@@ -1,0 +1,70 @@
+{
+  "config": {
+    "users": 3,
+    "rounds": 4,
+    "model": "Qwen3.6-27B-MLX-8bit"
+  },
+  "parallel": {
+    "reps": 3,
+    "stale_share_min": 0.8,
+    "stale_share_median": 0.8182,
+    "stale_share_max": 0.8276,
+    "stale_depth_max": 10,
+    "peak_concurrency_min": 3
+  },
+  "serial_control": {
+    "reps": 1,
+    "stale_steps_total": 0,
+    "steps_total": 13
+  },
+  "reps": [
+    {
+      "arm": "parallel",
+      "model": "Qwen3.6-27B-MLX-8bit",
+      "turn_threads": 12,
+      "steps": 30,
+      "stale_steps": 24,
+      "stale_share": 0.8,
+      "stale_depth_p50": 2.0,
+      "stale_depth_max": 10,
+      "peak_concurrency": 3,
+      "rep": 0
+    },
+    {
+      "arm": "parallel",
+      "model": "Qwen3.6-27B-MLX-8bit",
+      "turn_threads": 12,
+      "steps": 29,
+      "stale_steps": 24,
+      "stale_share": 0.8276,
+      "stale_depth_p50": 2.0,
+      "stale_depth_max": 10,
+      "peak_concurrency": 3,
+      "rep": 1
+    },
+    {
+      "arm": "parallel",
+      "model": "Qwen3.6-27B-MLX-8bit",
+      "turn_threads": 12,
+      "steps": 33,
+      "stale_steps": 27,
+      "stale_share": 0.8182,
+      "stale_depth_p50": 2,
+      "stale_depth_max": 8,
+      "peak_concurrency": 3,
+      "rep": 2
+    },
+    {
+      "arm": "serial",
+      "model": "Qwen3.6-27B-MLX-8bit",
+      "turn_threads": 1,
+      "steps": 13,
+      "stale_steps": 0,
+      "stale_share": 0.0,
+      "stale_depth_p50": 0,
+      "stale_depth_max": 0,
+      "peak_concurrency": 1,
+      "rep": 0
+    }
+  ]
+}

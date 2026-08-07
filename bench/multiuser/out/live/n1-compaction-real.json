@@ -1,0 +1,21 @@
+{
+  "users": 3,
+  "rounds": 6,
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "ctx_advertised": null,
+  "context_budget_tokens": 3000,
+  "summary_delay_ms": "real summarizer call",
+  "turns_sent": 18,
+  "queries_recorded": 18,
+  "queries_lost": 0,
+  "compactions": {
+    "begun": 0,
+    "committed": 0,
+    "stale_retries": 0,
+    "failed": 0
+  },
+  "availability_windows": [],
+  "concurrent_compactions": 0,
+  "attribution_checked": 18,
+  "attribution_mismatches": 11
+}

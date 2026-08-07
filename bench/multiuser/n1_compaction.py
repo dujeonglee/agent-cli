@@ -71,10 +71,14 @@ def main() -> None:
         "무락 요약 구간의 가용성을 확인한다. 압축은 --max-context-tokens 로 강제.",
     )
     ap.add_argument(
-        "--budget",
+        "--real-ctx",
         type=int,
-        default=3000,
-        help="--real 일 때 압축을 유발할 컨텍스트 토큰 예산",
+        default=12288,
+        help="--real 일 때 모델에 **광고할** 컨텍스트 창. 압축 목표는 "
+        "`--max-context-tokens` 가 아니라 이 값에서 나온다(loop/llm.py: "
+        "target=(context_window − system − max_output) × ratio) — 실측으로 "
+        "확인했다. 워크스페이스 로컬 .agent-cli/models.json 에 써서 고정하므로 "
+        "제품 코드도 사용자 설정도 건드리지 않는다.",
     )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
@@ -89,16 +93,37 @@ def main() -> None:
         else None
     )
     ws = Path(tempfile.mkdtemp(prefix="n1-compact-"))
+    if llm:
+        # 실모델의 광고 창은 262K 라 압축이 영영 안 걸린다(1차 시도에서 0회
+        # 발동으로 실측). 레지스트리 우선순위(models.json > 런타임 탐지 >
+        # 기본값)를 이용해 워크스페이스 로컬 항목으로 창을 좁힌다 —
+        # AgentServer 가 cwd·HOME 을 워크스페이스로 격리하므로 이 파일은
+        # 이 실행에만 보인다.
+        reg = ws / ".agent-cli"
+        reg.mkdir(parents=True, exist_ok=True)
+        (reg / "models.json").write_text(
+            json.dumps(
+                {
+                    "models": {
+                        llm["model"]: {
+                            "provider": "openai",
+                            "context_window": args.real_ctx,
+                            "max_output_tokens": 2048,
+                            "supports_thinking": False,
+                            "thinking_budget": 0,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
     server = AgentServer(
         ws,
         None if mock is None else mock.port,
         contract="parallel",
         max_turns=args.users,
         real_llm=llm,
-        # 실모델의 광고 창은 262K 라 압축이 영영 안 걸린다. 압축 예산을 직접
-        # 조여 목 팔과 같은 압력을 만든다 — 재는 것은 창의 크기가 아니라
-        # "요약이 도는 동안 턴이 계속 흐르는가"이므로 이 대체가 유효하다.
-        extra=["--max-context-tokens", str(args.budget)] if llm else None,
+        extra=None,
     )
     total = args.users * args.rounds
     timeout = 900 if llm is None else 3600
@@ -180,7 +205,7 @@ def main() -> None:
             "rounds": args.rounds,
             "model": "mock" if llm is None else llm["model"],
             "ctx_advertised": args.ctx if llm is None else None,
-            "context_budget_tokens": args.budget if llm else None,
+            "context_window_advertised": args.real_ctx if llm else None,
             "summary_delay_ms": args.sum_ms if llm is None else "real summarizer call",
             "turns_sent": total,
             "queries_recorded": len(queries),
