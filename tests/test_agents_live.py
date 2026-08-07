@@ -3243,9 +3243,7 @@ class TestSpawnResumeMessageAlias:
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-        tool_agent(
-            {"mode": "resume", "key": "agt-x", "task": "계속"}, registry=reg
-        )
+        tool_agent({"mode": "resume", "key": "agt-x", "task": "계속"}, registry=reg)
         assert sent == [("agt-x", "계속")]
 
     def test_resume_task_wins_over_message_when_both(self, tmp_path, monkeypatch):
@@ -3268,9 +3266,7 @@ class TestSpawnResumeMessageAlias:
         assert res.success
         assert sent and sent[0][1] == "첫 작업"
 
-    def test_resume_without_any_instruction_queues_nothing(
-        self, tmp_path, monkeypatch
-    ):
+    def test_resume_without_any_instruction_queues_nothing(self, tmp_path, monkeypatch):
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
