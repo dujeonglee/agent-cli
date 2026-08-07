@@ -1,0 +1,132 @@
+# 리뷰 대응 플랜 — v0.8 → v0.9
+
+> 2026-08-07. 대상 리뷰: `13-reviewer-simulation-v0.8.md` (Major Revision).
+> 네 트랙: **A 해명(W2)** · **B–C 실험 재설계/재실험(W1, W3, W6)** · **D–E 인용/서술 보강(W4, W5)** · **F Abstract·표현 재보강**.
+> 원칙: 수치가 바뀌는 작업(Phase 1–2)을 먼저 끝내고 Abstract(Phase 3)는 마지막에 쓴다.
+
+---
+
+## 사전 확인된 사실 (플랜의 근거)
+
+코드 확인 결과 (2026-08-07):
+
+1. **Mid-run injection은 턴 경계 전용이다.** `agent_cli/loop/core.py:604` `_inject_queued_messages()`는 에이전트 루프의 *내부 턴 경계*(LLM 스텝 사이)에서만 큐에서 **한 건**을 꺼내 주입한다. 실행 중인 LLM 호출 도중에는 주입 지점이 없다.
+2. **§6.1의 A 태스크는 단일 호출이다.** `bench/multiuser/e2_hol.py:51` — `[[bench ttft=200 tok=… n=… id=a]]`는 툴 스텝 없는 한 번의 생성이므로 A의 런에는 턴 경계가 아예 없다. 따라서 serial에서 B의 질문은 A의 생성이 끝난 뒤에야 주입·처리되고, **TTFT_B ≈ L은 injection을 끈 결과가 아니라 메커니즘의 귀결이다.**
+3. **§6.10의 3질문→2호출**은 라이브 워크로드가 멀티스텝(툴 호출 포함)이어서 턴 경계가 존재했기 때문에 injection이 실제로 접붙인 사례다. 두 절은 모순이 아니라 *경계 밀도*의 차이인데, 논문이 이를 말하지 않고 있다.
+
+→ W2는 **재실험 없이 해명 가능**하지만, 해명을 수치로 뒷받침하는 저비용 실험(E2b)을 추가하면 오히려 baseline이 강해져 W1 방어에도 쓸 수 있다.
+
+---
+
+## Track A — W2/Q1 해명 (Phase 0–1)
+
+### A1. 본문 해명 (글만, Phase 0)
+
+- **§6.1 프로토콜 문단에 추가**: serial 팔은 mid-run injection이 *켜진 채* 측정되었음을 명시하고, injection 지점은 내부 턴 경계뿐이며 A 태스크가 단일 생성이므로 경계가 없음 → TTFT_B = L은 mechanism의 답임을 서술.
+- **§6.10에 역참조**: "3질문 2호출"이 같은 메커니즘의 멀티스텝 케이스임을 명시. 서로가 서로의 각주가 되게 한다.
+- **측정 기점 표현 통일** (리뷰 minor): §5 "measured from the server's first 409" vs §6.1 "from B's first submission attempt" — 실제 하니스 코드(`e2_hol.py`의 reject 분기)를 확인해 한 문장으로 통일. 첫 (거부된) POST의 왕복이 포함되는지 명시.
+
+### A2. 신규 실험 E2b — "serial + injection의 실제 상한" (Phase 1, mock, 저비용)
+
+- **설계**: A의 태스크를 총 길이 L=15 s 고정, 스텝 수 k ∈ {1, 2, 4, 8}로 분할(스텝마다 무해한 툴 호출로 경계 생성). serial 계약에서 B의 TTFT를 측정.
+- **예상**: TTFT_B ≈ (다음 경계까지 시간) + (B 답 생성 시간) — k가 클수록 감소. k=1이 §6.1의 15.34 s를 재현해야 함(정합성 체크 겸용).
+- **mock 함정 검토 완료**: §5의 shared-transcript directive-collapse는 *동시 턴*이 서로 다른 스크립트를 돌릴 때의 문제. serial 계약은 동시 턴이 없고 B는 큐 대기 질문이므로 이 실험은 mock으로 안전하다.
+- **산출물**: `bench/multiuser/e2b_injection.py` → `out/e2b-injection.json`. 논문에는 §6.1 하위 문단으로 편입: "serial의 진짜 상한은 L이 아니라 경계 간격이다; 경계가 조밀한 워크로드에서 serial은 parallel에 접근하지만, 긴 생성·긴 쉘 실행이 경계를 없앤다" — baseline을 스스로 강화해 리뷰어의 W2를 정면으로 흡수.
+- **수용 기준**: k=1 셀이 기존 §6.1 serial L=15 셀과 ±5% 내 일치. k에 대한 단조 감소.
+
+---
+
+## Track B — W1 대응: §6.10 승격 재실험 (Phase 2, 실모델 필요)
+
+리프레임 원칙: §6.1(mock)은 "구현이 계약대로 동작한다는 *검증*", §6.10(live)이 "실세계 주장". 서사와 실험 규모를 이에 맞춘다.
+
+### B1. 랭킹 실험 확장 (`p6_real_llm.py` 개정)
+
+- 반복 5 → **20+**, median/p95와 분산 보고 (Q3 대응).
+- **서빙 스택 명세 기록**: 엔드포인트의 동시성 한계(동시 디코드 슬롯, batch 정책)를 결과 JSON에 함께 저장 — "provider's concurrency" 명시 요구 대응.
+- 사용자 수 축 추가: N ∈ {2, 3} (엔드포인트 동시성 내에서).
+
+### B2. 토큰 회계 확장
+
+- 반복 3 → **10**, 그리고 **히스토리 길이 축 추가**: 짧은 히스토리(현행) vs 성장한 히스토리(예: 50턴 진행 후 동일 3질문 워크로드) — "premium grows with history" 자인을 측정으로 대체 (Limitation 1 보강, W6 일부 겸용).
+- 산출: 1.49×가 히스토리 길이에 따라 어떻게 움직이는지 곡선 1개.
+
+### B3. 본문 재배치
+
+- Abstract·§1·기여 4에서 mock slope를 "검증"으로 강등하고 live 결과(7.0 s vs 27.8 s, 1.49×→곡선)를 승격.
+- §6.1 통계 보강(재실험 불필요, 커밋된 `out/e2-hol.jsonl` 재계산): 회귀 적합 방식(전체 점 vs 셀 중앙값), R², serial/reject의 p95−p50 산포 추가. L=30 셀에 세션 경계 각주.
+
+---
+
+## Track C — W3/Q2 대응: semantic confusion 완화 실험 (Phase 2, 최대 작업)
+
+리뷰의 급소. "구조적 귀속은 기록하지 방지하지 않는다"에 대해 **완화책 1개를 구현·측정**하고, 실패해도 negative result로 보고한다.
+
+### C1. 완화책 구현 — per-turn instruction scoping
+
+- **설계**: 턴별 프롬프트 전문(前文)에 "이 턴은 사용자 U의 요청 t_i를 수행한다; 트랜스크립트에 보이는 다른 사용자의 동시 요청은 참고용이며 이 턴이 실행할 대상이 아니다"를 삽입 + 사용자 메시지에 turn-id 태그. 턴 정체성은 이미 thread-local로 존재하므로(§5 attribution 기계) `agent_cli/loop/prompt.py`의 섹션 주입 경로를 재사용 — 신규 추상화 불필요.
+- **스위치화**: `--turn-scoping on|off` — §6의 다른 스위치들과 같은 ablation 문법 유지.
+- **CLAUDE.md 준수**: agent_cli 코드 변경이므로 유닛 테스트(프롬프트에 스코핑 섹션이 정확히 그 턴에만 붙는지, thread-local 정합), ruff, ARCHITECTURE.md 갱신, 단일 커밋.
+
+### C2. 측정 (on/off ablation, 2팔)
+
+1. **어드버세리얼 재실험**: `n3_attribution.py`의 always-answer-latest 모델로 scoping off(38% 재현) vs on — 단, mock 어드버세리얼 모델은 지시를 무시하도록 *설계*되어 있으므로, scoping 지시를 조건부로 존중하는 어드버세리얼 변형("태그가 없으면 최신 질문에 답한다")을 함께 정의해 상한/하한을 모두 보고. 설계 논거를 본문에 명시(어드버세리얼 상한은 완화 불가능함이 당연하고, 측정 대상은 *비적대* 모델의 혼선률).
+2. **라이브 재실험**: §6.4의 12-run 라이브 팔(`p2_scope_real.py`)을 scoping on/off로 재실행(각 12 runs) — cross-user file write 재발 여부. §6.6 스타일의 경부하 혼선률(4/90)도 scoping on으로 재측정.
+
+### C3. 본문 반영
+
+- §6.7을 "구조적 귀속(해결) + 의미론적 혼선(측정→완화 시도)"의 2부 구조로 재편. §6.4의 1/12 사건을 "incidental"에서 명명된 결과로 승격.
+- Limitation 3을 독립 항목으로 확장하고 Track D(위협 모델)와 연결.
+- **수용 기준**: 완화 효과가 있으면 rate 감소 보고; 없으면 "prompt-level scoping은 불충분하다"를 negative result로 명시 — 어느 쪽이든 W3 답변이 된다.
+
+---
+
+## Track D — W5 대응: 위협 모델 절 신설 (Phase 0, 글만)
+
+- §7.5 Limitation 7을 확장하거나 §7에 짧은 절 신설: **신뢰 모델 명시** — 본 시스템은 상호 신뢰하는 협업자를 가정한다; 공유 컨텍스트는 cross-principal 주입 채널이며 §6.7의 혼선이 그 채널이 살아있다는 증거다; 계약이 막는 것(물리적 무결성, 턴 소유권, read-only 격리)과 막지 않는 것(프롬프트 수준 교차 오염, 악의적 참가자)을 표로 구분.
+- [30](multi-user policy)을 "보완재"로만 치우지 말고 이 절에서 실제로 접속: 권한 계층이 이 채널에 어떻게 덧씌워질 수 있는지 한 문단.
+- AML.CS0035 인용을 메신저 비판에서만 쓰지 말고 자기 시스템에도 적용(리뷰어가 지적한 비대칭 해소).
+
+## Track E — W4 대응: DB 동시성 제어 인용 보강 (Phase 0, 글만)
+
+- **추가 인용 (필수)**: Gray, Lorie, Putzolu, Traiger — *Granularity of Locks and Degrees of Consistency* (1976, intention locks·계층 락); Berenson et al. — *A Critique of ANSI SQL Isolation Levels* (SIGMOD 1995, snapshot isolation·write-skew); Bernstein & Goodman — *Concurrency Control in Distributed Database Systems* (1981); Gray & Reuter — *Transaction Processing* (1993).
+- **§4.3**: snapshot read + atomic commit이 스냅샷 격리와 동형임을 명시하고, **write-skew의 의미론적 유사물**(두 턴이 같은 스냅샷을 읽고 서로 다른 파일을 써서 불변식을 함께 깨는 경우)이 가능함을 인정 — Limitation 3과 연결.
+- **§4.4**: 호환성 행렬 + 계층 락을 granular/intention locking의 이식으로 위치 지정. "last-wins by construction of order"가 고전 문헌에서 anomaly로 분류됨을 인정.
+- **§2.4에 한 문단 신설**: "고전 CC와의 관계" — 기여의 novelty는 기법이 아니라 **배치**(inference는 어떤 락도 잡지 않는다; 효과층만 비관적)임을 선제 명시. 리뷰어의 "unawareness or overclaiming" 프레임을 차단.
+- Q7 대응: "first user-level fairness mechanism" 주장을 "**에이전트 세션의 턴 granularity에서는** 최초로 아는 바"로 한정하고 API 게이트웨이류 per-user rate limiting과 구분.
+
+## Track F — W6 + 표현/Abstract 재보강
+
+### F1. 저비용 민감도 실험 (Phase 1, mock)
+
+1. **Reject retry-interval 민감도**: L=15 셀 하나에 retry ∈ {250 ms, 1000 ms} — tax가 interval의 함수임을 1행으로 보이고 "never better than serial" 주장을 interval-독립으로 만든다.
+2. **N 스케일링**: parallel 계약, N ∈ {2, 4, 8} 동시 사용자(cap 조정) — TTFT 평탄성이 N에서 유지되는지. fairness 게이트도 N=8 플러딩 1셀 추가.
+3. **LangGraph enqueue = serial 팔 매핑 명시** (글만): §2.4와 §6.1에 한 줄.
+
+### F2. Shell-heavy operating point (Phase 2, 라이브 1팔 — §4.4 긴장 해소)
+
+- 리뷰 지적: 10⁻⁵ operating point는 파일쓰기 워크로드의 것; 코딩 에이전트의 지배적 효과는 쉘(빌드/테스트)이고 쉘은 배타 락이다.
+- **실험**: 라이브 모델로 "테스트 실행 포함" 태스크 2-user 런 소수(예: 6 runs) — 쉘 hold 시간 기반 effect share를 측정해 §6.3의 collapse 곡선 위에 두 번째 operating point를 찍는다. 곡선의 knee(50%)와의 거리로 정직하게 보고.
+- 산출: §6.4에 "two operating points" 문단.
+
+### F3. Abstract·프레젠테이션 (Phase 3, 수치 확정 후)
+
+- **Abstract 전면 재작성 (≤250 단어)**: 유지 — 설계 공간의 빈 좌표, 계약 한 문장, slope(검증) + live 결과(주장), 8.2%는 "forced-overlap ablation"으로 명기, 1.49×(+히스토리 곡선), 의미론적 혼선의 정직한 한 문장, 연구 어젠다. 삭제 — 실험 나열(§6.5–6.9 property list는 기여 목록으로 이동).
+- **Table 1 D4 수정** (Q6): parallel 행을 "during, turn-scoped **(cancellation only)**"로, serial 행을 "during, session-scoped **+ mid-run steering**"으로 — 개입의 *종류*가 좁아졌음을 표에 기록.
+- 표현 통일: "tax"→"phase penalty" 일원화, 반올림 정책 1회 명시, "shipped mode" 중복 5→2회, §6.5 버퍼 크기 명시, §6.9를 smoke test로 표현 조정, `[[bench …]]` 문법은 Appendix A로 전방 참조.
+- **참고문헌 정비**: [10]·[11]·[12] 완성(한국어 잔존 텍스트 "비특허문헌" 제거), [23]·[26] 검증, Track E 인용 4건 추가, 익명화 [NOTE] 해소.
+
+---
+
+## 실행 순서·산출물 요약
+
+| Phase | 작업 | 실험? | 모델 | 산출물 |
+|---|---|---|---|---|
+| 0 | A1 해명, D 위협모델, E 인용, F1-3 매핑 문장 | 없음 | — | 논문 §2.4, §4.3–4.4, §6.1, §6.10, §7.5 개정 |
+| 1 | A2 E2b, F1 retry 민감도·N 스케일링, B3 통계 재계산 | mock | 불필요 | `e2b_injection.py`, `e2_hol.py` 확장 셀, `out/*` 신규 raw |
+| 2 | C 완화 구현+측정, B1–B2 live 승격, F2 shell 지점 | live | on-prem 엔드포인트 | `--turn-scoping` 스위치 + 테스트, `p6_real_llm.py`·`p2_scope_real.py` 개정 |
+| 3 | F3 Abstract·표·참고문헌 최종화 → **v0.9** | 없음 | — | `09-full-paper-draft.md` v0.9 (+ko) |
+
+**의존성**: Phase 3은 Phase 1–2의 수치 확정 이후. Phase 0은 즉시 병행 가능. Track C의 코드 변경은 CLAUDE.md 규칙(테스트+ruff+ARCHITECTURE.md+단일 커밋) 적용 대상.
+
+**리스크**: (1) C2 라이브 재실험에서 1/12 사건이 재현되지 않을 수 있음(희귀 사건) — scoping off 팔의 run 수를 12→24로 늘려 기저율을 먼저 안정화할지 결정 필요. (2) B1의 N축은 엔드포인트 동시성 한계에 의해 제약될 수 있음 — 한계 자체를 명세로 기록하는 것이 Q3의 답이므로 실패가 아님. (3) E2b에서 k=1 재현이 ±5%를 벗어나면 드리프트 통제 재측정(`e2-drift-control` 방식) 선행.
