@@ -3199,3 +3199,82 @@ class TestRunMode:
         assert "[Task 2]" in c and "A-done" in c and "B-done" in c
         # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
         assert provider.call.call_count == 4
+
+
+class TestSpawnResumeMessageAlias:
+    """spawn/resume 의 지시 필드 별칭 (v7.29.1).
+
+    mode:"request" 는 ``message``, spawn/resume 는 ``task`` 였다 — 모델이
+    request 습관대로 resume 에 ``message`` 를 보내면 **조용히 버려져서**
+    "에이전트가 지시를 씹었다"로 관측됐다(라이브 재현: resume+message →
+    ACK 정상·회신 영원히 없음 / resume+task → 회신 도착). 별칭으로 수용한다.
+    """
+
+    @staticmethod
+    def _registry_with_request_capture(tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        reg = AgentRegistry(tmp_path)
+        sent = []
+
+        def fake_request(key, message, **kw):
+            sent.append((key, message))
+            return ""
+
+        monkeypatch.setattr(reg, "request", fake_request)
+        # spawn 이 실제 worker 를 띄우지 않게 — 계약은 큐잉 여부다.
+        monkeypatch.setattr(reg, "spawn", lambda **kw: ("agt-test0001", ""))
+        monkeypatch.setattr(reg, "resume_teammate", lambda key, parent_ctx=None: "")
+        return reg, sent
+
+    def test_resume_message_is_queued_as_task(self, tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent(
+            {"mode": "resume", "key": "agt-x", "message": "이어서 해줘"},
+            registry=reg,
+        )
+        assert res.success
+        assert sent == [("agt-x", "이어서 해줘")]
+        assert "task queued" in res.output  # ACK 도 큐잉을 알린다
+
+    def test_resume_task_still_works(self, tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        tool_agent(
+            {"mode": "resume", "key": "agt-x", "task": "계속"}, registry=reg
+        )
+        assert sent == [("agt-x", "계속")]
+
+    def test_resume_task_wins_over_message_when_both(self, tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        tool_agent(
+            {"mode": "resume", "key": "agt-x", "task": "A", "message": "B"},
+            registry=reg,
+        )
+        assert sent == [("agt-x", "A")]  # 정식 필드 우선
+
+    def test_spawn_message_is_queued_as_task(self, tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent(
+            {"mode": "spawn", "profile": "", "message": "첫 작업"}, registry=reg
+        )
+        assert res.success
+        assert sent and sent[0][1] == "첫 작업"
+
+    def test_resume_without_any_instruction_queues_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent({"mode": "resume", "key": "agt-x"}, registry=reg)
+        assert res.success
+        assert sent == []
+        assert "task queued" not in res.output
