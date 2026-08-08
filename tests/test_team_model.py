@@ -38,6 +38,7 @@ let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
   const agents = {};
   m.agents.forEach((v,k)=>{ const c=Object.assign({},v); delete c._busyFrom; agents[k]=c; });
   process.stdout.write(JSON.stringify({lanes:m.lanes, agents, messages:m.messages,
+    userMarks:m.userMarks, finals:m.finals,
     oneshots:m.oneshots, skillBands:m.skillBands, mainSpans:m.mainSpans,
     forks:m.forks, maxSlot:m.maxSlot, t0:m.t0, t1:m.t1}));
 });
@@ -284,8 +285,14 @@ class TestMessages:
         ]
         m = run_model(events)
         assert len(m["messages"]) == 1
-        assert m["messages"][0]["from"] == "user:alice"
+        # v8.2.0: "user:*" authors map onto the ONE multiplexed user lane
+        # (leftmost), nickname kept as the arrow label — previously the
+        # "user:alice" from-key had no lane so the view dropped the arrow.
+        assert m["messages"][0]["from"] == "user"
+        assert m["messages"][0]["who"] == "alice"
         assert m["messages"][0]["to"] == "w1"
+        assert m["lanes"][0] == "user"
+        assert m["userMarks"] == [{"t": 3.0, "who": "alice", "text": "hi"}]
 
     def test_peer_inbound_not_doubled_by_roundtrip(self):
         # A peer request has BOTH an "in" (at receiver) and an "out" (at sender).
@@ -839,3 +846,97 @@ class TestScopeForks:
         forks = run_model(events)["forks"]
         assert [f["t0"] for f in forks] == [2.0, 8.0]
         assert all(len(f["members"]) == 2 for f in forks)
+
+
+class TestUserLane:
+    """v8.2.0 — the ONE multiplexed user lane + complete attribution."""
+
+    def _um(self, ts, author, content="hello"):
+        e = {"type": "user_message", "ts": ts, "content": content}
+        if author:
+            e["author"] = author
+        return e
+
+    def _final(self, ts, answers, text="done"):
+        e = {"type": "assistant_turn", "ts": ts, "turn": 3, "final": text}
+        if answers is not None:
+            e["answers"] = answers
+        return e
+
+    def test_user_message_with_author_makes_lane_mark_and_request_arrow(self):
+        m = run_model([self._um(1.0, "Bob", "fix the bug")])
+        assert m["lanes"][0] == "user"
+        assert m["userMarks"] == [{"t": 1.0, "who": "Bob", "text": "fix the bug"}]
+        [msg] = m["messages"]
+        assert msg["from"] == "user" and msg["to"] == "main"
+        assert msg["type"] == "request" and msg["who"] == "Bob"
+
+    def test_authorless_user_message_stays_off_the_lane(self):
+        # 🤝 agent-report starter / CLI history: card only, no user lane.
+        m = run_model([self._um(1.0, None)])
+        assert m["userMarks"] == [] and m["messages"] == []
+        assert "user" not in m["lanes"]
+
+    def test_multiple_users_multiplex_into_one_lane(self):
+        m = run_model([self._um(1.0, "Bob"), self._um(2.0, "두정")])
+        assert m["lanes"].count("user") == 1
+        assert [u["who"] for u in m["userMarks"]] == ["Bob", "두정"]
+
+    def test_final_with_answers_draws_one_reply_arrow_with_all_names(self):
+        # A run Bob started and 두정 steered mid-run: ONE dashed arrow into the
+        # shared lane, labeled with every recipient — not an arrow per user.
+        m = run_model(
+            [
+                self._um(1.0, "Bob"),
+                self._um(2.0, "두정"),
+                self._final(3.0, ["Bob", "두정"], "answer text"),
+            ]
+        )
+        replies = [x for x in m["messages"] if x.get("reply")]
+        assert len(replies) == 1
+        assert replies[0]["from"] == "main" and replies[0]["to"] == "user"
+        assert replies[0]["who"] == "Bob·두정"
+        assert replies[0]["text"] == "answer text"
+        assert m["finals"] == [
+            {"t": 3.0, "answers": ["Bob", "두정"], "text": "answer text"}
+        ]
+
+    def test_final_with_empty_answers_has_no_reply_arrow(self):
+        # 🤝 agent-report run: the final is recorded (dock shows it,
+        # unattributed) but no arrow points at any user.
+        m = run_model([self._um(1.0, "Bob"), self._final(2.0, [])])
+        assert [x for x in m["messages"] if x.get("reply")] == []
+        assert m["finals"][0]["answers"] == []
+
+    def test_final_without_answers_field_is_pre_attribution(self):
+        # Sessions recorded before v8.2.0 replay finals with NO answers key —
+        # same rendering as empty (no arrow), never a crash.
+        m = run_model([self._final(2.0, None)])
+        assert m["finals"] == [{"t": 2.0, "answers": [], "text": "done"}]
+        assert [x for x in m["messages"] if x.get("reply")] == []
+
+    def test_scoped_final_is_not_a_main_reply(self):
+        # A sub-agent's final carries task_id → not main's answer to anyone.
+        e = self._final(2.0, ["Bob"])
+        e["task_id"] = "t1"
+        m = run_model([self._um(1.0, "Bob"), e])
+        assert m["finals"] == []
+        assert [x for x in m["messages"] if x.get("reply")] == []
+
+    def test_final_does_not_pollute_main_turn_spans(self):
+        # finals divert from the mainBusyFrom span tracker — a lone final must
+        # not open a phantom main-activity span.
+        m = run_model([self._um(1.0, "Bob"), self._final(2.0, ["Bob"])])
+        assert m["mainSpans"] == []
+
+    def test_user_lane_is_leftmost_with_agents_present(self):
+        events = [
+            {
+                "type": "agent_roster",
+                "ts": 0.5,
+                "roster": [{"key": "w1", "profile": "code-writer"}],
+            },
+            self._um(1.0, "Bob"),
+        ]
+        m = run_model(events)
+        assert m["lanes"] == ["user", "main", "w1"]

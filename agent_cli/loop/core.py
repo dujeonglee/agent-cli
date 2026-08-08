@@ -79,6 +79,7 @@ class AgentLoop:
         dequeue_user_message=None,
         route_message=None,
         query_author: str | None = None,
+        query_author_is_user: bool = True,
         agent_role: str = "",
         agent_name: str = "",
         mcp_manager=None,
@@ -114,6 +115,14 @@ class AgentLoop:
         # injected) so recovery / review reference the full set of asks.
         self.dequeue_user_message = dequeue_user_message
         self.route_message = route_message
+        # ``query_author_is_user`` — False for a 🤝 agent-report wake-up: its
+        # "author" is a display label, not a user, so it must not enter the
+        # run's ``answers`` attribution. ``run_authors`` = the users whose asks
+        # this run services (starter + injected plain chat, first-seen order);
+        # mirrored to the web renderer via ``set_run_authors`` so the final's
+        # ``answers`` field is stamped by whoever owns the fact (this loop).
+        self.query_author_is_user = query_author_is_user
+        self.run_authors: list[str] = []
         self.provider = provider
         self.ctx = ctx
         self.agent_role = agent_role
@@ -569,15 +578,24 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
-        self._add_user_message(self.query, self.query_author)
+        self._add_user_message(
+            self.query, self.query_author, is_user=self.query_author_is_user
+        )
 
-    def _add_user_message(self, text: str, author: str | None = None) -> None:
+    def _add_user_message(
+        self, text: str, author: str | None = None, is_user: bool = True
+    ) -> None:
         """Add a user message to the conversation + task log.
 
         Shared by the run-starter (``_setup``) and the plain-chat branch of
         turn-boundary injection so the ``[author]: text`` labeling, task-log
         accumulation, and ctx/messages update live in ONE place. ``author``
         (a nickname) is prefixed only when truthy — CLI / single-user stays raw.
+
+        ``is_user=False`` marks an author that is a display label, not a user
+        (the 🤝 agent-report starter): it keeps the ``[author]:`` label but is
+        excluded from ``run_authors`` (the final's ``answers`` attribution)
+        and flagged in the history record so resume replay excludes it too.
         """
         labeled = f"[{author}]: {text}" if author else text
         self.task_log.append(labeled)
@@ -587,11 +605,23 @@ class AgentLoop:
         record = {"role": "user", "content": labeled}
         if author:
             record["author"] = author
+            if not is_user:
+                record["author_is_user"] = False
         if self.ctx:
             self.ctx.add(record)
             self.messages = self.ctx.get_messages()
         else:
             self.messages.append(record)
+        if author and is_user and author not in self.run_authors:
+            self.run_authors.append(author)
+        # Web main loop only (sub-loops have no queue): keep the renderer's
+        # attribution current so the final it renders carries ``answers``.
+        if self.dequeue_user_message is not None:
+            from agent_cli.render import get_renderer
+
+            renderer = get_renderer()
+            if hasattr(renderer, "set_run_authors"):
+                renderer.set_run_authors(self.run_authors)
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
@@ -626,7 +656,7 @@ class AgentLoop:
 
         renderer = get_renderer()
         if hasattr(renderer, "push_user_message"):
-            renderer.push_user_message(labeled)
+            renderer.push_user_message(labeled, author=author or "")
         if self.route_message is not None and self.route_message(text):
             # Routed as a command — record the ask; ctx may have changed.
             self.task_log.append(labeled)

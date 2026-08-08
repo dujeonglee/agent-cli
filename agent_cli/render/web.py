@@ -264,6 +264,20 @@ class WebRenderer(Renderer):
         # ``_replay_ts``, because replay runs on the MAIN thread (so the usual
         # per-thread routing cannot know the original scope).
         self._replay_task_id: str | None = None
+        # ── complete-attribution (team view user lane, v8.2.0) ──
+        # ``answers`` on a MAIN-timeline final = the users whose asks this run
+        # serviced (run starter + turn-boundary steering injections). Two
+        # sources, one field:
+        #  · live — the main loop owns the set (it knows which injections were
+        #    plain chat vs routed commands) and hands it over via
+        #    ``set_run_authors`` at run start + every injection. ``worker_busy``
+        #    clears it so a command-dispatch run (no ``run_loop``) can never
+        #    inherit the PREVIOUS run's attribution.
+        #  · replay — derived from the history user records' ``author`` field
+        #    (same set: routed commands write no user record), accumulated per
+        #    record and consumed at each main-level final.
+        self._run_authors: list[str] | None = None
+        self._replay_authors: list[str] = []
 
     # ─── Event distribution ─────────────────────────
 
@@ -948,7 +962,20 @@ class WebRenderer(Renderer):
                     return
                 content = msg.get("content", "")
                 if content:
-                    self.push_user_message(content)
+                    # ``author`` + ``author_is_user`` (additive, see
+                    # ``_add_user_message``): a USER author feeds the replayed
+                    # ``answers`` attribution and the team view's user lane.
+                    # The literal "🤝 agent" check covers records written
+                    # before the ``author_is_user`` flag existed — legacy-data
+                    # hygiene only, live code never compares that string.
+                    author = msg.get("author") or ""
+                    is_user = msg.get("author_is_user", True) and author != "🤝 agent"
+                    if author and is_user:
+                        if author not in self._replay_authors:
+                            self._replay_authors.append(author)
+                        self.push_user_message(content, author=author)
+                    else:
+                        self.push_user_message(content)
         elif role == "assistant":
             thought = msg.get("thought", "") or ""
             ops = msg.get("ops")
@@ -1248,15 +1275,26 @@ class WebRenderer(Renderer):
         )
 
     def final(self, content: str, turn: int) -> None:
-        self._emit(
-            "assistant_turn",
-            {
-                "turn": turn,
-                "thought": self._pending_thought or "",
-                "final": content,
-            },
-            persistent=True,
+        payload = {
+            "turn": turn,
+            "thought": self._pending_thought or "",
+            "final": content,
+        }
+        # ``answers`` (additive) — only on MAIN-timeline finals: a scope's
+        # final answers its caller, not a user. Empty list = a run with no
+        # user attribution (🤝 agent-report run); missing = pre-attribution
+        # session or CLI. See the ``_run_authors`` init comment for the
+        # live/replay split.
+        in_scope = (
+            self._thread_to_task.get(threading.get_ident()) or self._replay_task_id
         )
+        if in_scope is None:
+            if self._replay_ts is not None:
+                payload["answers"] = list(self._replay_authors)
+                self._replay_authors = []
+            elif self._run_authors is not None:
+                payload["answers"] = list(self._run_authors)
+        self._emit("assistant_turn", payload, persistent=True)
         self._pending_thought = None
 
     def error(self, content: str, turn: int) -> None:
@@ -1404,6 +1442,11 @@ class WebRenderer(Renderer):
         replay, without waiting for the next transition.
         """
         self._worker_busy = True
+        # New run pickup: drop the previous run's attribution so a final
+        # rendered outside ``run_loop`` (e.g. a routed command dispatch) can
+        # never carry a stale ``answers`` list. ``run_loop`` re-sets it via
+        # ``set_run_authors``.
+        self._run_authors = None
         self.set_sticky("worker_state", "worker_state", {"busy": True})
 
     def worker_idle(self) -> None:
@@ -1857,20 +1900,33 @@ class WebRenderer(Renderer):
         else:
             self._input_queue.put(payload.get("content", ""))
 
-    def push_user_message(self, content: str) -> None:
+    def push_user_message(self, content: str, author: str = "") -> None:
         """Echo a user-typed chat message into the persistent event
         stream so the frontend renders it as a card.
 
-        Called by the server's POST /api/input handler for chat
-        messages, BEFORE the message is fed to the AgentLoop. Goes
+        Callers: the worker's run-start echo, the loop's turn-boundary
+        injection echo, the ask-answer UI echo, and resume replay. Goes
         into the buffer (replayed on reconnect) so the conversation
         renders correctly.
+
+        ``author`` — the sending USER's nickname (empty for CLI/single-user
+        and for agent-triggered 🤝 runs, whose starter is not a user
+        message). Additive field: the team view uses it to place the message
+        on the user lane; the timeline card keeps rendering ``content``
+        (which carries the ``[nickname]:`` label) as before.
         """
-        self._emit(
-            "user_message",
-            {"content": content},
-            persistent=True,
-        )
+        payload: dict = {"content": content}
+        if author:
+            payload["author"] = author
+        self._emit("user_message", payload, persistent=True)
+
+    def set_run_authors(self, authors: list[str]) -> None:
+        """Main loop → renderer: the users whose asks the CURRENT run is
+        servicing (starter + turn-boundary chat injections so far). Called at
+        run start and again after every injection; consumed by ``final`` on
+        the main timeline as the ``answers`` attribution. Sub-loops never
+        call this (they have no ``dequeue_user_message``)."""
+        self._run_authors = list(authors)
 
     def push_abort(self) -> None:
         """Unblock a pending ``prompt_user`` / ``confirm`` call by

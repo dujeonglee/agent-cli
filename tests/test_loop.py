@@ -3735,3 +3735,133 @@ class TestPR3Collaborators:
         assert loop._dispatch.cfg is loop._config and loop._llm.cfg is loop._config
         assert loop._dispatch.state is loop._state is loop._llm.state
         assert loop._dispatch.tools is loop._tools
+
+
+class TestRunAuthors:
+    """v8.2.0 complete-attribution: ``run_authors`` = the USERS whose asks this
+    run services (starter + injected plain chat). The loop owns the set and
+    mirrors it to the web renderer (``set_run_authors``) so the final's
+    ``answers`` field is stamped at the origin of the fact."""
+
+    def _loop(self, caps, **kw):
+        from agent_cli.loop import AgentLoop
+
+        return AgentLoop(
+            query="Q", provider=MagicMock(), capabilities=caps, model="m", **kw
+        )
+
+    def test_user_author_accumulates_and_dedupes(self, caps):
+        loop = self._loop(caps)
+        loop._add_user_message("q1", "Bob")
+        loop._add_user_message("q2", "두정")
+        loop._add_user_message("q3", "Bob")  # repeat → no dup
+        assert loop.run_authors == ["Bob", "두정"]
+
+    def test_non_user_author_is_excluded_and_flagged(self, caps):
+        # 🤝 agent-report starter: label kept, attribution + history flagged.
+        loop = self._loop(caps)
+        loop._add_user_message("reply arrived", "🤝 agent", is_user=False)
+        assert loop.run_authors == []
+        rec = loop.messages[-1]
+        assert rec["content"].startswith("[🤝 agent]:")
+        assert rec["author"] == "🤝 agent"
+        assert rec["author_is_user"] is False
+
+    def test_user_record_has_no_flag(self, caps):
+        # The flag is sparse — user records stay exactly as before (additive).
+        loop = self._loop(caps)
+        loop._add_user_message("q", "Bob")
+        assert "author_is_user" not in loop.messages[-1]
+
+    def test_authorless_message_stays_raw(self, caps):
+        loop = self._loop(caps)
+        loop._add_user_message("plain")
+        assert loop.run_authors == []
+        assert loop.messages[-1] == {"role": "user", "content": "plain"}
+
+    def _with_stub_renderer(self):
+        """Swap in a renderer stub recording set_run_authors calls."""
+        from agent_cli import render
+
+        class _Stub:
+            def __init__(self):
+                self.author_sets = []
+                self.pushed = []
+
+            def set_run_authors(self, authors):
+                self.author_sets.append(list(authors))
+
+            def push_user_message(self, content, author=""):
+                self.pushed.append((content, author))
+
+        stub = _Stub()
+        prev = render.get_renderer()
+        render.set_renderer(stub)
+        return stub, prev
+
+    def test_web_loop_mirrors_authors_to_renderer(self, caps):
+        from agent_cli import render
+
+        stub, prev = self._with_stub_renderer()
+        try:
+            loop = self._loop(caps, dequeue_user_message=lambda: None)
+            loop._add_user_message("q1", "Bob")
+            loop._add_user_message("q2", "두정")
+            assert stub.author_sets == [["Bob"], ["Bob", "두정"]]
+        finally:
+            render.set_renderer(prev)
+
+    def test_sub_loop_never_touches_renderer_attribution(self, caps):
+        # No dequeue (CLI main / every sub-loop) → no set_run_authors calls,
+        # so a skill/delegate loop can't clobber the main run's attribution.
+        from agent_cli import render
+
+        stub, prev = self._with_stub_renderer()
+        try:
+            loop = self._loop(caps)  # dequeue_user_message=None
+            loop._add_user_message("task prompt", "Bob")
+            assert stub.author_sets == []
+        finally:
+            render.set_renderer(prev)
+
+    def test_injected_chat_echoes_author_and_accumulates(self, caps):
+        from agent_cli import render
+
+        stub, prev = self._with_stub_renderer()
+        try:
+            items = [{"text": "steer it", "nickname": "두정"}]
+            loop = self._loop(
+                caps, dequeue_user_message=lambda: items.pop() if items else None
+            )
+            loop.run_authors.append("Bob")  # as the starter would have
+            loop._inject_queued_messages()
+            assert loop.run_authors == ["Bob", "두정"]
+            assert stub.pushed == [("[두정]: steer it", "두정")]
+            assert stub.author_sets[-1] == ["Bob", "두정"]
+        finally:
+            render.set_renderer(prev)
+
+    def test_injected_routed_command_does_not_attribute(self, caps):
+        # A routed command (/sh, @agent…) executes — it is not an ask the
+        # final answers, and it writes no user record (replay parity).
+        from agent_cli import render
+
+        stub, prev = self._with_stub_renderer()
+        try:
+            items = [{"text": "/compact", "nickname": "두정"}]
+            loop = self._loop(
+                caps,
+                dequeue_user_message=lambda: items.pop() if items else None,
+                route_message=lambda text: True,
+            )
+            loop._inject_queued_messages()
+            assert loop.run_authors == []
+            # …but the echo still shows who sent it (user lane mark).
+            assert stub.pushed == [("[두정]: /compact", "두정")]
+        finally:
+            render.set_renderer(prev)
+
+    def test_query_author_is_user_false_excludes_starter(self, caps):
+        loop = self._loop(caps, query_author="🤝 agent", query_author_is_user=False)
+        loop._add_user_message(loop.query, loop.query_author, is_user=False)
+        assert loop.run_authors == []

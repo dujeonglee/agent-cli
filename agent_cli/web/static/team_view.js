@@ -107,6 +107,15 @@
         key =
           "msg:" + (data.author || "") + ":" + (data.to || "") +
           ":" + (data.seq || 0) + ":" + (data.direction || "");
+      } else if (type === "user_message") {
+        // Reconnect replays the persistent buffer verbatim — the server ts is
+        // stable per event, so (ts, author, length) identifies it.
+        key =
+          "um:" + (data.ts || "") + ":" + (data.author || "") +
+          ":" + ((data.content || "").length);
+      } else if (type === "assistant_turn") {
+        // Only MAIN finals are fed (see app.js); ts+turn pins the replay.
+        key = "fin:" + (data.ts || "") + ":" + (data.turn || 0);
       }
       if (key) {
         if (this._seen[key]) return;
@@ -137,7 +146,7 @@
       host.appendChild(this._head);
       this._svg = svg("svg", { class: "tv-svg", role: "img", "aria-label": "Agent team swimlane" });
       host.appendChild(this._svg);
-      this._empty = elh("div", "tv-empty", "No team activity yet — spawn agents or run /orchestrate.");
+      this._empty = elh("div", "tv-empty", "No activity yet — send a message below to start.");
       host.appendChild(this._empty);
       // Stick to "now" (the bottom, since time flows down) unless the user has
       // scrolled up to read history. The scroll listener flips the flag; render
@@ -230,7 +239,8 @@
         return m.agents.get ? m.agents.get(k) : m.agents[k];
       };
       var hasActivity =
-        m.lanes.length > 1 || m.oneshots.length || m.skillBands.length || m.mainSpans.length;
+        m.lanes.length > 1 || m.oneshots.length || m.skillBands.length ||
+        m.mainSpans.length || (m.userMarks && m.userMarks.length);
       this._empty.hidden = !!hasActivity;
       this._head.style.display = hasActivity ? "block" : "none";
       this._svg.style.display = hasActivity ? "block" : "none";
@@ -242,22 +252,26 @@
 
       var lanes = m.lanes;
       var N = lanes.length;
-      // ── horizontal: one column per agent. main's column carries the nested
+      // ── horizontal: one column per agent. MAIN's column carries the nested
       // scope slots, so it gets ``maxSlot`` extra steps of width and its
       // baseline sits LEFT of centre — slots then grow rightward inside the
       // column instead of spilling into the next lane. With no nesting
-      // (maxSlot 0) the geometry is exactly the old centred single column. ──
+      // (maxSlot 0) the geometry is exactly the old centred single column.
+      // main is index 0 normally, index 1 when the user lane is present —
+      // hence ``mainIdx``, not a hard-coded 0. ──
+      var mainIdx = lanes.indexOf("main");
+      if (mainIdx < 0) mainIdx = 0;
       var slotSpan = (m.maxSlot || 0) * SLOT_DX;
       var W = Math.max(GUT_L + N * COL_MIN + slotSpan + PAD_R, host.clientWidth - 4);
       var colW = (W - GUT_L - PAD_R - slotSpan) / N;
       var laneX = function (i) {
-        return GUT_L + i * colW + (i > 0 ? slotSpan : 0);
+        return GUT_L + i * colW + (i > mainIdx ? slotSpan : 0);
       };
       var laneW = function (i) {
-        return colW + (i === 0 ? slotSpan : 0);
+        return colW + (i === mainIdx ? slotSpan : 0);
       };
       var colX = function (i) {
-        if (i === 0 && slotSpan) return laneX(0) + Math.min(26, colW / 2);
+        if (i === mainIdx && slotSpan) return laneX(i) + Math.min(26, colW / 2);
         return laneX(i) + laneW(i) / 2;
       };
       var laneIndex = {};
@@ -278,6 +292,9 @@
       };
       m.messages.forEach(function (mm) {
         addPt(mm.t);
+      });
+      (m.userMarks || []).forEach(function (um) {
+        addPt(um.t);
       });
       m.skillBands.forEach(function (b) {
         addPt(b.t0);
@@ -333,10 +350,11 @@
       lanes.forEach(function (k, i) {
         var cx = colX(i);
         var ag = agOf(k);
-        var profile = k === "main" ? "" : ag ? ag.profile : "";
-        var label = k === "main" ? "main" : ag ? ag.label : k;
-        var role = k === "main" ? "session" : ag ? ag.role || "" : "";
-        var hv = k === "main" ? "var(--h-main)" : hueVar(profile);
+        var special = k === "main" || k === "user";
+        var profile = special ? "" : ag ? ag.profile : "";
+        var label = k === "main" ? "main" : k === "user" ? "users" : ag ? ag.label : k;
+        var role = k === "main" ? "session" : k === "user" ? "multiplexed" : ag ? ag.role || "" : "";
+        var hv = k === "main" ? "var(--h-main)" : k === "user" ? "var(--h-user)" : hueVar(profile);
         var cw = Math.min(colW - 10, 150);
         // Centre the chip on its lane's baseline, but keep it inside the lane
         // (main's baseline is off-centre once slots widen the column).
@@ -350,7 +368,7 @@
         gb.style.fill = hv;
         gb.style.opacity = "0.18";
         var gl = svg("text", { x: x0 + 15, y: 27, "text-anchor": "middle", "font-size": "11" }, g);
-        gl.textContent = k === "main" ? "◈" : glyphFor(profile);
+        gl.textContent = k === "main" ? "◈" : k === "user" ? "👤" : glyphFor(profile);
         var nm = svg("text", { class: "tv-lane-nm", x: x0 + 30, y: 22 }, g);
         nm.textContent = label;
         var rl = svg("text", { class: "tv-lane-role", x: x0 + 30, y: 34 }, g);
@@ -390,7 +408,7 @@
       // proportional) plus the nesting depth.
       var scopeX = function (item) {
         var ci = laneIndex[item.caller];
-        if (ci == null) ci = 0;
+        if (ci == null) ci = mainIdx;
         return colX(ci) + (item.slot || 0) * SLOT_DX;
       };
       var batchMember = {};
@@ -430,7 +448,7 @@
         // main — that column's slot-0 baseline (where main's turn bars sit).
         var p = byTask[f.parent];
         var y = rowY(f.t0);
-        var xp = p ? scopeX(p) : colX(0);
+        var xp = p ? scopeX(p) : colX(mainIdx);
         var xs = f.members
           .map(function (id) {
             return byTask[id] ? scopeX(byTask[id]) : null;
@@ -448,7 +466,7 @@
           forked[id] = 1;
         });
         // Count badge, only when it fits inside the caller's own column.
-        var ci = p && laneIndex[p.caller] != null ? laneIndex[p.caller] : 0;
+        var ci = p && laneIndex[p.caller] != null ? laneIndex[p.caller] : mainIdx;
         if (xMax + 26 < laneX(ci) + laneW(ci)) {
           var badge = svg("text", { class: "tv-batch", x: xMax + 9, y: y + 3.5 }, s);
           badge.textContent = "⋔" + f.members.length;
@@ -464,7 +482,7 @@
         svg("path", { class: "tv-nest", d: "M " + (xp2 + BARW / 2) + " " + rowY(it.t0) + " H " + (xc2 - BARW / 2 - 2) }, s);
       });
       m.mainSpans.forEach(function (sp) {
-        var cx = colX(0);
+        var cx = colX(mainIdx);
         var y0 = rowY(sp.t0),
           h = Math.max(rowY(sp.t1) - y0, 3);
         var r = svg("rect", { class: "tv-span", x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
@@ -497,6 +515,9 @@
       // messages: a horizontal arrow between two columns at the message's ROW —
       // request (main/peer → agent) and reply (agent → requester) both draw,
       // reading like a sequence diagram. Hover shows the real event time.
+      var clipTip = function (t) {
+        return global.TeamModel ? global.TeamModel._clip(t, 200) : (t || "").slice(0, 200);
+      };
       m.messages.forEach(function (msg) {
         var fi = laneIndex[msg.from],
           ti = laneIndex[msg.to];
@@ -505,7 +526,9 @@
           xt = colX(ti),
           y = rowY(msg.t);
         var fromProfile = msg.from === "main" ? "" : (agOf(msg.from) || {}).profile;
-        var hv = msg.from === "main" ? "var(--h-main)" : hueVar(fromProfile);
+        var hv =
+          msg.from === "main" ? "var(--h-main)" :
+          msg.from === "user" ? "var(--h-user)" : hueVar(fromProfile);
         var dir = xt > xf ? 1 : -1;
         var x0 = xf + dir * (BARW / 2 + 2),
           x1 = xt - dir * 7;
@@ -517,20 +540,49 @@
         // group the visible path + arrowhead + origin + wide hit so hovering
         // ANY of them highlights THIS message.
         var g = svg("g", { class: "tv-msg-g" }, s);
-        var p = svg("path", { class: "tv-msg", d: d, fill: "none" }, g);
+        var p = svg("path", { class: "tv-msg" + (msg.reply ? " tv-reply" : ""), d: d, fill: "none" }, g);
         p.style.stroke = hv;
         var ah = svg("path", { class: "tv-msg-ah", d: "M " + x1 + " " + (y - 3) + " L " + x1 + " " + (y + 3) + " L " + (x1 + dir * 6) + " " + y + " Z" }, g);
         ah.style.fill = hv;
         svg("circle", { cx: x0, cy: y, r: 1.8 }, g).style.fill = hv;
+        // Who-label above the arrow: sender nickname on a user request, the
+        // full recipient list ("✓ Bob·두정") on a complete's reply.
+        if (msg.who) {
+          var lb = svg("text", {
+            class: "tv-msg-label",
+            x: (x0 + x1) / 2,
+            y: y - bow - 2,
+            "text-anchor": "middle",
+          }, g);
+          lb.textContent = (msg.reply ? "✓ " : "") + msg.who;
+        }
         var hit = svg("path", { class: "tv-msg-hit", d: d, fill: "none" }, g);
-        hit.setAttribute("data-tip", msg.from + " → " + msg.to + " · " + msg.type + " @ " + fmtClock(msg.t - m.t0) + (msg.text ? " · " + msg.text : ""));
+        hit.setAttribute("data-tip", msg.from + " → " + msg.to + " · " + msg.type + " @ " + fmtClock(msg.t - m.t0) + (msg.text ? " · " + clipTip(msg.text) : ""));
+        // Click-nav anchor: app.js resolves data-nav-ts to the timeline card
+        // stamped with the same event ts (user cards + final cards).
+        if (msg.from === "user" || msg.reply) hit.setAttribute("data-nav-ts", String(msg.t));
       });
+
+      // 👤 marks on the multiplexed user lane — one per user message, the
+      // sender's name beside it (that's how multiple users share ONE lane).
+      var userIdx = laneIndex["user"];
+      if (userIdx != null) {
+        (m.userMarks || []).forEach(function (um) {
+          var cx = colX(userIdx),
+            y = rowY(um.t);
+          var mk = svg("circle", { class: "tv-user-mark", cx: cx, cy: y, r: 4.5 }, s);
+          mk.setAttribute("data-tip", "👤 " + um.who + " @ " + fmtClock(um.t - m.t0) + (um.text ? " · " + clipTip(um.text) : ""));
+          mk.setAttribute("data-nav-ts", String(um.t));
+          var nm = svg("text", { class: "tv-user-nm", x: cx, y: y + 14, "text-anchor": "middle" }, s);
+          nm.textContent = um.who;
+        });
+      }
 
       // tail status per AGENT column: a spinner while working, a green check
       // while idle. Driven by roster state (event-updated), and the spinner
       // animates via SMIL so no periodic re-render is needed.
       lanes.forEach(function (k, i) {
-        if (k === "main") return;
+        if (k === "main" || k === "user") return;
         var ag = agOf(k);
         var st = ag ? ag.state : "";
         var cx = colX(i);

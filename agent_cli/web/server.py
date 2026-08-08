@@ -1120,7 +1120,13 @@ def create_app(server: WebServer) -> FastAPI:
             # UI-only echo; doesn't change LLM context.
             content = body.get("content", "")
             if isinstance(content, str) and content:
-                server.renderer.push_user_message(content)
+                # ``author`` puts the answer on the team view's user lane.
+                # UI-echo only (not in history), so it never feeds the
+                # ``answers`` attribution — that is loop-owned.
+                nick = server.renderer.nickname_for(body.get("conn_id"))
+                server.renderer.push_user_message(
+                    content, author="" if nick == "?" else nick
+                )
             server.renderer.push_user_input(kind, body)
             return JSONResponse({"accepted": True})
         if kind == "confirm":

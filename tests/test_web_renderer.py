@@ -3007,3 +3007,177 @@ class TestCtxDirWiring:
         }
         assert starts == set(captured)
         assert len(starts) == 2  # 워커별 고유 dir
+
+
+# ── Complete attribution (v8.2.0 — team view user lane) ──────────
+
+
+class TestCompleteAttribution:
+    """``answers`` on MAIN-timeline finals + ``author`` on user_message.
+
+    Live: the loop owns the set (``set_run_authors``); replay derives the SAME
+    set from the history user records' ``author`` field. Scope-level finals
+    answer their caller, never a user — no ``answers`` there.
+    """
+
+    def _renderer_with_conn(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        return r, conn
+
+    def _events(self, conn):
+        out = []
+        while True:
+            try:
+                out.append(conn.queue.get_nowait())
+            except Exception:
+                return out
+
+    def test_author_field_present_only_when_truthy(self):
+        r, conn = self._renderer_with_conn()
+        r.push_user_message("[Bob]: hi", author="Bob")
+        r.push_user_message("[🤝 agent]: report")
+        (_e1, d1), (_e2, d2) = self._events(conn)
+        assert d1["author"] == "Bob"
+        assert "author" not in d2  # additive: absent, not empty-string
+
+    def test_live_final_carries_set_run_authors(self):
+        r, conn = self._renderer_with_conn()
+        r.set_run_authors(["Bob", "두정"])
+        r.final("ans", turn=1)
+        [(event, data)] = self._events(conn)
+        assert event == "assistant_turn"
+        assert data["answers"] == ["Bob", "두정"]
+
+    def test_live_final_without_set_has_no_answers_key(self):
+        # CLI / pre-run finals: no claim either way (missing ≠ empty).
+        r, conn = self._renderer_with_conn()
+        r.final("ans", turn=1)
+        [(_e, data)] = self._events(conn)
+        assert "answers" not in data
+
+    def test_empty_answers_is_a_real_value(self):
+        # 🤝 agent-report run: the loop DID set (empty) → explicit [].
+        r, conn = self._renderer_with_conn()
+        r.set_run_authors([])
+        r.final("ans", turn=1)
+        [(_e, data)] = self._events(conn)
+        assert data["answers"] == []
+
+    def test_worker_busy_clears_stale_attribution(self):
+        # A routed-command dispatch (no run_loop) must not inherit the
+        # PREVIOUS run's answers.
+        r, conn = self._renderer_with_conn()
+        r.set_run_authors(["Bob"])
+        r.final("run1", turn=1)
+        r.worker_busy()
+        r.final("command output", turn=0)
+        events = self._events(conn)
+        finals = [d for e, d in events if e == "assistant_turn"]
+        assert finals[0]["answers"] == ["Bob"]
+        assert "answers" not in finals[1]
+
+    def test_scope_level_final_never_carries_answers(self):
+        # A skill/agent sub-loop's final answers its CALLER.
+        r, conn = self._renderer_with_conn()
+        r.set_run_authors(["Bob"])
+        r.begin_scope(task_id="sk1", kind="skill", label="plan")
+        r.final("sub answer", turn=1)
+        r.end_scope(task_id="sk1", kind="skill", success=True, duration_s=0.1)
+        r.final("main answer", turn=2)
+        finals = [d for e, d in self._events(conn) if e == "assistant_turn"]
+        scoped = [d for d in finals if d.get("task_id")]
+        main = [d for d in finals if not d.get("task_id")]
+        assert scoped and all("answers" not in d for d in scoped)
+        assert main and main[-1]["answers"] == ["Bob"]
+
+    # ── replay path ──
+
+    def _final_record(self, ts, text="ans"):
+        return {
+            "role": "assistant",
+            "thought": "",
+            "ops": [{"action": "complete", "action_input": {"result": text}}],
+            "ts": ts,
+        }
+
+    def test_replay_derives_answers_from_user_record_authors(self):
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {"role": "user", "content": "[Bob]: q1", "author": "Bob", "ts": 1.0},
+                {"role": "user", "content": "[두정]: q2", "author": "두정", "ts": 2.0},
+                self._final_record(3.0),
+            ]
+        )
+        r.replay_from_history(ctx)
+        events = self._events(conn)
+        users = [d for e, d in events if e == "user_message"]
+        finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
+        assert [u.get("author") for u in users] == ["Bob", "두정"]
+        assert finals[-1]["answers"] == ["Bob", "두정"]
+
+    def test_replay_attribution_resets_per_final(self):
+        # Two runs in one history: the second final only lists ITS askers.
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {"role": "user", "content": "[Bob]: q1", "author": "Bob", "ts": 1.0},
+                self._final_record(2.0, "a1"),
+                {"role": "user", "content": "[Ann]: q2", "author": "Ann", "ts": 3.0},
+                self._final_record(4.0, "a2"),
+            ]
+        )
+        r.replay_from_history(ctx)
+        finals = [
+            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
+        ]
+        assert finals[0]["answers"] == ["Bob"]
+        assert finals[1]["answers"] == ["Ann"]
+
+    def test_replay_excludes_non_user_authors(self):
+        # author_is_user False (new records) + the literal legacy "🤝 agent"
+        # (records predating the flag) both stay out of the attribution AND
+        # off the user lane (no author on the replayed event).
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {
+                    "role": "user",
+                    "content": "[🤝 agent]: reply arrived",
+                    "author": "🤝 agent",
+                    "author_is_user": False,
+                    "ts": 1.0,
+                },
+                {
+                    "role": "user",
+                    "content": "[🤝 agent]: legacy record",
+                    "author": "🤝 agent",
+                    "ts": 2.0,
+                },
+                {"role": "user", "content": "[Bob]: real", "author": "Bob", "ts": 3.0},
+                self._final_record(4.0),
+            ]
+        )
+        r.replay_from_history(ctx)
+        events = self._events(conn)
+        users = [d for e, d in events if e == "user_message"]
+        finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
+        assert [u.get("author") for u in users] == [None, None, "Bob"]
+        assert finals[-1]["answers"] == ["Bob"]
+
+    def test_replay_dedupes_repeat_authors(self):
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {"role": "user", "content": "[Bob]: q1", "author": "Bob", "ts": 1.0},
+                {"role": "user", "content": "[Bob]: more", "author": "Bob", "ts": 2.0},
+                self._final_record(3.0),
+            ]
+        )
+        r.replay_from_history(ctx)
+        finals = [
+            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
+        ]
+        assert finals[-1]["answers"] == ["Bob"]

@@ -2054,7 +2054,13 @@ def web(
             renderer.worker_busy()
             # Echo the dequeued message as a conversation card (input no
             # longer echoes — it sits in the live queue display until popped).
-            renderer.push_user_message(f"[{nickname}]: {message}")
+            # ``author`` only for a real USER starter: a 🤝 agent-report run
+            # has no user to attribute, so the team view gets no user mark
+            # and the run's final carries an empty ``answers`` list.
+            renderer.push_user_message(
+                f"[{nickname}]: {message}",
+                author="" if _wake_verdict == "run" else nickname,
+            )
             # Fresh stop handle for this turn so the web "Stop" button
             # (POST /api/stop → server.trigger_stop) can signal the loop
             # to exit at the next turn boundary — the same ``stop_event``
@@ -2102,6 +2108,7 @@ def web(
                         return run_loop(
                             query=query,
                             query_author=author,
+                            query_author_is_user=_wake_verdict != "run",  # noqa: B023 — called immediately, same iteration
                             dequeue_user_message=server.dequeue_nowait,
                             route_message=route_one,
                             provider=llm_provider,

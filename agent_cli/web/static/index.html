@@ -77,20 +77,36 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
-  <div class="view-toggle" id="view-toggle" aria-label="View" hidden>
+  <div class="view-toggle" id="view-toggle" aria-label="View">
     <div class="vt-seg">
-      <button class="vt-tab" id="vt-team-toggle" type="button" aria-pressed="true"
-              title="Show/hide the Team overview pane">◧ Team</button>
+      <button class="vt-tab" id="vt-detail-toggle" type="button" aria-pressed="false"
+              title="상세 대화(타임라인) 드로어 열기/닫기">▤ 상세 대화</button>
     </div>
   </div>
-  <!-- Timeline (main) + Team swimlane sit side by side: the swimlane is a
-       compact overview + navigator on the LEFT, the timeline the detail on the
-       RIGHT. Clicking a swimlane bar scrolls the timeline to its card. -->
+  <!-- v8.2.0 inversion: the TEAM swimlane is the primary surface; the full
+       conversation timeline lives in an on-demand drawer (right). Clicking a
+       swimlane bar/arrow or the response dock opens the drawer at that card. -->
   <div id="content-split">
-    <div id="team-view" hidden></div>
-    <div id="split-handle" hidden role="separator" aria-orientation="vertical"
-         title="드래그하여 크기 조절"></div>
-    <main id="messages"></main>
+    <div id="team-view"></div>
+    <aside id="timeline-drawer" aria-hidden="true">
+      <div class="td-head">
+        <span class="td-title">▤ 상세 대화</span>
+        <button id="td-close" type="button" class="btn-icon" title="Close">✕</button>
+      </div>
+      <main id="messages"></main>
+    </aside>
+  </div>
+  <!-- Response dock: the latest main answer, pinned above the input bar.
+       Body click → drawer at that answer's card; 펼치기 only when clamped. -->
+  <div id="dock" hidden>
+    <span class="d-ic">💬</span>
+    <div class="d-body">
+      <div class="d-meta">최신 응답 <span class="d-who" id="d-who"></span><span id="d-time"></span></div>
+      <div class="d-text" id="d-text" title="클릭하면 상세 대화에서 이 답의 위치로 이동"></div>
+    </div>
+    <div class="d-actions">
+      <button id="d-expand" type="button" class="btn-ghost" hidden>펼치기</button>
+    </div>
   </div>
 
   <!-- Export selection action bar (shown only in export mode) -->
