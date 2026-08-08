@@ -619,6 +619,11 @@ class AgentRegistry:
             "author": author,
             "text": message,
             "seq": tm.queued,
+            # 수신자 = 이 에이전트. 누락 시 렌더러 기본값 "main" 이 실려
+            # 의미가 뒤집히고, TeamView ingest 중복제거 키(author:to:seq:
+            # direction)가 **다른 에이전트의 같은 seq 요청**과 충돌해 두
+            # 번째 spawn+task 의 요청 화살표가 드롭됐다 (v8.5.1).
+            "to": key,
             "ts": send_ts,
         }
         get_renderer().agent_message(**payload)
