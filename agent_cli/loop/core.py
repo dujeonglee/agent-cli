@@ -614,14 +614,23 @@ class AgentLoop:
             self.messages.append(record)
         if author and is_user and author not in self.run_authors:
             self.run_authors.append(author)
-        # Web main loop only (sub-loops have no queue): keep the renderer's
-        # attribution current so the final it renders carries ``answers``.
-        if self.dequeue_user_message is not None:
-            from agent_cli.render import get_renderer
+        self._mirror_run_authors()
 
-            renderer = get_renderer()
-            if hasattr(renderer, "set_run_authors"):
-                renderer.set_run_authors(self.run_authors)
+    def _mirror_run_authors(self) -> None:
+        """Web main loop only (sub-loops have no queue): keep the renderer's
+        attribution AND the registry's request-snapshot source current, so
+        (a) the final this run renders carries ``answers`` and (b) an agent
+        request made anywhere inside this run inherits the same set."""
+        if self.dequeue_user_message is None:
+            return
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
+        if hasattr(renderer, "set_run_authors"):
+            renderer.set_run_authors(self.run_authors)
+        registry = self._config.agent_registry
+        if registry is not None:
+            registry.set_current_run_authors(self.run_authors)
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
@@ -680,10 +689,20 @@ class AgentLoop:
             return
         from agent_cli.subagent.agents_live import build_reply_record
 
+        merged_authors = False
         for reply in replies:
             record = build_reply_record(
                 reply, cap=self._oversized_cap, registry=registry
             )
+            # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의
+            # answers 에 합류 — 🤝 웨이크 런(시작 authors 빈)과 실행 중
+            # 배달 양쪽이 이 한 지점으로 커버된다. 요청↔회신 쌍에 묶인
+            # 값이라 사이에 끼어든 다른 사용자의 런과 교차 오염 없음.
+            # 히스토리 관찰 레코드에도 additive 로 실어(``answers``) resume
+            # 재생이 같은 집합을 재도출하게 한다 (라이브/재생 규칙 일치).
+            inherited = [a for a in (reply.get("answers") or []) if a]
+            if inherited:
+                record["answers"] = list(inherited)
             self.messages.append({"role": "user", "content": record["content"]})
             if self.ctx:
                 self.ctx.add(dict(record))
@@ -694,6 +713,12 @@ class AgentLoop:
                 tool_name="agent",
                 success=bool(reply.get("success")),
             )
+            for a in inherited:
+                if a not in self.run_authors:
+                    self.run_authors.append(a)
+                    merged_authors = True
+        if merged_authors:
+            self._mirror_run_authors()
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
