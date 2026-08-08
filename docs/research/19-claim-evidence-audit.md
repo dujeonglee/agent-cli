@@ -50,6 +50,16 @@
 
 **수정.** 해당 문장에 "이 넷 중 첫 값은 3 회가 아니라 2 회의 유효 런에 근거한다"를 명시했다.
 
+## 발견 C — 인용된 문헌에 없는 시스템 이름을 붙였다 (수정함)
+
+**증상.** §2.3 이 "In *group conversation*, **Koala** explored when an agent should take the floor in multi-party chat [21]" 라고 적었다. 저자 확인 과정에서 [21] 의 1 차 출처(arXiv:2501.17258, IUI 2025)를 읽으니 **그 논문에는 Koala 라는 시스템도 프로토타입도 없다.** Houde 등(IBM Research)이 집단 아이디어 발상에서 에이전트 참여를 두 차례 연구해 "언제·무엇을·어디에 응답할지"에 대한 제어 분류 체계와 구성원이 조작 가능한 실제 제어 장치를 만든 연구다.
+
+**왜 문제인가.** 존재하지 않는 이름을 문헌에 귀속시키는 것은 리뷰어가 원 논문을 열어 보는 순간 드러나고, 관련 연구를 실제로 읽었는지 의심하게 만든다. 저자 확인을 하지 않았다면 발견되지 않았을 오류다.
+
+**수정.** 그 문헌이 실제로 한 일로 문장을 교체했다(양 언어).
+
+**함께 확인한 것.** 같은 방식으로 [1] 의 인용도 검증했다. §2.1 은 [1] 을 "developers validate AI suggestions less than they validate human partners'" 의 근거로 쓰는데, 원 논문 초록의 "developers tend to accept GitHub Copilot's suggestions with less scrutiny than those from human pair programming partners" 와 일치한다 — 이쪽은 정확했다.
+
 ---
 
 ## 참고 — 이번 작업 전체에서 이미 반박·정정된 주장들

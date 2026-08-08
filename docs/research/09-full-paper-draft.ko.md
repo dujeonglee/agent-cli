@@ -53,7 +53,7 @@ AI 페어 프로그래밍 연구는 일관되게 2인조를 구현한다. Imai �
 
 ### 2.3 여러 인간과 하나의 AI: 코딩 밖에서, 또는 세션 밖에서
 
-가장 가까운 연구 이웃들은 세 방향에서 접근하지만 어느 쪽도 우리 설정에 닿지 않는다. *협업 글쓰기*에서 Lehmann 등은 다중 사용자 편집기에 에이전트를 심고, 일주일간의 팀 사용에서 팀이 에이전트를 기존 협업 규범에 흡수했으며 에이전트 프로필은 개인 작업공간처럼, 산출물은 공유 자산처럼 기능했음을 발견했다 [20]. 그러나 문서에는 코딩 조정을 어렵게 만드는 실행 가능 상태·비가역 부수효과·객관적 테스트 신호가 없다. *그룹 대화*에서 Koala 는 다자 채팅에서 에이전트가 언제 발언권을 가져야 하는지 탐구했고 [21], GroupMemBench 는 에이전트가 다자 채널에 배치되는데도 에이전트 기억 시스템이 단일 사용자로 지어짐을 관찰한다 [22]. *교육*에서 Daryanto 등은 우리와 구성상 가장 가까운 연구를 수행했다: 참가자 20명이 2인조(인간 1 + AI)와 3인조(인간 2 + AI) 프로그래밍을 비교했고, 3인조가 AI 코드에 대한 과의존을 줄였음을 발견했다. 동료의 가시성이 참가자로 하여금 제안을 적용하기 전에 이해할 책임을 느끼게 했기 때문이다 [23]. 우리는 다섯 축에서 다르다: 그들의 설정은 협업 학습이고, 그들의 AI 는 파일·셸 효과를 가진 자율 에이전트가 아니라 제안 기반 어시스턴트이며, 과제는 일회성 실험실 연습이고, 종속 변수는 학습 성과이며, 지속되는 공유 세션 상태가 존재하지 않는다. 그럼에도 그들의 책임성 발견은 §7.3 에서 돌아올 가설을 제공한다. 마지막으로, 하나의 에이전트 *산출물* 주변의 여러 인간을 다루는 실증 문헌이 늘고 있다: 에이전트가 작성한 풀 리퀘스트에 대한 리뷰어 참여도가 통합을 강하게 예측한다 [24]. 그러나 이는 산출물에 대한 비동기 사후 협업이고, 라이브 세션은 여전히 싱글플레이어다. 최근 입장 논문은 인간-에이전트 상호작용에 관한 공개 데이터가 전반적으로 희소하다고 주장하는데 [25], 다중 인간 세션 데이터는 아예 존재하지 않는다.
+가장 가까운 연구 이웃들은 세 방향에서 접근하지만 어느 쪽도 우리 설정에 닿지 않는다. *협업 글쓰기*에서 Lehmann 등은 다중 사용자 편집기에 에이전트를 심고, 일주일간의 팀 사용에서 팀이 에이전트를 기존 협업 규범에 흡수했으며 에이전트 프로필은 개인 작업공간처럼, 산출물은 공유 자산처럼 기능했음을 발견했다 [20]. 그러나 문서에는 코딩 조정을 어렵게 만드는 실행 가능 상태·비가역 부수효과·객관적 테스트 신호가 없다. *그룹 대화*에서 Houde 등은 집단 아이디어 발상에 참여하는 에이전트를 두 차례 연구해, 그런 에이전트가 **언제·무엇을·어디에** 응답해야 하는지에 대한 제어 분류 체계와 구성원이 직접 조작할 수 있는 실제 제어 장치를 도출했고 [21], GroupMemBench 는 에이전트가 다자 채널에 배치되는데도 에이전트 기억 시스템이 단일 사용자로 지어짐을 관찰한다 [22]. *교육*에서 Daryanto 등은 우리와 구성상 가장 가까운 연구를 수행했다: 참가자 20명이 2인조(인간 1 + AI)와 3인조(인간 2 + AI) 프로그래밍을 비교했고, 3인조가 AI 코드에 대한 과의존을 줄였음을 발견했다. 동료의 가시성이 참가자로 하여금 제안을 적용하기 전에 이해할 책임을 느끼게 했기 때문이다 [23]. 우리는 다섯 축에서 다르다: 그들의 설정은 협업 학습이고, 그들의 AI 는 파일·셸 효과를 가진 자율 에이전트가 아니라 제안 기반 어시스턴트이며, 과제는 일회성 실험실 연습이고, 종속 변수는 학습 성과이며, 지속되는 공유 세션 상태가 존재하지 않는다. 그럼에도 그들의 책임성 발견은 §7.3 에서 돌아올 가설을 제공한다. 마지막으로, 하나의 에이전트 *산출물* 주변의 여러 인간을 다루는 실증 문헌이 늘고 있다: 에이전트가 작성한 풀 리퀘스트에 대한 리뷰어 참여도가 통합을 강하게 예측한다 [24]. 그러나 이는 산출물에 대한 비동기 사후 협업이고, 라이브 세션은 여전히 싱글플레이어다. 최근 입장 논문은 인간-에이전트 상호작용에 관한 공개 데이터가 전반적으로 희소하다고 주장하는데 [25], 다중 인간 세션 데이터는 아예 존재하지 않는다.
 
 ### 2.4 공유 상태 위 에이전트를 위한 동시성 제어
 
@@ -476,13 +476,13 @@ Schmidt 와 Bannon 은 조정 기술이 접합 작업을 제거하기보다 재�
 
 ## 참고문헌 (References)
 
-[NOTE: 투고처 형식으로 정규화. 모든 항목을 원 출처에 대조했다. 남은 미해결 항목은 둘이며 어느 것도 추측으로 닫아서는 안 된다: [26] 의 게재처(해당 항목에 표기), 그리고 [1]·[5]·[21]·[22]·[24] 의 저자 목록 — 출처에 대조해 확인하지 못해 제목으로만 인용했다. 제출 전 보완할 것.]
+[NOTE: 투고처 형식으로 정규화. 모든 항목을 원 출처에 대조했으며, [1]·[5]·[21]·[22]·[24] 의 저자 목록과 [26] 의 기록 상태도 2026-08-08 에 arXiv·ACM DL·이슈 트래커에서 확인했다. 남은 표시는 [25] 하나이며 해당 항목에 적었다.]
 
-1. *From developer pairs to AI copilots.* arXiv:2506.04785, 2025.
+1. A. Welter, N. Schneider, T. Dick, K. Weis, C. Tinnes, M. Wyrich, S. Apel. *From developer pairs to AI copilots: A comparative study on knowledge transfer.* arXiv:2506.04785, 2025.
 2. V. Chen, A. Talwalkar, J. Brennan, G. Neubig. *Code with me or for me? How increasing AI automation transforms developer workflows.* arXiv:2507.08149, 2025.
 3. Baumann et al. *SWE-chat: Coding agent interactions from real users in the wild.* arXiv:2604.20779, 2026.
 4. GitHub Next. *Ace: Agent Collaboration Environment.* Technical preview, 2026. https://ace.githubnext.com/ (2026-08-05 접근).
-5. *Claude Code issue #60082: multi-user shared sessions.* GitHub, 2026.
+5. apstorenet. *Feature request: real-time multi-user collaboration on a single Claude Code session.* Claude Code 이슈 #60082, GitHub, 2026-05-18. https://github.com/anthropics/claude-code/issues/60082
 6. Anthropic. *What is Claude Tag.* Support documentation, 2026. https://support.claude.com/en/articles/15594475
 7. GitHub. *About Copilot integrations* (스레드 포착 고지). Documentation, 2026.
 8. LangChain. *LangGraph double-texting strategies.* Documentation.
@@ -498,12 +498,12 @@ Schmidt 와 Bannon 은 조정 기술이 접합 작업을 제거하기보다 재�
 18. Cursor. *Cursor in Slack.* Documentation, 2026. https://cursor.com/docs/integrations/slack
 19. MITRE ATLAS. *Case study AML.CS0035: Data exfiltration from Slack AI via indirect prompt injection.* 2024.
 20. Lehmann, Shauchenka, Buschek. *Collaborative document editing with multiple users and AI agents.* CHI 2026. arXiv:2509.11826.
-21. *Controlling AI agent participation in group conversations: A human-centered approach.* IUI 2025.
-22. *GroupMemBench: Benchmarking LLM agent memory in multi-party conversations.* arXiv:2605.14498, 2026.
+21. S. Houde, K. Brimijoin, M. Muller, S. I. Ross, D. A. Silva Moran, G. E. Gonzalez, S. Kunde, M. A. Foreman, J. D. Weisz. *Controlling AI agent participation in group conversations: A human-centered approach.* IUI 2025. arXiv:2501.17258.
+22. J. Yang, K.-H. Lai, X. Wang, S. Chang, Y. Harari, E. Gabrilovich. *GroupMemBench: Benchmarking LLM agent memory in multi-party conversations.* arXiv:2605.14498, 2026.
 23. Daryanto et al. *Human-human-AI triadic programming.* arXiv:2601.12134, 2026.
-24. *When AI teammates meet code review.* MSR 2026. arXiv:2602.19441.
+24. C. Nachuma, M. Zibran. *When AI teammates meet code review: Collaboration signals shaping the integration of agent-authored pull requests.* MSR 2026. arXiv:2602.19441.
 25. Z. Z. Wang et al. *Position: Humans are missing from AI coding agent research.* 2026. https://zorazrw.github.io/files/position-haicode.pdf [NOTE: 게재처 미확인 — 프로시딩 등재 확인 전까지 포지션 페이퍼로 인용.]
-26. M. Liu et al. *Multi-agent collaboration with state management* (STORM: 공유 코드베이스 위 에이전트의 낙관적 동시성). arXiv:2605.20563, 2026.
+26. M. Liu, T. Chen, Z. Xu, X. Jiang, Y. Dong. *Multi-agent collaboration with state management* (STORM: 상태 지향 관리. 충돌 편집을 공유 코드베이스 위에서 **쓰기 시점에** 탐지·해소). arXiv:2605.20563, 2026. 프리프린트이며 기록상 게재처 표기 없음.
 27. Y. Mao, A. Mirhoseini. *Decentralized multi-agent systems with shared context* (DeLM). arXiv:2606.10662, 2026.
 28. M. Yang et al. *Justitia: Fair and efficient scheduling of task-parallel LLM agents with selective pampering.* arXiv:2510.17015, 2025.
 29. M. Cim et al. *Parallel context compaction for long-horizon LLM agent serving.* arXiv:2605.23296, 2026.
