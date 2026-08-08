@@ -75,7 +75,11 @@
   //   SLOT_DX horizontal step per nesting slot inside the caller's column
   var HEAD_H = 54,
     GUT_L = 56,
-    PAD_T = 16,
+    // PAD_T must clear an arrow at the FIRST row: the curve bows up to 14px
+    // above its row and the who-label sits another ~11px above that — at the
+    // old 16px the top row's label (and the bow's crest) fell outside the
+    // viewBox and was clipped ("맨 위 화살표의 이름이 안 보인다").
+    PAD_T = 34,
     PAD_B = 28,
     PAD_R = 14,
     COL_MIN = 96,
@@ -90,6 +94,16 @@
     _active: false,
     _raf: 0,
     _seen: null,
+    _mainBusy: false,
+
+    /** worker_state mirror (app.js): draw/clear the main column's tail
+     * spinner. Sticky on the server, so reconnects land in the right state. */
+    setMainBusy: function (on) {
+      on = !!on;
+      if (on === this._mainBusy) return;
+      this._mainBusy = on;
+      if (this._active) this._schedule();
+    },
 
     /** Feed one SSE event into the model buffer. */
     ingest: function (type, data) {
@@ -578,21 +592,33 @@
         });
       }
 
-      // tail status per AGENT column: a spinner while working, a green check
-      // while idle. Driven by roster state (event-updated), and the spinner
-      // animates via SMIL so no periodic re-render is needed.
+      // tail status per column: a spinner while working, a green check while
+      // idle. Agents are driven by roster state; MAIN by the worker_state
+      // sticky (``setMainBusy`` — with the timeline in a drawer, this is the
+      // default surface's only "main is responding" cue; idle main draws
+      // nothing rather than a noise-check). The spinner animates via SMIL so
+      // no periodic re-render is needed.
+      var self2 = this;
+      function tailSpinner(cx, ty, tip) {
+        var tg = svg("g", { transform: "translate(" + cx + "," + ty + ")" }, s);
+        var spin = svg("g", {}, tg);
+        svg("circle", { r: 6, fill: "none", "stroke-width": 2, "stroke-dasharray": "22 14", class: "tv-busy" }, spin);
+        svg("animateTransform", { attributeName: "transform", type: "rotate", from: "0 0 0", to: "360 0 0", dur: "0.9s", repeatCount: "indefinite" }, spin);
+        tg.setAttribute("data-tip", tip);
+        return tg;
+      }
       lanes.forEach(function (k, i) {
-        if (k === "main" || k === "user") return;
-        var ag = agOf(k);
-        var st = ag ? ag.state : "";
+        if (k === "user") return;
         var cx = colX(i);
         var ty = lastRowY + 20;
+        if (k === "main") {
+          if (self2._mainBusy) tailSpinner(cx, ty, "main: responding…").setAttribute("class", "tv-main-busy");
+          return;
+        }
+        var ag = agOf(k);
+        var st = ag ? ag.state : "";
         if (st === "busy") {
-          var tg = svg("g", { transform: "translate(" + cx + "," + ty + ")" }, s);
-          var spin = svg("g", {}, tg);
-          svg("circle", { r: 6, fill: "none", "stroke-width": 2, "stroke-dasharray": "22 14", class: "tv-busy" }, spin);
-          svg("animateTransform", { attributeName: "transform", type: "rotate", from: "0 0 0", to: "360 0 0", dur: "0.9s", repeatCount: "indefinite" }, spin);
-          tg.setAttribute("data-tip", (ag ? ag.label : k) + ": working…");
+          tailSpinner(cx, ty, (ag ? ag.label : k) + ": working…");
         } else {
           var cls = st === "waiting_ask" ? "tv-wait" : "tv-idle";
           var chk = svg("text", { x: cx, y: ty + 5, "text-anchor": "middle", class: cls }, s);
