@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import replace
 
 from agent_cli.loop.skill_invoke import _handle_run_skill
 
@@ -47,7 +46,7 @@ from agent_cli.render import (
 from agent_cli.tools import TOOLS, infer_action
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-from agent_cli.wire_formats import Op, try_foreign_parse
+from agent_cli.wire_formats import try_foreign_parse
 
 
 class TurnDispatcher:
@@ -255,28 +254,16 @@ class TurnDispatcher:
             self.state.turn -= 1
             return _CONTINUE
 
-        # Prose-only completion (all wire-formats, single point): an action-
-        # less turn whose thought is a natural-language FINAL ANSWER (the model
-        # finished but omitted the explicit `complete` op) is accepted as
-        # `complete` instead of nudged — saving the nudge round-trip. Gated on
-        # ``parse_stage >= 1`` (a hard parse failure / NO_JSON is stage 0 and
-        # must not terminate) and the format's conservative residue filter
-        # (broken-action leftovers → None → nudge, so an intended read_file/
-        # shell is never swallowed). Checked BEFORE the thought render so the
-        # prose surfaces once as the final answer, not doubly as thought+final.
-        # History is written thought-less (``replace(turn, thought=None)``):
-        # the prose lives in the complete result only, so re-feeding it on
-        # resume/overflow shows the correct terminal shape rather than
-        # reinforcing the prose-only-no-op pattern we are compensating for.
-        if not turn.ops and turn.parse_stage >= 1:
-            prose = self.cfg.wire_format.prose_completion(turn)
-            if prose is not None:
-                outcome["failure_signal"] = None  # a completion, not NO_ACTION
-                outcome["primitives"] = ["prose_complete"]
-                synthetic = Op(action="complete", action_input={"result": prose})
-                return self._op_complete(
-                    replace(turn, thought=None), synthetic, outcome
-                )
+        # NOTE (v8.4.0): prose-only completion (v7.14.0 — accept an action-less
+        # prose turn as an implicit `complete`) was REMOVED. Production found
+        # the counterexample the 2026-07-23 bakeoff measured as zero: a
+        # transitional narration ("Now let me write the plan document:") with
+        # no action residue was accepted as a skill's final result — a silent
+        # wrong completion consumed downstream. Completion is tool-input
+        # SEMANTICS, and semantics are strict (the v8.0.0 line: only wire
+        # SYNTAX is lenient) — so an action-less prose turn now always takes
+        # the NO_ACTION nudge below, whose wording tells the model to re-emit
+        # a prose answer through an explicit `complete` op.
 
         # 6. Thought
         if turn.thought:

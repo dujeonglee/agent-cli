@@ -648,9 +648,8 @@ class TestEndToEnd:
 
     def test_broken_action_residue_nudges_then_completes(self, tmp_path):
         # 깨진 op-array 잔해(파싱 불가)는 완료가 아니라 NO_ACTION 넛지 — 모델이
-        # 다음 턴에 명시적 complete 로 끝낸다. (v7.14: 순수 산문 최종답변은
-        # prose_completion 으로 즉시 완료되지만, 액션-잔해는 삼키면 조기종료라
-        # 여전히 넛지 — 이 경계를 고정.)
+        # 다음 턴에 명시적 complete 로 끝낸다. (v8.4.0: 산문-only 도 전부 같은
+        # 넛지 경로 — prose_completion 제거로 action-less 턴은 예외 없이 넛지.)
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import AgentLoop
 

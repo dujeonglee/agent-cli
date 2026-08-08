@@ -255,9 +255,8 @@ class TestDispatchRescue:
 
     def test_unrescuable_broken_action_still_no_action_nudge(self, caps, tmp_path):
         # 구제 불가한 깨진 액션 잔해(파싱 실패 op-array 가 thought 로 파싱됨)는
-        # NO_ACTION 넛지로 폴백. (v7.14: 순수 산문 최종답변은 prose_completion
-        # 으로 완료되지만, 액션-잔해는 삼키면 조기종료라 여전히 넛지 — 구제
-        # 폴백 경로가 이 경계에서 유지됨을 고정.)
+        # NO_ACTION 넛지로 폴백. (v8.4.0: 산문-only 포함 action-less 턴 전부가
+        # 이 넛지 경로 — 구제 폴백이 여기 유지됨을 고정.)
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
 
