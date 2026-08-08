@@ -15,11 +15,22 @@
  *                          parent/depth → containment (see SLOTS below)
  *   scope_end          {task_id}                                 → closes it
  *   assistant_turn     {turn,...} with NO task_id                → main activity
+ *                          …with ``final`` + ``answers`` → a complete answering
+ *                          the listed users (reply arrow main → user lane)
+ *   user_message       {content,author?}                          → user lane
+ *                          author = sending user's nickname; absent for a 🤝
+ *                          agent-report starter (no user to attribute)
  *
  * Output model:
- *   { lanes:[key...],                       // "main" first, agents by first-seen
+ *   { lanes:[key...],   // "user" first (when any user activity), then "main",
+ *                       // then agents by first-seen. ONE multiplexed user
+ *                       // lane: every web user shares it, told apart by name.
  *     agents: Map(key → {key,label,role,profile,state,firstTs,lastTs,spans}),
- *     messages:[{from,to,t,type,text}],     // deduped canonical sends
+ *     messages:[{from,to,t,type,text,who?,reply?}], // deduped canonical sends;
+ *                       // who = user nickname(s) on user-lane arrows,
+ *                       // reply:true = main→user complete (dashed in view)
+ *     userMarks:[{t,who,text}],             // 👤 points on the user lane
+ *     finals:[{t,answers:[who…],text}],     // main-timeline completes (dock/nav)
  *     oneshots:[{caller,label,role,t0,t1,task_id,parent,depth,slot}], skillBands:[…],
  *     mainSpans:[{t0,t1,title}],            // main's own turns
  *     forks:[{parent,t0,members:[task_id],slots:[…]}],  // batch fan-outs
@@ -93,8 +104,11 @@
     return typeof x === "string" && x.indexOf("agent:") === 0 ? x.slice(6) : x;
   }
 
-  // main→agent = assign, agent→main = report, agent→agent = message.
+  // user→* = request, *→user = reply, main→agent = assign,
+  // agent→main = report, agent→agent = message.
   function msgType(from, to) {
+    if (from === "user") return "request";
+    if (to === "user") return "reply";
     if (to === "main") return "report";
     if (from === "main") return "assign";
     return "message";
@@ -103,6 +117,8 @@
   function build(events, now) {
     var agents = new Map(); // key → lane record
     var messages = [];
+    var userMarks = []; // 👤 points on the single multiplexed user lane
+    var finals = []; // main-timeline completes (reply arrows + dock nav)
     var oneshots = [];
     var skillBands = [];
     var mainSpans = [];
@@ -199,13 +215,24 @@
           if (inAuthor === "main" || inAuthor.indexOf("user") === 0) {
             var inTo = laneKey(e.key || "main");
             var inSig = inAuthor + " " + inTo + " " + (e.seq || 0) + " in";
+            // A "user:<nick>" author maps onto the ONE multiplexed user lane,
+            // keeping the nickname as the arrow label. (These arrows used to
+            // be dropped silently — "user:…" was no lane key.)
+            var inFrom = inAuthor;
+            var inWho = "";
+            if (inAuthor.indexOf("user") === 0) {
+              inFrom = "user";
+              inWho = inAuthor.indexOf("user:") === 0 ? inAuthor.slice(5) : "";
+              if (inWho) userMarks.push({ t: ts, who: inWho, text: e.text || "" });
+            }
             if (!seenMsg.has(inSig)) {
               seenMsg.add(inSig);
               messages.push({
-                from: inAuthor,
+                from: inFrom,
                 to: inTo,
                 t: ts,
-                type: msgType(inAuthor, inTo),
+                type: msgType(inFrom, inTo),
+                who: inWho,
                 text: e.text || "",
               });
             }
@@ -255,10 +282,46 @@
           closeScope(o);
           openRun.delete(e.task_id);
         }
+      } else if (e.type === "user_message") {
+        // Author present = a real USER message (starter / steering injection /
+        // ask answer) → a 👤 mark on the multiplexed user lane + a request
+        // arrow into main. Author absent (🤝 agent-report starter, CLI replay)
+        // = a timeline card only, nothing on the user lane.
+        if (e.author) {
+          userMarks.push({ t: ts, who: e.author, text: e.content || "" });
+          messages.push({
+            from: "user",
+            to: "main",
+            t: ts,
+            type: "request",
+            who: e.author,
+            text: e.content || "",
+          });
+        }
       } else if (e.type === "assistant_turn" && !e.task_id) {
-        // main's own turn — a short activity span (start..next event bump).
-        if (mainBusyFrom == null) mainBusyFrom = ts;
-        else {
+        if (e.final !== undefined) {
+          // A main-timeline complete. ``answers`` = the users whose asks this
+          // run serviced (starter + steering injections, loop-owned). Non-empty
+          // → ONE dashed reply arrow into the shared user lane, labeled with
+          // every recipient. Empty/missing → no arrow (agent-report run or a
+          // pre-attribution session).
+          var ans = Array.isArray(e.answers) ? e.answers : [];
+          finals.push({ t: ts, answers: ans, text: e.final || "" });
+          if (ans.length) {
+            messages.push({
+              from: "main",
+              to: "user",
+              t: ts,
+              type: "reply",
+              reply: true,
+              who: ans.join("·"),
+              text: e.final || "",
+            });
+          }
+        } else if (mainBusyFrom == null) {
+          // main's own turn — a short activity span (start..next event bump).
+          mainBusyFrom = ts;
+        } else {
           mainSpans.push({ t0: mainBusyFrom, t1: ts, title: "turn" });
           mainBusyFrom = ts;
         }
@@ -341,11 +404,17 @@
     var lanes = ["main"].concat(ordered.map(function (a) {
       return a.key;
     }));
+    // The ONE multiplexed user lane, leftmost — only when some user activity
+    // exists, so an author-less session (CLI recording, pre-author history)
+    // keeps its old lane set instead of gaining an empty column.
+    if (userMarks.length) lanes.unshift("user");
 
     return {
       lanes: lanes,
       agents: agents,
       messages: messages,
+      userMarks: userMarks,
+      finals: finals,
       oneshots: oneshots,
       skillBands: skillBands,
       mainSpans: mainSpans,

@@ -667,10 +667,27 @@
   }
 
   // ── Card renderers ─────────────────────────
+
+  // Timeline-card navigation anchor. The swimlane's user marks / reply arrows
+  // and the dock carry the EVENT's epoch-seconds ts; cards stamp the same
+  // normalized value so click-nav resolves `[data-nav-ts="…"]` directly.
+  // Mirrors TeamModel._toEpoch (numbers pass through, ISO strings parse).
+  function navTs(ts) {
+    if (ts == null) return null;
+    if (typeof ts === "number") return ts;
+    const n = Date.parse(ts);
+    return isNaN(n) ? null : n / 1000;
+  }
+  function stampNavTs(card, ts) {
+    const t = navTs(ts);
+    if (t != null) card.setAttribute("data-nav-ts", String(t));
+  }
+
   function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
     card.appendChild(el("div", ["bubble"], escapeAndFormat(content)));
     stampCard(card, ts);
+    stampNavTs(card, ts);
     $messages.appendChild(card);
     scrollToBottom();
   }
@@ -682,6 +699,7 @@
     }
     if (d.final !== undefined) {
       card.appendChild(el("div", ["final"], escapeAndFormat(d.final)));
+      if (!d.task_id) stampNavTs(card, d.ts);
     } else if (d.action) {
       const a = el("div", ["action"]);
       a.appendChild(
@@ -1413,12 +1431,22 @@
   es.addEventListener("user_message", function (e) {
     const d = JSON.parse(e.data);
     renderUserMessage(d.content, d.ts);
+    // ``author`` (a user's nickname) puts the message on the swimlane's
+    // multiplexed user lane; author-less messages (🤝 starter) are card-only.
+    if (window.TeamView) TeamView.ingest("user_message", d);
   });
 
   es.addEventListener("assistant_turn", function (e) {
     const d = JSON.parse(e.data);
     clearStreamingCard(d.task_id);
     renderAssistantTurn(d);
+    // MAIN-timeline finals only: the swimlane draws the main→user reply
+    // arrow (``answers``), the dock pins the answer text. Action turns and
+    // scoped (sub-agent) finals stay out of the team buffer.
+    if (!d.task_id && d.final !== undefined) {
+      if (window.TeamView) TeamView.ingest("assistant_turn", d);
+      updateDock(d);
+    }
   });
 
   es.addEventListener("failed_turn", function (e) {
@@ -1578,168 +1606,169 @@
     }, 2600);
   }
 
+  // ── v8.2.0 layout inversion: team view = primary surface, timeline =
+  // on-demand drawer, response dock = latest answer. ──
+  const $drawer = document.getElementById("timeline-drawer");
+  const $detailBtn = document.getElementById("vt-detail-toggle");
+
+  function setDrawer(open) {
+    $drawer.classList.toggle("open", open);
+    $drawer.setAttribute("aria-hidden", open ? "false" : "true");
+    if ($detailBtn) $detailBtn.setAttribute("aria-pressed", open ? "true" : "false");
+    // Re-pin the bottom on open: scrollTop writes while the drawer was shut
+    // may have landed on stale geometry.
+    if (open && autoScrollEnabled) scrollToBottom();
+  }
+
+  /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
+   * also scrolls every scrollable ancestor (incl. horizontally) and shoved
+   * the whole team view sideways in the mockup. The container is the one
+   * surface that should move. */
+  function scrollTimelineTo(card) {
+    // Off auto-follow so a live scrollToBottom() can't yank us back down.
+    autoScrollEnabled = false;
+    const top =
+      card.getBoundingClientRect().top -
+      $messages.getBoundingClientRect().top +
+      $messages.scrollTop -
+      10;
+    $messages.scrollTop = Math.max(0, top);
+    card.classList.remove("tv-nav-hl");
+    void card.offsetWidth; // restart the animation
+    card.classList.add("tv-nav-hl");
+  }
+
+  /** Expand a scope card's collapsed ancestor chain, OUTERMOST first (jumping
+   * before expanding would move the target away from the jump). */
+  function expandAncestors(tid) {
+    scopeAncestors(tid)
+      .slice()
+      .reverse()
+      .forEach(function (a) {
+        const g = taskGroups[a];
+        if (g && g.body.hidden) g.toggle();
+        else if (!g) {
+          // Group entry already released (scope finished) — the card's own
+          // DOM is still there, so toggle it through the element.
+          const anc = $messages.querySelector(
+            '.card-task-group[data-task-id="' +
+              (window.CSS && CSS.escape ? CSS.escape(a) : a.replace(/"/g, '\\"')) +
+              '"]',
+          );
+          const b = anc && anc.querySelector(":scope > .task-body");
+          if (b && b.hidden) {
+            b.hidden = false;
+            const ch = anc.querySelector(":scope > .task-header > .task-chevron");
+            if (ch) ch.textContent = "▼";
+          }
+        }
+      });
+  }
+
+  // ── Response dock — latest MAIN answer, pinned above the input bar ──
+  const $dock = document.getElementById("dock");
+  let dockNavTs = null;
+  function updateDock(d) {
+    if (!$dock) return;
+    const who = document.getElementById("d-who");
+    // answers present+non-empty → attributed; [] → a 🤝 agent-report run;
+    // missing → pre-attribution session (no claim either way).
+    if (Array.isArray(d.answers) && d.answers.length) {
+      who.textContent = "→ [" + d.answers.join(", ") + "]";
+    } else if (Array.isArray(d.answers)) {
+      who.textContent = "(🤝 보고 처리 — 특정 사용자 답 아님)";
+    } else {
+      who.textContent = "";
+    }
+    const t = navTs(d.ts);
+    document.getElementById("d-time").textContent = t
+      ? new Date(t * 1000).toLocaleTimeString()
+      : "";
+    const dt = document.getElementById("d-text");
+    dt.textContent = d.final || "";
+    dockNavTs = t != null ? String(t) : null;
+    $dock.hidden = false;
+    $dock.classList.remove("expanded");
+    const xb = document.getElementById("d-expand");
+    xb.textContent = "펼치기";
+    // 펼치기 only when the text actually exceeds the 3-line clamp. Modern
+    // Chromium treats line-clamp as REAL truncation (scrollHeight reports the
+    // clamped height), so measure by lifting the clamp for one layout pass.
+    const clamped = dt.clientHeight;
+    dt.style.webkitLineClamp = "unset";
+    const full = dt.scrollHeight;
+    dt.style.webkitLineClamp = "";
+    xb.hidden = !(full > clamped + 1);
+    $dock.classList.remove("pulse");
+    void $dock.offsetWidth;
+    $dock.classList.add("pulse");
+  }
+  if ($dock) {
+    document.getElementById("d-expand").addEventListener("click", function () {
+      $dock.classList.toggle("expanded");
+      this.textContent = $dock.classList.contains("expanded") ? "접기" : "펼치기";
+    });
+    // Dock body click = jump to this answer's card in the drawer (same
+    // gesture as clicking the reply arrow in the swimlane).
+    document.getElementById("d-text").addEventListener("click", function () {
+      setDrawer(true);
+      if (!dockNavTs) return;
+      const card = $messages.querySelector('[data-nav-ts="' + dockNavTs + '"]');
+      if (card) scrollTimelineTo(card);
+    });
+  }
+
   function _setupTeamView() {
     const teamHost = document.getElementById("team-view");
-    const toggle = document.getElementById("view-toggle");
-    const btn = document.getElementById("vt-team-toggle");
-    const split = document.getElementById("content-split");
-    const handle = document.getElementById("split-handle");
-    if (!teamHost || !toggle || !btn || !window.TeamView) return;
+    if (!teamHost || !window.TeamView) return;
     TeamView.mount(teamHost);
+    // The team view IS the default surface now — always active, no reveal
+    // gate, no resizable side pane. (The old pane width in localStorage is
+    // obsolete; drop it so it can't confuse a future layout.)
+    try {
+      localStorage.removeItem("agentcli_team_w");
+    } catch (_e) {}
+    TeamView.setActive(true);
 
-    // Pane width: restored from localStorage, changed by dragging the divider.
-    //
-    // ONE clamp for every path (restore / drag / window resize). The drag always
-    // clamped, but RESTORE used the stored number as-is — so a width stored on a
-    // wide window, or the same window later made narrower, squeezed the timeline
-    // to ~30px and its cards rendered at ZERO width. The cards were all there;
-    // they were invisible. And because the value lives in localStorage, no amount
-    // of restarting the server or the session could clear it (reported as
-    // "resume 하면 카드가 하나도 안 보인다" after restarting both CLI and board).
-    const WKEY = "agentcli_team_w";
-    const PANE_MIN = 260; // swimlane stays usable
-    const TIMELINE_MIN = 360; // …but never at the timeline's expense
-    function clampPaneW(w) {
-      const total = split
-        ? split.getBoundingClientRect().width
-        : window.innerWidth;
-      const max = Math.max(PANE_MIN, total - TIMELINE_MIN);
-      return Math.max(PANE_MIN, Math.min(max, w));
-    }
-    function applyPaneW(w, persist) {
-      const clamped = clampPaneW(w);
-      teamHost.style.flexBasis = clamped + "px";
-      if (persist) localStorage.setItem(WKEY, String(clamped));
-      return clamped;
-    }
-    const savedW = parseInt(localStorage.getItem(WKEY) || "", 10);
-    if (savedW > 0) applyPaneW(savedW, false);
-    // Shrinking the window must not squeeze the timeline away either — re-clamp
-    // against the new size (only when a width was actually set; otherwise the
-    // CSS default flexes on its own).
-    window.addEventListener("resize", function () {
-      const cur = parseInt(teamHost.style.flexBasis, 10);
-      if (cur > 0) applyPaneW(cur, false);
-    });
-
-    // aria-pressed="true" = pane shown; setActive toggles teamHost.hidden. The
-    // drag handle shows/hides with the pane.
-    function setCollapsed(collapsed) {
-      btn.setAttribute("aria-pressed", collapsed ? "false" : "true");
-      TeamView.setActive(!collapsed);
-      if (handle) handle.hidden = collapsed;
-    }
-    btn.addEventListener("click", () =>
-      setCollapsed(btn.getAttribute("aria-pressed") === "true"),
-    );
-
-    // Draggable divider: resize the swimlane pane (min 260px; keep the timeline
-    // at least 360px). Pointer events → mouse + touch + pen; capture keeps the
-    // drag alive when the cursor leaves the thin handle.
-    if (handle && split) {
-      let dragging = false;
-      handle.addEventListener("pointerdown", (e) => {
-        dragging = true;
-        handle.setPointerCapture(e.pointerId);
-        handle.classList.add("dragging");
-        e.preventDefault();
+    if ($detailBtn)
+      $detailBtn.addEventListener("click", function () {
+        setDrawer(!$drawer.classList.contains("open"));
       });
-      handle.addEventListener("pointermove", (e) => {
-        if (!dragging) return;
-        applyPaneW(e.clientX - split.getBoundingClientRect().left, false);
-        // The host's ResizeObserver (mount) reschedules a render on width change.
+    const tdClose = document.getElementById("td-close");
+    if (tdClose)
+      tdClose.addEventListener("click", function () {
+        setDrawer(false);
       });
-      function endDrag(e) {
-        if (!dragging) return;
-        dragging = false;
-        try {
-          handle.releasePointerCapture(e.pointerId);
-        } catch (_) {}
-        handle.classList.remove("dragging");
-        // Persist the CLAMPED width so a stored value can never exceed what the
-        // current layout allows.
-        applyPaneW(parseInt(teamHost.style.flexBasis, 10) || 400, true);
-      }
-      handle.addEventListener("pointerup", endDrag);
-      handle.addEventListener("pointercancel", endDrag);
-    }
 
-    let revealed = false;
-    const origIngest = TeamView.ingest.bind(TeamView);
-    TeamView.ingest = function (type, data) {
-      origIngest(type, data);
-      const isTeam =
-        type === "scope_start" ||
-        (type === "agent_roster" && data.roster && data.roster.length);
-      if (isTeam && !revealed) {
-        revealed = true;
-        toggle.hidden = false;
-        setCollapsed(false); // reveal the pane beside the timeline
-      }
-    };
-
-    // Click a swimlane bar → scroll the timeline to its card FIRST, then flash
-    // it once the scroll settles. Flashing before/during the scroll means an
-    // off-screen card lights up where the user isn't looking; waiting for
-    // ``scrollend`` (with a timeout fallback for no-scroll / unsupported) makes
-    // the highlight land after the card is actually in view.
+    // Click a swimlane bar / arrow / user mark → open the drawer and scroll
+    // the timeline to the matching card. Two anchor kinds: scope bars carry
+    // data-task-id (scope cards), user marks + reply arrows carry data-nav-ts
+    // (user/final cards stamped with the same event ts).
     teamHost.addEventListener("click", (e) => {
-      const tid =
-        e.target && e.target.getAttribute && e.target.getAttribute("data-task-id");
-      if (!tid) return;
-      const sel =
-        window.CSS && CSS.escape ? CSS.escape(tid) : tid.replace(/"/g, '\\"');
-      const card = $messages.querySelector(
-        '.card-task-group[data-task-id="' + sel + '"]',
-      );
+      const t = e.target;
+      const tid = t && t.getAttribute && t.getAttribute("data-task-id");
+      const nts = t && t.getAttribute && t.getAttribute("data-nav-ts");
+      if (!tid && !nts) return;
+      let card = null;
+      if (tid) {
+        const sel =
+          window.CSS && CSS.escape ? CSS.escape(tid) : tid.replace(/"/g, '\\"');
+        card = $messages.querySelector(
+          '.card-task-group[data-task-id="' + sel + '"]',
+        );
+      } else {
+        card = $messages.querySelector('[data-nav-ts="' + nts + '"]');
+      }
       if (!card) {
-        // ⓒ No card to jump to — say so instead of doing nothing. Happens for a
-        // session recorded before turns carried their scope (pre-v7.28): the
-        // bars come back from the sidecar, but there is no card to open. A
-        // silent no-op reads as a broken button (reported as "클릭해도 스크롤이
-        // 안 된다").
+        // ⓒ No card to jump to — say so instead of doing nothing (a session
+        // recorded before the anchor existed replays bars/arrows only). A
+        // silent no-op reads as a broken button.
         showNavMiss(e.clientX, e.clientY);
         return;
       }
-      // A nested card lives inside its parent's (collapsed by default) body, so
-      // expand the whole ancestor chain OUTERMOST-first before measuring the
-      // scroll — expanding after the jump would move the target away from it.
-      scopeAncestors(tid)
-        .slice()
-        .reverse()
-        .forEach(function (a) {
-          const g = taskGroups[a];
-          if (g && g.body.hidden) g.toggle();
-          else if (!g) {
-            // Group entry already released (scope finished) — the card's own
-            // DOM is still there, so toggle it through the element.
-            const anc = $messages.querySelector(
-              '.card-task-group[data-task-id="' +
-                (window.CSS && CSS.escape ? CSS.escape(a) : a.replace(/"/g, '\\"')) +
-                '"]',
-            );
-            const b = anc && anc.querySelector(":scope > .task-body");
-            if (b && b.hidden) {
-              b.hidden = false;
-              const ch = anc.querySelector(":scope > .task-header > .task-chevron");
-              if (ch) ch.textContent = "▼";
-            }
-          }
-        });
-      // Turn OFF auto-follow so a live event's scrollToBottom() can't pull us
-      // back down after the jump. Then jump INSTANTLY (not smooth): during an
-      // active run the timeline is constantly appending cards + calling
-      // scrollToBottom, and both cancel an in-flight smooth scroll — that was
-      // the "sometimes doesn't scroll up, click 2-3 times" bug. An instant jump
-      // has no animation window to interrupt, so it lands every time. ``block:
-      // "start"`` puts the card's header at the top (a tall/expanded card
-      // center-aligned would hide the header); ``scroll-margin-top`` adds a gap.
-      autoScrollEnabled = false;
-      card.scrollIntoView({ block: "start" });
-      // Highlight now that the card is in view (the jump already happened).
-      card.classList.remove("tv-nav-hl");
-      void card.offsetWidth; // restart the animation
-      card.classList.add("tv-nav-hl");
+      setDrawer(true);
+      if (tid) expandAncestors(tid);
+      scrollTimelineTo(card);
     });
   }
   _setupTeamView();

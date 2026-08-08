@@ -65,45 +65,29 @@ class TestTeamSwimlane:
         # The reply is a message connector between lanes.
         assert _wait(lambda: page.locator(".tv-msg").count() >= 1)
 
-    def test_side_by_side_and_collapse_toggle(self, stack, page):
+    def test_team_is_default_surface_and_drawer_toggles(self, stack, page):
+        """v8.2.0 inversion: the team view is the PRIMARY surface (full width,
+        no reveal gate); the timeline lives in a right-side drawer opened by
+        ▤ 상세 대화 and closed by its ✕."""
         page.goto(stack.url)
         stack.emit_ready()
         _drive_team(stack)
-        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
 
-        messages = page.locator("#messages")
         team = page.locator("#team-view")
-        # Both visible at once — the swimlane sits BESIDE the timeline.
-        assert _wait(lambda: team.is_visible() and messages.is_visible())
-        # The drag handle is shown alongside the pane.
-        assert _wait(lambda: page.locator("#split-handle").is_visible())
-        # ◧ Team collapses the pane; the timeline stays visible, handle hidden.
-        page.click("#vt-team-toggle")
-        assert _wait(lambda: not team.is_visible() and messages.is_visible())
-        assert not page.locator("#split-handle").is_visible()
-        # Toggling again re-shows the pane + handle.
-        page.click("#vt-team-toggle")
-        assert _wait(lambda: team.is_visible() and messages.is_visible())
-        assert _wait(lambda: page.locator("#split-handle").is_visible())
-
-    def test_split_handle_drag_resizes_pane(self, stack, page):
-        """Dragging the divider widens the swimlane pane (and the width sticks)."""
-        page.set_viewport_size({"width": 1100, "height": 640})
-        page.goto(stack.url)
-        stack.emit_ready()
-        _drive_team(stack)
-        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
-        team = page.locator("#team-view")
-        w0 = team.bounding_box()["width"]
-        box = page.locator("#split-handle").bounding_box()
-        cx = box["x"] + box["width"] / 2
-        cy = box["y"] + box["height"] / 2
-        page.mouse.move(cx, cy)
-        page.mouse.down()
-        page.mouse.move(cx + 130, cy, steps=6)
-        page.mouse.up()
-        w1 = team.bounding_box()["width"]
-        assert w1 > w0 + 70  # pane got wider by ~the drag distance
+        drawer = page.locator("#timeline-drawer")
+        assert _wait(lambda: team.is_visible())
+        # Drawer starts closed (slid off-screen; aria mirrors it).
+        assert drawer.get_attribute("aria-hidden") == "true"
+        assert "open" not in (drawer.get_attribute("class") or "")
+        # ▤ opens it…
+        page.click("#vt-detail-toggle")
+        assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
+        assert drawer.get_attribute("aria-hidden") == "false"
+        # …the team view stays visible behind (overlay, not a swap)…
+        assert team.is_visible()
+        # …and ✕ closes it again.
+        page.click("#td-close")
+        assert _wait(lambda: "open" not in (drawer.get_attribute("class") or ""))
 
     def test_reconnect_replay_no_flash_empty_or_duplicate(self, stack, page):
         """Reconnect replays the persistent buffer (roster sticky + scope_* +
@@ -152,7 +136,11 @@ class TestTeamSwimlane:
         assert _wait(lambda: bar.count() >= 1)
         card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
         assert _wait(lambda: card.count() == 1)
+        # Clicking must OPEN the detail drawer (the timeline is on-demand now)…
         bar.first.click()
+        drawer = page.locator("#timeline-drawer")
+        assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
+        # …and flash the matching card.
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
     def test_click_bar_jumps_instantly_and_survives_live_events(self, stack, page):
@@ -171,7 +159,7 @@ class TestTeamSwimlane:
         for i in range(20):
             r.begin_agent_work(key="w1", seq=i, profile="code-writer", message=f"t{i}")
             r.end_agent_work(key="w1", seq=i, success=True, duration_s=0.01)
-        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        page.wait_for_selector("#team-view .tv-svg", timeout=8000)
         target = "w1#3"  # near the top → far off-screen once scrolled to the bottom
         assert _wait(
             lambda: (
@@ -222,7 +210,7 @@ class TestTeamSwimlane:
         for i in range(8):
             r.begin_agent_work(key="w1", seq=i, profile="code-writer", message=f"t{i}")
             r.end_agent_work(key="w1", seq=i, success=True, duration_s=0.01)
-        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        page.wait_for_selector("#team-view .tv-svg", timeout=8000)
         assert _wait(
             lambda: (
                 page.locator('#messages .card-task-group[data-task-id="w1#5"]').count()
@@ -638,81 +626,137 @@ class TestScopeNestingRender:
         assert _wait(lambda: "tv-nav-hl" in (nested_card.get_attribute("class") or ""))
 
 
-class TestSplitPaneWidthClamp:
-    """저장된 패널 폭이 타임라인을 지워버리지 못하게 (v7.27.2 회귀 수리).
+class TestUserLaneAndDock:
+    """v8.2.0 — 팀뷰 기본 전환의 3요소: 사용자 레인(multiplex), complete 회신
+    화살표(answers 귀속), 응답 독. 모두 실 렌더러 경로로 주입해 검증한다.
 
-    v7.26.0 이 드래그 폭을 localStorage 에 저장하면서, **복원 경로에만 클램프가
-    없었다**(드래그는 `rect.width - 360` 으로 클램프). 넓은 창에서 저장한 폭을
-    좁은 창에서 복원하면 타임라인이 ~30px 로 짜부라져 **카드가 폭 0 으로
-    렌더**됐다 — 카드는 DOM 에 다 있는데 보이지 않는다. localStorage 라서 서버·
-    세션을 몇 번 재시작해도 안 고쳐졌고, 실제로 "resume 하면 카드가 하나도 안
-    보인다"로 제보됐다(원인 오진 1회: 저장값 없는 새 브라우저로만 확인해서
-    '회귀 아님' 으로 결론냈다가 라이브 재현으로 뒤집힘).
+    (이 자리에 있던 TestSplitPaneWidthClamp 는 페인 폭 저장/클램프 기계장치와
+    함께 제거 — 드로어 오버레이 레이아웃에는 저장되는 폭 자체가 없다.)
     """
 
-    @staticmethod
-    def _seed_and_measure(stack, browser, *, viewport, saved):
-        ctx = browser.new_context(viewport=viewport)
-        page = ctx.new_page()
+    def test_user_message_draws_lane_mark_and_request_arrow(self, stack, page):
         page.goto(stack.url)
-        page.evaluate(f"() => localStorage.setItem('agentcli_team_w', '{saved}')")
-        # 팀 활동이 있어야 패널이 드러난다 (평범한 단일-에이전트 대화엔 미표시).
-        stack.renderer.begin_scope(task_id="sk", kind="skill", label="orchestrate")
-        stack.renderer.observation("done", turn=1, tool_name="read_file", success=True)
-        page.reload()
-        page.wait_for_selector("#team-view:not([hidden])", timeout=8000)
-        page.wait_for_selector("#messages .card", timeout=8000)
-        out = page.evaluate(
-            """() => {
-                const m = document.getElementById('messages');
-                const tv = document.getElementById('team-view');
-                const card = m.querySelector(':scope > .card');
-                const w = e => Math.round(e.getBoundingClientRect().width);
-                return {msg: w(m), pane: w(tv), card: card ? w(card) : 0,
-                        stored: localStorage.getItem('agentcli_team_w')};
-            }"""
-        )
-        ctx.close()
-        return out
-
-    def test_oversized_stored_width_cannot_squeeze_the_timeline(self, stack, browser):
         stack.emit_ready()
-        for viewport in (
-            {"width": 1400, "height": 900},
-            {"width": 1000, "height": 800},
-        ):
-            got = self._seed_and_measure(stack, browser, viewport=viewport, saved=3000)
-            assert got["msg"] >= 300, (viewport, got)  # 타임라인 최소폭 확보
-            assert got["card"] >= 200, (viewport, got)  # 카드가 실제로 읽히는 폭
-            assert got["pane"] <= viewport["width"] - 300, (viewport, got)
+        r = stack.renderer
+        r.push_user_message("[Bob]: fix the bug", author="Bob")
+        page.wait_for_selector("#team-view .tv-user-mark", timeout=8000)
+        # The multiplexed user lane is the FIRST column ("users" chip).
+        chips = page.locator("#team-view .tv-head .tv-lane-nm")
+        assert _wait(lambda: chips.count() >= 2)
+        assert chips.first.text_content() == "users"  # SVG text → not inner_text
+        # Request arrow user→main with the sender's name as its label.
+        assert _wait(lambda: page.locator("#team-view .tv-msg").count() >= 1)
+        assert page.locator("#team-view .tv-msg-label", has_text="Bob").count() >= 1
+        # The mark itself is labeled with the nickname (how multiple users
+        # share one lane).
+        assert page.locator("#team-view .tv-user-nm", has_text="Bob").count() >= 1
 
-    def test_small_stored_width_is_floored(self, stack, browser):
-        stack.emit_ready()
-        got = self._seed_and_measure(
-            stack, browser, viewport={"width": 1200, "height": 800}, saved=10
-        )
-        assert got["pane"] >= 260, got  # 스윔레인도 사용 가능한 최소폭 유지
-
-    def test_shrinking_the_window_reclamps(self, stack, browser):
-        """창을 좁혀도 타임라인이 사라지지 않아야 한다 (resize 재클램프)."""
-        stack.emit_ready()
-        ctx = browser.new_context(viewport={"width": 1600, "height": 900})
-        page = ctx.new_page()
+    def test_authorless_user_message_stays_off_the_lane(self, stack, page):
+        # 🤝 agent-report starter: card only — no user lane, no arrow.
         page.goto(stack.url)
-        page.evaluate("() => localStorage.setItem('agentcli_team_w', '1100')")
-        stack.renderer.begin_scope(task_id="sk2", kind="skill", label="orchestrate")
-        stack.renderer.observation("done", turn=1, tool_name="read_file", success=True)
-        page.reload()
-        page.wait_for_selector("#messages .card", timeout=8000)
-        page.set_viewport_size({"width": 900, "height": 800})
+        stack.emit_ready()
+        stack.renderer.push_user_message("[🤝 agent]: reply arrived")
+        page.wait_for_selector("#messages .card-user", timeout=8000)
+        assert page.locator("#team-view .tv-user-mark").count() == 0
+
+    def test_final_with_answers_draws_dashed_reply_arrow(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.push_user_message("[Bob]: q1", author="Bob")
+        r.push_user_message("[두정]: q2", author="두정")
+        r.set_run_authors(["Bob", "두정"])
+        r.final("the combined answer", turn=1)
+        # ONE dashed reply arrow into the shared lane, labeled with everyone.
+        assert _wait(lambda: page.locator("#team-view .tv-msg.tv-reply").count() == 1)
+        assert (
+            page.locator("#team-view .tv-msg-label", has_text="✓ Bob·두정").count() == 1
+        )
+
+    def test_reply_arrow_click_opens_drawer_at_final_card(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.push_user_message("[Bob]: q", author="Bob")
+        r.set_run_authors(["Bob"])
+        r.final("the answer", turn=1)
+        page.wait_for_selector("#team-view .tv-msg.tv-reply", timeout=8000)
+        # The hit path is a transparent wide stroke — click via dispatchEvent
+        # (its bbox centre may sit off the curve).
+        page.eval_on_selector(
+            "#team-view .tv-msg-g:has(.tv-reply) .tv-msg-hit[data-nav-ts]",
+            "el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))",
+        )
+        drawer = page.locator("#timeline-drawer")
+        assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
+        card = page.locator("#messages .card-assistant[data-nav-ts]")
+        assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
+
+    def test_agent_report_run_is_unattributed(self, stack, page):
+        # answers=[] (🤝 run): no reply arrow; the dock says so explicitly.
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.set_run_authors([])
+        r.final("agent report folded in", turn=1)
+        page.wait_for_selector("#dock:not([hidden])", timeout=8000)
+        assert page.locator("#team-view .tv-msg.tv-reply").count() == 0
+        assert "🤝" in page.locator("#dock .d-meta").inner_text()
+
+    def test_dock_shows_attribution_and_navigates(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.push_user_message("[Bob]: q", author="Bob")
+        r.set_run_authors(["Bob"])
+        r.final("short answer", turn=1)
+        page.wait_for_selector("#dock:not([hidden])", timeout=8000)
+        assert _wait(lambda: "→ [Bob]" in page.locator("#dock .d-who").inner_text())
+        assert "short answer" in page.locator("#d-text").inner_text()
+        # Short answer → no 펼치기 (button only appears when clamped).
+        assert page.locator("#d-expand").is_hidden()
+        # Body click = drawer at that answer's card.
+        page.click("#d-text")
+        drawer = page.locator("#timeline-drawer")
+        assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
+        card = page.locator("#messages .card-assistant[data-nav-ts]")
+        assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
+
+    def test_dock_expand_appears_only_when_clamped(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.set_run_authors(["Bob"])
+        long_answer = "긴 답변 문장입니다. " * 120
+        r.final(long_answer, turn=1)
+        page.wait_for_selector("#dock:not([hidden])", timeout=8000)
+        assert _wait(lambda: page.locator("#d-expand").is_visible())
+        h0 = page.evaluate("() => document.getElementById('d-text').clientHeight")
+        page.click("#d-expand")
         assert _wait(
             lambda: (
-                page.evaluate(
-                    "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
-                )
-                >= 300
+                page.evaluate("() => document.getElementById('d-text').clientHeight")
+                > h0
             )
-        ), page.evaluate(
-            "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
         )
-        ctx.close()
+        assert page.locator("#d-expand").inner_text() == "접기"
+        # A NEW final resets to the collapsed 3-line preview.
+        r.final("next short", turn=2)
+        assert _wait(
+            lambda: (
+                "expanded" not in (page.locator("#dock").get_attribute("class") or "")
+            )
+        )
+
+    def test_resume_replay_restores_lane_and_reply_arrow(self, stack, page):
+        """Replay path parity: replayed user_message(author) + final(answers)
+        rebuild the user lane and the reply arrow after reconnect."""
+        r = stack.renderer
+        r.push_user_message("[Bob]: q", author="Bob")
+        r.set_run_authors(["Bob"])
+        r.final("answered", turn=1)
+        # Connect AFTER the events exist — the SSE replay must rebuild both.
+        page.goto(stack.url)
+        stack.emit_ready()
+        page.wait_for_selector("#team-view .tv-user-mark", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-msg.tv-reply").count() == 1)

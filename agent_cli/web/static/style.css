@@ -48,6 +48,7 @@
   /* Team swimlane role hues — theme-independent categorical lane colors. */
   --h-main: #9aa1ad; --h-worker: #7e8db0; --h-orch: #e0a458;
   --h-writer: #3fb950; --h-reviewer: #a78bfa; --h-tester: #4d8eff; --h-rose: #f85149;
+  --h-user: #d29922;
   --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
   --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
@@ -1366,9 +1367,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 
 /* ── Team swimlane (Phase 3) — role hue tokens live in the top :root block;
    everything here is var()-based so it recolors with the theme. */
-#messages[hidden] { display: none; }
-/* Team-pane collapse toggle (◧ Team) — a single button, shown once there's
-   team activity; pressed = pane visible. */
+/* 상세 대화 드로어 토글 (▤) — always visible; pressed = drawer open. */
 .view-toggle {
   display: flex; align-items: center; gap: 6px; padding: 8px 16px 0;
 }
@@ -1382,33 +1381,64 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .vt-tab[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
 .vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Side-by-side: swimlane (overview, LEFT) + drag handle + timeline (RIGHT). */
-#content-split { display: flex; flex: 1; min-height: 0; }
-#content-split > main#messages { flex: 1; min-width: 0; }
-/* Team view container — the vertical scroll surface (time flows DOWN), a
-   resizable left pane (drag #split-handle). The .tv-head pins at the top. */
+/* v8.2.0 layout inversion: the TEAM view is the primary surface (full width);
+   the timeline is an on-demand DETAIL DRAWER sliding in from the right —
+   opened by the ▤ 상세 대화 toggle, a swimlane bar/arrow click, or the
+   response dock. ``position: relative`` anchors the absolute drawer. */
+#content-split { display: flex; flex: 1; min-height: 0; position: relative; }
+/* Team view container — the vertical scroll surface (time flows DOWN). */
 #team-view {
-  flex: 0 0 400px; overflow: auto; padding: 0 12px 20px; min-height: 0;
+  flex: 1; overflow: auto; padding: 0 12px 20px; min-height: 0; min-width: 0;
 }
 #team-view[hidden] { display: none; }
-/* Draggable divider between the swimlane and the timeline. */
-#split-handle {
-  flex: 0 0 6px; cursor: col-resize; background: var(--border);
-  transition: background .12s; position: relative; touch-action: none;
+/* Timeline drawer. Kept in the DOM (transform slide, not display:none) so
+   card geometry is measurable the moment a click-nav opens it. */
+#timeline-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(56%, 640px);
+  display: flex; flex-direction: column; z-index: 5;
+  background: var(--surface, var(--bg)); border-left: 1px solid var(--border-2);
+  box-shadow: -8px 0 24px var(--shadow);
+  transform: translateX(102%); transition: transform .18s ease;
 }
-#split-handle:hover, #split-handle.dragging { background: var(--accent); }
-#split-handle::after {  /* grip dots */
-  content: ""; position: absolute; top: 50%; left: 50%;
-  width: 2px; height: 26px; transform: translate(-50%, -50%);
-  border-radius: 2px; background: var(--muted); opacity: .5;
+#timeline-drawer.open { transform: translateX(0); }
+@media (prefers-reduced-motion: reduce) { #timeline-drawer { transition: none; } }
+.td-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); background: var(--surface-3, var(--surface));
+  font-size: 12px; color: var(--text-2); flex: none;
 }
-#split-handle[hidden] { display: none; }
-/* Narrow screens: stack the swimlane above the timeline; no horizontal drag. */
+.td-head .td-title { flex: 1; font-weight: 550; }
+#timeline-drawer > main#messages { flex: 1; min-height: 0; }
+/* Narrow screens: the drawer covers the full width. */
 @media (max-width: 780px) {
-  #content-split { flex-direction: column; }
-  #team-view { flex: 0 0 210px !important; border-bottom: 1px solid var(--border); }
-  #split-handle { display: none; }
+  #timeline-drawer { width: 100%; }
 }
+
+/* ── Response dock — the latest main answer, always visible ── */
+#dock {
+  border-top: 1px solid var(--border); background: var(--surface-3, var(--surface));
+  padding: 9px 14px; display: flex; gap: 10px; align-items: flex-start; flex: none;
+}
+#dock[hidden] { display: none; }
+#dock .d-ic { flex: none; font-size: 13px; margin-top: 1px; }
+#dock .d-body { flex: 1; min-width: 0; }
+#dock .d-meta {
+  font-size: 10.5px; color: var(--muted); letter-spacing: .05em;
+  text-transform: uppercase; margin-bottom: 3px;
+  display: flex; gap: 8px; align-items: center;
+}
+#dock .d-meta .d-who { color: var(--h-user); text-transform: none; letter-spacing: 0; }
+#dock .d-text {
+  font-size: 13px; color: var(--text); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  cursor: pointer; border-radius: 4px; white-space: pre-wrap; word-break: break-word;
+}
+#dock .d-text:hover { background: var(--accent-soft-bg); box-shadow: 0 0 0 5px var(--accent-soft-bg); }
+#dock.expanded .d-text { display: block; max-height: 220px; overflow-y: auto; }
+#dock .d-actions { flex: none; }
+#dock.pulse { animation: dockpulse 1.2s ease-out 1; }
+@keyframes dockpulse { 0% { background: var(--accent-soft-bg); } 100% { background: var(--surface-3, var(--surface)); } }
 /* A timeline card the user navigated to from the swimlane. */
 #messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {
   animation: tv-nav-flash 1.2s ease;
@@ -1452,6 +1482,13 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* Hovering anywhere in a message group highlights THAT message's path +
    arrowhead (an adjacent-sibling selector used to highlight the NEXT arrow). */
 .tv-msg-g:hover .tv-msg { opacity: 1; stroke-width: 2.2; }
+/* main→user complete = dashed reply arrow (solid = request/assign/report). */
+.tv-msg.tv-reply { stroke-dasharray: 4 3; }
+/* Who-label above an arrow (sender nickname / "✓ recipient list"). */
+.tv-msg-label { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; font-weight: 500; fill: var(--muted); }
+/* 👤 marks + name labels on the ONE multiplexed user lane. */
+.tv-user-mark { fill: var(--h-user); cursor: pointer; }
+.tv-user-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 8.5px; fill: var(--h-user); opacity: .85; }
 
 /* "이 막대에 대응하는 카드가 없음" 안내 — 클릭이 조용히 아무것도 안 하면
    고장난 버튼으로 읽힌다(구 세션은 막대만 복구되므로 대상이 없다). */

@@ -481,27 +481,38 @@ class TestStaticUI:
         움직여 v7.26.x 에서 고친 '2~3번 클릭' 증상이 재발한다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        nav = js.split('teamHost.addEventListener("click"', 1)[1].split(
-            "\n  }\n  _setupTeamView", 1
-        )[0]
-        assert "scopeAncestors(tid)" in nav
-        expand_at = nav.index("scopeAncestors(tid)")
-        scroll_at = nav.index("card.scrollIntoView")
+        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n  }\n", 1)[0]
+        assert "expandAncestors(tid)" in nav
+        expand_at = nav.index("expandAncestors(tid)")
+        scroll_at = nav.index("scrollTimelineTo(card)")
         assert expand_at < scroll_at, "펼치기가 스크롤보다 먼저여야 함"
-        assert ".reverse()" in nav  # 바깥→안 순서로 펼침
+        # 바깥→안 순서로 펼침 (expandAncestors 본문).
+        expand_fn = js.split("function expandAncestors(", 1)[1].split("\n  }\n", 1)[0]
+        assert "scopeAncestors(tid)" in expand_fn and ".reverse()" in expand_fn
 
-    def test_pane_width_restore_is_clamped(self, server_and_client):
-        """저장 폭 복원이 드래그와 **같은 클램프**를 통과해야 한다 (v7.27.2).
-        복원만 클램프 없이 flexBasis 를 세우면 넓은 창에서 저장한 값이 좁은
-        창에서 타임라인을 지운다 — 카드가 폭 0 으로 렌더(동작 계약은
-        tests/browser 의 TestSplitPaneWidthClamp)."""
+    def test_click_nav_scrolls_container_not_scroll_into_view(self, server_and_client):
+        """클릭 내비는 타임라인 컨테이너의 scrollTop 만 움직인다 (v8.2.0).
+        scrollIntoView 는 스크롤 가능한 **모든 조상**을 (가로 포함) 움직여서,
+        드로어 레이아웃에선 팀뷰 전체를 옆으로 밀고 닫아도 안 돌아오는 빈
+        공간을 남긴다 — 목업 검증에서 실측된 사고라 계약으로 봉인한다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        setup = js.split("function _setupTeamView()", 1)[1].split("\n  function ", 1)[0]
-        assert "clampPaneW" in setup and "applyPaneW(savedW" in setup
-        # 클램프 없이 직접 세우는 옛 배선이 남아 있으면 안 된다.
-        assert 'teamHost.style.flexBasis = savedW + "px"' not in setup
-        assert "TIMELINE_MIN" in setup  # 타임라인 최소폭이 클램프에 반영
+        scroll_fn = js.split("function scrollTimelineTo(", 1)[1].split("\n  }\n", 1)[0]
+        assert "$messages.scrollTop" in scroll_fn
+        assert "scrollIntoView" not in scroll_fn
+        # 클릭 핸들러 영역 전체에도 scrollIntoView 재유입 금지.
+        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n  }\n", 1)[0]
+        assert "scrollIntoView" not in nav
+
+    def test_pane_width_machinery_is_gone(self, server_and_client):
+        """v8.2.0 드로어 레이아웃엔 저장되는 페인 폭이 없다 — v7.26~27 의 폭
+        저장/클램프 기계(카드 폭 0 사고의 진원)는 완전 제거되고, 남은 저장값은
+        시작 시 지운다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "clampPaneW" not in js and "applyPaneW" not in js
+        assert 'localStorage.removeItem("agentcli_team_w")' in js
+        assert 'localStorage.setItem("agentcli_team_w"' not in js
 
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
