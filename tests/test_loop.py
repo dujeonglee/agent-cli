@@ -3977,3 +3977,46 @@ class TestMailAnswersInheritance:
         loop = self._loop(caps, reg)
         loop._deliver_agent_mail()
         assert loop.run_authors == []
+
+
+class TestRendererAbcPromotion:
+    """v8.6.0 — push_user_message/set_run_authors 의 ABC 승격: 코어는 ABC
+    표면만 알고 무조건 호출한다(hasattr 게이트 제거). CLI(minimal)는 no-op
+    기본을 상속하므로 web 전용 의미론이 흘러 들어와도 안전해야 한다."""
+
+    def test_abc_defines_both_as_noop_defaults(self):
+        from rich.console import Console
+
+        from agent_cli.render.base import Renderer
+        from agent_cli.render.minimal import MinimalRenderer
+
+        assert hasattr(Renderer, "push_user_message")
+        assert hasattr(Renderer, "set_run_authors")
+        r = MinimalRenderer(Console())
+        r.push_user_message("[Bob]: hi", author="Bob")  # no-op, 예외 없음
+        r.set_run_authors(["Bob"])
+
+    def test_mirror_and_injection_safe_on_cli_renderer(self, caps):
+        # CLI 렌더러가 활성인 채로 web 경로 코드가 돌아도 (이론상 조합)
+        # 게이트 없이 그대로 통과해야 한다.
+        from rich.console import Console
+
+        from agent_cli import render
+        from agent_cli.loop import AgentLoop
+        from agent_cli.render.minimal import MinimalRenderer
+
+        prev = render.get_renderer()
+        render.set_renderer(MinimalRenderer(Console(file=None)))
+        try:
+            items = [{"text": "steer", "nickname": "Bob"}]
+            loop = AgentLoop(
+                query="Q",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="m",
+                dequeue_user_message=lambda: items.pop() if items else None,
+            )
+            loop._inject_queued_messages()  # push_user_message → no-op
+            assert loop.run_authors == ["Bob"]
+        finally:
+            render.set_renderer(prev)

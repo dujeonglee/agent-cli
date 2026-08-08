@@ -465,6 +465,26 @@ class Renderer(ABC):
         (e.g. Anthropic thinking blocks, OpenAI reasoning).
         """
 
+    def push_user_message(self, content: str, author: str = "") -> None:
+        """Echo a user message into the conversation surface (v8.6.0 ABC
+        승격 — 종전 web 전용+hasattr 게이트).
+
+        Web 은 persistent ``user_message`` 이벤트로 override; CLI 는 no-op
+        기본 — 사용자가 방금 타이핑한 내용을 터미널에 다시 찍을 이유가
+        없다(다중 사용자 큐/주입도 web 전용). 코어(loop)는 이 ABC 표면만
+        알고 무조건 호출한다. ``author`` = 보낸 USER 의 닉네임(팀뷰 사용자
+        레인 라우팅), 비-사용자 발신(🤝 스타터)·CLI 는 빈값.
+        """
+
+    def set_run_authors(self, authors: list[str]) -> None:
+        """현재 런이 서비스 중인 USER 목록 미러 (v8.6.0 ABC 승격 — 종전
+        web 전용+hasattr 게이트).
+
+        Web 은 main-레벨 final 의 ``answers`` 귀속에 소비하도록 override;
+        CLI 는 no-op 기본(단일 사용자 — 귀속 표시 대상 없음). main 루프가
+        런 시작 + 조향 주입 + 회신 승계 합류마다 호출한다.
+        """
+
     @abstractmethod
     def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update (running/done/error)."""
