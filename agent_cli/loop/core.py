@@ -91,7 +91,7 @@ class AgentLoop:
         message_handler=None,
         peer_agents_section: str = "",
         origin_turn: str = "",
-        turn_scoping: bool = False,
+        turn_scoping: bool = True,
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
         # prompt section, and lifecycle hooks so adding a new format means

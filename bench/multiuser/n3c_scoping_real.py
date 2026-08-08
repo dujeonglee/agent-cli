@@ -200,7 +200,7 @@ def run_rep(
         contract="parallel",
         max_turns=2,
         real_llm=llm,
-        extra=["--turn-scoping"] if scoping else [],
+        extra=["--turn-scoping"] if scoping else ["--no-turn-scoping"],
     )
     a_conn, b_conn = f"A-{rep}", f"B-{rep}"
     try:
@@ -233,9 +233,18 @@ def run_rep(
         # 하다. history.jsonl 의 레코드는 `reply_to`(어느 요청을 처리 중이던
         # 턴인가)와 `files`(그 레코드가 만진 경로)를 함께 들고 있으므로,
         # 둘을 조인하면 "이 턴이 실제로 어느 파일을 썼는가"가 나온다.
-        turns = _attribute(_read_history(server.session_dir), tasks)
+        records = _read_history(server.session_dir)
+        turns = _attribute(records, tasks)
         if len(turns) != 2:
             return None  # 두 질의가 다 기록되지 않았다면 판정 불가
+        # 턴별 응답 텍스트 보존 (플랜3 R3-W5): 커밋 raw 에 경로만 있으면
+        # 사후 텍스트 수준 판정이 불가능하다. reply_to 사슬로 질의별 후속
+        # 레코드의 text 를 모아 유계로 남긴다.
+        answers: dict[str, str] = {}
+        for r in records:
+            owner = r.get("reply_to")
+            if owner and r.get("text"):
+                answers[owner] = (answers.get(owner, "") + "\n" + str(r["text"]))[:4000]
         by_key = {t.key: t for t in tasks}
         per_turn = []
         for t in turns:
@@ -248,6 +257,7 @@ def run_rep(
                     "wrote": sorted(t["files"]),
                     "ownComplete": own <= t["files"],
                     "wroteOthers": bool(t["files"] & other),
+                    "answerText": answers.get(t["query"], ""),
                 }
             )
         return {
@@ -319,12 +329,20 @@ def main() -> None:
         action="store_true",
         help="실행 없이 커밋된 원시 JSONL 에서 요약만 재도출 (리포 규약).",
     )
+    ap.add_argument(
+        "--out-tag",
+        default="",
+        help="산출물 파일명 접미 — 다른 모델(J2)로 돌릴 때 커밋된 원 측정을 "
+        "보존하기 위한 것 (예: --out-tag qwen14b).",
+    )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     tasks = WORKLOADS[args.workload]
     stem = (
         "n3c-scoping-real" if args.workload == "confusable" else f"n3c-{args.workload}"
     )
+    if args.out_tag:
+        stem = f"{stem}-{args.out_tag}"
     raw_path = args.out / f"{stem}.jsonl"
 
     if args.rederive:

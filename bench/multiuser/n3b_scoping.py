@@ -65,7 +65,7 @@ def run_arm(arm: str, users: int, rounds: int, rep: int) -> dict:
         mock.port,
         contract="parallel",
         max_turns=users,
-        extra=[] if arm == "off" else ["--turn-scoping"],
+        extra=["--no-turn-scoping"] if arm == "off" else ["--turn-scoping"],
     )
     total = users * rounds
     try:

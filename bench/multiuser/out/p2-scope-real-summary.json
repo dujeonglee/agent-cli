@@ -1,5 +1,6 @@
 {
   "model": "(re-derived from committed raw data)",
+  "turn_scoping": false,
   "runs_used": 12,
   "writes_per_turn_requested": 4,
   "lines_per_file": 40,

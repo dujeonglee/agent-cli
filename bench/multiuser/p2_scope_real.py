@@ -44,9 +44,14 @@ import time
 from pathlib import Path
 
 from driver import AgentServer, turn_chain
+from n3c_scoping_real import _read_history
 
 SCOPES = ("workspace", "conflict")
 PATHS = ("disjoint", "same")
+#: 원시 행에 보존하는 턴별 응답 텍스트 상한 — 사후 텍스트 수준 판정용이며
+#: (플랜3 R3-W5: 커밋 raw 에 텍스트가 없어 사후 분석이 불가능했다) 원시
+#: 파일 크기를 유계로 유지한다.
+TEXT_KEEP = 4000
 #: 턴당 쓰기를 여러 번 시키는 이유: 실 모델은 한 번에 수 KB 이상을 내놓지
 #: 못하므로, 효과 시간 비중을 조금이라도 끌어올리려면 횟수로 가야 한다.
 #: (그래도 추론이 지배한다는 것이 이 실험의 예상 결과이자 요점이다.)
@@ -119,10 +124,20 @@ def lock_totals(events: list[dict], offset: int) -> dict[str, dict]:
     return per
 
 
-def run_rep(llm: dict, scope: str, paths: str, rep: int) -> dict | None:
+def run_rep(
+    llm: dict, scope: str, paths: str, rep: int, *, scoping: bool = False
+) -> dict | None:
     ws = Path(tempfile.mkdtemp(prefix=f"p2sr-{scope}-{paths}-"))
     server = AgentServer(
-        ws, None, contract="parallel", lock_scope=scope, max_turns=2, real_llm=llm
+        ws,
+        None,
+        contract="parallel",
+        lock_scope=scope,
+        max_turns=2,
+        real_llm=llm,
+        # 명시적 고정: 원 측정은 스코핑 이전(off)이었고, 스코핑 팔(J1)은
+        # §6.7 의 완화가 경로 조건(서로소)을 복원하는지를 묻는다.
+        extra=["--turn-scoping"] if scoping else ["--no-turn-scoping"],
     )
     a_conn, b_conn = f"A-{rep}", f"B-{rep}"
     try:
@@ -164,10 +179,30 @@ def run_rep(llm: dict, scope: str, paths: str, rep: int) -> dict | None:
         )
         held = la["held_ms"] + lb["held_ms"]
         files = sorted(p.name for p in ws.glob("*.txt"))
+        # 턴별 응답 텍스트 보존: history.jsonl 의 reply_to 사슬로 질의별
+        # 후속 레코드의 text 를 모은다. 사후 텍스트 수준 판정(누구의 태그를
+        # 말했는가)을 커밋 raw 만으로 가능하게 하는 계기다.
+        records = _read_history(server.session_dir)
+        answers: dict[str, str] = {}
+        for r in records:
+            owner = r.get("reply_to")
+            if not owner or not r.get("text"):
+                continue
+            answers[owner] = (answers.get(owner, "") + "\n" + str(r["text"]))[
+                :TEXT_KEEP
+            ]
+        queries = {
+            r["id"]: str(r.get("text", ""))[:400]
+            for r in records
+            if r.get("kind") == "query" and r.get("id")
+        }
         return {
             "lock_scope": scope,
             "paths": paths,
             "rep": rep,
+            "turn_scoping": scoping,
+            "queries": queries,
+            "answer_texts": answers,
             "spanA_ms": round(span_a, 1),
             "spanB_ms": round(span_b, 1),
             "workA_ms": round(work_a, 1),
@@ -194,6 +229,19 @@ def main() -> None:
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     ap.add_argument(
+        "--turn-scoping",
+        action="store_true",
+        help="스코핑을 켠 팔(J1). §6.7 의 완화가 §6.4 서로소 경로 조건을 "
+        "복원하는지 측정한다. 산출물은 별도 파일(-scoped)로 나가 커밋된 "
+        "원 측정을 보존한다.",
+    )
+    ap.add_argument(
+        "--paths",
+        choices=("both", "disjoint", "same"),
+        default="both",
+        help="경로 조건 선택 — J1 은 disjoint 만 재실행한다.",
+    )
+    ap.add_argument(
         "--rederive",
         action="store_true",
         help="아무것도 실행하지 않고 커밋된 원시 JSONL 에서 요약만 재도출한다. "
@@ -203,7 +251,8 @@ def main() -> None:
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    raw_path = args.out / "p2-scope-real.jsonl"
+    stem = "p2-scope-real-scoped" if args.turn_scoping else "p2-scope-real"
+    raw_path = args.out / f"{stem}.jsonl"
     if args.rederive:
         rows = [
             json.loads(x)
@@ -218,10 +267,11 @@ def main() -> None:
     llm = real_llm_from_env()
     rows = []
     t_start = time.time()
-    for paths in PATHS:
+    path_axis = PATHS if args.paths == "both" else (args.paths,)
+    for paths in path_axis:
         for scope in SCOPES:
             for rep in range(1, args.reps + 1):
-                row = run_rep(llm, scope, paths, rep)
+                row = run_rep(llm, scope, paths, rep, scoping=args.turn_scoping)
                 if row is None:
                     print(
                         json.dumps(
@@ -299,6 +349,7 @@ def summarize(rows, args, llm, t_start, raw_path, *, write_raw: bool) -> None:
 
     summary = {
         "model": llm["model"],
+        "turn_scoping": bool(rows and rows[0].get("turn_scoping")),
         "runs_used": len(rows),
         "writes_per_turn_requested": WRITES_PER_TURN,
         "lines_per_file": LINES,
@@ -320,9 +371,9 @@ def summarize(rows, args, llm, t_start, raw_path, *, write_raw: bool) -> None:
         ),
         "elapsed_s": round(time.time() - t_start, 1),
     }
-    (args.out / "p2-scope-real-summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (
+        raw_path.parent / f"{raw_path.stem.replace('.jsonl', '')}-summary.json"
+    ).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 

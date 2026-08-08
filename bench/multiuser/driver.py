@@ -150,6 +150,15 @@ class AgentServer:
         if resume is not None:
             args += ["--resume", resume]
         args += extra or []
+        # 재현성 고정: 커밋된 벤치 구성은 turn-scoping 기본값 전환(기본
+        # on) 이전에 측정됐다. 병렬 계약에서 스크립트가 스코핑을 명시하지
+        # 않으면 이전 기본값(off)을 고정해, 기본값 변경이 기존 실험의
+        # 의미를 조용히 바꾸지 않게 한다. 스코핑이 필요한 팔은 extra 로
+        # --turn-scoping 을 명시한다(n3b/n3c/p2_scope_real).
+        if contract == "parallel" and not any(
+            a in ("--turn-scoping", "--no-turn-scoping") for a in (extra or [])
+        ):
+            args.append("--no-turn-scoping")
         # env 로 provider 설정을 공급한다 — 이 프로젝트의 운용 환경은 홈
         # config.json 없이 AGENT_CLI_* env 로 돌므로, 지우기만 하면 설정
         # 부재로 셋업 위저드가 떠서 부팅이 멈춘다. 플래그(-m/--base-url)가

@@ -1842,15 +1842,18 @@ def web(
         "for benchmarks only — pure FIFO+cap lets one user monopolise slots.",
     ),
     turn_scoping: bool = typer.Option(
-        False,
+        True,
         "--turn-scoping/--no-turn-scoping",
         help="Pin each turn's own request in its system prompt under "
         "--concurrency-contract=parallel, telling the model that other "
         "users' concurrent messages in the shared transcript are context "
         "rather than instructions. Mitigates a turn answering somebody "
         "else's question; does not affect who the reply is recorded "
-        "against, which is structural and already exact. EXPERIMENTAL, off "
-        "by default.",
+        "against, which is structural and already exact. ON by default "
+        "under the parallel contract (measured: cross-user file writes "
+        "56/80 -> 0/80 with own-task completion up); use "
+        "--no-turn-scoping to disable for ablation. No effect under the "
+        "serial contract.",
     ),
     lock_scope: str | None = typer.Option(
         None,

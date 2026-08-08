@@ -2810,3 +2810,37 @@ class TestParseCursor:
         r = WebRenderer()
         assert r.parse_cursor("not-a-number") == -1
         assert r.parse_cursor(f"{r.stream_epoch}:-3") == -1
+
+
+class TestSeqAllocationOrderUnderConcurrency:
+    """§4.7 불변식: ``seq`` 는 이벤트가 재생 버퍼에 들어가는 단일 지점에서,
+    append 와 같은 락 아래에서 발급된다. 팬아웃에서 발급하면 동시 턴 둘이
+    seq 를 한 순서로 받고 버퍼 append 는 다른 순서로 할 수 있어, 재접속
+    클라이언트가 어떤 라이브 뷰어도 본 적 없는 순서를 재생하게 된다.
+
+    기존 재생 테스트는 전부 단일 스레드였고, 이 불변식 자체는 e2e 벤치
+    (§6.5, n4_replay)만 덮고 있었다 — 불변식→프로덕션 seam 감사(플랜3
+    K2)가 찾은 pytest 층 공백. 프로덕션 emit 경로를 여러 스레드로 동시에
+    두들겨 '버퍼 순서 == seq 순서, 구멍도 중복도 없음'을 단언한다."""
+
+    def test_buffer_order_equals_seq_order_under_concurrent_emits(self):
+        r = WebRenderer()
+        n_threads, per = 8, 25
+        gate = threading.Barrier(n_threads)
+
+        def worker(k: int) -> None:
+            gate.wait()
+            for i in range(per):
+                r.final(f"w{k}-{i}", turn=k * per + i)
+
+        threads = [threading.Thread(target=worker, args=(k,)) for k in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        seqs = [getattr(ready, "seq", None) for _event, ready in r._event_buffer]
+        assert seqs, "no persistent events buffered"
+        assert None not in seqs, "persistent event entered the buffer without a seq"
+        assert seqs == sorted(seqs), "buffer order diverged from seq issue order"
+        assert seqs == list(range(1, len(seqs) + 1)), "seq has a gap or duplicate"

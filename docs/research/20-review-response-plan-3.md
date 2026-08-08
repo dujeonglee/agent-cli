@@ -97,6 +97,27 @@ Originality 4.5 · Significance 4 · Rigor: 시스템 4.5+ / 인간 증거 1 (�
 
 Phase A–C는 기계로 닫힌다. D가 CHI 점수를 움직이는 유일한 항목이고, E는 제출 직전 마감이다.
 
+## 부록 — K2 불변식 → 프로덕션 seam 테스트 감사 판정표 (Phase A 실행 결과)
+
+> 2026-08-08 수행. 1차 분류는 탐색 에이전트, 2건은 사람이 재검증해 정정. 층 정의 — **seam**: 실제 턴이 타는 프로덕션 경로를 동시성 하에서 구동 / **unit**: 프리미티브 직접 호출 / **e2e**: bench 스크립트만.
+
+| # | 불변식 | 프로덕션 위치 | 테스트 | 층 |
+|---|---|---|---|---|
+| 1 | 스냅샷 읽기 불변성 | `context/manager.py` get_messages | `test_context_concurrency.py::TestSnapshot` (동시 쓰기 중 스냅샷 면역) | seam |
+| 2 | 원자 블록 커밋 (스텝 seam) | `loop/dispatch.py` `_append_observation` | `TestAppendObservationBlockAtomicity` (§5 수리의 회귀) | seam |
+| 3 | 효과 락 FIFO 무추월 | `tools/effect_lock.py` | `test_effect_lock.py::TestFairness::test_strict_fifo_no_overtaking` | seam |
+| 4 | 호환성 행렬 | `tools/effect_lock.py` | `TestCompatibilityMatrix` + `TestLoopIntegration` (write_file 경유) | seam |
+| 5 | 사용자당 1 활성 턴 | `loop/turns.py` TurnRegistry | `test_turn_registry.py::TestPerUserFairness` (동시 submit) | seam |
+| 6 | 재생 커서 seq 발급 순서 | `render/web.py` `_emit` (락 하 발급+append) | **공백이었음** — 재생 순서 테스트는 전부 단일 스레드, e2e 는 §6.5 만 → `test_web_renderer.py::TestSeqAllocationOrderUnderConcurrency` 신설로 고정 | ~~e2e~~ → seam |
+| 7 | 스트라이프 append 락 | `fsio.py` append_line | `test_fsio.py::TestAppendLineConcurrency` (분할 쓰기 몽키패치) | seam |
+| 8 | 인터럽트 소유권 | `loop/turns.py` interrupt(tid, conn) | `TestInterrupt::test_owner_only_cancel` + e2e | seam |
+| 9 | 스코핑 재부착 + 이중 게이트 | `loop/core.py:561`, `loop/prompt.py` | `test_turn_scoping.py` (rebuild 생존, 게이트 3방향, 기본값) | seam |
+| 10 | 재개 id 전체 이력 재도출 | `context/manager.py` `_restore_reply_attribution` | `test_reply_attribution.py::TestResume` (압축된 접두 포함 계수) | seam |
+| 11 | 읽기 전용 라우트 표 | `web/server.py` | `test_web_server.py::TestSpectatorRouteTable::test_every_route_is_classified` — **에이전트 1차 분류가 "미검증"으로 오탐**, 사람 재검증으로 정정. 등록 전 라우트 파라미터화, 미분류 라우트는 스위트 실패 | seam |
+| 12 | 압축 낙관 커밋 재검증 | `context/manager.py` commit_atomic + gen | `TestCompactionBarrier`, `TestConcurrentCompactionCommitStarvation` | seam |
+
+**결론**: 12 중 11 이 이미 seam 에서 검증되고 있었고, 공백 1건(#6)은 동시 emit 회귀 테스트로 닫았다. 논문 §6.11 에 한 문단으로 보고했다(오탐 1건의 교훈 포함 — 감사도 두 독자가 낫다).
+
 ### 이 플랜이 의도적으로 하지 않는 것
 
 - §6의 정량 실험을 스터디에서 반복하지 않는다 (프로토콜 v2 원칙).

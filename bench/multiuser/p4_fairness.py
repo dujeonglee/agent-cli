@@ -164,6 +164,12 @@ def main() -> None:
         "겪는 절대 대기를 잰다(배포에서 의미 있는 수).",
     )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
+    ap.add_argument(
+        "--out-suffix",
+        default="",
+        help="산출물 파일명 접미 — 커밋된 원 측정을 보존하며 반복 수를 "
+        "늘려 재실행할 때 (예: --out-suffix -r5).",
+    )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     llm = real_llm_from_env() if args.real else None
@@ -186,7 +192,8 @@ def main() -> None:
         "arms": arms,
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    name = "p4-fairness-real.json" if args.real else "p4-fairness.json"
+    base = "p4-fairness-real" if args.real else "p4-fairness"
+    name = f"{base}{args.out_suffix}.json"
     (args.out / name).write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )

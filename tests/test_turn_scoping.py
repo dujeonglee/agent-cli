@@ -136,10 +136,17 @@ class TestAgentLoopGating:
         assert "You are serving turn" not in loop.system
 
     def test_absent_when_flag_off(self, caps):
-        """기본 off — 효과가 측정되기 전까지 출하 동작을 바꾸지 않는다."""
+        """명시적 off(`--no-turn-scoping`) — 절제 팔이 쓰는 상태."""
         loop = self._loop(caps, origin_turn="t7", turn_scoping=False)
         assert "You are serving turn" not in loop.system
 
-    def test_default_is_off(self, caps):
+    def test_default_is_on_under_parallel(self, caps):
+        """기본 on — 측정 결과(라이브 56/80 → 0/80, 자기 과제 완수 상승,
+        n3c) 이후 출하 기본값이 됐다. 절제는 명시적 off 로만 간다."""
         loop = self._loop(caps, origin_turn="t7")
+        assert "You are serving turn t7" in loop.system
+
+    def test_default_still_absent_under_serial(self, caps):
+        """기본 on 이어도 직렬(origin_turn 없음)에는 결코 걸리지 않는다."""
+        loop = self._loop(caps, origin_turn="")
         assert "You are serving turn" not in loop.system
