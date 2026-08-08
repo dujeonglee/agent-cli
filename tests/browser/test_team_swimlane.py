@@ -760,3 +760,45 @@ class TestUserLaneAndDock:
         stack.emit_ready()
         page.wait_for_selector("#team-view .tv-user-mark", timeout=8000)
         assert _wait(lambda: page.locator("#team-view .tv-msg.tv-reply").count() == 1)
+
+
+class TestMainSpinnerAndLabelClip:
+    """v8.3.0 — 팀뷰 기본 표면의 두 마감: main 응답-중 스피너(worker_state
+    구동)와 첫 행 화살표 who-라벨의 viewBox 클리핑 수리."""
+
+    def test_main_spinner_follows_worker_state(self, stack, page):
+        # 타임라인이 드로어 안이라, main 이 응답 중이라는 단서는 팀 표면의
+        # main 컬럼 tail 스피너가 유일 — worker_busy 로 켜지고 idle 로 꺼진다.
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.push_user_message("[Bob]: go", author="Bob")
+        page.wait_for_selector("#team-view .tv-svg", timeout=8000)
+        assert page.locator("#team-view .tv-main-busy").count() == 0
+        r.worker_busy()
+        assert _wait(lambda: page.locator("#team-view .tv-main-busy").count() == 1)
+        r.worker_idle()
+        assert _wait(lambda: page.locator("#team-view .tv-main-busy").count() == 0)
+
+    def test_reconnect_lands_in_busy_state(self, stack, page):
+        # worker_state 는 sticky — 실행 중에 새로 접속해도 스피너가 보인다.
+        r = stack.renderer
+        r.push_user_message("[Bob]: go", author="Bob")
+        r.worker_busy()
+        page.goto(stack.url)
+        stack.emit_ready()
+        assert _wait(lambda: page.locator("#team-view .tv-main-busy").count() == 1)
+
+    def test_first_row_arrow_label_is_not_clipped(self, stack, page):
+        # 첫 이벤트가 사용자 메시지면 그 화살표가 첫 행(y=PAD_T)에 그려진다.
+        # 라벨은 화살표 활보다 위에 있으므로 PAD_T 가 활+라벨 높이를 못
+        # 이기면 viewBox 밖으로 잘린다 ("맨 위 화살표 이름 철수 안 보임").
+        page.goto(stack.url)
+        stack.emit_ready()
+        stack.renderer.push_user_message("[철수]: 첫 요청", author="철수")
+        page.wait_for_selector("#team-view .tv-msg-label", timeout=8000)
+        box = page.evaluate(
+            "() => document.querySelector('#team-view .tv-msg-label').getBBox().y"
+        )
+        assert box > 0, f"label bbox top {box} — clipped above the viewBox"
+        assert page.locator("#team-view .tv-msg-label", has_text="철수").count() == 1

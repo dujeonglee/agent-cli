@@ -1817,6 +1817,10 @@
     // we were stopping has finished; busy = a fresh turn started.
     stopRequested = false;
     updateSendEnabled();
+    // Main-lane tail spinner: with the timeline in a drawer this is the
+    // team surface's "main is responding" cue (agents get theirs from
+    // roster state; main's truth is the worker state).
+    if (window.TeamView && TeamView.setMainBusy) TeamView.setMainBusy(d.busy);
   });
 
   // ── Identity + viewer roster ───────
