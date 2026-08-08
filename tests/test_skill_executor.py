@@ -317,19 +317,26 @@ class TestSkillSpawnExecution:
 
             sctx = ContextManager(session_dir=Path(d))
             reg = AgentRegistry(session_dir=Path(d))
-            execute_skill(
-                skill,
-                "make it",
-                prov,
-                caps,
-                "m",
-                ctx=sctx,
-                agent_registry=reg,
-                max_turns=4,
-            )
-            hist = Path(d) / "history.jsonl"
-            rejected = hist.is_file() and "main-session only" in hist.read_text()
-            worker_count = len(reg.roster_snapshot())
+            try:
+                execute_skill(
+                    skill,
+                    "make it",
+                    prov,
+                    caps,
+                    "m",
+                    ctx=sctx,
+                    agent_registry=reg,
+                    max_turns=4,
+                )
+                hist = Path(d) / "history.jsonl"
+                rejected = hist.is_file() and "main-session only" in hist.read_text()
+                worker_count = len(reg.roster_snapshot())
+            finally:
+                # 실워커 스레드를 join 하고 나서 TemporaryDirectory 를 닫는다 —
+                # 부팅 중인 워커가 세션 디렉토리에 파일을 쓰는 도중 rmtree 가
+                # 돌면 CI 에서 "Directory not empty" 로 간헐 실패 (느린 러너
+                # 에서만 재현되는 teardown 레이스).
+                reg.shutdown_all()
         # spawn 이 거부되지 않고 워커가 registry 에 등록돼야 (배선 완전)
         assert not rejected, "skill 서브루프 spawn 이 'main-session only' 로 거부됨"
         assert worker_count >= 1, "spawn 된 워커가 registry 에 등록 안 됨"
