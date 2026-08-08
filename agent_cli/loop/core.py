@@ -625,9 +625,8 @@ class AgentLoop:
             return
         from agent_cli.render import get_renderer
 
-        renderer = get_renderer()
-        if hasattr(renderer, "set_run_authors"):
-            renderer.set_run_authors(self.run_authors)
+        # ABC 표면 (v8.6.0 승격) — CLI 는 no-op 기본, web 이 override.
+        get_renderer().set_run_authors(self.run_authors)
         registry = self._config.agent_registry
         if registry is not None:
             registry.set_current_run_authors(self.run_authors)
@@ -659,13 +658,11 @@ class AgentLoop:
         labeled = f"[{author}]: {text}" if author else text
         # Echo the dequeued message as a conversation card BEFORE routing —
         # mirrors the worker's run-starter echo so an injected command/chat
-        # shows the same way it would at run-start (web renderer only;
-        # push_user_message is a web affordance, CLI/minimal don't inject).
+        # shows the same way it would at run-start. ABC 표면 (v8.6.0 승격):
+        # CLI 기본은 no-op(주입 자체가 web 전용이라 도달도 안 함).
         from agent_cli.render import get_renderer
 
-        renderer = get_renderer()
-        if hasattr(renderer, "push_user_message"):
-            renderer.push_user_message(labeled, author=author or "")
+        get_renderer().push_user_message(labeled, author=author or "")
         if self.route_message is not None and self.route_message(text):
             # Routed as a command — record the ask; ctx may have changed.
             self.task_log.append(labeled)
