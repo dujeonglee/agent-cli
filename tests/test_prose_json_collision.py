@@ -135,7 +135,7 @@ class TestRepairPathStillReachable:
 
 class TestNonOpJsonIsNotAnOp:
     """계층 0 = op 이 아니다. op 이 아예 없는 턴은 산문-only 로 남아야 한다
-    (ⓐ 결정: prose_completion 이 최종답변으로 수용)."""
+    (v8.4.0 부터 산문-only 는 NO_ACTION 넛지 — 명시적 complete 만 종결)."""
 
     @pytest.mark.parametrize("payload", ["[1, 2, 3]", "[]", '["a", "b"]', "42"])
     def test_non_op_json_alone_is_prose_only(self, payload):
