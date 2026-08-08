@@ -2061,6 +2061,12 @@ def web(
                 f"[{nickname}]: {message}",
                 author="" if _wake_verdict == "run" else nickname,
             )
+            # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령
+            # (@agent request 등)이 만든 요청도 이 런의 요청자를 물려받도록
+            # 워커가 먼저 세팅 — run_loop 는 주입 때마다 재갱신한다.
+            agent_registry.set_current_run_authors(
+                [] if _wake_verdict == "run" else [nickname]
+            )
             # Fresh stop handle for this turn so the web "Stop" button
             # (POST /api/stop → server.trigger_stop) can signal the loop
             # to exit at the next turn boundary — the same ``stop_event``

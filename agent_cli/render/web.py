@@ -947,6 +947,14 @@ class WebRenderer(Renderer):
                 # live ``observation()`` call would emit.
                 prefix = "Observation: "
                 content = content.removeprefix(prefix)
+                # 귀속 승계 재생 (v8.5.0): 에이전트 회신 관찰이 실어온 원
+                # 요청자들(``answers`` additive) — 라이브의 턴경계 합류와
+                # 같은 집합을 재생에서도 재도출해, 🤝 웨이크 런의 회신
+                # 화살표가 resume 후에도 유지된다.
+                if not sub:
+                    for a in msg.get("answers") or []:
+                        if a and a not in self._replay_authors:
+                            self._replay_authors.append(a)
                 self.observation(
                     content,
                     turn=0,

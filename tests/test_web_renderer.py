@@ -3181,3 +3181,56 @@ class TestCompleteAttribution:
             d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
         ]
         assert finals[-1]["answers"] == ["Bob"]
+
+    def test_replay_inherits_answers_from_agent_reply_observation(self):
+        # 귀속 승계 재생 (v8.5.0): 🤝 웨이크 런은 user 레코드가 agent 발신
+        # (author_is_user=False)이라 그 자체론 무귀속인데, 에이전트 회신
+        # 관찰 레코드의 ``answers`` additive 가 원 요청자를 되실어 온다 —
+        # 라이브의 턴경계 합류와 동일 집합.
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {
+                    "role": "user",
+                    "content": "[🤝 agent]: New agent mail has arrived…",
+                    "author": "🤝 agent",
+                    "author_is_user": False,
+                    "ts": 1.0,
+                },
+                {
+                    "role": "user",
+                    "tool": "agent",
+                    "content": "Observation: ── agent w1 reply ──\ndone",
+                    "success": True,
+                    "answers": ["Bob"],
+                    "ts": 2.0,
+                },
+                self._final_record(3.0, "the real answer"),
+            ]
+        )
+        r.replay_from_history(ctx)
+        finals = [
+            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
+        ]
+        assert finals[-1]["answers"] == ["Bob"]
+
+    def test_replay_answerless_observation_is_noop(self):
+        # 구세션 관찰(answers 없음) 은 종전 그대로 — 하위호환.
+        r, conn = self._renderer_with_conn()
+        ctx = _FakeResumeCtx(
+            [
+                {
+                    "role": "user",
+                    "tool": "shell",
+                    "content": "Observation: ok",
+                    "success": True,
+                    "ts": 1.0,
+                },
+                self._final_record(2.0),
+            ]
+        )
+        r.replay_from_history(ctx)
+        finals = [
+            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
+        ]
+        assert finals[-1]["answers"] == []

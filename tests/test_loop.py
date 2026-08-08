@@ -3865,3 +3865,115 @@ class TestRunAuthors:
         loop = self._loop(caps, query_author="🤝 agent", query_author_is_user=False)
         loop._add_user_message(loop.query, loop.query_author, is_user=False)
         assert loop.run_authors == []
+
+
+class TestMailAnswersInheritance:
+    """귀속 승계 소비측 (v8.5.0) — 회신이 실어온 원 요청자들이 회신을 접는
+    런의 run_authors 에 합류한다. 🤝 웨이크 런(시작 authors 빈)과 실행 중
+    턴경계 배달이 같은 지점(_deliver_agent_mail)으로 커버."""
+
+    class _StubRegistry:
+        def __init__(self, replies):
+            self._replies = replies
+            self.author_sets = []
+
+        def drain_replies(self):
+            out, self._replies = self._replies, []
+            return out
+
+        def set_current_run_authors(self, authors):
+            self.author_sets.append(list(authors))
+
+        def get(self, key):
+            return None  # build_reply_record 의 배달-시점 상태 줄 생략 경로
+
+    def _reply(self, answers, key="w1", output="done"):
+        return {
+            "kind": "reply",
+            "key": key,
+            "profile": "code-writer",
+            "seq": 1,
+            "success": True,
+            "output": output,
+            "duration_s": 0.1,
+            "reply_path": "",
+            "answers": answers,
+        }
+
+    def _loop(self, caps, registry, **kw):
+        from agent_cli.loop import AgentLoop
+
+        return AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            agent_registry=registry,
+            **kw,
+        )
+
+    def test_wake_run_inherits_reply_answers(self, caps):
+        # 🤝 런: 시작 authors 빈 상태에서 배달이 원 요청자를 채운다.
+        from agent_cli import render
+
+        class _Stub:
+            def __init__(self):
+                self.author_sets = []
+
+            def set_run_authors(self, authors):
+                self.author_sets.append(list(authors))
+
+            def push_user_message(self, content, author=""):
+                pass
+
+        stub = _Stub()
+        prev = render.get_renderer()
+        render.set_renderer(stub)
+        try:
+            reg = self._StubRegistry([self._reply(["Bob"])])
+            loop = self._loop(caps, reg, dequeue_user_message=lambda: None)
+            loop._deliver_agent_mail()
+            assert loop.run_authors == ["Bob"]
+            assert stub.author_sets[-1] == ["Bob"]
+            assert reg.author_sets[-1] == ["Bob"]
+        finally:
+            render.set_renderer(prev)
+
+    def test_midrun_delivery_merges_into_existing_authors(self, caps):
+        # 두정 런 실행 중 Bob 요청의 회신이 배달 → 합집합 (교차 오염이 아니라
+        # 그 런의 답이 실제로 두 사람 건을 다루게 된 것).
+        reg = self._StubRegistry([self._reply(["Bob"])])
+        loop = self._loop(caps, reg)
+        loop.run_authors.append("두정")
+        loop._deliver_agent_mail()
+        assert loop.run_authors == ["두정", "Bob"]
+
+    def test_multiple_replies_union_dedup(self, caps):
+        reg = self._StubRegistry(
+            [self._reply(["Bob"]), self._reply(["Bob", "Ann"], key="w2")]
+        )
+        loop = self._loop(caps, reg)
+        loop._deliver_agent_mail()
+        assert loop.run_authors == ["Bob", "Ann"]
+
+    def test_delivery_persists_answers_on_ctx_record(self, caps, tmp_path):
+        # resume 파리티: 합류한 answers 가 관찰 레코드에 additive 로 실려
+        # 히스토리에 남는다 (재생이 같은 집합을 재도출하는 근거).
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        reg = self._StubRegistry([self._reply(["Bob"])])
+        loop = self._loop(caps, reg, ctx=ctx)
+        loop._deliver_agent_mail()
+        recs = ctx.get_raw_messages()
+        obs = [r for r in recs if r.get("tool") == "agent"]
+        assert obs and obs[-1]["answers"] == ["Bob"]
+
+    def test_answerless_reply_is_noop(self, caps):
+        # 구버전 회신(answers 키 없음 — resume 하위호환)도 안전.
+        r = self._reply([])
+        del r["answers"]
+        reg = self._StubRegistry([r])
+        loop = self._loop(caps, reg)
+        loop._deliver_agent_mail()
+        assert loop.run_authors == []

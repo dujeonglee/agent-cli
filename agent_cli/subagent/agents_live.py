@@ -386,8 +386,19 @@ class AgentRegistry:
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
         # 회신 도착 알림 (CLI 📨 라인 / web transient status) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
+        # 귀속 승계 (v8.5.0): 현재 런이 서비스 중인 USER 들 — worker 가 런
+        # 시작에, main 루프가 조향 주입마다 갱신. main 발신 request 가 이
+        # 스냅샷을 아이템에 실어 보내고, 그 회신이 그대로 되가져와 회신을
+        # 소비한 런의 ``answers`` 에 합류한다(🤝 웨이크 런 포함). 시간이
+        # 아니라 요청↔회신 쌍에 묶이므로 인터리빙에 안전.
+        self._current_run_authors: list[str] = []
 
     # ── 조회 ────────────────────────────────────
+
+    def set_current_run_authors(self, authors: list[str]) -> None:
+        """현재 런의 요청자 목록 갱신 (귀속 승계 — ``_current_run_authors``
+        주석 참조). worker(런 시작)와 main 루프(조향 주입)가 호출한다."""
+        self._current_run_authors = list(authors)
 
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
@@ -586,15 +597,20 @@ class AgentRegistry:
         # request ABOVE (before) the work bar, not after it.
         send_ts = time.time()
         tm.queued += 1
-        tm.inbox.put(
-            {
-                "seq": tm.queued,
-                "text": message,
-                "author": author,
-                "hop": hop,
-                "expects_reply": expects_reply,
-            }
-        )
+        item = {
+            "seq": tm.queued,
+            "text": message,
+            "author": author,
+            "hop": hop,
+            "expects_reply": expects_reply,
+        }
+        if author == "main":
+            # 귀속 승계: 이 요청을 만든 런의 USER 들을 요청에 스냅샷 —
+            # 회신이 그대로 되가져와, 회신을 접는 런(🤝 웨이크 포함)의
+            # 최종답이 원 요청자에게 귀속된다. peer/user 발신은 회신이
+            # main mailbox 로 안 가므로 스냅샷 불필요.
+            item["answers"] = list(self._current_run_authors)
+        tm.inbox.put(item)
         from agent_cli.render import get_renderer
 
         payload = {
@@ -1211,6 +1227,9 @@ class AgentRegistry:
                 elif author == "main":
                     # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
                     # 개입 문답은 창에만, main 컨텍스트 비오염).
+                    # ``answers`` = 요청 스냅샷 그대로 (귀속 승계) — 회신을
+                    # 소비하는 런이 run_authors 에 합류시킨다. question/died
+                    # 는 미승계(사용자 답이 아닌 내부 왕복).
                     self._push_reply(
                         {
                             "kind": "reply",
@@ -1221,6 +1240,7 @@ class AgentRegistry:
                             "output": output,
                             "duration_s": duration,
                             "reply_path": reply_path,
+                            "answers": item.get("answers") or [],
                         }
                     )
                 else:
