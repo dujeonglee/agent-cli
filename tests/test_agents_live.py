@@ -3420,3 +3420,40 @@ class TestAttributionInheritance:
         assert wait_until(reg.has_pending_replies)
         state = _json.loads((tmp_path / "agents.json").read_text())
         assert state["pending"][0]["answers"] == ["Bob", "두정"]
+
+
+class TestRequestInEventAddressing:
+    """v8.5.1 — request 의 "in" 이벤트는 수신 에이전트를 to 로 실어야 한다.
+    누락 시 렌더러 기본값 "main" 이 대신 실려, TeamView ingest 중복제거 키
+    (author:to:seq:direction)가 다른 에이전트의 같은 seq 요청과 충돌 —
+    두 번째 spawn+task 의 요청 화살표가 조용히 드롭됐다 (실세션 ae730c35)."""
+
+    def test_request_in_event_carries_recipient_as_to(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        ins = [
+            kw
+            for name, kw in renderer.calls
+            if name == "agent_message" and kw.get("direction") == "in"
+        ]
+        assert ins and ins[0]["to"] == key
+
+    def test_two_agents_same_seq_have_distinct_addressing(self, tmp_path, renderer):
+        # 서로 다른 에이전트의 첫 요청(seq=1 씩)이 (author,to,seq,direction)
+        # 4-튜플에서 구분돼야 프런트 dedup 이 두 번째를 못 삼킨다.
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn()
+        k2, _ = reg.spawn()
+        wait_until(lambda: reg.get(k1).state == "idle")
+        wait_until(lambda: reg.get(k2).state == "idle")
+        reg.request(k1, "job a")
+        reg.request(k2, "job b")
+        ins = [
+            (kw["author"], kw["to"], kw["seq"], kw["direction"])
+            for name, kw in renderer.calls
+            if name == "agent_message" and kw.get("direction") == "in"
+        ]
+        assert len(ins) == 2
+        assert len(set(ins)) == 2, f"dedup 키 충돌: {ins}"

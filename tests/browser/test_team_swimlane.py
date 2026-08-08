@@ -802,3 +802,36 @@ class TestMainSpinnerAndLabelClip:
         )
         assert box > 0, f"label bbox top {box} — clipped above the viewBox"
         assert page.locator("#team-view .tv-msg-label", has_text="철수").count() == 1
+
+
+class TestSpawnTaskArrows:
+    """v8.5.1 — 서로 다른 에이전트에 대한 같은-seq 요청(연속 spawn+task 의
+    실제 모양)이 각각 화살표를 그린다. to 누락 시절엔 ingest 중복제거 키가
+    충돌해 두 번째가 드롭됐다 (실세션 ae730c35 재현)."""
+
+    def test_same_seq_requests_to_two_agents_both_draw(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [
+                {
+                    "key": "w1",
+                    "profile": "code-reviewer",
+                    "name": "w1",
+                    "state": "busy",
+                },
+                {"key": "w2", "profile": "code-writer", "name": "w2", "state": "busy"},
+            ]
+        )
+        # spawn+task 두 번의 실제 이벤트 모양: 각자 자기 seq 카운터의 1번.
+        r.agent_message(
+            key="w1", direction="in", author="main", to="w1", text="review it", seq=1
+        )
+        r.agent_message(
+            key="w2", direction="in", author="main", to="w2", text="write tests", seq=1
+        )
+        page.wait_for_selector("#team-view .tv-msg", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2), (
+            "두 번째 spawn+task 요청 화살표가 dedup 에 삼켜짐"
+        )
