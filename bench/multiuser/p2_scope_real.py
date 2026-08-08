@@ -196,6 +196,18 @@ def run_rep(
             for r in records
             if r.get("kind") == "query" and r.get("id")
         }
+        # 턴별 파일 귀속 (reply_to × files 조인, n3c 판정기와 같은 원리).
+        # 워크스페이스 합집합(classify)은 "둘 다 함" 실패 양상 — §6.7 의
+        # 지배적 양상 — 을 disjoint_ok 로 오판하므로, 경로 조건의 턴 수준
+        # 판정에는 이 필드가 필요하다.
+        turn_files: dict[str, list[str]] = {}
+        for r in records:
+            owner = r.get("reply_to")
+            if not owner:
+                continue
+            for p in r.get("files") or []:
+                turn_files.setdefault(owner, []).append(Path(str(p)).name)
+        turn_files = {k: sorted(set(v)) for k, v in turn_files.items()}
         return {
             "lock_scope": scope,
             "paths": paths,
@@ -203,6 +215,7 @@ def run_rep(
             "turn_scoping": scoping,
             "queries": queries,
             "answer_texts": answers,
+            "turn_files": turn_files,
             "spanA_ms": round(span_a, 1),
             "spanB_ms": round(span_b, 1),
             "workA_ms": round(work_a, 1),

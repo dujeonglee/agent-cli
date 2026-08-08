@@ -1,0 +1,42 @@
+{
+  "workload": "realistic",
+  "tasks": {
+    "parser": [
+      "parser_tokens.txt",
+      "parser_rules.txt"
+    ],
+    "readme": [
+      "readme_intro.txt",
+      "readme_usage.txt"
+    ]
+  },
+  "writesPerTurn": 2,
+  "lines": 8,
+  "arms": [
+    {
+      "scoping": "off",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 11,
+      "crossTaskRate": 0.55,
+      "turnsWroteOthers": 14,
+      "turnsOwnComplete": 33,
+      "bothComplete": 13,
+      "bothCompleteRate": 0.65,
+      "medianSpanMs": 9471.4
+    },
+    {
+      "scoping": "on",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 8,
+      "crossTaskRate": 0.4,
+      "turnsWroteOthers": 9,
+      "turnsOwnComplete": 38,
+      "bothComplete": 18,
+      "bothCompleteRate": 0.9,
+      "medianSpanMs": 10278.6
+    }
+  ],
+  "note": "crossTask = one turn carried out the other user's task (wrote their files instead of its own), judged from filenames alone. The two instructions are genuinely different work (different subject, filenames, line content and completion tag), so this arm measures the base rate a deployment would actually see. Only the shape of the work is shared (two files of eight lines) so that spans and sample sizes stay comparable. bothComplete guards the other direction: scoping must not make the model so cautious that it stops doing its job."
+}

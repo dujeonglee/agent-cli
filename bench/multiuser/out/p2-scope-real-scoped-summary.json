@@ -1,0 +1,42 @@
+{
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "turn_scoping": true,
+  "runs_used": 6,
+  "writes_per_turn_requested": 4,
+  "lines_per_file": 40,
+  "validity_counts": {
+    "disjoint_ok": 6
+  },
+  "cross_task_note": "실 모델도 공유 트랜스크립트에서 남의 과제를 수행할 수 있다. 두 턴의 지시가 태그와 대상 파일명만 다른 거의 동일한 문장이라 이 비율은 일반 추정치가 아니라 이 조건의 관측이다.",
+  "cells": [
+    {
+      "paths": "disjoint",
+      "lock_scope": "workspace",
+      "n_runs": 3,
+      "n_valid_for_path_axis": 3,
+      "effective_parallelism_p50": 1.882,
+      "effect_share_measured_p50": 0.0,
+      "lock_wait_p50_ms": 0.1,
+      "lock_held_p50_ms": 4.06,
+      "lock_acquisitions_p50": 8,
+      "turn_span_p50_ms": 483155.25
+    },
+    {
+      "paths": "disjoint",
+      "lock_scope": "conflict",
+      "n_runs": 3,
+      "n_valid_for_path_axis": 3,
+      "effective_parallelism_p50": 1.836,
+      "effect_share_measured_p50": 0.0,
+      "lock_wait_p50_ms": 0.1,
+      "lock_held_p50_ms": 3.75,
+      "lock_acquisitions_p50": 8,
+      "turn_span_p50_ms": 404040.0
+    }
+  ],
+  "effect_share_overall_p50": 1e-05,
+  "effect_share_overall_max": 1e-05,
+  "parallelism_identity_max_deviation": 0.0003,
+  "parallelism_identity_note": "지표 = 1 + 짧은턴/긴턴 과의 최대 편차. 이 값이 0 에 붙어 있으면 유효 병렬도 손실이 전부 턴 길이 비대칭이고 락 기여는 그 아래다.",
+  "elapsed_s": 3069.8
+}

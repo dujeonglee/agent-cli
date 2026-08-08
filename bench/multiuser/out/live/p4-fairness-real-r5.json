@@ -1,0 +1,27 @@
+{
+  "users_short": 3,
+  "cap": 3,
+  "flood": 4,
+  "reps": 5,
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "arms": {
+    "gate_on": {
+      "per_user_gate": true,
+      "jain_all_users": 0.3734,
+      "short_wait_p50": 4.8,
+      "short_wait_p95": 23568.8,
+      "flood_wait_p50": 83331.8,
+      "flood_wait_max": 161776.5,
+      "per_user_concurrency_violations": 0
+    },
+    "gate_off": {
+      "per_user_gate": false,
+      "jain_all_users": 0.7918,
+      "short_wait_p50": 151205.2,
+      "short_wait_p95": 198191.0,
+      "flood_wait_p50": 8.6,
+      "flood_wait_max": 112671.8,
+      "per_user_concurrency_violations": 15
+    }
+  }
+}

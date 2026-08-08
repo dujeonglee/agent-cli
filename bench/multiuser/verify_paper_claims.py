@@ -179,6 +179,73 @@ def main() -> None:
     chk("6.4", "shell share 5s", 0.094, sc[5000]["effectShareP50"], tol=0.02)
     chk("6.4", "shell lock wait 5s ms", 4125, sc[5000]["lockWaitP50Ms"], tol=0.02)
 
+    # ── §6.4 스코핑-온 서로소 재실행 (플랜3 J1) ───────────
+    psc = J("p2-scope-real-scoped-summary.json")
+    chk("6.4", "scoped arm turn_scoping", True, psc["turn_scoping"])
+    chk("6.4", "scoped runs", 6, psc["runs_used"])
+    chk(
+        "6.4",
+        "scoped disjoint_ok runs",
+        6,
+        psc["validity_counts"].get("disjoint_ok", 0),
+    )
+    pcells = {c["lock_scope"]: c for c in psc["cells"]}
+    chk(
+        "6.4",
+        "scoped n_valid workspace",
+        3,
+        pcells["workspace"]["n_valid_for_path_axis"],
+    )
+    chk(
+        "6.4", "scoped n_valid conflict", 3, pcells["conflict"]["n_valid_for_path_axis"]
+    )
+    chk(
+        "6.4",
+        "scoped para workspace",
+        1.88,
+        pcells["workspace"]["effective_parallelism_p50"],
+        tol=0.005,
+    )
+    chk(
+        "6.4",
+        "scoped para conflict",
+        1.84,
+        pcells["conflict"]["effective_parallelism_p50"],
+        tol=0.005,
+    )
+    chk("6.4", "scoped effect share p50", 1e-05, psc["effect_share_overall_p50"])
+    chk("6.4", "scoped effect share max", 1e-05, psc["effect_share_overall_max"])
+    chk(
+        "6.4",
+        "scoped identity holds to",
+        0.0003,
+        psc["parallelism_identity_max_deviation"],
+        tol=0.5,
+    )
+    # 턴 수준 판정 — 워크스페이스 합집합이 아니라 reply_to×files 조인.
+    prows = L("p2-scope-real-scoped.jsonl")
+    p_total = p_own = p_clean = 0
+    for r in prows:
+        for qid, text in r["queries"].items():
+            stem = "alpha" if "alpha1.txt" in text else "beta"
+            other = "beta" if stem == "alpha" else "alpha"
+            wrote = set(r["turn_files"].get(qid, []))
+            p_total += 1
+            p_own += {f"{stem}{i}.txt" for i in range(1, 5)} <= wrote
+            p_clean += not (wrote & {f"{other}{i}.txt" for i in range(1, 5)})
+    chk("6.4", "scoped turns judged", 12, p_total)
+    chk("6.4", "scoped turns own-complete", 12, p_own)
+    chk("6.4", "scoped turns no-trespass", 12, p_clean)
+    pspans = [r[k] for r in prows for k in ("spanA_ms", "spanB_ms")]
+    chk("6.4", "scoped span low s", 354, round(min(pspans) / 1000))
+    chk("6.4", "scoped span high s", 703, round(max(pspans) / 1000))
+    chk(
+        "6.4",
+        "scoped lock wait p50 ms",
+        0.1,
+        statistics.median(r["lock_wait_ms"] for r in prows),
+    )
+
     # ── §6.5 증분 재생 ────────────────────────────────────
     n4 = J("n4-replay.json")
     se = n4["stream_equality"]
@@ -298,6 +365,34 @@ def main() -> None:
         sum(r["stale_steps"] for r in m5["reps"] if r["arm"] == "parallel"),
     )
 
+    # ── §6.7 두 번째 모델 (플랜3 J2, Qwen3.6-35B-A3B) ─────
+    m2 = {a["scoping"]: a for a in J("n3c-realistic-35b-a3b.json")["arms"]}
+    chk("6.7", "35B off wrote others", 14, m2["off"]["turnsWroteOthers"])
+    chk("6.7", "35B on wrote others", 9, m2["on"]["turnsWroteOthers"])
+    chk("6.7", "35B off own complete", 33, m2["off"]["turnsOwnComplete"])
+    chk("6.7", "35B on own complete", 38, m2["on"]["turnsOwnComplete"])
+    chk("6.7", "35B off both correct", 13, m2["off"]["bothComplete"])
+    chk("6.7", "35B on both correct", 18, m2["on"]["bothComplete"])
+    m2rows = L("n3c-realistic-35b-a3b.jsonl")
+    for arm, (pfloor, pmed) in (("off", (0.18, 0.86)), ("on", (0.27, 0.76))):
+        cov = sorted(
+            min(r["spanA_ms"], r["spanB_ms"]) / max(r["spanA_ms"], r["spanB_ms"])
+            for r in m2rows
+            if r["scoping"] == arm
+        )
+        chk("6.7", f"35B overlap floor {arm}", pfloor, round(cov[0], 2))
+        chk("6.7", f"35B overlap median {arm}", pmed, round(cov[len(cov) // 2], 2))
+    # 텍스트 수준: 상대 과제의 완료 태그가 답변 텍스트에 등장한 턴 수.
+    for arm, pv in (("off", 12), ("on", 10)):
+        n_txt = 0
+        for r in m2rows:
+            if r["scoping"] != arm:
+                continue
+            for t in r["turns"]:
+                other = "readme" if t["target"] == "parser" else "parser"
+                n_txt += f"{other} done" in t.get("answerText", "")
+        chk("6.7", f"35B text-level cross tag {arm}", pv, n_txt)
+
     # ── §6.8 공정성 ───────────────────────────────────────
     p4 = J("p4-fairness.json")
     chk(
@@ -355,6 +450,52 @@ def main() -> None:
         / pl["arms"]["gate_on"]["short_wait_p50"]
     )
     chk("6.8", "live ratio (thousands)", 33, round(ratio / 1000), tol=0.05)
+
+    # ── §6.8 라이브 5회 반복 (플랜3 J3) — 본문이 인용하는 실행 ──
+    p5 = J("live/p4-fairness-real-r5.json")
+    chk("6.8", "r5 reps", 5, p5["reps"])
+    chk(
+        "6.8",
+        "r5 gate_on short p50 ms",
+        4.8,
+        p5["arms"]["gate_on"]["short_wait_p50"],
+        tol=0.05,
+    )
+    chk(
+        "6.8",
+        "r5 gate_off short p50 s",
+        151.2,
+        round(p5["arms"]["gate_off"]["short_wait_p50"] / 1000, 1),
+    )
+    chk(
+        "6.8",
+        "r5 gate_off short p95 s",
+        198.2,
+        round(p5["arms"]["gate_off"]["short_wait_p95"] / 1000, 1),
+    )
+    chk(
+        "6.8",
+        "r5 gate_on short p95 s",
+        23.6,
+        round(p5["arms"]["gate_on"]["short_wait_p95"] / 1000, 1),
+    )
+    chk(
+        "6.8",
+        "r5 flood p50 s",
+        83.3,
+        round(p5["arms"]["gate_on"]["flood_wait_p50"] / 1000, 1),
+    )
+    chk(
+        "6.8",
+        "r5 gate_on violations",
+        0,
+        p5["arms"]["gate_on"]["per_user_concurrency_violations"],
+    )
+    r5ratio = (
+        p5["arms"]["gate_off"]["short_wait_p50"]
+        / p5["arms"]["gate_on"]["short_wait_p50"]
+    )
+    chk("6.8", "r5 ratio (thousands)", 31, round(r5ratio / 1000), tol=0.05)
     pb = {(x["shell_s"], x["arm"]): x for x in J("p4b-mixed.json")["cells"]}
     chk(
         "6.8",
