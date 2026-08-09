@@ -1,6 +1,6 @@
 # Coagora: 단일 LLM 에이전트 세션의 동기적 다중 사용자 공유를 위한 동시성 계약을 통한 멀티플레이어 코딩 에이전트
 
-> **한국어 번역본** (v1.0-wip 대응, 2026-08-08). 라운드 1 Phase 0–3(`14-review-response-plan.md`)과 라운드 2 Phase A–C + 목/라이브 감사(`16-review-response-plan-2.md`, `17-mock-vs-live-audit.md`)가 반영됐다: 모든 라이브 측정을 수리된 스텝 seam 위에서 재실행했고, 현실 워크로드 기저율을 측정했으며, 목이 실상을 왜곡할 수 있던 네 실험에 라이브 팔을 붙였다. 변경 이력은 `09-CHANGELOG.md`. 제출 전 남은 것: §7 의 first-use study(프로토콜 `18-first-use-study-protocol.md`, 참가자 대기), 저자 미검증 참고문헌 5 건 보완, 게재처 서식 정규화와 익명화.
+> **한국어 번역본** (v1.0-wip 대응, 2026-08-08). 라운드 1 Phase 0–3(`14-review-response-plan.md`)과 라운드 2 Phase A–C + 목/라이브 감사(`16-review-response-plan-2.md`, `17-mock-vs-live-audit.md`)가 반영됐다: 모든 라이브 측정을 수리된 스텝 seam 위에서 재실행했고, 현실 워크로드 기저율을 측정했으며, 목이 실상을 왜곡할 수 있던 네 실험에 라이브 팔을 붙였다. 변경 이력은 `09-CHANGELOG.md`. 게재처 확정: **CHI Papers**. 익명화 제출 파생본은 `21-chi-submission-draft.md` 이며 이 파일이 작업 정본으로 남는다(참고문헌 저자 목록은 전부 원 출처 검증 완료). 제출 전 남은 것: §7 의 first-use study(프로토콜 `18-first-use-study-protocol.md`, 참가자 대기)와 그 결과의 파생본 통합.
 > 정본은 영문 초안 `09-full-paper-draft.md` 이며, 본 번역본은 검토·논의용이다. 수치·인용 번호·절 구조는 정본과 1:1 로 대응한다. 투고 원고는 영문 정본에서 만든다.
 > 저자용 상태 노트는 `[NOTE: …]`/`[TODO: …]` 로 표기되며 제출 전 제거한다.
 > ✔ 표시 수치는 `bench/multiuser/out/` 의 커밋된 원시 데이터가 근거다.
@@ -484,7 +484,7 @@ Schmidt 와 Bannon 은 조정 기술이 접합 작업을 제거하기보다 재�
 
 ## 참고문헌 (References)
 
-[NOTE: 투고처 형식으로 정규화. 모든 항목을 원 출처에 대조했으며, [1]·[3]·[5]·[21]·[22]·[24] 의 저자 목록과 [26] 의 기록 상태도 2026-08-08 에 arXiv·ACM DL·이슈 트래커에서 확인했다. 남은 표시는 [25] 하나이며 해당 항목에 적었다.]
+[NOTE: 정본은 이 작업 형식을 유지한다. CHI 제출 파생본(`21-chi-submission-draft.md`)이 익명화 형태이며, ACM BibTeX 정규화는 이 검증된 항목들로부터 LaTeX 단계에서 한다. 모든 항목을 원 출처에 대조했으며, [1]·[3]·[5]·[21]·[22]·[24]·[25] 의 저자 목록과 [26] 의 기록 상태를 2026-08-08/09 에 arXiv·ACM DL·이슈 트래커·저자 페이지에서 확인했다. 남은 플래그 없음.]
 
 1. A. Welter, N. Schneider, T. Dick, K. Weis, C. Tinnes, M. Wyrich, S. Apel. *From developer pairs to AI copilots: A comparative study on knowledge transfer.* arXiv:2506.04785, 2025.
 2. V. Chen, A. Talwalkar, J. Brennan, G. Neubig. *Code with me or for me? How increasing AI automation transforms developer workflows.* arXiv:2507.08149, 2025.
@@ -510,7 +510,7 @@ Schmidt 와 Bannon 은 조정 기술이 접합 작업을 제거하기보다 재�
 22. J. Yang, K.-H. Lai, X. Wang, S. Chang, Y. Harari, E. Gabrilovich. *GroupMemBench: Benchmarking LLM agent memory in multi-party conversations.* arXiv:2605.14498, 2026.
 23. Daryanto et al. *Human-human-AI triadic programming.* arXiv:2601.12134, 2026.
 24. C. Nachuma, M. Zibran. *When AI teammates meet code review: Collaboration signals shaping the integration of agent-authored pull requests.* MSR 2026. arXiv:2602.19441.
-25. Z. Z. Wang et al. *Position: Humans are missing from AI coding agent research.* 2026. https://zorazrw.github.io/files/position-haicode.pdf [NOTE: 게재처 미확인 — 프로시딩 등재 확인 전까지 포지션 페이퍼로 인용.]
+25. Z. Z. Wang, J. Yang, K. Lieret, et al. *Position: Humans are missing from AI coding agent research.* Preprint, 2026. https://zorazrw.github.io/files/position-haicode.pdf (2026-08-09 재확인: 여전히 프로시딩 미등재, 프리프린트로 인용).
 26. M. Liu, T. Chen, Z. Xu, X. Jiang, Y. Dong. *Multi-agent collaboration with state management* (STORM: 상태 지향 관리. 충돌 편집을 공유 코드베이스 위에서 **쓰기 시점에** 탐지·해소). arXiv:2605.20563, 2026. 프리프린트이며 기록상 게재처 표기 없음.
 27. Y. Mao, A. Mirhoseini. *Decentralized multi-agent systems with shared context* (DeLM). arXiv:2606.10662, 2026.
 28. M. Yang et al. *Justitia: Fair and efficient scheduling of task-parallel LLM agents with selective pampering.* arXiv:2510.17015, 2025.
