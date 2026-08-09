@@ -39,6 +39,50 @@ def is_context_overflow(error_message: str) -> bool:
     return any(p.search(error_message) for p in _COMPILED_PATTERNS)
 
 
+class ContextOverflowError(Exception):
+    """Raised at the provider boundary when the server rejects a request as
+    context-overflow (HTTP 400 + overflow body).
+
+    Carries the server-reported amounts so the loop's reactive recovery needs
+    no string re-parsing. ``actual``/``limit`` are best-effort — ``None`` when
+    the body did not name them."""
+
+    def __init__(
+        self, actual: int | None, limit: int | None, message: str = ""
+    ) -> None:
+        super().__init__(message or "context overflow")
+        self.actual = actual
+        self.limit = limit
+
+
+# The destructive ``force_fit`` recovery must fire ONLY for a genuine
+# server-side context rejection. HTTP 400/413 is the ground truth; gating on
+# it stops a non-overflow exception whose text merely *mentions* "context
+# window" (a config error, a proxy 500 page, a bare transport error) from
+# shredding history via a false-positive shrink-and-retry (see AUDIT L-1).
+_OVERFLOW_STATUS = frozenset({400, 413})
+
+
+def classify_overflow(exc: Exception) -> tuple[int | None, int | None] | None:
+    """Classify an exception as context-overflow, returning ``(actual, limit)``
+    or ``None`` when it is NOT an overflow the loop should recover from.
+
+    - :class:`ContextOverflowError` → its carried amounts (the boundary already
+      knew it was a 400 overflow and parsed the body).
+    - An HTTP 400/413 error whose body matches the overflow patterns → amounts
+      parsed from the message. This is the fallback for a provider path that
+      does not route through :func:`raise_for_status_with_body`; the status gate
+      is what makes it safe.
+    - Anything else → ``None``. A matching phrase alone never triggers
+      recovery, so a non-overflow error can never destroy context."""
+    if isinstance(exc, ContextOverflowError):
+        return exc.actual, exc.limit
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in _OVERFLOW_STATUS and is_context_overflow(str(exc)):
+        return parse_overflow_amounts(str(exc))
+    return None
+
+
 # Combined-form patterns: the actual count and the limit appear bound
 # together in a single comparison clause, so one regex captures both.
 # Each tuple: (compiled_regex, actual_group, limit_group).

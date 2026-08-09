@@ -424,20 +424,34 @@ class TestRaiseForStatusWithBody:
     def test_ok_does_not_raise(self):
         http_mod.raise_for_status_with_body(self._resp(200, ""))  # no exception
 
-    def test_400_message_includes_body_and_is_recognised_as_overflow(self):
-        from agent_cli.context.overflow import is_context_overflow
+    def test_400_overflow_raises_typed_error_with_amounts(self):
+        # The boundary promotes a 400 overflow to a typed ContextOverflowError
+        # carrying the server-reported amounts, so the loop never string-matches
+        # arbitrary exceptions (AUDIT L-1). Previously this raised a generic
+        # HTTPError the loop re-parsed — the false-positive source.
+        from agent_cli.context.overflow import ContextOverflowError
 
         body = (
             '{"error": "Prompt 270000 tokens exceeds max context window of '
             '262144 tokens"}'
         )
-        with pytest.raises(requests.HTTPError) as ei:
+        with pytest.raises(ContextOverflowError) as ei:
             http_mod.raise_for_status_with_body(self._resp(400, body))
-        msg = str(ei.value)
-        assert "exceeds max context window" in msg
-        # the loop's reactive recovery keys on exactly this — without the body
-        # it returned False and the 400 surfaced as a hard failure.
-        assert is_context_overflow(msg) is True
+        assert ei.value.actual == 270000
+        assert ei.value.limit == 262144
+        assert "exceeds max context window" in str(ei.value)
+
+    def test_400_non_overflow_stays_generic_httperror(self):
+        # A 400 that is NOT an overflow must remain a plain HTTPError-with-body,
+        # not the typed error — so recovery is never triggered for it.
+        with pytest.raises(requests.HTTPError) as ei:
+            http_mod.raise_for_status_with_body(
+                self._resp(400, '{"error": "missing field foo"}')
+            )
+        from agent_cli.context.overflow import ContextOverflowError
+
+        assert not isinstance(ei.value, ContextOverflowError)
+        assert "missing field foo" in str(ei.value)
 
     def test_400_without_body_falls_back_to_standard(self):
         r = self._resp(400, "")

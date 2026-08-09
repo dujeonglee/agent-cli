@@ -272,7 +272,10 @@ constants.py        → (외부만: 없음, 순수 상수)
 verbose.py          → (외부만: sys, time) — providers/http, loop가 공유
 providers/capabilities.py → config
 providers/base.py   → providers/capabilities
-providers/http.py   → verbose, render (lazy)
+providers/http.py   → verbose, render (lazy), context/overflow
+                      (ContextOverflowError·is_context_overflow·parse_overflow_amounts
+                       — 400 overflow 를 경계에서 typed error 로 승격. context/overflow
+                       는 내부 의존 0 이라 acyclic)
 providers/*.py      → providers/base, providers/capabilities, providers/http
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/_json_diag → (외부만: json) — 순수 JSON 진단 유틸, 저층
@@ -644,15 +647,17 @@ LLM 호출 시 messages:
 
 **flow 2 — Reactive overflow recovery (`force_fit`)**
 
-> **전제 — 에러에 본문이 실려야 함**: omlx 400 의 상한 정보는 **응답 BODY**(`...exceeds max context window of N tokens`)에 있는데, 표준 `r.raise_for_status()` 는 본문 없는 메시지(`400 Client Error: Bad Request for url: ...`)만 던져 `is_context_overflow(str(err))` 가 항상 False → flow 2 가 발화를 못 하고 recoverable 400 이 hard-fail(실측 iter=37 증상). provider 는 **`http.raise_for_status_with_body(r)`** 로 본문을 메시지에 포함시켜 이 인식을 복원한다(success 경로 무손상 — 스트리밍 200 에선 `r.text` 안 읽음, 에러 분기에서만 읽음).
+> **전제 — 분류는 타입으로, 발화는 HTTP 상태로 게이트**: omlx 400 의 상한 정보는 **응답 BODY**(`...exceeds max context window of N tokens`)에 있다. `http.raise_for_status_with_body(r)` 가 **경계에서** `status==400 && is_context_overflow(body)` 이면 body 를 파싱해 typed **`ContextOverflowError(actual, limit)`** 를 raise 한다(그 외 400/오류는 본문 포함 generic `HTTPError`; success 경로 무손상 — 스트리밍 200 에선 `r.text` 안 읽음). 루프는 **`classify_overflow(e)`** 로 판정하는데, typed error 이거나 **HTTP 400/413 + overflow 본문**일 때만 amounts 를 돌려주고 그 외엔 `None`(→ force_fit 안 함). 이 **상태 게이트**가 핵심: 예전엔 `is_context_overflow(str(err))` 로 *임의* 예외의 문자열만 맞으면 파괴적 force_fit 이 발화해 비-overflow 오류(설정 오류·프록시 500 페이지)가 히스토리를 **영구 파쇄**했다(AUDIT L-1, v8.6.1 수리).
 
 ```
 provider.call() → 예외
     │
-    └─ is_context_overflow(err)? (overflow.py 패턴: Anthropic/OpenAI/omlx)
-         │ yes & ctx 있음 & overflow_retries < _MAX_OVERFLOW_RETRIES(5)
+    └─ classify_overflow(e) → (actual, limit) | None
+         │ = ContextOverflowError 이거나 (HTTPError && status∈{400,413} && overflow 본문)
+         │   그 외(비-HTTP·500·overflow아닌 400) → None → force_fit 안 함(재전파)
+         │ non-None & ctx 있음 & overflow_retries < _MAX_OVERFLOW_RETRIES(5)
          ↓
-         parse_overflow_amounts(err) → (actual, limit)
+         (actual, limit)  ← typed error 는 이미 파싱됨; 폴백은 str(e) 에서 파싱
              omlx "N tokens exceeds max context window of M tokens" → (N, M)
          target = (limit or budget) × 0.8
          ctx.force_fit(target, actual_tokens=actual)

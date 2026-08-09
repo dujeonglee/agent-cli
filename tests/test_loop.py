@@ -3065,12 +3065,36 @@ class TestContextOverflowRecovery:
             ctx.add({"role": "user", "content": f"old turn {i} " * 30})
         return ctx
 
+    @staticmethod
+    def _http_error(status, body):
+        """An ``HTTPError`` carrying a ``.response`` with ``status`` — models a
+        provider that surfaces an HTTP error WITHOUT routing through
+        ``raise_for_status_with_body`` (so no ContextOverflowError). The loop's
+        ``classify_overflow`` gates on ``response.status_code``."""
+        import requests
+
+        r = requests.Response()
+        r.status_code = status
+        return requests.HTTPError(f"{status} Error: {body}", response=r)
+
+    @classmethod
+    def _overflow_400(cls, body=_OMLX_OVERFLOW_MSG):
+        return cls._http_error(400, body)
+
+    @staticmethod
+    def _typed_overflow():
+        """A ``ContextOverflowError`` — what ``raise_for_status_with_body``
+        actually raises for a 400 overflow (the real production path)."""
+        from agent_cli.context.overflow import ContextOverflowError
+
+        return ContextOverflowError(360012, 262144, _OMLX_OVERFLOW_MSG)
+
     def test_shrinks_and_retries_then_succeeds(self, caps, tmp_path):
         ctx = self._ctx_with_history(tmp_path)
         before = len(ctx.get_raw_messages())
         provider = MagicMock()
         provider.call.side_effect = [
-            RuntimeError(_OMLX_OVERFLOW_MSG),  # first call: server 400
+            self._typed_overflow(),  # first call: server 400 (typed at boundary)
             LLMResponse(content=_complete("recovered")),  # retry succeeds
         ]
         result = run_loop(
@@ -3085,6 +3109,24 @@ class TestContextOverflowRecovery:
         # The cache was shed before the retry.
         assert len(ctx.get_raw_messages()) < before
 
+    def test_http_400_without_typed_error_still_recovers(self, caps, tmp_path):
+        """Robustness fallback: a bare HTTP 400 overflow (no ContextOverflowError)
+        still recovers because ``classify_overflow`` gates on the response
+        status — not on the exception type alone."""
+        ctx = self._ctx_with_history(tmp_path)
+        before = len(ctx.get_raw_messages())
+        provider = MagicMock()
+        provider.call.side_effect = [
+            self._overflow_400(),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        result = run_loop(
+            query="do it", provider=provider, capabilities=caps, model="test", ctx=ctx
+        )
+        assert result.output == "recovered"
+        assert provider.call.call_count == 2
+        assert len(ctx.get_raw_messages()) < before
+
     def test_bounded_gives_up_cleanly(self, caps, tmp_path):
         """Server keeps rejecting → loop gives up without spinning; the
         number of attempts is bounded by _MAX_OVERFLOW_RETRIES."""
@@ -3092,7 +3134,7 @@ class TestContextOverflowRecovery:
 
         ctx = self._ctx_with_history(tmp_path, n=40)
         provider = MagicMock()
-        provider.call.side_effect = [RuntimeError(_OMLX_OVERFLOW_MSG)] * 30
+        provider.call.side_effect = [self._typed_overflow() for _ in range(30)]
         result = run_loop(
             query="do it",
             provider=provider,
@@ -3121,6 +3163,31 @@ class TestContextOverflowRecovery:
         assert provider.call.call_count == 1  # no retry
         # cache untouched by recovery (only the query was appended by setup)
         assert len(ctx.get_raw_messages()) == before + 1
+
+    def test_bare_overflow_text_does_not_destroy_history(self, caps, tmp_path):
+        """★ AUDIT L-1 regression: an exception whose TEXT mentions overflow but
+        which is NOT an HTTP 400 (a bare RuntimeError, a proxy 500 page, a config
+        error) must NEVER trigger force_fit — that false positive shredded
+        history irreversibly. Mutating classify_overflow back to a bare
+        ``is_context_overflow(str(e))`` check makes this fail."""
+        for exc in (
+            RuntimeError(_OMLX_OVERFLOW_MSG),  # overflow words, but bare
+            self._http_error(500, "context window blah"),  # 500, not 400
+        ):
+            ctx = self._ctx_with_history(tmp_path)
+            before = len(ctx.get_raw_messages())
+            provider = MagicMock()
+            provider.call.side_effect = [exc]
+            run_loop(
+                query="do it",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+            assert provider.call.call_count == 1  # no shrink-and-retry
+            # history untouched by recovery (only the query was appended)
+            assert len(ctx.get_raw_messages()) == before + 1
 
 
 class TestFlow1PreventiveCompaction:

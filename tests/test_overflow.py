@@ -1,9 +1,21 @@
 """Tests for context/overflow."""
 
+import requests
+
 from agent_cli.context.overflow import (
+    ContextOverflowError,
+    classify_overflow,
     is_context_overflow,
     parse_overflow_amounts,
 )
+
+
+def _http_error(status: int, body: str) -> requests.HTTPError:
+    """An HTTPError carrying a ``.response`` with the given status code."""
+    r = requests.Response()
+    r.status_code = status
+    return requests.HTTPError(f"{status} Error: {body}", response=r)
+
 
 # Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30):
 # a prompt over the configured context returns HTTP 400 with this body.
@@ -107,3 +119,45 @@ class TestParseOverflowAmounts:
 
     def test_unrelated_message_returns_none(self):
         assert parse_overflow_amounts("Connection refused") == (None, None)
+
+
+class TestContextOverflowError:
+    def test_carries_amounts(self):
+        e = ContextOverflowError(360012, 262144, "too long")
+        assert e.actual == 360012
+        assert e.limit == 262144
+        assert "too long" in str(e)
+
+    def test_amounts_may_be_none(self):
+        e = ContextOverflowError(None, None)
+        assert e.actual is None
+        assert e.limit is None
+
+
+class TestClassifyOverflow:
+    """★ AUDIT L-1 core: force_fit (destructive) must fire ONLY for a genuine
+    server-side context rejection. classify_overflow is the single gate."""
+
+    def test_typed_error_passes_through_amounts(self):
+        assert classify_overflow(ContextOverflowError(900, 500)) == (900, 500)
+
+    def test_http_400_overflow_parses_amounts(self):
+        assert classify_overflow(_http_error(400, OMLX_400_MESSAGE)) == (360012, 262144)
+
+    def test_http_413_overflow_recognised(self):
+        assert classify_overflow(_http_error(413, OMLX_400_MESSAGE)) == (360012, 262144)
+
+    def test_http_500_with_overflow_text_is_ignored(self):
+        # A proxy/500 page that merely mentions "context window" must NOT be
+        # treated as overflow — this false positive shredded history.
+        assert classify_overflow(_http_error(500, "context window blah")) is None
+
+    def test_bare_exception_with_overflow_text_is_ignored(self):
+        # No HTTP response → not an overflow the loop recovers from.
+        assert classify_overflow(RuntimeError(OMLX_400_MESSAGE)) is None
+
+    def test_http_400_non_overflow_is_ignored(self):
+        assert classify_overflow(_http_error(400, "missing field foo")) is None
+
+    def test_connection_error_is_ignored(self):
+        assert classify_overflow(requests.ConnectionError("Connection refused")) is None

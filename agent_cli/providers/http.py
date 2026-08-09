@@ -63,6 +63,11 @@ from dataclasses import dataclass, field
 
 import requests
 
+from agent_cli.context.overflow import (
+    ContextOverflowError,
+    is_context_overflow,
+    parse_overflow_amounts,
+)
 from agent_cli.verbose import debug_log
 
 _DEFAULT_ATTEMPTS = 10
@@ -102,6 +107,13 @@ def raise_for_status_with_body(r: requests.Response, max_body: int = 1000) -> No
         body = (r.text or "").strip()
         if not body:
             raise
+        # Provider boundary: this is the ONE place that knows both the HTTP
+        # status and the body. Promote a 400 overflow to a typed error so the
+        # loop never has to string-match arbitrary exceptions — a false match
+        # there destroyed history via force_fit (AUDIT-2026-08-09.md L-1).
+        if r.status_code == 400 and is_context_overflow(body):
+            actual, limit = parse_overflow_amounts(body)
+            raise ContextOverflowError(actual, limit, body[:max_body]) from e
         raise requests.HTTPError(f"{e}: {body[:max_body]}", response=r) from e
 
 

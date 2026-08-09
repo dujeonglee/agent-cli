@@ -12,6 +12,31 @@
 
 ## [Unreleased]
 
+## [8.6.1] - 2026-08-09
+
+### Fixed
+
+- **context overflow 오탐지로 인한 히스토리 영구 파쇄 수리** (감사 L-1/L-25).
+  종전엔 LLM 호출 예외 핸들러가 `is_context_overflow(str(e))` 로 **임의 예외의
+  문자열**을 검사해, "context window" 같은 문구를 담은 비-overflow 오류(설정
+  오류·프록시 500 페이지·전송 예외)가 파괴적 `force_fit`(FIFO evict +
+  `_dynamic_start_index` 전진 + `compaction.json` 영속화)을 최대 5회 발화 →
+  resume 가 전진된 오프셋을 읽어 손실이 영구화됐다.
+  - **provider 경계(`http.raise_for_status_with_body`)** 가 `status==400 &&
+    is_context_overflow(body)` 일 때 typed **`ContextOverflowError(actual, limit)`**
+    를 raise — status+body 를 아는 유일 지점에서 타입을 확정.
+  - **루프(`loop/llm.py`)** 는 `classify_overflow(e)` 로 판정: typed error 이거나
+    **HTTP 400/413 + overflow 본문**일 때만 recovery, 그 외엔 `None` → force_fit
+    을 건너뛰고 기존 실패 경로로. 상태 게이트가 오탐지를 구조적으로 차단.
+  - 실 provider(anthropic/openai)는 스트리밍·비스트리밍 모두
+    `raise_for_status_with_body` 를 경유하므로 production overflow 는 항상 typed
+    로 도착(기능 회귀 없음). capabilities 프로브의 문자열 매칭은 파괴 경로가
+    아니라 무변경(L-25 잔여는 follow-up).
+  - 검증: 유닛 신규(classify_overflow 게이트·typed 경계·loop recovery) + 뮤테이션
+    (상태 게이트 제거 시 오탐지 회귀 테스트 3건 실패 확인) + 전체 3338 무회귀.
+  - resume/wire 포맷 무변경(런타임 분류만) → PATCH.
+
+
 ## [8.1.0] - 2026-08-07
 
 ### Changed

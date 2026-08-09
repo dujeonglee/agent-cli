@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
+from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
 
@@ -172,15 +172,19 @@ class LLMCaller:
             self.overflow_retries = 0
             return response
         except Exception as e:
+            overflow_amounts = classify_overflow(e)
             if (
-                is_context_overflow(str(e))
+                overflow_amounts is not None
                 and self.ctx
                 and self.overflow_retries < _MAX_OVERFLOW_RETRIES
             ):
                 # Reactive recovery (flow 2): the server rejected the
                 # prompt as too long. Trust its count over our local
                 # estimate, shrink the cache toward the limit, and retry.
-                actual, limit = parse_overflow_amounts(str(e))
+                # ``classify_overflow`` gates on HTTP 400/413 so a non-overflow
+                # error never reaches force_fit (AUDIT L-1); a None result
+                # falls through to the normal failure path below.
+                actual, limit = overflow_amounts
                 budget = self.ctx.max_context_tokens
                 target = int((limit or budget) * self.ctx.compaction_ratio)
                 if self.ctx.force_fit(target, actual_tokens=actual):
