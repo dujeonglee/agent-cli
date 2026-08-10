@@ -40,7 +40,10 @@ TaskBook — 작업 목록 CLI. `cli.py`(argparse 진입점) · `validate.py`(�
 
 ## 인터뷰 채점에 쓰는 법
 
-- M1 정지 탐침 채점: 상대 턴의 실제 작업은 세션 `history.jsonl` 의
-  `reply_to`×`files` 로 확인 (킷 §6-1).
+- 로그를 직접 읽을 필요 없이 `pick_events.py` 가 인터뷰 사건 후보와
+  요청별 실제 작업 파일을 한국어로 뽑아 준다:
+  `.venv/bin/python bench/study/pick_events.py study-data/team1/A`
+- M1 정지 탐침 채점: 탐침 시각에 상대 턴이 실제로 하던 일을 위 출력의
+  요청별 파일 목록·시각으로 확인 (킷 §10).
 - 모듈 C(스코핑 off) 오염 판정 기준도 동일 — 위 표의 "대상 파일" 이 곧
-  각 참가자의 영역 경계다.
+  각 참가자의 영역 경계이고, 그 밖의 파일을 건드린 요청이 오염이다.
