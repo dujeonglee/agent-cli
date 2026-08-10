@@ -1753,7 +1753,11 @@ def web(
         "json_fc.",
     ),
     host: str = typer.Option(
-        "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"
+        "127.0.0.1",
+        "--host",
+        help="Bind address (default: 127.0.0.1 — loopback only). Use "
+        "--host 0.0.0.0 to expose on the LAN (opt-in; the web UI can drive "
+        "the shell, so only do this on a trusted network).",
     ),
     port: int | None = typer.Option(
         None,

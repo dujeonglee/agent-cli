@@ -72,8 +72,11 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
     # functions we test don't touch them. The harness then exposes
     # the named helper via ``globalThis``.
     stub = (
-        "var window = { location: { search: '?token=t', reload: function(){} },\n"
+        "var window = { location: { search: '?token=t', pathname: '/', hash: '', "
+        "reload: function(){} },\n"
         "  addEventListener: function(){} };\n"
+        # app.js's bootstrap strips ?token= from the URL via history.replaceState.
+        "var history = { replaceState: function(){} };\n"
         "function _stubEl(){ return new Proxy({}, {\n"
         "  get: function(t, k){\n"
         "    if (k === 'classList') return { add: function(){}, remove: function(){}, "
@@ -94,7 +97,9 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         "var document = { getElementById: function(){ return _stubEl(); },\n"
         "  createElement: function(){ return _stubEl(); },\n"
         "  body: _stubEl() };\n"
-        "var URLSearchParams = function(){ return { get: function(){ return 't'; } }; };\n"
+        # Native URLSearchParams (app.js uses .has/.delete/.toString for the
+        # bootstrap-token strip, not just .get).
+        "var URLSearchParams = globalThis.URLSearchParams;\n"
         "var EventSource = function(){ return _stubEl(); };\n"
         "var fetch = function(){ return Promise.resolve({}); };\n"
     )

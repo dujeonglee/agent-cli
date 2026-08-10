@@ -12,6 +12,35 @@
 
 ## [Unreleased]
 
+## [8.7.0] - 2026-08-09
+
+### Security
+
+- **웹 UI 기본 바인드를 loopback 으로 (감사 C-4).** `--host` 기본이
+  `0.0.0.0`→`127.0.0.1`. 웹 UI 는 셸을 구동할 수 있어 기본 LAN 노출은 위험했다.
+  LAN 노출은 이제 `--host 0.0.0.0` 명시 opt-in. board 는 이미 `--host 127.0.0.1`
+  로 spawn 하므로 무영향. **사용자 표면: 기본값만 변경**(기능 보존).
+- **토큰을 URL 에서 HttpOnly 쿠키로 (감사 C-5).** 종전엔 토큰이 모든 요청 URL
+  (주소창·SSE·XHR)에 실려 프록시 로그·브라우저 히스토리·Referer 로 샜다. 이제
+  `_AuthMiddleware` 가 단일 인증 chokepoint 로:
+  - 유효 부트스트랩 `?token=` → 응답에 `Set-Cookie act`(HttpOnly·SameSite=Strict·
+    Path=base_path·TLS 면 Secure). 브라우저는 이후 **쿠키로 인증**하고 프론트가
+    주소창 토큰을 `history.replaceState` 로 제거. `EventSource`(SSE)는 헤더를 못
+    실으므로 쿠키가 핵심.
+  - 인증 판정 = trust-local **or 쿠키 or `?token=`**; 인증 시 미들웨어가 토큰을
+    query 에 주입해 기존 per-endpoint `_require_token` 무변경. `?token=` 수용은
+    유지(부트스트랩·curl·툴링) — 브라우저가 더는 emit 안 하므로 누출 무증가.
+  - 모든 응답에 `Referrer-Policy: no-referrer`.
+  - app.js 는 per-request `?token=` 부착을 전부 제거(쿠키 자동 전송).
+  - 검증: 신규 `TestCookieAuth`(부트스트랩 Set-Cookie·쿠키 인증·거부·Referrer-
+    Policy) + 뮤테이션(쿠키 분기 제거 시 실패) + 전체 3343 무회귀.
+
+### Notes
+
+- resume/wire/세션 포맷 무변경. C-4 기본 바인드 변경이 사용자 인지 대상이라
+  MINOR. board 와 함께 "경계 A" 보안 잠금을 구성(agent-board 1.25.0 B-1/B-2).
+
+
 ## [8.6.1] - 2026-08-09
 
 ### Fixed

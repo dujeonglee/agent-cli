@@ -7,10 +7,13 @@ Endpoints:
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
 
-Auth: every authenticated endpoint requires the ``token`` query param to
-match ``WebServer.token``. The token is generated at startup (or
-provided by ``--token``) and printed to stdout so the operator can share
-the URL with the LAN.
+Auth: the ``_AuthMiddleware`` is the single chokepoint. A request authenticates
+via ``--trust-local`` (loopback gateway), a valid ``act`` cookie, or a valid
+``?token=`` (the one-time bootstrap URL / curl); the middleware injects the
+valid token into the query string so the per-endpoint ``_require_token`` checks
+are unchanged. A bootstrap ``?token=`` also Sets the ``act`` cookie, so the
+browser authenticates by cookie thereafter and the token leaves per-request
+URLs. Every response carries ``Referrer-Policy: no-referrer``.
 
 Multi-viewer, all equal: every authenticated SSE connection RECEIVES the
 stream AND may send input (no controller/observer split). Each connection
@@ -399,27 +402,125 @@ def _with_token_query(query_string: bytes, token: str) -> bytes:
     return urlencode([("token", token), *pairs]).encode()
 
 
-class _TrustLocalMiddleware:
-    """Pure-ASGI: for a trusted loopback request (``--trust-local`` on + peer is
-    127.0.0.1/::1 → only the local gateway can reach a loopback-bound instance,
-    and it already authenticated the user), inject the valid token into the
-    query string so the existing per-endpoint token checks pass. No-op when
-    ``--trust-local`` is off, so the default auth path is byte-identical."""
+_AUTH_COOKIE = "act"  # agent-cli token cookie — set once from the bootstrap URL
+
+
+def _query_token(query_string: bytes) -> str | None:
+    """Extract the ``token`` value from a raw ASGI query string, or None."""
+    from urllib.parse import parse_qsl
+
+    for k, v in parse_qsl(query_string.decode(errors="ignore"), keep_blank_values=True):
+        if k == "token":
+            return v
+    return None
+
+
+def _cookie_value(scope, name: str) -> str | None:
+    """Read cookie ``name`` from the raw ASGI scope headers, or None."""
+    from http.cookies import SimpleCookie
+
+    for k, v in scope.get("headers", []):
+        if k == b"cookie":
+            jar = SimpleCookie()
+            try:
+                jar.load(v.decode("latin-1"))
+            except Exception:
+                return None
+            m = jar.get(name)
+            return m.value if m else None
+    return None
+
+
+def _build_auth_cookie(token: str, base_path: str, *, secure: bool) -> str:
+    """``Set-Cookie`` value for the auth cookie.
+
+    Path is scoped to the instance's ``base_path`` so two ``/s/<id>`` instances
+    behind one gateway origin never share a cookie. ``HttpOnly`` keeps JS (hence
+    XSS) from reading the token; ``SameSite=Strict`` closes CSRF (the cookie is
+    never sent on a cross-site request); ``Secure`` is added ONLY on TLS — a
+    Secure cookie is silently dropped over the plain-HTTP loopback that
+    board-proxy serves."""
+    path = (base_path or "") + "/"  # "" → "/", "/s/doom" → "/s/doom/"
+    parts = [f"{_AUTH_COOKIE}={token}", f"Path={path}", "HttpOnly", "SameSite=Strict"]
+    if secure:
+        parts.append("Secure")
+    return "; ".join(parts)
+
+
+class _AuthMiddleware:
+    """Pure-ASGI auth chokepoint for the web UI.
+
+    A request is authenticated when the peer is a trusted loopback gateway
+    (``--trust-local``), it carries a valid ``act`` cookie, OR it carries a valid
+    ``?token=``. For an authenticated request the valid token is injected into
+    the query string so the existing per-endpoint ``_require_token(token)``
+    checks pass unchanged.
+
+    A valid client ``?token=`` (the one-time bootstrap URL the gateway/operator
+    hands out, or a curl/tool call) also makes the response Set the ``act``
+    cookie, so the browser's next request — and the SSE stream, which cannot send
+    headers — authenticate via the cookie and the token leaves the browser's
+    URLs after one hop. The security win (no token in the address bar /
+    per-request browser URLs / Referer) comes from the browser no longer emitting
+    ``?token=``; the server still accepting it keeps the bootstrap and tooling
+    working without reintroducing any leak.
+
+    Every response gets ``Referrer-Policy: no-referrer``. Pure-ASGI (not
+    BaseHTTPMiddleware) so the injected token reaches the endpoint context
+    reliably."""
 
     def __init__(self, app, server: WebServer):
         self.app = app
         self.server = server
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http":
-            client = scope.get("client")
-            host = client[0] if client else None
-            if self.server.is_trusted_client(host):
-                scope = dict(scope)
-                scope["query_string"] = _with_token_query(
-                    scope.get("query_string", b""), self.server.token
-                )
-        await self.app(scope, receive, send)
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        server = self.server
+        client = scope.get("client")
+        host = client[0] if client else None
+        qs = scope.get("query_string", b"")
+
+        cookie_tok = _cookie_value(scope, _AUTH_COOKIE)
+        client_tok = _query_token(qs)
+        valid_cookie = cookie_tok is not None and secrets.compare_digest(
+            cookie_tok, server.token
+        )
+        valid_client = client_tok is not None and secrets.compare_digest(
+            client_tok, server.token
+        )
+
+        # Auth (token injection): trust-local, a valid cookie, or a valid client
+        # ``?token=`` (bootstrap / tooling). For the browser this is normally the
+        # cookie; the query token stays accepted so the bootstrap URL and
+        # curl/tools keep working.
+        if server.is_trusted_client(host) or valid_cookie or valid_client:
+            scope = dict(scope)
+            scope["query_string"] = _with_token_query(qs, server.token)
+
+        set_cookie = valid_client and not valid_cookie
+        secure = scope.get("scheme") == "https" or any(
+            k == b"x-forwarded-proto" and v == b"https"
+            for k, v in scope.get("headers", [])
+        )
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                from starlette.datastructures import MutableHeaders
+
+                headers = MutableHeaders(raw=message.setdefault("headers", []))
+                headers.append("Referrer-Policy", "no-referrer")
+                if set_cookie:
+                    headers.append(
+                        "Set-Cookie",
+                        _build_auth_cookie(
+                            server.token, server.base_path, secure=secure
+                        ),
+                    )
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 def create_app(server: WebServer) -> FastAPI:
@@ -444,16 +545,20 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.shutdown_all_connections()
 
     app = FastAPI(title="agent-cli web", lifespan=_lifespan)
-    # Trust-local auth bypass (no-op unless --trust-local). Pure-ASGI so the
-    # injected token reaches the per-endpoint check reliably (unlike a
-    # BaseHTTPMiddleware contextvar, which Starlette runs in a separate context).
-    app.add_middleware(_TrustLocalMiddleware, server=server)
+    # Single auth chokepoint: trust-local / cookie / bootstrap ?token= → inject
+    # token so per-endpoint checks pass; a bootstrap ?token= sets the cookie;
+    # Referrer-Policy on every response. Pure-ASGI so the injected token reaches
+    # the endpoint context reliably (unlike a BaseHTTPMiddleware contextvar).
+    app.add_middleware(_AuthMiddleware, server=server)
 
     @app.get("/")
     async def index():
-        """Serve the static chat UI. JS reads ``?token=…`` from the
-        URL — no auth gate here because the page itself contains no
-        secrets; the SSE / input endpoints are token-protected.
+        """Serve the static chat UI (no auth gate — the page holds no secrets;
+        the API/SSE endpoints are auth-protected).
+
+        When the request carried a valid bootstrap ``?token=``, ``_AuthMiddleware``
+        Set the ``act`` cookie on this response, so the JS then authenticates by
+        cookie and strips the token from the address bar.
 
         Injects ``<base href="<prefix>/">`` so the page's RELATIVE asset/API
         URLs resolve under ``--base-path`` (default ``/`` = root, unchanged)."""

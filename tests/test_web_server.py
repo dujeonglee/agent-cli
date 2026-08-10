@@ -788,6 +788,57 @@ class TestAuth:
         assert resp.status_code == 401
 
 
+class TestCookieAuth:
+    """C-5: the browser authenticates via an HttpOnly ``act`` cookie set from a
+    one-time bootstrap ``?token=`` URL, so the token leaves per-request URLs."""
+
+    def _fresh_client(self):
+        # A client with NO persisted cookies (TestClient keeps cookies across
+        # requests, which is exactly the browser behaviour we exercise).
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        return server, TestClient(create_app(server))
+
+    def test_bootstrap_sets_httponly_samesite_cookie(self):
+        _, client = self._fresh_client()
+        r = client.get("/?token=testtoken")
+        assert r.status_code == 200
+        setc = r.headers.get("set-cookie", "")
+        assert "act=testtoken" in setc
+        assert "HttpOnly" in setc
+        assert "SameSite=Strict" in setc
+        # plain-HTTP TestClient → cookie must NOT be Secure (else browser drops it)
+        assert "Secure" not in setc
+
+    def test_cookie_authenticates_without_query_token(self):
+        _, client = self._fresh_client()
+        # bootstrap installs the cookie on the TestClient's jar
+        client.get("/?token=testtoken")
+        # subsequent request carries ONLY the cookie, no ?token= in the URL
+        r = client.post("/api/input", json={"kind": "chat", "content": "hi"})
+        # 200 (enqueued) proves the cookie authenticated AND the token was
+        # injected — a mere !=401 would also pass a 422 "missing token", so a
+        # dropped cookie branch (mutation) must fail here.
+        assert r.status_code == 200
+
+    def test_wrong_cookie_is_rejected(self):
+        _, client = self._fresh_client()
+        client.cookies.set("act", "nope")
+        r = client.post("/api/input", json={"kind": "chat", "content": "hi"})
+        # An invalid cookie grants nothing: the middleware injects no token, so
+        # the endpoint rejects it (401 wrong / 422 missing) — never authorises.
+        assert r.status_code in (401, 422)
+
+    def test_referrer_policy_header_present(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/health").headers.get("referrer-policy") == "no-referrer"
+
+    def test_no_bootstrap_no_cookie_still_401(self, server_and_client):
+        # A bare /api call with neither cookie nor token is unauthenticated.
+        _, _, client = server_and_client
+        assert client.post("/api/abort").status_code in (401, 422)
+
+
 # ── POST /api/input ───────────────────────────────
 
 

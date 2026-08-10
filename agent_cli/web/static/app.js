@@ -13,19 +13,31 @@
 (function () {
   "use strict";
 
-  // ── Token from URL ─────────────────────────
+  // ── Bootstrap token → cookie ───────────────
+  // The index response set an HttpOnly ``act`` cookie from the one-time
+  // ``?token=`` URL, so every request (and the SSE stream, which cannot send
+  // headers) authenticates via that cookie — the token never rides in a
+  // per-request URL. Strip it from the address bar. If we hold no valid cookie,
+  // the SSE handshake fails and ``showSetupHelp`` (below) explains what to do.
   const params = new URLSearchParams(window.location.search);
-  const token = params.get("token");
+  if (params.has("token")) {
+    params.delete("token");
+    const q = params.toString();
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + (q ? "?" + q : "") + window.location.hash
+    );
+  }
 
-  if (!token) {
+  function showSetupHelp() {
     document.body.innerHTML =
       '<div class="setup-message">' +
       "<h1>agent-cli web</h1>" +
-      "<p>Add <code>?token=&lt;your-token&gt;</code> to the URL.</p>" +
-      "<p>The token was printed to stdout when you started " +
-      "<code>agent-cli web</code>.</p>" +
+      "<p>Not authenticated. Open the URL printed by " +
+      "<code>agent-cli web</code> — it carries a one-time " +
+      "<code>?token=</code> that installs your session cookie.</p>" +
       "</div>";
-    return;
   }
 
   // ── DOM refs ───────────────────────────────
@@ -1106,7 +1118,7 @@
   function postInput(body) {
     body.conn_id = myConnId; // identifies the sender (queued-message ownership)
     return fetch(
-      "api/input?token=" + encodeURIComponent(token),
+      "api/input",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1189,7 +1201,7 @@
     // feedback and can't double-fire /api/stop.
     stopRequested = true;
     updateSendEnabled();
-    fetch("api/stop?token=" + encodeURIComponent(token), {
+    fetch("api/stop", {
       method: "POST",
     }).catch(function () {
       /* network blip — ignore; the turn will end on its own anyway */
@@ -1243,16 +1255,22 @@
 
   // ── SSE connection ─────────────────────────
   const es = new EventSource(
-    "api/stream?token=" + encodeURIComponent(token)
+    "api/stream"
   );
 
+  let sseConnected = false;
   es.onopen = function () {
+    sseConnected = true;
     $status.classList.remove("down");
     $status.classList.add("up");
   };
   es.onerror = function () {
     $status.classList.remove("up");
     $status.classList.add("down");
+    // EventSource does NOT retry a failed handshake (401 → readyState CLOSED).
+    // A hard failure before we ever connected means the browser holds no valid
+    // auth cookie — show the setup help instead of a silently dead UI.
+    if (!sseConnected && es.readyState === EventSource.CLOSED) showSetupHelp();
   };
 
   // Release the SSE when the page is hidden — navigation, tab close, or
@@ -1784,7 +1802,7 @@
     $abort.hidden = !visible;
   }
   $abort.addEventListener("click", function () {
-    fetch("api/abort?token=" + encodeURIComponent(token), {
+    fetch("api/abort", {
       method: "POST",
     });
   });
@@ -1865,7 +1883,7 @@
   let myNickname = ""; // latest roster name, for prefill on rename
 
   function postNickname(name) {
-    fetch("api/nickname?token=" + encodeURIComponent(token), {
+    fetch("api/nickname", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conn_id: myConnId, name: name }),
@@ -1945,7 +1963,7 @@
         x.textContent = "✕";
         x.title = "Cancel this queued message";
         x.addEventListener("click", function () {
-          fetch("api/queue/cancel?token=" + encodeURIComponent(token), {
+          fetch("api/queue/cancel", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ conn_id: myConnId, id: it.id }),
@@ -1965,7 +1983,6 @@
 (function () {
   "use strict";
 
-  const token = new URLSearchParams(window.location.search).get("token");
   const $btn = document.getElementById("inspector-btn");
   const $drawer = document.getElementById("inspector");
   const $backdrop = document.getElementById("inspector-backdrop");
@@ -1983,16 +2000,12 @@
   const $dirBrief = document.getElementById("insp-dir-brief");
   const $dirGen = document.getElementById("insp-dir-gen");
   // 💾 save modal
-  if (!$btn || !$drawer || !token) return;
+  if (!$btn || !$drawer) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
   // task_id = a delegate sub-agent. Clicking a chip switches scope; the ⚡
   // button always re-opens on whatever was last selected.
   let activeScope = "";
-
-  function qtoken() {
-    return "token=" + encodeURIComponent(token);
-  }
 
   // Distinct, stable hues per section index (works on the light theme).
   const PALETTE = [
@@ -2122,7 +2135,7 @@
   }
 
   function loadScopes() {
-    return fetch("api/debug/prompt/scopes?" + qtoken())
+    return fetch("api/debug/prompt/scopes")
       .then(function (r) { return r.json(); })
       .then(function (d) { renderChips((d && d.scopes) || []); })
       .catch(function () { renderChips([]); });
@@ -2130,8 +2143,8 @@
 
   function loadPrompt() {
     const q = activeScope
-      ? "?" + qtoken() + "&task_id=" + encodeURIComponent(activeScope)
-      : "?" + qtoken();
+      ? "?task_id=" + encodeURIComponent(activeScope)
+      : "";
     return fetch("api/debug/prompt" + q)
       .then(function (r) { return r.json(); })
       .then(render)
@@ -2153,7 +2166,7 @@
 
   function deleteScope(id) {
     fetch(
-      "api/debug/prompt?" + qtoken() + "&task_id=" + encodeURIComponent(id),
+      "api/debug/prompt?task_id=" + encodeURIComponent(id),
       { method: "DELETE" }
     )
       .then(function () {
@@ -2214,7 +2227,7 @@
     });
 
   function loadDirectives() {
-    return fetch("api/directives?" + qtoken())
+    return fetch("api/directives")
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (dirDirty) return; // a concurrent edit shouldn't overwrite my typing
@@ -2233,7 +2246,7 @@
     dirSyncActive();
     $dirSave.disabled = true;
     $dirStatus.textContent = "Saving…";
-    fetch("api/directives?" + qtoken(), {
+    fetch("api/directives", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scopes: dirBuffers }),
@@ -2287,7 +2300,7 @@
     $dirBrief.value = "";
     dirGenLabel();
     $dirStatus.textContent = "✨ [" + aud + "] drafting — this can take tens of seconds";
-    fetch("api/directives/generate?" + qtoken(), {
+    fetch("api/directives/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2395,11 +2408,10 @@
 (function () {
   "use strict";
 
-  const token = new URLSearchParams(window.location.search).get("token");
   const $btn = document.getElementById("export-btn");
   const $bar = document.getElementById("export-bar");
   const $messages = document.getElementById("messages");
-  if (!$btn || !$bar || !$messages || !token) return;
+  if (!$btn || !$bar || !$messages) return;
 
   const $all = document.getElementById("export-all");
   const $count = document.getElementById("export-count");
@@ -2419,10 +2431,6 @@
 
   let exportMode = false;
   const selected = new Set(); // selected card elements
-
-  function qtoken() {
-    return "token=" + encodeURIComponent(token);
-  }
 
   // Classify a top-level card → {kind, label, mono, body?(selector)} or null
   // to skip (transient streaming / rejected raw cards).
@@ -2545,7 +2553,7 @@
   async function exportHtml() {
     $msg.textContent = "Exporting…";
     try {
-      const resp = await fetch("api/export/html?" + qtoken(), {
+      const resp = await fetch("api/export/html", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: document.title, entries: collectEntries() }),
@@ -2569,7 +2577,7 @@
 
   async function loadJiraTargets() {
     try {
-      const r = await fetch("api/export/jira/targets?" + qtoken());
+      const r = await fetch("api/export/jira/targets");
       const d = await r.json();
       return (d && d.targets) || [];
     } catch (_e) {
@@ -2692,7 +2700,7 @@
     $jiraSend.disabled = true;
     $msg.textContent = "Posting to Jira…";
     try {
-      const r = await fetch("api/export/jira?" + qtoken(), {
+      const r = await fetch("api/export/jira", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2763,7 +2771,6 @@
 // or the workspace root). Drag-OUT download isn't done (browser-restricted to
 // Chromium single-files); the select + zip button is the universal path. ───
 (function () {
-  const token = new URLSearchParams(window.location.search).get("token");
   const $btn = document.getElementById("files-btn");
   const $drawer = document.getElementById("download-drawer");
   const $backdrop = document.getElementById("download-backdrop");
@@ -2779,9 +2786,8 @@
   const $fileInput = document.getElementById("ul-input");
   const $dirInput = document.getElementById("ul-dir-input");
   const $target = document.getElementById("ul-target");
-  if (!$btn || !$drawer || !token) return;
+  if (!$btn || !$drawer) return;
 
-  const qt = () => "token=" + encodeURIComponent(token);
   const selected = new Set();
   // Upload target directory (rel path; "" = workspace root). Set by clicking a
   // directory label in the tree; shown in the dropzone.
@@ -2817,7 +2823,7 @@
   }
 
   async function fetchTree(path) {
-    const r = await fetch("api/workspace/tree?" + qt() + "&path=" + encodeURIComponent(path));
+    const r = await fetch("api/workspace/tree?path=" + encodeURIComponent(path));
     if (!r.ok) throw new Error("tree " + r.status);
     return (await r.json()).entries;
   }
@@ -2965,7 +2971,7 @@
     $go.disabled = true;
     $msg.textContent = "Zipping…";
     try {
-      const r = await fetch("api/workspace/download?" + qt(), {
+      const r = await fetch("api/workspace/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -3008,7 +3014,7 @@
     $del.disabled = true;
     $msg.textContent = "Deleting…";
     try {
-      const r = await fetch("api/workspace/delete?" + qt(), {
+      const r = await fetch("api/workspace/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paths: paths }),
@@ -3036,9 +3042,7 @@
   // directory upload; the server creates the nested dirs). ─────────────
   function uploadOne(item) {
     const q =
-      "api/workspace/upload?" +
-      qt() +
-      "&name=" +
+      "api/workspace/upload?name=" +
       encodeURIComponent(item.name) +
       (uploadDir ? "&path=" + encodeURIComponent(uploadDir) : "");
     return fetch(q, { method: "POST", body: item.file }).then((r) =>
@@ -3281,7 +3285,6 @@
 (function () {
   "use strict";
 
-  const token = new URLSearchParams(window.location.search).get("token");
   const $btn = document.getElementById("agent-btn");
   const $badge = document.getElementById("tm-badge");
   const $drawer = document.getElementById("tm-drawer");
@@ -3290,13 +3293,12 @@
   const $conv = document.getElementById("tm-conv");
   const $input = document.getElementById("tm-input");
   const $send = document.getElementById("tm-send");
-  if (!$btn || !$drawer || !token) return;
+  if (!$btn || !$drawer) return;
 
   let roster = []; // [{key, role, state, handled, ...}]
   const msgs = Object.create(null); // key → [{direction, author, text, seq, success}]
   let selected = null;
 
-  const qt = () => "token=" + encodeURIComponent(token);
 
   function esc(s) {
     const d = document.createElement("div");
@@ -3332,7 +3334,7 @@
         kill.textContent = "✕";
         kill.addEventListener("click", function (ev) {
           ev.stopPropagation();
-          fetch("api/agent/" + encodeURIComponent(tm.key) + "/kill?" + qt(), {
+          fetch("api/agent/" + encodeURIComponent(tm.key) + "/kill", {
             method: "POST",
           });
         });
@@ -3346,7 +3348,7 @@
         rev.addEventListener("click", function (ev) {
           ev.stopPropagation();
           fetch(
-            "api/agent/" + encodeURIComponent(tm.key) + "/resume?" + qt(),
+            "api/agent/" + encodeURIComponent(tm.key) + "/resume",
             { method: "POST" },
           );
         });
@@ -3427,7 +3429,7 @@
   function sendInput() {
     const text = ($input.value || "").trim();
     if (!text || !selected) return;
-    fetch("api/agent/" + encodeURIComponent(selected) + "/input?" + qt(), {
+    fetch("api/agent/" + encodeURIComponent(selected) + "/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: text, conn_id: window.AGENTCLI_CONN_ID || null }),
@@ -3479,8 +3481,6 @@
 // 렌더 루프 무수정(인스펙터·테마 등과 동일 패턴).
 (function () {
   "use strict";
-  const token = new URLSearchParams(window.location.search).get("token");
-  const qt = () => "token=" + encodeURIComponent(token);
   const $wrap = document.getElementById("compaction-wrap");
   const $range = document.getElementById("compaction-range");
   const $label = document.getElementById("compaction-label");
@@ -3497,7 +3497,7 @@
   }
 
   // 초기 로드: 현재 비율 + 슬라이더 범위(min/max/step). 성공 시 노출.
-  fetch("api/compaction?" + qt())
+  fetch("api/compaction")
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       if (!d) return;
@@ -3513,7 +3513,7 @@
   $range.addEventListener("input", () => setLabel($range.value));
   $range.addEventListener("change", () => {
     const ratio = Number($range.value) / 100;
-    fetch("api/compaction?" + qt(), {
+    fetch("api/compaction", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ratio: ratio }),
@@ -3539,8 +3539,6 @@
 // sticky(max_agents) 로 동기화. 별도 IIFE — 메인 렌더 루프 무수정.
 (function () {
   "use strict";
-  const token = new URLSearchParams(window.location.search).get("token");
-  const qt = () => "token=" + encodeURIComponent(token);
   const $wrap = document.getElementById("maxagents-wrap");
   const $input = document.getElementById("maxagents-input");
   const $unlim = document.getElementById("maxagents-unlimited");
@@ -3562,7 +3560,7 @@
   }
 
   function post(value) {
-    fetch("api/max-agents?" + qt(), {
+    fetch("api/max-agents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: value }),
@@ -3575,7 +3573,7 @@
   }
 
   // 초기 로드: 현재 값 + 최소값. 성공 시 노출.
-  fetch("api/max-agents?" + qt())
+  fetch("api/max-agents")
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       if (!d) return;
