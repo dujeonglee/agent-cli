@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [8.7.1] - 2026-08-09
+
+### Fixed
+
+- **멀티 에이전트 부하 시 무관한 에이전트 오사망 수리 (감사 S-1, P0).**
+  `AgentRegistry` 의 리더 7곳(`roster_snapshot`·`alive_count`·`any_activity`·
+  `has_active_work`·`waiting_ask_keys`·`auto_spawn`·`_save_state`)이 워커/웹
+  스레드에서 `self._agents.values()` **라이브 뷰를 직접 순회**하는 동안 main 이
+  spawn/resume 로 삽입하면 `RuntimeError: dictionary changed size during
+  iteration` 이 발생, 그게 `_save_state` 를 부른 워커의 `except BaseException`
+  으로 전파돼 **다른** 에이전트가 죽음·비재생 처리됐다("orchestrate 가 워커 N개
+  spawn 중 워커1이 회신" 부하 패턴). 각 순회를 `list(self._agents.values())`
+  스냅샷으로 감쌈 — CPython 에서 GIL 하 원자 복사라 순회 중 변형돼도 raise 불가.
+  (락 추가 대신 스냅샷 — 기존 안전 사이트와 동일 패턴, 데드락 위험 0.)
+  - 검증: 결정적 회귀 테스트(`snapshot()` 이 순회 중 `_agents` 변형 → bare view
+    면 RuntimeError, `list()` 면 안전; 뮤테이션으로 캐치 확인) + 전체 3344 무회귀.
+
+
 ## [8.7.0] - 2026-08-09
 
 ### Security

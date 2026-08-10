@@ -3457,3 +3457,39 @@ class TestRequestInEventAddressing:
         ]
         assert len(ins) == 2
         assert len(set(ins)) == 2, f"dedup 키 충돌: {ins}"
+
+
+def test_roster_snapshot_snapshots_agents_before_iterating(tmp_path):
+    """★ AUDIT S-1 regression (deterministic): registry readers run on worker/web
+    threads while the main thread spawns into ``_agents``. Iterating the live
+    ``.values()`` view raises 'dictionary changed size during iteration', which
+    the worker's ``except BaseException`` turned into an UNRELATED agent's death.
+
+    Here a fake mutates the registry from inside ``snapshot()`` — i.e. exactly
+    while the reader iterates. The fix materialises ``list(self._agents.values())``
+    BEFORE iterating, so the mutation can't perturb the loop. Reverting the
+    reader to a bare ``self._agents.values()`` makes this raise (and fail)."""
+    reg = make_registry(tmp_path)
+
+    class _Inert:
+        def __init__(self, key):
+            self.key = key
+            self.state = "idle"
+
+        def snapshot(self):
+            return {"key": self.key}
+
+    class _Mutating(_Inert):
+        def snapshot(self):
+            # A concurrent spawn landing mid-iteration.
+            k = f"z{len(reg._agents)}"
+            reg._agents[k] = _Inert(k)
+            return {"key": self.key}
+
+    for i in range(5):
+        reg._agents[f"a{i}"] = _Mutating(f"a{i}")
+
+    # Must not raise "dictionary changed size during iteration"; returns exactly
+    # the five originals (snapshotted before the mutations they trigger).
+    out = reg.roster_snapshot()
+    assert len(out) == 5

@@ -404,7 +404,11 @@ class AgentRegistry:
         return self._agents.get(key)
 
     def roster_snapshot(self) -> list[dict]:
-        return [tm.snapshot() for tm in self._agents.values()]
+        # Snapshot the values first: this runs on worker/web threads while the
+        # main thread may spawn/resume/restore into ``_agents``. Iterating the
+        # live view directly raises "dictionary changed size during iteration"
+        # (AUDIT S-1); ``list(...)`` materialises atomically under the GIL.
+        return [tm.snapshot() for tm in list(self._agents.values())]
 
     def _notify_roster(self) -> None:
         """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op."""
@@ -416,7 +420,7 @@ class AgentRegistry:
             pass  # 표시용 — 실행 경로를 막지 않는다
 
     def alive_count(self) -> int:
-        return sum(1 for t in self._agents.values() if t.state != "dead")
+        return sum(1 for t in list(self._agents.values()) if t.state != "dead")
 
     @staticmethod
     def state_is_active(state: str) -> bool:
@@ -435,7 +439,7 @@ class AgentRegistry:
         시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
         return any(
             self.state_is_active(t.state) or t.inbox.qsize() > 0
-            for t in self._agents.values()
+            for t in list(self._agents.values())
         )
 
     def set_max_agents(self, value) -> int:
@@ -460,14 +464,16 @@ class AgentRegistry:
         교착이라, 펌프는 경고 후 종료(shutdown 이 대기를 푼다)를 택한다."""
         if self.has_pending_replies():
             return True
-        for tm in self._agents.values():
+        for tm in list(self._agents.values()):
             if tm.state == "busy" or tm.inbox.qsize() > 0:
                 return True
         return False
 
     def waiting_ask_keys(self) -> list[str]:
         """답변 대기 중인 teammate — 펌프 종료 시 경고 표시용."""
-        return [tm.key for tm in self._agents.values() if tm.state == "waiting_ask"]
+        return [
+            tm.key for tm in list(self._agents.values()) if tm.state == "waiting_ask"
+        ]
 
     # ── spawn ───────────────────────────────────
 
@@ -919,7 +925,7 @@ class AgentRegistry:
         from agent_cli.subagent.profiles import available_profiles
 
         live_roles = {
-            tm.profile_name for tm in self._agents.values() if tm.state != "dead"
+            tm.profile_name for tm in list(self._agents.values()) if tm.state != "dead"
         }
         spawned = 0
         for name, meta in available_profiles(include_meta=True):
@@ -947,7 +953,11 @@ class AgentRegistry:
         if path is None:
             return
         entries = []
-        for tm in self._agents.values():
+        # Snapshot under the GIL — ``_save_state`` runs on worker threads while
+        # the main thread mutates ``_agents``; iterating the live view raced a
+        # spawn and killed an UNRELATED agent via the worker's except-handler
+        # (AUDIT S-1). ``list(...)`` can't raise mid-iteration.
+        for tm in list(self._agents.values()):
             entries.append(
                 {
                     "key": tm.key,
