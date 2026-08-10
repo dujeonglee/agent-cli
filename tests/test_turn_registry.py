@@ -6,6 +6,7 @@
   - ``interrupt(turnId)`` 는 지정 턴만 (624-639)
 """
 
+import json
 import threading
 import time
 
@@ -112,6 +113,66 @@ class TestDispatch:
             TurnRegistry(lambda t: None, max_concurrent=0)
 
 
+class TestSnapshot:
+    """``/api/turns`` 페이로드 — **관전 토큰으로도 읽히는** 표면이다.
+
+    필드 집합을 여기서 못박는 이유: 서버 테스트는 author/id 의 *존재*만 보므로
+    누군가 ``text`` 를 얹어도 그쪽은 통과한다. 본문은 렌더러의 표시 규칙을
+    거쳐 나가야 하는데 이 경로로 새면 그 규칙을 우회한다.
+    """
+
+    def _one_active(self, **submit_kw):
+        block = threading.Event()
+        rec = _Recorder(block)
+        reg = TurnRegistry(rec, max_concurrent=2)
+        reg.submit("the secret message", **submit_kw)
+        assert rec.entered.wait(timeout=5)
+        return reg, block
+
+    def test_reports_id_author_and_connection(self):
+        reg, block = self._one_active(author="alice", conn_id="c-alice")
+        try:
+            snap = reg.snapshot()
+            assert len(snap) == 1
+            assert snap[0]["id"] == "t1"
+            assert snap[0]["author"] == "alice"
+            assert snap[0]["conn_id"] == "c-alice"
+        finally:
+            block.set()
+            assert reg.wait_idle(timeout=5)
+
+    def test_never_carries_the_message_text(self):
+        reg, block = self._one_active(author="alice", conn_id="c-alice")
+        try:
+            snap = reg.snapshot()
+            assert set(snap[0]) == {"id", "author", "conn_id"}, (
+                f"필드가 늘었다 — 관전 경계 재확인 필요: {sorted(snap[0])}"
+            )
+            assert "the secret message" not in json.dumps(snap, ensure_ascii=False)
+        finally:
+            block.set()
+            assert reg.wait_idle(timeout=5)
+
+    def test_pending_turns_are_not_listed(self):
+        """대기 항목은 아직 id 가 없다(규칙 1) — 활성만 나열한다."""
+        block = threading.Event()
+        rec = _Recorder(block)
+        reg = TurnRegistry(rec, max_concurrent=1)
+        reg.submit("first")
+        assert rec.entered.wait(timeout=5)
+        reg.submit("second")
+        try:
+            assert reg.pending_count() == 1
+            assert [t["id"] for t in reg.snapshot()] == ["t1"]
+        finally:
+            block.set()
+            assert reg.wait_idle(timeout=5)
+
+    def test_empty_when_idle(self):
+        reg = TurnRegistry(lambda t: None)
+        assert reg.snapshot() == []
+
+
 class TestSlotReclamation:
     def test_failing_turn_releases_its_slot(self):
         """실패한 턴이 슬롯을 영구 점유하면 세션이 굳는다 (pi.ts:251-252)."""
@@ -148,10 +209,15 @@ class TestInterrupt:
         """다른 동시 턴은 불간섭 (pi.ts:624-639)."""
         started = threading.Barrier(3)
         observed: dict[str, bool] = {}
+        release = threading.Event()
 
         def runner(turn: Turn) -> None:
             started.wait(timeout=5)
-            turn.stop_event.wait(timeout=2)
+            # 중단 신호를 기다리되 검사가 끝나면 함께 풀린다 — 신호를 **안**
+            # 받는 쪽이 고정 타임아웃을 통째로 소진하지 않게 한다. 판정은
+            # 어느 조건으로 빠져나왔든 stop_event 값 그대로 기록해 결정적이다.
+            while not turn.stop_event.is_set() and not release.is_set():
+                time.sleep(0.005)
             observed[turn.text] = turn.stop_event.is_set()
 
         reg = TurnRegistry(runner, max_concurrent=2)
@@ -160,7 +226,8 @@ class TestInterrupt:
         started.wait(timeout=5)
 
         ids = sorted(reg.active_ids())
-        assert reg.interrupt(ids[0]) is True
+        assert reg.interrupt(ids[0]) is True  # 이 시점에 피해자 이벤트는 이미 set
+        release.set()
 
         assert reg.wait_idle(timeout=10)
         # 하나만 중단 신호를 받았다.
@@ -439,9 +506,12 @@ class TestPerUserFairness:
 
     def test_interrupted_turn_releases_the_gate(self):
         """취소된 턴이 사용자를 막아두면 그 사람은 다시 말을 못 한다."""
+        release = threading.Event()
 
         def runner(turn):
-            turn.stop_event.wait(timeout=3)
+            # 중단 신호 또는 검사 종료까지 (고정 타임아웃 소진 회피).
+            while not turn.stop_event.is_set() and not release.is_set():
+                time.sleep(0.005)
 
         reg = TurnRegistry(runner, max_concurrent=2)
         reg.submit("first", conn_id="alice")
@@ -452,6 +522,8 @@ class TestPerUserFairness:
         assert reg.pending_count() == 1  # 게이트에 막힘
 
         assert reg.interrupt(reg.active_ids()[0]) is True
+        release.set()
+        # 게이트가 안 풀리면 두 번째 턴이 영원히 대기해 여기서 시간 초과한다.
         assert reg.wait_idle(timeout=10)
         assert reg.pending_count() == 0  # 취소 후 다음 턴이 진행됐다
 
@@ -460,10 +532,6 @@ class TestPerUserGateAblation:
     """P4 ablation 스위치 — per_user_gate=False 는 순수 FIFO+cap."""
 
     def test_gate_off_same_user_runs_concurrently(self):
-        import threading
-
-        from agent_cli.loop.turns import TurnRegistry
-
         started, release = [], threading.Event()
         lock = threading.Lock()
 
@@ -475,11 +543,9 @@ class TestPerUserGateAblation:
         reg = TurnRegistry(runner, max_concurrent=2, per_user_gate=False)
         reg.submit("a1", conn_id="alice")
         reg.submit("a2", conn_id="alice")
-        deadline = threading.Event()
-        for _ in range(200):
-            if reg.active_count() == 2:
-                break
-            deadline.wait(0.01)
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert reg.active_count() == 2, (
             "게이트 off 인데 같은 사용자 2턴이 병주하지 않는다"
         )
@@ -488,10 +554,6 @@ class TestPerUserGateAblation:
         reg.shutdown()
 
     def test_gate_on_default_blocks_same_user(self):
-        import threading
-
-        from agent_cli.loop.turns import TurnRegistry
-
         release = threading.Event()
 
         def runner(turn):
@@ -500,12 +562,10 @@ class TestPerUserGateAblation:
         reg = TurnRegistry(runner, max_concurrent=2)  # 기본값 = 게이트 on
         reg.submit("a1", conn_id="alice")
         reg.submit("a2", conn_id="alice")
-        deadline = threading.Event()
-        for _ in range(50):
-            if reg.active_count() >= 1:
-                break
-            deadline.wait(0.01)
-        deadline.wait(0.1)  # 두 번째가 뜰 시간 여유를 주고도
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.1)  # 두 번째가 뜰 시간 여유를 주고도
         assert reg.active_count() == 1, "기본 게이트가 같은 사용자 2턴을 허용했다"
         assert reg.pending_count() == 1
         release.set()

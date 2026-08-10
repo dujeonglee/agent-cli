@@ -139,7 +139,14 @@ class TurnRegistry:
             return list(self._active)
 
     def snapshot(self) -> list[dict]:
-        """활성 턴 요약 — 상태 표시용. 비밀 없음(id/닉네임/텍스트 미포함)."""
+        """활성 턴 요약 — ``/api/turns`` 의 페이로드.
+
+        싣는 것은 턴 id·작성자·연결 id 뿐이고 **메시지 본문(``text``)은 넣지
+        않는다**. 이 표면은 관전 토큰으로도 읽히므로(라우트 표의 ``read``),
+        필드를 더할 때는 "스트림이 이미 보여주는 것 이상을 노출하지 않는다"는
+        관전 경계를 함께 확인해야 한다 — 본문은 렌더러가 정한 표시 규칙을
+        거쳐 나가는데 여기로 새면 그 규칙을 우회한다.
+        """
         with self._lock:
             return [
                 {"id": t.id, "author": t.author, "conn_id": t.conn_id}
