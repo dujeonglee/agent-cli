@@ -114,8 +114,8 @@
 - **BC 결정 정정**: per-endpoint `?token=` 은 **유지**(엄격 제거는 수십 테스트 파괴+curl 불가인데 얻는 깔끔함은 OR항 1개뿐 → 사용자 "더 깔끔하면" 기준 미달). 보안 목표는 브라우저가 토큰을 URL 에 안 싣는 것으로 달성.
 - 함정 확인: board-proxy 는 trust-local 로 이미 토큰 스킵(쿠키는 브라우저 누출 방지); `Secure` 는 TLS 만(loopback 평문서 켜면 쿠키 드롭); `SameSite=Strict` 로 CSRF 차단.
 
-### 후속 — ⏳ 미착수
-- [ ] S-1 (§6) 락 스냅샷 6곳 + 재현/뮤테이션 테스트 → cli PATCH
+### 후속 — ✅ 완료 (v8.7.1, 2026-08-09)
+- [x] S-1 (§6) 리더 7곳을 `list(self._agents.values())` 스냅샷(GIL 원자 복사) + 결정적 회귀 테스트(뮤테이션 캐치) → cli PATCH 8.7.1 릴리스
 
 **함정**:
 - C-5: board-proxy 는 loopback+trust-local 이라 cli 가 토큰을 아예 스킵함 — 쿠키는 **브라우저 누출 방지**가 목적(cli 서버측 게이트는 trust-local 이 이미 품). 직접 cli 사용(비 trust-local)에선 쿠키가 실제 인증. 두 시나리오 모두 테스트.
