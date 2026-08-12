@@ -595,6 +595,17 @@ def create_app(server: WebServer) -> FastAPI:
             "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
         }
 
+    @app.get("/api/share-url")
+    async def share_url(token: str = Query(...)):
+        """Return the instance token so the UI can build a token-bearing share
+        link (the 🔗 button). Authenticated — only an already-authorised session
+        (cookie / trust-local / token) may read it. The token is the instance's
+        shared access credential (all viewers are equal), so handing it out is
+        the intended way to invite a teammate; the frontend composes the full
+        URL from ``<base href>`` (origin + base-path) + ``?token=``."""
+        server._require_token(token)
+        return {"token": server.token}
+
     @app.get("/api/debug/prompt")
     async def debug_prompt(token: str = Query(...), task_id: str = Query("")):
         """Prompt Inspector data for a scope: the latest LLM call's system

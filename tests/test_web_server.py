@@ -839,6 +839,30 @@ class TestCookieAuth:
         assert client.post("/api/abort").status_code in (401, 422)
 
 
+class TestShareUrl:
+    """The 🔗 share button reads the instance token from /api/share-url (the
+    HttpOnly cookie is unreadable by JS) to build a token-bearing invite link."""
+
+    def test_share_url_returns_token_when_authed(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        client = TestClient(create_app(server))
+        # cookie-authenticated session (what the browser holds after bootstrap)
+        client.cookies.set("act", "testtoken")
+        r = client.get("/api/share-url")
+        assert r.status_code == 200
+        assert r.json()["token"] == "testtoken"
+
+    def test_share_url_requires_auth(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        client = TestClient(create_app(server))
+        # no cookie, no token → 422 (required Query param missing, like other
+        # authed endpoints); a wrong token → 401. Never leaks the token either way.
+        assert client.get("/api/share-url").status_code == 422
+        assert client.get("/api/share-url?token=nope").status_code == 401
+
+
 # ── POST /api/input ───────────────────────────────
 
 

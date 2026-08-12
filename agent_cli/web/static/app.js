@@ -1345,6 +1345,36 @@
     }
   });
 
+  // ── Share link (🔗) — copy a token-bearing URL others can open ──
+  // The token lives in an HttpOnly cookie (JS can't read it), so fetch it from
+  // the server and build the shareable URL from <base href> (which already
+  // carries origin + base-path, so it is correct for direct / LAN / board /
+  // caddy alike). This deliberately re-exposes the shared access token to the
+  // authenticated session so the operator can hand it to a teammate.
+  const $shareBtn = document.getElementById("share-btn");
+  if ($shareBtn) {
+    $shareBtn.addEventListener("click", async function () {
+      const orig = $shareBtn.textContent;
+      try {
+        const r = await fetch("api/share-url");
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        const base = document.querySelector("base");
+        const baseHref = base ? base.href : window.location.origin + "/";
+        const url = baseHref + "?token=" + encodeURIComponent(d.token);
+        await copyToClipboard(url);
+        $shareBtn.textContent = "✓";
+        $shareBtn.title = "복사됨: " + url;
+      } catch (e) {
+        $shareBtn.textContent = "✗";
+        $shareBtn.title = "링크 복사 실패: " + e.message;
+      }
+      setTimeout(function () {
+        $shareBtn.textContent = orig;
+      }, 1200);
+    });
+  }
+
   function fmtTok(n) {
     n = n || 0;
     return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
