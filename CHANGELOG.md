@@ -12,6 +12,29 @@
 
 ## [Unreleased]
 
+## [8.8.1] - 2026-08-12
+
+### Changed
+
+- **웹 인증을 default-deny 단일 집행으로 (양산 하드닝).** 종전엔 인증이
+  엔드포인트마다 `token: Query(...)` + `_require_token()`으로 **opt-in**이라, 새
+  `/api` 엔드포인트가 그 두 줄을 깜빡하면 조용히 무인증 출하될 수 있었다(감사가
+  반복 지적한 "가드가 흩어져 opt-in" 클래스). 이제 `_AuthMiddleware`가 **유일
+  집행자**로 fail-closed:
+  - `/api/*`는 `/api/health` 빼고 전부 인증 필요, `/`·`/static`만 공개
+    (`_needs_auth`/`_is_public_path`). 미인증 요청은 **미들웨어가 401** — 엔드포인트
+    자체가 실행되지 않는다. 등록 안 된 `/api` 경로도 401(404 아님) → **새 라우트가
+    구조적으로 자동 보호**됨.
+  - 엔드포인트 27곳에서 `token` 파라미터·`_require_token` 호출 제거(≈53줄), dead
+    `_require_token`/`_with_token_query` 정리.
+  - 인증 수단·curl `?token=`·쿠키 부트스트랩·Referrer-Policy 는 그대로.
+  - **동작 차이**: 정상 인증은 모두 동일. 유일한 표면 변화 — 보호 경로에 인증
+    없이 접근 시 응답이 `422`(파라미터 누락)에서 **`401`**(미인증)로 통일.
+  - 검증: `TestDefaultDeny`(경로 분류·미등록 경로 401·공개 경로 200) + 뮤테이션
+    (`_needs_auth`→False 시 미등록 경로가 404로 새고 SSE 무한대기 hang — 가드가
+    /api/stream 까지 막고 있었음을 입증) + 전체 3346 무회귀.
+
+
 ## [8.8.0] - 2026-08-12
 
 ### Added

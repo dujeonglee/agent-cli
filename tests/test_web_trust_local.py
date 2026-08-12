@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from agent_cli.render.web import WebRenderer
-from agent_cli.web.server import WebServer, _with_token_query, create_app
+from agent_cli.web.server import WebServer, create_app
 
 
 class TestIsTrustedClient:
@@ -32,22 +32,6 @@ class TestIsTrustedClient:
         assert s.is_trusted_client("10.0.0.5") is False
         assert s.is_trusted_client("testclient") is False
         assert s.is_trusted_client(None) is False
-
-
-class TestWithTokenQuery:
-    def test_empty_query(self):
-        assert _with_token_query(b"", "secret") == b"token=secret"
-
-    def test_preserves_other_params(self):
-        out = _with_token_query(b"path=src&x=1", "secret").decode()
-        assert "token=secret" in out and "path=src" in out and "x=1" in out
-
-    def test_strips_existing_token(self):
-        # any client-supplied (possibly wrong) token is replaced by ours
-        out = _with_token_query(b"token=wrong&path=src", "secret").decode()
-        from urllib.parse import parse_qs
-
-        assert parse_qs(out)["token"] == ["secret"]
 
 
 def _app(trust):

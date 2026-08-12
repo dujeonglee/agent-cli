@@ -763,11 +763,12 @@ class TestAuth:
         renderer._connections.extend([live, gone])
         assert client.get("/api/health").json()["viewers"] == 1
 
-    def test_stream_without_token_is_422(self, server_and_client):
+    def test_stream_without_token_is_401(self, server_and_client):
         _, _, client = server_and_client
-        # FastAPI's required Query param without a value → 422.
+        # default-deny: the middleware rejects an unauthenticated /api request
+        # before the endpoint runs (was 422 when auth was a per-endpoint param).
         resp = client.get("/api/stream")
-        assert resp.status_code == 422
+        assert resp.status_code == 401
 
     def test_stream_with_wrong_token_is_401(self, server_and_client):
         _, _, client = server_and_client
@@ -857,10 +858,45 @@ class TestShareUrl:
         renderer = WebRenderer()
         server = WebServer(renderer, token="testtoken")
         client = TestClient(create_app(server))
-        # no cookie, no token → 422 (required Query param missing, like other
-        # authed endpoints); a wrong token → 401. Never leaks the token either way.
-        assert client.get("/api/share-url").status_code == 422
+        # unauthenticated → 401 (middleware default-deny); wrong token → 401.
+        # Never leaks the token either way.
+        assert client.get("/api/share-url").status_code == 401
         assert client.get("/api/share-url?token=nope").status_code == 401
+
+
+class TestDefaultDeny:
+    """★ The production invariant: auth is fail-closed. The middleware is the
+    sole enforcer, so every /api path except the health probe is protected —
+    including routes that don't exist yet. Endpoints carry no auth code, so a
+    NEW /api endpoint is authenticated automatically (can't forget it)."""
+
+    def test_path_classification(self):
+        from agent_cli.web.server import _is_public_path, _needs_auth
+
+        assert _needs_auth("/api/input") is True
+        assert _needs_auth("/api/anything/new") is True  # future routes too
+        assert _needs_auth("/api/health") is False
+        assert _needs_auth("/") is False
+        assert _is_public_path("/") is True
+        assert _is_public_path("/api/health") is True
+        assert _is_public_path("/static/app.js") is True
+        assert _is_public_path("/api/input") is False
+
+    def test_unknown_api_path_is_401_not_404_without_auth(self):
+        # Fail-closed proof: a path with NO registered route is still rejected by
+        # the middleware BEFORE routing — so a newly added /api endpoint is
+        # protected by construction. (Reverting _needs_auth makes this 404.)
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        client = TestClient(create_app(server))
+        assert client.get("/api/some/brand/new/route").status_code == 401
+
+    def test_public_paths_open_without_auth(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        client = TestClient(create_app(server))
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/").status_code == 200
 
 
 # ── POST /api/input ───────────────────────────────
@@ -1546,7 +1582,7 @@ class TestDebugPromptEndpoint:
 
     def test_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert client.get("/api/debug/prompt").status_code == 422  # missing param
+        assert client.get("/api/debug/prompt").status_code == 401  # default-deny
         r = client.get("/api/debug/prompt?token=wrong")
         assert r.status_code == 401
 
@@ -1650,9 +1686,7 @@ class TestDebugPromptScopedEndpoints:
 
     def test_scopes_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert (
-            client.get("/api/debug/prompt/scopes").status_code == 422
-        )  # missing param
+        assert client.get("/api/debug/prompt/scopes").status_code == 401  # default-deny
         assert client.get("/api/debug/prompt/scopes?token=wrong").status_code == 401
 
     def test_delete_drops_agent_scope(self, server_and_client):
@@ -1682,8 +1716,8 @@ class TestDebugPromptScopedEndpoints:
 
     def test_delete_requires_token_and_task_id(self, server_and_client):
         _, _, client = server_and_client
-        # Missing token AND task_id → 422 (both are required query params).
-        assert client.delete("/api/debug/prompt").status_code == 422
+        # Unauthenticated → 401 (middleware default-deny, before param check).
+        assert client.delete("/api/debug/prompt").status_code == 401
         assert (
             client.delete("/api/debug/prompt?token=wrong&task_id=x").status_code == 401
         )
@@ -1712,7 +1746,7 @@ class TestExportEndpoints:
 
     def test_targets_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert client.get("/api/export/jira/targets").status_code == 422  # no token
+        assert client.get("/api/export/jira/targets").status_code == 401  # no auth
         assert client.get("/api/export/jira/targets?token=wrong").status_code == 401
 
     def test_targets_lists_instances_with_deployment(self, server_and_client):
@@ -1743,7 +1777,7 @@ class TestExportEndpoints:
 
     def test_html_export_requires_token_and_list(self, server_and_client):
         _, _, client = server_and_client
-        assert client.post("/api/export/html", json={}).status_code == 422
+        assert client.post("/api/export/html", json={}).status_code == 401
         r = client.post("/api/export/html?token=testtoken", json={"entries": "x"})
         assert r.status_code == 400
 
@@ -1887,7 +1921,7 @@ class TestWorkspaceDownload:
 
     def test_tree_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert client.get("/api/workspace/tree").status_code == 422
+        assert client.get("/api/workspace/tree").status_code == 401
         assert client.get("/api/workspace/tree?token=wrong").status_code == 401
 
     def test_tree_lists_root_dirs_first(self, server_and_client, tmp_path):
@@ -2031,7 +2065,7 @@ class TestWorkspaceDelete:
 
     def test_delete_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert client.post("/api/workspace/delete").status_code == 422
+        assert client.post("/api/workspace/delete").status_code == 401
         assert (
             client.post(
                 "/api/workspace/delete?token=wrong", json={"paths": ["README.md"]}

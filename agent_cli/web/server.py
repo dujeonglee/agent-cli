@@ -7,13 +7,16 @@ Endpoints:
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
 
-Auth: the ``_AuthMiddleware`` is the single chokepoint. A request authenticates
-via ``--trust-local`` (loopback gateway), a valid ``act`` cookie, or a valid
-``?token=`` (the one-time bootstrap URL / curl); the middleware injects the
-valid token into the query string so the per-endpoint ``_require_token`` checks
-are unchanged. A bootstrap ``?token=`` also Sets the ``act`` cookie, so the
-browser authenticates by cookie thereafter and the token leaves per-request
-URLs. Every response carries ``Referrer-Policy: no-referrer``.
+Auth: the ``_AuthMiddleware`` is the SOLE enforcer, default-deny. Every
+``/api/*`` path except ``/api/health`` requires authentication; ``/``, ``/static``
+and the health probe are public. A request authenticates via ``--trust-local``
+(loopback gateway), a valid ``act`` cookie, or a valid ``?token=`` (the one-time
+bootstrap URL / curl). Unauthenticated requests to a protected path get 401 from
+the middleware — the endpoint never runs — so a newly added ``/api`` route is
+protected BY CONSTRUCTION (endpoints carry no auth code of their own). A
+bootstrap ``?token=`` also Sets the ``act`` cookie, so the browser authenticates
+by cookie thereafter and the token leaves per-request URLs. Every response
+carries ``Referrer-Policy: no-referrer``.
 
 Multi-viewer, all equal: every authenticated SSE connection RECEIVES the
 stream AND may send input (no controller/observer split). Each connection
@@ -274,14 +277,11 @@ class WebServer:
 
     # ─── Auth helper ──────────────────────────────────────────
 
-    def _require_token(self, token: str | None) -> None:
-        """Constant-time compare against the configured token.
-
-        Constant-time avoids timing-side-channel leaks on the LAN —
-        cheap and standard for shared-secret schemes.
-        """
-        if token is None or not secrets.compare_digest(token, self.token):
-            raise HTTPException(status_code=401, detail="invalid or missing token")
+    def token_ok(self, candidate: str | None) -> bool:
+        """Constant-time compare against the configured token (avoids a LAN
+        timing side-channel). Used by ``_AuthMiddleware`` for cookie/query
+        token validation."""
+        return candidate is not None and secrets.compare_digest(candidate, self.token)
 
     def is_trusted_client(self, host: str | None) -> bool:
         """Whether a request from ``host`` may skip token auth — only when
@@ -388,21 +388,24 @@ def suppress_incomplete_response_log() -> None:
 # ── FastAPI app factory ────────────────────────────────────
 
 
-def _with_token_query(query_string: bytes, token: str) -> bytes:
-    """Return ``query_string`` with any client ``token`` replaced by ``token``
-    (ours first). Used by the trust-local middleware to make per-endpoint token
-    checks pass for trusted loopback requests without the gateway plumbing it."""
-    from urllib.parse import parse_qsl, urlencode
-
-    pairs = [
-        (k, v)
-        for k, v in parse_qsl(query_string.decode(), keep_blank_values=True)
-        if k != "token"
-    ]
-    return urlencode([("token", token), *pairs]).encode()
-
-
 _AUTH_COOKIE = "act"  # agent-cli token cookie — set once from the bootstrap URL
+
+
+def _is_public_path(path: str) -> bool:
+    """Paths served WITHOUT authentication: the UI shell, its static assets, and
+    the liveness probe. Everything else under ``/api`` is default-deny."""
+    return (
+        path == "/"
+        or path == "/api/health"
+        or path == "/static"
+        or path.startswith("/static/")
+    )
+
+
+def _needs_auth(path: str) -> bool:
+    """Default-deny: any ``/api`` path that is not explicitly public requires
+    authentication. A newly added ``/api`` route is protected by construction."""
+    return path.startswith("/api") and not _is_public_path(path)
 
 
 def _query_token(query_string: bytes) -> str | None:
@@ -447,27 +450,39 @@ def _build_auth_cookie(token: str, base_path: str, *, secure: bool) -> str:
     return "; ".join(parts)
 
 
+async def _send_401(send) -> None:
+    """Emit a JSON 401 straight from the middleware (the endpoint never runs)."""
+    body = b'{"detail":"invalid or missing token"}'
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"referrer-policy", b"no-referrer"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 class _AuthMiddleware:
-    """Pure-ASGI auth chokepoint for the web UI.
+    """Pure-ASGI auth chokepoint — the SOLE enforcer, default-deny.
 
-    A request is authenticated when the peer is a trusted loopback gateway
-    (``--trust-local``), it carries a valid ``act`` cookie, OR it carries a valid
-    ``?token=``. For an authenticated request the valid token is injected into
-    the query string so the existing per-endpoint ``_require_token(token)``
-    checks pass unchanged.
+    A request authenticates via a trusted loopback peer (``--trust-local``), a
+    valid ``act`` cookie, or a valid ``?token=`` (the one-time bootstrap URL the
+    gateway/operator hands out, or a curl/tool call). Any ``/api`` path that is
+    not public (:func:`_needs_auth`) and is unauthenticated gets a 401 HERE — the
+    endpoint never runs. Endpoints carry NO auth code of their own, so a newly
+    added ``/api`` route is protected by construction (fail-closed).
 
-    A valid client ``?token=`` (the one-time bootstrap URL the gateway/operator
-    hands out, or a curl/tool call) also makes the response Set the ``act``
-    cookie, so the browser's next request — and the SSE stream, which cannot send
-    headers — authenticate via the cookie and the token leaves the browser's
-    URLs after one hop. The security win (no token in the address bar /
-    per-request browser URLs / Referer) comes from the browser no longer emitting
-    ``?token=``; the server still accepting it keeps the bootstrap and tooling
-    working without reintroducing any leak.
+    A valid client ``?token=`` also makes the response Set the ``act`` cookie, so
+    the browser's next request — and the SSE stream, which cannot send headers —
+    authenticate via the cookie and the token leaves the browser's URLs after one
+    hop. The server still accepting ``?token=`` keeps the bootstrap and curl/tools
+    working without reintroducing a leak (the browser no longer emits it).
 
-    Every response gets ``Referrer-Policy: no-referrer``. Pure-ASGI (not
-    BaseHTTPMiddleware) so the injected token reaches the endpoint context
-    reliably."""
+    Every response gets ``Referrer-Policy: no-referrer``."""
 
     def __init__(self, app, server: WebServer):
         self.app = app
@@ -482,23 +497,18 @@ class _AuthMiddleware:
         host = client[0] if client else None
         qs = scope.get("query_string", b"")
 
-        cookie_tok = _cookie_value(scope, _AUTH_COOKIE)
-        client_tok = _query_token(qs)
-        valid_cookie = cookie_tok is not None and secrets.compare_digest(
-            cookie_tok, server.token
-        )
-        valid_client = client_tok is not None and secrets.compare_digest(
-            client_tok, server.token
-        )
+        valid_cookie = server.token_ok(_cookie_value(scope, _AUTH_COOKIE))
+        valid_client = server.token_ok(_query_token(qs))
+        authed = server.is_trusted_client(host) or valid_cookie or valid_client
 
-        # Auth (token injection): trust-local, a valid cookie, or a valid client
-        # ``?token=`` (bootstrap / tooling). For the browser this is normally the
-        # cookie; the query token stays accepted so the bootstrap URL and
-        # curl/tools keep working.
-        if server.is_trusted_client(host) or valid_cookie or valid_client:
-            scope = dict(scope)
-            scope["query_string"] = _with_token_query(qs, server.token)
+        # Default-deny: reject an unauthenticated request to a protected path
+        # before the endpoint runs.
+        if _needs_auth(scope.get("path", "")) and not authed:
+            await _send_401(send)
+            return
 
+        # Bootstrap: a valid ?token= installs the cookie so the browser stops
+        # putting the token in per-request URLs.
         set_cookie = valid_client and not valid_cookie
         secure = scope.get("scheme") == "https" or any(
             k == b"x-forwarded-proto" and v == b"https"
@@ -596,25 +606,23 @@ def create_app(server: WebServer) -> FastAPI:
         }
 
     @app.get("/api/share-url")
-    async def share_url(token: str = Query(...)):
+    async def share_url():
         """Return the instance token so the UI can build a token-bearing share
         link (the 🔗 button). Authenticated — only an already-authorised session
         (cookie / trust-local / token) may read it. The token is the instance's
         shared access credential (all viewers are equal), so handing it out is
         the intended way to invite a teammate; the frontend composes the full
         URL from ``<base href>`` (origin + base-path) + ``?token=``."""
-        server._require_token(token)
         return {"token": server.token}
 
     @app.get("/api/debug/prompt")
-    async def debug_prompt(token: str = Query(...), task_id: str = Query("")):
+    async def debug_prompt(task_id: str = Query("")):
         """Prompt Inspector data for a scope: the latest LLM call's system
         prompt as named sections with size figures. ``task_id`` selects a
         delegate sub-agent's prompt; empty (default) is the main loop. Token-
         authenticated; fetched on demand when the inspector drawer opens (the
         ~16KB payload is never pushed over SSE). ``ok=False`` before that
         scope's first LLM call."""
-        server._require_token(token)
         snapshot = server.renderer.prompt_snapshot(task_id)
         # System sections (kind=system, from the latest LLM call's snapshot —
         # may be absent before the first call) + the live DYNAMIC context
@@ -652,11 +660,10 @@ def create_app(server: WebServer) -> FastAPI:
         }
 
     @app.get("/api/directives")
-    async def debug_directives(token: str = Query(...)):
+    async def debug_directives():
         """프로젝트 ``DIRECTIVE.md`` — 스코프 에디터용으로 원문(content)과
         스코프 분해(scopes: common/main/agents)를 함께 반환. 파일이 없어도
         빈 폼으로 항상 표시. 프로젝트 파일 전용(전역 파일은 손편집)."""
-        server._require_token(token)
         from agent_cli.prompts.system_prompt import (
             project_directive_file,
             read_project_directive,
@@ -671,11 +678,10 @@ def create_app(server: WebServer) -> FastAPI:
         }
 
     @app.post("/api/directives")
-    async def debug_directives_save(body: dict, token: str = Query(...)):
+    async def debug_directives_save(body: dict):
         """저장 — ``{scopes:{common,main,agents}}``(에디터, 서버가 조립) 또는
         ``{content}``(원문 그대로). 다음 LLM 콜에서 시스템 프롬프트 rebuild
         (KV prefix 리셋), 다른 인스펙터에 브로드캐스트."""
-        server._require_token(token)
         from agent_cli.prompts.system_prompt import (
             join_directive_scopes,
             write_project_directive,
@@ -691,10 +697,9 @@ def create_app(server: WebServer) -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/compaction")
-    async def get_compaction(token: str = Query(...)):
+    async def get_compaction():
         """현재 compaction 목표 비율 + 슬라이더 범위(min/max/step). 라이브
         ctx 가 없으면(headless) 기본값. 프론트가 슬라이더 초기화에 사용."""
-        server._require_token(token)
         from agent_cli.context.manager import (
             COMPACTION_RATIO_MAX,
             COMPACTION_RATIO_MIN,
@@ -715,13 +720,12 @@ def create_app(server: WebServer) -> FastAPI:
         }
 
     @app.post("/api/compaction")
-    async def set_compaction(body: dict, token: str = Query(...)):
+    async def set_compaction(body: dict):
         """세션 한정 compaction 목표 비율 변경. web 과 loop 이 같은 ctx 를
         공유하므로 다음 LLM 콜이 즉시 새 값을 읽는다(rebuild 불필요). 값은
         [min,max] 로 clamp 되고, 다른 뷰어엔 sticky 브로드캐스트로 슬라이더
         동기화. 서브에이전트는 spawn/resume 시점에 이 값을 상속(기존 서브는
         불변 — 재spawn 으로 적용)."""
-        server._require_token(token)
         if server.ctx is None:
             return {"ok": False, "error": "no active context"}
         try:
@@ -733,11 +737,10 @@ def create_app(server: WebServer) -> FastAPI:
         return {"ok": True, "ratio": clamped}
 
     @app.get("/api/max-agents")
-    async def get_max_agents(token: str = Query(...)):
+    async def get_max_agents():
         """현재 동시 생존 에이전트 상한 + 입력 최소값/기본값. 레지스트리가
         없으면(headless·부트 전) 기본값. 프론트가 입력·체크박스 초기화에
         사용. value=0 이면 무제한(unlimited=True)."""
-        server._require_token(token)
         from agent_cli.subagent.agents_live import (
             _DEFAULT_MAX_AGENTS,
             MAX_AGENTS_MIN,
@@ -753,12 +756,11 @@ def create_app(server: WebServer) -> FastAPI:
         }
 
     @app.post("/api/max-agents")
-    async def set_max_agents(body: dict, token: str = Query(...)):
+    async def set_max_agents(body: dict):
         """세션 한정 에이전트 상한 변경. ``value <= 0`` 이면 무제한. 레지스트리
         가 즉시 새 값을 읽어(다음 spawn/resume 게이트) 반영되고, 다른 뷰어엔
         sticky 브로드캐스트로 입력/체크박스 동기화. 상한을 낮춰도 기존 에이전트
         는 안 죽임 — 새 spawn 만 막음."""
-        server._require_token(token)
         reg = server.agent_registry
         if reg is None:
             return {"ok": False, "error": "agent registry not ready"}
@@ -771,13 +773,12 @@ def create_app(server: WebServer) -> FastAPI:
         return {"ok": True, "value": stored, "unlimited": stored == 0}
 
     @app.post("/api/directives/generate")
-    async def directives_generate(body: dict, token: str = Query(...)):
+    async def directives_generate(body: dict):
         """✨ 생성 — 대략적 의도(brief)를 해당 청중(audience)용 directive
         초안으로. 산문 직접 호출(provider.call + 구조적 새니타이저 — Qwen3.6
         재실측 16/16 무누출, 5.7.0), 결과는 **미저장** 반환(에디터가 활성 탭에
         반영, 사용자 검토 후 저장). Body: ``{audience, brief, current?}``.
         LLM 미배선 503. 수십 초 블로킹 — executor 오프로드."""
-        server._require_token(token)
         if not server.runtime or server.runtime.get("provider") is None:
             raise HTTPException(status_code=503, detail="LLM not available")
 
@@ -798,29 +799,26 @@ def create_app(server: WebServer) -> FastAPI:
         return {"content": content}
 
     @app.get("/api/debug/prompt/scopes")
-    async def debug_prompt_scopes(token: str = Query(...)):
+    async def debug_prompt_scopes():
         """Scopes that currently have a captured system prompt — the main loop
         plus any delegate sub-agents — for the inspector's scope chip row."""
-        server._require_token(token)
         return {"ok": True, "scopes": server.renderer.prompt_scopes()}
 
     @app.delete("/api/debug/prompt")
-    async def debug_prompt_delete(token: str = Query(...), task_id: str = Query(...)):
+    async def debug_prompt_delete(task_id: str = Query(...)):
         """Drop a sub-agent's captured prompt (inspector ✕ button). Main is
         not deletable (it regenerates every turn)."""
-        server._require_token(token)
         removed = server.renderer.delete_prompt_scope(task_id)
         return {"ok": True, "removed": removed}
 
     @app.get("/api/export/jira/targets")
-    async def export_jira_targets(token: str = Query(...)):
+    async def export_jira_targets():
         """Configured Jira instance names + base URLs (+ deployment) for the
         export dropdown. Token-authenticated; NEVER returns credentials (none
         are stored server-side). Each target's ``deployment`` is the
         config-pinned value or, when absent, probed from serverInfo so the UI
         pre-selects the right credential fields. Empty list when no Jira is
         configured (the UI then disables the Jira option)."""
-        server._require_token(token)
         from agent_cli.config import load_config
         from agent_cli.integrations import jira as jira_mod
 
@@ -831,12 +829,11 @@ def create_app(server: WebServer) -> FastAPI:
         return {"ok": True, "targets": targets}
 
     @app.post("/api/export/html")
-    async def export_html(request: Request, token: str = Query(...)):
+    async def export_html(request: Request):
         """Render selected transcript entries to a self-contained HTML doc and
         return it as a download. Body: ``{title?, entries: [...]}``. Read-only,
         so token-auth (no controller check) — any authenticated viewer may
         export what they can see."""
-        server._require_token(token)
         from agent_cli.integrations import export as export_mod
 
         try:
@@ -860,7 +857,7 @@ def create_app(server: WebServer) -> FastAPI:
         )
 
     @app.post("/api/export/jira")
-    async def export_jira(request: Request, token: str = Query(...)):
+    async def export_jira(request: Request):
         """Post selected transcript entries as ONE Jira comment, AS THE
         FRONTEND USER. Body: ``{target?, base_url?, issue_key, deployment?,
         entries: [...], auth: {user, secret}}``. ``base_url`` (optional) lets the
@@ -870,7 +867,6 @@ def create_app(server: WebServer) -> FastAPI:
         per ``deployment`` and POSTs with the user-supplied credentials, which
         are used ONLY for this request — never logged or persisted. Returns
         ``{ok, url}`` or 400 with the error."""
-        server._require_token(token)
         from agent_cli.config import load_config
         from agent_cli.integrations import export as export_mod
         from agent_cli.integrations import jira as jira_mod
@@ -919,11 +915,10 @@ def create_app(server: WebServer) -> FastAPI:
         )
 
     @app.get("/api/workspace/tree")
-    async def workspace_tree(token: str = Query(...), path: str = Query("")):
+    async def workspace_tree(path: str = Query("")):
         """List one directory level of the workspace (lazy tree expansion).
         Returns ``{path, entries:[{name, type, size}]}`` — dirs first, then
         files, name-sorted. Read-only, token-auth."""
-        server._require_token(token)
         d = server._safe_workspace_path(path)
         if not d.is_dir():
             raise HTTPException(status_code=400, detail="not a directory")
@@ -965,11 +960,10 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"path": path, "entries": entries})
 
     @app.post("/api/workspace/download")
-    async def workspace_download(request: Request, token: str = Query(...)):
+    async def workspace_download(request: Request):
         """Zip the selected workspace paths and return the archive, deleting
         the temp file after send. Body: ``{paths:[rel...], all?:bool}``. A dir
         is added recursively; a file individually. Read-only, token-auth."""
-        server._require_token(token)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -1013,7 +1007,7 @@ def create_app(server: WebServer) -> FastAPI:
         )
 
     @app.post("/api/workspace/delete")
-    async def workspace_delete(request: Request, token: str = Query(...)):
+    async def workspace_delete(request: Request):
         """Delete selected workspace paths. Body: ``{paths:[rel...]}``. A file
         is unlinked, a directory removed recursively. WRITE + DESTRUCTIVE, so
         the strictest guards: under-workspace only (``_safe_workspace_path``),
@@ -1021,7 +1015,6 @@ def create_app(server: WebServer) -> FastAPI:
         reported (not fatal) so one bad path doesn't abort the rest."""
         import shutil
 
-        server._require_token(token)
         body = await request.json()
         rels = body.get("paths") or []
         if not rels:
@@ -1061,7 +1054,6 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/workspace/upload")
     async def workspace_upload(
         request: Request,
-        token: str = Query(...),
         name: str = Query(..., min_length=1),
         path: str = Query(""),
     ):
@@ -1083,7 +1075,6 @@ def create_app(server: WebServer) -> FastAPI:
         - size capped at ``_MAX_UPLOAD_BYTES`` (413 over).
         Overwrites an existing file (the user's own workspace) but reports it.
         """
-        server._require_token(token)
         segments = name.split("/")
         if (
             not name
@@ -1123,19 +1114,17 @@ def create_app(server: WebServer) -> FastAPI:
         )
 
     @app.get("/api/stream")
-    async def stream(token: str = Query(...)):
+    async def stream():
         """SSE event stream. Token-authenticated; multi-viewer (all equal)."""
-        server._require_token(token)
         conn = WebConnection(id=secrets.token_hex(8))
         return EventSourceResponse(server.stream_events(conn))
 
     @app.post("/api/agent/{key}/input")
-    async def agent_input(key: str, request: Request, token: str = Query(...)):
+    async def agent_input(key: str, request: Request):
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
         직접 전송. teammate 가 ask 답변 대기(waiting_ask) 중이면 이 메시지가
         답으로 소비된다 (main 과 선착순). 이 문답의 회신은 main 컨텍스트에
         배달되지 않는다 (창에만 — 레지스트리의 화자 규칙)."""
-        server._require_token(token)
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1155,9 +1144,8 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"accepted": True})
 
     @app.post("/api/agent/{key}/resume")
-    async def agent_resume(key: str, token: str = Query(...)):
+    async def agent_resume(key: str):
         """죽은 teammate 를 이전 컨텍스트 그대로 부활 (대화 창의 ↻)."""
-        server._require_token(token)
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1168,10 +1156,9 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.post("/api/agent/{key}/kill")
-    async def agent_kill(key: str, token: str = Query(...)):
+    async def agent_kill(key: str):
         """teammate 종료 (P4 창의 ✕) — kill 은 worker join(≤2s)을 포함하므로
         이벤트 루프를 막지 않게 executor 로 오프로드."""
-        server._require_token(token)
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1182,7 +1169,7 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.post("/api/input")
-    async def input_endpoint(request: Request, token: str = Query(...)):
+    async def input_endpoint(request: Request):
         """User input → renderer queue.
 
         Body shape::
@@ -1195,7 +1182,6 @@ def create_app(server: WebServer) -> FastAPI:
         ``prompt`` / ``confirm`` answer an in-flight render call. Every
         authenticated connection may send input (no controller gate).
         """
-        server._require_token(token)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -1251,11 +1237,10 @@ def create_app(server: WebServer) -> FastAPI:
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
 
     @app.post("/api/queue/cancel")
-    async def queue_cancel(request: Request, token: str = Query(...)):
+    async def queue_cancel(request: Request):
         """Cancel a still-pending queued message. Body: ``{conn_id, id}`` —
         only the owner (matching ``conn_id``) may cancel; already-dequeued
         messages can't be cancelled. Returns ``{cancelled: bool}``."""
-        server._require_token(token)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -1264,10 +1249,9 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"cancelled": ok})
 
     @app.post("/api/nickname")
-    async def set_nickname(request: Request, token: str = Query(...)):
+    async def set_nickname(request: Request):
         """Set the caller's display nickname. Body: ``{conn_id, name}``. The
         UI pre-fills the assigned fun default; the user edits/confirms."""
-        server._require_token(token)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -1276,20 +1260,18 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"ok": ok})
 
     @app.post("/api/abort")
-    async def abort(token: str = Query(...)):
+    async def abort():
         """Interrupt the current ``prompt_user`` / ``confirm`` wait."""
-        server._require_token(token)
         server.renderer.push_abort()
         return JSONResponse({"accepted": True})
 
     @app.post("/api/stop")
-    async def stop(token: str = Query(...)):
+    async def stop():
         """Stop the in-flight chat turn at the next turn boundary.
 
         Sets the worker's ``stop_event`` (same mechanism as Ctrl+C in
         the CLI). ``stopped`` is ``False`` when no turn was active.
         """
-        server._require_token(token)
         stopped = server.trigger_stop()
         return JSONResponse({"stopped": stopped})
 
