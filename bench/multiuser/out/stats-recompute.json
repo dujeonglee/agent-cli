@@ -1,61 +1,553 @@
 {
-  "scoping_6_7": {
-    "tally": {
-      "off": {
+  "semantic_5_4": {
+    "experimental_unit": "one concurrent two-turn run/pair",
+    "arms": [
+      {
+        "scoping": "off",
+        "reps": 20,
         "turns": 40,
-        "wrote_others": 26,
-        "own_complete": 34,
-        "runs": 20,
-        "both": 14
+        "crossTask": 20,
+        "crossTaskRate": 1.0,
+        "crossTaskRateExactCI95": [
+          0.8316,
+          1.0
+        ],
+        "turnsWroteOthers": 27,
+        "turnsWroteAllAssignedTargetPaths": 35,
+        "turnsTaskCorrect": 35,
+        "bothWroteAllAssignedTargetPaths": 15,
+        "bothTasksCorrect": 15,
+        "bothTasksCorrectRate": 0.75,
+        "bothTasksCorrectRateExactCI95": [
+          0.509,
+          0.9134
+        ],
+        "repositoryCorrect": 15,
+        "repositoryCorrectRateExactCI95": [
+          0.509,
+          0.9134
+        ],
+        "runsWithResponseCrossTag": 15,
+        "responseCrossTagRateExactCI95": [
+          0.509,
+          0.9134
+        ],
+        "medianLongerTurnSpanMs": 64628.4
       },
-      "on": {
+      {
+        "scoping": "on",
+        "reps": 20,
         "turns": 40,
-        "wrote_others": 0,
-        "own_complete": 40,
-        "runs": 20,
-        "both": 20
+        "crossTask": 0,
+        "crossTaskRate": 0.0,
+        "crossTaskRateExactCI95": [
+          0.0,
+          0.1684
+        ],
+        "turnsWroteOthers": 0,
+        "turnsWroteAllAssignedTargetPaths": 40,
+        "turnsTaskCorrect": 40,
+        "bothWroteAllAssignedTargetPaths": 20,
+        "bothTasksCorrect": 20,
+        "bothTasksCorrectRate": 1.0,
+        "bothTasksCorrectRateExactCI95": [
+          0.8316,
+          1.0
+        ],
+        "repositoryCorrect": 20,
+        "repositoryCorrectRateExactCI95": [
+          0.8316,
+          1.0
+        ],
+        "runsWithResponseCrossTag": 1,
+        "responseCrossTagRateExactCI95": [
+          0.0013,
+          0.2487
+        ],
+        "medianLongerTurnSpanMs": 59932.3
       }
-    },
-    "tests": [
+    ],
+    "paired_contrasts": [
       {
-        "contrast": "wrote another user's files (turns)",
-        "off": "26/40",
-        "on": "0/40",
-        "fisher_p_two_sided": 6.037498152742319e-11
+        "outcome": "crossTask",
+        "pairedRuns": 20,
+        "offOnly": 20,
+        "onOnly": 0,
+        "exactPairedP": 1.9073486328125e-06
       },
       {
-        "contrast": "completed own task (turns)",
-        "off": "34/40",
-        "on": "40/40",
-        "fisher_p_two_sided": 0.025546605293440737
+        "outcome": "bothWroteAllAssignedTargetPaths",
+        "pairedRuns": 20,
+        "offOnly": 0,
+        "onOnly": 5,
+        "exactPairedP": 0.0625
       },
       {
-        "contrast": "both tasks correct (runs)",
-        "off": "14/20",
-        "on": "20/20",
-        "fisher_p_two_sided": 0.020196020196020195
+        "outcome": "bothTasksCorrect",
+        "pairedRuns": 20,
+        "offOnly": 0,
+        "onOnly": 5,
+        "exactPairedP": 0.0625
+      },
+      {
+        "outcome": "repositoryCorrect",
+        "pairedRuns": 20,
+        "offOnly": 0,
+        "onOnly": 5,
+        "exactPairedP": 0.0625
+      },
+      {
+        "outcome": "anyResponseCrossTag",
+        "pairedRuns": 20,
+        "offOnly": 14,
+        "onOnly": 0,
+        "exactPairedP": 0.0001220703125
       }
-    ]
+    ],
+    "note": "turn-level counts are descriptive; inference uses paired runs"
   },
-  "integrity_6_2": {
-    "cells": {
-      "off": {
-        "classified": 110,
-        "violations": 9
-      },
-      "workspace": {
-        "classified": 181,
-        "violations": 0
-      },
-      "conflict": {
-        "classified": 180,
-        "violations": 0
-      }
+  "integrity_5_2": {
+    "experimental_unit": "one trace in a fresh process and temporary workspace",
+    "primary_outcomes": {
+      "writerOrdering": "whether participating writer critical sections overlapped",
+      "externalVisibility": "whether any mixed/broken read was observed in a run",
+      "finalState": "classification after both writers completed"
     },
-    "fisher_p_two_sided": 1.5951459802524068e-06,
-    "note": "off violations vs both locked scopes pooled"
+    "summary": [
+      {
+        "sample_ms": 1.0,
+        "lock_scope": "off",
+        "runs": 30,
+        "runsWithViolation": 24,
+        "runViolationRate": 0.8,
+        "runViolationRateExactCI95": [
+          0.6143,
+          0.9229
+        ],
+        "runsWithPartialVisibility": 30,
+        "runsWithParticipatingWriterOverlap": 30,
+        "writerOverlapRateExactCI95": [
+          0.8843,
+          1.0
+        ],
+        "medianEstimatedViolationExposureMs": 2.0,
+        "finalClasses": {
+          "intact": 25,
+          "mixed": 5,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 206,
+          "mixed": 61,
+          "broken": 0,
+          "partial": 1,
+          "empty": 114
+        }
+      },
+      {
+        "sample_ms": 1.0,
+        "lock_scope": "workspace",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 30,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 436,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 117
+        }
+      },
+      {
+        "sample_ms": 1.0,
+        "lock_scope": "conflict",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 30,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 439,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 146
+        }
+      },
+      {
+        "sample_ms": 2.0,
+        "lock_scope": "off",
+        "runs": 30,
+        "runsWithViolation": 27,
+        "runViolationRate": 0.9,
+        "runViolationRateExactCI95": [
+          0.7347,
+          0.9789
+        ],
+        "runsWithPartialVisibility": 29,
+        "runsWithParticipatingWriterOverlap": 30,
+        "writerOverlapRateExactCI95": [
+          0.8843,
+          1.0
+        ],
+        "medianEstimatedViolationExposureMs": 4.0,
+        "finalClasses": {
+          "intact": 27,
+          "mixed": 3,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 157,
+          "mixed": 60,
+          "broken": 0,
+          "partial": 9,
+          "empty": 86
+        }
+      },
+      {
+        "sample_ms": 2.0,
+        "lock_scope": "workspace",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 30,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 276,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 139
+        }
+      },
+      {
+        "sample_ms": 2.0,
+        "lock_scope": "conflict",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 29,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 302,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 114
+        }
+      },
+      {
+        "sample_ms": 5.0,
+        "lock_scope": "off",
+        "runs": 30,
+        "runsWithViolation": 24,
+        "runViolationRate": 0.8,
+        "runViolationRateExactCI95": [
+          0.6143,
+          0.9229
+        ],
+        "runsWithPartialVisibility": 23,
+        "runsWithParticipatingWriterOverlap": 30,
+        "writerOverlapRateExactCI95": [
+          0.8843,
+          1.0
+        ],
+        "medianEstimatedViolationExposureMs": 5.0,
+        "finalClasses": {
+          "intact": 27,
+          "mixed": 3,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 106,
+          "mixed": 42,
+          "broken": 0,
+          "partial": 1,
+          "empty": 37
+        }
+      },
+      {
+        "sample_ms": 5.0,
+        "lock_scope": "workspace",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 28,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 100,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 123
+        }
+      },
+      {
+        "sample_ms": 5.0,
+        "lock_scope": "conflict",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 27,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 143,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 86
+        }
+      },
+      {
+        "sample_ms": 10.0,
+        "lock_scope": "off",
+        "runs": 30,
+        "runsWithViolation": 13,
+        "runViolationRate": 0.4333,
+        "runViolationRateExactCI95": [
+          0.2546,
+          0.6257
+        ],
+        "runsWithPartialVisibility": 22,
+        "runsWithParticipatingWriterOverlap": 30,
+        "writerOverlapRateExactCI95": [
+          0.8843,
+          1.0
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 50,
+          "mixed": 17,
+          "broken": 0,
+          "partial": 0,
+          "empty": 33
+        }
+      },
+      {
+        "sample_ms": 10.0,
+        "lock_scope": "workspace",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 20,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 85,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 37
+        }
+      },
+      {
+        "sample_ms": 10.0,
+        "lock_scope": "conflict",
+        "runs": 30,
+        "runsWithViolation": 0,
+        "runViolationRate": 0.0,
+        "runViolationRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "runsWithPartialVisibility": 19,
+        "runsWithParticipatingWriterOverlap": 0,
+        "writerOverlapRateExactCI95": [
+          0.0,
+          0.1157
+        ],
+        "medianEstimatedViolationExposureMs": 0.0,
+        "finalClasses": {
+          "intact": 30,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0
+        },
+        "snapshotCountsDescriptiveOnly": {
+          "intact": 101,
+          "mixed": 0,
+          "broken": 0,
+          "partial": 0,
+          "empty": 20
+        }
+      }
+    ],
+    "paired_contrasts": [
+      {
+        "sample_ms": 1.0,
+        "contrast": "off vs workspace",
+        "discordantOffOnly": 24,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.1920928955078125e-07
+      },
+      {
+        "sample_ms": 1.0,
+        "contrast": "off vs conflict",
+        "discordantOffOnly": 24,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.1920928955078125e-07
+      },
+      {
+        "sample_ms": 2.0,
+        "contrast": "off vs workspace",
+        "discordantOffOnly": 27,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.4901161193847656e-08
+      },
+      {
+        "sample_ms": 2.0,
+        "contrast": "off vs conflict",
+        "discordantOffOnly": 27,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.4901161193847656e-08
+      },
+      {
+        "sample_ms": 5.0,
+        "contrast": "off vs workspace",
+        "discordantOffOnly": 24,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.1920928955078125e-07
+      },
+      {
+        "sample_ms": 5.0,
+        "contrast": "off vs conflict",
+        "discordantOffOnly": 24,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 1.1920928955078125e-07
+      },
+      {
+        "sample_ms": 10.0,
+        "contrast": "off vs workspace",
+        "discordantOffOnly": 13,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 0.000244140625
+      },
+      {
+        "sample_ms": 10.0,
+        "contrast": "off vs conflict",
+        "discordantOffOnly": 13,
+        "discordantLockedOnly": 0,
+        "exactPairedP": 0.000244140625
+      }
+    ],
+    "note": "snapshot counts are descriptive and never treated as independent"
   },
-  "ranking_6_10_ttft_ms": {
+  "ranking_5_1_ttft_ms": {
     "serial": {
       "n": 12,
       "median": 38204.05,

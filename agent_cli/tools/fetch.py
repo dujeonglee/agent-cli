@@ -241,6 +241,7 @@ def tool_fetch(args: dict) -> ToolResult:
 
 
 class FetchTool(Tool):
+    non_workspace_or_composite = True
     name = "fetch"
     description = (
         "Fetch a web page and return its content as markdown. "

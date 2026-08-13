@@ -14,7 +14,8 @@ M4 의 효과 락이 이 인텐트를 읽어 수행한다.
 
     FILE_WRITE/READ(경로 P) ↔ FILE_WRITE/READ(경로 Q≠P) : 병렬
     FILE_WRITE/READ(P)      ↔ FILE_WRITE/READ(P)        : 직렬
-    그 외 전부(SHELL/PACKAGE/FILE_DELETE/UNKNOWN)        : 배타
+    그 외 전부(SHELL/PACKAGE/FILE_DELETE/UNKNOWN_WORKSPACE_EFFECT): 배타
+    NON_WORKSPACE_OR_COMPOSITE                            : 이 게이트 대상 아님
 
 ``FILE_DELETE`` 가 배타인 이유(포크 ``sandboxLock.ts:20-22``): 삭제는
 디렉토리째 지울 수 있어 ``rm -r src/`` 와 ``write src/x.py`` 가 경로 키가
@@ -49,8 +50,19 @@ class EffectKind(str, Enum):
     FILE_DELETE = "FILE_DELETE"
     SHELL = "SHELL"
     PACKAGE = "PACKAGE"
-    UNKNOWN = "UNKNOWN"
+    # A leaf tool whose workspace effects were not classified.  This is the
+    # fail-closed default for newly registered/plugin tools: it must take the
+    # workspace-exclusive gate until the tool declares a narrower intent.
+    UNKNOWN_WORKSPACE_EFFECT = "UNKNOWN_WORKSPACE_EFFECT"
+    # A tool that is explicitly known not to have a leaf workspace effect, or
+    # a composite whose children acquire their own gates.  Keeping this
+    # separate from the fail-closed default avoids both silent races and the
+    # parent/child deadlock that one overloaded UNKNOWN value used to create.
+    NON_WORKSPACE_OR_COMPOSITE = "NON_WORKSPACE_OR_COMPOSITE"
 
+    # Backward-compatible spelling for third-party callers. It aliases the
+    # safe fail-closed meaning, never the old unlocked behavior.
+    UNKNOWN = "UNKNOWN_WORKSPACE_EFFECT"  # noqa: PIE796
 
 @dataclass(frozen=True)
 class EffectIntent:
@@ -75,4 +87,4 @@ class EffectIntent:
         """
         if self.kind in (EffectKind.FILE_READ, EffectKind.FILE_WRITE):
             return not self.path.strip()
-        return True
+        return self.kind is not EffectKind.NON_WORKSPACE_OR_COMPOSITE

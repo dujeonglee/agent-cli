@@ -44,6 +44,7 @@ from agent_cli.code_index.builder import get_parser
 from agent_cli.code_index.languages import LANGUAGES, language_of
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
 from agent_cli.tools.base import Tool, narrow_oversized_nudge
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.read_file import format_hashlines_range
 from agent_cli.tools.result import ToolResult
 
@@ -721,6 +722,15 @@ class CodeIndexTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """Lazy refresh can write ``.agent-cli/code_index.db`` in the root.
+
+        Its internal build lock protects index writers from one another, but it
+        cannot coordinate an arbitrary shell or plugin workspace effect. Keep
+        this explicitly workspace-exclusive even when a query looks read-only.
+        """
+        return EffectIntent(EffectKind.UNKNOWN_WORKSPACE_EFFECT)
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")

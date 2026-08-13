@@ -369,6 +369,7 @@ def _help(session_dir: Path | None) -> ToolResult:
 
 
 class ReadContextTool(Tool):
+    non_workspace_or_composite = True
     name = "read_context"
     description = (
         "Query past/current session history with SQL. read_context_query='SELECT "

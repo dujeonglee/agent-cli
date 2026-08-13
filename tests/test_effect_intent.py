@@ -16,23 +16,49 @@ from agent_cli.tools.effect import EffectIntent, EffectKind
 
 
 class TestDefaultIsExclusive:
-    """자기 효과를 증명 못 하는 도구는 전부 UNKNOWN(=배타) — 안전측."""
+    """누락된 분류는 배타, 의도적 비워크스페이스 효과는 명시적이다."""
 
     #: FILE_*/SHELL 로 좁혀진 도구들. 그 외는 전부 UNKNOWN 이어야 한다.
-    NARROWED: ClassVar[set[str]] = {"read_file", "write_file", "edit_file", "shell"}
+    NARROWED: ClassVar[set[str]] = {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "shell",
+        "code_index",
+    }
 
-    def test_every_other_tool_is_unknown(self):
+    def test_every_other_builtin_explicitly_opts_out(self):
         for name, tool in TOOLS.items():
             if name in self.NARROWED:
                 continue
             intent = tool.effect_intent({})
-            assert intent.kind is EffectKind.UNKNOWN, name
-            assert intent.is_exclusive, name
+            assert intent.kind is EffectKind.NON_WORKSPACE_OR_COMPOSITE, name
+            assert not intent.is_exclusive, name
 
-    def test_unknown_is_exclusive_even_with_a_path_argument(self):
-        # 경로를 들고 있어도 분류가 UNKNOWN 이면 배타 — 경로 유무가 아니라
-        # 종류가 판정을 지배한다(추측으로 좁히지 않는다).
-        assert TOOLS["code_index"].effect_intent({"path": "a.py"}).is_exclusive
+    def test_omitted_plugin_intent_is_exclusive(self):
+        from agent_cli.tools.base import Tool
+        from agent_cli.tools.result import ToolResult
+
+        class PluginThatForgotIntent(Tool):
+            name = "forgotten"
+            description = "test"
+            parameters: ClassVar[dict] = {"type": "object", "properties": {}}
+
+            def _run(self, args, *, ctx=None):
+                return ToolResult(True, output="ok")
+
+        intent = PluginThatForgotIntent().effect_intent({"path": "a.py"})
+        assert intent.kind is EffectKind.UNKNOWN_WORKSPACE_EFFECT
+        assert intent.is_exclusive
+
+    def test_code_index_explicitly_declares_workspace_exclusive(self):
+        intent = TOOLS["code_index"].effect_intent({"mode": "lookup", "name": "x"})
+        assert intent.kind is EffectKind.UNKNOWN_WORKSPACE_EFFECT
+        assert intent.is_exclusive
+
+    def test_legacy_unknown_spelling_is_now_fail_closed(self):
+        assert EffectKind.UNKNOWN is EffectKind.UNKNOWN_WORKSPACE_EFFECT
+        assert EffectIntent(EffectKind.UNKNOWN).is_exclusive
 
 
 class TestFileTools:

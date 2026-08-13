@@ -197,6 +197,12 @@ class Tool(ABC):
     #: concurrency is both safe and worth the wall-clock win).
     parallel_safe: bool = False
 
+    #: Explicit opt-out for tools with no leaf workspace effect, or composites
+    #: whose children acquire their own gates.  False by default so a new
+    #: plugin/tool that omits classification fails closed at the workspace
+    #: gate instead of silently running unlocked.
+    non_workspace_or_composite: bool = False
+
     def parallel_batchable(self, action_input: dict) -> bool:
         """이 op 이 병렬 배치에 합류 가능한가 (5.0.0 mode-aware 배칭).
 
@@ -375,7 +381,7 @@ class Tool(ABC):
     def effect_intent(self, action_input: dict) -> EffectIntent:
         """이 호출이 일으키는 부수효과의 선언 — A3 계층 락의 전제.
 
-        Default: :attr:`EffectKind.UNKNOWN` (=배타). 자기 부수효과를
+        Default: :attr:`EffectKind.UNKNOWN_WORKSPACE_EFFECT` (=배타). 자기 부수효과를
         **증명할 수 있는** 도구만 override 해 좁힌다. 기본값이 배타인 것은
         안전측 설계다 — 미분류 도구가 실수로 병렬 진입해 파일을 동시에
         만지는 것보다, 줄을 서서 느린 편이 항상 낫다.
@@ -384,25 +390,24 @@ class Tool(ABC):
         shape 를 안다)을 따르며, override 는 :meth:`strip_prefix` 로 표준 키를
         읽는다. 분류 어휘와 호환성 행렬은 :mod:`agent_cli.tools.effect` 참조.
 
-        UNKNOWN 으로 남는 도구들의 근거(전부 "워크스페이스 경로로 좁힐 수
-        없음"): ``code_index`` 는 공유 인덱스 DB 를 갱신하고(이미 자체
-        ``_BUILD_LOCK`` 보유) path 없는 모드가 있다, ``memory`` 는 세션
-        memory.jsonl 을, ``read_context`` 는 세션 history 를 대상으로 한다
-        (워크스페이스 파일이 아니라 M4 경로 락의 대상이 아님), ``fetch`` 는
-        네트워크, ``agent`` 는 중첩 도구라 효과가 미지, 가상 도구
-        (complete/ask/message/run_skill)는 파일을 만지지 않는다.
+        ``code_index`` 는 공유 인덱스 DB를 갱신할 수 있고 경로 없는 모드도 있어
+        명시적인 workspace-exclusive intent를 낸다. 반면 ``memory`` 는 세션
+        memory.jsonl, ``read_context`` 는 세션 history, ``fetch`` 는 네트워크를
+        대상으로 하므로 NON_WORKSPACE_OR_COMPOSITE를 명시한다. ``agent`` 와
+        ``run_skill`` 은 중첩 도구이고 가상 도구(complete/ask/message)는 사용자
+        작업공간 파일을 만지지 않는다.
 
-        **UNKNOWN 의 운용 의미 (M4 에서 확정)**: "이 락으로 정렬할 워크스페이스
-        효과가 없다" = 락을 잡지 않는다. M1 때 남긴 숙제("가상 도구가 배타 락을
-        쥐면 ``ask`` 가 사람을 기다리는 동안 전부 멈춘다")의 해소이며, 실제 락을
-        붙여 보니 이유가 하나 더 있었다 — ``agent``/``run_skill`` 은 중첩 루프를
-        띄우고 그 안의 잎 도구들이 **각자** 락을 잡으므로, 부모가 배타 락을 쥐면
-        **교착**이다(자식은 다른 스레드라 재진입도 안 통한다). 판정 근거와 도구별
-        사유는 :mod:`agent_cli.tools.effect_lock` docstring 참조.
-        ``EffectIntent.is_exclusive`` 는 여전히 "잠근다면 배타여야 하는가"만
-        답하고, **잠글지 여부**는 락이 정한다.
+        워크스페이스 밖 상태만 다루거나 자식 잎 도구가 스스로 잠그는 복합 도구는
+        반드시 ``NON_WORKSPACE_OR_COMPOSITE`` 를 명시한다. 이 구분 덕분에 새
+        plugin/tool 이 선언을 빠뜨리면 조용히 무잠금으로 실행되지 않고 배타로
+        떨어지며, 명시된 복합 도구만 부모 락을 건너뛰어 중첩 교착을 피한다.
         """
-        return EffectIntent(EffectKind.UNKNOWN)
+        kind = (
+            EffectKind.NON_WORKSPACE_OR_COMPOSITE
+            if self.non_workspace_or_composite
+            else EffectKind.UNKNOWN_WORKSPACE_EFFECT
+        )
+        return EffectIntent(kind)
 
     def summary_arg(self, action_input: dict) -> str:
         """Short label for this action in the compaction transcript /

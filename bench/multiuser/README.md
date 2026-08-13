@@ -12,7 +12,7 @@
 | `mock_llm.py` | 결정적 목 LLM — OpenAI 호환 `/chat/completions` SSE. 지연은 프롬프트 안 `[[bench ttft= tok= n= work= fwrite= fpath= marker= lines= id=]]` 지시자로 제어. 도구 호출은 **json_fc content op** 로 흘린다(이 시스템의 wire 형식). 압축 요약 콜은 지시자보다 먼저 감지해 짧게 응답(`MOCK_LLM_SUM_MS`). `MOCK_LLM_CTX` 로 광고 컨텍스트 창 제어(N1 압축 유발) |
 | `driver.py` | 공용 드라이버 — 서버/목 기동(HOME 격리·워크스페이스 격리), 입력 주입, `turns.jsonl`(M2 계측) 파싱, 턴 사슬 해석(`turn_chain`/`ttft_ms`), 통계(p50/p95/기울기) |
 | `e2_hol.py` | **P1/N2**: HOL 지연 — 3계약 × L{2,6,15,30}s × reps. 핵심 지표 = B TTFT ~ L 회귀 기울기 (실측 §6.1) |
-| `e1_ablation.py` | **P3/N2**: 효과 락 ablation — lock{off,workspace,conflict} × 동일 파일 동시 쓰기. 위반 = 두 마커 공존(mixed). 손상 메커니즘은 truncate/write 인터리브 |
+| `e1_ablation.py` | **P3/N2**: 효과 락 ablation — 독립 프로세스/workspace run을 분석 단위로 lock{off,workspace,conflict} × 동일 파일 동시 쓰기. 참여 writer 중첩, 외부 reader 혼합/파손 노출, 최종 상태를 분리하고 1/2/5/10ms 민감도를 기록한다. snapshot 수 자체는 기술 통계일 뿐 독립 표본이 아니다 |
 | `n1_compaction.py` | **N1**: 동시 턴 하의 낙관적 압축 — 압축 무락 구간 안에서 타 턴 이벤트 지속(가용성), stale 재시도 수, 질의 유실 0 + 귀속 정합(정확성) |
 | `n3_attribution.py` | **N3**: 병렬 귀속 정확도 — 마커 왕복 검사로 오귀속률 측정(가설: 0) |
 | `p4_fairness.py` | **P4**: per-user 공정성 — 게이트 on/off 두 팔(`--no-per-user-gate` ablation), 단기 사용자 대기 절대값 대조 |
@@ -26,12 +26,12 @@
 | `e2c_retry.py` | **E2c**: 거부 벌점 대 재시도 간격 {250,1000}ms — 벌점이 간격 하나 안에 머무는지 (§6.1) |
 | `e2d_nscale.py` | **E2d**: 사용자 수 축 N∈{2,4,8} — 병렬 행 평탄함의 스케일 (§6.1) |
 | `n3b_scoping.py` | **N3b**: 턴 스코핑 목 절제 — off/ignore(음성 대조)/honor 3팔 (§6.7) |
-| `n3c_scoping_real.py` | **N3c**: 턴 스코핑 라이브 — reply_to×files 턴별 귀속 판정 (§6.7). `--workload confusable`(기본, 혼선 최악=완화 실험) / `realistic`(정상적으로 구분되는 작업=배치 기저율), `--arms off\|on\|both` |
+| `n3c_scoping_real.py` | **N3c**: 턴 스코핑 라이브 — 동시 두 턴의 run/pair가 분석 단위. reply_to×도구효과 귀속, 지정 경로 작성, exact content oracle, 최종 repository, 응답 완료 태그를 층별 판정한다. `--workload confusable` / `realistic`, `--arms off\|on\|both`; 양팔은 반복마다 순서를 교대한다 |
 | `n5_staleness.py` | **N5**: 스냅샷 staleness — ctx seq 이벤트로 스텝별 (커밋−1)−(스냅샷) 산술, 병렬 대 직렬 대조군 (§6.7) |
 | `p4b_mixed_fairness.py` | **P4b**: 혼합 워크로드 효과층 대기 — 셸 위주 A 옆 파일 위주 B 의 락 대기 분포, 락 직접 구동 (§6.8) |
 | `p2_shell_real.py` | **F2**: 셸 지배 작동점 — 라이브 2-user, 효과 비중·락 대기 (§6.4) |
 | `p6b_provider_concurrency.py` | **Q3**: 엔드포인트 자체 동시성 상한 — 세션 우회 N 동시 생성 (§6.10) |
-| `stats_recompute.py` | 커밋된 raw 재계산 — Fisher 정확검정·부트스트랩 CI (§6 Setup 정책) |
+| `stats_recompute.py` | 커밋된 raw 재계산 — run/pair exact interval·exact McNemar 검정과 TTFT bootstrap CI. 연속 snapshot/중첩 turn을 독립 표본으로 쓰지 않는다 |
 | `compare_prepost.py` | 수리 전(`out/`) 대 수리 후(`out/postfix/`) 라이브 결과 대조 (플랜2 H2b) |
 
 **`--real` 플래그** (`n5_staleness`·`n1_compaction`·`p4_fairness`·`p7_lifecycle`): 목이 실상을 왜곡할 수 있는 네 실험(`docs/research/17-mock-vs-live-audit.md` 범주 D)의 실모델 팔. 산출은 `*-real.json` 으로 분리되어 목 결과를 덮지 않는다. 나머지 목 실험은 **목이 곧 계기**(작업 길이·스텝 수·적대 정책이 독립변수)라 실모델로 바꾸면 설계가 무너진다 — 같은 문서의 범주 A.
@@ -44,7 +44,8 @@
 .venv/bin/python bench/multiuser/e2_hol.py --reps 20
 
 # 락 ablation
-.venv/bin/python bench/multiuser/e1_ablation.py --reps 3 --writes 8
+.venv/bin/python bench/multiuser/e1_ablation.py --reps 30 --k 8 \
+  --size-kib 128 --sample-ms 1 2 5 10
 
 # 동시 압축 / 귀속 / 공정성
 .venv/bin/python bench/multiuser/n1_compaction.py

@@ -22,6 +22,7 @@ from agent_cli.tools.result import ToolResult
 
 
 class AgentTool(Tool):
+    non_workspace_or_composite = True
     name = "agent"
     # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
     # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).

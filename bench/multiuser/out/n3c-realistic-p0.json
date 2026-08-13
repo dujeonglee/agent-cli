@@ -1,0 +1,136 @@
+{
+  "workload": "realistic",
+  "tasks": {
+    "parser": [
+      "parser_tokens.txt",
+      "parser_rules.txt"
+    ],
+    "readme": [
+      "readme_intro.txt",
+      "readme_usage.txt"
+    ]
+  },
+  "writesPerTurn": 2,
+  "lines": 8,
+  "arms": [
+    {
+      "scoping": "off",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 20,
+      "crossTaskRate": 1.0,
+      "crossTaskRateExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "turnsWroteOthers": 27,
+      "turnsWroteAllAssignedTargetPaths": 35,
+      "turnsTaskCorrect": 35,
+      "bothWroteAllAssignedTargetPaths": 15,
+      "bothTasksCorrect": 15,
+      "bothTasksCorrectRate": 0.75,
+      "bothTasksCorrectRateExactCI95": [
+        0.509,
+        0.9134
+      ],
+      "repositoryCorrect": 15,
+      "repositoryCorrectRateExactCI95": [
+        0.509,
+        0.9134
+      ],
+      "runsWithResponseCrossTag": 15,
+      "responseCrossTagRateExactCI95": [
+        0.509,
+        0.9134
+      ],
+      "medianLongerTurnSpanMs": 64628.4
+    },
+    {
+      "scoping": "on",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 0,
+      "crossTaskRate": 0.0,
+      "crossTaskRateExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "turnsWroteOthers": 0,
+      "turnsWroteAllAssignedTargetPaths": 40,
+      "turnsTaskCorrect": 40,
+      "bothWroteAllAssignedTargetPaths": 20,
+      "bothTasksCorrect": 20,
+      "bothTasksCorrectRate": 1.0,
+      "bothTasksCorrectRateExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "repositoryCorrect": 20,
+      "repositoryCorrectRateExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "runsWithResponseCrossTag": 1,
+      "responseCrossTagRateExactCI95": [
+        0.0013,
+        0.2487
+      ],
+      "medianLongerTurnSpanMs": 59932.3
+    }
+  ],
+  "experimentalUnit": "one concurrent two-turn run/pair",
+  "armOrder": "alternated by repetition (off-first odd, on-first even)",
+  "pairedContrasts": [
+    {
+      "outcome": "crossTask",
+      "pairedRuns": 20,
+      "offOnly": 20,
+      "onOnly": 0,
+      "exactPairedP": 1.9073486328125e-06
+    },
+    {
+      "outcome": "bothWroteAllAssignedTargetPaths",
+      "pairedRuns": 20,
+      "offOnly": 0,
+      "onOnly": 5,
+      "exactPairedP": 0.0625
+    },
+    {
+      "outcome": "bothTasksCorrect",
+      "pairedRuns": 20,
+      "offOnly": 0,
+      "onOnly": 5,
+      "exactPairedP": 0.0625
+    },
+    {
+      "outcome": "repositoryCorrect",
+      "pairedRuns": 20,
+      "offOnly": 0,
+      "onOnly": 5,
+      "exactPairedP": 0.0625
+    },
+    {
+      "outcome": "anyResponseCrossTag",
+      "pairedRuns": 20,
+      "offOnly": 14,
+      "onOnly": 0,
+      "exactPairedP": 0.0001220703125
+    }
+  ],
+  "completePairedRuns": 20,
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "decoding": {
+    "temperature": "not explicitly set (endpoint default)",
+    "top_p": "not explicitly set (endpoint default)",
+    "seed": "not explicitly set; endpoint may be nondeterministic",
+    "max_tokens": "agent-cli model capability max_output_tokens"
+  },
+  "host": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "logicalCpuCount": 16
+  },
+  "requestedRunsPerArm": 20,
+  "failedRuns": [],
+  "runDate": "2026-08-13",
+  "note": "crossTask is a run-level indicator that either turn touched the other assignment's paths. wroteAllAssignedTargetPaths is only a path-coverage measure; taskCorrect additionally requires exact content-oracle matches, repositoryCorrect checks final files, and response cross-tags use a preregistered literal completion-tag rule. The two instructions are genuinely different work (different subject, filenames, line content and completion tag), so this arm measures the base rate a deployment would actually see. Only the shape of the work is shared (two files of eight lines) so that spans and sample sizes stay comparable. The run/pair, not either nested turn, is the primary analysis unit."
+}

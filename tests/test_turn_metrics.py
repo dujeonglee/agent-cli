@@ -213,10 +213,12 @@ class TestEffectLockEvents:
             pass
         assert _read_events(tmp_path) == []
 
-    def test_unknown_kind_emits_nothing(self, tmp_path):
+    def test_explicit_non_workspace_kind_emits_nothing(self, tmp_path):
         turn_metrics.enable(tmp_path)
         effect_lock.set_scope("conflict")
-        with effect_lock.hold(EffectIntent(EffectKind.UNKNOWN, ""), key="k"):
+        with effect_lock.hold(
+            EffectIntent(EffectKind.NON_WORKSPACE_OR_COMPOSITE, ""), key="k"
+        ):
             pass
         assert _read_events(tmp_path) == []
 

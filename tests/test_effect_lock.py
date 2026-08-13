@@ -30,7 +30,8 @@ W = EffectIntent(EffectKind.FILE_WRITE, "a.py")
 W2 = EffectIntent(EffectKind.FILE_WRITE, "b.py")
 R = EffectIntent(EffectKind.FILE_READ, "a.py")
 SH = EffectIntent(EffectKind.SHELL)
-UNK = EffectIntent(EffectKind.UNKNOWN)
+UNK = EffectIntent(EffectKind.UNKNOWN_WORKSPACE_EFFECT)
+NON_WS = EffectIntent(EffectKind.NON_WORKSPACE_OR_COMPOSITE)
 
 
 class _Tracker:
@@ -158,6 +159,64 @@ class TestCompatibilityMatrix:
         t = _spawn([(rel, "rel"), (absolute, "abs")], _Tracker())
         assert t.peak == 1
 
+    def test_symlink_aliases_share_a_key(self, tmp_path):
+        target = tmp_path / "target.txt"
+        target.write_text("x", encoding="utf-8")
+        alias = tmp_path / "alias.txt"
+        alias.symlink_to(target)
+        a = EffectIntent(EffectKind.FILE_WRITE, str(target))
+        b = EffectIntent(EffectKind.FILE_WRITE, str(alias))
+        t = _spawn([(a, "target"), (b, "symlink")], _Tracker())
+        assert t.peak == 1
+
+    def test_hard_link_aliases_share_a_key(self, tmp_path):
+        import os
+
+        target = tmp_path / "target.txt"
+        target.write_text("x", encoding="utf-8")
+        alias = tmp_path / "hardlink.txt"
+        os.link(target, alias)
+        a = EffectIntent(EffectKind.FILE_WRITE, str(target))
+        b = EffectIntent(EffectKind.FILE_WRITE, str(alias))
+        t = _spawn([(a, "target"), (b, "hardlink")], _Tracker())
+        assert t.peak == 1
+
+    def test_new_paths_through_symlinked_parent_share_a_key(self, tmp_path):
+        target_dir = tmp_path / "real"
+        target_dir.mkdir()
+        alias_dir = tmp_path / "alias"
+        alias_dir.symlink_to(target_dir, target_is_directory=True)
+        a = EffectIntent(EffectKind.FILE_WRITE, str(target_dir / "new.txt"))
+        b = EffectIntent(EffectKind.FILE_WRITE, str(alias_dir / "new.txt"))
+        t = _spawn([(a, "target"), (b, "symlink-parent")], _Tracker())
+        assert t.peak == 1
+
+    def test_cyclic_symlink_fails_closed(self, tmp_path):
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.symlink_to(second)
+        second.symlink_to(first)
+        cyclic = EffectIntent(EffectKind.FILE_WRITE, str(first))
+        _assert_blocks(cyclic, W2, note="canonicalization failure must be exclusive")
+
+    def test_rename_after_key_construction_is_an_explicit_toctou_boundary(
+        self, tmp_path
+    ):
+        """Canonicalization is not a filesystem transaction.
+
+        This adversarial check deliberately moves the resource after the first
+        key has been constructed.  The new name has a different key; A3 in the
+        paper therefore requires resource identity to remain stable between
+        key construction and execution.
+        """
+        old = tmp_path / "old.txt"
+        new = tmp_path / "new.txt"
+        old.write_text("x", encoding="utf-8")
+        old_key = effect_lock.normalize_lock_path(str(old))
+        old.rename(new)
+        new_key = effect_lock.normalize_lock_path(str(new))
+        assert old_key != new_key
+
 
 class TestFairness:
     def test_strict_fifo_no_overtaking(self):
@@ -226,19 +285,21 @@ class TestScopes:
         cf = _spawn([(W, "a"), (W2, "b")], _Tracker(), scope="conflict")
         assert ws.peak == 1 and cf.peak == 2
 
-    def test_unknown_never_locks(self):
-        """복합/세션-상태 도구는 정렬 대상이 아니다 — 잠그면 중첩 교착."""
+    def test_unknown_workspace_effect_fails_closed(self):
+        """미분류 plugin/tool 효과는 누락 실수여도 배타로 떨어진다."""
         t = _spawn([(UNK, "u1"), (UNK, "u2")], _Tracker(), scope="conflict")
+        assert t.peak == 1
+
+    def test_explicit_non_workspace_effect_does_not_lock(self):
+        t = _spawn([(NON_WS, "u"), (SH, "sh")], _Tracker(), scope="conflict")
         assert t.peak == 2
 
-    def test_unknown_does_not_block_others(self):
-        t = _spawn([(UNK, "u"), (SH, "sh")], _Tracker(), scope="conflict")
-        assert t.peak == 2  # UNKNOWN 은 큐에 들어가지도 않는다
-
-    def test_unknown_yields_false(self):
+    def test_only_explicit_non_workspace_kind_yields_false(self):
         effect_lock.set_scope("conflict")
-        with effect_lock.hold(UNK) as locked:
+        with effect_lock.hold(NON_WS) as locked:
             assert locked is False
+        with effect_lock.hold(UNK) as locked:
+            assert locked is True
         with effect_lock.hold(W) as locked:
             assert locked is True
 
@@ -338,7 +399,8 @@ class TestNoDeadlockWithNestedTools:
 
     ``agent``/``run_skill`` 은 중첩 루프를 띄우고 그 안의 잎 도구가 각자 락을
     잡는다. 부모가 배타 락을 쥔 채 자식이 요구하면(자식은 다른 스레드라 재진입도
-    안 통한다) 영원히 멈춘다. 그래서 복합 도구는 UNKNOWN = 정렬 대상 아님이다.
+    안 통한다) 영원히 멈춘다. 그래서 복합 도구는 명시적인
+    NON_WORKSPACE_OR_COMPOSITE = 부모 정렬 대상 아님이다.
     """
 
     def test_composite_tools_declare_no_orderable_effect(self):
@@ -346,7 +408,7 @@ class TestNoDeadlockWithNestedTools:
 
         for name in ("agent", "run_skill", "ask", "complete", "message"):
             intent = TOOLS[name].effect_intent({})
-            assert intent.kind is EffectKind.UNKNOWN, name
+            assert intent.kind is EffectKind.NON_WORKSPACE_OR_COMPOSITE, name
 
     def test_nested_leaf_call_inside_a_held_lock_does_not_deadlock(self):
         """부모 스레드가 락을 쥔 동안 자식 스레드의 잎 호출이 진행되는가.
@@ -376,6 +438,31 @@ class TestNoDeadlockWithNestedTools:
             t.join(timeout=3)
 
         assert child_done.is_set(), "중첩 잎 호출이 교착했다"
+
+
+class TestCooperativeProcessBoundary:
+    def test_detached_work_outlives_the_shell_gate(self):
+        """The gate covers a foreground shell call, not work it detaches.
+
+        This pins assumption A4: a background process/thread can continue after
+        the declaring shell critical section releases, so the paper must never
+        describe the in-process gate as process-external containment.
+        """
+        effect_lock.set_scope("conflict")
+        released = threading.Event()
+        detached_done = threading.Event()
+
+        def detached():
+            released.wait(timeout=5)
+            detached_done.set()
+
+        with effect_lock.hold(SH):
+            t = threading.Thread(target=detached)
+            t.start()
+            assert not detached_done.wait(timeout=0.05)
+        released.set()
+        t.join(timeout=5)
+        assert detached_done.is_set()
 
 
 class TestLoopIntegration:

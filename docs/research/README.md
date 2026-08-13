@@ -23,6 +23,8 @@
 | [09-full-paper-draft.md](09-full-paper-draft.md) | **논문 전체 본문(영문, 투고용 초안)** — Abstract, §1–§8, 참고문헌 32건. 실측(✔)과 미실행([TODO]) 구분 표기 |
 | [10-agent-cli-gap-analysis.md](10-agent-cli-gap-analysis.md) | 본류 미병합 기능 백로그 — 격차 매트릭스(A–E), 실험 P1–P8별 본류 실행 가능성 판정. §3 전략 α/β는 11로 대체됨 |
 | [11-upstream-merge-plan.md](11-upstream-merge-plan.md) | **포크→본류 역병합 계획** — 계약 이식 원칙, 컴포넌트 대응표, 병합 단계 M0–M6, 단계별 해금 실험, 검증 게이트, 리스크 |
+| [24-review-response.md](24-review-response.md) | CHI 리뷰어 관점의 P0–P2 타당성·프레이밍 문제와 수정안 |
+| [25-p0-revision-report.md](25-p0-revision-report.md) | P0 구현 수정, 독립-run 재실험, 의미 판정 재설계, 논문 반영 결과 |
 
 읽는 순서: 연구 결론은 **06 → 05 → 04**, 논문은 **09**(전문)·07(기획), 개발 착수는 **11 → 10**, 시스템 근거는 01(포크)·03(본류), 도구 현황은 02.
 

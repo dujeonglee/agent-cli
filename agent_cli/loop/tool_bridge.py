@@ -343,7 +343,7 @@ class ToolBridge:
         intent = (
             tool.effect_intent(args)
             if tool is not None
-            else EffectIntent(EffectKind.UNKNOWN)
+            else EffectIntent(EffectKind.UNKNOWN_WORKSPACE_EFFECT)
         )
         with effect_lock.hold(intent):
             return _execute_tool(tool_name, tool_input, ctx=self._run_ctx())

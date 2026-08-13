@@ -21,21 +21,22 @@
 — 파일 작업이 계속 들어와도 SHELL 이 굶지 않는다. 동시성을 조금 포기하고
 공정성을 택한 것이며, 이 선택 역시 포크에서 검증됐다(``sandboxLock.ts:24-25``).
 
-**UNKNOWN 은 락을 잡지 않는다** — M1 에서 남긴 숙제의 해소다. M1 은 "모호하면
-UNKNOWN=배타"로 안전측 분류를 했지만, 실제 락을 붙여 보니 UNKNOWN 이 성격이
-다른 셋을 뭉뚱그리고 있었다:
+미분류 워크스페이스 효과와 정렬 대상이 아닌 효과를 구분한다. 전자는
+``UNKNOWN_WORKSPACE_EFFECT`` 로 워크스페이스 배타(fail-closed), 후자는
+``NON_WORKSPACE_OR_COMPOSITE`` 로 무잠금이다. 예전 UNKNOWN 은 성격이 다른 셋을
+뭉뚱그리고 있었다:
   ① **복합 도구**(``agent``/``run_skill``) — 중첩 루프를 띄우고 그 안에서 잎
      도구들이 **각자** 락을 잡는다. 부모가 배타 락을 쥔 채 자식이 같은 락을
      요구하면 **교착**이다(자식은 다른 스레드라 재진입도 안 통한다).
   ② **사람 대기 도구**(``ask``) — 배타 락을 쥔 채 사람 답을 기다리면 그동안
      다른 모든 턴의 부수효과가 멈춘다.
-  ③ **워크스페이스 밖 상태 도구**(``memory``/``read_context``/``code_index``/
-     ``fetch``) — 세션 파일이나 인덱스 DB 를 만지지 이 락이 정렬할 대상인
-     워크스페이스 경로를 만지지 않는다. 각자 자기 가드가 있다(fsio append 락,
-     ``code_index._BUILD_LOCK``).
-셋 다 "이 락으로 정렬할 워크스페이스 효과가 없다"는 점에서 같으므로, UNKNOWN 의
-운용 의미를 **"정렬 대상 아님"** 으로 확정한다. :attr:`EffectIntent.is_exclusive`
-는 여전히 "잠근다면 배타여야 하는가"를 답하며, **잠글지 여부**는 여기가 정한다.
+  ③ **워크스페이스 밖 상태 도구**(``memory``/``read_context``/``fetch``) — 세션
+     파일이나 네트워크를 다뤄 이 락이 정렬할 사용자 작업공간 경로가 없다.
+``code_index`` 는 예외다. 자체 ``_BUILD_LOCK`` 이 있어도 workspace 안의
+``.agent-cli/code_index.db`` 를 갱신하므로 명시적인 배타 workspace 효과다.
+셋 다 "이 락으로 정렬할 워크스페이스 효과가 없다"는 점에서 같으므로 명시적으로
+``NON_WORKSPACE_OR_COMPOSITE`` 를 선언한다. 선언을 빠뜨린 새 도구는 기본
+``UNKNOWN_WORKSPACE_EFFECT`` 가 되어 안전하게 배타 실행된다.
 
 프로세스 전역인 이유: 락은 한 워크스페이스에 대한 것이고, 서브에이전트는
 프로세스가 아니라 스레드다. 루프별 설정으로 두면 어떤 루프는 잠그고 어떤 루프는
@@ -45,12 +46,12 @@ UNKNOWN=배타"로 안전측 분류를 했지만, 실제 락을 붙여 보니 UN
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent_cli import turn_metrics
 from agent_cli.tools.effect import EffectIntent, EffectKind
@@ -83,13 +84,30 @@ def get_scope() -> str:
 def normalize_lock_path(rel_path: str) -> str:
     """경로를 락 키로 정규화한다 — 같은 파일이 다른 키가 되지 않도록.
 
-    ``normpath`` 로 ``./``·중복 구분자·``..`` 를 정리한다. 포크는 win32
-    소문자화도 하지만 본 프로젝트는 Linux/WSL 을 정식 측정 기준으로 삼기로 해
-    넣지 않았다. 경로 탈출 검사는 하지 않는다(그건 ``_confine`` 책임) — 여기서는
-    키 동일성만 본다. 상대/절대 혼용은 ``abspath`` 로 흡수한다: 같은 파일을 한
-    턴은 상대경로로, 다른 턴은 절대경로로 부르면 키가 갈려 보호가 새기 때문이다.
+    ``Path.resolve(strict=False)`` 로 기존 symlink와 symlink 부모를 따라간
+    canonical 경로 키를 쓴다. 상대/절대, ``.``/``..`` 표기도 함께 흡수한다.
+    hard link는 경로 정규화로 합칠 수 없으므로 :func:`hold` 가 ``st_nlink > 1``
+    인 경로 효과를 워크스페이스 배타로 내린다.
+
+    이 판정과 실제 도구 실행 사이 rename/링크 교체는 TOCTOU 경계다. 협조적 도구
+    호출의 진입을 정렬하는 in-process gate이지 filesystem transaction은 아니다.
     """
-    return os.path.abspath(os.path.normpath(rel_path))
+    path = Path(rel_path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        return f"path:{path.resolve(strict=False)}"
+    except (OSError, RuntimeError):
+        # Broken/cyclic aliases cannot produce a trustworthy narrow key.  The
+        # caller treats an empty key as workspace-exclusive (fail closed).
+        return ""
+
+
+def _has_hardlink_alias(path: str) -> bool:
+    try:
+        return Path(path).stat().st_nlink > 1
+    except OSError:
+        return False
 
 
 @dataclass
@@ -153,17 +171,22 @@ def hold(intent: EffectIntent, *, key: str | None = None) -> Iterator[bool]:
     대기자를 진행시킨다(직렬성 보존 — 포크 ``sandboxLock.ts:114-126``).
     """
     scope = _scope
-    if scope == "off" or intent.kind is EffectKind.UNKNOWN:
+    if scope == "off" or intent.kind is EffectKind.NON_WORKSPACE_OR_COMPOSITE:
         yield False
         return
 
     if scope == "workspace":
         waiter = _Waiter(exclusive=True, path="")
     else:
-        exclusive = intent.is_exclusive
+        normalized = "" if intent.is_exclusive else normalize_lock_path(intent.path)
+        exclusive = (
+            intent.is_exclusive
+            or _has_hardlink_alias(intent.path)
+            or not normalized
+        )
         waiter = _Waiter(
             exclusive=exclusive,
-            path="" if exclusive else normalize_lock_path(intent.path),
+            path="" if exclusive else normalized,
         )
 
     lock_key = key or _default_key()

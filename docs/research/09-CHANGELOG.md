@@ -2,6 +2,33 @@
 
 > 2026-08-07 에 논문 초안 서두에서 이 파일로 분리했다 (`16-review-response-plan-2.md` Phase A / I3). 최신 항목이 위. 영문이 정본이고, 한국어 항목은 번역본 서두에 있던 대응 문단이다.
 
+# v1.2-p0 — CHI P0 validity and guarantee repair (2026-08-13)
+
+Responded to the four P0 findings in `24-review-response.md`.
+
+- Replaced the single-trace `9/110 vs 0/361` snapshot Fisher analysis with
+  randomized blocks of independent process/workspace runs. The experiment now
+  separates participating-writer overlap, external-reader visibility, and
+  post-completion final state; 1/2/5/10 ms sampling is a sensitivity axis, and
+  correlated snapshot totals are descriptive only.
+- Rebuilt the live scoping harness around the concurrent two-turn run/pair as
+  its experimental unit. The 20 paired blocks alternate arm order. In the new
+  distinct-task run, cross-path effects changed 20/20 → 0/20, exact task and
+  repository correctness 15/20 → 20/20, and response cross-tags 15/20 → 1/20.
+- Renamed path coverage to `wroteAllAssignedTargetPaths` and added exact content
+  oracles, final repository checks, command-use recording, and a preregistered
+  literal response-tag outcome. “Task completed” is no longer inferred from
+  filenames alone.
+- Split the overloaded effect kind into fail-closed
+  `UNKNOWN_WORKSPACE_EFFECT` and explicit `NON_WORKSPACE_OR_COMPOSITE`.
+  Symlinks resolve to canonical paths, detected hard-link aliases fall back to
+  workspace-exclusive locking, and missing plugin intent is regression-tested
+  as fail-closed.
+- Recast the effect guarantee as an A1–A5 assumption-bound invariant. The paper
+  now states that the in-process gate orders participating critical sections
+  but does not provide atomic reader visibility, rollback, process-external
+  exclusion, detached-shell containment, or protection from path TOCTOU.
+
 ## v1.0-wip — 가독성 재구성 (2026-08-10)
 
 A readability restructuring pass, prompted by an outside reader's feedback that the prose was impenetrable. **No number, claim, or hedge changed**; what changed is architecture: 63 wall paragraphs were split at topic-sentence boundaries in both languages (mirrored, paragraph structure now 1:1 at 223 paragraphs each), §7.6's nine limitations became a numbered list (item numbers unchanged — cross-references depend on them), and the Korean abstract's most translation-flavoured sentences were rewritten into natural Korean. The CHI submission derivative was re-derived from the restructured master with its §6.5/§6.9 condensation and Appendix B reattached. All 155 claim checks still pass.

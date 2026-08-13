@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -42,6 +43,15 @@ def chk(sec, claim, paper, actual, tol=0.01):
     else:
         ok = paper == actual
     ROWS.append((sec, claim, paper, actual, ok))
+
+
+def exact_mcnemar_p(off_only: int, on_only: int) -> float:
+    """Two-sided exact sign/McNemar test over discordant pairs."""
+    n = off_only + on_only
+    if n == 0:
+        return 1.0
+    tail = sum(math.comb(n, k) for k in range(min(off_only, on_only) + 1)) / 2**n
+    return min(1.0, 2 * tail)
 
 
 def main() -> None:
@@ -101,24 +111,34 @@ def main() -> None:
     )
 
     # ── §6.2 무결성 절제 ──────────────────────────────────
-    cell = {r["lock_scope"]: r for r in J("e1-ablation.json")["results"]}
-    off = cell["off"]
-    viol = off["counts"].get("mixed", 0) + off["counts"].get("broken", 0)
-    chk(
-        "6.2",
-        "off violation rate %",
-        8.2,
-        round(100 * viol / off["snapshots_classified"], 1),
-    )
-    chk("6.2", "off violations", 9, viol)
-    for scope, n in (("workspace", 181), ("conflict", 180)):
-        chk("6.2", f"{scope} classified", n, cell[scope]["snapshots_classified"])
+    integrity = J("e1-ablation-p0.json")
+    cell = {
+        (r["sample_ms"], r["lock_scope"]): r for r in integrity["summary"]
+    }
+    for scope, external, overlap, partial, final_mixed in (
+        ("off", 27, 30, 29, 3),
+        ("workspace", 0, 0, 30, 0),
+        ("conflict", 0, 0, 29, 0),
+    ):
+        row = cell[(2.0, scope)]
+        chk("5.2", f"{scope} independent runs", 30, row["runs"])
+        chk("5.2", f"{scope} external mixed/broken runs", external, row["runsWithViolation"])
+        chk("5.2", f"{scope} writer-overlap runs", overlap, row["runsWithParticipatingWriterOverlap"])
+        chk("5.2", f"{scope} empty/partial-visible runs", partial, row["runsWithPartialVisibility"])
+        chk("5.2", f"{scope} mixed final runs", final_mixed, row["finalClasses"]["mixed"])
+    sensitivity = {r["sample_ms"]: r for r in integrity["summary"] if r["lock_scope"] == "off"}
+    for sample_ms, observed in ((1.0, 24), (5.0, 24), (10.0, 13)):
+        chk("5.2", f"off external runs at {sample_ms:g}ms", observed, sensitivity[sample_ms]["runsWithViolation"])
+    contrasts = {
+        (r["sample_ms"], r["contrast"]): r for r in integrity["pairedContrasts"]
+    }
+    for locked in ("workspace", "conflict"):
         chk(
-            "6.2",
-            f"{scope} violations",
-            0,
-            cell[scope]["counts"].get("mixed", 0)
-            + cell[scope]["counts"].get("broken", 0),
+            "5.2",
+            f"2ms exact paired p off vs {locked}",
+            1.49e-8,
+            contrasts[(2.0, f"off vs {locked}")]["exactPairedP"],
+            tol=0.01,
         )
 
     # ── §6.3 붕괴 경계 ────────────────────────────────────
@@ -309,43 +329,43 @@ def main() -> None:
         ),
     )
     chk("6.7", "n3b honor max", 0.0, ab["honor"]["mismatchMax"])
-    arms = {a["scoping"]: a for a in J("postfix/n3c-scoping-real.json")["arms"]}
-    chk("6.7", "confusable off wrote others", 25, arms["off"]["turnsWroteOthers"])
-    chk("6.7", "confusable on wrote others", 0, arms["on"]["turnsWroteOthers"])
-    chk("6.7", "confusable off own complete", 36, arms["off"]["turnsOwnComplete"])
-    chk("6.7", "confusable off both correct", 16, arms["off"]["bothComplete"])
-    chk(
-        "6.7",
-        "realistic off wrote others",
-        31,
-        J("postfix/n3c-realistic.json")["arms"][0]["turnsWroteOthers"],
-    )
-    chk(
-        "6.7",
-        "realistic on wrote others",
-        0,
-        J("postfix2/n3c-realistic.json")["arms"][0]["turnsWroteOthers"],
-    )
-    # 겹침 검증 — 표가 보고하는 실행에서 재계산해야 한다 (감사 발견 A)
-    for label, path, arm, floor, med in (
-        ("confusable off", "postfix/n3c-scoping-real.jsonl", "off", 53, 89),
-        ("confusable on", "postfix/n3c-scoping-real.jsonl", "on", 61, 78),
-        ("realistic off", "postfix/n3c-realistic.jsonl", "off", 76, 98),
-        ("realistic on", "postfix2/n3c-realistic.jsonl", "on", 74, 77),
+    # P0 paired semantic rerun: run/pair is inferential; nested turns descriptive.
+    semantic = J("n3c-realistic-p0.json")
+    sarms = {a["scoping"]: a for a in semantic["arms"]}
+    chk("5.4", "P0 complete paired runs", 20, semantic["completePairedRuns"])
+    chk("5.4", "P0 failed runs", [], semantic["failedRuns"])
+    chk("5.4", "P0 model", "Qwen3.6-27B-MLX-8bit", semantic["model"])
+    for arm, values in {
+        "off": (20, 15, 15, 15, 15, 27, 35),
+        "on": (0, 20, 20, 20, 1, 0, 40),
+    }.items():
+        row = sarms[arm]
+        for claim, expected, field in (
+            ("cross-task runs", values[0], "crossTask"),
+            ("both assigned-path runs", values[1], "bothWroteAllAssignedTargetPaths"),
+            ("both exact-task runs", values[2], "bothTasksCorrect"),
+            ("repository-correct runs", values[3], "repositoryCorrect"),
+            ("response-cross-tag runs", values[4], "runsWithResponseCrossTag"),
+            ("turns wrote others", values[5], "turnsWroteOthers"),
+            ("turns exact-task correct", values[6], "turnsTaskCorrect"),
+        ):
+            chk("5.4", f"P0 {arm} {claim}", expected, row[field])
+    paired = {p["outcome"]: p for p in semantic["pairedContrasts"]}
+    for outcome, expected in (
+        ("crossTask", 1.9073486328125e-6),
+        ("bothWroteAllAssignedTargetPaths", 0.0625),
+        ("bothTasksCorrect", 0.0625),
+        ("repositoryCorrect", 0.0625),
+        ("anyResponseCrossTag", 0.0001220703125),
     ):
-        rows = [r for r in L(path) if r["scoping"] == arm]
-        cov = [
-            min(r["spanA_ms"], r["spanB_ms"]) / max(r["spanA_ms"], r["spanB_ms"])
-            for r in rows
-        ]
-        chk("6.7", f"overlap floor {label} %", floor, round(min(cov) * 100), tol=0.02)
-        chk(
-            "6.7",
-            f"overlap median {label} %",
-            med,
-            round(statistics.median(cov) * 100),
-            tol=0.02,
-        )
+        chk("5.4", f"P0 paired p {outcome}", expected, paired[outcome]["exactPairedP"])
+    chk("5.4", "P0 off cross CI low", 0.8316, sarms["off"]["crossTaskRateExactCI95"][0])
+    chk("5.4", "P0 on cross CI high", 0.1684, sarms["on"]["crossTaskRateExactCI95"][1])
+
+    # Historical same-model similar-task data are explicitly supporting only.
+    legacy = {a["scoping"]: a for a in J("postfix/n3c-scoping-real.json")["arms"]}
+    chk("5.4", "legacy similar off cross runs", 19, legacy["off"]["crossTask"])
+    chk("5.4", "legacy similar on cross runs", 0, legacy["on"]["crossTask"])
     n5 = J("live/n5-staleness-real.json")
     par = [r for r in n5["reps"] if r["arm"] == "parallel"]
     chk("6.7", "live stale steps", 75, sum(r["stale_steps"] for r in par))
@@ -365,23 +385,17 @@ def main() -> None:
         sum(r["stale_steps"] for r in m5["reps"] if r["arm"] == "parallel"),
     )
 
-    # ── §6.7 두 번째 모델 (플랜3 J2, Qwen3.6-35B-A3B) ─────
+    # ── §5.4 보조 두 번째 모델 (Qwen3.6-35B-A3B) ──────────
     m2 = {a["scoping"]: a for a in J("n3c-realistic-35b-a3b.json")["arms"]}
-    chk("6.7", "35B off wrote others", 14, m2["off"]["turnsWroteOthers"])
-    chk("6.7", "35B on wrote others", 9, m2["on"]["turnsWroteOthers"])
-    chk("6.7", "35B off own complete", 33, m2["off"]["turnsOwnComplete"])
-    chk("6.7", "35B on own complete", 38, m2["on"]["turnsOwnComplete"])
-    chk("6.7", "35B off both correct", 13, m2["off"]["bothComplete"])
-    chk("6.7", "35B on both correct", 18, m2["on"]["bothComplete"])
+    chk("5.4", "35B off cross runs", 11, m2["off"]["crossTask"])
+    chk("5.4", "35B on cross runs", 8, m2["on"]["crossTask"])
     m2rows = L("n3c-realistic-35b-a3b.jsonl")
-    for arm, (pfloor, pmed) in (("off", (0.18, 0.86)), ("on", (0.27, 0.76))):
-        cov = sorted(
-            min(r["spanA_ms"], r["spanB_ms"]) / max(r["spanA_ms"], r["spanB_ms"])
-            for r in m2rows
-            if r["scoping"] == arm
-        )
-        chk("6.7", f"35B overlap floor {arm}", pfloor, round(cov[0], 2))
-        chk("6.7", f"35B overlap median {arm}", pmed, round(cov[len(cov) // 2], 2))
+    m2pairs = {}
+    for row in m2rows:
+        m2pairs.setdefault(row["rep"], {})[row["scoping"]] = row["crossTask"]
+    off_only = sum(v["off"] and not v["on"] for v in m2pairs.values())
+    on_only = sum(v["on"] and not v["off"] for v in m2pairs.values())
+    chk("5.4", "35B paired cross p", 0.508, exact_mcnemar_p(off_only, on_only))
     # 텍스트 수준: 상대 과제의 완료 태그가 답변 텍스트에 등장한 턴 수.
     for arm, pv in (("off", 12), ("on", 10)):
         n_txt = 0
@@ -391,7 +405,7 @@ def main() -> None:
             for t in r["turns"]:
                 other = "readme" if t["target"] == "parser" else "parser"
                 n_txt += f"{other} done" in t.get("answerText", "")
-        chk("6.7", f"35B text-level cross tag {arm}", pv, n_txt)
+        chk("5.4", f"35B text-level cross tag {arm}", pv, n_txt)
 
     # ── §6.8 공정성 ───────────────────────────────────────
     p4 = J("p4-fairness.json")

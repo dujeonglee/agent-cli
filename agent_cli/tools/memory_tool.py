@@ -87,6 +87,7 @@ def _as_id(v):
 
 
 class MemoryTool(Tool):
+    non_workspace_or_composite = True
     name = "memory"
     description = (
         "Record and recall salient session notes that must survive context "

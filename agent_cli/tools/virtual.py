@@ -19,6 +19,7 @@ from agent_cli.tools.result import ToolResult
 
 
 class CompleteTool(Tool):
+    non_workspace_or_composite = True
     name = "complete"
     description = "Call this tool when the task is done. Provide the final result."
     parameters: ClassVar[dict] = {
@@ -40,6 +41,7 @@ class CompleteTool(Tool):
 
 
 class AskTool(Tool):
+    non_workspace_or_composite = True
     name = "ask"
     # Compact gate only. The full ask-vs-complete decision tree (examples,
     # rule of thumb) lives in the inline guide ``_ASK_INLINE`` in
@@ -75,6 +77,7 @@ class AskTool(Tool):
 
 
 class MessageTool(Tool):
+    non_workspace_or_composite = True
     name = "message"
     # Present ONLY for resident (persistent) sub-agents — the loop injects a
     # ``message_handler`` and force-adds this tool for them, and strips it
@@ -111,6 +114,7 @@ class MessageTool(Tool):
 
 
 class RunSkillTool(Tool):
+    non_workspace_or_composite = True
     name = "run_skill"
     description = (
         "Run a registered skill by name. Use this to invoke specialized "
