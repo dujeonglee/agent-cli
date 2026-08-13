@@ -189,25 +189,95 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 
 ## 5. 중요한 연구·프레이밍 문제(P1)
 
-### P1-1. prompt scoping보다 강한 context-isolation 대안이 빠져 있다
+### P1-1. prompt 완화를 강제 가능한 turn-local 파일 격리로 확장해야 한다
 
-현재 결과는 다른 사용자의 동시 요청이 공유 transcript에 들어간 상태에서, system prompt가 “이 turn이 담당할 요청”을 다시 지정했을 때의 효과를 본다. 그러나 더 직접적인 설계는 다음과 같다.
+P0 paired 실험에서 turn scoping은 관찰된 교차 사용자 경로 효과를 20/20
+run에서 0/20으로 줄였지만, scoped 응답 하나는 여전히 상대 완료 태그를
+언급했다. 이 결과는 프롬프트가 강한 완화책임을 보여주지만, 모델이 지시를
+무시해도 유지되는 격리 invariant는 아니다. P1의 목표는 “의미적 정확성 전체”를
+보장하는 것이 아니라 다음의 더 좁고 검증 가능한 성질을 강제하는 것이다.
 
-- 각 turn은 dispatch 시점의 committed context + 자기 요청만 본다.
-- 다른 in-flight 사용자의 요청은 그 turn에 user-role instruction으로 노출하지 않는다.
-- 다른 요청을 보여야 한다면 quoted/metadata context로 변환한다.
-- 완료된 다른 turn의 결과는 다음 inference step부터 명시적인 “newer committed activity”로 합류시킨다.
+> A turn cannot publish a mutation outside its approved canonical write set;
+> overlapping write sets cannot commit concurrently; and a staged write set is
+> published only after its task-supplied oracle succeeds.
 
-즉, **공유된 durable transcript와 모든 in-flight prompt를 그대로 공유하는 것은 같은 선택이 아니다.** 이 architectural baseline 없이 “shared context causes semantic cross-talk”라고 하면, 리뷰어는 “공유 세션의 본질적 경계가 아니라 prompt assembly bug 아닌가?”라고 물을 수 있다.
+이를 위해 context, authorization, publication을 별도 층으로 구현한다.
 
-수정 우선순위는 다음과 같다.
+1. **Turn-local context view.** 각 turn은 dispatch 시점의 committed context와
+   자기 요청만 user-role instruction으로 본다. 다른 in-flight 요청은 제거하거나
+   명시적인 quoted/metadata activity로 낮춘다. 완료된 다른 turn의 결과는 다음
+   inference step부터 “newer committed activity”로 합류시킨다.
+2. **Approved write-set capability.** dispatch 전에 turn별 canonical path
+   allowlist를 만든다. benchmark에서는 과제에 명시된 target path가 곧
+   capability다. 일반 사용에서는 사용자가 지정한 경로 또는 모델이 제안하고
+   requester가 승인한 manifest만 권한이 된다. 실행 중 범위 확장은 묵시적으로
+   허용하지 않고 별도 승인·예약을 거친다.
+3. **Conflict reservation.** 승인된 write set을 effect gate의 canonical key로
+   예약한다. 다른 active turn과 겹치면 inference 이후까지 미루지 말고 dispatch
+   또는 capability 확장 시점에 queue/reject/confirmation 정책을 적용한다. 같은
+   실제 파일을 가리키는 symlink와 감지된 hard link에는 P0의 fail-closed 규칙을
+   그대로 쓴다.
+4. **Tool-boundary enforcement.** `write_file`, `edit_file`, delete, rename/move 등
+   모든 workspace mutation은 실행 전에 `turn_id × capability` 검사를 통과해야
+   한다. 범위 밖 호출은 기록하고 차단한다. 임의 경로를 바꿀 수 있는 shell과
+   미분류 plugin은 allowlist를 우회할 수 있으므로, capability 모드에서는
+   read-only sandbox, 명시적 승인, 또는 workspace-exclusive deny 중 하나로
+   fail-closed해야 한다.
+5. **Staged validation.** 파일 효과를 즉시 공유 workspace에 공개하지 않고
+   turn-local staging 영역에 쓴다. 과제별 exact-content oracle 또는 명시된 test를
+   staging 결과에 실행한다. oracle이 실패하거나 없을 때의 정책을 분리한다:
+   benchmark에서는 실패 시 publish 금지, 일반 사용에서는 승인 요청 또는
+   “unvalidated” 상태로 남기되 자동 commit하지 않는다.
+6. **Validated commit.** oracle 통과 후 effect gate 안에서 reservation과 기준
+   version을 다시 확인하고 write set 전체를 publish한다. 가능한 파일은 temp file
+   + atomic replace를 사용한다. version conflict, capability 변경, validator 실패가
+   있으면 공유 workspace는 바뀌지 않아야 한다.
+7. **Auditability.** `capability_granted`, `effect_blocked`, `validation_passed/failed`,
+   `commit_conflict`, `write_set_published`를 turn attribution과 함께 기록한다. 모델이
+   상대 과제를 시도했는지와 시스템이 실제로 게시했는지를 구분해야 한다.
 
-1. `unscoped shared prompt`
-2. `turn-scoped prompt` (현재 기본)
-3. `turn-local view / filtered concurrent requests`
-4. 가능하면 `turn-local effect capability`까지
+이 설계가 강제할 수 있는 것은 **교차 요청 파일 효과 격리**와 **명시된 oracle에
+대한 validated publication**이다. 요구사항 자체가 잘못됐거나 oracle이 불완전한
+경우, 응답 텍스트의 의미, shell/외부 프로세스가 정책 밖에서 만든 효과까지
+“의미적 정확성”으로 보장할 수는 없다. 논문도 이 좁은 보장과 모델의 task
+correctness를 별도 행으로 보고해야 한다.
 
-세 번째 팔을 최소 한 모델·한 distinct workload에서 비교하라. 구현이 어렵다면 논문의 주장을 “the tested shared-prompt policy”로 한정하고, 공유 세션 일반의 필연적 속성처럼 쓰지 말아야 한다.
+#### P1 평가 설계
+
+주 live 비교는 현재의 `turn-scoped prompt`와 아래 두 팔을 같은 20개 paired
+block에서 교대 실행한다.
+
+1. `turn-scoped prompt` — 현재 기준선
+2. `turn-local filtered context` — prompt assembly 대안
+3. `filtered context + capability + staged validated commit` — 강제 격리
+
+서로 다른 parser/CLI 과제 외에 의도적으로 같은 target path를 요구하는 충돌
+과제를 추가한다. symlink/hard-link alias, `..`, rename, shell, 미분류 plugin은
+실모델 비율이 아니라 결정론적 adversarial invariant suite로 검증한다.
+
+주 결과는 run/pair 단위로 다음을 분리한다.
+
+- 모델이 범위 밖 효과를 **시도한** run
+- 범위 밖 mutation이 공유 workspace에 **게시된** run
+- overlapping write set이 동시에 commit된 run
+- 두 과제의 staged oracle 통과 및 최종 repository correctness
+- validator 실패 후 workspace가 불변이었던 run
+- capability false rejection, 사용자 승인 횟수, 추가 latency와 token 비용
+- 응답의 cross-tag는 보조 의미 지표
+
+live paired 결과에는 exact binomial CI와 exact McNemar 검정을 사용한다.
+adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invariant의 예상값과
+관측값이 일치했는가”로 보고한다. P1의 성공 기준은 적어도 모든 참여 도구에 대해
+`committed cross-scope mutation = 0`, `concurrent conflicting commit = 0`,
+`failed validation followed by publication = 0`이며, false rejection과 비용을 함께
+공개하는 것이다.
+
+이 결과가 성립하면 논문의 강한 주장은 “prompt scoping이 의미를 보장한다”가
+아니라 다음처럼 쓸 수 있다.
+
+> Prompt and context scoping reduce cross-request behavior, while a turn-local
+> capability and validated-commit boundary prevents cross-scope file
+> publication under the stated cooperative-tool and path-stability assumptions.
 
 ### P1-2. isolate-and-merge 대안과의 관계를 더 좁혀야 한다
 
@@ -379,7 +449,8 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 
 - “guarantee table” 앞에 assumptions 표를 둔다.
 - path alias, detached effects, UNKNOWN, crash durability, cancellation의 경계를 명시한다.
-- turn-local view가 아닌 shared-prompt view를 선택한 이유와 대안을 설명한다.
+- turn-local context, capability reservation, staged validation, publish의 상태 전이를
+  설명하고 각 단계의 fail-closed 조건을 명시한다.
 - state transition 또는 timeline figure를 추가한다.
 
 ### Technical Evaluation
@@ -387,7 +458,8 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 - 먼저 공통 Methods를 둔다: experimental unit, n, randomization, endpoint, missing data, statistic.
 - §5.2 integrity를 독립 run 단위로 재실험한다.
 - §5.4 semantic 결과는 file-path completion이 아니라 content/test correctness를 포함한다.
-- second-model text 결과를 포함해 outcome selection을 투명하게 한다.
+- P1 isolation 표에는 범위 밖 효과의 attempted/blocked/published 결과와 staged
+  oracle/final repository correctness를 함께 둔다.
 - §5.3a의 substrate validation은 1개 표로 유지하되 방법 세부는 supplement로 옮긴다.
 - deterministic mechanism check에는 p-value를 붙이지 않고 expected invariant와 관측 일치로 보고한다.
 
@@ -395,7 +467,9 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 
 - physical, structural, semantic, security의 네 층을 하나의 표로 정리하면 논문의 가장 재사용 가능한 산출물이 된다.
 - 사용자 행동을 관찰하지 않은 상태에서는 design principle을 testable hypothesis로 쓴다.
-- effect-level safeguards를 future work로만 두지 말고 최소 한 가지—예: turn capability scope 또는 cross-owned path confirmation—를 작은 prototype arm으로 보여주면 논문이 훨씬 강해진다.
+- effect-level safeguard를 future work로 두지 말고 P1-1의 turn-local capability와
+  staged validated commit을 구현·평가한다. 모델의 범위 밖 **시도**와 시스템이
+  허용한 **게시**를 나누면 prompt 완화와 강제 격리의 차이가 명확해진다.
 
 ### Conclusion
 
@@ -412,12 +486,16 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 | P0 | lock이 mixed state를 막는가 | arm당 독립 20–30 run, run-level outcome | 플랫폼 2종, sampling sensitivity, exposure duration |
 | P0 | 같은 실제 파일의 별칭도 막는가 | symlink·empty path regression | hard link·rename·TOCTOU stress arm |
 | P0 | scoping이 semantic correctness를 높이는가 | 파일 내용 oracle + run-level 분석 | tests, answer coding, command effects까지 다층 평가 |
-| P0/P1 | 오염이 shared session에 본질적인가 | turn-local filtered context 1개 arm | prompt scoping × context visibility 요인 실험 |
+| P1 | 오염이 shared prompt assembly에서 생기는가 | turn-local filtered context 1개 arm | prompt scoping × context visibility 요인 실험 |
 | P1 | live latency가 재현되는가 | n, CI, 실패 조건, model config 공개 | 다른 serving stack/model에서 독립 replication |
 | P1 | effect scope 성능 경계가 명확한가 | metric 공식·n·분산 추가 | turn 수 2/4/8과 workload structure 변화 |
-| P1 | prompt 외 safeguard가 가능한가 | cross-owned path confirmation prototype | per-turn capability scope와 usability trade-off |
+| P1 | 교차 요청 파일 효과를 강제 차단할 수 있는가 | canonical per-turn write capability + 범위 밖 tool call 차단 | staging + oracle/test + validated atomic commit |
+| P1 | 같은 파일을 요구한 두 turn의 충돌을 안전하게 처리하는가 | write-set 사전 예약과 queue/reject | 동적 capability 확장 승인과 versioned commit |
 
-가장 비용 대비 효과가 큰 추가 실험은 **turn-local filtered context arm**과 **content oracle을 포함한 semantic run-level 재분석**이다. 이것들이 논문의 가장 중요한 alternative explanation을 직접 닫는다.
+가장 중요한 P1 추가 실험은 **turn-local filtered context arm**과
+**capability + staged validated commit arm**이다. 전자는 오염의 prompt-assembly
+대안 설명을 닫고, 후자는 모델 순응과 무관하게 파일 충돌을 막는 enforceable
+boundary를 논문의 새 기술 기여로 만든다.
 
 ## 9. 추천하는 최종 기여 문장
 
@@ -425,7 +503,11 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 
 1. **Interaction architecture:** one live coding-agent session에서 concurrent inference, attributed turns, ordered context commit, conflict-scoped cooperative effects를 결합한 명시적 contract.
 2. **Measured systems trade-off:** serial/reject/parallel의 responsiveness, input-token premium, exclusive-effect collapse boundary를 같은 구현에서 측정한 결과.
-3. **Boundary result:** structural ownership and cooperative effect ordering do not imply semantic request isolation; prompt scoping changes file-level cross-task behavior in a model-dependent way.
+3. **Layered isolation result:** structural ownership and cooperative effect
+   ordering do not imply semantic request isolation; context scoping reduces
+   cross-request behavior, while turn-local write capabilities and validated
+   publication enforce a narrower cross-scope file boundary under explicit
+   assumptions.
 
 design space는 이 세 기여를 설명하는 framing으로 두는 편이 안전하다. 조사 절차를 체계화할 경우에만 독립 기여로 유지하라.
 
@@ -464,17 +546,23 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 ### 강하게 권장
 
 1. turn-local filtered-context arm을 추가한다.
-2. second-model text-level 혼선 결과를 포함한다.
-3. replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
-4. isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
-5. design-space survey procedure와 문서 snapshot을 남긴다.
-6. token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
+2. canonical per-turn write capability, conflict reservation, tool-boundary
+   fail-closed enforcement를 구현한다.
+3. turn-local staging에서 content/test oracle을 통과한 write set만 공유
+   workspace에 publish하는 validated commit arm을 추가한다.
+4. replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
+5. isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
+6. design-space survey procedure와 문서 snapshot을 남긴다.
+7. token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
 
 ### 있으면 논문을 크게 강화
 
-1. prompt가 아닌 effect-level safeguard prototype을 하나 평가한다.
-2. 별도 serving stack 또는 외부 모델에서 latency/semantic 결과를 복제한다.
-3. physical/structural/semantic/security 네 층을 재사용 가능한 분석 프레임으로 정식화한다.
+1. capability 확장 승인과 충돌 알림이 사용자 흐름에 주는 비용을 first-use
+   study에서 측정한다.
+2. task oracle이 없는 일반 작업을 위한 “unvalidated staging”과 requester 승인
+   흐름을 평가한다.
+3. 별도 serving stack 또는 외부 모델에서 latency/semantic 결과를 복제한다.
+4. physical/structural/semantic/security 네 층을 재사용 가능한 분석 프레임으로 정식화한다.
 
 ---
 
@@ -482,6 +570,14 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 
 이 초안은 이전 버전보다 훨씬 좋은 CHI 논문 후보가 됐다. 문제, 계약, 기술 결과, 한계가 한 이야기로 모였고, 분량도 적절하다. 사용자 연구 결과를 제외하더라도 **“병렬 추론은 대기를 줄이지만, 구조적 귀속과 효과 정렬은 모델의 요청 소유권을 보장하지 않는다”**는 기여는 충분히 중요하다.
 
-하지만 현재는 가장 강한 두 실험에서 분석 단위가 부정확하고, 핵심 safety guarantee가 실제 경로 별칭과 effect classification보다 넓게 쓰여 있다. 또한 과제 완료라는 표현이 파일명 touch를 과도하게 해석한다. 이 문제들은 문장 다듬기만으로는 닫히지 않지만, 범위가 분명해 R&R 기간에도 해결 가능한 종류다.
+P0 수정으로 분석 단위, 과제 oracle, 경로 별칭, effect classification 문제는
+해결됐다. 남은 핵심은 모델이 다른 요청을 따르더라도 공유 workspace에 그 효과를
+게시하지 못하게 하는 강제 경계다. prompt/context scoping만으로 의미적 정확성을
+보장하려 하면 scoped 응답의 잔여 혼선이 즉시 반례가 된다.
 
-P0 항목을 제대로 고치고 turn-local context 대안을 한 번만 비교해도 논문은 **Weak Accept–Accept 논의가 가능한 수준**으로 올라갈 수 있다. 반대로 사용자 연구 결과만 추가하고 이 기술적 타당성 문제를 그대로 두면, 사람 데이터가 생겨도 중앙 주장의 신뢰성은 충분히 회복되지 않는다.
+P1에서 turn-local filtered context와 capability + staged validated commit을 같은
+paired 설계로 비교하고, adversarial suite에서 cross-scope publication·동시 충돌
+commit·검증 실패 후 publish가 모두 0임을 보인다면 논문은 **모델 행동 완화와
+시스템 강제 보장을 함께 제시하는 Weak Accept–Accept 후보**가 된다. 이때도
+보장 이름은 “semantic correctness”가 아니라 assumption-bound
+“cross-request file-effect isolation and validated publication”이어야 한다.
