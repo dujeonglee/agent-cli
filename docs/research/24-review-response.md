@@ -7,6 +7,81 @@
 
 ---
 
+## 0. 작업 체크포인트 (2026-08-13, P1 완료 후)
+
+이 문서의 §1–8은 수정 전 초안을 대상으로 작성한 원 리뷰이므로 문제 설명과
+제안 문구를 이력으로 보존한다. 현재 구현·실험·논문 상태는 이 절과 §11의
+체크리스트가 우선한다. P0 및 P1의 상세 재현 정보는
+`26-p1-isolation-report.md`와 `bench/multiuser/out/`에 있다.
+
+### 처리 완료
+
+- **P0 통계 단위 수정:** torn-write 실험을 arm당 30개의 독립 process/workspace
+  run으로 다시 수집했다. 분석 단위를 snapshot이 아닌 run으로 바꾸고 잘못된
+  Fisher 분석을 제거했으며, exact binomial CI와 paired exact McNemar 검정을
+  본문에 반영했다. 1/2/5/10 ms 민감도 결과와 final-file 결과도 분리했다.
+- **P0 semantic 측정 수정:** distinct-task 조건을 같은 20개 block 안에서
+  재수집하고, 파일명 생성 여부 대신 과제별 exact-content oracle과 최종 저장소
+  oracle을 사용했다. 개선 전 실험은 본문에서 반복 설명하지 않고 현재 실험만
+  기술한다.
+- **P0 보장 범위 수정:** symlink를 canonicalize하고 기존 hard-link alias를
+  workspace-exclusive로 처리한다. 새 도구의 미분류 workspace effect는
+  fail-closed한다. 논문의 보장 표를 가정 A1–A5에 결합한 invariant/boundary
+  표로 바꿨다.
+- **P1 context 대안 추가:** scoped prompt, turn-local filtered context,
+  enforced publication의 세 arm을 한 source digest에서 20 block, 총 60개의
+  실모델 run으로 비교했다. 각 block의 arm 순서는 여섯 순열로 균형화했다.
+- **P1 파일 게시 강제:** 요청별 canonical write capability, path/inode 예약,
+  turn-local staging, content/test oracle, version check, 파일별 atomic publication,
+  audit event를 구현했다. 범위 밖 쓰기, shell, nested agent, executable hook,
+  unclassified effect는 capability mode에서 차단한다.
+- **P1 검증:** 19/19 adversarial invariant가 예상값과 일치했다. 실모델 결과는
+  세 arm 모두 exact task와 final repository가 20/20이었고 cross-scope file
+  publication은 0/20이었다. scoped 응답 하나의 상대 완료 태그는 의미 정확성
+  보장으로 확대하지 않고 boundary example로 보고했다.
+- **회귀 검증:** 전체 suite는 3,617 passed, 35 skipped, 0 failed였으며 관련
+  subset은 552 passed였다. 구현·원자료·영문/한글 논문 초안은 커밋
+  `69c79828`까지 함께 반영했다.
+- **주장 교정:** 강한 주장을 “semantic correctness”가 아니라, 명시한
+  cooperative-tool/path-stability 가정 아래의 **cross-request task-file
+  publication isolation and validated publication**으로 한정했다. token 비용도
+  전체 비용이 아닌 measured input-token premium으로 표현했다.
+
+### 남은 제출 작업
+
+1. **제출 형태 결정:** first-use study를 수행해 §6을 채우거나, 기술 논문으로
+   제출한다면 RQ4·§6·초록/논의의 study TODO를 모두 제거한다. 결과 없는
+   프로토콜과 TODO 표를 제출본에 남기지 않는다.
+2. **필수 그림 두 개 작성:** 두 참가자, attributed streams, shared context,
+   effect gate, serial/parallel timeline을 묶은 architecture figure와 실제 UI에서
+   ownership·waiting·effects가 보이는 figure를 완성한다.
+3. **기존 live TTFT 재현 정보 보강:** 사용 모델, serving engine/revision,
+   CPU/GPU/RAM, decoding 설정, concurrency, arm 순서, 유효/실패 run, 실패 원인,
+   실제 bootstrap CI, heavier-load 재실행 조건을 본문 또는 supplement에 적는다.
+   P1 isolation arm의 모델·block·누락 run 정보는 이미 반영됐지만 기존 latency
+   arm 정보는 아직 불완전하다.
+4. **throughput/effect-share 표 자립화:** normalized throughput, effect share,
+   recovery의 수식과 분모·분자, cell별 n, 요약 통계와 range/CI를 추가하고 50%
+   knee가 두 turn·완전 overlap·특정 단계 구조의 결과임을 명시한다.
+5. **범위와 구조 정리:** isolate-and-merge 대비 우월성으로 읽힐 문장을 줄이고
+   범위를 one-live-context busy-turn contract로 한정한다. replay, compaction,
+   fairness, lifecycle은 supporting invariant 또는 supplement로 이동한다.
+6. **HCI/design-space 근거 정리:** 사용자 결과가 생기기 전 interface 원칙은
+   design hypothesis/implication으로 유지한다. design-space에는 search date,
+   포함·제외 규칙, documentation snapshot, 축 도출 절차를 추가하고
+   undocumented와 absent를 구분한다.
+7. **제출 마감 정리:** 미사용/역할이 불명확한 참고문헌을 정리하고 author note,
+   TODO, 익명화되지 않은 artifact 링크를 최종 검사한다.
+
+### 다음 작업 권장 순서
+
+`제출 형태 결정 → live-method 정보 보강 → effect-share 표 수정 → 논문 구조·주장
+정리 → 그림 제작 → 참고문헌·TODO·익명화 최종 점검` 순서가 가장 안전하다.
+사용자 연구를 진행한다면 그림 작업과 병행할 수 있지만, §6 결과가 나온 뒤 초록,
+기여, 논의, 결론을 다시 맞춰야 한다.
+
+---
+
 ## 1. 결론부터: 현재 판정
 
 **현재 판정: Weak Reject / Major Revision. CHI의 짧은 R&R 경계에는 걸칠 수 있으나, 그대로 제출하면 핵심 보장의 타당성과 통계 분석 단위 때문에 탈락할 가능성이 높다.**
@@ -544,26 +619,26 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 
 ### 제출 전에 반드시
 
-1. integrity 실험을 독립 run 단위로 재실행하고 잘못된 Fisher 분석을 제거한다.
-2. semantic 실험을 run/cluster 단위로 재분석하고 distinct-task arms를 같은 block에서 다시 수집한다.
-3. `ownComplete`를 정확히 이름 붙이고 content/test oracle을 추가한다.
-4. symlink alias와 `UNKNOWN` fallback을 구현 또는 claim 수준에서 해결한다.
-5. guarantee 표를 assumption-bound invariant 표로 바꾼다.
-6. live model·hardware·decoding·missing-run 정보를 공개한다.
-7. 핵심 architecture/timeline figure와 UI figure를 완성한다.
-8. 사용자 연구를 포함하지 않는 제출본이라면 §6 TODO와 RQ4를 전부 제거한다.
+- [x] integrity 실험을 독립 run 단위로 재실행하고 잘못된 Fisher 분석을 제거한다.
+- [x] semantic 실험을 run/cluster 단위로 재분석하고 distinct-task arms를 같은 block에서 다시 수집한다.
+- [x] `ownComplete` 대신 content/test oracle과 final-repository oracle을 사용한다.
+- [x] symlink/hard-link alias와 `UNKNOWN` fail-closed fallback을 구현하고 claim을 한정한다.
+- [x] guarantee 표를 assumption-bound invariant 표로 바꾼다.
+- [ ] 기존 live latency arm의 model·hardware·decoding·missing-run 정보를 공개한다. P1 isolation arm 정보는 부분 완료다.
+- [ ] 핵심 architecture/timeline figure와 UI figure를 완성한다.
+- [ ] 사용자 연구 포함 여부를 결정하고, 포함하지 않는다면 §6 TODO와 RQ4를 전부 제거한다.
 
 ### 강하게 권장
 
-1. turn-local filtered-context arm을 추가한다.
-2. canonical per-turn write capability, conflict reservation, tool-boundary
-   fail-closed enforcement를 구현한다.
-3. turn-local staging에서 content/test oracle을 통과한 write set만 공유
-   workspace에 publish하는 validated commit arm을 추가한다.
-4. replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
-5. isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
-6. design-space survey procedure와 문서 snapshot을 남긴다.
-7. token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
+- [x] turn-local filtered-context arm을 추가한다.
+- [x] canonical per-turn write capability, conflict reservation, tool-boundary
+  fail-closed enforcement를 구현한다.
+- [x] turn-local staging에서 content/test oracle을 통과한 write set만 공유
+  workspace에 publish하는 validated publication arm을 추가한다.
+- [ ] replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
+- [ ] isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
+- [ ] design-space survey procedure와 문서 snapshot을 남긴다.
+- [x] token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
 
 ### 있으면 논문을 크게 강화
 
@@ -578,16 +653,21 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 
 ## 12. 최종 평가
 
-이 초안은 이전 버전보다 훨씬 좋은 CHI 논문 후보가 됐다. 문제, 계약, 기술 결과, 한계가 한 이야기로 모였고, 분량도 적절하다. 사용자 연구 결과를 제외하더라도 **“병렬 추론은 대기를 줄이지만, 구조적 귀속과 효과 정렬은 모델의 요청 소유권을 보장하지 않는다”**는 기여는 충분히 중요하다.
+이 초안은 P0 재실험과 P1 강제 경계까지 반영하면서 초기 Weak Reject의 핵심
+타당성 문제를 대부분 해소했다. 분석 단위, 과제 oracle, 경로 별칭, effect
+classification이 수정됐고, turn-local context 및 validated publication 대안도
+같은 paired 설계에서 평가됐다. adversarial suite는 cross-scope publication,
+동시 충돌 commit, 검증 실패 후 publication의 assumption-bound invariant를
+직접 검사한다.
 
-P0 수정으로 분석 단위, 과제 oracle, 경로 별칭, effect classification 문제는
-해결됐다. 남은 핵심은 모델이 다른 요청을 따르더라도 공유 workspace에 그 효과를
-게시하지 못하게 하는 강제 경계다. prompt/context scoping만으로 의미적 정확성을
-보장하려 하면 scoped 응답의 잔여 혼선이 즉시 반례가 된다.
+따라서 현재 기술적 중심은 **모델 행동을 완화하는 prompt/context layer와 파일
+게시를 강제하는 capability/validation layer를 분리했다**는 데 있다. scoped arm의
+응답 하나가 상대 태그를 언급한 결과 때문에도 일반 semantic correctness는 계속
+보장할 수 없으며, 논문의 보장 이름은 “cross-request task-file publication
+isolation and validated publication”으로 유지해야 한다.
 
-P1에서 turn-local filtered context와 capability + staged validated commit을 같은
-paired 설계로 비교하고, adversarial suite에서 cross-scope publication·동시 충돌
-commit·검증 실패 후 publish가 모두 0임을 보인다면 논문은 **모델 행동 완화와
-시스템 강제 보장을 함께 제시하는 Weak Accept–Accept 후보**가 된다. 이때도
-보장 이름은 “semantic correctness”가 아니라 assumption-bound
-“cross-request file-effect isolation and validated publication”이어야 한다.
+남은 accept 리스크는 새 격리 메커니즘보다 제출 완결성에 가깝다. 사용자 연구
+포함 여부, 핵심 그림, 기존 live latency 실험의 재현 정보, effect-share 표의 독립적
+해석 가능성, isolate-and-merge 범위, design-space 도출 방법을 해결하면 기술 논문
+기준으로 Weak Accept–Accept 후보가 된다. 이 평가는 사용자 연구 결과가 생기기
+전에는 사람의 이해·신뢰·협업 성과를 주장하지 않는다는 조건을 전제로 한다.
