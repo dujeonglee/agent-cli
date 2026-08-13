@@ -1,0 +1,487 @@
+# CHI 리뷰어 관점의 기술 논문 리뷰 및 수정안
+
+**검토 대상:** `09-full-paper-draft.md` (v1.1-wip, 2026-08-13)  
+**검토일:** 2026-08-13  
+**검토 관점:** CHI 2027 full paper reviewer  
+**평가 범위:** 사용자 연구의 결과는 의도적으로 평가에서 제외한다. 즉, §6의 미완성 결과 자체를 감점 사유로 삼지 않고, §1–5와 §7–8에 있는 기술적·상호작용적 기여만 평가한다. 다만 실제 제출본에 결과 없는 TODO 섹션을 남겨도 된다는 뜻은 아니다.
+
+---
+
+## 1. 결론부터: 현재 판정
+
+**현재 판정: Weak Reject / Major Revision. CHI의 짧은 R&R 경계에는 걸칠 수 있으나, 그대로 제출하면 핵심 보장의 타당성과 통계 분석 단위 때문에 탈락할 가능성이 높다.**
+
+이 판정은 “사용자 연구가 없어서”가 아니다. CHI는 인간 대상 실험이 없는 기술 기여도 받아들일 수 있고, Coagora의 문제 설정과 시스템 기여는 충분히 HCI에 관련된다. 현재 걸림돌은 다음 네 가지다.
+
+1. torn-write 실험에서 **한 실행 안의 2ms 샘플들을 독립 표본처럼 Fisher 검정에 사용한 의사반복(pseudoreplication)** 문제가 있다.
+2. “동일 자원 효과는 겹치지 않는다”는 보장이 **경로 별칭, `UNKNOWN` 효과, 비협조적 프로세스와 부분 쓰기**를 포괄하지 못한다. 일부는 논문의 선언과 구현이 정확히 일치하지 않는다.
+3. 의미적 오염 실험의 `own task completed`는 실제로는 **예정된 파일명을 모두 썼는가**에 가깝다. 과제의 내용적 정답이나 저장소 정확성을 측정하지 않는다.
+4. 가장 중요한 실패가 공유 세션 자체에서 필연적으로 생긴 것인지, 현재의 **프롬프트 구성 방식—동시 사용자의 요청을 서로에게 user-role instruction처럼 노출하는 방식—에서 생긴 것인지** 분리되지 않았다. turn-local context 또는 동시 요청 필터링이 빠진 핵심 대안이다.
+
+반대로, 이전 초안에서 문제였던 과도한 분량과 11개 RQ의 분산은 크게 개선됐다. 현재 서론부터 결론까지 약 7,100단어이고, 사용자 연구 섹션을 제외하면 약 5,740단어다. 이는 CHI 2027이 권장하는 5,000–8,000단어 범위에 들어간다. 이번에는 “절반을 잘라야 한다”가 아니라, **핵심 타당성 문제를 고치고 약한 검증 묶음을 부록으로 옮겨 중심 주장을 더 선명하게 만드는 것**이 필요하다.
+
+CHI 2027은 originality, significance, validity/research quality, presentation clarity를 중심으로 평가하고 기술 기여에는 검증 가능성·재현성·복제 가능성을 요구한다. 이 기준에서 Coagora는 중요성과 재현성은 강하지만, 현재 중앙 실험의 분석 타당성과 보장 범위가 부족하다. 관련 공식 기준은 [CHI 2027 Papers](https://chi2027.acm.org/authors/papers/)와 [Guide to a Successful Submission](https://chi2027.acm.org/guide-to-a-successful-submission/)에 근거했다.
+
+## 2. 리뷰 점수표
+
+| 기준 | 현재 평가 | 판단 근거 |
+|---|---:|---|
+| HCI 중요성 | 4/5 | 여러 개발자가 하나의 상태 있는 에이전트를 동시에 조작할 때 생기는 소유권·대기·개입 문제는 시의성과 파급력이 높다. |
+| 독창성 | 3.5/5 | 락 자체는 새롭지 않지만, 추론 아래에 효과 정렬을 두고 물리적 무결성과 의미적 귀속을 분리한 상호작용 아키텍처는 새롭다. |
+| 기술적 완성도 | 3/5 | 구현과 계측은 인상적이지만, 경로 별칭과 `UNKNOWN` 처리 때문에 보장 범위가 현재 문구보다 좁다. |
+| 평가의 타당성 | 2.5/5 | 다양한 실험과 원시자료는 강점이나, 핵심 두 실험의 표본단위·측정 타당성에 문제가 있다. |
+| 재현성·투명성 | 4/5 | 155개 수치 검증과 원시 JSONL은 매우 좋다. 다만 수치의 재현성과 통계적 해석의 정당성은 별개다. |
+| 표현 명료성 | 4/5 | 이전 버전보다 훨씬 읽기 쉽고 주장이 절제돼 있다. 핵심 그림과 일부 정의는 여전히 빠져 있다. |
+| CHI 적합성(사용자 연구 제외) | 3.5/5 | 기술 HCI 논문으로 성립 가능하다. 단, 사람에 대한 함의를 관찰 결과가 아니라 설계 가설로 한정해야 한다. |
+| 종합 | Weak Reject | P0 문제를 해결하면 R&R 또는 borderline accept 수준까지 올라갈 가능성이 크다. |
+
+## 3. 논문의 강점
+
+### 3.1 실제로 중요한 상호작용 문제를 정확히 집었다
+
+이 논문은 “여러 브라우저가 같은 채팅을 본다”를 협업이라고 부르지 않는다. 두 사람이 동시에 요청할 때 무엇이 실행되고, 누가 행동을 소유하며, 누가 멈출 수 있고, 어느 상태가 어떤 순서로 바뀌는지를 계약으로 정의한다. 이것은 단순 성능 최적화가 아니라 HCI와 CSCW의 제어·책임·상황 인식 문제다.
+
+### 3.2 물리적 무결성과 의미적 정확성을 분리한 것이 가장 강한 통찰이다
+
+트랜스크립트가 구조적으로 정상이고 파일 쓰기가 겹치지 않아도 모델은 다른 사용자의 요청을 수행할 수 있다. 이 구분은 shared-agent 연구가 앞으로 반복해서 사용할 만한 개념적 도구다. 특히 prompt scoping이 한 모델에서는 파일 수준 오염을 없앴지만 다른 모델에서는 잔여 실패를 남겼다는 결과는 과장되지 않은 좋은 negative result다.
+
+### 3.3 같은 구현에서 세 계약을 비교한다
+
+serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층을 사용한다. 별도 프로토타입끼리 비교하는 것보다 내부 타당성이 높고, 기존에 출하된 serial 경로를 기준으로 쓴 점도 straw-man 우려를 줄인다.
+
+### 3.4 검증 자료가 매우 투명하다
+
+원시 JSONL, 파생 요약, 재계산 스크립트, claim verifier, mock/live 구분, 실패한 실행과 수정 이력이 남아 있다. `verify_paper_claims.py`의 현재 155개 항목은 모두 원자료와 일치했다. 이는 **보고된 숫자의 전사 정확성**에 강한 신뢰를 준다.
+
+다만 이 검증기는 표본 독립성, 측정 구성타당성, 대안 설명까지 확인하지는 않는다. 이 구분을 논문도 명시하면 오히려 투명성 기여가 더 강해진다.
+
+### 3.5 분량과 구조가 CHI 제출 형태에 가까워졌다
+
+4개의 RQ, 압축된 구현 절, 한계가 명확한 평가, 약 7,100단어의 전체 길이는 이전 버전보다 훨씬 경쟁력 있다. §5.3a의 여러 기계적 검증을 더 줄일 여지는 있지만, 현재 문제는 더 이상 전체 분량이 아니다.
+
+---
+
+## 4. 반드시 해결해야 할 문제(P0)
+
+### P0-1. torn-write 통계는 독립 표본을 사용하지 않는다
+
+#### 문제
+
+§5.2는 2ms마다 파일 상태를 읽어 `9/110` 대 `0/361`을 만들고 Fisher exact test의 `p = 1.6 × 10⁻⁶`을 보고한다. 그러나 원자료를 생성한 `e1_ablation.py`는 각 lock scope를 **한 번씩** 실행하고, 그 한 실행 안에서 연속 스냅샷을 채취한다.
+
+같은 실행에서 2ms 간격으로 얻은 상태들은 독립 시행이 아니다. 하나의 긴 torn 상태가 여러 샘플로 잡힐 수 있고, 쓰기 속도나 스케줄링이 샘플 수를 바꾼다. 실제로 arm별 관측 시간과 classified sample 수도 다르다. 따라서 471개 스냅샷을 독립 Bernoulli 시행처럼 넣은 Fisher p-value는 통계적으로 정당하지 않다.
+
+더구나 현재 실험에서 최종 파일은 세 arm 모두 `intact`였다. 이 실험이 증명하는 것은 “강제 겹침 중 외부 관찰자가 혼합 중간 상태를 볼 수 있었다”이지, “완료 후 파일의 8.2%가 손상됐다”가 아니다. 본문은 대체로 sampled states라고 적었지만, 초록의 “forced overlap produces torn writes in 8.2% of sampled states”는 독자가 occurrence rate로 오해하기 쉽다.
+
+#### 수정 방안
+
+최소 수정은 다음과 같다.
+
+1. Fisher p-value를 현재 데이터에서 제거한다.
+2. `9/110`은 한 번의 계측 실행에서 관찰된 **노출 사례**로만 기술한다.
+3. 독립된 임시 workspace와 프로세스에서 arm당 최소 20–30회를 반복한다.
+4. 1차 분석 단위를 `run`으로 둔다. 예: “한 번이라도 mixed/broken 상태가 관찰된 실행 수”, “위반 상태가 관찰된 총 시간 비율”, “첫 위반까지 시간”.
+5. arm별 실행 순서를 무작위화하거나 block randomization하고, 플랫폼별로 분리 보고한다.
+6. 샘플링 간격 1/2/5/10ms 민감도 분석을 보조자료에 둔다.
+7. lock의 목적이 최종 상태, concurrent-reader visibility, writer non-overlap 중 무엇인지 각각 분리한다.
+
+가장 정직한 핵심 문장은 다음 정도다.
+
+> In one forced-overlap trace, an external sampler observed mixed-writer states without the gate and none with either locking policy. Repeated runs use the run, rather than correlated snapshots, as the unit of analysis.
+
+### P0-2. 의미적 오염 실험도 표본단위와 arm 비교가 불완전하다
+
+#### 문제
+
+각 반복은 두 동시 턴이 하나의 workspace, context, endpoint 부하를 공유한다. 따라서 `40 turns`는 40개의 완전 독립 표본이 아니라 **20개의 cluster 안에 중첩된 40개 관측치**다. turn별 Fisher 검정은 이 의존성을 무시한다.
+
+스크립트에는 이미 더 적절한 run-level 지표가 있다.
+
+- primary model, similar task: off `19/20 runs`에서 어느 한 턴이라도 cross-task, on `0/20`
+- second model, distinct task: off `11/20`, on `8/20`
+
+이 run-level 결과가 본문의 1차 결과가 되어야 한다. turn-level count는 기술 통계로 남길 수 있다.
+
+또한 primary model의 distinct-task off와 on은 같은 interleaved 실행에서 나온 것이 아니다. 원자료상 off는 `postfix/n3c-realistic.*`, on은 이후의 `postfix2/n3c-realistic.*`에 있다. 모델·서빙 설정이 고정됐더라도 시간대와 endpoint 상태가 arm과 완전히 교락될 수 있다. 큰 차이 자체는 흥미롭지만, 동시 수집한 대조실험처럼 서술하면 안 된다.
+
+#### 수정 방안
+
+1. 1차 분석 단위를 run/pair로 바꾼다.
+2. 두 arm을 반복 번호별로 교차 실행하고 순서를 번갈아 배치한다.
+3. `crossTask`, `bothComplete` 같은 run-level 결과와 정확한 이항 신뢰구간을 보고한다.
+4. turn-level 결과가 필요하면 cluster bootstrap, GEE, 또는 run 단위 permutation을 사용한다.
+5. 모델별·workload별 비교를 사전에 정한 primary contrast와 exploratory contrast로 구분한다.
+6. “within-model statistically separable” 같은 문장은 재분석 전 제거한다.
+7. model endpoint가 deterministic하지 않다면 seed, temperature, decoding parameter, model revision과 실행 날짜를 기록한다.
+
+### P0-3. `own task completed`는 과제 완료를 측정하지 않는다
+
+#### 문제
+
+`n3c_scoping_real.py`의 `ownComplete`는 해당 턴이 예정된 파일명 집합을 모두 썼는지 확인한다. 파일 내용, 요구사항 충족, 테스트 통과, 저장소 불변식은 확인하지 않는다. 그런데 표의 열 제목은 “Own task completed”다. 이는 측정값보다 강한 표현이다.
+
+같은 한계가 `cross-user file effects`에도 있다. 상대방의 파일명을 건드린 것은 잘 잡지만 다음 실패는 놓친다.
+
+- 자기 파일에 상대방 과제의 내용을 씀
+- 올바른 파일명을 만들었지만 내용이 틀림
+- shell/package 명령으로 상대 과제에 영향을 줌
+- 답변 텍스트에서는 상대 요청을 따랐지만 파일은 쓰지 않음
+- 두 과제를 모두 했으나 한쪽 결과가 저장소를 깨뜨림
+
+특히 두 번째 모델의 원시 응답에는 상대 완료 태그가 나타난 turn이 scoping off `12/40`, on `10/40`으로 기록돼 있다. 파일 효과는 `14/40 → 9/40`으로 줄었지만 텍스트 수준 혼선은 거의 줄지 않았다. 현재 본문은 side effect를 1차 판정으로 선택했다고 밝히지만, “semantic focus”와 “another participant's task”라는 넓은 해석을 하려면 이 결과도 함께 보여야 한다.
+
+#### 수정 방안
+
+1. 지금 지표의 이름을 `wrote all assigned target paths`로 바꾼다.
+2. 각 과제에 content oracle 또는 자동 테스트를 둔다. 최소한 예상 marker, line semantics, parse/test 성공 여부를 확인한다.
+3. 결과를 네 층으로 분리한다.
+
+   - structural attribution: `reply_to`
+   - effect ownership: touched paths/commands
+   - task correctness: content oracle/tests
+   - response focus: answer-text coding
+
+4. answer text는 condition을 모르는 두 코더 또는 사전 정의된 tag/rubric으로 판정하고 agreement를 보고한다.
+5. “semantic isolation”을 주장하려면 파일 쓰기뿐 아니라 명령과 최종 응답도 포함한다. 그렇지 않으면 일관되게 “cross-user file effects”로 한정한다.
+6. scoping의 이득과 함께 omission, over-cautiousness, own-task correctness를 동일한 표에서 보고한다.
+
+### P0-4. 논문의 effect-gate 보장이 구현의 실제 별칭·분류 모델보다 넓다
+
+#### 문제 A: 경로 별칭
+
+§3.3은 경로를 정규화하고 같은 경로의 효과를 정렬한다고 한다. 실제 `normalize_lock_path`는 `os.path.abspath(os.path.normpath(...))`를 사용한다. 이 방식은 `.`/`..`와 상대·절대 표기는 합치지만 다음은 합치지 못한다.
+
+- workspace 내부 symbolic link와 그 target
+- 같은 inode를 가리키는 hard link
+- 실행 중 rename으로 생긴 별칭
+- 일부 filesystem의 case/Unicode normalization 별칭
+
+`_confine.resolve_within`은 symlink를 따라가지만, lock key를 만드는 `effect_lock`은 그 canonical path를 재사용하지 않는다. 따라서 두 턴이 `link.txt`와 `target.txt`를 쓰면 실제로 같은 파일이어도 서로 다른 lock key로 병렬 진입할 수 있다. 이는 현재 “same-resource operations run one after another”라는 보장의 반례다.
+
+#### 문제 B: `UNKNOWN`의 이중 의미
+
+논문 표는 “Unknown file effect → exclusive, safety-first fallback”이라고 쓴다. `EffectIntent.is_exclusive`와 일부 주석도 UNKNOWN을 exclusive로 설명한다. 그러나 실제 `effect_lock.hold`는 `EffectKind.UNKNOWN`이면 lock을 전혀 잡지 않고 통과시킨다.
+
+현재 내장 UNKNOWN 도구들이 parent/composite, human-wait, workspace 외부 상태라서 의도적으로 통과한다는 구현 설명은 이해된다. 문제는 **UNKNOWN이 동시에 ‘새 도구가 분류를 빠뜨렸을 때의 기본값’**이기도 하다는 점이다. 새 plugin/tool이 workspace를 수정하면서 intent override를 잊으면 fail-closed가 아니라 fail-open이 된다. 논문의 safety-first fallback과 맞지 않는다.
+
+#### 문제 C: partial visibility와 협조적 호출만 보호
+
+`e1_ablation.py`는 `partial` 상태를 정상으로 제외한다. 실제 write는 truncate 후 기록하므로 lock을 켜도 gate 밖의 reader는 빈 파일이나 부분 파일을 볼 수 있다. 또한 detached background process, 외부 IDE, 다른 OS process는 in-process gate를 따르지 않는다.
+
+따라서 현재 gate가 보장하는 것은 다음처럼 좁혀야 한다.
+
+> All participating in-process effects that declare canonical, correctly classified resources do not overlap according to the compatibility matrix.
+
+이는 “파일이 항상 intact하다” 또는 “workspace가 atomic하다”와 다르다.
+
+#### 수정 방안
+
+1. 기존 파일은 `realpath`/`Path.resolve()`로, 새 파일은 canonical parent + basename으로 key를 만든다.
+2. hard-link alias가 중요한 환경이라면 inode `(st_dev, st_ino)`를 사용하거나, hard link가 감지된 경로는 workspace-exclusive로 내린다.
+3. canonicalization과 실제 tool execution 사이의 TOCTOU 한계를 명시한다.
+4. `UNKNOWN_WORKSPACE_EFFECT`와 `NON_WORKSPACE_OR_COMPOSITE`를 별도 kind로 나눈다. 전자는 exclusive, 후자는 leaf에서만 lock한다.
+5. plugin/tool registration 시 effect intent 선언을 필수화하고, 누락은 서버 시작 실패 또는 exclusive fallback으로 처리한다.
+6. symlink, hard link, empty path, plugin intent omission, rename, detached shell을 포함한 adversarial regression suite를 추가한다.
+7. concurrent-reader visibility까지 보장하려면 write를 temp file + atomic replace로 바꾼다. 그렇지 않으면 partial visibility를 명시적으로 보장 밖에 둔다.
+8. §3.5의 “guaranteed”를 “enforced under assumptions A1–A5”로 바꾸고 가정 표를 바로 옆에 둔다.
+
+---
+
+## 5. 중요한 연구·프레이밍 문제(P1)
+
+### P1-1. prompt scoping보다 강한 context-isolation 대안이 빠져 있다
+
+현재 결과는 다른 사용자의 동시 요청이 공유 transcript에 들어간 상태에서, system prompt가 “이 turn이 담당할 요청”을 다시 지정했을 때의 효과를 본다. 그러나 더 직접적인 설계는 다음과 같다.
+
+- 각 turn은 dispatch 시점의 committed context + 자기 요청만 본다.
+- 다른 in-flight 사용자의 요청은 그 turn에 user-role instruction으로 노출하지 않는다.
+- 다른 요청을 보여야 한다면 quoted/metadata context로 변환한다.
+- 완료된 다른 turn의 결과는 다음 inference step부터 명시적인 “newer committed activity”로 합류시킨다.
+
+즉, **공유된 durable transcript와 모든 in-flight prompt를 그대로 공유하는 것은 같은 선택이 아니다.** 이 architectural baseline 없이 “shared context causes semantic cross-talk”라고 하면, 리뷰어는 “공유 세션의 본질적 경계가 아니라 prompt assembly bug 아닌가?”라고 물을 수 있다.
+
+수정 우선순위는 다음과 같다.
+
+1. `unscoped shared prompt`
+2. `turn-scoped prompt` (현재 기본)
+3. `turn-local view / filtered concurrent requests`
+4. 가능하면 `turn-local effect capability`까지
+
+세 번째 팔을 최소 한 모델·한 distinct workload에서 비교하라. 구현이 어렵다면 논문의 주장을 “the tested shared-prompt policy”로 한정하고, 공유 세션 일반의 필연적 속성처럼 쓰지 말아야 한다.
+
+### P1-2. isolate-and-merge 대안과의 관계를 더 좁혀야 한다
+
+서론은 serial과 session fork를 대비한 뒤 Coagora를 “third contract”로 제시하지만, 평가는 reject, serial, parallel만 비교한다. worktree/branch 격리는 표에만 있고 merge cost, context divergence, conflict resolution을 측정하지 않는다.
+
+두 선택지가 있다.
+
+- **권장:** 논문 범위를 “one live shared context 안의 busy-turn contract 비교”로 명확히 한정한다.
+- 또는 isolate-and-merge arm을 추가하되, TTFT만이 아니라 merge 시간, 중복 작업, context reconciliation까지 측정한다.
+
+현재 분량과 연구 집중도를 고려하면 첫 번째가 낫다. “forking necessarily creates costly merge work” 같은 일반 문장은 동기 설명으로만 두고 비교 우월성 주장으로 읽히지 않게 해야 한다.
+
+### P1-3. live-model 방법 정보가 본문만으로 충분하지 않다
+
+“primary model”, “second model”, “on-premise endpoint”, “heavier endpoint load”만으로는 복제가 어렵다. 익명 심사라고 해서 사용한 모델을 숨길 필요는 없다. 최소한 다음을 본문 또는 보조자료에 제시해야 한다.
+
+- model family, parameter/quantization class, serving engine와 revision
+- temperature, top-p, seed, max tokens, tool-calling format
+- host CPU/GPU/RAM과 동시 요청 설정
+- arm별 유효/실패 실행 수, 실패 원인과 어느 조건에서 빠졌는지
+- live TTFT의 12개 분포, 실제 bootstrap CI 수치
+- “heavier endpoint load” 재실행의 날짜·반복 수·부하 조건
+- arm 실행 순서와 randomization/blocking 절차
+
+현재 §5.1은 “non-overlapping ranges and bootstrap intervals”라고만 쓰고 interval을 보여주지 않는다. 원자료에는 serial median CI 약 `[38.02, 38.28]s`, parallel `[10.71, 10.81]s`가 있으므로 표나 그림에 직접 넣는 편이 낫다. 다만 이 CI는 한 endpoint의 12회 runtime variation에 대한 것이지 다른 모델·배포로의 일반화 구간은 아니다.
+
+또한 deterministic HOL grid의 네 실패는 조건별 위치와 원인을 보고하고, 실패를 제외해도 slope 결론이 유지되는 sensitivity analysis를 제시해야 한다.
+
+### P1-4. throughput/effect-share 표가 독립적으로 해석되지 않는다
+
+§5.2의 표에서 `1.987`, `1.992`가 무엇의 비율인지 열 이름만으로 알 수 없다. `Recovery`의 분모·분자도 정의되지 않는다. effect share `s`의 공식, throughput normalization 기준, 반복 수, 분산이 없다.
+
+다음을 추가하라.
+
+> normalized throughput = serial wall time / concurrent wall time  
+> effect share = exclusive-effect hold time / end-to-end turn time  
+> recovery = (conflict-scoped − workspace) / (no-lock − workspace)
+
+실제 정의가 다르면 그 정의를 써야 한다. 각 셀의 `n`, median/mean, range 또는 CI도 필요하다. “50% knee”는 두 turn, 완전 겹침, 특정 단계 구조에서 성립하는 이론적 결과이므로 일반 법칙처럼 표현하지 말고 모델 가정을 함께 적어야 한다.
+
+### P1-5. RQ3이 아직 너무 많은 것을 한 바구니에 넣는다
+
+현재 RQ3은 replay, compaction, attribution, fairness, lifecycle, staleness, semantic cross-talk을 모두 포함한다. 표로 압축해 이전보다 낫지만, 논문의 가장 중요한 semantic boundary가 인프라 회귀검사들과 같은 RQ에 묻힌다.
+
+추천 구조는 다음과 같다.
+
+1. RQ1: responsiveness and token cost
+2. RQ2: effect ordering, integrity, and collapse boundary
+3. RQ3: request ownership versus semantic focus
+4. Supporting invariant validation: replay/compaction/fairness/lifecycle — RQ가 아닌 짧은 subsection 또는 supplement
+5. RQ4: first use — 결과가 생겼을 때만
+
+특히 204/204 lifecycle, test count, reconnect 세부 수치는 artifact 신뢰를 높이지만 CHI 본문의 중심 발견은 아니다.
+
+### P1-6. 기술 HCI 논문으로 제출할 경우 사람에 대한 문장을 더 엄격히 한정해야 한다
+
+사용자 연구 결과를 제외해도 논문은 성립 가능하다. 다만 다음은 기술 측정에서 직접 관찰되지 않았다.
+
+- 사용자가 stale context를 이해하는가
+- ownership label이 실제 책임 판단을 돕는가
+- waiting indicator가 올바른 mental model을 만드는가
+- 팀이 coordination norm을 형성하는가
+- parallel contract를 선호하거나 신뢰하는가
+
+따라서 §7.2의 네 원칙은 “evaluation suggests”보다 **design hypotheses/implications derived from system behavior**로 명명하는 것이 안전하다. “A viable interface must…”도 “Our results motivate testing…” 정도로 낮추면 사용자 결과 없이도 논리적으로 완결된다.
+
+실제 제출 시에는 둘 중 하나를 택해야 한다.
+
+- 사용자 연구를 포함한다면 §6 결과가 초록·기여·논의·결론을 실제로 바꾸게 한다.
+- 기술 논문으로 제출한다면 미완성 §6, RQ4, 모든 `[TODO after study]`를 제거하고 human claim을 연구 가설로 한정한다.
+
+결과 없는 프로토콜과 TODO 표를 제출본에 남기는 선택지는 없다.
+
+### P1-7. design-space 기여의 도출 방법이 얇다
+
+네 축은 유용하지만, 현재는 저자들이 어떤 절차로 축을 도출했는지 충분히 설명되지 않는다. 9개 시스템을 본 뒤 축을 귀납적으로 만들었는지, CSCW 이론에서 연역했는지, 두 방식이 결합됐는지 알려야 한다.
+
+수정 방안:
+
+1. search date, inclusion/exclusion rule, documentation snapshot을 보조자료에 둔다.
+2. 제품 문서가 “undocumented”인 것과 기능이 “없음”을 구분한다.
+3. 표를 novelty proof가 아니라 scoped analytical framing으로 위치시킨다.
+4. GitHub Next Ace [4]가 참고문헌에는 있으나 본문 비교에는 없는 이유를 설명하거나 제거한다.
+5. compaction 관련 [29]도 현재 인용되지 않으므로 관련 절에서 쓰거나 제거한다.
+6. Codex Slack 행은 통합 문서 [15]를 직접 인용하고, 발표 글 [14]와 역할을 구분한다.
+
+---
+
+## 6. 세부 문제와 수정안(P2)
+
+### 6.1 “one agent”의 조작적 정의
+
+한 process/session/context/tool registry를 공유하지만 inference loop는 turn마다 병렬로 돈다. 일부 독자는 이를 여러 agent instance로 볼 것이다. “one agent”를 shared durable session, workspace, policy, tool runtime의 동일성으로 정의하고, concurrent inference calls는 복수임을 첫 등장 때 명시하라.
+
+### 6.2 completion-order commit의 인과 의미
+
+도착 순서, dispatch 순서, inference completion 순서, context commit 순서가 다르다. completion-order serialization이 API-valid transcript는 만들지만 사용자가 기대하는 conversational causality까지 보장하지 않는다. 두 턴이 여러 tool step을 거칠 때 새 commit을 어느 시점부터 보는지도 timeline figure로 설명해야 한다.
+
+### 6.3 fairness는 정책 정의이지 보편적 공정성이 아니다
+
+현재 fairness는 “한 user당 한 active turn + strict FIFO”다. 이는 flood resistance에는 좋지만, user identity가 안정적이고 Sybil이 없다는 가정이 필요하다. 단일 사용자의 의도적 병렬 작업도 막는다. “fair”를 넓게 쓰기보다 per-principal admission fairness로 부르고, identity binding과 reconnect semantics를 설명하라.
+
+`4.8ms vs 151.2s`도 gate가 정의한 flood workload에서의 verification에 가깝다. 일반적인 multi-user fairness magnitude로 해석하지 않도록 workload 구성과 p95 `23.6s` 같은 tail도 같이 보여야 한다.
+
+### 6.4 default cap을 올린 8-user 결과의 해석
+
+8-user 실험은 admission queue를 피하려고 cap을 올렸다. 이는 “default Coagora가 8명에서 scale한다”가 아니라 “queue가 없을 때 inference contention이 39% 증가했다”는 결과다. 본문 문구를 이 조건에 맞게 좁혀라.
+
+### 6.5 token cost의 범위
+
+현재 1.49×는 세 질문 workload의 **input tokens**다. output tokens, wall-clock compute, GPU energy, 금전 비용, 실패·중복 효과의 repair cost는 포함하지 않는다. “cost” 대신 “input-token premium in this workload”를 일관되게 사용하고 전체 토큰 표를 보조자료에 제시하라.
+
+### 6.6 cancel의 실제 효과
+
+사용자가 자기 turn을 취소할 수 있다고 하지만, 이미 시작된 shell subprocess, leaf effect, model HTTP call이 즉시 중단되는지 아니면 결과만 버리는지 명확하지 않다. cancellation의 linearization point와 effect rollback 부재를 contract 표에 추가하라.
+
+### 6.7 실패·제외 보고
+
+HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와 L에서 발생했는지, timeout인지 parser/stream 문제인지가 중요하다. responsiveness 논문에서는 “답하지 않음”도 사용자 경험의 일부이므로 단순 제외만 해서는 안 된다.
+
+### 6.8 참고문헌과 인용 정리
+
+현재 working reference에는 arXiv, 제품 문서, issue, peer-reviewed paper가 섞여 있다. 제출 전 다음을 수행하라.
+
+- 모든 저자·연도·출판 상태를 BibTeX 원문과 대조
+- arXiv가 정식 출판됐다면 최종 서지로 교체
+- 제품 문서의 접근일 또는 archived snapshot 기록
+- 본문에 쓰지 않은 [4], [29] 처리
+- 번호 수동 관리 대신 LaTeX/BibTeX에서 자동 생성
+
+### 6.9 시각 자료가 반드시 필요하다
+
+현재 유일한 핵심 figure가 TODO다. 최소 두 개가 필요하다.
+
+1. serial/reject/parallel의 시간선과 snapshot/commit/effect gate를 한 장에 보여주는 architecture timeline
+2. 두 사용자의 concurrent stream, requester label, touched files, cancel control, stale indicator 위치를 보여주는 실제 UI screenshot 또는 충실한 wireframe
+
+표만으로는 turn과 effect의 인과관계가 잘 보이지 않는다. 색상 외에도 선 모양·아이콘·직접 레이블을 사용하고 alt text를 준비하라.
+
+---
+
+## 7. 절별 수정 제안
+
+### Abstract
+
+현재 초록은 기술 결과가 많고 중심 메시지는 분명하다. 다만 다음을 고치면 더 강해진다.
+
+- deterministic slope `0.00 vs 1.03`보다 live `38.2s vs 10.8s`를 우선한다.
+- `8.2%`를 occurrence rate처럼 전면에 두지 않는다. 반복 run-level 분석 전에는 “a forced-overlap trace exposed mixed-writer intermediate states”로 낮춘다.
+- `technically viable`를 `demonstrates feasibility under a cooperative, single-process threat model`로 좁힌다.
+- “turn-scoped prompt eliminated…”에는 model/workload와 측정 endpoint가 file effects임을 넣는다.
+- 사용자 연구 결과를 제외한 제출본이라면 마지막 문장의 ownership/visible control은 measured result와 derived implication을 구분한다.
+
+### Introduction
+
+- 현재 문제 설정과 세 기여는 대체로 좋다.
+- isolate-and-merge보다 일반적으로 우월하다는 인상을 줄이고 “one live shared context의 contract”로 범위를 고정한다.
+- contribution 1의 design space는 조사 방법을 보강하지 않으면 “analytical framing”으로 낮춘다.
+- contribution 3에서 guarantee라는 단어에 cooperative in-process effect assumptions를 붙인다.
+
+### Related Work and Design Space
+
+- DB 개념을 새 기법처럼 주장하지 않는 점은 좋다.
+- 제품 표의 근거 날짜와 undocumented/absent 구분을 추가한다.
+- prompt/context isolation, multi-principal authorization, collaborative editor transaction/awareness literature를 Coagora의 실제 설계 선택과 더 직접 연결한다.
+- 현재 sparse coordinate를 novelty의 증명으로 사용하지 않는다.
+
+### Contract and Implementation
+
+- “guarantee table” 앞에 assumptions 표를 둔다.
+- path alias, detached effects, UNKNOWN, crash durability, cancellation의 경계를 명시한다.
+- turn-local view가 아닌 shared-prompt view를 선택한 이유와 대안을 설명한다.
+- state transition 또는 timeline figure를 추가한다.
+
+### Technical Evaluation
+
+- 먼저 공통 Methods를 둔다: experimental unit, n, randomization, endpoint, missing data, statistic.
+- §5.2 integrity를 독립 run 단위로 재실험한다.
+- §5.4 semantic 결과는 file-path completion이 아니라 content/test correctness를 포함한다.
+- second-model text 결과를 포함해 outcome selection을 투명하게 한다.
+- §5.3a의 substrate validation은 1개 표로 유지하되 방법 세부는 supplement로 옮긴다.
+- deterministic mechanism check에는 p-value를 붙이지 않고 expected invariant와 관측 일치로 보고한다.
+
+### Discussion
+
+- physical, structural, semantic, security의 네 층을 하나의 표로 정리하면 논문의 가장 재사용 가능한 산출물이 된다.
+- 사용자 행동을 관찰하지 않은 상태에서는 design principle을 testable hypothesis로 쓴다.
+- effect-level safeguards를 future work로만 두지 말고 최소 한 가지—예: turn capability scope 또는 cross-owned path confirmation—를 작은 prototype arm으로 보여주면 논문이 훨씬 강해진다.
+
+### Conclusion
+
+- 현재 결론의 물리/의미 경계는 좋다.
+- “viable shared-agent interface”보다 “the evaluated contract exposes…”처럼 측정 범위에 맞춘다.
+- 사용자 연구가 없는 버전에서는 planned study 문장을 제거하고, 후속 연구 질문으로 끝낸다.
+
+---
+
+## 8. 권장 추가 실험: 최소안과 이상안
+
+| 우선순위 | 질문 | 최소 수정 | 이상적인 수정 |
+|---|---|---|---|
+| P0 | lock이 mixed state를 막는가 | arm당 독립 20–30 run, run-level outcome | 플랫폼 2종, sampling sensitivity, exposure duration |
+| P0 | 같은 실제 파일의 별칭도 막는가 | symlink·empty path regression | hard link·rename·TOCTOU stress arm |
+| P0 | scoping이 semantic correctness를 높이는가 | 파일 내용 oracle + run-level 분석 | tests, answer coding, command effects까지 다층 평가 |
+| P0/P1 | 오염이 shared session에 본질적인가 | turn-local filtered context 1개 arm | prompt scoping × context visibility 요인 실험 |
+| P1 | live latency가 재현되는가 | n, CI, 실패 조건, model config 공개 | 다른 serving stack/model에서 독립 replication |
+| P1 | effect scope 성능 경계가 명확한가 | metric 공식·n·분산 추가 | turn 수 2/4/8과 workload structure 변화 |
+| P1 | prompt 외 safeguard가 가능한가 | cross-owned path confirmation prototype | per-turn capability scope와 usability trade-off |
+
+가장 비용 대비 효과가 큰 추가 실험은 **turn-local filtered context arm**과 **content oracle을 포함한 semantic run-level 재분석**이다. 이것들이 논문의 가장 중요한 alternative explanation을 직접 닫는다.
+
+## 9. 추천하는 최종 기여 문장
+
+현재 세 기여는 다음처럼 좁히는 것이 좋다.
+
+1. **Interaction architecture:** one live coding-agent session에서 concurrent inference, attributed turns, ordered context commit, conflict-scoped cooperative effects를 결합한 명시적 contract.
+2. **Measured systems trade-off:** serial/reject/parallel의 responsiveness, input-token premium, exclusive-effect collapse boundary를 같은 구현에서 측정한 결과.
+3. **Boundary result:** structural ownership and cooperative effect ordering do not imply semantic request isolation; prompt scoping changes file-level cross-task behavior in a model-dependent way.
+
+design space는 이 세 기여를 설명하는 framing으로 두는 편이 안전하다. 조사 절차를 체계화할 경우에만 독립 기여로 유지하라.
+
+논문의 한 문장 핵심 주장은 다음이 가장 설득력 있다.
+
+> Parallelizing inference below a shared-session interface can remove head-of-line waiting, but ordering commits and file effects does not determine which participant's request the model follows.
+
+이 문장은 속도, 시스템 계약, 의미적 실패를 한 번에 묶고 인간 연구 결과를 전제하지 않는다.
+
+## 10. 리뷰어가 저자에게 물을 질문
+
+1. 왜 다른 in-flight user request를 현재 turn의 user-role context에서 제거하지 않고 prompt scoping으로만 구분했는가?
+2. `own task completed`가 파일명 존재 외에 어떤 semantic oracle을 통과했는가?
+3. 동일 실행 안의 2ms samples를 독립 표본으로 Fisher test에 넣는 것이 왜 정당한가?
+4. symlink와 hard link가 같은 실제 파일을 가리킬 때 effect gate는 어떻게 충돌을 인식하는가?
+5. `UNKNOWN`은 문서상 exclusive인데 실제 gate에서는 왜 unlocked이며, 새 plugin이 effect intent를 빠뜨리면 무엇이 막아 주는가?
+6. primary distinct-task의 off/on arm이 서로 다른 수집 시점에 실행됐다는 사실이 결과 해석에 어떤 영향을 주는가?
+7. 두 번째 모델에서 answer text의 cross-task tag가 `12/40 → 10/40`으로 거의 유지된 결과를 본문에서 제외한 이유는 무엇인가?
+8. cancellation 시 이미 실행 중인 shell process와 workspace effect는 중단되는가, 완료되는가, 또는 결과만 숨겨지는가?
+9. default cap을 올린 8-user 실험은 실제 기본 설정의 scaling에 대해 무엇을 말할 수 있는가?
+10. 사람 연구를 완전히 빼도 남는 단 하나의 HCI 지식 기여는 무엇인가?
+
+## 11. 우선순위별 수정 순서
+
+### 제출 전에 반드시
+
+1. integrity 실험을 독립 run 단위로 재실행하고 잘못된 Fisher 분석을 제거한다.
+2. semantic 실험을 run/cluster 단위로 재분석하고 distinct-task arms를 같은 block에서 다시 수집한다.
+3. `ownComplete`를 정확히 이름 붙이고 content/test oracle을 추가한다.
+4. symlink alias와 `UNKNOWN` fallback을 구현 또는 claim 수준에서 해결한다.
+5. guarantee 표를 assumption-bound invariant 표로 바꾼다.
+6. live model·hardware·decoding·missing-run 정보를 공개한다.
+7. 핵심 architecture/timeline figure와 UI figure를 완성한다.
+8. 사용자 연구를 포함하지 않는 제출본이라면 §6 TODO와 RQ4를 전부 제거한다.
+
+### 강하게 권장
+
+1. turn-local filtered-context arm을 추가한다.
+2. second-model text-level 혼선 결과를 포함한다.
+3. replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
+4. isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
+5. design-space survey procedure와 문서 snapshot을 남긴다.
+6. token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
+
+### 있으면 논문을 크게 강화
+
+1. prompt가 아닌 effect-level safeguard prototype을 하나 평가한다.
+2. 별도 serving stack 또는 외부 모델에서 latency/semantic 결과를 복제한다.
+3. physical/structural/semantic/security 네 층을 재사용 가능한 분석 프레임으로 정식화한다.
+
+---
+
+## 12. 최종 평가
+
+이 초안은 이전 버전보다 훨씬 좋은 CHI 논문 후보가 됐다. 문제, 계약, 기술 결과, 한계가 한 이야기로 모였고, 분량도 적절하다. 사용자 연구 결과를 제외하더라도 **“병렬 추론은 대기를 줄이지만, 구조적 귀속과 효과 정렬은 모델의 요청 소유권을 보장하지 않는다”**는 기여는 충분히 중요하다.
+
+하지만 현재는 가장 강한 두 실험에서 분석 단위가 부정확하고, 핵심 safety guarantee가 실제 경로 별칭과 effect classification보다 넓게 쓰여 있다. 또한 과제 완료라는 표현이 파일명 touch를 과도하게 해석한다. 이 문제들은 문장 다듬기만으로는 닫히지 않지만, 범위가 분명해 R&R 기간에도 해결 가능한 종류다.
+
+P0 항목을 제대로 고치고 turn-local context 대안을 한 번만 비교해도 논문은 **Weak Accept–Accept 논의가 가능한 수준**으로 올라갈 수 있다. 반대로 사용자 연구 결과만 추가하고 이 기술적 타당성 문제를 그대로 두면, 사람 데이터가 생겨도 중앙 주장의 신뢰성은 충분히 회복되지 않는다.
