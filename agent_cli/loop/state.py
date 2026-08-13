@@ -82,14 +82,18 @@ class LoopConfig:
     # v7.30: 턴 스코핑 — 공유 트랜스크립트에서 이 턴이 **어느 요청을 수행
     # 중인지**를 시스템 프롬프트에 못 박는다. 병렬 계약에서만 의미가 있고
     # (``origin_turn`` 이 빈 직렬 모드에서는 동시 요청이 애초에 없다),
-    # 기본 on 이다 — 효과가 측정됐다: 라이브 80 턴 중 56 이 남의 파일을
-    # 쓰던 것이 스코핑으로 80 중 0 이 됐고, 자기 과제 완수는 오히려 올랐다
-    # (bench n3c). 두 번째 모델(35B-A3B)에서는 제거가 아니라 감소(14→9/40)
-    # — 충분성은 모델 속성이지만 방향은 양쪽 다 양(+)이고 비용이 없어
-    # 기본값으로 정당하다. 절제 팔은 ``--no-turn-scoping`` 으로 명시적으로 끈다.
+    # 기본 on 이다. 모델 순응에 의존하는 의미적 완화이며, 강제 파일 경계는
+    # 아래 ``turn_isolation`` 이 별도로 담당한다. 절제 팔은
+    # ``--no-turn-scoping`` 으로 명시적으로 끈다.
     # 목적은 구조적 귀속(이미 정확하다)이 아니라 **의미론적** 혼선, 즉
     # 모델이 남의 동시 질문에 답해 버리는 현상의 완화다.
     turn_scoping: bool = True
+    # P1: exclude records produced by other still-active turns from every
+    # LLM-facing context snapshot. Completed records remain shared.
+    turn_local_context: bool = False
+    # Optional enforced file capability/staging transaction. Kept opaque here
+    # to avoid coupling loop state to the tool implementation module.
+    turn_isolation: object = None
 
 
 @dataclass

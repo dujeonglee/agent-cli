@@ -1,0 +1,194 @@
+{
+  "workload": "realistic",
+  "experimentalUnit": "one concurrent two-request run/pair",
+  "armOrder": "rotating balanced order by repetition",
+  "requestedRunsPerArm": 20,
+  "arms": [
+    {
+      "arm": "scoped",
+      "runs": 20,
+      "runsAttemptedOutsideCapability": 0,
+      "attemptedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "runsPublishedOutsideCapability": 0,
+      "publishedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "bothTasksCorrect": 20,
+      "correctExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "repositoryCorrect": 20,
+      "repositoryExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "runsWithResponseCrossTag": 1,
+      "blockedEffects": 0,
+      "validationFailures": 0,
+      "medianLongerTurnSpanMs": 59535.1,
+      "medianLlmCalls": 4.0,
+      "medianInputTokens": 33508.0,
+      "medianOutputTokens": 320.5
+    },
+    {
+      "arm": "filtered",
+      "runs": 20,
+      "runsAttemptedOutsideCapability": 0,
+      "attemptedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "runsPublishedOutsideCapability": 0,
+      "publishedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "bothTasksCorrect": 20,
+      "correctExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "repositoryCorrect": 20,
+      "repositoryExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "runsWithResponseCrossTag": 0,
+      "blockedEffects": 0,
+      "validationFailures": 0,
+      "medianLongerTurnSpanMs": 52133.9,
+      "medianLlmCalls": 4.0,
+      "medianInputTokens": 32687.0,
+      "medianOutputTokens": 277.0
+    },
+    {
+      "arm": "enforced",
+      "runs": 20,
+      "runsAttemptedOutsideCapability": 0,
+      "attemptedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "runsPublishedOutsideCapability": 0,
+      "publishedExactCI95": [
+        0.0,
+        0.1684
+      ],
+      "bothTasksCorrect": 20,
+      "correctExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "repositoryCorrect": 20,
+      "repositoryExactCI95": [
+        0.8316,
+        1.0
+      ],
+      "runsWithResponseCrossTag": 0,
+      "blockedEffects": 0,
+      "validationFailures": 0,
+      "medianLongerTurnSpanMs": 59536.6,
+      "medianLlmCalls": 4.0,
+      "medianInputTokens": 33177.0,
+      "medianOutputTokens": 346.5
+    }
+  ],
+  "pairedContrasts": [
+    {
+      "contrast": "scoped vs filtered",
+      "outcome": "runAttemptedOutsideCapability",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs filtered",
+      "outcome": "runPublishedOutsideCapability",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs filtered",
+      "outcome": "bothTasksCorrect",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs filtered",
+      "outcome": "repositoryCorrect",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs filtered",
+      "outcome": "anyResponseCrossTag",
+      "pairedRuns": 20,
+      "scopedOnly": 1,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs enforced",
+      "outcome": "runAttemptedOutsideCapability",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs enforced",
+      "outcome": "runPublishedOutsideCapability",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs enforced",
+      "outcome": "bothTasksCorrect",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs enforced",
+      "outcome": "repositoryCorrect",
+      "pairedRuns": 20,
+      "scopedOnly": 0,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    },
+    {
+      "contrast": "scoped vs enforced",
+      "outcome": "anyResponseCrossTag",
+      "pairedRuns": 20,
+      "scopedOnly": 1,
+      "contrastOnly": 0,
+      "exactMcNemarP": 1.0
+    }
+  ],
+  "failedRuns": [],
+  "implementationDigests": [
+    "412db2fa3688aa413cc7e69269894d8f61a944bf140057da1bb9b738d42a65a8"
+  ],
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "host": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "logicalCpuCount": 16
+  },
+  "runDate": "2026-08-13",
+  "claimBoundary": "Enforced publication covers cooperative registered tools, canonical paths, and path stability checked at commit. It does not claim general response semantics, external processes, or crash-atomic multi-file transactions."
+}

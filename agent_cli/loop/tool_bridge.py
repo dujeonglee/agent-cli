@@ -81,11 +81,29 @@ class ToolBridge:
         )
 
         # 1. Pre-hooks (may block or modify input)
+        isolation = self.cfg.turn_isolation
+        if isolation is not None and (self.cfg.hook_runner or self.cfg.hooks_config):
+            return ToolResult(
+                False,
+                error="Turn isolation blocks executable tool hooks; run without hooks or sandbox them explicitly",
+            )
         blocked, tool_input, input_dict = self._run_pre_hooks(
             tool_name, tool_input, input_dict
         )
         if blocked is not None:
             return blocked
+
+        if isolation is not None:
+            tool = TOOLS.get(tool_name)
+            args = tool_input if isinstance(tool_input, dict) else {}
+            intent = (
+                tool.effect_intent(args)
+                if tool is not None
+                else EffectIntent(EffectKind.UNKNOWN_WORKSPACE_EFFECT)
+            )
+            denial = isolation.authorize_tool(tool_name, args, intent)
+            if denial:
+                return ToolResult(False, error=denial)
 
         # 2/3. Dispatch (delegate special-case or regular).
         #
@@ -317,6 +335,7 @@ class ToolBridge:
                 session_dir=self.ctx.session_dir if self.ctx else None,
                 oversized_cap=self._oversized_cap,
                 tools_available=frozenset(self.cfg.tools_list),
+                turn_isolation=self.cfg.turn_isolation,
             )
             self._run_ctx_cache = cached
         return cached

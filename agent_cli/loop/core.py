@@ -92,6 +92,8 @@ class AgentLoop:
         peer_agents_section: str = "",
         origin_turn: str = "",
         turn_scoping: bool = True,
+        turn_local_context: bool = False,
+        turn_isolation=None,
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
         # prompt section, and lifecycle hooks so adding a new format means
@@ -193,6 +195,8 @@ class AgentLoop:
             peer_agents_section=peer_agents_section,
             origin_turn=origin_turn,
             turn_scoping=turn_scoping,
+            turn_local_context=turn_local_context,
+            turn_isolation=turn_isolation,
         )
         self._state = LoopState(
             query=query,
@@ -562,6 +566,8 @@ class AgentLoop:
             self._prompt.set_turn_scope(
                 self._config.origin_turn, self.query_author, self.query
             )
+        if self._config.turn_isolation is not None:
+            self._prompt.set_turn_isolation(self._config.turn_isolation.allowed_paths)
 
         # Build system prompt with session_dir for Context Recovery Guide.
         # Built as named sections — the joined string is what the LLM gets
@@ -602,9 +608,16 @@ class AgentLoop:
             record["author"] = author
         if self.ctx:
             self.ctx.add(record)
-            self.messages = self.ctx.get_messages()
+            self.messages = self._context_messages()
         else:
             self.messages.append(record)
+
+    def _context_messages(self) -> list[dict]:
+        """Return this turn's configured view of the shared context."""
+        return self.ctx.get_messages(
+            origin_turn=self._config.origin_turn,
+            filter_inflight=self._config.turn_local_context,
+        )
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
@@ -644,7 +657,7 @@ class AgentLoop:
             # Routed as a command — record the ask; ctx may have changed.
             self.task_log.append(labeled)
             if self.ctx:
-                self.messages = self.ctx.get_messages()
+                self.messages = self._context_messages()
             return
         self._add_user_message(text, author)
 

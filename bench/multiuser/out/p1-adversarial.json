@@ -1,0 +1,122 @@
+{
+  "suite": "P1 deterministic adversarial invariants",
+  "checks": 19,
+  "passed": 19,
+  "rows": [
+    {
+      "invariant": "staged write succeeds",
+      "expected": true,
+      "observed": true,
+      "pass": true
+    },
+    {
+      "invariant": "staged write is not prematurely visible",
+      "expected": "old",
+      "observed": "old",
+      "pass": true
+    },
+    {
+      "invariant": "out-of-scope path is blocked",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "parent traversal is blocked",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "shell bypass is blocked",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "direct dispatch cannot bypass shell guard",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "composite bypass is blocked",
+      "expected": true,
+      "observed": true,
+      "pass": true
+    },
+    {
+      "invariant": "unclassified plugin fails closed",
+      "expected": true,
+      "observed": true,
+      "pass": true
+    },
+    {
+      "invariant": "validated write publishes",
+      "expected": true,
+      "observed": true,
+      "pass": true
+    },
+    {
+      "invariant": "published content matches oracle",
+      "expected": "new",
+      "observed": "new",
+      "pass": true
+    },
+    {
+      "invariant": "blocked target remains absent",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "failed validation rejects publication",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "failed validation leaves workspace unchanged",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "version conflict rejects commit",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "version conflict preserves external write",
+      "expected": "external",
+      "observed": "external",
+      "pass": true
+    },
+    {
+      "invariant": "hard-link aliases never reserve concurrently",
+      "expected": 1,
+      "observed": 1,
+      "pass": true
+    },
+    {
+      "invariant": "same-path successor waits for predecessor",
+      "expected": false,
+      "observed": false,
+      "pass": true
+    },
+    {
+      "invariant": "queued same-path publications both validate",
+      "expected": true,
+      "observed": true,
+      "pass": true
+    },
+    {
+      "invariant": "queued same-path publication has a serial final value",
+      "expected": "second",
+      "observed": "second",
+      "pass": true
+    }
+  ],
+  "statisticalInterpretation": "deterministic invariant checks; no population p-value"
+}

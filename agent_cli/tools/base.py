@@ -65,6 +65,7 @@ class RunContext:
     session_dir: Path | None = None
     oversized_cap: int = 0
     tools_available: frozenset[str] = frozenset()
+    turn_isolation: object = None
 
 
 def default_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:

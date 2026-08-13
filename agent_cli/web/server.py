@@ -318,11 +318,24 @@ class WebServer:
             return True
         return False
 
-    def enqueue(self, conn_id: str | None, text: str) -> dict:
+    def enqueue(
+        self,
+        conn_id: str | None,
+        text: str,
+        *,
+        write_paths: list[str] | None = None,
+        expected_contents: dict[str, str] | None = None,
+    ) -> dict:
         """Add a user message to the pending queue (any connection may).
         Returns the queued item ``{id, conn_id, nickname, text}``."""
         nickname = self.renderer.nickname_for(conn_id)
-        item = self._queue.enqueue(conn_id, text, nickname=nickname)
+        item = self._queue.enqueue(
+            conn_id,
+            text,
+            nickname=nickname,
+            write_paths=write_paths,
+            expected_contents=expected_contents,
+        )
         # M2 계측: 큐 진입 시각 — TTFT 의 분모(t0). queue_id 가 이후
         # dispatch 이벤트(직렬: 워커, 병렬: TurnRegistry)와 이어 준다.
         turn_metrics.emit(
@@ -1283,7 +1296,34 @@ def create_app(server: WebServer) -> FastAPI:
             # display until it's dequeued — by the worker to START a run, or by
             # the running loop at a turn boundary to INJECT — at which point it
             # is rendered as a conversation card.
-            server.enqueue(body.get("conn_id"), content)
+            write_paths = body.get("write_paths", [])
+            expected_contents = body.get("expected_contents", {})
+            if not isinstance(write_paths, list) or not all(
+                isinstance(p, str) and p for p in write_paths
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="write_paths must be a list of non-empty strings",
+                )
+            if not isinstance(expected_contents, dict) or not all(
+                isinstance(k, str) and isinstance(v, str)
+                for k, v in expected_contents.items()
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="expected_contents must map path strings to exact string contents",
+                )
+            if expected_contents and set(expected_contents) != set(write_paths):
+                raise HTTPException(
+                    status_code=400,
+                    detail="expected_contents must cover exactly write_paths",
+                )
+            server.enqueue(
+                body.get("conn_id"),
+                content,
+                write_paths=write_paths,
+                expected_contents=expected_contents,
+            )
             return JSONResponse({"accepted": True})
         if (
             kind in ("prompt", "confirm")

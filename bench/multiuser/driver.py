@@ -198,12 +198,29 @@ class AgentServer:
     def base(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
-    def chat(self, content: str, conn_id: str) -> int:
+    def chat(
+        self,
+        content: str,
+        conn_id: str,
+        *,
+        write_paths: list[str] | None = None,
+        expected_contents: dict[str, str] | None = None,
+    ) -> int:
         """chat 입력 1건. HTTP status 반환 (409 = 거부 계약)."""
         try:
             status, _ = _http(
                 f"{self.base}/api/input?token={TOKEN}",
-                {"kind": "chat", "content": content, "conn_id": conn_id},
+                {
+                    "kind": "chat",
+                    "content": content,
+                    "conn_id": conn_id,
+                    **({"write_paths": write_paths} if write_paths is not None else {}),
+                    **(
+                        {"expected_contents": expected_contents}
+                        if expected_contents is not None
+                        else {}
+                    ),
+                },
             )
             return status
         except urllib.error.HTTPError as e:

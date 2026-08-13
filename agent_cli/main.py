@@ -1850,10 +1850,17 @@ def web(
         "rather than instructions. Mitigates a turn answering somebody "
         "else's question; does not affect who the reply is recorded "
         "against, which is structural and already exact. ON by default "
-        "under the parallel contract (measured: cross-user file writes "
-        "56/80 -> 0/80 with own-task completion up); use "
-        "--no-turn-scoping to disable for ablation. No effect under the "
+        "under the parallel contract; use --no-turn-scoping to disable for "
+        "ablation. This is a model-compliance mitigation, not an enforced "
+        "file boundary. No effect under the "
         "serial contract.",
+    ),
+    turn_local_context: bool = typer.Option(
+        False,
+        "--turn-local-context/--shared-inflight-context",
+        help="Under the parallel contract, omit records produced by other "
+        "still-running turns from each LLM prompt. Completed turns remain "
+        "shared. Experimental P1 context arm; off preserves the shipped view.",
     ),
     lock_scope: str | None = typer.Option(
         None,
@@ -2185,8 +2192,25 @@ def web(
                 label = turn.author or "?"
                 renderer.push_user_message(f"[{label}]: {turn.text}")
                 try:
-                    if _route(turn.text):
+                    # A manifest-bound request must enter the guarded tool
+                    # loop. Direct /sh, /skill, or @agent routing happens
+                    # outside that boundary and would bypass its capability.
+                    if not turn.write_paths and _route(turn.text):
                         return
+                    turn_isolation = None
+                    if turn.write_paths:
+                        from agent_cli.tools.turn_isolation import (
+                            TurnIsolation,
+                            TurnIsolationPolicy,
+                        )
+
+                        turn_isolation = TurnIsolation(
+                            TurnIsolationPolicy(
+                                turn_id=turn.id,
+                                allowed_paths=turn.write_paths,
+                                expected_contents=(turn.expected_contents or None),
+                            )
+                        )
                     run_loop(
                         query=turn.text,
                         query_author=turn.author,
@@ -2215,6 +2239,10 @@ def web(
                         agent_registry=agent_registry,
                         origin_turn=turn.id,  # 회신 귀속 (A6↔A1 정합)
                         turn_scoping=turn_scoping,
+                        turn_local_context=(
+                            turn_local_context or turn_isolation is not None
+                        ),
+                        turn_isolation=turn_isolation,
                     )
                 except Exception as exc:
                     renderer.error(f"Turn {turn.id} error: {exc}", 0)
@@ -2281,6 +2309,8 @@ def web(
                     author=nickname,
                     conn_id=item.get("conn_id", ""),
                     queue_id=item.get("id", ""),
+                    write_paths=item.get("write_paths", []),
+                    expected_contents=item.get("expected_contents", {}),
                 )
                 continue
             # M2 계측: 직렬 계약의 dispatch — 워커가 이 메시지의 처리를 시작한
@@ -2340,15 +2370,36 @@ def web(
                         stop_event=stop_event,  # noqa: B023 — route_one runs only within this turn iteration
                     )
 
-                if route_one(message):
+                if not item.get("write_paths") and route_one(message):
                     continue
                 try:
 
-                    def _run_main(query: str, author: str):
+                    def _run_main(query: str, author: str, *, queued_item=item):
+                        turn_isolation = None
+                        write_paths = queued_item.get("write_paths", [])
+                        if write_paths:
+                            from agent_cli.tools.turn_isolation import (
+                                TurnIsolation,
+                                TurnIsolationPolicy,
+                            )
+
+                            turn_isolation = TurnIsolation(
+                                TurnIsolationPolicy(
+                                    turn_id=f"q{queued_item.get('id', '')}",
+                                    allowed_paths=write_paths,
+                                    expected_contents=(
+                                        queued_item.get("expected_contents") or None
+                                    ),
+                                )
+                            )
                         return run_loop(
                             query=query,
                             query_author=author,
-                            dequeue_user_message=server.dequeue_nowait,
+                            # A capability belongs to exactly one request;
+                            # do not absorb a later queued request into it.
+                            dequeue_user_message=(
+                                None if turn_isolation else server.dequeue_nowait
+                            ),
                             route_message=route_one,
                             provider=llm_provider,
                             capabilities=capabilities,
@@ -2368,6 +2419,7 @@ def web(
                             wire_format=wire_format_plugin,
                             mcp_manager=mcp_manager,
                             agent_registry=agent_registry,
+                            turn_isolation=turn_isolation,
                         )
 
                     _run_main(message, nickname)

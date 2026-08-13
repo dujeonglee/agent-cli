@@ -68,7 +68,7 @@ def _small_overwrite_analysis(path: str, new_content: str):
     return (True, old, nudge)
 
 
-def tool_write_file(args: dict) -> ToolResult:
+def tool_write_file(args: dict, *, storage_path: Path | None = None) -> ToolResult:
     """Create or overwrite a file with raw content.
 
     Returns the written content in hashline format (LINE#HASH:content) so
@@ -88,13 +88,16 @@ def tool_write_file(args: dict) -> ToolResult:
     content = args.get("content", "")
     from agent_cli.tools import _confine
 
-    denial = _confine.guard([path], "write_file")
+    # In P1 staging mode the logical path was already canonicalized and
+    # authorized at the tool boundary; the system-owned staging directory may
+    # intentionally live outside cwd and must not trigger a second prompt.
+    denial = None if storage_path is not None else _confine.guard([path], "write_file")
     if denial:
         return ToolResult(False, error=denial)
     try:
-        p = Path(path)
+        p = storage_path or Path(path)
         # Judge small-overwrite BEFORE writing — the old content is gone after.
-        is_small, old_content, nudge = _small_overwrite_analysis(path, content)
+        is_small, old_content, nudge = _small_overwrite_analysis(str(p), content)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         header = f"File saved: {path} ({len(content)} bytes)"
@@ -122,7 +125,8 @@ def tool_write_file(args: dict) -> ToolResult:
         # never poisons the user-facing write.
         from agent_cli.tools.code_index import post_hook
 
-        post_hook(path)
+        if storage_path is None:
+            post_hook(path)
         return ToolResult(True, output=msg)
     except Exception as e:
         return ToolResult(False, error=f"write_file failed: {e}")
@@ -176,4 +180,6 @@ class WriteFileTool(Tool):
     # the body stays verbatim on re-feed. See docs/ARCHITECTURE.md §5.4.
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_write_file(args)
+        isolation = ctx.turn_isolation if ctx else None
+        staged = isolation.stage_for_write(args.get("path", "")) if isolation else None
+        return tool_write_file(args, storage_path=staged)

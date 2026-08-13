@@ -19,12 +19,15 @@ from agent_cli.tools.registry import (
     validate_tool_input,
 )
 from agent_cli.tools.result import ToolResult
+from agent_cli.tools.turn_isolation import TurnIsolation, TurnIsolationPolicy
 
 __all__ = [
     "TOOLS",
     "TOOL_SCHEMAS",
     "RunContext",
     "ToolResult",
+    "TurnIsolation",
+    "TurnIsolationPolicy",
     "_execute_tool",
     "get_tool_descriptions",
     "infer_action",

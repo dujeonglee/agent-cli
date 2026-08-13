@@ -30,6 +30,7 @@ class SystemPromptSvc:
         # v7.30 턴 스코핑 섹션 (``set_turn_scope``). rebuild 가 매번 다시
         # 붙이므로 Inspector 의 DIRECTIVE 재빌드에도 살아남는다.
         self._turn_scope: tuple[str, str] | None = None
+        self._turn_isolation: tuple[str, str] | None = None
 
     def set_turn_scope(self, turn_id: str, author: str | None, query: str) -> None:
         """이 루프가 수행 중인 요청을 시스템 프롬프트에 못 박는다.
@@ -58,6 +59,20 @@ class SystemPromptSvc:
             ),
         )
 
+    def set_turn_isolation(self, paths: tuple[str, ...]) -> None:
+        listing = "\n".join(f"- {path}" for path in paths)
+        self._turn_isolation = (
+            "Turn File Capability",
+            (
+                "## Enforced file capability\n"
+                "This turn may publish changes only to the paths below. Use "
+                "write_file/edit_file for mutations; shell, nested agents, and "
+                "unclassified workspace effects are blocked in this mode. "
+                "Writes remain staged until the request-supplied validator passes.\n\n"
+                f"{listing}"
+            ),
+        )
+
     def rebuild(self) -> None:
         """(Re)build the static sections from scratch and derive ``system``.
         Run once at setup, and again when DIRECTIVE.md is edited via the
@@ -80,6 +95,8 @@ class SystemPromptSvc:
         )
         if self._turn_scope:
             self.sections.append(self._turn_scope)
+        if self._turn_isolation:
+            self.sections.append(self._turn_isolation)
         self.system = "\n\n".join(t for _, t in self.sections)
 
     def apply_hook_sections(self, hook_ctx) -> None:

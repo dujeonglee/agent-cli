@@ -7,9 +7,9 @@ web 은 여기에 SSE 브로드캐스트·닉네임 해석을 얹고(:class:`Web
 — 초기 질의도, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로
 들어오므로 main 이 idle 이어도 회신이 잠들지 않는다 (D3 의 CLI 완성).
 
-의도적으로 web 무의존: 아이템 shape ``{id, conn_id, nickname, text}`` 는
-web 의 기존 계약 그대로 유지한다 (queue 표시·cancel 소유권이 이 필드를
-읽음).
+의도적으로 web 무의존이다. worker 내부 아이템은 선택적인 P1
+``write_paths``/``expected_contents``도 운반하지만, spectator가 보는
+``snapshot`` shape는 계속 ``{id, conn_id, nickname, text}``로 고정한다.
 """
 
 from __future__ import annotations
@@ -41,7 +41,15 @@ class InputQueue:
         if cb is not None:
             cb()
 
-    def enqueue(self, conn_id: str | None, text: str, *, nickname=None) -> dict:
+    def enqueue(
+        self,
+        conn_id: str | None,
+        text: str,
+        *,
+        nickname=None,
+        write_paths: list[str] | None = None,
+        expected_contents: dict[str, str] | None = None,
+    ) -> dict:
         """메시지 추가 — ``{id, conn_id, nickname, text}`` 반환."""
         with self._cv:
             self._seq += 1
@@ -50,6 +58,8 @@ class InputQueue:
                 "conn_id": conn_id or "",
                 "nickname": nickname,
                 "text": text,
+                "write_paths": list(write_paths or []),
+                "expected_contents": dict(expected_contents or {}),
             }
             self._items.append(item)
             self._cv.notify()
@@ -96,7 +106,13 @@ class InputQueue:
 
     def snapshot(self) -> list[dict]:
         with self._cv:
-            return [dict(it) for it in self._items]
+            # Capability/oracle details are execution metadata, not queue UI
+            # fields.  In particular, do not duplicate expected file bodies
+            # onto the spectator-readable queue surface.
+            return [
+                {k: it[k] for k in ("id", "conn_id", "nickname", "text")}
+                for it in self._items
+            ]
 
     def pending_count(self) -> int:
         with self._cv:

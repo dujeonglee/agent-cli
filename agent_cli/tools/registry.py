@@ -76,7 +76,16 @@ def _execute_tool(
     failure mode. ``ctx`` (:class:`RunContext`) is the per-call loop
     context, forwarded uniformly; tools that do not need it ignore it.
     """
-    return TOOLS[tool_name].run(action_input, ctx=ctx)
+    tool = TOOLS[tool_name]
+    if ctx is not None and ctx.turn_isolation is not None:
+        standard = tool.strip_prefix(action_input)
+        args = standard if isinstance(standard, dict) else {}
+        denial = ctx.turn_isolation.authorize_tool(
+            tool_name, args, tool.effect_intent(args)
+        )
+        if denial:
+            return ToolResult(False, error=denial)
+    return tool.run(action_input, ctx=ctx)
 
 
 def infer_action(action_input: Any) -> str | None:

@@ -3168,6 +3168,48 @@ class TestRejectContract:
             turn_metrics.disable()
 
 
+class TestTurnFileCapabilityInput:
+    def test_manifest_and_oracle_reach_worker_queue(self, server_and_client):
+        server, _renderer, client = server_and_client
+        response = client.post(
+            "/api/input?token=testtoken",
+            json={
+                "kind": "chat",
+                "content": "write it",
+                "conn_id": "c1",
+                "write_paths": ["mine.txt"],
+                "expected_contents": {"mine.txt": "exact"},
+            },
+        )
+        assert response.status_code == 200
+        # Spectator-readable queue state does not duplicate oracle bodies.
+        assert "expected_contents" not in server.queue_snapshot()[0]
+        item = server.dequeue_nowait()
+        assert item["write_paths"] == ["mine.txt"]
+        assert item["expected_contents"] == {"mine.txt": "exact"}
+
+    def test_oracle_must_cover_exact_manifest(self, server_and_client):
+        _server, _renderer, client = server_and_client
+        response = client.post(
+            "/api/input?token=testtoken",
+            json={
+                "kind": "chat",
+                "content": "write it",
+                "write_paths": ["mine.txt"],
+                "expected_contents": {"other.txt": "wrong target"},
+            },
+        )
+        assert response.status_code == 400
+
+    def test_manifest_rejects_non_string_paths(self, server_and_client):
+        _server, _renderer, client = server_and_client
+        response = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "write it", "write_paths": [7]},
+        )
+        assert response.status_code == 400
+
+
 # ── Spectator (read-only token) mode ─────────────────────────────────
 
 # The route table the spectator split rests on, mirroring the one in

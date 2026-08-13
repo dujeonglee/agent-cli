@@ -191,13 +191,23 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 
 ### P1-1. prompt 완화를 강제 가능한 turn-local 파일 격리로 확장해야 한다
 
+> **반영 완료 (2026-08-13).** `origin_turn` 기반 turn-local context view,
+> canonical path/inode write-set 예약, 등록 도구 경계의 fail-closed capability,
+> private staging, exact-content/task validator, version 재검사, 파일별 atomic
+> replace, 귀속 가능한 감사 이벤트를 구현했다. 동일 경로 순차 게시를 포함한
+> 결정론적 적대 검증은 19/19 통과했다. 고정 source digest의 실모델 20-block
+> 세 팔 비교에서는 세 팔 모두 exact 과제·최종 저장소 정답 20/20과 상대 과제
+> 파일 게시 0/20이었다. 응답 cross-tag는 scoped 1/20, filtered/enforced 0/20;
+> 모든 paired exact p는 1.0이었다. 강제 팔은 40/40 write set을 validation 뒤
+> 게시했고 실패·재시도는 없었다. 본문 §3.5, §4, §5.4, §7–8과 부록 A에 반영했다.
+
 P0 paired 실험에서 turn scoping은 관찰된 교차 사용자 경로 효과를 20/20
 run에서 0/20으로 줄였지만, scoped 응답 하나는 여전히 상대 완료 태그를
 언급했다. 이 결과는 프롬프트가 강한 완화책임을 보여주지만, 모델이 지시를
 무시해도 유지되는 격리 invariant는 아니다. P1의 목표는 “의미적 정확성 전체”를
 보장하는 것이 아니라 다음의 더 좁고 검증 가능한 성질을 강제하는 것이다.
 
-> A turn cannot publish a mutation outside its approved canonical write set;
+> A turn cannot publish a tool-mediated task-file mutation outside its approved canonical write set;
 > overlapping write sets cannot commit concurrently; and a staged write set is
 > published only after its task-supplied oracle succeeds.
 
@@ -276,7 +286,7 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 아니라 다음처럼 쓸 수 있다.
 
 > Prompt and context scoping reduce cross-request behavior, while a turn-local
-> capability and validated-commit boundary prevents cross-scope file
+> capability and validated-commit boundary prevents cross-scope task-file
 > publication under the stated cooperative-tool and path-stability assumptions.
 
 ### P1-2. isolate-and-merge 대안과의 관계를 더 좁혀야 한다

@@ -57,6 +57,9 @@ class Turn:
     #: 있음)와 dispatch 이벤트(턴 id 발급 후)를 잇는 상관 키. 계측 off 나
     #: 큐를 거치지 않은 제출은 "".
     queue_id: str = ""
+    #: P1 requester-supplied exact file capability and optional oracle.
+    write_paths: list[str] = field(default_factory=list)
+    expected_contents: dict[str, str] = field(default_factory=dict)
 
 
 class TurnRegistry:
@@ -162,6 +165,8 @@ class TurnRegistry:
         author: str | None = None,
         conn_id: str = "",
         queue_id: str = "",
+        write_paths: list[str] | None = None,
+        expected_contents: dict[str, str] | None = None,
     ) -> None:
         """턴 하나를 제출한다. cap 에 여유가 있으면 **같은 호출 안에서** 즉시
         디스패치되고, 아니면 FIFO 로 대기한다.
@@ -179,6 +184,8 @@ class TurnRegistry:
                     author=author,
                     conn_id=conn_id,
                     queue_id=queue_id,
+                    write_paths=list(write_paths or []),
+                    expected_contents=dict(expected_contents or {}),
                 )
             )
             self._idle.clear()

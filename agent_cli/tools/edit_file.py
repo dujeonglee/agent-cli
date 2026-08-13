@@ -231,7 +231,7 @@ def _validate_semantics(args: dict) -> str | None:
     return None
 
 
-def tool_edit_file(args: dict) -> ToolResult:
+def tool_edit_file(args: dict, *, storage_path: Path | None = None) -> ToolResult:
     """Apply a single hashline-based edit to a file (fuzzy matching support).
 
     Flat-native (consolidation roadmap Step 3): one op = one edit. Several
@@ -251,7 +251,7 @@ def tool_edit_file(args: dict) -> ToolResult:
 
     from agent_cli.tools import _confine
 
-    denial = _confine.guard([path], "edit_file")
+    denial = None if storage_path is not None else _confine.guard([path], "edit_file")
     if denial:
         return ToolResult(False, error=denial)
 
@@ -261,7 +261,7 @@ def tool_edit_file(args: dict) -> ToolResult:
         new_lines = []
 
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = (storage_path or Path(path)).read_text(encoding="utf-8")
     except Exception as e:
         return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
 
@@ -311,7 +311,7 @@ def tool_edit_file(args: dict) -> ToolResult:
 
     result_text = "\n".join(file_lines)
     try:
-        Path(path).write_text(result_text, encoding="utf-8")
+        (storage_path or Path(path)).write_text(result_text, encoding="utf-8")
     except Exception as e:
         return ToolResult(False, error=f"edit_file: cannot write '{path}': {e}")
 
@@ -326,7 +326,8 @@ def tool_edit_file(args: dict) -> ToolResult:
     # never poisons the user-facing edit.
     from agent_cli.tools.code_index import post_hook
 
-    post_hook(path)
+    if storage_path is None:
+        post_hook(path)
     return ToolResult(True, output=msg)
 
 
@@ -399,4 +400,6 @@ class EditFileTool(Tool):
         return _validate_semantics(args)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_edit_file(args)
+        isolation = ctx.turn_isolation if ctx else None
+        staged = isolation.stage_for_write(args.get("path", "")) if isolation else None
+        return tool_edit_file(args, storage_path=staged)

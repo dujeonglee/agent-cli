@@ -33,6 +33,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -231,6 +232,13 @@ class ContextManager:
         # thread-local 과 전역이 항상 같은 값 = 동작 무변.
         self._tls = threading.local()
 
+        # P1 turn-local context: active parallel turns are tracked separately
+        # from durable history.  Records are stamped with their producing turn
+        # in memory; a turn-local snapshot can then omit records belonging to
+        # *other active* turns while retaining all completed work.  Counts (not
+        # a set) make nested scopes safe for tests/subloops.
+        self._active_turn_scopes: dict[str, int] = {}
+
         # ── 동시 턴 안전 (다중 사용자 병렬 턴 A1의 전제) ────────────
         # 하나의 재진입 락이 캐시·토큰·압축 상태 전체를 지킨다. 락이 하나뿐이라
         # 획득 순서 문제가 없고, RLock 이라 공개 메서드가 서로를 불러도(예:
@@ -298,6 +306,34 @@ class ContextManager:
         (NFR-CC-6). May be ``None`` (headless / no session)."""
         self._recorder = recorder
 
+    @contextmanager
+    def turn_scope(self, turn_id: str):
+        """Mark ``turn_id`` active and stamp records added by this thread.
+
+        The durable transcript remains shared.  Only the LLM-facing view is
+        filtered, so completed turns automatically become visible at the next
+        inference boundary without copying or merging histories.
+        """
+        if not turn_id:
+            yield
+            return
+        previous = getattr(self._tls, "origin_turn", "")
+        with self._lock:
+            self._active_turn_scopes[turn_id] = (
+                self._active_turn_scopes.get(turn_id, 0) + 1
+            )
+        self._tls.origin_turn = turn_id
+        try:
+            yield
+        finally:
+            self._tls.origin_turn = previous
+            with self._lock:
+                remaining = self._active_turn_scopes.get(turn_id, 1) - 1
+                if remaining > 0:
+                    self._active_turn_scopes[turn_id] = remaining
+                else:
+                    self._active_turn_scopes.pop(turn_id, None)
+
     def _mark_bulk_mutation(self) -> None:
         """벌크 변형 표식 — 렌더 미러 무효화 + 세대 증가 (락 보유 중 호출).
 
@@ -348,6 +384,10 @@ class ContextManager:
 
     def _add_locked(self, message: dict) -> dict:
         """:meth:`add` 의 본문 (락 보유 중 호출). ``commit_atomic`` 과 공유."""
+        origin_turn = getattr(self._tls, "origin_turn", "")
+        if origin_turn and message.get("_origin_turn") != origin_turn:
+            message = dict(message)
+            message["_origin_turn"] = origin_turn
         msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
         # Incremental render: keep the natural-language mirror in step so
@@ -432,7 +472,9 @@ class ContextManager:
         with self._lock:
             self._cache_tokens = max(actual_total_tokens - system_tokens, 0)
 
-    def get_messages(self) -> list[dict]:
+    def get_messages(
+        self, *, origin_turn: str = "", filter_inflight: bool = False
+    ) -> list[dict]:
         """Return cached messages converted to natural language for LLM.
 
         When a compaction summary exists, two synthesised ``role=user``
@@ -448,7 +490,16 @@ class ContextManager:
         쓰기도 겸하므로 읽기 전용이 아니다.
         """
         with self._lock:
-            result = self._get_messages_locked()
+            excluded = (
+                {
+                    turn_id
+                    for turn_id in self._active_turn_scopes
+                    if turn_id != origin_turn
+                }
+                if filter_inflight and origin_turn
+                else set()
+            )
+            result = self._get_messages_locked(excluded_turns=excluded)
             seq = self._commit_seq
         turn_metrics.emit(
             "ctx",
@@ -458,9 +509,20 @@ class ContextManager:
         )
         return result
 
-    def _get_messages_locked(self) -> list[dict]:
+    def _get_messages_locked(
+        self, *, excluded_turns: set[str] | None = None
+    ) -> list[dict]:
         result: list[dict] = []
-        cache = self._cache
+        excluded_turns = excluded_turns or set()
+        cache = (
+            [
+                msg
+                for msg in self._cache
+                if msg.get("_origin_turn") not in excluded_turns
+            ]
+            if excluded_turns
+            else self._cache
+        )
 
         # Pass through the system prompt first if it's at the head —
         # the synthesised summary / file-list messages slot in
@@ -475,7 +537,13 @@ class ContextManager:
         else:
             rest_start = 0
 
-        if self._summary:
+        # A shared compaction summary/file list can aggregate records from
+        # several turns and has no per-source boundaries.  While another turn
+        # is actively excluded, conservatively omit these aggregates too;
+        # otherwise their prose/path list could reintroduce the very in-flight
+        # request hidden from the dynamic slice.  They reappear once the other
+        # turn completes (``excluded_turns`` becomes empty).
+        if self._summary and not excluded_turns:
             result.append(
                 {
                     "role": "user",
@@ -484,7 +552,7 @@ class ContextManager:
                     ),
                 }
             )
-        if self._file_list:
+        if self._file_list and not excluded_turns:
             listing = "\n".join(f"- {p}" for p in self._file_list)
             result.append(
                 {
@@ -497,12 +565,21 @@ class ContextManager:
         # (bulk mutation) or a length mismatch (backstop for any missed
         # invalidation) → full re-render once; steady state is a pointer copy.
         n_rest = len(cache) - rest_start
-        if self._nl_cache is None or len(self._nl_cache) != n_rest:
-            self._nl_cache = [
+        if excluded_turns:
+            # The shared incremental mirror represents the unfiltered cache;
+            # a turn-local subset is intentionally rendered independently.
+            rendered = [
                 _to_natural_language(msg, self.wire_format)
                 for msg in cache[rest_start:]
             ]
-        result.extend(self._nl_cache)
+        else:
+            if self._nl_cache is None or len(self._nl_cache) != n_rest:
+                self._nl_cache = [
+                    _to_natural_language(msg, self.wire_format)
+                    for msg in cache[rest_start:]
+                ]
+            rendered = self._nl_cache
+        result.extend(rendered)
 
         # Append the complete-nudge to the CURRENT observation only, at feed
         # time. A tool result is always in the dynamic slice, so when cache[-1]
@@ -1064,6 +1141,9 @@ class ContextManager:
         untouched (this is the file write only — ``record`` is a copy)."""
         kind, tools, text = _classify_record(message)
         record = dict(message)
+        origin_turn = record.pop("_origin_turn", "")
+        if origin_turn:
+            record["origin_turn"] = origin_turn
         record["kind"] = kind
         record["turn"] = self._current_turn
         record["ts"] = _now_iso()

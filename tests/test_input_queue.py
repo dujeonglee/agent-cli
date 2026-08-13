@@ -1,6 +1,7 @@
 """공용 InputQueue 계약 (teammate P5) — web WebServer 와 CLI run 펌프가
-공유하는 골격. 아이템 shape {id, conn_id, nickname, text} 는 web 의 큐
-표시·cancel 소유권 계약이라 필드 고정."""
+공유하는 골격. spectator-facing snapshot shape
+{id, conn_id, nickname, text}는 web의 큐 표시·cancel 소유권 계약이라 고정하고,
+worker item만 P1 capability metadata를 추가로 운반한다."""
 
 from __future__ import annotations
 
@@ -49,6 +50,20 @@ class TestInputQueue:
         assert [i["text"] for i in q.snapshot()] == ["x"]
         assert q.pending_count() == 1
         assert q.dequeue_nowait()["text"] == "x"
+
+    def test_capability_metadata_reaches_worker_but_not_queue_snapshot(self):
+        q = InputQueue()
+        q.enqueue(
+            "c1",
+            "write it",
+            write_paths=["mine.txt"],
+            expected_contents={"mine.txt": "exact"},
+        )
+        visible = q.snapshot()[0]
+        assert "write_paths" not in visible and "expected_contents" not in visible
+        item = q.dequeue_nowait()
+        assert item["write_paths"] == ["mine.txt"]
+        assert item["expected_contents"] == {"mine.txt": "exact"}
 
     def test_cancel_owner_only(self):
         q = InputQueue()

@@ -224,6 +224,7 @@ def _read_one(
     *,
     oversized_cap: int = 0,
     tools_available: frozenset[str] = frozenset(),
+    storage_path: Path | None = None,
 ) -> ToolResult:
     """Read a single file with optional stat, search, or partial read modes.
 
@@ -259,7 +260,7 @@ def _read_one(
         line_start, line_end, context = 0, 0, _DEFAULT_SEARCH_CONTEXT
 
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = (storage_path or Path(path)).read_text(encoding="utf-8")
         all_lines = text.split("\n")
         total = len(all_lines)
 
@@ -372,8 +373,11 @@ class ReadFileTool(Tool):
         # stat mode uses the loop's over-cap threshold (from ctx) to steer a
         # LARGE file toward a slice/fan-out instead of baiting a full read that
         # would blow the cap; 0 (headless / no ctx) keeps the plain hint.
+        isolation = ctx.turn_isolation if ctx else None
+        staged = isolation.path_for_read(args.get("path", "")) if isolation else None
         return _read_one(
             args,
             oversized_cap=ctx.oversized_cap if ctx else 0,
             tools_available=ctx.tools_available if ctx else frozenset(),
+            storage_path=staged,
         )

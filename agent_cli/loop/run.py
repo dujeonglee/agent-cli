@@ -14,6 +14,8 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.loop.core import AgentLoop
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.render import render_step
+from agent_cli.tools.result import ToolResult
 from agent_cli.wire_formats import get as _get_wire_format
 
 
@@ -56,6 +58,8 @@ def run_loop(
     peer_agents_section: str = "",
     origin_turn: str = "",
     turn_scoping: bool = True,
+    turn_local_context: bool = False,
+    turn_isolation=None,
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
 
@@ -65,7 +69,20 @@ def run_loop(
     """
     if isinstance(wire_format, str):
         wire_format = _get_wire_format(wire_format)
-    return AgentLoop(
+    if turn_isolation is not None and (hooks_config or hook_runner):
+        from agent_cli.tools.effect import EffectIntent, EffectKind
+
+        denial = turn_isolation.authorize_tool(
+            "hooks", {}, EffectIntent(EffectKind.UNKNOWN_WORKSPACE_EFFECT)
+        )
+        return ToolResult(False, error=denial or "Turn isolation blocked hooks")
+    # Enforced publication is the strongest P1 arm and always includes the
+    # turn-local prompt view when a parallel turn id exists. Callers cannot
+    # accidentally construct capability+staging while leaving cross-turn
+    # in-flight instructions visible.
+    turn_local_context = turn_local_context or turn_isolation is not None
+    turn_scoping = turn_scoping or turn_isolation is not None
+    loop = AgentLoop(
         query=query,
         provider=provider,
         capabilities=capabilities,
@@ -104,4 +121,44 @@ def run_loop(
         peer_agents_section=peer_agents_section,
         origin_turn=origin_turn,
         turn_scoping=turn_scoping,
-    ).run()
+        turn_local_context=turn_local_context,
+        turn_isolation=turn_isolation,
+    )
+
+    def _execute():
+        result = loop.run()
+        if turn_isolation is None:
+            return result
+        finalized = turn_isolation.finish(result)
+        if result.success and not finalized.success:
+            # The model may already have emitted `complete`; publication is a
+            # distinct system decision and must be visible in both the UI and
+            # durable transcript when it rejects that completion.
+            if ctx is not None:
+                ctx.add(
+                    {
+                        "role": "user",
+                        "tool": "turn_isolation",
+                        "success": False,
+                        "content": finalized.error,
+                    }
+                )
+            render_step(
+                "error",
+                finalized.error,
+                loop.turn,
+                tool_name="turn_isolation",
+                success=False,
+            )
+        return finalized
+
+    if turn_isolation is not None:
+        with turn_isolation:
+            if ctx is not None and turn_local_context and origin_turn:
+                with ctx.turn_scope(origin_turn):
+                    return _execute()
+            return _execute()
+    if ctx is not None and turn_local_context and origin_turn:
+        with ctx.turn_scope(origin_turn):
+            return _execute()
+    return _execute()

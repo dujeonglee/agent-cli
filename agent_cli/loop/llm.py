@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_cli import turn_metrics
 from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
+from agent_cli.context.render import _sum_message_tokens
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
 
@@ -32,6 +33,24 @@ _MAX_OVERFLOW_RETRIES = 5
 # the ContextManager (``self.ctx.compaction_ratio``) so the web slider can tune
 # it live; both the preventive (flow 1) and overflow-recovery (flow 2) target
 # computations in _call_llm read it from there.
+
+
+def _fit_turn_local_view(messages: list[dict], target_tokens: int) -> list[dict]:
+    """FIFO-fit one ephemeral prompt view without mutating shared context.
+
+    Turn-local mode cannot safely compact the shared cache while another turn
+    is excluded: a source-mixed summary could reintroduce that request, and
+    hiding the summary could also hide this turn's own evicted records.  The
+    request itself remains duplicated in the turn-scoping system section, so
+    retaining the newest dynamic records is the safe local fallback.
+    """
+    fitted = [dict(message) for message in messages]
+    first_dynamic = 1 if fitted and fitted[0].get("role") == "system" else 0
+    while (
+        len(fitted) - first_dynamic > 1 and _sum_message_tokens(fitted) > target_tokens
+    ):
+        fitted.pop(first_dynamic)
+    return fitted
 
 
 class LLMCaller:
@@ -64,6 +83,9 @@ class LLMCaller:
         # first_token 을 찍기 위한 래치. LLMCaller 는 run_loop 당 1개라
         # 인스턴스 필드로 충분하다.
         self._first_token_emitted = False
+        # Reactive overflow may lower the per-turn ephemeral view budget for
+        # the remainder of this loop. It never rewrites the shared ctx budget.
+        self._turn_local_target: int | None = None
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -91,8 +113,17 @@ class LLMCaller:
                 ),
                 1,
             )
-            self.ctx.ensure_within(target)
-            self.state.messages = self.ctx.get_messages()
+            if self.cfg.turn_local_context:
+                if self._turn_local_target is not None:
+                    target = min(target, self._turn_local_target)
+                view = self.ctx.get_messages(
+                    origin_turn=self.cfg.origin_turn,
+                    filter_inflight=True,
+                )
+                self.state.messages = _fit_turn_local_view(view, target)
+            else:
+                self.ctx.ensure_within(target)
+                self.state.messages = self.ctx.get_messages()
 
         # Context dump (verbose only)
         if self.cfg.verbose:
@@ -178,7 +209,7 @@ class LLMCaller:
             # input count so the chars/4 estimate can't compound across
             # turns. usage covers system+messages; ctx subtracts the same
             # sys_tokens used for the threshold above. No-op without usage.
-            if self.ctx and response.usage:
+            if self.ctx and response.usage and not self.cfg.turn_local_context:
                 self.ctx.reconcile_actual_tokens(
                     response.usage.total_input_tokens, system_tokens=sys_tokens
                 )
@@ -211,14 +242,36 @@ class LLMCaller:
                 actual, limit = parse_overflow_amounts(str(e))
                 budget = self.ctx.max_context_tokens
                 target = int((limit or budget) * self.ctx.compaction_ratio)
-                if self.ctx.force_fit(target, actual_tokens=actual):
+                if self.cfg.turn_local_context:
+                    message_limit = max(
+                        1,
+                        (limit or self.cfg.capabilities.context_window)
+                        - sys_tokens
+                        - self.cfg.capabilities.max_output_tokens,
+                    )
+                    local_target = max(
+                        1, int(message_limit * self.ctx.compaction_ratio)
+                    )
+                    before = self.ctx.get_messages(
+                        origin_turn=self.cfg.origin_turn,
+                        filter_inflight=True,
+                    )
+                    fitted = _fit_turn_local_view(before, local_target)
+                    recovered = len(fitted) < len(before)
+                    if recovered:
+                        self._turn_local_target = local_target
+                        self.state.messages = fitted
+                else:
+                    recovered = self.ctx.force_fit(target, actual_tokens=actual)
+                    if recovered:
+                        self.state.messages = self.ctx.get_messages()
+                if recovered:
                     self.overflow_retries += 1
                     render_status(
                         "running",
                         f"Context overflow — shrinking and retrying "
                         f"({self.overflow_retries}/{_MAX_OVERFLOW_RETRIES})...",
                     )
-                    self.state.messages = self.ctx.get_messages()
                     self.state.turn -= 1
                     return _RETRY
                 # force_fit could not shrink further (only the anchor
