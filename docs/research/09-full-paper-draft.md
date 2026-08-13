@@ -1,6 +1,6 @@
 # Coagora: Sharing a Live Coding Agent Session Across Multiple Developers
 
-> Full paper draft v1.2 (2026-08-13). Detailed engineering history remains in 09-CHANGELOG.md, and reproduction material remains in Appendix A. The first-use study in §6 is reserved for later execution; its methods and result placeholders are intentionally unchanged in substance.
+> Full paper draft v1.2 (2026-08-13). Detailed engineering history remains in 09-CHANGELOG.md, and reproduction material remains in Appendix A. Section 6 reserves space for the planned first-use study.
 >
 > Author notes appear as [NOTE: …] or [TODO: …] and must be removed before submission. Numbers marked ✔ are backed by committed raw data in bench/multiuser/out/.
 
@@ -14,7 +14,7 @@ We present Coagora, a coding agent in which multiple developers share one conver
 
 We compare parallel, serial, and reject-and-retry contracts within the same implementation. In a deterministic workload, the second user's time-to-first-token is independent of the first user's task length: its slope is 0.00 under parallel execution and 1.03 under both alternatives. A live-model replication reduces the second user's median wait from 38.2 to 10.8 seconds. In 30 independent forced-overlap runs, participating writers overlapped in 30/30 runs without the gate and 0/30 with either locking policy; a 2 ms external sampler observed mixed or broken reads in 27/30 versus 0/30 runs. Parallel execution costs 1.49× as many input tokens in a three-question workload, and its benefit declines only when exclusive effects occupy a large share of a turn.
 
-Writer ordering and structural attribution do not imply semantic correctness, so Coagora also supports a narrower enforced boundary. A turn-local view omits other in-flight turns, while a requester-approved write capability stages file effects and publishes them only after an exact task oracle succeeds. In a three-arm, 20-block live-model experiment, all arms achieved 20/20 exact task and repository correctness with no cross-assignment file action; one scoped response mentioned the other completion tag, versus none with filtered context or enforcement. The enforced arm validated and published all 40 write sets. A separate 19-case adversarial suite blocked every tested bypass, serialized same-path publications, and rejected validation and version conflicts without publishing them. Under cooperative-tool and stable-path assumptions, the system therefore prevents tool-mediated task-file publication outside the approved canonical write set; it does not guarantee response semantics, oracle quality, or multi-file crash atomicity.
+Structural attribution does not constrain which request a model follows. Coagora therefore combines turn-local context with requester-approved file capabilities and validated publication. Across 20 live-model blocks, all three configurations produced task files and repositories that passed their oracles; one scoped response mentioned the other task, while the two turn-local configurations did not. Nineteen adversarial checks confirmed that enforced turns publish only validated files within their approved write sets under cooperative-tool and stable-path assumptions. The guarantee covers file publication; response semantics and oracle quality remain model- and task-dependent.
 
 [TODO after the first-use study: add one sentence reporting the central human finding from §6.]
 
@@ -30,7 +30,7 @@ A live shared session would keep the conversation, workspace, and controls in on
 
 Coagora explores a third contract: **parallel inference with ordered effects**. Every message creates an independent turn that begins immediately and streams to all participants. Turns share one conversation and one working directory. Slow, read-only inference remains concurrent; context commits and conflicting file or shell effects pass through an ordering layer. A turn id connects each stream, tool call, result, and interrupt to the participant who initiated it.
 
-This is not a claim that locks or snapshot isolation are new. The contribution is their placement in an interactive agent. Prior agent systems often place coordination around the whole run and conclude that pessimistic control is too expensive because it blocks inference [11]. Coagora orders only the state-changing portion. The resulting system exposes a sharper boundary: the session can preserve a valid transcript and ordered participating effects while a model still follows another person's request.
+Coagora places established locking and snapshot mechanisms below inference, ordering only state-changing operations. This preserves concurrent interaction while exposing a boundary between structural correctness and the request a model follows [11].
 
 We study three questions:
 
@@ -39,13 +39,13 @@ We study three questions:
 - **RQ3 — Shared-session correctness.** Do replay, compaction, attribution, fairness, and lifecycle remain correct under concurrency, and when does shared context cause semantic cross-talk?
 - **RQ4 — First use.** What do pairs notice, infer, and do while sharing a live session? Section 6 reserves this question for the planned study.
 
-The evidence comes from one working system with three runtime-selectable contracts. Coagora's serial path predates this work and provides the baseline; the parallel and reject modes use the same transport, context manager, tools, and instrumentation. Deterministic experiments verify mechanisms and boundaries, while live-model arms test the findings most likely to depend on model or provider behavior.
+All three contracts run in one system with the same transport, context manager, tools, and instrumentation. Deterministic experiments verify mechanisms and boundaries; live-model experiments measure model- and provider-dependent behavior.
 
 This paper contributes:
 
 1. **A scoped design space** for multi-user coding-agent interaction, organized by state location, concurrency contract, attribution unit, and intervention point.
 2. **A shared-session interaction architecture** that combines parallel turns with atomic context commits, conflict-scoped effects, per-user admission, structural attribution, replay, and turn-owned interruption.
-3. **An empirical account of its trade-offs and isolation boundary.** Parallel turns remove inference-level head-of-line blocking, but pay additional model calls and use stale snapshots. A three-arm live experiment separates prompt scoping, turn-local context, and enforced validated publication; adversarial checks establish the narrower file-publication invariant without treating it as general semantic correctness.
+3. **An empirical account of its trade-offs and isolation boundary.** The evaluation measures responsiveness, token use, stale context, effect ordering, and a capability-enforced file-publication boundary.
 
 The planned first-use study will later add evidence about how people understand and manage these trade-offs. Until then, the paper makes no claim that the parallel contract improves team performance or long-term collaboration.
 
@@ -181,11 +181,11 @@ This separation is central to the paper. “Integrity” below always means phys
 
 Coagora is a Python coding agent with a terminal interface and a multi-user LAN web interface. Both front ends call the same agent loop through a renderer abstraction. One operating-system process owns a session, and concurrent turns run as threads over a shared heap.
 
-The context manager provides immutable snapshots and atomic block commits. Context, renderer, and durable-append locks have one acquisition order to prevent cycles. Turn ownership and reply attribution are thread-local, so one turn cannot inherit the id of a newer request. Parallel turns rebuild their own system prompts. Turn scoping identifies the request being served. The optional turn-local view additionally removes records produced by other still-active turns from each LLM call; completed turns rejoin the shared view at the next inference boundary. Unattributed shared compaction summaries are conservatively omitted while such a filter is active. If that filtered prompt exceeds its budget, the loop FIFO-fits only the ephemeral view; it does not compact or re-anchor the source-mixed shared cache from a partial prompt.
+The context manager provides immutable snapshots and atomic block commits. Context, renderer, and durable-append locks follow one acquisition order. Turn ownership and reply attribution are thread-local. Each parallel turn rebuilds its system prompt, identifies its request, and may omit records from other active turns. Completed turns rejoin the shared view at the next inference boundary; shared summaries without turn attribution remain hidden while the view is filtered.
 
-For tasks that supply a file manifest and oracle, Coagora binds a canonical write capability to the turn id before execution. Canonical path and detected inode identities are reserved, so overlapping write sets queue rather than enter together. `write_file` and `edit_file` operate on a private temporary copy, and `read_file` for the same path observes that staged copy. Out-of-scope writes are rejected at the tool boundary. Shell, nested agents, executable hooks, and unclassified workspace effects fail closed because they could bypass the manifest. After the model completes, the system checks the task oracle and the dispatch-time file version, then publishes each validated file with atomic replace. A failed oracle or version check publishes nothing. The full multi-file transition is not crash-atomic.
+For tasks with a file manifest and oracle, Coagora binds a canonical write capability to the turn. Path and inode reservations serialize overlapping write sets. File tools operate on private staged copies, and out-of-scope effects fail at the tool boundary. Shell, nested agents, executable hooks, and unclassified workspace effects are disabled in this mode. After the model completes, the system checks the oracle and file versions, then atomically replaces each validated file. Failed checks publish nothing; publication across multiple files is not crash-atomic.
 
-Workspace effects announce an intent before execution. The effect gate maps that intent to a canonical resource and lock mode, records wait and hold time, and releases the mode when the operation finishes. Existing symlinks resolve to their targets; files with multiple hard links become workspace-exclusive. The intent vocabulary separates `UNKNOWN_WORKSPACE_EFFECT`, which is fail-closed and exclusive, from `NON_WORKSPACE_OR_COMPOSITE`, whose child leaf effects acquire their own gates. This removes the prior ambiguity in which a plugin omission and an intentional composite opt-out shared one unlocked value. Durable appends also use a bounded striped lock: direct concurrent O_APPEND writes were intact on ext4 but corrupted records on a Windows-mounted WSL filesystem, so filesystem append behavior is not treated as portable.
+Workspace effects declare an intent that the gate maps to a canonical resource and lock mode. Symlinks resolve to their targets, files with multiple hard links become workspace-exclusive, unknown workspace effects are exclusive, and composite tools acquire gates at their leaf effects. Durable appends use a bounded striped lock because direct concurrent `O_APPEND` behavior differed across the evaluated filesystems.
 
 The web client receives one SSE stream and sends occasional POST requests. SSE provides browser-native reconnection with Last-Event-ID. A shared write token permits action; an optional read-only token permits the transcript stream but receives 403 from every mutating endpoint and from reads that expose prompts, directives, or workspace contents. This is observation control, not participant-to-participant confidentiality.
 
@@ -199,7 +199,7 @@ The concurrency suite is covered by the repository tests, including turn admissi
 
 ## 5 Technical Evaluation
 
-We evaluate the contract as a systems and interaction substrate, not as evidence that teams collaborate better. Following evaluation guidance for HCI systems and toolkits [41], deterministic experiments verify mechanisms and boundaries, and live arms test deployment-sensitive findings.
+We evaluate the contract's systems and interaction properties. Following guidance for HCI systems and toolkits [41], deterministic experiments verify mechanisms and boundaries, and live arms test deployment-sensitive findings. Collaboration outcomes are reserved for the first-use study.
 
 All comparisons use the same binary and change one runtime switch. The experimental unit is declared for each repeated experiment. Binary run-level outcomes use exact binomial 95% confidence intervals; randomized or alternating within-block contrasts use two-sided exact McNemar tests. Nested turns and high-frequency snapshots are retained as descriptive observations, not treated as independent trials. Median contrasts use fixed-seed percentile-bootstrap 95% confidence intervals when raw per-run samples are available. Deterministic mechanism checks are interpreted as verification rather than population estimates.
 
@@ -244,7 +244,7 @@ Parallel turns also use more calls. In an identical three-question workload, ser
 
 #### What ordering prevents
 
-The forced-overlap probe uses 30 independent processes and temporary workspaces per arm, randomizing the three arm orders within each repetition. One run—not each correlated sampler observation—is the analysis unit. The primary 2 ms condition separates three outcomes: participating-writer critical-section overlap, mixed/broken visibility to a non-participating reader, and the final file after both writers finish.
+The forced-overlap probe uses 30 independent processes and temporary workspaces per arm, with arm order randomized within each repetition. The run is the analysis unit. The primary 2 ms condition measures writer overlap, mixed or broken reads by a non-participating sampler, and the final file.
 
 | 2 ms condition | No gate | Workspace lock | Conflict-scoped lock |
 |---|---:|---:|---:|
@@ -253,7 +253,7 @@ The forced-overlap probe uses 30 independent processes and temporary workspaces 
 | Mixed/broken final file | 3/30 | 0/30 | 0/30 |
 | Empty/partial visibility observed | 29/30 | 30/30 | 29/30 |
 
-The paired run-level contrast for external mixed/broken visibility was exact p = 1.49 × 10⁻⁸ for no gate versus either lock. Sensitivity runs at 1, 5, and 10 ms retained the direction: no-gate exposure appeared in 24/30, 24/30, and 13/30 runs, respectively, and in 0/30 runs under both locks at every interval. Snapshot totals are reported only as descriptive exposure traces. The last row is equally important: the gate orders participating writers but direct overwrite still exposes empty or partial states to readers outside the gate. Atomic reader visibility would require a different write primitive, such as temporary-file replacement.
+External mixed/broken visibility differed between no gate and either lock (paired exact p = 1.49 × 10⁻⁸). At 1, 5, and 10 ms sampling, no-gate exposure occurred in 24/30, 24/30, and 13/30 runs, and never under either lock. The gate orders participating writers but does not make direct overwrite atomic for external readers.
 
 #### When a coarse lock becomes expensive
 
@@ -273,7 +273,7 @@ Live file-writing turns sit far below this boundary. Eight writes spread across 
 
 ### 5.3 RQ3a: Structural correctness under concurrency
 
-The following experiments test whether the supporting session machinery preserves its invariants. They are grouped because they validate one shared-session substrate rather than seven independent research contributions.
+The following experiments validate invariants of the shared-session substrate.
 
 | Property | Experiment | Result |
 |---|---|---|
@@ -295,9 +295,9 @@ Snapshot results quantify the price of never blocking inference. A concurrent tu
 
 Structural ownership records which request created a turn; semantic focus asks which request the model followed. Neither property by itself prevents a model-selected tool from changing another request's files. Coagora therefore separates three layers: a scoped prompt names the current request, a turn-local context view omits records from other still-running turns, and an enforced capability controls what may be published regardless of the generated action.
 
-The live experiment used Qwen3.6-27B-MLX-8bit on an on-premise endpoint. Each run paired two distinct concurrent assignments: one turn produced parser token/rule files and the other CLI introduction/usage files. Each task supplied two approved paths and an eight-line exact-content oracle. Every one of 20 blocks ran three arms in fresh workspaces: scoped prompt; scoped prompt plus turn-local context; and turn-local context plus canonical write capability, staging, and validated publication. Arm order rotated through the six permutations. Temperature, top-p, and seed were not explicitly fixed, so inference is to this endpoint and collection date rather than to a deterministic model revision.
+The live experiment used Qwen3.6-27B-MLX-8bit on an on-premise endpoint. Each run paired a parser-file task with a CLI-documentation task; both specified two approved paths and exact-content oracles. Each of 20 blocks evaluated scoped prompts, turn-local context, and enforced publication in fresh workspaces, rotating arm order through six permutations. Temperature, top-p, and seed were not fixed, so the results characterize this endpoint and collection date.
 
-The concurrent two-request run is the analysis unit. Predefined scorers distinguish a model action that attempts an out-of-scope path from a mutation actually published to the shared workspace. They also check both task oracles, the final repository, the other task's literal completion tag in either response, the longer of the two turn spans, and total input tokens. In the enforced arm, publication is derived by joining `write_set_published` audit events to the turn's approved manifest; it is not assigned zero by construction.
+The concurrent request pair is the analysis unit. Predefined scorers measure out-of-scope path attempts and publications, task and repository correctness, cross-task response tags, turn span, and input tokens. Publication in the enforced arm is measured from audit events and approved manifests.
 
 | Run-level outcome | Scoped prompt | Turn-local context | Enforced publication |
 |---|---:|---:|---:|
@@ -309,21 +309,21 @@ The concurrent two-request run is the analysis unit. Predefined scorers distingu
 | Median longer-turn span | 59.5 s | 52.1 s | 59.5 s |
 | Median input tokens per run | 33,508 | 32,687 | 33,177 |
 
-All binary file and correctness outcomes were identical across arms (paired exact McNemar p = 1.0 for each contrast). The sole response-tag discordance also yields p = 1.0: it is a boundary example, not evidence of a population difference. Filtered context used 2.5% fewer median input tokens than scoped prompting and had a 12.4% shorter median longer-turn span. Enforcement used 1.0% fewer median input tokens than scoped prompting and essentially the same span. These are descriptive operating points from one endpoint, not latency or cost superiority claims. The enforced arm emitted 40 `write_set_published` events, one per request, with no blocked effects or validation failures; all 60 runs completed on the first attempt from one implementation digest.
+File and correctness outcomes did not differ across arms. The single cross-task response tag is insufficient to distinguish the configurations (paired exact McNemar p = 1.0). Relative to scoped prompting, turn-local context used 2.5% fewer median input tokens and reduced the median longer-turn span by 12.4%; enforcement used 1.0% fewer tokens with the same median span. These endpoint-specific differences are descriptive. The enforced arm validated and published all 40 write sets without blocked effects or validation failures.
 
-The live workload samples model behavior but cannot establish an access-control invariant from a finite number of compliant outputs. We therefore separately exercised 19 deterministic adversarial checks: an out-of-scope path, parent traversal, shell and direct primitive dispatch, a composite agent, an unclassified plugin, failed and absent validation, an external version change, symlink canonicalization, hard-link reservation, and sequential validated publication by two same-path turns. All 19 matched their expected outcomes. Staged writes stayed invisible until validation; failed validation and version conflicts left the workspace unchanged; and same-file or hard-link aliases never held overlapping reservations.
+Nineteen deterministic adversarial checks covered scope bypasses, undeclared effects, validation and version failures, path aliases, and same-path concurrency. All matched their expected outcomes: staged writes remained private until validation, rejected publications left the workspace unchanged, and conflicting reservations did not overlap.
 
-The resulting claim is narrower than semantic correctness. Under the cooperative registered-tool and path-stability assumptions in §3.5, a turn cannot publish a tool-mediated task-file mutation outside its approved canonical write set, and its staged files publish only after the task-supplied oracle succeeds. This does not cover system-owned history and audit files, establish that the oracle captures the user's intent, isolate response text, or make multiple file replacements crash-atomic as a group.
+Under the assumptions in §3.5, enforced turns publish tool-mediated task-file changes only within their approved canonical write sets and only after their task oracles pass. Response semantics, oracle adequacy, and multi-file crash atomicity remain outside this guarantee.
 
 ### 5.5 Validity and claim boundaries
 
 Deterministic timings remove provider variance but cannot represent model compliance or real serving contention. We therefore use them for mechanism verification, adversarial isolation checks, and controlled sweeps, and use live models for responsiveness, context behavior, token use, compaction duration, fairness magnitude, staleness, and lifecycle confirmation. The live evidence still comes from one on-premise endpoint, one model for the three-arm isolation experiment, one host, and mostly two or three users.
 
-Workloads are synthetic and chosen to expose overlap and boundaries. The technical results establish that the contract is implementable and identify failure modes; they do not describe the distribution of tasks in production teams. Integrity rates belong to independent forced-overlap runs at specified sampling intervals, while semantic-contamination counts belong to the tested model/workload pairs. Neither is a universal occurrence rate. Correlated snapshots are never used as Bernoulli trials.
+Workloads are synthetic and chosen to expose overlap and boundaries. The measured rates characterize the tested run configurations, models, and workloads rather than production teams.
 
-The repository reports 3,652 tests: 3,617 pass and 35 are environment-gated skips, with no failures in the reported run (`NO_COLOR` unset so the explicit ANSI-color test exercises its intended condition). A 53-test headless-browser suite covers behavior that source-level tests cannot reach. These suites increase confidence in the implementation but do not replace external replication.
+The repository reports 3,617 passing tests and 35 environment-gated skips, including a 53-test headless-browser suite. These tests do not replace external replication.
 
-Most importantly, no technical metric establishes better collaboration. Section 6 reserves the first human evidence. Until that study is complete, claims about awareness, coordination, control, and deployment fit remain research questions.
+The technical evaluation does not measure collaboration outcomes. Section 6 addresses awareness, coordination, control, and deployment fit in the planned first-use study.
 
 ---
 
@@ -441,9 +441,8 @@ Filesystem publication isolation and prompt isolation are also different. The en
 - **Narrow deployment environment.** Live results come from one endpoint and one host; the three-arm file-isolation result uses one model. Provider behavior can change absolute latency, and the observed response behavior may not transfer to other models.
 - **Token cost.** Parallel execution used 1.49× the input tokens in the measured workload because it used three calls where serial injection used two.
 - **Context growth and stale compaction.** A shared history grows faster with more participants. Turns remain available during compaction, but 3 of 5 long live summaries became stale before commit.
-- **Semantic correctness.** Validated publication proves only the supplied oracle over the approved files. The oracle can be incomplete, responses can still cross request boundaries, and separately valid write sets can implement incompatible decisions.
-- **Manifest and approval ergonomics.** The evaluated API receives a complete path manifest and oracle with the request. It does not yet provide an interactive model-propose/requester-approve flow; without an oracle, automatic publication is disabled.
-- **Derived indexes.** Capability-mode publication deliberately skips the ordinary code-index post-hook because that hook writes outside the approved task manifest. The index can therefore remain stale until it is rebuilt through a separately authorized system operation.
+- **Publication boundary.** Validation covers only the supplied oracle and approved files. The API requires the manifest and oracle with the request; it does not yet support an interactive proposal-and-approval flow. Separately valid write sets may still encode incompatible decisions.
+- **Derived indexes.** Capability-mode publication does not update indexes outside the approved manifest, so they require a separately authorized rebuild.
 - **Lock envelope.** Effects from detached background processes escape the in-process gate; shell operations remain coarse and exclusive.
 - **Single process and directory-level isolation.** Sessions do not span machines and are not containers.
 - **Bounded replay.** Incremental replay is exact only within the retained event window; older clients receive an explicit reset.
@@ -458,7 +457,7 @@ Sharing a coding agent is not only a question of adding more clients to one chat
 
 Coagora keeps inference parallel while ordering context commits and participating conflicting effects. Within one implementation, this removes inference-level head-of-line blocking and preserves transcript, attribution, replay, and writer-ordering invariants across concurrency. It does not make direct overwrites atomically visible to external readers. The cost is additional model calls, stale snapshots, and exclusive waits when effects dominate.
 
-The harder boundary is semantic. A transcript can remain structurally valid and participating effects can remain ordered while a model follows another participant's request. Coagora therefore does not turn prompt compliance into a security claim: it combines scoped prompts and turn-local context with a requester-approved file capability and validated publication. The live experiment reports model behavior across those three layers, while adversarial checks establish the narrower file-publication invariant. Under the stated assumptions, a turn cannot publish a tool-mediated task-file mutation outside its canonical write set; response meaning and oracle adequacy remain model- and task-dependent. A viable shared-agent interface must expose ownership, freshness, approval, and effects clearly enough for people to understand and control that boundary. The planned first-use study will test how visible and manageable it is in practice.
+Structural correctness does not ensure that a model follows the intended request. Coagora combines scoped prompts and turn-local context with requester-approved file capabilities and validated publication. Under the stated assumptions, enforced turns publish task-file changes only within their approved write sets; response meaning and oracle adequacy remain model- and task-dependent. Shared-agent interfaces should therefore expose request ownership, context freshness, approvals, and effects. The planned first-use study will examine whether these controls are understandable in practice.
 
 ---
 
