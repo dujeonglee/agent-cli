@@ -122,5 +122,5 @@ env -u NO_COLOR .venv/bin/pytest -q
 - P0 effect/metrics 회귀검사: 76 passed
 - 전체 Python suite(`NO_COLOR` 해제): 3,596 passed, 35 skipped, 0 failed
 - 정적 검사: 변경 Python 파일 ruff 통과
-- 원자료-논문 수치 대조: 174 checked, 0 mismatches
+- 원자료-논문 수치 대조: 165 checked, 0 mismatches
 - `git diff --check`: whitespace 오류 없음

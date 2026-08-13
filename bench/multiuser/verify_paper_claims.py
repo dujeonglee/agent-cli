@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-import math
 import statistics
 import sys
 from pathlib import Path
@@ -43,15 +42,6 @@ def chk(sec, claim, paper, actual, tol=0.01):
     else:
         ok = paper == actual
     ROWS.append((sec, claim, paper, actual, ok))
-
-
-def exact_mcnemar_p(off_only: int, on_only: int) -> float:
-    """Two-sided exact sign/McNemar test over discordant pairs."""
-    n = off_only + on_only
-    if n == 0:
-        return 1.0
-    tail = sum(math.comb(n, k) for k in range(min(off_only, on_only) + 1)) / 2**n
-    return min(1.0, 2 * tail)
 
 
 def main() -> None:
@@ -317,18 +307,6 @@ def main() -> None:
     chk("6.7", "mint chain checked", 100, st["mint_chain_checked"])
     chk("6.7", "mint chain errors", 0, st["mint_chain_errors"])
     chk("6.7", "reply_to duplicates", 0, st["reply_to_duplicates"])
-    ab = {a["arm"]: a for a in J("n3b-scoping.json")["arms"]}
-    chk(
-        "6.7",
-        "n3b off min/med/max",
-        (0.13, 0.19, 0.21),
-        (
-            ab["off"]["mismatchMin"],
-            ab["off"]["mismatchMedian"],
-            ab["off"]["mismatchMax"],
-        ),
-    )
-    chk("6.7", "n3b honor max", 0.0, ab["honor"]["mismatchMax"])
     # P0 paired semantic rerun: run/pair is inferential; nested turns descriptive.
     semantic = J("n3c-realistic-p0.json")
     sarms = {a["scoping"]: a for a in semantic["arms"]}
@@ -362,10 +340,6 @@ def main() -> None:
     chk("5.4", "P0 off cross CI low", 0.8316, sarms["off"]["crossTaskRateExactCI95"][0])
     chk("5.4", "P0 on cross CI high", 0.1684, sarms["on"]["crossTaskRateExactCI95"][1])
 
-    # Historical same-model similar-task data are explicitly supporting only.
-    legacy = {a["scoping"]: a for a in J("postfix/n3c-scoping-real.json")["arms"]}
-    chk("5.4", "legacy similar off cross runs", 19, legacy["off"]["crossTask"])
-    chk("5.4", "legacy similar on cross runs", 0, legacy["on"]["crossTask"])
     n5 = J("live/n5-staleness-real.json")
     par = [r for r in n5["reps"] if r["arm"] == "parallel"]
     chk("6.7", "live stale steps", 75, sum(r["stale_steps"] for r in par))
@@ -384,28 +358,6 @@ def main() -> None:
         498,
         sum(r["stale_steps"] for r in m5["reps"] if r["arm"] == "parallel"),
     )
-
-    # ── §5.4 보조 두 번째 모델 (Qwen3.6-35B-A3B) ──────────
-    m2 = {a["scoping"]: a for a in J("n3c-realistic-35b-a3b.json")["arms"]}
-    chk("5.4", "35B off cross runs", 11, m2["off"]["crossTask"])
-    chk("5.4", "35B on cross runs", 8, m2["on"]["crossTask"])
-    m2rows = L("n3c-realistic-35b-a3b.jsonl")
-    m2pairs = {}
-    for row in m2rows:
-        m2pairs.setdefault(row["rep"], {})[row["scoping"]] = row["crossTask"]
-    off_only = sum(v["off"] and not v["on"] for v in m2pairs.values())
-    on_only = sum(v["on"] and not v["off"] for v in m2pairs.values())
-    chk("5.4", "35B paired cross p", 0.508, exact_mcnemar_p(off_only, on_only))
-    # 텍스트 수준: 상대 과제의 완료 태그가 답변 텍스트에 등장한 턴 수.
-    for arm, pv in (("off", 12), ("on", 10)):
-        n_txt = 0
-        for r in m2rows:
-            if r["scoping"] != arm:
-                continue
-            for t in r["turns"]:
-                other = "readme" if t["target"] == "parser" else "parser"
-                n_txt += f"{other} done" in t.get("answerText", "")
-        chk("5.4", f"35B text-level cross tag {arm}", pv, n_txt)
 
     # ── §6.8 공정성 ───────────────────────────────────────
     p4 = J("p4-fairness.json")

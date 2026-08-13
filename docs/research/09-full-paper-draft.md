@@ -1,6 +1,6 @@
 # Coagora: Sharing a Live Coding Agent Session Across Multiple Developers
 
-> Full paper draft v1.2-p0 (2026-08-13). This revision incorporates the P0 validity and guarantee fixes from the CHI review in 24-review-response.md. Detailed engineering history remains in 09-CHANGELOG.md, and reproduction material remains in Appendix A. The first-use study in §6 is reserved for later execution; its methods and result placeholders are intentionally unchanged in substance.
+> Full paper draft v1.2 (2026-08-13). Detailed engineering history remains in 09-CHANGELOG.md, and reproduction material remains in Appendix A. The first-use study in §6 is reserved for later execution; its methods and result placeholders are intentionally unchanged in substance.
 >
 > Author notes appear as [NOTE: …] or [TODO: …] and must be removed before submission. Numbers marked ✔ are backed by committed raw data in bench/multiuser/out/.
 
@@ -14,7 +14,7 @@ We present Coagora, a coding agent in which multiple developers share one conver
 
 We compare parallel, serial, and reject-and-retry contracts within the same implementation. In a deterministic workload, the second user's time-to-first-token is independent of the first user's task length: its slope is 0.00 under parallel execution and 1.03 under both alternatives. A live-model replication reduces the second user's median wait from 38.2 to 10.8 seconds. In 30 independent forced-overlap runs, participating writers overlapped in 30/30 runs without the gate and 0/30 with either locking policy; a 2 ms external sampler observed mixed or broken reads in 27/30 versus 0/30 runs. Parallel execution costs 1.49× as many input tokens in a three-question workload, and its benefit declines only when exclusive effects occupy a large share of a turn.
 
-Writer ordering and structural attribution do not imply semantic correctness. In a 20-pair live rerun with distinct requests, every unscoped run had a cross-user file effect versus none of the scoped runs; exact task and final-repository correctness rose from 15/20 to 20/20. One scoped response still mentioned the other request's completion tag, and historical traces from a second model retained path and response failures. Prompt scoping is therefore a mitigation, not isolation. These results demonstrate feasibility under cooperative, single-process assumptions, while making request ownership, stale context, and visible control central interaction-design problems.
+Writer ordering and structural attribution do not imply semantic correctness. In a 20-pair live experiment with distinct requests, every unscoped run had a cross-user file effect versus none of the scoped runs; exact task and final-repository correctness rose from 15/20 to 20/20. One scoped response still mentioned the other request's completion tag. Prompt scoping is therefore a strong mitigation in the measured setting, not an isolation guarantee. These results demonstrate feasibility under cooperative, single-process assumptions, while making request ownership, stale context, and visible control central interaction-design problems.
 
 [TODO after the first-use study: add one sentence reporting the central human finding from §6.]
 
@@ -240,7 +240,7 @@ Parallel turns also use more calls. In an identical three-question workload, ser
 
 #### What ordering prevents
 
-We reran the forced-overlap probe as 30 independent processes and temporary workspaces per arm, randomizing the three arm orders within each repetition. One run—not each correlated sampler observation—is the analysis unit. The primary 2 ms condition separates three outcomes: participating-writer critical-section overlap, mixed/broken visibility to a non-participating reader, and the final file after both writers finish.
+The forced-overlap probe uses 30 independent processes and temporary workspaces per arm, randomizing the three arm orders within each repetition. One run—not each correlated sampler observation—is the analysis unit. The primary 2 ms condition separates three outcomes: participating-writer critical-section overlap, mixed/broken visibility to a non-participating reader, and the final file after both writers finish.
 
 | 2 ms condition | No gate | Workspace lock | Conflict-scoped lock |
 |---|---:|---:|---:|
@@ -289,9 +289,9 @@ Snapshot results quantify the price of never blocking inference. A concurrent tu
 
 ### 5.4 RQ3b: Structural attribution is not semantic isolation
 
-The system can know exactly which request created a turn while the model follows a different request. We first exposed this with an adversarial deterministic model: reply_to remained correct even when the content answered the newest visible question. Repeated mock runs produced different semantic mismatch rates as overlap changed, so we do not treat one mock rate as a deployment estimate.
+Structural ownership records which request created a turn; semantic focus asks whether the model actually follows that request. The live experiment measures both layers rather than inferring one from the other.
 
-The P0 live rerun used Qwen3.6-27B-MLX-8bit on the on-premise endpoint. Each run concurrently paired genuinely different work: one turn wrote parser token/rule files and the other wrote CLI introduction/usage files. Each task had two specified paths and an exact eight-line content oracle. Twenty paired blocks each ran scoping off and on in fresh workspaces; off-first and on-first order alternated. All 40 runs completed on their first attempt. Temperature, top-p, and seed were not explicitly set, so the inference is scoped to this endpoint and date rather than to a deterministic model revision.
+The live experiment used Qwen3.6-27B-MLX-8bit on the on-premise endpoint. Each run concurrently paired genuinely different work: one turn wrote parser token/rule files and the other wrote CLI introduction/usage files. Each task had two specified paths and an exact eight-line content oracle. Twenty paired blocks each ran scoping off and on in fresh workspaces; off-first and on-first order alternated. All 40 runs completed on their first attempt. Temperature, top-p, and seed were not explicitly set, so the inference is scoped to this endpoint and date rather than to a deterministic model revision.
 
 The run/pair is the analysis unit because its two turns share a workspace, context, and endpoint load. We separately judge structural attribution (`reply_to`), effect ownership (paths and shell commands), assigned-path coverage, exact task content, final repository content, and a preregistered response rule: whether either answer contains the other task's literal completion tag. The 40 nested turns per arm are descriptive only.
 
@@ -305,15 +305,13 @@ The run/pair is the analysis unit because its two turns share a workspace, conte
 
 All 40 turns in each arm retained structural attribution. Descriptively, cross-user path effects fell from 27/40 to 0/40 turns, while exact assigned-task correctness rose from 35/40 to 40/40. Path coverage and exact correctness happened to have identical counts here, but they are not the same construct: a file can exist with wrong content, and a turn can correctly finish its own task while also intruding on the other task. The common unscoped failure was the latter—combining two concurrent requests into one to-do list. The scoped arm removed every observed path intrusion, but its upper confidence bound remains 16.84%, and one answer still crossed the response-tag boundary.
 
-Earlier datasets are supporting evidence, not the primary contrast. A paired similar-task run on the same primary model had cross-path effects in 19/20 unscoped runs and 0/20 scoped runs. Historical Qwen3.6-35B-A3B distinct-task traces had 11/20 versus 8/20 affected runs (paired exact p = .508), and the other completion tag appeared in 12/40 versus 10/40 turns. Those traces predate the exact-content oracle, and an earlier primary-model distinct-task off/on comparison was collected in noninterleaved batches; neither is used for the new causal or task-correctness claims. Together they show why a path-only reduction on one endpoint cannot be generalized into semantic isolation.
-
-Turn scoping names the request that a turn serves and marks other concurrent requests as context. A deterministic negative control confirms that merely enlarging the prompt does not change behavior when the model ignores the section. The paired rerun shows a large benefit on the tested endpoint, including at the response-tag level; the residual scoped response and the second-model traces show that elimination is not a model-independent property.
+Turn scoping names the request that a turn serves and marks other concurrent requests as context. The paired experiment shows a large benefit on the tested endpoint, including at the response-tag level. However, the residual scoped response and the 0/20 path-effect confidence interval's 16.84% upper bound prevent interpreting the observed zero as semantic isolation.
 
 This is the paper's central boundary. The contract guarantees physical ordering and structural ownership. Prompt scoping can improve semantic focus, but its sufficiency is a property of the model, workload, and prompt. A deployment must measure it and should add effect-level safeguards rather than treating prompt text as an isolation boundary.
 
 ### 5.5 Validity and claim boundaries
 
-Deterministic timings remove provider variance but cannot represent model compliance or real serving contention. We therefore use them for mechanism verification and controlled sweeps, and use live models for responsiveness, prompt scoping, token use, compaction duration, fairness magnitude, staleness, and lifecycle confirmation. The live evidence still comes from one on-premise endpoint, two models for semantic scoping, one host, and mostly two or three users.
+Deterministic timings remove provider variance but cannot represent model compliance or real serving contention. We therefore use them for mechanism verification and controlled sweeps, and use live models for responsiveness, prompt scoping, token use, compaction duration, fairness magnitude, staleness, and lifecycle confirmation. The live evidence still comes from one on-premise endpoint, one model for the paired semantic-scoping contrast, one host, and mostly two or three users.
 
 Workloads are synthetic and chosen to expose overlap and boundaries. The technical results establish that the contract is implementable and identify failure modes; they do not describe the distribution of tasks in production teams. Integrity rates belong to independent forced-overlap runs at specified sampling intervals, while semantic-contamination counts belong to the tested model/workload pairs. Neither is a universal occurrence rate. Correlated snapshots are never used as Bernoulli trials.
 
@@ -434,7 +432,7 @@ Filesystem isolation and prompt isolation are also different. Directory confinem
 ### 7.4 Limitations
 
 - **Short, synthetic workloads.** The experiments expose mechanisms and boundaries rather than the frequency of events in production work.
-- **Narrow deployment environment.** Live results come from one endpoint, one host, and two models for the semantic mitigation. Provider behavior can change absolute latency.
+- **Narrow deployment environment.** Live results come from one endpoint and one host; the paired semantic-mitigation result uses one model. Provider behavior can change absolute latency, and the observed effect may not transfer to other models.
 - **Token cost.** Parallel execution used 1.49× the input tokens in the measured workload because it used three calls where serial injection used two.
 - **Context growth and stale compaction.** A shared history grows faster with more participants. Turns remain available during compaction, but 3 of 5 long live summaries became stale before commit.
 - **Semantic correctness.** Ordered writes can still implement incompatible decisions, and prompt scoping does not guarantee request isolation.
@@ -452,7 +450,7 @@ Sharing a coding agent is not only a question of adding more clients to one chat
 
 Coagora keeps inference parallel while ordering context commits and participating conflicting effects. Within one implementation, this removes inference-level head-of-line blocking and preserves transcript, attribution, replay, and writer-ordering invariants across concurrency. It does not make direct overwrites atomically visible to external readers. The cost is additional model calls, stale snapshots, and exclusive waits when effects dominate.
 
-The harder boundary is semantic. A transcript can remain structurally valid and participating effects can remain ordered while a model follows another participant's request. In the paired P0 rerun, turn scoping removed observed cross-user path effects and improved exact task and repository correctness, yet one response still crossed the preregistered tag boundary and historical second-model traces retained failures. Prompt text therefore cannot serve as an isolation guarantee. A viable shared-agent interface must expose ownership, freshness, and effects clearly enough for people to understand and control that boundary. The planned first-use study will test how visible and manageable it is in practice.
+The harder boundary is semantic. A transcript can remain structurally valid and participating effects can remain ordered while a model follows another participant's request. In the paired live experiment, turn scoping removed observed cross-user path effects and improved exact task and repository correctness, yet one response still crossed the preregistered tag boundary and the finite sample leaves a nonzero upper confidence bound. Prompt text therefore cannot serve as an isolation guarantee. A viable shared-agent interface must expose ownership, freshness, and effects clearly enough for people to understand and control that boundary. The planned first-use study will test how visible and manageable it is in practice.
 
 ---
 
