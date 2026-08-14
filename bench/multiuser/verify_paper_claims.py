@@ -491,12 +491,41 @@ def main() -> None:
     chk("6.9", "live queries recorded", 27, p7l["queries_recorded"])
     chk("6.9", "live queries lost", 0, p7l["queries_lost"])
 
-    # ── §6.10 실모델 ──────────────────────────────────────
+    # ── §5.1 완전 manifest 라이브 TTFT ────────────────────
+    ttft = J("p6-ttft-replication.json")
+    ttft_runs = ttft["runs"]
+    ttft_summary = ttft["summary"]
+    serial_ttft = ttft_summary["arms"]["serial"]
+    parallel_ttft = ttft_summary["arms"]["parallel"]
+    chk("5.1", "TTFT runs complete", 40, len(ttft_runs))
+    chk("5.1", "TTFT valid runs", 40, sum(r["valid"] for r in ttft_runs))
+    chk("5.1", "TTFT failed runs", 0, sum(not r["valid"] for r in ttft_runs))
+    chk("5.1", "TTFT serial p50 s", 42.1, round(serial_ttft["medianMs"] / 1000, 1))
+    chk("5.1", "TTFT parallel p50 s", 11.7, round(parallel_ttft["medianMs"] / 1000, 1))
+    chk("5.1", "TTFT paired speedup", 3.619, ttft_summary["pairedSpeedupMedian"])
+    chk("5.1", "TTFT serial range low s", 29.8, round(serial_ttft["rangeMs"][0] / 1000, 1))
+    chk("5.1", "TTFT serial range high s", 57.5, round(serial_ttft["rangeMs"][1] / 1000, 1))
+    chk("5.1", "TTFT parallel range low s", 7.6, round(parallel_ttft["rangeMs"][0] / 1000, 1))
+    chk("5.1", "TTFT parallel range high s", 15.3, round(parallel_ttft["rangeMs"][1] / 1000, 1))
+    chk("5.1", "TTFT serial CI low s", 41.61, round(serial_ttft["medianBootstrapCi95Ms"][0] / 1000, 2))
+    chk("5.1", "TTFT serial CI high s", 43.70, round(serial_ttft["medianBootstrapCi95Ms"][1] / 1000, 2))
+    chk("5.1", "TTFT parallel CI low s", 11.20, round(parallel_ttft["medianBootstrapCi95Ms"][0] / 1000, 2))
+    chk("5.1", "TTFT parallel CI high s", 12.19, round(parallel_ttft["medianBootstrapCi95Ms"][1] / 1000, 2))
+    chk("5.1", "TTFT serial-first blocks", 10, ttft["protocol"]["serialFirstBlocks"])
+    chk("5.1", "TTFT parallel-first blocks", 10, ttft["protocol"]["parallelFirstBlocks"])
+    chk("5.1", "TTFT oMLX version", "0.5.7", ttft["environment"]["server"]["endpoint"]["engine"]["version"])
+    chk("5.1", "TTFT server memory GB", 256, ttft["environment"]["server"]["serverHardware"]["memory_gb"])
+    chk("5.1", "TTFT server GPU cores", 80, ttft["environment"]["server"]["serverHardware"]["gpu_cores"])
+    chk("5.1", "TTFT effective temperature", 0.2, ttft["environment"]["server"]["requestConfiguration"]["effectiveTemperature"])
+    chk("5.1", "TTFT effective top-p", 0.95, ttft["environment"]["server"]["requestConfiguration"]["effectiveTopP"])
+    chk("5.1", "TTFT endpoint request integrity", True, all(r["endpointRequestDelta"] == r["topLevelLlmCalls"] == 2 for r in ttft_runs))
+    by_block = {}
+    for run in ttft_runs:
+        by_block.setdefault(run["block"], {})[run["arm"]] = run["bTtftMs"]
+    chk("5.1", "TTFT parallel faster paired blocks", 20, sum(v["parallel"] < v["serial"] for v in by_block.values()))
+
+    # ── §5.1 토큰 비용과 provider 동시성 ──────────────────
     p6 = J("p6-real-llm.json")
-    hol = {r["contract"]: r for r in p6["hol_spot"]}
-    chk("6.10", "serial p50 s", 38.2, round(hol["serial"]["bTtft_p50"] / 1000, 1))
-    chk("6.10", "parallel p50 s", 10.8, round(hol["parallel"]["bTtft_p50"] / 1000, 1))
-    chk("6.10", "serial reps", 12, hol["serial"]["n"])
     tc = {(r["contract"], r.get("warmup")): r for r in p6["token_cost"]}
     chk(
         "6.10",

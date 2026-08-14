@@ -1,13 +1,46 @@
 # CHI 리뷰어 관점의 기술 논문 리뷰 및 수정안
 
-**검토 대상:** `09-full-paper-draft.md` (v1.1-wip, 2026-08-13)  
+## 현재 P0/P1/P2 해결 현황 (2026-08-14, v1.5 반영 후)
+
+아래 표가 이 문서의 현재 상태에 대한 단일 기준이다. 뒤의 §1–8은 최초 리뷰의
+문제 설명과 수정 근거를 보존하며, 각 항목의 `현재 상태` 메모가 원래 판정보다
+우선한다. 요청에 따라 first-use study의 수행·결과·TODO는 이 표의 판정 범위에서
+제외한다.
+
+| 항목 | 상태 | 해결한 부분 | 남은 부분 |
+|---|---|---|---|
+| P0-1 독립 표본 | 해결 | process/workspace별 독립 run, run-level paired 분석, sampling 민감도와 final state 분리 | 없음 |
+| P0-2 semantic 분석 단위 | 해결 | 동시 두 턴을 한 pair로 분석하고 같은 block에서 arm 비교 | 없음 |
+| P0-3 과제 정답 측정 | 해결 | exact-content·최종 저장소 oracle과 응답 tag를 경로 coverage에서 분리 | 없음 |
+| P0-4 gate 보장 범위 | 해결 | symlink canonicalization, hard-link 배타 처리, UNKNOWN fail-closed, A1–A5 경계 | 없음 |
+| P1-1 강제 turn-local 격리 | 해결 | filtered context, capability, reservation, staging, validation, version check, atomic per-file publication, audit | 일반 의미 정확성·외부 프로세스·multi-file crash atomicity는 의도적으로 비보장 |
+| P1-2 isolate-and-merge 관계 | 해결 | 범위를 one-live-context busy-turn contract로 고정하고 merge 접근과의 우월성 주장을 제거 | isolate-and-merge 성능 비교는 본 논문의 범위 밖 |
+| P1-3 live-model 방법 | 해결 | oMLX version, M3 Ultra·80 GPU core·256GB, 모델·유효 sampling·scheduler/cache, UTC 기간, 20 paired block의 10:10 순서, 40/40 유효·실패 0, raw 분포·CI·source digest 공개 | 없음 |
+| P1-4 effect-share 표 | 해결 | effective parallelism/effect share 수식, cell별 n·median·range, 50% knee의 two-turn 가정 추가 | 없음 |
+| P1-5 RQ3 구조 | 해결 | semantic boundary만 RQ3로 두고 replay/compaction/fairness/lifecycle을 supporting invariant validation으로 분리 | 세부 절차의 최종 supplement 편집만 제출 작업 |
+| P1-6 사람에 대한 주장 | 해결 | 원칙을 사용자 결과가 아닌 testable design hypothesis로 한정 | study 결과 전 사용자 이해·선호·협업 성과 주장 금지 유지 |
+| P1-7 design-space 근거 | 해결 | freeze date, 포함·제외 규칙, 2-pass 축 도출, undocumented/absent 구분, source-decision appendix 추가 | 제출 artifact에서 인용 페이지 보존 필요 |
+| P2-1 “one agent” 정의 | 해결 | one process/shared session/workspace와 turn별 병렬 thread를 명시 | 없음 |
+| P2-2 commit 인과 | 부분 해결 | snapshot, atomic step commit, 다음 호출 가시성을 설명 | architecture/timeline figure 필요 |
+| P2-3 fairness 명칭·가정 | 미해결 | per-user gate와 FIFO 동작은 설명 | per-principal 명칭, stable identity/Sybil 가정, tail 보고 보강 필요 |
+| P2-4 8-user cap 해석 | 해결 | cap을 올린 조건과 inference contention 해석을 명시 | 없음 |
+| P2-5 token cost 범위 | 해결 | input-token premium과 call-count 원인을 명시 | 없음 |
+| P2-6 cancel 의미 | 미해결 | owner-only interrupt와 다른 턴 불간섭은 구현·설명 | shell/leaf effect 중단점, rollback 부재를 contract에 추가해야 함 |
+| P2-7 실패·제외 보고 | 부분 해결 | 누락 4개의 contract/L과 sensitivity slope 공개 | 당시 artifact가 timeout/parser/stream 원인을 저장하지 않음 |
+| P2-8 참고문헌 | 미해결 | [4], [15], [29]의 본문 역할은 부여 | BibTeX, 접근일/archive, 출판 상태, 자동 번호화 필요 |
+| P2-9 시각 자료 | 미해결 | figure 요구사항만 정의 | architecture/timeline figure와 UI figure 제작 필요 |
+
+**원 리뷰 대상:** `09-full-paper-draft.md` (v1.1-wip, 2026-08-13)
+
+**현재 반영본:** `09-full-paper-draft.md`, `09-full-paper-draft.ko.md` (v1.5, 2026-08-14)
+
 **검토일:** 2026-08-13  
 **검토 관점:** CHI 2027 full paper reviewer  
 **평가 범위:** 사용자 연구의 결과는 의도적으로 평가에서 제외한다. 즉, §6의 미완성 결과 자체를 감점 사유로 삼지 않고, §1–5와 §7–8에 있는 기술적·상호작용적 기여만 평가한다. 다만 실제 제출본에 결과 없는 TODO 섹션을 남겨도 된다는 뜻은 아니다.
 
 ---
 
-## 0. 작업 체크포인트 (2026-08-13, P1 완료 후)
+## 0. 작업 체크포인트 (2026-08-14, v1.5 P1 완료 후)
 
 이 문서의 §1–8은 수정 전 초안을 대상으로 작성한 원 리뷰이므로 문제 설명과
 제안 문구를 이력으로 보존한다. 현재 구현·실험·논문 상태는 이 절과 §11의
@@ -39,13 +72,27 @@
   세 arm 모두 exact task와 final repository가 20/20이었고 cross-scope file
   publication은 0/20이었다. scoped 응답 하나의 상대 완료 태그는 의미 정확성
   보장으로 확대하지 않고 boundary example로 보고했다.
-- **회귀 검증:** 전체 suite는 3,617 passed, 35 skipped, 0 failed였으며 관련
-  subset은 552 passed였다. 구현·원자료·영문/한글 논문 초안은 커밋
-  `69c79828`까지 함께 반영했다.
+- **회귀 검증:** 현재 worktree에서 전체 suite는 3,617 passed, 35 skipped,
+  0 failed였으며 관련 subset은 552 passed였다. 새 TTFT artifact는 수집 당시
+  client base commit `83ed06bc`와 측정 대상 source 전체의 SHA-256 digest를
+  함께 보존한다.
 - **주장 교정:** 강한 주장을 “semantic correctness”가 아니라, 명시한
   cooperative-tool/path-stability 가정 아래의 **cross-request task-file
   publication isolation and validated publication**으로 한정했다. token 비용도
   전체 비용이 아닌 measured input-token premium으로 표현했다.
+- **P1 범위·구조 교정:** isolate-and-merge와의 우월성 주장을 제거하고 평가
+  범위를 one-live-context busy-turn contract로 고정했다. semantic request
+  separation만 RQ3로 남기고 replay, compaction, fairness, lifecycle은 supporting
+  invariant validation으로 분리했다.
+- **P1 방법·표 보강:** live TTFT를 완전한 server/source manifest와 20개 paired
+  block의 10:10 arm 순서로 재수집했다. 40/40 run이 유효했고 failure/exclusion은
+  없었다. 모델·engine version·hardware·유효 sampling·scheduler/cache·UTC 기간,
+  원분포·bootstrap CI와 request-count integrity를 보존했다. effect-share 표에는
+  effective parallelism/effect share 수식, cell별 n·median·range, two-turn 50%
+  knee 가정을 추가했다.
+- **P1 HCI/design-space 보강:** 인터페이스 원칙을 testable design hypothesis로
+  낮추고, design-space의 2026-08-13 freeze date, 포함·제외 기준, 2-pass 축 도출,
+  undocumented/absent 구분과 source-decision appendix를 추가했다.
 
 ### 남은 제출 작업
 
@@ -55,28 +102,15 @@
 2. **필수 그림 두 개 작성:** 두 참가자, attributed streams, shared context,
    effect gate, serial/parallel timeline을 묶은 architecture figure와 실제 UI에서
    ownership·waiting·effects가 보이는 figure를 완성한다.
-3. **기존 live TTFT 재현 정보 보강:** 사용 모델, serving engine/revision,
-   CPU/GPU/RAM, decoding 설정, concurrency, arm 순서, 유효/실패 run, 실패 원인,
-   실제 bootstrap CI, heavier-load 재실행 조건을 본문 또는 supplement에 적는다.
-   P1 isolation arm의 모델·block·누락 run 정보는 이미 반영됐지만 기존 latency
-   arm 정보는 아직 불완전하다.
-4. **throughput/effect-share 표 자립화:** normalized throughput, effect share,
-   recovery의 수식과 분모·분자, cell별 n, 요약 통계와 range/CI를 추가하고 50%
-   knee가 두 turn·완전 overlap·특정 단계 구조의 결과임을 명시한다.
-5. **범위와 구조 정리:** isolate-and-merge 대비 우월성으로 읽힐 문장을 줄이고
-   범위를 one-live-context busy-turn contract로 한정한다. replay, compaction,
-   fairness, lifecycle은 supporting invariant 또는 supplement로 이동한다.
-6. **HCI/design-space 근거 정리:** 사용자 결과가 생기기 전 interface 원칙은
-   design hypothesis/implication으로 유지한다. design-space에는 search date,
-   포함·제외 규칙, documentation snapshot, 축 도출 절차를 추가하고
-   undocumented와 absent를 구분한다.
-7. **제출 마감 정리:** 미사용/역할이 불명확한 참고문헌을 정리하고 author note,
+3. **P2 contract 보강:** cancellation의 shell/leaf-effect 중단점과 rollback 부재,
+   per-principal admission fairness의 identity 가정과 tail을 본문에 추가한다.
+4. **제출 마감 정리:** 참고문헌의 BibTeX·접근일·archive·출판 상태를 정리하고 author note,
    TODO, 익명화되지 않은 artifact 링크를 최종 검사한다.
 
 ### 다음 작업 권장 순서
 
-`제출 형태 결정 → live-method 정보 보강 → effect-share 표 수정 → 논문 구조·주장
-정리 → 그림 제작 → 참고문헌·TODO·익명화 최종 점검` 순서가 가장 안전하다.
+`제출 형태 결정 → P2 contract 보강 → 그림 제작 → 참고문헌·TODO·익명화 최종
+점검` 순서가 가장 안전하다.
 사용자 연구를 진행한다면 그림 작업과 병행할 수 있지만, §6 결과가 나온 뒤 초록,
 기여, 논의, 결론을 다시 맞춰야 한다.
 
@@ -84,18 +118,28 @@
 
 ## 1. 결론부터: 현재 판정
 
-**현재 판정: Weak Reject / Major Revision. CHI의 짧은 R&R 경계에는 걸칠 수 있으나, 그대로 제출하면 핵심 보장의 타당성과 통계 분석 단위 때문에 탈락할 가능성이 높다.**
+> **현재 재평가 (v1.5, study 제외): 기술적 중심은 Weak Accept 후보까지
+> 올라왔다.** 최초 Weak Reject의 직접 원인이었던 P0 네 항목과 P1-1, P1-2,
+> P1-3–P1-7은 해결됐다. 다만 P2의 fairness/cancellation contract, 핵심 그림,
+> 참고문헌 정리가 남아 있어 현재
+> 원고를 그대로 제출할 단계는 아니다.
 
-이 판정은 “사용자 연구가 없어서”가 아니다. CHI는 인간 대상 실험이 없는 기술 기여도 받아들일 수 있고, Coagora의 문제 설정과 시스템 기여는 충분히 HCI에 관련된다. 현재 걸림돌은 다음 네 가지다.
+아래 네 항목은 **최초 v1.1에 대한 Weak Reject 근거**였다. 현재는 모두 P0
+재실험·구현·주장 교정으로 해소됐으며, 상세 상태는 문서 맨 위 표와 §4의
+`현재 상태` 메모를 따른다.
 
-1. torn-write 실험에서 **한 실행 안의 2ms 샘플들을 독립 표본처럼 Fisher 검정에 사용한 의사반복(pseudoreplication)** 문제가 있다.
-2. “동일 자원 효과는 겹치지 않는다”는 보장이 **경로 별칭, `UNKNOWN` 효과, 비협조적 프로세스와 부분 쓰기**를 포괄하지 못한다. 일부는 논문의 선언과 구현이 정확히 일치하지 않는다.
-3. 의미적 오염 실험의 `own task completed`는 실제로는 **예정된 파일명을 모두 썼는가**에 가깝다. 과제의 내용적 정답이나 저장소 정확성을 측정하지 않는다.
-4. 가장 중요한 실패가 공유 세션 자체에서 필연적으로 생긴 것인지, 현재의 **프롬프트 구성 방식—동시 사용자의 요청을 서로에게 user-role instruction처럼 노출하는 방식—에서 생긴 것인지** 분리되지 않았다. turn-local context 또는 동시 요청 필터링이 빠진 핵심 대안이다.
+1. torn-write 실험에서 **한 실행 안의 2ms 샘플들을 독립 표본처럼 Fisher 검정에 사용한 의사반복(pseudoreplication)** 문제가 있었다.
+2. “동일 자원 효과는 겹치지 않는다”는 보장이 **경로 별칭, `UNKNOWN` 효과, 비협조적 프로세스와 부분 쓰기**를 포괄하지 못했고, 논문의 선언과 구현이 정확히 일치하지 않았다.
+3. 의미적 오염 실험의 `own task completed`는 실제로는 **예정된 파일명을 모두 썼는가**에 가까워 과제의 내용적 정답이나 저장소 정확성을 측정하지 못했다.
+4. 가장 중요한 실패가 공유 세션 자체의 문제인지, **동시 사용자의 요청을 서로에게 user-role instruction처럼 노출한 프롬프트 구성 방식**의 문제인지 분리되지 않았고 turn-local context 대안이 빠져 있었다.
 
-반대로, 이전 초안에서 문제였던 과도한 분량과 11개 RQ의 분산은 크게 개선됐다. 현재 서론부터 결론까지 약 7,100단어이고, 사용자 연구 섹션을 제외하면 약 5,740단어다. 이는 CHI 2027이 권장하는 5,000–8,000단어 범위에 들어간다. 이번에는 “절반을 잘라야 한다”가 아니라, **핵심 타당성 문제를 고치고 약한 검증 묶음을 부록으로 옮겨 중심 주장을 더 선명하게 만드는 것**이 필요하다.
+이전 초안에서 문제였던 과도한 분량과 11개 RQ의 분산도 개선됐다. v1.4는
+semantic request separation만 RQ3으로 두고 replay/compaction/fairness/lifecycle을
+supporting invariant validation으로 분리했다. 이제 필요한 작업은 중심 주장을
+다시 바꾸는 것이 아니라, 남은 P2 contract와 제출 형식·그림·서지를 완결하는
+것이다.
 
-CHI 2027은 originality, significance, validity/research quality, presentation clarity를 중심으로 평가하고 기술 기여에는 검증 가능성·재현성·복제 가능성을 요구한다. 이 기준에서 Coagora는 중요성과 재현성은 강하지만, 현재 중앙 실험의 분석 타당성과 보장 범위가 부족하다. 관련 공식 기준은 [CHI 2027 Papers](https://chi2027.acm.org/authors/papers/)와 [Guide to a Successful Submission](https://chi2027.acm.org/guide-to-a-successful-submission/)에 근거했다.
+CHI 2027은 originality, significance, validity/research quality, presentation clarity를 중심으로 평가하고 기술 기여에는 검증 가능성·재현성·복제 가능성을 요구한다. 이 기준에서 Coagora의 중앙 실험, 보장 범위와 live TTFT 재현 정보는 v1.5에서 기술 논문 후보 수준으로 보강됐다. 남은 위험은 P2와 제출 완결성이다. 관련 공식 기준은 [CHI 2027 Papers](https://chi2027.acm.org/authors/papers/)와 [Guide to a Successful Submission](https://chi2027.acm.org/guide-to-a-successful-submission/)에 근거했다.
 
 ## 2. 리뷰 점수표
 
@@ -103,12 +147,12 @@ CHI 2027은 originality, significance, validity/research quality, presentation c
 |---|---:|---|
 | HCI 중요성 | 4/5 | 여러 개발자가 하나의 상태 있는 에이전트를 동시에 조작할 때 생기는 소유권·대기·개입 문제는 시의성과 파급력이 높다. |
 | 독창성 | 3.5/5 | 락 자체는 새롭지 않지만, 추론 아래에 효과 정렬을 두고 물리적 무결성과 의미적 귀속을 분리한 상호작용 아키텍처는 새롭다. |
-| 기술적 완성도 | 3/5 | 구현과 계측은 인상적이지만, 경로 별칭과 `UNKNOWN` 처리 때문에 보장 범위가 현재 문구보다 좁다. |
-| 평가의 타당성 | 2.5/5 | 다양한 실험과 원시자료는 강점이나, 핵심 두 실험의 표본단위·측정 타당성에 문제가 있다. |
-| 재현성·투명성 | 4/5 | 155개 수치 검증과 원시 JSONL은 매우 좋다. 다만 수치의 재현성과 통계적 해석의 정당성은 별개다. |
+| 기술적 완성도 | 4/5 | 경로 별칭, `UNKNOWN`, turn-local capability와 validated publication을 구현·검증했다. cancellation의 leaf-effect contract는 남아 있다. |
+| 평가의 타당성 | 4/5 | 독립 run/pair 분석, exact oracle, paired 설계와 sensitivity 분석으로 최초 핵심 문제를 해소했다. |
+| 재현성·투명성 | 4.5/5 | 원시자료, 자동 수치 검증, live TTFT의 server/source manifest와 run별 상태·timestamp를 함께 보존한다. |
 | 표현 명료성 | 4/5 | 이전 버전보다 훨씬 읽기 쉽고 주장이 절제돼 있다. 핵심 그림과 일부 정의는 여전히 빠져 있다. |
 | CHI 적합성(사용자 연구 제외) | 3.5/5 | 기술 HCI 논문으로 성립 가능하다. 단, 사람에 대한 함의를 관찰 결과가 아니라 설계 가설로 한정해야 한다. |
-| 종합 | Weak Reject | P0 문제를 해결하면 R&R 또는 borderline accept 수준까지 올라갈 가능성이 크다. |
+| 종합 | Weak Accept 후보 | study를 제외한 기술적 중심의 재평가다. P2 contract, 핵심 그림, 서지와 제출본 정리는 아직 필요하다. |
 
 ## 3. 논문의 강점
 
@@ -126,19 +170,23 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 
 ### 3.4 검증 자료가 매우 투명하다
 
-원시 JSONL, 파생 요약, 재계산 스크립트, claim verifier, mock/live 구분, 실패한 실행과 수정 이력이 남아 있다. `verify_paper_claims.py`의 현재 155개 항목은 모두 원자료와 일치했다. 이는 **보고된 숫자의 전사 정확성**에 강한 신뢰를 준다.
+원시 JSONL, 파생 요약, 재계산 스크립트, claim verifier, mock/live 구분, 실패한 실행과 수정 이력이 남아 있다. `verify_paper_claims.py`의 현재 165개 항목은 모두 원자료와 일치했다. 이는 **보고된 숫자의 전사 정확성**에 강한 신뢰를 준다.
 
 다만 이 검증기는 표본 독립성, 측정 구성타당성, 대안 설명까지 확인하지는 않는다. 이 구분을 논문도 명시하면 오히려 투명성 기여가 더 강해진다.
 
 ### 3.5 분량과 구조가 CHI 제출 형태에 가까워졌다
 
-4개의 RQ, 압축된 구현 절, 한계가 명확한 평가, 약 7,100단어의 전체 길이는 이전 버전보다 훨씬 경쟁력 있다. §5.3a의 여러 기계적 검증을 더 줄일 여지는 있지만, 현재 문제는 더 이상 전체 분량이 아니다.
+압축된 구현 절과 한계가 명확한 평가는 이전 버전보다 훨씬 경쟁력 있다. §5.3의 supporting invariant validation을 supplement에서 더 다듬을 여지는 있지만, 현재 문제는 더 이상 전체 분량이나 RQ 분산이 아니다.
 
 ---
 
 ## 4. 반드시 해결해야 할 문제(P0)
 
 ### P0-1. torn-write 통계는 독립 표본을 사용하지 않는다
+
+> **현재 상태: 해결.** arm당 30개의 독립 process/workspace run으로 다시
+> 수집하고 run을 분석 단위로 사용했다. snapshot은 설명 통계로 분리하고 paired
+> exact McNemar, exact binomial CI, 1/2/5/10 ms 민감도와 final state를 보고했다.
 
 #### 문제
 
@@ -166,6 +214,10 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 
 ### P0-2. 의미적 오염 실험도 표본단위와 arm 비교가 불완전하다
 
+> **현재 상태: 해결.** 동시 두 turn을 한 pair로 분석하고 off/on 및 P1 세 arm을
+> 같은 block에서 수집했다. exact task·final repository·cross-scope publication과
+> response tag를 서로 다른 지표로 보고했다.
+
 #### 문제
 
 각 반복은 두 동시 턴이 하나의 workspace, context, endpoint 부하를 공유한다. 따라서 `40 turns`는 40개의 완전 독립 표본이 아니라 **20개의 cluster 안에 중첩된 40개 관측치**다. turn별 Fisher 검정은 이 의존성을 무시한다.
@@ -190,6 +242,10 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 7. model endpoint가 deterministic하지 않다면 seed, temperature, decoding parameter, model revision과 실행 날짜를 기록한다.
 
 ### P0-3. `own task completed`는 과제 완료를 측정하지 않는다
+
+> **현재 상태: 해결.** 경로 생성 여부를 task completion으로 부르지 않고,
+> exact-content/task oracle과 final-repository oracle을 사용한다. response tag와
+> attempted/published cross-scope effect도 분리했다.
 
 #### 문제
 
@@ -221,6 +277,11 @@ serial, reject-and-retry, parallel이 같은 전송·컨텍스트·도구 계층
 6. scoping의 이득과 함께 omission, over-cautiousness, own-task correctness를 동일한 표에서 보고한다.
 
 ### P0-4. 논문의 effect-gate 보장이 구현의 실제 별칭·분류 모델보다 넓다
+
+> **현재 상태: 해결.** symlink canonicalization, 기존 hard-link의
+> workspace-exclusive 처리, 미분류 workspace effect의 fail-closed 정책과
+> A1–A5 경계를 구현·문서화했다. 비협조적 외부 프로세스와 multi-file crash
+> atomicity는 보장 밖으로 명시했다.
 
 #### 문제 A: 경로 별칭
 
@@ -366,6 +427,11 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 
 ### P1-2. isolate-and-merge 대안과의 관계를 더 좁혀야 한다
 
+> **현재 상태: 해결.** v1.4는 평가 범위를 one-live-context busy-turn contract로
+> 고정하고, isolate-and-merge보다 일반적으로 우월하다는 주장을 제거했다. 해당
+> 대안의 merge·reconciliation 비용 비교는 수행하지 않았으며 명시적으로 범위
+> 밖에 둔다.
+
 서론은 serial과 session fork를 대비한 뒤 Coagora를 “third contract”로 제시하지만, 평가는 reject, serial, parallel만 비교한다. worktree/branch 격리는 표에만 있고 merge cost, context divergence, conflict resolution을 측정하지 않는다.
 
 두 선택지가 있다.
@@ -377,21 +443,30 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 
 ### P1-3. live-model 방법 정보가 본문만으로 충분하지 않다
 
-“primary model”, “second model”, “on-premise endpoint”, “heavier endpoint load”만으로는 복제가 어렵다. 익명 심사라고 해서 사용한 모델을 숨길 필요는 없다. 최소한 다음을 본문 또는 보조자료에 제시해야 한다.
+> **현재 상태: 해결.** v1.5의 live TTFT는 oMLX 0.5.7, Apple M3 Ultra,
+> 80 GPU core, 256 GB unified memory, 정확한 모델·크기·context/output 한도,
+> 유효 temperature 0.2와 top-p 0.95, unseeded sampling, scheduler/cache/prefill,
+> response format을 manifest에 저장했다. UTC 수집 기간, full source digest,
+> run 전후 endpoint 상태와 request-count integrity도 보존했다.
 
-- model family, parameter/quantization class, serving engine와 revision
-- temperature, top-p, seed, max tokens, tool-calling format
-- host CPU/GPU/RAM과 동시 요청 설정
-- arm별 유효/실패 실행 수, 실패 원인과 어느 조건에서 빠졌는지
-- live TTFT의 12개 분포, 실제 bootstrap CI 수치
-- “heavier endpoint load” 재실행의 날짜·반복 수·부하 조건
-- arm 실행 순서와 randomization/blocking 절차
+실험은 20개 paired block마다 serial/parallel을 한 번씩 실행하고 첫 arm을 10:10으로
+균형화했다. 각 run은 fresh process/session/HOME/workspace를 사용했다. 40/40 run이
+첫 시도에 유효했고 failure/exclusion은 0이었다. Serial TTFT 중앙값은 42.1초
+(range 29.8–57.5, bootstrap 95% CI 41.61–43.70), parallel은 11.7초
+(7.6–15.3, 11.20–12.19)이었다. 모든 20개 block에서 parallel이 빨랐고 paired
+speedup 중앙값은 3.619배였다. Artifact와 `stats_recompute.py`,
+`verify_paper_claims.py`가 raw run에서 이 결과를 다시 계산한다.
 
-현재 §5.1은 “non-overlapping ranges and bootstrap intervals”라고만 쓰고 interval을 보여주지 않는다. 원자료에는 serial median CI 약 `[38.02, 38.28]s`, parallel `[10.71, 10.81]s`가 있으므로 표나 그림에 직접 넣는 편이 낫다. 다만 이 CI는 한 endpoint의 12회 runtime variation에 대한 것이지 다른 모델·배포로의 일반화 구간은 아니다.
-
-또한 deterministic HOL grid의 네 실패는 조건별 위치와 원인을 보고하고, 실패를 제외해도 slope 결론이 유지되는 sensitivity analysis를 제시해야 한다.
+Deterministic HOL grid의 missing 네 run도 조건별 위치와 complete-level sensitivity를
+본문에 공개했다. 이 항목에서 추가로 필요한 것은 다른 배치로의 외적 타당성을 위한
+후속 반복이지, 현재 결과의 방법·재현 정보 보완은 아니다.
 
 ### P1-4. throughput/effect-share 표가 독립적으로 해석되지 않는다
+
+> **현재 상태: 해결.** v1.4에 effective parallelism과 measured effect share의
+> 실제 계산식, cell당 `n=5`, median과 range를 추가했다. 50% knee도 두 개의 같은
+> 길이 turn, 완전 overlap, effect-stage 직렬화라는 분석 가정에서의 ceiling으로
+> 한정했다.
 
 §5.2의 표에서 `1.987`, `1.992`가 무엇의 비율인지 열 이름만으로 알 수 없다. `Recovery`의 분모·분자도 정의되지 않는다. effect share `s`의 공식, throughput normalization 기준, 반복 수, 분산이 없다.
 
@@ -404,6 +479,11 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 실제 정의가 다르면 그 정의를 써야 한다. 각 셀의 `n`, median/mean, range 또는 CI도 필요하다. “50% knee”는 두 turn, 완전 겹침, 특정 단계 구조에서 성립하는 이론적 결과이므로 일반 법칙처럼 표현하지 말고 모델 가정을 함께 적어야 한다.
 
 ### P1-5. RQ3이 아직 너무 많은 것을 한 바구니에 넣는다
+
+> **현재 상태: 해결.** RQ3은 request ownership과 semantic separation만 다루며,
+> replay/compaction/fairness/lifecycle은 `Supporting invariant validation`으로
+> 이동했다. 제출 supplement에서 세부 절차를 다듬는 일은 남지만 RQ 구조 문제는
+> 해소됐다.
 
 현재 RQ3은 replay, compaction, attribution, fairness, lifecycle, staleness, semantic cross-talk을 모두 포함한다. 표로 압축해 이전보다 낫지만, 논문의 가장 중요한 semantic boundary가 인프라 회귀검사들과 같은 RQ에 묻힌다.
 
@@ -418,6 +498,10 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 특히 204/204 lifecycle, test count, reconnect 세부 수치는 artifact 신뢰를 높이지만 CHI 본문의 중심 발견은 아니다.
 
 ### P1-6. 기술 HCI 논문으로 제출할 경우 사람에 대한 문장을 더 엄격히 한정해야 한다
+
+> **현재 상태: 해결.** §7.2를 사용자 결과가 아니라 시스템 동작에서 도출한
+> `Testable design hypotheses`로 바꿨다. study 전에는 이해·선호·신뢰·협업 성과를
+> 관찰 결과처럼 주장하지 않는 제한을 유지한다.
 
 사용자 연구 결과를 제외해도 논문은 성립 가능하다. 다만 다음은 기술 측정에서 직접 관찰되지 않았다.
 
@@ -438,6 +522,14 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 
 ### P1-7. design-space 기여의 도출 방법이 얇다
 
+> **현재 상태: 해결.** 2026-08-13 freeze date, 포함·제외 규칙, 상태/busy 처리의
+> 귀납적 코딩과 CSCW ownership/intervention 렌즈를 결합한 2-pass 축 도출,
+> `undocumented`와 `absent`의 구분을 본문에 명시했다. Appendix B에 source별
+> 포함 결정과 역할을 추가하고 Ace를 확인 가능한 필드만으로 포함했으며,
+> Codex Slack [15], compaction [29]의
+> 인용 관계도 정리했다. 제출 artifact에는 인용 문서의 접근일·archive 보존이
+> 남는다.
+
 네 축은 유용하지만, 현재는 저자들이 어떤 절차로 축을 도출했는지 충분히 설명되지 않는다. 9개 시스템을 본 뒤 축을 귀납적으로 만들었는지, CSCW 이론에서 연역했는지, 두 방식이 결합됐는지 알려야 한다.
 
 수정 방안:
@@ -455,13 +547,26 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 
 ### 6.1 “one agent”의 조작적 정의
 
+> **현재 상태: 해결.** v1.4는 one agent를 하나의 process, durable session,
+> shared context/workspace/policy/tool registry로 정의하고, 각 turn의 inference
+> call은 병렬 thread로 실행될 수 있음을 첫 설명에서 분리했다.
+
 한 process/session/context/tool registry를 공유하지만 inference loop는 turn마다 병렬로 돈다. 일부 독자는 이를 여러 agent instance로 볼 것이다. “one agent”를 shared durable session, workspace, policy, tool runtime의 동일성으로 정의하고, concurrent inference calls는 복수임을 첫 등장 때 명시하라.
 
 ### 6.2 completion-order commit의 인과 의미
 
+> **현재 상태: 부분 해결.** dispatch snapshot, step별 atomic commit, 완료된
+> activity가 다음 inference/tool step에서 보이는 규칙은 본문에 명시했다. 여러
+> tool step을 포함한 두 turn의 인과를 한눈에 보여 주는 timeline figure는 아직
+> 필요하다.
+
 도착 순서, dispatch 순서, inference completion 순서, context commit 순서가 다르다. completion-order serialization이 API-valid transcript는 만들지만 사용자가 기대하는 conversational causality까지 보장하지 않는다. 두 턴이 여러 tool step을 거칠 때 새 commit을 어느 시점부터 보는지도 timeline figure로 설명해야 한다.
 
 ### 6.3 fairness는 정책 정의이지 보편적 공정성이 아니다
+
+> **현재 상태: 미해결.** per-user gate와 FIFO 동작은 설명돼 있지만,
+> `per-principal admission fairness`라는 좁은 명칭, stable identity/Sybil 가정,
+> reconnect binding과 tail 결과를 본문 contract에 추가해야 한다.
 
 현재 fairness는 “한 user당 한 active turn + strict FIFO”다. 이는 flood resistance에는 좋지만, user identity가 안정적이고 Sybil이 없다는 가정이 필요하다. 단일 사용자의 의도적 병렬 작업도 막는다. “fair”를 넓게 쓰기보다 per-principal admission fairness로 부르고, identity binding과 reconnect semantics를 설명하라.
 
@@ -469,21 +574,44 @@ adversarial suite는 모집단 비율이나 p-value가 아니라 “각 invarian
 
 ### 6.4 default cap을 올린 8-user 결과의 해석
 
+> **현재 상태: 해결.** cap을 올려 admission queue를 제거한 조건임을 명시하고,
+> 결과를 default 설정의 8-user scaling이 아니라 queue가 없는 조건의 inference
+> contention으로 한정했다.
+
 8-user 실험은 admission queue를 피하려고 cap을 올렸다. 이는 “default Coagora가 8명에서 scale한다”가 아니라 “queue가 없을 때 inference contention이 39% 증가했다”는 결과다. 본문 문구를 이 조건에 맞게 좁혀라.
 
 ### 6.5 token cost의 범위
+
+> **현재 상태: 해결.** v1.4는 `cost`를 해당 workload의 measured input-token
+> premium으로 좁히고 call-count 증가가 원인임을 밝혔다. output tokens, compute,
+> energy, monetary/repair cost는 측정하지 않았다고 명시했다.
 
 현재 1.49×는 세 질문 workload의 **input tokens**다. output tokens, wall-clock compute, GPU energy, 금전 비용, 실패·중복 효과의 repair cost는 포함하지 않는다. “cost” 대신 “input-token premium in this workload”를 일관되게 사용하고 전체 토큰 표를 보조자료에 제시하라.
 
 ### 6.6 cancel의 실제 효과
 
+> **현재 상태: 미해결.** owner-only interrupt와 다른 turn 불간섭은 구현·설명돼
+> 있다. 하지만 진행 중 model HTTP call, shell subprocess, 이미 시작한 leaf
+> effect가 실제로 어디서 중단되는지와 effect rollback을 제공하지 않는다는 점을
+> contract 표에 명시해야 한다.
+
 사용자가 자기 turn을 취소할 수 있다고 하지만, 이미 시작된 shell subprocess, leaf effect, model HTTP call이 즉시 중단되는지 아니면 결과만 버리는지 명확하지 않다. cancellation의 linearization point와 effect rollback 부재를 contract 표에 추가하라.
 
 ### 6.7 실패·제외 보고
 
+> **현재 상태: 부분 해결.** attributable first token이 없던 네 실행의 조건
+> (reject `L=2`, reject `L=15`, parallel `L=2`, parallel `L=6`; 각 1회)과 이를
+> 제외한 complete-level sensitivity slope(reject 약 1.030, parallel 약 −0.004)를
+> v1.4에 공개했다. 당시 artifact가 timeout/parser/stream 원인을 기록하지 않아
+> 원인 분류는 복원할 수 없다.
+
 HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와 L에서 발생했는지, timeout인지 parser/stream 문제인지가 중요하다. responsiveness 논문에서는 “답하지 않음”도 사용자 경험의 일부이므로 단순 제외만 해서는 안 된다.
 
 ### 6.8 참고문헌과 인용 정리
+
+> **현재 상태: 미해결.** [4], [15], [29]가 본문과 design-space appendix에서
+> 담당하는 역할은 정리했다. BibTeX 대조, 제품 문서 접근일·archive, 출판 상태와
+> 자동 번호화는 제출 단계에서 남아 있다.
 
 현재 working reference에는 arXiv, 제품 문서, issue, peer-reviewed paper가 섞여 있다. 제출 전 다음을 수행하라.
 
@@ -494,6 +622,9 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 - 번호 수동 관리 대신 LaTeX/BibTeX에서 자동 생성
 
 ### 6.9 시각 자료가 반드시 필요하다
+
+> **현재 상태: 미해결.** 필요한 architecture/timeline figure와 실제 UI figure의
+> 구성요소는 정의했지만 그림 자체는 아직 작성되지 않았다.
 
 현재 유일한 핵심 figure가 TODO다. 최소 두 개가 필요하다.
 
@@ -506,11 +637,16 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 
 ## 7. 절별 수정 제안
 
+> 이 절은 최초 리뷰의 절별 처방을 보존한다. v1.4에서는 P0 재실험, assumption
+> table, turn-local isolation, RQ 분리, 범위·design-hypothesis 교정이 반영됐다.
+> 현재 유효한 잔여 처방은 cancellation 경계, 핵심 figure, 참고문헌·제출본
+> 정리이며 §11 체크리스트가 우선한다.
+
 ### Abstract
 
 현재 초록은 기술 결과가 많고 중심 메시지는 분명하다. 다만 다음을 고치면 더 강해진다.
 
-- deterministic slope `0.00 vs 1.03`보다 live `38.2s vs 10.8s`를 우선한다.
+- deterministic slope `0.00 vs 1.03`보다 live `42.1s vs 11.7s`를 우선한다.
 - `8.2%`를 occurrence rate처럼 전면에 두지 않는다. 반복 run-level 분석 전에는 “a forced-overlap trace exposed mixed-writer intermediate states”로 낮춘다.
 - `technically viable`를 `demonstrates feasibility under a cooperative, single-process threat model`로 좁힌다.
 - “turn-scoped prompt eliminated…”에는 model/workload와 측정 endpoint가 file effects임을 넣는다.
@@ -545,7 +681,7 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 - §5.4 semantic 결과는 file-path completion이 아니라 content/test correctness를 포함한다.
 - P1 isolation 표에는 범위 밖 효과의 attempted/blocked/published 결과와 staged
   oracle/final repository correctness를 함께 둔다.
-- §5.3a의 substrate validation은 1개 표로 유지하되 방법 세부는 supplement로 옮긴다.
+- §5.3의 substrate validation은 1개 표로 유지하되 방법 세부는 supplement로 옮긴다.
 - deterministic mechanism check에는 p-value를 붙이지 않고 expected invariant와 관측 일치로 보고한다.
 
 ### Discussion
@@ -566,21 +702,20 @@ HOL 240회 중 4회에 attributable first token이 없었다. 어느 contract와
 
 ## 8. 권장 추가 실험: 최소안과 이상안
 
-| 우선순위 | 질문 | 최소 수정 | 이상적인 수정 |
-|---|---|---|---|
-| P0 | lock이 mixed state를 막는가 | arm당 독립 20–30 run, run-level outcome | 플랫폼 2종, sampling sensitivity, exposure duration |
-| P0 | 같은 실제 파일의 별칭도 막는가 | symlink·empty path regression | hard link·rename·TOCTOU stress arm |
-| P0 | scoping이 semantic correctness를 높이는가 | 파일 내용 oracle + run-level 분석 | tests, answer coding, command effects까지 다층 평가 |
-| P1 | 오염이 shared prompt assembly에서 생기는가 | turn-local filtered context 1개 arm | prompt scoping × context visibility 요인 실험 |
-| P1 | live latency가 재현되는가 | n, CI, 실패 조건, model config 공개 | 다른 serving stack/model에서 독립 replication |
-| P1 | effect scope 성능 경계가 명확한가 | metric 공식·n·분산 추가 | turn 수 2/4/8과 workload structure 변화 |
-| P1 | 교차 요청 파일 효과를 강제 차단할 수 있는가 | canonical per-turn write capability + 범위 밖 tool call 차단 | staging + oracle/test + validated atomic commit |
-| P1 | 같은 파일을 요구한 두 turn의 충돌을 안전하게 처리하는가 | write-set 사전 예약과 queue/reject | 동적 capability 확장 승인과 versioned commit |
+| 우선순위 | 질문 | 최소 수정 | 현재 상태 | 이상적인 후속 작업 |
+|---|---|---|---|---|
+| P0 | lock이 mixed state를 막는가 | arm당 독립 20–30 run, run-level outcome | 해결 | 플랫폼 2종, exposure duration |
+| P0 | 같은 실제 파일의 별칭도 막는가 | symlink·empty path regression | 해결 | rename·TOCTOU stress 확대 |
+| P0 | scoping과 과제 정확성을 분리했는가 | 파일 내용 oracle + run-level 분석 | 해결 | blinded answer coding, command effects까지 다층 평가 |
+| P1 | 오염이 shared prompt assembly에서 생기는가 | turn-local filtered context arm | 해결 | prompt scoping × context visibility 요인 실험 |
+| P1 | live latency가 재분석 가능한가 | n, CI, 실패 조건, model config 공개 | 해결 | 다른 serving stack/model에서 외적 타당성 반복 |
+| P1 | effect scope 성능 경계가 명확한가 | metric 공식·n·분산 추가 | 해결 | turn 수 2/4/8과 workload structure 변화 |
+| P1 | 교차 요청 파일 효과를 강제 차단할 수 있는가 | per-turn capability + 범위 밖 tool call 차단 | 해결 | 일반 작업의 capability 확장 승인 평가 |
+| P1 | 같은 파일을 요구한 두 turn의 충돌을 안전하게 처리하는가 | write-set 예약과 queue/reject | 해결 | multi-file crash-atomic commit |
 
-가장 중요한 P1 추가 실험은 **turn-local filtered context arm**과
-**capability + staged validated commit arm**이다. 전자는 오염의 prompt-assembly
-대안 설명을 닫고, 후자는 모델 순응과 무관하게 파일 충돌을 막는 enforceable
-boundary를 논문의 새 기술 기여로 만든다.
+핵심 P1 추가 arm인 **turn-local filtered context**와 **capability + staged
+validated publication**은 구현·평가됐다. Live TTFT도 완전한 manifest와 20개
+paired block으로 재수집해 방법·재현 정보 문제를 닫았다.
 
 ## 9. 추천하는 최종 기여 문장
 
@@ -604,6 +739,12 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 
 ## 10. 리뷰어가 저자에게 물을 질문
 
+> v1.4는 1–7번과 9번에 구현·재실험·범위 교정으로 답했다. 8번 cancellation의
+> leaf-effect 경계는 아직 미해결이다. 10번의 study-excluded 답은 “shared
+> session에서 structural attribution/effect ordering과 semantic request
+> separation이 서로 다른 층이며, 후자는 context와 enforceable publication
+> boundary를 별도로 요구한다”는 기술적 HCI 기여다.
+
 1. 왜 다른 in-flight user request를 현재 turn의 user-role context에서 제거하지 않고 prompt scoping으로만 구분했는가?
 2. `own task completed`가 파일명 존재 외에 어떤 semantic oracle을 통과했는가?
 3. 동일 실행 안의 2ms samples를 독립 표본으로 Fisher test에 넣는 것이 왜 정당한가?
@@ -624,7 +765,11 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
 - [x] `ownComplete` 대신 content/test oracle과 final-repository oracle을 사용한다.
 - [x] symlink/hard-link alias와 `UNKNOWN` fail-closed fallback을 구현하고 claim을 한정한다.
 - [x] guarantee 표를 assumption-bound invariant 표로 바꾼다.
-- [ ] 기존 live latency arm의 model·hardware·decoding·missing-run 정보를 공개한다. P1 isolation arm 정보는 부분 완료다.
+- [x] live TTFT를 engine version, server hardware, model/sampling/scheduler/cache,
+  UTC timestamp, source digest, 균형화 순서, raw run을 저장하는 완전한 manifest로
+  재수집한다.
+- [x] 20개 paired block의 40/40 유효 run, failure/exclusion 0, range·bootstrap CI,
+  paired speedup과 endpoint request-count integrity를 보고한다.
 - [ ] 핵심 architecture/timeline figure와 UI figure를 완성한다.
 - [ ] 사용자 연구 포함 여부를 결정하고, 포함하지 않는다면 §6 TODO와 RQ4를 전부 제거한다.
 
@@ -635,9 +780,14 @@ design space는 이 세 기여를 설명하는 framing으로 두는 편이 안�
   fail-closed enforcement를 구현한다.
 - [x] turn-local staging에서 content/test oracle을 통과한 write set만 공유
   workspace에 publish하는 validated publication arm을 추가한다.
-- [ ] replay/compaction/fairness/lifecycle 세부를 supplement로 이동한다.
-- [ ] isolate-and-merge에 대한 우월성 인상을 제거하고 범위를 one-live-context contract로 한정한다.
-- [ ] design-space survey procedure와 문서 snapshot을 남긴다.
+- [x] replay/compaction/fairness/lifecycle을 supporting invariant validation으로
+  분리한다.
+- [x] isolate-and-merge에 대한 우월성 인상을 제거하고 범위를
+  one-live-context contract로 한정한다.
+- [x] design-space의 freeze date, 포함·제외 규칙, 2-pass 도출 절차와
+  source-decision appendix를 남긴다.
+- [ ] cancellation의 leaf-effect 중단점·rollback 부재와 per-principal fairness의
+  identity/Sybil 가정·tail을 contract에 추가한다.
 - [x] token “cost”를 input-token premium으로 좁히고 output/compute 제외 범위를 쓴다.
 
 ### 있으면 논문을 크게 강화
@@ -666,8 +816,12 @@ classification이 수정됐고, turn-local context 및 validated publication 대
 보장할 수 없으며, 논문의 보장 이름은 “cross-request task-file publication
 isolation and validated publication”으로 유지해야 한다.
 
-남은 accept 리스크는 새 격리 메커니즘보다 제출 완결성에 가깝다. 사용자 연구
-포함 여부, 핵심 그림, 기존 live latency 실험의 재현 정보, effect-share 표의 독립적
-해석 가능성, isolate-and-merge 범위, design-space 도출 방법을 해결하면 기술 논문
-기준으로 Weak Accept–Accept 후보가 된다. 이 평가는 사용자 연구 결과가 생기기
-전에는 사람의 이해·신뢰·협업 성과를 주장하지 않는다는 조건을 전제로 한다.
+P1-2–P1-7은 v1.5에서 모두 닫혔다. 특히 P1-3은 완전한 server/source manifest와
+20개 paired block으로 TTFT를 재수집하고, 40/40 valid·failure/exclusion 0,
+run별 timestamp·endpoint state·raw value와 bootstrap CI를 함께 보존해 해결했다.
+
+study를 제외한 남은 accept 리스크는 P2와 제출 완결성이다. cancellation의 실제
+중단·rollback contract, per-principal fairness 가정과 tail, architecture/timeline 및
+UI figure, 참고문헌·artifact 정리를 완료하면 기술 논문의 Weak Accept 후보라는
+현재 재평가를 더 안정적으로 지지할 수 있다. 그 전까지는 사람의 이해·신뢰·협업
+성과를 관찰 결과처럼 주장하지 않아야 한다.

@@ -10,8 +10,9 @@
   2. §5.2 무결성 절제 — 독립 프로세스 run 단위 외부-reader 노출,
      참여 writer 중첩, 최종 상태와 exact McNemar 검정
      (`e1-ablation-p0.json`). 연속 snapshot Fisher 검정은 사용하지 않는다.
-  3. §6.10 라이브 랭킹 — 계약별 12회 TTFT 중앙값의 퍼센타일 부트스트랩
-     95% CI, 10,000 재표집, 고정 시드 (`p6-real-llm.json`)
+  3. §5.1 라이브 TTFT — 20개 paired block의 계약별 중앙값 퍼센타일
+     부트스트랩 95% CI, 10,000 재표집, 고정 시드
+     (`p6-ttft-replication.json`).
 
 정책 문장(논문 §5 Setup): 반복 binary 결과는 run/pair 단위 exact interval과
 exact McNemar 검정을 사용하고, 중앙값 구간은 고정 시드 퍼센타일 부트스트랩 95%
@@ -30,7 +31,7 @@ import statistics
 from pathlib import Path
 
 OUT = Path(__file__).parent / "out"
-SEED = 20260807
+SEED = 20260813
 RESAMPLES = 10_000
 
 
@@ -38,8 +39,8 @@ def J(name: str):
     return json.loads((OUT / name).read_text(encoding="utf-8"))
 
 
-def bootstrap_median_ci(values: list[float]) -> dict:
-    rng = random.Random(SEED)
+def bootstrap_median_ci(values: list[float], *, seed: int = SEED) -> dict:
+    rng = random.Random(seed)
     n = len(values)
     medians = sorted(
         statistics.median(rng.choices(values, k=n)) for _ in range(RESAMPLES)
@@ -47,9 +48,12 @@ def bootstrap_median_ci(values: list[float]) -> dict:
     return {
         "n": n,
         "median": statistics.median(values),
-        "ci95": [medians[int(RESAMPLES * 0.025)], medians[int(RESAMPLES * 0.975)]],
+        "ci95": [
+            medians[int(RESAMPLES * 0.025)],
+            medians[int(RESAMPLES * 0.975) - 1],
+        ],
         "resamples": RESAMPLES,
-        "seed": SEED,
+        "seed": seed,
     }
 
 
@@ -75,10 +79,15 @@ def integrity_contrast() -> dict:
 
 
 def ranking_cis() -> dict:
-    data = json.loads((OUT / "p6-real-llm.json").read_text())
+    data = J("p6-ttft-replication.json")
     out = {}
-    for row in data["hol_spot"]:
-        out[row["contract"]] = bootstrap_median_ci([float(v) for v in row["bTtft_all"]])
+    for offset, arm in enumerate(("serial", "parallel")):
+        values = [
+            float(run["bTtftMs"])
+            for run in data["runs"]
+            if run["arm"] == arm and run["valid"]
+        ]
+        out[arm] = bootstrap_median_ci(values, seed=SEED + offset)
     return out
 
 
