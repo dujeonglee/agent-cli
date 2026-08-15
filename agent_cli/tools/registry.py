@@ -25,6 +25,7 @@ from agent_cli.tools.fetch import FetchTool
 from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
+from agent_cli.tools.schedule import ScheduleTool
 from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.virtual import (
     AskTool,
@@ -52,6 +53,12 @@ _ALL_TOOLS: list[Tool] = [
     FetchTool(),
     AgentTool(),
 ]
+
+# ⏰ ``schedule`` — only when an external scheduler backs this session
+# (env ``AGENT_CLI_SCHEDULER=1``, set by agent-board). Appended last so the
+# base tool order (KV-cache stability) is unchanged for plain CLI sessions.
+if ScheduleTool.env_enabled():
+    _ALL_TOOLS.append(ScheduleTool())
 
 TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
 

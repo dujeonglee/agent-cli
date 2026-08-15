@@ -12,6 +12,28 @@
 
 ## [Unreleased]
 
+## [8.9.0] - 2026-08-16
+
+### Added
+
+- **`schedule` 도구 (env 게이트)** — 외부 스케줄러(agent-board)가 붙은 세션에서만
+  등록. 에이전트가 **이 세션(post)에 미래 반복 작업을 예약**할 수 있다("매주 월
+  주간 보고" 류). agent-cli 자체엔 스케줄러가 없고 board 를 모른다 — 도구는
+  워크스페이스 파일 계약(`<ws>/.agent-cli/schedule-requests.jsonl` append →
+  board 가 `schedule-state.json` 으로 ack)만 쓴다(agent-board schedule-design.md
+  §7). 모드: add(cron+prompt[+label])·delete(schedule_id)·list.
+  - **게이트**: 환경변수 `AGENT_CLI_SCHEDULER=1` 이 있을 때만 registry 가 도구를
+    등록(board 가 spawn 시 주입). 없으면 등록조차 안 돼 **일반 CLI 세션의 도구
+    표면·KV-cache 순서는 무변화**. 기존 도구 뒤에 append 라 순서도 보존.
+  - 요청 후 state 파일에서 그 req_id 의 ack 를 짧게 폴링(≤6s)해 결과 반환;
+    미응답이면 부드러운 안내(“applies within a few seconds — use list to confirm”).
+  - 검증: 유닛 9(validate·add/delete/list ack·거부·미응답·env 게이트 reload) +
+    전체 3355 무회귀.
+
+### Notes
+
+- 스케줄 발화·저장·놓친 발화 질문 등 실제 스케줄링은 **agent-board 1.26.0** 이
+  담당(cli 는 파일 계약의 요청자일 뿐). 두 저장소가 함께 이 기능을 구성한다.
 ## [8.8.1] - 2026-08-12
 
 ### Changed

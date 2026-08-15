@@ -426,6 +426,10 @@ class Tool(ABC):
 #   code_index, read_context, fetch, memory, agent (5.0.0 — 구 delegate+teammate 통합)
 # 가상 도구 (tools/virtual.py — loop이 인터셉트, 표준 키 유지, prefix/추론 대상 아님):
 #   complete, ask, run_skill
+# 조건부 도구 (env 게이트): schedule — env AGENT_CLI_SCHEDULER=1 일 때만 registry 가
+#   등록(agent-board 가 spawn 시 주입). 워크스페이스 파일 계약(.agent-cli/
+#   schedule-requests.jsonl append → board 가 schedule-state.json 으로 ack)으로
+#   이 post 에 반복 프롬프트 예약. 없으면 미등록 = 표면·KV 순서 무변화.
 # registry.py가 12개 Tool 인스턴스를 수집 → TOOLS(= TOOL_SCHEMAS alias).
 #   인스턴스가 옛 ToolSchema와 같은 .name/.description/.parameters를 노출하므로
 #   schema 소비처(system prompt, input validation, MCP adapter)는 무변경.
