@@ -10,7 +10,9 @@ so a plain CLI session's surface is unchanged.
 
 Modes:
 - ``add`` — ``cron`` (5-field, e.g. "0 9 * * 1") + ``prompt`` (the request to
-  inject) + optional ``label``. Schedules FUTURE autonomous work on this post.
+  inject) + optional ``label`` + optional ``nickname`` (display name the injected
+  prompt shows up under; defaults to "⏰ Scheduler" on the board when omitted).
+  Schedules FUTURE autonomous work on this post.
 - ``delete`` — ``schedule_id`` (from ``list``).
 - ``list`` — the post's current schedules.
 """
@@ -91,6 +93,8 @@ class ScheduleTool(Tool):
         "asked to automate (e.g. a weekly report). Modes: add (cron + prompt "
         "[+ label]), delete (schedule_id), list. cron is 5 fields "
         "'min hour day month weekday' (e.g. '0 9 * * 1' = Mondays 09:00). "
+        "Pass 'nickname' to set the display name the injected prompt appears "
+        "under (defaults to '⏰ Scheduler'). "
         "Only available when a scheduler backs this session."
     )
     parameters: ClassVar[dict] = {
@@ -108,6 +112,13 @@ class ScheduleTool(Tool):
             "label": {
                 "type": "string",
                 "description": "Short name for the schedule (optional, add)",
+            },
+            "nickname": {
+                "type": "string",
+                "description": (
+                    "Display name the injected prompt shows under (optional, "
+                    "add; defaults to '⏰ Scheduler')"
+                ),
             },
             "schedule_id": {
                 "type": "string",
@@ -156,6 +167,7 @@ class ScheduleTool(Tool):
                 cron=(args.get("cron") or "").strip(),
                 prompt=(args.get("prompt") or "").strip(),
                 label=(args.get("label") or "").strip(),
+                nickname=(args.get("nickname") or "").strip(),
             )
         elif mode == "delete":
             req["schedule_id"] = (args.get("schedule_id") or "").strip()

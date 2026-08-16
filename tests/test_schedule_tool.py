@@ -116,6 +116,30 @@ class TestRun:
         reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
         assert json.loads(reqs[-1])["op"] == "add"
 
+    def test_add_includes_nickname_in_request(self, ws, monkeypatch):
+        tmp_path, sdir = ws
+        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.3)
+        _run(
+            ScheduleTool(),
+            {
+                "mode": "add",
+                "cron": "0 9 * * 1",
+                "prompt": "주간 보고",
+                "nickname": "주간봇",
+            },
+            sdir,
+        )
+        reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
+        req = json.loads(reqs[-1])
+        assert req["nickname"] == "주간봇"
+
+    def test_add_defaults_nickname_to_empty(self, ws, monkeypatch):
+        tmp_path, sdir = ws
+        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.3)
+        _run(ScheduleTool(), {"mode": "add", "cron": "0 9 * * 1", "prompt": "x"}, sdir)
+        reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
+        assert json.loads(reqs[-1])["nickname"] == ""
+
     def test_rejected_ack_is_error(self, ws, monkeypatch):
         tmp_path, sdir = ws
         monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 2.0)
