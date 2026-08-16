@@ -12,6 +12,44 @@
 
 ## [Unreleased]
 
+## [8.11.0] - 2026-08-16
+
+### Changed — 웹 Prompt Inspector 재설계 (역할 분리 + 컨텍스트 인스펙션)
+
+- **📝 Directive Editor (헤더)** — 기존 ⚡ Prompt Inspector 툴바 버튼을 **지시문 편집
+  전용** 드로어로 전환. 인스펙터 안에 눌려 있던 3탭(Common/Main/Sub-agents) 에디터를
+  1급 화면으로 승격하고 프롬프트 뷰어(스코프 칩·budget 바)는 분리·제거.
+- **🔍 컨텍스트 프롬프트 인스펙션** — 전역 인스펙터 메뉴 제거. 대화의 agent/skill
+  카드 헤더의 🔍 로 **그 스코프의 프롬프트**를 연다(스코프 칩 없음 — 스코프=클릭한 것).
+  메인 루프는 입력창 옆 🔍(footer). 드로어 제목에 `agent`/`skill`/`main` 태그 + 이름.
+- **skill scope_id 통일** — `execute_skill(scope_id=…)` 로 스코프를 여는 호출자
+  (main.py / loop.skill_invoke)의 scope_id 를 재사용(자체 `begin_prompt_scope` 이중
+  push 제거). skill 카드 `data-task-id` 로 전체 프롬프트 스냅샷이 조회되어 **agent 와
+  동일한 인스펙션 뷰**가 된다(이전엔 카드 id≠스냅샷 id 라 `ok:false`였음).
+- **플랫/솔리드 UI + 편의** — 글래스 블러 대신 솔리드 서피스. system↔대화 **의미색
+  좌측선** + **스티키 그룹 헤더**(System prompt / Conversation·observations), 섹션별
+  **점유율 바**, **섹션 복사(⧉)**·**전체 접기/전체 복사**, 검색 필터. `role="dialog"`
+  ·`aria-modal`·탭 `aria-selected` 등 접근성 보강.
+- **정리** — 드로어 open 시 미정의 `loadAllAxes()` 호출(ReferenceError) 제거, 제거된
+  기능의 죽은 CSS(axes 행·`#dir-preset-modal`) 삭제.
+- **상주 에이전트 요청 화살표 네비게이션 수정** — 상주 에이전트에게 보낸 메시지는
+  스윔레인 요청 화살표/유저 마크(`agent_msg` "in", ts=발신시각)와 작업 카드
+  (`scope_start`, task_id `<key>#<seq>`)가 **서로 다른 이벤트**라, 카드에 `data-nav-ts`
+  앵커가 없어 화살표 클릭이 "이 실행의 카드가 없습니다"로 잘못 떴다(카드는 실제로 존재).
+  **서버가 발신 ts를 scope_start의 `nav_ts`로 실어** 보내도록 수정 — `begin_agent_work`에
+  `req_ts` 인자 추가(agents_live worker 가 요청 item 의 발신 ts 전달), payload 의 `nav_ts`가
+  `scopes.jsonl` 에 기록돼 **resume 재생까지 보존**. 프런트는 `scope_start.nav_ts` 로 카드
+  `data-nav-ts` 를 스탬프(단일 경로 — 클라 상관 로직 없음). **하위호환 주의**: 이 변경
+  이전에 기록된 세션의 `scopes.jsonl` 엔 `nav_ts` 가 없어, 그 상주-에이전트 요청 화살표는
+  resume/reconnect 후 기존대로 "카드 없음" 안내로 남는다(신규 세션만 해결).
+- **상주 에이전트 스코프 정규화** — 상주 에이전트(🤝)의 작업-스팬 카드는 `data-task-id`
+  가 `<agentId>#<n>` (호출별 접미사)인데 프롬프트 스냅샷은 **베이스 agentId** 로 저장된다.
+  🔍 오픈 시 말미 `#<n>` 를 제거해 스냅샷과 일치시킨다(one-shot delegate `delegate-…`·
+  skill `skill-…` 은 `#` 없음 → 무영향). 이 정규화 전엔 상주 에이전트 카드 🔍 가 "아직
+  LLM 호출이 없습니다" 로 잘못 나왔다(라이브 확인·수정).
+- 검증: 유닛(skill scope 통일 2종 신규) + `node --check` + 전체 3359 통과. 설계·계획:
+  `docs/inspector-redesign-plan.md`.
+
 ## [8.10.0] - 2026-08-16
 
 ### Added

@@ -61,7 +61,7 @@
       <button id="theme-btn" class="btn-icon" type="button" title="Choose theme" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>
     </span>
-    <button id="inspector-btn" class="btn-icon" type="button" title="Prompt Inspector">⚡</button>
+    <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
     <button id="agent-btn" class="btn-icon" type="button" title="Agents — resident agent chat">🤝<span id="tm-badge" hidden></span></button>
     <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
@@ -177,41 +177,58 @@
     </div>
   </aside>
 
-  <!-- Prompt Inspector drawer -->
+  <!-- Directive Editor drawer (📝 toolbar) — dedicated directive editing.
+       Split out of the old Prompt Inspector: this surface ONLY edits the
+       agent directives (no prompt viewer). -->
+  <div id="directive-backdrop" hidden></div>
+  <aside id="directive-editor" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-label="Directive Editor">
+    <div class="de-head">
+      <div class="de-title">📝 Directive Editor</div>
+      <span id="insp-dir-path" class="de-path"></span>
+      <button id="de-close" type="button" class="btn-icon" title="Close">✕</button>
+    </div>
+    <!-- 청중 스코프 탭 (5.4.0) — 에디터 구조 = 파일 구조(U-C).
+         공통=전체 / Main=main LLM 전용(## @main) / 서브에이전트=서브루프 전용(## @agents).
+         ● 뱃지 = 내용 있는 탭. ✨ = 대략적 의도를 LLM 이 초안으로 (run 엔진 경유, 미저장). -->
+    <div class="de-tabs" id="insp-dir-tabs" role="tablist">
+      <button type="button" data-aud="common" class="active" role="tab" aria-selected="true" title="main + all sub-agents">🌐 Common</button>
+      <button type="button" data-aud="main" role="tab" aria-selected="false" title="main LLM only (## @main)">🎯 Main</button>
+      <button type="button" data-aud="agents" role="tab" aria-selected="false" title="sub-agents only (## @agents)">🤖 Sub-agents</button>
+    </div>
+    <textarea id="insp-dir-text" class="de-text" spellcheck="false"
+      placeholder="Instructions for this audience — write directly, or draft with ✨ below. Applied from the next LLM call after saving."></textarea>
+    <div class="de-gen">
+      <input id="insp-dir-brief" type="text"
+        placeholder="Roughly what you want to include… (e.g. reply concisely, conclusion first)">
+      <button id="insp-dir-gen" type="button" class="btn-ghost"
+        title="Draft this tab's directive with the LLM — merges/revises existing content (unsaved; review then save)">✨ Generate</button>
+    </div>
+    <div class="de-foot">
+      <span id="insp-dir-status" class="de-status"></span>
+      <button id="insp-dir-cancel" type="button" class="btn-ghost" title="Cancel edits — revert to the file on disk">Cancel</button>
+      <button id="insp-dir-save" type="button" class="btn-primary" title="Assemble all three tabs and save">Save</button>
+    </div>
+  </aside>
+
+  <!-- Prompt Inspection drawer — opened CONTEXTUALLY from a conversation
+       agent/skill card (🔍) or the main-prompt footer button. Scope is fixed
+       to what was clicked (no scope chips). -->
   <div id="inspector-backdrop" hidden></div>
-  <aside id="inspector" aria-hidden="true">
+  <aside id="inspector" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-label="Prompt Inspection">
     <div class="insp-head">
-      <div class="insp-title">⚡ Prompt Inspector</div>
-      <div id="insp-meta" class="insp-meta"></div>
+      <span id="insp-scope-tag" class="insp-scope-tag"></span>
+      <div id="insp-scope-name" class="insp-scope-name"></div>
       <button id="insp-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
-    <div id="insp-scopes" class="insp-scopes" title="System prompt scope — main loop or a delegate sub-agent"></div>
-    <div id="insp-budget" class="insp-budget" title="per-section token share"></div>
-    <details id="insp-dir" class="insp-dir">
-      <summary>📝 Directives <span id="insp-dir-path" class="insp-dir-path"></span></summary>
-      <!-- 청중 스코프 탭 (5.4.0) — 에디터 구조 = 파일 구조(U-C).
-           공통=전체 / Main=main LLM 전용(## @main) / 서브에이전트=서브루프 전용(## @agents).
-           ● 뱃지 = 내용 있는 탭. ✨ = 대략적 의도를 LLM 이 초안으로 (run 엔진 경유, 미저장). -->
-      <div class="insp-dir-tabs" id="insp-dir-tabs" role="tablist">
-        <button type="button" data-aud="common" class="active" title="main + all sub-agents">🌐 Common</button>
-        <button type="button" data-aud="main" title="main LLM only (## @main)">🎯 Main</button>
-        <button type="button" data-aud="agents" title="sub-agents only (## @agents)">🤖 Sub-agents</button>
-      </div>
-      <textarea id="insp-dir-text" class="insp-dir-text" spellcheck="false"
-        placeholder="Instructions for this audience — write directly, or draft with ✨ below. Applied from the next LLM call after saving."></textarea>
-      <div class="insp-dir-gen">
-        <input id="insp-dir-brief" type="text"
-          placeholder="Roughly what you want to include… (e.g. reply concisely, conclusion first)">
-        <button id="insp-dir-gen" type="button" class="btn-ghost"
-          title="Draft this tab's directive with the LLM — merges/revises existing content (unsaved; review then save)">✨ Generate</button>
-      </div>
-      <div class="insp-dir-foot">
-        <span id="insp-dir-status" class="insp-dir-status"></span>
-        <button id="insp-dir-cancel" type="button" class="btn-ghost" title="Cancel edits — revert to the file on disk">Cancel</button>
-        <button id="insp-dir-save" type="button" class="btn-primary" title="Assemble all three tabs and save">Save</button>
-      </div>
-    </details>
-    <input id="insp-search" type="search" placeholder="Filter sections…" autocomplete="off">
+    <div class="insp-bar">
+      <span id="insp-meta" class="insp-meta"></span>
+      <span class="insp-bar-sp"></span>
+      <button id="insp-collapse" type="button" class="insp-mini" title="모든 섹션 접기">⤢ 접기</button>
+      <button id="insp-copyall" type="button" class="insp-mini" title="전체 프롬프트 복사">⧉ 전체 복사</button>
+    </div>
+    <input id="insp-search" type="search" placeholder="섹션 필터…" autocomplete="off">
     <div id="insp-sections" class="insp-sections"></div>
   </aside>
   <footer>
@@ -221,6 +238,8 @@
       <textarea id="input"
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>
+      <button id="insp-main-btn" type="button" class="btn-icon"
+        title="메인 프롬프트 인스펙션 — 이 대화의 시스템 프롬프트+컨텍스트">🔍</button>
       <button id="send" type="button" class="btn-primary">Send</button>
       <button id="chat-stop" type="button" class="btn-danger" hidden title="Stop the current run">Stop</button>
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>

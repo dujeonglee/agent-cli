@@ -3234,3 +3234,38 @@ class TestCompleteAttribution:
             d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
         ]
         assert finals[-1]["answers"] == []
+
+
+class TestAgentWorkNavTs:
+    """Resident-agent request → work-card navigation (server-side, 8.11.0).
+
+    The swimlane user-mark/request arrow for a message sent TO a resident agent
+    carries the send timestamp; the work card is a separate ``scope_start``
+    keyed by ``<key>#<seq>``. ``begin_agent_work(req_ts=…)`` bakes that ts into
+    the scope_start payload as ``nav_ts`` so the frontend stamps the card's
+    ``data-nav-ts`` and the arrow resolves. Persisted → survives resume replay.
+    Omitted when no req_ts (old sessions / direct callers) → arrow falls back to
+    the 'no card' notice."""
+
+    def _scope_starts(self, r):
+        snap = r.register_connection(WebConnection(id="c1"))
+        return [d for e, d in snap if e == "scope_start"]
+
+    def test_nav_ts_baked_into_scope_start(self):
+        r = WebRenderer()
+        r.begin_agent_work(
+            key="agt-x",
+            seq=3,
+            profile="reviewer",
+            message="안녕?",
+            req_ts=1786888869.935647,
+        )
+        ss = self._scope_starts(r)
+        assert ss and ss[0]["task_id"] == "agt-x#3"
+        assert ss[0]["nav_ts"] == 1786888869.935647
+
+    def test_nav_ts_omitted_without_req_ts(self):
+        r = WebRenderer()
+        r.begin_agent_work(key="agt-x", seq=1, profile="p", message="hi")
+        ss = self._scope_starts(r)
+        assert ss and "nav_ts" not in ss[0]

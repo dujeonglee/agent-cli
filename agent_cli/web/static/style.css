@@ -886,7 +886,7 @@ footer {
 
 /* ── Prompt Inspector ───────────────────────── */
 /* header icon buttons — btn-icon + 헤더 전용 크기/간격 */
-#theme-btn, #inspector-btn, #export-btn, #files-btn, #agent-btn {
+#theme-btn, #directive-btn, #export-btn, #files-btn, #agent-btn {
   font-size: 18px; margin-left: 4px; flex-shrink: 0;
 }
 
@@ -934,220 +934,189 @@ footer {
 }
 .theme-item .theme-check { margin-left: auto; opacity: .9; font-size: 12px; }
 
-#inspector-backdrop {
+/* ── Inspection + Directive drawers (인스펙터 재설계) ───────────────
+   Flat/solid sheets — solid surface, hairline border, one soft shadow (no
+   heavy glass blur). Both drawers share the slide-in chrome. */
+#inspector-backdrop,
+#directive-backdrop {
   position: fixed;
   inset: 0;
   background: var(--overlay);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
   opacity: 0;
-  transition: opacity .25s ease;
+  transition: opacity .2s ease;
   z-index: 40;
 }
-#inspector-backdrop.open { opacity: 1; }
+#inspector-backdrop.open,
+#directive-backdrop.open { opacity: 1; }
 
-#inspector {
+#inspector,
+#directive-editor {
   position: fixed;
   top: 0;
   right: 0;
   height: 100%;
-  width: min(560px, 92vw);
-  background: var(--glass);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  width: min(560px, 94vw);
+  background: var(--surface);
   border-left: 1px solid var(--border);
-  box-shadow: -12px 0 40px var(--shadow);
+  box-shadow: -10px 0 34px var(--shadow);
   transform: translateX(105%);
-  transition: transform .28s cubic-bezier(.32,.72,.28,1);
+  transition: transform .26s cubic-bezier(.32, .72, .28, 1);
   z-index: 50;
   display: flex;
   flex-direction: column;
-  padding: 14px 16px;
-  gap: 10px;
 }
-#inspector.open { transform: translateX(0); }
+#inspector.open,
+#directive-editor.open { transform: translateX(0); }
 
-/* Header / budget / search are fixed-height chrome — never compress them
-   when the viewport is short; only the sections list scrolls. */
-.insp-head,
-.insp-scopes,
-.insp-budget,
-#insp-search { flex: 0 0 auto; }
+/* semantic kind hues — system prompt vs conversation. Literal (like the JS
+   palette) so they stay stable across themes; used only as subtle accents. */
+:root { --insp-system: var(--accent); --insp-convo: var(--cyan); }
 
-.insp-head { display: flex; align-items: baseline; gap: 10px; }
-.insp-title { font-weight: 650; font-size: 15px; letter-spacing: .2px; }
-.insp-meta {
+/* ── Prompt Inspection ─────────────────────── */
+.insp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.insp-scope-tag {
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  flex: none;
+}
+.insp-scope-tag.tag-agent { background: var(--accent-soft-bg); color: var(--accent-soft-text); }
+.insp-scope-tag.tag-skill { background: var(--surface-2); color: var(--insp-convo); }
+.insp-scope-name {
+  font-weight: 640;
+  font-size: 15px;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#insp-close, #de-close { font-size: 16px; }
+#insp-close:hover, #de-close:hover { background: var(--surface-2); color: var(--text); }
+
+.insp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-3);
+  flex: 0 0 auto;
+}
+.insp-meta {
   color: var(--text-2);
   font-size: 11.5px;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
-#insp-close { font-size: 16px; }
-#insp-close:hover { background: var(--surface-2); color: var(--text); }
-
-/* Stacked budget bar — one colored span per section */
-.insp-budget {
-  display: flex;
-  height: 14px;
+.insp-bar-sp { flex: 1; }
+.insp-mini {
+  font-size: 11.5px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
   border-radius: 7px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  padding: 3px 8px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
 }
-.insp-budget span {
-  display: block;
-  height: 100%;
-  min-width: 2px;
-  transition: filter .15s ease;
-}
-.insp-budget span:hover { filter: brightness(1.15); }
+.insp-mini:hover { background: var(--surface-2); color: var(--text); }
 
 #insp-search {
+  margin: 10px 16px 0;
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
   padding: 7px 10px;
   font-size: 13px;
-  outline: none;
-  background: var(--surface);
 }
-#insp-search:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); }
-
-/* Scope chip row — Main + one chip per delegate sub-agent */
-.insp-scopes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.insp-scopes:empty { display: none; }
-.insp-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 540;
-  color: var(--text-2);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  cursor: pointer;
-  user-select: none;
-  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.insp-chip:hover { background: var(--surface-2); }
-.insp-chip.active {
-  color: var(--on-accent);
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 1px 4px var(--accent-shadow);
-}
-.insp-chip-tok {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 10px;
-  opacity: .7;
-}
-.insp-chip-del {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-  padding: 0 1px;
-  color: inherit;
-  opacity: .55;
-  border-radius: 4px;
-}
-.insp-chip-del:hover { opacity: 1; background: var(--hairline-strong); }
-.insp-chip.active .insp-chip-del:hover { background: var(--hairline-strong); }
-
-.insp-dir { margin: 0 0 8px; font-size: 12px; flex: 0 0 auto; }
-.insp-dir > summary { cursor: pointer; color: var(--text); user-select: none; padding: 2px 0; }
-.insp-dir-path { color: var(--text-2); font-size: 10px; margin-left: 6px; }
-.insp-dir-text {
-  width: 100%; box-sizing: border-box; height: 120px; resize: vertical;
-  margin-top: 6px; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px; line-height: 1.5;
-  color: var(--text); background: var(--surface-3);
-  border: 1px solid var(--border); border-radius: 6px; padding: 8px;
-}
-.insp-dir-text:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
-.insp-dir-tabs { display: flex; gap: 4px; margin: 6px 0 4px; }
-.insp-dir-tabs button {
-  border-color: var(--ghost-border); border-radius: 7px 7px 0 0;
-  padding: 4px 10px; font-size: 11px; opacity: .8;
-}
-.insp-dir-tabs button.active {
-  opacity: 1; color: var(--text); background: var(--surface-2);
-  border-bottom-color: transparent;
-}
-.insp-dir-gen { display: flex; gap: 6px; margin-top: 6px; }
-.insp-dir-gen input { flex: 1; padding: 4px 8px; font-size: 12px; }
-.insp-dir-gen button { white-space: nowrap; }
-.insp-dir-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
-.insp-dir-status { flex: 1 1 auto; order: 1; color: var(--text-2); font-size: 11px; }
-#insp-dir-cancel { order: 2; }
-#insp-dir-save { order: 2; }
-
-/* Three axis rows (성격/업무/지침): each = label + dropdown + subtle icon
-   buttons. Each wraps to its own full-width line under the status text. */
-
-/* 💾 preset save modal — fixed location (read-only) + name + existing chips. */
-#dir-preset-modal-cancel {
-  background: transparent; color: var(--text-2); border: 1px solid var(--border);
-}
-#dir-preset-modal-save { background: var(--accent); color: var(--on-accent); }
+#insp-search:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
 
 .insp-sections {
   flex: 1 1 auto;
-  /* min-height:0 is required for a flex child to become a scroll container —
-     without it the default min-height:auto lets the list grow to its content
-     height, pushing past the drawer instead of scrolling inside it. */
+  /* min-height:0 lets the flex child scroll instead of overgrowing the drawer. */
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 8px;
+  gap: 5px;
+  padding: 6px 16px 16px;
+}
+/* Sticky group header — replaces the old faint divider; labels SYSTEM vs
+   CONVERSATION so the two halves read at a glance. */
+.insp-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: 0 0 auto;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 10px 2px 4px;
 }
 .insp-sec {
-  /* Never shrink cards in the flex column — on a short viewport flexbox would
-     otherwise compress collapsed cards until their summary text is clipped. */
   flex: 0 0 auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-left: 3px solid var(--border);
+  border-radius: 9px;
   background: var(--surface);
   overflow: hidden;
 }
-/* Divider between the static system prompt and the live dynamic context. */
-.insp-divider {
-  flex: 0 0 auto;
-  text-align: center;
-  font-size: 11px;
-  color: var(--muted);
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  margin: 6px 0 2px;
-  letter-spacing: 0.02em;
-}
-/* Dynamic-context sections: tinted left edge so they read as "conversation",
-   distinct from the system-prompt sections above the divider. */
-.insp-sec.insp-dynamic { border-left: 3px solid var(--accent-soft-border); }
+.insp-sec.insp-system { border-left-color: var(--insp-system); }
+.insp-sec.insp-dynamic { border-left-color: var(--insp-convo); }
 .insp-sec > summary {
   list-style: none;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 9px;
+  padding: 8px 11px;
   user-select: none;
 }
 .insp-sec > summary::-webkit-details-marker { display: none; }
 .insp-sec > summary::before {
   content: "▸";
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  flex: none;
   transition: transform .15s ease;
 }
 .insp-sec[open] > summary::before { transform: rotate(90deg); }
-.insp-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.insp-name { font-weight: 560; font-size: 13px; flex: 1; }
+.insp-name {
+  font-weight: 550;
+  font-size: 13px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insp-share {
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+  flex: none;
+}
+.insp-share i { display: block; height: 100%; background: var(--muted); }
+.insp-system .insp-share i { background: var(--insp-system); }
+.insp-dynamic .insp-share i { background: var(--insp-convo); }
 .insp-tok {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
@@ -1155,8 +1124,20 @@ footer {
   background: var(--surface-2);
   border-radius: 999px;
   padding: 1px 8px;
+  flex: none;
 }
-.insp-pct { font-size: 10.5px; color: var(--muted); width: 38px; text-align: right; }
+.insp-cp {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: var(--surface-3);
+  cursor: pointer;
+  flex: none;
+}
+.insp-cp:hover { background: var(--surface-2); color: var(--text); }
 .insp-body {
   margin: 0;
   padding: 10px 12px;
@@ -1168,12 +1149,99 @@ footer {
   word-break: break-word;
   color: var(--text);
   background: var(--surface-3);
-  /* Cap an expanded body to the smaller of 420px / half the viewport so one
-     long section can't dominate a short window — the outer list still scrolls. */
   max-height: min(420px, 50vh);
   overflow-y: auto;
 }
 .insp-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; }
+
+/* ── Directive Editor ─────────────────────── */
+.de-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.de-title { font-weight: 640; font-size: 15px; flex: none; }
+.de-path {
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.de-tabs { display: flex; gap: 6px; padding: 12px 16px 0; flex: 0 0 auto; }
+.de-tabs button {
+  font-size: 12.5px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.de-tabs button:hover { background: var(--surface-2); }
+.de-tabs button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.de-text {
+  margin: 12px 16px 0;
+  flex: 1 1 auto;
+  min-height: 140px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-3);
+  color: var(--text);
+  padding: 11px 12px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.de-text:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
+.de-gen { display: flex; gap: 8px; padding: 10px 16px 0; flex: 0 0 auto; }
+.de-gen input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+.de-gen input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
+.de-gen button { white-space: nowrap; }
+.de-foot { display: flex; align-items: center; gap: 10px; padding: 12px 16px 16px; flex: 0 0 auto; }
+.de-status {
+  flex: 1;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Timeline card 🔍 inspect action ─────────── */
+.task-inspect {
+  margin-left: 6px;
+  flex: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: .5;
+  padding: 2px 5px;
+  border-radius: 6px;
+  transition: opacity .12s ease, background .12s ease;
+}
+.card-task-group:hover .task-inspect { opacity: .8; }
+.task-inspect:hover { opacity: 1; background: var(--hairline-strong); }
+
+/* footer main-prompt inspect button (🔍) */
+#insp-main-btn { font-size: 16px; align-self: flex-end; flex-shrink: 0; }
 
 /* ── Export selection mode ───────────────────── */
 .export-check { display: none; }

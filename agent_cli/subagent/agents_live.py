@@ -609,6 +609,10 @@ class AgentRegistry:
             "author": author,
             "hop": hop,
             "expects_reply": expects_reply,
+            # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
+            # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
+            # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
+            "ts": send_ts,
         }
         if author == "main":
             # 귀속 승계: 이 요청을 만든 런의 USER 들을 요청에 스냅샷 —
@@ -1188,7 +1192,13 @@ class AgentRegistry:
                 query = f"[{author}]: {text}" if author != "main" else text
 
                 renderer.begin_agent_work(
-                    key=tm.key, seq=seq, profile=_disp, message=text
+                    key=tm.key,
+                    seq=seq,
+                    profile=_disp,
+                    message=text,
+                    # 요청 발신 시각을 scope_start(nav_ts)로 실어, 스윔레인
+                    # 요청 화살표가 이 작업 카드로 이동하게 한다.
+                    req_ts=item.get("ts"),
                 )
                 success, output, duration = False, "", 0.0
                 try:

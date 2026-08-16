@@ -686,7 +686,13 @@ class WebRenderer(Renderer):
     # 않으므로 시스템/동적 스냅샷은 계속 teammate key 스코프에 쌓인다.
 
     def begin_agent_work(
-        self, *, key: str, seq: int, profile: str, message: str
+        self,
+        *,
+        key: str,
+        seq: int,
+        profile: str,
+        message: str,
+        req_ts: float | str | None = None,
     ) -> None:
         tid = threading.get_ident()
         task_id = f"{key}#{seq}"
@@ -694,28 +700,33 @@ class WebRenderer(Renderer):
             self._thread_to_task[tid] = task_id
         label = profile or key
         self.set_thread_agent(label)
-        self._emit(
-            "scope_start",
-            {
-                "task_id": task_id,
-                "kind": "run",
-                "label": message,
-                "index": seq,
-                "agent": f"🤝 {label}",
-                # A resident teammate's request is NOT a nested scope of the
-                # caller: the swimlane routes it to that agent's OWN lane by the
-                # ``{key}#{seq}`` task_id. Emitted anyway so every scope_start
-                # has one shape, and so the timeline keeps its card at the root.
-                "parent": "",
-                "depth": 0,
-                # The agent's turns accumulate in agents/<key>/history.jsonl —
-                # ONE continuous file across requests, so the resume replay
-                # slices it by this scope's [start, end] timestamps to put each
-                # request's turns into its own card.
-                "ctx_dir": f"agents/{key}",
-            },
-            persistent=True,
-        )
+        payload = {
+            "task_id": task_id,
+            "kind": "run",
+            "label": message,
+            "index": seq,
+            "agent": f"🤝 {label}",
+            # A resident teammate's request is NOT a nested scope of the
+            # caller: the swimlane routes it to that agent's OWN lane by the
+            # ``{key}#{seq}`` task_id. Emitted anyway so every scope_start
+            # has one shape, and so the timeline keeps its card at the root.
+            "parent": "",
+            "depth": 0,
+            # The agent's turns accumulate in agents/<key>/history.jsonl —
+            # ONE continuous file across requests, so the resume replay
+            # slices it by this scope's [start, end] timestamps to put each
+            # request's turns into its own card.
+            "ctx_dir": f"agents/{key}",
+        }
+        # nav_ts = the originating request's timestamp (the same value the
+        # swimlane user-mark/request arrow carries, via ``agent_message(ts=…)``).
+        # The frontend stamps the card's ``data-nav-ts`` from this so the arrow
+        # navigates here. Baked into the payload (hence into ``scopes.jsonl``), so
+        # it survives resume replay. Sessions recorded before this field lack it
+        # → the arrow falls back to the "no card" notice (as before).
+        if req_ts is not None:
+            payload["nav_ts"] = req_ts
+        self._emit("scope_start", payload, persistent=True)
 
     def end_agent_work(
         self,

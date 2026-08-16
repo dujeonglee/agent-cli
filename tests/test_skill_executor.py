@@ -392,3 +392,62 @@ class TestMainRegistrySlotInheritance:
     def test_slot_empty_unspecified_is_none(self, caps, ctx):
         # 슬롯 미등록(예: headless) — 미지정이어도 None (거부 경로 그대로)
         assert self._run_and_capture(caps, ctx) is None
+
+
+class TestPromptScopeUnification:
+    """Inspector redesign: a skill's prompt snapshot must be keyed under the
+    SAME scope id the timeline card carries (its ``data-task-id``), so clicking
+    🔍 on the skill card resolves ``GET /api/debug/prompt?task_id=<card id>``.
+
+    The scope-opening caller (main.py / loop.skill_invoke) passes ``scope_id``;
+    ``execute_skill`` must then NOT open a second, divergent prompt scope — it
+    registers under the caller's scope. Direct callers (no ``scope_id``) keep the
+    self-managed fallback scope."""
+
+    def _spy_renderer(self):
+        r = MagicMock()
+        r.begin_prompt_scope = MagicMock()
+        r.end_prompt_scope = MagicMock()
+        r.note_scope_ctx = MagicMock()
+        return r
+
+    def _run(self, caps, ctx, *, scope_id):
+        from agent_cli.tools.result import ToolResult as _TR
+
+        skill = _make_skill(name="plan")
+        spy = self._spy_renderer()
+        with (
+            patch("agent_cli.skills.executor.run_loop") as mock_loop,
+            patch("agent_cli.render.get_renderer", return_value=spy),
+        ):
+            mock_loop.return_value = _TR(True, output="ok")
+            execute_skill(
+                skill=skill,
+                arguments="",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="m",
+                ctx=ctx,
+                scope_id=scope_id,
+            )
+        return spy
+
+    def test_caller_scope_is_reused_no_second_scope(self, caps, ctx):
+        # scope_id passed → execute_skill must NOT push its own prompt scope,
+        # but MUST register the skill ctx (under the caller's top scope = card id).
+        spy = self._run(caps, ctx, scope_id="skill-plan-card1")
+        spy.begin_prompt_scope.assert_not_called()
+        spy.end_prompt_scope.assert_not_called()
+        spy.note_scope_ctx.assert_called_once()
+
+    def test_direct_call_opens_fallback_scope(self, caps, ctx):
+        # No scope_id (direct/test caller) → self-managed fallback scope so the
+        # skill is still inspectable independently.
+        spy = self._run(caps, ctx, scope_id="")
+        spy.begin_prompt_scope.assert_called_once()
+        spy.end_prompt_scope.assert_called_once()
+        # begin/end use the SAME minted id (balanced push/pop).
+        assert (
+            spy.begin_prompt_scope.call_args.args[0]
+            == spy.end_prompt_scope.call_args.args[0]
+        )

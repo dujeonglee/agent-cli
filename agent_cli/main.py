@@ -770,6 +770,9 @@ def _dispatch_skill(
             stop_event=stop_event,
             parent_hooks_config=_parent_hooks,
             session_subdir=_skill_dir,
+            # 카드/스냅샷 scope_id 통일 (인스펙터 재설계) — 카드 data-task-id 로
+            # skill 프롬프트가 인스펙션되도록 이미 연 스코프를 재사용.
+            scope_id=_scope_id,
         )
     finally:
         render_pop_depth()

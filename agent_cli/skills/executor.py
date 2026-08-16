@@ -115,6 +115,7 @@ def execute_skill(
     compaction_enabled: bool = True,
     agent_registry=_INHERIT,
     session_subdir: str = "",
+    scope_id: str = "",
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -193,18 +194,30 @@ def execute_skill(
 
     effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)
 
-    # v4.52.0 프롬프트 인스펙터 스코프: skill 은 호출자 스레드에서 중첩
-    # 실행이라(delegate 의 스레드-매핑 미적용) 명시 push — 중첩 루프의
-    # 시스템 스냅샷이 main 스코프를 덮던 동작이 사라지고, skill 이 독립
-    # 칩(+동적 컨텍스트)으로 인스펙터에 잡힌다. CLI(minimal)는 no-op.
+    # 프롬프트 인스펙터 스코프. skill 은 호출자 스레드에서 중첩 실행이라
+    # 시스템 스냅샷/동적 ctx 를 이 스코프에 귀속시킨다.
+    #
+    # ★ scope_id 통일 (인스펙터 재설계): 스코프를 여는 호출자(main.py /
+    # loop.skill_invoke)는 `render_begin_scope(scope_id, "skill", …)` 로 이미
+    # 이 스레드의 prompt-scope 스택에 scope_id 를 push 하고, 종료 시 end_scope 가
+    # pop + 동적 ctx 고정까지 한다. 그 scope_id 가 곧 타임라인 카드의
+    # data-task-id 이자 `GET /api/debug/prompt?task_id=` 의 키다. 따라서 여기서
+    # 별도 id 로 begin_prompt_scope 를 또 push 하면 스냅샷이 카드 id 와 다른
+    # id 에 저장돼 카드 🔍 인스펙션이 ok:false 가 됐다. 호출자가 scope_id 를
+    # 넘겨주면(=스코프를 이미 열었으면) 그 스코프에 note_scope_ctx 로만 등록하고
+    # push/pop 은 호출자에게 맡긴다. 직접 호출/테스트(scope_id 없음)만 자체
+    # 스코프를 열어 폴백한다. CLI(minimal 렌더러)는 전부 no-op.
     import uuid as _uuid
 
     from agent_cli.render import get_renderer as _get_renderer
 
     _renderer = _get_renderer()
-    _scope_id = f"skill-{skill.name or 'skill'}-{_uuid.uuid4().hex[:8]}"
-    _renderer.begin_prompt_scope(_scope_id, label=f"skill:{skill.name or 'skill'}")
+    _owns_scope = not scope_id  # 호출자가 스코프를 안 열었을 때만 자체 관리
+    if _owns_scope:
+        _scope_id = f"skill-{skill.name or 'skill'}-{_uuid.uuid4().hex[:8]}"
+        _renderer.begin_prompt_scope(_scope_id, label=f"skill:{skill.name or 'skill'}")
     if skill_ctx is not None:
+        # 현재 스택 top 스코프에 등록 — scope_id 전달 시 카드 id, 아니면 위 폴백 id.
         _renderer.note_scope_ctx(skill_ctx)
     try:
         loop_result = run_loop(
@@ -241,7 +254,8 @@ def execute_skill(
             compaction_enabled=compaction_enabled,
         )
     finally:
-        _renderer.end_prompt_scope(_scope_id)
+        if _owns_scope:
+            _renderer.end_prompt_scope(_scope_id)
 
     result = loop_result.output if loop_result.success else None
 

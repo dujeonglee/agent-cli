@@ -510,11 +510,30 @@
     const statusEl = el("span", ["task-status"], "starting…");
     const subEl = el("span", ["task-sub"]);
     const meta = el("span", ["task-meta"]);
+    // 🔍 프롬프트 인스펙션 (재설계): 이 agent/skill 스코프의 프롬프트를 연다.
+    // 카드가 이미 data-task-id 를 들고 있어(카드=스냅샷 scope_id 통일) 바로
+    // 조회 가능. 클릭이 카드 접기 토글로 번지지 않게 stopPropagation.
+    const inspectBtn = el("button", ["task-inspect"], "🔍");
+    inspectBtn.type = "button";
+    inspectBtn.title = "프롬프트 인스펙션";
+    inspectBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (window.__openInspector) {
+        const label =
+          kind === "skill"
+            ? taskText
+            : agent
+              ? agent + ": " + taskText
+              : taskText;
+        window.__openInspector(taskId, label, kind || "run");
+      }
+    });
     header.appendChild(chevron);
     header.appendChild(title);
     header.appendChild(subEl);
     header.appendChild(statusEl);
     header.appendChild(meta);
+    header.appendChild(inspectBtn);
 
     const body = el("div", ["task-body"]);
     body.hidden = true; // default collapsed
@@ -1579,7 +1598,7 @@
     // scope it belongs to, so the card opens BEFORE its turns arrive and they
     // land inside it. Skipping it now would be the bug: no card at all, and a
     // swimlane bar offering navigation to something that does not exist.
-    ensureTaskGroup(
+    const grp = ensureTaskGroup(
       d.task_id,
       d.index || 0,
       d.agent || "",
@@ -1587,6 +1606,12 @@
       d.kind || "run",
       d.parent || "",
     );
+    // Resident-agent request cards carry ``nav_ts`` = the originating request's
+    // timestamp (server-provided, matching the swimlane user-mark/request arrow),
+    // so clicking that arrow navigates to this card. Only resident-agent work
+    // spans (begin_agent_work) set it; delegates/skills have no request anchor.
+    if (d.nav_ts != null && grp && grp.card && !grp.card.hasAttribute("data-nav-ts"))
+      stampNavTs(grp.card, d.nav_ts);
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
@@ -2006,21 +2031,16 @@
   });
 })();
 
-// ── Prompt Inspector ─────────────────────────
-// Independent IIFE: fetches /api/debug/prompt on open, renders the system
-// prompt as a token-budget bar + per-section accordions. Store-only on the
-// server side, so opening the drawer is the only thing that costs a request.
+// ── Directive Editor (📝 toolbar) ─────────────────────────
+// Split out of the old Prompt Inspector: this drawer ONLY edits the agent
+// directives (three audience buffers). Prompt VIEWING now lives in the
+// contextual Prompt Inspection drawer, opened from conversation cards.
 (function () {
   "use strict";
 
-  const $btn = document.getElementById("inspector-btn");
-  const $drawer = document.getElementById("inspector");
-  const $backdrop = document.getElementById("inspector-backdrop");
-  const $meta = document.getElementById("insp-meta");
-  const $scopes = document.getElementById("insp-scopes");
-  const $budget = document.getElementById("insp-budget");
-  const $search = document.getElementById("insp-search");
-  const $sections = document.getElementById("insp-sections");
+  const $btn = document.getElementById("directive-btn");
+  const $drawer = document.getElementById("directive-editor");
+  const $backdrop = document.getElementById("directive-backdrop");
   const $dirText = document.getElementById("insp-dir-text");
   const $dirPath = document.getElementById("insp-dir-path");
   const $dirSave = document.getElementById("insp-dir-save");
@@ -2029,201 +2049,10 @@
   const $dirTabs = document.getElementById("insp-dir-tabs");
   const $dirBrief = document.getElementById("insp-dir-brief");
   const $dirGen = document.getElementById("insp-dir-gen");
-  // 💾 save modal
   if (!$btn || !$drawer) return;
 
-  // Which system-prompt scope the drawer is showing: "" = main loop, a
-  // task_id = a delegate sub-agent. Clicking a chip switches scope; the ⚡
-  // button always re-opens on whatever was last selected.
-  let activeScope = "";
-
-  // Distinct, stable hues per section index (works on the light theme).
-  const PALETTE = [
-    "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444",
-    "#8b5cf6", "#14b8a6", "#f97316", "#ec4899", "#64748b",
-    "#84cc16", "#06b6d4",
-  ];
-
-  function esc(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-
-  function fmtTok(n) {
-    return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
-  }
-
-  let lastData = null;
-
-  function render(data) {
-    lastData = data;
-    if (!data.ok) {
-      $meta.textContent = "";
-      $budget.innerHTML = "";
-      $sections.innerHTML =
-        '<div class="insp-empty">No LLM call yet — send a message first.</div>';
-      return;
-    }
-    $meta.textContent =
-      "turn " + data.turn + " · " + fmtTok(data.est_tokens) + " tok · " +
-      (data.total_chars / 1024).toFixed(1) + " KB · " +
-      data.sections.length + " sections";
-
-    const total = Math.max(1, data.est_tokens);
-    $budget.innerHTML = data.sections
-      .map(function (s, i) {
-        const pct = (100 * s.est_tokens) / total;
-        return (
-          '<span style="width:' + Math.max(0.6, pct) + "%;background:" +
-          PALETTE[i % PALETTE.length] + '" title="' + esc(s.name) + " — " +
-          fmtTok(s.est_tokens) + " tok (" + pct.toFixed(1) + '%)"></span>'
-        );
-      })
-      .join("");
-
-    $sections.innerHTML = data.sections
-      .map(function (s, i) {
-        const pct = ((100 * s.est_tokens) / total).toFixed(1);
-        const kind = s.kind || "system";
-        // Divider above the first dynamic section: the static system prompt
-        // ends, the live conversation/observations begin.
-        const prev = i > 0 ? data.sections[i - 1] : null;
-        let divider = "";
-        if (kind === "dynamic" && (!prev || (prev.kind || "system") !== "dynamic")) {
-          divider =
-            '<div class="insp-divider">── Dynamic context (conversation · observations) ──</div>';
-        }
-        return (
-          divider +
-          '<details class="insp-sec insp-' + kind +
-          '" data-name="' + esc(s.name.toLowerCase()) + '">' +
-          "<summary>" +
-          '<span class="insp-dot" style="background:' +
-          PALETTE[i % PALETTE.length] + '"></span>' +
-          '<span class="insp-name">' + esc(s.name) + "</span>" +
-          '<span class="insp-tok">' + fmtTok(s.est_tokens) + " tok</span>" +
-          '<span class="insp-pct">' + pct + "%</span>" +
-          "</summary>" +
-          '<pre class="insp-body">' + esc(s.text) + "</pre>" +
-          "</details>"
-        );
-      })
-      .join("");
-    applyFilter();
-  }
-
-  function applyFilter() {
-    const q = $search.value.trim().toLowerCase();
-    $drawer.querySelectorAll(".insp-sec").forEach(function (el) {
-      if (!q) {
-        el.hidden = false;
-        return;
-      }
-      const name = el.getAttribute("data-name") || "";
-      const body = el.querySelector(".insp-body").textContent.toLowerCase();
-      const hit = name.includes(q) || body.includes(q);
-      el.hidden = !hit;
-      if (hit && body.includes(q) && q.length >= 2) el.open = true;
-    });
-  }
-
-  // ── Scope chip row (Main + delegate sub-agents) ──
-  function renderChips(scopes) {
-    // Always offer Main even if it has no snapshot yet, so the user has a
-    // stable home; agent chips only appear once that agent has a captured
-    // prompt (the server omits scope-less agents).
-    let hasMain = false;
-    const chips = scopes.map(function (s) {
-      if (s.id === "") hasMain = true;
-      const active = s.id === activeScope ? " active" : "";
-      const del = s.main
-        ? ""
-        : '<button class="insp-chip-del" type="button" title="Remove this agent\'s snapshot" data-del="' +
-          esc(s.id) + '">✕</button>';
-      return (
-        '<span class="insp-chip' + active + '" data-scope="' + esc(s.id) + '">' +
-        '<span class="insp-chip-label">' + esc(s.label) + "</span>" +
-        (s.est_tokens
-          ? '<span class="insp-chip-tok">' + fmtTok(s.est_tokens) + "</span>"
-          : "") +
-        del + "</span>"
-      );
-    });
-    if (!hasMain) {
-      const active = activeScope === "" ? " active" : "";
-      chips.unshift(
-        '<span class="insp-chip' + active + '" data-scope=""><span class="insp-chip-label">Main</span></span>'
-      );
-    }
-    $scopes.innerHTML = chips.join("");
-    // If the active scope vanished (e.g. deleted elsewhere), fall back to Main.
-    if (
-      activeScope !== "" &&
-      !scopes.some(function (s) { return s.id === activeScope; })
-    ) {
-      activeScope = "";
-    }
-  }
-
-  function loadScopes() {
-    return fetch("api/debug/prompt/scopes")
-      .then(function (r) { return r.json(); })
-      .then(function (d) { renderChips((d && d.scopes) || []); })
-      .catch(function () { renderChips([]); });
-  }
-
-  function loadPrompt() {
-    const q = activeScope
-      ? "?task_id=" + encodeURIComponent(activeScope)
-      : "";
-    return fetch("api/debug/prompt" + q)
-      .then(function (r) { return r.json(); })
-      .then(render)
-      .catch(function () {
-        $sections.innerHTML =
-          '<div class="insp-empty">Failed to load prompt snapshot.</div>';
-      });
-  }
-
-  function selectScope(id) {
-    if (id === activeScope) return;
-    activeScope = id;
-    // Re-paint active state immediately for snappy feedback, then refetch.
-    $scopes.querySelectorAll(".insp-chip").forEach(function (el) {
-      el.classList.toggle("active", el.getAttribute("data-scope") === id);
-    });
-    loadPrompt();
-  }
-
-  function deleteScope(id) {
-    fetch(
-      "api/debug/prompt?task_id=" + encodeURIComponent(id),
-      { method: "DELETE" }
-    )
-      .then(function () {
-        if (id === activeScope) activeScope = "";
-        return loadScopes();
-      })
-      .then(function () {
-        if (id === activeScope || activeScope === "") loadPrompt();
-      })
-      .catch(function () {});
-  }
-
-  $scopes.addEventListener("click", function (e) {
-    const del = e.target.closest(".insp-chip-del");
-    if (del) {
-      e.stopPropagation();
-      deleteScope(del.getAttribute("data-del"));
-      return;
-    }
-    const chip = e.target.closest(".insp-chip");
-    if (chip) selectScope(chip.getAttribute("data-scope"));
-  });
-
-  // ── Directives editor — 청중 스코프 탭 (5.4.0) ──
-  // 에디터 구조 = 파일 구조: 공통 / ## @main / ## @agents 세 버퍼.
+  // 청중 스코프 탭 (5.4.0): 에디터 구조 = 파일 구조(공통 / ## @main / ## @agents).
   // 분해(GET scopes)·조립(POST scopes)은 서버(Python 파서 단일 출처).
-  // ✨ 생성은 run 엔진 경유 초안 — 활성 탭에 미저장 반영, 검토 후 저장.
   let dirDirty = false; // user typed since last load → don't clobber on refetch
   let dirAudience = "common";
   const dirBuffers = { common: "", main: "", agents: "" };
@@ -2235,11 +2064,13 @@
     if (!$dirTabs) return;
     $dirTabs.querySelectorAll("button").forEach(function (b) {
       const aud = b.getAttribute("data-aud");
-      b.classList.toggle("active", aud === dirAudience);
+      const on = aud === dirAudience;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
       // ● 뱃지 — 내용 있는 탭 표시 (라벨 뒤에 부착/제거)
       const base = b.textContent.replace(/ ●$/, "");
-      b.textContent = (aud === dirAudience ? base : base) +
-        ((aud === dirAudience ? $dirText.value : dirBuffers[aud]).trim() ? " ●" : "");
+      b.textContent =
+        base + ((on ? $dirText.value : dirBuffers[aud]).trim() ? " ●" : "");
     });
   }
   function selectDirTab(aud) {
@@ -2284,17 +2115,13 @@
       .then(function (r) {
         if (!r.ok) throw new Error(r.status);
         dirDirty = false;
-        // Update-when-applied: don't optimistically refresh the prompt view —
-        // it shows the CURRENTLY-applied directive and refreshes via broadcast
-        // when the loop actually rebuilds (next LLM call).
         $dirStatus.textContent = "✓ Saved — applies on the next LLM call";
       })
       .catch(function () { $dirStatus.textContent = "✗ Save failed"; })
       .finally(function () { $dirSave.disabled = false; });
   }
   // Cancel: discard unsaved edits by re-loading the file's current content back
-  // into the buffers. Clear dirDirty FIRST so loadDirectives (which bails while
-  // dirty to protect in-progress typing) actually overwrites, then note it.
+  // into the buffers. Clear dirDirty FIRST so loadDirectives overwrites.
   function cancelDirectives() {
     dirDirty = false;
     loadDirectives().then(function () {
@@ -2304,19 +2131,17 @@
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
 
-  // ✨ 생성 — brief → 요청 시점 탭의 directive 초안 (기존 내용은 병합/개정).
-  // 별도 agent-cli run 프로세스라 **탭별 동시 생성** 가능 (5.6.0): 결과는
-  // 요청한 탭의 버퍼로 들어가고, 생성 중 다른 탭에서 또 ✨ 를 눌러도 된다.
-  // 같은 탭의 이중 생성만 막는다 (버퍼 레이스).
+  // ✨ 생성 — brief → 요청 시점 탭의 directive 초안 (기존 내용 병합/개정).
+  // 별도 run 프로세스라 탭별 동시 생성 가능; 같은 탭 이중 생성만 막는다.
   const dirGenPending = { common: false, main: false, agents: false };
-
   function dirGenLabel() {
     if (!$dirGen) return;
     const busy = Object.keys(dirGenPending).filter(function (k) { return dirGenPending[k]; });
     $dirGen.disabled = dirGenPending[dirAudience];
-    $dirGen.textContent = busy.length ? "✨ Generate (" + busy.length + " running…)" : "✨ Generate";
+    $dirGen.textContent = busy.length
+      ? "✨ Generate (" + busy.length + " running…)"
+      : "✨ Generate";
   }
-
   function generateDirective() {
     const brief = ($dirBrief.value || "").trim();
     if (!brief) {
@@ -2333,11 +2158,7 @@
     fetch("api/directives/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        audience: aud,
-        brief: brief,
-        current: dirBuffers[aud],
-      }),
+      body: JSON.stringify({ audience: aud, brief: brief, current: dirBuffers[aud] }),
     })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error((e && e.detail) || r.status); });
@@ -2346,8 +2167,8 @@
       .then(function (d) {
         if (d && d.content) {
           dirBuffers[aud] = d.content;
-          if (dirAudience === aud) $dirText.value = d.content; // 보고 있는 탭이면 즉시
-          dirDirty = true; // unsaved — review, then 저장 or 취소
+          if (dirAudience === aud) $dirText.value = d.content;
+          dirDirty = true; // unsaved — review, then save/cancel
           $dirStatus.textContent = "✨ [" + aud + "] draft applied — review then save";
           dirUpdateTabs();
         }
@@ -2363,31 +2184,16 @@
     $dirBrief.addEventListener("keydown", function (e) {
       if (e.key === "Enter") generateDirective();
     });
-
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
       $dirStatus.textContent = "● Unsaved";
       dirUpdateTabs();
     });
-  // Directives changed on disk (a save) OR were just applied by the loop:
-  // re-sync the editor and refresh the prompt view so its Directives section
-  // reflects the currently-applied directive (updates when applied, not on save).
-  window.addEventListener("agentcli:directives-changed", function () {
-    if ($drawer.classList.contains("open")) {
-      loadDirectives();
-      loadPrompt();
-    }
-  });
-  window.addEventListener("agentcli:prompt-changed", function () {
-    if ($drawer.classList.contains("open")) {
-      loadPrompt();
-    }
-  });
 
-  window.addEventListener("agentcli:memory-changed", function () {
-    // Memory index changed → refresh the prompt view only (no editor).
-    if ($drawer.classList.contains("open")) loadPrompt();
+  // Directives changed on disk (a save elsewhere) → re-sync the editor.
+  window.addEventListener("agentcli:directives-changed", function () {
+    if ($drawer.classList.contains("open")) loadDirectives();
   });
 
   function open() {
@@ -2397,18 +2203,181 @@
       $drawer.classList.add("open");
     });
     $drawer.setAttribute("aria-hidden", "false");
-    loadScopes().then(loadPrompt);
     loadDirectives();
-    loadAllAxes();
+  }
+  function close() {
+    $backdrop.classList.remove("open");
+    $drawer.classList.remove("open");
+    $drawer.setAttribute("aria-hidden", "true");
+    setTimeout(function () { $backdrop.hidden = true; }, 260);
+  }
+  $btn.addEventListener("click", function () {
+    if ($drawer.classList.contains("open")) close();
+    else open();
+  });
+  const $deClose = document.getElementById("de-close");
+  if ($deClose) $deClose.addEventListener("click", close);
+  $backdrop.addEventListener("click", close);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && $drawer.classList.contains("open")) close();
+  });
+})();
+
+// ── Prompt Inspection (contextual) ─────────────────────────
+// Opened from a conversation agent/skill card (🔍) or the main-prompt footer
+// button, SCOPED to what was clicked (no scope chips). Fetches
+// /api/debug/prompt?task_id= on open; renders system + dynamic sections with
+// semantic colors, group headers, per-section share bar + copy.
+(function () {
+  "use strict";
+
+  const $drawer = document.getElementById("inspector");
+  const $backdrop = document.getElementById("inspector-backdrop");
+  const $tag = document.getElementById("insp-scope-tag");
+  const $name = document.getElementById("insp-scope-name");
+  const $meta = document.getElementById("insp-meta");
+  const $search = document.getElementById("insp-search");
+  const $sections = document.getElementById("insp-sections");
+  const $collapse = document.getElementById("insp-collapse");
+  const $copyall = document.getElementById("insp-copyall");
+  const $mainBtn = document.getElementById("insp-main-btn");
+  if (!$drawer) return;
+
+  let activeScope = ""; // "" = main loop; a task_id = an agent/skill scope
+  let lastData = null;
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+  function fmtTok(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
   }
 
-  // Live chip refresh: when a delegate sub-agent spins up while the drawer is
-  // open, surface its chip without forcing a reopen (the main timeline IIFE
-  // dispatches this on ``delegate_task_start``).
-  window.addEventListener("agent-cli:scopes-changed", function () {
-    if ($drawer.classList.contains("open")) loadScopes();
+  function copyText(text, btn) {
+    const flash = function () {
+      if (!btn) return;
+      const old = btn.textContent;
+      btn.textContent = "✓";
+      setTimeout(function () { btn.textContent = old; }, 1000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash).catch(function () {});
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); flash(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  }
+
+  function render(data) {
+    lastData = data;
+    if (!data || !data.ok) {
+      $meta.textContent = "";
+      $sections.innerHTML =
+        '<div class="insp-empty">아직 LLM 호출이 없습니다 — 먼저 메시지를 보내세요.</div>';
+      return;
+    }
+    $meta.textContent =
+      "turn " + data.turn + " · " + fmtTok(data.est_tokens) + " tok · " +
+      data.sections.length + " 섹션";
+    const total = Math.max(1, data.est_tokens);
+    let html = "";
+    let lastKind = null;
+    data.sections.forEach(function (s) {
+      const kind = s.kind === "dynamic" ? "dynamic" : "system";
+      if (kind !== lastKind) {
+        html +=
+          '<div class="insp-group">' +
+          (kind === "dynamic" ? "Conversation · observations" : "System prompt") +
+          "</div>";
+        lastKind = kind;
+      }
+      const pct = (100 * s.est_tokens) / total;
+      html +=
+        '<details class="insp-sec insp-' + kind +
+        '" data-name="' + esc(s.name.toLowerCase()) + '">' +
+        "<summary>" +
+        '<span class="insp-name">' + esc(s.name) + "</span>" +
+        '<span class="insp-share"><i style="width:' +
+        Math.max(3, pct).toFixed(0) + '%"></i></span>' +
+        '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+        '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+        "</summary>" +
+        '<pre class="insp-body">' + esc(s.text) + "</pre>" +
+        "</details>";
+    });
+    $sections.innerHTML = html;
+    $collapse.textContent = "⤢ 접기";
+    applyFilter();
+  }
+
+  function applyFilter() {
+    const q = $search.value.trim().toLowerCase();
+    $sections.querySelectorAll(".insp-sec").forEach(function (el) {
+      if (!q) {
+        el.hidden = false;
+        return;
+      }
+      const name = el.getAttribute("data-name") || "";
+      const body = el.querySelector(".insp-body").textContent.toLowerCase();
+      const hit = name.includes(q) || body.includes(q);
+      el.hidden = !hit;
+      if (hit && body.includes(q) && q.length >= 2) el.open = true;
+    });
+  }
+
+  // Per-section copy — stop the click from toggling the <details>.
+  $sections.addEventListener("click", function (e) {
+    const cp = e.target.closest(".insp-cp");
+    if (!cp) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const det = cp.closest(".insp-sec");
+    const body = det && det.querySelector(".insp-body");
+    if (body) copyText(body.textContent, cp);
   });
 
+  $collapse.addEventListener("click", function () {
+    const secs = $sections.querySelectorAll(".insp-sec");
+    const anyOpen = Array.prototype.some.call(secs, function (d) { return d.open; });
+    secs.forEach(function (d) { d.open = !anyOpen; });
+    $collapse.textContent = anyOpen ? "⤢ 펼치기" : "⤢ 접기";
+  });
+
+  $copyall.addEventListener("click", function () {
+    if (!lastData || !lastData.ok) return;
+    const all = lastData.sections
+      .map(function (s) { return "### " + s.name + "\n" + s.text; })
+      .join("\n\n");
+    copyText(all, $copyall);
+  });
+
+  function loadPrompt() {
+    const q = activeScope ? "?task_id=" + encodeURIComponent(activeScope) : "";
+    return fetch("api/debug/prompt" + q)
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () {
+        $sections.innerHTML =
+          '<div class="insp-empty">프롬프트 스냅샷을 불러오지 못했습니다.</div>';
+      });
+  }
+
+  function open() {
+    $backdrop.hidden = false;
+    requestAnimationFrame(function () {
+      $backdrop.classList.add("open");
+      $drawer.classList.add("open");
+    });
+    $drawer.setAttribute("aria-hidden", "false");
+  }
   function close() {
     $backdrop.classList.remove("open");
     $drawer.classList.remove("open");
@@ -2416,16 +2385,43 @@
     setTimeout(function () { $backdrop.hidden = true; }, 260);
   }
 
-  $btn.addEventListener("click", function () {
-    if ($drawer.classList.contains("open")) close();
-    else open();
-  });
+  // Public entry — open scoped to a conversation agent/skill (or the main loop).
+  // scope: "" = main; a task_id = that card's scope. kind: "main"|"run"|"skill".
+  window.__openInspector = function (scope, name, kind) {
+    // Resident-agent work-span cards carry a per-invocation id `<agentId>#<n>`,
+    // but the prompt snapshot is keyed by the BASE agent id (`<agentId>`). One-
+    // shot delegates (`delegate-…`) and skills (`skill-…`) have no `#` suffix, so
+    // stripping a trailing `#<n>` normalizes the resident case and is a no-op for
+    // the rest. (Verified live: `agt-x#1` card → snapshot under `agt-x`.)
+    activeScope = (scope || "").replace(/#\d+$/, "");
+    const tag = kind === "skill" ? "skill" : !scope || kind === "main" ? "main" : "agent";
+    $tag.textContent = tag;
+    $tag.className = "insp-scope-tag tag-" + tag;
+    $name.textContent = name || (tag === "main" ? "Main" : scope);
+    $search.value = "";
+    $sections.innerHTML = '<div class="insp-empty">불러오는 중…</div>';
+    open();
+    loadPrompt();
+  };
+
+  if ($mainBtn)
+    $mainBtn.addEventListener("click", function () {
+      window.__openInspector("", "Main", "main");
+    });
   document.getElementById("insp-close").addEventListener("click", close);
   $backdrop.addEventListener("click", close);
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && $drawer.classList.contains("open")) close();
   });
   $search.addEventListener("input", applyFilter);
+
+  // Live refresh of the currently-open scope (loop rebuilt the prompt / memory).
+  window.addEventListener("agentcli:prompt-changed", function () {
+    if ($drawer.classList.contains("open")) loadPrompt();
+  });
+  window.addEventListener("agentcli:memory-changed", function () {
+    if ($drawer.classList.contains("open")) loadPrompt();
+  });
 })();
 
 // ── Export feature (self-contained IIFE) ───────────────────────────────

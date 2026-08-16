@@ -141,6 +141,9 @@ def _handle_run_skill(
             compaction_enabled=compaction_enabled,
             agent_registry=agent_registry,
             session_subdir=_skill_dir,
+            # 카드/스냅샷 scope_id 통일 — execute_skill 이 별도 스코프를 또
+            # 열지 않고 이 스코프에 귀속(카드 data-task-id 로 인스펙션됨).
+            scope_id=_scope_id,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

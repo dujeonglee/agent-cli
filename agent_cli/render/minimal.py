@@ -1048,7 +1048,13 @@ class MinimalRenderer(Renderer):
     # 📨 도착 알림·agents/<key>/ 세션 기록으로만 표면화 (P1 결정).
 
     def begin_agent_work(
-        self, *, key: str, seq: int, profile: str, message: str
+        self,
+        *,
+        key: str,
+        seq: int,
+        profile: str,
+        message: str,
+        req_ts: float | str | None = None,
     ) -> None:
         self.start_capture()
         self.set_thread_agent(profile or key)

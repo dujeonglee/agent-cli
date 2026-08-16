@@ -286,7 +286,13 @@ class Renderer(ABC):
         return ""
 
     def begin_agent_work(
-        self, *, key: str, seq: int, profile: str, message: str
+        self,
+        *,
+        key: str,
+        seq: int,
+        profile: str,
+        message: str,
+        req_ts: float | str | None = None,
     ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
 
