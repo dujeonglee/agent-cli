@@ -1728,6 +1728,12 @@
     });
     if (mode === "overview") ovRender();
   }
+  // 다른 IIFE(예: Export)에서 타임라인을 확실히 보이게 할 때 쓰는 훅.
+  // Export 선택 체크박스는 #messages 카드에 붙는데, 개요/흐름에선 #messages 가
+  // 닫힌 전문 드로어 안이라 안 보인다 → export 진입 시 전문으로 전환.
+  window.__showTimeline = function () {
+    setViewMode("detail");
+  };
 
   // ── 개요(GLANCE) 뷰 렌더 (단계 2) ──────────────────────────
   // presentation-only: 기존 SSE 이벤트를 재사용해 [누적 쿼리 → 응답 hero] 블록을
@@ -3028,6 +3034,9 @@
   function enter() {
     exportMode = true;
     selected.clear();
+    // 선택 체크박스는 #messages 카드에 붙는다 — 개요/흐름 모드에선 #messages 가
+    // 닫힌 전문 드로어 안이라 보이지 않으므로 타임라인을 띄운다(없으면 no-op).
+    if (window.__showTimeline) window.__showTimeline();
     document.body.classList.add("export-mode");
     $bar.hidden = false;
     hideJiraForm();

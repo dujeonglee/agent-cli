@@ -654,6 +654,13 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#export-bar[hidden]" in css
         assert "#export-jira-form[hidden]" in css
+        # v8.13.2: 선택 체크박스는 #messages 카드에 붙는데 개요/흐름에선 #messages
+        # 가 닫힌 전문 드로어 안이라 안 보인다 → export 진입(enter)이 타임라인을
+        # 띄워야 한다(안 그러면 '뭘 고를지 안 나옴'). 훅 배선 회귀 가드.
+        assert "window.__showTimeline" in js  # 메인 IIFE 가 훅 노출
+        assert (
+            "if (window.__showTimeline) window.__showTimeline();" in js
+        )  # export enter 가 호출
 
     def test_compaction_slider_wired(self, server_and_client):
         # 5.13 compaction 슬라이더 배선 계약: index.html 요소 + app.js 가
