@@ -19,7 +19,7 @@
 1. [ ] **레벨 컨트롤 + 뷰 모드**: `개요·흐름·전문` 세그먼트. 흐름=기존 #team-view(무변경), 전문=기존 timeline drawer, 개요=신규 #overview 컨테이너. 스윔레인 바 클릭 시 전문으로. (기본은 흐름 유지 → 개요 완성 후 기본 전환)
 2. [ ] **개요 화면 본체**: ambient 스트립 + 응답 블록(누적 쿼리 → hero) + **hero 라이브 스트리밍**(stream_chunk main scope) + 대화창(모드 배지). 완성 후 기본 뷰=개요.
 3. [ ] **다음 턴 대기 큐 + 전달 상태**: 큐 스트립(⏳[nick], 내 것 ✕) + ✓주입/승격/✕취소, 승격 시 새 응답 블록 형성.
-4. [ ] **선택→고정 상세 패널(Tier 2)**: 흐름/개요에서 요소 클릭 → 고정 패널(메시지 전체·스팬·관찰). 툴팁/드로어/인스펙터 통합.
+4. [x] **선택→고정 상세 패널(Tier 2)**: 흐름/개요에서 요소 클릭 → 고정 패널(메시지 전체·스팬·관찰). 툴팁/드로어/인스펙터 통합.
 5. [ ] **FLOW 밀도**: 메시지 ×N 클러스터 · 상단 클리핑 수정.
 
 ## 테스트 전략 (프런트 회귀)
@@ -64,4 +64,20 @@
   - ⚠️ **관찰(사전존재, 이 변경과 무관)**: 닫힌 `#timeline-drawer`(position:absolute·translateX off-canvas)의
     폭넓은 `.card pre.code` 코드가 문서 scrollWidth 를 늘려 페이지 가로 스크롤 발생. 조상에 overflow-x:hidden 없음.
     `.ov-tx` 스코프 밖 → 이번 마크다운 변경의 회귀 아님. 단계 5(클리핑)에서 처리 후보 or 1줄 즉시 수정 가능(사용자 판단).
-- (다음) 단계 4: 선택→고정 상세 패널(Tier 2). 단계 5: FLOW ×N 클러스터·상단 클리핑.
+- **단계 4 완료** (코드+유닛+회귀+라이브): 선택→고정 상세 패널(Tier 2).
+  - index.html: `#detail-panel`(dp-tag/title/meta/body/timeline/inspect/close) — 드로어 옆 우측 레일.
+  - app.js: `dpClassifyCard`(export classify 미러) + `dpPinCard`(흐름 카드 해석→추출) + `dpPinOverview`
+    (개요 블록 hero HTML 재사용) + `dpFill`/`dpClose`. hover=툴팁 유지, **click=이 패널 고정**
+    (teamHost 클릭이 드로어 즉시 열기 대신 `dpPinCard`), 버튼=Tier-3 승격([▤ 전체 타임라인]→드로어+
+    `expandAncestors`→`scrollTimelineTo`, [🔍]→`__openInspector`, task_id 있을 때만). `setViewMode` 가
+    맥락 종속 패널을 뷰 전환 시 닫음. Esc 닫기. 본문은 카드의 이미-렌더(escapeAndFormat) HTML 재사용
+    (스코프=task-body 첫 .final/.obs-body 초점, 메시지=.bubble/.final, 관찰=.obs-body).
+  - style.css: `.detail-panel`(드로어보다 좁은 슬라이드인) + `.dp-*` + `.dp-body` 마크다운 — 전부 토큰.
+  - 테스트: `test_detail_panel_wired`(StaticUI, 기본 스위트) 신규. 클릭 계약이 바뀐 브라우저 e2e 5개
+    (`test_click_bar_*`·`test_click_navigates_to_top`·`test_clicking_nested_bar`·`test_reply_arrow_click`)를
+    새 흐름(클릭→패널, `#dp-timeline`→드로어)으로 갱신. `test_swimlane_click_expands_ancestor_chain`은
+    펼침→스크롤 순서 보장이 `#dp-timeline` 핸들러로 이동한 것에 맞춰 갱신. **전체 3364 passed**, ruff, node OK.
+  - **라이브**: 흐름 바 클릭→패널 고정(드로어 닫힘 유지)·[전체 타임라인]→드로어·[🔍]→인스펙터·
+    개요 헤더 클릭→응답 패널(마크다운)·Esc 닫기. ⚠️ 브라우저 e2e(playwright, gated)는 이 환경에서
+    미실행 — 갱신만 함. 사용자 측 `AGENT_CLI_BROWSER_TESTS=1 pytest tests/browser/test_team_swimlane.py` 권장.
+- (다음) 단계 5: FLOW ×N 클러스터·상단 클리핑.

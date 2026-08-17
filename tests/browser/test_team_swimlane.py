@@ -124,10 +124,12 @@ class TestTeamSwimlane:
         page.wait_for_selector(".tv-tip:not([hidden])", timeout=3000)
         assert "orchestrate" in page.locator(".tv-tip").inner_text()
 
-    def test_click_bar_navigates_timeline(self, stack, page):
-        """The swimlane is a navigator: clicking a work bar flashes the matching
-        timeline card (shared task_id). The w1 work bar carries data-task-id
-        "w1#0", and the timeline has a .card-task-group with the same id."""
+    def test_click_bar_pins_panel_then_escalates_to_timeline(self, stack, page):
+        """v8.13.0: the swimlane is a navigator, but clicking a work bar now PINS
+        the Tier-2 detail panel (focused view of that one span) instead of opening
+        the full timeline directly. The panel's [▤ 전체 타임라인] button escalates
+        to Tier-3: opens the drawer and flashes the matching card (shared task_id
+        "w1#0")."""
         page.goto(stack.url)
         stack.emit_ready()
         _drive_team(stack)
@@ -136,11 +138,15 @@ class TestTeamSwimlane:
         assert _wait(lambda: bar.count() >= 1)
         card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
         assert _wait(lambda: card.count() == 1)
-        # Clicking must OPEN the detail drawer (the timeline is on-demand now)…
+        # Click bar → Tier-2 detail panel pins; the drawer stays closed.
         bar.first.click()
+        panel = page.locator("#detail-panel")
+        assert _wait(lambda: "open" in (panel.get_attribute("class") or ""))
         drawer = page.locator("#timeline-drawer")
+        assert "open" not in (drawer.get_attribute("class") or "")
+        # [▤ 전체 타임라인] → Tier-3: drawer opens and the matching card flashes.
+        page.click("#dp-timeline")
         assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
-        # …and flash the matching card.
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
     def test_click_bar_jumps_instantly_and_survives_live_events(self, stack, page):
@@ -184,7 +190,10 @@ class TestTeamSwimlane:
             "() => { const m=document.getElementById('messages'); m.scrollTop=m.scrollHeight; }"
         )
         assert not page.evaluate(in_view)  # target is off the top
+        # v8.13.0: bar click pins the Tier-2 panel; [▤ 전체 타임라인] escalates and
+        # performs the instant scroll. Both are synchronous.
         page.locator(f'#team-view .tv-span[data-task-id="{target}"]').first.click()
+        page.click("#dp-timeline")
         # INSTANT: scrollTop has already moved up synchronously (a smooth scroll
         # would still be at the bottom here, then get cancelled by the appends).
         assert page.evaluate(moved_up)
@@ -226,7 +235,9 @@ class TestTeamSwimlane:
             " b.appendChild(d); } const m=document.getElementById('messages');"
             " m.scrollTop=m.scrollHeight; }"
         )
+        # v8.13.0: bar click pins the panel; [▤ 전체 타임라인] escalates + scrolls.
         page.locator('#team-view .tv-span[data-task-id="w1#5"]').first.click()
+        page.click("#dp-timeline")
         # The card's HEADER (top) must sit at/near the top of the viewport — not
         # scrolled past it (which a center-align of an 800px card would do).
         header_at_top = (
@@ -621,7 +632,10 @@ class TestScopeNestingRender:
         nested_card = page.locator('.card-task-group[data-task-id="run-1"]')
         # Parent collapsed by default → the nested card is not visible yet.
         assert not nested_card.is_visible()
+        # v8.13.0: nested bar click pins the panel; [▤ 전체 타임라인] escalates,
+        # expands the ancestor chain and reveals+flashes the nested card.
         page.locator("#team-view .tv-scope-run").first.click()
+        page.click("#dp-timeline")
         assert _wait(lambda: nested_card.is_visible()), "ancestor chain not expanded"
         assert _wait(lambda: "tv-nav-hl" in (nested_card.get_attribute("class") or ""))
 
@@ -673,7 +687,9 @@ class TestUserLaneAndDock:
             page.locator("#team-view .tv-msg-label", has_text="✓ Bob·두정").count() == 1
         )
 
-    def test_reply_arrow_click_opens_drawer_at_final_card(self, stack, page):
+    def test_reply_arrow_click_pins_panel_then_opens_drawer_at_final_card(
+        self, stack, page
+    ):
         page.goto(stack.url)
         stack.emit_ready()
         r = stack.renderer
@@ -687,6 +703,11 @@ class TestUserLaneAndDock:
             "#team-view .tv-msg-g:has(.tv-reply) .tv-msg-hit[data-nav-ts]",
             "el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))",
         )
+        # v8.13.0: reply-arrow click pins the Tier-2 panel first; [▤ 전체 타임라인]
+        # escalates to the drawer + flashes the final card.
+        panel = page.locator("#detail-panel")
+        assert _wait(lambda: "open" in (panel.get_attribute("class") or ""))
+        page.click("#dp-timeline")
         drawer = page.locator("#timeline-drawer")
         assert _wait(lambda: "open" in (drawer.get_attribute("class") or ""))
         card = page.locator("#messages .card-assistant[data-nav-ts]")

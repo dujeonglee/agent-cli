@@ -1712,6 +1712,7 @@
   // 그대로 감싸고(회귀 없음), 개요는 team-view를 대체하는 요약 뷰(단계 2에서 채움).
   function setViewMode(mode) {
     viewMode = mode;
+    if (typeof dpClose === "function") dpClose(); // Tier-2 패널은 맥락 종속 — 뷰 전환 시 닫기
     if ($overview) $overview.hidden = mode !== "overview";
     if ($teamView) $teamView.style.display = mode === "overview" ? "none" : "";
     setDrawer(mode === "detail");
@@ -1979,6 +1980,146 @@
     });
   }
 
+  // ── 선택→고정 상세 패널 (Tier 2, v8.13.0) ──────────────────────────
+  // 흐름/개요 요소 클릭 → 그 요소만 집중해 우측 패널에 고정. 기존 카드/모델의
+  // 이미-렌더된(escapeAndFormat) HTML 을 추출해 재사용 — presentation-only,
+  // 서버·데이터·SSE 무변경. hover=툴팁(순간)·click=이 패널(고정)·버튼=Tier-3 승격.
+  const $dp = document.getElementById("detail-panel");
+  const $dpTag = document.getElementById("dp-tag");
+  const $dpTitle = document.getElementById("dp-title");
+  const $dpMeta = document.getElementById("dp-meta");
+  const $dpBody = document.getElementById("dp-body");
+  const $dpTimeline = document.getElementById("dp-timeline");
+  const $dpInspect = document.getElementById("dp-inspect");
+  const DP_TAGS = {
+    user: "사용자",
+    main: "응답",
+    skill: "스킬",
+    agent: "에이전트",
+    obs: "관찰",
+    error: "오류",
+  };
+  let dpNav = null; // Tier-3 승격 타겟 {card, taskId, label, kind, overview}
+
+  // 카드 → {tag, label, status?, srcSel?} (export IIFE 의 classify 미러 · 메인 스코프판).
+  function dpClassifyCard(card) {
+    const cl = card.classList;
+    if (cl.contains("card-user")) return { tag: "user", label: "사용자", srcSel: ".bubble" };
+    if (cl.contains("card-assistant")) return { tag: "main", label: "응답", srcSel: ".final" };
+    if (cl.contains("card-observation")) {
+      const h = card.querySelector(".obs-head");
+      return { tag: "obs", label: h ? h.innerText.trim() : "관찰", srcSel: ".obs-body" };
+    }
+    if (cl.contains("card-error")) return { tag: "error", label: "오류", srcSel: null };
+    if (cl.contains("card-task-group")) {
+      const t = card.querySelector(".task-title");
+      const st = card.querySelector(".task-status");
+      return {
+        tag: card.dataset.kind === "skill" ? "skill" : "agent",
+        label: t ? t.innerText.trim() : "스코프",
+        status: st ? st.innerText.trim() : "",
+        srcSel: null,
+      };
+    }
+    return { tag: "main", label: "카드", srcSel: null };
+  }
+
+  function dpSetOpen(open) {
+    $dp.hidden = !open;
+    $dp.classList.toggle("open", open);
+    $dp.setAttribute("aria-hidden", open ? "false" : "true");
+    if (!open) dpNav = null;
+  }
+  function dpClose() {
+    dpSetOpen(false);
+  }
+
+  // 공통 채움: tag/label/meta/bodyHTML + Tier-3 승격 타겟(nav).
+  function dpFill(tag, label, meta, bodyHtml, nav) {
+    $dpTag.textContent = DP_TAGS[tag] || tag;
+    $dpTag.className = "dp-tag tag-" + tag;
+    $dpTitle.textContent = label || "";
+    $dpMeta.textContent = meta || "";
+    $dpMeta.hidden = !meta;
+    $dpBody.innerHTML = bodyHtml || '<div class="dp-empty">표시할 내용이 없습니다.</div>';
+    dpNav = nav || null;
+    // 🔍 는 프롬프트 스냅샷이 있는 스코프(task_id)에서만.
+    $dpInspect.hidden = !(dpNav && dpNav.taskId);
+    dpSetOpen(true);
+    $dpBody.scrollTop = 0;
+  }
+
+  // 흐름 스윔레인 요소(카드 해석 완료) → 패널. meta = data-tip(label · 소요).
+  function dpPinCard(card, meta, taskId) {
+    const info = dpClassifyCard(card);
+    let bodyHtml;
+    if (info.tag === "skill" || info.tag === "agent") {
+      // 스코프: 상태 + task-body 안 첫 .final/.obs-body(주 결과)만 초점 복제
+      // (전체 중첩 트리는 [전체 타임라인] 로 승격).
+      const res = card.querySelector(".task-body .final, .task-body .obs-body");
+      const statusLine = info.status
+        ? '<div class="dp-status">' + escapeHtml(info.status) + "</div>"
+        : "";
+      bodyHtml =
+        statusLine +
+        (res
+          ? '<div class="dp-result">' + res.innerHTML + "</div>"
+          : '<div class="dp-empty">아직 결과가 없습니다 (실행 중이거나 관찰 미도착).</div>');
+    } else if (info.srcSel) {
+      const src = card.querySelector(info.srcSel);
+      bodyHtml = src ? src.innerHTML : "";
+    } else {
+      bodyHtml = escapeAndFormat(card.innerText || "");
+    }
+    dpFill(info.tag, info.label, meta, bodyHtml, {
+      card: card,
+      taskId: taskId || null,
+      label: info.label,
+      kind: card.dataset.kind || "run",
+    });
+  }
+
+  // 개요 응답 블록 → 패널(이미 렌더된 hero HTML 재사용 · 카드 불요).
+  function dpPinOverview(block) {
+    const tx = block.querySelector(".ov-tx");
+    const who = block.querySelector(".ov-he .who");
+    const label = who && who.textContent.trim() ? "응답 " + who.textContent.trim() : "응답";
+    dpFill("main", label, "", tx ? tx.innerHTML : "", { card: null, taskId: null, kind: "main", overview: true });
+  }
+
+  // Tier-3 승격: [▤ 전체 타임라인] → 드로어 열고 카드로 이동(개요/카드없음은 최신 하단).
+  $dpTimeline.addEventListener("click", function () {
+    const nav = dpNav;
+    dpClose();
+    setViewMode("detail");
+    if (nav && nav.card) {
+      if (nav.taskId) expandAncestors(nav.taskId);
+      scrollTimelineTo(nav.card);
+    } else {
+      scrollToBottom();
+    }
+  });
+  // [🔍 프롬프트] → 기존 인스펙터(스코프 프롬프트+동적 컨텍스트).
+  $dpInspect.addEventListener("click", function () {
+    const nav = dpNav;
+    if (!nav || !nav.taskId || !window.__openInspector) return;
+    dpClose();
+    window.__openInspector(nav.taskId, nav.label, nav.kind);
+  });
+  document.getElementById("dp-close").addEventListener("click", dpClose);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && $dp.classList.contains("open")) dpClose();
+  });
+  // 개요 클릭 → 응답 블록 헤더(.ov-he)에서 패널 고정(본문 텍스트 선택 방해 없이).
+  if ($overview) {
+    $overview.addEventListener("click", function (e) {
+      const he = e.target.closest(".ov-he");
+      if (!he) return;
+      const block = he.closest(".ov-block");
+      if (block) dpPinOverview(block);
+    });
+  }
+
   function _setupTeamView() {
     const teamHost = document.getElementById("team-view");
     if (!teamHost || !window.TeamView) return;
@@ -2035,9 +2176,10 @@
         showNavMiss(e.clientX, e.clientY);
         return;
       }
-      setViewMode("detail");
-      if (tid) expandAncestors(tid);
-      scrollTimelineTo(card);
+      // v8.13.0: 바로 전문 드로어를 여는 대신 Tier-2 고정 패널에 이 요소를 집중
+      // 표시(점진적 공개). 패널의 [▤ 전체 타임라인] 이 종전 드로어+스크롤 동작을 승계.
+      const tip = (t.getAttribute && t.getAttribute("data-tip")) || "";
+      dpPinCard(card, tip, tid || null);
     });
   }
   _setupTeamView();
