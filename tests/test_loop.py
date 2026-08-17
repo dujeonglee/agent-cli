@@ -3513,6 +3513,15 @@ class TestMessageInjection:
             m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
         ]
         assert "[Otter]: also focus on X" in users
+        # v8.14.2: a system notice is injected immediately BEFORE the queued
+        # request so the model addresses every outstanding request instead of
+        # dropping the earlier unanswered one (starter "do Y").
+        from agent_cli.constants import QUEUED_REQUEST_NOTICE
+
+        assert QUEUED_REQUEST_NOTICE in users
+        assert users.index(QUEUED_REQUEST_NOTICE) < users.index(
+            "[Otter]: also focus on X"
+        )
 
     def test_starter_and_injected_share_route_message(self, caps, tmp_path):
         # Symmetry: the run-STARTER text is NOT chat-injected when it is a
@@ -3907,6 +3916,16 @@ class TestRunAuthors:
             assert stub.author_sets[-1] == ["Bob", "두정"]
         finally:
             render.set_renderer(prev)
+
+    def test_queued_request_notice_is_filtered_from_resume(self):
+        # The steering notice is harness-injected, not a user query — its prefix
+        # must be registered so resume/history previews strip it (v8.14.2).
+        from agent_cli.constants import QUEUED_REQUEST_NOTICE
+        from agent_cli.wire_formats import all_system_user_prefixes
+
+        assert any(
+            QUEUED_REQUEST_NOTICE.startswith(p) for p in all_system_user_prefixes()
+        )
 
     def test_injected_routed_command_does_not_attribute(self, caps):
         # A routed command (/sh, @agent…) executes — it is not an ask the

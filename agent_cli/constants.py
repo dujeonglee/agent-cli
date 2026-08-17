@@ -58,6 +58,20 @@ OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 # ``agent_cli.wire_formats.all_system_user_prefixes()``.
 INTERRUPT_NOTICE = "⚡ User interrupted. Waiting for new instructions."
 
+# Injected as a role=user notice immediately BEFORE a mid-run queued user
+# request (web steering, ``LoopState._inject_queued_messages``). Without it the
+# model tends to answer only the most-recent user turn and silently drop an
+# earlier request it had not answered yet (e.g. it was still doing a tool call
+# for it when the next request was queued). Its prefix is registered in
+# ``wire_formats._FORMAT_AGNOSTIC_USER_PREFIXES`` so resume/history filtering
+# excludes the notice from previews.
+QUEUED_REQUEST_NOTICE = (
+    "⚡ Another user request arrived while you were mid-task. Address EVERY "
+    "outstanding request in this run — including any earlier one you have not "
+    "answered yet — instead of replying only to the most recent and skipping "
+    "the rest."
+)
+
 # Shown as an observation when a response hits the model's output-token
 # limit (stop_reason == "length"). The truncated action is NOT executed
 # — the loop records this so the model retries with a smaller unit.

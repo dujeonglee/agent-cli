@@ -188,6 +188,7 @@ def resolve_wire_format(
 # are unioned at consume time.
 _FORMAT_AGNOSTIC_USER_PREFIXES: tuple[str, ...] = (
     "⚡ User interrupted.",
+    "⚡ Another user request arrived",
     "You have called",
     "You were asked to:",
 )

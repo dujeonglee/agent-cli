@@ -10,6 +10,7 @@ from agent_cli.constants import (
     AGENT_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
+    QUEUED_REQUEST_NOTICE,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
@@ -669,6 +670,14 @@ class AgentLoop:
             if self.ctx:
                 self.messages = self.ctx.get_messages()
             return
+        # Plain-chat steering injection: prepend a system notice so the model
+        # addresses EVERY outstanding request instead of answering only this
+        # (latest) one and dropping an earlier request it had not finished. The
+        # notice rides as its own role=user turn (INTERRUPT_NOTICE pattern) — the
+        # real request stays unpolluted, and its prefix is filtered from resume
+        # previews via ``all_system_user_prefixes``.
+        if self.ctx:
+            self.ctx.add({"role": "user", "content": QUEUED_REQUEST_NOTICE})
         self._add_user_message(text, author)
 
     def _deliver_agent_mail(self) -> None:

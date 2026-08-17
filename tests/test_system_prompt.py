@@ -649,6 +649,19 @@ class TestBuildSystemPrompt:
         # (b) leave pre-existing dead code alone unless asked.
         assert "pre-existing" in flat or "without asking" in flat
 
+    def test_task_guidelines_require_addressing_all_pending_requests(self):
+        """When a second request is queued mid-task the model must address every
+        outstanding request, not answer only the latest and drop an earlier
+        unanswered one (v8.14.2). Guidance sits in Task Guidelines next to the
+        multi-user fairness rule."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        flat = re.sub(r"\s+", " ", guidelines).lower()
+        assert "outstanding request" in flat
+        assert "most recent" in flat
+
     def test_no_recursive_invocation_in_guidelines(self):
         """Recursive-self-invocation guard moved from Response Format
         (where it was an outlier — a behavior rule, not a format rule)

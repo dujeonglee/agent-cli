@@ -100,6 +100,7 @@ TASK_GUIDELINES = """\
 - If an approach fails, diagnose the cause before switching tactics.
 - Do not introduce new security vulnerabilities.
 - All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.
+- When more than one user request is pending, or a new request arrives mid-task, address every outstanding request — do not answer only the most recent and silently skip an earlier one you have not yet completed.
 - Do not invoke agent-cli recursively via shell — that re-enters this same loop.
 - Report outcomes honestly — if verification failed or was not run, say so explicitly."""
 
