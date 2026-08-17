@@ -1462,7 +1462,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* overflow-x:hidden clips the closed #timeline-drawer (position:absolute,
    translateX off-canvas right) so its wide content can't add page-level
    horizontal scroll. Vertical unaffected: #overview owns its own scroll. */
-#content-split { display: flex; flex: 1; min-height: 0; position: relative; overflow-x: hidden; }
+#content-split { display: flex; flex: 1; min-height: 0; position: relative; overflow-x: hidden; --drawer-w: min(56%, 640px); }
 /* Team view container — the vertical scroll surface (time flows DOWN). */
 #team-view {
   flex: 1; overflow: auto; padding: 0 12px 20px; min-height: 0; min-width: 0;
@@ -1524,7 +1524,7 @@ body.mode-overview #dock { display: none !important; }
    card geometry is measurable the moment a click-nav opens it. */
 #timeline-drawer {
   position: absolute; top: 0; right: 0; bottom: 0;
-  width: min(56%, 640px);
+  width: var(--drawer-w, min(56%, 640px));
   display: flex; flex-direction: column; z-index: 5;
   background: var(--surface, var(--bg)); border-left: 1px solid var(--border-2);
   box-shadow: -8px 0 24px var(--shadow);
@@ -1532,6 +1532,12 @@ body.mode-overview #dock { display: none !important; }
 }
 #timeline-drawer.open { transform: translateX(0); }
 @media (prefers-reduced-motion: reduce) { #timeline-drawer { transition: none; } }
+/* 전문 드로어는 base 위에 뜨는 사이드 패널(v8.14.0). 개요는 드로어가 열리면 폭을
+   내줘 겹치지 않고 나란히 보인다(개요 보면서 전문 확인). 흐름(스윔레인)은 기존처럼
+   드로어가 위로 오버레이 — 실측·계약 유지. */
+#overview { transition: margin-right .18s ease; }
+body.drawer-open #overview:not([hidden]) { margin-right: var(--drawer-w); }
+@media (prefers-reduced-motion: reduce) { #overview { transition: none; } }
 .td-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--border); background: var(--surface-3, var(--surface));
@@ -1539,9 +1545,10 @@ body.mode-overview #dock { display: none !important; }
 }
 .td-head .td-title { flex: 1; font-weight: 550; }
 #timeline-drawer > main#messages { flex: 1; min-height: 0; }
-/* Narrow screens: the drawer covers the full width. */
+/* Narrow screens: the drawer covers the full width (no side-by-side room). */
 @media (max-width: 780px) {
   #timeline-drawer { width: 100%; }
+  body.drawer-open #overview:not([hidden]) { margin-right: 0; }
 }
 
 /* 선택→고정 상세 패널 (Tier 2, v8.13.0) — 흐름/개요 요소 클릭 시 그 요소만

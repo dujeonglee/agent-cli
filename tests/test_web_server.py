@@ -454,6 +454,15 @@ class TestStaticUI:
         # active-state + overview styling
         assert '.vt-tab[aria-selected="true"]' in css
         assert "#overview[hidden]" in css
+        # v8.14.0: 전문(timeline)은 개요/흐름과 배타적 탭이 아니라 그 위에 함께 뜨는
+        # 사이드 오버레이. base(개요/흐름) 전환과 드로어 열기가 분리되고, 개요는
+        # 드로어가 열리면 폭을 내줘 나란히 보인다(겹침 없음).
+        assert "function setBaseView(" in js  # base 뷰(개요/흐름) 전환
+        assert "function syncTabs(" in js  # 전문=오버레이라 base 와 동시 활성 가능
+        assert "setDrawer(!drawerOpen)" in js  # 전문 탭 = 오버레이 토글
+        assert 'classList.toggle("drawer-open"' in js  # 개요 폭 양보 트리거
+        assert "body.drawer-open #overview" in css  # 개요 side-by-side 리플로우
+        assert "--drawer-w" in css  # 드로어 폭 = 개요 margin 단일 출처
 
     def test_queue_delivery_state_wired(self, server_and_client):
         """관측 UI 단계 3 배선: 큐 항목이 조용히 사라지지 않고 전달 상태

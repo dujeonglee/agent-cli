@@ -84,3 +84,12 @@
 - **죽은 컨트롤 수리** (사용자 지적): 개요 응답 블록의 `⧉ 복사`·`▤ 전체 대화` 가 핸들러 없는 span 이었음.
   - app.js: `.ov-act` 버튼화 + 위임 핸들러 — `ovCopyBlock`(클립보드; secure-context 아닌 LAN http 대비 execCommand 폴백 + "✓ 복사됨" 플래시) · `ovOpenTimeline`(드로어 열고 블록 nav_ts 카드로 점프). `ovOnFinal` 이 `navTs=d.ts` 캡처, `ovBlockHtml` 이 블록에 `data-nav-ts` 부여(개요 상세패널 [전체 타임라인] 도 정확 점프). id 기준 전수 감사 결과 다른 죽은 버튼 없음(refs=0 은 전부 CSS 레이아웃 래퍼).
   - style.css: `.ov-act`(+hover) — 토큰.
+- **export 개요 노출 수리 (v8.13.2, 사용자 지적)**: 개요에서 📤 눌러도 선택지가 안 나옴 — 체크박스는 `#messages`
+  카드에 붙는데 개요/흐름에선 그게 닫힌 드로어 안이라 안 보임. Export IIFE `enter()` 가 `window.__showTimeline`
+  (메인 IIFE 훅) 호출로 타임라인을 띄운 뒤 체크박스 부착. test_export_ui_wired 확장.
+- **개요+전문 side-by-side (v8.14.0, 사용자 요청)**: "개요에서 바로 전문 사이드를 띄울 순 없나" — 드로어는 이미
+  우측 절대위치 오버레이라 결합만 풀면 됨(소규모). `setViewMode`→`setBaseView`(개요↔흐름)+`setDrawer`(전문
+  오버레이)+`syncTabs` 로 분리. 개요는 `body.drawer-open` 시 `margin-right:var(--drawer-w)` 로 폭을 내줘 겹침
+  없이 나란히(개요 요약+상세 대화 동시). 전문 탭=토글, td-close=오버레이만 닫기(base 유지). __showTimeline 도
+  `setDrawer(true)`. 라이브(스크린샷) 검증: 개요 왼쪽 + 전문 오른쪽 나란히 OK. ⚠️ 자동화 ref 클릭이 click 을
+  2회 디스패치해 토글 상쇄되는 현상 — 사람/합성 1회 클릭은 정상(afterOneClick=true 확인). test_level_control_wired 확장.

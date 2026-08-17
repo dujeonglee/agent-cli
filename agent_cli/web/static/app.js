@@ -1697,42 +1697,59 @@
   const $teamView = document.getElementById("team-view");
   // Level control (progressive disclosure). 흐름=swimlane, 전문=timeline drawer,
   // 개요=summary view. 개요 뷰 완성(단계 2) 전까지 기본은 흐름 — 회귀 안전.
-  let viewMode = "flow";
+  let viewMode = "flow"; // base 뷰: overview | flow (전문 타임라인은 이 위에 뜨는 오버레이)
+  let drawerOpen = false; // 전문 드로어 오버레이 상태 — base 와 독립(개요/흐름 어디 위에도)
+
+  // 레벨 컨트롤 탭 상태 반영. 개요/흐름은 배타적 base, 전문은 그 위에 함께 뜨는
+  // 오버레이 토글이라 base 와 동시에 활성일 수 있다(개요 보면서 전문 사이드 열기).
+  function syncTabs() {
+    if ($overviewBtn)
+      $overviewBtn.setAttribute("aria-selected", viewMode === "overview" ? "true" : "false");
+    if ($flowBtn) $flowBtn.setAttribute("aria-selected", viewMode === "flow" ? "true" : "false");
+    if ($detailBtn) {
+      $detailBtn.setAttribute("aria-selected", drawerOpen ? "true" : "false");
+      $detailBtn.setAttribute("aria-pressed", drawerOpen ? "true" : "false");
+    }
+  }
 
   function setDrawer(open) {
+    drawerOpen = open;
     $drawer.classList.toggle("open", open);
     $drawer.setAttribute("aria-hidden", open ? "false" : "true");
-    if ($detailBtn) $detailBtn.setAttribute("aria-pressed", open ? "true" : "false");
+    // base(개요/흐름) 옆으로 붙는 사이드 패널 — 개요는 이 클래스로 폭을 내줘 겹침 방지.
+    document.body.classList.toggle("drawer-open", open);
+    syncTabs();
     // Re-pin the bottom on open: scrollTop writes while the drawer was shut
     // may have landed on stale geometry.
     if (open && autoScrollEnabled) scrollToBottom();
   }
 
-  // Single entry for the level control. 흐름/전문은 기존 team-view/drawer 동작을
-  // 그대로 감싸고(회귀 없음), 개요는 team-view를 대체하는 요약 뷰(단계 2에서 채움).
-  function setViewMode(mode) {
+  // base 뷰 전환(개요 ↔ 흐름). 전문 드로어는 base 위에 뜨는 독립 오버레이라 여기서
+  // 닫지 않는다 — 개요를 보면서 전문 사이드를 함께 열어둘 수 있다.
+  function setBaseView(mode) {
     viewMode = mode;
-    if (typeof dpClose === "function") dpClose(); // Tier-2 패널은 맥락 종속 — 뷰 전환 시 닫기
+    if (typeof dpClose === "function") dpClose(); // Tier-2 패널은 맥락 종속 — base 전환 시 닫기
     if ($overview) $overview.hidden = mode !== "overview";
     if ($teamView) $teamView.style.display = mode === "overview" ? "none" : "";
-    setDrawer(mode === "detail");
     // 개요 모드에서는 dock(기존 최신응답 스트립)을 CSS로 숨긴다 — 개요의 응답
     // 블록 hero 가 대체하므로 중복 방지(dock 의 hidden 로직과 충돌 없이).
     document.body.classList.toggle("mode-overview", mode === "overview");
-    [
-      ["overview", $overviewBtn],
-      ["flow", $flowBtn],
-      ["detail", $detailBtn],
-    ].forEach(function (p) {
-      if (p[1]) p[1].setAttribute("aria-selected", p[0] === mode ? "true" : "false");
-    });
+    syncTabs();
     if (mode === "overview") ovRender();
   }
-  // 다른 IIFE(예: Export)에서 타임라인을 확실히 보이게 할 때 쓰는 훅.
-  // Export 선택 체크박스는 #messages 카드에 붙는데, 개요/흐름에선 #messages 가
-  // 닫힌 전문 드로어 안이라 안 보인다 → export 진입 시 전문으로 전환.
+
+  // 하위호환 단일 진입점. 'detail' = 현재 base 위에 타임라인 오버레이를 연다(더 이상
+  // base 를 바꾸지 않음 → 개요에서 열어도 개요가 유지되고 전문이 옆에 뜬다).
+  function setViewMode(mode) {
+    if (mode === "detail") {
+      setDrawer(true);
+      return;
+    }
+    setBaseView(mode);
+  }
+  // 다른 IIFE(예: Export)에서 타임라인을 확실히 보이게 할 때 쓰는 훅 — base 유지, 오버레이만 연다.
   window.__showTimeline = function () {
-    setViewMode("detail");
+    setDrawer(true);
   };
 
   // ── 개요(GLANCE) 뷰 렌더 (단계 2) ──────────────────────────
@@ -2209,12 +2226,12 @@
       $flowBtn.addEventListener("click", function () { setViewMode("flow"); });
     if ($detailBtn)
       $detailBtn.addEventListener("click", function () {
-        setViewMode(viewMode === "detail" ? "flow" : "detail");
+        setDrawer(!drawerOpen); // 전문 = base 위 오버레이 토글(개요/흐름 유지)
       });
     const tdClose = document.getElementById("td-close");
     if (tdClose)
       tdClose.addEventListener("click", function () {
-        setViewMode("flow");
+        setDrawer(false); // 오버레이만 닫고 현재 base(개요/흐름) 유지
       });
 
     // Click a swimlane bar / arrow / user mark → open the drawer and scroll
