@@ -1405,6 +1405,7 @@
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("agent_roster", d);
     document.dispatchEvent(new CustomEvent("agentcli:tm-roster", { detail: d }));
+    ovOnRoster(d); // 개요: 에이전트 상태 dot
   });
 
   es.addEventListener("agent_msg", function (e) {
@@ -1492,6 +1493,7 @@
       document.getElementById("ctx-pct").textContent = "ctx " + pct + "%";
       document.getElementById("ctx-gauge-fill").style.width = pct + "%";
       chip.hidden = false;
+      ovOnCtx(pct); // 개요: ambient ctx%
     }
   });
 
@@ -1501,6 +1503,8 @@
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
     if (window.TeamView) TeamView.ingest("user_message", d);
+    ovOnUserMsg(d); // 개요: 누적 쿼리
+    qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
   });
 
   es.addEventListener("assistant_turn", function (e) {
@@ -1513,6 +1517,7 @@
     if (!d.task_id && d.final !== undefined) {
       if (window.TeamView) TeamView.ingest("assistant_turn", d);
       updateDock(d);
+      ovOnFinal(d); // 개요: 응답 블록 확정
     }
   });
 
@@ -1571,6 +1576,7 @@
     }
     ensureStreamingCard(d.task_id);
     updateStreamingCard(d.task_id);
+    ovOnStream(d); // 개요: hero 라이브 스트리밍(메인 스코프)
   });
 
   es.addEventListener("stream_end", function () {
@@ -1615,6 +1621,7 @@
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
+    ovOnScopeStart(d); // 개요: ambient 스킬 상태
     // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
     // if it's open, so a new sub-agent's chip appears live.
     window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
@@ -1629,6 +1636,7 @@
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_end", d);
     noteScopeEnd(d.task_id);
+    ovOnScopeEnd(d); // 개요: 스킬 종료
     // A replayed scope whose turns are not in this session's history closes
     // EMPTY (an old session recorded before turns carried their scope, or a
     // sub-agent whose turns live in its own context). Say why, rather than
@@ -1683,6 +1691,13 @@
   // on-demand drawer, response dock = latest answer. ──
   const $drawer = document.getElementById("timeline-drawer");
   const $detailBtn = document.getElementById("vt-detail-toggle");
+  const $overviewBtn = document.getElementById("vt-overview");
+  const $flowBtn = document.getElementById("vt-flow");
+  const $overview = document.getElementById("overview");
+  const $teamView = document.getElementById("team-view");
+  // Level control (progressive disclosure). 흐름=swimlane, 전문=timeline drawer,
+  // 개요=summary view. 개요 뷰 완성(단계 2) 전까지 기본은 흐름 — 회귀 안전.
+  let viewMode = "flow";
 
   function setDrawer(open) {
     $drawer.classList.toggle("open", open);
@@ -1691,6 +1706,179 @@
     // Re-pin the bottom on open: scrollTop writes while the drawer was shut
     // may have landed on stale geometry.
     if (open && autoScrollEnabled) scrollToBottom();
+  }
+
+  // Single entry for the level control. 흐름/전문은 기존 team-view/drawer 동작을
+  // 그대로 감싸고(회귀 없음), 개요는 team-view를 대체하는 요약 뷰(단계 2에서 채움).
+  function setViewMode(mode) {
+    viewMode = mode;
+    if ($overview) $overview.hidden = mode !== "overview";
+    if ($teamView) $teamView.style.display = mode === "overview" ? "none" : "";
+    setDrawer(mode === "detail");
+    // 개요 모드에서는 dock(기존 최신응답 스트립)을 CSS로 숨긴다 — 개요의 응답
+    // 블록 hero 가 대체하므로 중복 방지(dock 의 hidden 로직과 충돌 없이).
+    document.body.classList.toggle("mode-overview", mode === "overview");
+    [
+      ["overview", $overviewBtn],
+      ["flow", $flowBtn],
+      ["detail", $detailBtn],
+    ].forEach(function (p) {
+      if (p[1]) p[1].setAttribute("aria-selected", p[0] === mode ? "true" : "false");
+    });
+    if (mode === "overview") ovRender();
+  }
+
+  // ── 개요(GLANCE) 뷰 렌더 (단계 2) ──────────────────────────
+  // presentation-only: 기존 SSE 이벤트를 재사용해 [누적 쿼리 → 응답 hero] 블록을
+  // 그린다. 서버/데이터/로직 무변경. 개요가 활성일 때만 DOM 갱신(그 외엔 모델만).
+  var ovDone = []; // 완료된 메인 응답 블록 (최근 몇 개 유지)
+  var ovLive = null; // 현재 스트리밍/직전 블록 {queries,text,status,answers}
+  var ovPending = { queries: [] }; // 직전 final 이후 누적 사용자 쿼리
+  var ovRoster = []; // agent_roster
+  var ovSkills = {}; // 열린 skill scope: task_id → label
+  var ovCtxPct = null;
+
+  function ovClock(ts) {
+    var ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
+    if (!ms || isNaN(ms)) return "";
+    var d = new Date(ms);
+    return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  function ovAmbient() {
+    var dots = ovRoster
+      .map(function (a) {
+        var s = a.state;
+        var c = s === "busy" ? "b" : s === "waiting_ask" ? "w" : s === "dead" ? "x" : "i";
+        return '<span class="ov-dot ' + c + '" title="' +
+          escapeHtml((a.profile || a.name || a.key || "") + " · " + s) + '"></span>';
+      })
+      .join("");
+    var sk = Object.keys(ovSkills);
+    var skHtml = sk.length
+      ? '<span class="ov-a sk">🪄 ' + escapeHtml(ovSkills[sk[sk.length - 1]]) + " 실행 중</span>"
+      : "";
+    var ctxHtml = ovCtxPct != null ? '<span class="ov-a">🧮 ctx ' + ovCtxPct + "%</span>" : "";
+    var model = ((document.getElementById("info") || {}).textContent || "").trim();
+    var mdHtml = model ? '<span class="ov-a">◈ ' + escapeHtml(model) + "</span>" : "";
+    var viewers = ((document.getElementById("viewers") || {}).textContent || "").trim();
+    var vwHtml = viewers ? '<span class="ov-a">' + escapeHtml(viewers) + "</span>" : "";
+    return (
+      '<div class="ov-ambient">' + skHtml +
+      (dots ? '<span class="ov-a">' + dots + "</span>" : "") +
+      ctxHtml + vwHtml + mdHtml + "</div>"
+    );
+  }
+  function ovBlockHtml(b, isHero) {
+    var q =
+      b.queries && b.queries.length
+        ? '<div class="ov-qb"><div class="ov-qh">📥 이 응답의 요청 · ' + b.queries.length + "건</div>" +
+          b.queries
+            .map(function (x) {
+              return '<div class="ov-qr"><span class="w">👤 [' + escapeHtml(x.who) + "]</span> " +
+                escapeHtml(x.t) + (x.tm ? '<span class="tm">' + x.tm + "</span>" : "") + "</div>";
+            })
+            .join("") +
+          "</div>"
+        : "";
+    var st =
+      b.status === "gen"
+        ? '<span class="ov-st gen"><span class="ov-pulse"></span> 생성 중</span>'
+        : b.status === "wait"
+          ? '<span class="ov-st wait">⚪ 대기</span>'
+          : '<span class="ov-st done">✓ 완료</span>';
+    var who = b.answers && b.answers.length ? "[" + b.answers.map(escapeHtml).join(", ") + "]" : "";
+    // 완료 = 앱 마크다운 렌더러(타임라인 .final 과 동일: 제목·목록·코드블록·표·강조).
+    // 스트리밍 중엔 불완전 마크다운 방지 위해 평문 + caret (pre-wrap 이 개행 유지).
+    var txt =
+      b.status === "gen"
+        ? escapeHtml(b.text || "") + '<span class="ov-caret"></span>'
+        : escapeAndFormat(b.text || "");
+    var acts =
+      b.status === "done"
+        ? '<div class="ov-acts"><span>⧉ 복사</span><span>▤ 전체 대화</span></div>'
+        : "";
+    return (
+      '<div class="ov-block ' + (isHero ? "hero" : "past") + '">' + q +
+      '<div class="ov-hero"><div class="ov-he"><span class="lab">응답</span>main → ' +
+      '<span class="who">' + who + "</span>" + st + "</div>" +
+      '<div class="ov-tx">' + txt + "</div>" + acts + "</div></div>"
+    );
+  }
+  function ovRender() {
+    if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
+    var blocks = ovDone.slice(-3);
+    var tail = ovLive
+      ? ovLive
+      : ovPending.queries.length
+        ? { queries: ovPending.queries, text: "", status: "wait", answers: [] }
+        : null;
+    var all = blocks.slice();
+    if (tail) all.push(tail);
+    var html = ovAmbient();
+    if (!all.length) {
+      html += '<div class="ov-placeholder">아직 응답이 없습니다 — 아래에 메시지를 입력하세요.</div>';
+    } else {
+      all.forEach(function (b, i) {
+        html += ovBlockHtml(b, i === all.length - 1);
+      });
+    }
+    $overview.innerHTML = html;
+    $overview.scrollTop = $overview.scrollHeight;
+  }
+  // 이벤트 훅 (아래 es 핸들러에서 호출)
+  function ovOnUserMsg(d) {
+    // 본문에 이미 박힌 "[닉네임]: " 접두는 제거(who 라벨과 중복 방지).
+    var t = (d.content || "").replace(/^\[[^\]]+\]:\s*/, "");
+    ovPending.queries.push({ who: d.author || "사용자", t: t, tm: ovClock(d.ts) });
+    ovRender();
+  }
+  function ovOnStream(d) {
+    if (d.task_id) return; // 메인 스코프만 hero 로
+    if (!ovLive) {
+      ovLive = { queries: ovPending.queries, text: "", status: "gen", answers: [] };
+      ovPending = { queries: [] };
+    }
+    ovLive.text += d.text || "";
+    ovRender();
+  }
+  function ovOnFinal(d) {
+    if (ovLive) {
+      ovLive.text = d.final;
+      ovLive.answers = d.answers || [];
+      ovLive.status = "done";
+      ovDone.push(ovLive);
+      ovLive = null;
+    } else {
+      ovDone.push({
+        queries: ovPending.queries,
+        text: d.final,
+        status: "done",
+        answers: d.answers || [],
+      });
+      ovPending = { queries: [] };
+    }
+    if (ovDone.length > 6) ovDone = ovDone.slice(-6);
+    ovRender();
+  }
+  function ovOnRoster(d) {
+    ovRoster = (d && d.roster) || [];
+    ovRender();
+  }
+  function ovOnCtx(pct) {
+    ovCtxPct = pct;
+    ovRender();
+  }
+  function ovOnScopeStart(d) {
+    if (d.kind === "skill") {
+      ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
+      ovRender();
+    }
+  }
+  function ovOnScopeEnd(d) {
+    if (ovSkills[d.task_id]) {
+      delete ovSkills[d.task_id];
+      ovRender();
+    }
   }
 
   /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
@@ -1784,7 +1972,7 @@
     // Dock body click = jump to this answer's card in the drawer (same
     // gesture as clicking the reply arrow in the swimlane).
     document.getElementById("d-text").addEventListener("click", function () {
-      setDrawer(true);
+      setViewMode("detail");
       if (!dockNavTs) return;
       const card = $messages.querySelector('[data-nav-ts="' + dockNavTs + '"]');
       if (card) scrollTimelineTo(card);
@@ -1803,14 +1991,22 @@
     } catch (_e) {}
     TeamView.setActive(true);
 
+    // 기본 뷰 = 개요(GLANCE) — progressive disclosure 기본값(단계 2). 흐름/전문은
+    // 레벨 컨트롤로 전환. (스윔레인·타임라인 동작은 그대로 보존.)
+    setViewMode("overview");
+
+    if ($overviewBtn)
+      $overviewBtn.addEventListener("click", function () { setViewMode("overview"); });
+    if ($flowBtn)
+      $flowBtn.addEventListener("click", function () { setViewMode("flow"); });
     if ($detailBtn)
       $detailBtn.addEventListener("click", function () {
-        setDrawer(!$drawer.classList.contains("open"));
+        setViewMode(viewMode === "detail" ? "flow" : "detail");
       });
     const tdClose = document.getElementById("td-close");
     if (tdClose)
       tdClose.addEventListener("click", function () {
-        setDrawer(false);
+        setViewMode("flow");
       });
 
     // Click a swimlane bar / arrow / user mark → open the drawer and scroll
@@ -1839,7 +2035,7 @@
         showNavMiss(e.clientX, e.clientY);
         return;
       }
-      setDrawer(true);
+      setViewMode("detail");
       if (tid) expandAncestors(tid);
       scrollTimelineTo(card);
     });
@@ -1998,16 +2194,34 @@
     });
   }
 
-  // ── Pending message queue (live) ───────
+  // ── Pending message queue (live) + 전달 상태 ───────
   // Messages queued while the worker is busy; injected one-per-turn-boundary.
   // Each viewer can cancel their OWN still-pending items.
+  //
+  // 조용히 사라지는 대신 "전달됨" 을 보여준다(단계 3): 큐를 떠난 항목은
+  // ⏳ → ✓ 주입됨(내 것=✓ 내 요청 반영됨) 또는 ✕ 취소됨 영수증으로 잠깐 남았다
+  // 사라진다. 주입/취소 판정은 기존 이벤트로 추론(로직 불변): 큐에서 빠진 항목의
+  // 텍스트가 곧 user_message 로 재방출되면 주입(그리고 개요의 다음 응답 블록
+  // 요청으로 자동 승격), ~1.4s 내 매칭이 없으면 취소. 내가 ✕ 누른 건 즉시 취소.
   const $queueList = document.getElementById("queue-list");
-  es.addEventListener("queue", function (e) {
+  let qPrevById = {}; // 직전 pending: id → item
+  const qLeaving = {}; // id → {item, state:'wait'|'injected'|'cancelled', _timer}
+  const qCancelledByMe = {}; // id → true (내가 ✕)
+  let qPending = [];
+
+  function qScheduleRemove(id) {
+    setTimeout(function () {
+      delete qLeaving[id];
+      delete qCancelledByMe[id];
+      qRender();
+    }, 1800);
+  }
+  function qRender() {
     if (!$queueList) return;
-    const pending = JSON.parse(e.data).pending || [];
+    const leaving = Object.keys(qLeaving);
     $queueList.innerHTML = "";
-    $queueList.hidden = pending.length === 0;
-    pending.forEach(function (it) {
+    $queueList.hidden = qPending.length + leaving.length === 0;
+    qPending.forEach(function (it) {
       const row = el("div", ["queue-item"]);
       const txt = el("span", ["queue-text"]);
       txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
@@ -2018,6 +2232,7 @@
         x.textContent = "✕";
         x.title = "Cancel this queued message";
         x.addEventListener("click", function () {
+          qCancelledByMe[it.id] = true; // 로컬 확정 — 다음 queue 이벤트서 취소 영수증
           fetch("api/queue/cancel", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2028,6 +2243,71 @@
       }
       $queueList.appendChild(row);
     });
+    leaving.forEach(function (id) {
+      const lv = qLeaving[id];
+      const cancelled = lv.state === "cancelled";
+      const mine = lv.item.conn_id === myConnId;
+      const row = el("div", ["queue-item", cancelled ? "q-cancelled" : "q-injected"]);
+      const txt = el("span", ["queue-text"]);
+      txt.textContent = (cancelled ? "✕" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
+      row.appendChild(txt);
+      const st = el("span", ["queue-state"]);
+      st.textContent = cancelled
+        ? "취소됨"
+        : mine
+          ? "✓ 내 요청 반영됨"
+          : "주입됨 · 다음 답변에 반영";
+      row.appendChild(st);
+      $queueList.appendChild(row);
+    });
+  }
+  function qOnUserMsg(d) {
+    // 큐를 떠나 대기 중인 항목이 user_message 로 재방출 → 주입 확정.
+    const c = d.content || "";
+    Object.keys(qLeaving).forEach(function (id) {
+      const lv = qLeaving[id];
+      if (
+        lv.state === "wait" &&
+        (c === lv.item.text || c.indexOf(lv.item.text) >= 0 || lv.item.text.indexOf(c) >= 0)
+      ) {
+        if (lv._timer) clearTimeout(lv._timer);
+        lv.state = "injected";
+        qRender();
+        qScheduleRemove(id);
+      }
+    });
+  }
+  es.addEventListener("queue", function (e) {
+    if (!$queueList) return;
+    const pending = JSON.parse(e.data).pending || [];
+    const newIds = {};
+    pending.forEach(function (it) {
+      newIds[it.id] = true;
+    });
+    // pending 에서 빠진 항목 → 영수증(즉시 취소 or 판정 대기)
+    Object.keys(qPrevById).forEach(function (id) {
+      if (newIds[id] || qLeaving[id]) return;
+      const item = qPrevById[id];
+      if (qCancelledByMe[id]) {
+        qLeaving[id] = { item: item, state: "cancelled" };
+        qScheduleRemove(id);
+      } else {
+        qLeaving[id] = { item: item, state: "wait" };
+        qLeaving[id]._timer = setTimeout(function () {
+          if (qLeaving[id] && qLeaving[id].state === "wait") {
+            qLeaving[id].state = "cancelled";
+            qRender();
+            qScheduleRemove(id);
+          }
+        }, 1400);
+      }
+    });
+    qPending = pending;
+    qPrevById = {};
+    pending.forEach(function (it) {
+      qPrevById[it.id] = it;
+    });
+    qRender();
   });
 })();
 

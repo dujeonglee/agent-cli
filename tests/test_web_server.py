@@ -433,6 +433,45 @@ class TestStaticUI:
         assert "static/app.js" in body
         assert "static/style.css" in body
 
+    def test_level_control_wired(self, server_and_client):
+        """관측 UI 재설계 단계 1 배선 (동작은 브라우저 검증): 레벨 컨트롤
+        3세그(개요·흐름·전문) + #overview 컨테이너 + setViewMode 스위칭.
+        흐름=team-view, 전문=timeline drawer 는 기존 동작을 그대로 감싼다."""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # 3-segment level control + overview container present
+        for el_id in ("vt-overview", "vt-flow", "vt-detail-toggle"):
+            assert 'id="' + el_id + '"' in html, el_id
+        assert 'id="overview"' in html
+        assert "개요" in html and "흐름" in html and "전문" in html
+        # single switching entry, wired to all three tabs
+        assert "function setViewMode(" in js
+        assert 'setViewMode("overview")' in js
+        assert 'setViewMode("flow")' in js
+        assert 'setViewMode("detail")' in js
+        # active-state + overview styling
+        assert '.vt-tab[aria-selected="true"]' in css
+        assert "#overview[hidden]" in css
+
+    def test_queue_delivery_state_wired(self, server_and_client):
+        """관측 UI 단계 3 배선: 큐 항목이 조용히 사라지지 않고 전달 상태
+        영수증(✓ 주입됨 / ✕ 취소됨)을 보인다. 주입 판정은 user_message 매칭
+        (기존 이벤트 추론), 승격은 개요 블록으로 자동."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # leaving-item lifecycle + injected/cancelled classification
+        assert "qLeaving" in js
+        assert "qOnUserMsg" in js  # user_message → injected 판정
+        assert "qCancelledByMe" in js  # 내가 ✕ → 즉시 취소 영수증
+        assert '"injected"' in js and '"cancelled"' in js
+        # receipt styling present
+        assert ".queue-item.q-injected" in css
+        assert ".queue-item.q-cancelled" in css
+        assert ".queue-state" in css
+
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
         양쪽 토글 + sticky 헤더."""
