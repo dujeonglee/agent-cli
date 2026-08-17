@@ -1796,10 +1796,12 @@
         : escapeAndFormat(b.text || "");
     var acts =
       b.status === "done"
-        ? '<div class="ov-acts"><span>⧉ 복사</span><span>▤ 전체 대화</span></div>'
+        ? '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
+          '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>'
         : "";
+    var navAttr = b.navTs != null ? ' data-nav-ts="' + escapeHtml(String(b.navTs)) + '"' : "";
     return (
-      '<div class="ov-block ' + (isHero ? "hero" : "past") + '">' + q +
+      '<div class="ov-block ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" + q +
       '<div class="ov-hero"><div class="ov-he"><span class="lab">응답</span>main → ' +
       '<span class="who">' + who + "</span>" + st + "</div>" +
       '<div class="ov-tx">' + txt + "</div>" + acts + "</div></div>"
@@ -1843,10 +1845,13 @@
     ovRender();
   }
   function ovOnFinal(d) {
+    // navTs = d.ts: 메인 스코프 final 카드는 stampNavTs(card, d.ts) 로 같은 값을
+    // 달고 있어(≈733행) 개요 블록에서 그 카드로 정확히 점프할 수 있다.
     if (ovLive) {
       ovLive.text = d.final;
       ovLive.answers = d.answers || [];
       ovLive.status = "done";
+      ovLive.navTs = d.ts;
       ovDone.push(ovLive);
       ovLive = null;
     } else {
@@ -1855,6 +1860,7 @@
         text: d.final,
         status: "done",
         answers: d.answers || [],
+        navTs: d.ts,
       });
       ovPending = { queries: [] };
     }
@@ -2079,12 +2085,56 @@
     });
   }
 
-  // 개요 응답 블록 → 패널(이미 렌더된 hero HTML 재사용 · 카드 불요).
+  // 개요 응답 블록 → 패널(이미 렌더된 hero HTML 재사용). data-nav-ts 로 타임라인
+  // 카드를 해석해 두면 [▤ 전체 타임라인] 이 그 카드로 정확히 점프한다.
   function dpPinOverview(block) {
     const tx = block.querySelector(".ov-tx");
     const who = block.querySelector(".ov-he .who");
     const label = who && who.textContent.trim() ? "응답 " + who.textContent.trim() : "응답";
-    dpFill("main", label, "", tx ? tx.innerHTML : "", { card: null, taskId: null, kind: "main", overview: true });
+    const nts = block.getAttribute("data-nav-ts");
+    const card = nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null;
+    dpFill("main", label, "", tx ? tx.innerHTML : "", { card: card, taskId: null, kind: "main", overview: true });
+  }
+
+  // 개요 응답 블록 액션: ⧉ 복사(본문 텍스트) · ▤ 전체 대화(타임라인으로 승격).
+  // navigator.clipboard 는 secure context 전용 → LAN http 에서 미정의라 execCommand 폴백 필수.
+  function ovCopyBlock(block) {
+    if (!block) return;
+    const tx = block.querySelector(".ov-tx");
+    const text = tx ? tx.innerText : "";
+    const btn = block.querySelector(".ov-copy");
+    function flash() {
+      if (!btn) return;
+      const orig = btn.textContent;
+      btn.textContent = "✓ 복사됨";
+      setTimeout(function () {
+        btn.textContent = orig;
+      }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash, function () {});
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        flash();
+      } catch (e) {
+        /* no-op */
+      }
+      document.body.removeChild(ta);
+    }
+  }
+  function ovOpenTimeline(block) {
+    setViewMode("detail");
+    const nts = block && block.getAttribute("data-nav-ts");
+    const card = nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null;
+    if (card) scrollTimelineTo(card);
+    else scrollToBottom();
   }
 
   // Tier-3 승격: [▤ 전체 타임라인] → 드로어 열고 카드로 이동(개요/카드없음은 최신 하단).
@@ -2110,9 +2160,20 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && $dp.classList.contains("open")) dpClose();
   });
-  // 개요 클릭 → 응답 블록 헤더(.ov-he)에서 패널 고정(본문 텍스트 선택 방해 없이).
+  // 개요 클릭 위임: ⧉ 복사 / ▤ 전체 대화 버튼 우선, 그 외 헤더(.ov-he) 클릭은
+  // 상세 패널 고정(본문 텍스트 선택 방해 없이).
   if ($overview) {
     $overview.addEventListener("click", function (e) {
+      const copyBtn = e.target.closest(".ov-copy");
+      if (copyBtn) {
+        ovCopyBlock(copyBtn.closest(".ov-block"));
+        return;
+      }
+      const openBtn = e.target.closest(".ov-open");
+      if (openBtn) {
+        ovOpenTimeline(openBtn.closest(".ov-block"));
+        return;
+      }
       const he = e.target.closest(".ov-he");
       if (!he) return;
       const block = he.closest(".ov-block");

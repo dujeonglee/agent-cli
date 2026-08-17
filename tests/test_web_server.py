@@ -508,6 +508,28 @@ class TestStaticUI:
         assert ".detail-panel" in css
         assert ".detail-panel.open" in css
 
+    def test_overview_actions_wired(self, server_and_client):
+        """개요 응답 블록의 ⧉ 복사 · ▤ 전체 대화 는 실제 버튼(핸들러 배선) 이어야
+        한다 — 종전 핸들러 없는 span 이던 '죽은 버튼' 회귀 가드. 복사는 secure
+        context 아닌 LAN http 대비 execCommand 폴백, 전체 대화는 블록 data-nav-ts
+        카드로 점프."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # real buttons (not inert spans) with hookable classes
+        assert '"ov-act ov-copy"' in js and '"ov-act ov-open"' in js
+        # wired handlers exist and are delegated from the overview click listener
+        assert "function ovCopyBlock(" in js
+        assert "function ovOpenTimeline(" in js
+        assert 'e.target.closest(".ov-copy")' in js
+        assert 'e.target.closest(".ov-open")' in js
+        # clipboard fallback for non-secure LAN http (navigator.clipboard undefined)
+        assert 'document.execCommand("copy")' in js
+        # blocks carry data-nav-ts so 전체 대화 / 상세패널 jump to the exact card
+        assert "navTs: d.ts" in js and "ovLive.navTs = d.ts" in js
+        assert 'data-nav-ts="' in js
+        assert ".ov-act" in css
+
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
         양쪽 토글 + sticky 헤더."""

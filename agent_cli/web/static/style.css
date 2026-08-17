@@ -1515,7 +1515,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ov-caret { display: inline-block; width: .5em; height: 1.05em; vertical-align: -.16em; background: var(--accent); margin-left: 1px; border-radius: 1px; animation: ov-blink 1s steps(1) infinite; }
 @keyframes ov-blink { 50% { opacity: 0; } }
 .ov-acts { display: flex; gap: 8px; margin-top: 10px; }
-.ov-acts span { font-size: 12px; border: 1px solid var(--border); border-radius: 7px; padding: 3px 9px; color: var(--text-2); background: var(--surface-3); cursor: pointer; }
+.ov-act { font-size: 12px; border: 1px solid var(--border); border-radius: 7px; padding: 3px 9px; color: var(--text-2); background: var(--surface-3); cursor: pointer; }
+.ov-act:hover { border-color: var(--accent-soft-border); color: var(--accent-soft-text); background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) { .ov-caret, .ov-pulse { animation: none; } }
 /* 개요 모드: dock(기존 최신응답 스트립) 숨김 — 개요의 hero 가 대체 */
 body.mode-overview #dock { display: none !important; }
