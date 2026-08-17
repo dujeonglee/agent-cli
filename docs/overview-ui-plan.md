@@ -93,3 +93,10 @@
   없이 나란히(개요 요약+상세 대화 동시). 전문 탭=토글, td-close=오버레이만 닫기(base 유지). __showTimeline 도
   `setDrawer(true)`. 라이브(스크린샷) 검증: 개요 왼쪽 + 전문 오른쪽 나란히 OK. ⚠️ 자동화 ref 클릭이 click 을
   2회 디스패치해 토글 상쇄되는 현상 — 사람/합성 1회 클릭은 정상(afterOneClick=true 확인). test_level_control_wired 확장.
+- **gated 브라우저 e2e 회귀 수리 (검증 실행)**: `AGENT_CLI_BROWSER_TESTS=1 pytest tests/browser/` 를 실제로
+  돌려 v8.12.0(개요 기본화)가 스윔레인/독/타임라인을 숨겨 23+5개 e2e 가 타임아웃하던 사전 회귀를 발견·수리.
+  - test_team_swimlane.py: `_show_flow(page)`(흐름 탭 전환) 헬퍼 추가 → 34개 각 emit_ready 뒤 삽입.
+    `test_team_is_default_surface` → `test_flow_surface_and_drawer_toggles` 로 정정(개요가 기본).
+  - test_resume_replay.py: 스윔레인 클릭 nav 2개에 흐름 전환 + Stage 4 승격(#dp-timeline) 반영.
+  - test_task_group_collapse.py: `_build_tall_task_group` 가 전문 드로어를 열어 #messages 카드 노출.
+  - 결과: **전체 gated 브라우저 55 passed**. 기본 스위트 3365 passed 유지(브라우저는 opt-in gated).

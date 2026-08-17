@@ -21,6 +21,14 @@ def _wait(cond, timeout=8.0, step=0.05):
     return False
 
 
+def _show_flow(page):
+    """v8.12.0 부터 기본 뷰가 **개요**라 스윔레인(`#team-view`)과 응답 독(`#dock`)은
+    숨겨진다. 이 파일의 테스트는 모두 스윔레인/독을 검증하므로, 로드 직후 **흐름** 탭으로
+    전환해 이들을 노출시킨다(레벨 컨트롤은 항상 헤더에 있어 활동 전에도 클릭 가능)."""
+    page.wait_for_selector("#vt-flow", timeout=8000)
+    page.click("#vt-flow")
+
+
 def _drive_team(stack):
     """Emit a minimal team run through the real renderer: an enclosing skill
     band, a two-agent roster, and one request→reply that becomes w1's work
@@ -46,6 +54,7 @@ class TestTeamSwimlane:
     def test_toggle_reveals_and_swimlane_renders(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
 
         # The swimlane pane + collapse toggle appear once team activity arrives
@@ -65,12 +74,13 @@ class TestTeamSwimlane:
         # The reply is a message connector between lanes.
         assert _wait(lambda: page.locator(".tv-msg").count() >= 1)
 
-    def test_team_is_default_surface_and_drawer_toggles(self, stack, page):
-        """v8.2.0 inversion: the team view is the PRIMARY surface (full width,
-        no reveal gate); the timeline lives in a right-side drawer opened by
-        ▤ 상세 대화 and closed by its ✕."""
+    def test_flow_surface_and_drawer_toggles(self, stack, page):
+        """흐름(팀 스윔레인)은 full-width base 표면(v8.2.0 반전; v8.12.0 부터 기본은
+        개요라 _show_flow 로 전환)이고, 타임라인은 전문 드로어(▤ / #vt-detail-toggle 로
+        열고 ✕ 로 닫음)로 그 위에 오버레이된다."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
 
         team = page.locator("#team-view")
@@ -96,6 +106,7 @@ class TestTeamSwimlane:
         team activity on every event' (the old reset()-on-ready flush)."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         page.wait_for_selector(".tv-scope-skill", timeout=8000)
@@ -117,6 +128,7 @@ class TestTeamSwimlane:
         <title> was too slow). Hovering the skill span reveals its text."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         page.wait_for_selector(".tv-scope-skill", timeout=8000)
@@ -132,6 +144,7 @@ class TestTeamSwimlane:
         "w1#0")."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         bar = page.locator('#team-view .tv-span[data-task-id="w1#0"]')
@@ -158,6 +171,7 @@ class TestTeamSwimlane:
         page.set_viewport_size({"width": 1100, "height": 460})
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
@@ -212,6 +226,7 @@ class TestTeamSwimlane:
         page.set_viewport_size({"width": 1100, "height": 480})
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
@@ -264,6 +279,7 @@ class TestResumeScopeReplay:
     def test_replay_scope_draws_bar_and_card(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         # As replay_session would emit on resume: replay-tagged skill scope.
         r = stack.renderer
         r._emit(
@@ -296,6 +312,7 @@ class TestResumeScopeReplay:
         the guard is scoped to replays only, no regression for live runs."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         stack.renderer.begin_scope(task_id="sk-live", kind="skill", label="plan")
         assert _wait(
             lambda: (
@@ -312,6 +329,7 @@ class TestVerticalLayout:
     def test_sticky_header_has_agent_columns(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         # Column chips live in the sticky header (.tv-head), not the plot.
@@ -328,6 +346,7 @@ class TestVerticalLayout:
         agent->main reply (direction=out) each draw an arrow."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [
@@ -352,6 +371,7 @@ class TestVerticalLayout:
         page.set_viewport_size({"width": 900, "height": 460})
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
@@ -376,6 +396,7 @@ class TestVerticalLayout:
         pixel distance apart. Mutation guard against a proportional-time axis."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
@@ -434,6 +455,7 @@ class TestVerticalLayout:
         """Tail status: a working agent gets a spinner, a resting one a check."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [
@@ -460,6 +482,7 @@ class TestVerticalLayout:
         """The bar length is ordinal, so hover reports the REAL elapsed time."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         # skill scope from 1000s..1030s → 30s real duration
         r._emit(
@@ -484,6 +507,7 @@ class TestVerticalLayout:
         'orchestrator request shows, reply doesn't' bug)."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [
@@ -525,6 +549,7 @@ class TestScopeNestingRender:
     def test_nested_scopes_get_distinct_x_positions(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         # skill → run → skill, each nested in the previous (same thread, so the
         # parent link is derived from the scope stack).
@@ -548,6 +573,7 @@ class TestScopeNestingRender:
         children one after another."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.begin_scope(task_id="sk", kind="skill", label="orchestrate")
         for i in range(4):
@@ -562,6 +588,7 @@ class TestScopeNestingRender:
         fork, and a ⋔N badge; the members still get their own slots (distinct x)."""
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.begin_scope(task_id="sk", kind="skill", label="orchestrate")
         batch_ts = time.time()
@@ -589,6 +616,7 @@ class TestScopeNestingRender:
     def test_nested_card_lives_inside_its_parents_body(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
         r.begin_scope(task_id="run-1", kind="run", label="explorer", agent="explorer")
@@ -608,6 +636,7 @@ class TestScopeNestingRender:
     def test_collapsed_parent_shows_live_child_hint(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
         r.begin_scope(task_id="run-1", kind="run", label="find X", agent="explorer")
@@ -625,6 +654,7 @@ class TestScopeNestingRender:
     def test_clicking_nested_bar_expands_ancestors_and_reveals_card(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
         r.begin_scope(task_id="run-1", kind="run", label="find X", agent="explorer")
@@ -651,6 +681,7 @@ class TestUserLaneAndDock:
     def test_user_message_draws_lane_mark_and_request_arrow(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.push_user_message("[Bob]: fix the bug", author="Bob")
         page.wait_for_selector("#team-view .tv-user-mark", timeout=8000)
@@ -669,6 +700,7 @@ class TestUserLaneAndDock:
         # 🤝 agent-report starter: card only — no user lane, no arrow.
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         stack.renderer.push_user_message("[🤝 agent]: reply arrived")
         page.wait_for_selector("#messages .card-user", timeout=8000)
         assert page.locator("#team-view .tv-user-mark").count() == 0
@@ -676,6 +708,7 @@ class TestUserLaneAndDock:
     def test_final_with_answers_draws_dashed_reply_arrow(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.push_user_message("[Bob]: q1", author="Bob")
         r.push_user_message("[두정]: q2", author="두정")
@@ -692,6 +725,7 @@ class TestUserLaneAndDock:
     ):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.push_user_message("[Bob]: q", author="Bob")
         r.set_run_authors(["Bob"])
@@ -717,6 +751,7 @@ class TestUserLaneAndDock:
         # answers=[] (🤝 run): no reply arrow; the dock says so explicitly.
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.set_run_authors([])
         r.final("agent report folded in", turn=1)
@@ -727,6 +762,7 @@ class TestUserLaneAndDock:
     def test_dock_shows_attribution_and_navigates(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.push_user_message("[Bob]: q", author="Bob")
         r.set_run_authors(["Bob"])
@@ -746,6 +782,7 @@ class TestUserLaneAndDock:
     def test_dock_expand_appears_only_when_clamped(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.set_run_authors(["Bob"])
         long_answer = "긴 답변 문장입니다. " * 120
@@ -779,6 +816,7 @@ class TestUserLaneAndDock:
         # Connect AFTER the events exist — the SSE replay must rebuild both.
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         page.wait_for_selector("#team-view .tv-user-mark", timeout=8000)
         assert _wait(lambda: page.locator("#team-view .tv-msg.tv-reply").count() == 1)
 
@@ -792,6 +830,7 @@ class TestMainSpinnerAndLabelClip:
         # main 컬럼 tail 스피너가 유일 — worker_busy 로 켜지고 idle 로 꺼진다.
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.push_user_message("[Bob]: go", author="Bob")
         page.wait_for_selector("#team-view .tv-svg", timeout=8000)
@@ -808,6 +847,7 @@ class TestMainSpinnerAndLabelClip:
         r.worker_busy()
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         assert _wait(lambda: page.locator("#team-view .tv-main-busy").count() == 1)
 
     def test_first_row_arrow_label_is_not_clipped(self, stack, page):
@@ -816,6 +856,7 @@ class TestMainSpinnerAndLabelClip:
         # 이기면 viewBox 밖으로 잘린다 ("맨 위 화살표 이름 철수 안 보임").
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         stack.renderer.push_user_message("[철수]: 첫 요청", author="철수")
         page.wait_for_selector("#team-view .tv-msg-label", timeout=8000)
         box = page.evaluate(
@@ -833,6 +874,7 @@ class TestSpawnTaskArrows:
     def test_same_seq_requests_to_two_agents_both_draw(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
+        _show_flow(page)
         r = stack.renderer
         r.agent_roster(
             [

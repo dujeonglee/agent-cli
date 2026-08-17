@@ -249,9 +249,14 @@ class TestResumeRebuildsScopeCards:
     def test_swimlane_click_navigates_to_the_rebuilt_card(self, stack, page, tmp_path):
         self._drive(stack, tmp_path, with_task_id=True)
         page.goto(stack.url)
+        # v8.12.0: 개요가 기본 뷰 → 스윔레인을 보려면 흐름 탭으로 전환.
+        page.click("#vt-flow")
         page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
         page.wait_for_selector('.card-task-group[data-task-id="sk1"]', timeout=8000)
+        # v8.13.0: 막대 클릭은 Tier-2 패널을 고정하고, [▤ 전체 타임라인](#dp-timeline)이
+        # 드로어를 열어 카드로 이동·플래시한다.
         page.locator("#team-view .tv-scope-skill").first.click()
+        page.click("#dp-timeline")
         card = page.locator('.card-task-group[data-task-id="sk1"]')
         assert _wait(lambda: "tv-nav-hl" in (card.get_attribute("class") or ""))
         assert page.locator("#team-view .tv-nav-miss:not([hidden])").count() == 0
@@ -283,6 +288,7 @@ class TestResumeRebuildsScopeCards:
                     persistent=False,
                 )
         page.goto(stack.url)
+        page.click("#vt-flow")  # v8.12.0: 개요가 기본 → 스윔레인 노출 위해 흐름 전환
         page.evaluate(
             """() => {
                 const d = {task_id: 'ghost', kind: 'skill', label: 'gone', ts: 100,
