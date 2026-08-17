@@ -1538,6 +1538,11 @@ body.mode-overview #dock { display: none !important; }
 #overview { transition: margin-right .18s ease; }
 body.drawer-open #overview:not([hidden]) { margin-right: var(--drawer-w); }
 @media (prefers-reduced-motion: reduce) { #overview { transition: none; } }
+/* 흐름(스윔레인)도 개요처럼 폭을 내줘 나란히 — 오버레이로 가리지 않는다. #team-view
+   의 ResizeObserver 가 폭 변화 시 SVG width 를 재계산하므로 margin 만으로 압축된다
+   (가로 스크롤 아님). transition 은 생략 — 슬라이드 .18s 동안 rAF 마다 SVG 를 다시
+   그리는 비용을 피하고, 즉시 최종 폭으로 리플로우한 뒤 드로어가 빈 자리로 들어온다. */
+body.drawer-open #team-view { margin-right: var(--drawer-w); }
 .td-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--border); background: var(--surface-3, var(--surface));
@@ -1549,6 +1554,7 @@ body.drawer-open #overview:not([hidden]) { margin-right: var(--drawer-w); }
 @media (max-width: 780px) {
   #timeline-drawer { width: 100%; }
   body.drawer-open #overview:not([hidden]) { margin-right: 0; }
+  body.drawer-open #team-view { margin-right: 0; }
 }
 
 /* 선택→고정 상세 패널 (Tier 2, v8.13.0) — 흐름/개요 요소 클릭 시 그 요소만

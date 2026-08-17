@@ -100,3 +100,7 @@
   - test_resume_replay.py: 스윔레인 클릭 nav 2개에 흐름 전환 + Stage 4 승격(#dp-timeline) 반영.
   - test_task_group_collapse.py: `_build_tall_task_group` 가 전문 드로어를 열어 #messages 카드 노출.
   - 결과: **전체 gated 브라우저 55 passed**. 기본 스위트 3365 passed 유지(브라우저는 opt-in gated).
+- **흐름도 side-by-side 압축 (v8.14.1, 사용자 요청)**: 흐름에서 전문을 열면 스윔레인이 가려지던 것 → 개요와
+  동일하게 폭 양보. `body.drawer-open #team-view{margin-right:var(--drawer-w)}` (CSS-only). `#team-view` 의
+  ResizeObserver 가 폭 변화 → SVG width 재계산이라 margin 만으로 스윔레인 압축(라이브: viewBox 1901→1261,
+  겹침·가로스크롤 없음). transition 생략(슬라이드 중 rAF 반복 리렌더 회피). gated 브라우저 42 passed.
