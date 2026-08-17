@@ -104,3 +104,9 @@
   동일하게 폭 양보. `body.drawer-open #team-view{margin-right:var(--drawer-w)}` (CSS-only). `#team-view` 의
   ResizeObserver 가 폭 변화 → SVG width 재계산이라 margin 만으로 스윔레인 압축(라이브: viewBox 1901→1261,
   겹침·가로스크롤 없음). transition 생략(슬라이드 중 rAF 반복 리렌더 회피). gated 브라우저 42 passed.
+- **개요 hero 정체/오귀속 수리 (v8.14.3, 사용자 지적)**: 메인 스코프가 `complete` final 없이 턴/런을 끝내면
+  (모델이 prose 로만 답한 포맷 실패 등) `ovLive`(gen)가 안 지워져 hero 가 "생성 중"에 영구 정체하고, 뒤 요청의
+  complete 가 그 gen 을 덮어써 쿼리↔응답 오귀속(예: "이야기10개" 쿼리에 "1+1=2" 답)이 났다. `ovFinalizeGen`
+  을 `failed_turn`(메인)·`worker_state` idle 에서 호출 → prose 실패 응답이 자기 블록으로 확정. 라이브 재현은
+  모델 포맷실패가 간헐적+로컬모델 지연으로 확정 관찰이 어려웠으나, 디스크 history([1] prose 실패)+코드+사용자
+  화면(오귀속)으로 원인 확정. test_overview_finalizes_stuck_gen_hero_wired 신규. 전체 3368 passed.

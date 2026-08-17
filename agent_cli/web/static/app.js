@@ -1524,6 +1524,7 @@
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
     finalizeStreamingAsFailed(d.task_id, d.reason, d.raw);
+    ovOnFailed(d); // 개요: 진행 중 hero 가 "생성 중" 에 갇히지 않게 확정
   });
 
   es.addEventListener("observation", function (e) {
@@ -1889,6 +1890,25 @@
     }
     if (ovDone.length > 6) ovDone = ovDone.slice(-6);
     ovRender();
+  }
+  // 진행 중 hero(ovLive, gen)를 확정 블록으로 마감한다. 메인 스코프가 `complete`
+  // final 을 못 낸 채 턴/런이 끝난 경우(포맷 실패 → prose 응답, 실패 턴, 런 종료)에
+  // 쓴다 — 그냥 두면 hero 가 "생성 중" caret 에 영구 정체(사용자 리포트: 응답은
+  // 끝났는데 계속 대기 중). 스트리밍된 본문이 곧 답이므로 done 으로 확정하고, 빈
+  // 블록(순수 액션 턴 실패)은 caret 만 걷어내고 버린다.
+  function ovFinalizeGen() {
+    if (!ovLive || ovLive.status !== "gen") return;
+    if ((ovLive.text || "").trim()) {
+      ovLive.status = "done";
+      ovDone.push(ovLive);
+      if (ovDone.length > 6) ovDone = ovDone.slice(-6);
+    }
+    ovLive = null;
+    ovRender();
+  }
+  function ovOnFailed(d) {
+    if (d && d.task_id) return; // 메인 스코프만 (서브루프 실패는 hero 와 무관)
+    ovFinalizeGen();
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
@@ -2316,6 +2336,9 @@
     // team surface's "main is responding" cue (agents get theirs from
     // roster state; main's truth is the worker state).
     if (window.TeamView && TeamView.setMainBusy) TeamView.setMainBusy(d.busy);
+    // 런 종료(idle)인데 hero 가 아직 'gen' 이면(메인이 complete final 없이 끝남)
+    // 더는 스트리밍이 없으므로 확정 — "응답 끝났는데 대기 중" 정체 방지(안전망).
+    if (!d.busy) ovFinalizeGen();
   });
 
   // ── Identity + viewer roster ───────

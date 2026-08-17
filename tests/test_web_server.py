@@ -539,6 +539,22 @@ class TestStaticUI:
         assert 'data-nav-ts="' in js
         assert ".ov-act" in css
 
+    def test_overview_finalizes_stuck_gen_hero_wired(self, server_and_client):
+        """개요 hero 정체 방지 (v8.14.3): 메인 스코프가 `complete` final 없이 턴/런을
+        끝내면(모델이 prose 로만 답한 포맷 실패, 실패 턴, 런 종료) hero 가 '생성 중'
+        caret 에 영구 정체했다 — 사용자 리포트 '응답 끝났는데 대기 중'. failed_turn
+        (메인)과 worker_state idle 에서 진행 중 hero 를 확정해 해소한다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "function ovFinalizeGen(" in js
+        assert "function ovOnFailed(" in js
+        # failed_turn 핸들러가 개요를 정리
+        ft = js.split('es.addEventListener("failed_turn"', 1)[1].split("});", 1)[0]
+        assert "ovOnFailed(d)" in ft
+        # worker_state idle 안전망
+        ws = js.split('es.addEventListener("worker_state"', 1)[1].split("});", 1)[0]
+        assert "if (!d.busy) ovFinalizeGen()" in ws
+
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
         양쪽 토글 + sticky 헤더."""
