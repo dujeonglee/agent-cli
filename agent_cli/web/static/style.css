@@ -1517,6 +1517,13 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ov-acts { display: flex; gap: 8px; margin-top: 10px; }
 .ov-act { font-size: 12px; border: 1px solid var(--border); border-radius: 7px; padding: 3px 9px; color: var(--text-2); background: var(--surface-3); cursor: pointer; }
 .ov-act:hover { border-color: var(--accent-soft-border); color: var(--accent-soft-text); background: var(--surface-2); }
+/* 💭 reasoning — 요약 뷰에선 접힘, 펼치면 사고 과정 (답변 위, 무채색 저강조) */
+.ov-re { margin: 4px 0 8px; }
+.ov-re > summary { cursor: pointer; font-size: 12px; color: var(--text-2); user-select: none; list-style: none; }
+.ov-re > summary:hover { color: var(--accent-soft-text); }
+.ov-re > summary::-webkit-details-marker { display: none; }
+.ov-re[open] > summary { margin-bottom: 4px; }
+.ov-re-body { font-size: 13px; line-height: 1.55; color: var(--text-2); border-left: 2px solid var(--border-2); padding: 2px 0 2px 10px; }
 @media (prefers-reduced-motion: reduce) { .ov-caret, .ov-pulse { animation: none; } }
 /* 개요 모드: dock(기존 최신응답 스트립) 숨김 — 개요의 hero 가 대체 */
 body.mode-overview #dock { display: none !important; }

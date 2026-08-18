@@ -256,3 +256,104 @@ class TestMarkdownHelpers:
         assert "<h5>" not in out
         # ``####`` row stays raw.
         assert "#### d" in out
+
+
+def _extract_fn(name: str) -> str:
+    """Return the source of a top-level ``function <name>(...) { ... }`` from
+    app.js by brace-matching. ``ovBuildBlocks`` lives past the first ``})();``
+    (a nested IIFE closer), so the whole-IIFE harness can't reach it — but the
+    function only closes over ``ovEntries``, so we run it standalone."""
+    src = _APP_JS.read_text(encoding="utf-8")
+    m = re.search(r"\n  function " + re.escape(name) + r"\(", src)
+    assert m, f"could not find function {name} in app.js"
+    brace = src.index("{", m.end())
+    depth = 0
+    for i in range(brace, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start() : i + 1]
+    raise AssertionError(f"unbalanced braces for {name}")
+
+
+def _ov_blocks(entries):
+    """Run app.js's REAL ovBuildBlocks over a flat entry list → derived blocks.
+    ovBuildBlocks closes over ``ovEntries`` only, so we inject it and run the
+    extracted source standalone in Node (same source the browser executes)."""
+    fn = _extract_fn("ovBuildBlocks")
+    harness = (
+        "var ovEntries = " + json.dumps(entries) + ";\n" + fn + "\n"
+        "process.stdout.write(JSON.stringify(ovBuildBlocks()));\n"
+    )
+    result = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, timeout=10, check=False
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"node failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+class TestOverviewFlatGrouping:
+    """개요 플랫 로그 모델(v8.15.0): ovEntries(사용자 입력 + resp)를 렌더 시점에
+    [연속 user + 뒤따르는 resp] 블록으로 그룹핑. 짝짓기를 저장하지 않으므로 정체·
+    오귀속이 없다 — 여기서 REAL ovBuildBlocks 로직을 실행해 검증한다."""
+
+    def test_users_then_response_group_into_one_block(self):
+        blocks = _ov_blocks(
+            [
+                {"kind": "user", "who": "A", "text": "q1", "tm": ""},
+                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
+                {"kind": "resp", "text": "answer", "status": "done", "answers": []},
+            ]
+        )
+        assert len(blocks) == 1
+        assert [q["t"] for q in blocks[0]["queries"]] == ["q1", "q2"]
+        assert blocks[0]["text"] == "answer"
+        assert blocks[0]["status"] == "done"
+
+    def test_two_runs_do_not_cross_contaminate(self):
+        # q1→a1, then q2→a2: each response pairs with only its preceding queries.
+        blocks = _ov_blocks(
+            [
+                {"kind": "user", "who": "A", "text": "q1", "tm": ""},
+                {"kind": "resp", "text": "a1", "status": "done", "answers": []},
+                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
+                {"kind": "resp", "text": "a2", "status": "done", "answers": []},
+            ]
+        )
+        assert len(blocks) == 2
+        assert [q["t"] for q in blocks[0]["queries"]] == ["q1"]
+        assert blocks[0]["text"] == "a1"
+        assert [q["t"] for q in blocks[1]["queries"]] == ["q2"]
+        assert blocks[1]["text"] == "a2"
+
+    def test_trailing_users_without_response_are_a_wait_block(self):
+        # A request with no response yet → a wait block (never stuck: it just
+        # trails until a resp entry arrives). This is the "대기" case that used to
+        # get stuck; now it is purely render-derived, not stateful.
+        blocks = _ov_blocks(
+            [
+                {"kind": "resp", "text": "a1", "status": "done", "answers": []},
+                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
+            ]
+        )
+        assert len(blocks) == 2
+        assert blocks[1]["status"] == "wait"
+        assert blocks[1]["text"] == ""
+        assert [q["t"] for q in blocks[1]["queries"]] == ["q2"]
+
+    def test_response_with_no_preceding_query(self):
+        # A scoped/dispatched complete may land with no immediately-preceding
+        # user entry (e.g. its query was consumed by a prior block) — still a
+        # valid response block with empty queries, never dropped or stuck.
+        blocks = _ov_blocks(
+            [{"kind": "resp", "text": "scoped result", "status": "done", "answers": []}]
+        )
+        assert len(blocks) == 1
+        assert blocks[0]["queries"] == []
+        assert blocks[0]["text"] == "scoped result"
+
+    def test_empty_log_yields_no_blocks(self):
+        assert _ov_blocks([]) == []

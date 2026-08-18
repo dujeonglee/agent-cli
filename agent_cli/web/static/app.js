@@ -1517,7 +1517,9 @@
     if (!d.task_id && d.final !== undefined) {
       if (window.TeamView) TeamView.ingest("assistant_turn", d);
       updateDock(d);
-      ovOnFinal(d); // 개요: 응답 블록 확정
+      ovOnFinal(d); // 개요: 메인 응답 기록
+    } else if (d.task_id && d.final !== undefined) {
+      ovOnScopedFinal(d); // 개요: top-level /skill·@agent 결과 기록(모델 B)
     }
   });
 
@@ -1753,15 +1755,29 @@
     setDrawer(true);
   };
 
-  // ── 개요(GLANCE) 뷰 렌더 (단계 2) ──────────────────────────
-  // presentation-only: 기존 SSE 이벤트를 재사용해 [누적 쿼리 → 응답 hero] 블록을
-  // 그린다. 서버/데이터/로직 무변경. 개요가 활성일 때만 DOM 갱신(그 외엔 모델만).
-  var ovDone = []; // 완료된 메인 응답 블록 (최근 몇 개 유지)
-  var ovLive = null; // 현재 스트리밍/직전 블록 {queries,text,status,answers}
-  var ovPending = { queries: [] }; // 직전 final 이후 누적 사용자 쿼리
+  // ── 개요(GLANCE) 뷰 렌더 ──────────────────────────
+  // presentation-only: 기존 SSE 이벤트를 재사용. **플랫 로그 모델** — 사용자 입력과
+  // "complete"(메인 final + top-level 스코프 final)를 도착 순서대로 append 만 한다.
+  // 짝짓기(pairing)를 상태로 저장하지 않으므로 "대기" 정체·쿼리↔응답 오귀속이 원천적
+  // 으로 없다. 블록 그룹핑(연속 user + 뒤따르는 resp)은 렌더 시점에 순서로만 도출.
+  var ovEntries = []; // 플랫: {kind:'user',who,text,tm} | {kind:'resp',text,reasoning,answers,status,navTs,scopeId}
+  var ovGen = null; // 현재 스트리밍 중인 resp 엔트리 참조(없으면 null)
+  var ovTopScopes = {}; // depth-0 스코프 task_id → true (직접 dispatch 결과 수용용)
   var ovRoster = []; // agent_roster
   var ovSkills = {}; // 열린 skill scope: task_id → label
   var ovCtxPct = null;
+  function ovCap() {
+    if (ovEntries.length > 80) ovEntries = ovEntries.slice(-80);
+  }
+  // 스크롤 고정: 기본은 bottom 고정(스트리밍 따라감). 사용자가 위로 스크롤하면
+  // 해제하고, 다시 바닥까지 내리면 재고정 — 타임라인의 _stick 과 동형 동작.
+  var ovStick = true;
+  if ($overview) {
+    $overview.addEventListener("scroll", function () {
+      ovStick =
+        $overview.scrollTop + $overview.clientHeight >= $overview.scrollHeight - 24;
+    });
+  }
 
   function ovClock(ts) {
     var ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
@@ -1823,87 +1839,145 @@
         ? '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
           '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>'
         : "";
-    var navAttr = b.navTs != null ? ' data-nav-ts="' + escapeHtml(String(b.navTs)) + '"' : "";
+    // 💭 reasoning — final 이벤트의 thought. 요약 뷰라 기본 접힘(<details>)으로 두어
+    // 답변을 가리지 않되, 펼치면 타임라인과 같은 사고 과정을 볼 수 있다.
+    var re =
+      b.status === "done" && b.reasoning && b.reasoning.trim()
+        ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
+          '<div class="ov-re-body">' + escapeAndFormat(b.reasoning) + "</div></details>"
+        : "";
+    // 점프 앵커: 메인 응답=data-nav-ts(카드가 같은 ts 스탬프), 직접 dispatch 응답=
+    // data-scope-id(스코프 task-group 카드로).
+    var navAttr = b.scopeId
+      ? ' data-scope-id="' + escapeHtml(String(b.scopeId)) + '"'
+      : b.navTs != null
+        ? ' data-nav-ts="' + escapeHtml(String(b.navTs)) + '"'
+        : "";
     return (
       '<div class="ov-block ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" + q +
       '<div class="ov-hero"><div class="ov-he"><span class="lab">응답</span>main → ' +
-      '<span class="who">' + who + "</span>" + st + "</div>" +
+      '<span class="who">' + who + "</span>" + st + "</div>" + re +
       '<div class="ov-tx">' + txt + "</div>" + acts + "</div></div>"
     );
   }
+  // 플랫 로그 → 블록 도출(렌더 시점, 무상태): 연속된 user 엔트리 + 뒤따르는 resp 를
+  // 한 블록으로 묶는다. 마지막에 남은 user 들(응답 아직 없음)은 wait 블록.
+  function ovBuildBlocks() {
+    var blocks = [];
+    var q = [];
+    for (var i = 0; i < ovEntries.length; i++) {
+      var e = ovEntries[i];
+      if (e.kind === "user") {
+        q.push({ who: e.who, t: e.text, tm: e.tm });
+      } else {
+        blocks.push({
+          queries: q,
+          text: e.text,
+          reasoning: e.reasoning,
+          answers: e.answers,
+          status: e.status,
+          navTs: e.navTs,
+          scopeId: e.scopeId,
+        });
+        q = [];
+      }
+    }
+    if (q.length) blocks.push({ queries: q, text: "", status: "wait", answers: [] });
+    return blocks;
+  }
   function ovRender() {
     if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
-    var blocks = ovDone.slice(-3);
-    var tail = ovLive
-      ? ovLive
-      : ovPending.queries.length
-        ? { queries: ovPending.queries, text: "", status: "wait", answers: [] }
-        : null;
-    var all = blocks.slice();
-    if (tail) all.push(tail);
+    var all = ovBuildBlocks().slice(-6);
     var html = ovAmbient();
     if (!all.length) {
       html += '<div class="ov-placeholder">아직 응답이 없습니다 — 아래에 메시지를 입력하세요.</div>';
     } else {
+      // hero = 마지막 "응답 있는" 블록(wait 블록은 hero 아님).
+      var heroIdx = -1;
+      for (var k = all.length - 1; k >= 0; k--) {
+        if (all[k].status !== "wait") {
+          heroIdx = k;
+          break;
+        }
+      }
       all.forEach(function (b, i) {
-        html += ovBlockHtml(b, i === all.length - 1);
+        html += ovBlockHtml(b, i === heroIdx);
       });
     }
     $overview.innerHTML = html;
-    $overview.scrollTop = $overview.scrollHeight;
+    // 사용자가 위로 스크롤해 둔 상태(ovStick=false)면 강제로 바닥으로 끌어내리지
+    // 않는다 — 읽던 위치 유지. 바닥에 붙어 있을 때만 스트리밍을 따라 자동 스크롤.
+    if (ovStick) $overview.scrollTop = $overview.scrollHeight;
   }
-  // 이벤트 훅 (아래 es 핸들러에서 호출)
+  // 이벤트 훅 (아래 es 핸들러에서 호출) — 전부 ovEntries 에 append 만(무상태 페어링).
   function ovOnUserMsg(d) {
     // 본문에 이미 박힌 "[닉네임]: " 접두는 제거(who 라벨과 중복 방지).
     var t = (d.content || "").replace(/^\[[^\]]+\]:\s*/, "");
-    ovPending.queries.push({ who: d.author || "사용자", t: t, tm: ovClock(d.ts) });
+    ovEntries.push({ kind: "user", who: d.author || "사용자", text: t, tm: ovClock(d.ts) });
+    ovCap();
     ovRender();
   }
   function ovOnStream(d) {
-    if (d.task_id) return; // 메인 스코프만 hero 로
-    if (!ovLive) {
-      ovLive = { queries: ovPending.queries, text: "", status: "gen", answers: [] };
-      ovPending = { queries: [] };
+    if (d.task_id) return; // 메인 스코프만 hero 스트리밍
+    if (!ovGen) {
+      ovGen = { kind: "resp", text: "", reasoning: "", answers: [], status: "gen", navTs: null };
+      ovEntries.push(ovGen);
     }
-    ovLive.text += d.text || "";
+    ovGen.text += d.text || "";
     ovRender();
   }
+  // navTs = d.ts: 메인 스코프 final 카드는 stampNavTs(card, d.ts) 로 같은 값을 달고
+  // 있어(≈733행) 개요 블록에서 그 카드로 정확히 점프할 수 있다.
   function ovOnFinal(d) {
-    // navTs = d.ts: 메인 스코프 final 카드는 stampNavTs(card, d.ts) 로 같은 값을
-    // 달고 있어(≈733행) 개요 블록에서 그 카드로 정확히 점프할 수 있다.
-    if (ovLive) {
-      ovLive.text = d.final;
-      ovLive.answers = d.answers || [];
-      ovLive.status = "done";
-      ovLive.navTs = d.ts;
-      ovDone.push(ovLive);
-      ovLive = null;
+    if (ovGen) {
+      ovGen.text = d.final;
+      ovGen.reasoning = d.thought || ""; // 💭 reasoning (final 이벤트가 실어옴)
+      ovGen.answers = d.answers || [];
+      ovGen.status = "done";
+      ovGen.navTs = d.ts;
+      ovGen = null;
     } else {
-      ovDone.push({
-        queries: ovPending.queries,
+      ovEntries.push({
+        kind: "resp",
         text: d.final,
-        status: "done",
+        reasoning: d.thought || "",
         answers: d.answers || [],
+        status: "done",
         navTs: d.ts,
       });
-      ovPending = { queries: [] };
     }
-    if (ovDone.length > 6) ovDone = ovDone.slice(-6);
+    ovCap();
     ovRender();
   }
-  // 진행 중 hero(ovLive, gen)를 확정 블록으로 마감한다. 메인 스코프가 `complete`
-  // final 을 못 낸 채 턴/런이 끝난 경우(포맷 실패 → prose 응답, 실패 턴, 런 종료)에
-  // 쓴다 — 그냥 두면 hero 가 "생성 중" caret 에 영구 정체(사용자 리포트: 응답은
-  // 끝났는데 계속 대기 중). 스트리밍된 본문이 곧 답이므로 done 으로 확정하고, 빈
-  // 블록(순수 액션 턴 실패)은 caret 만 걷어내고 버린다.
+  // 직접 실행한 top-level(depth0) /skill·@agent 의 complete 결과를 기록(모델 B).
+  // 중첩(depth>0) 스코프·nav_ts 없는 메인 도구 스코프는 요약에서 제외하지 않지만,
+  // 여기선 top-level 만 수용(ovTopScopes) → 요약이 과하게 시끄러워지지 않게.
+  function ovOnScopedFinal(d) {
+    if (!d || !d.task_id || d.final === undefined) return;
+    if (!ovTopScopes[d.task_id]) return; // 중첩 스코프는 제외(전문에만)
+    ovEntries.push({
+      kind: "resp",
+      text: d.final,
+      reasoning: d.thought || "",
+      answers: [],
+      status: "done",
+      navTs: d.ts,
+      scopeId: d.task_id, // [전체 대화] 는 스코프 카드로 점프
+    });
+    ovCap();
+    ovRender();
+  }
+  // 스트리밍만 하고 complete 을 못 낸 채 끝난 경우(포맷 실패·실패 턴·런 종료)의
+  // gen 엔트리를 마감한다 — 그냥 두면 "생성 중" caret 정체. 본문 있으면 done, 없으면 제거.
   function ovFinalizeGen() {
-    if (!ovLive || ovLive.status !== "gen") return;
-    if ((ovLive.text || "").trim()) {
-      ovLive.status = "done";
-      ovDone.push(ovLive);
-      if (ovDone.length > 6) ovDone = ovDone.slice(-6);
+    if (!ovGen) return;
+    if ((ovGen.text || "").trim()) {
+      ovGen.status = "done";
+    } else {
+      var i = ovEntries.indexOf(ovGen);
+      if (i >= 0) ovEntries.splice(i, 1);
     }
-    ovLive = null;
+    ovGen = null;
     ovRender();
   }
   function ovOnFailed(d) {
@@ -1919,16 +1993,16 @@
     ovRender();
   }
   function ovOnScopeStart(d) {
-    if (d.kind === "skill") {
-      ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
-      ovRender();
-    }
+    if (!d || !d.task_id) return;
+    if (d.depth === 0) ovTopScopes[d.task_id] = true; // top-level → complete 수용 대상
+    if (d.kind === "skill") ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
+    ovRender();
   }
   function ovOnScopeEnd(d) {
-    if (ovSkills[d.task_id]) {
-      delete ovSkills[d.task_id];
-      ovRender();
-    }
+    if (!d || !d.task_id) return;
+    delete ovTopScopes[d.task_id];
+    if (ovSkills[d.task_id]) delete ovSkills[d.task_id];
+    ovRender();
   }
 
   /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
@@ -2130,13 +2204,30 @@
 
   // 개요 응답 블록 → 패널(이미 렌더된 hero HTML 재사용). data-nav-ts 로 타임라인
   // 카드를 해석해 두면 [▤ 전체 타임라인] 이 그 카드로 정확히 점프한다.
+  // 개요 블록 → 대응하는 타임라인 카드. data-scope-id(직접 dispatch)면 스코프 task-group
+  // 카드로, 아니면 data-nav-ts(메인 응답)로 해석.
+  function ovResolveCard(block) {
+    if (!block) return { card: null, taskId: null };
+    const sid = block.getAttribute("data-scope-id");
+    if (sid) {
+      const sel = window.CSS && CSS.escape ? CSS.escape(sid) : sid.replace(/"/g, '\\"');
+      return {
+        card: $messages.querySelector('.card-task-group[data-task-id="' + sel + '"]'),
+        taskId: sid,
+      };
+    }
+    const nts = block.getAttribute("data-nav-ts");
+    return {
+      card: nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null,
+      taskId: null,
+    };
+  }
   function dpPinOverview(block) {
     const tx = block.querySelector(".ov-tx");
     const who = block.querySelector(".ov-he .who");
     const label = who && who.textContent.trim() ? "응답 " + who.textContent.trim() : "응답";
-    const nts = block.getAttribute("data-nav-ts");
-    const card = nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null;
-    dpFill("main", label, "", tx ? tx.innerHTML : "", { card: card, taskId: null, kind: "main", overview: true });
+    const r = ovResolveCard(block);
+    dpFill("main", label, "", tx ? tx.innerHTML : "", { card: r.card, taskId: r.taskId, kind: "main", overview: true });
   }
 
   // 개요 응답 블록 액션: ⧉ 복사(본문 텍스트) · ▤ 전체 대화(타임라인으로 승격).
@@ -2174,10 +2265,13 @@
   }
   function ovOpenTimeline(block) {
     setViewMode("detail");
-    const nts = block && block.getAttribute("data-nav-ts");
-    const card = nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null;
-    if (card) scrollTimelineTo(card);
-    else scrollToBottom();
+    const r = ovResolveCard(block);
+    if (r.card) {
+      if (r.taskId && typeof expandAncestors === "function") expandAncestors(r.taskId);
+      scrollTimelineTo(r.card);
+    } else {
+      scrollToBottom();
+    }
   }
 
   // Tier-3 승격: [▤ 전체 타임라인] → 드로어 열고 카드로 이동(개요/카드없음은 최신 하단).

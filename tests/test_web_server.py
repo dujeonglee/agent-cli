@@ -534,9 +534,10 @@ class TestStaticUI:
         assert 'e.target.closest(".ov-open")' in js
         # clipboard fallback for non-secure LAN http (navigator.clipboard undefined)
         assert 'document.execCommand("copy")' in js
-        # blocks carry data-nav-ts so 전체 대화 / 상세패널 jump to the exact card
-        assert "navTs: d.ts" in js and "ovLive.navTs = d.ts" in js
-        assert 'data-nav-ts="' in js
+        # blocks carry data-nav-ts (main) or data-scope-id (dispatched) so
+        # 전체 대화 / 상세패널 resolve the right timeline card (ovResolveCard).
+        assert "function ovResolveCard(" in js
+        assert 'data-nav-ts="' in js and 'data-scope-id="' in js
         assert ".ov-act" in css
 
     def test_overview_finalizes_stuck_gen_hero_wired(self, server_and_client):
@@ -554,6 +555,31 @@ class TestStaticUI:
         # worker_state idle 안전망
         ws = js.split('es.addEventListener("worker_state"', 1)[1].split("});", 1)[0]
         assert "if (!d.busy) ovFinalizeGen()" in ws
+
+    def test_overview_flat_log_model_wired(self, server_and_client):
+        """개요 = 플랫 로그 모델(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
+        만 하고 짝짓기(pairing)는 렌더 시점에 순서로만 도출 → '대기' 정체·쿼리↔응답
+        오귀속 원천 제거. 모델 B: 직접 실행한 top-level(depth0) /skill·@agent 의 complete
+        (scoped final)도 요약에 기록한다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        # flat append-only state (no stateful pairing vars)
+        assert "var ovEntries" in js
+        assert "ovDone" not in js and "ovPending" not in js  # 옛 pairing 상태 제거
+        # append-only handlers push entries
+        assert 'ovEntries.push({ kind: "user"' in js
+        assert 'kind: "resp"' in js
+        # render-time grouping (consecutive users + following resp), no stored pairing
+        assert "function ovBuildBlocks(" in js
+        # model B: top-level scoped completes recorded via ovTopScopes / ovOnScopedFinal
+        assert "function ovOnScopedFinal(" in js
+        assert "ovTopScopes" in js
+        assert "d.depth === 0" in js  # depth-0 → top-level scope 수용 대상
+        # assistant_turn routes main finals AND top-level scoped finals to overview
+        at = js.split('es.addEventListener("assistant_turn"', 1)[1].split("\n  });", 1)[
+            0
+        ]
+        assert "ovOnFinal(d)" in at and "ovOnScopedFinal(d)" in at
 
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
