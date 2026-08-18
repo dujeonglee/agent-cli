@@ -1810,26 +1810,27 @@
     );
   }
   function ovBlockHtml(b, isHero) {
-    var q =
-      b.queries && b.queries.length
-        ? '<div class="ov-qb"><div class="ov-qh">📥 이 응답의 요청 · ' + b.queries.length + "건</div>" +
-          b.queries
-            .map(function (x) {
-              return '<div class="ov-qr"><span class="w">👤 [' + escapeHtml(x.who) + "]</span> " +
-                escapeHtml(x.t) + (x.tm ? '<span class="tm">' + x.tm + "</span>" : "") + "</div>";
-            })
-            .join("") +
-          "</div>"
-        : "";
+    // 사용자 입력 = 채팅 로그 스타일 평문 줄(박스·"N건" 없음).
+    var q = (b.queries || [])
+      .map(function (x) {
+        return '<div class="ov-q"><span class="w">👤 ' + escapeHtml(x.who) + "</span> " +
+          escapeHtml(x.t) + (x.tm ? '<span class="tm">' + x.tm + "</span>" : "") + "</div>";
+      })
+      .join("");
+    // 응답 아직 없음(트레일링 입력) = 입력 줄 + 은은한 대기 표시만.
+    if (b.status === "wait") {
+      return '<div class="ov-block wait">' + q + '<div class="ov-wait">⚪ 응답 대기…</div></div>';
+    }
     var st =
       b.status === "gen"
         ? '<span class="ov-st gen"><span class="ov-pulse"></span> 생성 중</span>'
-        : b.status === "wait"
-          ? '<span class="ov-st wait">⚪ 대기</span>'
-          : '<span class="ov-st done">✓ 완료</span>';
-    var who = b.answers && b.answers.length ? "[" + b.answers.map(escapeHtml).join(", ") + "]" : "";
-    // 완료 = 앱 마크다운 렌더러(타임라인 .final 과 동일: 제목·목록·코드블록·표·강조).
-    // 스트리밍 중엔 불완전 마크다운 방지 위해 평문 + caret (pre-wrap 이 개행 유지).
+        : '<span class="ov-st done">✓</span>';
+    // 귀속(누구의 요청에 답했나) — "응답" 라벨은 빼고 은은한 ↳ 칩만.
+    var who =
+      b.answers && b.answers.length
+        ? '<span class="who">↳ ' + b.answers.map(escapeHtml).join(", ") + "</span>"
+        : "";
+    // 완료 = 앱 마크다운 렌더러(타임라인 .final 과 동일). 스트리밍 중엔 평문 + caret.
     var txt =
       b.status === "gen"
         ? escapeHtml(b.text || "") + '<span class="ov-caret"></span>'
@@ -1839,15 +1840,13 @@
         ? '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
           '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>'
         : "";
-    // 💭 reasoning — final 이벤트의 thought. 요약 뷰라 기본 접힘(<details>)으로 두어
-    // 답변을 가리지 않되, 펼치면 타임라인과 같은 사고 과정을 볼 수 있다.
+    // 💭 reasoning — final 이벤트의 thought. 기본 접힘(<details>).
     var re =
       b.status === "done" && b.reasoning && b.reasoning.trim()
         ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
           '<div class="ov-re-body">' + escapeAndFormat(b.reasoning) + "</div></details>"
         : "";
-    // 점프 앵커: 메인 응답=data-nav-ts(카드가 같은 ts 스탬프), 직접 dispatch 응답=
-    // data-scope-id(스코프 task-group 카드로).
+    // 점프 앵커: 메인 응답=data-nav-ts, 직접 dispatch 응답=data-scope-id.
     var navAttr = b.scopeId
       ? ' data-scope-id="' + escapeHtml(String(b.scopeId)) + '"'
       : b.navTs != null
@@ -1855,8 +1854,7 @@
         : "";
     return (
       '<div class="ov-block ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" + q +
-      '<div class="ov-hero"><div class="ov-he"><span class="lab">응답</span>main → ' +
-      '<span class="who">' + who + "</span>" + st + "</div>" + re +
+      '<div class="ov-hero"><div class="ov-he">' + who + st + "</div>" + re +
       '<div class="ov-tx">' + txt + "</div>" + acts + "</div></div>"
     );
   }

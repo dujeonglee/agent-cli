@@ -1488,15 +1488,15 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ov-block { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; margin-bottom: 10px; transition: box-shadow .25s, border-color .25s, opacity .3s; }
 .ov-block.past { opacity: .58; }
 .ov-block.hero { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft-bg); }
-.ov-qb { background: var(--surface-3); border-bottom: 1px solid var(--border); padding: 8px 12px; }
-.ov-qh { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-2); font-weight: 700; margin-bottom: 3px; }
-.ov-qr { font-size: 13px; color: var(--text); padding: 1px 0; }
-.ov-qr .w { color: var(--accent); font-size: 11.5px; font-weight: 600; }
-.ov-qr .tm { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
-.ov-hero { padding: 12px 14px; }
-.ov-he { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
-.ov-he .lab { color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-.ov-he .who { color: var(--text); font-weight: 600; }
+/* 사용자 입력 = 채팅 로그 평문 줄(박스 없음) */
+.ov-q { font-size: 13.5px; color: var(--text); padding: 7px 14px 0; }
+.ov-q .w { color: var(--accent); font-size: 12px; font-weight: 600; }
+.ov-q .tm { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
+/* 응답 대기(트레일링 입력) */
+.ov-wait { font-size: 12px; color: var(--muted); padding: 4px 14px 10px; }
+.ov-hero { padding: 8px 14px 12px; }
+.ov-he { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 6px; min-height: 14px; }
+.ov-he .who { color: var(--text-2); font-weight: 600; }
 .ov-st { margin-left: auto; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
 .ov-st.gen { color: var(--warn); } .ov-st.done { color: var(--ok); } .ov-st.wait { color: var(--muted); }
 .ov-pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: ov-pulse 1.1s ease-in-out infinite; }
@@ -1523,6 +1523,9 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ov-re > summary:hover { color: var(--accent-soft-text); }
 .ov-re > summary::-webkit-details-marker { display: none; }
 .ov-re[open] > summary { margin-bottom: 4px; }
+/* 접힘 상태에서 본문 숨김 — 페이지 CSS 리셋이 UA 기본(details:not([open]) 자식
+   숨김)을 덮어써 접혀도 본문이 보이던 것 명시적으로 수정. */
+.ov-re:not([open]) > .ov-re-body { display: none; }
 .ov-re-body { font-size: 13px; line-height: 1.55; color: var(--text-2); border-left: 2px solid var(--border-2); padding: 2px 0 2px 10px; }
 @media (prefers-reduced-motion: reduce) { .ov-caret, .ov-pulse { animation: none; } }
 /* 개요 모드: dock(기존 최신응답 스트립) 숨김 — 개요의 hero 가 대체 */
