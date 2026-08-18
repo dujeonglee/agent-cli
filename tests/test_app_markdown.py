@@ -278,82 +278,79 @@ def _extract_fn(name: str) -> str:
     raise AssertionError(f"unbalanced braces for {name}")
 
 
-def _ov_blocks(entries):
-    """Run app.js's REAL ovBuildBlocks over a flat entry list → derived blocks.
-    ovBuildBlocks closes over ``ovEntries`` only, so we inject it and run the
-    extracted source standalone in Node (same source the browser executes)."""
-    fn = _extract_fn("ovBuildBlocks")
-    harness = (
-        "var ovEntries = " + json.dumps(entries) + ";\n" + fn + "\n"
-        "process.stdout.write(JSON.stringify(ovBuildBlocks()));\n"
+def _ov_render_html(name, entry, *, is_hero=False):
+    """Run app.js's REAL ovUserHtml/ovRespHtml (pure string builders) standalone.
+    They only close over escapeHtml/escapeAndFormat, which we extract alongside —
+    exercising the same source the browser runs. The flat log has NO grouping
+    function anymore (no pairing), so we test the per-entry renderers directly."""
+    deps = _extract_fn("escapeHtml") + "\n"
+    if name == "ovRespHtml":
+        # ovRespHtml uses the markdown pipeline; pull the whole chain.
+        for dep in (
+            "renderTables",
+            "renderHeadings",
+            "renderLists",
+            "renderEmphasis",
+            "markdownInline",
+            "extractCodeFences",
+            "restoreCodeFences",
+            "escapeAndFormat",
+        ):
+            deps += _extract_fn(dep) + "\n"
+    fn = _extract_fn(name)
+    call = (
+        name
+        + "("
+        + json.dumps(entry)
+        + ((", " + ("true" if is_hero else "false")) if name == "ovRespHtml" else "")
+        + ")"
     )
+    harness = deps + fn + "\n" + "process.stdout.write(" + call + ");\n"
     result = subprocess.run(
         ["node", "-e", harness], capture_output=True, text=True, timeout=10, check=False
     )
     if result.returncode != 0:
         raise AssertionError(f"node failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    return result.stdout
 
 
-class TestOverviewFlatGrouping:
-    """개요 플랫 로그 모델(v8.15.0): ovEntries(사용자 입력 + resp)를 렌더 시점에
-    [연속 user + 뒤따르는 resp] 블록으로 그룹핑. 짝짓기를 저장하지 않으므로 정체·
-    오귀속이 없다 — 여기서 REAL ovBuildBlocks 로직을 실행해 검증한다."""
+class TestOverviewFlatRender:
+    """개요 = 순수 플랫 로그(v8.15.0): 각 항목(사용자 입력/응답)을 도착 순서대로 독립
+    렌더 — **그룹핑도 귀속(↳)도 없다**(짝짓기 안 함). 여기서 REAL 렌더 함수를 실행해
+    '짝지어 보이는' 요소가 없음을 검증한다."""
 
-    def test_users_then_response_group_into_one_block(self):
-        blocks = _ov_blocks(
-            [
-                {"kind": "user", "who": "A", "text": "q1", "tm": ""},
-                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
-                {"kind": "resp", "text": "answer", "status": "done", "answers": []},
-            ]
+    def test_user_line_is_standalone_no_group_box(self):
+        out = _ov_render_html(
+            "ovUserHtml", {"who": "Grumpy Walrus", "text": "하이하이", "tm": "1:36"}
         )
-        assert len(blocks) == 1
-        assert [q["t"] for q in blocks[0]["queries"]] == ["q1", "q2"]
-        assert blocks[0]["text"] == "answer"
-        assert blocks[0]["status"] == "done"
+        assert 'class="ov-umsg"' in out
+        assert "Grumpy Walrus" in out and "하이하이" in out
+        assert "1:36" in out
+        # 그룹핑/짝짓기 흔적이 없어야 한다.
+        assert "이 응답의 요청" not in out
+        assert "ov-qb" not in out and "ov-q" not in out.replace("ov-umsg", "")
 
-    def test_two_runs_do_not_cross_contaminate(self):
-        # q1→a1, then q2→a2: each response pairs with only its preceding queries.
-        blocks = _ov_blocks(
-            [
-                {"kind": "user", "who": "A", "text": "q1", "tm": ""},
-                {"kind": "resp", "text": "a1", "status": "done", "answers": []},
-                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
-                {"kind": "resp", "text": "a2", "status": "done", "answers": []},
-            ]
+    def test_user_line_agent_wake_shown_without_person_icon(self):
+        # 🤝 agent wake 도 그대로 보여주되(사용자가 원함) 사람(👤) 아이콘은 안 붙인다.
+        out = _ov_render_html(
+            "ovUserHtml", {"who": "🤝 agent", "text": "New agent mail", "tm": ""}
         )
-        assert len(blocks) == 2
-        assert [q["t"] for q in blocks[0]["queries"]] == ["q1"]
-        assert blocks[0]["text"] == "a1"
-        assert [q["t"] for q in blocks[1]["queries"]] == ["q2"]
-        assert blocks[1]["text"] == "a2"
+        assert "🤝 agent" in out and "New agent mail" in out
+        assert "👤" not in out
 
-    def test_trailing_users_without_response_are_a_wait_block(self):
-        # A request with no response yet → a wait block (never stuck: it just
-        # trails until a resp entry arrives). This is the "대기" case that used to
-        # get stuck; now it is purely render-derived, not stateful.
-        blocks = _ov_blocks(
-            [
-                {"kind": "resp", "text": "a1", "status": "done", "answers": []},
-                {"kind": "user", "who": "A", "text": "q2", "tm": ""},
-            ]
+    def test_response_block_has_no_attribution_or_queries(self):
+        out = _ov_render_html(
+            "ovRespHtml",
+            {"text": "answer", "status": "done", "answers": ["Grumpy Walrus"]},
+            is_hero=True,
         )
-        assert len(blocks) == 2
-        assert blocks[1]["status"] == "wait"
-        assert blocks[1]["text"] == ""
-        assert [q["t"] for q in blocks[1]["queries"]] == ["q2"]
+        assert 'class="ov-block resp' in out and "hero" in out
+        assert "answer" in out
+        # 짝지어 보이게 하던 ↳ 귀속·요청 박스가 없어야 한다.
+        assert "↳" not in out
+        assert "이 응답의 요청" not in out
 
-    def test_response_with_no_preceding_query(self):
-        # A scoped/dispatched complete may land with no immediately-preceding
-        # user entry (e.g. its query was consumed by a prior block) — still a
-        # valid response block with empty queries, never dropped or stuck.
-        blocks = _ov_blocks(
-            [{"kind": "resp", "text": "scoped result", "status": "done", "answers": []}]
-        )
-        assert len(blocks) == 1
-        assert blocks[0]["queries"] == []
-        assert blocks[0]["text"] == "scoped result"
-
-    def test_empty_log_yields_no_blocks(self):
-        assert _ov_blocks([]) == []
+    def test_response_gen_shows_caret_no_actions(self):
+        out = _ov_render_html("ovRespHtml", {"text": "partial", "status": "gen"})
+        assert "ov-caret" in out
+        assert "복사" not in out  # 생성 중엔 액션 없음

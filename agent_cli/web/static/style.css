@@ -1488,15 +1488,13 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ov-block { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; margin-bottom: 10px; transition: box-shadow .25s, border-color .25s, opacity .3s; }
 .ov-block.past { opacity: .58; }
 .ov-block.hero { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft-bg); }
-/* 사용자 입력 = 채팅 로그 평문 줄(박스 없음) */
-.ov-q { font-size: 13.5px; color: var(--text); padding: 7px 14px 0; }
-.ov-q .w { color: var(--accent); font-size: 12px; font-weight: 600; }
-.ov-q .tm { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
-/* 응답 대기(트레일링 입력) */
-.ov-wait { font-size: 12px; color: var(--muted); padding: 4px 14px 10px; }
-.ov-hero { padding: 8px 14px 12px; }
+/* 사용자 입력 = 독립된 채팅 로그 평문 줄(그룹핑·박스 없음) */
+.ov-umsg { font-size: 13.5px; color: var(--text); padding: 8px 4px 2px; word-break: break-word; }
+.ov-umsg .w { color: var(--accent); font-size: 12px; font-weight: 600; }
+.ov-umsg .tm { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
+/* 응답 블록(독립) */
+.ov-block.resp { padding: 8px 14px 12px; }
 .ov-he { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 6px; min-height: 14px; }
-.ov-he .who { color: var(--text-2); font-weight: 600; }
 .ov-st { margin-left: auto; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
 .ov-st.gen { color: var(--warn); } .ov-st.done { color: var(--ok); } .ov-st.wait { color: var(--muted); }
 .ov-pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: ov-pulse 1.1s ease-in-out infinite; }

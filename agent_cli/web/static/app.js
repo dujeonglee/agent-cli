@@ -1809,97 +1809,63 @@
       ctxHtml + vwHtml + mdHtml + "</div>"
     );
   }
-  function ovBlockHtml(b, isHero) {
-    // 사용자 입력 = 채팅 로그 스타일 평문 줄(박스·"N건" 없음).
-    var q = (b.queries || [])
-      .map(function (x) {
-        return '<div class="ov-q"><span class="w">👤 ' + escapeHtml(x.who) + "</span> " +
-          escapeHtml(x.t) + (x.tm ? '<span class="tm">' + x.tm + "</span>" : "") + "</div>";
-      })
-      .join("");
-    // 응답 아직 없음(트레일링 입력) = 입력 줄 + 은은한 대기 표시만.
-    if (b.status === "wait") {
-      return '<div class="ov-block wait">' + q + '<div class="ov-wait">⚪ 응답 대기…</div></div>';
-    }
+  // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
+  function ovUserHtml(e) {
+    var icon = /🤝/.test(e.who) ? "" : "👤 ";
+    return (
+      '<div class="ov-umsg"><span class="w">' + icon + escapeHtml(e.who) + "</span> " +
+      escapeHtml(e.text) + (e.tm ? '<span class="tm">' + e.tm + "</span>" : "") + "</div>"
+    );
+  }
+  // 응답 = 독립된 블록. **짝짓기·귀속 없음** — 도착 순서대로 그냥 놓인다(플랫 로그).
+  function ovRespHtml(e, isHero) {
     var st =
-      b.status === "gen"
+      e.status === "gen"
         ? '<span class="ov-st gen"><span class="ov-pulse"></span> 생성 중</span>'
         : '<span class="ov-st done">✓</span>';
-    // 귀속(누구의 요청에 답했나) — "응답" 라벨은 빼고 은은한 ↳ 칩만.
-    var who =
-      b.answers && b.answers.length
-        ? '<span class="who">↳ ' + b.answers.map(escapeHtml).join(", ") + "</span>"
-        : "";
-    // 완료 = 앱 마크다운 렌더러(타임라인 .final 과 동일). 스트리밍 중엔 평문 + caret.
     var txt =
-      b.status === "gen"
-        ? escapeHtml(b.text || "") + '<span class="ov-caret"></span>'
-        : escapeAndFormat(b.text || "");
+      e.status === "gen"
+        ? escapeHtml(e.text || "") + '<span class="ov-caret"></span>'
+        : escapeAndFormat(e.text || "");
     var acts =
-      b.status === "done"
+      e.status === "done"
         ? '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
           '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>'
         : "";
-    // 💭 reasoning — final 이벤트의 thought. 기본 접힘(<details>).
     var re =
-      b.status === "done" && b.reasoning && b.reasoning.trim()
+      e.status === "done" && e.reasoning && e.reasoning.trim()
         ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
-          '<div class="ov-re-body">' + escapeAndFormat(b.reasoning) + "</div></details>"
+          '<div class="ov-re-body">' + escapeAndFormat(e.reasoning) + "</div></details>"
         : "";
     // 점프 앵커: 메인 응답=data-nav-ts, 직접 dispatch 응답=data-scope-id.
-    var navAttr = b.scopeId
-      ? ' data-scope-id="' + escapeHtml(String(b.scopeId)) + '"'
-      : b.navTs != null
-        ? ' data-nav-ts="' + escapeHtml(String(b.navTs)) + '"'
+    var navAttr = e.scopeId
+      ? ' data-scope-id="' + escapeHtml(String(e.scopeId)) + '"'
+      : e.navTs != null
+        ? ' data-nav-ts="' + escapeHtml(String(e.navTs)) + '"'
         : "";
     return (
-      '<div class="ov-block ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" + q +
-      '<div class="ov-hero"><div class="ov-he">' + who + st + "</div>" + re +
-      '<div class="ov-tx">' + txt + "</div>" + acts + "</div></div>"
+      '<div class="ov-block resp ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" +
+      '<div class="ov-he">' + st + "</div>" + re +
+      '<div class="ov-tx">' + txt + "</div>" + acts + "</div>"
     );
-  }
-  // 플랫 로그 → 블록 도출(렌더 시점, 무상태): 연속된 user 엔트리 + 뒤따르는 resp 를
-  // 한 블록으로 묶는다. 마지막에 남은 user 들(응답 아직 없음)은 wait 블록.
-  function ovBuildBlocks() {
-    var blocks = [];
-    var q = [];
-    for (var i = 0; i < ovEntries.length; i++) {
-      var e = ovEntries[i];
-      if (e.kind === "user") {
-        q.push({ who: e.who, t: e.text, tm: e.tm });
-      } else {
-        blocks.push({
-          queries: q,
-          text: e.text,
-          reasoning: e.reasoning,
-          answers: e.answers,
-          status: e.status,
-          navTs: e.navTs,
-          scopeId: e.scopeId,
-        });
-        q = [];
-      }
-    }
-    if (q.length) blocks.push({ queries: q, text: "", status: "wait", answers: [] });
-    return blocks;
   }
   function ovRender() {
     if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
-    var all = ovBuildBlocks().slice(-6);
+    var items = ovEntries.slice(-14); // 최근 항목만(사용자 입력 + 응답 혼합)
+    // hero = 마지막 응답 엔트리(눈에 잘 띄게 accent). 그 외는 dim.
+    var heroIdx = -1;
+    for (var k = items.length - 1; k >= 0; k--) {
+      if (items[k].kind === "resp") {
+        heroIdx = k;
+        break;
+      }
+    }
     var html = ovAmbient();
-    if (!all.length) {
+    if (!items.length) {
       html += '<div class="ov-placeholder">아직 응답이 없습니다 — 아래에 메시지를 입력하세요.</div>';
     } else {
-      // hero = 마지막 "응답 있는" 블록(wait 블록은 hero 아님).
-      var heroIdx = -1;
-      for (var k = all.length - 1; k >= 0; k--) {
-        if (all[k].status !== "wait") {
-          heroIdx = k;
-          break;
-        }
-      }
-      all.forEach(function (b, i) {
-        html += ovBlockHtml(b, i === heroIdx);
+      items.forEach(function (e, i) {
+        html += e.kind === "user" ? ovUserHtml(e) : ovRespHtml(e, i === heroIdx);
       });
     }
     $overview.innerHTML = html;
@@ -1909,9 +1875,14 @@
   }
   // 이벤트 훅 (아래 es 핸들러에서 호출) — 전부 ovEntries 에 append 만(무상태 페어링).
   function ovOnUserMsg(d) {
-    // 본문에 이미 박힌 "[닉네임]: " 접두는 제거(who 라벨과 중복 방지).
-    var t = (d.content || "").replace(/^\[[^\]]+\]:\s*/, "");
-    ovEntries.push({ kind: "user", who: d.author || "사용자", text: t, tm: ovClock(d.ts) });
+    // 본문의 "[라벨]: " 접두에서 라벨을 뽑아 who 로 쓴다 — 실제 사용자면 닉네임,
+    // 🤝 agent wake(예 "[🤝 agent]: New agent mail…")면 "🤝 agent". wake 도 그대로
+    // 도착 순서대로 로그에 보여준다(짝짓기 안 함 — 그냥 시간순 스트림).
+    var content = d.content || "";
+    var m = content.match(/^\[([^\]]+)\]:\s*/);
+    var who = d.author || (m ? m[1] : "사용자");
+    var t = content.replace(/^\[[^\]]+\]:\s*/, "");
+    ovEntries.push({ kind: "user", who: who, text: t, tm: ovClock(d.ts) });
     ovCap();
     ovRender();
   }

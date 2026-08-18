@@ -557,9 +557,10 @@ class TestStaticUI:
         assert "if (!d.busy) ovFinalizeGen()" in ws
 
     def test_overview_flat_log_model_wired(self, server_and_client):
-        """개요 = 플랫 로그 모델(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
-        만 하고 짝짓기(pairing)는 렌더 시점에 순서로만 도출 → '대기' 정체·쿼리↔응답
-        오귀속 원천 제거. 모델 B: 직접 실행한 top-level(depth0) /skill·@agent 의 complete
+        """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
+        만 하고, 각 항목을 독립 렌더 → 짝짓기(pairing)를 아예 안 한다. '대기' 정체·
+        쿼리↔응답 오귀속이 원천 제거되고, **그룹핑도 ↳ 귀속도 없어 짝지어 보이지
+        않는다**. 모델 B: 직접 실행한 top-level(depth0) /skill·@agent 의 complete
         (scoped final)도 요약에 기록한다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
@@ -569,8 +570,11 @@ class TestStaticUI:
         # append-only handlers push entries
         assert 'ovEntries.push({ kind: "user"' in js
         assert 'kind: "resp"' in js
-        # render-time grouping (consecutive users + following resp), no stored pairing
-        assert "function ovBuildBlocks(" in js
+        # 순수 플랫 렌더: 항목별 독립 렌더(그룹핑 함수 없음, ↳ 귀속 없음).
+        assert "function ovUserHtml(" in js and "function ovRespHtml(" in js
+        assert "function ovBuildBlocks(" not in js  # 그룹핑 폐기(짝지어 보이던 원인)
+        assert 'e.kind === "user" ? ovUserHtml(e) : ovRespHtml(' in js
+        assert "이 응답의 요청" not in js  # 요청 그룹 박스 제거
         # model B: top-level scoped completes recorded via ovTopScopes / ovOnScopedFinal
         assert "function ovOnScopedFinal(" in js
         assert "ovTopScopes" in js
