@@ -1565,56 +1565,6 @@ body.drawer-open #team-view { margin-right: var(--drawer-w); }
   body.drawer-open #team-view { margin-right: 0; }
 }
 
-/* 선택→고정 상세 패널 (Tier 2, v8.13.0) — 흐름/개요 요소 클릭 시 그 요소만
-   집중해 우측에 고정. 드로어(Tier 3)보다 좁고, 닫힘 시 화면 밖으로
-   (#content-split overflow-x:hidden 이 클리핑). 전부 토큰 — 하드 hex 0. */
-.detail-panel {
-  position: absolute; top: 0; right: 0; bottom: 0;
-  width: min(46%, 460px);
-  display: flex; flex-direction: column; z-index: 6;
-  background: var(--surface); border-left: 1px solid var(--border-2);
-  box-shadow: -8px 0 24px var(--shadow);
-  transform: translateX(102%); transition: transform .18s ease;
-}
-.detail-panel.open { transform: translateX(0); }
-@media (prefers-reduced-motion: reduce) { .detail-panel { transition: none; } }
-.dp-head {
-  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
-  border-bottom: 1px solid var(--border); background: var(--surface-3); flex: none;
-}
-.dp-tag {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700;
-  padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); flex: none;
-}
-.dp-tag.tag-main, .dp-tag.tag-agent { background: var(--accent-soft-bg); color: var(--accent-soft-text); }
-.dp-tag.tag-skill { background: var(--surface-2); color: var(--accent-2); }
-.dp-tag.tag-obs { background: var(--ok-soft-bg); color: var(--ok); }
-.dp-tag.tag-error { background: var(--surface-2); color: var(--fail); }
-.dp-title { flex: 1; font-weight: 550; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dp-meta { padding: 6px 12px; font-size: 11.5px; color: var(--text-2); border-bottom: 1px solid var(--border); background: var(--surface-2); flex: none; }
-.dp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; }
-.dp-status { font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
-.dp-empty { color: var(--muted); font-size: 13px; font-style: italic; }
-.dp-actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-3); flex: none; }
-.dp-btn {
-  flex: 1; padding: 7px 10px; font-size: 12.5px; cursor: pointer;
-  border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface-2); color: var(--text);
-}
-.dp-btn:hover { background: var(--surface); border-color: var(--accent-soft-border); color: var(--accent-soft-text); }
-/* 패널 본문 마크다운(카드에서 복제한 이미-렌더 HTML) — .ov-tx 와 동일 규칙 */
-.dp-body pre.code { background: var(--code-bg); color: var(--code-fg); padding: 9px 12px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 8px 0; }
-.dp-body code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: .92em; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; }
-.dp-body pre.code code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
-.dp-body h1, .dp-body h2, .dp-body h3 { margin: 12px 0 6px; line-height: 1.3; font-weight: 640; }
-.dp-body h1 { font-size: 1.22em; } .dp-body h2 { font-size: 1.12em; } .dp-body h3 { font-size: 1.04em; }
-.dp-body ul, .dp-body ol { margin: 6px 0; padding-left: 1.4em; }
-.dp-body table { border-collapse: collapse; margin: 8px 0; font-size: .95em; }
-.dp-body th, .dp-body td { border: 1px solid var(--border); padding: 4px 8px; }
-@media (max-width: 780px) { .detail-panel { width: 100%; } }
-/* 개요 응답 블록 헤더 = 상세 패널 진입점 */
-.ov-he { cursor: pointer; }
-.ov-he:hover { color: var(--accent-soft-text); }
 
 /* ── Response dock — the latest main answer, always visible ── */
 #dock {

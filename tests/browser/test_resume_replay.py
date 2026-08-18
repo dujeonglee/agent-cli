@@ -253,10 +253,8 @@ class TestResumeRebuildsScopeCards:
         page.click("#vt-flow")
         page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
         page.wait_for_selector('.card-task-group[data-task-id="sk1"]', timeout=8000)
-        # v8.13.0: 막대 클릭은 Tier-2 패널을 고정하고, [▤ 전체 타임라인](#dp-timeline)이
-        # 드로어를 열어 카드로 이동·플래시한다.
+        # v8.15.0: 막대 클릭이 전문 드로어를 열어 카드로 이동·플래시(패널 폐기).
         page.locator("#team-view .tv-scope-skill").first.click()
-        page.click("#dp-timeline")
         card = page.locator('.card-task-group[data-task-id="sk1"]')
         assert _wait(lambda: "tv-nav-hl" in (card.get_attribute("class") or ""))
         assert page.locator("#team-view .tv-nav-miss:not([hidden])").count() == 0

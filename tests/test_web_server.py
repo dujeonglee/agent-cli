@@ -481,41 +481,23 @@ class TestStaticUI:
         assert ".queue-item.q-cancelled" in css
         assert ".queue-state" in css
 
-    def test_detail_panel_wired(self, server_and_client):
-        """관측 UI 단계 4 배선 (동작은 브라우저 검증): 흐름/개요 요소 클릭 →
-        Tier-2 고정 패널(#detail-panel). hover=툴팁·click=이 패널·버튼=Tier-3
-        (▤ 전체 타임라인 → 드로어 / 🔍 → 인스펙터) 승격. presentation-only —
-        기존 카드/모델에서 이미-렌더된 HTML 을 추출해 재사용."""
+    def test_detail_panel_removed(self, server_and_client):
+        """Tier-2 상세 패널 폐기(v8.15.0): 개요 응답은 본문이 인라인 렌더돼 패널이
+        중복이고, 전문 드로어가 이미 side-by-side 라 '엿보기' 패널도 불필요 →
+        전면 제거. 흐름 막대/화살표 클릭은 전문 드로어로 직행한다."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # panel scaffold + escalation controls present
-        assert 'id="detail-panel"' in html
-        for el_id in (
-            "dp-tag",
-            "dp-title",
-            "dp-body",
-            "dp-timeline",
-            "dp-inspect",
-            "dp-close",
-        ):
-            assert 'id="' + el_id + '"' in html, el_id
-        # pin entry points: swimlane card click + overview block header
-        assert "function dpPinCard(" in js
-        assert "function dpPinOverview(" in js
-        # swimlane click now pins the panel (not the old direct drawer open)
-        assert "dpPinCard(card, tip" in js
-        # Tier-3 escalation wired to the two buttons
-        assert (
-            "expandAncestors(nav.taskId)" in js and "scrollTimelineTo(nav.card)" in js
-        )
-        assert "__openInspector(nav.taskId" in js
-        # contextual close on view switch
-        assert "dpClose()" in js
-        # panel styling present (slide-in like the drawer, narrower)
-        assert ".detail-panel" in css
-        assert ".detail-panel.open" in css
+        assert 'id="detail-panel"' not in html
+        for gone in ("dpPinCard", "dpPinOverview", "dpFill", "dpClose", ".dp-btn"):
+            assert gone not in js, gone
+        assert ".detail-panel" not in css
+        # 흐름 클릭은 드로어 직행(패널 경유 아님).
+        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n    });", 1)[
+            0
+        ]
+        assert 'setViewMode("detail")' in nav and "scrollTimelineTo(card)" in nav
 
     def test_overview_actions_wired(self, server_and_client):
         """개요 응답 블록의 ⧉ 복사 · ▤ 전체 대화 는 실제 버튼(핸들러 배선) 이어야
@@ -630,15 +612,16 @@ class TestStaticUI:
     def test_swimlane_click_expands_ancestor_chain(self, server_and_client):
         """스윔레인 바 클릭 내비: 중첩 카드는 부모 body(기본 접힘) 안에 있으므로
         스크롤 전에 조상 체인을 펼쳐야 한다 — 펼치기가 스크롤 뒤면 타깃이
-        움직여 v7.26.x 에서 고친 '2~3번 클릭' 증상이 재발한다. v8.13.0: 바 클릭은
-        Tier-2 패널을 고정하고, 이 펼침→스크롤 순서 보장은 [▤ 전체 타임라인]
-        (#dp-timeline) 승격 핸들러로 이동했다."""
+        움직여 v7.26.x 에서 고친 '2~3번 클릭' 증상이 재발한다. (v8.15.0: Tier-2
+        패널 폐기 → teamHost 클릭이 다시 드로어로 직행하며 이 순서를 보장한다.)"""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        nav = js.split("$dpTimeline.addEventListener(", 1)[1].split("\n  });\n", 1)[0]
-        assert "expandAncestors(nav.taskId)" in nav
-        expand_at = nav.index("expandAncestors(nav.taskId)")
-        scroll_at = nav.index("scrollTimelineTo(nav.card)")
+        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n    });", 1)[
+            0
+        ]
+        assert "expandAncestors(tid)" in nav
+        expand_at = nav.index("expandAncestors(tid)")
+        scroll_at = nav.index("scrollTimelineTo(card)")
         assert expand_at < scroll_at, "펼치기가 스크롤보다 먼저여야 함"
         # 바깥→안 순서로 펼침 (expandAncestors 본문).
         expand_fn = js.split("function expandAncestors(", 1)[1].split("\n  }\n", 1)[0]

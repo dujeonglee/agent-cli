@@ -106,22 +106,6 @@
       </div>
       <main id="messages"></main>
     </aside>
-    <!-- 선택→고정 상세 패널 (Tier 2, v8.13.0) — 흐름/개요에서 요소 클릭 시
-         그 요소만 집중해 고정. presentation-only(기존 카드/모델에서 추출).
-         [▤ 전체 타임라인]·[🔍 프롬프트] 로 Tier-3 승격. -->
-    <aside id="detail-panel" class="detail-panel" hidden aria-hidden="true">
-      <div class="dp-head">
-        <span id="dp-tag" class="dp-tag"></span>
-        <span id="dp-title" class="dp-title"></span>
-        <button id="dp-close" type="button" class="btn-icon" title="닫기 (Esc)">✕</button>
-      </div>
-      <div id="dp-meta" class="dp-meta" hidden></div>
-      <div id="dp-body" class="dp-body"></div>
-      <div class="dp-actions">
-        <button id="dp-timeline" type="button" class="dp-btn">▤ 전체 타임라인</button>
-        <button id="dp-inspect" type="button" class="dp-btn" hidden>🔍 프롬프트</button>
-      </div>
-    </aside>
   </div>
   <!-- Response dock: the latest main answer, pinned above the input bar.
        Body click → drawer at that answer's card; 펼치기 only when clamped. -->
