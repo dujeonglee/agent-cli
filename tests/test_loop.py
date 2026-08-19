@@ -3523,6 +3523,49 @@ class TestMessageInjection:
             "[Otter]: also focus on X"
         )
 
+    def test_inject_drains_entire_queue_in_one_turn_notice_once(self, caps, tmp_path):
+        # v8.16.1: a turn boundary DRAINS the whole queue — all pending requests
+        # reach the LLM together (Claude Code 식 묶음 반영), not one per turn. The
+        # steering notice is injected ONCE for the batch, before the first item.
+        from agent_cli.constants import QUEUED_REQUEST_NOTICE
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        pending = [
+            {"nickname": "Otter", "text": "req A"},
+            {"nickname": "Bob", "text": "req B"},
+            {"nickname": "Otter", "text": "req C"},
+        ]
+
+        def dq():
+            return pending.pop(0) if pending else None
+
+        run_loop(
+            query="starter",
+            query_author="Pen",
+            dequeue_user_message=dq,
+            route_message=lambda _text: False,  # all plain chat
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        # All three drained into the same turn boundary (single _inject call).
+        assert "[Otter]: req A" in users
+        assert "[Bob]: req B" in users
+        assert "[Otter]: req C" in users
+        # Order preserved (FIFO).
+        assert users.index("[Otter]: req A") < users.index("[Bob]: req B")
+        assert users.index("[Bob]: req B") < users.index("[Otter]: req C")
+        # Notice appears exactly ONCE for the whole batch, before the first item.
+        assert users.count(QUEUED_REQUEST_NOTICE) == 1
+        assert users.index(QUEUED_REQUEST_NOTICE) < users.index("[Otter]: req A")
+
     def test_starter_and_injected_share_route_message(self, caps, tmp_path):
         # Symmetry: the run-STARTER text is NOT chat-injected when it is a
         # command — same route_message gate as injected. (Here the starter is

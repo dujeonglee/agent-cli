@@ -639,46 +639,49 @@ class AgentLoop:
         return self.max_turns <= 0 or self.turn < self.max_turns
 
     def _inject_queued_messages(self) -> None:
-        """Turn boundary (web): pull ONE queued user message and process it the
-        SAME way a run-starter is processed. No-op when no callback (CLI) or the
-        queue is empty.
+        """Turn boundary (web): **drain the ENTIRE queue** and process each item
+        the SAME way a run-starter is processed, so all requests pending at this
+        boundary reach the LLM together in the next turn (v8.16.1 — Claude Code
+        식 묶음 반영; 종전엔 턴당 1건만 빼는 스티어링이었다). No-op when no callback
+        (CLI) or the queue is empty.
 
         A command (``/sh``, ``/compact``, ``@agent``, ``/skill``) is routed via
         ``route_message`` exactly as at run-start — so it executes instead of
-        leaking in as literal chat. Its effect lands in the shared ctx (e.g. a
-        ``@agent`` delegate result, a ``/compact``), so we refresh ``messages``
-        and record the ask in the task log. A plain chat message falls through
-        to ``_add_user_message`` as a steering injection."""
+        leaking in as literal chat; its effect lands in the shared ctx, so we
+        refresh ``messages`` and record the ask. A plain chat message falls
+        through to ``_add_user_message`` as a steering injection. The system
+        notice ("address every outstanding request") is injected **once** for the
+        whole drained batch, right before the first plain-chat message."""
         if self.dequeue_user_message is None:
             return
-        item = self.dequeue_user_message()
-        if not item:
-            return
-        text = item.get("text") or ""
-        author = item.get("nickname")
-        labeled = f"[{author}]: {text}" if author else text
-        # Echo the dequeued message as a conversation card BEFORE routing —
-        # mirrors the worker's run-starter echo so an injected command/chat
-        # shows the same way it would at run-start. ABC 표면 (v8.6.0 승격):
-        # CLI 기본은 no-op(주입 자체가 web 전용이라 도달도 안 함).
         from agent_cli.render import get_renderer
 
-        get_renderer().push_user_message(labeled, author=author or "")
-        if self.route_message is not None and self.route_message(text):
-            # Routed as a command — record the ask; ctx may have changed.
-            self.task_log.append(labeled)
-            if self.ctx:
-                self.messages = self.ctx.get_messages()
-            return
-        # Plain-chat steering injection: prepend a system notice so the model
-        # addresses EVERY outstanding request instead of answering only this
-        # (latest) one and dropping an earlier request it had not finished. The
-        # notice rides as its own role=user turn (INTERRUPT_NOTICE pattern) — the
-        # real request stays unpolluted, and its prefix is filtered from resume
-        # previews via ``all_system_user_prefixes``.
-        if self.ctx:
-            self.ctx.add({"role": "user", "content": QUEUED_REQUEST_NOTICE})
-        self._add_user_message(text, author)
+        renderer = get_renderer()
+        notice_added = False
+        while True:
+            item = self.dequeue_user_message()
+            if not item:
+                break
+            text = item.get("text") or ""
+            author = item.get("nickname")
+            labeled = f"[{author}]: {text}" if author else text
+            # Echo the dequeued message as a conversation card BEFORE routing —
+            # mirrors the worker's run-starter echo (CLI 기본은 no-op).
+            renderer.push_user_message(labeled, author=author or "")
+            if self.route_message is not None and self.route_message(text):
+                # Routed as a command — record the ask; ctx may have changed.
+                self.task_log.append(labeled)
+                if self.ctx:
+                    self.messages = self.ctx.get_messages()
+                continue
+            # Plain-chat steering injection. The system notice rides once per
+            # drained batch as its own role=user turn (INTERRUPT_NOTICE pattern) —
+            # the real requests stay unpolluted, and its prefix is filtered from
+            # resume previews via ``all_system_user_prefixes``.
+            if not notice_added and self.ctx:
+                self.ctx.add({"role": "user", "content": QUEUED_REQUEST_NOTICE})
+                notice_added = True
+            self._add_user_message(text, author)
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
