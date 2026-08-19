@@ -350,7 +350,50 @@ class TestOverviewFlatRender:
         assert "↳" not in out
         assert "이 응답의 요청" not in out
 
-    def test_response_gen_shows_caret_no_actions(self):
-        out = _ov_render_html("ovRespHtml", {"text": "partial", "status": "gen"})
-        assert "ov-caret" in out
-        assert "복사" not in out  # 생성 중엔 액션 없음
+    def test_response_block_always_done_with_actions(self):
+        # complete 시 한 번에 append → resp 는 항상 done(라이브 타이핑 없음), 액션 포함.
+        out = _ov_render_html("ovRespHtml", {"text": "answer", "reasoning": ""})
+        assert "ov-caret" not in out  # 라이브 타이핑 caret 없음
+        assert "복사" in out and "전체 대화" in out
+
+
+def _ov_act_html(act):
+    """Run app.js's REAL ovActHtml with an injected ovAct → activity-strip HTML.
+    (진행 중 도구 호출 축약 스트립: 누적 카운트 + 현재 배치 칩.)"""
+    esc = _extract_fn("escapeHtml")
+    fn = _extract_fn("ovActHtml")
+    harness = (
+        esc + "\n" + "var ovAct = " + json.dumps(act) + ";\n" + fn + "\n"
+        "process.stdout.write(ovActHtml());\n"
+    )
+    result = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, timeout=10, check=False
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"node failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+class TestOverviewActivityStrip:
+    """실행 중 = 진행 내용(원시 스트림) 대신 도구 호출을 축약한 활동 스트립
+    (누적 카운트 + 현재 배치 칩). complete 시 사라지고 응답 블록으로 대체된다."""
+
+    def test_strip_shows_total_and_current_batch_chips(self):
+        out = _ov_act_html(
+            {
+                "total": 3,
+                "turn": 2,
+                "batch": [
+                    {"key": "a", "icon": "✏️", "label": "index.html", "n": 2},
+                    {"key": "b", "icon": "📖", "label": "game.js", "n": 1},
+                ],
+            }
+        )
+        assert "ov-act-strip" in out
+        assert "도구 3회" in out  # 누적 카운트
+        assert "index.html" in out and "×2" in out  # 배치 칩 + 중복 집계
+        assert "game.js" in out
+
+    def test_strip_empty_when_no_activity(self):
+        # ovAct null → 스트립 미표시(전체 로직은 ovRender 가 판단; 여기선 null 가드).
+        assert _ov_act_html(None) == ""

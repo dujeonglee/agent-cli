@@ -1520,6 +1520,8 @@
       ovOnFinal(d); // 개요: 메인 응답 기록
     } else if (d.task_id && d.final !== undefined) {
       ovOnScopedFinal(d); // 개요: top-level /skill·@agent 결과 기록(모델 B)
+    } else if (!d.task_id && d.action) {
+      ovOnAction(d); // 개요: 메인 도구 호출 → 활동 스트립(축약)
     }
   });
 
@@ -1760,7 +1762,7 @@
   // 짝짓기(pairing)를 상태로 저장하지 않으므로 "대기" 정체·쿼리↔응답 오귀속이 원천적
   // 으로 없다. 블록 그룹핑(연속 user + 뒤따르는 resp)은 렌더 시점에 순서로만 도출.
   var ovEntries = []; // 플랫: {kind:'user',who,text,tm} | {kind:'resp',text,reasoning,answers,status,navTs,scopeId}
-  var ovGen = null; // 현재 스트리밍 중인 resp 엔트리 참조(없으면 null)
+  var ovAct = null; // 실행 중 활동 스트립 {total, turn, batch:[{icon,label,n}]} | null
   var ovTopScopes = {}; // depth-0 스코프 task_id → true (직접 dispatch 결과 수용용)
   var ovRoster = []; // agent_roster
   var ovSkills = {}; // 열린 skill scope: task_id → label
@@ -1816,23 +1818,15 @@
       escapeHtml(e.text) + (e.tm ? '<span class="tm">' + e.tm + "</span>" : "") + "</div>"
     );
   }
-  // 응답 = 독립된 블록. **짝짓기·귀속 없음** — 도착 순서대로 그냥 놓인다(플랫 로그).
+  // 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
   function ovRespHtml(e, isHero) {
-    var st =
-      e.status === "gen"
-        ? '<span class="ov-st gen"><span class="ov-pulse"></span> 생성 중</span>'
-        : '<span class="ov-st done">✓</span>';
-    var txt =
-      e.status === "gen"
-        ? escapeHtml(e.text || "") + '<span class="ov-caret"></span>'
-        : escapeAndFormat(e.text || "");
+    var st = '<span class="ov-st done">✓</span>';
+    var txt = escapeAndFormat(e.text || "");
     var acts =
-      e.status === "done"
-        ? '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
-          '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>'
-        : "";
+      '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
+      '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>';
     var re =
-      e.status === "done" && e.reasoning && e.reasoning.trim()
+      e.reasoning && e.reasoning.trim()
         ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
           '<div class="ov-re-body">' + escapeAndFormat(e.reasoning) + "</div></details>"
         : "";
@@ -1848,6 +1842,23 @@
       '<div class="ov-tx">' + txt + "</div>" + acts + "</div>"
     );
   }
+  // 활동 스트립: 실행 중 도구 호출 축약 한 줄(왼쪽=누적 카운트, 오른쪽=현재 배치 칩).
+  function ovActHtml() {
+    if (!ovAct) return "";
+    var chips = ovAct.batch
+      .map(function (c) {
+        return '<span class="ov-chip">' + c.icon + " " +
+          escapeHtml(c.label) + (c.n > 1 ? " ×" + c.n : "") + "</span>";
+      })
+      .join("");
+    var total = ovAct.total
+      ? '<span class="ov-act-n">도구 ' + ovAct.total + "회</span>"
+      : "";
+    var now = chips ? '<span class="ov-act-now">' + chips + "</span>" : "생성 중…";
+    return (
+      '<div class="ov-act-strip"><span class="ov-pulse"></span>' + total + now + "</div>"
+    );
+  }
   function ovRender() {
     if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
     var items = ovEntries.slice(-14); // 최근 항목만(사용자 입력 + 응답 혼합)
@@ -1860,13 +1871,14 @@
       }
     }
     var html = ovAmbient();
-    if (!items.length) {
+    if (!items.length && !ovAct) {
       html += '<div class="ov-placeholder">아직 응답이 없습니다 — 아래에 메시지를 입력하세요.</div>';
     } else {
       items.forEach(function (e, i) {
         html += e.kind === "user" ? ovUserHtml(e) : ovRespHtml(e, i === heroIdx);
       });
     }
+    html += ovActHtml(); // 진행 중이면 맨 아래 활동 스트립
     $overview.innerHTML = html;
     // 사용자가 위로 스크롤해 둔 상태(ovStick=false)면 강제로 바닥으로 끌어내리지
     // 않는다 — 읽던 위치 유지. 바닥에 붙어 있을 때만 스트리밍을 따라 자동 스크롤.
@@ -1881,39 +1893,31 @@
     var m = content.match(/^\[([^\]]+)\]:\s*/);
     var who = d.author || (m ? m[1] : "사용자");
     var t = content.replace(/^\[[^\]]+\]:\s*/, "");
+    // 새 요청은 항상 로그 끝에 append — 활동 스트립(진행 중 표시)은 항상 맨 아래에
+    // 렌더되므로, 실행 중 들어온 요청도 자연히 [이전 요청 아래 · 진행 표시 위]에 놓인다.
     ovEntries.push({ kind: "user", who: who, text: t, tm: ovClock(d.ts) });
     ovCap();
     ovRender();
   }
+  // 실행 중 진행 내용(thought/원시 스트림)은 요약에 표시하지 않는다 — stream_chunk 는
+  // "지금 실행 중"이라는 신호로만 쓰고(활동 스트립 활성화), 본문은 쌓지 않는다.
   function ovOnStream(d) {
-    if (d.task_id) return; // 메인 스코프만 hero 스트리밍
-    if (!ovGen) {
-      ovGen = { kind: "resp", text: "", reasoning: "", answers: [], status: "gen", navTs: null };
-      ovEntries.push(ovGen);
-    }
-    ovGen.text += d.text || "";
+    if (d.task_id) return; // 메인 스코프만
+    ovActEnsure();
     ovRender();
   }
-  // navTs = d.ts: 메인 스코프 final 카드는 stampNavTs(card, d.ts) 로 같은 값을 달고
-  // 있어(≈733행) 개요 블록에서 그 카드로 정확히 점프할 수 있다.
+  // navTs = d.ts: 메인 스코프 final 카드가 같은 ts 스탬프라 [전체 대화] 점프에 쓴다.
+  // complete = 활동 스트립 종료 + 최종 답변을 한 번에 블록으로 append(라이브 타이핑 없음).
   function ovOnFinal(d) {
-    if (ovGen) {
-      ovGen.text = d.final;
-      ovGen.reasoning = d.thought || ""; // 💭 reasoning (final 이벤트가 실어옴)
-      ovGen.answers = d.answers || [];
-      ovGen.status = "done";
-      ovGen.navTs = d.ts;
-      ovGen = null;
-    } else {
-      ovEntries.push({
-        kind: "resp",
-        text: d.final,
-        reasoning: d.thought || "",
-        answers: d.answers || [],
-        status: "done",
-        navTs: d.ts,
-      });
-    }
+    ovAct = null;
+    ovEntries.push({
+      kind: "resp",
+      text: d.final,
+      reasoning: d.thought || "",
+      answers: d.answers || [],
+      status: "done",
+      navTs: d.ts,
+    });
     ovCap();
     ovRender();
   }
@@ -1935,22 +1939,62 @@
     ovCap();
     ovRender();
   }
-  // 스트리밍만 하고 complete 을 못 낸 채 끝난 경우(포맷 실패·실패 턴·런 종료)의
-  // gen 엔트리를 마감한다 — 그냥 두면 "생성 중" caret 정체. 본문 있으면 done, 없으면 제거.
-  function ovFinalizeGen() {
-    if (!ovGen) return;
-    if ((ovGen.text || "").trim()) {
-      ovGen.status = "done";
-    } else {
-      var i = ovEntries.indexOf(ovGen);
-      if (i >= 0) ovEntries.splice(i, 1);
+  // ── 활동 스트립: 실행 중 도구 호출을 축약해 한 줄로(누적 카운트 + 현재 배치) ──
+  function ovActEnsure() {
+    if (!ovAct) ovAct = { total: 0, turn: null, batch: [] };
+    return ovAct;
+  }
+  // 도구 호출 1건 → {icon, label} 축약. tool_input 은 JSON 문자열(파싱 실패 시 원문).
+  function ovAbbrevAction(tool, inputStr) {
+    var p = {};
+    try {
+      p = JSON.parse(inputStr || "{}");
+    } catch (_e) {
+      p = {};
     }
-    ovGen = null;
+    var base = function (s) {
+      s = String(s || "");
+      var seg = s.split("/");
+      return seg[seg.length - 1] || s;
+    };
+    var map = {
+      read_file: ["📖", base(p.path)],
+      edit_file: ["✏️", base(p.path)],
+      write_file: ["📝", base(p.path)],
+      shell: ["⚡", String(p.command || "").split(/\s+/)[0]],
+      sh: ["⚡", String(p.command || "").split(/\s+/)[0]],
+      run_skill: ["🪄", p.name || ""],
+      agent: ["🤝", p.key || p.mode || ""],
+      glob: ["🔎", p.pattern || ""],
+      grep: ["🔎", p.pattern || p.query || ""],
+      search_code: ["🔎", p.query || ""],
+    };
+    var m = map[tool];
+    if (m) return { icon: m[0], label: m[1] || tool };
+    return { icon: "⚙", label: tool || "" };
+  }
+  // 메인 스코프 action 턴 → 활동 스트립 갱신. 같은 turn = 한 배치(다음 turn 이면 교체).
+  function ovOnAction(d) {
+    if (!d || d.task_id || !d.action) return; // 메인 스코프 도구 호출만
+    var a = ovActEnsure();
+    if (a.turn !== d.turn) {
+      a.turn = d.turn;
+      a.batch = []; // 다음 배치 → 이전 칩 지움
+    }
+    var ab = ovAbbrevAction(d.action.tool_name || "", d.action.tool_input || "");
+    var key = ab.icon + "|" + ab.label;
+    var hit = a.batch.find(function (c) {
+      return c.key === key;
+    });
+    if (hit) hit.n += 1;
+    else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
+    a.total += 1;
     ovRender();
   }
   function ovOnFailed(d) {
-    if (d && d.task_id) return; // 메인 스코프만 (서브루프 실패는 hero 와 무관)
-    ovFinalizeGen();
+    if (d && d.task_id) return; // 메인 스코프만 — 런이 complete 없이 끝나면 스트립 정리
+    ovAct = null;
+    ovRender();
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
@@ -2259,9 +2303,11 @@
     // team surface's "main is responding" cue (agents get theirs from
     // roster state; main's truth is the worker state).
     if (window.TeamView && TeamView.setMainBusy) TeamView.setMainBusy(d.busy);
-    // 런 종료(idle)인데 hero 가 아직 'gen' 이면(메인이 complete final 없이 끝남)
-    // 더는 스트리밍이 없으므로 확정 — "응답 끝났는데 대기 중" 정체 방지(안전망).
-    if (!d.busy) ovFinalizeGen();
+    // 런 종료(idle) → 활동 스트립 정리(complete 없이 끝난 경우의 안전망).
+    if (!d.busy) {
+      ovAct = null;
+      ovRender();
+    }
   });
 
   // ── Identity + viewer roster ───────
