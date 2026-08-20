@@ -190,6 +190,9 @@ class WebRenderer(Renderer):
         # final(), so the thought is held until the second call so we can
         # emit a single ``assistant_turn`` event per LLM emission.
         self._pending_thought: str | None = None
+        # ⚡ 자동 승인 (per-session, runtime-only): confirm() 안전 게이트를 끄고
+        # 위험 명령/경로 확인을 자동 허용. 기본 OFF, 재시작 시 리셋.
+        self._auto_approve: bool = False
         # Counter of persistent events in the SSE replay buffer.
         self._persistent_count: int = 0
         # Optional workspace path piggybacks on the ``ready`` event so
@@ -760,6 +763,14 @@ class WebRenderer(Renderer):
         """5.13: compaction 슬라이더 값 변경을 다른 뷰어에 sticky 로 전파 —
         여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
         self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
+
+    def set_auto_approve(self, on: bool) -> None:
+        """⚡ 자동 승인 토글 설정 + 다른 뷰어에 sticky 로 전파(체크박스 동기화·재접속
+        snapshot 복원). confirm() 이 이 플래그를 읽어 안전 프롬프트를 건너뛴다."""
+        self._auto_approve = bool(on)
+        self.set_sticky(
+            "confirm_mode", "confirm_mode", {"auto_approve": self._auto_approve}
+        )
 
     def broadcast_max_agents(self, value: int) -> None:
         """5.16: 에이전트 상한 변경을 다른 뷰어에 sticky 로 전파 — 여러
@@ -1852,6 +1863,20 @@ class WebRenderer(Renderer):
         given) ride along in the payload so the dialog can show the command
         with its dangerous tokens highlighted.
         """
+
+        # Per-session "trust" toggle (⚡ 자동 승인): when on, skip the safety
+        # prompt and allow immediately (options[0] = the affirmative — y/allow in
+        # both guards). Leave an observation so the timeline still records WHAT
+        # ran without asking. Off by default; resets on restart (runtime-only).
+        if self._auto_approve:
+            allow = options[0].key if options else default_key
+            label = command or prompt.strip().split("\n", 1)[0]
+            self.observation(
+                f"⚡ 자동 승인됨 (확인 없이 실행): {label}",
+                turn=0,
+                tool_name="confirm",
+            )
+            return (allow, "")
 
         # Emit + wait run together under ``_guarded_read``'s shared lock
         # (same serialization as ``prompt_user``) so confirm and ask never

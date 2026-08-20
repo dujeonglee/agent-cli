@@ -250,13 +250,18 @@ header {
 }
 #ctx-popover[hidden] { display: none; }
 #ctx-popover #compaction-wrap,
-#ctx-popover #maxagents-wrap {
+#ctx-popover #maxagents-wrap,
+#ctx-popover #confirm-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 #ctx-popover #compaction-wrap[hidden],
-#ctx-popover #maxagents-wrap[hidden] { display: none; }
+#ctx-popover #maxagents-wrap[hidden],
+#ctx-popover #confirm-wrap[hidden] { display: none; }
+/* ⚡ 자동 승인: 켜지면 안전 게이트 꺼짐을 경고색으로 명확히 */
+#confirm-wrap #confirm-mode-label { cursor: pointer; }
+#confirm-wrap.on #confirm-mode-label { color: var(--warn); font-weight: 700; }
 #info {
   color: var(--text-2);
   font-size: 12px;

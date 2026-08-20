@@ -255,6 +255,37 @@ class TestDangerousShellWaitsForViewer:
             results[0].error or ""
         )
 
+    def test_auto_approve_skips_confirm_and_records_observation(self, monkeypatch):
+        """⚡ 자동 승인 ON: 위험 shell confirm 이 프롬프트/대기 없이 즉시 허용되고,
+        무엇이 확인 없이 실행됐는지 관찰로 남는다. 안전 기본값(deny)이 아니라 허용
+        (options[0]) 을 반환해야 실제 실행된다."""
+        import agent_cli.render as render_mod
+        from agent_cli.tools.shell import tool_shell
+
+        r = WebRenderer()
+        r.set_auto_approve(True)
+        recorded = []
+        r.observation = lambda content, turn, tool_name=None, success=True: (
+            recorded.append(content)
+        )
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        # 위험 명령이지만 자동 승인이라 즉시 반환(대기 스레드 불필요).
+        res = tool_shell({"command": "echo hi && rm -f ./agentcli-test-nope"})
+        # deny 였으면 success False + 'denied'. 허용됐으니 shell 이 실제 실행됨.
+        assert res.success is True
+        assert any("자동 승인" in c for c in recorded)
+
+    def test_auto_approve_defaults_off_and_broadcasts(self):
+        r = WebRenderer()
+        assert r._auto_approve is False  # 기본 OFF(안전)
+        r.set_auto_approve(True)
+        assert r._auto_approve is True
+        # sticky 로 브로드캐스트되어 재접속 snapshot 에 실린다.
+        conn = WebConnection(id="v")
+        snap = r.register_connection(conn)
+        cm = [d for ev, d in snap if ev == "confirm_mode"]
+        assert cm and cm[0].get("auto_approve") is True
+
     def test_confirm_payload_carries_command_and_danger_spans(self, monkeypatch):
         """The confirm event payload includes the raw command and the
         dangerous-token ranges so the web dialog can highlight them — the web

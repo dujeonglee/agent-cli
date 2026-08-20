@@ -1439,6 +1439,13 @@
     );
   });
 
+  es.addEventListener("confirm_mode", function (e) {
+    // ⚡ 자동 승인 체크박스 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:confirmmode", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -4126,6 +4133,51 @@
   document.addEventListener("agentcli:maxagents", (e) => {
     const d = e.detail || {};
     if (typeof d.value === "number") applyValue(d.value);
+  });
+})();
+
+// ── ⚡ 자동 승인 체크박스 (confirm-mode, 별도 IIFE) ────────────────────
+// 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고 자동 허용(세션 한정·런타임).
+// GET 로 초기값 로드 후 노출, change 에 POST, sticky(confirm_mode) 로 동기화.
+(function () {
+  "use strict";
+  const $wrap = document.getElementById("confirm-wrap");
+  const $cb = document.getElementById("confirm-mode");
+  if (!$wrap || !$cb) return;
+
+  function apply(on) {
+    $cb.checked = !!on;
+    // 활성 시 경고색으로 "안전 게이트 꺼짐"을 눈에 띄게.
+    $wrap.classList.toggle("on", !!on);
+  }
+
+  fetch("api/confirm-mode")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      apply(!!d.auto_approve);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  $cb.addEventListener("change", () => {
+    const on = $cb.checked;
+    apply(on);
+    fetch("api/confirm-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_approve: on }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.auto_approve === "boolean") apply(d.auto_approve);
+      })
+      .catch(() => {});
+  });
+
+  document.addEventListener("agentcli:confirmmode", (e) => {
+    const d = e.detail || {};
+    if (typeof d.auto_approve === "boolean") apply(d.auto_approve);
   });
 })();
 

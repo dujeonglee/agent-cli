@@ -736,6 +736,20 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_compaction_ratio(clamped)
         return {"ok": True, "ratio": clamped}
 
+    @app.get("/api/confirm-mode")
+    async def get_confirm_mode():
+        """⚡ 자동 승인(확인 없이 실행) 현재 상태 — 헤더 체크박스 초기화용."""
+        return {"auto_approve": bool(getattr(server.renderer, "_auto_approve", False))}
+
+    @app.post("/api/confirm-mode")
+    async def set_confirm_mode(body: dict):
+        """세션 한정 자동 승인 토글. 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고
+        자동 허용(타임라인에 관찰로 기록). 런타임 전용 — 재시작 시 OFF 로 리셋.
+        다른 뷰어엔 sticky 브로드캐스트로 체크박스 동기화."""
+        on = bool(body.get("auto_approve"))
+        server.renderer.set_auto_approve(on)
+        return {"ok": True, "auto_approve": on}
+
     @app.get("/api/max-agents")
     async def get_max_agents():
         """현재 동시 생존 에이전트 상한 + 입력 최소값/기본값. 레지스트리가

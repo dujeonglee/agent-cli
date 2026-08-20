@@ -547,6 +547,34 @@ class TestStaticUI:
         ws = js.split('es.addEventListener("worker_state"', 1)[1].split("});", 1)[0]
         assert "ovAct = null" in ws
 
+    def test_confirm_mode_api_and_wiring(self, server_and_client):
+        """⚡ 자동 승인 토글: GET/POST /api/confirm-mode 로 세션 한정 상태를 읽고/
+        바꾸며, 헤더 체크박스가 이를 배선한다. 기본 OFF, 재시작 시 리셋(런타임)."""
+        _server, renderer, client = server_and_client
+        # 기본 OFF
+        assert client.get("/api/confirm-mode?token=testtoken").json() == {
+            "auto_approve": False
+        }
+        # 켜기 → 렌더러 플래그 반영
+        r = client.post(
+            "/api/confirm-mode?token=testtoken", json={"auto_approve": True}
+        )
+        assert r.json() == {"ok": True, "auto_approve": True}
+        assert renderer._auto_approve is True
+        assert client.get("/api/confirm-mode?token=testtoken").json() == {
+            "auto_approve": True
+        }
+        # 끄기
+        client.post("/api/confirm-mode?token=testtoken", json={"auto_approve": False})
+        assert renderer._auto_approve is False
+        # UI 배선: 체크박스 + IIFE + sticky 동기화
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        assert 'id="confirm-mode"' in html and 'id="confirm-wrap"' in html
+        assert "api/confirm-mode" in js
+        assert 'es.addEventListener("confirm_mode"' in js
+        assert "agentcli:confirmmode" in js
+
     def test_overview_flat_log_model_wired(self, server_and_client):
         """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
         만 하고, 각 항목을 독립 렌더 → 짝짓기(pairing)를 아예 안 한다. '대기' 정체·
