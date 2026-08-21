@@ -211,10 +211,10 @@ class TestAnthropicProvider:
 
 class TestOpenAIProvider:
     @patch("agent_cli.providers.openai.requests.post")
-    def test_request_overrides_apply_to_body(self, mock_post, caps_structured):
+    def test_request_overrides_apply_to_body(self, mock_post, caps_thinking):
         """세션 thinking 오버라이드(web UI) → 요청 body 반영: enable_thinking 은
         chat_template_kwargs(Qwen/MLX 스위치), reasoning_effort 는 그대로 필드로.
-        "off" 는 reasoning_effort 제거."""
+        "off" 는 reasoning_effort 제거. (사고 지원 모델에서만 — caps_thinking.)"""
         r = MagicMock()
         r.raise_for_status.return_value = None
         r.json.return_value = {
@@ -227,7 +227,7 @@ class TestOpenAIProvider:
             messages=[{"role": "user", "content": "hi"}],
             system="s",
             model="m",
-            capabilities=caps_structured,
+            capabilities=caps_thinking,
             request_overrides={"enable_thinking": False, "reasoning_effort": "high"},
         )
         body = mock_post.call_args.kwargs["json"]
@@ -239,8 +239,30 @@ class TestOpenAIProvider:
             messages=[{"role": "user", "content": "hi"}],
             system="s",
             model="m",
-            capabilities=caps_structured,
+            capabilities=caps_thinking,
             request_overrides={"reasoning_effort": "off"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "reasoning_effort" not in body
+        assert "chat_template_kwargs" not in body
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_overrides_ignored_when_not_supported(self, mock_post, caps_structured):
+        """v8.21.1: supports_thinking=False 면 런타임 오버라이드를 무시 —
+        비추론 모델에 reasoning_effort/chat_template_kwargs 를 보내 400 나는 것 방지."""
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
+        }
+        mock_post.return_value = r
+        provider = OpenAIProvider("https://api.openai.com/v1", "k")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,  # supports_thinking=False
+            request_overrides={"enable_thinking": True, "reasoning_effort": "high"},
         )
         body = mock_post.call_args.kwargs["json"]
         assert "reasoning_effort" not in body
@@ -532,25 +554,30 @@ class TestThinkingBudget:
         assert body["max_tokens"] == 4096
 
     @patch("agent_cli.providers.anthropic.requests.post")
-    def test_anthropic_enable_true_uses_default_budget(
+    def test_anthropic_overrides_ignored_when_not_supported(
         self, mock_post, caps_no_thinking
     ):
-        """enable_thinking True → effort 미지정이면 기본(medium) budget 으로 활성.
-        (런타임 오버라이드가 capabilities 게이트보다 우선 — OpenAI 와 대칭.)"""
+        """v8.21.1: supports_thinking=False 면 enable_thinking True·effort 오버라이드를
+        모두 무시 — 사고 미지원 모델에 thinking 블록을 보내 400 나는 것 방지."""
         mock_post.return_value = _mock_response(
             {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
         )
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="claude-sonnet-4-20250514",
-            capabilities=caps_no_thinking,
-            request_overrides={"enable_thinking": True},
-        )
-        body = mock_post.call_args.kwargs["json"]
-        assert body["thinking"] == {"type": "enabled", "budget_tokens": 16384}
-        assert body["max_tokens"] == 16384 + 4096
+        for ov in (
+            {"enable_thinking": True},
+            {"reasoning_effort": "high"},
+            {"enable_thinking": True, "reasoning_effort": "high"},
+        ):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="claude-sonnet-4-20250514",
+                capabilities=caps_no_thinking,
+                request_overrides=ov,
+            )
+            body = mock_post.call_args.kwargs["json"]
+            assert "thinking" not in body
+            assert body["max_tokens"] == 4096  # base max_output, 사고 미주입
 
     @patch("agent_cli.providers.openai.requests.post")
     def test_openai_reasoning_effort(self, mock_post, caps_thinking):

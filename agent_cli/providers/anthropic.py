@@ -74,31 +74,31 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Thinking budget: base state from capabilities, then per-session
-        # runtime overrides (web UI 사고/노력 컨트롤, request_overrides) win at
-        # request time — OpenAI provider 와 대칭.
+        # Thinking budget — v8.21.0: supports_thinking 단독 게이트. 미지원 모델이면
+        # 기본값도, 런타임 오버라이드(enable_thinking 포함)도 **일절 적용 안 함** —
+        # 사고 미지원 모델에 thinking 블록을 보내 400 이 나는 것을 방지(게이트 우회
+        # 제거, v8.21.1). 지원 모델일 때만 런타임 오버라이드가 그 위에 얹혀 이김:
         #  · reasoning_effort low/medium/high → budget_tokens 로 번역
         #    (Anthropic 은 effort enum 이 없어 budget 이 유일 레버).
         #  · reasoning_effort "off" 또는 enable_thinking False → 사고 비활성.
-        #  · enable_thinking True → 사고 활성 (effort 없으면 기존/기본 budget).
+        #  · enable_thinking True 또는 오버라이드 없음 → 활성(effort 없으면 medium).
         overrides = kwargs.get("request_overrides") or {}
         eff = overrides.get("reasoning_effort")
         enable = overrides.get("enable_thinking")
 
-        thinking_on = capabilities.supports_thinking
-        if enable is True:
+        if capabilities.supports_thinking:
             thinking_on = True
-        elif enable is False:
-            thinking_on = False
-        if eff == "off":
-            thinking_on = False
+            if enable is False:
+                thinking_on = False
+            if eff == "off":
+                thinking_on = False
 
-        if thinking_on:
-            budget = _EFFORT_TO_BUDGET.get(eff) or _EFFORT_TO_BUDGET["medium"]
-            budget = max(budget, _MIN_THINKING_BUDGET)
-            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            # Anthropic deducts thinking from max_tokens
-            body["max_tokens"] = budget + capabilities.max_output_tokens
+            if thinking_on:
+                budget = _EFFORT_TO_BUDGET.get(eff) or _EFFORT_TO_BUDGET["medium"]
+                budget = max(budget, _MIN_THINKING_BUDGET)
+                body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                # Anthropic deducts thinking from max_tokens
+                body["max_tokens"] = budget + capabilities.max_output_tokens
 
         if on_chunk:
             body["stream"] = True

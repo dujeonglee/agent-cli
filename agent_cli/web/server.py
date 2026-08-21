@@ -753,11 +753,17 @@ def create_app(server: WebServer) -> FastAPI:
     @app.get("/api/thinking")
     async def get_thinking():
         """세션 thinking 오버라이드(사고 on/off·reasoning_effort). ctx 없으면 빈값.
-        `{enable_thinking: null|bool, reasoning_effort: null|str}` — 헤더 컨트롤 초기화."""
+        `{enable_thinking, reasoning_effort, supports_thinking}` — 컨트롤 초기화.
+        `supports_thinking` (모델 capability): False 면 provider 가 사고 파라미터를
+        아예 안 넣으므로 프론트가 컨트롤을 비활성화한다(v8.21.1). caps 미배선(테스트/
+        부트 전)이면 None → 프론트는 비활성화하지 않음(unknown)."""
         ov = server.ctx.thinking_override if server.ctx is not None else {}
+        caps = server.runtime.get("capabilities")
+        supports = bool(caps.supports_thinking) if caps is not None else None
         return {
             "enable_thinking": ov.get("enable_thinking"),
             "reasoning_effort": ov.get("reasoning_effort"),
+            "supports_thinking": supports,
         }
 
     @app.post("/api/thinking")

@@ -4205,7 +4205,20 @@
     $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
   }
 
+  // 모델이 사고를 지원 안 하면(supports_thinking=false) provider 가 사고
+  // 파라미터를 아예 안 넣으므로 컨트롤을 잠근다. null/undefined(unknown)면 잠그지 않음.
+  function setSupported(supported) {
+    const locked = supported === false;
+    $en.disabled = locked;
+    $eff.disabled = locked;
+    $wrap.classList.toggle("is-disabled", locked);
+    if (locked) {
+      $wrap.title = "이 모델은 사고(thinking)를 지원하지 않습니다 — 사고/노력 조정 불가.";
+    }
+  }
+
   function post() {
+    if ($en.disabled) return; // 미지원 모델 — 잠긴 상태에선 저장 안 함
     const et = $en.value === "on" ? true : $en.value === "off" ? false : null;
     const eff = $eff.value === "auto" ? "auto" : $eff.value;
     fetch("api/thinking", {
@@ -4224,6 +4237,7 @@
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       apply(d);
+      setSupported(d ? d.supports_thinking : null);
       $wrap.hidden = false;
     })
     .catch(() => {});

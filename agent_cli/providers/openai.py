@@ -56,28 +56,28 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # Thinking/reasoning effort for reasoning models (o1, o3, etc.). v8.21.0:
-        # 정적 thinking_budget 필드 제거 후 supports_thinking 단독 게이트 —
-        # 사고 지원 모델은 기본 "medium" effort, 런타임 오버라이드로 튜닝.
+        # Thinking/reasoning effort — v8.21.0: 정적 thinking_budget 제거 후
+        # supports_thinking 단독 게이트. 미지원 모델(supports_thinking=False)이면
+        # 기본값도, 런타임 오버라이드도 **일절 주입 안 함** — 엄격 백엔드에서
+        # 비추론 모델에 reasoning_effort/chat_template_kwargs 를 보내 400 이 나는
+        # 것을 방지(게이트 우회 제거, v8.21.1).
+        #  · 기본: 사고 지원 모델은 reasoning_effort "medium".
+        #  · 런타임 오버라이드(web UI 사고/노력 컨트롤)가 그 위에 얹혀 이김:
+        #    reasoning_effort low/medium/high 로 덮어쓰거나 "off"/None 이면 제거,
+        #    enable_thinking True/False → chat_template_kwargs(Qwen/MLX 스위치).
         if capabilities.supports_thinking:
             body["reasoning_effort"] = "medium"
-
-        # Per-session runtime overrides (web UI 사고/노력 컨트롤) — applied on top of
-        # the capabilities-derived defaults so they win at request time.
-        #  · reasoning_effort: "low"|"medium"|"high" 로 덮어쓰거나 "off"/None 이면 제거.
-        #  · enable_thinking: True/False → body["chat_template_kwargs"](Qwen/MLX 스위치;
-        #    테스트로 이 백엔드에서 유효 확인). None 이면 미전송(모델 기본값 유지).
-        overrides = kwargs.get("request_overrides") or {}
-        eff = overrides.get("reasoning_effort")
-        if eff in ("low", "medium", "high"):
-            body["reasoning_effort"] = eff
-        elif eff == "off":
-            body.pop("reasoning_effort", None)
-        enable = overrides.get("enable_thinking")
-        if enable is not None:
-            ctk = dict(body.get("chat_template_kwargs") or {})
-            ctk["enable_thinking"] = bool(enable)
-            body["chat_template_kwargs"] = ctk
+            overrides = kwargs.get("request_overrides") or {}
+            eff = overrides.get("reasoning_effort")
+            if eff in ("low", "medium", "high"):
+                body["reasoning_effort"] = eff
+            elif eff == "off":
+                body.pop("reasoning_effort", None)
+            enable = overrides.get("enable_thinking")
+            if enable is not None:
+                ctk = dict(body.get("chat_template_kwargs") or {})
+                ctk["enable_thinking"] = bool(enable)
+                body["chat_template_kwargs"] = ctk
 
         if on_chunk:
             body["stream"] = True

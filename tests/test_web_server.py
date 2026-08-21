@@ -578,10 +578,11 @@ class TestStaticUI:
         ctx = ContextManager(session_dir=str(tmp_path))
         server = WebServer(renderer, token="t", ctx=ctx)
         client = TestClient(create_app(server))
-        # 기본 미설정
+        # 기본 미설정. caps 미배선(runtime={}) → supports_thinking None(unknown).
         assert client.get("/api/thinking?token=t").json() == {
             "enable_thinking": None,
             "reasoning_effort": None,
+            "supports_thinking": None,
         }
         # 사고 끄기 + effort high
         r = client.post(
@@ -596,6 +597,7 @@ class TestStaticUI:
         assert client.get("/api/thinking?token=t").json() == {
             "enable_thinking": False,
             "reasoning_effort": "high",
+            "supports_thinking": None,
         }
         # auto → 미설정으로 클리어
         client.post(
@@ -603,14 +605,34 @@ class TestStaticUI:
             json={"enable_thinking": None, "reasoning_effort": "auto"},
         )
         assert ctx.thinking_override == {}
+        # v8.21.1: runtime capabilities 가 있으면 supports_thinking 를 그대로 노출
+        # (프론트가 컨트롤 비활성화 판단에 사용).
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        for supports in (True, False):
+            caps = ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=supports
+            )
+            srv2 = WebServer(
+                renderer, token="t", ctx=ctx, runtime={"capabilities": caps}
+            )
+            cli2 = TestClient(create_app(srv2))
+            assert (
+                cli2.get("/api/thinking?token=t").json()["supports_thinking"]
+                is supports
+            )
         # UI 배선 + provider 가 override 를 body 에 적용
         html = client.get("/").text
         js = client.get("/static/app.js").text
         assert 'id="think-enable"' in html and 'id="think-effort"' in html
         assert "api/thinking" in js and 'es.addEventListener("thinking_mode"' in js
+        # 미지원 모델이면 컨트롤 잠금 배선
+        assert "supports_thinking" in js and "setSupported(" in js
         with open("agent_cli/providers/openai.py", encoding="utf-8") as _f:
             prov = _f.read()
         assert "request_overrides" in prov and "chat_template_kwargs" in prov
+        # provider 게이트: supports_thinking 이면만 오버라이드 적용
+        assert "if capabilities.supports_thinking:" in prov
 
     def test_overview_flat_log_model_wired(self, server_and_client):
         """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
