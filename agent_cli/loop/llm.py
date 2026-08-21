@@ -149,6 +149,8 @@ class LLMCaller:
                 on_chunk=on_chunk,
                 degeneration_check=self.cfg.wire_format.is_degenerate,
                 interrupt_check=self._interrupt_check,
+                # 세션 thinking 오버라이드(web UI) — 공유 ctx 라 이 콜이 즉시 반영.
+                request_overrides=(self.ctx.thinking_override if self.ctx else None),
                 **extra_call_kwargs,
             )
             # Stitch the prefill back onto the response so downstream

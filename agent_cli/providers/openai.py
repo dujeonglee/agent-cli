@@ -65,6 +65,23 @@ class OpenAIProvider:
             else:
                 body["reasoning_effort"] = "high"
 
+        # Per-session runtime overrides (web UI 사고/노력 컨트롤) — applied on top of
+        # the capabilities-derived defaults so they win at request time.
+        #  · reasoning_effort: "low"|"medium"|"high" 로 덮어쓰거나 "off"/None 이면 제거.
+        #  · enable_thinking: True/False → body["chat_template_kwargs"](Qwen/MLX 스위치;
+        #    테스트로 이 백엔드에서 유효 확인). None 이면 미전송(모델 기본값 유지).
+        overrides = kwargs.get("request_overrides") or {}
+        eff = overrides.get("reasoning_effort")
+        if eff in ("low", "medium", "high"):
+            body["reasoning_effort"] = eff
+        elif eff == "off":
+            body.pop("reasoning_effort", None)
+        enable = overrides.get("enable_thinking")
+        if enable is not None:
+            ctk = dict(body.get("chat_template_kwargs") or {})
+            ctk["enable_thinking"] = bool(enable)
+            body["chat_template_kwargs"] = ctk
+
         if on_chunk:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}

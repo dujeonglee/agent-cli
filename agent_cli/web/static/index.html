@@ -51,8 +51,20 @@
                  aria-label="Max concurrent agents">
           <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
         </span>
-        <span id="confirm-wrap" title="⚡ 자동 승인: 위험 명령(rm 등)·워크스페이스 밖 접근의 확인 프롬프트를 건너뛰고 자동 허용합니다. 세션 한정이며 재시작 시 해제됩니다. 신뢰된 작업에서만 사용하세요." hidden>
-          <label id="confirm-mode-label"><input id="confirm-mode" type="checkbox">⚡ 확인 없이 실행</label>
+        <span id="thinking-wrap" title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>
+          <label for="think-enable">사고</label>
+          <select id="think-enable" aria-label="Thinking on/off">
+            <option value="auto">자동</option>
+            <option value="on">켜기</option>
+            <option value="off">끄기</option>
+          </select>
+          <label for="think-effort">노력</label>
+          <select id="think-effort" aria-label="Reasoning effort">
+            <option value="auto">자동</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
         </span>
       </div>
     </span>
@@ -68,6 +80,8 @@
     <button id="agent-btn" class="btn-icon" type="button" title="Agents — resident agent chat">🤝<span id="tm-badge" hidden></span></button>
     <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
+    <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
+            title="⚡ 자동 승인: 위험 명령(rm 등)·워크스페이스 밖 접근의 확인 프롬프트를 건너뛰고 자동 허용합니다. 세션 한정·재시작 시 해제. 신뢰된 작업에서만 켜세요.">⚡ 확인 없이 실행</button>
     <button id="share-btn" class="btn-icon" type="button" title="접속 링크 복사 (토큰 포함 — 이 링크를 받은 사람도 접속)">🔗</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" class="btn-icon" type="button" title="Change nickname" hidden>✎</button>

@@ -213,6 +213,42 @@ class TestAnthropicProvider:
 
 class TestOpenAIProvider:
     @patch("agent_cli.providers.openai.requests.post")
+    def test_request_overrides_apply_to_body(self, mock_post, caps_structured):
+        """세션 thinking 오버라이드(web UI) → 요청 body 반영: enable_thinking 은
+        chat_template_kwargs(Qwen/MLX 스위치), reasoning_effort 는 그대로 필드로.
+        "off" 는 reasoning_effort 제거."""
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
+        }
+        mock_post.return_value = r
+        provider = OpenAIProvider("https://api.openai.com/v1", "k")
+
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            request_overrides={"enable_thinking": False, "reasoning_effort": "high"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["reasoning_effort"] == "high"
+
+        # "off" → reasoning_effort 제거, enable_thinking None → 미전송
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            request_overrides={"reasoning_effort": "off"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "reasoning_effort" not in body
+        assert "chat_template_kwargs" not in body
+
+    @patch("agent_cli.providers.openai.requests.post")
     def test_degeneration_check_breaks_stream(self, mock_post, caps_structured):
         # As the streamed text accumulates into a runaway, degeneration_check
         # returns True mid-stream → the provider closes the stream and never

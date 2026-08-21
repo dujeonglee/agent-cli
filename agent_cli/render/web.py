@@ -772,6 +772,18 @@ class WebRenderer(Renderer):
             "confirm_mode", "confirm_mode", {"auto_approve": self._auto_approve}
         )
 
+    def broadcast_thinking(self, override: dict) -> None:
+        """세션 thinking 오버라이드(사고/노력) 변경을 sticky 로 전파 — 여러 뷰어의
+        컨트롤이 동기화되고 재접속 snapshot 에도 실린다."""
+        self.set_sticky(
+            "thinking_mode",
+            "thinking_mode",
+            {
+                "enable_thinking": override.get("enable_thinking"),
+                "reasoning_effort": override.get("reasoning_effort"),
+            },
+        )
+
     def broadcast_max_agents(self, value: int) -> None:
         """5.16: 에이전트 상한 변경을 다른 뷰어에 sticky 로 전파 — 여러
         브라우저의 입력/무제한 체크박스가 동기화되고 재접속 snapshot 에도 실린다.

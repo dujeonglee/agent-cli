@@ -251,17 +251,19 @@ header {
 #ctx-popover[hidden] { display: none; }
 #ctx-popover #compaction-wrap,
 #ctx-popover #maxagents-wrap,
-#ctx-popover #confirm-wrap {
+#ctx-popover #thinking-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 #ctx-popover #compaction-wrap[hidden],
 #ctx-popover #maxagents-wrap[hidden],
-#ctx-popover #confirm-wrap[hidden] { display: none; }
-/* ⚡ 자동 승인: 켜지면 안전 게이트 꺼짐을 경고색으로 명확히 */
-#confirm-wrap #confirm-mode-label { cursor: pointer; }
-#confirm-wrap.on #confirm-mode-label { color: var(--warn); font-weight: 700; }
+#ctx-popover #thinking-wrap[hidden] { display: none; }
+/* 🧠 사고/노력 셀렉트 */
+#thinking-wrap select { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+/* ⚡ 자동 승인 헤더 토글: 켜지면 안전 게이트 꺼짐을 amber 경고색으로 명확히 */
+#confirm-mode-btn { font-size: 12px; }
+#confirm-mode-btn.on { color: var(--warn); border-color: var(--warn); font-weight: 700; }
 #info {
   color: var(--text-2);
   font-size: 12px;

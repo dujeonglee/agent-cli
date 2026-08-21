@@ -549,31 +549,69 @@ class TestStaticUI:
 
     def test_confirm_mode_api_and_wiring(self, server_and_client):
         """⚡ 자동 승인 토글: GET/POST /api/confirm-mode 로 세션 한정 상태를 읽고/
-        바꾸며, 헤더 체크박스가 이를 배선한다. 기본 OFF, 재시작 시 리셋(런타임)."""
+        바꾸며, **헤더 버튼**(팝오버 밖)이 이를 배선한다. 기본 OFF·재시작 리셋."""
         _server, renderer, client = server_and_client
-        # 기본 OFF
         assert client.get("/api/confirm-mode?token=testtoken").json() == {
             "auto_approve": False
         }
-        # 켜기 → 렌더러 플래그 반영
         r = client.post(
             "/api/confirm-mode?token=testtoken", json={"auto_approve": True}
         )
         assert r.json() == {"ok": True, "auto_approve": True}
         assert renderer._auto_approve is True
-        assert client.get("/api/confirm-mode?token=testtoken").json() == {
-            "auto_approve": True
-        }
-        # 끄기
         client.post("/api/confirm-mode?token=testtoken", json={"auto_approve": False})
         assert renderer._auto_approve is False
-        # UI 배선: 체크박스 + IIFE + sticky 동기화
+        # UI 배선: 헤더 토글 버튼(팝오버 밖) + IIFE + sticky 동기화
         html = client.get("/").text
         js = client.get("/static/app.js").text
-        assert 'id="confirm-mode"' in html and 'id="confirm-wrap"' in html
-        assert "api/confirm-mode" in js
-        assert 'es.addEventListener("confirm_mode"' in js
+        assert 'id="confirm-mode-btn"' in html  # 헤더로 이동
+        assert "api/confirm-mode" in js and 'es.addEventListener("confirm_mode"' in js
         assert "agentcli:confirmmode" in js
+
+    def test_thinking_api_and_wiring(self, tmp_path):
+        """🧠 사고/추론 노력 컨트롤(web UI): GET/POST /api/thinking 이 세션 오버라이드를
+        읽고/바꾸며(공유 ctx → 다음 LLM 콜 반영), ctx 팝오버 셀렉트가 배선한다.
+        openai provider 가 request_overrides 로 enable_thinking·reasoning_effort 를 body 에
+        얹는다."""
+        from agent_cli.context.manager import ContextManager
+
+        renderer = WebRenderer()
+        ctx = ContextManager(session_dir=str(tmp_path))
+        server = WebServer(renderer, token="t", ctx=ctx)
+        client = TestClient(create_app(server))
+        # 기본 미설정
+        assert client.get("/api/thinking?token=t").json() == {
+            "enable_thinking": None,
+            "reasoning_effort": None,
+        }
+        # 사고 끄기 + effort high
+        r = client.post(
+            "/api/thinking?token=t",
+            json={"enable_thinking": False, "reasoning_effort": "high"},
+        )
+        assert r.json()["ok"] is True
+        assert ctx.thinking_override == {
+            "enable_thinking": False,
+            "reasoning_effort": "high",
+        }
+        assert client.get("/api/thinking?token=t").json() == {
+            "enable_thinking": False,
+            "reasoning_effort": "high",
+        }
+        # auto → 미설정으로 클리어
+        client.post(
+            "/api/thinking?token=t",
+            json={"enable_thinking": None, "reasoning_effort": "auto"},
+        )
+        assert ctx.thinking_override == {}
+        # UI 배선 + provider 가 override 를 body 에 적용
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        assert 'id="think-enable"' in html and 'id="think-effort"' in html
+        assert "api/thinking" in js and 'es.addEventListener("thinking_mode"' in js
+        with open("agent_cli/providers/openai.py", encoding="utf-8") as _f:
+            prov = _f.read()
+        assert "request_overrides" in prov and "chat_template_kwargs" in prov
 
     def test_overview_flat_log_model_wired(self, server_and_client):
         """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append

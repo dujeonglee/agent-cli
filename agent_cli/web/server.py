@@ -750,6 +750,30 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.set_auto_approve(on)
         return {"ok": True, "auto_approve": on}
 
+    @app.get("/api/thinking")
+    async def get_thinking():
+        """세션 thinking 오버라이드(사고 on/off·reasoning_effort). ctx 없으면 빈값.
+        `{enable_thinking: null|bool, reasoning_effort: null|str}` — 헤더 컨트롤 초기화."""
+        ov = server.ctx.thinking_override if server.ctx is not None else {}
+        return {
+            "enable_thinking": ov.get("enable_thinking"),
+            "reasoning_effort": ov.get("reasoning_effort"),
+        }
+
+    @app.post("/api/thinking")
+    async def set_thinking(body: dict):
+        """세션 thinking 오버라이드 변경 — 다음 LLM 콜에 즉시 반영(공유 ctx). None/
+        "auto" = 미설정(모델 기본). 다른 뷰어엔 sticky 브로드캐스트로 컨트롤 동기화."""
+        if server.ctx is None:
+            return {"ok": False, "error": "no active context"}
+        et = body.get("enable_thinking")
+        eff = body.get("reasoning_effort")
+        if eff in ("auto", ""):
+            eff = None
+        ov = server.ctx.set_thinking_override(enable_thinking=et, reasoning_effort=eff)
+        server.renderer.broadcast_thinking(ov)
+        return {"ok": True, **ov}
+
     @app.get("/api/max-agents")
     async def get_max_agents():
         """현재 동시 생존 에이전트 상한 + 입력 최소값/기본값. 레지스트리가

@@ -181,6 +181,10 @@ class ContextManager:
         # Live-tunable compaction target (web slider). Clamped on set so the
         # loop's per-call ``× compaction_ratio`` can never disable compaction.
         self.compaction_ratio = clamp_compaction_ratio(compaction_ratio)
+        # Per-session thinking/reasoning override (web UI 컨트롤). 공유 ctx 라 다음
+        # LLM 콜이 즉시 읽는다(rebuild 불필요). 기본 {}=미설정(모델 기본값 유지).
+        #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"
+        self.thinking_override: dict = {}
         self._cache: list[dict] = []
         self._cache_tokens: int = 0
         # Rendered (natural-language) mirror of the cache's dynamic slice —
@@ -387,6 +391,20 @@ class ContextManager:
         loop's next LLM call (shared ctx) — no rebuild needed."""
         self.compaction_ratio = clamp_compaction_ratio(ratio)
         return self.compaction_ratio
+
+    def set_thinking_override(
+        self, enable_thinking=None, reasoning_effort=None
+    ) -> dict:
+        """세션 thinking 오버라이드 설정(web UI). None=미설정(모델 기본), 값이 있으면
+        provider 요청 body 에 반영(다음 LLM 콜 즉시). enable_thinking: bool|None,
+        reasoning_effort: "auto"/None|"low"|"medium"|"high"|"off". 저장된 dict 반환."""
+        ov: dict = {}
+        if enable_thinking is not None:
+            ov["enable_thinking"] = bool(enable_thinking)
+        if reasoning_effort in ("low", "medium", "high", "off"):
+            ov["reasoning_effort"] = reasoning_effort
+        self.thinking_override = ov
+        return ov
 
     @property
     def summary(self) -> str:

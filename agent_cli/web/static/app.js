@@ -1446,6 +1446,13 @@
     );
   });
 
+  es.addEventListener("thinking_mode", function (e) {
+    // 🧠 사고/노력 컨트롤 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:thinkingmode", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -4136,19 +4143,19 @@
   });
 })();
 
-// ── ⚡ 자동 승인 체크박스 (confirm-mode, 별도 IIFE) ────────────────────
-// 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고 자동 허용(세션 한정·런타임).
-// GET 로 초기값 로드 후 노출, change 에 POST, sticky(confirm_mode) 로 동기화.
+// ── ⚡ 자동 승인 헤더 토글 (confirm-mode, 별도 IIFE) ───────────────────
+// 헤더 버튼으로 노출(팝오버 밖). 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고 자동
+// 허용(세션 한정·런타임). GET 초기화, 클릭 토글→POST, sticky(confirm_mode) 동기화.
 (function () {
   "use strict";
-  const $wrap = document.getElementById("confirm-wrap");
-  const $cb = document.getElementById("confirm-mode");
-  if (!$wrap || !$cb) return;
+  const $btn = document.getElementById("confirm-mode-btn");
+  if (!$btn) return;
+  let on = false;
 
-  function apply(on) {
-    $cb.checked = !!on;
-    // 활성 시 경고색으로 "안전 게이트 꺼짐"을 눈에 띄게.
-    $wrap.classList.toggle("on", !!on);
+  function apply(v) {
+    on = !!v;
+    $btn.setAttribute("aria-pressed", on ? "true" : "false");
+    $btn.classList.toggle("on", on); // 활성 시 amber 경고색
   }
 
   fetch("api/confirm-mode")
@@ -4156,13 +4163,12 @@
     .then((d) => {
       if (!d) return;
       apply(!!d.auto_approve);
-      $wrap.hidden = false;
+      $btn.hidden = false;
     })
     .catch(() => {});
 
-  $cb.addEventListener("change", () => {
-    const on = $cb.checked;
-    apply(on);
+  $btn.addEventListener("click", () => {
+    apply(!on);
     fetch("api/confirm-mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4179,6 +4185,52 @@
     const d = e.detail || {};
     if (typeof d.auto_approve === "boolean") apply(d.auto_approve);
   });
+})();
+
+// ── 🧠 사고/추론 노력 컨트롤 (thinking, 별도 IIFE) ─────────────────────
+// ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort)를 /api/thinking 으로 저장 →
+// 다음 LLM 요청부터 반영(공유 ctx). sticky(thinking_mode) 로 뷰어 동기화.
+(function () {
+  "use strict";
+  const $wrap = document.getElementById("thinking-wrap");
+  const $en = document.getElementById("think-enable");
+  const $eff = document.getElementById("think-effort");
+  if (!$wrap || !$en || !$eff) return;
+
+  // 서버 상태(null|bool / null|str) → 셀렉트 값(auto/on/off, auto/low/…).
+  function apply(d) {
+    const et = d ? d.enable_thinking : undefined;
+    $en.value = et === true ? "on" : et === false ? "off" : "auto";
+    const eff = (d && d.reasoning_effort) || "auto";
+    $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
+  }
+
+  function post() {
+    const et = $en.value === "on" ? true : $en.value === "off" ? false : null;
+    const eff = $eff.value === "auto" ? "auto" : $eff.value;
+    fetch("api/thinking", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enable_thinking: et, reasoning_effort: eff }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.ok) apply(d);
+      })
+      .catch(() => {});
+  }
+
+  fetch("api/thinking")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      apply(d);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  $en.addEventListener("change", post);
+  $eff.addEventListener("change", post);
+  document.addEventListener("agentcli:thinkingmode", (e) => apply(e.detail || {}));
 })();
 
 // ── ctx 칩 팝오버 (v7.1.0) ──────────────────────────────────────
