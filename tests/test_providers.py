@@ -478,6 +478,82 @@ class TestThinkingBudget:
         assert "thinking" not in body
         assert body["max_tokens"] == 4096
 
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_effort_override_maps_to_budget(self, mock_post, caps_thinking):
+        """런타임 reasoning_effort high/medium → Anthropic budget_tokens 로 번역."""
+        mock_post.return_value = _mock_response(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        for eff, expect in (("high", 32768), ("medium", 16384), ("low", 4096)):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="claude-sonnet-4-20250514",
+                capabilities=caps_thinking,
+                request_overrides={"reasoning_effort": eff},
+            )
+            body = mock_post.call_args.kwargs["json"]
+            assert body["thinking"] == {"type": "enabled", "budget_tokens": expect}
+            assert body["max_tokens"] == expect + 4096  # budget + max_output
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_effort_off_disables_thinking(self, mock_post, caps_thinking):
+        """reasoning_effort 'off' → 사고 비활성, max_tokens 원복."""
+        mock_post.return_value = _mock_response(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_thinking,
+            request_overrides={"reasoning_effort": "off"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "thinking" not in body
+        assert body["max_tokens"] == 4096  # base max_output, no budget added
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_enable_false_disables_thinking(self, mock_post, caps_thinking):
+        """enable_thinking False → capabilities 가 thinking 지원이어도 비활성."""
+        mock_post.return_value = _mock_response(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_thinking,
+            request_overrides={"enable_thinking": False},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "thinking" not in body
+        assert body["max_tokens"] == 4096
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_enable_true_uses_default_budget(
+        self, mock_post, caps_no_thinking
+    ):
+        """enable_thinking True → effort 미지정이면 기본(medium) budget 으로 활성.
+        (런타임 오버라이드가 capabilities 게이트보다 우선 — OpenAI 와 대칭.)"""
+        mock_post.return_value = _mock_response(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_no_thinking,
+            request_overrides={"enable_thinking": True},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["thinking"] == {"type": "enabled", "budget_tokens": 16384}
+        assert body["max_tokens"] == 16384 + 4096
+
     @patch("agent_cli.providers.openai.requests.post")
     def test_openai_reasoning_effort(self, mock_post, caps_thinking):
         mock_post.return_value = _mock_response(

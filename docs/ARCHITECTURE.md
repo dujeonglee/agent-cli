@@ -953,6 +953,15 @@ OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바�
 | Anthropic | `thinking.budget_tokens = budget`, `max_tokens += budget` | Anthropic이 max_tokens에서 thinking 차감 |
 | OpenAI | `reasoning_effort = low/medium/high` | budget ≤1024→low, ≤8192→medium, >8192→high |
 
+**런타임 오버라이드 (web UI 사고/노력 컨트롤, `request_overrides`)** — capabilities 기본값 위에 얹혀 요청 시점에 이김. `loop/llm.py` 가 `ctx.thinking_override`(`{enable_thinking, reasoning_effort}`)를 provider 에 전달하고 각 provider 가 자기 방식으로 번역:
+
+| 프로바이더 | `reasoning_effort` low/medium/high | `reasoning_effort` "off" | `enable_thinking` True/False |
+|-----------|-----------------------------------|--------------------------|------------------------------|
+| Anthropic | **budget_tokens 로 번역** (`_EFFORT_TO_BUDGET` = 4096/16384/32768; Anthropic 은 effort enum 이 없어 budget 이 유일 레버) | 사고 비활성 | True→활성(effort 없으면 기본 medium=16384 budget) / False→비활성 |
+| OpenAI | `body["reasoning_effort"]` 직접 덮어씀 | 필드 제거 | `chat_template_kwargs.enable_thinking`(Qwen/MLX 스위치) |
+
+Anthropic budget 상한 32768 은 "이 이상은 배치 처리 권장" 하는 자연 상한 — 256K 컨텍스트에서 `budget + max_output` 여유 충분. 런타임 오버라이드는 capabilities 게이트(`supports_thinking`)를 우회하므로(양 provider 대칭), 엄격 백엔드에서 미지원 모델에 강제 활성 시 400 가능(로컬 vLLM/MLX 는 관용).
+
 Thinking 블록 처리 플로우:
 1. thinking 모델 → `<think>...</think>` 블록을 텍스트에 출력
 2. 각 플러그인 stage 0(`strip_thinking`)이 블록 분리 (thinking_tags 단일 소스)

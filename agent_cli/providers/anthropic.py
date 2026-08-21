@@ -21,6 +21,16 @@ from agent_cli.providers.http import (
     run_sse_stream,
 )
 
+# reasoning_effort → Anthropic thinking budget_tokens 번역표. Anthropic 은
+# OpenAI 식 low/medium/high enum 이 없어 budget_tokens 가 유일한 사고 레버라,
+# web UI 런타임 effort 를 budget 으로 옮긴다. high=32768 은 Anthropic 이 "이
+# 이상은 배치 처리 권장" 하는 자연 상한 — 256K 컨텍스트에서 budget+max_output
+# 여유 충분. medium=16384 은 claude-sonnet-4 레지스트리 기본값과 일치.
+_EFFORT_TO_BUDGET = {"low": 4096, "medium": 16384, "high": 32768}
+
+# Anthropic thinking budget_tokens 하한 (API 제약).
+_MIN_THINKING_BUDGET = 1024
+
 
 class AnthropicProvider:
     """Adapter for the Anthropic Messages API (/v1/messages)."""
@@ -63,16 +73,37 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Thinking budget: enable extended thinking with budget
-        if capabilities.supports_thinking and capabilities.thinking_budget > 0:
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": capabilities.thinking_budget,
-            }
-            # Anthropic deducts thinking from max_tokens
-            body["max_tokens"] = (
-                capabilities.thinking_budget + capabilities.max_output_tokens
+        # Thinking budget: base state from capabilities, then per-session
+        # runtime overrides (web UI 사고/노력 컨트롤, request_overrides) win at
+        # request time — OpenAI provider 와 대칭.
+        #  · reasoning_effort low/medium/high → budget_tokens 로 번역
+        #    (Anthropic 은 effort enum 이 없어 budget 이 유일 레버).
+        #  · reasoning_effort "off" 또는 enable_thinking False → 사고 비활성.
+        #  · enable_thinking True → 사고 활성 (effort 없으면 기존/기본 budget).
+        overrides = kwargs.get("request_overrides") or {}
+        eff = overrides.get("reasoning_effort")
+        enable = overrides.get("enable_thinking")
+
+        thinking_on = (
+            capabilities.supports_thinking and capabilities.thinking_budget > 0
+        )
+        if enable is True:
+            thinking_on = True
+        elif enable is False:
+            thinking_on = False
+        if eff == "off":
+            thinking_on = False
+
+        if thinking_on:
+            budget = (
+                _EFFORT_TO_BUDGET.get(eff)
+                or capabilities.thinking_budget
+                or _EFFORT_TO_BUDGET["medium"]
             )
+            budget = max(budget, _MIN_THINKING_BUDGET)
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # Anthropic deducts thinking from max_tokens
+            body["max_tokens"] = budget + capabilities.max_output_tokens
 
         if on_chunk:
             body["stream"] = True
