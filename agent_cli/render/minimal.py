@@ -410,8 +410,7 @@ class MinimalRenderer(Renderer):
     ) -> None:
         yes, no = "✓", "✗"
         thinking_info = (
-            f"{yes} (budget: {capabilities.thinking_budget:,}, "
-            f"format: {capabilities.thinking_format})"
+            f"{yes} (budget: {capabilities.thinking_budget:,})"
             if capabilities.supports_thinking
             else no
         )

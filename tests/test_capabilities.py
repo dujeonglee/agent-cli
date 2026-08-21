@@ -48,18 +48,36 @@ class TestGetCapabilities:
         caps = get_capabilities("gpt-4o")
         assert caps.context_window == 128000
 
-    def test_thinking_format_empty_for_non_thinking(self):
-        caps = get_capabilities("gpt-4o")
-        assert caps.thinking_format == ""
-
-    def test_thinking_format_empty_for_anthropic(self):
-        caps = get_capabilities("claude-sonnet-4-20250514")
-        assert caps.thinking_format == ""
-
     def test_frozen(self):
         caps = get_capabilities("gpt-4o")
         with pytest.raises(AttributeError):
             caps.context_window = 9999  # type: ignore
+
+    def test_thinking_format_field_removed(self):
+        """v8.19.0: thinking_format 필드는 제거됨 (요청 미형성 순수 메타).
+        dataclass 에 필드가 없고, caps_to_entry 도 키를 쓰지 않으며,
+        _detect_thinking 은 bool 만 반환한다."""
+        from agent_cli.providers.capabilities import (
+            _detect_thinking,
+            caps_to_entry,
+        )
+
+        caps = get_capabilities("gpt-4o")
+        assert not hasattr(caps, "thinking_format")
+        assert "thinking_format" not in caps_to_entry(caps)
+        # 태그 감지는 supports_thinking 판정용 bool 로 유지.
+        assert _detect_thinking("<think>x</think>") is True
+        assert _detect_thinking("no tags here") is False
+
+    def test_legacy_thinking_format_key_ignored(self):
+        """구 models.json 의 thinking_format 키는 로더가 무시 (무해)."""
+        from agent_cli.providers.capabilities import _build_from_entry
+
+        caps = _build_from_entry(
+            {"context_window": 32768, "thinking_format": "reasoning"}
+        )
+        assert caps.context_window == 32768
+        assert not hasattr(caps, "thinking_format")
 
     def test_static_registry_takes_priority(self):
         """models.json entry should override runtime detection."""
@@ -103,7 +121,6 @@ class TestOpenAIRuntimeDetection:
         assert caps is not None
         assert caps.context_window == 32768
         assert caps.supports_thinking is True
-        assert caps.thinking_format == "think"
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -607,7 +624,6 @@ class TestAnthropicRuntimeDetection:
 
         caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
         assert caps.supports_thinking is True
-        assert caps.thinking_format == "think"
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")

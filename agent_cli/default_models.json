@@ -7,8 +7,7 @@
       "supports_structured_output": false,
       "supports_thinking": true,
       "thinking_budget": 16384,
-      "supports_strict_schema": true,
-      "thinking_format": ""
+      "supports_strict_schema": true
     },
     "gpt-4o": {
       "provider": "openai",
@@ -17,8 +16,7 @@
       "supports_structured_output": true,
       "supports_thinking": false,
       "thinking_budget": 0,
-      "supports_strict_schema": true,
-      "thinking_format": ""
+      "supports_strict_schema": true
     }
   },
   "provider_defaults": {

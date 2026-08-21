@@ -358,7 +358,6 @@ class TestSkillHooksWiring:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
 
         captured: dict = {}
@@ -404,7 +403,6 @@ class TestSkillHooksWiring:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
 
         captured: dict = {}
@@ -445,7 +443,6 @@ class TestSkillHooksEndToEnd:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
 
     def _mock_provider(self, *responses):
@@ -604,7 +601,6 @@ class TestDelegateHooksWiring:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
         parent_hooks = {
             "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
@@ -649,7 +645,6 @@ class TestDelegateHooksWiring:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
         captured: dict = {}
 
@@ -687,7 +682,6 @@ class TestAgentFrontmatterHooks:
             max_output_tokens=4096,
             supports_thinking=False,
             thinking_budget=0,
-            thinking_format="",
         )
 
     def _stubload_profile(

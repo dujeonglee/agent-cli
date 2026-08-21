@@ -49,7 +49,6 @@ class ModelCapabilities:
     max_output_tokens: int
     supports_thinking: bool
     thinking_budget: int
-    thinking_format: str = ""  # "think", "reasoning", "" (none)
 
 
 # Conservative defaults for unregistered models
@@ -58,7 +57,6 @@ DEFAULT_CAPABILITIES = ModelCapabilities(
     max_output_tokens=2048,
     supports_thinking=False,
     thinking_budget=0,
-    thinking_format="",
 )
 
 # Auto-detected output token budget = context_window // this. A model
@@ -141,7 +139,6 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
         "max_output_tokens": caps.max_output_tokens,
         "supports_thinking": caps.supports_thinking,
         "thinking_budget": caps.thinking_budget,
-        "thinking_format": caps.thinking_format,
     }
     if auto_detected:
         entry["_auto_detected"] = True
@@ -162,7 +159,6 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_thinking=entry.get("supports_thinking", False),
         thinking_budget=entry.get("thinking_budget", 0),
-        thinking_format=entry.get("thinking_format", ""),
     )
 
 
@@ -197,10 +193,9 @@ def _detect_runtime_capabilities(
 # honored, not that the model happened to emit JSON on its own.
 
 
-def _detect_thinking(content: str) -> tuple[bool, str]:
+def _detect_thinking(content: str) -> bool:
     """``<think>``-style tag detection on a probe response's content."""
-    m = _THINKING_TAG_PATTERN.search(content or "")
-    return (True, m.group(1).lower()) if m else (False, "")
+    return bool(_THINKING_TAG_PATTERN.search(content or ""))
 
 
 def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
@@ -224,9 +219,7 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
         _emit_progress(
             f"Probing thinking support ({model}) — may take ~10s on cold load"
         )
-        supports_thinking, thinking_format = _detect_thinking(
-            transport.simple_chat("Say hello.", 512)
-        )
+        supports_thinking = _detect_thinking(transport.simple_chat("Say hello.", 512))
 
         if context_window < MIN_CONTEXT_WINDOW:
             raise UnsupportedModelError(
@@ -241,7 +234,6 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
             thinking_budget=4096 if supports_thinking else 0,
-            thinking_format=thinking_format,
         )
     except UnsupportedModelError:
         # Hard reject — propagate to the CLI instead of degrading to defaults.

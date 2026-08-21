@@ -825,13 +825,11 @@ def _prompt_model_capabilities(model: str):
         supports_thinking = thinking_input in ("y", "yes")
 
         thinking_budget = 0
-        thinking_format = ""
         if supports_thinking:
             budget_input = renderer.prompt_user(
                 "  Thinking budget tokens [4096]: ", multiline=False
             )
             thinking_budget = int(budget_input) if budget_input else 4096
-            thinking_format = "think"
 
         max_output = min(context_window // 4, 4096)
 
@@ -840,7 +838,6 @@ def _prompt_model_capabilities(model: str):
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
             thinking_budget=thinking_budget,
-            thinking_format=thinking_format,
         )
 
         # Wire format 바인딩 (바인딩 UX ② — multi-wire-format): 엔트리가

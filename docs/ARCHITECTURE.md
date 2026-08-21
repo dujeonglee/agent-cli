@@ -362,13 +362,9 @@ class ModelCapabilities:
     supports_thinking: bool           # thinking/reasoning 지원
     thinking_budget: int              # thinking 토큰 예산 (0=비활성)
     supports_strict_schema: bool      # (dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함. 향후 opt-in strict schema 재도입 시 사용 예정.
-    thinking_format: str = ""         # thinking 블록 태그 ("think", "reasoning", "")
 ```
 
-`thinking_format` 값:
-- `"think"` — `<think>...</think>` 형식 (DeepSeek-R1 등)
-- `"reasoning"` — `<reasoning>...</reasoning>` 형식
-- `""` — thinking 블록 미사용 (Anthropic API 레벨 처리, GPT 등)
+> **thinking_format 필드 제거 (v8.19.0):** 예전엔 감지된 thinking 태그 스타일(`"think"`/`"reasoning"`)을 엔트리에 저장했으나, 어떤 요청도 이 값으로 형성되지 않는 순수 표시용 메타였다. `<think>` 계열 태그 감지는 여전히 `supports_thinking` 판정에만 쓰이고(`_detect_thinking` → bool), strip 경로는 `thinking_tags` 단일 vocab 을 그대로 사용한다. 구 models.json 의 `thinking_format` 키는 로더가 무시(무해).
 
 능력치 조회 우선순위:
 1. `models.json` 정적 설정 (최우선)
@@ -952,13 +948,13 @@ OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바�
 
 ### 7.4 Thinking Budget 적용
 
-| 프로바이더 | 파라미터 | 동작 | thinking_format |
-|-----------|---------|------|----------------|
-| Anthropic | `thinking.budget_tokens = budget`, `max_tokens += budget` | Anthropic이 max_tokens에서 thinking 차감 | `""` (API 레벨 처리) |
-| OpenAI | `reasoning_effort = low/medium/high` | budget ≤1024→low, ≤8192→medium, >8192→high | `""` (API 레벨 처리) |
+| 프로바이더 | 파라미터 | 동작 |
+|-----------|---------|------|
+| Anthropic | `thinking.budget_tokens = budget`, `max_tokens += budget` | Anthropic이 max_tokens에서 thinking 차감 |
+| OpenAI | `reasoning_effort = low/medium/high` | budget ≤1024→low, ≤8192→medium, >8192→high |
 
 Thinking 블록 처리 플로우:
-1. thinking 모델(`thinking_format="think"`) → `<think>...</think>` 블록을 텍스트에 출력
+1. thinking 모델 → `<think>...</think>` 블록을 텍스트에 출력
 2. 각 플러그인 stage 0(`strip_thinking`)이 블록 분리 (thinking_tags 단일 소스)
 3. 분리된 thinking 내용은 `ParsedAction.thinking`에 보존
 4. 나머지 텍스트(JSON)만 파싱 → Stage 1 직접 성공률 향상
@@ -1083,7 +1079,7 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 2. 두 가지 위치에서 thinking 확인:
    - `reasoning_content` 필드 (OpenAI 호환 — vLLM 컨벤션)
    - `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그 in content (DeepSeek-R1 등)
-3. 감지되면 → `supports_thinking=True`, `thinking_format=감지방식`
+3. 감지되면 → `supports_thinking=True`
 4. 결과를 `~/.agent-cli/models.json`에 저장 (`_auto_detected: true`) → 다음 실행 시 프로브 불필요
 5. 모델 업데이트 시 자동 감지 항목은 재감지로 갱신됨 (수동 등록 항목은 보호)
 
