@@ -730,16 +730,17 @@ class TestStaticUI:
         assert "현재 대화 상대" in html
 
     def test_channel_states_and_dead_and_kill_resume_wired(self, server_and_client):
-        """agent-channels 4단계: 채널 칩 상태(🔔 안본회신·❓ waiting_ask·dead) +
-        죽은 agent 입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1)."""
+        """agent-channels 4단계: 채널 칩 상태(❓ waiting_ask·dead) + 죽은 agent
+        입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1). (🔔 안본회신 배지는
+        v8.31.0 에서 제거 — replay inflation 으로 '글 수'처럼 보여 폐기.)"""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # 🔔 안 본 회신 카운트
-        assert "var ovChanUnread" in js
-        assert "ovChanUnread[d.key]" in js  # 증가
+        # 🔔 안본회신 배지·상태는 제거됨
+        assert "ovChanUnread" not in js
+        assert "ov-ch-n" not in css
         chip = _js_fn_body(js, "ovChanChip")
-        assert "🔔" in chip and "ov-ch-q" in chip  # 🔔 + ❓ 배지
+        assert "ov-ch-q" in chip  # ❓ waiting 배지는 유지
         # 죽은 agent: 입력 비활성 + 사망 고지(⑤)
         aci = _js_fn_body(js, "ovApplyChannelInput")
         assert "ovActiveDead()" in aci
@@ -749,7 +750,7 @@ class TestStaticUI:
         assert '"resume"' in chip and '"kill"' in chip
         assert '"/" +' in js and 'ctl.getAttribute("data-act")' in js
         # 채널 칩 상태 스타일
-        assert ".ov-ch.dead" in css and ".ov-ch-n" in css and ".ov-ch-ctl" in css
+        assert ".ov-ch.dead" in css and ".ov-ch-ctl" in css
 
     def test_global_ask_tray_wired(self, server_and_client):
         """agent-channels 3단계: agent 질문(waiting_ask)을 채널 무관 글로벌 트레이로

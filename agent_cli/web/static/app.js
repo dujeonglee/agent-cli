@@ -1704,7 +1704,6 @@
   // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
   var ovActiveChannel = "main";
   var ovChannels = {}; // key → [{kind:'user'|'resp', ...}] (agent 대화 스트림)
-  var ovChanUnread = {}; // 4단계: key → 안 본 회신 수(🔔). 그 채널 보면 0.
   // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
   // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
   var ovAskTray = {};
@@ -2122,10 +2121,6 @@
       if (d.direction === "question") {
         ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
         ovRenderAskTray();
-      } else if (ovActiveChannel !== d.key) {
-        // 안 보는 채널의 회신 → 🔔 카운트(그 채널 열면 0). 4단계.
-        ovChanUnread[d.key] = (ovChanUnread[d.key] || 0) + 1;
-        ovSyncChannels();
       }
     } else {
       // in — 사람/main/peer 발신 메시지.
@@ -2134,18 +2129,17 @@
     if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
     if (ovActiveChannel === d.key) ovRender();
   }
-  // kill(agent_cleared) → 그 채널 대화·트레이·unread 정리 (resume 재생 중복 방지).
+  // kill(agent_cleared) → 그 채널 대화·트레이 정리 (resume 재생 중복 방지).
   function ovOnAgentCleared(key) {
     delete ovChannels[key];
     delete ovAskTray[key];
-    delete ovChanUnread[key];
     ovRenderAskTray();
     ovSyncChannels();
     if (ovActiveChannel === key) ovRender();
   }
   // 드롭박스 옵션(main + 살아있는 agent) 동기화 + 선택 유효성 검증.
-  // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩 상태: 🔔N(안 본
-  // 회신)·❓(waiting_ask)·dead(dim). agent 칩엔 ✕(kill)/↻(resume). 4단계.
+  // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩 상태: ❓(waiting_ask)
+  // ·dead(dim). agent 칩엔 ✕(kill)/↻(resume). (🔔 안본회신 배지는 v8.31.0 제거.)
   function ovSyncChannels() {
     var bar = document.getElementById("ov-channels");
     if (!bar) return;
@@ -2155,21 +2149,18 @@
         !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
       ovActiveChannel = "main";
     }
-    var html = ovChanChip("main", "💬 main", false, false, 0, ovActiveChannel === "main");
+    var html = ovChanChip("main", "💬 main", false, false, ovActiveChannel === "main");
     ovRoster.forEach(function (t) {
       html += ovChanChip(
         t.key, ovAgentLabel(t.key), t.state === "dead",
-        t.state === "waiting_ask", ovChanUnread[t.key] || 0,
-        ovActiveChannel === t.key
+        t.state === "waiting_ask", ovActiveChannel === t.key
       );
     });
     bar.innerHTML = html;
     ovApplyChannelInput();
   }
-  function ovChanChip(key, label, dead, waiting, unread, active) {
-    var badges = "";
-    if (unread > 0) badges += '<span class="ov-ch-n">🔔' + unread + "</span>";
-    if (waiting) badges += '<span class="ov-ch-q">❓</span>';
+  function ovChanChip(key, label, dead, waiting, active) {
+    var badges = waiting ? '<span class="ov-ch-q">❓</span>' : "";
     var ctrl = "";
     if (key !== "main") {
       ctrl = dead
@@ -2204,10 +2195,9 @@
         : "Type a message — Enter to send, Shift+Enter for newline";
     }
   }
-  // 채널 전환 — 그 채널 안 본 회신 카운트 초기화.
+  // 채널 전환.
   function ovSetChannel(key) {
     ovActiveChannel = key || "main";
-    delete ovChanUnread[ovActiveChannel];
     ovSyncChannels();
     ovRender();
   }

@@ -592,8 +592,6 @@ footer {
 .ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .ov-ch.dead { opacity: 0.5; }
 .ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
-.ov-ch-n { font-family: var(--mono); font-size: 10px; color: var(--warn); font-weight: 700; }
-.ov-ch.on .ov-ch-n { color: var(--on-accent); }
 .ov-ch-q { color: var(--warn); }
 .ov-ch.on .ov-ch-q { color: var(--on-accent); }
 .ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
