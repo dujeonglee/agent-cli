@@ -1474,32 +1474,60 @@ class TestConfirmStallWarning:
         css = client.get("/static/style.css").text
         assert "CONFIRM_STALL_MS" in js
         assert ".confirm-stall" in css
-        # 타이머 arm 은 submitConfirm 안에서
-        body = _js_fn_body(js, "submitConfirm")
+        # 타이머 arm 은 트레이의 main confirm 제출부에서 (3b).
+        body = _js_fn_body(js, "ovSubmitMainConfirm")
         assert "confirmStallTimer = setTimeout" in body
 
-    def test_stall_timer_cleared_on_mode_transition(self, server_and_client):
-        """해결(input_resolved→setInputMode)·새 프롬프트 진입 시 타이머
-        정리 — 아니면 정상 해결 뒤 가짜 '연결 정체' 경고/타이머 누수."""
+    def test_stall_timer_cleared_on_transition(self, server_and_client):
+        """해결(input_resolved→ovFoldMainAsk)·새 프롬프트 진입(input_required)
+        시 타이머 정리 — 아니면 정상 해결 뒤 가짜 '연결 정체' 경고/타이머 누수."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        assert "clearConfirmStall()" in _js_fn_body(js, "setInputMode")
+        assert "clearConfirmStall()" in _js_fn_body(js, "ovFoldMainAsk")
+        ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
+            0
+        ]
+        assert "clearConfirmStall()" in ir
 
-    def test_frontend_handles_409_as_stale_prompt(self, server_and_client):
-        """409(이미 해결된 프롬프트) 응답이면 stale UI 를 chat 으로 접는다
-        — confirm/prompt 두 submit 핸들러 각각의 분기 안에서."""
+    def test_frontend_handles_409_as_stale_ask(self, server_and_client):
+        """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
+        (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        confirm_body = _js_fn_body(js, "submitConfirm")
+        confirm_body = _js_fn_body(js, "ovSubmitMainConfirm")
         assert "res.status === 409" in confirm_body
-        assert 'setInputMode("chat"' in confirm_body
-        prompt_body = _js_fn_body(js, "submitChatOrPrompt")
+        assert "ovFoldMainAsk()" in confirm_body
+        prompt_body = _js_fn_body(js, "ovSubmitMainPrompt")
         assert "res.status === 409" in prompt_body
-        assert 'setInputMode("chat"' in prompt_body
-        # 두 핸들러 모두 postInput 이 raw fetch Response 를 반환한다는
-        # 전제 — postInput 이 res.json() 등으로 바뀌면 .status 가
-        # undefined 가 되어 fold 가 조용히 죽는다.
+        assert "ovFoldMainAsk()" in prompt_body
+        # 두 제출부 모두 postInput 이 raw fetch Response 를 반환한다는 전제.
         assert "return fetch(" in _js_fn_body(js, "postInput")
+
+    def test_main_ask_in_tray_input_box_chat_only(self, server_and_client):
+        """3b: main prompt/confirm 이 input box 가 아니라 글로벌 트레이 항목으로
+        렌더(ovMainAsk/ovBuildMainAskEl), input box 는 항상 chat(모드 전환 폐지).
+        """
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        # input box mode 머신 제거
+        assert "setInputMode" not in js
+        assert 'id="input-mode-badge"' not in html
+        # main ask 는 트레이로
+        assert "var ovMainAsk" in js and "function ovBuildMainAskEl(" in js
+        ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
+            0
+        ]
+        assert "ovMainAsk = { kind: d.kind, data: d }" in ir
+        assert "ovRenderAskTray()" in ir
+        # input box 는 chat 전용 — prompt kind 제출 경로 없음
+        sc = _js_fn_body(js, "submitChatOrPrompt")
+        assert '"prompt"' not in sc
+        # 트레이 main confirm 은 검증된 조각 재사용
+        bm = _js_fn_body(js, "ovBuildMainAskEl")
+        assert "buildPromptMetaEl(" in bm and "highlightDangerHtml(" in bm
+        # main ask 대기 중엔 #chat-stop 숨김 — #abort 와 두 Stop 동시노출 방지.
+        assert "!ovMainAsk" in _js_fn_body(js, "isBusyChat")
 
 
 class TestWebResumeCli:

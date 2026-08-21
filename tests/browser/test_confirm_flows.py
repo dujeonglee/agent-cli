@@ -23,9 +23,9 @@ class TestConfirmClick:
         results: list = []
         stack.start_confirm_loop(results)
         page.goto(stack.url)
-        page.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
+        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
         # y — once (첫 버튼)
-        page.click("#confirm-buttons .confirm-btn >> nth=0")
+        page.click(".ask-main .confirm-btn >> nth=0")
         assert _wait(lambda: results and results[0][0] == "y")
         # 해결되면 다이얼로그가 접힌다 (다음 confirm 이 다시 뜰 수 있으니
         # '해당 결과가 도착했다'가 핵심 계약)
@@ -35,9 +35,9 @@ class TestConfirmClick:
         results: list = []
         stack.start_confirm_loop(results)
         page.goto(stack.url)
-        page.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
-        page.fill("#input", "메모: /tmp 만 허용")
-        page.click("#confirm-buttons .confirm-btn >> nth=1")  # n — deny
+        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        page.fill(".ask-main .ask-answer", "메모: /tmp 만 허용")
+        page.click(".ask-main .confirm-btn >> nth=1")  # n — deny
         assert _wait(lambda: bool(results))
         assert results[0] == ("n", "메모: /tmp 만 허용")
 
@@ -51,13 +51,13 @@ class TestConfirmClick:
         a.goto(stack.url)
         b.goto(stack.url)
         for pg in (a, b):
-            pg.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
-        a.click("#confirm-buttons .confirm-btn >> nth=0")  # y
+            pg.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        a.click(".ask-main .confirm-btn >> nth=0")  # y
         assert _wait(lambda: len(results) >= 1)
-        b.click("#confirm-buttons .confirm-btn >> nth=1")  # n (stale 또는 다음 것)
+        b.click(".ask-main .confirm-btn >> nth=1")  # n (stale 또는 다음 것)
         # 핵심 불변식: 이후 confirm 이 stale 답으로 자동 해결되지 않는다 —
         # 다음 다이얼로그가 항상 '대기 상태'로 다시 나타난다.
-        assert a.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
+        assert a.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
         ctx.close()
 
 
@@ -68,11 +68,11 @@ class TestDangerHighlight:
         results: list = []
         stack.start_confirm_loop(results, command="rm -rf build", danger_spans=[(0, 2)])
         page.goto(stack.url)
-        page.wait_for_selector("#confirm-buttons .confirm-cmd", timeout=8000)
+        page.wait_for_selector(".ask-main .confirm-cmd", timeout=8000)
         # 명령 원문이 다이얼로그에 보인다
-        assert "rm -rf build" in page.inner_text("#confirm-buttons .confirm-cmd")
+        assert "rm -rf build" in page.inner_text(".ask-main .confirm-cmd")
         # 트리거 토큰만 강조 — 정확히 "rm"
-        danger = page.locator("#confirm-buttons .confirm-cmd .danger")
+        danger = page.locator(".ask-main .confirm-cmd .danger")
         assert danger.count() == 1
         assert danger.first.inner_text() == "rm"
 
@@ -81,28 +81,25 @@ class TestDangerHighlight:
         results: list = []
         stack.start_confirm_loop(results)  # command=None
         page.goto(stack.url)
-        page.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
-        assert page.locator("#confirm-buttons .confirm-cmd").count() == 0
+        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        assert page.locator(".ask-main .confirm-cmd").count() == 0
 
 
 class TestAnswering:
     def test_ask_badge_and_answer_roundtrip(self, stack, page):
+        # 3b: main ask 는 글로벌 트레이 항목(.ask-main)으로 뜨고, 인라인
+        # 답변창에 입력·Enter → 해결 후 항목이 트레이에서 사라진다.
         results: list = []
         stack.start_ask(results, question="어떤 언어를 쓰시나요?")
         page.goto(stack.url)
-        page.wait_for_selector("#input-mode-badge.visible", timeout=8000)
-        assert "어떤 언어" in page.inner_text("#input-mode-badge")
-        page.fill("#input", "Python 이요")
-        page.press("#input", "Enter")
+        page.wait_for_selector(".ask-main", timeout=8000)
+        assert "어떤 언어" in page.inner_text(".ask-main")
+        page.fill(".ask-main .ask-answer", "Python 이요")
+        page.press(".ask-main .ask-answer", "Enter")
         assert _wait(lambda: bool(results))
         assert results[0] == "Python 이요"
-        # 해결 후 ANSWERING 배지가 접힌다
-        assert _wait(
-            lambda: (
-                "visible"
-                not in (page.get_attribute("#input-mode-badge", "class") or "")
-            )
-        )
+        # 해결 후 main ask 항목이 트레이에서 접힌다
+        assert _wait(lambda: page.locator(".ask-main").count() == 0)
 
 
 class TestReconnectReplay:
@@ -134,8 +131,8 @@ class TestReconnectReplay:
         ctx = browser.new_context()
         late = ctx.new_page()
         late.goto(stack.url)
-        late.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
-        late.click("#confirm-buttons .confirm-btn >> nth=0")
+        late.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        late.click(".ask-main .confirm-btn >> nth=0")
         assert _wait(lambda: bool(results))
         assert results[0][0] == "y"
         ctx.close()

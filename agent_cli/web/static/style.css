@@ -564,42 +564,14 @@ footer {
   padding: 10px 16px;
 }
 
-#input-mode-badge {
-  display: none;
-  font-size: 11px;
-  margin-bottom: 6px;
-  align-items: flex-start;
-  gap: 8px;
-}
-#input-mode-badge.visible { display: flex; }
-/* Static legacy text — the ``CONFIRM`` mode still sets ``textContent``
-   directly on the badge, so we need a fallback when no ``.mode-tag``
-   child is present. */
-#input-mode-badge:not(:has(.mode-tag)) {
-  padding: 2px 8px;
-  background: var(--warn-soft-bg);
-  color: var(--warn-soft-fg);
-  border-radius: 4px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-#input-mode-badge .mode-tag {
-  padding: 2px 8px;
-  background: var(--warn-soft-bg);
-  color: var(--warn-soft-fg);
-  border-radius: 4px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  flex: 0 0 auto;
-  line-height: 1.6;
-}
-#input-mode-badge .mode-context {
+/* main ask 항목(3b)의 질문 컨텍스트 텍스트 */
+.mode-context {
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
-  padding-top: 2px;
+  margin-bottom: 7px;
 }
 
 /* agent-channels 3단계: 글로벌 ask 트레이 (채널 무관, 여러 asker stack) */
@@ -687,7 +659,7 @@ footer {
 }
 .action-delegate li .muted { color: var(--text-2); font-size: 12px; }
 
-#confirm-buttons {
+.ask-confirm-btns {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
@@ -752,10 +724,6 @@ footer {
   word-break: break-all;
 }
 /* In the ANSWERING badge (ask), stack the meta under the tag. */
-#input-mode-badge .prompt-meta {
-  margin-top: 4px;
-}
-
 /* ── Setup / missing token ──────────────────── */
 .setup-message {
   max-width: 520px;

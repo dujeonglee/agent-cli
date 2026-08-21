@@ -49,12 +49,12 @@
   const $info = document.getElementById("info");
   const $tokenUsage = document.getElementById("token-usage");
   const $status = document.getElementById("conn-status");
-  const $modeBadge = document.getElementById("input-mode-badge");
   const $inputArea = document.getElementById("input-area");
 
   // ── State ──────────────────────────────────
-  let currentMode = "chat"; // "chat" | "prompt" | "confirm"
-  let confirmDefaultKey = null;
+  // 3b: 입력창은 항상 chat(활성 채널로 라우팅). main 의 prompt/confirm 은 글로벌
+  // ask 트레이의 항목으로 렌더된다(ovMainAsk) — 입력창 mode 전환 폐지.
+  var ovMainAsk = null; // null | {kind:"prompt"|"confirm", data}
   // Every connection is equal (all may send input / queue). ``myConnId`` (from
   // the ``identity`` event) is used to mark "(you)" in the viewer roster and
   // to own queued messages.
@@ -88,13 +88,15 @@
   // available in chat mode now — typing while busy QUEUES the message
   // (injected at the next turn boundary), so Stop is a separate button.
   function isBusyChat() {
-    return currentMode === "chat" && workerBusy;
+    // main ask(prompt/confirm) 대기 중엔 #chat-stop 을 숨긴다 — 그땐 런을
+    // 중단(#chat-stop)하는 게 아니라 입력 대기를 취소(#abort)하는 상황.
+    // (예전 currentMode 게이트를 ovMainAsk 로 대체 — 두 Stop 동시노출 방지.)
+    return workerBusy && !ovMainAsk;
   }
 
   function updateSendEnabled() {
-    // Send is always enabled (chat idle → starts a run; chat busy → queues;
-    // prompt/confirm → answers). Stop is a SEPARATE button shown only while a
-    // chat run is in flight.
+    // Send is always enabled (chat idle → starts a run; chat busy → queues).
+    // Stop is a SEPARATE button shown only while a chat run is in flight.
     const busy = isBusyChat();
     const stopping = busy && stopRequested;
     $send.disabled = false;
@@ -104,14 +106,8 @@
       $chatStop.disabled = stopping;
       $chatStop.textContent = stopping ? "Stopping…" : "Stop";
     }
-    $input.placeholder =
-      currentMode === "prompt"
-        ? "Type your answer — Enter to send"
-        : currentMode === "confirm"
-          ? "Optional comment (empty = no comment)"
-          : busy
-            ? "Worker is processing… your message will be queued (injected next turn)"
-            : "Type a message — Enter to send, Shift+Enter for newline";
+    // placeholder 는 채널(+busy) 인지형 — ovApplyChannelInput 단일 소유.
+    ovApplyChannelInput();
   }
 
   // ── HTML escaping + minimal markdown ───────
@@ -1001,11 +997,6 @@
   }
 
   // ── Input mode switching ───────────────────
-  function clearConfirmButtons() {
-    const btns = document.getElementById("confirm-buttons");
-    if (btns) btns.remove();
-  }
-
   // Provenance block (who/why/what) shown with a confirm or ask prompt so
   // the user can tell which delegate agent is asking and about what.
   // Returns null when there's nothing to show (e.g. main-agent prompt).
@@ -1058,81 +1049,6 @@
     return out;
   }
 
-  function renderConfirmButtons(options, defaultKey, data) {
-    clearConfirmButtons();
-    const container = el("div");
-    container.id = "confirm-buttons";
-    const meta = buildPromptMetaEl(data, true);
-    if (meta) container.appendChild(meta);
-    // The command under review, with its dangerous tokens highlighted. The
-    // dialog otherwise never shows the command (it lives only in the action
-    // card above), so this anchors the decision to what will actually run.
-    if (data && typeof data.command === "string" && data.command) {
-      const cmdEl = el(
-        "pre",
-        ["action-shell", "confirm-cmd"],
-        highlightDangerHtml(data.command, data.danger_spans)
-      );
-      container.appendChild(cmdEl);
-    }
-    options.forEach(function (opt) {
-      const btn = el("button", ["confirm-btn"]);
-      if (opt.key === defaultKey) btn.classList.add("default");
-      btn.textContent = opt.key + " — " + opt.label;
-      btn.addEventListener("click", function () {
-        submitConfirm(opt.key);
-      });
-      container.appendChild(btn);
-    });
-    $inputArea.parentNode.insertBefore(container, $inputArea);
-  }
-
-  function setInputMode(kind, data) {
-    // Any mode transition ends a pending stall watch: resolved → the
-    // warning is moot; a NEW confirm → the old timer must not fire into it.
-    clearConfirmStall();
-    currentMode = kind;
-    if (kind === "confirm") {
-      $modeBadge.textContent = "CONFIRM";
-      $modeBadge.classList.add("visible");
-      confirmDefaultKey = data.default_key;
-      renderConfirmButtons(data.options || [], data.default_key, data);
-      $input.placeholder = "Optional comment (empty = no comment)";
-    } else {
-      // chat or prompt
-      // ``data.context`` is the ``ask`` tool's question block (a
-      // plain-text mirror of the CLI's "Agent asks:" announcement).
-      // Surfacing it next to the badge means the user doesn't have
-      // to scroll the chat back to see what they're answering —
-      // the question stays anchored to the input affordance until
-      // they reply.
-      $modeBadge.innerHTML = "";
-      if (kind === "prompt") {
-        const tag = document.createElement("span");
-        tag.className = "mode-tag";
-        tag.textContent = "ANSWERING";
-        $modeBadge.appendChild(tag);
-        // Who/why (delegate agent + reasoning), so an ask from a subagent
-        // is attributable. No-op for a main-agent ask.
-        const metaEl = buildPromptMetaEl(data, false);
-        if (metaEl) $modeBadge.appendChild(metaEl);
-        const ctx = data && typeof data.context === "string" ? data.context : "";
-        if (ctx) {
-          const ctxEl = document.createElement("span");
-          ctxEl.className = "mode-context";
-          ctxEl.textContent = ctx;
-          $modeBadge.appendChild(ctxEl);
-        }
-      }
-      $modeBadge.classList.toggle("visible", kind === "prompt");
-      clearConfirmButtons();
-    }
-    // Mode just changed — recompute the send button + placeholder.
-    // ``updateSendEnabled`` reads currentMode + workerBusy and
-    // owns the placeholder text now, so we don't set it here.
-    updateSendEnabled();
-  }
-
   // ── POST helpers ───────────────────────────
   function postInput(body) {
     body.conn_id = myConnId; // identifies the sender (queued-message ownership)
@@ -1146,12 +1062,12 @@
     );
   }
 
+  // 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
+  // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
   function submitChatOrPrompt() {
     const text = $input.value.trim();
     if (!text) return;
-    // 채널이 agent 이고 chat 모드면 그 agent inbox 로 라우팅(2단계 B). prompt/
-    // confirm(=main 이 물어봄)은 채널과 무관하게 main 으로(3단계에서 트레이 분리).
-    if (currentMode !== "prompt" && ovActiveChannel !== "main") {
+    if (ovActiveChannel !== "main") {
       fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1160,16 +1076,17 @@
       $input.value = "";
       return;
     }
-    const kind = currentMode === "prompt" ? "prompt" : "chat";
-    postInput({ kind: kind, content: text }).then(function (res) {
-      if (kind === "prompt" && res && res.status === 409) {
-        // The ask was already answered (another viewer) or aborted —
-        // fold the stale ANSWERING affordance.
-        setInputMode("chat", null);
-        setAbortVisible(false);
-      }
-    });
+    postInput({ kind: "chat", content: text });
     $input.value = "";
+  }
+
+  // main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
+  function ovFoldMainAsk() {
+    ovMainAsk = null;
+    clearConfirmStall();
+    ovRenderAskTray();
+    updateSendEnabled(); // ovMainAsk 해제 → busy 면 #chat-stop 다시 노출
+    setAbortVisible(false);
   }
 
   // ── Confirm stall visibility ───────────────
@@ -1190,36 +1107,36 @@
     if (w) w.remove();
   }
 
-  function submitConfirm(key) {
-    const comment = $input.value.trim();
+  // main prompt(ask) 답변 — 트레이 항목의 입력에서 호출.
+  function ovSubmitMainPrompt(text) {
+    if (!text.trim()) return;
+    postInput({ kind: "prompt", content: text }).then(function (res) {
+      if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨(다른 뷰어)
+    });
+  }
+
+  // main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트).
+  function ovSubmitMainConfirm(key, comment) {
     clearConfirmStall();
     confirmStallTimer = setTimeout(function () {
-      const box = document.getElementById("confirm-buttons");
-      if (currentMode !== "confirm" || !box) return;
+      var item = document.querySelector(".ask-main");
+      if (!ovMainAsk || ovMainAsk.kind !== "confirm" || !item) return;
+      if (item.querySelector(".confirm-stall")) return;
       const warn = el("div", ["confirm-stall"]);
-      warn.id = "confirm-stall";
       warn.textContent =
         "⚠ No response from the server yet — the connection may be " +
         "stalled (e.g. too many open tabs holding connections to this " +
         "host). The click applies as soon as it gets through; closing " +
         "unused tabs can help.";
-      box.appendChild(warn);
+      item.appendChild(warn);
     }, CONFIRM_STALL_MS);
-    postInput({ kind: "confirm", key: key, comment: comment })
+    postInput({ kind: "confirm", key: key, comment: comment || "" })
       .then(function (res) {
-        if (res && res.status === 409) {
-          // Already answered (another viewer / earlier click) or aborted —
-          // this dialog is stale. input_resolved normally folds it; this
-          // covers a client that missed that event.
-          clearConfirmStall();
-          setInputMode("chat", null);
-          setAbortVisible(false);
-        }
+        if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨
       })
       .catch(function () {
         /* network error — the stall warning covers the visible feedback */
       });
-    $input.value = "";
   }
 
   // ── Input bindings ─────────────────────────
@@ -1246,16 +1163,8 @@
 
   $send.addEventListener("click", function () {
     if ($send.disabled) return;
-    if (currentMode === "confirm") {
-      // No textarea-only path in confirm — buttons are the contract.
-      // Pressing Send falls back to the default option.
-      submitConfirm(confirmDefaultKey);
-    } else {
-      // chat (idle → starts a run; busy → queues for injection) / prompt
-      // (answers an ask). The server decides; no optimistic busy flip —
-      // a queued message doesn't change worker state.
-      submitChatOrPrompt();
-    }
+    // 입력창은 항상 chat(idle→런 시작·busy→큐). main ask 답변은 트레이가 담당.
+    submitChatOrPrompt();
   });
   $input.addEventListener("keydown", function (e) {
     // ``e.isComposing`` / ``keyCode === 229`` guard the IME commit
@@ -1274,12 +1183,7 @@
     ) {
       e.preventDefault();
       if ($send.disabled) return;
-      if (currentMode === "confirm") {
-        submitConfirm(confirmDefaultKey);
-      } else {
-        // chat (queues if busy) / prompt — Stop is click-only (separate btn).
-        submitChatOrPrompt();
-      }
+      submitChatOrPrompt(); // chat (queues if busy). Stop 은 별도 버튼.
     }
   });
 
@@ -2077,11 +1981,83 @@
   // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
   // 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
   // 공유 상태라 누가 먼저 답하면 waiting_ask 해제 → 모든 뷰어에서 사라짐(선착순).
+  // main 의 prompt/confirm 을 트레이 항목(DOM)으로 — 검증된 조각 재사용
+  // (buildPromptMetaEl·highlightDangerHtml·confirm-btn·mode-context). 3b.
+  function ovBuildMainAskEl() {
+    var kind = ovMainAsk.kind;
+    var data = ovMainAsk.data || {};
+    var item = el("div", ["ask-item", "ask-main"]);
+    var head = el("div", ["ask-q"]);
+    head.textContent =
+      kind === "confirm" ? "⚠ main — 확인 필요" : "❓ main 이(가) 물었습니다";
+    item.appendChild(head);
+    var meta = buildPromptMetaEl(data, kind === "confirm");
+    if (meta) item.appendChild(meta);
+    if (kind === "confirm") {
+      if (typeof data.command === "string" && data.command) {
+        item.appendChild(
+          el("pre", ["action-shell", "confirm-cmd"],
+            highlightDangerHtml(data.command, data.danger_spans))
+        );
+      }
+      var cmt = el("input", ["ask-answer"]);
+      cmt.type = "text";
+      cmt.placeholder = "선택 코멘트(비우면 없음)";
+      var btns = el("div", ["ask-confirm-btns"]);
+      (data.options || []).forEach(function (opt) {
+        var b = el("button", ["confirm-btn"]);
+        if (opt.key === data.default_key) b.classList.add("default");
+        b.textContent = opt.key + " — " + opt.label;
+        b.addEventListener("click", function () {
+          ovSubmitMainConfirm(opt.key, cmt.value.trim());
+        });
+        btns.appendChild(b);
+      });
+      cmt.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          ovSubmitMainConfirm(data.default_key, cmt.value.trim());
+        }
+      });
+      item.appendChild(btns);
+      var cw = el("div", ["ask-in"]);
+      cw.appendChild(cmt);
+      item.appendChild(cw);
+    } else {
+      var ctx = typeof data.context === "string" ? data.context : "";
+      if (ctx) {
+        var ce = el("div", ["mode-context"]);
+        ce.textContent = ctx;
+        item.appendChild(ce);
+      }
+      var ans = el("input", ["ask-answer"]);
+      ans.type = "text";
+      ans.placeholder = "답변… (Enter 전송)";
+      var send = el("button", ["ask-send", "btn-primary"]);
+      send.textContent = "전송";
+      send.addEventListener("click", function () {
+        ovSubmitMainPrompt(ans.value);
+        ans.value = "";
+      });
+      ans.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          ovSubmitMainPrompt(ans.value);
+          ans.value = "";
+        }
+      });
+      var iw = el("div", ["ask-in"]);
+      iw.appendChild(ans);
+      iw.appendChild(send);
+      item.appendChild(iw);
+    }
+    return item;
+  }
   function ovRenderAskTray() {
     var tray = document.getElementById("ask-tray");
     if (!tray) return;
     var waiting = ovRoster.filter(function (t) { return t.state === "waiting_ask"; });
-    if (!waiting.length) {
+    if (!ovMainAsk && !waiting.length) {
       tray.hidden = true;
       tray.innerHTML = "";
       return;
@@ -2100,6 +2076,8 @@
         'class="ask-send btn-primary">전송</button></div></div>';
     });
     tray.innerHTML = html;
+    // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
+    if (ovMainAsk) tray.insertBefore(ovBuildMainAskEl(), tray.firstChild);
     tray.hidden = false;
   }
   // 트레이 답변 전송(그 asker 로 고정 — 드롭박스 채널과 무관).
@@ -2171,12 +2149,16 @@
     sel.value = ovActiveChannel;
     ovApplyChannelInput();
   }
-  // 입력창 placeholder 를 현재 채널에 맞게.
+  // 입력창 placeholder 를 현재 채널(+busy)에 맞게. 입력창은 항상 chat(3b).
   function ovApplyChannelInput() {
     if (!$input) return;
-    $input.placeholder = ovActiveChannel === "main"
-      ? "Type a message — Enter to send, Shift+Enter for newline"
-      : ovAgentLabel(ovActiveChannel) + " 에게… (Enter 전송)";
+    if (ovActiveChannel !== "main") {
+      $input.placeholder = ovAgentLabel(ovActiveChannel) + " 에게… (Enter 전송)";
+    } else {
+      $input.placeholder = workerBusy
+        ? "Worker is processing… your message will be queued (injected next turn)"
+        : "Type a message — Enter to send, Shift+Enter for newline";
+    }
   }
   // 드롭박스 변경 → 채널 전환(뷰 스코핑 + 입력 라우팅).
   function ovSetChannel(key) {
@@ -2469,7 +2451,11 @@
 
   es.addEventListener("input_required", function (e) {
     const d = JSON.parse(e.data);
-    setInputMode(d.kind, d);
+    // 3b: main 의 prompt/confirm 을 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
+    clearConfirmStall();
+    ovMainAsk = { kind: d.kind, data: d };
+    ovRenderAskTray();
+    updateSendEnabled(); // ovMainAsk 반영 → #chat-stop 숨김(두 Stop 방지)
     // Allow aborting a stuck prompt / confirm wait. Worker side
     // surfaces this as EOFError → ``(no response)`` (ask) or
     // ``(default_key, "")`` (confirm).
@@ -2477,8 +2463,7 @@
   });
 
   es.addEventListener("input_resolved", function () {
-    setInputMode("chat", null);
-    setAbortVisible(false);
+    ovFoldMainAsk();
   });
 
   es.addEventListener("worker_state", function (e) {

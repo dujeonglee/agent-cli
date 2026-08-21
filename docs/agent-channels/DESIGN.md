@@ -213,7 +213,10 @@ agent Y가 질문 (사람이 채널 X 보는 중)
 
 1. **백엔드 drain-all(C, C-1)** — ✅ **완료**. `_worker` 를 `_handle_request`(개별, 종전 로직 추출)/`_handle_human_batch`(사람-직접 배치)로 분리 + `_is_human_direct` 게이트 + 1칸 stash. 단위 테스트 3종(배치·main 개별·혼재 split). 단건 경로 무변경(회귀 0). (프론트 무변경.)
 2. **채널 모델 골격(A·B·E)** — ✅ **완료**. `#ov-channel` 드롭박스(main + 살아있는 agent) + `ovActiveChannel`/`ovChannels`(agent_msg→채널 스트림) + `ovRender` 채널 스코핑 + 입력 라우팅(`submitChatOrPrompt`: agent 채널+chat→`/api/agent/<key>/input`) + 대상/주체 배지(라벨은 렌더 시점 해소 — replay 순서 무관). 드로어는 공존(5단계까지). 라이브 검증: 채널 격리·배지·batch 시각 확인.
-3. **글로벌 ask 트레이(D)** — ✅ **agent question 부분 완료(3a)**. `#ask-tray`(입력 위 고정, 채널 무관)가 roster 의 `waiting_ask` agent + 질문(`ovAskTray`)을 렌더, 인라인 답변→`/api/agent/<key>/input`. 선착순: 답하면 waiting_ask 해제→roster 갱신→모든 뷰어 트레이에서 제거. 라이브 검증: pudding 채널 보는 중 dolphin ask 트레이 노출 + 답변→클리어. **main prompt/confirm 은 input box 유지(3b 로 분리)** — main ask 는 이미 input box takeover 로 전 뷰어에 노출돼 놓칠 수 없어 리스크 대비 편익이 낮음. 완전 이관(input box=chat 전용)은 검증된 confirm/prompt/409/stall 머신 재작성이라 별도 승인 후.
+3. **글로벌 ask 트레이(D)** — ✅ **완료(3a+3b)**.
+   - **3a(agent question)**: `#ask-tray`(입력 위 고정, 채널 무관)가 roster 의 `waiting_ask` agent + 질문(`ovAskTray`)을 렌더, 인라인 답변→`/api/agent/<key>/input`. 선착순: 답하면 waiting_ask 해제→roster 갱신→모든 뷰어 트레이에서 제거.
+   - **3b(main prompt/confirm 이관)**: main 의 ask 도 트레이 항목(`ovMainAsk`/`ovBuildMainAskEl`)으로 — **input box 는 chat 전용**(모드 전환 폐지). 검증된 조각 재사용(`buildPromptMetaEl`·`highlightDangerHtml`·`.confirm-btn`·stall·409). `setInputMode`/`renderConfirmButtons`/`#input-mode-badge`/`#confirm-buttons`/`currentMode`/`confirmDefaultKey` 제거(dead 정리). 회신: prompt→`ovSubmitMainPrompt`, confirm→`ovSubmitMainConfirm`(둘 다 409→`ovFoldMainAsk`). **Stop 이중노출 수정**: `isBusyChat = workerBusy && !ovMainAsk` — main ask 대기 중엔 `#chat-stop` 숨기고 `#abort` 만.
+   - 라이브 검증: pudding 채널 보는 중 dolphin ask 트레이 노출+답변→클리어(3a); main ask 트레이 노출(input box chat 유지, Stop 1개)+답변→fold(3b). 게이트 e2e(confirm_flows·header_and_stall)를 트레이 selector 로 갱신, 10 passed.
 4. **죽은 agent(F) + 채널 칩 상태(🔔/❓/dead)**.
 5. **드로어 제거** — 데이터 수집 채널 이관 확인 후 드로어 IIFE/마크업/스타일 삭제. 회귀 스윕.
 6. **문서화 + 릴리스**.

@@ -63,7 +63,7 @@ class TestConfirmStallWarning:
         ctx = browser.new_context()
         victim = ctx.new_page()
         victim.goto(stack.url)
-        victim.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
+        victim.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
         holders = []
         for _ in range(5):
             t = ctx.new_page()
@@ -73,9 +73,11 @@ class TestConfirmStallWarning:
                 pass  # 풀 경계에서 로드가 밀릴 수 있음 — 보유만 하면 됨
             holders.append(t)
         victim.wait_for_timeout(800)
-        victim.click("#confirm-buttons .confirm-btn >> nth=0")
-        victim.wait_for_selector("#confirm-stall", timeout=8000)
+        victim.click(".ask-main .confirm-btn >> nth=0")
+        victim.wait_for_selector(".ask-main .confirm-stall", timeout=8000)
         holders[0].close()  # 슬롯 해방 → 갇힌 POST flush
         assert _wait(lambda: bool(results), timeout=8)
-        assert _wait(lambda: victim.locator("#confirm-stall").count() == 0, timeout=8)
+        assert _wait(
+            lambda: victim.locator(".ask-main .confirm-stall").count() == 0, timeout=8
+        )
         ctx.close()
