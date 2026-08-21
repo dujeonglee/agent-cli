@@ -201,21 +201,24 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
     that differs between OpenAI and Anthropic (endpoint / headers / request +
     response shape):
       - ``context_window()`` — 3-tier (metadata → overflow probe → fallback).
-      - ``simple_chat(text, max_tokens)`` → response content (thinking probe).
-    Everything else (reject-too-small, ``max_output = ctx//4``, ``<think>`` tag
-    detection, assembly, error→None degradation) is shared. ``UnsupportedModel
-    Error`` (window below the minimum) propagates; any other probe failure
-    returns None so detection degrades to defaults rather than crashing."""
+      - ``thinking_probe()`` → bool. OpenAI 는 2단계(기본 → enable_thinking=true
+        재프로브)로 기본 OFF 사고 모델까지 감지; Anthropic 은 단일 프로브.
+    Everything else (reject-too-small, ``max_output = ctx//4``, assembly,
+    error→None degradation) is shared. ``UnsupportedModelError`` (window below
+    the minimum) propagates; any other probe failure returns None so detection
+    degrades to defaults rather than crashing."""
     try:
         _emit_progress(f"First run for {model} — detecting capabilities")
         _emit_progress(f"Querying context window ({model})")
         context_window = transport.context_window()
 
         # Thinking probe runs before the reject (matches the historical order).
+        # OpenAI transport 는 2단계(기본 → enable_thinking=true 재프로브)라 기본
+        # OFF 사고 모델(Qwen 등)도 잡는다 — 미검출이면 재프로브만큼 더 걸릴 수 있다.
         _emit_progress(
             f"Probing thinking support ({model}) — may take ~10s on cold load"
         )
-        supports_thinking = _detect_thinking(transport.simple_chat("Say hello.", 512))
+        supports_thinking = transport.thinking_probe()
 
         if context_window < MIN_CONTEXT_WINDOW:
             raise UnsupportedModelError(
@@ -259,19 +262,46 @@ class _OpenAITransport:
     def context_window(self) -> int:
         return _detect_openai_context_window(self.base, self.model, self.api_key)
 
-    def simple_chat(self, user_text: str, max_tokens: int) -> str:
+    def simple_chat(
+        self, user_text: str, max_tokens: int, enable_thinking: bool = False
+    ) -> str:
+        body: dict = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": user_text}],
+            "max_tokens": max_tokens,
+        }
+        # 기본 OFF 모델(Qwen 등)을 재프로브할 때 사고 스위치를 켠다.
+        if enable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": True}
         r = requests.post(
             f"{self.base}/chat/completions",
-            json={
-                "model": self.model,
-                "messages": [{"role": "user", "content": user_text}],
-                "max_tokens": max_tokens,
-            },
+            json=body,
             headers=self._headers(),
             timeout=DETECTION_PROBE_TIMEOUT,
         )
         r.raise_for_status()
-        return r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
+        content = msg.get("content") or ""
+        # vLLM reasoning 파서는 사고를 별도 `reasoning_content` 필드로 뽑는다
+        # (content 엔 `<think>` 가 없음). 이를 `<think>` 로 정규화해 태그 검출과
+        # 하나로 합친다 — 필드/태그 어느 쪽이든 감지.
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+        return f"<think>{reasoning}</think>{content}" if reasoning else content
+
+    def thinking_probe(self) -> bool:
+        """2단계 사고 감지: ① 기본 프로브(모델이 기본으로 사고를 뱉으면 감지).
+        미검출이면 ② `enable_thinking=true` 재프로브 — Qwen 처럼 사고가 기본 OFF
+        이고 chat_template 스위치로 켜지는 모델을 잡는다. 재프로브가 실패(서버가
+        chat_template_kwargs 거부 등)해도 검출 전체를 깨지 않도록 관용(→ 미지원).
+        1차 프로브 오류는 상위로 전파(검출 실패 = 기본값 폴백, 기존 계약)."""
+        if _detect_thinking(self.simple_chat("Say hello.", 512)):
+            return True
+        try:
+            return _detect_thinking(
+                self.simple_chat("Say hello.", 512, enable_thinking=True)
+            )
+        except Exception:
+            return False
 
 
 def _detect_openai_capabilities(
@@ -331,6 +361,12 @@ class _AnthropicTransport:
         )
         r.raise_for_status()
         return _anthropic_text(r.json())
+
+    def thinking_probe(self) -> bool:
+        """Anthropic 사고 감지: 단일 프로브의 `<think>` 태그. Anthropic 사고는
+        chat_template 스위치가 아니라 API 레벨(`thinking` 블록)이고 실 Anthropic
+        모델은 레지스트리 기반이라, OpenAI 식 enable_thinking 재프로브는 두지 않는다."""
+        return _detect_thinking(self.simple_chat("Say hello.", 512))
 
 
 def _detect_anthropic_context_window(

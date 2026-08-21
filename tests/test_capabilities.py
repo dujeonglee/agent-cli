@@ -140,6 +140,78 @@ class TestOpenAIRuntimeDetection:
         assert caps.context_window == 32768
         assert caps.supports_thinking is True
 
+    @staticmethod
+    def _models_resp():
+        m = MagicMock(status_code=200)
+        m.json.return_value = {"data": [{"id": "local-model", "max_model_len": 32768}]}
+        m.raise_for_status.return_value = None
+        return m
+
+    @staticmethod
+    def _chat_resp(message: dict):
+        r = MagicMock(status_code=200)
+        r.json.return_value = {"choices": [{"message": message}]}
+        r.raise_for_status.return_value = None
+        return r
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_reprobe_with_enable_thinking(self, mock_post, mock_get):
+        """기본 프로브가 사고 미검출이어도, enable_thinking=true 재프로브로 감지
+        (Qwen 등 기본 OFF 모델). 2차 요청 body 에 chat_template_kwargs 포함."""
+        mock_get.return_value = self._models_resp()
+        # 1차: 기본 → 사고 없음. 2차: enable_thinking → <think> 등장.
+        mock_post.side_effect = [
+            self._chat_resp({"content": "Hello!"}),
+            self._chat_resp({"content": "<think>reasoning</think>\nHi"}),
+        ]
+
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
+
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        assert caps is not None
+        assert caps.supports_thinking is True
+        # 두 번 프로브했고, 2차만 enable_thinking 스위치를 켰다.
+        assert mock_post.call_count == 2
+        second_body = mock_post.call_args_list[1].kwargs["json"]
+        assert second_body["chat_template_kwargs"] == {"enable_thinking": True}
+        first_body = mock_post.call_args_list[0].kwargs["json"]
+        assert "chat_template_kwargs" not in first_body
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_detected_via_reasoning_content(self, mock_post, mock_get):
+        """vLLM reasoning 파서: 사고가 content 가 아닌 reasoning_content 필드로 와도
+        (content 엔 <think> 없음) 정규화로 감지 — 재프로브 없이 1차에서."""
+        mock_get.return_value = self._models_resp()
+        mock_post.return_value = self._chat_resp(
+            {"content": "Hi", "reasoning_content": "let me think"}
+        )
+
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
+
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        assert caps is not None
+        assert caps.supports_thinking is True
+        assert mock_post.call_count == 1  # 1차에서 검출 → 재프로브 없음
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_reprobe_error_is_tolerated(self, mock_post, mock_get):
+        """재프로브가 실패(서버가 chat_template_kwargs 거부 등)해도 검출 전체를
+        깨지 않고 '미지원'으로 판정한다 (None 아님)."""
+        mock_get.return_value = self._models_resp()
+        mock_post.side_effect = [
+            self._chat_resp({"content": "Hello!"}),  # 1차: 사고 없음
+            Exception("400 chat_template_kwargs rejected"),  # 2차: 재프로브 실패
+        ]
+
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
+
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        assert caps is not None
+        assert caps.supports_thinking is False
+
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_api_key_passed_in_headers(self, mock_post, mock_get):

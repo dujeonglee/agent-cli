@@ -1087,16 +1087,17 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 
 ### 8.6 Thinking 감지 방식
 
-하드코딩 패턴 매칭이 아닌 **프로브 기반 감지**:
-1. 모델에 "What is 2+2?" 프롬프트 전송
-2. 두 가지 위치에서 thinking 확인:
-   - `reasoning_content` 필드 (OpenAI 호환 — vLLM 컨벤션)
+하드코딩 패턴 매칭이 아닌 **프로브 기반 감지** (`transport.thinking_probe()`):
+1. 모델에 "Say hello." 프롬프트 전송
+2. 두 가지 위치에서 thinking 확인 (OpenAI transport 는 `reasoning_content`/`reasoning` 필드를 `<think>` 로 정규화해 태그 검출로 통합):
+   - `reasoning_content` 필드 (OpenAI 호환 — vLLM reasoning 파서)
    - `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그 in content (DeepSeek-R1 등)
-3. 감지되면 → `supports_thinking=True`
-4. 결과를 `~/.agent-cli/models.json`에 저장 (`_auto_detected: true`) → 다음 실행 시 프로브 불필요
-5. 모델 업데이트 시 자동 감지 항목은 재감지로 갱신됨 (수동 등록 항목은 보호)
+3. **2단계 재프로브 (v8.22.0)**: 1차(기본)에서 미검출이면 OpenAI transport 가 `chat_template_kwargs.enable_thinking=true` 로 **재프로브** — Qwen 처럼 사고가 **기본 OFF** 이고 chat_template 스위치로 켜지는 모델을 잡는다. 재프로브 실패(서버가 kwarg 거부 등)는 관용(→ 미지원). Anthropic 은 단일 프로브(그쪽 사고는 API 레벨).
+4. 감지되면 → `supports_thinking=True`
+5. 결과를 `~/.agent-cli/models.json`에 저장 (`_auto_detected: true`) → 다음 실행 시 프로브 불필요
+6. 모델 업데이트 시 자동 감지 항목은 재감지로 갱신됨 (수동 등록 항목은 보호)
 
-새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다.
+새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다. **주의**: 이미 저장된(과거 감지된) 엔트리는 재감지 전까지 갱신 안 됨 — 개선 이전에 `supports_thinking=false` 로 잘못 저장된 모델은 엔트리를 지워 재감지하거나 admin 에서 수동 수정해야 반영된다.
 
 OpenAI 호환 서버(vLLM 등)에서는 `/v1/models` API로 context window도 감지합니다 (`max_model_len` 필드). 메타데이터에 없으면 overflow probe fallback으로 결정.
 
