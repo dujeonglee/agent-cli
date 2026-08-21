@@ -2211,6 +2211,12 @@
     ovSyncChannels();
     ovRender();
   }
+  // 🔍 인스펙터가 열 스코프 = 현재 대화 채널. main → main 스코프, agent → 그
+  // agent 의 프롬프트 스냅샷(task_id=agent key). 인스펙터 IIFE 가 읽는다.
+  window.__inspectorScope = function () {
+    if (ovActiveChannel === "main") return { scope: "", name: "Main", kind: "main" };
+    return { scope: ovActiveChannel, name: ovAgentLabel(ovActiveChannel), kind: "agent" };
+  };
   (function () {
     var bar = document.getElementById("ov-channels");
     if (!bar) return;
@@ -3144,7 +3150,11 @@
 
   if ($mainBtn)
     $mainBtn.addEventListener("click", function () {
-      window.__openInspector("", "Main", "main");
+      // 현재 대화 채널의 프롬프트/컨텍스트를 연다(main 또는 활성 agent).
+      const s =
+        (window.__inspectorScope && window.__inspectorScope()) ||
+        { scope: "", name: "Main", kind: "main" };
+      window.__openInspector(s.scope, s.name, s.kind);
     });
   document.getElementById("insp-close").addEventListener("click", close);
   $backdrop.addEventListener("click", close);

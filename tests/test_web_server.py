@@ -708,6 +708,27 @@ class TestStaticUI:
         assert "ovChannels[ovActiveChannel]" in js
         assert "#ov-channels" in css and ".ov-umsg-to" in css
 
+    def test_inspector_follows_active_channel(self, server_and_client):
+        """🔍 프롬프트 인스펙터가 현재 대화 채널을 따른다 — main 이면 main 스코프,
+        agent 채널이면 그 agent 의 프롬프트 스냅샷(task_id=agent key)."""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        # 활성 채널 스코프 노출 (main → main, agent → agent key)
+        assert "window.__inspectorScope = function" in js
+        assert 'return { scope: "", name: "Main", kind: "main" }' in js
+        assert (
+            "return { scope: ovActiveChannel, name: ovAgentLabel(ovActiveChannel), "
+            'kind: "agent" }' in js
+        )
+        # 🔍 버튼이 그 스코프로 인스펙터를 연다(항상 main 아님)
+        assert "window.__inspectorScope && window.__inspectorScope()" in js
+        assert "window.__openInspector(s.scope, s.name, s.kind)" in js
+        # 인스펙터는 이미 task_id 스코프 fetch 지원(회귀 가드)
+        assert '"?task_id=" + encodeURIComponent(activeScope)' in js
+        # 버튼 title 이 main 한정이 아님
+        assert "현재 대화 상대" in html
+
     def test_channel_states_and_dead_and_kill_resume_wired(self, server_and_client):
         """agent-channels 4단계: 채널 칩 상태(🔔 안본회신·❓ waiting_ask·dead) +
         죽은 agent 입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1)."""
