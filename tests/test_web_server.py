@@ -670,6 +670,10 @@ class TestStaticUI:
         assert "function ovOnScopedFinal(" in js
         assert "ovTopScopes" in js
         assert "d.depth === 0" in js  # depth-0 → top-level scope 수용 대상
+        # 회신 주체 배지: main final=source:"main", scoped final=agent/skill 이름.
+        assert "ovScopeSrc" in js  # scope_start 에서 주체명 캡처
+        assert 'source: "main"' in js  # 메인 응답 주체
+        assert "ov-src-main" in js and "ov-src-agent" in js  # 배지 렌더
         # assistant_turn routes main finals AND top-level scoped finals to overview
         at = js.split('es.addEventListener("assistant_turn"', 1)[1].split("\n  });", 1)[
             0

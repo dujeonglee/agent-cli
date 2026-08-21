@@ -356,6 +356,24 @@ class TestOverviewFlatRender:
         assert "ov-caret" not in out  # 라이브 타이핑 caret 없음
         assert "복사" in out and "전체 대화" in out
 
+    def test_response_source_badge_main(self):
+        # 회신 주체 배지: 메인 LLM 은 "main"(muted).
+        out = _ov_render_html("ovRespHtml", {"text": "a", "source": "main"})
+        assert 'class="ov-src ov-src-main"' in out
+        assert ">main<" in out
+
+    def test_response_source_badge_agent(self):
+        # agent 응답은 서버가 준 표시명(🤝 pudding)을 accent 배지로.
+        out = _ov_render_html("ovRespHtml", {"text": "a", "source": "🤝 pudding"})
+        assert 'class="ov-src ov-src-agent"' in out
+        assert "🤝 pudding" in out
+        assert "ov-src-main" not in out
+
+    def test_response_source_badge_absent_when_no_source(self):
+        # source 없으면 배지 미출력(과거 엔트리·회귀 안전).
+        out = _ov_render_html("ovRespHtml", {"text": "a"})
+        assert "ov-src" not in out
+
 
 def _ov_act_html(act):
     """Run app.js's REAL ovActHtml with an injected ovAct → activity-strip HTML.

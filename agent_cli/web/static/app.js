@@ -1782,6 +1782,7 @@
   var ovEntries = []; // 플랫: {kind:'user',who,text,tm} | {kind:'resp',text,reasoning,answers,status,navTs,scopeId}
   var ovAct = null; // 실행 중 활동 스트립 {total, turn, batch:[{icon,label,n}]} | null
   var ovTopScopes = {}; // depth-0 스코프 task_id → true (직접 dispatch 결과 수용용)
+  var ovScopeSrc = {}; // depth-0 스코프 task_id → 응답 주체 표시명 (🤝 agent / 🪄 skill)
   var ovRoster = []; // agent_roster
   var ovSkills = {}; // 열린 skill scope: task_id → label
   var ovCtxPct = null;
@@ -1839,6 +1840,13 @@
   // 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
   function ovRespHtml(e, isHero) {
     var st = '<span class="ov-st done">✓</span>';
+    // 회신 주체 배지: 메인 LLM=main, 그 외=agent/skill 이름. 다중 에이전트
+    // 시나리오에서 어느 주체의 응답인지 카드에서 바로 식별.
+    var isMain = e.source === "main";
+    var src = e.source
+      ? '<span class="ov-src ' + (isMain ? "ov-src-main" : "ov-src-agent") + '">' +
+        escapeHtml(isMain ? "main" : e.source) + "</span>"
+      : "";
     var txt = escapeAndFormat(e.text || "");
     var acts =
       '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
@@ -1856,7 +1864,7 @@
         : "";
     return (
       '<div class="ov-block resp ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" +
-      '<div class="ov-he">' + st + "</div>" + re +
+      '<div class="ov-he">' + src + st + "</div>" + re +
       '<div class="ov-tx">' + txt + "</div>" + acts + "</div>"
     );
   }
@@ -1935,6 +1943,7 @@
       answers: d.answers || [],
       status: "done",
       navTs: d.ts,
+      source: "main", // 회신 주체: 메인 LLM
     });
     ovCap();
     ovRender();
@@ -1953,6 +1962,7 @@
       status: "done",
       navTs: d.ts,
       scopeId: d.task_id, // [전체 대화] 는 스코프 카드로 점프
+      source: ovScopeSrc[d.task_id] || "agent", // 회신 주체: agent/skill 이름
     });
     ovCap();
     ovRender();
@@ -2024,8 +2034,16 @@
   }
   function ovOnScopeStart(d) {
     if (!d || !d.task_id) return;
-    if (d.depth === 0) ovTopScopes[d.task_id] = true; // top-level → complete 수용 대상
     if (d.kind === "skill") ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
+    if (d.depth === 0) {
+      ovTopScopes[d.task_id] = true; // top-level → complete 수용 대상
+      // 응답 주체 표시명: agent 는 서버가 준 "🤝 <name>", skill 은 "🪄 <name>".
+      // scoped final 카드에 라벨로 붙는다(main 과 구분).
+      ovScopeSrc[d.task_id] =
+        d.kind === "skill"
+          ? "🪄 " + (ovSkills[d.task_id] || "skill")
+          : d.agent || d.label || "agent";
+    }
     ovRender();
   }
   function ovOnScopeEnd(d) {
