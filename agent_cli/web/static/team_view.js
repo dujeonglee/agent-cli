@@ -245,6 +245,12 @@
     render: function () {
       if (!this._svg || !this._head || !this._host || !global.TeamModel) return;
       var host = this._host;
+      // Skip while hidden (base view = 개요 → display:none → clientWidth 0).
+      // Rendering then computes W from a 0 width and bakes a tiny viewBox; when
+      // 흐름 is later shown that viewBox stretches to fill the real width → a
+      // brief "giant axes" flash before the ResizeObserver re-renders. Keeping
+      // the last visible render (correct W) + re-rendering on show avoids it.
+      if (!host.clientWidth) return;
       // No ``now``: the axis is event-ordinal, so open scopes close at the last
       // real event (tMax) rather than sprouting a moving "now" row. An ongoing
       // agent is shown by its tail spinner, not by a growing bar.

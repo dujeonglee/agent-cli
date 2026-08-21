@@ -463,6 +463,19 @@ class TestStaticUI:
         assert "body.drawer-open #overview" in css  # 개요 side-by-side 리플로우
         assert "--drawer-w" in css  # 드로어 폭 = 개요 margin 단일 출처
 
+    def test_flow_view_no_scale_flash_wired(self, server_and_client):
+        """흐름 전환 시 '축 크게 → 정상 작게' 스케일 플래시 제거: (1) team_view 는
+        숨김 중(clientWidth 0) 렌더를 스킵해 작은 viewBox 를 굽지 않고, (2)
+        setBaseView 가 흐름 전환 직후(폭 유효) 즉시 재렌더한다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        tv = client.get("/static/team_view.js").text
+        # (1) 숨김 중 렌더 가드 — clientWidth 0 이면 조기 반환.
+        assert "if (!host.clientWidth) return;" in tv
+        # (2) 흐름 전환 시 재렌더 배선 (개요→ovRender, 흐름→TeamView.render).
+        assert "function setBaseView(" in js
+        assert "TeamView.render()" in js
+
     def test_queue_delivery_state_wired(self, server_and_client):
         """관측 UI 단계 3 배선: 큐 항목이 조용히 사라지지 않고 전달 상태
         영수증(✓ 주입됨 / ✕ 취소됨)을 보인다. 주입 판정은 user_message 매칭

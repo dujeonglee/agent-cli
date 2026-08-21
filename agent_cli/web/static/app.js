@@ -1754,6 +1754,10 @@
     document.body.classList.toggle("mode-overview", mode === "overview");
     syncTabs();
     if (mode === "overview") ovRender();
+    // 흐름으로 전환: 방금 display 를 해제해 clientWidth 가 유효하므로 즉시 재렌더.
+    // 숨겨진 동안 render 가드로 스킵된 버퍼 이벤트를 올바른 폭으로 그린다 →
+    // ResizeObserver 를 기다리는 사이의 "축 크게" 스케일 플래시 제거.
+    else if (window.TeamView) TeamView.render();
   }
 
   // 하위호환 단일 진입점. 'detail' = 현재 base 위에 타임라인 오버레이를 연다(더 이상
