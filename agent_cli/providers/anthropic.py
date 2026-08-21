@@ -25,7 +25,8 @@ from agent_cli.providers.http import (
 # OpenAI 식 low/medium/high enum 이 없어 budget_tokens 가 유일한 사고 레버라,
 # web UI 런타임 effort 를 budget 으로 옮긴다. high=32768 은 Anthropic 이 "이
 # 이상은 배치 처리 권장" 하는 자연 상한 — 256K 컨텍스트에서 budget+max_output
-# 여유 충분. medium=16384 은 claude-sonnet-4 레지스트리 기본값과 일치.
+# 여유 충분. v8.21.0: 정적 thinking_budget 필드 제거 후 medium 이 **기본값** —
+# supports_thinking 모델이 effort 오버라이드 없이 사고할 때 이 budget 을 쓴다.
 _EFFORT_TO_BUDGET = {"low": 4096, "medium": 16384, "high": 32768}
 
 # Anthropic thinking budget_tokens 하한 (API 제약).
@@ -84,9 +85,7 @@ class AnthropicProvider:
         eff = overrides.get("reasoning_effort")
         enable = overrides.get("enable_thinking")
 
-        thinking_on = (
-            capabilities.supports_thinking and capabilities.thinking_budget > 0
-        )
+        thinking_on = capabilities.supports_thinking
         if enable is True:
             thinking_on = True
         elif enable is False:
@@ -95,11 +94,7 @@ class AnthropicProvider:
             thinking_on = False
 
         if thinking_on:
-            budget = (
-                _EFFORT_TO_BUDGET.get(eff)
-                or capabilities.thinking_budget
-                or _EFFORT_TO_BUDGET["medium"]
-            )
+            budget = _EFFORT_TO_BUDGET.get(eff) or _EFFORT_TO_BUDGET["medium"]
             budget = max(budget, _MIN_THINKING_BUDGET)
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
             # Anthropic deducts thinking from max_tokens

@@ -44,7 +44,6 @@ def caps():
         context_window=32768,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -240,7 +239,6 @@ class TestBootstrapWiring:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
         return (provider, caps, resolved_model, "http://x", "", "openai")
 

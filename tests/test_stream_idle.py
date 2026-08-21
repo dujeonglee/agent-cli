@@ -120,7 +120,6 @@ class TestStreamingReconnect:
             context_window=4096,
             max_output_tokens=256,
             supports_thinking=False,
-            thinking_budget=0,
         )
         return {
             "messages": [{"role": "user", "content": "hi"}],

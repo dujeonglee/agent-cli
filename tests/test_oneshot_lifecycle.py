@@ -680,7 +680,6 @@ class TestParallelBatchScopeIdentity:
                 context_window=32768,
                 max_output_tokens=4096,
                 supports_thinking=False,
-                thinking_budget=0,
             ),
         )
         return [
@@ -733,7 +732,6 @@ class TestParallelBatchScopeIdentity:
                 context_window=32768,
                 max_output_tokens=4096,
                 supports_thinking=False,
-                thinking_budget=0,
             ),
         )
         ends = [d for e, d in r._event_buffer if e == "scope_end"]

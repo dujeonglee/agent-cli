@@ -19,7 +19,6 @@ def caps_structured():
         context_window=32768,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -29,7 +28,6 @@ def caps_basic():
         context_window=4096,
         max_output_tokens=2048,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -425,7 +423,6 @@ def caps_thinking():
         context_window=32768,
         max_output_tokens=4096,
         supports_thinking=True,
-        thinking_budget=4096,
     )
 
 
@@ -435,13 +432,14 @@ def caps_no_thinking():
         context_window=32768,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
 class TestThinkingBudget:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_thinking_param(self, mock_post, caps_thinking):
+        """v8.21.0: supports_thinking 단독 게이트 — 오버라이드 없으면 기본
+        medium(16384) budget 으로 사고 활성."""
         mock_post.return_value = _mock_response(
             {
                 "content": [{"type": "text", "text": "ok"}],
@@ -456,8 +454,8 @@ class TestThinkingBudget:
             capabilities=caps_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
-        assert body["thinking"] == {"type": "enabled", "budget_tokens": 4096}
-        assert body["max_tokens"] == 4096 + 4096
+        assert body["thinking"] == {"type": "enabled", "budget_tokens": 16384}
+        assert body["max_tokens"] == 16384 + 4096
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_no_thinking_regression(self, mock_post, caps_no_thinking):

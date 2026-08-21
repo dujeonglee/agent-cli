@@ -13,7 +13,6 @@ _CAPS = ModelCapabilities(
     context_window=4096,
     max_output_tokens=2048,
     supports_thinking=False,
-    thinking_budget=0,
 )
 
 

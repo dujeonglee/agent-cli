@@ -37,7 +37,6 @@ class TestGetCapabilities:
         assert caps.context_window == 200000
         assert caps.max_output_tokens == 8192
         assert caps.supports_thinking is True
-        assert caps.thinking_budget == 16384
 
     def test_unregistered_model(self):
         caps = get_capabilities("unknown-model:latest")
@@ -78,6 +77,25 @@ class TestGetCapabilities:
         )
         assert caps.context_window == 32768
         assert not hasattr(caps, "thinking_format")
+
+    def test_thinking_budget_field_removed(self):
+        """v8.21.0: 정적 thinking_budget 필드 제거 — supports_thinking 단독
+        게이트로 전환, 사고 예산은 런타임 effort→budget 번역이 담당.
+        구 models.json 의 thinking_budget 키는 로더가 무시(무해)."""
+        from agent_cli.providers.capabilities import (
+            _build_from_entry,
+            caps_to_entry,
+        )
+
+        caps = get_capabilities("gpt-4o")
+        assert not hasattr(caps, "thinking_budget")
+        assert "thinking_budget" not in caps_to_entry(caps)
+        # 구 키가 있어도 무시하고 로드.
+        legacy = _build_from_entry(
+            {"context_window": 32768, "supports_thinking": True, "thinking_budget": 999}
+        )
+        assert legacy.supports_thinking is True
+        assert not hasattr(legacy, "thinking_budget")
 
     def test_static_registry_takes_priority(self):
         """models.json entry should override runtime detection."""
@@ -245,14 +263,15 @@ class TestPromptModelCapabilities:
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
 
-        inputs = iter(["131072", "y", "8192", ""])  # 마지막 "" = wire format auto
+        # context, supports_thinking(y), wire format auto("") — budget 프롬프트는
+        # v8.21.0 에서 제거(정적 thinking_budget 필드 삭제).
+        inputs = iter(["131072", "y", ""])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
         assert caps is not None
         assert caps.context_window == 131072
         assert caps.supports_thinking is True
-        assert caps.thinking_budget == 8192
 
         # Verify saved to file
         import json

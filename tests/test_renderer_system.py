@@ -319,7 +319,6 @@ class TestDispatchAgent:
             context_window=8192,
             max_output_tokens=2048,
             supports_thinking=False,
-            thinking_budget=0,
         )
         provider = MagicMock()
 

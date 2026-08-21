@@ -593,7 +593,6 @@ class TestEndToEnd:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
     def test_two_ops_then_complete_finish(self, tmp_path):

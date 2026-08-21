@@ -197,7 +197,6 @@ class TestLoopE2E:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
     def test_read_then_complete(self, tmp_path):

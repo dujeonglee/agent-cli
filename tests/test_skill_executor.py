@@ -16,7 +16,6 @@ def caps():
         context_window=8000,
         max_output_tokens=2000,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 

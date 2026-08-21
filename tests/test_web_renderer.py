@@ -2896,7 +2896,6 @@ class TestCtxDirWiring:
                 context_window=32768,
                 max_output_tokens=4096,
                 supports_thinking=False,
-                thinking_budget=0,
             )
             skill_invoke._handle_run_skill(
                 {"name": "plan", "arguments": ""},
@@ -2939,7 +2938,6 @@ class TestCtxDirWiring:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
         execute_skill(
             skill=Skill(name="plan", description="", prompt_template="do it"),
@@ -2963,7 +2961,6 @@ class TestCtxDirWiring:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
     def test_run_single_honours_the_prenamed_dir(self, tmp_path, monkeypatch):

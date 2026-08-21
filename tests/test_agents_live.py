@@ -910,7 +910,6 @@ class TestFullLoopIntegration:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
     def test_spawn_request_delivery_roundtrip(self, tmp_path):
@@ -1686,7 +1685,6 @@ class TestRoleDiscovery:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
         with_tool = build_system_prompt_sections(
             caps, active_tools=["read_file", "agent"]
@@ -1834,7 +1832,6 @@ class TestLiveTeammatesSection:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
         reg = make_registry(tmp_path)
         reg.spawn(name="ui")
@@ -1883,7 +1880,6 @@ class TestLiveTeammatesSection:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
         names = [
             n
@@ -1929,7 +1925,6 @@ class TestLiveTeammatesSection:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
         def emit(action, ai):
@@ -2154,7 +2149,6 @@ class TestPeerMessaging:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
         def emit(action, ai):
@@ -3055,7 +3049,6 @@ class TestRunMode:
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
-            thinking_budget=0,
         )
 
     def test_parallel_batchable_is_mode_aware(self):

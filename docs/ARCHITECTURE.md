@@ -359,12 +359,13 @@ class ModelCapabilities:
     context_window: int               # 컨텍스트 윈도우 크기 (토큰)
     max_output_tokens: int            # 최대 출력 토큰
     supports_structured_output: bool  # basic JSON mode 가능 (OpenAI response_format / Anthropic tool calling)
-    supports_thinking: bool           # thinking/reasoning 지원
-    thinking_budget: int              # thinking 토큰 예산 (0=비활성)
+    supports_thinking: bool           # thinking/reasoning 지원 (단독 게이트)
     supports_strict_schema: bool      # (dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함. 향후 opt-in strict schema 재도입 시 사용 예정.
 ```
 
 > **thinking_format 필드 제거 (v8.19.0):** 예전엔 감지된 thinking 태그 스타일(`"think"`/`"reasoning"`)을 엔트리에 저장했으나, 어떤 요청도 이 값으로 형성되지 않는 순수 표시용 메타였다. `<think>` 계열 태그 감지는 여전히 `supports_thinking` 판정에만 쓰이고(`_detect_thinking` → bool), strip 경로는 `thinking_tags` 단일 vocab 을 그대로 사용한다. 구 models.json 의 `thinking_format` 키는 로더가 무시(무해).
+>
+> **thinking_budget 필드 제거 (v8.21.0):** 정적 per-model 예산도 제거하고 **`supports_thinking` 단독 게이트**로 전환. 사고 예산은 이제 런타임 `reasoning_effort`(웹 UI 사고/노력 컨트롤)가 결정한다 — Anthropic 은 effort→budget_tokens 번역(low/medium/high = 4096/16384/32768), OpenAI 계열은 `reasoning_effort` 필드. 오버라이드가 없으면 사고 지원 모델은 **기본 medium**(Anthropic budget 16384 / OpenAI effort "medium")으로 동작. 구 models.json 의 `thinking_budget` 키는 로더가 무시(무해).
 
 능력치 조회 우선순위:
 1. `models.json` 정적 설정 (최우선)
@@ -946,14 +947,16 @@ create_provider("openai", base_url, api_key)     → OpenAIProvider
 
 OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바꿔서 커버.
 
-### 7.4 Thinking Budget 적용
+### 7.4 Thinking 적용
 
-| 프로바이더 | 파라미터 | 동작 |
-|-----------|---------|------|
-| Anthropic | `thinking.budget_tokens = budget`, `max_tokens += budget` | Anthropic이 max_tokens에서 thinking 차감 |
-| OpenAI | `reasoning_effort = low/medium/high` | budget ≤1024→low, ≤8192→medium, >8192→high |
+**기본 게이트 (v8.21.0)**: `supports_thinking` 단독. 정적 `thinking_budget` 필드는 제거됐고, 사고 지원 모델은 런타임 오버라이드가 없으면 **기본 medium** 으로 사고한다.
 
-**런타임 오버라이드 (web UI 사고/노력 컨트롤, `request_overrides`)** — capabilities 기본값 위에 얹혀 요청 시점에 이김. `loop/llm.py` 가 `ctx.thinking_override`(`{enable_thinking, reasoning_effort}`)를 provider 에 전달하고 각 provider 가 자기 방식으로 번역:
+| 프로바이더 | 오버라이드 없을 때 (기본) | 파라미터 |
+|-----------|--------------------------|---------|
+| Anthropic | `thinking.budget_tokens = 16384`(medium), `max_tokens += budget` | Anthropic이 max_tokens에서 thinking 차감 |
+| OpenAI | `reasoning_effort = "medium"` | reasoning 모델(o1/o3 등)이 존중 |
+
+**런타임 오버라이드 (web UI 사고/노력 컨트롤, `request_overrides`)** — 기본값 위에 얹혀 요청 시점에 이김. `loop/llm.py` 가 `ctx.thinking_override`(`{enable_thinking, reasoning_effort}`)를 provider 에 전달하고 각 provider 가 자기 방식으로 번역:
 
 | 프로바이더 | `reasoning_effort` low/medium/high | `reasoning_effort` "off" | `enable_thinking` True/False |
 |-----------|-----------------------------------|--------------------------|------------------------------|
@@ -1045,7 +1048,6 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
       "max_output_tokens": 4096,
       "supports_structured_output": true,
       "supports_thinking": true,
-      "thinking_budget": 4096,
       "supports_strict_schema": false
     }
   },
@@ -1265,7 +1267,6 @@ agent-cli web [options]
   "max_output_tokens": 4096,
   "supports_structured_output": true,
   "supports_thinking": false,
-  "thinking_budget": 0,
   "supports_strict_schema": false
 }
 ```

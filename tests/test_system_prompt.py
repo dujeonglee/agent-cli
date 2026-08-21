@@ -286,7 +286,6 @@ def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:
         context_window=ctx_window,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -296,7 +295,6 @@ def caps():
         context_window=8000,
         max_output_tokens=2000,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -865,7 +863,6 @@ class TestBuildSystemPrompt:
             context_window=4096,
             max_output_tokens=4096,
             supports_thinking=True,
-            thinking_budget=1024,
         )
         prompt = build_system_prompt(caps, ["shell"])
         assert "Thinking Budget" not in prompt

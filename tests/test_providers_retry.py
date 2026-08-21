@@ -296,7 +296,6 @@ class TestProviderWiring:
             context_window=4096,
             max_output_tokens=1024,
             supports_thinking=False,
-            thinking_budget=0,
         )
         good = MagicMock()
         good.status_code = 200
@@ -323,7 +322,6 @@ class TestProviderWiring:
             context_window=4096,
             max_output_tokens=1024,
             supports_thinking=False,
-            thinking_budget=0,
         )
         good = MagicMock()
         good.status_code = 200
@@ -349,7 +347,6 @@ class TestProviderWiring:
             context_window=4096,
             max_output_tokens=1024,
             supports_thinking=False,
-            thinking_budget=0,
         )
         good = MagicMock()
         good.status_code = 200
@@ -377,7 +374,6 @@ class TestProviderWiring:
             context_window=4096,
             max_output_tokens=1024,
             supports_thinking=False,
-            thinking_budget=0,
         )
         bad = MagicMock()
         bad.status_code = 502

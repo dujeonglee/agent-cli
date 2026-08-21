@@ -72,7 +72,6 @@ def caps():
         context_window=32768,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -2052,7 +2051,6 @@ def caps_tc():
         context_window=128000,
         max_output_tokens=4096,
         supports_thinking=False,
-        thinking_budget=0,
     )
 
 
@@ -3291,7 +3289,6 @@ class TestFlow1PreventiveCompaction:
             context_window=2000,
             max_output_tokens=256,
             supports_thinking=False,
-            thinking_budget=0,
         )
         ctx = self._ctx(tmp_path)
         for i in range(40):

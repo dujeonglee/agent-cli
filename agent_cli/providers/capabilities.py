@@ -48,7 +48,6 @@ class ModelCapabilities:
     context_window: int
     max_output_tokens: int
     supports_thinking: bool
-    thinking_budget: int
 
 
 # Conservative defaults for unregistered models
@@ -56,7 +55,6 @@ DEFAULT_CAPABILITIES = ModelCapabilities(
     context_window=4096,
     max_output_tokens=2048,
     supports_thinking=False,
-    thinking_budget=0,
 )
 
 # Auto-detected output token budget = context_window // this. A model
@@ -138,7 +136,6 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
         "context_window": caps.context_window,
         "max_output_tokens": caps.max_output_tokens,
         "supports_thinking": caps.supports_thinking,
-        "thinking_budget": caps.thinking_budget,
     }
     if auto_detected:
         entry["_auto_detected"] = True
@@ -158,7 +155,6 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
         context_window=entry.get("context_window", 4096),
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_thinking=entry.get("supports_thinking", False),
-        thinking_budget=entry.get("thinking_budget", 0),
     )
 
 
@@ -233,7 +229,6 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
             context_window=context_window,
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
-            thinking_budget=4096 if supports_thinking else 0,
         )
     except UnsupportedModelError:
         # Hard reject — propagate to the CLI instead of degrading to defaults.

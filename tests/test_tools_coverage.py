@@ -858,7 +858,6 @@ class TestParallelTimeout:
             context_window=8192,
             max_output_tokens=2048,
             supports_thinking=False,
-            thinking_budget=0,
         )
         provider = MagicMock()
         provider.call.return_value = LLMResponse(content="mock")
@@ -899,7 +898,6 @@ class TestSignalHandlerThreadSafety:
             context_window=8192,
             max_output_tokens=2048,
             supports_thinking=False,
-            thinking_budget=0,
         )
         provider = MagicMock()
 

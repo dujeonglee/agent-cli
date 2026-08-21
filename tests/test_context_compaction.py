@@ -1040,7 +1040,6 @@ class TestAgentLoopCompactorCallback:
             max_output_tokens=512,  # default-on; the callback
             #                                  must flip it off
             supports_thinking=True,  # ditto
-            thinking_budget=2048,
         )
         loop = AgentLoop(
             query="x",

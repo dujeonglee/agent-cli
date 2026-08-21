@@ -56,14 +56,11 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # Thinking/reasoning effort for reasoning models (o1, o3, etc.)
-        if capabilities.supports_thinking and capabilities.thinking_budget > 0:
-            if capabilities.thinking_budget <= 1024:
-                body["reasoning_effort"] = "low"
-            elif capabilities.thinking_budget <= 8192:
-                body["reasoning_effort"] = "medium"
-            else:
-                body["reasoning_effort"] = "high"
+        # Thinking/reasoning effort for reasoning models (o1, o3, etc.). v8.21.0:
+        # 정적 thinking_budget 필드 제거 후 supports_thinking 단독 게이트 —
+        # 사고 지원 모델은 기본 "medium" effort, 런타임 오버라이드로 튜닝.
+        if capabilities.supports_thinking:
+            body["reasoning_effort"] = "medium"
 
         # Per-session runtime overrides (web UI 사고/노력 컨트롤) — applied on top of
         # the capabilities-derived defaults so they win at request time.

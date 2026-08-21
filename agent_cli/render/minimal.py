@@ -409,11 +409,7 @@ class MinimalRenderer(Renderer):
         self, model: str, capabilities, provider: str, saved_path: str
     ) -> None:
         yes, no = "✓", "✗"
-        thinking_info = (
-            f"{yes} (budget: {capabilities.thinking_budget:,})"
-            if capabilities.supports_thinking
-            else no
-        )
+        thinking_info = yes if capabilities.supports_thinking else no
         self.con.print()
         self.con.print("  ● Model Detected", highlight=False)
         self.con.print(f"    {model} ({provider})", highlight=False)

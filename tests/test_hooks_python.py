@@ -443,7 +443,6 @@ class TestLoopHookIntegration:
             context_window=4096,
             max_output_tokens=2048,
             supports_thinking=False,
-            thinking_budget=0,
         )
         return AgentLoop(
             query="test",

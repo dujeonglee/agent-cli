@@ -670,7 +670,6 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
       "max_output_tokens": 4096,
       "supports_structured_output": true,
       "supports_thinking": true,
-      "thinking_budget": 4096,
       "supports_strict_schema": false
     }
   }
@@ -698,8 +697,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 |------|------|
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
-| `supports_thinking` | Thinking/reasoning 지원 |
-| `thinking_budget` | Thinking 토큰 예산 |
+| `supports_thinking` | Thinking/reasoning 지원 (단독 게이트 — 사고 예산은 런타임 사고/노력 컨트롤이 결정, v8.21.0) |
 | `wire_format` | (선택) 이 모델의 wire format 바인딩 (`json_fc`, `xml_fc`). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Wire format [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
 **설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
