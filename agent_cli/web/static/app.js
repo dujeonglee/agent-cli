@@ -1802,6 +1802,9 @@
   // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
   var ovActiveChannel = "main";
   var ovChannels = {}; // key → [{kind:'user'|'resp', ...}] (agent 대화 스트림)
+  // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
+  // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
+  var ovAskTray = {};
   // 채널 표시명: agent 는 "🤝 <name>"(스윔레인/주체 배지와 동형).
   function ovAgentLabel(key) {
     var tm = ovRoster.filter(function (t) { return t.key === key; })[0];
@@ -2068,8 +2071,66 @@
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
     ovSyncChannels(); // 드롭박스 옵션·선택 유효성 갱신(죽으면 main 복귀)
+    ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
     ovRender();
   }
+  // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
+  // 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
+  // 공유 상태라 누가 먼저 답하면 waiting_ask 해제 → 모든 뷰어에서 사라짐(선착순).
+  function ovRenderAskTray() {
+    var tray = document.getElementById("ask-tray");
+    if (!tray) return;
+    var waiting = ovRoster.filter(function (t) { return t.state === "waiting_ask"; });
+    if (!waiting.length) {
+      tray.hidden = true;
+      tray.innerHTML = "";
+      return;
+    }
+    var html = "";
+    waiting.forEach(function (t) {
+      var q = ovAskTray[t.key];
+      var qt = q && q.text ? escapeHtml(q.text) : "(질문 대기)";
+      html +=
+        '<div class="ask-item" data-key="' + escapeHtml(t.key) + '">' +
+        '<div class="ask-q">❓ <b>' + escapeHtml(ovAgentLabel(t.key)) +
+        "</b> 이(가) 물었습니다</div>" +
+        '<div class="ask-qt">' + qt + "</div>" +
+        '<div class="ask-in"><input class="ask-answer" type="text" ' +
+        'placeholder="답변…" aria-label="답변"><button type="button" ' +
+        'class="ask-send btn-primary">전송</button></div></div>';
+    });
+    tray.innerHTML = html;
+    tray.hidden = false;
+  }
+  // 트레이 답변 전송(그 asker 로 고정 — 드롭박스 채널과 무관).
+  function ovSubmitAsk(key, text) {
+    if (!key || !text.trim()) return;
+    fetch("api/agent/" + encodeURIComponent(key) + "/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text, conn_id: myConnId }),
+    });
+  }
+  (function () {
+    var tray = document.getElementById("ask-tray");
+    if (!tray) return;
+    function submitFrom(el) {
+      var item = el.closest(".ask-item");
+      if (!item) return;
+      var inp = item.querySelector(".ask-answer");
+      ovSubmitAsk(item.getAttribute("data-key"), inp ? inp.value : "");
+      if (inp) inp.value = ""; // 낙관적 클리어 — roster 갱신이 항목 제거
+    }
+    tray.addEventListener("click", function (e) {
+      if (e.target.classList.contains("ask-send")) submitFrom(e.target);
+    });
+    tray.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.isComposing && e.target.classList.contains("ask-answer")) {
+        e.preventDefault();
+        submitFrom(e.target);
+      }
+    });
+  })();
   // agent 대화 메시지(agent_msg)를 채널 스트림으로 축적 (2단계 E). 주체/대상
   // 라벨은 **렌더 시점에 해소**한다(ovRender) — replay 시 agent_msg 가 roster 보다
   // 먼저 와도 이름이 키로 고정되지 않게.
@@ -2081,6 +2142,10 @@
         kind: "resp", text: d.text || "", status: "done", navTs: d.ts,
         question: d.direction === "question",
       });
+      if (d.direction === "question") {
+        ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
+        ovRenderAskTray();
+      }
     } else {
       // in — 사람/main/peer 발신 메시지.
       ch.push({ kind: "user", who: d.author || "", text: d.text || "", tm: ovClock(d.ts) });

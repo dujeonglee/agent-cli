@@ -708,6 +708,29 @@ class TestStaticUI:
         assert "ovChannels[ovActiveChannel]" in js
         assert "#ov-channel" in css and ".ov-umsg-to" in css
 
+    def test_global_ask_tray_wired(self, server_and_client):
+        """agent-channels 3단계: agent 질문(waiting_ask)을 채널 무관 글로벌 트레이로
+        노출·답변. 답변은 그 asker 로 고정(/api/agent/<key>/input), waiting_ask 해제
+        시 자동 제거(roster 진실원)."""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        assert 'id="ask-tray"' in html
+        assert "var ovAskTray" in js
+        assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
+        # waiting_ask 가 표시 진실원
+        rt = _js_fn_body(js, "ovRenderAskTray")
+        assert 't.state === "waiting_ask"' in rt
+        # question 이벤트가 트레이에 적재 + roster 갱신마다 재렌더
+        assert "ovAskTray[d.key]" in js
+        onr = _js_fn_body(js, "ovOnRoster")
+        assert "ovRenderAskTray()" in onr
+        # 답변 라우팅: 그 agent inbox 로 고정
+        sa = _js_fn_body(js, "ovSubmitAsk")
+        assert '"api/agent/" + encodeURIComponent(key) + "/input"' in sa
+        assert ".ask-item" in css and ".ask-answer" in css
+
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
         양쪽 토글 + sticky 헤더."""
