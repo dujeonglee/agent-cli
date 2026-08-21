@@ -681,22 +681,22 @@ class TestStaticUI:
         ]
         assert "ovOnFinal(d)" in at and "ovOnScopedFinal(d)" in at
 
-    def test_agent_channel_dropdown_and_routing_wired(self, server_and_client):
-        """agent-channels 2단계: 입력 옆 대화-상대 드롭박스로 채널(main/agent)을
-        고르고, 개요가 채널별로 스코핑되며, agent 채널이면 입력이 그 agent inbox 로
+    def test_agent_channel_bar_and_routing_wired(self, server_and_client):
+        """agent-channels 2~4단계: 대화 채널 칩 바(main/agent)로 채널을 고르고,
+        개요가 채널별로 스코핑되며, agent 채널이면 입력이 그 agent inbox 로
         라우팅된다. agent_msg → 채널 스트림."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # 드롭박스 + 기본 main 옵션
-        assert 'id="ov-channel"' in html
-        assert '<option value="main">' in html
+        # 채널 칩 바(4단계 — select 아님)
+        assert 'id="ov-channels"' in html
+        assert "function ovChanChip(" in js and "function ovSyncChannels(" in js
         # 채널 상태 + 데이터 + 핸들러
         assert 'var ovActiveChannel = "main"' in js
         assert "var ovChannels" in js
         assert "function ovOnAgentMsg(" in js
-        assert "function ovSetChannel(" in js and "function ovSyncChannels(" in js
+        assert "function ovSetChannel(" in js
         # agent_msg → 채널 스트림 축적
         am = js.split('es.addEventListener("agent_msg"', 1)[1].split("\n  });", 1)[0]
         assert "ovOnAgentMsg(d)" in am
@@ -706,7 +706,29 @@ class TestStaticUI:
         assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
         # 렌더 채널 스코핑 + 대상 배지 스타일
         assert "ovChannels[ovActiveChannel]" in js
-        assert "#ov-channel" in css and ".ov-umsg-to" in css
+        assert "#ov-channels" in css and ".ov-umsg-to" in css
+
+    def test_channel_states_and_dead_and_kill_resume_wired(self, server_and_client):
+        """agent-channels 4단계: 채널 칩 상태(🔔 안본회신·❓ waiting_ask·dead) +
+        죽은 agent 입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1)."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # 🔔 안 본 회신 카운트
+        assert "var ovChanUnread" in js
+        assert "ovChanUnread[d.key]" in js  # 증가
+        chip = _js_fn_body(js, "ovChanChip")
+        assert "🔔" in chip and "ov-ch-q" in chip  # 🔔 + ❓ 배지
+        # 죽은 agent: 입력 비활성 + 사망 고지(⑤)
+        aci = _js_fn_body(js, "ovApplyChannelInput")
+        assert "ovActiveDead()" in aci
+        assert "$input.disabled = dead" in aci
+        assert "종료됨" in aci
+        # kill/resume 컨트롤(I-1) — 칩의 ✕/↻ → /api/agent/<key>/{kill,resume}
+        assert '"resume"' in chip and '"kill"' in chip
+        assert '"/" +' in js and 'ctl.getAttribute("data-act")' in js
+        # 채널 칩 상태 스타일
+        assert ".ov-ch.dead" in css and ".ov-ch-n" in css and ".ov-ch-ctl" in css
 
     def test_global_ask_tray_wired(self, server_and_client):
         """agent-channels 3단계: agent 질문(waiting_ask)을 채널 무관 글로벌 트레이로

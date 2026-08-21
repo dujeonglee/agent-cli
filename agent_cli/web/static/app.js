@@ -1706,6 +1706,7 @@
   // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
   var ovActiveChannel = "main";
   var ovChannels = {}; // key → [{kind:'user'|'resp', ...}] (agent 대화 스트림)
+  var ovChanUnread = {}; // 4단계: key → 안 본 회신 수(🔔). 그 채널 보면 0.
   // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
   // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
   var ovAskTray = {};
@@ -2123,6 +2124,10 @@
       if (d.direction === "question") {
         ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
         ovRenderAskTray();
+      } else if (ovActiveChannel !== d.key) {
+        // 안 보는 채널의 회신 → 🔔 카운트(그 채널 열면 0). 4단계.
+        ovChanUnread[d.key] = (ovChanUnread[d.key] || 0) + 1;
+        ovSyncChannels();
       }
     } else {
       // in — 사람/main/peer 발신 메시지.
@@ -2132,27 +2137,59 @@
     if (ovActiveChannel === d.key) ovRender();
   }
   // 드롭박스 옵션(main + 살아있는 agent) 동기화 + 선택 유효성 검증.
+  // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩 상태: 🔔N(안 본
+  // 회신)·❓(waiting_ask)·dead(dim). agent 칩엔 ✕(kill)/↻(resume). 4단계.
   function ovSyncChannels() {
-    var sel = document.getElementById("ov-channel");
-    if (!sel) return;
-    var alive = ovRoster.filter(function (t) { return t.state !== "dead"; });
+    var bar = document.getElementById("ov-channels");
+    if (!bar) return;
+    // 선택 채널이 roster 에서 완전히 사라지면(dead 도 아님) main 복귀. dead 는
+    // 유지(⑤: 사망 고지 + ↻ 되살리기 가능).
     if (ovActiveChannel !== "main" &&
-        !alive.some(function (t) { return t.key === ovActiveChannel; })) {
-      ovActiveChannel = "main"; // 선택한 agent 가 사라짐 → main 복귀
+        !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
+      ovActiveChannel = "main";
     }
-    var opts = '<option value="main">💬 main</option>';
-    alive.forEach(function (t) {
-      opts += '<option value="' + escapeHtml(t.key) + '">' +
-        escapeHtml(ovAgentLabel(t.key)) + "</option>";
+    var html = ovChanChip("main", "💬 main", false, false, 0, ovActiveChannel === "main");
+    ovRoster.forEach(function (t) {
+      html += ovChanChip(
+        t.key, ovAgentLabel(t.key), t.state === "dead",
+        t.state === "waiting_ask", ovChanUnread[t.key] || 0,
+        ovActiveChannel === t.key
+      );
     });
-    sel.innerHTML = opts;
-    sel.value = ovActiveChannel;
+    bar.innerHTML = html;
     ovApplyChannelInput();
   }
-  // 입력창 placeholder 를 현재 채널(+busy)에 맞게. 입력창은 항상 chat(3b).
+  function ovChanChip(key, label, dead, waiting, unread, active) {
+    var badges = "";
+    if (unread > 0) badges += '<span class="ov-ch-n">🔔' + unread + "</span>";
+    if (waiting) badges += '<span class="ov-ch-q">❓</span>';
+    var ctrl = "";
+    if (key !== "main") {
+      ctrl = dead
+        ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="되살리기">↻</button>'
+        : '<button type="button" class="ov-ch-ctl" data-act="kill" title="종료">✕</button>';
+    }
+    return (
+      '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
+      '" data-key="' + escapeHtml(key) + '" role="tab" aria-selected="' +
+      (active ? "true" : "false") + '"><span class="ov-ch-lb">' +
+      escapeHtml(label) + "</span>" + badges + ctrl + "</span>"
+    );
+  }
+  function ovActiveDead() {
+    if (ovActiveChannel === "main") return false;
+    var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
+    return !!(t && t.state === "dead");
+  }
+  // 입력창 placeholder/disabled 를 현재 채널(+busy·dead)에 맞게. 입력창은 chat 전용.
   function ovApplyChannelInput() {
     if (!$input) return;
-    if (ovActiveChannel !== "main") {
+    var dead = ovActiveDead();
+    $input.disabled = dead;
+    if ($send) $send.disabled = dead;
+    if (dead) {
+      $input.placeholder = "✕ 이 에이전트는 종료됨 — 다른 대상 선택 또는 ↻ 로 되살리기";
+    } else if (ovActiveChannel !== "main") {
       $input.placeholder = ovAgentLabel(ovActiveChannel) + " 에게… (Enter 전송)";
     } else {
       $input.placeholder = workerBusy
@@ -2160,15 +2197,30 @@
         : "Type a message — Enter to send, Shift+Enter for newline";
     }
   }
-  // 드롭박스 변경 → 채널 전환(뷰 스코핑 + 입력 라우팅).
+  // 채널 전환 — 그 채널 안 본 회신 카운트 초기화.
   function ovSetChannel(key) {
     ovActiveChannel = key || "main";
-    ovApplyChannelInput();
+    delete ovChanUnread[ovActiveChannel];
+    ovSyncChannels();
     ovRender();
   }
   (function () {
-    var sel = document.getElementById("ov-channel");
-    if (sel) sel.addEventListener("change", function () { ovSetChannel(sel.value); });
+    var bar = document.getElementById("ov-channels");
+    if (!bar) return;
+    bar.addEventListener("click", function (e) {
+      var chip = e.target.closest ? e.target.closest(".ov-ch") : null;
+      if (!chip) return;
+      var key = chip.getAttribute("data-key");
+      var ctl = e.target.closest(".ov-ch-ctl");
+      if (ctl) {
+        e.stopPropagation();
+        fetch("api/agent/" + encodeURIComponent(key) + "/" +
+          ctl.getAttribute("data-act"), { method: "POST" });
+        return;
+      }
+      ovSetChannel(key);
+    });
+    ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
   })();
   function ovOnCtx(pct) {
     ovCtxPct = pct;

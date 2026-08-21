@@ -584,8 +584,20 @@ footer {
 .ask-answer { flex: 1; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg); color: var(--text); }
 .ask-send { padding: 6px 14px; font-size: 13px; }
 #input-area { display: flex; gap: 8px; align-items: stretch; }
-/* agent-channels: 대화 상대 드롭박스 + 발신 대상 배지 */
-#ov-channel { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2); border-radius: 6px; padding: 0 8px; max-width: 170px; align-self: stretch; cursor: pointer; }
+/* agent-channels: 대화 채널 칩 바 (4단계) + 발신 대상 배지 */
+#ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
+#ov-channels:empty { display: none; }
+.ov-ch { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-2); color: var(--text-2); background: var(--surface-2); cursor: pointer; user-select: none; }
+.ov-ch:hover { border-color: var(--border); color: var(--text); }
+.ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.ov-ch.dead { opacity: 0.5; }
+.ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
+.ov-ch-n { font-family: var(--mono); font-size: 10px; color: var(--warn); font-weight: 700; }
+.ov-ch.on .ov-ch-n { color: var(--on-accent); }
+.ov-ch-q { color: var(--warn); }
+.ov-ch.on .ov-ch-q { color: var(--on-accent); }
+.ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
+.ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
 .ov-umsg-to { color: var(--accent-soft-text); font-weight: 600; font-size: 11px; }
 #input {
   flex: 1;

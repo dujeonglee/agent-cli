@@ -217,6 +217,6 @@ agent Y가 질문 (사람이 채널 X 보는 중)
    - **3a(agent question)**: `#ask-tray`(입력 위 고정, 채널 무관)가 roster 의 `waiting_ask` agent + 질문(`ovAskTray`)을 렌더, 인라인 답변→`/api/agent/<key>/input`. 선착순: 답하면 waiting_ask 해제→roster 갱신→모든 뷰어 트레이에서 제거.
    - **3b(main prompt/confirm 이관)**: main 의 ask 도 트레이 항목(`ovMainAsk`/`ovBuildMainAskEl`)으로 — **input box 는 chat 전용**(모드 전환 폐지). 검증된 조각 재사용(`buildPromptMetaEl`·`highlightDangerHtml`·`.confirm-btn`·stall·409). `setInputMode`/`renderConfirmButtons`/`#input-mode-badge`/`#confirm-buttons`/`currentMode`/`confirmDefaultKey` 제거(dead 정리). 회신: prompt→`ovSubmitMainPrompt`, confirm→`ovSubmitMainConfirm`(둘 다 409→`ovFoldMainAsk`). **Stop 이중노출 수정**: `isBusyChat = workerBusy && !ovMainAsk` — main ask 대기 중엔 `#chat-stop` 숨기고 `#abort` 만.
    - 라이브 검증: pudding 채널 보는 중 dolphin ask 트레이 노출+답변→클리어(3a); main ask 트레이 노출(input box chat 유지, Stop 1개)+답변→fold(3b). 게이트 e2e(confirm_flows·header_and_stall)를 트레이 selector 로 갱신, 10 passed.
-4. **죽은 agent(F) + 채널 칩 상태(🔔/❓/dead)**.
+4. **죽은 agent(F) + 채널 칩 상태(🔔/❓/dead) + kill/resume(I-1)** — ✅ **완료**. select 드롭박스를 **채널 칩 바**(`#ov-channels`)로 교체: main + roster 전 agent(dead 포함), 칩마다 🔔N(`ovChanUnread` — 안 본 회신, 그 채널 열면 0)·❓(waiting_ask)·dead(dim+취소선). 죽은 agent 채널이면 입력 비활성 + 사망 고지 placeholder(⑤, `ovApplyChannelInput`/`ovActiveDead`). 칩의 ✕(kill)/↻(resume) → `/api/agent/<key>/{kill,resume}`(I-1). 라이브 검증: 채널 바 렌더·🔔 클리어·kill→dead+입력잠금+고지·resume→부활.
 5. **드로어 제거** — 데이터 수집 채널 이관 확인 후 드로어 IIFE/마크업/스타일 삭제. 회귀 스윕.
 6. **문서화 + 릴리스**.
