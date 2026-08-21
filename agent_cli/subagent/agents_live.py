@@ -39,7 +39,7 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from queue import SimpleQueue
+from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
 from agent_cli.tools.result import ToolResult
@@ -49,6 +49,13 @@ if TYPE_CHECKING:
 
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
 _SHUTDOWN = object()
+
+# 사람-직접 요청이 한 턴에 여러 건 배치될 때(C-1) 앞에 붙는 안내 — main 의
+# QUEUED_REQUEST_NOTICE 대응(에이전트가 최신 것만 답하고 나머지를 흘리지 않게).
+_AGENT_BATCH_NOTICE = (
+    "(여러 메시지가 함께 도착했습니다 — 아래 요청/메시지 전부에 응답하세요. "
+    "최신 것만 답하고 이전 것을 건너뛰지 마세요.)"
+)
 
 _DEFAULT_MAX_AGENTS = 10
 MAX_AGENTS_MIN = 1  # smallest positive cap; 0 (or less) means unlimited
@@ -1177,101 +1184,39 @@ class AgentRegistry:
             # (busy/dead 전환만 알리고 최초 idle 을 빠뜨렸었음, v4.62.1).
             self._notify_roster()
 
+            # 사람-직접 요청 배치 수집 중 만난 비-사람 항목을 다음 이터레이션으로
+            # 이월하는 1칸 stash (SimpleQueue 는 put-front 가 없어 필요).
+            stash = None
             while not tm.stop_event.is_set():
-                item = tm.inbox.get()
+                item = stash if stash is not None else tm.inbox.get()
+                stash = None
                 if item is _SHUTDOWN or tm.stop_event.is_set():
                     break
-                tm.state = "busy"
-                seq = item["seq"]
-                text = item["text"]
-                # 화자 attribution — teammate ctx 에 누가 말했는지 남긴다
-                # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
-                author = item.get("author", "main")
-                tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
-                self._notify_roster()
-                query = f"[{author}]: {text}" if author != "main" else text
-
-                renderer.begin_agent_work(
-                    key=tm.key,
-                    seq=seq,
-                    profile=_disp,
-                    message=text,
-                    # 요청 발신 시각을 scope_start(nav_ts)로 실어, 스윔레인
-                    # 요청 화살표가 이 작업 카드로 이동하게 한다.
-                    req_ts=item.get("ts"),
-                )
-                success, output, duration = False, "", 0.0
-                try:
-                    loop_result, duration = self._run_message(tm, query)
-                    success = bool(loop_result.success)
-                    output = (
-                        loop_result.output
-                        if loop_result.output is not None
-                        else "(agent did not complete the request)"
-                    )
-                except Exception as e:  # worker 는 죽지 않는다 — 회신으로 보고
-                    output = f"agent internal error: {type(e).__name__}: {e}"
-                finally:
-                    renderer.end_agent_work(
-                        key=tm.key,
-                        seq=seq,
-                        success=success,
-                        duration_s=duration,
-                        error="" if success else output[:200],
-                    )
-                reply_path = self._persist_reply(tm, seq, output)
-                tm.handled += 1
-                tm.state = "idle"
-                # 대화 창에는 화자 불문 항상 표시 (P4).
-                out_payload = {
-                    "key": tm.key,
-                    "direction": "out",
-                    "author": tm.key,
-                    "text": output,
-                    "seq": seq,
-                    "success": success,
-                    "to": author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
-                    "ts": time.time(),
-                }
-                renderer.agent_message(**out_payload)
-                self._log_conversation(tm, out_payload)
-                expects_reply = item.get("expects_reply", True)
-                if not expects_reply:
-                    # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
-                    # 어디로도 라우팅하지 않는다(terminal, 핑퐁 방지). 결과에
-                    # 이어 다른 주체에게 보낼 게 있으면 명시적 message 로.
-                    self._save_state()
-                elif author.startswith("agent:"):
-                    # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입.
-                    # 청탁된 응답이라 항상 배달(LGTM 억제 없음 — 구독 제거로
-                    # watch 노이즈 억제가 불필요해짐, v5.12).
-                    requester = author.split(":", 1)[1]
-                    self._deliver_peer_reply(
-                        requester, tm.key, output, item.get("hop", 0)
-                    )
-                elif author == "main":
-                    # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
-                    # 개입 문답은 창에만, main 컨텍스트 비오염).
-                    # ``answers`` = 요청 스냅샷 그대로 (귀속 승계) — 회신을
-                    # 소비하는 런이 run_authors 에 합류시킨다. question/died
-                    # 는 미승계(사용자 답이 아닌 내부 왕복).
-                    self._push_reply(
-                        {
-                            "kind": "reply",
-                            "key": tm.key,
-                            "profile": tm.profile_name,
-                            "seq": seq,
-                            "success": success,
-                            "output": output,
-                            "duration_s": duration,
-                            "reply_path": reply_path,
-                            "answers": item.get("answers") or [],
-                        }
-                    )
+                # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
+                # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
+                # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과
+                # 동일(회귀 안전).
+                if self._is_human_direct(item):
+                    batch = [item]
+                    while tm.inbox.qsize() > 0:
+                        try:
+                            nxt = tm.inbox.get_nowait()
+                        except Empty:
+                            break
+                        if nxt is _SHUTDOWN:
+                            tm.inbox.put(_SHUTDOWN)  # 바깥 루프 종료 몫으로 재게시
+                            break
+                        if self._is_human_direct(nxt):
+                            batch.append(nxt)
+                        else:
+                            stash = nxt  # 비-사람 항목은 다음 이터레이션으로 이월
+                            break
+                    if len(batch) == 1:
+                        self._handle_request(tm, item, renderer, _disp)
+                    else:
+                        self._handle_human_batch(tm, batch, renderer, _disp)
                 else:
-                    self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
-                tm.current_author = "main"
-                self._notify_roster()
+                    self._handle_request(tm, item, renderer, _disp)
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -1295,6 +1240,169 @@ class AgentRegistry:
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
             notify_agents_changed(self)  # 사망도 멤버십 변화 — 광고에서 제거
+
+    @staticmethod
+    def _is_human_direct(item) -> bool:
+        """사람-직접(웹/@agt 대화창) 요청인가 — ``user:*`` 발신 + 회신 기대.
+        이런 요청만 배치 대상(C-1, 회신→대화창 ⑥). main 위임(→mailbox)·peer
+        (→requester)·배달된 peer 회신(expects_reply=False)은 제외."""
+        return (
+            isinstance(item, dict)
+            and str(item.get("author", "")).startswith("user:")
+            and item.get("expects_reply", True)
+        )
+
+    def _handle_request(self, tm: AgentInstance, item: dict, renderer, disp) -> None:
+        """단일 request 처리 — main 위임/peer/배달회신/사람-직접(단건) 공통 경로.
+        회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창)."""
+        tm.state = "busy"
+        seq = item["seq"]
+        text = item["text"]
+        # 화자 attribution — teammate ctx 에 누가 말했는지 남긴다
+        # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
+        author = item.get("author", "main")
+        tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
+        self._notify_roster()
+        query = f"[{author}]: {text}" if author != "main" else text
+
+        renderer.begin_agent_work(
+            key=tm.key,
+            seq=seq,
+            profile=disp,
+            message=text,
+            # 요청 발신 시각을 scope_start(nav_ts)로 실어, 스윔레인
+            # 요청 화살표가 이 작업 카드로 이동하게 한다.
+            req_ts=item.get("ts"),
+        )
+        success, output, duration = False, "", 0.0
+        try:
+            loop_result, duration = self._run_message(tm, query)
+            success = bool(loop_result.success)
+            output = (
+                loop_result.output
+                if loop_result.output is not None
+                else "(agent did not complete the request)"
+            )
+        except Exception as e:  # worker 는 죽지 않는다 — 회신으로 보고
+            output = f"agent internal error: {type(e).__name__}: {e}"
+        finally:
+            renderer.end_agent_work(
+                key=tm.key,
+                seq=seq,
+                success=success,
+                duration_s=duration,
+                error="" if success else output[:200],
+            )
+        reply_path = self._persist_reply(tm, seq, output)
+        tm.handled += 1
+        tm.state = "idle"
+        # 대화 창에는 화자 불문 항상 표시 (P4).
+        out_payload = {
+            "key": tm.key,
+            "direction": "out",
+            "author": tm.key,
+            "text": output,
+            "seq": seq,
+            "success": success,
+            "to": author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
+            "ts": time.time(),
+        }
+        renderer.agent_message(**out_payload)
+        self._log_conversation(tm, out_payload)
+        expects_reply = item.get("expects_reply", True)
+        if not expects_reply:
+            # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
+            # 어디로도 라우팅하지 않는다(terminal, 핑퐁 방지). 결과에
+            # 이어 다른 주체에게 보낼 게 있으면 명시적 message 로.
+            self._save_state()
+        elif author.startswith("agent:"):
+            # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입.
+            # 청탁된 응답이라 항상 배달(LGTM 억제 없음 — 구독 제거로
+            # watch 노이즈 억제가 불필요해짐, v5.12).
+            requester = author.split(":", 1)[1]
+            self._deliver_peer_reply(requester, tm.key, output, item.get("hop", 0))
+        elif author == "main":
+            # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
+            # 개입 문답은 창에만, main 컨텍스트 비오염).
+            # ``answers`` = 요청 스냅샷 그대로 (귀속 승계) — 회신을
+            # 소비하는 런이 run_authors 에 합류시킨다. question/died
+            # 는 미승계(사용자 답이 아닌 내부 왕복).
+            self._push_reply(
+                {
+                    "kind": "reply",
+                    "key": tm.key,
+                    "profile": tm.profile_name,
+                    "seq": seq,
+                    "success": success,
+                    "output": output,
+                    "duration_s": duration,
+                    "reply_path": reply_path,
+                    "answers": item.get("answers") or [],
+                }
+            )
+        else:
+            self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
+        tm.current_author = "main"
+        self._notify_roster()
+
+    def _handle_human_batch(
+        self, tm: AgentInstance, items: list[dict], renderer, disp
+    ) -> None:
+        """사람-직접 요청 2건+ 를 한 턴에 배치 처리(C-1) — 모두 ``user:*`` 발신
+        이라 회신은 대화창 전용(⑥), main mailbox 미배달. main 과 동일하게 대기분
+        전부를 한 응답으로 처리(_AGENT_BATCH_NOTICE 안내). 첫 항목의 seq/ts 로
+        작업 카드 1개(스윔레인은 각 메시지의 in 화살표가 이 카드로 수렴)."""
+        first = items[0]
+        seq = first["seq"]
+        author0 = first.get("author", "main")
+        tm.state = "busy"
+        tm.current_author = author0  # 배치 중 ask 는 첫 발신자에게
+        self._notify_roster()
+
+        labeled = [f"[{it.get('author', 'main')}]: {it['text']}" for it in items]
+        query = _AGENT_BATCH_NOTICE + "\n\n" + "\n\n".join(labeled)
+        preview = "\n".join(labeled)
+
+        renderer.begin_agent_work(
+            key=tm.key, seq=seq, profile=disp, message=preview, req_ts=first.get("ts")
+        )
+        success, output, duration = False, "", 0.0
+        try:
+            loop_result, duration = self._run_message(tm, query)
+            success = bool(loop_result.success)
+            output = (
+                loop_result.output
+                if loop_result.output is not None
+                else "(agent did not complete the request)"
+            )
+        except Exception as e:
+            output = f"agent internal error: {type(e).__name__}: {e}"
+        finally:
+            renderer.end_agent_work(
+                key=tm.key,
+                seq=seq,
+                success=success,
+                duration_s=duration,
+                error="" if success else output[:200],
+            )
+        self._persist_reply(tm, seq, output)
+        tm.handled += len(items)  # N 요청을 한 턴에 처리
+        tm.state = "idle"
+        out_payload = {
+            "key": tm.key,
+            "direction": "out",
+            "author": tm.key,
+            "text": output,
+            "seq": seq,
+            "success": success,
+            "to": author0,
+            "ts": time.time(),
+        }
+        renderer.agent_message(**out_payload)
+        self._log_conversation(tm, out_payload)
+        self._save_state()  # 전부 user:* — 창만(⑥), mailbox push 없음
+        tm.current_author = "main"
+        self._notify_roster()
 
     def _make_ask_handler(self, tm: AgentInstance):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).

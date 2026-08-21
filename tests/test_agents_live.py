@@ -1285,8 +1285,91 @@ class TestResumeRestore:
 # ── P4: WebUI 이벤트·비배달 규칙·idle 자동 재기동 ──
 
 
+def make_gated_recording_runner():
+    """첫 호출을 gate 로 잡아두고 모든 query 를 기록하는 러너 — worker 가 첫
+    작업에 묶여 있는 동안 후속 메시지를 inbox 에 쌓아 배치(C-1)를 강제한다."""
+    seen: list[str] = []
+    gate = threading.Event()
+    lock = threading.Lock()
+    state = {"first": True}
+
+    def runner(query, ctx, **kwargs):
+        with lock:
+            seen.append(query)
+            is_first = state["first"]
+            state["first"] = False
+        if is_first:
+            gate.wait(3)  # 첫(warmup) 호출을 묶어둔다
+        return _FakeLoopResult(output=f"done:{query}"), 0.01
+
+    runner.seen = seen
+    runner.gate = gate
+    return runner
+
+
 class TestHumanInterventionRouting:
     """D8: 인간(비-main 화자) 문답은 대화 창에만 — main mailbox 비오염."""
+
+    def test_multiple_human_requests_batched_into_one_turn(self, tmp_path, renderer):
+        """C-1: 사람-직접 요청이 여러 건 대기하면 한 턴에 배치 — 러너가 두 메시지를
+        모두 담은 단일 query 를 한 번만 본다(2회 아님) + 안내문 포함. 회신은 창만(⑥)."""
+        runner = make_gated_recording_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        # warmup 으로 worker 를 gate 에 묶어둔다
+        reg.request(key, "warmup", author="user:alice")
+        assert wait_until(lambda: len(runner.seen) == 1)
+        # 묶여 있는 동안 사람-직접 2건 enqueue → 다음 턴에 배치
+        reg.request(key, "msg one", author="user:alice")
+        reg.request(key, "msg two", author="user:bob")
+        runner.gate.set()
+        assert wait_until(lambda: len(runner.seen) == 2)  # warmup + 배치 1회
+        batched = runner.seen[1]
+        assert "[user:alice]: msg one" in batched
+        assert "[user:bob]: msg two" in batched
+        assert "함께 도착" in batched  # _AGENT_BATCH_NOTICE
+        assert not reg.has_pending_replies()  # 전부 user:* → 창만
+        assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
+        reg.shutdown_all()
+
+    def test_main_delegations_processed_individually(self, tmp_path, renderer):
+        """C-1: main 위임은 배치하지 않고 개별 처리 — 각각 별도 turn + mailbox 회신."""
+        runner = make_gated_recording_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "warmup", author="user:alice")  # gate 로 묶기
+        assert wait_until(lambda: len(runner.seen) == 1)
+        reg.request(key, "task A")  # main
+        reg.request(key, "task B")  # main
+        runner.gate.set()
+        # 개별 처리 → 3 별도 호출(warmup + A + B), 배치 아님
+        assert wait_until(lambda: len(runner.seen) == 3)
+        assert wait_until(lambda: reg.get(key).handled == 3)
+        replies = reg.drain_replies()
+        assert sorted(r["output"] for r in replies) == ["done:task A", "done:task B"]
+        reg.shutdown_all()
+
+    def test_mixed_batch_splits_at_main_delegation(self, tmp_path, renderer):
+        """C-1: [user, main, user] 가 함께 대기하면 사이의 main 이 배치를 끊는다 —
+        각각 개별 처리(순서·목적지 보존), main 만 mailbox."""
+        runner = make_gated_recording_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "warmup", author="user:alice")
+        assert wait_until(lambda: len(runner.seen) == 1)
+        reg.request(key, "u1", author="user:alice")  # user
+        reg.request(key, "deleg")  # main — 배치 끊음
+        reg.request(key, "u2", author="user:bob")  # user
+        runner.gate.set()
+        # u1 단독 · deleg 개별 · u2 단독 → 4 별도 호출(warmup 포함)
+        assert wait_until(lambda: len(runner.seen) == 4)
+        assert wait_until(lambda: reg.get(key).handled == 4)
+        replies = reg.drain_replies()
+        assert len(replies) == 1 and replies[0]["output"] == "done:deleg"
+        reg.shutdown_all()
 
     def test_human_request_reply_not_delivered_to_main(self, tmp_path, renderer):
         reg = make_registry(tmp_path)

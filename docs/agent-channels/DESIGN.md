@@ -211,7 +211,7 @@ agent Y가 질문 (사람이 채널 X 보는 중)
 
 ## 단계별 구현 (각 단계 후 회귀 + 라이브 + 보고)
 
-1. **백엔드 drain-all(C, C-1)** — worker 배칭 + 목적지 분리. 단위 테스트. (프론트 무변경, 회신 묶임만 관찰.)
+1. **백엔드 drain-all(C, C-1)** — ✅ **완료**. `_worker` 를 `_handle_request`(개별, 종전 로직 추출)/`_handle_human_batch`(사람-직접 배치)로 분리 + `_is_human_direct` 게이트 + 1칸 stash. 단위 테스트 3종(배치·main 개별·혼재 split). 단건 경로 무변경(회귀 0). (프론트 무변경.)
 2. **채널 모델 골격(A·B·E)** — 드롭박스 + activeChannel + 개요 채널 스코핑 + 라우팅 + 배지/rail. 드로어는 아직 공존(안전).
 3. **글로벌 ask 트레이(D)** — main prompt/confirm + agent question 트레이 이관. 입력창 모드 단순화(chat 전용).
 4. **죽은 agent(F) + 채널 칩 상태(🔔/❓/dead)**.
