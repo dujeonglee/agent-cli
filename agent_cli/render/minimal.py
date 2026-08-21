@@ -1084,7 +1084,14 @@ class MinimalRenderer(Renderer):
         건너뛴다."""
         if to == "main" or direction == "in":
             return
-        icon = "❓" if direction == "question" else ("🤝" if success else "🤝✗")
+        from agent_cli.agent_icon import agent_icon
+
+        base_icon = agent_icon(key)
+        icon = (
+            "❓"
+            if direction == "question"
+            else (base_icon if success else base_icon + "✗")
+        )
         self.con.print(f"\n{icon} [{key} → {to}]", style="bold cyan", markup=False)
         self.con.print(text, highlight=False, markup=False)
 

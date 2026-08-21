@@ -703,12 +703,14 @@ class WebRenderer(Renderer):
             self._thread_to_task[tid] = task_id
         label = profile or key
         self.set_thread_agent(label)
+        from agent_cli.agent_icon import agent_icon
+
         payload = {
             "task_id": task_id,
             "kind": "run",
             "label": message,
             "index": seq,
-            "agent": f"🤝 {label}",
+            "agent": f"{agent_icon(key)} {label}",
             # A resident teammate's request is NOT a nested scope of the
             # caller: the swimlane routes it to that agent's OWN lane by the
             # ``{key}#{seq}`` task_id. Emitted anyway so every scope_start

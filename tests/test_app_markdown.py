@@ -425,3 +425,47 @@ class TestOverviewActivityStrip:
     def test_strip_empty_when_no_activity(self):
         # ovAct null → 스트립 미표시(전체 로직은 ovRender 가 판단; 여기선 null 가드).
         assert _ov_act_html(None) == ""
+
+
+class TestAgentIconParity:
+    """에이전트별 결정적 아이콘 — JS(ovAgentIcon)와 Python(agent_icon)이 같은
+    key 에 같은 아이콘을 내야 한다(서버 스윔레인·주체 배지 ↔ 웹 개요 채널 일치).
+    풀/해시가 어긋나면 같은 agent 가 두 아이콘으로 보인다."""
+
+    def test_js_python_icon_parity(self):
+        import re
+
+        from agent_cli.agent_icon import agent_icon
+
+        src = _APP_JS.read_text(encoding="utf-8")
+        pool = re.search(r"var OV_AGENT_ICONS = (\[[\s\S]*?\]);", src).group(1)
+        fn = re.search(r"(function ovAgentIcon\(key\) \{[\s\S]*?\n  \})", src).group(1)
+        keys = [
+            "agt-c83d4f82",
+            "agt-9859a1e1",
+            "agt-ba9813fa",
+            "x",
+            "agt-deadbeef",
+            "agt-00000000",
+            "",
+            "agent-writer#3",
+        ]
+        harness = (
+            f"var OV_AGENT_ICONS = {pool};\n{fn}\n"
+            + "const ks="
+            + json.dumps(keys)
+            + ";\n"
+            + "process.stdout.write(ks.map(k=>ovAgentIcon(k)).join('\\n'));"
+        )
+        out = subprocess.run(
+            ["node", "-e", harness],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.splitlines()
+        assert len(out) == len(keys)
+        for key, js_icon in zip(keys, out):
+            assert agent_icon(key) == js_icon, (
+                f"{key}: py={agent_icon(key)} js={js_icon}"
+            )

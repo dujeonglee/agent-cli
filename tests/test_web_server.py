@@ -729,6 +729,39 @@ class TestStaticUI:
         # 버튼 title 이 main 한정이 아님
         assert "현재 대화 상대" in html
 
+    def test_agent_icon_per_key_wired(self, server_and_client):
+        """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신
+        이를 쓴다. 서버(agent_icon) parity 는 test_app_markdown 이 강제.
+        서버 scope_start 도 agent_icon 으로 라벨을 짓는다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "var OV_AGENT_ICONS" in js and "function ovAgentIcon(" in js
+        lbl = _js_fn_body(js, "ovAgentLabel")
+        assert "ovAgentIcon(key)" in lbl
+        assert '"🤝 " +' not in lbl  # 고정 악수 아이콘 제거
+        # 서버 스윔레인/주체배지 라벨(scope_start)도 per-key agent_icon
+        import inspect
+
+        from agent_cli.render.web import WebRenderer
+
+        assert "agent_icon(key)" in inspect.getsource(WebRenderer.begin_agent_work)
+
+    def test_agent_status_dots_moved_to_flow_tab(self, server_and_client):
+        """v8.32.0: 개요 상단 ambient 줄 제거 — 에이전트 상태 dots 는 흐름 탭으로,
+        ctx%·뷰어·모델·스킬(헤더 중복)은 삭제."""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # 흐름 탭에 dots 컨테이너 + 렌더 함수 + roster 배선
+        assert 'id="vt-flow-dots"' in html
+        assert "function ovRenderTabDots(" in js
+        assert "ovRenderTabDots()" in _js_fn_body(js, "ovOnRoster")
+        assert ".vt-dots" in css and ".ov-dot" in css
+        # 구 ambient 는 완전 제거
+        assert "ovAmbient" not in js
+        assert ".ov-ambient" not in css and "ovOnCtx" not in js
+
     def test_channel_states_and_dead_and_kill_resume_wired(self, server_and_client):
         """agent-channels 4단계: 채널 칩 상태(❓ waiting_ask·dead) + 죽은 agent
         입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1). (🔔 안본회신 배지는

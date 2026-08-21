@@ -1406,10 +1406,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   color: var(--text-2); font-size: 13.5px; text-align: center;
   margin-top: 48px; padding: 0 20px;
 }
-/* 개요 ambient 스트립 */
-.ov-ambient { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0; font-size: 11.5px; color: var(--text-2); }
-.ov-a { display: inline-flex; align-items: center; gap: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; }
-.ov-a.sk { border-color: transparent; background: var(--accent-soft-bg); color: var(--accent-soft-text); font-weight: 600; }
+/* 에이전트 상태 dots — 흐름 탭에 표시(v8.32.0, 구 개요 ambient 에서 이동) */
+.vt-dots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
 .ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ov-dot.b { background: var(--warn); } .ov-dot.i { background: var(--ok); }
 .ov-dot.w { background: var(--cyan); } .ov-dot.x { background: var(--text-2); }

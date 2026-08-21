@@ -1421,7 +1421,6 @@
       document.getElementById("ctx-pct").textContent = "ctx " + pct + "%";
       document.getElementById("ctx-gauge-fill").style.width = pct + "%";
       chip.hidden = false;
-      ovOnCtx(pct); // 개요: ambient ctx%
     }
   });
 
@@ -1699,7 +1698,6 @@
   var ovScopeSrc = {}; // depth-0 스코프 task_id → 응답 주체 표시명 (🤝 agent / 🪄 skill)
   var ovRoster = []; // agent_roster
   var ovSkills = {}; // 열린 skill scope: task_id → label
-  var ovCtxPct = null;
   // agent-channels 2단계: 대화 채널. "main" = 메인 개요(ovEntries), 그 외 = agent
   // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
   var ovActiveChannel = "main";
@@ -1707,11 +1705,25 @@
   // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
   // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
   var ovAskTray = {};
-  // 채널 표시명: agent 는 "🤝 <name>"(스윔레인/주체 배지와 동형).
+  // 에이전트별 결정적 아이콘 — key 해시로 고정. 서버(agent_cli/agent_icon.py)와
+  // 반드시 동일한 풀·순서·해시(test_app_markdown 이 대조). key 는 ASCII 라
+  // charCodeAt == Python ord.
+  var OV_AGENT_ICONS = [
+    "🦊", "🐙", "🦉", "🦄", "🐳", "🦋", "🐢", "🐝",
+    "🦁", "🐧", "🦩", "🐬", "🦇", "🐡", "🦕", "🐌",
+    "🦔", "🦦", "🐨", "🐼", "🦭", "🦡", "🐺", "🐸",
+  ];
+  function ovAgentIcon(key) {
+    if (!key) return OV_AGENT_ICONS[0];
+    var s = 0;
+    for (var i = 0; i < key.length; i++) s += key.charCodeAt(i);
+    return OV_AGENT_ICONS[s % OV_AGENT_ICONS.length];
+  }
+  // 채널 표시명: agent 는 "<key별 아이콘> <name>"(스윔레인/주체 배지와 동형).
   function ovAgentLabel(key) {
     var tm = ovRoster.filter(function (t) { return t.key === key; })[0];
     var nm = tm && (tm.name || [tm.profile, tm.name].filter(Boolean).join(" · "));
-    return "🤝 " + (nm || key);
+    return ovAgentIcon(key) + " " + (nm || key);
   }
   function ovCap() {
     if (ovEntries.length > 80) ovEntries = ovEntries.slice(-80);
@@ -1732,8 +1744,12 @@
     var d = new Date(ms);
     return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
   }
-  function ovAmbient() {
-    var dots = ovRoster
+  // 에이전트 상태 dots 를 흐름 탭에 렌더(구 개요 상단 ambient 줄에서 이동). 나머지
+  // ambient 항목(ctx%·뷰어·모델·스킬)은 헤더 등과 중복이라 제거(v8.32.0).
+  function ovRenderTabDots() {
+    var el = document.getElementById("vt-flow-dots");
+    if (!el) return;
+    el.innerHTML = ovRoster
       .map(function (a) {
         var s = a.state;
         var c = s === "busy" ? "b" : s === "waiting_ask" ? "w" : s === "dead" ? "x" : "i";
@@ -1741,20 +1757,6 @@
           escapeHtml((a.profile || a.name || a.key || "") + " · " + s) + '"></span>';
       })
       .join("");
-    var sk = Object.keys(ovSkills);
-    var skHtml = sk.length
-      ? '<span class="ov-a sk">🪄 ' + escapeHtml(ovSkills[sk[sk.length - 1]]) + " 실행 중</span>"
-      : "";
-    var ctxHtml = ovCtxPct != null ? '<span class="ov-a">🧮 ctx ' + ovCtxPct + "%</span>" : "";
-    var model = ((document.getElementById("info") || {}).textContent || "").trim();
-    var mdHtml = model ? '<span class="ov-a">◈ ' + escapeHtml(model) + "</span>" : "";
-    var viewers = ((document.getElementById("viewers") || {}).textContent || "").trim();
-    var vwHtml = viewers ? '<span class="ov-a">' + escapeHtml(viewers) + "</span>" : "";
-    return (
-      '<div class="ov-ambient">' + skHtml +
-      (dots ? '<span class="ov-a">' + dots + "</span>" : "") +
-      ctxHtml + vwHtml + mdHtml + "</div>"
-    );
   }
   // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
   function ovUserHtml(e) {
@@ -1831,7 +1833,7 @@
         break;
       }
     }
-    var html = ovAmbient();
+    var html = "";
     if (!items.length && !(ovAct && isMain)) {
       html += '<div class="ov-placeholder">' +
         (isMain ? "아직 응답이 없습니다" : "아직 대화가 없습니다") +
@@ -1938,7 +1940,7 @@
       shell: ["⚡", String(p.command || "").split(/\s+/)[0]],
       sh: ["⚡", String(p.command || "").split(/\s+/)[0]],
       run_skill: ["🪄", p.name || ""],
-      agent: ["🤝", p.key || p.mode || ""],
+      agent: [p.key ? ovAgentIcon(p.key) : "🤖", p.key || p.mode || ""],
       glob: ["🔎", p.pattern || ""],
       grep: ["🔎", p.pattern || p.query || ""],
       search_code: ["🔎", p.query || ""],
@@ -1972,8 +1974,9 @@
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
-    ovSyncChannels(); // 드롭박스 옵션·선택 유효성 갱신(죽으면 main 복귀)
+    ovSyncChannels(); // 채널 바 옵션·선택 유효성 갱신(죽으면 main 복귀)
     ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
+    ovRenderTabDots(); // 흐름 탭의 에이전트 상태 dots
     ovRender();
   }
   // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
@@ -2225,10 +2228,6 @@
     });
     ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
   })();
-  function ovOnCtx(pct) {
-    ovCtxPct = pct;
-    ovRender();
-  }
   function ovOnScopeStart(d) {
     if (!d || !d.task_id) return;
     if (d.kind === "skill") ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
