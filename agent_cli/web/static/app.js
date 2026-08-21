@@ -1316,27 +1316,25 @@
 
 
   es.addEventListener("agent_roster", function (e) {
-    // 상주 에이전트 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계 + Team 스윔레인.
+    // 상주 에이전트 목록/상태 sticky (P4) — Team 스윔레인 + 개요 채널 바.
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("agent_roster", d);
-    document.dispatchEvent(new CustomEvent("agentcli:tm-roster", { detail: d }));
-    ovOnRoster(d); // 개요: 에이전트 상태 dot
+    ovOnRoster(d); // 개요: 채널 바 + ask 트레이 + 상태
   });
 
   es.addEventListener("agent_msg", function (e) {
     // 상주 에이전트 대화 메시지 (persistent — 재접속 replay 포함).
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("agent_msg", d);
-    document.dispatchEvent(new CustomEvent("agentcli:tm-msg", { detail: d }));
     ovOnAgentMsg(d); // 개요: agent 대화 채널 스트림
   });
 
   es.addEventListener("agent_cleared", function (e) {
-    // 5.13: kill 시 그 에이전트 대화창 비움 (resume 재생과 대칭) — 대화
-    // 창 IIFE 로 중계해 열려 있는 탭의 msgs[key] 도 지우게 한다.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:tm-cleared", { detail: JSON.parse(e.data) }),
-    );
+    // kill 시 그 에이전트 대화 비움 (resume 재생과 대칭 — 안 지우면 부활 시
+    // conversation.jsonl 재생이 채널 스트림에 중복 append). 5단계: 드로어
+    // 대신 개요 채널을 정리.
+    const d = JSON.parse(e.data);
+    if (d && d.key) ovOnAgentCleared(d.key);
   });
 
   es.addEventListener("compaction_ratio", function (e) {
@@ -2135,6 +2133,15 @@
     }
     if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
     if (ovActiveChannel === d.key) ovRender();
+  }
+  // kill(agent_cleared) → 그 채널 대화·트레이·unread 정리 (resume 재생 중복 방지).
+  function ovOnAgentCleared(key) {
+    delete ovChannels[key];
+    delete ovAskTray[key];
+    delete ovChanUnread[key];
+    ovRenderAskTray();
+    ovSyncChannels();
+    if (ovActiveChannel === key) ovRender();
   }
   // 드롭박스 옵션(main + 살아있는 agent) 동기화 + 선택 유효성 검증.
   // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩 상태: 🔔N(안 본
@@ -4037,202 +4044,6 @@
   });
 })();
 
-// ── 상주 에이전트 대화 창 (🤝, P4) ─────────────────────────────────────────
-// 상주 에이전트 roster + 대화 스트림 + 인간 개입. 데이터는 메인 SSE 가
-// document CustomEvent 로 중계(agentcli:tm-roster / agentcli:tm-msg —
-// 메인 SSE 가 CustomEvent 로 중계하는 브리지 패턴). 메시지는 persistent 이벤트라
-// 재접속 replay 로 창 내용이 복원된다.
-(function () {
-  "use strict";
-
-  const $btn = document.getElementById("agent-btn");
-  const $badge = document.getElementById("tm-badge");
-  const $drawer = document.getElementById("tm-drawer");
-  const $backdrop = document.getElementById("tm-backdrop");
-  const $roster = document.getElementById("tm-roster");
-  const $conv = document.getElementById("tm-conv");
-  const $input = document.getElementById("tm-input");
-  const $send = document.getElementById("tm-send");
-  if (!$btn || !$drawer) return;
-
-  let roster = []; // [{key, role, state, handled, ...}]
-  const msgs = Object.create(null); // key → [{direction, author, text, seq, success}]
-  let selected = null;
-
-
-  function esc(s) {
-    const d = document.createElement("div");
-    d.textContent = s == null ? "" : String(s);
-    return d.innerHTML;
-  }
-
-  function renderRoster() {
-    const alive = roster.filter((t) => t.state !== "dead").length;
-    $badge.hidden = alive === 0;
-    $badge.textContent = String(alive);
-    if (!roster.length) {
-      $roster.innerHTML =
-        '<div class="tm-empty">No resident agents yet — spawn one and it appears here.</div>';
-      return;
-    }
-    $roster.innerHTML = "";
-    roster.forEach(function (tm) {
-      const chip = document.createElement("span");
-      chip.className = "tm-chip" + (tm.key === selected ? " active" : "");
-      const who = [tm.profile, tm.name].filter(Boolean).join(" · ");
-      chip.innerHTML =
-        esc(tm.key) +
-        (who ? " <b>" + esc(who) + "</b>" : "") +
-        ' <span class="tm-state ' + esc(tm.state) + '">' + esc(tm.state) + "</span>";
-      chip.addEventListener("click", function () {
-        select(tm.key);
-      });
-      if (tm.state !== "dead") {
-        const kill = document.createElement("button");
-        kill.className = "tm-kill";
-        kill.title = "Kill";
-        kill.textContent = "✕";
-        kill.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          fetch("api/agent/" + encodeURIComponent(tm.key) + "/kill", {
-            method: "POST",
-          });
-        });
-        chip.appendChild(kill);
-      } else {
-        // 죽은 에이전트는 이전 컨텍스트 그대로 부활 가능 (mode:"resume")
-        const rev = document.createElement("button");
-        rev.className = "tm-kill";
-        rev.title = "Revive with previous context";
-        rev.textContent = "↻";
-        rev.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          fetch(
-            "api/agent/" + encodeURIComponent(tm.key) + "/resume",
-            { method: "POST" },
-          );
-        });
-        chip.appendChild(rev);
-      }
-      $roster.appendChild(chip);
-    });
-  }
-
-  function renderConv() {
-    const list = (selected && msgs[selected]) || [];
-    $conv.innerHTML = "";
-    if (!selected) {
-      $conv.innerHTML = '<div class="tm-empty">Select an agent.</div>';
-      return;
-    }
-    if (!list.length) {
-      $conv.innerHTML = '<div class="tm-empty">No conversation yet.</div>';
-      return;
-    }
-    list.forEach(function (m) {
-      const el = document.createElement("div");
-      el.className =
-        "tm-msg " + m.direction + (m.direction === "out" && !m.success ? " fail" : "");
-      const who =
-        m.direction === "in"
-          ? m.author
-          : m.direction === "question"
-            ? m.author + " ❓"
-            : m.author;
-      el.innerHTML = '<div class="tm-author">' + esc(who) + "</div>" + esc(m.text);
-      $conv.appendChild(el);
-    });
-    $conv.scrollTop = $conv.scrollHeight;
-  }
-
-  function select(key) {
-    selected = key;
-    const tm = roster.find((t) => t.key === key);
-    const alive = tm && tm.state !== "dead";
-    $input.disabled = !alive;
-    $send.disabled = !alive;
-    $input.placeholder = alive
-      ? key + " — type a message… (consumed as the answer if it's awaiting one)"
-      : "This agent has been terminated.";
-    renderRoster();
-    renderConv();
-  }
-
-  document.addEventListener("agentcli:tm-roster", function (e) {
-    roster = (e.detail && e.detail.roster) || [];
-    if (!selected && roster.length) {
-      select(roster[0].key);
-      return;
-    }
-    if (selected && !roster.find((t) => t.key === selected)) selected = null;
-    renderRoster();
-    if (selected) select(selected);
-  });
-
-  document.addEventListener("agentcli:tm-msg", function (e) {
-    const m = e.detail || {};
-    if (!m.key) return;
-    (msgs[m.key] = msgs[m.key] || []).push(m);
-    if ($drawer.classList.contains("open") && m.key === selected) renderConv();
-  });
-
-  document.addEventListener("agentcli:tm-cleared", function (e) {
-    // 5.13: kill → 그 에이전트 대화창 비움. resume 시 conversation.jsonl
-    // 재생(agent_msg)이 다시 채운다. 열려 있고 그 에이전트를 보고 있으면
-    // 즉시 다시 그린다.
-    const m = e.detail || {};
-    if (!m.key) return;
-    delete msgs[m.key];
-    if ($drawer.classList.contains("open") && m.key === selected) renderConv();
-  });
-
-  function sendInput() {
-    const text = ($input.value || "").trim();
-    if (!text || !selected) return;
-    fetch("api/agent/" + encodeURIComponent(selected) + "/input", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text, conn_id: window.AGENTCLI_CONN_ID || null }),
-    }).then(function (r) {
-      if (r.ok) $input.value = "";
-    });
-  }
-  $send.addEventListener("click", sendInput);
-  $input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendInput();
-    }
-  });
-
-  function open() {
-    $backdrop.hidden = false;
-    requestAnimationFrame(function () {
-      $backdrop.classList.add("open");
-    });
-    $drawer.classList.add("open");
-    $drawer.setAttribute("aria-hidden", "false");
-    renderRoster();
-    renderConv();
-  }
-  function close() {
-    $drawer.classList.remove("open");
-    $backdrop.classList.remove("open");
-    $drawer.setAttribute("aria-hidden", "true");
-    setTimeout(function () {
-      $backdrop.hidden = true;
-    }, 260);
-  }
-  $btn.addEventListener("click", function () {
-    if ($drawer.classList.contains("open")) close();
-    else open();
-  });
-  document.getElementById("tm-close").addEventListener("click", close);
-  $backdrop.addEventListener("click", close);
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && $drawer.classList.contains("open")) close();
-  });
-})();
 
 // ── 컨텍스트 압축 임계 슬라이더 (5.13) ──────────────────────────────────
 // 헤더의 토큰 사용량 옆 슬라이더로 compaction 목표 비율을 세션 한정 변경.

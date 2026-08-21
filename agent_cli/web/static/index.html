@@ -77,7 +77,6 @@
       <div id="theme-menu" role="menu" hidden></div>
     </span>
     <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
-    <button id="agent-btn" class="btn-icon" type="button" title="Agents — resident agent chat">🤝<span id="tm-badge" hidden></span></button>
     <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
@@ -188,21 +187,7 @@
     <div id="dl-msg" class="dl-msg"></div>
   </aside>
 
-  <!-- 상주 에이전트 대화 창 (🤝) — roster + 대화 + 인간 개입 -->
-  <div id="tm-backdrop" hidden></div>
-  <aside id="tm-drawer" aria-hidden="true">
-    <div class="tm-head">
-      <div class="tm-title">🤝 Agents</div>
-      <button id="tm-close" type="button" class="btn-icon" title="Close">✕</button>
-    </div>
-    <div id="tm-roster" title="Live resident agents — click to view the chat"></div>
-    <div id="tm-conv"></div>
-    <div id="tm-inputrow">
-      <textarea id="tm-input" rows="2" placeholder="Pick an agent and type a message…"
-                spellcheck="false" disabled></textarea>
-      <button id="tm-send" type="button" class="btn-primary" disabled>Send</button>
-    </div>
-  </aside>
+  <!-- (구 상주 에이전트 대화 드로어는 v8.29.0 에서 개요 채널로 통합·제거) -->
 
   <!-- Directive Editor drawer (📝 toolbar) — dedicated directive editing.
        Split out of the old Prompt Inspector: this surface ONLY edits the
