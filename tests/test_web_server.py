@@ -664,7 +664,8 @@ class TestStaticUI:
         # 순수 플랫 렌더: 항목별 독립 렌더(그룹핑 함수 없음, ↳ 귀속 없음).
         assert "function ovUserHtml(" in js and "function ovRespHtml(" in js
         assert "function ovBuildBlocks(" not in js  # 그룹핑 폐기(짝지어 보이던 원인)
-        assert 'e.kind === "user" ? ovUserHtml(e) : ovRespHtml(' in js
+        # 항목별 독립 렌더(채널 라벨 주입 후 ent 로 렌더 — 2단계).
+        assert 'ent.kind === "user" ? ovUserHtml(ent) : ovRespHtml(' in js
         assert "이 응답의 요청" not in js  # 요청 그룹 박스 제거
         # model B: top-level scoped completes recorded via ovTopScopes / ovOnScopedFinal
         assert "function ovOnScopedFinal(" in js
@@ -679,6 +680,33 @@ class TestStaticUI:
             0
         ]
         assert "ovOnFinal(d)" in at and "ovOnScopedFinal(d)" in at
+
+    def test_agent_channel_dropdown_and_routing_wired(self, server_and_client):
+        """agent-channels 2단계: 입력 옆 대화-상대 드롭박스로 채널(main/agent)을
+        고르고, 개요가 채널별로 스코핑되며, agent 채널이면 입력이 그 agent inbox 로
+        라우팅된다. agent_msg → 채널 스트림."""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        # 드롭박스 + 기본 main 옵션
+        assert 'id="ov-channel"' in html
+        assert '<option value="main">' in html
+        # 채널 상태 + 데이터 + 핸들러
+        assert 'var ovActiveChannel = "main"' in js
+        assert "var ovChannels" in js
+        assert "function ovOnAgentMsg(" in js
+        assert "function ovSetChannel(" in js and "function ovSyncChannels(" in js
+        # agent_msg → 채널 스트림 축적
+        am = js.split('es.addEventListener("agent_msg"', 1)[1].split("\n  });", 1)[0]
+        assert "ovOnAgentMsg(d)" in am
+        # 입력 라우팅: agent 채널 + chat 이면 /api/agent/<key>/input
+        sc = _js_fn_body(js, "submitChatOrPrompt")
+        assert 'ovActiveChannel !== "main"' in sc
+        assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
+        # 렌더 채널 스코핑 + 대상 배지 스타일
+        assert "ovChannels[ovActiveChannel]" in js
+        assert "#ov-channel" in css and ".ov-umsg-to" in css
 
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문

@@ -603,6 +603,9 @@ footer {
 }
 
 #input-area { display: flex; gap: 8px; align-items: stretch; }
+/* agent-channels: 대화 상대 드롭박스 + 발신 대상 배지 */
+#ov-channel { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2); border-radius: 6px; padding: 0 8px; max-width: 170px; align-self: stretch; cursor: pointer; }
+.ov-umsg-to { color: var(--accent-soft-text); font-weight: 600; font-size: 11px; }
 #input {
   flex: 1;
   resize: vertical;

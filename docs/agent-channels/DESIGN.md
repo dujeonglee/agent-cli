@@ -212,7 +212,7 @@ agent Y가 질문 (사람이 채널 X 보는 중)
 ## 단계별 구현 (각 단계 후 회귀 + 라이브 + 보고)
 
 1. **백엔드 drain-all(C, C-1)** — ✅ **완료**. `_worker` 를 `_handle_request`(개별, 종전 로직 추출)/`_handle_human_batch`(사람-직접 배치)로 분리 + `_is_human_direct` 게이트 + 1칸 stash. 단위 테스트 3종(배치·main 개별·혼재 split). 단건 경로 무변경(회귀 0). (프론트 무변경.)
-2. **채널 모델 골격(A·B·E)** — 드롭박스 + activeChannel + 개요 채널 스코핑 + 라우팅 + 배지/rail. 드로어는 아직 공존(안전).
+2. **채널 모델 골격(A·B·E)** — ✅ **완료**. `#ov-channel` 드롭박스(main + 살아있는 agent) + `ovActiveChannel`/`ovChannels`(agent_msg→채널 스트림) + `ovRender` 채널 스코핑 + 입력 라우팅(`submitChatOrPrompt`: agent 채널+chat→`/api/agent/<key>/input`) + 대상/주체 배지(라벨은 렌더 시점 해소 — replay 순서 무관). 드로어는 공존(5단계까지). 라이브 검증: 채널 격리·배지·batch 시각 확인.
 3. **글로벌 ask 트레이(D)** — main prompt/confirm + agent question 트레이 이관. 입력창 모드 단순화(chat 전용).
 4. **죽은 agent(F) + 채널 칩 상태(🔔/❓/dead)**.
 5. **드로어 제거** — 데이터 수집 채널 이관 확인 후 드로어 IIFE/마크업/스타일 삭제. 회귀 스윕.

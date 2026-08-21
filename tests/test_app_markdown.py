@@ -338,6 +338,16 @@ class TestOverviewFlatRender:
         assert "🤝 agent" in out and "New agent mail" in out
         assert "👤" not in out
 
+    def test_user_line_target_badge_in_agent_channel(self):
+        # agent 채널의 발신 메시지엔 대상 배지(→ 🤝 agent). 없으면 미출력.
+        out = _ov_render_html(
+            "ovUserHtml",
+            {"who": "소연", "text": "안녕", "target": "🤝 pudding", "tm": ""},
+        )
+        assert 'class="ov-umsg-to"' in out and "→ 🤝 pudding" in out
+        plain = _ov_render_html("ovUserHtml", {"who": "소연", "text": "안녕", "tm": ""})
+        assert "ov-umsg-to" not in plain
+
     def test_response_block_has_no_attribution_or_queries(self):
         out = _ov_render_html(
             "ovRespHtml",

@@ -1149,6 +1149,17 @@
   function submitChatOrPrompt() {
     const text = $input.value.trim();
     if (!text) return;
+    // 채널이 agent 이고 chat 모드면 그 agent inbox 로 라우팅(2단계 B). prompt/
+    // confirm(=main 이 물어봄)은 채널과 무관하게 main 으로(3단계에서 트레이 분리).
+    if (currentMode !== "prompt" && ovActiveChannel !== "main") {
+      fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text, conn_id: myConnId }),
+      });
+      $input.value = "";
+      return;
+    }
     const kind = currentMode === "prompt" ? "prompt" : "chat";
     postInput({ kind: kind, content: text }).then(function (res) {
       if (kind === "prompt" && res && res.status === 409) {
@@ -1413,6 +1424,7 @@
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("agent_msg", d);
     document.dispatchEvent(new CustomEvent("agentcli:tm-msg", { detail: d }));
+    ovOnAgentMsg(d); // 개요: agent 대화 채널 스트림
   });
 
   es.addEventListener("agent_cleared", function (e) {
@@ -1786,6 +1798,16 @@
   var ovRoster = []; // agent_roster
   var ovSkills = {}; // 열린 skill scope: task_id → label
   var ovCtxPct = null;
+  // agent-channels 2단계: 대화 채널. "main" = 메인 개요(ovEntries), 그 외 = agent
+  // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
+  var ovActiveChannel = "main";
+  var ovChannels = {}; // key → [{kind:'user'|'resp', ...}] (agent 대화 스트림)
+  // 채널 표시명: agent 는 "🤝 <name>"(스윔레인/주체 배지와 동형).
+  function ovAgentLabel(key) {
+    var tm = ovRoster.filter(function (t) { return t.key === key; })[0];
+    var nm = tm && (tm.name || [tm.profile, tm.name].filter(Boolean).join(" · "));
+    return "🤝 " + (nm || key);
+  }
   function ovCap() {
     if (ovEntries.length > 80) ovEntries = ovEntries.slice(-80);
   }
@@ -1832,9 +1854,14 @@
   // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
   function ovUserHtml(e) {
     var icon = /🤝/.test(e.who) ? "" : "👤 ";
+    // agent 채널에서는 발신 대상 배지(→ 🤝 agent) — 다중 대화 소속 식별(④).
+    var tgt = e.target
+      ? ' <span class="ov-umsg-to">→ ' + escapeHtml(e.target) + "</span>"
+      : "";
     return (
-      '<div class="ov-umsg"><span class="w">' + icon + escapeHtml(e.who) + "</span> " +
-      escapeHtml(e.text) + (e.tm ? '<span class="tm">' + e.tm + "</span>" : "") + "</div>"
+      '<div class="ov-umsg"><span class="w">' + icon + escapeHtml(e.who) + "</span>" +
+      tgt + " " + escapeHtml(e.text) +
+      (e.tm ? '<span class="tm">' + e.tm + "</span>" : "") + "</div>"
     );
   }
   // 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
@@ -1887,7 +1914,10 @@
   }
   function ovRender() {
     if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
-    var items = ovEntries.slice(-14); // 최근 항목만(사용자 입력 + 응답 혼합)
+    // 채널 스코핑(2단계): main = ovEntries, agent = ovChannels[key].
+    var isMain = ovActiveChannel === "main";
+    var src = isMain ? ovEntries : ovChannels[ovActiveChannel] || [];
+    var items = src.slice(-14); // 최근 항목만(사용자 입력 + 응답 혼합)
     // hero = 마지막 응답 엔트리(눈에 잘 띄게 accent). 그 외는 dim.
     var heroIdx = -1;
     for (var k = items.length - 1; k >= 0; k--) {
@@ -1897,14 +1927,25 @@
       }
     }
     var html = ovAmbient();
-    if (!items.length && !ovAct) {
-      html += '<div class="ov-placeholder">아직 응답이 없습니다 — 아래에 메시지를 입력하세요.</div>';
+    if (!items.length && !(ovAct && isMain)) {
+      html += '<div class="ov-placeholder">' +
+        (isMain ? "아직 응답이 없습니다" : "아직 대화가 없습니다") +
+        " — 아래에 메시지를 입력하세요.</div>";
     } else {
+      // agent 채널: 주체/대상 라벨을 현재 roster 기준으로 해소해 주입(replay
+      // 순서와 무관). main 채널 엔트리는 자체 source(main/scope 이름) 유지.
+      var label = isMain ? null : ovAgentLabel(ovActiveChannel);
       items.forEach(function (e, i) {
-        html += e.kind === "user" ? ovUserHtml(e) : ovRespHtml(e, i === heroIdx);
+        var ent = e;
+        if (!isMain) {
+          ent = e.kind === "user"
+            ? Object.assign({}, e, { target: label })
+            : Object.assign({}, e, { source: label });
+        }
+        html += ent.kind === "user" ? ovUserHtml(ent) : ovRespHtml(ent, i === heroIdx);
       });
     }
-    html += ovActHtml(); // 진행 중이면 맨 아래 활동 스트립
+    if (isMain) html += ovActHtml(); // 진행 중 활동 스트립은 main 채널만
     $overview.innerHTML = html;
     // 사용자가 위로 스크롤해 둔 상태(ovStick=false)면 강제로 바닥으로 끌어내리지
     // 않는다 — 읽던 위치 유지. 바닥에 붙어 있을 때만 스트리밍을 따라 자동 스크롤.
@@ -2026,8 +2067,62 @@
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
+    ovSyncChannels(); // 드롭박스 옵션·선택 유효성 갱신(죽으면 main 복귀)
     ovRender();
   }
+  // agent 대화 메시지(agent_msg)를 채널 스트림으로 축적 (2단계 E). 주체/대상
+  // 라벨은 **렌더 시점에 해소**한다(ovRender) — replay 시 agent_msg 가 roster 보다
+  // 먼저 와도 이름이 키로 고정되지 않게.
+  function ovOnAgentMsg(d) {
+    if (!d || !d.key) return;
+    var ch = ovChannels[d.key] || (ovChannels[d.key] = []);
+    if (d.direction === "out" || d.direction === "question") {
+      ch.push({
+        kind: "resp", text: d.text || "", status: "done", navTs: d.ts,
+        question: d.direction === "question",
+      });
+    } else {
+      // in — 사람/main/peer 발신 메시지.
+      ch.push({ kind: "user", who: d.author || "", text: d.text || "", tm: ovClock(d.ts) });
+    }
+    if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
+    if (ovActiveChannel === d.key) ovRender();
+  }
+  // 드롭박스 옵션(main + 살아있는 agent) 동기화 + 선택 유효성 검증.
+  function ovSyncChannels() {
+    var sel = document.getElementById("ov-channel");
+    if (!sel) return;
+    var alive = ovRoster.filter(function (t) { return t.state !== "dead"; });
+    if (ovActiveChannel !== "main" &&
+        !alive.some(function (t) { return t.key === ovActiveChannel; })) {
+      ovActiveChannel = "main"; // 선택한 agent 가 사라짐 → main 복귀
+    }
+    var opts = '<option value="main">💬 main</option>';
+    alive.forEach(function (t) {
+      opts += '<option value="' + escapeHtml(t.key) + '">' +
+        escapeHtml(ovAgentLabel(t.key)) + "</option>";
+    });
+    sel.innerHTML = opts;
+    sel.value = ovActiveChannel;
+    ovApplyChannelInput();
+  }
+  // 입력창 placeholder 를 현재 채널에 맞게.
+  function ovApplyChannelInput() {
+    if (!$input) return;
+    $input.placeholder = ovActiveChannel === "main"
+      ? "Type a message — Enter to send, Shift+Enter for newline"
+      : ovAgentLabel(ovActiveChannel) + " 에게… (Enter 전송)";
+  }
+  // 드롭박스 변경 → 채널 전환(뷰 스코핑 + 입력 라우팅).
+  function ovSetChannel(key) {
+    ovActiveChannel = key || "main";
+    ovApplyChannelInput();
+    ovRender();
+  }
+  (function () {
+    var sel = document.getElementById("ov-channel");
+    if (sel) sel.addEventListener("change", function () { ovSetChannel(sel.value); });
+  })();
   function ovOnCtx(pct) {
     ovCtxPct = pct;
     ovRender();

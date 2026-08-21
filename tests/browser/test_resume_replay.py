@@ -146,6 +146,10 @@ def test_replayed_scope_rebuilds_both_bar_and_card(stack, page):
     page.goto(stack.url)
     page.wait_for_selector("#messages .card", timeout=8000)
     time.sleep(0.5)
+    # v8.22.1: 스윔레인은 숨김(개요 기본) 중 렌더를 스킵(플래시 방지)하므로,
+    # DOM 을 검사하기 전에 흐름 뷰로 전환해 렌더시킨다.
+    page.click("#vt-flow")
+    page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
     # 스윔레인 막대 + 타임라인 카드 둘 다
     assert page.locator("#team-view .tv-scope-skill").count() >= 1
     assert page.locator('.card-task-group[data-task-id="sk1"]').count() == 1
