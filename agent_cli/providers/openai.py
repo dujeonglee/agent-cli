@@ -15,7 +15,12 @@ from agent_cli.constants import (
     LLM_STREAM_TIMEOUT,
     STREAM_MAX_RECONNECTS,
 )
-from agent_cli.providers.base import LLMResponse, TokenUsage, strip_think_blocks
+from agent_cli.providers.base import (
+    LLMResponse,
+    TokenUsage,
+    resolve_thinking_policy,
+    strip_think_blocks,
+)
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
@@ -56,27 +61,22 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # Thinking/reasoning effort — v8.21.0: 정적 thinking_budget 제거 후
-        # supports_thinking 단독 게이트. 미지원 모델(supports_thinking=False)이면
-        # 기본값도, 런타임 오버라이드도 **일절 주입 안 함** — 엄격 백엔드에서
-        # 비추론 모델에 reasoning_effort/chat_template_kwargs 를 보내 400 이 나는
-        # 것을 방지(게이트 우회 제거, v8.21.1).
-        #  · 기본: 사고 지원 모델은 reasoning_effort "medium".
-        #  · 런타임 오버라이드(web UI 사고/노력 컨트롤)가 그 위에 얹혀 이김:
-        #    reasoning_effort low/medium/high 로 덮어쓰거나 "off"/None 이면 제거,
-        #    enable_thinking True/False → chat_template_kwargs(Qwen/MLX 스위치).
-        if capabilities.supports_thinking:
-            body["reasoning_effort"] = "medium"
-            overrides = kwargs.get("request_overrides") or {}
-            eff = overrides.get("reasoning_effort")
-            if eff in ("low", "medium", "high"):
-                body["reasoning_effort"] = eff
-            elif eff == "off":
-                body.pop("reasoning_effort", None)
-            enable = overrides.get("enable_thinking")
-            if enable is not None:
+        # Thinking/reasoning effort — 해석은 공용 ``resolve_thinking_policy``
+        # (supports_thinking=False 면 None → 일절 미주입, v8.21.1 게이트).
+        # 여기는 정책을 OpenAI 방언으로 번역만 한다:
+        #  · enabled → reasoning_effort (기본 medium, 오버라이드 low/medium/high).
+        #  · disabled → reasoning_effort **미주입** — 종전엔 enable_thinking=False
+        #    여도 effort 가 잔존해 엄격 백엔드에 상충 신호를 보냈다(리뷰 §4.2).
+        #  · chat_template_kwargs.enable_thinking (Qwen/MLX 스위치)은 명시
+        #    enable_thinking 오버라이드가 있을 때만 방출 — 방출 표면 불변,
+        #    값은 정책의 enabled (eff="off"+enable=True 조합도 프로바이더 간 동형).
+        policy = resolve_thinking_policy(capabilities, kwargs.get("request_overrides"))
+        if policy is not None:
+            if policy.enabled:
+                body["reasoning_effort"] = policy.effort
+            if policy.enable_override is not None:
                 ctk = dict(body.get("chat_template_kwargs") or {})
-                ctk["enable_thinking"] = bool(enable)
+                ctk["enable_thinking"] = policy.enabled
                 body["chat_template_kwargs"] = ctk
 
         if on_chunk:

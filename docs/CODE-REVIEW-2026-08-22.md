@@ -26,7 +26,7 @@
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
 
-> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정).
+> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수).
 
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).
@@ -41,6 +41,8 @@
 
 ### T1. "조합-의존 무발화" 안전장치 (일관성 × 최고 위험)
 절단 가드·러너웨이 조기종료·훅·새니타이저가 **특정 프로바이더/포맷/경로 조합에서만 동작**한다(P0-1~4). 공통 원인: 경계 계약(stop_reason 어휘, degeneration 시그니처, truncated 신호)이 **명세 없이 기본 조합(OpenAI+json_fc 단건)으로 암묵 고정**된 것. 수리 방향도 공통 — 계약을 명시 어휘/플러그인 속성으로 승격하고 매핑 책임을 경계 소유자(프로바이더/wire format)에게 옮긴다.
+
+> **테마 종결 (v8.37.0)**: P0-1~4(v8.34.0/v8.35.0) + 잔여 3건 — thinking 오버라이드 해석 공용화(`resolve_thinking_policy`), 인라인 `<think>` 격리 프로바이더 동형화, enable_thinking 재프로브 transport 공통 2단계 계약 — 까지 전부 수리됨. "조합에 따라 안전장치/기능이 갈리는" 발견은 남아있지 않다.
 
 ### T2. 절반에서 멈춘 리팩터 이행 (확장성)
 - `loop/core.py:254-449` — property 34 + setter 12가 순수 위임 shim("PR-2/3에서 소멸" 예고 후 잔존). 파라미터 28개가 run_loop→`__init__`→LoopConfig→property 4중 복제.
@@ -87,7 +89,7 @@
 **P1 — 구조 부채 (확장 비용 절감, 중간 규모)**
 - 도구 정책 선언화(`terminal`/`requires_handler`/`depth_gated` 클래스 속성) + agent 모드 테이블화
 - core.py property 브리지 소멸 + 파라미터 4중 복제 해소(LoopConfig 직접 전달)
-- 개입 처리 5중복 → `_intervene()` 단일 헬퍼(+ 턴 계수 규칙 통일)
+- ~~개입 처리 5중복 → `_intervene()` 단일 헬퍼(+ 턴 계수 규칙 통일)~~ ✅ v8.37.0
 - run/web 부트스트랩·teardown 조립기 추출(runtime dict 3중·종료경로 4갈래 해소)
 - 프로바이더 self-register + capability transport 흡수; wire ABC `parse_turn` 1차화 + 사문 빌더 제거
 - Renderer ABC 코어/옵셔널 프로토콜 분리; sticky+엔드포인트 선언형 레지스트리
@@ -100,7 +102,7 @@
 - context per-record 토큰 미러; agents.json 저장 디바운스; memory.add → `append_line`
 - provider content 리스트 누적 + degeneration 윈도우 검사; SSE 대기 asyncio화; 디렉토리 사이징 on-demand
 
-**부수 정리(낮음)**: loop 8파일 동일 docstring·고아 주석, `DEFAULT_TOKEN_BUDGET` 사본 2, `tool_calls`/`prefill` 등 소비자-0 훅, `${SESSION_ID}` 상시 빈값, `$N` 치환 11개+ 버그, mcp devnull fd 누수, `${VAR}` 치환 env만 적용, deprecated `get_event_loop` 혼용, 존재하지 않는 도구명 `delegate` 안내 문구 2곳.
+**부수 정리(낮음)**: loop 8파일 동일 docstring·고아 주석, `DEFAULT_TOKEN_BUDGET` 사본 2, `tool_calls`/`prefill` 등 소비자-0 훅, `${SESSION_ID}` 상시 빈값, ~~`$N` 치환 11개+ 버그~~ ✅, ~~mcp devnull fd 누수~~ ✅, `${VAR}` 치환 env만 적용, deprecated `get_event_loop` 혼용, ~~존재하지 않는 도구명 `delegate` 안내 문구 2곳~~ ✅ (v8.37.0).
 
 ---
 
@@ -112,9 +114,9 @@
 - [높음][확장성] `run.py:20-105`+`core.py:56-95`+`state.py:36-74` — 파라미터 28개 4중 복제 / LoopConfig 직접 전달로 진입점 축소.
 - [높음][확장성] `core.py:254-449` — 위임 property 34+12 잔존 / 호출부 이행 후 브리지 삭제.
 - [높음][확장성] `core.py:141-154`+`dispatch.py` 7곳 — 도구 정책 문자열 하드코딩 / Tool 클래스 속성으로 승격.
-- [높음][중복성] `dispatch.py:237-255,833-852,884-899,911-926,1010-1029` — 개입 블록 5복제 / `_intervene()` 헬퍼.
-- [높음][일관성] 위 5곳 — A7/B1/NO_JSON만 `turn -= 1`, A4/A5는 계수 / "개입 비계수" 단일 규칙.
-- [중간][확장성] `dispatch.py:455-461` — 미배선 `parallel_safe` 도구 = 런 크래시 / 순차 폴백 or 등록 시 거부.
+- ~~[높음][중복성] `dispatch.py:237-255,833-852,884-899,911-926,1010-1029` — 개입 블록 5복제 / `_intervene()` 헬퍼.~~ ✅ v8.37.0
+- ~~[높음][일관성] 위 5곳 — A7/B1/NO_JSON만 `turn -= 1`, A4/A5는 계수 / "개입 비계수" 단일 규칙.~~ ✅ v8.37.0 (개입 전부 비계수 — B1 detector 가 반복 폭주 상한)
+- ~~[중간][확장성] `dispatch.py:455-461` — 미배선 `parallel_safe` 도구 = 런 크래시 / 순차 폴백 or 등록 시 거부.~~ ✅ v8.37.0 (`_PARALLEL_BATCH_ENGINES` 수집 게이트 → 순차 폴백)
 - [중간][중복성] `main.py:1178,1976`+`tool_bridge.py:280` — runtime 13키 3중 / `AgentRuntime` dataclass.
 - [중간][중복성] `main.py:737-784` vs `skill_invoke.py:107-158` — 스킬 스코프 열닫 2벌 / 컨텍스트매니저 추출.
 - [중간][일관성] `main.py:1232,1272,1302,1350` — 종료 경로별 teardown 누락 조합 상이 / `_finalize_run()` 단일화.
@@ -137,12 +139,12 @@
 - [높음][확장성] `providers/__init__.py:21-32`+`capabilities.py:169-183` — 프로바이더 추가 5곳 수정 / self-register + transport 흡수.
 - [중간][중복성] `openai.py:91-118` ≡ `anthropic.py:108-135` — 스트림 재연결 28행 복붙 / `stream_with_reconnect` 공용화.
 - [중간][중복성] `capabilities.py:372-526` — 3-tier 탐지 3벌 / transport 확장으로 단일화.
-- [중간][일관성] `openai.py:68-80` vs `anthropic.py:89-101` — request_overrides 해석 정책 상이 / 공용 정책 함수.
-- [중간][일관성] `openai.py:149` vs anthropic — 인라인 `<think>` 격리 OpenAI만 / 공용 후처리로 승격.
+- ~~[중간][일관성] `openai.py:68-80` vs `anthropic.py:89-101` — request_overrides 해석 정책 상이 / 공용 정책 함수.~~ ✅ v8.37.0 (`resolve_thinking_policy`)
+- ~~[중간][일관성] `openai.py:149` vs anthropic — 인라인 `<think>` 격리 OpenAI만 / 공용 후처리로 승격.~~ ✅ v8.37.0 (Anthropic 스트림+비스트림 동형 적용)
 - [중간][효율성] `http.py:452` — content/thinking O(n²) 누적 / 리스트+join.
 - [중간][효율성] `http.py:456-460` — degeneration 누적-전체 재검사 / 윈도우 제한.
-- [중간][일관성] `anthropic.py:190-198` — 비스트리밍 다중 text 블록 마지막만 잔존 / 누산으로 동형화.
-- [중간][확장성] `capabilities.py:291-365` — enable_thinking 재프로브 OpenAI만 / transport 공통 계약화.
+- ~~[중간][일관성] `anthropic.py:190-198` — 비스트리밍 다중 text 블록 마지막만 잔존 / 누산으로 동형화.~~ ✅ v8.37.0
+- ~~[중간][확장성] `capabilities.py:291-365` — enable_thinking 재프로브 OpenAI만 / transport 공통 계약화.~~ ✅ v8.37.0 (Anthropic 은 thinking 블록 재프로브 — 방언별 스위치, 공통 2단계 계약)
 - [중간][일관성] `capabilities.py` — 16K 미만 하드리젝인데 폴백은 4096 + 프로브가 재시도 헬퍼 미사용 / 128K 폴백 통일+재시도.
 - [중간][중복성] wire 접두 제거 스캔 2벌(+매 렌더 재정렬), 멀티-op history 직렬화 2벌 / 공용 헬퍼·중간 클래스.
 - [낮음] 스트리밍 분기 fall-through 위험(이중 청구), `tool_calls` 등 소비자-0 코드, no-op `max()` 가드·고아 주석.
@@ -172,7 +174,7 @@
 - [높음][중복성] `_handle_request` vs `_handle_human_batch` 몸통 복제 / `_execute_turn(tm, items)` 병합.
 - [높음][효율성] code_index 전체 재스캔 + 주석 오도 (P0급 효율) / 증분 API+게이트.
 - [중간][일관성] read_context만 프리픽스 키 잔존(flat-native 불변식 위반) / 평탄화.
-- [중간][일관성] 존재하지 않는 `delegate` 도구명 안내 2곳 / `agent(mode="run")` 정정.
+- ~~[중간][일관성] 존재하지 않는 `delegate` 도구명 안내 2곳 / `agent(mode="run")` 정정.~~ ✅ v8.37.0
 - [중간][일관성] `tm.queued` 비원자 seq / 락 하 발급.
 - [중간][일관성] 무락 상태로 idle-reap 제어 판정 / 락 하 판독 or 전이 카운터.
 - [중간][일관성] MailWaker `_armed` 레이스 / Event/Lock 원자화.
@@ -181,7 +183,7 @@
 - [중간][중복성] shell vs _confine confirm 흐름, shell vs fetch over-cap 흐름, `_do_callers/callees`, 단건 vs 배치 edit / 각각 공용 헬퍼.
 - [중간][효율성] write_file 1회에 diff 3연산 / opcodes 전달.
 - [중간][효율성] 메시지당 agents.json 전체 재작성 / 디바운스·분리.
-- [낮음] `validate_tool_input` 제자리 변경, 에러에 스키마 전문 동봉.
+- [낮음] ~~`validate_tool_input` 제자리 변경~~ ✅ v8.37.0 (사본화 — normalized 반환이 단일 계약), 에러에 스키마 전문 동봉.
 
 ### 4.5 context/ + prompts/ + hooks/ + 지원모듈
 - [높음][확장성] 파이썬 훅 미배선 (P0-7) + `_run_shell_hooks` 빈 스텁 / 배선 or 제거.
@@ -190,7 +192,7 @@
 - [중간][일관성] fold 오프셋 미갱신 → resume 재혼입 / history 인덱스 동반.
 - [중간][확장성] `build_system_prompt` 래퍼 시그니처 이탈 / kwargs 위임 or 삭제.
 - [중간][일관성] 스킬 0개 판정 `len<=2` 상시 거짓 / `len==4` 정정.
-- [중간][일관성] `save_config` 캐시 미무효화 / `reload_config()` 호출.
+- ~~[중간][일관성] `save_config` 캐시 미무효화 / `reload_config()` 호출.~~ ✅ v8.37.0
 - [중간][중복성] `.agent-cli` 경로쌍 6곳(순서·병합·시점 제각각) / `scoped_paths()` 단일화.
 - [중간][일관성] 훅만 파일 대체(타 설정은 병합) / `merge_hooks_configs` 통일.
 - [중간][중복성] hooks/shell.py 파싱 24행 중복 / `parse_hooks_config` 재사용.
@@ -198,7 +200,7 @@
 - [중간][효율성] memory add마다 시스템 프롬프트 재조립(스킬 glob+md+YAML 전량) / mtime 캐시·섹션 교체.
 - [중간][효율성] memory.add 전체 재작성(`append_line` 미사용) / append 전환.
 - [중간][확장성] MCP 루프 재진입(병렬 워커) / 직렬화 락 or 전용 스레드.
-- [중간][일관성] MCP `${VAR}` env만 치환 / 전 필드 적용. + devnull fd 누수.
+- [중간][일관성] MCP `${VAR}` env만 치환 / 전 필드 적용. + ~~devnull fd 누수~~ ✅ v8.37.0 (disconnect 에서 close, 연결 실패 경로 포함).
 - [낮음] `${SESSION_ID}` 상시 빈값, `$N` 11개+ 치환 버그, `DEFAULT_TOKEN_BUDGET` 사본, 시스템 앵커 사문 분기.
 
 ### 4.6 프론트 정적자산

@@ -68,6 +68,54 @@ class TestAnthropicProvider:
         assert call_kwargs.kwargs["json"]["max_tokens"] == 4096
 
     @patch("agent_cli.providers.anthropic.requests.post")
+    def test_multiple_text_blocks_accumulate(self, mock_post, caps_structured):
+        """다중 text/thinking 블록은 누산 — 마지막 블록만 잔존하던 종전 동작의
+        수리(리뷰 §4.2). 스트리밍 경로(델타 연결)와 동형."""
+        mock_post.return_value = _mock_response(
+            {
+                "content": [
+                    {"type": "thinking", "thinking": "step1 "},
+                    {"type": "text", "text": "part1 "},
+                    {"type": "thinking", "thinking": "step2"},
+                    {"type": "text", "text": "part2"},
+                ],
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+        )
+        assert result.content == "part1 part2"
+        assert result.thinking == "step1 step2"
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_inline_think_isolated_from_content(self, mock_post, caps_structured):
+        """인라인 <think> 격리 — OpenAI 경로와 동형(리뷰 §4.2 수리). Anthropic-
+        호환 로컬 서버(omlx 등)가 태그를 content 에 흘리면 thinking 으로 분리,
+        thinking 블록이 함께 있으면 합류."""
+        mock_post.return_value = _mock_response(
+            {
+                "content": [
+                    {"type": "text", "text": "<think>inline reasoning</think>Answer"}
+                ],
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="qwen-on-omlx",
+            capabilities=caps_structured,
+        )
+        assert result.content == "Answer"
+        assert result.thinking == "inline reasoning"
+
+    @patch("agent_cli.providers.anthropic.requests.post")
     def test_system_sent_with_cache_control(self, mock_post, caps_structured):
         """System prompt is wrapped in a content block with cache_control."""
         mock_post.return_value = _mock_response(
@@ -317,7 +365,9 @@ class TestOpenAIProvider:
     def test_request_overrides_apply_to_body(self, mock_post, caps_thinking):
         """세션 thinking 오버라이드(web UI) → 요청 body 반영: enable_thinking 은
         chat_template_kwargs(Qwen/MLX 스위치), reasoning_effort 는 그대로 필드로.
-        "off" 는 reasoning_effort 제거. (사고 지원 모델에서만 — caps_thinking.)"""
+        공용 정책(resolve_thinking_policy): 사고 off 면 reasoning_effort 도
+        **미전송** — 종전엔 enable_thinking=False 여도 effort 가 잔존해 엄격
+        백엔드에 상충 신호를 보냈다(리뷰 §4.2 수리)."""
         r = MagicMock()
         r.raise_for_status.return_value = None
         r.json.return_value = {
@@ -326,6 +376,7 @@ class TestOpenAIProvider:
         mock_post.return_value = r
         provider = OpenAIProvider("https://api.openai.com/v1", "k")
 
+        # 사고 off(enable=False) → 스위치 off + effort 미전송 (잔존 effort 수리)
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -335,6 +386,18 @@ class TestOpenAIProvider:
         )
         body = mock_post.call_args.kwargs["json"]
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert "reasoning_effort" not in body
+
+        # 사고 on(enable=True) + effort → 둘 다 전송
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_thinking,
+            request_overrides={"enable_thinking": True, "reasoning_effort": "high"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["chat_template_kwargs"] == {"enable_thinking": True}
         assert body["reasoning_effort"] == "high"
 
         # "off" → reasoning_effort 제거, enable_thinking None → 미전송
@@ -348,6 +411,20 @@ class TestOpenAIProvider:
         body = mock_post.call_args.kwargs["json"]
         assert "reasoning_effort" not in body
         assert "chat_template_kwargs" not in body
+
+        # eff="off" + enable=True 상충 조합 — "off" 가 이긴다 (Anthropic 과
+        # 동형: 공용 정책의 통일 규칙). 명시 오버라이드가 있으니 스위치는
+        # 방출하되 값은 정책의 enabled(False).
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_thinking,
+            request_overrides={"enable_thinking": True, "reasoning_effort": "off"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "reasoning_effort" not in body
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
 
     @patch("agent_cli.providers.openai.requests.post")
     def test_overrides_ignored_when_not_supported(self, mock_post, caps_structured):
@@ -657,6 +734,25 @@ class TestThinkingBudget:
         assert body["max_tokens"] == 4096
 
     @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_off_wins_over_enable_true(self, mock_post, caps_thinking):
+        """eff="off" + enable=True 상충 조합 — 공용 정책의 통일 규칙: "off" 가
+        이긴다 (OpenAI 와 동형 — 종전 Anthropic 의미를 공용 규칙으로 채택)."""
+        mock_post.return_value = _mock_response(
+            {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_thinking,
+            request_overrides={"enable_thinking": True, "reasoning_effort": "off"},
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert "thinking" not in body
+        assert body["max_tokens"] == 4096
+
+    @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_overrides_ignored_when_not_supported(
         self, mock_post, caps_no_thinking
     ):
@@ -758,6 +854,87 @@ class TestThinkingFieldCapture:
         )
         assert result.thinking == "Let me reason..."
         assert result.content == '{"action":"complete"}'
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_stream_isolates_inline_think(self, mock_post, caps_structured):
+        """스트리밍 경로도 인라인 <think> 격리 — OpenAI 스트림과 동형
+        (리뷰 §4.2 수리). content 에 흘러든 태그는 thinking 으로 분리된다."""
+        sse = [
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<think>inline r</think>"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Answer"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="qwen-on-omlx",
+            capabilities=caps_structured,
+            on_chunk=lambda _c: None,
+        )
+        assert result.content == "Answer"
+        assert result.thinking == "inline r"
+        assert result.stop_reason == "stop"  # P0-1 정규화 유지
+
+
+class TestResolveThinkingPolicy:
+    """공용 정책 함수(resolve_thinking_policy) — request_overrides 해석의
+    단일 소스(T1 잔여, 리뷰 §4.2). 프로바이더는 이 결과를 방언으로 번역만."""
+
+    def _caps(self, supports):
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=supports
+        )
+
+    def test_unsupported_returns_none(self):
+        from agent_cli.providers.base import resolve_thinking_policy
+
+        assert resolve_thinking_policy(self._caps(False), None) is None
+        assert (
+            resolve_thinking_policy(self._caps(False), {"enable_thinking": True})
+            is None
+        )
+
+    def test_default_enabled_medium(self):
+        from agent_cli.providers.base import resolve_thinking_policy
+
+        p = resolve_thinking_policy(self._caps(True), None)
+        assert p.enabled is True
+        assert p.effort == "medium"
+        assert p.enable_override is None
+
+    def test_effort_override(self):
+        from agent_cli.providers.base import resolve_thinking_policy
+
+        for eff in ("low", "medium", "high"):
+            p = resolve_thinking_policy(self._caps(True), {"reasoning_effort": eff})
+            assert p.enabled is True and p.effort == eff
+
+    def test_off_wins_over_explicit_enable(self):
+        from agent_cli.providers.base import resolve_thinking_policy
+
+        p = resolve_thinking_policy(
+            self._caps(True), {"enable_thinking": True, "reasoning_effort": "off"}
+        )
+        assert p.enabled is False
+        assert p.enable_override is True  # 원본 오버라이드는 보존 (방언 방출용)
+
+    def test_enable_false_disables(self):
+        from agent_cli.providers.base import resolve_thinking_policy
+
+        p = resolve_thinking_policy(
+            self._caps(True), {"enable_thinking": False, "reasoning_effort": "high"}
+        )
+        assert p.enabled is False
+        assert p.enable_override is False
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_no_thinking_block_returns_empty(

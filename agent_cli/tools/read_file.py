@@ -157,8 +157,8 @@ def _stat(
         if "agent" in tools_available:
             fan = (
                 "\n  - analyse the WHOLE file? Fan out: split the line range "
-                "into several contiguous sections and emit one delegate op per "
-                "section in the SAME turn (they run concurrently), each "
+                'into several contiguous sections and emit one agent(mode="run") '
+                "op per section in the SAME turn (they run concurrently), each "
                 "returning a short summary; then merge them — no single context "
                 "holds the whole file."
             )

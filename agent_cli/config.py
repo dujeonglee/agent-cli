@@ -196,8 +196,13 @@ def load_config(use_cache: bool = True) -> dict[str, str]:
 
 
 def save_config(config: dict, path: Path) -> None:
-    """Save config dict to a JSON file."""
+    """Save config dict to a JSON file.
+
+    형제 ``save_model_entry`` 와 동형으로 저장 후 캐시를 무효화한다 — 같은
+    프로세스의 다음 ``load_config()`` 가 방금 쓴 값을 보게 (종전엔 스테일
+    캐시 잔존 — 리뷰 §4.5)."""
     atomic_write_json(path, config, indent=2)  # 상태 파일 — fsio
+    reload_config()
 
 
 def has_config() -> bool:

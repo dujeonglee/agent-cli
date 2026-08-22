@@ -1318,6 +1318,30 @@ class TestRunLoopUnknownTool:
         assert "bogus" in observation
         assert "Available:" in observation
 
+    def test_unknown_tool_does_not_consume_turn_budget(self, caps, tmp_path):
+        """턴 계수 통일 규칙(리뷰 §4.1): A4 개입은 도구를 실행하지 않은 회복
+        넛지이므로 max_turns 예산을 소모하지 않는다 — max_turns=1 에서도
+        [A4 개입 → complete] 가 성공한다 (종전엔 A4 가 턴을 소모해 max-turns
+        실패)."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=json.dumps({"action": "bogus_tool"})),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=1,
+        )
+        assert result.success
+        assert result.output == "recovered"
+
 
 class TestRunLoopSchemaMismatch:
     """A5 — model emits a known action with input violating the schema.
@@ -1390,6 +1414,28 @@ class TestRunLoopSchemaMismatch:
         # Error mentions which field is missing and the schema
         assert "path" in observation
         assert "Missing required field" in observation
+
+    def test_schema_mismatch_does_not_consume_turn_budget(self, caps, tmp_path):
+        """턴 계수 통일 규칙(리뷰 §4.1): A5 개입도 A7/B1/NO_JSON 과 동형으로
+        턴 미계수 — max_turns=1 에서 [A5 개입 → complete] 가 성공한다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=json.dumps({"action": "write_file", "content": "x"})),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=1,
+        )
+        assert result.success
+        assert result.output == "recovered"
 
 
 class TestRunLoopMaxIter:

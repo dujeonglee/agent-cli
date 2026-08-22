@@ -74,3 +74,46 @@ class LLMProvider(Protocol):
         capabilities: ModelCapabilities,
         **kwargs,
     ) -> LLMResponse: ...
+
+
+@dataclass(frozen=True)
+class ThinkingPolicy:
+    """``request_overrides`` 의 **공용 해석 결과** (T1 잔여 — 리뷰 §4.2).
+
+    종전엔 OpenAI/Anthropic 이 각자 오버라이드를 해석해 조합별 의미가
+    갈렸다(예: OpenAI 는 enable_thinking=False 여도 reasoning_effort 잔존,
+    eff="off"+enable=True 가 프로바이더별 on/off 상이). 해석은 여기 한 곳,
+    프로바이더는 이 결과를 자기 wire 방언(reasoning_effort+
+    chat_template_kwargs / thinking 블록)으로 번역만 한다.
+
+    - ``enabled``: 사고 on/off. off 판정은 ``enable_thinking is False`` 또는
+      ``reasoning_effort == "off"`` — "off" 가 명시 enable=True 보다 이긴다
+      (Anthropic 의 종전 의미를 공용 규칙으로 채택).
+    - ``effort``: enabled 일 때의 노력 수준 — 오버라이드가 low/medium/high 면
+      그 값, 없으면 "medium" (양 프로바이더 공통 기본).
+    - ``enable_override``: 원본 enable_thinking 오버라이드 (None=미설정).
+      OpenAI 방언이 chat_template_kwargs 스위치를 **명시 오버라이드가 있을
+      때만** 방출하기 위한 원본 보존 — 값 자체는 ``enabled`` 를 쓴다.
+    """
+
+    enabled: bool
+    effort: str
+    enable_override: bool | None
+
+
+def resolve_thinking_policy(
+    capabilities: ModelCapabilities, overrides: dict | None
+) -> ThinkingPolicy | None:
+    """thinking 오버라이드 해석 — 프로바이더 공용 정책 함수.
+
+    ``supports_thinking=False`` 면 **None**: 기본값도 오버라이드도 일절
+    주입하지 않는다는 v8.21.1 게이트 그대로 (호출측은 None 이면 사고 관련
+    필드를 아무것도 만들지 않는다)."""
+    if not capabilities.supports_thinking:
+        return None
+    ov = overrides or {}
+    eff = ov.get("reasoning_effort")
+    enable = ov.get("enable_thinking")
+    enabled = not (enable is False or eff == "off")
+    effort = eff if eff in ("low", "medium", "high") else "medium"
+    return ThinkingPolicy(enabled=enabled, effort=effort, enable_override=enable)

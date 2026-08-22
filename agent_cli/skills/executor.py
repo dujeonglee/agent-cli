@@ -80,12 +80,15 @@ def substitute_arguments(
     # $ARGUMENTS (full string)
     result = result.replace("$ARGUMENTS", arguments)
 
-    # $N shorthand
-    for i, arg in enumerate(args_list):
-        result = result.replace(f"${i}", arg)
+    # $N shorthand — 단일 패스 정규식 치환. 숫자 전체를 한 토큰으로 잡으므로
+    # 인자가 10개 이상이어도 ``$10`` 이 ``$1``+"0" 으로 쪼개지지 않고(종전
+    # 순차 replace 루프의 버그 — 리뷰 §4.5), 인자 범위 밖 $N 은 빈 문자열로
+    # 정리된다(종전 후처리 sub 와 동일 의미).
+    def _replace_n(m: re.Match) -> str:
+        idx = int(m.group(1))
+        return args_list[idx] if idx < len(args_list) else ""
 
-    # Clean up unreplaced $N patterns (if more placeholders than args)
-    result = re.sub(r"\$\d+", "", result)
+    result = re.sub(r"\$(\d+)", _replace_n, result)
 
     return result
 

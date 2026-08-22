@@ -461,6 +461,24 @@ class TestSaveConfig:
         save_config({"provider": "openai"}, target)
         assert target.exists()
 
+    def test_save_invalidates_load_cache(self, tmp_path, monkeypatch):
+        """save_config 후 같은 프로세스의 load_config() 가 방금 쓴 값을 본다 —
+        형제 save_model_entry 와 동형의 캐시 무효화(리뷰 §4.5 수리)."""
+        target = tmp_path / "config.json"
+        monkeypatch.setattr(_config, "_CONFIG_PATHS", [target])
+        for key in [
+            "AGENT_CLI_PROVIDER",
+            "AGENT_CLI_BASE_URL",
+            "AGENT_CLI_API_KEY",
+            "AGENT_CLI_MODEL",
+        ]:
+            monkeypatch.delenv(key, raising=False)
+        save_config({"provider": "openai"}, target)
+        assert load_config()["provider"] == "openai"
+        # 캐시를 데운 뒤 저장 — 스테일 캐시가 아니라 새 값이 보여야 한다
+        save_config({"provider": "anthropic"}, target)
+        assert load_config()["provider"] == "anthropic"
+
     def test_has_config_false_when_empty(self, tmp_path, monkeypatch):
         """has_config returns False when no config files exist."""
         monkeypatch.setattr(

@@ -277,6 +277,63 @@ class TestMultiOpDispatch:
         ]
         assert obs and "alpha" in obs[0]["content"]
 
+    def test_unwired_parallel_safe_tool_runs_sequentially(self, tmp_path):
+        """parallel_safe=True 지만 배치 엔진 미배선(_PARALLEL_BATCH_ENGINES
+        밖) 도구의 연속 op 는 배치로 묶이지 않고 **순차 per-op** 로 실행된다 —
+        종전엔 수집이 플래그만 보고 묶은 뒤 디스패치의 NotImplementedError 로
+        런이 죽는 크래시 트랩(리뷰 §4.1 수리)."""
+        from agent_cli.tools.base import Tool
+        from agent_cli.tools.result import ToolResult
+
+        calls: list[dict] = []
+
+        class _ParTool(Tool):
+            name = "partool"
+            description = "synthetic parallel_safe tool without a batch engine"
+            parallel_safe = True
+            parameters: ClassVar[dict] = {
+                "type": "object",
+                "properties": {"item": {"type": "string"}},
+                "required": [],
+            }
+
+            def wrap_single_op(self, flat):
+                return flat
+
+            def parallel_batchable(self, args):
+                return True
+
+            def _run(self, args, *, ctx=None):
+                calls.append(dict(args))
+                return ToolResult(True, output=f"ran {args.get('item')}")
+
+        TOOLS["partool"] = _ParTool()
+        try:
+            result, ctx, _ = _run(
+                [
+                    _turn(
+                        ops=[
+                            {"action": "partool", "item": "a"},
+                            {"action": "partool", "item": "b"},
+                        ]
+                    ),
+                    *_finish(),
+                ],
+                tmp_path,
+            )
+        finally:
+            del TOOLS["partool"]
+        assert result.success  # NotImplementedError 로 죽지 않는다
+        assert calls == [{"item": "a"}, {"item": "b"}]  # 순차 실행, 순서 보존
+        obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2]" in m.get("content", "")
+        ]
+        assert len(obs) == 1  # 순차 per-op 도 하나의 combined 관찰로 합류
+        assert "[1/2] partool — OK" in obs[0]["content"]
+        assert "[2/2] partool — OK" in obs[0]["content"]
+
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,
         # result is the output, no review gate, no second turn.

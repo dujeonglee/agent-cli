@@ -103,21 +103,29 @@ class McpClientManager:
         )
 
         # Suppress MCP server stderr to prevent terminal state corruption
-        # Handle outlives this function (passed to stdio_client, closed on
-        # teardown), so no context manager; opening /dev/null never blocks.
+        # Handle outlives this function (passed to stdio_client, closed in
+        # ``disconnect``), so no context manager; opening /dev/null never blocks.
         devnull = open(os.devnull, "w")  # noqa: SIM115, ASYNC230
-        transport_cm = stdio_client(params, errlog=devnull)
-        read, write = await transport_cm.__aenter__()
+        try:
+            transport_cm = stdio_client(params, errlog=devnull)
+            read, write = await transport_cm.__aenter__()
 
-        session = ClientSession(read, write)
-        await session.__aenter__()
-        await session.initialize()
+            session = ClientSession(read, write)
+            await session.__aenter__()
+            await session.initialize()
+        except BaseException:
+            # 연결 실패 시 방금 연 fd 를 닫는다 — 저장 전 예외 경로 누수 방지.
+            devnull.close()
+            raise
 
-        # Store session and cleanup info
+        # Store session and cleanup info (errlog fd 는 disconnect 에서 닫는다 —
+        # 종전엔 저장하지 않아 서버당 fd 1개가 프로세스 수명 내내 누수됐다,
+        # 리뷰 §4.5)
         self._clients[name] = {
             "session": session,
             "transport_cm": transport_cm,
             "session_cm": session,
+            "errlog": devnull,
         }
 
         # Fetch tool list
@@ -183,6 +191,14 @@ class McpClientManager:
             loop.run_until_complete(transport_cm.__aexit__(None, None, None))
         except Exception:
             pass
+        finally:
+            # stdio 전송의 errlog fd (sse 는 키 없음 — no-op).
+            errlog = client.get("errlog")
+            if errlog is not None:
+                try:
+                    errlog.close()
+                except Exception:
+                    pass
 
     # ── Tool operations ──────────────────────────────
 

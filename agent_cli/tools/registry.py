@@ -360,6 +360,11 @@ def validate_tool_input(
             action_input,
         )
 
+    # 이하 정규화(빈 문자열 제거·타입 강제)는 **사본**에만 적용 — 호출자의
+    # 원본 dict 를 제자리 변경하지 않는다(리뷰 §4.4: 반환 normalized 가
+    # 계약이고 원본 부수효과는 비계약이었음). 소비자는 셋째 반환값을 쓴다.
+    action_input = dict(action_input)
+
     # Strip empty strings from optional fields (LLMs send "" for omitted params)
     properties = schema.parameters.get("properties", {})
     for key in list(action_input.keys()):

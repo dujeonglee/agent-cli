@@ -141,8 +141,9 @@ def on_disk_oversized_nudge(
             lines.append(
                 "· Need the WHOLE thing analysed/searched? Fan out IN PARALLEL: "
                 f"split '{read_path}' into several contiguous line-range sections "
-                "and emit one delegate op per section in the SAME turn (they run "
-                "concurrently), each returning a short summary; then merge them."
+                'and emit one agent(mode="run") op per section in the SAME turn '
+                "(they run concurrently), each returning a short summary; then "
+                "merge them."
             )
     lines.extend(f"· {b}" for b in tail_bullets)
     return "\n".join(lines) + "]"

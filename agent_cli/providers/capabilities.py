@@ -201,8 +201,11 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
     that differs between OpenAI and Anthropic (endpoint / headers / request +
     response shape):
       - ``context_window()`` — 3-tier (metadata → overflow probe → fallback).
-      - ``thinking_probe()`` → bool. OpenAI 는 2단계(기본 → enable_thinking=true
-        재프로브)로 기본 OFF 사고 모델까지 감지; Anthropic 은 단일 프로브.
+      - ``thinking_probe()`` → bool. **공통 계약: 2단계** — ① 기본 프로브(모델이
+        기본으로 사고를 뱉으면 감지) → ② 미검출 시 방언별 "사고 켜기" 스위치로
+        재프로브(OpenAI: chat_template_kwargs.enable_thinking / Anthropic:
+        thinking 블록). 재프로브 실패는 관용(→ 미지원) — 기본 OFF 사고 모델
+        (Qwen 등)을 transport 무관하게 잡는다.
     Everything else (reject-too-small, ``max_output = ctx//4``, assembly,
     error→None degradation) is shared. ``UnsupportedModelError`` (window below
     the minimum) propagates; any other probe failure returns None so detection
@@ -213,8 +216,8 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
         context_window = transport.context_window()
 
         # Thinking probe runs before the reject (matches the historical order).
-        # OpenAI transport 는 2단계(기본 → enable_thinking=true 재프로브)라 기본
-        # OFF 사고 모델(Qwen 등)도 잡는다 — 미검출이면 재프로브만큼 더 걸릴 수 있다.
+        # 2단계(기본 → 사고-켜기 재프로브, transport 공통 계약)라 기본 OFF 사고
+        # 모델(Qwen 등)도 잡는다 — 미검출이면 재프로브만큼 더 걸릴 수 있다.
         _emit_progress(
             f"Probing thinking support ({model}) — may take ~10s on cold load"
         )
@@ -314,10 +317,14 @@ def _detect_openai_capabilities(
 
 def _anthropic_text(data: dict) -> str:
     """Text of an Anthropic ``/messages`` response
-    (``{"content": [{"type": "text", "text": …}]}``)."""
+    (``{"content": [{"type": "text", "text": …}]}``). 첫 **text 타입** 블록을
+    찾는다 — thinking 활성 응답은 blocks[0] 이 thinking 블록이라 위치 고정
+    인덱싱이 빈 문자열을 돌려주던 것을 수리."""
     blocks = data.get("content") if isinstance(data, dict) else None
-    if isinstance(blocks, list) and blocks and isinstance(blocks[0], dict):
-        return blocks[0].get("text", "") or ""
+    if isinstance(blocks, list):
+        for b in blocks:
+            if isinstance(b, dict) and b.get("type", "text") == "text":
+                return b.get("text", "") or ""
     return ""
 
 
@@ -348,25 +355,58 @@ class _AnthropicTransport:
     def context_window(self) -> int:
         return _detect_anthropic_context_window(self.base, self.model, self.api_key)
 
-    def simple_chat(self, user_text: str, max_tokens: int) -> str:
+    def simple_chat(
+        self, user_text: str, max_tokens: int, enable_thinking: bool = False
+    ) -> str:
+        body: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": user_text}],
+        }
+        # 기본 OFF 모델을 재프로브할 때 Anthropic 방언의 사고 스위치(thinking
+        # 블록)를 켠다 — OpenAI transport 의 chat_template_kwargs 와 동형 계약.
+        # budget 은 API 하한 1024, max_tokens 는 budget 만큼 증액(Anthropic 이
+        # 사고를 max_tokens 에서 차감하므로).
+        if enable_thinking:
+            body["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+            body["max_tokens"] = max_tokens + 1024
         r = requests.post(
             f"{self.base}/messages",
-            json={
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": user_text}],
-            },
+            json=body,
             headers=self._headers(),
             timeout=DETECTION_PROBE_TIMEOUT,
         )
         r.raise_for_status()
-        return _anthropic_text(r.json())
+        data = r.json()
+        content = _anthropic_text(data)
+        # thinking 블록을 `<think>` 로 정규화 — OpenAI transport 의
+        # reasoning_content 정규화와 동형(필드/태그 어느 쪽이든 감지).
+        blocks = data.get("content") if isinstance(data, dict) else None
+        thinking = ""
+        if isinstance(blocks, list):
+            thinking = "".join(
+                b.get("thinking", "") or ""
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "thinking"
+            )
+        return f"<think>{thinking}</think>{content}" if thinking else content
 
     def thinking_probe(self) -> bool:
-        """Anthropic 사고 감지: 단일 프로브의 `<think>` 태그. Anthropic 사고는
-        chat_template 스위치가 아니라 API 레벨(`thinking` 블록)이고 실 Anthropic
-        모델은 레지스트리 기반이라, OpenAI 식 enable_thinking 재프로브는 두지 않는다."""
-        return _detect_thinking(self.simple_chat("Say hello.", 512))
+        """2단계 사고 감지 (transport 공통 계약 — OpenAI 와 동형): ① 기본
+        프로브(`<think>` 태그·thinking 블록). 미검출이면 ② thinking 블록을 켠
+        재프로브 — Anthropic-호환 로컬 서버(omlx 등)가 서빙하는 기본 OFF 사고
+        모델(Qwen 류)을 잡는다. 재프로브 실패(비사고 모델에 thinking 블록을
+        보내 400 등)는 관용(→ 미지원); 실 Anthropic 모델은 레지스트리 기반이라
+        이 프로브 경로 자체를 타지 않는다. 1차 프로브 오류는 상위로 전파
+        (검출 실패 = 기본값 폴백, 기존 계약)."""
+        if _detect_thinking(self.simple_chat("Say hello.", 512)):
+            return True
+        try:
+            return _detect_thinking(
+                self.simple_chat("Say hello.", 512, enable_thinking=True)
+            )
+        except Exception:
+            return False
 
 
 def _detect_anthropic_context_window(

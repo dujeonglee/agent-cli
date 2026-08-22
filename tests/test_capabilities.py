@@ -718,6 +718,84 @@ class TestAnthropicRuntimeDetection:
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_reprobe_with_thinking_block(self, mock_post, mock_get):
+        """2단계 재프로브 (transport 공통 계약 — 리뷰 §4.2 수리): ① 기본
+        프로브 미검출 → ② thinking 블록을 켠 재프로브에서 사고가 나오면
+        supports_thinking=True. 재프로브 요청은 Anthropic 방언의 스위치
+        (thinking 블록, budget 하한 1024 + max_tokens 증액)를 실어야 한다."""
+        mg = MagicMock(status_code=200)
+        mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
+        mg.raise_for_status.return_value = None
+        mock_get.return_value = mg
+
+        plain = MagicMock(status_code=200)
+        plain.json.return_value = {"content": [{"type": "text", "text": "Hi"}]}
+        plain.raise_for_status.return_value = None
+        thinky = MagicMock(status_code=200)
+        thinky.json.return_value = {
+            "content": [
+                {"type": "thinking", "thinking": "pondering"},
+                {"type": "text", "text": "Hi"},
+            ]
+        }
+        thinky.raise_for_status.return_value = None
+        mock_post.side_effect = [plain, thinky]
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        assert caps.supports_thinking is True
+        # 재프로브 body 에 thinking 스위치 + budget 만큼 증액된 max_tokens
+        reprobe_body = mock_post.call_args_list[1].kwargs["json"]
+        assert reprobe_body["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+        assert reprobe_body["max_tokens"] == 512 + 1024
+        # 1차 프로브는 스위치 없음
+        assert "thinking" not in mock_post.call_args_list[0].kwargs["json"]
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_reprobe_failure_tolerated(self, mock_post, mock_get):
+        """재프로브 실패(비사고 모델이 thinking 블록에 400 등)는 관용 —
+        검출 전체를 깨지 않고 supports_thinking=False 로 강등 (OpenAI
+        transport 와 동형 계약)."""
+        mg = MagicMock(status_code=200)
+        mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
+        mg.raise_for_status.return_value = None
+        mock_get.return_value = mg
+
+        plain = MagicMock(status_code=200)
+        plain.json.return_value = {"content": [{"type": "text", "text": "Hi"}]}
+        plain.raise_for_status.return_value = None
+        mock_post.side_effect = [plain, Exception("400 thinking not supported")]
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        assert caps is not None
+        assert caps.supports_thinking is False
+
+    def test_anthropic_text_skips_leading_thinking_block(self):
+        """_anthropic_text 는 첫 **text 타입** 블록을 찾는다 — thinking 활성
+        응답(blocks[0]=thinking)에서 위치 고정 인덱싱이 빈 문자열을 돌려주던
+        것의 수리."""
+        from agent_cli.providers.capabilities import _anthropic_text
+
+        assert (
+            _anthropic_text(
+                {
+                    "content": [
+                        {"type": "thinking", "thinking": "r"},
+                        {"type": "text", "text": "Hello"},
+                    ]
+                }
+            )
+            == "Hello"
+        )
+        assert _anthropic_text({"content": [{"type": "text", "text": "x"}]}) == "x"
+        assert _anthropic_text({"content": []}) == ""
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
     def test_overflow_probe_via_messages_when_no_metadata(self, mock_post, mock_get):
         mock_get.side_effect = Exception("no /models metadata")  # tier 1 miss
 

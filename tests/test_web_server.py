@@ -644,8 +644,10 @@ class TestStaticUI:
         with open("agent_cli/providers/openai.py", encoding="utf-8") as _f:
             prov = _f.read()
         assert "request_overrides" in prov and "chat_template_kwargs" in prov
-        # provider 게이트: supports_thinking 이면만 오버라이드 적용
-        assert "if capabilities.supports_thinking:" in prov
+        # provider 게이트: 공용 정책 함수 경유 (supports_thinking=False → None →
+        # 사고 필드 일절 미주입 — resolve_thinking_policy 가 단일 소스)
+        assert "resolve_thinking_policy" in prov
+        assert "if policy is not None:" in prov
 
     def test_overview_flat_log_model_wired(self, server_and_client):
         """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append

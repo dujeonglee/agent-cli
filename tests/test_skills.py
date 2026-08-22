@@ -113,6 +113,18 @@ class TestArgumentSubstitution:
         assert "$2" not in result
         assert "only-one-arg" in result
 
+    def test_two_digit_numbered_args_not_corrupted(self):
+        """11개 이상 인자에서 $10/$11 이 $1+"0" 으로 쪼개지지 않는다 —
+        단일 패스 정규식 치환(종전 순차 replace 루프의 버그, 리뷰 §4.5)."""
+        args = " ".join(f"a{i}" for i in range(12))  # a0 … a11
+        result = substitute_arguments("x=$1 y=$10 z=$11", args)
+        assert result == "x=a1 y=a10 z=a11"
+
+    def test_two_digit_out_of_range_cleaned_whole(self):
+        """범위 밖 두 자리 $N 은 통째로 정리 — $12 가 arg1+"2" 로 남지 않는다."""
+        result = substitute_arguments("keep=$0 gone=$12", "a0 a1")
+        assert result == "keep=a0 gone="
+
     def test_mixed_args_and_arguments(self):
         result = substitute_arguments("Read $ARGUMENTS, focus on $0", "src/main.py")
         assert "src/main.py" in result

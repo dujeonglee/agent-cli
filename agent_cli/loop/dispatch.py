@@ -48,6 +48,14 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 from agent_cli.wire_formats import try_foreign_parse
 
+# parallel_safe 배치 디스패치 엔진이 실제로 배선된 도구들.
+# ``_dispatch_parallel_batch`` 는 도구별 병렬 엔진 호출을 알아야 하므로,
+# 여기 없는 parallel_safe 도구는 배치로 묶지 않고 순차 per-op 경로를 탄다
+# (종전엔 수집은 parallel_safe 플래그만 보고 묶은 뒤 디스패치에서
+# NotImplementedError 로 런이 죽는 크래시 트랩 — 리뷰 §4.1). 새 도구를
+# 병렬 배치에 태우려면 엔진을 배선하고 이 집합에 추가한다.
+_PARALLEL_BATCH_ENGINES = frozenset({"agent"})
+
 
 class TurnDispatcher:
     """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
@@ -77,6 +85,52 @@ class TurnDispatcher:
         return (
             "\n".join(self.state.task_log) if self.state.task_log else self.state.query
         )
+
+    def _intervene(
+        self,
+        llm_text: str,
+        message: str,
+        reason: str,
+        outcome: dict,
+        *,
+        failure_signal: str | None = None,
+        tool_name: str = "",
+        primitives=None,
+        recovery_kind: str = "",
+    ):
+        """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
+
+        render_recovery → 관찰 append(render=False — 이미 표면화됨) → outcome
+        기록 → 턴 미계수 → ``_CONTINUE``. **턴 계수 통일 규칙**: 개입 턴은
+        도구를 실행하지 않은 회복 넛지이므로 max_turns 예산을 소모하지 않는다
+        (종전엔 A4/A5 만 계수하고 A7/B1/NO_JSON 은 미계수하던 비일관 —
+        리뷰 §4.1). 반복-개입 폭주는 B1 detector(동일 액션 반복 → level≥3
+        하드페일)가 상한을 잡는다.
+
+        ``failure_signal`` None 이면 outcome 의 기존 값을 유지한다
+        (``_recover_unparsed`` — 초기 분류 NO_OUTPUT/NO_JSON/NO_ACTION 승계).
+        ``recovery_kind`` "format" 은 fold 대상 마킹(B1 은 빈 값 유지 —
+        액션 루프 넛지는 다음 파싱 성공으로 해소된 게 아니므로 접지 않는다).
+        """
+        render_recovery(llm_text, message, reason, self.state.turn)
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            message,
+            tool_name=tool_name,
+            success=False,
+            turn=self.state.turn,
+            render=False,  # render_recovery already surfaced it
+            recovery_kind=recovery_kind,
+        )
+        if failure_signal is not None:
+            outcome["failure_signal"] = failure_signal
+        if primitives is not None:
+            outcome["primitives"] = list(primitives)
+        self.state.turn -= 1  # 개입은 턴 미계수 (통일 규칙 — docstring 참조)
+        return _CONTINUE
 
     def _handle_text_path(self, llm_text: str):
         """Handle text parsing response (non-JSON fallback).
@@ -234,25 +288,15 @@ class TurnDispatcher:
             intervention = self.cfg.wire_format.format_no_thought_retry(
                 prior_content=llm_text
             )
-            render_recovery(
-                llm_text, intervention.message, "no thought", self.state.turn
-            )
-            _append_observation(
-                self.state.messages,
-                self.ctx,
-                self.cfg.wire_format,
+            return self._intervene(
                 llm_text,
                 intervention.message,
-                tool_name="",
-                success=False,
-                turn=self.state.turn,
-                render=False,  # render_recovery already surfaced it
+                "no thought",
+                outcome,
+                failure_signal=FAILURE_NO_THOUGHT,
+                primitives=intervention.primitives,
                 recovery_kind="format",
             )
-            outcome["failure_signal"] = FAILURE_NO_THOUGHT
-            outcome["primitives"] = list(intervention.primitives)
-            self.state.turn -= 1
-            return _CONTINUE
 
         # NOTE (v8.4.0): prose-only completion (v7.14.0 — accept an action-less
         # prose turn as an implicit `complete`) was REMOVED. Production found
@@ -341,6 +385,7 @@ class TurnDispatcher:
             if (
                 tool is not None
                 and tool.parallel_safe
+                and op.action in _PARALLEL_BATCH_ENGINES
                 and tool.parallel_batchable(op.action_input or {})
             ):
                 # mode-aware 수집 (5.0.0): 같은 도구라도 배치 가능한 op
@@ -452,12 +497,15 @@ class TurnDispatcher:
                 for op in batch_ops
             ]
         else:
-            # Extension slot: a parallel_safe tool with no internal concurrent
-            # engine (e.g. a future read-only read_file/code_index opt-in) would
-            # fan its ops out over a thread-pool of per-op run() calls here.
+            # Unreachable in practice: 수집 단계가 ``_PARALLEL_BATCH_ENGINES``
+            # 로 게이트하므로 엔진 미배선 도구는 여기 오기 전에 순차 per-op
+            # 경로로 빠진다. 방어적 불변식 단언으로만 유지 — a future
+            # parallel_safe tool with no internal concurrent engine would fan
+            # its ops out over a thread-pool of per-op run() calls here, then
+            # register itself in _PARALLEL_BATCH_ENGINES.
             raise NotImplementedError(
-                f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
-                "agent has an internal concurrent engine (_run_parallel)."
+                f"parallel_safe batch dispatch not wired for {tool_name!r}; "
+                "register an engine in _PARALLEL_BATCH_ENGINES after wiring."
             )
 
         result = self.tools._dispatch_tool_with_hooks(tool_name, {"tasks": specs})
@@ -829,26 +877,15 @@ class TurnDispatcher:
                 )
             # Level 1 or 2: inject Intervention, skip dispatch,
             # let the next turn try again with the new context.
-            render_recovery(
+            return self._intervene(
                 llm_text,
                 intervention.message,
                 f"action loop ({tool_name}, level {loop_level})",
-                self.state.turn,
-            )
-            _append_observation(
-                self.state.messages,
-                self.ctx,
-                self.cfg.wire_format,
-                llm_text,
-                intervention.message,
+                outcome,
+                failure_signal=FAILURE_ACTION_LOOP,
                 tool_name=tool_name,
-                success=False,
-                turn=self.state.turn,
-                render=False,  # render_recovery already surfaced it
+                primitives=intervention.primitives,
             )
-            outcome["primitives"] = list(intervention.primitives)
-            self.state.turn -= 1  # Don't count loop nudges as user-facing turns
-            return _CONTINUE
 
         # Render the model's ACTUAL emission, not the dispatch-canonical
         # form. `wrap_single_op` above re-wrapped the flat op into the
@@ -877,25 +914,17 @@ class TurnDispatcher:
         # for "did you mean" suggestions is deferred to Step 4b once
         # observability data shows whether it improves recovery.
         if detect_unknown_tool(tool_name, self.cfg.tools_list):
-            outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
             avail = ", ".join(self.cfg.tools_list)
             err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
-            render_recovery(
-                llm_text, f"Observation: {err_msg}", "unknown tool", self.state.turn
-            )
-            _append_observation(
-                self.state.messages,
-                self.ctx,
-                self.cfg.wire_format,
+            return self._intervene(
                 llm_text,
                 f"Observation: {err_msg}",
+                "unknown tool",
+                outcome,
+                failure_signal=FAILURE_UNKNOWN_TOOL,
                 tool_name=tool_name,
-                success=False,
-                turn=self.state.turn,
-                render=False,  # render_recovery already surfaced it
                 recovery_kind="format",
             )
-            return _CONTINUE
 
         # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
         # as A4: single source of truth in the recovery layer. The
@@ -905,24 +934,16 @@ class TurnDispatcher:
             tool_name, tool_input
         )
         if mismatched:
-            outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
             err_msg = f"{schema_err} Fix action_input and retry."
-            render_recovery(
-                llm_text, f"Observation: {err_msg}", "schema mismatch", self.state.turn
-            )
-            _append_observation(
-                self.state.messages,
-                self.ctx,
-                self.cfg.wire_format,
+            return self._intervene(
                 llm_text,
                 f"Observation: {err_msg}",
+                "schema mismatch",
+                outcome,
+                failure_signal=FAILURE_SCHEMA_MISMATCH,
                 tool_name=tool_name,
-                success=False,
-                turn=self.state.turn,
-                render=False,  # render_recovery already surfaced it
                 recovery_kind="format",
             )
-            return _CONTINUE
         tool_input = normalized  # use post-normalization input for dispatch
 
         # Execute tool (method tracks self.tools.recent_tool_history,
@@ -1006,26 +1027,16 @@ class TurnDispatcher:
                 syntax_error=syntax_error,
             )
             recovery_reason = "invalid JSON"
-        render_recovery(
-            llm_text, intervention.message, recovery_reason, self.state.turn
-        )
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.wire_format,
+        # failure_signal 은 넘기지 않는다 — _handle_text_path 의 초기 분류
+        # (NO_OUTPUT/NO_JSON/NO_ACTION)를 그대로 승계.
+        return self._intervene(
             llm_text,
             intervention.message,
-            tool_name="",
-            success=False,
-            turn=self.state.turn,
-            render=False,  # render_recovery already surfaced it
+            recovery_reason,
+            outcome,
+            primitives=intervention.primitives,
             recovery_kind="format",
         )
-        # Surface composed primitive names to the enclosing _handle_text_path
-        # so the trailing finally-block records them.
-        outcome["primitives"] = list(intervention.primitives)
-        self.state.turn -= 1  # Don't count format retries
-        return _CONTINUE
 
     # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
     #    위임 (dispatch 클러스터가 PR-3 에서 승격되면 bridge 를 직접 주입받아

@@ -13,6 +13,69 @@ from agent_cli.mcp.config import (
 # ── Config Tests ──────────────────────────────────────
 
 
+class TestDisconnectClosesErrlog:
+    """stdio 전송의 errlog(/dev/null) fd 는 disconnect 에서 닫힌다 — 종전엔
+    저장조차 안 해 서버당 fd 1개가 프로세스 수명 내내 누수(리뷰 §4.5 수리)."""
+
+    def _manager_with_fake_client(self, errlog):
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from agent_cli.mcp.client import McpClientManager
+
+        mgr = McpClientManager()
+
+        async def _noop(*a, **k):
+            return None
+
+        session = MagicMock()
+        session.__aexit__ = _noop
+        transport = MagicMock()
+        transport.__aexit__ = _noop
+        client = {"session": session, "transport_cm": transport}
+        if errlog is not None:
+            client["errlog"] = errlog
+        mgr._clients["srv"] = client
+        mgr._loop = asyncio.new_event_loop()
+        return mgr
+
+    def test_errlog_closed_on_disconnect(self, tmp_path):
+        errlog = open(tmp_path / "null", "w")  # noqa: SIM115 — close 검증 대상
+        mgr = self._manager_with_fake_client(errlog)
+        try:
+            mgr.disconnect("srv")
+            assert errlog.closed
+            assert "srv" not in mgr._clients
+        finally:
+            if not errlog.closed:
+                errlog.close()
+            mgr._loop.close()
+
+    def test_errlog_closed_even_when_aexit_raises(self, tmp_path):
+        errlog = open(tmp_path / "null", "w")  # noqa: SIM115 — close 검증 대상
+        mgr = self._manager_with_fake_client(errlog)
+
+        async def _boom(*a, **k):
+            raise RuntimeError("teardown failed")
+
+        mgr._clients["srv"]["session"].__aexit__ = _boom
+        try:
+            mgr.disconnect("srv")  # 예외는 삼켜지고 fd 는 finally 에서 닫힌다
+            assert errlog.closed
+        finally:
+            if not errlog.closed:
+                errlog.close()
+            mgr._loop.close()
+
+    def test_sse_client_without_errlog_is_noop(self):
+        mgr = self._manager_with_fake_client(None)
+        try:
+            mgr.disconnect("srv")  # errlog 키 없음(SSE) — 조용히 통과
+            assert "srv" not in mgr._clients
+        finally:
+            mgr._loop.close()
+
+
 class TestMcpServerConfig:
     def test_stdio_config(self):
         cfg = McpServerConfig(

@@ -10,7 +10,12 @@ from agent_cli.constants import (
     LLM_STREAM_TIMEOUT,
     STREAM_MAX_RECONNECTS,
 )
-from agent_cli.providers.base import LLMResponse, TokenUsage
+from agent_cli.providers.base import (
+    LLMResponse,
+    TokenUsage,
+    resolve_thinking_policy,
+    strip_think_blocks,
+)
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
@@ -89,31 +94,18 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Thinking budget — v8.21.0: supports_thinking 단독 게이트. 미지원 모델이면
-        # 기본값도, 런타임 오버라이드(enable_thinking 포함)도 **일절 적용 안 함** —
-        # 사고 미지원 모델에 thinking 블록을 보내 400 이 나는 것을 방지(게이트 우회
-        # 제거, v8.21.1). 지원 모델일 때만 런타임 오버라이드가 그 위에 얹혀 이김:
-        #  · reasoning_effort low/medium/high → budget_tokens 로 번역
-        #    (Anthropic 은 effort enum 이 없어 budget 이 유일 레버).
-        #  · reasoning_effort "off" 또는 enable_thinking False → 사고 비활성.
-        #  · enable_thinking True 또는 오버라이드 없음 → 활성(effort 없으면 medium).
-        overrides = kwargs.get("request_overrides") or {}
-        eff = overrides.get("reasoning_effort")
-        enable = overrides.get("enable_thinking")
-
-        if capabilities.supports_thinking:
-            thinking_on = True
-            if enable is False:
-                thinking_on = False
-            if eff == "off":
-                thinking_on = False
-
-            if thinking_on:
-                budget = _EFFORT_TO_BUDGET.get(eff) or _EFFORT_TO_BUDGET["medium"]
-                budget = max(budget, _MIN_THINKING_BUDGET)
-                body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-                # Anthropic deducts thinking from max_tokens
-                body["max_tokens"] = budget + capabilities.max_output_tokens
+        # Thinking budget — 해석은 공용 ``resolve_thinking_policy``
+        # (supports_thinking=False 면 None → 기본값도 오버라이드도 일절 미적용,
+        # v8.21.1 게이트). 여기는 정책을 Anthropic 방언으로 번역만 한다:
+        # effort → budget_tokens (Anthropic 은 effort enum 이 없어 budget 이
+        # 유일 레버), disabled → thinking 블록 미주입.
+        policy = resolve_thinking_policy(capabilities, kwargs.get("request_overrides"))
+        if policy is not None and policy.enabled:
+            budget = _EFFORT_TO_BUDGET[policy.effort]
+            budget = max(budget, _MIN_THINKING_BUDGET)
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # Anthropic deducts thinking from max_tokens
+            body["max_tokens"] = budget + capabilities.max_output_tokens
 
         if on_chunk:
             body["stream"] = True
@@ -196,28 +188,37 @@ class AnthropicProvider:
                 cache_creation_input_tokens=f.get("cache_creation_input_tokens", 0),
                 cache_read_input_tokens=f.get("cache_read_input_tokens", 0),
             )
+        # 인라인 <think> 격리 — OpenAI 경로와 동형 (T1 잔여, 리뷰 §4.2).
+        # 실 Anthropic 모델은 사고를 thinking 블록으로 내지만, Anthropic-호환
+        # 로컬 서버(omlx 등)가 태그를 content 에 흘리면 격리해 thinking 으로.
+        content, inline_think = strip_think_blocks(acc.content)
+        thinking = "\n\n".join(x for x in (acc.thinking, inline_think) if x)
         return LLMResponse(
-            content=acc.content,
+            content=content,
             tool_calls=None,
             usage=usage,
             stop_reason=_normalize_stop_reason(acc.stop_reason),
-            thinking=acc.thinking,
+            thinking=thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
-        """Parse non-streaming response."""
-        content = ""
-        thinking = ""
+        """Parse non-streaming response.
+
+        text/thinking 블록은 **누산**한다 — 다중 블록 응답에서 마지막 블록만
+        잔존하던 종전 동작(리뷰 §4.2)을 스트리밍 경로(델타 연결)와 동형화.
+        인라인 <think> 격리도 OpenAI 경로와 동형 적용."""
+        text_parts: list[str] = []
+        think_parts: list[str] = []
         tool_calls = None
         for block in data.get("content", []):
             btype = block.get("type")
             if btype == "text":
-                content = block["text"]
+                text_parts.append(block["text"])
             elif btype == "thinking":
                 # Extended-thinking block: capture for diagnostics and
                 # for self-quoting on retry. Anthropic places reasoning
                 # in a dedicated content block, not inside text.
-                thinking = block.get("thinking", "")
+                think_parts.append(block.get("thinking", ""))
             elif btype == "tool_use":
                 if tool_calls is None:
                     tool_calls = []
@@ -241,6 +242,8 @@ class AnthropicProvider:
                 cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
             )
 
+        content, inline_think = strip_think_blocks("".join(text_parts))
+        thinking = "\n\n".join(x for x in ("".join(think_parts), inline_think) if x)
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,

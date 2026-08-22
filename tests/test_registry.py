@@ -82,11 +82,13 @@ class TestTypeValidation:
         assert ok is True
 
     def test_string_timeout_auto_coerced(self):
-        """Small model sends "30" instead of 30 — auto-coerce."""
+        """Small model sends "30" instead of 30 — auto-coerce. 정규화는 반환
+        normalized 에만 반영되고 호출자의 원본은 불변(사본화 — 리뷰 §4.4)."""
         inp = {"command": "ls", "timeout": "30"}
-        ok, _err, _ = validate_tool_input("shell", inp)
+        ok, _err, normalized = validate_tool_input("shell", inp)
         assert ok is True
-        assert inp["timeout"] == 30  # coerced in-place
+        assert normalized["timeout"] == 30  # coerced in the returned copy
+        assert inp["timeout"] == "30"  # original untouched
 
     def test_dict_array_param_auto_coerced_to_array(self):
         """Small model sends a dict instead of [dict] for an array param —
@@ -124,14 +126,16 @@ class TestAgentSchema:
 
 class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
-        """Empty string on optional field should be stripped before validation."""
+        """Empty string on optional field should be stripped before validation —
+        반환 normalized 에서만; 호출자의 원본은 불변(사본화 — 리뷰 §4.4)."""
         action_input = {
             "command": "ls",
             "timeout": "",
         }
-        ok, _err, _ = validate_tool_input("shell", action_input)
+        ok, _err, normalized = validate_tool_input("shell", action_input)
         assert ok is True
-        assert "timeout" not in action_input
+        assert "timeout" not in normalized
+        assert action_input["timeout"] == ""  # original untouched
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""

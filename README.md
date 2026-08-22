@@ -687,7 +687,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 - 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
   - OpenAI 호환: context window를 `/v1/models`의 `max_model_len`에서 읽고, 값이 없으면 컨텍스트 오버플로 프로브로 추정. 추가로 thinking 지원 여부를 프로브.
   - Anthropic: 동일한 로직을 Anthropic API(`/messages`, `x-api-key`+`anthropic-version`)로 프로브 — context window는 `/models` 메타(omlx) → `/messages` 오버플로 프로브 → 128K 폴백, structured-output 은 프롬프트 기반 JSON 검사. (`/v1/models` 메타가 없는 실 Anthropic 모델은 레지스트리/폴백 사용.)
-  - Thinking 감지: 프로브 프롬프트 → `reasoning_content` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동). **2단계(v8.22.0)**: 기본 프로브에서 미검출이면 `enable_thinking=true` 로 재프로브 → Qwen 처럼 사고가 기본 OFF 인 모델도 감지. (이미 저장된 엔트리는 재감지 전까지 갱신 안 됨 — 과거 `false` 로 잘못 저장됐으면 재감지/수동 수정 필요.)
+  - Thinking 감지: 프로브 프롬프트 → `reasoning_content` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동). **2단계(v8.22.0)**: 기본 프로브에서 미검출이면 사고 스위치를 켜고 재프로브 → Qwen 처럼 사고가 기본 OFF 인 모델도 감지. **v8.37.0 부터 두 transport 공통**: OpenAI 호환은 `enable_thinking=true`, Anthropic 호환은 `thinking` 블록으로 재프로브(재프로브 실패는 관용 → 미지원). (이미 저장된 엔트리는 재감지 전까지 갱신 안 됨 — 과거 `false` 로 잘못 저장됐으면 재감지/수동 수정 필요.)
   - 자동 산출 규칙: `max_output = context_window // 4`. context window가 16K(`MIN_CONTEXT_WINDOW`) 미만이면 `UnsupportedModelError`로 거부.
 - 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부, **wire format 바인딩**(auto = 기본 해석 체인; 등록된 포맷명만 수용, 오타는 재질문)을 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)

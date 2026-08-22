@@ -274,9 +274,12 @@ class TestOnDiskNudgeHelper:
 
     def test_fanout_generic_without_nlines(self):
         # No line count → still parallel, but generic (no concrete ranges).
+        # 실존 도구명으로 안내 — 종전 "delegate op" 문구는 제거된 도구를
+        # 가리켰다(리뷰 §4.4 수리).
         n = self._n(["toolx", "agent"])  # nlines defaults to 0
         assert "Fan out IN PARALLEL" in n
-        assert "one delegate op per section" in n
+        assert 'one agent(mode="run") op per section' in n
+        assert "delegate op" not in n
         assert 'agent(mode="run", task=' not in n  # no concrete op examples
 
     def test_part_extra_and_tail_bullets(self):
