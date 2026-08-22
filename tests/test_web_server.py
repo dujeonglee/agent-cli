@@ -729,18 +729,29 @@ class TestStaticUI:
         # 버튼 title 이 main 한정이 아님
         assert "현재 대화 상대" in html
 
-    def test_failed_card_escapes_model_text(self, server_and_client):
-        """P0-6: 실패 카드는 모델/서버 원문(reason·raw)을 innerHTML 경로(el 3번째
-        인자)로 넣으므로 반드시 escapeHtml 경유 — 미이스케이프면 모델 출력의
-        <img onerror=…> 류가 뷰어 브라우저에서 실행(self-XSS)."""
+    def test_el_is_text_by_default_elhtml_explicit(self, server_and_client):
+        """P0-6②: el() 3번째 인자는 textContent(기본이 안전 — 모델/서버 원문을
+        그대로 넘겨도 마크업 실행 불가), HTML 은 elHtml() 로만 명시. 종전
+        innerHTML-기본은 콜사이트마다 escapeHtml 규율이 갈려 누락=self-XSS 였다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
+        el_body = _js_fn_body(js, "el")
+        assert "textContent" in el_body and "innerHTML" not in el_body
+        elh_body = _js_fn_body(js, "elHtml")
+        assert "innerHTML" in elh_body
+        # elHtml 은 의도가 자명한 HTML 소스에만 — escapeAndFormat(마크다운)/
+        # colorizeDiffBody(diff 색)/highlightDangerHtml(위험 강조) 콜사이트 존재.
+        assert 'elHtml("div", ["bubble"], escapeAndFormat(' in js
+        assert "colorizeDiffBody(" in js and 'elHtml("pre", ["obs-body"]' in js
+        assert "highlightDangerHtml(data.command" in js
+        # 실패 카드: textContent 라 원문 그대로 안전(이중 이스케이프 없음).
         body = _js_fn_body(js, "finalizeStreamingAsFailed")
-        assert "escapeHtml(reason)" in body
-        assert "escapeHtml(raw)" in body
-        # 미이스케이프 원문 주입 잔재가 없어야 한다.
-        assert '"⚠ " + reason' not in body
-        assert '["streaming"], raw' not in body
+        assert '"⚠ " + reason' in body and "escapeHtml(reason)" not in body
+        assert '["streaming"], raw' in body and "escapeHtml(raw)" not in body
+        # el() 텍스트 사이트에 escapeHtml 잔재(=화면에 &lt; 노출) 금지 —
+        # 대표 지점: card-time / task-error.
+        assert 'el("span", ["card-time"], fmtCardTime(ts))' in js
+        assert 'el("div", ["task-error"], error)' in js
 
     def test_agent_icon_per_key_wired(self, server_and_client):
         """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신

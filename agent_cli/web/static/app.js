@@ -350,7 +350,19 @@
   }
 
   // ── DOM helpers ────────────────────────────
-  function el(tag, classes, html) {
+  // P0-6②: el() 의 3번째 인자는 **textContent** — 기본이 안전(모델/서버 원문을
+  // 그대로 넘겨도 마크업 실행 불가). HTML 이 필요한 곳만 elHtml() 로 **명시**한다.
+  // 종전엔 el() 이 무조건 innerHTML 이라 콜사이트마다 escapeHtml 규율이 갈렸고
+  // (606 은 이스케이프, 실패 카드는 누락 → self-XSS), 누락 = 취약이었다.
+  function el(tag, classes, text) {
+    const e = document.createElement(tag);
+    if (classes && classes.length) e.classList.add.apply(e.classList, classes);
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+  // 이미 이스케이프/조립된 HTML 전용 — 새 콜사이트는 "왜 HTML 인가"가 자명할
+  // 때만 사용(마크다운 렌더·diff 색상·danger 하이라이트 류).
+  function elHtml(tag, classes, html) {
     const e = document.createElement(tag);
     if (classes && classes.length) e.classList.add.apply(e.classList, classes);
     if (html !== undefined && html !== null) e.innerHTML = html;
@@ -388,7 +400,7 @@
   // (e.g. legacy buffered events) so nothing breaks if the field is missing.
   function stampCard(cardEl, ts) {
     if (ts == null) return cardEl;
-    const t = el("span", ["card-time"], escapeHtml(fmtCardTime(ts)));
+    const t = el("span", ["card-time"], fmtCardTime(ts));
     t.title = fmtCardTimeFull(ts);
     cardEl.appendChild(t);
     return cardEl;
@@ -603,7 +615,7 @@
     const dur = durationS != null ? " (" + durationS.toFixed(1) + "s)" : "";
     g.meta.textContent = icon + dur;
     if (!success && error) {
-      const errEl = el("div", ["task-error"], escapeHtml(error));
+      const errEl = el("div", ["task-error"], error);
       g.body.appendChild(errEl);
     }
     // Drop the streaming card if the task ended mid-stream — the
@@ -712,7 +724,7 @@
 
   function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
-    card.appendChild(el("div", ["bubble"], escapeAndFormat(content)));
+    card.appendChild(elHtml("div", ["bubble"], escapeAndFormat(content)));
     stampCard(card, ts);
     stampNavTs(card, ts);
     $messages.appendChild(card);
@@ -722,15 +734,15 @@
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
     if (d.thought) {
-      card.appendChild(el("div", ["thought"], escapeAndFormat(d.thought)));
+      card.appendChild(elHtml("div", ["thought"], escapeAndFormat(d.thought)));
     }
     if (d.final !== undefined) {
-      card.appendChild(el("div", ["final"], escapeAndFormat(d.final)));
+      card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
       if (!d.task_id) stampNavTs(card, d.ts);
     } else if (d.action) {
       const a = el("div", ["action"]);
       a.appendChild(
-        el("div", ["tool"], "⚡ " + escapeHtml(d.action.tool_name || ""))
+        el("div", ["tool"], "⚡ " + (d.action.tool_name || ""))
       );
       const detail = renderActionInput(
         d.action.tool_name || "",
@@ -758,7 +770,7 @@
     } catch (_e) {
       // tool_input wasn't valid JSON (e.g. parser returned a string).
       // Show it verbatim so the user can still inspect what happened.
-      return el("pre", ["args"], escapeHtml(toolInputStr));
+      return el("pre", ["args"], toolInputStr);
     }
 
     if (toolName === "ask" && Array.isArray(parsed.questions)) {
@@ -775,7 +787,7 @@
       return el(
         "pre",
         ["action-shell"],
-        "$ " + escapeHtml(parsed.command)
+        "$ " + parsed.command
       );
     }
 
@@ -795,7 +807,7 @@
             (parsed.line_end || "?")
         );
       }
-      return el("div", ["action-detail"], parts.join(" "));
+      return elHtml("div", ["action-detail"], parts.join(" "));
     }
 
     if (toolName === "edit_file" && typeof parsed.path === "string") {
@@ -815,7 +827,7 @@
       } else {
         detail = "";
       }
-      return el(
+      return elHtml(
         "div",
         ["action-detail"],
         escapeHtml(parsed.path) +
@@ -834,7 +846,7 @@
             const prof = el(
               "span",
               ["muted"],
-              " → " + escapeHtml(String(t.agent || t.profile))
+              " → " + String(t.agent || t.profile)
             );
             li.appendChild(prof);
           }
@@ -846,7 +858,7 @@
       if (typeof parsed.mode === "string") {
         const target = parsed.key || parsed.profile || "";
         const body = parsed.task || parsed.message || "";
-        return el(
+        return elHtml(
           "div",
           ["action-detail"],
           escapeHtml(parsed.mode + (target ? " " + target : "")) +
@@ -860,7 +872,7 @@
     if (toolName === "complete" && typeof parsed.result === "string") {
       // Should not normally hit (complete renders as ``final``) but
       // act gracefully if the model emits an explicit complete action.
-      return el("div", ["final"], escapeAndFormat(parsed.result));
+      return elHtml("div", ["final"], escapeAndFormat(parsed.result));
     }
 
     // Fallback: pretty JSON. Two-space indent keeps wide objects readable
@@ -868,7 +880,7 @@
     return el(
       "pre",
       ["args"],
-      escapeHtml(JSON.stringify(parsed, null, 2))
+      JSON.stringify(parsed, null, 2)
     );
   }
 
@@ -892,11 +904,11 @@
     // is monospace/structured → keep the <pre> + diff colouring.
     if ((d.tool_name || "") === "agent") {
       card.appendChild(
-        el("div", ["obs-body", "obs-md"], escapeAndFormat(d.content || ""))
+        elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(d.content || ""))
       );
     } else {
       card.appendChild(
-        el("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
+        elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
       );
     }
     stampCard(card, d.ts);
@@ -968,14 +980,13 @@
   // rejected raw text visible and closes the card so the next turn's
   // stream opens a fresh one — instead of appending to the failed card.
   function finalizeStreamingAsFailed(taskId, reason, raw) {
-    // P0-6: reason/raw 는 모델·서버 원문 — el() 3번째 인자는 innerHTML 이므로
-    // 반드시 escapeHtml 경유(미이스케이프 시 모델 출력의 <img onerror=…> 류가
-    // 뷰어 브라우저에서 실행되는 self-XSS).
+    // P0-6②: reason/raw 는 모델·서버 원문 — el() 이 textContent 기반이라
+    // 원문 그대로 안전(과거 innerHTML 시절 미이스케이프 self-XSS 의 수리 지점).
     function mark(card) {
       card.classList.remove("card-streaming");
       card.classList.add("card-failed");
       if (reason)
-        card.appendChild(el("div", ["fail-reason"], "⚠ " + escapeHtml(reason)));
+        card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
     }
     if (taskId && taskGroups[taskId]) {
       const g = taskGroups[taskId];
@@ -994,9 +1005,9 @@
       // Replay (event_buffer): no live stream card to close — render the
       // rejected emission as a standalone failed card.
       const card = el("div", ["card", "card-failed"]);
-      card.appendChild(el("pre", ["streaming"], escapeHtml(raw)));
+      card.appendChild(el("pre", ["streaming"], raw));
       if (reason)
-        card.appendChild(el("div", ["fail-reason"], "⚠ " + escapeHtml(reason)));
+        card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
       $messages.appendChild(card);
     }
   }
@@ -1987,7 +1998,7 @@
     if (kind === "confirm") {
       if (typeof data.command === "string" && data.command) {
         item.appendChild(
-          el("pre", ["action-shell", "confirm-cmd"],
+          elHtml("pre", ["action-shell", "confirm-cmd"],
             highlightDangerHtml(data.command, data.danger_spans))
         );
       }

@@ -26,7 +26,7 @@
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
 
-> **수리 현황**: 1묶음(v8.34.0) — P0-1·P0-4·P0-5·P0-9 ✅, P0-6 ✅ 최소패치. 2묶음(v8.35.0) — P0-2 ✅(ToolBridge.dispatch_edit_batch — 훅/이력 단건 동형, 배치 의미 보존)·P0-3 ✅(json_fc Op.truncated 마지막-op 전파). 남은 것: P0-8(3묶음), P0-6 규약 정리(3묶음), P0-7 보류(사용자 결정).
+> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정).
 
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).

@@ -1241,3 +1241,107 @@ class TestSumMessageTokens:
         from agent_cli.context.render import _sum_message_tokens
 
         assert _sum_message_tokens([]) == 0
+
+
+class TestTokenScaleAccounting:
+    """P0-8b: 실측 재앵커 후의 증감 단위 정합 — reconcile 이 계산한 실측/추정
+    비율(_token_scale)로 add/evict/fold/force_fit 의 증감을 환산한다.
+    scale 1.0(기본·미실측)이면 산술 바이트 동일(기존 계약 보존)."""
+
+    def _ctx(self, tmp_path, budget=100_000):
+        return ContextManager(tmp_path / "s", max_context_tokens=budget)
+
+    def _msg(self, n_chars=400, role="user"):
+        return {"role": role, "content": "x" * n_chars}
+
+    def test_default_scale_is_identity(self, tmp_path):
+        # reconcile 없이는 scale 1.0 — _scaled_tokens == 순수 추정 (계약 보존).
+        ctx = self._ctx(tmp_path)
+        m = self._msg(400)
+        from agent_cli.context.render import _estimate_message_tokens
+
+        assert ctx._token_scale == 1.0
+        assert ctx._scaled_tokens(m) == _estimate_message_tokens(m)
+
+    def test_reconcile_sets_scale_from_ratio(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        for _ in range(4):
+            ctx.add(self._msg(400))
+        est = ctx.get_estimated_tokens()  # scale 1.0 이므로 = 추정 합
+        # 서버 실측이 추정의 2배(CJK 류 과소평가 시나리오)
+        ctx.reconcile_actual_tokens(est * 2, system_tokens=0)
+        assert abs(ctx._token_scale - 2.0) < 0.01
+        assert ctx.get_estimated_tokens() == est * 2
+
+    def test_evict_uses_scaled_subtraction(self, tmp_path):
+        """실측 2× 앵커에서 evict: 스케일 감산이면 레코드당 2×est 씩 줄어 —
+        비스케일(1×est 감산) 대비 절반의 레코드만 버리고 목표 도달(과잉
+        evict 방지가 이 수리의 목적)."""
+        ctx = self._ctx(tmp_path)
+        n = 10
+        for _ in range(n):
+            ctx.add(self._msg(400))
+        est_total = ctx.get_estimated_tokens()
+        per = est_total // n
+        ctx.reconcile_actual_tokens(est_total * 2)
+        # 목표: 실측 단위로 레코드 2개어치만 줄이면 되는 수준
+        target = est_total * 2 - (2 * per * 2)
+        ctx._evict_fifo(target)
+        # 스케일 감산 → 정확히 2개 pop (비스케일이면 4개 pop 됐을 것)
+        assert len(ctx._cache) == n - 2
+        assert ctx.get_estimated_tokens() <= target
+
+    def test_scale_clamped_against_degenerate_ratio(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.add(self._msg(4))  # est ≈ 1 token
+        ctx.reconcile_actual_tokens(1_000_000)
+        assert ctx._token_scale == 8.0  # 상한 클램프
+        ctx.reconcile_actual_tokens(1)
+        assert ctx._token_scale == 0.25  # 하한 클램프
+
+    def test_zero_usage_reconcile_keeps_scale(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.add(self._msg(400))
+        ctx.reconcile_actual_tokens(0)  # no-op 계약 유지
+        assert ctx._token_scale == 1.0
+
+    def test_estimate_basis_recompute_resets_scale(self, tmp_path):
+        """카운터가 추정 기반으로 재계산되면(basis 전환) scale 도 1.0 으로 —
+        아니면 다음 evict 가 추정-기반 카운터에 스케일 감산(이중 보정)."""
+        ctx = self._ctx(tmp_path, budget=10_000)
+        for _ in range(6):
+            ctx.add(self._msg(2000))
+        ctx.reconcile_actual_tokens(ctx.get_estimated_tokens() * 2)
+        assert ctx._token_scale == 2.0
+        # 요약 콜백 없는 compact 폴백 경로 대신 resume 로 basis 전환 검증:
+        # 저장→재로드 (forward-slice) 시 추정 기반 재계산 + scale 1.0.
+        ctx._evict_fifo(ctx.get_estimated_tokens() - 1)  # 오프셋 하나 이상 확보
+        resumed = ContextManager(
+            ctx.session_dir
+            if hasattr(ctx, "session_dir")
+            else ctx._history_path.parent,
+            max_context_tokens=10_000,
+            resume=True,
+        )
+        assert resumed._token_scale == 1.0
+
+    def test_fold_uses_scaled_subtraction(self, tmp_path):
+        """fold 감산도 스케일 단위 — 실측 앵커 카운터에서 접힌 개입만큼
+        실측-단위로 줄어 카운터가 음수/과대 잔존하지 않는다."""
+        ctx = self._ctx(tmp_path)
+        ctx.add({"role": "assistant", "content": "…broken…"})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "",
+                "success": False,
+                "content": "Observation: invalid JSON — fix format",
+            }
+        )
+        est = ctx.get_estimated_tokens()
+        ctx.reconcile_actual_tokens(est * 2)
+        before = ctx.get_estimated_tokens()
+        folded = ctx.fold_resolved_interventions(assume_tail_resolved=True)
+        assert folded == 2
+        # 감산이 스케일(2×) 단위로 일어나 0 근처(전부 접힘)로 수렴
+        assert ctx.get_estimated_tokens() <= max(before - est, 0) + 2

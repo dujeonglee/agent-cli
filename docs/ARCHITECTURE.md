@@ -956,6 +956,12 @@ OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바�
 - **edit 배치 훅 경유 (P0-2)**: 같은 파일 edit_file 2건+ 배치는 `ToolBridge.dispatch_edit_batch` 를 지나 단건 경로와 **동일한 훅/이력 계약**을 탄다 — PreToolUse 는 edit 별(하나라도 블록 → 배치 전체 미적용, all-or-nothing 유지), PostToolUse 1회(물리 실행 1회), `recent_tool_history` 는 edit 별(B1 가시성), 예외 안전망·문구 단건 동형. 종전엔 dispatch 가 `apply_edits_batch` 를 직접 불러 배치에서만 훅·이력이 통째로 빠졌다(훅으로 금지한 편집이 배치로는 무사통과).
 - **json_fc 절단 전파 (P0-3)**: EOF 절단 증거(수리 필요 + 미닫힘 괄호를 `close_unbalanced` 로 복구)를 `Op.truncated` 로 전파 — **마지막 op 에만**(절단은 EOF 이므로 앞선 온전한 op 를 과잉 수리하지 않게). 비-절단 수리(제어문자·이스케이프·과닫힘)는 미플래그. 단수 투영(`parse`)도 xml_fc 동형으로 플래그 승계. 종전엔 기본 포맷에서 dispatch 의 edit 절단 새니타이저가 상시 무발화였다.
 
+### 7.3⅞ 컨텍스트 회계·프론트 렌더 규약 (P0-8·P0-6②, v8.36.0)
+
+- **P0-8a 캐시↔history 정렬 북키핑**: `_cache_hidx`(캐시 레코드별 history 서수 병행 리스트, in-memory 전용). fold 는 캐시 **중간**을 제거하는데 오프셋(`_dynamic_start_index`)은 prefix-skip 모델이라 이를 표현 못 해, 종전 `+= 1`/`+= len(evict)` 은 접힌 수만큼 과소 전진 — fold·evict 교차 후 resume 에 잉여 레코드가 재유입됐다(수렴 테스트로 실증). 이제 front-pop/compact 가 "다음 레코드의 실제 history 위치"로 정확히 전진(evict=`hidx.pop(0)+1`, compact=첫 retained 의 hidx). resume 의 fold 재적용(v4.51.0)과 합쳐져 live↔resume 뷰가 반복 사이클에서도 수렴(계약 테스트 TestFoldOffsetResumeConvergence·TestHidxAlignmentInvariant).
+- **P0-8b 토큰 단위 정합(`_token_scale`)**: `reconcile_actual_tokens` 가 실측/추정 비율(클램프 [0.25,8])을 계산해 이후 증감(add/evict/fold/force_fit)을 환산 — 실측-앵커 카운터에서 chars/4 추정을 빼던 단위 혼합(CJK 과소 추정 → 과잉 evict) 수리. 추정-기반 재계산(compact 재빌드·resume 로드) 시 1.0 리셋(basis 전환). scale 1.0 이면 산술 바이트 동일(기존 계약 보존).
+- **P0-6② 프론트 el/elHtml 규약**: `el()` 3번째 인자 = **textContent**(기본이 안전 — 원문 그대로 넘겨도 마크업 실행 불가), HTML 은 `elHtml()` 로만 명시(escapeAndFormat 마크다운·colorizeDiffBody·highlightDangerHtml 등 의도 자명한 소스 한정). 종전 innerHTML-기본은 콜사이트별 escapeHtml 규율이 갈려 누락=self-XSS 였다. 텍스트 사이트의 기존 escapeHtml 은 제거(이중 이스케이프 방지).
+
 ### 7.4 Thinking 적용
 
 **기본 게이트 (v8.21.0)**: `supports_thinking` 단독. 정적 `thinking_budget` 필드는 제거됐고, 사고 지원 모델은 런타임 오버라이드가 없으면 **기본 medium** 으로 사고한다.

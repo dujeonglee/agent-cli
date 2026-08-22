@@ -160,3 +160,100 @@ class TestDispatcherIntegration:
 
         recs = [_json.loads(line) for line in ctx.history_path.read_text().splitlines()]
         assert any(is_format_intervention(r) for r in recs)
+
+
+class TestFoldOffsetResumeConvergence:
+    """P0-8a 검증: fold 는 캐시 **중간**을 제거하고 ``_dynamic_start_index``
+    (prefix-skip 오프셋)를 올리지 않는다 — 이는 버그가 아니라 설계다:
+    resume 이 forward slice 로드 직후 ``fold_resolved_interventions()`` 를
+    **재적용**해(레코드-기반 재판정) live 와 동일 뷰로 결정적으로 수렴한다
+    (manager docstring "live↔resume 동일 뷰, 사이드카 상태 불필요").
+    이 스위트는 리뷰에서 제기된 시나리오(fold 후 evict 로 오프셋 전진 →
+    resume)에서도 수렴이 깨지지 않음을 회귀로 고정한다."""
+
+    def test_fold_then_evict_then_resume_converges(self, tmp_path):
+        sd = tmp_path / "s"
+        ctx = ContextManager(sd, max_context_tokens=100_000)
+        # [u0, u1, 실패, 개입, 성공, u2] — 개입 쌍은 캐시 중간에 위치.
+        ctx.add({"role": "user", "content": "q0" * 50})
+        ctx.add({"role": "user", "content": "q1" * 50})
+        ctx.add(_fail_prior())
+        ctx.add(_intervention())
+        ctx.fold_resolved_interventions(assume_tail_resolved=True)  # live fold
+        ctx.add(_success_turn())
+        ctx.add({"role": "user", "content": "q2" * 50})
+        # evict 로 앞의 u0 하나를 버려 오프셋을 전진시킨다 (fold 뒤의 전진 —
+        # 리뷰 시나리오의 핵심: 오프셋은 접힌 중간 레코드를 모른다).
+        per = ctx.get_estimated_tokens() // len(ctx._cache) + 1
+        ctx._evict_fifo(ctx.get_estimated_tokens() - per)
+        assert ctx._dynamic_start_index >= 1
+        live_view = [(m.get("role"), m.get("content", "")[:8]) for m in ctx._cache]
+        # 접힌 개입은 live 뷰에 없다.
+        assert all("invalid JSON" not in (m.get("content") or "") for m in ctx._cache)
+
+        resumed = ContextManager(sd, max_context_tokens=100_000, resume=True)
+        resumed_view = [
+            (m.get("role"), m.get("content", "")[:8]) for m in resumed._cache
+        ]
+        # 수렴: forward slice 에 다시 들어온 접힌 레코드를 재-fold 가 제거해
+        # live 와 동일 뷰 (재혼입이 최종 뷰에 남지 않는다).
+        assert resumed_view == live_view
+        assert all(
+            "invalid JSON" not in (m.get("content") or "") for m in resumed._cache
+        )
+
+    def test_repeated_fold_evict_cycles_stay_convergent(self, tmp_path):
+        """fold·evict 가 여러 번 교차해도(오프셋-접힘 불일치 누적) resume
+        재-fold 수렴은 유지된다."""
+        sd = tmp_path / "s"
+        ctx = ContextManager(sd, max_context_tokens=100_000)
+        for i in range(3):
+            ctx.add({"role": "user", "content": f"q{i}" * 60})
+            ctx.add(_fail_prior())
+            ctx.add(_intervention())
+            ctx.fold_resolved_interventions(assume_tail_resolved=True)
+            ctx.add(_success_turn())
+            per = ctx.get_estimated_tokens() // max(len(ctx._cache), 1) + 1
+            ctx._evict_fifo(max(ctx.get_estimated_tokens() - per, 1))
+        live_view = [(m.get("role"), m.get("content", "")[:8]) for m in ctx._cache]
+        resumed = ContextManager(sd, max_context_tokens=100_000, resume=True)
+        resumed_view = [
+            (m.get("role"), m.get("content", "")[:8]) for m in resumed._cache
+        ]
+        assert resumed_view == live_view
+
+
+class TestHidxAlignmentInvariant:
+    """P0-8a 북키핑 불변식: ``_cache_hidx`` 는 캐시와 항상 같은 길이·순서이며
+    각 값은 그 레코드의 실제 history 서수다 — 모든 변형(add/fold/evict/resume)
+    후에도 유지된다."""
+
+    def _aligned(self, ctx):
+        assert len(ctx._cache_hidx) == len(ctx._cache)
+        assert ctx._cache_hidx == sorted(ctx._cache_hidx)  # 순서 보존(단조)
+
+    def test_invariant_across_mutations(self, tmp_path):
+        sd = tmp_path / "s"
+        ctx = ContextManager(sd, max_context_tokens=100_000)
+        for i in range(3):
+            ctx.add({"role": "user", "content": f"q{i}" * 40})
+        self._aligned(ctx)
+        assert ctx._cache_hidx == [0, 1, 2]
+        ctx.add(_fail_prior())
+        ctx.add(_intervention())
+        ctx.fold_resolved_interventions(assume_tail_resolved=True)
+        self._aligned(ctx)
+        assert ctx._cache_hidx == [0, 1, 2]  # 중간(3,4) 접힘 반영
+        ctx.add(_success_turn())
+        self._aligned(ctx)
+        assert ctx._cache_hidx == [0, 1, 2, 5]  # 서수는 history 기준 유지
+        per = ctx.get_estimated_tokens() // len(ctx._cache) + 1
+        ctx._evict_fifo(ctx.get_estimated_tokens() - per)
+        self._aligned(ctx)
+        assert (
+            ctx._dynamic_start_index == ctx._cache_hidx[0] if ctx._cache_hidx else True
+        )
+        # resume 후에도 정렬 유지 + 서수 연속성
+        resumed = ContextManager(sd, max_context_tokens=100_000, resume=True)
+        self._aligned(resumed)
+        assert resumed._history_ordinal == 6  # 총 add 수 (fold 는 history 불변)

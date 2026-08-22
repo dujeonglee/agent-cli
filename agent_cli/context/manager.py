@@ -186,7 +186,23 @@ class ContextManager:
         #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"
         self.thinking_override: dict = {}
         self._cache: list[dict] = []
+        # P0-8a: 캐시 레코드별 history.jsonl 서수(index) 병행 리스트 — 캐시와
+        # 항상 같은 길이/순서. fold 가 캐시 **중간**을 제거해도(오프셋은 prefix-
+        # skip 모델이라 중간 제거를 표현 못 함) front-pop/compact 가 "다음
+        # 레코드의 실제 history 위치"로 오프셋을 정확히 전진시키기 위한 정렬
+        # 북키핑. 종전 ``+= 1``/``+= len(evict)`` 은 접힌 레코드 수만큼 과소
+        # 전진해, fold·evict 교차 후 resume 시 잉여 레코드가 재유입됐다(수렴
+        # 테스트로 실증). in-memory 전용(레코드 dict 오염 없음).
+        self._cache_hidx: list[int] = []
+        self._history_ordinal: int = 0  # 지금까지 add 된(=history 의) 레코드 수
         self._cache_tokens: int = 0
+        # P0-8b: 추정→실측 보정 계수. ``reconcile_actual_tokens`` 가 카운터를
+        # 서버 실측으로 재앵커한 뒤에도 증감(add/evict/fold/force_fit)은 로컬
+        # chars/4 추정을 쓰므로 단위가 섞여 — CJK(추정 과소)에선 카운터가 느리게
+        # 줄어 필요 이상으로 오래 evict(컨텍스트 과잉 손실), 과대면 과소 evict
+        # (오버플로 재발) — 재앵커 시점의 실측/추정 비율로 증감을 스케일해
+        # 정합시킨다. 1.0(기본·미실측·추정-기반 재계산 후)이면 산술 바이트 동일.
+        self._token_scale: float = 1.0
         # Rendered (natural-language) mirror of the cache's dynamic slice —
         # everything after the optional leading system message, in order.
         # ``get_messages`` used to re-run ``_to_natural_language`` over the
@@ -262,8 +278,10 @@ class ContextManager:
         loop's result→observation seam, so no message reaching here can blow
         past the window and break compaction.
         """
-        msg_tokens = _estimate_message_tokens(message)
+        msg_tokens = self._scaled_tokens(message)  # P0-8b: 실측 앵커와 단위 정합
         self._cache.append(message)
+        self._cache_hidx.append(self._history_ordinal)  # P0-8a: history 정렬
+        self._history_ordinal += 1
         # Incremental render: keep the natural-language mirror in step so
         # ``get_messages`` never re-renders old records. A leading system
         # message is excluded (``get_messages`` passes it through verbatim).
@@ -281,6 +299,14 @@ class ContextManager:
         """Set the current LLM turn index. The loop calls this at each turn
         boundary so subsequent history records carry the right ``turn``."""
         self._current_turn = turn
+
+    def _scaled_tokens(self, message: dict) -> int:
+        """P0-8b: 카운터 증감용 레코드 토큰 — 로컬 추정 × 보정 계수.
+        scale 1.0(기본)이면 추정 그대로(기존 산술과 바이트 동일)."""
+        est = _estimate_message_tokens(message)
+        if self._token_scale == 1.0:
+            return est
+        return max(1, round(est * self._token_scale))
 
     def reconcile_actual_tokens(
         self, actual_total_tokens: int, system_tokens: int = 0
@@ -303,7 +329,14 @@ class ContextManager:
         """
         if actual_total_tokens <= 0:
             return
-        self._cache_tokens = max(actual_total_tokens - system_tokens, 0)
+        anchored = max(actual_total_tokens - system_tokens, 0)
+        # P0-8b: 이후 증감(추정 단위)을 실측 단위로 환산할 계수 갱신.
+        # 클램프 [0.25, 8.0] — 퇴화 분모/이상 실측이 산술을 뒤집지 않게
+        # (CJK 실측 계수는 대략 2~3×). 추정 합이 0(빈 캐시)이면 유지.
+        est_total = _sum_message_tokens(self._cache)
+        if est_total > 0 and anchored > 0:
+            self._token_scale = min(max(anchored / est_total, 0.25), 8.0)
+        self._cache_tokens = anchored
 
     def get_messages(self) -> list[dict]:
         """Return cached messages converted to natural language for LLM.
@@ -533,14 +566,22 @@ class ContextManager:
             # Cap and store.
             self._summary = new_summary[:_SUMMARY_CHAR_CAP]
             self._file_list = self._merge_file_lists(self._file_list, new_paths)
+            # P0-8a: hidx 재조립 — anchor 유지 + evict 슬라이스 드롭.
+            n_anchor = len(anchor)
+            retained_hidx = self._cache_hidx[n_anchor + len(evict_set) :]
+            self._cache_hidx = self._cache_hidx[:n_anchor] + retained_hidx
             self._cache = anchor + retained
             self._nl_cache = None  # bulk rebuild → re-render on next get
             self._cache_tokens = _sum_message_tokens(self._cache)
+            self._token_scale = 1.0  # P0-8b: 추정 기반 재계산 → 계수 리셋
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
-            # The evicted slice came from the cache; reflect it in the
-            # history offset so resume skips the summarised tail.
-            self._dynamic_start_index += len(evict_set)
+            # P0-8a: resume 오프셋 = 첫 retained 레코드의 **실제 history 위치**
+            # (없으면 지금까지의 전체 서수) — ``+= len(evict_set)`` 은 fold 가
+            # 만든 공백을 몰라 과소 전진했다.
+            self._dynamic_start_index = (
+                retained_hidx[0] if retained_hidx else self._history_ordinal
+            )
             self._save_compaction_json()
         except CompactionError:
             failure_signal = "summary_failed"
@@ -661,11 +702,10 @@ class ContextManager:
         while self._cache_tokens > target and len(self._cache) > 1:
             removed = self._cache.pop(0)
             self._nl_cache = None  # front pop → rendered mirror stale
-            self._cache_tokens -= _estimate_message_tokens(removed)
-            # The popped message came from the cache, which mirrors
-            # history.jsonl — reflect the drop in the offset so
-            # ``--resume`` doesn't pull the popped entry back in.
-            self._dynamic_start_index += 1
+            self._cache_tokens -= self._scaled_tokens(removed)  # P0-8b
+            # P0-8a: 오프셋 = 버린 레코드의 **실제 history 위치** + 1 —
+            # ``+= 1`` 은 fold 가 만든 중간 공백을 몰라 과소 전진했다.
+            self._dynamic_start_index = self._cache_hidx.pop(0) + 1
         # Persist updated offset so an interrupted run survives.
         if self._summary or self._compaction_count or self._dynamic_start_index:
             self._save_compaction_json()
@@ -741,9 +781,10 @@ class ContextManager:
                 removed = self._cache.pop(0)
                 self._nl_cache = None  # front pop → rendered mirror stale
                 self._cache_tokens = max(
-                    self._cache_tokens - _estimate_message_tokens(removed), 0
+                    self._cache_tokens - self._scaled_tokens(removed),
+                    0,  # P0-8b
                 )
-                self._dynamic_start_index += 1
+                self._dynamic_start_index = self._cache_hidx.pop(0) + 1  # P0-8a
                 self._save_compaction_json()
 
         return len(self._cache) < before_len
@@ -794,8 +835,10 @@ class ContextManager:
             return 0
         for i in idxs:
             removed = self._cache.pop(i)
+            self._cache_hidx.pop(i)  # P0-8a: 정렬 유지 (중간 제거 동기화)
             self._cache_tokens = max(
-                self._cache_tokens - _estimate_message_tokens(removed), 0
+                self._cache_tokens - self._scaled_tokens(removed),
+                0,  # P0-8b
             )
         self._nl_cache = None  # 벌크 변형 → 렌더 미러 재빌드
         return len(idxs)
@@ -889,13 +932,17 @@ class ContextManager:
         if use_offset:
             forward = messages[self._dynamic_start_index :]
             self._cache = forward
+            # P0-8a: forward slice 는 history 와 연속이므로 서수 = 구간 range.
+            self._cache_hidx = list(range(self._dynamic_start_index, len(messages)))
+            self._history_ordinal = len(messages)
             self._cache_tokens = _sum_message_tokens(forward)
+            self._token_scale = 1.0  # P0-8b: 추정 기반 로드
             # If even the forward slice exceeds budget (budget shrank
             # since the previous run), trim oldest until it fits.
             while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
                 removed = self._cache.pop(0)
                 self._cache_tokens -= _estimate_message_tokens(removed)
-                self._dynamic_start_index += 1
+                self._dynamic_start_index = self._cache_hidx.pop(0) + 1  # P0-8a
             self.fold_resolved_interventions()  # v4.51.0 — 위와 동일 재적용
             return
 
@@ -913,6 +960,10 @@ class ContextManager:
                 start_idx = len(messages) - 1
 
         self._cache = messages[start_idx:]
+        # P0-8a: legacy 경로도 정렬 북키핑 초기화 — 이후 evict/fold 가 hidx 를
+        # 소비하므로 캐시와 길이/순서가 일치해야 한다.
+        self._cache_hidx = list(range(start_idx, len(messages)))
+        self._history_ordinal = len(messages)
         self._cache_tokens = _sum_message_tokens(self._cache)
         # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
         # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
