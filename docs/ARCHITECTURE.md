@@ -951,6 +951,11 @@ OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바�
 
 `LLMResponse.stop_reason` 은 **루프 어휘**로 통일된 계약이다: `"stop"`(정상 종료) / `"length"`(출력 절단) / 합성 `"interrupted"`·`"degenerate_runaway"`. 각 프로바이더가 자기 원어를 매핑할 책임을 진다 — anthropic 은 `_STOP_REASON_MAP`(end_turn·stop_sequence→stop, max_tokens→length), openai 는 finish_reason 이 이미 이 어휘. 종전엔 Anthropic 원어가 그대로 흘러 루프의 출력-절단 가드(`== "length"`)가 무발화, 잘린 write_file/shell 이 디스패치됐다.
 
+### 7.3¾ 배치·절단 안전장치 (P0-2·P0-3, v8.35.0)
+
+- **edit 배치 훅 경유 (P0-2)**: 같은 파일 edit_file 2건+ 배치는 `ToolBridge.dispatch_edit_batch` 를 지나 단건 경로와 **동일한 훅/이력 계약**을 탄다 — PreToolUse 는 edit 별(하나라도 블록 → 배치 전체 미적용, all-or-nothing 유지), PostToolUse 1회(물리 실행 1회), `recent_tool_history` 는 edit 별(B1 가시성), 예외 안전망·문구 단건 동형. 종전엔 dispatch 가 `apply_edits_batch` 를 직접 불러 배치에서만 훅·이력이 통째로 빠졌다(훅으로 금지한 편집이 배치로는 무사통과).
+- **json_fc 절단 전파 (P0-3)**: EOF 절단 증거(수리 필요 + 미닫힘 괄호를 `close_unbalanced` 로 복구)를 `Op.truncated` 로 전파 — **마지막 op 에만**(절단은 EOF 이므로 앞선 온전한 op 를 과잉 수리하지 않게). 비-절단 수리(제어문자·이스케이프·과닫힘)는 미플래그. 단수 투영(`parse`)도 xml_fc 동형으로 플래그 승계. 종전엔 기본 포맷에서 dispatch 의 edit 절단 새니타이저가 상시 무발화였다.
+
 ### 7.4 Thinking 적용
 
 **기본 게이트 (v8.21.0)**: `supports_thinking` 단독. 정적 `thinking_budget` 필드는 제거됐고, 사고 지원 모델은 런타임 오버라이드가 없으면 **기본 medium** 으로 사고한다.

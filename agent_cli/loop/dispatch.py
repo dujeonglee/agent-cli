@@ -476,15 +476,14 @@ class TurnDispatcher:
         """Apply a run of ≥2 consecutive same-path edit_file ops as ONE batch,
         appending ONE combined result to *accumulate*.
 
-        Calls the pure ``apply_edits_batch`` (resolve all refs against one
-        original read → reject overlaps → bottom-up apply → one write,
-        all-or-nothing). Single-direction call: the loop hands it ``(path,
-        edits)`` and gets a ToolResult back — edit_file knows nothing of the
-        loop. Each op's flat input also gets rendered as its own action card,
-        matching the single-op render.
+        Goes through ``ToolBridge.dispatch_edit_batch`` (P0-2) so the batch
+        carries the SAME hook/history contract as the single-op path
+        (PreToolUse per edit — any block aborts the whole batch, PostToolUse
+        once, ``recent_tool_history`` per edit), while keeping the batch
+        semantics (one ``apply_edits_batch`` apply → one write, all-or-nothing,
+        ONE combined observation). Each op's flat input is still rendered as
+        its own action card, matching the single-op render.
         """
-        from agent_cli.tools.edit_file import apply_edits_batch
-
         for op in batch_ops:
             disp = op.action_input if isinstance(op.action_input, dict) else {}
             render_step(
@@ -497,7 +496,7 @@ class TurnDispatcher:
 
         path = batch_ops[0].action_input.get("path")
         edits = [op.action_input for op in batch_ops]
-        result = apply_edits_batch(path, edits)
+        result = self.tools.dispatch_edit_batch(path, edits)
         observation = self.tools._tool_observation(
             "edit_file", result, batch_ops[0].action_input
         )

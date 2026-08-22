@@ -679,15 +679,23 @@ class JsonFcFormat(WireFormat):
         return turn
 
     def _parse_turn_stripped(self, llm_text: str) -> ParsedTurn:
-        def _ops(items) -> list:
+        def _ops(items, truncated_last: bool = False) -> list:
+            # P0-3: ``truncated_last`` — 본문이 EOF 절단 증거(미닫힘 괄호를
+            # close_unbalanced 로 복구)를 보였으면 **마지막 op 에만** truncated
+            # 를 표시한다. 절단은 EOF 에서 일어나므로 앞선 op 들은 온전하고,
+            # 전 op 에 걸면 dispatch 의 절단 새니타이저가 멀쩡한 edit 의 마지막
+            # 줄까지 깎는다(과잉 수리). 종전엔 json_fc 가 이 플래그를 아예 안
+            # 세워 기본 포맷에서 새니타이저가 상시 무발화였다(xml_fc 만 전파).
+            last = len(items) - 1
             return [
                 Op(
                     action=(
                         it.get("action") if isinstance(it.get("action"), str) else None
                     ),
                     action_input={k: v for k, v in it.items() if k != "action"},
+                    truncated=truncated_last and idx == last,
                 )
-                for it in items
+                for idx, it in enumerate(items)
             ]
 
         # ── legacy 관용: 구 md_array 헤더 (`## Action`) — 전환기 모델
@@ -705,7 +713,10 @@ class JsonFcFormat(WireFormat):
                     if items and not all(not it for it in items):
                         return ParsedTurn(
                             thought=clean_thought,
-                            ops=_ops(items),
+                            ops=_ops(
+                                items,
+                                truncated_last=_repaired and close_unbalanced(body)[1],
+                            ),
                             raw=llm_text,
                             parse_stage=2,
                         )
@@ -735,12 +746,17 @@ class JsonFcFormat(WireFormat):
                 arr = parsed if isinstance(parsed, list) else [parsed]
                 items = [x for x in arr if isinstance(x, dict)]
                 stage = 2 if repaired else 1
+                # P0-3: EOF 절단 증거 = "수리가 필요했고 + 본문 괄호가 EOF 에서
+                # 미닫힘(close_unbalanced 가 changed)". 과닫힘(drop_closers)·
+                # 제어문자·이스케이프 수리 같은 비-절단 수리는 changed=False 라
+                # 플래그되지 않는다 — 마지막 op 만 truncated (아래 _ops 주석).
+                trunc = repaired and close_unbalanced(body)[1]
                 # `any("action")` 가드: 산문 속 `[1,2,3]` 같은 비-op 배열은
                 # 통과시키지 않고 thought-only 로 (NO_ACTION 넛지).
                 if any("action" in it for it in items):
                     return ParsedTurn(
                         thought=thought,
-                        ops=_ops(items),
+                        ops=_ops(items, truncated_last=trunc),
                         raw=llm_text,
                         parse_stage=stage,
                     )
@@ -784,6 +800,7 @@ class JsonFcFormat(WireFormat):
             raw=t.raw,
             parse_stage=t.parse_stage,
             thinking=t.thinking,
+            truncated=first.truncated if first else False,  # P0-3 (xml_fc 동형)
         )
 
     def is_degenerate(self, text: str) -> bool:

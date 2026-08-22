@@ -143,6 +143,68 @@ class ToolBridge:
 
         return result
 
+    def dispatch_edit_batch(self, path: str, edits: list) -> ToolResult:
+        """같은 파일 edit_file 배치 디스패치 — 단건 경로와 **동일한 훅/이력
+        계약** (P0-2). 종전 dispatch 가 ``apply_edits_batch`` 를 직접 불러
+        Pre/PostToolUse 훅과 ``recent_tool_history``(B1 입력)가 배치에서만
+        통째로 빠졌다(훅으로 금지한 편집이 배치로는 무사통과하던 정책 구멍).
+
+        배치 의미는 보존한다:
+          - **적용은 1회** (``apply_edits_batch`` — 단일 읽기→겹침 거부→
+            bottom-up 적용→단일 쓰기, all-or-nothing) + **관찰 1건**.
+          - **PreToolUse 는 edit 별** 발화(각 edit 이 블록/수정 대상) —
+            하나라도 블록되면 **배치 전체 미적용**(원자성 유지) 후 단건과
+            동일 형태의 블록 ToolResult 반환. 단건 계약과 동형으로, 블록 시
+            post-hook/이력은 기록하지 않는다.
+          - **PostToolUse 는 1회**(물리 실행이 1회 — 포매터류 훅이 edit 수만큼
+            중복 실행되지 않게), **이력은 edit 별**(B1 이 각 편집을 보게).
+          - 예외 안전망·문구는 단건 오케스트레이터와 동일.
+        """
+        from agent_cli.tools.edit_file import apply_edits_batch
+
+        processed: list = []
+        for args in edits:
+            if isinstance(args, dict):
+                args = TOOLS["edit_file"].strip_prefix(args)
+            input_dict = args if isinstance(args, dict) else {"raw": str(args)}
+            blocked, args, input_dict = self._run_pre_hooks(
+                "edit_file", args, input_dict
+            )
+            if blocked is not None:
+                # all-or-nothing: 어느 edit 도 적용하지 않았음을 명시.
+                blocked.error += (
+                    f" (batch of {len(edits)} same-file edits — none applied)"
+                )
+                return blocked
+            processed.append(args if isinstance(args, dict) else input_dict)
+
+        try:
+            result = apply_edits_batch(path, processed)
+        except Exception as e:  # 단건 경로와 동일 안전망 (KeyboardInterrupt 전파)
+            import traceback as _tb
+
+            _debug_log(
+                f"TOOL EXCEPTION turn={self.state.turn} tool=edit_file(batch)\n"
+                f"{_tb.format_exc()}"
+            )
+            result = ToolResult(
+                False,
+                error=(
+                    f"Tool 'edit_file' raised "
+                    f"{type(e).__name__}: {e}. "
+                    f"This is likely a malformed input or an internal "
+                    f"tool error. Review the action_input shape and "
+                    f"retry, or try a different approach if the same "
+                    f"input keeps failing."
+                ),
+            )
+
+        first = processed[0] if processed else {}
+        self._run_post_hooks("edit_file", first, result)
+        for args in processed:
+            self._record_tool_history("edit_file", args, result)
+        return result
+
     # ── 1. PreToolUse hooks ────────────────────────────────────────
     def _run_pre_hooks(
         self, tool_name: str, tool_input, input_dict: dict

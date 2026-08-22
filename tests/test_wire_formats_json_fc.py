@@ -229,3 +229,75 @@ class TestLoopE2E:
         args, kwargs = provider.call.call_args_list[0]
         sys_prompt = kwargs.get("system") or (args[1] if len(args) > 1 else "")
         assert "ONE JSON" in sys_prompt
+
+
+class TestTruncatedPropagation:
+    """P0-3: EOF 절단 증거(수리 필요 + 미닫힘 괄호를 close_unbalanced 로 복구)를
+    ``Op.truncated`` 로 전파 — 종전 json_fc 는 이 플래그를 절대 세우지 않아
+    dispatch 의 edit 절단 새니타이저가 **기본 포맷에서 상시 무발화**였다
+    (xml_fc 만 전파). 계약: 절단은 EOF 이므로 **마지막 op 에만** 표시(앞선
+    온전한 op 를 과잉 수리하지 않게), 비-절단 수리는 플래그하지 않는다."""
+
+    def setup_method(self):
+        from agent_cli.wire_formats import get
+
+        self.w = get("json_fc")
+
+    def test_unclosed_batch_flags_last_op_only(self):
+        # 실측 지배 절단 shape: 값은 완성, 닫힘 괄호만 소실.
+        t = self.w.parse_turn(
+            '생각.\n[{"action":"read_file","path":"a.py"},'
+            '{"action":"edit_file","path":"a.py","old_lines":["x"],"new_lines":["y"]'
+        )
+        assert t.parse_stage == 2
+        assert [o.action for o in t.ops] == ["read_file", "edit_file"]
+        assert [o.truncated for o in t.ops] == [False, True]  # 마지막만
+
+    def test_clean_parse_never_flags(self):
+        t = self.w.parse_turn(
+            '[{"action":"read_file","path":"a.py"},{"action":"shell","command":"ls"}]'
+        )
+        assert t.parse_stage == 1
+        assert all(not o.truncated for o in t.ops)
+
+    def test_non_truncation_repairs_not_flagged(self):
+        # (a) 제어문자 관용(stage 2 수리지만 괄호는 닫힘) → 미플래그.
+        t = self.w.parse_turn('[{"action":"write_file","path":"a","content":"l1\nl2"}]')
+        assert t.parse_stage == 2
+        assert all(not o.truncated for o in t.ops)
+        # (b) 과닫힘(`}}]`) — 절단의 반대 → 미플래그.
+        t2 = self.w.parse_turn('[{"action":"shell","command":"ls"}}]')
+        assert t2.ops and not t2.ops[0].truncated
+
+    def test_parse_projection_carries_truncated(self):
+        # 단수 투영(parse)도 xml_fc 동형으로 truncated 를 실어야 한다.
+        p = self.w.parse(
+            '[{"action":"edit_file","path":"a.py","old_lines":["x"],"new_lines":["y"]'
+        )
+        assert p.truncated is True
+        clean = self.w.parse('[{"action":"shell","command":"ls"}]')
+        assert clean.truncated is False
+
+    def test_legacy_header_path_flags_truncated(self):
+        # 구 md_array 헤더 경로도 같은 증거 규칙을 탄다.
+        t = self.w.parse_turn(
+            "## Thought\n생각\n## Action\n"
+            '[{"action":"edit_file","path":"a.py","old_lines":["x"],"new_lines":["y"]'
+        )
+        assert t.parse_stage == 2
+        assert t.ops and t.ops[-1].truncated is True
+
+    def test_sanitizer_consumes_flag_end_to_end(self):
+        # dispatch 새니타이저와의 계약: truncated edit 의 lines 마지막(불완전
+        # 가능) 요소를 깎고 경고를 낸다 — 플래그가 이제 실제로 도달함을 고정.
+        from agent_cli.loop.dispatch import _sanitize_truncated_edit
+
+        t = self.w.parse_turn(
+            '[{"action":"edit_file","path":"a.py","op":"replace",'
+            '"pos":"2#ab","lines":["keep","cut-me"]'
+        )
+        op = t.ops[-1]
+        assert op.truncated
+        sanitized, warning = _sanitize_truncated_edit(dict(op.action_input))
+        assert warning  # 경고 문구 발생
+        assert sanitized["lines"] == ["keep"]  # 마지막(불완전 가능) 줄만 깎임
