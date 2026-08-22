@@ -968,10 +968,14 @@
   // rejected raw text visible and closes the card so the next turn's
   // stream opens a fresh one — instead of appending to the failed card.
   function finalizeStreamingAsFailed(taskId, reason, raw) {
+    // P0-6: reason/raw 는 모델·서버 원문 — el() 3번째 인자는 innerHTML 이므로
+    // 반드시 escapeHtml 경유(미이스케이프 시 모델 출력의 <img onerror=…> 류가
+    // 뷰어 브라우저에서 실행되는 self-XSS).
     function mark(card) {
       card.classList.remove("card-streaming");
       card.classList.add("card-failed");
-      if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
+      if (reason)
+        card.appendChild(el("div", ["fail-reason"], "⚠ " + escapeHtml(reason)));
     }
     if (taskId && taskGroups[taskId]) {
       const g = taskGroups[taskId];
@@ -990,8 +994,9 @@
       // Replay (event_buffer): no live stream card to close — render the
       // rejected emission as a standalone failed card.
       const card = el("div", ["card", "card-failed"]);
-      card.appendChild(el("pre", ["streaming"], raw));
-      if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
+      card.appendChild(el("pre", ["streaming"], escapeHtml(raw)));
+      if (reason)
+        card.appendChild(el("div", ["fail-reason"], "⚠ " + escapeHtml(reason)));
       $messages.appendChild(card);
     }
   }

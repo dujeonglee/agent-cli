@@ -3569,3 +3569,41 @@ def test_roster_snapshot_snapshots_agents_before_iterating(tmp_path):
     # the five originals (snapshotted before the mutations they trigger).
     out = reg.roster_snapshot()
     assert len(out) == 5
+
+
+class TestSeqAtomicity:
+    """P0-9a: seq 발급은 _cv 락 아래 — 무락 ``tm.queued += 1`` 은 동시 request()
+    에서 같은 seq 를 발급해 reply-<seq>.md 상호 덮어쓰기 + UI dedup 키 충돌
+    (요청 화살표 드롭)을 일으킬 수 있었다."""
+
+    def test_concurrent_requests_get_unique_seqs(self, tmp_path, renderer):
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+
+        n = 24
+        start = threading.Barrier(n)
+
+        def send(i):
+            start.wait(timeout=5)  # 동시 돌입 최대화
+            reg.request(key, f"m{i}", author=f"user:u{i}")
+
+        threads = [
+            threading.Thread(target=send, args=(i,), daemon=True) for i in range(n)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        gate.set()
+
+        seqs = [
+            c[1]["seq"]
+            for c in renderer.named("agent_message")
+            if c[1]["direction"] == "in"
+        ]
+        assert len(seqs) == n
+        assert len(set(seqs)) == n, f"duplicate seqs: {sorted(seqs)}"
+        assert sorted(seqs) == list(range(1, n + 1))
+        reg.shutdown_all()

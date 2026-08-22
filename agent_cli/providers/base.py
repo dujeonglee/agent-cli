@@ -49,6 +49,12 @@ class LLMResponse:
     content: str
     tool_calls: list[dict] | None = None
     usage: TokenUsage | None = None
+    # 정규화 어휘 (P0-1) — 프로바이더가 자기 원어를 이 어휘로 매핑해 반환할 계약:
+    #   "stop"   = 정상 종료   (OpenAI stop / Anthropic end_turn·stop_sequence)
+    #   "length" = 출력 절단   (OpenAI length / Anthropic max_tokens)
+    #   합성: "interrupted"(사용자 중단) / "degenerate_runaway"(조기 종료)
+    # 루프의 출력-절단 가드가 "length" 를 비교하므로, 원어를 그대로 흘리면
+    # 가드가 그 프로바이더에서 무발화한다(실사고 — anthropic._STOP_REASON_MAP).
     stop_reason: str | None = None
     # Reasoning content surfaced via a separate API field (e.g. Anthropic
     # thinking blocks, OpenAI reasoning). Empty string when the provider

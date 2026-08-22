@@ -497,6 +497,9 @@ class XmlFcFormat(WireFormat):
             truncated=first.truncated if first else False,
         )
 
+    # 러너웨이 시그니처가 <tool_call> 태그라 게이트 문자도 "<" (P0-4).
+    degeneration_trigger = "<"
+
     def is_degenerate(self, text: str) -> bool:
         # 빈 <tool_call> 골격 반복 = format runaway (≥2 임계 — json_fc 동형).
         hits = len(_DEGEN_EMPTY_BLOCK.findall(text)) + len(

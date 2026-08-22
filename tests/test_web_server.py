@@ -729,6 +729,19 @@ class TestStaticUI:
         # 버튼 title 이 main 한정이 아님
         assert "현재 대화 상대" in html
 
+    def test_failed_card_escapes_model_text(self, server_and_client):
+        """P0-6: 실패 카드는 모델/서버 원문(reason·raw)을 innerHTML 경로(el 3번째
+        인자)로 넣으므로 반드시 escapeHtml 경유 — 미이스케이프면 모델 출력의
+        <img onerror=…> 류가 뷰어 브라우저에서 실행(self-XSS)."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        body = _js_fn_body(js, "finalizeStreamingAsFailed")
+        assert "escapeHtml(reason)" in body
+        assert "escapeHtml(raw)" in body
+        # 미이스케이프 원문 주입 잔재가 없어야 한다.
+        assert '"⚠ " + reason' not in body
+        assert '["streaming"], raw' not in body
+
     def test_agent_icon_per_key_wired(self, server_and_client):
         """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신
         이를 쓴다. 서버(agent_icon) parity 는 test_app_markdown 이 강제.

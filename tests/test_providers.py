@@ -61,7 +61,7 @@ class TestAnthropicProvider:
         assert isinstance(result, LLMResponse)
         assert result.content == '{"thought": "hi"}'
         assert result.usage.input_tokens == 10
-        assert result.stop_reason == "end_turn"
+        assert result.stop_reason == "stop"  # P0-1: end_turn → 정규화 어휘
 
         call_kwargs = mock_post.call_args
         assert "x-api-key" in call_kwargs.kwargs["headers"]
@@ -207,6 +207,109 @@ class TestAnthropicProvider:
         assert result.stop_reason == "degenerate_runaway"
         assert "NEVER_READ" not in result.content
         r.close.assert_called_once()
+
+
+class TestStopReasonNormalization:
+    """P0-1: LLMResponse.stop_reason 은 루프 어휘로 정규화 — Anthropic 원어
+    ``max_tokens`` 가 그대로 흐르면 loop 의 출력-절단 가드(``== "length"``)가
+    무발화해 잘린 write_file/shell 이 디스패치되던 실사고의 계약 고정."""
+
+    def _call(self, caps, stop_reason):
+        with patch("agent_cli.providers.anthropic.requests.post") as mock_post:
+            mock_post.return_value = _mock_response(
+                {
+                    "content": [{"type": "text", "text": "x"}],
+                    "stop_reason": stop_reason,
+                }
+            )
+            provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+            return provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="s",
+                model="m",
+                capabilities=caps,
+            )
+
+    def test_max_tokens_maps_to_length(self, caps_structured):
+        # 절단 가드가 실제로 발화하게 되는 핵심 매핑.
+        assert self._call(caps_structured, "max_tokens").stop_reason == "length"
+
+    def test_end_turn_and_stop_sequence_map_to_stop(self, caps_structured):
+        assert self._call(caps_structured, "end_turn").stop_reason == "stop"
+        assert self._call(caps_structured, "stop_sequence").stop_reason == "stop"
+
+    def test_unknown_and_none_pass_through(self, caps_structured):
+        assert self._call(caps_structured, "tool_use").stop_reason == "tool_use"
+        assert self._call(caps_structured, None).stop_reason is None
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_streaming_path_also_normalized(self, mock_post, caps_structured):
+        # 스트리밍 경로(message_delta 의 stop_reason)도 같은 매핑을 타야 한다.
+        sse = [
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":2}}',
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+        )
+        assert result.stop_reason == "length"
+
+
+class TestDegenerationTrigger:
+    """P0-4: 조기종료 게이트 문자는 wire shape 소유 — 종전 '#' 하드코딩은
+    xml_fc(<tool_call> 반복 러너웨이)에서 조기종료를 구조적으로 무발화시켰다."""
+
+    def test_wire_formats_declare_trigger(self):
+        from agent_cli.wire_formats import get as get_wire
+
+        assert get_wire("json_fc").degeneration_trigger == "#"
+        assert get_wire("xml_fc").degeneration_trigger == "<"
+
+    def test_llm_caller_passes_wire_trigger(self):
+        # llm.py 가 wire 의 트리거를 provider.call 로 전달하는 배선 고정.
+        import inspect
+
+        from agent_cli.loop import llm as llm_mod
+
+        src = inspect.getsource(llm_mod)
+        assert "degeneration_trigger" in src
+        assert "getattr(\n                    self.cfg.wire_format" in src
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_custom_trigger_fires_early_stop(self, mock_post, caps_structured):
+        # '#' 없는 xml 러너웨이 청크 — 트리거 '<' 로 조기종료가 걸려야 한다
+        # (종전 하드코딩에선 predicate 자체가 호출되지 않아 무발화).
+        sse = [
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<tool_call></tool_call>"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<tool_call></tool_call>"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"NEVER_READ"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+            degeneration_check=lambda t: t.count("<tool_call>") >= 2,
+            degeneration_trigger="<",
+        )
+        assert result.stop_reason == "degenerate_runaway"
+        assert "NEVER_READ" not in result.content
 
 
 class TestOpenAIProvider:

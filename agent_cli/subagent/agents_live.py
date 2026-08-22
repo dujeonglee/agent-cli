@@ -609,9 +609,14 @@ class AgentRegistry:
         # timestamp precedes any work it triggers, so the team view shows the
         # request ABOVE (before) the work bar, not after it.
         send_ts = time.time()
-        tm.queued += 1
+        # P0-9a: seq 발급 원자화 — main/peer/웹 스레드가 동시에 request() 하면
+        # 같은 seq 가 나와 replies/reply-<seq>.md 상호 덮어쓰기 + UI dedup 키
+        # 충돌(요청 화살표 드롭)이 가능했다. _cv(RLock 기반) 아래서 증가+캡처.
+        with self._cv:
+            tm.queued += 1
+            seq = tm.queued
         item = {
-            "seq": tm.queued,
+            "seq": seq,
             "text": message,
             "author": author,
             "hop": hop,
@@ -635,7 +640,7 @@ class AgentRegistry:
             "direction": "in",
             "author": author,
             "text": message,
-            "seq": tm.queued,
+            "seq": seq,  # P0-9a: 락 하에서 캡처한 값 — tm.queued 재독은 레이스
             # 수신자 = 이 에이전트. 누락 시 렌더러 기본값 "main" 이 실려
             # 의미가 뒤집히고, TeamView ingest 중복제거 키(author:to:seq:
             # direction)가 **다른 에이전트의 같은 seq 요청**과 충돌해 두
@@ -1192,6 +1197,11 @@ class AgentRegistry:
                 stash = None
                 if item is _SHUTDOWN or tm.stop_event.is_set():
                     break
+                # P0-9b: dequeue 직후 즉시 busy — 종전엔 분류/배치 수집 뒤
+                # _handle_* 안에서야 busy 로 바뀌어, 그 사이 idle-reap 의
+                # any_activity()(state 검사 + inbox.qsize — 방금 비움)가 "활동
+                # 없음"으로 오판해 작업 중 세션을 거둘 수 있었다.
+                tm.state = "busy"
                 # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
                 # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
                 # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과
@@ -1518,12 +1528,18 @@ class MailWaker:
         self._enqueue = enqueue  # (conn_id, text) — web 서버의 입력 큐
         self._has_pending = has_pending
         self._armed = False
+        # P0-9c: _armed 는 worker(on_mail)·펌프(mark_idle/handle_dequeued) 두
+        # 스레드가 공유 — check-then-set 을 락으로 원자화해 "중복 무장 무해"
+        # 가드가 스스로 레이스이던 것을 봉합(비무장 오판 시 wake 유실 → park).
+        self._armed_lock = threading.Lock()
         self.idle = threading.Event()  # worker 가 dequeue 대기 중인 구간
 
     def _arm(self) -> None:
-        if not self._armed:
+        with self._armed_lock:
+            if self._armed:
+                return
             self._armed = True
-            self._enqueue(None, self.WAKE_TEXT)
+        self._enqueue(None, self.WAKE_TEXT)
 
     def on_mail(self) -> None:
         """registry.on_reply 에서 — idle 일 때만 wake."""
@@ -1556,7 +1572,8 @@ class MailWaker:
         "run"(배달할 잔여 있음) 또는 "skip"(이미 배달됨)."""
         if text != self.WAKE_TEXT:
             return None
-        self._armed = False
+        with self._armed_lock:
+            self._armed = False
         return "run" if self._has_pending() else "skip"
 
 

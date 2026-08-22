@@ -25,6 +25,9 @@
 | P0-6 | 프론트 `el(tag, cls, html)` 3번째 인자가 무조건 innerHTML인데 실패 카드가 원문 미이스케이프 주입 | `app.js:974,993-995` | 모델 원문의 `<` **마크업 실행/렌더 파손** (같은 파일 606행은 이스케이프 — 규칙 불일치) |
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
+
+> **수리 현황 (v8.34.0, 1묶음)**: P0-1·P0-4·P0-5·P0-9 ✅ 완료, P0-6 ✅ 최소패치(2콜사이트 escape — el() 규약 정리는 3묶음). P0-2·P0-3(2묶음), P0-8(3묶음) 진행 예정, P0-7 은 사용자 결정으로 보류.
+
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).
 - 웹 헤더 중첩 판정 불일치 — delegate 서브루프가 `ready` 스티키를 서브 모델로 덮음(`render/web.py:1255` vs `minimal.py:285`).

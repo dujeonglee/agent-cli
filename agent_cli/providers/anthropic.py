@@ -32,6 +32,21 @@ _EFFORT_TO_BUDGET = {"low": 4096, "medium": 16384, "high": 32768}
 # Anthropic thinking budget_tokens 하한 (API 제약).
 _MIN_THINKING_BUDGET = 1024
 
+# P0-1: stop_reason 정규화 — LLMResponse.stop_reason 은 **루프 어휘**(OpenAI
+# finish_reason 계열: "length"=출력 절단, "stop"=정상 종료)로 통일한다. 루프의
+# 출력-절단 가드(loop/core.py — ``stop_reason == "length"``)가 Anthropic 원어
+# ("max_tokens")를 몰라 절단된 write_file/shell 이 그대로 디스패치되던 버그의
+# 수리. 미지의 값(합성 "interrupted"/"degenerate_runaway" 포함)은 통과.
+_STOP_REASON_MAP = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+}
+
+
+def _normalize_stop_reason(reason: str | None) -> str | None:
+    return _STOP_REASON_MAP.get(reason, reason)
+
 
 class AnthropicProvider:
     """Adapter for the Anthropic Messages API (/v1/messages)."""
@@ -122,6 +137,7 @@ class AnthropicProvider:
                         on_chunk,
                         kwargs.get("degeneration_check"),
                         kwargs.get("interrupt_check"),
+                        degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     )
                 except StreamIdleTimeout:
                     if attempt >= STREAM_MAX_RECONNECTS:
@@ -141,7 +157,12 @@ class AnthropicProvider:
         return self._parse_response(r.json())
 
     def _handle_stream(
-        self, r, on_chunk, degeneration_check=None, interrupt_check=None
+        self,
+        r,
+        on_chunk,
+        degeneration_check=None,
+        interrupt_check=None,
+        degeneration_trigger="#",
     ) -> LLMResponse:
         """Anthropic SSE 스트림 — 골격은 ``http.run_sse_stream`` 공용 (C6,
         v4.48.0). 이로써 idle notice/StreamIdleTimeout·JSONDecodeError 관용이
@@ -152,6 +173,7 @@ class AnthropicProvider:
             on_chunk,
             map_payload=_map_anthropic_payload,
             degeneration_check=degeneration_check,
+            degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
         )
         f = acc.usage_fields
@@ -178,7 +200,7 @@ class AnthropicProvider:
             content=acc.content,
             tool_calls=None,
             usage=usage,
-            stop_reason=acc.stop_reason,
+            stop_reason=_normalize_stop_reason(acc.stop_reason),
             thinking=acc.thinking,
         )
 
@@ -223,7 +245,7 @@ class AnthropicProvider:
             content=content,
             tool_calls=tool_calls,
             usage=usage,
-            stop_reason=data.get("stop_reason"),
+            stop_reason=_normalize_stop_reason(data.get("stop_reason")),
             thinking=thinking,
         )
 

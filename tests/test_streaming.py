@@ -145,7 +145,7 @@ class TestAnthropicStreaming:
         assert collected == ["Hey", "!"]
         assert result.usage.input_tokens == 8
         assert result.usage.output_tokens == 2
-        assert result.stop_reason == "end_turn"
+        assert result.stop_reason == "stop"  # P0-1: end_turn → 정규화 어휘
 
     def test_no_on_chunk_uses_non_streaming(self):
         from agent_cli.providers.anthropic import AnthropicProvider

@@ -148,6 +148,10 @@ class LLMCaller:
                 capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
                 degeneration_check=self.cfg.wire_format.is_degenerate,
+                # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".
+                degeneration_trigger=getattr(
+                    self.cfg.wire_format, "degeneration_trigger", "#"
+                ),
                 interrupt_check=self._interrupt_check,
                 # 세션 thinking 오버라이드(web UI) — 공유 ctx 라 이 콜이 즉시 반영.
                 request_overrides=(self.ctx.thinking_override if self.ctx else None),

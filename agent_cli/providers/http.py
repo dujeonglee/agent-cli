@@ -387,6 +387,7 @@ def run_sse_stream(
     *,
     map_payload,
     degeneration_check=None,
+    degeneration_trigger="#",
     interrupt_check=None,
 ) -> StreamAccum:
     """SSE 스트림 공용 골격 — 양 provider 동형 보장 지점.
@@ -451,11 +452,12 @@ def run_sse_stream(
                 t_first = _time.perf_counter_ns()
             acc.content += ev.text
             on_chunk(ev.text)
-            # Early-stop format runaway. '#' 게이트로 predicate(regex)를
-            # 새 헤더 가능 시점에만 실행 — O(headers) not O(chunks).
+            # Early-stop format runaway. 게이트 문자는 wire shape 소유
+            # (P0-4 — json_fc "#" 헤더 / xml_fc "<" 태그): 러너웨이 시그니처가
+            # 가능해진 시점에만 predicate(regex) 실행 — O(트리거) not O(chunks).
             if (
                 degeneration_check is not None
-                and "#" in ev.text
+                and degeneration_trigger in ev.text
                 and degeneration_check(acc.content)
             ):
                 acc.stop_reason = "degenerate_runaway"

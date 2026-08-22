@@ -189,7 +189,11 @@ class WebRenderer(Renderer):
         # Pending assistant emission: thought() arrives before action() /
         # final(), so the thought is held until the second call so we can
         # emit a single ``assistant_turn`` event per LLM emission.
-        self._pending_thought: str | None = None
+        # P0-5: **스레드 키 딕셔너리** — 병렬 delegate 워커 N개가 같은 렌더러를
+        # 공유하므로 단일 슬롯이면 서로의 thought 를 덮어써 다른 워커의 카드에
+        # 오귀속됐다(CLI 는 스레드 캡처라 무사했던 비대칭). emit 하는 스레드가
+        # 자기 tid 슬롯만 읽고 지운다; delegate 종료 시 pop 으로 누수 방지.
+        self._pending_thoughts: dict[int, str] = {}
         # ⚡ 자동 승인 (per-session, runtime-only): confirm() 안전 게이트를 끄고
         # 위험 명령/경로 확인을 자동 허용. 기본 OFF, 재시작 시 리셋.
         self._auto_approve: bool = False
@@ -518,6 +522,9 @@ class WebRenderer(Renderer):
                 stack.remove(scope_id)
             if not stack:
                 self._thread_prompt_scopes.pop(tid, None)
+                # 잔여 pending thought 정리 — thought() 후 emit 없이 스코프를
+                # 닫은 워커의 슬롯 누수 방지 (P0-5, end_scope 와 동형).
+                self._pending_thoughts.pop(tid, None)
         self._finalize_prompt_scope(scope_id)
 
     def note_scope_ctx(self, ctx) -> None:
@@ -666,6 +673,9 @@ class WebRenderer(Renderer):
             else:
                 self._thread_to_task.pop(tid, None)
                 self._thread_prompt_scopes.pop(tid, None)
+                # 스코프를 다 닫은 스레드의 잔여 pending thought 정리 —
+                # thought() 후 action/final 없이 죽은 워커의 슬롯 누수 방지 (P0-5).
+                self._pending_thoughts.pop(tid, None)
             # This scope can no longer be anyone's parent — drop its depth entry
             # so a long session doesn't accumulate one per scope. Children were
             # opened while it was live and already carry their own depth.
@@ -1276,8 +1286,8 @@ class WebRenderer(Renderer):
         # or ask in this thread).
         self.note_thought(content)
         # Hold until the matching action / final fires so we can emit
-        # a single ``assistant_turn`` event per LLM emission.
-        self._pending_thought = content
+        # a single ``assistant_turn`` event per LLM emission (per-thread, P0-5).
+        self._pending_thoughts[threading.get_ident()] = content
         # Mirror the CLI behaviour: surface the first line of the
         # thought as the worker's live status so a delegate-task card
         # header shows ``💭 reasoning…`` while the worker is still
@@ -1293,12 +1303,12 @@ class WebRenderer(Renderer):
             "assistant_turn",
             {
                 "turn": turn,
-                "thought": self._pending_thought or "",
+                "thought": self._pending_thoughts.get(threading.get_ident(), ""),
                 "action": {"tool_name": tool_name, "tool_input": tool_input},
             },
             persistent=True,
         )
-        self._pending_thought = None
+        self._pending_thoughts.pop(threading.get_ident(), None)
 
     def observation(
         self,
@@ -1321,7 +1331,7 @@ class WebRenderer(Renderer):
     def final(self, content: str, turn: int) -> None:
         payload = {
             "turn": turn,
-            "thought": self._pending_thought or "",
+            "thought": self._pending_thoughts.get(threading.get_ident(), ""),
             "final": content,
         }
         # ``answers`` (additive) — only on MAIN-timeline finals: a scope's
@@ -1339,7 +1349,7 @@ class WebRenderer(Renderer):
             elif self._run_authors is not None:
                 payload["answers"] = list(self._run_authors)
         self._emit("assistant_turn", payload, persistent=True)
-        self._pending_thought = None
+        self._pending_thoughts.pop(threading.get_ident(), None)
 
     def error(self, content: str, turn: int) -> None:
         # Event name is ``turn_error``, NOT ``error``: the browser's

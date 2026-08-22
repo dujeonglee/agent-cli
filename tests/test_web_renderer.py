@@ -3297,3 +3297,50 @@ class TestAgentWorkNavTs:
         r.begin_agent_work(key="agt-x", seq=1, profile="p", message="hi")
         ss = self._scope_starts(r)
         assert ss and "nav_ts" not in ss[0]
+
+
+class TestPendingThoughtPerThread:
+    """P0-5: thought 보류 슬롯은 스레드별 — 병렬 delegate 워커 N개가 같은
+    렌더러를 공유하므로, 단일 슬롯이면 서로의 thought 를 덮어써 다른 워커의
+    assistant_turn 카드에 오귀속됐다."""
+
+    def test_parallel_threads_keep_own_thought(self):
+        import threading
+
+        r = WebRenderer()
+        barrier = threading.Barrier(2)
+        done = threading.Barrier(3)
+
+        def worker(name):
+            r.thought(f"reasoning-{name}", turn=1)
+            barrier.wait(timeout=5)  # 두 스레드 모두 thought 를 쓴 뒤에 emit
+            r.action("shell", f"cmd-{name}", turn=1)
+            done.wait(timeout=5)
+
+        t1 = threading.Thread(target=worker, args=("A",), daemon=True)
+        t2 = threading.Thread(target=worker, args=("B",), daemon=True)
+        t1.start()
+        t2.start()
+        done.wait(timeout=5)
+        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        assert len(turns) == 2
+        by_cmd = {t["action"]["tool_input"]: t["thought"] for t in turns}
+        # 각 워커의 카드에 자기 thought 가 실린다 (단일 슬롯이면 한쪽이 덮임).
+        assert by_cmd["cmd-A"] == "reasoning-A"
+        assert by_cmd["cmd-B"] == "reasoning-B"
+
+    def test_slot_cleared_after_emit_and_scope_end(self):
+        r = WebRenderer()
+        r.thought("only-once", turn=1)
+        r.action("shell", "c1", turn=1)
+        r.final("done", turn=1)  # 두 번째 emit 에 이전 thought 가 새면 안 됨
+        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        assert turns[0]["thought"] == "only-once"
+        assert turns[1]["thought"] == ""
+        # 스코프 전부 닫힌 스레드의 잔여 슬롯 정리(누수 방지)
+        r.begin_prompt_scope("t1", label="x")
+        r.thought("leaked?", turn=2)
+        r.end_prompt_scope("t1")
+        import threading as _t
+
+        assert _t.get_ident() not in r._pending_thoughts

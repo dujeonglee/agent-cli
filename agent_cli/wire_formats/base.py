@@ -344,6 +344,13 @@ class WireFormat(ABC):
         cleaned, thinking = strip_think_blocks(text, stop=cls.thinking_stop)
         return cleaned, (thinking or None)
 
+    # P0-4: 스트림 조기종료 게이트 문자 — 이 문자가 청크에 나타날 때만
+    # ``is_degenerate`` 를 재실행한다(비용 게이트, O(트리거 발생 수)). 러너웨이
+    # 시그니처가 shape 마다 다르므로 **플러그인이 소유**한다: json_fc 는 마크다운
+    # 헤더 반복이라 "#", xml_fc 는 ``<tool_call>`` 반복이라 "<". 종전엔 http 골격이
+    # "#" 을 하드코딩해 xml_fc 러너웨이에서 조기종료가 구조적으로 무발화했다.
+    degeneration_trigger: str = "#"
+
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
         shape instead of emitting one turn (e.g. several empty ``## Thought``
