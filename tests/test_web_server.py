@@ -3351,3 +3351,56 @@ class TestMaxAgentsEndpoint:
         _, _, client = server_and_client
         d = client.post("/api/max-agents?token=testtoken", json={"value": 5}).json()
         assert d["ok"] is False
+
+
+class TestRenderCoalescing:
+    """렌더 병합 (v8.42.0 — 리뷰 §4.6 효율): 스냅샷 재생/스트리밍의 이벤트
+    폭주 구간에서 ovRender(개요 전체 재렌더)와 scrollToBottom(강제 레이아웃)
+    을 rAF 당 1회로 병합 — 888이벤트 스냅샷 실측 블로킹 1012ms→277ms.
+    이벤트 경로가 직접 호출로 회귀하면 실패한다."""
+
+    def _js(self):
+        with open("agent_cli/web/static/app.js", encoding="utf-8") as f:
+            return f.read()
+
+    def test_coalescers_defined_once(self):
+        js = self._js()
+        assert js.count("function scheduleScroll()") == 1
+        assert js.count("function scheduleOvRender()") == 1
+        # rAF 콜백 몸통은 실함수 직접 호출 (자기재귀 금지)
+        import re
+
+        m = re.search(
+            r"function scheduleScroll\(\).*?requestAnimationFrame\(function \(\) \{(.*?)\}\);",
+            js,
+            re.DOTALL,
+        )
+        assert m and "scrollToBottom();" in m.group(1)
+        m = re.search(
+            r"function scheduleOvRender\(\).*?requestAnimationFrame\(function \(\) \{(.*?)\}\);",
+            js,
+            re.DOTALL,
+        )
+        assert m and "ovRender();" in m.group(1)
+
+    def test_event_paths_use_coalesced_calls(self):
+        """이벤트 훅 경로는 schedule* 만 — 직접 호출은 정의부와 사용자-조작
+        경로(뷰 전환 setViewMode·채널 전환 ovSetChannel)에만 허용."""
+        import re
+
+        js = self._js()
+        direct_ov = [
+            ln.strip()
+            for ln in js.split("\n")
+            if re.search(r"(?<!schedule)(?<!function )ovRender\(\);", ln)
+            and "scheduleOvRender" not in ln
+        ]
+        # 허용 3곳: rAF 콜백 몸통, setViewMode(mode==="overview" 조건), ovSetChannel
+        assert len(direct_ov) == 3, direct_ov
+        direct_scroll = [
+            ln.strip()
+            for ln in js.split("\n")
+            if re.search(r"(?<!function )scrollToBottom\(\);", ln)
+            and "scheduleScroll" not in ln
+        ]
+        assert len(direct_scroll) == 1, direct_scroll  # rAF 콜백 몸통뿐

@@ -424,6 +424,21 @@
     $messages.scrollTop = $messages.scrollHeight;
   }
 
+  // 렌더 병합 (v8.42.0 — 리뷰 §4.6 효율): 스냅샷 재생·스트리밍처럼 이벤트가
+  // 동기로 폭주하는 구간에서 scrollTop=scrollHeight 쓰기가 이벤트마다 전체
+  // 레이아웃을 강제해 O(N²) 였다 (888이벤트 스냅샷에서 ~400ms 블로킹 실측).
+  // requestAnimationFrame 당 1회로 병합 — 폭주 구간에선 사실상 마지막 1회만
+  // 실행되고, 라이브에서도 프레임당 1회로 준다. ~16ms 지연은 인지 불가.
+  var _scrollQueued = false;
+  function scheduleScroll() {
+    if (_scrollQueued) return;
+    _scrollQueued = true;
+    requestAnimationFrame(function () {
+      _scrollQueued = false;
+      scrollToBottom();
+    });
+  }
+
   $messages.addEventListener("scroll", function () {
     // Updating the flag from the scroll handler covers both user
     // wheel/touch input AND our own programmatic scrollTop write —
@@ -593,7 +608,7 @@
       toggle: toggleTaskGroup,
     };
     taskGroups[taskId] = group;
-    scrollToBottom();
+    scheduleScroll();
     return group;
   }
 
@@ -663,7 +678,7 @@
       );
       compactionLines[scope] = line;
       appendToTimeline(line, d.task_id);
-      scrollToBottom();
+      scheduleScroll();
       return;
     }
     // done / warning: update the pending line, or append a fresh one if the
@@ -683,7 +698,7 @@
       textEl.textContent = "Context compaction failed (" + (d.reason || "") + ") — using FIFO";
     }
     delete compactionLines[scope];
-    scrollToBottom();
+    scheduleScroll();
   }
 
   // Agent mail-arrival hint: a live "📨 reply arrived" system line (❓ for a
@@ -702,7 +717,7 @@
         : who + " replied";
     line.appendChild(el("span", ["sys-text"], label));
     appendToTimeline(line, d.task_id);
-    scrollToBottom();
+    scheduleScroll();
   }
 
   // ── Card renderers ─────────────────────────
@@ -728,7 +743,7 @@
     stampCard(card, ts);
     stampNavTs(card, ts);
     $messages.appendChild(card);
-    scrollToBottom();
+    scheduleScroll();
   }
 
   function renderAssistantTurn(d) {
@@ -753,7 +768,7 @@
     }
     stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
-    scrollToBottom();
+    scheduleScroll();
   }
 
   /** Render the action_input portion of an assistant_turn card.
@@ -913,7 +928,7 @@
     }
     stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
-    scrollToBottom();
+    scheduleScroll();
   }
 
   function renderError(d) {
@@ -921,7 +936,7 @@
     card.textContent = d.content;
     stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
-    scrollToBottom();
+    scheduleScroll();
   }
 
   // ── Streaming card (transient) ─────────────
@@ -951,12 +966,12 @@
       const g = taskGroups[taskId];
       if (!g.streamingCard) return;
       g.streamingCard.querySelector(".streaming").textContent = g.streamingText;
-      scrollToBottom();
+      scheduleScroll();
       return;
     }
     if (!streamingCard) return;
     streamingCard.querySelector(".streaming").textContent = streamingText;
-    scrollToBottom();
+    scheduleScroll();
   }
   function clearStreamingCard(taskId) {
     if (taskId && taskGroups[taskId]) {
@@ -1512,7 +1527,7 @@
       )
     );
     appendToTimeline(line);
-    scrollToBottom();
+    scheduleScroll();
   });
 
   es.addEventListener("stream_chunk", function (e) {
@@ -1669,7 +1684,7 @@
     syncTabs();
     // Re-pin the bottom on open: scrollTop writes while the drawer was shut
     // may have landed on stale geometry.
-    if (open && autoScrollEnabled) scrollToBottom();
+    if (open && autoScrollEnabled) scheduleScroll();
   }
 
   // base 뷰 전환(개요 ↔ 흐름). 전문 드로어는 base 위에 뜨는 독립 오버레이라 여기서
@@ -1860,6 +1875,19 @@
     // 않는다 — 읽던 위치 유지. 바닥에 붙어 있을 때만 스트리밍을 따라 자동 스크롤.
     if (ovStick) $overview.scrollTop = $overview.scrollHeight;
   }
+
+  // ovRender 병합 (v8.42.0): 이벤트마다 개요 전체 innerHTML+마크다운 재실행이
+  // 스냅샷 재생에서 지배 비용(888이벤트 ~600ms 실측 — 호출×14항목 마크다운).
+  // 프레임당 1회로 병합. 뷰/채널 전환 등 사용자 조작 경로는 즉시 ovRender().
+  var _ovRenderQueued = false;
+  function scheduleOvRender() {
+    if (_ovRenderQueued) return;
+    _ovRenderQueued = true;
+    requestAnimationFrame(function () {
+      _ovRenderQueued = false;
+      ovRender();
+    });
+  }
   // 이벤트 훅 (아래 es 핸들러에서 호출) — 전부 ovEntries 에 append 만(무상태 페어링).
   function ovOnUserMsg(d) {
     // 본문의 "[라벨]: " 접두에서 라벨을 뽑아 who 로 쓴다 — 실제 사용자면 닉네임,
@@ -1873,14 +1901,14 @@
     // 렌더되므로, 실행 중 들어온 요청도 자연히 [이전 요청 아래 · 진행 표시 위]에 놓인다.
     ovEntries.push({ kind: "user", who: who, text: t, tm: ovClock(d.ts) });
     ovCap();
-    ovRender();
+    scheduleOvRender();
   }
   // 실행 중 진행 내용(thought/원시 스트림)은 요약에 표시하지 않는다 — stream_chunk 는
   // "지금 실행 중"이라는 신호로만 쓰고(활동 스트립 활성화), 본문은 쌓지 않는다.
   function ovOnStream(d) {
     if (d.task_id) return; // 메인 스코프만
     ovActEnsure();
-    ovRender();
+    scheduleOvRender();
   }
   // navTs = d.ts: 메인 스코프 final 카드가 같은 ts 스탬프라 [전체 대화] 점프에 쓴다.
   // complete = 활동 스트립 종료 + 최종 답변을 한 번에 블록으로 append(라이브 타이핑 없음).
@@ -1896,7 +1924,7 @@
       source: "main", // 회신 주체: 메인 LLM
     });
     ovCap();
-    ovRender();
+    scheduleOvRender();
   }
   // 직접 실행한 top-level(depth0) /skill·@agent 의 complete 결과를 기록(모델 B).
   // 중첩(depth>0) 스코프·nav_ts 없는 메인 도구 스코프는 요약에서 제외하지 않지만,
@@ -1915,7 +1943,7 @@
       source: ovScopeSrc[d.task_id] || "agent", // 회신 주체: agent/skill 이름
     });
     ovCap();
-    ovRender();
+    scheduleOvRender();
   }
   // ── 활동 스트립: 실행 중 도구 호출을 축약해 한 줄로(누적 카운트 + 현재 배치) ──
   function ovActEnsure() {
@@ -1967,18 +1995,18 @@
     if (hit) hit.n += 1;
     else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
     a.total += 1;
-    ovRender();
+    scheduleOvRender();
   }
   function ovOnFailed(d) {
     if (d && d.task_id) return; // 메인 스코프만 — 런이 complete 없이 끝나면 스트립 정리
     ovAct = null;
-    ovRender();
+    scheduleOvRender();
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
     ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
     ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
-    ovRender();
+    scheduleOvRender();
   }
   // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
   // 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
@@ -2131,7 +2159,7 @@
       ch.push({ kind: "user", who: d.author || "", text: d.text || "", tm: ovClock(d.ts) });
     }
     if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
-    if (ovActiveChannel === d.key) ovRender();
+    if (ovActiveChannel === d.key) scheduleOvRender();
   }
   // kill(agent_cleared) → 그 채널 대화·트레이 정리 (resume 재생 중복 방지).
   function ovOnAgentCleared(key) {
@@ -2139,7 +2167,7 @@
     delete ovAskTray[key];
     ovRenderAskTray();
     ovSyncChannels();
-    if (ovActiveChannel === key) ovRender();
+    if (ovActiveChannel === key) scheduleOvRender();
   }
   // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
   // (idle/busy/waiting/dead) + ❓(waiting_ask) + ✕(kill)/↻(resume). 에이전트 상태를
@@ -2247,13 +2275,13 @@
           ? "🪄 " + (ovSkills[d.task_id] || "skill")
           : d.agent || d.label || "agent";
     }
-    ovRender();
+    scheduleOvRender();
   }
   function ovOnScopeEnd(d) {
     if (!d || !d.task_id) return;
     delete ovTopScopes[d.task_id];
     if (ovSkills[d.task_id]) delete ovSkills[d.task_id];
-    ovRender();
+    scheduleOvRender();
   }
 
   /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
@@ -2413,7 +2441,7 @@
       if (r.taskId && typeof expandAncestors === "function") expandAncestors(r.taskId);
       scrollTimelineTo(r.card);
     } else {
-      scrollToBottom();
+      scheduleScroll();
     }
   }
 
@@ -2548,7 +2576,7 @@
     // 런 종료(idle) → 활동 스트립 정리(complete 없이 끝난 경우의 안전망).
     if (!d.busy) {
       ovAct = null;
-      ovRender();
+      scheduleOvRender();
     }
   });
 
