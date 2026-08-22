@@ -22,9 +22,10 @@ from agent_cli.skills.models import Skill
 # Search order: project root first (priority), then user home, then built-in
 _BUILTIN_DIR = Path(__file__).parent / "builtin"
 
+from agent_cli.paths import scoped_paths
+
 _SEARCH_PATHS = [
-    Path.cwd() / ".agent-cli" / "skills",
-    Path.home() / ".agent-cli" / "skills",
+    *scoped_paths("skills"),
     _BUILTIN_DIR,
 ]
 

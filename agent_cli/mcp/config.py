@@ -16,10 +16,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_MCP_CONFIG_PATHS = [
-    Path.home() / ".agent-cli" / "mcp.json",  # user global (lower priority)
-    Path.cwd() / ".agent-cli" / "mcp.json",  # project local (higher priority)
-]
+# 소비(load_mcp_config)가 정순 순회 later-wins 라 역순으로 뒤집는다 —
+# 선언 자체는 scoped_paths 캐노니컬([프로젝트, 사용자])에서 파생 (v8.40.0).
+from agent_cli.paths import scoped_paths
+
+_MCP_CONFIG_PATHS = list(reversed(scoped_paths("mcp.json")))
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 

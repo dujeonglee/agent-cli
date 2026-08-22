@@ -30,9 +30,11 @@ class ProviderDefaults:
 
 
 # Search order: project local > user global > package defaults
+# (경로쌍은 scoped_paths 단일 소스 — v8.40.0, 리뷰 §4.5)
+from agent_cli.paths import scoped_paths
+
 _SEARCH_PATHS = [
-    Path.cwd() / ".agent-cli" / "models.json",
-    Path.home() / ".agent-cli" / "models.json",
+    *scoped_paths("models.json"),
     Path(__file__).parent / "default_models.json",
 ]
 
@@ -146,10 +148,7 @@ def reload_registry() -> None:
 # ── Config.json (provider/model/url settings) ──────────────────
 
 # Config search order: workspace (highest) > user > env (lowest)
-_CONFIG_PATHS = [
-    Path.cwd() / ".agent-cli" / "config.json",  # workspace
-    Path.home() / ".agent-cli" / "config.json",  # user
-]
+_CONFIG_PATHS = scoped_paths("config.json")
 
 # Environment variable → config key mapping
 _ENV_MAP = {

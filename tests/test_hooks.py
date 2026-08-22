@@ -941,3 +941,98 @@ class TestDiskHooksThroughLoop:
         second_msgs = provider.call.call_args_list[1].kwargs["messages"]
         observation = second_msgs[-1]["content"]
         assert "Blocked by PreToolUse hook" in observation
+
+
+class TestLoadHooksMergesBothScopes:
+    """v8.40.0 병합 규칙 통일(사용자 결정 — '둘 다 발화'): 프로젝트+사용자
+    hooks.json 이 둘 다 있으면 이벤트별 matcher 연결 병합(프로젝트 먼저) —
+    종전 first-found-only(프로젝트 파일 존재만으로 사용자 전역 안전 훅이
+    통째로 꺼지던 함정)의 대체. Python 훅 디렉토리·스킬 frontmatter 훅의
+    누적 철학과 동형."""
+
+    def _write(self, path, payload):
+        import json as _json
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(payload))
+
+    def _patch_paths(self, monkeypatch, project, user):
+        import agent_cli.hooks.shell as hooks_shell
+
+        monkeypatch.setattr(hooks_shell, "_HOOKS_PATHS", [project, user])
+
+    def test_same_event_concatenates_project_first(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj" / "hooks.json"
+        user = tmp_path / "user" / "hooks.json"
+        self._write(
+            project,
+            {"PreToolUse": [{"matcher": "shell", "hooks": [{"command": "echo P"}]}]},
+        )
+        self._write(
+            user,
+            {"PreToolUse": [{"matcher": "", "hooks": [{"command": "echo U"}]}]},
+        )
+        self._patch_paths(monkeypatch, project, user)
+        result = load_hooks(use_cache=False)
+        cmds = [h.command for m in result["PreToolUse"] for h in m.hooks]
+        assert cmds == ["echo P", "echo U"]  # 둘 다 + 프로젝트 먼저
+
+    def test_disjoint_events_union(self, tmp_path, monkeypatch):
+        """종전 first-found 에선 사용자 파일의 PostToolUse 가 통째로
+        무시됐다 — 이제 합집합."""
+        project = tmp_path / "proj" / "hooks.json"
+        user = tmp_path / "user" / "hooks.json"
+        self._write(
+            project,
+            {"PreToolUse": [{"matcher": "shell", "hooks": [{"command": "echo P"}]}]},
+        )
+        self._write(
+            user,
+            {"PostToolUse": [{"matcher": "", "hooks": [{"command": "echo U"}]}]},
+        )
+        self._patch_paths(monkeypatch, project, user)
+        result = load_hooks(use_cache=False)
+        assert set(result) == {"PreToolUse", "PostToolUse"}
+
+    def test_single_scope_unchanged(self, tmp_path, monkeypatch):
+        """한쪽만 있으면 종전과 동일 — 그 파일만 쓰인다 (등가성 보존)."""
+        project = tmp_path / "proj" / "hooks.json"
+        user = tmp_path / "user" / "hooks.json"  # 미생성
+        self._write(
+            project,
+            {"PreToolUse": [{"matcher": "shell", "hooks": [{"command": "echo P"}]}]},
+        )
+        self._patch_paths(monkeypatch, project, user)
+        result = load_hooks(use_cache=False)
+        cmds = [h.command for m in result["PreToolUse"] for h in m.hooks]
+        assert cmds == ["echo P"]
+
+        # 사용자만 있는 경우도 동일
+        project2 = tmp_path / "proj2" / "hooks.json"  # 미생성
+        self._write(
+            user,
+            {"PostToolUse": [{"matcher": "", "hooks": [{"command": "echo U"}]}]},
+        )
+        self._patch_paths(monkeypatch, project2, user)
+        result = load_hooks(use_cache=False)
+        assert list(result) == ["PostToolUse"]
+
+    def test_user_safety_hook_survives_project_file(self, tmp_path, monkeypatch):
+        """이 변경의 존재 이유: 사용자 전역 위험-명령 차단 훅이 프로젝트
+        hooks.json 존재만으로 꺼지지 않고 실제 발화한다 (run_hooks 까지)."""
+        project = tmp_path / "proj" / "hooks.json"
+        user = tmp_path / "user" / "hooks.json"
+        self._write(
+            project,
+            {"PostToolUse": [{"matcher": "", "hooks": [{"command": "exit 0"}]}]},
+        )
+        self._write(
+            user,
+            {"PreToolUse": [{"matcher": "shell", "hooks": [{"command": "exit 2"}]}]},
+        )
+        self._patch_paths(monkeypatch, project, user)
+        cfg = load_hooks(use_cache=False)
+        result = run_hooks(
+            "PreToolUse", "shell", {"command": "rm -rf /"}, hooks_config=cfg
+        )
+        assert result.allowed is False  # 사용자 전역 차단 훅 발화

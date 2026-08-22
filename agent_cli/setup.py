@@ -102,9 +102,12 @@ class SetupWizard:
         """Display any existing global or project configs so the user
         can reference them before picking new values. Silent when no
         config exists (first-time setup)."""
+        from agent_cli.paths import scoped_paths
+
+        project_cfg, user_cfg = scoped_paths("config.json")
         candidates = [
-            ("Project", Path.cwd() / ".agent-cli" / "config.json"),
-            ("User (global)", Path.home() / ".agent-cli" / "config.json"),
+            ("Project", project_cfg),
+            ("User (global)", user_cfg),
         ]
         entries: list[tuple[str, Path, dict]] = []
         for label, path in candidates:
@@ -246,10 +249,10 @@ class SetupWizard:
 
         choice = IntPrompt.ask("   Select", default=2, choices=["1", "2"])
 
-        if choice == 1:
-            path = Path.cwd() / ".agent-cli" / "config.json"
-        else:
-            path = Path.home() / ".agent-cli" / "config.json"
+        from agent_cli.paths import scoped_paths
+
+        project_cfg, user_cfg = scoped_paths("config.json")
+        path = project_cfg if choice == 1 else user_cfg
 
         save_config(config, path)
         self.console.print(f"   [green]Saved to {path}[/]")

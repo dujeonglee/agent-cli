@@ -22,9 +22,10 @@ _PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 # subagent/ 아래라 패키지 루트까지 parent 2단.
 _BUILTIN_PROFILES_DIR = Path(__file__).parent.parent / "agents" / "builtin"
 
+from agent_cli.paths import scoped_paths
+
 _PROFILE_SEARCH_PATHS = [
-    Path.cwd() / ".agent-cli" / "agents",
-    Path.home() / ".agent-cli" / "agents",
+    *scoped_paths("agents"),
     _BUILTIN_PROFILES_DIR,
 ]
 

@@ -41,10 +41,9 @@ def _rai_prefixed(wire_format, tool_name: str, action_input: dict) -> str:
 
 
 # ── DIRECTIVE.md search paths ────────────────────
-_DIRECTIVE_PATHS = [
-    Path.cwd() / ".agent-cli",
-    Path.home() / ".agent-cli",
-]
+from agent_cli.paths import scoped_paths
+
+_DIRECTIVE_PATHS = scoped_paths()
 
 
 def project_directive_file() -> Path:

@@ -12,10 +12,9 @@ from agent_cli.hooks.events import ALL_EVENTS, EVENT_TO_FUNC
 
 def _hook_dirs() -> list[Path]:
     """Return hook directories in execution order: project → user."""
-    return [
-        Path.cwd() / ".agent-cli" / "hooks",
-        Path.home() / ".agent-cli" / "hooks",
-    ]
+    from agent_cli.paths import scoped_paths
+
+    return scoped_paths("hooks")
 
 
 def _scan_hook_files(dirs: list[Path] | None = None) -> list[Path]:

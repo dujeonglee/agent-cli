@@ -26,7 +26,7 @@
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
 
-> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수). 5묶음(v8.38.0) — **T3 테마 본체** ✅: agent 모드 테이블화(`AGENT_MODES`+`_MODE_HANDLERS` — 5중 나열 소멸, 신·구 출력 20케이스 바이트 동일) + 도구 정책 선언화(`terminal`/`depth_gated`/`requires_handler`/`force_mount` 클래스 속성 — tools_list·턴 종결이 속성 파생, 60조합 등가성 매트릭스로 증명). 6묶음(v8.39.0) — **run/web 조립기** ✅: `agent_cli/runtime.py`(`AgentRuntime` 13키 단일 정의·registry/waker 조립 공용화·`teardown_session` 단일 소유), HEAD 3벌 dict 추출-대조 + CliRunner 실구동 경로 검증. **부수 발견·수리 3건**: ①web 채팅 턴·상주 에이전트의 디스크 훅(hooks.json) 미배선 — run 과 동형 배선으로 수리(디스크→루프 전 체인 기능 테스트 고정) ②skill 조기-반환 경로 registry 미종료+MCP 미해제 ③@agent 경로 MCP 미해제 — 전 종료 경로가 단일 finally 로 수렴.
+> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수). 5묶음(v8.38.0) — **T3 테마 본체** ✅: agent 모드 테이블화(`AGENT_MODES`+`_MODE_HANDLERS` — 5중 나열 소멸, 신·구 출력 20케이스 바이트 동일) + 도구 정책 선언화(`terminal`/`depth_gated`/`requires_handler`/`force_mount` 클래스 속성 — tools_list·턴 종결이 속성 파생, 60조합 등가성 매트릭스로 증명). 6묶음(v8.39.0) — **run/web 조립기** ✅: `agent_cli/runtime.py`(`AgentRuntime` 13키 단일 정의·registry/waker 조립 공용화·`teardown_session` 단일 소유), HEAD 3벌 dict 추출-대조 + CliRunner 실구동 경로 검증. **부수 발견·수리 3건**: ①web 채팅 턴·상주 에이전트의 디스크 훅(hooks.json) 미배선 — run 과 동형 배선으로 수리(디스크→루프 전 체인 기능 테스트 고정) ②skill 조기-반환 경로 registry 미종료+MCP 미해제 ③@agent 경로 MCP 미해제 — 전 종료 경로가 단일 finally 로 수렴. 7묶음(v8.40.0) — **경로쌍 단일화** ✅: `scoped_paths()` 7모듈 8상수 파생(HEAD 대조 8/8 일치), hooks.json 병합 규칙 통일(둘 다 발화 — 사용자 전역 안전 훅이 프로젝트 파일 존재로 꺼지던 함정 제거, 신규 계약 테스트 4종).
 
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).
@@ -93,7 +93,7 @@
 - ~~run/web 부트스트랩·teardown 조립기 추출(runtime dict 3중·종료경로 4갈래 해소)~~ ✅ v8.39.0 (`agent_cli/runtime.py`: `AgentRuntime`+`build_agent_registry`/`wire_agent_mail`+`teardown_session`; **부수 발견·수리 3건** — web 채팅 턴·상주 에이전트 디스크 훅 미배선(run 만 배선돼 있었음), skill 조기-반환 경로 registry/MCP 미정리, @agent 경로 MCP 미해제)
 - 프로바이더 self-register + capability transport 흡수; wire ABC `parse_turn` 1차화 + 사문 빌더 제거
 - Renderer ABC 코어/옵셔널 프로토콜 분리; sticky+엔드포인트 선언형 레지스트리
-- `.agent-cli` 경로쌍 `scoped_paths()` 단일화(+훅 병합 규칙 통일)
+- ~~`.agent-cli` 경로쌍 `scoped_paths()` 단일화(+훅 병합 규칙 통일)~~ ✅ v8.40.0 (`agent_cli/paths.py` — 7모듈 8상수 파생, HEAD 표현식 재구성 대조 8/8 순서 포함 일치; hooks.json 은 사용자 결정으로 first-found→**둘 다 발화**(이벤트별 연결, 프로젝트 먼저) — 유일한 의도 동작 변경)
 - 프론트 ES 모듈 분할(`type="module"` — 빌드 불필요) + `postJson`/`escapeHtml`/클립보드 util 단일화 → 테스트의 소스 스크레이핑도 함께 소멸
 
 **P2 — 효율 (측정 후 순차)**
@@ -193,7 +193,7 @@
 - [중간][확장성] `build_system_prompt` 래퍼 시그니처 이탈 / kwargs 위임 or 삭제.
 - [중간][일관성] 스킬 0개 판정 `len<=2` 상시 거짓 / `len==4` 정정.
 - ~~[중간][일관성] `save_config` 캐시 미무효화 / `reload_config()` 호출.~~ ✅ v8.37.0
-- [중간][중복성] `.agent-cli` 경로쌍 6곳(순서·병합·시점 제각각) / `scoped_paths()` 단일화.
+- ~~[중간][중복성] `.agent-cli` 경로쌍 6곳(순서·병합·시점 제각각) / `scoped_paths()` 단일화.~~ ✅ v8.40.0 (선언 캐노니컬=[프로젝트, 사용자]; mcp 의 역순 소비는 reversed 파생으로 보존; 병합 입도는 자원별 의도 보존 — hooks.json 만 통일)
 - [중간][일관성] 훅만 파일 대체(타 설정은 병합) / `merge_hooks_configs` 통일.
 - [중간][중복성] hooks/shell.py 파싱 24행 중복 / `parse_hooks_config` 재사용.
 - [중간][확장성] 훅 오류 전면 무음 / 경고+수집 필드.

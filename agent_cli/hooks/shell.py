@@ -6,7 +6,8 @@ They receive JSON on stdin and communicate via exit codes:
   - exit 2: block (PreToolUse only)
   - other: non-blocking error (proceed with warning)
 
-Configuration: .agent-cli/hooks.json (project) or ~/.agent-cli/hooks.json (global)
+Configuration: .agent-cli/hooks.json (project) + ~/.agent-cli/hooks.json
+(global) — both fire, merged per event, project matchers first (v8.40.0)
 """
 
 from __future__ import annotations
@@ -43,63 +44,72 @@ class HookResult:
     stderr: str | None = None
 
 
-# Search paths for hooks config
-_HOOKS_PATHS = [
-    Path.cwd() / ".agent-cli" / "hooks.json",
-    Path.home() / ".agent-cli" / "hooks.json",
-]
+# Search paths for hooks config (경로쌍 단일 소스 — v8.40.0, 리뷰 §4.5)
+from agent_cli.paths import scoped_paths
+
+_HOOKS_PATHS = scoped_paths("hooks.json")
 
 _cached_hooks: dict[str, list[HookMatcher]] | None = None
 
 
-def load_hooks(use_cache: bool = True) -> dict[str, list[HookMatcher]]:
-    """Load hook configuration from disk.
+def _parse_hooks_file(hooks_path: Path) -> dict[str, list[HookMatcher]]:
+    """hooks.json 한 파일 → {event: [HookMatcher]} (파싱 관용은 종전 동일)."""
+    result: dict[str, list[HookMatcher]] = {}
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except Exception:
+        return result
+    if not isinstance(data, dict):
+        return result
 
-    Project-local hooks.json takes priority over user-global.
+    for event_name, matchers_raw in data.items():
+        if not isinstance(matchers_raw, list):
+            continue
+        matchers = []
+        for m in matchers_raw:
+            if not isinstance(m, dict):
+                continue
+            hooks_list = [
+                HookEntry(
+                    command=h.get("command", ""),
+                    timeout=int(h.get("timeout", 30)),
+                )
+                for h in m.get("hooks", [])
+                if isinstance(h, dict) and h.get("command")
+            ]
+            if hooks_list:
+                matchers.append(
+                    HookMatcher(
+                        matcher=m.get("matcher", ""),
+                        hooks=hooks_list,
+                    )
+                )
+        if matchers:
+            result[event_name] = matchers
+    return result
+
+
+def load_hooks(use_cache: bool = True) -> dict[str, list[HookMatcher]]:
+    """Load hook configuration from disk — 프로젝트+사용자 **둘 다 발화**.
+
+    v8.40.0 병합 규칙 통일(사용자 결정): 종전엔 첫 발견 파일만 읽어
+    프로젝트 hooks.json 이 존재하는 순간 사용자 전역 파일(안전 훅 포함)이
+    통째로 무시됐다. 이제 이벤트별로 두 파일의 matcher 를 **연결 병합** —
+    프로젝트 훅이 먼저, 사용자 전역 훅이 뒤에 발화한다 (Python 훅
+    디렉토리의 '프로젝트 → 사용자 둘 다 실행'·스킬 frontmatter 훅의
+    ``merge_hooks_configs`` 연결 병합과 동형 철학). 한쪽만 있으면 종전과
+    동일하게 그 파일만 쓰인다.
     """
     global _cached_hooks
     if use_cache and _cached_hooks is not None:
         return _cached_hooks
 
     result: dict[str, list[HookMatcher]] = {}
-
-    for hooks_path in _HOOKS_PATHS:
+    for hooks_path in _HOOKS_PATHS:  # [프로젝트, 사용자] — 발화 순서
         if not hooks_path.is_file():
             continue
-        try:
-            data = json.loads(hooks_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        if not isinstance(data, dict):
-            continue
-
-        for event_name, matchers_raw in data.items():
-            if not isinstance(matchers_raw, list):
-                continue
-            matchers = []
-            for m in matchers_raw:
-                if not isinstance(m, dict):
-                    continue
-                hooks_list = [
-                    HookEntry(
-                        command=h.get("command", ""),
-                        timeout=int(h.get("timeout", 30)),
-                    )
-                    for h in m.get("hooks", [])
-                    if isinstance(h, dict) and h.get("command")
-                ]
-                if hooks_list:
-                    matchers.append(
-                        HookMatcher(
-                            matcher=m.get("matcher", ""),
-                            hooks=hooks_list,
-                        )
-                    )
-            if matchers:
-                result[event_name] = matchers
-
-        break  # Use first found file only
+        for event_name, matchers in _parse_hooks_file(hooks_path).items():
+            result.setdefault(event_name, []).extend(matchers)
 
     _cached_hooks = result
     return result

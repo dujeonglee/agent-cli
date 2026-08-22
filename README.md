@@ -593,7 +593,7 @@ def pre_llm_call(ctx):
 
 ### Shell Hooks (기존 방식)
 
-`.agent-cli/hooks.json`:
+`.agent-cli/hooks.json`(프로젝트) + `~/.agent-cli/hooks.json`(사용자 전역) — **둘 다 발화**합니다(v8.40.0): 이벤트별로 두 파일의 matcher 가 연결 병합되어 프로젝트 훅이 먼저, 사용자 전역 훅이 뒤에 실행됩니다(Python 훅 디렉토리의 '둘 다 실행'과 동형). 종전(v8.39.x 이하)에는 프로젝트 파일이 존재하면 사용자 전역 파일이 통째로 무시됐습니다.
 
 ```json
 {
