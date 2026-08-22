@@ -746,19 +746,20 @@ class TestStaticUI:
 
         assert "agent_icon(key)" in inspect.getsource(WebRenderer.begin_agent_work)
 
-    def test_agent_status_dots_moved_to_flow_tab(self, server_and_client):
-        """v8.32.0: 개요 상단 ambient 줄 제거 — 에이전트 상태 dots 는 흐름 탭으로,
-        ctx%·뷰어·모델·스킬(헤더 중복)은 삭제."""
+    def test_agent_status_dot_on_channel_chip(self, server_and_client):
+        """v8.32.0 개요 ambient 줄 제거(ctx%·뷰어·모델 헤더 중복). v8.33.0:
+        에이전트 상태 dot 을 채널 칩(agent 탭)에 직접 — 흐름-탭 dots 통합."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # 흐름 탭에 dots 컨테이너 + 렌더 함수 + roster 배선
-        assert 'id="vt-flow-dots"' in html
-        assert "function ovRenderTabDots(" in js
-        assert "ovRenderTabDots()" in _js_fn_body(js, "ovOnRoster")
-        assert ".vt-dots" in css and ".ov-dot" in css
-        # 구 ambient 는 완전 제거
+        # 채널 칩 안에 상태 dot (흐름-탭 dots 제거)
+        chip = _js_fn_body(js, "ovChanChip")
+        assert '"ov-dot "' in chip or "ov-dot " in chip
+        assert ".ov-dot" in css
+        assert 'id="vt-flow-dots"' not in html
+        assert "ovRenderTabDots" not in js and ".vt-dots" not in css
+        # 구 ambient 완전 제거
         assert "ovAmbient" not in js
         assert ".ov-ambient" not in css and "ovOnCtx" not in js
 

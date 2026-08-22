@@ -1406,8 +1406,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   color: var(--text-2); font-size: 13.5px; text-align: center;
   margin-top: 48px; padding: 0 20px;
 }
-/* 에이전트 상태 dots — 흐름 탭에 표시(v8.32.0, 구 개요 ambient 에서 이동) */
-.vt-dots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+/* 에이전트 상태 dot — 채널 칩(agent 탭) 안에 표시(v8.33.0) */
+.ov-ch .ov-dot { flex: none; }
 .ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ov-dot.b { background: var(--warn); } .ov-dot.i { background: var(--ok); }
 .ov-dot.w { background: var(--cyan); } .ov-dot.x { background: var(--text-2); }

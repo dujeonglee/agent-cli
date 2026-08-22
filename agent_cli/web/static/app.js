@@ -1744,20 +1744,6 @@
     var d = new Date(ms);
     return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
   }
-  // 에이전트 상태 dots 를 흐름 탭에 렌더(구 개요 상단 ambient 줄에서 이동). 나머지
-  // ambient 항목(ctx%·뷰어·모델·스킬)은 헤더 등과 중복이라 제거(v8.32.0).
-  function ovRenderTabDots() {
-    var el = document.getElementById("vt-flow-dots");
-    if (!el) return;
-    el.innerHTML = ovRoster
-      .map(function (a) {
-        var s = a.state;
-        var c = s === "busy" ? "b" : s === "waiting_ask" ? "w" : s === "dead" ? "x" : "i";
-        return '<span class="ov-dot ' + c + '" title="' +
-          escapeHtml((a.profile || a.name || a.key || "") + " · " + s) + '"></span>';
-      })
-      .join("");
-  }
   // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
   function ovUserHtml(e) {
     var icon = /🤝/.test(e.who) ? "" : "👤 ";
@@ -1974,9 +1960,8 @@
   }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
-    ovSyncChannels(); // 채널 바 옵션·선택 유효성 갱신(죽으면 main 복귀)
+    ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
     ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
-    ovRenderTabDots(); // 흐름 탭의 에이전트 상태 dots
     ovRender();
   }
   // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
@@ -2140,9 +2125,9 @@
     ovSyncChannels();
     if (ovActiveChannel === key) ovRender();
   }
-  // 드롭박스 옵션(main + 살아있는 agent) 동기화 + 선택 유효성 검증.
-  // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩 상태: ❓(waiting_ask)
-  // ·dead(dim). agent 칩엔 ✕(kill)/↻(resume). (🔔 안본회신 배지는 v8.31.0 제거.)
+  // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
+  // (idle/busy/waiting/dead) + ❓(waiting_ask) + ✕(kill)/↻(resume). 에이전트 상태를
+  // 이 "agent 탭"에 직접 표시(v8.33.0 — 구 흐름-탭 dots 통합).
   function ovSyncChannels() {
     var bar = document.getElementById("ov-channels");
     if (!bar) return;
@@ -2152,18 +2137,24 @@
         !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
       ovActiveChannel = "main";
     }
-    var html = ovChanChip("main", "💬 main", false, false, ovActiveChannel === "main");
+    var html = ovChanChip("main", "💬 main", "", ovActiveChannel === "main");
     ovRoster.forEach(function (t) {
       html += ovChanChip(
-        t.key, ovAgentLabel(t.key), t.state === "dead",
-        t.state === "waiting_ask", ovActiveChannel === t.key
+        t.key, ovAgentLabel(t.key), t.state, ovActiveChannel === t.key
       );
     });
     bar.innerHTML = html;
     ovApplyChannelInput();
   }
-  function ovChanChip(key, label, dead, waiting, active) {
-    var badges = waiting ? '<span class="ov-ch-q">❓</span>' : "";
+  function ovChanChip(key, label, state, active) {
+    var dead = state === "dead";
+    // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
+    var dot = "";
+    if (key !== "main") {
+      var c = state === "busy" ? "b" : state === "waiting_ask" ? "w" : dead ? "x" : "i";
+      dot = '<span class="ov-dot ' + c + '"></span>';
+    }
+    var badges = state === "waiting_ask" ? '<span class="ov-ch-q">❓</span>' : "";
     var ctrl = "";
     if (key !== "main") {
       ctrl = dead
@@ -2173,7 +2164,7 @@
     return (
       '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
       '" data-key="' + escapeHtml(key) + '" role="tab" aria-selected="' +
-      (active ? "true" : "false") + '"><span class="ov-ch-lb">' +
+      (active ? "true" : "false") + '">' + dot + '<span class="ov-ch-lb">' +
       escapeHtml(label) + "</span>" + badges + ctrl + "</span>"
     );
   }
