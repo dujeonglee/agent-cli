@@ -20,6 +20,7 @@ from agent_cli.tools.result import ToolResult
 
 class CompleteTool(Tool):
     name = "complete"
+    terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
     description = "Call this tool when the task is done. Provide the final result."
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -41,6 +42,7 @@ class CompleteTool(Tool):
 
 class AskTool(Tool):
     name = "ask"
+    requires_handler = "ctx"  # 비대화형 루프(ctx 없음)에선 목록에서 제거
     # Compact gate only. The full ask-vs-complete decision tree (examples,
     # rule of thumb) lives in the inline guide ``_ASK_INLINE`` in
     # ``prompts/system_prompt.py``, which is always rendered right after
@@ -79,6 +81,9 @@ class MessageTool(Tool):
     # Present ONLY for resident (persistent) sub-agents — the loop injects a
     # ``message_handler`` and force-adds this tool for them, and strips it
     # everywhere else (the main agent talks to agents via the ``agent`` tool).
+    # 이 정책은 아래 두 선언에서 파생된다 (T3 선언화).
+    requires_handler = "message_handler"
+    force_mount = True
     description = (
         "Message another running agent (a peer, or `main`) and keep working. "
         "Async: your message is delivered to them and its reply comes back to "
@@ -112,6 +117,8 @@ class MessageTool(Tool):
 
 class RunSkillTool(Tool):
     name = "run_skill"
+    terminal = True  # 턴 종결 (complete 와 동형 — flush 후 디스패치)
+    depth_gated = True  # 결합 깊이 상한에서 제거 (스킬도 depth 계수)
     description = (
         "Run a registered skill by name. Use this to invoke specialized "
         "prompt-based workflows like code review, optimization, or test generation."

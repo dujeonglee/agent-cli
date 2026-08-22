@@ -342,10 +342,12 @@ class TurnDispatcher:
         i = 0
         while i < len(ops):
             op = ops[i]
-            # Turn-ending special actions: flush accumulated results BEFORE
-            # the branch runs so its observation lands after the work done
-            # so far (chronological order for the model).
-            if op.action in ("complete", "run_skill"):
+            tool = TOOLS.get(op.action) if op.action else None
+            # Turn-ending actions (complete/run_skill): flush accumulated
+            # results BEFORE the branch runs so its observation lands after
+            # the work done so far (chronological order for the model).
+            # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
+            if tool is not None and tool.terminal:
                 self._flush_op_results(
                     llm_text, results, corrected_record=outcome.get("corrected_record")
                 )
@@ -358,7 +360,6 @@ class TurnDispatcher:
             # keeps its B1/A4/A5 guards. Mutating tools (parallel_safe=False)
             # always take the sequential per-op path — order is their
             # correctness guarantee (write→edit same file, mkdir→touch).
-            tool = TOOLS.get(op.action) if op.action else None
             # Same-file edit batch: a run of ≥2 consecutive edit_file ops on the
             # SAME path is applied together against ONE original read (all refs
             # resolved before any write, bottom-up, all-or-nothing) so a later

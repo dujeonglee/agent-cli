@@ -1578,6 +1578,160 @@ class MailWaker:
 
 
 # ── LLM 도구 진입점 (tool_bridge 인터셉트) ──────
+#
+# 모드 테이블화 (리뷰 §4.4 T3): 상주 모드별 처리는 ``_agent_<mode>`` 핸들러
+# 함수 + ``_MODE_HANDLERS`` 테이블 — 종전 tool_agent 안의 if-체인.
+# 모드 추가 = agent_tool.AGENT_MODES 한 줄 + 핸들러 함수 하나
+# (커버리지는 tests 의 테이블↔핸들러 정합 테스트가 고정).
+
+
+def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
+    key, error = registry.spawn(
+        profile=args.get("profile", ""),
+        name=args.get("name", ""),
+        instructions=args.get("instructions", ""),
+        allowed_tools=args.get("tools"),
+        context_mode=args.get("context", "none"),
+        parent_ctx=parent_ctx,
+        runtime=runtime,
+    )
+    if error:
+        return ToolResult(False, error=f"spawn rejected: {error}")
+    _parts = [p for p in (args.get("profile", ""), args.get("name", "")) if p]
+    lines = [f"spawned agent '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")]
+    # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
+    # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
+    profile_arg = args.get("profile", "")
+    if profile_arg:
+        dead_same_role = [
+            tm.key
+            for tm in registry._agents.values()
+            if tm.profile_name == profile_arg and tm.state == "dead" and tm.key != key
+        ]
+        if dead_same_role:
+            lines.append(
+                f"note: dead agent(s) with the same profile exist "
+                f"({', '.join(dead_same_role)}) — this NEW spawn starts "
+                f"with NO memory of them. If you meant to CONTINUE one, "
+                f'kill this and use {{"mode":"resume","key":"..."}} instead.'
+            )
+    task = args.get("task", "")
+    if task:
+        err = registry.request(key, task)
+        if err:
+            lines.append(f"initial task NOT queued: {err}")
+        else:
+            lines.append(
+                "initial task queued — the reply arrives automatically as "
+                "an observation and you will be woken. Do NOT poll status "
+                "or re-send it (re-sends queue duplicate work and slow it "
+                "down). FIRST finish the rest of your plan — spawn the "
+                "other agents / send the other requests you intended, "
+                "ideally batched with a final `complete` in this SAME "
+                "turn. Only complete-and-wait once nothing else remains."
+            )
+    else:
+        lines.append(
+            'send work with {"mode":"request","key":"' + key + '","task":"..."}.'
+        )
+    return ToolResult(True, output="\n".join(lines))
+
+
+def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
+    key = args.get("key", "")
+    tm = registry.get(key)
+    was_waiting = tm is not None and tm.state == "waiting_ask"
+    err = registry.request(key, args.get("task", ""))
+    if err:
+        return ToolResult(False, error=f"request rejected: {err}")
+    if was_waiting:
+        # P2: 질문 대기 중이던 teammate — 이 메시지가 답변으로 소비되고
+        # 원래 작업이 재개된다 (표시용 힌트 — 도착 순서가 진실).
+        return ToolResult(
+            True,
+            output=(
+                f"delivered to {key} as the answer to its pending question — "
+                f"it resumes the original request now."
+            ),
+        )
+    backlog = tm.inbox.qsize() if tm is not None else 0
+    stacked = (
+        (
+            f"\n⚠ it now has {backlog} queued requests — if these are "
+            f"progress checks or re-sends of the same ask, that is "
+            f"interference: each one queues MORE work and delays the "
+            f"answer. Replies arrive automatically; stop re-sending."
+        )
+        if backlog >= 2
+        else ""
+    )
+    return ToolResult(
+        True,
+        output=(
+            f"queued to {key} — the reply will be delivered to you "
+            f"automatically at a later turn (even while you are idle) and "
+            f"you will be woken when it arrives. Do NOT poll status or "
+            f"re-send this request. If your plan still has other work "
+            f"(other agents, other requests), do it now; then finish "
+            f"this turn with `complete` and wait.{stacked}"
+        ),
+    )
+
+
+def _agent_resume(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
+    key = args.get("key", "")
+    err = registry.resume_teammate(key, parent_ctx=parent_ctx)
+    if err:
+        return ToolResult(False, error=f"resume rejected: {err}")
+    lines = [
+        (
+            f"agent '{key}' resumed — it remembers ALL previous exchanges "
+            f"(its context was preserved across death)."
+        )
+    ]
+    task = args.get("task", "")
+    if task:
+        qerr = registry.request(key, task)
+        if qerr:
+            lines.append(f"task NOT queued: {qerr}")
+        else:
+            lines.append(
+                "task queued — reply arrives automatically; do not poll, "
+                "finish with `complete` and wait."
+            )
+    return ToolResult(True, output="\n".join(lines))
+
+
+def _agent_status(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
+    return ToolResult(True, output=registry.format_status(args.get("key", "")))
+
+
+def _agent_kill(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
+    key = args.get("key", "")
+    err = registry.kill(key)
+    if err:
+        return ToolResult(False, error=f"kill rejected: {err}")
+    return ToolResult(
+        True,
+        output=(
+            f"agent '{key}' terminated. Its context is PRESERVED — to "
+            f"bring it back later with full memory, use "
+            f'{{"mode":"resume","key":"{key}"}} (do NOT spawn a new one '
+            f"if you want it to remember)."
+        ),
+    )
+
+
+# 상주 모드 → 핸들러. agent_tool.AGENT_MODES 의 engine="registry" 모드와
+# 1:1 — 정합은 tests 의 커버리지 테스트가 고정 (run 은 oneshot 엔진이라
+# tool_bridge 가 tool_delegate 로 라우팅, 여기 없음).
+_MODE_HANDLERS = {
+    "spawn": _agent_spawn,
+    "request": _agent_request,
+    "status": _agent_status,
+    "resume": _agent_resume,
+    "kill": _agent_kill,
+}
 
 
 def tool_agent(
@@ -1587,13 +1741,15 @@ def tool_agent(
     parent_ctx=None,
     runtime: dict | None = None,
 ) -> ToolResult:
-    """teammate 도구 mode 디스패치. delegate 처럼 루프가 인터셉트해
-    provider/ctx 배선(runtime)을 주입한다."""
+    """teammate 도구 mode 디스패치 — ``_MODE_HANDLERS`` 테이블 경유.
+    delegate 처럼 루프가 인터셉트해 provider/ctx 배선(runtime)을 주입한다."""
+    from agent_cli.tools.agent_tool import REGISTRY_MODES
+
     if registry is None:
         return ToolResult(
             False,
             error=(
-                "persistent agent modes (spawn/request/status/resume/kill) are "
+                f"persistent agent modes ({'/'.join(REGISTRY_MODES)}) are "
                 'main-session only — in this loop use {"mode":"run","task":...} '
                 "for a one-shot sub-agent instead"
             ),
@@ -1605,144 +1761,10 @@ def tool_agent(
         registry.runtime = runtime
 
     mode = args.get("mode", "")
-
-    if mode == "spawn":
-        key, error = registry.spawn(
-            profile=args.get("profile", ""),
-            name=args.get("name", ""),
-            instructions=args.get("instructions", ""),
-            allowed_tools=args.get("tools"),
-            context_mode=args.get("context", "none"),
-            parent_ctx=parent_ctx,
-            runtime=runtime,
-        )
-        if error:
-            return ToolResult(False, error=f"spawn rejected: {error}")
-        _parts = [p for p in (args.get("profile", ""), args.get("name", "")) if p]
-        lines = [
-            f"spawned agent '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
-        ]
-        # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
-        # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
-        profile_arg = args.get("profile", "")
-        if profile_arg:
-            dead_same_role = [
-                tm.key
-                for tm in registry._agents.values()
-                if tm.profile_name == profile_arg
-                and tm.state == "dead"
-                and tm.key != key
-            ]
-            if dead_same_role:
-                lines.append(
-                    f"note: dead agent(s) with the same profile exist "
-                    f"({', '.join(dead_same_role)}) — this NEW spawn starts "
-                    f"with NO memory of them. If you meant to CONTINUE one, "
-                    f'kill this and use {{"mode":"resume","key":"..."}} instead.'
-                )
-        task = args.get("task", "")
-        if task:
-            err = registry.request(key, task)
-            if err:
-                lines.append(f"initial task NOT queued: {err}")
-            else:
-                lines.append(
-                    "initial task queued — the reply arrives automatically as "
-                    "an observation and you will be woken. Do NOT poll status "
-                    "or re-send it (re-sends queue duplicate work and slow it "
-                    "down). FIRST finish the rest of your plan — spawn the "
-                    "other agents / send the other requests you intended, "
-                    "ideally batched with a final `complete` in this SAME "
-                    "turn. Only complete-and-wait once nothing else remains."
-                )
-        else:
-            lines.append(
-                'send work with {"mode":"request","key":"' + key + '","task":"..."}.'
-            )
-        return ToolResult(True, output="\n".join(lines))
-
-    if mode == "request":
-        key = args.get("key", "")
-        tm = registry.get(key)
-        was_waiting = tm is not None and tm.state == "waiting_ask"
-        err = registry.request(key, args.get("task", ""))
-        if err:
-            return ToolResult(False, error=f"request rejected: {err}")
-        if was_waiting:
-            # P2: 질문 대기 중이던 teammate — 이 메시지가 답변으로 소비되고
-            # 원래 작업이 재개된다 (표시용 힌트 — 도착 순서가 진실).
-            return ToolResult(
-                True,
-                output=(
-                    f"delivered to {key} as the answer to its pending question — "
-                    f"it resumes the original request now."
-                ),
-            )
-        backlog = tm.inbox.qsize() if tm is not None else 0
-        stacked = (
-            (
-                f"\n⚠ it now has {backlog} queued requests — if these are "
-                f"progress checks or re-sends of the same ask, that is "
-                f"interference: each one queues MORE work and delays the "
-                f"answer. Replies arrive automatically; stop re-sending."
-            )
-            if backlog >= 2
-            else ""
-        )
+    handler = _MODE_HANDLERS.get(mode)
+    if handler is None:
         return ToolResult(
-            True,
-            output=(
-                f"queued to {key} — the reply will be delivered to you "
-                f"automatically at a later turn (even while you are idle) and "
-                f"you will be woken when it arrives. Do NOT poll status or "
-                f"re-send this request. If your plan still has other work "
-                f"(other agents, other requests), do it now; then finish "
-                f"this turn with `complete` and wait.{stacked}"
-            ),
+            False,
+            error=(f"unknown mode '{mode}' — use " + " / ".join(_MODE_HANDLERS)),
         )
-
-    if mode == "resume":
-        key = args.get("key", "")
-        err = registry.resume_teammate(key, parent_ctx=parent_ctx)
-        if err:
-            return ToolResult(False, error=f"resume rejected: {err}")
-        lines = [
-            (
-                f"agent '{key}' resumed — it remembers ALL previous exchanges "
-                f"(its context was preserved across death)."
-            )
-        ]
-        task = args.get("task", "")
-        if task:
-            qerr = registry.request(key, task)
-            if qerr:
-                lines.append(f"task NOT queued: {qerr}")
-            else:
-                lines.append(
-                    "task queued — reply arrives automatically; do not poll, "
-                    "finish with `complete` and wait."
-                )
-        return ToolResult(True, output="\n".join(lines))
-
-    if mode == "status":
-        return ToolResult(True, output=registry.format_status(args.get("key", "")))
-
-    if mode == "kill":
-        key = args.get("key", "")
-        err = registry.kill(key)
-        if err:
-            return ToolResult(False, error=f"kill rejected: {err}")
-        return ToolResult(
-            True,
-            output=(
-                f"agent '{key}' terminated. Its context is PRESERVED — to "
-                f"bring it back later with full memory, use "
-                f'{{"mode":"resume","key":"{key}"}} (do NOT spawn a new one '
-                f"if you want it to remember)."
-            ),
-        )
-
-    return ToolResult(
-        False,
-        error=(f"unknown mode '{mode}' — use spawn / request / status / resume / kill"),
-    )
+    return handler(registry, args, parent_ctx=parent_ctx, runtime=runtime)

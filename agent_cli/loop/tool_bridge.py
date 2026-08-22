@@ -279,19 +279,27 @@ class ToolBridge:
           일회성 병렬 엔진(tool_delegate 경로)으로. OnAgentStart/End 훅이
           엔진 실행을 감싼다 (구 delegate 훅 승계 — run 에만 발화;
           상주 모드는 일반 PreToolUse/PostToolUse 로 충분).
-        - ``mode:"run"`` 단건 : 같은 엔진의 단건 경로.
+        - ``engine="oneshot"`` 모드(run) 단건 : 같은 엔진의 단건 경로.
         - 그 외(상주 모드) : tool_agent(레지스트리) — 레지스트리 없는
           루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
+
+        라우팅은 ``AGENT_MODES`` 테이블의 ``engine`` 필드에서 파생 (모드
+        테이블화 — 종전 ``mode == "run"`` 문자열 분기). 미지의 모드는
+        registry 경로로 흘러 tool_agent 의 unknown-mode 에러가 처리
+        (루프 경로에서는 validate 가 A5 로 먼저 거른다 — 여기 도달은
+        직접 호출자/테스트뿐).
         """
         from agent_cli.subagent.agents_live import tool_agent
 
         # 함수-로컬 import — 호출 시점에 oneshot 모듈 attr 을 읽는 테스트
         # DI seam (모듈-레벨 바인딩이면 monkeypatch 가 안 닿는다).
         from agent_cli.subagent.oneshot import tool_delegate
+        from agent_cli.tools.agent_tool import AGENT_MODES
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
 
-        if "tasks" in args or args.get("mode") == "run":
+        spec = AGENT_MODES.get(args.get("mode"))
+        if "tasks" in args or (spec is not None and spec.engine == "oneshot"):
             raw = (
                 {"tasks": args["tasks"]}
                 if "tasks" in args

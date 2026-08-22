@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -21,8 +22,47 @@ from agent_cli.tools.base import (
 from agent_cli.tools.result import ToolResult
 
 
+@dataclass(frozen=True)
+class AgentMode:
+    """agent 도구 모드 1종의 선언 (모드 테이블화 — 리뷰 §4.4 T3).
+
+    스키마 enum·validate 필수 필드·병렬 배치 합류·tool_bridge 라우팅이
+    전부 이 테이블에서 파생된다 — 종전엔 5곳(enum/validate 재나열/
+    parallel_batchable/브리지 분기/agents_live if-체인)에 각자 나열돼
+    새 모드 추가 시 동기 수정 누락이 조용한 폴스루로 새던 구조.
+
+    - ``required``: 모드별 필수 필드 (C7 의미론 검증).
+    - ``engine``: "oneshot"=일회성 병렬 엔진(tool_bridge 가 tool_delegate
+      로 라우팅) / "registry"=상주 레지스트리(agents_live.tool_agent 의
+      핸들러 테이블로 라우팅).
+    - ``batchable``: 같은 턴 연속 op 의 병렬 배치 합류 여부 (설계 §3.6 —
+      run 만; 상주 모드는 즉시 반환이라 병렬 이득 없음).
+    """
+
+    required: tuple[str, ...] = ()
+    engine: str = "registry"
+    batchable: bool = False
+
+
+# 삽입 순서 = 스키마 enum 노출 순서 (프롬프트 렌더 안정성).
+AGENT_MODES: dict[str, AgentMode] = {
+    "run": AgentMode(required=("task",), engine="oneshot", batchable=True),
+    "spawn": AgentMode(),
+    "request": AgentMode(required=("key", "task")),
+    "status": AgentMode(),
+    "resume": AgentMode(required=("key",)),
+    "kill": AgentMode(required=("key",)),
+}
+
+# 상주(registry) 모드 이름들 — 에러 문구·핸들러 커버리지 검증용 파생.
+REGISTRY_MODES: tuple[str, ...] = tuple(
+    m for m, spec in AGENT_MODES.items() if spec.engine == "registry"
+)
+
+
 class AgentTool(Tool):
     name = "agent"
+    depth_gated = True  # 결합 깊이 상한에서 제거 (T3 선언화 — run 도 불가)
     # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
     # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
     SUBLOOP_DESCRIPTION = (
@@ -56,7 +96,7 @@ class AgentTool(Tool):
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["run", "spawn", "request", "status", "resume", "kill"],
+                "enum": list(AGENT_MODES),
                 "description": (
                     "run: execute ONE task in a fresh one-shot sub-agent "
                     "(blocking — result returns in this turn; several run ops "
@@ -131,22 +171,15 @@ class AgentTool(Tool):
         "required": ["mode"],
     }
 
-    # mode 별 조건부 필수 필드 — C7 의미론 검증 훅 (shape 는 중앙 1~5단계).
     # run fan-out 용 — 배치 합류 여부는 parallel_batchable(mode-aware)이 결정.
     parallel_safe = True
 
-    _MODE_REQUIRED: ClassVar[dict] = {
-        "run": ("task",),
-        "request": ("key", "task"),
-        "resume": ("key",),
-        "kill": ("key",),
-    }
-
     def validate(self, args: dict) -> str | None:
+        # 모드 유효성·필수 필드는 AGENT_MODES 테이블에서 파생 (C7 의미론
+        # 검증 훅 — shape 는 중앙 1~5단계).
         mode = args.get("mode")
-        valid = ("run", "spawn", "request", "status", "resume", "kill")
-        if mode not in valid:
-            return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"
+        if mode not in AGENT_MODES:
+            return f"unknown mode '{mode}' — must be one of {', '.join(AGENT_MODES)}"
         if "message" in args:
             # 통일 어휘 (v8.0.0): 지시는 모든 모드에서 ``task`` 하나다. 과거
             # request 만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
@@ -157,17 +190,17 @@ class AgentTool(Tool):
                 "field 'message' is not accepted — put the instruction in "
                 "'task' (every agent mode uses 'task')"
             )
-        for field in self._MODE_REQUIRED.get(mode, ()):
+        for field in AGENT_MODES[mode].required:
             value = args.get(field)
             if not isinstance(value, str) or not value.strip():
                 return f"mode '{mode}' requires a non-empty '{field}'"
         return None
 
     def parallel_batchable(self, action_input: dict) -> bool:
-        # mode-aware 배칭 (설계 §3.6): run 연속 op 만 병렬 — 상주 모드가
-        # 섞인 턴은 순차 (spawn/request 는 즉시 반환이라 병렬 이득도 없음).
+        # mode-aware 배칭 — AGENT_MODES.batchable 파생 (설계 §3.6: run 만).
         args = self.strip_prefix(action_input) if isinstance(action_input, dict) else {}
-        return args.get("mode") == "run"
+        spec = AGENT_MODES.get(args.get("mode"))
+        return spec is not None and spec.batchable
 
     def touched_paths(self, action_input: dict) -> list[str]:
         # 파일 경로가 없는 도구 — compaction file-list 에 스폰/요청 흔적 마커.

@@ -26,7 +26,7 @@
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
 
-> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수).
+> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수). 5묶음(v8.38.0) — **T3 테마 본체** ✅: agent 모드 테이블화(`AGENT_MODES`+`_MODE_HANDLERS` — 5중 나열 소멸, 신·구 출력 20케이스 바이트 동일) + 도구 정책 선언화(`terminal`/`depth_gated`/`requires_handler`/`force_mount` 클래스 속성 — tools_list·턴 종결이 속성 파생, 60조합 등가성 매트릭스로 증명).
 
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).
@@ -87,7 +87,7 @@
 9. `agents_live` seq/armed/판정 락 정리
 
 **P1 — 구조 부채 (확장 비용 절감, 중간 규모)**
-- 도구 정책 선언화(`terminal`/`requires_handler`/`depth_gated` 클래스 속성) + agent 모드 테이블화
+- ~~도구 정책 선언화(`terminal`/`requires_handler`/`depth_gated` 클래스 속성) + agent 모드 테이블화~~ ✅ v8.38.0 (+`force_mount`; 엔진 바인딩(edit_file 같은-path 배치·agent 병렬 엔진)은 의도적으로 엔진 코드 옆 잔존 — 속성이 배선을 거짓말하면 parallel_safe 트랩의 재판)
 - core.py property 브리지 소멸 + 파라미터 4중 복제 해소(LoopConfig 직접 전달)
 - ~~개입 처리 5중복 → `_intervene()` 단일 헬퍼(+ 턴 계수 규칙 통일)~~ ✅ v8.37.0
 - run/web 부트스트랩·teardown 조립기 추출(runtime dict 3중·종료경로 4갈래 해소)
@@ -113,7 +113,7 @@
 ### 4.1 loop/ + main.py
 - [높음][확장성] `run.py:20-105`+`core.py:56-95`+`state.py:36-74` — 파라미터 28개 4중 복제 / LoopConfig 직접 전달로 진입점 축소.
 - [높음][확장성] `core.py:254-449` — 위임 property 34+12 잔존 / 호출부 이행 후 브리지 삭제.
-- [높음][확장성] `core.py:141-154`+`dispatch.py` 7곳 — 도구 정책 문자열 하드코딩 / Tool 클래스 속성으로 승격.
+- ~~[높음][확장성] `core.py:141-154`+`dispatch.py` 7곳 — 도구 정책 문자열 하드코딩 / Tool 클래스 속성으로 승격.~~ ✅ v8.38.0 (terminal/depth_gated/requires_handler/force_mount — tools_list 구성·턴-종결 flush 가 속성 파생; 등가성은 신·구 알고리즘 60조합 매트릭스 테스트로 증명)
 - ~~[높음][중복성] `dispatch.py:237-255,833-852,884-899,911-926,1010-1029` — 개입 블록 5복제 / `_intervene()` 헬퍼.~~ ✅ v8.37.0
 - ~~[높음][일관성] 위 5곳 — A7/B1/NO_JSON만 `turn -= 1`, A4/A5는 계수 / "개입 비계수" 단일 규칙.~~ ✅ v8.37.0 (개입 전부 비계수 — B1 detector 가 반복 폭주 상한)
 - ~~[중간][확장성] `dispatch.py:455-461` — 미배선 `parallel_safe` 도구 = 런 크래시 / 순차 폴백 or 등록 시 거부.~~ ✅ v8.37.0 (`_PARALLEL_BATCH_ENGINES` 수집 게이트 → 순차 폴백)
@@ -178,7 +178,7 @@
 - [중간][일관성] `tm.queued` 비원자 seq / 락 하 발급.
 - [중간][일관성] 무락 상태로 idle-reap 제어 판정 / 락 하 판독 or 전이 카운터.
 - [중간][일관성] MailWaker `_armed` 레이스 / Event/Lock 원자화.
-- [중간][확장성] agent 모드 5중 선언(+폴백 문구 `run` 누락) / 선언 테이블.
+- ~~[중간][확장성] agent 모드 5중 선언(+폴백 문구 `run` 누락) / 선언 테이블.~~ ✅ v8.38.0 (`AGENT_MODES` 단일 테이블 → enum/validate/배칭/브리지 라우팅/`_MODE_HANDLERS` 전부 파생; 신·구 tool_agent 출력 20케이스 바이트 동일 검증)
 - [중간][확장성] ScheduleTool env 1회 평가 + conditional 2갈래 / `Tool.available()` 소유.
 - [중간][중복성] shell vs _confine confirm 흐름, shell vs fetch over-cap 흐름, `_do_callers/callees`, 단건 vs 배치 edit / 각각 공용 헬퍼.
 - [중간][효율성] write_file 1회에 diff 3연산 / opcodes 전달.

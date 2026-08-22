@@ -1438,6 +1438,97 @@ class TestRunLoopSchemaMismatch:
         assert result.output == "recovered"
 
 
+class TestToolPolicyDeclarations:
+    """도구 정책 선언화 (T3 — 리뷰 §4.1): tools_list 구성이 Tool 클래스
+    속성(depth_gated/requires_handler/force_mount)에서 파생되고, 결과가
+    종전 하드코딩 알고리즘과 **모든 입력 조합에서 동일**함을 고정."""
+
+    def _legacy_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
+        """v8.37.0 까지의 하드코딩 알고리즘 재현 (등가성 기준선)."""
+        from agent_cli.tools.registry import TOOLS
+
+        tools_list = active_tools or list(TOOLS.keys())
+        if depth >= max_depth:
+            tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
+        if not ctx and "ask" in tools_list:
+            tools_list = [t for t in tools_list if t != "ask"]
+        if message_handler is not None:
+            if "message" not in tools_list:
+                tools_list = [*tools_list, "message"]
+        else:
+            tools_list = [t for t in tools_list if t != "message"]
+        return tools_list
+
+    def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            ctx=ctx,
+            depth=depth,
+            max_depth=max_depth,
+            active_tools=list(active_tools) if active_tools else None,
+            message_handler=message_handler,
+        )
+        return list(loop.tools_list)
+
+    def test_equivalent_to_legacy_for_all_combinations(self, tmp_path):
+        """(depth 상한 여부) × (ctx 유무) × (handler 유무) × (active_tools
+        변형) 전 조합에서 신·구 알고리즘 결과(내용+순서)가 동일하다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx_real = ContextManager(session_dir=tmp_path)
+        handler = lambda to, text: "ok"
+        active_variants = [
+            None,  # 전체 레지스트리
+            ["shell", "read_file"],  # 특수 도구 없음
+            ["shell", "ask", "run_skill", "agent"],  # depth/ctx 게이트 대상 포함
+            ["message", "shell"],  # message 명시 포함 (handler 없으면 제거)
+            ["complete", "run_skill", "ask", "message", "agent"],  # 특수 전부
+        ]
+        for active in active_variants:
+            for depth, max_depth in ((0, 2), (2, 2), (3, 2)):
+                for ctx in (None, ctx_real):
+                    for mh in (None, handler):
+                        expected = self._legacy_tools_list(
+                            list(active) if active else None, depth, max_depth, ctx, mh
+                        )
+                        got = self._built_tools_list(active, depth, max_depth, ctx, mh)
+                        assert got == expected, (
+                            f"divergence: active={active} depth={depth}/"
+                            f"{max_depth} ctx={ctx is not None} handler={mh is not None}"
+                            f"\n legacy={expected}\n new   ={got}"
+                        )
+
+    def test_policy_attributes_pinned(self):
+        """정책 선언이 의도한 도구에만 있고, 그 외 도구는 전부 기본값 —
+        새 도구가 실수로 정책을 상속-오염하지 않음을 고정."""
+        from agent_cli.tools.registry import TOOLS
+
+        expected = {
+            "complete": {"terminal": True},
+            "run_skill": {"terminal": True, "depth_gated": True},
+            "agent": {"depth_gated": True},
+            "ask": {"requires_handler": "ctx"},
+            "message": {"requires_handler": "message_handler", "force_mount": True},
+        }
+        defaults = {
+            "terminal": False,
+            "depth_gated": False,
+            "requires_handler": None,
+            "force_mount": False,
+        }
+        for name, tool in TOOLS.items():
+            want = {**defaults, **expected.get(name, {})}
+            for attr, val in want.items():
+                assert getattr(tool, attr) == val, f"{name}.{attr}"
+
+
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(

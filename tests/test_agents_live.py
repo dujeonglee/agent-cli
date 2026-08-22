@@ -3142,6 +3142,58 @@ class TestRunMode:
         assert tool.parallel_batchable({"mode": "run", "task": "x"}) is True
         assert tool.parallel_batchable({"mode": "spawn"}) is False
         assert tool.parallel_batchable({"mode": "request", "key": "k"}) is False
+        assert tool.parallel_batchable({"mode": "bogus"}) is False  # 미지 모드
+        assert tool.parallel_batchable({}) is False  # 모드 없음
+
+    def test_mode_table_is_single_source(self):
+        """모드 테이블화 (리뷰 §4.4 T3): 스키마 enum·registry 핸들러·oneshot
+        라우팅이 전부 AGENT_MODES 한 곳에서 파생됨을 고정 — 나열 불일치
+        (enum 에만 추가하고 핸들러 누락 → 조용한 폴스루) 버그 클래스 차단."""
+        from agent_cli.subagent.agents_live import _MODE_HANDLERS
+        from agent_cli.tools.agent_tool import AGENT_MODES, REGISTRY_MODES
+        from agent_cli.tools.registry import TOOLS
+
+        # 스키마 enum == 테이블 (순서 포함 — 프롬프트 렌더 안정성)
+        enum = TOOLS["agent"].parameters["properties"]["mode"]["enum"]
+        assert enum == list(AGENT_MODES)
+        # registry 모드 ↔ 핸들러 1:1 (순서 무관)
+        assert set(_MODE_HANDLERS) == set(REGISTRY_MODES)
+        # run 은 oneshot 엔진 — 핸들러 테이블 밖 (tool_bridge 가 라우팅)
+        assert AGENT_MODES["run"].engine == "oneshot"
+        assert "run" not in _MODE_HANDLERS
+        # batchable 은 run 만 (설계 §3.6)
+        assert [m for m, s in AGENT_MODES.items() if s.batchable] == ["run"]
+        # 필수 필드 테이블 보존 (종전 _MODE_REQUIRED 의미 그대로)
+        assert AGENT_MODES["run"].required == ("task",)
+        assert AGENT_MODES["request"].required == ("key", "task")
+        assert AGENT_MODES["resume"].required == ("key",)
+        assert AGENT_MODES["kill"].required == ("key",)
+        assert AGENT_MODES["spawn"].required == ()
+        assert AGENT_MODES["status"].required == ()
+
+    def test_unknown_mode_error_derives_from_handler_table(self):
+        """unknown-mode 에러 문구가 핸들러 테이블에서 파생 — 종전 하드코딩
+        나열('use spawn / request / status / resume / kill')과 동일 문자열
+        유지(회귀 없음), 단 소스가 테이블이라 모드 추가 시 자동 갱신."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.subagent.agents_live import tool_agent
+
+        registry = MagicMock()
+        r = tool_agent({"mode": "bogus"}, registry=registry)
+        assert r.success is False
+        assert "unknown mode 'bogus'" in r.error
+        assert "spawn / request / status / resume / kill" in r.error
+
+    def test_registry_none_error_derives_from_table(self):
+        """registry 없는 루프의 상주-모드 거부 문구 — REGISTRY_MODES 파생,
+        종전 하드코딩 'spawn/request/status/resume/kill' 과 동일 문자열."""
+        from agent_cli.subagent.agents_live import tool_agent
+
+        r = tool_agent({"mode": "spawn"}, registry=None)
+        assert r.success is False
+        assert "spawn/request/status/resume/kill" in r.error
+        assert '"mode":"run"' in r.error  # run 대안 안내 유지
 
     def test_run_validate_requires_task(self):
         from agent_cli.tools.registry import TOOLS

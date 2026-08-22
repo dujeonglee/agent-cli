@@ -334,6 +334,64 @@ class TestMultiOpDispatch:
         assert "[1/2] partool — OK" in obs[0]["content"]
         assert "[2/2] partool — OK" in obs[0]["content"]
 
+    def test_terminal_attribute_flushes_and_ends_turn(self, tmp_path):
+        """턴-종결 flush 분기가 Tool.terminal **속성 파생**임을 실루프로 고정
+        (T3 선언화 — 종전 ("complete","run_skill") 튜플 하드코딩): terminal=
+        True 합성 도구의 op 을 만나면 ① 그때까지의 누적 결과를 먼저 flush
+        하고 ② 그 op 을 디스패치한 뒤 ③ 턴을 끝낸다 — 배열 뒤의 op 은
+        실행되지 않는다."""
+        from agent_cli.tools.base import Tool
+        from agent_cli.tools.result import ToolResult
+
+        ran: list[str] = []
+
+        class _TermTool(Tool):
+            name = "termtool"
+            description = "synthetic terminal tool"
+            terminal = True
+            parameters: ClassVar[dict] = {
+                "type": "object",
+                "properties": {"tag": {"type": "string"}},
+                "required": [],
+            }
+
+            def wrap_single_op(self, flat):
+                return flat
+
+            def _run(self, args, *, ctx=None):
+                ran.append(args.get("tag", ""))
+                return ToolResult(True, output="term ran")
+
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        never = tmp_path / "never-read.txt"
+        never.write_text("should not appear")
+
+        TOOLS["termtool"] = _TermTool()
+        try:
+            result, ctx, _ = _run(
+                [
+                    _turn(
+                        ops=[
+                            {"action": "read_file", "path": str(f1)},
+                            {"action": "termtool", "tag": "t1"},
+                            {"action": "read_file", "path": str(never)},
+                        ]
+                    ),
+                    *_finish(),
+                ],
+                tmp_path,
+            )
+        finally:
+            del TOOLS["termtool"]
+        assert result.success
+        assert ran == ["t1"]  # terminal op 은 디스패치됨
+        msgs = [m.get("content", "") for m in ctx.get_raw_messages()]
+        # ① 누적 read 결과가 flush 됨 (단독 op 라 [1/1] combined)
+        assert any("[1/1] read_file — OK" in c and "alpha" in c for c in msgs)
+        # ③ terminal 뒤의 op 은 실행되지 않음
+        assert not any("should not appear" in c for c in msgs)
+
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,
         # result is the output, no review gate, no second turn.

@@ -213,6 +213,34 @@ class Tool(ABC):
     #: this False. The loop reads it at the result→observation seam.
     apply_oversized_cap: bool = True
 
+    # ── 루프 정책 선언 (T3 선언화 — 리뷰 §4.1) ──────────────────────
+    # 종전엔 아래 정책들이 루프 코드의 도구명 문자열 목록(core.py 의
+    # tools_list 구성, dispatch.py 의 턴-종결 분기)에 산재했다 — 새 도구가
+    # 루프 여러 파일을 동기 수정해야 했고, 누락은 조용한 오동작. 이제 도구
+    # 클래스가 자기 정책을 선언하고 루프는 속성만 읽는다 (단일 소스).
+    # 엔진 바인딩(edit_file 같은-path 배치, agent 병렬 엔진)은 정책이 아니라
+    # 루프 쪽 엔진 코드와 함께 산다 — 속성만 세우고 배선이 없으면 v8.37.0
+    # 이전 parallel_safe 크래시 트랩의 재판이 되기 때문에 여기 두지 않는다.
+
+    #: 이 도구의 op 은 턴을 종결한다 (complete/run_skill) — 멀티-op 턴에서
+    #: 누적 결과를 먼저 flush 한 뒤 이 op 을 디스패치하고 턴을 끝낸다.
+    terminal: bool = False
+
+    #: 결합 호출 깊이 상한(depth >= max_depth)에서 tools_list 에서 제거
+    #: (run_skill/agent) — LLM 이 거부될 도구를 광고받지 않게. 디스패치-시점
+    #: 깊이 가드는 belt-and-suspenders 로 남는다.
+    depth_gated: bool = False
+
+    #: 이 루프 자원이 없으면 tools_list 에서 제거. "ctx"(ask — 비대화형
+    #: 루프는 질문 불가) / "message_handler"(message — 상주 서브에이전트
+    #: 전용). None = 무조건 사용 가능.
+    requires_handler: str | None = None
+
+    #: requires_handler 자원이 **있으면** 프로파일 allowed-tools 와 무관하게
+    #: 커널이 강제 탑재 (message — 상주 루프의 기본 능력, v5.11 의미).
+    #: requires_handler 와 함께일 때만 의미가 있다.
+    force_mount: bool = False
+
     @property
     def key_prefix(self) -> str:
         """Wire-key namespace for this tool: ``{name}_``."""

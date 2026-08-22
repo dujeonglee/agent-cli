@@ -130,28 +130,32 @@ class AgentLoop:
 
         # Derived wiring (finalized below, then frozen into LoopConfig)
         tools_list = active_tools or list(TOOLS.keys())
-        # Remove both 'delegate' and 'run_skill' when the combined
-        # call depth has reached its ceiling. Skills now count
-        # toward depth (parity with delegate), so the ceiling treats
-        # both kinds of nesting the same way — and the LLM never
-        # sees a tool it'd be refused from. The dispatch-time
-        # ``_handle_run_skill`` / ``_run_single`` checks remain as a
-        # belt-and-suspenders layer for direct callers that built a
-        # custom ``active_tools`` list.
+        # 도구 정책 선언 적용 (T3 선언화, 리뷰 §4.1 — Tool 클래스 속성이
+        # 단일 소스; 종전 도구명 문자열 하드코딩 대체. 필터는 순서 보존이라
+        # 프롬프트 렌더 순서 불변):
+        #  · ``depth_gated`` (run_skill/agent): 결합 호출 깊이가 상한이면
+        #    제거 — 스킬도 depth 를 계수(위임과 parity)하므로 두 중첩을
+        #    동일 취급하고, LLM 이 거부될 도구를 광고받지 않는다.
+        #    디스패치-시점 ``_handle_run_skill``/``_run_single`` 체크는
+        #    custom active_tools 직접 호출자용 belt-and-suspenders 로 잔존.
+        #  · ``requires_handler`` (ask→ctx, message→message_handler): 명명된
+        #    루프 자원이 없으면 제거해 비기능 도구를 광고하지 않고,
+        #    ``force_mount``(message, v5.11)면 자원이 있을 때 프로파일
+        #    allowed-tools 와 무관하게 커널이 강제 탑재(상주 서브에이전트의
+        #    기본 능력).
         if depth >= max_depth:
-            tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
-        # Remove "ask" in non-interactive mode (no ctx)
-        if not ctx and "ask" in tools_list:
-            tools_list = [t for t in tools_list if t != "ask"]
-        # v5.11: ``message`` (에이전트↔에이전트) 는 상주 서브에이전트 전용 —
-        # message_handler 가 주입된 루프에만 커널 기본으로 강제 탑재하고
-        # (프로파일 allowed-tools 와 무관, ``ask`` 와 동형), 그 외(main·
-        # 일회성)에서는 제거해 비기능 도구를 광고하지 않는다.
-        if message_handler is not None:
-            if "message" not in tools_list:
-                tools_list = [*tools_list, "message"]
-        else:
-            tools_list = [t for t in tools_list if t != "message"]
+            tools_list = [
+                t for t in tools_list if not (t in TOOLS and TOOLS[t].depth_gated)
+            ]
+        handler_resources = {"ctx": ctx, "message_handler": message_handler}
+        for tool_name, tool in TOOLS.items():
+            required = tool.requires_handler
+            if not required:
+                continue
+            if not handler_resources.get(required):
+                tools_list = [t for t in tools_list if t != tool_name]
+            elif tool.force_mount and tool_name not in tools_list:
+                tools_list = [*tools_list, tool_name]
         # agent 도구는 모든 루프에 존재 (5.0.0 모드 축소 노출, 설계 §3.2):
         # 서브루프(레지스트리 없음)는 run 만 문서화된 축소 설명을 받고,
         # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라
