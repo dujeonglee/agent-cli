@@ -344,25 +344,14 @@ class ToolBridge:
                 )
             return result
 
+        from agent_cli.runtime import AgentRuntime
+
         return tool_agent(
             args,
             registry=self.cfg.agent_registry,
             parent_ctx=self.ctx,
-            runtime={
-                "provider": self.provider,
-                "capabilities": self.cfg.capabilities,
-                "model": self.cfg.model,
-                "provider_name": self.cfg.provider_name,
-                "base_url": self.cfg.base_url,
-                "api_key": self.cfg.api_key,
-                "max_turns": self.cfg.max_turns,
-                "depth": self.cfg.depth,
-                "max_depth": self.cfg.max_depth,
-                "timeout": self.cfg.agent_timeout,
-                "session": self.cfg.session,
-                "hooks_config": self.cfg.hooks_config,
-                "compaction_enabled": self.cfg.compaction_enabled,
-            },
+            # 단일 정의 (v8.39.0 조립기) — 종전 13키 dict 리터럴 3벌 중 하나.
+            runtime=AgentRuntime.from_loop_config(self.cfg, self.provider).as_dict(),
         )
 
     # ── per-call loop context (execute + render seams share it) ─────

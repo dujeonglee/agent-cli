@@ -884,3 +884,60 @@ class TestAgentFrontmatterHooks:
                     "agent_cli.subagent.profiles", fromlist=["x"]
                 )._PROFILE_SEARCH_PATHS
             )
+
+
+class TestDiskHooksThroughLoop:
+    """v8.39.0 web 훅 배선 수리의 전 체인 계약: 디스크 hooks.json →
+    load_hooks() → run_loop(hooks_config=...) → PreToolUse 가 도구를
+    차단한다. web worker 가 이제 run 과 동형으로 밟는 경로 그대로 —
+    이 체인이 살아있는 한 배선 누락은 wiring 핀(test_runtime_assembly)
+    과 이 기능 테스트 둘 중 하나에서 반드시 걸린다."""
+
+    def test_hooks_json_blocks_tool_via_run_loop(self, tmp_path, monkeypatch):
+        import json as _json
+        from unittest.mock import MagicMock
+
+        import agent_cli.hooks.shell as hooks_shell
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        hooks_file = tmp_path / ".agent-cli" / "hooks.json"
+        hooks_file.parent.mkdir(parents=True)
+        hooks_file.write_text(
+            _json.dumps(
+                {
+                    "PreToolUse": [
+                        {
+                            "matcher": "shell",
+                            "hooks": [{"command": "exit 2", "timeout": 10}],
+                        }
+                    ]
+                }
+            )
+        )
+        monkeypatch.setattr(hooks_shell, "_HOOKS_PATHS", [hooks_file])
+        disk_hooks = load_hooks(use_cache=False) or None
+        assert disk_hooks  # 디스크 → 설정 로드 확인
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_json.dumps({"action": "shell", "command": "ls"})),
+            LLMResponse(content=_json.dumps({"action": "complete", "result": "done"})),
+        ]
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            max_turns=3,
+            hooks_config=disk_hooks,
+        )
+        assert result.success
+        # 2번째 콜의 관찰에 차단 문구 — 도구는 실행되지 않았다
+        second_msgs = provider.call.call_args_list[1].kwargs["messages"]
+        observation = second_msgs[-1]["content"]
+        assert "Blocked by PreToolUse hook" in observation

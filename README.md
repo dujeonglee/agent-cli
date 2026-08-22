@@ -612,6 +612,7 @@ def pre_llm_call(ctx):
 }
 ```
 
+- run/web/스킬/서브·상주 에이전트 전 경로에 적용됩니다 (v8.39.0 — 종전엔 web 채팅 턴·상주 에이전트에서 미발화하던 배선 누락 수리)
 - stdin으로 JSON 전달: `{"hook_event_name", "tool_name", "tool_input", "tool_result"}`
 - `matcher`: 도구 이름 regex (빈 문자열 = 모든 도구)
 - exit 0 = 통과, exit 2 = 차단 (PreToolUse만)

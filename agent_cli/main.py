@@ -1166,150 +1166,21 @@ def run(
     ctx = _build_context(session, boot, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
+    from agent_cli.runtime import (
+        AgentRuntime,
+        build_agent_registry,
+        wire_agent_mail,
+    )
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
     # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
-    # 회신의 세션-넘김 보존은 P3(manifest/outbox).
-    from agent_cli.subagent.agents_live import AgentRegistry, set_main_registry
-
-    # runtime 프리필: restore/auto-spawn 된 teammate 가 도구 호출(스폰)
-    # 없이 첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
-    agent_registry = AgentRegistry(
+    # 회신의 세션-넘김 보존은 P3(manifest/outbox). 생성은 skill dispatch
+    # 앞 (v7.17.0 배선 통일 — execute_skill 이 main 슬롯에서 자동 상속),
+    # restore/auto_spawn/waker 배선은 종전 위치 그대로 dispatch 뒤.
+    agent_registry = build_agent_registry(
         ctx.session_dir if ctx else None,
-        runtime={
-            "provider": llm_provider,
-            "capabilities": capabilities,
-            "model": resolved_model,
-            "provider_name": provider,
-            "base_url": resolved_url,
-            "api_key": resolved_key,
-            "max_turns": max_turns,
-            "depth": 0,
-            "max_depth": max_depth,
-            "timeout": agent_timeout,
-            "session": session,
-            "hooks_config": _disk_hooks,
-        },
-    )
-    # main registry 슬롯 등록 (v7.17.0 배선 통일): 아래 skill dispatch 를
-    # 포함한 모든 skill 실행이 execute_skill 에서 이 registry 를 자동 상속
-    # (spawn 가능). 생성을 dispatch 앞으로 이동 — 부수효과(restore/
-    # auto_spawn/waker)는 종전 위치 그대로.
-    set_main_registry(agent_registry)
-
-    # Skill dispatch: /skill-name args — web 의 route_one 과 같은 공용 입구
-    # (try_dispatch_agent_or_skill → _dispatch_skill) 로 v7.17.0 통일. 종전
-    # run 전용 fast-path 는 _dispatch_skill 을 직접 불러 (a) registry 미배선
-    # (spawn "main-session only" 거부 사고의 ③경로) (b) not-found 폴스루
-    # (오타 /명령이 LLM 쿼리로 샘) 로 web 과 갈렸다. 이제 not-found 도 web
-    # 과 같이 소비+표시, /skills 리스팅도 동작. 외곽 가드는 run 특유 보존:
-    # /sh 는 run 에 핸들러가 없고, 경로-선두 쿼리는 통과(looks_like).
-    if (
-        query.startswith("/")
-        and not query.startswith("/sh")
-        and looks_like_slash_command(query)
-        # 단락 평가: 가드 통과 시에만 dispatch 실행(부수효과 포함)
-        and try_dispatch_agent_or_skill(
-            query,
-            _ConsoleDispatchOutput(),
-            llm_provider=llm_provider,
-            capabilities=capabilities,
-            resolved_model=resolved_model,
-            provider=provider,
-            resolved_url=resolved_url,
-            resolved_key=resolved_key,
-            max_turns=max_turns,
-            verbose=verbose,
-            max_depth=max_depth,
-            agent_timeout=agent_timeout,
-            ctx=ctx,
-            session=session,
-            graceful_interrupt=False,
-            agent_registry=agent_registry,
-        )
-    ):
-        _finalize_run(session, ctx)
-        return
-
-    # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue 에
-    # 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로 들어온다.
-    # 정지 = 큐 비고 + teammate 활성 작업 없음(quiescence). teammate 를
-    # 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료.
-    from agent_cli.input_queue import InputQueue
-    from agent_cli.subagent.agents_live import MailWaker
-
-    input_queue = InputQueue()
-    waker = MailWaker(input_queue.enqueue, agent_registry.has_pending_replies)
-
-    def _on_agent_mail(reply: dict) -> None:
-        _agent_mail_notice(reply)
-        waker.on_mail()
-
-    agent_registry.on_reply = _on_agent_mail
-    # P3 (D7): --resume 세션이면 이전 teammate 자동 재생성 + 미배달 회신
-    # 복원 (fresh 세션은 agents.json 이 없어 no-op).
-    revived = agent_registry.restore(parent_ctx=ctx)
-    if revived:
-        console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
-    auto = agent_registry.auto_spawn(parent_ctx=ctx)
-    if auto:
-        console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
-
-    # 상주 방향 @ 명령: @agents / @agt-<key> [메시지] / @<profile>-spawn.
-    # --resume 세션에서 재생성된 상주 에이전트에게 CLI 로 직접 말 걸기.
-    if query.startswith("@") and _try_dispatch_agent_command(
-        query, _ConsoleDispatchOutput(), agent_registry
-    ):
-        # 회신까지 대기 — MinimalRenderer.agent_message 가 콘솔로 출력.
-        try:
-            while agent_registry.has_active_work():
-                time.sleep(0.3)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            agent_registry.shutdown_all()
-        _finalize_run(session, ctx, mcp_manager)
-        return
-
-    # Agent dispatch: @agent-name task
-    if query.startswith("@"):
-        answer, dispatch_ok = _dispatch_agent(
-            query,
-            llm_provider,
-            capabilities,
-            resolved_model,
-            provider,
-            resolved_url,
-            resolved_key,
-            max_turns=max_turns,
-            verbose=verbose,
-            max_depth=max_depth,
-            agent_timeout=agent_timeout,
-            ctx=ctx,
-            session=session,
-        )
-        if answer is not _AGENT_NOT_FOUND:
-            if answer is not None:
-                console.print(f"\n[{C['final']}]{answer}[/]")
-            # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문만
-            # 기록 — 메인 경로(loop_result.output=원문)와 계약 일치.
-            if dispatch_ok and answer is not None:
-                from agent_cli.subagent.report import extract_result_body
-
-                _write_result_file(result_file, extract_result_body(str(answer)))
-            agent_registry.shutdown_all()
-            _finalize_run(session, ctx)
-            return
-
-    answer = None
-
-    def _run_one(text: str, *, wake: bool) -> None:
-        nonlocal answer
-        if wake:
-            console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
-        loop_result = run_loop(
-            query=text,
+        AgentRuntime(
             provider=llm_provider,
             capabilities=capabilities,
             model=resolved_model,
@@ -1317,37 +1188,159 @@ def run(
             base_url=resolved_url,
             api_key=resolved_key,
             max_turns=max_turns,
-            verbose=verbose,
+            depth=0,
             max_depth=max_depth,
-            agent_timeout=agent_timeout,
-            ctx=ctx,
+            timeout=agent_timeout,
             session=session,
-            mcp_manager=mcp_manager,
             hooks_config=_disk_hooks,
-            record_turns=record_turns,
-            wire_format=wire_format_plugin,
-            agent_registry=agent_registry,
-        )
-        if loop_result.success:
-            answer = loop_result.output
-
-    input_queue.enqueue(None, query)
+        ),
+    )
+    # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1).
+    # 종전엔 조기-반환 경로들이 각자 나열하다 skill 경로는 registry/MCP,
+    # @agent 경로는 MCP 정리를 누락했다. ``warn_stuck`` 은 메인 펌프
+    # 경로에서만 켠다 (종전 표면 보존).
+    warn_stuck = False
     try:
-        _run_message_pump(input_queue, waker, agent_registry, _run_one)
-    except KeyboardInterrupt:
-        answer = None
-        console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
-    finally:
-        stuck = agent_registry.waiting_ask_keys()
-        if stuck:
-            console.print(
-                f"[{C['accent']}]⚠ 에이전트 {', '.join(stuck)} 이(가) 답변 대기 "
-                f"중인 채 종료 — resume 시 질문은 STALE 처리됩니다[/]"
+        # Skill dispatch: /skill-name args — web 의 route_one 과 같은 공용
+        # 입구 (try_dispatch_agent_or_skill → _dispatch_skill) 로 v7.17.0
+        # 통일. 종전 run 전용 fast-path 는 _dispatch_skill 을 직접 불러
+        # (a) registry 미배선 (spawn "main-session only" 거부 사고의 ③경로)
+        # (b) not-found 폴스루(오타 /명령이 LLM 쿼리로 샘) 로 web 과 갈렸다.
+        # 이제 not-found 도 web 과 같이 소비+표시, /skills 리스팅도 동작.
+        # 외곽 가드는 run 특유 보존: /sh 는 run 에 핸들러가 없고, 경로-선두
+        # 쿼리는 통과(looks_like).
+        if (
+            query.startswith("/")
+            and not query.startswith("/sh")
+            and looks_like_slash_command(query)
+            # 단락 평가: 가드 통과 시에만 dispatch 실행(부수효과 포함)
+            and try_dispatch_agent_or_skill(
+                query,
+                _ConsoleDispatchOutput(),
+                llm_provider=llm_provider,
+                capabilities=capabilities,
+                resolved_model=resolved_model,
+                provider=provider,
+                resolved_url=resolved_url,
+                resolved_key=resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                max_depth=max_depth,
+                agent_timeout=agent_timeout,
+                ctx=ctx,
+                session=session,
+                graceful_interrupt=False,
+                agent_registry=agent_registry,
             )
-        agent_registry.shutdown_all()
+        ):
+            return
 
-    _write_result_file(result_file, answer)
-    _finalize_run(session, ctx, mcp_manager)
+        # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue
+        # 에 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로
+        # 들어온다. 정지 = 큐 비고 + teammate 활성 작업 없음(quiescence).
+        # teammate 를 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료.
+        from agent_cli.input_queue import InputQueue
+
+        input_queue = InputQueue()
+        waker, revived, auto = wire_agent_mail(
+            agent_registry,
+            enqueue_wake=input_queue.enqueue,
+            on_mail_notice=_agent_mail_notice,
+            parent_ctx=ctx,
+        )
+        if revived:
+            console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
+        if auto:
+            console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
+
+        # 상주 방향 @ 명령: @agents / @agt-<key> [메시지] / @<profile>-spawn.
+        # --resume 세션에서 재생성된 상주 에이전트에게 CLI 로 직접 말 걸기.
+        if query.startswith("@") and _try_dispatch_agent_command(
+            query, _ConsoleDispatchOutput(), agent_registry
+        ):
+            # 회신까지 대기 — MinimalRenderer.agent_message 가 콘솔로 출력.
+            try:
+                while agent_registry.has_active_work():
+                    time.sleep(0.3)
+            except KeyboardInterrupt:
+                pass
+            return
+
+        # Agent dispatch: @agent-name task
+        if query.startswith("@"):
+            answer, dispatch_ok = _dispatch_agent(
+                query,
+                llm_provider,
+                capabilities,
+                resolved_model,
+                provider,
+                resolved_url,
+                resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                max_depth=max_depth,
+                agent_timeout=agent_timeout,
+                ctx=ctx,
+                session=session,
+            )
+            if answer is not _AGENT_NOT_FOUND:
+                if answer is not None:
+                    console.print(f"\n[{C['final']}]{answer}[/]")
+                # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴
+                # 원문만 기록 — 메인 경로(loop_result.output=원문)와 계약
+                # 일치.
+                if dispatch_ok and answer is not None:
+                    from agent_cli.subagent.report import extract_result_body
+
+                    _write_result_file(result_file, extract_result_body(str(answer)))
+                return
+
+        answer = None
+
+        def _run_one(text: str, *, wake: bool) -> None:
+            nonlocal answer
+            if wake:
+                console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
+            loop_result = run_loop(
+                query=text,
+                provider=llm_provider,
+                capabilities=capabilities,
+                model=resolved_model,
+                provider_name=provider,
+                base_url=resolved_url,
+                api_key=resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                max_depth=max_depth,
+                agent_timeout=agent_timeout,
+                ctx=ctx,
+                session=session,
+                mcp_manager=mcp_manager,
+                hooks_config=_disk_hooks,
+                record_turns=record_turns,
+                wire_format=wire_format_plugin,
+                agent_registry=agent_registry,
+            )
+            if loop_result.success:
+                answer = loop_result.output
+
+        input_queue.enqueue(None, query)
+        warn_stuck = True  # 메인 펌프 경로에서만 답변-대기 경고 (종전 표면)
+        try:
+            _run_message_pump(input_queue, waker, agent_registry, _run_one)
+        except KeyboardInterrupt:
+            answer = None
+            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+
+        _write_result_file(result_file, answer)
+    finally:
+        _finalize_run(
+            session,
+            ctx,
+            mcp_manager,
+            agent_registry=agent_registry,
+            warn_stuck=warn_stuck,
+        )
 
 
 def resume_wire_format(session, current, explicit: str | None):
@@ -1456,18 +1449,23 @@ def _write_result_file(path: str, answer) -> None:
         console.print(f"[{C['error']}]--result-file 기록 실패: {e}[/]")
 
 
-def _finalize_run(session, ctx, mcp_manager=None) -> None:
-    """Finalize session after run command (save summary, print session ID)."""
-    from agent_cli.render import render_spinner_stop
+def _finalize_run(
+    session, ctx, mcp_manager=None, *, agent_registry=None, warn_stuck=False
+) -> None:
+    """Finalize session after run command — 공용 teardown_session 위임
+    (조립기 v8.39.0: registry 종료→스피너→MCP 해제→세션 저장 순서를 한
+    곳이 소유) + run 표면의 resume 힌트 출력."""
+    from agent_cli.runtime import teardown_session
 
-    render_spinner_stop()
-    if mcp_manager:
-        mcp_manager.disconnect_all()
+    teardown_session(
+        session,
+        ctx,
+        agent_registry=agent_registry,
+        mcp_manager=mcp_manager,
+        warn_stuck=warn_stuck,
+    )
     if session is None:
         return
-    from agent_cli.context.session import finalize_session
-
-    finalize_session(session, ctx)
     console.print(
         f"[{C['muted']}]Session {session.session_id} saved. "
         f"Resume with: agent-cli run/web --resume {session.session_id}[/]"
@@ -1855,11 +1853,18 @@ def web(
 
         TOOLS.update(mcp_tools)
 
+    # 디스크 훅 (.agent-cli/hooks.json) — run 과 동형 배선 (v8.39.0 수리).
+    # 종전엔 web 만 로드하지 않아 채팅 턴·상주 에이전트에서 PreToolUse/
+    # PostToolUse shell 훅이 조용히 미발화했다 (문서 계약엔 모드 제한 없음;
+    # /skill·@agent 디스패치는 자체 로드라 발화 — web 내부에서도 갈렸다).
+    from agent_cli.hooks import load_hooks as _load_hooks
+
+    _disk_hooks = _load_hooks() or None
+
     # 2. Session + ContextManager.
     import sys
 
     from agent_cli.context.session import (
-        finalize_session,
         get_session_dir,
         save_meta,
     )
@@ -1969,53 +1974,46 @@ def web(
         web_output = WebDispatchOutput(renderer)
         # teammate P1: 서버 수명의 레지스트리 — 매 run_loop 에 주입되어
         # teammate 가 run 경계를 넘어 생존한다. 종료는 서버 teardown 의
-        # shutdown_all (아래 finally).
-        from agent_cli.subagent.agents_live import AgentRegistry
+        # teardown_session (아래 finally). 조립은 run 과 공용
+        # (build_agent_registry/wire_agent_mail — v8.39.0 조립기): runtime
+        # 프리필로 restore/auto-spawn 분이 스폰 도구 호출 없이 웹 창 첫
+        # 접촉을 받아도 돌고, hooks_config 는 run 과 동형 배선(수리).
+        from agent_cli.runtime import (
+            AgentRuntime,
+            build_agent_registry,
+            wire_agent_mail,
+        )
 
         nonlocal agent_registry
-        agent_registry = AgentRegistry(
+        agent_registry = build_agent_registry(
             ctx.session_dir if ctx else None,
-            # runtime 프리필 — restore/auto-spawn 분이 스폰 도구 호출 없이
-            # 웹 창 첫 접촉을 받아도 돌 수 있게 (run 경로와 동일 이유).
-            runtime={
-                "provider": llm_provider,
-                "capabilities": capabilities,
-                "model": resolved_model,
-                "provider_name": provider,
-                "base_url": resolved_url,
-                "api_key": resolved_key,
-                "max_turns": max_turns,
-                "depth": 0,
-                "max_depth": max_depth,
-                "timeout": agent_timeout,
-                "session": session,
-                "hooks_config": None,
-            },
+            AgentRuntime(
+                provider=llm_provider,
+                capabilities=capabilities,
+                model=resolved_model,
+                provider_name=provider,
+                base_url=resolved_url,
+                api_key=resolved_key,
+                max_turns=max_turns,
+                depth=0,
+                max_depth=max_depth,
+                timeout=agent_timeout,
+                session=session,
+                hooks_config=_disk_hooks,
+            ),
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
-        # main registry 슬롯 등록 (v7.17.0 배선 통일) — 사용자 /skill
-        # dispatch 등 registry 를 명시받지 못하는 skill 실행 경로가
-        # execute_skill 에서 자동 상속(spawn 가능).
-        from agent_cli.subagent.agents_live import set_main_registry
-
-        set_main_registry(_registry)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
         server.agent_registry = _registry
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
-        # 가능한 순수 조율자, subagent/teammate.py) 가 소유.
-        from agent_cli.subagent.agents_live import MailWaker
-
-        _waker = MailWaker(server.enqueue, _registry.has_pending_replies)
-
-        def _on_agent_mail(reply: dict) -> None:
-            _agent_mail_notice(reply)
-            _waker.on_mail()
-
-        agent_registry.on_reply = _on_agent_mail
-        # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
-        revived = agent_registry.restore(parent_ctx=ctx)
-        auto = agent_registry.auto_spawn(parent_ctx=ctx)
+        # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
+        _waker, revived, auto = wire_agent_mail(
+            _registry,
+            enqueue_wake=server.enqueue,
+            on_mail_notice=_agent_mail_notice,
+            parent_ctx=ctx,
+        )
         _announce_agent_boot(renderer, revived, auto)
         while True:
             # Tell the frontend we're waiting for the next user
@@ -2130,6 +2128,10 @@ def web(
                             record_turns=record_turns,
                             wire_format=wire_format_plugin,
                             mcp_manager=mcp_manager,
+                            # v8.39.0 수리: run 과 동형 — 종전 web 은
+                            # hooks_config 미전달로 채팅 턴에서 디스크
+                            # 훅이 미발화했다.
+                            hooks_config=_disk_hooks,
                             agent_registry=agent_registry,
                         )
 
@@ -2282,13 +2284,15 @@ def web(
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)
-        if agent_registry is not None:
-            agent_registry.shutdown_all()  # 상주 teammate 전원 종료
-        if mcp_manager:
-            mcp_manager.disconnect_all()
         console.print(f"[{C['muted']}]Saving session...[/]")
+        # 공용 teardown (v8.39.0 조립기): 상주 에이전트 전원 종료 → MCP
+        # 해제 → 세션 저장 — run 의 종료 경로들과 같은 시퀀스 소유자.
         try:
-            finalize_session(session, ctx)
+            from agent_cli.runtime import teardown_session
+
+            teardown_session(
+                session, ctx, agent_registry=agent_registry, mcp_manager=mcp_manager
+            )
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
             console.print(f"[red]Failed to save session: {exc}[/]")
