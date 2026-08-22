@@ -37,18 +37,18 @@ Default implementations are provided for the common cases:
     sanitizes at save time (``sanitize_thought`` on thought + bare content).
   - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``;
     builds the next-turn prior (live AND resume).
-  - ``format_rules`` — delegate to the shared builder.
   - ``render_action_input`` — dict → JSON via ``json.dumps``.
   - ``provider_call_kwargs`` — empty dict.
   - ``prefill`` — empty string.
 
 So a typical plugin only implements the wire-shape-specific abstract
-methods: ``parse``, ``render_full_example``, ``format_rules_anchor``,
-``format_rules_field_specific``, and the recovery wording strings. The
-serialize / render defaults compose those into the lifecycle automatically
-— ``serialize`` calls ``self.parse()`` and extracts structured fields;
-``render`` calls ``self.render_full_example()`` to re-emit the wire shape
-from the stored record.
+methods: ``parse_turn``(루프의 1차 파서 — v8.41.0 추상 승격),
+``render_full_example``, ``format_rules``, and the recovery wording
+strings. The serialize / render defaults compose those into the lifecycle
+automatically — ``serialize`` calls ``self.parse()``(기본 = parse_turn 의
+첫-op 투영) and extracts structured fields; ``render`` calls
+``self.render_full_example()`` to re-emit the wire shape from the stored
+record.
 
 See ``agent_cli/wire_formats/json_fc.py`` for the reference implementation.
 """
@@ -122,8 +122,8 @@ class ParsedTurn:
     formats never set it (they complete via a ``complete`` op), so it is
     ``False`` for them and the loop's behaviour is unchanged.
 
-    The default :meth:`WireFormat.parse_turn` wraps a plugin's existing
-    :meth:`WireFormat.parse` into this shape, so a plugin opts into multi-op
+    :meth:`WireFormat.parse_turn` (abstract, v8.41.0 — 루프의 1차 경계) 가
+    이 shape 을 반환한다; a plugin opts into multi-op
     only by overriding ``parse_turn``; ``parse`` (and the history round-trip
     built on it) is untouched.
 
@@ -240,84 +240,59 @@ class WireFormat(ABC):
             trailing newline.
         """
 
-    @abstractmethod
-    def format_rules_anchor(self) -> str:
-        """One-sentence anchor that opens the section after the heading.
+    # (v8.41.0) ``format_rules_anchor`` / ``format_rules_field_specific``
+    # 추상 훅 제거 — 유일 소비자였던 ``_format_rules_builder`` 와 함께 소멸
+    # (리뷰 §4.2: 호출 0 + 공유 문구가 multi-op 규칙과 모순). 섹션 조립은
+    # 각 포맷의 ``format_rules`` 가 통째로 소유한다.
 
-        Tells the model what wire shape it must emit. ReAct says
-        "You MUST output a single JSON object only — …". Newlines are
-        allowed for multi-line anchors.
-        """
-
-    @abstractmethod
-    def format_rules_field_specific(self) -> str:
-        """Lines for Rules 1 and 2 of the section.
-
-        Rules 1 and 2 obligate the model to populate the reasoning /
-        thought slot and the action input slot, but the field names
-        differ by wire shape. Rules 3-6 are shared text and live in the
-        builder.
-
-        The returned string contains both rules joined by newlines and
-        starts with ``"1. …\\n2. …"``; it is spliced between
-        ``"Rules:"`` and the shared tail.
-        """
-
-    # ─── Parsing (abstract) ─────────────────────────────────────
+    # ─── Parsing ────────────────────────────────────────────────
+    # v8.41.0 (리뷰 §4.2 — parse/parse_turn 역전 수리): 루프의 실제 디스패치
+    # 경계는 ``parse_turn`` 인데 종전엔 ``parse`` 가 추상이고 parse_turn 은
+    # parse 를 감싸는 기본 구현이었다 — 등록된 두 포맷(json_fc/xml_fc) 모두
+    # multi-op 라 그 기본 구현은 사문이었고, 새 포맷 작성자는 루프가 부르지
+    # 않는 메서드를 구현하라고 안내받았다. 이제 **parse_turn 이 추상(1차)**,
+    # parse 는 첫-op 투영 기본 구현(레거시 단수 소비자용 — history 직렬화
+    # 기본·테스트)이다. 기존 플러그인의 자체 parse 오버라이드는 그대로.
 
     @abstractmethod
-    def parse(self, llm_text: str) -> ParsedAction:
-        """Parse one model emission into a ``ParsedAction``.
-
-        Must not raise on malformed input — return a ``ParsedAction`` with
-        ``parse_stage = 0`` instead. The loop's recovery path expects
-        every emission to round-trip through this method, including
-        garbage that needs an intervention.
-
-        Preservation invariant (both flags' recovery paths depend on it):
-        when the ``action`` slot is empty or invalid but an
-        ``action_input`` was still identified, the parser MUST keep it in
-        ``action_input`` rather than dropping it. ``infer_action`` (for
-        ``action_required=False``) and the NO_ACTION recovery echo (for
-        ``action_required=True``) both read it — dropping it here is what
-        regressed prefix_md's dropped-action recovery. ``parse_stage``
-        should be > 0 whenever an ``action_input`` was recovered this way,
-        so the loop treats the emission as parsed (the exact value stays
-        observability-only — see :class:`ParsedAction`).
-        """
-
     def parse_turn(self, llm_text: str) -> ParsedTurn:
         """Parse one emission into a turn-level :class:`ParsedTurn` — the
-        loop's dispatch boundary.
+        loop's dispatch boundary (구현 필수 — 루프가 부르는 1차 파서).
 
-        Default: wrap :meth:`parse`. A single-action format yields a turn with
-        one ``Op`` (or zero ops on parse failure / no action); ``terminal`` is
-        always ``False`` (it completes via a ``complete`` op, not a thought-only
-        turn). So single-action plugins need not override this, and the loop's
-        one-op iteration reproduces today's behaviour exactly.
+        Must not raise on malformed input — return a ``ParsedTurn`` with
+        ``parse_stage = 0`` (ops 비움) instead. The loop's recovery path
+        expects every emission to round-trip through this method, including
+        garbage that needs an intervention.
 
-        A multi-op format overrides this to return several ops, or
-        ``terminal=True`` for a no-op completion turn. ``parse`` (and the
-        history round-trip built on it) is left untouched either way.
+        Preservation invariant (recovery paths depend on it): when an op's
+        ``action`` slot is empty or invalid but an ``action_input`` was
+        still identified, the parser MUST keep the op with its
+        ``action_input`` rather than dropping it. ``infer_action`` (for
+        ``action_required=False``) and the NO_ACTION recovery echo (for
+        ``action_required=True``) both read it. ``parse_stage`` should be
+        > 0 whenever an ``action_input`` was recovered this way (the exact
+        value stays observability-only).
         """
-        pa = self.parse(llm_text)
-        # Preserve the parse invariant: keep a single Op whenever there is an
-        # action OR a recovered action_input (the dropped-action /
-        # parse_stage-3 case), so the loop's per-op infer_action / NO_ACTION
-        # echo can still recover it. Only a total parse failure (no action,
-        # no input) yields zero ops.
-        ops = (
-            [Op(pa.action, pa.action_input, pa.truncated)]
-            if (pa.action is not None or pa.action_input is not None)
-            else []
-        )
-        return ParsedTurn(
-            thought=pa.thought,
-            ops=ops,
-            terminal=False,
-            raw=pa.raw,
-            parse_stage=pa.parse_stage,
-            thinking=pa.thinking,
+
+    def parse(self, llm_text: str) -> ParsedAction:
+        """Parse one emission into the singular legacy :class:`ParsedAction`.
+
+        Default: first-op projection of :meth:`parse_turn` — for consumers
+        of the pre-multi-op surface (the base history-serialization default,
+        direct callers, tests). Plugins may override when their singular
+        projection differs from "first op" (both built-ins do, keeping
+        their historical projections byte-identical).
+        """
+        turn = self.parse_turn(llm_text)
+        op = turn.ops[0] if turn.ops else Op()
+        return ParsedAction(
+            thought=turn.thought,
+            action=op.action,
+            action_input=op.action_input,
+            raw=turn.raw,
+            parse_stage=turn.parse_stage,
+            thinking=turn.thinking,
+            truncated=op.truncated,
         )
 
     # 미닫힘 thinking opener 의 truncation 정지점 — 포맷의 첫-구조 마커.
@@ -491,20 +466,17 @@ class WireFormat(ABC):
         with how the flags already gate the *recovery* side in the loop."""
         return soft if (not required and soft is not None) else strong
 
+    @abstractmethod
     def format_rules(self) -> str:
-        """Compose the ``## Response Format`` section via shared builder.
+        """Compose the ``## Response Format`` section for the system prompt.
 
-        Default delegates to
-        ``_format_rules_builder.build_format_rules(self)`` which sources
-        the shared text (completion intro, rules 3-6) and calls
-        ``format_rules_anchor`` / ``render_full_example`` /
-        ``format_rules_field_specific`` for the wire-shape-dependent
-        parts. Plugins whose section diverges so much that templating
-        would obscure rather than clarify may override.
+        v8.41.0 (리뷰 §4.2): 종전 기본 구현은 ``_format_rules_builder`` 에
+        위임했는데, 등록된 두 포맷 모두 자체 구현이라 **호출 0** 인 데다
+        빌더의 공유 문구("Exactly ONE action per turn")가 현행 multi-op
+        규칙과 정면 모순이었다 — 새 포맷 작성자가 사문·모순 텍스트를
+        상속받는 함정. 빌더는 제거하고 추상으로 승격: 각 포맷이 자기
+        wire shape 에 맞는 섹션을 직접 소유한다.
         """
-        from agent_cli.wire_formats._format_rules_builder import build_format_rules
-
-        return build_format_rules(self)
 
     def render_action_input(self, action_input: dict) -> str:
         """Render an action_input dict in this format's inner shape.

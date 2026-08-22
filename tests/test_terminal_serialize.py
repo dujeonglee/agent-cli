@@ -42,20 +42,18 @@ class TestTerminalSerialize:
     def test_base_default_is_singular(self):
         # a hypothetical singular format keeps the {action, action_input} shape
         class _Singular(WireFormat):
-            # minimal concrete: inherit everything, only need the default
+            # minimal concrete: inherit everything, only need the default.
+            # v8.41.0 ABC: parse_turn 이 1차 추상 (parse 는 첫-op 투영 기본).
             def render_full_example(self, **k):
                 return ""
 
-            def format_rules_anchor(self):
+            def format_rules(self):
                 return ""
 
-            def format_rules_field_specific(self):
-                return ""
+            def parse_turn(self, t):
+                from agent_cli.wire_formats.base import ParsedTurn
 
-            def parse(self, t):
-                from agent_cli.wire_formats.base import ParsedAction
-
-                return ParsedAction()
+                return ParsedTurn()
 
             def constraint_reminder_call(self):
                 return ""

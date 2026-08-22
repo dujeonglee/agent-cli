@@ -26,7 +26,7 @@
 | P0-7 | 파이썬 훅 시스템(`hooks/runner.py`) 프로덕션 미배선 — `HookRunner()` 생성 0, loop의 `_fire_hook` 7곳 전부 죽은 분기 | `hooks/runner.py:14` + `loop/run.py:50` | **광고된 확장점(.agent-cli/hooks/*.py)이 무동작**. 배선 or 제거 결정 필요 |
 
 
-> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수). 5묶음(v8.38.0) — **T3 테마 본체** ✅: agent 모드 테이블화(`AGENT_MODES`+`_MODE_HANDLERS` — 5중 나열 소멸, 신·구 출력 20케이스 바이트 동일) + 도구 정책 선언화(`terminal`/`depth_gated`/`requires_handler`/`force_mount` 클래스 속성 — tools_list·턴 종결이 속성 파생, 60조합 등가성 매트릭스로 증명). 6묶음(v8.39.0) — **run/web 조립기** ✅: `agent_cli/runtime.py`(`AgentRuntime` 13키 단일 정의·registry/waker 조립 공용화·`teardown_session` 단일 소유), HEAD 3벌 dict 추출-대조 + CliRunner 실구동 경로 검증. **부수 발견·수리 3건**: ①web 채팅 턴·상주 에이전트의 디스크 훅(hooks.json) 미배선 — run 과 동형 배선으로 수리(디스크→루프 전 체인 기능 테스트 고정) ②skill 조기-반환 경로 registry 미종료+MCP 미해제 ③@agent 경로 MCP 미해제 — 전 종료 경로가 단일 finally 로 수렴. 7묶음(v8.40.0) — **경로쌍 단일화** ✅: `scoped_paths()` 7모듈 8상수 파생(HEAD 대조 8/8 일치), hooks.json 병합 규칙 통일(둘 다 발화 — 사용자 전역 안전 훅이 프로젝트 파일 존재로 꺼지던 함정 제거, 신규 계약 테스트 4종).
+> **수리 현황**: 1묶음(v8.34.0) — P0-1·4·5·9 ✅ + P0-6 최소패치. 2묶음(v8.35.0) — P0-2·3 ✅. 3묶음(v8.36.0) — P0-8a ✅(캐시↔history 정렬 북키핑 `_cache_hidx` — 리뷰 시나리오를 수렴 테스트로 실증 후 수리; 단, resume 의 fold 재적용은 원래 설계에 있었고 단일 사이클은 수렴했음을 병기)·P0-8b ✅(`_token_scale` 실측/추정 환산)·P0-6② ✅(el=textContent + elHtml 명시 분리, 콜사이트 전수 감사). **P0 전체 완료** — P0-7 만 보류(사용자 결정). 4묶음(v8.37.0) — **T1 잔여 3건 + P1 퀵윈** ✅: 개입 5중복→`_intervene()` 통일+턴 계수 단일화(A4/A5 도 비계수), parallel_safe 크래시 트랩 봉인(`_PARALLEL_BATCH_ENGINES` 게이트→순차 폴백), thinking 오버라이드 공용 정책(`resolve_thinking_policy` — off 시 effort 잔존 수리·상충 조합 동형화), 인라인 `<think>` 격리 Anthropic 동형화(+다중 text/thinking 블록 누산), enable_thinking 재프로브 transport 공통화(Anthropic thinking-블록 재프로브), 부수 5건(`delegate` 문구 2곳·`save_config` 캐시·`validate_tool_input` 사본화·`$N` 두자리 버그·mcp devnull fd 누수). 5묶음(v8.38.0) — **T3 테마 본체** ✅: agent 모드 테이블화(`AGENT_MODES`+`_MODE_HANDLERS` — 5중 나열 소멸, 신·구 출력 20케이스 바이트 동일) + 도구 정책 선언화(`terminal`/`depth_gated`/`requires_handler`/`force_mount` 클래스 속성 — tools_list·턴 종결이 속성 파생, 60조합 등가성 매트릭스로 증명). 6묶음(v8.39.0) — **run/web 조립기** ✅: `agent_cli/runtime.py`(`AgentRuntime` 13키 단일 정의·registry/waker 조립 공용화·`teardown_session` 단일 소유), HEAD 3벌 dict 추출-대조 + CliRunner 실구동 경로 검증. **부수 발견·수리 3건**: ①web 채팅 턴·상주 에이전트의 디스크 훅(hooks.json) 미배선 — run 과 동형 배선으로 수리(디스크→루프 전 체인 기능 테스트 고정) ②skill 조기-반환 경로 registry 미종료+MCP 미해제 ③@agent 경로 MCP 미해제 — 전 종료 경로가 단일 finally 로 수렴. 7묶음(v8.40.0) — **경로쌍 단일화** ✅: `scoped_paths()` 7모듈 8상수 파생(HEAD 대조 8/8 일치), hooks.json 병합 규칙 통일(둘 다 발화 — 사용자 전역 안전 훅이 프로젝트 파일 존재로 꺼지던 함정 제거, 신규 계약 테스트 4종). 8묶음(v8.41.0) — **프로바이더 self-register + wire ABC 정돈** ✅: register_provider 레지스트리+capability_transport 클래스 훅(추가=모듈 1개), parse_turn 추상 1차화(+parse=첫-op 투영 기본), 사문 빌더·anchor/field_specific 훅 제거, stream_with_reconnect 공용화, 스트림 리스트 누적+degeneration tail-window(O(n²) 2건 해소) — 신·구 등가 하네스 + 실서버(MLX) 스모크(감지·스트리밍·teardown 전 체인) 통과. 잔여: capability 3-tier 탐지 3벌·16K/4096 폴백 모순(동작 결정 필요)·접두 스캔 2벌은 보류.
 
 **부가 P0급**(리뷰어 검증, 스팟체크 미수행이나 코드 인용 명확):
 - 컨텍스트 회계 이중 결함 — 실측 재앵커 후 추정치 감산(단위 혼합, `context/manager.py:306` vs `:664` 등) + `fold_resolved_interventions`가 `_dynamic_start_index`를 안 올려 **resume 시 요약된 레코드 재혼입**(`:795`).
@@ -91,7 +91,7 @@
 - core.py property 브리지 소멸 + 파라미터 4중 복제 해소(LoopConfig 직접 전달)
 - ~~개입 처리 5중복 → `_intervene()` 단일 헬퍼(+ 턴 계수 규칙 통일)~~ ✅ v8.37.0
 - ~~run/web 부트스트랩·teardown 조립기 추출(runtime dict 3중·종료경로 4갈래 해소)~~ ✅ v8.39.0 (`agent_cli/runtime.py`: `AgentRuntime`+`build_agent_registry`/`wire_agent_mail`+`teardown_session`; **부수 발견·수리 3건** — web 채팅 턴·상주 에이전트 디스크 훅 미배선(run 만 배선돼 있었음), skill 조기-반환 경로 registry/MCP 미정리, @agent 경로 MCP 미해제)
-- 프로바이더 self-register + capability transport 흡수; wire ABC `parse_turn` 1차화 + 사문 빌더 제거
+- ~~프로바이더 self-register + capability transport 흡수; wire ABC `parse_turn` 1차화 + 사문 빌더 제거~~ ✅ v8.41.0 (+스트림 재연결 28행 2벌 공용화 `stream_with_reconnect`, run_sse_stream 리스트 누적·degeneration tail-window — HEAD 대조 하네스 + 실서버 스모크로 검증)
 - Renderer ABC 코어/옵셔널 프로토콜 분리; sticky+엔드포인트 선언형 레지스트리
 - ~~`.agent-cli` 경로쌍 `scoped_paths()` 단일화(+훅 병합 규칙 통일)~~ ✅ v8.40.0 (`agent_cli/paths.py` — 7모듈 8상수 파생, HEAD 표현식 재구성 대조 8/8 순서 포함 일치; hooks.json 은 사용자 결정으로 first-found→**둘 다 발화**(이벤트별 연결, 프로젝트 먼저) — 유일한 의도 동작 변경)
 - 프론트 ES 모듈 분할(`type="module"` — 빌드 불필요) + `postJson`/`escapeHtml`/클립보드 util 단일화 → 테스트의 소스 스크레이핑도 함께 소멸
@@ -133,16 +133,16 @@
 ### 4.2 providers/ + wire_formats/
 - [높음][일관성] `core.py:818`↔`anthropic.py:226` — stop_reason 정규화 부재 (P0-1).
 - [높음][확장성] `http.py:456-459` — degeneration 게이트 json_fc 전용 (P0-4).
-- [높음][확장성] `wire_formats/base.py:268-321` — `parse`/`parse_turn` 역전, base 기본 구현 사문 / `parse_turn` 추상 승격.
+- ~~[높음][확장성] `wire_formats/base.py:268-321` — `parse`/`parse_turn` 역전, base 기본 구현 사문 / `parse_turn` 추상 승격.~~ ✅ v8.41.0 (parse_turn 추상 1차 + parse=첫-op 투영 기본; 등록 포맷의 자체 parse 오버라이드 불변)
 - [높음][일관성] `json_fc.py:682-691` — `Op.truncated` 미설정 (P0-3).
-- [높음][확장성] `_format_rules_builder.py:41` — 호출 0 + 현행 규칙과 모순 / 갱신 or 제거.
-- [높음][확장성] `providers/__init__.py:21-32`+`capabilities.py:169-183` — 프로바이더 추가 5곳 수정 / self-register + transport 흡수.
-- [중간][중복성] `openai.py:91-118` ≡ `anthropic.py:108-135` — 스트림 재연결 28행 복붙 / `stream_with_reconnect` 공용화.
+- ~~[높음][확장성] `_format_rules_builder.py:41` — 호출 0 + 현행 규칙과 모순 / 갱신 or 제거.~~ ✅ v8.41.0 (빌더+anchor/field_specific 훅 제거 — format_rules 추상 승격, 섹션은 포맷이 통째 소유)
+- ~~[높음][확장성] `providers/__init__.py:21-32`+`capabilities.py:169-183` — 프로바이더 추가 5곳 수정 / self-register + transport 흡수.~~ ✅ v8.41.0 (register_provider 레지스트리 + 클래스 소유 capability_transport 훅 — 추가=모듈 1개+내장 목록 1줄; 신·구 반환 클래스·에러 메시지·transport 인자 등가 확인)
+- ~~[중간][중복성] `openai.py:91-118` ≡ `anthropic.py:108-135` — 스트림 재연결 28행 복붙 / `stream_with_reconnect` 공용화.~~ ✅ v8.41.0 (http.stream_with_reconnect — 기존 재연결 테스트가 그대로 계약 가드, provider 파일 복붙 부활 금지 핀)
 - [중간][중복성] `capabilities.py:372-526` — 3-tier 탐지 3벌 / transport 확장으로 단일화.
 - ~~[중간][일관성] `openai.py:68-80` vs `anthropic.py:89-101` — request_overrides 해석 정책 상이 / 공용 정책 함수.~~ ✅ v8.37.0 (`resolve_thinking_policy`)
 - ~~[중간][일관성] `openai.py:149` vs anthropic — 인라인 `<think>` 격리 OpenAI만 / 공용 후처리로 승격.~~ ✅ v8.37.0 (Anthropic 스트림+비스트림 동형 적용)
-- [중간][효율성] `http.py:452` — content/thinking O(n²) 누적 / 리스트+join.
-- [중간][효율성] `http.py:456-460` — degeneration 누적-전체 재검사 / 윈도우 제한.
+- ~~[중간][효율성] `http.py:452` — content/thinking O(n²) 누적 / 리스트+join.~~ ✅ v8.41.0
+- ~~[중간][효율성] `http.py:456-460` — degeneration 누적-전체 재검사 / 윈도우 제한.~~ ✅ v8.41.0 (_DEGEN_WINDOW=4096 tail — 조밀 반복인 러너웨이는 tail 로 충분; 턴-종료 후 전문 라벨링은 종전 그대로)
 - ~~[중간][일관성] `anthropic.py:190-198` — 비스트리밍 다중 text 블록 마지막만 잔존 / 누산으로 동형화.~~ ✅ v8.37.0
 - ~~[중간][확장성] `capabilities.py:291-365` — enable_thinking 재프로브 OpenAI만 / transport 공통 계약화.~~ ✅ v8.37.0 (Anthropic 은 thinking 블록 재프로브 — 방언별 스위치, 공통 2단계 계약)
 - [중간][일관성] `capabilities.py` — 16K 미만 하드리젝인데 폴백은 4096 + 프로브가 재시도 헬퍼 미사용 / 128K 폴백 통일+재시도.

@@ -128,11 +128,10 @@ class _MultiOpFormat(WireFormat):
             ensure_ascii=False,
         )
 
-    def format_rules_anchor(self) -> str:
-        return "Mock multi-op anchor."
-
-    def format_rules_field_specific(self) -> str:
-        return "1. thought.\n2. ops."
+    def format_rules(self) -> str:
+        # v8.41.0 ABC: format_rules 가 추상 (anchor/field_specific 훅과
+        # 사문 빌더는 제거됨 — 섹션은 포맷이 통째로 소유).
+        return "Mock multi-op rules."
 
     def constraint_reminder_call(self) -> str:
         return ""

@@ -171,16 +171,17 @@ def _detect_runtime_capabilities(
 ) -> ModelCapabilities | None:
     """Detect model capabilities at runtime via provider API.
 
-    Both providers share the probe orchestration (`_detect_capabilities`); only
-    the transport (OpenAI ``/chat/completions`` vs Anthropic ``/messages``)
-    differs."""
-    if provider == "openai":
-        return _detect_capabilities(model, _OpenAITransport(base_url, model, api_key))
-    if provider == "anthropic":
-        return _detect_capabilities(
-            model, _AnthropicTransport(base_url, model, api_key)
-        )
-    return None
+    All providers share the probe orchestration (`_detect_capabilities`);
+    transport 는 **프로바이더 클래스의 ``capability_transport`` 훅** 소유
+    (v8.41.0 self-register — 종전 이 함수의 provider-이름 분기 흡수).
+    미등록 프로바이더/훅 부재는 None → 기본값 폴백 (종전 계약)."""
+    from agent_cli.providers import get_provider_class
+
+    cls = get_provider_class(provider)
+    transport_factory = getattr(cls, "capability_transport", None)
+    if transport_factory is None:
+        return None
+    return _detect_capabilities(model, transport_factory(base_url, model, api_key))
 
 
 # Prompt whose natural answer is prose, not JSON. If the server does not

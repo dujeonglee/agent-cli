@@ -1157,3 +1157,133 @@ class TestStripThinkBlocks:
         resp = prov._parse_response(data)
         assert resp.content == "답"
         assert "필드" in resp.thinking and "tag" in resp.thinking
+
+
+class TestProviderRegistry:
+    """프로바이더 self-register (v8.41.0 — 리뷰 §4.2): 추가 = 모듈 1개 +
+    내장 목록 1줄. create_provider/_detect_runtime_capabilities 의 이름
+    분기 소멸 — 등가성은 릴리스 하네스로 신·구 동작(반환 클래스·에러
+    메시지·transport 인자) 일치 확인."""
+
+    def test_builtins_registered(self):
+        from agent_cli.providers import get_provider_class
+
+        assert get_provider_class("openai") is OpenAIProvider
+        assert get_provider_class("anthropic") is AnthropicProvider
+        assert get_provider_class("nope") is None
+
+    def test_create_provider_unknown_message_stable(self):
+        from agent_cli.providers import create_provider
+
+        with pytest.raises(ValueError) as exc:
+            create_provider("gemini", "u", "k")
+        # 종전 하드코딩 메시지와 동일 (정렬된 등록명 나열)
+        assert "Unknown provider: gemini" in str(exc.value)
+        assert "anthropic, openai" in str(exc.value)
+
+    def test_register_collision_raises_same_class_tolerated(self):
+        from agent_cli.providers import _PROVIDERS, register_provider
+
+        register_provider("openai", OpenAIProvider)  # 같은 클래스 재등록 no-op
+        assert _PROVIDERS["openai"] is OpenAIProvider
+        with pytest.raises(ValueError):
+            register_provider("openai", AnthropicProvider)
+
+    def test_capability_transport_hook_owned_by_provider(self):
+        from agent_cli.providers.capabilities import (
+            _AnthropicTransport,
+            _OpenAITransport,
+        )
+
+        t = OpenAIProvider.capability_transport("http://b/v1", "m1", "kk")
+        assert isinstance(t, _OpenAITransport)
+        assert (t.base, t.model, t.api_key) == ("http://b/v1", "m1", "kk")
+        t2 = AnthropicProvider.capability_transport("http://b/v1", "m2")
+        assert isinstance(t2, _AnthropicTransport)
+        assert (t2.base, t2.model) == ("http://b/v1", "m2")
+
+    def test_detect_runtime_uses_provider_hook(self):
+        """감지 오케스트레이터가 프로바이더 클래스의 훅을 경유 — 커스텀
+        프로바이더가 자기 transport 를 꽂을 수 있음을 고정."""
+        from unittest.mock import patch as _patch
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        sentinel_transport = object()
+
+        class _CustomProvider:
+            @staticmethod
+            def capability_transport(base_url, model, api_key=""):
+                return sentinel_transport
+
+        captured = {}
+
+        def fake_detect(model, transport):
+            captured["transport"] = transport
+
+        with (
+            _patch(
+                "agent_cli.providers.get_provider_class",
+                return_value=_CustomProvider,
+            ),
+            _patch(
+                "agent_cli.providers.capabilities._detect_capabilities", fake_detect
+            ),
+        ):
+            _detect_runtime_capabilities("custom", "u", "m")
+        assert captured["transport"] is sentinel_transport
+
+    def test_detect_runtime_unknown_provider_none(self):
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        assert _detect_runtime_capabilities("gemini", "u", "m") is None
+
+
+class TestDegenerationWindow:
+    """degeneration 조기종료 검사창 (v8.41.0 효율 — 리뷰 §4.2): 트리거
+    청크에서 최근 _DEGEN_WINDOW tail 만 검사 — 러너웨이(조밀 반복)는 tail
+    로 충분하고 누적-전체 재검사의 O(n²) 를 피한다. 턴-종료 후 전문
+    라벨링(dispatch)은 별개로 종전 그대로."""
+
+    def test_tail_text_takes_last_window(self):
+        from agent_cli.providers.http import _tail_text
+
+        assert _tail_text(["abc", "def", "ghi"], 4) == "fghi"
+        assert _tail_text(["abc"], 100) == "abc"
+        assert _tail_text([], 10) == ""
+
+    def test_dense_runaway_still_early_stops(self):
+        """실 러너웨이(조밀 반복)는 창 안에서 ≥2 히트 — 조기종료 유지."""
+        from agent_cli.providers.http import run_sse_stream
+
+        chunks = ['data: {"c": "## Thought\\n## Action\\n"}'] * 3
+        r = MagicMock()
+        r.iter_lines.return_value = iter([c.encode() for c in chunks])
+
+        def mapper(data):
+            from agent_cli.providers.http import StreamEvent
+
+            return StreamEvent(text=data.get("c", ""))
+
+        acc = run_sse_stream(
+            r,
+            lambda _t: None,
+            map_payload=mapper,
+            degeneration_check=lambda t: t.count("## Thought") >= 2,
+            degeneration_trigger="#",
+        )
+        assert acc.stop_reason == "degenerate_runaway"
+
+    def test_content_joined_across_chunks(self):
+        """리스트 누적 → 종료 시 join — content 는 청크 연결과 바이트 동일."""
+        from agent_cli.providers.http import StreamEvent, run_sse_stream
+
+        chunks = ['data: {"c": "hello "}', 'data: {"c": "world"}', "data: [DONE]"]
+        r = MagicMock()
+        r.iter_lines.return_value = iter([c.encode() for c in chunks])
+        acc = run_sse_stream(
+            r,
+            lambda _t: None,
+            map_payload=lambda d: StreamEvent(text=d.get("c", "")),
+        )
+        assert acc.content == "hello world"

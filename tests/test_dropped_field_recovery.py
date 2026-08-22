@@ -267,17 +267,14 @@ class TestPromptFlagHook:
         fr = get("json_fc").format_rules()
         assert 'must have an "action"' in fr
 
-    def test_field_specific_composes_numbered_rules(self):
-        for name in ("json_fc", "xml_fc"):
-            fs = get(name).format_rules_field_specific()
-            assert fs.startswith("1. "), name
-            assert "\n2. " in fs, name
-
     def test_softening_takes_effect_via_synthetic_plugin(self):
+        # v8.41.0: format_rules_field_specific 훅은 사문 빌더와 함께 제거 —
+        # _gated_rule 은 플러그인이 자기 format_rules 안에서 쓰는 유틸로
+        # 잔존한다 (합성 플러그인의 format_rules 조립으로 동일 계약 검증).
         class _SoftThought(JsonFcFormat):
-            def format_rules_field_specific(self) -> str:
+            def format_rules(self) -> str:
                 return f"1. {self._gated_rule(self.thought_required, 'STRONG', 'thought optional')}"
 
-        out = _SoftThought().format_rules_field_specific()
+        out = _SoftThought().format_rules()
         assert "thought optional" in out
         assert "STRONG" not in out

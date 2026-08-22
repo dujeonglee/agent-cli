@@ -381,6 +381,65 @@ class StreamAccum:
     decode_ns: int = 0
 
 
+def stream_with_reconnect(url, *, headers, body, handle_stream):
+    """스트리밍 POST + idle 재연결 루프 — 양 provider 공용 (v8.41.0,
+    리뷰 §4.2: 28행 복붙 2벌의 단일화; 동작은 바이트 동일).
+
+    post ``LLM_STREAM_TIMEOUT``(헤더 바운드) → 소켓 patient 리셋 →
+    ``handle_stream(r)``. ``StreamIdleTimeout``(장기 침묵) 시 재연결 알림
+    렌더 후 재전송, ``STREAM_MAX_RECONNECTS`` 회 소진 후 raise."""
+    from agent_cli.constants import (
+        LLM_READ_TIMEOUT,
+        LLM_STREAM_TIMEOUT,
+        STREAM_MAX_RECONNECTS,
+    )
+
+    for attempt in range(STREAM_MAX_RECONNECTS + 1):
+        r = post_with_retry(
+            requests.post,
+            url,
+            headers=headers,
+            json=body,
+            timeout=LLM_STREAM_TIMEOUT,
+            stream=True,
+        )
+        raise_for_status_with_body(r)
+        make_stream_patient(r, LLM_READ_TIMEOUT)
+        try:
+            return handle_stream(r)
+        except StreamIdleTimeout:
+            if attempt >= STREAM_MAX_RECONNECTS:
+                raise
+            from agent_cli.render import render_status
+
+            render_status(
+                "running",
+                "스트림 무응답 — 재연결 후 재전송 "
+                f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
+            )
+
+
+# degeneration 조기종료 검사창 (v8.41.0 — 리뷰 §4.2 효율): 러너웨이는 같은
+# 시그니처의 조밀 반복이라 최근 tail 만 봐도 ≥2 히트가 즉시 잡힌다. 종전엔
+# 트리거 문자가 있는 청크마다 누적 전체를 재검사해 xml_fc("<" 트리거 —
+# 코드 출력에 흔함) 장출력에서 O(n²) 이었다. 턴-종료 후의 전체-텍스트
+# 라벨링(dispatch 의 is_degenerate(llm_text))은 종전 그대로 전문 검사.
+_DEGEN_WINDOW = 4096
+
+
+def _tail_text(parts: list[str], window: int) -> str:
+    """누적 조각 리스트의 마지막 ``window`` 문자 — 뒤에서부터 필요한
+    조각만 join (트리거 청크에서만 호출되는 O(window) 경로)."""
+    take: list[str] = []
+    size = 0
+    for part in reversed(parts):
+        take.append(part)
+        size += len(part)
+        if size >= window:
+            break
+    return "".join(reversed(take))[-window:]
+
+
 def run_sse_stream(
     r,
     on_chunk,
@@ -407,6 +466,10 @@ def run_sse_stream(
     from agent_cli.constants import STREAM_IDLE_MAX_TICKS, STREAM_IDLE_THRESHOLD
 
     acc = StreamAccum()
+    # 리스트 누적 + 종료 시 1회 join (v8.41.0 — 리뷰 §4.2 효율): 인스턴스
+    # 속성 str += 는 CPython 의 로컬-변수 최적화 밖이라 장출력에서 O(n²).
+    content_parts: list[str] = []
+    thinking_parts: list[str] = []
     t0 = _time.perf_counter_ns()
     t_first = 0
 
@@ -446,19 +509,22 @@ def run_sse_stream(
         if ev.usage_fields:
             acc.usage_fields.update(ev.usage_fields)
         if ev.thinking:
-            acc.thinking += ev.thinking
+            thinking_parts.append(ev.thinking)
         if ev.text:
             if not t_first:
                 t_first = _time.perf_counter_ns()
-            acc.content += ev.text
+            content_parts.append(ev.text)
             on_chunk(ev.text)
             # Early-stop format runaway. 게이트 문자는 wire shape 소유
             # (P0-4 — json_fc "#" 헤더 / xml_fc "<" 태그): 러너웨이 시그니처가
-            # 가능해진 시점에만 predicate(regex) 실행 — O(트리거) not O(chunks).
+            # 가능해진 시점에만 predicate(regex) 실행. 검사 대상은 최근
+            # ``_DEGEN_WINDOW`` tail — 러너웨이(조밀 반복)는 tail 로 충분하고
+            # 누적-전체 재검사의 O(n²) 를 피한다 (턴-종료 후 라벨링은
+            # dispatch 가 전문 검사 — 종전 그대로).
             if (
                 degeneration_check is not None
                 and degeneration_trigger in ev.text
-                and degeneration_check(acc.content)
+                and degeneration_check(_tail_text(content_parts, _DEGEN_WINDOW))
             ):
                 acc.stop_reason = "degenerate_runaway"
                 r.close()
@@ -468,6 +534,8 @@ def run_sse_stream(
         if ev.done:
             break
 
+    acc.content = "".join(content_parts)
+    acc.thinking = "".join(thinking_parts)
     # Reader stopped early because the user interrupted; flag still set →
     # (폐기될) partial 에 라벨.
     if interrupt_check is not None and interrupt_check():

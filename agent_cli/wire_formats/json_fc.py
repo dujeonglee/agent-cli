@@ -629,18 +629,6 @@ class JsonFcFormat(WireFormat):
     def format_rules(self) -> str:
         return _FORMAT_RULES
 
-    def format_rules_anchor(self) -> str:
-        return (
-            "Write brief reasoning as plain prose, then end the turn with "
-            "ONE JSON array of ops (finish with a `complete` op)."
-        )
-
-    def format_rules_field_specific(self) -> str:
-        return (
-            "1. Optional reasoning is plain prose BEFORE the array.\n"
-            '2. The turn ends with a JSON array of {"action": ..., params} ops.'
-        )
-
     def render_action_input(self, action_input: dict) -> str:
         # Guides hand in a wire-key-prefixed dict (`_rai_prefixed`); render it
         # as this format's flat op: {"action": tool, plain params}.

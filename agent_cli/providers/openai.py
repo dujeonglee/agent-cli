@@ -11,9 +11,6 @@ import requests
 
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
-    LLM_READ_TIMEOUT,
-    LLM_STREAM_TIMEOUT,
-    STREAM_MAX_RECONNECTS,
 )
 from agent_cli.providers.base import (
     LLMResponse,
@@ -24,16 +21,23 @@ from agent_cli.providers.base import (
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
-    StreamIdleTimeout,
-    make_stream_patient,
     post_with_retry,
     raise_for_status_with_body,
     run_sse_stream,
+    stream_with_reconnect,
 )
 
 
 class OpenAIProvider:
     """Adapter for OpenAI-compatible /v1/chat/completions API."""
+
+    @staticmethod
+    def capability_transport(base_url: str, model: str, api_key: str = ""):
+        """capability 프로브 transport — 프로바이더 클래스 소유 (v8.41.0
+        self-register: 종전 capabilities 쪽 provider-이름 분기 흡수)."""
+        from agent_cli.providers.capabilities import _OpenAITransport
+
+        return _OpenAITransport(base_url, model, api_key)
 
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip("/")
@@ -82,41 +86,20 @@ class OpenAIProvider:
         if on_chunk:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}
-            # Stream timeout is (connect 30s, read 30s) — the short read bounds
-            # the header wait + interrupt-during-header. After post() returns we
-            # relax the socket to patient (LLM_READ_TIMEOUT) so body reads aren't
-            # killed at 30s; the poll-loop idle detector handles body stalls and
-            # raises StreamIdleTimeout after ~10min of silence, which we
-            # reconnect + re-send (up to STREAM_MAX_RECONNECTS).
-            for attempt in range(STREAM_MAX_RECONNECTS + 1):
-                r = post_with_retry(
-                    requests.post,
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=LLM_STREAM_TIMEOUT,
-                    stream=True,
-                )
-                raise_for_status_with_body(r)
-                make_stream_patient(r, LLM_READ_TIMEOUT)
-                try:
-                    return self._handle_stream(
-                        r,
-                        on_chunk,
-                        kwargs.get("degeneration_check"),
-                        kwargs.get("interrupt_check"),
-                        degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
-                    )
-                except StreamIdleTimeout:
-                    if attempt >= STREAM_MAX_RECONNECTS:
-                        raise
-                    from agent_cli.render import render_status
-
-                    render_status(
-                        "running",
-                        "스트림 무응답 — 재연결 후 재전송 "
-                        f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
-                    )
+            # 스트리밍 POST + idle 재연결 — 골격은 http.stream_with_reconnect
+            # 공용 (v8.41.0; timeout/patient-socket/재전송 의미는 그 docstring).
+            return stream_with_reconnect(
+                url,
+                headers=headers,
+                body=body,
+                handle_stream=lambda r: self._handle_stream(
+                    r,
+                    on_chunk,
+                    kwargs.get("degeneration_check"),
+                    kwargs.get("interrupt_check"),
+                    degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
+                ),
+            )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -236,3 +219,9 @@ def _map_openai_payload(data: dict) -> StreamEvent | None:
     if not (ev.text or ev.thinking or ev.stop_reason or ev.usage_fields):
         return None
     return ev
+
+
+# self-register (v8.41.0) — 프로바이더 추가 = 모듈 1개 + 내장 목록 1줄.
+from agent_cli.providers import register_provider as _register_provider
+
+_register_provider("openai", OpenAIProvider)

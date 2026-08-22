@@ -68,18 +68,15 @@ class TestParsedAction:
 class _MockFormat(WireFormatProtocol):
     """Minimal WireFormat implementation for registry / ABC tests.
 
-    Implements every abstract method; inherits the concrete defaults
-    (history pipeline, identity hooks, shared format-rules builder)
-    from :class:`WireFormat` so the mock stays minimal."""
+    Implements every abstract method (v8.41.0 ABC: ``parse_turn`` 이 1차
+    추상, ``parse`` 는 첫-op 투영 기본 상속); inherits the concrete
+    defaults (history pipeline, identity hooks) so the mock stays minimal."""
 
     name = "_mock_for_tests"
     thought_required = False
 
-    def format_rules_anchor(self) -> str:
-        return "Mock anchor."
-
-    def format_rules_field_specific(self) -> str:
-        return "1. Mock rule 1.\n2. Mock rule 2."
+    def format_rules(self) -> str:
+        return "Mock rules."
 
     def render_full_example(self, *, thought, action, action_input) -> str:
         if thought is None:
@@ -90,8 +87,8 @@ class _MockFormat(WireFormatProtocol):
             f'"action_input": {action_input}}}'
         )
 
-    def parse(self, llm_text: str) -> ParsedAction:
-        return ParsedAction(raw=llm_text)
+    def parse_turn(self, llm_text: str) -> ParsedTurn:
+        return ParsedTurn(raw=llm_text)
 
     def constraint_reminder_call(self) -> str:
         return "mock call reminder"
@@ -116,79 +113,65 @@ class _MockFormat(WireFormatProtocol):
 
 
 class _ConfigurableFormat(_MockFormat):
-    """Mock whose ``parse()`` returns a preset ParsedAction, to exercise the
-    default ``parse_turn()`` wrapper's mapping in isolation."""
+    """Mock whose ``parse_turn()`` returns a preset ParsedTurn, to exercise
+    the default ``parse()`` first-op projection in isolation (v8.41.0 역전:
+    parse_turn 이 1차 추상, parse 가 파생 기본)."""
 
     name = "_configurable_for_tests"
 
-    def __init__(self, pa: ParsedAction):
-        self._pa = pa
+    def __init__(self, turn: ParsedTurn):
+        self._turn = turn
 
-    def parse(self, llm_text: str) -> ParsedAction:
-        return self._pa
+    def parse_turn(self, llm_text: str) -> ParsedTurn:
+        return self._turn
 
 
-class TestParseTurnDefaultWrapper:
-    """``WireFormat.parse_turn`` defaults to wrapping a plugin's singular
-    ``parse()`` into a ``ParsedTurn`` — so single-action formats need no
-    change and the loop's one-op iteration reproduces today's behaviour.
-    A multi-op format opts in only by overriding ``parse_turn``."""
+class TestParseDefaultProjection:
+    """``WireFormat.parse`` defaults to the first-op projection of
+    ``parse_turn`` — 레거시 단수 소비자(history 직렬화 기본·직접 호출)용.
+    v8.41.0 역전: 종전엔 parse 가 추상 + parse_turn 기본이 그것을 감쌌는데
+    등록 포맷 전부 multi-op 라 그 기본이 사문이었다."""
 
-    def test_normal_action_yields_one_op(self):
-        pa = ParsedAction(
+    def test_first_op_projected(self):
+        turn = ParsedTurn(
             thought="t",
-            action="read_file",
-            action_input={"path": "x"},
+            ops=[Op("read_file", {"path": "x"}), Op("shell", {"command": "ls"})],
             raw="raw",
             parse_stage=1,
             thinking="th",
         )
-        turn = _ConfigurableFormat(pa).parse_turn("raw")
-        assert isinstance(turn, ParsedTurn)
-        assert turn.terminal is False
-        assert len(turn.ops) == 1
-        assert isinstance(turn.ops[0], Op)
-        assert turn.ops[0].action == "read_file"
-        assert turn.ops[0].action_input == {"path": "x"}
+        pa = _ConfigurableFormat(turn).parse("raw")
+        assert isinstance(pa, ParsedAction)
+        assert pa.action == "read_file"
+        assert pa.action_input == {"path": "x"}
         # turn-level metadata carried through verbatim
-        assert turn.thought == "t"
-        assert turn.raw == "raw"
-        assert turn.parse_stage == 1
-        assert turn.thinking == "th"
+        assert pa.thought == "t"
+        assert pa.raw == "raw"
+        assert pa.parse_stage == 1
+        assert pa.thinking == "th"
 
-    def test_dropped_action_preserves_input_as_op(self):
-        # parse_stage-3 (dropped-action recovery): no action name, but
-        # action_input recovered.
-        # The wrapper MUST keep an Op so the loop's per-op infer_action / echo
-        # can still recover it (the parse preservation invariant).
-        # A still-prefixed batch tool's key (code_index_queries) — the shape
-        # infer_action can recover a dropped action from. (read_file/write_file/
-        # edit_file are now flat-native, so their dropped-action input would be
-        # ambiguous.)
-        pa = ParsedAction(
-            action=None,
-            action_input={"code_index_queries": [{"mode": "list"}]},
+    def test_dropped_action_op_preserves_input(self):
+        # parse-preservation invariant 승계: action 없는 op 도 input 이
+        # 살아 있으면 투영에 그대로 실린다 (infer_action / echo 전제).
+        turn = ParsedTurn(
+            ops=[Op(None, {"code_index_queries": [{"mode": "list"}]})],
             parse_stage=3,
         )
-        turn = _ConfigurableFormat(pa).parse_turn("raw")
-        assert len(turn.ops) == 1
-        assert turn.ops[0].action is None
-        assert turn.ops[0].action_input == {"code_index_queries": [{"mode": "list"}]}
-        assert turn.parse_stage == 3
+        pa = _ConfigurableFormat(turn).parse("raw")
+        assert pa.action is None
+        assert pa.action_input == {"code_index_queries": [{"mode": "list"}]}
+        assert pa.parse_stage == 3
 
-    def test_total_failure_yields_no_ops(self):
-        # parse_stage 0, no action, no input → a real parse failure → zero ops.
-        turn = _ConfigurableFormat(ParsedAction(parse_stage=0)).parse_turn("garbage")
-        assert turn.ops == []
-        assert turn.terminal is False
-        assert turn.parse_stage == 0
+    def test_total_failure_projects_empty(self):
+        pa = _ConfigurableFormat(ParsedTurn(parse_stage=0)).parse("garbage")
+        assert pa.action is None and pa.action_input is None
+        assert pa.parse_stage == 0
 
-    def test_truncated_flag_carried_to_op(self):
-        pa = ParsedAction(
-            action="edit_file", action_input={"x": 1}, parse_stage=1, truncated=True
+    def test_truncated_flag_carried_from_op(self):
+        turn = ParsedTurn(
+            ops=[Op("edit_file", {"x": 1}, truncated=True)], parse_stage=1
         )
-        turn = _ConfigurableFormat(pa).parse_turn("raw")
-        assert turn.ops[0].truncated is True
+        assert _ConfigurableFormat(turn).parse("raw").truncated is True
 
     def test_react_render_round_trips_through_parse_turn(self):
         # react is multi-op now: render_full_example emits {thought, actions:
@@ -291,17 +274,14 @@ class TestRegistry:
             name = "bbb"
             thought_required = False
 
-            def format_rules_anchor(self) -> str:
-                return ""
-
-            def format_rules_field_specific(self) -> str:
+            def format_rules(self) -> str:
                 return ""
 
             def render_full_example(self, *, thought, action, action_input) -> str:
                 return ""
 
-            def parse(self, t) -> ParsedAction:
-                return ParsedAction()
+            def parse_turn(self, t) -> ParsedTurn:
+                return ParsedTurn()
 
             def constraint_reminder_call(self) -> str:
                 return ""

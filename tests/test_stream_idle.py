@@ -139,8 +139,8 @@ class TestStreamingReconnect:
             side_effect=[StreamIdleTimeout(600), StreamIdleTimeout(600), ok]
         )
         with (
-            patch("agent_cli.providers.openai.post_with_retry") as post,
-            patch("agent_cli.providers.openai.make_stream_patient"),
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
             patch.object(type(prov), "_handle_stream", stream),
             patch("agent_cli.render.render_status") as status,
         ):
@@ -157,8 +157,8 @@ class TestStreamingReconnect:
         prov = self._provider()
         stream = MagicMock(side_effect=StreamIdleTimeout(600))  # always stalls
         with (
-            patch("agent_cli.providers.openai.post_with_retry") as post,
-            patch("agent_cli.providers.openai.make_stream_patient"),
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
             patch.object(type(prov), "_handle_stream", stream),
             patch("agent_cli.render.render_status"),
             pytest.raises(StreamIdleTimeout),

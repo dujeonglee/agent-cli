@@ -6,9 +6,6 @@ import requests
 
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
-    LLM_READ_TIMEOUT,
-    LLM_STREAM_TIMEOUT,
-    STREAM_MAX_RECONNECTS,
 )
 from agent_cli.providers.base import (
     LLMResponse,
@@ -19,11 +16,10 @@ from agent_cli.providers.base import (
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
-    StreamIdleTimeout,
-    make_stream_patient,
     post_with_retry,
     raise_for_status_with_body,
     run_sse_stream,
+    stream_with_reconnect,
 )
 
 # reasoning_effort → Anthropic thinking budget_tokens 번역표. Anthropic 은
@@ -55,6 +51,13 @@ def _normalize_stop_reason(reason: str | None) -> str | None:
 
 class AnthropicProvider:
     """Adapter for the Anthropic Messages API (/v1/messages)."""
+
+    @staticmethod
+    def capability_transport(base_url: str, model: str, api_key: str = ""):
+        """capability 프로브 transport — 프로바이더 클래스 소유 (v8.41.0)."""
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        return _AnthropicTransport(base_url, model, api_key)
 
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip("/")
@@ -109,38 +112,20 @@ class AnthropicProvider:
 
         if on_chunk:
             body["stream"] = True
-            # openai 동형 idle-재연결 래퍼 (C6): 골격이 침묵 시
-            # StreamIdleTimeout 을 올리면 재연결+재전송 — 이전엔 anthropic
-            # 만 이 래퍼가 없어 무한 대기했다.
-            for attempt in range(STREAM_MAX_RECONNECTS + 1):
-                r = post_with_retry(
-                    requests.post,
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=LLM_STREAM_TIMEOUT,
-                    stream=True,
-                )
-                raise_for_status_with_body(r)
-                make_stream_patient(r, LLM_READ_TIMEOUT)
-                try:
-                    return self._handle_stream(
-                        r,
-                        on_chunk,
-                        kwargs.get("degeneration_check"),
-                        kwargs.get("interrupt_check"),
-                        degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
-                    )
-                except StreamIdleTimeout:
-                    if attempt >= STREAM_MAX_RECONNECTS:
-                        raise
-                    from agent_cli.render import render_status
-
-                    render_status(
-                        "running",
-                        "스트림 무응답 — 재연결 후 재전송 "
-                        f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
-                    )
+            # 스트리밍 POST + idle 재연결 — 골격은 http.stream_with_reconnect
+            # 공용 (v8.41.0; 종전 openai 와 28행 동형 복붙의 단일화).
+            return stream_with_reconnect(
+                url,
+                headers=headers,
+                body=body,
+                handle_stream=lambda r: self._handle_stream(
+                    r,
+                    on_chunk,
+                    kwargs.get("degeneration_check"),
+                    kwargs.get("interrupt_check"),
+                    degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
+                ),
+            )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -287,3 +272,9 @@ def _map_anthropic_payload(data: dict) -> StreamEvent | None:
             ev.usage_fields = {"output_tokens": usage["output_tokens"]}
         return ev
     return None
+
+
+# self-register (v8.41.0) — 프로바이더 추가 = 모듈 1개 + 내장 목록 1줄.
+from agent_cli.providers import register_provider as _register_provider
+
+_register_provider("anthropic", AnthropicProvider)

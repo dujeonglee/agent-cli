@@ -300,19 +300,6 @@ class XmlFcFormat(WireFormat):
     def format_rules(self) -> str:
         return _FORMAT_RULES
 
-    def format_rules_anchor(self) -> str:
-        return (
-            "Write brief reasoning as plain prose, then emit one or more "
-            "<tool_call> blocks (finish with a `complete` call)."
-        )
-
-    def format_rules_field_specific(self) -> str:
-        return (
-            "1. Optional reasoning is plain prose BEFORE the first <tool_call>.\n"
-            "2. Each <tool_call> wraps one <function=NAME> with "
-            "<parameter=KEY>value</parameter> lines."
-        )
-
     def render_action_input(self, action_input) -> str:
         # 가이드는 wire-key prefixed dict 를 넘긴다 — flat 태그 콜로
         # (json_fc 의 un-prefix 스캔과 동형 계약, 구현은 self-contained).

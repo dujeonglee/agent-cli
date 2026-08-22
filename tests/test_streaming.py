@@ -538,9 +538,15 @@ class TestC6Symmetry:
             assert "for line in interruptible_lines" not in src, mod
 
     def test_both_calls_have_idle_reconnect(self):
-        # C6 대칭화: StreamIdleTimeout 재연결 래퍼가 양 call() 에 존재
+        # C6 대칭화 → v8.41.0 공용화: 재연결 래퍼는 http.stream_with_reconnect
+        # 단일 지점 — 양 call() 이 그것을 경유하고, provider 파일에 복붙
+        # 재연결 루프가 부활하면 회귀.
         for mod in ("openai", "anthropic"):
             with open(f"agent_cli/providers/{mod}.py") as fh:
                 src = fh.read()
-            assert "except StreamIdleTimeout" in src, mod
-            assert "STREAM_MAX_RECONNECTS" in src, mod
+            assert "stream_with_reconnect(" in src, mod
+            assert "except StreamIdleTimeout" not in src, mod  # 복붙 부활 금지
+        with open("agent_cli/providers/http.py") as fh:
+            http_src = fh.read()
+        assert "except StreamIdleTimeout" in http_src
+        assert "STREAM_MAX_RECONNECTS" in http_src
