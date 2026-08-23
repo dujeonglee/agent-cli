@@ -25,7 +25,8 @@ htmlcov/
 !.agent-cli/skills/
 .claude/
 out.txt
-perf-kpi.json        # KPI 측정 run 산출물 (베이스라인은 docs/PERF-KPI.md)
+# KPI 측정 run 산출물 (베이스라인은 docs/PERF-KPI.md)
+perf-kpi.json
 OptimizationToDo.md
 OptimizationSummary.md
 
