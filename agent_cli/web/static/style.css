@@ -645,6 +645,11 @@ footer {
   padding: 6px 8px;
   background: var(--surface-2);
   border-radius: 4px;
+  /* 경로는 공백이 없어 기본 규칙으로는 어디서도 못 끊는다 — 긴 절대경로
+     (read_file/edit_file 대상)가 카드 박스를 가로로 넘던 것 수리(v8.42.3).
+     ``anywhere`` 는 필요한 지점에서만 끊고 min-content 폭도 낮춰, flex
+     컨테이너 안에서도 카드를 밀어내지 않는다(``break-word`` 와의 차이). */
+  overflow-wrap: anywhere;
 }
 .action-detail .muted { color: var(--muted); }
 .action-shell {

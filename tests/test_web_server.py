@@ -755,6 +755,71 @@ class TestStaticUI:
         assert 'el("span", ["card-time"], fmtCardTime(ts))' in js
         assert 'el("div", ["task-error"], error)' in js
 
+    def test_no_markup_passed_to_text_el(self, server_and_client):
+        """el() 오용 **자동 탐지** (v8.42.3): 3번째 인자에 HTML 마크업이 섞이면
+        textContent 라 화면에 태그가 문자 그대로 노출된다 — 실제로
+        ``renderObservation`` 의 ``<span class="icon">✓</span> shell`` 이 그렇게
+        새어 화면에 raw 로 찍혔다(v8.36.0 el/elHtml 분리 때 놓친 콜사이트).
+
+        종전엔 콜사이트 전수를 **손으로** 감사해 놓쳤으므로, 이제 소스를 파싱해
+        기계적으로 막는다: el( 호출 본문에 마크업 리터럴이나 HTML 생성 함수
+        결과가 있으면 실패 → elHtml 을 쓰라는 신호."""
+        import re
+
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+
+        def _el_call_bodies(src):
+            """``el(`` 호출의 인자 본문을 괄호 균형으로 추출 (elHtml 은 제외 —
+            \b 경계가 ``elHtml(`` 을 걸러낸다)."""
+            for m in re.finditer(r"\bel\(", src):
+                i, depth = m.end(), 1
+                start = i
+                while i < len(src) and depth:
+                    if src[i] == "(":
+                        depth += 1
+                    elif src[i] == ")":
+                        depth -= 1
+                    i += 1
+                yield src[: m.start()].count("\n") + 1, src[start : i - 1]
+
+        markup = re.compile(r"[\"'`]\s*<\s*(span|div|b|i|code|pre|em|strong|a|ul|li)\b")
+        html_fns = re.compile(
+            r"(escapeAndFormat|colorizeDiffBody|highlightDangerHtml|markdownInline"
+            r"|restoreCodeFences|ovUserHtml|ovRespHtml|ovActHtml|ovChanChip)\("
+        )
+        offenders = [
+            (line, " ".join(body.split())[:100])
+            for line, body in _el_call_bodies(js)
+            if markup.search(body) or html_fns.search(body)
+        ]
+        assert not offenders, (
+            "el() 에 HTML 을 넘긴 콜사이트 — elHtml() 로 바꿀 것:\n"
+            + "\n".join(f"  L{ln}: el({b}..." for ln, b in offenders)
+        )
+
+    def test_observation_head_uses_elhtml(self, server_and_client):
+        """관찰 카드 헤더(✓/✗ 아이콘 + 도구명)는 마크업이라 elHtml 경유 —
+        위 자동 탐지의 구체 회귀 지점 핀(v8.42.3 수리)."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        import re
+
+        body = _js_fn_body(js, "renderObservation")
+        assert '<span class="icon">' in body  # 헤더는 마크업을 담는다
+        assert re.search(r'elHtml\(\s*"div",\s*\["obs-head"\]', body), (
+            "obs-head 가 elHtml 경유가 아님 — 아이콘 마크업이 문자로 노출된다"
+        )
+
+    def test_action_detail_wraps_long_paths(self, server_and_client):
+        """긴 절대경로(공백 없음)가 카드 박스를 넘지 않도록 줄바꿈 규칙 —
+        read_file/edit_file 액션 상세가 가로로 삐져나가던 것 수리(v8.42.3).
+        형제 요소(.obs-body/.action-shell/.card-error)는 이미 규칙 보유."""
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        block = css.split(".action-detail {", 1)[1].split("}", 1)[0]
+        assert "overflow-wrap: anywhere" in block, ".action-detail 줄바꿈 규칙 없음"
+
     def test_agent_icon_per_key_wired(self, server_and_client):
         """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신
         이를 쓴다. 서버(agent_icon) parity 는 test_app_markdown 이 강제.

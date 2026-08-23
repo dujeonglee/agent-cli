@@ -903,7 +903,11 @@
     const card = el("div", ["card", "card-observation"]);
     card.classList.add(d.success ? "ok" : "fail");
     card.appendChild(
-      el(
+      // ★ elHtml (innerHTML) — 본문에 <span class="icon"> 마크업이 들어간다.
+      // el() 은 textContent 라 마크업이 문자 그대로 노출된다(v8.36.0 el/elHtml
+      // 분리 때 놓친 콜사이트 — v8.42.3 수리). tool_name 은 escapeHtml 로 이미
+      // 이스케이프되므로 주입 안전.
+      elHtml(
         "div",
         ["obs-head"],
         '<span class="icon">' +
