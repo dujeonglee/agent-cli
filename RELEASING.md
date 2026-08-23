@@ -26,8 +26,19 @@ agent-cli의 버전 정책과 릴리스 절차. on-premise 배포 대상이며 *
 pytest tests/ -m "not ollama_integration"
 ruff check agent_cli/ tests/
 ruff format --check agent_cli/ tests/
+node --check agent_cli/web/static/app.js      # 프런트 수정 시
 git status            # 작업 트리 클린 (untracked scratch 제외)
 ```
+
+**프런트(`web/static/`)를 건드렸다면 추가로**:
+
+```bash
+AGENT_CLI_BROWSER_TESTS=1 pytest tests/browser/          # 실브라우저 e2e + 성능 회귀 가드
+# 렌더 경로를 건드렸다면 KPI 도 측정해 docs/PERF-KPI.md 표 갱신
+AGENT_CLI_BROWSER_TESTS=1 AGENT_CLI_PERF_KPI=1 pytest tests/browser/test_render_perf.py -s
+```
+
+성능 KPI 의 정의·베이스라인·회귀 판정 기준은 [docs/PERF-KPI.md](docs/PERF-KPI.md).
 
 README.md / docs/ARCHITECTURE.md가 최신인지 확인.
 

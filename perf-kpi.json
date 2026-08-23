@@ -1,0 +1,25 @@
+{
+  "rows": [
+    {
+      "events": 120,
+      "cards": 120,
+      "blocking_ms": 0,
+      "worst_long_task_ms": 0,
+      "load_to_settled_ms": 163
+    },
+    {
+      "events": 360,
+      "cards": 360,
+      "blocking_ms": 59,
+      "worst_long_task_ms": 59,
+      "load_to_settled_ms": 167
+    },
+    {
+      "events": 600,
+      "cards": 600,
+      "blocking_ms": 87,
+      "worst_long_task_ms": 87,
+      "load_to_settled_ms": 215
+    }
+  ]
+}
