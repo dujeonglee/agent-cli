@@ -1490,7 +1490,12 @@
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
     finalizeStreamingAsFailed(d.task_id, d.reason, d.raw);
-    ovOnFailed(d); // 개요: 진행 중 hero 가 "생성 중" 에 갇히지 않게 확정
+    // ★개요 활동 스트립은 건드리지 않는다 (v8.42.4): failed_turn 은 서버의
+    // ``recovery()`` 에서만 나오고 — 즉 **포맷 복구 후 같은 런이 재시도**
+    // 한다는 뜻이지 런 종료가 아니다. 종전엔 여기서 ovAct 를 비워, LLM 이
+    // Invalid JSON 을 한 번 뱉으면 "도구 N회" 스트립이 사라졌다가 다음 도구
+    // 호출부터 0 부터 다시 세었다. 런 종료 정리는 worker_state idle 이 이미
+    // 소유한다(complete 없이 끝난 경우까지 포함하는 안전망).
   });
 
   es.addEventListener("observation", function (e) {
@@ -1999,11 +2004,6 @@
     if (hit) hit.n += 1;
     else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
     a.total += 1;
-    scheduleOvRender();
-  }
-  function ovOnFailed(d) {
-    if (d && d.task_id) return; // 메인 스코프만 — 런이 complete 없이 끝나면 스트립 정리
-    ovAct = null;
     scheduleOvRender();
   }
   function ovOnRoster(d) {

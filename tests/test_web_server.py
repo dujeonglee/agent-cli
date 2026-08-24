@@ -537,8 +537,12 @@ class TestStaticUI:
     def test_overview_activity_strip_wired(self, server_and_client):
         """실행 중(v8.16.0): 진행 내용(원시 스트림)을 표시하지 않고, 메인 도구 호출을
         축약한 **활동 스트립**(누적 카운트 + 현재 배치 칩)만 보여준다 — 다음 배치에
-        이전 칩 교체. complete 시 스트립이 사라지고 응답 블록으로 대체. failed_turn·
-        worker_state idle 은 스트립을 정리(정체 방지)."""
+        이전 칩 교체. complete 시 스트립이 사라지고 응답 블록으로 대체.
+
+        스트립 정리 주체는 **worker_state idle 하나** (v8.42.4): 종전엔
+        failed_turn 도 정리했는데, 그건 서버 recovery() 단독 방출 =
+        "포맷 복구 후 **재시도**" 신호라 런 종료가 아니었다 — Invalid JSON
+        한 번에 스트립이 사라지고 카운트가 0 부터 재시작하던 버그의 원인."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         # 도구 호출 축약 + 배치 스트립
@@ -553,9 +557,8 @@ class TestStaticUI:
             0
         ]
         assert "ovOnAction(d)" in at
-        # failed_turn·worker_idle 에서 스트립 정리(ovAct = null)
-        ft = js.split('es.addEventListener("failed_turn"', 1)[1].split("});", 1)[0]
-        assert "ovOnFailed(d)" in ft
+        # 스트립 정리는 worker_state idle 만 (failed_turn 은 재시도 신호라 미개입 —
+        # 상세 계약은 test_failed_turn_does_not_clear_overview_strip)
         ws = js.split('es.addEventListener("worker_state"', 1)[1].split("});", 1)[0]
         assert "ovAct = null" in ws
 
@@ -810,6 +813,36 @@ class TestStaticUI:
         assert re.search(r'elHtml\(\s*"div",\s*\["obs-head"\]', body), (
             "obs-head 가 elHtml 경유가 아님 — 아이콘 마크업이 문자로 노출된다"
         )
+
+    def test_failed_turn_does_not_clear_overview_strip(self, server_and_client):
+        """failed_turn 은 **런 종료가 아니라 재시도** 신호다 (서버 recovery()
+        단독 방출) — 개요 활동 스트립(ovAct)을 여기서 비우면 Invalid JSON 한
+        번에 "도구 N회" 카드가 사라지고 카운트가 0 부터 재시작한다(v8.42.4
+        수리). 런 종료 정리는 worker_state idle 이 소유.
+
+        브라우저 가드(tests/browser/test_overview_activity.py)가 실동작을
+        보지만 그 스위트는 옵트인이라, 기본 스위트에도 걸리도록 정적 핀."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+
+        def _code_only(text):
+            """`//` 주석 제거 — 주석에 쓰인 식별자가 오탐을 내지 않게."""
+            import re as _re
+
+            return "\n".join(_re.sub(r"//.*$", "", ln) for ln in text.split("\n"))
+
+        # failed_turn 리스너 **코드**에 ovAct 조작이 없어야 한다
+        start = js.index('es.addEventListener("failed_turn"')
+        body = _code_only(js[start : js.index("es.addEventListener(", start + 10)])
+        assert "ovAct" not in body, "failed_turn 이 개요 활동 스트립을 건드림(회귀)"
+        assert "finalizeStreamingAsFailed" in body  # 타임라인 마감은 유지
+        # 소비자 없는 헬퍼는 소멸 (되살아나면 같은 회귀)
+        assert "ovOnFailed" not in js
+
+        # 런 종료 정리는 worker_state idle 이 여전히 소유 (안전망 제거 금지)
+        ws = js.index('es.addEventListener("worker_state"')
+        ws_body = _code_only(js[ws : js.index("es.addEventListener(", ws + 10)])
+        assert "ovAct = null" in ws_body, "런 종료 시 스트립 정리가 사라짐"
 
     def test_action_detail_wraps_long_paths(self, server_and_client):
         """긴 절대경로(공백 없음)가 카드 박스를 넘지 않도록 줄바꿈 규칙 —
