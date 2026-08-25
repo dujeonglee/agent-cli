@@ -844,6 +844,60 @@ class TestStaticUI:
         ws_body = _code_only(js[ws : js.index("es.addEventListener(", ws + 10)])
         assert "ovAct = null" in ws_body, "런 종료 시 스트립 정리가 사라짐"
 
+    def test_overview_slash_output_allowlist(self, server_and_client):
+        """슬래시 명령 출력이 개요에 뜨는 화이트리스트가 **서버 tool_name 과
+        1:1** 임을 교차 고정 (v8.43.0).
+
+        이 명령들은 LLM 루프를 타지 않고 observation 이벤트 하나만 쏘므로
+        종전엔 개요에 요청만 남고 결과가 안 붙었다. 프런트가 tool_name 으로
+        게이트하는데, 서버에서 이름을 바꾸면 **조용히 개요에서 사라진다** —
+        두 소스를 여기서 묶어 그 드리프트를 막는다.
+
+        제외 대상: ``agent``(@<agent> 실제 런 — ovOnScopedFinal 이 이미 개요에
+        싣는다, 넣으면 이중 표시)와 not-found 에러(tool_name 이 동적)."""
+        import re
+        from pathlib import Path
+
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+
+        # 프런트 화이트리스트 추출
+        block = js.split("var OV_SLASH_TOOLS = {", 1)[1].split("};", 1)[0]
+        front = set(re.findall(r"^\s*([A-Za-z_]+):", block, re.MULTILINE))
+        assert front == {"sh", "help", "compact", "skills", "agents"}, front
+
+        # 서버가 실제로 그 이름으로 쏘는지 (web/slash.py 리터럴)
+        slash_src = (
+            Path(__file__).resolve().parent.parent / "agent_cli/web/slash.py"
+        ).read_text(encoding="utf-8")
+        emitted = set(re.findall(r'tool_name="([a-z]+)"', slash_src))
+        assert front <= emitted, (
+            f"프런트 화이트리스트가 서버 미방출 이름 포함: {front - emitted}"
+        )
+        # 실제 런(@agent 결과)은 개요 화이트리스트 밖이어야 한다
+        assert "agent" in emitted and "agent" not in front
+
+    def test_overview_slash_output_rendered_raw(self, server_and_client):
+        """슬래시 출력 블록은 **마크다운을 태우지 않는다**(셸 출력의 `**`/`|`/`#`
+        이 뭉개지지 않게) + 실패는 ✗ + [전체 대화] 점프 버튼 미노출(a안 —
+        관찰 카드에 nav 앵커가 없어 해소 불가)."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        body = _js_fn_body(js, "ovRespHtml")
+        # mono 분기: escapeHtml 만 (escapeAndFormat 은 비-mono 경로)
+        assert "e.mono ? escapeHtml(" in body
+        # 실패 배지
+        assert "e.ok === false" in body and "ov-st fail" in body
+        # mono 면 전체 대화 버튼 생략
+        assert "ov-open" in body and "e.mono" in body
+        # 훅이 observation 리스너에 배선
+        assert "ovOnSlashOutput(d)" in js
+        css = client.get("/static/style.css").text
+        assert (
+            ".ov-tx.ov-mono" in css
+            and "max-height" in css.split(".ov-tx.ov-mono", 1)[1][:300]
+        )
+
     def test_action_detail_wraps_long_paths(self, server_and_client):
         """긴 절대경로(공백 없음)가 카드 박스를 넘지 않도록 줄바꿈 규칙 —
         read_file/edit_file 액션 상세가 가로로 삐져나가던 것 수리(v8.42.3).

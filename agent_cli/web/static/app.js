@@ -1501,6 +1501,7 @@
   es.addEventListener("observation", function (e) {
     const d = JSON.parse(e.data);
     renderObservation(d);
+    ovOnSlashOutput(d); // 개요: 슬래시 명령 출력만(화이트리스트) 블록으로
   });
 
   es.addEventListener("compaction", function (e) {
@@ -1799,7 +1800,11 @@
   }
   // 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
   function ovRespHtml(e, isHero) {
-    var st = '<span class="ov-st done">✓</span>';
+    // ok === false → 실패 배지(현재 /sh 의 exit code 등). 기존 엔트리는 ok 를
+    // 안 실으므로 종전대로 ✓ (하위호환).
+    var st = e.ok === false
+      ? '<span class="ov-st fail">✗</span>'
+      : '<span class="ov-st done">✓</span>';
     // 회신 주체 배지: 메인 LLM=main, 그 외=agent/skill 이름. 다중 에이전트
     // 시나리오에서 어느 주체의 응답인지 카드에서 바로 식별.
     var isMain = e.source === "main";
@@ -1807,10 +1812,18 @@
       ? '<span class="ov-src ' + (isMain ? "ov-src-main" : "ov-src-agent") + '">' +
         escapeHtml(isMain ? "main" : e.source) + "</span>"
       : "";
-    var txt = escapeAndFormat(e.text || "");
+    // mono = 슬래시 명령 출력(/sh 등) — **마크다운을 태우지 않는다**. 셸 출력엔
+    // `**`·`|`·`#`·백틱이 흔해서 escapeAndFormat 을 태우면 굵게/표/헤더로
+    // 뭉개진다. escapeHtml 만 + 고정폭(.ov-tx 가 이미 pre-wrap 이라 개행·정렬
+    // 보존). 전체 대화 점프는 관찰 카드에 앵커(data-nav-ts)가 없어 해소되지
+    // 않으므로 mono 블록에선 [복사]만 노출한다.
+    var txt = e.mono ? escapeHtml(e.text || "") : escapeAndFormat(e.text || "");
     var acts =
       '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
-      '<button type="button" class="ov-act ov-open">▤ 전체 대화</button></div>';
+      (e.mono
+        ? ""
+        : '<button type="button" class="ov-act ov-open">▤ 전체 대화</button>') +
+      "</div>";
     var re =
       e.reasoning && e.reasoning.trim()
         ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
@@ -1825,7 +1838,8 @@
     return (
       '<div class="ov-block resp ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" +
       '<div class="ov-he">' + src + st + "</div>" + re +
-      '<div class="ov-tx">' + txt + "</div>" + acts + "</div>"
+      '<div class="ov-tx' + (e.mono ? " ov-mono" : "") + '">' + txt +
+      "</div>" + acts + "</div>"
     );
   }
   // 활동 스트립: 실행 중 도구 호출 축약 한 줄(왼쪽=누적 카운트, 오른쪽=현재 배치 칩).
@@ -2004,6 +2018,36 @@
     if (hit) hit.n += 1;
     else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
     a.total += 1;
+    scheduleOvRender();
+  }
+  // 슬래시 명령 출력 → 개요 (v8.43.0). 이 명령들은 LLM 루프를 타지 않고
+  // observation 이벤트 **하나만** 쏘므로, 종전엔 개요에 요청("/sh ls")만 남고
+  // 결과가 안 붙었다(전문에만 존재). 배지 라벨 맵이 곧 **화이트리스트** —
+  // 여기 없는 관찰(일반 도구 결과·@agent 런)은 개요에 들어오지 않는다.
+  // ★서버(web/slash.py)의 tool_name 과 1:1 — 정합은 test_web_server 의
+  //   test_overview_slash_output_allowlist 가 교차 고정한다.
+  var OV_SLASH_TOOLS = {
+    sh: "⚡ sh",
+    help: "/help",
+    compact: "/compact",
+    skills: "/skills",
+    agents: "@agents",
+  };
+  function ovOnSlashOutput(d) {
+    if (!d || d.task_id) return; // 메인 스코프만
+    var label = OV_SLASH_TOOLS[d.tool_name || ""];
+    if (!label) return; // 화이트리스트 밖 = 개요 미표시(종전 동작)
+    ovEntries.push({
+      kind: "resp",
+      text: d.content || "",
+      reasoning: "",
+      answers: [],
+      status: "done",
+      source: label,
+      mono: true, // 마크다운 없이 그대로 + 고정폭
+      ok: d.success !== false,
+    });
+    ovCap();
     scheduleOvRender();
   }
   function ovOnRoster(d) {
