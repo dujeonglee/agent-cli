@@ -114,3 +114,57 @@ class TestOverviewSlashOutput:
         page.click("#vt-detail-toggle")
         assert _wait(lambda: page.locator(".card-observation").count() == 2)
         assert _blocks(page).count() == 0, "화이트리스트 밖 관찰이 개요에 표시됨"
+
+
+class TestOverviewTurnError:
+    """런-레벨 실패(turn_error)가 요약에도 뜬다 (v8.44.0).
+
+    실사고: 보드 게시글이 LLM 서버에 없는 모델로 고정돼 **모든 호출이 404**
+    였는데, 개요(기본 뷰)에는 요청만 남고 아무 반응이 없어 "쿼리가 안 나간다"
+    로 보였다. 서버는 turn_error 를 정상 방출하고 전문 타임라인엔 카드가
+    떴지만, 개요가 그 이벤트를 안 받고 있었다.
+    """
+
+    def test_llm_failure_shown_in_overview(self, stack, page):
+        r = stack.renderer
+        r.header("openai", "Test-Model", max_turns=0)
+        page.goto(stack.url)
+        page.wait_for_selector("#overview", timeout=8000)
+
+        msg = (
+            "LLM call failed (model=NoSuchModel, iter=1): 404 Client Error: "
+            'Not Found: {"error":{"message":"Model not found."}}'
+        )
+        r.error(msg, 1)
+
+        assert _wait(lambda: _blocks(page).count() > 0), "개요에 오류 블록 미표시"
+        blk = _blocks(page).last
+        assert "⚠ 오류" in blk.locator(".ov-src").inner_text()
+        assert blk.locator(".ov-st.fail").count() == 1  # ✗ 배지
+        txt = blk.inner_text()
+        assert "404" in txt and "NoSuchModel" in txt
+        # 원문 그대로 — JSON/URL 이 마크다운으로 뭉개지지 않는다
+        assert blk.locator(".ov-tx.ov-mono").count() == 1
+        assert blk.locator(".ov-open").count() == 0  # 복사만
+
+    def test_timeline_card_still_rendered(self, stack, page):
+        """전문 카드는 종전대로 유지 — 개요 추가가 대체가 아니라 병행."""
+        r = stack.renderer
+        r.header("openai", "Test-Model", max_turns=0)
+        page.goto(stack.url)
+        page.click("#vt-detail-toggle")
+        r.error("boom", 1)
+        assert _wait(lambda: page.locator(".card-error").count() == 1)
+        assert _blocks(page).count() == 1  # 개요에도
+
+    def test_subagent_error_not_in_overview(self, stack, page):
+        """서브에이전트 스코프(task_id) 실패는 개요에 안 올린다 — 그 실패는
+        부모에게 관찰로 전달되므로 main 요약을 오염시키면 안 된다."""
+        r = stack.renderer
+        r.header("openai", "Test-Model", max_turns=0)
+        page.goto(stack.url)
+        page.wait_for_selector("#overview", timeout=8000)
+        r.begin_scope(task_id="t1", kind="run", index=0, agent="explorer", label="dig")
+        r.error("서브에이전트 실패", 1)  # 스코프 스레드 → task_id 부착
+        time.sleep(1.0)
+        assert _blocks(page).count() == 0, "서브에이전트 실패가 개요에 표시됨"

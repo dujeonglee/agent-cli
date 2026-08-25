@@ -1520,6 +1520,7 @@
   es.addEventListener("turn_error", function (e) {
     const d = JSON.parse(e.data);
     renderError(d);
+    ovOnTurnError(d); // 개요: 런-레벨 실패를 요약에도 (전문만 보면 놓친다)
   });
 
   // Bounded replay buffer: on reconnect to a very long session the server
@@ -2046,6 +2047,27 @@
       source: label,
       mono: true, // 마크다운 없이 그대로 + 고정폭
       ok: d.success !== false,
+    });
+    ovCap();
+    scheduleOvRender();
+  }
+  // 런-레벨 실패 → 개요 (v8.44.0). turn_error 는 ① LLM 호출 실패(모델 없음·
+  // 서버 다운 등) ② 워커 예외 ③ 워커 크래시 — 셋뿐이고 전부 "이 런은 끝났다"는
+  // 치명 신호다. 종전엔 **전문(타임라인)에만** 카드가 떠서, 기본 뷰인 개요만
+  // 보는 사용자에겐 요청만 남고 아무 답도 안 오는 것처럼 보였다(실사고: 보드
+  // 게시글이 서버에 없는 모델로 고정돼 모든 호출이 404 났는데 개요는 무반응).
+  // 서브에이전트 스코프(task_id)는 제외 — 그 실패는 부모에게 관찰로 전달된다.
+  function ovOnTurnError(d) {
+    if (!d || d.task_id) return;
+    ovEntries.push({
+      kind: "resp",
+      text: d.content || "",
+      reasoning: "",
+      answers: [],
+      status: "done",
+      source: "⚠ 오류",
+      mono: true, // 원문 그대로(스택/URL/JSON 이 마크다운으로 뭉개지지 않게)
+      ok: false, // ✗ 배지
     });
     ovCap();
     scheduleOvRender();

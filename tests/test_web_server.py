@@ -877,6 +877,23 @@ class TestStaticUI:
         # 실제 런(@agent 결과)은 개요 화이트리스트 밖이어야 한다
         assert "agent" in emitted and "agent" not in front
 
+    def test_turn_error_reaches_overview(self, server_and_client):
+        """런-레벨 실패(turn_error)가 **개요에도** 실린다 (v8.44.0).
+
+        turn_error 는 LLM 호출 실패·워커 예외·워커 크래시 3곳에서만 나오는
+        치명 신호인데, 종전엔 전문 타임라인 카드로만 떠서 기본 뷰(개요)만
+        보는 사용자에겐 "요청만 남고 무반응"으로 보였다(실사고: 서버에 없는
+        모델로 고정된 게시글이 모든 호출 404). 전문 카드는 유지 + 개요 추가."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        start = js.index('es.addEventListener("turn_error"')
+        body = js[start : js.index("es.addEventListener(", start + 10)]
+        assert "renderError(d)" in body  # 전문 카드 유지(대체 아님)
+        assert "ovOnTurnError(d)" in body  # 개요 추가
+        fn = _js_fn_body(js, "ovOnTurnError")
+        assert "d.task_id" in fn  # 서브에이전트 스코프 제외
+        assert "mono: true" in fn and "ok: false" in fn  # 원문 그대로 + ✗ 배지
+
     def test_overview_slash_output_rendered_raw(self, server_and_client):
         """슬래시 출력 블록은 **마크다운을 태우지 않는다**(셸 출력의 `**`/`|`/`#`
         이 뭉개지지 않게) + 실패는 ✗ + [전체 대화] 점프 버튼 미노출(a안 —
