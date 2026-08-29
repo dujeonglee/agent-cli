@@ -313,11 +313,6 @@ class Renderer(ABC):
         """teammate request 1건 처리 종료 — begin_agent_work 과 짝.
         기본 no-op."""
 
-    def update_prompt_section(self, scope: str, name: str, text: str) -> None:
-        """저장된 시스템 프롬프트 스냅샷의 섹션 1개를 외과적으로 갱신
-        (teammate 멤버십의 즉시 인스펙터 반영 — v4.61.0). text 가 빈
-        문자열이면 섹션 제거. 기본 no-op (web 전용 표면)."""
-
     def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
         web 은 sticky 브로드캐스트(대화 창 목록), CLI 는 no-op."""

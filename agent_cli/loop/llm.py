@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
+from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -59,6 +59,46 @@ class LLMCaller:
         # Reactive context-overflow recovery (flow 2) 카운터 — 현재 턴에서
         # 축소-재시도한 횟수. _MAX_OVERFLOW_RETRIES 로 유계.
         self.overflow_retries = 0
+        # Size of the last session-state block, reserved from the next turn's
+        # compaction budget (see _call_llm).
+        self._state_tokens = 0
+
+    def _build_session_state(self, budget: int) -> str:
+        """The volatile state block appended to the last message each turn —
+        context pressure, turn budget, the live agent roster and the session
+        memory index (see ``prompts/session_state.py`` for why the tail).
+
+        Assembled HERE rather than in ContextManager because this is where the
+        inputs live: the turn counter (state), the agent registry (config) and
+        the model's budget. Reuses the same section renderers the system prompt
+        used before the move, so the model sees identical headings.
+
+        ``budget`` is the live compaction target, so the "context is nearly
+        full" warning fires a turn or two BEFORE ``ensure_within`` actually
+        starts dropping history — early enough for the model to save something
+        with ``memory``."""
+        from agent_cli.memory import render_index
+        from agent_cli.prompts.session_state import build_session_state
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        agents = ""
+        # Same gate the system-prompt section used: no ``agent`` tool, no
+        # roster to advertise.
+        if self.cfg.agent_registry is not None and "agent" in self.cfg.tools_list:
+            agents = build_live_agents_section(
+                self.cfg.agent_registry, include_state=True
+            )
+        memory = ""
+        if self.ctx is not None and self.ctx.session_dir:
+            memory = render_index(self.ctx.session_dir)
+        return build_session_state(
+            used_tokens=self.ctx.get_estimated_tokens() if self.ctx else 0,
+            budget_tokens=budget,
+            turn=self.state.turn,
+            max_turns=self.cfg.max_turns,
+            agents=agents,
+            memory=memory,
+        )
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -80,6 +120,14 @@ class LLMCaller:
                     (
                         self.cfg.capabilities.context_window
                         - sys_tokens
+                        # The session-state block rides at the TAIL of the
+                        # messages, so it is part of the request but not of
+                        # ``system``. Reserve the previous turn's size — it is
+                        # stable turn to turn (the memory index grows slowly),
+                        # and it must be built AFTER ensure_within to report
+                        # post-compaction numbers, which is after this budget
+                        # is needed.
+                        - self._state_tokens
                         - self.cfg.capabilities.max_output_tokens
                     )
                     * self.ctx.compaction_ratio
@@ -87,6 +135,9 @@ class LLMCaller:
                 1,
             )
             self.ctx.ensure_within(target)
+            state = self._build_session_state(target)
+            self._state_tokens = estimate_tokens(state)
+            self.ctx.set_session_state(state)
             self.state.messages = self.ctx.get_messages()
 
         # Context dump (verbose only)
@@ -113,9 +164,7 @@ class LLMCaller:
         # Prompt Inspector snapshot: what THIS call's system prompt looks
         # like, as named sections. No-op for CLI renderers (store-only on
         # web), so per-turn cost is negligible.
-        render_system_prompt_snapshot(
-            build_inspector_sections(self.prompt.sections, self.ctx), self.state.turn
-        )
+        render_system_prompt_snapshot(self.prompt.sections, self.state.turn)
 
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it

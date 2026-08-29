@@ -3,13 +3,17 @@
 The agent records critical failures, important discoveries, decisions, and
 plain notes via the ``memory`` tool. Entries persist in
 ``<session_dir>/memory.jsonl`` (surviving compaction AND ``--resume``) and
-surface as a compact **always-on** ``## Session Memory`` index in the system
-prompt, with full ``detail`` pulled on demand (``memory(mode=get, id=N)``).
+surface as a compact **always-on** ``## Session Memory`` index in the
+session-state block appended to the LAST message each turn
+(``prompts/session_state.py``), with full ``detail`` pulled on demand
+(``memory(mode=get, id=N)``). It lived in the system prompt until v8.46.0; it
+moved because it changes on every ``memory add`` and a system-prompt edit
+invalidates the provider KV prefix for the entire conversation after it.
 
 Why a separate store (not the rolling context): memory's whole job is to
-survive compaction — the system prompt is outside ``ctx.get_messages()`` so it
-is never compacted, whereas a context message would be summarized/dropped
-exactly when the note matters most. Re-feeding LLM-authored text as context
+survive compaction — the index is re-rendered from the JSONL every turn and
+appended at feed time, so it is never subject to compaction, whereas a context
+message would be summarized/dropped exactly when the note matters most. Re-feeding LLM-authored text as context
 messages also risks mimicry (see docs/session-memory/DESIGN.md §5, and the
 ``feedback_refeed_own_output_mimicry`` lesson).
 

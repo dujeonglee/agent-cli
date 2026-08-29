@@ -223,6 +223,12 @@ class ContextManager:
         # it at each turn boundary; 0 covers the run-starting query.
         self._current_turn: int = 0
 
+        # Volatile session-state block, re-set by the loop before each call and
+        # appended to the last message at feed time. Storage only — this object
+        # never builds it (it has no turn counter or agent registry) and never
+        # persists it.
+        self._session_state: str = ""
+
         # Compaction state. ``_summary`` empty until first compaction
         # completes. ``_dynamic_start_index`` tracks how many history
         # entries have been compacted away — resume reads ``history
@@ -391,16 +397,34 @@ class ContextManager:
             ]
         result.extend(self._nl_cache)
 
-        # Append the complete-nudge to the CURRENT observation only, at feed
-        # time. A tool result is always in the dynamic slice, so when cache[-1]
-        # is one, result[-1] is its rendered form (nl_cache is non-empty). Copy
-        # before mutating so _nl_cache and the stored records stay clean (this
-        # never persists — see constant).
+        # ── tail annotations (feed time only, never persisted) ──────────
+        # Both are appended to the LAST message rather than added as new ones:
+        # providers forward ``messages`` verbatim, so an extra trailing user
+        # message would create consecutive same-role turns whose handling
+        # differs per provider. Copy before mutating so _nl_cache and the
+        # stored records stay clean.
+        tail = ""
+        # (a) complete-nudge — CURRENT observation only (it is about how to end
+        # a turn, which only makes sense right after a tool result).
         if cache and cache[-1].get("role") == "user" and cache[-1].get("tool"):
+            tail += _OBS_COMPLETE_NUDGE
+        # (b) session state — every turn, whatever the last message is (a fresh
+        # user request is exactly when the memory index and the agent roster
+        # matter most). Last, so the volatile state is the true tail: strongest
+        # recency, and zero KV-prefix cost (see prompts/session_state.py).
+        if self._session_state:
+            tail += "\n\n" + self._session_state
+        if tail and result and result[-1].get("role") == "user":
             last = dict(result[-1])
-            last["content"] = last.get("content", "") + _OBS_COMPLETE_NUDGE
+            last["content"] = last.get("content", "") + tail
             result[-1] = last
         return result
+
+    def set_session_state(self, text: str) -> None:
+        """Set the session-state block appended to the last message by
+        :meth:`get_messages`. Called by the loop each turn (it owns the turn
+        counter / agent registry); ``""`` disables it. Never persisted."""
+        self._session_state = text or ""
 
     def get_raw_messages(self) -> list[dict]:
         """Return cached messages as raw JSON dicts (no conversion)."""

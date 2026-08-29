@@ -1561,55 +1561,6 @@ class WebRenderer(Renderer):
         (so concurrent editors don't show stale content). Transient event."""
         self._emit("directives_changed", {}, persistent=False)
 
-    def update_prompt_section(self, scope: str, name: str, text: str) -> None:
-        """스냅샷의 ``name`` 섹션만 교체/삽입/제거하고 총계를 재계산한 뒤
-        열린 인스펙터에 재조회를 알린다 (transient ``prompt_changed``).
-
-        용도: teammate 멤버십 변화(kill/spawn/사망/부활)의 **즉시** 반영 —
-        루프의 플래그-리로드는 다음 턴에야 돌기 때문에 idle 중 대화 창
-        kill 이 낡은 Live Teammates 를 남기던 갭을 메운다. LLM 이 실제로
-        받을 다음 프롬프트와 동일한 내용을 미리 보여주는 것 (재조립
-        자체는 여전히 플래그가 보장).
-        """
-        from agent_cli.context.token_estimator import estimate_tokens
-
-        with self._lock:
-            snap = self._prompt_snapshots.get(scope)
-            if snap is None:
-                return
-            sections = snap["sections"]
-            idx = next((i for i, s in enumerate(sections) if s["name"] == name), None)
-            if text:
-                entry = {
-                    "name": name,
-                    "text": text,
-                    "chars": len(text),
-                    "est_tokens": estimate_tokens(text),
-                }
-                if idx is not None:
-                    sections[idx] = entry
-                else:
-                    # 신설 — 카탈로그(AgentInstance Roles) 뒤가 자연스러운 자리,
-                    # 없으면 말미.
-                    after = next(
-                        (
-                            i + 1
-                            for i, s in enumerate(sections)
-                            if s["name"] == "AgentInstance Roles"
-                        ),
-                        len(sections),
-                    )
-                    sections.insert(after, entry)
-            elif idx is not None:
-                sections.pop(idx)
-            else:
-                return  # 부재 섹션의 제거 — 변화 없음
-            snap["total_chars"] = sum(s["chars"] for s in sections) + 2 * max(
-                0, len(sections) - 1
-            )
-            snap["est_tokens"] = sum(s["est_tokens"] for s in sections)
-        self._emit("prompt_changed", {}, persistent=False)
-
     def broadcast_memory_changed(self) -> None:
         """Tell every open Prompt Inspector to re-fetch the prompt view after a
         `memory` op updated the `## Session Memory` index. Transient event."""

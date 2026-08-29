@@ -413,9 +413,11 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
 - **왜 필요한가**: 컨텍스트가 예산의 90% 를 넘으면 오래된 대화가 요약/드롭됩니다. "왜 이
   빌드가 깨졌는지" 같은 중요한 정보가 이때 사라집니다. 메모리는 **롤링 컨텍스트 밖**
   (`<session_dir>/memory.jsonl`)에 저장돼 압축 대상이 아니고, **`--resume` 로 복원**됩니다.
-- **상시 인덱스**: 기록된 메모리의 요약(id·타입·한 줄)이 시스템 프롬프트의 `## Session
-  Memory` 섹션에 **항상 노출**되어, LLM 이 "무엇을 기록했는지" 잊지 않습니다. 전체 내용은
-  `memory(mode=get, id=N)` 으로 필요할 때만 꺼냅니다(토큰 절약 + recall 보장).
+- **상시 인덱스**: 기록된 메모리의 요약(id·타입·한 줄)이 **세션 상태 블록**(아래)의
+  `## Session Memory` 섹션에 **항상 노출**되어, LLM 이 "무엇을 기록했는지" 잊지 않습니다.
+  전체 내용은 `memory(mode=get, id=N)` 으로 필요할 때만 꺼냅니다(토큰 절약 + recall 보장).
+  (v8.46.0 이전에는 시스템 프롬프트 섹션이었는데, `memory add` 마다 시스템 프롬프트가
+  재조립되면서 **그 뒤 대화 전체의 KV 프리픽스 캐시가 무효화**됐습니다.)
 - **타입 4종**: `failure` ⚠(반복 회피) · `discovery` 💡(재사용) · `decision` 🔀(근거) ·
   `note` 📝(일반).
 - **모드**: `add`(type+summary, 선택 detail/tags → id) · `get`(id) · `update`(id + 바꿀 필드)
@@ -1079,7 +1081,7 @@ spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할
 - **양방향 문답 (ask 라우팅)**: 상주 에이전트가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 그 에이전트의 "사용자"). main 은 같은 `request` 로 답하고, 에이전트는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. run 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
 - **에이전트↔에이전트 메시징 (5.11.0)**: 모든 상주 에이전트는 `message` 도구(커널 기본 탑재)로 **다른 상주 에이전트나 `main` 에게 직접** 메시지를 보낼 수 있습니다 — `{"to":"<key>","text":"..."}` (또는 `"to":"main"`). **비동기**입니다: 발신자는 블록하지 않고 계속 일하며, 대상의 회신은 **새 메시지로 발신자의 inbox 에 도착**합니다(도착하면 idle 이어도 깨어나 이어서 처리 — main 의 자동 배달과 동형). 배달된 회신은 **terminal**(되받아치지 않음)이라 핑퐁이 없고(안전망 hop 상한), 데드락은 비동기라 구조적으로 불가합니다. 회신을 받은 에이전트는 그걸로 자기 작업을 계속하고, 마무리되어 요청자(예: main)에게 보고할 결과가 있으면 다시 `message` 로 보내며, 없으면 그냥 `complete` 합니다. spawn/kill 같은 생명주기는 여전히 main 전용 — 서브에이전트는 **메시지만**. 요청은 언제나 명시적·directed 이라 상시 관찰 채널(구독)이 필요 없습니다.
 - **다중 인스턴스**: 같은 프로파일을 여러 명 스폰할 수 있습니다 — coder 3명이 서로 다른 파일을 병렬 개발하는 식. spawn 의 `name`(예: `ui`/`api`)으로 인스턴스를 구분하며 광고·대화창·회신 헤더에 `agt-x (coder · ui)` 로 표시됩니다 (주소는 항상 key).
-- **Live Agents 광고**: 현재 상주 중인 에이전트 목록(key·프로파일·인스턴스명·전문영역)이 main 시스템 프롬프트 `## Live Agents` 섹션에 상시 광고됩니다 — compaction 이 spawn 관찰을 지워도, auto-spawn/resume 처럼 관찰이 없어도 모델이 자기 팀을 잊지 않습니다. 멤버십 변화(spawn/kill/사망) 때만 재조립되어 KV 캐시 영향 최소(busy/idle 같은 휘발 상태는 미포함 — 활동은 관찰이 운반). 프롬프트 인스펙터에서 그대로 확인 가능합니다. **상주 에이전트에게도(5.11.0)** 자기 자신을 제외한 동료 로스터가 같은 `## Live Agents` 섹션으로 주입되어(단, `message` 도구 안내 문구), 누가 돌고 있고 어떤 역할인지 알고 서로 부를 수 있습니다.
+- **Live Agents 광고**: 현재 상주 중인 에이전트 목록(key·프로파일·인스턴스명·전문영역)이 main 의 **세션 상태 블록** `## Live Agents` 섹션에 상시 광고됩니다 — compaction 이 spawn 관찰을 지워도, auto-spawn/resume 처럼 관찰이 없어도 모델이 자기 팀을 잊지 않습니다. **v8.46.0**: 시스템 프롬프트에서 꼬리로 옮기면서 `[busy · 2 queued]` / `[idle]` 같은 **휘발 상태까지 함께 실립니다** — 종전엔 매 턴 바뀌면 KV 프리픽스가 통째로 버스트돼 멤버십만 실을 수 있었고, 그래서 멤버십 변화 때만 재조립했습니다(플래그·스냅샷 패치 기구도 함께 제거). 프롬프트 인스펙터에서 그대로 확인 가능합니다. **상주 에이전트에게도(5.11.0)** 자기 자신을 제외한 동료 로스터가 같은 `## Live Agents` 섹션으로 주입되어(단, `message` 도구 안내 문구), 누가 돌고 있고 어떤 역할인지 알고 서로 부를 수 있습니다 — 이쪽은 스폰 시 한 번 조립되는 **정적** 문자열이라 세션 중 변하지 않으므로 시스템 프롬프트에 그대로 남습니다(캐시 비용 없음).
 - **🤝 대화창 resume 복원 (5.13.0)**: 웹 UI 의 상주 에이전트 대화창은 그 에이전트와 주고받은 요청/회신/질문을 `agents/<key>/conversation.jsonl` 에 남깁니다. **agent-cli 를 재시작하고 세션을 resume 하거나** dead 에이전트를 `mode:"resume"` 으로 되살리면, 이 로그를 재생해 대화창이 **원래 시각 그대로** 복원됩니다 (에이전트 내부 작업 상세는 종전대로 메인 채팅의 접히는 작업 카드). `kill` 하면 대화창을 즉시 비우고(정리), resume 하면 다시 채웁니다 — "kill=정리 / resume=재생" 대칭. 로그 파일은 kill 후에도 남아 언제든 부활 시 복원됩니다.
 - **auto-spawn**: frontmatter `auto-spawn: true` 프로파일은 세션 시작 시 자동 상주합니다 (resume 재생성분과 중복 스폰 없음).
 - **worker 사망 통지**: worker 가 비정상 종료(ctx 생성 실패·내부 기계 예외)하면 main 에 `DIED` 관찰로 즉시 통지됩니다 — status 를 조회할 필요 없음. `kill`/세션 종료 같은 의도된 종료는 통지하지 않습니다.
@@ -1150,6 +1152,37 @@ Strict JSON Schema(OpenAI `json_schema`)는 **사용하지 않습니다**. 일�
 3. **Stage 3**: Regex 추출 (최후 수단)
 
 Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
+
+### 세션 상태 블록 (프롬프트 꼬리)
+
+매 턴 바뀌는 **휘발 상태**를 시스템 프롬프트가 아니라 **마지막 메시지 뒤**에 덧붙입니다.
+
+```
+── session state (context only — not part of the conversation) ──
+context: ~118,400 / 140,000 tokens (85%) · turn 23/40
+
+## Live Agents
+- `agt-ui` (code-writer · ui) [busy · 2 queued] — Writes UI code.
+- `agt-dt` (explorer · dts) [idle] — Explores device trees.
+
+## Session Memory (2) — pull full detail with memory(mode=get, id=N)
+⚠ #1 [failure] uart0 클럭 미설정 시 부팅 로그 없음
+🔀 #2 [decision] dts 대신 defconfig 로 수정하기로
+
+⚠ Context is nearly full. Older turns will be summarised away soon — anything you
+must not lose … should go into memory(mode=add) NOW … Keep working; this is not a
+reason to finish early.
+```
+
+**왜 꼬리인가 (KV 프리픽스)**: 프로바이더는 프롬프트의 **접두사**를 캐시하고, 이전 호출과 처음 달라지는 토큰에서 재사용이 끊깁니다.
+
+- **시스템 프롬프트에 두면** — 그 섹션 이후 전부(= 남은 시스템 프롬프트 + **대화 전체**)가 무효화됩니다. `memory add` 한 번이 수만 토큰 재계산을 유발했습니다. 이 압박 때문에 로스터는 휘발 상태를 못 실었고, `Environment` 섹션은 날짜를 일부러 뺐습니다.
+- **사용자 요청 바로 뒤에 두면** — 에이전트 루프에서 사용자 요청은 프롬프트 **앞쪽**(요청 1개 + 그 뒤로 assistant/observation 이 N턴 쌓임)이라, 매 턴 블록이 바뀌면 그 뒤 모든 턴이 무효화됩니다. 직관과 반대로 최악입니다.
+- **꼬리에 두면 공짜입니다** — 턴 N 이 `… obs_{N-1} + STATE_N` 로 끝나고 턴 N+1 은 `… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}`. 접두사 일치는 `obs_{N-1}` 에서 끝나는데, 이건 `assistant_N`·`obs_N` 이 새 토큰이라 **어차피 거기서 끝났을 자리**입니다. 잃는 건 이전 블록 자신의 토큰 몇십 개뿐이고, 손실이 **대화 길이와 무관하게 상수**입니다. 그리고 꼬리는 recency attention 이 가장 강한 위치라, "지금 이걸 보고 판단하라"는 내용에 맞습니다.
+
+**전달 방식**: 새 메시지를 추가하지 않고 **마지막 메시지 본문에 덧붙입니다** — 프로바이더가 `messages` 를 그대로 전송하므로(`providers/anthropic.py`) 끝에 `role=user` 를 하나 더 붙이면 연속 동일-롤 턴이 되고 처리 방식이 프로바이더마다 갈립니다. `_OBS_COMPLETE_NUDGE` 와 같은 기구로 **feed 시점에만**(복사본에) 적용되며 **`history.jsonl` 에 절대 저장되지 않습니다**(저장하면 낡은 숫자가 매 턴 재공급되고 resume 프리뷰가 오염됩니다).
+
+**압축 경고**: 예산의 75%(`COMPACTION_WARN_RATIO`)를 넘으면 한 줄이 추가됩니다. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있어(=`_OBS_COMPLETE_NUDGE` 가 실측으로 방어했던 실패 유형), 문구는 "여유 없음"이 아니라 **"지금 memory 에 남겨라, 계속 진행하라"**는 행동 지시입니다. 그리고 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
 
 ### 세션 & 컨텍스트 관리 시스템
 

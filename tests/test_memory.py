@@ -208,15 +208,30 @@ class TestSystemPromptSection:
             )
         )
 
-    def test_section_absent_when_empty(self, tmp_path):
+    def test_never_a_system_prompt_section(self, tmp_path):
+        """v8.46.0: the index moved OUT of the system prompt. It changes on
+        every ``memory add``, and a system-prompt edit invalidates the provider
+        KV prefix for the whole conversation after it — one note cost a full
+        re-prefill. It now rides in the per-turn tail block, where a rewrite is
+        free. Empty or not, it must never come back as a system section."""
+        assert "Session Memory" not in self._sections(tmp_path)
+        memory.add(tmp_path, type="failure", summary="빌드 깨짐", detail="D")
         assert "Session Memory" not in self._sections(tmp_path)
 
-    def test_section_present_summaries_only(self, tmp_path):
+    def test_index_is_summaries_only(self, tmp_path):
         memory.add(
             tmp_path, type="failure", summary="빌드 깨짐", detail="SECRET DETAIL"
         )
-        d = self._sections(tmp_path)
-        assert "Session Memory" in d
-        assert "빌드 깨짐" in d["Session Memory"]
-        # detail must NOT leak into the always-on system prompt (index = summaries)
-        assert "SECRET DETAIL" not in d["Session Memory"]
+        idx = memory.render_index(tmp_path)
+        assert "빌드 깨짐" in idx
+        # detail must NOT leak into the always-on index (pulled via mode=get)
+        assert "SECRET DETAIL" not in idx
+
+    def test_index_reaches_the_llm_through_the_tail_block(self, tmp_path):
+        """The move must not lose the content — it has to actually arrive."""
+        from agent_cli.prompts.session_state import build_session_state
+
+        memory.add(tmp_path, type="failure", summary="빌드 깨짐", detail="D")
+        block = build_session_state(memory=memory.render_index(tmp_path))
+        assert "빌드 깨짐" in block
+        assert "Session Memory" in block

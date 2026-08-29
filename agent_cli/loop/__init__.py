@@ -20,7 +20,7 @@ from agent_cli.loop.dispatch import (
     _try_echo_as_final,
 )
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
-from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
+from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.run import run_loop
 from agent_cli.loop.skill_invoke import _handle_run_skill
 from agent_cli.loop.state import (
@@ -51,6 +51,5 @@ __all__ = [
     "_handle_run_skill",
     "_sanitize_truncated_edit",
     "_try_echo_as_final",
-    "build_inspector_sections",
     "run_loop",
 ]

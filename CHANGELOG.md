@@ -12,6 +12,55 @@
 
 ## [Unreleased]
 
+## [8.46.0] - 2026-08-29
+
+### Changed — 휘발 상태를 프롬프트 꼬리로 (KV 프리픽스 캐시)
+
+프로바이더는 프롬프트의 **접두사**를 캐시하고, 직전 호출과 처음 달라지는 토큰에서
+재사용이 끊깁니다. 그래서 매 턴 바뀌는 내용을 **어디에 두느냐가 곧 비용**입니다.
+
+- **`## Session Memory` 와 registry 기반 `## Live Agents` 가 시스템 프롬프트를 떠나
+  세션 상태 블록(마지막 메시지 뒤)으로 이동.** 두 섹션은 세션 중 변합니다(`memory add`
+  마다, spawn/kill 마다) — 시스템 프롬프트를 고치면 그 뒤 **대화 전체**의 프리픽스가
+  무효화되므로, 세션 중반의 `memory add` 한 번이 수만 토큰 재프리필이었습니다. 꼬리에서는
+  비용이 0입니다: 턴 N 이 `… obs_{N-1} + STATE_N` 로 끝나고 턴 N+1 이
+  `… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}` 이라, 접두사 일치가 끝나는 지점은
+  새 토큰 때문에 **어차피 거기서 끝났을 자리**입니다. 손실은 이전 블록 자신뿐이고
+  대화 길이와 무관한 상수입니다.
+- **새 `prompts/session_state.py`** — 컨텍스트 사용량(`~48,200 / 140,000 (34%)`),
+  턴 예산, Live Agents, Session Memory, 그리고 예산의 75%를 넘으면 압축 임박 경고.
+  경고 문구는 조기 `complete` 유발을 피하려 "여유 없음"이 아니라 **행동 지시**입니다
+  ("지금 memory 에 남겨라 · 끝낼 이유가 아니다").
+- **Live Agents 가 이제 휘발 상태를 싣습니다** (`[busy · 2 queued]` / `[idle]`).
+  종전엔 시스템 프롬프트에 있어서 넣을 수 없었던 것 — 매 턴 바뀌면 프리픽스가 버스트되니까.
+  꼬리로 옮기면서 그 제약이 사라졌습니다. 서브에이전트의 정적 peer 로스터는 스폰 시 한 번
+  조립되므로 시스템 프롬프트에 그대로 남습니다.
+- **전달은 마지막 메시지에 append** — 프로바이더가 `messages` 를 verbatim 전송하므로
+  끝에 `role=user` 를 하나 더 붙이면 연속 동일-롤 턴이 되고 처리가 프로바이더마다 갈립니다.
+  `_OBS_COMPLETE_NUDGE` 와 같은 seam(feed 시점·복사본)이며 **`history.jsonl` 에 절대
+  저장되지 않습니다**. 블록 크기는 `system` 이 아니므로 압축 예산에서 별도 예약합니다.
+- 세션 중 시스템 프롬프트를 바꾸는 소스는 이제 **DIRECTIVE.md 뿐**입니다.
+
+### Removed — 위 이동으로 목적을 잃은 기구
+
+- `notify_agents_changed` / `consume_agents_reload` / `_membership_changed` —
+  시스템 프롬프트의 로스터를 턴 사이에 따라잡게 하려던 더티 플래그. 로스터가 매 턴
+  레지스트리에서 재조립되므로 신호가 필요 없습니다.
+- `Renderer.update_prompt_section` (+ web `prompt_changed` 이벤트와 프론트 중계) —
+  인스펙터 시스템 스냅샷에 로스터를 외과적으로 끼워 넣던 경로. 남겨뒀다면 스냅샷에 없는
+  "Live Agents" 를 **삽입**해 LLM 이 받지 않은 유령 섹션을 만들었을 것입니다.
+
+### Fixed — Prompt Inspector 이중 계상
+
+- `build_inspector_sections` 가 압축 요약·touched-file 목록을 `"⊙ … (user-injected)"`
+  **가짜 시스템 섹션**으로 합성했는데, 이 둘은 실제로는 `role=user` 메시지라
+  `_dynamic_context_sections`(=`ctx.get_messages()` 순회)가 **이미** 내보내고 있었습니다 →
+  `/api/debug/prompt` 가 같은 내용을 두 번 반환하고 `est_tokens`/`total_chars` 를 중복
+  합산했습니다. 합성을 지우니 함수가 항등이 되어 통째로 삭제했고, 루프는
+  `prompt.sections` 를 그대로 넘깁니다. 부수 효과로 인스펙터는 꼬리 주입물(세션 상태 블록
+  포함)을 자동으로 올바른 위치에 보여줍니다.
+- `memory` 도구 설명이 인덱스가 "시스템 프롬프트에 표시된다"고 말하던 것을 정정.
+
 ## [8.45.0] - 2026-08-29
 
 ### Changed — 과대 출력 처리 일원화 (모든 도구가 같은 넛지)
@@ -1945,7 +1994,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...HEAD
+[8.46.0]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...v8.46.0
 [8.45.0]: https://github.com/dujeonglee/agent-cli/compare/v8.44.0...v8.45.0
 [8.1.0]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...v8.1.0
 [8.0.0]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...v8.0.0

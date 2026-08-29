@@ -73,30 +73,6 @@ class SystemPromptSvc:
         self.system = "\n\n".join(t for _, t in self.sections)
 
 
-def build_inspector_sections(system_sections, ctx):
-    """Prompt Inspector sections = system-prompt sections + compaction-
-    injected context (running summary + touched-file list).
-
-    The summary and file list are injected as ``role=user`` messages right
-    after the system prompt (``ContextManager.get_messages``), so they are
-    NOT part of ``self.system`` — but they DO consume the context window and
-    shape the turn, so the inspector surfaces them as clearly-labelled extra
-    sections. Returns a NEW list; never mutates ``system_sections`` (which
-    is the single source ``self.system`` derives from).
-    """
-    sections = list(system_sections)
-    if ctx is None:
-        return sections
-    summary = getattr(ctx, "summary", "")
-    if summary:
-        sections.append(("⊙ Compaction summary (user-injected)", summary))
-    file_list = getattr(ctx, "file_list", None) or []
-    if file_list:
-        listing = "\n".join(f"- {p}" for p in file_list)
-        sections.append(("⊙ Files touched (user-injected)", listing))
-    return sections
-
-
 # Fields a model might use to wrap a question's text inside a dict —
 # e.g. `questions=[{"question": "..."}]` drift observed with qwen3.6
 # in S25FE-kernel session 1776954600. Checked in priority order, so a

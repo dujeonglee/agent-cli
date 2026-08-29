@@ -1918,14 +1918,18 @@ class TestLiveTeammatesSection:
         )
         reg = make_registry(tmp_path)
         reg.spawn(name="ui")
-        # main 루프 (도구 + registry): 두 섹션 다 존재
+        # v8.46.0: the registry-derived roster left the system prompt for the
+        # per-turn tail block (it mutates on every spawn/kill, and a system
+        # edit invalidates the KV prefix for the whole conversation). The
+        # STATIC catalogue stays — it never changes within a session.
         main_names = [
             n
             for n, _ in build_system_prompt_sections(
                 caps, active_tools=["agent"], agent_registry=reg
             )
         ]
-        assert "Agent Profiles" in main_names and "Live Agents" in main_names
+        assert "Agent Profiles" in main_names
+        assert "Live Agents" not in main_names
         # 서브루프 (agent 도구 있음·registry 없음): 카탈로그 O / Live X
         sub_names = [
             n
@@ -1975,23 +1979,37 @@ class TestLiveTeammatesSection:
         ]
         assert "Live Agents" in names
 
-    def test_membership_flag_set_and_consumed(self, tmp_path, renderer):
-        from agent_cli.subagent.agents_live import (
-            consume_agents_reload,
-            notify_agents_changed,
-        )
+    def test_membership_signal_machinery_is_gone(self):
+        """v8.46.0: the dirty-flag + snapshot-patch machinery
+        (``notify_agents_changed`` / ``consume_agents_reload`` /
+        ``update_prompt_section``) existed only to make the SYSTEM prompt's
+        roster catch up between turns. The roster is rebuilt from the registry
+        on EVERY turn now, so no signal is needed — and keeping the patch would
+        have inserted a phantom section the LLM never received."""
+        from agent_cli.render.base import Renderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.subagent import agents_live
 
-        consume_agents_reload()  # 잔여 클리어
-        assert consume_agents_reload() is False
-        notify_agents_changed()
-        assert consume_agents_reload() is True
-        assert consume_agents_reload() is False  # 소비됨
+        assert not hasattr(agents_live, "notify_agents_changed")
+        assert not hasattr(agents_live, "consume_agents_reload")
+        assert not hasattr(agents_live, "_membership_changed")
+        assert not hasattr(Renderer, "update_prompt_section")
+        assert not hasattr(WebRenderer, "update_prompt_section")
+
+    def test_roster_carries_volatile_state_now(self, tmp_path, renderer):
+        """The move UNLOCKED something: busy/idle + queue depth were
+        deliberately excluded while this lived in the system prompt (a per-turn
+        change there burst the KV prefix). At the tail it is free."""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
         reg = make_registry(tmp_path)
-        key, _ = reg.spawn()  # spawn 이 플래그를 세운다
-        assert consume_agents_reload() is True
+        key, _ = reg.spawn(name="ui")
         wait_until(lambda: reg.get(key).state == "idle")
-        reg.kill(key)  # kill 도
-        assert consume_agents_reload() is True
+        plain = build_live_agents_section(reg)
+        stateful = build_live_agents_section(reg, include_state=True)
+        assert "[idle]" not in plain  # default output unchanged (peer roster)
+        assert "[idle]" in stateful
+        reg.shutdown_all()
 
     def test_full_loop_advertises_after_spawn(self, tmp_path, renderer):
         # 통합: 턴1 spawn → 멤버십 플래그 → 턴2 시스템 프롬프트에
@@ -2001,6 +2019,7 @@ class TestLiveTeammatesSection:
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
+        from agent_cli.prompts.session_state import SESSION_STATE_HEADER
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -2034,12 +2053,19 @@ class TestLiveTeammatesSection:
             agent_registry=reg,
         )
         assert result.success
-        # 턴 2 의 시스템 프롬프트(system kwarg)에 광고가 실렸다
-        _, kwargs = provider.call.call_args_list[1]
-        system = kwargs["system"]
-        assert "## Live Agents" in system
         key = next(iter(reg._agents))
-        assert key in system and "(ui)" in system
+        # v8.46.0: the roster reaches turn 2 through the TAIL of the messages,
+        # not the system prompt — and it must genuinely arrive (the whole point
+        # of the move is zero KV cost, not losing the information).
+        _, kwargs = provider.call.call_args_list[1]
+        assert "## Live Agents" not in kwargs["system"]
+        tail = kwargs["messages"][-1]["content"]
+        assert key in tail and "(ui)" in tail
+        # and it rides in the appended state block (after the real message
+        # content), which is what makes it free: the tail is re-processed every
+        # turn anyway, so nothing earlier in the prefix is invalidated.
+        assert SESSION_STATE_HEADER in tail
+        assert tail.index("## Live Agents") > tail.index(SESSION_STATE_HEADER)
         reg.shutdown_all()
 
 
@@ -2679,71 +2705,38 @@ class TestConversationReplay:
 # ── 멤버십 변화의 인스펙터 즉시 반영 (v4.61.0) ──
 
 
-class TestInspectorImmediateReflection:
-    def _web_with_snapshot(self):
-        from agent_cli.render.web import WebRenderer
+class TestRosterFreshnessWithoutSignals:
+    """What replaced the flag + snapshot-patch machinery: the roster is
+    re-derived from the registry every turn, so spawn/kill/death show up on the
+    next call with nothing to signal, invalidate, or patch."""
 
-        r = WebRenderer()
-        r.note_system_prompt([("Base", "BASE"), ("Agent Profiles", "CATALOG")], turn=1)
-        return r
+    def test_spawn_and_kill_reflected_without_any_signal(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
 
-    def test_update_prompt_section_insert_replace_remove(self):
-        r = self._web_with_snapshot()
-        # 신설 — 카탈로그 뒤에 삽입
-        r.update_prompt_section("", "Live Agents", "- `agt-1` (coder)")
-        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert names == ["Base", "Agent Profiles", "Live Agents"]
-        # 교체 + 총계 재계산
-        r.update_prompt_section("", "Live Agents", "- `agt-1`\n- `agt-2`")
-        snap = r.prompt_snapshot("")
-        live = next(s for s in snap["sections"] if s["name"] == "Live Agents")
-        assert "agt-2" in live["text"]
-        assert snap["total_chars"] == sum(s["chars"] for s in snap["sections"]) + 4
-        # 제거 (마지막 teammate 사망 → 섹션 소멸)
-        r.update_prompt_section("", "Live Agents", "")
-        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert "Live Agents" not in names
-        # 열린 인스펙터 재조회 신호가 흘렀다 (transient)
-        # → connection 등록 후 한 번 더 갱신해 이벤트 수신 확인
-        from agent_cli.render.web import WebConnection
-
-        conn = WebConnection(id="c")
-        r.register_connection(conn)
-        r.update_prompt_section("", "Live Agents", "- back")
-        events = []
-        while not conn.queue.empty():
-            events.append(conn.queue.get_nowait())
-        assert any(e == "prompt_changed" for e, _ in events)
-
-    def test_kill_reflects_in_main_snapshot_immediately(self, tmp_path, monkeypatch):
-        # 대화 창/도구 kill 공통 경로 — 다음 턴을 기다리지 않고 main
-        # 스냅샷의 Live Teammates 에서 즉시 사라진다.
-        import agent_cli.render as render_mod
-
-        r = self._web_with_snapshot()
-        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
         reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
+        key, _ = reg.spawn(name="ui")
         wait_until(lambda: reg.get(key).state == "idle")
-        live = next(
-            s for s in r.prompt_snapshot("")["sections"] if s["name"] == "Live Agents"
-        )
-        assert key in live["text"]  # spawn 즉시 광고
+        assert key in build_live_agents_section(reg, include_state=True)
         reg.kill(key)
-        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert "Live Agents" not in names  # 유일 멤버 사망 → 섹션 소멸
+        # last member gone → section collapses to "" (was: patched out of the
+        # system snapshot by update_prompt_section)
+        assert build_live_agents_section(reg, include_state=True) == ""
 
-    def test_no_snapshot_is_safe_noop(self, tmp_path, monkeypatch):
-        # CLI(minimal)·스냅샷 미존재 환경에서도 멤버십 변화가 안전.
+    def test_membership_change_is_safe_without_a_renderer_snapshot(
+        self, tmp_path, monkeypatch
+    ):
+        """Used to call into the renderer on every membership change; a CLI /
+        snapshot-less environment had to be defended. Now nothing is called at
+        all — this stays as a regression guard on that quiet path."""
         import agent_cli.render as render_mod
         from agent_cli.render.web import WebRenderer
 
-        r = WebRenderer()  # note_system_prompt 안 함 — 스냅샷 없음
+        r = WebRenderer()  # no note_system_prompt → no snapshot
         monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        reg.kill(key)  # 예외 없이 통과하면 OK
+        reg.kill(key)
         assert r.prompt_snapshot("") is None
 
 

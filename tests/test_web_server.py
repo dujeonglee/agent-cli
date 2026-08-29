@@ -351,6 +351,31 @@ class TestPromptInspectorDynamic:
         assert kinds[0] == "system"
         assert kinds.count("dynamic") == 2
 
+    def test_compaction_summary_is_not_counted_twice(self, tmp_path):
+        """Regression: ``build_inspector_sections`` used to synthesise the
+        compaction summary + touched-file list as pseudo SYSTEM sections while
+        ``_dynamic_context_sections`` already emitted them as the real
+        ``role=user`` messages they are — so the endpoint returned each twice
+        and double-counted its tokens. The synthesis is gone; the summary must
+        appear exactly once, on the dynamic side."""
+        from agent_cli.context.manager import ContextManager
+
+        renderer = WebRenderer()
+        renderer.note_system_prompt([("System Prompt", "you are an agent")], turn=1)
+        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
+        ctx._summary = "earlier: user asked X, we did Y"
+        ctx._file_list = ["a.py"]
+        ctx.add({"role": "user", "content": "hello"})
+
+        server = WebServer(renderer, token="t", ctx=ctx)
+        data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
+        assert data["ok"]
+        blob = "\n".join(s["text"] for s in data["sections"])
+        assert blob.count("earlier: user asked X, we did Y") == 1
+        assert blob.count("- a.py") == 1
+        # and the token total reflects one copy, not two
+        assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
+
     def test_dynamic_shows_before_any_llm_call_on_resume(self):
         """Part 1: a resumed session has ctx messages but no system snapshot
         yet (the loop captures only on an LLM call). The inspector must still

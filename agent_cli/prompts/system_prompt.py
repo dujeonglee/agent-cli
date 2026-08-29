@@ -861,10 +861,6 @@ def build_system_prompt_sections(
         profiles_desc = build_agent_profiles_section(wire_format=wire_format)
         if profiles_desc:
             sections.append(("Agent Profiles", profiles_desc))
-        live_desc = build_live_agents_section(agent_registry)
-        if live_desc:
-            sections.append(("Live Agents", live_desc))
-
     # v5.11: 상주 서브에이전트는 registry 없이(상주 모드 차단 유지) 미리
     # 만든 로스터 문자열로 peer 가시성을 받는다 — "agent" 도구 유무와 무관
     # (message 도구가 접촉 경로). main 은 위 registry 경로로 받으므로 중복
@@ -893,17 +889,15 @@ def build_system_prompt_sections(
     if directives:
         sections.append(("Directives", directives))
 
-    # Session Memory: an LLM-curated, compaction-immune index of salient notes
-    # (failures/discoveries/decisions). Read fresh from <session_dir>/memory.jsonl
-    # each build so a `memory add` (which flips the reload flag) shows next turn,
-    # and a resumed session restores its memory. Summaries only — full detail is
-    # pulled via memory(mode=get). Omitted when empty (like an absent directive).
-    if session_dir:
-        from agent_cli.memory import render_index
-
-        mem = render_index(session_dir)
-        if mem:
-            sections.append(("Session Memory", mem))
+    # NOTE (v8.46.0): "Session Memory" and the registry-derived "Live Agents"
+    # section used to live here. Both mutate DURING a session (every `memory
+    # add`, every agent spawn/kill), and a system-prompt edit invalidates the
+    # provider-side KV prefix for the ENTIRE conversation that follows it — one
+    # `memory add` mid-session cost a full re-prefill. They now ride in the
+    # session-state block appended to the LAST message instead
+    # (``prompts/session_state.py``), where a per-turn rewrite costs nothing:
+    # the tail is re-processed every turn regardless. The static peer roster
+    # below stays — it is assembled once at spawn and never changes.
 
     # Execution context: tell LLM where it is in the call stack.
     # Last because it's the only Recency section that mutates within a
@@ -1077,15 +1071,25 @@ def build_agent_profiles_section(wire_format=None) -> str:
 
 
 def build_live_agents_section(
-    agent_registry, *, exclude_key: str = "", via_message_tool: bool = False
+    agent_registry,
+    *,
+    exclude_key: str = "",
+    via_message_tool: bool = False,
+    include_state: bool = False,
 ) -> str:
-    """현재 상주 중인 teammate 광고 (static 멤버십 층).
+    """현재 상주 중인 teammate 광고.
 
-    설계: 멤버십(key·역할·인스턴스명·전문영역)만 — compaction 이 spawn
-    관찰을 지워도 모델이 상주 팀을 잊지 않고, auto-spawn/resume 분처럼
-    관찰이 아예 없는 경우도 커버한다. busy/idle 같은 휘발 상태는 넣지
-    않는다 (매 턴 KV 프리픽스 버스트 방지 — 활동은 dynamic 관찰이 이미
-    운반). 재조립 트리거는 멤버십 변화 플래그(consume_agents_reload).
+    설계: 멤버십(key·역할·인스턴스명·전문영역) — compaction 이 spawn 관찰을
+    지워도 모델이 상주 팀을 잊지 않고, auto-spawn/resume 분처럼 관찰이 아예
+    없는 경우도 커버한다.
+
+    ``include_state`` (v8.46.0): busy/idle·큐 깊이 같은 **휘발 상태**를 각 줄에
+    덧붙인다. 종전엔 이 섹션이 시스템 프롬프트에 있어서 휘발 상태를 넣을 수
+    없었다 — 매 턴 바뀌면 KV 프리픽스가 통째로 버스트되므로 멤버십만 싣고
+    재조립도 멤버십 변화 때만 했다. 이제 main 루프에서는 이 섹션이 프롬프트
+    **꼬리**(session state 블록)로 옮겨져 캐시 비용이 0 이라, 그 제약이 사라진
+    자리에서 상태를 실어 보낸다. 기본 False = 종전 출력 그대로 (서브에이전트의
+    정적 peer 로스터는 스폰 시 한 번 조립되므로 상태를 실을 수 없다).
 
     ``exclude_key`` (v5.11): 이 key 는 목록에서 뺀다 — 상주 에이전트가
     자기 자신을 로스터에서 보지 않게. ``via_message_tool``: 접촉 안내를
@@ -1139,7 +1143,13 @@ def build_live_agents_section(
                 desc = desc[: m.start() + 1]
             elif len(desc) > 200:
                 desc = desc[:197] + "..."
-        line = f"- {label}" + (f" — {desc}" if desc else "")
+        state = ""
+        if include_state:
+            queued = s.get("pending_requests") or 0
+            state = f" [{s.get('state', '?')}" + (
+                f" · {queued} queued]" if queued else "]"
+            )
+        line = f"- {label}{state}" + (f" — {desc}" if desc else "")
         lines.append(line)
     return "\n".join(lines)
 

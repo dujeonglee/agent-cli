@@ -15,7 +15,7 @@ from agent_cli.constants import (
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
-from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
+from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -42,7 +42,6 @@ from agent_cli.render import (
     render_token_usage,
     render_turn_sep,
 )
-from agent_cli.subagent.agents_live import consume_agents_reload
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
@@ -753,26 +752,24 @@ class AgentLoop:
         # so THIS call reflects it (busts the KV prefix). Memory's `## Session
         # Memory` index is read from memory.jsonl at build time, so a rebuild is
         # all it needs to refresh.
+        # DIRECTIVE.md is the only remaining source that mutates the SYSTEM
+        # prompt mid-session (v8.46.0: Session Memory and the live agent roster
+        # moved to the tail session-state block, which is rebuilt every turn —
+        # so a `memory add` / spawn / kill no longer forces a rebuild, and no
+        # longer invalidates the provider KV prefix for the whole conversation).
         directives_changed = consume_directives_reload()
+        # Memory still flips a dirty flag; it now only drives the web toast
+        # ("your note is live"), which is true from the next turn's block.
         memory_changed = consume_memory_reload()
-        # teammate 멤버십(spawn/kill/died) 변화 → Live Teammates 섹션 재조립.
-        # 레지스트리 없는 루프(서브에이전트)는 섹션이 없어 no-op 재조립이나,
-        # 플래그는 전역이라 main 루프가 소비하도록 여기서도 조건에 포함.
-        teammates_changed = (
-            self._config.agent_registry is not None and consume_agents_reload()
-        )
-        if directives_changed or memory_changed or teammates_changed:
+        if directives_changed:
             self._rebuild_system_prompt()
             # Update-when-applied: push the fresh snapshot + signal open
             # inspectors so the prompt view shows the now-live sections at the
             # moment they take effect (not optimistically on save).
-            render_system_prompt_snapshot(
-                build_inspector_sections(self._system_sections, self.ctx), self.turn
-            )
-            if directives_changed:
-                notify_directives_applied()
-            if memory_changed:
-                notify_memory_applied()
+            render_system_prompt_snapshot(self._system_sections, self.turn)
+            notify_directives_applied()
+        if memory_changed:
+            notify_memory_applied()
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)

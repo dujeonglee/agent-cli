@@ -87,7 +87,6 @@ AGENTS_STATE_VERSION = 1
 # _execute_turn 이 directives/memory 플래그와 같은 자리에서 consume 해
 # 다음 턴 시스템 프롬프트를 재조립한다 (상태 전이 busy/idle 은 안 건드림
 # — KV 캐시 프리픽스를 의미 있는 사건에만 버스트).
-_membership_changed = threading.Event()
 
 # ── main registry 프로세스 슬롯 (v7.17.0 배선 통일) ──
 # agent-cli 프로세스 = 세션 1개(web 인스턴스는 post 당 1 프로세스, run 은
@@ -114,29 +113,17 @@ def main_registry() -> AgentRegistry | None:
     return _MAIN_REGISTRY
 
 
-def notify_agents_changed(registry=None) -> None:
-    """멤버십 변화 신호. 플래그(다음 턴 실제 재조립)에 더해, ``registry``
-    가 주어지면 인스펙터의 main 스냅샷 Live Teammates 섹션을 **즉시**
-    갱신한다 — idle 중 대화 창 kill 도 인스펙터에 바로 반영 (v4.61.0)."""
-    _membership_changed.set()
-    if registry is None:
-        return
-    try:
-        from agent_cli.prompts.system_prompt import build_live_agents_section
-        from agent_cli.render import get_renderer
-
-        get_renderer().update_prompt_section(
-            "", "Live Agents", build_live_agents_section(registry)
-        )
-    except Exception:
-        pass  # 표시용 — 실행 경로를 막지 않는다
-
-
-def consume_agents_reload() -> bool:
-    if _membership_changed.is_set():
-        _membership_changed.clear()
-        return True
-    return False
+# NOTE (v8.46.0): ``notify_agents_changed`` / ``consume_agents_reload`` /
+# ``_membership_changed`` lived here so the SYSTEM prompt's "Live Agents"
+# section could catch up after a spawn/kill/revive/death — a dirty flag the
+# loop consumed to rebuild the prompt, plus a renderer call that surgically
+# patched the section into the Prompt Inspector's system snapshot in between.
+# All three are gone: the roster now rides in the tail session-state block,
+# which the loop rebuilds from the registry on EVERY turn, so a membership
+# change needs no signal at all. Keeping the snapshot patch would have been
+# actively wrong — with no "Live Agents" section left in the system snapshot it
+# would have INSERTED a phantom one the LLM never actually received.
+# ``_notify_roster()`` (the 🤝 conversation-list update) is unrelated and stays.
 
 
 def compose_role_prompt(profile_body: str, instructions: str) -> str:
@@ -573,7 +560,6 @@ class AgentRegistry:
         tm.worker.start()
         self._save_state()
         self._notify_roster()
-        notify_agents_changed(self)  # Live Teammates 재조립+인스펙터 즉시 반영
         return key, ""
 
     # ── request / 회신 ──────────────────────────
@@ -864,7 +850,6 @@ class AgentRegistry:
         get_renderer().clear_agent_conversation(key)
         self._save_state()
         self._notify_roster()
-        notify_agents_changed(self)
         return ""
 
     def shutdown_all(self) -> None:
@@ -931,7 +916,6 @@ class AgentRegistry:
         self._replay_conversation(fresh)
         self._save_state()
         self._notify_roster()
-        notify_agents_changed(self)
         return ""
 
     def auto_spawn(self, parent_ctx=None) -> int:
@@ -1088,8 +1072,6 @@ class AgentRegistry:
             revived += 1
         self._save_state()
         self._notify_roster()
-        if revived:
-            notify_agents_changed(self)
         return revived
 
     # ── worker ──────────────────────────────────
@@ -1249,7 +1231,6 @@ class AgentRegistry:
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
-            notify_agents_changed(self)  # 사망도 멤버십 변화 — 광고에서 제거
 
     @staticmethod
     def _is_human_direct(item) -> bool:

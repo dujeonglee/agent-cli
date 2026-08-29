@@ -1408,12 +1408,6 @@
     window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
   });
 
-  es.addEventListener("prompt_changed", function () {
-    // 시스템 프롬프트 스냅샷의 외과적 갱신 (상주 에이전트 멤버십 즉시 반영) —
-    // 열린 인스펙터가 프롬프트 뷰를 재조회하게 중계.
-    window.dispatchEvent(new CustomEvent("agentcli:prompt-changed"));
-  });
-
   es.addEventListener("memory_changed", function () {
     // A `memory` op updated the ## Session Memory index → refresh the prompt
     // view (memory has no editor, so prompt-only).
@@ -3257,10 +3251,11 @@
   });
   $search.addEventListener("input", applyFilter);
 
-  // Live refresh of the currently-open scope (loop rebuilt the prompt / memory).
-  window.addEventListener("agentcli:prompt-changed", function () {
-    if ($drawer.classList.contains("open")) loadPrompt();
-  });
+  // Live refresh of the currently-open scope. The "prompt-changed" relay is
+  // gone with the server event that fed it (v8.46.0 — the agent roster left the
+  // system prompt for the per-turn tail block, so there is nothing to patch
+  // between turns); memory still notifies, and the reload picks the new note up
+  // from the dynamic half.
   window.addEventListener("agentcli:memory-changed", function () {
     if ($drawer.classList.contains("open")) loadPrompt();
   });

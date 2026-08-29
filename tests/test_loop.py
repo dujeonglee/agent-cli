@@ -1,64 +1,63 @@
 """Tests for agent loop (integration with mocked provider)."""
 
 import json
-from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import build_inspector_sections, run_loop
+from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 
 
-class _FakeInspectorCtx:
-    """Minimal ContextManager stand-in for inspector-section tests."""
+class TestInspectorNoSynthesis:
+    """The Prompt Inspector's static half is EXACTLY the system-prompt sections.
 
-    def __init__(self, summary="", file_list=None):
-        self.summary = summary
-        self.file_list = file_list or []
+    ``build_inspector_sections`` used to append the compaction summary and the
+    touched-file list as ``"⊙ … (user-injected)"`` pseudo-sections. They are
+    really ``role=user`` messages (``ContextManager.get_messages`` synthesises
+    them), so the inspector's DYNAMIC half already carried them — the API
+    returned each of them twice and double-counted their tokens. The synthesis
+    is gone; these tests keep it from coming back.
+    """
 
+    def test_helper_is_gone(self):
+        import agent_cli.loop as loop_pkg
+        import agent_cli.loop.prompt as prompt_mod
 
-class TestInspectorSections:
-    """Prompt Inspector surfaces compaction-injected context (summary +
-    touched files) as clearly-labelled sections, without mutating the
-    system-prompt section list that ``self.system`` derives from."""
+        assert not hasattr(prompt_mod, "build_inspector_sections")
+        assert not hasattr(loop_pkg, "build_inspector_sections")
 
-    _SYS: ClassVar[list] = [
-        ("System Prompt", "you are an agent"),
-        ("Tools", "read_file, ..."),
-    ]
+    def test_summary_and_files_appear_exactly_once(self, tmp_path):
+        """End-to-end on the real objects: one occurrence each, from the
+        dynamic half only."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.web.inspector import _dynamic_context_sections
 
-    def test_no_ctx_returns_system_sections_copy(self):
-        out = build_inspector_sections(self._SYS, None)
-        assert out == self._SYS
-        assert out is not self._SYS  # new list, not the same reference
+        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
+        ctx._summary = "earlier: user asked X, we did Y"
+        ctx._file_list = ["a.py", "b/c.py"]
+        ctx.add({"role": "user", "content": "hello"})
 
-    def test_no_compaction_yet_adds_nothing(self):
-        out = build_inspector_sections(self._SYS, _FakeInspectorCtx())
-        assert out == self._SYS
+        texts = [s["text"] for s in _dynamic_context_sections(ctx)]
+        joined = "\n".join(texts)
+        assert joined.count("earlier: user asked X, we did Y") == 1
+        assert joined.count("- a.py") == 1
 
-    def test_summary_appended_as_labelled_section(self):
-        ctx = _FakeInspectorCtx(summary="earlier: user asked X, we did Y")
-        out = build_inspector_sections(self._SYS, ctx)
-        assert len(out) == len(self._SYS) + 1
-        name, text = out[-1]
-        assert "Compaction summary" in name
-        assert text == "earlier: user asked X, we did Y"
+    def test_dynamic_sections_match_what_the_llm_receives(self, tmp_path):
+        """The inspector's dynamic half is derived from ``get_messages()``, so
+        it is the LLM's view by construction — including tail annotations."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.web.inspector import _dynamic_context_sections
 
-    def test_file_list_appended_as_bullets(self):
-        ctx = _FakeInspectorCtx(summary="s", file_list=["a.py", "b/c.py"])
-        out = build_inspector_sections(self._SYS, ctx)
-        names = [n for n, _ in out]
-        assert any("Files touched" in n for n in names)
-        files_section = next(t for n, t in out if "Files touched" in n)
-        assert "- a.py" in files_section and "- b/c.py" in files_section
+        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "hello"})
+        ctx.set_session_state("── session state ──\ncontext: ~1 / 2 tokens")
 
-    def test_does_not_mutate_input_sections(self):
-        original = list(self._SYS)
-        ctx = _FakeInspectorCtx(summary="s", file_list=["a.py"])
-        build_inspector_sections(self._SYS, ctx)
-        assert self._SYS == original  # unchanged
+        sent = [m for m in ctx.get_messages() if m.get("role") != "system"]
+        shown = _dynamic_context_sections(ctx)
+        assert [m["content"] for m in sent] == [s["text"] for s in shown]
+        assert "session state" in shown[-1]["text"]
 
 
 def _complete(result: str) -> str:
