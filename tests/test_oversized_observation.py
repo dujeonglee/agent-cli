@@ -1,24 +1,35 @@
-"""Oversized-observation cap + per-tool render/cap surfaces.
+"""Oversized-observation policy — ONE policy for every tool.
 
-Replaces the chunked-spill subsystem. A tool observation larger than the cap
-(``context_window / 10``) is replaced at the result→observation seam
-(``AgentLoop._tool_observation``) with a narrow-it nudge — the full output is
-never added to context (large outputs crowd out reasoning and lower quality).
-Two per-tool surfaces govern this: ``Tool.render_observation`` (how the result
-is formatted, default output/error) and ``Tool.apply_oversized_cap`` (whether
-the cap applies, default True). ``ctx.add`` is therefore pure storage.
+A tool observation over the cap (``context_window / 10``) never reaches the
+model. It is replaced at the result→observation seam
+(``ToolBridge._tool_observation``) by a nudge that is identical in SHAPE for
+every tool: the full body goes to a file, a bounded head+tail excerpt is shown,
+and the same recovery routes are offered (regex match / line range / agent
+fan-out), plus one tool-specific line on avoiding the bulk at the source.
+
+Per-tool surfaces: ``render_observation`` (how a result is formatted),
+``apply_oversized_cap`` (whether the cap applies), ``oversized_retry_hint``
+(the root-cause line) and ``oversized_source_path`` (a file the tool already
+wrote). ``render_oversized`` itself is NOT overridden any more.
+
+The cap is floored at ``MIN_CONTEXT_WINDOW / 10`` so it can never be 0, and a
+per-TURN budget (``TURN_OBS_BUDGET_MULT`` × cap) bounds a multi-op turn whose
+ops are each individually under the cap. ``ctx.add`` stays pure storage.
 """
 
 import json
+from pathlib import Path
 
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop import AgentLoop, LoopConfig, LoopState, ToolBridge
+from agent_cli.loop.tool_bridge import TURN_OBS_BUDGET_MULT
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
+    GENERIC_RETRY_HINT,
+    OVERSIZED_DIRNAME,
     Tool,
-    default_oversized_nudge,
-    narrow_oversized_nudge,
-    on_disk_oversized_nudge,
+    oversized_excerpt,
+    persist_oversized,
 )
 from agent_cli.tools.result import ToolResult
 
@@ -60,486 +71,423 @@ class TestToolSurfaces:
         r = ToolResult(False, error="boom")
         assert tool.render_observation(r, {}) == "boom"
 
-    def test_render_oversized_default_is_generic_nudge(self):
-        # A tool that does NOT override the seam falls back to the shared
-        # default byte-for-byte (shell has no override).
-        tool = TOOLS["shell"]
-        out = tool.render_oversized(
-            ToolResult(True, output="x"),
-            {},
-            body="x",
-            tokens=9_000,
-            ctx=RunContext(
-                oversized_cap=4_000, tools_available=frozenset(TOOLS.keys())
-            ),
+    def test_no_tool_overrides_render_oversized(self):
+        """The whole point of the unification: over-cap behaviour is decided in
+        ONE place. A tool customises via oversized_retry_hint /
+        oversized_source_path, never by reimplementing the policy."""
+        for name, tool in TOOLS.items():
+            assert type(tool).render_oversized is Tool.render_oversized, name
+
+    def test_every_tool_has_a_retry_hint(self):
+        for name, tool in TOOLS.items():
+            assert tool.oversized_retry_hint.strip(), name
+
+    def test_unknown_tool_falls_back_to_generic_hint(self):
+        # An MCP tool (or any future dynamically registered one) declares no
+        # hint and inherits the one piece of advice true for everything.
+        from agent_cli.mcp.adapter import McpTool
+
+        assert McpTool.oversized_retry_hint == GENERIC_RETRY_HINT
+
+
+# ── the unified nudge ────────────────────────────────────────────────
+
+
+def _nudge(tool_name, body, *, cap=1000, tools=("agent",), tmp_path=None, args=None):
+    """Render one tool's over-cap observation through the real seam."""
+    tool = TOOLS[tool_name]
+    ctx = RunContext(
+        session_dir=tmp_path,
+        oversized_cap=cap,
+        tools_available=frozenset(tools),
+    )
+    return tool.render_oversized(
+        ToolResult(True, output=body),
+        args or {},
+        body=body,
+        tokens=estimate_tokens(body),
+        ctx=ctx,
+    )
+
+
+class TestUnifiedNudge:
+    def _body(self, n=4000):
+        return "\n".join(f"line {i}" for i in range(n))
+
+    def test_shape_is_identical_across_tools(self, tmp_path):
+        """Same four elements for every tool — that is the unification."""
+        for name in ("shell", "fetch", "code_index", "read_context"):
+            n = _nudge(name, self._body(), tmp_path=tmp_path)
+            assert n.startswith(f"[{name}:")
+            assert "NOT added to context" in n
+            assert "Full output saved to" in n
+            assert "--- first" in n and "--- last" in n  # excerpt
+            assert "search='<regex>'" in n  # regex route
+            assert "line_start=<N>" in n  # range route
+            assert 'agent(mode="run"' in n  # fan-out route
+            assert "Root cause —" in n  # per-tool hint
+            assert n.endswith("]")
+
+    def test_root_cause_line_is_the_tools_own_hint(self, tmp_path):
+        n = _nudge("shell", self._body(), tmp_path=tmp_path)
+        assert TOOLS["shell"].oversized_retry_hint in n
+        n = _nudge("read_context", self._body(), tmp_path=tmp_path)
+        assert "LIMIT" in n and "substr(text,1,200)" in n
+
+    def test_reports_size_and_cap(self, tmp_path):
+        body = self._body()
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
+        assert f"{estimate_tokens(body):,} tokens" in n
+        assert "cap 1,000" in n
+
+    def test_fanout_route_omitted_when_agent_not_callable(self, tmp_path):
+        n = _nudge("shell", self._body(), tools=("read_file",), tmp_path=tmp_path)
+        assert 'agent(mode="run"' not in n
+        # the other routes survive
+        assert "search='<regex>'" in n and "Root cause —" in n
+
+    def _sections(self, nudge):
+        import re as _re
+
+        m = _re.search(r"split it into (\d+) sections", nudge)
+        assert m, nudge
+        return int(m.group(1))
+
+    def test_fanout_sections_are_sized_to_fit_the_cap(self, tmp_path):
+        """Old sizing clamped at 8 sections regardless of size, so a body a few
+        caps large handed every sub-agent a still-over-cap slice and the fan-out
+        just re-hit the same wall one level down."""
+        body = self._body(3_000)  # ~7k tokens = under the section ceiling
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
+        k = self._sections(n)
+        assert estimate_tokens(body) / k <= 1000, "each section must fit the cap"
+        assert "still large" not in n
+
+    def test_fanout_says_so_when_it_cannot_fit_in_one_level(self, tmp_path):
+        """Past the section ceiling the sections cannot all fit — the model is
+        told to make each sub-agent narrow further instead of being handed a
+        silently over-cap slice."""
+        body = self._body(40_000)  # ~ 100 caps
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
+        assert self._sections(n) == 16
+        assert "still large" in n and "read_file search=" in n
+
+    def test_persist_failure_degrades_without_claiming_a_file(self, monkeypatch):
+        monkeypatch.setattr(
+            "agent_cli.tools.base.persist_oversized", lambda *a, **k: ""
         )
-        assert out == default_oversized_nudge("shell", 9_000, 4_000)
+        n = _nudge("shell", self._body(), tmp_path=None)
+        assert "could NOT be saved" in n
+        assert "Full output saved to" not in n
+        assert "Root cause —" in n  # still tells it how to avoid the bulk
 
 
-# ── _tool_observation: render + cap meet here ────────────────────────
+# ── where the full body lands ────────────────────────────────────────
+
+
+class TestPersistence:
+    def test_written_under_the_session_dir(self, tmp_path):
+        path = persist_oversized("shell", "BODY", "ls -R /", tmp_path)
+        assert path
+        p = Path(path)
+        assert p.parent == tmp_path / OVERSIZED_DIRNAME
+        assert p.read_text() == "BODY"
+        assert p.name.startswith("shell-")
+
+    def test_headless_falls_back_to_a_temp_dir(self):
+        """ "Over the cap always lands in a file" must hold with no session."""
+        path = persist_oversized("shell", "HEADLESS BODY", "cmd", None)
+        assert path
+        p = Path(path)
+        try:
+            assert p.read_text() == "HEADLESS BODY"
+            assert "agent-cli-oversized" in str(p.parent)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_same_call_and_body_reuse_one_file(self, tmp_path):
+        a = persist_oversized("shell", "SAME", "cmd", tmp_path)
+        b = persist_oversized("shell", "SAME", "cmd", tmp_path)
+        assert a == b
+        assert len(list((tmp_path / OVERSIZED_DIRNAME).iterdir())) == 1
+
+    def test_different_body_gets_its_own_file(self, tmp_path):
+        a = persist_oversized("shell", "ONE", "cmd", tmp_path)
+        b = persist_oversized("shell", "TWO", "cmd", tmp_path)
+        assert a != b
+
+    def test_seam_persists_and_points_at_the_file(self, tmp_path):
+        body = "\n".join(f"out {i}" for i in range(4000))
+        n = _nudge("shell", body, tmp_path=tmp_path, args={"command": "ls -R /"})
+        saved = tmp_path / OVERSIZED_DIRNAME
+        files = list(saved.iterdir())
+        assert len(files) == 1
+        assert str(files[0]) in n
+        assert files[0].read_text() == body
+
+
+class TestSourcePathTools:
+    """Two tools already wrote the bulk to disk — they point at it instead of
+    persisting a byte-identical copy."""
+
+    def test_read_file_points_at_the_file_it_read(self, tmp_path):
+        f = tmp_path / "big.py"
+        f.write_text("\n".join(f"x = {i}" for i in range(4000)))
+        body = "\n".join(f"{i}#AB:x = {i}" for i in range(4000))
+        n = _nudge("read_file", body, tmp_path=tmp_path, args={"path": str(f)})
+        assert str(f) in n
+        assert not (tmp_path / OVERSIZED_DIRNAME).exists(), "no copy"
+
+    def test_read_file_persists_when_the_path_is_gone(self, tmp_path):
+        body = "\n".join(f"line {i}" for i in range(4000))
+        n = _nudge("read_file", body, tmp_path=tmp_path, args={"path": "/nope/gone.py"})
+        assert "/nope/gone.py" not in n
+        assert (tmp_path / OVERSIZED_DIRNAME).exists()
+
+    def test_agent_points_at_result_md(self, tmp_path):
+        run = tmp_path / "run-1"
+        run.mkdir()
+        (run / "result.md").write_text("FULL ANSWER")
+        body = "\n".join(f"line {i}" for i in range(4000))
+        tool = TOOLS["agent"]
+        ctx = RunContext(
+            session_dir=tmp_path,
+            oversized_cap=1000,
+            tools_available=frozenset({"agent"}),
+        )
+        n = tool.render_oversized(
+            ToolResult(True, output=body, artifact="run-1"),
+            {"mode": "run"},
+            body=body,
+            tokens=estimate_tokens(body),
+            ctx=ctx,
+        )
+        assert str(run / "result.md") in n
+        assert not (tmp_path / OVERSIZED_DIRNAME).exists()
+
+    def test_agent_without_artifact_persists(self, tmp_path):
+        body = "\n".join(f"line {i}" for i in range(4000))
+        n = _nudge("agent", body, tmp_path=tmp_path, args={"mode": "run"})
+        assert (tmp_path / OVERSIZED_DIRNAME).exists()
+        assert "Root cause —" in n
+
+
+# ── excerpt ──────────────────────────────────────────────────────────
+
+
+class TestExcerpt:
+    def test_keeps_head_and_tail_with_an_omission_marker(self):
+        body = "\n".join(f"line {i}" for i in range(500))
+        e = oversized_excerpt(body, cap=10_000)
+        assert "line 0" in e and "line 499" in e
+        assert "line 250" not in e
+        assert "omitted" in e
+
+    def test_tail_survives_a_small_budget(self):
+        """The answer in a build log is at the END — the tail is what must not
+        be the part that gets dropped."""
+        body = "\n".join(f"line {i}" for i in range(500)) + "\n[exit code: 2]"
+        e = oversized_excerpt(body, cap=120)  # tiny cap → floor budget
+        assert "[exit code: 2]" in e
+
+    def test_bounded_by_a_fraction_of_the_cap(self):
+        body = "\n".join("x" * 200 for _ in range(10_000))
+        cap = 20_000
+        e = oversized_excerpt(body, cap=cap)
+        assert estimate_tokens(e) <= cap * 0.2
+
+    def test_single_enormous_line_is_hard_sliced(self):
+        body = "y" * 1_000_000  # one line, no newlines at all
+        e = oversized_excerpt(body, cap=1000)
+        assert e
+        assert len(e) < 5000
+
+    def test_few_lines_are_split_not_duplicated(self):
+        body = "\n".join(f"L{i}" for i in range(6))
+        e = oversized_excerpt(body, cap=10_000)
+        assert e.count("L3") == 1
+
+
+# ── the cap itself ───────────────────────────────────────────────────
+
+
+def _bridge(window):
+    class _Caps:
+        context_window = window
+        max_output_tokens = 1000
+
+    return ToolBridge(
+        LoopConfig(
+            tools_list=list(TOOLS.keys()),
+            capabilities=_Caps() if window is not None else None,
+        ),
+        LoopState(),
+        ctx=None,
+        provider=None,
+    )
+
+
+class TestCapComputation:
+    def test_cap_is_one_tenth_of_window(self):
+        assert _bridge(250_000)._oversized_cap == 25_000
+
+    def test_missing_capabilities_still_caps(self):
+        """Used to be cap=0 — the cap was DISABLED, so an unbounded observation
+        went into context with no file and no warning."""
+        from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
+
+        assert _bridge(None)._oversized_cap == MIN_CONTEXT_WINDOW // 10
+        assert _bridge(0)._oversized_cap == MIN_CONTEXT_WINDOW // 10
+
+    def test_floor_is_the_smallest_supported_window(self):
+        from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
+
+        # a window below the minimum the agent will even start on cannot make
+        # the cap smaller than that minimum implies
+        assert _bridge(4096)._oversized_cap == MIN_CONTEXT_WINDOW // 10
+
+    def test_turn_budget_tracks_the_cap(self):
+        b = _bridge(250_000)
+        assert b._turn_obs_budget == 25_000 * TURN_OBS_BUDGET_MULT
+        b._oversized_cap = 1_000  # reassignment must not leave it stale
+        assert b._turn_obs_budget == 1_000 * TURN_OBS_BUDGET_MULT
+
+
+# ── the seam ─────────────────────────────────────────────────────────
 
 
 class TestToolObservationCap:
     def test_under_cap_passes_through_verbatim(self):
         loop = _loop(cap=1000)
-        body = "line one\n  line two\n\tline three"  # newlines/indent preserved
-        out = loop._tool_observation("read_file", ToolResult(True, output=body), {})
-        assert out == body
+        r = ToolResult(True, output="small")
+        assert loop._tool_observation("shell", r, {}) == "small"
 
-    def test_over_cap_is_nudged_not_raw(self):
-        loop = _loop(cap=50)
-        big = "/p/secret_marker.py\n" * 500
-        out = loop._tool_observation("read_file", ToolResult(True, output=big), {})
-        assert "too large" in out
-        assert "secret_marker" not in out  # raw content absent
-        assert "read_file" in out  # nudge names the tool
+    def test_over_cap_is_replaced(self, tmp_path):
+        loop = _loop(cap=100)
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        big = "\n".join(f"line {i}" for i in range(4000))
+        obs = loop._tool_observation("shell", ToolResult(True, output=big), {})
+        assert obs != big
+        assert "Full output saved to" in obs
 
-    def test_opt_out_tool_never_nudged(self, monkeypatch):
-        loop = _loop(cap=50)
-        monkeypatch.setattr(TOOLS["read_file"], "apply_oversized_cap", False)
+    def test_opt_out_tool_never_replaced(self, monkeypatch):
+        loop = _loop(cap=10)
+        monkeypatch.setattr(type(TOOLS["shell"]), "apply_oversized_cap", False)
         big = "x" * 100_000
-        out = loop._tool_observation("read_file", ToolResult(True, output=big), {})
-        assert out == big  # opted out → verbatim even when huge
+        assert loop._tool_observation("shell", ToolResult(True, output=big), {}) == big
 
-    def test_cap_zero_disables_capping(self):
-        loop = _loop(cap=0)  # headless/no-capabilities path
-        big = "x" * 100_000
-        out = loop._tool_observation("read_file", ToolResult(True, output=big), {})
-        assert out == big
-
-    def test_unknown_tool_falls_back_to_default_render_and_cap(self):
-        loop = _loop(cap=50)
-        big = "y" * 100_000
-        out = loop._tool_observation("not_a_tool", ToolResult(True, output=big), {})
-        assert "too large" in out  # default cap_on=True still applies
+    def test_unknown_tool_is_capped_too(self, tmp_path):
+        loop = _loop(cap=100)
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        big = "\n".join(f"line {i}" for i in range(4000))
+        obs = loop._tool_observation("srv.thing", ToolResult(True, output=big), {})
+        assert obs.startswith("[srv.thing:")
+        assert "Full output saved to" in obs
+        assert GENERIC_RETRY_HINT in obs
 
     def test_render_observation_override_is_honored(self, monkeypatch):
         loop = _loop(cap=1000)
-
-        def fake_render(result, args):
-            return "CUSTOM RENDER"
-
-        monkeypatch.setattr(TOOLS["read_file"], "render_observation", fake_render)
-        out = loop._tool_observation("read_file", ToolResult(True, output="raw"), {})
-        assert out == "CUSTOM RENDER"
-
-
-# ── cap = context_window / 10 ────────────────────────────────────────
-
-
-class TestCapComputation:
-    def _caps(self, window):
-        class C:
-            context_window = window
-            max_output_tokens = 1000
-
-        return C()
-
-    def test_cap_is_one_tenth_of_window(self):
-        # the formula __init__ uses to set self._oversized_cap
-        caps = self._caps(250_000)
-        cap = (
-            caps.context_window // 10
-            if caps and getattr(caps, "context_window", 0)
-            else 0
+        monkeypatch.setattr(
+            type(TOOLS["shell"]),
+            "render_observation",
+            lambda self, result, args: "REWRITTEN",
         )
-        assert cap == 25_000
-
-    def test_no_capabilities_means_no_cap(self):
-        caps = None
-        cap = (
-            caps.context_window // 10
-            if caps and getattr(caps, "context_window", 0)
-            else 0
-        )
-        assert cap == 0
+        r = ToolResult(True, output="original")
+        assert loop._tool_observation("shell", r, {}) == "REWRITTEN"
 
 
-# ── nudge text ───────────────────────────────────────────────────────
+# ── per-TURN budget: N ops each under the cap ────────────────────────
 
 
-class TestNudge:
-    def test_nudge_mentions_tool_size_and_recovery(self):
-        n = default_oversized_nudge("read_context", 99_999, 5_000)
-        assert "read_context" in n
-        assert "99,999" in n and "5,000" in n
-        assert "too large" in n
-        assert "read_file" in n  # points at a narrower path
+class TestTurnBudget:
+    def _obs(self, cap_tokens):
+        # a body comfortably under the per-op cap
+        return "\n".join(f"line {i}" for i in range(cap_tokens // 3))
 
-
-# ── read_file over-cap: pure nudge + delegate fan-out guidance ───────
-
-
-class TestReadFileOversized:
-    def test_read_file_overrides_render_oversized(self):
-        # The surface is actually wired for read_file (not the inherited default).
-        assert type(TOOLS["read_file"]).render_oversized is not Tool.render_oversized
-
-    def _nudge(self, tools, args=None):
-        # A multi-line body so the fan-out bullet proposes concrete line ranges.
-        body = "\n".join(f"RAW_SECRET_BODY line {i}" for i in range(900))
-        return TOOLS["read_file"].render_oversized(
-            ToolResult(True, output=body),
-            args or {"path": "big_module.py"},
-            body=body,
-            tokens=63_488,
-            ctx=RunContext(oversized_cap=4_096, tools_available=frozenset(tools)),
-        )
-
-    def test_names_path_size_and_narrowing(self):
-        n = self._nudge(["read_file", "agent"])
-        assert "big_module.py" in n  # the path
-        assert "63,488" in n and "4,096" in n  # size + cap
-        assert "range" in n and "read_symbols" in n  # cheap narrowing
-        assert "too large" in n and "read_file" in n
-        assert "RAW_SECRET_BODY" not in n  # raw body never echoed
-
-    def test_delegate_fanout_is_n_way_parallel(self):
-        n = self._nudge(["read_file", "agent"])
-        assert "Fan out IN PARALLEL" in n
-        # N-way: several delegate ops in ONE turn, with concrete line ranges
-        assert "agent run ops in ONE turn" in n
-        assert "concurrently" in n
-        assert n.count('agent(mode="run", task=') >= 2  # a copyable multi-op pattern
-        assert "lines 1-" in n  # concrete section boundary
-
-    def test_delegate_omitted_when_unavailable(self):
-        # Depth-limited subagent: delegate is stripped from the toolset — the
-        # nudge must NOT point at a tool the model cannot call.
-        n = self._nudge(["read_file"])  # no delegate
-        assert "agent" not in n
-        assert "range" in n  # cheap narrowing still offered
-
-    def test_missing_path_degrades_gracefully(self):
-        n = self._nudge(["read_file"], args={})
-        assert "the file" in n  # placeholder, no crash
-
-
-# ── through the loop seam (render_oversized + tools_available) ────────
-
-
-class TestReadFileOversizedThroughSeam:
-    def test_seam_emits_delegate_guidance_when_delegate_present(self):
-        loop = _loop(cap=50, tools=["read_file", "agent"])
-        big = "line of source\n" * 500
-        out = loop._tool_observation(
-            "read_file", ToolResult(True, output=big), {"path": "m.py"}
-        )
-        assert "m.py" in out and "agent" in out
-        assert "line of source" not in out  # raw dropped
-
-    def test_seam_omits_delegate_when_depth_stripped(self):
-        loop = _loop(cap=50, tools=["read_file"])  # delegate depth-stripped
-        big = "line of source\n" * 500
-        out = loop._tool_observation(
-            "read_file", ToolResult(True, output=big), {"path": "m.py"}
-        )
-        assert "agent" not in out
-        assert "read_symbols" in out  # still steers to a narrower read
-
-
-# ── shared on-disk nudge (read_file / shell / delegate invariant) ────
-
-
-class TestOnDiskNudgeHelper:
-    def _n(self, tools, **kw):
-        return on_disk_oversized_nudge(
-            "toolx",
-            "the thing",
-            "saved to '/s/out.txt'",
-            "/s/out.txt",
-            12_345,
-            4_096,
-            frozenset(tools),
-            **kw,
-        )
-
-    def test_specific_part_bullet_always_present(self):
-        n = self._n(["toolx"])
-        assert "read_file '/s/out.txt' with a line range" in n
-        assert "12,345" in n and "4,096" in n
-        assert "saved to '/s/out.txt'" in n
-
-    def test_fanout_bullet_only_when_delegate_available(self):
-        assert "Fan out IN PARALLEL" in self._n(["toolx", "agent"])
-        assert "Fan out IN PARALLEL" not in self._n(["toolx"])
-
-    def test_fanout_concrete_ranges_with_nlines(self):
-        # With a line count, the fan-out bullet proposes concrete parallel ops.
-        n = self._n(["toolx", "agent"], nlines=2_483)
-        assert "2,483 lines" in n
-        assert "agent run ops in ONE turn" in n and "concurrently" in n
-        assert n.count('agent(mode="run", task=') >= 2
-        assert "lines 1-" in n
-
-    def test_fanout_generic_without_nlines(self):
-        # No line count → still parallel, but generic (no concrete ranges).
-        # 실존 도구명으로 안내 — 종전 "delegate op" 문구는 제거된 도구를
-        # 가리켰다(리뷰 §4.4 수리).
-        n = self._n(["toolx", "agent"])  # nlines defaults to 0
-        assert "Fan out IN PARALLEL" in n
-        assert 'one agent(mode="run") op per section' in n
-        assert "delegate op" not in n
-        assert 'agent(mode="run", task=' not in n  # no concrete op examples
-
-    def test_part_extra_and_tail_bullets(self):
-        n = self._n(["toolx"], part_extra="read_symbols", tail_bullets=("do X.",))
-        assert "read_symbols" in n
-        assert "· do X." in n
-
-
-# ── shell over-cap: persist output to file + on-disk nudge ───────────
-
-
-class TestShellOversized:
-    def _big(self):
-        return "row of output\n" * 800
-
-    def test_persists_output_and_points_at_file(self, tmp_path):
-        n = TOOLS["shell"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"command": "grep -r foo ."},
-            body=self._big(),
-            tokens=9_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset({"shell", "read_file", "agent"}),
-            ),
-        )
-        saved = list(tmp_path.glob("shell-output-*.txt"))
-        assert len(saved) == 1, "output must be persisted exactly once"
-        assert saved[0].read_text() == self._big()  # full body on disk
-        assert str(saved[0]) in n  # nudge points at the file
-        assert "row of output" not in n  # raw body not echoed
-        assert "Fan out IN PARALLEL" in n  # fan-out offered
-
-    def test_no_delegate_no_fanout_bullet(self, tmp_path):
-        n = TOOLS["shell"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"command": "ls -R /"},
-            body=self._big(),
-            tokens=9_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset({"shell", "read_file"}),
-            ),
-        )
-        assert "Fan out IN PARALLEL" not in n
-        assert "read_file" in n  # still steers to a ranged read of the file
-
-    def test_headless_falls_back_to_tee_nudge(self):
-        # No session dir → cannot save a file → generic tee-to-file fallback.
-        n = TOOLS["shell"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"command": "ls"},
-            body=self._big(),
-            tokens=9_000,
-            ctx=RunContext(
-                session_dir=None,
-                oversized_cap=4_096,
-                tools_available=frozenset({"shell", "agent"}),
-            ),
-        )
-        assert "tee" in n  # generic default nudge advises tee→read_file
-        assert "shell" in n
-
-    def test_identical_output_dedups_filename(self, tmp_path):
-        # Same command+output → same hash → same file (no proliferation).
-        for _ in range(3):
-            TOOLS["shell"].render_oversized(
-                ToolResult(True, output=self._big()),
-                {"command": "dup"},
-                body=self._big(),
-                tokens=9_000,
-                ctx=RunContext(
-                    session_dir=tmp_path,
-                    oversized_cap=4_096,
-                    tools_available=frozenset({"shell"}),
-                ),
+    def test_ops_under_the_cap_still_bounded_in_aggregate(self, tmp_path):
+        loop = _loop(cap=1000, tools=["shell", "agent"])
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        acc = []
+        body = self._obs(1000)
+        assert estimate_tokens(body) < 1000, "each op must be individually legal"
+        for _ in range(12):
+            loop._tools.accumulate_observation(
+                acc, "shell", ToolResult(True, output=body), {"command": "x"}
             )
-        assert len(list(tmp_path.glob("shell-output-*.txt"))) == 1
+        verbatim = [r for r in acc if r["observation"] == body]
+        replaced = [r for r in acc if "saved to" in r["observation"]]
+        assert verbatim, "early ops keep their output"
+        assert replaced, "the overflow degrades to file pointers"
+        total = sum(r["tokens"] for r in acc)
+        assert total < 1000 * 12, "aggregate must be smaller than N x cap"
 
+    def test_earlier_ops_are_the_ones_kept(self, tmp_path):
+        loop = _loop(cap=1000, tools=["shell", "agent"])
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        acc = []
+        body = self._obs(1000)
+        for _ in range(12):
+            loop._tools.accumulate_observation(
+                acc, "shell", ToolResult(True, output=body), {"command": "x"}
+            )
+        kept = [i for i, r in enumerate(acc) if r["observation"] == body]
+        dropped = [i for i, r in enumerate(acc) if r["observation"] != body]
+        assert max(kept) < min(dropped)
 
-# ── delegate over-cap: point at result.md + fan-out + re-delegate ────
+    def test_budget_nudge_explains_the_turn_not_the_result(self, tmp_path):
+        loop = _loop(cap=1000, tools=["shell", "agent"])
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        acc = []
+        body = self._obs(1000)
+        for _ in range(12):
+            loop._tools.accumulate_observation(
+                acc, "shell", ToolResult(True, output=body), {"command": "x"}
+            )
+        replaced = next(r for r in acc if r["observation"] != body)["observation"]
+        assert "per-turn budget" in replaced
+        assert "Emit fewer ops per turn" in replaced
+        # and NOT the misleading single-result reason
+        assert "too large for one context" not in replaced
 
-
-class TestDelegateOversized:
-    def test_points_at_result_md_with_fanout_and_redelegate(self, tmp_path):
-        # tool_delegate persisted the answer at <session>/<artifact>result.md.
-        (tmp_path / "task-abc").mkdir()
-        (tmp_path / "task-abc" / "result.md").write_text("BIG ANSWER")
-        n = TOOLS["agent"].render_oversized(
-            ToolResult(True, output="STATUS: success…", artifact="task-abc/"),
-            {"task": "analyse everything"},
-            body="x" * 50_000,
-            tokens=25_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset({"agent", "read_file"}),
-            ),
-        )
-        assert "task-abc/result.md" in n.replace(str(tmp_path) + "/", "")
-        assert "result.md" in n
-        assert "Fan out IN PARALLEL" in n  # split result.md across subagents
-        assert "re-delegate a NARROWER task" in n.lower() or "narrower" in n.lower()
-
-    def test_falls_back_without_artifact(self, tmp_path):
-        n = TOOLS["agent"].render_oversized(
-            ToolResult(True, output="…", artifact=""),
-            {"task": "t"},
-            body="x" * 50_000,
-            tokens=25_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset({"agent"}),
-            ),
-        )
-        assert "too large" in n  # generic fallback still caps
-
-
-# ── fetch over-cap: persist content to file + on-disk nudge ──────────
-
-
-class TestFetchOversized:
-    def _big(self):
-        return "# Section\n\nlots of fetched prose. " * 900
-
-    def _call(self, tmp_path, tools, url="http://example.com/big"):
-        # fetch is flat-native (v4.38.0): the action_input key is plain `url`.
-        return TOOLS["fetch"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"url": url},
-            body=self._big(),
-            tokens=30_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset(tools),
-            ),
+    def test_a_single_op_is_never_charged_a_turn_budget(self, tmp_path):
+        loop = _loop(cap=1000)
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        body = self._obs(1000)
+        assert (
+            loop._tool_observation("shell", ToolResult(True, output=body), {}) == body
         )
 
-    def test_persists_content_and_points_at_file(self, tmp_path):
-        n = self._call(tmp_path, ["fetch", "read_file", "agent"])
-        saved = list(tmp_path.glob("fetch-output-*.txt"))
-        assert len(saved) == 1
-        assert saved[0].read_text() == self._big()  # full content on disk
-        assert str(saved[0]) in n
-        assert "fetched prose" not in n  # raw body not echoed
-        assert "Fan out IN PARALLEL" in n
-        assert "shallower depth" in n  # fetch-specific narrower-URL bullet
-
-    def test_legacy_prefixed_key_still_tolerated(self, tmp_path):
-        # A resumed session's re-fed prior may still emit `fetch_url`;
-        # strip_prefix keeps accepting it (key_prefix machinery is latent,
-        # not deleted), so the nudge still names the file.
-        n = TOOLS["fetch"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"fetch_url": "http://example.com/legacy"},
-            body=self._big(),
-            tokens=30_000,
-            ctx=RunContext(
-                session_dir=tmp_path,
-                oversized_cap=4_096,
-                tools_available=frozenset({"fetch", "read_file"}),
-            ),
+    def test_suffix_survives_replacement(self, tmp_path):
+        loop = _loop(cap=1000, tools=["shell", "agent"])
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        acc = []
+        big = "\n".join(f"line {i}" for i in range(4000))
+        loop._tools.accumulate_observation(
+            acc, "shell", ToolResult(True, output=big), {}, suffix="[warn] truncated"
         )
-        assert len(list(tmp_path.glob("fetch-output-*.txt"))) == 1
-        assert "too large" in n
-
-    def test_no_delegate_no_fanout(self, tmp_path):
-        n = self._call(tmp_path, ["fetch", "read_file"])
-        assert "Fan out IN PARALLEL" not in n
-        assert "read_file" in n
-
-    def test_headless_falls_back(self):
-        n = TOOLS["fetch"].render_oversized(
-            ToolResult(True, output=self._big()),
-            {"url": "http://x"},
-            body=self._big(),
-            tokens=30_000,
-            ctx=RunContext(
-                session_dir=None,
-                oversized_cap=4_096,
-                tools_available=frozenset({"fetch", "agent"}),
-            ),
-        )
-        assert "too large" in n  # generic fallback
+        assert "[warn] truncated" in acc[0]["observation"]
+        assert "Full output saved to" in acc[0]["observation"]
 
 
-# ── narrow (not-on-disk) nudge: context / code_index ─────────────────
+# ── run_skill goes through the seam like everything else ─────────────
 
 
-class TestNarrowNudgeHelper:
-    def test_preamble_and_bullets(self):
-        n = narrow_oversized_nudge(
-            "toolx", "the result", 30_000, 4_096, bullets=("do A.", "do B.")
-        )
-        assert "toolx: the result is ~30,000 tokens" in n
-        assert "cap 4,096" in n
-        assert "the call succeeded" in n
-        assert "· do A." in n and "· do B." in n
-        # narrow nudge is in-place: it must NOT drag in file/tee/read_file advice
-        assert "tee" not in n and "read_file" not in n
+class TestRunSkillCapped:
+    def test_run_skill_is_a_capped_tool(self, tmp_path):
+        loop = _loop(cap=100, tools=["run_skill", "agent"])
+        loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
+        big = "\n".join(f"line {i}" for i in range(4000))
+        obs = loop._tool_observation("run_skill", ToolResult(True, output=big), {})
+        assert "Full output saved to" in obs
+        assert TOOLS["run_skill"].oversized_retry_hint in obs
 
+    def test_dispatch_routes_run_skill_through_the_seam(self):
+        import inspect
 
-class TestContextOversized:
-    def _n(self, tools=("read_context", "read_file", "agent")):
-        return TOOLS["read_context"].render_oversized(
-            ToolResult(True, output="…"),
-            {"read_context_query": "SELECT * FROM history"},
-            body="…" * 10,
-            tokens=30_000,
-            ctx=RunContext(oversized_cap=4_096, tools_available=frozenset(tools)),
-        )
+        from agent_cli.loop import dispatch
 
-    def test_overrides_and_steers_to_sql_narrowing(self):
-        assert type(TOOLS["read_context"]).render_oversized is not Tool.render_oversized
-        n = self._n()
-        assert "read_context" in n and "30,000" in n
-        assert "LIMIT" in n and "substr(text,1,200)" in n  # SQL-native recovery
-        # no irrelevant generic advice / no file/fan-out for a SQL result
-        assert "line range" not in n
-        assert "tee" not in n and "Fan out IN PARALLEL" not in n
-
-    def test_seam_produces_sql_nudge(self):
-        loop = _loop(cap=50)
-        big = "x" * 100_000
-        out = loop._tool_observation("read_context", ToolResult(True, output=big), {})
-        assert "LIMIT" in out and "substr" in out
-        assert "x" * 50 not in out  # raw dropped
-
-
-class TestCodeIndexOversized:
-    def _n(self):
-        return TOOLS["code_index"].render_oversized(
-            ToolResult(True, output="…"),
-            {"mode": "kind", "symbol_kind": "function"},
-            body="…" * 10,
-            tokens=30_000,
-            ctx=RunContext(
-                oversized_cap=4_096,
-                tools_available=frozenset({"code_index", "read_file"}),
-            ),
-        )
-
-    def test_overrides_and_steers_to_index_params(self):
-        assert type(TOOLS["code_index"]).render_oversized is not Tool.render_oversized
-        n = self._n()
-        assert "code_index" in n and "30,000" in n
-        # real code_index params, not generic advice
-        assert "mode=fetch" in n and "search=" in n and "max_bytes" in n
-        assert "line range" not in n and "tee" not in n
-
-    def test_seam_produces_index_nudge(self):
-        loop = _loop(cap=50)
-        big = "y" * 100_000
-        out = loop._tool_observation("code_index", ToolResult(True, output=big), {})
-        assert "mode=fetch" in out
-        assert "y" * 50 not in out
+        src = inspect.getsource(dispatch.TurnDispatcher._op_run_skill)
+        assert "_tool_observation" in src
 
 
 # ── ctx.add is pure storage (no spill transform) ─────────────────────

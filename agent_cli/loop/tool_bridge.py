@@ -11,10 +11,21 @@ from agent_cli.context.token_estimator import estimate_tokens
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
+from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
 from agent_cli.tools import TOOLS, RunContext, _execute_tool
-from agent_cli.tools.base import default_oversized_nudge
+from agent_cli.tools.base import (
+    GENERIC_RETRY_HINT,
+    oversized_nudge,
+    persist_oversized,
+)
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
+
+# A turn may accumulate this many times the per-op cap in tool observations
+# before the overflow starts degrading to file pointers. 3 leaves room for the
+# ordinary "read three files in one turn" batch the prompt encourages, while
+# still bounding a turn at ~30% of the context window.
+TURN_OBS_BUDGET_MULT = 3
 
 
 def _normalize_input(tool_input) -> str:
@@ -40,18 +51,39 @@ class ToolBridge:
         self.state = state
         self.ctx = ctx
         self.provider = provider
-        # Oversized-observation cap: a single tool observation larger than
-        # this many tokens is replaced (at the result→observation seam) with
-        # a narrow-it nudge. context_window / 10; 0 = disabled (headless).
+        # Oversized-observation cap: a single tool observation larger than this
+        # many tokens is replaced (at the result→observation seam) by the
+        # unified over-cap nudge — full body to a file, excerpt + how to mine it.
+        #
+        # context_window / 10, FLOORED at MIN_CONTEXT_WINDOW / 10. The floor is
+        # what makes "over the cap always lands in a file" true everywhere:
+        # ``capabilities`` defaults to None on LoopConfig, and a missing/zero
+        # window used to yield cap=0 — which disabled the cap entirely, so an
+        # unbounded observation went straight into context with no file and no
+        # warning. Flooring at the smallest window the agent will even start on
+        # (detection hard-rejects below MIN_CONTEXT_WINDOW) keeps the formula
+        # self-consistent instead of introducing an unrelated magic number.
         caps = config.capabilities
-        self._oversized_cap = (
-            caps.context_window // 10
-            if caps and getattr(caps, "context_window", 0)
-            else 0
-        )
+        window = getattr(caps, "context_window", 0) or 0 if caps else 0
+        self._oversized_cap = max(window, MIN_CONTEXT_WINDOW) // 10
+
         # Lazy one-shot cache for _run_ctx() — see its docstring.
         self._run_ctx_cache: RunContext | None = None
         self.recent_tool_history: list[dict] = []
+
+    @property
+    def _turn_obs_budget(self) -> int:
+        """Per-TURN accumulated-observation budget. The cap is per OP, so a turn
+        of N ops each just under it added up to N × cap — 10 ops filled the
+        whole window, and the system prompt actively encourages batching
+        independent reads into one turn. Once a turn's observations pass this,
+        every FURTHER op's observation is replaced by the same over-cap policy
+        (file + excerpt + routes): the ops the model asked for earliest stay
+        verbatim, the overflow degrades to pointers.
+
+        Derived rather than stored so it cannot go stale when ``_oversized_cap``
+        is reassigned (the AgentLoop property setter, tests)."""
+        return self._oversized_cap * TURN_OBS_BUDGET_MULT
 
     def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
         """Orchestrator: pre-hooks → invoke → guards → post-hooks → record.
@@ -422,13 +454,27 @@ class ToolBridge:
             )
 
     # ── result → observation seam (per-tool render + oversized cap) ──
-    def _tool_observation(self, tool_name: str, result: ToolResult, args) -> str:
+    def _tool_observation(
+        self, tool_name: str, result: ToolResult, args, *, spent_tokens: int = 0
+    ) -> str:
         """Turn a tool's ToolResult into the observation body that enters
         context. Two per-tool surfaces meet here: ``render_observation``
         (how this tool formats its result — default output/error) and
         ``apply_oversized_cap`` (whether the cap applies — default True).
-        An over-cap body is replaced with a narrow-it nudge. Tools not in the
-        registry (none today) fall back to the default render + cap on."""
+
+        A body is replaced by the tool's over-cap rendering (full text to a
+        file + head/tail excerpt + how to mine it) for either of two reasons:
+
+        - it is over the PER-OP cap on its own, or
+        - ``spent_tokens`` (what this turn's earlier ops already contributed)
+          plus this body would pass the per-TURN budget. The model is told
+          which of the two happened, because the fix differs — a single huge
+          result wants a narrower call, a blown turn budget wants fewer ops
+          per turn.
+
+        Tools not in the registry (none today; the seam stays honest for a
+        future dynamically-registered one) get the same treatment through the
+        module-level builders with the generic retry hint."""
         tool = TOOLS.get(tool_name)
         safe_args = args if isinstance(args, dict) else {}
         if tool is not None:
@@ -437,23 +483,103 @@ class ToolBridge:
         else:
             body = result.output if result.success else result.error
             cap_on = True
-        if cap_on and self._oversized_cap:
-            tokens = estimate_tokens(body)
-            if tokens > self._oversized_cap:
-                # Per-tool over-cap policy (default = generic narrow-it nudge).
-                # ``tools_available`` lets a tool tailor guidance to what the
-                # model can actually call (e.g. delegate fan-out only when
-                # delegate is not depth-stripped from this loop).
-                if tool is not None:
-                    return tool.render_oversized(
-                        result,
-                        safe_args,
-                        body=body,
-                        tokens=tokens,
-                        ctx=self._run_ctx(),
-                    )
-                return default_oversized_nudge(tool_name, tokens, self._oversized_cap)
-        return body
+        if not (cap_on and self._oversized_cap):
+            return body
+
+        tokens = estimate_tokens(body)
+        if tokens > self._oversized_cap:
+            reason = ""  # the standard "too large for one context" opening
+        elif spent_tokens and spent_tokens + tokens > self._turn_obs_budget:
+            reason = (
+                f"this result is only ~{tokens:,} tokens, but this turn's tool "
+                f"output already totals ~{spent_tokens:,} — adding it would pass "
+                f"the per-turn budget of {self._turn_obs_budget:,} tokens "
+                f"({TURN_OBS_BUDGET_MULT}× the {self._oversized_cap:,} per-result "
+                f"cap). Emit fewer ops per turn to keep results inline"
+            )
+        else:
+            return body
+
+        if tool is not None:
+            return tool.render_oversized(
+                result,
+                safe_args,
+                body=body,
+                tokens=tokens,
+                ctx=self._run_ctx(),
+                reason=reason,
+            )
+        path = persist_oversized(
+            tool_name, body, "", self.ctx.session_dir if self.ctx else None
+        )
+        return oversized_nudge(
+            tool_name=tool_name,
+            path=path,
+            body=body,
+            tokens=tokens,
+            cap=self._oversized_cap,
+            retry_hint=GENERIC_RETRY_HINT,
+            tools_available=frozenset(self.cfg.tools_list),
+            reason=reason,
+        )
+
+    def accumulate_observation(
+        self,
+        accumulate: list,
+        tool_name: str,
+        result: ToolResult,
+        args,
+        *,
+        suffix: str = "",
+    ) -> str:
+        """Render one op's observation INTO a multi-op turn's accumulator,
+        charging it against the per-turn budget.
+
+        The per-op cap alone cannot bound a turn: N ops each just under it sum
+        to N × cap, and batching independent reads into one turn is exactly
+        what the system prompt asks for. Each entry carries its own token cost
+        so the running total is O(N) to read and the ops that overflow — the
+        LATER ones, since the model orders a turn by what it wanted first —
+        degrade to file pointers while the earlier ones stay verbatim.
+
+        ``suffix`` is appended after the render (the truncated-edit warning),
+        so it survives an over-cap replacement instead of being dropped with
+        the body it was warning about."""
+        observation = self._tool_observation(
+            tool_name,
+            result,
+            args,
+            spent_tokens=sum(r.get("tokens", 0) for r in accumulate),
+        )
+        if suffix:
+            observation = f"{observation}\n{suffix}"
+        accumulate.append(
+            {
+                "tool_name": tool_name,
+                "observation": observation,
+                "success": result.success,
+                "tokens": estimate_tokens(observation),
+            }
+        )
+        return observation
+
+    @staticmethod
+    def accumulate_raw(
+        accumulate: list, tool_name: str, observation: str, success: bool
+    ) -> None:
+        """Accumulate an observation the loop produced WITHOUT a tool result
+        (``ask``'s user answer, ``message``'s delivery receipt). They are small
+        by construction and have nothing to persist, so they are never
+        replaced — but they still consume the turn's observation budget, so
+        they are charged like everything else."""
+        accumulate.append(
+            {
+                "tool_name": tool_name,
+                "observation": observation,
+                "success": success,
+                "tokens": estimate_tokens(observation),
+            }
+        )
 
     # ── 5. recent_tool_history append ──────────────────────────────
     def _record_tool_history(

@@ -10,7 +10,12 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.skills.executor import execute_skill, substitute_arguments
+from agent_cli.skills.executor import (
+    _INJECT_MAX_CHARS,
+    _clamp_injected,
+    execute_skill,
+    substitute_arguments,
+)
 from agent_cli.skills.loader import _parse_skill_file, load_skills
 from agent_cli.skills.models import Skill
 
@@ -215,6 +220,31 @@ class TestArgumentSubstitution:
         """No !` pattern → template unchanged (except other substitutions)."""
         result = substitute_arguments("No commands here", "")
         assert result == "No commands here"
+
+
+class TestShellInjectionCap:
+    """`` !`cmd` `` output is spliced straight into a skill's prompt — there is
+    no tool-observation seam in front of it, so it carries its own bound."""
+
+    def test_small_output_is_untouched(self):
+        out = substitute_arguments("ctx: !`printf hello`", "")
+        assert out == "ctx: hello"
+
+    def test_large_output_is_clamped_with_a_marker(self):
+        out = substitute_arguments("ctx: !`python3 -c 'print(\"z\"*50000)'`", "")
+        assert len(out) < _INJECT_MAX_CHARS + 500
+        assert "chars omitted" in out
+
+    def test_clamp_keeps_head_and_tail(self):
+        body = "HEAD" + ("m" * 50_000) + "TAIL"
+        clamped = _clamp_injected("cmd", body)
+        assert clamped.startswith("HEAD")
+        assert clamped.endswith("TAIL")
+        assert "chars omitted" in clamped
+
+    def test_clamp_is_a_noop_under_the_limit(self):
+        body = "short output"
+        assert _clamp_injected("cmd", body) == body
 
 
 class TestSkillLoader:

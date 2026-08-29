@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shlex
 import subprocess
-from pathlib import Path
 from typing import ClassVar
 
-from agent_cli.tools.base import (
-    Tool,
-    default_oversized_nudge,
-    on_disk_oversized_nudge,
-)
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 # Commands that destroy or move files irreversibly. Detection works on
@@ -245,6 +239,11 @@ def tool_shell(args: dict) -> ToolResult:
 class ShellTool(Tool):
     name = "shell"
     description = "Run a shell command and return stdout/stderr."
+    oversized_retry_hint = (
+        "narrow the command itself: add `grep`/`head`/`tail`, target fewer "
+        "files, or pass a quieter flag (-q/--no-progress) so the bulk is never "
+        "produced."
+    )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-command shape — no `shell_` wire-key prefix. (fetch turned out to
     # still carry its prefix after Step 3 and was flattened last, in v4.38.0 —
@@ -275,38 +274,6 @@ class ShellTool(Tool):
 
     def summary_arg(self, action_input: dict) -> str:
         return (self.strip_prefix(action_input).get("command") or "")[:60]
-
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """Over-cap policy for a large shell result: shell output is ephemeral,
-        so persist it to a file in the session dir (LAZILY — only here, when it
-        is actually over cap, so ordinary shell calls never touch disk) and then
-        reuse the shared on-disk nudge — (a) read a specific part / search the
-        file, (b) delegate fan-out over its sections. Headless / no session dir
-        (or a write failure) → the generic ``tee``-to-file fallback."""
-        cmd = (args.get("command") or "").strip()
-        if ctx.session_dir:
-            digest = hashlib.sha1(
-                (cmd + "\x00" + body).encode("utf-8", "replace")
-            ).hexdigest()[:8]
-            out_path = Path(ctx.session_dir) / f"shell-output-{digest}.txt"
-            try:
-                out_path.write_text(body, encoding="utf-8")
-            except OSError:
-                pass
-            else:
-                path = str(out_path)
-                return on_disk_oversized_nudge(
-                    "shell",
-                    "command output",
-                    f"full output saved to '{path}'",
-                    path,
-                    tokens,
-                    ctx.oversized_cap,
-                    ctx.tools_available,
-                    nlines=body.count("\n") + 1,
-                    part_extra=f"search it (read_file path='{path}', search='…')",
-                )
-        return default_oversized_nudge("shell", tokens, ctx.oversized_cap)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_shell(args)

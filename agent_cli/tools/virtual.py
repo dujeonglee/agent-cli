@@ -119,6 +119,10 @@ class RunSkillTool(Tool):
     name = "run_skill"
     terminal = True  # 턴 종결 (complete 와 동형 — flush 후 디스패치)
     depth_gated = True  # 결합 깊이 상한에서 제거 (스킬도 depth 계수)
+    oversized_retry_hint = (
+        "run the skill against a smaller target, or ask it (via arguments) for "
+        "a summary instead of full output."
+    )
     description = (
         "Run a registered skill by name. Use this to invoke specialized "
         "prompt-based workflows like code review, optimization, or test generation."

@@ -510,15 +510,10 @@ class TurnDispatcher:
             )
 
         result = self.tools._dispatch_tool_with_hooks(tool_name, {"tasks": specs})
-        observation = self.tools._tool_observation(tool_name, result, {"tasks": specs})
         # Rendered from storage by _flush_op_results' _append_observation
         # (combined card), matching ctx + resume — no separate pre-render.
-        accumulate.append(
-            {
-                "tool_name": tool_name,
-                "observation": observation,
-                "success": result.success,
-            }
+        self.tools.accumulate_observation(
+            accumulate, tool_name, result, {"tasks": specs}
         )
 
     def _dispatch_edit_batch(self, llm_text, turn, batch_ops, outcome, *, accumulate):
@@ -546,15 +541,8 @@ class TurnDispatcher:
         path = batch_ops[0].action_input.get("path")
         edits = [op.action_input for op in batch_ops]
         result = self.tools.dispatch_edit_batch(path, edits)
-        observation = self.tools._tool_observation(
-            "edit_file", result, batch_ops[0].action_input
-        )
-        accumulate.append(
-            {
-                "tool_name": "edit_file",
-                "observation": observation,
-                "success": result.success,
-            }
+        self.tools.accumulate_observation(
+            accumulate, "edit_file", result, batch_ops[0].action_input
         )
 
     def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
@@ -685,12 +673,8 @@ class TurnDispatcher:
             # it accumulates like read/shell so consecutive asks batch into
             # the one combined observation; alone it appends its own.
             if accumulate is not None:
-                accumulate.append(
-                    {
-                        "tool_name": "ask",
-                        "observation": f"User responded:\n{user_response}",
-                        "success": True,
-                    }
+                self.tools.accumulate_raw(
+                    accumulate, "ask", f"User responded:\n{user_response}", True
                 )
                 return None
             obs_msg = f"Observation: User responded:\n{user_response}"
@@ -736,9 +720,7 @@ class TurnDispatcher:
             result = f"message failed: {type(e).__name__}: {e}"
         obs = f"[message → {to or '?'}] {result}"
         if accumulate is not None:
-            accumulate.append(
-                {"tool_name": "message", "observation": obs, "success": True}
-            )
+            self.tools.accumulate_raw(accumulate, "message", obs, True)
             return None
         _append_observation(
             self.state.messages,
@@ -790,7 +772,11 @@ class TurnDispatcher:
             # no registry, so its skills stay run-only. See executor.execute_skill.
             agent_registry=self.cfg.agent_registry,
         )
-        obs = skill_tool_result.output or skill_tool_result.error
+        # Through the same result→observation seam as every other tool: a skill
+        # returns its sub-loop's whole output, so it is the single largest
+        # observation the loop can produce — it used to be the ONE path that
+        # skipped the cap entirely and went into context unbounded.
+        obs = self.tools._tool_observation("run_skill", skill_tool_result, skill_input)
         obs_msg = f"Observation: {obs}"
         _append_observation(
             self.state.messages,
@@ -951,25 +937,26 @@ class TurnDispatcher:
         # uses self.* for provider/ctx/hooks/etc.)
         tool_result = self.tools._dispatch_tool_with_hooks(tool_name, tool_input)
 
-        observation = self.tools._tool_observation(tool_name, tool_result, tool_input)
-        if truncation_warning:
-            observation = f"{observation}\n{truncation_warning}"
-
         # N-op accumulate mode: record the execution for the caller's
         # combined observation instead of appending one here. The render
         # happens once, from storage, in _append_observation (single-op
         # below, or _flush_op_results for the combined) — so the live card
-        # matches ctx + resume. Oversized bodies are already nudge-capped
-        # by _tool_observation above.
+        # matches ctx + resume. ``accumulate_observation`` applies BOTH the
+        # per-result cap and the per-turn budget; the single-op path below
+        # needs only the former (one op cannot blow a turn budget by itself).
         if accumulate is not None:
-            accumulate.append(
-                {
-                    "tool_name": tool_name,
-                    "observation": observation,
-                    "success": tool_result.success,
-                }
+            self.tools.accumulate_observation(
+                accumulate,
+                tool_name,
+                tool_result,
+                tool_input,
+                suffix=truncation_warning,
             )
             return None
+
+        observation = self.tools._tool_observation(tool_name, tool_result, tool_input)
+        if truncation_warning:
+            observation = f"{observation}\n{truncation_warning}"
 
         # Inject observation with structured artifact. On an
         # action-name correction, rewrite the assistant prior + history

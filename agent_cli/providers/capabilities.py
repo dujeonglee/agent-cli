@@ -50,9 +50,20 @@ class ModelCapabilities:
     supports_thinking: bool
 
 
-# Conservative defaults for unregistered models
+# Fallback for a model we could neither look up (models.json) nor probe
+# (runtime detection returned None). The window is OPTIMISTIC on purpose:
+# the old 4096 made ``oversized_cap`` (= window/10) 409 tokens, so virtually
+# every read_file / shell observation was dropped as over-cap — the agent was
+# unusable on any model that failed detection, and 4096 also contradicted
+# ``MIN_CONTEXT_WINDOW`` (detection hard-rejects anything under 16K). 256K
+# errs the other way: on a model whose real window is smaller the first call
+# is rejected by the server and ``ContextManager.force_fit`` (flow 2) shrinks
+# and retries — a few wasted round trips instead of a crippled session.
+# ``max_output_tokens`` stays conservative (a too-large request is rejected
+# outright by many servers, with no reactive recovery path).
+DEFAULT_CONTEXT_WINDOW = 262_144  # 256K
 DEFAULT_CAPABILITIES = ModelCapabilities(
-    context_window=4096,
+    context_window=DEFAULT_CONTEXT_WINDOW,
     max_output_tokens=2048,
     supports_thinking=False,
 )
@@ -152,7 +163,7 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
     # older models.json entries; the loop uses ReAct text parsing, not the
     # native tool-calling API on any provider.
     return ModelCapabilities(
-        context_window=entry.get("context_window", 4096),
+        context_window=entry.get("context_window", DEFAULT_CONTEXT_WINDOW),
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_thinking=entry.get("supports_thinking", False),
     )

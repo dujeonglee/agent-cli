@@ -817,15 +817,18 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 ### 과대 출력 캡 (oversized observation)
 
-도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면, 그 전체 출력은 컨텍스트에 들어가지 않고 **"좁혀서 다시 받아라"는 nudge 로 대체**됩니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문에, 모델을 라인범위/심볼/`LIMIT`/`grep` 같은 surgical 회수로 자연스럽게 유도합니다. 전체가 꼭 필요하면 파일로 빼서(`… | tee /tmp/out.txt`) 부분만 `read_file` 하면 됩니다.
+도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면 그 출력은 컨텍스트에 들어가지 않습니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문입니다. 대신 **모든 도구가 정확히 같은 모양의 관찰**을 받습니다:
 
-- **도구별 제어 (`Tool` 추상화 표면 3개)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끔; **`Tool.render_oversized(result, args, *, body, tokens, ctx)`** 가 **캡에 걸렸을 때 무엇을 낼지**를 도구가 소유(기본=제네릭 nudge). per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더(`render_oversized`) 두 표면에 동일하게 전달됩니다 — 새 per-call 값이 생겨도 시그니처를 다시 안 늘리고 필드 하나만 추가하면 됩니다. `ctx.tools_available`(현재 루프에서 호출 가능한 도구 집합)을 받아, 그 도구가 실제로 쓸 수 있는 복구만 안내합니다.
-- **디스크-기반 분산 유도 (`read_file`·`shell`·`agent`·`fetch` 공통)**: 큰 내용이 파일 `<path>` 에 있으면 복구는 한 패턴으로 수렴합니다(공유 헬퍼 `on_disk_oversized_nudge`) — (a) **특정 부분** → `read_file '<path>'` line range/search, (b) **전체 분석/검색** → **N-way 병렬 `agent` run 팬아웃**: 파일 라인수로 `~k` 섹션을 계산해 **한 턴에 run op 여러 개**(agent-cli 가 동시 실행)를 내는 **구체 범위 예시**(`agent(mode="run", task="read_file '<path>' lines 1-N …")` × k)를 제시 → 서브에이전트마다 한 섹션만 read 해 요약 반환, 부모는 distilled 만 병합. 팬아웃 줄은 agent 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 자동 생략).
-  - `read_file`: `<path>`=원본 파일(이미 디스크). 추가 갈래 `read_symbols`. 또한 `stat` 모드(메타데이터 조회)의 후속 안내가 **cap-aware** — 전체 읽기가 캡을 넘을 파일이면 "full read" 미끼를 빼고 처음부터 range/search/run 팬아웃으로 유도(작은 파일은 기존대로 full read 제안), 캡에 걸릴 왕복 한 번을 아낍니다.
-  - `shell`: over-cap 일 때만 출력을 `session_dir/shell-output-<hash>.txt` 로 **lazy 저장**(일반 shell 호출엔 디스크 쓰기 0) 후 그 파일을 가리킴. headless(세션 없음)면 `tee` 폴백.
-  - `agent` (run): 서브에이전트 답변은 이미 `<run_dir>/result.md` 에 저장돼 있어 그 파일을 가리킴 + **더 좁은 재위임**(근본 원인 교정) 옵션 추가.
-  - `fetch`: over-cap 일 때만 내용을 `session_dir/fetch-output-<hash>.txt` 로 lazy 저장 후 가리킴 + **더 좁은 URL/얕은 `depth`** 옵션 추가.
-- **비-파일 도구 (`read_context`·`code_index`)**: 출력이 파일이 아니라(SQL 결과·심볼 목록) **제자리 재-narrow** 가 정답이므로 별도 헬퍼(`narrow_oversized_nudge`)로 그 도구 파라미터만 안내 — `read_context` → `LIMIT`/컬럼 projection/`substr(text,1,200)` 재쿼리, `code_index` → `mode=fetch` 단일 심볼/`search` 필터/`max_bytes`. (파일·팬아웃 얘기 없음.)
+1. **전문은 항상 파일로** — 도구가 이미 파일에 썼으면 그 파일(`read_file` 의 원본 경로, `agent` run 의 `<run_dir>/result.md`), 아니면 `<session_dir>/oversized/<tool>-<hash>.txt` 에 **lazy 저장**(캡에 걸릴 때만 — 일반 호출엔 디스크 쓰기 0). 세션 디렉터리가 없는 headless 실행은 임시 디렉터리로 폴백하므로 "넘치면 파일에 남는다"가 예외 없이 성립합니다.
+2. **head/tail 발췌 동봉** — 앞뒤 일부(캡의 15% 이내로 클램프)를 그대로 보여줍니다. 빌드/테스트 로그처럼 **답이 꼬리에 있는** 경우가 많아, 상당수는 추가 왕복 없이 그 자리에서 끝납니다.
+3. **회수 경로 3종** — ① `read_file(path, search='regex')` 문자열/정규식 매칭, ② `read_file(path, line_start, line_end)` 범위 읽기, ③ **분할 정복**: 파일을 캡에 맞는 `k` 섹션으로 쪼개 **한 턴에 `agent(mode="run")` op 를 k 개**(agent-cli 가 동시 실행) 내고 각자 요약만 반환 → 부모는 distilled 만 병합. ③ 은 `agent` 가 실제 호출 가능할 때만 표시됩니다(depth 한계 서브에이전트에선 자동 생략).
+4. **근본 원인 한 줄** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위/`code_index mode='fetch'`, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `read_context` → `LIMIT`/projection/`substr`.
+
+- **도구별 제어 (`Tool` 표면)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 끔; **`Tool.oversized_retry_hint`**(위 4번 한 줄)와 **`Tool.oversized_source_path()`**(이미 디스크에 있는 전문의 경로)만 도구가 정의합니다. `Tool.render_oversized()` 는 **어떤 도구도 오버라이드하지 않습니다** — 정책이 한 곳에 있으므로 MCP 서버 도구를 포함해 새 도구가 아무 것도 안 해도 올바르게 동작합니다. per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더 두 표면에 동일하게 전달됩니다.
+- **캡 하한**: `max(context_window, MIN_CONTEXT_WINDOW) // 10`. capabilities 미탐지로 윈도우를 모를 때도 캡이 0(=무제한)이 되지 않습니다.
+- **턴 단위 예산**: 위 캡은 op 하나에 대한 것이라, 각각 캡 바로 아래인 op 이 10개면 합계가 윈도우를 채웁니다(그리고 시스템 프롬프트는 독립 파일 읽기를 한 턴에 몰아 내라고 권장합니다). 한 턴의 관찰 누적이 **캡 × 3** 을 넘으면 그 이후 op 의 관찰이 같은 정책(파일+발췌+경로)으로 치환됩니다 — 모델이 먼저 요청한 앞쪽 op 은 원문 그대로 남고 넘치는 뒤쪽이 포인터로 강등됩니다. 이때 nudge 는 "이 결과가 컸다"가 아니라 "이 턴이 예산을 넘었다"고 정직하게 말합니다(고치는 법이 다르므로).
+- `run_skill` 도 다른 도구와 같은 seam 을 지납니다(스킬은 서브루프 전체 출력을 반환하므로 단일 관찰 중 가장 커질 수 있습니다).
+- 스킬 템플릿의 `` !`cmd` `` 주입은 관찰 seam 을 지나지 않으므로 자체 상한(4,000자, head+tail 보존)을 가집니다.
 - 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
 
 ### code_index — SQLite 코드 인덱스

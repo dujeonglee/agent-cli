@@ -14,11 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from agent_cli.tools.base import (
-    Tool,
-    default_oversized_nudge,
-    on_disk_oversized_nudge,
-)
+from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.result import ToolResult
 
 
@@ -214,35 +210,22 @@ class AgentTool(Tool):
         target = args.get("key") or args.get("profile") or ""
         return f"{mode} {target}".strip()
 
+    oversized_retry_hint = (
+        "re-run a NARROWER task — the sub-agent's scope was too broad, so it "
+        "returned everything instead of an answer."
+    )
+
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
 
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """run 모드의 큰 결과: 일회성 엔진이 이미 전문을
-        ``<run_dir>/result.md``(상대경로 = ``result.artifact``)에 영속했으므로
-        그 파일을 가리키는 on-disk nudge — 구 DelegateTool 의 정책 이식
-        (PR-4 하드컷 때 누락됐던 것을 테스트가 잡음)."""
+    def oversized_source_path(self, result, args, ctx: RunContext) -> str:
+        """run 모드는 일회성 엔진이 이미 전문을 ``<run_dir>/result.md``
+        (상대경로 = ``result.artifact``)에 영속했다 — 사본 대신 그 파일을
+        가리킨다. artifact 가 없는 모드/경로는 "" (seam 이 저장)."""
         artifact = getattr(result, "artifact", "") or ""
         if ctx.session_dir and artifact:
-            path = str(Path(ctx.session_dir) / artifact / "result.md")
-            return on_disk_oversized_nudge(
-                "agent",
-                "sub-agent answer",
-                f"full answer saved to '{path}'",
-                path,
-                tokens,
-                ctx.oversized_cap,
-                ctx.tools_available,
-                nlines=body.count("\n") + 1,
-                tail_bullets=(
-                    (
-                        "Or re-run a NARROWER task so the sub-agent returns a "
-                        "focused result (attack the root cause: the task was too "
-                        "broad)."
-                    ),
-                ),
-            )
-        return default_oversized_nudge("agent", tokens, ctx.oversized_cap)
+            return str(Path(ctx.session_dir) / artifact / "result.md")
+        return ""
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.

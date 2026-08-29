@@ -7,6 +7,7 @@ import pytest
 from agent_cli.config import reload_registry
 from agent_cli.providers.capabilities import (
     DEFAULT_CAPABILITIES,
+    DEFAULT_CONTEXT_WINDOW,
     MIN_CONTEXT_WINDOW,
     UnsupportedModelError,
     _detect_openai_capabilities,
@@ -41,7 +42,14 @@ class TestGetCapabilities:
     def test_unregistered_model(self):
         caps = get_capabilities("unknown-model:latest")
         assert caps == DEFAULT_CAPABILITIES
-        assert caps.context_window == 4096
+        assert caps.context_window == DEFAULT_CONTEXT_WINDOW
+
+    def test_default_window_is_not_below_the_supported_minimum(self):
+        """The fallback used to be 4096 — below MIN_CONTEXT_WINDOW, which
+        detection hard-rejects, and small enough that oversized_cap
+        (= window/10) dropped virtually every observation as over-cap."""
+        assert DEFAULT_CONTEXT_WINDOW >= MIN_CONTEXT_WINDOW
+        assert DEFAULT_CAPABILITIES.context_window == DEFAULT_CONTEXT_WINDOW
 
     def test_openai_model(self):
         caps = get_capabilities("gpt-4o")

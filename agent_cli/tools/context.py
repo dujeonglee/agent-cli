@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from agent_cli.context.session import get_session_dir, list_sessions
-from agent_cli.tools.base import Tool, narrow_oversized_nudge
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 _SESSIONS_BASE = Path(".agent-cli") / "sessions"
@@ -407,28 +407,11 @@ class ReadContextTool(Tool):
         "required": [],
     }
 
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """Over-cap policy for a SQL query result: the fix is a NARROWER query
-        in place (not a file — the history is queryable), so steer to SQL
-        narrowing (LIMIT / projection / substr) instead of the generic
-        line-range / head / grep default."""
-        return narrow_oversized_nudge(
-            "read_context",
-            "query result",
-            tokens,
-            ctx.oversized_cap,
-            bullets=(
-                (
-                    "Re-run a NARROWER SQL query: add or lower LIMIT, project fewer "
-                    "columns, or preview long text with substr(text,1,200)."
-                ),
-                (
-                    "Scan first with a small projection (SELECT loc, turn, "
-                    "substr(text,1,200) … LIMIT 30), then SELECT the one row's full "
-                    "text you actually need."
-                ),
-            ),
-        )
+    oversized_retry_hint = (
+        "re-run a NARROWER SQL query: add or lower LIMIT, project fewer columns, "
+        "or scan with substr(text,1,200) first and then SELECT the full text of "
+        "the one row you need."
+    )
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_read_context(args, session_dir=ctx.session_dir if ctx else None)

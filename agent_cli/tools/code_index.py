@@ -43,7 +43,7 @@ from agent_cli.code_index import (
 from agent_cli.code_index.builder import get_parser
 from agent_cli.code_index.languages import LANGUAGES, language_of
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
-from agent_cli.tools.base import Tool, narrow_oversized_nudge
+from agent_cli.tools.base import Tool
 from agent_cli.tools.read_file import format_hashlines_range
 from agent_cli.tools.result import ToolResult
 
@@ -719,6 +719,12 @@ class CodeIndexTool(Tool):
         "required": ["mode"],
     }
 
+    oversized_retry_hint = (
+        "narrow the query itself: mode='fetch' for ONE symbol (path + name), "
+        "search='regex' to filter a list/kind, a specific path instead of a "
+        "broad dump, or a lower max_bytes for slice."
+    )
+
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
 
@@ -734,27 +740,6 @@ class CodeIndexTool(Tool):
         """C7: mode 존재/enum·mode별 필수 키·kind enum — _validate_semantics
         단일 구현 위임 (직접 호출자 경로 _dispatch_one 과 동일 소스)."""
         return _validate_semantics(args)
-
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """Over-cap policy for an index query: the fix is a NARROWER query in
-        place (fetch one symbol, filter, or scope a mode), not a file read —
-        steer to code_index's own params instead of the generic default."""
-        return narrow_oversized_nudge(
-            "code_index",
-            "result",
-            tokens,
-            ctx.oversized_cap,
-            bullets=(
-                (
-                    "Narrow the query: fetch ONE symbol (mode=fetch, path, name), "
-                    "or filter list/kind with search='regex'."
-                ),
-                (
-                    "Scope to a specific path/name instead of a broad dump (kind / "
-                    "a big file's list); for slice mode, lower max_bytes."
-                ),
-            ),
-        )
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return _dispatch_one(args)

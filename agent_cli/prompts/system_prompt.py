@@ -86,7 +86,13 @@ Treat every token you add as a cost:
   narrow shell commands at the source rather than dumping output.
 - Keep `thought` short. Do not restate what the observation already shows.
 - Large irrelevant context (off-topic content, huge dumps, verbose logs)
-  crowds out what you actually need. Filter at the source."""
+  crowds out what you actually need. Filter at the source.
+
+A tool result too large for one context is NOT delivered. Its full output is
+written to a file; you get a head/tail excerpt, the file's path, and the ways
+to mine it — regex match, a line range, or splitting it across parallel
+sub-agents. The same applies when ONE turn's results add up to too much, so
+prefer a few targeted ops over many broad ones."""
 
 # ── Section 3: Task Guidelines ───────────────────
 TASK_GUIDELINES = """\
@@ -379,8 +385,9 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
         flow = """
   Flow: for an unknown file, stat first to get its size, then pick one
   of modes 2–4. stat alone is never enough — if you stop after stat,
-  you have only seen the first 20 lines. A bare full read on a large
-  file (~300+ lines) will be refused with instructions; follow them."""
+  you have only seen the first 20 lines. A full read whose result is too
+  big for one context is not delivered: you get an excerpt plus
+  instructions for pulling out the part you need — follow them."""
     return base_modes + flow
 
 

@@ -10,7 +10,7 @@ import zlib
 from pathlib import Path
 from typing import ClassVar
 
-from agent_cli.tools.base import Tool, on_disk_oversized_nudge
+from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.result import ToolResult
 
 # Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
@@ -298,6 +298,11 @@ class ReadFileTool(Tool):
         "efficient for targeted lookups), line_start/line_end (partial read, "
         "1-based inclusive), or none (full file)."
     )
+    oversized_retry_hint = (
+        "read a narrower slice up front — search='regex' for a targeted lookup, "
+        "line_start/line_end for a known region, or code_index mode='fetch' for "
+        "one symbol."
+    )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-file shape — no `read_file_reads` batch array and no
     # `read_file_` wire-key prefix. One op reads one file; to read several
@@ -336,31 +341,19 @@ class ReadFileTool(Tool):
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
 
+    def oversized_source_path(self, result, args, ctx: RunContext) -> str:
+        """The file itself — an over-cap read needs no copy. Hashline tags carry
+        absolute 1-based line numbers, so the line ranges the nudge quotes map
+        straight onto this path."""
+        path = args.get("path")
+        return path if isinstance(path, str) else ""
+
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []
 
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
-
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """Over-cap policy for a whole-file read: the file is intact on disk, so
-        drop the body and steer by NEED via the shared on-disk nudge — (a) a
-        SPECIFIC part is a cheap ranged re-read (range / read_symbols), (b) the
-        WHOLE file is a delegate fan-out over sections. Same pattern shell and
-        delegate use once their bulk output is a file."""
-        path = args.get("path") or "the file"
-        return on_disk_oversized_nudge(
-            "read_file",
-            f"'{path}'",
-            "the file is intact on disk",
-            path,
-            tokens,
-            ctx.oversized_cap,
-            ctx.tools_available,
-            nlines=body.count("\n") + 1,
-            part_extra="read_symbols for one function/class",
-        )
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # stat mode uses the loop's over-cap threshold (from ctx) to steer a

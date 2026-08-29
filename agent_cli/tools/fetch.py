@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from html.parser import HTMLParser
-from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urljoin, urlparse
 
 import requests
 
-from agent_cli.tools.base import (
-    Tool,
-    default_oversized_nudge,
-    on_disk_oversized_nudge,
-)
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 # ── Configuration ──────────────────────────────
@@ -225,9 +219,9 @@ def tool_fetch(args: dict) -> ToolResult:
                         pages.append({"url": gc_url, "content": gc_content})
 
     # Build full content — no truncation here. If the result is over the
-    # oversized cap, ``FetchTool.render_oversized`` persists it to a file in the
-    # session dir and returns a narrow-it / fan-out nudge (same on-disk pattern
-    # as read_file / shell / delegate); otherwise it enters context verbatim.
+    # oversized cap, the shared ``Tool.render_oversized`` policy persists it to
+    # a file and returns an excerpt + how to mine it (identical for every tool);
+    # otherwise it enters context verbatim.
     if len(pages) == 1:
         full_content = pages[0]["content"]
     else:
@@ -246,7 +240,10 @@ class FetchTool(Tool):
         "Fetch a web page and return its content as markdown. "
         "Supports recursive fetching of same-domain links via the depth parameter. "
         "Full content returned inline; an over-cap result is saved to a file and "
-        "replaced with a narrow-it / delegate-fan-out nudge (read it in ranges)."
+        "replaced with an excerpt + how to mine it (read it in ranges)."
+    )
+    oversized_retry_hint = (
+        "re-fetch a more specific URL, or a shallower depth, so less is pulled."
     )
     # Flat-native (consolidation roadmap Step 3 completion): the schema is the
     # plain ``{url, depth?}`` shape — the ``fetch_`` wire-key prefix is gone.
@@ -273,44 +270,6 @@ class FetchTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
-
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """Over-cap policy for a large fetch: fetched content is ephemeral (like
-        shell output), so persist it to a file in the session dir (LAZILY — only
-        here, over cap) and reuse the shared on-disk nudge — (a) read a specific
-        part / search the file, (b) delegate fan-out over its sections — plus a
-        fetch-specific option to re-fetch a narrower URL / shallower depth
-        (attack the root cause). Headless / write failure → generic fallback."""
-        url = (self.strip_prefix(args).get("url") or "").strip()
-        if ctx.session_dir:
-            digest = hashlib.sha1(
-                (url + "\x00" + body).encode("utf-8", "replace")
-            ).hexdigest()[:8]
-            out_path = Path(ctx.session_dir) / f"fetch-output-{digest}.txt"
-            try:
-                out_path.write_text(body, encoding="utf-8")
-            except OSError:
-                pass
-            else:
-                path = str(out_path)
-                return on_disk_oversized_nudge(
-                    "fetch",
-                    "fetched content",
-                    f"full content saved to '{path}'",
-                    path,
-                    tokens,
-                    ctx.oversized_cap,
-                    ctx.tools_available,
-                    nlines=body.count("\n") + 1,
-                    part_extra=f"search it (read_file path='{path}', search='…')",
-                    tail_bullets=(
-                        (
-                            "Or re-fetch a more specific URL / shallower depth "
-                            "so the result is smaller."
-                        ),
-                    ),
-                )
-        return default_oversized_nudge("fetch", tokens, ctx.oversized_cap)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_fetch(args)

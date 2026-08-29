@@ -20,6 +20,30 @@ from agent_cli.tools.result import ToolResult
 # Pattern for !`command` dynamic context injection
 _SHELL_INJECT_PATTERN = re.compile(r"!`([^`]+)`")
 
+# Injected shell output is spliced straight into a skill's prompt, so it has no
+# tool-observation seam and no oversized cap in front of it — an unbounded
+# `!`git log`` or `!`cat …`` used to land in the sub-loop's prompt whole. Cap it
+# here, keeping head AND tail (a command's summary/exit state is usually last).
+_INJECT_MAX_CHARS = 4000
+_INJECT_HEAD_CHARS = 1500
+_INJECT_TAIL_CHARS = _INJECT_MAX_CHARS - _INJECT_HEAD_CHARS
+
+
+def _clamp_injected(cmd: str, output: str) -> str:
+    """Bound one injected command's output to ``_INJECT_MAX_CHARS``, keeping a
+    head and a tail with an explicit marker between them so the skill author
+    (and the model) can see that the middle was dropped."""
+    if len(output) <= _INJECT_MAX_CHARS:
+        return output
+    omitted = len(output) - _INJECT_HEAD_CHARS - _INJECT_TAIL_CHARS
+    return (
+        f"{output[:_INJECT_HEAD_CHARS]}\n"
+        f"[... {omitted:,} chars omitted from `{cmd}` output — injected context "
+        f"is capped at {_INJECT_MAX_CHARS:,} chars; run the command with a "
+        f"narrower scope if you need the middle ...]\n"
+        f"{output[-_INJECT_TAIL_CHARS:]}"
+    )
+
 
 def _execute_shell_inject(m: re.Match) -> str:
     """Execute a shell command and return its output for template injection."""
@@ -36,8 +60,11 @@ def _execute_shell_inject(m: re.Match) -> str:
         output = result.stdout.strip()
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            return f"[error] {cmd}: {stderr or '(exit code ' + str(result.returncode) + ')'}"
-        return output
+            return _clamp_injected(
+                cmd,
+                f"[error] {cmd}: {stderr or '(exit code ' + str(result.returncode) + ')'}",
+            )
+        return _clamp_injected(cmd, output)
     except subprocess.TimeoutExpired:
         return f"[error] {cmd}: timed out (30s)"
     except Exception as e:

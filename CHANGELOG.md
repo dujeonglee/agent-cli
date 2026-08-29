@@ -12,6 +12,65 @@
 
 ## [Unreleased]
 
+## [8.45.0] - 2026-08-29
+
+### Changed — 과대 출력 처리 일원화 (모든 도구가 같은 넛지)
+
+- **넛지 빌더 3종 → 1종, `render_oversized` 오버라이드 6개 → 0개.** 종전엔 도구마다
+  over-cap 응답이 달라, 새 도구(특히 MCP)는 성립하지 않는 제네릭 조언(`tee`로 파일에
+  써라 / `head`·`grep`으로 파이프해라)을 받았고, `code_index`·`read_context`는 결과를
+  **파일에도 안 남기고 통째로 폐기**해 다시는 볼 수 없었다. 이제 `Tool.render_oversized`
+  단일 정책이 모든 도구(MCP 포함)에 적용된다:
+  1. **전문은 항상 파일로** — 도구가 이미 쓴 파일(`read_file`=원본 경로,
+     `agent` run=`<run_dir>/result.md`)이 있으면 그것을, 없으면
+     `<session_dir>/oversized/<tool>-<sha1>.txt`에 지연 저장(캡에 걸릴 때만).
+     세션 디렉터리가 없는 headless 실행은 tempdir로 폴백하므로 "넘치면 파일에
+     남는다"가 예외 없이 성립한다.
+  2. **head/tail 발췌 동봉** — 캡의 15%로 클램프, tail에 60% 가중. 빌드·테스트 로그처럼
+     답이 꼬리에 있는 경우가 많아 상당수는 추가 왕복 없이 그 자리에서 끝난다.
+  3. **회수 경로 3종** — regex 매칭(`read_file(search=)`) / 라인 범위 / 분할 정복
+     (한 턴에 `agent(mode="run")` op를 k개, 동시 실행 후 요약 병합).
+  4. **근본 원인 한 줄** — 도구별로 유일하게 다른 부분(`Tool.oversized_retry_hint`).
+- 도구가 정의하는 것은 `oversized_retry_hint`와 `oversized_source_path()` 둘뿐이다.
+  `render_oversized`는 어떤 도구도 오버라이드하지 않으며 테스트가 이를 잠근다.
+- **팬아웃 섹션 산정 수정** — `ceil(tokens / (cap × 0.6))`, 상한 16. 종전 상한 8은
+  본문이 8캡 이상이면 각 섹션이 여전히 over-cap이라 서브에이전트가 한 단계 아래서
+  같은 벽에 부딪혔다. 상한에 걸리면 "각 서브에이전트가 더 좁히라"고 명시한다.
+
+### Fixed — 캡을 우회하던 경로들
+
+- **`oversized_cap`이 0이 될 수 있던 문제** — `max(context_window, MIN_CONTEXT_WINDOW) // 10`
+  으로 하한을 둔다. `LoopConfig.capabilities`는 기본값이 `None`이라, 이를 넘기지 않는
+  경로에서는 캡이 통째로 꺼져 무제한 관찰이 파일도 경고도 없이 컨텍스트로 직행했다.
+- **`run_skill`이 관찰 seam을 건너뛰던 문제** — 스킬은 서브루프 전체 출력을 반환해
+  단일 관찰 중 가장 커질 수 있는데 유일하게 상한이 없었다. 이제 다른 도구와 같은
+  seam을 지난다.
+- **멀티-op 턴의 합산 상한 부재** — 캡이 op 단위라 각각 캡 바로 아래인 op이 10개면
+  합계가 컨텍스트 윈도우를 채웠고(시스템 프롬프트는 독립 read를 한 턴에 몰아 내라고
+  권장한다), 다음 호출 직전 예방 압축이 발동해 그때까지의 작업 맥락이 요약으로
+  뭉개졌다 — 조용히. 이제 턴 누적이 `cap × 3`을 넘으면 그 이후 op의 관찰이 같은
+  정책으로 치환된다(앞쪽 op는 원문 유지). 넛지는 "이 결과가 컸다"가 아니라 "이 턴이
+  예산을 넘었다"고 말한다 — 고치는 법이 다르므로.
+- **스킬 템플릿 `` !`cmd` `` 주입 무제한** — 셸 출력이 상한 없이 서브루프 시스템
+  프롬프트에 박혔다. 4,000자 상한(head+tail 보존)을 둔다.
+
+### Changed — 모델 capabilities 폴백
+
+- **`DEFAULT_CAPABILITIES.context_window` 4096 → 262,144 (256K)** (`DEFAULT_CONTEXT_WINDOW`
+  상수로 분리). 4096은 `oversized_cap`을 409토큰으로 만들어 탐지에 실패한 모델에서는
+  거의 모든 `read_file`·`shell` 관찰이 폐기됐고, "16K 미만은 하드리젝"하는
+  `MIN_CONTEXT_WINDOW`와도 모순이었다. 폴백이 실제 윈도우보다 클 경우 서버가 요청을
+  거절하고 `ContextManager.force_fit`(flow 2)이 축소 후 재시도한다 — 왕복 몇 번을
+  낭비할 뿐, 세션이 무력화되지는 않는다. `max_output_tokens`는 보수적으로 유지
+  (과대 요청은 서버가 거절할 뿐 반응형 복구 경로가 없다).
+
+### Changed — 시스템 프롬프트
+
+- Context Discipline에 실제 계약을 명시 — 너무 큰 결과는 배달되지 않고 파일+발췌를
+  받으며, regex·라인 범위·병렬 분할로 회수하고, 한 턴 합산에도 같은 규칙이 적용된다.
+- `read_file` 안내의 "~300줄 넘는 full read는 거절된다"는 사실이 아니어서 제거
+  (실제 기준은 줄 수가 아니라 캡이고, 거절이 아니라 발췌+안내로 치환된다).
+
 ## [8.11.0] - 2026-08-16
 
 ### Changed — 웹 Prompt Inspector 재설계 (역할 분리 + 컨텍스트 인스펙션)
@@ -1886,7 +1945,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.1.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...HEAD
+[8.45.0]: https://github.com/dujeonglee/agent-cli/compare/v8.44.0...v8.45.0
 [8.1.0]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...v8.1.0
 [8.0.0]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...v8.0.0
 [7.29.1]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...v7.29.1
