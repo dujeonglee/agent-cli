@@ -1838,7 +1838,10 @@
     );
   }
   // 활동 스트립: 실행 중 도구 호출 축약 한 줄(왼쪽=누적 카운트, 오른쪽=현재 배치 칩).
-  function ovActHtml() {
+  // 스트립 본문만 — 껍데기(.ov-act-strip)와 펄스(.ov-pulse)는 제외. 스트리밍 중
+  // 갱신되는 유일한 부분이라 따로 뽑았다: 펄스는 1.1s 무한 CSS 애니메이션이라
+  // 엘리먼트를 매 프레임 다시 만들면 t=0 에서 영원히 재시작해 멎은 것처럼 보인다.
+  function ovActBodyHtml() {
     if (!ovAct) return "";
     var chips = ovAct.batch
       .map(function (c) {
@@ -1850,8 +1853,13 @@
       ? '<span class="ov-act-n">도구 ' + ovAct.total + "회</span>"
       : "";
     var now = chips ? '<span class="ov-act-now">' + chips + "</span>" : "생성 중…";
+    return total + now;
+  }
+  function ovActHtml() {
+    if (!ovAct) return "";
     return (
-      '<div class="ov-act-strip"><span class="ov-pulse"></span>' + total + now + "</div>"
+      '<div class="ov-act-strip"><span class="ov-pulse"></span>' +
+      '<span class="ov-act-body">' + ovActBodyHtml() + "</span></div>"
     );
   }
   function ovRender() {
@@ -1906,6 +1914,50 @@
       ovRender();
     });
   }
+
+  // 활동 스트립만 갱신 (v8.47.0). 스트리밍 중 실제로 바뀌는 건 이 한 줄뿐인데
+  // 종전엔 stream 청크마다 ovRender() 가 개요 전체를 innerHTML 로 갈아끼웠다.
+  // 그 결과 초당 ~60회 .ov-block 들이 파괴·재생성되면서:
+  //   - [⧉ 복사]·[▤ 전체 대화] 버튼이 **클릭 불가** — click 은 mousedown 과
+  //     mouseup 이 같은 엘리먼트에 떨어져야 발생하는데 그 사이에 노드가 사라진다
+  //     (그래서 $overview 위임으로도 못 살린다 — 브라우저가 click 을 안 만든다),
+  //   - 목록 전체가 매 프레임 리페인트되어 깜빡이고,
+  //   - 💭 reasoning <details> 열림 상태·텍스트 선택·:hover 가 매 프레임 리셋된다.
+  // 목록 DOM 은 손대지 않고 스트립 본문만 패치한다.
+  function ovRenderAct() {
+    if (!$overview || viewMode !== "overview") return;
+    if (ovActiveChannel !== "main") return; // 스트립은 main 채널에만 렌더된다
+    var strip = $overview.querySelector(".ov-act-strip");
+    if (!ovAct) {
+      if (strip) strip.remove();
+      return;
+    }
+    if (!strip) {
+      // 처음 등장 — 플레이스홀더("아직 응답이 없습니다")가 걷혀야 하는 경우는
+      // 목록 구조가 바뀌는 것이므로 전체 렌더에 위임한다.
+      if ($overview.querySelector(".ov-placeholder")) {
+        ovRender();
+        return;
+      }
+      $overview.insertAdjacentHTML("beforeend", ovActHtml());
+    } else {
+      var body = strip.querySelector(".ov-act-body");
+      if (body) body.innerHTML = ovActBodyHtml();
+      else strip.innerHTML = ovActHtml(); // 방어: 구 구조가 남아 있으면 통째로
+    }
+    if (ovStick) $overview.scrollTop = $overview.scrollHeight;
+  }
+  var _ovActQueued = false;
+  function scheduleOvActRender() {
+    // 같은 프레임에 전체 렌더가 예약돼 있으면 그쪽이 스트립까지 그리므로 생략.
+    if (_ovRenderQueued || _ovActQueued) return;
+    _ovActQueued = true;
+    requestAnimationFrame(function () {
+      _ovActQueued = false;
+      if (_ovRenderQueued) return; // 그 사이 전체 렌더가 예약됐다
+      ovRenderAct();
+    });
+  }
   // 이벤트 훅 (아래 es 핸들러에서 호출) — 전부 ovEntries 에 append 만(무상태 페어링).
   function ovOnUserMsg(d) {
     // 본문의 "[라벨]: " 접두에서 라벨을 뽑아 who 로 쓴다 — 실제 사용자면 닉네임,
@@ -1926,7 +1978,7 @@
   function ovOnStream(d) {
     if (d.task_id) return; // 메인 스코프만
     ovActEnsure();
-    scheduleOvRender();
+    scheduleOvActRender(); // 스트립만 바뀐다 — 목록을 갈아끼우면 버튼이 죽는다
   }
   // navTs = d.ts: 메인 스코프 final 카드가 같은 ts 스탬프라 [전체 대화] 점프에 쓴다.
   // complete = 활동 스트립 종료 + 최종 답변을 한 번에 블록으로 append(라이브 타이핑 없음).
@@ -2013,7 +2065,7 @@
     if (hit) hit.n += 1;
     else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
     a.total += 1;
-    scheduleOvRender();
+    scheduleOvActRender(); // 스트립만 바뀐다 (위 ovRenderAct 주석)
   }
   // 슬래시 명령 출력 → 개요 (v8.43.0). 이 명령들은 LLM 루프를 타지 않고
   // observation 이벤트 **하나만** 쏘므로, 종전엔 개요에 요청("/sh ls")만 남고

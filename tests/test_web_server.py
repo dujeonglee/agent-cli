@@ -3561,6 +3561,7 @@ class TestRenderCoalescing:
         js = self._js()
         assert js.count("function scheduleScroll()") == 1
         assert js.count("function scheduleOvRender()") == 1
+        assert js.count("function scheduleOvActRender()") == 1
         # rAF 콜백 몸통은 실함수 직접 호출 (자기재귀 금지)
         import re
 
@@ -3579,7 +3580,8 @@ class TestRenderCoalescing:
 
     def test_event_paths_use_coalesced_calls(self):
         """이벤트 훅 경로는 schedule* 만 — 직접 호출은 정의부와 사용자-조작
-        경로(뷰 전환 setViewMode·채널 전환 ovSetChannel)에만 허용."""
+        경로(뷰 전환 setViewMode·채널 전환 ovSetChannel), 그리고 ovRenderAct 의
+        플레이스홀더 위임에만 허용."""
         import re
 
         js = self._js()
@@ -3589,8 +3591,9 @@ class TestRenderCoalescing:
             if re.search(r"(?<!schedule)(?<!function )ovRender\(\);", ln)
             and "scheduleOvRender" not in ln
         ]
-        # 허용 3곳: rAF 콜백 몸통, setViewMode(mode==="overview" 조건), ovSetChannel
-        assert len(direct_ov) == 3, direct_ov
+        # 허용 4곳: rAF 콜백 몸통, setViewMode(mode==="overview" 조건),
+        # ovSetChannel, ovRenderAct 의 플레이스홀더→전체렌더 위임
+        assert len(direct_ov) == 4, direct_ov
         direct_scroll = [
             ln.strip()
             for ln in js.split("\n")
@@ -3598,3 +3601,22 @@ class TestRenderCoalescing:
             and "scheduleScroll" not in ln
         ]
         assert len(direct_scroll) == 1, direct_scroll  # rAF 콜백 몸통뿐
+
+    def test_strip_only_events_do_not_full_render(self):
+        """v8.47.0: ``ovOnStream``(청크마다) / ``ovOnAction``(툴콜마다)는 활동
+        스트립 한 줄만 바꾸므로 개요 전체를 innerHTML 로 갈아끼우면 안 된다 —
+        그러면 초당 ~60회 .ov-block 이 재생성돼 [복사]/[전체 대화] 버튼이
+        클릭 불가가 된다(click 은 mousedown/mouseup 이 같은 노드여야 발생).
+        실제 DOM 계약은 tests/browser/test_overview_activity.py 가 검증하고,
+        여기서는 호출 경로가 되돌아가지 않게 못을 박는다."""
+        import re
+
+        js = self._js()
+        for fn in ("ovOnStream", "ovOnAction"):
+            m = re.search(r"function " + fn + r"\(d\) \{(.*?)\n  \}", js, re.DOTALL)
+            assert m, fn
+            body = m.group(1)
+            assert "scheduleOvActRender()" in body, fn
+            assert "scheduleOvRender()" not in body, (
+                f"{fn} 이 전체 렌더로 회귀 — 스트리밍 중 버튼이 죽는다"
+            )

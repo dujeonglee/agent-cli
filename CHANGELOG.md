@@ -12,6 +12,44 @@
 
 ## [Unreleased]
 
+## [8.47.0] - 2026-08-30
+
+### Fixed — LLM 발화 중 개요 카드의 버튼이 눌리지 않던 문제
+
+사용자 보고: "LLM 발화중 개요창 카드의 [복사]/[전체 대화] 버튼이 계속 반짝이면서
+클릭이 안 된다."
+
+- **원인**: `ovRender()` 는 `$overview.innerHTML` 를 **통째로 갈아끼우는데**,
+  `ovOnStream`(스트림 청크마다)·`ovOnAction`(툴콜마다)이 그것을 호출했다. 실제로
+  바뀌는 것은 맨 아래 활동 스트립 한 줄뿐인데도 위쪽 응답 블록이 전부
+  파괴·재생성됐다(rAF 병합이 있어도 초당 ~60회).
+- click 이벤트는 mousedown 과 mouseup 이 **같은 엘리먼트**에 떨어져야 발생한다.
+  그 사이에 노드가 사라지므로 브라우저가 click 을 **아예 만들지 않았다** — 그래서
+  `$overview` 이벤트 위임으로도 살릴 수 없었다.
+- 같은 원인으로 `.ov-pulse`(1.1s 무한 CSS 애니메이션)가 매 프레임 `t=0` 에서
+  재시작해 멎은 것처럼 보였고("반짝임"), `💭 reasoning` `<details>` 열림 상태·텍스트
+  선택·`:hover` 도 매 프레임 리셋됐다.
+- **수리**: `ovActHtml` 에서 본문을 `.ov-act-body` 로 분리하고, 스트립만 패치하는
+  `ovRenderAct` / `scheduleOvActRender` 를 신설해 그 두 이벤트만 그 경로로 보낸다.
+  나머지 9개 호출부는 실제로 목록이 바뀌므로 전체 렌더를 유지한다. 스트립이 처음
+  등장하면서 플레이스홀더가 걷혀야 하는 경우만 전체 렌더에 위임.
+
+라이브 세션 실측(같은 세션에서 구/신 대조):
+
+| | 구버전 | 수정본 |
+|---|---|---|
+| 4초 스트리밍 중 파괴된 `.ov-block` | 7 | 0 |
+| 응답 블록 / 펄스 노드 생존 | ✗ | ✓ |
+| 스트리밍 중 실제 마우스 클릭 | — | ✓ (`✓ 복사됨`) |
+
+### Added — 회귀 가드
+
+- `tests/browser/test_overview_activity.py` 에 브라우저 e2e 9건 추가 — 노드 동일성,
+  발화 중 클릭 착지, `<details>` 보존, 펄스 노드 보존, 스트립 갱신 지속, 새 엔트리의
+  전체 렌더. 이 중 4건은 **구버전 app.js 로 되돌리면 실제로 실패**함을 확인했다.
+- `test_web_server.TestRenderCoalescing` 에 `ovOnStream`/`ovOnAction` 이 전체 렌더로
+  회귀하지 못하게 하는 계약 테스트 추가.
+
 ## [8.46.0] - 2026-08-29
 
 ### Changed — 휘발 상태를 프롬프트 꼬리로 (KV 프리픽스 캐시)
@@ -1994,7 +2032,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...HEAD
+[8.47.0]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...v8.47.0
 [8.46.0]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...v8.46.0
 [8.45.0]: https://github.com/dujeonglee/agent-cli/compare/v8.44.0...v8.45.0
 [8.1.0]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...v8.1.0

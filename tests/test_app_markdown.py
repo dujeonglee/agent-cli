@@ -389,9 +389,12 @@ def _ov_act_html(act):
     """Run app.js's REAL ovActHtml with an injected ovAct → activity-strip HTML.
     (진행 중 도구 호출 축약 스트립: 누적 카운트 + 현재 배치 칩.)"""
     esc = _extract_fn("escapeHtml")
+    # v8.47.0: the strip body is a separate function so the streaming path can
+    # patch it without recreating the wrapper (and the animated pulse inside).
+    body = _extract_fn("ovActBodyHtml")
     fn = _extract_fn("ovActHtml")
     harness = (
-        esc + "\n" + "var ovAct = " + json.dumps(act) + ";\n" + fn + "\n"
+        esc + "\n" + body + "\n" + "var ovAct = " + json.dumps(act) + ";\n" + fn + "\n"
         "process.stdout.write(ovActHtml());\n"
     )
     result = subprocess.run(
@@ -421,6 +424,8 @@ class TestOverviewActivityStrip:
         assert "도구 3회" in out  # 누적 카운트
         assert "index.html" in out and "×2" in out  # 배치 칩 + 중복 집계
         assert "game.js" in out
+        # 펄스와 본문이 분리돼 있어야 스트리밍 중 본문만 패치할 수 있다
+        assert "ov-pulse" in out and "ov-act-body" in out
 
     def test_strip_empty_when_no_activity(self):
         # ovAct null → 스트립 미표시(전체 로직은 ovRender 가 판단; 여기선 null 가드).
