@@ -11,7 +11,13 @@ session-scoped files are bounded by the session length.
 
 Privacy: the schema deliberately excludes any LLM-generated text or user
 prompt content. Only structural metadata (parse_stage, failure_signal,
-primitive names, timing) is recorded.
+primitive names, timing, token counts) is recorded.
+
+Token usage (v8.49.0): each row also carries the provider-reported
+``TokenUsage`` counts for that turn — the only on-disk record of what a
+session cost. Session totals / cost / cache-hit ratio are derived by
+summing rows (KPI, board stats, benchmark harnesses); the loop itself
+keeps only an in-memory running output total for the live readout.
 
 See ``docs/robust-harness/DESIGN.md`` §3.3.
 """
@@ -22,8 +28,12 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_cli.fsio import append_line
+
+if TYPE_CHECKING:
+    from agent_cli.providers.base import TokenUsage
 
 # Failure signal labels — kept as bare strings for forward compatibility.
 # New signal types are mapping-table additions, not new code branches
@@ -66,6 +76,15 @@ class TurnRecord:
     parse_stage: int  # 0=fail, 1=json.loads, 2=json_repair, 3=regex
     failure_signal: str | None = None
     primitives_applied: list[str] = field(default_factory=list)
+    # Provider-reported usage for this turn, copied verbatim from
+    # ``TokenUsage`` (same field names, same semantics): ``input_tokens``
+    # EXCLUDES the two cache fields, so billable/context input is the sum
+    # of the three. All 0 when the provider reports no usage (mocks,
+    # servers without a usage block) — readers must not treat 0 as "unknown".
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 class TurnRecorder:
@@ -104,8 +123,12 @@ class TurnRecorder:
         parse_stage: int,
         failure_signal: str | None = None,
         primitives_applied: list[str] | None = None,
+        usage: TokenUsage | None = None,
     ) -> None:
-        """Append one record to ``turns.jsonl``. No-op when disabled."""
+        """Append one record to ``turns.jsonl``. No-op when disabled.
+
+        ``usage`` is the turn's ``LLMResponse.usage`` (None when the
+        provider reported nothing → zero counts)."""
         if self._path is None:
             return
 
@@ -116,6 +139,12 @@ class TurnRecorder:
             parse_stage=parse_stage,
             failure_signal=failure_signal,
             primitives_applied=list(primitives_applied) if primitives_applied else [],
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            cache_read_input_tokens=usage.cache_read_input_tokens if usage else 0,
+            cache_creation_input_tokens=(
+                usage.cache_creation_input_tokens if usage else 0
+            ),
         )
         line = json.dumps(asdict(rec), ensure_ascii=False)
         # Parent dir is normally created by ContextManager. Recreate

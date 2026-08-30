@@ -821,7 +821,7 @@ class AgentLoop:
             self._fire_hook("OnTurnEnd")
             return result
 
-        result = self._handle_text_path(llm_text)
+        result = self._handle_text_path(llm_text, response.usage)
 
         # OnTurnEnd hook
         self._fire_hook("OnTurnEnd")
@@ -853,8 +853,8 @@ class AgentLoop:
         )
         return self._CONTINUE
 
-    def _handle_text_path(self, llm_text: str):
-        return self._dispatch._handle_text_path(llm_text)
+    def _handle_text_path(self, llm_text: str, usage=None):
+        return self._dispatch._handle_text_path(llm_text, usage)
 
     def _task_text(self) -> str:
         return self._dispatch._task_text()

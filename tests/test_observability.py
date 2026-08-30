@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.providers.base import TokenUsage
 from agent_cli.recovery.observability import (
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
@@ -169,6 +170,10 @@ class TestSchemaInvariants:
             "parse_stage",
             "failure_signal",
             "primitives_applied",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
         }
 
     def test_failure_signals_are_stable_strings(self):
@@ -182,3 +187,52 @@ class TestSchemaInvariants:
         rec = TurnRecord(model="m", timestamp="t", parse_stage=1)
         assert rec.primitives_applied == []
         assert rec.failure_signal is None
+
+
+class TestTokenUsage:
+    """Per-turn provider usage rides on the record (v8.49.0) — the only
+    on-disk source for session cost, so field names/semantics mirror
+    ``TokenUsage`` verbatim."""
+
+    def test_usage_fields_copied_verbatim(self, session_dir):
+        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder.record(
+            model="m",
+            parse_stage=1,
+            usage=TokenUsage(
+                input_tokens=1200,
+                output_tokens=45,
+                cache_read_input_tokens=900,
+                cache_creation_input_tokens=100,
+            ),
+        )
+        row = _read_jsonl(session_dir / "turns.jsonl")[0]
+        assert row["input_tokens"] == 1200
+        assert row["output_tokens"] == 45
+        assert row["cache_read_input_tokens"] == 900
+        assert row["cache_creation_input_tokens"] == 100
+
+    def test_no_usage_records_zero_counts(self, session_dir):
+        # Providers/mocks without a usage block → zeros, never missing keys
+        # (readers sum rows; a missing key would break the aggregate).
+        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder.record(model="m", parse_stage=1, usage=None)
+        row = _read_jsonl(session_dir / "turns.jsonl")[0]
+        assert (
+            row["input_tokens"],
+            row["output_tokens"],
+            row["cache_read_input_tokens"],
+            row["cache_creation_input_tokens"],
+        ) == (0, 0, 0, 0)
+
+    def test_session_totals_are_a_sum_over_rows(self, session_dir):
+        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        for i in (1, 2, 3):
+            recorder.record(
+                model="m",
+                parse_stage=1,
+                usage=TokenUsage(input_tokens=10 * i, output_tokens=i),
+            )
+        rows = _read_jsonl(session_dir / "turns.jsonl")
+        assert sum(r["input_tokens"] for r in rows) == 60
+        assert sum(r["output_tokens"] for r in rows) == 6

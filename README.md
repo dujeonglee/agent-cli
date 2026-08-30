@@ -258,7 +258,7 @@ agent-cli run "task description" [options]
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성 | (없음) |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
-| `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
+| `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `json_fc` (**기본** — 산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능(기본은 json_fc) — `docs/multi-wire-format/PHASE2.md` §8). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **미지정 시 해석 체인**: resume 세션의 기록 포맷 > models.json 모델별 `wire_format` 바인딩 > `json_fc` | (해석 체인) |
 
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |

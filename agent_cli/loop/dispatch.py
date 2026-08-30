@@ -132,8 +132,12 @@ class TurnDispatcher:
         self.state.turn -= 1  # 개입은 턴 미계수 (통일 규칙 — docstring 참조)
         return _CONTINUE
 
-    def _handle_text_path(self, llm_text: str):
+    def _handle_text_path(self, llm_text: str, usage=None):
         """Handle text parsing response (non-JSON fallback).
+
+        ``usage`` is the turn's provider ``TokenUsage`` (or None) — passed
+        straight through to the TurnRecord so per-turn cost lives next to
+        the parse outcome in ``turns.jsonl``.
 
         Recovery primitives consume only the emitted text (``llm_text``)
         — the thinking channel is intentionally excluded from the
@@ -256,6 +260,7 @@ class TurnDispatcher:
                 parse_stage=turn.parse_stage,
                 failure_signal=outcome["failure_signal"],
                 primitives_applied=outcome["primitives"],
+                usage=usage,
             )
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):

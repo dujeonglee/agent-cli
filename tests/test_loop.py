@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.loop import run_loop
-from agent_cli.providers.base import LLMResponse
+from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 
 
@@ -771,6 +771,56 @@ class TestRunLoopObservability:
         if not path.exists():
             return []
         return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+    def test_turn_record_carries_provider_usage(self, caps, tmp_path):
+        """The loop hands each response's ``usage`` to the recorder, so a
+        turn's token counts sit next to its parse outcome (v8.49.0)."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=_complete("answer"),
+                usage=TokenUsage(
+                    input_tokens=321,
+                    output_tokens=12,
+                    cache_read_input_tokens=200,
+                    cache_creation_input_tokens=5,
+                ),
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+            max_turns=3,
+        )
+        rows = self._read_turns(tmp_path)
+        assert len(rows) == 1
+        assert rows[0]["input_tokens"] == 321
+        assert rows[0]["output_tokens"] == 12
+        assert rows[0]["cache_read_input_tokens"] == 200
+        assert rows[0]["cache_creation_input_tokens"] == 5
+
+    def test_turn_record_zero_usage_when_provider_reports_none(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("answer"))  # usage=None
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+            max_turns=3,
+        )
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["input_tokens"] == 0
+        assert rows[0]["output_tokens"] == 0
 
     def test_success_turn_records_no_failure(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager

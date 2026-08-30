@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+## [8.49.0] - 2026-08-30
+
+### Added — `turns.jsonl` 에 턴별 토큰 사용량
+
+프로바이더가 돌려주는 `TokenUsage` 는 지금까지 라이브 readout(ctx%·속도) 에만 쓰이고
+**디스크에 남지 않았습니다** — 루프가 메모리에 출력 누계 하나만 들고 있다가 프로세스와
+함께 사라졌습니다. 그래서 "이 세션이 얼마나 들었나", "캐시 적중률이 얼마였나" 를 사후에
+답할 방법이 없었고, 외부 벤치마크 하니스(Harbor 등)가 요구하는 per-trial 토큰 집계도
+채울 수 없었습니다.
+
+- `TurnRecord` 에 `input_tokens` / `output_tokens` / `cache_read_input_tokens` /
+  `cache_creation_input_tokens` 4필드 추가 — 이름·의미는 `TokenUsage` 와 **동일**
+  (`input_tokens` 는 캐시 필드를 제외하므로 청구 입력 = 셋의 합). usage 가 없는 턴(목,
+  usage 블록 없는 서버)은 0 — 키는 항상 존재하므로 합산 리더가 깨지지 않습니다.
+- 배관은 한 줄: `_run_turn` 이 `response.usage` 를 `_handle_text_path(llm_text, usage)`
+  로 넘기고, dispatch 의 finally-record 가 그대로 싣습니다. 절단(`length`)·중단 턴은
+  종전과 같이 record 가 없습니다(별도 이슈).
+- `turns.jsonl` 은 여전히 구조 메타데이터만 — prompt·응답 본문 비포함 원칙 유지.
+  스키마 키 집합 테스트가 이 계약을 고정합니다.
+
 ## [8.48.0] - 2026-08-30
 
 ### Changed — 경로는 작업 디렉토리 상대로
@@ -2069,6 +2089,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.49.0]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...v8.49.0
 [8.48.0]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...v8.48.0
 [8.47.0]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...v8.47.0
 [8.46.0]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...v8.46.0
