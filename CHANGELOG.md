@@ -12,6 +12,42 @@
 
 ## [Unreleased]
 
+## [8.48.0] - 2026-08-30
+
+### Changed — 경로는 작업 디렉토리 상대로
+
+에이전트 프로세스의 cwd 는 수명 내내 고정입니다 — 코드베이스에 `os.chdir` 도, 서브
+프로세스에 넘기는 `cwd=` 인자도 없습니다. 파일 도구가 전부 `Path(path)` 라 상대경로는
+그 cwd 기준으로 풀리고 `shell` 도 cwd 를 상속하므로, `src/main.c` 와 그 절대경로는
+**같은 파일**입니다. `_confine` 은 오히려 상대경로를 워크스페이스 안으로 간주해 그냥
+통과시키고 워크스페이스 밖 절대경로에만 확인을 요구하니, 상대경로가 마찰도 적습니다.
+
+그런데 시스템 프롬프트는 `Working directory:` 한 줄만 알려줄 뿐 **상대경로를 쓰라는
+지시가 없었습니다.** 실제 세션 히스토리를 세어보니 **절대 23 : 상대 2** — 모델이 습관대로
+절대경로를 씁니다. 그 경로는 `action_input` 에 실려 **매 턴 재공급**되고 compaction
+파일 목록에도 누적되므로, 비용이 한 번이 아니라 반복 청구됩니다.
+
+```
+/Users/idujeong/workspace/agent-harness/data/ws/b5rztq/worm_game.html   69자
+worm_game.html                                                          14자
+```
+
+- **Environment 섹션에 규칙 명시** — 도구 인자는 작업 디렉토리 상대경로로. 예외는 둘:
+  작업 디렉토리 **밖** 파일, 그리고 최종 답변에서 **사용자에게** 위치를 알려줄 때.
+  이유도 함께 준다("매 턴 재공급된다") — 비용이 반복된다는 사실을 모르면 모델이
+  행동을 바꿀 근거가 없기 때문입니다.
+- **루프도 같은 규칙을 지킵니다** — 새 `tools/base.display_path()` 가 over-cap 넛지의
+  파일 경로를 cwd 상대로 줄입니다. 넛지 하나에 경로가 3~4회(헤더 + 회수 경로 3종)
+  등장하므로 절약이 배가되고, 무엇보다 **루프가 절대경로를 뱉으면 over-cap 이 날 때마다
+  프롬프트 규칙의 반대를 가르치는 셈**이 됩니다. headless 임시 디렉토리 폴백은 작업
+  디렉토리 밖이라 절대경로를 유지합니다(상대로 줄이면 해석되지 않으므로).
+
+### Added
+
+- `display_path` 단위 테스트(cwd 아래/밖/이미 상대/존재하지 않는 경로), 넛지가 절대
+  프리픽스를 흘리지 않는지, 모델이 준 상대경로를 보존하는지, tempdir 폴백은 절대로
+  남는지, 그리고 **프롬프트 규칙과 넛지가 서로 모순되지 않는지** 검증하는 테스트.
+
 ## [8.47.0] - 2026-08-30
 
 ### Fixed — LLM 발화 중 개요 카드의 버튼이 눌리지 않던 문제
@@ -2032,7 +2068,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.48.0]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...v8.48.0
 [8.47.0]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...v8.47.0
 [8.46.0]: https://github.com/dujeonglee/agent-cli/compare/v8.45.0...v8.46.0
 [8.45.0]: https://github.com/dujeonglee/agent-cli/compare/v8.44.0...v8.45.0

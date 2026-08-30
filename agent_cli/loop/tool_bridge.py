@@ -15,6 +15,7 @@ from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
 from agent_cli.tools import TOOLS, RunContext, _execute_tool
 from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,
+    display_path,
     oversized_nudge,
     persist_oversized,
 )
@@ -514,7 +515,7 @@ class ToolBridge:
         )
         return oversized_nudge(
             tool_name=tool_name,
-            path=path,
+            path=display_path(path) if path else "",
             body=body,
             tokens=tokens,
             cap=self._oversized_cap,

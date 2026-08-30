@@ -827,6 +827,7 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 4. **근본 원인 한 줄** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위/`code_index mode='fetch'`, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `read_context` → `LIMIT`/projection/`substr`.
 
 - **도구별 제어 (`Tool` 표면)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 끔; **`Tool.oversized_retry_hint`**(위 4번 한 줄)와 **`Tool.oversized_source_path()`**(이미 디스크에 있는 전문의 경로)만 도구가 정의합니다. `Tool.render_oversized()` 는 **어떤 도구도 오버라이드하지 않습니다** — 정책이 한 곳에 있으므로 MCP 서버 도구를 포함해 새 도구가 아무 것도 안 해도 올바르게 동작합니다. per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더 두 표면에 동일하게 전달됩니다.
+- **경로는 작업 디렉토리 상대로 표시**: 넛지가 돌려주는 파일 경로는 모델이 다음 호출에 그대로 받아쓰는 인자가 되고, `action_input` 은 그 뒤 매 턴 재공급됩니다. 그래서 `display_path()` 가 작업 디렉토리 아래에 있는 경로를 상대경로로 줄입니다 — `/Users/…/ws/b5rztq/.agent-cli/sessions/…/oversized/shell-3f9ac2.txt` → `.agent-cli/sessions/…/oversized/shell-3f9ac2.txt`. 한 넛지 안에 경로가 3~4번 등장하므로 절약이 배가됩니다. headless 임시 디렉토리는 작업 디렉토리 밖이라 절대경로를 유지합니다.
 - **캡 하한**: `max(context_window, MIN_CONTEXT_WINDOW) // 10`. capabilities 미탐지로 윈도우를 모를 때도 캡이 0(=무제한)이 되지 않습니다.
 - **턴 단위 예산**: 위 캡은 op 하나에 대한 것이라, 각각 캡 바로 아래인 op 이 10개면 합계가 윈도우를 채웁니다(그리고 시스템 프롬프트는 독립 파일 읽기를 한 턴에 몰아 내라고 권장합니다). 한 턴의 관찰 누적이 **캡 × 3** 을 넘으면 그 이후 op 의 관찰이 같은 정책(파일+발췌+경로)으로 치환됩니다 — 모델이 먼저 요청한 앞쪽 op 은 원문 그대로 남고 넘치는 뒤쪽이 포인터로 강등됩니다. 이때 nudge 는 "이 결과가 컸다"가 아니라 "이 턴이 예산을 넘었다"고 정직하게 말합니다(고치는 법이 다르므로).
 - `run_skill` 도 다른 도구와 같은 seam 을 지납니다(스킬은 서브루프 전체 출력을 반환하므로 단일 관찰 중 가장 커질 수 있습니다).
@@ -1152,6 +1153,19 @@ Strict JSON Schema(OpenAI `json_schema`)는 **사용하지 않습니다**. 일�
 3. **Stage 3**: Regex 추출 (최후 수단)
 
 Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
+
+### 경로 표기 규칙 (상대경로)
+
+에이전트 프로세스는 **cwd 가 고정**입니다 — `os.chdir` 도, 서브프로세스에 넘기는 `cwd=` 인자도 코드베이스에 없습니다. 모든 파일 도구가 `Path(path)` 라 상대경로는 그 cwd 기준으로 풀리고, `shell` 도 cwd 를 상속합니다. 즉 `src/main.c` 와 그 절대경로는 **같은 파일**을 가리킵니다. `_confine` 은 오히려 상대경로를 워크스페이스 안으로 간주해 그냥 통과시키고, 워크스페이스 밖 절대경로에만 확인을 요구합니다.
+
+그런데 시스템 프롬프트는 `Working directory:` 한 줄만 알려줄 뿐 **상대경로를 쓰라는 지시가 없었습니다.** 실제 세션 히스토리를 세어보니 **절대경로 23 : 상대경로 2** 로, 모델이 습관대로 절대경로를 씁니다. 그 경로는 `action_input` 에 실려 **매 턴 재공급**되고 compaction 파일 목록에도 누적되므로 비용이 반복 청구됩니다.
+
+```
+/Users/idujeong/workspace/agent-harness/data/ws/b5rztq/worm_game.html   69자
+worm_game.html                                                          14자
+```
+
+그래서 Environment 섹션이 규칙을 명시합니다 — 도구 인자는 상대경로, **작업 디렉토리 밖 파일**과 **최종 답변에서 사용자에게 위치를 알려줄 때**만 절대경로. 루프 자신도 같은 규칙을 지킵니다(위 `display_path`) — 넛지가 절대경로를 뱉으면 매 over-cap 마다 반대를 가르치는 셈이 되기 때문입니다.
 
 ### 세션 상태 블록 (프롬프트 꼬리)
 

@@ -28,6 +28,7 @@ from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,
     OVERSIZED_DIRNAME,
     Tool,
+    display_path,
     oversized_excerpt,
     persist_oversized,
 )
@@ -722,3 +723,111 @@ class TestStatHintCapAwareThreading:
             really_capped = "too large" in seam_out
             assert says_over == expect_over
             assert says_over == really_capped  # stat prediction == reality
+
+
+# ── paths the model is shown ─────────────────────────────────────────
+
+
+class TestDisplayPath:
+    """A path handed back in a nudge becomes an argument the model echoes into
+    its next call — and an ``action_input`` is re-fed on every turn after it. So
+    the loop must hand back the same SHAPE of path the system prompt asks the
+    model to write (relative to the working directory)."""
+
+    def test_under_cwd_becomes_relative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "a" / "b").mkdir(parents=True)
+        f = tmp_path / "a" / "b" / "out.txt"
+        f.write_text("x")
+        assert display_path(f) == "a/b/out.txt"
+
+    def test_outside_cwd_stays_absolute(self, tmp_path, monkeypatch):
+        work = tmp_path / "work"
+        work.mkdir()
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        monkeypatch.chdir(work)
+        assert display_path(other / "f.txt") == str(other / "f.txt")
+
+    def test_already_relative_is_preserved(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "x.txt").write_text("x")
+        assert display_path("x.txt") == "x.txt"
+
+    def test_cwd_itself(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert display_path(tmp_path) == "."
+
+    def test_never_raises_on_a_nonexistent_path(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert display_path(tmp_path / "nope" / "gone.txt") == "nope/gone.txt"
+
+
+class TestNudgePathShape:
+    def _big(self):
+        return "\n".join(f"line {i}" for i in range(4000))
+
+    def test_saved_file_is_shown_relative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        sess = tmp_path / ".agent-cli" / "sessions" / "s1"
+        sess.mkdir(parents=True)
+        body = self._big()
+        n = _nudge("shell", body, tmp_path=sess, args={"command": "make"})
+        assert str(tmp_path) not in n, "absolute workspace prefix leaked into the nudge"
+        assert ".agent-cli/sessions/s1/oversized/" in n
+
+    def test_every_occurrence_is_short(self, tmp_path, monkeypatch):
+        """The path appears in the header AND in each recovery route, so the
+        saving compounds — one absolute leak would undo the rest."""
+        monkeypatch.chdir(tmp_path)
+        sess = tmp_path / ".agent-cli" / "sessions" / "s1"
+        sess.mkdir(parents=True)
+        n = _nudge("shell", self._big(), tmp_path=sess, args={"command": "make"})
+        assert n.count(".agent-cli/sessions/s1/oversized/") >= 3
+        assert n.count(str(tmp_path)) == 0
+
+    def test_read_file_keeps_the_models_own_relative_path(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "big.py").write_text("\n".join(f"x={i}" for i in range(4000)))
+        n = _nudge("read_file", self._big(), tmp_path=tmp_path, args={"path": "big.py"})
+        assert "'big.py'" in n
+        assert str(tmp_path) not in n
+
+    def test_absolute_source_path_is_shortened_too(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "big.py"
+        f.write_text("\n".join(f"x={i}" for i in range(4000)))
+        n = _nudge("read_file", self._big(), tmp_path=tmp_path, args={"path": str(f)})
+        assert "'big.py'" in n
+        assert str(tmp_path) not in n
+
+    def test_headless_tempdir_fallback_stays_absolute(self, tmp_path, monkeypatch):
+        """The temp dir is genuinely outside the working directory — shortening
+        it would produce a path that does not resolve."""
+        import re
+
+        monkeypatch.chdir(tmp_path)
+        n = _nudge("shell", self._big(), tmp_path=None, args={"command": "make"})
+        m = re.search(r"Full output saved to '([^']+)'", n)
+        assert m, n
+        saved = m.group(1)
+        assert "agent-cli-oversized" in saved
+        assert saved.startswith("/"), saved
+        assert Path(saved).is_file()
+        Path(saved).unlink(missing_ok=True)
+
+
+class TestLoopPracticesWhatThePromptPreaches:
+    def test_prompt_asks_for_relative_and_the_nudge_supplies_it(
+        self, tmp_path, monkeypatch
+    ):
+        """If the Environment rule and the nudge disagreed, the loop would be
+        teaching by counter-example on every over-cap result."""
+        from agent_cli.prompts.system_prompt import _build_environment_section
+
+        monkeypatch.chdir(tmp_path)
+        assert "RELATIVE" in _build_environment_section()
+        sess = tmp_path / ".agent-cli" / "sessions" / "s1"
+        sess.mkdir(parents=True)
+        n = _nudge("shell", "\n".join(f"l{i}" for i in range(4000)), tmp_path=sess)
+        assert str(tmp_path) not in n

@@ -1435,6 +1435,52 @@ class TestAntiHtmlEmphasis:
             assert "HTML" in hint, name
 
 
+class TestPathRule:
+    """Nothing told the model to use relative paths, and on a measured real
+    session it emitted 23 absolute paths to 2 relative — each carrying the full
+    workspace prefix into an ``action_input`` that is re-fed every turn after
+    it. The rule is what makes the short workspace path actually pay off."""
+
+    def _env(self):
+        from agent_cli.prompts.system_prompt import _build_environment_section
+
+        return _build_environment_section()
+
+    def test_states_the_working_directory(self):
+        from pathlib import Path
+
+        assert str(Path.cwd()) in self._env()
+
+    def test_asks_for_relative_paths(self):
+        env = self._env()
+        assert "RELATIVE" in env
+        assert "not absolute" in env
+
+    def test_names_the_reason_the_model_can_act_on(self):
+        """ "It costs context" is not actionable on its own — the model needs to
+        know the cost RECURS, which is what makes a long path worth avoiding."""
+        assert "every turn" in self._env()
+
+    def test_keeps_the_legitimate_absolute_cases(self):
+        """A blanket ban would be wrong: files outside the working directory
+        need absolute paths, and the user wants a real location in the answer."""
+        env = self._env()
+        assert "outside the working directory" in env
+        assert "USER" in env
+
+    def test_rule_ships_in_the_built_prompt(
+        self,
+    ):
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        sections = dict(build_system_prompt_sections(caps, ["read_file"]))
+        assert "RELATIVE" in sections["Environment"]
+
+
 class TestReplyDisciplineSection:
     """상주 에이전트 고정 각인 (v7.18.1) — 여러 요청자(main·창 사용자·peer)의
     요청마다 반드시 그 요청자에게 회신이 돌아가야 한다는 핵심 계약. 상주

@@ -647,15 +647,35 @@ def _build_tools_section(
 
 
 def _build_environment_section() -> str:
-    """Build environment context section with CWD and platform.
+    """Build environment context section with CWD, platform, and the
+    relative-path rule.
 
     Date is intentionally omitted: it has no programmatic consumer and
     its daily rollover invalidates provider-side prefix caches across
     midnight. Tasks that genuinely need today's date can call shell `date`.
+
+    The path rule earns its tokens back many times over. Every file tool
+    resolves a bare path with ``Path(path)`` — i.e. against this process's cwd,
+    which never changes (nothing calls ``os.chdir`` and no subprocess is given a
+    ``cwd``), so a relative path and its absolute form name the same file.
+    ``_confine`` even treats a bare relative name as inside the workspace while
+    an absolute one outside it needs a confirm, so relative is the smoother
+    path too. But nothing told the model that, and measured on a real session it
+    emitted 23 absolute paths to 2 relative — each one carrying the full
+    workspace prefix into ``action_input``, which is re-fed on EVERY subsequent
+    turn and accumulates in the compaction file list.
     """
     lines = ["## Environment"]
     lines.append(f"- Working directory: {Path.cwd()}")
     lines.append(f"- Platform: {platform.system().lower()} ({platform.release()})")
+    lines.append(
+        "- Paths: give tools paths RELATIVE to the working directory "
+        "(`src/main.c`), not absolute. They name the same file and cost far "
+        "less context — an action's arguments are re-fed to you every turn "
+        "after it, so a long path is paid for again and again. Use an absolute "
+        "path only for a file genuinely outside the working directory, or when "
+        "telling the USER where something is in your final answer."
+    )
     return "\n".join(lines)
 
 
