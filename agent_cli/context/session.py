@@ -19,9 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_cli.fsio import atomic_write_text
+from agent_cli.paths import sessions_dir
 from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, all_system_user_prefixes
 
-_SESSIONS_BASE = Path(".agent-cli")
+_SESSIONS_DIR = sessions_dir()
 
 
 @dataclass
@@ -37,7 +38,7 @@ class SessionMeta:
 
 def get_session_dir(meta: SessionMeta) -> Path:
     """Return the session directory path, creating it if needed."""
-    d = _SESSIONS_BASE / "sessions" / meta.session_id
+    d = _SESSIONS_DIR / meta.session_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -58,7 +59,7 @@ def create_session(
 def save_meta(meta: SessionMeta) -> None:
     """Save session metadata (single line in session.jsonl)."""
     meta.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    d = _SESSIONS_BASE / "sessions" / meta.session_id
+    d = _SESSIONS_DIR / meta.session_id
     d.mkdir(parents=True, exist_ok=True)
     path = d / "session.jsonl"
     header = json.dumps(
@@ -79,12 +80,12 @@ def save_meta(meta: SessionMeta) -> None:
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
     """List sessions, optionally filtered by workspace."""
-    sessions_dir = _SESSIONS_BASE / "sessions"
-    if not sessions_dir.is_dir():
+    root = _SESSIONS_DIR
+    if not root.is_dir():
         return []
 
     sessions = []
-    for sdir in sorted(sessions_dir.iterdir()):
+    for sdir in sorted(root.iterdir()):
         if not sdir.is_dir():
             continue
         jsonl = sdir / "session.jsonl"
@@ -109,7 +110,7 @@ def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
 
 def load_session(session_id: str) -> SessionMeta | None:
     """Load a session by ID."""
-    sdir = _SESSIONS_BASE / "sessions" / session_id
+    sdir = _SESSIONS_DIR / session_id
     jsonl = sdir / "session.jsonl"
     if not jsonl.is_file():
         return None
@@ -211,6 +212,6 @@ def session_summary(meta: SessionMeta) -> tuple[str, str]:
     ``("", "")`` when the session has no history yet. Reads the file path
     directly (no mkdir side-effect, unlike ``get_session_dir``).
     """
-    hp = _SESSIONS_BASE / "sessions" / meta.session_id / "history.jsonl"
+    hp = _SESSIONS_DIR / meta.session_id / "history.jsonl"
     pairs = recent_exchanges(hp, n=1)
     return pairs[-1] if pairs else ("", "")

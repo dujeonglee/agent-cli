@@ -32,10 +32,11 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from agent_cli.context.session import get_session_dir, list_sessions
+from agent_cli.paths import sessions_dir
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
-_SESSIONS_BASE = Path(".agent-cli") / "sessions"
+_SESSIONS_DIR = sessions_dir()
 
 # read_context is a CORE tool (always registered), so this module must import
 # even where SQLite is unavailable. Some locked-down / custom CPython builds
@@ -142,16 +143,16 @@ def _resolve_session_dirs(
     if "all" in sessions:
         if len(sessions) > 1:
             return None, "sessions='all' cannot be combined with specific session ids"
-        if not _SESSIONS_BASE.is_dir():
+        if not _SESSIONS_DIR.is_dir():
             return [], None
-        return [d for d in sorted(_SESSIONS_BASE.iterdir()) if d.is_dir()], None
+        return [d for d in sorted(_SESSIONS_DIR.iterdir()) if d.is_dir()], None
 
     dirs: list[Path] = []
     missing: list[str] = []
     for sid in sessions:
         if not isinstance(sid, str):
             return None, f"sessions must contain strings, got {type(sid).__name__}"
-        d = _SESSIONS_BASE / sid
+        d = _SESSIONS_DIR / sid
         if d.is_dir():
             dirs.append(d)
         else:

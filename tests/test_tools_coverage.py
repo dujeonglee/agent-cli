@@ -1207,7 +1207,7 @@ class TestReadContextTool:
 
         base = tmp_path / "sessions"
         base.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", base)
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_DIR", base)
         return base
 
     # ── No-query help ──────────────────────────────────────────
@@ -1215,7 +1215,7 @@ class TestReadContextTool:
     def test_no_query_returns_help(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({})
@@ -1230,7 +1230,7 @@ class TestReadContextTool:
 
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         sdir = tmp_path / "sessions" / "1781440579"
         sdir.mkdir(parents=True)
         (sdir / "session.jsonl").write_text(

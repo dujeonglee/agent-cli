@@ -23,7 +23,9 @@ from agent_cli.main import _maybe_resume_recent
 @pytest.fixture(autouse=True)
 def _use_tmp_sessions_dir(tmp_path, monkeypatch):
     """Redirect the sessions base dir to a temp dir for every test."""
-    monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path / ".agent-cli")
+    monkeypatch.setattr(
+        session_mod, "_SESSIONS_DIR", tmp_path / ".agent-cli" / "sessions"
+    )
 
 
 def _make_session(workspace: str) -> str:
@@ -108,7 +110,7 @@ class TestMaybeResumeRecent:
         """list_sessions sorts ascending by id (timestamp); the resume offer
         is the LAST one. Build ids by hand so ordering is deterministic."""
         ws = str(tmp_path / "ws")
-        base = session_mod._SESSIONS_BASE / "sessions"
+        base = session_mod._SESSIONS_DIR
         for sid in ("1700000001", "1700000002", "1700000003"):
             from agent_cli.context.session import SessionMeta
 

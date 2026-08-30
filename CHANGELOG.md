@@ -12,6 +12,28 @@
 
 ## [Unreleased]
 
+## [8.50.0] - 2026-08-30
+
+### Added — `AGENT_CLI_SESSIONS_DIR`: 세션 루트를 작업 트리 밖으로
+
+세션(`history.jsonl`·`turns.jsonl`·`memory.jsonl`·`web.json`…)은 항상 작업 디렉토리의
+`.agent-cli/sessions/` 에 떨어졌고, 그 경로가 세 모듈(`context/session`·`tools/context`·
+`main` 의 web 인스턴스 파일)에 각자 손으로 조립돼 있었습니다. 대화형 사용엔 맞는 기본값이지만
+**작업 트리를 건드리면 안 되는 곳**이 있습니다 — `--result-file` 로 돌리는 헤드리스/CI
+자동화, 읽기 전용·공유 체크아웃, 그리고 채점 대상 워크스페이스에 잡음을 남기면 안 되는 벤치
+컨테이너(Harbor/SWE-bench — 종전 SWE-bench 하니스는 `.git/info/exclude` 로 우회했는데 git
+없는 태스크엔 통하지 않습니다).
+
+- `paths.sessions_dir()` — 세션 루트의 단일 소스. `AGENT_CLI_SESSIONS_DIR` 가 있으면 그
+  경로(`~` 확장), 없으면 **종전과 동일한** cwd 상대 `.agent-cli/sessions`(상대경로를 유지해
+  기록·표시되는 경로 형태가 바뀌지 않음). `run`·`web`·`sessions`·`--resume`·`read_context`
+  가 모두 이 루트를 봅니다.
+- 세 모듈의 리터럴은 이 함수에서 파생한 `_SESSIONS_DIR` 모듈 상수로 수렴(import 시점 고정 —
+  테스트 monkeypatch seam 유지). 구 `_SESSIONS_BASE` 는 모듈마다 `sessions` 접미 유무가
+  달라 폐기했습니다.
+- 코드 인덱스 캐시(`.agent-cli/code_index.db`)는 이 변경의 대상이 **아닙니다** — 인덱스
+  루트는 워크스페이스 앵커 의미(상위 `.agent-cli` 탐색)라 별도 결정이 필요합니다.
+
 ## [8.49.0] - 2026-08-30
 
 ### Added — `turns.jsonl` 에 턴별 토큰 사용량
@@ -2089,6 +2111,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.50.0]: https://github.com/dujeonglee/agent-cli/compare/v8.49.0...v8.50.0
 [8.49.0]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...v8.49.0
 [8.48.0]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...v8.48.0
 [8.47.0]: https://github.com/dujeonglee/agent-cli/compare/v8.46.0...v8.47.0

@@ -359,7 +359,7 @@ class TestResumeWireFormatHelper:
         import agent_cli.context.session as sess_mod
         from agent_cli.context.session import create_session, save_meta
 
-        monkeypatch.setattr(sess_mod, "_SESSIONS_BASE", tmp_path)
+        monkeypatch.setattr(sess_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         s = create_session()
         s.response_format = "xml_fc"
         save_meta(s)

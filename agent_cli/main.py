@@ -2189,6 +2189,7 @@ def web(
     # (host/port/token/pid). Written on start, removed in finally on exit (and
     # self-reaped via --idle-timeout), so the board can spawn-or-attach by
     # reading one file. Lives next to history.jsonl in the session dir.
+    from agent_cli.context.session import get_session_dir
     from agent_cli.web.instance_file import (
         remove_instance_file,
         remove_status_file,
@@ -2196,7 +2197,7 @@ def web(
         write_status_file,
     )
 
-    _session_dir = Path(".agent-cli") / "sessions" / session.session_id
+    _session_dir = get_session_dir(session)
     write_instance_file(
         _session_dir,
         session_id=session.session_id,

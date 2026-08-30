@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.paths import scoped_paths
+from agent_cli.paths import scoped_paths, sessions_dir
 
 _A = ".agent-cli"
 
@@ -104,3 +104,49 @@ class TestSiteEquivalence:
         import agent_cli.prompts.system_prompt as sysprompt
 
         assert sysprompt._DIRECTIVE_PATHS == [Path.cwd() / _A, Path.home() / _A]
+
+
+class TestSessionsDir:
+    """세션 루트 단일 소스 (v8.50.0): 기본은 종전과 동일한 cwd 상대
+    `.agent-cli/sessions`, `AGENT_CLI_SESSIONS_DIR` 로 통째 이전."""
+
+    def test_default_is_relative_dot_agent_cli_sessions(self, monkeypatch):
+        monkeypatch.delenv("AGENT_CLI_SESSIONS_DIR", raising=False)
+        assert sessions_dir() == Path(_A) / "sessions"
+        assert not sessions_dir().is_absolute()  # 소비자 기록 경로 형태 보존
+
+    def test_env_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", str(tmp_path / "s"))
+        assert sessions_dir() == tmp_path / "s"
+
+    def test_env_override_expands_home(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", "~/x/sessions")
+        assert sessions_dir() == Path.home() / "x" / "sessions"
+
+    def test_empty_env_means_default(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", "")
+        assert sessions_dir() == Path(_A) / "sessions"
+
+    def test_consumers_pin_the_same_root(self):
+        """종전 3곳의 손-조립 리터럴과 등가 — session/tools.context 상수가
+        같은 함수에서 파생 (main 의 web 인스턴스 파일은 get_session_dir 경유)."""
+        import agent_cli.context.session as session_mod
+        import agent_cli.tools.context as ctx_mod
+
+        assert session_mod._SESSIONS_DIR == Path(_A) / "sessions"
+        assert ctx_mod._SESSIONS_DIR == Path(_A) / "sessions"
+
+    def test_env_redirects_session_writes(self, monkeypatch, tmp_path):
+        """env 로 옮긴 루트에 실제 세션 파일이 떨어지고 작업 트리엔 남지 않음
+        (모듈 상수는 import 고정이라 여기선 상수를 함수값으로 재바인딩)."""
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", str(tmp_path / "elsewhere"))
+        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", sessions_dir())
+        meta = session_mod.create_session(str(tmp_path))
+        session_mod.save_meta(meta)
+        assert (tmp_path / "elsewhere" / meta.session_id / "session.jsonl").is_file()
+        assert (
+            session_mod.get_session_dir(meta)
+            == tmp_path / "elsewhere" / meta.session_id
+        )

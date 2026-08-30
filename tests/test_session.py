@@ -18,7 +18,9 @@ from agent_cli.context.session import (
 @pytest.fixture(autouse=True)
 def _use_tmp_sessions_dir(tmp_path, monkeypatch):
     """Redirect sessions base dir to temp for all tests."""
-    monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path / ".agent-cli")
+    monkeypatch.setattr(
+        session_mod, "_SESSIONS_DIR", tmp_path / ".agent-cli" / "sessions"
+    )
 
 
 class TestCreateSession:
@@ -72,7 +74,7 @@ class TestLoadSession:
         intentionally not preserved — a legacy session resumes on the
         current default."""
         sid = "1700000000"
-        d = session_mod._SESSIONS_BASE / "sessions" / sid
+        d = session_mod._SESSIONS_DIR / sid
         d.mkdir(parents=True, exist_ok=True)
         (d / "session.jsonl").write_text(
             json.dumps(
@@ -353,7 +355,7 @@ class TestSessionSummary:
     reads the LAST user request + result from the session's history."""
 
     def _write_history(self, meta, lines):
-        d = session_mod._SESSIONS_BASE / "sessions" / meta.session_id
+        d = session_mod._SESSIONS_DIR / meta.session_id
         d.mkdir(parents=True, exist_ok=True)
         (d / "history.jsonl").write_text(
             "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8"
@@ -407,9 +409,7 @@ class TestQueryFieldRemoved:
     def test_save_meta_writes_no_query_key(self):
         meta = create_session("/tmp/ws")
         save_meta(meta)
-        path = (
-            session_mod._SESSIONS_BASE / "sessions" / meta.session_id / "session.jsonl"
-        )
+        path = session_mod._SESSIONS_DIR / meta.session_id / "session.jsonl"
         data = json.loads(path.read_text())
         assert "query" not in data["_meta"]
 

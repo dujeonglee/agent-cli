@@ -194,6 +194,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
+| `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`read_context` 가 모두 같은 루트를 봄 (v8.50.0) |
 
 > **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고 body 10분 연속 침묵 시 연결을 끊고 재전송한다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
 >
@@ -373,7 +374,7 @@ agent-cli setup
 
 ### `sessions` — 세션 관리
 
-`run`과 `web` 모두 세션을 `.agent-cli/sessions/{session_id}/`에 자동 저장합니다. 세션 종료 시 컨텍스트 윈도우 내용이 요약으로 저장됩니다. `--resume`으로 이전 세션을 이어서 작업할 수 있습니다.
+`run`과 `web` 모두 세션을 `.agent-cli/sessions/{session_id}/`에 자동 저장합니다. 세션 종료 시 컨텍스트 윈도우 내용이 요약으로 저장됩니다. `--resume`으로 이전 세션을 이어서 작업할 수 있습니다. 세션 루트는 `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 옮길 수 있습니다(헤드리스/CI·벤치 — `run`·`web`·`sessions`·`--resume` 이 모두 같은 루트를 봅니다, v8.50.0).
 
 ```bash
 # 현재 워크스페이스의 세션 목록
