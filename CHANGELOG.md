@@ -12,6 +12,23 @@
 
 ## [Unreleased]
 
+## [8.51.0] - 2026-08-31
+
+### Changed — 벤치에서 재현된 실패 2건을 시스템 프롬프트 일반 원칙으로
+
+Harbor(tb21-file-recovery) 벤치에서 두 실패 모드가 재실행에서도 그대로 재현됐습니다
+(2/2): ① `db-wal-recovery` — 백업 없이 `sqlite3.connect` 로 원본을 여는 순간 corrupt
+WAL 이 소비돼 복구 대상 자체가 소실, ② `large-scale-text-editing` — 턴당 6~16K 토큰의
+심사숙고로 시간 예산 소진. 처음엔 벤치 프롬프트 템플릿에 규칙을 넣어 확인했으나, 태스크
+유래 힌트를 벤치 템플릿에 두는 것은 오버피팅(측정 대상 오염)이라 **일반 원칙만
+제품 시스템 프롬프트로 흡수**하고 벤치 템플릿에서는 제거했습니다.
+
+- `TASK_GUIDELINES` 에 2줄 추가: 입력 파일을 변경/소비할 수 있는 명령(DB 열기·입력
+  위에서 프로그램 실행·in-place 편집) 전에 원본을 복사해 둘 것 / 긴 심사숙고 대신
+  "작은 명령 → 실제 출력 확인 → 조정" 의 짧은 검증 스텝을 선호할 것.
+- 힌트 포함 템플릿으로의 진단 실행에서 두 태스크 모두 즉시 성공(각 2연패 → 1.0) —
+  원칙의 효력은 확인됨. 공정 점수는 제거 후 재측정.
+
 ## [8.50.0] - 2026-08-30
 
 ### Added — `AGENT_CLI_SESSIONS_DIR`: 세션 루트를 작업 트리 밖으로
@@ -2111,6 +2128,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.51.0]: https://github.com/dujeonglee/agent-cli/compare/v8.50.0...v8.51.0
 [8.50.0]: https://github.com/dujeonglee/agent-cli/compare/v8.49.0...v8.50.0
 [8.49.0]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...v8.49.0
 [8.48.0]: https://github.com/dujeonglee/agent-cli/compare/v8.47.0...v8.48.0

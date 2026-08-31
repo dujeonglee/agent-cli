@@ -1145,7 +1145,7 @@ build_system_prompt(capabilities, active_tools, skill_stack, session_id, agent_r
     ├─ CONTEXT_DISCIPLINE (항상 포함 — 컨텍스트 창이 핵심 리소스임을 교육)
     │   └─ "읽을 것만 읽어라 / thought 간결 / 불필요한 덤프 금지"
     │
-    ├─ TASK_GUIDELINES (항상 포함 — 코드 작업 원칙 7개)
+    ├─ TASK_GUIDELINES (항상 포함 — 작업 원칙 13개; v8.51.0 에서 벤치 실측 2개 흡수: ① 입력 파일을 변경/소비할 수 있는 명령 전 원본 백업 — Harbor tb21 db-wal-recovery 에서 백업 없는 sqlite3.connect 가 WAL 을 소비하는 실수 2/2 재현, ② 긴 심사숙고 대신 작은 검증 스텝 — 사고 폭주로 시간 예산 소진 2/2 재현. 벤치 템플릿이 아니라 제품 프롬프트에 두는 이유: 측정 대상은 agent-cli 자체여야 하고(벤치 템플릿의 태스크 유래 힌트는 오버피팅), 일반 원칙은 모든 사용자에게 유효)
     │   └─ 코드 읽기 선행, 범위 제한, 보안, 정직한 보고 등
     │
     ├─ FORMAT_RULES (항상 포함 — JSON ReAct 포맷 + 규칙 10개)
