@@ -50,6 +50,14 @@ SESSION_STATE_HEADER = (
     "── session state (context only — not part of the conversation) ──"
 )
 
+#: Task Guidelines 세그먼트의 헤더 (v8.52.1). 가이드라인을 SESSION_STATE_HEADER
+#: **아래**에 넣었더니 그 헤더의 자기-면책 문구("not part of the conversation")
+#: 가 규칙까지 무시해도 되는 메타데이터로 만들었다 — Harbor tb21 실측:
+#: 태스크 본문의 "hard rules" 는 1/1 준수, 면책 헤더 아래 같은 문장은 0/1
+#: (백업 없이 DB 를 열어 WAL 4번째 소실). 규칙은 상태가 아니므로 자기
+#: 헤더("always in effect")를 갖고 상태 블록 앞에 선다.
+RULES_HEADER = "── standing rules (always in effect) ──"
+
 
 def _context_line(used: int, budget: int, turn: int, max_turns: int) -> str:
     parts = []
@@ -86,17 +94,25 @@ def build_session_state(
     model keeps seeing the SAME headings it saw when these lived in the system
     prompt (nothing to re-learn from the move).
     """
-    blocks = [b for b in (guidelines.strip(), agents.strip(), memory.strip()) if b]
+    blocks = [b for b in (agents.strip(), memory.strip()) if b]
     ctx_line = _context_line(used_tokens, budget_tokens, turn, max_turns)
-    if not ctx_line and not blocks:
+    rules = guidelines.strip()
+    if not ctx_line and not blocks and not rules:
         return ""
 
-    lines = [SESSION_STATE_HEADER]
-    if ctx_line:
-        lines.append(ctx_line)
-    for b in blocks:
-        lines.append("")
-        lines.append(b)
+    lines: list[str] = []
+    if rules:
+        lines.append(RULES_HEADER)
+        lines.append(rules)
+    if ctx_line or blocks:
+        if lines:
+            lines.append("")
+        lines.append(SESSION_STATE_HEADER)
+        if ctx_line:
+            lines.append(ctx_line)
+        for b in blocks:
+            lines.append("")
+            lines.append(b)
 
     if budget_tokens > 0 and used_tokens >= budget_tokens * COMPACTION_WARN_RATIO:
         lines.append("")

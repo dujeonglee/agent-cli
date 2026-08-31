@@ -15,6 +15,7 @@ import json
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.prompts.session_state import (
     COMPACTION_WARN_RATIO,
+    RULES_HEADER,
     SESSION_STATE_HEADER,
     build_session_state,
 )
@@ -446,10 +447,22 @@ class TestGuidelinesInTail:
     """TASK_GUIDELINES 전체가 시스템 프롬프트 Primacy 에서 꼬리 블록으로 이동
     — 단일 상수는 system_prompt.py 에 유지, 렌더 위치만 바뀐다."""
 
-    def test_guidelines_render_under_the_header(self):
+    def test_guidelines_render_under_their_own_rules_header(self):
+        """v8.52.1: 규칙은 상태가 아니다 — 면책 헤더("not part of the
+        conversation") 아래 두면 무시해도 되는 메타데이터로 읽힌다(실측).
+        자기 헤더(always in effect)를 갖고 상태 블록 **앞**에 선다."""
         out = build_session_state(guidelines="## Task Guidelines\n- rule one")
-        assert out.startswith(SESSION_STATE_HEADER)
+        assert out.startswith(RULES_HEADER)
         assert "## Task Guidelines" in out and "- rule one" in out
+        assert SESSION_STATE_HEADER not in out  # 상태가 없으면 상태 헤더도 없음
+
+    def test_rules_come_before_the_disclaimed_state_block(self):
+        out = build_session_state(
+            used_tokens=1,
+            budget_tokens=100,
+            guidelines="## Task Guidelines\n- r",
+        )
+        assert out.index(RULES_HEADER) < out.index(SESSION_STATE_HEADER)
 
     def test_guidelines_alone_are_enough_to_render(self):
         assert build_session_state(guidelines="x") != ""

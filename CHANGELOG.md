@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [8.52.1] - 2026-08-31
+
+### Fixed — 꼬리 가이드라인이 "면책 헤더" 아래라 무시되던 문제
+
+v8.52.0 검증 런(db-wal-recovery)에서 꼬리로 옮긴 Task Guidelines 를 모델이 그대로
+무시했습니다(백업 없이 DB 를 열어 WAL 4번째 소실). 원인은 위치가 아니라 **프레이밍**:
+가이드라인이 `── session state (context only — not part of the conversation) ──`
+헤더 아래 들어가면서, 그 자기-면책 문구가 규칙까지 "무시해도 되는 메타데이터"로
+만들었습니다. 태스크 본문에 "hard rules" 로 박았던 대조 실험은 1/1 준수.
+
+- 가이드라인을 상태 블록에서 분리 — 자기 헤더 `── standing rules (always in
+  effect) ──` 아래, 상태 블록 **앞**에 렌더. 규칙은 상태가 아니다.
+
 ## [8.52.0] - 2026-08-31
 
 ### Changed — Task Guidelines 전체를 세션-상태 꼬리 블록으로
@@ -2148,6 +2161,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.52.1]: https://github.com/dujeonglee/agent-cli/compare/v8.52.0...v8.52.1
 [8.52.0]: https://github.com/dujeonglee/agent-cli/compare/v8.51.0...v8.52.0
 [8.51.0]: https://github.com/dujeonglee/agent-cli/compare/v8.50.0...v8.51.0
 [8.50.0]: https://github.com/dujeonglee/agent-cli/compare/v8.49.0...v8.50.0
