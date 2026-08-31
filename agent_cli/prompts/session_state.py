@@ -71,16 +71,22 @@ def build_session_state(
     max_turns: int = 0,
     agents: str = "",
     memory: str = "",
+    guidelines: str = "",
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
 
+    ``guidelines`` is ``TASK_GUIDELINES`` verbatim (v8.52.0 — the WHOLE
+    section moved here from the system prompt's primacy zone: bench-measured,
+    the 35B-class model ignored these principles there but follows them at the
+    tail; static text, so the only cost is re-prefilling ~0.4K tokens that the
+    un-cacheable tail region would re-process anyway).
     ``agents`` / ``memory`` are the already-rendered sections
     (``build_live_agents_section(include_state=True)`` / ``memory.render_index``)
     — passed in rather than fetched here so this stays a pure function and the
     model keeps seeing the SAME headings it saw when these lived in the system
     prompt (nothing to re-learn from the move).
     """
-    blocks = [b for b in (agents.strip(), memory.strip()) if b]
+    blocks = [b for b in (guidelines.strip(), agents.strip(), memory.strip()) if b]
     ctx_line = _context_line(used_tokens, budget_tokens, turn, max_turns)
     if not ctx_line and not blocks:
         return ""

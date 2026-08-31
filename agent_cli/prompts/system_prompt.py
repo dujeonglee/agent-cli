@@ -852,7 +852,11 @@ def build_system_prompt_sections(
     else:
         sections.append(("Role", ROLE_PROMPT))
     sections.append(("Context Discipline", CONTEXT_DISCIPLINE))
-    sections.append(("Task Guidelines", TASK_GUIDELINES))
+    # Task Guidelines (v8.52.0): 시스템 프롬프트가 아니라 세션-상태 꼬리
+    # 블록으로 렌더된다 (llm._build_session_state → session_state). Harbor
+    # tb21 실측: 35B-A3B 가 Primacy 의 원칙(백업·간결)을 0/1 무시, 같은
+    # 문장을 마지막 메시지 꼬리에 두면 3/3 준수 — recency 가 실제로 먹히는
+    # 위치. 상수 ``TASK_GUIDELINES`` 는 단일 소스로 여기 유지.
     sections.append(("Response Format", wire_format.format_rules()))
 
     # ── Middle: reference material ──

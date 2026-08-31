@@ -28,6 +28,7 @@ from typing import ClassVar
 import pytest
 
 from agent_cli.prompts.system_prompt import (
+    TASK_GUIDELINES,
     _build_agent_inline,
     _build_context_recovery,
     _build_environment_section,
@@ -238,7 +239,6 @@ class TestBuildSystemPromptSections:
         core = [
             "Role",
             "Context Discipline",
-            "Task Guidelines",
             "Response Format",
             "Available Tools",
             "Environment",
@@ -329,7 +329,10 @@ class TestBuildSystemPrompt:
 
         prompt = build_system_prompt(_make_caps(), ["shell"])
         flat = re.sub(r"\s+", " ", prompt)
-        assert "actions" in flat.lower()  # the multi-op envelope field
+        # The multi-op envelope field — json_fc emits [{"action": ...}, ...].
+        # (Was a loose plural-"actions" grep that in fact matched TASK_GUIDELINES;
+        # that section moved to the session-state tail in v8.52.0.)
+        assert '{"action"' in prompt
         assert "Batch independent" in flat or "one or more tool calls" in flat
 
     def test_format_rules_nudge_efficient_action(self):
@@ -577,13 +580,18 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Directives" not in prompt
 
-    def test_task_guidelines_present(self):
+    def test_task_guidelines_not_in_system_prompt(self):
+        """v8.52.0: the WHOLE section rides the session-state tail block
+        (recency — the position the Harbor bench showed the model follows);
+        the system prompt must no longer carry it."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "## Task Guidelines" in prompt
+        assert "## Task Guidelines" not in prompt
+
+    def test_task_guidelines_read_before_edit(self):
         # "Read before edit" applies to ALL file kinds, not only code —
         # config / docs / lockfiles all qualify.
-        assert "Read a file before changing it" in prompt
-        assert "code, config, docs" in prompt
+        assert "Read a file before changing it" in TASK_GUIDELINES
+        assert "code, config, docs" in TASK_GUIDELINES
 
     def test_task_guidelines_block_feature_creep(self):
         """Task Guidelines must explicitly forbid feature creep, premature
@@ -593,8 +601,7 @@ class TestBuildSystemPrompt:
         anti-pattern phrasings must appear."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        guidelines = TASK_GUIDELINES
         flat = re.sub(r"\s+", " ", guidelines).lower()
         # Names "beyond what the task requires" or equivalent scope cap.
         assert "beyond what the task requires" in flat or "scope" in flat
@@ -616,8 +623,7 @@ class TestBuildSystemPrompt:
         only) so the model has a clear place to draw the line."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        guidelines = TASK_GUIDELINES
         flat = re.sub(r"\s+", " ", guidelines).lower()
         # Anti-pattern is named.
         assert (
@@ -638,8 +644,7 @@ class TestBuildSystemPrompt:
         bloats the diff."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        guidelines = TASK_GUIDELINES
         flat = re.sub(r"\s+", " ", guidelines).lower()
         # (a) clean own orphans — names what gets removed.
         assert "imports" in flat
@@ -654,8 +659,7 @@ class TestBuildSystemPrompt:
         multi-user fairness rule."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        guidelines = TASK_GUIDELINES
         flat = re.sub(r"\s+", " ", guidelines).lower()
         assert "outstanding request" in flat
         assert "most recent" in flat
@@ -664,8 +668,7 @@ class TestBuildSystemPrompt:
         """Recursive-self-invocation guard moved from Response Format
         (where it was an outlier — a behavior rule, not a format rule)
         into Task Guidelines alongside the other safety guidance."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        guidelines = TASK_GUIDELINES
         assert "recursiv" in guidelines.lower()
         assert "agent-cli" in guidelines
 
@@ -684,14 +687,13 @@ class TestBuildSystemPrompt:
         assert "ONE JSON" in prompt
 
     def test_section_order_primacy_before_tools(self):
-        """Context Discipline → Task Guidelines → Response Format, all in
-        the primacy zone ahead of Available Tools."""
+        """Context Discipline → Response Format in the primacy zone ahead
+        of Available Tools (Task Guidelines → session-state tail, v8.52.0)."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
         ctx_pos = prompt.index("## Context Window Discipline")
-        guidelines_pos = prompt.index("## Task Guidelines")
         format_pos = prompt.index("## Response Format")
         tools_pos = prompt.index("## Available Tools")
-        assert ctx_pos < guidelines_pos < format_pos < tools_pos
+        assert ctx_pos < format_pos < tools_pos
 
     def test_code_index_inline_guide_present(self):
         """When code_index is in active_tools, the inline guide should

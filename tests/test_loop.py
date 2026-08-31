@@ -4332,3 +4332,24 @@ class TestRendererAbcPromotion:
             assert loop.run_authors == ["Bob"]
         finally:
             render.set_renderer(prev)
+
+
+class TestTaskGuidelinesRideTheTail:
+    def test_last_message_carries_task_guidelines(self, caps, tmp_path):
+        """v8.52.0: 가이드라인은 시스템 프롬프트가 아니라 매 턴 세션-상태
+        꼬리로 전달된다 — 프로바이더가 받은 마지막 메시지에 실려야 한다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        msgs = _messages_from_call(provider.call.call_args_list[0])
+        assert "## Task Guidelines" in msgs[-1]["content"]
+        assert "Read a file before changing it" in msgs[-1]["content"]

@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+## [8.52.0] - 2026-08-31
+
+### Changed — Task Guidelines 전체를 세션-상태 꼬리 블록으로
+
+v8.51.0 이 벤치 실측 원칙 2개를 시스템 프롬프트 `TASK_GUIDELINES` 에 넣었지만, 클린
+재측정에서 35B-A3B 는 이를 **그대로 무시**했습니다(백업 없이 DB 를 열어 WAL 3번째
+소실). 같은 문장이 태스크 메시지 꼬리에 있던 실험에서는 3/3 준수 — 이 모델급에서
+행동 규칙이 실제로 먹히는 위치는 Primacy(시스템 프롬프트 앞)가 아니라 **최신성
+(마지막 메시지 꼬리)** 입니다.
+
+일부만 옮기면 "어떤 규칙은 어디, 어떤 규칙은 어디"의 관리 분열이 생기므로(사용자
+결정), **섹션 전체를 이동**합니다:
+
+- `build_session_state(guidelines=)` — v8.46.0 세션-상태 블록(마지막 user 메시지
+  본문 append, `── session state ──` 헤더, history.jsonl 미영속)에 `TASK_GUIDELINES`
+  전문이 실린다. 상수는 `system_prompt.py` 에 단일 소스로 유지 — 렌더 위치만 변경.
+- 시스템 프롬프트에서 `Task Guidelines` 섹션 제거. 비용: 매턴 ~0.4K 토큰 재프리필
+  (꼬리는 KV 비캐시 구간이라 추가 캐시 손실 없음), 요청당 컨텍스트 총량 불변.
+- 압축 경고(`COMPACTION_WARN_RATIO`)는 계속 블록 마지막 — 가장 급한 신호가 최후미.
+
 ## [8.51.0] - 2026-08-31
 
 ### Changed — 벤치에서 재현된 실패 2건을 시스템 프롬프트 일반 원칙으로
@@ -2128,6 +2148,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.52.0]: https://github.com/dujeonglee/agent-cli/compare/v8.51.0...v8.52.0
 [8.51.0]: https://github.com/dujeonglee/agent-cli/compare/v8.50.0...v8.51.0
 [8.50.0]: https://github.com/dujeonglee/agent-cli/compare/v8.49.0...v8.50.0
 [8.49.0]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...v8.49.0

@@ -79,7 +79,10 @@ class LLMCaller:
         with ``memory``."""
         from agent_cli.memory import render_index
         from agent_cli.prompts.session_state import build_session_state
-        from agent_cli.prompts.system_prompt import build_live_agents_section
+        from agent_cli.prompts.system_prompt import (
+            TASK_GUIDELINES,
+            build_live_agents_section,
+        )
 
         agents = ""
         # Same gate the system-prompt section used: no ``agent`` tool, no
@@ -98,6 +101,7 @@ class LLMCaller:
             max_turns=self.cfg.max_turns,
             agents=agents,
             memory=memory,
+            guidelines=TASK_GUIDELINES,
         )
 
     def _interrupt_check(self) -> bool:

@@ -437,3 +437,25 @@ class TestKvWinEndToEnd:
             tail = call[1]["messages"][-1]["content"]
             assert SESSION_STATE_HEADER in tail
             assert "context: ~" in tail
+
+
+# ── 4. Task Guidelines in the tail (v8.52.0) ─────────────────────────
+
+
+class TestGuidelinesInTail:
+    """TASK_GUIDELINES 전체가 시스템 프롬프트 Primacy 에서 꼬리 블록으로 이동
+    — 단일 상수는 system_prompt.py 에 유지, 렌더 위치만 바뀐다."""
+
+    def test_guidelines_render_under_the_header(self):
+        out = build_session_state(guidelines="## Task Guidelines\n- rule one")
+        assert out.startswith(SESSION_STATE_HEADER)
+        assert "## Task Guidelines" in out and "- rule one" in out
+
+    def test_guidelines_alone_are_enough_to_render(self):
+        assert build_session_state(guidelines="x") != ""
+
+    def test_compaction_warning_stays_last(self):
+        out = build_session_state(
+            used_tokens=90, budget_tokens=100, guidelines="## Task Guidelines\n- r"
+        )
+        assert out.index("## Task Guidelines") < out.index("nearly full")
