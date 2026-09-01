@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc
@@ -63,6 +65,16 @@ class LLMCaller:
         # compaction budget (see _call_llm).
         self._state_tokens = 0
 
+    # 요청 max_tokens 클램프 (v8.53.0): 예산은 더 이상 max_output 을 선제
+    # 예약하지 않으므로(아래 _call_llm), 남은 창을 넘는 max_tokens 요청이
+    # 가능해진다. omlx 는 스스로 클램프하지만(server 로그의
+    # request_max_tokens vs max_tokens) 엄격한 OpenAI 호환 서버는 400 을
+    # 던져 매턴 flow-2 낭비 루프가 되므로 요청 직전에 명시 클램프한다.
+    # MARGIN 은 chars/4 추정 오차 여유, FLOOR 는 음수/0 방지 하한 — 하한을
+    # 보내 절단되면 기존 length 가드가, 400 이면 flow 2 가 처리한다.
+    _MAX_TOKENS_MARGIN = 512
+    _MIN_REQUEST_OUTPUT_TOKENS = 1024
+
     def _build_session_state(self, budget: int) -> str:
         """The volatile state block appended to the last message each turn —
         context pressure, turn budget, the live agent roster and the session
@@ -118,24 +130,20 @@ class LLMCaller:
         # reused below to reconcile the cache against the server's actual
         # input count once the call succeeds.
         sys_tokens = estimate_tokens(self.prompt.system) if self.ctx else 0
+        call_caps = self.cfg.capabilities
         if self.ctx:
+            # v8.53.0: cap 은 **총입력(system + 대화 + 세션상태) 기준** —
+            # ``context_window × compaction_ratio`` 에서 system 실측과 직전
+            # 턴의 세션-상태 블록 크기(메시지 꼬리라 request 에는 포함,
+            # ``system`` 에는 미포함; 턴 간 안정적이라 직전 값 예약)를 빼면
+            # 동적 캐시의 몫이 나온다. 종전엔 max_output_tokens 까지 선제
+            # 예약해 ratio 0.8 이 "창의 42%" 에서 발화하는 비직관을 낳았다
+            # (262K 창 + 등록 max_output 131K 실측). 출력은 예약 대신 아래
+            # 요청-시 클램프 + 기존 length 가드 / flow 2 가 담당한다.
             target = max(
-                int(
-                    (
-                        self.cfg.capabilities.context_window
-                        - sys_tokens
-                        # The session-state block rides at the TAIL of the
-                        # messages, so it is part of the request but not of
-                        # ``system``. Reserve the previous turn's size — it is
-                        # stable turn to turn (the memory index grows slowly),
-                        # and it must be built AFTER ensure_within to report
-                        # post-compaction numbers, which is after this budget
-                        # is needed.
-                        - self._state_tokens
-                        - self.cfg.capabilities.max_output_tokens
-                    )
-                    * self.ctx.compaction_ratio
-                ),
+                int(self.cfg.capabilities.context_window * self.ctx.compaction_ratio)
+                - sys_tokens
+                - self._state_tokens,
                 1,
             )
             self.ctx.ensure_within(target)
@@ -143,6 +151,21 @@ class LLMCaller:
             self._state_tokens = estimate_tokens(state)
             self.ctx.set_session_state(state)
             self.state.messages = self.ctx.get_messages()
+            # 요청 max_tokens 를 남은 창에 맞춰 클램프 (모듈 상수 주석 참조)
+            prompt_est = (
+                sys_tokens + self._state_tokens + self.ctx.get_estimated_tokens()
+            )
+            available = (
+                self.cfg.capabilities.context_window
+                - prompt_est
+                - self._MAX_TOKENS_MARGIN
+            )
+            clamped = max(
+                min(self.cfg.capabilities.max_output_tokens, available),
+                self._MIN_REQUEST_OUTPUT_TOKENS,
+            )
+            if clamped != self.cfg.capabilities.max_output_tokens:
+                call_caps = replace(self.cfg.capabilities, max_output_tokens=clamped)
 
         # Context dump (verbose only)
         if self.cfg.verbose:
@@ -198,7 +221,7 @@ class LLMCaller:
                 messages=call_messages,
                 system=self.prompt.system,
                 model=self.cfg.model,
-                capabilities=self.cfg.capabilities,
+                capabilities=call_caps,
                 on_chunk=on_chunk,
                 degeneration_check=self.cfg.wire_format.is_degenerate,
                 # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".

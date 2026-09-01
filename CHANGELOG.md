@@ -12,6 +12,22 @@
 
 ## [Unreleased]
 
+## [8.53.0] - 2026-09-01
+
+### Changed — 압축 임계값을 "전체 창 × ratio(총입력 기준)" 로
+
+사용자 보고: compaction_ratio 0.8 인데 262K 창에서 ~110K(42%) 에 압축이 발화.
+원인은 예산 수식이 ``(창 − system − 상태 − **max_output**) × ratio`` 로
+모델의 max_output_tokens(등록값 131K = 창의 절반)를 매턴 선제 예약했기 때문.
+
+- **새 수식**: ``총입력(system+대화+세션상태) ≤ 창 × compaction_ratio`` —
+  설정 80% = 화면 ctx 80% 에서 발화(설정값=관측값). max_output 예약 제거.
+- **짝 변경**: 요청 max_tokens 를 ``min(등록값, 창 − prompt실측 − 여유)`` 로
+  클램프(하한 1024). omlx 는 자체 클램프라 no-op; 엄격 OpenAI 호환 서버의
+  "매턴 400 → flow 2" 낭비 루프만 막는다. 출력이 잘리면 기존 length 가드가,
+  거대 입력이 창을 넘으면 기존 flow 1(호출 전 압축)/flow 2(400 반응)가 그대로
+  처리 — 새 메커니즘 없음.
+
 ## [8.52.1] - 2026-08-31
 
 ### Fixed — 꼬리 가이드라인이 "면책 헤더" 아래라 무시되던 문제
@@ -2161,6 +2177,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.53.0]: https://github.com/dujeonglee/agent-cli/compare/v8.52.1...v8.53.0
 [8.52.1]: https://github.com/dujeonglee/agent-cli/compare/v8.52.0...v8.52.1
 [8.52.0]: https://github.com/dujeonglee/agent-cli/compare/v8.51.0...v8.52.0
 [8.51.0]: https://github.com/dujeonglee/agent-cli/compare/v8.50.0...v8.51.0

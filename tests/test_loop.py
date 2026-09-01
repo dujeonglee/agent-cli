@@ -3421,10 +3421,10 @@ class TestFlow1PreventiveCompaction:
         assert spy.call_args.args[0] == 600  # 500 + 30 + 70
 
     def test_target_scales_with_compaction_ratio(self, caps, tmp_path):
-        """flow-1 target = (context − system − output) × ctx.compaction_ratio.
-        The loop reads the ratio LIVE from ctx (web slider), so a lower ratio
-        yields a proportionally smaller (more aggressive) target — proves the
-        constant→ctx.compaction_ratio switch is wired to the runtime value."""
+        """flow-1 target = context × ratio − system − state (v8.53.0 — 총입력
+        기준, max_output 예약 없음). The loop reads the ratio LIVE from ctx
+        (web slider) — ratio 차이가 target 차이 = window × Δratio 로 정확히
+        나타나야 한다(system 항은 상쇄)."""
         from unittest.mock import patch
 
         def capture_target(ctx):
@@ -3445,10 +3445,11 @@ class TestFlow1PreventiveCompaction:
         ctx_hi.set_compaction_ratio(0.95)
         t_lo = capture_target(ctx_lo)
         t_hi = capture_target(ctx_hi)
-        # Same caps / query / tools → system+output identical; only the ratio
-        # differs, so the targets scale as 0.5 : 0.95.
+        # Same caps / query / tools → the system term cancels: the target
+        # gap must be exactly window × (0.95 − 0.5).
         assert t_lo < t_hi
-        assert t_lo == pytest.approx(t_hi * (0.5 / 0.95), rel=0.02)
+        W = caps.context_window
+        assert t_hi - t_lo == int(W * 0.95) - int(W * 0.5)
 
     def test_no_reconcile_without_usage(self, caps, tmp_path):
         """Providers that report no usage leave the running estimate."""
@@ -4353,3 +4354,70 @@ class TestTaskGuidelinesRideTheTail:
         msgs = _messages_from_call(provider.call.call_args_list[0])
         assert "## Task Guidelines" in msgs[-1]["content"]
         assert "Read a file before changing it" in msgs[-1]["content"]
+
+
+class TestMaxTokensClamp:
+    """v8.53.0: 출력 선제 예약 제거의 짝 — 요청 max_tokens 는 남은 창으로
+    클램프해 엄격 서버의 400 루프를 막는다 (omlx 는 자체 클램프라 no-op)."""
+
+    def _caps(self, window, max_out):
+        return ModelCapabilities(
+            context_window=window,
+            max_output_tokens=max_out,
+            supports_thinking=False,
+        )
+
+    def test_request_max_tokens_clamped_to_remaining_window(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        for _ in range(30):
+            ctx.add({"role": "user", "content": "word " * 200})  # ~1.5K tok
+        provider = _make_provider(_complete("ok"))
+        caps = self._caps(window=60_000, max_out=50_000)
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        sent = provider.call.call_args_list[0].kwargs["capabilities"]
+        assert sent.max_output_tokens < 50_000  # 남은 창보다 크게 못 보냄
+        assert sent.max_output_tokens >= 1024
+
+    def test_no_clamp_when_headroom_is_plenty(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("ok"))
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        sent = provider.call.call_args_list[0].kwargs["capabilities"]
+        assert sent.max_output_tokens == caps.max_output_tokens
+
+    def test_floor_when_window_is_exhausted(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path, compaction_ratio=0.95)
+        for _ in range(40):
+            ctx.add({"role": "user", "content": "word " * 200})
+        provider = _make_provider(_complete("ok"))
+        caps = self._caps(window=20_000, max_out=16_000)
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        sent = provider.call.call_args_list[0].kwargs["capabilities"]
+        assert sent.max_output_tokens >= 1024

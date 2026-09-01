@@ -126,8 +126,9 @@ def compute_token_budget(context_window: int) -> int:
     70% 로 단일화 — chars/4 추정의 CJK 과소평가에 대한 여유이기도 하다.
 
     NOTE: this is no longer the live compaction threshold. flow 1
-    computes the real target per call as ``(context − system(measured)
-    − max_output) × 0.8`` in ``AgentLoop._call_llm``. This value remains
+    computes the real target per call as ``context × compaction_ratio −
+    system(measured) − session_state`` in ``AgentLoop._call_llm`` (v8.53.0
+    — 총입력 기준; max_output 예약은 요청-시 클램프로 대체). This value remains
     the ``_evict_fifo`` default target and the budget used to restore the
     cache on resume (before the first call's ``ensure_within`` refines it).
     """
@@ -485,8 +486,8 @@ class ContextManager:
              the summariser-failure case and the small-budget-with-large-
              summary edge case in §2.1 of DESIGN.
 
-        The loop computes ``target_tokens`` as ``(context_window −
-        system_tokens − max_output) × 0.8`` each call — system measured
+        The loop computes ``target_tokens`` as ``context_window ×
+        compaction_ratio − system − session_state`` (v8.53.0) each call — system measured
         live, so a large tool-laden system prompt correctly reduces the
         room left for messages. Paired with ``reconcile_actual_tokens``
         keeping ``_cache_tokens`` anchored to the server's real count,
