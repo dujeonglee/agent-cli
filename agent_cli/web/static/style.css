@@ -980,7 +980,7 @@ footer {
 
 /* semantic kind hues — system prompt vs conversation. Literal (like the JS
    palette) so they stay stable across themes; used only as subtle accents. */
-:root { --insp-system: var(--accent); --insp-convo: var(--cyan); }
+:root { --insp-system: var(--accent); --insp-convo: var(--cyan); --insp-tail: var(--warn); }
 
 /* ── Prompt Inspection ─────────────────────── */
 .insp-head {
@@ -1090,6 +1090,7 @@ footer {
 }
 .insp-sec.insp-system { border-left-color: var(--insp-system); }
 .insp-sec.insp-dynamic { border-left-color: var(--insp-convo); }
+.insp-sec.insp-tail { border-left-color: var(--insp-tail); }
 .insp-sec > summary {
   list-style: none;
   cursor: pointer;

@@ -3175,11 +3175,16 @@
     let html = "";
     let lastKind = null;
     data.sections.forEach(function (s) {
-      const kind = s.kind === "dynamic" ? "dynamic" : "system";
+      const kind =
+        s.kind === "dynamic" ? "dynamic" : s.kind === "tail" ? "tail" : "system";
       if (kind !== lastKind) {
         html +=
           '<div class="insp-group">' +
-          (kind === "dynamic" ? "Conversation · observations" : "System prompt") +
+          (kind === "dynamic"
+            ? "Conversation · observations"
+            : kind === "tail"
+              ? "Per-turn tail — appended to the LAST message every turn (not system prompt)"
+              : "System prompt") +
           "</div>";
         lastKind = kind;
       }

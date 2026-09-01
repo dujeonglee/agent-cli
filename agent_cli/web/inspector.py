@@ -5,7 +5,35 @@ C3: web 전송 계층(server.py)에서 분리된 도메인 로직. FastAPI 무�
 
 from __future__ import annotations
 
+from agent_cli.prompts.session_state import RULES_HEADER, SESSION_STATE_HEADER
 from agent_cli.render.web import WebRenderer
+
+
+def _split_tail(content: str) -> tuple[str, list[tuple[str, str]]]:
+    """마지막 메시지 본문에서 매턴 꼬리(standing rules + session state)를 분리.
+
+    ``get_messages`` 는 Task Guidelines(v8.52.x)와 세션 상태(v8.46.0)를
+    마지막 user 메시지 **본문 끝에** 붙인다 — 인스펙터가 메시지를 그대로
+    섹션화하면 이 꼬리가 `[user] Observation…` 안에 묻혀 발견이 안 된다.
+    실제 요청 위치(항상 맨 끝)를 그대로 반영해 독립 섹션으로 떼어낸다.
+    이름에 "system" 을 쓰지 않는 것은 의도 — 프로바이더 입장에서 이 텍스트는
+    system 이 아니라 user 메시지 본문이다."""
+    cut = len(content)
+    for marker in (RULES_HEADER, SESSION_STATE_HEADER):
+        i = content.find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    if cut == len(content):
+        return content, []
+    body, tail = content[:cut].rstrip(), content[cut:]
+    parts: list[tuple[str, str]] = []
+    si = tail.find(SESSION_STATE_HEADER)
+    if tail.startswith(RULES_HEADER):
+        rules = tail if si == -1 else tail[:si]
+        parts.append(("Standing Rules (per-turn tail)", rules.strip()))
+    if si != -1:
+        parts.append(("Session State (per-turn tail)", tail[si:].strip()))
+    return body, parts
 
 
 def _dynamic_context_sections(ctx) -> list[dict]:
@@ -23,16 +51,31 @@ def _dynamic_context_sections(ctx) -> list[dict]:
     from agent_cli.context.token_estimator import estimate_tokens
 
     sections: list[dict] = []
+    tail_sections: list[dict] = []
     try:
         messages = list(ctx.get_messages())
     except Exception:
         return []
-    for m in messages:
+    for idx, m in enumerate(messages):
         if m.get("role") == "system":
             continue  # already shown as the system snapshot
         content = m.get("content", "")
         if not isinstance(content, str):
             content = str(content)
+        # 마지막 메시지만 매턴 꼬리를 실을 수 있다 (get_messages 계약) —
+        # 떼어낸 꼬리는 kind="tail" 로 목록 맨 끝(실제 위치와 동형).
+        if idx == len(messages) - 1:
+            content, tail = _split_tail(content)
+            for name, text in tail:
+                tail_sections.append(
+                    {
+                        "name": name,
+                        "text": text,
+                        "chars": len(text),
+                        "est_tokens": estimate_tokens(text),
+                        "kind": "tail",
+                    }
+                )
         role = m.get("role", "?")
         first = content.strip().split("\n", 1)[0][:60]
         name = f"[{role}] {first}" if first else f"[{role}]"
@@ -45,7 +88,7 @@ def _dynamic_context_sections(ctx) -> list[dict]:
                 "kind": "dynamic",
             }
         )
-    return sections
+    return sections + tail_sections
 
 
 def capture_startup_system_prompt(

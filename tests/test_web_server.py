@@ -3620,3 +3620,60 @@ class TestRenderCoalescing:
             assert "scheduleOvRender()" not in body, (
                 f"{fn} 이 전체 렌더로 회귀 — 스트리밍 중 버튼이 죽는다"
             )
+
+
+class TestInspectorTailSections:
+    """v8.54.0: 매턴 꼬리(standing rules + session state)를 마지막 메시지에서
+    분리해 kind="tail" 독립 섹션으로 — 목록 맨 끝(실제 요청 위치와 동형)."""
+
+    def _ctx(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.prompts.session_state import build_session_state
+
+        ctx = ContextManager(session_dir=tmp_path)
+        ctx.add({"role": "user", "content": "do the task"})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "shell",
+                "success": True,
+                "content": "Observation: ok",
+            }
+        )
+        ctx.set_session_state(
+            build_session_state(
+                used_tokens=10,
+                budget_tokens=100,
+                guidelines="## Task Guidelines\n- rule one",
+            )
+        )
+        return ctx
+
+    def test_tail_split_into_named_sections_at_the_end(self, tmp_path):
+        from agent_cli.web.inspector import _dynamic_context_sections
+
+        secs = _dynamic_context_sections(self._ctx(tmp_path))
+        names = [s["name"] for s in secs]
+        assert names[-2] == "Standing Rules (per-turn tail)"
+        assert names[-1] == "Session State (per-turn tail)"
+        assert [s["kind"] for s in secs[-2:]] == ["tail", "tail"]
+        assert "- rule one" in secs[-2]["text"]
+        assert "~10" in secs[-1]["text"] or "10" in secs[-1]["text"]
+
+    def test_message_section_keeps_conversation_only(self, tmp_path):
+        from agent_cli.web.inspector import _dynamic_context_sections
+
+        secs = _dynamic_context_sections(self._ctx(tmp_path))
+        obs = [s for s in secs if s["kind"] == "dynamic"][-1]
+        assert "Observation: ok" in obs["text"]
+        assert "Task Guidelines" not in obs["text"]  # 중복 표시 없음
+        assert "session state" not in obs["text"]
+
+    def test_no_tail_no_extra_sections(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.web.inspector import _dynamic_context_sections
+
+        ctx = ContextManager(session_dir=tmp_path)
+        ctx.add({"role": "user", "content": "hello"})
+        secs = _dynamic_context_sections(ctx)
+        assert all(s["kind"] == "dynamic" for s in secs)

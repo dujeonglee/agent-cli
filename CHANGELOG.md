@@ -12,6 +12,22 @@
 
 ## [Unreleased]
 
+## [8.54.0] - 2026-09-01
+
+### Added — Prompt Inspector 에 매턴 꼬리 섹션
+
+Task Guidelines(v8.52.x)와 세션 상태(v8.46.0)는 마지막 user 메시지 본문 끝에
+실리는데, 인스펙터는 메시지를 통째로 섹션화해서 이 꼬리가 `[user] Observation…`
+안에 묻혀 있었다 ("가이드라인이 어디 갔지?").
+
+- `_split_tail`: 마지막 동적 메시지에서 꼬리를 분리해 `Standing Rules (per-turn
+  tail)` / `Session State (per-turn tail)` **kind="tail"** 섹션으로 목록 맨 끝에
+  (실제 요청 위치와 동형). 대화 섹션에서는 제거돼 중복 표시 없음.
+- 프론트: tail 전용 그룹 헤더("appended to the LAST message every turn — not
+  system prompt") + 좌측 색상. 이름에 "system" 을 쓰지 않는 것은 의도 —
+  프로바이더 관점에서 이 텍스트는 system 이 아니라 user 메시지 본문이다.
+- fetch-on-open 이라 항상 호출 시점 최신 값 — 스테일/유령 섹션 문제 없음.
+
 ## [8.53.0] - 2026-09-01
 
 ### Changed — 압축 임계값을 "전체 창 × ratio(총입력 기준)" 로
@@ -2177,6 +2193,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.54.0]: https://github.com/dujeonglee/agent-cli/compare/v8.53.0...v8.54.0
 [8.53.0]: https://github.com/dujeonglee/agent-cli/compare/v8.52.1...v8.53.0
 [8.52.1]: https://github.com/dujeonglee/agent-cli/compare/v8.52.0...v8.52.1
 [8.52.0]: https://github.com/dujeonglee/agent-cli/compare/v8.51.0...v8.52.0
