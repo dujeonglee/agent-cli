@@ -7,7 +7,7 @@ import pytest
 
 from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
-from agent_cli.providers.base import LLMResponse
+from agent_cli.providers.base import CallSettings, LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import interruptible_lines
 from agent_cli.providers.openai import OpenAIProvider
@@ -382,7 +382,9 @@ class TestOpenAIProvider:
             system="s",
             model="m",
             capabilities=caps_thinking,
-            request_overrides={"enable_thinking": False, "reasoning_effort": "high"},
+            settings=CallSettings(
+                thinking={"enable_thinking": False, "reasoning_effort": "high"}
+            ),
         )
         body = mock_post.call_args.kwargs["json"]
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
@@ -394,7 +396,9 @@ class TestOpenAIProvider:
             system="s",
             model="m",
             capabilities=caps_thinking,
-            request_overrides={"enable_thinking": True, "reasoning_effort": "high"},
+            settings=CallSettings(
+                thinking={"enable_thinking": True, "reasoning_effort": "high"}
+            ),
         )
         body = mock_post.call_args.kwargs["json"]
         assert body["chat_template_kwargs"] == {"enable_thinking": True}
@@ -406,7 +410,7 @@ class TestOpenAIProvider:
             system="s",
             model="m",
             capabilities=caps_thinking,
-            request_overrides={"reasoning_effort": "off"},
+            settings=CallSettings(thinking={"reasoning_effort": "off"}),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "reasoning_effort" not in body
@@ -420,7 +424,9 @@ class TestOpenAIProvider:
             system="s",
             model="m",
             capabilities=caps_thinking,
-            request_overrides={"enable_thinking": True, "reasoning_effort": "off"},
+            settings=CallSettings(
+                thinking={"enable_thinking": True, "reasoning_effort": "off"}
+            ),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "reasoning_effort" not in body
@@ -442,7 +448,9 @@ class TestOpenAIProvider:
             system="s",
             model="m",
             capabilities=caps_structured,  # supports_thinking=False
-            request_overrides={"enable_thinking": True, "reasoning_effort": "high"},
+            settings=CallSettings(
+                thinking={"enable_thinking": True, "reasoning_effort": "high"}
+            ),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "reasoning_effort" not in body
@@ -691,7 +699,7 @@ class TestThinkingBudget:
                 system="sys",
                 model="claude-sonnet-4-20250514",
                 capabilities=caps_thinking,
-                request_overrides={"reasoning_effort": eff},
+                settings=CallSettings(thinking={"reasoning_effort": eff}),
             )
             body = mock_post.call_args.kwargs["json"]
             assert body["thinking"] == {"type": "enabled", "budget_tokens": expect}
@@ -709,7 +717,7 @@ class TestThinkingBudget:
             system="sys",
             model="claude-sonnet-4-20250514",
             capabilities=caps_thinking,
-            request_overrides={"reasoning_effort": "off"},
+            settings=CallSettings(thinking={"reasoning_effort": "off"}),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "thinking" not in body
@@ -727,7 +735,7 @@ class TestThinkingBudget:
             system="sys",
             model="claude-sonnet-4-20250514",
             capabilities=caps_thinking,
-            request_overrides={"enable_thinking": False},
+            settings=CallSettings(thinking={"enable_thinking": False}),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "thinking" not in body
@@ -746,7 +754,9 @@ class TestThinkingBudget:
             system="sys",
             model="claude-sonnet-4-20250514",
             capabilities=caps_thinking,
-            request_overrides={"enable_thinking": True, "reasoning_effort": "off"},
+            settings=CallSettings(
+                thinking={"enable_thinking": True, "reasoning_effort": "off"}
+            ),
         )
         body = mock_post.call_args.kwargs["json"]
         assert "thinking" not in body

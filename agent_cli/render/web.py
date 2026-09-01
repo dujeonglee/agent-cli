@@ -776,6 +776,11 @@ class WebRenderer(Renderer):
         여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
         self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
 
+    def broadcast_stream_idle(self, seconds: int) -> None:
+        """P3 (v8.55.0): Stall(스트림 무진전 한도) 변경을 타 뷰어에 sticky
+        전파 — 팝오버 입력 동기화 + 재접속 snapshot."""
+        self.set_sticky("stream_idle", "stream_idle", {"seconds": seconds})
+
     def set_auto_approve(self, on: bool) -> None:
         """⚡ 자동 승인 토글 설정 + 다른 뷰어에 sticky 로 전파(체크박스 동기화·재접속
         snapshot 복원). confirm() 이 이 플래그를 읽어 안전 프롬프트를 건너뛴다."""

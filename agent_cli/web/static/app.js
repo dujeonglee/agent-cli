@@ -1380,6 +1380,13 @@
     );
   });
 
+  es.addEventListener("stream_idle", function (e) {
+    // P3: 다른 뷰어의 Stall(무진전 한도) 변경을 IIFE 로 중계.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:streamidle", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("max_agents", function (e) {
     // 5.16: 다른 뷰어가 에이전트 상한을 바꾸면 sticky 로 전파 — maxagents
     // IIFE 로 중계해 이 탭의 입력/체크박스도 동기화한다.
@@ -4256,6 +4263,49 @@
   document.addEventListener("agentcli:compaction", (e) => {
     const d = e.detail || {};
     if (typeof d.ratio === "number") applyRatio(d.ratio);
+  });
+})();
+
+// ── 스트림 무진전(Stall) 한도 (P3, v8.55.0) ────────────────────────────
+// ctx 팝오버에서 "마지막 토큰 이후 N분 무진전 시 재접속·재전송" 한도를 세션
+// 한정 변경. keep-alive 는 진전이 아님. 0 = 감지 끔. compaction IIFE 동형.
+(function () {
+  "use strict";
+  const $wrap = document.getElementById("stall-wrap");
+  const $input = document.getElementById("stall-input");
+  if (!$wrap || !$input) return;
+
+  const toMin = (s) => (s <= 0 ? 0 : Math.round(s / 60));
+  function apply(seconds) {
+    $input.value = toMin(seconds);
+  }
+
+  fetch("api/stream-idle")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      if (typeof d.seconds === "number") apply(d.seconds);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  $input.addEventListener("change", () => {
+    const minutes = Math.max(0, Math.round(Number($input.value) || 0));
+    fetch("api/stream-idle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds: minutes * 60 }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.seconds === "number") apply(d.seconds);
+      })
+      .catch(() => {});
+  });
+
+  document.addEventListener("agentcli:streamidle", (e) => {
+    const d = e.detail || {};
+    if (typeof d.seconds === "number") apply(d.seconds);
   });
 })();
 

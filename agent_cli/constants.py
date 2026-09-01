@@ -37,6 +37,13 @@ LLM_STREAM_TIMEOUT = (LLM_CONNECT_TIMEOUT, LLM_STREAM_READ_TIMEOUT)
 STREAM_IDLE_THRESHOLD = 30
 STREAM_IDLE_MAX_TICKS = 20
 STREAM_MAX_RECONNECTS = 3
+# P3 (v8.55.0): 스트림 무진전(no-token) 한도의 기본/상한. 유휴는 "마지막
+# **진전**(실제 토큰/종결 이벤트) 이후"로 잰다 — keep-alive 프레임은 진전이
+# 아니다(omlx hang 실측 2회: keep-alive 가 종전 줄-기준 감지를 무력화).
+# 사용자 값은 ctx.stream_idle_timeout_s(web "Stall" / env
+# AGENT_CLI_STREAM_IDLE_TIMEOUT_S) → CallSettings 로 매 콜 전달, 0=감지 끔.
+DEFAULT_STREAM_IDLE_TIMEOUT_S = STREAM_IDLE_THRESHOLD * STREAM_IDLE_MAX_TICKS
+STREAM_IDLE_TIMEOUT_MAX_S = 3600
 AGENT_DEFAULT_TIMEOUT = 300
 # First-run capability detection probes (thinking support, JSON-format
 # tolerance, context-window overflow). All run once per model and may

@@ -12,6 +12,30 @@
 
 ## [Unreleased]
 
+## [8.55.0] - 2026-09-02
+
+### Fixed — 서버 hang 시 재접속이 발화하지 않던 문제 (P3) + CallSettings
+
+Harbor 벤치에서 2회 실측: omlx 가 생성을 멈춘 채 keep-alive 프레임(빈 delta 의
+정규 chat chunk)만 보내는 hang 에서, 유휴 감지기가 **아무 줄이나 수신하면**
+타이머를 리셋해 "무토큰 10분 → 재접속"이 영원히 발화하지 않았다(각 14~15분
+손실 + 태스크 0점).
+
+- **유휴 = "마지막 진전 이후"** (`ProgressClock`): `run_sse_stream` 이 실제
+  내용 있는 이벤트(content/thinking/usage/종결)에서만 시계를 되감고, keep-alive·
+  SSE 주석·공백 framing 은 진전이 아니다. keep-alive 폭주로 수신 루프가 바쁠
+  때도 검사가 굶지 않게 수신 경로에서도 판정한다. 발화 시 기존
+  StreamIdleTimeout → 동일 요청 재전송(≤3회) 경로 그대로.
+- **한도는 사용자 값** (첫 토큰 전후 공통, 기본 10분): web ctx 팝오버의 새
+  "Stall" 입력(분; 0=끔) — Compact 슬라이더·Agents 상한과 같은 자리, 같은
+  패턴(GET/POST `/api/stream-idle` + sticky 동기화 + 서브에이전트 spawn 시점
+  상속). 부팅 기본은 env `AGENT_CLI_STREAM_IDLE_TIMEOUT_S`.
+- **`CallSettings`** (providers/base): provider 경계를 여행하는 세션-런타임
+  노브의 단일 컨테이너 — thinking 오버라이드(구 `request_overrides` 대체),
+  무진전 한도, 요청-시 클램프 `max_output_tokens`(v8.53.0 의
+  capabilities-replace 대체 — capabilities 는 순수 모델 서술로 복귀). 새
+  노브는 필드 추가만으로 배선 완료.
+
 ## [8.54.0] - 2026-09-01
 
 ### Added — Prompt Inspector 에 매턴 꼬리 섹션
@@ -2193,6 +2217,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.55.0]: https://github.com/dujeonglee/agent-cli/compare/v8.54.0...v8.55.0
 [8.54.0]: https://github.com/dujeonglee/agent-cli/compare/v8.53.0...v8.54.0
 [8.53.0]: https://github.com/dujeonglee/agent-cli/compare/v8.52.1...v8.53.0
 [8.52.1]: https://github.com/dujeonglee/agent-cli/compare/v8.52.0...v8.52.1

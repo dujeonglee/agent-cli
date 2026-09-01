@@ -4383,7 +4383,8 @@ class TestMaxTokensClamp:
             ctx=ctx,
             max_turns=2,
         )
-        sent = provider.call.call_args_list[0].kwargs["capabilities"]
+        sent = provider.call.call_args_list[0].kwargs["settings"]
+        assert sent.max_output_tokens is not None
         assert sent.max_output_tokens < 50_000  # 남은 창보다 크게 못 보냄
         assert sent.max_output_tokens >= 1024
 
@@ -4400,8 +4401,8 @@ class TestMaxTokensClamp:
             ctx=ctx,
             max_turns=2,
         )
-        sent = provider.call.call_args_list[0].kwargs["capabilities"]
-        assert sent.max_output_tokens == caps.max_output_tokens
+        sent = provider.call.call_args_list[0].kwargs["settings"]
+        assert sent.max_output_tokens is None  # 클램프 불필요 → 등록값 사용
 
     def test_floor_when_window_is_exhausted(self, tmp_path):
         from agent_cli.context.manager import ContextManager
@@ -4419,5 +4420,18 @@ class TestMaxTokensClamp:
             ctx=ctx,
             max_turns=2,
         )
-        sent = provider.call.call_args_list[0].kwargs["capabilities"]
+        sent = provider.call.call_args_list[0].kwargs["settings"]
         assert sent.max_output_tokens >= 1024
+
+
+class TestStreamIdleInheritance:
+    def test_subagent_inherits_stream_idle_timeout(self, tmp_path):
+        """P3: 서브에이전트 ctx 는 spawn 시점의 부모 Stall 값을 상속."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.subagent.runner import create_subagent_ctx
+
+        parent = ContextManager(session_dir=tmp_path / "p")
+        parent.set_stream_idle_timeout(120)
+        sub, err = create_subagent_ctx("none", parent, tmp_path / "s")
+        assert sub is not None, err
+        assert sub.stream_idle_timeout_s == 120

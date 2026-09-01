@@ -259,6 +259,28 @@ def post_with_retry(
     raise last_exc
 
 
+class ProgressClock:
+    """스트림 '진전'(실제 토큰/종결 이벤트) 시각의 공유 시계 (P3, v8.55.0).
+
+    ``run_sse_stream`` 이 내용 있는 이벤트에서만 ``touch()`` 하고,
+    ``interruptible_lines`` 는 ``elapsed()`` 로 유휴를 잰다 — keep-alive
+    프레임(빈 delta chunk·SSE 주석·공백 framing)은 줄이지만 진전이 아니므로
+    시계를 되감지 못한다. 서버가 생성을 멈춘 채 keep-alive 만 보내는
+    hang(omlx 실측 2회, 각 14~15분 손실 + 태스크 0점)이 이것으로 비로소
+    감지되어 기존 StreamIdleTimeout → 재전송 경로를 탄다."""
+
+    __slots__ = ("_last",)
+
+    def __init__(self) -> None:
+        self._last = time.monotonic()
+
+    def touch(self) -> None:
+        self._last = time.monotonic()
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self._last
+
+
 def interruptible_lines(
     r: requests.Response,
     interrupt_check: Callable[[], bool] | None = None,
@@ -266,6 +288,7 @@ def interruptible_lines(
     idle_threshold: float | None = None,
     max_idle_ticks: int | None = None,
     on_idle: Callable[[int, float], None] | None = None,
+    progress_clock: ProgressClock | None = None,
 ) -> Iterator[bytes]:
     """Yield SSE lines from a streaming response, but stay interruptible even
     when no data is arriving, and surface / bound a stalled stream.
@@ -316,6 +339,29 @@ def interruptible_lines(
 
     last_data = time.monotonic()
     idle_ticks = 0
+
+    def _idle_check() -> None:
+        # 유휴 기준 (P3, v8.55.0): ``progress_clock`` 이 주어지면 "마지막
+        # **진전** 이후"(keep-alive 무시), 아니면 종전대로 "마지막 줄 수신
+        # 이후". 진전이 있으면 시계가 되감기므로 틱을 재무장한다.
+        nonlocal idle_ticks
+        if idle_threshold is None:
+            return
+        idle = (
+            progress_clock.elapsed()
+            if progress_clock is not None
+            else time.monotonic() - last_data
+        )
+        if idle < idle_threshold * idle_ticks:
+            idle_ticks = int(idle // idle_threshold)
+        if idle >= idle_threshold * (idle_ticks + 1):
+            idle_ticks += 1
+            if on_idle is not None:
+                on_idle(idle_ticks, idle)
+            if max_idle_ticks is not None and idle_ticks >= max_idle_ticks:
+                r.close()
+                raise StreamIdleTimeout(idle)
+
     while True:
         if interrupt_check is not None and interrupt_check():
             r.close()  # abort the reader's blocked recv
@@ -323,19 +369,16 @@ def interruptible_lines(
         try:
             item = q.get(timeout=poll_interval)
         except queue.Empty:
-            if idle_threshold is not None:
-                idle = time.monotonic() - last_data
-                if idle >= idle_threshold * (idle_ticks + 1):
-                    idle_ticks += 1
-                    if on_idle is not None:
-                        on_idle(idle_ticks, idle)
-                    if max_idle_ticks is not None and idle_ticks >= max_idle_ticks:
-                        r.close()
-                        raise StreamIdleTimeout(idle)
+            _idle_check()
             continue
-        # A line arrived → the stream is alive; reset the idle window.
+        # A line arrived → the TRANSPORT is alive; with a progress clock the
+        # idle window is about tokens, so keep-alive floods must not skip the
+        # check (they can starve the Empty branch entirely).
         last_data = time.monotonic()
-        idle_ticks = 0
+        if progress_clock is None:
+            idle_ticks = 0
+        else:
+            _idle_check()
         if item is _STREAM_DONE:
             if err:
                 raise err[0]
@@ -448,8 +491,13 @@ def run_sse_stream(
     degeneration_check=None,
     degeneration_trigger="#",
     interrupt_check=None,
+    idle_timeout_s: int | None = None,
 ) -> StreamAccum:
     """SSE 스트림 공용 골격 — 양 provider 동형 보장 지점.
+
+    ``idle_timeout_s`` (P3, v8.55.0): 무진전 한도 — None=기본(30s×20틱),
+    0=감지 끔, N초=사용자값(CallSettings 경유). 유휴는 ProgressClock 기준
+    (마지막 실제 토큰 이후)이라 keep-alive 로는 연명되지 않는다.
 
     소유: ``interruptible_lines`` 순회(**idle notice + StreamIdleTimeout
     을 양 provider 에 동일 적용** — 이전엔 openai 만), ``data: `` 프리픽스
@@ -465,6 +513,17 @@ def run_sse_stream(
 
     from agent_cli.constants import STREAM_IDLE_MAX_TICKS, STREAM_IDLE_THRESHOLD
 
+    if idle_timeout_s is None:
+        idle_threshold: float | None = STREAM_IDLE_THRESHOLD
+        max_ticks: int | None = STREAM_IDLE_MAX_TICKS
+    elif idle_timeout_s <= 0:
+        idle_threshold = None
+        max_ticks = None
+    else:
+        idle_threshold = STREAM_IDLE_THRESHOLD
+        # float-안전 ceil (테스트가 threshold 를 소수로 패치할 수 있음)
+        max_ticks = max(1, int(-(-float(idle_timeout_s) // STREAM_IDLE_THRESHOLD)))
+
     acc = StreamAccum()
     # 리스트 누적 + 종료 시 1회 join (v8.41.0 — 리뷰 §4.2 효율): 인스턴스
     # 속성 str += 는 CPython 의 로컬-변수 최적화 밖이라 장출력에서 O(n²).
@@ -479,16 +538,18 @@ def run_sse_stream(
         render_status(
             "running",
             f"응답 대기 중 — 토큰 없음 {int(seconds)}s "
-            f"({tick}/{STREAM_IDLE_MAX_TICKS}, "
-            f"{STREAM_IDLE_MAX_TICKS * STREAM_IDLE_THRESHOLD // 60}분 후 재연결)",
+            f"({tick}/{max_ticks}, "
+            f"{int(max_ticks * STREAM_IDLE_THRESHOLD) // 60}분 무진전 시 재연결)",
         )
 
+    clock = ProgressClock()
     for line in interruptible_lines(
         r,
         interrupt_check,
-        idle_threshold=STREAM_IDLE_THRESHOLD,
-        max_idle_ticks=STREAM_IDLE_MAX_TICKS,
+        idle_threshold=idle_threshold,
+        max_idle_ticks=max_ticks,
         on_idle=_on_idle,
+        progress_clock=clock,
     ):
         if not line:
             continue
@@ -506,6 +567,9 @@ def run_sse_stream(
         ev = map_payload(data)
         if ev is None:
             continue
+        if ev.usage_fields or ev.thinking or ev.text or ev.stop_reason or ev.done:
+            # 실제 진전 — keep-alive(빈 delta) 프레임은 여기 도달하지 못한다.
+            clock.touch()
         if ev.usage_fields:
             acc.usage_fields.update(ev.usage_fields)
         if ev.thinking:

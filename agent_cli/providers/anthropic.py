@@ -8,6 +8,7 @@ from agent_cli.constants import (
     LLM_API_TIMEOUT,
 )
 from agent_cli.providers.base import (
+    CallSettings,
     LLMResponse,
     TokenUsage,
     resolve_thinking_policy,
@@ -102,13 +103,19 @@ class AnthropicProvider:
         # v8.21.1 게이트). 여기는 정책을 Anthropic 방언으로 번역만 한다:
         # effort → budget_tokens (Anthropic 은 effort enum 이 없어 budget 이
         # 유일 레버), disabled → thinking 블록 미주입.
-        policy = resolve_thinking_policy(capabilities, kwargs.get("request_overrides"))
+        # 세션-런타임 노브 (v8.55.0, base.CallSettings): thinking 오버라이드·
+        # 스트림 무진전 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
+        settings = kwargs.get("settings") or CallSettings()
+        if settings.max_output_tokens is not None:
+            body["max_tokens"] = settings.max_output_tokens
+        max_out = body["max_tokens"]
+        policy = resolve_thinking_policy(capabilities, settings.thinking)
         if policy is not None and policy.enabled:
             budget = _EFFORT_TO_BUDGET[policy.effort]
             budget = max(budget, _MIN_THINKING_BUDGET)
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
             # Anthropic deducts thinking from max_tokens
-            body["max_tokens"] = budget + capabilities.max_output_tokens
+            body["max_tokens"] = budget + max_out
 
         if on_chunk:
             body["stream"] = True
@@ -124,6 +131,7 @@ class AnthropicProvider:
                     kwargs.get("degeneration_check"),
                     kwargs.get("interrupt_check"),
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
+                    idle_timeout_s=settings.stream_idle_timeout_s,
                 ),
             )
 
@@ -140,6 +148,7 @@ class AnthropicProvider:
         degeneration_check=None,
         interrupt_check=None,
         degeneration_trigger="#",
+        idle_timeout_s=None,
     ) -> LLMResponse:
         """Anthropic SSE 스트림 — 골격은 ``http.run_sse_stream`` 공용 (C6,
         v4.48.0). 이로써 idle notice/StreamIdleTimeout·JSONDecodeError 관용이
@@ -152,6 +161,7 @@ class AnthropicProvider:
             degeneration_check=degeneration_check,
             degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
+            idle_timeout_s=idle_timeout_s,
         )
         f = acc.usage_fields
         usage = None

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -550,3 +552,113 @@ class TestC6Symmetry:
             http_src = fh.read()
         assert "except StreamIdleTimeout" in http_src
         assert "STREAM_MAX_RECONNECTS" in http_src
+
+
+class TestProgressClockIdle:
+    """P3 (v8.55.0): 유휴 = '마지막 진전 이후' — keep-alive 는 진전이 아니다."""
+
+    def _resp(self, lines_fn, closed):
+        class R:
+            def iter_lines(self):
+                yield from lines_fn()
+
+            def close(self):
+                closed.append(True)
+
+        return R()
+
+    def test_keepalive_lines_do_not_defer_timeout(self):
+        import time as _t
+
+        from agent_cli.providers.http import (
+            ProgressClock,
+            StreamIdleTimeout,
+            interruptible_lines,
+        )
+
+        closed = []
+
+        def lines():
+            while not closed:
+                _t.sleep(0.01)
+                yield b": keep-alive"
+
+        gen = interruptible_lines(
+            self._resp(lines, closed),
+            lambda: False,
+            poll_interval=0.01,
+            idle_threshold=0.05,
+            max_idle_ticks=2,
+            progress_clock=ProgressClock(),
+        )
+        with pytest.raises(StreamIdleTimeout):
+            for _ in gen:
+                pass
+        assert closed  # 연결을 닫고 나온다 (재전송 경로 전제)
+
+    def test_progress_touch_defers_timeout(self):
+        import time as _t
+
+        from agent_cli.providers.http import ProgressClock, interruptible_lines
+
+        closed = []
+
+        def lines():
+            for _ in range(30):
+                _t.sleep(0.01)
+                yield b"data: x"
+
+        clock = ProgressClock()
+        n = 0
+        for _ in interruptible_lines(
+            self._resp(lines, closed),
+            None,
+            poll_interval=0.01,
+            idle_threshold=0.05,
+            max_idle_ticks=2,
+            progress_clock=clock,
+        ):
+            clock.touch()  # 소비자가 진전 신호 → 타임아웃 없이 완주
+            n += 1
+        assert n == 30 and not closed
+
+    def test_run_sse_stream_keepalive_frames_hit_timeout(self, monkeypatch):
+        import time as _t
+
+        import agent_cli.constants as consts
+        from agent_cli.providers import http as http_mod
+
+        monkeypatch.setattr(consts, "STREAM_IDLE_THRESHOLD", 0.05)
+        closed = []
+
+        def lines():
+            while not closed:
+                _t.sleep(0.01)
+                yield b'data: {"keepalive": true}'
+
+        with pytest.raises(http_mod.StreamIdleTimeout):
+            http_mod.run_sse_stream(
+                self._resp(lines, closed),
+                lambda t: None,
+                map_payload=lambda d: None,  # keep-alive → 무진전
+                interrupt_check=lambda: False,
+                idle_timeout_s=1,  # threshold 0.05 → 20틱 ≈ 1s
+            )
+
+    def test_run_sse_stream_zero_disables_idle(self):
+        from agent_cli.providers import http as http_mod
+
+        closed = []
+
+        def lines():
+            for _ in range(5):
+                yield b'data: {"keepalive": true}'
+
+        acc = http_mod.run_sse_stream(
+            self._resp(lines, closed),
+            lambda t: None,
+            map_payload=lambda d: None,
+            interrupt_check=lambda: False,
+            idle_timeout_s=0,  # 감지 끔 — 예외 없이 스트림 종료까지 소진
+        )
+        assert acc.content == ""

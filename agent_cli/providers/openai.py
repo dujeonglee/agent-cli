@@ -13,6 +13,7 @@ from agent_cli.constants import (
     LLM_API_TIMEOUT,
 )
 from agent_cli.providers.base import (
+    CallSettings,
     LLMResponse,
     TokenUsage,
     resolve_thinking_policy,
@@ -74,7 +75,12 @@ class OpenAIProvider:
         #  · chat_template_kwargs.enable_thinking (Qwen/MLX 스위치)은 명시
         #    enable_thinking 오버라이드가 있을 때만 방출 — 방출 표면 불변,
         #    값은 정책의 enabled (eff="off"+enable=True 조합도 프로바이더 간 동형).
-        policy = resolve_thinking_policy(capabilities, kwargs.get("request_overrides"))
+        # 세션-런타임 노브 (v8.55.0, base.CallSettings): thinking 오버라이드·
+        # 스트림 무진전 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
+        settings = kwargs.get("settings") or CallSettings()
+        if settings.max_output_tokens is not None:
+            body["max_tokens"] = settings.max_output_tokens
+        policy = resolve_thinking_policy(capabilities, settings.thinking)
         if policy is not None:
             if policy.enabled:
                 body["reasoning_effort"] = policy.effort
@@ -98,6 +104,7 @@ class OpenAIProvider:
                     kwargs.get("degeneration_check"),
                     kwargs.get("interrupt_check"),
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
+                    idle_timeout_s=settings.stream_idle_timeout_s,
                 ),
             )
 
@@ -114,6 +121,7 @@ class OpenAIProvider:
         degeneration_check=None,
         interrupt_check=None,
         degeneration_trigger="#",
+        idle_timeout_s=None,
     ) -> LLMResponse:
         """OpenAI-호환 SSE 스트림 — 골격(idle/파싱/누산/조기종료/interrupt)은
         ``http.run_sse_stream`` 공용, 여기는 이벤트 shape 해석과 usage 조립만
@@ -126,6 +134,7 @@ class OpenAIProvider:
             degeneration_check=degeneration_check,
             degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
+            idle_timeout_s=idle_timeout_s,
         )
         usage = None
         if acc.usage_fields:

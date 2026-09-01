@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc
@@ -13,6 +14,7 @@ from agent_cli.loop.prompt import SystemPromptSvc
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
+from agent_cli.providers.base import CallSettings
 from agent_cli.render import (
     render_context_dump,
     render_spinner_start,
@@ -130,7 +132,7 @@ class LLMCaller:
         # reused below to reconcile the cache against the server's actual
         # input count once the call succeeds.
         sys_tokens = estimate_tokens(self.prompt.system) if self.ctx else 0
-        call_caps = self.cfg.capabilities
+        clamped_max_tokens: int | None = None
         if self.ctx:
             # v8.53.0: cap 은 **총입력(system + 대화 + 세션상태) 기준** —
             # ``context_window × compaction_ratio`` 에서 system 실측과 직전
@@ -165,7 +167,7 @@ class LLMCaller:
                 self._MIN_REQUEST_OUTPUT_TOKENS,
             )
             if clamped != self.cfg.capabilities.max_output_tokens:
-                call_caps = replace(self.cfg.capabilities, max_output_tokens=clamped)
+                clamped_max_tokens = clamped
 
         # Context dump (verbose only)
         if self.cfg.verbose:
@@ -221,7 +223,7 @@ class LLMCaller:
                 messages=call_messages,
                 system=self.prompt.system,
                 model=self.cfg.model,
-                capabilities=call_caps,
+                capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
                 degeneration_check=self.cfg.wire_format.is_degenerate,
                 # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".
@@ -229,8 +231,20 @@ class LLMCaller:
                     self.cfg.wire_format, "degeneration_trigger", "#"
                 ),
                 interrupt_check=self._interrupt_check,
-                # 세션 thinking 오버라이드(web UI) — 공유 ctx 라 이 콜이 즉시 반영.
-                request_overrides=(self.ctx.thinking_override if self.ctx else None),
+                # 세션-런타임 노브 스냅샷 (v8.55.0, base.CallSettings):
+                # thinking 오버라이드·스트림 무진전 한도·클램프 max_tokens.
+                # 공유 ctx 라 web 변경이 이 콜부터 즉시 반영.
+                settings=CallSettings(
+                    thinking=(
+                        (self.ctx.thinking_override or None) if self.ctx else None
+                    ),
+                    stream_idle_timeout_s=(
+                        self.ctx.stream_idle_timeout_s
+                        if self.ctx
+                        else DEFAULT_STREAM_IDLE_TIMEOUT_S
+                    ),
+                    max_output_tokens=clamped_max_tokens,
+                ),
                 **extra_call_kwargs,
             )
             # Stitch the prefill back onto the response so downstream
@@ -315,7 +329,6 @@ class LLMCaller:
             consume the response budget without ending up in the
             persisted summary.
         """
-        from dataclasses import replace
 
         summarisation_prompt = (
             "You are compacting an agent's working transcript so it can "

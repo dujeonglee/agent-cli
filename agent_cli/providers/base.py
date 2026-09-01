@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
 from agent_cli.providers.capabilities import ModelCapabilities
 
 # content 인라인 thinking 블록 격리 (5.10.0) — 구현은 thinking_tags 단일
@@ -99,6 +100,25 @@ class ThinkingPolicy:
     enabled: bool
     effort: str
     enable_override: bool | None
+
+
+@dataclass(frozen=True)
+class CallSettings:
+    """루프 → provider → 스트림으로 **여행하는** 세션-런타임 노브의 단일
+    컨테이너 (v8.55.0). ctx 가 세션 상태로 들고, llm.py 가 매 콜 스냅샷을
+    만들어 ``provider.call(settings=...)`` 로 전달한다. 새 노브 = 여기 필드
+    추가(+기본값) + 소비 지점 한 곳 — provider 시그니처는 불변.
+
+    담는 기준: provider 경계를 실제로 건너는 것만. ctx-로컬 노브
+    (compaction_ratio 등)는 제외 — 담으면 진실 원천이 둘이 된다."""
+
+    #: 세션 thinking 오버라이드 (구 ``request_overrides`` — 의미 동일).
+    thinking: dict | None = None
+    #: 스트림 무진전(no-token) 한도(초). 0 = 감지 끔.
+    stream_idle_timeout_s: int = DEFAULT_STREAM_IDLE_TIMEOUT_S
+    #: 요청-시 클램프된 max_tokens. None = capabilities 등록값 사용 —
+    #: capabilities 는 순수 모델 서술로 남는다 (v8.53.0 의 replace 대체).
+    max_output_tokens: int | None = None
 
 
 def resolve_thinking_policy(

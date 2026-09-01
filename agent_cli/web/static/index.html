@@ -51,6 +51,11 @@
                  aria-label="Max concurrent agents">
           <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
         </span>
+        <span id="stall-wrap" title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Session-only; sub-agents inherit at spawn." hidden>
+          <label id="stall-label" for="stall-input">Stall</label>
+          <input id="stall-input" type="number" min="0" max="60" step="1" value="10"
+                 aria-label="Stream stall timeout (minutes; 0 = off)">
+        </span>
         <span id="thinking-wrap" title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>
           <label for="think-enable">사고</label>
           <select id="think-enable" aria-label="Thinking on/off">

@@ -671,7 +671,8 @@ class TestStaticUI:
         assert "supports_thinking" in js and "setSupported(" in js
         with open("agent_cli/providers/openai.py", encoding="utf-8") as _f:
             prov = _f.read()
-        assert "request_overrides" in prov and "chat_template_kwargs" in prov
+        # v8.55.0: request_overrides → CallSettings.thinking (의미 동일)
+        assert "settings.thinking" in prov and "chat_template_kwargs" in prov
         # provider 게이트: 공용 정책 함수 경유 (supports_thinking=False → None →
         # 사고 필드 일절 미주입 — resolve_thinking_policy 가 단일 소스)
         assert "resolve_thinking_policy" in prov
@@ -3677,3 +3678,61 @@ class TestInspectorTailSections:
         ctx.add({"role": "user", "content": "hello"})
         secs = _dynamic_context_sections(ctx)
         assert all(s["kind"] == "dynamic" for s in secs)
+
+
+class TestStreamIdleEndpoint:
+    """GET/POST /api/stream-idle — 세션 한정 스트림 무진전(Stall) 한도 (P3)."""
+
+    def _client_with_ctx(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        renderer = WebRenderer()
+        ctx = ContextManager(tmp_path)
+        server = WebServer(renderer, token="testtoken", ctx=ctx)
+        return server, renderer, TestClient(create_app(server)), ctx
+
+    def test_get_returns_seconds_and_range(self, tmp_path):
+        _, _, client, _ctx = self._client_with_ctx(tmp_path)
+        d = client.get("/api/stream-idle?token=testtoken").json()
+        assert d["seconds"] == 600 and d["min"] == 60 and d["max"] == 3600
+
+    def test_post_sets_clamps_and_zero_disables(self, tmp_path):
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        d = client.post(
+            "/api/stream-idle?token=testtoken", json={"seconds": 120}
+        ).json()
+        assert d["ok"] and d["seconds"] == 120 and ctx.stream_idle_timeout_s == 120
+        assert (
+            client.post("/api/stream-idle?token=testtoken", json={"seconds": 5}).json()[
+                "seconds"
+            ]
+            == 60
+        )  # clamp ↓
+        assert (
+            client.post(
+                "/api/stream-idle?token=testtoken", json={"seconds": 99999}
+            ).json()["seconds"]
+            == 3600
+        )  # clamp ↑
+        assert (
+            client.post("/api/stream-idle?token=testtoken", json={"seconds": 0}).json()[
+                "seconds"
+            ]
+            == 0
+        )  # off
+
+    def test_post_broadcasts_sticky(self, tmp_path):
+        _, renderer, client, _ctx = self._client_with_ctx(tmp_path)
+        client.post("/api/stream-idle?token=testtoken", json={"seconds": 300})
+        conn = WebConnection(id="v2")
+        snap = renderer.register_connection(conn)
+        vals = [d.get("seconds") for (ev, d) in snap if ev == "stream_idle"]
+        assert vals == [300]
+
+    def test_env_default_and_zero(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENT_CLI_STREAM_IDLE_TIMEOUT_S", "300")
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path)
+        assert ctx.stream_idle_timeout_s == 300
+        assert ctx.set_stream_idle_timeout(0) == 0

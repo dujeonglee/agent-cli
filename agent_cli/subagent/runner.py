@@ -137,6 +137,11 @@ def create_subagent_ctx(
             compaction_ratio=ratio,
         )
 
+    # P3 (v8.55.0): 스트림 무진전 한도도 spawn 시점 스냅샷 상속 — compaction
+    # ratio 와 동형 (이후 부모 변경은 새 spawn 에만 적용).
+    if parent_ctx is not None and ctx is not None:
+        ctx.stream_idle_timeout_s = parent_ctx.stream_idle_timeout_s
+
     from agent_cli.render import get_renderer
 
     get_renderer().note_scope_ctx(ctx)

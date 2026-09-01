@@ -736,6 +736,41 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_compaction_ratio(clamped)
         return {"ok": True, "ratio": clamped}
 
+    @app.get("/api/stream-idle")
+    async def get_stream_idle():
+        """현재 스트림 무진전(no-token) 한도(초) + 입력 범위. 0=감지 끔.
+        프론트 ctx 팝오버 "Stall" 초기화용 (P3, v8.55.0)."""
+        from agent_cli.constants import STREAM_IDLE_TIMEOUT_MAX_S
+        from agent_cli.context.manager import (
+            STREAM_IDLE_TIMEOUT_MIN_S,
+            default_stream_idle_timeout_s,
+        )
+
+        seconds = (
+            server.ctx.stream_idle_timeout_s
+            if server.ctx is not None
+            else default_stream_idle_timeout_s()
+        )
+        return {
+            "seconds": seconds,
+            "min": STREAM_IDLE_TIMEOUT_MIN_S,
+            "max": STREAM_IDLE_TIMEOUT_MAX_S,
+        }
+
+    @app.post("/api/stream-idle")
+    async def set_stream_idle(body: dict):
+        """세션 한정 스트림 무진전 한도 변경 — 다음 LLM 콜 즉시 반영(공유
+        ctx), clamp 결과 반환, sticky 로 타 뷰어 동기화. 0=감지 끔."""
+        if server.ctx is None:
+            return {"ok": False, "error": "no active context"}
+        try:
+            seconds = int(body.get("seconds"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "seconds must be an integer"}
+        clamped = server.ctx.set_stream_idle_timeout(seconds)
+        server.renderer.broadcast_stream_idle(clamped)
+        return {"ok": True, "seconds": clamped}
+
     @app.get("/api/confirm-mode")
     async def get_confirm_mode():
         """⚡ 자동 승인(확인 없이 실행) 현재 상태 — 헤더 체크박스 초기화용."""
