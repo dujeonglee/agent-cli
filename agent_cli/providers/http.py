@@ -492,6 +492,7 @@ def run_sse_stream(
     degeneration_trigger="#",
     interrupt_check=None,
     idle_timeout_s: int | None = None,
+    on_thinking=None,
 ) -> StreamAccum:
     """SSE 스트림 공용 골격 — 양 provider 동형 보장 지점.
 
@@ -574,6 +575,8 @@ def run_sse_stream(
             acc.usage_fields.update(ev.usage_fields)
         if ev.thinking:
             thinking_parts.append(ev.thinking)
+            if on_thinking is not None:
+                on_thinking(ev.thinking)  # P5: 사고 진행 가시화 (v8.56.0)
         if ev.text:
             if not t_first:
                 t_first = _time.perf_counter_ns()

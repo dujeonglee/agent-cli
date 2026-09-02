@@ -562,18 +562,35 @@ class MinimalRenderer(Renderer):
             f.write("\r\x1b[K\x1b[1A")
         f.write("\r\x1b[K")
 
-    def stream_chunk(self, text: str) -> None:
-        import time
-
-        if self.is_capturing:
-            # Skip streaming in capture mode (parallel delegates).
-            # The talking-face progress indicator is for live TTY only.
-            return
+    def _marquee_init(self) -> None:
         if not hasattr(self, "_stream_buf"):
             self._stream_buf = ""
             self._stream_chunks = 0
             self._last_frame_time = 0.0
+        if not hasattr(self, "_think_buf"):
+            self._think_buf = ""
+
+    def stream_chunk(self, text: str) -> None:
+        if self.is_capturing:
+            # Skip streaming in capture mode (parallel delegates).
+            # The talking-face progress indicator is for live TTY only.
+            return
+        self._marquee_init()
         self._stream_buf += text
+        self._paint_marquee()
+
+    def thinking_chunk(self, text: str) -> None:
+        # P5 (v8.56.0): 사고 델타 — 같은 마르퀴 줄의 思 카운터로만 표시.
+        # content 없이 사고만 이어지는 러너웨이가 무음이 되지 않게 한다.
+        if self.is_capturing:
+            return
+        self._marquee_init()
+        self._think_buf += text
+        self._paint_marquee()
+
+    def _paint_marquee(self) -> None:
+        import time
+
         # Frame advancement is time-throttled so multi-char talking
         # frames stay readable. The counter (below) still updates on
         # every chunk, so the user still sees activity even between
@@ -593,6 +610,8 @@ class MinimalRenderer(Renderer):
 
             tokens = estimate_tokens(self._stream_buf)
             line = f"{prefix}{frame} ~{tokens} tokens"
+            if self._think_buf:
+                line += f" (思 {estimate_tokens(self._think_buf)})"
             # Narrow-terminal safety net: if frame+counter wouldn't fit,
             # drop the counter; if even the face wouldn't fit, truncate.
             # Keeps the indicator from ever wrapping onto a new line.
@@ -611,6 +630,7 @@ class MinimalRenderer(Renderer):
     def stream_end(self) -> None:
         self._stream_buf = ""
         self._stream_chunks = 0
+        self._think_buf = ""
         if self.is_capturing:
             return
         if self.con.file:

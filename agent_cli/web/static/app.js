@@ -1387,6 +1387,15 @@
     );
   });
 
+  es.addEventListener("thinking_tick", function (e) {
+    // P5: 사고 러너웨이 가시화 — 상단 토큰바 끝에 思 카운트를 붙인다.
+    // token_usage 이벤트가 텍스트를 재구성하므로 턴 경계에서 자연 소멸.
+    const d = JSON.parse(e.data);
+    if (typeof d.tokens !== "number" || !$tokenUsage) return;
+    const base = $tokenUsage.textContent.replace(/ · 思 [^·]*$/, "");
+    $tokenUsage.textContent = base + " · 思 " + fmtTok(d.tokens);
+  });
+
   es.addEventListener("max_agents", function (e) {
     // 5.16: 다른 뷰어가 에이전트 상한을 바꾸면 sticky 로 전파 — maxagents
     // IIFE 로 중계해 이 탭의 입력/체크박스도 동기화한다.

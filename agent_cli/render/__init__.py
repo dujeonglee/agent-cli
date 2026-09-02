@@ -263,6 +263,16 @@ def render_stream_chunk(text: str) -> None:
     _renderer.stream_chunk(text)
 
 
+def render_thinking_chunk(text: str) -> None:
+    """스트리밍 사고(reasoning_content) 델타 — 본문과 분리 채널 (P5, v8.56.0).
+
+    러너웨이 가시화: content 없이 사고만 수 분 이어질 수 있는데(35B 벤치
+    실측 — 631s/46K 토큰 단일 생성, 화면·로그 완전 무음 → hang 오진),
+    이 이벤트가 사고 진행을 스피너/상단바 카운터로 보이게 한다. transcript
+    에는 싣지 않는다(본문 오염 방지). 기본 구현 no-op — 커스텀 렌더러 안전."""
+    _renderer.thinking_chunk(text)
+
+
 def render_stream_end() -> None:
     _renderer.stream_end()
 

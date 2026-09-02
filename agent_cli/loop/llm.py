@@ -24,6 +24,7 @@ from agent_cli.render import (
     render_stream_chunk,
     render_stream_end,
     render_system_prompt_snapshot,
+    render_thinking_chunk,
 )
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
@@ -186,6 +187,15 @@ class LLMCaller:
                 spinner_active = False
             render_stream_chunk(text)
 
+        def on_thinking(text: str) -> None:
+            # P5 (v8.56.0): 사고 델타도 스피너를 멈추고 진행 카운터로 —
+            # content 없이 사고만 수 분 이어지는 러너웨이가 무음이 되지 않게.
+            nonlocal spinner_active
+            if spinner_active:
+                render_spinner_stop()
+                spinner_active = False
+            render_thinking_chunk(text)
+
         if self.cfg.skill_name:
             render_spinner_start(f"skill:{self.cfg.skill_name}")
         else:
@@ -225,6 +235,7 @@ class LLMCaller:
                 model=self.cfg.model,
                 capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
+                on_thinking=on_thinking,
                 degeneration_check=self.cfg.wire_format.is_degenerate,
                 # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".
                 degeneration_trigger=getattr(

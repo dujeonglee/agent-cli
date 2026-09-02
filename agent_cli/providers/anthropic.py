@@ -132,6 +132,7 @@ class AnthropicProvider:
                     kwargs.get("interrupt_check"),
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
+                    on_thinking=kwargs.get("on_thinking"),
                 ),
             )
 
@@ -149,6 +150,7 @@ class AnthropicProvider:
         interrupt_check=None,
         degeneration_trigger="#",
         idle_timeout_s=None,
+        on_thinking=None,
     ) -> LLMResponse:
         """Anthropic SSE 스트림 — 골격은 ``http.run_sse_stream`` 공용 (C6,
         v4.48.0). 이로써 idle notice/StreamIdleTimeout·JSONDecodeError 관용이
@@ -162,6 +164,7 @@ class AnthropicProvider:
             degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
             idle_timeout_s=idle_timeout_s,
+            on_thinking=on_thinking,
         )
         f = acc.usage_fields
         usage = None

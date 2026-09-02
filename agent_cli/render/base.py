@@ -556,6 +556,11 @@ class Renderer(ABC):
     def stream_chunk(self, text: str) -> None:
         """Render a streaming chunk from LLM response. Default: no-op."""
 
+    def thinking_chunk(self, text: str) -> None:
+        """Streaming reasoning delta (P5, v8.56.0). Default: no-op —
+        선택 구현(필수 9개 계약 불변). 진행 카운터용이며 transcript 에
+        싣지 않는 것이 계약이다."""
+
     def stream_end(self) -> None:
         """Signal end of streaming. Default: no-op."""
 

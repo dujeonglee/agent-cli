@@ -1743,7 +1743,25 @@ class WebRenderer(Renderer):
     def stream_chunk(self, text: str) -> None:
         self._emit("stream_chunk", {"text": text}, persistent=False)
 
+    def thinking_chunk(self, text: str) -> None:
+        """P5 (v8.56.0): 사고 델타 — 누적 추정 토큰만 0.5s 스로틀로
+        ``thinking_tick`` 이벤트에 실어 상단 토큰바에 思 카운트를 붙인다
+        (본문 카드 미오염, 비영속 — 러너웨이 가시화 전용)."""
+        import time as _t
+
+        self._think_chars = getattr(self, "_think_chars", 0) + len(text)
+        now = _t.monotonic()
+        if now - getattr(self, "_last_think_emit", 0.0) < 0.5:
+            return
+        self._last_think_emit = now
+        # chars/4 — estimate_tokens 와 동일 관례 (import cycle 회피)
+        self._emit(
+            "thinking_tick", {"tokens": self._think_chars // 4}, persistent=False
+        )
+
     def stream_end(self) -> None:
+        self._think_chars = 0
+        self._last_think_emit = 0.0
         self._emit("stream_end", {}, persistent=False)
 
     # ─── Input methods (Renderer ABC) ───────────────

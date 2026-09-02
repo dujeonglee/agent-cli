@@ -105,6 +105,7 @@ class OpenAIProvider:
                     kwargs.get("interrupt_check"),
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
+                    on_thinking=kwargs.get("on_thinking"),
                 ),
             )
 
@@ -122,6 +123,7 @@ class OpenAIProvider:
         interrupt_check=None,
         degeneration_trigger="#",
         idle_timeout_s=None,
+        on_thinking=None,
     ) -> LLMResponse:
         """OpenAI-호환 SSE 스트림 — 골격(idle/파싱/누산/조기종료/interrupt)은
         ``http.run_sse_stream`` 공용, 여기는 이벤트 shape 해석과 usage 조립만
@@ -135,6 +137,7 @@ class OpenAIProvider:
             degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
             idle_timeout_s=idle_timeout_s,
+            on_thinking=on_thinking,
         )
         usage = None
         if acc.usage_fields:

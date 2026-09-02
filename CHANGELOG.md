@@ -12,6 +12,22 @@
 
 ## [Unreleased]
 
+## [8.56.0] - 2026-09-02
+
+### Added — 사고(thinking) 스트림 가시화 (P5)
+
+벤치 오진의 직접 원인 수리: 모델이 content 없이 사고만 수 분 생성하는
+러너웨이(35B 실측 631s/46K 토큰)가 **완전 무음**이었다 — 사고 델타는
+``on_chunk``(본문)를 타지 않아 스피너·로그·웹 어디에도 흔적이 없었고,
+그래서 서버 hang 과 구별할 수 없었다.
+
+- 새 렌더 채널 ``thinking_chunk`` (기본 no-op — 커스텀 렌더러 필수 9개
+  계약 불변): CLI 는 스트리밍 마르퀴에 ``(思 4.2K)`` 카운터, 웹은
+  ``thinking_tick`` 이벤트(0.5s 스로틀)로 상단 토큰바에 ``· 思 4.2K``
+  부착(턴 경계에서 자연 소멸). transcript/본문 카드는 오염하지 않는다.
+- 배관: ``run_sse_stream(on_thinking=)`` → provider → loop 의 스피너 정지
+  포함 — 사고만 이어져도 "생성 중"임이 보인다.
+
 ## [8.55.0] - 2026-09-02
 
 ### Fixed — 서버 hang 시 재접속이 발화하지 않던 문제 (P3) + CallSettings
@@ -2217,6 +2233,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.56.0]: https://github.com/dujeonglee/agent-cli/compare/v8.55.0...v8.56.0
 [8.55.0]: https://github.com/dujeonglee/agent-cli/compare/v8.54.0...v8.55.0
 [8.54.0]: https://github.com/dujeonglee/agent-cli/compare/v8.53.0...v8.54.0
 [8.53.0]: https://github.com/dujeonglee/agent-cli/compare/v8.52.1...v8.53.0
