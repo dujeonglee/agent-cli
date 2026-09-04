@@ -12,7 +12,7 @@
 
 ## [Unreleased]
 
-## [8.57.0] - 2026-09-04
+## [8.57.1] - 2026-09-04
 
 ### Changed — 웹 헤더 개편: 토큰 상세 상시 노출 · 노브별 값-배지 칩 · 보따리 오버플로
 
@@ -25,9 +25,9 @@
 - **노브별 값-배지 칩**: Compact(🗜️ 80%) · Agents(👥 10) · Stall(⏳ 10m) · 사고(🧠 auto)
   가 각자 현재 값을 배지로 단 칩이 되어, 클릭하면 그 노브만의 팝업이 열린다(한 번에 하나,
   바깥 클릭·Escape 로 닫힘). reasoning 아이콘은 💭(사고 카운터) 충돌 회피로 🧠.
-- **보따리(🎒) 오버플로**: 헤더가 한 줄을 넘치면(flex-wrap 감지 = 헤더 높이 기준) 우선순위
-  낮은 칩·아이콘부터 보따리로 수납(FLIP 비행, reduced-motion 이면 즉시), 넓히면 복원.
-  실제 DOM 을 옮기므로 이벤트·배선 무손실. `#pouch-btn` 클릭 = 수납 항목 패널.
+- **좁은 창 = 자동 줄바꿈**: 헤더가 `flex-wrap` 이라 폭이 부족하면 둘째 줄로 접혀 모든
+  칩·아이콘이 계속 보인다(숨김·수납 없음). 초기 구현의 보따리(오버플로 수납)는 레이아웃
+  판정이 취약해 제거하고 브라우저 기본 줄바꿈에 맡겼다(v8.57.1).
 - 기존 입력 id(compaction-range·maxagents-input·stall-input·think-enable/effort·token-usage)
   전부 보존 → 각 노브 IIFE·엔드포인트 배선 무변경. 실브라우저 회귀 테스트(칩 팝업 토글·
   보따리 수납/복원·토큰바 상시 노출) 추가.
@@ -2253,7 +2253,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
-[8.57.0]: https://github.com/dujeonglee/agent-cli/compare/v8.56.0...v8.57.0
+[8.57.1]: https://github.com/dujeonglee/agent-cli/compare/v8.56.0...v8.57.1
 [8.56.0]: https://github.com/dujeonglee/agent-cli/compare/v8.55.0...v8.56.0
 [8.55.0]: https://github.com/dujeonglee/agent-cli/compare/v8.54.0...v8.55.0
 [8.54.0]: https://github.com/dujeonglee/agent-cli/compare/v8.53.0...v8.54.0

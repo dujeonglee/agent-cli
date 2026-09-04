@@ -41,7 +41,7 @@
     </button>
     <!-- v8.57.0: 세션 노브 4종 — 값-배지 칩 + 전용 팝업 (구 ctx 팝오버 이사).
          wrap/내부 입력 id 전부 보존 → compaction·maxagents·stall·thinking IIFE 무수정. -->
-    <span id="compaction-wrap" class="knob" data-overflow title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). Session-only. Sub-agents inherit the value at spawn time." hidden>
+    <span id="compaction-wrap" class="knob" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). Session-only. Sub-agents inherit the value at spawn time." hidden>
       <button id="compaction-chip" class="knob-btn" type="button" data-pop="compaction-pop" aria-haspopup="true" aria-expanded="false">🗜️ <span id="compaction-badge">80%</span></button>
       <div id="compaction-pop" class="knob-pop" hidden>
         <label id="compaction-label" for="compaction-range">Compact 80%</label>
@@ -49,7 +49,7 @@
                aria-label="Context compaction threshold %">
       </div>
     </span>
-    <span id="maxagents-wrap" class="knob" data-overflow title="Max number of live resident agents. Session-only. Checking Unlimited disables the input. Lowering the cap doesn't kill existing agents (only blocks new spawns)." hidden>
+    <span id="maxagents-wrap" class="knob" title="Max number of live resident agents. Session-only. Checking Unlimited disables the input. Lowering the cap doesn't kill existing agents (only blocks new spawns)." hidden>
       <button id="maxagents-chip" class="knob-btn" type="button" data-pop="maxagents-pop" aria-haspopup="true" aria-expanded="false">👥 <span id="maxagents-badge">10</span></button>
       <div id="maxagents-pop" class="knob-pop" hidden>
         <label id="maxagents-label" for="maxagents-input">Agents</label>
@@ -58,7 +58,7 @@
         <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
       </div>
     </span>
-    <span id="stall-wrap" class="knob" data-overflow title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Session-only; sub-agents inherit at spawn." hidden>
+    <span id="stall-wrap" class="knob" title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Session-only; sub-agents inherit at spawn." hidden>
       <button id="stall-chip" class="knob-btn" type="button" data-pop="stall-pop" aria-haspopup="true" aria-expanded="false">⏳ <span id="stall-badge">10m</span></button>
       <div id="stall-pop" class="knob-pop" hidden>
         <label id="stall-label" for="stall-input">Stall</label>
@@ -67,7 +67,7 @@
         <span class="knob-unit">min · 0 = off</span>
       </div>
     </span>
-    <span id="thinking-wrap" class="knob" data-overflow title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>
+    <span id="thinking-wrap" class="knob" title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>
       <button id="thinking-chip" class="knob-btn" type="button" data-pop="thinking-pop" aria-haspopup="true" aria-expanded="false">🧠 <span id="thinking-badge">auto</span></button>
       <div id="thinking-pop" class="knob-pop" hidden>
         <label for="think-enable">사고</label>
@@ -89,18 +89,14 @@
       <button id="theme-btn" class="btn-icon" type="button" title="Choose theme" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>
     </span>
-    <button id="directive-btn" class="btn-icon" data-overflow type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
-    <button id="export-btn" class="btn-icon" data-overflow type="button" title="Export conversation">📤</button>
-    <button id="files-btn" class="btn-icon" data-overflow type="button" title="Workspace files — download / upload">📁</button>
+    <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
+    <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
+    <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
             title="⚡ 자동 승인: 위험 명령(rm 등)·워크스페이스 밖 접근의 확인 프롬프트를 건너뛰고 자동 허용합니다. 세션 한정·재시작 시 해제. 신뢰된 작업에서만 켜세요.">⚡ 확인 없이 실행</button>
     <button id="share-btn" class="btn-icon" type="button" title="접속 링크 복사 (토큰 포함 — 이 링크를 받은 사람도 접속)">🔗</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" class="btn-icon" type="button" title="Change nickname" hidden>✎</button>
-    <span id="pouch-wrap" class="knob" hidden>
-      <button id="pouch-btn" class="btn-icon" type="button" title="더 보기 — 좁은 창에서 수납된 메뉴" aria-haspopup="true" aria-expanded="false">🎒<span id="pouch-cnt" class="pouch-cnt"></span></button>
-      <div id="pouch-panel" class="knob-pop" hidden></div>
-    </span>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <!-- First-connect nickname bar (pre-filled with the assigned fun default) -->

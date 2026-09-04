@@ -1188,7 +1188,7 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#maxagents-input" in css
 
-    def test_header_knob_chips_and_pouch_wired(self, server_and_client):
+    def test_header_knob_chips_wired(self, server_and_client):
         # v8.57.0 헤더 배선 계약: 토큰 상세(#token-usage)는 헤더에 상시 노출
         # (구 ctx 게이지 칩·팝오버 폐기), 세션 노브 4종은 값-배지 칩(knob),
         # 좁은 창은 보따리(🎒) 오버플로. 내부 입력 id 는 IIFE 계약이라 보존.
@@ -1211,12 +1211,13 @@ class TestStaticUI:
         ):
             assert f'id="{wrap}"' in html and f'id="{chip}"' in html
             assert f'id="{pop}"' in html and f'id="{inner}"' in html
-        assert 'id="pouch-wrap"' in html and 'id="pouch-btn"' in html
         js = client.get("/static/app.js").text
-        assert "knob-btn" in js and "ResizeObserver" in js  # 토글 + 오버플로
+        assert "knob-btn" in js  # 노브 칩 토글
         assert 'getElementById("tok-think")' in js  # 💭 세그먼트
+        # v8.57.1: 보따리 제거 — 좁은 창은 flex-wrap 자동 줄바꿈으로 항상 노출
+        assert "pouch" not in html and "pouch" not in js
         css = client.get("/static/style.css").text
-        assert ".hd-chip" in css and ".knob-btn" in css and "#pouch-btn" in css
+        assert ".hd-chip" in css and ".knob-btn" in css
 
     def test_agent_mail_hint_wired(self, server_and_client):
         # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``

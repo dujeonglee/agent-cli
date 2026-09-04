@@ -65,23 +65,26 @@ class TestHeaderChips:
         page.keyboard.press("Escape")
         assert _wait(lambda: page.locator("#stall-pop").is_hidden(), timeout=3)
 
-    def test_pouch_stows_and_restores_on_resize(self, stack, page):
-        # 좁히면 오버플로 아이템이 보따리로 수납(🎒 노출), 넓히면 복원.
-        # ResizeObserver 가 자동 reflow 하므로 뷰포트 변경 후 대기만 하면 된다.
-        page.set_viewport_size({"width": 1500, "height": 720})
+    def test_narrow_header_wraps_all_chips_visible(self, stack, page):
+        # v8.57.1: 보따리 제거 — 좁은 창에서 헤더가 둘째 줄로 접히고(flex-wrap)
+        # 모든 노브 칩이 계속 보인다(숨김/수납 없음).
+        page.set_viewport_size({"width": 420, "height": 720})
         page.goto(stack.url)
         page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
-        assert _wait(lambda: page.locator("#pouch-wrap").is_hidden(), timeout=3)
-        page.set_viewport_size({"width": 440, "height": 720})
-        assert _wait(lambda: not page.locator("#pouch-wrap").is_hidden(), timeout=4)
-        # 🎒 클릭 → 수납 패널에 아이템 존재
-        page.click("#pouch-btn")
-        assert _wait(
-            lambda: page.locator("#pouch-panel [data-overflow]").count() >= 1, timeout=2
-        )
-        # 다시 넓히면 보따리가 비고 사라진다
-        page.set_viewport_size({"width": 1500, "height": 720})
-        assert _wait(lambda: page.locator("#pouch-wrap").is_hidden(), timeout=4)
+        page.wait_for_timeout(200)
+        for chip in ("#compaction-chip", "#stall-chip", "#thinking-chip"):
+            assert page.locator(chip).is_visible(), chip
+        # 줄바꿈이 실제로 일어나 헤더가 한 줄보다 높다
+        heights = page.evaluate("""() => {
+            var h = document.querySelector('header');
+            var maxChild = 0, ch = h.children;
+            for (var i=0;i<ch.length;i++){var c=ch[i];if(!c.hidden&&c.offsetParent)maxChild=Math.max(maxChild,c.offsetHeight);}
+            return {header: h.clientHeight, maxChild: maxChild};
+        }""")
+        assert heights["header"] > heights["maxChild"] + 20  # 다중 줄
+        # 좁은 창에서도 칩 클릭 → 팝업 정상
+        page.click("#stall-chip")
+        assert page.locator("#stall-pop").is_visible()
 
 
 class TestConfirmStallWarning:

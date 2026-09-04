@@ -4509,10 +4509,10 @@
 // 셀렉트)은 닫힘을 유발하지 않는다. 구 ctx-popover 단일 토글의 계승.
 (function () {
   function chips() {
-    return Array.prototype.slice.call(document.querySelectorAll(".knob-btn, #pouch-btn"));
+    return Array.prototype.slice.call(document.querySelectorAll(".knob-btn"));
   }
   function popOf(btn) {
-    return document.getElementById(btn.dataset.pop || (btn.id === "pouch-btn" ? "pouch-panel" : ""));
+    return document.getElementById(btn.dataset.pop || "");
   }
   function closeAll(except) {
     chips().forEach(function (b) {
@@ -4521,7 +4521,7 @@
     });
   }
   document.addEventListener("click", function (e) {
-    var btn = e.target.closest && e.target.closest(".knob-btn, #pouch-btn");
+    var btn = e.target.closest && e.target.closest(".knob-btn");
     if (btn) {
       e.stopPropagation();
       var pop = popOf(btn);
@@ -4540,114 +4540,6 @@
   });
 })();
 
-// ── 헤더 오버플로 → 보따리 🎒 (v8.57.0) ──────────────────────────
-// 헤더가 한 줄에 안 들어가면 우선순위 낮은 순으로 아이템을 보따리로 수납하고,
-// 넓어지면 도로 꺼낸다(FLIP 비행). 실제 DOM 을 옮기므로 이벤트/배선 무손실.
-// 수납 후보는 [data-overflow] 표시된 요소(노브 칩·부가 액션 아이콘). 항상
-// 보이는 것(모델칩·토큰바·conn-status·보따리 자신)은 제외.
-(function () {
-  var header = document.querySelector("header");
-  var pouchWrap = document.getElementById("pouch-wrap");
-  var pouchBtn = document.getElementById("pouch-btn");
-  var panel = document.getElementById("pouch-panel");
-  var cnt = document.getElementById("pouch-cnt");
-  if (!header || !pouchWrap || !panel) return;
-  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var stowed = []; // {el, placeholder}
-
-  function candidates() {
-    // 우선순위 순(뒤에서부터 수납) — data-overflow 의 문서 순서를 그대로 사용.
-    return Array.prototype.slice.call(header.querySelectorAll("[data-overflow]"));
-  }
-  function fly(from, to, glyph, done) {
-    if (reduce || !from || !to) { done(); return; }
-    var el = document.createElement("span");
-    el.className = "hd-fly"; el.textContent = glyph;
-    el.style.left = from.left + "px"; el.style.top = from.top + "px";
-    document.body.appendChild(el);
-    requestAnimationFrame(function () {
-      var dx = to.left + to.width / 2 - from.left - from.width / 2;
-      var dy = to.top + to.height / 2 - from.top - from.height / 2;
-      el.style.transform = "translate(" + dx + "px," + dy + "px) scale(.3) rotate(35deg)";
-      el.style.opacity = "0";
-    });
-    setTimeout(function () { el.remove(); done(); }, 430);
-  }
-  function glyphOf(el) {
-    var b = el.querySelector("button") || el;
-    return (b.textContent || "•").trim().slice(0, 2);
-  }
-  function stowOne() {
-    var list = candidates();
-    // 이미 수납되지 않은 것 중 마지막(우선순위 최저)
-    var el = null;
-    for (var i = list.length - 1; i >= 0; i--) {
-      if (!list[i].dataset.stowed) { el = list[i]; break; }
-    }
-    if (!el) return false;
-    pouchWrap.hidden = false;
-    var from = el.getBoundingClientRect(), to = pouchBtn.getBoundingClientRect();
-    var ph = document.createComment("stow");
-    el.parentNode.insertBefore(ph, el);
-    el.dataset.stowed = "1";
-    panel.insertBefore(el, panel.firstChild); // 실제 DOM 이동
-    stowed.push({ el: el, ph: ph });
-    cnt.textContent = stowed.length;
-    fly(from, to, glyphOf(el), function () {});
-    return true;
-  }
-  function unstowOne() {
-    var it = stowed.pop();
-    if (!it) return false;
-    var from = pouchBtn.getBoundingClientRect();
-    it.ph.parentNode.insertBefore(it.el, it.ph);
-    it.ph.remove();
-    delete it.el.dataset.stowed;
-    var to = it.el.getBoundingClientRect();
-    it.el.style.visibility = "hidden";
-    fly(from, to, glyphOf(it.el), function () { it.el.style.visibility = ""; });
-    if (reduce) it.el.style.visibility = "";
-    cnt.textContent = stowed.length;
-    if (!stowed.length) { pouchWrap.hidden = true; panel.hidden = true; }
-    return true;
-  }
-  function fits() {
-    // 헤더는 flex-wrap:wrap — 넘치면 가로가 아니라 **둘째 줄**로 줄바꿈되므로
-    // scrollWidth 는 못 쓴다. offsetTop 비교도 안 된다: align-items:center 라
-    // 아이템 높이차(이모지 버튼 vs 텍스트 칩)만으로 offsetTop 이 수 px 흩어진다.
-    // 대신 "헤더 높이가 한 줄(자식 최대 높이 + 세로 패딩) 이내인가"로 판정 —
-    // 줄바꿈은 20px+ 늘고 높이차는 10px 미만이라 확실히 구분된다.
-    var maxH = 0, ch = header.children;
-    for (var i = 0; i < ch.length; i++) {
-      var c = ch[i];
-      if (!c.hidden && c.offsetParent !== null) maxH = Math.max(maxH, c.offsetHeight);
-    }
-    if (!maxH) return true;
-    return header.clientHeight <= maxH + 20; // 세로 padding(16) + 여유
-  }
-  var reflowing = false;
-  function reflow() {
-    if (reflowing) return;
-    reflowing = true;
-    var guard = 0;
-    while (!fits() && guard++ < 20) { if (!stowOne()) break; }
-    guard = 0;
-    while (fits() && stowed.length && guard++ < 20) {
-      unstowOne();
-      if (!fits()) { stowOne(); break; } // 한 스텝 히스테리시스
-    }
-    reflowing = false;
-  }
-  if (typeof ResizeObserver !== "undefined") {
-    var ro = new ResizeObserver(function () { reflow(); });
-    ro.observe(header);
-  } else {
-    window.addEventListener("resize", reflow);
-  }
-  // 초기 1회 (레이아웃 안정 후)
-  setTimeout(reflow, 120);
-  window.__hdReflow = reflow; // 테스트 훅
-})();
 
 // ── Tab-presence beacon ─────────────────────
 // Every live web-UI tab holds one SSE connection out of the browser's

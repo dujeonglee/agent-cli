@@ -247,21 +247,8 @@ header {
 }
 .knob-pop[hidden] { display: none; }
 .knob-unit { color: var(--muted); font-size: 11px; }
-/* 보따리 🎒 — 좁은 창에서 수납된 메뉴 (오버플로) */
-#pouch-wrap[hidden] { display: none; }
-#pouch-btn { position: relative; font-size: 15px; }
-.pouch-cnt {
-  position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px;
-  border-radius: 7px; background: var(--accent); color: var(--on-accent);
-  font: 700 9px/13px "Jetendard", ui-monospace, monospace; text-align: center; padding: 0 2px;
-}
-#pouch-panel { flex-direction: row; flex-wrap: wrap; gap: 4px; min-width: 0; }
-/* 수납 아이콘의 비행 클론 (FLIP) */
-.hd-fly {
-  position: fixed; z-index: 99; pointer-events: none; font-size: 14px;
-  transition: transform .42s cubic-bezier(.5,-.2,.3,1), opacity .42s ease;
-}
-@media (prefers-reduced-motion: reduce) { .hd-fly { transition: none; } }
+/* 헤더는 flex-wrap:wrap — 좁아지면 둘째 줄로 접혀 모든 칩이 항상 보인다
+   (v8.57.1: 보따리 오버플로 제거, 자동 줄바꿈으로 단순화). */
 /* 🧠 사고/노력 셀렉트 */
 #thinking-wrap select { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
 /* 모델이 사고 미지원(supports_thinking=false)이면 컨트롤 잠금 표시 */
