@@ -37,21 +37,51 @@ class TestHeaderChips:
         assert _wait(lambda: page.inner_text("#ws-copy-ic").strip() == "✓", timeout=3)
         ctx.close()
 
-    def test_ctx_popover_toggles_with_moved_controls(self, stack, page):
+    def test_token_usage_shows_in_header(self, stack, page):
+        # v8.57.0: 토큰 상세는 헤더에 상시 노출 (구 ctx 게이지 칩·팝오버 폐기).
         page.goto(stack.url)
-        # token_usage 가 와야 ctx 칩이 뜬다 — 렌더러로 직접 발화
         stack.renderer.token_usage(
             {"in": 5200, "out": 320, "total_out": 1800, "context_window": 262144},
             turn=1,
         )
-        page.wait_for_selector("#chip-ctx:not([hidden])", timeout=8000)
-        assert page.locator("#ctx-popover").is_hidden()
-        page.click("#chip-ctx")
-        assert page.locator("#ctx-popover").is_visible()
-        # 이동 수납된 컨트롤들이 팝오버 안에서 렌더
-        assert page.locator("#ctx-popover #token-usage").is_visible()
+        page.wait_for_selector("#token-usage:not([hidden])", timeout=8000)
+        # ↑(턴 입력)은 ctx 분자와 동일 값이라 생략, ↓·Σ↓ 는 표시
+        txt = page.inner_text("#token-usage")
+        assert "ctx" in txt and "↓" in txt and "↑" not in txt
+        box = page.locator("#token-usage").bounding_box()
+        assert box and box["height"] >= 10 and box["width"] > 40  # 클리핑 없음
+
+    def test_knob_chip_popup_toggles(self, stack, page):
+        # 노브 칩 클릭 → 전용 팝업 열림, Escape 로 닫힘 (한 번에 하나).
+        # 넓은 뷰포트 — 노브가 보따리로 수납되지 않은 상태를 보장.
+        page.set_viewport_size({"width": 1500, "height": 720})
+        page.goto(stack.url)
+        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_timeout(300)
+        assert page.locator("#stall-pop").is_hidden()
+        page.click("#stall-chip")
+        assert page.locator("#stall-pop").is_visible()
+        assert page.locator("#stall-pop #stall-input").is_visible()
         page.keyboard.press("Escape")
-        assert _wait(lambda: page.locator("#ctx-popover").is_hidden(), timeout=3)
+        assert _wait(lambda: page.locator("#stall-pop").is_hidden(), timeout=3)
+
+    def test_pouch_stows_and_restores_on_resize(self, stack, page):
+        # 좁히면 오버플로 아이템이 보따리로 수납(🎒 노출), 넓히면 복원.
+        # ResizeObserver 가 자동 reflow 하므로 뷰포트 변경 후 대기만 하면 된다.
+        page.set_viewport_size({"width": 1500, "height": 720})
+        page.goto(stack.url)
+        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        assert _wait(lambda: page.locator("#pouch-wrap").is_hidden(), timeout=3)
+        page.set_viewport_size({"width": 440, "height": 720})
+        assert _wait(lambda: not page.locator("#pouch-wrap").is_hidden(), timeout=4)
+        # 🎒 클릭 → 수납 패널에 아이템 존재
+        page.click("#pouch-btn")
+        assert _wait(
+            lambda: page.locator("#pouch-panel [data-overflow]").count() >= 1, timeout=2
+        )
+        # 다시 넓히면 보따리가 비고 사라진다
+        page.set_viewport_size({"width": 1500, "height": 720})
+        assert _wait(lambda: page.locator("#pouch-wrap").is_hidden(), timeout=4)
 
 
 class TestConfirmStallWarning:

@@ -213,28 +213,24 @@ header {
   border-color: var(--accent);
   color: var(--text);
 }
-#ctx-wrap { position: relative; display: inline-flex; }
-#ctx-gauge {
-  width: 40px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--border);
-  overflow: hidden;
-  flex: none;
+/* ── 노브 칩 (v8.57.0) — 값-배지 칩 + 전용 팝업 ── */
+.knob { position: relative; display: inline-flex; flex: none; }
+.knob[hidden] { display: none; }
+.knob-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 9px; cursor: pointer; color: var(--text-2);
+  font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace; line-height: 1.6;
+  white-space: nowrap;
 }
-#ctx-gauge-fill {
-  display: block;
-  height: 100%;
-  width: 0;
-  border-radius: 3px;
-  background: var(--accent);
-  transition: width 0.3s ease;
-}
-#ctx-popover {
+.knob-btn:hover, .knob-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
+.knob.is-disabled .knob-btn { opacity: 0.45; cursor: not-allowed; }
+/* 전용 팝업 — 우측 정렬(헤더 오른편 칩이라 화면 밖으로 안 나가게) */
+.knob-pop {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
-  min-width: 240px;
+  right: 0;
+  min-width: 200px;
   background: var(--glass);
   backdrop-filter: blur(14px) saturate(1.4);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
@@ -244,21 +240,28 @@ header {
   padding: 10px 12px;
   z-index: 60;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-size: 12px;
-}
-#ctx-popover[hidden] { display: none; }
-#ctx-popover #compaction-wrap,
-#ctx-popover #maxagents-wrap,
-#ctx-popover #thinking-wrap {
-  display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
 }
-#ctx-popover #compaction-wrap[hidden],
-#ctx-popover #maxagents-wrap[hidden],
-#ctx-popover #thinking-wrap[hidden] { display: none; }
+.knob-pop[hidden] { display: none; }
+.knob-unit { color: var(--muted); font-size: 11px; }
+/* 보따리 🎒 — 좁은 창에서 수납된 메뉴 (오버플로) */
+#pouch-wrap[hidden] { display: none; }
+#pouch-btn { position: relative; font-size: 15px; }
+.pouch-cnt {
+  position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px;
+  border-radius: 7px; background: var(--accent); color: var(--on-accent);
+  font: 700 9px/13px "Jetendard", ui-monospace, monospace; text-align: center; padding: 0 2px;
+}
+#pouch-panel { flex-direction: row; flex-wrap: wrap; gap: 4px; min-width: 0; }
+/* 수납 아이콘의 비행 클론 (FLIP) */
+.hd-fly {
+  position: fixed; z-index: 99; pointer-events: none; font-size: 14px;
+  transition: transform .42s cubic-bezier(.5,-.2,.3,1), opacity .42s ease;
+}
+@media (prefers-reduced-motion: reduce) { .hd-fly { transition: none; } }
 /* 🧠 사고/노력 셀렉트 */
 #thinking-wrap select { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
 /* 모델이 사고 미지원(supports_thinking=false)이면 컨트롤 잠금 표시 */
@@ -278,21 +281,18 @@ header {
   margin-right: 12px;
 }
 #token-usage {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 11px;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   white-space: nowrap;
-  margin-right: 12px;
   flex-shrink: 0;
 }
+#token-usage[hidden] { display: none; }
+/* 💭 사고 카운터 세그먼트 — thinking_tick 이 부착 (러너웨이 가시화) */
+#token-usage .tok-think { color: var(--warn); }
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
 #rename-btn[hidden] { display: none; }
-#compaction-wrap {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-right: 12px; flex-shrink: 0;
-}
-#compaction-wrap[hidden] { display: none; }
 #compaction-label {
   color: var(--muted); font-size: 11px; white-space: nowrap;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
@@ -301,11 +301,6 @@ header {
 #compaction-range {
   width: 84px; height: 3px; cursor: pointer; accent-color: var(--accent);
 }
-#maxagents-wrap {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-right: 12px; flex-shrink: 0;
-}
-#maxagents-wrap[hidden] { display: none; }
 #maxagents-label, #maxagents-unlim-label {
   color: var(--muted); font-size: 11px; white-space: nowrap;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;

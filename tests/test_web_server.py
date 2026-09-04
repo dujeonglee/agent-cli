@@ -1188,23 +1188,35 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#maxagents-input" in css
 
-    def test_header_chips_and_ctx_popover_wired(self, server_and_client):
-        # 칩+팝오버 헤더 (v7.1.0) 배선 계약: 모델 칩(#info)·ctx 게이지 칩·
-        # ws 칩이 존재하고, 저빈도 컨트롤(token-usage/compaction/maxagents)
-        # 은 ctx 팝오버 안으로 이동 (id 는 IIFE 계약이라 보존).
+    def test_header_knob_chips_and_pouch_wired(self, server_and_client):
+        # v8.57.0 헤더 배선 계약: 토큰 상세(#token-usage)는 헤더에 상시 노출
+        # (구 ctx 게이지 칩·팝오버 폐기), 세션 노브 4종은 값-배지 칩(knob),
+        # 좁은 창은 보따리(🎒) 오버플로. 내부 입력 id 는 IIFE 계약이라 보존.
         _, _, client = server_and_client
         html = client.get("/static/index.html").text
-        assert 'id="chip-ctx"' in html
-        assert 'id="ctx-popover"' in html
-        assert 'id="chip-ws"' in html
-        pop = html.split('id="ctx-popover"', 1)[1].split("</div>", 1)[0]
-        for moved in ("token-usage", "compaction-wrap", "maxagents-wrap"):
-            assert moved in pop, moved
+        assert 'id="token-usage"' in html and 'id="chip-ws"' in html
+        # 구 게이지/팝오버 id 는 제거됐다
+        assert 'id="chip-ctx"' not in html and 'id="ctx-popover"' not in html
+        # 노브 칩 4종 + 각자 팝업 + 보존된 입력 id
+        for wrap, chip, pop, inner in (
+            (
+                "compaction-wrap",
+                "compaction-chip",
+                "compaction-pop",
+                "compaction-range",
+            ),
+            ("maxagents-wrap", "maxagents-chip", "maxagents-pop", "maxagents-input"),
+            ("stall-wrap", "stall-chip", "stall-pop", "stall-input"),
+            ("thinking-wrap", "thinking-chip", "thinking-pop", "think-enable"),
+        ):
+            assert f'id="{wrap}"' in html and f'id="{chip}"' in html
+            assert f'id="{pop}"' in html and f'id="{inner}"' in html
+        assert 'id="pouch-wrap"' in html and 'id="pouch-btn"' in html
         js = client.get("/static/app.js").text
-        assert "ctx-gauge-fill" in js  # 게이지 갱신
-        assert 'getElementById("chip-ctx")' in js  # 팝오버 토글
+        assert "knob-btn" in js and "ResizeObserver" in js  # 토글 + 오버플로
+        assert 'getElementById("tok-think")' in js  # 💭 세그먼트
         css = client.get("/static/style.css").text
-        assert ".hd-chip" in css and "#ctx-popover" in css
+        assert ".hd-chip" in css and ".knob-btn" in css and "#pouch-btn" in css
 
     def test_agent_mail_hint_wired(self, server_and_client):
         # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``

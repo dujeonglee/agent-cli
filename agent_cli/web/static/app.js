@@ -1388,12 +1388,12 @@
   });
 
   es.addEventListener("thinking_tick", function (e) {
-    // P5: 사고 러너웨이 가시화 — 상단 토큰바 끝에 思 카운트를 붙인다.
-    // token_usage 이벤트가 텍스트를 재구성하므로 턴 경계에서 자연 소멸.
+    // P5/v8.57.0: 사고 러너웨이 가시화 — 헤더 토큰바의 #tok-think 세그먼트에
+    // 💭 카운트를 부착. token_usage(턴 경계)가 #tok-think 를 비워 자연 소멸.
     const d = JSON.parse(e.data);
-    if (typeof d.tokens !== "number" || !$tokenUsage) return;
-    const base = $tokenUsage.textContent.replace(/ · 思 [^·]*$/, "");
-    $tokenUsage.textContent = base + " · 思 " + fmtTok(d.tokens);
+    if (typeof d.tokens !== "number") return;
+    const $think = document.getElementById("tok-think");
+    if ($think) $think.textContent = " · 💭 " + fmtTok(d.tokens);
   });
 
   es.addEventListener("max_agents", function (e) {
@@ -1441,32 +1441,30 @@
       const pct = Math.round((inTok / win) * 100);
       parts.push("ctx " + fmtTok(inTok) + "/" + fmtTok(win) + " (" + pct + "%)");
     }
+    // v8.57.0: ↑(턴 입력)은 ctx 분자와 동일 값이라 생략 — ↓(출력)·Σ↓(누적)만.
     if (inTok || d.out) {
-      parts.push("↑" + fmtTok(inTok) + " ↓" + fmtTok(d.out));
+      parts.push("↓" + fmtTok(d.out));
     }
     if (d.total_out) {
       parts.push("Σ↓" + fmtTok(d.total_out));
     }
-    $tokenUsage.textContent = parts.join(" · ");
+    // base 세그먼트는 #tok-base, 💭 세그먼트는 thinking_tick 가 #tok-think 에
+    // 부착 — 이 갱신(턴 경계)이 오면 💭 는 클리어돼 자연 소멸한다.
+    var $base = document.getElementById("tok-base");
+    var $think = document.getElementById("tok-think");
+    if ($base) $base.textContent = parts.join(" · ");
+    if ($think) $think.textContent = "";
     $tokenUsage.title =
       "context " +
       fmtTok(inTok) +
       " / " +
       fmtTok(win) +
-      " · turn in " +
-      fmtTok(inTok) +
-      " out " +
+      " · turn out " +
       fmtTok(d.out) +
       " · session out " +
       fmtTok(d.total_out);
-    // ctx 칩 요약 (v7.1.0) — 게이지 + %, 상세는 팝오버(#token-usage)로.
-    if (inTok && win) {
-      const pct = Math.min(100, Math.round((inTok / win) * 100));
-      const chip = document.getElementById("chip-ctx");
-      document.getElementById("ctx-pct").textContent = "ctx " + pct + "%";
-      document.getElementById("ctx-gauge-fill").style.width = pct + "%";
-      chip.hidden = false;
-    }
+    // v8.57.0: 토큰 상세는 헤더에 상시 노출 (구 ctx 게이지 칩 폐기).
+    if (inTok && win) $tokenUsage.hidden = false;
   });
 
   es.addEventListener("user_message", function (e) {
@@ -4230,8 +4228,10 @@
   if (!$wrap || !$range || !$label) return;
 
   const pctOf = (ratio) => Math.round(ratio * 100);
+  var $badge = document.getElementById("compaction-badge");
   function setLabel(pct) {
     $label.textContent = "Compact " + pct + "%";
+    if ($badge) $badge.textContent = pct + "%";
   }
   function applyRatio(ratio) {
     const pct = pctOf(ratio);
@@ -4285,8 +4285,11 @@
   if (!$wrap || !$input) return;
 
   const toMin = (s) => (s <= 0 ? 0 : Math.round(s / 60));
+  const $badge = document.getElementById("stall-badge");
   function apply(seconds) {
-    $input.value = toMin(seconds);
+    const m = toMin(seconds);
+    $input.value = m;
+    if ($badge) $badge.textContent = m === 0 ? "off" : m + "m";
   }
 
   fetch("api/stream-idle")
@@ -4333,6 +4336,7 @@
   let lastValue = 10; // 무제한 해제 시 되돌릴 마지막 유한값
 
   // value=0 → 무제한(체크+입력 비활성). >0 → 유한(체크 해제+입력 활성).
+  var $badge = document.getElementById("maxagents-badge");
   function applyValue(value) {
     if (value === 0) {
       $unlim.checked = true;
@@ -4343,6 +4347,7 @@
       $input.value = value;
       lastValue = value;
     }
+    if ($badge) $badge.textContent = value === 0 ? "∞" : String(value);
   }
 
   function post(value) {
@@ -4443,11 +4448,17 @@
   if (!$wrap || !$en || !$eff) return;
 
   // 서버 상태(null|bool / null|str) → 셀렉트 값(auto/on/off, auto/low/…).
+  const $badge = document.getElementById("thinking-badge");
   function apply(d) {
     const et = d ? d.enable_thinking : undefined;
     $en.value = et === true ? "on" : et === false ? "off" : "auto";
     const eff = (d && d.reasoning_effort) || "auto";
     $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
+    // 배지: off → "off", effort 지정 → 그 값, 그 외 → "auto"
+    if ($badge) {
+      $badge.textContent =
+        $en.value === "off" ? "off" : $eff.value !== "auto" ? $eff.value : "auto";
+    }
   }
 
   // 모델이 사고를 지원 안 하면(supports_thinking=false) provider 가 사고
@@ -4492,31 +4503,150 @@
   document.addEventListener("agentcli:thinkingmode", (e) => apply(e.detail || {}));
 })();
 
-// ── ctx 칩 팝오버 (v7.1.0) ──────────────────────────────────────
-// 저빈도 컨트롤(토큰 상세·컴팩션 슬라이더·Agents 상한)을 헤더에서 팝오버로
-// 승격 — 헤더가 어떤 창 폭에서도 한 줄. 열림/닫힘은 테마 메뉴와 동형
-// (클릭 토글, 바깥 클릭·Escape 닫기). 별도 IIFE — 메인 렌더 루프 무수정.
+// ── 노브 칩 팝업 토글 (v8.57.0) ─────────────────────────────────
+// 각 노브 칩(🗜️/👥/⏳/🧠·보따리)이 data-pop 으로 자기 팝업을 가리킨다.
+// 한 번에 하나만 열리고, 바깥 클릭·Escape 로 닫힘. 팝업 내부 조작(슬라이더·
+// 셀렉트)은 닫힘을 유발하지 않는다. 구 ctx-popover 단일 토글의 계승.
 (function () {
-  var chip = document.getElementById("chip-ctx");
-  var pop = document.getElementById("ctx-popover");
-  if (!chip || !pop) return;
-  function setOpen(open) {
-    pop.hidden = !open;
-    chip.setAttribute("aria-expanded", String(open));
+  function chips() {
+    return Array.prototype.slice.call(document.querySelectorAll(".knob-btn, #pouch-btn"));
   }
-  chip.addEventListener("click", function (e) {
-    e.stopPropagation();
-    setOpen(pop.hidden);
-  });
-  pop.addEventListener("click", function (e) {
-    e.stopPropagation(); // 팝오버 내부 조작(슬라이더 등)이 닫힘을 유발하지 않게
-  });
-  document.addEventListener("click", function () {
-    if (!pop.hidden) setOpen(false);
+  function popOf(btn) {
+    return document.getElementById(btn.dataset.pop || (btn.id === "pouch-btn" ? "pouch-panel" : ""));
+  }
+  function closeAll(except) {
+    chips().forEach(function (b) {
+      var pop = popOf(b);
+      if (pop && b !== except) { pop.hidden = true; b.setAttribute("aria-expanded", "false"); }
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".knob-btn, #pouch-btn");
+    if (btn) {
+      e.stopPropagation();
+      var pop = popOf(btn);
+      if (!pop) return;
+      var willOpen = pop.hidden;
+      closeAll(willOpen ? btn : null);
+      pop.hidden = !willOpen;
+      btn.setAttribute("aria-expanded", String(willOpen));
+      return;
+    }
+    if (e.target.closest && e.target.closest(".knob-pop")) return; // 내부 조작
+    closeAll(null);
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !pop.hidden) setOpen(false);
+    if (e.key === "Escape") closeAll(null);
   });
+})();
+
+// ── 헤더 오버플로 → 보따리 🎒 (v8.57.0) ──────────────────────────
+// 헤더가 한 줄에 안 들어가면 우선순위 낮은 순으로 아이템을 보따리로 수납하고,
+// 넓어지면 도로 꺼낸다(FLIP 비행). 실제 DOM 을 옮기므로 이벤트/배선 무손실.
+// 수납 후보는 [data-overflow] 표시된 요소(노브 칩·부가 액션 아이콘). 항상
+// 보이는 것(모델칩·토큰바·conn-status·보따리 자신)은 제외.
+(function () {
+  var header = document.querySelector("header");
+  var pouchWrap = document.getElementById("pouch-wrap");
+  var pouchBtn = document.getElementById("pouch-btn");
+  var panel = document.getElementById("pouch-panel");
+  var cnt = document.getElementById("pouch-cnt");
+  if (!header || !pouchWrap || !panel) return;
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var stowed = []; // {el, placeholder}
+
+  function candidates() {
+    // 우선순위 순(뒤에서부터 수납) — data-overflow 의 문서 순서를 그대로 사용.
+    return Array.prototype.slice.call(header.querySelectorAll("[data-overflow]"));
+  }
+  function fly(from, to, glyph, done) {
+    if (reduce || !from || !to) { done(); return; }
+    var el = document.createElement("span");
+    el.className = "hd-fly"; el.textContent = glyph;
+    el.style.left = from.left + "px"; el.style.top = from.top + "px";
+    document.body.appendChild(el);
+    requestAnimationFrame(function () {
+      var dx = to.left + to.width / 2 - from.left - from.width / 2;
+      var dy = to.top + to.height / 2 - from.top - from.height / 2;
+      el.style.transform = "translate(" + dx + "px," + dy + "px) scale(.3) rotate(35deg)";
+      el.style.opacity = "0";
+    });
+    setTimeout(function () { el.remove(); done(); }, 430);
+  }
+  function glyphOf(el) {
+    var b = el.querySelector("button") || el;
+    return (b.textContent || "•").trim().slice(0, 2);
+  }
+  function stowOne() {
+    var list = candidates();
+    // 이미 수납되지 않은 것 중 마지막(우선순위 최저)
+    var el = null;
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (!list[i].dataset.stowed) { el = list[i]; break; }
+    }
+    if (!el) return false;
+    pouchWrap.hidden = false;
+    var from = el.getBoundingClientRect(), to = pouchBtn.getBoundingClientRect();
+    var ph = document.createComment("stow");
+    el.parentNode.insertBefore(ph, el);
+    el.dataset.stowed = "1";
+    panel.insertBefore(el, panel.firstChild); // 실제 DOM 이동
+    stowed.push({ el: el, ph: ph });
+    cnt.textContent = stowed.length;
+    fly(from, to, glyphOf(el), function () {});
+    return true;
+  }
+  function unstowOne() {
+    var it = stowed.pop();
+    if (!it) return false;
+    var from = pouchBtn.getBoundingClientRect();
+    it.ph.parentNode.insertBefore(it.el, it.ph);
+    it.ph.remove();
+    delete it.el.dataset.stowed;
+    var to = it.el.getBoundingClientRect();
+    it.el.style.visibility = "hidden";
+    fly(from, to, glyphOf(it.el), function () { it.el.style.visibility = ""; });
+    if (reduce) it.el.style.visibility = "";
+    cnt.textContent = stowed.length;
+    if (!stowed.length) { pouchWrap.hidden = true; panel.hidden = true; }
+    return true;
+  }
+  function fits() {
+    // 헤더는 flex-wrap:wrap — 넘치면 가로가 아니라 **둘째 줄**로 줄바꿈되므로
+    // scrollWidth 는 못 쓴다. offsetTop 비교도 안 된다: align-items:center 라
+    // 아이템 높이차(이모지 버튼 vs 텍스트 칩)만으로 offsetTop 이 수 px 흩어진다.
+    // 대신 "헤더 높이가 한 줄(자식 최대 높이 + 세로 패딩) 이내인가"로 판정 —
+    // 줄바꿈은 20px+ 늘고 높이차는 10px 미만이라 확실히 구분된다.
+    var maxH = 0, ch = header.children;
+    for (var i = 0; i < ch.length; i++) {
+      var c = ch[i];
+      if (!c.hidden && c.offsetParent !== null) maxH = Math.max(maxH, c.offsetHeight);
+    }
+    if (!maxH) return true;
+    return header.clientHeight <= maxH + 20; // 세로 padding(16) + 여유
+  }
+  var reflowing = false;
+  function reflow() {
+    if (reflowing) return;
+    reflowing = true;
+    var guard = 0;
+    while (!fits() && guard++ < 20) { if (!stowOne()) break; }
+    guard = 0;
+    while (fits() && stowed.length && guard++ < 20) {
+      unstowOne();
+      if (!fits()) { stowOne(); break; } // 한 스텝 히스테리시스
+    }
+    reflowing = false;
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    var ro = new ResizeObserver(function () { reflow(); });
+    ro.observe(header);
+  } else {
+    window.addEventListener("resize", reflow);
+  }
+  // 초기 1회 (레이아웃 안정 후)
+  setTimeout(reflow, 120);
+  window.__hdReflow = reflow; // 테스트 훅
 })();
 
 // ── Tab-presence beacon ─────────────────────
