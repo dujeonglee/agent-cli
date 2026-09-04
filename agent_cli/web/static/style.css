@@ -121,7 +121,15 @@ html, body {
   font-size: 14px;
   color: var(--text);
 }
-body { display: flex; flex-direction: column; background: var(--bg); }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  /* 콘텐츠 하한 (v8.57.3): 이보다 좁아지면 헤더를 무한정 접는 대신 가로
+     스크롤로 처리 — 병리적으로 좁은 폭에서의 찌그러짐만 막는다(그 이상은
+     기존 flex-wrap 줄바꿈이 그대로 동작). */
+  min-width: 360px;
+}
 
 /* Form controls don't inherit `color`, so without this they fall back to the
    browser default (black) — invisible on dark surfaces. Tokenize text +

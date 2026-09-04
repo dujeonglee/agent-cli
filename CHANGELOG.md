@@ -12,6 +12,15 @@
 
 ## [Unreleased]
 
+## [8.57.3] - 2026-09-04
+
+### Changed — 콘텐츠 최소 폭 360px
+
+`body { min-width: 360px }` — 창이 그보다 좁아지면 헤더를 무한정 접는 대신
+가로 스크롤로 처리한다(병리적으로 좁은 폭의 찌그러짐만 방지; 360px 이상은
+기존 flex-wrap 줄바꿈 그대로). 브라우저 창 자체를 강제로 못 줄이게 하는
+것은 스크립트로 불가하므로(브라우저 정책) 콘텐츠 하한 방식.
+
 ## [8.57.2] - 2026-09-04
 
 ### Fixed — 헤더 우측 그룹이 좁은 창에서 잘리던 문제
@@ -2263,6 +2272,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.57.3]: https://github.com/dujeonglee/agent-cli/compare/v8.57.2...v8.57.3
 [8.57.2]: https://github.com/dujeonglee/agent-cli/compare/v8.57.1...v8.57.2
 [8.57.1]: https://github.com/dujeonglee/agent-cli/compare/v8.56.0...v8.57.1
 [8.56.0]: https://github.com/dujeonglee/agent-cli/compare/v8.55.0...v8.56.0
