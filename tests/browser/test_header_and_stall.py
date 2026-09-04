@@ -82,6 +82,20 @@ class TestHeaderChips:
             return {header: h.clientHeight, maxChild: maxChild};
         }""")
         assert heights["header"] > heights["maxChild"] + 20  # 다중 줄
+        # v8.57.2: 우측 그룹(액션·viewers·conn)도 잘리지 않고 화면 안 (margin-left:auto
+        # 가 wrap 을 헝클던 문제 방지). confirm/viewers/rename 을 보이게 한 뒤 검사.
+        page.evaluate(
+            "() => { var c=document.getElementById('confirm-mode-btn'); if(c)c.hidden=false;"
+            " var v=document.getElementById('viewers'); if(v)v.textContent='1 viewer - Dizzy Ferret (you)';"
+            " var r=document.getElementById('rename-btn'); if(r)r.hidden=false; }"
+        )
+        page.wait_for_timeout(150)
+        offscreen = page.evaluate(
+            "() => { var h=document.querySelector('header'), vw=window.innerWidth, bad=[];"
+            " Array.from(h.children).forEach(function(c){ if(c.hidden||!c.offsetParent)return;"
+            " var r=c.getBoundingClientRect(); if(r.right>vw+1||r.left<-1) bad.push(c.id); }); return bad; }"
+        )
+        assert offscreen == [], offscreen
         # 좁은 창에서도 칩 클릭 → 팝업 정상
         page.click("#stall-chip")
         assert page.locator("#stall-pop").is_visible()

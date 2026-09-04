@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+## [8.57.2] - 2026-09-04
+
+### Fixed — 헤더 우측 그룹이 좁은 창에서 잘리던 문제
+
+`#theme-wrap { margin-left: auto }` 가 `flex-wrap` 헤더에서 우측 그룹(⚡ 확인 없이
+실행·🔗·viewers·✎·●)의 줄바꿈을 헝클어(각 줄의 남는 공간을 auto 마진이 먹어) 잘려
+보였다. `header` 에 `flex-wrap: wrap` 을 명시하고, 좁은 창(≤900px)에선 `margin-left`
+auto 를 해제해 순수 좌→우 자연 줄바꿈으로 — 380~1300px 전 구간에서 화면 밖으로
+나가는 요소 0(실브라우저 검증). 넓은 창의 우측 정렬은 그대로.
+
 ## [8.57.1] - 2026-09-04
 
 ### Changed — 웹 헤더 개편: 토큰 상세 상시 노출 · 노브별 값-배지 칩 · 보따리 오버플로
@@ -2253,6 +2263,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.57.2]: https://github.com/dujeonglee/agent-cli/compare/v8.57.1...v8.57.2
 [8.57.1]: https://github.com/dujeonglee/agent-cli/compare/v8.56.0...v8.57.1
 [8.56.0]: https://github.com/dujeonglee/agent-cli/compare/v8.55.0...v8.56.0
 [8.55.0]: https://github.com/dujeonglee/agent-cli/compare/v8.54.0...v8.55.0

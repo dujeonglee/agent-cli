@@ -172,10 +172,16 @@ header {
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;   /* 좁아지면 둘째 줄로 접혀 모든 칩·아이콘이 항상 보인다 */
+  gap: 6px 8px;      /* row-gap 6 · column-gap 8 — 줄바꿈 시 줄 간격 */
 }
-/* 우측 액션 그룹의 시작 — 칩(좌)과 아이콘(우)을 가른다 */
+/* 우측 액션 그룹의 시작 — 넓은 창에서만 우측 정렬(margin-left:auto).
+   좁은 창(≤900px)에선 auto 를 해제해 순수 좌→우 줄바꿈으로 — auto 마진이
+   wrap 레이아웃에서 우측 그룹을 헝클어 잘려 보이던 문제(v8.57.2)를 방지. */
 #theme-wrap { margin-left: auto; }
+@media (max-width: 900px) {
+  #theme-wrap { margin-left: 0; }
+}
 
 /* ── 헤더 칩 (v7.1.0) — 의미 단위 요약, 상세는 hover/팝오버 ── */
 .hd-chip {
