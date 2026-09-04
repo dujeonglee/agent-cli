@@ -64,6 +64,13 @@ class TestHeaderChips:
         assert page.locator("#stall-pop #stall-input").is_visible()
         page.keyboard.press("Escape")
         assert _wait(lambda: page.locator("#stall-pop").is_hidden(), timeout=3)
+        # v8.57.4: 왼쪽 칩 팝업이 화면 밖으로 잘리지 않는다(오른쪽으로 펼침).
+        page.click("#compaction-chip")
+        inview = page.evaluate(
+            "() => { var b=document.querySelector('#compaction-pop').getBoundingClientRect();"
+            " return b.left >= -1 && b.right <= window.innerWidth + 1; }"
+        )
+        assert inview
 
     def test_narrow_header_wraps_all_chips_visible(self, stack, page):
         # v8.57.1: 보따리 제거 — 좁은 창에서 헤더가 둘째 줄로 접히고(flex-wrap)

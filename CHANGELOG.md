@@ -12,6 +12,15 @@
 
 ## [Unreleased]
 
+## [8.57.4] - 2026-09-04
+
+### Fixed — 노브 칩 팝업이 왼쪽 칩에서 잘리던 문제
+
+`.knob-pop` 이 항상 버튼 오른쪽 끝 기준 왼쪽으로 펼쳐져(`right:0`), 헤더 왼쪽의
+칩(🗜️ 등)은 팝업이 화면 왼쪽 밖으로 나가 잘렸다. 기본을 **오른쪽으로 펼침**
+(`left:0`)으로 바꾸고, 열 때 뷰포트 오른쪽을 넘으면 `.align-right` 로 왼쪽 펼침으로
+뒤집는다 — 칩 위치와 무관하게 팝업이 항상 화면 안.
+
 ## [8.57.3] - 2026-09-04
 
 ### Changed — 콘텐츠 최소 폭 360px
@@ -2272,6 +2281,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.57.4]: https://github.com/dujeonglee/agent-cli/compare/v8.57.3...v8.57.4
 [8.57.3]: https://github.com/dujeonglee/agent-cli/compare/v8.57.2...v8.57.3
 [8.57.2]: https://github.com/dujeonglee/agent-cli/compare/v8.57.1...v8.57.2
 [8.57.1]: https://github.com/dujeonglee/agent-cli/compare/v8.56.0...v8.57.1

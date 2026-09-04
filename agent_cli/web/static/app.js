@@ -4530,6 +4530,12 @@
       closeAll(willOpen ? btn : null);
       pop.hidden = !willOpen;
       btn.setAttribute("aria-expanded", String(willOpen));
+      if (willOpen) {
+        // 기본(오른쪽 펼침)으로 열고, 뷰포트 오른쪽을 넘으면 왼쪽 펼침으로 뒤집는다.
+        pop.classList.remove("align-right");
+        var r = pop.getBoundingClientRect();
+        if (r.right > window.innerWidth - 4) pop.classList.add("align-right");
+      }
       return;
     }
     if (e.target.closest && e.target.closest(".knob-pop")) return; // 내부 조작

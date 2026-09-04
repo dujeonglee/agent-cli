@@ -243,7 +243,10 @@ header {
 .knob-pop {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  /* 기본은 버튼 왼쪽 끝 기준 → 오른쪽으로 펼침(왼쪽 칩이 안 잘림).
+     오른쪽 칩은 IIFE 가 .align-right 를 붙여 반대로 편다(v8.57.4). */
+  left: 0;
+  right: auto;
   min-width: 200px;
   background: var(--glass);
   backdrop-filter: blur(14px) saturate(1.4);
@@ -260,6 +263,7 @@ header {
   white-space: nowrap;
 }
 .knob-pop[hidden] { display: none; }
+.knob-pop.align-right { left: auto; right: 0; }
 .knob-unit { color: var(--muted); font-size: 11px; }
 /* 헤더는 flex-wrap:wrap — 좁아지면 둘째 줄로 접혀 모든 칩이 항상 보인다
    (v8.57.1: 보따리 오버플로 제거, 자동 줄바꿈으로 단순화). */
