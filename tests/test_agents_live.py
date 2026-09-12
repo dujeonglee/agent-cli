@@ -1693,6 +1693,17 @@ class TestWorkerDeathNotice:
         assert wait_until(lambda: reg.get(key).state == "dead")
         import json
 
+        # 메모리 상태(reg.get) 가 dead 여도 디스크 미러(_save_state) 는 그
+        # 직후에 써진다 — 느린 러너에서 이 틈이 flake 를 만든다(같은 부류:
+        # test_pending_mirror_persists_answers). 미러가 반영될 때까지 대기.
+        def _mirror_dead() -> bool:
+            try:
+                agents = json.loads((tmp_path / "agents.json").read_text())["agents"]
+                return bool(agents) and agents[0].get("state") == "dead"
+            except (FileNotFoundError, ValueError, KeyError):
+                return False
+
+        assert wait_until(_mirror_dead)
         entry = json.loads((tmp_path / "agents.json").read_text())["agents"][0]
         assert entry["state"] == "dead"
 
@@ -3539,6 +3550,21 @@ class TestAttributionInheritance:
         reg.set_current_run_authors(["Bob", "두정"])
         reg.request(key, "job")
         assert wait_until(reg.has_pending_replies)
+
+        # ``has_pending_replies`` 는 **메모리** 상태(_pending) 라 True 가 된
+        # 시점에 디스크 미러(_save_state, 락 밖 후속 호출)는 아직 안 써졌을
+        # 수 있다 — CI 의 느린 러너에서 이 틈이 벌어져 IndexError 로 flake
+        # (2026-09-12 run 34669480281). 검증 대상이 **미러 파일**이므로
+        # 파일이 실제로 pending 을 담을 때까지 기다린다.
+        def _mirror_has_pending() -> bool:
+            try:
+                return bool(
+                    _json.loads((tmp_path / "agents.json").read_text()).get("pending")
+                )
+            except (FileNotFoundError, ValueError):
+                return False
+
+        assert wait_until(_mirror_has_pending)
         state = _json.loads((tmp_path / "agents.json").read_text())
         assert state["pending"][0]["answers"] == ["Bob", "두정"]
 
