@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [8.58.0] - 2026-09-12
+
+### Added — headless thinking 제어 (env)
+
+thinking 제어가 web UI(🧠 노브)에만 있고 `agent-cli run`(비대화형·harbor 벤치
+경로)엔 없어, headless 에서 thinking 을 끌 수단이 전무했다(`supports_thinking:false`
+로 우회하면 파라미터를 아예 안 보내 모델 기본값=Qwen ON 으로 돌던 함정).
+
+- `default_thinking_override()`: 부팅 시 env `AGENT_CLI_THINKING`(off/on) +
+  `AGENT_CLI_REASONING_EFFORT`(low/medium/high/off) 로 `ctx.thinking_override`
+  초기값을 구성 — web 의 런타임 `set_thinking_override` 와 동일 dict 형태.
+  run/web 공통 `_build_context` → `ContextManager.__init__` 에서 적용되므로 두
+  경로 모두 자동. harbor 는 `--ae AGENT_CLI_THINKING=off` 로 주입(모든 exec 에
+  오버레이) — 어댑터 수정 불필요.
+- **주의**: `supports_thinking=False` 모델에선 `resolve_thinking_policy` 가
+  이 override 를 무시한다(thinking 미지원 모델에 파라미터를 안 보내는 게이트).
+  실제로 off 를 보내려면 모델이 `supports_thinking=True` 여야 한다.
+
 ## [8.57.4] - 2026-09-04
 
 ### Fixed — 노브 칩 팝업이 왼쪽 칩에서 잘리던 문제
@@ -2281,6 +2299,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.58.0]: https://github.com/dujeonglee/agent-cli/compare/v8.57.4...v8.58.0
 [8.57.4]: https://github.com/dujeonglee/agent-cli/compare/v8.57.3...v8.57.4
 [8.57.3]: https://github.com/dujeonglee/agent-cli/compare/v8.57.2...v8.57.3
 [8.57.2]: https://github.com/dujeonglee/agent-cli/compare/v8.57.1...v8.57.2

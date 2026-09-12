@@ -194,6 +194,8 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
+| `AGENT_CLI_THINKING` | — | headless(run·harbor) thinking 제어: `off`/`on` (미설정=모델 기본). web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
+| `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
 | `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. 웹 ctx 팝오버 "Stall" 로 세션 중 변경 (v8.55.0) |
 | `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`read_context` 가 모두 같은 루트를 봄 (v8.50.0) |
 

@@ -4435,3 +4435,59 @@ class TestStreamIdleInheritance:
         sub, err = create_subagent_ctx("none", parent, tmp_path / "s")
         assert sub is not None, err
         assert sub.stream_idle_timeout_s == 120
+
+
+class TestHeadlessThinkingControl:
+    """v8.58.0: headless(run)·harbor thinking 제어 — env AGENT_CLI_THINKING /
+    AGENT_CLI_REASONING_EFFORT 가 ctx.thinking_override 초기값을 채우고,
+    provider.call 의 CallSettings.thinking 으로 흘러 요청 body 에 반영된다."""
+
+    def test_env_off_sets_override(self, monkeypatch, tmp_path):
+        from agent_cli.context.manager import (
+            ContextManager,
+            default_thinking_override,
+        )
+
+        monkeypatch.setenv("AGENT_CLI_THINKING", "off")
+        assert default_thinking_override() == {"enable_thinking": False}
+        assert ContextManager(session_dir=tmp_path).thinking_override == {
+            "enable_thinking": False
+        }
+
+    def test_env_effort_and_on(self, monkeypatch):
+        from agent_cli.context.manager import default_thinking_override
+
+        monkeypatch.setenv("AGENT_CLI_THINKING", "on")
+        monkeypatch.setenv("AGENT_CLI_REASONING_EFFORT", "high")
+        assert default_thinking_override() == {
+            "enable_thinking": True,
+            "reasoning_effort": "high",
+        }
+
+    def test_unset_is_empty(self, monkeypatch):
+        from agent_cli.context.manager import default_thinking_override
+
+        monkeypatch.delenv("AGENT_CLI_THINKING", raising=False)
+        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
+        assert default_thinking_override() == {}
+
+    def test_env_off_reaches_provider_call(self, monkeypatch, tmp_path):
+        """env off → ctx override → CallSettings.thinking (엔드-투-엔드)."""
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setenv("AGENT_CLI_THINKING", "off")
+        ctx = ContextManager(session_dir=tmp_path)
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=1024, supports_thinking=True
+        )
+        provider = _make_provider(_complete("ok"))
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        settings = provider.call.call_args_list[0].kwargs["settings"]
+        assert settings.thinking == {"enable_thinking": False}

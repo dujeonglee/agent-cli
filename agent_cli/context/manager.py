@@ -93,6 +93,32 @@ def clamp_stream_idle_timeout(seconds: int) -> int:
     return max(STREAM_IDLE_TIMEOUT_MIN_S, min(s, STREAM_IDLE_TIMEOUT_MAX_S))
 
 
+def default_thinking_override() -> dict:
+    """부팅 기본 thinking 오버라이드 — headless(run)·harbor 에서 thinking 을
+    제어할 유일한 경로 (v8.58.0). web UI 의 런타임 ``set_thinking_override`` 와
+    **동일 dict 형태**를 env 로 구성한다:
+
+      - ``AGENT_CLI_THINKING`` = off|on  → ``enable_thinking`` (미설정=모델 기본)
+      - ``AGENT_CLI_REASONING_EFFORT`` = low|medium|high|off → ``reasoning_effort``
+
+    둘 다 미설정이면 ``{}`` (모델 기본). **주의**: ``supports_thinking=False``
+    모델에선 ``resolve_thinking_policy`` 가 이 override 를 무시한다(thinking 을
+    아예 못 받는 모델에 파라미터를 안 보내는 게이트) — off 를 실제로 보내려면
+    모델이 ``supports_thinking=True`` 여야 한다."""
+    import os
+
+    ov: dict = {}
+    t = os.environ.get("AGENT_CLI_THINKING", "").strip().lower()
+    if t in ("off", "no", "0", "false"):
+        ov["enable_thinking"] = False
+    elif t in ("on", "yes", "1", "true"):
+        ov["enable_thinking"] = True
+    eff = os.environ.get("AGENT_CLI_REASONING_EFFORT", "").strip().lower()
+    if eff in ("low", "medium", "high", "off"):
+        ov["reasoning_effort"] = eff
+    return ov
+
+
 def default_stream_idle_timeout_s() -> int:
     """부팅 기본 — env AGENT_CLI_STREAM_IDLE_TIMEOUT_S(초) 오버라이드."""
     import os
@@ -213,7 +239,7 @@ class ContextManager:
         # Per-session thinking/reasoning override (web UI 컨트롤). 공유 ctx 라 다음
         # LLM 콜이 즉시 읽는다(rebuild 불필요). 기본 {}=미설정(모델 기본값 유지).
         #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"
-        self.thinking_override: dict = {}
+        self.thinking_override: dict = default_thinking_override()
         # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정,
         # web ctx 팝오버 "Stall" 로 변경, 서브에이전트는 spawn 시점 상속.
         self.stream_idle_timeout_s: int = default_stream_idle_timeout_s()
