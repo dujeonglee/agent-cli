@@ -12,6 +12,30 @@
 
 ## [Unreleased]
 
+## [8.59.0] - 2026-09-12
+
+### Changed — 간결한 reasoning 지시 (출력 18~92% 감소)
+
+`TASK_GUIDELINES` 에 한 줄 추가: "Reason in short, plain sentences — one point
+per sentence, active voice, no repetition. State the plan, then act."
+
+실측 경위: ASD-STE100(항공우주 Simplified Technical English) 원문 지시로
+파일럿한 결과 순수 추론에서 −30%, 실전(thinking OFF 기준)에서 −22~63% 의 출력
+절감. 다만 규격명·전문용어("approved simple words", "noun clusters")는 모델마다
+인지 편차가 크고 그 자체가 오버헤드라, **효과의 본질(단문·능동태·한 문장 한
+요점·비반복)만 평이한 문장으로 일반화**해 A/B 재측정:
+
+| task | base | 이 문구 | Δ | (참고) STE 원문 |
+|---|---|---|---|---|
+| gcode-to-text | 30,748 | 2,707 | **-92%** | 9,226 |
+| large-scale-text-editing | 8,219 | 6,774 | -18% | 5,797 |
+| regex-log | 8,249 (0.0) | 6,047 (**1.0**) | -27% | 15,618 |
+
+일반화 문구가 **STE 원문보다 낫거나 비슷**했고(규격명보다 직접 행동 지시가 잘
+먹힘), 품질 저하 신호는 없었다(regex 는 오히려 성공). 기존 "작은 검증 스텝
+선호"(v8.51.0) 와 같은 결의 습관이라 그 옆에 둔다. 측정은 모두 thinking OFF
+(v8.58.0 `AGENT_CLI_THINKING=off`) 기준 — 두 레버는 다른 대상을 압축한다.
+
 ## [8.58.0] - 2026-09-12
 
 ### Added — headless thinking 제어 (env)
@@ -2299,6 +2323,7 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
 [Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.48.0...HEAD
+[8.59.0]: https://github.com/dujeonglee/agent-cli/compare/v8.58.0...v8.59.0
 [8.58.0]: https://github.com/dujeonglee/agent-cli/compare/v8.57.4...v8.58.0
 [8.57.4]: https://github.com/dujeonglee/agent-cli/compare/v8.57.3...v8.57.4
 [8.57.3]: https://github.com/dujeonglee/agent-cli/compare/v8.57.2...v8.57.3

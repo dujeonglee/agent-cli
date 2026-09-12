@@ -593,6 +593,18 @@ class TestBuildSystemPrompt:
         assert "Read a file before changing it" in TASK_GUIDELINES
         assert "code, config, docs" in TASK_GUIDELINES
 
+    def test_task_guidelines_require_terse_reasoning(self):
+        """v8.59.0: 간결한 reasoning 지시 — Harbor tb21 실측에서 출력 토큰을
+        18~92% 줄였고(3/3 일관) 품질 저하 신호 없음. ASD-STE100 규격 원문보다
+        규격명을 뺀 평이한 행동 지시가 더 잘 먹혔다(gcode 2.7K vs 9.2K).
+        의도 수준 검증 — 재작성이 테스트를 깨지 않게."""
+        import re
+
+        flat = re.sub(r"\s+", " ", TASK_GUIDELINES).lower()
+        assert "short, plain sentences" in flat or "short sentences" in flat
+        assert "one point per sentence" in flat
+        assert "no repetition" in flat
+
     def test_task_guidelines_block_feature_creep(self):
         """Task Guidelines must explicitly forbid feature creep, premature
         abstraction, and speculative flexibility — the LLM equivalents
