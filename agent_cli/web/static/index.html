@@ -58,13 +58,18 @@
         <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
       </div>
     </span>
-    <span id="stall-wrap" class="knob" title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Session-only; sub-agents inherit at spawn." hidden>
-      <button id="stall-chip" class="knob-btn" type="button" data-pop="stall-pop" aria-haspopup="true" aria-expanded="false">⏳ <span id="stall-badge">10m</span></button>
+    <span id="stall-wrap" class="knob" title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Attempts is the TOTAL number of sends including the first, so the longest possible wait is N minutes x attempts. Session-only; sub-agents inherit at spawn." hidden>
+      <button id="stall-chip" class="knob-btn" type="button" data-pop="stall-pop" aria-haspopup="true" aria-expanded="false">⏳ <span id="stall-badge">10m×4</span></button>
       <div id="stall-pop" class="knob-pop" hidden>
-        <label id="stall-label" for="stall-input">Stall</label>
+        <label id="stall-label" for="stall-input">무진전</label>
         <input id="stall-input" type="number" min="0" max="60" step="1" value="10"
                aria-label="Stream stall timeout (minutes; 0 = off)">
         <span class="knob-unit">min · 0 = off</span>
+        <label id="stall-att-label" for="stall-attempts">시도</label>
+        <input id="stall-attempts" type="number" min="1" max="10" step="1" value="4"
+               aria-label="Total send attempts on stall, first send included">
+        <span class="knob-unit">회 · 첫 전송 포함</span>
+        <span id="stall-derived" class="knob-derived">10분 × 4회 = 최대 40분 후 실패</span>
       </div>
     </span>
     <span id="thinking-wrap" class="knob" title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>

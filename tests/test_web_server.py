@@ -3749,3 +3749,66 @@ class TestStreamIdleEndpoint:
         ctx = ContextManager(tmp_path)
         assert ctx.stream_idle_timeout_s == 300
         assert ctx.set_stream_idle_timeout(0) == 0
+
+    # ── v8.60.0: 같은 엔드포인트가 2번째 축(총 시도 횟수)도 나른다 ──
+    # 두 값은 최대 대기(= 한도 × 시도)의 두 인수라 따로 오면 프론트가
+    # 파생 표시를 위해 두 응답을 기다려야 한다.
+
+    def test_get_returns_attempts_and_range(self, tmp_path):
+        _, _, client, _ctx = self._client_with_ctx(tmp_path)
+        d = client.get("/api/stream-idle?token=testtoken").json()
+        assert d["attempts"] == 4
+        assert d["attempts_min"] == 1 and d["attempts_max"] == 10
+
+    def test_post_attempts_only_leaves_limit_alone(self, tmp_path):
+        """한 축만 보내면 그 축만 바뀐다 — 노브 입력 둘이 서로를 덮어쓰면
+        시도를 고칠 때마다 한도가 기본값으로 되돌아간다."""
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        client.post("/api/stream-idle?token=testtoken", json={"seconds": 300})
+        d = client.post("/api/stream-idle?token=testtoken", json={"attempts": 6}).json()
+        assert d["ok"] and d["attempts"] == 6 and d["seconds"] == 300
+        assert (ctx.stream_idle_timeout_s, ctx.stream_max_attempts) == (300, 6)
+
+    def test_post_seconds_only_is_backward_compatible(self, tmp_path):
+        """v8.55.0 프론트가 보내던 ``{"seconds": N}`` 단독 호출이 그대로
+        유효해야 한다 — 캐시된 구 app.js 가 붙어도 노브가 죽지 않는다."""
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        ctx.set_stream_max_attempts(6)
+        d = client.post(
+            "/api/stream-idle?token=testtoken", json={"seconds": 120}
+        ).json()
+        assert d["ok"] and d["seconds"] == 120
+        assert ctx.stream_max_attempts == 6  # 건드리지 않았다
+
+    def test_post_attempts_clamped(self, tmp_path):
+        _, _, client, _ctx = self._client_with_ctx(tmp_path)
+
+        def post(n):
+            return client.post(
+                "/api/stream-idle?token=testtoken", json={"attempts": n}
+            ).json()["attempts"]
+
+        assert post(0) == 1 and post(-3) == 1  # 0 은 '끔'이 아니다
+        assert post(99) == 10
+
+    def test_post_rejects_empty_body(self, tmp_path):
+        _, _, client, _ctx = self._client_with_ctx(tmp_path)
+        d = client.post("/api/stream-idle?token=testtoken", json={}).json()
+        assert d["ok"] is False
+
+    def test_post_rejects_non_integer(self, tmp_path):
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        d = client.post(
+            "/api/stream-idle?token=testtoken", json={"attempts": "six"}
+        ).json()
+        assert d["ok"] is False
+        assert ctx.stream_max_attempts == 4  # 변경 없음
+
+    def test_post_broadcasts_both_axes_in_one_sticky(self, tmp_path):
+        """한 슬롯에 같이 실어야 타 뷰어의 파생 표시(최대 N분)가 두 번
+        깜빡이지 않는다."""
+        _, renderer, client, _ctx = self._client_with_ctx(tmp_path)
+        client.post("/api/stream-idle?token=testtoken", json={"attempts": 6})
+        snap = renderer.register_connection(WebConnection(id="v3"))
+        payloads = [d for (ev, d) in snap if ev == "stream_idle"]
+        assert payloads == [{"seconds": 600, "attempts": 6}]

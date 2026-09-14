@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
+from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc
@@ -253,6 +253,11 @@ class LLMCaller:
                         self.ctx.stream_idle_timeout_s
                         if self.ctx
                         else DEFAULT_STREAM_IDLE_TIMEOUT_S
+                    ),
+                    stream_max_attempts=(
+                        self.ctx.stream_max_attempts
+                        if self.ctx
+                        else STREAM_MAX_ATTEMPTS
                     ),
                     max_output_tokens=clamped_max_tokens,
                 ),

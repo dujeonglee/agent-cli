@@ -196,10 +196,11 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | — | headless(run·harbor) thinking 제어: `off`/`on` (미설정=모델 기본). web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
-| `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. 웹 ctx 팝오버 "Stall" 로 세션 중 변경 (v8.55.0) |
+| `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. `--stall` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.55.0) |
+| `AGENT_CLI_STREAM_MAX_ATTEMPTS` | — | 무진전 시 **총** 전송 횟수(첫 전송 포함), 1~10, 기본 4. 최대 대기 = 한도 × 이 값. `--stall-attempts` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.60.0) |
 | `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`read_context` 가 모두 같은 루트를 봄 (v8.50.0) |
 
-> **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고 body 10분 연속 침묵 시 연결을 끊고 재전송한다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
+> **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고, body 가 10분 연속 침묵하면 연결을 끊고 재전송한다 — **총 4회**(첫 전송 포함)까지, 즉 최장 40분 뒤 실패. 이 두 축만은 고정이 아니라 세션 노브다: 한도는 `--stall`, 횟수는 `--stall-attempts`(웹은 ⏳ 칩 하나에 두 입력, 팝업이 곱한 최대 대기를 같이 보여준다). 대기 중에는 남은 시간과 `시도 n/4` 가 웹·CLI 양쪽에 표시되고, 반복되는 대기는 한 줄을 제자리 갱신하며 재전송·실패만 기록으로 남는다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
 >
 > **컨텍스트 컴팩션**은 항상 켜져 있다(90% 예산 초과 시 LLM 요약; 실패/여전히 초과 시 플레인 FIFO drop 으로 폴백). 서브에이전트에도 전파된다.
 
@@ -259,6 +260,8 @@ agent-cli run "task description" [options]
 | `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
 | `--max-depth` | 중첩 깊이 (agent + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--agent-timeout` | 서브에이전트 타임아웃 (초) | `300` |
+| `--stall` | 스트림 무진전 한도 — `600`(초)·`10m`(분)·`0`(끔). env 보다 우선 | `10m` |
+| `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성 | (없음) |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |

@@ -4436,6 +4436,57 @@ class TestStreamIdleInheritance:
         assert sub is not None, err
         assert sub.stream_idle_timeout_s == 120
 
+    def test_ctx_stall_knobs_reach_call_settings(self, tmp_path):
+        """**ctx 에 담기는 것과 실제로 전달되는 것은 다른 문제** — 종전엔
+        ctx 필드와 엔드포인트만 검증했고 llm.py 의 스냅샷 한 줄은 무보증
+        이었다. 그 줄이 빠지면 노브를 돌려도 스트림은 기본값으로 돈다
+        (테스트는 전부 통과한 채로). 두 축 모두 여기서 고정한다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=200_000, max_output_tokens=4096, supports_thinking=False
+        )
+        ctx = ContextManager(session_dir=tmp_path)
+        ctx.set_stream_idle_timeout(300)
+        ctx.set_stream_max_attempts(6)
+        provider = _make_provider(_complete("ok"))
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        sent = provider.call.call_args_list[0].kwargs["settings"]
+        assert (sent.stream_idle_timeout_s, sent.stream_max_attempts) == (300, 6)
+
+    def test_call_settings_fall_back_to_defaults_without_ctx(self):
+        """ctx 없는 경로(일부 도구/프로브)에서도 필드는 채워져야 한다 —
+        None 이 흘러가면 재연결 루프가 max(1, int(None)) 에서 터진다."""
+        from agent_cli.constants import (
+            DEFAULT_STREAM_IDLE_TIMEOUT_S,
+            STREAM_MAX_ATTEMPTS,
+        )
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=200_000, max_output_tokens=4096, supports_thinking=False
+        )
+        provider = _make_provider(_complete("ok"))
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=None,
+            max_turns=2,
+        )
+        sent = provider.call.call_args_list[0].kwargs["settings"]
+        assert sent.stream_idle_timeout_s == DEFAULT_STREAM_IDLE_TIMEOUT_S
+        assert sent.stream_max_attempts == STREAM_MAX_ATTEMPTS
+
 
 class TestHeadlessThinkingControl:
     """v8.58.0: headless(run)·harbor thinking 제어 — env AGENT_CLI_THINKING /

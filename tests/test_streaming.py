@@ -551,7 +551,7 @@ class TestC6Symmetry:
         with open("agent_cli/providers/http.py") as fh:
             http_src = fh.read()
         assert "except StreamIdleTimeout" in http_src
-        assert "STREAM_MAX_RECONNECTS" in http_src
+        assert "STREAM_MAX_ATTEMPTS" in http_src
 
 
 class TestProgressClockIdle:

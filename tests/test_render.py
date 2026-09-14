@@ -1087,3 +1087,106 @@ class TestScopeDelegatingFunctions:
         assert "└─" in out
         assert "skill:test" in out
         assert "1.5s" in out
+
+
+class TestStreamStallCli:
+    """v8.60.0: CLI 무진전 표시 — 대기는 마르퀴와 같은 한 줄 슬롯에서
+    제자리 갱신, 재전송(전이)만 기록. 종전엔 대기 알림이 시도당 20줄씩
+    쌓여(4시도면 80줄) 정작 중요한 재전송·실패가 그 사이에 묻혔다."""
+
+    def _tty(self):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        return MinimalRenderer(Console(file=buf, force_terminal=True, width=100)), buf
+
+    def _pipe(self):
+        """non-TTY: harbor·파이프·instance.log 경로."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        return MinimalRenderer(Console(file=buf, force_terminal=False, width=100)), buf
+
+    def test_tty_wait_repaints_in_place(self):
+        """20틱이 울려도 줄은 늘지 않는다 — \\r 로 같은 자리를 덮어쓴다."""
+        r, buf = self._tty()
+        for tick in range(1, 21):
+            r.stream_stall(
+                kind="wait", elapsed_s=tick * 30, limit_s=600, attempt=1, attempts=4
+            )
+        out = buf.getvalue()
+        assert out.count("\n") == 0  # 한 줄도 확정되지 않았다
+        assert out.count("\r") == 20  # 매번 같은 자리로 되돌아가 덮어썼다
+        assert "10:00" in out  # 마지막 프레임 = 한도 도달
+
+    def test_tty_wait_shows_progress_and_attempt(self):
+        """사용자가 읽어야 할 두 가지: 한도 대비 위치와 몇 번째 시도인지."""
+        r, buf = self._tty()
+        r.stream_stall(kind="wait", elapsed_s=90, limit_s=600, attempt=2, attempts=4)
+        out = buf.getvalue()
+        assert "1:30" in out and "10:00" in out
+        assert "시도 2/4" in out
+
+    def test_tty_resend_is_a_kept_record(self):
+        """전이는 드물고 되돌릴 수 없으므로 기록으로 남는다."""
+        r, buf = self._tty()
+        r.stream_stall(kind="wait", elapsed_s=600, limit_s=600, attempts=4)
+        r.stream_stall(kind="resend", attempt=2, attempts=4)
+        out = buf.getvalue()
+        assert "재전송" in out and "시도 2/4" in out
+        assert out.rstrip().endswith(")")  # 확정된 줄로 끝난다
+
+    def test_tty_clear_leaves_no_stale_wait_line(self):
+        """토큰이 도착하면 대기 줄은 지워지고 기록도 남기지 않는다 —
+        지우지 않으면 다음 출력 앞에 '응답 대기 중 9:30' 이 눌어붙는다."""
+        r, buf = self._tty()
+        r.stream_stall(kind="wait", elapsed_s=570, limit_s=600, attempts=4)
+        buf.truncate(0)
+        buf.seek(0)
+        r.stream_stall(kind="clear")
+        out = buf.getvalue()
+        assert "응답 대기 중" not in out
+        assert "\r" in out  # 슬롯을 공백으로 덮고 되감았다
+
+    def test_non_tty_keeps_line_output(self):
+        """파이프·로그에선 \\r 이 무의미하고 줄이 남는 편이 사후 진단에
+        유리하다(harbor instance.log) — 기본 구현으로 떨어진다."""
+        r, buf = self._pipe()
+        r.stream_stall(kind="wait", elapsed_s=300, limit_s=600, attempt=1, attempts=4)
+        r.stream_stall(kind="resend", attempt=2, attempts=4)
+        out = buf.getvalue()
+        assert "\r" not in out
+        assert out.count("\n") == 2  # 두 줄 모두 남았다
+        assert "시도 1/4" in out and "시도 2/4" in out
+
+    def test_custom_renderer_needs_no_change(self):
+        """``stream_stall`` 은 기본 구현이 있는 훅 — 구현하지 않은 커스텀
+        렌더러는 종전대로 ``status`` 로 받는다(agent_mail_hint 선례)."""
+        from agent_cli.render.base import Renderer
+
+        seen = []
+
+        class Custom:
+            """추상 메서드를 구현하지 않은 렌더러 — 기본 훅만 빌려 쓴다."""
+
+            stream_stall = Renderer.stream_stall
+
+            def status(self, state, message, turn=0):
+                seen.append(message)
+
+        c = Custom()
+        c.stream_stall(kind="resend", attempt=3, attempts=4)
+        c.stream_stall(kind="wait", elapsed_s=120, limit_s=600, attempt=1, attempts=4)
+        c.stream_stall(kind="clear")  # 남긴 게 없으므로 할 일도 없다
+        assert seen == [
+            "스트림 무응답 — 재연결 후 재전송 (시도 3/4)",
+            "응답 대기 중 — 토큰 없음 120s (시도 1/4, 480s 후 재연결)",
+        ]

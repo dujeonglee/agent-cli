@@ -49,14 +49,23 @@ class WebStack:
     """
 
     def __init__(self):
+        import pathlib
+        import tempfile
+
         import uvicorn
 
+        from agent_cli.context.manager import ContextManager
         from agent_cli.render.web import WebRenderer
         from agent_cli.web.server import WebServer, create_app
 
         self.renderer = WebRenderer(workspace=os.getcwd())
         self.token = "browser-test"
-        self.server = WebServer(self.renderer, token=self.token)
+        # 실 서버는 항상 ctx 를 들고 있다. 없으면 세션-한정 노브
+        # (compaction·stall 등)의 POST 가 "no active context" 로 떨어져
+        # 브라우저 층에서 왕복을 검증할 수 없다 (v8.60.0).
+        self._ctxdir = tempfile.mkdtemp(prefix="agentcli-browser-ctx-")
+        self.ctx = ContextManager(session_dir=pathlib.Path(self._ctxdir))
+        self.server = WebServer(self.renderer, token=self.token, ctx=self.ctx)
         app = create_app(self.server)
         # 포트 0 = OS 임시 할당 — 병렬/반복 실행 충돌 없음.
         self._config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")

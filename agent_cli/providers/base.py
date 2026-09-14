@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
+from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
 from agent_cli.providers.capabilities import ModelCapabilities
 
 # content 인라인 thinking 블록 격리 (5.10.0) — 구현은 thinking_tags 단일
@@ -116,6 +116,9 @@ class CallSettings:
     thinking: dict | None = None
     #: 스트림 무진전(no-token) 한도(초). 0 = 감지 끔.
     stream_idle_timeout_s: int = DEFAULT_STREAM_IDLE_TIMEOUT_S
+    #: 무진전 시 **총** 시도 횟수(첫 전송 포함). 한도와 한 쌍 —
+    #: 최대 대기 = stream_idle_timeout_s × stream_max_attempts (v8.60.0).
+    stream_max_attempts: int = STREAM_MAX_ATTEMPTS
     #: 요청-시 클램프된 max_tokens. None = capabilities 등록값 사용 —
     #: capabilities 는 순수 모델 서술로 남는다 (v8.53.0 의 replace 대체).
     max_output_tokens: int | None = None

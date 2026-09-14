@@ -98,7 +98,7 @@ class OpenAIProvider:
                 url,
                 headers=headers,
                 body=body,
-                handle_stream=lambda r: self._handle_stream(
+                handle_stream=lambda r, attempt, attempts: self._handle_stream(
                     r,
                     on_chunk,
                     kwargs.get("degeneration_check"),
@@ -106,7 +106,10 @@ class OpenAIProvider:
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
                     on_thinking=kwargs.get("on_thinking"),
+                    attempt=attempt,
+                    attempts=attempts,
                 ),
+                max_attempts=settings.stream_max_attempts,
             )
 
         r = post_with_retry(
@@ -124,6 +127,8 @@ class OpenAIProvider:
         degeneration_trigger="#",
         idle_timeout_s=None,
         on_thinking=None,
+        attempt: int = 1,
+        attempts: int = 1,
     ) -> LLMResponse:
         """OpenAI-호환 SSE 스트림 — 골격(idle/파싱/누산/조기종료/interrupt)은
         ``http.run_sse_stream`` 공용, 여기는 이벤트 shape 해석과 usage 조립만
@@ -137,6 +142,8 @@ class OpenAIProvider:
             degeneration_trigger=degeneration_trigger,
             interrupt_check=interrupt_check,
             idle_timeout_s=idle_timeout_s,
+            attempt=attempt,
+            attempts=attempts,
             on_thinking=on_thinking,
         )
         usage = None

@@ -109,6 +109,24 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_stream_stall(
+    *,
+    kind: str,
+    elapsed_s: float = 0.0,
+    limit_s: float = 0.0,
+    attempt: int = 1,
+    attempts: int = 1,
+) -> None:
+    """스트림 무진전 상태 — 의미는 ``Renderer.stream_stall`` 참조 (v8.60.0)."""
+    _renderer.stream_stall(
+        kind=kind,
+        elapsed_s=elapsed_s,
+        limit_s=limit_s,
+        attempt=attempt,
+        attempts=attempts,
+    )
+
+
 def render_recovery(
     raw_emission: str, intervention_message: str, reason: str, turn: int
 ) -> None:

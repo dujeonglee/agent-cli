@@ -720,6 +720,70 @@
     scheduleScroll();
   }
 
+  // ── 스트림 무진전(stall) 표시 (v8.60.0) ──────────────────────
+  // 종전엔 이 알림이 전부 ``status`` 이벤트로 왔고 여기 리스너가 없어
+  // **통째로 드롭**됐다 — 사용자는 40분을 아무 표시 없이 기다린 뒤
+  // "LLM call failed" 만 봤다. 두 부류로 갈라 표시한다:
+  //   wait   = 30초마다 반복 → 카드 하나를 **제자리 갱신** (compaction
+  //            마커가 scope 별 줄을 재사용하는 것과 동형)
+  //   resend = 드문 전이 → 기록으로 남긴다
+  //   clear  = 대기 종료 → 제자리 카드 제거
+  let stallLine = null;
+  function mmss(s) {
+    const n = Math.max(0, Math.floor(Number(s) || 0));
+    return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+  }
+  function renderStreamStall(d) {
+    if (d.kind === "wait") {
+      if (!stallLine || !stallLine.isConnected) {
+        stallLine = el("div", ["card", "card-sys", "stall-line"]);
+        stallLine.appendChild(el("span", ["sys-icon"], "⏳"));
+        stallLine.appendChild(el("span", ["sys-text"]));
+        const bar = el("div", ["stall-bar"]);
+        bar.appendChild(el("i"));
+        stallLine.appendChild(bar);
+        appendToTimeline(stallLine);
+        scheduleScroll();
+      }
+      const txt = stallLine.querySelector(".sys-text");
+      const fill = stallLine.querySelector(".stall-bar > i");
+      txt.textContent =
+        "응답 대기 중 " +
+        mmss(d.elapsed_s) +
+        " / " +
+        mmss(d.limit_s) +
+        " · 시도 " +
+        d.attempt +
+        "/" +
+        d.attempts;
+      if (fill) {
+        const pct = d.limit_s > 0 ? (d.elapsed_s / d.limit_s) * 100 : 0;
+        fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+      }
+      return;
+    }
+    // 전이·정리 — 제자리 줄을 먼저 걷는다(낡은 경과 시간을 남기지 않는다).
+    if (stallLine && stallLine.isConnected) stallLine.remove();
+    stallLine = null;
+    if (d.kind === "resend") {
+      const line = el("div", ["card", "card-sys", "stall-resend"]);
+      line.appendChild(el("span", ["sys-icon"], "↻"));
+      line.appendChild(
+        el(
+          "span",
+          ["sys-text"],
+          "스트림 무응답 — 재연결 후 재전송 (시도 " +
+            d.attempt +
+            "/" +
+            d.attempts +
+            ")"
+        )
+      );
+      appendToTimeline(line);
+      scheduleScroll();
+    }
+  }
+
   // ── Card renderers ─────────────────────────
 
   // Timeline-card navigation anchor. The swimlane's user marks / reply arrows
@@ -1518,6 +1582,10 @@
 
   es.addEventListener("agent_mail", function (e) {
     renderAgentMail(JSON.parse(e.data));
+  });
+
+  es.addEventListener("stream_stall", function (e) {
+    renderStreamStall(JSON.parse(e.data));
   });
 
   // Application-level turn/tool errors arrive as ``turn_error`` — NOT
@@ -4286,38 +4354,71 @@
 
   const toMin = (s) => (s <= 0 ? 0 : Math.round(s / 60));
   const $badge = document.getElementById("stall-badge");
-  function apply(seconds) {
+  const $att = document.getElementById("stall-attempts");
+  const $derived = document.getElementById("stall-derived");
+
+  // 배지가 "10m×4" 인 이유: 곱(40m)만 보이면 어느 축을 고칠지 알 수 없고,
+  // 한 축만 보이면 최대 대기를 머릿속에서 계산해야 한다. 곱은 파생 줄이 진다.
+  function apply(seconds, attempts) {
     const m = toMin(seconds);
-    $input.value = m;
-    if ($badge) $badge.textContent = m === 0 ? "off" : m + "m";
+    const n =
+      typeof attempts === "number"
+        ? attempts
+        : $att
+          ? Math.max(1, Number($att.value) || 1)
+          : 1;
+    // 편집 중인 입력은 덮어쓰지 않는다. 한 축을 바꾸면 응답이 **두 축 모두**
+    // 실어 오므로, 그대로 쓰면 다른 칸에 타이핑하던 값이 서버 값으로 되돌아가
+    // 사용자가 방금 친 숫자를 잃는다(두 입력이 한 팝업에 생기며 드러난 경합).
+    if (document.activeElement !== $input) $input.value = m;
+    if ($att && document.activeElement !== $att) $att.value = n;
+    if ($badge) $badge.textContent = m === 0 ? "off" : m + "m×" + n;
+    // 한도 0 = 감지 끔 → 시도 횟수라는 개념 자체가 성립하지 않는다.
+    if ($att) $att.disabled = m === 0;
+    if ($derived) {
+      $derived.classList.toggle("is-off", m === 0);
+      $derived.textContent =
+        m === 0
+          ? "무진전 감지가 꺼져 있어 재전송하지 않습니다"
+          : m + "분 × " + n + "회 = 최대 " + m * n + "분 후 실패";
+    }
   }
 
   fetch("api/stream-idle")
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       if (!d) return;
-      if (typeof d.seconds === "number") apply(d.seconds);
+      if (typeof d.seconds === "number") apply(d.seconds, d.attempts);
       $wrap.hidden = false;
     })
     .catch(() => {});
 
-  $input.addEventListener("change", () => {
-    const minutes = Math.max(0, Math.round(Number($input.value) || 0));
+  function push(payload) {
     fetch("api/stream-idle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seconds: minutes * 60 }),
+      body: JSON.stringify(payload),
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d && typeof d.seconds === "number") apply(d.seconds);
+        if (d && typeof d.seconds === "number") apply(d.seconds, d.attempts);
       })
       .catch(() => {});
+  }
+
+  $input.addEventListener("change", () => {
+    const minutes = Math.max(0, Math.round(Number($input.value) || 0));
+    push({ seconds: minutes * 60 });
   });
+  if ($att) {
+    $att.addEventListener("change", () => {
+      push({ attempts: Math.max(1, Math.round(Number($att.value) || 1)) });
+    });
+  }
 
   document.addEventListener("agentcli:streamidle", (e) => {
     const d = e.detail || {};
-    if (typeof d.seconds === "number") apply(d.seconds);
+    if (typeof d.seconds === "number") apply(d.seconds, d.attempts);
   });
 })();
 

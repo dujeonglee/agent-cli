@@ -93,6 +93,16 @@ def clamp_stream_idle_timeout(seconds: int) -> int:
     return max(STREAM_IDLE_TIMEOUT_MIN_S, min(s, STREAM_IDLE_TIMEOUT_MAX_S))
 
 
+def clamp_stream_max_attempts(attempts: int) -> int:
+    """무진전 재전송 **총** 시도 횟수 clamp (v8.60.0): [1, 10].
+    1 = 재전송 없음(첫 전송만). 한도(``clamp_stream_idle_timeout``)와 달리
+    0 은 "끔"이 아니다 — 시도 0회는 콜 자체를 안 한다는 뜻이 되므로 1 로
+    올린다. 감지를 끄는 축은 한도(0=끔) 쪽 하나뿐이다."""
+    from agent_cli.constants import STREAM_MAX_ATTEMPTS_MAX
+
+    return max(1, min(int(attempts), STREAM_MAX_ATTEMPTS_MAX))
+
+
 def default_thinking_override() -> dict:
     """부팅 기본 thinking 오버라이드 — headless(run)·harbor 에서 thinking 을
     제어할 유일한 경로 (v8.58.0). web UI 의 런타임 ``set_thinking_override`` 와
@@ -132,6 +142,22 @@ def default_stream_idle_timeout_s() -> int:
         return clamp_stream_idle_timeout(int(raw))
     except ValueError:
         return DEFAULT_STREAM_IDLE_TIMEOUT_S
+
+
+def default_stream_max_attempts() -> int:
+    """부팅 기본 — env AGENT_CLI_STREAM_MAX_ATTEMPTS 오버라이드 (v8.60.0).
+    한도의 env 와 짝 — headless/harbor 에서 최대 대기를 두 축으로 조절."""
+    import os
+
+    from agent_cli.constants import STREAM_MAX_ATTEMPTS
+
+    raw = os.environ.get("AGENT_CLI_STREAM_MAX_ATTEMPTS", "")
+    if not raw:
+        return STREAM_MAX_ATTEMPTS
+    try:
+        return clamp_stream_max_attempts(int(raw))
+    except ValueError:
+        return STREAM_MAX_ATTEMPTS
 
 
 # ── Observation complete-nudge ───────────────────────────────
@@ -243,6 +269,9 @@ class ContextManager:
         # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정,
         # web ctx 팝오버 "Stall" 로 변경, 서브에이전트는 spawn 시점 상속.
         self.stream_idle_timeout_s: int = default_stream_idle_timeout_s()
+        # v8.60.0: 한도와 한 쌍인 **총** 시도 횟수(첫 전송 포함). 최대 대기 =
+        # stream_idle_timeout_s × stream_max_attempts — 같은 ⏳ 노브의 2번째 입력.
+        self.stream_max_attempts: int = default_stream_max_attempts()
         self._cache: list[dict] = []
         # P0-8a: 캐시 레코드별 history.jsonl 서수(index) 병행 리스트 — 캐시와
         # 항상 같은 길이/순서. fold 가 캐시 **중간**을 제거해도(오프셋은 prefix-
@@ -512,6 +541,12 @@ class ContextManager:
         LLM 콜부터 즉시 반영(공유 ctx). 0=감지 끔."""
         self.stream_idle_timeout_s = clamp_stream_idle_timeout(seconds)
         return self.stream_idle_timeout_s
+
+    def set_stream_max_attempts(self, attempts: int) -> int:
+        """무진전 재전송 총 시도 횟수 설정 (web ⏳ 노브 2번째 입력, v8.60.0).
+        clamp 결과 반환 — 다음 LLM 콜부터 즉시 반영(공유 ctx)."""
+        self.stream_max_attempts = clamp_stream_max_attempts(attempts)
+        return self.stream_max_attempts
 
     def set_thinking_override(
         self, enable_thinking=None, reasoning_effort=None

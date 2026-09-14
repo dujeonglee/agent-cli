@@ -776,10 +776,15 @@ class WebRenderer(Renderer):
         여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
         self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
 
-    def broadcast_stream_idle(self, seconds: int) -> None:
+    def broadcast_stream_idle(self, seconds: int, attempts: int | None = None) -> None:
         """P3 (v8.55.0): Stall(스트림 무진전 한도) 변경을 타 뷰어에 sticky
-        전파 — 팝오버 입력 동기화 + 재접속 snapshot."""
-        self.set_sticky("stream_idle", "stream_idle", {"seconds": seconds})
+        전파 — 팝오버 입력 동기화 + 재접속 snapshot. v8.60.0: 같은 ⏳ 노브의
+        2번째 축(총 시도 횟수)도 같은 sticky 슬롯에 실어 한 번에 동기화한다
+        (두 값은 최대 대기의 두 인수라 따로 도착하면 파생 표시가 깜빡인다)."""
+        payload: dict = {"seconds": seconds}
+        if attempts is not None:
+            payload["attempts"] = attempts
+        self.set_sticky("stream_idle", "stream_idle", payload)
 
     def set_auto_approve(self, on: bool) -> None:
         """⚡ 자동 승인 토글 설정 + 다른 뷰어에 sticky 로 전파(체크박스 동기화·재접속
@@ -1401,6 +1406,41 @@ class WebRenderer(Renderer):
             {"state": state, "message": message, "turn": turn},
             persistent=False,
         )
+
+    def stream_stall(
+        self,
+        *,
+        kind: str,
+        elapsed_s: float = 0.0,
+        limit_s: float = 0.0,
+        attempt: int = 1,
+        attempts: int = 1,
+    ) -> None:
+        """무진전 대기/재전송 전용 이벤트 (v8.60.0). 종전엔 이 알림이 전부
+        ``status`` 로 나갔고 **프론트에 그 리스너가 없어 웹에서 통째로
+        드롭**됐다 — 40분을 기다린 뒤 "LLM call failed" 만 보였다.
+        ``agent_mail_hint`` 가 같은 이유로 전용 이벤트를 받은 선례를 따른다.
+
+        ``persistent=False``: 대기는 "지금 몇 초째"라는 순간 상태라 replay
+        에 실으면 지난 대기가 되살아난다(compaction 마커와 동형). 대신 긴
+        대기 중 접속한 뷰어도 현재 상태를 봐야 하므로 **sticky 슬롯**에
+        실어 재접속 snapshot 으로 복원하고, 대기가 끝나면 슬롯을 비운다."""
+        payload = {
+            "kind": kind,
+            "elapsed_s": int(elapsed_s),
+            "limit_s": int(limit_s),
+            "attempt": int(attempt),
+            "attempts": int(attempts),
+        }
+        if kind == "wait":
+            # set_sticky 가 라이브 브로드캐스트까지 겸한다 — _emit 을 따로
+            # 부르면 같은 프레임이 두 번 간다.
+            self.set_sticky("stream_stall", "stream_stall", payload)
+        else:
+            # 재전송은 기록으로 남지만(라이브 이벤트), 제자리 대기 줄은
+            # 새 시도의 첫 wait 이 다시 채운다 — 낡은 경과 시간을 남기지 않는다.
+            self.clear_sticky("stream_stall")
+            self._emit("stream_stall", payload, persistent=False)
 
     def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
         """상주 에이전트 회신/질문/사망 도착 힌트 — 프론트가 듣는 전용

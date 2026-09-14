@@ -424,20 +424,28 @@ class StreamAccum:
     decode_ns: int = 0
 
 
-def stream_with_reconnect(url, *, headers, body, handle_stream):
+def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=None):
     """스트리밍 POST + idle 재연결 루프 — 양 provider 공용 (v8.41.0,
     리뷰 §4.2: 28행 복붙 2벌의 단일화; 동작은 바이트 동일).
 
     post ``LLM_STREAM_TIMEOUT``(헤더 바운드) → 소켓 patient 리셋 →
     ``handle_stream(r)``. ``StreamIdleTimeout``(장기 침묵) 시 재연결 알림
-    렌더 후 재전송, ``STREAM_MAX_RECONNECTS`` 회 소진 후 raise."""
+    렌더 후 재전송, **총** ``max_attempts`` 회(첫 전송 포함) 소진 후 raise.
+
+    ``max_attempts`` 는 세션 노브(``CallSettings.stream_max_attempts``);
+    None 이면 ``STREAM_MAX_ATTEMPTS`` 기본값 (v8.60.0)."""
     from agent_cli.constants import (
         LLM_READ_TIMEOUT,
         LLM_STREAM_TIMEOUT,
-        STREAM_MAX_RECONNECTS,
+        STREAM_MAX_ATTEMPTS,
     )
 
-    for attempt in range(STREAM_MAX_RECONNECTS + 1):
+    attempts = (
+        STREAM_MAX_ATTEMPTS if max_attempts is None else max(1, int(max_attempts))
+    )
+    from agent_cli.render import render_stream_stall
+
+    for attempt in range(attempts):
         r = post_with_retry(
             requests.post,
             url,
@@ -449,17 +457,26 @@ def stream_with_reconnect(url, *, headers, body, handle_stream):
         raise_for_status_with_body(r)
         make_stream_patient(r, LLM_READ_TIMEOUT)
         try:
-            return handle_stream(r)
+            # 시도 좌표는 이 루프만 안다 → 대기 줄이 n/N 을 표시할 수 있게
+            # handle_stream 으로 내려보낸다.
+            result = handle_stream(r, attempt=attempt + 1, attempts=attempts)
         except StreamIdleTimeout:
-            if attempt >= STREAM_MAX_RECONNECTS:
+            if attempt >= attempts - 1:
+                # 시도 소진 — 제자리 대기 줄을 정리한 뒤 전파한다.
+                render_stream_stall(
+                    kind="clear", attempt=attempt + 1, attempts=attempts
+                )
                 raise
-            from agent_cli.render import render_status
-
-            render_status(
-                "running",
-                "스트림 무응답 — 재연결 후 재전송 "
-                f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
-            )
+            # 전이(드묾) — 제자리 갱신이 아니라 기록으로 남는다. 카운터는
+            # **다음** 시도 번호: 사용자가 보는 건 "이제 몇 번째를 시작하나".
+            render_stream_stall(kind="resend", attempt=attempt + 2, attempts=attempts)
+        except BaseException:
+            # 중단·에러로 빠져나갈 때도 제자리 줄을 남기지 않는다.
+            render_stream_stall(kind="clear", attempt=attempt + 1, attempts=attempts)
+            raise
+        else:
+            render_stream_stall(kind="clear", attempt=attempt + 1, attempts=attempts)
+            return result
 
 
 # degeneration 조기종료 검사창 (v8.41.0 — 리뷰 §4.2 효율): 러너웨이는 같은
@@ -493,6 +510,8 @@ def run_sse_stream(
     interrupt_check=None,
     idle_timeout_s: int | None = None,
     on_thinking=None,
+    attempt: int = 1,
+    attempts: int = 1,
 ) -> StreamAccum:
     """SSE 스트림 공용 골격 — 양 provider 동형 보장 지점.
 
@@ -534,13 +553,17 @@ def run_sse_stream(
     t_first = 0
 
     def _on_idle(tick: int, seconds: float) -> None:
-        from agent_cli.render import render_status
+        """반복 대기 — 렌더러가 제자리 갱신할 수 있게 **구조화**해 넘긴다
+        (v8.60.0). 종전엔 여기서 문자열을 조립해 ``status`` 로 보냈고, 웹엔
+        그 리스너가 없어 통째로 드롭됐다."""
+        from agent_cli.render import render_stream_stall
 
-        render_status(
-            "running",
-            f"응답 대기 중 — 토큰 없음 {int(seconds)}s "
-            f"({tick}/{max_ticks}, "
-            f"{int(max_ticks * STREAM_IDLE_THRESHOLD) // 60}분 무진전 시 재연결)",
+        render_stream_stall(
+            kind="wait",
+            elapsed_s=seconds,
+            limit_s=(max_ticks or 0) * STREAM_IDLE_THRESHOLD,
+            attempt=attempt,
+            attempts=attempts,
         )
 
     clock = ProgressClock()

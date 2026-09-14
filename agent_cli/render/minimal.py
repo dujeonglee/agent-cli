@@ -22,6 +22,13 @@ def _fmt_tok(n: int) -> str:
     return f"{n / 1000:.1f}K" if n >= 1000 else str(int(n))
 
 
+def _fmt_mmss(seconds: float) -> str:
+    """경과/한도 표시용 m:ss — 초 단위 누적(600s)보다 한도 대비 위치가
+    즉시 읽힌다. 음수는 0 으로 접는다."""
+    s = max(0, int(seconds))
+    return f"{s // 60}:{s % 60:02d}"
+
+
 def _format_token_stats(stats: dict) -> str:
     """Render the token-usage dict into the CLI's single-line summary.
 
@@ -396,6 +403,64 @@ class MinimalRenderer(Renderer):
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)
+
+    def stream_stall(
+        self,
+        *,
+        kind: str,
+        elapsed_s: float = 0.0,
+        limit_s: float = 0.0,
+        attempt: int = 1,
+        attempts: int = 1,
+    ) -> None:
+        """무진전 대기는 마르퀴와 **같은 한 줄 슬롯**에서 제자리 갱신하고,
+        재전송(전이)만 기록으로 남긴다 (v8.60.0). 종전엔 대기 알림이
+        시도당 20줄씩 쌓여 재전송·실패가 그 사이에 묻혔다.
+
+        비-TTY(harbor·파이프·instance.log)에선 ``\\r`` 갱신이 무의미하고
+        줄이 남는 편이 사후 진단에 유리하므로 **기본 구현(줄 출력)** 그대로
+        — 사람이 보는 표면에서만 제자리로 바꾼다."""
+        if self.is_capturing or not self.con.is_terminal or not self.con.file:
+            super().stream_stall(
+                kind=kind,
+                elapsed_s=elapsed_s,
+                limit_s=limit_s,
+                attempt=attempt,
+                attempts=attempts,
+            )
+            return
+        if kind == "wait":
+            self._marquee_init()
+            left = max(0, int(limit_s) - int(elapsed_s))
+            prefix = f"{self._prefix}  " if self._depth > 0 else "  "
+            line = (
+                f"{prefix}⏳ 응답 대기 중 {_fmt_mmss(elapsed_s)}"
+                f" / {_fmt_mmss(limit_s)} · 시도 {attempt}/{attempts}"
+            )
+            if left <= 0:
+                line += " · 재연결"
+            avail = self.con.width - 1
+            if _display_width(line) > avail:
+                line = _truncate_to_width(line, avail)
+            self._erase_reflowed_marquee()
+            self.con.file.write(f"\r{line}")
+            pad = max(0, self.con.width - _display_width(line) - 1)
+            self.con.file.write(" " * pad)
+            self.con.file.flush()
+            self._last_term_w = self.con.width
+            self._last_painted_w = _display_width(line) + pad
+        else:
+            # 전이·정리 — 제자리 줄을 먼저 지운 뒤에 기록을 쓴다. 지우지
+            # 않으면 잔여 문자가 다음 줄 앞에 남는다(폭이 더 긴 경우).
+            self._erase_reflowed_marquee()
+            self.con.file.write(f"\r{' ' * self.con.width}\r")
+            self.con.file.flush()
+            self._last_painted_w = 0
+            if kind == "resend":
+                self._p(
+                    f"  ↻ 스트림 무응답 — 재연결 후 재전송 (시도 {attempt}/{attempts})",
+                    highlight=False,
+                )
 
     def token_usage(self, stats: dict, turn: int, verbose: bool = False) -> None:
         msg = _format_token_stats(stats)

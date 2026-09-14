@@ -141,6 +141,7 @@ def create_subagent_ctx(
     # ratio 와 동형 (이후 부모 변경은 새 spawn 에만 적용).
     if parent_ctx is not None and ctx is not None:
         ctx.stream_idle_timeout_s = parent_ctx.stream_idle_timeout_s
+        ctx.stream_max_attempts = parent_ctx.stream_max_attempts
 
     from agent_cli.render import get_renderer
 

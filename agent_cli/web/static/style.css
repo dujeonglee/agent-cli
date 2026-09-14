@@ -265,6 +265,29 @@ header {
 .knob-pop[hidden] { display: none; }
 .knob-pop.align-right { left: auto; right: 0; }
 .knob-unit { color: var(--muted); font-size: 11px; }
+/* ⏳ 노브만 두 축(무진전 한도 × 시도) — 한 줄 flex 로는 6칸이 헤더를 넘치므로
+   3열 그리드로 두 입력을 라벨 정렬하고, 파생값(최대 대기)을 아래 폭 전체에
+   둔다. 곱을 설정하는 자리에서 바로 보여 "3인데 왜 40분?"을 없앤다 (v8.60.0). */
+/* ``:not([hidden])`` 필수 — id 선택자는 ``.knob-pop[hidden]{display:none}``
+   보다 특이도가 높아, 그냥 ``#stall-pop{display:grid}`` 로 쓰면 hidden 속성을
+   이겨 팝업이 항상 펼쳐진 채로 렌더된다 (브라우저 테스트가 잡은 실버그). */
+#stall-pop:not([hidden]) {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px 8px;
+  align-items: center;
+  justify-items: start;
+}
+#stall-pop input {
+  width: 44px; font-size: 11px; padding: 1px 4px;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+#stall-pop input:disabled { opacity: 0.4; cursor: not-allowed; }
+.knob-derived { grid-column: 1 / -1; color: var(--accent); font-size: 11px; }
+/* 한도 0(감지 끔)이면 곱이 무의미 — 강조를 걷고 시도 입력도 잠근다. */
+.knob-derived.is-off { color: var(--muted); }
 /* 헤더는 flex-wrap:wrap — 좁아지면 둘째 줄로 접혀 모든 칩이 항상 보인다
    (v8.57.1: 보따리 오버플로 제거, 자동 줄바꿈으로 단순화). */
 /* 🧠 사고/노력 셀렉트 */
@@ -468,6 +491,18 @@ main#messages {
 }
 .card-sys .sys-icon { opacity: 0.7; }
 .card-sys.warn { color: var(--warn); }
+/* ⏳ 무진전 대기 — 30초마다 갱신되는 **한 줄**이라 기록처럼 쌓이면 안 된다.
+   진행바가 "한도까지 얼마나 남았나"를 숫자 없이 보여준다 (v8.60.0). */
+.card-sys.stall-line { color: var(--warn); }
+.card-sys.stall-resend { color: var(--warn); }
+.stall-bar {
+  width: 90px; height: 3px; border-radius: 2px;
+  background: var(--border); overflow: hidden;
+}
+.stall-bar > i { display: block; height: 100%; width: 0; background: var(--warn); }
+@media (prefers-reduced-motion: no-preference) {
+  .stall-bar > i { transition: width 0.3s linear; }
+}
 /* Rich markup → HTML spans rendered by ``richMarkupToHtml``. Colours
    mirror what ``format_diff`` paints in the CLI so users moving
    between terminals and the web UI see the same shape — bold headers,

@@ -31,12 +31,20 @@ LLM_STREAM_TIMEOUT = (LLM_CONNECT_TIMEOUT, LLM_STREAM_READ_TIMEOUT)
 #     (visible "still waiting" feedback) — resets when a token arrives.
 #   - after STREAM_IDLE_MAX_TICKS consecutive idle intervals (20*30s = 10min of
 #     total silence) the connection is closed and the request re-sent
-#     (StreamIdleTimeout), up to STREAM_MAX_RECONNECTS times before hard-fail.
+#     (StreamIdleTimeout), for STREAM_MAX_ATTEMPTS attempts before hard-fail.
 #     A re-send RESTARTS generation (no server-side resume); a 10-min-silent
 #     stream is dead anyway. Interrupt is independent (polled every 0.2s).
 STREAM_IDLE_THRESHOLD = 30
 STREAM_IDLE_MAX_TICKS = 20
-STREAM_MAX_RECONNECTS = 3
+# v8.60.0: **총 시도 횟수** (첫 전송 포함) — 종전 STREAM_MAX_RECONNECTS=3
+# ("재전송 횟수")의 재정의로, 동작은 바이트 동일(4회)하고 의미만 바꾼다.
+# 이유: 같은 파일의 post_with_retry 는 _DEFAULT_ATTEMPTS=10 을 "총 시도"로
+# 쓰는데 여기만 "재전송"이라 `range(N+1)` 변환과 `(1/3)` 표시가 필요했고,
+# 사용자에게 "3 설정인데 왜 40분?"으로 읽혔다. 이제 값=표시=총 시간 나눗수.
+# 사용자 값은 ctx.stream_max_attempts(web ⏳ 노브 2번째 입력 /
+# env AGENT_CLI_STREAM_MAX_ATTEMPTS / CLI --stall-attempts).
+STREAM_MAX_ATTEMPTS = 4
+STREAM_MAX_ATTEMPTS_MAX = 10
 # P3 (v8.55.0): 스트림 무진전(no-token) 한도의 기본/상한. 유휴는 "마지막
 # **진전**(실제 토큰/종결 이벤트) 이후"로 잰다 — keep-alive 프레임은 진전이
 # 아니다(omlx hang 실측 2회: keep-alive 가 종전 줄-기준 감지를 무력화).

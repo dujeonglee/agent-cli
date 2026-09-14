@@ -348,6 +348,42 @@ class Renderer(ABC):
         드롭됐기 때문(필수 구현 아님: 기본값 존재)."""
         self.status("running", text)
 
+    def stream_stall(
+        self,
+        *,
+        kind: str,
+        elapsed_s: float = 0.0,
+        limit_s: float = 0.0,
+        attempt: int = 1,
+        attempts: int = 1,
+    ) -> None:
+        """스트림 무진전(no-token) 상태 (v8.60.0). ``agent_mail_hint`` 와 같은
+        형태 — **기본 구현은 ``status`` 위임**이라 커스텀 렌더러는 무수정.
+
+        이벤트를 두 부류로 가르는 게 이 훅의 존재 이유다:
+
+        - ``kind="wait"``: 30초마다 **반복**되는 대기. 한 시도에 20번까지
+          울리므로 기록으로 남기면 표면을 덮는다 → 제자리 갱신 대상.
+        - ``kind="resend"``: 한도 소진 후 재전송이라는 **전이**. 드물고
+          되돌릴 수 없으므로 기록으로 남긴다.
+        - ``kind="clear"``: 대기 종료(토큰 도착·에러·중단) — 제자리 줄 정리.
+          기본 구현에선 할 일이 없다(남긴 게 없으므로).
+
+        ``attempt``/``attempts`` 는 **총 시도 기준 1-오리진** (n/N, N=총
+        횟수). 최대 대기 = ``limit_s`` × ``attempts``."""
+        if kind == "wait":
+            left = max(0, int(limit_s) - int(elapsed_s))
+            self.status(
+                "running",
+                f"응답 대기 중 — 토큰 없음 {int(elapsed_s)}s "
+                f"(시도 {attempt}/{attempts}, {left}s 후 재연결)",
+            )
+        elif kind == "resend":
+            self.status(
+                "running",
+                f"스트림 무응답 — 재연결 후 재전송 (시도 {attempt}/{attempts})",
+            )
+
     # ── Abstract render methods ──────────────────────
 
     @abstractmethod

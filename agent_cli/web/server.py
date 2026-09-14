@@ -738,38 +738,61 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/stream-idle")
     async def get_stream_idle():
-        """현재 스트림 무진전(no-token) 한도(초) + 입력 범위. 0=감지 끔.
-        프론트 ctx 팝오버 "Stall" 초기화용 (P3, v8.55.0)."""
-        from agent_cli.constants import STREAM_IDLE_TIMEOUT_MAX_S
+        """현재 스트림 무진전(no-token) 한도(초) + 총 시도 횟수 + 입력 범위.
+        한도 0=감지 끔. 프론트 ⏳ 노브 초기화용 (P3 v8.55.0, 시도 v8.60.0).
+
+        두 축을 한 엔드포인트가 나르는 이유: 최대 대기 = 한도 × 시도 라
+        따로 읽으면 프론트가 두 응답을 기다려 파생값을 계산해야 한다."""
+        from agent_cli.constants import (
+            STREAM_IDLE_TIMEOUT_MAX_S,
+            STREAM_MAX_ATTEMPTS_MAX,
+        )
         from agent_cli.context.manager import (
             STREAM_IDLE_TIMEOUT_MIN_S,
             default_stream_idle_timeout_s,
+            default_stream_max_attempts,
         )
 
+        has_ctx = server.ctx is not None
         seconds = (
             server.ctx.stream_idle_timeout_s
-            if server.ctx is not None
+            if has_ctx
             else default_stream_idle_timeout_s()
+        )
+        attempts = (
+            server.ctx.stream_max_attempts if has_ctx else default_stream_max_attempts()
         )
         return {
             "seconds": seconds,
             "min": STREAM_IDLE_TIMEOUT_MIN_S,
             "max": STREAM_IDLE_TIMEOUT_MAX_S,
+            "attempts": attempts,
+            "attempts_min": 1,
+            "attempts_max": STREAM_MAX_ATTEMPTS_MAX,
         }
 
     @app.post("/api/stream-idle")
     async def set_stream_idle(body: dict):
-        """세션 한정 스트림 무진전 한도 변경 — 다음 LLM 콜 즉시 반영(공유
-        ctx), clamp 결과 반환, sticky 로 타 뷰어 동기화. 0=감지 끔."""
+        """세션 한정 무진전 한도/시도 횟수 변경 — 다음 LLM 콜 즉시 반영(공유
+        ctx), clamp 결과 반환, sticky 로 타 뷰어 동기화. 한도 0=감지 끔.
+
+        두 키 모두 **선택** — 보낸 축만 바뀐다. v8.55.0 의 ``{"seconds": N}``
+        단독 호출은 그대로 유효(구 프론트 호환)."""
         if server.ctx is None:
             return {"ok": False, "error": "no active context"}
+        if "seconds" not in body and "attempts" not in body:
+            return {"ok": False, "error": "seconds or attempts required"}
         try:
-            seconds = int(body.get("seconds"))
+            if "seconds" in body:
+                server.ctx.set_stream_idle_timeout(int(body["seconds"]))
+            if "attempts" in body:
+                server.ctx.set_stream_max_attempts(int(body["attempts"]))
         except (TypeError, ValueError):
-            return {"ok": False, "error": "seconds must be an integer"}
-        clamped = server.ctx.set_stream_idle_timeout(seconds)
-        server.renderer.broadcast_stream_idle(clamped)
-        return {"ok": True, "seconds": clamped}
+            return {"ok": False, "error": "seconds/attempts must be integers"}
+        seconds = server.ctx.stream_idle_timeout_s
+        attempts = server.ctx.stream_max_attempts
+        server.renderer.broadcast_stream_idle(seconds, attempts)
+        return {"ok": True, "seconds": seconds, "attempts": attempts}
 
     @app.get("/api/confirm-mode")
     async def get_confirm_mode():

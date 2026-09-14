@@ -3344,3 +3344,73 @@ class TestPendingThoughtPerThread:
         import threading as _t
 
         assert _t.get_ident() not in r._pending_thoughts
+
+
+class TestStreamStallDisplay:
+    """v8.60.0: 무진전 대기/재전송 표시.
+
+    **고치는 버그**: 이 알림들은 전부 ``status`` 이벤트로 나갔고 ``app.js``
+    에 그 리스너가 없어 웹에서 통째로 드롭됐다 — 사용자는 40분간 아무
+    표시 없이 기다린 뒤 "LLM call failed" 만 봤다.
+
+    표시 규칙은 이벤트를 두 부류로 가른다: 30초마다 **반복**되는 wait 는
+    제자리 갱신(sticky 슬롯 하나), 드문 **전이**(resend)는 기록."""
+
+    def test_wait_goes_to_dedicated_event_not_status(self, tmp_path):
+        """회귀 가드 — status 로 돌아가면 웹에서 다시 드롭된다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_stall(kind="wait", elapsed_s=90, limit_s=600, attempt=1, attempts=4)
+        slot = r._sticky["stream_stall"]
+        assert slot["event"] == "stream_stall"
+        assert slot["payload"] == {
+            "kind": "wait",
+            "elapsed_s": 90,
+            "limit_s": 600,
+            "attempt": 1,
+            "attempts": 4,
+        }
+
+    def test_wait_reuses_one_sticky_slot(self, tmp_path):
+        """반복 대기가 슬롯을 새로 만들지 않는다 — 20회 울려도 표면엔 하나."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        for tick in range(1, 21):
+            r.stream_stall(kind="wait", elapsed_s=tick * 30, limit_s=600, attempts=4)
+        assert r._sticky["stream_stall"]["payload"]["elapsed_s"] == 600
+        assert sum(1 for k in r._sticky if k.startswith("stream_stall")) == 1
+
+    def test_wait_is_sticky_so_late_viewers_see_it(self, tmp_path):
+        """긴 대기 도중 접속한 뷰어도 현재 상태를 봐야 한다 — 재접속
+        snapshot 에 실린다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_stall(kind="wait", elapsed_s=120, limit_s=600, attempts=4)
+        snap = r.register_connection(WebConnection(id="late"))
+        events = [p for ev, p in snap if ev == "stream_stall"]
+        assert events and events[0]["elapsed_s"] == 120
+
+    def test_resend_clears_the_wait_slot(self, tmp_path):
+        """재전송 후에도 옛 sticky 가 남으면 재접속한 뷰어가 끝난 대기의
+        경과 시간을 현재 상태로 본다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_stall(kind="wait", elapsed_s=600, limit_s=600, attempts=4)
+        r.stream_stall(kind="resend", attempt=2, attempts=4)
+        assert "stream_stall" not in r._sticky
+        snap = r.register_connection(WebConnection(id="late"))
+        assert not [p for ev, p in snap if ev == "stream_stall"]
+
+    def test_clear_removes_wait_without_leaving_a_record(self, tmp_path):
+        """토큰이 도착하면 대기 줄만 사라진다 — 기록으로 남을 일이 아니다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_stall(kind="wait", elapsed_s=30, limit_s=600, attempts=4)
+        r.stream_stall(kind="clear")
+        assert "stream_stall" not in r._sticky
+        snap = r.register_connection(WebConnection(id="late"))
+        assert not [p for ev, p in snap if ev == "stream_stall"]
+
+    def test_frontend_listens_for_the_event(self):
+        """이벤트를 내도 프론트가 안 들으면 원래 버그 그대로다. 이 배선이
+        끊기면 증상이 '조용히 아무것도 안 보임'이라 눈에 안 띈다."""
+        from pathlib import Path
+
+        js = Path("agent_cli/web/static/app.js").read_text()
+        assert 'es.addEventListener("stream_stall"' in js
+        assert "function renderStreamStall" in js

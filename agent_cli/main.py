@@ -1020,16 +1020,59 @@ def _load_resume_session(resume_id: str):
     return session
 
 
-def _build_context(session, boot: SessionBootstrap, *, resume: bool = False):
-    """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로)."""
+def _parse_stall(raw: str | None) -> int | None:
+    """``--stall`` 값 → 초. ``"600"``(초) · ``"10m"``(분) · ``"0"``(감지 끔).
+
+    None/빈 문자열은 **미지정**(None) — env·기본값이 그대로 이긴다. 0 과
+    구분해야 하므로 sentinel 을 0 으로 쓸 수 없다 (0 = 명시적 "끔").
+    잘못된 값은 typer.BadParameter 로 즉시 실패 — 조용히 기본값으로
+    떨어지면 헤드리스에서 오타가 드러나지 않는다."""
+    if raw is None or not str(raw).strip():
+        return None
+    t = str(raw).strip().lower()
+    mult = 1
+    if t.endswith("m"):
+        mult, t = 60, t[:-1]
+    elif t.endswith("s"):
+        t = t[:-1]
+    try:
+        value = int(t)
+    except ValueError:
+        raise typer.BadParameter(
+            f"--stall: {raw!r} — 초(600) · 분(10m) · 0(끔) 형식이어야 합니다"
+        ) from None
+    if value < 0:
+        raise typer.BadParameter("--stall: 음수는 쓸 수 없습니다 (0 = 끔)")
+    return value * mult
+
+
+def _build_context(
+    session,
+    boot: SessionBootstrap,
+    *,
+    resume: bool = False,
+    stall: str | None = None,
+    stall_attempts: int | None = None,
+):
+    """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로).
+
+    무진전 노브 우선순위는 **CLI 인자 > env > 기본값** — env·기본값은
+    ContextManager.__init__ 이 이미 적용했으므로 여기선 인자가 주어진
+    축만 덮어쓴다 (v8.60.0)."""
     from agent_cli.context.session import get_session_dir
 
-    return ContextManager(
+    ctx = ContextManager(
         get_session_dir(session),
         max_context_tokens=boot.max_context_tokens,
         resume=resume,
         wire_format=boot.wire_format,
     )
+    seconds = _parse_stall(stall)
+    if seconds is not None:
+        ctx.set_stream_idle_timeout(seconds)
+    if stall_attempts is not None:
+        ctx.set_stream_max_attempts(stall_attempts)
+    return ctx
 
 
 @app.command()
@@ -1077,6 +1120,16 @@ def run(
         300,
         "--agent-timeout",
         help="Timeout in seconds for subagent delegation",
+    ),
+    stall: str | None = typer.Option(
+        None,
+        "--stall",
+        help="Stream stall limit before re-sending: 600 (seconds), 10m (minutes), 0 (off). Overrides AGENT_CLI_STREAM_IDLE_TIMEOUT_S; default 10m",
+    ),
+    stall_attempts: int | None = typer.Option(
+        None,
+        "--stall-attempts",
+        help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Overrides AGENT_CLI_STREAM_MAX_ATTEMPTS; default 4",
     ),
     verbose: bool = typer.Option(
         False,
@@ -1163,7 +1216,13 @@ def run(
     # resume 가 이어받는다 (meta = 마지막 실행의 truth).
     session.response_format = boot.wire_format.name
     save_meta(session)
-    ctx = _build_context(session, boot, resume=session_resumed is not None)
+    ctx = _build_context(
+        session,
+        boot,
+        resume=session_resumed is not None,
+        stall=stall,
+        stall_attempts=stall_attempts,
+    )
 
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.runtime import (
@@ -1733,6 +1792,16 @@ def web(
     agent_timeout: int = typer.Option(
         AGENT_DEFAULT_TIMEOUT, "--agent-timeout", help="Subagent timeout (s)"
     ),
+    stall: str | None = typer.Option(
+        None,
+        "--stall",
+        help="Stream stall limit before re-sending: 600 (seconds), 10m (minutes), 0 (off). Default 10m",
+    ),
+    stall_attempts: int | None = typer.Option(
+        None,
+        "--stall-attempts",
+        help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Default 4",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
     response_format: str | None = typer.Option(
@@ -1892,7 +1961,9 @@ def web(
     # resume 가 이어받는다 (meta = 마지막 실행의 truth).
     session.response_format = wire_format_plugin.name
     save_meta(session)
-    ctx = _build_context(session, boot, resume=is_resume)
+    ctx = _build_context(
+        session, boot, resume=is_resume, stall=stall, stall_attempts=stall_attempts
+    )
 
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(
