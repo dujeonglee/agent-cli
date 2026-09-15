@@ -109,6 +109,11 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_stream_reset() -> None:
+    """재전송 전 부분 출력 폐기 — 의미는 ``Renderer.stream_reset`` 참조."""
+    _renderer.stream_reset()
+
+
 def render_stream_stall(
     *,
     kind: str,

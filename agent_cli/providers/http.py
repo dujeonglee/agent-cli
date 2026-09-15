@@ -73,6 +73,18 @@ from agent_cli.verbose import debug_log
 _DEFAULT_ATTEMPTS = 10
 _DEFAULT_STATUS_ATTEMPTS = 3
 _DEFAULT_DELAY = 1.0
+# v8.61.0 — 스트림 **중간** 조기 종료(서버가 종결 청크 없이 소켓을 닫음):
+# urllib3 가 "Response ended prematurely" ProtocolError 를 내고 requests 가
+# ChunkedEncodingError 로 감싼다. 원인(서버 재시작·프록시 끊김·OOM kill)은
+# 스트림 **시작 전**의 ConnectionError 와 같은 부류인데, 그건 위
+# _DEFAULT_ATTEMPTS 로 이미 재시도되고 시작 후만 무방비였다.
+#
+# 예산을 STREAM_MAX_ATTEMPTS(무진전)와 **분리**하는 이유: 무진전은 한 번에
+# 수 분을 태우지만 이건 즉시 실패한다. 공유하면 플래핑하는 서버에서 1초 만에
+# 4회를 소진하고 끝난다 — 재시도의 값어치가 사라진다. 사용자 노브로도 빼지
+# 않는다: 기다릴 시간의 트레이드오프가 아니라 일시적 장애 복구라서
+# post_with_retry 의 고정 예산과 같은 성격이다.
+_BROKEN_STREAM_ATTEMPTS = 10
 
 # Poll cadence for interrupt during a no-data stream gap (TTFT, between-token
 # stalls). Sub-second so a user interrupt feels immediate; not so tight it
@@ -164,6 +176,15 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
 # on-prem LLM server: the upstream is momentarily down/restarting/overloaded, so
 # a bounded re-send usually recovers — unlike 4xx (bad request) or a bare 500.
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
+
+# 스트림 본문이 끝까지 오지 않고 끊긴 경우. requests 는 urllib3 ProtocolError
+# (종결 청크 없는 EOF / IncompleteRead)를 ChunkedEncodingError 로, 디코딩
+# 중단은 ContentDecodingError 로 감싼다 — 둘 다 RequestException 직계라
+# ConnectionError 계열 검사에 걸리지 않는다(그래서 종전엔 런이 죽었다).
+_BROKEN_STREAM: tuple[type[BaseException], ...] = (
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
 
 
 def post_with_retry(
@@ -433,7 +454,14 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
     렌더 후 재전송, **총** ``max_attempts`` 회(첫 전송 포함) 소진 후 raise.
 
     ``max_attempts`` 는 세션 노브(``CallSettings.stream_max_attempts``);
-    None 이면 ``STREAM_MAX_ATTEMPTS`` 기본값 (v8.60.0)."""
+    None 이면 ``STREAM_MAX_ATTEMPTS`` 기본값 (v8.60.0).
+
+    **v8.61.0**: 스트림 중간 조기 종료(``_BROKEN_STREAM`` — 서버가 종결 청크
+    없이 소켓을 닫음)도 재전송한다. 예산은 무진전과 **별개**인 고정 상수
+    ``_BROKEN_STREAM_ATTEMPTS``(+1초 간격) — 이유는 그 상수 주석 참조.
+    재전송 전에는 항상 ``render_stream_reset()`` 으로 부분 출력을 걷는다:
+    재전송은 생성을 처음부터 다시 하므로(서버측 resume 없음) 남겨두면 새
+    출력이 옛 부분 뒤에 이어붙어 보인다."""
     from agent_cli.constants import (
         LLM_READ_TIMEOUT,
         LLM_STREAM_TIMEOUT,
@@ -443,9 +471,15 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
     attempts = (
         STREAM_MAX_ATTEMPTS if max_attempts is None else max(1, int(max_attempts))
     )
-    from agent_cli.render import render_stream_stall
+    from agent_cli.render import render_stream_reset, render_stream_stall
 
-    for attempt in range(attempts):
+    # 두 카운터가 **독립**인 이유는 실패의 시간 척도가 두 자릿수 다르기
+    # 때문이다: 무진전은 시도당 수 분, 조기 종료는 즉시. 하나로 합치면 한쪽이
+    # 다른 쪽의 예산을 순식간에 먹는다. 둘 다 각 except 절에서 증가하므로
+    # 총 반복은 attempts + _BROKEN_STREAM_ATTEMPTS 로 유계다.
+    stalls = 0
+    broken = 0
+    while True:
         r = post_with_retry(
             requests.post,
             url,
@@ -459,23 +493,35 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
         try:
             # 시도 좌표는 이 루프만 안다 → 대기 줄이 n/N 을 표시할 수 있게
             # handle_stream 으로 내려보낸다.
-            result = handle_stream(r, attempt=attempt + 1, attempts=attempts)
+            result = handle_stream(r, attempt=stalls + 1, attempts=attempts)
         except StreamIdleTimeout:
-            if attempt >= attempts - 1:
+            stalls += 1
+            if stalls >= attempts:
                 # 시도 소진 — 제자리 대기 줄을 정리한 뒤 전파한다.
-                render_stream_stall(
-                    kind="clear", attempt=attempt + 1, attempts=attempts
-                )
+                render_stream_stall(kind="clear", attempt=stalls, attempts=attempts)
                 raise
             # 전이(드묾) — 제자리 갱신이 아니라 기록으로 남는다. 카운터는
             # **다음** 시도 번호: 사용자가 보는 건 "이제 몇 번째를 시작하나".
-            render_stream_stall(kind="resend", attempt=attempt + 2, attempts=attempts)
+            render_stream_stall(kind="resend", attempt=stalls + 1, attempts=attempts)
+            render_stream_reset()
+        except _BROKEN_STREAM as e:
+            broken += 1
+            if broken >= _BROKEN_STREAM_ATTEMPTS:
+                render_stream_stall(kind="clear", attempt=stalls + 1, attempts=attempts)
+                raise
+            render_stream_stall(
+                kind="broken", attempt=broken, attempts=_BROKEN_STREAM_ATTEMPTS
+            )
+            debug_log(f"[stream] broken mid-stream ({type(e).__name__}: {e}) — resend")
+            render_stream_reset()
+            # 서버가 재시작 중일 수 있으므로 한 박자 쉰다 (post_with_retry 동일).
+            time.sleep(_DEFAULT_DELAY)
         except BaseException:
             # 중단·에러로 빠져나갈 때도 제자리 줄을 남기지 않는다.
-            render_stream_stall(kind="clear", attempt=attempt + 1, attempts=attempts)
+            render_stream_stall(kind="clear", attempt=stalls + 1, attempts=attempts)
             raise
         else:
-            render_stream_stall(kind="clear", attempt=attempt + 1, attempts=attempts)
+            render_stream_stall(kind="clear", attempt=stalls + 1, attempts=attempts)
             return result
 
 

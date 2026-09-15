@@ -74,14 +74,19 @@ class AgentRuntime:
         )
 
 
-def build_agent_registry(session_dir, runtime: AgentRuntime):
+def build_agent_registry(session_dir, runtime: AgentRuntime, max_agents=None):
     """AgentRegistry 생성 + main registry 슬롯 등록 (v7.17.0 배선 통일).
 
     runtime 프리필: restore/auto-spawn 된 에이전트가 도구 호출(스폰) 없이
-    첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록."""
+    첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
+
+    ``max_agents`` None = 미지정 → registry 가 env/기본값을 고른다 (v8.61.0,
+    CLI ``--max-agents``)."""
     from agent_cli.subagent.agents_live import AgentRegistry, set_main_registry
 
-    registry = AgentRegistry(session_dir, runtime=runtime.as_dict())
+    registry = AgentRegistry(
+        session_dir, runtime=runtime.as_dict(), max_agents=max_agents
+    )
     set_main_registry(registry)
     return registry
 

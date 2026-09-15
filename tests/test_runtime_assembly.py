@@ -215,8 +215,33 @@ class TestRegistryAssembly:
             patch("agent_cli.subagent.agents_live.set_main_registry") as set_main,
         ):
             reg = build_agent_registry("/sess", rt)
-        reg_cls.assert_called_once_with("/sess", runtime=rt.as_dict())
+        # max_agents=None = 미지정 → registry 가 env/기본값을 고른다
+        # (v8.61.0 --max-agents). 여기서 값을 정하면 env 가 무시된다.
+        reg_cls.assert_called_once_with("/sess", runtime=rt.as_dict(), max_agents=None)
         set_main.assert_called_once_with(reg)
+
+    def test_build_agent_registry_passes_explicit_cap(self):
+        """CLI ``--max-agents`` 가 registry 까지 닿는지 — 이 배선이 끊기면
+        플래그가 조용히 무시된다(기본 10 으로 돈다)."""
+        rt = AgentRuntime(
+            provider=object(),
+            capabilities=object(),
+            model="m",
+            provider_name="p",
+            base_url="u",
+            api_key="k",
+            max_turns=0,
+            depth=0,
+            max_depth=2,
+            timeout=300,
+            session=None,
+        )
+        with (
+            patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls,
+            patch("agent_cli.subagent.agents_live.set_main_registry"),
+        ):
+            build_agent_registry("/sess", rt, max_agents=3)
+        assert reg_cls.call_args.kwargs["max_agents"] == 3
 
     def test_wire_agent_mail_assembly(self):
         """waker 조립 + on_reply(알림→waker.on_mail 순) + restore/auto_spawn

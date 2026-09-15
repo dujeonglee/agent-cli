@@ -3414,3 +3414,59 @@ class TestStreamStallDisplay:
         js = Path("agent_cli/web/static/app.js").read_text()
         assert 'es.addEventListener("stream_stall"' in js
         assert "function renderStreamStall" in js
+
+
+class TestStreamResetWeb:
+    """v8.61.0: 재전송 전 부분 출력 폐기 (웹 쪽).
+
+    ``stream_end`` 를 재사용할 수 없다 — 프론트가 그걸 "곧 assistant_turn 이
+    대체한다"로 읽어 카드를 남기기 때문. 여기선 대체가 아니라 폐기다."""
+
+    def test_emits_dedicated_event(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.stream_reset()
+        events = []
+        while not conn.queue.empty():
+            events.append(conn.queue.get_nowait())
+        assert [e[0] for e in events] == ["stream_reset"]
+
+    def test_is_transient_not_replayed(self, tmp_path):
+        """폐기된 부분 출력은 되살릴 이유가 없다 — 재접속 스냅샷에서
+        빈 reset 이 날아오면 프론트가 멀쩡한 카드를 지울 수도 있다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_reset()
+        snap = r.register_connection(WebConnection(id="late"))
+        assert not [p for ev, p in snap if ev == "stream_reset"]
+
+    def test_carries_scope_task_id(self, tmp_path):
+        """서브에이전트 스트림이면 그 카드만 지워져야 한다 — task_id 가
+        빠지면 메인 타임라인의 카드가 날아간다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        import threading
+
+        r._thread_to_task[threading.get_ident()] = "task-7"
+        try:
+            r.stream_reset()
+        finally:
+            r._thread_to_task.pop(threading.get_ident(), None)
+        payloads = []
+        while not conn.queue.empty():
+            ev, p = conn.queue.get_nowait()
+            if ev == "stream_reset":
+                payloads.append(p)
+        assert payloads and payloads[0].get("task_id") == "task-7"
+
+    def test_frontend_listens_and_discards(self):
+        """이벤트를 내도 프론트가 안 들으면 원래 증상(중복 출력) 그대로다."""
+        from pathlib import Path
+
+        js = Path("agent_cli/web/static/app.js").read_text()
+        assert 'es.addEventListener("stream_reset"' in js
+        # 폐기여야 한다 — finalizeStreamingAsFailed(마감) 이면 카드가 남는다
+        idx = js.index('es.addEventListener("stream_reset"')
+        handler = js[idx : idx + 300]
+        assert "clearStreamingCard" in handler

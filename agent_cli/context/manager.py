@@ -93,6 +93,23 @@ def clamp_stream_idle_timeout(seconds: int) -> int:
     return max(STREAM_IDLE_TIMEOUT_MIN_S, min(s, STREAM_IDLE_TIMEOUT_MAX_S))
 
 
+def default_compaction_ratio() -> float:
+    """부팅 기본 — env AGENT_CLI_COMPACTION_RATIO 오버라이드 (v8.61.0).
+
+    종전엔 이 노브를 부팅 시점에 지정할 수단이 아예 없어(웹 슬라이더 전용)
+    headless·harbor 는 매번 0.8 로 시작했다. 잘못된 값은 조용히 기본값으로
+    떨어진다 — clamp 가 [0.5, 0.95] 를 보장하므로 범위 밖도 안전하다."""
+    import os
+
+    raw = os.environ.get("AGENT_CLI_COMPACTION_RATIO", "")
+    if not raw:
+        return DEFAULT_COMPACTION_RATIO
+    try:
+        return clamp_compaction_ratio(float(raw))
+    except ValueError:
+        return DEFAULT_COMPACTION_RATIO
+
+
 def clamp_stream_max_attempts(attempts: int) -> int:
     """무진전 재전송 **총** 시도 횟수 clamp (v8.60.0): [1, 10].
     1 = 재전송 없음(첫 전송만). 한도(``clamp_stream_idle_timeout``)와 달리
@@ -242,7 +259,7 @@ class ContextManager:
         resume: bool = False,
         wire_format=None,
         compaction_enabled: bool = True,
-        compaction_ratio: float = DEFAULT_COMPACTION_RATIO,
+        compaction_ratio: float | None = None,
     ):
         # Wire-format plugin attached to this ctx — drives the on-disk
         # → in-memory rendering of assistant turns when ``get_messages``
@@ -261,7 +278,13 @@ class ContextManager:
         )
         # Live-tunable compaction target (web slider). Clamped on set so the
         # loop's per-call ``× compaction_ratio`` can never disable compaction.
-        self.compaction_ratio = clamp_compaction_ratio(compaction_ratio)
+        # None = 미지정 → env(AGENT_CLI_COMPACTION_RATIO) 또는 기본값.
+        # 명시값(서브에이전트 상속·테스트)은 그대로 clamp (v8.61.0).
+        self.compaction_ratio = (
+            default_compaction_ratio()
+            if compaction_ratio is None
+            else clamp_compaction_ratio(compaction_ratio)
+        )
         # Per-session thinking/reasoning override (web UI 컨트롤). 공유 ctx 라 다음
         # LLM 콜이 즉시 읽는다(rebuild 불필요). 기본 {}=미설정(모델 기본값 유지).
         #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"

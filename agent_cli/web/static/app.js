@@ -1588,6 +1588,15 @@
     renderStreamStall(JSON.parse(e.data));
   });
 
+  // 재전송 직전 부분 출력 폐기 (v8.61.0). `stream_end` 를 못 쓰는 이유는
+  // 그게 "곧 assistant_turn 이 대체한다"는 뜻이라 카드를 남기기 때문 —
+  // 여기선 대체가 아니라 폐기다. 안 지우면 새 시도의 토큰이 끊긴 옛 부분
+  // 뒤에 이어붙어 같은 문장이 두 번 나온 것처럼 보인다.
+  es.addEventListener("stream_reset", function (e) {
+    const d = JSON.parse(e.data || "{}");
+    clearStreamingCard(d.task_id);
+  });
+
   // Application-level turn/tool errors arrive as ``turn_error`` — NOT
   // ``error`` — precisely so they don't collide with the native EventSource
   // "error" event type (which drives the connection dot via ``es.onerror``

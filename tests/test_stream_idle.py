@@ -391,3 +391,384 @@ class TestStallCliFlags:
         생기면 끄려는 사용자가 기본 10분을 받는다."""
         ctx = self._ctx(tmp_path, stall="0")
         assert ctx.stream_idle_timeout_s == 0
+
+
+class TestBrokenStreamRetry:
+    """v8.61.0: 스트림 **중간** 조기 종료 재전송.
+
+    urllib3 가 종결 청크 없는 EOF 에 "Response ended prematurely"
+    (ProtocolError) 를 내고 requests 가 ChunkedEncodingError 로 감싼다.
+    이건 RequestException 직계라 ConnectionError 검사에 안 걸리고, 본문
+    스트리밍 중이라 post_with_retry(스트림 **시작 전** 전용) 범위 밖이라
+    종전엔 어느 그물에도 안 걸려 런이 죽었다."""
+
+    def _provider(self):
+        from agent_cli.providers.openai import OpenAIProvider
+
+        return OpenAIProvider("http://x", "")
+
+    def _args(self):
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        return {
+            "messages": [{"role": "user", "content": "hi"}],
+            "system": "s",
+            "model": "m",
+            "capabilities": ModelCapabilities(
+                context_window=4096, max_output_tokens=256, supports_thinking=False
+            ),
+            "on_chunk": lambda *a, **k: None,
+        }
+
+    def test_chunked_encoding_error_is_not_a_connection_error(self):
+        """이 계층 구조가 버그의 원인이었다 — 바뀌면 재시도 정책이 조용히
+        달라지므로 고정한다."""
+        import requests
+
+        exc = requests.exceptions.ChunkedEncodingError
+        assert not issubclass(exc, requests.ConnectionError)
+        assert not issubclass(exc, requests.Timeout)
+        assert issubclass(exc, requests.RequestException)
+
+    def test_broken_stream_retries_then_succeeds(self, monkeypatch):
+        import requests
+
+        from agent_cli.providers.base import LLMResponse
+
+        monkeypatch.setattr("agent_cli.providers.http.time.sleep", lambda s: None)
+        prov = self._provider()
+        ok = LLMResponse(content="done")
+        stream = MagicMock(
+            side_effect=[
+                requests.exceptions.ChunkedEncodingError("Response ended prematurely"),
+                ok,
+            ]
+        )
+        with (
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall") as stall,
+            patch("agent_cli.render.render_stream_reset") as reset,
+        ):
+            result = prov.call(**self._args())
+        assert result is ok
+        assert post.call_count == 2
+        kinds = [c.kwargs["kind"] for c in stall.call_args_list]
+        assert "broken" in kinds
+        # 재전송 전에 부분 출력을 걷는다 — 안 걷으면 새 토큰이 옛 부분 뒤에
+        # 이어붙어 같은 문장이 두 번 나온 것처럼 보인다.
+        assert reset.call_count == 1
+
+    def test_content_decoding_error_also_retried(self, monkeypatch):
+        """gzip 스트림이 중간에 끊기면 ContentDecodingError — 같은 원인,
+        같은 처방."""
+        import requests
+
+        from agent_cli.providers.base import LLMResponse
+
+        monkeypatch.setattr("agent_cli.providers.http.time.sleep", lambda s: None)
+        prov = self._provider()
+        stream = MagicMock(
+            side_effect=[
+                requests.exceptions.ContentDecodingError("broken"),
+                LLMResponse(content="ok"),
+            ]
+        )
+        with (
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset"),
+        ):
+            prov.call(**self._args())
+        assert post.call_count == 2
+
+    def test_broken_stream_budget_is_bounded(self, monkeypatch):
+        import requests
+
+        from agent_cli.providers.http import _BROKEN_STREAM_ATTEMPTS
+
+        monkeypatch.setattr("agent_cli.providers.http.time.sleep", lambda s: None)
+        prov = self._provider()
+        stream = MagicMock(
+            side_effect=requests.exceptions.ChunkedEncodingError("always")
+        )
+        with (
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset"),
+            pytest.raises(requests.exceptions.ChunkedEncodingError),
+        ):
+            prov.call(**self._args())
+        assert post.call_count == _BROKEN_STREAM_ATTEMPTS
+
+    def test_budget_is_independent_from_stall_budget(self, monkeypatch):
+        """핵심 설계 계약: 예산이 분리되어 있어야 한다.
+
+        조기 종료는 즉시 실패라 무진전 예산(기본 4)을 공유하면 플래핑하는
+        서버에서 1초 만에 4회를 태우고 끝난다. 여기선 stall 예산 2 를 주고
+        조기 종료를 5번 낸 뒤 성공시켜, **stall 예산이 전혀 줄지 않았는지**
+        (=이후 무진전이 여전히 2회 가능한지) 확인한다."""
+        import requests
+
+        from agent_cli.providers.base import CallSettings, LLMResponse
+        from agent_cli.providers.http import StreamIdleTimeout
+
+        monkeypatch.setattr("agent_cli.providers.http.time.sleep", lambda s: None)
+        prov = self._provider()
+        broken = requests.exceptions.ChunkedEncodingError("x")
+        seq = [broken] * 5 + [StreamIdleTimeout(600)] + [LLMResponse(content="ok")]
+        stream = MagicMock(side_effect=seq)
+        with (
+            patch("agent_cli.providers.http.post_with_retry") as post,
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset"),
+        ):
+            prov.call(**self._args(), settings=CallSettings(stream_max_attempts=2))
+        # 조기 종료 5회가 stall 예산(2)을 먹었다면 무진전 1회에서 터졌을 것.
+        assert post.call_count == 7
+
+    def test_stall_counter_ignores_broken_retries(self, monkeypatch):
+        """대기 줄의 `시도 n/N` 은 무진전 시도만 센다 — 조기 종료가 끼어들어
+        번호를 올리면 사용자가 보는 카운터가 실제 무진전 예산과 어긋난다."""
+        import requests
+
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.http import StreamIdleTimeout
+
+        monkeypatch.setattr("agent_cli.providers.http.time.sleep", lambda s: None)
+        seen: list[tuple] = []
+
+        def fake_handle(r, *a, attempt=None, attempts=None, **kw):
+            seen.append((attempt, attempts))
+            if len(seen) == 1:
+                raise requests.exceptions.ChunkedEncodingError("x")
+            if len(seen) == 2:
+                raise StreamIdleTimeout(600)
+            return LLMResponse(content="ok")
+
+        prov = self._provider()
+        with (
+            patch("agent_cli.providers.http.post_with_retry"),
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", fake_handle),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset"),
+        ):
+            prov.call(**self._args())
+        # 1차 조기 종료 후에도 여전히 "시도 1/4", 무진전 1회 뒤에야 2/4.
+        assert seen == [(1, 4), (1, 4), (2, 4)]
+
+    def test_broken_stream_sleeps_between_attempts(self):
+        """서버가 재시작 중일 수 있으므로 한 박자 쉰다 (post_with_retry 동일).
+        즉시 재전송을 반복하면 10회를 수 밀리초에 태운다."""
+        import requests
+
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.http import _DEFAULT_DELAY
+
+        slept: list[float] = []
+        prov = self._provider()
+        stream = MagicMock(
+            side_effect=[
+                requests.exceptions.ChunkedEncodingError("x"),
+                LLMResponse(content="ok"),
+            ]
+        )
+        with (
+            patch("agent_cli.providers.http.post_with_retry"),
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch("agent_cli.providers.http.time.sleep", slept.append),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset"),
+        ):
+            prov.call(**self._args())
+        assert slept == [_DEFAULT_DELAY]
+
+    def test_idle_resend_also_resets_partial_output(self, monkeypatch):
+        """조기 종료뿐 아니라 **기존 무진전 재전송**도 부분 출력을 걷는다 —
+        그쪽은 거의 항상 TTFT(토큰 0)라 안 드러났을 뿐 같은 갭이었다."""
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.http import StreamIdleTimeout
+
+        prov = self._provider()
+        stream = MagicMock(side_effect=[StreamIdleTimeout(600), LLMResponse("ok")])
+        with (
+            patch("agent_cli.providers.http.post_with_retry"),
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(type(prov), "_handle_stream", stream),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset") as reset,
+        ):
+            prov.call(**self._args())
+        assert reset.call_count == 1
+
+    def test_no_reset_on_success(self):
+        """성공 경로에선 부분 출력을 걷지 않는다 — 걷으면 방금 스트리밍한
+        본문이 사라졌다가 assistant_turn 으로 다시 나타난다(깜빡임)."""
+        from agent_cli.providers.base import LLMResponse
+
+        prov = self._provider()
+        with (
+            patch("agent_cli.providers.http.post_with_retry"),
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(
+                type(prov), "_handle_stream", MagicMock(return_value=LLMResponse("ok"))
+            ),
+            patch("agent_cli.render.render_stream_stall"),
+            patch("agent_cli.render.render_stream_reset") as reset,
+        ):
+            prov.call(**self._args())
+        assert reset.call_count == 0
+
+
+class TestBootKnobFlags:
+    """v8.61.0: 🗜️ compaction · 👥 max-agents 도 --stall 과 같은 패턴으로
+    부팅 시점 지정 (CLI 인자 > env > 기본값).
+
+    종전엔 이 둘이 **웹 노브 전용**이라 headless·harbor 는 매번 기본값으로
+    시작했고, 재실행하면 웹에서 다시 돌려야 했다. ⏳·🧠 만 부팅 주입 수단이
+    있던 비대칭의 해소."""
+
+    # ── compaction ratio ──
+    @pytest.mark.parametrize(
+        "env,expected",
+        [
+            (None, 0.8),
+            ("0.6", 0.6),
+            ("0.5", 0.5),
+            ("0.95", 0.95),
+            ("0.1", 0.5),  # clamp ↓
+            ("9", 0.95),  # clamp ↑
+            ("abc", 0.8),
+            ("", 0.8),
+        ],
+    )
+    def test_compaction_env_default(self, monkeypatch, env, expected):
+        from agent_cli.context.manager import default_compaction_ratio
+
+        if env is None:
+            monkeypatch.delenv("AGENT_CLI_COMPACTION_RATIO", raising=False)
+        else:
+            monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", env)
+        assert default_compaction_ratio() == pytest.approx(expected)
+
+    def test_ctx_picks_up_compaction_env(self, monkeypatch, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
+        assert ContextManager(session_dir=tmp_path).compaction_ratio == pytest.approx(
+            0.6
+        )
+
+    def test_explicit_compaction_beats_env(self, monkeypatch, tmp_path):
+        """명시값(서브에이전트 상속·테스트)은 env 를 이긴다 — 안 그러면
+        부모의 비율을 물려받아야 할 서브에이전트가 env 로 끌려간다."""
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
+        ctx = ContextManager(session_dir=tmp_path, compaction_ratio=0.9)
+        assert ctx.compaction_ratio == pytest.approx(0.9)
+
+    # ── max agents ──
+    @pytest.mark.parametrize(
+        "env,expected",
+        [
+            (None, 10),
+            ("3", 3),
+            ("0", 0),  # 무제한 sentinel — 기본값으로 떨어지면 안 된다
+            ("-1", 0),
+            ("abc", 10),
+            ("", 10),
+        ],
+    )
+    def test_max_agents_env_default(self, monkeypatch, env, expected):
+        from agent_cli.subagent.agents_live import default_max_agents
+
+        if env is None:
+            monkeypatch.delenv("AGENT_CLI_MAX_AGENTS", raising=False)
+        else:
+            monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", env)
+        assert default_max_agents() == expected
+
+    def test_registry_picks_up_max_agents_env(self, monkeypatch, tmp_path):
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "3")
+        assert AgentRegistry(tmp_path).max_agents == 3
+
+    def test_explicit_max_agents_beats_env(self, monkeypatch, tmp_path):
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "3")
+        assert AgentRegistry(tmp_path, max_agents=7).max_agents == 7
+
+    def test_explicit_zero_max_agents_is_unlimited_not_default(
+        self, monkeypatch, tmp_path
+    ):
+        """``--max-agents 0`` 은 미지정이 아니라 명시적 '무제한'. sentinel
+        혼동이 생기면 무제한을 원한 사용자가 기본 10 을 받는다."""
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        monkeypatch.delenv("AGENT_CLI_MAX_AGENTS", raising=False)
+        assert AgentRegistry(tmp_path, max_agents=0).max_agents == 0
+
+    # ── CLI ──
+    def test_flags_registered_on_run_and_web(self):
+        from typer.testing import CliRunner
+
+        from agent_cli.main import app
+
+        runner = CliRunner()
+        for cmd in ("run", "web"):
+            out = runner.invoke(app, [cmd, "--help"]).output
+            assert "--compaction-ratio" in out, cmd
+            assert "--max-agents" in out, cmd
+
+    def test_compaction_flag_beats_env(self, monkeypatch, tmp_path):
+        from agent_cli.main import _build_context
+
+        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
+        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
+            ctx = _build_context(MagicMock(), boot, compaction_ratio=0.9)
+        assert ctx.compaction_ratio == pytest.approx(0.9)
+
+    def test_compaction_env_applies_without_flag(self, monkeypatch, tmp_path):
+        from agent_cli.main import _build_context
+
+        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
+        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
+            ctx = _build_context(MagicMock(), boot)
+        assert ctx.compaction_ratio == pytest.approx(0.6)
+
+    def test_all_four_boot_knobs_reach_ctx_together(self, monkeypatch, tmp_path):
+        """네 축이 서로 간섭하지 않는지 — 한 번에 주면 각자 제 값으로."""
+        from agent_cli.main import _build_context
+
+        for k in (
+            "AGENT_CLI_COMPACTION_RATIO",
+            "AGENT_CLI_STREAM_IDLE_TIMEOUT_S",
+            "AGENT_CLI_STREAM_MAX_ATTEMPTS",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
+            ctx = _build_context(
+                MagicMock(),
+                boot,
+                stall="5m",
+                stall_attempts=6,
+                compaction_ratio=0.9,
+            )
+        assert ctx.stream_idle_timeout_s == 300
+        assert ctx.stream_max_attempts == 6
+        assert ctx.compaction_ratio == pytest.approx(0.9)

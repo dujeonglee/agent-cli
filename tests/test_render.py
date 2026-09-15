@@ -1190,3 +1190,68 @@ class TestStreamStallCli:
             "스트림 무응답 — 재연결 후 재전송 (시도 3/4)",
             "응답 대기 중 — 토큰 없음 120s (시도 1/4, 480s 후 재연결)",
         ]
+
+
+class TestStreamResetCli:
+    """v8.61.0: 재전송 전 부분 출력 폐기 (CLI 쪽)."""
+
+    def _tty(self):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        return MinimalRenderer(Console(file=buf, force_terminal=True, width=100)), buf
+
+    def test_resets_marquee_counters(self):
+        """카운터를 0 으로 되돌리지 않으면 재전송 후 ~N tokens 가 옛 시도분을
+        이어 세어 실제보다 부풀어 보인다."""
+        r, _buf = self._tty()
+        r.stream_chunk("hello world " * 50)
+        r.thinking_chunk("thinking " * 50)
+        assert r._stream_buf and r._think_buf
+        r.stream_reset()
+        assert r._stream_buf == "" and r._think_buf == ""
+        assert r._stream_chunks == 0
+
+    def test_erases_the_line(self):
+        r, buf = self._tty()
+        r.stream_chunk("partial output")
+        buf.truncate(0)
+        buf.seek(0)
+        r.stream_reset()
+        out = buf.getvalue()
+        assert "\r" in out and "\n" not in out  # 지우기만, 줄 확정 없음
+
+    def test_safe_when_nothing_streamed(self):
+        """스트림이 시작되기도 전(TTFT 무진전)에 불려도 터지지 않아야 한다 —
+        _marquee_init 전이면 버퍼 속성 자체가 없다."""
+        r, _buf = self._tty()
+        r.stream_reset()  # must not raise
+        assert r._stream_buf == ""
+
+    def test_capture_mode_is_a_noop_on_screen(self):
+        """병렬 delegate 캡처 중엔 화면 페인트가 없다 — 버퍼만 비운다."""
+        r, buf = self._tty()
+        r.start_capture()
+        try:
+            r.stream_chunk("x" * 20)
+            buf.truncate(0)
+            buf.seek(0)
+            r.stream_reset()
+        finally:
+            r.stop_capture()
+        assert buf.getvalue() == ""
+        assert r._stream_buf == ""
+
+    def test_custom_renderer_default_is_noop(self):
+        """부분 출력을 화면에 들고 있지 않은 렌더러는 할 일이 없다 —
+        구현 의무 없음(C8 규율)."""
+        from agent_cli.render.base import Renderer
+
+        class Custom:
+            stream_reset = Renderer.stream_reset
+
+        Custom().stream_reset()  # must not raise

@@ -404,6 +404,20 @@ class MinimalRenderer(Renderer):
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)
 
+    def stream_reset(self) -> None:
+        """마르퀴 누적(~N tokens · 思 N)을 0 으로 되돌리고 줄을 지운다 —
+        재전송 후 카운터가 옛 시도분을 이어 세면 실제보다 부풀어 보인다."""
+        self._marquee_init()
+        self._stream_buf = ""
+        self._stream_chunks = 0
+        self._think_buf = ""
+        if self.is_capturing or not self.con.file:
+            return
+        self._erase_reflowed_marquee()
+        self.con.file.write(f"\r{' ' * self.con.width}\r")
+        self.con.file.flush()
+        self._last_painted_w = 0
+
     def stream_stall(
         self,
         *,

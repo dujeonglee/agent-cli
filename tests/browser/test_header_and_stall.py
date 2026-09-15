@@ -212,6 +212,26 @@ class TestStreamStallDisplay:
         assert "시도 2/4" in page.inner_text(".stall-resend")
         assert _wait(lambda: page.locator(".stall-line").count() == 0)
 
+    def test_reset_discards_partial_output(self, stack, page):
+        """v8.61.0 — 재전송 전 부분 출력 폐기. 이걸 안 하면 새 시도의 토큰이
+        끊긴 옛 부분 **뒤에 이어붙어** 같은 문장이 두 번 나온 것처럼 보인다.
+        DOM 층이 아니면 확인할 수 없는 부류(누적 변수 + 카드 수명)."""
+        page.goto(stack.url)
+        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        stack.renderer.stream_chunk("파일을 확인해 보")
+        page.wait_for_selector(".card-streaming", timeout=8000)
+        assert "파일을 확인해 보" in page.inner_text(".card-streaming")
+
+        stack.renderer.stream_reset()
+        assert _wait(lambda: page.locator(".card-streaming").count() == 0)
+
+        # 재전송된 스트림은 **처음부터** — 옛 부분이 앞에 남아 있으면 안 된다.
+        stack.renderer.stream_chunk("파일을 확인해 보겠습니다")
+        page.wait_for_selector(".card-streaming", timeout=8000)
+        txt = page.inner_text(".card-streaming")
+        assert txt.strip() == "파일을 확인해 보겠습니다"
+        assert txt.count("파일을 확인해 보") == 1
+
     def test_clear_leaves_nothing_behind(self, stack, page):
         page.goto(stack.url)
         page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)

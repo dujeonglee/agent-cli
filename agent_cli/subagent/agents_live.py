@@ -61,6 +61,18 @@ _DEFAULT_MAX_AGENTS = 10
 MAX_AGENTS_MIN = 1  # smallest positive cap; 0 (or less) means unlimited
 
 
+def default_max_agents() -> int:
+    """부팅 기본 — env AGENT_CLI_MAX_AGENTS 오버라이드 (v8.61.0).
+    ``0`` = 무제한(clamp 의 sentinel 그대로). 종전엔 웹 노브 전용이라
+    headless 에서 동시 에이전트 수를 지정할 수단이 없었다."""
+    import os
+
+    raw = os.environ.get("AGENT_CLI_MAX_AGENTS", "")
+    if not raw:
+        return _DEFAULT_MAX_AGENTS
+    return clamp_max_agents(raw)
+
+
 def clamp_max_agents(value) -> int:
     """Normalise a requested max-agent cap. ``value <= 0`` → 0 (unlimited);
     otherwise floor to ``MAX_AGENTS_MIN``. Non-numeric → default."""
@@ -364,7 +376,7 @@ class AgentRegistry:
         *,
         runtime: dict | None = None,
         runner: Callable | None = None,
-        max_agents: int = _DEFAULT_MAX_AGENTS,
+        max_agents: int | None = None,
     ):
         # 회신을 처리할 provider/모델 등 실행 배선 — spawn 시점이 아니라
         # 레지스트리 생성 시점(부트스트랩)에 고정할 수도 있으나, provider
@@ -373,7 +385,10 @@ class AgentRegistry:
         self._runner = runner
         self.session_dir = Path(session_dir) if session_dir else None
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한.
-        self.max_agents = clamp_max_agents(max_agents)
+        # None = 미지정 → env(AGENT_CLI_MAX_AGENTS) 또는 기본값 (v8.61.0).
+        self.max_agents = (
+            default_max_agents() if max_agents is None else clamp_max_agents(max_agents)
+        )
 
         self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()

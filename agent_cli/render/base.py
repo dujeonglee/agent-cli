@@ -383,6 +383,23 @@ class Renderer(ABC):
                 "running",
                 f"스트림 무응답 — 재연결 후 재전송 (시도 {attempt}/{attempts})",
             )
+        elif kind == "broken":
+            self.status(
+                "running",
+                f"스트림 연결 끊김 — 재전송 ({attempt}/{attempts})",
+            )
+
+    def stream_reset(self) -> None:
+        """진행 중 스트림의 **부분 출력을 버린다** (v8.61.0).
+
+        재전송은 생성을 처음부터 다시 한다(서버측 resume 없음). 이미 표면에
+        나간 부분 출력을 걷지 않으면 새 시도의 토큰이 그 뒤에 이어붙어
+        중복으로 보인다 — 최종 응답 내용은 시도마다 새 ``StreamAccum`` 이라
+        멀쩡하고, **표시만** 어긋난다.
+
+        기본 no-op: 부분 출력을 화면에 들고 있지 않은 렌더러는 할 일이 없다.
+        (종전 무진전 재전송에도 이 갭이 있었으나 그쪽은 거의 항상 TTFT —
+        토큰이 하나도 안 나온 상태 — 라 드러나지 않았다.)"""
 
     # ── Abstract render methods ──────────────────────
 

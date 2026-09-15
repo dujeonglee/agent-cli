@@ -1053,6 +1053,7 @@ def _build_context(
     resume: bool = False,
     stall: str | None = None,
     stall_attempts: int | None = None,
+    compaction_ratio: float | None = None,
 ):
     """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로).
 
@@ -1066,6 +1067,8 @@ def _build_context(
         max_context_tokens=boot.max_context_tokens,
         resume=resume,
         wire_format=boot.wire_format,
+        # None 이면 ContextManager 가 env/기본값을 고른다 (v8.61.0).
+        compaction_ratio=compaction_ratio,
     )
     seconds = _parse_stall(stall)
     if seconds is not None:
@@ -1130,6 +1133,16 @@ def run(
         None,
         "--stall-attempts",
         help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Overrides AGENT_CLI_STREAM_MAX_ATTEMPTS; default 4",
+    ),
+    compaction_ratio: float | None = typer.Option(
+        None,
+        "--compaction-ratio",
+        help="Context compaction target as a fraction of the window (0.5-0.95). Lower = compact earlier. Overrides AGENT_CLI_COMPACTION_RATIO; default 0.8",
+    ),
+    max_agents: int | None = typer.Option(
+        None,
+        "--max-agents",
+        help="Max concurrently live sub-agents; 0 = unlimited. Overrides AGENT_CLI_MAX_AGENTS; default 10",
     ),
     verbose: bool = typer.Option(
         False,
@@ -1222,6 +1235,7 @@ def run(
         resume=session_resumed is not None,
         stall=stall,
         stall_attempts=stall_attempts,
+        compaction_ratio=compaction_ratio,
     )
 
     from agent_cli.hooks import load_hooks as _load_hooks
@@ -1253,6 +1267,7 @@ def run(
             session=session,
             hooks_config=_disk_hooks,
         ),
+        max_agents=max_agents,
     )
     # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1).
     # 종전엔 조기-반환 경로들이 각자 나열하다 skill 경로는 registry/MCP,
@@ -1802,6 +1817,16 @@ def web(
         "--stall-attempts",
         help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Default 4",
     ),
+    compaction_ratio: float | None = typer.Option(
+        None,
+        "--compaction-ratio",
+        help="Context compaction target as a fraction of the window (0.5-0.95). Lower = compact earlier. Default 0.8",
+    ),
+    max_agents: int | None = typer.Option(
+        None,
+        "--max-agents",
+        help="Max concurrently live sub-agents; 0 = unlimited. Default 10",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
     response_format: str | None = typer.Option(
@@ -1962,7 +1987,12 @@ def web(
     session.response_format = wire_format_plugin.name
     save_meta(session)
     ctx = _build_context(
-        session, boot, resume=is_resume, stall=stall, stall_attempts=stall_attempts
+        session,
+        boot,
+        resume=is_resume,
+        stall=stall,
+        stall_attempts=stall_attempts,
+        compaction_ratio=compaction_ratio,
     )
 
     # 3. Renderer + server + worker thread.
@@ -2072,6 +2102,7 @@ def web(
                 session=session,
                 hooks_config=_disk_hooks,
             ),
+            max_agents=max_agents,
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.

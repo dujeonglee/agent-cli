@@ -1407,6 +1407,16 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
+    def stream_reset(self) -> None:
+        """진행 중 스트리밍 카드를 **폐기**하라고 프론트에 알린다 (v8.61.0).
+
+        ``stream_end`` 는 못 쓴다 — 프론트가 그걸 "곧 assistant_turn 이
+        대체한다"로 읽어 카드를 남기기 때문이다. 여기선 대체가 아니라 폐기다.
+        ``persistent=False``: 재접속 replay 에서 되살릴 이유가 없다(폐기된
+        부분 출력은 버퍼에도 남지 않는다). ``_emit`` 이 스코프 task_id 를
+        자동으로 붙여 서브에이전트 카드도 제 것만 지워진다."""
+        self._emit("stream_reset", {}, persistent=False)
+
     def stream_stall(
         self,
         *,
