@@ -237,6 +237,23 @@ class TestStreamingReconnect:
         assert seen["coords"] == (1, 4)
 
 
+def _registered_options(command: str) -> set[str]:
+    """``agent-cli <command>`` 에 등록된 옵션 이름 집합.
+
+    ``--help`` **렌더 결과를 파싱하지 않는다**: Rich 가 옵션명 첫 글자를 따로
+    스타일링해(``\x1b[1;36m-\x1b[0m\x1b[1;36m-stall\x1b[0m``) 색상이 켜지면
+    리터럴 ``"--stall"`` 이 문자열에 존재하지 않는다. 로컬(색상 off)은 통과하고
+    CI(색상 on)만 깨지는 부류라 실제로 v8.60.0·v8.61.0 CI 를 두 번 깼다.
+    등록된 파라미터를 직접 보면 렌더링과 무관하게 "플래그가 배선됐나"라는
+    진짜 계약을 검사한다."""
+    from typer.main import get_command
+
+    from agent_cli.main import app
+
+    sub = get_command(app).commands[command]
+    return {opt for param in sub.params for opt in param.opts}
+
+
 class TestStreamMaxAttemptsKnob:
     """v8.60.0: ``STREAM_MAX_ATTEMPTS`` 는 **총 시도**(첫 전송 포함)이고,
     한도(Stall)와 한 쌍인 세션 노브다. 최대 대기 = 한도 × 시도."""
@@ -349,15 +366,10 @@ class TestStallCliFlags:
     def test_flags_registered_on_run_and_web(self):
         """두 명령 모두에 있어야 한다 — web 에만 있으면 harbor·스크립트
         경로가 env 로만 조절 가능해진다."""
-        from typer.testing import CliRunner
-
-        from agent_cli.main import app
-
-        runner = CliRunner()
         for cmd in ("run", "web"):
-            out = runner.invoke(app, [cmd, "--help"]).output
-            assert "--stall" in out, cmd
-            assert "--stall-attempts" in out, cmd
+            opts = _registered_options(cmd)
+            assert "--stall" in opts, cmd
+            assert "--stall-attempts" in opts, cmd
 
     def _ctx(self, tmp_path, **kw):
         """``_build_context`` 를 세션 디스크 조립 없이 호출 — 검증 대상은
@@ -722,15 +734,10 @@ class TestBootKnobFlags:
 
     # ── CLI ──
     def test_flags_registered_on_run_and_web(self):
-        from typer.testing import CliRunner
-
-        from agent_cli.main import app
-
-        runner = CliRunner()
         for cmd in ("run", "web"):
-            out = runner.invoke(app, [cmd, "--help"]).output
-            assert "--compaction-ratio" in out, cmd
-            assert "--max-agents" in out, cmd
+            opts = _registered_options(cmd)
+            assert "--compaction-ratio" in opts, cmd
+            assert "--max-agents" in opts, cmd
 
     def test_compaction_flag_beats_env(self, monkeypatch, tmp_path):
         from agent_cli.main import _build_context
