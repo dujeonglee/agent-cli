@@ -159,7 +159,9 @@ class TestProbe:
         import threading
 
         m = MagicMock()
-        m.connect_all.side_effect = lambda c: threading.Event().wait()  # never returns
+        m.connect_all.side_effect = lambda c, **kw: (
+            threading.Event().wait()
+        )  # never returns
         with patch("agent_cli.mcp.client.McpClientManager", return_value=m):
             ok, msg, _, secs = W.probe_server("s", {"url": "http://h:1"}, timeout=0.2)
         assert ok is False and "응답이 없습니다" in msg
@@ -236,7 +238,10 @@ class TestAddFlow:
         assert "GH 있음" in out and "ghp_••••••••4f2a" in out
         assert "도구 2개" in out and "다음 실행부터" in out
 
-    def test_sse_sets_transport_explicitly(self, proj, monkeypatch):
+    def test_remote_saves_detected_transport_explicitly(self, proj, monkeypatch):
+        """v9.3.0: 원격은 세대를 판별해 **명시** 저장한다 — 파일에 추측을
+        조용히 써넣지 않는다는 게 이 설계의 요구였다 (판별 상세는
+        TestRemoteAutodetect)."""
         _script_prompts(
             monkeypatch, prompt=["figma", "http://localhost:3845", ""], intp=[2]
         )
@@ -244,7 +249,10 @@ class TestAddFlow:
             w, _ = _wizard()
             assert w.add()
         saved = W.read_servers(proj / ".agent-cli" / "mcp.json")["figma"]
-        assert saved == {"url": "http://localhost:3845", "transport": "sse"}
+        assert saved == {
+            "url": "http://localhost:3845",
+            "transport": "streamable-http",
+        }
 
     def test_missing_env_is_flagged_but_allowed(self, proj, monkeypatch):
         """오타 변수 — 경고는 하되 막지는 않는다(값이 나중에 생길 수 있다)."""
@@ -472,3 +480,88 @@ class TestListIsScriptSafe:
             w, _ = _wizard()
             assert w.add()
         assert set(W.read_servers(proj / ".agent-cli" / "mcp.json")) == {"old", "n2"}
+
+
+class TestRemoteAutodetect:
+    """v9.3.0: 원격은 URL 만 받고 HTTP 세대를 **연결해 보며 판별**한다.
+
+    문서에서 받은 URL 만 보고 streamable-http 인지 구 sse 인지 아는 사용자는
+    많지 않다 — 물으면 추측을 떠넘기는 셈이고, 틀리면 -32600 을 만난다.
+    마법사는 어차피 저장 전에 붙어 보므로 판별에 추가 비용이 사실상 없다."""
+
+    def test_wizard_offers_local_or_remote_not_http_generations(self):
+        """선택지는 '확실히 아는 것'만 — 세대는 묻지 않는다."""
+        assert [t[0] for t in W._TRANSPORTS] == ["stdio", "remote"]
+
+    def test_detects_streamable_http_first(self, proj, monkeypatch):
+        _script_prompts(monkeypatch, prompt=["m", "http://h/mcp", ""], intp=[2])
+        with patch.object(W, "probe_server", return_value=(True, "", ["a"], 0.2)) as pr:
+            w, buf = _wizard()
+            assert w.add() is True
+        # 현재 권장 규격을 먼저 시도한다
+        assert pr.call_args_list[0].args[1]["transport"] == "streamable-http"
+        saved = W.read_servers(proj / ".agent-cli" / "mcp.json")["m"]
+        assert saved == {"url": "http://h/mcp", "transport": "streamable-http"}
+        assert "자동 판별" in buf.getvalue()
+
+    def test_falls_back_to_sse(self, proj, monkeypatch):
+        _script_prompts(monkeypatch, prompt=["l", "http://h/sse", ""], intp=[2])
+        with patch.object(
+            W,
+            "probe_server",
+            side_effect=[
+                (False, "응답하지 않습니다", [], 0.1),
+                (True, "", ["ping"], 0.1),
+            ],
+        ) as pr:
+            w, buf = _wizard()
+            assert w.add() is True
+        assert [c.args[1]["transport"] for c in pr.call_args_list] == [
+            "streamable-http",
+            "sse",
+        ]
+        assert (
+            W.read_servers(proj / ".agent-cli" / "mcp.json")["l"]["transport"] == "sse"
+        )
+        assert "전송 방식: sse" in buf.getvalue()
+
+    def test_both_fail_shows_each_reason_and_saves_nothing(self, proj, monkeypatch):
+        _script_prompts(monkeypatch, prompt=["d", "http://h:1/mcp", ""], intp=[2, 3])
+        with patch.object(
+            W,
+            "probe_server",
+            side_effect=[(False, "이유A", [], 0.1), (False, "이유B", [], 0.1)],
+        ):
+            w, buf = _wizard()
+            assert w.add() is False
+        out = buf.getvalue()
+        assert "두 전송 방식 모두 실패" in out
+        assert "streamable-http: 이유A" in out and "sse: 이유B" in out
+        assert not (proj / ".agent-cli" / "mcp.json").exists()
+
+    def test_explicit_transport_skips_detection(self, proj, monkeypatch):
+        """이미 transport 가 있는 entry(재프로브·mcp test)는 판별하지 않는다."""
+        W.save_server(
+            "x",
+            {"url": "http://h", "transport": "sse"},
+            proj / ".agent-cli" / "mcp.json",
+        )
+        with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)) as pr:
+            w, _ = _wizard()
+            assert w.test("x") is True
+        assert pr.call_count == 1  # 한 번만 — 판별 루프를 안 탄다
+
+    def test_stdio_path_unaffected(self, proj, monkeypatch):
+        _script_prompts(monkeypatch, prompt=["s", "python3", "", ""], intp=[1])
+        with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)) as pr:
+            w, _ = _wizard()
+            assert w.add() is True
+        assert pr.call_count == 1
+        assert "transport" not in W.read_servers(proj / ".agent-cli" / "mcp.json")["s"]
+
+    def test_probe_is_quiet_by_default(self):
+        """판별은 실패를 전제로 두 번 시도 — 예상된 실패가 stderr 로 새면
+        성공한 등록 출력에 [warn] 이 섞인다(실장에서 잡힘)."""
+        import inspect
+
+        assert inspect.signature(W.probe_server).parameters["warn"].default is False

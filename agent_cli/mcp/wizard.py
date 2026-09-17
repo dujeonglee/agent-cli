@@ -46,10 +46,17 @@ console = Console()
 # 설치를 겸해 수십 초가 걸릴 수 있고, 마법사는 정확히 그 "첫 실행" 자리다.
 PROBE_TIMEOUT_S = 45.0
 
+# 사용자가 고르는 건 **확실히 아는 것**(로컬이냐 원격이냐)뿐. 원격의 HTTP
+# 세대(streamable-http vs 구 sse)는 문서의 URL 만 봐서는 대개 알 수 없으므로
+# 묻지 않고 **연결해 보며 판별**한다 (v9.3.0) — 마법사는 어차피 저장 전에
+# 붙어 보므로 추가 비용이 사실상 없다. 판별 결과는 파일에 명시 저장한다.
 _TRANSPORTS = (
     ("stdio", "로컬 프로세스로 실행 (npx, uvx, 실행 파일)"),
-    ("sse", "이미 떠 있는 HTTP 서버에 연결"),
+    ("remote", "원격 HTTP 서버 (전송 방식은 자동 판별)"),
 )
+
+# 판별 순서: 현재 권장 규격 먼저, 구 규격 폴백.
+_REMOTE_ORDER = ("streamable-http", "sse")
 
 
 # ── 순수 헬퍼 (프롬프트 없음) ──────────────────────────────
@@ -138,7 +145,7 @@ def resolve_command(cmd: str) -> str | None:
 
 
 def probe_server(
-    name: str, entry: dict, timeout: float = PROBE_TIMEOUT_S
+    name: str, entry: dict, timeout: float = PROBE_TIMEOUT_S, *, warn: bool = False
 ) -> tuple[bool, str, list[str], float]:
     """실제로 연결해 도구 목록을 받아 본다.
 
@@ -148,8 +155,8 @@ def probe_server(
     from agent_cli.mcp.client import McpClientManager
 
     cfg = _parse_server_config(name, entry)
-    if not (cfg.is_stdio or cfg.is_sse):
-        return False, "command(stdio) 또는 url(sse) 중 하나가 필요합니다", [], 0.0
+    if not (cfg.is_stdio or cfg.is_remote):
+        return False, "command(stdio) 또는 url(원격) 중 하나가 필요합니다", [], 0.0
     if cfg.is_stdio and resolve_command(cfg.command) is None:
         return (
             False,
@@ -161,7 +168,7 @@ def probe_server(
     manager = McpClientManager()
     t0 = time.perf_counter()
     try:
-        results = _connect_with_timeout(manager, {name: cfg}, timeout)
+        results = _connect_with_timeout(manager, {name: cfg}, timeout, warn=warn)
         status = results.get(name, "error: unknown")
         if status != "connected":
             return False, humanize_error(status, cfg), [], time.perf_counter() - t0
@@ -184,7 +191,9 @@ def probe_server(
             pass
 
 
-def _connect_with_timeout(manager, configs: dict, timeout: float) -> dict[str, str]:
+def _connect_with_timeout(
+    manager, configs: dict, timeout: float, *, warn: bool = False
+) -> dict[str, str]:
     """``connect_all`` 은 서버별 예외를 삼켜 status 문자열로 돌려주지만 타임아웃이
     없다. 여기서만 상한을 건다 — 부팅 경로(``_setup_mcp``)는 느린 첫 실행을
     기다려야 하므로 건드리지 않는다.
@@ -198,7 +207,7 @@ def _connect_with_timeout(manager, configs: dict, timeout: float) -> dict[str, s
 
     def _work():
         try:
-            box["result"] = manager.connect_all(configs)
+            box["result"] = manager.connect_all(configs, warn=warn)
         except BaseException as e:  # 스레드 경계 — 결과로 실어 보낸다
             box["error"] = e
 
@@ -396,13 +405,14 @@ class McpWizard:
                 entry["args"] = args_raw.split()
             return entry
 
-        self.console.print("\n   [bold]sse 설정[/]")
+        self.console.print("\n   [bold]원격 서버[/]")
         url = Prompt.ask("   URL").strip()
         if not url:
             self.console.print("   [red]URL 은 비울 수 없습니다.[/]")
             return None
-        # ``url`` 키의 존재만으로 sse 로 판별된다 — transport 는 명시해 둔다
-        return {"url": url, "transport": "sse"}
+        # transport 는 연결 테스트가 판별해 채운다 (_run_probe). 여기서
+        # 기본값을 박으면 사용자에게 추측을 떠넘기는 셈이 된다.
+        return {"url": url}
 
     def _ask_env(self, entry: dict) -> dict:
         self.console.print("\n   [bold]환경 변수[/] [dim](없으면 빈 줄로 종료)[/]")
@@ -432,7 +442,12 @@ class McpWizard:
         return entry
 
     def _run_probe(self, name: str, entry: dict) -> bool:
+        """연결 테스트. 원격인데 transport 가 비어 있으면 세대를 **판별**하고
+        ``entry`` 에 확정해 넣는다(호출자가 그대로 저장) — v9.3.0."""
         self.console.print("\n   [bold]연결 테스트[/]")
+        if "url" in entry and not entry.get("transport"):
+            return self._probe_remote_autodetect(name, entry)
+
         cfg = _parse_server_config(name, entry)
         target = (
             f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg.is_stdio else cfg.url
@@ -442,6 +457,37 @@ class McpWizard:
             "npx 첫 실행은 패키지 설치로 오래 걸릴 수 있습니다)[/]"
         )
         ok, msg, tools, secs = probe_server(name, entry)
+        return self._render_probe(name, ok, msg, tools, secs)
+
+    def _probe_remote_autodetect(self, name: str, entry: dict) -> bool:
+        """현재 권장(streamable-http) → 구(sse) 순으로 붙여 본다.
+
+        사용자는 문서에서 받은 URL 만 알지 그게 어느 HTTP 세대인지는 대개
+        모른다. 틀리게 고르면 서버가 -32600 으로 거절하는데 그 메시지만으론
+        원인이 전송 방식이라는 걸 알 수 없다 — 그래서 묻지 않고 판별한다."""
+        self.console.print(f"   [dim]{entry['url']} 연결 중…[/]")
+        failures: list[tuple[str, str]] = []
+        for transport in _REMOTE_ORDER:
+            attempt = {**entry, "transport": transport}
+            self.console.print(f"     [dim]{transport} 로 시도…[/]", end="")
+            ok, msg, tools, secs = probe_server(name, attempt)
+            if ok:
+                self.console.print(" [green]●[/]")
+                entry["transport"] = transport  # 판별 결과를 명시 저장
+                self.console.print(
+                    f"   [green]●[/] 전송 방식: [bold]{transport}[/] [dim](자동 판별)[/]"
+                )
+                return self._render_probe(name, True, msg, tools, secs)
+            self.console.print(" [red]✗[/]")
+            failures.append((transport, msg))
+        self.console.print("   [red]✗[/] 두 전송 방식 모두 실패")
+        for transport, msg in failures:
+            self.console.print(f"       [red]{transport}: {msg}[/]")
+        return False
+
+    def _render_probe(
+        self, name: str, ok: bool, msg: str, tools: list[str], secs: float
+    ) -> bool:
         if ok:
             self.console.print(f"   [green]●[/] 연결됨 [dim]({secs:.1f}s)[/]")
             self.console.print(f"   [green]●[/] 도구 [bold]{len(tools)}[/]개")

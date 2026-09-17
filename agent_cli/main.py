@@ -182,14 +182,21 @@ def _setup_mcp():
         return None, {}
 
     manager = McpClientManager()
-    results = manager.connect_all(configs)
+    # warn=False: 아래에서 서버당 한 줄을 직접 찍으므로 connect_all 의 stderr
+    # [warn] 은 같은 내용의 중복이다. 그리고 그쪽은 날것이라, 전송 방식
+    # 불일치 같은 원인이 안 보인다 (v9.3.0 — 사용자 제보로 드러난 화면).
+    results = manager.connect_all(configs, warn=False)
+
+    from agent_cli.mcp.client import humanize_error
 
     for name, status in results.items():
         if status == "connected":
             tool_count = len(manager.list_tools(name))
             console.print(f"  [green]●[/] MCP {name}: {tool_count} tools")
         else:
-            console.print(f"  [red]●[/] MCP {name}: {status}")
+            console.print(
+                f"  [red]●[/] MCP {name}: {humanize_error(status, configs.get(name))}"
+            )
 
     mcp_tools = register_mcp_tools(manager)
     return manager, mcp_tools

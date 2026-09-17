@@ -1321,12 +1321,12 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 #### 등록 — `agent-cli mcp` (v9.1.0)
 
-손으로 JSON 을 짜는 대신 마법사를 쓰세요. **저장 전에 실제로 연결해 도구 개수를 세고**, `${VAR}` 는 현재 셸에 값이 있는지 확인해 보여줍니다 — 붙지 않는 설정은 파일에 남지 않고, 토큰 오타는 저장 전에 드러납니다.
+손으로 JSON 을 짜는 대신 마법사를 쓰세요. **저장 전에 실제로 연결해 도구 개수를 세고**, 원격 서버는 **HTTP 전송 세대를 자동 판별**하며(문서의 URL 만 봐서는 streamable-http 인지 구 sse 인지 알기 어렵습니다 — 판별 결과는 파일에 명시 저장됩니다), `${VAR}` 는 현재 셸에 값이 있는지 확인해 보여줍니다 — 붙지 않는 설정은 파일에 남지 않고, 토큰 오타는 저장 전에 드러납니다.
 
 ```bash
 agent-cli mcp                 # 등록 목록 + 실제 연결 진단 (실패 이유·설정 파일 경로 표시)
 agent-cli mcp --no-test       # 연결 없이 목록만 (스크립트용; 파이프 뒤에서 프롬프트로 멈추지 않음)
-agent-cli mcp add             # 대화형 등록: 이름 → 전송(stdio/sse) → 명령·인자 또는 URL → env → 연결 테스트 → 저장
+agent-cli mcp add             # 대화형 등록: 이름 → 로컬/원격 → 명령·인자 또는 URL → env → 연결 테스트 → 저장
 agent-cli mcp test <이름>     # 하나만 다시 연결해 보기
 agent-cli mcp remove <이름>
 ```
@@ -1362,8 +1362,11 @@ agent-cli mcp remove <이름>
 ```
 
 - **stdio**: `command` + `args` — 로컬 프로세스로 실행
-- **SSE**: `url` + `transport: "sse"` — HTTP 원격 연결
-- **전송 방식은 `url` 키의 유무로 결정**됩니다. `url` 이 있으면 `transport` 를 생략해도 `sse`, 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다.
+- **Streamable HTTP**: `url` + `transport: "streamable-http"` — MCP 2025-03-26 의 원격 전송(현재 권장). `streamable_http` · `http` 도 같은 뜻으로 받습니다.
+- **SSE**: `url` + `transport: "sse"` — 구 HTTP+SSE 전송
+- **로컬/원격은 `url` 키의 유무로 결정**됩니다. `url` 이 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다. `url` 이 있는데 `transport` 를 생략하면 **`sse`** 입니다(기존 설정 호환). 신규 서버는 대개 Streamable HTTP 이니 `agent-cli mcp add` 로 등록하거나 `transport` 를 명시하세요.
+
+> 구 `sse` 설정으로 Streamable HTTP 서버에 붙으면 서버가 `-32600 "Not Acceptable: Client must accept both application/json and text/event-stream"` 으로 거절합니다. 이 경우 agent-cli 가 **"전송 방식이 다릅니다 — 이 서버는 Streamable HTTP 입니다"** 로 안내합니다 (v9.3.0).
 - `${VAR}` — 환경 변수 참조. **`env` 블록 안에서만** 치환되며(`command`·`url` 에는 적용되지 않음), **정의되지 않은 변수는 빈 문자열**이 됩니다(에러 아님 — 토큰 오타는 인증 실패로만 드러납니다).
 - 한 서버 연결이 실패해도 나머지는 연결되고 에이전트는 계속 돕니다. 실패는 stderr 경고 한 줄뿐이니, 도구가 안 보이면 stderr 를 먼저 확인하세요.
 

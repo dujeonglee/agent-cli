@@ -676,3 +676,201 @@ class TestHumanizeError:
             m.summary()["servers"][0]["error"]
             == "연결 거부 — http://h:1 에 서버가 없습니다"
         )
+
+
+class TestStreamableHttpTransport:
+    """v9.3.0: MCP 2025-03-26 Streamable HTTP 전송.
+
+    사용자 제보로 드러난 공백 — 신규 서버에 구 sse 로 붙으면 Accept 헤더가
+    모자라 서버가 -32600 "Not Acceptable" 로 거절한다. SDK 에
+    ``streamablehttp_client`` 가 이미 있었고 배선만 없었다."""
+
+    @pytest.mark.parametrize(
+        "data,transport,stdio,sse,shttp",
+        [
+            ({"command": "x"}, "stdio", True, False, False),
+            ({"url": "u"}, "sse", False, True, False),  # 생략 기본은 종전대로
+            ({"url": "u", "transport": "sse"}, "sse", False, True, False),
+            (
+                {"url": "u", "transport": "streamable-http"},
+                "streamable-http",
+                False,
+                False,
+                True,
+            ),
+            (
+                {"url": "u", "transport": "streamable_http"},
+                "streamable_http",
+                False,
+                False,
+                True,
+            ),
+            ({"url": "u", "transport": "http"}, "http", False, False, True),
+        ],
+    )
+    def test_transport_detection(self, data, transport, stdio, sse, shttp):
+        from agent_cli.mcp.config import _parse_server_config
+
+        c = _parse_server_config("n", data)
+        assert (c.transport, c.is_stdio, c.is_sse, c.is_streamable_http) == (
+            transport,
+            stdio,
+            sse,
+            shttp,
+        )
+        assert c.is_remote == (sse or shttp)
+
+    def test_omitted_transport_stays_sse_for_back_compat(self):
+        """기본을 바꾸면 기존 손편집 설정이 조용히 다르게 동작한다 — 핀."""
+        from agent_cli.mcp.config import _parse_server_config
+
+        assert _parse_server_config("n", {"url": "u"}).transport == "sse"
+
+    def test_url_without_value_is_neither(self):
+        from agent_cli.mcp.config import McpServerConfig
+
+        c = McpServerConfig(name="n", transport="streamable-http")
+        assert not c.is_streamable_http and not c.is_remote
+
+    @pytest.mark.asyncio
+    async def test_connect_one_dispatches_to_streamable_http(self):
+        from unittest.mock import AsyncMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        cfg = McpServerConfig(name="s", url="http://h/mcp", transport="streamable-http")
+        with (
+            patch.object(m, "_connect_streamable_http", new=AsyncMock()) as sh,
+            patch.object(m, "_connect_sse", new=AsyncMock()) as sse,
+        ):
+            await m._connect_one("s", cfg)
+        sh.assert_awaited_once()
+        sse.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_connect_one_still_dispatches_sse(self):
+        from unittest.mock import AsyncMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        cfg = McpServerConfig(name="s", url="http://h/sse", transport="sse")
+        with (
+            patch.object(m, "_connect_streamable_http", new=AsyncMock()) as sh,
+            patch.object(m, "_connect_sse", new=AsyncMock()) as sse,
+        ):
+            await m._connect_one("s", cfg)
+        sse.assert_awaited_once()
+        sh.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_config_names_both_remote_options(self):
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        with pytest.raises(ValueError, match="streamable-http"):
+            await McpClientManager()._connect_one("s", McpServerConfig(name="s"))
+
+
+class TestCancelledErrorIsCaught:
+    """v9.3.0 실장에서 잡힌 크래시: streamable-http 로 구 SSE 엔드포인트를 치면
+    transport 의 anyio cancel scope 가 대기 중인 initialize 를 취소하는데,
+    ``CancelledError`` 는 BaseException 이라 ``except Exception`` 을 빠져나가
+    마법사가 통째로 터졌다."""
+
+    def test_cancelled_error_becomes_a_status_not_a_crash(self):
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        with (
+            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
+            patch.object(
+                m,
+                "_run_sync",
+                side_effect=asyncio.CancelledError("Cancelled via cancel scope 0x1"),
+            ),
+        ):
+            r = m.connect_all(
+                {"s": McpServerConfig(name="s", url="u", transport="streamable-http")},
+                warn=False,
+            )
+        assert r["s"].startswith("error:")
+        assert (
+            m.summary()["servers"][0]["error"]
+            == "서버가 이 전송 방식에 응답하지 않습니다"
+        )
+
+    def test_keyboard_interrupt_still_propagates(self):
+        """사용자 Ctrl-C 는 삼키면 안 된다 — CancelledError 와 다른 부류."""
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        with (
+            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
+            patch.object(m, "_run_sync", side_effect=KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            m.connect_all({"s": McpServerConfig(name="s", command="x")}, warn=False)
+
+    def test_warn_switch_silences_stderr(self, capsys):
+        """판별은 실패를 전제로 두 번 시도한다 — 예상된 첫 실패에 [warn] 을
+        찍으면 성공한 등록 출력에 경고가 섞인다."""
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        cfg = {"s": McpServerConfig(name="s", command="x")}
+        with (
+            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
+            patch.object(m, "_run_sync", side_effect=OSError("boom")),
+        ):
+            m.connect_all(cfg, warn=False)
+            assert "[warn]" not in capsys.readouterr().err
+            m.connect_all(cfg)  # 기본 True — 부팅 경로는 종전대로
+            assert "[warn]" in capsys.readouterr().err
+
+
+class TestWrongTransportDiagnosis:
+    """구 sse 설정으로 Streamable HTTP 서버를 치면 원문은 400/-32600 뿐이라
+    **원인이 전송 방식이라는 걸 알 수 없다**. 손편집 사용자에겐 이게 유일한
+    단서다 (마법사는 자동 판별하므로 이 경로를 안 탄다)."""
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Client error '400 Bad Request' for url 'http://h/mcp'",
+            "error: -32600 not acceptable",
+            "Not Acceptable: Client must accept both application/json and text/event-stream",
+        ],
+    )
+    def test_sse_config_gets_transport_hint(self, raw):
+        from agent_cli.mcp.client import humanize_error
+        from agent_cli.mcp.config import McpServerConfig
+
+        msg = humanize_error(raw, McpServerConfig(name="s", url="u", transport="sse"))
+        assert "전송 방식이 다릅니다" in msg and "streamable-http" in msg
+
+    def test_streamable_config_400_is_not_misdiagnosed(self):
+        """이미 streamable 인데 난 400 은 다른 문제(경로 오타 등)다."""
+        from agent_cli.mcp.client import humanize_error
+        from agent_cli.mcp.config import McpServerConfig
+
+        cfg = McpServerConfig(name="s", url="u", transport="streamable-http")
+        assert "전송 방식" not in humanize_error("400 Bad Request", cfg)
+
+    def test_no_config_no_hint(self):
+        from agent_cli.mcp.client import humanize_error
+
+        assert "전송 방식" not in humanize_error("400 Bad Request", None)

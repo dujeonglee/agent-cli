@@ -22,6 +22,11 @@ _MCP_CONFIG_PATHS = [project_dir() / "mcp.json"]
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 
+# Streamable HTTP 의 표기 흔들림 수용 — 규격 문서·다른 클라이언트가
+# "streamable-http" / "streamable_http" / "http" 를 섞어 쓴다 (v9.3.0).
+_STREAMABLE_ALIASES = frozenset({"streamable-http", "streamable_http", "http"})
+STREAMABLE_HTTP = "streamable-http"  # 우리가 파일에 쓰는 캐노니컬 이름
+
 
 @dataclass
 class McpServerConfig:
@@ -32,9 +37,9 @@ class McpServerConfig:
     command: str = ""
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
-    # SSE transport
+    # HTTP transports (sse | streamable-http)
     url: str = ""
-    transport: str = "stdio"  # "stdio" or "sse"
+    transport: str = "stdio"  # "stdio" | "sse" | "streamable-http"
 
     @property
     def is_stdio(self) -> bool:
@@ -42,7 +47,21 @@ class McpServerConfig:
 
     @property
     def is_sse(self) -> bool:
+        """구 HTTP+SSE 전송 (MCP 초기 규격)."""
         return self.transport == "sse" and bool(self.url)
+
+    @property
+    def is_streamable_http(self) -> bool:
+        """Streamable HTTP (MCP 2025-03-26 — 현재 권장 원격 전송, v9.3.0).
+
+        단일 엔드포인트에 POST 하며 ``Accept: application/json,
+        text/event-stream`` 을 **둘 다** 요구한다. 구 sse_client 로 붙으면
+        서버가 -32600 "Not Acceptable" 로 거절한다."""
+        return self.transport in _STREAMABLE_ALIASES and bool(self.url)
+
+    @property
+    def is_remote(self) -> bool:
+        return self.is_sse or self.is_streamable_http
 
 
 def _resolve_env_vars(value: str) -> str:
@@ -60,7 +79,11 @@ def _parse_server_config(name: str, data: dict) -> McpServerConfig:
     raw_env = data.get("env", {})
     resolved_env = {k: _resolve_env_vars(v) for k, v in raw_env.items()}
 
-    # Detect transport type
+    # Detect transport type. url 이 있으면 HTTP 계열 — 어느 세대인지는
+    # ``transport`` 가 정한다. **생략 시 기본은 종전대로 "sse"**: 바꾸면
+    # 기존 손편집 설정이 조용히 다르게 동작한다. 마법사는 항상 명시해
+    # 저장하므로 새로 만든 설정은 영향이 없고, 손편집으로 세대를 잘못 고른
+    # 경우는 client.humanize_error 가 "전송 방식이 다릅니다"로 안내한다.
     if "url" in data:
         transport = data.get("transport", "sse")
     else:
