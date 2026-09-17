@@ -93,6 +93,10 @@ class McpClientManager:
         """Connect via stdio transport."""
         import os
 
+        # SDK import 는 **의도적으로 함수 안**이다 (v8.62.0 부터 필수 의존성이
+        # 됐어도 유지): ``import mcp`` 가 실측 ~235ms 라 최상위로 올리면 MCP 를
+        # 쓰지 않는 모든 CLI 실행에 그 비용이 붙는다. 계약은
+        # ``test_mcp.py::TestMcpSdkIsADeclaredDependency`` 가 고정한다.
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 

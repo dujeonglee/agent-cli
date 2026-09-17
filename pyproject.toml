@@ -38,6 +38,16 @@ dependencies = [
     # their stdlib ``sqlite3`` (conda / system Python ship it), which the
     # shim already prefers.
     "pysqlite3-binary>=0.5; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # MCP (Model Context Protocol) 클라이언트 SDK — 외부 도구 서버 연결.
+    # v8.62.0 부터 **필수** 의존성: MCP 를 안 쓰는 배포를 이제 상정하지
+    # 않는다. 종전엔 미선언이라 SDK 가 없으면 연결이 stderr 경고 한 줄로
+    # 조용히 실패하고 도구만 사라졌다(에이전트는 그대로 돌아 원인이 안 보임).
+    # 하한 1.6: ``stdio_client(server, errlog=...)`` 의 errlog 파라미터가
+    # 1.6.0 에 들어왔다 — 1.4.0 에는 없어 client.py 가 TypeError 로 깨진다
+    # (실측: 1.0.0·1.4.0 없음 / 1.6.0·1.8.1·1.9.4·2.2.0 있음).
+    # 상한 <3: 2.2.0 까지 동일 API 로 검증했고, API 표면이 4개 심볼로 좁아
+    # 2.x 는 열어 두되 미지의 major 는 막는다.
+    "mcp>=1.6,<3",
 ]
 
 [project.optional-dependencies]

@@ -210,7 +210,7 @@ agent_cli/
 │       ├── log-analyst.md          읽기 전용 로그·크래시 근본원인
 │       └── orchestrator.md         spawn 전용 peer 조율자 (/orchestrate 인계)
 │
-├── mcp/                            MCP (Model Context Protocol) 통합
+├── mcp/                            MCP (Model Context Protocol) 통합. **v8.62.0**: `mcp` SDK 가 **필수** 의존성(`mcp>=1.6,<3`) — 종전엔 pyproject 에 미선언이라 SDK 없는 환경에서 `connect_all` 이 예외를 삼켜 stderr 경고 한 줄만 남기고 **도구가 조용히 사라졌다**(에이전트는 그대로 돌아 원인이 안 보임). 하한 1.6 = `stdio_client(server, errlog=)` 의 errlog 가 들어온 버전(실측: 1.0.0·1.4.0 없음 → `_connect_stdio` TypeError / 1.6.0·1.8.1·1.9.4·2.2.0 있음); 상한 `<3` = 2.2.0 까지 동일 API 검증, 표면이 4심볼로 좁아 2.x 는 열고 미지의 major 만 막음. SDK import 는 필수가 된 뒤에도 **함수 안에 유지** — `import mcp` 가 실측 ~235ms 라 최상위로 올리면 MCP 미사용 CLI 실행 전부에 그 비용이 붙는다(계약: `test_mcp.py::TestMcpSdkIsADeclaredDependency`)
 │   ├── __init__.py          (1)
 │   ├── config.py            (108)  mcp.json 로드/병합 (프로젝트 > 유저)
 │   ├── client.py            (258)  McpClientManager (stdio/SSE 연결, 도구 호출, stderr 격리)

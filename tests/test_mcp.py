@@ -422,3 +422,52 @@ class TestMcpAdapter:
         manager.list_tools.return_value = []
 
         assert build_mcp_tool_descriptions(manager) == ""
+
+
+class TestMcpSdkIsADeclaredDependency:
+    """v8.62.0: ``mcp`` SDK 가 **필수** 의존성이다.
+
+    종전엔 pyproject 에 선언이 없고 client.py 가 함수 안에서 import 했다.
+    SDK 가 없는 환경에선 ``connect_all`` 이 예외를 삼켜 stderr 경고 한 줄만
+    남기고 **MCP 도구가 조용히 사라졌다** — 에이전트는 그대로 돌아서 왜
+    도구가 없는지 드러나지 않는다. 그 조용한 실패가 이 테스트의 대상이다."""
+
+    def test_sdk_importable(self):
+        """설치 환경에 SDK 가 있다. pyproject 에서 의존성을 빼면 CI 가
+        SDK 없이 설치하므로 여기서 잡힌다."""
+        import mcp  # noqa: F401
+        from mcp import ClientSession, StdioServerParameters  # noqa: F401
+        from mcp.client.sse import sse_client  # noqa: F401
+        from mcp.client.stdio import stdio_client  # noqa: F401
+
+    def test_declared_in_pyproject(self):
+        """선언 자체를 고정 — 설치 환경에 우연히 있는 것과 구분한다."""
+        import re
+        from pathlib import Path
+
+        deps = Path("pyproject.toml").read_text(encoding="utf-8")
+        block = deps.split("[project.optional-dependencies]")[0]
+        assert re.search(r'^\s*"mcp[><=]', block, re.MULTILINE), (
+            "mcp 는 core dependencies 에 있어야 한다 (optional extra 아님)"
+        )
+
+    def test_stdio_client_accepts_errlog(self):
+        """하한 1.6 의 근거. ``errlog`` 는 1.6.0 에 들어왔고 1.4.0 엔 없다 —
+        없는 SDK 로는 ``_connect_stdio`` 가 TypeError 로 깨진다. SDK 를
+        올리다 이 인자가 사라지면 여기서 먼저 잡힌다."""
+        import inspect
+
+        from mcp.client.stdio import stdio_client
+
+        assert "errlog" in inspect.signature(stdio_client).parameters
+
+    def test_client_keeps_sdk_import_lazy(self):
+        """필수 의존성이 됐어도 import 는 **함수 안에 남긴다** — ``import mcp``
+        가 실측 ~235ms 라, 최상위로 올리면 MCP 를 안 쓰는 모든 CLI 실행에
+        그 비용이 붙는다. 무심코 '정리'되는 걸 막는 가드."""
+        from pathlib import Path
+
+        src = Path("agent_cli/mcp/client.py").read_text(encoding="utf-8")
+        head = src.split("class ", 1)[0]
+        assert "from mcp import" not in head, "SDK import 는 함수 안에 두어야 한다"
+        assert "from mcp import" in src  # 함수 안에는 있다

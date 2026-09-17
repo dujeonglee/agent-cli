@@ -1308,7 +1308,7 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 ### MCP (Model Context Protocol) 지원
 
-외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다.
+외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다. MCP 클라이언트 SDK(`mcp`)는 **기본 설치에 포함**됩니다 (v8.62.0 — 그 전에는 별도 설치가 필요했고, 없으면 서버 연결이 stderr 경고 한 줄로 조용히 실패해 도구만 사라졌습니다).
 
 #### 설정
 
@@ -1332,8 +1332,10 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 - **stdio**: `command` + `args` — 로컬 프로세스로 실행
 - **SSE**: `url` + `transport: "sse"` — HTTP 원격 연결
-- `${VAR}` — 환경 변수 참조
-- 프로젝트 설정이 유저 설정보다 우선
+- **전송 방식은 `url` 키의 유무로 결정**됩니다. `url` 이 있으면 `transport` 를 생략해도 `sse`, 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다.
+- `${VAR}` — 환경 변수 참조. **`env` 블록 안에서만** 치환되며(`command`·`url` 에는 적용되지 않음), **정의되지 않은 변수는 빈 문자열**이 됩니다(에러 아님 — 토큰 오타는 인증 실패로만 드러납니다).
+- 프로젝트 설정이 유저 설정보다 우선 (같은 서버 이름 기준)
+- 한 서버 연결이 실패해도 나머지는 연결되고 에이전트는 계속 돕니다. 실패는 stderr 경고 한 줄뿐이니, 도구가 안 보이면 stderr 를 먼저 확인하세요.
 
 #### 사용
 
