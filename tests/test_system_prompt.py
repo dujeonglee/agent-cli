@@ -951,38 +951,10 @@ class TestLoadDirectives:
         assert "[truncated]" not in result
         assert "x" * 100 in result
 
-    def test_dedup_identical_content(self, tmp_path, monkeypatch):
-        d1 = tmp_path / "proj" / ".agent-cli"
-        d2 = tmp_path / "home" / ".agent-cli"
-        d1.mkdir(parents=True)
-        d2.mkdir(parents=True)
-        (d1 / "DIRECTIVE.md").write_text("Same rule.")
-        (d2 / "DIRECTIVE.md").write_text("Same rule.")
-        monkeypatch.setattr(
-            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d1, d2],
-        )
-        result = _load_directives()
-        assert result.count("Same rule.") == 1
-
-    def test_loads_both_when_different(self, tmp_path, monkeypatch):
-        d1 = tmp_path / "proj" / ".agent-cli"
-        d2 = tmp_path / "home" / ".agent-cli"
-        d1.mkdir(parents=True)
-        d2.mkdir(parents=True)
-        (d1 / "DIRECTIVE.md").write_text("Project rule.")
-        (d2 / "DIRECTIVE.md").write_text("User rule.")
-        monkeypatch.setattr(
-            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d1, d2],
-        )
-        result = _load_directives()
-        assert "Project rule." in result
-        assert "User rule." in result
-
-    def test_scope_labels_are_positional(self, tmp_path, monkeypatch):
-        """Scope comes from list position ([project, user]), not from a
-        source-path substring match."""
+    def test_only_project_directive_is_read(self, tmp_path, monkeypatch):
+        """v9.0.0 (docs/config-scopes): DIRECTIVE.md 는 프로젝트 **한 곳**.
+        리스트에 두 번째 경로가 들어 있어도 읽지 않는다 — 종전 병합(둘 다
+        연결·중복 제거·위치 라벨)이 슬쩍 되살아나는 걸 막는 가드."""
         d1 = tmp_path / "proj" / ".agent-cli"
         d2 = tmp_path / "home" / ".agent-cli"
         d1.mkdir(parents=True)
@@ -995,23 +967,7 @@ class TestLoadDirectives:
         )
         result = _load_directives()
         assert "(scope: project)\nProject rule." in result
-        assert "(scope: user)\nUser rule." in result
-
-    def test_cwd_is_home_collapses_to_one(self, tmp_path, monkeypatch):
-        """N1: when cwd == home the project and user paths resolve to the
-        same file — it must be read once and labeled 'project', not read
-        twice or mislabeled 'user'."""
-        d = tmp_path / ".agent-cli"
-        d.mkdir()
-        (d / "DIRECTIVE.md").write_text("Shared rule.")
-        # Both entries point at the same dir (the cwd == home case).
-        monkeypatch.setattr(
-            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d, d],
-        )
-        result = _load_directives()
-        assert result.count("Shared rule.") == 1
-        assert "(scope: project)" in result
+        assert "User rule." not in result
         assert "(scope: user)" not in result
 
 

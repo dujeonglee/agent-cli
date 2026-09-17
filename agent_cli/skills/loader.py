@@ -22,10 +22,12 @@ from agent_cli.skills.models import Skill
 # Search order: project root first (priority), then user home, then built-in
 _BUILTIN_DIR = Path(__file__).parent / "builtin"
 
-from agent_cli.paths import scoped_paths
+from agent_cli.paths import project_dir
 
+# v9.0.0: 프로젝트 > 내장 (docs/config-scopes). 종전의 ~/.agent-cli/skills 는
+# 무시된다 — 스킬은 프로젝트 자산(.gitignore 가 skills/ 만 커밋하는 관행).
 _SEARCH_PATHS = [
-    *scoped_paths("skills"),
+    project_dir() / "skills",
     _BUILTIN_DIR,
 ]
 

@@ -41,15 +41,17 @@ def _rai_prefixed(wire_format, tool_name: str, action_input: dict) -> str:
 
 
 # ── DIRECTIVE.md search paths ────────────────────
-from agent_cli.paths import scoped_paths
+from agent_cli.paths import project_dir
 
-_DIRECTIVE_PATHS = scoped_paths()
+# v9.0.0: DIRECTIVE.md 는 프로젝트만 (docs/config-scopes). 종전엔 유저 파일도
+# 연결했다 — 웹 에디터가 그걸 "blast radius is every project" 로 편집에서
+# 뺐던 판단을 제거로 밀고 간 것. 취향 지시("항상 한국어로")도 프로젝트에.
+_DIRECTIVE_PATHS = [project_dir()]
 
 
 def project_directive_file() -> Path:
-    """The PROJECT-scope ``DIRECTIVE.md`` (``cwd/.agent-cli``) — the one the web
-    Prompt Inspector editor reads/writes. The user-global file (``~/.agent-cli``)
-    is intentionally left out of editing (its blast radius is every project)."""
+    """``cwd/.agent-cli/DIRECTIVE.md`` — v9.0.0 부터 유일한 DIRECTIVE. 웹 Prompt
+    Inspector 에디터가 읽고 쓴다."""
     return _DIRECTIVE_PATHS[0] / "DIRECTIVE.md"
 
 
@@ -730,55 +732,26 @@ def join_directive_scopes(scopes: dict[str, str]) -> str:
 
 
 def _load_directives(audience: str = "main") -> str:
-    """Load DIRECTIVE.md files from project and user paths.
+    """Load the project ``DIRECTIVE.md`` (v9.0.0: 프로젝트 단일 —
+    docs/config-scopes; 종전엔 유저 파일도 연결했다).
 
     ``audience`` ("main" | "agents") selects which scope blocks join the
     common body — U-C 스코프 분할 (마커 없는 파일은 종전과 동일 전문).
-
     Uses ResourceLoader._parse_file for consistent parsing.
-    Both project and user directives are included (not deduplicated by name)
-    unless they have identical content.
-
-    Scope label is positional — ``_DIRECTIVE_PATHS`` is ordered
-    ``[project, user]`` — rather than inferred from the source path. When
-    the cwd IS the home directory the two entries resolve to the same file;
-    the path-dedup below keeps only the first (project) so the directive is
-    neither read twice nor mislabeled.
     """
     from agent_cli.resource_loader import ResourceLoader
 
-    loaded: list[str] = []
-    seen_hashes: set[int] = set()
-    seen_paths: set[Path] = set()
-
-    for idx, search_dir in enumerate(_DIRECTIVE_PATHS):
-        directive_file = (search_dir / "DIRECTIVE.md").resolve()
-        # cwd == home → project and user paths coincide; skip the dupe.
-        if directive_file in seen_paths:
-            continue
-        seen_paths.add(directive_file)
-        if not directive_file.is_file():
-            continue
-
-        resource = ResourceLoader._parse_file(directive_file)
-        if resource is None:
-            continue
-
-        content_hash = hash(resource.body)
-        if content_hash in seen_hashes:
-            continue
-        seen_hashes.add(content_hash)
-
-        scopes = split_directive_scopes(resource.body)
-        body = "\n\n".join(p for p in (scopes["common"], scopes[audience]) if p)
-        if not body:
-            continue  # 이 청중에 해당하는 내용이 없는 파일 (예: @main 전용)
-        scope = "project" if idx == 0 else "user"
-        loaded.append(f"### DIRECTIVE.md (scope: {scope})\n{body}")
-
-    if not loaded:
+    directive_file = project_directive_file()
+    if not directive_file.is_file():
         return ""
-    return "## Directives\n\n" + "\n\n".join(loaded)
+    resource = ResourceLoader._parse_file(directive_file)
+    if resource is None:
+        return ""
+    scopes = split_directive_scopes(resource.body)
+    body = "\n\n".join(p for p in (scopes["common"], scopes[audience]) if p)
+    if not body:
+        return ""  # 이 청중에 해당하는 내용이 없는 파일 (예: @main 전용)
+    return "## Directives\n\n### DIRECTIVE.md (scope: project)\n" + body
 
 
 # 상주 에이전트 고정 각인 (v7.18.1) — 회신 규율. 여러 요청자(main·창의

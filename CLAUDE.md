@@ -31,10 +31,7 @@
 - `agent_cli/resource_loader.py` — 공유 파일 로더 (스킬/에이전트/지시사항)
 - `tests/` — 유닛 + 통합 테스트
 - `docs/` — 아키텍처 문서 + 설계 문서 (`delegate-redesign/` 등)
-- `~/.agent-cli/models.json` — 사용자 전역 모델 설정 (자동 저장 대상)
-- `~/.agent-cli/DIRECTIVE.md` — 사용자 전역 에이전트 지시사항
-- `~/.agent-cli/agents/` — 사용자 전역 에이전트 정의
-- `.agent-cli/` — 프로젝트 로컬 설정 + 스킬 (.gitignore 대상)
-- `.agent-cli/DIRECTIVE.md` — 프로젝트별 에이전트 지시사항
-- `.agent-cli/agents/` — 프로젝트별 에이전트 정의 (delegate agent 파라미터용)
+- `~/.agent-cli/` — 유저(머신) 설정: `config.json` · `models.json`(자동 저장 대상). **이것뿐** (v9.0.0, docs/config-scopes)
+- `.agent-cli/` — 프로젝트 설정 (.gitignore 대상, skills/ 만 커밋): `mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md`
+- `.agent-cli/sessions/` — 세션 + `chat_history` (`AGENT_CLI_SESSIONS_DIR` 로 이전 가능)
 - `agent_cli/default_models.json` — 패키지 기본 모델 정의

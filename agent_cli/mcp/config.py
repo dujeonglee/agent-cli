@@ -1,10 +1,9 @@
 """MCP server configuration loader.
 
-Searches for mcp.json in:
-  1. .agent-cli/mcp.json          (project local — highest priority)
-  2. ~/.agent-cli/mcp.json        (user global)
-
-Same server name in project overrides user config.
+v9.0.0: ``.agent-cli/mcp.json`` (프로젝트) **한 곳** — docs/config-scopes.
+종전엔 ``~/.agent-cli/mcp.json`` 과 이름별로 병합했다(프로젝트 승). MCP 서버는
+로컬 프로세스를 띄우는 프로젝트 성격의 설정이라 프로젝트에만 둔다. 종전의
+유저 파일은 무시된다.
 """
 
 from __future__ import annotations
@@ -16,11 +15,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 소비(load_mcp_config)가 정순 순회 later-wins 라 역순으로 뒤집는다 —
-# 선언 자체는 scoped_paths 캐노니컬([프로젝트, 사용자])에서 파생 (v8.40.0).
-from agent_cli.paths import scoped_paths
+from agent_cli.paths import project_dir
 
-_MCP_CONFIG_PATHS = list(reversed(scoped_paths("mcp.json")))
+# 리스트로 두는 건 load_mcp_config 의 순회 구조·테스트 seam 을 유지하기 위함.
+_MCP_CONFIG_PATHS = [project_dir() / "mcp.json"]
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 
@@ -81,10 +79,9 @@ def _parse_server_config(name: str, data: dict) -> McpServerConfig:
 def load_mcp_config(
     search_paths: list[Path] | None = None,
 ) -> dict[str, McpServerConfig]:
-    """Load and merge MCP server configs.
+    """Load MCP server configs (v9.0.0: 프로젝트 단일 — 병합 없음).
 
     Returns dict of {server_name: McpServerConfig}.
-    Project config overrides user config for same server name.
     """
     paths = search_paths if search_paths is not None else _MCP_CONFIG_PATHS
     merged: dict[str, McpServerConfig] = {}

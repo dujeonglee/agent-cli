@@ -99,16 +99,12 @@ class SetupWizard:
         self.console.print()
 
     def _show_existing_configs(self) -> None:
-        """Display any existing global or project configs so the user
-        can reference them before picking new values. Silent when no
-        config exists (first-time setup)."""
-        from agent_cli.paths import scoped_paths
+        """Display the existing user config so the user can reference it
+        before picking new values. Silent when none exists (first-time setup).
+        v9.0.0: config.json 은 유저 스코프만 — 프로젝트 후보는 없다."""
+        from agent_cli.paths import user_dir
 
-        project_cfg, user_cfg = scoped_paths("config.json")
-        candidates = [
-            ("Project", project_cfg),
-            ("User (global)", user_cfg),
-        ]
+        candidates = [("User", user_dir() / "config.json")]
         entries: list[tuple[str, Path, dict]] = []
         for label, path in candidates:
             if not path.exists():
@@ -240,20 +236,11 @@ class SetupWizard:
         return Confirm.ask("   Save?", default=True)
 
     def _save(self, config: dict) -> None:
-        self.console.print()
-        self.console.print("[bold]Save configuration to:[/]")
-        self.console.print("   [1] This workspace only (.agent-cli/config.json)")
-        self.console.print(
-            "   [2] All projects - user default (~/.agent-cli/config.json)"
-        )
+        # v9.0.0: 저장 위치 질문 제거 — config.json 은 유저 스코프 하나뿐
+        # (docs/config-scopes). 프로젝트별 모델 고정은 `--model`/env 로.
+        from agent_cli.paths import user_dir
 
-        choice = IntPrompt.ask("   Select", default=2, choices=["1", "2"])
-
-        from agent_cli.paths import scoped_paths
-
-        project_cfg, user_cfg = scoped_paths("config.json")
-        path = project_cfg if choice == 1 else user_cfg
-
+        path = user_dir() / "config.json"
         save_config(config, path)
         self.console.print(f"   [green]Saved to {path}[/]")
 

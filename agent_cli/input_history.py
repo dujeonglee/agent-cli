@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import atexit
 import os
-from pathlib import Path
 
 # Prefer gnureadline over stdlib readline (macOS ships libedit which has
 # known bugs with CJK character width, causing typed Korean/Chinese/Japanese
@@ -31,7 +30,14 @@ if not os.environ.get("AGENT_CLI_NO_READLINE"):
         except Exception:
             pass
 
-_HISTORY_FILE = Path.home() / ".agent-cli" / "chat_history"
+# v9.0.0: 프로젝트별 히스토리 (↑ 에 다른 프로젝트 명령이 안 나온다) — 단
+# 위치는 ``.agent-cli/`` 가 아니라 ``sessions_dir()``. 사용자가 타이핑한
+# 것이라 경로·토큰이 섞일 수 있어 작업 트리에 두지 않고,
+# AGENT_CLI_SESSIONS_DIR 로 컨테이너·CI 에서 트리 밖으로 뺄 수 있게 한다
+# (docs/config-scopes §4). 종전 ~/.agent-cli/chat_history 는 무시된다.
+from agent_cli.paths import sessions_dir
+
+_HISTORY_FILE = sessions_dir() / "chat_history"
 _MAX_HISTORY = 1000
 _initialized = False
 _decode_warning_shown = False

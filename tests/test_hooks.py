@@ -944,11 +944,14 @@ class TestDiskHooksThroughLoop:
 
 
 class TestLoadHooksMergesBothScopes:
-    """v8.40.0 병합 규칙 통일(사용자 결정 — '둘 다 발화'): 프로젝트+사용자
-    hooks.json 이 둘 다 있으면 이벤트별 matcher 연결 병합(프로젝트 먼저) —
-    종전 first-found-only(프로젝트 파일 존재만으로 사용자 전역 안전 훅이
-    통째로 꺼지던 함정)의 대체. Python 훅 디렉토리·스킬 frontmatter 훅의
-    누적 철학과 동형."""
+    """hooks.json 로더의 다중 파일 병합 **기계** — 이벤트별 matcher 연결,
+    앞 파일 먼저 (v8.40.0).
+
+    **v9.0.0 주의**: 제품은 이 로더에 경로를 **하나만** 넘긴다
+    (``_HOOKS_PATHS == [project/hooks.json]`` — docs/config-scopes,
+    test_paths.py 가 고정). 유저 전역 hooks.json 은 제거됐다. 여기 테스트는
+    ``_HOOKS_PATHS`` 를 두 개로 몽키패치해 병합 기계만 검사하는 것이고,
+    "프로젝트+유저 병합"이라는 제품 계약을 뜻하지 않는다."""
 
     def _write(self, path, payload):
         import json as _json
@@ -1017,22 +1020,11 @@ class TestLoadHooksMergesBothScopes:
         result = load_hooks(use_cache=False)
         assert list(result) == ["PostToolUse"]
 
-    def test_user_safety_hook_survives_project_file(self, tmp_path, monkeypatch):
-        """이 변경의 존재 이유: 사용자 전역 위험-명령 차단 훅이 프로젝트
-        hooks.json 존재만으로 꺼지지 않고 실제 발화한다 (run_hooks 까지)."""
-        project = tmp_path / "proj" / "hooks.json"
-        user = tmp_path / "user" / "hooks.json"
-        self._write(
-            project,
-            {"PostToolUse": [{"matcher": "", "hooks": [{"command": "exit 0"}]}]},
-        )
-        self._write(
-            user,
-            {"PreToolUse": [{"matcher": "shell", "hooks": [{"command": "exit 2"}]}]},
-        )
-        self._patch_paths(monkeypatch, project, user)
-        cfg = load_hooks(use_cache=False)
-        result = run_hooks(
-            "PreToolUse", "shell", {"command": "rm -rf /"}, hooks_config=cfg
-        )
-        assert result.allowed is False  # 사용자 전역 차단 훅 발화
+    def test_production_passes_a_single_project_path(self):
+        """v9.0.0: 전역 훅은 유일한 정책 수단이었으나 사용자 결정으로 제거.
+        제품 상수가 다시 두 개가 되면 여기서 잡힌다 (test_paths 와 이중 가드 —
+        이 파일을 읽는 사람이 위 병합 테스트를 제품 계약으로 오해하지 않게)."""
+        import agent_cli.hooks.shell as hooks_shell
+        from agent_cli.paths import project_dir
+
+        assert hooks_shell._HOOKS_PATHS == [project_dir() / "hooks.json"]

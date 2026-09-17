@@ -1,109 +1,124 @@
-"""`.agent-cli` 경로쌍 단일화 (agent_cli/paths.py, v8.40.0 — 리뷰 §4.5).
+"""`.agent-cli` 경로의 단일 소스 (agent_cli/paths.py) — **설정의 집은 하나**
+(v9.0.0, docs/config-scopes).
 
-등가성 계약: 7개 소비 모듈의 경로 상수가 종전 손-나열 값과 **순서 포함
-동일** (HEAD 표현식 재구성 대조 — 릴리스 시 하네스로도 검증). 유일한
-의도 변경은 hooks.json 병합 규칙(first-found → 둘 다 발화, 사용자 결정)
-이며 그 계약은 test_hooks.py::TestLoadHooksMergesBothScopes 가 고정.
+종전(v8.40.0)엔 ``scoped_paths()`` 가 [프로젝트, 사용자] 쌍을 돌려주고 7개
+모듈이 각자 병합했다. v9.0.0 부터 각 설정은 정확히 한 스코프에 살고 쌍을
+원하는 소비자가 없어 ``scoped_paths`` 는 은퇴했다. 여기서는 **각 소비
+모듈의 상수가 단일 스코프**임을 고정한다 — 두 번째 경로가 슬쩍 되살아나면
+"어느 파일이 이겼나"라는 종전의 혼란이 돌아온다.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.paths import scoped_paths, sessions_dir
+import pytest
+
+from agent_cli.paths import project_dir, sessions_dir, user_dir
 
 _A = ".agent-cli"
 
 
-class TestScopedPaths:
-    def test_pair_structure(self):
-        """[프로젝트, 사용자] 순 = 우선순위 순 (프로젝트 승) — 단일 계약."""
-        assert scoped_paths("x.json") == [
-            Path.cwd() / _A / "x.json",
-            Path.home() / _A / "x.json",
-        ]
+class TestScopeDirs:
+    def test_project_dir_is_cwd(self):
+        assert project_dir() == Path.cwd() / _A
 
-    def test_multi_part(self):
-        assert scoped_paths("a", "b.md") == [
-            Path.cwd() / _A / "a" / "b.md",
-            Path.home() / _A / "a" / "b.md",
-        ]
+    def test_user_dir_is_home(self):
+        assert user_dir() == Path.home() / _A
 
-    def test_no_args_gives_base_dirs(self):
-        """인자 없음 = 베이스 디렉토리 쌍 (DIRECTIVE.md 소비자용)."""
-        assert scoped_paths() == [Path.cwd() / _A, Path.home() / _A]
+    def test_scoped_paths_is_retired(self):
+        """쌍을 돌려주는 API 가 남아 있으면 누군가 다시 쓴다."""
+        from agent_cli import paths
+
+        assert not hasattr(paths, "scoped_paths")
 
 
-class TestSiteEquivalence:
-    """7개 소비 모듈의 상수 == 종전(v8.39.0 HEAD) 손-나열 값 (순서 포함).
+class TestSingleScopePins:
+    """소비 모듈 10곳 — 각각 **정확히 하나**의 스코프.
 
-    mcp 는 소비자가 정순 순회 later-wins 라 종전의 [사용자, 프로젝트]
-    역순이 그대로 보존돼야 한다 — reversed(scoped_paths(...)) 파생 핀.
+    유저: config.json · models.json (머신 사실)
+    프로젝트: mcp · skills · agents · hooks · hooks.json · DIRECTIVE
+    sessions_dir(): chat_history
     """
 
-    def test_config_models_search_paths(self):
+    # ── 유저 스코프 ──
+    def test_config_is_user_only(self):
+        from agent_cli import config
+
+        assert config._CONFIG_PATHS == [Path.home() / _A / "config.json"]
+
+    def test_models_is_user_only_plus_builtin(self):
         from agent_cli import config
 
         assert config._SEARCH_PATHS == [
-            Path.cwd() / _A / "models.json",
             Path.home() / _A / "models.json",
             Path(config.__file__).parent / "default_models.json",
         ]
+        # 자동 저장 대상 == 탐색 경로 (한 파일)
+        assert config._GLOBAL_MODELS_PATH == config._SEARCH_PATHS[0]
 
-    def test_config_paths(self):
-        from agent_cli import config
-
-        assert config._CONFIG_PATHS == [
-            Path.cwd() / _A / "config.json",
-            Path.home() / _A / "config.json",
-        ]
-
-    def test_mcp_paths_keep_reversed_consumption_order(self):
+    # ── 프로젝트 스코프 ──
+    def test_mcp_is_project_only(self):
         import agent_cli.mcp.config as mcp_config
 
-        assert mcp_config._MCP_CONFIG_PATHS == [
-            Path.home() / _A / "mcp.json",  # 정순 순회 + later-wins 소비
-            Path.cwd() / _A / "mcp.json",
-        ]
+        assert mcp_config._MCP_CONFIG_PATHS == [Path.cwd() / _A / "mcp.json"]
 
-    def test_hooks_json_paths(self):
+    def test_hooks_json_is_project_only(self):
         import agent_cli.hooks.shell as hooks_shell
 
-        assert hooks_shell._HOOKS_PATHS == [
-            Path.cwd() / _A / "hooks.json",
-            Path.home() / _A / "hooks.json",
-        ]
+        assert hooks_shell._HOOKS_PATHS == [Path.cwd() / _A / "hooks.json"]
 
-    def test_hook_dirs(self):
+    def test_hook_dirs_is_project_only(self):
         import agent_cli.hooks.loader as hooks_loader
 
-        assert hooks_loader._hook_dirs() == [
-            Path.cwd() / _A / "hooks",
-            Path.home() / _A / "hooks",
-        ]
+        assert hooks_loader._hook_dirs() == [Path.cwd() / _A / "hooks"]
 
-    def test_skills_search_paths(self):
+    def test_skills_is_project_plus_builtin(self):
         import agent_cli.skills.loader as skills_loader
 
         assert skills_loader._SEARCH_PATHS == [
             Path.cwd() / _A / "skills",
-            Path.home() / _A / "skills",
             Path(skills_loader.__file__).parent / "builtin",
         ]
 
-    def test_profile_search_paths(self):
+    def test_agents_is_project_plus_builtin(self):
         from agent_cli.subagent import profiles
 
         assert profiles._PROFILE_SEARCH_PATHS == [
             Path.cwd() / _A / "agents",
-            Path.home() / _A / "agents",
             Path(profiles.__file__).parent.parent / "agents" / "builtin",
         ]
 
-    def test_directive_paths(self):
+    def test_directive_is_project_only(self):
         import agent_cli.prompts.system_prompt as sysprompt
 
-        assert sysprompt._DIRECTIVE_PATHS == [Path.cwd() / _A, Path.home() / _A]
+        assert sysprompt._DIRECTIVE_PATHS == [Path.cwd() / _A]
+        assert sysprompt.project_directive_file() == Path.cwd() / _A / "DIRECTIVE.md"
+
+    # ── sessions_dir 스코프 ──
+    def test_chat_history_lives_in_sessions_dir(self):
+        """작업 트리(.agent-cli/)가 아니라 sessions_dir() — 타이핑한 내용이
+        트리에 남지 않고, AGENT_CLI_SESSIONS_DIR 로 컨테이너에서 뺄 수 있다."""
+        import agent_cli.input_history as ih
+
+        assert ih._HISTORY_FILE == Path(_A) / "sessions" / "chat_history"
+
+    @pytest.mark.parametrize("name", ["home", "Path.home"])
+    def test_no_consumer_reaches_for_home_except_user_scope(self, name):
+        """유저 스코프 모듈(config) 외엔 홈 디렉토리를 직접 조립하지 않는다 —
+        전역 경로가 은근슬쩍 돌아오는 걸 막는 소스 가드."""
+        import re
+
+        allowed = {"agent_cli/paths.py", "agent_cli/config.py"}
+        offenders = []
+        for f in Path("agent_cli").rglob("*.py"):
+            rel = str(f)
+            if rel in allowed:
+                continue
+            src = f.read_text(encoding="utf-8")
+            if re.search(r"Path\.home\(\)\s*/\s*[\"']\.agent-cli", src):
+                offenders.append(rel)
+        assert offenders == [], offenders
 
 
 class TestSessionsDir:
@@ -150,3 +165,102 @@ class TestSessionsDir:
             session_mod.get_session_dir(meta)
             == tmp_path / "elsewhere" / meta.session_id
         )
+
+
+class TestUserScopeFilesAreIgnoredAtRuntime:
+    """상수 핀(TestSingleScopePins)만으론 부족하다 — 상수가 맞아도 로더가
+    홈을 따로 뒤지면 전역이 되살아난다. 여기서는 **실제로 홈에 파일을 두고
+    무시되는지**를 각 로더로 확인한다. 실장 검증(서브프로세스)은
+    tests/test_config_scopes_e2e.py."""
+
+    def _home_and_project(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        proj = tmp_path / "proj"
+        (home / ".agent-cli").mkdir(parents=True)
+        (proj / ".agent-cli").mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: home)
+        monkeypatch.chdir(proj)
+        return home, proj
+
+    def test_user_mcp_json_ignored(self, tmp_path, monkeypatch):
+        import json
+
+        from agent_cli.mcp.config import load_mcp_config
+
+        home, proj = self._home_and_project(tmp_path, monkeypatch)
+        (home / ".agent-cli" / "mcp.json").write_text(
+            json.dumps({"mcpServers": {"ghost": {"command": "x"}}})
+        )
+        (proj / ".agent-cli" / "mcp.json").write_text(
+            json.dumps({"mcpServers": {"real": {"command": "y"}}})
+        )
+        # 상수는 import 시점 cwd 고정이라 명시 경로로 프로젝트만 넘긴다 —
+        # 제품 배선이 그렇게 한다(test_mcp_is_project_only).
+        got = load_mcp_config(search_paths=[proj / ".agent-cli" / "mcp.json"])
+        assert set(got) == {"real"}
+
+    def test_user_directive_ignored(self, tmp_path, monkeypatch):
+        from agent_cli.prompts import system_prompt as sp
+
+        home, proj = self._home_and_project(tmp_path, monkeypatch)
+        (home / ".agent-cli" / "DIRECTIVE.md").write_text("GHOST RULE")
+        (proj / ".agent-cli" / "DIRECTIVE.md").write_text("REAL RULE")
+        monkeypatch.setattr(sp, "_DIRECTIVE_PATHS", [proj / ".agent-cli"])
+        out = sp._load_directives()
+        assert "REAL RULE" in out and "GHOST RULE" not in out
+
+    def test_user_hooks_json_ignored(self, tmp_path, monkeypatch):
+        import json
+
+        import agent_cli.hooks.shell as hs
+
+        home, proj = self._home_and_project(tmp_path, monkeypatch)
+        (home / ".agent-cli" / "hooks.json").write_text(
+            json.dumps(
+                {"PreToolUse": [{"matcher": "", "hooks": [{"command": "exit 2"}]}]}
+            )
+        )
+        monkeypatch.setattr(hs, "_HOOKS_PATHS", [proj / ".agent-cli" / "hooks.json"])
+        cfg = hs.load_hooks(use_cache=False)
+        assert cfg == {}  # 홈의 차단 훅은 로드되지 않았다
+
+    def test_project_config_json_ignored(self, tmp_path, monkeypatch):
+        import json
+
+        from agent_cli import config as cfgmod
+
+        home, proj = self._home_and_project(tmp_path, monkeypatch)
+        (proj / ".agent-cli" / "config.json").write_text(
+            json.dumps({"default_model": "PROJECT-MODEL"})
+        )
+        (home / ".agent-cli" / "config.json").write_text(
+            json.dumps({"default_model": "USER-MODEL"})
+        )
+        monkeypatch.setattr(
+            cfgmod, "_CONFIG_PATHS", [home / ".agent-cli" / "config.json"]
+        )
+        for k in ("AGENT_CLI_MODEL", "AGENT_CLI_PROVIDER"):
+            monkeypatch.delenv(k, raising=False)
+        assert cfgmod.load_config(use_cache=False)["default_model"] == "USER-MODEL"
+
+
+class TestChatHistoryFollowsSessionsDir:
+    """chat_history 는 sessions_dir() 를 따른다 — 작업 트리가 아니라
+    AGENT_CLI_SESSIONS_DIR 로 옮길 수 있는 곳 (docs/config-scopes §4)."""
+
+    def test_default_under_dot_agent_cli_sessions(self, monkeypatch):
+        monkeypatch.delenv("AGENT_CLI_SESSIONS_DIR", raising=False)
+        assert sessions_dir() / "chat_history" == Path(_A) / "sessions" / "chat_history"
+
+    def test_env_moves_history_out_of_tree(self, monkeypatch, tmp_path):
+        """컨테이너·CI 에서 트리를 안 더럽히는 게 이 위치 선택의 이유."""
+        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", str(tmp_path / "out"))
+        assert sessions_dir() / "chat_history" == tmp_path / "out" / "chat_history"
+        assert not str(sessions_dir()).startswith(_A)
+
+    def test_history_module_pins_sessions_dir(self):
+        """input_history 가 자기 경로를 따로 조립하면 이 계약이 깨진다."""
+        import agent_cli.input_history as ih
+
+        assert ih._HISTORY_FILE.parent == sessions_dir()
+        assert ih._HISTORY_FILE.name == "chat_history"

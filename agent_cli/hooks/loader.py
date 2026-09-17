@@ -12,9 +12,11 @@ from agent_cli.hooks.events import ALL_EVENTS, EVENT_TO_FUNC
 
 def _hook_dirs() -> list[Path]:
     """Return hook directories in execution order: project → user."""
-    from agent_cli.paths import scoped_paths
+    from agent_cli.paths import project_dir
 
-    return scoped_paths("hooks")
+    # v9.0.0: 프로젝트만 (docs/config-scopes). 종전엔 ~/.agent-cli/hooks 도
+    # 같이 실행했다(누적) — 전역 정책 수단이었으나 사용자 결정으로 제거.
+    return [project_dir() / "hooks"]
 
 
 def _scan_hook_files(dirs: list[Path] | None = None) -> list[Path]:

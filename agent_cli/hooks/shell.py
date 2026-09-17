@@ -45,9 +45,10 @@ class HookResult:
 
 
 # Search paths for hooks config (경로쌍 단일 소스 — v8.40.0, 리뷰 §4.5)
-from agent_cli.paths import scoped_paths
+from agent_cli.paths import project_dir
 
-_HOOKS_PATHS = scoped_paths("hooks.json")
+# v9.0.0: 프로젝트만 (docs/config-scopes). 종전 ~/.agent-cli/hooks.json 무시.
+_HOOKS_PATHS = [project_dir() / "hooks.json"]
 
 _cached_hooks: dict[str, list[HookMatcher]] | None = None
 

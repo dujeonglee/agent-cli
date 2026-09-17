@@ -188,8 +188,10 @@ class TestShowExistingConfigs:
         # No panel printed when nothing exists.
         wizard.console.print.assert_not_called()
 
-    def test_shows_project_config(self, tmp_path, monkeypatch):
-        """Existing .agent-cli/config.json in cwd is surfaced."""
+    def test_project_config_is_ignored(self, tmp_path, monkeypatch):
+        """v9.0.0 (docs/config-scopes): config.json 은 유저 스코프만. cwd 의
+        .agent-cli/config.json 은 존재해도 표시하지 않는다 — 보여주면 사용자가
+        그게 읽힌다고 믿는다(실제로는 무시됨)."""
         monkeypatch.setattr("agent_cli.setup.Path.home", lambda: tmp_path / "home")
         project = tmp_path / "project"
         project.mkdir()
@@ -208,8 +210,7 @@ class TestShowExistingConfigs:
         wizard.console = MagicMock()
         wizard._show_existing_configs()
 
-        # Panel rendered — check console.print was called.
-        assert wizard.console.print.called
+        assert not wizard.console.print.called
 
     def test_shows_user_config(self, tmp_path, monkeypatch):
         """Existing ~/.agent-cli/config.json is surfaced."""
@@ -276,3 +277,31 @@ class TestShowExistingConfigs:
         wizard._show_existing_configs()
         # No valid entry → no panel.
         wizard.console.print.assert_not_called()
+
+
+class TestSaveIsUserScopeOnly:
+    """v9.0.0 (docs/config-scopes): 저장 위치 질문이 사라지고 유저 스코프에
+    고정된다. 프로젝트 저장 옵션이 슬쩍 돌아오면 여기서 잡힌다."""
+
+    def test_save_writes_user_config_without_prompting(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setattr("agent_cli.setup.Path.home", lambda: home)
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.chdir(project)
+        # 어떤 프롬프트도 뜨면 안 된다 — 뜨면 여기서 즉시 실패
+        monkeypatch.setattr(
+            "agent_cli.setup.IntPrompt.ask",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted")),
+        )
+        wizard = SetupWizard()
+        wizard.console = MagicMock()
+        cfg = {
+            "provider": "openai",
+            "base_url": "http://127.0.0.1:8000/v1",
+            "api_key": "",
+            "default_model": "m",
+        }
+        wizard._save(cfg)
+        assert (home / ".agent-cli" / "config.json").is_file()
+        assert not (project / ".agent-cli" / "config.json").exists()

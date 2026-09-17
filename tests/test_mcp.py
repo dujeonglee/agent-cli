@@ -163,7 +163,10 @@ class TestLoadMcpConfig:
         assert result["remote"].is_sse
         assert result["remote"].url == "http://localhost:8080"
 
-    def test_project_overrides_user(self, tmp_path):
+    def test_later_file_wins_when_given_several(self, tmp_path):
+        """로더의 later-wins 병합 **기계**. v9.0.0 부터 제품은 경로를 하나만
+        넘긴다(프로젝트 mcp.json — docs/config-scopes); 유저 전역 mcp.json 은
+        제거됐다. 이 테스트는 search_paths 인자로 병합 기계만 검사한다."""
         user_file = tmp_path / "user_mcp.json"
         user_file.write_text(
             json.dumps(

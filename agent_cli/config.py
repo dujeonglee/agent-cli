@@ -29,17 +29,16 @@ class ProviderDefaults:
     default_model: str
 
 
-# Search order: project local > user global > package defaults
-# (경로쌍은 scoped_paths 단일 소스 — v8.40.0, 리뷰 §4.5)
-from agent_cli.paths import scoped_paths
+# v9.0.0 — models.json 은 **유저 스코프만** (docs/config-scopes). capability
+# 탐지(콜드 로드 유발)의 캐시라 머신 단위가 맞고, 자동 저장도 원래 여기였다.
+# 종전의 프로젝트 models.json 은 무시된다.
+from agent_cli.paths import user_dir
 
+_GLOBAL_MODELS_PATH = user_dir() / "models.json"
 _SEARCH_PATHS = [
-    *scoped_paths("models.json"),
+    _GLOBAL_MODELS_PATH,
     Path(__file__).parent / "default_models.json",
 ]
-
-# Auto-save target: always user global
-_GLOBAL_MODELS_PATH = Path.home() / ".agent-cli" / "models.json"
 
 _cached_registry: dict[str, Any] | None = None
 
@@ -147,8 +146,10 @@ def reload_registry() -> None:
 
 # ── Config.json (provider/model/url settings) ──────────────────
 
-# Config search order: workspace (highest) > user > env (lowest)
-_CONFIG_PATHS = scoped_paths("config.json")
+# v9.0.0 — config.json 은 **유저 스코프만** (docs/config-scopes): provider·
+# API 키는 머신 사실이다. 우선순위는 유저 파일 > env. 프로젝트별 모델 고정은
+# `--model`/env 로 (종전의 프로젝트 config.json 은 무시된다).
+_CONFIG_PATHS = [user_dir() / "config.json"]
 
 # Environment variable → config key mapping
 _ENV_MAP = {
@@ -162,7 +163,7 @@ _cached_config: dict[str, str] | None = None
 
 
 def load_config(use_cache: bool = True) -> dict[str, str]:
-    """Load config by merging: env vars → user config → workspace config.
+    """Load config by merging: env vars → user config (v9.0.0: 유저 단일).
 
     Higher priority layers override lower ones per-field.
     Returns a dict with keys: provider, base_url, api_key, default_model.

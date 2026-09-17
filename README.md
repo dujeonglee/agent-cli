@@ -126,6 +126,20 @@ agent-cli setup
 - **자격증명 입력**: Cloud 는 `email` + `API token`(Atlassian 계정 설정에서 발급), Server/Data Center 는 `username` + `password`(또는 PAT). 입력값은 **그 브라우저의 localStorage 에만** 저장되어 다음 접속 때 자동 채워지고, 코멘트 POST 한 번에만 transient 하게 쓰입니다(서버 로그·세션에 남지 않음). ⚠️ 웹 UI 는 LAN 평문 HTTP 이므로 신뢰된 네트워크에서만 사용하세요.
 - Jira Cloud 무료 티어(≤10명)로도 동작합니다.
 
+### 설정의 집은 하나 (v9.0.0)
+
+각 설정은 **정확히 한 곳**에 삽니다. 종전의 "프로젝트와 유저 둘 다 읽고 프로젝트 우선" 병합은 사라졌습니다 — 어느 파일이 이겼는지 따질 일이 없습니다.
+
+| 스코프 | 위치 | 담는 것 |
+|--------|------|---------|
+| 유저 | `~/.agent-cli/` | `config.json` · `models.json` — 이 컴퓨터의 환경 (provider·API 키·모델 capability 캐시) |
+| 프로젝트 | `.agent-cli/` (cwd 기준) | `mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md` — 이 저장소가 필요로 하는 것 |
+| 세션 | `sessions_dir()` | `sessions/` · `chat_history` — `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 뺄 수 있는 것 |
+
+**프로젝트는 git 루트가 아니라 cwd 기준**입니다. 하위 디렉토리에서 실행하면 프로젝트 설정이 비어 있습니다. 프로젝트 밖(`~/Downloads` 등)에서 실행하면 스킬·MCP·DIRECTIVE 없이 뜹니다 — agent-cli 는 프로젝트 안에서 쓰는 도구입니다.
+
+> **v8.x 에서 올리는 경우**: 다음 파일은 이제 **읽지 않습니다** — `~/.agent-cli/mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md`(→ 프로젝트로), `.agent-cli/config.json` · `models.json`(→ 유저로), `~/.agent-cli/chat_history`(→ `sessions_dir()`). 경고는 없으니 손으로 옮기세요. 설계 근거와 알고 받아들인 손실은 `docs/config-scopes/DESIGN.md`.
+
 ### 설정 우선순위
 
 높은 게 낮은 걸 덮어씁니다 (필드 단위 병합):
@@ -133,9 +147,10 @@ agent-cli setup
 | 우선순위 | 위치 | 용도 |
 |---------|------|------|
 | 1 (최고) | CLI 파라미터 (`-p`, `-m`, `--base-url`, `--api-key`) | 임시 오버라이드 |
-| 2 | `.agent-cli/config.json` (프로젝트) | 워크스페이스별 설정 |
-| 3 | `~/.agent-cli/config.json` (사용자) | 전역 기본 설정 |
-| 4 (최저) | 환경변수 | 시스템 레벨 |
+| 2 | `~/.agent-cli/config.json` (유저) | 기본 설정 |
+| 3 (최저) | 환경변수 | 시스템 레벨 |
+
+프로젝트별로 다른 모델을 고정하려면 `-m` 이나 `AGENT_CLI_MODEL`(direnv 등)을 쓰세요 — v9.0.0 부터 프로젝트 `config.json` 은 읽지 않습니다.
 
 예: `~/.agent-cli/config.json`에 `gpt-4o`가 기본이지만 `-m gpt-4o-mini`로 임시 실행:
 ```bash
@@ -146,14 +161,9 @@ agent-cli run "task" -m gpt-4o-mini
 
 에이전트가 항상 따라야 하는 규칙을 `DIRECTIVE.md` 파일에 작성하면 매 세션의 시스템 프롬프트에 자동 주입됩니다.
 
-| 경로 | 용도 |
-|------|------|
-| `.agent-cli/DIRECTIVE.md` | 프로젝트별 규칙 (코딩 컨벤션, 테스트 정책 등) |
-| `~/.agent-cli/DIRECTIVE.md` | 사용자 전역 규칙 (응답 언어, 개인 선호 등) |
+경로는 `.agent-cli/DIRECTIVE.md` **하나**입니다 (v9.0.0 — 유저 전역 `~/.agent-cli/DIRECTIVE.md` 는 더 이상 읽지 않습니다). 응답 언어 같은 개인 취향도 프로젝트 파일에 적습니다.
 
-- 두 파일 모두 존재하면 **둘 다 로드** (프로젝트 먼저, 유저 전역 뒤에)
-- 동일 내용이면 중복 제거
-- 파일당 최대 4,000자, 전체 최대 8,000자 (초과 시 잘림)
+- 최대 4,000자 (초과 시 잘림)
 
 예시 (`.agent-cli/DIRECTIVE.md`):
 ```markdown
@@ -508,11 +518,10 @@ ${SESSION_ID} for the current session ID.
 | `user-invocable` | `false`이면 `/skills` 메뉴에서 숨김 (LLM만 호출 가능) | |
 | `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
-스킬 검색 경로:
-1. `.agent-cli/skills/*.md` (프로젝트 로컬 플랫, 우선)
-2. `.agent-cli/skills/<name>/SKILL.md` (프로젝트 로컬 디렉토리)
-3. `~/.agent-cli/skills/*.md` (사용자 전역 플랫)
-4. `~/.agent-cli/skills/<name>/SKILL.md` (사용자 전역 디렉토리)
+스킬 검색 경로 (v9.0.0 — 프로젝트만; `~/.agent-cli/skills/` 는 읽지 않음):
+1. `.agent-cli/skills/*.md` (플랫)
+2. `.agent-cli/skills/<name>/SKILL.md` (디렉토리)
+3. 패키지 내장
 
 같은 검색 경로 내에서 동일 이름의 플랫 파일과 디렉토리 스킬이 모두 존재하면 에러가 발생합니다.
 
@@ -522,7 +531,7 @@ ${SESSION_ID} for the current session ID.
 
 ### Python Hooks
 
-`.agent-cli/hooks/*.py` (프로젝트) 또는 `~/.agent-cli/hooks/*.py` (유저 전역):
+`.agent-cli/hooks/*.py` (v9.0.0 — 프로젝트만; `~/.agent-cli/hooks/` 는 읽지 않음):
 
 ```python
 # .agent-cli/hooks/00_memory.py
@@ -610,7 +619,7 @@ def pre_llm_call(ctx):
 
 ### Shell Hooks (기존 방식)
 
-`.agent-cli/hooks.json`(프로젝트) + `~/.agent-cli/hooks.json`(사용자 전역) — **둘 다 발화**합니다(v8.40.0): 이벤트별로 두 파일의 matcher 가 연결 병합되어 프로젝트 훅이 먼저, 사용자 전역 훅이 뒤에 실행됩니다(Python 훅 디렉토리의 '둘 다 실행'과 동형). 종전(v8.39.x 이하)에는 프로젝트 파일이 존재하면 사용자 전역 파일이 통째로 무시됐습니다.
+`.agent-cli/hooks.json` **하나**입니다 (v9.0.0 — `~/.agent-cli/hooks.json` 은 읽지 않음). 모든 프로젝트에 공통으로 거는 정책 훅이라는 개념은 없어졌습니다 — 필요하면 프로젝트마다 둡니다.
 
 ```json
 {
@@ -698,9 +707,8 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 
 | 우선순위 | 위치 | 역할 | 자동 저장 |
 |---------|------|------|----------|
-| 1 | `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 | 안 함 (읽기만) |
-| 2 | `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
-| 3 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
+| 1 | `~/.agent-cli/models.json` | 유저 설정 (v9.0.0 — 프로젝트 `models.json` 은 읽지 않음) | 새 모델 자동 저장 |
+| 2 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
 
 - 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
   - OpenAI 호환: context window를 `/v1/models`의 `max_model_len`에서 읽고, 값이 없으면 컨텍스트 오버플로 프로브로 추정. 추가로 thinking 지원 여부를 프로브.
@@ -718,7 +726,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 | `supports_thinking` | Thinking/reasoning 지원 (단독 게이트 — 사고 예산은 런타임 사고/노력 컨트롤이 결정, v8.21.0) |
 | `wire_format` | (선택) 이 모델의 wire format 바인딩 (`json_fc`, `xml_fc`). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Wire format [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
-**설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
+**설정 우선순위**: `~/.agent-cli/models.json` (유저) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
 ## 도구
 
@@ -1043,7 +1051,7 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 
 #### 공통 — 프로파일 (profile)
 
-run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — 서브에이전트 시스템 프롬프트의 Role 섹션을 통째로 교체). 검색 경로: 프로젝트(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`).
+run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — 서브에이전트 시스템 프롬프트의 Role 섹션을 통째로 교체). 검색 경로: 프로젝트(`.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`) (v9.0.0 — `~/.agent-cli/agents/` 는 읽지 않음).
 
 - **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
 - **내장 프로파일** — 범용 워커 5종(오케스트레이션은 main 이 담당). 모두 **격리된 private `memory`**(세션·compaction·resume 를 넘어 자기 지식 축적, 서로 못 봄)를 가집니다:
@@ -1280,7 +1288,8 @@ reason to finish early.
 
 ```
 {project}/.agent-cli/
-  sessions/
+  sessions/                             # AGENT_CLI_SESSIONS_DIR 로 통째 이전 가능
+    chat_history                        # CLI 입력 히스토리 (v9.0.0 — 종전 ~/.agent-cli/chat_history)
     {session_id}/
       session.jsonl                     # 메타데이터 (1줄: id, workspace, updated_at, query)
       history.jsonl                     # 전체 대화 기록 (JSON Lines, append-only)
@@ -1312,7 +1321,7 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 #### 설정
 
-`.agent-cli/mcp.json` 또는 `~/.agent-cli/mcp.json`에 서버를 정의합니다:
+`.agent-cli/mcp.json` 에 서버를 정의합니다 (v9.0.0 — 프로젝트만; `~/.agent-cli/mcp.json` 은 읽지 않음. MCP 서버는 로컬 프로세스를 띄우는 프로젝트 성격의 설정입니다):
 
 ```json
 {
@@ -1334,7 +1343,6 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 - **SSE**: `url` + `transport: "sse"` — HTTP 원격 연결
 - **전송 방식은 `url` 키의 유무로 결정**됩니다. `url` 이 있으면 `transport` 를 생략해도 `sse`, 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다.
 - `${VAR}` — 환경 변수 참조. **`env` 블록 안에서만** 치환되며(`command`·`url` 에는 적용되지 않음), **정의되지 않은 변수는 빈 문자열**이 됩니다(에러 아님 — 토큰 오타는 인증 실패로만 드러납니다).
-- 프로젝트 설정이 유저 설정보다 우선 (같은 서버 이름 기준)
 - 한 서버 연결이 실패해도 나머지는 연결되고 에이전트는 계속 돕니다. 실패는 stderr 경고 한 줄뿐이니, 도구가 안 보이면 stderr 를 먼저 확인하세요.
 
 #### 사용
