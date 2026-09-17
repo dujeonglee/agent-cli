@@ -34,6 +34,32 @@ class McpResourceInfo:
     description: str
 
 
+def _leaf_error(e: BaseException) -> str:
+    """예외를 사람이 읽을 원인 문장으로 (v9.1.0).
+
+    mcp SDK 는 전송 오류를 anyio TaskGroup 의 ``ExceptionGroup`` 으로 감싼다 —
+    그대로 ``str()`` 하면 "unhandled errors in a TaskGroup (1 sub-exception)"
+    이라 **진짜 원인(connection refused, ENOENT)이 묻힌다**. 실장 검증에서
+    잡힌 것. 그룹은 잎까지 풀고, 잎이 여럿이면 세미콜론으로 잇는다."""
+    leaves: list[BaseException] = []
+
+    def _walk(x: BaseException) -> None:
+        subs = getattr(x, "exceptions", None)  # ExceptionGroup (3.11+) / anyio
+        if subs:
+            for sub in subs:
+                _walk(sub)
+        else:
+            leaves.append(x)
+
+    _walk(e)
+    parts = []
+    for leaf in leaves:
+        text = str(leaf).strip() or type(leaf).__name__
+        if text not in parts:
+            parts.append(text)
+    return "; ".join(parts) if parts else type(e).__name__
+
+
 class McpClientManager:
     """Manages connections to MCP servers.
 
@@ -71,9 +97,10 @@ class McpClientManager:
                 self._run_sync(self._connect_one(name, config))
                 results[name] = "connected"
             except Exception as e:
-                results[name] = f"error: {e}"
+                msg = _leaf_error(e)
+                results[name] = f"error: {msg}"
                 print(
-                    f"[warn] MCP server '{name}' connection failed: {e}",
+                    f"[warn] MCP server '{name}' connection failed: {msg}",
                     file=sys.stderr,
                 )
         return results

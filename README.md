@@ -1319,9 +1319,25 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다. MCP 클라이언트 SDK(`mcp`)는 **기본 설치에 포함**됩니다 (v8.62.0 — 그 전에는 별도 설치가 필요했고, 없으면 서버 연결이 stderr 경고 한 줄로 조용히 실패해 도구만 사라졌습니다).
 
-#### 설정
+#### 등록 — `agent-cli mcp` (v9.1.0)
 
-`.agent-cli/mcp.json` 에 서버를 정의합니다 (v9.0.0 — 프로젝트만; `~/.agent-cli/mcp.json` 은 읽지 않음. MCP 서버는 로컬 프로세스를 띄우는 프로젝트 성격의 설정입니다):
+손으로 JSON 을 짜는 대신 마법사를 쓰세요. **저장 전에 실제로 연결해 도구 개수를 세고**, `${VAR}` 는 현재 셸에 값이 있는지 확인해 보여줍니다 — 붙지 않는 설정은 파일에 남지 않고, 토큰 오타는 저장 전에 드러납니다.
+
+```bash
+agent-cli mcp                 # 등록 목록 + 실제 연결 진단 (실패 이유·설정 파일 경로 표시)
+agent-cli mcp --no-test       # 연결 없이 목록만 (스크립트용; 파이프 뒤에서 프롬프트로 멈추지 않음)
+agent-cli mcp add             # 대화형 등록: 이름 → 전송(stdio/sse) → 명령·인자 또는 URL → env → 연결 테스트 → 저장
+agent-cli mcp test <이름>     # 하나만 다시 연결해 보기
+agent-cli mcp remove <이름>
+```
+
+`agent-cli mcp` 의 종료 코드는 실패한 서버가 하나라도 있으면 1 입니다 (`agent-cli mcp && …` 로 스크립트에서 쓸 수 있게). 종전 `~/.agent-cli/mcp.json` 이 남아 있으면 마법사가 **이 프로젝트로 가져올지 묻습니다** — v9.0.0 스코프 정리의 마이그레이션 경로입니다(원본은 지우지 않습니다).
+
+연결 실패 이유는 mcp SDK 가 `ExceptionGroup` 으로 감싼 것을 잎까지 풀어서 보여줍니다 — 종전엔 부팅 시 `[warn]` 줄에도 "unhandled errors in a TaskGroup" 만 찍혀 원인을 알 수 없었습니다.
+
+#### 설정 파일
+
+`.agent-cli/mcp.json` 에 저장됩니다 (v9.0.0 — 프로젝트만; `~/.agent-cli/mcp.json` 은 읽지 않음. MCP 서버는 로컬 프로세스를 띄우는 프로젝트 성격의 설정입니다). 직접 편집해도 됩니다:
 
 ```json
 {
@@ -1389,7 +1405,7 @@ agent_cli/
 ├── prompts/             조건부 시스템 프롬프트
 ├── skills/              프롬프트 스킬 시스템 (로더, 실행기, 모델)
 ├── agents/              에이전트 정의 (builtin: explorer)
-└── mcp/                 MCP 통합 (config, client, adapter)
+└── mcp/                 MCP 통합 (config, client, adapter, wizard — `agent-cli mcp`)
 ```
 
 상세 아키텍처: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

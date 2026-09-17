@@ -37,7 +37,8 @@ app = typer.Typer(
     "Run 'agent-cli setup' to configure.\n"
     "Run 'agent-cli run <task>' for single-shot execution.\n"
     "Run 'agent-cli web' for the interactive browser UI.\n"
-    "Run 'agent-cli sessions' to list previous sessions.",
+    "Run 'agent-cli sessions' to list previous sessions.\n"
+    "Run 'agent-cli mcp' to register and diagnose MCP servers.",
     add_completion=False,
 )
 
@@ -1552,6 +1553,62 @@ def setup():
     from agent_cli.setup import SetupWizard
 
     SetupWizard().run()
+
+
+# ── agent-cli mcp ─────────────────────────────────────────────
+# 서브커맨드 그룹 (v9.1.0, docs/mcp-ui 시안). 인자 없이 `agent-cli mcp` 면
+# 목록+진단 — setup 처럼 대화형이라 로직은 mcp/wizard.py 가 소유하고 여기는
+# 진입점만. 저장 위치는 .agent-cli/mcp.json 하나 (v9.0.0 스코프 정리).
+mcp_app = typer.Typer(
+    name="mcp",
+    help="MCP 서버 등록·진단. 인자 없이 실행하면 등록된 서버를 실제로 연결해 보고 상태를 보여줍니다.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+    add_completion=False,
+)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.callback(invoke_without_command=True)
+def mcp_root(
+    ctx: typer.Context,
+    no_test: bool = typer.Option(
+        False,
+        "--no-test",
+        help="연결 테스트 없이 설정만 나열 (느린 서버가 있을 때)",
+    ),
+):
+    """등록된 MCP 서버 목록 + 연결 진단."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from agent_cli.mcp.wizard import McpWizard
+
+    failures = McpWizard().list(test=not no_test)
+    raise typer.Exit(code=1 if failures else 0)
+
+
+@mcp_app.command("add")
+def mcp_add():
+    """대화형으로 서버를 추가합니다 — 저장 전에 실제로 연결해 봅니다."""
+    from agent_cli.mcp.wizard import McpWizard
+
+    raise typer.Exit(code=0 if McpWizard().add() else 1)
+
+
+@mcp_app.command("test")
+def mcp_test(name: str = typer.Argument(..., help="서버 이름")):
+    """등록된 서버 하나에 실제로 연결해 도구 목록을 받아 봅니다."""
+    from agent_cli.mcp.wizard import McpWizard
+
+    raise typer.Exit(code=0 if McpWizard().test(name) else 1)
+
+
+@mcp_app.command("remove")
+def mcp_remove(name: str = typer.Argument(..., help="서버 이름")):
+    """등록을 제거합니다 (.agent-cli/mcp.json 에서)."""
+    from agent_cli.mcp.wizard import McpWizard
+
+    raise typer.Exit(code=0 if McpWizard().remove(name) else 1)
 
 
 @app.command()

@@ -474,3 +474,70 @@ class TestMcpSdkIsADeclaredDependency:
         head = src.split("class ", 1)[0]
         assert "from mcp import" not in head, "SDK import 는 함수 안에 두어야 한다"
         assert "from mcp import" in src  # 함수 안에는 있다
+
+
+class TestLeafError:
+    """v9.1.0: mcp SDK 는 전송 오류를 anyio TaskGroup 의 ExceptionGroup 으로
+    감싼다 — 그대로 str() 하면 "unhandled errors in a TaskGroup (1 sub-exception)"
+    이라 진짜 원인이 묻힌다. 마법사 실장 검증에서 잡혔고, 부팅 시 [warn] 줄도
+    같은 문제였다.
+
+    내장 ``ExceptionGroup`` 은 3.11+ 라 여기선 ``.exceptions`` 속성만 가진 가짜를
+    쓴다 — 3.10 에선 anyio 가 ``exceptiongroup`` 백포트를 쓰므로 그 덕타이핑이
+    실제 계약이다."""
+
+    @staticmethod
+    def _group(msg, subs):
+        class _Group(Exception):
+            def __init__(self, m, ex):
+                super().__init__(m)
+                self.exceptions = tuple(ex)
+
+        return _Group(msg, subs)
+
+    def test_plain_exception_passes_through(self):
+        from agent_cli.mcp.client import _leaf_error
+
+        assert _leaf_error(ConnectionRefusedError("refused")) == "refused"
+
+    def test_group_is_unwrapped_to_leaves(self):
+        from agent_cli.mcp.client import _leaf_error
+
+        eg = self._group(
+            "unhandled errors in a TaskGroup", [OSError("Connection refused")]
+        )
+        assert _leaf_error(eg) == "Connection refused"
+
+    def test_nested_groups_and_dedup(self):
+        from agent_cli.mcp.client import _leaf_error
+
+        inner = self._group("g", [OSError("a"), OSError("a")])
+        outer = self._group("g", [inner, ValueError("b")])
+        assert _leaf_error(outer) == "a; b"
+
+    def test_empty_message_falls_back_to_type(self):
+        from agent_cli.mcp.client import _leaf_error
+
+        assert _leaf_error(RuntimeError("")) == "RuntimeError"
+
+    def test_connect_all_reports_leaf(self):
+        """실제 경로: connect_all 의 status 문자열과 [warn] 줄에 잎이 실린다."""
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        eg = self._group(
+            "unhandled errors in a TaskGroup", [OSError("Connection refused")]
+        )
+        # _connect_one 도 패치 — 안 그러면 인자로 만들어진 코루틴이 await 없이
+        # 버려져 "never awaited" 경고가 난다.
+        with (
+            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
+            patch.object(m, "_run_sync", side_effect=eg),
+        ):
+            r = m.connect_all(
+                {"s": McpServerConfig(name="s", url="http://h", transport="sse")}
+            )
+        assert r["s"] == "error: Connection refused"
