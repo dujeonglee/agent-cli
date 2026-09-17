@@ -90,6 +90,14 @@
         </select>
       </div>
     </span>
+    <span id="mcp-wrap" class="knob" title="MCP servers connected at boot — connected/total, tool count, and why a server failed. Read-only: register or edit with `agent-cli mcp` (registering runs a local process, which is beyond what the web UI is trusted to do)." hidden>
+      <button id="mcp-chip" class="knob-btn" type="button" data-pop="mcp-pop" aria-haspopup="true" aria-expanded="false">🔌 <span id="mcp-badge">0/0</span></button>
+      <div id="mcp-pop" class="knob-pop" hidden>
+        <div class="mcp-hd"><span>MCP 서버</span><span id="mcp-tools" class="knob-unit">0 tools</span></div>
+        <div id="mcp-list"></div>
+        <div class="mcp-ft">등록·수정은 <code>agent-cli mcp</code> 에서 합니다.</div>
+      </div>
+    </span>
     <span id="theme-wrap">
       <button id="theme-btn" class="btn-icon" type="button" title="Choose theme" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>

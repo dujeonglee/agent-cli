@@ -35,7 +35,8 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
 from agent_cli.fsio import atomic_write_json
-from agent_cli.mcp.config import McpServerConfig, _parse_server_config
+from agent_cli.mcp.client import humanize_error
+from agent_cli.mcp.config import _parse_server_config
 from agent_cli.paths import project_dir, user_dir
 
 console = Console()
@@ -163,7 +164,7 @@ def probe_server(
         results = _connect_with_timeout(manager, {name: cfg}, timeout)
         status = results.get(name, "error: unknown")
         if status != "connected":
-            return False, _humanize_error(status, cfg), [], time.perf_counter() - t0
+            return False, humanize_error(status, cfg), [], time.perf_counter() - t0
         tools = [t.name for t in manager.list_tools(name)]
         return True, "연결됨", tools, time.perf_counter() - t0
     except TimeoutError:
@@ -209,23 +210,6 @@ def _connect_with_timeout(manager, configs: dict, timeout: float) -> dict[str, s
     if "error" in box:
         raise box["error"]
     return box["result"]
-
-
-def _humanize_error(status: str, cfg: McpServerConfig) -> str:
-    """``connect_all`` 의 ``error: ...`` 를 다음 행동이 보이는 문장으로."""
-    msg = status.removeprefix("error: ").strip()
-    low = msg.lower()
-    if "no such file" in low or "errno 2" in low:
-        return f"실행 파일을 찾을 수 없습니다: {cfg.command}"
-    if (
-        "connection refused" in low
-        or "connect call failed" in low
-        or "all connection attempts failed" in low  # httpx (sse)
-    ):
-        return f"연결 거부 — {cfg.url} 에 서버가 없습니다"
-    if "no module named 'mcp'" in low:
-        return "mcp SDK 가 없습니다 (pip install mcp)"
-    return msg or "알 수 없는 오류"
 
 
 # ── 대화형 ──────────────────────────────────────────────

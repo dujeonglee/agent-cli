@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from agent_cli.mcp.config import (
     McpServerConfig,
     _resolve_env_vars,
@@ -541,3 +543,136 @@ class TestLeafError:
                 {"s": McpServerConfig(name="s", url="http://h", transport="sse")}
             )
         assert r["s"] == "error: Connection refused"
+
+
+class TestManagerSummary:
+    """v9.2.0: 웹 🔌 칩용 스냅샷. connect_all 이 실패한 서버도 기억해야 한다 —
+    종전엔 stderr 한 줄로 흘려보내고 잊었다."""
+
+    def _manager(
+        self, statuses: dict[str, str], tools: dict[str, list[str]] | None = None
+    ):
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager, McpToolInfo
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        cfgs = {
+            n: McpServerConfig(name=n, command="x")
+            if not n.startswith("sse")
+            else McpServerConfig(name=n, url="http://h", transport="sse")
+            for n in statuses
+        }
+
+        # _connect_one 을 동기 MagicMock 으로: 이름별 성공/실패를 흉내
+        def fake_connect(name, cfg):
+            st = statuses[name]
+            if st != "connected":
+                raise OSError(st.removeprefix("error: "))
+            m._tools[name] = [
+                McpToolInfo(server=name, name=t, description="", input_schema={})
+                for t in (tools or {}).get(name, [])
+            ]
+
+        with (
+            patch.object(m, "_connect_one", new=MagicMock(side_effect=fake_connect)),
+            patch.object(m, "_run_sync", new=lambda x: x),
+        ):
+            m.connect_all(cfgs)
+        return m
+
+    def test_records_status_and_config_for_every_server(self):
+        m = self._manager({"a": "connected", "sse-b": "error: Connection refused"})
+        assert m.status == {"a": "connected", "sse-b": "error: Connection refused"}
+        assert set(m.configs) == {"a", "sse-b"}
+
+    def test_summary_shape(self):
+        m = self._manager(
+            {"a": "connected", "sse-b": "error: Connection refused"},
+            tools={"a": ["list_issues", "create_pr"]},
+        )
+        d = m.summary()
+        assert d["connected"] == 1 and d["total"] == 2 and d["tool_count"] == 2
+        by = {s["name"]: s for s in d["servers"]}
+        assert by["a"] == {
+            "name": "a",
+            "transport": "stdio",
+            "connected": True,
+            "tools": ["list_issues", "create_pr"],
+            "error": None,
+        }
+        assert by["sse-b"]["connected"] is False
+        assert by["sse-b"]["transport"] == "sse"
+        assert by["sse-b"]["tools"] == []
+        # 원문이 아니라 번역 — 마법사 list 와 같은 문구 (TestHumanizeError)
+        assert by["sse-b"]["error"] == "연결 거부 — http://h 에 서버가 없습니다"
+
+    def test_empty_manager_summary(self):
+        from agent_cli.mcp.client import McpClientManager
+
+        assert McpClientManager().summary() == {
+            "servers": [],
+            "connected": 0,
+            "total": 0,
+            "tool_count": 0,
+        }
+
+
+class TestHumanizeError:
+    """v9.2.0: CLI 마법사와 웹 🔌 칩이 같은 오류를 같은 말로 — 한 곳."""
+
+    @pytest.mark.parametrize(
+        "raw,cfg,needle",
+        [
+            (
+                "error: [Errno 2] No such file or directory: 'x'",
+                ("stdio", "npx"),
+                "찾을 수 없습니다: npx",
+            ),
+            (
+                "error: Connection refused",
+                ("sse", "http://h:1"),
+                "연결 거부 — http://h:1",
+            ),
+            ("All connection attempts failed", ("sse", "http://h:1"), "연결 거부"),
+            ("error: No module named 'mcp'", ("stdio", "x"), "pip install mcp"),
+            ("error: something odd", ("stdio", "x"), "something odd"),
+            ("", ("stdio", "x"), "알 수 없는 오류"),
+        ],
+    )
+    def test_messages(self, raw, cfg, needle):
+        from agent_cli.mcp.client import humanize_error
+        from agent_cli.mcp.config import McpServerConfig
+
+        kind, target = cfg
+        c = (
+            McpServerConfig(name="s", command=target)
+            if kind == "stdio"
+            else McpServerConfig(name="s", url=target, transport="sse")
+        )
+        assert needle in humanize_error(raw, c)
+
+    def test_summary_uses_it(self):
+        """칩이 httpx 원문 대신 번역을 받는다 — 마법사 list 와 동일 문구."""
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.config import McpServerConfig
+
+        m = McpClientManager()
+        with (
+            patch.object(
+                m,
+                "_connect_one",
+                new=MagicMock(side_effect=OSError("All connection attempts failed")),
+            ),
+            patch.object(m, "_run_sync", new=lambda x: x),
+        ):
+            m.connect_all(
+                {"b": McpServerConfig(name="b", url="http://h:1", transport="sse")}
+            )
+        assert (
+            m.summary()["servers"][0]["error"]
+            == "연결 거부 — http://h:1 에 서버가 없습니다"
+        )

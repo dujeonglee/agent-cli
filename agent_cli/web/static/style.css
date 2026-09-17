@@ -286,6 +286,21 @@ header {
 }
 #stall-pop input:disabled { opacity: 0.4; cursor: not-allowed; }
 .knob-derived { grid-column: 1 / -1; color: var(--accent); font-size: 11px; }
+/* 🔌 MCP 상태 팝업 — 읽기 전용 목록. 입력이 없는 유일한 노브라 세로 스택
+   (다른 팝업은 한 줄 flex). 상태는 색 점 하나로: 초록=붙음 · 빨강=실패. */
+#mcp-pop:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 300px; white-space: normal; }
+.mcp-hd { display: flex; align-items: baseline; gap: 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.mcp-hd .knob-unit { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.mcp-srv { display: grid; grid-template-columns: 10px 1fr auto; column-gap: 8px; row-gap: 2px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.mcp-srv .dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; background: var(--ok); }
+.mcp-srv.fail .dot { background: var(--fail); }
+.mcp-srv .nm { color: var(--text); font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; }
+.mcp-srv .tr { color: var(--muted); font-size: 11px; }
+.mcp-srv .detail { grid-column: 2 / -1; color: var(--text-2); font-size: 11px; line-height: 1.45; }
+.mcp-srv.fail .detail { color: var(--fail); }
+.mcp-ft { border-top: 1px solid var(--border); padding-top: 7px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.mcp-ft code { font-size: 11px; color: var(--accent); background: var(--surface); padding: 0 4px; border-radius: 3px; }
+#mcp-wrap.has-fail > .knob-btn { border-color: var(--fail); color: var(--fail); }
 /* 한도 0(감지 끔)이면 곱이 무의미 — 강조를 걷고 시도 입력도 잠근다. */
 .knob-derived.is-off { color: var(--muted); }
 /* 헤더는 flex-wrap:wrap — 좁아지면 둘째 줄로 접혀 모든 칩이 항상 보인다

@@ -3812,3 +3812,70 @@ class TestStreamIdleEndpoint:
         snap = renderer.register_connection(WebConnection(id="v3"))
         payloads = [d for (ev, d) in snap if ev == "stream_idle"]
         assert payloads == [{"seconds": 600, "attempts": 6}]
+
+
+class TestMcpStatusEndpoint:
+    """GET /api/mcp — 🔌 칩 (v9.2.0, docs/mcp-ui §D). 읽기 전용: 쓰기
+    엔드포인트는 존재하지 않아야 한다(§E — 등록은 곧 로컬 프로세스 실행)."""
+
+    def _client(self, manager=None):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        server.mcp_manager = manager
+        return TestClient(create_app(server))
+
+    def test_no_manager_is_empty_not_error(self):
+        """mcp.json 이 없으면 매니저도 없다 — 칩은 숨겨지고 에러는 아니다."""
+        d = self._client(None).get("/api/mcp?token=testtoken").json()
+        assert d == {"servers": [], "connected": 0, "total": 0, "tool_count": 0}
+
+    def test_reports_manager_summary(self):
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        m.summary.return_value = {
+            "servers": [
+                {
+                    "name": "gh",
+                    "transport": "stdio",
+                    "connected": True,
+                    "tools": ["a"],
+                    "error": None,
+                },
+                {
+                    "name": "figma",
+                    "transport": "sse",
+                    "connected": False,
+                    "tools": [],
+                    "error": "연결 거부",
+                },
+            ],
+            "connected": 1,
+            "total": 2,
+            "tool_count": 1,
+        }
+        d = self._client(m).get("/api/mcp?token=testtoken").json()
+        assert d["connected"] == 1 and d["total"] == 2
+        assert d["servers"][1]["error"] == "연결 거부"
+
+    def test_requires_auth(self):
+        """미들웨어가 default-deny 라 새 라우트도 구조적으로 보호된다 — 핀."""
+        assert self._client(None).get("/api/mcp").status_code == 401
+
+    def test_no_write_endpoint(self):
+        """POST /api/mcp 가 생기면 웹에서 로컬 프로세스 실행을 등록하는 길이
+        열린다. 405(라우트는 있으나 메서드 없음)여야 한다."""
+        r = self._client(None).post("/api/mcp?token=testtoken", json={"name": "x"})
+        assert r.status_code == 405
+
+    def test_frontend_wired(self):
+        from pathlib import Path
+
+        js = Path("agent_cli/web/static/app.js").read_text(encoding="utf-8")
+        html = Path("agent_cli/web/static/index.html").read_text(encoding="utf-8")
+        assert 'fetch("api/mcp")' in js
+        assert 'id="mcp-wrap"' in html and 'id="mcp-badge"' in html
+        # 칩에 입력 요소가 없다 — 읽기 전용 계약
+        i = html.index('id="mcp-pop"')
+        pop = html[i : html.index("</span>", i)]
+        assert "<input" not in pop and "<select" not in pop

@@ -60,6 +60,30 @@ def _leaf_error(e: BaseException) -> str:
     return "; ".join(parts) if parts else type(e).__name__
 
 
+def humanize_error(msg: str, cfg: McpServerConfig | None = None) -> str:
+    """연결 실패 원문 → 다음 행동이 보이는 한 문장 (v9.2.0, 마법사에서 이관).
+    CLI 마법사와 웹 🔌 칩이 **같은 오류를 같은 말로** 하도록 한 곳에 둔다."""
+    text = msg.removeprefix("error: ").strip()
+    low = text.lower()
+    cmd = cfg.command if cfg else ""
+    url = cfg.url if cfg else ""
+    if "no such file" in low or "errno 2" in low:
+        return (
+            f"실행 파일을 찾을 수 없습니다: {cmd}"
+            if cmd
+            else "실행 파일을 찾을 수 없습니다"
+        )
+    if (
+        "connection refused" in low
+        or "connect call failed" in low
+        or "all connection attempts failed" in low  # httpx (sse)
+    ):
+        return f"연결 거부 — {url} 에 서버가 없습니다" if url else "연결 거부"
+    if "no module named 'mcp'" in low:
+        return "mcp SDK 가 없습니다 (pip install mcp)"
+    return text or "알 수 없는 오류"
+
+
 class McpClientManager:
     """Manages connections to MCP servers.
 
@@ -71,6 +95,11 @@ class McpClientManager:
         self._clients: dict[str, Any] = {}  # server_name → (session, cleanup)
         self._tools: dict[str, list[McpToolInfo]] = {}  # server_name → tools
         self._loop: asyncio.AbstractEventLoop | None = None
+        # v9.2.0: 마지막 connect_all 의 서버별 결과("connected" | "error: …")와
+        # 설정 — 웹 🔌 칩(GET /api/mcp)이 부팅 시점 상태를 보여주려면 실패한
+        # 서버도 기억해야 한다(종전엔 stderr 한 줄로 흘려보내고 잊었다).
+        self.status: dict[str, str] = {}
+        self.configs: dict[str, McpServerConfig] = {}
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """Get or create event loop for sync wrappers."""
@@ -93,6 +122,7 @@ class McpClientManager:
         """
         results = {}
         for name, config in configs.items():
+            self.configs[name] = config
             try:
                 self._run_sync(self._connect_one(name, config))
                 results[name] = "connected"
@@ -103,7 +133,33 @@ class McpClientManager:
                     f"[warn] MCP server '{name}' connection failed: {msg}",
                     file=sys.stderr,
                 )
+            self.status[name] = results[name]
         return results
+
+    def summary(self) -> dict:
+        """웹 🔌 칩용 스냅샷 (v9.2.0): 서버별 전송·상태·도구 수/이름·실패 이유
+        + 집계. 부팅 시점 상태다 — 세션 중 재연결 경로가 없으므로 sticky 나
+        SSE 없이 페이지 로드 시 GET 한 번이면 충분하다."""
+        servers = []
+        for name in self.configs:
+            st = self.status.get(name, "error: unknown")
+            ok = st == "connected"
+            tools = [t.name for t in self._tools.get(name, [])] if ok else []
+            servers.append(
+                {
+                    "name": name,
+                    "transport": self.configs[name].transport,
+                    "connected": ok,
+                    "tools": tools,
+                    "error": None if ok else humanize_error(st, self.configs[name]),
+                }
+            )
+        return {
+            "servers": servers,
+            "connected": sum(1 for s in servers if s["connected"]),
+            "total": len(servers),
+            "tool_count": sum(len(s["tools"]) for s in servers),
+        }
 
     async def _connect_one(self, name: str, config: McpServerConfig) -> None:
         """Connect to a single MCP server."""

@@ -244,6 +244,76 @@ class TestStreamStallDisplay:
         assert page.locator(".stall-resend").count() == 0
 
 
+class TestMcpChip:
+    """v9.2.0: 🔌 칩 — 읽기 전용 MCP 상태. 배지는 붙은/전체, 실패는 이유 표시."""
+
+    def _fake_manager(self):
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        m.summary.return_value = {
+            "servers": [
+                {
+                    "name": "github",
+                    "transport": "stdio",
+                    "connected": True,
+                    "tools": ["list_issues", "create_pr"],
+                    "error": None,
+                },
+                {
+                    "name": "figma",
+                    "transport": "sse",
+                    "connected": False,
+                    "tools": [],
+                    "error": "연결 거부 — http://localhost:3845",
+                },
+            ],
+            "connected": 1,
+            "total": 2,
+            "tool_count": 2,
+        }
+        return m
+
+    def test_hidden_when_no_servers(self, stack, page):
+        stack.server.mcp_manager = None
+        page.goto(stack.url)
+        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_timeout(300)
+        assert page.locator("#mcp-wrap").is_hidden()  # 0/0 은 소음
+
+    def test_badge_and_popup_show_status_and_reason(self, stack, page):
+        stack.server.mcp_manager = self._fake_manager()
+        page.set_viewport_size({"width": 1500, "height": 720})
+        page.goto(stack.url)
+        page.wait_for_selector("#mcp-wrap:not([hidden])", timeout=8000)
+        assert page.inner_text("#mcp-badge").strip() == "1/2"
+        # 하나라도 실패하면 칩 자체가 경고색 — 숫자를 읽기 전에 안다
+        assert page.evaluate(
+            "() => document.getElementById('mcp-wrap').classList.contains('has-fail')"
+        )
+        page.click("#mcp-chip")
+        assert page.locator("#mcp-pop").is_visible()
+        txt = page.inner_text("#mcp-pop")
+        assert "2 tools" in txt and "github" in txt and "list_issues" in txt
+        assert "figma" in txt and "연결 거부" in txt
+        assert "agent-cli mcp" in txt  # 등록은 CLI 로
+        # 팝업이 화면 안에 있다 (오른쪽 칩이라 align-right 로 펼침)
+        assert page.evaluate(
+            "() => { var b=document.querySelector('#mcp-pop').getBoundingClientRect();"
+            " return b.left >= -1 && b.right <= window.innerWidth + 1; }"
+        )
+
+    def test_popup_has_no_inputs(self, stack, page):
+        """읽기 전용 계약 — 입력이 생기면 웹에서 등록하는 길이 열린 것."""
+        stack.server.mcp_manager = self._fake_manager()
+        page.goto(stack.url)
+        page.wait_for_selector("#mcp-wrap:not([hidden])", timeout=8000)
+        assert (
+            page.locator("#mcp-pop input, #mcp-pop select, #mcp-pop textarea").count()
+            == 0
+        )
+
+
 class TestConfirmStallWarning:
     def test_warning_appears_when_starved_and_clears_on_recovery(self, browser, stack):
         """origin 당 6연결 고갈 실재현(수용된 잔여 케이스) — 클릭이 갇히면

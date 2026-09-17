@@ -173,6 +173,10 @@ class WebServer:
         # teammate P4: 대화 창의 인간 개입(input/kill) 대상 — worker 부트가
         # AgentRegistry 를 꽂는다. None(테스트/기동 전)이면 엔드포인트 503.
         self.agent_registry = None
+        # v9.2.0: 부팅 시 붙인 McpClientManager (없으면 None — mcp.json 부재).
+        # 🔌 칩은 읽기 전용: 등록·수정은 `agent-cli mcp` 로만 (docs/mcp-ui §E —
+        # 등록은 곧 로컬 프로세스 실행이라 웹 신뢰 수준을 넘는다).
+        self.mcp_manager = None
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
@@ -793,6 +797,16 @@ def create_app(server: WebServer) -> FastAPI:
         attempts = server.ctx.stream_max_attempts
         server.renderer.broadcast_stream_idle(seconds, attempts)
         return {"ok": True, "seconds": seconds, "attempts": attempts}
+
+    @app.get("/api/mcp")
+    async def get_mcp_status():
+        """🔌 칩용 — 부팅 시 MCP 서버별 연결 상태·도구 수·실패 이유 (v9.2.0).
+        지금까지 이 정보는 stderr 에만 있어 웹 사용자는 볼 방법이 없었다.
+        읽기 전용: 쓰기 엔드포인트는 만들지 않는다."""
+        mgr = server.mcp_manager
+        if mgr is None:
+            return {"servers": [], "connected": 0, "total": 0, "tool_count": 0}
+        return mgr.summary()
 
     @app.get("/api/confirm-mode")
     async def get_confirm_mode():

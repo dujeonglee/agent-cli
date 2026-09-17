@@ -2164,6 +2164,7 @@ def web(
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
         server.agent_registry = _registry
+        server.mcp_manager = mcp_manager  # 🔌 칩 (읽기 전용, v9.2.0)
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
         # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
