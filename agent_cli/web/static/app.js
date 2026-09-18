@@ -1531,7 +1531,6 @@
     renderUserMessage(d.content, d.ts);
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
-    ovOnUserMsg(d); // 개요: 누적 쿼리
     qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
   });
 
@@ -1544,29 +1543,22 @@
     // scoped (sub-agent) finals stay out of the team buffer.
     if (!d.task_id && d.final !== undefined) {
       updateDock(d);
-      ovOnFinal(d); // 개요: 메인 응답 기록
     } else if (d.task_id && d.final !== undefined) {
-      ovOnScopedFinal(d); // 개요: top-level /skill·@agent 결과 기록(모델 B)
     } else if (!d.task_id && d.action) {
-      ovOnAction(d); // 개요: 메인 도구 호출 → 활동 스트립(축약)
     }
   });
 
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
     finalizeStreamingAsFailed(d.task_id, d.reason, d.raw);
-    // ★개요 활동 스트립은 건드리지 않는다 (v8.42.4): failed_turn 은 서버의
-    // ``recovery()`` 에서만 나오고 — 즉 **포맷 복구 후 같은 런이 재시도**
-    // 한다는 뜻이지 런 종료가 아니다. 종전엔 여기서 ovAct 를 비워, LLM 이
-    // Invalid JSON 을 한 번 뱉으면 "도구 N회" 스트립이 사라졌다가 다음 도구
-    // 호출부터 0 부터 다시 세었다. 런 종료 정리는 worker_state idle 이 이미
-    // 소유한다(complete 없이 끝난 경우까지 포함하는 안전망).
+    // failed_turn 은 서버의 ``recovery()`` 에서만 나온다 — **포맷 복구 후
+    // 같은 런이 재시도**한다는 뜻이지 런 종료가 아니다. 런 종료 정리는
+    // worker_state idle 이 소유한다.
   });
 
   es.addEventListener("observation", function (e) {
     const d = JSON.parse(e.data);
     renderObservation(d);
-    ovOnSlashOutput(d); // 개요: 슬래시 명령 출력만(화이트리스트) 블록으로
   });
 
   es.addEventListener("compaction", function (e) {
@@ -1598,7 +1590,6 @@
   es.addEventListener("turn_error", function (e) {
     const d = JSON.parse(e.data);
     renderError(d);
-    ovOnTurnError(d); // 개요: 런-레벨 실패를 요약에도 (전문만 보면 놓친다)
   });
 
   // Bounded replay buffer: on reconnect to a very long session the server
@@ -1628,7 +1619,6 @@
     }
     ensureStreamingCard(d.task_id);
     updateStreamingCard(d.task_id);
-    ovOnStream(d); // 개요: hero 라이브 스트리밍(메인 스코프)
   });
 
   es.addEventListener("stream_end", function () {
@@ -1672,7 +1662,6 @@
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
-    ovOnScopeStart(d); // 개요: ambient 스킬 상태
     // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
     // if it's open, so a new sub-agent's chip appears live.
     window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
@@ -1686,7 +1675,6 @@
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
     noteScopeEnd(d.task_id);
-    ovOnScopeEnd(d); // 개요: 스킬 종료
     // A replayed scope whose turns are not in this session's history closes
     // EMPTY (an old session recorded before turns carried their scope, or a
     // sub-agent whose turns live in its own context). Say why, rather than
@@ -1709,71 +1697,16 @@
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 
-  // ── Team swimlane: side-by-side with the timeline ──
-  // The swimlane is a compact overview + navigator on the LEFT, the timeline the
-  // detail on the RIGHT (see #content-split). Both stay visible; the ◧ Team
-  // button just collapses the pane so the timeline can reclaim the width. The
-  // pane + button are hidden until team activity arrives, so a plain
-  // single-agent chat never sees them. Clicking a swimlane bar scrolls the
-  // timeline to the matching collapsible card (shared task_id). Named function
-  // (not a nested IIFE) so the markdown test harness's "first })(); = main
-  // closer" extraction stays valid.
-  // v9.4.0 ①: 흐름 뷰 제거 — base 는 개요 하나, 전문은 그 위의 드로어.
-  const $drawer = document.getElementById("timeline-drawer");
-  const $detailBtn = document.getElementById("vt-detail-toggle");
-  const $overviewBtn = document.getElementById("vt-overview");
-  const $overview = document.getElementById("overview");
-  let viewMode = "overview"; // base 뷰는 이제 하나뿐 (②에서 이 변수도 사라진다)
-  let drawerOpen = false; // 전문 드로어 오버레이 상태 — base 와 독립
-
-  function syncTabs() {
-    if ($overviewBtn)
-      $overviewBtn.setAttribute("aria-selected", viewMode === "overview" ? "true" : "false");
-    if ($detailBtn) {
-      $detailBtn.setAttribute("aria-selected", drawerOpen ? "true" : "false");
-      $detailBtn.setAttribute("aria-pressed", drawerOpen ? "true" : "false");
-    }
-  }
-
-  function setDrawer(open) {
-    drawerOpen = open;
-    $drawer.classList.toggle("open", open);
-    $drawer.setAttribute("aria-hidden", open ? "false" : "true");
-    // base(개요/흐름) 옆으로 붙는 사이드 패널 — 개요는 이 클래스로 폭을 내줘 겹침 방지.
-    document.body.classList.toggle("drawer-open", open);
-    syncTabs();
-    // Re-pin the bottom on open: scrollTop writes while the drawer was shut
-    // may have landed on stale geometry.
-    if (open && autoScrollEnabled) scheduleScroll();
-  }
-
-  // base 뷰 전환(개요 ↔ 흐름). 전문 드로어는 base 위에 뜨는 독립 오버레이라 여기서
-  // 닫지 않는다 — 개요를 보면서 전문 사이드를 함께 열어둘 수 있다.
-  function setBaseView(mode) {
-    // v9.4.0 ①: 흐름 뷰 제거 — base 는 개요 하나뿐이다. 남은 전환은
-    // 전문 드로어(setDrawer) 이고, 그것도 ②에서 통합되며 사라진다.
-    viewMode = mode;
-    if ($overview) $overview.hidden = mode !== "overview";
-    // 개요 모드에서는 dock(기존 최신응답 스트립)을 CSS로 숨긴다 — 개요의 응답
-    // 블록 hero 가 대체하므로 중복 방지(dock 의 hidden 로직과 충돌 없이).
-    document.body.classList.toggle("mode-overview", mode === "overview");
-    syncTabs();
-    if (mode === "overview") ovRender();
-  }
-
-  // 하위호환 단일 진입점. 'detail' = 현재 base 위에 타임라인 오버레이를 연다(더 이상
-  // base 를 바꾸지 않음 → 개요에서 열어도 개요가 유지되고 전문이 옆에 뜬다).
-  function setViewMode(mode) {
-    if (mode === "detail") {
-      setDrawer(true);
-      return;
-    }
-    setBaseView(mode);
-  }
-  // 다른 IIFE(예: Export)에서 타임라인을 확실히 보이게 할 때 쓰는 훅 — base 유지, 오버레이만 연다.
-  window.__showTimeline = function () {
-    setDrawer(true);
-  };
+  // ── 타임라인 = 유일한 표면 (v9.4.0 ②, docs/chat-ui) ──
+  // 종전엔 개요(요약) / 전문(드로어) / 흐름(스윔레인) 셋이 같은 대화를 각자
+  // 그렸고, 투명성(도구 호출·reasoning)이 **드로어 안에만** 있었다. 기본 화면인
+  // 개요엔 도구가 아예 안 나와(슬래시만 화이트리스트 예외) "간단"과 "투명"이
+  // 둘 다 손해였다. 이제 `#messages` 하나다 — 뷰 전환·드로어·탭이 전부 없다.
+  //
+  // 에이전트 작업이 사라지지 않는 이유: `begin_agent_work` 가 task_id 를 붙여
+  // `scope_start` 를 내고 `_emit` 이 후속 이벤트에 자동 부착하므로, 에이전트의
+  // 생각·도구·결과는 **이미** 여기 중첩 카드로 들어와 있었다(§7.5). 개요를
+  // 지우는 것은 잃는 게 아니라 드러내는 것이다.
 
   // ── 개요(GLANCE) 뷰 렌더 ──────────────────────────
   // presentation-only: 기존 SSE 이벤트를 재사용. **플랫 로그 모델** — 사용자 입력과
@@ -1781,7 +1714,6 @@
   // 짝짓기(pairing)를 상태로 저장하지 않으므로 "대기" 정체·쿼리↔응답 오귀속이 원천적
   // 으로 없다. 블록 그룹핑(연속 user + 뒤따르는 resp)은 렌더 시점에 순서로만 도출.
   var ovEntries = []; // 플랫: {kind:'user',who,text,tm} | {kind:'resp',text,reasoning,answers,status,navTs,scopeId}
-  var ovAct = null; // 실행 중 활동 스트립 {total, turn, batch:[{icon,label,n}]} | null
   var ovTopScopes = {}; // depth-0 스코프 task_id → true (직접 dispatch 결과 수용용)
   var ovScopeSrc = {}; // depth-0 스코프 task_id → 응답 주체 표시명 (🤝 agent / 🪄 skill)
   var ovRoster = []; // agent_roster
@@ -1813,368 +1745,14 @@
     var nm = tm && (tm.name || [tm.profile, tm.name].filter(Boolean).join(" · "));
     return ovAgentIcon(key) + " " + (nm || key);
   }
-  function ovCap() {
-    if (ovEntries.length > 80) ovEntries = ovEntries.slice(-80);
-  }
-  // 스크롤 고정: 기본은 bottom 고정(스트리밍 따라감). 사용자가 위로 스크롤하면
-  // 해제하고, 다시 바닥까지 내리면 재고정 — 타임라인의 _stick 과 동형 동작.
-  var ovStick = true;
-  if ($overview) {
-    $overview.addEventListener("scroll", function () {
-      ovStick =
-        $overview.scrollTop + $overview.clientHeight >= $overview.scrollHeight - 24;
-    });
-  }
 
-  function ovClock(ts) {
-    var ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
-    if (!ms || isNaN(ms)) return "";
-    var d = new Date(ms);
-    return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
-  }
   // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
-  function ovUserHtml(e) {
-    var icon = /🤝/.test(e.who) ? "" : "👤 ";
-    // agent 채널에서는 발신 대상 배지(→ 🤝 agent) — 다중 대화 소속 식별(④).
-    var tgt = e.target
-      ? ' <span class="ov-umsg-to">→ ' + escapeHtml(e.target) + "</span>"
-      : "";
-    return (
-      '<div class="ov-umsg"><span class="w">' + icon + escapeHtml(e.who) + "</span>" +
-      tgt + " " + escapeHtml(e.text) +
-      (e.tm ? '<span class="tm">' + e.tm + "</span>" : "") + "</div>"
-    );
-  }
   // 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
-  function ovRespHtml(e, isHero) {
-    // ok === false → 실패 배지(현재 /sh 의 exit code 등). 기존 엔트리는 ok 를
-    // 안 실으므로 종전대로 ✓ (하위호환).
-    var st = e.ok === false
-      ? '<span class="ov-st fail">✗</span>'
-      : '<span class="ov-st done">✓</span>';
-    // 회신 주체 배지: 메인 LLM=main, 그 외=agent/skill 이름. 다중 에이전트
-    // 시나리오에서 어느 주체의 응답인지 카드에서 바로 식별.
-    var isMain = e.source === "main";
-    var src = e.source
-      ? '<span class="ov-src ' + (isMain ? "ov-src-main" : "ov-src-agent") + '">' +
-        escapeHtml(isMain ? "main" : e.source) + "</span>"
-      : "";
-    // mono = 슬래시 명령 출력(/sh 등) — **마크다운을 태우지 않는다**. 셸 출력엔
-    // `**`·`|`·`#`·백틱이 흔해서 escapeAndFormat 을 태우면 굵게/표/헤더로
-    // 뭉개진다. escapeHtml 만 + 고정폭(.ov-tx 가 이미 pre-wrap 이라 개행·정렬
-    // 보존). 전체 대화 점프는 관찰 카드에 앵커(data-nav-ts)가 없어 해소되지
-    // 않으므로 mono 블록에선 [복사]만 노출한다.
-    var txt = e.mono ? escapeHtml(e.text || "") : escapeAndFormat(e.text || "");
-    var acts =
-      '<div class="ov-acts"><button type="button" class="ov-act ov-copy">⧉ 복사</button>' +
-      (e.mono
-        ? ""
-        : '<button type="button" class="ov-act ov-open">▤ 전체 대화</button>') +
-      "</div>";
-    var re =
-      e.reasoning && e.reasoning.trim()
-        ? '<details class="ov-re"><summary>💭 reasoning</summary>' +
-          '<div class="ov-re-body">' + escapeAndFormat(e.reasoning) + "</div></details>"
-        : "";
-    // 점프 앵커: 메인 응답=data-nav-ts, 직접 dispatch 응답=data-scope-id.
-    var navAttr = e.scopeId
-      ? ' data-scope-id="' + escapeHtml(String(e.scopeId)) + '"'
-      : e.navTs != null
-        ? ' data-nav-ts="' + escapeHtml(String(e.navTs)) + '"'
-        : "";
-    return (
-      '<div class="ov-block resp ' + (isHero ? "hero" : "past") + '"' + navAttr + ">" +
-      '<div class="ov-he">' + src + st + "</div>" + re +
-      '<div class="ov-tx' + (e.mono ? " ov-mono" : "") + '">' + txt +
-      "</div>" + acts + "</div>"
-    );
-  }
   // 활동 스트립: 실행 중 도구 호출 축약 한 줄(왼쪽=누적 카운트, 오른쪽=현재 배치 칩).
-  // 스트립 본문만 — 껍데기(.ov-act-strip)와 펄스(.ov-pulse)는 제외. 스트리밍 중
-  // 갱신되는 유일한 부분이라 따로 뽑았다: 펄스는 1.1s 무한 CSS 애니메이션이라
-  // 엘리먼트를 매 프레임 다시 만들면 t=0 에서 영원히 재시작해 멎은 것처럼 보인다.
-  function ovActBodyHtml() {
-    if (!ovAct) return "";
-    var chips = ovAct.batch
-      .map(function (c) {
-        return '<span class="ov-chip">' + c.icon + " " +
-          escapeHtml(c.label) + (c.n > 1 ? " ×" + c.n : "") + "</span>";
-      })
-      .join("");
-    var total = ovAct.total
-      ? '<span class="ov-act-n">도구 ' + ovAct.total + "회</span>"
-      : "";
-    var now = chips ? '<span class="ov-act-now">' + chips + "</span>" : "생성 중…";
-    return total + now;
-  }
-  function ovActHtml() {
-    if (!ovAct) return "";
-    return (
-      '<div class="ov-act-strip"><span class="ov-pulse"></span>' +
-      '<span class="ov-act-body">' + ovActBodyHtml() + "</span></div>"
-    );
-  }
-  function ovRender() {
-    if (!$overview || viewMode !== "overview") return; // 활성일 때만 DOM 갱신
-    // 채널 스코핑(2단계): main = ovEntries, agent = ovChannels[key].
-    var isMain = ovActiveChannel === "main";
-    var src = isMain ? ovEntries : ovChannels[ovActiveChannel] || [];
-    var items = src.slice(-14); // 최근 항목만(사용자 입력 + 응답 혼합)
-    // hero = 마지막 응답 엔트리(눈에 잘 띄게 accent). 그 외는 dim.
-    var heroIdx = -1;
-    for (var k = items.length - 1; k >= 0; k--) {
-      if (items[k].kind === "resp") {
-        heroIdx = k;
-        break;
-      }
-    }
-    var html = "";
-    if (!items.length && !(ovAct && isMain)) {
-      html += '<div class="ov-placeholder">' +
-        (isMain ? "아직 응답이 없습니다" : "아직 대화가 없습니다") +
-        " — 아래에 메시지를 입력하세요.</div>";
-    } else {
-      // agent 채널: 주체/대상 라벨을 현재 roster 기준으로 해소해 주입(replay
-      // 순서와 무관). main 채널 엔트리는 자체 source(main/scope 이름) 유지.
-      var label = isMain ? null : ovAgentLabel(ovActiveChannel);
-      items.forEach(function (e, i) {
-        var ent = e;
-        if (!isMain) {
-          ent = e.kind === "user"
-            ? Object.assign({}, e, { target: label })
-            : Object.assign({}, e, { source: label });
-        }
-        html += ent.kind === "user" ? ovUserHtml(ent) : ovRespHtml(ent, i === heroIdx);
-      });
-    }
-    if (isMain) html += ovActHtml(); // 진행 중 활동 스트립은 main 채널만
-    $overview.innerHTML = html;
-    // 사용자가 위로 스크롤해 둔 상태(ovStick=false)면 강제로 바닥으로 끌어내리지
-    // 않는다 — 읽던 위치 유지. 바닥에 붙어 있을 때만 스트리밍을 따라 자동 스크롤.
-    if (ovStick) $overview.scrollTop = $overview.scrollHeight;
-  }
-
-  // ovRender 병합 (v8.42.0): 이벤트마다 개요 전체 innerHTML+마크다운 재실행이
-  // 스냅샷 재생에서 지배 비용(888이벤트 ~600ms 실측 — 호출×14항목 마크다운).
-  // 프레임당 1회로 병합. 뷰/채널 전환 등 사용자 조작 경로는 즉시 ovRender().
-  var _ovRenderQueued = false;
-  function scheduleOvRender() {
-    if (_ovRenderQueued) return;
-    _ovRenderQueued = true;
-    requestAnimationFrame(function () {
-      _ovRenderQueued = false;
-      ovRender();
-    });
-  }
-
-  // 활동 스트립만 갱신 (v8.47.0). 스트리밍 중 실제로 바뀌는 건 이 한 줄뿐인데
-  // 종전엔 stream 청크마다 ovRender() 가 개요 전체를 innerHTML 로 갈아끼웠다.
-  // 그 결과 초당 ~60회 .ov-block 들이 파괴·재생성되면서:
-  //   - [⧉ 복사]·[▤ 전체 대화] 버튼이 **클릭 불가** — click 은 mousedown 과
-  //     mouseup 이 같은 엘리먼트에 떨어져야 발생하는데 그 사이에 노드가 사라진다
-  //     (그래서 $overview 위임으로도 못 살린다 — 브라우저가 click 을 안 만든다),
-  //   - 목록 전체가 매 프레임 리페인트되어 깜빡이고,
-  //   - 💭 reasoning <details> 열림 상태·텍스트 선택·:hover 가 매 프레임 리셋된다.
-  // 목록 DOM 은 손대지 않고 스트립 본문만 패치한다.
-  function ovRenderAct() {
-    if (!$overview || viewMode !== "overview") return;
-    if (ovActiveChannel !== "main") return; // 스트립은 main 채널에만 렌더된다
-    var strip = $overview.querySelector(".ov-act-strip");
-    if (!ovAct) {
-      if (strip) strip.remove();
-      return;
-    }
-    if (!strip) {
-      // 처음 등장 — 플레이스홀더("아직 응답이 없습니다")가 걷혀야 하는 경우는
-      // 목록 구조가 바뀌는 것이므로 전체 렌더에 위임한다.
-      if ($overview.querySelector(".ov-placeholder")) {
-        ovRender();
-        return;
-      }
-      $overview.insertAdjacentHTML("beforeend", ovActHtml());
-    } else {
-      var body = strip.querySelector(".ov-act-body");
-      if (body) body.innerHTML = ovActBodyHtml();
-      else strip.innerHTML = ovActHtml(); // 방어: 구 구조가 남아 있으면 통째로
-    }
-    if (ovStick) $overview.scrollTop = $overview.scrollHeight;
-  }
-  var _ovActQueued = false;
-  function scheduleOvActRender() {
-    // 같은 프레임에 전체 렌더가 예약돼 있으면 그쪽이 스트립까지 그리므로 생략.
-    if (_ovRenderQueued || _ovActQueued) return;
-    _ovActQueued = true;
-    requestAnimationFrame(function () {
-      _ovActQueued = false;
-      if (_ovRenderQueued) return; // 그 사이 전체 렌더가 예약됐다
-      ovRenderAct();
-    });
-  }
-  // 이벤트 훅 (아래 es 핸들러에서 호출) — 전부 ovEntries 에 append 만(무상태 페어링).
-  function ovOnUserMsg(d) {
-    // 본문의 "[라벨]: " 접두에서 라벨을 뽑아 who 로 쓴다 — 실제 사용자면 닉네임,
-    // 🤝 agent wake(예 "[🤝 agent]: New agent mail…")면 "🤝 agent". wake 도 그대로
-    // 도착 순서대로 로그에 보여준다(짝짓기 안 함 — 그냥 시간순 스트림).
-    var content = d.content || "";
-    var m = content.match(/^\[([^\]]+)\]:\s*/);
-    var who = d.author || (m ? m[1] : "사용자");
-    var t = content.replace(/^\[[^\]]+\]:\s*/, "");
-    // 새 요청은 항상 로그 끝에 append — 활동 스트립(진행 중 표시)은 항상 맨 아래에
-    // 렌더되므로, 실행 중 들어온 요청도 자연히 [이전 요청 아래 · 진행 표시 위]에 놓인다.
-    ovEntries.push({ kind: "user", who: who, text: t, tm: ovClock(d.ts) });
-    ovCap();
-    scheduleOvRender();
-  }
-  // 실행 중 진행 내용(thought/원시 스트림)은 요약에 표시하지 않는다 — stream_chunk 는
-  // "지금 실행 중"이라는 신호로만 쓰고(활동 스트립 활성화), 본문은 쌓지 않는다.
-  function ovOnStream(d) {
-    if (d.task_id) return; // 메인 스코프만
-    ovActEnsure();
-    scheduleOvActRender(); // 스트립만 바뀐다 — 목록을 갈아끼우면 버튼이 죽는다
-  }
-  // navTs = d.ts: 메인 스코프 final 카드가 같은 ts 스탬프라 [전체 대화] 점프에 쓴다.
-  // complete = 활동 스트립 종료 + 최종 답변을 한 번에 블록으로 append(라이브 타이핑 없음).
-  function ovOnFinal(d) {
-    ovAct = null;
-    ovEntries.push({
-      kind: "resp",
-      text: d.final,
-      reasoning: d.thought || "",
-      answers: d.answers || [],
-      status: "done",
-      navTs: d.ts,
-      source: "main", // 회신 주체: 메인 LLM
-    });
-    ovCap();
-    scheduleOvRender();
-  }
-  // 직접 실행한 top-level(depth0) /skill·@agent 의 complete 결과를 기록(모델 B).
-  // 중첩(depth>0) 스코프·nav_ts 없는 메인 도구 스코프는 요약에서 제외하지 않지만,
-  // 여기선 top-level 만 수용(ovTopScopes) → 요약이 과하게 시끄러워지지 않게.
-  function ovOnScopedFinal(d) {
-    if (!d || !d.task_id || d.final === undefined) return;
-    if (!ovTopScopes[d.task_id]) return; // 중첩 스코프는 제외(전문에만)
-    ovEntries.push({
-      kind: "resp",
-      text: d.final,
-      reasoning: d.thought || "",
-      answers: [],
-      status: "done",
-      navTs: d.ts,
-      scopeId: d.task_id, // [전체 대화] 는 스코프 카드로 점프
-      source: ovScopeSrc[d.task_id] || "agent", // 회신 주체: agent/skill 이름
-    });
-    ovCap();
-    scheduleOvRender();
-  }
-  // ── 활동 스트립: 실행 중 도구 호출을 축약해 한 줄로(누적 카운트 + 현재 배치) ──
-  function ovActEnsure() {
-    if (!ovAct) ovAct = { total: 0, turn: null, batch: [] };
-    return ovAct;
-  }
-  // 도구 호출 1건 → {icon, label} 축약. tool_input 은 JSON 문자열(파싱 실패 시 원문).
-  function ovAbbrevAction(tool, inputStr) {
-    var p = {};
-    try {
-      p = JSON.parse(inputStr || "{}");
-    } catch (_e) {
-      p = {};
-    }
-    var base = function (s) {
-      s = String(s || "");
-      var seg = s.split("/");
-      return seg[seg.length - 1] || s;
-    };
-    var map = {
-      read_file: ["📖", base(p.path)],
-      edit_file: ["✏️", base(p.path)],
-      write_file: ["📝", base(p.path)],
-      shell: ["⚡", String(p.command || "").split(/\s+/)[0]],
-      sh: ["⚡", String(p.command || "").split(/\s+/)[0]],
-      run_skill: ["🪄", p.name || ""],
-      agent: [p.key ? ovAgentIcon(p.key) : "🤖", p.key || p.mode || ""],
-      glob: ["🔎", p.pattern || ""],
-      grep: ["🔎", p.pattern || p.query || ""],
-      search_code: ["🔎", p.query || ""],
-    };
-    var m = map[tool];
-    if (m) return { icon: m[0], label: m[1] || tool };
-    return { icon: "⚙", label: tool || "" };
-  }
-  // 메인 스코프 action 턴 → 활동 스트립 갱신. 같은 turn = 한 배치(다음 turn 이면 교체).
-  function ovOnAction(d) {
-    if (!d || d.task_id || !d.action) return; // 메인 스코프 도구 호출만
-    var a = ovActEnsure();
-    if (a.turn !== d.turn) {
-      a.turn = d.turn;
-      a.batch = []; // 다음 배치 → 이전 칩 지움
-    }
-    var ab = ovAbbrevAction(d.action.tool_name || "", d.action.tool_input || "");
-    var key = ab.icon + "|" + ab.label;
-    var hit = a.batch.find(function (c) {
-      return c.key === key;
-    });
-    if (hit) hit.n += 1;
-    else a.batch.push({ key: key, icon: ab.icon, label: ab.label, n: 1 });
-    a.total += 1;
-    scheduleOvActRender(); // 스트립만 바뀐다 (위 ovRenderAct 주석)
-  }
-  // 슬래시 명령 출력 → 개요 (v8.43.0). 이 명령들은 LLM 루프를 타지 않고
-  // observation 이벤트 **하나만** 쏘므로, 종전엔 개요에 요청("/sh ls")만 남고
-  // 결과가 안 붙었다(전문에만 존재). 배지 라벨 맵이 곧 **화이트리스트** —
-  // 여기 없는 관찰(일반 도구 결과·@agent 런)은 개요에 들어오지 않는다.
-  // ★서버(web/slash.py)의 tool_name 과 1:1 — 정합은 test_web_server 의
-  //   test_overview_slash_output_allowlist 가 교차 고정한다.
-  var OV_SLASH_TOOLS = {
-    sh: "⚡ sh",
-    help: "/help",
-    compact: "/compact",
-    skills: "/skills",
-    agents: "@agents",
-  };
-  function ovOnSlashOutput(d) {
-    if (!d || d.task_id) return; // 메인 스코프만
-    var label = OV_SLASH_TOOLS[d.tool_name || ""];
-    if (!label) return; // 화이트리스트 밖 = 개요 미표시(종전 동작)
-    ovEntries.push({
-      kind: "resp",
-      text: d.content || "",
-      reasoning: "",
-      answers: [],
-      status: "done",
-      source: label,
-      mono: true, // 마크다운 없이 그대로 + 고정폭
-      ok: d.success !== false,
-    });
-    ovCap();
-    scheduleOvRender();
-  }
-  // 런-레벨 실패 → 개요 (v8.44.0). turn_error 는 ① LLM 호출 실패(모델 없음·
-  // 서버 다운 등) ② 워커 예외 ③ 워커 크래시 — 셋뿐이고 전부 "이 런은 끝났다"는
-  // 치명 신호다. 종전엔 **전문(타임라인)에만** 카드가 떠서, 기본 뷰인 개요만
-  // 보는 사용자에겐 요청만 남고 아무 답도 안 오는 것처럼 보였다(실사고: 보드
-  // 게시글이 서버에 없는 모델로 고정돼 모든 호출이 404 났는데 개요는 무반응).
-  // 서브에이전트 스코프(task_id)는 제외 — 그 실패는 부모에게 관찰로 전달된다.
-  function ovOnTurnError(d) {
-    if (!d || d.task_id) return;
-    ovEntries.push({
-      kind: "resp",
-      text: d.content || "",
-      reasoning: "",
-      answers: [],
-      status: "done",
-      source: "⚠ 오류",
-      mono: true, // 원문 그대로(스택/URL/JSON 이 마크다운으로 뭉개지지 않게)
-      ok: false, // ✗ 배지
-    });
-    ovCap();
-    scheduleOvRender();
-  }
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
     ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
     ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
-    scheduleOvRender();
   }
   // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
   // 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
@@ -2308,8 +1886,16 @@
     });
   })();
   // agent 대화 메시지(agent_msg)를 채널 스트림으로 축적 (2단계 E). 주체/대상
-  // 라벨은 **렌더 시점에 해소**한다(ovRender) — replay 시 agent_msg 가 roster 보다
+  // 라벨은 **렌더 시점에 해소**한다 — replay 시 agent_msg 가 roster 보다
   // 먼저 와도 이름이 키로 고정되지 않게.
+  // 채널 스트림의 시각 표시 — 개요 렌더는 사라졌지만 agent_msg 축적이
+  // 여전히 쓴다 (v9.4.0 ②).
+  function ovClock(ts) {
+    var ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
+    if (!ms || isNaN(ms)) return "";
+    var d = new Date(ms);
+    return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
   function ovOnAgentMsg(d) {
     if (!d || !d.key) return;
     var ch = ovChannels[d.key] || (ovChannels[d.key] = []);
@@ -2327,7 +1913,8 @@
       ch.push({ kind: "user", who: d.author || "", text: d.text || "", tm: ovClock(d.ts) });
     }
     if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
-    if (ovActiveChannel === d.key) scheduleOvRender();
+    // v9.4.0 ②: 채널 스트림을 **그리는** 지점은 아직 없다 — 축적만 한다
+    // (채널별 카드 필터링은 ⑥, docs/chat-ui).
   }
   // kill(agent_cleared) → 그 채널 대화·트레이 정리 (resume 재생 중복 방지).
   function ovOnAgentCleared(key) {
@@ -2335,7 +1922,6 @@
     delete ovAskTray[key];
     ovRenderAskTray();
     ovSyncChannels();
-    if (ovActiveChannel === key) scheduleOvRender();
   }
   // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
   // (idle/busy/waiting/dead) + ❓(waiting_ask) + ✕(kill)/↻(resume). 에이전트 상태를
@@ -2405,7 +1991,7 @@
   function ovSetChannel(key) {
     ovActiveChannel = key || "main";
     ovSyncChannels();
-    ovRender();
+    ovApplyChannelInput(); // 입력창 라우팅·플레이스홀더 (표시 전환은 ⑥)
   }
   // 🔍 인스펙터가 열 스코프 = 현재 대화 채널. main → main 스코프, agent → 그
   // agent 의 프롬프트 스냅샷(task_id=agent key). 인스펙터 IIFE 가 읽는다.
@@ -2431,26 +2017,6 @@
     });
     ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
   })();
-  function ovOnScopeStart(d) {
-    if (!d || !d.task_id) return;
-    if (d.kind === "skill") ovSkills[d.task_id] = String(d.label || "skill").replace(/^skill:/, "");
-    if (d.depth === 0) {
-      ovTopScopes[d.task_id] = true; // top-level → complete 수용 대상
-      // 응답 주체 표시명: agent 는 서버가 준 "🤝 <name>", skill 은 "🪄 <name>".
-      // scoped final 카드에 라벨로 붙는다(main 과 구분).
-      ovScopeSrc[d.task_id] =
-        d.kind === "skill"
-          ? "🪄 " + (ovSkills[d.task_id] || "skill")
-          : d.agent || d.label || "agent";
-    }
-    scheduleOvRender();
-  }
-  function ovOnScopeEnd(d) {
-    if (!d || !d.task_id) return;
-    delete ovTopScopes[d.task_id];
-    if (ovSkills[d.task_id]) delete ovSkills[d.task_id];
-    scheduleOvRender();
-  }
 
   /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
    * also scrolls every scrollable ancestor (incl. horizontally) and shoved
@@ -2540,112 +2106,15 @@
       $dock.classList.toggle("expanded");
       this.textContent = $dock.classList.contains("expanded") ? "접기" : "펼치기";
     });
-    // Dock body click = jump to this answer's card in the drawer (same
-    // gesture as clicking the reply arrow in the swimlane).
+    // Dock body click = 이 답변의 카드로 스크롤. v9.4.0 ②: 표면이 하나라
+    // 뷰 전환 없이 스크롤만 하면 된다.
     document.getElementById("d-text").addEventListener("click", function () {
-      setViewMode("detail");
       if (!dockNavTs) return;
       const card = $messages.querySelector('[data-nav-ts="' + dockNavTs + '"]');
       if (card) scrollTimelineTo(card);
     });
   }
 
-  // 개요 응답 블록 → 대응하는 타임라인 카드 해석: data-scope-id(직접 dispatch)면
-  // 스코프 task-group 카드, 아니면 data-nav-ts(메인 응답). "▤ 전체 대화" 점프용.
-  function ovResolveCard(block) {
-    if (!block) return { card: null, taskId: null };
-    const sid = block.getAttribute("data-scope-id");
-    if (sid) {
-      const sel = window.CSS && CSS.escape ? CSS.escape(sid) : sid.replace(/"/g, '\\"');
-      return {
-        card: $messages.querySelector('.card-task-group[data-task-id="' + sel + '"]'),
-        taskId: sid,
-      };
-    }
-    const nts = block.getAttribute("data-nav-ts");
-    return {
-      card: nts ? $messages.querySelector('[data-nav-ts="' + nts + '"]') : null,
-      taskId: null,
-    };
-  }
-
-  // 개요 응답 블록 액션: ⧉ 복사(본문 텍스트) · ▤ 전체 대화(타임라인으로 승격).
-  // navigator.clipboard 는 secure context 전용 → LAN http 에서 미정의라 execCommand 폴백 필수.
-  function ovCopyBlock(block) {
-    if (!block) return;
-    const tx = block.querySelector(".ov-tx");
-    const text = tx ? tx.innerText : "";
-    const btn = block.querySelector(".ov-copy");
-    function flash() {
-      if (!btn) return;
-      const orig = btn.textContent;
-      btn.textContent = "✓ 복사됨";
-      setTimeout(function () {
-        btn.textContent = orig;
-      }, 1200);
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(flash, function () {});
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-        flash();
-      } catch (e) {
-        /* no-op */
-      }
-      document.body.removeChild(ta);
-    }
-  }
-  function ovOpenTimeline(block) {
-    setViewMode("detail");
-    const r = ovResolveCard(block);
-    if (r.card) {
-      if (r.taskId && typeof expandAncestors === "function") expandAncestors(r.taskId);
-      scrollTimelineTo(r.card);
-    } else {
-      scheduleScroll();
-    }
-  }
-
-  // 개요 클릭 위임: ⧉ 복사 / ▤ 전체 대화 버튼만 처리(응답 본문은 이미 인라인 렌더).
-  if ($overview) {
-    $overview.addEventListener("click", function (e) {
-      const copyBtn = e.target.closest(".ov-copy");
-      if (copyBtn) {
-        ovCopyBlock(copyBtn.closest(".ov-block"));
-        return;
-      }
-      const openBtn = e.target.closest(".ov-open");
-      if (openBtn) ovOpenTimeline(openBtn.closest(".ov-block"));
-    });
-  }
-
-  function _setupViewTabs() {
-    // v9.4.0 ①: 흐름 뷰(스윔레인) 제거로 마운트·클릭 점프가 함께 사라지고
-    // 뷰 탭 배선만 남았다 (②에서 이것도 통합된다 — docs/chat-ui).
-    try {
-      localStorage.removeItem("agentcli_team_w");  // 구 사이드 페인 폭
-    } catch (_e) {}
-
-    setViewMode("overview");
-
-    if ($overviewBtn)
-      $overviewBtn.addEventListener("click", function () { setViewMode("overview"); });
-    if ($detailBtn)
-      $detailBtn.addEventListener("click", function () {
-        setDrawer(!drawerOpen); // 전문 = base 위 오버레이 토글
-      });
-    const tdClose = document.getElementById("td-close");
-    if (tdClose)
-      tdClose.addEventListener("click", function () { setDrawer(false); });
-  }
-  _setupViewTabs();
 
   // ── Abort button visibility ────────────────
   // Shown only during ``input_required`` waits (ask answer / confirm
@@ -2694,14 +2163,6 @@
     // we were stopping has finished; busy = a fresh turn started.
     stopRequested = false;
     updateSendEnabled();
-    // Main-lane tail spinner: with the timeline in a drawer this is the
-    // team surface's "main is responding" cue (agents get theirs from
-    // roster state; main's truth is the worker state).
-    // 런 종료(idle) → 활동 스트립 정리(complete 없이 끝난 경우의 안전망).
-    if (!d.busy) {
-      ovAct = null;
-      scheduleOvRender();
-    }
   });
 
   // ── Identity + viewer roster ───────
@@ -3447,9 +2908,6 @@
   function enter() {
     exportMode = true;
     selected.clear();
-    // 선택 체크박스는 #messages 카드에 붙는다 — 개요/흐름 모드에선 #messages 가
-    // 닫힌 전문 드로어 안이라 보이지 않으므로 타임라인을 띄운다(없으면 no-op).
-    if (window.__showTimeline) window.__showTimeline();
     document.body.classList.add("export-mode");
     $bar.hidden = false;
     hideJiraForm();

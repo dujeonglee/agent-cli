@@ -120,33 +120,11 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
-  <!-- Level control: 개요(GLANCE) / 전문(DEEP=timeline drawer).
-       v9.4.0 ①: 흐름(스윔레인) 제거 — 채널 칩이 대체한다(docs/chat-ui).
-       ②에서 개요·전문도 한 뷰로 통합되며 이 컨트롤 자체가 사라진다. -->
-  <div class="view-toggle" id="view-toggle" aria-label="View" role="tablist">
-    <div class="vt-seg">
-      <button class="vt-tab" id="vt-overview" type="button" role="tab" aria-selected="false"
-              title="개요 — 최신 응답·상태 요약">개요</button>
-      <button class="vt-tab" id="vt-detail-toggle" type="button" role="tab" aria-selected="false"
-              title="전문 — 상세 대화(타임라인) 드로어">전문</button>
-    </div>
-  </div>
-  <!-- v8.2.0 inversion: the TEAM swimlane is the primary surface; the full
-       conversation timeline lives in an on-demand drawer (right). Clicking a
-       swimlane bar/arrow or the response dock opens the drawer at that card. -->
-  <div id="content-split">
-    <!-- 개요(GLANCE) 뷰 — 단계 2에서 응답 블록/ambient/스트리밍으로 채움. 기본 hidden. -->
-    <div id="overview" hidden>
-      <div class="ov-placeholder">개요 뷰 — 준비 중 (최신 응답·상태 요약이 여기 표시됩니다)</div>
-    </div>
-    <aside id="timeline-drawer" aria-hidden="true">
-      <div class="td-head">
-        <span class="td-title">▤ 상세 대화</span>
-        <button id="td-close" type="button" class="btn-icon" title="Close">✕</button>
-      </div>
-      <main id="messages"></main>
-    </aside>
-  </div>
+  <!-- v9.4.0 ②: 대화 표면은 #messages 하나 (docs/chat-ui).
+       종전엔 개요(요약) · 전문(드로어) · 흐름(스윔레인) 셋이 같은 대화를 각자
+       그렸고 투명성(도구·reasoning)이 드로어 안에만 있었다. 뷰 토글·드로어·
+       content-split 이 전부 사라지고 타임라인이 곧 본문이다. -->
+  <main id="messages"></main>
   <!-- Response dock: the latest main answer, pinned above the input bar.
        Body click → drawer at that answer's card; 펼치기 only when clamped. -->
   <div id="dock" hidden>

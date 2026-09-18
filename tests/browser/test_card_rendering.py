@@ -27,9 +27,9 @@ LONG_PATH = (
 
 
 def _open_timeline(page, stack):
-    """전문 드로어를 열어 #messages 카드가 보이게 한다(기본 뷰는 개요)."""
+    """v9.4.0 ②: #messages 가 유일한 표면이라 열 드로어가 없다 — goto 만으로
+    카드가 보인다. (이름은 호출부 보존을 위해 유지.)"""
     page.goto(stack.url)
-    page.click("#vt-detail-toggle")
 
 
 def _wait(cond, timeout=8.0):

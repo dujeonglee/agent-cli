@@ -33,10 +33,7 @@ def _build_tall_task_group(stack, page):
             tool_name="read_file",
             success=True,
         )
-    # v8.12.0 부터 기본 뷰가 개요라 타임라인(#messages)은 닫힌 전문 드로어 안에 있다 —
-    # 전문 탭으로 드로어를 열어 카드를 노출시킨다(카드 자체는 뷰와 무관하게 #messages 에
-    # 추가되지만, 접기/스크롤 상호작용을 보려면 보여야 한다).
-    page.click("#vt-detail-toggle")
+    # v9.4.0 ②: #messages 가 유일한 표면 — 드로어를 열 필요가 없다.
     page.wait_for_selector(".card-task-group .task-header", timeout=8000)
 
 

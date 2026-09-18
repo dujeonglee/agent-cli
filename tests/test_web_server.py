@@ -457,19 +457,6 @@ class TestStaticUI:
         assert "static/app.js" in body
         assert "static/style.css" in body
 
-    def test_level_control_wired(self, server_and_client):
-        """v9.4.0 ①: 흐름 뷰 제거 — 레벨 컨트롤은 개요·전문 2세그다.
-        (②에서 이 둘도 하나로 통합되며 컨트롤 자체가 사라진다.)"""
-        _, _, client = server_and_client
-        html = client.get("/").text
-        js = client.get("/static/app.js").text
-        for el_id in ("vt-overview", "vt-detail-toggle"):
-            assert 'id="' + el_id + '"' in html, el_id
-        assert 'id="overview"' in html
-        assert "개요" in html and "전문" in html
-        assert "function setViewMode(" in js
-        assert 'setViewMode("overview")' in js
-
     def test_flow_view_is_gone(self, server_and_client):
         """흐름 뷰(스윔레인) 전면 제거 — 채널 칩이 대체한다(docs/chat-ui §7).
         '이제 없어야 한다'가 계약이라 가드로 남긴다: 되살아나면 삭제한 1825줄의
@@ -520,57 +507,6 @@ class TestStaticUI:
         for gone in ("dpPinCard", "dpPinOverview", "dpFill", "dpClose", ".dp-btn"):
             assert gone not in js, gone
         assert ".detail-panel" not in css
-
-    def test_overview_actions_wired(self, server_and_client):
-        """개요 응답 블록의 ⧉ 복사 · ▤ 전체 대화 는 실제 버튼(핸들러 배선) 이어야
-        한다 — 종전 핸들러 없는 span 이던 '죽은 버튼' 회귀 가드. 복사는 secure
-        context 아닌 LAN http 대비 execCommand 폴백, 전체 대화는 블록 data-nav-ts
-        카드로 점프."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        css = client.get("/static/style.css").text
-        # real buttons (not inert spans) with hookable classes
-        assert '"ov-act ov-copy"' in js and '"ov-act ov-open"' in js
-        # wired handlers exist and are delegated from the overview click listener
-        assert "function ovCopyBlock(" in js
-        assert "function ovOpenTimeline(" in js
-        assert 'e.target.closest(".ov-copy")' in js
-        assert 'e.target.closest(".ov-open")' in js
-        # clipboard fallback for non-secure LAN http (navigator.clipboard undefined)
-        assert 'document.execCommand("copy")' in js
-        # blocks carry data-nav-ts (main) or data-scope-id (dispatched) so
-        # 전체 대화 / 상세패널 resolve the right timeline card (ovResolveCard).
-        assert "function ovResolveCard(" in js
-        assert 'data-nav-ts="' in js and 'data-scope-id="' in js
-        assert ".ov-act" in css
-
-    def test_overview_activity_strip_wired(self, server_and_client):
-        """실행 중(v8.16.0): 진행 내용(원시 스트림)을 표시하지 않고, 메인 도구 호출을
-        축약한 **활동 스트립**(누적 카운트 + 현재 배치 칩)만 보여준다 — 다음 배치에
-        이전 칩 교체. complete 시 스트립이 사라지고 응답 블록으로 대체.
-
-        스트립 정리 주체는 **worker_state idle 하나** (v8.42.4): 종전엔
-        failed_turn 도 정리했는데, 그건 서버 recovery() 단독 방출 =
-        "포맷 복구 후 **재시도**" 신호라 런 종료가 아니었다 — Invalid JSON
-        한 번에 스트립이 사라지고 카운트가 0 부터 재시작하던 버그의 원인."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        # 도구 호출 축약 + 배치 스트립
-        assert "function ovOnAction(" in js and "function ovAbbrevAction(" in js
-        assert "function ovActHtml(" in js
-        assert "a.batch = []" in js  # 다음 turn = 이전 배치 칩 교체
-        assert "ov-act-strip" in js and "ov-act-n" in js
-        # stream_chunk 는 본문을 쌓지 않고 진행 신호로만(활동 스트립 활성화)
-        assert "function ovActEnsure(" in js
-        # assistant_turn 의 메인 action 을 스트립으로 라우팅
-        at = js.split('es.addEventListener("assistant_turn"', 1)[1].split("\n  });", 1)[
-            0
-        ]
-        assert "ovOnAction(d)" in at
-        # 스트립 정리는 worker_state idle 만 (failed_turn 은 재시도 신호라 미개입 —
-        # 상세 계약은 test_failed_turn_does_not_clear_overview_strip)
-        ws = js.split('es.addEventListener("worker_state"', 1)[1].split("});", 1)[0]
-        assert "ovAct = null" in ws
 
     def test_confirm_mode_api_and_wiring(self, server_and_client):
         """⚡ 자동 승인 토글: GET/POST /api/confirm-mode 로 세션 한정 상태를 읽고/
@@ -663,40 +599,6 @@ class TestStaticUI:
         assert "resolve_thinking_policy" in prov
         assert "if policy is not None:" in prov
 
-    def test_overview_flat_log_model_wired(self, server_and_client):
-        """개요 = 순수 플랫 로그(v8.15.0): 사용자 입력·complete 를 도착 순서대로 append
-        만 하고, 각 항목을 독립 렌더 → 짝짓기(pairing)를 아예 안 한다. '대기' 정체·
-        쿼리↔응답 오귀속이 원천 제거되고, **그룹핑도 ↳ 귀속도 없어 짝지어 보이지
-        않는다**. 모델 B: 직접 실행한 top-level(depth0) /skill·@agent 의 complete
-        (scoped final)도 요약에 기록한다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        # flat append-only state (no stateful pairing vars)
-        assert "var ovEntries" in js
-        assert "ovDone" not in js and "ovPending" not in js  # 옛 pairing 상태 제거
-        # append-only handlers push entries
-        assert 'ovEntries.push({ kind: "user"' in js
-        assert 'kind: "resp"' in js
-        # 순수 플랫 렌더: 항목별 독립 렌더(그룹핑 함수 없음, ↳ 귀속 없음).
-        assert "function ovUserHtml(" in js and "function ovRespHtml(" in js
-        assert "function ovBuildBlocks(" not in js  # 그룹핑 폐기(짝지어 보이던 원인)
-        # 항목별 독립 렌더(채널 라벨 주입 후 ent 로 렌더 — 2단계).
-        assert 'ent.kind === "user" ? ovUserHtml(ent) : ovRespHtml(' in js
-        assert "이 응답의 요청" not in js  # 요청 그룹 박스 제거
-        # model B: top-level scoped completes recorded via ovTopScopes / ovOnScopedFinal
-        assert "function ovOnScopedFinal(" in js
-        assert "ovTopScopes" in js
-        assert "d.depth === 0" in js  # depth-0 → top-level scope 수용 대상
-        # 회신 주체 배지: main final=source:"main", scoped final=agent/skill 이름.
-        assert "ovScopeSrc" in js  # scope_start 에서 주체명 캡처
-        assert 'source: "main"' in js  # 메인 응답 주체
-        assert "ov-src-main" in js and "ov-src-agent" in js  # 배지 렌더
-        # assistant_turn routes main finals AND top-level scoped finals to overview
-        at = js.split('es.addEventListener("assistant_turn"', 1)[1].split("\n  });", 1)[
-            0
-        ]
-        assert "ovOnFinal(d)" in at and "ovOnScopedFinal(d)" in at
-
     def test_agent_channel_bar_and_routing_wired(self, server_and_client):
         """agent-channels 2~4단계: 대화 채널 칩 바(main/agent)로 채널을 고르고,
         개요가 채널별로 스코핑되며, agent 채널이면 입력이 그 agent inbox 로
@@ -721,7 +623,10 @@ class TestStaticUI:
         assert 'ovActiveChannel !== "main"' in sc
         assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
         # 렌더 채널 스코핑 + 대상 배지 스타일
-        assert "ovChannels[ovActiveChannel]" in js
+        # v9.4.0 ②: 개요 렌더가 사라져 ovChannels 를 **읽는** 지점은 아직 없다
+        # (채널별 카드 필터링은 ⑥ — docs/chat-ui). 지금 계약은 "채널 스트림이
+        # 쌓이고 입력이 그 채널로 라우팅된다"까지다.
+        assert "ovChannels[d.key]" in js  # agent_msg → 채널 스트림 축적
         assert "#ov-channels" in css and ".ov-umsg-to" in css
 
     def test_inspector_follows_active_channel(self, server_and_client):
@@ -823,107 +728,6 @@ class TestStaticUI:
         assert '<span class="icon">' in body  # 헤더는 마크업을 담는다
         assert re.search(r'elHtml\(\s*"div",\s*\["obs-head"\]', body), (
             "obs-head 가 elHtml 경유가 아님 — 아이콘 마크업이 문자로 노출된다"
-        )
-
-    def test_failed_turn_does_not_clear_overview_strip(self, server_and_client):
-        """failed_turn 은 **런 종료가 아니라 재시도** 신호다 (서버 recovery()
-        단독 방출) — 개요 활동 스트립(ovAct)을 여기서 비우면 Invalid JSON 한
-        번에 "도구 N회" 카드가 사라지고 카운트가 0 부터 재시작한다(v8.42.4
-        수리). 런 종료 정리는 worker_state idle 이 소유.
-
-        브라우저 가드(tests/browser/test_overview_activity.py)가 실동작을
-        보지만 그 스위트는 옵트인이라, 기본 스위트에도 걸리도록 정적 핀."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-
-        def _code_only(text):
-            """`//` 주석 제거 — 주석에 쓰인 식별자가 오탐을 내지 않게."""
-            import re as _re
-
-            return "\n".join(_re.sub(r"//.*$", "", ln) for ln in text.split("\n"))
-
-        # failed_turn 리스너 **코드**에 ovAct 조작이 없어야 한다
-        start = js.index('es.addEventListener("failed_turn"')
-        body = _code_only(js[start : js.index("es.addEventListener(", start + 10)])
-        assert "ovAct" not in body, "failed_turn 이 개요 활동 스트립을 건드림(회귀)"
-        assert "finalizeStreamingAsFailed" in body  # 타임라인 마감은 유지
-        # 소비자 없는 헬퍼는 소멸 (되살아나면 같은 회귀)
-        assert "ovOnFailed" not in js
-
-        # 런 종료 정리는 worker_state idle 이 여전히 소유 (안전망 제거 금지)
-        ws = js.index('es.addEventListener("worker_state"')
-        ws_body = _code_only(js[ws : js.index("es.addEventListener(", ws + 10)])
-        assert "ovAct = null" in ws_body, "런 종료 시 스트립 정리가 사라짐"
-
-    def test_overview_slash_output_allowlist(self, server_and_client):
-        """슬래시 명령 출력이 개요에 뜨는 화이트리스트가 **서버 tool_name 과
-        1:1** 임을 교차 고정 (v8.43.0).
-
-        이 명령들은 LLM 루프를 타지 않고 observation 이벤트 하나만 쏘므로
-        종전엔 개요에 요청만 남고 결과가 안 붙었다. 프런트가 tool_name 으로
-        게이트하는데, 서버에서 이름을 바꾸면 **조용히 개요에서 사라진다** —
-        두 소스를 여기서 묶어 그 드리프트를 막는다.
-
-        제외 대상: ``agent``(@<agent> 실제 런 — ovOnScopedFinal 이 이미 개요에
-        싣는다, 넣으면 이중 표시)와 not-found 에러(tool_name 이 동적)."""
-        import re
-        from pathlib import Path
-
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-
-        # 프런트 화이트리스트 추출
-        block = js.split("var OV_SLASH_TOOLS = {", 1)[1].split("};", 1)[0]
-        front = set(re.findall(r"^\s*([A-Za-z_]+):", block, re.MULTILINE))
-        assert front == {"sh", "help", "compact", "skills", "agents"}, front
-
-        # 서버가 실제로 그 이름으로 쏘는지 (web/slash.py 리터럴)
-        slash_src = (
-            Path(__file__).resolve().parent.parent / "agent_cli/web/slash.py"
-        ).read_text(encoding="utf-8")
-        emitted = set(re.findall(r'tool_name="([a-z]+)"', slash_src))
-        assert front <= emitted, (
-            f"프런트 화이트리스트가 서버 미방출 이름 포함: {front - emitted}"
-        )
-        # 실제 런(@agent 결과)은 개요 화이트리스트 밖이어야 한다
-        assert "agent" in emitted and "agent" not in front
-
-    def test_turn_error_reaches_overview(self, server_and_client):
-        """런-레벨 실패(turn_error)가 **개요에도** 실린다 (v8.44.0).
-
-        turn_error 는 LLM 호출 실패·워커 예외·워커 크래시 3곳에서만 나오는
-        치명 신호인데, 종전엔 전문 타임라인 카드로만 떠서 기본 뷰(개요)만
-        보는 사용자에겐 "요청만 남고 무반응"으로 보였다(실사고: 서버에 없는
-        모델로 고정된 게시글이 모든 호출 404). 전문 카드는 유지 + 개요 추가."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        start = js.index('es.addEventListener("turn_error"')
-        body = js[start : js.index("es.addEventListener(", start + 10)]
-        assert "renderError(d)" in body  # 전문 카드 유지(대체 아님)
-        assert "ovOnTurnError(d)" in body  # 개요 추가
-        fn = _js_fn_body(js, "ovOnTurnError")
-        assert "d.task_id" in fn  # 서브에이전트 스코프 제외
-        assert "mono: true" in fn and "ok: false" in fn  # 원문 그대로 + ✗ 배지
-
-    def test_overview_slash_output_rendered_raw(self, server_and_client):
-        """슬래시 출력 블록은 **마크다운을 태우지 않는다**(셸 출력의 `**`/`|`/`#`
-        이 뭉개지지 않게) + 실패는 ✗ + [전체 대화] 점프 버튼 미노출(a안 —
-        관찰 카드에 nav 앵커가 없어 해소 불가)."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        body = _js_fn_body(js, "ovRespHtml")
-        # mono 분기: escapeHtml 만 (escapeAndFormat 은 비-mono 경로)
-        assert "e.mono ? escapeHtml(" in body
-        # 실패 배지
-        assert "e.ok === false" in body and "ov-st fail" in body
-        # mono 면 전체 대화 버튼 생략
-        assert "ov-open" in body and "e.mono" in body
-        # 훅이 observation 리스너에 배선
-        assert "ovOnSlashOutput(d)" in js
-        css = client.get("/static/style.css").text
-        assert (
-            ".ov-tx.ov-mono" in css
-            and "max-height" in css.split(".ov-tx.ov-mono", 1)[1][:300]
         )
 
     def test_action_detail_wraps_long_paths(self, server_and_client):
@@ -1057,16 +861,6 @@ class TestStaticUI:
         # 접힌 부모가 라이브 자식을 숨기지 않도록 전용 표시 요소 + 스타일.
         assert "task-sub" in js and ".card-task-group .task-sub" in css
 
-    def test_pane_width_machinery_is_gone(self, server_and_client):
-        """v8.2.0 드로어 레이아웃엔 저장되는 페인 폭이 없다 — v7.26~27 의 폭
-        저장/클램프 기계(카드 폭 0 사고의 진원)는 완전 제거되고, 남은 저장값은
-        시작 시 지운다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        assert "clampPaneW" not in js and "applyPaneW" not in js
-        assert 'localStorage.removeItem("agentcli_team_w")' in js
-        assert 'localStorage.setItem("agentcli_team_w"' not in js
-
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
         resp = client.get("/static/app.js")
@@ -1108,13 +902,11 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#export-bar[hidden]" in css
         assert "#export-jira-form[hidden]" in css
-        # v8.13.2: 선택 체크박스는 #messages 카드에 붙는데 개요/흐름에선 #messages
-        # 가 닫힌 전문 드로어 안이라 안 보인다 → export 진입(enter)이 타임라인을
-        # 띄워야 한다(안 그러면 '뭘 고를지 안 나옴'). 훅 배선 회귀 가드.
-        assert "window.__showTimeline" in js  # 메인 IIFE 가 훅 노출
-        assert (
-            "if (window.__showTimeline) window.__showTimeline();" in js
-        )  # export enter 가 호출
+        # v9.4.0 ②: 표면이 #messages 하나라 "타임라인을 띄우는" 훅이 사라졌다.
+        # 종전엔 개요/흐름 모드에서 #messages 가 닫힌 드로어 안이라 export 진입이
+        # 그걸 열어야 했다(v8.13.2 "뭘 고를지 안 나옴" 수리). 이제 항상 보인다 —
+        # 되살아나면 표면이 다시 갈라졌다는 뜻이라 부재를 고정한다.
+        assert "__showTimeline" not in js
 
     def test_compaction_slider_wired(self, server_and_client):
         # 5.13 compaction 슬라이더 배선 계약: index.html 요소 + app.js 가
@@ -3523,70 +3315,6 @@ class TestRenderCoalescing:
     def _js(self):
         with open("agent_cli/web/static/app.js", encoding="utf-8") as f:
             return f.read()
-
-    def test_coalescers_defined_once(self):
-        js = self._js()
-        assert js.count("function scheduleScroll()") == 1
-        assert js.count("function scheduleOvRender()") == 1
-        assert js.count("function scheduleOvActRender()") == 1
-        # rAF 콜백 몸통은 실함수 직접 호출 (자기재귀 금지)
-        import re
-
-        m = re.search(
-            r"function scheduleScroll\(\).*?requestAnimationFrame\(function \(\) \{(.*?)\}\);",
-            js,
-            re.DOTALL,
-        )
-        assert m and "scrollToBottom();" in m.group(1)
-        m = re.search(
-            r"function scheduleOvRender\(\).*?requestAnimationFrame\(function \(\) \{(.*?)\}\);",
-            js,
-            re.DOTALL,
-        )
-        assert m and "ovRender();" in m.group(1)
-
-    def test_event_paths_use_coalesced_calls(self):
-        """이벤트 훅 경로는 schedule* 만 — 직접 호출은 정의부와 사용자-조작
-        경로(뷰 전환 setViewMode·채널 전환 ovSetChannel), 그리고 ovRenderAct 의
-        플레이스홀더 위임에만 허용."""
-        import re
-
-        js = self._js()
-        direct_ov = [
-            ln.strip()
-            for ln in js.split("\n")
-            if re.search(r"(?<!schedule)(?<!function )ovRender\(\);", ln)
-            and "scheduleOvRender" not in ln
-        ]
-        # 허용 4곳: rAF 콜백 몸통, setViewMode(mode==="overview" 조건),
-        # ovSetChannel, ovRenderAct 의 플레이스홀더→전체렌더 위임
-        assert len(direct_ov) == 4, direct_ov
-        direct_scroll = [
-            ln.strip()
-            for ln in js.split("\n")
-            if re.search(r"(?<!function )scrollToBottom\(\);", ln)
-            and "scheduleScroll" not in ln
-        ]
-        assert len(direct_scroll) == 1, direct_scroll  # rAF 콜백 몸통뿐
-
-    def test_strip_only_events_do_not_full_render(self):
-        """v8.47.0: ``ovOnStream``(청크마다) / ``ovOnAction``(툴콜마다)는 활동
-        스트립 한 줄만 바꾸므로 개요 전체를 innerHTML 로 갈아끼우면 안 된다 —
-        그러면 초당 ~60회 .ov-block 이 재생성돼 [복사]/[전체 대화] 버튼이
-        클릭 불가가 된다(click 은 mousedown/mouseup 이 같은 노드여야 발생).
-        실제 DOM 계약은 tests/browser/test_overview_activity.py 가 검증하고,
-        여기서는 호출 경로가 되돌아가지 않게 못을 박는다."""
-        import re
-
-        js = self._js()
-        for fn in ("ovOnStream", "ovOnAction"):
-            m = re.search(r"function " + fn + r"\(d\) \{(.*?)\n  \}", js, re.DOTALL)
-            assert m, fn
-            body = m.group(1)
-            assert "scheduleOvActRender()" in body, fn
-            assert "scheduleOvRender()" not in body, (
-                f"{fn} 이 전체 렌더로 회귀 — 스트리밍 중 버튼이 죽는다"
-            )
 
 
 class TestInspectorTailSections:

@@ -45,15 +45,19 @@ def _extract_iife_body() -> str:
     """
     src = _APP_JS.read_text(encoding="utf-8")
     # Match the FIRST IIFE (the chat client, which owns the markdown
-    # helpers) and cut at ITS closer — the first ``})();`` after the
-    # opener. app.js now contains additional sibling IIFEs (e.g. the
-    # Prompt Inspector) that touch the DOM at load time; taking the
-    # last closer would pull them into the Node harness, which has no
-    # ``document``.
+    # helpers) and cut at ITS closer. Sibling IIFEs (Prompt Inspector 등)는
+    # 로드 시점에 DOM 을 건드리므로 하네스에 딸려 오면 안 된다.
+    #
+    # 닫는 위치는 **열 0 의** ``})();`` 로 찾는다 (v9.4.0 ②). 종전엔 첫
+    # ``})();`` 를 그냥 찾았는데, 그게 실제로는 app.js 주석 안의 문자열
+    # ("first })(); = main closer" 라고 적힌 그 주석!)에 걸려 있었다 —
+    # 줄 주석이라 뒤가 통째로 삼켜져 우연히 파싱이 됐을 뿐이다. 그 주석을
+    # 지우자 첫 매치가 **중첩 IIFE 의 닫는 줄**로 옮겨가 본문이 불균형해졌다.
+    # 메인 IIFE 의 닫기는 열 0, 중첩은 들여쓰기이므로 이 구분이 견고하다.
     m = re.search(r"\(function \(\) \{\s*(?:\"use strict\";)?\s*", src)
     assert m, "could not find IIFE opener in app.js"
     start = m.end()
-    end = src.find("})();", start)
+    end = src.find("\n})();", start)
     assert end > start, "could not find IIFE closer in app.js"
     return src[start:end]
 
@@ -312,124 +316,6 @@ def _ov_render_html(name, entry, *, is_hero=False):
     if result.returncode != 0:
         raise AssertionError(f"node failed: {result.stderr.strip()}")
     return result.stdout
-
-
-class TestOverviewFlatRender:
-    """개요 = 순수 플랫 로그(v8.15.0): 각 항목(사용자 입력/응답)을 도착 순서대로 독립
-    렌더 — **그룹핑도 귀속(↳)도 없다**(짝짓기 안 함). 여기서 REAL 렌더 함수를 실행해
-    '짝지어 보이는' 요소가 없음을 검증한다."""
-
-    def test_user_line_is_standalone_no_group_box(self):
-        out = _ov_render_html(
-            "ovUserHtml", {"who": "Grumpy Walrus", "text": "하이하이", "tm": "1:36"}
-        )
-        assert 'class="ov-umsg"' in out
-        assert "Grumpy Walrus" in out and "하이하이" in out
-        assert "1:36" in out
-        # 그룹핑/짝짓기 흔적이 없어야 한다.
-        assert "이 응답의 요청" not in out
-        assert "ov-qb" not in out and "ov-q" not in out.replace("ov-umsg", "")
-
-    def test_user_line_agent_wake_shown_without_person_icon(self):
-        # 🤝 agent wake 도 그대로 보여주되(사용자가 원함) 사람(👤) 아이콘은 안 붙인다.
-        out = _ov_render_html(
-            "ovUserHtml", {"who": "🤝 agent", "text": "New agent mail", "tm": ""}
-        )
-        assert "🤝 agent" in out and "New agent mail" in out
-        assert "👤" not in out
-
-    def test_user_line_target_badge_in_agent_channel(self):
-        # agent 채널의 발신 메시지엔 대상 배지(→ 🤝 agent). 없으면 미출력.
-        out = _ov_render_html(
-            "ovUserHtml",
-            {"who": "소연", "text": "안녕", "target": "🤝 pudding", "tm": ""},
-        )
-        assert 'class="ov-umsg-to"' in out and "→ 🤝 pudding" in out
-        plain = _ov_render_html("ovUserHtml", {"who": "소연", "text": "안녕", "tm": ""})
-        assert "ov-umsg-to" not in plain
-
-    def test_response_block_has_no_attribution_or_queries(self):
-        out = _ov_render_html(
-            "ovRespHtml",
-            {"text": "answer", "status": "done", "answers": ["Grumpy Walrus"]},
-            is_hero=True,
-        )
-        assert 'class="ov-block resp' in out and "hero" in out
-        assert "answer" in out
-        # 짝지어 보이게 하던 ↳ 귀속·요청 박스가 없어야 한다.
-        assert "↳" not in out
-        assert "이 응답의 요청" not in out
-
-    def test_response_block_always_done_with_actions(self):
-        # complete 시 한 번에 append → resp 는 항상 done(라이브 타이핑 없음), 액션 포함.
-        out = _ov_render_html("ovRespHtml", {"text": "answer", "reasoning": ""})
-        assert "ov-caret" not in out  # 라이브 타이핑 caret 없음
-        assert "복사" in out and "전체 대화" in out
-
-    def test_response_source_badge_main(self):
-        # 회신 주체 배지: 메인 LLM 은 "main"(muted).
-        out = _ov_render_html("ovRespHtml", {"text": "a", "source": "main"})
-        assert 'class="ov-src ov-src-main"' in out
-        assert ">main<" in out
-
-    def test_response_source_badge_agent(self):
-        # agent 응답은 서버가 준 표시명(🤝 pudding)을 accent 배지로.
-        out = _ov_render_html("ovRespHtml", {"text": "a", "source": "🤝 pudding"})
-        assert 'class="ov-src ov-src-agent"' in out
-        assert "🤝 pudding" in out
-        assert "ov-src-main" not in out
-
-    def test_response_source_badge_absent_when_no_source(self):
-        # source 없으면 배지 미출력(과거 엔트리·회귀 안전).
-        out = _ov_render_html("ovRespHtml", {"text": "a"})
-        assert "ov-src" not in out
-
-
-def _ov_act_html(act):
-    """Run app.js's REAL ovActHtml with an injected ovAct → activity-strip HTML.
-    (진행 중 도구 호출 축약 스트립: 누적 카운트 + 현재 배치 칩.)"""
-    esc = _extract_fn("escapeHtml")
-    # v8.47.0: the strip body is a separate function so the streaming path can
-    # patch it without recreating the wrapper (and the animated pulse inside).
-    body = _extract_fn("ovActBodyHtml")
-    fn = _extract_fn("ovActHtml")
-    harness = (
-        esc + "\n" + body + "\n" + "var ovAct = " + json.dumps(act) + ";\n" + fn + "\n"
-        "process.stdout.write(ovActHtml());\n"
-    )
-    result = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=10, check=False
-    )
-    if result.returncode != 0:
-        raise AssertionError(f"node failed: {result.stderr.strip()}")
-    return result.stdout
-
-
-class TestOverviewActivityStrip:
-    """실행 중 = 진행 내용(원시 스트림) 대신 도구 호출을 축약한 활동 스트립
-    (누적 카운트 + 현재 배치 칩). complete 시 사라지고 응답 블록으로 대체된다."""
-
-    def test_strip_shows_total_and_current_batch_chips(self):
-        out = _ov_act_html(
-            {
-                "total": 3,
-                "turn": 2,
-                "batch": [
-                    {"key": "a", "icon": "✏️", "label": "index.html", "n": 2},
-                    {"key": "b", "icon": "📖", "label": "game.js", "n": 1},
-                ],
-            }
-        )
-        assert "ov-act-strip" in out
-        assert "도구 3회" in out  # 누적 카운트
-        assert "index.html" in out and "×2" in out  # 배치 칩 + 중복 집계
-        assert "game.js" in out
-        # 펄스와 본문이 분리돼 있어야 스트리밍 중 본문만 패치할 수 있다
-        assert "ov-pulse" in out and "ov-act-body" in out
-
-    def test_strip_empty_when_no_activity(self):
-        # ovAct null → 스트립 미표시(전체 로직은 ovRender 가 판단; 여기선 null 가드).
-        assert _ov_act_html(None) == ""
 
 
 class TestAgentIconParity:

@@ -45,7 +45,7 @@
   --on-accent: #ffffff;
   --user-bg: #3c4456; --user-hover: #464f63; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
-  /* Team swimlane role hues — theme-independent categorical lane colors. */
+  /* 역할 색 — 에이전트 라벨·dock 화자 표시에 쓰인다. */
   --h-main: #9aa1ad; --h-worker: #7e8db0; --h-orch: #e0a458;
   --h-writer: #3fb950; --h-reviewer: #a78bfa; --h-tester: #4d8eff; --h-rose: #f85149;
   --h-user: #d29922;
@@ -111,7 +111,6 @@
   --ok-soft-bg: rgba(80,200,120,.22); --ok-soft-border: rgba(80,200,120,.6);
   --focus-ring-shadow: rgba(129,140,248,.18); --time-bg: rgba(249,250,251,.78);
 }
-
 
 * { box-sizing: border-box; }
 html, body {
@@ -637,16 +636,6 @@ footer {
 /* agent-channels: 대화 채널 칩 바 (4단계) + 발신 대상 배지 */
 #ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 #ov-channels:empty { display: none; }
-.ov-ch { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-2); color: var(--text-2); background: var(--surface-2); cursor: pointer; user-select: none; }
-.ov-ch:hover { border-color: var(--border); color: var(--text); }
-.ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
-.ov-ch.dead { opacity: 0.5; }
-.ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
-.ov-ch-q { color: var(--warn); }
-.ov-ch.on .ov-ch-q { color: var(--on-accent); }
-.ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
-.ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
-.ov-umsg-to { color: var(--accent-soft-text); font-weight: 600; font-size: 11px; }
 #input {
   flex: 1;
   resize: vertical;
@@ -1422,145 +1411,12 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   #viewers { max-width: 50vw; }
 }
 
-
-/* ── Team swimlane (Phase 3) — role hue tokens live in the top :root block;
-   everything here is var()-based so it recolors with the theme. */
-/* 상세 대화 드로어 토글 (▤) — always visible; pressed = drawer open. */
-.view-toggle {
-  display: flex; align-items: center; gap: 6px; padding: 8px 16px 0;
-}
-.vt-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
-.vt-tab {
-  appearance: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer;
-  font: inherit; font-size: 12.5px; font-weight: 550; padding: 5px 13px; border-radius: 7px;
-  transition: color .14s, background .14s;
-}
-.vt-tab:hover { color: var(--text); }
-.vt-tab[aria-pressed="true"],
-.vt-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
-.vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* v8.2.0 layout inversion: the TEAM view is the primary surface (full width);
-   the timeline is an on-demand DETAIL DRAWER sliding in from the right —
-   opened by the ▤ 상세 대화 toggle, a swimlane bar/arrow click, or the
-   response dock. ``position: relative`` anchors the absolute drawer. */
-/* overflow-x:hidden clips the closed #timeline-drawer (position:absolute,
-   translateX off-canvas right) so its wide content can't add page-level
-   horizontal scroll. Vertical unaffected: #overview owns its own scroll. */
-#content-split { display: flex; flex: 1; min-height: 0; position: relative; overflow-x: hidden; --drawer-w: min(56%, 640px); }
-/* Team view container — the vertical scroll surface (time flows DOWN). */
-/* 개요(GLANCE) 뷰 — v9.4.0 ① 이후 유일한 base surface. */
-#overview {
-  flex: 1; overflow: auto; padding: 0 14px 20px; min-height: 0; min-width: 0;
-}
-#overview[hidden] { display: none; }
-.ov-placeholder {
-  color: var(--text-2); font-size: 13.5px; text-align: center;
-  margin-top: 48px; padding: 0 20px;
-}
 /* 에이전트 상태 dot — 채널 칩(agent 탭) 안에 표시(v8.33.0) */
-.ov-ch .ov-dot { flex: none; }
-.ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.ov-dot.b { background: var(--warn); } .ov-dot.i { background: var(--ok); }
-.ov-dot.w { background: var(--cyan); } .ov-dot.x { background: var(--text-2); }
-/* 응답 블록 (누적 쿼리 → hero) */
-.ov-block { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; margin-bottom: 10px; transition: box-shadow .25s, border-color .25s, opacity .3s; }
-.ov-block.past { opacity: .58; }
-.ov-block.hero { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft-bg); }
-/* 사용자 입력 = 독립된 채팅 로그 평문 줄(그룹핑·박스 없음) */
-.ov-umsg { font-size: 13.5px; color: var(--text); padding: 8px 4px 2px; word-break: break-word; }
-.ov-umsg .w { color: var(--accent); font-size: 12px; font-weight: 600; }
-.ov-umsg .tm { color: var(--muted); font-size: 10.5px; margin-left: 6px; }
-/* 응답 블록(독립) */
-.ov-block.resp { padding: 8px 14px 12px; }
-.ov-he { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 6px; min-height: 14px; }
-.ov-st { margin-left: auto; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; }
-.ov-st.gen { color: var(--warn); } .ov-st.done { color: var(--ok); } .ov-st.wait { color: var(--muted); }
-.ov-st.fail { color: var(--fail); }
-/* 회신 주체 배지: main=조용한 muted, agent/skill=accent 로 눈에 띄게 */
-.ov-src { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; letter-spacing: .02em; line-height: 1.6; border: 1px solid var(--border-2); white-space: nowrap; }
-.ov-src-main { color: var(--muted); background: var(--surface-2); }
-.ov-src-agent { color: var(--accent-soft-text); background: var(--accent-soft-bg); border-color: transparent; }
-.ov-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: inline-block; animation: ov-pulse 1.1s ease-in-out infinite; flex: none; }
-@keyframes ov-pulse { 0%,100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
-/* 활동 스트립: 실행 중 도구 호출 축약(누적 카운트 + 현재 배치 칩) */
-.ov-act-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 6px 0 4px; padding: 7px 12px; border: 1px dashed var(--accent-soft-border); border-radius: 10px; background: var(--accent-soft-bg); font-size: 12.5px; color: var(--text-2); }
-.ov-act-n { font-weight: 700; color: var(--accent-soft-text); }
-.ov-act-now { display: inline-flex; flex-wrap: wrap; gap: 5px; }
-.ov-chip { font-size: 12px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; }
-.ov-tx { font-size: 15px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
-/* hero 마크다운 (escapeAndFormat — 타임라인 .final 과 동일 렌더) */
-.ov-tx pre.code { background: var(--code-bg); color: var(--code-fg); padding: 9px 12px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; margin: 8px 0; }
-.ov-tx code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: .92em; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; }
-.ov-tx pre.code code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
-.ov-tx h1, .ov-tx h2, .ov-tx h3 { margin: 12px 0 6px; line-height: 1.3; font-weight: 640; }
-.ov-tx h1 { font-size: 1.25em; } .ov-tx h2 { font-size: 1.14em; } .ov-tx h3 { font-size: 1.05em; }
-.ov-tx ul, .ov-tx ol { margin: 6px 0; padding-left: 1.4em; }
-.ov-tx li { margin: 2px 0; }
-.ov-tx table { border-collapse: collapse; margin: 8px 0; font-size: .95em; }
-.ov-tx th, .ov-tx td { border: 1px solid var(--border); padding: 4px 8px; }
-/* 슬래시 명령 출력(/sh 등) — 마크다운 없이 "그대로": 고정폭 + 개행 보존
-   (.ov-tx 의 pre-wrap 상속). 요약이 통째로 밀리지 않게 높이 상한 + 스크롤
-   — 타임라인 관찰 카드(.obs-body, 240px)와 동형 정책. */
-.ov-tx.ov-mono {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 12.5px;
-  line-height: 1.5;
-  max-height: 260px;
-  overflow-y: auto;
-  background: var(--surface-2);
-  padding: 8px 10px;
-  border-radius: 6px;
-}
-.ov-caret { display: inline-block; width: .5em; height: 1.05em; vertical-align: -.16em; background: var(--accent); margin-left: 1px; border-radius: 1px; animation: ov-blink 1s steps(1) infinite; }
-@keyframes ov-blink { 50% { opacity: 0; } }
-.ov-acts { display: flex; gap: 8px; margin-top: 10px; }
-.ov-act { font-size: 12px; border: 1px solid var(--border); border-radius: 7px; padding: 3px 9px; color: var(--text-2); background: var(--surface-3); cursor: pointer; }
-.ov-act:hover { border-color: var(--accent-soft-border); color: var(--accent-soft-text); background: var(--surface-2); }
-/* 💭 reasoning — 요약 뷰에선 접힘, 펼치면 사고 과정 (답변 위, 무채색 저강조) */
-.ov-re { margin: 4px 0 8px; }
-.ov-re > summary { cursor: pointer; font-size: 12px; color: var(--text-2); user-select: none; list-style: none; }
-.ov-re > summary:hover { color: var(--accent-soft-text); }
-.ov-re > summary::-webkit-details-marker { display: none; }
-.ov-re[open] > summary { margin-bottom: 4px; }
 /* 접힘 상태에서 본문 숨김 — 페이지 CSS 리셋이 UA 기본(details:not([open]) 자식
    숨김)을 덮어써 접혀도 본문이 보이던 것 명시적으로 수정. */
-.ov-re:not([open]) > .ov-re-body { display: none; }
-.ov-re-body { font-size: 13px; line-height: 1.55; color: var(--text-2); border-left: 2px solid var(--border-2); padding: 2px 0 2px 10px; }
-@media (prefers-reduced-motion: reduce) { .ov-caret, .ov-pulse { animation: none; } }
 /* 개요 모드: dock(기존 최신응답 스트립) 숨김 — 개요의 hero 가 대체 */
-body.mode-overview #dock { display: none !important; }
 /* Timeline drawer. Kept in the DOM (transform slide, not display:none) so
    card geometry is measurable the moment a click-nav opens it. */
-#timeline-drawer {
-  position: absolute; top: 0; right: 0; bottom: 0;
-  width: var(--drawer-w, min(56%, 640px));
-  display: flex; flex-direction: column; z-index: 5;
-  background: var(--surface, var(--bg)); border-left: 1px solid var(--border-2);
-  box-shadow: -8px 0 24px var(--shadow);
-  transform: translateX(102%); transition: transform .18s ease;
-}
-#timeline-drawer.open { transform: translateX(0); }
-@media (prefers-reduced-motion: reduce) { #timeline-drawer { transition: none; } }
-/* 전문 드로어는 base 위에 뜨는 사이드 패널(v8.14.0). 개요는 드로어가 열리면 폭을
-   내줘 겹치지 않고 나란히 보인다(개요 보면서 전문 확인). 흐름(스윔레인)은 기존처럼
-   드로어가 위로 오버레이 — 실측·계약 유지. */
-#overview { transition: margin-right .18s ease; }
-body.drawer-open #overview:not([hidden]) { margin-right: var(--drawer-w); }
-@media (prefers-reduced-motion: reduce) { #overview { transition: none; } }
-body.drawer-open .td-head {
-  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-  border-bottom: 1px solid var(--border); background: var(--surface-3, var(--surface));
-  font-size: 12px; color: var(--text-2); flex: none;
-}
-.td-head .td-title { flex: 1; font-weight: 550; }
-#timeline-drawer > main#messages { flex: 1; min-height: 0; }
-/* Narrow screens: the drawer covers the full width (no side-by-side room). */
-@media (max-width: 780px) {
-  #timeline-drawer { width: 100%; }
-  body.drawer-open #overview:not([hidden]) { margin-right: 0; }
-  body.drawer-open }
-
 
 /* ── Response dock — the latest main answer, always visible ── */
 #dock {
@@ -1586,67 +1442,48 @@ body.drawer-open .td-head {
 #dock .d-actions { flex: none; }
 #dock.pulse { animation: dockpulse 1.2s ease-out 1; }
 @keyframes dockpulse { 0% { background: var(--accent-soft-bg); } 100% { background: var(--surface-3, var(--surface)); } }
-/* A timeline card the user navigated to from the swimlane. */
+/* 점프해 온 카드의 하이라이트 (개요 [▤]→ v9.4.0 ② 이후엔 dock 클릭). */
 #messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {
   animation: tv-nav-flash 1.2s ease;
 }
-/* Leave a small gap above a card scrolled to via swimlane click (block:start). */
+/* 점프 시 카드 위에 여백 (block:start). */
 #messages .card-task-group { scroll-margin-top: 10px; }
 @keyframes tv-nav-flash {
   0%, 100% { box-shadow: none; }
   12% { box-shadow: 0 0 0 2px var(--accent); }
 }
-.tv-head {
-  display: block; width: 100%; height: auto;
-  position: sticky; top: 0; z-index: 2;
-  background: var(--bg); border-bottom: 1px solid var(--border);
-}
-.tv-svg { display: block; width: 100%; height: auto; }
-.tv-empty { color: var(--muted); font-size: 13px; padding: 40px 6px; text-align: center; }
-.tv-empty[hidden] { display: none; }
 
-.tv-axis { stroke: var(--border); stroke-dasharray: 1 5; }
-.tv-tick { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
-.tv-base { stroke: var(--border); stroke-width: 1; }
-.tv-chip-bg { fill: var(--surface-2); stroke: var(--border); }
-.tv-lane-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600; fill: var(--text); }
-.tv-lane-role { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
 /* work span = agent's own work (hue set inline). scope spans block the caller: */
-.tv-scope-skill { fill: var(--accent); opacity: .55; }
-.tv-scope-run { fill: var(--h-reviewer); opacity: .8; }
 /* Nesting: a thin stub links a lone child scope to its parent's slot; a fork
    (spine + one tine per member) links a parallel batch that started together. */
-.tv-nest { stroke: var(--border-2); stroke-width: 1; fill: none; }
-.tv-fork { stroke: var(--h-reviewer); stroke-width: 1.2; fill: none; opacity: .75; }
-.tv-batch { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; font-weight: 500; fill: var(--h-reviewer); }
 /* tail status glyphs: spinner while an agent works, green check while idle. */
-.tv-busy { stroke: var(--cyan); }
-.tv-idle { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 700; fill: var(--ok); }
-.tv-wait { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 700; fill: var(--warn); }
-.tv-msg { stroke-width: 1.5; opacity: .6; transition: opacity .12s; }
-.tv-msg-ah { transition: opacity .12s; }
-.tv-msg-hit { stroke: transparent; stroke-width: 11; cursor: pointer; }
 /* Hovering anywhere in a message group highlights THAT message's path +
    arrowhead (an adjacent-sibling selector used to highlight the NEXT arrow). */
-.tv-msg-g:hover .tv-msg { opacity: 1; stroke-width: 2.2; }
 /* main→user complete = dashed reply arrow (solid = request/assign/report). */
-.tv-msg.tv-reply { stroke-dasharray: 4 3; }
 /* Who-label above an arrow (sender nickname / "✓ recipient list"). */
-.tv-msg-label { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; font-weight: 500; fill: var(--muted); }
 /* 👤 marks + name labels on the ONE multiplexed user lane. */
-.tv-user-mark { fill: var(--h-user); cursor: pointer; }
-.tv-user-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 8.5px; fill: var(--h-user); opacity: .85; }
 
 /* "이 막대에 대응하는 카드가 없음" 안내 — 클릭이 조용히 아무것도 안 하면
    고장난 버튼으로 읽힌다(구 세션은 막대만 복구되므로 대상이 없다). */
 
+#ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
+#ov-channels:empty { display: none; }
+.ov-umsg-to { color: var(--accent-soft-text); font-weight: 600; font-size: 11px; }
+/* 대화 채널 칩 (#ov-channels) — v9.4.0 ② 이후 유일하게 남은 ov-* 표면.
+   개요 뷰는 사라졌지만 **채널 전환·에이전트 상태·질문 표시**는 살린다
+   (docs/chat-ui §7: "말을 걸 수 있는 상대"에게만 칩을 준다). */
+.ov-ch { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-2); color: var(--text-2); background: var(--surface-2); cursor: pointer; user-select: none; }
+.ov-ch:hover { border-color: var(--border); color: var(--text); }
+.ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.ov-ch.dead { opacity: 0.5; }
+.ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
+.ov-ch-q { color: var(--warn); }
+.ov-ch.on .ov-ch-q { color: var(--on-accent); }
+.ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
+.ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
+.ov-ch .ov-dot { flex: none; }
+.ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ov-dot.b { background: var(--warn); } .ov-dot.i { background: var(--ok); }
+.ov-dot.w { background: var(--cyan); } .ov-dot.x { background: var(--text-2); }
+
 /* Custom fast tooltip (replaces the slow native <title>). */
-.tv-tip {
-  position: fixed; z-index: 60; pointer-events: none;
-  max-width: 340px; font-size: 11.5px; line-height: 1.4;
-  color: var(--text); background: var(--glass-strong, var(--surface-2));
-  border: 1px solid var(--border-2); border-radius: 7px; padding: 5px 9px;
-  box-shadow: 0 6px 20px var(--shadow, rgba(0,0,0,.4));
-  white-space: pre-wrap; word-break: break-word;
-}
-.tv-tip[hidden] { display: none; }

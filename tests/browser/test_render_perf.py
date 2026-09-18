@@ -36,31 +36,22 @@ import pytest
 
 # ── 계측 스크립트 (페이지 스크립트보다 먼저 실행) ───────────────────
 #
-# ovRender/scrollToBottom 은 IIFE 클로저 안이라 밖에서 못 잡는다. 대신
-# **관측 가능한 효과**를 prototype accessor 에서 정확히 센다:
-#   · ovRender  → ``#overview`` 의 innerHTML 전면 교체
+# scrollToBottom 은 IIFE 클로저 안이라 밖에서 못 잡는다. 대신 **관측 가능한
+# 효과**를 prototype accessor 에서 정확히 센다:
 #   · scrollToBottom → ``#messages`` 의 scrollTop 쓰기
+# v9.4.0 ②: 개요 재작성(innerHTML) 계측은 개요 뷰와 함께 제거 — 카드는 증분
+# append 라 통째 재렌더가 없다.
 # MutationObserver 는 마이크로태스크 배칭 때문에 호출 횟수를 과소계상할
 # 수 있어 쓰지 않는다(회귀를 놓치는 방향의 오차 = 가드로서 치명적).
 _INSTRUMENT = """
-window.__perf = { ovWrites: 0, scrollMsgs: 0, scrollOv: 0 };
+window.__perf = { scrollMsgs: 0 };
 (function () {
-  var ih = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
-  Object.defineProperty(Element.prototype, "innerHTML", {
-    configurable: true,
-    get: ih.get,
-    set: function (v) {
-      if (this.id === "overview") window.__perf.ovWrites++;
-      return ih.set.call(this, v);
-    },
-  });
   var st = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
   Object.defineProperty(Element.prototype, "scrollTop", {
     configurable: true,
     get: st.get,
     set: function (v) {
       if (this.id === "messages") window.__perf.scrollMsgs++;
-      else if (this.id === "overview") window.__perf.scrollOv++;
       return st.set.call(this, v);
     },
   });
@@ -123,8 +114,11 @@ def _wait_settled(page, expected_cards: int, timeout: float = 30.0) -> None:
 
 
 class TestRenderCoalescingRuntime:
-    """스냅샷 재생 시 렌더/스크롤이 **이벤트 수에 비례하지 않는다**는
-    런타임 불변식 — v8.42.0 회귀 가드."""
+    """스냅샷 재생 시 **스크롤 쓰기가 이벤트 수에 비례하지 않는다**는 런타임
+    불변식 — v8.42.0 회귀 가드.
+
+    v9.4.0 ②: 개요 재작성 지표는 개요 뷰와 함께 사라졌다(카드는 증분 append
+    라 통째 재렌더가 없다). scrollTop 병합(scheduleScroll)만 남긴다."""
 
     def test_snapshot_replay_coalesces_render_and_scroll(self, stack, page):
         _seed_snapshot(stack)
@@ -137,7 +131,7 @@ class TestRenderCoalescingRuntime:
         cards = page.evaluate("document.querySelectorAll('#messages > *').length")
         # 여유(headroom) 가시화 — ``-s`` 로 실행 시 상한 대비 실측이 보인다.
         print(
-            f"\n[coalescing] events={_TOTAL_EVENTS} → ovWrites={perf['ovWrites']} "
+            f"\n[coalescing] events={_TOTAL_EVENTS} → "
             f"scrollMsgs={perf['scrollMsgs']} (상한 {_COALESCED_MAX}, "
             f"병합 전 기준 ≈{_TOTAL_EVENTS // 2}/{_TOTAL_EVENTS})"
         )
@@ -147,58 +141,11 @@ class TestRenderCoalescingRuntime:
         assert cards == _TOTAL_EVENTS, f"카드 {cards} != 이벤트 {_TOTAL_EVENTS}"
 
         # 2) 개요 전체 재작성은 프레임 수준 상수 (병합 풀리면 ≈120회)
-        assert perf["ovWrites"] <= _COALESCED_MAX, (
-            f"개요 재작성 {perf['ovWrites']}회 — 이벤트당 재렌더로 회귀했을 "
-            f"가능성(스냅샷 {_TOTAL_EVENTS}이벤트, 상한 {_COALESCED_MAX})"
-        )
 
         # 3) 타임라인 스크롤 쓰기(강제 레이아웃)도 상수 (병합 풀리면 ≈240회)
         assert perf["scrollMsgs"] <= _COALESCED_MAX, (
             f"scrollTop 쓰기 {perf['scrollMsgs']}회 — 카드마다 강제 레이아웃으로 "
             f"회귀했을 가능성(상한 {_COALESCED_MAX})"
-        )
-
-    def test_coalescing_preserves_final_state(self, stack, page):
-        """병합이 **마지막 렌더를 삼키지 않는다** — 개요는 최신 응답을
-        보여주고 타임라인은 바닥에 붙어 있어야 한다(병합의 기능 계약)."""
-        expected_last = _seed_snapshot(stack)
-        stack.emit_ready()
-        page.add_init_script(_INSTRUMENT)
-        page.goto(stack.url)
-        _wait_settled(page, _TOTAL_EVENTS)
-
-        # 개요에 최신 응답이 반영됨 (rAF 마지막 1회가 최신 상태를 그린다)
-        ov_text = page.inner_text("#overview")
-        assert expected_last in ov_text, "개요가 최신 응답을 반영하지 않음"
-
-        # 타임라인은 자동 스크롤로 바닥 (앱의 임계 50px 와 동일 기준)
-        dist = page.evaluate(
-            "(() => { const m = document.getElementById('messages');"
-            " return m.scrollHeight - m.scrollTop - m.clientHeight; })()"
-        )
-        assert dist <= 50, f"자동 스크롤이 바닥에 도달하지 않음 (여유 {dist}px)"
-
-    def test_live_stream_does_not_render_per_event(self, stack, page):
-        """접속 **후** 라이브로 도착하는 이벤트도 병합된다 — 스냅샷 경로만
-        고치고 라이브 경로를 놓치는 반쪽 회귀 방지."""
-        stack.emit_ready()
-        page.add_init_script(_INSTRUMENT)
-        page.goto(stack.url)
-        page.wait_for_selector("#overview", timeout=8000)
-        # 접속 후 카운터를 0 으로 리셋하고 라이브 버스트를 쏜다
-        page.evaluate("window.__perf.ovWrites = 0; window.__perf.scrollMsgs = 0;")
-        before_cards = page.evaluate(
-            "document.querySelectorAll('#messages > *').length"
-        )
-        _seed_snapshot(stack, turns=30)
-        _wait_settled(page, before_cards + 30 * _EVENTS_PER_TURN)
-
-        perf = page.evaluate("window.__perf")
-        assert perf["ovWrites"] <= _COALESCED_MAX, (
-            f"라이브 경로 개요 재작성 {perf['ovWrites']}회 — 병합 미적용"
-        )
-        assert perf["scrollMsgs"] <= _COALESCED_MAX, (
-            f"라이브 경로 scrollTop 쓰기 {perf['scrollMsgs']}회 — 병합 미적용"
         )
 
 
