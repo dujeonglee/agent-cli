@@ -458,48 +458,38 @@ class TestStaticUI:
         assert "static/style.css" in body
 
     def test_level_control_wired(self, server_and_client):
-        """관측 UI 재설계 단계 1 배선 (동작은 브라우저 검증): 레벨 컨트롤
-        3세그(개요·흐름·전문) + #overview 컨테이너 + setViewMode 스위칭.
-        흐름=team-view, 전문=timeline drawer 는 기존 동작을 그대로 감싼다."""
+        """v9.4.0 ①: 흐름 뷰 제거 — 레벨 컨트롤은 개요·전문 2세그다.
+        (②에서 이 둘도 하나로 통합되며 컨트롤 자체가 사라진다.)"""
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        for el_id in ("vt-overview", "vt-detail-toggle"):
+            assert 'id="' + el_id + '"' in html, el_id
+        assert 'id="overview"' in html
+        assert "개요" in html and "전문" in html
+        assert "function setViewMode(" in js
+        assert 'setViewMode("overview")' in js
+
+    def test_flow_view_is_gone(self, server_and_client):
+        """흐름 뷰(스윔레인) 전면 제거 — 채널 칩이 대체한다(docs/chat-ui §7).
+        '이제 없어야 한다'가 계약이라 가드로 남긴다: 되살아나면 삭제한 1825줄의
+        테스트 없이 부활하는 셈이다."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # 3-segment level control + overview container present
-        for el_id in ("vt-overview", "vt-flow", "vt-detail-toggle"):
-            assert 'id="' + el_id + '"' in html, el_id
-        assert 'id="overview"' in html
-        assert "개요" in html and "흐름" in html and "전문" in html
-        # single switching entry, wired to all three tabs
-        assert "function setViewMode(" in js
-        assert 'setViewMode("overview")' in js
-        assert 'setViewMode("flow")' in js
-        assert 'setViewMode("detail")' in js
-        # active-state + overview styling
-        assert '.vt-tab[aria-selected="true"]' in css
-        assert "#overview[hidden]" in css
-        # v8.14.0: 전문(timeline)은 개요/흐름과 배타적 탭이 아니라 그 위에 함께 뜨는
-        # 사이드 오버레이. base(개요/흐름) 전환과 드로어 열기가 분리되고, 개요는
-        # 드로어가 열리면 폭을 내줘 나란히 보인다(겹침 없음).
-        assert "function setBaseView(" in js  # base 뷰(개요/흐름) 전환
-        assert "function syncTabs(" in js  # 전문=오버레이라 base 와 동시 활성 가능
-        assert "setDrawer(!drawerOpen)" in js  # 전문 탭 = 오버레이 토글
-        assert 'classList.toggle("drawer-open"' in js  # 개요 폭 양보 트리거
-        assert "body.drawer-open #overview" in css  # 개요 side-by-side 리플로우
-        assert "--drawer-w" in css  # 드로어 폭 = 개요 margin 단일 출처
-
-    def test_flow_view_no_scale_flash_wired(self, server_and_client):
-        """흐름 전환 시 '축 크게 → 정상 작게' 스케일 플래시 제거: (1) team_view 는
-        숨김 중(clientWidth 0) 렌더를 스킵해 작은 viewBox 를 굽지 않고, (2)
-        setBaseView 가 흐름 전환 직후(폭 유효) 즉시 재렌더한다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        tv = client.get("/static/team_view.js").text
-        # (1) 숨김 중 렌더 가드 — clientWidth 0 이면 조기 반환.
-        assert "if (!host.clientWidth) return;" in tv
-        # (2) 흐름 전환 시 재렌더 배선 (개요→ovRender, 흐름→TeamView.render).
-        assert "function setBaseView(" in js
-        assert "TeamView.render()" in js
+        assert 'id="team-view"' not in html
+        assert 'id="vt-flow"' not in html
+        assert "team_model.js" not in html and "team_view.js" not in html
+        # 탭 라벨 — 주석이 아니라 **보이는 텍스트**만 본다 (설명 주석에
+        # "흐름 제거" 라고 쓰면 무딘 매칭은 그걸 잡는다)
+        assert ">흐름<" not in html
+        for gone in ("TeamView", "showNavMiss", "$flowBtn", "$teamView"):
+            assert gone not in js, gone
+        assert "#team-view" not in css and ".tv-nav-miss" not in css
+        # 정적 파일 자체도 사라졌다
+        assert client.get("/static/team_view.js").status_code == 404
+        assert client.get("/static/team_model.js").status_code == 404
 
     def test_queue_delivery_state_wired(self, server_and_client):
         """관측 UI 단계 3 배선: 큐 항목이 조용히 사라지지 않고 전달 상태
@@ -530,11 +520,6 @@ class TestStaticUI:
         for gone in ("dpPinCard", "dpPinOverview", "dpFill", "dpClose", ".dp-btn"):
             assert gone not in js, gone
         assert ".detail-panel" not in css
-        # 흐름 클릭은 드로어 직행(패널 경유 아님).
-        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n    });", 1)[
-            0
-        ]
-        assert 'setViewMode("detail")' in nav and "scrollTimelineTo(card)" in nav
 
     def test_overview_actions_wired(self, server_and_client):
         """개요 응답 블록의 ⧉ 복사 · ▤ 전체 대화 는 실제 버튼(핸들러 배선) 이어야
@@ -1071,38 +1056,6 @@ class TestStaticUI:
         assert "noteScopeStart(" in handler
         # 접힌 부모가 라이브 자식을 숨기지 않도록 전용 표시 요소 + 스타일.
         assert "task-sub" in js and ".card-task-group .task-sub" in css
-
-    def test_swimlane_click_expands_ancestor_chain(self, server_and_client):
-        """스윔레인 바 클릭 내비: 중첩 카드는 부모 body(기본 접힘) 안에 있으므로
-        스크롤 전에 조상 체인을 펼쳐야 한다 — 펼치기가 스크롤 뒤면 타깃이
-        움직여 v7.26.x 에서 고친 '2~3번 클릭' 증상이 재발한다. (v8.15.0: Tier-2
-        패널 폐기 → teamHost 클릭이 다시 드로어로 직행하며 이 순서를 보장한다.)"""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n    });", 1)[
-            0
-        ]
-        assert "expandAncestors(tid)" in nav
-        expand_at = nav.index("expandAncestors(tid)")
-        scroll_at = nav.index("scrollTimelineTo(card)")
-        assert expand_at < scroll_at, "펼치기가 스크롤보다 먼저여야 함"
-        # 바깥→안 순서로 펼침 (expandAncestors 본문).
-        expand_fn = js.split("function expandAncestors(", 1)[1].split("\n  }\n", 1)[0]
-        assert "scopeAncestors(tid)" in expand_fn and ".reverse()" in expand_fn
-
-    def test_click_nav_scrolls_container_not_scroll_into_view(self, server_and_client):
-        """클릭 내비는 타임라인 컨테이너의 scrollTop 만 움직인다 (v8.2.0).
-        scrollIntoView 는 스크롤 가능한 **모든 조상**을 (가로 포함) 움직여서,
-        드로어 레이아웃에선 팀뷰 전체를 옆으로 밀고 닫아도 안 돌아오는 빈
-        공간을 남긴다 — 목업 검증에서 실측된 사고라 계약으로 봉인한다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        scroll_fn = js.split("function scrollTimelineTo(", 1)[1].split("\n  }\n", 1)[0]
-        assert "$messages.scrollTop" in scroll_fn
-        assert "scrollIntoView" not in scroll_fn
-        # 클릭 핸들러 영역 전체에도 scrollIntoView 재유입 금지.
-        nav = js.split('teamHost.addEventListener("click"', 1)[1].split("\n  }\n", 1)[0]
-        assert "scrollIntoView" not in nav
 
     def test_pane_width_machinery_is_gone(self, server_and_client):
         """v8.2.0 드로어 레이아웃엔 저장되는 페인 폭이 없다 — v7.26~27 의 폭

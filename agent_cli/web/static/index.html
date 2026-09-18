@@ -120,14 +120,13 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
-  <!-- Level control (progressive disclosure): 개요(GLANCE) / 흐름(FLOW=swimlane) /
-       전문(DEEP=timeline). 흐름·전문은 기존 동작을 그대로 감싸고, 개요는 신규 요약 뷰. -->
+  <!-- Level control: 개요(GLANCE) / 전문(DEEP=timeline drawer).
+       v9.4.0 ①: 흐름(스윔레인) 제거 — 채널 칩이 대체한다(docs/chat-ui).
+       ②에서 개요·전문도 한 뷰로 통합되며 이 컨트롤 자체가 사라진다. -->
   <div class="view-toggle" id="view-toggle" aria-label="View" role="tablist">
     <div class="vt-seg">
       <button class="vt-tab" id="vt-overview" type="button" role="tab" aria-selected="false"
               title="개요 — 최신 응답·상태 요약">개요</button>
-      <button class="vt-tab" id="vt-flow" type="button" role="tab" aria-selected="true"
-              title="흐름 — 팀 스윔레인(에이전트·메시지·스킬)">흐름</button>
       <button class="vt-tab" id="vt-detail-toggle" type="button" role="tab" aria-selected="false"
               title="전문 — 상세 대화(타임라인) 드로어">전문</button>
     </div>
@@ -140,7 +139,6 @@
     <div id="overview" hidden>
       <div class="ov-placeholder">개요 뷰 — 준비 중 (최신 응답·상태 요약이 여기 표시됩니다)</div>
     </div>
-    <div id="team-view"></div>
     <aside id="timeline-drawer" aria-hidden="true">
       <div class="td-head">
         <span class="td-title">▤ 상세 대화</span>
@@ -284,8 +282,6 @@
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>
     </div>
   </footer>
-  <script src="static/team_model.js"></script>
-  <script src="static/team_view.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

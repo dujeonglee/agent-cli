@@ -108,7 +108,7 @@ def test_resumed_cards_show_original_time_not_now(stack, page):
     assert not any(today in s for s in stamps), (today, stamps)
 
 
-def test_replayed_scope_rebuilds_both_bar_and_card(stack, page):
+def test_replayed_scope_rebuilds_the_card(stack, page):
     """resume 의 scope 재생은 **스윔레인 막대 + 타임라인 카드** 둘 다 복구한다.
 
     v7.21~7.27 은 카드를 건너뛰었다("내부 턴이 flat 재생이라 빈 껍데기") — 그
@@ -146,12 +146,9 @@ def test_replayed_scope_rebuilds_both_bar_and_card(stack, page):
     page.goto(stack.url)
     page.wait_for_selector("#messages .card", timeout=8000)
     time.sleep(0.5)
-    # v8.22.1: 스윔레인은 숨김(개요 기본) 중 렌더를 스킵(플래시 방지)하므로,
-    # DOM 을 검사하기 전에 흐름 뷰로 전환해 렌더시킨다.
-    page.click("#vt-flow")
-    page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
-    # 스윔레인 막대 + 타임라인 카드 둘 다
-    assert page.locator("#team-view .tv-scope-skill").count() >= 1
+    # v9.4.0 ①: 스윔레인 막대 검증은 흐름 뷰와 함께 사라졌다. **카드 복구**는
+    # 그대로 계약이다 — v7.21~7.27 이 카드를 건너뛰어 resume 후 scope 카드가
+    # 0 이던 회귀의 가드라, 흐름 뷰와 무관하게 지킬 값어치가 있다.
     assert page.locator('.card-task-group[data-task-id="sk1"]').count() == 1
     # 이 히스토리엔 task_id 가 없으니 카드는 비어 있고 사유가 적힌다.
     assert (
@@ -161,14 +158,13 @@ def test_replayed_scope_rebuilds_both_bar_and_card(stack, page):
 
 
 class TestResumeRebuildsScopeCards:
-    """resume 후 skill/agent 카드와 클릭-네비 (v7.28.0).
+    """resume 후 skill/agent 카드 복구 (v7.28.0).
 
-    v7.21.0 은 재생 scope 를 **막대만** 복구했다(카드는 "빈 껍데기 방지"로 스킵).
-    결과: resume 하면 flat 카드만 남고 **scope 카드 0** → 스윔레인이 존재하지
-    않는 카드로의 네비게이션을 광고했다(라이브 실측: 막대 23개, 클릭 시
-    scrollTop 불변). 수리=①history 레코드에 `task_id` ②resume 을 **시각 순서
-    단일 스트림**으로 재생(카드가 자기 턴보다 먼저 열림) ③대상 없는 막대 클릭엔
-    안내 표시.
+    v7.21.0 은 재생 scope 를 막대만 복구하고 카드는 "빈 껍데기 방지"로 스킵해,
+    resume 하면 flat 카드만 남고 **scope 카드가 0** 이었다. 수리 = ①history
+    레코드에 `task_id` ②resume 을 **시각 순서 단일 스트림**으로 재생(카드가
+    자기 턴보다 먼저 열림). v9.4.0 ①: 막대·클릭 네비 검증은 흐름 뷰와 함께
+    제거, 카드 복구만 남는다.
     """
 
     @staticmethod
@@ -250,19 +246,6 @@ class TestResumeRebuildsScopeCards:
         # 루트에는 스코프 밖 user 카드 + scope 카드만.
         assert page.locator("#messages > .card").count() == 2
 
-    def test_swimlane_click_navigates_to_the_rebuilt_card(self, stack, page, tmp_path):
-        self._drive(stack, tmp_path, with_task_id=True)
-        page.goto(stack.url)
-        # v8.12.0: 개요가 기본 뷰 → 스윔레인을 보려면 흐름 탭으로 전환.
-        page.click("#vt-flow")
-        page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
-        page.wait_for_selector('.card-task-group[data-task-id="sk1"]', timeout=8000)
-        # v8.15.0: 막대 클릭이 전문 드로어를 열어 카드로 이동·플래시(패널 폐기).
-        page.locator("#team-view .tv-scope-skill").first.click()
-        card = page.locator('.card-task-group[data-task-id="sk1"]')
-        assert _wait(lambda: "tv-nav-hl" in (card.get_attribute("class") or ""))
-        assert page.locator("#team-view .tv-nav-miss:not([hidden])").count() == 0
-
     def test_old_session_card_explains_why_it_is_empty(self, stack, page, tmp_path):
         """task_id 없는 구 세션: 카드는 복구되지만 내용이 없다 → 사유를 밝힌다."""
         self._drive(stack, tmp_path, with_task_id=False)
@@ -273,41 +256,6 @@ class TestResumeRebuildsScopeCards:
         )
         assert note.count() == 1
         assert "히스토리에 없습니다" in (note.inner_text() or "")
-
-    def test_bar_without_a_card_shows_a_notice(self, stack, page, tmp_path):
-        """ⓒ 대상 없는 막대 클릭 = 조용한 무동작 금지."""
-        self._sidecar(tmp_path)
-        stack.renderer._scope_log_path = tmp_path / "scopes.jsonl"
-        stack.emit_ready()
-        # 막대만 복구 (카드 생성 이벤트 없이 스윔레인만) — 옛 동작 재현
-        for _ts, event, data in stack.renderer._scope_replay_events():
-            if event == "scope_start":
-                page_data = dict(data)
-                stack.renderer._emit("agent_roster", {"roster": []}, persistent=False)
-                stack.renderer._emit(
-                    "scope_status",
-                    {"task_id": page_data["task_id"], "status": ""},
-                    persistent=False,
-                )
-        page.goto(stack.url)
-        page.click("#vt-flow")  # v8.12.0: 개요가 기본 → 스윔레인 노출 위해 흐름 전환
-        page.evaluate(
-            """() => {
-                const d = {task_id: 'ghost', kind: 'skill', label: 'gone', ts: 100,
-                          parent: '', depth: 0, replay: true};
-                if (window.TeamView) TeamView.ingest('scope_start', d);
-                if (window.TeamView) TeamView.ingest('scope_end',
-                    {task_id: 'ghost', kind: 'skill', success: true, ts: 200, replay: true});
-                document.getElementById('view-toggle').hidden = false;
-                TeamView.setActive(true);
-            }"""
-        )
-        page.wait_for_selector(
-            "#team-view [data-task-id='ghost']", state="attached", timeout=8000
-        )
-        page.locator("#team-view [data-task-id='ghost']").first.click()
-        assert _wait(lambda: page.locator(".tv-nav-miss:not([hidden])").count() == 1)
-        assert "카드가 없습니다" in page.locator(".tv-nav-miss").inner_text()
 
 
 class TestResumeInnerTurnsInCard:

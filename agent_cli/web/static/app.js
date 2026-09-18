@@ -1343,9 +1343,6 @@
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
-    // NOTE: no TeamView.reset() here — reconnect replays the buffer and
-    // TeamView.ingest dedups replayed events (idempotent). Clearing on every
-    // reconnect used to flash "no team activity yet" mid-run.
     // ``workspace`` is the agent's working directory at session
     // creation time. Showing it in the top bar disambiguates which
     // checkout you're talking to when several LAN sessions are open
@@ -1417,14 +1414,12 @@
   es.addEventListener("agent_roster", function (e) {
     // 상주 에이전트 목록/상태 sticky (P4) — Team 스윔레인 + 개요 채널 바.
     const d = JSON.parse(e.data);
-    if (window.TeamView) TeamView.ingest("agent_roster", d);
     ovOnRoster(d); // 개요: 채널 바 + ask 트레이 + 상태
   });
 
   es.addEventListener("agent_msg", function (e) {
     // 상주 에이전트 대화 메시지 (persistent — 재접속 replay 포함).
     const d = JSON.parse(e.data);
-    if (window.TeamView) TeamView.ingest("agent_msg", d);
     ovOnAgentMsg(d); // 개요: agent 대화 채널 스트림
   });
 
@@ -1536,7 +1531,6 @@
     renderUserMessage(d.content, d.ts);
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
-    if (window.TeamView) TeamView.ingest("user_message", d);
     ovOnUserMsg(d); // 개요: 누적 쿼리
     qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
   });
@@ -1549,7 +1543,6 @@
     // arrow (``answers``), the dock pins the answer text. Action turns and
     // scoped (sub-agent) finals stay out of the team buffer.
     if (!d.task_id && d.final !== undefined) {
-      if (window.TeamView) TeamView.ingest("assistant_turn", d);
       updateDock(d);
       ovOnFinal(d); // 개요: 메인 응답 기록
     } else if (d.task_id && d.final !== undefined) {
@@ -1655,7 +1648,6 @@
   // un-handled group_start and drew no card.
   es.addEventListener("scope_start", function (e) {
     const d = JSON.parse(e.data);
-    if (window.TeamView) TeamView.ingest("scope_start", d);
     // NOTE: a resume-replayed scope (``d.replay``) builds its card too. It used
     // to return here — the reasoning being that the scope's turns replayed flat,
     // so the card would be an empty shell. Since v7.28.0 the resume replay is
@@ -1693,7 +1685,6 @@
 
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
-    if (window.TeamView) TeamView.ingest("scope_end", d);
     noteScopeEnd(d.task_id);
     ovOnScopeEnd(d); // 개요: 스킬 종료
     // A replayed scope whose turns are not in this session's history closes
@@ -1727,44 +1718,17 @@
   // timeline to the matching collapsible card (shared task_id). Named function
   // (not a nested IIFE) so the markdown test harness's "first })(); = main
   // closer" extraction stays valid.
-  /** Transient "no card for this bar" notice at the cursor (auto-hides). */
-  let navMissEl = null;
-  let navMissTimer = 0;
-  function showNavMiss(x, y) {
-    if (!navMissEl) {
-      navMissEl = el("div", ["tv-nav-miss"]);
-      document.body.appendChild(navMissEl);
-    }
-    navMissEl.textContent =
-      "이 실행의 카드가 없습니다 — resume 이전 기록(스윔레인 막대만 복구)";
-    navMissEl.style.left = Math.max(4, Math.min(x + 12, window.innerWidth - 340)) + "px";
-    navMissEl.style.top = Math.max(4, y + 14) + "px";
-    navMissEl.hidden = false;
-    clearTimeout(navMissTimer);
-    navMissTimer = setTimeout(function () {
-      if (navMissEl) navMissEl.hidden = true;
-    }, 2600);
-  }
-
-  // ── v8.2.0 layout inversion: team view = primary surface, timeline =
-  // on-demand drawer, response dock = latest answer. ──
+  // v9.4.0 ①: 흐름 뷰 제거 — base 는 개요 하나, 전문은 그 위의 드로어.
   const $drawer = document.getElementById("timeline-drawer");
   const $detailBtn = document.getElementById("vt-detail-toggle");
   const $overviewBtn = document.getElementById("vt-overview");
-  const $flowBtn = document.getElementById("vt-flow");
   const $overview = document.getElementById("overview");
-  const $teamView = document.getElementById("team-view");
-  // Level control (progressive disclosure). 흐름=swimlane, 전문=timeline drawer,
-  // 개요=summary view. 개요 뷰 완성(단계 2) 전까지 기본은 흐름 — 회귀 안전.
-  let viewMode = "flow"; // base 뷰: overview | flow (전문 타임라인은 이 위에 뜨는 오버레이)
-  let drawerOpen = false; // 전문 드로어 오버레이 상태 — base 와 독립(개요/흐름 어디 위에도)
+  let viewMode = "overview"; // base 뷰는 이제 하나뿐 (②에서 이 변수도 사라진다)
+  let drawerOpen = false; // 전문 드로어 오버레이 상태 — base 와 독립
 
-  // 레벨 컨트롤 탭 상태 반영. 개요/흐름은 배타적 base, 전문은 그 위에 함께 뜨는
-  // 오버레이 토글이라 base 와 동시에 활성일 수 있다(개요 보면서 전문 사이드 열기).
   function syncTabs() {
     if ($overviewBtn)
       $overviewBtn.setAttribute("aria-selected", viewMode === "overview" ? "true" : "false");
-    if ($flowBtn) $flowBtn.setAttribute("aria-selected", viewMode === "flow" ? "true" : "false");
     if ($detailBtn) {
       $detailBtn.setAttribute("aria-selected", drawerOpen ? "true" : "false");
       $detailBtn.setAttribute("aria-pressed", drawerOpen ? "true" : "false");
@@ -1786,18 +1750,15 @@
   // base 뷰 전환(개요 ↔ 흐름). 전문 드로어는 base 위에 뜨는 독립 오버레이라 여기서
   // 닫지 않는다 — 개요를 보면서 전문 사이드를 함께 열어둘 수 있다.
   function setBaseView(mode) {
+    // v9.4.0 ①: 흐름 뷰 제거 — base 는 개요 하나뿐이다. 남은 전환은
+    // 전문 드로어(setDrawer) 이고, 그것도 ②에서 통합되며 사라진다.
     viewMode = mode;
     if ($overview) $overview.hidden = mode !== "overview";
-    if ($teamView) $teamView.style.display = mode === "overview" ? "none" : "";
     // 개요 모드에서는 dock(기존 최신응답 스트립)을 CSS로 숨긴다 — 개요의 응답
     // 블록 hero 가 대체하므로 중복 방지(dock 의 hidden 로직과 충돌 없이).
     document.body.classList.toggle("mode-overview", mode === "overview");
     syncTabs();
     if (mode === "overview") ovRender();
-    // 흐름으로 전환: 방금 display 를 해제해 clientWidth 가 유효하므로 즉시 재렌더.
-    // 숨겨진 동안 render 가드로 스킵된 버퍼 이벤트를 올바른 폭으로 그린다 →
-    // ResizeObserver 를 기다리는 사이의 "축 크게" 스케일 플래시 제거.
-    else if (window.TeamView) TeamView.render();
   }
 
   // 하위호환 단일 진입점. 'detail' = 현재 base 위에 타임라인 오버레이를 연다(더 이상
@@ -2665,69 +2626,26 @@
     });
   }
 
-  function _setupTeamView() {
-    const teamHost = document.getElementById("team-view");
-    if (!teamHost || !window.TeamView) return;
-    TeamView.mount(teamHost);
-    // The team view IS the default surface now — always active, no reveal
-    // gate, no resizable side pane. (The old pane width in localStorage is
-    // obsolete; drop it so it can't confuse a future layout.)
+  function _setupViewTabs() {
+    // v9.4.0 ①: 흐름 뷰(스윔레인) 제거로 마운트·클릭 점프가 함께 사라지고
+    // 뷰 탭 배선만 남았다 (②에서 이것도 통합된다 — docs/chat-ui).
     try {
-      localStorage.removeItem("agentcli_team_w");
+      localStorage.removeItem("agentcli_team_w");  // 구 사이드 페인 폭
     } catch (_e) {}
-    TeamView.setActive(true);
 
-    // 기본 뷰 = 개요(GLANCE) — progressive disclosure 기본값(단계 2). 흐름/전문은
-    // 레벨 컨트롤로 전환. (스윔레인·타임라인 동작은 그대로 보존.)
     setViewMode("overview");
 
     if ($overviewBtn)
       $overviewBtn.addEventListener("click", function () { setViewMode("overview"); });
-    if ($flowBtn)
-      $flowBtn.addEventListener("click", function () { setViewMode("flow"); });
     if ($detailBtn)
       $detailBtn.addEventListener("click", function () {
-        setDrawer(!drawerOpen); // 전문 = base 위 오버레이 토글(개요/흐름 유지)
+        setDrawer(!drawerOpen); // 전문 = base 위 오버레이 토글
       });
     const tdClose = document.getElementById("td-close");
     if (tdClose)
-      tdClose.addEventListener("click", function () {
-        setDrawer(false); // 오버레이만 닫고 현재 base(개요/흐름) 유지
-      });
-
-    // Click a swimlane bar / arrow / user mark → open the drawer and scroll
-    // the timeline to the matching card. Two anchor kinds: scope bars carry
-    // data-task-id (scope cards), user marks + reply arrows carry data-nav-ts
-    // (user/final cards stamped with the same event ts).
-    teamHost.addEventListener("click", (e) => {
-      const t = e.target;
-      const tid = t && t.getAttribute && t.getAttribute("data-task-id");
-      const nts = t && t.getAttribute && t.getAttribute("data-nav-ts");
-      if (!tid && !nts) return;
-      let card = null;
-      if (tid) {
-        const sel =
-          window.CSS && CSS.escape ? CSS.escape(tid) : tid.replace(/"/g, '\\"');
-        card = $messages.querySelector(
-          '.card-task-group[data-task-id="' + sel + '"]',
-        );
-      } else {
-        card = $messages.querySelector('[data-nav-ts="' + nts + '"]');
-      }
-      if (!card) {
-        // ⓒ No card to jump to — say so instead of doing nothing (a session
-        // recorded before the anchor existed replays bars/arrows only). A
-        // silent no-op reads as a broken button.
-        showNavMiss(e.clientX, e.clientY);
-        return;
-      }
-      // 전문 드로어(side-by-side)를 열고 해당 카드로 스크롤·하이라이트.
-      setViewMode("detail");
-      if (tid) expandAncestors(tid);
-      scrollTimelineTo(card);
-    });
+      tdClose.addEventListener("click", function () { setDrawer(false); });
   }
-  _setupTeamView();
+  _setupViewTabs();
 
   // ── Abort button visibility ────────────────
   // Shown only during ``input_required`` waits (ask answer / confirm
@@ -2779,7 +2697,6 @@
     // Main-lane tail spinner: with the timeline in a drawer this is the
     // team surface's "main is responding" cue (agents get theirs from
     // roster state; main's truth is the worker state).
-    if (window.TeamView && TeamView.setMainBusy) TeamView.setMainBusy(d.busy);
     // 런 종료(idle) → 활동 스트립 정리(complete 없이 끝난 경우의 안전망).
     if (!d.busy) {
       ovAct = null;

@@ -1449,11 +1449,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
    horizontal scroll. Vertical unaffected: #overview owns its own scroll. */
 #content-split { display: flex; flex: 1; min-height: 0; position: relative; overflow-x: hidden; --drawer-w: min(56%, 640px); }
 /* Team view container — the vertical scroll surface (time flows DOWN). */
-#team-view {
-  flex: 1; overflow: auto; padding: 0 12px 20px; min-height: 0; min-width: 0;
-}
-#team-view[hidden] { display: none; }
-/* 개요(GLANCE) 뷰 — 흐름(#team-view)을 대체하는 요약 surface. 단계 2에서 채움. */
+/* 개요(GLANCE) 뷰 — v9.4.0 ① 이후 유일한 base surface. */
 #overview {
   flex: 1; overflow: auto; padding: 0 14px 20px; min-height: 0; min-width: 0;
 }
@@ -1552,12 +1548,7 @@ body.mode-overview #dock { display: none !important; }
 #overview { transition: margin-right .18s ease; }
 body.drawer-open #overview:not([hidden]) { margin-right: var(--drawer-w); }
 @media (prefers-reduced-motion: reduce) { #overview { transition: none; } }
-/* 흐름(스윔레인)도 개요처럼 폭을 내줘 나란히 — 오버레이로 가리지 않는다. #team-view
-   의 ResizeObserver 가 폭 변화 시 SVG width 를 재계산하므로 margin 만으로 압축된다
-   (가로 스크롤 아님). transition 은 생략 — 슬라이드 .18s 동안 rAF 마다 SVG 를 다시
-   그리는 비용을 피하고, 즉시 최종 폭으로 리플로우한 뒤 드로어가 빈 자리로 들어온다. */
-body.drawer-open #team-view { margin-right: var(--drawer-w); }
-.td-head {
+body.drawer-open .td-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--border); background: var(--surface-3, var(--surface));
   font-size: 12px; color: var(--text-2); flex: none;
@@ -1568,8 +1559,7 @@ body.drawer-open #team-view { margin-right: var(--drawer-w); }
 @media (max-width: 780px) {
   #timeline-drawer { width: 100%; }
   body.drawer-open #overview:not([hidden]) { margin-right: 0; }
-  body.drawer-open #team-view { margin-right: 0; }
-}
+  body.drawer-open }
 
 
 /* ── Response dock — the latest main answer, always visible ── */
@@ -1649,13 +1639,6 @@ body.drawer-open #team-view { margin-right: var(--drawer-w); }
 
 /* "이 막대에 대응하는 카드가 없음" 안내 — 클릭이 조용히 아무것도 안 하면
    고장난 버튼으로 읽힌다(구 세션은 막대만 복구되므로 대상이 없다). */
-.tv-nav-miss {
-  position: fixed; z-index: 60; max-width: 330px; pointer-events: none;
-  font-size: 12px; line-height: 1.45; padding: 7px 10px; border-radius: 7px;
-  background: var(--warn-soft-bg); color: var(--warn-soft-fg);
-  border: 1px solid var(--warn-soft-border); box-shadow: 0 4px 14px var(--shadow);
-}
-.tv-nav-miss[hidden] { display: none; }
 
 /* Custom fast tooltip (replaces the slow native <title>). */
 .tv-tip {
