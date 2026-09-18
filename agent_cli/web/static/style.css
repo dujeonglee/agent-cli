@@ -539,16 +539,30 @@ main#messages {
   white-space: pre-wrap;
 }
 
-/* Streaming card — shown while raw chunks come in, replaced by the
-   structured ``assistant_turn`` card when the LLM emission settles. */
-.card-streaming {
-  background: var(--surface);
-  border: 1px dashed var(--border-2);
-  padding: 12px;
-  border-radius: 8px;
-  opacity: 0.85;
+/* ── 생성 중 한 줄 (v9.4.0 ④, docs/chat-ui §2) ─────────────────────
+   라이브 타이핑 카드(.card-streaming)를 버리고 이것만 남긴다. 본문이
+   흐르지 않으므로 카드가 자라며 화면이 튀지 않고, 트래픽도 토큰 수와
+   무관하다(서버가 0.5s 틱만 보낸다). 최종 답변 들여쓰기(92px)에 맞춰
+   같은 열에서 시작하므로 답이 도착하면 그 자리에서 대체되는 것처럼 읽힌다. */
+.gen {
+  display: flex; align-items: center; gap: 8px;
+  font: 12px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--warn);
+  padding: 3px 0 3px 92px;
 }
-.card-streaming .streaming {
+.gen-pulse {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--warn);
+  animation: gen-pulse 1.3s ease-in-out infinite;
+}
+@keyframes gen-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .gen-pulse { animation: none; opacity: .85; }
+}
+.gen-tok { color: var(--muted); }
+@media (max-width: 560px) { .gen { padding-left: 0; } }
+/* 거부된 원문은 여전히 <pre> 로 보여준다 — 모델이 무엇을 뱉어 거부됐는지. */
+.card-failed .streaming, .card-streaming .streaming {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
@@ -1309,7 +1323,6 @@ body.export-mode #messages > .card > .export-check {
   cursor: pointer;
   z-index: 2;
 }
-body.export-mode #messages > .card-streaming,
 body.export-mode #messages > .card-failed { padding-left: 0; }
 
 #export-bar {

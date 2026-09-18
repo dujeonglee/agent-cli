@@ -3460,13 +3460,20 @@ class TestStreamResetWeb:
                 payloads.append(p)
         assert payloads and payloads[0].get("task_id") == "task-7"
 
-    def test_frontend_listens_and_discards(self):
-        """이벤트를 내도 프론트가 안 들으면 원래 증상(중복 출력) 그대로다."""
+    def test_frontend_no_longer_needs_to_discard(self):
+        """v9.4.0 ④: 프론트에 **버릴 부분 출력이 없다**.
+
+        v8.61.0 이 이 이벤트를 넣은 이유는 재전송 시 새 토큰이 끊긴 옛 부분
+        뒤에 이어붙는 것이었는데, 라이브 타이핑을 버리면서 그 문제 자체가
+        사라졌다 — 화면에 쌓이는 부분 출력이 없으니 지울 것도 없다.
+
+        서버 방출은 **유지**한다: CLI 마르퀴는 여전히 스트리밍하고 재전송 시
+        제자리 줄을 걷어야 한다(render/minimal.py). 이벤트가 살아 있되 웹만
+        듣지 않는 상태가 계약이다."""
         from pathlib import Path
 
         js = Path("agent_cli/web/static/app.js").read_text()
-        assert 'es.addEventListener("stream_reset"' in js
-        # 폐기여야 한다 — finalizeStreamingAsFailed(마감) 이면 카드가 남는다
-        idx = js.index('es.addEventListener("stream_reset"')
-        handler = js[idx : idx + 300]
-        assert "clearStreamingCard" in handler
+        assert 'es.addEventListener("stream_reset"' not in js
+        # 서버는 계속 낸다 — CLI 쪽 계약(TestStreamResetCli)이 그걸 쓴다
+        web = Path("agent_cli/render/web.py").read_text()
+        assert "def stream_reset" in web

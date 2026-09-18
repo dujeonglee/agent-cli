@@ -245,9 +245,10 @@ agent → 질문  : key=<agent> direction=question               → 에이전�
 
 ## 11. 열린 질문
 
-- **`stream_chunk` 서버 방출**: web 렌더러에서 아예 emit 안 할지(트래픽 절감,
-  단 CLI 와 분기) 프론트에서만 무시할지.
-- **토큰 수 출처**: `token_usage` 는 턴 종료 후 도착한다. 생성 중 실시간
-  카운트는 `thinking_tick` 만 있으므로, 본문 토큰의 실시간 근사를 어디서
-  얻을지(`stream_chunk` 를 세는 대신 주기 이벤트 신설?) — ④에서 결정.
+- ~~**`stream_chunk` 서버 방출**~~ · ~~**토큰 수 출처**~~ — **④에서 해소**:
+  `WebRenderer.stream_chunk` 가 텍스트 대신 **0.5s 스로틀 tick**(`stream_tick`,
+  누적 토큰만)을 낸다. `thinking_chunk`/`thinking_tick` 과 같은 모양이라 둘을
+  `_tick(kind, text)` 하나로 합쳤다. 트래픽이 토큰 수에 비례하던 것이 상수가
+  되고, `token_usage`(턴 종료 후 도착)를 기다릴 필요도 없다. CLI 는
+  `MinimalRenderer.stream_chunk` 라 영향 없음(마르퀴 유지).
 - **접힘 기본값**: 실패한 도구 결과는 펼친 채로 둘지.

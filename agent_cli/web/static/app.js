@@ -59,8 +59,6 @@
   // the ``identity`` event) is used to mark "(you)" in the viewer roster and
   // to own queued messages.
   let myConnId = null;
-  let streamingCard = null;
-  let streamingText = "";
   // ``workerBusy`` mirrors the server's ``worker_state`` event: true
   // means the chat worker is between popping a user message and
   // returning to the next ``dequeue_blocking`` call. While busy,
@@ -457,8 +455,7 @@
   // the main timeline. Without this routing the parallel work would
   // interleave and the user couldn't tell which task is doing what.
   //
-  // Group state per task_id: { card, header, body, statusEl,
-  // streamingCard, streamingText, closed }.
+  // Group state per task_id: { card, header, body, statusEl, closed }.
   const taskGroups = {};
   // task_id → enclosing scope's task_id ("" = top level). Outlives the group
   // entry (which ``closeTaskGroup`` drops) because the CARDS stay in the
@@ -602,8 +599,6 @@
       statusEl: statusEl,
       subEl: subEl,
       meta: meta,
-      streamingCard: null,
-      streamingText: "",
       closed: false,
       toggle: toggleTaskGroup,
     };
@@ -632,14 +627,6 @@
     if (!success && error) {
       const errEl = el("div", ["task-error"], error);
       g.body.appendChild(errEl);
-    }
-    // Drop the streaming card if the task ended mid-stream — the
-    // structured event(s) for the final turn have already replaced
-    // it on the body, or won't arrive at all.
-    if (g.streamingCard) {
-      g.streamingCard.remove();
-      g.streamingCard = null;
-      g.streamingText = "";
     }
     // Release the global entry now that the task is done. The card's
     // DOM stays in the timeline (still visible + expandable via its own
@@ -1089,92 +1076,53 @@
     scheduleScroll();
   }
 
-  // ── Streaming card (transient) ─────────────
-  //
-  // Streaming chunks belong to whoever last fired ``begin_delegate_
-  // task`` on the emitting thread — main thread (no task_id) writes
-  // to the global ``streamingCard`` slot; delegate worker threads
-  // write to their group's per-task streaming slot. This keeps two
-  // parallel workers' raw streams from colliding inside the same
-  // pre element.
-  function ensureStreamingCard(taskId) {
-    if (taskId && taskGroups[taskId]) {
-      const g = taskGroups[taskId];
-      if (g.streamingCard) return;
-      g.streamingCard = el("div", ["card", "card-streaming"]);
-      g.streamingCard.appendChild(el("pre", ["streaming"], ""));
-      g.body.appendChild(g.streamingCard);
-      return;
+  // ── 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) ────────────────────
+  // 스트리밍(라이브 타이핑)을 버리고 **한 줄**만 남긴다:
+  //     ● 생성 중 · 1.2K tokens · 💭 사고 2.1K
+  // 숫자가 오르면 살아 있다는 뜻이고, 사고 토큰이 따로 잡히면 러너웨이가
+  // 바로 보인다. 본문이 흐르지 않으므로 **카드가 자라며 화면이 튀지 않는다**.
+  // 서버는 0.5s 스로틀 tick 만 보내므로 트래픽도 토큰 수와 무관하다.
+  let genEl = null;
+  let genBody = 0;    // 본문 누적 토큰
+  let genThink = 0;   // 사고 누적 토큰
+  // fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
+
+  function showGenerating() {
+    if (!genEl) {
+      genEl = el("div", ["gen"]);
+      genEl.appendChild(el("span", ["gen-pulse"]));
+      genEl.appendChild(el("span", ["gen-label"], "생성 중"));
+      genEl.appendChild(el("span", ["gen-tok"]));
+      $messages.appendChild(genEl);
     }
-    if (streamingCard) return;
-    streamingCard = el("div", ["card", "card-streaming"]);
-    streamingCard.appendChild(el("pre", ["streaming"], ""));
-    $messages.appendChild(streamingCard);
-  }
-  function updateStreamingCard(taskId) {
-    if (taskId && taskGroups[taskId]) {
-      const g = taskGroups[taskId];
-      if (!g.streamingCard) return;
-      g.streamingCard.querySelector(".streaming").textContent = g.streamingText;
-      scheduleScroll();
-      return;
-    }
-    if (!streamingCard) return;
-    streamingCard.querySelector(".streaming").textContent = streamingText;
+    const parts = [];
+    if (genBody) parts.push("· " + fmtTok(genBody) + " tokens");
+    if (genThink) parts.push("· 💭 사고 " + fmtTok(genThink));
+    genEl.querySelector(".gen-tok").textContent = parts.join(" ");
     scheduleScroll();
   }
-  function clearStreamingCard(taskId) {
-    if (taskId && taskGroups[taskId]) {
-      const g = taskGroups[taskId];
-      if (g.streamingCard) {
-        g.streamingCard.remove();
-        g.streamingCard = null;
-        g.streamingText = "";
-      }
-      return;
+
+  function hideGenerating() {
+    if (genEl) {
+      genEl.remove();
+      genEl = null;
     }
-    if (streamingCard) {
-      streamingCard.remove();
-      streamingCard = null;
-      streamingText = "";
-    }
+    genBody = 0;
+    genThink = 0;
   }
-  // Finalize the live streaming card in place as a *failed* emission and
-  // reset the streaming slot. Unlike clearStreamingCard (which removes the
-  // card for the structured assistant_turn to replace), this keeps the
-  // rejected raw text visible and closes the card so the next turn's
-  // stream opens a fresh one — instead of appending to the failed card.
-  function finalizeStreamingAsFailed(taskId, reason, raw) {
+
+  // 거부된 원문(raw)을 실패 카드로. 종전엔 라이브 스트리밍 카드를 마감하는
+  // 경로가 주였으나, 스트리밍이 없어져 **원문 표시**만 남는다 — 모델이 무엇을
+  // 뱉어 거부됐는지는 여전히 봐야 한다.
+  function renderFailedEmission(reason, raw) {
+    if (!raw && !reason) return;
+    const card = el("div", ["card", "card-failed"]);
     // P0-6②: reason/raw 는 모델·서버 원문 — el() 이 textContent 기반이라
     // 원문 그대로 안전(과거 innerHTML 시절 미이스케이프 self-XSS 의 수리 지점).
-    function mark(card) {
-      card.classList.remove("card-streaming");
-      card.classList.add("card-failed");
-      if (reason)
-        card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
-    }
-    if (taskId && taskGroups[taskId]) {
-      const g = taskGroups[taskId];
-      if (g.streamingCard) {
-        mark(g.streamingCard);
-        g.streamingCard = null;
-        g.streamingText = "";
-      }
-      return;
-    }
-    if (streamingCard) {
-      mark(streamingCard);
-      streamingCard = null;
-      streamingText = "";
-    } else if (raw) {
-      // Replay (event_buffer): no live stream card to close — render the
-      // rejected emission as a standalone failed card.
-      const card = el("div", ["card", "card-failed"]);
-      card.appendChild(el("pre", ["streaming"], raw));
-      if (reason)
-        card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
-      $messages.appendChild(card);
-    }
+    if (raw) card.appendChild(el("pre", ["streaming"], raw));
+    if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
+    appendToTimeline(card);
+    scheduleScroll();
   }
 
   // ── Input mode switching ───────────────────
@@ -1535,6 +1483,11 @@
     if (typeof d.tokens !== "number") return;
     const $think = document.getElementById("tok-think");
     if ($think) $think.textContent = " · 💭 " + fmtTok(d.tokens);
+    // v9.4.0 ④: 생성 중 줄에도 싣는다. 사고만 하고 본문이 아직 없는 구간
+    // (러너웨이가 정확히 그 모양이다)에서도 살아있음이 보여야 한다 —
+    // 헤더 배지만 갱신하면 대화 쪽은 조용해 멎은 것처럼 읽힌다.
+    genThink = d.tokens;
+    showGenerating();
   });
 
   es.addEventListener("max_agents", function (e) {
@@ -1618,7 +1571,7 @@
 
   es.addEventListener("assistant_turn", function (e) {
     const d = JSON.parse(e.data);
-    clearStreamingCard(d.task_id);
+    hideGenerating();
     renderAssistantTurn(d);
     // MAIN-timeline finals only: the swimlane draws the main→user reply
     // arrow (``answers``), the dock pins the answer text. Action turns and
@@ -1632,7 +1585,8 @@
 
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
-    finalizeStreamingAsFailed(d.task_id, d.reason, d.raw);
+    hideGenerating();
+    renderFailedEmission(d.reason, d.raw);
     // failed_turn 은 서버의 ``recovery()`` 에서만 나온다 — **포맷 복구 후
     // 같은 런이 재시도**한다는 뜻이지 런 종료가 아니다. 런 종료 정리는
     // worker_state idle 이 소유한다.
@@ -1655,14 +1609,9 @@
     renderStreamStall(JSON.parse(e.data));
   });
 
-  // 재전송 직전 부분 출력 폐기 (v8.61.0). `stream_end` 를 못 쓰는 이유는
-  // 그게 "곧 assistant_turn 이 대체한다"는 뜻이라 카드를 남기기 때문 —
-  // 여기선 대체가 아니라 폐기다. 안 지우면 새 시도의 토큰이 끊긴 옛 부분
-  // 뒤에 이어붙어 같은 문장이 두 번 나온 것처럼 보인다.
-  es.addEventListener("stream_reset", function (e) {
-    const d = JSON.parse(e.data || "{}");
-    clearStreamingCard(d.task_id);
-  });
+  // v9.4.0 ④: stream_reset 리스너 제거 — 버릴 **부분 출력이 없다**.
+  // (v8.61.0 이 재전송 시 이어붙기를 고치려 넣은 것인데, 라이브 타이핑을
+  // 버리면서 그 문제 자체가 사라졌다. 서버 방출은 CLI 마르퀴가 쓰므로 유지.)
 
   // Application-level turn/tool errors arrive as ``turn_error`` — NOT
   // ``error`` — precisely so they don't collide with the native EventSource
@@ -1692,20 +1641,14 @@
     scheduleScroll();
   });
 
-  es.addEventListener("stream_chunk", function (e) {
-    const d = JSON.parse(e.data);
-    if (d.task_id && taskGroups[d.task_id]) {
-      taskGroups[d.task_id].streamingText += d.text;
-    } else {
-      streamingText += d.text;
-    }
-    ensureStreamingCard(d.task_id);
-    updateStreamingCard(d.task_id);
+  // 본문·사고 tick — 토큰 수만 온다(텍스트 없음).
+  es.addEventListener("stream_tick", function (e) {
+    genBody = (JSON.parse(e.data) || {}).tokens || 0;
+    showGenerating();
   });
 
   es.addEventListener("stream_end", function () {
-    // assistant_turn will replace the streaming card with the
-    // structured version; nothing to do here.
+    hideGenerating();
   });
 
   // ── Delegate task lifecycle ────────────────

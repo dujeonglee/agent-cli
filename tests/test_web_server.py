@@ -666,7 +666,9 @@ class TestStaticUI:
         assert "colorizeDiffBody(" in js and 'elHtml("pre", ["obs-body"]' in js
         assert "highlightDangerHtml(data.command" in js
         # 실패 카드: textContent 라 원문 그대로 안전(이중 이스케이프 없음).
-        body = _js_fn_body(js, "finalizeStreamingAsFailed")
+        # v9.4.0 ④: finalizeStreamingAsFailed → renderFailedEmission
+        # (라이브 스트리밍 카드를 마감하던 경로가 사라지고 원문 표시만 남았다).
+        body = _js_fn_body(js, "renderFailedEmission")
         assert '"⚠ " + reason' in body and "escapeHtml(reason)" not in body
         assert '["streaming"], raw' in body and "escapeHtml(raw)" not in body
         # el() 텍스트 사이트에 escapeHtml 잔재(=화면에 &lt; 노출) 금지 —

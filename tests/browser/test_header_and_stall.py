@@ -212,25 +212,25 @@ class TestStreamStallDisplay:
         assert "시도 2/4" in page.inner_text(".stall-resend")
         assert _wait(lambda: page.locator(".stall-line").count() == 0)
 
-    def test_reset_discards_partial_output(self, stack, page):
-        """v8.61.0 — 재전송 전 부분 출력 폐기. 이걸 안 하면 새 시도의 토큰이
-        끊긴 옛 부분 **뒤에 이어붙어** 같은 문장이 두 번 나온 것처럼 보인다.
-        DOM 층이 아니면 확인할 수 없는 부류(누적 변수 + 카드 수명)."""
+    def test_no_partial_output_to_discard(self, stack, page):
+        """v9.4.0 ④: 라이브 타이핑을 버려 **버릴 부분 출력이 없다**.
+
+        v8.61.0 이 이 TC 를 넣은 이유는 재전송 시 새 토큰이 끊긴 옛 부분 뒤에
+        이어붙는 것이었다(그때는 실재현했다). 이제 stream_chunk 가 텍스트를
+        안 실어 보내므로 화면에 쌓이는 부분 출력 자체가 없다 — 대신 **생성 중
+        한 줄**만 뜬다. 라이브 타이핑이 되살아나면 그 버그도 같이 돌아오므로
+        부재를 고정한다."""
         page.goto(stack.url)
         page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
         stack.renderer.stream_chunk("파일을 확인해 보")
-        page.wait_for_selector(".card-streaming", timeout=8000)
-        assert "파일을 확인해 보" in page.inner_text(".card-streaming")
-
-        stack.renderer.stream_reset()
-        assert _wait(lambda: page.locator(".card-streaming").count() == 0)
-
-        # 재전송된 스트림은 **처음부터** — 옛 부분이 앞에 남아 있으면 안 된다.
-        stack.renderer.stream_chunk("파일을 확인해 보겠습니다")
-        page.wait_for_selector(".card-streaming", timeout=8000)
-        txt = page.inner_text(".card-streaming")
-        assert txt.strip() == "파일을 확인해 보겠습니다"
-        assert txt.count("파일을 확인해 보") == 1
+        assert _wait(lambda: page.locator("#messages .gen").count() == 1)
+        # 본문 텍스트는 어디에도 없다
+        assert page.locator(".card-streaming").count() == 0
+        assert "파일을 확인해 보" not in page.inner_text("#messages")
+        # 토큰 수만 보인다
+        assert "tokens" in page.inner_text("#messages .gen")
+        stack.renderer.stream_end()
+        assert _wait(lambda: page.locator("#messages .gen").count() == 0)
 
     def test_clear_leaves_nothing_behind(self, stack, page):
         page.goto(stack.url)

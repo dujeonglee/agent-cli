@@ -225,3 +225,64 @@ class TestRowRhythm:
         h = s.evaluate("e => e.getBoundingClientRect().height")
         assert h < 30, f"요약이 여러 줄로 늘어남 ({h}px)"
         assert s.evaluate("e => e.scrollWidth > e.clientWidth"), "잘리지 않음"
+
+
+class TestGeneratingIndicator:
+    """v9.4.0 ④ (docs/chat-ui §2): 스트리밍을 버리고 **한 줄**만 남긴다 —
+    `● 생성 중 · N tokens · 💭 사고 M`. 숫자가 오르면 살아 있다는 뜻이고,
+    본문이 흐르지 않으므로 카드가 자라며 화면이 튀지 않는다."""
+
+    def _gen(self, page):
+        return page.locator("#messages .gen")
+
+    def test_appears_with_token_count(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.stream_chunk("x" * 4000)  # ≈1K tokens
+        assert _wait(lambda: self._gen(page).count() == 1)
+        txt = self._gen(page).inner_text()
+        assert "생성 중" in txt and "tokens" in txt
+
+    def test_body_text_never_reaches_the_page(self, stack, page):
+        """버린 것의 핵심 — 본문은 오지 않는다(트래픽·화면 튐 둘 다 해결)."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.stream_chunk("비밀스러운 본문 텍스트")
+        assert _wait(lambda: self._gen(page).count() == 1)
+        assert "비밀스러운" not in page.inner_text("#messages")
+
+    def test_thinking_tokens_shown_separately(self, stack, page):
+        """사고 토큰이 따로 잡히면 러너웨이가 바로 보인다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thinking_chunk("t" * 8000)
+        assert _wait(lambda: self._gen(page).count() == 1)
+        assert "💭" in self._gen(page).inner_text()
+
+    def test_disappears_on_stream_end(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.stream_chunk("x" * 400)
+        assert _wait(lambda: self._gen(page).count() == 1)
+        stack.renderer.stream_end()
+        assert _wait(lambda: self._gen(page).count() == 0)
+
+    def test_only_one_indicator_regardless_of_tick_count(self, stack, page):
+        """틱마다 줄이 생기면 그게 곧 스트리밍이다 — 한 줄이 제자리 갱신."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        for _ in range(5):
+            stack.renderer._last_stream_emit = 0.0  # 스로틀 무시하고 강제 방출
+            stack.renderer.stream_chunk("x" * 400)
+        assert _wait(lambda: self._gen(page).count() == 1)
+        assert self._gen(page).count() == 1
+
+    def test_failed_emission_still_shows_raw(self, stack, page):
+        """거부된 원문은 여전히 봐야 한다 — 모델이 무엇을 뱉었는지."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.recovery("{bad json", "형식이 틀렸습니다", "NO_JSON", 1)
+        assert _wait(lambda: page.locator(".card-failed").count() > 0)
+        card = page.locator(".card-failed").first
+        assert "{bad json" in card.inner_text()
+        assert "⚠" in card.inner_text()

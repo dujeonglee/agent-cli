@@ -1790,28 +1790,45 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
-    def stream_chunk(self, text: str) -> None:
-        self._emit("stream_chunk", {"text": text}, persistent=False)
+    # 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) — 본문·사고 **둘 다** 같은
+    # 모양이다: 델타를 누적해 0.5s 스로틀로 tick 만 보낸다.
+    #
+    # 종전 stream_chunk 는 청크마다 **본문 텍스트를 그대로** 실어 보내
+    # 프론트가 라이브 타이핑을 그렸다. 그걸 버린 이유(사용자 결정):
+    #   · 부수적 — "무엇이 생성됐나"는 턴이 끝나면 카드로 온다
+    #   · 카드가 자라며 화면이 튄다
+    #   · 트래픽이 토큰 수에 비례한다 (0.5s 틱이면 상수)
+    # 남는 신호는 "지금 생성 중이고 N 토큰까지 왔다" 하나뿐이고, 그게
+    # 살아있음을 판정하는 데 필요한 전부다(숫자가 오르면 살아 있다).
+    _TICK_THROTTLE_S = 0.5
 
-    def thinking_chunk(self, text: str) -> None:
-        """P5 (v8.56.0): 사고 델타 — 누적 추정 토큰만 0.5s 스로틀로
-        ``thinking_tick`` 이벤트에 실어 상단 토큰바에 思 카운트를 붙인다
-        (본문 카드 미오염, 비영속 — 러너웨이 가시화 전용)."""
+    def _tick(self, kind: str, text: str) -> None:
         import time as _t
 
-        self._think_chars = getattr(self, "_think_chars", 0) + len(text)
+        chars_attr = f"_{kind}_chars"
+        last_attr = f"_last_{kind}_emit"
+        total = getattr(self, chars_attr, 0) + len(text)
+        setattr(self, chars_attr, total)
         now = _t.monotonic()
-        if now - getattr(self, "_last_think_emit", 0.0) < 0.5:
+        if now - getattr(self, last_attr, 0.0) < self._TICK_THROTTLE_S:
             return
-        self._last_think_emit = now
+        setattr(self, last_attr, now)
         # chars/4 — estimate_tokens 와 동일 관례 (import cycle 회피)
-        self._emit(
-            "thinking_tick", {"tokens": self._think_chars // 4}, persistent=False
-        )
+        self._emit(f"{kind}_tick", {"tokens": total // 4}, persistent=False)
+
+    def stream_chunk(self, text: str) -> None:
+        """본문 델타 → ``stream_tick`` (토큰 수만). 본문 텍스트는 보내지 않는다."""
+        self._tick("stream", text)
+
+    def thinking_chunk(self, text: str) -> None:
+        """사고 델타 → ``thinking_tick`` (P5, v8.56.0 — 러너웨이 가시화)."""
+        self._tick("thinking", text)
 
     def stream_end(self) -> None:
-        self._think_chars = 0
-        self._last_think_emit = 0.0
+        self._stream_chars = 0
+        self._thinking_chars = 0
+        self._last_stream_emit = 0.0
+        self._last_thinking_emit = 0.0
         self._emit("stream_end", {}, persistent=False)
 
     # ─── Input methods (Renderer ABC) ───────────────

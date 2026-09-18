@@ -87,8 +87,8 @@ class TestWebRenderer:
         r.thinking_chunk("x" * 400)  # 0.5s 내 → 스로틀
         assert len(events) == 1
         assert events[0][0] == "thinking_tick" and events[0][1]["tokens"] == 100
-        r._last_think_emit = 0.0
+        r._last_thinking_emit = 0.0
         r.thinking_chunk("x" * 400)
         assert len(events) == 2 and events[1][1]["tokens"] == 300
         r.stream_end()  # 리셋 (+stream_end 이벤트)
-        assert r._think_chars == 0
+        assert r._thinking_chars == 0
