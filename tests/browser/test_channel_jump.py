@@ -139,6 +139,76 @@ class TestChannelFilter:
             "main 사용자 입력이 에이전트 채널에 샜다"
         )
 
+    def test_rejected_emission_stays_in_its_own_channel(self, stack, page):
+        """거부된 응답(`⚠ no action`)은 **그걸 낸 주체**의 것이다.
+
+        실사고(사용자 보고): 에이전트에게 물은 답이 거부됐는데 그 빨간 박스가
+        **main 대화**에 떴다. `failed_turn` 은 `_emit` 이 스코프 task_id 를 이미
+        실어 보내는데 리스너가 그걸 흘리고 `appendToTimeline(card)` 로 붙여,
+        채널 없는 루트 카드가 된 탓. `renderUserMessage` 누수와 같은 부류라
+        **루트에 붙는 경로마다** 이 가드가 필요하다."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+
+        # 에이전트 스코프 안에서 난 실패 — 렌더러가 스레드→task_id 를 붙인다.
+        stack.renderer.begin_scope(
+            task_id=f"{AGT}#1",
+            kind="run",
+            label="3+3",
+            agent=AGT,
+            parent="",
+            ctx_dir=f"agents/{AGT}",
+        )
+        stack.renderer.recovery("6입니다.", "형식을 지켜 다시", "no action", 1)
+        card = page.locator("#messages .card-failed")
+        assert _wait(lambda: card.count() > 0)
+
+        # 에이전트 작업 카드 **안**(중첩)이거나, 최소한 main 채널은 아니어야 한다.
+        inside = page.locator(f'[data-task-id="{AGT}#1"] .card-failed').count()
+        assert inside == 1 or card.first.get_attribute("data-ch") == AGT, (
+            "거부된 응답이 낸 주체를 잃었다 — main 대화에 뜬다"
+        )
+        _chip(page, "main").click()
+        assert _wait(lambda: not card.first.is_visible()), "main 에서 보인다"
+
+    def test_switching_channel_lands_at_the_bottom(self, stack, page):
+        """채널을 열면 **그 대화의 맨 아래**로 간다 (사용자 보고).
+
+        필터가 노드를 감추고 드러내면 문서 높이가 확 바뀌는데 스크롤 위치는
+        그대로라, 칩을 누를 때마다 아무 데나 떨어져 규칙을 읽을 수 없었다.
+        대화를 열면 최신부터 보는 게 채팅의 규칙이다."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+
+        for i in range(40):  # main 을 길게 만들어 스크롤이 생기게
+            stack.renderer.final(f"메인 응답 {i}\n" + ("본문 " * 30), turn=i)
+        for i in range(12):
+            stack.renderer.agent_message(
+                key=AGT,
+                direction="in",
+                author="main",
+                text=f"에이전트 요청 {i}\n" + ("본문 " * 30),
+                to=AGT,
+            )
+        assert _wait(lambda: page.locator("#messages > *").count() >= 52)
+
+        def at_bottom():
+            return page.evaluate(
+                "() => { const m = document.getElementById('messages');"
+                " return m.scrollHeight - m.scrollTop - m.clientHeight < 40; }"
+            )
+
+        page.evaluate("document.getElementById('messages').scrollTop = 0")
+        _chip(page, AGT).click()
+        assert _wait(at_bottom), "에이전트 채널을 열었는데 맨 아래가 아니다"
+        page.evaluate("document.getElementById('messages').scrollTop = 0")
+        _chip(page, "main").click()
+        assert _wait(at_bottom), "main 으로 돌아왔는데 맨 아래가 아니다"
+
 
 class TestTrafficRow:
     """왕래(가로로 건너는 것)는 방향과 상대를 싣는다 — 내부 작업과 같은 리듬."""

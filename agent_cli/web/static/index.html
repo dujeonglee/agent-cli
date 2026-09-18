@@ -125,19 +125,6 @@
        그렸고 투명성(도구·reasoning)이 드로어 안에만 있었다. 뷰 토글·드로어·
        content-split 이 전부 사라지고 타임라인이 곧 본문이다. -->
   <main id="messages"></main>
-  <!-- Response dock: the latest main answer, pinned above the input bar.
-       Body click → drawer at that answer's card; 펼치기 only when clamped. -->
-  <div id="dock" hidden>
-    <span class="d-ic">💬</span>
-    <div class="d-body">
-      <div class="d-meta">최신 응답 <span class="d-who" id="d-who"></span><span id="d-time"></span></div>
-      <div class="d-text" id="d-text" title="클릭하면 상세 대화에서 이 답의 위치로 이동"></div>
-    </div>
-    <div class="d-actions">
-      <button id="d-expand" type="button" class="btn-ghost" hidden>펼치기</button>
-    </div>
-  </div>
-
   <!-- Export selection action bar (shown only in export mode) -->
   <div id="export-bar" hidden>
     <label class="exp-all"><input type="checkbox" id="export-all"> All</label>

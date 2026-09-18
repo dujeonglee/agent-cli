@@ -784,7 +784,7 @@
         const bar = el("div", ["stall-bar"]);
         bar.appendChild(el("i"));
         stallLine.appendChild(bar);
-        appendToTimeline(stallLine);
+        appendToTimeline(stallLine, d.task_id);
         scheduleScroll();
       }
       const txt = stallLine.querySelector(".sys-text");
@@ -821,33 +821,17 @@
             ")"
         )
       );
-      appendToTimeline(line);
+      appendToTimeline(line, d.task_id);
       scheduleScroll();
     }
   }
 
   // ── Card renderers ─────────────────────────
 
-  // Timeline-card navigation anchor. The swimlane's user marks / reply arrows
-  // and the dock carry the EVENT's epoch-seconds ts; cards stamp the same
-  // normalized value so click-nav resolves `[data-nav-ts="…"]` directly.
-  // Mirrors TeamModel._toEpoch (numbers pass through, ISO strings parse).
-  function navTs(ts) {
-    if (ts == null) return null;
-    if (typeof ts === "number") return ts;
-    const n = Date.parse(ts);
-    return isNaN(n) ? null : n / 1000;
-  }
-  function stampNavTs(card, ts) {
-    const t = navTs(ts);
-    if (t != null) card.setAttribute("data-nav-ts", String(t));
-  }
-
   function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
     card.appendChild(elHtml("div", ["bubble"], escapeAndFormat(content)));
     stampCard(card, ts);
-    stampNavTs(card, ts);
     // 루트 직결이 아니라 appendToTimeline 경유 — 채널 도장(`data-ch="main"`)을
     // 받아야 한다. 직결이면 도장이 없어 **모든 채널에서 보였다**(v9.4.0 ⑥
     // 실장에서 발견). 에이전트 채널의 사용자 입력은 여기 오지 않는다 —
@@ -978,7 +962,6 @@
       // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
       // 아니라 로그가 된다.
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
-      if (!d.task_id) stampNavTs(card, d.ts);
     } else if (d.action) {
       const tool = d.action.tool_name || "";
       const input = d.action.tool_input || "";
@@ -1206,14 +1189,17 @@
   // 거부된 원문(raw)을 실패 카드로. 종전엔 라이브 스트리밍 카드를 마감하는
   // 경로가 주였으나, 스트리밍이 없어져 **원문 표시**만 남는다 — 모델이 무엇을
   // 뱉어 거부됐는지는 여전히 봐야 한다.
-  function renderFailedEmission(reason, raw) {
+  // ``taskId`` 를 **반드시** 넘긴다. 거부된 응답은 그걸 낸 주체의 것이라, 빠뜨리면
+  // 에이전트가 낸 실패가 main 대화에 빨간 박스로 뜬다(사용자 보고). `_emit` 이
+  // `failed_turn` 에 스코프 task_id 를 이미 실어 보내므로 리스너가 흘리기만 하면 됐다.
+  function renderFailedEmission(reason, raw, taskId) {
     if (!raw && !reason) return;
     const card = el("div", ["card", "card-failed"]);
     // P0-6②: reason/raw 는 모델·서버 원문 — el() 이 textContent 기반이라
     // 원문 그대로 안전(과거 innerHTML 시절 미이스케이프 self-XSS 의 수리 지점).
     if (raw) card.appendChild(el("pre", ["streaming"], raw));
     if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
-    appendToTimeline(card);
+    appendToTimeline(card, taskId);
     scheduleScroll();
   }
 
@@ -1665,20 +1651,12 @@
     const d = JSON.parse(e.data);
     hideGenerating();
     renderAssistantTurn(d);
-    // MAIN-timeline finals only: the swimlane draws the main→user reply
-    // arrow (``answers``), the dock pins the answer text. Action turns and
-    // scoped (sub-agent) finals stay out of the team buffer.
-    if (!d.task_id && d.final !== undefined) {
-      updateDock(d);
-    } else if (d.task_id && d.final !== undefined) {
-    } else if (!d.task_id && d.action) {
-    }
   });
 
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
     hideGenerating();
-    renderFailedEmission(d.reason, d.raw);
+    renderFailedEmission(d.reason, d.raw, d.task_id);
     // failed_turn 은 서버의 ``recovery()`` 에서만 나온다 — **포맷 복구 후
     // 같은 런이 재시도**한다는 뜻이지 런 종료가 아니다. 런 종료 정리는
     // worker_state idle 이 소유한다.
@@ -1772,12 +1750,6 @@
       d.depth || 0,
       d.ctx_dir || "",
     );
-    // Resident-agent request cards carry ``nav_ts`` = the originating request's
-    // timestamp (server-provided, matching the swimlane user-mark/request arrow),
-    // so clicking that arrow navigates to this card. Only resident-agent work
-    // spans (begin_agent_work) set it; delegates/skills have no request anchor.
-    if (d.nav_ts != null && grp && grp.card && !grp.card.hasAttribute("data-nav-ts"))
-      stampNavTs(grp.card, d.nav_ts);
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
@@ -2151,11 +2123,20 @@
   }
 
   // 채널 전환. 표시(필터) · 입력 라우팅 · 칩 활성이 한 지점에서 움직인다.
+  //
+  // **전환하면 그 대화의 맨 아래로 간다.** 필터가 노드를 감추고 드러내면
+  // 문서 높이가 확 바뀌는데, 스크롤 위치는 그대로라 아무 데나 떨어져 있었다
+  // — 칩을 누를 때마다 "어딘지 모를 곳"으로 튀어 규칙을 읽을 수 없었다
+  // (사용자 보고). 대화를 열면 최신부터 보는 게 채팅의 규칙이고, 자동 따라가기도
+  // 함께 되살려 그 채널에 새 줄이 오면 이어서 따라간다.
+  // (점프는 이 뒤에 앵커로 다시 스크롤하므로 영향받지 않는다 — ovJump 참조.)
   function ovSetChannel(key) {
     ovActiveChannel = key || "main";
     ovSyncChannels();
     applyChannelFilter();
     ovApplyChannelInput();
+    autoScrollEnabled = true;
+    scrollToBottom();
   }
 
   // ── 점프 — 엿보기, 네비게이션이 아니다 (docs/chat-ui §5) ────
@@ -2286,59 +2267,6 @@
         }
       });
   }
-
-  // ── Response dock — latest MAIN answer, pinned above the input bar ──
-  const $dock = document.getElementById("dock");
-  let dockNavTs = null;
-  function updateDock(d) {
-    if (!$dock) return;
-    const who = document.getElementById("d-who");
-    // answers present+non-empty → attributed; [] → a 🤝 agent-report run;
-    // missing → pre-attribution session (no claim either way).
-    if (Array.isArray(d.answers) && d.answers.length) {
-      who.textContent = "→ [" + d.answers.join(", ") + "]";
-    } else if (Array.isArray(d.answers)) {
-      who.textContent = "(🤝 보고 처리 — 특정 사용자 답 아님)";
-    } else {
-      who.textContent = "";
-    }
-    const t = navTs(d.ts);
-    document.getElementById("d-time").textContent = t
-      ? new Date(t * 1000).toLocaleTimeString()
-      : "";
-    const dt = document.getElementById("d-text");
-    dt.textContent = d.final || "";
-    dockNavTs = t != null ? String(t) : null;
-    $dock.hidden = false;
-    $dock.classList.remove("expanded");
-    const xb = document.getElementById("d-expand");
-    xb.textContent = "펼치기";
-    // 펼치기 only when the text actually exceeds the 3-line clamp. Modern
-    // Chromium treats line-clamp as REAL truncation (scrollHeight reports the
-    // clamped height), so measure by lifting the clamp for one layout pass.
-    const clamped = dt.clientHeight;
-    dt.style.webkitLineClamp = "unset";
-    const full = dt.scrollHeight;
-    dt.style.webkitLineClamp = "";
-    xb.hidden = !(full > clamped + 1);
-    $dock.classList.remove("pulse");
-    void $dock.offsetWidth;
-    $dock.classList.add("pulse");
-  }
-  if ($dock) {
-    document.getElementById("d-expand").addEventListener("click", function () {
-      $dock.classList.toggle("expanded");
-      this.textContent = $dock.classList.contains("expanded") ? "접기" : "펼치기";
-    });
-    // Dock body click = 이 답변의 카드로 스크롤. v9.4.0 ②: 표면이 하나라
-    // 뷰 전환 없이 스크롤만 하면 된다.
-    document.getElementById("d-text").addEventListener("click", function () {
-      if (!dockNavTs) return;
-      const card = $messages.querySelector('[data-nav-ts="' + dockNavTs + '"]');
-      if (card) scrollTimelineTo(card);
-    });
-  }
-
 
   // ── Abort button visibility ────────────────
   // Shown only during ``input_required`` waits (ask answer / confirm

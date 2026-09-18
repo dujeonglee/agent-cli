@@ -261,6 +261,21 @@ agent → 질문  : key=<agent> direction=question               → 에이전�
 대신 `#messages > [hidden]{display:none!important}` 한 줄로 표면 전체에 못
 박았다 — 앞으로 추가될 카드 클래스도 자동으로 안전하다.
 
+## 8.5. 실사용 보고 — ⑥ 이후 (사용자)
+
+실제로 써 보고 나온 3건. 전부 **TC 가 그린인 상태**에서 나왔다.
+
+| 증상 | 원인 | 수리 |
+|---|---|---|
+| 에이전트에게 물은 답의 거부 표시가 main 에 빨간 박스로 | `failed_turn` 리스너가 `task_id` 를 흘림 | `renderFailedEmission(…, taskId)` — 루트 append 경로는 예외 없이 task_id 를 날라야 한다 |
+| 채널 칩을 누를 때마다 알 수 없는 위치로 스크롤 | 필터가 높이를 바꾸는데 scrollTop 은 그대로 | `ovSetChannel` → 맨 아래 + 자동 따라가기 복구 |
+| "최신 응답" 독이 마지막 카드와 중복 | 전문이 드로어 안이던 시절의 유물 | `#dock` 제거 (+ 유일 소비처였던 `data-nav-ts` 앵커 동반 사망) |
+
+**교훈**: 루트에 카드를 붙이는 경로는 `renderUserMessage`·`renderFailedEmission`
+둘 다 같은 방식으로 새어 나갔다. `appendToTimeline` 이 채널 도장의 단일 지점인
+것은 맞지만, **호출부가 task_id 를 안 주면 소용이 없다**. 새 카드 경로를 만들 때
+"이 카드는 누구 것인가"를 먼저 답해야 한다.
+
 ## 9. Dead code 정리 원칙
 
 각 단계에서 **"이제 아무도 안 쓰는 것"을 같이 지운다** — 나중에 몰아서 하면

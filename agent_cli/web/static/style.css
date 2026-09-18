@@ -1525,33 +1525,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
    card geometry is measurable the moment a click-nav opens it. */
 
 /* ── Response dock — the latest main answer, always visible ── */
-#dock {
-  border-top: 1px solid var(--border); background: var(--surface-3, var(--surface));
-  padding: 9px 14px; display: flex; gap: 10px; align-items: flex-start; flex: none;
-}
-#dock[hidden] { display: none; }
-#dock .d-ic { flex: none; font-size: 13px; margin-top: 1px; }
-#dock .d-body { flex: 1; min-width: 0; }
-#dock .d-meta {
-  font-size: 10.5px; color: var(--muted); letter-spacing: .05em;
-  text-transform: uppercase; margin-bottom: 3px;
-  display: flex; gap: 8px; align-items: center;
-}
-#dock .d-meta .d-who { color: var(--h-user); text-transform: none; letter-spacing: 0; }
-#dock .d-text {
-  font-size: 13px; color: var(--text); overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  cursor: pointer; border-radius: 4px; white-space: pre-wrap; word-break: break-word;
-}
-#dock .d-text:hover { background: var(--accent-soft-bg); box-shadow: 0 0 0 5px var(--accent-soft-bg); }
-#dock.expanded .d-text { display: block; max-height: 220px; overflow-y: auto; }
-#dock .d-actions { flex: none; }
-#dock.pulse { animation: dockpulse 1.2s ease-out 1; }
-@keyframes dockpulse { 0% { background: var(--accent-soft-bg); } 100% { background: var(--surface-3, var(--surface)); } }
-/* 점프해 온 카드의 하이라이트 (개요 [▤]→ v9.4.0 ② 이후엔 dock 클릭). */
-#messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {
-  animation: tv-nav-flash 1.2s ease;
-}
 /* 점프 시 카드 위에 여백 (block:start). */
 #messages .card-task-group { scroll-margin-top: 10px; }
 @keyframes tv-nav-flash {
