@@ -398,19 +398,21 @@
   // (e.g. legacy buffered events) so nothing breaks if the field is missing.
   //
   // 자리는 **둘 중 하나**다 (v9.4.0 ⑥):
-  //   · 보통 카드 → 우상단 코너 배지 (absolute)
-  //   · 꼬리 칸(상대 이름)이 있는 줄을 가진 카드 → **그 줄 안**의 한 칸
-  // 코너 배지는 absolute 라 그 아래 놓이는 줄의 오른쪽 끝(왕래 줄의 상대 칩)과
-  // 겹친다 — 여백을 상수로 비워두는 방식은 배지 폭 추정에 기대 깨지기 쉬웠다
-  // (사용자 지적). 같은 그리드 안에 넣으면 겹칠 자리가 원천적으로 없다.
+  //   · 행(.row)이 있는 카드 → **첫 행 안**의 한 칸 (.row-time)
+  //   · 그 외(사용자 말풍선·시스템 줄·최종답) → 우상단 코너 배지 (.card-time)
+  // 코너 배지는 absolute 라 그 아래 놓이는 줄의 글자를 덮어 **겹쳐 보였다**
+  // (사용자 지적 2회 — 왕래 줄의 상대 칩, 그리고 생각/도구/관찰의 요약).
+  // 여백을 상수로 비워두는 방식은 배지 폭 추정에 기대 깨지기 쉬우므로, 행이
+  // 있으면 같은 그리드 안에 넣는다 — 겹칠 자리가 원천적으로 없다. 행이 없는
+  // 산문 블록만 `--time-w` 로 자리를 비운다.
   function stampCard(cardEl, ts) {
     if (ts == null) return cardEl;
-    const tailRow = cardEl.querySelector(".row.has-tail");
-    const t = el("span", [tailRow ? "row-time" : "card-time"], fmtCardTime(ts));
+    const row = cardEl.querySelector(".row");
+    const t = el("span", [row ? "row-time" : "card-time"], fmtCardTime(ts));
     t.title = fmtCardTimeFull(ts);
-    if (tailRow) {
-      tailRow.classList.add("has-time");
-      tailRow.insertBefore(t, tailRow.querySelector(".x"));
+    if (row) {
+      row.classList.add("has-time");
+      row.insertBefore(t, row.querySelector(".x"));
     } else {
       cardEl.appendChild(t);
     }

@@ -215,16 +215,44 @@ class TestRowRhythm:
         assert fin.is_visible()
         assert "여기 답이 있습니다" in fin.inner_text()
 
-    def test_long_summary_stays_one_line(self, stack, page):
-        """요약이 줄바꿈되면 대화가 통째로 밀린다 — ellipsis 로 자른다."""
+    def test_long_summary_wraps_instead_of_being_clipped(self, stack, page):
+        """긴 요약은 **줄바꿈된다** (v9.4.0 — 사용자 지적으로 방침 전환).
+
+        ③ 에서는 한 줄 고정(ellipsis)이었다. 그런데 잘린 줄은 폭을 아무리 넓혀도
+        다 안 보이고, 생각처럼 **펼칠 본문이 없는 줄은 읽을 방법이 아예 없었다**.
+        대화가 밀리는 것보다 못 읽는 게 나쁘다. 공백 없는 긴 문자열도 끊긴다
+        (`overflow-wrap: anywhere`) — 안 끊으면 그리드 트랙이 밀려 카드가 넘친다."""
         stack.emit_ready()
         _open_timeline(page, stack)
         stack.renderer.action("shell", json.dumps({"command": "echo " + "x" * 400}), 1)
         assert _wait(lambda: self._rows(page).count() > 0)
         s = self._rows(page).first.locator(".s")
+        assert s.evaluate("e => e.scrollWidth <= e.clientWidth + 1"), "여전히 잘린다"
         h = s.evaluate("e => e.getBoundingClientRect().height")
-        assert h < 30, f"요약이 여러 줄로 늘어남 ({h}px)"
-        assert s.evaluate("e => e.scrollWidth > e.clientWidth"), "잘리지 않음"
+        assert h > 30, f"공백 없는 긴 문자열이 줄바꿈되지 않음 ({h}px)"
+
+    def test_timestamp_never_overlaps_row_text(self, stack, page):
+        """시각과 글자가 **겹치지 않는다** (사용자 지적).
+
+        코너 배지(`.card-time`)는 absolute 라 그 아래 행의 글자를 덮었다. 행이
+        있는 카드는 시각을 **같은 그리드 안**(`.row-time`)으로 들여 겹칠 자리를
+        없앤다. 소스로는 안 보이고 기하로만 드러나는 부류."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.observation(
+            "결과 " * 200, turn=1, tool_name="shell", success=True
+        )
+        assert _wait(lambda: self._rows(page).count() > 0)
+        row = self._rows(page).first
+
+        # 행이 있는 카드에 코너 배지가 남아 있으면 그 자체가 회귀다.
+        assert page.locator(".card-observation .card-time").count() == 0
+        summary = row.locator(".s").bounding_box()
+        tm = row.locator(".row-time").bounding_box()
+        assert summary and tm
+        assert summary["x"] + summary["width"] <= tm["x"] + 0.5, (
+            f"요약이 시각 밑으로 들어감: s={summary}, time={tm}"
+        )
 
 
 class TestGeneratingIndicator:

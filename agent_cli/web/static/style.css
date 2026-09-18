@@ -52,6 +52,9 @@
   /* 중첩 블록 레일 — 보라=skill(🪄), amber=inline agent(🦀). 팔레트 테마가
      덮지 않는 의미색이라 여기 한 번만 둔다(docs/chat-ui §3). */
   --scope-skill: #a78bfa; --scope-inline: #e0a458;
+  /* 코너 시각 배지가 차지하는 폭 — 고정폭 포맷 `260918 22:53:21` 기준.
+     행이 없어 시각을 그리드로 들일 수 없는 산문 블록이 이만큼 자리를 비운다. */
+  --time-w: 104px;
   --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
   --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
@@ -450,14 +453,17 @@ main#messages {
   letter-spacing: .03em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 요약은 **한 줄 고정** — 길면 잘린다. 전문이 필요하면 펼치면 되므로
-   줄바꿈으로 대화를 밀어낼 이유가 없다. */
+/* 요약은 **줄바꿈된다**. 처음엔 한 줄 고정(ellipsis)이었는데, 잘린 줄은 폭을
+   아무리 넓혀도 다 안 보이고 — 생각처럼 펼칠 본문이 없는 줄은 **읽을 방법이
+   아예 없었다**(사용자 지적). 대화가 밀리는 것보다 못 읽는 게 나쁘다.
+   `anywhere` 는 공백 없는 긴 경로도 끊고 min-content 폭을 낮춰, 그리드 트랙이
+   내용에 밀려 넘치는 것도 같이 막는다. */
 .row .s {
   color: var(--text-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
-.row.open .s { white-space: normal; }
 /* ▸ 는 **펼칠 게 있는 줄에만**. 없는 줄에 뜨면 눌러도 아무 일이 없어
    고장난 버튼으로 읽힌다. */
 .row .x { font: 10px "Jetendard", ui-monospace, monospace; color: var(--muted); opacity: 0; }
@@ -475,9 +481,11 @@ main#messages {
    오른쪽 여백은 카드 우상단의 시각 배지(.card-time, absolute)를 **비켜가려고**
    비운다 — 안 비우면 겹쳐 그려진다(실장에서 발견). 배지는 고정폭 포맷
    `260918 22:52:31` 이라 값이 예측 가능하다. */
+/* 시각과 꼬리 칸은 각각 한 칸을 차지한다 (stampCard 참조). 코너 배지
+   (`.card-time`, absolute)는 줄 위를 덮어 글자와 **겹쳤다** — 행이 있는 카드는
+   시각을 아예 같은 그리드 안으로 들여 겹칠 자리를 없앤다(사용자 지적). */
+.row.has-time { grid-template-columns: 18px 56px 1fr auto auto; }
 .row.has-tail { grid-template-columns: 18px 56px 1fr auto auto; }
-/* 시각이 이 줄 안으로 들어오면 한 칸 더 (stampCard 참조) — 코너 배지와 달리
-   같은 그리드라 상대 칩과 겹칠 수 없다. */
 .row.has-tail.has-time { grid-template-columns: 18px 56px 1fr auto auto auto; }
 .row .row-time {
   font: 10px "Jetendard", ui-monospace, SFMono-Regular, monospace;
@@ -485,8 +493,11 @@ main#messages {
   white-space: nowrap;
 }
 @media (max-width: 560px) {
-  /* 좁은 화면에선 시각을 접는다 — 남기면 요약이 거의 안 남는다. */
-  .row .row-time { display: none; }
+  /* 좁은 화면에선 시각을 접는다 — 남기면 요약이 거의 안 남는다.
+     비워뒀던 자리도 같이 회수한다. */
+  .row .row-time, .card-time { display: none; }
+  .card-assistant .final { padding-right: 0; }
+  .card-error, .card-sys .sys-text { padding-right: 0; }
 }
 
 /* 채널 필터는 `el.hidden` 으로 숨긴다. 그런데 카드 클래스가 `display` 를
@@ -544,9 +555,11 @@ main#messages {
 .card-assistant .final {
   white-space: pre-wrap;
   word-wrap: break-word;
-  padding: 3px 0 3px 92px;
+  /* 오른쪽은 코너 시각 배지 자리 — 안 비우면 첫 줄이 배지 밑으로 들어간다. */
+  padding: 3px var(--time-w) 3px 92px;
   line-height: 1.65;
 }
+.card-error, .card-sys .sys-text { padding-right: var(--time-w); }
 @media (max-width: 560px) {
   .row { grid-template-columns: 16px 44px 1fr auto; gap: 7px; }
   .card-assistant .final { padding-left: 0; }

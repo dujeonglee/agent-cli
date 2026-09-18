@@ -678,10 +678,10 @@ class TestStaticUI:
         assert '"⚠ " + reason' in body and "escapeHtml(reason)" not in body
         assert '["streaming"], raw' in body and "escapeHtml(raw)" not in body
         # el() 텍스트 사이트에 escapeHtml 잔재(=화면에 &lt; 노출) 금지 —
-        # 대표 지점: 시각 배지 / task-error. v9.4.0 ⑥: 시각은 코너 배지
-        # (.card-time) 또는 줄 안(.row-time) 둘 중 하나로 가되(stampCard),
+        # 대표 지점: 시각 배지 / task-error. v9.4.0 ⑥: 시각은 행이 있으면
+        # 줄 안(.row-time), 없으면 코너 배지(.card-time)로 가되(stampCard),
         # 어느 쪽이든 el()=textContent 경로여야 한다.
-        assert 'el("span", [tailRow ? "row-time" : "card-time"], fmtCardTime(ts))' in js
+        assert 'el("span", [row ? "row-time" : "card-time"], fmtCardTime(ts))' in js
         assert 'el("div", ["task-error"], error)' in js
 
     def test_no_markup_passed_to_text_el(self, server_and_client):
