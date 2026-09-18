@@ -49,6 +49,9 @@
   --h-main: #9aa1ad; --h-worker: #7e8db0; --h-orch: #e0a458;
   --h-writer: #3fb950; --h-reviewer: #a78bfa; --h-tester: #4d8eff; --h-rose: #f85149;
   --h-user: #d29922;
+  /* 중첩 블록 레일 — 보라=skill(🪄), amber=inline agent(🦀). 팔레트 테마가
+     덮지 않는 의미색이라 여기 한 번만 둔다(docs/chat-ui §3). */
+  --scope-skill: #a78bfa; --scope-inline: #e0a458;
   --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
   --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
@@ -404,6 +407,11 @@ main#messages {
   padding: 1px 3px;
   border-radius: 3px;
   z-index: 1;
+  /* 시각 배지는 **장식**이다 — 카드 우상단에 절대배치라 그 아래 놓이는 줄의
+     오른쪽 끝(왕래 줄의 상대 칩 = 점프 버튼)을 덮어 클릭을 먹었다(v9.4.0 ⑥
+     브라우저 TC 가 잡음). 보이는 텍스트가 이미 시각이라 hover 툴팁을 잃는
+     대가는 싸다. */
+  pointer-events: none;
 }
 .card-user .card-time { color: var(--user-time); background: transparent; }
 
@@ -462,6 +470,75 @@ main#messages {
 .row.act .ic { color: var(--accent); }
 .row-body { grid-column: 3 / -1; margin-top: 5px; }
 .row-body.hide { display: none; }
+/* 꼬리 칸(왕래 줄의 상대 이름) — 항상 보여야 하므로 펼침 표시(.x, hover 전
+   투명)와 별도 칸. 그리드가 5칸이 되고 `.row-body` 는 `3 / -1` 이라 그대로.
+   오른쪽 여백은 카드 우상단의 시각 배지(.card-time, absolute)를 **비켜가려고**
+   비운다 — 안 비우면 겹쳐 그려진다(실장에서 발견). 배지는 고정폭 포맷
+   `260918 22:52:31` 이라 값이 예측 가능하다. */
+.row.has-tail { grid-template-columns: 18px 56px 1fr auto auto; }
+/* 시각이 이 줄 안으로 들어오면 한 칸 더 (stampCard 참조) — 코너 배지와 달리
+   같은 그리드라 상대 칩과 겹칠 수 없다. */
+.row.has-tail.has-time { grid-template-columns: 18px 56px 1fr auto auto auto; }
+.row .row-time {
+  font: 10px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  /* 좁은 화면에선 시각을 접는다 — 남기면 요약이 거의 안 남는다. */
+  .row .row-time { display: none; }
+}
+
+/* 채널 필터는 `el.hidden` 으로 숨긴다. 그런데 카드 클래스가 `display` 를
+   지정하면(.card-user 는 `display:flex`) **작성자 스타일이 UA 의
+   `[hidden]{display:none}` 을 이겨** 숨겨지지 않는다 — 속성은 붙었는데 화면엔
+   그대로 있는, 소스만 봐선 안 보이는 부류(브라우저 TC 가 잡음). 클래스마다
+   때우는 대신 표면 전체에 한 줄로 못 박는다. */
+#messages > [hidden] { display: none !important; }
+
+/* ── 왕래(traffic) — 가로로 건너는 줄 (docs/chat-ui §4) ──────────
+   내부 작업(세로)과 같은 리듬을 쓰되 **방향과 상대**를 싣는다. 왼쪽 세로선이
+   "이건 건너온 것"을 한눈에 구분해 준다. */
+.card-msg { border-left: 2px solid var(--border-2); padding-left: 8px; }
+.row.msg .ic { color: var(--accent-2); font-weight: 600; }
+.peer {
+  font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* 점프 가능한 상대만 버튼처럼 보인다 — main 은 매칭 키가 없어 갈 수 없고
+   (docs/chat-ui §5), 눌리는 것처럼 보이면 고장으로 읽힌다. */
+.peer.can-jump {
+  color: var(--accent-soft-text);
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border);
+  border-radius: 999px;
+  padding: 0 7px;
+  cursor: pointer;
+}
+.peer.can-jump:hover { background: var(--accent-soft-bg2); color: var(--text); }
+
+/* ── 중첩 블록 레일 (docs/chat-ui §3) ────────────────────────────
+   갈림선은 "말을 걸 수 있는가". skill·inline agent 는 턴 안에서 끝나므로
+   좌측 레일로 **담김**을 보이고, 상주 agent 는 채널 칩이 있으니 레일을 주지
+   않는다(주면 중첩처럼 보여 거짓말이 된다). */
+.card-task-group.scope-skill { border-left: 2px solid var(--scope-skill); }
+.card-task-group.scope-inline { border-left: 2px solid var(--scope-inline); }
+.card-task-group.scope-agent { border-left: 2px solid transparent; }
+
+/* 돌아가기 — 점프 직후에만 뜨는 한 개짜리 버튼. */
+#ch-back {
+  align-self: flex-start;
+  margin: 0 0 4px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--accent-soft-text);
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+#ch-back:hover { background: var(--accent-soft-bg2); color: var(--text); }
 /* 최종 답변은 접지 않는다 — 읽히려고 있는 것이다. 요약 칸과 같은 열에
    맞춰 들여쓴다(18+56+9*2 = 92px). */
 .card-assistant .final {
@@ -1484,7 +1561,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 
 #ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 #ov-channels:empty { display: none; }
-.ov-umsg-to { color: var(--accent-soft-text); font-weight: 600; font-size: 11px; }
 /* 대화 채널 칩 (#ov-channels) — v9.4.0 ② 이후 유일하게 남은 ov-* 표면.
    개요 뷰는 사라졌지만 **채널 전환·에이전트 상태·질문 표시**는 살린다
    (docs/chat-ui §7: "말을 걸 수 있는 상대"에게만 칩을 준다). */

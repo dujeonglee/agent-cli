@@ -600,34 +600,40 @@ class TestStaticUI:
         assert "if policy is not None:" in prov
 
     def test_agent_channel_bar_and_routing_wired(self, server_and_client):
-        """agent-channels 2~4단계: 대화 채널 칩 바(main/agent)로 채널을 고르고,
-        개요가 채널별로 스코핑되며, agent 채널이면 입력이 그 agent inbox 로
-        라우팅된다. agent_msg → 채널 스트림."""
+        """대화 채널 칩 바(main/agent)로 채널을 고르고, **타임라인이 그 채널로
+        걸러지며**, agent 채널이면 입력이 그 agent inbox 로 라우팅된다.
+
+        v9.4.0 ⑥: 채널이 별도 스트림(구 ``ovChannels``)이 아니라 타임라인의
+        필터가 됐다 — `agent_msg` 는 왕래 줄 카드로 그려지고 `data-ch` 가
+        귀속을 싣는다. 스트림을 따로 들지 않으므로 리로드하면 replay 버퍼가
+        그대로 복원한다(구조상 중복·유실이 생길 자리가 없다)."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        # 채널 칩 바(4단계 — select 아님)
+        # 채널 칩 바(select 아님)
         assert 'id="ov-channels"' in html
         assert "function ovChanChip(" in js and "function ovSyncChannels(" in js
-        # 채널 상태 + 데이터 + 핸들러
+        # 채널 상태 + 핸들러
         assert 'var ovActiveChannel = "main"' in js
-        assert "var ovChannels" in js
         assert "function ovOnAgentMsg(" in js
         assert "function ovSetChannel(" in js
-        # agent_msg → 채널 스트림 축적
+        # agent_msg → 왕래 줄 렌더
         am = js.split('es.addEventListener("agent_msg"', 1)[1].split("\n  });", 1)[0]
         assert "ovOnAgentMsg(d)" in am
+        assert "ovRenderAgentMsg(d)" in _js_fn_body(js, "ovOnAgentMsg")
         # 입력 라우팅: agent 채널 + chat 이면 /api/agent/<key>/input
         sc = _js_fn_body(js, "submitChatOrPrompt")
         assert 'ovActiveChannel !== "main"' in sc
         assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
-        # 렌더 채널 스코핑 + 대상 배지 스타일
-        # v9.4.0 ②: 개요 렌더가 사라져 ovChannels 를 **읽는** 지점은 아직 없다
-        # (채널별 카드 필터링은 ⑥ — docs/chat-ui). 지금 계약은 "채널 스트림이
-        # 쌓이고 입력이 그 채널로 라우팅된다"까지다.
-        assert "ovChannels[d.key]" in js  # agent_msg → 채널 스트림 축적
-        assert "#ov-channels" in css and ".ov-umsg-to" in css
+        # 채널 전환이 **표시**까지 바꾼다 (⑥ 이전엔 입력 라우팅만 바뀌었다)
+        assert "applyChannelFilter()" in _js_fn_body(js, "ovSetChannel")
+        # 필터의 대상은 `#messages` 직계 자식의 `data-ch` 뿐 — `data-ch` 가
+        # 없는 노드(생성 중 한 줄)는 어느 채널에서나 보인다.
+        f = _js_fn_body(js, "applyChannelFilter")
+        assert "n.hidden = ch !== ovActiveChannel" in f
+        assert "if (ch)" in f  # data-ch 없는 노드는 손대지 않는다
+        assert "#ov-channels" in css and ".card-msg" in css
 
     def test_inspector_follows_active_channel(self, server_and_client):
         """🔍 프롬프트 인스펙터가 현재 대화 채널을 따른다 — main 이면 main 스코프,
@@ -672,8 +678,10 @@ class TestStaticUI:
         assert '"⚠ " + reason' in body and "escapeHtml(reason)" not in body
         assert '["streaming"], raw' in body and "escapeHtml(raw)" not in body
         # el() 텍스트 사이트에 escapeHtml 잔재(=화면에 &lt; 노출) 금지 —
-        # 대표 지점: card-time / task-error.
-        assert 'el("span", ["card-time"], fmtCardTime(ts))' in js
+        # 대표 지점: 시각 배지 / task-error. v9.4.0 ⑥: 시각은 코너 배지
+        # (.card-time) 또는 줄 안(.row-time) 둘 중 하나로 가되(stampCard),
+        # 어느 쪽이든 el()=textContent 경로여야 한다.
+        assert 'el("span", [tailRow ? "row-time" : "card-time"], fmtCardTime(ts))' in js
         assert 'el("div", ["task-error"], error)' in js
 
     def test_no_markup_passed_to_text_el(self, server_and_client):
@@ -990,16 +998,19 @@ class TestStaticUI:
         assert '" asked a question (awaiting reply)"' in js
 
     def test_agent_conversation_clear_wired(self, server_and_client):
-        # kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를 app.js 가 받아
-        # 그 key 의 개요 채널(ovChannels)·트레이·unread 를 지운다 — 안 지우면
-        # 부활 시 conversation.jsonl 재생이 채널 스트림에 중복 append(5단계:
-        # 드로어 제거 후 개요 채널로 이관).
+        """kill=정리 계약: 서버의 ``agent_cleared`` 를 받아 그 key 의 왕래
+        줄·트레이를 지운다 — 안 지우면 부활 시 conversation.jsonl 재생이
+        같은 대화를 두 번 그린다.
+
+        v9.4.0 ⑥: 왕래가 별도 스트림이 아니라 타임라인의 카드가 됐으므로
+        비우는 곳도 DOM 이다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         assert '"agent_cleared"' in js  # SSE 리스너
-        assert "ovOnAgentCleared(" in js  # 개요 채널 정리로 라우팅
+        assert "ovOnAgentCleared(" in js  # 채널 정리로 라우팅
         cleared = _js_fn_body(js, "ovOnAgentCleared")
-        assert "delete ovChannels[key]" in cleared
+        assert ".card-msg[data-ch=" in cleared and "c.remove()" in cleared
+        assert "delete ovAskTray[key]" in cleared
 
     def test_agent_observation_renders_markdown(self, server_and_client):
         # An agent observation is a subagent's prose answer → it must be

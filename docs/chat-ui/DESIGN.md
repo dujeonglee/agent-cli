@@ -1,6 +1,7 @@
 # 대화 화면 통일 — 간단 명료 · 투명성
 
-> 상태: **승인, 구현 중** (2026-09-18 사용자와 공동 설계)
+> 상태: **완료** — ①②③④⑥ 전부 반영(⑤는 §7.5 로 불필요 판정)
+> (2026-09-18 사용자와 공동 설계)
 > 시안: https://claude.ai/code/artifact/3baf98e1-7360-40e9-bfff-c3c395cb40b5
 > 목표 키워드 둘 — **간단 명료**, **투명성**. 대화·셸 수행·reasoning 을 투명하게
 > 보여주되 최대한 간단하게. Main/Agent 창을 같은 컨셉으로.
@@ -218,12 +219,39 @@ agent → 질문  : key=<agent> direction=question               → 에이전�
 프론트도 `#messages` 에 중첩 카드로 그린다. 남는 일(채널로 묶기)은 ②·⑥에
 흡수. `agent_msg` 의 중복 최종답 정리만 ⑥에서 함께.
 
-### ⑥ 점프 + 중첩 블록
-- 왕래 줄의 상대 이름 클릭 → 채널 전환 + `scrollIntoView` + 1.6s 하이라이트
-- 돌아가기 단일 단계
-- `scope_start` 의 `kind`/`depth` 로 skill/inline 중첩 블록 렌더
-- **TC 신규**: main→agent 점프, peer↔peer 점프, agent→main 은 비활성,
-  돌아가기 1단계(두 번 점프해도 스택 안 쌓임), 중첩 접기
+### ⑥ 점프 + 중첩 블록 — **완료**
+- **채널 = 타임라인 필터**로 승격. `#messages` 직계 자식의 `data-ch` 하나로
+  걸러진다. 도장은 `appendToTimeline` 한 곳, 출처는 `scopeChannel[task_id]`.
+  상주 에이전트 스코프는 `ctx_dir="agents/<key>"` 로 자기를 밝히므로 **서버
+  무변경**(§7.5 의 연장). `data-ch` 없는 노드(생성 중 한 줄)는 어느 채널에서나
+  보인다 — 에이전트 채널에서 생성 표시가 사라지면 멈춘 것처럼 보인다.
+- `agent_msg` → **왕래 줄**(`← 받음 / → 보냄 / ❓ 질문` + 상대 칩). 축적만 하던
+  `ovChannels` 는 읽는 곳이 없어 제거 — 채널을 따로 들지 않으니 리로드 시
+  replay 버퍼가 그대로 복원하고, 중복·유실이 생길 자리가 구조상 없다.
+- 상대 칩이 점프 버튼을 겸한다. main→agent(`⚡ agent` 호출의 `key`)·peer↔peer
+  는 가능, **agent→main 은 평문**(매칭 키가 달라 이번 범위 밖 — 눌리는 것처럼
+  보이면 고장으로 읽힌다). 도착지는 그 상대와 주고받은 최근 줄을 하이라이트.
+- 돌아가기 `#ch-back` — 값 하나(`ovBack`), 새 점프가 덮고 한 번 누르면 사라짐.
+- 중첩 블록: `kind`/`ctx_dir` 로 skill(보라 레일)·inline agent(amber 레일)·
+  상주 agent(레일 없음 — 채널 칩이 있는데 레일을 주면 중첩처럼 보여 거짓말)
+- **TC 신규 17** (`tests/browser/test_channel_jump.py`): 채널 필터 양방향,
+  `data-ch` 없는 노드 상시 노출, main 입력 누수, 왕래 줄 방향·상대, 시각↔상대
+  칩 비겹침(기하), 질문의 트레이 동시 노출, kill 정리, main→agent·peer↔peer
+  점프, 비상주 key 는 칩 없음, agent→main 비활성, 사람 발신 라벨, 돌아가기
+  1단계, 레일 종류, 중첩 접기.
+
+**실장에서만 잡힌 3건** (유닛·브라우저 TC 가 전부 그린인 상태에서 발견):
+
+| 증상 | 원인 | 수리 |
+|---|---|---|
+| 상대 칩이 안 눌림 | 시각 배지(absolute)가 덮음 | `pointer-events:none` |
+| 시각과 상대가 겹쳐 보임 | 여백을 폭 상수로 비운 첫 수리가 취약 | 꼬리 칸이 있는 줄은 시각을 **같은 그리드 안**(`.row-time`)으로 |
+| main 입력이 모든 채널에 뜸 | `renderUserMessage` 만 `$messages.appendChild` 직결 | `appendToTimeline` 경유 |
+
+그리고 그 누수를 고치자 드러난 것: `.card-user{display:flex}` 가 UA 의
+`[hidden]{display:none}` 을 **이겨** 속성만 붙고 안 숨었다. 클래스마다 때우는
+대신 `#messages > [hidden]{display:none!important}` 한 줄로 표면 전체에 못
+박았다 — 앞으로 추가될 카드 클래스도 자동으로 안전하다.
 
 ## 9. Dead code 정리 원칙
 

@@ -394,13 +394,26 @@
       "." + String(d.getMilliseconds()).padStart(3, "0")
     );
   }
-  // Attach a muted corner timestamp to any `.card`. No-op when `ts` is absent
+  // Attach a muted timestamp to any `.card`. No-op when `ts` is absent
   // (e.g. legacy buffered events) so nothing breaks if the field is missing.
+  //
+  // 자리는 **둘 중 하나**다 (v9.4.0 ⑥):
+  //   · 보통 카드 → 우상단 코너 배지 (absolute)
+  //   · 꼬리 칸(상대 이름)이 있는 줄을 가진 카드 → **그 줄 안**의 한 칸
+  // 코너 배지는 absolute 라 그 아래 놓이는 줄의 오른쪽 끝(왕래 줄의 상대 칩)과
+  // 겹친다 — 여백을 상수로 비워두는 방식은 배지 폭 추정에 기대 깨지기 쉬웠다
+  // (사용자 지적). 같은 그리드 안에 넣으면 겹칠 자리가 원천적으로 없다.
   function stampCard(cardEl, ts) {
     if (ts == null) return cardEl;
-    const t = el("span", ["card-time"], fmtCardTime(ts));
+    const tailRow = cardEl.querySelector(".row.has-tail");
+    const t = el("span", [tailRow ? "row-time" : "card-time"], fmtCardTime(ts));
     t.title = fmtCardTimeFull(ts);
-    cardEl.appendChild(t);
+    if (tailRow) {
+      tailRow.classList.add("has-time");
+      tailRow.insertBefore(t, tailRow.querySelector(".x"));
+    } else {
+      cardEl.appendChild(t);
+    }
     return cardEl;
   }
 
@@ -465,6 +478,16 @@
   // ancestor task_id → [{id, label}] of its currently-running descendants.
   // A collapsed parent would otherwise hide live nested work completely.
   const liveKids = {};
+  // task_id → **대화 채널**("main" 또는 상주 에이전트 key). 채널은 타임라인의
+  // 필터다(v9.4.0 ⑥): `#messages` 의 **직계** 자식만 `data-ch` 로 걸러 보여준다.
+  // 상주 에이전트의 작업 스코프는 `ctx_dir="agents/<key>"` 로 자기를 밝히므로
+  // (render/web.py begin_agent_work) 서버에 새 필드를 더할 필요가 없다. 중첩
+  // 스코프는 부모의 채널을 물려받는다 — 카드가 부모 body 안에 있어 필터가
+  // 닿지 않지만, 그 안에서 append 되는 왕래 줄의 귀속에는 쓰인다.
+  const scopeChannel = {};
+  function channelOf(taskId) {
+    return (taskId && scopeChannel[taskId]) || "main";
+  }
 
   function scopeAncestors(taskId) {
     const chain = [];
@@ -509,12 +532,31 @@
     });
   }
 
-  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent) {
+  /** 스코프 카드를 연다. ``depth``/``ctxDir`` 는 **중첩 블록의 종류**를 가른다
+   * (v9.4.0 ⑥, docs/chat-ui §3). 갈림선은 "말을 걸 수 있는가":
+   *
+   *   kind="skill"                 → 🪄 skill        · 중첩 블록(보라 레일)
+   *   kind="run" + agents/<key>    → 🤝 상주 agent   · **채널**(레일 없음)
+   *   kind="run" (그 외)           → 🦀 inline agent · 중첩 블록(amber 레일)
+   *
+   * skill·inline 은 턴 안에서 끝나 칩을 줘도 누를 일이 없으므로 들여쓰기 +
+   * 좌측 레일로 그린다. 상주 agent 는 채널 칩이 이미 있으니 레일을 주면
+   * 중첩처럼 보여 거짓말이 된다. */
+  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, ctxDir) {
     if (taskGroups[taskId]) return taskGroups[taskId];
 
     const card = el("div", ["card", "card-task-group"]);
     card.dataset.taskId = taskId;
     card.dataset.kind = kind || "run";
+    card.dataset.depth = String(depth || 0);
+    const chKey = /^agents\/(.+)$/.exec(ctxDir || "");
+    if (chKey) {
+      scopeChannel[taskId] = chKey[1]; // 상주 에이전트 = 자기 채널
+      card.classList.add("scope-agent");
+    } else {
+      scopeChannel[taskId] = channelOf(parent); // 중첩은 부모 채널을 물려받음
+      card.classList.add(kind === "skill" ? "scope-skill" : "scope-inline");
+    }
 
     const header = el("div", ["task-header"]);
     const chevron = el("span", ["task-chevron"], "▶");
@@ -590,6 +632,13 @@
     // or an agent). Falls back to the timeline root when the parent is unknown
     // (top-level scope, or its group already closed) — same as any other event.
     appendToTimeline(card, parent);
+    // 채널 귀속은 **이 스코프 자신의** 것이다. appendToTimeline 은 중첩 위치를
+    // 정하려고 `parent` 를 받으므로 부모 채널로 도장을 찍는다 — 상주 에이전트
+    // 작업은 parent="" 라 그대로 두면 main 에 남아 채널이 무의미해진다.
+    if (card.parentNode === $messages) {
+      card.dataset.ch = scopeChannel[taskId];
+      applyChannelFilter(card);
+    }
 
     const group = {
       card: card,
@@ -644,9 +693,13 @@
   function appendToTimeline(cardEl, taskId) {
     if (taskId && taskGroups[taskId]) {
       taskGroups[taskId].body.appendChild(cardEl);
-    } else {
-      $messages.appendChild(cardEl);
+      return;
     }
+    // 루트 append 만 채널 필터의 대상이다. `data-ch` 가 **없는** 노드는 어느
+    // 채널에서나 보인다(생성 중 한 줄처럼 채널과 무관한 표시).
+    cardEl.dataset.ch = channelOf(taskId);
+    $messages.appendChild(cardEl);
+    applyChannelFilter(cardEl);
   }
 
   // Inline context-compaction marker. `start` drops a "압축 중…" system line;
@@ -793,7 +846,11 @@
     card.appendChild(elHtml("div", ["bubble"], escapeAndFormat(content)));
     stampCard(card, ts);
     stampNavTs(card, ts);
-    $messages.appendChild(card);
+    // 루트 직결이 아니라 appendToTimeline 경유 — 채널 도장(`data-ch="main"`)을
+    // 받아야 한다. 직결이면 도장이 없어 **모든 채널에서 보였다**(v9.4.0 ⑥
+    // 실장에서 발견). 에이전트 채널의 사용자 입력은 여기 오지 않는다 —
+    // /api/agent/<key>/input 을 거쳐 `agent_msg` 왕래 줄로 온다.
+    appendToTimeline(card, "");
     scheduleScroll();
   }
 
@@ -802,11 +859,18 @@
   // 한 줄이고 누르면 전문이 펼쳐진다 — **투명성은 깊이로, 간결함은 기본
   // 상태로**. 펼칠 게 있는 줄에만 ▸ 가 뜬다(없는 줄에 뜨면 눌러도 아무 일이
   // 없어 고장으로 읽힌다).
-  function makeRow(icon, kind, summary, bodyNode, extraCls) {
+  function makeRow(icon, kind, summary, bodyNode, extraCls, tailNode) {
     const row = el("div", ["row"].concat(extraCls || []));
     row.appendChild(el("span", ["ic"], icon));
     row.appendChild(el("span", ["k"], kind));
     row.appendChild(el("span", ["s"], summary));
+    // 꼬리 칸(선택): 왕래 줄의 **상대 이름**처럼 항상 보여야 하는 것. 펼침
+    // 표시(`.x`)는 hover 전까지 투명하므로 거기에 섞을 수 없다 — 별도 칸으로
+    // 두고 그리드를 5칸으로 늘린다(`.row.has-tail`).
+    if (tailNode) {
+      row.classList.add("has-tail");
+      row.appendChild(tailNode);
+    }
     const mark = el("span", ["x"]);
     row.appendChild(mark);
     if (bodyNode) {
@@ -869,6 +933,27 @@
     return lines[lines.length - 1].trim();
   }
 
+  /** `⚡ agent` 도구 호출의 대상 칩 — roster 에 있는 **상주** 에이전트일 때만.
+   * 일회성 위임(`run`)은 대상이 채널이 아니라 이 카드 안의 중첩 블록이라
+   * 갈 곳이 없다(docs/chat-ui §3). 없으면 null → 꼬리 칸 자체가 안 생긴다. */
+  function agentJumpChip(inputStr) {
+    let p = {};
+    try {
+      p = JSON.parse(inputStr || "{}");
+    } catch (_e) {
+      return null;
+    }
+    const key = p && typeof p.key === "string" ? p.key : "";
+    if (!key || !ovRoster.some((t) => t.key === key)) return null;
+    const chip = el("span", ["peer", "can-jump"], ovAgentLabel(key));
+    chip.title = ovAgentLabel(key) + " 채널로 이동";
+    chip.addEventListener("click", function (e) {
+      e.stopPropagation();
+      ovJump(key, "");
+    });
+    return chip;
+  }
+
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
     // 💭 생각 — 한 줄 요약(첫 줄), 전문은 펼쳐서. reasoning 이 길면 대화가
@@ -895,9 +980,14 @@
     } else if (d.action) {
       const tool = d.action.tool_name || "";
       const input = d.action.tool_input || "";
+      // main → agent 점프의 출발점. main 쪽에서 상주 에이전트에게 거는 일은
+      // **왕래 줄이 아니라 `⚡ agent` 도구 호출**로 나타나므로(docs/chat-ui §5),
+      // 상대 칩을 여기 붙인다. 반대 방향(agent → main)은 매칭 키가 달라
+      // 이번 범위 밖 — 돌아가기 버튼이 그 자리를 채운다.
       card.appendChild(
         makeRow("⚡", tool, actionSummary(tool, input),
-                renderActionInput(tool, input), ["act"])
+                renderActionInput(tool, input), ["act"],
+                tool === "agent" ? agentJumpChip(input) : null)
       );
     }
     stampCard(card, d.ts);
@@ -1677,6 +1767,8 @@
       d.label || "",
       d.kind || "run",
       d.parent || "",
+      d.depth || 0,
+      d.ctx_dir || "",
     );
     // Resident-agent request cards carry ``nav_ts`` = the originating request's
     // timestamp (server-provided, matching the swimlane user-mark/request arrow),
@@ -1733,20 +1825,15 @@
   // 생각·도구·결과는 **이미** 여기 중첩 카드로 들어와 있었다(§7.5). 개요를
   // 지우는 것은 잃는 게 아니라 드러내는 것이다.
 
-  // ── 개요(GLANCE) 뷰 렌더 ──────────────────────────
-  // presentation-only: 기존 SSE 이벤트를 재사용. **플랫 로그 모델** — 사용자 입력과
-  // "complete"(메인 final + top-level 스코프 final)를 도착 순서대로 append 만 한다.
-  // 짝짓기(pairing)를 상태로 저장하지 않으므로 "대기" 정체·쿼리↔응답 오귀속이 원천적
-  // 으로 없다. 블록 그룹핑(연속 user + 뒤따르는 resp)은 렌더 시점에 순서로만 도출.
-  var ovEntries = []; // 플랫: {kind:'user',who,text,tm} | {kind:'resp',text,reasoning,answers,status,navTs,scopeId}
-  var ovTopScopes = {}; // depth-0 스코프 task_id → true (직접 dispatch 결과 수용용)
-  var ovScopeSrc = {}; // depth-0 스코프 task_id → 응답 주체 표시명 (🤝 agent / 🪄 skill)
+  // ── 채널·트레이 상태 (구 개요의 잔존분) ─────────────────
+  // ② 가 개요 렌더를 지웠을 때 그 **데이터**(ovEntries/ovTopScopes/ovScopeSrc/
+  // ovSkills)는 선언만 남아 아무도 읽지 않았다 — ⑥ 에서 함께 걷어낸다. 남는
+  // 것은 실제로 읽히는 둘: roster(채널 칩·점프 가능 판정의 진실원)와 활성 채널.
   var ovRoster = []; // agent_roster
-  var ovSkills = {}; // 열린 skill scope: task_id → label
-  // agent-channels 2단계: 대화 채널. "main" = 메인 개요(ovEntries), 그 외 = agent
-  // key → 그 agent 대화(ovChannels[key], agent_msg 로 구성). 휘발(A-1: 리로드 시 main).
+  // 대화 채널. "main" = 메인, 그 외 = 상주 agent key. 채널은 **타임라인의
+  // 필터**다(v9.4.0 ⑥) — 별도 스트림을 들고 있지 않으므로 리로드하면
+  // replay 버퍼가 그대로 복원한다.
   var ovActiveChannel = "main";
-  var ovChannels = {}; // key → [{kind:'user'|'resp', ...}] (agent 대화 스트림)
   // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
   // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
   var ovAskTray = {};
@@ -1910,40 +1997,70 @@
       }
     });
   })();
-  // agent 대화 메시지(agent_msg)를 채널 스트림으로 축적 (2단계 E). 주체/대상
-  // 라벨은 **렌더 시점에 해소**한다 — replay 시 agent_msg 가 roster 보다
-  // 먼저 와도 이름이 키로 고정되지 않게.
-  // 채널 스트림의 시각 표시 — 개요 렌더는 사라졌지만 agent_msg 축적이
-  // 여전히 쓴다 (v9.4.0 ②).
-  function ovClock(ts) {
-    var ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
-    if (!ms || isNaN(ms)) return "";
-    var d = new Date(ms);
-    return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+  // agent 대화 메시지(agent_msg) → 왕래 줄. 주체/대상 라벨은 **렌더 시점에
+  // 해소**한다 — replay 시 agent_msg 가 roster 보다 먼저 와도 이름이 키로
+  // 고정되지 않게.
+  // 왕래 상대 해소 — `author` 네임스페이스가 이미 셋을 구분한다
+  // (`main` / `user:<닉>` / `agent:<key>`). 반환 `key` 가 있으면 **점프 가능**.
+  // main 은 일부러 비운다: main 쪽 대응 줄이 `⚡ agent` 도구 호출이라 매칭 키가
+  // 달라 agent→main 점프는 이번 범위 밖이다(docs/chat-ui §5).
+  function ovPeerInfo(who) {
+    var w = String(who || "");
+    if (!w || w === "main") return { label: "💬 main", key: "" };
+    if (w.indexOf("user:") === 0) return { label: w.slice(5) + " (사람)", key: "" };
+    var k = w.indexOf("agent:") === 0 ? w.slice(6) : w;
+    var known = ovRoster.some(function (t) { return t.key === k; });
+    return { label: ovAgentLabel(k) + " (peer)", key: known ? k : "" };
   }
+  // 왕래 한 줄 — 세로로 흐르는 내부 작업과 달리 **방향과 상대**를 싣는다
+  // (docs/chat-ui §4). 상대 칩이 점프 버튼을 겸한다.
+  function ovRenderAgentMsg(d) {
+    var out = d.direction === "out" || d.direction === "question";
+    var peer = ovPeerInfo(out ? d.to : d.author);
+    var text = String(d.text || "");
+    var first = text.split("\n").find(function (l) { return l.trim(); }) || text;
+    var tail = el("span", ["peer"], peer.label);
+    if (peer.key) {
+      tail.classList.add("can-jump");
+      tail.title = peer.label + " 채널로 이동";
+      tail.addEventListener("click", function (e) {
+        e.stopPropagation(); // 줄 펼침 토글과 분리
+        ovJump(peer.key, d.key);
+      });
+    }
+    var card = el("div", ["card", "card-msg"]);
+    card.dataset.ch = d.key;
+    if (peer.key) card.dataset.peer = peer.key;
+    card.appendChild(
+      makeRow(
+        d.direction === "question" ? "❓" : out ? "→" : "←",
+        d.direction === "question" ? "질문" : out ? "보냄" : "받음",
+        first.trim(),
+        text !== first.trim() ? elHtml("div", ["md"], escapeAndFormat(text)) : null,
+        ["msg"],
+        tail
+      )
+    );
+    stampCard(card, d.ts);
+    $messages.appendChild(card);
+    applyChannelFilter(card);
+    scheduleScroll();
+  }
+
   function ovOnAgentMsg(d) {
     if (!d || !d.key) return;
-    var ch = ovChannels[d.key] || (ovChannels[d.key] = []);
-    if (d.direction === "out" || d.direction === "question") {
-      ch.push({
-        kind: "resp", text: d.text || "", status: "done", navTs: d.ts,
-        question: d.direction === "question",
-      });
-      if (d.direction === "question") {
-        ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
-        ovRenderAskTray();
-      }
-    } else {
-      // in — 사람/main/peer 발신 메시지.
-      ch.push({ kind: "user", who: d.author || "", text: d.text || "", tm: ovClock(d.ts) });
+    ovRenderAgentMsg(d);
+    if (d.direction === "question") {
+      ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
+      ovRenderAskTray();
     }
-    if (ch.length > 80) ovChannels[d.key] = ch.slice(-80);
-    // v9.4.0 ②: 채널 스트림을 **그리는** 지점은 아직 없다 — 축적만 한다
-    // (채널별 카드 필터링은 ⑥, docs/chat-ui).
   }
   // kill(agent_cleared) → 그 채널 대화·트레이 정리 (resume 재생 중복 방지).
+  // 왕래 줄은 이제 타임라인의 카드라, 비우는 것도 DOM 에서 한다.
   function ovOnAgentCleared(key) {
-    delete ovChannels[key];
+    $messages
+      .querySelectorAll(':scope > .card-msg[data-ch="' + cssEsc(key) + '"]')
+      .forEach(function (c) { c.remove(); });
     delete ovAskTray[key];
     ovRenderAskTray();
     ovSyncChannels();
@@ -1959,7 +2076,14 @@
     if (ovActiveChannel !== "main" &&
         !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
       ovActiveChannel = "main";
+      applyChannelFilter(); // 사라진 채널을 보고 있었다면 표시도 되돌린다
     }
+    // 돌아갈 채널이 사라졌으면 버튼도 사라진다(눌러도 갈 곳이 없다).
+    if (ovBack && ovBack.ch !== "main" &&
+        !ovRoster.some(function (t) { return t.key === ovBack.ch; })) {
+      ovBack = null;
+    }
+    ovRenderBack(); // 라벨은 roster 가 와야 이름으로 해소된다
     var html = ovChanChip("main", "💬 main", "", ovActiveChannel === "main");
     ovRoster.forEach(function (t) {
       html += ovChanChip(
@@ -2012,12 +2136,85 @@
         : "Type a message — Enter to send, Shift+Enter for newline";
     }
   }
-  // 채널 전환.
+  // ── 채널 = 타임라인 필터 (v9.4.0 ⑥) ──────────────────────
+  // `#messages` 의 **직계 자식**만 걸러 보여준다. `data-ch` 가 없는 노드는
+  // 어느 채널에서나 보인다(생성 중 한 줄 — 채널과 무관한 표시).
+  // 인자를 주면 그 노드 하나만(새로 append 된 카드), 없으면 전부 훑는다.
+  function applyChannelFilter(one) {
+    var nodes = one ? [one] : Array.prototype.slice.call($messages.children);
+    nodes.forEach(function (n) {
+      var ch = n.dataset ? n.dataset.ch : null;
+      if (ch) n.hidden = ch !== ovActiveChannel;
+    });
+  }
+
+  // 채널 전환. 표시(필터) · 입력 라우팅 · 칩 활성이 한 지점에서 움직인다.
   function ovSetChannel(key) {
     ovActiveChannel = key || "main";
     ovSyncChannels();
-    ovApplyChannelInput(); // 입력창 라우팅·플레이스홀더 (표시 전환은 ⑥)
+    applyChannelFilter();
+    ovApplyChannelInput();
   }
+
+  // ── 점프 — 엿보기, 네비게이션이 아니다 (docs/chat-ui §5) ────
+  // 상태는 값 하나: 직전에 어디서 왔는지. **스택이 아니다** — 새 점프가 이전
+  // 것을 덮고, 한 번 누르면 사라진다. 스택이면 누를 때마다 라벨이 바뀌어
+  // 어디로 갈지 예측이 안 되는데, 채널 칩이 항상 보이므로 그 복잡도를 살
+  // 이유가 없다(사용자 지적으로 스택→단일 변경).
+  var ovBack = null; // {ch, id} | null
+  function ovRenderBack() {
+    var btn = document.getElementById("ch-back");
+    if (!btn) return;
+    if (!ovBack) {
+      btn.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    btn.textContent =
+      "↩ " + (ovBack.ch === "main" ? "💬 main" : ovAgentLabel(ovBack.ch)) + " 으로";
+  }
+  /** 채널의 앵커 카드로 이동 + 1.6s 하이라이트. ``peer`` 가 주어지면 그 상대와
+   * 주고받은 **가장 최근 왕래 줄**을 앵커로 삼는다(정확히 그 대화를 가리킴).
+   * 없으면 그 채널의 마지막 카드 — 도착은 했음을 보이는 게 아무것도 안 하는
+   * 것보다 낫다. */
+  function ovChannelAnchor(key, peer) {
+    var cards = $messages.querySelectorAll(
+      ':scope > [data-ch="' + cssEsc(key) + '"]'
+    );
+    if (peer) {
+      var hit = null;
+      cards.forEach(function (c) {
+        if (c.dataset.peer === peer) hit = c;
+      });
+      if (hit) return hit;
+    }
+    return cards.length ? cards[cards.length - 1] : null;
+  }
+  function cssEsc(s) {
+    return String(s).replace(/["\\]/g, "\\$&");
+  }
+  function ovJump(key, peer) {
+    if (!key || key === ovActiveChannel) return;
+    ovBack = { ch: ovActiveChannel };
+    ovSetChannel(key);
+    ovRenderBack();
+    var anchor = ovChannelAnchor(key, peer);
+    if (anchor) {
+      expandAncestors(anchor.dataset.taskId || "");
+      scrollTimelineTo(anchor);
+    }
+  }
+  (function () {
+    var btn = document.getElementById("ch-back");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (!ovBack) return;
+      var to = ovBack.ch;
+      ovBack = null; // 한 단계 — 돌아가면 사라진다
+      ovSetChannel(to);
+      ovRenderBack();
+    });
+  })();
   // 🔍 인스펙터가 열 스코프 = 현재 대화 채널. main → main 스코프, agent → 그
   // agent 의 프롬프트 스냅샷(task_id=agent key). 인스펙터 IIFE 가 읽는다.
   window.__inspectorScope = function () {

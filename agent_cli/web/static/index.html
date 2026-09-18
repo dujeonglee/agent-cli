@@ -249,6 +249,9 @@
     <div id="ask-tray" hidden aria-live="polite"></div>
     <div id="queue-list" hidden></div>
     <div id="ov-channels" role="tablist" aria-label="대화 채널"></div>
+    <!-- 점프는 엿보기라 돌아가기는 **한 단계**만 — 새 점프가 이전 것을 덮는다
+         (docs/chat-ui §5). 채널 칩이 항상 보이므로 스택일 이유가 없다. -->
+    <button id="ch-back" type="button" hidden></button>
     <div id="input-area">
       <textarea id="input"
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
