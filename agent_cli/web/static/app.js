@@ -810,25 +810,108 @@
     scheduleScroll();
   }
 
+  // ── 한 줄 리듬 (v9.4.0 ③, docs/chat-ui §2) ──────────────────
+  // 모든 줄이 `아이콘 · 종류 · 한 줄 요약 · 펼침표시` 4칸 그리드다. 기본은
+  // 한 줄이고 누르면 전문이 펼쳐진다 — **투명성은 깊이로, 간결함은 기본
+  // 상태로**. 펼칠 게 있는 줄에만 ▸ 가 뜬다(없는 줄에 뜨면 눌러도 아무 일이
+  // 없어 고장으로 읽힌다).
+  function makeRow(icon, kind, summary, bodyNode, extraCls) {
+    const row = el("div", ["row"].concat(extraCls || []));
+    row.appendChild(el("span", ["ic"], icon));
+    row.appendChild(el("span", ["k"], kind));
+    row.appendChild(el("span", ["s"], summary));
+    const mark = el("span", ["x"]);
+    row.appendChild(mark);
+    if (bodyNode) {
+      row.classList.add("can");
+      mark.textContent = "▸";
+      bodyNode.classList.add("row-body", "hide");
+      row.appendChild(bodyNode);
+      row.addEventListener("click", function (e) {
+        // 본문 안의 선택·클릭(복사 등)은 접기를 유발하지 않는다.
+        if (e.target.closest(".row-body")) return;
+        const open = !bodyNode.classList.toggle("hide");
+        row.classList.toggle("open", open);
+        mark.textContent = open ? "▾" : "▸";
+      });
+    }
+    return row;
+  }
+
+  /** 도구 호출 → 한 줄 요약. 길이는 CSS ellipsis 가 맡고, 여기선 **무엇을
+   *  했는지 알아볼 수 있는 가장 짧은 문자열**을 고른다. */
+  function actionSummary(tool, inputStr) {
+    let p = {};
+    try {
+      p = JSON.parse(inputStr || "{}");
+    } catch (_e) {
+      p = {};
+    }
+    if (typeof p !== "object" || p === null) p = {};
+    if (tool === "shell" || tool === "sh") return String(p.command || "");
+    if (tool === "read_file") return String(p.path || "");
+    if (tool === "write_file") return String(p.path || "");
+    if (tool === "edit_file") {
+      const n = Array.isArray(p.edits) ? p.edits.length : 0;
+      return String(p.path || "") + (n ? " · " + n + "곳" : "");
+    }
+    if (tool === "run_skill") return String(p.name || "");
+    if (tool === "agent") {
+      const who = p.key || p.agent || p.profile || p.mode || "";
+      const task = String(p.task || p.message || "");
+      return (who ? who + (task ? " · " : "") : "") + task;
+    }
+    if (tool === "ask") {
+      const qs = Array.isArray(p.questions) ? p.questions : [];
+      return qs.length ? String(qs[0]) + (qs.length > 1 ? " 외 " + (qs.length - 1) : "") : "";
+    }
+    if (tool === "complete") return String(p.result || "");
+    // 알 수 없는 도구: 첫 문자열 값이 대개 가장 설명적이다
+    for (const k of Object.keys(p)) {
+      if (typeof p[k] === "string" && p[k]) return p[k];
+    }
+    return "";
+  }
+
+  /** 관찰 출력 → 한 줄 요약. **마지막** 유의미한 줄을 쓴다 — 셸·테스트·린트
+   *  출력의 결론이 대개 끝에 있고(3826 passed / All checks passed), 실패도
+   *  끝에서 드러난다. 첫 줄은 명령 에코나 헤더라 정보가 적다. */
+  function obsSummary(content) {
+    const lines = String(content || "").split("\n").filter((l) => l.trim());
+    if (!lines.length) return "(출력 없음)";
+    return lines[lines.length - 1].trim();
+  }
+
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
+    // 💭 생각 — 한 줄 요약(첫 줄), 전문은 펼쳐서. reasoning 이 길면 대화가
+    // 통째로 밀리므로 기본은 접는다.
     if (d.thought) {
-      card.appendChild(elHtml("div", ["thought"], escapeAndFormat(d.thought)));
+      const t = String(d.thought).trim();
+      const first = t.split("\n").find((l) => l.trim()) || t;
+      const multi = t !== first.trim();
+      card.appendChild(
+        makeRow(
+          "💭",
+          "생각",
+          first.trim(),
+          multi ? elHtml("div", ["md"], escapeAndFormat(t)) : null,
+          ["think"]
+        )
+      );
     }
     if (d.final !== undefined) {
+      // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
+      // 아니라 로그가 된다.
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
       if (!d.task_id) stampNavTs(card, d.ts);
     } else if (d.action) {
-      const a = el("div", ["action"]);
-      a.appendChild(
-        el("div", ["tool"], "⚡ " + (d.action.tool_name || ""))
+      const tool = d.action.tool_name || "";
+      const input = d.action.tool_input || "";
+      card.appendChild(
+        makeRow("⚡", tool, actionSummary(tool, input),
+                renderActionInput(tool, input), ["act"])
       );
-      const detail = renderActionInput(
-        d.action.tool_name || "",
-        d.action.tool_input || ""
-      );
-      a.appendChild(detail);
-      card.appendChild(a);
     }
     stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
@@ -966,34 +1049,33 @@
   function renderObservation(d) {
     const card = el("div", ["card", "card-observation"]);
     card.classList.add(d.success ? "ok" : "fail");
-    card.appendChild(
-      // ★ elHtml (innerHTML) — 본문에 <span class="icon"> 마크업이 들어간다.
-      // el() 은 textContent 라 마크업이 문자 그대로 노출된다(v8.36.0 el/elHtml
-      // 분리 때 놓친 콜사이트 — v8.42.3 수리). tool_name 은 escapeHtml 로 이미
-      // 이스케이프되므로 주입 안전.
-      elHtml(
-        "div",
-        ["obs-head"],
-        '<span class="icon">' +
-          (d.success ? "✓" : "✗") +
-          "</span> " +
-          escapeHtml(d.tool_name || "")
-      )
-    );
+    const content = d.content || "";
+    const tool = d.tool_name || "";
     // An `agent` observation is a subagent's prose answer (run 결과의
     // STATUS/RESULT/[Task N]/[Duration] wrapper, 상주 회신 배달), so
     // render it through the markdown pipeline like an assistant turn. Every
     // other tool's output (read_file hashlines, shell text, write/edit diffs)
     // is monospace/structured → keep the <pre> + diff colouring.
-    if ((d.tool_name || "") === "agent") {
-      card.appendChild(
-        elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(d.content || ""))
-      );
-    } else {
-      card.appendChild(
-        elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
-      );
+    const body =
+      tool === "agent"
+        ? elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(content))
+        : elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(content)));
+    // 실패는 **펼친 채로** 둔다 — 접힌 한 줄로는 왜 실패했는지 알 수 없고,
+    // 사용자가 지금 봐야 하는 유일한 줄이다.
+    // 종류 칸은 **도구 이름** — "결과"라고만 쓰면 어느 도구의 결과인지 알 수
+    // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
+    // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
+    const row = makeRow(
+      d.success ? "✓" : "✗", tool || "결과", obsSummary(content), body,
+      [d.success ? "ok" : "bad"]
+    );
+    if (!d.success) {
+      body.classList.remove("hide");
+      row.classList.add("open");
+      const mark = row.querySelector(".x");
+      if (mark) mark.textContent = "▾";
     }
+    card.appendChild(row);
     stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
     scheduleScroll();
@@ -2831,10 +2913,12 @@
     if (cl.contains("card-assistant"))
       return { kind: "assistant", label: "Assistant", mono: false };
     if (cl.contains("card-observation")) {
-      const head = card.querySelector(".obs-head");
+      // v9.4.0 ③: obs-head 가 행(.row)으로 바뀌었다 — 라벨은 도구 이름
+      // 칸(.k)에서 뽑는다(종전 "✓ shell" 대신 "shell").
+      const kind = card.querySelector(".row .k");
       return {
         kind: "observation",
-        label: head ? head.innerText.trim() : "Observation",
+        label: kind ? kind.innerText.trim() : "Observation",
         mono: true,
         body: ".obs-body",
       };

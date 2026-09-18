@@ -419,59 +419,62 @@ main#messages {
   width: fit-content;
 }
 
-.card-assistant {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 24px 12px 12px;
-  border-radius: 8px;
+/* ── 한 줄 리듬 (v9.4.0 ③, docs/chat-ui §2) ───────────────────────
+   모든 줄이 같은 4칸 그리드다: 아이콘 · 종류 · 한 줄 요약 · 펼침표시.
+   카드 테두리/배경을 걷어낸 이유 — 줄마다 상자를 두르면 "간단 명료"의
+   반대가 되고, 줄들이 같은 리듬으로 읽히지 않는다. 구분은 아이콘 색과
+   들여쓰기만으로 한다. */
+.card-assistant, .card-observation {
+  background: none; border: 0; padding: 1px 0; border-radius: 0;
 }
-.card-assistant .thought {
-  color: var(--text-2);
-  font-style: italic;
-  margin-bottom: 8px;
+.row {
+  display: grid;
+  grid-template-columns: 18px 56px 1fr auto;
+  gap: 9px;
+  align-items: baseline;
   font-size: 13px;
-  white-space: pre-wrap;
+  padding: 1px 0;
 }
-.card-assistant .thought::before { content: "💭 "; }
+.row .ic { text-align: center; font-size: 12px; }
+.row .k {
+  font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted);
+  letter-spacing: .03em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 요약은 **한 줄 고정** — 길면 잘린다. 전문이 필요하면 펼치면 되므로
+   줄바꿈으로 대화를 밀어낼 이유가 없다. */
+.row .s {
+  color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+.row.open .s { white-space: normal; }
+/* ▸ 는 **펼칠 게 있는 줄에만**. 없는 줄에 뜨면 눌러도 아무 일이 없어
+   고장난 버튼으로 읽힌다. */
+.row .x { font: 10px "Jetendard", ui-monospace, monospace; color: var(--muted); opacity: 0; }
+.row.can { cursor: pointer; }
+.row.can:hover .x, .row.open .x { opacity: 1; }
+.row.can:hover .s { color: var(--text); }
+.row.think .s { color: var(--muted); font-style: italic; }
+.row.ok .ic { color: var(--ok); }
+.row.bad .ic { color: var(--fail); }
+.row.act .ic { color: var(--accent); }
+.row-body { grid-column: 3 / -1; margin-top: 5px; }
+.row-body.hide { display: none; }
+/* 최종 답변은 접지 않는다 — 읽히려고 있는 것이다. 요약 칸과 같은 열에
+   맞춰 들여쓴다(18+56+9*2 = 92px). */
 .card-assistant .final {
   white-space: pre-wrap;
   word-wrap: break-word;
-  margin-top: 4px;
+  padding: 3px 0 3px 92px;
+  line-height: 1.65;
 }
-.card-assistant .action { font-size: 13px; }
-.card-assistant .action .tool {
-  color: var(--ok);
-  font-weight: 600;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-.card-assistant .action .args {
-  background: var(--surface-2);
-  padding: 6px 8px;
-  border-radius: 4px;
-  margin: 4px 0 0 0;
-  overflow-x: auto;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
+@media (max-width: 560px) {
+  .row { grid-template-columns: 16px 44px 1fr auto; gap: 7px; }
+  .card-assistant .final { padding-left: 0; }
 }
 
-.card-observation {
-  background: var(--surface-3);
-  border-left: 3px solid var(--muted);
-  padding: 22px 12px 8px;
-  border-radius: 4px;
-}
-.card-observation.ok { border-left-color: var(--ok); }
-.card-observation.fail { border-left-color: var(--fail); }
-.card-observation .obs-head {
-  font-weight: 600;
-  font-size: 12px;
-  margin-bottom: 4px;
-  color: var(--text-2);
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-.card-observation .obs-head .icon { margin-right: 4px; }
 .card-observation .obs-body {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;

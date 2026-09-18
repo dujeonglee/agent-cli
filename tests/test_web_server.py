@@ -717,18 +717,27 @@ class TestStaticUI:
             + "\n".join(f"  L{ln}: el({b}..." for ln, b in offenders)
         )
 
-    def test_observation_head_uses_elhtml(self, server_and_client):
-        """관찰 카드 헤더(✓/✗ 아이콘 + 도구명)는 마크업이라 elHtml 경유 —
-        위 자동 탐지의 구체 회귀 지점 핀(v8.42.3 수리)."""
+    def test_observation_body_uses_elhtml(self, server_and_client):
+        """관찰 **본문**은 마크업(diff 색상 span / 마크다운)이라 elHtml 경유여야
+        한다 — el() 은 textContent 라 마크업이 문자 그대로 노출된다(v8.42.3
+        수리의 회귀 지점).
+
+        v9.4.0 ③: 헤더(obs-head)는 행(.row)으로 바뀌었고, 행의 아이콘·도구명은
+        **텍스트**라 el() 이 맞다(마크업이 없으니 elHtml 이면 오히려 주입 표면).
+        그래서 핀의 대상이 헤더 → 본문으로 옮겨간다."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         import re
 
         body = _js_fn_body(js, "renderObservation")
-        assert '<span class="icon">' in body  # 헤더는 마크업을 담는다
-        assert re.search(r'elHtml\(\s*"div",\s*\["obs-head"\]', body), (
-            "obs-head 가 elHtml 경유가 아님 — 아이콘 마크업이 문자로 노출된다"
+        assert re.search(r'elHtml\(\s*"pre",\s*\["obs-body"\]', body), (
+            "obs-body 가 elHtml 경유가 아님 — diff 색상 span 이 문자로 노출된다"
         )
+        assert re.search(r'elHtml\(\s*"div",\s*\["obs-body", "obs-md"\]', body), (
+            "agent 관찰의 마크다운 본문이 elHtml 경유가 아님"
+        )
+        # 행 자체는 텍스트 — makeRow 가 el() 로 만든다(주입 표면 없음)
+        assert "makeRow(" in body
 
     def test_action_detail_wraps_long_paths(self, server_and_client):
         """긴 절대경로(공백 없음)가 카드 박스를 넘지 않도록 줄바꿈 규칙 —
