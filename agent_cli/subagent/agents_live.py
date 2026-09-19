@@ -721,6 +721,10 @@ class AgentRegistry:
             # 번째 spawn+task 의 요청 화살표가 드롭됐다 (v8.5.1).
             "to": key,
             "ts": send_ts,
+            # 표시용 신원 — CLI 는 로스터를 못 보므로 발신자가 실어 보낸다
+            # (웹은 늦게-해소가 replay 에 강해 로스터를 계속 쓴다). v9.9.0
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
         }
         get_renderer().agent_message(**payload)
         self._log_conversation(tm, payload)
@@ -815,6 +819,8 @@ class AgentRegistry:
             "success": True,
             "to": to,
             "ts": ts if ts is not None else time.time(),
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
         }
         try:
             get_renderer().agent_message(**payload)
@@ -1385,6 +1391,8 @@ class AgentRegistry:
             "success": success,
             "to": author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
             "ts": time.time(),
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
@@ -1476,6 +1484,8 @@ class AgentRegistry:
             "success": success,
             "to": author0,
             "ts": time.time(),
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
@@ -1505,6 +1515,8 @@ class AgentRegistry:
                 "text": question,
                 "to": tm.current_author,  # 인간 발신 작업의 질문은 그 사람에게
                 "ts": time.time(),
+                "profile": tm.profile_name,
+                "instance_name": tm.instance_name,
             }
             get_renderer().agent_message(**q_payload)
             self._log_conversation(tm, q_payload)

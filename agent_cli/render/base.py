@@ -328,6 +328,8 @@ class Renderer(ABC):
         success: bool = True,
         to: str = "main",
         ts: float | str | None = None,
+        profile: str = "",
+        instance_name: str = "",
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
         수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는

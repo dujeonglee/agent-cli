@@ -675,3 +675,95 @@ class TestNestedBlocks:
         assert _wait(lambda: child.is_visible())
         parent_head.click()  # 접음
         assert _wait(lambda: not child.is_visible())
+
+
+class TestAgentNameAndKey:
+    """이름은 사람이 읽고, key 는 부를 때 쓴다 — 둘 다 보인다 (v9.9.0).
+
+    종전엔 프로파일 없는 즉석 에이전트가 화면에 `agt-882cc142` 로만 나왔다.
+    별명으로 폴백하되 **key 를 흐리게 곁에 둔다**: 보이는 것과 칠 수 있는 것이
+    갈라지면 안 되기 때문이다(`@agt-<key>` 가 유일한 주소 — 별명을 주소로
+    받기 시작하면 유일성·경로·rename 이 전부 따라온다. 자세한 근거는
+    `agent_cli/agent_icon.py` 모듈 docstring).
+    """
+
+    def test_instant_agent_falls_back_to_a_nickname_beside_its_key(self, stack, page):
+        stack.emit_ready()
+        page.goto(stack.url)
+        # 프로파일도 이름도 없는 즉석 에이전트 — 종전 raw key 가 나오던 경우.
+        stack.renderer.agent_roster(
+            [{"key": "agt-882cc142", "profile": "", "name": "", "state": "idle"}]
+        )
+        assert _wait(lambda: _chip(page, "agt-882cc142").count() > 0)
+
+        chip = _chip(page, "agt-882cc142")
+        assert "조용한 사자" in chip.inner_text()  # agent_nickname 과 동일
+        key_el = chip.locator(".ag-key")
+        assert key_el.inner_text().strip() == "agt-882cc142"
+
+    def test_profile_wins_over_the_nickname(self, stack, page):
+        """프로파일이 있으면 그게 별명보다 많은 것을 말한다 — 별명은 폴백."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.agent_roster(
+            [
+                {
+                    "key": "agt-c83d4f82",
+                    "profile": "code-writer",
+                    "name": "ui",
+                    "state": "idle",
+                }
+            ]
+        )
+        assert _wait(lambda: _chip(page, "agt-c83d4f82").count() > 0)
+
+        text = _chip(page, "agt-c83d4f82").inner_text()
+        assert "code-writer · ui" in text
+        assert "여우" not in text and "사자" not in text
+
+    def test_the_key_is_dimmed_but_present(self, stack, page):
+        """흐리게 — 이름을 가리면 안 되고, 안 보이면 주소로 못 쓴다."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.agent_roster(
+            [{"key": "agt-882cc142", "profile": "", "name": "", "state": "idle"}]
+        )
+        assert _wait(lambda: page.locator(".ag-key").count() > 0)
+
+        key_el = page.locator(".ag-key").first
+        assert key_el.is_visible()
+        opacity = float(
+            page.evaluate("getComputedStyle(document.querySelector('.ag-key')).opacity")
+        )
+        assert 0.2 < opacity < 0.8, f"흐림 정도가 의도 밖: {opacity}"
+
+    def test_channel_bar_does_not_overflow_at_phone_width(self, stack, browser):
+        """이름+key 는 칩을 길게 만든다 — 좁은 폭에서 접혀야 한다."""
+        ctx = browser.new_context(viewport={"width": 400, "height": 720})
+        page = ctx.new_page()
+        try:
+            stack.emit_ready()
+            page.goto(stack.url)
+            stack.renderer.agent_roster(
+                [
+                    {"key": "agt-882cc142", "profile": "", "name": "", "state": "idle"},
+                    {
+                        "key": "agt-c83d4f82",
+                        "profile": "code-writer",
+                        "name": "ui",
+                        "state": "idle",
+                    },
+                    {
+                        "key": "agt-9859a1e1",
+                        "profile": "reviewer",
+                        "name": "",
+                        "state": "idle",
+                    },
+                ]
+            )
+            assert _wait(lambda: page.locator(".ov-ch").count() == 4)
+            sw = page.evaluate("document.body.scrollWidth")
+            cw = page.evaluate("document.body.clientWidth")
+            assert sw <= cw, f"채널 바가 화면을 가로로 넓힘: {sw} > {cw}"
+        finally:
+            ctx.close()

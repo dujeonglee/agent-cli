@@ -318,45 +318,104 @@ def _ov_render_html(name, entry, *, is_hero=False):
     return result.stdout
 
 
+_PARITY_KEYS = [
+    "agt-c83d4f82",
+    "agt-9859a1e1",
+    "agt-ba9813fa",
+    "x",
+    "agt-deadbeef",
+    "agt-00000000",
+    "",
+    "agent-writer#3",
+]
+
+
+def _js_pool(src, name):
+    import re
+
+    return re.search(rf"var {name} = (\[[\s\S]*?\]);", src).group(1)
+
+
+def _js_fn(src, name):
+    import re
+
+    return re.search(rf"(function {name}\(key\) \{{[\s\S]*?\n  \}})", src).group(1)
+
+
+def _run_js(prelude, expr, keys):
+    harness = (
+        prelude
+        + "\nconst ks="
+        + json.dumps(keys)
+        + ";\nprocess.stdout.write(ks.map(k=>("
+        + expr
+        + ")).join('\\n'));"
+    )
+    return subprocess.run(
+        ["node", "-e", harness],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    ).stdout.splitlines()
+
+
 class TestAgentIconParity:
-    """에이전트별 결정적 아이콘 — JS(ovAgentIcon)와 Python(agent_icon)이 같은
-    key 에 같은 아이콘을 내야 한다(서버 스윔레인·주체 배지 ↔ 웹 개요 채널 일치).
-    풀/해시가 어긋나면 같은 agent 가 두 아이콘으로 보인다."""
+    """에이전트별 결정적 **시각 정체성** — JS 와 Python 이 같은 key 에 같은
+    아이콘·같은 별명을 내야 한다(서버 스윔레인·주체 배지·CLI 문답 창 ↔ 웹 개요
+    채널 일치). 풀/해시가 어긋나면 같은 agent 가 화면마다 다른 얼굴이 된다.
+
+    별명은 **표시 전용**이고 주소는 언제나 key 다 — 그래서 이 함수들은 순수
+    함수(로스터 미참조)이고, 양쪽이 같은 산술만 하면 일치가 보장된다."""
 
     def test_js_python_icon_parity(self):
-        import re
-
         from agent_cli.agent_icon import agent_icon
 
         src = _APP_JS.read_text(encoding="utf-8")
-        pool = re.search(r"var OV_AGENT_ICONS = (\[[\s\S]*?\]);", src).group(1)
-        fn = re.search(r"(function ovAgentIcon\(key\) \{[\s\S]*?\n  \})", src).group(1)
-        keys = [
-            "agt-c83d4f82",
-            "agt-9859a1e1",
-            "agt-ba9813fa",
-            "x",
-            "agt-deadbeef",
-            "agt-00000000",
-            "",
-            "agent-writer#3",
-        ]
-        harness = (
-            f"var OV_AGENT_ICONS = {pool};\n{fn}\n"
-            + "const ks="
-            + json.dumps(keys)
-            + ";\n"
-            + "process.stdout.write(ks.map(k=>ovAgentIcon(k)).join('\\n'));"
+        prelude = (
+            f"var OV_AGENT_ICONS = {_js_pool(src, 'OV_AGENT_ICONS')};\n"
+            + _js_fn(src, "ovAgentHash")
+            + "\n"
+            + _js_fn(src, "ovAgentIcon")
         )
-        out = subprocess.run(
-            ["node", "-e", harness],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        ).stdout.splitlines()
-        assert len(out) == len(keys)
-        for key, js_icon in zip(keys, out):
+        out = _run_js(prelude, "ovAgentIcon(k)", _PARITY_KEYS)
+        assert len(out) == len(_PARITY_KEYS)
+        for key, js_icon in zip(_PARITY_KEYS, out):
             assert agent_icon(key) == js_icon, (
                 f"{key}: py={agent_icon(key)} js={js_icon}"
             )
+
+    def test_js_python_nickname_parity(self):
+        """v9.9.0 — 별명 풀·해시도 양쪽이 같아야 한다."""
+        from agent_cli.agent_icon import agent_nickname
+
+        src = _APP_JS.read_text(encoding="utf-8")
+        prelude = (
+            f"var OV_AGENT_ANIMALS = {_js_pool(src, 'OV_AGENT_ANIMALS')};\n"
+            f"var OV_AGENT_ADJECTIVES = {_js_pool(src, 'OV_AGENT_ADJECTIVES')};\n"
+            + _js_fn(src, "ovAgentHash")
+            + "\n"
+            + _js_fn(src, "ovAgentNickname")
+        )
+        out = _run_js(prelude, "ovAgentNickname(k)", _PARITY_KEYS)
+        assert len(out) == len(_PARITY_KEYS)
+        for key, js_nick in zip(_PARITY_KEYS, out):
+            assert agent_nickname(key) == js_nick, (
+                f"{key}: py={agent_nickname(key)} js={js_nick}"
+            )
+
+    def test_animal_pool_is_paired_with_the_icon_pool(self):
+        """ "🦊 날쌘 여우" 가 어긋나지 않으려면 같은 인덱스여야 한다 — 길이
+        불일치는 조용히 짝을 깨므로(아이콘만 늘리면 % 가 달라진다) 고정한다."""
+        import re
+
+        from agent_cli.agent_icon import AGENT_ANIMALS, AGENT_ICONS
+
+        assert len(AGENT_ICONS) == len(AGENT_ANIMALS)
+        src = _APP_JS.read_text(encoding="utf-8")
+        for py_pool, js_name in (
+            (AGENT_ICONS, "OV_AGENT_ICONS"),
+            (AGENT_ANIMALS, "OV_AGENT_ANIMALS"),
+        ):
+            js = re.findall(r'"([^"]+)"', _js_pool(src, js_name))
+            assert js == py_pool, f"{js_name}: 풀이 서버와 다르다"

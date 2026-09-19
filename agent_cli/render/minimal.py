@@ -1176,6 +1176,8 @@ class MinimalRenderer(Renderer):
         success: bool = True,
         to: str = "main",
         ts: float | str | None = None,
+        profile: str = "",
+        instance_name: str = "",
     ) -> None:
         """CLI 의 teammate 문답 수신 창 — @agt-<key> 명령(사용자 발신)의
         회신/질문은 main 관찰로 배달되지 않으므로(D8) 콘솔 라인이 유일한
@@ -1183,7 +1185,7 @@ class MinimalRenderer(Renderer):
         건너뛴다."""
         if to == "main" or direction == "in":
             return
-        from agent_cli.agent_icon import agent_icon
+        from agent_cli.agent_icon import agent_display_name, agent_icon
 
         base_icon = agent_icon(key)
         icon = (
@@ -1191,7 +1193,13 @@ class MinimalRenderer(Renderer):
             if direction == "question"
             else (base_icon if success else base_icon + "✗")
         )
-        self.con.print(f"\n{icon} [{key} → {to}]", style="bold cyan", markup=False)
+        # 이름을 앞에, 주소(key)를 뒤에 — 웹 채널 칩과 같은 배치. 터미널엔
+        # 흐리게 할 자리가 없으니 괄호로 눌러 둔다. v9.9.0.
+        self.con.print(
+            f"\n{icon} [{agent_display_name(key, profile, instance_name)} ({key}) → {to}]",
+            style="bold cyan",
+            markup=False,
+        )
         self.con.print(text, highlight=False, markup=False)
 
     # ── Ask-tool announcement ────────────────────────

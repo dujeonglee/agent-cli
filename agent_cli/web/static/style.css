@@ -1547,6 +1547,15 @@ body.export-mode #messages > .card > .export-check {
 .ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .ov-ch.dead { opacity: 0.5; }
 .ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
+/* 에이전트 주소(`agt-<hex>`) — 이름 옆에 **흐리게** 병기한다. 사람은 이름으로
+   기억하지만 부를 때 필요한 건 key 라(`@agt-…`, 도구의 `{"key": …}`), 읽히되
+   이름을 가리지 않는 무게로 둔다. 별명은 표시 전용이고 주소는 언제나 key. */
+.ag-key {
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.85em;
+  opacity: 0.45;
+  user-select: all; /* 클릭 한 번에 통째로 잡혀 복사된다 */
+}
 .ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
 .ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
 .ov-ch .ov-dot { flex: none; }

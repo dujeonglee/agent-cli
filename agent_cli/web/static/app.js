@@ -1923,17 +1923,57 @@
     "🦁", "🐧", "🦩", "🐬", "🦇", "🐡", "🦕", "🐌",
     "🦔", "🦦", "🐨", "🐼", "🦭", "🦡", "🐺", "🐸",
   ];
-  function ovAgentIcon(key) {
-    if (!key) return OV_AGENT_ICONS[0];
+  // 아이콘과 **같은 인덱스**의 동물 + 독립 해시의 수식어 → "날쌘 여우".
+  // 별명은 **표시 전용**이다 — 주소는 언제나 key(`@agt-<key>`)라, 화면은 늘
+  // key 를 흐리게 곁에 단다(`ovAgentLabelHtml`). 별명을 주소로 받기 시작하면
+  // 유일성·경로·rename 이 따라오는데 key 가 uuid 라 그 셋이 이미 해결돼 있다.
+  var OV_AGENT_ANIMALS = [
+    "여우", "문어", "올빼미", "유니콘", "고래", "나비", "거북", "꿀벌",
+    "사자", "펭귄", "홍학", "돌고래", "박쥐", "복어", "공룡", "달팽이",
+    "고슴도치", "수달", "코알라", "판다", "물범", "오소리", "늑대", "개구리",
+  ];
+  var OV_AGENT_ADJECTIVES = [
+    "날쌘", "느긋한", "꼼꼼한", "용감한", "조용한", "엉뚱한", "성실한", "영리한",
+    "무던한", "재빠른", "신중한", "다정한", "듬직한", "부지런한", "침착한", "씩씩한",
+  ];
+  function ovAgentHash(key) {
     var s = 0;
     for (var i = 0; i < key.length; i++) s += key.charCodeAt(i);
-    return OV_AGENT_ICONS[s % OV_AGENT_ICONS.length];
+    return s;
   }
-  // 채널 표시명: agent 는 "<key별 아이콘> <name>"(스윔레인/주체 배지와 동형).
-  function ovAgentLabel(key) {
+  function ovAgentIcon(key) {
+    if (!key) return OV_AGENT_ICONS[0];
+    return OV_AGENT_ICONS[ovAgentHash(key) % OV_AGENT_ICONS.length];
+  }
+  function ovAgentNickname(key) {
+    var h = ovAgentHash(key);
+    return (
+      OV_AGENT_ADJECTIVES[
+        Math.floor(h / OV_AGENT_ANIMALS.length) % OV_AGENT_ADJECTIVES.length
+      ] + " " + OV_AGENT_ANIMALS[h % OV_AGENT_ANIMALS.length]
+    );
+  }
+  // 화면에 쓸 **이름** — 구체적인 것부터: 인스턴스 이름 > 프로파일 > 별명.
+  // (서버 `agent_icon.agent_display_name` 과 같은 우선순위 — 한 에이전트가
+  // CLI 와 웹에서 다른 이름으로 불리면 안 된다.)
+  function ovAgentDisplayName(key) {
     var tm = ovRoster.filter(function (t) { return t.key === key; })[0];
-    var nm = tm && (tm.name || [tm.profile, tm.name].filter(Boolean).join(" · "));
-    return ovAgentIcon(key) + " " + (nm || key);
+    var profile = (tm && tm.profile) || "";
+    var name = (tm && tm.name) || "";
+    if (name && profile) return profile + " · " + name;
+    return name || profile || ovAgentNickname(key);
+  }
+  // 채널 표시명(**평문**) — title/placeholder 등 마크업을 못 쓰는 자리용.
+  function ovAgentLabel(key) {
+    return ovAgentIcon(key) + " " + ovAgentDisplayName(key);
+  }
+  // 이름 + **흐린 key** — 자리가 있는 곳(채널 칩·ask 트레이)에서 쓴다.
+  // 사람은 이름으로 기억하고, `@agt-…` 로 부를 때 필요한 주소가 바로 옆에 있다.
+  function ovAgentLabelHtml(key) {
+    return (
+      escapeHtml(ovAgentLabel(key)) +
+      ' <span class="ag-key">' + escapeHtml(key) + "</span>"
+    );
   }
 
   // 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
@@ -2043,7 +2083,7 @@
       var qt = q && q.text ? escapeHtml(q.text) : "(질문 대기)";
       html +=
         '<div class="ask-item" data-key="' + escapeHtml(t.key) + '">' +
-        '<div class="ask-q">❓ <b>' + escapeHtml(ovAgentLabel(t.key)) +
+        '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(t.key) +
         "</b> 이(가) 물었습니다</div>" +
         '<div class="ask-qt">' + qt + "</div>" +
         '<div class="ask-in"><input class="ask-answer" type="text" ' +
@@ -2178,10 +2218,12 @@
       ovBack = null;
     }
     ovRenderBack(); // 라벨은 roster 가 와야 이름으로 해소된다
-    var html = ovChanChip("main", "💬 main", "", ovActiveChannel === "main");
+    var html = ovChanChip(
+      "main", escapeHtml("💬 main"), "", ovActiveChannel === "main"
+    );
     ovRoster.forEach(function (t) {
       html += ovChanChip(
-        t.key, ovAgentLabel(t.key), t.state, ovActiveChannel === t.key
+        t.key, ovAgentLabelHtml(t.key), t.state, ovActiveChannel === t.key
       );
     });
     bar.innerHTML = html;
@@ -2192,7 +2234,9 @@
     bar.hidden = ovRoster.length === 0;
     ovApplyChannelInput();
   }
-  function ovChanChip(key, label, state, active) {
+  // `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를
+  // 담기 위해 평문이 아니다. 호출부가 이스케이프 책임을 진다.
+  function ovChanChip(key, labelHtml, state, active) {
     var dead = state === "dead";
     // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
     var dot = "";
@@ -2215,7 +2259,7 @@
       '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
       '" data-key="' + escapeHtml(key) + '" role="tab" aria-selected="' +
       (active ? "true" : "false") + '">' + dot + '<span class="ov-ch-lb">' +
-      escapeHtml(label) + "</span>" + badges + ctrl + "</span>"
+      labelHtml + "</span>" + badges + ctrl + "</span>"
     );
   }
   function ovActiveDead() {

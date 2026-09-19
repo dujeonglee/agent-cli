@@ -3119,7 +3119,27 @@ class TestMinimalConsoleReception:
             to="user",
         )
         out = buf.getvalue()
-        assert "agt-1 → user" in out and "답변입니다" in out
+        # 이름이 앞, 주소(key)가 뒤 — 웹 채널 칩과 같은 배치 (v9.9.0).
+        # 프로파일이 없으면 결정적 별명으로 폴백하되 **key 는 늘 곁에 있다**:
+        # 별명은 표시 전용이고 `@agt-<key>` 가 유일한 주소이기 때문.
+        assert "(agt-1) → user" in out and "답변입니다" in out
+        assert "느긋한 올빼미" in out  # agent_nickname("agt-1") 과 동일
+
+    def test_prints_profile_over_nickname(self):
+        """프로파일이 있으면 그게 별명보다 많은 것을 말한다 — 별명은 폴백."""
+        r, buf = self._minimal()
+        r.agent_message(
+            key="agt-1",
+            direction="out",
+            author="agt-1",
+            text="ok",
+            to="user",
+            profile="code-writer",
+            instance_name="ui",
+        )
+        out = buf.getvalue()
+        assert "code-writer · ui (agt-1) → user" in out
+        assert "올빼미" not in out
 
     def test_skips_main_directed_and_inbound(self):
         r, buf = self._minimal()

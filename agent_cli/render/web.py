@@ -722,9 +722,12 @@ class WebRenderer(Renderer):
         task_id = f"{key}#{seq}"
         with self._lock:
             self._thread_to_task[tid] = task_id
-        label = profile or key
+        from agent_cli.agent_icon import agent_display_name, agent_icon
+
+        # 프로파일 없는 즉석 에이전트는 종전 raw key 가 배지에 찍혔다 —
+        # 결정적 별명으로 폴백한다(주소는 그대로 key). v9.9.0.
+        label = agent_display_name(key, profile)
         self.set_thread_agent(label)
-        from agent_cli.agent_icon import agent_icon
 
         payload = {
             "task_id": task_id,
@@ -837,6 +840,8 @@ class WebRenderer(Renderer):
         success: bool = True,
         to: str = "main",
         ts: float | str | None = None,
+        profile: str = "",
+        instance_name: str = "",
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서).
@@ -844,7 +849,14 @@ class WebRenderer(Renderer):
         ``ts`` (5.13): resume 재생 시 원래 발생 시각을 넘겨 카드가 부활
         순간이 아닌 실제 대화 시각을 보이게 한다 (main 의 ``_replay_ts``
         와 같은 의도 — 여기선 인자로 직접 전달). ``None`` = 라이브 경로
-        → ``_emit`` 이 wall-clock 을 찍는다."""
+        → ``_emit`` 이 wall-clock 을 찍는다.
+
+        ``profile``/``instance_name`` 은 **의도적으로 버린다** (v9.9.0). 발신자가 실어
+        보내지만 그건 로스터를 볼 수 없는 CLI 를 위한 것이고, 프런트는 이름을
+        **렌더 시점에 로스터에서 해소**한다(`ovAgentDisplayName`) — replay 때
+        `agent_msg` 가 `roster` 보다 먼저 와도, 나중에 rename 이 생겨도 한
+        군데만 보면 되기 때문. 여기서 payload 에 실으면 웹에 이름의 출처가
+        둘이 된다."""
         data = {
             "key": key,
             "direction": direction,
