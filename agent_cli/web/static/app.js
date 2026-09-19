@@ -699,16 +699,40 @@
    * body, based on ``taskId``. If the task group hasn't been
    * registered yet (event raced before ``delegate_task_start``), the
    * card falls back to the main timeline so it isn't dropped. */
-  function appendToTimeline(cardEl, taskId) {
+  function appendToTimeline(cardEl, taskId, channel) {
     if (taskId && taskGroups[taskId]) {
       taskGroups[taskId].body.appendChild(cardEl);
       return;
     }
     // 루트 append 만 채널 필터의 대상이다. `data-ch` 가 **없는** 노드는 어느
     // 채널에서나 보인다(생성 중 한 줄처럼 채널과 무관한 표시).
-    cardEl.dataset.ch = channelOf(taskId);
+    // ``channel`` 은 귀속을 **직접** 지정한다 — 왕래 줄은 자기 에이전트의
+    // 채널에 속하지 `channelOf(task_id)` 가 아니다. 종전엔 호출부가
+    // `$messages.appendChild` + `dataset.ch` + `applyChannelFilter` 를 손으로
+    // 조립했고, 그 세 단계가 누수의 단골 자리였다.
+    cardEl.dataset.ch = channel || channelOf(taskId);
     $messages.appendChild(cardEl);
     applyChannelFilter(cardEl);
+  }
+
+  /** 타임라인 카드를 **마무리**한다 — 시각 도장 · 배치(중첩 body 또는 채널
+   * 필터가 걸린 루트) · 스크롤 1회 병합.
+   *
+   * 13개 렌더러가 진짜로 공유하는 건 본문 구성이 아니라 이 **꼬리 배관**이고,
+   * 최근 누수가 전부 여기서 났다(사용자 입력=도장 누락, 거부된 응답=task_id
+   * 흘림, 왕래=세 단계 수동 조립, 무진전 줄=스코프 누락). 조사에서 하나 더
+   * 나왔다 — `renderFailedEmission` 은 아예 `stampCard` 를 안 불러 **시각 없는
+   * 카드**였다.
+   *
+   * 인자는 **이벤트 페이로드 통째**다. 추출한 id 를 받으면 `undefined` 가
+   * 조용히 통과하지만(실제로 `transcript_truncated` 가 그랬다), 페이로드를
+   * 받으면 귀속 누락이 "필드를 잊었다"가 아니라 **"인자를 안 넘겼다"** 가 된다.
+   * main 에 일부러 두려면 `MAIN` 을 명시한다. */
+  const MAIN = { task_id: "" };
+  function finishCard(cardEl, ev, channel) {
+    stampCard(cardEl, ev && ev.ts);
+    appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
+    scheduleScroll();
   }
 
   /** 에이전트 메일이 idle 한 main 을 깨워 런이 시작됐다 (v9.7.0).
@@ -740,9 +764,7 @@
         ["wake"]
       )
     );
-    stampCard(card, d.ts);
-    appendToTimeline(card, d.task_id);
-    scheduleScroll();
+    finishCard(card, d);
   }
 
   // Inline context-compaction marker. `start` drops a "압축 중…" system line;
@@ -881,12 +903,9 @@
   function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
     card.appendChild(elHtml("div", ["bubble"], escapeAndFormat(content)));
-    stampCard(card, ts);
-    // 루트 직결이 아니라 appendToTimeline 경유 — 채널 도장(`data-ch="main"`)을
-    // 받아야 한다. 직결이면 도장이 없어 **모든 채널에서 보였다**(v9.4.0 ⑥
-    // 실장에서 발견). 에이전트 채널의 사용자 입력은 여기 오지 않는다 —
-    // /api/agent/<key>/input 을 거쳐 `agent_msg` 왕래 줄로 온다.
-    appendToTimeline(card, "");
+    // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
+    // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
+    finishCard(card, { ts: ts, task_id: MAIN.task_id });
     scheduleScroll();
   }
 
@@ -1027,9 +1046,7 @@
                 tool === "agent" ? agentJumpChip(input) : null)
       );
     }
-    stampCard(card, d.ts);
-    appendToTimeline(card, d.task_id);
-    scheduleScroll();
+    finishCard(card, d);
   }
 
   /** Render the action_input portion of an assistant_turn card.
@@ -1190,17 +1207,13 @@
       if (mark) mark.textContent = "▾";
     }
     card.appendChild(row);
-    stampCard(card, d.ts);
-    appendToTimeline(card, d.task_id);
-    scheduleScroll();
+    finishCard(card, d);
   }
 
   function renderError(d) {
     const card = el("div", ["card", "card-error"]);
     card.textContent = d.content;
-    stampCard(card, d.ts);
-    appendToTimeline(card, d.task_id);
-    scheduleScroll();
+    finishCard(card, d);
   }
 
   // ── 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) ────────────────────
@@ -1241,18 +1254,20 @@
   // 거부된 원문(raw)을 실패 카드로. 종전엔 라이브 스트리밍 카드를 마감하는
   // 경로가 주였으나, 스트리밍이 없어져 **원문 표시**만 남는다 — 모델이 무엇을
   // 뱉어 거부됐는지는 여전히 봐야 한다.
-  // ``taskId`` 를 **반드시** 넘긴다. 거부된 응답은 그걸 낸 주체의 것이라, 빠뜨리면
-  // 에이전트가 낸 실패가 main 대화에 빨간 박스로 뜬다(사용자 보고). `_emit` 이
-  // `failed_turn` 에 스코프 task_id 를 이미 실어 보내므로 리스너가 흘리기만 하면 됐다.
-  function renderFailedEmission(reason, raw, taskId) {
+  // **페이로드를 통째로** 받는다. 개별 인자로 받던 종전엔 (a) 호출부가 task_id 를
+  // 흘려 에이전트의 실패가 main 에 빨간 박스로 떴고(사용자 보고), (b) `ts` 는
+  // 아예 인자에 없어 **시각 없는 카드**였다(감사 발견 — 아무도 몰랐다).
+  // 페이로드를 받으면 둘 다 구조적으로 사라진다.
+  function renderFailedEmission(d) {
+    const reason = (d && d.reason) || "";
+    const raw = (d && d.raw) || "";
     if (!raw && !reason) return;
     const card = el("div", ["card", "card-failed"]);
     // P0-6②: reason/raw 는 모델·서버 원문 — el() 이 textContent 기반이라
     // 원문 그대로 안전(과거 innerHTML 시절 미이스케이프 self-XSS 의 수리 지점).
     if (raw) card.appendChild(el("pre", ["streaming"], raw));
     if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
-    appendToTimeline(card, taskId);
-    scheduleScroll();
+    finishCard(card, d);
   }
 
   // ── Input mode switching ───────────────────
@@ -1708,7 +1723,7 @@
   es.addEventListener("failed_turn", function (e) {
     const d = JSON.parse(e.data);
     hideGenerating();
-    renderFailedEmission(d.reason, d.raw, d.task_id);
+    renderFailedEmission(d);
     // failed_turn 은 서버의 ``recovery()`` 에서만 나온다 — **포맷 복구 후
     // 같은 런이 재시도**한다는 뜻이지 런 종료가 아니다. 런 종료 정리는
     // worker_state idle 이 소유한다.
@@ -2087,7 +2102,6 @@
       });
     }
     var card = el("div", ["card", "card-msg"]);
-    card.dataset.ch = d.key;
     if (peer.key) card.dataset.peer = peer.key;
     // 바로 위 최종답과 같은 답이면 **영수증 한 줄**로만 (사용자 지적: 같은
     // 내용이 화면에 두 번). 같지 않으면(= resume 재생이라 최종답이 없다)
@@ -2108,10 +2122,9 @@
         tail
       )
     );
-    stampCard(card, d.ts);
-    $messages.appendChild(card);
-    applyChannelFilter(card);
-    scheduleScroll();
+    // 왕래 줄은 **자기 에이전트 채널**에 속한다 — channelOf(task_id) 가
+    // 아니라 d.key 다. 종전엔 이 세 단계를 손으로 조립했다.
+    finishCard(card, d, d.key);
   }
 
   function ovOnAgentMsg(d) {

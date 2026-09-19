@@ -3486,3 +3486,60 @@ class TestStreamResetWeb:
         # 서버는 계속 낸다 — CLI 쪽 계약(TestStreamResetCli)이 그걸 쓴다
         web = Path("agent_cli/render/web.py").read_text()
         assert "def stream_reset" in web
+
+
+class TestReplayContract:
+    """resume 재생의 표시-타입 계약 — 선언되지 않은 영속 이벤트를 잡는다 (v9.8.0).
+
+    지속성은 **세 단계**다(라이브 / 재접속 버퍼 / `--resume` history). 세 번째는
+    앞 둘에서 파생되지 않고 `ContextManager` 가 결정하는데, 렌더러는 그걸 보지
+    못한다. 그래서 새 영속 이벤트를 만들 때 resume 경로를 잊기 쉽고, 실제로
+    잊었다 — v9.7.0 이 깨우기를 말풍선에서 한 줄로 고쳤는데 resume 하면
+    되살아났다(`_replay_record` 가 `author_is_user` 를 읽고도 버렸다).
+
+    이 테스트는 "영속으로 방출하면서 재생 계약도 live-only 선언도 없는 이벤트"
+    를 실패시킨다. 무엇이 맞는지는 판단할 수 없지만 **판단을 강제**할 수는 있다."""
+
+    def test_every_persistent_event_declares_its_replay_behaviour(self):
+        import pathlib
+        import re
+
+        import agent_cli
+        from agent_cli.render.web import WebRenderer
+
+        src = (
+            pathlib.Path(agent_cli.__file__).parent / "render" / "web.py"
+        ).read_text()
+        # `_emit("name", …, persistent=True)` — 여러 줄에 걸친 호출도 잡는다.
+        persistent = {
+            m.group(1)
+            for m in re.finditer(
+                r'_emit\(\s*"([a-z_]+)"[^)]*?persistent=True', src, re.DOTALL
+            )
+        }
+        assert persistent, "영속 이벤트를 하나도 못 찾았다 — 정규식이 낡았다"
+
+        declared = set(WebRenderer.REPLAY_CONTRACT) | set(WebRenderer.REPLAY_LIVE_ONLY)
+        undeclared = sorted(persistent - declared)
+        assert not undeclared, (
+            f"영속으로 방출하는데 resume 계약이 선언되지 않은 이벤트: {undeclared}\n"
+            f"REPLAY_CONTRACT(재생됨) 또는 REPLAY_LIVE_ONLY(의도적 비재생)에 "
+            f"이유와 함께 적으세요 — 잊으면 표시 타입이 resume 에서 조용히 바뀝니다."
+        )
+
+    def test_contract_has_no_stale_entries(self):
+        """반대 방향 — 없어진 이벤트가 표에 남아 있으면 계약이 거짓말이 된다."""
+        import pathlib
+        import re
+
+        import agent_cli
+        from agent_cli.render.web import WebRenderer
+
+        src = (
+            pathlib.Path(agent_cli.__file__).parent / "render" / "web.py"
+        ).read_text()
+        emitted = set(re.findall(r'_emit\(\s*"([a-z_]+)"', src))
+        emitted |= set(re.findall(r'set_sticky\(\s*"[a-z_]+",\s*"([a-z_]+)"', src))
+        declared = set(WebRenderer.REPLAY_CONTRACT) | set(WebRenderer.REPLAY_LIVE_ONLY)
+        stale = sorted(declared - emitted)
+        assert not stale, f"방출되지 않는데 계약에 남아 있는 이벤트: {stale}"

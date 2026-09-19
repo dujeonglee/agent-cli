@@ -44,7 +44,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
-from typing import Any
+from typing import Any, ClassVar
 
 from agent_cli.render.base import ConfirmOption, Renderer
 
@@ -968,6 +968,43 @@ class WebRenderer(Renderer):
             pending_i += 1
         # Back to live: subsequent events get a fresh wall-clock stamp.
         self._replay_ts = None
+
+    # ── resume 재생의 표시-타입 계약 (v9.8.0) ──────────────────────
+    #
+    # 지속성은 불리언이 아니라 **독립된 세 단계**다:
+    #   ① 라이브 팬아웃        — 모든 이벤트
+    #   ② 재접속 리플레이      — `persistent=True` → `_event_buffer`
+    #   ③ `--resume` 리플레이  — **ContextManager 가 history.jsonl 에 썼는가**
+    #
+    # ③은 ②에서 파생되지 않는다. `persistent=` 는 `_emit` 의 파라미터인데 ③은
+    # 렌더러가 보지도 못하는 `loop/core.py` 코드의 창발적 성질이고, `_replay_record`
+    # 는 다섯 필드 어휘(role · `tool` 유무 · author · author_is_user · ops)로
+    # 표시 타입을 **재구성**한다. 그 다섯으로 표현 안 되는 구분은 전부 잃는다.
+    #
+    # 실제로 잃었다: v9.7.0 이 깨우기를 말풍선에서 한 줄로 고쳤는데 resume 하면
+    # 되살아났다. 관찰·왕래가 멀쩡한 것도 설계가 아니라 각각 다른 파일에 박아둔
+    # 일회성 shim 덕이었다(`removeprefix("Observation: ")`, `lastFinalByChannel`).
+    # **불변식을 선언하는 곳이 없어서** 새 타입이 조용히 빠져나간다.
+    #
+    # 그래서 여기 선언한다. 테스트(`test_web_renderer`)가 이 표와 실제 방출을
+    # 대조해 "영속 이벤트인데 재생 계약이 없다"를 잡는다.
+    REPLAY_CONTRACT: ClassVar[dict[str, str]] = {
+        # 이벤트 → 이 레코드 모양이 resume 에서 어떻게 복원되는가
+        "user_message": "role=user, tool 없음, author_is_user 참",
+        "agent_wake": "role=user, author_is_user 거짓 (사람 아닌 발신자)",
+        "observation": "role=user + tool 키",
+        "assistant_turn": "role=assistant (thought/ops/action/final)",
+        "scope_start": "scopes.jsonl 사이드카 → replay_scopes",
+        "scope_end": "scopes.jsonl 사이드카 → replay_scopes",
+        "agent_msg": "agents/<key>/conversation.jsonl → _replay_conversation",
+    }
+    # 영속(②)이지만 **의도적으로** resume(③)에 안 남는 것들 — 이유를 적는다.
+    REPLAY_LIVE_ONLY: ClassVar[dict[str, str]] = {
+        "turn_error": "history 에 쓰지 않는다 (의도 — 런 실패는 재생하지 않음)",
+        "failed_turn": "거부된 원문은 history 에 없다; 짝 관찰만 남는다",
+        "agent_roster": "sticky — 재접속엔 실리고 resume 은 registry 가 재구성",
+        "agent_cleared": "kill 시점의 정리 신호 (상태가 아님)",
+    }
 
     def _replay_record(
         self, msg: dict, *, force_task_id: str | None = None, sub: bool = False
