@@ -137,22 +137,117 @@ class TestChannelFilter:
         _chip(page, "main").click()
         assert _wait(lambda: main_card.first.is_visible())
 
-    def test_node_without_data_ch_stays_visible_in_every_channel(self, stack, page):
-        """생성 중 한 줄처럼 **채널과 무관한** 표시는 `data-ch` 를 달지 않고,
-        필터는 그런 노드를 손대지 않는다. (필터가 무조건 숨기면 에이전트
-        채널에서 생성 중 표시가 사라져 '멈춘 것처럼' 보인다.)"""
+    def test_generating_line_belongs_to_its_own_channel(self, stack, page):
+        """생성 중 줄은 **그 스코프의 채널에만** 보인다 (v9.9.0, 사용자 제보).
+
+        v9.4.0 은 이 줄을 `data-ch` 없이 두어 모든 채널에 보이게 했다 — *"필터가
+        무조건 숨기면 에이전트 채널에서 생성 중 표시가 사라져 '멈춘 것처럼'
+        보인다"*. 에이전트가 하나일 때를 전제한 판단이라, 넷을 띄우자 정반대로
+        거짓말이 됐다: **멈춰 있는 세 창에 옆 에이전트의 사고량이 비쳤다.**
+        컨텍스트가 에이전트마다 분리돼 있으므로 진행 표시도 그래야 한다.
+        """
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, AGT).count() > 0)
 
-        stack.renderer.stream_chunk("본문 " * 60)  # → stream_tick → 생성 중 한 줄
+        # main 스코프의 생성 중 줄 — main 에서만 보인다.
+        stack.renderer.stream_chunk("본문 " * 60)
         gen = page.locator("#messages > .gen")
         assert _wait(lambda: gen.count() > 0 and gen.is_visible())
-        assert gen.get_attribute("data-ch") is None
+        assert gen.get_attribute("data-ch") == "main"
 
         _chip(page, AGT).click()
-        assert gen.is_visible(), "생성 중 표시가 채널 전환에 숨었다"
+        assert _wait(lambda: not gen.is_visible()), (
+            "main 의 생성 중 표시가 에이전트 채널에 비친다"
+        )
+
+    def test_each_agent_gets_its_own_generating_line_and_numbers(self, stack, page):
+        """동시에 도는 둘은 **각자의 줄·각자의 숫자**를 갖는다.
+
+        서버 카운터도 같은 릴리스에서 스코프별로 갈랐다 — 화면만 나눠 그리면
+        숫자 자체가 이미 섞인 값이다(`_tick_state`). 여기서는 그 둘이 **함께**
+        동작해 실제 화면에 다른 숫자가 나오는지를 본다."""
+        import threading
+
+        stack.emit_ready()
+        _roster(stack, AGT, PEER)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, PEER).count() > 0)
+
+        def stream_as(key, chunk):
+            """에이전트 워커처럼 **자기 스레드**에서 자기 스코프를 연다."""
+            r = stack.renderer
+            r.begin_scope(
+                task_id=f"{key}#1",
+                kind="run",
+                label="작업",
+                agent=key,
+                parent="",
+                ctx_dir=f"agents/{key}",
+            )
+            r.thinking_chunk(chunk)
+
+        for key, n in ((AGT, 400), (PEER, 1200)):
+            t = threading.Thread(target=stream_as, args=(key, "x" * n))
+            t.start()
+            t.join()
+
+        assert _wait(lambda: page.locator("#messages > .gen").count() == 2)
+        by_ch = {
+            g.get_attribute("data-ch"): g.inner_text()
+            for g in page.locator("#messages > .gen").all()
+        }
+        assert set(by_ch) == {AGT, PEER}, f"채널 귀속이 어긋남: {list(by_ch)}"
+        # 400/4=100, 1200/4=300 — 섞였다면 둘 다 400 이 된다.
+        assert "100" in by_ch[AGT] and "300" in by_ch[PEER], by_ch
+
+        # 각 채널에서 자기 것만 보인다.
+        _chip(page, AGT).click()
+        assert _wait(
+            lambda: (
+                page.locator(f'.gen[data-ch="{AGT}"]').first.is_visible()
+                and not page.locator(f'.gen[data-ch="{PEER}"]').first.is_visible()
+            )
+        )
+
+    def test_one_agent_finishing_leaves_the_others_line_alone(self, stack, page):
+        """한 쪽의 `stream_end` 가 전원의 줄을 거두면 안 된다."""
+        import threading
+
+        stack.emit_ready()
+        _roster(stack, AGT, PEER)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, PEER).count() > 0)
+
+        def run(key, fn):
+            r = stack.renderer
+            r.begin_scope(
+                task_id=f"{key}#1",
+                kind="run",
+                label="작업",
+                agent=key,
+                parent="",
+                ctx_dir=f"agents/{key}",
+            )
+            fn(r)
+
+        for key in (AGT, PEER):
+            t = threading.Thread(
+                target=run, args=(key, lambda r: r.thinking_chunk("x" * 400))
+            )
+            t.start()
+            t.join()
+        assert _wait(lambda: page.locator("#messages > .gen").count() == 2)
+
+        t = threading.Thread(target=run, args=(AGT, lambda r: r.stream_end()))
+        t.start()
+        t.join()
+
+        assert _wait(lambda: page.locator(f'.gen[data-ch="{AGT}"]').count() == 0)
+        assert page.locator(f'.gen[data-ch="{PEER}"]').count() == 1, (
+            "한 에이전트의 종료가 다른 에이전트의 생성 중 줄을 거뒀다"
+        )
 
     def test_main_user_message_does_not_leak_into_agent_channels(self, stack, page):
         """`data-ch` 없음 = 모든 채널에 보임 이므로, 루트에 카드를 붙이는 경로는

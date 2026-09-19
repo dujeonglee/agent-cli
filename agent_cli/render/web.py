@@ -227,6 +227,9 @@ class WebRenderer(Renderer):
         self._scope_depths: dict[str, int] = {}
         # 스레드 → 다음 카드에 붙일 표시 전용 주석 (``note_next``)
         self._pending_notes: dict[int, str] = {}
+        # 스코프(task_id) → 스트리밍 누적 {stream_chars, thinking_chars, last_*}.
+        # 인스턴스 하나로 두면 동시에 도는 에이전트들의 토큰이 더해진다 (v9.9.0).
+        self._tick_state: dict[str, dict[str, float]] = {}
         # v4.52.0 스코프 스택: 스레드당 [스코프id…] — 중첩 루프(delegate 안
         # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹
         # 라우팅)와 분리 — 프런트 카드 그룹핑은 delegate 전용 시각 장치.
@@ -290,6 +293,18 @@ class WebRenderer(Renderer):
 
     # ─── Event distribution ─────────────────────────
 
+    def _current_task_id(self) -> str | None:
+        """지금 이 스레드가 속한 스코프의 ``task_id`` — 귀속의 **단일 출처**.
+
+        `_emit`(이벤트에 붙이는 라우팅 키)과 `_tick`(스트리밍 누적의 키)이
+        같은 값을 써야 프런트의 채널 필터와 어긋나지 않는다.
+        """
+        return self._thread_to_task.get(threading.get_ident()) or self._replay_task_id
+
+    def _tick_key(self) -> str:
+        """`_tick_state` 의 키 — main 은 빈 task_id 라 ``""`` 로 떨어진다."""
+        return self._current_task_id() or ""
+
     def _emit(
         self,
         event: str,
@@ -310,7 +325,7 @@ class WebRenderer(Renderer):
         deliberately bare (e.g. ``input_resolved``).
         """
         tid = threading.get_ident()
-        task_id = self._thread_to_task.get(tid) or self._replay_task_id
+        task_id = self._current_task_id()
         if task_id is not None and "task_id" not in data:
             data = {**data, "task_id": task_id}
         # 표시 전용 주석 — 다음 카드 하나에 배지로 붙는다 (v9.8.0).
@@ -1495,8 +1510,9 @@ class WebRenderer(Renderer):
 
         CLI(`MinimalRenderer.stream_reset`)는 처음부터 이걸 했다 — *"재전송 후
         카운터가 옛 시도분을 이어 세면 실제보다 부풀어 보인다"*. 웹 override 는
-        이벤트만 쏘고 `_stream_chars`/`_thinking_chars` 를 그대로 둬서, 재전송이
-        일어나면 생성 중 줄의 토큰 수가 부풀었다(감사 발견).
+        이벤트만 쏘고 누적 카운터를 그대로 둬서, 재전송이 일어나면 생성 중 줄의
+        토큰 수가 부풀었다(감사 발견). v9.9.0 부터 카운터가 스코프별이라
+        **이 스코프 것만** 버린다 — 옆 에이전트의 진행은 재전송과 무관하다.
 
         아래는 이벤트 자체에 대한 원래 주석:
 
@@ -1507,10 +1523,7 @@ class WebRenderer(Renderer):
         자동으로 붙여 서브에이전트 카드도 제 것만 지워진다."""
         # 카운터 리셋 — 생성 중 줄(`_tick`)이 누적분을 쓰므로, 재전송 시
         # 0 으로 되돌리지 않으면 옛 시도분을 이어 세서 부풀어 보인다.
-        self._stream_chars = 0
-        self._thinking_chars = 0
-        self._last_stream_emit = 0.0
-        self._last_thinking_emit = 0.0
+        self._tick_state.pop(self._tick_key(), None)
         self._emit("stream_reset", {}, persistent=False)
 
     def stream_stall(
@@ -1925,16 +1938,27 @@ class WebRenderer(Renderer):
     _TICK_THROTTLE_S = 0.5
 
     def _tick(self, kind: str, text: str) -> None:
+        """스트리밍 진행 tick — **스코프별로** 누적한다 (v9.9.0).
+
+        종전엔 `_stream_chars`/`_thinking_chars` 가 인스턴스 속성이었다.
+        렌더러는 싱글턴이고 상주 에이전트 워커는 각자 자기 스레드에서 도므로,
+        **동시에 도는 에이전트들의 토큰이 한 숫자에 더해지고** 한 쪽의
+        `stream_end` 가 전원의 카운터를 0으로 만들었다(에이전트 4대를 띄운
+        실세션에서 드러남). 화면을 채널별로 나눠 그려도 숫자 자체가 틀리므로
+        서버에서 먼저 갈라야 한다.
+
+        키는 `_emit` 이 `task_id` 로 쓰는 **바로 그 값**이다 — 귀속의 출처가
+        하나여야 프런트의 채널 필터와 어긋나지 않는다.
+        """
         import time as _t
 
-        chars_attr = f"_{kind}_chars"
-        last_attr = f"_last_{kind}_emit"
-        total = getattr(self, chars_attr, 0) + len(text)
-        setattr(self, chars_attr, total)
+        st = self._tick_state.setdefault(self._tick_key(), {})
+        total = st.get(f"{kind}_chars", 0) + len(text)
+        st[f"{kind}_chars"] = total
         now = _t.monotonic()
-        if now - getattr(self, last_attr, 0.0) < self._TICK_THROTTLE_S:
+        if now - st.get(f"last_{kind}", 0.0) < self._TICK_THROTTLE_S:
             return
-        setattr(self, last_attr, now)
+        st[f"last_{kind}"] = now
         # chars/4 — estimate_tokens 와 동일 관례 (import cycle 회피)
         self._emit(f"{kind}_tick", {"tokens": total // 4}, persistent=False)
 
@@ -1947,10 +1971,8 @@ class WebRenderer(Renderer):
         self._tick("thinking", text)
 
     def stream_end(self) -> None:
-        self._stream_chars = 0
-        self._thinking_chars = 0
-        self._last_stream_emit = 0.0
-        self._last_thinking_emit = 0.0
+        """이 스코프의 누적만 버린다 — 옆 에이전트의 카운터를 건드리지 않는다."""
+        self._tick_state.pop(self._tick_key(), None)
         self._emit("stream_end", {}, persistent=False)
 
     # ─── Input methods (Renderer ABC) ───────────────

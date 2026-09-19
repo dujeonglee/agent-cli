@@ -1241,40 +1241,57 @@
   // 숫자가 오르면 살아 있다는 뜻이고, 사고 토큰이 따로 잡히면 러너웨이가
   // 바로 보인다. 본문이 흐르지 않으므로 **카드가 자라며 화면이 튀지 않는다**.
   // 서버는 0.5s 스로틀 tick 만 보내므로 트래픽도 토큰 수와 무관하다.
-  let genEl = null;
-  let genBody = 0;    // 본문 누적 토큰
-  let genThink = 0;   // 사고 누적 토큰
-  let genRetry = 0;   // 형식 거부 후 재시도 횟수 (v9.8.0)
+  // **채널당 하나**다 (v9.9.0). 종전엔 전역 엘리먼트 하나를 `data-ch` 없이
+  // 붙여 모든 채널에 같은 줄이 보였다 — 에이전트가 하나일 때를 전제한 판단이라
+  // 넷이 되자 거짓말이 됐다(멈춰 있는 에이전트 창에 옆 에이전트의 사고량이
+  // 비쳤다, 사용자 제보). 서버도 같은 릴리스에서 누적을 스코프별로 갈랐다 —
+  // 화면만 나눠 그리면 숫자 자체가 이미 섞인 값이다.
+  //
+  // `channel -> {el, body, think, retry}`. 귀속은 `channelOf(task_id)` —
+  // 카드가 쓰는 그 함수라 필터와 어긋날 수 없다.
+  const genByCh = {};
   // fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
 
-  function showGenerating() {
-    if (!genEl) {
-      genEl = el("div", ["gen"]);
-      genEl.appendChild(el("span", ["gen-pulse"]));
-      genEl.appendChild(el("span", ["gen-label"], "생성 중"));
-      genEl.appendChild(el("span", ["gen-tok"]));
-      $messages.appendChild(genEl);
+  function genSlot(channel) {
+    let g = genByCh[channel];
+    if (!g) {
+      const node = el("div", ["gen"]);
+      node.appendChild(el("span", ["gen-pulse"]));
+      node.appendChild(el("span", ["gen-label"], "생성 중"));
+      node.appendChild(el("span", ["gen-tok"]));
+      g = genByCh[channel] = { el: node, body: 0, think: 0, retry: 0 };
     }
+    return g;
+  }
+
+  /** `taskId` 가 속한 채널의 생성 중 줄을 갱신한다(없으면 만든다). */
+  function showGenerating(taskId) {
+    const channel = channelOf(taskId || "");
+    const g = genSlot(channel);
     const parts = [];
-    if (genBody) parts.push("· " + fmtTok(genBody) + " tokens");
-    if (genThink) parts.push("· 💭 사고 " + fmtTok(genThink));
+    if (g.body) parts.push("· " + fmtTok(g.body) + " tokens");
+    if (g.think) parts.push("· 💭 사고 " + fmtTok(g.think));
     // 재시도는 **왜 오래 걸리는지**의 유일한 단서다. 거부된 응답 자체는 안
     // 보여주지만(하네스의 재시도 기계는 모델의 작업이 아니다), "그냥 느린 것"과
     // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
     // 실제로 다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다.
-    if (genRetry) parts.push("· ↻ 재시도 " + genRetry);
-    genEl.querySelector(".gen-tok").textContent = parts.join(" ");
+    if (g.retry) parts.push("· ↻ 재시도 " + g.retry);
+    g.el.querySelector(".gen-tok").textContent = parts.join(" ");
+    // 매번 다시 붙인다 = **맨 아래로 이동**(appendChild 는 기존 노드를 옮긴다).
+    // 진행 표시는 그 채널의 마지막 줄이어야 한다. taskId 를 비워 넘기는 이유:
+    // delegate/skill 스코프의 접히는 카드 **안**으로 들어가면 접었을 때 사라져
+    // "멈춘 것처럼" 보인다 — 귀속은 채널로 직접 지정한다.
+    appendToTimeline(g.el, "", channel);
     scheduleScroll();
   }
 
-  function hideGenerating() {
-    if (genEl) {
-      genEl.remove();
-      genEl = null;
-    }
-    genBody = 0;
-    genThink = 0;
-    genRetry = 0;
+  /** 그 채널의 생성 중 줄을 거둔다. 다른 채널은 건드리지 않는다. */
+  function hideGenerating(taskId) {
+    const channel = channelOf(taskId || "");
+    const g = genByCh[channel];
+    if (!g) return;
+    g.el.remove();
+    delete genByCh[channel];
   }
 
 
@@ -1648,8 +1665,8 @@
     // v9.4.0 ④: 생성 중 줄에도 싣는다. 사고만 하고 본문이 아직 없는 구간
     // (러너웨이가 정확히 그 모양이다)에서도 살아있음이 보여야 한다 —
     // 헤더 배지만 갱신하면 대화 쪽은 조용해 멎은 것처럼 읽힌다.
-    genThink = d.tokens;
-    showGenerating();
+    genSlot(channelOf(d.task_id || "")).think = d.tokens;
+    showGenerating(d.task_id);
   });
 
   es.addEventListener("max_agents", function (e) {
@@ -1729,7 +1746,7 @@
 
   es.addEventListener("assistant_turn", function (e) {
     const d = JSON.parse(e.data);
-    hideGenerating();
+    hideGenerating(d.task_id);
     renderAssistantTurn(d);
   });
 
@@ -1738,9 +1755,10 @@
   // 대신 생성 중 줄의 카운터만 올린다: 런은 계속되므로 `hideGenerating` 도
   // 부르지 않는다(종전엔 불렀다가 다음 tick 에 다시 만들어 깜빡였다).
   // 재시도를 다 쓰면 하드페일이 `turn_error` 로 **영속** 표면에 남는다.
-  es.addEventListener("retry_tick", function () {
-    genRetry += 1;
-    showGenerating();
+  es.addEventListener("retry_tick", function (e) {
+    const d = JSON.parse(e.data || "{}");
+    genSlot(channelOf(d.task_id || "")).retry += 1;
+    showGenerating(d.task_id);
   });
 
   es.addEventListener("observation", function (e) {
@@ -1814,12 +1832,13 @@
 
   // 본문·사고 tick — 토큰 수만 온다(텍스트 없음).
   es.addEventListener("stream_tick", function (e) {
-    genBody = (JSON.parse(e.data) || {}).tokens || 0;
-    showGenerating();
+    const d = JSON.parse(e.data) || {};
+    genSlot(channelOf(d.task_id || "")).body = d.tokens || 0;
+    showGenerating(d.task_id);
   });
 
-  es.addEventListener("stream_end", function () {
-    hideGenerating();
+  es.addEventListener("stream_end", function (e) {
+    hideGenerating((JSON.parse(e.data || "{}") || {}).task_id);
   });
 
   // ── Delegate task lifecycle ────────────────
