@@ -239,6 +239,15 @@ class WebServer:
         nickname = self.renderer.nickname_for(conn_id)
         return self._queue.enqueue(conn_id, text, nickname=nickname)
 
+    def enqueue_system(self, conn_id: str | None, text: str) -> dict:
+        """사람이 보내지 않은 합성 입력(에이전트 메일 깨우기)을 큐에 넣는다.
+
+        `enqueue` 와 같은 큐를 쓴다 — 워커의 `dequeue_blocking` 을 푸는 길이
+        그것뿐이다. 다만 화면의 대기열에는 뜨지 않는다(`snapshot` 이 제외).
+        ``conn_id`` 는 MailWaker 의 호출 규약(`enqueue(None, text)`)을 맞추기
+        위한 자리이고 항상 None 이다."""
+        return self._queue.enqueue(conn_id, text, nickname="", system=True)
+
     def dequeue_blocking(self):
         """Worker-idle: block until a message is queued (or shutdown).
 

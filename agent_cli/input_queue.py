@@ -41,8 +41,17 @@ class InputQueue:
         if cb is not None:
             cb()
 
-    def enqueue(self, conn_id: str | None, text: str, *, nickname=None) -> dict:
-        """메시지 추가 — ``{id, conn_id, nickname, text}`` 반환."""
+    def enqueue(
+        self, conn_id: str | None, text: str, *, nickname=None, system: bool = False
+    ) -> dict:
+        """메시지 추가 — ``{id, conn_id, nickname, text, system}`` 반환.
+
+        ``system=True`` 는 **사람이 보내지 않은** 합성 입력(에이전트 메일
+        깨우기)이다. 큐를 타는 건 그게 `dequeue_blocking` 을 푸는 유일한
+        수단이라서지, 사용자가 보낸 게 아니다 — 그래서 :meth:`snapshot`
+        (= 화면의 대기열)에서 빠진다. 대기 **카운트**에는 남는다: 그건
+        idle 리퍼가 "할 일이 있나"를 묻는 신호라 실제로 할 일이 맞다.
+        """
         with self._cv:
             self._seq += 1
             item = {
@@ -50,6 +59,7 @@ class InputQueue:
                 "conn_id": conn_id or "",
                 "nickname": nickname,
                 "text": text,
+                "system": system,
             }
             self._items.append(item)
             self._cv.notify()
@@ -95,8 +105,14 @@ class InputQueue:
         return removed
 
     def snapshot(self) -> list[dict]:
+        """화면에 보일 대기열 — **합성 입력은 뺀다**.
+
+        종전엔 메일 깨우기가 닉네임 ``"?"`` 의 대기 메시지로 입력창 위에
+        떴다가 즉시 사라졌다(사용자 지적). 아무도 보내지 않은 메시지가
+        대기열에 보이는 것이고, 프런트의 "주입됨/취소됨" 영수증 추론까지
+        헛돌게 한다."""
         with self._cv:
-            return [dict(it) for it in self._items]
+            return [dict(it) for it in self._items if not it.get("system")]
 
     def pending_count(self) -> int:
         with self._cv:

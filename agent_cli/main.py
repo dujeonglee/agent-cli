@@ -1448,7 +1448,8 @@ def run(
         input_queue = InputQueue()
         waker, revived, auto = wire_agent_mail(
             agent_registry,
-            enqueue_wake=input_queue.enqueue,
+            # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
+            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
         )
@@ -2299,7 +2300,7 @@ def web(
         # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
         _waker, revived, auto = wire_agent_mail(
             _registry,
-            enqueue_wake=server.enqueue,
+            enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
         )
