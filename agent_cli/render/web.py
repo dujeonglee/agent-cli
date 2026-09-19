@@ -225,6 +225,8 @@ class WebRenderer(Renderer):
         # from event order (which cannot tell a nested scope from a sibling).
         # Entries are dropped in ``end_scope``.
         self._scope_depths: dict[str, int] = {}
+        # 스레드 → 다음 카드에 붙일 표시 전용 주석 (``note_next``)
+        self._pending_notes: dict[int, str] = {}
         # v4.52.0 스코프 스택: 스레드당 [스코프id…] — 중첩 루프(delegate 안
         # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹
         # 라우팅)와 분리 — 프런트 카드 그룹핑은 delegate 전용 시각 장치.
@@ -311,6 +313,15 @@ class WebRenderer(Renderer):
         task_id = self._thread_to_task.get(tid) or self._replay_task_id
         if task_id is not None and "task_id" not in data:
             data = {**data, "task_id": task_id}
+        # 표시 전용 주석 — 다음 카드 하나에 배지로 붙는다 (v9.8.0).
+        # `task_id` 와 **같은 자리·같은 방식**(스레드 로컬 → 자동 부착)이다.
+        # 여기 두는 이유: `_emit` 이 단일 팬아웃 지점이라 **모든 타임라인 객체**가
+        # 자동으로 주석을 받을 수 있고, 프론트도 `finishCard` 한 곳에서 그린다.
+        # 동사마다 파라미터를 더하면(관찰에만, 최종답에만…) 14곳 × 구현 2개가
+        # 된다 — 감사가 "공유되는 건 본문이 아니라 꼬리 배관"이라고 한 그 자리다.
+        note = self._pending_notes.pop(tid, None)
+        if note and "note" not in data:
+            data = {**data, "note": note}
         # Server-stamp emit time once, at the single fan-out point, so every
         # card-producing event (incl. delegate/skill inner cards, which route
         # through here with their ``task_id``) carries a ``ts``. Baked into the
@@ -1536,6 +1547,18 @@ class WebRenderer(Renderer):
             {"key": key, "kind": kind, "text": text},
             persistent=False,
         )
+
+    def note_next(self, text: str) -> None:
+        """다음에 이 스레드가 낼 카드 하나에 **표시 전용 주석**을 붙인다.
+
+        모델 컨텍스트에는 들어가지 않는다 — 화면에만 붙는 배지다. 승인 게이트가
+        첫 소비자: "사용자가 이 명령을 승인했다"는 감사 흔적은 사람이 봐야 하지만
+        모델이 볼 이유가 없고, 오히려 도구 출력에 하네스 산문이 섞이면 35B 급에서
+        형식 모방을 부른다(`sanitize_thought` 가 존재하는 그 이유).
+
+        **다음 카드 하나에만** 붙고 소비되면 사라진다. 스레드 로컬이라 병렬
+        스코프끼리 섞이지 않는다."""
+        self._pending_notes[threading.get_ident()] = text
 
     def agent_wake(self, text: str) -> None:
         """에이전트 메일이 런을 깨웠다 — **전용 이벤트**로 낸다.

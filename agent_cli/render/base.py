@@ -348,6 +348,14 @@ class Renderer(ABC):
         드롭됐기 때문(필수 구현 아님: 기본값 존재)."""
         self.status("running", text)
 
+    def note_next(self, text: str) -> None:
+        """다음 카드 하나에 **표시 전용 주석**을 붙인다 (기본 no-op).
+
+        모델 컨텍스트에는 안 들어간다 — 화면에만 붙는다. 터미널은 이미 확인
+        프롬프트를 인라인으로 찍어 승인 사실이 스크롤백에 남으므로 기본 no-op
+        으로 두고, 웹만 override 한다(웹은 트레이가 답하는 순간 사라져 흔적이
+        없다). 필수 구현 아님."""
+
     def agent_wake(self, text: str) -> None:
         """에이전트 메일이 idle 한 main 을 깨워 런이 시작됐음 (v9.7.0).
 

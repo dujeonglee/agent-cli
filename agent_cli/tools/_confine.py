@@ -245,4 +245,12 @@ def guard(paths, action: str, *, command: str | None = None) -> str | None:
                 # re-prompt (the header-storm mitigation).
                 d = p if p.is_dir() else p.parent
                 _session_root_allowlist.add(str(d))
+            # 워크스페이스 경계가 세션 내내 열린다 — 기록한다 (v9.8.0, shell 과
+            # 같은 판단). 이후 그 서브트리는 재확인 없이 통과한다.
+            dirs = ", ".join(
+                sorted({str(p if p.is_dir() else p.parent) for p in outside})
+            )
+            renderer.note_next(
+                f"🔓 사용자가 워크스페이스 밖 경로를 승인 — 이 세션 내내 허용: {dirs}"
+            )
     return None

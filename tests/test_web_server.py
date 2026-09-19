@@ -1014,7 +1014,10 @@ class TestStaticUI:
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
         fn = _js_fn_body(js, "ensureTaskGroup")
-        assert "appendToTimeline(card, parent)" in fn
+        # v9.8.0: `finishCard(card, {task_id: parent}, 자기채널)` — 중첩 위치는
+        # 부모가, 채널 귀속은 자기가 정한다. 종전엔 append 뒤에 `data-ch` 를
+        # 다시 칠했다.
+        assert "finishCard(card, { task_id: parent }" in fn
         assert "$messages.appendChild(card)" not in fn  # 루트 직결 회귀 가드
         # scope_start 핸들러가 parent 를 실제로 넘겨야 배선이 산다.
         handler = js.split('es.addEventListener("scope_start"', 1)[1].split(

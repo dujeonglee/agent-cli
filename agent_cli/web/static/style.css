@@ -1500,6 +1500,19 @@ body.export-mode #messages > .card > .export-check {
 /* ── Response dock — the latest main answer, always visible ── */
 /* 점프 시 카드 위에 여백 (block:start). */
 #messages .card-task-group { scroll-margin-top: 10px; }
+/* 표시 전용 주석 (`note_next`) — 카드에 덧붙는 작은 배지. 모델이 아니라
+   사람에게 보이는 것이라 본문과 섞이지 않게 별도 줄로 둔다. 첫 소비자는
+   승인 게이트("사용자가 승인함")이고, 감사 흔적이라 눈에 띄되 조용해야 한다. */
+.card-note {
+  display: block;
+  margin: 4px 0 0 92px;
+  font-size: 11px;
+  color: var(--warn-soft-fg);
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+.card-sys .card-note, .card-user .card-note { margin-left: 0; }
+@media (max-width: 560px) { .card-note { margin-left: 0; } }
+
 /* 확인 다이얼로그의 **사유** — 무엇을 왜 승인하는지. 줄바꿈이 의미를 갖는
    경로 목록이 오므로 pre-wrap. */
 .confirm-why {

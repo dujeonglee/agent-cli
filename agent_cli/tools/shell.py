@@ -186,6 +186,15 @@ def tool_shell(args: dict) -> ToolResult:
                         return ToolResult(False, error=err)
                     if decision == "a":
                         _session_allowlist.add(keyword)
+                        # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0).
+                        # 이후 같은 키워드는 묻지도 않으므로, 대화에 흔적이
+                        # 없으면 나중에 "이게 왜 확인 없이 돌았지" 를 알 수 없다.
+                        # `y`(1회)는 안 남긴다 — 바로 위 `⚡` 카드가 맥락을 준다.
+                        # 거절은 이미 `ToolResult.error` 로 남는다(비대칭 해소).
+                        get_renderer().note_next(
+                            f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — "
+                            f"이 세션 내내 재확인 없음"
+                        )
 
     # Workspace confinement: best-effort extract literal path tokens (absolute
     # paths + ``..`` escapes) and gate any that fall outside the workspace. This

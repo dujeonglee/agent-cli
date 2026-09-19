@@ -636,18 +636,15 @@
 
     card.appendChild(header);
     card.appendChild(body);
-    // NEST the card in its parent scope's body (a skill that runs another skill
-    // or an agent). Falls back to the timeline root when the parent is unknown
-    // (top-level scope, or its group already closed) — same as any other event.
-    appendToTimeline(card, parent);
-    // 채널 귀속은 **이 스코프 자신의** 것이다. appendToTimeline 은 중첩 위치를
-    // 정하려고 `parent` 를 받으므로 부모 채널로 도장을 찍는데, 부모가 카드 없는
-    // 상주 스코프면 루트로 떨어지면서 그 채널이 아니라 부모의 채널로 찍힌다
-    // — 값은 같지만(자식은 부모 채널을 물려받는다) 출처를 자기 것으로 맞춘다.
-    if (card.parentNode === $messages) {
-      card.dataset.ch = scopeChannel[taskId];
-      applyChannelFilter(card);
-    }
+    // 중첩 위치는 **부모**가 정하고(`task_id: parent`), 채널 귀속은 **자기
+    // 것**이다(세 번째 인자) — 부모가 카드 없는 상주 스코프면 루트로 떨어지는데
+    // 그때 부모 채널로 찍히면 출처가 어긋난다. 종전엔 append 뒤에 `data-ch` 를
+    // 다시 칠했고, 이제 인자 하나로 끝난다.
+    //
+    // `ts` 를 주지 않는 이유: 헤더 우상단은 이미 `🔍`·`✓ (2.1s)` 가 쓰고 있어
+    // 코너 배지가 겹친다(어제 왕래 줄에서 겪은 그 부류). 스코프 카드는 소요
+    // 시간을 `meta` 에 따로 보이므로 시각이 없어도 잃는 게 없다.
+    finishCard(card, { task_id: parent }, scopeChannel[taskId]);
 
     const group = {
       card: card,
@@ -731,6 +728,14 @@
   const MAIN = { task_id: "" };
   function finishCard(cardEl, ev, channel) {
     stampCard(cardEl, ev && ev.ts);
+    // 표시 전용 주석 — 서버의 `note_next()` 가 `_emit` 에서 실어 보낸다.
+    // **여기 한 곳**이라 어떤 타임라인 객체든 공짜로 주석을 받는다(관찰·최종답·
+    // 왕래·시스템 줄 전부 이 함수를 지난다). 모델 컨텍스트와는 무관하다.
+    if (ev && ev.note) {
+      const n = el("span", ["card-note"], ev.note);
+      n.title = ev.note;
+      cardEl.appendChild(n);
+    }
     appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
     scheduleScroll();
   }
@@ -782,8 +787,7 @@
         el("span", ["sys-text"], "Compacting context… (" + fmtTok(d.old_tokens) + " tok)")
       );
       compactionLines[scope] = line;
-      appendToTimeline(line, d.task_id);
-      scheduleScroll();
+      finishCard(line, d);
       return;
     }
     // done / warning: update the pending line, or append a fresh one if the
@@ -792,7 +796,7 @@
       line = el("div", ["card", "card-sys"]);
       line.appendChild(el("span", ["sys-icon"], "⊙"));
       line.appendChild(el("span", ["sys-text"], ""));
-      appendToTimeline(line, d.task_id);
+      finishCard(line, d);
     }
     const textEl = line.querySelector(".sys-text");
     if (d.phase === "done") {
@@ -830,8 +834,7 @@
         ? who + " asked a question (awaiting reply)"
         : who + " replied";
     const line = sysLine(d.kind === "question" ? "❓" : "📨", label);
-    appendToTimeline(line, d.task_id);
-    scheduleScroll();
+    finishCard(line, d);
   }
 
   // ── 스트림 무진전(stall) 표시 (v8.60.0) ──────────────────────
@@ -856,8 +859,10 @@
         const bar = el("div", ["stall-bar"]);
         bar.appendChild(el("i"));
         stallLine.appendChild(bar);
-        appendToTimeline(stallLine, d.task_id);
-        scheduleScroll();
+        // 생성 시 한 번만 찍힌다 → **대기 시작 시각**. 이 줄은 30초마다
+        // 제자리 갱신되므로, 마지막 갱신 시각이 아니라 "언제부터 기다렸나"가
+        // 남는 게 맞다(본문의 경과 시간과 합쳐 읽힌다).
+        finishCard(stallLine, d);
       }
       const txt = stallLine.querySelector(".sys-text");
       const fill = stallLine.querySelector(".stall-bar > i");
@@ -893,8 +898,7 @@
             ")"
         )
       );
-      appendToTimeline(line, d.task_id);
-      scheduleScroll();
+      finishCard(line, d);
     }
   }
 
@@ -1766,8 +1770,7 @@
     if (!d || !d.message) return;
     const line = sysLine(d.state === "error" ? "✗" : "●", d.message,
                          d.state === "error" ? ["warn"] : null);
-    appendToTimeline(line, d.task_id);
-    scheduleScroll();
+    finishCard(line, d);
   });
 
   es.addEventListener("stream_stall", function (e) {
@@ -1804,8 +1807,9 @@
     );
     // 세션 전체에 대한 고지라 main 에 둔다 — 인자를 **생략하지 않고 명시**한다
     // (생략하면 "귀속을 잊었다"와 구별이 안 된다; 소스 핀이 이걸 강제한다).
-    appendToTimeline(line, "");
-    scheduleScroll();
+    // 이 이벤트엔 `ts` 가 없어(스냅샷에 직접 삽입) 시각은 안 찍힌다 —
+    // `stampCard` 가 `ts == null` 이면 그냥 넘어간다.
+    finishCard(line, { ts: d.ts, task_id: MAIN.task_id });
   });
 
   // 본문·사고 tick — 토큰 수만 온다(텍스트 없음).

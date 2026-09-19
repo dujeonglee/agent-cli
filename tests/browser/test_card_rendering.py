@@ -528,3 +528,63 @@ class TestGeneratingIndicator:
         err2 = page.locator("#messages .card-error")
         assert _wait(lambda: err2.count() == 1)
         assert "Action loop unresolved" in err2.inner_text()
+
+
+class TestDisplayOnlyNote:
+    """표시 전용 주석(``note_next``) — 화면에만 붙는 배지 (v9.8.0).
+
+    첫 소비자는 승인 게이트다. 사용자가 `a`(세션 내내 허용)를 고르면 그 뒤로
+    같은 명령이 **묻지도 않고** 통과하므로, 대화에 흔적이 없으면 나중에 "이게
+    왜 확인 없이 돌았지"를 되짚을 수 없다. 그 흔적을 모델 컨텍스트가 아니라
+    화면에만 남기는 게 이 기능이다.
+
+    층 분담: 유닛(`TestNoteNext`)이 서버측 분리(모델 컨텍스트 불침투·1회 소비)를,
+    정적 가드(`test_every_js_class_has_a_css_rule`)가 CSS 규칙 존재를 맡는다.
+    여기서는 **실 SSE 를 타고 DOM 까지 도달해 정확히 한 카드에만 붙는지**와
+    긴 경로의 줄바꿈 기하를 본다 — 앞 둘이 원리적으로 못 보는 것만."""
+
+    def test_note_renders_on_the_annotated_card_only(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+
+        stack.renderer.note_next("🔓 사용자가 `rm` 포함 명령을 승인")
+        stack.renderer.observation(
+            "removed 1204 files", turn=1, tool_name="shell", success=True
+        )
+        assert _wait(lambda: page.locator(".card-note").count() == 1)
+        assert "승인" in page.locator(".card-note").first.inner_text()
+
+        # 다음 카드에는 안 붙는다 — 승인이 한 번만 기록됐음이 화면으로 확인된다.
+        stack.renderer.observation(
+            "removed 7 files", turn=1, tool_name="shell", success=True
+        )
+        assert _wait(lambda: page.locator(".card-observation").count() == 2)
+        assert page.locator(".card-note").count() == 1
+
+    def test_long_note_wraps_instead_of_widening_the_timeline(self, stack, page):
+        """줄바꿈 회귀 — 승인 주석은 **경로를 담는다**(공백 없는 긴 문자열).
+
+        같은 클래스의 실사고가 이미 둘 있다(`.action-detail` 넘침, 요약 줄
+        미줄바꿈). 카드 기준으로 재면 안 된다 — 카드가 내용을 따라 늘어나
+        비교가 항상 참이 된다(이 테스트를 처음 그렇게 썼다가 `white-space:
+        nowrap` 을 넣어도 통과하는 걸 보고 고쳤다). 실제 증상은 **타임라인의
+        가로 스크롤**이라 거기서 잰다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+
+        stack.renderer.note_next(
+            "🔓 사용자가 워크스페이스 밖 경로를 승인 — 이 세션 내내 허용: " + LONG_PATH
+        )
+        stack.renderer.observation("ok", turn=1, tool_name="shell", success=True)
+        assert _wait(lambda: page.locator(".card-note").count() == 1)
+
+        note = page.locator(".card-note").first
+        assert note.is_visible()
+        assert note.bounding_box()["height"] > 20, (
+            "긴 주석이 한 줄에 머문다 — 줄바꿈이 안 걸렸다"
+        )
+        scroll_w = page.evaluate("document.querySelector('#messages').scrollWidth")
+        client_w = page.evaluate("document.querySelector('#messages').clientWidth")
+        assert scroll_w <= client_w, (
+            f"주석이 타임라인을 가로로 넓힘: scrollWidth={scroll_w} > {client_w}"
+        )

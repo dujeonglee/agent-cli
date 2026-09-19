@@ -3564,3 +3564,96 @@ class TestReplayContract:
         declared = set(WebRenderer.REPLAY_CONTRACT) | set(WebRenderer.REPLAY_LIVE_ONLY)
         stale = sorted(declared - emitted)
         assert not stale, f"방출되지 않는데 계약에 남아 있는 이벤트: {stale}"
+
+
+class TestNoteNext:
+    """표시 전용 주석 — 화면에만 붙고 모델 컨텍스트에는 안 들어간다 (v9.8.0).
+
+    첫 소비자는 승인 게이트다. "사용자가 `rm` 을 세션 내내 승인했다"는 사실은
+    사람이 나중에 "이게 왜 확인 없이 돌았지"를 되짚을 때 필요하지만, 모델이
+    볼 이유는 없다 — 도구 출력에 하네스 산문이 섞이면 작은 모델에서 형식
+    모방을 부른다(`sanitize_thought` 가 존재하는 그 이유).
+
+    `task_id` 와 **같은 자리·같은 방식**(스레드 로컬 → `_emit` 에서 자동 부착)
+    이라, 새 카드 종류가 생겨도 별도 배선 없이 주석을 받는다."""
+
+    def test_attaches_to_the_next_event_and_is_consumed_once(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.note_next("🔓 승인됨")
+        r.observation("removed 1204 files", turn=1, tool_name="shell", success=True)
+        _, first = _qget(conn)
+        assert first["note"] == "🔓 승인됨"
+
+        # 두 번째 카드에는 안 붙는다 — "다음 하나"가 계약이다.
+        r.observation("removed 7 files", turn=1, tool_name="shell", success=True)
+        _, second = _qget(conn)
+        assert "note" not in second
+
+    def test_note_is_not_in_the_model_facing_content(self):
+        """표시/모델 분리의 핵심 — 별도 필드여야 도구 출력이 오염되지 않는다."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.note_next("🔓 사용자가 `rm` 포함 명령을 승인")
+        r.observation("removed 1204 files", turn=1, tool_name="shell", success=True)
+        _, data = _qget(conn)
+        assert data["content"] == "removed 1204 files"
+        assert "승인" not in data["content"]
+
+    def test_pending_note_is_thread_local(self):
+        """병렬 스코프(에이전트 워커·delegate)끼리 주석이 새지 않는다."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.note_next("주 스레드 주석")
+
+        def other():
+            r.observation("다른 스레드의 카드", turn=1, tool_name="shell", success=True)
+
+        t = threading.Thread(target=other)
+        t.start()
+        t.join()
+        _, foreign = _qget(conn)
+        assert "note" not in foreign
+
+        # 주 스레드의 주석은 아직 살아 있다 — 소비되지 않았다.
+        r.observation("내 카드", turn=1, tool_name="shell", success=True)
+        _, mine = _qget(conn)
+        assert mine["note"] == "주 스레드 주석"
+
+    def test_default_renderer_ignores_notes(self):
+        """CLI 는 확인 프롬프트를 인라인으로 찍어 스크롤백에 이미 남는다 —
+        기본 구현은 no-op 이고, 호출해도 터지지 않아야 한다."""
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=False))
+        r.note_next("무시됨")  # 예외 없음
+
+    def test_approval_gates_record_the_session_policy_change(self):
+        """`a`(세션 내내 허용)는 정책이 바뀌는 순간이라 흔적을 남긴다.
+
+        이후 같은 키워드/경로는 묻지도 않으므로, 대화에 기록이 없으면 나중에
+        추적이 불가능하다. 소스 핀 — 감사 흔적이 조용히 사라지는 걸 막는다.
+        (`y`=1회는 일부러 안 남긴다: 바로 위 도구 카드가 맥락을 준다.
+        거절은 이미 `ToolResult.error` 로 남는다.)"""
+        import pathlib
+
+        import agent_cli
+
+        root = pathlib.Path(agent_cli.__file__).parent
+        for mod in ("tools/shell.py", "tools/_confine.py"):
+            src = (root / mod).read_text()
+            assert 'decision == "a"' in src, f"{mod}: 승인 분기가 사라졌다"
+            assert "note_next(" in src, (
+                f"{mod}: `a` 승인이 화면에 기록되지 않는다 — "
+                f"세션 내내 재확인 없이 통과하는 정책 변경은 흔적을 남겨야 한다"
+            )
