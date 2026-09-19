@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 import threading
 import time
 from typing import ClassVar
@@ -31,6 +32,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+import agent_cli
 from agent_cli.render.web import WebRenderer
 from agent_cli.web.server import (
     WebServer,
@@ -683,6 +685,140 @@ class TestStaticUI:
         # 어느 쪽이든 el()=textContent 경로여야 한다.
         assert 'el("span", [row ? "row-time" : "card-time"], fmtCardTime(ts))' in js
         assert 'el("div", ["task-error"], error)' in js
+
+    def test_every_js_class_has_a_css_rule(self, server_and_client):
+        """JS 가 붙이는 클래스에 **CSS 규칙이 있는가** — 정적 가드 (v9.8.0).
+
+        감사에서 이 부류가 셋 나왔다: `.tv-nav-hl`(점프 하이라이트가 아예 안
+        보였는데 브라우저 TC 는 클래스 부착만 검사해 초록), `.args`(미지 도구
+        JSON 이 UA 기본 `<pre>` 로 떨어져 카드를 가로로 뚫음), `.hd-chip[hidden]`
+        (가드 누락). **소스만 봐서는 안 보이고 스크린샷으로도 안 잡히는** 부류라
+        사람이 아니라 기계가 봐야 한다.
+
+        허용목록은 "규칙이 없어도 맞는" 것들 — 의미 훅이거나 부모에서 상속받는다.
+        새로 추가하려면 **왜 스타일이 없어도 되는지**를 여기 적어야 한다."""
+        import re
+
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        html = client.get("/").text
+
+        unstyled_ok = {
+            # 의미 훅 — 복합 선택자(.ask-item.ask-main)로만 쓰이거나 JS 가 찾는 표식
+            "ask-main",
+            "task-empty-note",
+            # 마크다운 본문 래퍼 — 안의 h1/ul/pre 가 요소 선택자로 스타일된다
+            "md",
+            # 생성 중 줄의 라벨 — 부모 `.gen` 의 색/폰트를 그대로 쓴다
+            "gen-label",
+            # 정규식 산물(문자열 연결로 만들어지는 조각)
+            "c",
+            "kind",
+        }
+
+        used = set()
+        for m in re.finditer(
+            r"\b(?:el|elHtml|makeRow|sysLine)\s*\([^;]{0,400}?\[([^\]]*)\]",
+            js,
+            re.DOTALL,
+        ):
+            used |= {
+                x.strip().strip("\"'")
+                for x in m.group(1).split(",")
+                if x.strip().startswith(('"', "'"))
+            }
+        for m in re.finditer(r"classList\.(?:add|toggle|remove)\(([^)]*)\)", js):
+            used |= {
+                x.strip().strip("\"'")
+                for x in m.group(1).split(",")
+                if x.strip().startswith(('"', "'"))
+            }
+        for m in re.finditer(r'class="([^"]+)"', js + html):
+            used |= set(m.group(1).split())
+        used = {c for c in used if c and re.fullmatch(r"[a-z][a-z0-9-]*", c)}
+
+        defined = set(re.findall(r"\.([a-z][a-z0-9-]*)", css))
+        missing = sorted(used - defined - unstyled_ok)
+        assert not missing, (
+            f"JS/HTML 이 쓰는데 CSS 규칙이 없는 클래스: {missing}\n"
+            f"규칙을 쓰거나, 스타일이 없어도 되는 이유를 unstyled_ok 에 적으세요."
+        )
+
+    def test_every_emitted_event_has_a_listener(self, server_and_client):
+        """`_emit` 하는 이벤트에 **프론트 리스너가 있는가** — 정적 가드 (v9.8.0).
+
+        `status` 가 이렇게 죽어 있었다: 리스너 0개인데 호출 10곳이라 "Max turns
+        도달"로 런이 멈춰도 웹엔 이유가 없었고 HTTP 재시도가 전부 암전이었다.
+        같은 병을 `agent_mail_hint`(v5.18.2)·`stream_stall`(v8.60.0) 이 각각
+        일회성으로 막았는데 **일반 경로는 안 닫혀 있었다** — 세 번째가 나온 뒤에야
+        이 가드를 만든다.
+
+        `cli_only` 는 "웹이 안 듣는 게 맞다"고 **선언한** 것들. 선언이 없으면
+        실패한다 — 조용히 버려지는 것과 일부러 안 듣는 것을 가른다."""
+        import re
+
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        web_src = (
+            pathlib.Path(agent_cli.__file__).parent / "render" / "web.py"
+        ).read_text()
+
+        cli_only = {
+            # 터미널 전용 진행 해설 — 웹엔 worker_state·스코프 카드가 이미 있다
+            "spinner": "worker_state 가 대체",
+            "dispatch_progress": "호출부 0곳 (죽은 동사)",
+            # verbose/debug 전용
+            "raw": "--verbose 터미널 덤프",
+            "context_dump": "디버그 덤프",
+            # 부트스트랩이 uvicorn 보다 먼저 돌아 브라우저가 붙기 전에 끝난다
+            "model_detected": "서버 기동 전에 방출 — 웹에 도달 불가",
+            "model_loaded": "서버 기동 전에 방출 — 웹에 도달 불가",
+            # 사고 원문은 웹에서 thinking_tick(카운터)으로 갈음
+            "thinking": "웹은 thinking_tick 카운터로 갈음",
+            # 폐기 신호 — 프론트는 stream_tick 만 쓰므로 들을 것이 없다
+            "stream_reset": "카운터 리셋은 서버 쪽 상태 (프론트 무관)",
+        }
+
+        emitted = set(re.findall(r'_emit\(\s*"([a-z_]+)"', web_src))
+        emitted |= set(re.findall(r'set_sticky\(\s*"[a-z_]+",\s*"([a-z_]+)"', web_src))
+        # f-string / 직접 큐 삽입 경로
+        emitted |= {"stream_tick", "thinking_tick"}  # _emit(f"{kind}_tick", …)
+        emitted |= {"transcript_truncated", "identity", "viewers"}  # snapshot 삽입
+
+        # `(?<![A-Za-z$_])` 필수 — 없으면 `$messages.addEventListener("scroll")`
+        # 의 "es." 까지 물어 SSE 리스너로 오인한다.
+        listened = set(
+            re.findall(r'(?<![A-Za-z$_])es\.addEventListener\(\s*"([a-z_]+)"', js)
+        )
+
+        dropped = sorted(emitted - listened - set(cli_only))
+        assert not dropped, (
+            f"방출하는데 프론트가 안 듣는 이벤트: {dropped}\n"
+            f"리스너를 붙이거나, 안 들어도 되는 이유를 cli_only 에 선언하세요."
+        )
+        orphan = sorted(listened - emitted)
+        assert not orphan, f"방출되지 않는 이벤트의 리스너: {orphan}"
+
+    def test_append_to_timeline_always_carries_a_scope(self, server_and_client):
+        """루트에 카드를 붙이는 호출은 **예외 없이 스코프를 날라야** 한다.
+
+        DESIGN.md §8.5 가 이걸 규율로 적어뒀다 — *"호출부가 task_id 를 안 주면
+        소용이 없다"*. 실제로 세 번 새어 나갔다(사용자 입력·거부된 응답·무진전
+        줄). 규율을 정적 검사로 바꾼다."""
+        import re
+
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        bad = [
+            m.group(0)
+            for m in re.finditer(r"appendToTimeline\(([^)]*)\)", js)
+            if "," not in m.group(1) and "function" not in m.group(1)
+        ]
+        assert not bad, (
+            f"스코프 없이 호출된 appendToTimeline: {bad}\n"
+            f'main 에 두려면 명시적으로 "" 를 넘기세요.'
+        )
 
     def test_no_markup_passed_to_text_el(self, server_and_client):
         """el() 오용 **자동 탐지** (v8.42.3): 3번째 인자에 HTML 마크업이 섞이면

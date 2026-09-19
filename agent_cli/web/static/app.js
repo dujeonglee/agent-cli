@@ -1777,7 +1777,9 @@
         d.omitted + " earlier events omitted (reconnect replay limit — full record kept in session history)"
       )
     );
-    appendToTimeline(line);
+    // 세션 전체에 대한 고지라 main 에 둔다 — 인자를 **생략하지 않고 명시**한다
+    // (생략하면 "귀속을 잊었다"와 구별이 안 된다; 소스 핀이 이걸 강제한다).
+    appendToTimeline(line, "");
     scheduleScroll();
   });
 
