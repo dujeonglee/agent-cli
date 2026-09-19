@@ -1,7 +1,11 @@
 # Monitor — 조건 → 액션 감시 도구 설계
 
-> 상태: **검토 보류** (2026-09-17 사용자와 공동 설계, 구현 전)
-> 결정된 것과 열린 것을 구분해 적는다. 재개 시 §9 부터 읽으면 된다.
+> 상태: **설계 확정 · 구현 대기** (2026-09-17 공동 설계 · 2026-09-19 §10 해소)
+> 재개 시 §9(실행 계획)부터 읽으면 된다. 열린 질문은 없다.
+>
+> 2026-09-19 재검증: §2 가 전제한 것(`_run_message_pump` · `has_active_work` ·
+> `MailWaker` · `ScheduleTool` · `build_agent_registry` · `_ALL_TOOLS`)이 전부
+> 그대로 있다. v9.4.0~9.8.0 의 변경은 렌더 계층에 국한돼 이 설계에 영향 없음.
 
 ## 1. 문제
 
@@ -253,23 +257,126 @@ Claude Monitor 도구에도 "이벤트를 너무 많이 내는 모니터는 자�
 | 배달 | enqueue 호출 형태, run·web 양쪽 동일 경로 |
 | 펌프 | 모니터 살아 있으면 run 이 안 끝남 / 해제되면 끝남 ← **회귀 위험 1순위** |
 | 영속 | 저장·복원·죽은 모니터 폐기 |
+| 파서 | `parse_duration` 문법 3종(초·분·시) + 오류가 **표면별로** 변환되는가 (CLI=BadParameter / 도구=ToolResult) |
+| clamp | deadline·interval 이 상·하한으로 **잘리고 그 값이 반환되는가** (거부가 아님 — §10.1) |
+| 보고문 | 5줄 상한 + "… N건 더" · 줄당 500자 절단 · 머리줄에 id·타입·경과 |
 
 ### 파일
 
 새로: `agent_cli/monitor/{__init__,registry,conditions,actions}.py`,
 `agent_cli/tools/monitor_tool.py`
 
-수정: `tools/registry.py`(도구 등록 — `_ALL_TOOLS` 끝에, KV 캐시 순서 보존),
-`runtime.py`(`build_monitor_registry` — `build_agent_registry` 형제),
-`main.py`(run·web 조립 + 펌프)
+수정:
+- `tools/registry.py` — 도구 등록. **`_ALL_TOOLS` 끝에** 붙인다(KV 캐시 순서 보존)
+- `runtime.py` — `build_monitor_registry` (`build_agent_registry` 형제)
+- `main.py` — run·web 조립 + 펌프 정지 판정, `_parse_stall` 을 공용 파서 위로
+- `constants.py` — `parse_duration()` + clamp 상수 3개 (§10.1·10.2·10.4)
 
-## 10. 열린 질문
+### 0단계 — 선행 (커밋 1 앞)
 
-- **`deadline` 기본 상한** — 사용자가 `"24h"` 를 주면 그대로 받을지, 하드 상한을
-  둘지. `STREAM_IDLE_TIMEOUT_MAX_S`(3600) 같은 clamp 선례가 있다.
-- **`interval` 최소값** — 너무 짧으면 턴 폭주. 60s 하한이 적당해 보이나 미정.
-- **보고문 형식** — 매치 줄을 얼마나 실을지(상한), 모니터 라벨·경과 시간을 함께
-  줄지. 과대 출력 캡(`apply_oversized_cap`) 과의 관계도 미정.
-- **duration 파서 공유** — `main.py::_parse_stall`("600"·"10m"·"0")과 같은 문법이
-  필요하다. 공용 헬퍼로 추출할지, monitor 쪽에 따로 둘지(현재 `_parse_stall` 은
-  typer 예외를 던져 도구에서 그대로 쓰기 어렵다).
+`constants.parse_duration()` 추출 + `_parse_stall` 을 그 위로 올리는 것은
+**monitor 와 독립**이다. 먼저 따로 내면 monitor 커밋이 그만큼 작아지고,
+`--stall` 회귀가 monitor 리뷰에 섞이지 않는다.
+
+### 감사(docs/audit)에서 온 제약 — 착수 전 확인
+
+이 설계는 2026-09-17 에 썼고 그 뒤 감사로 **새 규칙이 생겼다.** monitor 가
+새 SSE 이벤트나 카드를 추가한다면 전부 걸린다:
+
+- 새 이벤트를 `_emit` 하면 **프론트 리스너가 있어야** 한다
+  (`test_every_emitted_event_has_a_listener`). 웹이 안 들어도 되면 `cli_only` 에
+  이유를 적어 **선언**한다.
+- 영속(`persistent=True`) 이벤트면 `REPLAY_CONTRACT` / `REPLAY_LIVE_ONLY` 에
+  등록해야 한다 — resume 에서 어떻게 복원되는지를 선언하지 않으면 실패한다.
+- 새 카드 클래스는 `classify()`/`CARD_KINDS` 에 등록한다(안 하면 export 에서
+  조용히 빠진다). JS 가 붙이는 클래스는 **CSS 규칙이 있어야** 한다.
+- 루트에 카드를 붙이면 `finishCard(el, ev)` 를 쓴다 — 스코프 인자 누락은
+  정적 검사가 잡는다.
+
+**다만 v1 은 새 표면이 필요 없을 가능성이 높다.** 보고가 `enqueue` 로 들어가
+**사용자 메시지처럼 렌더**되므로(§6-④) 새 이벤트도 새 카드도 없다. 그 경우
+위 제약은 전부 무관하다 — 그게 이 설계가 `MailWaker` 경로를 재사용하는
+부수 이득이다.
+
+## 10. ~~열린 질문~~ — 해소 (2026-09-19)
+
+넷 다 **코드에 선례가 있었다.** 새로 정하기보다 있는 규칙을 따른다.
+
+### 10.1 `deadline` 상한 — clamp 하되 거부하지 않는다
+
+선례: `context/manager.py:93`
+
+```python
+return max(STREAM_IDLE_TIMEOUT_MIN_S, min(s, STREAM_IDLE_TIMEOUT_MAX_S))
+```
+
+같은 모양으로 `constants.py` 에 둘을 더한다:
+
+```python
+MONITOR_DEADLINE_MAX_S = 86400   # 24h — 그 이상은 조용히 자른다
+MONITOR_DEADLINE_MIN_S = 60      # 1m
+```
+
+**거부가 아니라 clamp 인 이유**: `deadline` 은 이미 *필수*라서(§7.1) 빠뜨리면
+등록이 실패한다. 값이 크다고 또 실패시키면 모델이 "얼마가 맞는지" 를 탐색하느라
+턴을 태운다. clamp 는 결과를 돌려주므로 한 번에 끝난다 — `/api/stall` 이
+clamp 결과를 되반영하는 것과 같은 판단이다.
+
+24h 근거: 감시 대상은 "아주 오래 도는 스크립트"(§1)다. 하루를 넘기면 그건
+세션이 아니라 배치 작업이고, board 의 `schedule` 이 맞는 도구다.
+
+### 10.2 `interval` 하한 — 60s
+
+`MONITOR_INTERVAL_MIN_S = 60`, 같은 방식으로 clamp.
+
+근거: `interval` 은 **변화가 없어도 매 틱 한 턴을 태운다**(§3.1 이 cron 을
+기각한 바로 그 이유). 35B 급 한 턴이 수십 초 걸리는 환경에서 60s 미만은
+"감시"가 아니라 사실상 연속 실행이다. 더 촘촘한 감시가 필요하면 `match` 나
+`silence` 를 쓰는 게 맞다 — **그쪽은 변화가 있을 때만 깨운다.**
+
+### 10.3 보고문 — 자체 상한, 과대 캡에 의존하지 않는다
+
+```
+🔔 monitor mon-3 (match · /tmp/out.log)   2h 14m 경과 · 3건
+  ERROR: connection refused (attempt 4)
+  ERROR: giving up after 5 attempts
+  … 1건 더
+```
+
+규칙 셋:
+
+- **매치 줄 최대 5개 + "… N건 더"**. `min_interval` 합치기(§7.2)가 이미 여러
+  건을 한 보고로 묶으므로 상한이 없으면 로그 한 뭉치가 그대로 들어온다.
+- **줄당 500자로 자른다.** 감시 대상은 로그이고 한 줄이 길 수 있다.
+- **모니터 id·조건 타입·경과 시간을 머리줄에** — 모니터가 여럿일 때 어느
+  것인지 알아야 하고, 경과 시간은 `deadline` 이 얼마 안 남았는지의 단서다.
+
+**과대 출력 캡(`apply_oversized_cap`)은 쓰지 않는다.** 그건 *도구 결과*를 위한
+장치다(`context_window/10` 초과분을 파일로 빼고 발췌 + 복구 경로 제시,
+`tools/base.py:507`). 모니터 보고는 도구 결과가 아니라 **합성 사용자 입력**
+(`enqueue`)이라 그 경로를 안 탄다. 자체 상한이 훨씬 작으므로(5줄 × 500자 ≈ 2.5KB)
+캡에 닿을 일도 없다 — **닿는다면 그건 상한이 고장난 것**이다.
+
+### 10.4 duration 파서 — `constants.py` 로 추출
+
+`main.py::_parse_stall` 과 **같은 문법**(`"600"` · `"10m"` · `"2h"`)이 필요한데,
+그 함수는 `typer.BadParameter` 를 던져 도구에서 그대로 못 쓴다(도구는
+`ToolResult(False, error=…)` 로 돌려줘야 한다).
+
+**순수 파서를 `constants.py` 에 두고 양쪽이 쓴다:**
+
+```python
+def parse_duration(raw: str) -> int:
+    """"600"·"10m"·"2h" → 초. 형식 오류면 ValueError."""
+```
+
+- `main._parse_stall` — 잡아서 `typer.BadParameter` 로 변환 (CLI 표면 유지)
+- `monitor_tool` — 잡아서 `ToolResult(False, error=…)` 로 변환
+
+`"h"` 를 추가하는 것이 유일한 문법 확장이다(`deadline="2h"` 가 §4 의 예시에
+이미 쓰였다). `--stall` 쪽엔 무해하다 — 시간 단위 stall 은 의미가 없지만
+받아서 나쁠 것도 없고, 문법이 갈리는 게 더 나쁘다.
+
+**이건 감사(docs/audit)의 교훈이 그대로 적용되는 자리다**: 같은 문법을 두 번
+구현하면 둘이 갈라지고, 갈라진 걸 아무도 모른다. 오늘만 이스케이퍼 3종과
+`el()` 2종을 그 이유로 정리했다.
