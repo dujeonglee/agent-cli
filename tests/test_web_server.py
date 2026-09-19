@@ -997,6 +997,44 @@ class TestStaticUI:
         assert '" replied"' in js
         assert '" asked a question (awaiting reply)"' in js
 
+    def test_agent_wake_is_not_a_user_bubble(self, server_and_client):
+        """깨우기 런은 전용 이벤트로 나가야 한다 (v9.7.0, 사용자 제보).
+
+        ``push_user_message`` 로 흘리면 프론트가 `.card-user`(파란 말풍선)로
+        그려 **기계가 만든 신호가 사람 발화처럼** 보인다. 호출부가 되돌아가지
+        않도록 서버·프론트 양쪽을 핀으로 박는다."""
+        _, renderer, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert '"agent_wake"' in js and "renderAgentWake(" in js
+        fn = _js_fn_body(js, "renderAgentWake")
+        assert '"row", ["wake"]' not in fn  # makeRow 경유여야 한다
+        assert "makeRow(" in fn and '"메일"' in fn
+        assert "card-user" not in fn  # ★ 말풍선 회귀 가드
+
+        # 렌더러는 persistent 전용 이벤트를 낸다 — agent_mail(휘발 힌트)과
+        # 달리 "이 런이 왜 시작됐는지"는 재접속 replay 에도 남아야 한다.
+        renderer.agent_wake("New agent mail has arrived.")
+        events = [e for e, _ in renderer._event_buffer if e == "agent_wake"]
+        assert events == ["agent_wake"]
+
+    def test_wake_call_site_does_not_use_push_user_message(self, server_and_client):
+        """main 웹 워커 루프의 분기 자체를 고정 — 렌더러만 고쳐도 호출부가
+        옛 경로로 남아 있으면 아무 소용이 없다."""
+        import inspect
+
+        import agent_cli.main as main_mod
+
+        src = inspect.getsource(main_mod)
+        assert "renderer.agent_wake(message)" in src
+        # 깨우기 분기에서 말풍선 경로로 돌아가지 않았는지
+        wake_branch = src.split('if _wake_verdict == "run":', 2)[-1].split(
+            "agent_registry.set_current_run_authors", 1
+        )[0]
+        assert "push_user_message" in wake_branch  # else 가지(진짜 사용자)는 유지
+        assert wake_branch.index("renderer.agent_wake(message)") < wake_branch.index(
+            "push_user_message"
+        ), "깨우기 분기가 여전히 말풍선을 그린다"
+
     def test_agent_conversation_clear_wired(self, server_and_client):
         """kill=정리 계약: 서버의 ``agent_cleared`` 를 받아 그 key 의 왕래
         줄·트레이를 지운다 — 안 지우면 부활 시 conversation.jsonl 재생이

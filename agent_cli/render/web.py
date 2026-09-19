@@ -1464,6 +1464,20 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
+    def agent_wake(self, text: str) -> None:
+        """에이전트 메일이 런을 깨웠다 — **전용 이벤트**로 낸다.
+
+        종전엔 ``push_user_message`` 로 흘러 `.card-user`(오른쪽 파란 말풍선)로
+        그려졌다. 기계가 만든 깨우기 신호가 사람이 친 말과 글자 하나 차이 없이
+        보인 것이다(사용자 제보). 서버는 이미 ``author=""`` 로 "귀속할 사용자가
+        없다"를 표시하고 있었는데, 그 구분을 프론트로 나르는 길이 없었다
+        (스윔레인이 유일한 소비처였고 v9.4.0 ① 에서 사라졌다).
+
+        **persistent=True**: ``agent_mail`` 힌트(도착 순간에만 의미)와 달리
+        이건 **그 런이 왜 시작됐는지**를 설명하는 기록이라 재접속 replay 에도
+        실려야 한다. 모델 컨텍스트 주입은 별개 경로(run_loop)라 무관하다."""
+        self._emit("agent_wake", {"text": text}, persistent=True)
+
     def compaction(
         self,
         *,

@@ -704,6 +704,33 @@
     applyChannelFilter(cardEl);
   }
 
+  /** 에이전트 메일이 idle 한 main 을 깨워 런이 시작됐다 (v9.7.0).
+   *
+   * 종전엔 이게 `push_user_message` 로 흘러 **오른쪽 파란 말풍선**으로
+   * 그려졌다 — 기계가 만든 깨우기 신호가 사람이 친 말과 구별되지 않았다
+   * (사용자 제보). `card-sys`(압축 마커 같은 **휘발** 표시)로 보내지 않는
+   * 이유는, 이건 그 런이 왜 시작됐는지를 설명하는 **기록**이고 모델
+   * 컨텍스트에도 들어간 실제 턴 입력이라서다. 그래서 다른 내부 작업과 같은
+   * 한 줄 리듬으로 그리고, 펼치면 **모델이 받은 원문**이 나온다 — 사람이 읽을
+   * 요약과 모델을 움직인 지시문을 한 줄 안에서 분리한다.
+   */
+  function renderAgentWake(d) {
+    const card = el("div", ["card", "card-assistant"]);
+    const raw = String((d && d.text) || "");
+    card.appendChild(
+      makeRow(
+        "🤝",
+        "메일",
+        "에이전트 회신 도착 — 이어서 진행합니다",
+        raw ? el("pre", ["args"], raw) : null,
+        ["wake"]
+      )
+    );
+    stampCard(card, d.ts);
+    appendToTimeline(card, d.task_id);
+    scheduleScroll();
+  }
+
   // Inline context-compaction marker. `start` drops a "압축 중…" system line;
   // `done`/`warning` update that same line in place (tracked per scope so a
   // delegate subagent's compaction updates its own line, not main's). The
@@ -1673,6 +1700,10 @@
 
   es.addEventListener("agent_mail", function (e) {
     renderAgentMail(JSON.parse(e.data));
+  });
+
+  es.addEventListener("agent_wake", function (e) {
+    renderAgentWake(JSON.parse(e.data));
   });
 
   es.addEventListener("stream_stall", function (e) {

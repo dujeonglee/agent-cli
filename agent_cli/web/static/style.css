@@ -474,6 +474,10 @@ main#messages {
 .row.ok .ic { color: var(--ok); }
 .row.bad .ic { color: var(--fail); }
 .row.act .ic { color: var(--accent); }
+/* 깨우기 줄 — 사람 발화가 아니라 **기계가 연 런**이라는 표시. 도구 호출과
+   구분되게 차분한 색으로 두되, 한 줄 리듬은 그대로 따른다. */
+.row.wake .ic { color: var(--cyan); }
+.row.wake .s { color: var(--text-2); }
 .row-body { grid-column: 3 / -1; margin-top: 5px; }
 .row-body.hide { display: none; }
 /* 꼬리 칸(왕래 줄의 상대 이름) — 항상 보여야 하므로 펼침 표시(.x, hover 전

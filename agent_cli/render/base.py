@@ -348,6 +348,19 @@ class Renderer(ABC):
         드롭됐기 때문(필수 구현 아님: 기본값 존재)."""
         self.status("running", text)
 
+    def agent_wake(self, text: str) -> None:
+        """에이전트 메일이 idle 한 main 을 깨워 런이 시작됐음 (v9.7.0).
+
+        ``text`` 는 **모델이 실제로 받은 지시문**이다 — 사람용 문장이 아니라
+        모델을 움직이는 장치라 표시용으로 다듬지 않고 그대로 넘긴다. 사람에게
+        보일 요약은 표면이 알아서 짓는다(``agent_mail_hint`` 와 같은 분업).
+
+        기본 구현은 ``push_user_message`` 로 위임해 종전 동작을 보존한다.
+        web 은 override 한다 — 거기서는 이게 **사용자 말풍선**으로 그려져
+        기계가 만든 깨우기 신호가 사람 발화와 구별되지 않았다(사용자 제보).
+        """
+        self.push_user_message(text)
+
     def stream_stall(
         self,
         *,

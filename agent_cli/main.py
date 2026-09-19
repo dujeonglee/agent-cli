@@ -2340,10 +2340,12 @@ def web(
             # ``author`` only for a real USER starter: a 🤝 agent-report run
             # has no user to attribute, so the team view gets no user mark
             # and the run's final carries an empty ``answers`` list.
-            renderer.push_user_message(
-                f"[{nickname}]: {message}",
-                author="" if _wake_verdict == "run" else nickname,
-            )
+            if _wake_verdict == "run":
+                # 기계가 만든 깨우기 — 사람 발화가 아니다. 말풍선으로 그리면
+                # 사용자가 저렇게 타이핑한 것처럼 보인다(사용자 제보).
+                renderer.agent_wake(message)
+            else:
+                renderer.push_user_message(f"[{nickname}]: {message}", author=nickname)
             # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령
             # (@agent request 등)이 만든 요청도 이 런의 요청자를 물려받도록
             # 워커가 먼저 세팅 — run_loop 는 주입 때마다 재갱신한다.

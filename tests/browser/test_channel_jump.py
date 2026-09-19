@@ -324,6 +324,70 @@ class TestTrafficRow:
         assert _wait(lambda: rows.count() == 0)
 
 
+class TestAgentWake:
+    """에이전트 메일이 깨운 런은 **사람 발화가 아니다** (v9.7.0, 사용자 제보).
+
+    종전엔 `push_user_message` 로 흘러 오른쪽 파란 말풍선(`.card-user`)으로
+    그려졌다 — `[🤝 agent]: New agent mail has arrived…` 가 사용자가 친 말과
+    글자 하나 차이 없이 보였다. 서버는 이미 `author=""` 로 "귀속할 사용자가
+    없다"를 표시하고 있었지만, 그 구분을 프론트로 나르는 길이 v9.4.0 ① 에서
+    스윔레인과 함께 사라져 있었다."""
+
+    WAKE = (
+        "New agent mail has arrived. It is delivered as observation(s) at "
+        "the start of this turn — review it and continue accordingly."
+    )
+
+    def test_wake_is_a_row_not_a_user_bubble(self, stack, page):
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.agent_wake(self.WAKE)
+
+        row = page.locator("#messages .row.wake")
+        assert _wait(lambda: row.count() == 1)
+        # ★ 회귀 가드: 말풍선으로 되돌아가면 즉시 실패한다.
+        assert page.locator("#messages .card-user").count() == 0
+        assert row.locator(".ic").inner_text().strip() == "🤝"
+        assert row.locator(".k").inner_text().strip() == "메일"
+
+    def test_summary_is_for_humans_body_is_what_the_model_got(self, stack, page):
+        """요약은 사람용 한 줄, 펼치면 **모델이 실제로 받은 지시문**.
+
+        그 영문 두 문장은 모델을 움직이는 장치지 사람이 읽을 문장이 아니다 —
+        숨기지는 않되(투명성) 기본 화면을 먹지도 않게(간결) 한 줄 안에서
+        분리한다."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.agent_wake(self.WAKE)
+
+        row = page.locator("#messages .row.wake")
+        assert _wait(lambda: row.count() == 1)
+        summary = row.locator(".s").inner_text()
+        assert "에이전트 회신 도착" in summary
+        assert "New agent mail" not in summary  # 원문은 요약 칸에 없다
+
+        body = row.locator(".row-body")
+        assert body.count() == 1
+        assert not body.is_visible()  # 기본 접힘
+        row.locator(".s").click()
+        assert _wait(lambda: body.is_visible())
+        assert "New agent mail has arrived" in body.inner_text()
+
+    def test_wake_belongs_to_main_channel(self, stack, page):
+        """깨우기는 main 의 런이 시작됐다는 기록이다 — 에이전트 채널이 아니다."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+
+        stack.renderer.agent_wake(self.WAKE)
+        card = page.locator("#messages > .card-assistant")
+        assert _wait(lambda: card.count() == 1)
+        assert card.get_attribute("data-ch") == "main"
+        _chip(page, AGT).click()
+        assert _wait(lambda: not card.is_visible())
+
+
 class TestJump:
     """점프는 **엿보기**다 — 한 방향만, 돌아가기는 한 단계(docs/chat-ui §5)."""
 
