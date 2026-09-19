@@ -719,7 +719,10 @@ class WebRenderer(Renderer):
             "task_id": task_id,
             "kind": "run",
             "label": message,
-            "index": seq,
+            # 프론트는 **0-based** index 를 받아 `index + 1` 로 표시한다
+            # (위임 배치의 0-based 와 공유). `seq` 는 1-based 라 그대로 넘기면
+            # 첫 요청이 "[2]" 로 찍혔다 (v9.7.0 오프바이원 수리).
+            "index": max(0, seq - 1),
             "agent": f"{agent_icon(key)} {label}",
             # A resident teammate's request is NOT a nested scope of the
             # caller: the swimlane routes it to that agent's OWN lane by the

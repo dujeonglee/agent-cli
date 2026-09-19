@@ -997,6 +997,16 @@ class TestStaticUI:
         assert '" replied"' in js
         assert '" asked a question (awaiting reply)"' in js
 
+    def test_agent_work_index_is_zero_based_for_the_frontend(self, server_and_client):
+        """`begin_agent_work` 의 `index` 는 **0-based** 여야 한다 (v9.7.0).
+
+        프론트는 위임 배치(0-based)와 같은 `index + 1` 표시를 쓰는데, 서버가
+        1-based `seq` 를 그대로 넘겨 **첫 요청이 "[2]"** 로 찍혔다."""
+        _, renderer, _client = server_and_client
+        renderer.begin_agent_work(key="agt-x", seq=1, profile="p", message="m")
+        payload = next(d for e, d in renderer._event_buffer if e == "scope_start")
+        assert payload["index"] == 0, f"첫 요청이 index={payload['index']}"
+
     def test_agent_wake_is_not_a_user_bubble(self, server_and_client):
         """깨우기 런은 전용 이벤트로 나가야 한다 (v9.7.0, 사용자 제보).
 

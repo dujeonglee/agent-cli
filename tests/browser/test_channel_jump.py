@@ -55,10 +55,17 @@ def _visible_rows(page, sel):
 class TestChannelFilter:
     """채널 전환이 **표시**를 바꾼다 (⑥ 이전엔 입력 라우팅만 바뀌었다)."""
 
-    def test_agent_work_is_hidden_from_main_and_shown_in_its_channel(self, stack, page):
-        """상주 에이전트의 작업 스코프(`ctx_dir=agents/<key>`)는 그 에이전트
-        채널에 속한다. main 에서 위임은 `⚡ agent` 도구 호출로 나타나므로
-        (docs/chat-ui §4) 작업 카드가 main 에 겹쳐 보이면 안 된다."""
+    def test_agent_work_lands_flat_in_its_channel_without_a_wrapper_card(
+        self, stack, page
+    ):
+        """상주 에이전트의 작업은 **카드로 감싸지 않고** 그 채널에 평평하게
+        흐른다 (v9.7.0, 사용자 지적).
+
+        ⑥ 이전엔 🦀 스코프 카드가 에이전트 작업을 묶는 유일한 수단이었다.
+        채널이 필터가 된 뒤로는 채널이 그 일을 하므로, 자기 채널 안에서 자기를
+        또 묶으면 아무 정보도 더하지 않으면서 **기본 접힘 뒤로 투명성을 숨기고**
+        (⑥의 목적과 정반대) main 창은 평평한데 agent 창만 한 겹 들어가
+        "같은 컨셉으로 통일"이 깨진다. 요청 경계는 왕래 줄이 이미 긋는다."""
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
@@ -72,16 +79,46 @@ class TestChannelFilter:
             parent="",
             ctx_dir=f"agents/{AGT}",
         )
-        card = page.locator(f'#messages > [data-task-id="{AGT}#1"]')
-        assert _wait(lambda: card.count() > 0)
+        stack.renderer.thought("먼저 확인한다", 1)
+        stack.renderer.final("검토 끝", turn=1)  # thought 는 다음 턴 이벤트에 실린다
 
-        # main 에서는 숨는다 — 채널 귀속이 실제 가시성으로 이어져야 한다.
+        # 래퍼 카드는 생기지 않는다.
+        assert _wait(lambda: page.locator("#messages > .card-assistant").count() > 0)
+        assert page.locator(f'[data-task-id="{AGT}#1"]').count() == 0
+
+        # 내부 턴이 채널 귀속을 그대로 물려받아 main 에서는 숨는다.
+        card = page.locator("#messages > .card-assistant").first
         assert card.get_attribute("data-ch") == AGT
         assert not card.is_visible()
-
-        # 그 채널로 가면 보인다.
         _chip(page, AGT).click()
         assert _wait(lambda: card.is_visible())
+
+    def test_nested_scope_inside_an_agent_keeps_its_own_card(self, stack, page):
+        """에이전트 안에서 열린 skill/inline 은 **여전히 자기 카드**를 갖는다 —
+        래퍼를 없앤 것이 중첩까지 없앤 것은 아니다. 부모 그룹이 없으니
+        `channelOf(parent)` 로 그 에이전트 채널의 루트에 붙는다."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+        _chip(page, AGT).click()
+
+        stack.renderer.begin_scope(
+            task_id=f"{AGT}#1",
+            kind="run",
+            label="리뷰",
+            agent=AGT,
+            parent="",
+            ctx_dir=f"agents/{AGT}",
+        )
+        stack.renderer.begin_scope(
+            task_id="sk-in", kind="skill", label="plan", parent=f"{AGT}#1"
+        )
+        sk = page.locator('[data-task-id="sk-in"]')
+        assert _wait(lambda: sk.count() == 1)
+        assert "scope-skill" in (sk.get_attribute("class") or "")
+        assert sk.get_attribute("data-ch") == AGT
+        assert sk.is_visible()
 
     def test_main_cards_hide_when_viewing_an_agent_channel(self, stack, page):
         """반대 방향도 성립해야 필터다 — 한쪽만 걸리면 두 대화가 섞인다."""
@@ -275,6 +312,56 @@ class TestTrafficRow:
         assert peer["x"] + peer["width"] <= tm["x"] + 0.5, (
             f"상대 칩과 시각이 겹친다: peer={peer}, time={tm}"
         )
+
+    def test_reply_repeating_the_final_becomes_a_receipt(self, stack, page):
+        """`→ 보냄` 이 바로 위 최종답을 그대로 반복하면 **영수증 한 줄**로만
+        (v9.7.0, 사용자 지적: 같은 내용이 화면에 두 번)."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+        _chip(page, AGT).click()
+
+        answer = "기차. 어릴 때 기차 여행하던 기억이 나네요!"
+        stack.renderer.begin_scope(
+            task_id=f"{AGT}#1",
+            kind="run",
+            label="한 수",
+            agent=AGT,
+            parent="",
+            ctx_dir=f"agents/{AGT}",
+        )
+        stack.renderer.final(answer, turn=1)
+        stack.renderer.agent_message(
+            key=AGT, direction="out", author=AGT, text=answer, to="main"
+        )
+        row = page.locator("#messages .card-msg .row")
+        assert _wait(lambda: row.count() == 1)
+        assert "receipt" in (row.get_attribute("class") or "")
+        assert row.locator(".s").inner_text().strip() == "회신했습니다"
+        assert row.locator(".row-body").count() == 0
+        # 화면 전체에서 답은 **한 번만** 나온다.
+        body = page.locator("#messages").inner_text()
+        assert body.count(answer) == 1, "같은 답이 두 번 보인다"
+
+    def test_reply_without_a_preceding_final_keeps_its_content(self, stack, page):
+        """kill→resume 재생은 `agent_message` 만 다시 내보낸다(최종답은 안
+        온다) — 그때 이 줄은 그 답의 **유일한 기록**이므로 내용을 그대로
+        싣는다. 무조건 영수증으로 접으면 대화 기록이 사라진다."""
+        stack.emit_ready()
+        _roster(stack, AGT)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+        _chip(page, AGT).click()
+
+        answer = "리플레이로만 남은 회신 본문입니다."
+        stack.renderer.agent_message(
+            key=AGT, direction="out", author=AGT, text=answer, to="main"
+        )
+        row = page.locator("#messages .card-msg .row")
+        assert _wait(lambda: row.count() == 1)
+        assert "receipt" not in (row.get_attribute("class") or "")
+        assert answer in row.locator(".s").inner_text()
 
     def test_question_row_also_lands_in_the_global_ask_tray(self, stack, page):
         """질문은 대화에도 남고 트레이에도 뜬다 — 어느 채널을 보고 있든 놓치지
@@ -560,14 +647,15 @@ class TestNestedBlocks:
             parent="",
             ctx_dir=f"agents/{AGT}",
         )
-        assert _wait(lambda: page.locator("#messages > .card-task-group").count() == 3)
+        assert _wait(lambda: page.locator("#messages > .card-task-group").count() == 2)
 
         def cls(tid):
             return page.locator(f'[data-task-id="{tid}"]').get_attribute("class")
 
         assert "scope-skill" in cls("sk1")
         assert "scope-inline" in cls("in1")
-        assert "scope-agent" in cls(f"{AGT}#1")  # 레일 없음(투명)
+        # v9.7.0: 상주 에이전트는 **카드 자체가 없다** — 채널이 그 역할이다.
+        assert page.locator(f'[data-task-id="{AGT}#1"]').count() == 0
 
     def test_nested_scope_collapses_inside_its_parent(self, stack, page):
         """중첩 접기: 부모를 접으면 자식 블록도 함께 사라진다 — 중첩이 표시만이

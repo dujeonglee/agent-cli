@@ -521,6 +521,13 @@ main#messages {
   color: var(--muted);
   white-space: nowrap;
 }
+/* 바로 위 최종답을 그대로 반복하는 회신 줄 — 내용 대신 **영수증**으로만
+   그린다(요약은 회신 사실, 본문 없음). 조건부인 이유는 kill→resume 뒤에는
+   최종답이 재생되지 않아(`_replay_conversation` 은 `agent_message` 만
+   재발행) 이 줄이 그 답의 **유일한 기록**이 되기 때문이다 — 그때는 내용을
+   그대로 싣는다. */
+.row.msg.receipt .s { color: var(--muted); font-style: italic; }
+
 /* 점프 가능한 상대만 버튼처럼 보인다 — main 은 매칭 키가 없어 갈 수 없고
    (docs/chat-ui §5), 눌리는 것처럼 보이면 고장으로 읽힌다. */
 .peer.can-jump {
@@ -539,7 +546,6 @@ main#messages {
    않는다(주면 중첩처럼 보여 거짓말이 된다). */
 .card-task-group.scope-skill { border-left: 2px solid var(--scope-skill); }
 .card-task-group.scope-inline { border-left: 2px solid var(--scope-inline); }
-.card-task-group.scope-agent { border-left: 2px solid transparent; }
 
 /* 돌아가기 — 점프 직후에만 뜨는 한 개짜리 버튼. */
 #ch-back {

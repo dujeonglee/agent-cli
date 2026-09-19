@@ -534,31 +534,37 @@
     });
   }
 
-  /** 스코프 카드를 연다. ``depth``/``ctxDir`` 는 **중첩 블록의 종류**를 가른다
-   * (v9.4.0 ⑥, docs/chat-ui §3). 갈림선은 "말을 걸 수 있는가":
+  /** 스코프의 **채널 귀속**을 등록하고, 이 스코프가 곧 채널인지 돌려준다.
    *
-   *   kind="skill"                 → 🪄 skill        · 중첩 블록(보라 레일)
-   *   kind="run" + agents/<key>    → 🤝 상주 agent   · **채널**(레일 없음)
-   *   kind="run" (그 외)           → 🦀 inline agent · 중첩 블록(amber 레일)
+   * 상주 에이전트 작업은 `ctx_dir="agents/<key>"` 로 자기를 밝힌다(서버의
+   * `begin_agent_work`). 그런 스코프는 **채널 자체**라 카드를 만들지 않는다
+   * (v9.7.0) — 채널이 이미 묶어 주는데 그 안에서 또 묶으면 아무 정보도 더하지
+   * 않으면서 기본 접힘 뒤로 투명성을 숨기고, main 창은 평평한데 agent 창만 한
+   * 겹 들어가 "같은 컨셉으로 통일"이 깨진다. 요청의 경계는 왕래 줄(`← 받음` /
+   * `→ 보냄`)이 이미 긋고 있다.
    *
-   * skill·inline 은 턴 안에서 끝나 칩을 줘도 누를 일이 없으므로 들여쓰기 +
-   * 좌측 레일로 그린다. 상주 agent 는 채널 칩이 이미 있으니 레일을 주면
-   * 중첩처럼 보여 거짓말이 된다. */
-  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, ctxDir) {
+   * 카드를 안 만들어도 배관은 그대로다: `appendToTimeline` 은 그룹이 없으면
+   * `channelOf(taskId)` 로 도장을 찍어 루트에 붙이는데, 그게 정확히 원하는
+   * 동작이다. 그 스코프 **안에서** 열리는 skill/inline 은 자기 카드를 그대로
+   * 갖고, 부모 그룹이 없으니 `channelOf(parent)` = 그 에이전트 채널의 루트에
+   * 붙는다 — 중첩 블록은 살아 있다. */
+  function noteScopeChannel(taskId, parent, ctxDir) {
+    const m = /^agents\/(.+)$/.exec(ctxDir || "");
+    scopeChannel[taskId] = m ? m[1] : channelOf(parent);
+    return !!m;
+  }
+
+  /** 스코프 카드를 연다. 중첩 블록의 종류는 `kind` 가 가른다 (docs/chat-ui §3):
+   * `skill` → 🪄 보라 레일, 그 외 → 🦀 inline agent · amber 레일.
+   * 상주 에이전트는 여기 오지 않는다 (``noteScopeChannel`` 참조). */
+  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth) {
     if (taskGroups[taskId]) return taskGroups[taskId];
 
     const card = el("div", ["card", "card-task-group"]);
     card.dataset.taskId = taskId;
     card.dataset.kind = kind || "run";
     card.dataset.depth = String(depth || 0);
-    const chKey = /^agents\/(.+)$/.exec(ctxDir || "");
-    if (chKey) {
-      scopeChannel[taskId] = chKey[1]; // 상주 에이전트 = 자기 채널
-      card.classList.add("scope-agent");
-    } else {
-      scopeChannel[taskId] = channelOf(parent); // 중첩은 부모 채널을 물려받음
-      card.classList.add(kind === "skill" ? "scope-skill" : "scope-inline");
-    }
+    card.classList.add(kind === "skill" ? "scope-skill" : "scope-inline");
 
     const header = el("div", ["task-header"]);
     const chevron = el("span", ["task-chevron"], "▶");
@@ -635,8 +641,9 @@
     // (top-level scope, or its group already closed) — same as any other event.
     appendToTimeline(card, parent);
     // 채널 귀속은 **이 스코프 자신의** 것이다. appendToTimeline 은 중첩 위치를
-    // 정하려고 `parent` 를 받으므로 부모 채널로 도장을 찍는다 — 상주 에이전트
-    // 작업은 parent="" 라 그대로 두면 main 에 남아 채널이 무의미해진다.
+    // 정하려고 `parent` 를 받으므로 부모 채널로 도장을 찍는데, 부모가 카드 없는
+    // 상주 스코프면 루트로 떨어지면서 그 채널이 아니라 부모의 채널로 찍힌다
+    // — 값은 같지만(자식은 부모 채널을 물려받는다) 출처를 자기 것으로 맞춘다.
     if (card.parentNode === $messages) {
       card.dataset.ch = scopeChannel[taskId];
       applyChannelFilter(card);
@@ -714,6 +721,13 @@
    * 한 줄 리듬으로 그리고, 펼치면 **모델이 받은 원문**이 나온다 — 사람이 읽을
    * 요약과 모델을 움직인 지시문을 한 줄 안에서 분리한다.
    */
+  // 채널별 **직전 최종답** — `→ 보냄` 줄이 그걸 그대로 반복하는지 판정한다.
+  // 라이브에서는 최종답 바로 뒤에 회신 줄이 오므로 텍스트가 같으면 중복이고,
+  // kill→resume 뒤에는 최종답이 재생되지 않아(`_replay_conversation` 은
+  // `agent_message` 만 재발행) 같지 않다 → 그때는 줄이 내용을 싣는다.
+  // 채널당 한 칸이고 최종답마다 덮어써서 자라지 않는다.
+  const lastFinalByChannel = {};
+
   function renderAgentWake(d) {
     const card = el("div", ["card", "card-assistant"]);
     const raw = String((d && d.text) || "");
@@ -989,6 +1003,8 @@
       // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
       // 아니라 로그가 된다.
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
+      const fch = channelOf(d.task_id);
+      if (fch !== "main") lastFinalByChannel[fch] = String(d.final).trim();
     } else if (d.action) {
       const tool = d.action.tool_name || "";
       const input = d.action.tool_input || "";
@@ -1771,16 +1787,19 @@
     // scope it belongs to, so the card opens BEFORE its turns arrive and they
     // land inside it. Skipping it now would be the bug: no card at all, and a
     // swimlane bar offering navigation to something that does not exist.
-    const grp = ensureTaskGroup(
-      d.task_id,
-      d.index || 0,
-      d.agent || "",
-      d.label || "",
-      d.kind || "run",
-      d.parent || "",
-      d.depth || 0,
-      d.ctx_dir || "",
-    );
+    // 채널 귀속은 카드와 무관한 등록이라 먼저, 그리고 **채널 자체인 스코프는
+    // 카드를 만들지 않는다**(v9.7.0 — 자기 채널 안에서 자기를 또 묶지 않는다).
+    const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "")
+      ? null
+      : ensureTaskGroup(
+          d.task_id,
+          d.index || 0,
+          d.agent || "",
+          d.label || "",
+          d.kind || "run",
+          d.parent || "",
+          d.depth || 0,
+        );
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
@@ -2036,13 +2055,22 @@
     var card = el("div", ["card", "card-msg"]);
     card.dataset.ch = d.key;
     if (peer.key) card.dataset.peer = peer.key;
+    // 바로 위 최종답과 같은 답이면 **영수증 한 줄**로만 (사용자 지적: 같은
+    // 내용이 화면에 두 번). 같지 않으면(= resume 재생이라 최종답이 없다)
+    // 이 줄이 유일한 기록이므로 내용을 그대로 싣는다.
+    var dup =
+      d.direction === "out" && lastFinalByChannel[d.key] === text.trim();
+    var body =
+      !dup && text !== first.trim()
+        ? elHtml("div", ["md"], escapeAndFormat(text))
+        : null;
     card.appendChild(
       makeRow(
         d.direction === "question" ? "❓" : out ? "→" : "←",
         d.direction === "question" ? "질문" : out ? "보냄" : "받음",
-        first.trim(),
-        text !== first.trim() ? elHtml("div", ["md"], escapeAndFormat(text)) : null,
-        ["msg"],
+        dup ? "회신했습니다" : first.trim(),
+        body,
+        dup ? ["msg", "receipt"] : ["msg"],
         tail
       )
     );
