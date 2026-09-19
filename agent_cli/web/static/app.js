@@ -721,8 +721,8 @@
    * 13개 렌더러가 진짜로 공유하는 건 본문 구성이 아니라 이 **꼬리 배관**이고,
    * 최근 누수가 전부 여기서 났다(사용자 입력=도장 누락, 거부된 응답=task_id
    * 흘림, 왕래=세 단계 수동 조립, 무진전 줄=스코프 누락). 조사에서 하나 더
-   * 나왔다 — `renderFailedEmission` 은 아예 `stampCard` 를 안 불러 **시각 없는
-   * 카드**였다.
+   * 나왔다 — 거부된 응답 카드는 아예 `stampCard` 를 안 불러 **시각 없는
+   * 카드**였다(그 카드 자체가 v9.8.0 에서 사라졌다).
    *
    * 인자는 **이벤트 페이로드 통째**다. 추출한 id 를 받으면 `undefined` 가
    * 조용히 통과하지만(실제로 `transcript_truncated` 가 그랬다), 페이로드를
@@ -1225,6 +1225,7 @@
   let genEl = null;
   let genBody = 0;    // 본문 누적 토큰
   let genThink = 0;   // 사고 누적 토큰
+  let genRetry = 0;   // 형식 거부 후 재시도 횟수 (v9.8.0)
   // fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
 
   function showGenerating() {
@@ -1238,6 +1239,11 @@
     const parts = [];
     if (genBody) parts.push("· " + fmtTok(genBody) + " tokens");
     if (genThink) parts.push("· 💭 사고 " + fmtTok(genThink));
+    // 재시도는 **왜 오래 걸리는지**의 유일한 단서다. 거부된 응답 자체는 안
+    // 보여주지만(하네스의 재시도 기계는 모델의 작업이 아니다), "그냥 느린 것"과
+    // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
+    // 실제로 다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다.
+    if (genRetry) parts.push("· ↻ 재시도 " + genRetry);
     genEl.querySelector(".gen-tok").textContent = parts.join(" ");
     scheduleScroll();
   }
@@ -1249,26 +1255,9 @@
     }
     genBody = 0;
     genThink = 0;
+    genRetry = 0;
   }
 
-  // 거부된 원문(raw)을 실패 카드로. 종전엔 라이브 스트리밍 카드를 마감하는
-  // 경로가 주였으나, 스트리밍이 없어져 **원문 표시**만 남는다 — 모델이 무엇을
-  // 뱉어 거부됐는지는 여전히 봐야 한다.
-  // **페이로드를 통째로** 받는다. 개별 인자로 받던 종전엔 (a) 호출부가 task_id 를
-  // 흘려 에이전트의 실패가 main 에 빨간 박스로 떴고(사용자 보고), (b) `ts` 는
-  // 아예 인자에 없어 **시각 없는 카드**였다(감사 발견 — 아무도 몰랐다).
-  // 페이로드를 받으면 둘 다 구조적으로 사라진다.
-  function renderFailedEmission(d) {
-    const reason = (d && d.reason) || "";
-    const raw = (d && d.raw) || "";
-    if (!raw && !reason) return;
-    const card = el("div", ["card", "card-failed"]);
-    // P0-6②: reason/raw 는 모델·서버 원문 — el() 이 textContent 기반이라
-    // 원문 그대로 안전(과거 innerHTML 시절 미이스케이프 self-XSS 의 수리 지점).
-    if (raw) card.appendChild(el("pre", ["streaming"], raw));
-    if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
-    finishCard(card, d);
-  }
 
   // ── Input mode switching ───────────────────
   // Provenance block (who/why/what) shown with a confirm or ask prompt so
@@ -1720,13 +1709,14 @@
     renderAssistantTurn(d);
   });
 
-  es.addEventListener("failed_turn", function (e) {
-    const d = JSON.parse(e.data);
-    hideGenerating();
-    renderFailedEmission(d);
-    // failed_turn 은 서버의 ``recovery()`` 에서만 나온다 — **포맷 복구 후
-    // 같은 런이 재시도**한다는 뜻이지 런 종료가 아니다. 런 종료 정리는
-    // worker_state idle 이 소유한다.
+  // 형식 거부 → 재시도. **카드를 그리지 않는다** (v9.8.0) — 거부된 원문은
+  // 하네스의 재시도 기계지 모델의 작업이 아니고, 사용자가 할 수 있는 일도 없다.
+  // 대신 생성 중 줄의 카운터만 올린다: 런은 계속되므로 `hideGenerating` 도
+  // 부르지 않는다(종전엔 불렀다가 다음 tick 에 다시 만들어 깜빡였다).
+  // 재시도를 다 쓰면 하드페일이 `turn_error` 로 **영속** 표면에 남는다.
+  es.addEventListener("retry_tick", function () {
+    genRetry += 1;
+    showGenerating();
   });
 
   es.addEventListener("observation", function (e) {
@@ -3131,8 +3121,6 @@
     }
     if (cl.contains("card-sys"))
       return { kind: "system", label: "System", mono: false };
-    if (cl.contains("card-failed"))
-      return { kind: "failed", label: "Rejected", mono: true };
     return null; // .gen(생성 중 표시) 등 카드가 아닌 것
   }
 
@@ -3141,7 +3129,7 @@
   // 대조해 "등록을 잊었다"를 정적으로 잡는다.
   const CARD_KINDS = [
     "card-user", "card-assistant", "card-observation",
-    "card-error", "card-task-group", "card-msg", "card-sys", "card-failed",
+    "card-error", "card-task-group", "card-msg", "card-sys",
   ];
 
   function topCards() {

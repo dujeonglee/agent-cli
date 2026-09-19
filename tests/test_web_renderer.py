@@ -351,31 +351,52 @@ class TestEventDistribution:
 
 
 class TestRecovery:
-    """recovery() finalizes the rejected emission as its own card, then
-    shows the intervention — so the failed response, the intervention, and
-    the retry are three distinct cards (not one growing stream blob)."""
+    """형식 거부는 **화면에 카드를 남기지 않는다** (v9.8.0, 사용자 결정).
 
-    def test_recovery_emits_failed_turn_then_observation(self):
+    종전엔 거부된 원문 카드 + 개입 관찰까지 두 장을 그렸다. 그런데 이건 모델의
+    작업이 아니라 **하네스의 재시도 기계**이고(DESIGN 의 투명성 대상은
+    "대화·셸 수행·reasoning"), 사용자가 할 수 있는 일도 없다. 상용 제품들도
+    재시도를 조용히 한다. 라이브 스트리밍을 버린 뒤로는 "좀 더 오래 생각하는구나"
+    로 읽히면 충분하다.
+
+    덤으로 라이브/resume 괴리가 사라진다 — history 엔 거부 사실이 없어 resume 은
+    원래 이걸 안 보여줬다. 라이브를 resume 에 맞춘 쪽이 싸다.
+
+    대신 **왜 오래 걸리는지**는 남긴다(진행 신호 `retry_tick` → 생성 중 줄의
+    카운터). 재시도를 다 쓰면 하드페일이 `turn_error` 로 영속 표면에 남는다."""
+
+    def test_recovery_emits_a_transient_retry_tick_only(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
         r.register_connection(conn)
 
         r.recovery("{bad", "Observation: add an action", "no action", turn=2)
 
-        # 1. failed_turn closes the streaming card (carries raw + reason
-        #    for replay where no live stream card exists).
+        # 진행 신호 하나. 거부된 원문도, 개입 관찰도 화면으로 가지 않는다.
         event, data = conn.queue.get(timeout=0.5)
-        assert event == "failed_turn"
+        assert event == "retry_tick"
         assert data["reason"] == "no action"
-        assert data["raw"] == "{bad"
         assert data["turn"] == 2
-        # 2. the intervention fed back, as its own observation card.
+        assert "raw" not in data, "거부된 원문이 프론트로 새면 안 된다"
+        assert conn.queue.empty(), "개입 관찰이 여전히 카드로 나간다"
+
+        # **영속이 아니다** — 재접속 replay 에서 되살리면 옛 시도분이 카운터에
+        # 더해진다(`stream_tick` 과 같은 성질).
+        assert r.persistent_count == 0
+
+    def test_hard_failure_is_still_persistent(self):
+        """재시도를 다 쓴 경우는 **남아야** 한다 — 런이 왜 끝났는지의 유일한
+        근거이고, 리로드해도 보여야 한다(`render_run_ended` → `turn_error`)."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.error("Action loop unresolved: shell repeated; Stopping.", turn=3)
+
         event, data = conn.queue.get(timeout=0.5)
-        assert event == "observation"
-        assert data["content"] == "Observation: add an action"
-        assert data["success"] is False
-        # Both persistent so a reconnecting client replays them.
-        assert r.persistent_count == 2
+        assert event == "turn_error"
+        assert "Action loop unresolved" in data["content"]
+        assert r.persistent_count == 1
 
 
 class TestTurnErrorEventName:

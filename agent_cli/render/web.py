@@ -1001,7 +1001,6 @@ class WebRenderer(Renderer):
     # 영속(②)이지만 **의도적으로** resume(③)에 안 남는 것들 — 이유를 적는다.
     REPLAY_LIVE_ONLY: ClassVar[dict[str, str]] = {
         "turn_error": "history 에 쓰지 않는다 (의도 — 런 실패는 재생하지 않음)",
-        "failed_turn": "거부된 원문은 history 에 없다; 짝 관찰만 남는다",
         "agent_roster": "sticky — 재접속엔 실리고 resume 은 registry 가 재구성",
         "agent_cleared": "kill 시점의 정리 신호 (상태가 아님)",
     }
@@ -1426,17 +1425,31 @@ class WebRenderer(Renderer):
         reason: str,
         turn: int,
     ) -> None:
-        # Finalize the live streaming card as a failed emission so the next
-        # turn's stream starts a fresh card instead of appending to the
-        # rejected one. ``raw`` is carried for replay (event_buffer), where
-        # no live streaming card exists to close.
+        # 거부된 응답은 **화면에 그리지 않는다** (v9.8.0, 사용자 결정).
+        #
+        # 종전엔 원문 + `⚠ 사유` 카드와 개입 관찰까지 두 장을 띄웠다. 그런데
+        # 이건 **모델의 작업이 아니라 하네스의 재시도 기계**다 — DESIGN 의
+        # 투명성 대상("대화·셸 수행·reasoning")과 범주가 다르고, 사용자가 할 수
+        # 있는 일도 없다(모델의 형식 준수는 고칠 수 없다). 상용 제품들도 재시도를
+        # 조용히 한다. 라이브 스트리밍을 버린 뒤로는 "좀 더 오래 생각하는구나"로
+        # 읽히면 충분하다.
+        #
+        # 덤으로 **라이브/resume 괴리가 사라진다**: history 엔 거부 사실이 없어
+        # resume 은 원래 이걸 안 보여줬다. resume 을 라이브에 맞추는 대신 라이브를
+        # resume 에 맞춘 것이고, 그쪽이 싸다.
+        #
+        # 대신 **왜 오래 걸리는지**는 알려준다 — 생성 중 줄의 재시도 카운터.
+        # 그래야 "그냥 느린 것"과 "재시도로 맴도는 것"이 구별된다(형식 붕괴가 잦은
+        # 로컬 모델에선 실제로 다른 상황이다). 재시도를 다 쓰면 하드페일이
+        # `render_run_ended` → `turn_error` 로 **영속** 표면에 남는다.
+        #
+        # ``persistent=False``: 진행 신호라 재접속 replay 에서 되살릴 이유가 없다
+        # (되살리면 옛 시도분이 카운터에 더해진다 — `stream_tick` 과 같은 성질).
         self._emit(
-            "failed_turn",
-            {"turn": turn, "reason": reason, "raw": raw_emission},
-            persistent=True,
+            "retry_tick",
+            {"turn": turn, "reason": reason},
+            persistent=False,
         )
-        # The intervention we fed back to the model — its own card.
-        self.observation(intervention_message, turn, None, success=False)
 
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         # verbose-only — transient debug stream.

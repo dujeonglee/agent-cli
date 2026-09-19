@@ -176,20 +176,18 @@ class TestChannelFilter:
             "main 사용자 입력이 에이전트 채널에 샜다"
         )
 
-    def test_rejected_emission_stays_in_its_own_channel(self, stack, page):
-        """거부된 응답(`⚠ no action`)은 **그걸 낸 주체**의 것이다.
+    def test_retry_tick_draws_nothing_in_any_channel(self, stack, page):
+        """형식 거부는 v9.8.0 부터 카드를 만들지 않는다 — 따라서 채널 누수도
+        구조적으로 불가능하다.
 
-        실사고(사용자 보고): 에이전트에게 물은 답이 거부됐는데 그 빨간 박스가
-        **main 대화**에 떴다. `failed_turn` 은 `_emit` 이 스코프 task_id 를 이미
-        실어 보내는데 리스너가 그걸 흘리고 `appendToTimeline(card)` 로 붙여,
-        채널 없는 루트 카드가 된 탓. `renderUserMessage` 누수와 같은 부류라
-        **루트에 붙는 경로마다** 이 가드가 필요하다."""
+        종전엔 `failed_turn` 이 `task_id` 를 잃고 main 에 빨간 박스로 떴고
+        (사용자 보고), v9.8.0 에서 그 카드 자체를 없앴다. 귀속을 검사하던
+        자리에 **아무것도 안 그린다**는 계약을 대신 박는다."""
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, AGT).count() > 0)
 
-        # 에이전트 스코프 안에서 난 실패 — 렌더러가 스레드→task_id 를 붙인다.
         stack.renderer.begin_scope(
             task_id=f"{AGT}#1",
             kind="run",
@@ -199,16 +197,12 @@ class TestChannelFilter:
             ctx_dir=f"agents/{AGT}",
         )
         stack.renderer.recovery("6입니다.", "형식을 지켜 다시", "no action", 1)
-        card = page.locator("#messages .card-failed")
-        assert _wait(lambda: card.count() > 0)
-
-        # 에이전트 작업 카드 **안**(중첩)이거나, 최소한 main 채널은 아니어야 한다.
-        inside = page.locator(f'[data-task-id="{AGT}#1"] .card-failed').count()
-        assert inside == 1 or card.first.get_attribute("data-ch") == AGT, (
-            "거부된 응답이 낸 주체를 잃었다 — main 대화에 뜬다"
-        )
-        _chip(page, "main").click()
-        assert _wait(lambda: not card.first.is_visible()), "main 에서 보인다"
+        assert _wait(lambda: "재시도" in page.locator("#messages .gen").inner_text())
+        for ch in ("main", AGT):
+            _chip(page, ch).click()
+            body = page.locator("#messages").inner_text()
+            assert "6입니다." not in body, f"{ch} 채널에 거부된 원문이 있다"
+            assert "형식을 지켜 다시" not in body, f"{ch} 채널에 개입이 있다"
 
     def test_switching_channel_lands_at_the_bottom(self, stack, page):
         """채널을 열면 **그 대화의 맨 아래**로 간다 (사용자 보고).

@@ -662,26 +662,6 @@ main#messages {
 /* A rejected emission finalized in place (parse/validate failure). Solid
    red border distinguishes it from the dashed in-progress stream, and the
    reason badge names why it was rejected. */
-.card-failed {
-  background: var(--fail-soft-bg);
-  border: 1px solid var(--fail-soft-border);
-  padding: 12px;
-  border-radius: 8px;
-}
-.card-failed .streaming {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  margin: 0;
-  color: var(--fail-soft-fg);
-}
-.card-failed .fail-reason {
-  margin-top: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fail);
-}
 
 /* Inline code + code blocks inside markdown-ish text */
 .card pre.code {
@@ -1414,7 +1394,6 @@ body.export-mode #messages > .card > .export-check {
   cursor: pointer;
   z-index: 2;
 }
-body.export-mode #messages > .card-failed { padding-left: 0; }
 
 #export-bar {
   display: flex;

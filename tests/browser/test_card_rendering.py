@@ -396,12 +396,54 @@ class TestGeneratingIndicator:
         assert _wait(lambda: self._gen(page).count() == 1)
         assert self._gen(page).count() == 1
 
-    def test_failed_emission_still_shows_raw(self, stack, page):
-        """거부된 원문은 여전히 봐야 한다 — 모델이 무엇을 뱉었는지."""
+    def test_rejected_emission_draws_no_card(self, stack, page):
+        """형식 거부는 **화면에 아무 카드도 남기지 않는다** (v9.8.0).
+
+        하네스의 재시도 기계지 모델의 작업이 아니다. 거부된 원문도, 개입
+        관찰도 나가지 않는다 — 둘 중 하나만 숨기면 맥락 없는 빨간 줄이 남아
+        더 나쁘다."""
         stack.emit_ready()
         _open_timeline(page, stack)
+        stack.renderer.final("이전 답", turn=0)
+        assert _wait(lambda: page.locator("#messages > .card").count() == 1)
+
         stack.renderer.recovery("{bad json", "형식이 틀렸습니다", "NO_JSON", 1)
-        assert _wait(lambda: page.locator(".card-failed").count() > 0)
-        card = page.locator(".card-failed").first
-        assert "{bad json" in card.inner_text()
-        assert "⚠" in card.inner_text()
+        # 카운터가 오를 때까지 기다린 뒤 카드 수가 그대로인지 본다.
+        assert _wait(lambda: "재시도" in self._gen(page).inner_text())
+        body = page.locator("#messages").inner_text()
+        assert "{bad json" not in body, "거부된 원문이 화면에 있다"
+        assert "형식이 틀렸습니다" not in body, "개입 관찰이 카드로 남았다"
+        assert page.locator("#messages > .card").count() == 1, "카드가 늘었다"
+
+    def test_retry_counter_says_why_it_is_slow(self, stack, page):
+        """거부는 숨기되 **왜 오래 걸리는지**는 남는다 — 그래야 "그냥 느림"과
+        "형식 거부로 맴돔"이 구별된다(형식 붕괴가 잦은 로컬 모델에선 실제로
+        다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다)."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.stream_chunk("본문 " * 60)
+        assert _wait(lambda: self._gen(page).count() == 1)
+
+        for i in range(1, 4):
+            stack.renderer.recovery("{bad", "다시", "no action", i)
+            want = f"재시도 {i}"
+            assert _wait(lambda w=want: w in self._gen(page).inner_text())
+        # 생성 중 줄은 살아 있어야 한다 — 런이 끝난 게 아니라 이어진다.
+        assert self._gen(page).count() == 1
+
+    def test_hard_failure_is_shown_and_persists(self, stack, page):
+        """재시도를 다 쓰면 **마지막 실패는 보여준다** — 런이 왜 끝났는지의
+        유일한 근거다. 그리고 리로드해도 남아야 한다(영속)."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.error(
+            "Action loop unresolved: shell repeated; Stopping.", turn=3
+        )
+        err = page.locator("#messages .card-error")
+        assert _wait(lambda: err.count() == 1)
+        assert "Action loop unresolved" in err.inner_text()
+
+        page.reload()  # 재접속 replay 에 실려야 한다
+        err2 = page.locator("#messages .card-error")
+        assert _wait(lambda: err2.count() == 1)
+        assert "Action loop unresolved" in err2.inner_text()

@@ -673,12 +673,10 @@ class TestStaticUI:
         assert 'elHtml("div", ["bubble"], escapeAndFormat(' in js
         assert "colorizeDiffBody(" in js and 'elHtml("pre", ["obs-body"]' in js
         assert "highlightDangerHtml(data.command" in js
-        # 실패 카드: textContent 라 원문 그대로 안전(이중 이스케이프 없음).
-        # v9.4.0 ④: finalizeStreamingAsFailed → renderFailedEmission
-        # (라이브 스트리밍 카드를 마감하던 경로가 사라지고 원문 표시만 남았다).
-        body = _js_fn_body(js, "renderFailedEmission")
-        assert '"⚠ " + reason' in body and "escapeHtml(reason)" not in body
-        assert '["streaming"], raw' in body and "escapeHtml(raw)" not in body
+        # v9.8.0: 거부된 응답 카드(renderFailedEmission)는 제거됐다 — 원문을
+        # 화면에 그리는 경로가 없어져 이 지점의 이스케이프 계약도 함께 사라졌다.
+        assert "renderFailedEmission" not in js
+        assert "card-failed" not in js
         # el() 텍스트 사이트에 escapeHtml 잔재(=화면에 &lt; 노출) 금지 —
         # 대표 지점: 시각 배지 / task-error. v9.4.0 ⑥: 시각은 행이 있으면
         # 줄 안(.row-time), 없으면 코너 배지(.card-time)로 가되(stampCard),
