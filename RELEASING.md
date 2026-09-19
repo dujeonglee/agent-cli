@@ -50,16 +50,17 @@ README.md / docs/ARCHITECTURE.md가 최신인지 확인.
 agent-cli --version   # → agent-cli X.Y.Z
 ```
 
-### 3. CHANGELOG 갱신
+### 3. 릴리스 노트 작성
 
-`CHANGELOG.md`의 `[Unreleased]` 아래에 `## [X.Y.Z] - YYYY-MM-DD` 섹션을 만들고
-Added / Changed / Fixed / Removed로 정리. 하단 compare 링크도 갱신.
+**`CHANGELOG.md` 는 v9.0.0 이후 쓰지 않습니다** — 릴리스 노트는 GitHub Release
+본문이 단일 소스이고, 재료는 이번 태그 이후의 커밋 메시지입니다
+(`git log --oneline vX.Y.(Z-1)..HEAD`). 6단계에서 `--notes-file` 로 붙입니다.
 
 ### 4. 릴리스 커밋 (브랜치 → 머지 → 푸쉬)
 
 ```bash
 git checkout -b release/vX.Y.Z
-git add agent_cli/__init__.py CHANGELOG.md   # + 동반 문서
+git add agent_cli/__init__.py   # + 동반 문서(README·ARCHITECTURE·PERF-KPI)
 git commit -m "chore(release): vX.Y.Z"
 git checkout main && git merge --ff-only release/vX.Y.Z
 git push origin main
@@ -79,7 +80,7 @@ git push origin vX.Y.Z
 python -m build                       # dist/agent_cli-X.Y.Z-py3-none-any.whl + .tar.gz
 gh release create vX.Y.Z \
   --title "vX.Y.Z" \
-  --notes-file <(awk '/^## \[X.Y.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md) \
+  --notes-file RELEASE_NOTES.md \
   dist/agent_cli-X.Y.Z*
 ```
 
