@@ -346,6 +346,87 @@ class TestAuditFixes:
         stack.renderer.push_abort()
 
 
+class TestInfoDedup:
+    """같은 정보가 두 곳에 나오던 것들 — 잃는 게 없어 바로 제거한 셋 (v9.8.0)."""
+
+    def test_main_confirm_does_not_repeat_the_lines_above_it(self, stack, page):
+        """main confirm 의 `💭 reasoning` / `⚡ action` 은 바로 위 타임라인
+        행의 복사본이다. **CLI 엔 이미 이 게이트가 있었다** —
+        `base._format_prompt_meta`: *"the main agent already prints its
+        thought/action inline right above the prompt"*. 웹에만 없었다."""
+        from agent_cli.render.base import ConfirmOption
+
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.thought("위험한 명령을 쓰겠다", 1)
+        stack.renderer.action("shell", '{"command":"rm -rf /tmp/x"}', 1)
+        assert _wait(lambda: page.locator("#messages .row.act").count() > 0)
+
+        threading.Thread(
+            target=lambda: stack.renderer.confirm(
+                "⚠ Dangerous command detected",
+                [
+                    ConfirmOption(key="y", label="once"),
+                    ConfirmOption(key="n", label="deny"),
+                ],
+                default_key="n",
+                command="rm -rf /tmp/x",
+            ),
+            daemon=True,
+        ).start()
+        assert _wait(lambda: page.locator("#ask-tray .ask-item").count() > 0)
+        tray = page.locator("#ask-tray")
+        assert tray.locator(".prompt-meta").count() == 0, (
+            "main confirm 이 바로 위 두 줄을 그대로 반복한다"
+        )
+        # 승인 대상(명령)은 여전히 보여야 한다 — 그건 중복이 아니다.
+        assert "rm -rf /tmp/x" in tray.inner_text()
+        stack.renderer.push_abort()
+
+    def test_sender_name_shows_only_with_more_than_one_viewer(self, stack, page):
+        """단독 세션에선 오른쪽 파란 말풍선이 이미 "나"라 `[닉]:` 접두가 순수
+        소음이다. 여럿일 때만 이름을 보인다.
+
+        표시를 CSS 클래스로 가르는 이유: 렌더 시점에 뷰어 수로 분기하면
+        **스냅샷 재생 순서에 종속**된다(`viewers` 가 늦으면 이미 그린 카드가
+        영영 안 바뀐다). 클래스면 과거 카드에도 소급된다 — 아래에서 그걸 검증."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.push_user_message("[두정]: 안녕", author="두정")
+        bubble = page.locator("#messages .card-user .bubble")
+        assert _wait(lambda: bubble.count() > 0)
+
+        # 단독: 접두도 라벨도 안 보이고, 본문만.
+        assert "두정" not in bubble.inner_text()
+        assert "[두정]:" not in bubble.inner_text()
+        assert "안녕" in bubble.inner_text()
+
+        # 두 번째 뷰어가 붙으면 **이미 그려진 카드**에도 이름이 나타난다.
+        page2 = page.context.new_page()
+        page2.goto(stack.url)
+        assert _wait(lambda: "두정" in bubble.inner_text()), "소급 적용이 안 된다"
+        page2.close()
+
+    def test_channel_bar_hidden_until_an_agent_exists(self, stack, page):
+        """`ovSyncChannels` 가 main 칩을 항상 그려서 `#ov-channels:empty` 가
+        **절대 발동하지 않았다** — 에이전트 안 쓰는 세션 내내 탭 1개짜리 탭바가
+        입력창 위 한 줄을 먹었다. 🔌 칩의 판례와 같은 판단."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        bar = page.locator("#ov-channels")
+        assert _wait(lambda: bar.count() > 0)
+        assert not bar.is_visible(), "에이전트가 없는데 채널 바가 보인다"
+
+        stack.renderer.agent_roster(
+            [{"key": "agt-1", "name": "rev", "profile": "r", "state": "idle"}]
+        )
+        assert _wait(lambda: bar.is_visible()), "에이전트가 생겼는데 바가 없다"
+        assert page.locator('.ov-ch[data-key="main"]').count() == 1
+
+        stack.renderer.agent_roster([])
+        assert _wait(lambda: not bar.is_visible())
+
+
 class TestGeneratingIndicator:
     """v9.4.0 ④ (docs/chat-ui §2): 스트리밍을 버리고 **한 줄**만 남긴다 —
     `● 생성 중 · N tokens · 💭 사고 M`. 숫자가 오르면 살아 있다는 뜻이고,

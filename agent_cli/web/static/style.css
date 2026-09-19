@@ -115,6 +115,15 @@
 }
 
 * { box-sizing: border-box; }
+/* ★ `hidden` 속성을 **전역으로** 강제한다 (v9.8.0).
+   UA 의 `[hidden]{display:none}` 은 특정도 (0,1,0) 이라 작성자의 `display`
+   선언이면 뭐든 이긴다. 그래서 `el.hidden = true` 를 걸어도 안 숨는 사고가
+   **네 번** 났다: `#stall-pop`(팝업이 항상 열림) · `.card-user`(채널 필터가
+   안 먹음) · `.hd-chip`(빈 칩 상시 노출) · `#ov-channels`(탭 1개짜리 탭바).
+   매번 그 셀렉터에만 가드를 붙였는데, 그건 **다음 요소를 기다리는 것**이다.
+   한 줄로 부류 자체를 없앤다 — `:not([hidden])` 을 쓰는 규칙들은 hidden 이
+   아닐 때만 매칭되므로 충돌하지 않는다. */
+[hidden] { display: none !important; }
 html, body {
   height: 100%;
   margin: 0;
@@ -217,12 +226,6 @@ header {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 작성자 스타일(`display:inline-flex`)이 UA 의 `[hidden]{display:none}` 을
-   이기므로 가드가 없으면 hidden 이 무시된다 — `#chip-ws`·`#confirm-mode-btn`
-   이 빈 칩으로 첫 페인트부터 노출됐다(감사 발견). 같은 파일의 `.knob`(237)·
-   `.knob-pop`(270)·`#token-usage`·`#rename-btn`·`#messages > [hidden]`·
-   `#export-bar` 는 전부 이 가드를 갖고 있었고 `.hd-chip` 만 빠졌다. */
-.hd-chip[hidden] { display: none; }
 .hd-chip-btn { cursor: pointer; }
 .hd-chip-btn:hover, .hd-chip-btn[aria-expanded="true"] {
   border-color: var(--accent);
@@ -230,7 +233,6 @@ header {
 }
 /* ── 노브 칩 (v8.57.0) — 값-배지 칩 + 전용 팝업 ── */
 .knob { position: relative; display: inline-flex; flex: none; }
-.knob[hidden] { display: none; }
 .knob-btn {
   display: inline-flex; align-items: center; gap: 4px;
   background: transparent; border: 1px solid var(--border); border-radius: 999px;
@@ -263,7 +265,6 @@ header {
   font-size: 12px;
   white-space: nowrap;
 }
-.knob-pop[hidden] { display: none; }
 .knob-pop.align-right { left: auto; right: 0; }
 .knob-unit { color: var(--muted); font-size: 11px; }
 /* ⏳ 노브만 두 축(무진전 한도 × 시도) — 한 줄 flex 로는 6칸이 헤더를 넘치므로
@@ -333,12 +334,10 @@ header {
   white-space: nowrap;
   flex-shrink: 0;
 }
-#token-usage[hidden] { display: none; }
 /* 💭 사고 카운터 세그먼트 — thinking_tick 이 부착 (러너웨이 가시화) */
 #token-usage .tok-think { color: var(--warn); }
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
-#rename-btn[hidden] { display: none; }
 #compaction-label {
   color: var(--muted); font-size: 11px; white-space: nowrap;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
@@ -367,7 +366,6 @@ header {
   padding: 8px 16px; background: var(--accent-soft-bg); border-bottom: 1px solid var(--accent-soft-border);
   font-size: 13px;
 }
-#name-bar[hidden] { display: none; }
 .nb-label { color: var(--accent-soft-text); font-weight: 600; }
 #nb-input {
   flex: 0 1 220px; padding: 5px 9px; border: 1px solid var(--accent-soft-border);
@@ -417,6 +415,17 @@ main#messages {
 .card-user .card-time { color: var(--user-time); background: transparent; }
 
 .card-user { margin-left: auto; display: flex; justify-content: flex-end; padding-top: 20px; }
+/* 보낸 사람 이름 — **2인 이상일 때만**. 단독 세션에선 오른쪽 파란 말풍선이
+   이미 "나"라 접두가 순수 소음이다. 렌더가 아니라 CSS 로 가르는 이유는
+   renderUserMessage 주석 참조(스냅샷 재생 순서 비종속). */
+.card-user .who { display: none; }
+body.multi-viewer .card-user .who {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
 .card-user .bubble {
   background: var(--user-bg);
   color: var(--on-accent);
@@ -502,12 +511,6 @@ main#messages {
   .card-error, .card-sys .sys-text { padding-right: 0; }
 }
 
-/* 채널 필터는 `el.hidden` 으로 숨긴다. 그런데 카드 클래스가 `display` 를
-   지정하면(.card-user 는 `display:flex`) **작성자 스타일이 UA 의
-   `[hidden]{display:none}` 을 이겨** 숨겨지지 않는다 — 속성은 붙었는데 화면엔
-   그대로 있는, 소스만 봐선 안 보이는 부류(브라우저 TC 가 잡음). 클래스마다
-   때우는 대신 표면 전체에 한 줄로 못 박는다. */
-#messages > [hidden] { display: none !important; }
 
 /* ── 왕래(traffic) — 가로로 건너는 줄 (docs/chat-ui §4) ──────────
    내부 작업(세로)과 같은 리듬을 쓰되 **방향과 상대**를 싣는다. 왼쪽 세로선이
@@ -711,7 +714,6 @@ footer {
 
 /* agent-channels 3단계: 글로벌 ask 트레이 (채널 무관, 여러 asker stack) */
 #ask-tray { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-#ask-tray[hidden] { display: none; }
 .ask-item { border: 1px solid var(--warn); border-radius: 10px; background: rgba(224,169,74,.08); padding: 8px 12px; }
 .ask-q { font-size: 12px; color: var(--warn); font-weight: 600; margin-bottom: 4px; }
 .ask-qt { font-size: 13px; margin-bottom: 7px; color: var(--text); white-space: pre-wrap; }
@@ -737,11 +739,9 @@ footer {
 
 /* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
 #send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
-#abort[hidden], #chat-stop[hidden] { display: none; }
 
 /* Pending message queue (live) */
 #queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
-#queue-list[hidden] { display: none; }
 .queue-item {
   display: flex; align-items: center; gap: 8px;
   background: var(--warn-soft-bg); border: 1px solid var(--warn-soft-border); border-radius: 6px;
@@ -989,7 +989,6 @@ footer {
   flex-direction: column;
   gap: 8px;
 }
-.card-task-group .task-body[hidden] { display: none; }
 /* Nested cards inside a task body lose their outer max-width — the
    group itself already takes the page width. Avoids double-bordering
    when an observation card sits inside the group. */
@@ -1047,7 +1046,6 @@ footer {
   flex-direction: column;
   gap: 2px;
 }
-#theme-menu[hidden] { display: none; }
 .theme-item {
   display: flex;
   align-items: center;
@@ -1409,8 +1407,6 @@ body.export-mode #messages > .card > .export-check {
    `[hidden] { display: none }` (attribute selector), so the `hidden`
    attribute is inert without these explicit higher-specificity rules —
    the bar / Jira form would never hide. (Same pattern as `#abort[hidden]`.) */
-#export-bar[hidden] { display: none; }
-#export-jira-form[hidden] { display: none; }
 #export-bar .exp-all { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
 #export-count { color: var(--muted); min-width: 6rem; }
 #export-bar .exp-actions { display: inline-flex; gap: 0.4rem; }
@@ -1422,7 +1418,6 @@ body.export-mode #messages > .card > .export-check {
 #export-jira-issue { width: 7rem; }
 .exp-hint { color: var(--muted); font-size: 0.78rem; cursor: help; }
 .exp-warn { color: var(--warn); font-size: 0.78rem; }
-#export-jira-http-warn[hidden] { display: none; }
 .exp-msg { color: var(--muted); }
 .exp-msg a { color: var(--accent); }
 

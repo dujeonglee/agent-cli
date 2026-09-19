@@ -900,9 +900,24 @@
 
   // ── Card renderers ─────────────────────────
 
-  function renderUserMessage(content, ts) {
+  /** 사용자 말풍선. ``author`` 가 있으면 내용 앞의 `[닉]: ` 접두를 떼어
+   * **별도 라벨**로 돌린다 — 단독 세션에선 오른쪽 파란 말풍선이 이미 "나"라
+   * 접두가 순수 소음이고, 여러 명일 때만 누가 보냈는지가 정보다.
+   *
+   * 표시 여부는 CSS(`body.multi-viewer`)가 정한다. 렌더 시점에 뷰어 수로
+   * 분기하면 **스냅샷 재생 순서에 종속**된다(`viewers` 가 늦게 오면 이미 그린
+   * 카드들이 영영 안 바뀐다). 클래스 토글이면 나중에 온 뷰어 정보가 과거
+   * 카드에도 소급된다. */
+  function renderUserMessage(content, ts, author) {
     const card = el("div", ["card", "card-user"]);
-    card.appendChild(elHtml("div", ["bubble"], escapeAndFormat(content)));
+    let body = content;
+    if (author) {
+      const tag = "[" + author + "]: ";
+      if (body.startsWith(tag)) body = body.slice(tag.length);
+    }
+    const bubble = elHtml("div", ["bubble"], escapeAndFormat(body));
+    if (author) bubble.insertBefore(el("span", ["who"], author), bubble.firstChild);
+    card.appendChild(bubble);
     // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
     // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
     finishCard(card, { ts: ts, task_id: MAIN.task_id });
@@ -1268,7 +1283,14 @@
     const agent = typeof data.agent === "string" ? data.agent : "";
     const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
     const action = typeof data.action === "string" ? data.action : "";
-    if (!agent && !reasoning && !(includeAction && action)) return null;
+    // **agent 없으면 안 그린다** — CLI 가 이미 내린 판단을 옮긴 것
+    // (`base._format_prompt_meta`: *"the main agent already prints its
+    // thought/action inline right above the prompt, so a header would just
+    // duplicate it"*). 웹에만 이 게이트가 없어서 main confirm 이 바로 위
+    // 💭/⚡ 두 줄을 그대로 반복했다. 서브에이전트 confirm 의 `↳ from` 은
+    // agent 가 있으므로 그대로 산다 — 거기선 출처를 달리 알 방법이 없다.
+    if (!agent) return null;
+    if (!reasoning && !(includeAction && action)) return null;
     const box = el("div", ["prompt-meta"]);
     if (agent) {
       const a = el("div", ["prompt-meta-agent"]);
@@ -1697,7 +1719,7 @@
 
   es.addEventListener("user_message", function (e) {
     const d = JSON.parse(e.data);
-    renderUserMessage(d.content, d.ts);
+    renderUserMessage(d.content, d.ts, d.author || "");
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
     qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
@@ -2161,6 +2183,11 @@
       );
     });
     bar.innerHTML = html;
+    // 에이전트가 없으면 바 전체를 숨긴다 — "탭 1개짜리 탭바"는 고를 것이
+    // 없다. `#ov-channels:empty` 규칙은 main 칩을 항상 그리므로 **절대
+    // 발동하지 않았다**(감사 발견). 🔌 칩의 판례와 같은 판단:
+    // "0/0 은 정보가 아니라 소음".
+    bar.hidden = ovRoster.length === 0;
     ovApplyChannelInput();
   }
   function ovChanChip(key, label, state, active) {
@@ -2437,6 +2464,8 @@
     const me = (d.viewers || []).find(function (v) {
       return v.id === myConnId;
     });
+    // 2인 이상일 때만 말풍선에 보낸 사람 이름을 보인다(위 renderUserMessage).
+    document.body.classList.toggle("multi-viewer", (d.count || 0) > 1);
     if (me) myNickname = me.name; // latest name for rename prefill
     if ($renameBtn) $renameBtn.hidden = !me;
     maybeNamePrompt(d.viewers || []);

@@ -1055,13 +1055,14 @@ class TestStaticUI:
         assert "api/export/html" in js
         assert "api/export/jira" in js
         assert "api/export/jira/targets" in js
-        # The action bar uses the `hidden` attribute to show/hide, but its
-        # `display:flex` ID rule outweighs the UA `[hidden]` style — so an
-        # explicit `#export-bar[hidden] { display:none }` is REQUIRED or ✕
-        # never hides the bar. Guard it (regression: it shipped missing once).
+        # 이 바는 `hidden` 속성으로 여닫는데, 작성자의 `display` 선언이 UA 의
+        # `[hidden]{display:none}` 을 이겨 **속성만 붙고 안 숨는** 사고가
+        # 났었다. v9.8.0 부터 셀렉터마다 가드를 붙이는 대신 **전역 한 줄**로
+        # 부류를 없앴다 — 같은 사고가 네 번(`#stall-pop`·`.card-user`·
+        # `.hd-chip`·`#ov-channels`) 난 뒤의 결론이다. 개별 가드 15개를 지웠고,
+        # 이 한 줄이 그 전부를 덮는다. 지워지면 넷이 한꺼번에 재발한다.
         css = client.get("/static/style.css").text
-        assert "#export-bar[hidden]" in css
-        assert "#export-jira-form[hidden]" in css
+        assert "[hidden] { display: none !important; }" in css
         # v9.4.0 ②: 표면이 #messages 하나라 "타임라인을 띄우는" 훅이 사라졌다.
         # 종전엔 개요/흐름 모드에서 #messages 가 닫힌 드로어 안이라 export 진입이
         # 그걸 열어야 했다(v8.13.2 "뭘 고를지 안 나옴" 수리). 이제 항상 보인다 —
