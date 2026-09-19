@@ -2857,12 +2857,17 @@
   let activeScope = ""; // "" = main loop; a task_id = an agent/skill scope
   let lastData = null;
 
+  // 메인 IIFE 의 escapeHtml 과 **같은 커버리지**를 유지한다 — 종전엔 `'` 가
+  // 빠져 있었다. 현재 사용처는 전부 텍스트 아니면 큰따옴표 속성이라 안전하지만,
+  // 작은따옴표 속성에 한 번 쓰이는 순간 주입 경로가 된다(두 이스케이퍼의
+  // 커버리지가 다르다는 것 자체가 함정이다).
   function esc(s) {
     return String(s)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
   function fmtTok(n) {
     return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);

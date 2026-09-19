@@ -43,12 +43,8 @@
   --accent: #7e8db0; --accent-hover: #93a0bf; --accent-2: #9aa6c4;
   --accent-soft-text: #aab4cc; --accent-soft-bg: rgba(126,141,176,.14); --accent-soft-border: rgba(126,141,176,.30);
   --on-accent: #ffffff;
-  --user-bg: #3c4456; --user-hover: #464f63; --user-time: #aab4cc; --focus-ring: #7e8db0;
+  --user-bg: #3c4456; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
-  /* 역할 색 — 에이전트 라벨·dock 화자 표시에 쓰인다. */
-  --h-main: #9aa1ad; --h-worker: #7e8db0; --h-orch: #e0a458;
-  --h-writer: #3fb950; --h-reviewer: #a78bfa; --h-tester: #4d8eff; --h-rose: #f85149;
-  --h-user: #d29922;
   /* 중첩 블록 레일 — 보라=skill(🪄), amber=inline agent(🦀). 팔레트 테마가
      덮지 않는 의미색이라 여기 한 번만 둔다(docs/chat-ui §3). */
   --scope-skill: #a78bfa; --scope-inline: #e0a458;
@@ -69,7 +65,7 @@
   --bg: #0a0e17; --surface: #111725; --surface-2: #182032; --surface-3: #131a29;
   --accent: #4d8eff; --accent-hover: #6ba0ff; --accent-2: #74a6ff;
   --accent-soft-text: #9cc0ff; --accent-soft-bg: rgba(77,142,255,.14); --accent-soft-border: rgba(77,142,255,.32);
-  --user-bg: #2f6fe0; --user-hover: #2860c8; --user-time: #9cc0ff; --focus-ring: #4d8eff;
+  --user-bg: #2f6fe0; --user-time: #9cc0ff; --focus-ring: #4d8eff;
   --accent-shadow: rgba(77,142,255,.45); --accent-soft-bg2: rgba(77,142,255,.18); --accent-soft-bg3: rgba(77,142,255,.12);
   --focus-ring-shadow: rgba(77,142,255,.30); --glass: rgba(17,23,37,.86); --glass-strong: rgba(17,23,37,.92);
   --time-bg: rgba(17,23,37,.72);
@@ -80,7 +76,7 @@
   --accent: #2dd4bf; --accent-hover: #45e0cc; --accent-2: #5ee8d6;
   --on-accent: #04211d;
   --accent-soft-text: #7fe8da; --accent-soft-bg: rgba(45,212,191,.13); --accent-soft-border: rgba(45,212,191,.30);
-  --user-bg: #15897b; --user-hover: #12796c; --user-time: #7fe8da; --focus-ring: #2dd4bf;
+  --user-bg: #15897b; --user-time: #7fe8da; --focus-ring: #2dd4bf;
   --accent-shadow: rgba(45,212,191,.40); --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
   --focus-ring-shadow: rgba(45,212,191,.28); --glass: rgba(16,20,19,.86); --glass-strong: rgba(16,20,19,.92);
   --time-bg: rgba(16,20,19,.72);
@@ -93,7 +89,7 @@
   --accent: #e0a458; --accent-hover: #ecb56c; --accent-2: #f0c084;
   --on-accent: #1c1610;
   --accent-soft-text: #f0c890; --accent-soft-bg: rgba(224,164,88,.14); --accent-soft-border: rgba(224,164,88,.32);
-  --user-bg: #c0813a; --user-hover: #a8662b; --user-time: #f0c890; --focus-ring: #e0a458;
+  --user-bg: #c0813a; --user-time: #f0c890; --focus-ring: #e0a458;
   --accent-shadow: rgba(224,164,88,.42); --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
   --focus-ring-shadow: rgba(224,164,88,.30); --hairline: rgba(255,248,235,.06);
   --glass: rgba(24,20,15,.86); --glass-strong: rgba(24,20,15,.92); --time-bg: rgba(24,20,15,.72);
@@ -106,7 +102,7 @@
   --accent: #6366f1; --accent-hover: #4f46e5; --accent-2: #818cf8;
   --accent-soft-text: #4338ca; --accent-soft-bg: #eef2ff; --accent-soft-border: #c7d2fe;
   --on-accent: #ffffff;
-  --user-bg: #2563eb; --user-hover: #1d4ed8; --user-time: #93c5fd; --focus-ring: #93c5fd;
+  --user-bg: #2563eb; --user-time: #93c5fd; --focus-ring: #93c5fd;
   --ok: #16a34a; --fail: #dc2626; --warn: #b45309; --cyan: #0891b2;
   --fail-soft-bg: #fef2f2; --fail-soft-fg: #7f1d1d; --fail-soft-border: #fca5a5;
   --warn-soft-bg: #fef3c7; --warn-soft-border: #fed7aa; --warn-soft-fg: #78350f;
@@ -213,12 +209,6 @@ header {
 /* 모델 칩 — 텍스트 단일이라 inline-block 이면 자체 ellipsis 가능.
    max 28ch: 로컬 모델 id(예: Qwen3.6-35B-A3B-MLX-8bit=24ch)는 온전히,
    HF org/model 풀네임류만 말줄임 (hover = provider·전체 이름). */
-#info {
-  display: inline-block;
-  max-width: 28ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* ellipsis 는 flex 컨테이너에 안 먹는다 — 내부 text span 이 담당 */
 .hd-chip-text {
   display: block;
@@ -324,6 +314,8 @@ header {
 /* ⚡ 자동 승인 헤더 토글: 켜지면 안전 게이트 꺼짐을 amber 경고색으로 명확히 */
 #confirm-mode-btn { font-size: 12px; }
 #confirm-mode-btn.on { color: var(--warn); border-color: var(--warn); font-weight: 700; }
+/* 두 블록으로 쪼개져 `flex:1`(basis 0 에서 확장)과 `max-width:28ch`(캡)이
+   싸우고 있었다 — 캡이 조용히 이기고 있었으므로 그쪽을 남긴다. */
 #info {
   color: var(--text-2);
   font-size: 12px;
@@ -331,7 +323,7 @@ header {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  max-width: 28ch;
   margin-right: 12px;
 }
 #token-usage {
@@ -632,7 +624,6 @@ main#messages {
    cyan hunks, green/red add/remove, dim line numbers + context. */
 .rich-bold { font-weight: 600; }
 .rich-cyan { color: var(--cyan); }
-.rich-dim  { color: var(--text-2); }
 .rich-green { color: var(--ok); }
 .rich-red   { color: var(--fail); }
 
@@ -668,14 +659,6 @@ main#messages {
 .gen-tok { color: var(--muted); }
 @media (max-width: 560px) { .gen { padding-left: 0; } }
 /* 거부된 원문은 여전히 <pre> 로 보여준다 — 모델이 무엇을 뱉어 거부됐는지. */
-.card-failed .streaming, .card-streaming .streaming {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  margin: 0;
-  color: var(--text-2);
-}
 /* A rejected emission finalized in place (parse/validate failure). Solid
    red border distinguishes it from the dashed in-progress stream, and the
    reason badge names why it was rejected. */
@@ -757,8 +740,6 @@ footer {
 .ask-send { padding: 6px 14px; font-size: 13px; }
 #input-area { display: flex; gap: 8px; align-items: stretch; }
 /* agent-channels: 대화 채널 칩 바 (4단계) + 발신 대상 배지 */
-#ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
-#ov-channels:empty { display: none; }
 #input {
   flex: 1;
   resize: vertical;
@@ -1516,7 +1497,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .dl-toggle { display: inline-block; width: 14px; text-align: center; color: var(--text-2); font-size: 10px; }
 .dl-label { user-select: none; }
 .dl-size { color: var(--muted); font-size: 11px; }
-.dl-kids { }
 .dl-loading { color: var(--muted); padding: 8px; }
 .dl-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 #dl-count { font-size: 12.5px; color: var(--text-2); }
@@ -1570,19 +1550,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   0%, 100% { box-shadow: none; }
   12% { box-shadow: 0 0 0 2px var(--accent); }
 }
-
-/* work span = agent's own work (hue set inline). scope spans block the caller: */
-/* Nesting: a thin stub links a lone child scope to its parent's slot; a fork
-   (spine + one tine per member) links a parallel batch that started together. */
-/* tail status glyphs: spinner while an agent works, green check while idle. */
-/* Hovering anywhere in a message group highlights THAT message's path +
-   arrowhead (an adjacent-sibling selector used to highlight the NEXT arrow). */
-/* main→user complete = dashed reply arrow (solid = request/assign/report). */
-/* Who-label above an arrow (sender nickname / "✓ recipient list"). */
-/* 👤 marks + name labels on the ONE multiplexed user lane. */
-
-/* "이 막대에 대응하는 카드가 없음" 안내 — 클릭이 조용히 아무것도 안 하면
-   고장난 버튼으로 읽힌다(구 세션은 막대만 복구되므로 대상이 없다). */
 
 #ov-channels { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 #ov-channels:empty { display: none; }
