@@ -1970,15 +1970,38 @@ class TestLiveTeammatesSection:
         reg.get(k1).description = "x" * 250
         k2, _ = reg.spawn()
         wait_until(lambda: reg.get(k2).state == "idle")
-        reg.kill(k2)  # dead 는 광고에서 제외
+        reg.kill(k2)
 
         desc = build_live_agents_section(reg)
         assert "## Live Agents" in desc
         assert f"`{k1}`" in desc and "(ui)" in desc
-        assert f"`{k2}`" not in desc
+        # v9.6.0: dead 도 **남는다** — 이 섹션이 모델이 "누가 이미 있나"를 아는
+        # 유일한 상시 출처라, 감추면 모델이 없는 것으로 보고 새로 띄운다
+        # (실사고: 같은 이름 칩 둘). resume 을 가리켜 그 선택을 살려 준다.
+        assert f"`{k2}`" in desc
+        assert "[dead · resumable]" in desc
+        assert '"mode":"resume"' in desc
         assert "..." in desc and "x" * 198 not in desc  # 197자 + "..." 캡 폴백
         assert '"mode":"request"' in desc  # 재사용 유도
         assert "distinct `name`" in desc  # 다중 인스턴스 안내
+        reg.shutdown_all()
+
+    def test_dead_hidden_from_subagent_peer_roster(self, tmp_path, renderer):
+        """서브에이전트에게는 죽은 peer 를 보이지 않는다 — spawn/kill/resume 은
+        main 전용이라 **손쓸 수 없는 정보**이고, 그 섹션은 스폰 시 1회 조립되는
+        정적 텍스트라 금세 낡는다."""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        reg = make_registry(tmp_path)
+        alive, _ = reg.spawn(name="live-one")
+        dead, _ = reg.spawn(name="dead-one")
+        wait_until(lambda: reg.get(dead).state == "idle")
+        reg.kill(dead)
+
+        peer = build_live_agents_section(reg, via_message_tool=True)
+        assert f"`{alive}`" in peer
+        assert f"`{dead}`" not in peer
+        assert "resume" not in peer
         reg.shutdown_all()
 
     def test_empty_or_absent_registry_renders_nothing(self, tmp_path, renderer):
@@ -2801,9 +2824,11 @@ class TestRosterFreshnessWithoutSignals:
         wait_until(lambda: reg.get(key).state == "idle")
         assert key in build_live_agents_section(reg, include_state=True)
         reg.kill(key)
-        # last member gone → section collapses to "" (was: patched out of the
-        # system snapshot by update_prompt_section)
-        assert build_live_agents_section(reg, include_state=True) == ""
+        # v9.6.0: kill 해도 섹션은 안 비고 **dead 로 남는다** — 죽은 개체를
+        # 감추면 모델이 그걸 없는 것으로 보고 같은 이름을 새로 띄운다.
+        # 섹션이 ""가 되는 것은 개체가 아예 없을 때뿐(아래 TC).
+        after = build_live_agents_section(reg, include_state=True)
+        assert key in after and "[dead · resumable]" in after
 
     def test_membership_change_is_safe_without_a_renderer_snapshot(
         self, tmp_path, monkeypatch
@@ -2858,14 +2883,45 @@ class TestResumeGuidance:
         k1, _ = reg.spawn(profile="comedian")
         wait_until(lambda: reg.get(k1).state == "idle")
         reg.kill(k1)
-        # 같은 역할 재spawn — 실사용 시나리오 ("다시 시작하자" → 모델이 spawn)
+        # 같은 표시 이름 재spawn → v9.6.0 부터 **거절**한다.
+        #
+        # 종전엔 허용하고 "NO memory … resume 이 맞았다" 안내를 붙였는데, 그
+        # 안내는 이미 벌어진 일을 되돌리라는 것이라(kill 하고 resume 하라) 잘
+        # 먹지 않았다. 실제로 사용자 세션에서 같은 이름 칩 둘이 생겼고, 키는
+        # 유일해도 **사람이 글자로 구별할 수 없어** 어느 쪽에 말을 거는지 알 수
+        # 없었다. 거절 메시지가 두 갈래(resume / distinct name)를 다 가리킨다.
         r = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
-        assert r.success
-        assert "NO memory" in r.output and k1 in r.output
-        assert '"mode":"resume"' in r.output
-        # dead 없는 역할은 힌트 없음
-        r2 = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
-        assert "NO memory" in r2.output  # k1 여전히 dead → 힌트 유지
+        assert not r.success
+        assert k1 in r.error and '"mode":"resume"' in r.error
+        assert "distinct `name`" in r.error
+        # 이름을 달리하면 통과 — 병렬 독립 작업용 다중 인스턴스는 정당하다.
+        r2 = tool_agent(
+            {"mode": "spawn", "profile": "comedian", "name": "second"}, registry=reg
+        )
+        assert r2.success
+        # 그 경우엔 종전의 사후 안내가 그대로 산다(같은 역할의 dead 존재 고지).
+        assert "NO memory" in r2.output and k1 in r2.output
+        reg.shutdown_all()
+
+    def test_duplicate_alive_label_rejected_pointing_at_request(
+        self, tmp_path, renderer
+    ):
+        """살아 있는 동명 개체가 있으면 resume 이 아니라 request 를 가리킨다."""
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn(name="ui")
+        wait_until(lambda: reg.get(k1).state == "idle")
+        k2, err = reg.spawn(name="ui")
+        assert k2 == ""
+        assert k1 in err and '"mode":"request"' in err
+        reg.shutdown_all()
+
+    def test_anonymous_spawns_never_collide(self, tmp_path, renderer):
+        """프로파일도 이름도 없는 즉석 에이전트끼리는 겹칠 표시 이름이 없다 —
+        여기서 막으면 익명 다중 스폰이 통째로 불가능해진다."""
+        reg = make_registry(tmp_path)
+        a, e1 = reg.spawn()
+        b, e2 = reg.spawn()
+        assert e1 == "" and e2 == "" and a != b
         reg.shutdown_all()
 
     def test_spawn_without_dead_role_has_no_hint(self, tmp_path, renderer):

@@ -1101,10 +1101,23 @@ def build_live_agents_section(
         snapshot = agent_registry.roster_snapshot()
     except Exception:
         return ""
-    alive = [
-        s for s in snapshot if s.get("state") != "dead" and s.get("key") != exclude_key
-    ]
-    if not alive:
+    rows = [s for s in snapshot if s.get("key") != exclude_key]
+    # 죽은 개체는 **main 로스터에만** 남긴다 (v9.6.0).
+    #
+    # 종전엔 무조건 걸러냈는데, 이 섹션이 모델의 "누가 이미 있나"를 아는 유일한
+    # 상시 출처다. 죽어서 사라지면 모델은 그 개체를 **없는 것으로 보고 새로
+    # 띄운다** — 그 뒤 사용자가 원본을 resume 하면 같은 이름 둘이 동시에 살아
+    # 있게 된다(실사고: `correctness` 칩이 둘). `status` 도구는 이미 죽은
+    # 개체를 resume 힌트와 함께 보여주고 있었으니, 감추던 쪽이 비대칭이었다.
+    #
+    # 서브에이전트(`via_message_tool`)에는 넣지 않는다 — spawn/kill/resume 은
+    # main 전용이라 죽은 peer 는 **손쓸 수 없는 정보**이고, 그 섹션은 스폰 시
+    # 1회 조립되는 정적 텍스트라 금세 낡는다. main 쪽 섹션은 session state
+    # 꼬리(캐시 밖)로 옮겨져 있어 매 턴 갱신돼도 비용이 없다.
+    show_dead = not via_message_tool
+    alive = [r for r in rows if r.get("state") != "dead"]
+    dead = [r for r in rows if r.get("state") == "dead"] if show_dead else []
+    if not alive and not dead:
         return ""
 
     if via_message_tool:
@@ -1126,8 +1139,14 @@ def build_live_agents_section(
             "parallel INDEPENDENT workstreams — e.g. several code-writers on "
             "disjoint files."
         )
+        if dead:
+            intro += (
+                " Agents marked [dead] are STOPPED but their memory is intact — "
+                'bring one back with `{"mode":"resume","key":"<key>"}` rather '
+                "than spawning a fresh one under the same name."
+            )
     lines = ["## Live Agents", intro]
-    for s in alive:
+    for s in alive + dead:
         # (v5.0 스냅샷 키 개명 잔재 수정: role → profile)
         who = " · ".join(p for p in (s.get("profile", ""), s.get("name", "")) if p)
         label = f"`{s['key']}`" + (f" ({who})" if who else "")
@@ -1144,7 +1163,11 @@ def build_live_agents_section(
             elif len(desc) > 200:
                 desc = desc[:197] + "..."
         state = ""
-        if include_state:
+        if s.get("state") == "dead":
+            # 죽은 줄은 include_state 와 무관하게 표시한다 — 이 표시가 없으면
+            # 살아 있는 개체와 구별이 안 돼 오히려 혼란을 키운다.
+            state = " [dead · resumable]"
+        elif include_state:
             queued = s.get("pending_requests") or 0
             state = f" [{s.get('state', '?')}" + (
                 f" · {queued} queued]" if queued else "]"

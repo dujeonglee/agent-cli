@@ -514,6 +514,37 @@ class AgentRegistry:
             return ""
         return ""
 
+    def _duplicate_label(self, profile: str, name: str) -> str:
+        """같은 **표시 이름**을 가진 개체가 이미 있으면 거절 사유, 아니면 "".
+
+        표시 이름 = ``(profile, name)`` 쌍이다 — 사람이 채널 칩에서 보는 것이
+        그것이고, 겹치면 **글자로 구별할 수 없다**(실사고: `correctness` 칩이
+        둘, 아이콘만 🐺/🐸 로 달랐다). 키는 유일하므로 배달이 틀리지는 않지만,
+        어느 쪽에 말을 거는지 사람이 알 수 없는 것 자체가 고장이다.
+
+        죽은 개체도 센다. 오히려 그쪽이 흔한 경로다 — 죽어서 로스터에서
+        사라진 개체를 모델이 못 보고 새로 띄운 뒤, 사용자가 원본을 resume 하면
+        같은 이름 둘이 동시에 살아난다. 그래서 죽었으면 **resume 을 가리킨다**.
+        """
+        if not profile and not name:
+            return ""  # 익명 즉석 에이전트끼리는 겹칠 이름이 없다
+        for tm in list(self._agents.values()):
+            if (tm.profile_name, tm.instance_name) != (profile, name):
+                continue
+            label = " · ".join(p for p in (profile, name) if p)
+            if tm.state == "dead":
+                return (
+                    f"'{label}' already exists (dead) as {tm.key} — resume it with "
+                    f'{{"mode":"resume","key":"{tm.key}"}} instead of spawning a '
+                    f"duplicate, or spawn with a distinct `name`."
+                )
+            return (
+                f"'{label}' is already running as {tm.key} — send it work with "
+                f'{{"mode":"request","key":"{tm.key}","task":"..."}}, or spawn with '
+                f"a distinct `name` if you really need a second instance."
+            )
+        return ""
+
     def spawn(
         self,
         *,
@@ -541,6 +572,10 @@ class AgentRegistry:
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
             return "", (f"invalid instance name '{name}': [a-zA-Z0-9_-], max 24 chars")
+
+        dup = self._duplicate_label(profile, name)
+        if dup:
+            return "", dup
 
         role_prompt = ""
         description = ""
