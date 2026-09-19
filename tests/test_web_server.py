@@ -944,7 +944,11 @@ class TestStaticUI:
         assert "ovChanUnread" not in js
         assert "ov-ch-n" not in css
         chip = _js_fn_body(js, "ovChanChip")
-        assert "ov-ch-q" in chip  # ❓ waiting 배지는 유지
+        # v9.8.0: ❓ 배지 제거 — 바로 옆 dot 이 이미 waiting_ask 를 하늘색으로
+        # 말하고 있어 **한 칩 안에서 같은 사실을 두 기호로** 말했다. dot 은
+        # 남는다(질문 알림이 아니라 상태 — idle/busy/waiting/dead).
+        assert "ov-ch-q" not in chip
+        assert '"w"' in chip  # waiting dot 색은 유지
         # 죽은 agent: 입력 비활성 + 사망 고지(⑤)
         aci = _js_fn_body(js, "ovApplyChannelInput")
         assert "ovActiveDead()" in aci
@@ -1119,7 +1123,10 @@ class TestStaticUI:
             assert f'id="{pop}"' in html and f'id="{inner}"' in html
         js = client.get("/static/app.js").text
         assert "knob-btn" in js  # 노브 칩 토글
-        assert 'getElementById("tok-think")' in js  # 💭 세그먼트
+        # v9.8.0: 헤더의 💭 세그먼트 제거 — 생성 중 줄이 같은 숫자를 이미 보여
+        # 화면에 두 번 있었다. 되살아나면 그 중복이 돌아온 것이므로 부재를 고정.
+        assert "tok-think" not in js
+        assert "tok-think" not in html
         # v8.57.1: 보따리 제거 — 좁은 창은 flex-wrap 자동 줄바꿈으로 항상 노출
         assert "pouch" not in html and "pouch" not in js
         css = client.get("/static/style.css").text

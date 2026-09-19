@@ -335,7 +335,6 @@ header {
   flex-shrink: 0;
 }
 /* 💭 사고 카운터 세그먼트 — thinking_tick 이 부착 (러너웨이 가시화) */
-#token-usage .tok-think { color: var(--warn); }
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
 #compaction-label {
@@ -1535,8 +1534,6 @@ body.export-mode #messages > .card > .export-check {
 .ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .ov-ch.dead { opacity: 0.5; }
 .ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
-.ov-ch-q { color: var(--warn); }
-.ov-ch.on .ov-ch-q { color: var(--on-accent); }
 .ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
 .ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
 .ov-ch .ov-dot { flex: none; }

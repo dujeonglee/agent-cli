@@ -1633,12 +1633,14 @@
   });
 
   es.addEventListener("thinking_tick", function (e) {
-    // P5/v8.57.0: 사고 러너웨이 가시화 — 헤더 토큰바의 #tok-think 세그먼트에
-    // 💭 카운트를 부착. token_usage(턴 경계)가 #tok-think 를 비워 자연 소멸.
+    // P5/v8.57.0: 사고 러너웨이 가시화. v9.8.0 부터 **대화 쪽 한 곳**만 —
+    // 헤더 배지는 같은 숫자를 두 번 보여 제거했다.
     const d = JSON.parse(e.data);
     if (typeof d.tokens !== "number") return;
-    const $think = document.getElementById("tok-think");
-    if ($think) $think.textContent = " · 💭 " + fmtTok(d.tokens);
+    // 헤더 배지는 제거했다 (v9.8.0) — 아래 생성 중 줄이 같은 숫자를 이미
+    // 보여 화면에 문자 그대로 두 번 있었다. 그 줄은 `data-ch` 가 없어 **모든
+    // 채널에서 항상 맨 아래**이고 자동 스크롤이 따라가므로, 헤더를 빼도
+    // "지금 얼마나 생각 중인가"는 계속 보인다.
     // v9.4.0 ④: 생성 중 줄에도 싣는다. 사고만 하고 본문이 아직 없는 구간
     // (러너웨이가 정확히 그 모양이다)에서도 살아있음이 보여야 한다 —
     // 헤더 배지만 갱신하면 대화 쪽은 조용해 멎은 것처럼 읽힌다.
@@ -1698,12 +1700,8 @@
     if (d.total_out) {
       parts.push("Σ↓" + fmtTok(d.total_out));
     }
-    // base 세그먼트는 #tok-base, 💭 세그먼트는 thinking_tick 가 #tok-think 에
-    // 부착 — 이 갱신(턴 경계)이 오면 💭 는 클리어돼 자연 소멸한다.
     var $base = document.getElementById("tok-base");
-    var $think = document.getElementById("tok-think");
     if ($base) $base.textContent = parts.join(" · ");
-    if ($think) $think.textContent = "";
     $tokenUsage.title =
       "context " +
       fmtTok(inTok) +
@@ -2198,7 +2196,11 @@
       var c = state === "busy" ? "b" : state === "waiting_ask" ? "w" : dead ? "x" : "i";
       dot = '<span class="ov-dot ' + c + '"></span>';
     }
-    var badges = state === "waiting_ask" ? '<span class="ov-ch-q">❓</span>' : "";
+    // ❓ 배지는 제거했다 (v9.8.0) — 바로 옆 dot 이 이미 `waiting_ask` 를
+    // 하늘색으로 말하고 있어, **한 칩 안에서 같은 사실을 두 기호로** 말했다.
+    // dot 은 남긴다: 그건 질문 알림이 아니라 상태(idle/busy/waiting/dead)이고,
+    // 하나만 빼면 답변 대기가 idle 로 보여 거짓이 된다.
+    var badges = "";
     var ctrl = "";
     if (key !== "main") {
       ctrl = dead
@@ -4304,7 +4306,9 @@
     const eff = (d && d.reasoning_effort) || "auto";
     $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
     // 배지: off → "off", effort 지정 → 그 값, 그 외 → "auto"
-    if ($badge) {
+    // 잠긴(미지원) 상태면 배지를 덮어쓰지 않는다 — sticky 동기화가 와도
+    // "미지원"이 `auto` 로 되돌아가면 안 된다.
+    if ($badge && !$wrap.classList.contains("is-disabled")) {
       $badge.textContent =
         $en.value === "off" ? "off" : $eff.value !== "auto" ? $eff.value : "auto";
     }
@@ -4319,6 +4323,11 @@
     $wrap.classList.toggle("is-disabled", locked);
     if (locked) {
       $wrap.title = "이 모델은 사고(thinking)를 지원하지 않습니다 — 사고/노력 조정 불가.";
+      // 배지로 **사실을 말한다** (v9.8.0). 종전엔 잠긴 채로 `auto` 라고 적혀
+      // 있어, 눌러야만 "아무것도 못 한다"를 알 수 있었다 — 그 모델을 쓰는 내내
+      // 죽은 칩이 자리를 차지했다. 칩을 숨기지 않는 이유: 숨기면 "이 모델은
+      // 사고 미지원"이라는 사실 자체를 알 길이 없어진다.
+      if ($badge) $badge.textContent = "미지원";
     }
   }
 
@@ -4341,8 +4350,11 @@
   fetch("api/thinking")
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
+      // 노출 가드 — 다른 세 노브는 전부 `if (!d) return;` 인데 이 칩만 빠져
+      // 있어 **조회 실패에도 `auto` 배지가 떴다**(백엔드 없는 칩).
+      if (!d) return;
       apply(d);
-      setSupported(d ? d.supports_thinking : null);
+      setSupported(d.supports_thinking);
       $wrap.hidden = false;
     })
     .catch(() => {});
