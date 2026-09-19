@@ -29,6 +29,8 @@ C = {
     "raw": "grey50",
     "muted": "grey46",
     "accent": "bright_cyan",
+    "warn": "yellow",
+    "ok": "green",
 }
 
 

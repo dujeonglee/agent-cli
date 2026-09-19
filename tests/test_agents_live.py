@@ -373,6 +373,78 @@ class TestRegistryLifecycle:
         key, err = reg.spawn()
         assert key == "" and "session dir" in err
 
+    def test_spawn_rejected_when_role_demands_a_missing_model(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """역할 md 의 ``model:`` 이 서버에 없으면 **spawn 에서** 막는다 (v9.5.0).
+
+        종전엔 그 에이전트의 **첫 턴에 가서야** 404 로 드러났고, 웹에서는 대화
+        한복판의 빨간 거부 카드로 보였다(사용자 제보). spawn 을 거절하는 편이
+        훨씬 싸고, 고칠 파일까지 지목할 수 있다."""
+        from agent_cli import model_check
+
+        model_check._cache.clear()
+        monkeypatch.setattr(
+            model_check,
+            "list_models",
+            lambda *a, **k: model_check.ModelListing(("real-model",), True),
+        )
+        (tmp_path / "agents").mkdir(parents=True, exist_ok=True)
+        prof = tmp_path / "agents" / "ghost.md"
+        prof.write_text(
+            "---\nname: ghost\nmodel: gone-model\n---\n역할 본문\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "agent_cli.subagent.profiles.load_profile",
+            lambda name: ("역할 본문", {"name": "ghost", "model": "gone-model"}, ""),
+        )
+        reg = make_registry(tmp_path, base_url="http://127.0.0.1:8000/v1")
+        key, err = reg.spawn(profile="ghost")
+        assert key == "", "없는 모델을 요구하는 에이전트가 떴다"
+        assert "gone-model" in err and "ghost" in err
+        assert "real-model" in err, "고칠 선택지를 안 알려준다"
+
+    def test_spawn_allowed_when_listing_unavailable(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """조회 불가는 거절 사유가 아니다 — 부팅 정책과 같은 규칙."""
+        from agent_cli import model_check
+
+        model_check._cache.clear()
+        monkeypatch.setattr(
+            model_check,
+            "list_models",
+            lambda *a, **k: model_check.ModelListing((), False, "offline"),
+        )
+        monkeypatch.setattr(
+            "agent_cli.subagent.profiles.load_profile",
+            lambda name: ("본문", {"name": "x", "model": "unverifiable"}, ""),
+        )
+        reg = make_registry(tmp_path, base_url="http://127.0.0.1:8000/v1")
+        key, err = reg.spawn(profile="x")
+        assert err == "" and key.startswith("agt-")
+        reg.shutdown_all()
+
+    def test_spawn_skips_check_without_base_url(self, tmp_path, renderer, monkeypatch):
+        """확인할 수단이 없으면 막지 않는다(테스트·오프라인 하네스)."""
+        from agent_cli import model_check
+
+        model_check._cache.clear()
+
+        def _boom(*a, **k):
+            raise AssertionError("base_url 이 없는데 서버를 조회했다")
+
+        monkeypatch.setattr(model_check, "list_models", _boom)
+        monkeypatch.setattr(
+            "agent_cli.subagent.profiles.load_profile",
+            lambda name: ("본문", {"name": "x", "model": "whatever"}, ""),
+        )
+        reg = make_registry(tmp_path)  # base_url 없음
+        key, err = reg.spawn(profile="x")
+        assert err == "" and key.startswith("agt-")
+        reg.shutdown_all()
+
     def test_spawn_limit(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         reg.set_max_agents(1)

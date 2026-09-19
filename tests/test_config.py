@@ -43,19 +43,44 @@ class TestGetModelEntry:
 
 
 class TestGetProviderDefaults:
-    def test_anthropic_defaults(self):
+    """주소는 준다, 모델 이름은 **추측하지 않는다** (v9.5.0).
+
+    종전엔 openai→``gpt-4o`` / anthropic→``claude-sonnet-4-…`` 를 최후 폴백으로
+    끼워 넣었다. 로컬 서버(omlx·vLLM·LM Studio)에는 그런 모델이 있을 리 없으니
+    이 추측은 **절대 맞을 수 없고**, "모델을 안 골랐다"를 "없는 모델 404"로
+    바꿔 원인을 가렸다(사용자 제보). 주소는 사정이 다르다 — 프로바이더의 공개
+    엔드포인트는 실제로 그 주소가 맞다."""
+
+    def test_anthropic_gives_url_but_no_model_guess(self):
         defaults = get_provider_defaults("anthropic")
         assert "api.anthropic.com" in defaults.base_url
-        assert defaults.default_model == "claude-sonnet-4-20250514"
+        assert defaults.default_model == ""
 
-    def test_openai_defaults(self):
+    def test_openai_gives_url_but_no_model_guess(self):
         defaults = get_provider_defaults("openai")
         assert "api.openai.com" in defaults.base_url
+        assert defaults.default_model == ""
 
     def test_unknown_provider_fallback(self):
         defaults = get_provider_defaults("unknown_provider")
         assert defaults.base_url == "http://127.0.0.1:8000/v1"
         assert defaults.default_model == ""
+
+    def test_no_provider_default_ships_a_model_name(self):
+        """패키지 기본 레지스트리에 모델 이름이 **되살아나지 않도록** 하는 가드.
+        누가 편의로 다시 넣으면 같은 고장이 그대로 돌아온다."""
+        import json
+        from pathlib import Path
+
+        import agent_cli
+
+        raw = json.loads(
+            (Path(agent_cli.__file__).parent / "default_models.json").read_text()
+        )
+        for provider, entry in raw.get("provider_defaults", {}).items():
+            assert "default_model" not in entry, (
+                f"{provider} 에 모델 추측이 다시 들어왔다: {entry.get('default_model')!r}"
+            )
 
 
 class TestSaveModelEntry:

@@ -486,6 +486,34 @@ class AgentRegistry:
 
     # ── spawn ───────────────────────────────────
 
+    def _model_unavailable(self, model: str, profile: str) -> str:
+        """역할이 요구한 모델이 서버에 없으면 사람이 읽을 이유를, 아니면 ""."""
+        from agent_cli.model_check import ModelNotFound, NoModelSelected, verify_model
+
+        rt = self.runtime or {}
+        base_url = rt.get("base_url", "")
+        if not base_url:
+            return ""  # 확인할 수단이 없으면 막지 않는다 (부팅 정책과 동일)
+        try:
+            verify_model(
+                model,
+                base_url,
+                rt.get("api_key", ""),
+                rt.get("provider_name", "openai") or "openai",
+            )
+        except ModelNotFound as e:
+            near = e.listing.suggest(model)
+            hint = f" (비슷한 이름: {near})" if near else ""
+            avail = ", ".join(e.listing.models[:6])
+            where = f"프로파일 '{profile}'" if profile else "역할 설정"
+            return (
+                f"{where} 이(가) 요구한 모델 '{model}' 이(가) 서버에 없습니다"
+                f"{hint}. 사용 가능: {avail}"
+            )
+        except NoModelSelected:
+            return ""
+        return ""
+
     def spawn(
         self,
         *,
@@ -528,12 +556,22 @@ class AgentRegistry:
                 return "", error
             role_prompt = body or ""
             description = str(config.get("description", "") or "")
+            inherited = model
             allowed_tools, model, hooks_config = apply_role_overrides(
                 config,
                 allowed_tools=allowed_tools,
                 model=model,
                 hooks_config=hooks_config,
             )
+            # 역할 md 가 상속 모델을 덮어썼다면 그 이름도 확인한다 (v9.5.0).
+            # 상속분은 부팅 때 이미 검증됐지만 역할이 지정한 이름은 처음 보는
+            # 값이고, 안 보면 **그 에이전트의 첫 턴에 가서야** 404 로 드러난다
+            # (사용자 제보: 대화 한복판의 빨간 거부 카드). spawn 을 거절하는
+            # 편이 훨씬 싸고, 고칠 파일까지 지목할 수 있다.
+            if model and model != inherited:
+                bad = self._model_unavailable(model, profile)
+                if bad:
+                    return "", bad
 
         # instant-agent 역할 캡처 (v5.12): 프로파일 description 이 없고
         # 인라인 instructions 만 있으면 그 첫 문장을 로스터 역할 요약으로.

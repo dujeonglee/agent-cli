@@ -17,6 +17,7 @@ from agent_cli.config import get_provider_defaults
 from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
+from agent_cli.paths import user_dir
 from agent_cli.providers import (
     UnsupportedModelError,
     create_provider,
@@ -878,6 +879,117 @@ def _prompt_model_capabilities(model: str):
         return None
 
 
+def _verify_model_or_exit(
+    resolved_model: str,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    *,
+    explicit: bool,
+    quiet: bool,
+) -> str:
+    """해석된 모델이 서버에 실재하는지 확인하고, 확정된 이름을 돌려준다.
+
+    세 갈래 (docs/model-resolution):
+
+    - **실재** → 그대로. ``quiet`` 가 아니면 한 줄로 무엇으로 도는지 밝힌다
+      — 기본값을 남기는 대가로 "지금 무슨 모델인지" 를 보이게 하는 지점이다.
+    - **목록에 없음 / 고른 적 없음** → 대화형이면 목록에서 고르게 하고
+      저장까지(다음부터 안 묻는다), 아니면 **실패**. 보드가 띄운 인스턴스는
+      stdin 이 파이프라 물어보면 멈추므로 절대 묻지 않는다.
+    - **조회 불가** (오프라인·``/models`` 미지원) → 경고 한 줄 후 진행.
+      확인할 수 없는 것을 틀렸다고 단정하면 그게 더 나쁜 회귀다.
+    """
+    from agent_cli.model_check import (
+        ModelNotFound,
+        NoModelSelected,
+        is_interactive,
+        verify_model,
+    )
+
+    origin = "--model" if explicit else str(user_dir() / "config.json")
+    try:
+        listing = verify_model(
+            resolved_model, base_url, api_key, provider, origin=origin
+        )
+    except NoModelSelected as e:
+        return _choose_model_or_exit(
+            e.listing, base_url, None, origin, quiet, interactive=is_interactive()
+        )
+    except ModelNotFound as e:
+        return _choose_model_or_exit(
+            e.listing, base_url, e, origin, quiet, interactive=is_interactive()
+        )
+    if not quiet and not listing.available:
+        console.print(
+            f"[{C['warn']}]⚠ /v1/models 를 읽지 못해 모델 이름을 확인하지 "
+            f"못했습니다 ({listing.reason}) — 설정값으로 진행합니다.[/]"
+        )
+    return resolved_model
+
+
+def _choose_model_or_exit(
+    listing,
+    base_url: str,
+    err,
+    origin: str,
+    quiet: bool,
+    *,
+    interactive: bool,
+) -> str:
+    """검증 실패 지점. 대화형이면 고르게 하고 저장, 아니면 깔끔히 실패한다."""
+    from agent_cli.config import save_config_value
+
+    if err is not None:
+        console.print(f"\n[{C['error']}]✗ 설정된 모델을 서버에서 찾을 수 없습니다.[/]")
+        console.print(f"  [{C['muted']}]모델[/]  {err.model}")
+        near = listing.suggest(err.model)
+        if near:
+            console.print(f"  [{C['muted']}]비슷한 이름[/]  {near}")
+    else:
+        console.print(f"\n[{C['error']}]✗ 사용할 모델이 지정되지 않았습니다.[/]")
+    console.print(f"  [{C['muted']}]서버[/]  {base_url}")
+    console.print(f"  [{C['muted']}]출처[/]  {origin}")
+
+    if not listing.available:
+        # 고를 목록조차 없다 — 이름을 대라고만 하면 맹목 타이핑을 유도한다.
+        console.print(
+            f"\n  [{C['muted']}]모델 목록도 읽을 수 없습니다 ({listing.reason}). "
+            f"서버 주소와 기동 상태를 확인하세요.[/]"
+        )
+        console.print(
+            f"  [{C['muted']}]고치기: agent-cli setup  또는  --model <id>[/]\n"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"\n  [{C['muted']}]사용 가능:[/]")
+    for i, m in enumerate(listing.models, 1):
+        console.print(f"    [{C['accent']}]{i}[/]) {m}")
+
+    if not interactive or quiet:
+        console.print(
+            f"\n  [{C['muted']}]고치기: agent-cli setup  또는  --model <id>[/]\n"
+        )
+        raise typer.Exit(1)
+
+    from rich.prompt import IntPrompt
+
+    try:
+        choice = IntPrompt.ask(
+            "\n  고르기",
+            choices=[str(i) for i in range(1, len(listing.models) + 1)],
+        )
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        raise typer.Exit(1) from None
+    picked = listing.models[choice - 1]
+    if save_config_value("default_model", picked):
+        console.print(f"  [{C['ok']}]✓ 저장했습니다 — 다음부터 이 모델로[/]\n")
+    else:
+        console.print(f"  [{C['warn']}]⚠ 설정 저장 실패 — 이번 실행에만 적용[/]\n")
+    return picked
+
+
 def _setup_provider(
     provider: str,
     model: str | None,
@@ -903,6 +1015,16 @@ def _setup_provider(
         model,
         base_url,
         api_key,
+    )
+    # 이름을 **쓰기 전에** 확인한다 (v9.5.0). 없는 모델은 종전엔 첫 LLM 호출까지
+    # 살아남아 404 로 터졌고, 에이전트에선 대화 한복판의 거부 카드로 보였다.
+    resolved_model = _verify_model_or_exit(
+        resolved_model,
+        provider,
+        resolved_url,
+        resolved_key,
+        explicit=bool(model),
+        quiet=quiet,
     )
     llm_provider = create_provider(provider, resolved_url, resolved_key)
     # Surface runtime-detection probe steps to the user. Only emits

@@ -42,10 +42,15 @@ _SEARCH_PATHS = [
 
 _cached_registry: dict[str, Any] | None = None
 
-# Hardcoded fallbacks
-_PROVIDER_FALLBACKS = {
-    "anthropic": ("https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
-    "openai": ("https://api.openai.com/v1", "gpt-4o"),
+# 프로바이더별 기본 **주소**만. 모델 이름은 여기 두지 않는다 (v9.5.0):
+# `gpt-4o` / `claude-sonnet-4-…` 같은 추측은 로컬 서버(omlx·vLLM·LM Studio)에서
+# **절대 맞을 수 없고**, "모델을 안 골랐다"를 "없는 모델 404"로 바꿔 원인을
+# 가렸다. 아무것도 해석되지 않으면 추측하지 말고 그렇게 말해야 한다
+# (`model_check.NoModelSelected`). 주소는 사정이 다르다 — 프로바이더의 공개
+# 엔드포인트는 실제로 그 주소가 맞다.
+_PROVIDER_FALLBACK_URLS = {
+    "anthropic": "https://api.anthropic.com/v1",
+    "openai": "https://api.openai.com/v1",
 }
 
 
@@ -84,13 +89,12 @@ def get_provider_defaults(provider: str) -> ProviderDefaults:
     registry = _load_registry()
     entry = registry.get("provider_defaults", {}).get(provider, {})
 
-    fb_url, fb_model = _PROVIDER_FALLBACKS.get(
-        provider, ("http://127.0.0.1:8000/v1", "")
-    )
+    fb_url = _PROVIDER_FALLBACK_URLS.get(provider, "http://127.0.0.1:8000/v1")
 
     return ProviderDefaults(
         base_url=entry.get("base_url", fb_url),
-        default_model=entry.get("default_model", fb_model),
+        # 빈 문자열 = "고른 적 없음". 추측하지 않는다.
+        default_model=entry.get("default_model", ""),
     )
 
 
@@ -203,6 +207,29 @@ def save_config(config: dict, path: Path) -> None:
     캐시 잔존 — 리뷰 §4.5)."""
     atomic_write_json(path, config, indent=2)  # 상태 파일 — fsio
     reload_config()
+
+
+def save_config_value(key: str, value: Any) -> bool:
+    """유저 ``config.json`` 의 키 하나만 갱신한다 (없으면 만든다).
+
+    모델 검증이 대화형으로 고른 이름을 그 자리에서 저장하는 용도 — 사용자가
+    같은 것을 두 번 고치게 하지 않는다. 다른 키는 읽어서 그대로 되쓰므로
+    수동 편집분이 날아가지 않는다. 실패는 예외가 아니라 False (저장 못 해도
+    이번 실행은 계속 굴러야 한다)."""
+    path = _CONFIG_PATHS[0]
+    try:
+        current: dict[str, Any] = {}
+        if path.is_file():
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                current = loaded
+        current[key] = value
+        path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(current, path)
+        return True
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
 def has_config() -> bool:
