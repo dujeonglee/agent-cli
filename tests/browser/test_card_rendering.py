@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 LONG_PATH = (
@@ -253,6 +254,96 @@ class TestRowRhythm:
         assert summary["x"] + summary["width"] <= tm["x"] + 0.5, (
             f"요약이 시각 밑으로 들어감: s={summary}, time={tm}"
         )
+
+
+class TestAuditFixes:
+    """감사에서 나온 "소스는 멀쩡, 테스트는 초록, 화면은 비어 있음" 부류.
+
+    전부 **렌더된 기하/가시성**으로 본다 — 속성이나 클래스 존재만 보면 이
+    부류는 그대로 통과한다(실제로 그렇게 통과하고 있었다)."""
+
+    def test_jump_highlight_is_actually_animated(self, stack, page):
+        """`.tv-nav-hl` 에 규칙이 없어 점프해도 **아무것도 안 보였다**.
+        기존 TC 는 클래스 부착만 검사해 초록이었다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.final("답", turn=1)
+        assert _wait(lambda: page.locator("#messages .card-assistant").count() > 0)
+        card = page.locator("#messages .card-assistant").first
+        card.evaluate("e => e.classList.add('tv-nav-hl')")
+        name = card.evaluate("e => getComputedStyle(e).animationName")
+        assert name == "tv-nav-flash", f"하이라이트 애니메이션이 없다: {name!r}"
+
+    def test_hidden_header_chips_are_actually_hidden(self, stack, page):
+        """`.hd-chip{display:inline-flex}` 가 UA 의 `[hidden]` 을 이겨서
+        빈 칩이 첫 페인트부터 보였다. 형제 클래스들엔 가드가 다 있었다."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        for cid in ("#chip-ws", "#confirm-mode-btn"):
+            el = page.locator(cid)
+            if el.get_attribute("hidden") is not None:
+                assert not el.is_visible(), f"{cid} 가 hidden 인데 보인다"
+
+    def test_unknown_tool_json_wraps_inside_the_card(self, stack, page):
+        """`pre.args` 는 규칙이 0개라 UA 기본 `<pre>`(줄바꿈 없음)로 떨어져
+        넓은 JSON 이 카드를 가로로 뚫었다. **미지 도구 전부**가 이 경로다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        payload = json.dumps(
+            {"what": "wide json", "nested": {"a": "x" * 400, "b": "y" * 400}}
+        )
+        stack.renderer.action("some_unknown_tool", payload, 1)
+        row = page.locator("#messages .row.act")
+        assert _wait(lambda: row.count() > 0)
+        row.click()  # 펼쳐야 본문이 보인다 (행 전체가 토글)
+        body = page.locator("#messages pre.args")
+        assert _wait(lambda: body.count() > 0 and body.is_visible())
+        assert body.evaluate("e => getComputedStyle(e).whiteSpace") == "pre-wrap"
+        # 카드를 가로로 뚫지 않는다.
+        assert page.evaluate(
+            "() => { const m = document.getElementById('messages');"
+            " return m.scrollWidth <= m.clientWidth + 1; }"
+        ), "본문이 타임라인을 가로로 넘쳤다"
+
+    def test_status_reaches_the_screen(self, stack, page):
+        """`status` 는 리스너가 없어 10곳의 호출이 통째로 버려졌다 —
+        HTTP 재시도·컨텍스트 오버플로 재시도가 전부 암전이었다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.status(
+            "running", "LLM request failed (ConnectionError) — retrying (2/5)"
+        )
+        line = page.locator("#messages .card-sys")
+        assert _wait(lambda: line.count() > 0)
+        assert "retrying (2/5)" in line.first.inner_text()
+
+    def test_confirm_says_what_it_is_asking_about(self, stack, page):
+        """워크스페이스 이탈 승인에서 **위반이 위반으로 고지**되어야 한다.
+        종전엔 `data.prompt` 를 아무도 안 읽어 헤더+버튼만 남았다."""
+        from agent_cli.render.base import ConfirmOption
+
+        stack.emit_ready()
+        page.goto(stack.url)
+        reason = (
+            "\n⚠ edit_file touches path(s) OUTSIDE the workspace\n"
+            "  (workspace: /ws):\n  /etc/hosts\n"
+        )
+        threading.Thread(
+            target=lambda: stack.renderer.confirm(
+                reason,
+                [
+                    ConfirmOption(key="y", label="once"),
+                    ConfirmOption(key="n", label="deny"),
+                ],
+                default_key="n",
+            ),
+            daemon=True,
+        ).start()
+        why = page.locator("#ask-tray .confirm-why")
+        assert _wait(lambda: why.count() > 0)
+        text = why.inner_text()
+        assert "OUTSIDE the workspace" in text and "/etc/hosts" in text
+        stack.renderer.push_abort()
 
 
 class TestGeneratingIndicator:

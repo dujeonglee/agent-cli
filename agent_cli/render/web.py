@@ -1041,6 +1041,13 @@ class WebRenderer(Renderer):
                         if author not in self._replay_authors:
                             self._replay_authors.append(author)
                         self.push_user_message(content, author=author)
+                    elif author and not is_user:
+                        # 사람이 아닌 발신자 = 에이전트 메일 깨우기. 종전엔 여기서
+                        # `push_user_message` 로 떨어져 **v9.7.0 에서 고친 파란
+                        # 말풍선이 resume 때 되살아났다** — `is_user` 를 계산해
+                        # 놓고 `answers` 귀속에만 쓰고 표시 타입 결정엔 안 썼다.
+                        # 라이브와 같은 표면으로 보낸다.
+                        self.agent_wake(content)
                     else:
                         self.push_user_message(content)
         elif role == "assistant":
@@ -1411,13 +1418,26 @@ class WebRenderer(Renderer):
         )
 
     def stream_reset(self) -> None:
-        """진행 중 스트리밍 카드를 **폐기**하라고 프론트에 알린다 (v8.61.0).
+        """재전송 전 누적 카운터를 0 으로 되돌린다 (v8.61.0 / 카운터 리셋 추가).
+
+        CLI(`MinimalRenderer.stream_reset`)는 처음부터 이걸 했다 — *"재전송 후
+        카운터가 옛 시도분을 이어 세면 실제보다 부풀어 보인다"*. 웹 override 는
+        이벤트만 쏘고 `_stream_chars`/`_thinking_chars` 를 그대로 둬서, 재전송이
+        일어나면 생성 중 줄의 토큰 수가 부풀었다(감사 발견).
+
+        아래는 이벤트 자체에 대한 원래 주석:
 
         ``stream_end`` 는 못 쓴다 — 프론트가 그걸 "곧 assistant_turn 이
         대체한다"로 읽어 카드를 남기기 때문이다. 여기선 대체가 아니라 폐기다.
         ``persistent=False``: 재접속 replay 에서 되살릴 이유가 없다(폐기된
         부분 출력은 버퍼에도 남지 않는다). ``_emit`` 이 스코프 task_id 를
         자동으로 붙여 서브에이전트 카드도 제 것만 지워진다."""
+        # 카운터 리셋 — 생성 중 줄(`_tick`)이 누적분을 쓰므로, 재전송 시
+        # 0 으로 되돌리지 않으면 옛 시도분을 이어 세서 부풀어 보인다.
+        self._stream_chars = 0
+        self._thinking_chars = 0
+        self._last_stream_emit = 0.0
+        self._last_thinking_emit = 0.0
         self._emit("stream_reset", {}, persistent=False)
 
     def stream_stall(

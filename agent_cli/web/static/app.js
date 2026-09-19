@@ -790,15 +790,24 @@
   // itself is delivered as main's next observation; this is just the cue.
   // The web UI phrases its own English label from key/kind (the backend's
   // `text` is the CLI's Korean status line — not shown here).
+  /** `card-sys` 한 줄 — 아이콘 + 텍스트. 타임라인 카드와 달리 4칸 리듬이
+   * 아니라 가운데 정렬된 **구분선**에 가깝다(압축·무진전·시스템 고지).
+   * 손으로 일곱 번 쓰이던 것을 한 곳으로. 제자리 갱신하는 호출부는 반환된
+   * 노드의 `.sys-text` 를 그대로 잡아 쓴다. */
+  function sysLine(icon, text, extraCls) {
+    const line = el("div", ["card", "card-sys"].concat(extraCls || []));
+    line.appendChild(el("span", ["sys-icon"], icon));
+    line.appendChild(el("span", ["sys-text"], text || ""));
+    return line;
+  }
+
   function renderAgentMail(d) {
-    const line = el("div", ["card", "card-sys"]);
-    line.appendChild(el("span", ["sys-icon"], d.kind === "question" ? "❓" : "📨"));
     const who = d.key ? "Agent " + d.key : "Agent";
     const label =
       d.kind === "question"
         ? who + " asked a question (awaiting reply)"
         : who + " replied";
-    line.appendChild(el("span", ["sys-text"], label));
+    const line = sysLine(d.kind === "question" ? "❓" : "📨", label);
     appendToTimeline(line, d.task_id);
     scheduleScroll();
   }
@@ -1722,6 +1731,20 @@
     renderAgentWake(JSON.parse(e.data));
   });
 
+  // 턴 사이의 **진행 해설** — 재시도·열화·부팅 고지. 종전엔 이 이벤트에
+  // 리스너가 없어 10곳의 호출이 웹에서 통째로 버려졌다(HTTP 재시도 전부가
+  // 암전이었다 — `stream_stall` 이 고친 것과 같은 병인데 그쪽은 스트림
+  // 레벨만 덮었다). 휘발 한 줄이 이 부류의 올바른 기본값이다: 대화 기록에
+  // 남아야 하는 것(런 종료 사유)은 `turn_error` 로 따로 간다.
+  es.addEventListener("status", function (e) {
+    const d = JSON.parse(e.data);
+    if (!d || !d.message) return;
+    const line = sysLine(d.state === "error" ? "✗" : "●", d.message,
+                         d.state === "error" ? ["warn"] : null);
+    appendToTimeline(line, d.task_id);
+    scheduleScroll();
+  });
+
   es.addEventListener("stream_stall", function (e) {
     renderStreamStall(JSON.parse(e.data));
   });
@@ -1906,6 +1929,15 @@
     var meta = buildPromptMetaEl(data, kind === "confirm");
     if (meta) item.appendChild(meta);
     if (kind === "confirm") {
+      // **무엇을 승인하는지**를 먼저 보인다. 종전엔 이 줄이 없어서, 워크스페이스
+      // 밖 경로에 쓰려는 것을 승인할 때 화면에 남는 게 헤더+버튼뿐이었다 —
+      // 이게 이탈 가드라는 사실도, 어느 경로가 밖인지도, 루트가 뭔지도 없이
+      // `a` 버튼만 "always allow these locations" 라고 말했다(감사 발견).
+      // `shell` 은 `command` 를 따로 실어 강조 렌더가 되지만 edit/write_file 은
+      // 안 싣는다. `prompt` 는 그 사유의 유일한 전달자다.
+      if (typeof data.prompt === "string" && data.prompt.trim()) {
+        item.appendChild(el("div", ["confirm-why"], data.prompt.trim()));
+      }
       if (typeof data.command === "string" && data.command) {
         item.appendChild(
           elHtml("pre", ["action-shell", "confirm-cmd"],
@@ -3063,8 +3095,34 @@
         body: ".task-body",
       };
     }
-    return null; // card-streaming / card-failed / unknown
+    // 왕래·시스템 줄·거부된 응답도 대화의 일부다 — 종전엔 여기서 null 로
+    // 떨어져 **조용히 export 에서 빠졌다**(감사 발견: classify 가 카드 종류의
+    // 두 번째 등록부인데 새 종류가 생겨도 아무 경고가 없다).
+    if (cl.contains("card-msg")) {
+      const k = card.querySelector(".row .k");
+      const peer = card.querySelector(".peer");
+      return {
+        kind: "message",
+        label:
+          (k ? k.innerText.trim() : "메시지") +
+          (peer ? " · " + peer.innerText.trim() : ""),
+        mono: false,
+      };
+    }
+    if (cl.contains("card-sys"))
+      return { kind: "system", label: "System", mono: false };
+    if (cl.contains("card-failed"))
+      return { kind: "failed", label: "Rejected", mono: true };
+    return null; // .gen(생성 중 표시) 등 카드가 아닌 것
   }
+
+  // classify 가 아는 카드 클래스 — 새 카드 종류를 만들 때 여기에 없으면
+  // export 에서 조용히 빠진다. 소스 핀 테스트가 이 목록과 classify 본문을
+  // 대조해 "등록을 잊었다"를 정적으로 잡는다.
+  const CARD_KINDS = [
+    "card-user", "card-assistant", "card-observation",
+    "card-error", "card-task-group", "card-msg", "card-sys", "card-failed",
+  ];
 
   function topCards() {
     return Array.from($messages.children).filter(function (c) {

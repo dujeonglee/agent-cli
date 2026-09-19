@@ -40,7 +40,7 @@ from agent_cli.recovery.wf_recovery import (
 )
 from agent_cli.render import (
     render_recovery,
-    render_status,
+    render_run_ended,
     render_step,
 )
 from agent_cli.tools import TOOLS, infer_action
@@ -854,11 +854,10 @@ class TurnDispatcher:
                     f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
                     f"level={loop_level} skill_name={self.cfg.skill_name}"
                 )
-                render_status(
-                    "error",
+                render_run_ended(
                     f"Action loop unresolved: {tool_name} repeated; "
                     "tried probe_progress and restate_task without "
-                    "recovery. Stopping.",
+                    "recovery. Stopping."
                 )
                 return ToolResult(
                     False,

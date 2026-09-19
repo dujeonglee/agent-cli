@@ -111,6 +111,17 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_run_ended(reason: str, turn: int = 0) -> None:
+    """런이 **왜 끝났는지** (max turns 도달·action loop 실패).
+
+    ``status`` 가 아니라 ``error`` 로 가는 이유: status 는 턴 사이의 휘발성
+    진행 해설이라 리로드하면 사라진다. 런 종료 사유는 **대화 기록의 마지막
+    줄**이고 "여기서 왜 멈췄나"를 설명하는 유일한 근거라 영속이어야 한다.
+    (웹에선 종전에 status 리스너가 없어 아예 안 보였다 — 런이 이유 없이
+    멈추는 것처럼 보였다.)"""
+    _renderer.error(reason, turn)
+
+
 def render_stream_reset() -> None:
     """재전송 전 부분 출력 폐기 — 의미는 ``Renderer.stream_reset`` 참조."""
     _renderer.stream_reset()

@@ -3165,9 +3165,12 @@ class TestCompleteAttribution:
         assert finals[1]["answers"] == ["Ann"]
 
     def test_replay_excludes_non_user_authors(self):
-        # author_is_user False (new records) + the literal legacy "🤝 agent"
-        # (records predating the flag) both stay out of the attribution AND
-        # off the user lane (no author on the replayed event).
+        """사람이 아닌 발신자는 귀속에서 빠지고, **말풍선으로도 안 나온다**.
+
+        v9.8.0: 종전엔 author 만 떼고 `user_message` 로 재생해서, v9.7.0 이
+        고친 파란 말풍선이 `--resume` 때 되살아났다 — `is_user` 를 계산해
+        놓고 `answers` 귀속에만 쓰고 표시 타입 결정엔 쓰지 않았다. 이제
+        라이브와 같은 표면(`agent_wake`)으로 간다."""
         r, conn = self._renderer_with_conn()
         ctx = _FakeResumeCtx(
             [
@@ -3191,8 +3194,14 @@ class TestCompleteAttribution:
         r.replay_from_history(ctx)
         events = self._events(conn)
         users = [d for e, d in events if e == "user_message"]
+        wakes = [d for e, d in events if e == "agent_wake"]
         finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
-        assert [u.get("author") for u in users] == [None, None, "Bob"]
+        # 사람 메시지만 말풍선으로 — 신형 레코드와 레거시 "🤝 agent" 둘 다 빠진다.
+        assert [u.get("author") for u in users] == ["Bob"]
+        # 그 둘은 라이브와 같은 깨우기 표면으로 (표시 타입이 resume 에서 보존된다).
+        assert len(wakes) == 2
+        assert "reply arrived" in wakes[0]["text"]
+        assert "legacy record" in wakes[1]["text"]
         assert finals[-1]["answers"] == ["Bob"]
 
     def test_replay_dedupes_repeat_authors(self):

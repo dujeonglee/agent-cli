@@ -227,6 +227,12 @@ header {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 작성자 스타일(`display:inline-flex`)이 UA 의 `[hidden]{display:none}` 을
+   이기므로 가드가 없으면 hidden 이 무시된다 — `#chip-ws`·`#confirm-mode-btn`
+   이 빈 칩으로 첫 페인트부터 노출됐다(감사 발견). 같은 파일의 `.knob`(237)·
+   `.knob-pop`(270)·`#token-usage`·`#rename-btn`·`#messages > [hidden]`·
+   `#export-bar` 는 전부 이 가드를 갖고 있었고 `.hd-chip` 만 빠졌다. */
+.hd-chip[hidden] { display: none; }
 .hd-chip-btn { cursor: pointer; }
 .hd-chip-btn:hover, .hd-chip-btn[aria-expanded="true"] {
   border-color: var(--accent);
@@ -285,7 +291,7 @@ header {
 }
 #stall-pop input {
   width: 44px; font-size: 11px; padding: 1px 4px;
-  background: var(--surface); color: var(--fg);
+  background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
@@ -357,7 +363,7 @@ header {
 #maxagents-unlimited { accent-color: var(--accent); cursor: pointer; }
 #maxagents-input {
   width: 44px; font-size: 11px; padding: 1px 4px;
-  background: var(--surface); color: var(--fg);
+  background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
@@ -808,7 +814,11 @@ footer {
   overflow-wrap: anywhere;
 }
 .action-detail .muted { color: var(--muted); }
-.action-shell {
+/* `.args` 는 **미지 도구의 JSON 폴백**과 깨우기 원문이 쓰는 기본형인데 규칙이
+   하나도 없었다 — UA 기본 `<pre>`(줄바꿈 없음·다른 폰트·스크롤 없음)로 떨어져
+   넓은 JSON 이 카드를 뚫었다. 정작 바로 위 주석이 이걸 "generic fallback" 이라
+   부르며 형제들을 그 기준에 맞춰 스타일링하고 있었다(감사 발견). */
+.action-shell, .args {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   margin: 4px 0 0 0;
@@ -1537,6 +1547,25 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* ── Response dock — the latest main answer, always visible ── */
 /* 점프 시 카드 위에 여백 (block:start). */
 #messages .card-task-group { scroll-margin-top: 10px; }
+/* 확인 다이얼로그의 **사유** — 무엇을 왜 승인하는지. 줄바꿈이 의미를 갖는
+   경로 목록이 오므로 pre-wrap. */
+.confirm-why {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--warn-soft-bg);
+  border: 1px solid var(--warn-soft-border);
+  border-radius: 4px;
+  padding: 8px 11px;
+  margin: 8px 0 0;
+}
+
+/* 점프 도착지 플래시. JS(`scrollTimelineTo`)가 이 클래스를 붙였다 떼는데
+   **규칙이 없어 아무것도 안 보였다** — 브라우저 TC 는 클래스 부착만 검사해
+   초록이었다(감사 발견). 지속시간은 JS 주석의 "1.6s 하이라이트"에 맞춘다. */
+.tv-nav-hl { animation: tv-nav-flash 1.6s ease-out 1; }
 @keyframes tv-nav-flash {
   0%, 100% { box-shadow: none; }
   12% { box-shadow: 0 0 0 2px var(--accent); }

@@ -35,7 +35,7 @@ from agent_cli.render import (
     notify_memory_applied,
     render_header,
     render_raw,
-    render_status,
+    render_run_ended,
     render_step,
     render_system_prompt_snapshot,
     render_thinking,
@@ -889,7 +889,7 @@ class AgentLoop:
 
     def _on_max_turns(self):
         """Handle max turns reached."""
-        render_status("error", f"Max turns ({self.max_turns}) reached.")
+        render_run_ended(f"Max turns ({self.max_turns}) reached.")
         _debug_log(
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
