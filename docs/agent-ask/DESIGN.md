@@ -1,14 +1,21 @@
-# 에이전트 `ask` — 질문/답 페어링 설계 (3판)
+# 에이전트 `ask` — 질문/답 페어링 설계 (4판)
 
-> 상태: **설계 3판 · 재리뷰 대기**
-> 1판 → 외부 리뷰("구현 불가") → 2판 → 재리뷰 + 사용자 지적 → 3판
-> 각 판이 틀린 것과 그 경위는 §11 에 남긴다.
+> 상태: **설계 4판 · 재리뷰 대기**
+> 1판 →("구현 불가")→ 2판 →(재리뷰+사용자 지적)→ 3판 →("교착 셋")→ 4판
+> 각 판이 틀린 것과 경위는 §11.
+>
+> **4판의 방향 전환**: 세 판 연속 뒤집힌 것을 되짚으니 **핵심(슬롯 + 생산자
+> 분류 + 주소)은 세 리뷰를 모두 통과했고, 깨진 것은 전부 내가 *추가*한
+> 것**이었다(2판 `explicit` 축, 3판 peer 배달·트레이 필터). 그래서 1단계를
+> **"오늘 있는 사고 하나를 없애되 아무것도 새로 만들지 않는"** 크기로 되돌린다.
+> peer 배달은 그 자체로 가치가 있으나 교착 셋을 데려오므로 2단계로 옮기고,
+> 살리는 방법을 리뷰에 따로 묻는다(§12).
 
 ## 0. 한 줄
 
-**질문에는 이미 주소가 있다** — `to = tm.current_author`(`:1517`). 지금은 그
-주소로 **배달도 안 되고**(peer 는 질문을 못 본다) **판정도 안 한다**(도착 순서가
-답이다). 이 설계는 배달과 자격을 **그 주소 하나에 맞춘다.**
+**질문에는 이미 주소가 있고**(`to = tm.current_author`, `:1516`) **종류도 이미
+있다**(`expects_reply`, `:774` vs `:856`). 지금은 둘 다 안 보고 **도착 순서**로
+답을 정한다. 이 설계는 판정을 그 둘에 맞춘다 — 배달까지 맞추는 것은 2단계다.
 
 ## 1. 문제
 
@@ -64,7 +71,8 @@ item = tm.inbox.get()             # :1538  ← 무엇이 오든 답이 된다
 (`virtual.py:52-54`). 한 턴 = N번의 순차 대기.
 
 **④ 발신자 종류는 넷** — `main`(:703) · `agent:<key>`(:772·:856) ·
-`user`(CLI `main.py:339`) · `user:<nick>`(`server.py:1266`).
+`user`(CLI `run` 인자 **및 웹 main 채팅**의 `@agt-…`, `main.py:339`) ·
+`user:<nick>`(웹 🤝 창·❓ 트레이, `server.py:1266`).
 
 **⑤ CLI 에는 사람이 답할 자리가 없다.** CLI 명령은 `run`/`setup`/`sessions`/
 `update`/`web` 뿐이고 **대화형 프롬프트 루프가 없다** — `@agt-<key>` 는
@@ -78,6 +86,15 @@ item = tm.inbox.get()             # :1538  ← 무엇이 오든 답이 된다
 
 **⑦ 거부는 이 표면의 기존 어휘다** — `unknown agent`(:673) · `is dead`(:676)
 → `ToolResult(False, "request rejected: …")`.
+
+**⑨ 주소 말고 두 번째 기존 값이 있다 — `expects_reply`.** `message` 는
+`True`(:856), `_deliver_peer_reply` 의 회신은 `False`(:774). `_is_human_direct`
+(:1330-1338)가 **이미 이 값을 판정에 쓴다.** 즉 코드는 "누구에게"뿐 아니라
+"요청인가 회신인가"도 이미 구분하고 있다.
+
+**⑩ 사람은 peer 가 아니라 운영자다.** 웹 창 입력이 `waiting_ask` 인 에이전트에
+닿으면 **"main 과 선착순"** 으로 답이 된다고 문서화돼 있다(`server.py:1249-1251`).
+main 이 엉뚱하게 답하거나 답변자가 사라졌을 때의 **유일한 탈출구**다.
 
 **⑧ 거부 반복은 액션 루프 탐지기가 못 잡는다.** 실패한 도구 재호출은
 `prev_was_error=True` 로 전달되고(`dispatch.py:826-834`), 탐지기는 그걸
@@ -103,75 +120,75 @@ self.answer: str = ""
 self.answered = threading.Event()
 ```
 
-### 3.2 자격은 주소 하나로 정해진다
+### 3.2 자격 — 주소와 종류, **그리고 받았는가**
+
+3판은 `author == awaiting_to` 한 줄이었다. 틀렸다. **질문을 받지 않은 주체는
+주소가 맞아도 답변자가 아니다** — 1단계에서 peer 는 질문을 못 받으므로(§3.3),
+peer 의 메시지가 주소만 맞다고 답이 되면 그건 여전히 도착 순서 판정이다.
 
 ```python
-def _answer_kind(tm, author: str, *, explicit: bool = False) -> str:
+def _answer_kind(tm, author, *, expects_reply=True, explicit=False) -> str:
     """'answer' | 'work' | 'reject'"""
     if not tm.awaiting:
-        return "reject" if explicit else "work"     # 없는 질문에 답 (§3.6)
+        return "reject" if explicit else "work"
+
+    # 사람 = 운영자. 주소와 무관하게 답할 수 있다 (§2-⑩ — 유일한 탈출구).
+    if author.startswith("user"):
+        return "answer"
+
     if author == tm.awaiting_to:
-        return "answer"                             # 질문이 그에게 갔다
-    if tm.awaiting_to.startswith("user") and author.startswith("user"):
-        return "answer"                             # 사람은 닉이 달라도 같은 창
+        if author.startswith("agent:"):
+            # peer 는 **회신**일 때만 답이다. `message`(expects_reply=True)는
+            # 새 요청이지 답이 아니다 (§2-⑨). 1단계엔 배달이 없으므로 이
+            # 분기는 도달하지 않는다 — 2단계 peer 배달과 짝이다.
+            return "answer" if not expects_reply else "work"
+        # main — 1단계는 레거시(답), 2단계는 explicit 요구 (§3.6)
+        return "answer" if (PHASE1 or explicit) else "reject"
+
     return "reject" if explicit else "work"
 ```
 
-한 규칙이 세 경우를 다 덮는다:
+| `awaiting_to` | 답 | 일감 | 거부(2단계) |
+|---|---|---|---|
+| `main` | 사람 · main(`mode:"answer"`) | peer | main 의 `request` |
+| `agent:B` | 사람 · **B 의 회신**(2단계) | main · 다른 peer · B 의 `message` | — |
+| `user:bob` | 사람 | main · peer | — |
 
-| `awaiting_to` | 답 | 일감 |
-|---|---|---|
-| `main` | main | peer · 사람 |
-| `agent:B` | **B** | main · 다른 peer · 사람 |
-| `user:bob` | 사람(웹) | main · peer |
+**사람이 모든 행에 있는 것이 의도다.** 운영자는 어느 질문에든 개입할 수 있어야
+한다 — 그게 3판에서 제거하려다 리뷰에 지적받은 탈출구다.
 
-2판의 `main`/`user*`/`agent:*` 3분기가 **한 줄로 줄었고**, peer 가 답변자에서
-빠져 있던 오류가 사라졌다.
+### 3.3 peer 질문 배달 — **2단계로 미룬다**
 
-### 3.3 peer 질문은 그 peer 에게 **배달**한다
+주소가 `agent:B` 인 질문은 지금 **B 에게 배달되지 않는다**(§1.1). 배달하는
+것이 옳고 배관도 있다(`_deliver_peer_reply` 의 `author=f"agent:{from_key}"` 가
+`awaiting_to` 와 맞는다). 그런데 3판에서 그걸 1단계에 넣었더니 **오늘 없는
+영구 교착 셋**이 생겼다:
 
-주소가 `agent:B` 면 질문을 B 에게 실제로 보낸다. **새 배관이 없다** — `message`
-도구가 쓰는 그 경로 그대로다(`_make_message_handler:856`).
+| | 무엇 |
+|---|---|
+| L1 | 배달 `submit()` 의 에러를 버려서, B 가 dead 면 A 가 armed 슬롯에서 영원히 대기 |
+| L2 | B 가 질문을 꺼내기 전에 kill/crash 되면 **아무도 A 를 안 깨운다** — `kill` 은 inbox 를 안 비우고 큐잉분은 유실된다(코드가 그렇게 적고 있다: `:201`) |
+| L3 | 순환 검사가 `_cv` 밖이라 A·B 동시 ask 가 둘 다 통과 |
 
-```
-① A: ask(...)  → 하네스: request(B, 질문, author=f"agent:{A}", expects_reply=True)
-                 A 는 슬롯 대기, awaiting_to = "agent:B"
-② B: 자기 큐에서 꺼내 처리 → complete
-③ 하네스: _deliver_peer_reply(A, B, 출력, hop)
-          → request(A, 출력, author="agent:B", expects_reply=False)   :769-775
-④ A: author == awaiting_to → **답**, 작업 재개
-```
+거기에 L4(B 는 A 가 막힌 걸 모르고, 프롬프트는 peer 에게 `message` 로 답하라고
+가르친다 — `system_prompt.py:1123-1130`)까지 있다.
 
-B 는 하던 일을 멈추지 않는다 — 질문이 B 의 inbox 에 줄 서고 한가해지면 처리
-한다. 그동안 A 가 막혀 있는 것은 `ask` 의 정의 그대로다.
+**1단계에서는 배달하지 않는다.** 그러면 peer 주소 질문의 답변자는 **사람뿐**
+이고, 그건 **오늘과 같다.** 대신 peer 의 무관한 메시지가 답으로 먹히던 사고는
+사라진다 — 그게 원래 제보된 버그다.
 
-**대안으로 검토한 "거부하고 `message`+`complete` 를 쓰게 하라"는 등가가
-아니다**(§10-b): A 가 `complete` 하면 그 request 가 끝나 B 는 답이 아니라
-**완료 회신**을 받는다 — 끝나지 않은 일을 끝났다고 보고하는 셈이다.
+| | 오늘 | 1단계 | 2단계 |
+|---|---|---|---|
+| peer 의 무관한 메시지 | **답으로 먹힘** | 일감 ✅ | 일감 |
+| peer 주소 질문의 답변자 | 사람만 | 사람만 (동일) | 사람 + **B** |
+| 새 교착 | — | **없음** | L1~L4 처리 필요 |
 
-### 3.4 순환은 거부한다
+살리는 방법은 §12 에 따로 묻는다.
 
-A 가 B 에게 묻는데 B 가 이미 A 의 답을 기다리는 중이면 **답할 수 있는 주체가
-구조적으로 없다.** 거부한다.
+### 3.4 순환 검사 — 2단계와 함께
 
-```python
-# ask 진입 시 — awaiting_to 체인을 따라간다 (깊이 상한 _MAX_PEER_HOPS)
-def _ask_cycle(registry, asker_key, target) -> str | None:
-    seen, cur = {asker_key}, target
-    for _ in range(_MAX_PEER_HOPS):
-        if not cur.startswith("agent:"):
-            return None
-        k = cur.split(":", 1)[1]
-        if k in seen:
-            return f"{k} 는 당신의 답을 기다리는 중입니다 — 먼저 답하세요."
-        tm = registry.get(k)
-        if tm is None or not tm.awaiting:
-            return None
-        seen.add(k); cur = tm.awaiting_to
-    return "질문 사슬이 너무 깊습니다."
-```
-
-관찰로 돌아가는 거부라 모델이 판단해 진행하거나 `complete` 할 수 있다.
+배달이 없으면 A→B 대기 자체가 성립하지 않으므로 1단계엔 불필요하다. 2단계에
+넣을 때는 **`_cv` 안에서** 한다(L3).
 
 ### 3.5 거부 문구는 **그 자리에서 실행 가능**해야 한다
 
@@ -225,12 +242,10 @@ answer rejected: agt-x9 의 질문은 user:bob 에게 간 것이라 당신이 �
 온 게 아니면, **답 텍스트를 새 일감으로 큐잉해 LLM 턴을 태우면 안 된다.**
 `explicit and kind != "answer" → reject`(§3.2). 문구는 §3.5 형식을 따른다.
 
-### 3.7 흐름
+### 3.7 흐름 (1단계)
 
 ```python
-# ask 핸들러 — **arm 먼저, 그 다음 공개** (1판 C1 회귀 수리)
-if err := _ask_cycle(registry, tm.key, tm.current_author):   # §3.4
-    return f"(ask rejected: {err})"
+# ask 핸들러 — **arm 먼저, 그 다음 공개**
 with self._cv:
     tm.answered.clear()          # clear 가 arm 보다 먼저 (이전 set 잔류 방지)
     tm.awaiting = question
@@ -241,14 +256,12 @@ with self._cv:
 renderer.agent_message(**q_payload); self._log_conversation(...)
 if tm.awaiting_to == "main":
     self._push_reply({"kind": "question", ...})
-elif tm.awaiting_to.startswith("agent:"):
-    self.submit(tm.awaiting_to.split(":",1)[1], question,     # §3.3 배달
-                author=f"agent:{tm.key}", expects_reply=True)
+# (2단계: awaiting_to 가 agent:* 면 여기서 배달 — §3.3)
 self._notify_roster()
 
 tm.answered.wait()               # 1단계엔 타임아웃 없음 (§8)
 
-if tm.stop_event.is_set():       # 종료 wake 를 **데이터보다 먼저** (1판 C3)
+if tm.stop_event.is_set():       # 종료 wake 를 **데이터보다 먼저**
     with self._cv: tm.awaiting = tm.awaiting_to = ""
     return "(no response — agent is being terminated)"
 with self._cv:
@@ -260,23 +273,24 @@ return answer
 ```
 
 ```python
-# submit() — 새 함수. request() 는 시그니처를 **바꾸지 않는다** (재리뷰 C)
+# submit() — 신설. request() 는 시그니처를 **바꾸지 않는다**
 def submit(self, key, message, *, author="main", hop=0,
            expects_reply=True, explicit=False) -> tuple[str, str]:
     """(error, verdict) — verdict ∈ answer | work | rejected"""
     ...
     with self._cv:
-        kind = _answer_kind(tm, author, explicit=explicit)
+        kind = _answer_kind(tm, author, expects_reply=expects_reply,
+                            explicit=explicit)
         if kind == "reject":
             return _reject_message(tm, author), "rejected"
-        tm.queued += 1; seq = tm.queued        # 답도 seq 를 받는다 (재리뷰 D)
+        tm.queued += 1; seq = tm.queued        # 답도 seq 를 받는다
         if kind == "answer":
             tm.answer = message if author == "main" else f"[{author}]: {message}"
             tm.awaiting = tm.awaiting_to = ""   # 원자적 claim
             tm.answered.set()
         else:
             tm.inbox.put({...})
-    # ↓ 락 밖 — 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 (1판 C2)
+    # ↓ 락 밖 — 답이든 일감이든 **항상** 창·로그·로스터에 남긴다
     renderer.agent_message(**payload); self._log_conversation(tm, payload)
     self._notify_roster()
     return "", kind
@@ -290,19 +304,23 @@ def request(self, key, message, **kw) -> str:   # 기존 8개 호출자 보존
 `answered.set()` 은 Event 자기 락만 잡으므로 안전하고, 대기자는 `wait()` 중
 아무 락도 쥐지 않는다.
 
-## 4. ❓ 트레이 — 사람에게 온 질문만
+## 4. ❓ 트레이 — 유지하고 **주소 라벨만** 붙인다
 
-지금 트레이는 `state === "waiting_ask"` 만 보고 뜬다(`app.js:2093`).
-**`awaiting_to` 가 사람일 때만** 뜨게 한다 — 트레이는 "답하라"는 어포던스이고,
-내게 온 질문이 아니면 그게 있으면 안 된다.
+3판은 `awaiting_to` 가 사람일 때만 띄우려 했다. **철회한다.** 사람은 peer 가
+아니라 **운영자**이고(§2-⑩), 트레이는 main 이 엉뚱하게 답하거나 답변자가
+사라졌을 때 **1단계의 유일한 탈출구**다. 게다가 "main 과 선착순"은 명시된
+기능이다(`server.py:1249-1251`).
 
-- 로스터 엔트리에 `awaiting_to` 를 실어 보낸다(`snapshot()` :350 additive).
-- `main`·`agent:B` 로 간 질문은 **채널 카드로는 그대로 보인다**(투명성) —
-  입력 어포던스만 사라진다.
+대신 **누구에게 간 질문인지 라벨을 붙인다** — 어포던스는 남기되 맥락을 준다:
 
-**이 변경이 §1.1 의 구멍을 눈에 보이게 만든다.** 지금은 사람이 트레이로 peer
-케이스를 메워 주고 있어서 구멍이 안 보였다. §3.3 의 배달이 그 자리를 제대로
-채우므로 가림막을 걷어도 된다 — **둘은 같이 가야 한다.**
+```
+❓ 🦊 code-writer agt-x9 이(가) 물었습니다        → main 에게
+❓ 🐙 code-reviewer agt-b1 이(가) 물었습니다      → 🐬 orchestrator agt-3e
+❓ 🦉 explorer agt-7c 이(가) 물었습니다           → 나에게
+```
+
+질문 페이로드에 이미 `to` 가 있으므로(`:1516`) `ovAskTray[d.key]`(app.js:2207)
+에 같이 담으면 된다 — **`snapshot()` 변경도 불필요하다.**
 
 ## 5. 동시성
 
@@ -314,28 +332,37 @@ def request(self, key, message, **kw) -> str:   # 기존 8개 호출자 보존
 | 4 | 종료 중 대기 | `kill`(:935)·`shutdown_all`(:953)에 `answered.set()` 추가 — **없으면 `join` 이 2/5초 타임아웃**. 깨어나면 `stop_event` 를 데이터보다 먼저 본다 |
 | 5 | 같은 스레드가 생산자이자 대기자 | 도달 불가 — 자기 메시지 거부(:845), 서브루프에 registry 없음(:1829) |
 | 6 | dead 에 답 | 기존 `state == "dead"` 거부가 앞선다(:674) |
-| 7 | **A→B 상호 대기** | §3.4 순환 검사 — §3.3 이 새로 만드는 위험 |
+| 7 | **A→B 상호 대기** | 1단계엔 없음(배달 안 함). 2단계에 §3.4 순환 검사를 **`_cv` 안에서** |
 
 `_cv` 는 RLock 기반이라 `_save_state()` 재진입(:1077)이 안전하고, 렌더러
 `_lock` → `_cv` 순서로 잡는 곳이 없어 역전이 없다.
 
 ## 6. 영향 받는 표면
 
+**1단계**
+
 | 곳 | 변경 |
 |---|---|
-| `AgentInstance.__init__` :293 | 필드 4개 |
-| `_make_ask_handler` :1496 | 순환 검사 · arm→공개 · peer 배달 · 슬롯 대기 · stop_event 우선 |
+| `AgentInstance.__init__` :293 | 필드 4개(`awaiting`·`awaiting_to`·`answer`·`answered`) |
+| `_make_ask_handler` :1496 | arm→공개 · 슬롯 대기 · stop_event 우선 |
 | **`submit()` 신설** | 분류 + verdict. `request()` 는 `submit()[0]` 로 보존 |
-| `kill` :930 · `shutdown_all` :949 | `answered.set()` |
+| `kill` :930 · `shutdown_all` :949 | `answered.set()` — **없으면 `join` 이 2/5초 타임아웃** |
 | `_agent_request` :1719 | `was_waiting` TOCTOU 제거 → verdict 사용 |
-| `snapshot()` :350 | `awaiting_to` additive (트레이용) |
-| `app.js` :2090 | 트레이 필터에 `awaiting_to` 가 사람인지 추가 |
-| **2단계** `agent_tool.py:44` | `answer` 모드 |
-| **2단계** :226 · :1734 · `system_prompt.py:1136` | `request` 를 답변 op 로 가르치는 곳 **전부** |
+| `app.js` :2207 | 트레이 항목에 `to` 를 담아 라벨 표시 (§4) |
 
-**영속 변화 없음.** `awaiting*` 은 저장하지 않는다 — 블록된 스레드는 프로세스와
-함께 죽는다. `resume_teammate`(:982)·`restore`(:1129)는 **새 `AgentInstance`**
-를 만들므로 낡은 `awaiting` 이 새지 않는다(재리뷰 확인).
+**2단계**
+
+| 곳 | 변경 |
+|---|---|
+| `_make_ask_handler` | peer 배달 + 순환 검사(`_cv` 안) + 배달 에러 처리(L1) |
+| `_worker` finally :1309 | 죽을 때 나를 기다리는 대기자 깨우기(L2) |
+| 배달 질문 꼬리표 | "A 가 이 답을 기다린다 — `message` 말고 `complete` 로 답하라"(L4) |
+| `agent_tool.py:44` | `answer` 모드 |
+| :226 · :1734 · `system_prompt.py:1136` | `request` 를 답변 op 로 가르치는 곳 **전부** |
+| `reject_count` | 거부 가드 (§7-②) |
+
+**영속 변화 없음.** `awaiting*` 은 저장하지 않는다. `resume_teammate`(:982)·
+`restore`(:1129)는 **새 `AgentInstance`** 를 만든다.
 
 ## 7. 알고 두는 것
 
@@ -353,41 +380,41 @@ op 들을 한 번의 핸들러 호출로 접는 것을 검토한다.
 에이전트 worker 스레드에서 `interactive_lock` 을 잡은 채 **main 채팅에**
 출처 없이 물어본다. 이 설계와 무관한 **기존 구멍**, 별건.
 
-**④ CLI 에서는 사람이 답할 수 없다**(§2-⑤). 1단계가 그걸 바꾸지 않는다.
-`awaiting_to` 가 `user*` 인데 CLI 면 그 에이전트는 세션 종료까지 막힌다 —
-오늘과 같다.
+**④ CLI 에서는 사람이 답할 수 없다**(§2-⑤). 1단계가 그걸 바꾸지 않는다 —
+오늘과 같다. 사람은 **웹 전용 답변자**이고, §4 가 트레이를 지키는 이유이기도
+하다(웹이 유일한 운영자 창구다).
+
+**⑤ 1단계에서 peer 주소 질문은 사람만 답할 수 있다.** 즉 **헤드리스에서는
+답할 주체가 없다** — 오늘도 그렇다. 2단계의 배달이 그 자리를 채운다(§12).
 
 ## 8. 실행 계획
 
-**1단계 — 모델 계약 변경 없음**
-필드 4개 · `submit()` · arm→공개 · 슬롯 · `_answer_kind` · **peer 배달**(§3.3)
-· **순환 검사**(§3.4) · 종료 두 곳 · 트레이 필터(§4).
-얻는 것: peer 가 답을 먹는 사고 제거 · **peer 질문이 실제로 배달됨** ·
-요청한 peer 가 영원히 기다리던 것 해소.
+**1단계 — 오늘 있는 사고 하나를 없애고, 아무것도 새로 만들지 않는다**
+필드 4개 · `submit()` · arm→공개 · 슬롯 · `_answer_kind`(peer→work) · 종료
+두 곳 · 트레이 라벨.
+**얻는 것**: peer/main 의 무관한 메시지가 답으로 먹히던 사고 제거 — 그와
+함께 그 일감이 `_handle_request` 를 안 거쳐 **라우팅째 유실되던 것**도 해소.
+**새로 만드는 것**: 없음. 교착도, 모델 계약 변경도, 답변 경로 제거도 없다.
 
-**2단계 — `mode:"answer"` + main 거부**
-`AGENT_MODES` · `_agent_request` verdict · `explicit` 규칙(§3.6) · 거부 문구(§3.5) ·
-**`reject_count` 가드**(§7-②) · **프롬프트 3곳**(:226 · :1734 ·
-`system_prompt.py:1136`) — 하나라도 남으면 모델이 프롬프트를 따르다 거부당한다.
+**2단계 — peer 배달 + main 거부**
+L1(배달 에러) · L2(죽은 B 의 대기자 깨우기) · L3(순환 검사 `_cv` 안) ·
+L4(`expects_reply=False` 만 답 + 배달 꼬리표) · `mode:"answer"` ·
+`reject_count` · 프롬프트 3곳.
 
-**3단계 (조건부)** — 타임아웃. §7-② 가드와 **함께**만. 웹에서 실제 hang 이
-관측되기 전에는 넣지 않는다.
+**3단계 (조건부)** — 타임아웃. §7-② 가드와 **함께**만.
 
-### 테스트 계획
+### 테스트 계획 (1단계)
 
 | 층 | 내용 |
 |---|---|
-| 자격 | 주소 주인의 답 → 답 / **다른 peer → 일감** / 주소가 peer 일 때 main → 일감 / 주소가 main 일 때 사람 → 일감 |
-| peer 배달 | A 가 물으면 **B 의 inbox 에 실제로 들어간다** · B 가 complete 하면 그 출력이 A 의 답이 된다(왕복 1회 통합 TC) |
-| 순환 | A→B, B→A → 거부 · 깊이 3 사슬 · 상대가 dead/없음이면 통과 |
-| 손실 없음 | 일감 판정된 항목이 inbox 에 남아 `_handle_request` 를 정상 통과 · peer 요청이면 `_deliver_peer_reply` 가 돈다 |
-| 레이스 | **공개 전 도착**(가짜 러너 지연 0) · 동시 답변자 둘 · clear 순서 |
+| 자격 | 사람 → 답(주소 무관) / 주소가 main 일 때 main → 답 / **peer → 일감**(주소가 peer 여도) / 주소가 peer 일 때 main → 일감 |
+| 손실 없음 | 일감 판정된 항목이 inbox 에 남아 `_handle_request` 를 정상 통과 · **peer 요청이면 `_deliver_peer_reply` 가 돈다**(오늘 유실되던 것) |
+| 레이스 | **공개 전 도착**(가짜 러너 지연 0이라 기본 경로) · 동시 답변자 둘 · `clear()` 순서 |
 | 종료 | `kill`/`shutdown_all` 즉시 깨움 · `join` 타임아웃 없음 · **기존 TC `test_shutdown_unblocks_pending_ask` 가 "no response" 그대로** |
 | 부수효과 | 답도 🤝 창·`conversation.jsonl`·로스터에 남는다 · 답에도 `seq` 가 있다 |
 | 호출자 보존 | `request()` 반환형이 `str` 그대로 — 기존 8개 호출자 무변경 |
-| 거부 문구 | 세 거부가 **질문 본문 + 복사 가능한 op** 를 싣는다(§3.5) · 300자 절단 · 한 헬퍼를 경유 |
-| 트레이 | `awaiting_to` 가 사람일 때만 뜬다 · main/peer 질문은 카드로는 보인다 |
-| 비회귀 | 로스터 dot · 종료 경고 · `_SHUTDOWN` 재게시 삭제가 배치 경로(:1293) 무영향 |
+| 트레이 | 모든 질문에 뜬다 · 주소 라벨이 맞다 |
+| 비회귀 | 로스터 dot · 종료 경고 · `_SHUTDOWN` 재게시 삭제가 배치 경로(:1293) 무영향 · **웹 "main 과 선착순" 이 그대로 동작** |
 
 ## 9. 왜 큐를 늘리지 않는가
 
@@ -444,11 +471,53 @@ inbox 항목으로 오면 그 회신을 원 요청자에게 라우팅하려고 �
 | **peer 는 답변자가 아니다** | **틀렸다.** 질문을 못 받아서였을 뿐 — 받으면 답할 수 있고, 배관이 이미 있다 | §3.3 배달 · §3.2 `awaiting_to` |
 | 트레이는 그대로 | 내게 온 질문이 아닌데 답 어포던스가 있다 | §4 |
 
+### 4판 (3판 재리뷰)
+
+| 3판 | 확인 | 결과 |
+|---|---|---|
+| peer 배달을 1단계에 | **교착 셋**(L1 배달 에러 무시 · L2 죽은 B · L3 순환 검사가 락 밖) | **2단계로**(§3.3) |
+| `author == awaiting_to` 한 줄 | `expects_reply` 를 안 봐서 B 의 `message` 가 답으로 먹힌다(L4) | 종류를 두 번째 축으로(§3.2) |
+| §3.2 와 §3.5 | 주소가 main 이면 무조건 답 → **2단계 거부가 도달 불가**. 2판이 푼 P1 재발 | 단계별 분기 명시(§3.2) |
+| 트레이는 주소가 사람일 때만 | 사람은 peer 가 아니라 **운영자** — 문서화된 "선착순" 기능이자 유일한 탈출구 | **철회**, 라벨만(§4) |
+| `user` 는 CLI | 웹 main 채팅의 `@agt-…` 도 bare `user` | §2-④ |
+
 ### 교훈
 
-1·2판이 틀린 자리는 전부 **"이 값 하나로 판정할 수 있다"** 고 적은 곳이었다
-— `author` 하나, 질문 개수 하나, `explicit` 하나. 3판이 `awaiting_to`
-하나로 돌아온 것은 그 반복처럼 보이지만 다르다: **그 값은 우리가 새로
-만든 판정 기준이 아니라 이미 페이로드에 있던 주소**(`to`, `:1517`)다.
-설계가 한 일은 기준을 발명한 게 아니라 **있던 주소를 배달과 판정이 따르게
-한 것**이다.
+1·2·3판이 틀린 자리는 전부 **"이 값 하나로 판정할 수 있다"** 고 적은 곳이었다
+— `author` · `explicit` · `awaiting_to`. 3판에서 *"`awaiting_to` 는 발명이
+아니라 원래 있던 주소"* 라고 변호했는데, **반만 맞았다**: 주소가 기존 값인 건
+사실이지만 코드에는 **종류(`expects_reply`)라는 두 번째 기존 값**도 있었고
+(`_is_human_direct` 가 이미 쓴다), 그걸 안 본 대가가 L4 였다. 정직한 문장은
+"주소와 종류 **둘 다** 이미 있었고 판정은 둘을 따른다"이다.
+
+더 큰 교훈은 따로 있다. 세 판을 되짚으면 **핵심(슬롯 + 생산자 분류)은 세 리뷰를
+모두 통과했고, 깨진 것은 전부 내가 *추가*한 것**이었다 — 2판의 `explicit` 축,
+3판의 peer 배달과 트레이 필터. 문제를 고치다 인접한 것까지 "이왕이면" 손대는
+습관이 리뷰를 세 번 돌게 했다. 4판이 1단계를 **오늘의 사고 하나**로 좁힌 이유다.
+
+## 12. 리뷰에 묻는 것 — peer 배달을 어떻게 살리나
+
+1단계에서 뺐지만 **버리자는 뜻은 아니다.** 주소는 `agent:B` 인데 B 가 못 듣는
+것은 그 자체로 결함이고(§1.1), 사람이 없는 헤드리스에서는 peer 주소 질문에
+**답할 주체가 아무도 없다.** 2단계에서 살리려면 L1~L4 를 어떻게 닫아야 하나.
+
+특히:
+
+**① L2 가 일반적인 해법을 갖는가.** "죽을 때 나를 기다리는 대기자를 깨운다"는
+`_worker` finally 에 넣으면 되지만, **inbox 에 줄 서 있다가 유실되는 질문**은
+그것으로 안 잡힌다(B 가 꺼내기 전에 죽으면 B 는 그 질문의 존재를 모른다).
+레지스트리가 `awaiting_to` 역인덱스를 들고 있어야 하나, 아니면 배달 자체를
+**inbox 를 거치지 않는 경로**(예: B 의 슬롯에 직접)로 바꿔야 하나?
+
+**② 배달을 요청으로 만드는 것이 맞나.** 지금 제안은 `message` 와 같은 경로라
+B 에게 **새 일감**으로 보인다. 그래서 L4(프롬프트가 `message` 로 답하라고
+가르침)가 생긴다. 질문을 일감이 아닌 **다른 종류**로 배달할 수 있나 —
+`expects_reply` 처럼 이미 있는 축으로 표현 가능한가?
+
+**③ 헤드리스에서 peer 주소 질문은 애초에 성립하나.** 사람도 없고 배달도
+어렵다면, 그 조합에서는 `ask` 를 **등록 시점에 거부**하는 게 정직한가?
+(3판에서 검토했다가 "기능 축소"라고 철회했는데, 배달의 비용을 보고 나니 다시
+물을 가치가 있다.)
+
+**④ 순환 검사의 상한.** `_cv` 안에서 체인을 따라가면 O(깊이)만큼 락을 쥔다.
+에이전트 수가 많으면 문제인가, 아니면 `_MAX_PEER_HOPS=6` 이라 무시해도 되나?
