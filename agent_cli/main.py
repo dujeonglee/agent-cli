@@ -1153,27 +1153,24 @@ def _load_resume_session(resume_id: str):
 def _parse_stall(raw: str | None) -> int | None:
     """``--stall`` 값 → 초. ``"600"``(초) · ``"10m"``(분) · ``"0"``(감지 끔).
 
+    문법은 ``constants.parse_duration`` 이 소유한다 (monitor 의 ``deadline``
+    과 공유 — 같은 문법을 두 번 구현하면 갈라진다). ``"2h"`` 도 받게 됐는데
+    시간 단위 stall 은 의미가 없지만 **문법이 갈리는 게 더 나쁘다**.
+
     None/빈 문자열은 **미지정**(None) — env·기본값이 그대로 이긴다. 0 과
     구분해야 하므로 sentinel 을 0 으로 쓸 수 없다 (0 = 명시적 "끔").
     잘못된 값은 typer.BadParameter 로 즉시 실패 — 조용히 기본값으로
     떨어지면 헤드리스에서 오타가 드러나지 않는다."""
     if raw is None or not str(raw).strip():
         return None
-    t = str(raw).strip().lower()
-    mult = 1
-    if t.endswith("m"):
-        mult, t = 60, t[:-1]
-    elif t.endswith("s"):
-        t = t[:-1]
+    from agent_cli.constants import parse_duration
+
     try:
-        value = int(t)
-    except ValueError:
-        raise typer.BadParameter(
-            f"--stall: {raw!r} — 초(600) · 분(10m) · 0(끔) 형식이어야 합니다"
-        ) from None
-    if value < 0:
-        raise typer.BadParameter("--stall: 음수는 쓸 수 없습니다 (0 = 끔)")
-    return value * mult
+        return parse_duration(raw)
+    except ValueError as exc:
+        # 문법은 공용 파서가, **표면별 예외**는 호출자가 — 도구 쪽은 같은
+        # 파서를 ToolResult 로 변환한다 (constants.parse_duration 주석).
+        raise typer.BadParameter(f"--stall: {exc}") from None
 
 
 def _build_context(

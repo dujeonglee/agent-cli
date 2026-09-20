@@ -96,3 +96,47 @@ OUTPUT_TRUNCATED_NOTICE = (
     "unit — e.g. build a large file incrementally with edit_file instead "
     "of one big write_file."
 )
+
+
+# ── duration 파서 — 표면 둘이 공유 (v9.11.0) ────────────────
+#
+# 같은 문법을 두 번 구현하면 둘이 갈라지고, 갈라진 걸 아무도 모른다(감사에서
+# 이스케이퍼 3종·`el()` 2종을 그 이유로 정리했다). ``--stall`` 과 monitor 의
+# ``deadline``/``every`` 가 같은 문법을 쓰므로 **순수 파서를 여기 두고 양쪽이
+# 자기 표면의 예외로 변환**한다:
+#
+#   main._parse_stall  → typer.BadParameter  (CLI 표면 유지)
+#   monitor_tool       → ToolResult(False, …) (도구는 예외를 못 던진다)
+def parse_duration(raw: str) -> int:
+    """``"600"``(초) · ``"10m"``(분) · ``"2h"``(시) → 초.
+
+    ``"45s"`` 처럼 명시적 초 접미사도 받는다. 형식 오류·음수는 ``ValueError``
+    — 호출자가 자기 표면의 예외로 바꾼다. 빈 값 처리는 **호출자 몫**이다
+    (``--stall`` 은 빈 값 = "미지정"이라 0 과 구분해야 하는데, monitor 는
+    그런 구분이 없다 — 파서가 둘 중 하나를 고르면 다른 쪽이 틀린다).
+    """
+    t = str(raw).strip().lower()
+    mult = 1
+    if t.endswith("h"):
+        mult, t = 3600, t[:-1]
+    elif t.endswith("m"):
+        mult, t = 60, t[:-1]
+    elif t.endswith("s"):
+        t = t[:-1]
+    try:
+        value = int(t)
+    except ValueError:
+        raise ValueError(f"{raw!r} — 초(600) · 분(10m) · 시(2h) 형식이어야 합니다")
+    if value < 0:
+        raise ValueError("음수는 쓸 수 없습니다")
+    return value * mult
+
+
+# monitor clamp 상수 (docs/monitor/DESIGN.md §10.1·10.2)
+# `context/manager.py` 의 STREAM_IDLE_TIMEOUT_{MIN,MAX}_S 와 같은 모양 —
+# 거부가 아니라 clamp 다. 값이 크다고 실패시키면 모델이 "얼마가 맞는지"를
+# 탐색하느라 턴을 태운다.
+MONITOR_DEADLINE_DEFAULT_S = 7200  # 2h — 빠뜨려도 등록이 성공한다
+MONITOR_DEADLINE_MIN_S = 60  # 1m
+MONITOR_DEADLINE_MAX_S = 86400  # 24h — 그 이상은 배치 작업이고 board 소관
+MONITOR_INTERVAL_MIN_S = 60  # 주기 `command` 의 `every` 하한

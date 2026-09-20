@@ -779,3 +779,63 @@ class TestBootKnobFlags:
         assert ctx.stream_idle_timeout_s == 300
         assert ctx.stream_max_attempts == 6
         assert ctx.compaction_ratio == pytest.approx(0.9)
+
+
+class TestSharedDurationParser:
+    """``constants.parse_duration`` — ``--stall`` 과 monitor 가 공유하는 문법.
+
+    같은 문법을 두 번 구현하면 둘이 갈라지고, 갈라진 걸 아무도 모른다(감사에서
+    이스케이퍼 3종·`el()` 2종을 그 이유로 정리했다). 그래서 **순수 파서 하나**를
+    두고 각 표면이 자기 예외로 변환한다 — 이 테스트가 그 분업을 고정한다."""
+
+    @pytest.mark.parametrize(
+        ("raw", "want"),
+        [
+            ("600", 600),
+            ("45s", 45),
+            ("10m", 600),
+            ("2h", 7200),
+            ("0", 0),
+            (" 10M ", 600),  # 공백·대문자 관용
+        ],
+    )
+    def test_syntax(self, raw, want):
+        from agent_cli.constants import parse_duration
+
+        assert parse_duration(raw) == want
+
+    @pytest.mark.parametrize("bad", ["abc", "10x", "-1", "1.5m", ""])
+    def test_rejects_with_valueerror_not_a_surface_exception(self, bad):
+        """파서는 **ValueError** 만 던진다 — typer 를 import 하면 도구에서
+        못 쓴다(도구는 ToolResult 로 돌려줘야 한다)."""
+        from agent_cli.constants import parse_duration
+
+        with pytest.raises(ValueError):
+            parse_duration(bad)
+
+    def test_parser_does_not_import_typer(self):
+        """소스 핀 — 공용 파서가 CLI 프레임워크에 묶이면 공유가 깨진다."""
+        import inspect
+
+        from agent_cli.constants import parse_duration
+
+        assert "typer" not in inspect.getsource(parse_duration)
+
+    def test_cli_surface_converts_to_bad_parameter(self):
+        """``--stall`` 은 ValueError 를 typer.BadParameter 로 바꾼다 —
+        조용히 기본값으로 떨어지면 헤드리스에서 오타가 안 드러난다."""
+        import typer
+
+        from agent_cli.main import _parse_stall
+
+        with pytest.raises(typer.BadParameter):
+            _parse_stall("10x")
+
+    def test_stall_keeps_its_empty_means_unset_rule(self):
+        """빈 값 처리는 **호출자 몫**이다 — ``--stall`` 은 빈 값 = 미지정(None)
+        이라 0(명시적 끔)과 구분해야 하는데, monitor 엔 그 구분이 없다.
+        파서가 둘 중 하나를 고르면 다른 쪽이 틀린다."""
+        from agent_cli.main import _parse_stall
+
+        assert _parse_stall("") is None and _parse_stall(None) is None
+        assert _parse_stall("0") == 0  # 구분 유지
