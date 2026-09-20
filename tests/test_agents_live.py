@@ -677,7 +677,7 @@ class TestWaitAndScope:
         판정의 정합. 표시/넛지/reap 코드가 존재하지 않는 "working" 을
         비교해 프로덕션에서 전부 무동작이던 버그 — 어휘가 바뀌면 이
         테스트부터 깨져야 한다."""
-        active = {"starting", "busy", "waiting_ask"}
+        active = {"starting", "busy"}
         inactive = {"idle", "dead"}
         for st in active:
             assert AgentRegistry.state_is_active(st), st
@@ -701,7 +701,7 @@ class TestWaitAndScope:
         )
         literals = set(re.findall(r'\.state = "([a-z_]+)"', src.read_text()))
         # starting 은 __init__ 초기값 — 할당처에 포함
-        classified = {"starting", "busy", "waiting_ask", "idle", "dead"}
+        classified = {"starting", "busy", "idle", "dead"}
         unclassified = literals - classified
         assert not unclassified, (
             f"분류되지 않은 새 상태 어휘: {unclassified} — "
@@ -1109,8 +1109,10 @@ class TestAskRouting:
         assert rec["source"] == "agent_question"
         assert not is_format_intervention(rec)
         assert "QUESTION" in rec["content"] and "which branch?" in rec["content"]
-        # main 이 그대로 따라할 수 있는 답변 op 안내 포함
-        assert '"mode":"request"' in rec["content"] and "agt-q1" in rec["content"]
+        # 비동기: 새 request 는 답이 아니라 일감이다 — `answer` 도구를 가리킨다
+        assert "`answer` tool" in rec["content"]
+        assert "NOT blocked" in rec["content"]
+        assert "mode" not in rec["content"]
 
     def test_async_ask_does_not_block_the_run(self, tmp_path, renderer):
         """③ flip 의 머리: 상주 에이전트의 ``ask`` 는 **막지 않는다**.
@@ -3488,15 +3490,12 @@ class TestAgentTaskFieldUnification:
 
         def fake_submit(key, message, **kw):
             sent.append((key, message))
-            return "", "work"
+            return ""
 
-        # `submit` 을 패치한다 — `request()` 는 그 얇은 래퍼라 같이 덮이고,
-        # `_agent_request` 는 verdict 가 필요해 `submit` 을 직접 부른다
-        # (v9.12.0). `request` 만 패치하면 도구 경로가 패치를 우회한다.
-        monkeypatch.setattr(reg, "submit", fake_submit)
-        monkeypatch.setattr(
-            reg, "request", lambda k, m, **kw: fake_submit(k, m, **kw)[0]
-        )
+        # ``request`` 하나만 패치하면 된다 — v9.12 의 ``submit`` 은 ask 답변
+        # 슬롯 배달을 구분하려던 것인데, 비동기 전환으로 슬롯이 사라져
+        # 되접혔다(§3 ④).
+        monkeypatch.setattr(reg, "request", fake_submit)
         monkeypatch.setattr(reg, "spawn", lambda **kw: ("agt-test0001", ""))
         monkeypatch.setattr(reg, "resume_teammate", lambda key, parent_ctx=None: "")
         return reg, sent

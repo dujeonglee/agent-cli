@@ -934,7 +934,7 @@ class TestStaticUI:
         assert ".ov-ambient" not in css and "ovOnCtx" not in js
 
     def test_channel_states_and_dead_and_kill_resume_wired(self, server_and_client):
-        """agent-channels 4단계: 채널 칩 상태(❓ waiting_ask·dead) + 죽은 agent
+        """agent-channels 4단계: 채널 칩 상태(busy·dead) + 죽은 agent
         입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1). (🔔 안본회신 배지는
         v8.31.0 에서 제거 — replay inflation 으로 '글 수'처럼 보여 폐기.)"""
         _, _, client = server_and_client
@@ -944,11 +944,12 @@ class TestStaticUI:
         assert "ovChanUnread" not in js
         assert "ov-ch-n" not in css
         chip = _js_fn_body(js, "ovChanChip")
-        # v9.8.0: ❓ 배지 제거 — 바로 옆 dot 이 이미 waiting_ask 를 하늘색으로
-        # 말하고 있어 **한 칩 안에서 같은 사실을 두 기호로** 말했다. dot 은
-        # 남는다(질문 알림이 아니라 상태 — idle/busy/waiting/dead).
+        # v9.8.0: ❓ 배지 제거 — dot 이 이미 상태를 말해 한 칩 안에서 같은
+        # 사실을 두 기호로 말했다. dot 은 남는다(상태 — idle/busy/dead).
         assert "ov-ch-q" not in chip
-        assert '"w"' in chip  # waiting dot 색은 유지
+        # waiting dot 은 없앴다 (v9.13 비동기) — 질문 중에도 에이전트는
+        # busy 거나 idle 이고, 질문은 dot 이 아니라 ❓ 트레이가 알린다.
+        assert '"w"' not in chip
         # 죽은 agent: 입력 비활성 + 사망 고지(⑤)
         aci = _js_fn_body(js, "ovApplyChannelInput")
         assert "ovActiveDead()" in aci
@@ -961,26 +962,32 @@ class TestStaticUI:
         assert ".ov-ch.dead" in css and ".ov-ch-ctl" in css
 
     def test_global_ask_tray_wired(self, server_and_client):
-        """agent-channels 3단계: agent 질문(waiting_ask)을 채널 무관 글로벌 트레이로
-        노출·답변. 답변은 그 asker 로 고정(/api/agent/<key>/input), waiting_ask 해제
-        시 자동 제거(roster 진실원)."""
+        """agent-channels 3단계: **주소가 사람인 열린 질문**을 채널 무관
+        글로벌 트레이로 노출·답변. 답은 그 asker 로 고정
+        (/api/agent/<key>/input + ``answer_id``), 질문이 닫히면 자동 제거
+        (roster 의 ``open_questions`` 가 진실원)."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
         assert 'id="ask-tray"' in html
-        assert "var ovAskTray" in js
+        # 트레이의 진실원은 roster 행의 ``open_questions`` 다 — 프런트가
+        # 질문을 따로 캐시하면 두 진실원이 생긴다.
+        assert "var ovAskTray" not in js
+        assert "open_questions" in js
         assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
-        # waiting_ask 가 표시 진실원
+        # roster 의 open_questions 가 표시 진실원이고, **사람 주소만** 뜬다
         rt = _js_fn_body(js, "ovRenderAskTray")
-        assert 't.state === "waiting_ask"' in rt
-        # question 이벤트가 트레이에 적재 + roster 갱신마다 재렌더
-        assert "ovAskTray[d.key]" in js
+        assert "t.open_questions" in rt
+        assert 'indexOf("user") === 0' in rt
+        assert "waiting_ask" not in rt
+        # roster 갱신마다 재렌더
         onr = _js_fn_body(js, "ovOnRoster")
         assert "ovRenderAskTray()" in onr
-        # 답변 라우팅: 그 agent inbox 로 고정
+        # 답변 라우팅: 그 agent 로 고정 + 질문 id 로 짝짓기
         sa = _js_fn_body(js, "ovSubmitAsk")
         assert '"api/agent/" + encodeURIComponent(key) + "/input"' in sa
+        assert "body.answer_id = qid" in sa
         assert ".ask-item" in css and ".ask-answer" in css
 
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
@@ -1210,7 +1217,7 @@ class TestStaticUI:
         assert "ovOnAgentCleared(" in js  # 채널 정리로 라우팅
         cleared = _js_fn_body(js, "ovOnAgentCleared")
         assert ".card-msg[data-ch=" in cleared and "c.remove()" in cleared
-        assert "delete ovAskTray[key]" in cleared
+        assert "ovRenderAskTray()" in cleared  # 트레이 재렌더
 
     def test_agent_observation_renders_markdown(self, server_and_client):
         # An agent observation is a subagent's prose answer → it must be

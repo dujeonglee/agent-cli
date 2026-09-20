@@ -153,18 +153,18 @@ def teardown_session(
 ) -> None:
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
 
-    순서(종전 run 메인 경로와 동일): ①(옵션) 답변-대기 에이전트 경고
+    순서(종전 run 메인 경로와 동일): ①(옵션) 미답 질문 경고
     ② 상주 에이전트 전원 종료 ③ 스피너 정지 ④ MCP 해제(stdio 자식
     프로세스·errlog fd 정리) ⑤ 세션 저장. 저장-완료 메시지는 표면별로
     다르므로 호출자가 출력한다."""
     if warn_stuck and agent_registry is not None:
-        stuck = agent_registry.waiting_ask_keys()
+        stuck = agent_registry.open_human_question_keys()
         if stuck:
             from agent_cli.render import C, console
 
             console.print(
-                f"[{C['accent']}]⚠ 에이전트 {', '.join(stuck)} 이(가) 답변 대기 "
-                f"중인 채 종료 — resume 시 질문은 STALE 처리됩니다[/]"
+                f"[{C['accent']}]❓ 에이전트 {', '.join(stuck)} 의 질문에 답하지 "
+                f"않은 채 종료 — 다음 세션에서 트레이에 다시 뜹니다[/]"
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()

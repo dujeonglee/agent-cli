@@ -1773,7 +1773,7 @@ class WebRenderer(Renderer):
         alive = [a for a in roster if a.get("state") != "dead"]
         return {
             "alive": len(alive),
-            # "작업 중" = idle/dead 외 전부 (busy/waiting_ask/starting —
+            # "작업 중" = idle/dead 외 전부 (busy/starting —
             # 어휘는 AgentRegistry.state_is_active 와 동일 규칙. ★실제 worker
             # 는 "working" 상태를 쓰지 않는다 — v7.11.1 버그 수리)
             "working": sum(1 for a in alive if a.get("state") not in ("idle", "dead")),
@@ -2036,13 +2036,6 @@ class WebRenderer(Renderer):
 
         value = self._guarded_read(_do)
         return value if value else default
-
-    def can_answer_agent(self) -> bool:
-        """웹은 🤝 창과 ❓ 트레이가 있어 에이전트 질문에 사람이 답할 수 있다.
-
-        `can_prompt()` 와 같은 "언젠가" 판정 — 지금 아무도 안 보고 있어도
-        질문은 트레이에 남고 다음 접속자가 답한다."""
-        return True
 
     def can_prompt(self) -> bool:
         """Always ``True``: the web channel can ALWAYS deliver an answer —

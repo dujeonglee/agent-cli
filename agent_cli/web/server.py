@@ -1247,9 +1247,9 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/agent/{key}/input")
     async def agent_input(key: str, request: Request):
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
-        직접 전송. teammate 가 ask 답변 대기(waiting_ask) 중이면 이 메시지가
-        답으로 소비된다 (main 과 선착순). 이 문답의 회신은 main 컨텍스트에
-        배달되지 않는다 (창에만 — 레지스트리의 화자 규칙).
+        직접 전송 — 언제나 **새 일감**이다. 열린 질문의 답은 ``answer_id``
+        로만 들어온다(아래). 이 문답의 회신은 main 컨텍스트에 배달되지
+        않는다 (창에만 — 레지스트리의 화자 규칙).
 
         ``answer_id`` 가 실려 오면 새 일감이 아니라 **그 질문의 답**이다."""
         registry = server.agent_registry

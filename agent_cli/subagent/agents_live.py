@@ -189,36 +189,6 @@ def _new_question_id() -> str:
     return f"q-{uuid.uuid4().hex[:6]}"
 
 
-def _answer_kind(tm, author: str) -> str:
-    """도착한 항목이 **이 에이전트가 기다리는 질문의 답**인가 (v9.12.0).
-
-    ``"answer"`` | ``"work"``. 판정 축은 **질문의 주소**(`awaiting_to`, =
-    ask 시점의 `current_author`)다 — 질문 페이로드가 이미 `to` 로 싣고 있던
-    값이라 새로 발명한 기준이 아니다(docs/agent-ask/DESIGN.md §0).
-
-    - **사람은 주소와 무관하게 답할 수 있다.** peer 가 아니라 **운영자**이고,
-      🤝 창·❓ 트레이가 "main 과 선착순"으로 답하는 것은 문서화된 기능이다
-      (`web/server.py` 의 `agent_input`). main 이 엉뚱하게 답하거나 답변자가
-      사라졌을 때의 유일한 탈출구다.
-    - **peer 는 답변자가 아니다** — 질문이 자기 채널에만 렌더되고 peer 에게는
-      배달되지 않기 때문이다(후속 단계에서 배달을 구현하면 그때 답변자가 된다).
-      그때까지 peer 의 메시지는 *우연히 도착한 새 일감*이지 답이 아니다.
-    - main 은 주소가 자기일 때만. 사람이 시킨 작업의 질문은 main 메일박스로
-      가지 않으므로 main 은 그 질문의 존재를 모른다.
-
-    **남는 사고**: 주소가 main 인 질문에 main 이 *새 일감*을 보내면 그대로
-    답으로 먹힌다 — `author` 로는 "답"과 "새 일"을 구별할 수 없다. 그건
-    `mode:"answer"` + 거부가 필요한 별도 단계다.
-    """
-    if not tm.awaiting:
-        return "work"
-    if author.startswith("user"):
-        return "answer"
-    if author == tm.awaiting_to and not author.startswith("agent:"):
-        return "answer"
-    return "work"
-
-
 # agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
 AGENTS_STATE_VERSION = 1
 
@@ -340,29 +310,15 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         }
 
     if reply.get("kind") == "question":
+        # 비동기 질문(§3): 상대는 **막혀 있지 않다**. 새 request 를 보내면
+        # 그건 답이 아니라 일감이라 질문은 열린 채 남고, 독촉이 상한까지
+        # 돌다 닫힌다 — 런만 태운다.
         question = reply.get("output") or "(empty question)"
-        if reply.get("stale"):
-            # P3: 세션 재시작으로 teammate 는 더 이상 답변 대기가 아님 —
-            # 그대로 답하면 새 request 로 오인되므로 정직하게 알린다.
-            tail = (
-                "(STALE — the session was resumed; the agent is NO LONGER "
-                "waiting for this answer. Re-send the original request with "
-                f'{{"mode":"request","key":"{key}","task":"..."}} if still needed.)'
-            )
-        elif reply.get("id"):
-            # 비동기 질문(§3): 상대는 **막혀 있지 않다**. 새 request 를
-            # 보내면 그건 답이 아니라 일감이라 질문은 열린 채 남고, 독촉이
-            # 상한까지 돌다 닫힌다 — 런만 태운다.
-            tail = (
-                "(The agent is NOT blocked and kept working. Answer it with "
-                f'the `answer` tool: answer(id="{reply["id"]}", text="..."). '
-                "A new request is not an answer.)"
-            )
-        else:
-            tail = (
-                "(The agent is BLOCKED until answered. Answer via agent op: "
-                f'{{"mode":"request","key":"{key}","task":"<your answer>"}}.)'
-            )
+        tail = (
+            "(The agent is NOT blocked and kept working. Answer it with the "
+            f'`answer` tool: answer(id="{reply.get("id", "")}", text="..."). '
+            "A new request is not an answer.)"
+        )
         content = f"── agent {label} QUESTION ──\n{question}\n{tail}"
         return {
             "role": "user",
@@ -491,19 +447,11 @@ class AgentInstance:
         self.home_dir = home_dir
 
         self.inbox: SimpleQueue = SimpleQueue()
-        # ask 답변 슬롯 (v9.12.0) — inbox 와 **분리**한다. 종전엔 ask 가 inbox
-        # 에서 기다려 "새 일감"과 "내 질문의 답"이 구분되지 않았고, **도착
-        # 순서가 답**이었다(docs/agent-ask/DESIGN.md §1). 미결 질문은 언제나
-        # 0 또는 1 개라(블록 중엔 두 번째 질문을 낼 수 없다) 큐가 아니라 슬롯.
-        self.awaiting = ""  # 대기 중인 질문 (빈 문자열 = 안 기다림)
-        self.awaiting_to = ""  # 그 질문의 **주소** (= ask 시점의 current_author)
-        self.answer = ""
-        self.answered = threading.Event()
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.ctx: ContextManager | None = None
 
-        self.state = "starting"  # starting | idle | busy | waiting_ask | dead
+        self.state = "starting"  # starting | idle | busy | dead
         self.error = ""  # dead 사유 (ctx 생성 실패 등)
         # P3 resume: kill 은 영구(revivable=False — manifest 에 dead 로 기록),
         # 세션 종료로 죽은 teammate 는 revivable 유지 → resume 시 재생성.
@@ -694,10 +642,10 @@ class AgentRegistry:
     @staticmethod
     def state_is_active(state: str) -> bool:
         """ "작업 중" 판정의 단일 소유 — worker 상태 어휘는
-        starting|idle|busy|waiting_ask|dead (AgentInstance.state). idle/dead
-        가 아니면 mid-task 다(waiting_ask=질문 답변 대기도 작업 중,
-        starting=곧 첫 요청 처리). ★v7.11.1: 표시/넛지/reap 코드가 존재하지
-        않는 "working" 문자열을 비교하던 버그의 수리 — 어휘는 여기서만."""
+        starting|idle|busy|dead (AgentInstance.state). idle/dead 가 아니면
+        mid-task 다(starting=곧 첫 요청 처리). ★v7.11.1: 표시/넛지/reap
+        코드가 존재하지 않는 "working" 문자열을 비교하던 버그의 수리 —
+        어휘는 여기서만."""
         return state not in ("idle", "dead")
 
     def any_activity(self) -> bool:
@@ -733,29 +681,20 @@ class AgentRegistry:
 
     def has_active_work(self) -> bool:
         """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
-        큐잉된 요청이 하나라도 있으면 True. **waiting_ask 는 제외**:
-        main 이 답하지 않기로 한 질문을 기다리는 건 영원히 안 끝나는
-        교착이라, 펌프는 경고 후 종료(shutdown 이 대기를 푼다)를 택한다."""
+        큐잉된 요청이 하나라도 있으면 True.
+
+        비동기 질문은 아무도 막지 않으므로(§3) 여기서 뺄 상태가 없다 —
+        질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다."""
         if self.has_pending_replies():
             return True
-        for tm in list(self._agents.values()):
-            # **막힌 슬롯 뒤의 큐는 활동이 아니다** (v9.12.0). ask 대기 중인
-            # 에이전트는 답이 오기 전까지 inbox 를 못 꺼내므로, 그 큐를 세면
-            # 펌프가 영원히 돈다. 위 docstring 의 판단("답하지 않기로 한 질문을
-            # 기다리는 건 교착이라 펌프는 종료를 택한다")이 그 **뒤의 큐**에도
-            # 그대로 적용된다. 웹의 `any_activity` 는 무변경 — 거기선 운영자가
-            # 답할 수 있으므로 활동이 맞다.
-            if tm.state == "busy" or (
-                tm.state != "waiting_ask" and tm.inbox.qsize() > 0
-            ):
-                return True
-        return False
+        return any(
+            tm.state == "busy" or tm.inbox.qsize() > 0
+            for tm in list(self._agents.values())
+        )
 
-    def waiting_ask_keys(self) -> list[str]:
-        """답변 대기 중인 teammate — 펌프 종료 시 경고 표시용."""
-        return [
-            tm.key for tm in list(self._agents.values()) if tm.state == "waiting_ask"
-        ]
+    def open_human_question_keys(self) -> list[str]:
+        """사람 답을 기다리는 열린 질문의 asker — 종료 시 경고 표시용."""
+        return sorted({q.asker for q in self.open_human_questions()})
 
     # ── 질문 목록 (비동기 ask/answer, DESIGN.md §3) ──────────────
 
@@ -809,6 +748,9 @@ class AgentRegistry:
         # 답 런이 안 생기므로 그 런의 회신이 영영 사라진다.
         self._mark_asked(asker)
         self._save_state()
+        # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
+        # 사람 주소 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
+        self._notify_roster()
         return q.id, ""
 
     def _mark_asked(self, asker: str) -> None:
@@ -848,7 +790,7 @@ class AgentRegistry:
             author = "main" if q.asker == "main" else f"agent:{q.asker}"
             # ``expects_reply=False`` — 상대가 이 항목을 처리한 **산출물**이
             # asker 에게 되돌아가면 안 된다. 답은 ``answer`` 도구로만.
-            err, _ = self.submit(
+            err = self.request(
                 q.target.split(":", 1)[1],
                 f"[question {q.id} from {q.asker}]: {q.text}",
                 author=author,
@@ -1020,7 +962,7 @@ class AgentRegistry:
                 }
             )
             return len(live)
-        self.submit(
+        self.request(
             addr.split(":", 1)[1],
             body,
             # 발신자는 **기다리는 쪽**(asker)으로 — ``addr`` 은 이 런의
@@ -1055,7 +997,7 @@ class AgentRegistry:
                 }
             )
             return
-        self.submit(q.asker, body, author=q.target, expects_reply=True)
+        self.request(q.asker, body, author=q.target, expects_reply=True)
 
     def _purge_questions_for(self, key: str) -> None:
         """에이전트 사망 정리 — **양방향** (§3.8).
@@ -1245,7 +1187,7 @@ class AgentRegistry:
 
     # ── request / 회신 ──────────────────────────
 
-    def submit(
+    def request(
         self,
         key: str,
         message: str,
@@ -1254,17 +1196,12 @@ class AgentRegistry:
         hop: int = 0,
         expects_reply: bool = True,
         question_id: str = "",
-    ) -> tuple[str, str]:
-        """request 큐잉 또는 **ask 답변 배달** — ``(error, verdict)``.
+    ) -> str:
+        """request 큐잉 — 에러 메시지 또는 빈 문자열.
 
-        ``verdict`` 는 ``"answer"``(대기 중인 질문의 답으로 배달) 또는
-        ``"work"``(inbox 큐잉). 호출자가 사실대로 보고할 수 있게 돌려준다 —
-        종전 `_agent_request` 는 `request()` 앞에서 `was_waiting` 을 읽고
-        "답변으로 전달됨" 을 출력했는데, 그 사이 상태가 바뀔 수 있는
-        TOCTOU 였다(docs/agent-ask/DESIGN.md).
-
-        `request()` 가 ``str`` 만 돌려주는 얇은 래퍼로 남아 기존 호출자
-        여덟 곳은 무변경이다.
+        v9.12 의 ``submit() -> (error, verdict)`` 은 ask 답변 슬롯 배달을
+        구분하려던 것인데, 비동기 전환으로 슬롯이 사라져 판정할 것이 없다 —
+        이름과 반환형을 원래대로 되돌렸다(답은 ``answer`` 도구로만 온다).
 
         ``question_id``: 이 아이템이 질문이면 그 id — 런 스코프 마킹용.
 
@@ -1275,12 +1212,12 @@ class AgentRegistry:
         """
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown agent '{key}' (see mode:\"status\" for live keys)", ""
+            return f"unknown agent '{key}' (see mode:\"status\" for live keys)"
         if tm.state == "dead":
             reason = f" ({tm.error})" if tm.error else ""
-            return f"agent '{key}' is dead{reason} — spawn a new one", ""
+            return f"agent '{key}' is dead{reason} — spawn a new one"
         if not message.strip():
-            return "empty message", ""
+            return "empty message"
         # Stamp the request's time BEFORE enqueuing. The worker runs on its own
         # thread and can dequeue + emit ``begin_agent_work`` (scope_start) the
         # instant the item lands in the inbox — i.e. before this method reaches a
@@ -1294,14 +1231,6 @@ class AgentRegistry:
         with self._cv:
             tm.queued += 1
             seq = tm.queued
-            # 분류는 **락 안**, 부수효과(렌더·로그·로스터)는 락 밖 — 이 파일의
-            # 기존 규율(_cv 구간은 전부 짧다)이고, 답 claim 이 원자적이어야
-            # 동시 답변자 둘 중 하나만 답이 된다.
-            verdict = _answer_kind(tm, author)
-            if verdict == "answer":
-                tm.answer = message if author == "main" else f"[{author}]: {message}"
-                tm.awaiting = tm.awaiting_to = ""  # 원자적 claim
-                tm.answered.set()
         item = {
             "seq": seq,
             "text": message,
@@ -1324,8 +1253,7 @@ class AgentRegistry:
             # 최종답이 원 요청자에게 귀속된다. peer/user 발신은 회신이
             # main mailbox 로 안 가므로 스냅샷 불필요.
             item["answers"] = list(self._current_run_authors)
-        if verdict == "work":
-            tm.inbox.put(item)
+        tm.inbox.put(item)
         # 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 — 답만 건너뛰면
         # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다.
         from agent_cli.render import get_renderer
@@ -1350,14 +1278,7 @@ class AgentRegistry:
         get_renderer().agent_message(**payload)
         self._log_conversation(tm, payload)
         self._notify_roster()
-        return "", verdict
-
-    def request(self, key: str, message: str, **kw) -> str:
-        """`submit()` 의 얇은 래퍼 — 기존 호출자 여덟 곳의 시그니처 보존.
-
-        튜플로 바꾸면 전부 `if err:` 로 판정하는데 **튜플은 항상 참**이라
-        성공이 에러로 읽힌다."""
-        return self.submit(key, message, **kw)[0]
+        return ""
 
     def _push_reply(self, reply: dict) -> None:
         with self._cv:
@@ -1573,7 +1494,6 @@ class AgentRegistry:
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         tm.stop_event.set()
         tm.inbox.put(_SHUTDOWN)
-        tm.answered.set()  # ask 슬롯 대기자는 inbox sentinel 로 안 깨어난다
         if tm.worker is not None:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
         # 5.13: kill=창 정리 — 표면(replay 버퍼+라이브 창)만 비우고
@@ -1592,7 +1512,6 @@ class AgentRegistry:
         for tm in list(self._agents.values()):
             tm.stop_event.set()
             tm.inbox.put(_SHUTDOWN)
-            tm.answered.set()  # ask 슬롯 대기자 — 없으면 join 이 5초 타임아웃
         for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=5.0)
@@ -1762,13 +1681,6 @@ class AgentRegistry:
             for item in data.get("pending", []):
                 if not isinstance(item, dict):
                     continue
-                # ``stale`` 마킹은 **블로킹 경로의 질문에만** 남긴다:
-                # 그쪽은 재시작으로 대기 슬롯이 사라져 "BLOCKED" 가 거짓이
-                # 된다. 비동기 질문(``id`` 가 실려 있다)은 목록째 되살아나
-                # 답이 정상 처리되므로 마킹하면 그게 거짓말이 된다.
-                # (④에서 블로킹 경로가 사라지면 이 분기도 함께 간다.)
-                if item.get("kind") == "question" and not item.get("id"):
-                    item["stale"] = True
                 self._pending.append(item)
             if self._pending:
                 self._cv.notify_all()
@@ -2282,94 +2194,6 @@ class AgentRegistry:
         tm.current_seq = 0
         self._notify_roster()
 
-    def _make_ask_handler(self, tm: AgentInstance):
-        """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
-
-        teammate 가 ask 를 부르면: 질문을 main mailbox 에 올리고
-        (턴 경계 배달 — main 은 관찰로 받는다), 이 teammate 의 inbox 에
-        **다음으로 도착하는 메시지를 답변으로 소비**한다 — "도착 순서가
-        답" (main 의 request 든, P4 의 인간 개입이든 먼저 온 쪽).
-        kill/세션 종료(_SHUTDOWN)는 답변 대기를 즉시 풀고 sentinel 을
-        재게시해 바깥 worker 루프도 종료되게 한다.
-        """
-
-        def handler(question: str) -> str:
-            from agent_cli.render import get_renderer
-
-            renderer = get_renderer()
-            to = tm.current_author
-
-            # 주소가 peer 인데 그 peer 에게 배달할 방법이 아직 없고(후속 단계)
-            # 운영자 창구도 없으면 **arm 하지 않고** 즉시 돌려준다. 막고 나서
-            # 아무도 안 오는 것보다 낫다 — `_handle_ask` 가 `can_prompt()`
-            # False 에 "(no response)" 를 돌려주는 것과 같은 판단.
-            if to.startswith("agent:") and not renderer.can_answer_agent():
-                return (
-                    f"(no response — this question is addressed to {to}, which "
-                    "cannot receive questions yet, and no operator channel is "
-                    "connected. Decide without it, or finish with `complete`.)"
-                )
-
-            # **arm 을 공개보다 먼저.** 질문을 렌더/푸시한 뒤에 arm 하면 그
-            # 사이에 도착한 답이 슬롯을 못 보고 inbox 로 빠진다 — 테스트의
-            # 가짜 러너는 지연이 0이라 그게 기본 경로다.
-            with self._cv:
-                tm.answered.clear()  # clear 가 arm 보다 먼저 (이전 set 잔류 방지)
-                tm.awaiting = question
-                tm.awaiting_to = to
-                tm.answer = ""
-            # `state` 는 **공개 뒤에** 세운다 — 정확성에 필요한 arm 은 위의
-            # `awaiting`(판정이 읽는 값)이고, `state` 는 표시·집계용이다.
-            # 먼저 세우면 "waiting_ask 면 질문이 공개됐다"는 기존 배리어가
-            # 깨진다(로스터를 보고 메일박스를 읽는 쪽이 빈손이 된다).
-
-            # 대화 창에는 항상 (P4) — 인간이 먼저 답할 수 있는 표면.
-            q_payload = {
-                "key": tm.key,
-                "direction": "question",
-                "author": tm.key,
-                "text": question,
-                "to": to,  # 인간 발신 작업의 질문은 그 사람에게
-                "ts": time.time(),
-                "profile": tm.profile_name,
-                "instance_name": tm.instance_name,
-            }
-            renderer.agent_message(**q_payload)
-            self._log_conversation(tm, q_payload)
-            if to == "main":
-                # main 발신 작업의 질문만 main mailbox 로 (D8 대칭).
-                self._push_reply(
-                    {
-                        "kind": "question",
-                        "key": tm.key,
-                        "profile": tm.profile_name,
-                        "name": tm.instance_name,
-                        "success": True,
-                        "output": question,
-                    }
-                )
-            with self._cv:
-                tm.state = "waiting_ask"
-            self._notify_roster()
-
-            tm.answered.wait()
-
-            # 종료 wake 를 **데이터보다 먼저** 판정한다 — kill/shutdown 은
-            # 빈 답으로 깨우므로, 데이터로 판정하면 빈 문자열이 답이 된다.
-            if tm.stop_event.is_set():
-                with self._cv:
-                    tm.awaiting = tm.awaiting_to = ""
-                    tm.state = "busy"
-                return "(no response — agent is being terminated)"
-            with self._cv:
-                tm.awaiting = tm.awaiting_to = ""
-                answer, tm.answer = tm.answer, ""
-                tm.state = "busy"
-            self._notify_roster()
-            return answer
-
-        return handler
-
     def _run_message(self, tm: AgentInstance, query: str):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너."""
         runner = self._runner
@@ -2545,20 +2369,11 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
 def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     key = args.get("key", "")
     tm = registry.get(key)
-    # 종전엔 `request()` **앞에서** `state == "waiting_ask"` 를 읽어 힌트를
-    # 냈다 — 그 사이 다른 답변자가 claim 하면 거짓말이 되는 TOCTOU 였다.
-    # 이제 배달 결과를 그대로 받는다 (v9.12.0).
-    err, verdict = registry.submit(key, args.get("task", ""))
+    # request 는 언제나 **일감**이다 — 열린 질문의 답은 ``answer`` 도구로만
+    # 들어온다(비동기 전환 전에는 여기서 슬롯 배달 여부를 구분했다).
+    err = registry.request(key, args.get("task", ""))
     if err:
         return ToolResult(False, error=f"request rejected: {err}")
-    if verdict == "answer":
-        return ToolResult(
-            True,
-            output=(
-                f"delivered to {key} as the answer to its pending question — "
-                f"it resumes the original request now."
-            ),
-        )
     backlog = tm.inbox.qsize() if tm is not None else 0
     stacked = (
         (

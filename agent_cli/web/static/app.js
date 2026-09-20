@@ -1931,9 +1931,8 @@
   // 필터**다(v9.4.0 ⑥) — 별도 스트림을 들고 있지 않으므로 리로드하면
   // replay 버퍼가 그대로 복원한다.
   var ovActiveChannel = "main";
-  // 3단계: 글로벌 ask 트레이 — agent 질문(waiting_ask)을 채널 무관하게 노출.
-  // key → {text, ts}. 실제 표시 여부는 roster 의 state==="waiting_ask" 가 진실.
-  var ovAskTray = {};
+  // 3단계: 글로벌 ask 트레이 — **주소가 사람인 열린 질문**을 채널 무관하게
+  // 노출한다. 진실원은 roster 행의 `open_questions` 다(질문 단위).
   // 에이전트별 결정적 아이콘 — key 해시로 고정. 서버(agent_cli/agent_icon.py)와
   // 반드시 동일한 풀·순서·해시(test_app_markdown 이 대조). key 는 ASCII 라
   // charCodeAt == Python ord.
@@ -2001,11 +2000,11 @@
   function ovOnRoster(d) {
     ovRoster = (d && d.roster) || [];
     ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
-    ovRenderAskTray(); // waiting_ask 진실원(선착순 답변→소비 시 자동 사라짐)
+    ovRenderAskTray(); // 진실원은 roster 의 open_questions
   }
-  // 글로벌 ask 트레이: roster 에서 waiting_ask 인 agent + 그 질문(ovAskTray)을
+  // 글로벌 ask 트레이: roster 행의 `open_questions` 중 사람 주소인 것을
   // 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
-  // 공유 상태라 누가 먼저 답하면 waiting_ask 해제 → 모든 뷰어에서 사라짐(선착순).
+  // 공유 상태라 누가 먼저 답하면 질문이 닫혀 → 모든 뷰어에서 사라짐(선착순).
   // main 의 prompt/confirm 을 트레이 항목(DOM)으로 — 검증된 조각 재사용
   // (buildPromptMetaEl·highlightDangerHtml·confirm-btn·mode-context). 3b.
   function ovBuildMainAskEl() {
@@ -2107,11 +2106,10 @@
   function ovRenderAskTray() {
     var tray = document.getElementById("ask-tray");
     if (!tray) return;
-    var waiting = ovRoster.filter(function (t) { return t.state === "waiting_ask"; });
     // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 주소가 **사람**인 열린
     // 질문만 뜬다. 상대가 막혀 있지 않으므로 state 로는 알 수 없고 질문
     // 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
-    // 질문 단위. 블로킹 경로(waiting_ask)가 사라지면 위 절반만 마른다.
+    // 질문 단위 — 한 에이전트가 동시에 여럿 물을 수 있다.
     var open = [];
     ovRoster.forEach(function (t) {
       (t.open_questions || []).forEach(function (q) {
@@ -2120,7 +2118,7 @@
         }
       });
     });
-    if (!ovMainAsk && !waiting.length && !open.length) {
+    if (!ovMainAsk && !open.length) {
       tray.hidden = true;
       tray.innerHTML = "";
       return;
@@ -2133,18 +2131,6 @@
         '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
         "</b> 이(가) 물었습니다" + ovAskAddress(it.q) + "</div>" +
         '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
-        '<div class="ask-in"><input class="ask-answer" type="text" ' +
-        'placeholder="답변…" aria-label="답변"><button type="button" ' +
-        'class="ask-send btn-primary">전송</button></div></div>';
-    });
-    waiting.forEach(function (t) {
-      var q = ovAskTray[t.key];
-      var qt = q && q.text ? escapeHtml(q.text) : "(질문 대기)";
-      html +=
-        '<div class="ask-item" data-key="' + escapeHtml(t.key) + '">' +
-        '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(t.key) +
-        "</b> 이(가) 물었습니다" + ovAskAddress(q) + "</div>" +
-        '<div class="ask-qt">' + qt + "</div>" +
         '<div class="ask-in"><input class="ask-answer" type="text" ' +
         'placeholder="답변…" aria-label="답변"><button type="button" ' +
         'class="ask-send btn-primary">전송</button></div></div>';
@@ -2252,11 +2238,9 @@
     if (!d || !d.key) return;
     ovRenderAgentMsg(d);
     if (d.direction === "question") {
-      // `to` 는 질문의 **주소**다 — 누구에게 물은 것인지 라벨로 보여 준다.
-      // 트레이는 계속 모든 질문에 뜬다: 사람은 peer 가 아니라 **운영자**라
-      // 어느 질문에든 끼어들 수 있어야 한다("main 과 선착순" — 서버의
-      // `agent_input` 이 명시한 기능이자, 답변자가 사라졌을 때의 탈출구).
-      ovAskTray[d.key] = { text: d.text || "", ts: d.ts, to: d.to || "" };
+      // 트레이는 **주소가 사람인 질문에만** 뜬다 — 그게 규칙이다. 여기서는
+      // 다시 그리기만 하고, 무엇을 띄울지는 roster 의 `open_questions` 가
+      // 정한다(질문 하나가 곧 항목 하나).
       ovRenderAskTray();
     }
   }
@@ -2266,12 +2250,11 @@
     $messages
       .querySelectorAll(':scope > .card-msg[data-ch="' + cssEsc(key) + '"]')
       .forEach(function (c) { c.remove(); });
-    delete ovAskTray[key];
     ovRenderAskTray();
     ovSyncChannels();
   }
   // 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
-  // (idle/busy/waiting/dead) + ❓(waiting_ask) + ✕(kill)/↻(resume). 에이전트 상태를
+  // (idle/busy/dead) + ✕(kill)/↻(resume). 에이전트 상태를
   // 이 "agent 탭"에 직접 표시(v8.33.0 — 구 흐름-탭 dots 통합).
   function ovSyncChannels() {
     var bar = document.getElementById("ov-channels");
@@ -2312,13 +2295,12 @@
     // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
     var dot = "";
     if (key !== "main") {
-      var c = state === "busy" ? "b" : state === "waiting_ask" ? "w" : dead ? "x" : "i";
+      var c = state === "busy" ? "b" : dead ? "x" : "i";
       dot = '<span class="ov-dot ' + c + '"></span>';
     }
-    // ❓ 배지는 제거했다 (v9.8.0) — 바로 옆 dot 이 이미 `waiting_ask` 를
-    // 하늘색으로 말하고 있어, **한 칩 안에서 같은 사실을 두 기호로** 말했다.
-    // dot 은 남긴다: 그건 질문 알림이 아니라 상태(idle/busy/waiting/dead)이고,
-    // 하나만 빼면 답변 대기가 idle 로 보여 거짓이 된다.
+    // ❓ 배지는 없다 (v9.8.0) — dot 이 이미 상태를 말하고 있어 한 칩 안에서
+    // 같은 사실을 두 기호로 말하게 된다. 질문은 dot 이 아니라 ❓ 트레이가
+    // 알린다 (비동기라 질문 중에도 에이전트는 busy 거나 idle 이다).
     var badges = "";
     var ctrl = "";
     if (key !== "main") {

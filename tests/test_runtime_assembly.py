@@ -132,7 +132,7 @@ class TestAgentRuntimeEquivalence:
 class TestTeardownSession:
     def _mocks(self, *, stuck=()):
         registry = MagicMock()
-        registry.waiting_ask_keys.return_value = list(stuck)
+        registry.open_human_question_keys.return_value = list(stuck)
         mcp = MagicMock()
         session = MagicMock()
         session.session_id = "s1"
@@ -165,9 +165,9 @@ class TestTeardownSession:
             patch("agent_cli.context.session.finalize_session"),
         ):
             teardown_session(session, None, agent_registry=registry, warn_stuck=False)
-            registry.waiting_ask_keys.assert_not_called()
+            registry.open_human_question_keys.assert_not_called()
             teardown_session(session, None, agent_registry=registry, warn_stuck=True)
-            registry.waiting_ask_keys.assert_called_once()
+            registry.open_human_question_keys.assert_called_once()
 
     def test_none_tolerance(self):
         """registry/mcp/session 이 None 이어도 무사 통과 — 세션 None 이면

@@ -1628,7 +1628,7 @@ def _run_message_pump(
     def _quiet() -> bool:
         """정지해도 되는가 — 모니터가 살아 있거나 미배달 보고가 있으면 아니다.
 
-        `has_active_work()` 가 `waiting_ask` 를 의도적으로 제외하는 것과 같은
+        `has_active_work()` 가 유휴 판정을 좁게 잡는 것과 같은
         자리다. 모니터 쪽은 `deadline` 이 **필수로 유계**라(§7.1) 안 끝나는
         세션이 되지 않는다."""
         if input_queue.pending_count() or registry.has_active_work():

@@ -457,7 +457,32 @@ class TestTrafficRow:
         않는 것이 트레이의 존재 이유다(docs/chat-ui §6)."""
         stack.emit_ready()
         stack.renderer.agent_roster(
-            [{"key": AGT, "name": AGT, "profile": "rev", "state": "waiting_ask"}]
+            [
+                {
+                    "key": AGT,
+                    "name": AGT,
+                    "profile": "rev",
+                    "state": "idle",
+                    # 비동기 질문: 트레이의 진실원은 이 목록이다 (상대는
+                    # 막혀 있지 않아 state 로는 알 수 없다).
+                    "open_questions": [
+                        {
+                            "id": "q-ab12",
+                            "text": "제가 추가할까요, 지적만 할까요?",
+                            "to": "user:bob",
+                            "ts": 0,
+                        },
+                        {
+                            # 사람이 답할 질문이 아니다 — 트레이에 뜨면
+                            # 사용자가 남의 질문에 끼어들게 된다.
+                            "id": "q-cd34",
+                            "text": "main 에게 묻는 것",
+                            "to": "main",
+                            "ts": 0,
+                        },
+                    ],
+                }
+            ]
         )
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, AGT).count() > 0)
@@ -473,6 +498,10 @@ class TestTrafficRow:
         tray = page.locator("#ask-tray .ask-item")
         assert _wait(lambda: tray.count() > 0 and tray.first.is_visible())
         assert "제가 추가할까요" in tray.first.inner_text()
+        # **사람 주소인 것만** — main 앞 질문까지 띄우면 사용자가 남의
+        # 질문에 끼어들게 된다(사용자가 정한 규칙, DESIGN.md §3.6).
+        assert tray.count() == 1
+        assert "main 에게 묻는 것" not in page.locator("#ask-tray").inner_text()
 
         # 대화 쪽 줄은 그 에이전트 채널에 있다.
         _chip(page, AGT).click()

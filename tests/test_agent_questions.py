@@ -75,23 +75,23 @@ def spawn_idle(reg):
 
 
 class SubmitSpy:
-    """``submit`` 호출 인자를 기록 — 답 배달의 라우팅 인자를 고정한다."""
+    """``request`` 호출 인자를 기록 — 답 배달의 라우팅 인자를 고정한다."""
 
     def __init__(self, reg):
         self.reg = reg
         self.calls = []
-        self._orig = reg.submit
+        self._orig = reg.request
 
     def __enter__(self):
         def spy(key, message, **kw):
             self.calls.append({"key": key, "message": message, **kw})
             return self._orig(key, message, **kw)
 
-        self.reg.submit = spy
+        self.reg.request = spy
         return self
 
     def __exit__(self, *a):
-        self.reg.submit = self._orig
+        self.reg.request = self._orig
 
 
 # ── 등록과 배달 ─────────────────────────────────
@@ -126,6 +126,17 @@ class TestRegisterAndDeliver:
         assert second == first
         assert spy.calls == []  # 두 번째는 배달하지 않는다
         gate.set()
+
+    def test_request_returns_a_plain_error_string(self, mkreg, tmp_path, renderer):
+        """``submit() -> (error, verdict)`` 는 ask 답변 슬롯을 구분하려던
+        것인데 슬롯이 사라져 되접혔다. 튜플로 돌아가면 **빈 튜플이 아닌
+        모든 반환이 참**이라 호출자들의 ``if err:`` 가 성공을 에러로 읽는다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        assert reg.request(a, "일감") == ""
+        assert isinstance(reg.request("agt-nope", "x"), str)
+        assert isinstance(reg.request(a, "   "), str)
+        assert not hasattr(reg, "submit")
 
     def test_empty_question_rejected(self, mkreg, tmp_path, renderer):
         reg = mkreg()
@@ -811,7 +822,7 @@ class TestSurfaces:
 
         reg._runner = runner
         b = spawn_idle(reg)
-        reg.submit(b, "일감", author="user:bob")
+        reg.request(b, "일감", author="user:bob")
         assert wait_until(lambda: reg.get(b).state == "idle")
         out = [
             c for c in renderer.named("agent_message") if c[1].get("direction") == "out"
@@ -857,6 +868,18 @@ class TestSurfaces:
         row = next(r for r in reg.roster_snapshot() if r["key"] == a)
         assert [q["id"] for q in row["open_questions"]] == [qid]
         assert row["open_questions"][0]["to"] == "user:bob"
+
+    def test_registering_notifies_the_roster(self, mkreg, tmp_path, renderer):
+        """트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
+        사람 주소 질문이 다음 브로드캐스트까지 화면에 안 뜬다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        before = len(renderer.named("agent_roster"))
+        qid, _ = reg.register_question(a, "user:bob", "배포?")
+        rosters = renderer.named("agent_roster")
+        assert len(rosters) > before
+        (row,) = [r for r in rosters[-1][1]["roster"] if r["key"] == a]
+        assert [q["id"] for q in row["open_questions"]] == [qid]
 
     def test_open_human_question_counts_as_activity(self, mkreg, tmp_path, renderer):
         """idle-reap 이 세션을 걷으면 resume 은 되살리지 않으므로(§3.9)
@@ -1112,7 +1135,7 @@ class TestReplyFreshness:
 
         reg._runner = runner
         a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.submit(b, "리팩터", author=f"agent:{a}", expects_reply=True)
+        reg.request(b, "리팩터", author=f"agent:{a}", expects_reply=True)
 
         assert wait_until(lambda: len(from_b) == 1, timeout=5.0)
         assert "B 완성" in from_b[0]
@@ -1191,7 +1214,7 @@ class TestReplyFreshness:
 
         reg._runner = runner
         a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.submit(b, "리팩터", author=f"agent:{a}", expects_reply=True)
+        reg.request(b, "리팩터", author=f"agent:{a}", expects_reply=True)
 
         assert wait_until(lambda: reg._questions == {}, timeout=10.0)  # 상한이 닫음
         assert wait_until(lambda: len(from_b) == 1, timeout=10.0)
@@ -1288,7 +1311,7 @@ class TestReplyFreshness:
 
         reg._runner = runner
         b = spawn_idle(reg)
-        reg.submit(b, "일감", author="user:bob")
+        reg.request(b, "일감", author="user:bob")
         assert wait_until(lambda: reg.get(b).state == "idle")
         outs = [
             c[1]
@@ -1585,9 +1608,8 @@ class TestUncoveredSurfaces:
         assert "`answer` tool" in rec["content"]
         assert "q-abc" in rec["content"]
         assert "BLOCKED" not in rec["content"]
-        # 블로킹 경로(id 없음)는 종전 문구 그대로
-        old = build_reply_record({"kind": "question", "key": "agt-x", "output": "q"})
-        assert "BLOCKED" in old["content"]
+        # 블로킹 경로는 ④에서 사라졌다 — 이제 질문 레코드는 하나뿐이다.
+        assert "mode" not in rec["content"]
 
 
 # ── ③ flip: 도구·디스패치·프롬프트 ─────────────
