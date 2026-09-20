@@ -1593,6 +1593,55 @@ class TestToolPolicyDeclarations:
                 assert getattr(tool, attr) == val, f"{name}.{attr}"
 
 
+class TestRunLoopForwarding:
+    """``run_loop`` 은 ``AgentLoop`` 로 가는 **유일한 공개 문**이다.
+
+    ★재발 방지: v9.11.0 이 ``monitor_registry`` 를 ``AgentLoop`` 에만 추가하고
+    ``run_loop`` 에는 빠뜨려, ``main.py`` 의 run·web 두 펌프가 첫 LLM 턴에서
+    ``TypeError: run_loop() got an unexpected keyword argument`` 로 죽었다.
+    **두 릴리스가 그 상태로 나갔다** — 유닛 테스트는 전부 ``AgentLoop`` 을
+    직접 만들고, 통합 테스트는 그 인자를 안 쓴다.
+    """
+
+    def test_forwards_every_agentloop_parameter(self):
+        import inspect
+
+        from agent_cli.loop import run_loop
+        from agent_cli.loop.core import AgentLoop
+
+        accepted = set(inspect.signature(run_loop).parameters)
+        needed = set(inspect.signature(AgentLoop.__init__).parameters) - {"self"}
+        missing = needed - accepted
+        assert not missing, (
+            f"run_loop 이 못 받는 AgentLoop 인자: {sorted(missing)} — "
+            "main.py 가 넘기는 순간 TypeError 로 죽는다"
+        )
+
+    def test_accepts_what_main_actually_passes(self):
+        """시그니처 일치만으로는 부족하다 — 실제 호출부가 쓰는 이름이
+        그 집합 안에 있는지까지 본다(오타·개명 회귀)."""
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from agent_cli.loop import run_loop
+
+        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
+        used: set[str] = set()
+        for node in ast.walk(ast.parse(src)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "run_loop"
+            ):
+                used |= {kw.arg for kw in node.keywords if kw.arg}
+        assert used, "main.py 에서 run_loop 호출을 못 찾았다 (테스트가 낡았다)"
+        unknown = used - set(inspect.signature(run_loop).parameters)
+        assert not unknown, (
+            f"main.py 가 넘기는데 run_loop 이 모르는 인자: {sorted(unknown)}"
+        )
+
+
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(
