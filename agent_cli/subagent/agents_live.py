@@ -770,35 +770,27 @@ class AgentRegistry:
             self._render_question(q)
         if q.to_human:
             return ""  # ❓ 트레이가 표면 — 배달할 inbox 가 없다 (§3.6)
-        if q.target == "main":
-            # main 에는 worker/inbox 가 없다 — 메일박스가 유일한 흡수 지점
-            # 이고, MailWaker 가 idle main 도 깨운다.
-            asker_tm = self._agents.get(q.asker)
-            self._push_reply(
-                {
-                    "kind": "question",
-                    "id": q.id,  # main 이 answer(id) 하려면 실려야 한다
-                    "key": q.asker,
-                    "profile": asker_tm.profile_name if asker_tm else "",
-                    "name": asker_tm.instance_name if asker_tm else "",
-                    "success": True,
-                    "output": q.text,
-                }
-            )
-            return ""
-        if q.target.startswith("agent:"):
-            author = "main" if q.asker == "main" else f"agent:{q.asker}"
-            # ``expects_reply=False`` — 상대가 이 항목을 처리한 **산출물**이
-            # asker 에게 되돌아가면 안 된다. 답은 ``answer`` 도구로만.
-            err = self.request(
-                q.target.split(":", 1)[1],
-                f"[question {q.id} from {q.asker}]: {q.text}",
-                author=author,
-                expects_reply=False,
-                question_id=q.id,
-            )
-            return err
-        return f"unroutable question target '{q.target}'"
+        if q.target != "main" and not q.target.startswith("agent:"):
+            return f"unroutable question target '{q.target}'"
+        asker_tm = self._agents.get(q.asker)
+        # ``expects_reply=False`` — 상대가 이 항목을 처리한 **산출물**이
+        # asker 에게 되돌아가면 안 된다. 답은 ``answer`` 도구로만.
+        return self.deliver(
+            q.target,
+            mail={
+                "kind": "question",
+                "id": q.id,  # main 이 answer(id) 하려면 실려야 한다
+                "key": q.asker,
+                "profile": asker_tm.profile_name if asker_tm else "",
+                "name": asker_tm.instance_name if asker_tm else "",
+                "success": True,
+                "output": q.text,
+            },
+            text=f"[question {q.id} from {q.asker}]: {q.text}",
+            author="main" if q.asker == "main" else f"agent:{q.asker}",
+            expects_reply=False,
+            question_id=q.id,
+        )
 
     def _render_question(self, q: Question) -> None:
         """대화 창 표면 — 사람이 먼저 보는 자리 (표시 전용, best-effort)."""
@@ -950,21 +942,15 @@ class AgentRegistry:
             + "\n"
             + "\n".join(f"  [{q.id}] (from {q.asker}) {q.text}" for q in live)
         )
-        if addr == "main":
-            # main 에는 inbox 가 없다 — 메일박스가 유일한 흡수 지점이고
-            # MailWaker 가 idle main 도 깨운다 (질문 배달과 같은 비대칭).
-            self._push_reply(
-                {
-                    "kind": "reminder",
-                    "key": live[0].asker,
-                    "success": True,
-                    "output": body,
-                }
-            )
-            return len(live)
-        self.request(
-            addr.split(":", 1)[1],
-            body,
+        self.deliver(
+            addr,
+            mail={
+                "kind": "reminder",
+                "key": live[0].asker,
+                "success": True,
+                "output": body,
+            },
+            text=body,
             # 발신자는 **기다리는 쪽**(asker)으로 — ``addr`` 은 이 런의
             # 주인 자신이라 창에서 "자기가 자기에게" 로 읽힌다. 여럿이
             # 기다리면 대표로 첫 asker 를 쓰되, 줄마다 누가 물었는지 적는다.
@@ -981,23 +967,22 @@ class AgentRegistry:
         ``_deliver_peer_reply``, main 이면 메일박스.
         """
         body = f"[answer to your question: {q.text}]\n{text}"
-        if q.asker == "main":
-            # main 에는 inbox 가 없다 — 메일박스로. (설계 3판 §3.3 은 이
-            # 경우를 빠뜨렸다: ``submit`` 의 대상은 상주 에이전트뿐이다.)
-            label = (
-                q.target.split(":", 1)[1] if q.target.startswith("agent:") else q.target
-            )
-            self._push_reply(
-                {
-                    "kind": "answer",
-                    "id": q.id,
-                    "key": label,
-                    "success": True,
-                    "output": body,
-                }
-            )
-            return
-        self.request(q.asker, body, author=q.target, expects_reply=True)
+        # main 에는 inbox 가 없다 — 메일박스로. (설계 3판 §3.3 은 이
+        # 경우를 빠뜨렸다: ``submit`` 의 대상은 상주 에이전트뿐이다.)
+        label = q.target.split(":", 1)[1] if q.target.startswith("agent:") else q.target
+        self.deliver(
+            q.asker if q.asker == "main" else f"agent:{q.asker}",
+            mail={
+                "kind": "answer",
+                "id": q.id,
+                "key": label,
+                "success": True,
+                "output": body,
+            },
+            text=body,
+            author=q.target,
+            expects_reply=True,
+        )
 
     def _purge_questions_for(self, key: str) -> None:
         """에이전트 사망 정리 — **양방향** (§3.8).
@@ -1279,6 +1264,49 @@ class AgentRegistry:
         self._log_conversation(tm, payload)
         self._notify_roster()
         return ""
+
+    def deliver(
+        self,
+        addr: str,
+        *,
+        mail: dict,
+        text: str,
+        author: str,
+        expects_reply: bool,
+        question_id: str = "",
+        hop: int = 0,
+    ) -> str:
+        """주소 하나로 배달 — 백엔드 둘. 에러 문자열 또는 "".
+
+        ``addr`` 은 질문·답·독촉이 이미 쓰던 어휘 그대로: ``"main"`` 또는
+        ``"agent:<key>"``. 종전엔 이 분기가 세 곳에 손으로 복제돼 있었다
+        (``_deliver_question``/``_deliver_answer``/``remind_owed``).
+
+        **두 백엔드는 나르는 것이 다르다** — 그래서 인자가 둘이다:
+
+        - main 에는 worker/inbox 가 없다. 메일박스가 유일한 흡수 지점이고
+          ``MailWaker`` 가 idle main 도 깨운다. 메일박스 아이템은 **구조**를
+          싣는다(``kind``/``id``/``key``/``profile`` — UI 렌더와 ``answer(id)``
+          가 그걸 읽는다). 그래서 ``mail``.
+        - 에이전트 inbox 는 **평문**을 싣는다. 항목 1개 = 런 1개이므로 상대가
+          idle 이어도 깨어난다. 그래서 ``text``.
+
+        둘이 같은 내용인 호출부(답·독촉)는 같은 문자열을 두 번 준다. 질문만
+        본문이 갈린다(main 은 질문 원문, 에이전트는 출처를 머리에 단 한 줄).
+        """
+        if addr == "main":
+            self._push_reply(mail)
+            return ""
+        if addr.startswith("agent:"):
+            return self.request(
+                addr.split(":", 1)[1],
+                text,
+                author=author,
+                expects_reply=expects_reply,
+                question_id=question_id,
+                hop=hop,
+            )
+        return f"unroutable address '{addr}'"
 
     def _push_reply(self, reply: dict) -> None:
         with self._cv:
