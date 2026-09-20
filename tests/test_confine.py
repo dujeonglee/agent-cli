@@ -214,7 +214,7 @@ class TestGuardPromptFlow:
 
 class TestExtractShellPaths:
     def test_absolute_path(self):
-        assert _confine.extract_shell_paths("cat /etc/passwd") == ["/etc/passwd"]
+        assert _confine.extract_shell_paths("rm /etc/passwd") == ["/etc/passwd"]
 
     def test_flag_attached_path(self):
         # -C/usr/src and -I/usr/include: the path rides on the flag.
@@ -229,14 +229,14 @@ class TestExtractShellPaths:
         assert _confine.extract_shell_paths("prog --dir=/opt/tool") == ["/opt/tool"]
 
     def test_home_path(self):
-        assert _confine.extract_shell_paths("cat ~/secrets") == ["~/secrets"]
+        assert _confine.extract_shell_paths("rm ~/secrets") == ["~/secrets"]
 
     def test_dotdot_escape(self):
-        assert _confine.extract_shell_paths("cat ../../etc/x") == ["../../etc/x"]
+        assert _confine.extract_shell_paths("rm ../../etc/x") == ["../../etc/x"]
 
     def test_bare_relative_not_extracted(self):
         # Resolves inside the workspace → never gates → not a candidate.
-        assert _confine.extract_shell_paths("cat foo.txt src/main.c") == []
+        assert _confine.extract_shell_paths("rm foo.txt src/main.c") == []
 
     def test_no_paths(self):
         assert _confine.extract_shell_paths("echo hello && ls -la") == []
@@ -252,15 +252,13 @@ class TestExtractShellPaths:
     def test_blind_spot_variable_not_caught(self):
         # DOCUMENTED LIMITATION: a path hidden behind a shell variable is
         # unknown at parse time. Not caught — needs an OS sandbox.
-        assert _confine.extract_shell_paths("cat $SECRET_FILE") == []
+        assert _confine.extract_shell_paths("rm $SECRET_FILE") == []
 
     def test_command_substitution_leaks_token_safely(self):
         # $(...) is NOT a blind spot in the simple case: shlex spills the inner
         # absolute path as a token (with a trailing ')'), so it still gates.
         # Over-triggering is the safe side — we'd rather prompt than miss.
-        assert _confine.extract_shell_paths("echo $(cat /etc/passwd)") == [
-            "/etc/passwd)"
-        ]
+        assert _confine.extract_shell_paths("rm $(cat /etc/passwd)") == ["/etc/passwd)"]
 
 
 # ── tool integration ───────────────────────────────────────
@@ -303,7 +301,7 @@ class TestToolIntegration:
         assert "outside the workspace" in (r.error or "")
 
     def test_shell_outside_path_refused_no_tty(self, confined):
-        r = tool_shell({"command": "cat /etc/passwd"})
+        r = tool_shell({"command": "cp x /etc/passwd"})
         assert not r.success
         assert "outside the workspace" in (r.error or "")
 

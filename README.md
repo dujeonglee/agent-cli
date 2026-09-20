@@ -217,7 +217,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
-| `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
+| `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 + 민감 경로 사전 (기본 on). `0` 으로 끄면 둘 다 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | — | headless(run·harbor) thinking 제어: `off`/`on` (미설정=모델 기본). web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
@@ -243,7 +243,14 @@ agent-cli run "task" -m gpt-4o-mini
 - **대상**: `write_file`, `edit_file`, `shell`. **`read_file` 은 봉쇄하지 않습니다** —
   드라이버/커널 작업은 커널 소스·툴체인·헤더를 워크스페이스 밖에서 대량으로 읽으므로,
   읽기까지 물으면 프롬프트 폭풍이 되어 사용자가 "always" 를 남발하게 됩니다.
+  (읽기는 대신 아래 **민감 경로 사전**이 봅니다.)
 - **shell**: 명령에서 절대경로·`../` 탈출 토큰을 **best-effort** 로 추출해 검사합니다.
+  추출은 **2단계**입니다 — ① 배칭된 명령(`&&`/`|`/`;`)을 갈라 각 세그먼트가 파일을
+  바꿀 수 있는지 보고 ② 바꿀 수 있는 것에서만 경로를 뽑습니다. 그래서
+  `sed -n '/^start/,/^end/p'` 의 **주소 정규식**이나 `grep '/api/'` 의 패턴은 더 이상
+  경로로 오인되지 않습니다. 모르는 명령은 "바꿀 수 있음"으로 보므로 목록이
+  불완전해도 구멍이 생기지 않고, `sed -i`·`find -delete`·`sort -o` 와 리다이렉션은
+  읽기 판정을 이깁니다.
   `$(...)`·`python -c "..."`·셸 변수(`$FILE`) 안에 숨은 경로는 못 잡습니다 —
   이건 사고 방지용 speed bump 이지 샌드박스가 아닙니다(진짜 격리는 OS 샌드박스 필요).
   확인 창에는 명령이 표시되고 **워크스페이스 밖 경로가 강조**됩니다 (위험 키워드
@@ -254,6 +261,28 @@ agent-cli run "task" -m gpt-4o-mini
   (멈추지 않음). 배치/CI 에서는 `AGENT_CLI_WORKSPACE_CONFINE=0` 으로 끄세요.
 - **루트**: 기본은 프로세스 실행 디렉토리. `AGENT_CLI_WORKSPACE_ROOT` 로 override.
   agent-board 는 각 인스턴스를 그 게시물 워크스페이스에서 spawn 하므로 그대로 맞습니다.
+
+### 민감 경로 사전
+
+봉쇄가 **경계**를 본다면, 사전은 **무엇을 읽느냐**를 봅니다. 자격증명으로 알려진
+경로는 워크스페이스 안이든 밖이든, 읽기든 쓰기든 확인을 받습니다.
+
+- **대상**: `shell` 과 **`read_file` 둘 다**. `cat ~/.ssh/id_rsa` 는 묻는데 도구로는
+  조용히 읽힌다면 그건 일관성이 아니라 우연입니다.
+- **무엇이 들어 있나**: 자격증명 디렉터리(`~/.ssh` `~/.aws` `~/.gnupg`
+  `~/.config/gcloud` `~/.azure` `~/.kube` 키체인/키링 `~/.password-store`
+  `~/.config/op`) · 상시 읽는 디렉터리 **안의 정확한 파일**(`~/.docker/config.json`
+  `~/.npmrc` `~/.cargo/credentials.toml` `~/.config/gh/hosts.yml` `~/.netrc`
+  셸·DB 히스토리 `/etc/shadow` 계열) · 비밀키 파일명(`id_rsa` 계열 — `.pub` 제외,
+  `privkey.pem`, `*.p12`/`*.pfx`/`*.jks`) · **agent-cli 자신의
+  `~/.agent-cli/config.json`**(여기에 `api_key` 가 있습니다).
+- **일부러 넣지 않은 것**: `.env`(에이전트는 보통 그 `.env` 를 가진 프로젝트를
+  작업 중입니다) · `*.pem`(CA 번들이 지천) · `*.key`(macOS 에선 Keynote 문서) ·
+  `~/.zshrc`(실제 유출 벡터지만 PATH 디버깅으로 매일 읽습니다) ·
+  `~/.config/`·`~/.cargo/` 같은 **디렉터리**(툴체인·캐시). **오탐 하나가 게이트
+  전체를 무의미하게 만들기 때문**입니다 — 정밀도가 재현율보다 중요합니다.
+- **macOS**: `/etc`→`/private/etc` 심볼릭, `/System/Volumes/Data/...` firmlink,
+  APFS 대소문자 무시를 모두 정규화해 비교합니다(셋 다 실제 우회 경로였습니다).
 
 ## 모델 권장 사양
 

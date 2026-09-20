@@ -257,6 +257,17 @@ def _read_one(
     except (ValueError, TypeError):
         line_start, line_end, context = 0, 0, _DEFAULT_SEARCH_CONTEXT
 
+    # 민감 경로 게이트 (v9.9.2) — read_file 은 **워크스페이스 봉쇄 대상이 아니다**
+    # (밖 헤더·툴체인을 대량으로 읽으므로 프롬프트 폭풍이 된다). 하지만
+    # 자격증명 사전은 건다: `cat ~/.ssh/id_rsa` 는 묻는데 이 도구로는 무음으로
+    # 읽히면 그건 일관성이 아니라 우연이다. 축 하나만 보도록
+    # `check_workspace=False`.
+    from agent_cli.tools._confine import guard as _path_guard
+
+    denied = _path_guard([path], "read_file", check_workspace=False)
+    if denied:
+        return ToolResult(False, error=denied)
+
     try:
         text = Path(path).read_text(encoding="utf-8")
         all_lines = text.split("\n")
