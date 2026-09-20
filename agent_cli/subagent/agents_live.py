@@ -111,9 +111,10 @@ _MAX_QUESTION_NAGS = 6
 
 # 런이 끝났는데 답 안 한 질문이 있을 때 다시 거는 항목의 머리말.
 _OWED_REMINDER = (
-    "(reminder) You have not answered the question(s) below. Answer each with "
-    "the `answer` tool (id, text) — they are blocking whoever asked. If you "
-    "genuinely cannot answer, say so with `answer` rather than ignoring it."
+    "(reminder) These question(s) are still waiting for your answer. Answer "
+    "each with the `answer` tool (id, text). Nothing is blocked on you — the "
+    "asker kept working — but they cannot finish the part that depends on it. "
+    "If you genuinely cannot answer, say so with `answer` rather than ignoring."
 )
 
 
@@ -336,6 +337,17 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "success": True,
             "content": content,
             "source": "agent_question",
+        }
+
+    if reply.get("kind") == "reminder":
+        # 미답 질문 독촉 (§3.4) — 상주 에이전트가 inbox 항목으로 받는 것을
+        # main 은 메일박스로 받는다. 새 일감이 아니라 빚 통지다.
+        return {
+            "role": "user",
+            "tool": "agent",
+            "success": True,
+            "content": reply.get("output") or "(empty reminder)",
+            "source": "agent_reminder",
         }
 
     if reply.get("kind") == "answer":
@@ -870,14 +882,19 @@ class AgentRegistry:
             q.nags += 1
             return q.nags
 
-    def remind_owed(self, key: str) -> int:
-        """런이 끝났는데 답 안 한 질문이 있으면 **독촉 런을 하나 건다**.
+    def remind_owed(self, addr: str) -> int:
+        """런이 끝났는데 답 안 한 질문이 있으면 **독촉을 하나 건다**.
+
+        ``addr`` 은 질문의 주소 어휘 그대로 — ``"main"`` 또는
+        ``"agent:<key>"``. 계산·상한·닫기는 둘이 완전히 같고, 다른 것은
+        배달 한 줄뿐이다(에이전트는 inbox 항목, main 은 메일박스 —
+        ``_deliver_question`` 과 같은 비대칭).
 
         ``complete`` 을 붙잡지 않는다 (DESIGN.md §3.4). 붙잡으면 그 런에
         일을 시킨 쪽이 **자기와 무관한 질문이 풀릴 때까지** 결과를 못 받는다
         — 없애려던 결합이 그대로 돌아온다. 대신 결과는 그대로 나가고,
-        남은 빚은 **새 inbox 항목 = 새 런**으로 다시 온다. 답이 오는 경로와
-        정확히 같은 기계라 dispatch 는 한 줄도 안 바뀐다.
+        남은 빚은 **새 항목 = 새 런**으로 다시 온다. 답이 오는 경로와
+        정확히 같은 기계라 ``dispatch.py`` 는 한 줄도 안 바뀐다.
 
         스코프 축은 **배달 여부**(``delivered_seq is not None``)지 seq 동치가
         아니다. 아직 큐에 서 있는 질문은 제외되지만(그 런이 읽지도 않은
@@ -885,29 +902,58 @@ class AgentRegistry:
         다시 온다 — seq 동치로 좁히면 독촉이 딱 한 번 나가고 끝나 상한조차
         영영 안 걸린다.
 
+        **독촉 런 끝에서도 독촉한다.** 한때 ``item["reminder"]`` 로 그걸
+        막았는데, 그 차단이 만든 정지가 훨씬 나빴다: 독촉 1회 뒤 그 에이전트
+        에게 일이 안 오면 ``nags`` 가 1에 멈춰 상한이 영영 안 걸리고 질문이
+        영원히 열린다. 차단의 근거였던 "수 밀리초에 상한 6이 탄다"는 **가짜
+        러너가 즉시 반환하기 때문**이고, 실제로는 독촉 런 하나가 질문을
+        컨텍스트에 놓고 도는 진짜 LLM 턴이다. 게다가 inbox 는 FIFO 라 독촉이
+        큐 뒤에 붙어 실제 일감을 굶기지 않는다.
+
         상한(``_MAX_QUESTION_NAGS``)을 넘으면 사유와 함께 닫는다 — 모델이
         끝내 안 답해도 asker 가 영원히 기다리지는 않는다. 반환값은 건 독촉
         수(0 이면 빚 없음).
         """
-        owed = self.questions_owed_by(f"agent:{key}")
+        owed = self.questions_owed_by(addr)
         if not owed:
             return 0
         live = []
         for q in owed:
-            if self.bump_question_nag(q.id) > _MAX_QUESTION_NAGS:
+            n = self.bump_question_nag(q.id)
+            if n == 0:
+                # 스냅샷과 bump 사이에 답이 들어왔다 — 0 은 "그런 질문 없음"
+                # 이고 살아 있는 질문은 언제나 ≥1 이라 모호하지 않다.
+                continue
+            if n > _MAX_QUESTION_NAGS:
                 self.close_question(q.id, "no answer after repeated reminders")
             else:
                 live.append(q)
         if not live:
             return 0
-        lines = "\n".join(f"  [{q.id}] {q.text}" for q in live)
+        body = (
+            _OWED_REMINDER
+            + "\n"
+            + "\n".join(f"  [{q.id}] (from {q.asker}) {q.text}" for q in live)
+        )
+        if addr == "main":
+            # main 에는 inbox 가 없다 — 메일박스가 유일한 흡수 지점이고
+            # MailWaker 가 idle main 도 깨운다 (질문 배달과 같은 비대칭).
+            self._push_reply(
+                {
+                    "kind": "reminder",
+                    "key": live[0].asker,
+                    "success": True,
+                    "output": body,
+                }
+            )
+            return len(live)
         self.submit(
-            key,
-            f"{_OWED_REMINDER}\n{lines}",
-            # 발신자는 **기다리는 쪽**(asker)으로 — ``target`` 은 이 런의
-            # 주인 자신이라 창에서 "자기가 자기에게" 로 읽힌다.
+            addr.split(":", 1)[1],
+            body,
+            # 발신자는 **기다리는 쪽**(asker)으로 — ``addr`` 은 이 런의
+            # 주인 자신이라 창에서 "자기가 자기에게" 로 읽힌다. 여럿이
+            # 기다리면 대표로 첫 asker 를 쓰되, 줄마다 누가 물었는지 적는다.
             author="main" if live[0].asker == "main" else f"agent:{live[0].asker}",
-            reminder=True,
             expects_reply=False,  # 독촉의 산출물은 어디로도 가지 않는다
         )
         return len(live)
@@ -1135,7 +1181,6 @@ class AgentRegistry:
         hop: int = 0,
         expects_reply: bool = True,
         question_id: str = "",
-        reminder: bool = False,
     ) -> tuple[str, str]:
         """request 큐잉 또는 **ask 답변 배달** — ``(error, verdict)``.
 
@@ -1149,7 +1194,6 @@ class AgentRegistry:
         여덟 곳은 무변경이다.
 
         ``question_id``: 이 아이템이 질문이면 그 id — 런 스코프 마킹용.
-        ``reminder``: 미답 질문 독촉 항목인가 — 독촉의 연쇄를 끊는다.
 
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
@@ -1196,10 +1240,6 @@ class AgentRegistry:
             # 찍는다 — 표시 문자열 ``[question q-xxx …]`` 를 파싱하지
             # 않는다(문구가 계약이 되면 못 고친다).
             "question_id": question_id,
-            # 이 항목이 **독촉**이면 True — 독촉 런 끝에서는 또 독촉하지
-            # 않는다. 안 그러면 답 않는 모델에게 독촉이 연쇄해 상한까지
-            # 수 밀리초에 타버리고, 질문은 "무응답" 으로 닫힌다.
-            "reminder": reminder,
             # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
             # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
             # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
@@ -1380,10 +1420,22 @@ class AgentRegistry:
         return handler
 
     def drain_replies(self) -> list[dict]:
-        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
+        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지.
+
+        main 에게는 여기가 **질문의 배달 시점**이다 — 상주 에이전트의
+        ``_handle_request`` 가 inbox 항목을 꺼낼 때 하는 일과 같은 자리.
+        안 찍으면 ``questions_owed_by("main")`` 이 영영 비어 main 은 독촉도
+        상한도 못 받고, §3.7 로 보류된 회신이 영구 정지한다. main 은 런
+        seq 가 없으므로 0 으로 찍는다 (판정 축은 None 여부).
+        """
         with self._cv:
             out = list(self._pending)
             self._pending.clear()
+            for r in out:
+                if r.get("kind") == "question" and r.get("id"):
+                    q = self._questions.get(r["id"])
+                    if q is not None and q.delivered_seq is None:
+                        q.delivered_seq = 0
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
         return out
@@ -1829,6 +1881,9 @@ class AgentRegistry:
                         self._handle_human_batch(tm, batch, renderer, _disp)
                 else:
                     self._handle_request(tm, item, renderer, _disp)
+                # 미답 질문 독촉은 **런이 끝났다**는 사실에 붙는다 — 세 갈래가
+                # 수렴하는 여기 한 곳에 둬야 핸들러가 늘어도 안 빠진다.
+                self.remind_owed(f"agent:{tm.key}")
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -1916,17 +1971,11 @@ class AgentRegistry:
                 duration_s=duration,
                 error="" if success else output[:200],
             )
-        # ── 비동기 질문 마무리 (DESIGN.md §3.4·§3.6·§3.7) ──
-        # ① 이 런이 꺼내 읽고도 안 답한 질문이 있으면 **독촉 런**을 건다.
-        #    런을 붙잡지 않으므로 종료 경로를 가리지 않는다 — complete 이든
-        #    max_turns·LLM 실패·중단이든 여기를 지난다. **독촉 런 뒤에는
-        #    독촉하지 않는다**: 답 않는 모델에게 연쇄해 상한이 수 밀리초에
-        #    타버린다. 사용자 표현대로 '있던 런의 post turn prompt' 지,
-        #    독촉용 런을 연달아 만드는 게 아니다 — 다음 실제 일감 끝에 다시 온다.
-        if not item.get("reminder"):
-            self.remind_owed(tm.key)
-        # ② 이 런에서 **건** 질문 중 아직 열린 것 (asked_seq 로 좁힌다 —
-        #    다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
+        # ── 비동기 질문 마무리 (DESIGN.md §3.6·§3.7) ──
+        # 독촉은 여기가 아니라 **워커 루프**에 있다 — 런이 끝났다는 사실에
+        # 붙는 것이라 핸들러마다 두면 빠진다(실제로 배치 경로에서 빠졌다).
+        # 이 런에서 **건** 질문 중 아직 열린 것 (asked_seq 로 좁힌다 —
+        # 다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
         still_open = self.questions_asked_in(tm.key, seq)
         human_open = [q for q in still_open if q.to_human]
         if human_open:

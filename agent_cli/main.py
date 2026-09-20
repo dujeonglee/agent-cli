@@ -1457,6 +1457,13 @@ def run(
         )
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
+        if agent_registry.stale_questions:
+            # resume 은 질문을 되살리지 않는다(asker 의 런이 없어 답을 받을
+            # 주체가 없다) — 몇 건이 사라졌는지만 알린다. 저장하는 유일한 이유.
+            console.print(
+                f"[{C['muted']}]❓ 미답 질문 {agent_registry.stale_questions}건은 "
+                f"세션 종료로 사라졌습니다 — 필요하면 다시 요청하세요[/]"
+            )
         if auto:
             console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
@@ -1538,6 +1545,11 @@ def run(
                     agent_registry.question_port(None) if agent_registry else None
                 ),
             )
+            # main 의 런도 끝났다 — 답 안 한 질문이 있으면 메일박스로
+            # 독촉이 오고, 다음 턴 경계에 관찰로 배달된다. 상주 에이전트가
+            # 워커 루프에서 하는 것과 같은 자리·같은 함수 (DESIGN.md §3.4).
+            if agent_registry is not None:
+                agent_registry.remind_owed("main")
             if loop_result.success:
                 answer = loop_result.output
 
@@ -1667,7 +1679,7 @@ def _previous_monitors_notice(session_dir) -> str:
     )
 
 
-def _announce_agent_boot(renderer, revived: int, auto: int) -> None:
+def _announce_agent_boot(renderer, revived: int, auto: int, stale: int = 0) -> None:
     """web 부트스트랩의 teammate 재생성/auto-spawn 알림.
 
     v4.60.1 사고의 재발 방지 지점: 인라인 status() 오호출(시그니처)이
@@ -1676,6 +1688,9 @@ def _announce_agent_boot(renderer, revived: int, auto: int) -> None:
     """
     if revived:
         renderer.status("running", f"🤝 상주 에이전트 {revived}명 재생성됨")
+    if stale:
+        # §3.9 — 되살리지 않고 건수만 알린다.
+        renderer.status("running", f"❓ 미답 질문 {stale}건은 세션 종료로 사라졌습니다")
     if auto:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
 
@@ -2367,7 +2382,7 @@ def web(
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
         )
-        _announce_agent_boot(renderer, revived, auto)
+        _announce_agent_boot(renderer, revived, auto, agent_registry.stale_questions)
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
         if _mon_notice:
             renderer.status("running", _mon_notice)
@@ -2501,6 +2516,9 @@ def web(
                         )
 
                     _run_main(message, nickname)
+                    # run 경로와 동일 — main 의 런 끝에서 미답 질문 독촉.
+                    if agent_registry is not None:
+                        agent_registry.remind_owed("main")
 
                 except Exception as exc:
                     # Push the error into the renderer so the frontend
