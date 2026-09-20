@@ -90,6 +90,31 @@ def _allowlisted(resolved: Path) -> bool:
 # workspace: an absolute path (``/…`` or ``~/…``) or an explicit ``..`` escape.
 # Bare relative names (``foo.txt``, ``src/main.c``) resolve INSIDE the workspace
 # so they never gate; we only pull out tokens that could point outside.
+def _is_line_comment(t: str) -> bool:
+    """``//`` 로 시작하는 **주석**인가 — 경로가 아니다 (v9.11.1, 사용자 제보).
+
+    C/C++/Java/JS/Go 주석이 셸 명령에 섞이면(``echo '// note' >> x.c``,
+    ``rm /tmp/x  // 주석``) 토큰이 ``/`` 로 시작해 경로 후보가 됐고, ``//`` 는
+    POSIX 에서 ``/`` 로 풀려 **"워크스페이스 밖"** 확인이 떴다.
+
+    **``//etc/passwd`` 는 제외하면 안 된다** — 셸이 실제로 ``/private/etc/passwd``
+    로 풀어 쓰기 때문이다(실측). 그래서 ``//`` 접두를 통째로 버리지 않고 **둘만**
+    거른다:
+
+    1. 슬래시만 있는 토큰(``//``, ``///``) — 가리키는 대상이 없다. 맨 ``/`` 를
+       후보에서 빼는 것과 같은 판단이다.
+    2. ``//`` 바로 뒤가 공백 — 주석 표기이지 경로 구분자일 수 없다.
+
+    남는 틈: ``//주석`` 처럼 공백 없이 붙여 쓴 주석은 ``//etc`` 와 문자열로
+    구별되지 않아 여전히 후보다. 대부분의 주석 스타일이 ``//`` 뒤에 공백을
+    두므로 실전 빈도가 낮고, 반대 방향(진짜 경로를 놓치는 것)이 더 나쁘다.
+    """
+    if not t.startswith("//"):
+        return False
+    rest = t[2:]
+    return rest.strip("/") == "" or rest[:1].isspace()
+
+
 def _path_candidate(tok: str) -> str | None:
     t = tok.strip("'\"").lstrip("<>")
     # --flag=/path  →  /path
@@ -102,6 +127,8 @@ def _path_candidate(tok: str) -> str | None:
         if not t:
             return None
     if not t:
+        return None
+    if _is_line_comment(t):
         return None
     if t.startswith(("/", "~/")) or t == "~":
         return t

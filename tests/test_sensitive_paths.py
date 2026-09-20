@@ -246,6 +246,59 @@ class TestReadOnlyCommandsDoNotGate:
         assert _confine.extract_shell_paths("awk -F/ '{print}' f") == []
 
 
+class TestLineCommentsAreNotPaths:
+    """``//`` 주석이 경로로 오인되던 것 (v9.11.1, 사용자 제보).
+
+    C/C++/Java/JS/Go 주석이 셸 명령에 섞이면 토큰이 ``/`` 로 시작해 경로
+    후보가 되고, ``//`` 는 POSIX 에서 ``/`` 로 풀려 **"워크스페이스 밖"**
+    확인이 떴다. 2단계(읽기/쓰기 판정)는 읽기 명령만 걸러 줬을 뿐이라
+    ``echo '// …' >> x.c`` 처럼 리다이렉션이 있으면 그대로 남았다.
+
+    **``//etc/passwd`` 를 함께 버리면 안 된다** — 셸이 실제로
+    ``/private/etc/passwd`` 로 풀어 쓴다(실측). 그래서 접두를 통째로 버리지
+    않고 "슬래시뿐" 과 "``//`` 뒤 공백" 둘만 거른다."""
+
+    COMMENT = "// —— difficulty dispatch: hard takes win, unknown -> medium ——"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "echo '{c}' >> src/dispatch.c",  # 리다이렉션 → 쓰기로 판정되던 경로
+            "sed -i '$a {c}' src/dispatch.c",
+            "printf '%s\\n' '{c}' > /dev/null",
+            "rm //",
+            "rm ///",
+        ],
+    )
+    def test_comment_tokens_are_not_candidates(self, cmd):
+        got = _confine.extract_shell_paths(cmd.format(c=self.COMMENT))
+        assert all(not g.startswith("//") for g in got), f"주석이 경로로 잡혔다: {got}"
+
+    def test_trailing_comment_does_not_add_a_candidate(self):
+        """``rm /tmp/x  // 주석`` — 진짜 경로는 남고 ``//`` 만 빠진다."""
+        assert _confine.extract_shell_paths("rm /tmp/x  // 주석") == ["/tmp/x"]
+
+    @pytest.mark.parametrize(
+        "cmd", ["cp x //etc/passwd", "tee //etc/hosts", "rm -rf //usr/local/lib"]
+    )
+    def test_double_slash_paths_are_still_gated(self, cmd):
+        """**여기가 핵심 회귀 가드다.** 셸은 ``//etc`` 를 ``/etc`` 로 푼다 —
+        ``//`` 접두를 통째로 버렸다면 조용한 우회가 됐을 것이다."""
+        got = _confine.extract_shell_paths(cmd)
+        assert got and got[0].startswith("//"), f"이중 슬래시 경로를 놓쳤다: {cmd}"
+
+    def test_double_slash_path_resolves_to_the_real_target(self):
+        """추출만 되고 해소가 틀리면 소용없다."""
+        resolved, inside = _confine.resolve_within("//etc/passwd")
+        assert not inside and resolved == pathlib.Path("/etc/passwd").resolve()
+
+    def test_known_gap_is_documented(self):
+        """``//주석`` 처럼 공백 없이 붙인 주석은 ``//etc`` 와 문자열로 구별되지
+        않아 여전히 후보다 — 알고 남긴 틈이라 계약으로 고정한다(반대 방향,
+        즉 진짜 경로를 놓치는 쪽이 더 나쁘다)."""
+        assert _confine.extract_shell_paths("rm //주석") == ["//주석"]
+
+
 # ── 2단계 셸 추출: 배칭 ─────────────────────────────────────
 
 
