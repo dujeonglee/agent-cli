@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -769,3 +770,308 @@ class TestReminderRace:
         reg.questions_owed_by = lambda addr: [ghost]  # 스냅샷만 낡았다
         assert reg.remind_owed("main") == 0
         assert reg.drain_replies() == []
+
+
+# ── §3.7 회신 신선도 ────────────────────────────
+
+
+class Replies:
+    """``drain_replies`` 는 비우므로 누적해서 본다."""
+
+    def __init__(self, reg):
+        self.reg = reg
+        self.seen = []
+
+    def all(self):
+        self.seen.extend(self.reg.drain_replies())
+        return self.seen
+
+    def kinds(self, kind="reply"):
+        return [r for r in self.all() if r.get("kind") == kind]
+
+
+class TestReplyFreshness:
+    """질문을 건 런은 요청자 채널로 **재주입하지 않는다**.
+
+    보장하는 성질은 "회신이 정확히 한 번" 이 아니라 **"회신이 낡지
+    않는다"** 다. 부분 회신은 *답이 존재하기 전에* 만들어졌는데 *답을 보낸
+    뒤에* 도착해서, 요청자가 자기 답이 반영된 상태로 오독한다 — peer 면
+    inbox 항목 1개 = 런 1개라 잘못된 하위 작업이 실제로 돌아간다.
+    """
+
+    def test_answer_arriving_before_run_end_still_yields_one_reply(
+        self, mkreg, renderer
+    ):
+        """**이 판정이 바뀐 이유.** 비동기라 답은 보통 묻던 런이 끝나기
+        *전에* 온다. "아직 열려 있나" 로 판정하면 그때 질문이 이미 닫혀
+        있어 억제가 안 걸리고 낡은 부분 회신이 나간다 — 막으려던 상황이
+        정상 경로다."""
+        hold = threading.Event()
+        reg = mkreg()
+        box = {}
+
+        def runner(query, ctx, **kw):
+            if "일감" in query:
+                box["qid"], err = reg.register_question(b, "main", "어느 쪽?")
+                assert not err
+                hold.wait(5)  # 이 런이 끝나기 전에 답이 들어온다
+                return _FakeLoopResult(output="부분 결과"), 0.01
+            return _FakeLoopResult(output="완성"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "일감")  # seq 1
+        assert wait_until(lambda: "qid" in box)
+        assert wait_until(lambda: any(r.get("kind") == "question" for r in rep.all()))
+
+        assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
+        hold.set()  # 이제 런 1 이 끝난다 — 질문은 이미 닫혀 있다
+
+        assert wait_until(lambda: len(rep.kinds()) == 1, timeout=5.0)
+        (only,) = rep.kinds()
+        assert only["output"] == "완성"  # 낡은 "부분 결과" 가 아니다
+        assert only["seq"] == 2  # 답 런의 회신
+        time.sleep(0.15)
+        assert len(rep.kinds()) == 1  # 뒤늦게 하나 더 오지 않는다
+
+    def test_answer_arriving_after_run_end_still_yields_one_reply(
+        self, mkreg, renderer
+    ):
+        """반대 순서(종전 조건이 잡던 경우)도 그대로여야 한다."""
+        reg = mkreg()
+        box = {}
+
+        def runner(query, ctx, **kw):
+            if "일감" in query:
+                box["qid"], _ = reg.register_question(b, "main", "어느 쪽?")
+                return _FakeLoopResult(output="부분 결과"), 0.01
+            return _FakeLoopResult(output="완성"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "일감")
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert rep.kinds() == []  # 런 1 은 회신을 안 밀었다
+
+        assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
+        assert wait_until(lambda: len(rep.kinds()) == 1)
+        assert rep.kinds()[0]["output"] == "완성"
+
+    def test_answer_run_reply_reaches_a_peer_requester(self, mkreg, renderer):
+        """억제의 대가는 **답 런이 원 요청자에게 도달한다**는 것이다 —
+        여기가 무너지면 요청자는 아무것도 못 받는다.
+
+        A 가 자기 질문 런 안에서 바로 답한다. 늦게 답하면 가짜 러너가
+        즉시 반환해 독촉 상한이 밀리초에 타 버린다(실제 모델은 런 하나가
+        초 단위라 생기지 않는 경합).
+        """
+        reg = mkreg()
+        from_b, asked = [], []
+
+        def runner(query, ctx, **kw):
+            if "[question q-" in query:  # A 가 질문을 받았다 → 즉답
+                qid = query.split("[question ")[1].split(" ")[0]
+                assert reg.answer_question(qid, "v2", by=f"agent:{a}") == ""
+                return _FakeLoopResult(output="A 가 답함"), 0.01
+            if "[answer to your question" in query:  # B 의 답 런
+                return _FakeLoopResult(output="B 완성"), 0.01
+            if query.startswith(f"[agent:{b}]"):  # A 가 받은 B 의 최종 회신
+                from_b.append(query)
+                return _FakeLoopResult(output="A 수신"), 0.01
+            asked.append(reg.register_question(b, f"agent:{a}", "정책?"))
+            return _FakeLoopResult(output="부분"), 0.01
+
+        reg._runner = runner
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.submit(b, "리팩터", author=f"agent:{a}", expects_reply=True)
+
+        assert wait_until(lambda: len(from_b) == 1, timeout=5.0)
+        assert "B 완성" in from_b[0]
+        assert "부분" not in from_b[0]  # 낡은 부분 결과는 A 를 깨우지 않았다
+        time.sleep(0.15)
+        assert len(from_b) == 1  # 두 번 깨우지도 않는다
+
+    def test_run_without_a_question_replies_normally(self, mkreg, renderer):
+        reg = mkreg()
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "평범한 일감")
+        assert wait_until(lambda: len(rep.kinds()) == 1)
+
+    def test_failed_registration_does_not_withhold(self, mkreg, renderer):
+        """등록이 실패하면 답 런이 안 생긴다 — 거기에 억제를 걸면 그 런의
+        회신이 **영영 사라진다**. 그래서 플래그는 배달 성공 뒤에 세운다."""
+        reg = mkreg()
+
+        def runner(query, ctx, **kw):
+            qid, err = reg.register_question(b, f"agent:{dead}", "죽은 상대에게")
+            assert not qid and "dead" in err
+            return _FakeLoopResult(output="그래도 끝냈다"), 0.01
+
+        reg._runner = runner
+        b, dead = spawn_idle(reg), spawn_idle(reg)
+        reg.kill(dead)
+        rep = Replies(reg)
+        reg.request(b, "일감")
+        assert wait_until(lambda: len(rep.kinds()) == 1)
+        assert rep.kinds()[0]["output"] == "그래도 끝냈다"
+
+    def test_flag_is_per_run(self, mkreg, renderer):
+        """플래그가 런 경계에서 안 지워지면 이후 모든 회신이 사라진다."""
+        reg = mkreg()
+        calls = []
+
+        def runner(query, ctx, **kw):
+            calls.append(query)
+            if len(calls) == 1:
+                reg.register_question(b, "main", "첫 런의 질문")
+            return _FakeLoopResult(output=f"out{len(calls)}"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "일감 1")
+        assert wait_until(lambda: len(calls) == 1)
+        reg.request(b, "일감 2")
+        assert wait_until(lambda: len(calls) == 2)
+        assert wait_until(lambda: len(rep.kinds()) == 1)
+        assert rep.kinds()[0]["output"] == "out2"  # 두 번째 런은 밀었다
+
+    def test_capped_question_still_produces_a_reply(self, mkreg, renderer):
+        """아무도 답하지 않아도 상한이 질문을 닫고, 그 닫힘이 답 런을
+        만들어 회신을 보낸다 — 억제가 **영구 보류**가 되지 않는다.
+
+        주소를 peer 로 둔다: 주소가 main 이면 독촉을 거는 주체가 main 펌프
+        뿐이라 테스트에는 없고, 상한이 구조적으로 안 걸린다.
+        """
+        reg = mkreg()
+        from_b, asked = [], []
+
+        def runner(query, ctx, **kw):
+            if "[question q-" in query:
+                return _FakeLoopResult(output="A 는 답하지 않는다"), 0.01
+            if "(reminder)" in query:
+                return _FakeLoopResult(output="A 는 여전히 답하지 않는다"), 0.01
+            if "[answer to your question" in query:
+                return _FakeLoopResult(output="B 마무리"), 0.01
+            if query.startswith(f"[agent:{b}]"):
+                from_b.append(query)
+                return _FakeLoopResult(output="A 수신"), 0.01
+            asked.append(reg.register_question(b, f"agent:{a}", "영영 무응답"))
+            return _FakeLoopResult(output="부분"), 0.01
+
+        reg._runner = runner
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.submit(b, "리팩터", author=f"agent:{a}", expects_reply=True)
+
+        assert wait_until(lambda: reg._questions == {}, timeout=10.0)  # 상한이 닫음
+        assert wait_until(lambda: len(from_b) == 1, timeout=10.0)
+        # A 가 받는 것은 닫힘 사유가 아니라 **그 사유를 보고 B 가 마무리한
+        # 결과**다 — 사유는 B 에게 답으로 들어가고, B 의 답 런이 회신한다.
+        assert "B 마무리" in from_b[0]
+        assert "부분" not in from_b[0]
+        time.sleep(0.15)
+        assert len(from_b) == 1
+
+    def test_two_questions_in_one_run_give_two_fresh_replies(self, mkreg, renderer):
+        """한 런이 둘을 물으면 답 런도 둘, 회신도 둘 — 보장하는 것은
+        "정확히 한 번" 이 아니라 **"낡지 않음"** 이다. 둘 다 각자의 답이
+        반영된 상태다."""
+        reg = mkreg()
+        ids, n = [], []
+
+        def runner(query, ctx, **kw):
+            n.append(query)
+            if len(n) == 1:
+                for t in ("질문 A", "질문 B"):
+                    qid, err = reg.register_question(b, "main", t)
+                    assert not err
+                    ids.append(qid)
+            return _FakeLoopResult(output=f"out{len(n)}"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "일감")
+        assert wait_until(lambda: len(ids) == 2)
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert rep.kinds() == []
+
+        for qid in ids:
+            assert reg.answer_question(qid, "답", by="main") == ""
+        assert wait_until(lambda: len(rep.kinds()) == 2, timeout=5.0)
+
+    def test_same_question_across_runs_is_not_folded(self, mkreg, renderer):
+        """중복 접기는 **런 안에서만**. 런 경계를 넘어 접으면 요청 둘에
+        답 런 하나 → 회신 하나가 되어, 낡은 회신보다 나쁜 **누락**이 된다."""
+        reg = mkreg()
+        ids, n = [], []
+
+        def runner(query, ctx, **kw):
+            n.append(query)
+            if "일감" in query:  # 답 런에서는 다시 묻지 않는다
+                qid, err = reg.register_question(b, "main", "똑같은 질문")
+                assert not err
+                ids.append(qid)
+            return _FakeLoopResult(output=f"out{len(n)}"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        rep = Replies(reg)
+        reg.request(b, "일감 1")
+        assert wait_until(lambda: len(ids) == 1)
+        reg.request(b, "일감 2")
+        assert wait_until(lambda: len(ids) == 2)
+        assert ids[0] != ids[1]  # 런이 다르면 별개의 질문
+
+        for qid in dict.fromkeys(ids):
+            assert reg.answer_question(qid, "답", by="main") == ""
+        assert wait_until(lambda: len(rep.kinds()) == 2, timeout=5.0)
+
+    def test_same_question_within_one_run_is_folded(self, mkreg, renderer):
+        """런 안에서는 접는다 — ``_op_ask`` 가 루프 탐지기 앞에서 반환해
+        같은 질문의 반복이 구조적으로 안 잡히기 때문이다."""
+        reg = mkreg()
+        ids = []
+
+        def runner(query, ctx, **kw):
+            for _ in range(3):
+                qid, err = reg.register_question(b, "main", "반복 질문")
+                assert not err
+                ids.append(qid)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.request(b, "일감")
+        assert wait_until(lambda: len(ids) == 3)
+        assert len(set(ids)) == 1
+        assert len(reg._questions) == 1
+
+    def test_human_run_still_renders_the_window(self, mkreg, renderer):
+        """사람 발신 런은 애초에 밀 회신이 없다(창만) — 억제가 창까지
+        막으면 사용자가 에이전트가 한 일을 못 본다."""
+        reg = mkreg()
+
+        def runner(query, ctx, **kw):
+            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            return _FakeLoopResult(output="정리 완료"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.submit(b, "일감", author="user:bob")
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        outs = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "out" and c[1].get("key") == b
+        ]
+        assert len(outs) == 1
+        assert "정리 완료" in outs[0]["text"]
+        assert (tmp_path_of(reg) / "agents" / b / "replies" / "reply-1.md").is_file()
+
+
+def tmp_path_of(reg):
+    return reg.session_dir

@@ -722,10 +722,20 @@ class AgentRegistry:
                 return "", f"unknown asker '{asker}'"
             asked_seq = tm.current_seq
         with self._cv:
-            # 중복 접기: ``_op_ask`` 는 루프 탐지기 **앞에서** 반환하므로
-            # 같은 질문의 반복이 구조적으로 안 잡힌다 — 여기서 접는다.
+            # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
+            # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
+            # 구조적으로 안 잡힌다. 그게 이 장치가 있는 이유고, 런 경계를
+            # 넘으면 접으면 안 된다: 억제된 런마다 자기 답 런이 하나씩
+            # 있어야 회신이 안 사라진다(§3.7). 접어 버리면 요청 둘에
+            # 답 런 하나 → 회신 하나 — 낡은 회신보다 나쁜 **누락**이다.
             for q in self._questions.values():
-                if q.asker == asker and q.target == target and q.text == text:
+                if (
+                    q.asker == asker
+                    and q.target == target
+                    and q.text == text
+                    and q.asked_seq == asked_seq
+                ):
+                    self._mark_asked(asker)
                     return q.id, ""
             q = Question(
                 id=_new_question_id(),
@@ -742,8 +752,17 @@ class AgentRegistry:
             with self._cv:
                 self._questions.pop(q.id, None)
             return "", err
+        # 배달까지 성공한 **뒤에** 세운다 — 실패한 질문에 억제를 걸면
+        # 답 런이 안 생기므로 그 런의 회신이 영영 사라진다.
+        self._mark_asked(asker)
         self._save_state()
         return q.id, ""
+
+    def _mark_asked(self, asker: str) -> None:
+        """이 런이 질문을 걸었다고 표시 (§3.7 회신 억제의 판정값)."""
+        tm = self._agents.get(asker)
+        if tm is not None:
+            tm.asked_this_run = True
 
     def _deliver_question(self, q: Question) -> str:
         """질문을 **기존 배관**으로 상대에게. 에러 또는 빈 문자열.
@@ -1856,6 +1875,7 @@ class AgentRegistry:
                 # any_activity()(state 검사 + inbox.qsize — 방금 비움)가 "활동
                 # 없음"으로 오판해 작업 중 세션을 거둘 수 있었다.
                 tm.state = "busy"
+                tm.asked_this_run = False  # 런 경계 (§3.7 회신 억제)
                 # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
                 # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
                 # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과
@@ -2007,12 +2027,26 @@ class AgentRegistry:
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
         expects_reply = item.get("expects_reply", True)
-        # ③ 이 런에서 건 질문이 아직 열려 있으면 **재주입만** 건너뛴다
-        #    (§3.7): 부분 결과로 회신하면 나중 답 런이 같은 요청에 두 번째
-        #    회신을 만든다. 요청자는 질문을 이미 받았으므로 깜깜하지 않고,
-        #    답 런의 회신이 그 요청의 진짜 회신이다. 창·로그·persist 는 위에서
-        #    이미 돌았다 — 사용자는 이 에이전트가 한 일을 그대로 본다.
-        if still_open and not human_open:
+        # ③ 이 런이 질문을 **걸었으면** 재주입만 건너뛴다 (§3.7).
+        #
+        #    판정은 "아직 열려 있나" 가 **아니다**. 비동기라 답은 보통 이
+        #    런이 끝나기 **전에** 도착하고, 그러면 그 조건은 안 걸려 부분
+        #    결과가 요청자에게 간다 — 막으려던 상황이 오히려 정상 경로다.
+        #    게다가 그 부분 결과는 **답이 존재하기 전에** 만들어졌는데
+        #    **답을 보낸 뒤에** 도착한다: 요청자는 자기 답이 반영된 최신
+        #    상태로 읽고 다음 단계를 시작한다(peer 면 inbox 항목 = 런 1개라
+        #    잘못된 하위 작업이 실제로 돌아간다).
+        #
+        #    질문을 걸었다면 답 런이 **반드시** 하나 생긴다 — 답·상한 초과·
+        #    상대 사망 셋 다 ``_deliver_answer`` 를 지난다. 그 런의 회신이
+        #    진짜 회신이다. 보장하는 성질은 "정확히 한 번" 이 아니라
+        #    **"회신이 낡지 않는다"** 다(질문 둘이면 답 런도 둘, 회신도 둘 —
+        #    다만 각각 자기 답이 반영된 최신 상태다).
+        #
+        #    창·로그·persist 는 위에서 이미 돌았다 — 억제되는 것은 요청자를
+        #    한 번 더 깨우는 재주입 한 줄뿐이고, 하네스는 아무것도 기다리지
+        #    않는다. 요청자는 질문을 이미 받았으므로 깜깜하지도 않다.
+        if tm.asked_this_run:
             self._save_state()
         elif not expects_reply:
             # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
