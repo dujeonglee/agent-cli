@@ -360,10 +360,19 @@ stop_event.is_set()`)를 쓰면 **kill 이 빠져** 죽은 상대를 향한 질�
 
 ```python
 class QuestionPort:            # 레지스트리가 에이전트별로 만든다
-    def pending(self) -> list[Question]: ...   # target_is_me 판정 포함
-    def ask(self, text) -> str: ...            # id (또는 에러)
-    def answer(self, id, text) -> str: ...     # err
+    def ask(self, text) -> tuple[str, str]: ...   # (id, err)
+    def answer(self, id, text) -> str: ...        # err
 ```
+
+**표면은 둘뿐이다.** 독촉은 하네스가 런 경계에서 걸므로(§3.4) 루프가
+미답 목록을 조회할 일이 없다 — 조회 메서드를 두면 호출자 없는 표면이 된다.
+
+**main 의 `ask` 는 거부한다.** main 이 사람에게 묻는 것은 기존 블로킹
+경로(`renderer.prompt_user`)다. 포트로 오면 주소가 `user` 인 질문이
+생기는데, 로스터에도 창에도 안 뜨고(둘 다 asker 를 에이전트 키로 찾는다)
+`open_human_questions()` 에만 남아 `any_activity()` 를 영구 True 로 만든다
+— **보이지도, 답할 수도, 사라지지도 않는 질문**이다. §3.9 가 질문을
+되살리면 asker(main)도 target(user)도 "항상 살아있음"이라 매 세션 부활한다.
 
 `LoopConfig.questions` 에 담고 `AnswerTool.requires_handler = "questions"` +
 `force_mount = True` — `MessageTool` 과 같은 선언(§2-④). **레지스트리가 아니라

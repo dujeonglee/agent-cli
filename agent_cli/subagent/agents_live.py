@@ -515,8 +515,12 @@ class QuestionPort:
     ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
     가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
 
+    표면은 ``ask``/``answer`` **둘뿐**이다. 독촉은 하네스가 런 경계에서
+    걸므로(§3.4) 루프가 미답 목록을 조회할 일이 없다 — 조회 메서드를 두면
+    호출자 없는 표면이 된다.
+
     main 도 같은 포트를 받는다(``key=None``) — 안 그러면 main 에 답변
-    수단이 없다.
+    수단이 없다. 단 ``ask`` 는 거부한다(아래).
     """
 
     def __init__(self, registry: AgentRegistry, key: str | None = None):
@@ -527,27 +531,29 @@ class QuestionPort:
         self.asker = "main" if key is None else key
 
     def ask(self, text: str) -> tuple[str, str]:
-        """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공."""
-        return self._reg.register_question(self.asker, self._target(), text)
+        """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공.
+
+        **main 은 거부한다.** main 의 ``ask`` 는 사람에게 묻는 기존 블로킹
+        경로(`renderer.prompt_user`) 그대로다. 여기로 오면 주소가 `user` 인
+        질문이 생기는데, 그것은 로스터에도 창에도 안 뜨고(둘 다 asker 를
+        에이전트 키로 찾는다) `open_human_questions()` 에만 남아
+        ``any_activity()`` 를 영구 True 로 만든다 — **보이지도, 답할 수도,
+        사라지지도 않는 질문**이다. resume 이 질문을 되살리면 asker(main)도
+        target(user)도 '항상 살아있음' 이라 매 세션 부활한다.
+        """
+        if self.key is None:
+            return "", (
+                "main asks the operator through the blocking `ask` prompt, "
+                "not through the question list"
+            )
+        tm = self._reg.get(self.key)
+        # ask 시점의 ``current_author`` = 원 요청자 = 질문의 주소 (§0).
+        target = tm.current_author if tm is not None else "main"
+        return self._reg.register_question(self.asker, target, text)
 
     def answer(self, qid: str, text: str) -> str:
         """``qid`` 에 답한다. 에러 메시지 또는 빈 문자열."""
         return self._reg.answer_question(qid, text, by=self.me)
-
-    def owed(self) -> list[Question]:
-        """**이 주체가 답해야 하는** 질문 — 배달된 것만 (§3.2 런 스코프)."""
-        return self._reg.questions_owed_by(self.me)
-
-    def asked(self, seq: int = 0) -> list[Question]:
-        """이 주체가 ``seq`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
-        return self._reg.questions_asked_in(self.asker, seq)
-
-    def _target(self) -> str:
-        """ask 시점의 ``current_author`` = 원 요청자 = 질문의 주소 (§0)."""
-        if self.key is None:
-            return "user"  # main 의 ask 는 사람에게 (블록 경로, 무변경)
-        tm = self._reg.get(self.key)
-        return tm.current_author if tm is not None else "main"
 
 
 class AgentRegistry:

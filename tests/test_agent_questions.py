@@ -28,6 +28,7 @@ from agent_cli.subagent.agents_live import (
     _MAX_QUESTION_NAGS,
     AgentRegistry,
     Question,
+    QuestionPort,
     build_reply_record,
 )
 from tests.test_agents_live import (
@@ -343,8 +344,16 @@ class TestDeath:
         reg.drain_replies()
 
         reg.kill(b)
-        # 앞으로 온 것: asker 가 풀려야 한다 — 사유를 배달.
+        # 앞으로 온 것: asker 가 풀려야 한다 — **사유가 실제로 배달**된다.
+        # 질문만 지우면 A 는 아무것도 못 받고 영원히 기다린다.
         assert wait_until(lambda: reg.questions_asked_in(a, 0) == [])
+        assert wait_until(
+            lambda: any(
+                "terminated before answering" in str(c[1].get("text"))
+                and c[1].get("key") == a
+                for c in renderer.named("agent_message")
+            )
+        )
         # 그가 건 것: 폐기 — 남기면 답하려는 쪽이 dead 에러를 받고 재시도한다.
         assert reg.answer_question(outgoing, "답", by="main").startswith("unknown")
         assert reg.answer_question(incoming, "답", by=f"agent:{b}").startswith(
@@ -1075,3 +1084,134 @@ class TestReplyFreshness:
 
 def tmp_path_of(reg):
     return reg.session_dir
+
+
+# ── QuestionPort — 루프가 닿는 유일한 seam ──────
+
+
+class TestQuestionPort:
+    """③ flip 이 통째로 기대는 클래스인데 가드가 하나도 없었다."""
+
+    def test_labels_distinguish_address_from_sender(self, mkreg, renderer):
+        """``me``(질문의 주소와 비교) 와 ``asker``(답이 돌아갈 곳)는 다른
+        어휘다. 섞으면 답변자 검증과 배달이 동시에 깨진다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        port = reg.question_port(a)
+        assert port.me == f"agent:{a}"
+        assert port.asker == a
+        main = reg.question_port(None)
+        assert main.me == "main"
+        assert main.asker == "main"
+
+    def test_ask_addresses_the_current_requester(self, mkreg, renderer):
+        """주소 = ask 시점의 ``current_author`` (§0). 그게 원 요청자다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_author = "user:bob"
+        qid, err = port_ask(reg, a, "사람에게")
+        assert not err
+        assert reg._questions[qid].target == "user:bob"
+
+        reg.get(a).current_author = "main"
+        qid2, _ = port_ask(reg, a, "main 에게")
+        assert reg._questions[qid2].target == "main"
+
+    def test_main_ask_is_refused(self, mkreg, renderer):
+        """main 이 포트로 물으면 **보이지도 답할 수도 사라지지도 않는**
+        질문이 생긴다 — 로스터/창은 asker 를 에이전트 키로 찾아 못 찾고,
+        ``open_human_questions`` 에만 남아 idle-reap 을 영구 차단한다.
+        resume 이 되살리면 매 세션 부활한다."""
+        reg = mkreg()
+        qid, err = reg.question_port(None).ask("이거 해도 되나요?")
+        assert not qid
+        assert "blocking" in err
+        assert reg._questions == {}
+        assert reg.open_human_questions() == []
+        assert reg.any_activity() is False
+
+    def test_answer_goes_through_as_this_address(self, mkreg, renderer):
+        """포트의 ``answer`` 는 자기 ``me`` 로 답한다 — 남의 질문에 답할 수
+        없어야 한다(§0)."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "누가 답하나")
+        assert "addressed to main" in reg.question_port(b).answer(qid, "내가")
+        assert reg.question_port(None).answer(qid, "main 이") == ""
+
+    def test_port_never_exposes_the_registry(self, mkreg, renderer):
+        """레지스트리가 서브루프에 닿으면 '팀원 안 팀원 금지' 의 단일
+        가드(loop/state.py)가 깨진다 — 포트의 공개 표면은 둘뿐이다."""
+        reg = mkreg()
+        port = reg.question_port(spawn_idle(reg))
+        public = {n for n in dir(port) if not n.startswith("_")}
+        assert public == {"ask", "answer", "key", "me", "asker"}
+        assert isinstance(port, QuestionPort)
+
+
+def port_ask(reg, key, text):
+    return reg.question_port(key).ask(text)
+
+
+# ── (가) 가 기댈 표면 ───────────────────────────
+
+
+class TestPersistShape:
+    def test_as_dict_round_trips_every_field(self, mkreg, renderer):
+        """resume 복원이 이 모양에 기댄다 — 필드가 빠지면 조용히 유실된다."""
+        q = Question(
+            id="q-shape",
+            asker="agt-x",
+            target="agent:agt-y",
+            text="본문",
+            asked_seq=4,
+            delivered_seq=9,
+            nags=2,
+        )
+        d = q.as_dict()
+        assert d == {
+            "id": "q-shape",
+            "asker": "agt-x",
+            "target": "agent:agt-y",
+            "text": "본문",
+            "asked_at": q.asked_at,
+            "asked_seq": 4,
+            "delivered_seq": 9,
+            "nags": 2,
+        }
+
+    def test_mark_delivered_records_the_first_read_only(self, mkreg, renderer):
+        """'언제 처음 읽었나' 다 — 뒤 런이 덮어쓰면 그 의미가 사라진다."""
+        reg = mkreg()
+        q = Question(id="q-mk", asker="main", target="agent:zz", text="t")
+        reg._questions[q.id] = q
+        reg.mark_question_delivered(q.id, 3)
+        reg.mark_question_delivered(q.id, 7)
+        assert q.delivered_seq == 3
+        reg.mark_question_delivered("q-nope", 1)  # 없는 id 는 조용히 무시
+
+    def test_unknown_asker_is_rejected(self, mkreg, renderer):
+        reg = mkreg()
+        qid, err = reg.register_question("agt-ghost", "main", "질문")
+        assert not qid
+        assert "unknown asker" in err
+
+    def test_unroutable_target_is_rejected(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, err = reg.register_question(a, "nobody", "질문")
+        assert not qid
+        assert "unroutable" in err
+        assert reg._questions == {}  # 등록도 취소된다
+
+    def test_roster_row_carries_text_and_time(self, mkreg, renderer):
+        """트레이가 이 세 필드로 그려진다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "user:bob", "덮어쓸까요?")
+        (row,) = [r for r in reg.roster_snapshot() if r["key"] == a]
+        (item,) = row["open_questions"]
+        assert item["id"] == qid
+        assert item["text"] == "덮어쓸까요?"
+        assert item["to"] == "user:bob"
+        assert isinstance(item["ts"], float)
