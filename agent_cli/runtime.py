@@ -91,7 +91,7 @@ def build_agent_registry(session_dir, runtime: AgentRuntime, max_agents=None):
     return registry
 
 
-def build_monitor_registry():
+def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
     `build_agent_registry` 의 형제다. 도구는 모듈 전역으로, 루프는
@@ -101,7 +101,7 @@ def build_monitor_registry():
     from agent_cli.monitor.registry import MonitorRegistry
     from agent_cli.monitor.runtime import set_monitor_registry
 
-    registry = MonitorRegistry()
+    registry = MonitorRegistry(session_dir=session_dir)
     set_monitor_registry(registry)
     return registry
 

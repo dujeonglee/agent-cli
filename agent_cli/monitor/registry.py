@@ -18,10 +18,12 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent_cli.constants import (
     MONITOR_DEADLINE_MAX_S,
@@ -90,12 +92,13 @@ class MonitorRegistry:
     (on-premise 배포 제약) 얻는 건 최대 1s 지연이다.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, session_dir=None) -> None:
         self._monitors: dict[str, Monitor] = {}
         self._pending: list[str] = []
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._path = Path(session_dir) / "monitors.json" if session_dir else None
 
     # ── 등록/조회 ──────────────────────────────
 
@@ -118,12 +121,16 @@ class MonitorRegistry:
         mon.state["registered_at"] = mon.created_at
         with self._lock:
             self._monitors[mon.id] = mon
+        self._save()
         self.start()
         return mon
 
     def delete(self, mon_id: str) -> bool:
         with self._lock:
-            return self._monitors.pop(mon_id, None) is not None
+            gone = self._monitors.pop(mon_id, None) is not None
+        if gone:
+            self._save()
+        return gone
 
     def list_all(self) -> list[Monitor]:
         with self._lock:
@@ -263,3 +270,57 @@ class MonitorRegistry:
         mon.wakes += 1
         with self._lock:
             self._pending.append(report)
+
+    # ── 영속 — 기록하되 **부활시키지 않는다** (§8) ─────────
+
+    def _save(self) -> None:
+        """살아 있는 모니터 목록을 기록한다. 실패해도 조용히 넘어간다 —
+        감시는 보조 기능이고 디스크 오류로 런을 죽일 이유가 없다."""
+        if self._path is None:
+            return
+        with self._lock:
+            rows = [
+                {"id": m.id, "desc": m.cond.describe(), "once": m.once, "run": m.run}
+                for m in self._monitors.values()
+                if m.alive
+            ]
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps({"monitors": rows}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+
+def describe_previous(session_dir) -> list[str]:
+    """이전 세션의 모니터 설명 줄 — **복원하지 않고 알리기만** 한다 (§8).
+
+    부활을 자른 이유 넷:
+
+    1. **희소하다.** `deadline` 상한 24h + `once=True` 기본이라 resume 시점에
+       살아 있을 모니터가 애초에 적다.
+    2. **커서가 낡는다.** `match` 의 바이트 오프셋은 중단 기간 동안 무의미해진다
+       — 되감으면 옛 매치를 다시 보고하고 건너뛰면 그동안의 매치를 잃는데,
+       **둘 다 틀렸고 어느 쪽이 맞는지 알 방법이 없다.**
+    3. **권한 구멍.** 세션 디렉터리 기본값이 워크스페이스 안(`paths.py`)이라
+       에이전트가 `write_file` 로 이 파일을 고칠 수 있다. 되살리면 **아무도
+       승인하지 않은 `command`/`run` 이 실행된다** — 파일 안의 플래그는
+       "이 프로세스에서 사람이 답했다"를 증명하지 못한다.
+    4. 재검증 매트릭스(PID×파일×deadline×확인)가 통째로 사라진다.
+
+    사용자가 다시 걸면 **확인도 다시 받는다** — 그게 정직한 상태다.
+    """
+    path = Path(session_dir) / "monitors.json"
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8")).get("monitors", [])
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return []
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        extra = f" · run={r['run']!r}" if r.get("run") else ""
+        out.append(f"[{r.get('id', '?')}] {r.get('desc', '?')}{extra}")
+    return out

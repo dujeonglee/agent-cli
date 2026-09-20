@@ -1375,7 +1375,7 @@ def run(
 
     # monitor 는 native — board 도 env 도 없이 항상 조립된다 (`schedule` 과의
     # 차이: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다).
-    monitor_registry = build_monitor_registry()
+    monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
@@ -1459,6 +1459,9 @@ def run(
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
         if auto:
             console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
+        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        if _mon_notice:
+            console.print(f"[{C['muted']}]{_mon_notice}[/]")
 
         # 상주 방향 @ 명령: @agents / @agt-<key> [메시지] / @<profile>-spawn.
         # --resume 세션에서 재생성된 상주 에이전트에게 CLI 로 직접 말 걸기.
@@ -1635,6 +1638,27 @@ def _run_message_pump(
             continue  # 이미 배달 완료된 wake — 빈 run 을 열지 않는다
         run_one(item["text"], wake=(verdict == "run"))
         waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
+
+
+def _previous_monitors_notice(session_dir) -> str:
+    """이전 세션의 모니터를 **복원하지 않고 알린다** (docs/monitor/DESIGN.md §8).
+
+    부활을 자른 이유는 `monitor.registry.describe_previous` docstring 에 —
+    요약하면 커서가 낡아 되감아도 건너뛰어도 틀리고, `monitors.json` 이
+    워크스페이스 안이라 승인받지 않은 명령이 되살아날 수 있다.
+    """
+    if session_dir is None:
+        return ""
+    from agent_cli.monitor.registry import describe_previous
+
+    rows = describe_previous(session_dir)
+    if not rows:
+        return ""
+    listing = "\n".join(f"  {r}" for r in rows)
+    return (
+        f"🔔 이전 세션의 모니터 {len(rows)}건은 복원되지 않았습니다 — "
+        f"필요하면 다시 등록하세요:\n{listing}"
+    )
 
 
 def _announce_agent_boot(renderer, revived: int, auto: int) -> None:
@@ -2278,7 +2302,7 @@ def web(
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
     from agent_cli.runtime import build_monitor_registry
 
-    monitor_registry = build_monitor_registry()
+    monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
@@ -2338,6 +2362,9 @@ def web(
             parent_ctx=ctx,
         )
         _announce_agent_boot(renderer, revived, auto)
+        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        if _mon_notice:
+            renderer.status("running", _mon_notice)
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a
