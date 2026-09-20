@@ -1370,6 +1370,7 @@ def run(
         AgentRuntime,
         build_agent_registry,
         build_monitor_registry,
+        main_run_ended,
         wire_agent_mail,
     )
 
@@ -1458,11 +1459,11 @@ def run(
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
         if agent_registry.stale_questions:
-            # resume 은 질문을 되살리지 않는다(asker 의 런이 없어 답을 받을
-            # 주체가 없다) — 몇 건이 사라졌는지만 알린다. 저장하는 유일한 이유.
+            # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
+            # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
             console.print(
                 f"[{C['muted']}]❓ 미답 질문 {agent_registry.stale_questions}건은 "
-                f"세션 종료로 사라졌습니다 — 필요하면 다시 요청하세요[/]"
+                f"상대가 돌아오지 않아 복원하지 못했습니다[/]"
             )
         if auto:
             console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
@@ -1545,11 +1546,7 @@ def run(
                     agent_registry.question_port(None) if agent_registry else None
                 ),
             )
-            # main 의 런도 끝났다 — 답 안 한 질문이 있으면 메일박스로
-            # 독촉이 오고, 다음 턴 경계에 관찰로 배달된다. 상주 에이전트가
-            # 워커 루프에서 하는 것과 같은 자리·같은 함수 (DESIGN.md §3.4).
-            if agent_registry is not None:
-                agent_registry.remind_owed("main")
+            main_run_ended(agent_registry)
             if loop_result.success:
                 answer = loop_result.output
 
@@ -1708,6 +1705,12 @@ def _agent_mail_notice(reply: dict) -> None:
     kind = reply.get("kind", "reply")
     if kind == "question":
         line = f"❓ 에이전트 {key} 질문 도착 (답변 대기 중)"
+    elif kind == "reminder":
+        # 회신이 아니라 **빚 통지**다 — "회신 도착" 으로 적으면 사용자가
+        # 에이전트가 뭔가 끝낸 줄 안다.
+        line = f"❓ 에이전트 {key} 미답 질문 독촉"
+    elif kind == "answer":
+        line = f"💬 {key} 답변 도착"
     else:
         line = f"📨 에이전트 {key} 회신 도착"
     try:
@@ -2349,6 +2352,7 @@ def web(
         from agent_cli.runtime import (
             AgentRuntime,
             build_agent_registry,
+            main_run_ended,
             wire_agent_mail,
         )
 
@@ -2518,9 +2522,7 @@ def web(
                         )
 
                     _run_main(message, nickname)
-                    # run 경로와 동일 — main 의 런 끝에서 미답 질문 독촉.
-                    if agent_registry is not None:
-                        agent_registry.remind_owed("main")
+                    main_run_ended(agent_registry)
 
                 except Exception as exc:
                     # Push the error into the renderer so the frontend

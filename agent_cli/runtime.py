@@ -127,6 +127,22 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     return waker, revived, auto
 
 
+def main_run_ended(agent_registry) -> int:
+    """main 의 런이 끝났다 — 미답 질문이 있으면 독촉한다 (agent-ask §3.4).
+
+    상주 에이전트는 워커 루프의 디스패치 수렴점에서 같은 일을 한다. main 은
+    펌프가 둘(run/web)이라 호출부가 둘인데, **정의는 하나**여야 한다 —
+    한쪽만 고치는 것이 이 파일이 존재하는 이유의 사고 유형이다
+    (모듈 docstring 의 teardown 4갈래 참조).
+
+    독촉은 메일박스로 가고 ``MailWaker`` 가 유휴 main 도 깨운다. 건 수를
+    돌려준다(0 = 빚 없음).
+    """
+    if agent_registry is None:
+        return 0
+    return agent_registry.remind_owed("main")
+
+
 def teardown_session(
     session,
     ctx,

@@ -349,6 +349,15 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
                 "waiting for this answer. Re-send the original request with "
                 f'{{"mode":"request","key":"{key}","task":"..."}} if still needed.)'
             )
+        elif reply.get("id"):
+            # 비동기 질문(§3): 상대는 **막혀 있지 않다**. 새 request 를
+            # 보내면 그건 답이 아니라 일감이라 질문은 열린 채 남고, 독촉이
+            # 상한까지 돌다 닫힌다 — 런만 태운다.
+            tail = (
+                "(The agent is NOT blocked and kept working. Answer it with "
+                f'the `answer` tool: answer(id="{reply["id"]}", text="..."). '
+                "A new request is not an answer.)"
+            )
         else:
             tail = (
                 "(The agent is BLOCKED until answered. Answer via agent op: "
@@ -509,6 +518,11 @@ class AgentInstance:
         # 지금 처리 중인 항목의 seq — 질문의 런 스코프(Question.asked_seq)가
         # 이 값을 찍는다. 유휴/main 은 0.
         self.current_seq = 0
+        # 이 런이 질문을 **걸었는가** (§3.7). 걸었다면 그 질문은 반드시 답
+        # 런을 하나 만들고(답·상한·상대 사망 셋 다 `_deliver_answer` 를
+        # 지난다) 그 런의 회신이 진짜 회신이므로, 이 런의 회신은 요청자에게
+        # 재주입하지 않는다. 워커가 런 경계마다 리셋한다.
+        self.asked_this_run = False
 
     def snapshot(self) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도)."""
@@ -685,8 +699,8 @@ class AgentRegistry:
         시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
         if self.open_human_questions():
             # 사람 주소 질문은 답이 올 때까지 열려 있고 상한도 없다 —
-            # 활동으로 세지 않으면 idle-reap 이 세션을 걷고, resume 은
-            # 되살리지 않으므로(§3.9) 질문이 묘비명이 된다.
+            # 활동으로 세지 않으면 작업 중인 세션을 idle-reap 이 걷는다.
+            # (§3.9 가 되살리긴 하지만 걷히는 것 자체가 사용자에겐 사고다.)
             return True
         return any(
             self.state_is_active(t.state) or t.inbox.qsize() > 0
@@ -794,14 +808,15 @@ class AgentRegistry:
         if tm is not None:
             tm.asked_this_run = True
 
-    def _deliver_question(self, q: Question) -> str:
+    def _deliver_question(self, q: Question, *, render: bool = True) -> str:
         """질문을 **기존 배관**으로 상대에게. 에러 또는 빈 문자열.
 
         상대가 idle 이어도 깨어난다 — inbox 항목 1개 = 런 1개이므로.
         그래서 ``complete`` 강제(§3.4)는 배달 수단이 아니라 "꺼내 읽고도
         안 답함" 백스톱이다.
         """
-        self._render_question(q)
+        if render:
+            self._render_question(q)
         if q.to_human:
             return ""  # ❓ 트레이가 표면 — 배달할 inbox 가 없다 (§3.6)
         if q.target == "main":
@@ -1694,8 +1709,8 @@ class AgentRegistry:
             )
         with self._cv:
             pending = [dict(r) for r in self._pending]
-            # 열린 질문은 resume 이 **되살리지 않고 N건만 알린다**(§3.9).
-            # 저장 없이 N 을 알릴 수 없으므로, 알릴 거면 저장한다.
+            # 열린 질문은 resume 이 **되살린다**(§3.9) — 그러려면 남아야
+            # 한다. 되살리지 못한 것만 `stale_questions` 로 알린다.
             questions = [q.as_dict() for q in self._questions.values()]
         try:
             from agent_cli.fsio import atomic_write_json
@@ -1840,25 +1855,31 @@ class AgentRegistry:
             return tm is not None and tm.state != "dead"
 
         dropped = 0
+        kick: set[str] = set()
         with self._cv:
             for q in restored:
-                if alive(q.asker) and alive(q.target):
-                    self._questions[q.id] = q
-                else:
+                if not (alive(q.asker) and alive(q.target)):
                     dropped += 1
+                    continue
+                self._questions[q.id] = q
+                if q.delivered_seq is not None:
+                    # kick 대상은 **재배달 전에** 확정한다. ②가 큐에 넣은
+                    # 질문을 상대 워커가 곧바로 꺼내 `delivered_seq` 를 찍으면
+                    # (LLM 호출 **전에** 찍힌다) ③의 집합에 섞여, 방금 배달한
+                    # 질문에 독촉까지 날아간다 — 런 하나 낭비 + 상한 조기 소모.
+                    kick.add(q.target)
         self.stale_questions = dropped
 
         for q in list(self._questions.values()):
             undelivered_peer = q.delivered_seq is None and q.target.startswith("agent:")
-            if undelivered_peer and self._deliver_question(q):  # ②
+            # ``render=False``: 이 질문은 이미 첫 세션에서 창에 그려졌고
+            # ``conversation.jsonl`` 에 남아 `_replay_conversation` 이 방금
+            # 재생했다 — 다시 그리면 창에 두 번, 로그에 두 줄이 된다.
+            if undelivered_peer and self._deliver_question(q, render=False):  # ②
                 with self._cv:  # 재배달 실패 — 답할 데가 없다
                     self._questions.pop(q.id, None)
-        for addr in {
-            q.target
-            for q in list(self._questions.values())
-            if q.delivered_seq is not None
-        }:
-            self.remind_owed(addr)  # ③
+        for addr in kick:  # ③
+            self.remind_owed(addr)
 
     # ── worker ──────────────────────────────────
 
@@ -2039,6 +2060,24 @@ class AgentRegistry:
             and item.get("expects_reply", True)
         )
 
+    def _with_human_notice(self, tm: AgentInstance, seq: int, output: str) -> str:
+        """이 런이 **사람에게** 물어 둔 미답 질문을 결과에 실어 알린다.
+
+        사람에게는 강제를 못 건다 — 우리 루프가 아니다. 대신 결과에 실어
+        "내가 답을 안 해서 끝났구나" 를 알린다. 이 문구는 **하네스가** 붙인다:
+        dispatch 에서 붙이면 ``serialize_terminal_for_history`` 를 타고 모델
+        자신이 쓴 최종답으로 ctx 에 남아, 다음 런에서 모델이 하네스 문구를
+        모방한다.
+        """
+        human_open = [q for q in self.questions_asked_in(tm.key, seq) if q.to_human]
+        if not human_open:
+            return output
+        lines = "\n".join(f'   [{q.id}] "{q.text}"' for q in human_open)
+        return (
+            f"{output}\n\n⏳ 답을 받지 못한 질문 {len(human_open)}건 — "
+            f"답하면 이어서 진행합니다:\n{lines}"
+        )
+
     def _handle_request(self, tm: AgentInstance, item: dict, renderer, disp) -> None:
         """단일 request 처리 — main 위임/peer/배달회신/사람-직접(단건) 공통 경로.
         회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창)."""
@@ -2091,18 +2130,7 @@ class AgentRegistry:
         # 붙는 것이라 핸들러마다 두면 빠진다(실제로 배치 경로에서 빠졌다).
         # 이 런에서 **건** 질문 중 아직 열린 것 (asked_seq 로 좁힌다 —
         # 다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
-        still_open = self.questions_asked_in(tm.key, seq)
-        human_open = [q for q in still_open if q.to_human]
-        if human_open:
-            # 사람에게 강제는 못 건다(우리 루프가 아니다) — 대신 결과에
-            # 실어 "내가 답을 안 해서 끝났구나"를 알린다. 이 문구는 **여기서**
-            # 붙인다: dispatch 에서 붙이면 모델 자신이 쓴 최종답으로 ctx 에
-            # 남아 다음 런에서 하네스 문구를 모방한다.
-            lines = "\n".join(f'   [{q.id}] "{q.text}"' for q in human_open)
-            output = (
-                f"{output}\n\n⏳ 답을 받지 못한 질문 {len(human_open)}건 — "
-                f"답하면 이어서 진행합니다:\n{lines}"
-            )
+        output = self._with_human_notice(tm, seq, output)
         reply_path = self._persist_reply(tm, seq, output)
         tm.handled += 1
         tm.state = "idle"
@@ -2220,6 +2248,9 @@ class AgentRegistry:
                 duration_s=duration,
                 error="" if success else output[:200],
             )
+        # 사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
+        # current_author) — 여기 빠뜨리면 알림이 가장 필요한 곳에 없다.
+        output = self._with_human_notice(tm, seq, output)
         self._persist_reply(tm, seq, output)
         tm.handled += len(items)  # N 요청을 한 턴에 처리
         tm.state = "idle"

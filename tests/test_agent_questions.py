@@ -442,11 +442,36 @@ class TestPersistence:
         assert q.id in fresh._questions
         assert fresh._questions[q.id].delivered_seq is not None  # 빚이 유지된다
         assert wait_until(lambda: fresh._questions[q.id].nags >= 1)  # 깨웠다
+        assert fresh._questions[q.id].nags == 1  # 두 번 깨우지 않는다
         assert wait_until(lambda: fresh.get(b).handled >= 1)  # 런이 생겼다
         # 이미 읽은 질문을 **다시 배달하지는 않는다** — 상대 ctx 에 남아
         # 있고, 재배달하면 같은 질문을 두 번 묻는 꼴이다.
         assert not [x for x in seen if "[question q-" in x]
         assert [x for x in seen if "(reminder)" in x]
+        fresh.shutdown_all()
+
+    def test_main_targeted_debt_is_kicked_too(self, mkreg, tmp_path, renderer):
+        """kick 을 ``agent:`` 로만 한정하면 main 의 빚은 resume 후 영영
+        잠든다 — main 의 독촉은 런 끝에서만 걸리는데, main 이 그 질문을
+        모르고 있으면 끝날 런도 없다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        q = Question(
+            id="q-main1",
+            asker=a,
+            target="main",
+            text="main 앞 배달된 빚",
+            delivered_seq=0,
+        )
+        reg._questions[q.id] = q
+        reg._save_state()
+        reg.shutdown_all()
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        fresh.restore()
+        assert fresh._questions[q.id].nags == 1
+        rec = next(r for r in fresh.drain_replies() if r.get("kind") == "reminder")
+        assert q.id in rec["output"]
         fresh.shutdown_all()
 
     def test_undelivered_peer_question_is_redelivered(self, mkreg, tmp_path, renderer):
@@ -468,9 +493,16 @@ class TestPersistence:
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
         fresh.restore()
-        # 다시 배달돼 상대가 꺼내 읽는다 — 그래야 빚이 성립한다.
-        assert wait_until(lambda: any("q-undel" in s for s in seen), timeout=5.0)
+        # **질문 항목**으로 다시 배달돼야 한다 — id 만 찾으면 독촉 문구에도
+        # 들어 있어, 재배달을 지우고 kick 만 남겨도 통과한다(실제로 그랬다).
+        assert wait_until(
+            lambda: any("[question q-undel" in x for x in seen), timeout=5.0
+        )
         assert wait_until(lambda: fresh._questions["q-undel"].delivered_seq is not None)
+        # 미배달이었으므로 kick 대상이 아니다 — 배달과 독촉을 겹쳐 받으면
+        # 런 하나가 낭비되고 상한이 일찍 닳는다.
+        assert fresh._questions["q-undel"].nags == 0
+        assert not [x for x in seen if "(reminder)" in x]
         fresh.shutdown_all()
 
     def test_question_is_dropped_when_its_target_did_not_come_back(
@@ -519,6 +551,22 @@ class TestPersistence:
         assert fresh._questions == {}
         assert fresh.stale_questions == 2
         fresh.shutdown_all()
+
+    def test_delivered_seq_zero_survives_round_trip(self, mkreg, tmp_path, renderer):
+        """main 의 배달 마킹은 ``0`` 이다(런 seq 가 없다). ``or``/truthy 로
+        읽으면 0 이 None 이 되어 **main 의 빚이 resume 마다 사라진다** —
+        ``is None`` 관용구가 그걸 막는 유일한 장치다."""
+        q = Question.from_dict(
+            {
+                "id": "q-zero",
+                "asker": "agt-a",
+                "target": "main",
+                "text": "t",
+                "delivered_seq": 0,
+            }
+        )
+        assert q is not None
+        assert q.delivered_seq == 0  # None 이 아니다 → 여전히 빚이다
 
     def test_malformed_question_entry_is_skipped(self, mkreg, tmp_path, renderer):
         reg = mkreg()
@@ -1385,3 +1433,155 @@ class TestPersistShape:
         assert item["text"] == "덮어쓸까요?"
         assert item["to"] == "user:bob"
         assert isinstance(item["ts"], float)
+
+
+# ── 리뷰가 짚은 무가드 지점 ────────────────────
+
+
+class TestUncoveredSurfaces:
+    @staticmethod
+    def _human_batch(reg, key, gate, texts):
+        """사람-직접 2건이 **확실히 한 배치로** 묶이게 한다.
+
+        그냥 넣으면 유휴 워커가 첫 건을 즉시 집어 단건 경로로 가는 경합이
+        있다. 먼저 일감 하나로 워커를 붙잡아 두고 넣은 뒤 풀어 준다.
+        """
+        reg.request(key, "선행 일감")
+        assert wait_until(lambda: reg.get(key).state == "busy")
+        for i, t in enumerate(texts, start=2):
+            reg.get(key).inbox.put(
+                {
+                    "seq": i,
+                    "text": t,
+                    "author": "user:bob",
+                    "expects_reply": True,
+                    "ts": time.time(),
+                }
+            )
+        gate.set()
+
+    def test_batch_run_end_also_reminds(self, mkreg, renderer):
+        """독촉은 '런이 끝났다' 는 사실에 붙는다. 핸들러마다 두면 배치
+        경로에서 빠진다 — 실제로 빠졌었고, 그래서 워커 루프로 옮겼다."""
+        gate = threading.Event()
+        reg = mkreg(runner=make_runner(block=gate))
+        b = spawn_idle(reg)
+        q = Question(
+            id="q-batch",
+            asker="main",
+            target=f"agent:{b}",
+            text="빚",
+            delivered_seq=99,
+        )
+        reg._questions[q.id] = q
+        self._human_batch(reg, b, gate, ("하나", "둘"))
+        assert wait_until(
+            lambda: any(
+                c[1].get("key") == b
+                and c[1].get("direction") == "in"
+                and "(reminder)" in str(c[1].get("text"))
+                for c in renderer.named("agent_message")
+            ),
+            timeout=5.0,
+        )
+
+    def test_batch_run_reports_open_human_questions(self, mkreg, renderer):
+        """사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
+        current_author) — 알림이 가장 필요한 곳이 비어 있었다."""
+        gate = threading.Event()
+        reg = mkreg()
+
+        def runner(query, ctx, **kw):
+            if "선행" in query:
+                gate.wait(5)
+                return _FakeLoopResult(output="선행 끝"), 0.01
+            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            return _FakeLoopResult(output="둘 다 처리"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        self._human_batch(reg, b, gate, ("하나", "둘"))
+        assert wait_until(
+            lambda: any(
+                "둘 다 처리" in str(c[1].get("text"))
+                for c in renderer.named("agent_message")
+                if c[1].get("direction") == "out"
+            ),
+            timeout=5.0,
+        )
+        out = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "out" and "둘 다 처리" in str(c[1].get("text"))
+        ][-1]
+        assert "답을 받지 못한 질문 1건" in out["text"]
+        assert "덮어쓸까요?" in out["text"]
+
+    def test_redelivery_does_not_duplicate_the_window_entry(
+        self, mkreg, tmp_path, renderer
+    ):
+        """재배달은 배관만 다시 태운다 — 질문은 첫 세션에서 이미 창에
+        그려졌고 `_replay_conversation` 이 방금 재생했다. 다시 그리면
+        사용자 창에 같은 질문이 두 번, 로그에 두 줄이 된다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        q = Question(id="q-nodup", asker=a, target=f"agent:{b}", text="못 꺼낸 질문")
+        reg._questions[q.id] = q
+        reg._save_state()
+        reg.shutdown_all()
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        fresh.restore()
+        assert wait_until(
+            lambda: fresh._questions["q-nodup"].delivered_seq is not None, timeout=5.0
+        )
+        drawn = [
+            c
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "question" and c[1].get("key") == a
+        ]
+        assert drawn == []  # 재배달이 새로 그리지 않았다
+        fresh.shutdown_all()
+
+    def test_main_run_ended_is_a_single_definition(self, mkreg, renderer):
+        """main 은 펌프가 둘(run/web)이라 호출부가 둘이다 — 정의가 하나여야
+        한쪽만 고치는 사고가 안 난다(`runtime.py` 가 있는 이유)."""
+        from agent_cli.runtime import main_run_ended
+
+        assert main_run_ended(None) == 0  # 레지스트리 없는 부팅에서 안전
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "어느 쪽?")
+        reg.drain_replies()  # 배달 마킹
+        assert main_run_ended(reg) == 1
+        rec = next(r for r in reg.drain_replies() if r.get("kind") == "reminder")
+        assert qid in rec["output"]
+        assert main_run_ended(reg) == 1  # 답할 때까지 계속
+
+    def test_mail_notice_labels_reminder_and_answer(self, mkreg, renderer):
+        """독촉을 '회신 도착' 으로 적으면 사용자가 뭔가 끝난 줄 안다."""
+        from agent_cli.main import _agent_mail_notice
+
+        seen = []
+        renderer.agent_mail_hint = lambda **kw: seen.append(kw["text"])
+        for kind, want in (
+            ("reminder", "독촉"),
+            ("answer", "답변 도착"),
+            ("question", "질문 도착"),
+            ("reply", "회신 도착"),
+        ):
+            _agent_mail_notice({"kind": kind, "key": "agt-x"})
+            assert want in seen[-1], (kind, seen[-1])
+
+    def test_async_question_record_points_at_the_answer_tool(self, mkreg, renderer):
+        """main 이 새 request 를 보내면 그건 답이 아니라 일감이다 — 질문은
+        열린 채 남고 독촉이 상한까지 돌다 닫힌다. 런만 태운다."""
+        rec = build_reply_record(
+            {"kind": "question", "id": "q-abc", "key": "agt-x", "output": "어느 쪽?"}
+        )
+        assert "`answer` tool" in rec["content"]
+        assert "q-abc" in rec["content"]
+        assert "BLOCKED" not in rec["content"]
+        # 블로킹 경로(id 없음)는 종전 문구 그대로
+        old = build_reply_record({"kind": "question", "key": "agt-x", "output": "q"})
+        assert "BLOCKED" in old["content"]

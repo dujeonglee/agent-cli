@@ -357,7 +357,8 @@ stop_event.is_set()`)를 쓰면 **kill 이 빠져** 죽은 상대를 향한 질�
 수가 `stale_questions` 이고, 부팅 시 사람에게 알린다 — 정상 경로에서는
 `kill`/crash 가 즉시 양방향 정리를 하므로(§3.8) 대개 0이다.
 
-**② 미배달 peer 질문은 다시 배달한다.** inbox 는 `SimpleQueue` 라 영속
+**② 미배달 peer 질문은 다시 배달한다** (창·로그에는 다시 그리지 않는다 —
+그 질문은 첫 세션에서 이미 그려졌고 `_replay_conversation` 이 방금 재생했다). inbox 는 `SimpleQueue` 라 영속
 대상이 **아니다** — 아직 안 꺼낸 질문은 항목으로만 존재했으므로 통째로
 증발했고, 목록만 되살리면 영영 안 꺼내지고 독촉도 안 간다. **배달된 것은
 재배달하지 않는다**: 상대 ctx 에 이미 남아 있어 두 번 묻는 꼴이 된다.
@@ -367,7 +368,14 @@ main 앞 질문은 `pending` 미러로 살아 있으므로 역시 그대로 둔�
 걸리는데, resume 직후 그 에이전트에게 새 일감이 안 오면 **끝나는 런이 없어**
 독촉도 상한도 영영 안 돈다 — 연쇄 차단이 만들었던 정지가 resume 경로로
 다시 들어온다. 복원 직후 `remind_owed` 를 한 번 걸면 그 독촉 항목이 런을
-만들고 이후는 평소 흐름이다.
+만들고 이후는 평소 흐름이다. main 앞 빚도 대상이다(`agent:` 로 한정하면
+main 의 빚은 영영 잠든다 — main 의 독촉은 런 끝에서만 걸리는데, main 이 그
+질문을 모르면 끝날 런도 없다).
+
+**②와 ③은 겹치면 안 된다.** kick 대상은 **재배달 전에** 확정한다: ②가 큐에
+넣은 질문을 상대 워커가 곧바로 꺼내 `delivered_seq` 를 찍으면(LLM 호출
+**전에** 찍힌다) ③의 집합에 섞여, 방금 배달한 질문에 독촉까지 날아간다 —
+런 하나 낭비 + 상한 조기 소모. 재현률 5/5 였다.
 
 **④ seq 둘의 취급이 다르다.** `asked_seq` 는 0 으로 리셋한다 — 세션마다
 의미가 다른 값이고, 물어본 런은 사라졌으며, seq 는 1부터라 0 은 어떤 런과도
@@ -377,6 +385,11 @@ main 앞 질문은 `pending` 미러로 살아 있으므로 역시 그대로 둔�
 전부 `_notify_roster` **앞**에서 끝나야 트레이 첫 스냅샷이 맞다.
 `AGENTS_STATE_VERSION` 은 그대로 — 구버전 파일엔 `questions` 가 없어
 되살릴 것이 없고, 구버전 리더는 모르는 키를 무시한다.
+
+**main 에게 가는 질문 레코드는 `answer` 도구를 가리킨다.** `id` 가 실린
+레코드(비동기)에 *"BLOCKED … mode:request 로 답하라"* 를 주면, main 이
+보내는 것은 답이 아니라 **일감**이라 질문은 열린 채 남고 독촉이 상한까지
+돌다 닫힌다 — 런만 태운다. `id` 유무로 문구를 가른다.
 
 **`stale` 마킹은 블로킹 경로에만 남긴다.** `build_reply_record` 의
 *"STALE … NO LONGER waiting"*(`:250`)는 재시작으로 대기 슬롯이 사라지는
@@ -449,6 +462,8 @@ main 도 포트를 받으므로 **`questions is not None` 으로는 못 가른�
 | `web/static/app.js:2110` | 트레이를 `open_questions` 기반으로(질문별 항목) |
 | `web/static/app.js:2284` | 상태 dot 의 `"w"` 분기 제거 — 비동기엔 그 state 가 없다 |
 | `runtime.py:144-152` | `waiting_ask_keys` → `open_human_question_keys`, **그리고 "resume 시 STALE 처리됩니다" 문구를 §3.9 의미로** |
+| `runtime.py` | `main_run_ended(registry)` — main 의 런 끝 독촉. 펌프가 둘(run/web)이라 호출부는 둘이되 **정의는 하나** |
+| `main.py` | `_agent_mail_notice` 가 `reminder`/`answer` 를 구분 — 독촉을 "회신 도착" 으로 적으면 뭔가 끝난 줄 안다 |
 | `agents_live.py:482` | `any_activity` 에 열린 사람 질문 합류 — 안 그러면 idle-reap 이 세션을 걷고 §3.9 가 안 살리니 묘비명이 된다 |
 | `render/base.py:686`·`render/web.py:2040` | `can_answer_agent` 제거(게이트는 `agents_live.py:1593` 하나) |
 
