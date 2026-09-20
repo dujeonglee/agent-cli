@@ -23,6 +23,7 @@ from agent_cli.tools.context import ReadContextTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
 from agent_cli.tools.memory_tool import MemoryTool
+from agent_cli.tools.monitor_tool import MonitorTool
 from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
@@ -53,6 +54,12 @@ _ALL_TOOLS: list[Tool] = [
     FetchTool(),
     AgentTool(),
 ]
+
+# 🔔 ``monitor`` — native. `schedule` 과 달리 **무조건** 등록된다: 시간을 재는
+# 것도 발화도 이 프로세스 안에서 일어나므로 board 도 env 도 필요 없다
+# (`schedule` 은 board 스케줄러의 얇은 클라이언트라 그쪽이 없으면 빈 껍데기다).
+# 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
+_ALL_TOOLS.append(MonitorTool())
 
 # ⏰ ``schedule`` — only when an external scheduler backs this session
 # (env ``AGENT_CLI_SCHEDULER=1``, set by agent-board). Appended last so the

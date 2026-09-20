@@ -139,6 +139,62 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     )
 
 
+def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
+    """위험 키워드 확인 — ``(거부 사유 | None, 사용자 코멘트)``.
+
+    `shell` 실행과 `monitor` **등록**이 공유한다 (v9.11.0). monitor 는 발화
+    시점이 아니라 등록 시점에 이걸 부른다: 사람은 모니터를 거는 순간엔 있지만
+    새벽 3시 발화 때는 없고, 무엇보다 **폴링 스레드에서 `renderer.confirm` 을
+    부르면 `interactive_lock` 교착**이다. 같은 함수를 쓰므로 정책(키워드 게이트
+    + `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0` 우회)이 갈릴 수 없다 — 모니터만
+    모든 명령에 확인을 요구하면 harbor/CI 에서 못 쓰게 되는데, 그 headless
+    환경이 monitor 를 만드는 근거였다(docs/monitor/DESIGN.md §7.3).
+    """
+    if not _confirmation_enabled():
+        return None, ""
+    keyword = _detect_dangerous(cmd)
+    if not keyword or keyword in _session_allowlist:
+        return None, ""
+
+    from agent_cli.render import get_renderer, interactive_lock
+
+    # "Can we ask the user?" is a renderer capability, not a TTY fact: the CLI
+    # renderer needs a terminal, the web renderer needs a connected client (no
+    # TTY). Gating on the renderer lets web prompt over SSE and stops the CLI
+    # from trying when no prompt could be shown.
+    if not get_renderer().can_prompt():
+        return (
+            f"Refused: command contains `{keyword}` but this interface can't "
+            "prompt for confirmation right now (non-interactive shell, or no "
+            "connected client). Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to "
+            "bypass for non-interactive runs."
+        ), ""
+    # Hold the shared interactive lock (re-entrant) across the allowlist
+    # re-check + prompt: it serializes against confirm AND ask everywhere, and
+    # ``renderer.confirm`` re-acquires it internally on this same thread.
+    # Re-check the allowlist inside — another worker may have been granted
+    # "always" while we waited.
+    with interactive_lock:
+        if keyword in _session_allowlist:
+            return None, ""
+        decision, user_comment = _ask_confirmation(cmd, keyword)
+        if decision == "n":
+            err = f"User denied command containing `{keyword}`: {cmd}"
+            if user_comment:
+                err += f". User said: {user_comment}"
+            return err, ""
+        if decision == "a":
+            _session_allowlist.add(keyword)
+            # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0). 이후 같은
+            # 키워드는 묻지도 않으므로, 대화에 흔적이 없으면 나중에 "이게 왜
+            # 확인 없이 돌았지" 를 알 수 없다. `y`(1회)는 안 남긴다 — 바로 위
+            # `⚡` 카드가 맥락을 준다. 거절은 이미 `ToolResult.error` 로 남는다.
+            get_renderer().note_next(
+                f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — 이 세션 내내 재확인 없음"
+            )
+        return None, user_comment
+
+
 def tool_shell(args: dict) -> ToolResult:
     """Run a shell command and return stdout/stderr."""
 
@@ -148,53 +204,9 @@ def tool_shell(args: dict) -> ToolResult:
             False, error="Empty command. Provide a shell command to execute."
         )
 
-    user_comment = ""
-    if _confirmation_enabled():
-        keyword = _detect_dangerous(cmd)
-        if keyword and keyword not in _session_allowlist:
-            from agent_cli.render import get_renderer, interactive_lock
-
-            # "Can we ask the user?" is a renderer capability, not a TTY
-            # fact: the CLI renderer needs a terminal, the web renderer
-            # needs a connected client (no TTY). Gating on the renderer
-            # lets web prompt over SSE and stops the CLI from trying when
-            # no prompt could be shown.
-            if not get_renderer().can_prompt():
-                return ToolResult(
-                    False,
-                    error=(
-                        f"Refused: command contains `{keyword}` but this "
-                        "interface can't prompt for confirmation right now "
-                        "(non-interactive shell, or no connected client). "
-                        "Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to bypass "
-                        "for non-interactive runs."
-                    ),
-                )
-            # Hold the shared interactive lock (re-entrant) across the
-            # allowlist re-check + prompt: it serializes against confirm
-            # AND ask everywhere, and ``renderer.confirm`` re-acquires it
-            # internally on this same thread. Re-check the allowlist inside
-            # — another worker may have been granted "always" while we
-            # waited.
-            with interactive_lock:
-                if keyword not in _session_allowlist:
-                    decision, user_comment = _ask_confirmation(cmd, keyword)
-                    if decision == "n":
-                        err = f"User denied command containing `{keyword}`: {cmd}"
-                        if user_comment:
-                            err += f". User said: {user_comment}"
-                        return ToolResult(False, error=err)
-                    if decision == "a":
-                        _session_allowlist.add(keyword)
-                        # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0).
-                        # 이후 같은 키워드는 묻지도 않으므로, 대화에 흔적이
-                        # 없으면 나중에 "이게 왜 확인 없이 돌았지" 를 알 수 없다.
-                        # `y`(1회)는 안 남긴다 — 바로 위 `⚡` 카드가 맥락을 준다.
-                        # 거절은 이미 `ToolResult.error` 로 남는다(비대칭 해소).
-                        get_renderer().note_next(
-                            f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — "
-                            f"이 세션 내내 재확인 없음"
-                        )
+    denied, user_comment = confirm_dangerous(cmd)
+    if denied:
+        return ToolResult(False, error=denied)
 
     # Workspace confinement: best-effort extract literal path tokens (absolute
     # paths + ``..`` escapes) and gate any that fall outside the workspace. This

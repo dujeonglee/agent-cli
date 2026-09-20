@@ -91,6 +91,21 @@ def build_agent_registry(session_dir, runtime: AgentRuntime, max_agents=None):
     return registry
 
 
+def build_monitor_registry():
+    """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
+
+    `build_agent_registry` 의 형제다. 도구는 모듈 전역으로, 루프는
+    `LoopConfig.monitor_registry` 로 닿는데 **같은 객체**여야 한다 — 여기서
+    하나를 만들어 둘 다에 준다.
+    """
+    from agent_cli.monitor.registry import MonitorRegistry
+    from agent_cli.monitor.runtime import set_monitor_registry
+
+    registry = MonitorRegistry()
+    set_monitor_registry(registry)
+    return registry
+
+
 def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 

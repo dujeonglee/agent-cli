@@ -1369,8 +1369,13 @@ def run(
     from agent_cli.runtime import (
         AgentRuntime,
         build_agent_registry,
+        build_monitor_registry,
         wire_agent_mail,
     )
+
+    # monitor 는 native — board 도 env 도 없이 항상 조립된다 (`schedule` 과의
+    # 차이: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다).
+    monitor_registry = build_monitor_registry()
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
@@ -1522,6 +1527,7 @@ def run(
                 record_turns=record_turns,
                 wire_format=wire_format_plugin,
                 agent_registry=agent_registry,
+                monitor_registry=monitor_registry,
             )
             if loop_result.success:
                 answer = loop_result.output
@@ -1529,7 +1535,13 @@ def run(
         input_queue.enqueue(None, query)
         warn_stuck = True  # 메인 펌프 경로에서만 답변-대기 경고 (종전 표면)
         try:
-            _run_message_pump(input_queue, waker, agent_registry, _run_one)
+            _run_message_pump(
+                input_queue,
+                waker,
+                agent_registry,
+                _run_one,
+                monitors=monitor_registry,
+            )
         except KeyboardInterrupt:
             answer = None
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
@@ -1560,22 +1572,31 @@ def resume_wire_format(session, current, explicit: str | None):
         raise typer.Exit(2) from exc
 
 
-def web_instance_is_active(renderer, server, agent_registry) -> bool:
+def web_instance_is_active(renderer, server, agent_registry, monitors=None) -> bool:
     """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
 
     True 조건: 라이브 뷰어 존재 ∨ main worker busy ∨ 상주 에이전트 활동
     (working / 미처리 inbox — main 유휴여도 백그라운드 작업 소실 방지)
-    ∨ 대기 메시지 큐 비어있지 않음. ``agent_registry`` 는 web() 의
-    worker 부트스트랩이 늦게 채우는 nonlocal 이라 None 허용."""
+    ∨ 대기 메시지 큐 비어있지 않음 ∨ **살아 있는 모니터/미배달 보고**.
+    ``agent_registry`` 는 web() 의 worker 부트스트랩이 늦게 채우는 nonlocal
+    이라 None 허용.
+
+    ``monitors`` (v9.11.0): 설계 초판은 "web 은 무한 대기라 수명 문제는 run
+    에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
+    여기서 자기를 거두고, 그러면 살아 있는 모니터가 조용히 죽는다. 펌프
+    (`_run_message_pump`)와 **같은 한 줄이 두 곳에** 들어가야 한다."""
     return bool(
         renderer.has_live_connections()
         or renderer.worker_is_busy()
         or (agent_registry is not None and agent_registry.any_activity())
         or server.pending_count() > 0
+        or (monitors is not None and monitors.has_active_work())
     )
 
 
-def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
+def _run_message_pump(
+    input_queue, waker, registry, run_one, *, monitors=None, poll_secs=0.5
+):
     """CLI ``run`` 의 큐 펌프 (teammate P5) — web ``_worker_loop`` 와 같은
     "큐에 뭔가 있으면 재기동" 모델을 공용 InputQueue 위에서 돈다.
 
@@ -1586,8 +1607,18 @@ def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
     """
     from agent_cli.input_queue import InputQueue
 
+    def _quiet() -> bool:
+        """정지해도 되는가 — 모니터가 살아 있거나 미배달 보고가 있으면 아니다.
+
+        `has_active_work()` 가 `waiting_ask` 를 의도적으로 제외하는 것과 같은
+        자리다. 모니터 쪽은 `deadline` 이 **필수로 유계**라(§7.1) 안 끝나는
+        세션이 되지 않는다."""
+        if input_queue.pending_count() or registry.has_active_work():
+            return False
+        return not (monitors is not None and monitors.has_active_work())
+
     while True:
-        if input_queue.pending_count() == 0 and not registry.has_active_work():
+        if _quiet():
             return
         # mark_idle (not bare idle.set): if a reply is already pending (e.g. it
         # landed in the on_run_end()→idle window), arm a wake now so the reply
@@ -2243,6 +2274,11 @@ def web(
 
     # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
     agent_registry = None
+    # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
+    # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
+    from agent_cli.runtime import build_monitor_registry
+
+    monitor_registry = build_monitor_registry()
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
@@ -2422,6 +2458,7 @@ def web(
                             # 훅이 미발화했다.
                             hooks_config=_disk_hooks,
                             agent_registry=agent_registry,
+                            monitor_registry=monitor_registry,
                         )
 
                     _run_main(message, nickname)
@@ -2547,7 +2584,9 @@ def web(
         from agent_cli.web.idle import IdleMonitor
 
         monitor = IdleMonitor(
-            is_active=lambda: web_instance_is_active(renderer, server, agent_registry),
+            is_active=lambda: web_instance_is_active(
+                renderer, server, agent_registry, monitor_registry
+            ),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
         )

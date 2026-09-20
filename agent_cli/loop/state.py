@@ -60,6 +60,10 @@ class LoopConfig:
     # None(서브에이전트/headless)이면 AgentLoop.__init__ 이 teammate 도구를
     # tools_list 에서 제거한다 (teammate 안 teammate 금지의 단일 가드).
     agent_registry: object = None
+    # monitor: 조건 감시 레지스트리 (v9.11.0). 턴 경계에서 보고를 drain 해
+    # `tool="monitor"` 관찰 레코드로 주입한다 — `agent_registry` 와 같은 자리.
+    # None(서브에이전트/headless)이면 배달 없음.
+    monitor_registry: object = None
     # teammate P2: ask 라우팅 훅 — teammate 서브루프에서만 주입.
     # 있으면 ask 도구가 사용자 프롬프트 대신 이 callable(question)->answer
     # 로 간다 (worker 가 질문을 main mailbox 에 올리고 답변을 블록 대기).
