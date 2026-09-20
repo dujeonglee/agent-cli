@@ -1689,8 +1689,10 @@ def _announce_agent_boot(renderer, revived: int, auto: int, stale: int = 0) -> N
     if revived:
         renderer.status("running", f"🤝 상주 에이전트 {revived}명 재생성됨")
     if stale:
-        # §3.9 — 되살리지 않고 건수만 알린다.
-        renderer.status("running", f"❓ 미답 질문 {stale}건은 세션 종료로 사라졌습니다")
+        # §3.9 — 되살리지 **못한** 건수 (묻거나 답할 쪽이 미복귀).
+        renderer.status(
+            "running", f"❓ 미답 질문 {stale}건은 상대가 돌아오지 않아 미복원"
+        )
     if auto:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
 

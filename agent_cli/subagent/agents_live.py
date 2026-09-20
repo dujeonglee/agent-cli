@@ -148,6 +148,30 @@ class Question:
     def to_human(self) -> bool:
         return _is_human_addr(self.target)
 
+    @classmethod
+    def from_dict(cls, d: dict) -> Question | None:
+        """``agents.json`` 의 한 항목 → Question. 모양이 깨졌으면 None."""
+        try:
+            return cls(
+                id=str(d["id"]),
+                asker=str(d["asker"]),
+                target=str(d["target"]),
+                text=str(d["text"]),
+                asked_at=float(d.get("asked_at") or time.time()),
+                # 물어본 런은 사라졌다 — 0 은 어떤 런과도 안 겹친다(seq 는
+                # 1부터). §3.7 억제는 이 세션의 런에만 적용된다.
+                asked_seq=0,
+                # 배달 여부는 **유지**한다 — 상대의 ctx 에 질문이 남아 있고
+                # (배달 = 런 1회 = 그 텍스트가 history 에 있다), 그 빚이
+                # 이어져야 독촉도 상한도 계속 돈다.
+                delivered_seq=(
+                    None if d.get("delivered_seq") is None else int(d["delivered_seq"])
+                ),
+                nags=int(d.get("nags") or 0),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def as_dict(self) -> dict:
         return {
             "id": self.id,
@@ -1694,9 +1718,10 @@ class AgentRegistry:
         - 살아있던(revivable) teammate: 자기 history 를 resume 한 ctx 로
           worker 재기동 (이전 문답 전부 기억). kill 된 것은 dead 툼스톤으로
           만 복원 (status 가시성).
-        - 미배달 pending 은 그대로 복원 → 첫 턴 경계에 정상 배달. 단
-          질문(kind:"question")은 **stale 마킹** — 재시작으로 teammate 가
-          더 이상 답변 대기가 아니므로 배달 문구가 재요청을 안내.
+        - 미배달 pending 은 그대로 복원 → 첫 턴 경계에 정상 배달.
+        - 열린 질문도 **되살린다**(§3.9): ctx 가 통째로 resume 되므로 나중에
+          도착한 답도 평소처럼 새 런으로 처리된다 — 못 할 기술적 이유가
+          없다. 되살리지 못하는 것은 asker 나 target 이 돌아오지 않은 것뿐.
         - 파일 부재/파손/버전 불일치는 조용히 no-op (fresh 세션과 동일).
         """
         path = self._state_path()
@@ -1713,16 +1738,27 @@ class AgentRegistry:
             for item in data.get("pending", []):
                 if not isinstance(item, dict):
                     continue
-                if item.get("kind") == "question":
+                # ``stale`` 마킹은 **블로킹 경로의 질문에만** 남긴다:
+                # 그쪽은 재시작으로 대기 슬롯이 사라져 "BLOCKED" 가 거짓이
+                # 된다. 비동기 질문(``id`` 가 실려 있다)은 목록째 되살아나
+                # 답이 정상 처리되므로 마킹하면 그게 거짓말이 된다.
+                # (④에서 블로킹 경로가 사라지면 이 분기도 함께 간다.)
+                if item.get("kind") == "question" and not item.get("id"):
                     item["stale"] = True
                 self._pending.append(item)
             if self._pending:
                 self._cv.notify_all()
-        # 열린 질문은 **되살리지 않는다** — 재시작으로 asker 의 런이 사라져
-        # 답을 받을 주체가 없다. 몇 건이 유실됐는지만 호출자에게 알린다.
-        self.stale_questions = sum(
-            1 for d in data.get("questions", []) if isinstance(d, dict)
-        )
+            # 열린 질문 복원 — 살릴 수 있는 것만. asker/target 판정은 에이전트
+            # 복원 뒤에 해야 하므로 여기서는 담아만 둔다.
+            restored = [
+                q
+                for q in (
+                    Question.from_dict(d)
+                    for d in data.get("questions", [])
+                    if isinstance(d, dict)
+                )
+                if q is not None
+            ]
 
         revived = 0
         for e in data.get("agents", []):
@@ -1767,9 +1803,62 @@ class AgentRegistry:
             # kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
             self._replay_conversation(tm)
             revived += 1
+        self._adopt_questions(restored)
         self._save_state()
         self._notify_roster()
         return revived
+
+    def _adopt_questions(self, restored: list[Question]) -> None:
+        """resume 이 복원한 질문을 받아들인다 — 에이전트 복원 **뒤에**.
+
+        세 가지를 한다.
+
+        **① 살릴 수 없는 것은 버린다.** asker 나 target 이 돌아오지 않았으면
+        (kill 툼스톤·매니페스트 부재) 아무도 답할 수 없거나 답을 받을 데가
+        없다. 버린 수는 ``stale_questions`` 로 사람에게 알린다.
+
+        **② 미배달 peer 질문은 다시 배달한다.** inbox 는 ``SimpleQueue`` 라
+        영속 대상이 아니다 — 아직 안 꺼낸 질문은 항목으로만 존재했으므로
+        통째로 증발했고, 되살려 놓기만 하면 영영 안 꺼내지고 독촉도 안 간다.
+        배달된 것은 상대 ctx 에 남아 있으니 재배달하지 않는다. main 앞
+        질문은 ``pending`` 미러로 살아 있어 역시 그대로 둔다.
+
+        **③ 배달됐던 빚은 한 번 깨운다(kick).** 독촉은 *런이 끝나는 자리*에
+        걸리는데, resume 직후 그 에이전트에게 새 일감이 안 오면 **끝나는 런이
+        없어** 독촉도 상한도 영영 안 돈다 — 연쇄 차단이 만들었던 정지가
+        resume 경로로 다시 들어온다. 여기서 한 번 걸어 주면 그 독촉 항목이
+        런을 만들고, 이후는 평소 흐름이다.
+        """
+        if not restored:
+            return
+
+        def alive(addr: str) -> bool:
+            if addr == "main" or _is_human_addr(addr):
+                return True
+            key = addr.split(":", 1)[1] if addr.startswith("agent:") else addr
+            tm = self._agents.get(key)
+            return tm is not None and tm.state != "dead"
+
+        dropped = 0
+        with self._cv:
+            for q in restored:
+                if alive(q.asker) and alive(q.target):
+                    self._questions[q.id] = q
+                else:
+                    dropped += 1
+        self.stale_questions = dropped
+
+        for q in list(self._questions.values()):
+            undelivered_peer = q.delivered_seq is None and q.target.startswith("agent:")
+            if undelivered_peer and self._deliver_question(q):  # ②
+                with self._cv:  # 재배달 실패 — 답할 데가 없다
+                    self._questions.pop(q.id, None)
+        for addr in {
+            q.target
+            for q in list(self._questions.values())
+            if q.delivered_seq is not None
+        }:
+            self.remind_owed(addr)  # ③
 
     # ── worker ──────────────────────────────────
 

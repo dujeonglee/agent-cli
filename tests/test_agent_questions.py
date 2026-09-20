@@ -377,28 +377,198 @@ class TestDeath:
 
 
 class TestPersistence:
-    def test_saved_question_survives_and_is_counted_not_revived(
-        self, mkreg, tmp_path, renderer
-    ):
-        """§3.9: 되살리지 않고 **N건만 알린다** — 재시작으로 asker 의 런이
-        사라져 답을 받을 주체가 없다. 저장 없이 N 을 알릴 수 없으므로,
-        알릴 거면 저장한다."""
+    """§3.9 — resume 은 질문을 **되살린다**. ctx 가 통째로 복원되므로
+    나중에 도착한 답도 평소처럼 새 런으로 처리된다. 되살리지 못하는 것은
+    asker 나 target 이 돌아오지 않은 것뿐이다."""
+
+    def test_human_question_comes_back_to_the_tray(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.register_question(a, "user:bob", "열린 채 종료")
+        qid, _ = reg.register_question(a, "user:bob", "열린 채 종료")
         reg.shutdown_all()
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        assert fresh.stale_questions == 0  # restore 전
+        assert fresh.restore() == 1
+        assert [q.id for q in fresh.open_human_questions()] == [qid]
+        assert fresh.stale_questions == 0
+        row = next(r for r in fresh.roster_snapshot() if r["key"] == a)
+        assert [q["id"] for q in row["open_questions"]] == [qid]
+        # 답할 수 있다 — 되살리는 이유 자체다.
+        assert fresh.answer_question(qid, "네", by="user:carol") == ""
+        fresh.shutdown_all()
+
+    def test_asked_seq_is_reset_so_it_cannot_gag_a_new_run(
+        self, mkreg, tmp_path, renderer
+    ):
+        """``asked_seq`` 는 세션마다 의미가 다르다. 그대로 두면 새 세션의
+        어떤 런과 우연히 같아져 §3.7 억제가 엉뚱하게 걸릴 수 있다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_seq = 4
+        qid, _ = reg.register_question(a, "user:bob", "질문")
+        assert reg._questions[qid].asked_seq == 4
+        reg.shutdown_all()
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert fresh.stale_questions == 1
-        assert fresh.open_human_questions() == []  # 되살리지 않는다
+        assert fresh._questions[qid].asked_seq == 0  # seq 는 1부터 — 안 겹친다
+        fresh.shutdown_all()
+
+    def test_delivered_debt_survives_and_is_kicked(self, mkreg, tmp_path, renderer):
+        """**kick.** 독촉은 런이 끝나는 자리에 걸린다 — resume 직후 새
+        일감이 안 오면 끝나는 런이 없어 빚이 영원히 잠든다. 한 번 깨워
+        주면 그 독촉 항목이 런을 만들고 이후는 평소 흐름이다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        q = Question(
+            id="q-debt1",
+            asker=a,
+            target=f"agent:{b}",
+            text="배달됐던 빚",
+            delivered_seq=2,
+        )
+        reg._questions[q.id] = q
+        reg._save_state()
+        reg.shutdown_all()
+
+        seen = []
+
+        def runner(query, ctx, **kw):
+            seen.append(query)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
+        fresh.restore()
+        assert q.id in fresh._questions
+        assert fresh._questions[q.id].delivered_seq is not None  # 빚이 유지된다
+        assert wait_until(lambda: fresh._questions[q.id].nags >= 1)  # 깨웠다
+        assert wait_until(lambda: fresh.get(b).handled >= 1)  # 런이 생겼다
+        # 이미 읽은 질문을 **다시 배달하지는 않는다** — 상대 ctx 에 남아
+        # 있고, 재배달하면 같은 질문을 두 번 묻는 꼴이다.
+        assert not [x for x in seen if "[question q-" in x]
+        assert [x for x in seen if "(reminder)" in x]
+        fresh.shutdown_all()
+
+    def test_undelivered_peer_question_is_redelivered(self, mkreg, tmp_path, renderer):
+        """inbox 는 ``SimpleQueue`` 라 영속 대상이 아니다 — 아직 안 꺼낸
+        질문은 항목으로만 존재했으므로 통째로 증발한다. 되살려 놓기만
+        하면 영영 안 꺼내지고 독촉도 안 가 영구 미결이 된다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        q = Question(id="q-undel", asker=a, target=f"agent:{b}", text="못 꺼낸 질문")
+        reg._questions[q.id] = q
+        reg._save_state()
+        reg.shutdown_all()
+
+        seen = []
+
+        def runner(query, ctx, **kw):
+            seen.append(query)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
+        fresh.restore()
+        # 다시 배달돼 상대가 꺼내 읽는다 — 그래야 빚이 성립한다.
+        assert wait_until(lambda: any("q-undel" in s for s in seen), timeout=5.0)
+        assert wait_until(lambda: fresh._questions["q-undel"].delivered_seq is not None)
+        fresh.shutdown_all()
+
+    def test_question_is_dropped_when_its_target_did_not_come_back(
+        self, mkreg, tmp_path, renderer
+    ):
+        """asker 나 target 이 안 돌아오면 아무도 답할 수 없거나 답을 받을
+        데가 없다 — 되살리면 영구 미결로 남는다.
+
+        정상 경로에서는 ``kill``/crash 가 **즉시** 양방향 정리를 하므로
+        (§3.8) 이 상태가 잘 안 만들어진다. 그래서 파일을 직접 손봐
+        안전망 자체를 잰다 — 손상·수동 편집·버전 엇갈림에서 나올 수 있다.
+        """
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg._save_state()
+        reg.shutdown_all()
+
+        path = tmp_path / "agents.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["questions"] = [
+            {  # target 이 매니페스트에 없다
+                "id": "q-orphan",
+                "asker": a,
+                "target": "agent:agt-gone",
+                "text": "돌아오지 않은 상대에게",
+                "asked_at": 1.0,
+                "asked_seq": 1,
+                "delivered_seq": None,
+                "nags": 0,
+            },
+            {  # asker 가 매니페스트에 없다
+                "id": "q-orphan2",
+                "asker": "agt-gone2",
+                "target": "main",
+                "text": "돌아오지 않은 쪽이 물었다",
+                "asked_at": 1.0,
+                "asked_seq": 1,
+                "delivered_seq": 3,
+                "nags": 0,
+            },
+        ]
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        fresh.restore()
+        assert fresh._questions == {}
+        assert fresh.stale_questions == 2
+        fresh.shutdown_all()
+
+    def test_malformed_question_entry_is_skipped(self, mkreg, tmp_path, renderer):
+        reg = mkreg()
+        spawn_idle(reg)
+        reg._save_state()
+        reg.shutdown_all()
+        path = tmp_path / "agents.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["questions"] = [
+            {"id": "q-bad"},  # 키 부족 (KeyError)
+            "not a dict",
+            {},
+            {  # 타입이 깨졌다 (ValueError)
+                "id": "q-bad2",
+                "asker": "a",
+                "target": "main",
+                "text": "t",
+                "nags": "여섯",
+            },
+        ]
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        fresh.restore()  # 조용히 무시 — 부팅을 막지 않는다
+        assert fresh._questions == {}
+        fresh.shutdown_all()
+
+    def test_async_question_record_is_not_marked_stale(self, mkreg, tmp_path, renderer):
+        """``stale`` 은 블로킹 경로 전용이다 — 거기선 재시작으로 대기
+        슬롯이 사라져 "BLOCKED" 가 거짓이 된다. 비동기 질문은 목록째
+        되살아나 답이 정상 처리되므로, 마킹하면 그게 거짓말이 된다."""
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "main 에게")  # pending 에 실린다
+        reg.shutdown_all()
+
+        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        fresh.restore()
+        rec = next(r for r in fresh.drain_replies() if r.get("kind") == "question")
+        assert rec["id"] == qid
+        assert rec.get("stale") is not True
+        assert "STALE" not in build_reply_record(rec)["content"]
+        assert qid in fresh._questions  # 되살아났다 — 답할 수 있다
         fresh.shutdown_all()
 
     def test_fresh_registry_reports_zero(self, mkreg, tmp_path, renderer):
         reg = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         reg.restore()
         assert reg.stale_questions == 0
+        assert reg._questions == {}
 
 
 # ── 독촉 런 (§3.4) ──────────────────────────────
