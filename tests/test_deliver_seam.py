@@ -44,12 +44,13 @@ class _Calls:
     def __init__(self, registry: AgentRegistry):
         self.mail: list[dict] = []
         self.requests: list[tuple] = []
+        self.fail_with = ""
         registry._push_reply = self.mail.append  # type: ignore[method-assign]
         registry.request = self._request  # type: ignore[method-assign]
 
     def _request(self, key, message, **kw):
         self.requests.append((key, message, kw))
-        return ""
+        return self.fail_with
 
 
 @pytest.fixture
@@ -100,6 +101,14 @@ class TestDeliverQuestion:
                 },
             )
         ]
+
+    def test_backend_error_reaches_the_caller(self, reg, calls):
+        """배달 실패가 `_deliver_question` 의 반환으로 올라와야 한다 —
+        `register_question` 이 그 값을 보고 질문을 취소한다. `return` 이
+        빠지면 죽은 대상에 건 질문이 영영 열린 채 남는다.
+        """
+        calls.fail_with = "boom"
+        assert reg._deliver_question(_q(target="agent:k1"), render=False) == "boom"
 
     def test_peer_asker_author_is_namespaced(self, reg, calls):
         """asker 가 에이전트면 author 는 `agent:<key>` — 맨 키가 아니다."""
@@ -200,8 +209,13 @@ class TestDeliverSurface:
         assert (calls.mail, calls.requests) == ([], [])
 
     def test_agent_backend_propagates_the_error_string(self, reg):
-        """`request` 의 에러가 호출부로 그대로 올라간다 — 삼키지 않는다."""
+        """`request` 의 에러가 호출부로 그대로 올라간다 — 삼키지 않는다.
+
+        `"nope" in err` 로는 부족하다: `agent:` 분기를 통째로 지워도
+        `"unroutable address 'agent:nope'"` 가 그 부분 문자열을 포함해
+        **지운 채로 통과**한다. 백엔드가 실제로 불렸음을 문구로 고정한다.
+        """
         err = reg.deliver(
             "agent:nope", mail={}, text="x", author="main", expects_reply=False
         )
-        assert "nope" in err
+        assert err.startswith("unknown agent 'nope'")

@@ -103,15 +103,21 @@ main 이 빈 wake 턴을 돌고, `on_run_end` 가 다시 무장 — 무한 루�
 main 측 페이로드도 kind 마다 다르다(`id` 는 question/answer 만, `profile`/`name` 은
 question 만). **주소 어휘조차 통일돼 있지 않다** — `_deliver_answer` 는 맨 키를 쓴다.
 
-그래서 접히는 것은 **main 분기(`_push_reply(item)`) + `agent:` 디코드**뿐이고,
+그래서 접히는 것은 **main 분기(`_push_reply(mail)`) + `agent:` 디코드**뿐이고,
 정직한 서명은 이렇다:
 
 ```python
-def deliver(self, addr: str, item: dict, *,
+def deliver(self, addr: str, *, mail: dict, text: str,
             author: str, expects_reply: bool,
             question_id: str = "", hop: int = 0) -> str:
     """addr: "main" | "agent:<key>". 에러 문자열 또는 ""."""
 ```
+
+**페이로드가 둘인 이유**: 두 백엔드는 나르는 것이 다르다. 메일박스 아이템은
+**구조**를 싣고(`kind`/`id`/`key`/`profile` — UI 렌더와 `answer(id)` 가 읽는다),
+inbox 는 **평문**을 싣는다. 답·독촉은 같은 문자열을 두 번 주지만 **질문만
+본문이 갈린다** — main 은 질문 원문, 에이전트는 출처를 머리에 단 한 줄. 하나의
+`item` 으로는 그 경로를 원형 그대로 재현할 수 없다. (C1 구현에서 확정.)
 
 **6줄짜리 헬퍼**다. "같은 두 호출을 같은 인자로" 가 아니다.
 
@@ -122,9 +128,9 @@ def deliver(self, addr: str, item: dict, *,
 
 ## 3. 설계 — 축 A: 주소 배달 (G1 + G2 의 절반)
 
-### 3.1 `AgentRegistry.deliver(addr, item, …)`
+### 3.1 `AgentRegistry.deliver(addr, *, mail, text, …)`
 
-§2.3 의 서명 그대로. `addr == "main"` → `_push_reply(item)`;
+§2.3 의 서명 그대로. `addr == "main"` → `_push_reply(mail)`;
 `addr.startswith("agent:")` → `request(key, …)`. 여섯 호출부 중 **주소 분기가 있는
 셋**(`_deliver_question`·`_deliver_answer`·`remind_owed`)을 이걸로 접는다.
 `_deliver_answer` 의 맨 키는 호출부에서 `f"agent:{q.asker}"` 로 만든다.
@@ -136,8 +142,8 @@ def deliver(self, addr: str, item: dict, *,
 
 - `Monitor.owner: str`. `MonitorRegistry.add(..., owner)`.
 - 발화 시 `_pending` 에 쌓지 않고 **즉시**
-  `deliver(owner, {"kind": "monitor", "success": True, "output": report},
-  author="main", expects_reply=False)`.
+  `deliver(owner, mail={"kind": "monitor", "success": True, "output": report},
+  text=report, author="main", expects_reply=False)`.
 
 **`"success": True` 는 빠뜨리면 안 된다** (리뷰 B1): `_deliver_agent_mail` 이
 `success=bool(reply.get("success"))` 로 렌더한다(`core.py:770`). 없으면 모든
@@ -402,7 +408,7 @@ web `:2363`)가 그 제약을 만족하는 가장 이른 지점이다.
 
 ### 3.10 G2 — 다음 기능은 어떻게 붙나
 
-새 능력이 누군가에게 알려야 하면: **`deliver(addr, item, …)` 를 부르고
+새 능력이 누군가에게 알려야 하면: **`deliver(addr, mail=…, text=…)` 를 부르고
 `build_reply_record` 에 `kind` 분기를 하나 더한다.** 건드리지 않는 것 — waker
 술어 · 생존 판정 · `run_loop` 시그니처 · `LoopConfig` · 배달 지점. 지금 고객
 넷(질문·답·독촉·모니터)이 그 형태를 공유하고 다섯 번째도 같다.
