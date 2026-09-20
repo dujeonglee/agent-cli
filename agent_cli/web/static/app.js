@@ -1048,8 +1048,13 @@
 
   // 채널별 **관찰을 기다리는 스텝 카드** 한 장. DOM 을 뒤지지 않는 이유는
   // 카드가 루트가 아니라 task group 본문에 들어갈 수 있어서다(appendToTimeline).
-  // 관찰은 언제나 자기 행동 뒤에 오므로(모든 `render=True` 호출부가 같은 턴에
-  // action 을 먼저 낸다) 채널당 한 장이면 충분하다.
+  //
+  // ★ 병합 단위는 **턴**이지 "직전 행동" 이 아니다. 서버는 `action()` 을
+  // op 마다 부르므로 다중 op 턴은 `assistant_turn` 을 **N개** 내고 관찰은
+  // 합쳐서 **하나** 낸다(`[1/2] shell — OK …`). "직전 행동" 으로 붙이면 마지막
+  // op 만 관찰을 받고 **앞 카드들은 성패 배지 없이 영영 남는다** — 실제로 그
+  // 회귀를 냈다(사용자 제보, 한 세션의 다중 op 턴 30건). 같은 턴의 두 번째
+  // 행동은 새 카드가 아니라 **그 카드의 본문**으로 들어간다.
   const pendingStep = {};
 
   /** 스텝 카드의 머리 행 — 통째로 눌러 본문을 여닫는다. */
@@ -1104,6 +1109,24 @@
     // 상대 칩을 여기 붙인다.
     const jump = tool === "agent" ? agentJumpChip(input) : null;
 
+    // 같은 턴의 두 번째 op — 새 카드가 아니라 앞 카드에 행을 더한다.
+    const openStep = pendingStep[ch];
+    if (openStep && openStep.turn === d.turn) {
+      openStep.body.appendChild(
+        makeRow("⚡", tool, actionSummary(tool, input),
+                renderActionInput(tool, input), ["act"], jump)
+      );
+      openStep.acts += 1;
+      // 배지는 `⚡ 첫도구 +N` 으로 접는다 — 도구 이름을 전부 늘어놓으면
+      // 머리 한 줄이 배지로 밀린다.
+      if (openStep.toolBadge) {
+        openStep.toolBadge.textContent =
+          "⚡ " + openStep.firstTool + " +" + (openStep.acts - 1);
+      }
+      scheduleScroll();
+      return;
+    }
+
     card.classList.add("step");
     const badges = el("span", ["badges"]);
     const body = el("div", ["step-body"]);
@@ -1143,7 +1166,11 @@
     card.appendChild(body);
     // 관찰이 이 카드를 찾아 붙는다. 못 찾으면 종전대로 단독 카드로 떨어진다
     // (안전망 — 구조적으로는 관찰이 행동 없이 오지 않는다).
-    pendingStep[ch] = { card: card, head: head, body: body, badges: badges };
+    pendingStep[ch] = {
+      card: card, head: head, body: body, badges: badges,
+      turn: d.turn, acts: 1, firstTool: tool || "?",
+      toolBadge: badges.querySelector(".badge.tool"),
+    };
     finishCard(card, d);
   }
 
@@ -1308,8 +1335,10 @@
     // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
     const ch = channelOf(d.task_id);
     const step = pendingStep[ch];
-    delete pendingStep[ch];
-    if (step) {
+    // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
+    // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
+    if (step && step.turn === d.turn) {
+      delete pendingStep[ch];
       step.body.appendChild(row);
       step.badges.appendChild(
         el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")

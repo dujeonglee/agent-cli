@@ -711,3 +711,95 @@ class TestStepCard:
         stack.renderer.observation("고아", turn=1, tool_name="shell", success=True)
         assert _wait(lambda: page.locator(".card-observation").count() == 1)
         assert "고아" in page.locator(".card-observation").first.inner_text()
+
+
+class TestStepCardMultiOp:
+    """다중 op 턴 — 서버는 ``action()`` 을 **op 마다** 부르고 관찰은 합쳐서
+    하나만 낸다(``[1/2] shell — OK …``).
+
+    ★재발 방지(사용자 제보): 병합 단위를 "직전 행동" 으로 잡았더니 마지막
+    op 만 관찰을 받고 **앞 카드들이 성패 배지 없이 영영 남았다**. 한 세션에서
+    다중 op 턴이 30건이었다 — 드문 모양이 아니다. 단위는 **턴**이다.
+    """
+
+    def test_two_actions_in_one_turn_share_one_card(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("띄우고 바로 감시를 건다", 4)
+        stack.renderer.action("shell", json.dumps({"command": "nohup x &"}), 4)
+        stack.renderer.action("monitor", json.dumps({"mode": "add"}), 4)
+        stack.renderer.observation(
+            "[1/2] shell — OK\n[2/2] monitor — OK",
+            turn=4,
+            tool_name="shell+monitor",
+            success=True,
+        )
+        steps = page.locator(".card-assistant.step")
+        assert _wait(lambda: steps.count() == 1), steps.count()
+
+        card = steps.first
+        # 두 행동과 하나의 결과가 **같은 장** 안에 있다.
+        assert card.locator(".step-body .row.act").count() == 2
+        assert card.locator(".step-body .row.ok").count() == 1
+        # 성패 배지가 붙었다 — 이게 빠지는 것이 제보된 증상이었다.
+        assert card.locator(".step-head .badge.ok").count() == 1
+        # 도구 배지는 `⚡ 첫도구 +N` 으로 접는다.
+        assert card.locator(".step-head .badge.tool").inner_text().strip() == (
+            "⚡ shell +1"
+        )
+
+    def test_next_turn_starts_a_new_card(self, stack, page):
+        """턴이 바뀌면 앞 카드에 얹히면 안 된다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("첫 턴", 1)
+        stack.renderer.action("shell", json.dumps({"command": "a"}), 1)
+        stack.renderer.observation("ok", turn=1, tool_name="shell", success=True)
+        stack.renderer.thought("둘째 턴", 2)
+        stack.renderer.action("shell", json.dumps({"command": "b"}), 2)
+        stack.renderer.observation("ok", turn=2, tool_name="shell", success=True)
+
+        steps = page.locator(".card-assistant.step")
+        assert _wait(lambda: steps.count() == 2), steps.count()
+        for i in range(2):
+            assert steps.nth(i).locator(".step-head .badge.ok").count() == 1
+
+    def test_next_turn_does_not_pile_onto_an_open_card(self, stack, page):
+        """관찰이 오면 카드가 닫히지만, **관찰 없이 열린 채 남는** 카드가
+        있다(블로킹 ``ask``). 그 위에 다음 턴의 행동이 얹히면 서로 다른 두
+        스텝이 한 장으로 뭉친다 — 턴 검사가 없으면 이 경로만 깨진다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("사람에게 묻는다", 1)
+        stack.renderer.action("ask", json.dumps({"question": "덮어쓸까요?"}), 1)
+        # 관찰 없이 다음 턴이 시작된다.
+        stack.renderer.thought("그동안 할 수 있는 걸 한다", 2)
+        stack.renderer.action("shell", json.dumps({"command": "ls"}), 2)
+
+        steps = page.locator(".card-assistant.step")
+        assert _wait(lambda: steps.count() == 2), steps.count()
+        # 각 카드가 **자기 행동 하나씩만** 갖는다 — 둘 다 생각이 있으므로
+        # 머리는 💭 이고 행동은 본문 행이다.
+        assert steps.nth(0).locator(".step-body .row.act").count() == 1
+        assert steps.nth(1).locator(".step-body .row.act").count() == 1
+        assert steps.nth(0).locator(".step-head .k").inner_text().strip() == "생각"
+        # 접힌 본문은 `inner_text()` 에 안 잡힌다 — DOM 으로 본다.
+        assert "덮어쓸까요?" in steps.nth(0).text_content()
+        assert "덮어쓸까요?" not in steps.nth(1).text_content()
+
+    def test_observation_from_another_turn_is_not_absorbed(self, stack, page):
+        """블로킹 ``ask`` 는 관찰 없이 카드를 열어 둔 채 남고, 개입 턴은
+        ``state.turn`` 을 되돌려 번호가 재사용될 수 있다 — 턴이 다르면
+        남의 카드다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("사람에게 묻는다", 1)
+        stack.renderer.action("ask", json.dumps({"question": "덮어쓸까요?"}), 1)
+        # 관찰이 **다른 턴**으로 온다 — 위 카드에 붙으면 안 된다.
+        stack.renderer.observation(
+            "다른 턴 결과", turn=9, tool_name="shell", success=True
+        )
+        assert _wait(lambda: page.locator(".card-observation").count() == 1)
+        step = page.locator(".card-assistant.step").first
+        assert step.locator(".step-head .badge.ok").count() == 0
+        assert step.locator(".step-head .badge.bad").count() == 0
