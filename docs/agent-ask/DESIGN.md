@@ -109,7 +109,7 @@ self.answered = threading.Event()
 def _answer_kind(tm, author: str, *, explicit: bool = False) -> str:
     """'answer' | 'work' | 'reject'"""
     if not tm.awaiting:
-        return "reject" if explicit else "work"     # 없는 질문에 답 (§3.5)
+        return "reject" if explicit else "work"     # 없는 질문에 답 (§3.6)
     if author == tm.awaiting_to:
         return "answer"                             # 질문이 그에게 갔다
     if tm.awaiting_to.startswith("user") and author.startswith("user"):
@@ -173,14 +173,59 @@ def _ask_cycle(registry, asker_key, target) -> str | None:
 
 관찰로 돌아가는 거부라 모델이 판단해 진행하거나 `complete` 할 수 있다.
 
-### 3.5 명시적 답이 빗나가면 거부한다
+### 3.5 거부 문구는 **그 자리에서 실행 가능**해야 한다
+
+거부의 자기수정 근거는 **관찰문의 op 를 모델이 복사하는 것뿐**이다(§2-⑧:
+루프 탐지기가 못 잡으므로 다른 안전망이 없다). 그렇다면 **복사할 것이 관찰문
+안에 있어야 한다** — 질문 본문과 응답 op 를 같이 싣는다. 세 거부가 한 헬퍼를
+쓴다(문구가 갈라지면 한쪽만 고쳐지므로).
+
+```
+ask rejected: 🐙 code-reviewer agt-b1 가 당신의 답을 기다리는 중입니다.
+
+  질문: "이 마이그레이션을 지금 돌릴까요, 아니면 리뷰 후에 할까요?"
+
+  먼저 답하세요:
+    {"action":"message","action_input":{"to":"agt-b1","text":"<답>"}}
+  그 다음 당신의 질문을 다시 보내세요.
+```
+
+```
+request rejected: 🦊 code-writer agt-x9 가 당신의 답을 기다리는 중입니다.
+
+  질문: "어느 브랜치에 커밋할까요?"
+
+  먼저 답하세요:
+    {"mode":"answer","key":"agt-x9","task":"<답>"}
+  그 다음 이 요청을 다시 보내세요. (이 요청은 큐에 넣지 않았습니다.)
+```
+
+```
+answer rejected: agt-x9 의 질문은 user:bob 에게 간 것이라 당신이 답할 수 없습니다.
+  질문: "이 설정 파일을 덮어써도 될까요?"
+  (사람의 답을 기다리는 중입니다 — 다른 일을 진행하세요.)
+```
+
+규칙 셋:
+
+- **질문 본문을 싣는다.** 300자로 자른다 — 모델이 무엇에 답하는지 알아야 하고,
+  질문은 로그 한 줄이 아니라 문장이라 길어질 수 있다.
+- **응답 op 를 복사 가능한 형태로 싣는다.** 대상 key 가 박혀 있어야 한다
+  (`<답>` 만 채우면 되게).
+- **다음에 할 일을 말한다.** "다시 보내라" / "다른 일을 하라" — 거부가 막다른
+  길이 아님을 밝힌다.
+
+2단계의 `reject_count` 가드(§7-②)는 이 문구를 **강화**하는 형태로 붙는다:
+2회째 거부는 같은 내용에 *"직전 거부를 이미 받았습니다 — 답하지 않으면 그
+에이전트는 계속 막혀 있습니다"* 를 덧붙인다.
+
+### 3.6 명시적 답이 빗나가면 거부한다
 
 2단계에서 main 이 `mode:"answer"` 를 쓰는데 그 질문이 (ⅰ)없거나 (ⅱ)자기에게
 온 게 아니면, **답 텍스트를 새 일감으로 큐잉해 LLM 턴을 태우면 안 된다.**
-`explicit and kind != "answer" → reject`(§3.2). 문구가 사실을 말한다:
-*"no pending question"* / *"the question is addressed to user:bob"*.
+`explicit and kind != "answer" → reject`(§3.2). 문구는 §3.5 형식을 따른다.
 
-### 3.6 흐름
+### 3.7 흐름
 
 ```python
 # ask 핸들러 — **arm 먼저, 그 다음 공개** (1판 C1 회귀 수리)
@@ -264,7 +309,7 @@ def request(self, key, message, **kw) -> str:   # 기존 8개 호출자 보존
 | # | 레이스 | 처리 |
 |---|---|---|
 | 1 | 답이 `wait()` 보다 먼저 | `Event` 가 흡수. **`clear()` 를 arm 보다 먼저** |
-| 2 | 공개 전에 답 도착 | **arm 을 공개보다 먼저**(§3.6) — 1판은 반대라 답이 inbox 로 샜다. 가짜 러너는 지연 0이라 테스트의 기본 경로다 |
+| 2 | 공개 전에 답 도착 | **arm 을 공개보다 먼저**(§3.7) — 1판은 반대라 답이 inbox 로 샜다. 가짜 러너는 지연 0이라 테스트의 기본 경로다 |
 | 3 | 답변자 둘 동시 | `_cv` 아래 `awaiting` claim — 두 번째는 `work`(비-explicit) 또는 `reject`(explicit) |
 | 4 | 종료 중 대기 | `kill`(:935)·`shutdown_all`(:953)에 `answered.set()` 추가 — **없으면 `join` 이 2/5초 타임아웃**. 깨어나면 `stop_event` 를 데이터보다 먼저 본다 |
 | 5 | 같은 스레드가 생산자이자 대기자 | 도달 불가 — 자기 메시지 거부(:845), 서브루프에 registry 없음(:1829) |
@@ -321,7 +366,7 @@ op 들을 한 번의 핸들러 호출로 접는 것을 검토한다.
 요청한 peer 가 영원히 기다리던 것 해소.
 
 **2단계 — `mode:"answer"` + main 거부**
-`AGENT_MODES` · `_agent_request` verdict · `explicit` 규칙(§3.5) ·
+`AGENT_MODES` · `_agent_request` verdict · `explicit` 규칙(§3.6) · 거부 문구(§3.5) ·
 **`reject_count` 가드**(§7-②) · **프롬프트 3곳**(:226 · :1734 ·
 `system_prompt.py:1136`) — 하나라도 남으면 모델이 프롬프트를 따르다 거부당한다.
 
@@ -340,6 +385,7 @@ op 들을 한 번의 핸들러 호출로 접는 것을 검토한다.
 | 종료 | `kill`/`shutdown_all` 즉시 깨움 · `join` 타임아웃 없음 · **기존 TC `test_shutdown_unblocks_pending_ask` 가 "no response" 그대로** |
 | 부수효과 | 답도 🤝 창·`conversation.jsonl`·로스터에 남는다 · 답에도 `seq` 가 있다 |
 | 호출자 보존 | `request()` 반환형이 `str` 그대로 — 기존 8개 호출자 무변경 |
+| 거부 문구 | 세 거부가 **질문 본문 + 복사 가능한 op** 를 싣는다(§3.5) · 300자 절단 · 한 헬퍼를 경유 |
 | 트레이 | `awaiting_to` 가 사람일 때만 뜬다 · main/peer 질문은 카드로는 보인다 |
 | 비회귀 | 로스터 dot · 종료 경고 · `_SHUTDOWN` 재게시 삭제가 배치 경로(:1293) 무영향 |
 
@@ -383,9 +429,9 @@ inbox 항목으로 오면 그 회신을 원 요청자에게 라우팅하려고 �
 |---|---|---|
 | `_is_answerer(author)` 로 충분 | main 은 무조건 답변자 → **새 일감이 그대로 먹힌다**(자기 문제 표 3행 미해결) | 판정 축 추가 |
 | 질문 여럿도 한 번의 대기 | `join` 은 op **하나 안** | §2-③ |
-| (회귀) arm 이 공개보다 뒤 | 즉답이 inbox 로 샌다 | §3.6 |
-| (회귀) `return ""` | 창·로그·로스터를 건너뛴다 | §3.6 |
-| (TC 파괴) 종료 wake | 빈 답 반환 | §3.6 |
+| (회귀) arm 이 공개보다 뒤 | 즉답이 inbox 로 샌다 | §3.7 |
+| (회귀) `return ""` | 창·로그·로스터를 건너뛴다 | §3.7 |
+| (TC 파괴) 종료 wake | 빈 답 반환 | §3.7 |
 
 ### 3판 (2판 재리뷰 + 사용자 지적)
 
