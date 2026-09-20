@@ -183,7 +183,7 @@ class TestMacOSBypasses:
 
 
 class TestReadOnlyCommandsDoNotGate:
-    """읽기 전용 명령의 **정규식 인자**가 경로로 오인되던 것 (v9.9.2).
+    """읽기 전용 명령의 **정규식 인자**가 경로로 오인되던 것 (v9.10.0).
 
     `sed -n '/^start/,/^end/p'` 의 주소 정규식이 `/` 로 시작한다는 이유로
     경로 후보가 되어 엉뚱한 확인을 물었다. 봉쇄는 *변경*을 막는 장치이고

@@ -15,7 +15,7 @@ workspace by the dozen, so gating reads would be a prompt storm that just trains
 allow-all fatigue. Only mutations and shell (which can write / exfiltrate) are
 confined.
 
-**민감 경로는 별개 축이다** (v9.9.2, `_sensitive`): 자격증명 사전에 걸리는
+**민감 경로는 별개 축이다** (v9.10.0, `_sensitive`): 자격증명 사전에 걸리는
 경로는 **읽기에도** 확인을 받는다 — `read_file` 과 `cat ~/.ssh/id_rsa` 가 같은
 파일에 다르게 굴면 그건 일관성이 아니라 우연이다. 봉쇄는 워크스페이스 경계를,
 사전은 "무엇을 읽느냐"를 본다. `guard(check_workspace=False)` 가 후자만 건다.
@@ -68,7 +68,7 @@ def resolve_within(path: str, *, root: Path | None = None) -> tuple[Path, bool]:
     ``~`` 은 **셸이 확장한다** — `tool_shell` 은 ``shell=True`` 로 돌리므로
     ``cp x ~/.ssh/authorized_keys`` 는 실제 홈에 쓴다. 그런데 ``Path.resolve()``
     는 ``expanduser`` 를 하지 않아 ``<워크스페이스>/~/.ssh/...`` 로 풀렸고,
-    **워크스페이스 안**으로 판정돼 게이트가 통째로 비켜갔다 (v9.9.2 수리).
+    **워크스페이스 안**으로 판정돼 게이트가 통째로 비켜갔다 (v9.10.0 수리).
     ``_path_candidate`` 가 ``~/`` 를 일부러 후보로 잡고 있었는데 그 다음 단계가
     무효화하던, 소리 없는 구멍이다."""
     r = root or workspace_root()
@@ -238,7 +238,7 @@ def extract_shell_paths(cmd: str) -> list[str]:
     variables, or globs. Those are a documented blind spot (they need an OS
     sandbox, not a string matcher); the gate is a speed bump, not a jail.
 
-    **2단계 (v9.9.2)**: ① 세그먼트가 파일을 바꿀 수 있는지 먼저 보고
+    **2단계 (v9.10.0)**: ① 세그먼트가 파일을 바꿀 수 있는지 먼저 보고
     ② 바꿀 수 있는 것에서만 경로를 뽑는다. 종전엔 ②만 있어 ``sed -n
     '/^start/,/^end/p'`` 의 **주소 정규식**이 경로로 잡혀 엉뚱한 확인을
     물었다(사용자 제보). 오탐은 allow-all 피로를 학습시켜 게이트 전체를
@@ -318,7 +318,7 @@ def guard(
     lock). Otherwise prompts ONCE for the flagged paths and returns ``None`` on
     allow, or an error string on deny / when no prompt can be shown.
 
-    **두 축을 본다** (v9.9.2):
+    **두 축을 본다** (v9.10.0):
 
     1. **워크스페이스 이탈** — 변경(write/edit/shell)이 루트 밖을 건드리나.
     2. **민감 경로** — 경로가 자격증명 사전(`_sensitive`)에 걸리나. 이쪽은

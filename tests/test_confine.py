@@ -105,7 +105,7 @@ class TestResolveWithin:
 
 
 class TestTildeIsExpanded:
-    """``~`` 은 **셸이 확장한다** — 가드도 같은 것을 봐야 한다 (v9.9.2 수리).
+    """``~`` 은 **셸이 확장한다** — 가드도 같은 것을 봐야 한다 (v9.10.0 수리).
 
     `tool_shell` 은 ``shell=True`` 로 돌리므로 ``cp x ~/.ssh/authorized_keys``
     는 실제 홈에 쓴다. 그런데 ``Path.resolve()`` 는 ``expanduser`` 를 하지
