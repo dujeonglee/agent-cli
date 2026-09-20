@@ -505,9 +505,16 @@ class TestPersistence:
         reg.shutdown_all()
 
         seen = []
+        hold = threading.Event()
 
         def runner(query, ctx, **kw):
             seen.append(query)
+            # 질문 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 워커가
+            # `remind_owed` 를 불러 nags 가 1이 되고 독촉 항목이 생긴다
+            # (설계대로의 동작) — 아래 두 단언과 경합한다. CI(Linux/3.12)
+            # 에서 실제로 깨졌다.
+            if "[question q-undel" in query:
+                hold.wait(5)
             return _FakeLoopResult(output="ok"), 0.01
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
@@ -522,6 +529,7 @@ class TestPersistence:
         # 런 하나가 낭비되고 상한이 일찍 닳는다.
         assert fresh._questions["q-undel"].nags == 0
         assert not [x for x in seen if "(reminder)" in x]
+        hold.set()
         fresh.shutdown_all()
 
     def test_question_is_dropped_when_its_target_did_not_come_back(
