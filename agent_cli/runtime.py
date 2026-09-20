@@ -106,14 +106,33 @@ def build_monitor_registry(session_dir=None):
     return registry
 
 
-def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
+def wire_agent_mail(
+    registry, *, enqueue_wake, on_mail_notice, parent_ctx=None, monitors=None
+):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
+
+    ``monitors`` 가 오면 **깨우기를 공유한다**: 모니터 보고도 턴 경계에서만
+    소비되는데(`AgentLoop._deliver_monitor_reports`), 모니터의 존재 이유가
+    "오래 걸리는 걸 걸어 두고 딴 일 하라" 라 발화 시점에 main 이 유휴인 것이
+    정상이다. 깨우지 않으면 보고가 큐에 앉은 채 사용자는 아무것도 못 본다
+    (사용자 제보: 등록은 됐는데 2분 무반응). 설계(docs/monitor)가 처음부터
+    "waker 술어에 `or monitors.has_pending()` 를 얹어 합치기를 공짜로
+    얻는다" 고 적어 뒀는데 배선만 빠져 있었다.
 
     Returns ``(waker, revived, auto)`` — 부활/auto-spawn 수는 호출자가
     자기 표면(콘솔/렌더러)으로 알린다."""
     from agent_cli.subagent.agents_live import MailWaker
 
-    waker = MailWaker(enqueue_wake, registry.has_pending_replies)
+    def _pending() -> bool:
+        if registry.has_pending_replies():
+            return True
+        return bool(monitors is not None and monitors.has_pending())
+
+    waker = MailWaker(enqueue_wake, _pending)
+    if monitors is not None:
+        # 보고가 **도착한 순간** 깨운다. 술어만 얹으면 다음 `mark_idle` 까지
+        # 기다리는데, 유휴로 접어든 뒤 발화하면 그 시점이 영영 안 온다.
+        monitors.on_report = waker.on_mail
 
     def _on_agent_mail(reply: dict) -> None:
         on_mail_notice(reply)

@@ -22,6 +22,7 @@ import json
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -99,6 +100,9 @@ class MonitorRegistry:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._path = Path(session_dir) / "monitors.json" if session_dir else None
+        # 보고가 쌓였을 때 부르는 훅 — 부트스트랩이 `MailWaker.on_mail` 을
+        # 꽂는다. 에이전트 회신의 `on_reply` 와 같은 자리·같은 이유다.
+        self.on_report: Callable[[], None] | None = None
 
     # ── 등록/조회 ──────────────────────────────
 
@@ -150,6 +154,22 @@ class MonitorRegistry:
         """
         with self._lock:
             return any(m.alive for m in self._monitors.values()) or bool(self._pending)
+
+    def _notify(self) -> None:
+        """보고가 쌓였다 — 유휴 main 을 깨운다 (best-effort).
+
+        보고는 **턴 경계**에서만 소비된다(`AgentLoop._deliver_monitor_reports`).
+        그런데 모니터의 존재 이유가 "오래 걸리는 걸 걸어 두고 딴 일 하라" 라
+        발화 시점에 main 이 유휴인 것이 **정상**이다 — 깨우지 않으면 보고가
+        큐에 앉은 채 사용자는 아무것도 못 본다(사용자 제보: 2분 무반응).
+        """
+        cb = self.on_report
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception:
+            pass  # 깨우기는 보조 — 감시 스레드를 죽이지 않는다
 
     def has_pending(self) -> bool:
         with self._lock:
@@ -244,6 +264,7 @@ class MonitorRegistry:
         mon._last_report = now
         with self._lock:
             self._pending.append(report)
+        self._notify()
         if mon.alive and mon.wakes >= MAX_WAKES:
             self._retire(mon, f"알림 상한({MAX_WAKES}) 도달 — 해제됨", now)
 
@@ -270,6 +291,7 @@ class MonitorRegistry:
         mon.wakes += 1
         with self._lock:
             self._pending.append(report)
+        self._notify()
 
     # ── 영속 — 기록하되 **부활시키지 않는다** (§8) ─────────
 

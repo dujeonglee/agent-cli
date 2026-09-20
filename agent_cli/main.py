@@ -1455,6 +1455,9 @@ def run(
             enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
+            # 모니터 보고도 같은 깨우기를 탄다 — 발화 시점에 main 이
+            # 유휴인 것이 정상이라, 안 얹으면 보고가 큐에 앉아 있다.
+            monitors=monitor_registry,
         )
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
@@ -2387,6 +2390,7 @@ def web(
             enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
+            monitors=monitor_registry,  # run 경로와 동일
         )
         _announce_agent_boot(renderer, revived, auto, agent_registry.stale_questions)
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
