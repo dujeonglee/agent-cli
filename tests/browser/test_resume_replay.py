@@ -76,13 +76,21 @@ def test_resumed_turns_render_as_cards(stack, page):
             total: document.querySelectorAll('#messages > .card').length,
             user: document.querySelectorAll('#messages .card-user').length,
             assistant: document.querySelectorAll('#messages .card-assistant').length,
-            obs: document.querySelectorAll('#messages .card-observation').length,
+            step: document.querySelectorAll('#messages .card-assistant.step').length,
+            obsRows: document.querySelectorAll('#messages .step-body .row.ok,'
+                   + ' #messages .step-body .row.bad').length,
+            orphanObs: document.querySelectorAll('#messages .card-observation').length,
         })"""
     )
     assert counts["user"] == 1, counts
     assert counts["assistant"] == 2, counts
-    assert counts["obs"] == 1, counts
-    assert counts["total"] == 4, counts
+    # 한 스텝 = 한 카드: 관찰은 별도 카드가 아니라 **행동 카드 안의 행**이다.
+    # 재생 경로도 라이브와 같은 병합 코드를 타야 한다 — 여기가 갈리면 resume
+    # 화면만 옛 모양으로 남는다.
+    assert counts["step"] == 1, counts
+    assert counts["obsRows"] == 1, counts
+    assert counts["orphanObs"] == 0, counts
+    assert counts["total"] == 3, counts
 
 
 def test_resumed_cards_show_original_time_not_now(stack, page):
@@ -240,7 +248,14 @@ class TestResumeRebuildsScopeCards:
         assert card.count() == 1
         # 턴이 카드 **안에** 들어가야 한다 (루트 형제가 아니라).
         inner = page.locator('.card-task-group[data-task-id="sk1"] .task-body .card')
-        assert inner.count() >= 2, inner.count()
+        assert inner.count() >= 1, inner.count()
+        # 행동과 관찰은 이제 **한 장 안의 두 행**이다 — 둘 다 카드 안에
+        # 있는지를 행으로 확인한다(카드 수로 세면 병합 전 모양을 고정한다).
+        rows = page.locator(
+            '.card-task-group[data-task-id="sk1"] .task-body'
+            " .card-assistant.step .step-body .row"
+        )
+        assert rows.count() >= 1, rows.count()
         # 카드는 닫힌 상태(✓ + duration)로 복구된다.
         assert "task-ok" in (card.get_attribute("class") or "")
         # 루트에는 스코프 밖 user 카드 + scope 카드만.
@@ -343,7 +358,13 @@ class TestResumeInnerTurnsInCard:
         page.goto(stack.url)
         page.wait_for_selector('.card-task-group[data-task-id="sk1"]', timeout=8000)
         inner = page.locator('.card-task-group[data-task-id="sk1"] .task-body .card')
-        assert inner.count() >= 2, inner.count()  # 액션 + 관찰
+        assert inner.count() >= 1, inner.count()
+        # 액션 + 관찰 — 병합 뒤에는 한 장 안의 두 행이다.
+        step = page.locator(
+            '.card-task-group[data-task-id="sk1"] .task-body .card-assistant.step'
+        )
+        assert step.count() >= 1, step.count()
+        assert step.first.locator(".step-body .row").count() >= 1
         # 내부 턴이 있으니 "기록이 없습니다" 노트는 없어야 한다
         assert (
             page.locator(

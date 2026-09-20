@@ -473,6 +473,36 @@ body.multi-viewer .card-user .who {
 /* ▸ 는 **펼칠 게 있는 줄에만**. 없는 줄에 뜨면 눌러도 아무 일이 없어
    고장난 버튼으로 읽힌다. */
 .row .x { font: 10px "Jetendard", ui-monospace, monospace; color: var(--muted); opacity: 0; }
+
+/* ── 스텝 카드: 사고·행동·관찰 한 장 ────────────────────────────
+   접힘은 머리 한 줄 + 오른쪽 배지, 펼치면 행동 상세와 관찰이 나온다.
+   세로 막대는 **펼쳤을 때만** 진해진다 — 접힌 목록에서 스텝마다 선이
+   그어져 있으면 한 줄 리듬이 깨진다. */
+.card-assistant.step { border-left: 2px solid transparent; padding-left: 10px; margin-left: -12px; }
+.card-assistant.step:hover { border-left-color: var(--border-2); }
+.card-assistant.step.open { border-left-color: var(--accent-soft-border); }
+/* 실패한 스텝은 목록에서 **튀어나와야** 한다 — 접혀 있어도 찾을 수 있게. */
+.card-assistant.step.failed { border-left-color: var(--fail-soft-border); background: var(--fail-soft-bg); }
+/* 머리 행의 펼침 표시는 **항상 보인다**(`.row.can` 은 hover 에만 보인다).
+   스텝 카드의 존재 이유가 '펼치면 더 있다' 라서, 표시가 hover 에만 있으면
+   그냥 한 줄로 읽히고 아무도 펼치지 않는다. */
+.row.step-head .x { opacity: .4; }
+.row.step-head:hover .x, .row.step-head.open .x { opacity: 1; }
+.step-body { margin-bottom: 2px; }
+.step-body > .row-body { margin-left: 27px; }
+
+/* 배지: 도구 이름과 성패. 사고 요약과 **같은 줄** 오른쪽 끝이라 줄 수가
+   늘지 않는다. `.x`(펼침 표시)는 hover 전까지 투명하므로 거기 섞을 수 없어
+   `makeRow` 의 꼬리 칸을 쓴다(왕래 줄이 상대 이름에 쓰는 그 슬롯). */
+.badges { display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+.badge {
+  font: 10px "Jetendard", ui-monospace, monospace;
+  letter-spacing: .02em; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+}
+.badge.tool { color: var(--accent-soft-text); border-color: var(--accent-soft-border); background: var(--accent-soft-bg); }
+.badge.ok { color: var(--ok); border-color: var(--ok-soft-border); background: transparent; }
+.badge.bad { color: var(--fail); border-color: var(--fail-soft-border); background: var(--fail-soft-bg); }
 .row.can { cursor: pointer; }
 .row.can:hover .x, .row.open .x { opacity: 1; }
 .row.can:hover .s { color: var(--text); }

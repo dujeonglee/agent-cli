@@ -1028,43 +1028,122 @@
     return chip;
   }
 
+  // ── 스텝 카드 (docs/chat-ui — 사고·행동·관찰을 한 장으로) ──────
+  //
+  // 종전엔 한 스텝이 카드 **둘**로 흩어졌다(assistant: 💭+⚡ / observation).
+  // 타임라인이 길어지면 어느 관찰이 어느 행동의 것인지 눈으로 다시 묶어야
+  // 했다. 이제 한 장으로 접는다:
+  //
+  //   접힘:  머리 한 줄 + 오른쪽 배지( ⚡도구 · ✓/✗ )
+  //   펼침:  행동 상세 + 관찰
+  //
+  // **머리 = 그 스텝이 가진 것 중 가장 요약적인 것** — 생각이 있으면 생각,
+  // 없으면 행동. 살아 있는 두 wire format 이 모두 `thought_required=False`
+  // 라 생각 없는 턴이 실측 1/3이고, 빈 자리에 "(생각 없음)" 을 그리면 줄만
+  // 쓰고 아무것도 안 알려준다.
+  //
+  // 배지를 남기는 이유: 접힘의 목적은 "안 읽고 지나가기" 가 아니라 **"읽을
+  // 곳을 고르기"** 다. 도구 이름과 성패는 그 선택에 쓰이는 정보라, 같은 줄
+  // 오른쪽 끝에 두면 줄 수를 안 늘리고 실패한 스텝이 목록에서 튀어나온다.
+
+  // 채널별 **관찰을 기다리는 스텝 카드** 한 장. DOM 을 뒤지지 않는 이유는
+  // 카드가 루트가 아니라 task group 본문에 들어갈 수 있어서다(appendToTimeline).
+  // 관찰은 언제나 자기 행동 뒤에 오므로(모든 `render=True` 호출부가 같은 턴에
+  // action 을 먼저 낸다) 채널당 한 장이면 충분하다.
+  const pendingStep = {};
+
+  /** 스텝 카드의 머리 행 — 통째로 눌러 본문을 여닫는다. */
+  function makeStepHead(icon, kind, summary, badges, cls, tailNode) {
+    const row = makeRow(icon, kind, summary, null, cls, tailNode || badges);
+    row.classList.add("can", "step-head");
+    const mark = row.querySelector(".x");
+    if (mark) mark.textContent = "▸";
+    return row;
+  }
+
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
-    // 💭 생각 — 한 줄 요약(첫 줄), 전문은 펼쳐서. reasoning 이 길면 대화가
-    // 통째로 밀리므로 기본은 접는다.
-    if (d.thought) {
-      const t = String(d.thought).trim();
-      const first = t.split("\n").find((l) => l.trim()) || t;
-      const multi = t !== first.trim();
-      card.appendChild(
-        makeRow(
-          "💭",
-          "생각",
-          first.trim(),
-          multi ? elHtml("div", ["md"], escapeAndFormat(t)) : null,
-          ["think"]
-        )
-      );
-    }
+    const ch = channelOf(d.task_id);
+    const t = d.thought ? String(d.thought).trim() : "";
+    const first = t ? t.split("\n").find((l) => l.trim()) || t : "";
+    const thoughtBody = t && t !== first.trim()
+      ? elHtml("div", ["md"], escapeAndFormat(t))
+      : null;
+
     if (d.final !== undefined) {
       // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
-      // 아니라 로그가 된다.
+      // 아니라 로그가 된다. 묶음 카드도 아니다(뒤따를 관찰이 없다).
+      if (t) {
+        card.appendChild(
+          makeRow("💭", "생각", first.trim(), thoughtBody, ["think"])
+        );
+      }
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
-      const fch = channelOf(d.task_id);
-      if (fch !== "main") lastFinalByChannel[fch] = String(d.final).trim();
-    } else if (d.action) {
-      const tool = d.action.tool_name || "";
-      const input = d.action.tool_input || "";
-      // main → agent 점프의 출발점. main 쪽에서 상주 에이전트에게 거는 일은
-      // **왕래 줄이 아니라 `⚡ agent` 도구 호출**로 나타나므로(docs/chat-ui §5),
-      // 상대 칩을 여기 붙인다. 반대 방향(agent → main)은 매칭 키가 달라
-      // 이번 범위 밖 — 돌아가기 버튼이 그 자리를 채운다.
-      card.appendChild(
-        makeRow("⚡", tool, actionSummary(tool, input),
-                renderActionInput(tool, input), ["act"],
-                tool === "agent" ? agentJumpChip(input) : null)
-      );
+      if (ch !== "main") lastFinalByChannel[ch] = String(d.final).trim();
+      delete pendingStep[ch];
+      finishCard(card, d);
+      return;
     }
+
+    if (!d.action) {
+      // 생각만 있는 턴 — 묶을 것이 없다.
+      if (t) {
+        card.appendChild(
+          makeRow("💭", "생각", first.trim(), thoughtBody, ["think"])
+        );
+      }
+      delete pendingStep[ch];
+      finishCard(card, d);
+      return;
+    }
+
+    const tool = d.action.tool_name || "";
+    const input = d.action.tool_input || "";
+    // main → agent 점프의 출발점. main 쪽에서 상주 에이전트에게 거는 일은
+    // **왕래 줄이 아니라 `⚡ agent` 도구 호출**로 나타나므로(docs/chat-ui §5),
+    // 상대 칩을 여기 붙인다.
+    const jump = tool === "agent" ? agentJumpChip(input) : null;
+
+    card.classList.add("step");
+    const badges = el("span", ["badges"]);
+    const body = el("div", ["step-body"]);
+    body.hidden = true;
+
+    let head;
+    if (t) {
+      head = makeStepHead("💭", "생각", first.trim(), badges, ["think"]);
+      // 도구 이름은 머리의 `k` 칸에 없으므로 배지로 알린다.
+      badges.appendChild(el("span", ["badge", "tool"], "⚡ " + (tool || "?")));
+      if (thoughtBody) body.appendChild(thoughtBody);
+      const actRow = makeRow("⚡", tool, actionSummary(tool, input),
+                             renderActionInput(tool, input), ["act"], jump);
+      body.appendChild(actRow);
+    } else {
+      // 생각이 없으면 행동이 머리로 올라온다 — 도구 이름이 이미 `k` 칸에
+      // 있으므로 배지에서는 빼고 성패만 남긴다(같은 사실을 두 번 말하지 않는다).
+      head = makeStepHead("⚡", tool, actionSummary(tool, input), badges,
+                          ["act"], jump || undefined);
+      if (jump) head.appendChild(badges);
+      const detail = renderActionInput(tool, input);
+      if (detail) {
+        detail.classList.add("row-body");
+        body.appendChild(detail);
+      }
+    }
+    head.addEventListener("click", function (e) {
+      if (e.target.closest(".step-body") || e.target.closest("a, button")) return;
+      const open = body.hidden;
+      body.hidden = !open;
+      head.classList.toggle("open", open);
+      card.classList.toggle("open", open);
+      const mark = head.querySelector(".x");
+      if (mark) mark.textContent = open ? "▾" : "▸";
+    });
+    card.appendChild(head);
+    card.appendChild(body);
+    // 관찰이 이 카드를 찾아 붙는다. 못 찾으면 종전대로 단독 카드로 떨어진다
+    // (안전망 — 구조적으로는 관찰이 행동 없이 오지 않는다).
+    pendingStep[ch] = { card: card, head: head, body: body, badges: badges };
     finishCard(card, d);
   }
 
@@ -1225,6 +1304,31 @@
       const mark = row.querySelector(".x");
       if (mark) mark.textContent = "▾";
     }
+
+    // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
+    const ch = channelOf(d.task_id);
+    const step = pendingStep[ch];
+    delete pendingStep[ch];
+    if (step) {
+      step.body.appendChild(row);
+      step.badges.appendChild(
+        el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
+      );
+      if (!d.success) {
+        // 실패는 **펼친 채로** 둔다 — 접힌 한 줄로는 왜 실패했는지 알 수 없고,
+        // 사용자가 지금 봐야 하는 유일한 줄이다(종전 규칙 그대로).
+        step.body.hidden = false;
+        step.head.classList.add("open");
+        step.card.classList.add("failed", "open");
+        const hm = step.head.querySelector(".x");
+        if (hm) hm.textContent = "▾";
+      }
+      scheduleScroll();
+      return;
+    }
+
+    // 안전망: 붙일 스텝을 못 찾았다. 조용히 버리면 결과가 **사라지므로**
+    // 종전대로 단독 카드로 떨어뜨린다 — 최악이 "안 묶임" 이지 "유실" 이 아니다.
     card.appendChild(row);
     finishCard(card, d);
   }

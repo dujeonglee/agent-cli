@@ -588,3 +588,126 @@ class TestDisplayOnlyNote:
         assert scroll_w <= client_w, (
             f"주석이 타임라인을 가로로 넓힘: scrollWidth={scroll_w} > {client_w}"
         )
+
+
+class TestStepCard:
+    """사고·행동·관찰이 **한 장**이다 (docs/chat-ui — 스텝 카드).
+
+    종전엔 한 스텝이 카드 둘로 흩어져(assistant: 💭+⚡ / observation) 어느
+    관찰이 어느 행동의 것인지 눈으로 다시 묶어야 했다. 여기서 고정하는 것은
+    구조가 아니라 **읽는 방식**이다: 접히면 머리 한 줄 + 배지, 펼치면 행동과
+    관찰. 그래서 아래 단언은 전부 화면에서 보이는 것으로 쓴다.
+    """
+
+    def _step(self, page):
+        return page.locator(".card-assistant.step")
+
+    def test_action_and_observation_land_in_one_card(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("실패한 테스트 이름부터 본다", 1)
+        stack.renderer.action("shell", json.dumps({"command": "pytest -q"}), 1)
+        stack.renderer.observation("2 failed", turn=1, tool_name="shell", success=True)
+
+        assert _wait(lambda: self._step(page).count() == 1)
+        card = self._step(page).first
+        # 관찰이 **별도 카드로 남지 않는다** — 그게 이 변경의 전부다.
+        assert page.locator(".card-observation").count() == 0
+        # 행동과 관찰이 같은 장 안의 두 행이다.
+        assert card.locator(".step-body .row.act").count() == 1
+        assert card.locator(".step-body .row.ok").count() == 1
+
+    def test_body_is_folded_until_the_head_is_clicked(self, stack, page):
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("설정을 먼저 찾는다", 1)
+        stack.renderer.action("shell", json.dumps({"command": "ls"}), 1)
+        stack.renderer.observation("ok", turn=1, tool_name="shell", success=True)
+        assert _wait(lambda: self._step(page).count() == 1)
+
+        card = self._step(page).first
+        body = card.locator(".step-body")
+        assert not body.is_visible(), "접힌 채로 시작해야 한다"
+        card.locator(".step-head").click()
+        assert _wait(lambda: body.is_visible())
+        card.locator(".step-head").click()
+        assert _wait(lambda: not body.is_visible())
+
+    def test_folded_head_still_says_which_tool_and_whether_it_worked(self, stack, page):
+        """접힘의 목적은 '안 읽고 지나가기' 가 아니라 **'읽을 곳을 고르기'** 다.
+        도구 이름과 성패가 사라지면 10스텝을 훑을 때 전부 펼쳐야 한다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("버전을 확인한다", 1)
+        stack.renderer.action("read_file", json.dumps({"path": "pyproject.toml"}), 1)
+        stack.renderer.observation(
+            "44 lines", turn=1, tool_name="read_file", success=True
+        )
+        assert _wait(lambda: self._step(page).count() == 1)
+
+        head = self._step(page).first.locator(".step-head")
+        assert head.locator(".badge.tool").inner_text().strip().endswith("read_file")
+        assert head.locator(".badge.ok").count() == 1
+        assert head.locator(".badge.bad").count() == 0
+        # 배지는 사고 요약과 **같은 줄**이다 — 줄 수가 늘면 접은 의미가 없다.
+        assert self._step(page).first.locator(".step-head").count() == 1
+
+    def test_head_is_the_action_when_there_is_no_reasoning(self, stack, page):
+        """살아 있는 두 wire format 이 ``thought_required=False`` 라 생각 없는
+        턴이 실측 1/3이다 — 빈 자리에 자리표시를 그리는 대신 행동을 올린다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.action("shell", json.dumps({"command": "uname -s"}), 1)
+        stack.renderer.observation("Darwin", turn=1, tool_name="shell", success=True)
+        assert _wait(lambda: self._step(page).count() == 1)
+
+        head = self._step(page).first.locator(".step-head")
+        assert "act" in (head.get_attribute("class") or "")
+        assert head.locator(".k").inner_text().strip() == "shell"
+        # 도구 이름이 이미 `k` 칸에 있으므로 배지에서는 뺀다 — 같은 사실을
+        # 한 줄 안에서 두 번 말하지 않는다.
+        assert head.locator(".badge.tool").count() == 0
+        assert head.locator(".badge.ok").count() == 1
+
+    def test_failure_opens_the_card_and_marks_it(self, stack, page):
+        """접힌 한 줄로는 왜 실패했는지 알 수 없다 — 종전 규칙을 묶은 뒤에도
+        지킨다. 게다가 접힌 목록에서 실패한 스텝을 찾을 수 있어야 한다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("수정이 먹었는지 확인", 1)
+        stack.renderer.action("shell", json.dumps({"command": "pytest -q"}), 1)
+        stack.renderer.observation(
+            "AssertionError: assert 2 == 1", turn=1, tool_name="shell", success=False
+        )
+        assert _wait(lambda: self._step(page).count() == 1)
+
+        card = self._step(page).first
+        assert _wait(lambda: card.locator(".step-body").is_visible())
+        assert "failed" in (card.get_attribute("class") or "")
+        assert card.locator(".step-head .badge.bad").count() == 1
+        assert "assert 2 == 1" in card.inner_text()
+
+    def test_final_answer_is_not_folded_into_a_step(self, stack, page):
+        """최종답은 읽히려고 있는 것이라 접으면 대화가 아니라 로그가 된다.
+        뒤따를 관찰도 없다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("정리해서 보고한다", 1)
+        stack.renderer.final("원인은 워커 경합이었습니다.", 1)
+        assert _wait(lambda: page.locator(".card-assistant .final").count() == 1)
+
+        assert self._step(page).count() == 0
+        assert (
+            "원인은 워커 경합이었습니다."
+            in page.locator(".card-assistant .final").first.inner_text()
+        )
+
+    def test_observation_without_an_action_still_shows(self, stack, page):
+        """안전망. 관찰은 구조적으로 행동 뒤에만 오지만(모든 render=True
+        호출부가 같은 턴에 action 을 먼저 낸다), 새 경로가 생겨도 **유실**
+        되면 안 된다 — 최악이 '안 묶임' 이어야 한다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.observation("고아", turn=1, tool_name="shell", success=True)
+        assert _wait(lambda: page.locator(".card-observation").count() == 1)
+        assert "고아" in page.locator(".card-observation").first.inner_text()
