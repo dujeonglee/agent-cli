@@ -10,6 +10,7 @@ python -c, variables).
 
 from __future__ import annotations
 
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -40,6 +41,12 @@ def confined(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "1")
     monkeypatch.setenv("AGENT_CLI_WORKSPACE_ROOT", str(ws))
     return ws, outside
+
+
+def _get_renderer():
+    from agent_cli.render import get_renderer
+
+    return get_renderer()
 
 
 def _allow_prompt(monkeypatch):
@@ -95,6 +102,57 @@ class TestResolveWithin:
 
 
 # ── guard: enable / inside / no-prompt ─────────────────────
+
+
+class TestTildeIsExpanded:
+    """``~`` 은 **셸이 확장한다** — 가드도 같은 것을 봐야 한다 (v9.9.2 수리).
+
+    `tool_shell` 은 ``shell=True`` 로 돌리므로 ``cp x ~/.ssh/authorized_keys``
+    는 실제 홈에 쓴다. 그런데 ``Path.resolve()`` 는 ``expanduser`` 를 하지
+    않아 ``<워크스페이스>/~/.ssh/...`` 로 풀렸고, **워크스페이스 안**으로
+    판정돼 게이트가 통째로 비켜갔다. ``_path_candidate`` 가 ``~/`` 를 일부러
+    후보로 잡아 놓고도 그 다음 단계가 무효화하던, 소리 없는 구멍이다 —
+    authorized_keys 쓰기가 확인 없이 통과했다."""
+
+    def test_home_resolves_to_the_real_home_not_under_the_workspace(self, tmp_path):
+        resolved, inside = _confine.resolve_within("~/.ssh/id_rsa", root=tmp_path)
+        assert not inside, f"홈이 워크스페이스 안으로 판정됨: {resolved}"
+        assert str(resolved).startswith(str(pathlib.Path.home()))
+        assert "~" not in str(resolved)
+
+    def test_bare_tilde_is_the_home_dir(self, tmp_path):
+        resolved, inside = _confine.resolve_within("~", root=tmp_path)
+        assert resolved == pathlib.Path.home().resolve() and not inside
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cp x ~/.ssh/authorized_keys",
+            "rm -rf ~/Downloads/junk",
+            "tee ~/.bashrc",
+        ],
+    )
+    def test_home_writes_are_gated(self, confined, monkeypatch, cmd):
+        """실제 사고 재현 — 이 셋은 전부 확인 없이 통과했다."""
+        _allow_prompt(monkeypatch)
+        seen = []
+        monkeypatch.setattr(
+            type(_get_renderer()),
+            "confirm",
+            lambda self, *a, **k: (seen.append(1), ("n", ""))[1],
+        )
+        paths = _confine.extract_shell_paths(cmd)
+        err = _confine.guard(paths, "shell", command=cmd)
+        assert seen, f"{cmd}: 확인을 묻지 않았다"
+        assert err is not None
+
+    def test_tilde_inside_the_workspace_still_passes(self, monkeypatch, tmp_path):
+        """홈이 곧 워크스페이스인 배치(에이전트가 홈에서 돌 때)는 안 묻는다 —
+        확장이 '무조건 밖'을 뜻하면 그 경우 프롬프트 폭풍이 된다."""
+        home = pathlib.Path.home()
+        monkeypatch.setenv("AGENT_CLI_WORKSPACE_ROOT", str(home))
+        _, inside = _confine.resolve_within("~/proj/main.c")
+        assert inside
 
 
 class TestGuardGating:

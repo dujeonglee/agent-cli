@@ -55,9 +55,16 @@ def resolve_within(path: str, *, root: Path | None = None) -> tuple[Path, bool]:
     inside the workspace root. ``resolve()`` collapses ``..`` and follows
     symlinks, so both traversal and symlink escapes are caught. A nonexistent
     target (writing a new file) still resolves — its would-be location is what
-    gets checked."""
+    gets checked.
+
+    ``~`` 은 **셸이 확장한다** — `tool_shell` 은 ``shell=True`` 로 돌리므로
+    ``cp x ~/.ssh/authorized_keys`` 는 실제 홈에 쓴다. 그런데 ``Path.resolve()``
+    는 ``expanduser`` 를 하지 않아 ``<워크스페이스>/~/.ssh/...`` 로 풀렸고,
+    **워크스페이스 안**으로 판정돼 게이트가 통째로 비켜갔다 (v9.9.2 수리).
+    ``_path_candidate`` 가 ``~/`` 를 일부러 후보로 잡고 있었는데 그 다음 단계가
+    무효화하던, 소리 없는 구멍이다."""
     r = root or workspace_root()
-    p = Path(path)
+    p = Path(path).expanduser()
     resolved = (p if p.is_absolute() else r / p).resolve()
     inside = resolved == r or r in resolved.parents
     return resolved, inside
