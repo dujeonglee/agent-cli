@@ -156,9 +156,21 @@ class TestSensitiveMisses:
 class TestMacOSBypasses:
     """정규화가 사전만큼 중요하다 — 셋 다 이 기계에서 재현한 실제 우회다."""
 
-    def test_private_symlink_is_canonicalized(self):
-        """``/etc`` 는 ``/private/etc`` 의 심볼릭 — 양쪽 다 걸려야 한다."""
+    def test_etc_entries_match_on_every_platform(self):
+        """플랫폼 무관 — 사전의 ``/etc/*`` 항목은 어디서나 걸려야 한다."""
         assert sensitive_reason("/etc/shadow")
+        assert sensitive_reason("/etc/sudoers")
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="/private 는 macOS")
+    def test_private_symlink_is_canonicalized(self):
+        """macOS 에서 ``/etc`` 는 ``/private/etc`` 의 심볼릭 — 양쪽 다 걸려야 한다.
+
+        **darwin 전용이다.** Linux 엔 ``/private/etc`` 가 없어 `canonical()` 이
+        접을 대상도 없다(그래서 우회 경로도 아니다). 같은 반에 있는 firmlink·
+        대소문자 테스트는 처음부터 `skipif` 가 붙어 있었는데 이것만 빠져
+        **CI(Linux)에서 v9.10.0 부터 세 릴리스 연속 실패**했다 — 로컬이
+        macOS 라 안 보였다."""
+        assert pathlib.Path("/etc").is_symlink(), "전제가 바뀌었다"
         assert sensitive_reason("/private/etc/shadow")
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="APFS firmlink")

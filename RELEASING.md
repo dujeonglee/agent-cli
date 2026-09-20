@@ -42,6 +42,22 @@ AGENT_CLI_BROWSER_TESTS=1 AGENT_CLI_PERF_KPI=1 pytest tests/browser/test_render_
 
 README.md / docs/ARCHITECTURE.md가 최신인지 확인.
 
+### 1-1. CI 가 그린인지 확인 — **로컬 통과로는 부족하다**
+
+```bash
+gh run list --limit 3          # 직전 push 들이 success 인가
+gh run view <id> --log-failed  # 아니면 원인부터
+```
+
+로컬은 macOS 한 대지만 CI 는 **Linux × Python 3.11/3.12** 다. 플랫폼 가정이
+섞인 테스트는 로컬에서 영영 안 보인다 — v9.10.0~v9.11.1 세 릴리스가
+`/private/etc`(macOS 전용)를 전제한 TC 하나 때문에 **전부 빨간 상태로
+나갔다.** 태그를 밀기 전에 직전 커밋의 CI 를 보는 것이 그 부류를 잡는
+유일한 지점이다.
+
+플랫폼 의존 테스트에는 반드시 `@pytest.mark.skipif(sys.platform != ...)` 를
+붙인다.
+
 ### 2. 버전 bump
 
 `agent_cli/__init__.py`의 `__version__`을 `X.Y.Z`로 변경. 확인:
