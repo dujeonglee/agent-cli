@@ -1,6 +1,6 @@
 # 에이전트 `ask`/`answer` — 비동기 문답 설계 (2판)
 
-> 상태: **설계 3판 · 구현 착수 가능**
+> 상태: **설계 4판 · ①②③ 구현 완료, ④ 정리 남음**
 > 블록 계열 1~5판은 `DESIGN-blocking.md` 에 기록으로.
 > 1판(비동기)은 *"as written 은 구현 불가"* 판정(§10.2), 2판은 블로커 2건
 > (§10.3). 3판은 *"B1·B2·G1~G3 반영되면 구현 착수 가능"* 을 반영한 것.
@@ -487,7 +487,7 @@ docstring(`server.py:1249-1252`) · `main.py:1616` · `app.js:1934-2010`.
 |---|---|---|
 | **① 코어** | `Question`(두 seq)·`_questions`·포트·`submit` kwarg·사망 정리·영속 | 호출자 0. 동작 불변 |
 | **② 받을 준비** | 독촉(`remind_owed`)·사람 알림·§3.7 억제·`roster_snapshot`·`agent_input`(`answer_id`)·트레이·`any_activity`·main 포트 | `_questions` 가 비어 **전부 no-op**. 동작 불변 |
-| **③ flip** | `AnswerTool`·`_op_answer`·`ask_handler`→`port.ask`·`_op_ask` 비블로킹·`nonblocking_ask` 프롬프트 배선·`build_reply_record` 문구 둘·**1단계 TC 재작성** — **한 커밋** | 동작이 바뀌는 유일한 단계 |
+| **③ flip** | `AnswerTool`·`_op_answer`·`_op_ask` 비블로킹(`port.nonblocking`)·`nonblocking_ask` 프롬프트 배선·상주에 `ask_handler` 미전달·**1단계 TC 재작성** — **한 커밋** ✅ | 동작이 바뀌는 유일한 단계 |
 | **④ 정리** | 블록 잔재·주석·`can_answer_agent` 제거 | |
 
 ③ 뒤에 남는 `_answer_kind`(`:751`)·`kill` 의 `answered.set()`·`has_active_work`

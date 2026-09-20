@@ -54,6 +54,17 @@ class AskTool(Tool):
         "answered in turn), the same way you batch read_file. Use only when you "
         "cannot proceed without specific input; otherwise end with `complete`."
     )
+    # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
+    # **막지 않는다** — 질문을 등록하고 즉시 돌아온다. 마지막 문장이
+    # 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
+    # 모델이 추측으로 메우고 끝낸다. complete 해도 이어진다는 걸 알린다.
+    RESIDENT_DESCRIPTION = (
+        "Ask a question and KEEP WORKING — you are NOT blocked. The question "
+        "goes to whoever requested your current task; their answer arrives "
+        "later as a NEW message and you continue from there. Carry on with "
+        "anything that does not depend on it. If nothing else can proceed, "
+        "`complete` — you will be resumed when the answer arrives."
+    )
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
@@ -113,6 +124,43 @@ class MessageTool(Tool):
         # callers get a benign echo.
         to = args.get("to", "")
         return ToolResult(True, output=f"(message to {to}: intercepted by loop)")
+
+
+class AnswerTool(Tool):
+    name = "answer"
+    # ``MessageTool`` 과 같은 선언 (T3): 질문 포트가 주입된 루프에만 붙고
+    # 그 외에서는 목록에서 제거된다. 포트는 상주 에이전트와 main 이 받는다
+    # — main 도 자기 앞으로 온 질문에 답해야 한다.
+    requires_handler = "questions"
+    force_mount = True
+    description = (
+        "Answer a question that was addressed to you. Its id arrived with the "
+        "question (e.g. `[question q-1a2b from agt-x9]`). The asker is NOT "
+        "blocked and kept working, but it cannot finish the part that depends "
+        "on your answer. If you genuinely cannot answer, say so with `answer` "
+        "rather than ignoring it — silence only stalls them."
+    )
+    parameters: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "The question id, e.g. 'q-1a2b'.",
+            },
+            "text": {
+                "type": "string",
+                "description": "Your answer.",
+            },
+        },
+        "required": ["id", "text"],
+    }
+
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        # Placeholder — the loop intercepts `answer` before dispatch and
+        # routes it through the injected question port.
+        return ToolResult(
+            True, output=f"(answer to {args.get('id', '?')}: intercepted by loop)"
+        )
 
 
 class RunSkillTool(Tool):

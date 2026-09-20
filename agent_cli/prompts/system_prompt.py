@@ -600,7 +600,30 @@ _ASK_INLINE_NO_COMPLETE = """\
   conversation would still flow, it's not a real question — finish."""
 
 
-def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str, str]:
+# 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 위 두 변형은 "묻느냐
+# 끝내느냐" 를 가르지만, 비동기에서는 **그 둘이 배타적이지 않다** — 물어
+# 두고 끝내는 것이 정상이고, 답이 오면 이어서 깨어난다. 잘못 고르는 비용도
+# 다르다: 여기서 진짜 위험은 군더더기 질문이 아니라 **묻지 않고 추측하는
+# 것**이다(막히지 않으니 물어도 비용이 거의 없다).
+_ASK_INLINE_RESIDENT = """\
+
+  `ask` does NOT block you. It registers the question with whoever
+  requested your current task and returns immediately; their answer
+  arrives later as a new message and you pick up where you left off.
+  - Ask as soon as a decision is genuinely not yours to make — a
+    policy call, an ambiguous requirement, a destructive choice. Do
+    NOT guess and paper over it with a TODO; guessing is the expensive
+    mistake here, not asking.
+  - Then keep going on everything that does not depend on the answer.
+  - When nothing else can proceed, `complete` and report what you did.
+    That is not giving up — you will be resumed with the answer.
+  - Do not re-ask the same question while it is still open; you will
+    be reminded if it goes unanswered."""
+
+
+def _build_tool_inline_guides(
+    active_tools: list[str], wire_format, *, nonblocking_ask: bool = False
+) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
     ``read_file``'s guide depends on whether ``code_index`` is also
@@ -613,11 +636,14 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     formats that don't expose `complete` get the variant phrased around
     finishing instead.
     """
-    ask = (
-        _ASK_INLINE
-        if getattr(wire_format, "exposes_complete", True)
-        else _ASK_INLINE_NO_COMPLETE
-    )
+    if nonblocking_ask:
+        ask = _ASK_INLINE_RESIDENT
+    else:
+        ask = (
+            _ASK_INLINE
+            if getattr(wire_format, "exposes_complete", True)
+            else _ASK_INLINE_NO_COMPLETE
+        )
     return {
         "read_file": _build_read_file_inline(active_tools, wire_format),
         "edit_file": _build_edit_file_inline(wire_format),
@@ -628,7 +654,11 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
 
 
 def _build_tools_section(
-    active_tools: list[str], wire_format, *, has_agent_registry: bool = True
+    active_tools: list[str],
+    wire_format,
+    *,
+    has_agent_registry: bool = True,
+    nonblocking_ask: bool = False,
 ) -> str:
     """Build Available Tools section with inline guides.
 
@@ -637,16 +667,24 @@ def _build_tools_section(
     축소판으로 스왑 — 모드 축소 노출 (설계 §3.2: 스키마 사본 없이 렌더만
     분기).
     """
-    overrides = None
+    overrides = {}
     if not has_agent_registry and "agent" in active_tools:
         from agent_cli.tools.agent_tool import AgentTool
 
-        overrides = {"agent": AgentTool.SUBLOOP_DESCRIPTION}
+        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
+    if nonblocking_ask and "ask" in active_tools:
+        # 상주 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their
+        # reply" 라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
+        from agent_cli.tools.virtual import AskTool
+
+        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
     tool_block = get_tool_descriptions(
         active_tools,
-        inline_guides=_build_tool_inline_guides(active_tools, wire_format),
+        inline_guides=_build_tool_inline_guides(
+            active_tools, wire_format, nonblocking_ask=nonblocking_ask
+        ),
         wire_format=wire_format,
-        description_overrides=overrides,
+        description_overrides=overrides or None,
     )
     return f"## Available Tools\n{tool_block}"
 
@@ -788,6 +826,7 @@ def build_system_prompt_sections(
     max_depth: int = 0,
     agent_registry=None,
     peer_agents_section: str = "",
+    nonblocking_ask: bool = False,
 ) -> list[tuple[str, str]]:
     """Build the system prompt as an ordered list of ``(name, text)`` sections.
 
@@ -841,6 +880,7 @@ def build_system_prompt_sections(
                 active_tools,
                 wire_format,
                 has_agent_registry=agent_registry is not None,
+                nonblocking_ask=nonblocking_ask,
             ),
         )
     )

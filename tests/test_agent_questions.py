@@ -1363,7 +1363,10 @@ class TestQuestionPort:
         reg = mkreg()
         port = reg.question_port(spawn_idle(reg))
         public = {n for n in dir(port) if not n.startswith("_")}
-        assert public == {"ask", "answer", "key", "me", "asker"}
+        assert public == {"ask", "answer", "key", "me", "asker", "nonblocking"}
+        # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
+        assert port.nonblocking is True
+        assert reg.question_port(None).nonblocking is False
         assert isinstance(port, QuestionPort)
 
 
@@ -1585,3 +1588,206 @@ class TestUncoveredSurfaces:
         # 블로킹 경로(id 없음)는 종전 문구 그대로
         old = build_reply_record({"kind": "question", "key": "agt-x", "output": "q"})
         assert "BLOCKED" in old["content"]
+
+
+# ── ③ flip: 도구·디스패치·프롬프트 ─────────────
+
+
+def _caps():
+    from agent_cli.providers.capabilities import ModelCapabilities
+
+    return ModelCapabilities(
+        context_window=32768, max_output_tokens=4096, supports_thinking=False
+    )
+
+
+def _run_scripted(ctx, emissions, **kw):
+    """스크립트된 LLM 응답으로 실제 ``run_loop`` 를 한 번 돌린다."""
+    from unittest.mock import MagicMock
+
+    from agent_cli.loop import run_loop
+    from agent_cli.providers.base import LLMResponse
+
+    provider = MagicMock()
+    seq = list(emissions)
+    provider.call = MagicMock(
+        side_effect=lambda *a, **k: LLMResponse(
+            content=seq.pop(0)
+            if seq
+            else json.dumps({"action": "complete", "result": "done"})
+        )
+    )
+    return run_loop(
+        query="Q",
+        provider=provider,
+        capabilities=_caps(),
+        model="test-model",
+        ctx=ctx,
+        **kw,
+    ), provider
+
+
+class TestFlipToolMount:
+    def test_answer_mounts_only_with_a_port_and_is_forced(self, mkreg, renderer):
+        """``MessageTool`` 과 같은 선언이라 정책이 파생된다 — 포트 없는
+        루프에서는 목록에서 빠지고, 있으면 프로파일 allowed-tools 와 무관
+        하게 커널이 강제 탑재한다."""
+        from agent_cli.loop import AgentLoop
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+
+        def tools_for(questions):
+            from unittest.mock import MagicMock
+
+            loop = AgentLoop(
+                query="Q",
+                provider=MagicMock(),
+                capabilities=_caps(),
+                model="m",
+                active_tools=["shell"],
+                questions=questions,
+            )
+            return list(loop.tools_list)
+
+        assert "answer" not in tools_for(None)
+        assert "answer" in tools_for(reg.question_port(a))  # force_mount
+        assert "answer" in tools_for(reg.question_port(None))  # main 도
+
+
+class TestFlipDispatch:
+    def test_resident_ask_returns_immediately_and_answer_pairs(
+        self, mkreg, tmp_path, renderer
+    ):
+        """실제 루프 관통: ``ask`` 가 막지 않고, 관찰이 '막히지 않았다' 를
+        말하며, ``answer`` 가 id 로 짝지어 배달한다."""
+        from agent_cli.context.manager import ContextManager
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_author = "main"
+        port = reg.question_port(a)
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=30_000)
+
+        result, provider = _run_scripted(
+            ctx,
+            [
+                json.dumps({"action": "ask", "question": "v1 or v2?"}),
+                json.dumps({"action": "complete", "result": "부분 결과"}),
+            ],
+            questions=port,
+        )
+        assert result.success and result.output == "부분 결과"
+        # 막지 않았다 — 두 번째 턴이 실제로 돌았다.
+        assert provider.call.call_count == 2
+        (q,) = list(reg._questions.values())
+        assert q.text == "v1 or v2?" and q.target == "main"
+        obs = "\n".join(str(m) for m in ctx.get_raw_messages())
+        assert "NOT blocked" in obs
+        assert q.id in obs  # 모델이 id 를 본다 → 되물을 때 지목 가능
+
+        # main 이 answer 도구로 답한다
+        ctx2 = ContextManager(tmp_path / "s2", max_context_tokens=30_000)
+        result2, _ = _run_scripted(
+            ctx2,
+            [json.dumps({"action": "answer", "id": q.id, "text": "v2"})],
+            questions=reg.question_port(None),
+        )
+        assert result2.success
+        assert reg._questions == {}
+        assert "delivered to the asker" in "\n".join(
+            str(m) for m in ctx2.get_raw_messages()
+        )
+
+    def test_answer_with_unknown_id_is_a_failed_observation(
+        self, mkreg, tmp_path, renderer
+    ):
+        """모델이 틀린 id 로 답하면 **조용히 성공하면 안 된다** — 질문은
+        열린 채 남고 독촉이 계속되는데 모델은 답했다고 믿는다."""
+        from agent_cli.context.manager import ContextManager
+
+        reg = mkreg()
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        _run_scripted(
+            ctx,
+            [json.dumps({"action": "answer", "id": "q-nope", "text": "x"})],
+            questions=reg.question_port(None),
+        )
+        raw = ctx.get_raw_messages()
+        rec = next(m for m in raw if m.get("tool") == "answer")
+        assert rec["success"] is False
+        assert "unknown or already-answered" in rec["content"]
+
+    def test_main_ask_still_blocks(self, mkreg, tmp_path, renderer):
+        """main·delegate 의 ``ask``(사람에게 묻기)는 무변경이다 — 포트를
+        받아도 비블로킹 분기를 타면 안 된다."""
+        from agent_cli.context.manager import ContextManager
+
+        reg = mkreg()
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        _run_scripted(
+            ctx,
+            [json.dumps({"action": "ask", "question": "괜찮나요?"})],
+            questions=reg.question_port(None),
+        )
+        assert reg._questions == {}  # 목록에 안 들어간다
+        obs = "\n".join(str(m) for m in ctx.get_raw_messages())
+        assert "User responded" in obs  # 기존 사용자-프롬프트 경로
+
+
+class TestFlipPrompt:
+    def test_resident_loop_actually_gets_the_resident_prompt(
+        self, mkreg, tmp_path, renderer
+    ):
+        """``_build_tools_section`` 을 직접 부르는 테스트는 **배선**을 못
+        잰다 — `loop/prompt.py` 가 신호를 안 넘겨도 통과한다. 실제 루프가
+        만든 시스템 프롬프트를 본다."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+
+        def system_for(questions, tag):
+            loop = AgentLoop(
+                query="Q",
+                provider=MagicMock(),
+                capabilities=_caps(),
+                model="m",
+                # ``ask`` 는 requires_handler="ctx" — ctx 없이는 벗겨진다.
+                ctx=ContextManager(tmp_path / tag, max_context_tokens=30_000),
+                active_tools=["ask", "shell"],
+                questions=questions,
+            )
+            loop._prompt.rebuild()  # __init__ 은 조립만 — 빌드는 런 시작에
+            assert "ask" in loop.tools_list
+            return loop.system
+
+        resident = system_for(reg.question_port(a), "r")
+        main = system_for(reg.question_port(None), "m")
+        # 도구 설명 — "NOT blocked" 만 보면 AnswerTool 설명으로도 통과한다
+        assert "KEEP WORKING" in resident and "KEEP WORKING" not in main
+        assert "WAIT for their reply" in main and "WAIT for their reply" not in resident
+        # 인라인 가이드도 함께 — 둘이 엇갈리면 모델이 헷갈린다
+        assert "does NOT block you" in resident
+        assert "does NOT block you" not in main
+        assert "pick by intent" in main and "pick by intent" not in resident
+
+    def test_resident_ask_description_says_it_does_not_block(self):
+        """설명이 'WAIT for their reply' 라고 거짓말하면 모델이 그걸 믿고
+        추측으로 메운다."""
+        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.wire_formats import get as get_wf
+
+        wf = get_wf("json_fc")
+        blocking = _build_tools_section(["ask"], wf)
+        resident = _build_tools_section(["ask"], wf, nonblocking_ask=True)
+        assert "WAIT for their reply" in blocking
+        assert "WAIT for their reply" not in resident
+        assert "NOT blocked" in resident
+        # 인라인 가이드도 함께 바뀐다 — 둘이 엇갈리면 모델이 헷갈린다
+        assert "does NOT block you" in resident
+        assert "does NOT block you" not in blocking
+        assert "pick by intent" in blocking

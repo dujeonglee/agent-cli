@@ -568,6 +568,15 @@ class QuestionPort:
         self.me = "main" if key is None else f"agent:{key}"
         self.asker = "main" if key is None else key
 
+    @property
+    def nonblocking(self) -> bool:
+        """이 주체의 ``ask`` 가 막지 않는가 — 상주 에이전트만 True.
+
+        main 의 ``ask`` 는 사람에게 묻는 기존 블로킹 경로 그대로다(§8-④).
+        디스패치와 시스템 프롬프트가 같은 이 값을 본다.
+        """
+        return self.key is not None
+
     def ask(self, text: str) -> tuple[str, str]:
         """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공.
 
@@ -2380,7 +2389,8 @@ class AgentRegistry:
         return runner(
             query,
             tm.ctx,
-            ask_handler=self._make_ask_handler(tm),
+            # ``ask_handler`` 없음 — 상주 에이전트의 ask 는 이제 질문
+            # 포트로 간다(비블로킹). 블로킹 슬롯 경로는 ④에서 제거한다.
             message_handler=self._make_message_handler(tm),
             questions=self.question_port(tm.key),
             peer_agents_section=peer_section,

@@ -594,6 +594,11 @@ class TurnDispatcher:
             if handled is not _NOT_HANDLED:
                 return handled
 
+        if op.action == "answer":
+            handled = self._op_answer(llm_text, turn, op, accumulate)
+            if handled is not _NOT_HANDLED:
+                return handled
+
         if op.action:
             return self._op_execute_tool(llm_text, turn, op, outcome, accumulate)
 
@@ -667,6 +672,9 @@ class TurnDispatcher:
                 if isinstance(op.action_input, dict)
                 else str(op.action_input),
             )
+            port = self.cfg.questions
+            if port is not None and port.nonblocking:
+                return self._op_ask_async(llm_text, questions, port, accumulate)
             # handler 없음(main/delegate)이면 종전 단일-인자 호출 유지 —
             # 기존 테스트/외부 patcher 의 _handle_ask 교체 표면 보존.
             if self.cfg.ask_handler is not None:
@@ -735,6 +743,81 @@ class TurnDispatcher:
             f"Observation: {obs}",
             tool_name="message",
             success=True,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
+
+    def _op_ask_async(self, llm_text: str, questions, port, accumulate):
+        """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
+
+        질문을 등록하고 즉시 관찰을 돌려준다. 답은 나중에 새 메시지(= 새
+        런)로 오고, 그때 이 에이전트의 ctx 는 그대로라 하던 일을 잇는다.
+        """
+        lines = []
+        for q in questions:
+            qid, err = port.ask(q)
+            if err:
+                lines.append(f"could not ask: {err}")
+            else:
+                lines.append(f'question {qid} sent — "{q}"')
+        obs = (
+            "\n".join(lines)
+            + "\nYou are NOT blocked. Continue with whatever does not depend "
+            "on the answer; it will arrive as a new message. If nothing else "
+            "can proceed, `complete` — you will be resumed when it arrives."
+        )
+        if accumulate is not None:
+            self.tools.accumulate_raw(accumulate, "ask", obs, True)
+            return None
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            f"Observation: {obs}",
+            tool_name="ask",
+            success=True,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
+
+    def _op_answer(self, llm_text: str, turn, op, accumulate):
+        """``answer`` op — 열린 질문에 id 로 짝지어 답한다 (§3.1).
+
+        ``_op_message`` 와 동형: 포트로 라우팅하고 즉시 관찰을 돌려준다.
+        포트가 없으면(일회성 루프) ``_NOT_HANDLED`` 로 폴스루 — 일반 도구
+        경로의 플레이스홀더가 무해하게 끝낸다.
+        """
+        port = self.cfg.questions
+        if port is None:
+            return _NOT_HANDLED
+        args = op.action_input if isinstance(op.action_input, dict) else {}
+        qid = str(args.get("id", "")).strip()
+        text = str(args.get("text", "")).strip()
+        render_step(
+            "action",
+            "",
+            self.state.turn,
+            tool_name="answer",
+            tool_input=json.dumps(args, ensure_ascii=False),
+        )
+        try:
+            err = port.answer(qid, text)
+        except Exception as e:
+            err = f"answer failed: {type(e).__name__}: {e}"
+        ok = not err
+        obs = f"[answer → {qid or '?'}] " + (err or "delivered to the asker")
+        if accumulate is not None:
+            self.tools.accumulate_raw(accumulate, "answer", obs, ok)
+            return None
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            f"Observation: {obs}",
+            tool_name="answer",
+            success=ok,
             turn=self.state.turn,
         )
         return _CONTINUE

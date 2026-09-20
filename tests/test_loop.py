@@ -1492,8 +1492,15 @@ class TestToolPolicyDeclarations:
     속성(depth_gated/requires_handler/force_mount)에서 파생되고, 결과가
     종전 하드코딩 알고리즘과 **모든 입력 조합에서 동일**함을 고정."""
 
-    def _legacy_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
-        """v8.37.0 까지의 하드코딩 알고리즘 재현 (등가성 기준선)."""
+    def _legacy_tools_list(
+        self, active_tools, depth, max_depth, ctx, message_handler, questions=None
+    ):
+        """v8.37.0 까지의 하드코딩 알고리즘 재현 (등가성 기준선).
+
+        ``answer``(v9.13 비동기 질문)는 ``message`` 와 같은 규칙이라 같은
+        모양으로 얹는다 — 기준선이 새 정책을 모르면 등가성 비교가 아니라
+        "새 도구가 추가됐다"만 알려준다.
+        """
         from agent_cli.tools.registry import TOOLS
 
         tools_list = active_tools or list(TOOLS.keys())
@@ -1506,6 +1513,11 @@ class TestToolPolicyDeclarations:
                 tools_list = [*tools_list, "message"]
         else:
             tools_list = [t for t in tools_list if t != "message"]
+        if questions is not None:
+            if "answer" not in tools_list:
+                tools_list = [*tools_list, "answer"]
+        else:
+            tools_list = [t for t in tools_list if t != "answer"]
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
@@ -1565,6 +1577,9 @@ class TestToolPolicyDeclarations:
             "agent": {"depth_gated": True},
             "ask": {"requires_handler": "ctx"},
             "message": {"requires_handler": "message_handler", "force_mount": True},
+            # 비동기 질문의 짝 — ``message`` 와 같은 선언(포트 없는 루프에선
+            # 목록에서 제거, 있으면 강제 탑재). docs/agent-ask/DESIGN.md §3.1
+            "answer": {"requires_handler": "questions", "force_mount": True},
         }
         defaults = {
             "terminal": False,

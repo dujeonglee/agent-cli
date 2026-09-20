@@ -1057,12 +1057,22 @@ class TestFullLoopIntegration:
 
 
 def make_asking_runner(question="which branch?"):
-    """ask_handler 를 실제로 호출하는 가짜 러너 — teammate 가 작업 중
-    질문하고, 받은 답을 회신에 반영하는 시나리오."""
+    """질문 포트로 실제로 묻는 가짜 러너 — 상주 에이전트의 ``ask`` 는
+    **막지 않는다**(docs/agent-ask/DESIGN.md §3.1). 등록하고 즉시 돌아와
+    부분 결과로 끝내고, 답은 나중에 새 런으로 온다."""
 
     def runner(query, ctx, **kwargs):
-        answer = kwargs["ask_handler"](question)
-        return _FakeLoopResult(output=f"resumed with: {answer}"), 0.01
+        # 상주 에이전트는 **블로킹 핸들러를 받지 않는다**. 받으면 슬롯
+        # 경로가 되살아나 `_answer_kind` 가 비동기 답을 먹어치울 수 있다
+        # (③이 원자적이어야 하는 이유).
+        assert kwargs.get("ask_handler") is None, "블로킹 ask 핸들러가 살아있다"
+        assert kwargs["questions"].nonblocking is True
+        # 답·독촉 런에서는 다시 묻지 않는다 — 그러면 그 런도 §3.7 로 억제돼
+        # 회신이 영영 안 나가고, 테스트가 실제 결함이 아닌 것으로 멈춘다.
+        if "answer to your question" in query or "(reminder)" in query:
+            return _FakeLoopResult(output=f"resumed with: {query}"), 0.01
+        qid, err = kwargs["questions"].ask(question)
+        return _FakeLoopResult(output=f"asked {qid or err}"), 0.01
 
     return runner
 
@@ -1102,78 +1112,79 @@ class TestAskRouting:
         # main 이 그대로 따라할 수 있는 답변 op 안내 포함
         assert '"mode":"request"' in rec["content"] and "agt-q1" in rec["content"]
 
-    def test_full_ask_roundtrip(self, tmp_path, renderer):
-        # teammate 가 질문 → main mailbox 에 kind:question → main 이
-        # request 로 답변 → teammate 재개 → 최종 회신에 답 반영.
+    def test_async_ask_does_not_block_the_run(self, tmp_path, renderer):
+        """③ flip 의 머리: 상주 에이전트의 ``ask`` 는 **막지 않는다**.
+        종전엔 여기서 ``waiting_ask`` 로 멈춰 있었다."""
         reg = make_registry(tmp_path, runner=make_asking_runner())
         key, _ = reg.spawn()
         reg.request(key, "do the task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        # 질문이 mailbox 에 떠 있다
-        with reg._cv:
-            kinds = [r.get("kind") for r in reg._pending]
-        assert kinds == ["question"]
-        # main 이 답변 — 도구 힌트가 "답변으로 소비" 를 알린다
-        r = tool_agent(
-            {"mode": "request", "key": key, "task": "main branch"}, registry=reg
-        )
-        assert r.success and "answer to its pending question" in r.output
-        # teammate 재개 → 최종 회신에 답이 반영
-        assert wait_until(
-            lambda: any(x.get("kind") == "reply" for x in getattr(reg, "_pending", []))
-        )
-        items = reg.drain_replies()
-        reply = next(x for x in items if x.get("kind") == "reply")
-        assert reply["output"] == "resumed with: main branch"
-        assert reg.get(key).state == "idle"
+        # 묻고도 런이 끝난다 — 상태는 idle 이고 waiting_ask 는 없다.
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert "waiting_ask" not in reg.format_status(key)
         reg.shutdown_all()
 
-    def test_answer_attribution_for_non_main_author(self, tmp_path, renderer):
-        # P4 인간 개입의 토대: main 외 화자의 답은 [author]: 접두로 전달.
+    def test_async_ask_roundtrip_through_the_port(self, tmp_path, renderer):
+        """묻고 → 부분 결과로 끝내고 → main 이 답하면 **새 런**으로 이어서
+        마무리하고, 그 런의 회신이 원 요청자에게 간다."""
         reg = make_registry(tmp_path, runner=make_asking_runner())
         key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        reg.request(key, "the blue one", author="user:bob")
-        assert wait_until(lambda: any(x.get("kind") == "reply" for x in reg._pending))
-        reply = next(x for x in reg.drain_replies() if x.get("kind") == "reply")
-        assert reply["output"] == "resumed with: [user:bob]: the blue one"
-        reg.shutdown_all()
+        reg.request(key, "do the task")
+        assert wait_until(lambda: reg.get(key).handled == 1)
 
-    def test_question_delivered_via_drain(self, tmp_path, renderer):
-        # wait 제거 후에도 질문 왕복은 성립: 질문은 턴 경계 drain 으로
-        # main 에 배달되고, main 이 request 로 답하면 재개된다.
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        # 질문이 main mailbox 에 id 와 함께 떠 있다.
         q = next(r for r in reg.drain_replies() if r.get("kind") == "question")
         assert "which branch?" in q["output"]
-        reg.request(key, "main branch")  # 답변 → 재개
+        qid = q["id"]
+        rec = build_reply_record(q, registry=reg)
+        assert "`answer` tool" in rec["content"]  # mode:request 가 아니다
+
+        # 질문을 건 런은 회신을 밀지 않았다 (§3.7) — 답 런의 회신이 진짜다.
+        assert not [r for r in reg._pending if r.get("kind") == "reply"]
+
+        assert reg.answer_question(qid, "main branch", by="main") == ""
+        assert wait_until(
+            lambda: any(r.get("kind") == "reply" for r in reg._pending), timeout=5.0
+        )
+        reply = next(r for r in reg.drain_replies() if r.get("kind") == "reply")
+        assert "main branch" in reply["output"]
+        assert reg._questions == {}
+        reg.shutdown_all()
+
+    def test_answer_carries_the_answerer_label(self, tmp_path, renderer):
+        """답은 ``author=q.target`` 으로 배달된다 — 그래서 답한 주체가
+        에이전트 쪽 query 에 ``[user:bob]:`` 로 남는다(P4 인간 개입의 토대)."""
+        seen = []
+
+        def runner(query, ctx, **kwargs):
+            seen.append(query)
+            if "answer to your question" not in query:
+                kwargs["questions"].ask("which branch?")
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        reg.request(key, "task", author="user:bob")
+        assert wait_until(lambda: len(seen) == 1)
+        (qid,) = [q.id for q in reg.open_human_questions()]
+        assert reg.answer_question(qid, "the blue one", by="user:bob") == ""
+        assert wait_until(lambda: len(seen) == 2)
+        assert seen[1].startswith("[user:bob]: ")
+        assert "the blue one" in seen[1]
+        reg.shutdown_all()
+
+    def test_shutdown_is_prompt_and_keeps_the_question(self, tmp_path, renderer):
+        """막는 것이 없으니 종료가 풀어 줄 대기도 없다. 열린 질문은
+        사라지지 않고 다음 세션이 되살린다(§3.9)."""
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
         assert wait_until(lambda: reg.get(key).handled == 1)
-        reg.shutdown_all()
-
-    def test_status_shows_waiting_ask(self, tmp_path, renderer):
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        assert "waiting_ask" in reg.format_status(key)
-        reg.shutdown_all()
-
-    def test_shutdown_unblocks_pending_ask(self, tmp_path, renderer):
-        # 답변 없이 세션 종료 — 핸들러가 즉시 풀리고 worker 가 dead 로.
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
         t0 = time.monotonic()
         reg.shutdown_all()
-        assert time.monotonic() - t0 < 4.0  # join(5s) 안에 즉시 종료
+        assert time.monotonic() - t0 < 4.0
         assert reg.get(key).state == "dead"
-        # 종료 답변이 회신에 반영됨 (터미널 no-response)
-        replies = [x for x in reg.drain_replies() if x.get("kind") == "reply"]
-        assert replies and "no response" in replies[0]["output"]
+        assert len(reg._questions) == 1  # 세션 종료는 질문을 지우지 않는다
 
     def test_delegate_ask_path_unchanged(self):
         # handler=None(delegate/main) 이면 종전 사용자-프롬프트 경로 —
@@ -1290,22 +1301,6 @@ class TestResumeRestore:
         tomb = reg2.get(k_dead)
         assert tomb is not None and tomb.state == "dead"  # 툼스톤 (status 가시성)
         assert "dead" in reg2.format_status(k_dead)
-        reg2.shutdown_all()
-
-    def test_stale_question_marked_on_restore(self, tmp_path, renderer):
-        reg1 = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg1.spawn()
-        reg1.request(key, "task")
-        assert wait_until(lambda: reg1.get(key).state == "waiting_ask")
-        reg1.shutdown_all()  # 질문이 미배달인 채 종료
-
-        reg2 = make_registry(tmp_path)
-        reg2.restore()
-        question = next(r for r in reg2.drain_replies() if r.get("kind") == "question")
-        assert question.get("stale") is True
-        rec = build_reply_record(question)
-        assert "STALE" in rec["content"]
-        assert "NO LONGER" in rec["content"]  # 답변 대기 아님을 명시
         reg2.shutdown_all()
 
     def test_role_prompt_survives_role_file_deletion(
@@ -1471,12 +1466,13 @@ class TestHumanInterventionRouting:
         reg.shutdown_all()
 
     def test_question_during_human_request_stays_in_window(self, tmp_path, renderer):
-        # 인간 발신 작업 중의 ask 질문은 main mailbox 로 가지 않는다 (D8 대칭)
+        """D8 대칭: 사람 발신 작업 중의 질문은 main mailbox 로 안 간다.
+        비동기에서도 같다 — 주소가 그 사람이므로 트레이·창이 표면이다."""
         reg = make_registry(tmp_path, runner=make_asking_runner())
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "human task", author="user:bob")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        assert wait_until(lambda: reg.get(key).handled == 1)
         assert not reg.has_pending_replies()  # main 비배달
         qs = [
             c
@@ -1484,9 +1480,11 @@ class TestHumanInterventionRouting:
             if c[1]["direction"] == "question"
         ]
         assert qs and qs[0][1]["text"] == "which branch?"  # 창에는 표시
-        # 인간이 창에서 답하면 재개되고, 회신도 창에만
-        reg.request(key, "blue", author="user:bob")
-        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert [q.target for q in reg.open_human_questions()] == ["user:bob"]
+        # 사람이 트레이에서 답하면 재개되고, 회신도 창에만
+        (qid,) = [q.id for q in reg.open_human_questions()]
+        assert reg.answer_question(qid, "blue", by="user:bob") == ""
+        assert wait_until(lambda: reg.get(key).handled == 2)
         assert not reg.has_pending_replies()
         reg.shutdown_all()
 
@@ -1494,8 +1492,9 @@ class TestHumanInterventionRouting:
         reg = make_registry(tmp_path, runner=make_asking_runner())
         key, _ = reg.spawn()
         reg.request(key, "main task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        assert wait_until(lambda: reg.get(key).handled == 1)
         assert reg.has_pending_replies()  # main 에도 배달
+        assert [r["kind"] for r in reg.drain_replies()] == ["question"]
         reg.shutdown_all()
 
 
@@ -1611,16 +1610,6 @@ class TestQuiescenceHelpers:
         assert reg.has_active_work()  # 미배달 회신
         reg.drain_replies()
         assert wait_until(lambda: not reg.has_active_work())
-        reg.shutdown_all()
-
-    def test_waiting_ask_not_active_but_reported(self, tmp_path, renderer):
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        reg.drain_replies()  # 질문 배달 소비 후에는
-        assert not reg.has_active_work()  # 교착 방지 — active 아님
-        assert reg.waiting_ask_keys() == [key]  # 대신 경고 표시용으로 노출
         reg.shutdown_all()
 
 
@@ -3831,219 +3820,4 @@ class TestSeqAtomicity:
         assert len(seqs) == n
         assert len(set(seqs)) == n, f"duplicate seqs: {sorted(seqs)}"
         assert sorted(seqs) == list(range(1, n + 1))
-        reg.shutdown_all()
-
-
-class TestAskAnswerPairing:
-    """ask 의 답을 **주소**로 가른다 (v9.12.0, docs/agent-ask/DESIGN.md).
-
-    종전엔 ask 가 자기 inbox 에서 기다려 **도착 순서가 곧 답**이었다. 그래서
-    peer 의 무관한 메시지나 다른 주소의 새 일감이 답으로 소비됐고, 소비된
-    항목은 `_handle_request` 를 안 거쳐 **라우팅째 유실**됐다(peer 요청이면
-    요청한 peer 가 영원히 기다린다).
-
-    이제 답은 **슬롯**(`awaiting`/`answered`)으로 오고, 분류는 막혀 있지 않은
-    **생산자**(`submit`)가 한다. 판정 축은 질문 페이로드가 이미 싣고 있던
-    주소(`to` = `awaiting_to`)다.
-    """
-
-    def _asking(self, tmp_path, renderer, author="main"):
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task", author=author)
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        return reg, key
-
-    # ── 답으로 소비되는 것 ──
-
-    def test_main_answers_when_the_question_is_addressed_to_main(
-        self, tmp_path, renderer
-    ):
-        reg, key = self._asking(tmp_path, renderer)
-        err, verdict = reg.submit(key, "release 브랜치로")
-        assert err == "" and verdict == "answer"
-        assert wait_until(lambda: reg.get(key).state in ("idle", "dead"))
-        replies = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
-        assert replies and "release 브랜치로" in replies[0]["output"]
-
-    @pytest.mark.parametrize("who", ["user", "user:bob"])
-    def test_human_can_answer_a_main_addressed_question(self, tmp_path, renderer, who):
-        """웹 `agent_input` docstring 이 **"main 과 선착순"** 으로 명시한 기능 —
-        사람은 peer 가 아니라 **운영자**라 main 앞 질문에도 끼어들 수 있다."""
-        reg, key = self._asking(tmp_path, renderer)
-        err, verdict = reg.submit(key, "사람이 먼저 답함", author=who)
-        assert err == "" and verdict == "answer"
-
-    def test_human_can_answer_a_peer_addressed_question(
-        self, tmp_path, renderer, monkeypatch
-    ):
-        """운영자 창구가 있으면 peer 주소 질문에도 사람이 답한다 — 지금 peer
-        에게 배달이 안 되므로 사람이 유일한 답변자다."""
-        monkeypatch.setattr(
-            type(renderer), "can_answer_agent", lambda self: True, raising=False
-        )
-        reg, key = self._asking(tmp_path, renderer, author="agent:agt-other")
-        err, verdict = reg.submit(key, "사람이 대신 답함", author="user:bob")
-        assert err == "" and verdict == "answer"
-
-    # ── 답이 아니라 일감이 되는 것 ── (여기가 이 변경의 본체)
-
-    def test_peer_message_is_work_not_an_answer(self, tmp_path, renderer):
-        """peer 는 그 질문을 **본 적이 없다** — 자기 채널에만 렌더되므로.
-        답할 수 없는 주체의 메시지가 답으로 소비되는 건 사고였다."""
-        reg, key = self._asking(tmp_path, renderer)
-        err, verdict = reg.submit(key, "무관한 얘기", author="agent:agt-peer")
-        assert err == "" and verdict == "work"
-        assert reg.get(key).state == "waiting_ask"  # 아직 기다린다
-        assert reg.get(key).inbox.qsize() == 1  # 일감으로 남았다
-
-    def test_the_addressed_peer_is_still_not_an_answerer(
-        self, tmp_path, renderer, monkeypatch
-    ):
-        """**주소가 그 peer 여도** 답이 아니다 — 아직 배달되지 않으므로
-        그 peer 는 질문을 본 적이 없다.
-
-        (앞 테스트는 `awaiting_to` 가 main 이라 어느 판정이든 `work` 였다 —
-        사보타주로 발견해 이 케이스를 따로 고정한다.)"""
-        monkeypatch.setattr(
-            type(renderer), "can_answer_agent", lambda self: True, raising=False
-        )
-        reg, key = self._asking(tmp_path, renderer, author="agent:agt-boss")
-        assert reg.get(key).awaiting_to == "agent:agt-boss"
-        err, verdict = reg.submit(key, "보스가 답함", author="agent:agt-boss")
-        assert err == "" and verdict == "work", "배달도 안 됐는데 답이 됐다"
-
-    def test_main_is_not_an_answerer_for_a_human_addressed_question(
-        self, tmp_path, renderer
-    ):
-        """사람이 시킨 작업의 질문은 main 메일박스로 가지 않는다 — main 은
-        그 질문의 존재조차 모르므로 답변자가 아니다."""
-        reg, key = self._asking(tmp_path, renderer, author="user:bob")
-        assert not [r for r in reg.drain_replies() if r.get("kind") == "question"]
-        err, verdict = reg.submit(key, "main 의 새 일감")
-        assert err == "" and verdict == "work"
-
-    def test_queued_work_survives_and_is_handled_after_the_answer(
-        self, tmp_path, renderer
-    ):
-        """일감으로 판정된 항목이 **유실되지 않는다** — 종전엔 답으로 먹혀
-        `_handle_request` 를 건너뛰었다."""
-        reg, key = self._asking(tmp_path, renderer)
-        reg.submit(key, "진짜 일감", author="agent:agt-peer")
-        reg.submit(key, "답이다")  # main → 답
-        assert wait_until(lambda: reg.get(key).handled >= 2, timeout=6.0)
-
-    # ── 레이스 ──
-
-    def test_answer_arriving_at_publish_time_is_claimed(self, tmp_path, renderer):
-        """**arm 을 공개보다 먼저** 하지 않으면 즉답이 inbox 로 샌다.
-
-        질문이 main 메일박스에 올라가는 **바로 그 순간** 답하게 해서 창을
-        정확히 겨냥한다 — `_push_reply` 안에서 동기로 답하면, arm 이 뒤에
-        있는 구현에서는 슬롯이 아직 없어 `work` 로 떨어진다."""
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        assert wait_until(lambda: reg.get(key).state == "idle")
-
-        verdicts = []
-        real_push = reg._push_reply
-
-        def push_then_answer(reply):
-            real_push(reply)
-            if reply.get("kind") == "question":
-                verdicts.append(reg.submit(key, "공개 시점의 답")[1])
-
-        reg._push_reply = push_then_answer
-        reg.request(key, "task")
-        assert wait_until(lambda: verdicts, timeout=6.0)
-        assert verdicts[0] == "answer", "공개 시점에 온 답이 inbox 로 샜다"
-
-    def test_second_answerer_becomes_work_not_a_lost_answer(self, tmp_path, renderer):
-        """동시 답변자 둘 — `awaiting` claim 이 원자적이라 둘째는 일감이 된다
-        (조용히 사라지지 않는다)."""
-        reg, key = self._asking(tmp_path, renderer)
-        assert reg.submit(key, "첫 답")[1] == "answer"
-        assert reg.submit(key, "둘째 답", author="user:bob")[1] == "work"
-
-    # ── 종료 ──
-
-    def test_shutdown_wakes_the_slot_not_just_the_inbox(self, tmp_path, renderer):
-        """슬롯 대기자는 inbox 의 `_SHUTDOWN` 으로 **안 깨어난다** —
-        `answered.set()` 이 없으면 `join` 이 5초 타임아웃된다."""
-        reg, key = self._asking(tmp_path, renderer)
-        t0 = time.monotonic()
-        reg.shutdown_all()
-        assert time.monotonic() - t0 < 4.0
-        assert reg.get(key).state == "dead"
-
-    def test_kill_wakes_the_slot(self, tmp_path, renderer):
-        reg, key = self._asking(tmp_path, renderer)
-        t0 = time.monotonic()
-        reg.kill(key)
-        assert time.monotonic() - t0 < 2.0
-        assert reg.get(key).state == "dead"
-
-    # ── 펌프 수명 (유일한 새 교착) ──
-
-    def test_queue_behind_a_blocked_slot_is_not_active_work(self, tmp_path, renderer):
-        """**이 변경이 만들 뻔한 유일한 교착.**
-
-        1단계는 peer 메시지를 막힌 에이전트의 inbox 에 쌓는데, 그 에이전트는
-        답이 오기 전엔 못 꺼낸다. `has_active_work()` 가 그 큐를 세면 `run`
-        펌프가 영원히 돈다. 그 함수 docstring 의 판단("답 안 오는 대기는
-        교착이라 펌프는 종료를 택한다")이 **뒤의 큐**에도 적용된다."""
-        reg, key = self._asking(tmp_path, renderer)
-        reg.submit(key, "쌓이는 일감", author="agent:agt-peer")
-        assert reg.get(key).inbox.qsize() == 1
-        reg.drain_replies()  # 미배달 질문을 비워 그것만 남기지 않게
-        assert not reg.has_active_work(), "막힌 슬롯 뒤의 큐가 펌프를 붙잡는다"
-        reg.shutdown_all()
-
-    def test_web_idle_gate_still_counts_a_waiting_agent(self, tmp_path, renderer):
-        """웹은 반대다 — 운영자가 답할 수 있으므로 활동이 맞다."""
-        reg, _ = self._asking(tmp_path, renderer)
-        assert reg.any_activity()
-        reg.shutdown_all()
-
-
-class TestHeadlessAskFailFast:
-    """peer 주소 질문은 아직 그 peer 에게 **배달되지 않는다**. 운영자 창구도
-    없으면 막고 나서 아무도 안 오므로, **막기 전에** 정직하게 돌려준다."""
-
-    def test_peer_addressed_ask_without_operator_returns_immediately(
-        self, tmp_path, renderer
-    ):
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task", author="agent:agt-boss")
-        assert wait_until(lambda: reg.get(key).handled >= 1, timeout=6.0)
-        assert reg.get(key).state != "waiting_ask", "arm 하고 막혔다"
-        assert reg.get(key).awaiting == ""
-
-    def test_capability_default_is_false_and_web_overrides(self):
-        """`can_prompt()` 는 재사용할 수 없다 — 그건 'main 프롬프트에 답이
-        언젠가 오나'라 웹은 항상 True 이고 minimal 은 TTY 만 본다."""
-        import io
-
-        from rich.console import Console
-
-        from agent_cli.render.base import Renderer
-        from agent_cli.render.minimal import MinimalRenderer
-        from agent_cli.render.web import WebRenderer
-
-        assert Renderer.can_answer_agent(object()) is False  # type: ignore[arg-type]
-        assert not MinimalRenderer(
-            Console(file=io.StringIO(), force_terminal=False)
-        ).can_answer_agent()
-        assert WebRenderer().can_answer_agent()
-
-    def test_main_addressed_ask_still_blocks_without_an_operator(
-        self, tmp_path, renderer
-    ):
-        """fail-fast 는 **peer 주소**에만 — main 은 메일박스로 받으므로
-        운영자가 없어도 답할 수 있다."""
-        reg = make_registry(tmp_path, runner=make_asking_runner())
-        key, _ = reg.spawn()
-        reg.request(key, "task")
-        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
         reg.shutdown_all()

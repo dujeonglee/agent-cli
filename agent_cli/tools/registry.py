@@ -29,6 +29,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
 from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.virtual import (
+    AnswerTool,
     AskTool,
     CompleteTool,
     MessageTool,
@@ -60,6 +61,11 @@ _ALL_TOOLS: list[Tool] = [
 # (`schedule` 은 board 스케줄러의 얇은 클라이언트라 그쪽이 없으면 빈 껍데기다).
 # 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
 _ALL_TOOLS.append(MonitorTool())
+
+# 💬 ``answer`` — 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1).
+# ``requires_handler`` 가 포트 없는 루프에서 알아서 떼므로 무조건 등록한다.
+# 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
+_ALL_TOOLS.append(AnswerTool())
 
 # ⏰ ``schedule`` — only when an external scheduler backs this session
 # (env ``AGENT_CLI_SCHEDULER=1``, set by agent-board). Appended last so the

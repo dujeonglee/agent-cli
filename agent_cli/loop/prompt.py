@@ -44,6 +44,11 @@ class SystemPromptSvc:
             max_depth=self.cfg.max_depth,
             agent_registry=self.cfg.agent_registry,
             peer_agents_section=self.cfg.peer_agents_section,
+            # 상주 에이전트의 ``ask`` 는 막지 않는다 — 도구 설명과 인라인
+            # 가이드가 그 사실을 말해야 한다 (DESIGN.md §3.1/§4.1).
+            nonblocking_ask=bool(
+                self.cfg.questions is not None and self.cfg.questions.nonblocking
+            ),
         )
         self.system = "\n\n".join(t for _, t in self.sections)
 
