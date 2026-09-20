@@ -1529,8 +1529,14 @@ def run(
                 hooks_config=_disk_hooks,
                 record_turns=record_turns,
                 wire_format=wire_format_plugin,
+                # main 도 같은 포트를 받는다 — 없으면 자기 앞으로 온
+                # 질문에 답할 수단이 없다 (DESIGN.md §4). 레지스트리가 아니라
+                # 포트라 '팀원 안 팀원 금지' 가드는 그대로.
                 agent_registry=agent_registry,
                 monitor_registry=monitor_registry,
+                questions=(
+                    agent_registry.question_port(None) if agent_registry else None
+                ),
             )
             if loop_result.success:
                 answer = loop_result.output
@@ -2486,6 +2492,12 @@ def web(
                             hooks_config=_disk_hooks,
                             agent_registry=agent_registry,
                             monitor_registry=monitor_registry,
+                            # main 의 답변 수단 (DESIGN.md §4) — 위 run 경로와 동일.
+                            questions=(
+                                agent_registry.question_port(None)
+                                if agent_registry
+                                else None
+                            ),
                         )
 
                     _run_main(message, nickname)

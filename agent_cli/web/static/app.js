@@ -2108,12 +2108,35 @@
     var tray = document.getElementById("ask-tray");
     if (!tray) return;
     var waiting = ovRoster.filter(function (t) { return t.state === "waiting_ask"; });
-    if (!ovMainAsk && !waiting.length) {
+    // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 주소가 **사람**인 열린
+    // 질문만 뜬다. 상대가 막혀 있지 않으므로 state 로는 알 수 없고 질문
+    // 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
+    // 질문 단위. 블로킹 경로(waiting_ask)가 사라지면 위 절반만 마른다.
+    var open = [];
+    ovRoster.forEach(function (t) {
+      (t.open_questions || []).forEach(function (q) {
+        if (String(q.to || "").indexOf("user") === 0) {
+          open.push({ key: t.key, q: q });
+        }
+      });
+    });
+    if (!ovMainAsk && !waiting.length && !open.length) {
       tray.hidden = true;
       tray.innerHTML = "";
       return;
     }
     var html = "";
+    open.forEach(function (it) {
+      html +=
+        '<div class="ask-item" data-key="' + escapeHtml(it.key) +
+        '" data-qid="' + escapeHtml(it.q.id) + '">' +
+        '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
+        "</b> 이(가) 물었습니다" + ovAskAddress(it.q) + "</div>" +
+        '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
+        '<div class="ask-in"><input class="ask-answer" type="text" ' +
+        'placeholder="답변…" aria-label="답변"><button type="button" ' +
+        'class="ask-send btn-primary">전송</button></div></div>';
+    });
     waiting.forEach(function (t) {
       var q = ovAskTray[t.key];
       var qt = q && q.text ? escapeHtml(q.text) : "(질문 대기)";
@@ -2132,12 +2155,16 @@
     tray.hidden = false;
   }
   // 트레이 답변 전송(그 asker 로 고정 — 드롭박스 채널과 무관).
-  function ovSubmitAsk(key, text) {
+  function ovSubmitAsk(key, text, qid) {
     if (!key || !text.trim()) return;
+    // `answer_id` 가 있으면 새 일감이 아니라 **그 질문의 답**으로 짝짓는다
+    // — 없으면 서버가 종전대로 inbox 로 넣는다(블로킹 경로).
+    var body = { content: text, conn_id: myConnId };
+    if (qid) body.answer_id = qid;
     fetch("api/agent/" + encodeURIComponent(key) + "/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text, conn_id: myConnId }),
+      body: JSON.stringify(body),
     });
   }
   (function () {
@@ -2147,7 +2174,11 @@
       var item = el.closest(".ask-item");
       if (!item) return;
       var inp = item.querySelector(".ask-answer");
-      ovSubmitAsk(item.getAttribute("data-key"), inp ? inp.value : "");
+      ovSubmitAsk(
+        item.getAttribute("data-key"),
+        inp ? inp.value : "",
+        item.getAttribute("data-qid")
+      );
       if (inp) inp.value = ""; // 낙관적 클리어 — roster 갱신이 항목 제거
     }
     tray.addEventListener("click", function (e) {

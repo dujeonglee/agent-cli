@@ -178,76 +178,61 @@ peer 질문을 `expects_reply=False` 로 보내는 이유: B 가 그 질문 항�
 `port.ask` 의 대상이 dead/unknown 이면 `submit` 이 에러를 돌려준다
 (`:727-732`) — 그 경우 **`_questions` 에 등록하지 않고** 에러를 관찰로 준다.
 
-### 3.4 강제 — 빚이 남으면 런이 안 끝난다
+### 3.4 독촉 — 런을 붙잡지 않고, 새 런으로 다시 묻는다
 
-**거부가 아니다.** `complete` 는 파싱되지만 루프가 끝나지 않는다. 모델에게
-에러 상태를 주지 않는 것이 핵심 — 작은 모델에 "거부"는 혼란스럽고 "아직
-남았다"는 정상 연속이다.
+**`complete` 을 가로막지 않는다.** 결과는 그대로 나가고, 남은 빚은
+**새 inbox 항목 = 새 런**으로 다시 온다.
+
+2판까지는 `_op_complete` 에서 `_CONTINUE` 를 돌려 런을 붙잡으려 했다.
+두 가지가 틀렸다:
+
+1. **비동기 전제를 스스로 깬다.** B 가 main 의 질문에 아직 안 답했다는
+   이유로 B 의 런을 안 끝내면, B 에게 일을 시킨 쪽은 *자기와 무관한 질문*이
+   풀릴 때까지 결과를 못 받는다 — 없애려던 결합이 그대로 돌아온다.
+2. **증상을 옆에서 때우게 된다.** 런을 더 돌리면 output 이 마지막
+   `complete` 것이 되므로 첫 결과를 stash 해 이어 붙여야 했는데, 그 stash 는
+   게이트가 만든 문제를 게이트 옆에서 메우는 코드였다.
+
+독촉을 항목으로 보내면 **답이 오는 경로와 정확히 같은 기계**를 쓴다
+(§3.3 — inbox 항목 1개 = 런 1개, main 은 메일박스+MailWaker). 그래서
+`dispatch.py` 는 **한 줄도 바뀌지 않는다**. 2판 리뷰의 블로커 B2(다중 op
+에서 flush 앞/뒤 순서), echo-as-final 우회, nag 턴 미계수,
+`[complete, answer]` 유실 — 전부 "게이트가 턴 루프 안에 있다"에서만 나오던
+문제라 통째로 사라진다.
 
 ```python
-def _owed_gate(self) -> str | None:
-    """빚이 있으면 nag 문구, 없으면 None."""
-    owed = [q for q in port.pending()
-            if q.target_is_me and q.delivered_seq is not None]
-    ...
+# _handle_request, _run_message 뒤
+if not item.get("reminder"):
+    self.remind_owed(tm.key)
 ```
 
-**호출 지점이 셋이고 서로 배타적이다.** `_op_complete` 안에 두면 안 된다:
+**스코프 축은 배달 여부**(`delivered_seq is not None`)**이지 seq 동치가
+아니다.** 아직 큐에 서 있는 질문은 제외되지만(그 런이 읽지도 않은 것으로
+독촉하면 안 된다 — B1), 한 번 읽은 빚은 **답할 때까지 매 런 끝에** 다시
+온다. seq 동치로 좁히면 독촉 런의 seq 가 달라 두 번째 독촉이 영영 안 나가고
+상한조차 안 걸린다(구현 중 실측).
 
-| 경로 | 자리 | 전달 방식 |
-|---|---|---|
-| 다중 op(`[edit, complete]`) | `dispatch.py:352` 터미널 분기, **`_flush_op_results` 앞** | `results.append({"tool_name":"complete","success":False,"observation":nag})` → flush → `_CONTINUE` |
-| 단일 op | `_dispatch_op` 의 `complete` 분기 머리(`:568`) | `_append_observation(llm_text, ...)` → `_CONTINUE` |
-| echo-as-final | `_try_echo_as_final` 분기(`:576`) | 위와 동일 |
+**독촉 런 뒤에는 독촉하지 않는다**(`item["reminder"]`). 안 그러면 답하지
+않는 모델에게 독촉이 연쇄해 상한 6회가 수 밀리초에 타고 질문이 "무응답"
+으로 닫힌다(구현 중 실측). 사용자 표현대로 *"있던 런의 post turn prompt"*
+이지, 독촉용 런을 연달아 만드는 것이 아니다 — 다음 실제 일감 끝에 다시 온다.
 
-`_op_complete` 맨 앞은 **다중 op 에서 늦다**. 쓰는 두 포맷 다
-`multi_op = True`(`json_fc.py:622`·`xml_fc.py:293`)이고, `:352` 가 터미널 op
-앞에서 `_flush_op_results` → `_append_observation`(`:1286-1293`)으로 **이미
-assistant 레코드를 하나 쓴 뒤** `_dispatch_op` 로 간다. 거기서 nag 가 같은
-`llm_text` 로 하나 더 쓰면 **한 emission 에 assistant 레코드 둘** — 2판이
-`:639-645` 를 피해 막겠다고 한 바로 그 결함이 다중 op 경로로 되돌아온다.
-
-`run_skill` 도 터미널이지만 빚과 무관하니 **`complete` 만** 대상이다.
-
-**첫 `complete` 의 결과는 버리지 않는다.** `_CONTINUE` 를 돌리면 런의 output 은
-마지막 `complete` 것이 되는데, 작은 모델은 답한 뒤 "답했습니다"로 끝내기 쉽다.
-→ 첫 결과를 런에 stash 해 두고 **최종 결과와 문자열이 다르면 이어 붙인다**
-(같으면 그대로). 임계값 없는 결정적 규칙이라 유실이 없다. 그리고 nag 앞에
-`render_step("action", tool_name="complete")` 를 낸다 — `_op_ask`/`_op_message`
-가 그러듯(`:655-660` 주석), 없으면 스트리밍 카드가 다음 턴 것과 눌어붙는다.
-
-**턴 계수**: nag 턴은 `_intervene`(`:132`) 관례를 따라 세지 않는다
-(`self.state.turn -= 1`). 상주 에이전트의 `max_turns` 가 유한할 수 있어
-(`agents_live.py:1689`) nag 가 예산을 태우면 안 된다. 상한은 `nags` 가 맡는다.
-
-**`[complete, answer]` 순서 주의**: 터미널 뒤의 op 는 조용히 버려진다
-(`:359` 가 `return`). nag 문구에 *"emit `answer` BEFORE `complete` in the same
-turn"* 을 넣는다.
-
-**`_op_complete` 에 도달하지 않는 종료**가 여럿이다 — `max_turns`
-(`core.py:486`) · LLM 실패(`:817`) · 중단(`:830`) · 액션 루프 하드페일
-(`dispatch.py:862`). 그래서 **`_handle_request` 가 `_run_message` 뒤에서
-sweep** 한다: `delivered_seq == 이 런의 seq` 인 빚만 *"(답변 없음 — 상대 런
-종료)"* 으로 닫고 asker 에게 배달한다.
-
-**main 에는 sweep 이 없다.** `_handle_request` 가 main 에 없고, `run_one` 뒤에
-같은 것을 다는 건 표면을 하나 더 늘린다. 대신 **다음 main 런의 nag 가 백스톱**
-이고 최종적으로 `nags` 상한(§3.5)이 닫는다. 그 사이 asker 의 회신이 §3.7 로
-억제된 채 머무는 창이 있다 — main 이 다음 턴을 돌면 닫히므로 수용한다.
+독촉 항목은 `expects_reply=False`(산출물이 어디로도 가면 안 된다)이고
+발신자는 **기다리는 쪽**(asker)이다 — `target` 은 그 런의 주인 자신이라
+창에서 "자기가 자기에게"로 읽힌다.
 
 ### 3.5 상한
 
-`nags`(= 빚을 진 채 `complete` 을 시도한 횟수, 기본 6) 초과 → *"(답변 없음)"*
-으로 닫고 asker 에게 배달, 런은 정상 종료. **사람 주소에는 적용하지 않는다**
-(§3.6).
+`nags`(= 받은 독촉 횟수, 기본 6) 초과 → *"(답변 없음 — 반복 독촉에도
+무응답)"* 으로 닫고 asker 에게 배달. **사람 주소에는 적용하지 않는다**(§3.6)
+— 배달이 없으니 `delivered_seq` 가 안 찍혀 독촉 대상에서 자연히 빠진다.
 
 ### 3.6 사람에게 묻는 경우 — 강제가 아니라 알림
 
 **루프를 붙잡는 강제는 루프를 도는 주체에게만 걸 수 있다.** 사람의 루프는 우리
 것이 아니고, CLI 엔 답할 자리조차 없다(§2-⑧).
 
-- **강제 목록에서 빠진다** — `complete` 을 막지 않는다. `delivered_seq` 도 안
-  찍힌다(배달이 없으므로) — §3.4 의 필터가 자연히 걸러낸다.
+- **독촉 대상이 아니다** — `delivered_seq` 가 안 찍힌다(배달이 없으므로).
 - **❓ 트레이가 표면이다** — `_questions` 중 `target.startswith("user")` 인 것.
   런이 끝났든 도는 중이든 뜬다. 지금처럼 `waiting_ask` state 를 보지 않는다.
 - **`user*` 인 누구나 답한다**(§0) — 답변자 라벨을 `q.target` 과 문자열 비교
@@ -363,9 +348,7 @@ main 도 포트를 받으므로 **`questions is not None` 으로는 못 가른�
 | `tools/virtual.py` | `AnswerTool`(`requires_handler="questions"`, `force_mount`) · `AskTool.RESIDENT_DESCRIPTION` |
 | `loop/state.py` | `LoopConfig.questions` |
 | `loop/core.py:150` | `handler_resources` 에 `"questions"` · main 포트 조립 |
-| `loop/dispatch.py:352` | 터미널 분기, flush **앞**에 `_owed_gate` |
-| `loop/dispatch.py:568,576` | `complete` 분기 머리 · echo-as-final 분기에 `_owed_gate` |
-| `loop/dispatch.py` | `_op_answer`(`_op_message:701` 동형) · `_op_ask` 비블로킹화 · 첫 결과 stash |
+| `loop/dispatch.py` | `_op_answer`(`_op_message:701` 동형) · `_op_ask` 비블로킹화. **게이트·stash 없음** — 독촉이 항목이라 종료 경로를 안 건드린다(§3.4) |
 | `loop/prompt.py:35-47` | `nonblocking_ask` 전달 |
 | `prompts/system_prompt.py:630,777` | `build_system_prompt_sections`/`_build_tools_section` 시그니처 · `ask` 설명 override · `_ASK_INLINE` 분기(`:616-620`) |
 | `subagent/runner.py:189` | 포트 전달 |
@@ -395,7 +378,7 @@ docstring(`server.py:1249-1252`) · `main.py:1616` · `app.js:1934-2010`.
 | 순서 | 내용 | 끝났을 때 |
 |---|---|---|
 | **① 코어** | `Question`(두 seq)·`_questions`·포트·`submit` kwarg·사망 정리·영속 | 호출자 0. 동작 불변 |
-| **② 받을 준비** | `_owed_gate` 3곳·결과 stash·sweep·사람 알림·`roster_snapshot`·`agent_input`·트레이·`any_activity`·main 포트 | `_questions` 가 비어 **전부 no-op**. 동작 불변 |
+| **② 받을 준비** | 독촉(`remind_owed`)·사람 알림·§3.7 억제·`roster_snapshot`·`agent_input`(`answer_id`)·트레이·`any_activity`·main 포트 | `_questions` 가 비어 **전부 no-op**. 동작 불변 |
 | **③ flip** | `AnswerTool`·`_op_answer`·`ask_handler`→`port.ask`·`_op_ask` 비블로킹·`nonblocking_ask` 프롬프트 배선·`build_reply_record` 문구 둘·**1단계 TC 재작성** — **한 커밋** | 동작이 바뀌는 유일한 단계 |
 | **④ 정리** | 블록 잔재·주석·`can_answer_agent` 제거 | |
 
@@ -419,8 +402,7 @@ docstring(`server.py:1249-1252`) · `main.py:1616` · `app.js:1934-2010`.
 | 런 스코프 | **바쁜 peer**: 큐 뒤의 질문은 앞 런의 nag·sweep 에 안 걸린다 ← B1 · 사람 질문이 열려 있어도 다른 런 회신은 안 막힌다 ← G3 |
 | 배달(답) | `author=q.target`·`expects_reply=True` · **답 런의 결과가 원 요청자에게** |
 | 짝짓기 | 없는/이미 답한 id 거부 · `_cv` 아래 원자적 claim |
-| 강제 | **`[edit, complete]` 다중 op 에서 assistant 레코드가 하나** ← B2 · 단일 op · echo-as-final · nag 턴이 `max_turns` 를 안 태움 · `[complete, answer]` 안내 · 첫 결과가 안 사라진다 |
-| sweep | `max_turns`·LLM 실패·중단으로 끝나도 그 런의 빚만 닫힌다 |
+| 독촉 | 결과는 즉시 나가고 독촉이 뒤따른다 · **독촉 런 뒤엔 독촉 없음**(연쇄 방지) · 답하면 그친다 · 상한 초과면 닫고 asker 에게 알림 · 독촉은 회신을 만들지 않는다 |
 | 사람 | 트레이가 `target=user*` 만 · `complete` 을 막지 않음 · 결과에 실림 · **두 번째 뷰어(다른 닉)도 답할 수 있다** ← G5 · 상한 미적용 · `any_activity` 가 센다 |
 | §3.7 | 그 런에서 건 질문을 진 채 끝나면 회신 억제, 창/로그/persist 는 그대로 |
 | 사망 | 양방향 정리 · **`shutdown_all` 은 지우지 않는다**(resume N>0) ← G1 |
@@ -495,7 +477,7 @@ user 턴 자체**다 — 이미 매 턴 컨텍스트에 있다. `core.py` 에 �
 | 1d | 먼저 `complete` 하면 같은 seq 에 회신 둘 | 빚 진 런은 회신 억제 |
 | 1e | `_questions` 에 락 없음 | `_cv` |
 | 1f | 같은 질문 재발 탐지 없음 | id 재사용 |
-| §2 | 의사코드 컴파일 불가 · 검사 위치 · nag 가 `max_turns` 태움 · `[complete, answer]` 유실 · 비-complete 종료 | §3.4 |
+| §2 | 의사코드 컴파일 불가 · 검사 위치 · nag 가 `max_turns` 태움 · `[complete, answer]` 유실 · 비-complete 종료 | 3판 §3.4, **4판에서 게이트 자체를 폐기** |
 | §3 | 사람 알림이 dispatch 층(모방 위험) · §3.8 자기모순 · 트레이/`agent_input` 미배선 | §3.6 · §3.9 · §5 |
 | §4 | **main 에 답변 경로 없음** | `QuestionPort` |
 | §6 | 순서가 main 을 깬다 | ①②③④ |
@@ -522,7 +504,24 @@ user 턴 자체**다 — 이미 매 턴 컨텍스트에 있다. `core.py` 에 �
 `waiting_ask` 전용이 아닌 일반 술어였고, 테스트 영향을 "10파일 ~80군데"로
 과대 계상했다(실제 5파일 43군데).
 
-### 10.4 교훈
+### 10.4 3판 → 4판 (구현 중 발견)
+
+구현하며 사용자가 지적했다: *"complete 이 오면 그대로 바로 출력해 주고 남은
+질문에 대해서 다른 루프를 시작하는 거 아니야?"* — 맞다. 런을 붙잡는 게이트는
+**비동기 전제를 스스로 깨는 것**이었고(§3.4), 그것이 리뷰 블로커 B2 와 결과
+stash 를 동시에 만들어 낸 원인이었다. 게이트를 없애니 `dispatch.py` 변경이
+0이 됐다.
+
+구현이 드러낸 것 셋(전부 테스트로 고정):
+
+| | 3판 | 4판 |
+|---|---|---|
+| 게이트 | `_op_complete` 에서 `_CONTINUE` + 결과 stash | 폐기 — 독촉을 inbox 항목으로(§3.4) |
+| 독촉 스코프 | `delivered_seq == 이 런의 seq` | `delivered_seq is not None` — seq 동치면 독촉이 **한 번만** 나가고 상한도 안 걸린다 |
+| 독촉 연쇄 | (없던 문제) | 독촉 런 뒤엔 독촉 금지 — 없으면 상한 6회가 수 밀리초에 탄다 |
+| main 이 asker | `submit(q.asker, …)` | `_agents` 에 main 슬롯이 없다 → 메일박스 `kind:"answer"` |
+
+### 10.5 교훈
 
 1판이 틀린 자리는 *"무엇을 강제할까"만 쓰고 "누가 어떻게 받고 답하나"를 안 쓴
 것*이었다. 2판이 틀린 자리는 그 배달을 쓰고도 **"언제 받는가"를 안 쓴 것**이다

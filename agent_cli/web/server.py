@@ -1249,7 +1249,9 @@ def create_app(server: WebServer) -> FastAPI:
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
         직접 전송. teammate 가 ask 답변 대기(waiting_ask) 중이면 이 메시지가
         답으로 소비된다 (main 과 선착순). 이 문답의 회신은 main 컨텍스트에
-        배달되지 않는다 (창에만 — 레지스트리의 화자 규칙)."""
+        배달되지 않는다 (창에만 — 레지스트리의 화자 규칙).
+
+        ``answer_id`` 가 실려 오면 새 일감이 아니라 **그 질문의 답**이다."""
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1263,6 +1265,18 @@ def create_app(server: WebServer) -> FastAPI:
                 status_code=400, detail="content must be a non-empty string"
             )
         nickname = server.renderer.nickname_for(body.get("conn_id")) or "user"
+        answer_id = body.get("answer_id")
+        if answer_id:
+            # ❓ 트레이의 답 — 새 일감이 아니라 **특정 질문**에 짝짓는다
+            # (비동기 ask/answer, docs/agent-ask/DESIGN.md §3.6). 주소가
+            # 사람인 질문만 트레이에 뜨고, `user*` 는 하나의 주체라 어느
+            # 뷰어가 답하든 받는다 — 먼저 답한 쪽이 claim 한다.
+            error = registry.answer_question(
+                str(answer_id), content, by=f"user:{nickname}"
+            )
+            if error:
+                raise HTTPException(status_code=409, detail=error)
+            return JSONResponse({"accepted": True, "answered": answer_id})
         error = registry.request(key, content, author=f"user:{nickname}")
         if error:
             raise HTTPException(status_code=404, detail=error)

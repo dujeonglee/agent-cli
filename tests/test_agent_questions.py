@@ -23,9 +23,15 @@ import threading
 import pytest
 
 import agent_cli.render as render_mod
-from agent_cli.subagent.agents_live import AgentRegistry, build_reply_record
+from agent_cli.subagent.agents_live import (
+    _MAX_QUESTION_NAGS,
+    AgentRegistry,
+    Question,
+    build_reply_record,
+)
 from tests.test_agents_live import (
     RecordingRenderer,
+    _FakeLoopResult,
     make_registry,
     make_runner,
     wait_until,
@@ -348,3 +354,255 @@ class TestPersistence:
         reg = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         reg.restore()
         assert reg.stale_questions == 0
+
+
+# ── 독촉 런 (§3.4) ──────────────────────────────
+
+
+class TestReminder:
+    def test_result_goes_out_immediately_and_reminder_follows(self, tmp_path, renderer):
+        """**complete 을 붙잡지 않는다.** 붙잡으면 그 런에 일을 시킨 쪽이
+        자기와 무관한 질문이 풀릴 때까지 결과를 못 받는다 — 없애려던 결합이
+        그대로 돌아온다. 결과는 그대로 나가고, 남은 빚은 새 런으로 온다."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.request(b, "main 이 시킨 일")  # seq 1 — B 가 붙잡힌다
+        assert wait_until(lambda: reg.get(b).state == "busy")
+        qid, _ = reg.register_question(a, f"agent:{b}", "이거 맞나요?")  # seq 2
+
+        gate.set()
+        # seq 1 의 결과는 질문과 **무관하게** 곧바로 main 에게 간다.
+        assert wait_until(
+            lambda: any(
+                r.get("kind") == "reply" and r.get("seq") == 1
+                for r in reg.drain_replies()
+            )
+        )
+        # 질문 런(seq 2)이 답 없이 끝나면 독촉이 새 항목으로 다시 온다.
+        assert wait_until(lambda: reg.get(b).handled >= 3)
+        assert qid in reg._questions  # 닫히지 않았다 — 다시 물어본다
+        reminded = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("key") == b
+            and c[1].get("direction") == "in"
+            and "reminder" in str(c[1].get("text"))
+        ]
+        assert reminded
+        # 발신자는 **기다리는 쪽** — target 을 쓰면 "자기가 자기에게" 가 된다.
+        assert reminded[0]["author"] == f"agent:{a}"
+        assert qid in reminded[0]["text"]  # 어느 질문인지 지목한다
+        # 독촉 런의 산출물은 **어디로도** 가지 않는다 — 청탁받은 일이 아니다.
+        # expects_reply 면 발신자(A)의 inbox 로 재주입돼 A 가 답을 받은 줄 안다.
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert [r for r in reg.drain_replies() if r.get("kind") == "reply"] == []
+        assert reg.get(a).handled == 0
+        assert reg.get(a).inbox.qsize() == 0
+
+    def test_answered_in_run_gets_no_reminder(self, tmp_path, renderer):
+        answered = threading.Event()
+
+        def runner(query, ctx, **kw):
+            if "question q-" in query:
+                qid = query.split("question ")[1].split(" ")[0]
+                assert reg.answer_question(qid, "네", by=f"agent:{b}") == ""
+                answered.set()
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path)
+        reg._runner = runner
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.register_question(a, f"agent:{b}", "답할게요")
+        assert answered.wait(5)
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert reg._questions == {}
+        assert not [
+            c
+            for c in renderer.named("agent_message")
+            if "reminder" in str(c[1].get("text"))
+        ]
+
+    def test_reminder_cap_closes_and_tells_the_asker(self, tmp_path, renderer):
+        """모델이 끝내 안 답해도 asker 가 영원히 기다리지는 않는다.
+
+        ``Question`` 을 직접 넣어 배달 경로를 건너뛴다 — 여기서 재는 것은
+        독촉 정책이지 배달이 아니고, 라이브 워커가 질문 항목을 꺼내면
+        ``delivered_seq`` 가 실제 seq 로 먼저 찍혀 런 스코프가 흐려진다.
+        """
+        reg = make_registry(tmp_path)
+        b = spawn_idle(reg)
+        q = Question(
+            id="q-cap01",
+            asker="main",
+            target=f"agent:{b}",
+            text="질문",
+            delivered_seq=7,
+        )
+        reg._questions[q.id] = q
+        for _ in range(_MAX_QUESTION_NAGS):
+            assert reg.remind_owed(b) == 1
+        assert reg.remind_owed(b) == 0  # 상한 — 닫힌다
+        assert q.id not in reg._questions
+        assert any(
+            "repeated reminders" in (r.get("output") or "") for r in reg.drain_replies()
+        )
+
+    def test_reminder_needs_delivery_not_just_registration(self, tmp_path, renderer):
+        """B1: 큐 뒤에 서 있는(아직 안 꺼낸) 질문으로는 독촉하지 않는다.
+
+        스코프 축은 **배달 여부**이지 seq 동치가 아니다 — seq 로 좁히면
+        독촉 런의 seq 가 달라 두 번째 독촉이 영영 안 나가고 상한조차
+        안 걸린다(아래 ``test_reminder_repeats_until_answered`` 가 반대쪽).
+        """
+        reg = make_registry(tmp_path)
+        b = spawn_idle(reg)
+        q = Question(id="q-scp01", asker="main", target=f"agent:{b}", text="질문")
+        reg._questions[q.id] = q
+        assert reg.remind_owed(b) == 0  # 아직 안 꺼냈다
+        reg.mark_question_delivered(q.id, 4)
+        assert reg.remind_owed(b) == 1
+
+    def test_reminder_does_not_cascade(self, tmp_path, renderer):
+        """독촉 런 끝에서 또 독촉하면 답 않는 모델에게 연쇄해 상한이 수
+        밀리초에 타버리고 질문이 '무응답' 으로 닫힌다 — 실제로 그랬다."""
+        reg = make_registry(tmp_path)
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        qid, _ = reg.register_question(a, f"agent:{b}", "답 안 할 질문")
+        assert wait_until(lambda: reg.get(b).handled >= 2)  # 질문 런 + 독촉 런
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert qid in reg._questions  # 살아 있다
+        assert reg._questions[qid].nags == 1  # 독촉은 딱 한 번
+
+    def test_reminder_repeats_until_answered(self, tmp_path, renderer):
+        """한 번 읽은 빚은 **답할 때까지 매 런 끝에** 다시 온다 — 사용자의
+        'post turn prompt 로 계속 넣어준다'가 이것이다."""
+        reg = make_registry(tmp_path)
+        b = spawn_idle(reg)
+        q = Question(
+            id="q-rep01",
+            asker="main",
+            target=f"agent:{b}",
+            text="질문",
+            delivered_seq=4,
+        )
+        reg._questions[q.id] = q
+        assert reg.remind_owed(b) == 1  # 런 A 끝
+        assert reg.remind_owed(b) == 1  # 런 B 끝 — seq 가 달라도 계속
+        assert reg.answer_question(q.id, "답", by=f"agent:{b}") == ""
+        assert reg.remind_owed(b) == 0  # 답했으면 그친다
+
+
+# ── 사람 알림 · 회신 억제 · 표면 ────────────────
+
+
+class TestSurfaces:
+    def test_open_human_question_is_reported_in_the_result(self, tmp_path, renderer):
+        """사람에겐 강제를 못 건다(우리 루프가 아니다) — 대신 결과에 실어
+        "내가 답을 안 해서 끝났구나"를 알린다."""
+        reg = make_registry(tmp_path)
+
+        def runner(query, ctx, **kw):
+            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            return _FakeLoopResult(output="정리 완료"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.submit(b, "일감", author="user:bob")
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        out = [
+            c for c in renderer.named("agent_message") if c[1].get("direction") == "out"
+        ][-1][1]["text"]
+        assert "정리 완료" in out
+        assert "답을 받지 못한 질문 1건" in out
+        assert "덮어쓸까요?" in out
+
+    def test_reply_is_withheld_while_this_runs_question_is_open(
+        self, tmp_path, renderer
+    ):
+        """§3.7: 부분 결과로 회신하면 나중 답 런이 같은 요청에 두 번째
+        회신을 만든다. 요청자는 질문을 이미 받았으므로 깜깜하지 않다."""
+        reg = make_registry(tmp_path)
+
+        def runner(query, ctx, **kw):
+            if "일감" in query:
+                reg.register_question(b, "main", "어느 쪽인가요?")
+            return _FakeLoopResult(output="부분 결과"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.request(b, "일감")
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        kinds = [r["kind"] for r in reg.drain_replies()]
+        assert "question" in kinds
+        assert "reply" not in kinds  # 답 런의 회신이 진짜 회신이다
+        # 억제는 **재주입만** 막는다 — 창·로그·persist 는 그대로 돌아야
+        # 사용자가 이 에이전트가 한 일을 본다.
+        outs = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "out" and c[1].get("key") == b
+        ]
+        assert len(outs) == 1
+        assert "부분 결과" in outs[0]["text"]
+        assert (tmp_path / "agents" / b / "replies" / "reply-1.md").is_file()
+
+    def test_roster_carries_open_questions(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "user:bob", "배포?")
+        row = next(r for r in reg.roster_snapshot() if r["key"] == a)
+        assert [q["id"] for q in row["open_questions"]] == [qid]
+        assert row["open_questions"][0]["to"] == "user:bob"
+
+    def test_open_human_question_counts_as_activity(self, tmp_path, renderer):
+        """idle-reap 이 세션을 걷으면 resume 은 되살리지 않으므로(§3.9)
+        질문이 묘비명이 된다."""
+        reg = make_registry(tmp_path)
+        a = spawn_idle(reg)
+        assert reg.any_activity() is False
+        reg.register_question(a, "user:bob", "배포?")
+        assert reg.any_activity() is True
+
+
+# ── 웹 표면: 트레이 답 (§3.6) ───────────────────
+
+
+class TestWebAnswerEndpoint:
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.web.server import WebServer, create_app
+
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t")
+        return server, TestClient(create_app(server))
+
+    def test_answer_id_pairs_instead_of_queueing_work(self, tmp_path, renderer):
+        """트레이 답은 **새 일감이 아니다** — 질문에 짝지어야 한다.
+        ``answer_id`` 없이 보내면 종전대로 inbox 로 들어간다."""
+        reg = make_registry(tmp_path)
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "user:bob", "덮어쓸까요?")
+        server, client = self._client()
+        server.agent_registry = reg
+
+        r = client.post(
+            f"/api/agent/{a}/input?token=t", json={"content": "네 덮어쓰세요", "answer_id": qid}
+        )
+        assert r.status_code == 200
+        assert r.json()["answered"] == qid
+        assert reg._questions == {}
+        assert reg.get(a).inbox.qsize() == 0  # 일감으로 들어가지 않았다
+
+    def test_stale_answer_id_is_rejected_not_queued(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        a = spawn_idle(reg)
+        server, client = self._client()
+        server.agent_registry = reg
+        r = client.post(
+            f"/api/agent/{a}/input?token=t", json={"content": "답", "answer_id": "q-gone"}
+        )
+        assert r.status_code == 409
+        assert reg.get(a).inbox.qsize() == 0
