@@ -54,6 +54,7 @@ def run_loop(
     agent_registry=None,
     ask_handler=None,
     message_handler=None,
+    questions=None,
     peer_agents_section: str = "",
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
@@ -101,5 +102,6 @@ def run_loop(
         agent_registry=agent_registry,
         ask_handler=ask_handler,
         message_handler=message_handler,
+        questions=questions,
         peer_agents_section=peer_agents_section,
     ).run()

@@ -174,6 +174,7 @@ def run_subagent_message(
     compaction_enabled: bool = True,
     ask_handler=None,
     message_handler=None,
+    questions=None,
     peer_agents_section: str = "",
 ) -> tuple[LoopResult, float]:
     """``ctx`` 위에서 메시지 1건을 처리 — ``(loop_result, 소요초)``.
@@ -211,6 +212,7 @@ def run_subagent_message(
         compaction_enabled=compaction_enabled,
         ask_handler=ask_handler,
         message_handler=message_handler,
+        questions=questions,
         peer_agents_section=peer_agents_section,
     )
     return loop_result, time.monotonic() - t0

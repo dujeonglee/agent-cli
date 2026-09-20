@@ -38,6 +38,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
@@ -90,6 +91,70 @@ def clamp_max_agents(value) -> int:
 # 명시적으로 서로 request 를 주고받는 사이클의 안전망일 뿐 — 데드락은
 # 비동기라 구조적으로 불가.
 _MAX_PEER_HOPS = 6
+
+
+# ── 비동기 ask/answer (docs/agent-ask/DESIGN.md 3판) ──────────────
+#
+# 질문은 **아무것도 블록하지 않는다**: ``ask`` 가 여기에 등록하고 즉시
+# 반환하며, ``answer(id, text)`` 가 id 로 짝지어 배달한다. 강제는 "빚이
+# 남으면 런이 안 끝난다"로 하되 루프를 도는 주체에게만 건다.
+#
+# 불변식(§0): 질문의 주소 = ask 시점의 current_author = 원 요청자.
+# 답할 수 있는 주체는 그 주소, 오직 그것. ∴ 답한 주체는 항상 원 요청자라
+# 답 배달에 ``author=q.target`` 만 쓰면 기존 회신 라우팅이 제자리로 보낸다.
+# 단 ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은
+# ``user:{nickname}`` 이고 뷰어가 여럿이면 닉이 다르다.
+
+# 빚을 진 채 complete 을 시도할 수 있는 횟수 — 초과하면 "(답변 없음)" 으로
+# 닫고 런을 정상 종료시킨다. 사람 주소 질문에는 적용하지 않는다(§3.5).
+_MAX_QUESTION_NAGS = 6
+
+
+def _is_human_addr(addr: str) -> bool:
+    """``user`` / ``user:<nick>`` — 사람 주소인가 (§0: 하나의 주체)."""
+    return addr == "user" or addr.startswith("user:")
+
+
+@dataclass
+class Question:
+    """열린 질문 하나 — ``AgentRegistry._questions`` 의 값.
+
+    **두 seq 가 런 스코프를 만든다.** 워커는 inbox 항목 1개 = 런 1개이고,
+    질문은 등록 즉시 목록에 오르지만 상대 inbox 에서는 **줄을 선다**. 이
+    비대칭을 안 보면 (a) 상대가 아직 꺼내지도 않은 질문에 강제·sweep 이
+    걸리고 (b) 다른 런에서 걸어 둔(영영 열릴 수 있는) 사람 질문이 이후 모든
+    회신을 막는다. 그래서 강제·sweep 은 ``delivered_seq``, 회신 억제는
+    ``asked_seq`` 를 본다 (DESIGN.md §3.2).
+    """
+
+    id: str
+    asker: str  # "main" | "<agent key>"  — 답이 돌아갈 곳
+    target: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
+    text: str
+    asked_at: float = field(default_factory=time.time)
+    asked_seq: int = 0  # asker 가 이 질문을 건 런의 inbox seq (main 은 0)
+    delivered_seq: int | None = None  # target 이 꺼낸 런의 seq (미배달 None)
+    nags: int = 0
+
+    @property
+    def to_human(self) -> bool:
+        return _is_human_addr(self.target)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "asker": self.asker,
+            "target": self.target,
+            "text": self.text,
+            "asked_at": self.asked_at,
+            "asked_seq": self.asked_seq,
+            "delivered_seq": self.delivered_seq,
+            "nags": self.nags,
+        }
+
+
+def _new_question_id() -> str:
+    return f"q-{uuid.uuid4().hex[:6]}"
 
 
 def _answer_kind(tm, author: str) -> str:
@@ -266,6 +331,23 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "source": "agent_question",
         }
 
+    if reply.get("kind") == "answer":
+        # main 이 건 질문의 답 — main 에는 inbox 가 없어 메일박스가 유일한
+        # 흡수 지점이다(``submit`` 의 대상은 상주 에이전트뿐).
+        body = reply.get("output") or "(empty answer)"
+        content = (
+            f"── answer from {label} ──\n{body}\n"
+            "(This answers a question you asked. Continue the work it was "
+            "blocking.)"
+        )
+        return {
+            "role": "user",
+            "tool": "agent",
+            "success": True,
+            "content": content,
+            "source": "agent_answer",
+        }
+
     if reply.get("kind") == "peer_message":
         # 상주 에이전트가 main 에게 먼저 보낸 메시지 (v5.11) — 회신 대기
         # 아님. main 은 필요하면 agent request 로 답한다.
@@ -381,6 +463,9 @@ class AgentInstance:
         self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수
         self.queued = 0  # inbox 에 넣은 request 수 (seq 발급)
+        # 지금 처리 중인 항목의 seq — 질문의 런 스코프(Question.asked_seq)가
+        # 이 값을 찍는다. 유휴/main 은 0.
+        self.current_seq = 0
 
     def snapshot(self) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도)."""
@@ -400,6 +485,50 @@ class AgentInstance:
             "est_tokens": est_tokens,
             "error": self.error,
         }
+
+
+class QuestionPort:
+    """루프가 질문 목록에 닿는 **유일한 seam** (DESIGN.md §4).
+
+    콜러블 셋을 ``LoopConfig``·``AgentLoop.__init__``·``run_loop``·
+    ``run_subagent_message``·``_run_message`` 에 각각 꿰면 15군데가 된다 —
+    객체 하나로 묶는다. **레지스트리 자체는 절대 넘기지 않는다**:
+    ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
+    가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
+
+    main 도 같은 포트를 받는다(``key=None``) — 안 그러면 main 에 답변
+    수단이 없다.
+    """
+
+    def __init__(self, registry: AgentRegistry, key: str | None = None):
+        self._reg = registry
+        self.key = key
+        # 이 주체의 **주소**(질문의 target 과 비교) / **발신 라벨**(asker).
+        self.me = "main" if key is None else f"agent:{key}"
+        self.asker = "main" if key is None else key
+
+    def ask(self, text: str) -> tuple[str, str]:
+        """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공."""
+        return self._reg.register_question(self.asker, self._target(), text)
+
+    def answer(self, qid: str, text: str) -> str:
+        """``qid`` 에 답한다. 에러 메시지 또는 빈 문자열."""
+        return self._reg.answer_question(qid, text, by=self.me)
+
+    def owed(self) -> list[Question]:
+        """**이 주체가 답해야 하는** 질문 — 배달된 것만 (§3.2 런 스코프)."""
+        return self._reg.questions_owed_by(self.me)
+
+    def asked(self, seq: int = 0) -> list[Question]:
+        """이 주체가 ``seq`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
+        return self._reg.questions_asked_in(self.asker, seq)
+
+    def _target(self) -> str:
+        """ask 시점의 ``current_author`` = 원 요청자 = 질문의 주소 (§0)."""
+        if self.key is None:
+            return "user"  # main 의 ask 는 사람에게 (블록 경로, 무변경)
+        tm = self._reg.get(self.key)
+        return tm.current_author if tm is not None else "main"
 
 
 class AgentRegistry:
@@ -440,6 +569,12 @@ class AgentRegistry:
         # 소비한 런의 ``answers`` 에 합류한다(🤝 웨이크 런 포함). 시간이
         # 아니라 요청↔회신 쌍에 묶이므로 인터리빙에 안전.
         self._current_run_authors: list[str] = []
+        # 열린 질문 (비동기 ask/answer, DESIGN.md §3) — id → Question.
+        # ``_pending`` 과 같은 규율: 모든 접근은 ``_cv`` 아래. 답 claim 이
+        # 원자적이어야 동시 답변자 둘 중 하나만 답이 된다.
+        self._questions: dict[str, Question] = {}
+        # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
+        self.stale_questions = 0
 
     # ── 조회 ────────────────────────────────────
 
@@ -530,6 +665,230 @@ class AgentRegistry:
         return [
             tm.key for tm in list(self._agents.values()) if tm.state == "waiting_ask"
         ]
+
+    # ── 질문 목록 (비동기 ask/answer, DESIGN.md §3) ──────────────
+
+    def question_port(self, key: str | None = None) -> QuestionPort:
+        """루프에 넘길 seam. ``key=None`` 이면 main 용."""
+        return QuestionPort(self, key)
+
+    def register_question(self, asker: str, target: str, text: str) -> tuple[str, str]:
+        """질문 등록 + 배달 — ``(id, err)``. 아무것도 블록하지 않는다."""
+        text = (text or "").strip()
+        if not text:
+            return "", "empty question"
+        asked_seq = 0
+        if asker != "main":
+            tm = self._agents.get(asker)
+            if tm is None:
+                return "", f"unknown asker '{asker}'"
+            asked_seq = tm.current_seq
+        with self._cv:
+            # 중복 접기: ``_op_ask`` 는 루프 탐지기 **앞에서** 반환하므로
+            # 같은 질문의 반복이 구조적으로 안 잡힌다 — 여기서 접는다.
+            for q in self._questions.values():
+                if q.asker == asker and q.target == target and q.text == text:
+                    return q.id, ""
+            q = Question(
+                id=_new_question_id(),
+                asker=asker,
+                target=target,
+                text=text,
+                asked_seq=asked_seq,
+            )
+            self._questions[q.id] = q
+        err = self._deliver_question(q)
+        if err:
+            # 배달 실패(상대 dead/unknown)면 **등록도 취소**한다 — 남기면
+            # 아무도 답할 수 없는 빚이 asker 를 영원히 붙잡는다.
+            with self._cv:
+                self._questions.pop(q.id, None)
+            return "", err
+        self._save_state()
+        return q.id, ""
+
+    def _deliver_question(self, q: Question) -> str:
+        """질문을 **기존 배관**으로 상대에게. 에러 또는 빈 문자열.
+
+        상대가 idle 이어도 깨어난다 — inbox 항목 1개 = 런 1개이므로.
+        그래서 ``complete`` 강제(§3.4)는 배달 수단이 아니라 "꺼내 읽고도
+        안 답함" 백스톱이다.
+        """
+        self._render_question(q)
+        if q.to_human:
+            return ""  # ❓ 트레이가 표면 — 배달할 inbox 가 없다 (§3.6)
+        if q.target == "main":
+            # main 에는 worker/inbox 가 없다 — 메일박스가 유일한 흡수 지점
+            # 이고, MailWaker 가 idle main 도 깨운다.
+            asker_tm = self._agents.get(q.asker)
+            self._push_reply(
+                {
+                    "kind": "question",
+                    "id": q.id,  # main 이 answer(id) 하려면 실려야 한다
+                    "key": q.asker,
+                    "profile": asker_tm.profile_name if asker_tm else "",
+                    "name": asker_tm.instance_name if asker_tm else "",
+                    "success": True,
+                    "output": q.text,
+                }
+            )
+            return ""
+        if q.target.startswith("agent:"):
+            author = "main" if q.asker == "main" else f"agent:{q.asker}"
+            # ``expects_reply=False`` — 상대가 이 항목을 처리한 **산출물**이
+            # asker 에게 되돌아가면 안 된다. 답은 ``answer`` 도구로만.
+            err, _ = self.submit(
+                q.target.split(":", 1)[1],
+                f"[question {q.id} from {q.asker}]: {q.text}",
+                author=author,
+                expects_reply=False,
+                question_id=q.id,
+            )
+            return err
+        return f"unroutable question target '{q.target}'"
+
+    def _render_question(self, q: Question) -> None:
+        """대화 창 표면 — 사람이 먼저 보는 자리 (표시 전용, best-effort)."""
+        tm = self._agents.get(q.asker)
+        if tm is None:
+            return
+        from agent_cli.render import get_renderer
+
+        payload = {
+            "key": tm.key,
+            "direction": "question",
+            "author": tm.key,
+            "text": q.text,
+            "to": q.target,
+            "ts": q.asked_at,
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
+        }
+        try:
+            get_renderer().agent_message(**payload)
+        except Exception:
+            pass
+        self._log_conversation(tm, payload)
+
+    def mark_question_delivered(self, qid: str, seq: int) -> None:
+        """상대가 이 질문을 **꺼냈다** — 강제·sweep 은 여기부터 유효하다."""
+        with self._cv:
+            q = self._questions.get(qid)
+            if q is not None and q.delivered_seq is None:
+                q.delivered_seq = seq
+
+    def questions_owed_by(self, addr: str) -> list[Question]:
+        """``addr`` 이 답해야 하는 질문 — **배달된 것만** (§3.2 런 스코프)."""
+        with self._cv:
+            return [
+                q
+                for q in self._questions.values()
+                if q.target == addr and q.delivered_seq is not None
+            ]
+
+    def questions_asked_in(self, asker: str, seq: int) -> list[Question]:
+        """``asker`` 가 ``seq`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
+        with self._cv:
+            return [
+                q
+                for q in self._questions.values()
+                if q.asker == asker and q.asked_seq == seq
+            ]
+
+    def open_human_questions(self) -> list[Question]:
+        """주소가 사람인 열린 질문 — ❓ 트레이와 idle-reap 가드가 읽는다."""
+        with self._cv:
+            return [q for q in self._questions.values() if q.to_human]
+
+    def answer_question(self, qid: str, text: str, *, by: str) -> str:
+        """``qid`` 에 답한다 — 에러 또는 빈 문자열.
+
+        **답할 수 있는 주체는 질문의 주소, 오직 그것**(§0). 단 ``user*`` 는
+        하나의 주체로 본다 — CLI 는 ``user``, 웹은 ``user:{nick}`` 이고
+        뷰어마다 닉이 달라, 문자열 동치로 검사하면 두 번째 뷰어의 트레이
+        답이 거부된다.
+        """
+        text = (text or "").strip()
+        if not text:
+            return "empty answer"
+        with self._cv:
+            q = self._questions.get(qid)
+            if q is None:
+                return f"unknown or already-answered question '{qid}'"
+            if q.to_human:
+                if not _is_human_addr(by):
+                    return f"question '{qid}' is addressed to the operator, not {by}"
+            elif by != q.target:
+                return f"question '{qid}' is addressed to {q.target}, not {by}"
+            del self._questions[qid]  # 원자적 claim — 동시 답변자 중 하나만
+        self._deliver_answer(q, text)
+        self._save_state()
+        return ""
+
+    def close_question(self, qid: str, reason: str) -> Question | None:
+        """답 없이 닫는다 (sweep·사망·상한) — asker 에게 사유를 배달."""
+        with self._cv:
+            q = self._questions.pop(qid, None)
+        if q is None:
+            return None
+        self._deliver_answer(q, f"({reason})")
+        self._save_state()
+        return q
+
+    def bump_question_nag(self, qid: str) -> int:
+        """빚을 진 채 complete 시도 — 누적 횟수 반환."""
+        with self._cv:
+            q = self._questions.get(qid)
+            if q is None:
+                return 0
+            q.nags += 1
+            return q.nags
+
+    def _deliver_answer(self, q: Question, text: str) -> None:
+        """답을 **원 요청자**에게. 주소가 곧 원 요청자라 분기가 필요 없다.
+
+        ``author=q.target`` + ``expects_reply=True`` 면 기존 회신 라우팅
+        (``_handle_request``)이 답 런의 결과를 제자리로 보낸다 — peer 면
+        ``_deliver_peer_reply``, main 이면 메일박스.
+        """
+        body = f"[answer to your question: {q.text}]\n{text}"
+        if q.asker == "main":
+            # main 에는 inbox 가 없다 — 메일박스로. (설계 3판 §3.3 은 이
+            # 경우를 빠뜨렸다: ``submit`` 의 대상은 상주 에이전트뿐이다.)
+            label = (
+                q.target.split(":", 1)[1] if q.target.startswith("agent:") else q.target
+            )
+            self._push_reply(
+                {
+                    "kind": "answer",
+                    "id": q.id,
+                    "key": label,
+                    "success": True,
+                    "output": body,
+                }
+            )
+            return
+        self.submit(q.asker, body, author=q.target, expects_reply=True)
+
+    def _purge_questions_for(self, key: str) -> None:
+        """에이전트 사망 정리 — **양방향** (§3.8).
+
+        앞으로 온 질문은 "(종료됨)" 으로 닫아 asker 를 풀어주고, 그가 건
+        질문은 폐기한다(남기면 답하려는 쪽이 dead 에러를 받고 재시도하며
+        상한만 태운다). 호출자가 ``not revivable`` 아래에서만 부른다 —
+        세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
+        빈 목록을 저장해 resume 알림이 항상 0건이 된다.
+        """
+        addr = f"agent:{key}"
+        with self._cv:
+            incoming = [q.id for q in self._questions.values() if q.target == addr]
+            outgoing = [q.id for q in self._questions.values() if q.asker == key]
+            for qid in outgoing:
+                self._questions.pop(qid, None)
+        for qid in incoming:
+            self.close_question(qid, f"agent {key} terminated before answering")
+        if outgoing:
+            self._save_state()
 
     # ── spawn ───────────────────────────────────
 
@@ -707,6 +1066,7 @@ class AgentRegistry:
         author: str = "main",
         hop: int = 0,
         expects_reply: bool = True,
+        question_id: str = "",
     ) -> tuple[str, str]:
         """request 큐잉 또는 **ask 답변 배달** — ``(error, verdict)``.
 
@@ -718,6 +1078,8 @@ class AgentRegistry:
 
         `request()` 가 ``str`` 만 돌려주는 얇은 래퍼로 남아 기존 호출자
         여덟 곳은 무변경이다.
+
+        ``question_id``: 이 아이템이 질문이면 그 id — 런 스코프 마킹용.
 
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
@@ -759,6 +1121,11 @@ class AgentRegistry:
             "author": author,
             "hop": hop,
             "expects_reply": expects_reply,
+            # 이 항목이 **질문**이면 그 id (DESIGN.md §3.3). 상대가 항목을
+            # 꺼낼 때 ``mark_question_delivered`` 가 이걸로 런 스코프를
+            # 찍는다 — 표시 문자열 ``[question q-xxx …]`` 를 파싱하지
+            # 않는다(문구가 계약이 되면 못 고친다).
+            "question_id": question_id,
             # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
             # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
             # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
@@ -1152,6 +1519,9 @@ class AgentRegistry:
             )
         with self._cv:
             pending = [dict(r) for r in self._pending]
+            # 열린 질문은 resume 이 **되살리지 않고 N건만 알린다**(§3.9).
+            # 저장 없이 N 을 알릴 수 없으므로, 알릴 거면 저장한다.
+            questions = [q.as_dict() for q in self._questions.values()]
         try:
             from agent_cli.fsio import atomic_write_json
 
@@ -1161,6 +1531,7 @@ class AgentRegistry:
                     "version": AGENTS_STATE_VERSION,
                     "agents": entries,
                     "pending": pending,
+                    "questions": questions,
                 },
             )
         except OSError:
@@ -1196,6 +1567,11 @@ class AgentRegistry:
                 self._pending.append(item)
             if self._pending:
                 self._cv.notify_all()
+        # 열린 질문은 **되살리지 않는다** — 재시작으로 asker 의 런이 사라져
+        # 답을 받을 주체가 없다. 몇 건이 유실됐는지만 호출자에게 알린다.
+        self.stale_questions = sum(
+            1 for d in data.get("questions", []) if isinstance(d, dict)
+        )
 
         revived = 0
         for e in data.get("agents", []):
@@ -1398,6 +1774,12 @@ class AgentRegistry:
                         "output": crash,
                     }
                 )
+            if not tm.revivable:
+                # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
+                # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
+                # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을
+                # 저장해 resume 이 알릴 열린 질문이 항상 0건이 된다.
+                self._purge_questions_for(tm.key)
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
@@ -1423,6 +1805,12 @@ class AgentRegistry:
         # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
         author = item.get("author", "main")
         tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
+        tm.current_seq = seq  # 이 런에서 거는 질문의 asked_seq (§3.2)
+        # 이 항목이 질문이면 **꺼낸 지금** 배달로 친다 — 그 전까지는 큐에서
+        # 줄만 서 있었고, 강제·sweep 이 걸리면 상대가 읽지도 않은 질문을
+        # "(답변 없음)" 으로 닫아 버린다 (§3.2 런 스코프).
+        if item.get("question_id"):
+            self.mark_question_delivered(item["question_id"], seq)
         self._notify_roster()
         query = f"[{author}]: {text}" if author != "main" else text
 
@@ -1506,6 +1894,7 @@ class AgentRegistry:
         else:
             self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
         tm.current_author = "main"
+        tm.current_seq = 0
         self._notify_roster()
 
     def _handle_human_batch(
@@ -1520,6 +1909,7 @@ class AgentRegistry:
         author0 = first.get("author", "main")
         tm.state = "busy"
         tm.current_author = author0  # 배치 중 ask 는 첫 발신자에게
+        tm.current_seq = seq
         self._notify_roster()
 
         labeled = [f"[{it.get('author', 'main')}]: {it['text']}" for it in items]
@@ -1567,6 +1957,7 @@ class AgentRegistry:
         self._log_conversation(tm, out_payload)
         self._save_state()  # 전부 user:* — 창만(⑥), mailbox push 없음
         tm.current_author = "main"
+        tm.current_seq = 0
         self._notify_roster()
 
     def _make_ask_handler(self, tm: AgentInstance):
@@ -1678,6 +2069,7 @@ class AgentRegistry:
             tm.ctx,
             ask_handler=self._make_ask_handler(tm),
             message_handler=self._make_message_handler(tm),
+            questions=self.question_port(tm.key),
             peer_agents_section=peer_section,
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),

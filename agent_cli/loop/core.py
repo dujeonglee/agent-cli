@@ -91,6 +91,7 @@ class AgentLoop:
         monitor_registry=None,
         ask_handler=None,
         message_handler=None,
+        questions=None,
         peer_agents_section: str = "",
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
@@ -147,7 +148,11 @@ class AgentLoop:
             tools_list = [
                 t for t in tools_list if not (t in TOOLS and TOOLS[t].depth_gated)
             ]
-        handler_resources = {"ctx": ctx, "message_handler": message_handler}
+        handler_resources = {
+            "ctx": ctx,
+            "message_handler": message_handler,
+            "questions": questions,
+        }
         for tool_name, tool in TOOLS.items():
             required = tool.requires_handler
             if not required:
@@ -203,6 +208,7 @@ class AgentLoop:
             monitor_registry=monitor_registry,
             ask_handler=ask_handler,
             message_handler=message_handler,
+            questions=questions,
             peer_agents_section=peer_agents_section,
         )
         self._state = LoopState(
