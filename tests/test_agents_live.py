@@ -3497,11 +3497,17 @@ class TestAgentTaskFieldUnification:
         reg = AgentRegistry(tmp_path)
         sent = []
 
-        def fake_request(key, message, **kw):
+        def fake_submit(key, message, **kw):
             sent.append((key, message))
-            return ""
+            return "", "work"
 
-        monkeypatch.setattr(reg, "request", fake_request)
+        # `submit` 을 패치한다 — `request()` 는 그 얇은 래퍼라 같이 덮이고,
+        # `_agent_request` 는 verdict 가 필요해 `submit` 을 직접 부른다
+        # (v9.12.0). `request` 만 패치하면 도구 경로가 패치를 우회한다.
+        monkeypatch.setattr(reg, "submit", fake_submit)
+        monkeypatch.setattr(
+            reg, "request", lambda k, m, **kw: fake_submit(k, m, **kw)[0]
+        )
         monkeypatch.setattr(reg, "spawn", lambda **kw: ("agt-test0001", ""))
         monkeypatch.setattr(reg, "resume_teammate", lambda key, parent_ctx=None: "")
         return reg, sent
@@ -3825,4 +3831,219 @@ class TestSeqAtomicity:
         assert len(seqs) == n
         assert len(set(seqs)) == n, f"duplicate seqs: {sorted(seqs)}"
         assert sorted(seqs) == list(range(1, n + 1))
+        reg.shutdown_all()
+
+
+class TestAskAnswerPairing:
+    """ask 의 답을 **주소**로 가른다 (v9.12.0, docs/agent-ask/DESIGN.md).
+
+    종전엔 ask 가 자기 inbox 에서 기다려 **도착 순서가 곧 답**이었다. 그래서
+    peer 의 무관한 메시지나 다른 주소의 새 일감이 답으로 소비됐고, 소비된
+    항목은 `_handle_request` 를 안 거쳐 **라우팅째 유실**됐다(peer 요청이면
+    요청한 peer 가 영원히 기다린다).
+
+    이제 답은 **슬롯**(`awaiting`/`answered`)으로 오고, 분류는 막혀 있지 않은
+    **생산자**(`submit`)가 한다. 판정 축은 질문 페이로드가 이미 싣고 있던
+    주소(`to` = `awaiting_to`)다.
+    """
+
+    def _asking(self, tmp_path, renderer, author="main"):
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task", author=author)
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        return reg, key
+
+    # ── 답으로 소비되는 것 ──
+
+    def test_main_answers_when_the_question_is_addressed_to_main(
+        self, tmp_path, renderer
+    ):
+        reg, key = self._asking(tmp_path, renderer)
+        err, verdict = reg.submit(key, "release 브랜치로")
+        assert err == "" and verdict == "answer"
+        assert wait_until(lambda: reg.get(key).state in ("idle", "dead"))
+        replies = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
+        assert replies and "release 브랜치로" in replies[0]["output"]
+
+    @pytest.mark.parametrize("who", ["user", "user:bob"])
+    def test_human_can_answer_a_main_addressed_question(self, tmp_path, renderer, who):
+        """웹 `agent_input` docstring 이 **"main 과 선착순"** 으로 명시한 기능 —
+        사람은 peer 가 아니라 **운영자**라 main 앞 질문에도 끼어들 수 있다."""
+        reg, key = self._asking(tmp_path, renderer)
+        err, verdict = reg.submit(key, "사람이 먼저 답함", author=who)
+        assert err == "" and verdict == "answer"
+
+    def test_human_can_answer_a_peer_addressed_question(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """운영자 창구가 있으면 peer 주소 질문에도 사람이 답한다 — 지금 peer
+        에게 배달이 안 되므로 사람이 유일한 답변자다."""
+        monkeypatch.setattr(
+            type(renderer), "can_answer_agent", lambda self: True, raising=False
+        )
+        reg, key = self._asking(tmp_path, renderer, author="agent:agt-other")
+        err, verdict = reg.submit(key, "사람이 대신 답함", author="user:bob")
+        assert err == "" and verdict == "answer"
+
+    # ── 답이 아니라 일감이 되는 것 ── (여기가 이 변경의 본체)
+
+    def test_peer_message_is_work_not_an_answer(self, tmp_path, renderer):
+        """peer 는 그 질문을 **본 적이 없다** — 자기 채널에만 렌더되므로.
+        답할 수 없는 주체의 메시지가 답으로 소비되는 건 사고였다."""
+        reg, key = self._asking(tmp_path, renderer)
+        err, verdict = reg.submit(key, "무관한 얘기", author="agent:agt-peer")
+        assert err == "" and verdict == "work"
+        assert reg.get(key).state == "waiting_ask"  # 아직 기다린다
+        assert reg.get(key).inbox.qsize() == 1  # 일감으로 남았다
+
+    def test_the_addressed_peer_is_still_not_an_answerer(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """**주소가 그 peer 여도** 답이 아니다 — 아직 배달되지 않으므로
+        그 peer 는 질문을 본 적이 없다.
+
+        (앞 테스트는 `awaiting_to` 가 main 이라 어느 판정이든 `work` 였다 —
+        사보타주로 발견해 이 케이스를 따로 고정한다.)"""
+        monkeypatch.setattr(
+            type(renderer), "can_answer_agent", lambda self: True, raising=False
+        )
+        reg, key = self._asking(tmp_path, renderer, author="agent:agt-boss")
+        assert reg.get(key).awaiting_to == "agent:agt-boss"
+        err, verdict = reg.submit(key, "보스가 답함", author="agent:agt-boss")
+        assert err == "" and verdict == "work", "배달도 안 됐는데 답이 됐다"
+
+    def test_main_is_not_an_answerer_for_a_human_addressed_question(
+        self, tmp_path, renderer
+    ):
+        """사람이 시킨 작업의 질문은 main 메일박스로 가지 않는다 — main 은
+        그 질문의 존재조차 모르므로 답변자가 아니다."""
+        reg, key = self._asking(tmp_path, renderer, author="user:bob")
+        assert not [r for r in reg.drain_replies() if r.get("kind") == "question"]
+        err, verdict = reg.submit(key, "main 의 새 일감")
+        assert err == "" and verdict == "work"
+
+    def test_queued_work_survives_and_is_handled_after_the_answer(
+        self, tmp_path, renderer
+    ):
+        """일감으로 판정된 항목이 **유실되지 않는다** — 종전엔 답으로 먹혀
+        `_handle_request` 를 건너뛰었다."""
+        reg, key = self._asking(tmp_path, renderer)
+        reg.submit(key, "진짜 일감", author="agent:agt-peer")
+        reg.submit(key, "답이다")  # main → 답
+        assert wait_until(lambda: reg.get(key).handled >= 2, timeout=6.0)
+
+    # ── 레이스 ──
+
+    def test_answer_arriving_at_publish_time_is_claimed(self, tmp_path, renderer):
+        """**arm 을 공개보다 먼저** 하지 않으면 즉답이 inbox 로 샌다.
+
+        질문이 main 메일박스에 올라가는 **바로 그 순간** 답하게 해서 창을
+        정확히 겨냥한다 — `_push_reply` 안에서 동기로 답하면, arm 이 뒤에
+        있는 구현에서는 슬롯이 아직 없어 `work` 로 떨어진다."""
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+
+        verdicts = []
+        real_push = reg._push_reply
+
+        def push_then_answer(reply):
+            real_push(reply)
+            if reply.get("kind") == "question":
+                verdicts.append(reg.submit(key, "공개 시점의 답")[1])
+
+        reg._push_reply = push_then_answer
+        reg.request(key, "task")
+        assert wait_until(lambda: verdicts, timeout=6.0)
+        assert verdicts[0] == "answer", "공개 시점에 온 답이 inbox 로 샜다"
+
+    def test_second_answerer_becomes_work_not_a_lost_answer(self, tmp_path, renderer):
+        """동시 답변자 둘 — `awaiting` claim 이 원자적이라 둘째는 일감이 된다
+        (조용히 사라지지 않는다)."""
+        reg, key = self._asking(tmp_path, renderer)
+        assert reg.submit(key, "첫 답")[1] == "answer"
+        assert reg.submit(key, "둘째 답", author="user:bob")[1] == "work"
+
+    # ── 종료 ──
+
+    def test_shutdown_wakes_the_slot_not_just_the_inbox(self, tmp_path, renderer):
+        """슬롯 대기자는 inbox 의 `_SHUTDOWN` 으로 **안 깨어난다** —
+        `answered.set()` 이 없으면 `join` 이 5초 타임아웃된다."""
+        reg, key = self._asking(tmp_path, renderer)
+        t0 = time.monotonic()
+        reg.shutdown_all()
+        assert time.monotonic() - t0 < 4.0
+        assert reg.get(key).state == "dead"
+
+    def test_kill_wakes_the_slot(self, tmp_path, renderer):
+        reg, key = self._asking(tmp_path, renderer)
+        t0 = time.monotonic()
+        reg.kill(key)
+        assert time.monotonic() - t0 < 2.0
+        assert reg.get(key).state == "dead"
+
+    # ── 펌프 수명 (유일한 새 교착) ──
+
+    def test_queue_behind_a_blocked_slot_is_not_active_work(self, tmp_path, renderer):
+        """**이 변경이 만들 뻔한 유일한 교착.**
+
+        1단계는 peer 메시지를 막힌 에이전트의 inbox 에 쌓는데, 그 에이전트는
+        답이 오기 전엔 못 꺼낸다. `has_active_work()` 가 그 큐를 세면 `run`
+        펌프가 영원히 돈다. 그 함수 docstring 의 판단("답 안 오는 대기는
+        교착이라 펌프는 종료를 택한다")이 **뒤의 큐**에도 적용된다."""
+        reg, key = self._asking(tmp_path, renderer)
+        reg.submit(key, "쌓이는 일감", author="agent:agt-peer")
+        assert reg.get(key).inbox.qsize() == 1
+        reg.drain_replies()  # 미배달 질문을 비워 그것만 남기지 않게
+        assert not reg.has_active_work(), "막힌 슬롯 뒤의 큐가 펌프를 붙잡는다"
+        reg.shutdown_all()
+
+    def test_web_idle_gate_still_counts_a_waiting_agent(self, tmp_path, renderer):
+        """웹은 반대다 — 운영자가 답할 수 있으므로 활동이 맞다."""
+        reg, _ = self._asking(tmp_path, renderer)
+        assert reg.any_activity()
+        reg.shutdown_all()
+
+
+class TestHeadlessAskFailFast:
+    """peer 주소 질문은 아직 그 peer 에게 **배달되지 않는다**. 운영자 창구도
+    없으면 막고 나서 아무도 안 오므로, **막기 전에** 정직하게 돌려준다."""
+
+    def test_peer_addressed_ask_without_operator_returns_immediately(
+        self, tmp_path, renderer
+    ):
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task", author="agent:agt-boss")
+        assert wait_until(lambda: reg.get(key).handled >= 1, timeout=6.0)
+        assert reg.get(key).state != "waiting_ask", "arm 하고 막혔다"
+        assert reg.get(key).awaiting == ""
+
+    def test_capability_default_is_false_and_web_overrides(self):
+        """`can_prompt()` 는 재사용할 수 없다 — 그건 'main 프롬프트에 답이
+        언젠가 오나'라 웹은 항상 True 이고 minimal 은 TTY 만 본다."""
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.base import Renderer
+        from agent_cli.render.minimal import MinimalRenderer
+        from agent_cli.render.web import WebRenderer
+
+        assert Renderer.can_answer_agent(object()) is False  # type: ignore[arg-type]
+        assert not MinimalRenderer(
+            Console(file=io.StringIO(), force_terminal=False)
+        ).can_answer_agent()
+        assert WebRenderer().can_answer_agent()
+
+    def test_main_addressed_ask_still_blocks_without_an_operator(
+        self, tmp_path, renderer
+    ):
+        """fail-fast 는 **peer 주소**에만 — main 은 메일박스로 받으므로
+        운영자가 없어도 답할 수 있다."""
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
         reg.shutdown_all()

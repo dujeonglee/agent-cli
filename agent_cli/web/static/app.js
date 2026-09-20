@@ -2087,6 +2087,23 @@
     }
     return item;
   }
+  /** 질문의 주소 라벨 — 누구에게 물은 것인지. 사람이 대신 답하는 경우가
+   *  많으므로(peer 에게는 아직 배달되지 않는다) 그 사실을 밝힌다. */
+  function ovAskAddress(q) {
+    var to = (q && q.to) || "";
+    if (!to || to === "main") {
+      return ' <span class="ask-to">→ main 에게</span>';
+    }
+    if (to.indexOf("agent:") === 0) {
+      var k = to.slice(6);
+      return (
+        ' <span class="ask-to">→ ' + escapeHtml(ovAgentLabel(k)) +
+        " 에게 (아직 못 받음 — 대신 답해 주세요)</span>"
+      );
+    }
+    return ' <span class="ask-to">→ 나에게</span>';
+  }
+
   function ovRenderAskTray() {
     var tray = document.getElementById("ask-tray");
     if (!tray) return;
@@ -2103,7 +2120,7 @@
       html +=
         '<div class="ask-item" data-key="' + escapeHtml(t.key) + '">' +
         '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(t.key) +
-        "</b> 이(가) 물었습니다</div>" +
+        "</b> 이(가) 물었습니다" + ovAskAddress(q) + "</div>" +
         '<div class="ask-qt">' + qt + "</div>" +
         '<div class="ask-in"><input class="ask-answer" type="text" ' +
         'placeholder="답변…" aria-label="답변"><button type="button" ' +
@@ -2204,7 +2221,11 @@
     if (!d || !d.key) return;
     ovRenderAgentMsg(d);
     if (d.direction === "question") {
-      ovAskTray[d.key] = { text: d.text || "", ts: d.ts }; // 글로벌 트레이용
+      // `to` 는 질문의 **주소**다 — 누구에게 물은 것인지 라벨로 보여 준다.
+      // 트레이는 계속 모든 질문에 뜬다: 사람은 peer 가 아니라 **운영자**라
+      // 어느 질문에든 끼어들 수 있어야 한다("main 과 선착순" — 서버의
+      // `agent_input` 이 명시한 기능이자, 답변자가 사라졌을 때의 탈출구).
+      ovAskTray[d.key] = { text: d.text || "", ts: d.ts, to: d.to || "" };
       ovRenderAskTray();
     }
   }

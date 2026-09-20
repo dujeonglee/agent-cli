@@ -1546,6 +1546,10 @@ body.export-mode #messages > .card > .export-check {
 .ov-ch:hover { border-color: var(--border); color: var(--text); }
 .ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .ov-ch.dead { opacity: 0.5; }
+/* ❓ 트레이의 **주소 라벨** — 누구에게 물은 질문인지. 사람은 peer 가 아니라
+   운영자라 어느 질문에든 답할 수 있지만, 그게 대리 응답인지는 알아야 한다. */
+.ask-to { font-size: 0.85em; color: var(--muted); font-weight: 400; }
+
 .ov-ch.dead .ov-ch-lb { text-decoration: line-through; }
 /* 에이전트 주소(`agt-<hex>`) — 이름 옆에 **흐리게** 병기한다. 사람은 이름으로
    기억하지만 부를 때 필요한 건 key 라(`@agt-…`, 도구의 `{"key": …}`), 읽히되

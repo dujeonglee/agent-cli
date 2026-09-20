@@ -683,6 +683,22 @@ class Renderer(ABC):
             The stripped user input, or ``default`` on empty input.
         """
 
+    def can_answer_agent(self) -> bool:
+        """**에이전트의 질문**에 답할 운영자 창구가 있나 (기본 False, v9.12.0).
+
+        `can_prompt()` 와 다른 질문이다 — 그건 *"main 프롬프트에 답이 언젠가
+        올 수 있나"* 라 웹은 항상 True 이고 minimal 은 TTY 만 본다. 상주
+        에이전트의 질문은 🤝 창·❓ 트레이라는 **별도 창구**로만 답할 수 있고,
+        CLI 에는 그 루프가 없다(명령이 `run`/`web` 뿐이라 `@agt-<key>` 는
+        `run` 의 인자다) — 그래서 TTY 가 있어도 False 다.
+
+        쓰이는 곳: peer 앞에서 `ask` 를 할 때. 질문의 주소가 peer 인데 그
+        peer 에게 배달할 방법이 아직 없고(배달은 후속 단계) 운영자도 없으면,
+        블록하지 않고 즉시 "답 없음"을 돌려준다 — `_handle_ask` 가
+        `can_prompt()` False 에 하는 것과 같은 판단이다.
+        """
+        return False
+
     def can_prompt(self) -> bool:
         """Whether an interactive prompt — a ``confirm`` y/n/a or ``ask``'s
         free-text question — can actually be shown to the user right now.

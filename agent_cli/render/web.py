@@ -2037,6 +2037,13 @@ class WebRenderer(Renderer):
         value = self._guarded_read(_do)
         return value if value else default
 
+    def can_answer_agent(self) -> bool:
+        """웹은 🤝 창과 ❓ 트레이가 있어 에이전트 질문에 사람이 답할 수 있다.
+
+        `can_prompt()` 와 같은 "언젠가" 판정 — 지금 아무도 안 보고 있어도
+        질문은 트레이에 남고 다음 접속자가 답한다."""
+        return True
+
     def can_prompt(self) -> bool:
         """Always ``True``: the web channel can ALWAYS deliver an answer —
         if nobody is watching right now, the pending ``input_required``
