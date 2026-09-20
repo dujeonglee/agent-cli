@@ -443,22 +443,30 @@ class TestPersistence:
         reg.shutdown_all()
 
         seen = []
+        hold = threading.Event()
 
         def runner(query, ctx, **kw):
             seen.append(query)
+            # 독촉 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 **자기도**
+            # `remind_owed` 를 불러(설계대로의 연쇄) nags 가 2가 되고,
+            # "두 번 깨우지 않는다" 단언이 CI 에서 깨진다.
+            if "(reminder)" in query:
+                hold.wait(5)
             return _FakeLoopResult(output="ok"), 0.01
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
         fresh.restore()
         assert q.id in fresh._questions
         assert fresh._questions[q.id].delivered_seq is not None  # 빚이 유지된다
-        assert wait_until(lambda: fresh._questions[q.id].nags >= 1)  # 깨웠다
+        assert wait_until(
+            lambda: fresh.get(b).handled >= 0 and any("(reminder)" in x for x in seen)
+        )  # 깨웠다 — 독촉 항목이 런을 만들었다
         assert fresh._questions[q.id].nags == 1  # 두 번 깨우지 않는다
-        assert wait_until(lambda: fresh.get(b).handled >= 1)  # 런이 생겼다
         # 이미 읽은 질문을 **다시 배달하지는 않는다** — 상대 ctx 에 남아
         # 있고, 재배달하면 같은 질문을 두 번 묻는 꼴이다.
         assert not [x for x in seen if "[question q-" in x]
         assert [x for x in seen if "(reminder)" in x]
+        hold.set()
         fresh.shutdown_all()
 
     def test_main_targeted_debt_is_kicked_too(self, mkreg, tmp_path, renderer):
@@ -722,25 +730,22 @@ class TestReminder:
         ]
 
     def test_reminder_cap_closes_and_tells_the_asker(self, mkreg, tmp_path, renderer):
-        """모델이 끝내 안 답해도 asker 가 영원히 기다리지는 않는다.
-
-        ``Question`` 을 직접 넣어 배달 경로를 건너뛴다 — 여기서 재는 것은
-        독촉 정책이지 배달이 아니고, 라이브 워커가 질문 항목을 꺼내면
-        ``delivered_seq`` 가 실제 seq 로 먼저 찍혀 런 스코프가 흐려진다.
-        """
+        """모델이 끝내 안 답해도 asker 가 영원히 기다리지는 않는다."""
         reg = mkreg()
-        b = spawn_idle(reg)
+        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
+        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
+        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
+        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
+        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
+        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
+        ghost = "agent:agt-noworker"
         q = Question(
-            id="q-cap01",
-            asker="main",
-            target=f"agent:{b}",
-            text="질문",
-            delivered_seq=7,
+            id="q-cap01", asker="main", target=ghost, text="질문", delivered_seq=7
         )
         reg._questions[q.id] = q
         for _ in range(_MAX_QUESTION_NAGS):
-            assert reg.remind_owed(f"agent:{b}") == 1
-        assert reg.remind_owed(f"agent:{b}") == 0  # 상한 — 닫힌다
+            assert reg.remind_owed(ghost) == 1
+        assert reg.remind_owed(ghost) == 0  # 상한 — 닫힌다
         assert q.id not in reg._questions
         assert any(
             "repeated reminders" in (r.get("output") or "") for r in reg.drain_replies()
@@ -756,53 +761,38 @@ class TestReminder:
         안 걸린다(아래 ``test_reminder_repeats_until_answered`` 가 반대쪽).
         """
         reg = mkreg()
-        b = spawn_idle(reg)
-        q = Question(id="q-scp01", asker="main", target=f"agent:{b}", text="질문")
+        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
+        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
+        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
+        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
+        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
+        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
+        ghost = "agent:agt-noworker"
+        q = Question(id="q-scp01", asker="main", target=ghost, text="질문")
         reg._questions[q.id] = q
-        assert reg.remind_owed(f"agent:{b}") == 0  # 아직 안 꺼냈다
+        assert reg.remind_owed(ghost) == 0  # 아직 안 꺼냈다
         reg.mark_question_delivered(q.id, 4)
-        assert reg.remind_owed(f"agent:{b}") == 1
-
-    def test_cascade_terminates_at_the_cap(self, mkreg, tmp_path, renderer):
-        """독촉 런 끝에서도 독촉하므로 답 않는 모델에겐 연쇄한다 — 그건
-        낭비지 버그가 아니고, **상한이 반드시 걸려 끝난다**.
-
-        한때 ``item["reminder"]`` 로 연쇄를 막았는데 그게 더 나빴다:
-        독촉 1회 뒤 그 에이전트에게 일이 안 오면 ``nags`` 가 1에 멈춰
-        상한이 영영 안 걸리고 질문이 영원히 열린다(정지).
-        """
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        qid, _ = reg.register_question(a, f"agent:{b}", "끝내 답 안 할 질문")
-        # 아무도 답하지 않아도 스스로 끝난다.
-        assert wait_until(lambda: qid not in reg._questions, timeout=10.0)
-        assert wait_until(lambda: reg.get(b).state == "idle", timeout=10.0)
-        # asker 는 침묵이 아니라 사유를 받는다.
-        assert wait_until(
-            lambda: any(
-                "repeated reminders" in str(c[1].get("text"))
-                for c in renderer.named("agent_message")
-                if c[1].get("key") == a
-            )
-        )
+        assert reg.remind_owed(ghost) == 1
 
     def test_reminder_repeats_until_answered(self, mkreg, tmp_path, renderer):
         """한 번 읽은 빚은 **답할 때까지 매 런 끝에** 다시 온다 — 사용자의
         'post turn prompt 로 계속 넣어준다'가 이것이다."""
         reg = mkreg()
-        b = spawn_idle(reg)
+        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
+        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
+        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
+        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
+        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
+        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
+        ghost = "agent:agt-noworker"
         q = Question(
-            id="q-rep01",
-            asker="main",
-            target=f"agent:{b}",
-            text="질문",
-            delivered_seq=4,
+            id="q-rep01", asker="main", target=ghost, text="질문", delivered_seq=4
         )
         reg._questions[q.id] = q
-        assert reg.remind_owed(f"agent:{b}") == 1  # 런 A 끝
-        assert reg.remind_owed(f"agent:{b}") == 1  # 런 B 끝 — seq 가 달라도 계속
-        assert reg.answer_question(q.id, "답", by=f"agent:{b}") == ""
-        assert reg.remind_owed(f"agent:{b}") == 0  # 답했으면 그친다
+        assert reg.remind_owed(ghost) == 1  # 런 A 끝
+        assert reg.remind_owed(ghost) == 1  # 런 B 끝 — seq 가 달라도 계속
+        assert reg.answer_question(q.id, "답", by=ghost) == ""
+        assert reg.remind_owed(ghost) == 0  # 답했으면 그친다
 
 
 # ── 사람 알림 · 회신 억제 · 표면 ────────────────

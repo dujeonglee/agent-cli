@@ -59,14 +59,23 @@ class TestWrapSingleOp:
         # wrap_single_op is now identity too.
         assert TOOLS["shell"].wrap_single_op({"command": "ls"}) == {"command": "ls"}
 
-    def test_base_default_wrap_is_add_prefix(self):
-        # No builtin tool uses the base default wrap anymore (all flat-native →
-        # identity, Step 3). A synthetic prefixed tool pins the base behavior,
-        # kept for MCP / future prefixed tools.
+    def test_base_default_wrap_is_identity(self):
+        """기본은 **항등**이다 — 대부분의 도구는 표준 입력이 이미 평탄해서
+        되감을 것이 없다. 배치 모양 도구만 오버라이드한다.
+
+        ★종전 기본값은 ``add_prefix`` 였고, 그것이 오버라이드를 깜빡한
+        도구의 **모든 호출을 중앙 검증에서 거절**시켰다(키가 ``monitor_mode``
+        가 되어 required ``mode`` 를 못 찾는다). v9.11.0 의 ``monitor`` 가
+        그 상태로 나가 한 번도 동작하지 않았다 — 살아 있는 wire format 이
+        둘 다 multi_op 이라 이 경로는 프로덕션에서 항상 탄다.
+
+        MCP 어댑터는 같은 함정을 겪고 자기만 항등으로 우회해 뒀었다
+        (``mcp/adapter.py`` 주석) — 함정 자체를 없앤다."""
+
         from agent_cli.tools.base import Tool
         from agent_cli.tools.result import ToolResult
 
-        class _Prefixed(Tool):
+        class _Plain(Tool):
             name = "synthtool"
             description = "x"
             parameters: ClassVar[dict] = {
@@ -77,9 +86,7 @@ class TestWrapSingleOp:
             def _run(self, args, *, ctx=None):
                 return ToolResult(True, output="")
 
-        assert _Prefixed().wrap_single_op({"command": "ls"}) == {
-            "synthtool_command": "ls"
-        }
+        assert _Plain().wrap_single_op({"command": "ls"}) == {"command": "ls"}
 
 
 # ─── Mock multi-op wire format ──────────────────────

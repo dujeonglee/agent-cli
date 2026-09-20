@@ -579,15 +579,25 @@ class Tool(ABC):
         override this to re-wrap (``{"read_file_reads": [{"path": "x"}]}``)
         so the existing validate → strip → run pipeline applies unchanged.
 
-        Default: prefix the keys (no structural change) — right for tools
-        whose canonical input is already flat (shell, write_file, ask, ...).
+        **Default: identity.** Most tools' canonical input is already the
+        flat shape the model emits, so there is nothing to re-wrap. Only
+        batch-shaped tools (read_file, edit_file, agent, ...) override.
+
+        ★ The default used to be ``add_prefix``, which namespaced the keys
+        (``mode`` → ``monitor_mode``) and made central validation reject
+        **every** call to any tool that forgot to override — silently, at
+        dispatch, only under multi-op formats. ``monitor`` shipped in
+        v9.11.0 in exactly that state and never worked once: both live wire
+        formats are ``multi_op``, so non-intercepted tools always take this
+        path. No tool relied on the prefixing default (every tool that needs
+        wrapping overrides), so identity removes the trap instead of asking
+        each new tool to remember. ``TestWrapSingleOpIdempotence`` pins it.
+
         Overrides must be tolerant of an already-canonical input (idempotent)
         so a model that emits the batch shape anyway still works. Only called
         on the multi-op dispatch path; single-action formats bypass it.
         """
-        if not isinstance(flat, dict):
-            return flat
-        return self.add_prefix(flat)
+        return flat
 
     def touched_paths(self, action_input: dict) -> list[str]:
         """File-list entries this action contributes during compaction.
