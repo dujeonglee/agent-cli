@@ -84,6 +84,19 @@ class Monitor:
         return not self.retired
 
 
+def _log_delivery_failure(mon: Monitor, err: str) -> None:
+    """배달 실패를 남긴다 — **도달 불가가 목표**인 경로다 (docs/wiring §3.6).
+
+    조기 드롭이 `kill`/`shutdown_all` 양쪽에서 `stop_event.set()` 보다 앞서고
+    배달 직전 `alive` 재확인이 있으므로 여기 오면 안 된다. 그래서 통지를
+    만들지 않고(도달 불가 분기를 UI 에 남기지 않는다) 로그만 남긴다 —
+    미래의 회귀가 조용하지 않게.
+    """
+    from agent_cli.verbose import debug_log
+
+    debug_log(f"monitor {mon.id} 배달 실패 (owner={mon.owner}): {err}")
+
+
 def _clamp_deadline(seconds: int) -> int:
     return max(MONITOR_DEADLINE_MIN_S, min(seconds, MONITOR_DEADLINE_MAX_S))
 
@@ -174,10 +187,14 @@ class MonitorRegistry:
     def delete(self, mon_id: str) -> bool:
         with self._lock:
             mon = self._monitors.pop(mon_id, None)
-            if mon is not None and mon.alive:
+            if mon is not None:
                 # pop 만으로는 부족하다 — `tick` 은 `live` 를 **스냅샷**한 뒤
                 # 락 밖에서 돌므로, 삭제된 모니터가 한 번 더 발화할 수 있다.
-                mon.retired = "삭제됨"
+                # `alive` 로 거르지 않는 이유는 `drop_owner` 와 같다: 은퇴
+                # 중(부작용 실행 중)이면 이미 `alive == False` 라, 거기서
+                # 건너뛰면 방금 지운 감시의 은퇴 통지가 그대로 나간다.
+                if mon.alive:
+                    mon.retired = "삭제됨"
                 mon.dropped = True
         if mon is not None:
             self._save()
@@ -356,7 +373,9 @@ class MonitorRegistry:
             report = _format_report(mon, lines, note=extra)
             mon.wakes += 1
             mon._last_report = now
-            self._send(mon, report)
+            err = self._send(mon, report)
+            if err:
+                _log_delivery_failure(mon, err)
         finally:
             with self._lock:
                 self._inflight -= 1
@@ -392,7 +411,9 @@ class MonitorRegistry:
             else:
                 report = _format_report(mon, [f"({why}) 누적 매치 {mon.matches}건"])
             mon.wakes += 1
-            self._send(mon, report, retiring=True)
+            err = self._send(mon, report, retiring=True)
+            if err:
+                _log_delivery_failure(mon, err)
         finally:
             with self._lock:
                 self._inflight -= 1
