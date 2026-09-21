@@ -18,8 +18,8 @@ main 소유 보고는 메일박스에 들어가므로 `MailWaker` 가 **이미**
 ## 왜 큐가 아니라 메일박스인가 (§6.1)
 
 보고문을 입력 큐에 넣으면 **사람 메시지로 위장된다** — `push_user_message` 가
-사용자 카드를 그리고 `QUEUED_REQUEST_NOTICE`("Another *user request* arrived")가
-붙으며, history·resume·검색에서 사람 턴과 구별되지 않는다. 게다가 `run` 은 턴
+사용자 카드를 그리고(v9.17.0 까지는 "Another *user request* arrived" 공지까지
+붙었다), history·resume·검색에서 사람 턴과 구별되지 않는다. 게다가 `run` 은 턴
 중 큐 주입을 안 해 배달이 런 종료 후로 밀리고, `--result-file` 이 모니터 보고에
 대한 응답으로 덮인다.
 

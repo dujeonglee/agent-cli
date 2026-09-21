@@ -74,7 +74,7 @@ while not stop:
     process_batch(tm, batch)          # 한 턴: 모든 메시지 + "모든 요청 처리" notice
 ```
 
-- `process_batch`는 배치 내 메시지를 `[author]: text` 라벨로 순서대로 주입 + main의 `QUEUED_REQUEST_NOTICE`에 대응하는 안내(agent용) 1회 → agent가 **한 응답으로 전부** 처리.
+- `process_batch`는 배치 내 메시지를 `[author]: text` 라벨로 순서대로 주입 + 배치 안내(agent용, `_AGENT_BATCH_NOTICE`) 1회 — main 의 같은 공지는 v9.18.0 에 제거됐지만 배치는 요청 여러 건을 `query` 하나로 합쳐 회계 id 가 없으므로 여기는 남는다 → agent가 **한 응답으로 전부** 처리.
 - 스윔레인 요청 화살표/카드는 배치 내 각 메시지별 `ts`를 유지(현행 앵커 규칙).
 
 > **결정 C-1 (확정)**: **목적지별 배치 분리** (제안 A).

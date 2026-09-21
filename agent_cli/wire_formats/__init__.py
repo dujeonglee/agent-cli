@@ -188,6 +188,10 @@ def resolve_wire_format(
 # are unioned at consume time.
 _FORMAT_AGNOSTIC_USER_PREFIXES: tuple[str, ...] = (
     "⚡ User interrupted.",
+    # v9.18.0 이후로는 주입하지 않는다(꼬리의 `## Open Requests` + Task
+    # Guidelines 와 같은 말을 세 번째로 하던 사본). 접두는 남긴다 — 9.17 이하
+    # 세션을 resume 하면 history 에 이 문구가 들어 있고, 프리뷰에서 걸러져야
+    # 한다.
     "⚡ Another user request arrived",
     "You have called",
     "You were asked to:",

@@ -51,8 +51,13 @@ if TYPE_CHECKING:
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
 _SHUTDOWN = object()
 
-# 사람-직접 요청이 한 턴에 여러 건 배치될 때(C-1) 앞에 붙는 안내 — main 의
-# QUEUED_REQUEST_NOTICE 대응(에이전트가 최신 것만 답하고 나머지를 흘리지 않게).
+# 사람-직접 요청이 한 턴에 여러 건 배치될 때(C-1) 앞에 붙는 안내 —
+# 에이전트가 최신 것만 답하고 나머지를 흘리지 않게 한다.
+#
+# main 에도 같은 목적의 `QUEUED_REQUEST_NOTICE` 가 있었지만 v9.18.0 에
+# 걷어냈다(꼬리의 `## Open Requests` 와 같은 말을 하면서 혼자 history 에
+# 박혔다). **여기는 남긴다**: 배치는 여러 요청을 `query` 문자열 하나로
+# 합치므로 회계가 셀 id 가 없고, 따라서 그 꼬리도 없다.
 _AGENT_BATCH_NOTICE = (
     "(Several messages arrived together — respond to ALL of the requests "
     "below. Do not answer only the latest one and skip the earlier ones.)"

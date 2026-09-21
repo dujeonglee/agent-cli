@@ -3892,21 +3892,16 @@ class TestMessageInjection:
             m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
         ]
         assert "[Otter]: also focus on X" in users
-        # v8.14.2: a system notice is injected immediately BEFORE the queued
-        # request so the model addresses every outstanding request instead of
-        # dropping the earlier unanswered one (starter "do Y").
-        from agent_cli.constants import QUEUED_REQUEST_NOTICE
-
-        assert QUEUED_REQUEST_NOTICE in users
-        assert users.index(QUEUED_REQUEST_NOTICE) < users.index(
-            "[Otter]: also focus on X"
+        # v9.18.0: 주입은 요청 **그 자체**뿐이다. v8.14.2 의 스티어링 공지는
+        # 꼬리의 `## Open Requests` + Task Guidelines 와 같은 말을 하면서
+        # 혼자 history 에 박히던 세 번째 사본이라 걷어냈다.
+        assert not any("Another user request arrived" in u for u in users), (
+            f"하네스 공지가 대화에 다시 섞였다: {users}"
         )
 
-    def test_inject_drains_entire_queue_in_one_turn_notice_once(self, caps, tmp_path):
+    def test_inject_drains_entire_queue_in_one_turn(self, caps, tmp_path):
         # v8.16.1: a turn boundary DRAINS the whole queue — all pending requests
-        # reach the LLM together (Claude Code 식 묶음 반영), not one per turn. The
-        # steering notice is injected ONCE for the batch, before the first item.
-        from agent_cli.constants import QUEUED_REQUEST_NOTICE
+        # reach the LLM together (Claude Code 식 묶음 반영), not one per turn.
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
@@ -3943,9 +3938,10 @@ class TestMessageInjection:
         # Order preserved (FIFO).
         assert users.index("[Otter]: req A") < users.index("[Bob]: req B")
         assert users.index("[Bob]: req B") < users.index("[Otter]: req C")
-        # Notice appears exactly ONCE for the whole batch, before the first item.
-        assert users.count(QUEUED_REQUEST_NOTICE) == 1
-        assert users.index(QUEUED_REQUEST_NOTICE) < users.index("[Otter]: req A")
+        # v9.18.0: 배치에 하네스 공지가 섞이지 않는다 — 요청만 들어간다.
+        assert not any("Another user request arrived" in u for u in users), (
+            f"하네스 공지가 대화에 다시 섞였다: {users}"
+        )
 
     def test_starter_and_injected_share_route_message(self, caps, tmp_path):
         # Symmetry: the run-STARTER text is NOT chat-injected when it is a
@@ -4347,15 +4343,19 @@ class TestRunAuthors:
         finally:
             render.set_renderer(prev)
 
-    def test_queued_request_notice_is_filtered_from_resume(self):
-        # The steering notice is harness-injected, not a user query — its prefix
-        # must be registered so resume/history previews strip it (v8.14.2).
-        from agent_cli.constants import QUEUED_REQUEST_NOTICE
+    def test_legacy_queued_request_notice_is_still_filtered_from_resume(self):
+        """구 세션 호환: 9.17 이하 history 에는 이 공지가 들어 있다.
+
+        더는 주입하지 않지만(v9.18.0), 그 세션을 resume 하면 프리뷰에서
+        걸러져야 한다 — 접두를 지우면 사용자 발화인 척 되살아난다.
+        """
         from agent_cli.wire_formats import all_system_user_prefixes
 
-        assert any(
-            QUEUED_REQUEST_NOTICE.startswith(p) for p in all_system_user_prefixes()
+        legacy = (
+            "⚡ Another user request arrived while you were mid-task. Address "
+            "EVERY outstanding request in this run"
         )
+        assert any(legacy.startswith(p) for p in all_system_user_prefixes())
 
     def test_injected_routed_command_does_not_attribute(self, caps):
         # A routed command (/sh, @agent…) executes — it is not an ask the

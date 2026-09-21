@@ -283,7 +283,7 @@ class Condition(ABC):
 
 1. **보고가 사람 메시지로 위장된다.** `_inject_queued_messages` 가
    `renderer.push_user_message(labeled, ...)` 로 사용자 카드를 그리고
-   `QUEUED_REQUEST_NOTICE`("Another **user request** arrived…")를 앞에 붙인다.
+   `QUEUED_REQUEST_NOTICE`("Another **user request** arrived…")를 앞에 붙였다(v9.18.0 에 제거 — 이유는 ARCHITECTURE 의 `constants.py` 항목).
    `run` 에선 `run_loop(query=report)` → `{"role":"user"}` 레코드가 되어
    history·resume 재생·검색 표면에서 사람 턴과 구별되지 않는다. "새 렌더 표면
    없음"은 맞지만 **사용자를 사칭해서** 맞는 것이다.

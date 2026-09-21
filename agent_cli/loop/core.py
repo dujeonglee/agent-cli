@@ -10,7 +10,6 @@ from agent_cli.constants import (
     AGENT_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
-    QUEUED_REQUEST_NOTICE,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
@@ -663,15 +662,26 @@ class AgentLoop:
         ``route_message`` exactly as at run-start — so it executes instead of
         leaking in as literal chat; its effect lands in the shared ctx, so we
         refresh ``messages`` and record the ask. A plain chat message falls
-        through to ``_add_user_message`` as a steering injection. The system
-        notice ("address every outstanding request") is injected **once** for the
-        whole drained batch, right before the first plain-chat message."""
+        through to ``_add_user_message`` as a steering injection.
+
+        **No steering notice (v9.18.0).** v8.14.2 put a ``role=user`` notice
+        ("⚡ Another user request arrived … address EVERY outstanding request")
+        before the batch's first plain-chat message. It said the same thing as
+        two per-turn tail surfaces — the Task Guidelines rule ("when more than
+        one user request is pending … do not answer only the most recent") and
+        ``## Open Requests`` (the ids themselves) — while being the only one
+        ``ctx.add``-ed, so it stuck in history and had to be filtered out of
+        resume previews. It was also positionally dominated: the tail is
+        appended AFTER the freshly injected request, the notice before it.
+        And the enforcement no longer rests on advice — an unanswered request
+        keeps the run open (``dispatch._nag_open_requests``, v9.17.0). Three
+        copies of one instruction is how "Outstanding Requests" and "Open
+        Requests" drifted apart in the first place."""
         if self.dequeue_user_message is None:
             return
         from agent_cli.render import get_renderer
 
         renderer = get_renderer()
-        notice_added = False
         while True:
             item = self.dequeue_user_message()
             if not item:
@@ -688,13 +698,6 @@ class AgentLoop:
                 if self.ctx:
                     self.messages = self.ctx.get_messages()
                 continue
-            # Plain-chat steering injection. The system notice rides once per
-            # drained batch as its own role=user turn (INTERRUPT_NOTICE pattern) —
-            # the real requests stay unpolluted, and its prefix is filtered from
-            # resume previews via ``all_system_user_prefixes``.
-            if not notice_added and self.ctx:
-                self.ctx.add({"role": "user", "content": QUEUED_REQUEST_NOTICE})
-                notice_added = True
             # 회계 등록은 라우팅 판정 **뒤**다 — 라우팅 명령은 이미 처리된
             # 것이라 미답으로 남으면 안 된다. 합성 wake 아이템도 제외
             # (사람 발화가 아니다).
