@@ -109,6 +109,13 @@ class LLMCaller:
         memory = ""
         if self.ctx is not None and self.ctx.session_dir:
             memory = render_index(self.ctx.session_dir)
+        # 요청이 둘 이상 합쳐진 런에서만 — 하나면 회계할 것이 없다.
+        requests = ""
+        pending = getattr(self.state, "run_requests", None)
+        if pending and len(pending) > 1:
+            from agent_cli.constants import outstanding_requests_block
+
+            requests = outstanding_requests_block(pending)
         return build_session_state(
             used_tokens=self.ctx.get_estimated_tokens() if self.ctx else 0,
             budget_tokens=budget,
@@ -116,6 +123,7 @@ class LLMCaller:
             max_turns=self.cfg.max_turns,
             agents=agents,
             memory=memory,
+            requests=requests,
             guidelines=TASK_GUIDELINES,
         )
 

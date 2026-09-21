@@ -11,7 +11,6 @@ from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
     QUEUED_REQUEST_NOTICE,
-    outstanding_requests_notice,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
@@ -705,17 +704,6 @@ class AgentLoop:
                     {"id": rid, "author": author or "", "text": text}
                 )
             self._add_user_message(text, author)
-        # 드레인이 끝난 뒤에야 이 런의 요청 집합이 확정된다 — 위 통지는
-        # 첫 plain-chat **앞**에 한 번 뜨므로 그 시점엔 아직 모른다.
-        # 그래서 목록은 루프 밖에서, 요청이 둘 이상일 때만 싣는다(하나면
-        # 회계할 것이 없다).
-        if notice_added and self.ctx and len(self._state.run_requests) > 1:
-            self.ctx.add(
-                {
-                    "role": "user",
-                    "content": outstanding_requests_notice(self._state.run_requests),
-                }
-            )
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로

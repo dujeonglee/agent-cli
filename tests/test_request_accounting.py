@@ -17,7 +17,6 @@ import re
 import types
 from unittest.mock import MagicMock
 
-from agent_cli.context.manager import ContextManager
 from agent_cli.loop import AgentLoop
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import make_ports
@@ -110,10 +109,29 @@ class TestRequestsReachTheRun:
 
 
 class TestClaims:
-    def test_omitting_answers_claims_everything(self):
-        """하위호환 — 종전 `complete` 은 `answers` 가 없고, 행동이 같아야 한다."""
+    def test_single_request_run_is_not_accounted(self):
+        """요청이 하나면 회계할 것이 없다 — 결과가 곧 그 요청의 답이다.
+        실측상 런의 90%가 여기고, 아무 변화도 없어야 한다."""
         loop = _drain([{"id": "r1", "nickname": "", "text": "a"}])
         assert _notice(loop, result="결과") == "결과"
+        assert _notice(loop, result="결과", answers=[]) == "결과"
+
+    def test_omitting_answers_claims_nothing(self):
+        """**생략은 "전부 답함" 이 아니다** (v9.16.0).
+
+        종전엔 하위호환을 위해 생략을 "전부 주장" 으로 쳤는데, 그러면 정작
+        잡으려던 실패(하나만 답하고 넘어감)가 영영 안 보인다 — 요청을 흘린
+        모델이 `answers` 를 실을 리도 없기 때문이다. 이제 꼬리가 매 턴
+        요구하므로, 그래도 생략한 것은 "밝히지 않음" 으로 읽는다.
+        """
+        loop = _drain(
+            [
+                {"id": "r1", "nickname": "", "text": "a"},
+                {"id": "r2", "nickname": "", "text": "b"},
+            ]
+        )
+        out = _notice(loop, result="결과")
+        assert "r1" in out and "r2" in out, "생략이 조용히 통과했다"
 
     def test_claiming_all_leaves_no_notice(self):
         loop = _drain(
@@ -137,9 +155,15 @@ class TestClaims:
         assert "r1" not in out, "답한 요청까지 미답으로 뜬다"
 
     def test_unknown_id_is_ignored(self):
-        """모르는 id 를 주장해도 터지지 않는다."""
-        loop = _drain([{"id": "r1", "nickname": "", "text": "a"}])
-        assert "r1" in _notice(loop, result="결과", answers=["nope"])
+        """모르는 id 를 주장해도 터지지 않는다 — 아무것도 주장 안 한 것."""
+        loop = _drain(
+            [
+                {"id": "r1", "nickname": "", "text": "a"},
+                {"id": "r2", "nickname": "", "text": "b"},
+            ]
+        )
+        out = _notice(loop, result="결과", answers=["nope"])
+        assert "r1" in out and "r2" in out
 
     def test_single_string_answer_is_tolerated(self):
         """리스트 대신 문자열 하나를 보내는 모델 습관을 관용한다.
@@ -163,7 +187,12 @@ class TestClaims:
 
     def test_notice_is_english(self):
         """하네스가 붙이는 문구다 — 사람도 모델도 읽는다."""
-        loop = _drain([{"id": "r1", "nickname": "", "text": "a"}])
+        loop = _drain(
+            [
+                {"id": "r1", "nickname": "", "text": "a"},
+                {"id": "r2", "nickname": "", "text": "b"},
+            ]
+        )
         tail = _notice(loop, result="ok", answers=[])[len("ok") :]
         assert not HANGUL.findall(tail), f"통지에 한글: {tail!r}"
         assert "not" in tail and "answered" in tail
@@ -191,80 +220,85 @@ class TestSchema:
         )
 
     def test_description_tells_the_model_what_omitting_means(self):
+        """단어 `answers` 만 보면 안 된다 — 지시문을 지워도 통과한다
+        (사보타주가 실제로 새어나갔다). **행동과 결과**를 고정한다."""
         from agent_cli.tools import TOOLS
 
-        assert "answers" in TOOLS["complete"].description
+        desc = TOOLS["complete"].description
+        assert "list the ids you actually answered" in desc, "무엇을 할지 안 말한다"
+        assert "unanswered" in desc, "빠뜨리면 어떻게 되는지 안 말한다"
 
 
 # ── ④ 모델이 id 를 볼 수 있어야 한다 ──────────────────
 
 
 class TestIdsReachTheModel:
-    """라이브 세션 cgyx7z 가 찾은 구멍.
+    """라이브 세션 cgyx7z 가 찾은 구멍, 그리고 그 첫 수정도 부족했던 것.
 
     `complete(answers=[id])` 는 스키마·처리·통지가 다 있었는데 **도달
-    불가**였다 — 모델이 받은 것은 `[nickname]: text` 뿐이고 id 는 큐 경계에서
-    죽었다. 기능은 다 있고 잇는 선 하나가 없던, 이 저장소의 그 클래스다.
+    불가**였다 — 모델이 받는 것은 `[nickname]: text` 뿐이고 id 는 큐 경계에서
+    죽었다. 그래서 드레인 시점에 목록을 한 번 주입했는데, **그래도 모델이
+    `answers` 를 생략했다**: 한 번 주입된 줄은 턴이 길어지면 뒤로 밀리고,
+    정작 `complete` 을 쓰는 순간엔 멀다.
+
+    이제 **매 턴 꼬리**(`prompts/session_state.py`)에 싣는다 — 재현성 주의가
+    가장 센 자리이고, history 에 남지 않는다.
     """
 
-    def _with_ctx(self, items, tmp_path, **kw):
-        q = list(items)
-        loop = _loop(
-            dequeue=lambda: q.pop(0) if q else None,
-            ctx=ContextManager(tmp_path / "s", max_context_tokens=30_000),
-            **kw,
-        )
-        loop._inject_queued_messages()
-        return loop
+    def _tail(self, requests):
+        from agent_cli.constants import outstanding_requests_block
+        from agent_cli.prompts.session_state import build_session_state
 
-    def test_ids_are_shown_when_requests_merge(self, tmp_path):
-        loop = self._with_ctx(
+        return build_session_state(
+            requests=outstanding_requests_block(requests) if len(requests) > 1 else ""
+        )
+
+    def test_ids_ride_the_per_turn_tail(self):
+        blob = self._tail(
             [
-                {"id": "r1", "nickname": "Bob", "text": "첫째"},
-                {"id": "r2", "nickname": "Ann", "text": "둘째"},
-            ],
-            tmp_path,
+                {"id": "1", "author": "Bob", "text": "첫째"},
+                {"id": "2", "author": "Ann", "text": "둘째"},
+            ]
         )
-        blob = "\n".join(_user_texts(loop))
-        assert "r1" in blob and "r2" in blob, "모델이 id 를 못 본다"
-        # 단어 `answers` 만 보면 안 된다 — 뒷문장에도 나와서, 지시문을 지워도
-        # 통과한다(사보타주가 실제로 그렇게 새어나갔다). **행동 지시**를 고정한다.
-        assert "list the ids" in blob and "complete(answers=" in blob, (
-            "모델이 무엇을 해야 하는지 못 듣는다"
+        assert "[1]" in blob and "[2]" in blob, "모델이 id 를 못 본다"
+        assert "Outstanding Requests" in blob
+        # 단어가 아니라 **행동 지시**를 고정한다 — 뒷문장에도 `answers` 가
+        # 나와서, 지시문을 지워도 단어 검사만으로는 통과한다.
+        assert "set `answers`" in blob and "reported to" in blob
+
+    def test_single_request_run_has_no_block(self):
+        """요청이 하나면 회계할 게 없다 — 꼬리를 더럽히지 않는다."""
+        blob = self._tail([{"id": "1", "author": "Bob", "text": "하나뿐"}])
+        assert "Outstanding Requests" not in blob
+
+    def test_llm_caller_feeds_the_block_only_when_merged(self):
+        """렌더러가 아니라 **호출부**가 게이트를 쥔다 — 소스 핀."""
+        import inspect
+
+        from agent_cli.loop.llm import LLMCaller
+
+        src = inspect.getsource(LLMCaller._build_session_state)
+        assert "outstanding_requests_block" in src, "꼬리에 안 실린다"
+        assert "len(pending) > 1" in src, "단건 런에도 실린다"
+        assert "requests=requests" in src
+
+    def test_the_block_is_not_persisted(self):
+        """꼬리는 feed 시점에만 붙고 history 에 안 남는다 — 한 번 주입하던
+        종전 방식은 `ctx.add` 라 resume 프리뷰까지 따라다녔다."""
+        import inspect
+
+        from agent_cli.loop import core
+
+        src = inspect.getsource(core.AgentLoop._inject_queued_messages)
+        assert "outstanding_requests_block" not in src, (
+            "드레인 시점 1회 주입이 되살아났다 — 그러면 history 에 박힌다"
         )
 
-    def test_single_request_stays_clean(self, tmp_path):
-        """요청이 하나면 회계할 게 없다 — 목록을 실으면 소음이다."""
-        loop = self._with_ctx(
-            [{"id": "r1", "nickname": "Bob", "text": "하나뿐"}], tmp_path
+    def test_block_is_english(self):
+        from agent_cli.constants import outstanding_requests_block
+
+        out = outstanding_requests_block(
+            [{"id": "1", "author": "Bob", "text": "hello"}, {"id": "2", "text": "hi"}]
         )
-        assert "Outstanding requests" not in "\n".join(_user_texts(loop))
-
-    def test_starter_is_listed_too(self, tmp_path):
-        """런을 연 요청도 미답 대상이다 — 목록에서 빠지면 주장할 길이 없다.
-
-        상태를 손으로 꾸미지 않는다: `_setup()` 이 스타터를 기록하고
-        `_inject_queued_messages()` 가 드레인분을 더하는 **실제 경로**로 간다.
-        """
-        q = [{"id": "r2", "nickname": "Ann", "text": "둘째"}]
-        loop = _loop(
-            dequeue=lambda: q.pop(0) if q else None,
-            ctx=ContextManager(tmp_path / "s", max_context_tokens=30_000),
-            query_request_id="r1",
-            query_author="Bob",
-        )
-        loop._setup()
-        loop._inject_queued_messages()
-        assert _ids(loop) == ["r1", "r2"]
-        blob = "\n".join(_user_texts(loop))
-        assert "r1" in blob and "r2" in blob, "스타터가 목록에서 빠졌다"
-
-    def test_outstanding_notice_is_english(self):
-        from agent_cli.constants import outstanding_requests_notice
-
-        out = outstanding_requests_notice(
-            [{"id": "r1", "author": "Bob", "text": "hello"}]
-        )
-        # 요청 본문(사용자 원문)은 어떤 언어든 올 수 있다 — 하네스 문구만 본다.
-        harness = out.replace("hello", "")
-        assert not HANGUL.findall(harness), f"통지에 한글: {harness!r}"
+        harness = out.replace("hello", "").replace("hi", "")
+        assert not HANGUL.findall(harness), f"꼬리에 한글: {harness!r}"

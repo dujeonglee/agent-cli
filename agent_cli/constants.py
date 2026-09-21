@@ -88,32 +88,36 @@ QUEUED_REQUEST_NOTICE = (
 )
 
 
-def outstanding_requests_notice(requests: list) -> str:
-    """Ids of every request this run must answer — injected after a drain.
+def outstanding_requests_block(requests: list) -> str:
+    """미답 가능 요청 목록 — **매 턴 꼬리**에 실린다 (per-turn tail).
 
-    ``complete`` takes an optional ``answers=[id]`` so unanswered requests can
-    be surfaced, but the model never saw the ids: queued messages render as
-    ``[nickname]: text`` and the queue id died at the loop boundary. The field
-    was therefore unreachable in practice — the machinery existed and the one
-    line that lets the model use it did not (live session cgyx7z: the model
-    emitted ``complete`` with no ``answers`` because it had no ids to name).
+    종전엔 드레인 시점에 딱 한 번 대화에 주입했다. 두 가지가 나빴다:
 
-    Listed here rather than on every message label: this rides only when a drain
-    actually merged requests, so single-request runs stay clean.
+    - **읽히지 않는다.** 턴이 길어지면 그 한 줄은 뒤로 밀려나고, 모델이
+      `complete` 을 쓰는 순간엔 이미 멀다. 실측(라이브 cgyx7z)에서 모델은
+      목록을 받고도 `answers` 를 생략했다.
+    - **영구히 남는다.** `ctx.add` 라 history 에 박히고 resume 프리뷰까지
+      따라다닌다.
+
+    꼬리는 재현성 주의(recency)가 가장 센 자리이고, KV 프리픽스 비용도
+    사실상 없다(`prompts/session_state.py` 의 설명 그대로 — 꼬리 블록은
+    어차피 매 턴 다시 계산되는 구간이다). 그리고 history 에 안 남는다.
+
+    요청이 **둘 이상일 때만** 실린다 — 하나면 회계할 것이 없다.
     """
     lines = "\n".join(
-        f"   [{r.get('id')}]"
+        f"  [{r.get('id')}]"
         + (f" ({r['author']})" if r.get("author") else "")
         + f' "{(r.get("text") or "").strip()[:120]}"'
         for r in requests
     )
     return (
-        "📋 Outstanding requests in this run:\n"
+        "## Outstanding Requests\n"
+        f"{len(requests)} user requests are open in this run:\n"
         f"{lines}\n"
-        "When you finish, list the ids you actually answered in "
-        "`complete(answers=[...])`. Anything you leave out is reported back "
-        "to the user as unanswered — so omit an id only if you truly did not "
-        "answer it."
+        "When you call `complete`, set `answers` to the ids you actually "
+        'answered — e.g. `answers: ["1"]`. Ids you leave out are reported to '
+        "the user as unanswered, so list every one you addressed."
     )
 
 

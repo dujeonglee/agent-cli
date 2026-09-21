@@ -673,7 +673,8 @@ class TurnDispatcher:
         ``answers`` 부재 = 전부 주장 (종전 행동과 동일 — 하위호환).
         """
         pending = getattr(self.state, "run_requests", None)
-        if not pending:
+        if not pending or len(pending) < 2:
+            # 요청이 하나면 회계할 것이 없다 — 결과가 곧 그 요청의 답이다.
             return answer
         claimed = None
         if isinstance(op.action_input, dict):
@@ -684,7 +685,15 @@ class TurnDispatcher:
                 # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
                 claimed = {raw.strip()}
         if claimed is None:
-            return answer
+            # **생략은 "전부 주장" 이 아니다** (v9.16.0). 요청이 둘 이상이면
+            # 꼬리가 매 턴 `answers` 를 요구하므로, 그래도 안 실은 것은
+            # "어느 것에 답했는지 밝히지 않음" 이다 — 조용히 전부 답한
+            # 것으로 쳐 주면 정작 잡으려던 실패(하나만 답하고 넘어감)가
+            # 영영 안 보인다.
+            #
+            # 요청이 하나인 런(실측 90%)은 여기 오지 않는다 — 위에서
+            # `pending` 이 1건이면 회계 자체를 하지 않는다.
+            claimed = set()
         missed = [r for r in pending if r.get("id") not in claimed]
         if not missed:
             return answer
