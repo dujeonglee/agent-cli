@@ -61,6 +61,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
+def _terminal_input(result: str, answers: list[str] | None) -> dict:
+    """``action_input`` for a stored terminal ``complete``.
+
+    ``answers`` rides only when the model actually sent it — an absent claim
+    and an empty one mean different things (unknown vs. "none of them"), and
+    a key invented here would erase that difference on resume.
+    """
+    payload: dict = {"result": result}
+    if answers is not None:
+        payload["answers"] = list(answers)
+    return payload
+
+
 @dataclass
 class ParsedAction:
     """Format-agnostic parse result.
@@ -571,7 +584,9 @@ class WireFormat(ABC):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
-    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+    def serialize_terminal_for_history(
+        self, thought: str, result: str, answers: list[str] | None = None
+    ) -> dict:
         """History record for a terminal ``complete`` turn.
 
         The loop's complete handler holds the (possibly nested-envelope-
@@ -584,12 +599,20 @@ class WireFormat(ABC):
 
         Default is the singular ``{action, action_input}`` shape; multi-op
         formats override to their ``ops`` shape.
+
+        ``answers`` (v9.17.0) is the request-id claim the model sent, stored
+        verbatim. It used to be **dropped**: this record is rebuilt from
+        ``(thought, result)``, not from the model's emission, so the claim
+        existed only in memory for the length of one call. Nothing — history,
+        the Prompt Inspector, resume, an audit — could say which requests a
+        run declared answered, and a live investigation read the rebuilt
+        record as proof the model had sent nothing.
         """
         return {
             "role": "assistant",
             "thought": thought or "",
             "action": "complete",
-            "action_input": {"result": result},
+            "action_input": _terminal_input(result, answers),
         }
 
     def render_assistant_from_history(self, record: dict) -> dict:

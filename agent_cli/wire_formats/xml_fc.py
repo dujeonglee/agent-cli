@@ -35,7 +35,13 @@ import json
 import re
 
 from agent_cli.thinking_tags import ORPHAN_THINK_TAG_RE
-from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
+from agent_cli.wire_formats.base import (
+    Op,
+    ParsedAction,
+    ParsedTurn,
+    WireFormat,
+    _terminal_input,
+)
 
 # ── 구조 토큰 ────────────────────────────────────────────────
 
@@ -520,11 +526,15 @@ class XmlFcFormat(WireFormat):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
-    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+    def serialize_terminal_for_history(
+        self, thought: str, result: str, answers: list[str] | None = None
+    ) -> dict:
         return {
             "role": "assistant",
             "thought": thought or "",
-            "ops": [{"action": "complete", "action_input": {"result": result}}],
+            "ops": [
+                {"action": "complete", "action_input": _terminal_input(result, answers)}
+            ],
         }
 
     def render_assistant_from_history(self, record: dict) -> dict:

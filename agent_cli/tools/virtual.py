@@ -23,7 +23,7 @@ class CompleteTool(Tool):
     terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
     description = (
         "Call this tool when the task is done. Provide the final result. "
-        "When the tail lists Outstanding Requests, `answers` is REQUIRED: "
+        "When the tail lists Open Requests, `answers` is REQUIRED: "
         "list the ids you actually answered. Ids you leave out are reported "
         "to the user as unanswered."
     )
@@ -36,7 +36,7 @@ class CompleteTool(Tool):
                 "items": {"type": "string"},
                 "description": (
                     "Ids of the user requests this result answers. Required "
-                    "whenever the tail lists Outstanding Requests — omitting "
+                    "whenever the tail lists Open Requests — omitting "
                     "it there means you answered none of them."
                 ),
             },

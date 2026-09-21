@@ -104,5 +104,10 @@ class LoopState:
     #: 끝내 안 실으면 받아주고 "미신고" 로 적는다. 무한히 되물으면 고집 센
     #: 모델이 런을 태운다.
     answers_prompted: bool = False
+    #: 이미 독촉한 요청 id — 한 요청당 **한 번**이다. `complete` 이 미답을
+    #: 남기면 최종답은 내보내되 루프를 닫지 않고 남은 요청을 가리킨다
+    #: (붙잡기가 아니다 — 결과는 이미 나갔다). 상한이 없으면 고집 센 모델과
+    #: 물려 런을 태운다.
+    requests_nagged: set = field(default_factory=set)
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

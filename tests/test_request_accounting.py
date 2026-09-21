@@ -45,6 +45,17 @@ def _drain(items, route=None, **kw):
     return loop
 
 
+def _with_ctx(items):
+    """history 기록을 보는 테스트용 — 실제 `ContextManager` 를 단 루프."""
+    import tempfile
+    from pathlib import Path
+
+    from agent_cli.context.manager import ContextManager
+
+    ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+    return _drain(items, ctx=ctx)
+
+
 def _op(**action_input):
     return types.SimpleNamespace(action="complete", action_input=action_input)
 
@@ -54,8 +65,19 @@ def _ids(loop):
 
 
 def _notice(loop, **ai):
-    # 두 번째 인자는 `_op_complete` 이 이미 언랩한 최종 답이다.
-    return loop._dispatch._with_unanswered_notice(_op(**ai), ai.get("result", ""))
+    """정산(주장분 제거) → 최후 통지. `_op_complete` 이 하는 두 걸음이다.
+
+    통지는 이제 **독촉이 끝난 자리**의 마지막 수단이라, 남은 것을 계산하는
+    `_settle_requests` 를 거치지 않고는 의미가 없다.
+    """
+    from agent_cli.loop.dispatch import _claimed_ids
+
+    op = _op(**ai)
+    claimed = _claimed_ids(op.action_input)
+    still_open = loop._dispatch._settle_requests(claimed)
+    return loop._dispatch._with_unanswered_notice(
+        claimed, still_open, ai.get("result", "")
+    )
 
 
 def _user_texts(loop):
@@ -473,9 +495,216 @@ class TestThroughRunLoop:
         )
         assert result.output.strip() == "A/B done", result.output
 
+    def test_partial_claim_keeps_the_loop_running(self):
+        """부분 주장은 런을 끝내지 않는다 — 전 경로로 확인한다."""
+        provider = self._provider(
+            self._env([{"action": "shell", "shell_command": "echo A"}]),
+            self._env([{"action": "complete", "result": "A done", "answers": ["1"]}]),
+            self._env(
+                [{"action": "complete", "result": "B done too", "answers": ["2"]}]
+            ),
+        )
+        result = self._run(
+            provider,
+            pending=[None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}],
+        )
+        assert provider.call.call_count == 3, (
+            "미답 [2] 를 남기고 런이 끝났다 — 독촉이 루프를 이어가지 않았다"
+        )
+        assert result.output.strip() == "B done too", result.output
+
+    def test_a_stubborn_model_cannot_burn_the_run(self):
+        """같은 요청을 두 번 독촉하지 않는다 — 각주로 닫는다."""
+        provider = self._provider(
+            self._env([{"action": "shell", "shell_command": "echo A"}]),
+            self._env([{"action": "complete", "result": "A done", "answers": ["1"]}]),
+            self._env([{"action": "complete", "result": "still A", "answers": ["1"]}]),
+        )
+        result = self._run(
+            provider,
+            pending=[None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}],
+        )
+        assert provider.call.call_count == 3, "독촉이 한 번으로 안 끝났다"
+        assert "were not answered" in result.output
+        assert "REQ-B" in result.output
+
     def test_starter_alone_is_not_bounced_through_the_loop(self):
         """단건 런은 턴을 더 쓰지 않는다 (실측 90%)."""
         provider = self._provider(self._env([{"action": "complete", "result": "done"}]))
         result = self._run(provider, pending=[])
         assert provider.call.call_count == 1
         assert "undeclared" not in result.output
+
+
+# ── ⑥ 미답이 남으면 런은 끝나지 않는다 ────────────────
+
+
+class TestOpenRequestsHoldTheLoop:
+    """**outstanding 이 있으면 루프가 끝나면 안 된다** (사용자 지적).
+
+    종전엔 부분 주장(`answers: ["1"]` 인데 [2] 가 열려 있음)이 각주 한 줄로
+    끝났다. 그 요청은 다음 런으로도 안 넘어가고(`run_requests` 는 런 수명),
+    다음 런이 온다는 보장도 없다 — 세션이 유휴로 들어가면 사라진다.
+
+    붙잡기와 다르다: 최종답은 **먼저 렌더되고 history 에 들어간다**. 기다리는
+    사람이 없으므로 "complete 을 붙잡지 않는다" 는 원칙은 그대로다.
+    """
+
+    @staticmethod
+    def _merged():
+        return _drain(
+            [
+                {"id": "1", "nickname": "Bob", "text": "첫째"},
+                {"id": "2", "nickname": "Ann", "text": "둘째"},
+            ]
+        )
+
+    def _complete(self, loop, **ai):
+        turn = types.SimpleNamespace(thought="t")
+        return loop._dispatch._op_complete("raw", turn, _op(**ai), {})
+
+    def test_partial_claim_continues_the_loop(self):
+        from agent_cli.loop.dispatch import _CONTINUE
+
+        loop = self._merged()
+        out = self._complete(loop, result="첫째 완료", answers=["1"])
+        assert out is _CONTINUE, "미답이 남았는데 런이 끝났다"
+        assert _ids(loop) == ["2"], "주장된 요청이 회계에서 안 지워졌다"
+
+    def test_claimed_request_is_closed(self):
+        loop = self._merged()
+        self._complete(loop, result="둘 다", answers=["1", "2"])
+        assert _ids(loop) == [], "전부 주장했는데 열린 채로 남았다"
+
+    def test_all_claimed_ends_the_run(self):
+        from agent_cli.loop.dispatch import _CONTINUE
+
+        loop = self._merged()
+        out = self._complete(loop, result="둘 다", answers=["1", "2"])
+        assert out is not _CONTINUE, "끝낼 수 있는데 런을 붙들었다"
+        assert out.output == "둘 다"
+
+    def test_result_is_delivered_before_the_nag(self):
+        """붙잡기가 아니다 — 답은 독촉 **전에** history 에 들어간다."""
+        loop = _with_ctx(
+            [
+                {"id": "1", "nickname": "Bob", "text": "a"},
+                {"id": "2", "nickname": "Ann", "text": "b"},
+            ]
+        )
+        self._complete(loop, result="첫째 완료", answers=["1"])
+        recs = [
+            m
+            for m in loop.ctx.get_raw_messages()
+            if m.get("role") == "assistant" and m.get("ops")
+        ]
+        assert recs, "최종답이 기록되지 않았다"
+        assert recs[-1]["ops"][0]["action_input"]["result"] == "첫째 완료"
+
+    def test_nag_names_the_open_ids_and_is_english(self):
+        # 요청 본문은 사용자 원문이라 한글이 정당하게 섞인다 — 하네스 문구만
+        # 보려고 영문 요청을 쓴다.
+        loop = _drain(
+            [
+                {"id": "1", "nickname": "Bob", "text": "first"},
+                {"id": "2", "nickname": "Ann", "text": "second"},
+            ]
+        )
+        msgs = []
+        loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
+        self._complete(loop, result="r", answers=["1"])
+        (msg,) = msgs
+        assert '"2"' in msg and "Ann" in msg, "무엇이 남았는지 안 보인다"
+        assert "still unanswered" in msg and "complete" in msg
+        assert not HANGUL.findall(msg), f"독촉 문구에 한글: {msg!r}"
+
+    def test_nag_is_once_per_request(self):
+        """고집 센 모델과 물려 런을 태우면 안 된다 — 요청당 한 번."""
+        from agent_cli.loop.dispatch import _CONTINUE
+
+        loop = self._merged()
+        assert self._complete(loop, result="r", answers=["1"]) is _CONTINUE
+        second = self._complete(loop, result="r", answers=[])
+        assert second is not _CONTINUE, "같은 요청을 두 번 독촉했다"
+        assert "were not answered" in second.output, "포기했으면 각주는 남겨야 한다"
+
+    def test_undeclared_is_never_nagged(self):
+        """무엇이 남았는지 모르면 '남은 걸 해라'는 말에 근거가 없다."""
+        from agent_cli.loop.dispatch import _CONTINUE
+
+        loop = self._merged()
+        loop._state.answers_prompted = True  # 되돌림은 이미 한 번 썼다
+        out = self._complete(loop, result="r")
+        assert out is not _CONTINUE
+        assert "undeclared" in out.output
+
+    def test_single_request_run_is_untouched(self):
+        from agent_cli.loop.dispatch import _CONTINUE
+
+        loop = _drain([{"id": "1", "nickname": "", "text": "a"}])
+        out = self._complete(loop, result="답")
+        assert out is not _CONTINUE and out.output == "답"
+
+
+# ── ⑦ 주장은 history 에 남는다 ────────────────────────
+
+
+class TestClaimsSurviveHistory:
+    """`answers` 가 history 에 남아야 한다.
+
+    종전엔 터미널 레코드를 `(thought, result)` 로 **재구성**해서 주장이 통째로
+    사라졌다 — 인스펙터·resume·감사 어디서도 모델이 무엇을 답했다고 했는지 볼
+    수 없었고, 라이브 조사에서 그 재구성본을 "모델이 안 보냈다" 는 증거로
+    읽었다.
+    """
+
+    @staticmethod
+    def _formats():
+        from agent_cli import wire_formats
+
+        return [wire_formats.get(n) for n in ("json_fc", "xml_fc")]
+
+    @staticmethod
+    def _inputs(rec):
+        if rec.get("ops"):
+            return [o["action_input"] for o in rec["ops"]]
+        return [rec["action_input"]]
+
+    def test_claims_are_stored(self):
+        for wf in self._formats():
+            rec = wf.serialize_terminal_for_history("t", "r", answers=["1", "2"])
+            (ai,) = self._inputs(rec)
+            assert ai["answers"] == ["1", "2"], f"{wf}: 주장이 버려졌다"
+
+    def test_absent_claim_stores_no_key(self):
+        """부재와 빈 주장은 다르다 — 없던 키를 만들면 resume 이 거짓을 읽는다."""
+        for wf in self._formats():
+            rec = wf.serialize_terminal_for_history("t", "r")
+            (ai,) = self._inputs(rec)
+            assert "answers" not in ai, f"{wf}: 없던 주장을 지어냈다"
+
+    def test_empty_claim_is_preserved(self):
+        for wf in self._formats():
+            rec = wf.serialize_terminal_for_history("t", "r", answers=[])
+            (ai,) = self._inputs(rec)
+            assert ai.get("answers") == [], f"{wf}: '아무것도 안 답함' 이 지워졌다"
+
+    def test_op_complete_writes_the_claim(self):
+        loop = _with_ctx(
+            [
+                {"id": "1", "nickname": "", "text": "a"},
+                {"id": "2", "nickname": "", "text": "b"},
+            ]
+        )
+        loop._dispatch._op_complete(
+            "raw",
+            types.SimpleNamespace(thought="t"),
+            _op(result="둘 다", answers=["1", "2"]),
+            {},
+        )
+        rec = [
+            m
+            for m in loop.ctx.get_raw_messages()
+            if m.get("role") == "assistant" and m.get("ops")
+        ][-1]
+        assert rec["ops"][0]["action_input"]["answers"] == ["1", "2"]

@@ -46,7 +46,13 @@ from agent_cli.wire_formats._json_repair import (
     fix_invalid_escapes,
     repair_value_quotes,
 )
-from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
+from agent_cli.wire_formats.base import (
+    Op,
+    ParsedAction,
+    ParsedTurn,
+    WireFormat,
+    _terminal_input,
+)
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)
 _ACTION_RE = re.compile(r"^##\s*Action\s*$", re.MULTILINE)
@@ -820,11 +826,15 @@ class JsonFcFormat(WireFormat):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
-    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+    def serialize_terminal_for_history(
+        self, thought: str, result: str, answers: list[str] | None = None
+    ) -> dict:
         return {
             "role": "assistant",
             "thought": thought or "",
-            "ops": [{"action": "complete", "action_input": {"result": result}}],
+            "ops": [
+                {"action": "complete", "action_input": _terminal_input(result, answers)}
+            ],
         }
 
     def render_assistant_from_history(self, record: dict) -> dict:

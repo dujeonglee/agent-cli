@@ -644,16 +644,26 @@ class TurnDispatcher:
         bounced = self._require_answers(llm_text, op, outcome)
         if bounced is not None:
             return bounced
-        answer = self._with_unanswered_notice(op, answer)
 
+        claimed = _claimed_ids(op.action_input)
+        still_open = self._settle_requests(claimed)
+        nagging = self._should_nag(claimed, still_open)
+        if not nagging:
+            answer = self._with_unanswered_notice(claimed, still_open, answer)
+
+        # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
         if self.ctx:
             self.ctx.add(
                 self.cfg.wire_format.serialize_terminal_for_history(
-                    turn.thought or "", answer
+                    turn.thought or "",
+                    answer,
+                    answers=None if claimed is None else sorted(claimed),
                 )
             )
         render_step("final", answer, self.state.turn)
 
+        if nagging:
+            return self._nag_open_requests(llm_text, still_open, outcome)
         return ToolResult(True, output=answer)
 
     def _require_answers(self, llm_text: str, op, outcome: dict):
@@ -677,12 +687,8 @@ class TurnDispatcher:
             return None
         if getattr(self.state, "answers_prompted", False):
             return None
-        if isinstance(op.action_input, dict):
-            raw = op.action_input.get("answers")
-            if isinstance(raw, list) and raw:
-                return None
-            if isinstance(raw, str) and raw.strip():
-                return None
+        if _claimed_ids(op.action_input):
+            return None
         self.state.answers_prompted = True
         ids = ", ".join(f'"{r.get("id")}"' for r in pending)
         return self._intervene(
@@ -701,36 +707,90 @@ class TurnDispatcher:
             recovery_kind="format",
         )
 
-    def _with_unanswered_notice(self, op, answer: str) -> str:
-        """이 런에 들어왔는데 `complete` 이 주장하지 않은 요청을 덧붙인다.
+    def _settle_requests(self, claimed):
+        """주장된 요청을 회계에서 **지우고**, 아직 열린 것을 돌려준다.
 
-        drain-all 은 요청 N건을 한 턴에 합치고 `complete` 은 하나만 나간다.
-        종전엔 **무엇이 답해졌는지** 아무도 몰랐다 — 두 사람이 서로 다른 걸
-        물었는데 모델이 하나만 답해도 조용했다. 질문(`ask`)에 대해 없앤 바로
-        그 클래스가 사용자 요청 쪽에 남아 있었다.
+        종전엔 아무것도 지우지 않았다 — 꼬리는 런 내내 같은 목록을 보였고,
+        `complete` 은 무조건 종결이라 남은 요청은 각주 한 줄로 알려지고 런과
+        함께 사라졌다(런 수명 `LoopState.run_requests`, 이월 없음). 이제
+        주장 = 닫힘이다. 남은 것이 곧 outstanding 이고, 그게 있으면 루프는
+        끝나지 않는다.
 
-        회계일 뿐 강제가 아니다. `complete` 을 붙잡지 않는다 — 붙잡으면 일을
-        시킨 쪽이 자기와 무관한 요청이 풀릴 때까지 결과를 못 받는다(설계
-        3판에서 한 번 틀렸던 자리). 결과는 그대로 나가고, 빠진 것이 보이게만
-        한다.
+        ``claimed is None`` (필드 생략)은 **모름**이다 — 무엇이 닫혔는지 알
+        수 없으니 지울 수도, 독촉할 수도 없다. 그 런의 회계는 여기서 닫고
+        (되돌림이 이미 한 턴을 썼다) 합쳐진 런이면 "미신고" 로 적는다.
+        """
+        pending = getattr(self.state, "run_requests", None)
+        if not pending:
+            return []
+        if claimed is None:
+            # 단건 런은 결과가 곧 그 답이라 조용히 닫는다(실측 90%).
+            open_now = list(pending) if len(pending) >= 2 else []
+            pending.clear()
+            return open_now
+        remaining = [r for r in pending if str(r.get("id")) not in claimed]
+        pending[:] = remaining
+        return list(remaining)
+
+    def _should_nag(self, claimed, still_open) -> bool:
+        """미답이 남았는데 런을 끝내려 하는가.
+
+        한 요청당 **한 번**만 독촉한다. 무한 독촉은 고집 센 모델과 물려 런을
+        태우고, `max_turns` 가 잡기 전에 토큰을 먼저 태운다. 생략
+        (``claimed is None``)에는 걸지 않는다 — 무엇이 남았는지 모르는
+        상태에서 "남은 걸 해라"는 말은 근거가 없다.
+        """
+        if claimed is None or not still_open:
+            return False
+        nagged = self.state.requests_nagged
+        return any(str(r.get("id")) not in nagged for r in still_open)
+
+    def _nag_open_requests(self, llm_text: str, still_open, outcome: dict):
+        """최종답은 내보내고 **루프는 계속** 돌린다.
+
+        `complete` 을 **붙잡는 것과 다르다**. 붙잡기란 다른 요청이 풀릴 때까지
+        결과를 못 내보내는 것이고, 그건 일을 시킨 쪽을 자기와 무관한 요청의
+        인질로 만든다(설계 3판에서 한 번 틀렸던 자리). 여기서는 답이 **이미
+        렌더되고 history 에 들어간 뒤**라 기다리는 사람이 없다 — 다만 아직
+        아무도 답하지 않은 요청이 남아 있으니 런을 닫지 않을 뿐이다.
+
+        종전엔 각주 한 줄(⏳)을 붙이고 끝냈다. 그 요청은 다음 런으로도 안
+        넘어간다(`run_requests` 는 런 수명) — 다음 런이 온다는 보장도 없어,
+        세션이 그대로 유휴로 들어가면 아무 데도 안 남았다.
+        """
+        self.state.requests_nagged.update(str(r.get("id")) for r in still_open)
+        ids = ", ".join(f'"{r.get("id")}"' for r in still_open)
+        return self._intervene(
+            llm_text,
+            (
+                f"Observation: your result was delivered, but {len(still_open)} "
+                "user request(s) in this run are still unanswered — you did not "
+                "list them in `answers`.\n"
+                f"{self._request_lines(still_open)}\n"
+                "Keep working and address them now. When you are done, call "
+                f"`complete` again with `answers: [{ids}]` covering what you "
+                "answered this time."
+            ),
+            "open requests remain",
+            outcome,
+            tool_name="complete",
+        )
+
+    def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:
+        """아무도 답을 주장하지 않은 요청을 최종답 말미에 덧붙인다.
+
+        독촉이 끝난 자리의 **최후 통지**다 — 요청마다 한 번씩 독촉하고도
+        남았거나(고집), 생략이라 독촉할 근거가 없는 경우.
+
+        회계일 뿐 강제가 아니다. `complete` 을 붙잡지 않는다 — 결과는 그대로
+        나가고, 빠진 것이 보이게만 한다.
 
         **모델의 주장이 정직한지는 검증할 수 없다.** 답했다고 주장하면 믿는다
         — `ask` 도 같고, 거기서도 asker 가 읽고 판단한다. 검출되는 것은
         "아무도 주장하지 않은 요청" 뿐이고, 그것만으로 충분히 값이 있다.
-
-        ``answers`` 부재 = 전부 주장 (종전 행동과 동일 — 하위호환).
         """
-        pending = getattr(self.state, "run_requests", None)
-        if not pending:
+        if not still_open:
             return answer
-        claimed = None
-        if isinstance(op.action_input, dict):
-            raw = op.action_input.get("answers")
-            if isinstance(raw, list):
-                claimed = {str(x) for x in raw if x}
-            elif isinstance(raw, str) and raw.strip():
-                # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
-                claimed = {raw.strip()}
 
         if claimed is None:
             # **생략은 "전부 답함" 도 "전부 미답" 도 아니다 — 모르는 것이다.**
@@ -740,26 +800,19 @@ class TurnDispatcher:
             # 쓰면 하네스가 거짓을 단언한다 — 종전의 조용한 관용보다 나쁘다.
             # 아는 것만 적는다: "어느 것에 답했는지 밝히지 않았다".
             #
-            # 단건 런에는 안 붙인다. 되돌리기도 안 하는 자리라(아래 이유)
-            # 이 각주가 실측 90% 의 런마다 뜨는데, 요청이 하나면 결과가 곧
-            # 그 답이라 사람이 확인할 것이 없다 — 순수 소음이다.
-            if len(pending) < 2:
-                return answer
+            # 단건 런은 여기 오지 않는다(`_settle_requests` 가 조용히 닫는다).
             return (
-                f"{answer}\n\n📋 This run merged {len(pending)} requests, but "
+                f"{answer}\n\n📋 This run merged {len(still_open)} requests, but "
                 "`complete` came without `answers` so which ones were addressed "
-                f"is undeclared. Check each:\n{self._request_lines(pending)}"
+                f"is undeclared. Check each:\n{self._request_lines(still_open)}"
             )
 
         # 여기서부터는 모델이 **직접 밝힌** 것이다. 그러니 건수와 무관하게
         # 그대로 전한다 — 단건 런에서 `answers: []` 를 보냈다면 "이 요청은
         # 답하지 않았다" 는 모델 자신의 진술이고, 삼키면 안 된다.
-        missed = [r for r in pending if r.get("id") not in claimed]
-        if not missed:
-            return answer
         return (
-            f"{answer}\n\n⏳ {len(missed)} request(s) in this run were not "
-            f"answered:\n{self._request_lines(missed)}"
+            f"{answer}\n\n⏳ {len(still_open)} request(s) in this run were not "
+            f"answered:\n{self._request_lines(still_open)}"
         )
 
     @staticmethod
@@ -1367,6 +1420,24 @@ _ECHO_FINAL_RE = re.compile(
     r'^echo\s+["\']?(.+?)["\']?\s*$',
     re.DOTALL,
 )
+
+
+def _claimed_ids(action_input) -> set[str] | None:
+    """`complete` 이 주장한 요청 id 집합. **부재는 `None`** (빈 집합과 다르다).
+
+    부재 = "어느 것에 답했는지 안 밝힘"(모름), 빈 집합 = "아무것도 안 답함"
+    (모델 자신의 진술). 이 둘을 같게 다루면 하네스가 거짓을 단언하거나
+    (실측 xrnway) 진술을 삼킨다.
+    """
+    if not isinstance(action_input, dict):
+        return None
+    raw = action_input.get("answers")
+    if isinstance(raw, list):
+        return {str(x) for x in raw if x}
+    if isinstance(raw, str) and raw.strip():
+        # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
+        return {raw.strip()}
+    return None
 
 
 def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
