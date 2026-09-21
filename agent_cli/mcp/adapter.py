@@ -56,10 +56,16 @@ class McpTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         # MCP is prefix-less (bare schema keys), so a multi-op flat op IS the
-        # canonical input — identity, like the flat-native builtin tools. The
-        # base default (add_prefix) would namespace the bare keys
-        # (``{query}`` → ``{srv.tool_query}``) and the prefixed schema-less
-        # input would then fail validate. Override to identity.
+        # canonical input — identity, like the flat-native builtin tools.
+        #
+        # This override predates the base default being flipped to identity
+        # (v9.12.0): back then the default was ``add_prefix``, which namespaced
+        # the bare keys (``{query}`` → ``{srv.tool_query}``) and made the
+        # prefixed schema-less input fail validate — MCP hit the same trap that
+        # killed ``monitor`` and worked around it here. The default no longer
+        # bites, so this is now redundant; kept as an explicit statement of the
+        # shape (a prefix-less tool's flat op needs no re-wrap), and pinned by
+        # tests/test_tool_wire_contract.py either way.
         return flat
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:

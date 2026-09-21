@@ -1642,55 +1642,6 @@ class TestToolPolicyDeclarations:
                 assert getattr(tool, attr) == val, f"{name}.{attr}"
 
 
-class TestWrapSingleOpIdempotence:
-    """``wrap_single_op`` 은 **표준 입력에 대해 멱등**이어야 한다.
-
-    살아 있는 wire format 두 개가 모두 ``multi_op`` 이라, 인터셉트되지 않는
-    도구는 프로덕션에서 **항상** 이 경로를 탄다:
-    ``_op_execute_tool`` → ``wrap_single_op`` → 중앙 검증 → 실행.
-
-    ★재발 방지: v9.11.0 의 ``monitor`` 가 이 메서드를 오버라이드하지 않아
-    기본 ``add_prefix`` 가 키에 ``monitor_`` 를 붙였고, 검증이 *"Missing
-    required field(s): mode"* 로 **모든 호출을 거절**했다. 도구가 릴리스
-    내내 한 번도 동작하지 않았고, 유닛 테스트는 도구를 직접 호출해서
-    이 경로를 안 탔다.
-    """
-
-    @staticmethod
-    def _example(schema) -> dict:
-        """스키마의 required 로 타입 맞는 최소 표준 입력을 만든다."""
-        props = schema.parameters.get("properties", {})
-        out = {}
-        for name in schema.parameters.get("required", []):
-            t = (props.get(name) or {}).get("type", "string")
-            out[name] = {
-                "array": [],
-                "object": {},
-                "integer": 1,
-                "number": 1,
-                "boolean": True,
-            }.get(t, "x")
-        return out
-
-    def test_canonical_input_survives_the_multi_op_wrap(self):
-        from agent_cli.tools.registry import TOOL_SCHEMAS, validate_tool_input
-
-        broken = []
-        for name, schema in TOOL_SCHEMAS.items():
-            canonical = self._example(schema)
-            ok_before, _, _ = validate_tool_input(name, dict(canonical))
-            if not ok_before:
-                continue  # 이 합성 예시로는 표준형을 못 만든다 — 판정 보류
-            wrapped = schema.wrap_single_op(dict(canonical))
-            ok_after, err, _ = validate_tool_input(name, wrapped)
-            if not ok_after:
-                broken.append(f"{name}: {str(err)[:80]}")
-        assert not broken, (
-            "wrap_single_op 이 표준 입력을 깨뜨린다 (multi_op 포맷에서 이 "
-            "도구는 **모든 호출이 거절**된다):\n  " + "\n  ".join(broken)
-        )
-
-
 class TestRunLoopForwarding:
     """``run_loop`` 은 ``AgentLoop`` 로 가는 **유일한 공개 문**이다.
 

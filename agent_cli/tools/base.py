@@ -580,13 +580,19 @@ class Tool(ABC):
 
         Multi-op formats emit ONE target per op with plain standard keys
         (``{"path": "x"}``) — the turn's op array is the batch mechanism, so
-        their ops never carry the per-tool batch wrapper. Batch-shaped tools
-        override this to re-wrap (``{"read_file_reads": [{"path": "x"}]}``)
-        so the existing validate → strip → run pipeline applies unchanged.
+        their ops never carry a per-tool batch wrapper.
 
-        **Default: identity.** Most tools' canonical input is already the
-        flat shape the model emits, so there is nothing to re-wrap. Only
-        batch-shaped tools (read_file, edit_file, agent, ...) override.
+        **Default: identity, and currently nothing overrides it in substance.**
+        Every tool's schema now declares the flat single-target shape, so the
+        op the model emits IS the canonical input. The ten overrides in the
+        tree all ``return flat`` — they predate the flattening and are kept as
+        local statements of "this tool is flat-native"; none re-wraps.
+
+        The hook stays for a future genuinely batch-shaped tool (it would map
+        ``{"path": "x"}`` → ``{"read_file_reads": [{"path": "x"}]}`` so the
+        validate → strip → run pipeline applies unchanged). If you add one,
+        note that its schema must then declare the batch key as required, or
+        the contract test cannot tell the re-wrap happened.
 
         ★ The default used to be ``add_prefix``, which namespaced the keys
         (``mode`` → ``monitor_mode``) and made central validation reject
