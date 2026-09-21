@@ -1088,23 +1088,6 @@ def make_asking_runner(question="which branch?"):
 
 
 class TestAskRouting:
-    def test_handle_ask_handler_branch(self):
-        # dispatch 의 _handle_ask: handler 가 있으면 사용자 프롬프트 대신
-        # 핸들러로 — Q/A 관찰 shape 은 사용자 경로와 동일.
-        from agent_cli.loop.dispatch import _handle_ask
-
-        out = _handle_ask(["1. which branch?"], handler=lambda q: "main branch")
-        assert out == "Q: which branch?\nA: main branch"
-
-    def test_handle_ask_handler_exception_is_no_response(self):
-        from agent_cli.loop.dispatch import _handle_ask
-
-        def broken(q):
-            raise RuntimeError("mailbox gone")
-
-        out = _handle_ask(["q?"], handler=broken)
-        assert out.endswith("A: (no response)")
-
     def test_question_record_contract(self):
         rec = build_reply_record(
             {

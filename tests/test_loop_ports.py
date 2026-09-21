@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import fields
+from dataclasses import MISSING, fields
 
 import pytest
 
@@ -70,7 +70,8 @@ class TestNoDefaults:
         optional = [
             f.name
             for f in fields(LoopPorts)
-            if f.name != "unwired" and (f.default is not f.default_factory)
+            if f.name != "unwired"
+            and not (f.default is MISSING and f.default_factory is MISSING)
         ]
         assert optional == [], f"기본값이 붙은 포트: {optional}"
 

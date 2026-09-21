@@ -1174,15 +1174,15 @@ def _extract_questions(action_input) -> list[str]:
     return []
 
 
-def _handle_ask(questions: list[str], handler=None) -> str:
+def _handle_ask(questions: list[str]) -> str:
     """Display all questions at once and collect a single response.
 
-    ``handler`` (teammate P2): teammate 서브루프의 ask 라우팅 훅 —
-    있으면 사용자 프롬프트(announce/prompt_user) 대신
-    ``handler(question_text) -> answer`` 로 답을 받는다 (worker 가 질문을
-    main mailbox 에 올리고 main/인간의 답변을 블록 대기). 반환 Q/A 포맷은
-    사용자 경로와 동일해 teammate 모델이 같은 관찰 shape 을 본다.
-    delegate 서브에이전트의 ask 는 종전대로 사용자에게 간다 (handler 없음).
+    종전엔 ``handler`` 인자로 **블로킹 ask 라우팅**(teammate P2)을 받았다 —
+    worker 가 질문을 main mailbox 에 올리고 답을 블록 대기하는 경로. 상주
+    에이전트의 ask 가 v9.12 에서 비동기 질문 포트로 옮겨가면서 실값을 주는
+    생산자가 사라졌고, 그 뒤로 분기는 **테스트만 붙들고 있었다**(협력자를
+    직접 만들어 검사하니 도달 불가를 아무도 못 봤다 — 이 저장소의 배선
+    누락과 정확히 같은 모양). C3 에서 인자째 제거한다.
     """
     import re
 
@@ -1191,15 +1191,6 @@ def _handle_ask(questions: list[str], handler=None) -> str:
     # Strip existing leading "1.", "2)", "- ", etc. so our numbering isn't doubled
     def _strip_leading_marker(q: str) -> str:
         return re.sub(r"^\s*(?:\d+[.):]|[-*•])\s+", "", q)
-
-    if handler is not None:
-        cleaned = [_strip_leading_marker(q) for q in questions]
-        try:
-            answer = handler("\n".join(cleaned))
-        except Exception:
-            answer = "(no response)"
-        q_part = "\n".join(f"Q: {q}" for q in cleaned)
-        return f"{q_part}\nA: {answer}"
 
     # Respect nested depth prefix (so ask inside skill/delegate aligns with │)
     renderer = get_renderer()

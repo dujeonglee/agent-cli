@@ -456,15 +456,19 @@ class LoopPorts:
 - **`monitor` 에 `requires_handler` 를 달지 않는다**: 오늘 선언이 없어 모든 루프에
   붙고 전역 `_MAIN` 으로 동작한다. 달면 스킬·delegate 가 도구를 **잃는다**.
 
-### 4.3 `NotWired` 는 빌더 안에서만 산다
+### 4.3 사유는 `unwired` 맵에만 산다
 
 2판은 `NotWired` 가 `is None` 을 "통과한다" 고 썼다. **죽는다** — 모든 `is None`
 가드 다음 줄이 호출/속성 접근이다(`prompt.py:50`, `core.py:674/683/718/743`,
 `dispatch.py:681` …). 특히 `stop_event=NotWired` 면 `core.py:517` 의
 `if self.stop_event:` 가 `.set()` 을 건너뛰어 **Ctrl+C 가 조용히 죽는다**.
 
-→ `NotWired(why)` 는 **호스트 빌더 안에서만**, `LoopPorts` 에는 실객체 or `None`
-+ `unwired` 사유 맵. 기존 `is None` 가드 40여 곳이 **한 글자도 안 바뀐다.**
+→ 사유는 **`unwired` 맵에만** 싣고 `LoopPorts` 필드에는 실객체 또는 `None` 을
+담는다. 기존 `is None` 가드 40여 곳이 **한 글자도 안 바뀐다.**
+
+(전 판들이 여기 `NotWired(why)` 래퍼 클래스를 뒀는데, C3 구현에서 **없앴다** —
+사유가 맵으로 가면 래퍼가 런타임에 하는 일이 없다. 값으로 들고 다녀 봐야
+`is None` 을 통과해 죽을 위험만 남는다.)
 
 사유 문자열의 한계는 인정한다 — 2판이 `mcp_manager` 에 **거짓 사유**를 적었고
 (MCP 도구는 전역 `TOOLS` 에 등록되므로 스킬·서브에이전트도 호출한다,

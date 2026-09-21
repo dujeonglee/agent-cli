@@ -62,6 +62,11 @@ class LoopPorts:
     #: 사유는 **문서**지 검증물이 아니다 — 문자열의 진위는 아무도 못
     #: 잡는다(설계 2판이 `mcp_manager` 에 거짓 사유를 적었고 통과했다).
     #: 강제되는 것은 "사유가 있다" 뿐이다.
+    #:
+    #: **빌더의 의도**를 적는 자리지 런타임 존재 여부가 아니다. 예컨대
+    #: `mcp_manager` 는 MCP 서버가 설정되지 않은 세션에서 `None` 이지만
+    #: 그건 미연결이 아니라 "연결됐고 저쪽에 아무도 없음" 이다 — 사유를
+    #: 적지 않는 것이 맞다.
     unwired: Mapping[str, str] = field(default_factory=dict)
 
     #: ``Tool.requires_handler`` 가 보지 **않는** 필드 — 자원이 아니다.
