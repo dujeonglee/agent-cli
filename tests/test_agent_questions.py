@@ -815,13 +815,20 @@ class TestSurfaces:
         "내가 답을 안 해서 끝났구나"를 알린다."""
         reg = mkreg()
 
+        ran = []
+
         def runner(query, ctx, **kw):
             reg.register_question(b, "user:bob", "덮어쓸까요?")
+            ran.append(query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
         reg._runner = runner
         b = spawn_idle(reg)
         reg.request(b, "일감", author="user:bob")
+        # 러너가 **돌았는지**를 먼저 기다린다 — `state == "idle"` 만 보면
+        # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
+        # 시 실제로 깨졌다). 이 파일의 공통 함정.
+        assert wait_until(lambda: ran)
         assert wait_until(lambda: reg.get(b).state == "idle")
         out = [
             c for c in renderer.named("agent_message") if c[1].get("direction") == "out"
@@ -837,14 +844,21 @@ class TestSurfaces:
         회신을 만든다. 요청자는 질문을 이미 받았으므로 깜깜하지 않다."""
         reg = mkreg()
 
+        ran = []
+
         def runner(query, ctx, **kw):
             if "일감" in query:
                 reg.register_question(b, "main", "어느 쪽인가요?")
+            ran.append(query)
             return _FakeLoopResult(output="부분 결과"), 0.01
 
         reg._runner = runner
         b = spawn_idle(reg)
         reg.request(b, "일감")
+        # 러너가 **돌았는지**를 먼저 기다린다 — `state == "idle"` 만 보면
+        # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
+        # 시 실제로 깨졌다). 이 파일의 공통 함정.
+        assert wait_until(lambda: ran)
         assert wait_until(lambda: reg.get(b).state == "idle")
         kinds = [r["kind"] for r in reg.drain_replies()]
         assert "question" in kinds
@@ -1309,13 +1323,20 @@ class TestReplyFreshness:
         막으면 사용자가 에이전트가 한 일을 못 본다."""
         reg = mkreg()
 
+        ran = []
+
         def runner(query, ctx, **kw):
             reg.register_question(b, "user:bob", "덮어쓸까요?")
+            ran.append(query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
         reg._runner = runner
         b = spawn_idle(reg)
         reg.request(b, "일감", author="user:bob")
+        # 러너가 **돌았는지**를 먼저 기다린다 — `state == "idle"` 만 보면
+        # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
+        # 시 실제로 깨졌다). 이 파일의 공통 함정.
+        assert wait_until(lambda: ran)
         assert wait_until(lambda: reg.get(b).state == "idle")
         outs = [
             c[1]
