@@ -608,8 +608,13 @@ class TestOpenRequestsHoldTheLoop:
         assert out is not _CONTINUE, "끝낼 수 있는데 런을 붙들었다"
         assert out.output == "둘 다"
 
-    def test_result_is_delivered_before_the_nag(self):
-        """붙잡기가 아니다 — 답은 독촉 **전에** history 에 들어간다."""
+    def test_the_final_is_recorded_once(self):
+        """독촉 경로에서 final 이 history 에 **한 번만** 들어간다.
+
+        `_intervene` 의 `_append_observation` 이 이미 이 턴의 assistant
+        레코드를 저장한다 — 여기서 터미널 레코드를 또 넣으면 같은 final 이
+        두 번 박히고 웹 타임라인에도 카드가 두 장 뜬다(라이브 실측).
+        """
         loop = _with_ctx(
             [
                 {"id": "1", "nickname": "Bob", "text": "a"},
@@ -617,13 +622,31 @@ class TestOpenRequestsHoldTheLoop:
             ]
         )
         self._complete(loop, result="첫째 완료", answers=["1"])
-        recs = [
-            m
-            for m in loop.ctx.get_raw_messages()
-            if m.get("role") == "assistant" and m.get("ops")
+        finals = [
+            m for m in loop.ctx.get_raw_messages() if m.get("role") == "assistant"
         ]
-        assert recs, "최종답이 기록되지 않았다"
-        assert recs[-1]["ops"][0]["action_input"]["result"] == "첫째 완료"
+        assert len(finals) == 1, f"이 턴의 assistant 레코드가 {len(finals)}개다"
+
+    def test_result_is_delivered_before_the_nag(self):
+        """붙잡기가 아니다 — 답은 독촉 **전에** 렌더된다."""
+        loop = _with_ctx(
+            [
+                {"id": "1", "nickname": "Bob", "text": "a"},
+                {"id": "2", "nickname": "Ann", "text": "b"},
+            ]
+        )
+        order = []
+        import agent_cli.loop.dispatch as D
+
+        real = D.render_step
+        D.render_step = lambda kind, text, *a, **k: order.append((kind, text))
+        loop._dispatch._intervene = lambda *a, **k: order.append(("nag", ""))
+        try:
+            self._complete(loop, result="첫째 완료", answers=["1"])
+        finally:
+            D.render_step = real
+        assert order[0] == ("final", "첫째 완료"), f"답이 먼저 안 나갔다: {order}"
+        assert ("nag", "") in order, "독촉이 없었다"
 
     def test_nag_names_the_open_ids_and_is_english(self):
         # 요청 본문은 사용자 원문이라 한글이 정당하게 섞인다 — 하네스 문구만

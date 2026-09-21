@@ -652,6 +652,14 @@ class TurnDispatcher:
             answer = self._with_unanswered_notice(claimed, still_open, answer)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
+        render_step("final", answer, self.state.turn)
+        if nagging:
+            # 기록은 여기서 하지 않는다 — `_intervene` 의 `_append_observation`
+            # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과
+            # 함께 저장한다. 둘 다 넣으면 history 에 같은 final 이 두 번 들어가고
+            # 웹 타임라인에도 같은 카드가 두 장 뜬다(라이브 실측).
+            return self._nag_open_requests(llm_text, still_open, outcome)
+
         if self.ctx:
             self.ctx.add(
                 self.cfg.wire_format.serialize_terminal_for_history(
@@ -660,10 +668,6 @@ class TurnDispatcher:
                     answers=None if claimed is None else sorted(claimed),
                 )
             )
-        render_step("final", answer, self.state.turn)
-
-        if nagging:
-            return self._nag_open_requests(llm_text, still_open, outcome)
         return ToolResult(True, output=answer)
 
     def _require_answers(self, llm_text: str, op, outcome: dict):
