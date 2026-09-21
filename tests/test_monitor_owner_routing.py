@@ -33,7 +33,7 @@ def reg():
     r.stop()
 
 
-def _add(reg, tmp_path, owner, *, name="w.log"):
+def _add(reg, tmp_path, owner, *, name="w.log", **kw):
     from agent_cli.monitor.conditions import build
 
     log = tmp_path / name
@@ -42,6 +42,7 @@ def _add(reg, tmp_path, owner, *, name="w.log"):
         build({"type": "match", "file": str(log), "pattern": "X"}),
         owner=owner,
         deadline_s=3600,
+        **kw,
     )
     reg.tick(__import__("time").time())
     return mon, log
@@ -442,7 +443,8 @@ class TestTeardown:
 
 
 class TestDeliveryFailureIsVisible:
-    def test_failure_is_logged_not_silent(self, reg, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("once", [True, False], ids=["retire", "flush"])
+    def test_failure_is_logged_not_silent(self, reg, tmp_path, monkeypatch, once):
         """배달 실패는 **도달 불가가 목표**인 경로다 — 조기 드롭 둘과 배달
         직전 재확인이 막는다. 그래서 UI 통지를 만들지 않는다(도달 불가
         분기를 사용자에게 남기지 않는다). 대신 로그는 남겨야 한다 —
@@ -453,7 +455,9 @@ class TestDeliveryFailureIsVisible:
             "agent_cli.verbose.debug_log", lambda msg, *a, **k: seen.append(msg)
         )
         reg.deliver = RecordingDelivery(error="배달 실패")
-        _add(reg, tmp_path, "agent:k1")
+        # 발화 경로가 둘이다 — `once=True` 는 `_retire`, `False` 는 `_flush`.
+        # 한쪽만 보면 다른 쪽의 로그가 없어도 통과한다(실제로 그랬다).
+        _add(reg, tmp_path, "agent:k1", once=once)
         (tmp_path / "w.log").write_text("X\n")
         import time
 
