@@ -54,8 +54,8 @@ _SHUTDOWN = object()
 # 사람-직접 요청이 한 턴에 여러 건 배치될 때(C-1) 앞에 붙는 안내 — main 의
 # QUEUED_REQUEST_NOTICE 대응(에이전트가 최신 것만 답하고 나머지를 흘리지 않게).
 _AGENT_BATCH_NOTICE = (
-    "(여러 메시지가 함께 도착했습니다 — 아래 요청/메시지 전부에 응답하세요. "
-    "최신 것만 답하고 이전 것을 건너뛰지 마세요.)"
+    "(Several messages arrived together — respond to ALL of the requests "
+    "below. Do not answer only the latest one and skip the earlier ones.)"
 )
 
 _DEFAULT_MAX_AGENTS = 10
@@ -2075,8 +2075,8 @@ class AgentRegistry:
             return output
         lines = "\n".join(f'   [{q.id}] "{q.text}"' for q in human_open)
         return (
-            f"{output}\n\n⏳ 답을 받지 못한 질문 {len(human_open)}건 — "
-            f"답하면 이어서 진행합니다:\n{lines}"
+            f"{output}\n\n⏳ {len(human_open)} question(s) still unanswered — "
+            f"answering lets this continue:\n{lines}"
         )
 
     def _handle_request(self, tm: AgentInstance, item: dict, renderer, disp) -> None:

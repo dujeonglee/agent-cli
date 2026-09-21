@@ -1390,7 +1390,7 @@ class TestHumanInterventionRouting:
         batched = runner.seen[1]
         assert "[user:alice]: msg one" in batched
         assert "[user:bob]: msg two" in batched
-        assert "함께 도착" in batched  # _AGENT_BATCH_NOTICE
+        assert "arrived together" in batched  # _AGENT_BATCH_NOTICE
         assert not reg.has_pending_replies()  # 전부 user:* → 창만
         assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
         reg.shutdown_all()

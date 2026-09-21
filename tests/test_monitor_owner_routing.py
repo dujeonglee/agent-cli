@@ -102,7 +102,7 @@ class TestToolKnowsItsAddress:
             },
             ctx=RunContext(),
         )
-        assert not res.success and "배달 배선" in res.error
+        assert not res.success and "delivery is not wired" in res.error
 
 
 # ── ② 주소가 중첩 루프로 상속된다 ──────────────────────

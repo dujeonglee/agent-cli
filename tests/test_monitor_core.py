@@ -160,7 +160,7 @@ class TestSilenceCondition:
         reg.tick(time.time())
         assert not reg.deliver.calls
         reg.tick(time.time() + 61)
-        assert "변화 없음" in "".join(reg.deliver.take())
+        assert "no change for" in "".join(reg.deliver.take())
         assert reg.get(mon.id).retired  # once=True 기본
 
     def test_writing_keeps_it_quiet(self, reg, tmp_path):
@@ -223,7 +223,7 @@ class TestCommandCondition:
         _add(reg, {"type": "command", "command": "sleep 5", "every": "1m"})
         reg.tick(time.time())
         out = "".join(reg.deliver.take())  # drain 은 1회성 — 두 번 부르면 둘째는 빈다
-        assert "끝나지 않음" in out, out
+        assert "did not finish" in out, out
 
 
 # ── 수명: 해제 세 경로가 전부 보고한다 ──────────────────────
@@ -241,7 +241,7 @@ class TestRetirementAlwaysReports:
         log.write_text("X\n")
         reg.tick(time.time())
         out = "".join(reg.deliver.take())
-        assert "은퇴" in out and reg.get(mon.id).retired
+        assert "retired" in out and reg.get(mon.id).retired
 
     def test_deadline_expiry_is_reported(self, reg, tmp_path):
         log = tmp_path / "d.log"
@@ -253,7 +253,7 @@ class TestRetirementAlwaysReports:
         assert not reg.deliver.calls
         reg.tick(time.time() + 61)
         out = "".join(reg.deliver.take())
-        assert "만료" in out, f"만료가 조용히 지나갔다: {out!r}"
+        assert "expired" in out, f"만료가 조용히 지나갔다: {out!r}"
         assert not reg.get(mon.id).alive
 
     def test_max_wakes_exhaustion_is_reported(self, reg, tmp_path, monkeypatch):
@@ -270,7 +270,7 @@ class TestRetirementAlwaysReports:
             if not reg.get(mon.id).alive:
                 break
         out = "".join(reg.deliver.take())
-        assert "상한" in out and not reg.get(mon.id).alive
+        assert "cap" in out and not reg.get(mon.id).alive
 
     def test_deadline_is_clamped_not_rejected(self, reg, tmp_path):
         """값이 크다고 거부하면 모델이 '얼마가 맞는지' 탐색하느라 턴을 태운다."""
@@ -403,7 +403,7 @@ class TestReportFormat:
 
     def test_caps_at_five_lines_with_a_remainder_note(self, reg, tmp_path):
         rep = self._report(reg, tmp_path, [f"X{i}" for i in range(9)])
-        assert "… 4건 더" in rep
+        assert "… 4 more" in rep
         assert rep.count("X") <= 9  # 머리줄 카운트 포함해도 전부 싣지 않는다
 
     def test_truncates_long_lines(self, reg, tmp_path):
@@ -413,7 +413,7 @@ class TestReportFormat:
     def test_header_carries_id_type_and_elapsed(self, reg, tmp_path):
         rep = self._report(reg, tmp_path, ["X hit"])
         head = rep.splitlines()[0]
-        assert "mon-" in head and "match" in head and "경과" in head
+        assert "mon-" in head and "match" in head and "ago" in head
 
     def test_report_stays_far_under_the_oversized_cap(self, reg, tmp_path):
         """5줄 × 500자 ≈ 2.5KB — 과대 출력 캡에 **닿는다면 상한이 고장난 것**."""

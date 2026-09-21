@@ -827,7 +827,7 @@ class TestSurfaces:
             c for c in renderer.named("agent_message") if c[1].get("direction") == "out"
         ][-1][1]["text"]
         assert "정리 완료" in out
-        assert "답을 받지 못한 질문 1건" in out
+        assert "1 question(s) still unanswered" in out
         assert "덮어쓸까요?" in out
 
     def test_reply_is_withheld_while_this_runs_question_is_open(
@@ -1539,7 +1539,7 @@ class TestUncoveredSurfaces:
             for c in renderer.named("agent_message")
             if c[1].get("direction") == "out" and "둘 다 처리" in str(c[1].get("text"))
         ][-1]
-        assert "답을 받지 못한 질문 1건" in out["text"]
+        assert "1 question(s) still unanswered" in out["text"]
         assert "덮어쓸까요?" in out["text"]
 
     def test_redelivery_does_not_duplicate_the_window_entry(

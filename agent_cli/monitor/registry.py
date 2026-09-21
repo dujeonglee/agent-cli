@@ -112,10 +112,12 @@ def _format_report(mon: Monitor, lines: list[str], *, note: str = "") -> str:
     h, rem = divmod(elapsed, 3600)
     m = rem // 60
     ago = f"{h}h {m}m" if h else f"{m}m"
-    head = f"🔔 monitor {mon.id} ({mon.cond.describe()})   {ago} 경과 · {len(lines)}건"
+    head = (
+        f"🔔 monitor {mon.id} ({mon.cond.describe()})   {ago} ago · {len(lines)} hit(s)"
+    )
     body = [ln[:REPORT_MAX_LINE_CHARS] for ln in lines[:REPORT_MAX_LINES]]
     if len(lines) > REPORT_MAX_LINES:
-        body.append(f"… {len(lines) - REPORT_MAX_LINES}건 더")
+        body.append(f"… {len(lines) - REPORT_MAX_LINES} more")
     if note:
         body.append(note)
     return "\n".join([head, *(f"  {ln}" for ln in body)])
@@ -165,9 +167,9 @@ class MonitorRegistry:
         `deliver` 를 꽂는다(docs/wiring §3.3).
         """
         if self.deliver is None:
-            raise MonitorUnavailable("monitor: 배달 배선 없음 (내부 오류)")
+            raise MonitorUnavailable("monitor: delivery is not wired (internal error)")
         if self.closed:
-            raise MonitorUnavailable("monitor: 세션이 종료 중이다")
+            raise MonitorUnavailable("monitor: the session is shutting down")
         mon = Monitor(
             id=f"mon-{uuid.uuid4().hex[:6]}",
             cond=cond,
@@ -194,7 +196,7 @@ class MonitorRegistry:
                 # 중(부작용 실행 중)이면 이미 `alive == False` 라, 거기서
                 # 건너뛰면 방금 지운 감시의 은퇴 통지가 그대로 나간다.
                 if mon.alive:
-                    mon.retired = "삭제됨"
+                    mon.retired = "deleted"
                 mon.dropped = True
         if mon is not None:
             self._save()
@@ -241,7 +243,7 @@ class MonitorRegistry:
                 # 잡았다). 이미 배달을 마친 모니터에 `dropped` 를 세우는
                 # 것은 무해하다.
                 if mon.alive:
-                    mon.retired = f"소유자 종료 ({addr})"
+                    mon.retired = f"owner gone ({addr})"
                     n += 1
                 mon.dropped = True
         return n
@@ -263,7 +265,7 @@ class MonitorRegistry:
                 return ""
             fn = self.deliver
         if fn is None:
-            return "배달 배선 없음"
+            return "no delivery wiring"
         return fn(
             mon.owner,
             mail={
@@ -313,7 +315,7 @@ class MonitorRegistry:
             live = [m for m in self._monitors.values() if m.alive]
         for mon in live:
             if now >= mon.deadline_at:
-                self._retire(mon, "deadline 만료", now)
+                self._retire(mon, "deadline expired", now)
                 continue
             try:
                 hit: Match | None = mon.cond.check(mon.state, now=now)
@@ -324,7 +326,7 @@ class MonitorRegistry:
             mon.matches += len(hit.lines) or 1
             mon._buf.extend(hit.lines)
             if mon.once:
-                self._retire(mon, "1회 발화 — 모니터 은퇴", now, flush=True)
+                self._retire(mon, "fired once — monitor retired", now, flush=True)
             elif now - mon._last_report >= MIN_INTERVAL_S:
                 self._flush(mon, now)
 
@@ -351,7 +353,7 @@ class MonitorRegistry:
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return f"↳ run {mon.run!r}: 타임아웃"
+            return f"↳ run {mon.run!r}: timed out"
         tail = proc.stdout.decode("utf-8", errors="replace").strip().splitlines()
         tail_s = f" · {tail[-1][:200]}" if tail else ""
         return f"↳ run {mon.run!r}: exit {proc.returncode}{tail_s}"
@@ -380,7 +382,7 @@ class MonitorRegistry:
             with self._lock:
                 self._inflight -= 1
         if mon.alive and mon.wakes >= MAX_WAKES:
-            self._retire(mon, f"알림 상한({MAX_WAKES}) 도달 — 해제됨", now)
+            self._retire(mon, f"report cap ({MAX_WAKES}) reached — released", now)
 
     def _retire(
         self, mon: Monitor, why: str, now: float, *, flush: bool = False
@@ -409,7 +411,7 @@ class MonitorRegistry:
                     mon, lines, note=" · ".join(x for x in (side, why) if x)
                 )
             else:
-                report = _format_report(mon, [f"({why}) 누적 매치 {mon.matches}건"])
+                report = _format_report(mon, [f"({why}) {mon.matches} match(es) total"])
             mon.wakes += 1
             err = self._send(mon, report, retiring=True)
             if err:

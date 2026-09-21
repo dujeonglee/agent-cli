@@ -207,8 +207,8 @@ class SilenceCondition(Condition):
         if now - last < self.seconds:
             return None
         quiet = int(now - last)
-        where = self.file if stt is not None else f"{self.file} (아직 없음)"
-        return Match([f"{where} — {quiet}s 동안 변화 없음"])
+        where = self.file if stt is not None else f"{self.file} (not created yet)"
+        return Match([f"{where} — no change for {quiet}s"])
 
 
 @register
@@ -261,8 +261,8 @@ class CommandCondition(Condition):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return Match([f"(명령이 {COMMAND_TIMEOUT_S}s 안에 끝나지 않음)"])
+            return Match([f"(command did not finish within {COMMAND_TIMEOUT_S}s)"])
         if proc.returncode != 0:
             return None
         out = proc.stdout.decode("utf-8", errors="replace").strip()
-        return Match(out.splitlines() if out else ["(exit 0, 출력 없음)"])
+        return Match(out.splitlines() if out else ["(exit 0, no output)"])
