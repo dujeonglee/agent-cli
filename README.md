@@ -910,6 +910,14 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 {"action": "complete", "action_input": {"result": "작업이 완료되었습니다. 파일을 생성했습니다."}}
 ```
 
+**요청 회계 — `answers` (v9.16.0)**: 웹 세션에서는 런 하나가 여러 사용자 요청을 합칠 수 있습니다(런 도중 도착한 메시지는 턴 경계에서 주입). 그러면 `complete` 하나가 나가는데 **무엇에 답한 것인지** 아무도 몰랐습니다. 이제 각 요청은 id 를 갖고 프롬프트 꼬리의 `## Open Requests` 로 매 턴 보이며, `complete` 은 답한 id 를 `answers` 로 밝힙니다.
+
+```json
+{"action": "complete", "action_input": {"result": "A완료 / B완료", "answers": ["1", "2"]}}
+```
+
+요청이 둘 이상인 런에서 `answers` 없이 완료하려 하면 **런당 한 번** 되돌려 다시 요구합니다(결과를 붙잡는 것이 아니라 같은 산출물의 형식만 고치게 하는 것이라, 완료가 다른 요청을 기다리지 않습니다). 끝내 밝히지 않으면 그대로 내보내되 최종 답변 말미에 `📋 … is undeclared` 각주로 남기고, 모델이 스스로 "답하지 않았다"고 밝힌 요청은 `⏳ … were not answered` 로 적습니다. 요청이 하나인 런은 결과가 곧 그 답이라 조용합니다.
+
 **종료는 명시적 `complete` 만 (v8.4.0)**: 모델이 도구 호출 없이 산문만 내면 — 그것이 최종답변처럼 보여도 — 완료로 수용하지 않고 재시도 넛지를 보냅니다. 넛지 문구가 "방금 산문이 최종답변이었다면 그 내용을 `complete` 의 result 로 재방출하라"고 직접 안내해 한 턴 안에 수렴합니다. (v7.14 의 산문-완료 자동 수용은 실사용에서 "Now let me write the plan document:" 같은 **전환 서술을 스킬 결과로 오인 종료**하는 반례가 발견되어 제거 — 완료 의도 추론은 본질적으로 불안정하고, 조용히 틀립니다.)
 
 ### read_context — 세션 이력 조회
@@ -1297,6 +1305,10 @@ worm_game.html                                                          14자
 ```
 ── session state (context only — not part of the conversation) ──
 context: ~118,400 / 140,000 tokens (85%) · turn 23/40
+
+## Open Requests
+   [2] (Ann) "REQ-B: 이건 REQ-A 와 별개다"
+   [3] (Bob) "로그도 같이 봐줘"
 
 ## Live Agents
 - `agt-ui` (code-writer · ui) [busy · 2 queued] — Writes UI code.

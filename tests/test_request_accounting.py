@@ -395,3 +395,87 @@ class TestAnswersAreRequired:
             loop._dispatch._require_answers("raw", _op(result="r", answers=[]), {})
             is not None
         )
+
+
+class TestThroughRunLoop:
+    """**실제 `run_loop` 로 한 번은 지나가 봐야 한다.**
+
+    위의 전부는 `AgentLoop` 를 직접 세우고 디스패처 메서드를 부른다. 그게
+    편한 만큼, 배선이 끊겨도 초록으로 남는다 — 이 저장소가 한 번 당한 바로
+    그 클래스다(docs/wiring/DESIGN.md).
+
+    여기서는 라이브 웹과 같은 순서로 전 경로를 태운다: 스타터가 id 를 갖고
+    들어오고, 턴1 경계엔 큐가 비었다가, 턴2 경계에서 두 번째 요청이 드레인
+    포트로 들어오고, 그 턴의 `complete` 이 `answers` 없이 나간다. 되돌림이
+    실제로 LLM 을 한 번 더 부르는지까지 본다.
+    """
+
+    @staticmethod
+    def _provider(*contents):
+        from agent_cli.providers.base import LLMResponse
+
+        p = MagicMock()
+        p.call.side_effect = [LLMResponse(content=c) for c in contents]
+        return p
+
+    @staticmethod
+    def _env(ops):
+        import json
+
+        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+
+    def _run(self, provider, *, pending, request_id="1", **kw):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+
+        queue = list(pending)
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        return run_loop(
+            query="REQ-A",
+            query_author="Bob",
+            query_request_id=request_id,
+            provider=provider,
+            capabilities=ModelCapabilities(
+                context_window=32768,
+                max_output_tokens=4096,
+                supports_thinking=False,
+            ),
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+            wire_format="json_fc",
+            ports=make_ports(
+                owner="main",
+                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+            ),
+            **kw,
+        )
+
+    def test_mid_run_drain_bounces_a_bare_complete(self):
+        """라이브(51awzs)에서 안 튀던 자리 — 끝까지 태워서 못박는다."""
+        provider = self._provider(
+            self._env([{"action": "shell", "shell_command": "echo A"}]),
+            self._env([{"action": "complete", "result": "A/B done"}]),
+            self._env(
+                [{"action": "complete", "result": "A/B done", "answers": ["1", "2"]}]
+            ),
+        )
+        result = self._run(
+            provider,
+            # 턴1 경계엔 비었고, 턴2 경계에서 도착한다 (라이브와 같은 순서).
+            pending=[None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}],
+        )
+        assert provider.call.call_count == 3, (
+            "되돌림이 LLM 을 다시 부르지 않았다 — 맨 complete 이 통과했다"
+        )
+        assert result.output.strip() == "A/B done", result.output
+
+    def test_starter_alone_is_not_bounced_through_the_loop(self):
+        """단건 런은 턴을 더 쓰지 않는다 (실측 90%)."""
+        provider = self._provider(self._env([{"action": "complete", "result": "done"}]))
+        result = self._run(provider, pending=[])
+        assert provider.call.call_count == 1
+        assert "undeclared" not in result.output
