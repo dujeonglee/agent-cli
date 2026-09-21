@@ -685,27 +685,37 @@ class TurnDispatcher:
                 # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
                 claimed = {raw.strip()}
         if claimed is None:
-            # **생략은 "전부 주장" 이 아니다** (v9.16.0). 요청이 둘 이상이면
-            # 꼬리가 매 턴 `answers` 를 요구하므로, 그래도 안 실은 것은
-            # "어느 것에 답했는지 밝히지 않음" 이다 — 조용히 전부 답한
-            # 것으로 쳐 주면 정작 잡으려던 실패(하나만 답하고 넘어감)가
-            # 영영 안 보인다.
+            # **생략은 "전부 답함" 도 "전부 미답" 도 아니다 — 모르는 것이다.**
             #
-            # 요청이 하나인 런(실측 90%)은 여기 오지 않는다 — 위에서
-            # `pending` 이 1건이면 회계 자체를 하지 않는다.
-            claimed = set()
+            # 라이브(xrnway)에서 모델은 꼬리가 매 턴 요구하는데도 `answers`
+            # 를 안 실었고, 실제로는 **둘 다 답했다**. 그때 "미답" 이라고
+            # 쓰면 하네스가 거짓을 단언한다 — 종전의 조용한 관용보다 나쁘다.
+            # 그렇다고 전부 답한 것으로 쳐 주면 정작 잡으려던 실패(하나만
+            # 답하고 넘어감)가 영영 안 보인다.
+            #
+            # 그래서 아는 것만 말한다: "어느 것에 답했는지 밝히지 않았다".
+            # 판단은 사람이 한다 — 자기가 뭘 물었는지 아니까 실제로 구별할
+            # 수 있는 유일한 주체다.
+            return (
+                f"{answer}\n\n📋 This run merged {len(pending)} requests, but "
+                "`complete` came without `answers` so which ones were addressed "
+                f"is undeclared. Check each:\n{self._request_lines(pending)}"
+            )
         missed = [r for r in pending if r.get("id") not in claimed]
         if not missed:
             return answer
-        lines = "\n".join(
+        return (
+            f"{answer}\n\n⏳ {len(missed)} request(s) in this run were not "
+            f"answered:\n{self._request_lines(missed)}"
+        )
+
+    @staticmethod
+    def _request_lines(requests) -> str:
+        return "\n".join(
             f"   [{r.get('id')}]"
             + (f" ({r['author']})" if r.get("author") else "")
             + f' "{(r.get("text") or "").strip()[:120]}"'
-            for r in missed
-        )
-        return (
-            f"{answer}\n\n⏳ {len(missed)} request(s) in this run were not "
-            f"answered:\n{lines}"
+            for r in requests
         )
 
     def _op_ask(self, llm_text: str, turn, op, accumulate):

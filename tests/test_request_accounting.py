@@ -116,22 +116,27 @@ class TestClaims:
         assert _notice(loop, result="결과") == "결과"
         assert _notice(loop, result="결과", answers=[]) == "결과"
 
-    def test_omitting_answers_claims_nothing(self):
-        """**생략은 "전부 답함" 이 아니다** (v9.16.0).
+    def test_omitting_answers_is_reported_as_undeclared_not_unanswered(self):
+        """**생략은 "미답" 이 아니라 "미신고" 다.**
 
-        종전엔 하위호환을 위해 생략을 "전부 주장" 으로 쳤는데, 그러면 정작
-        잡으려던 실패(하나만 답하고 넘어감)가 영영 안 보인다 — 요청을 흘린
-        모델이 `answers` 를 실을 리도 없기 때문이다. 이제 꼬리가 매 턴
-        요구하므로, 그래도 생략한 것은 "밝히지 않음" 으로 읽는다.
+        라이브(xrnway) 실측: 모델은 꼬리가 매 턴 요구하는데도 `answers` 를
+        안 실었고, **실제로는 둘 다 답했다**. 그때 "answered: none" 이라고
+        쓰면 하네스가 **거짓을 단언**한다 — 조용한 관용보다 나쁘다.
+        그렇다고 전부 답한 것으로 쳐 주면 잡으려던 실패가 안 보인다.
+        아는 것만 적는다.
         """
         loop = _drain(
             [
-                {"id": "r1", "nickname": "", "text": "a"},
-                {"id": "r2", "nickname": "", "text": "b"},
+                {"id": "1", "nickname": "Bob", "text": "a"},
+                {"id": "2", "nickname": "Ann", "text": "b"},
             ]
         )
         out = _notice(loop, result="결과")
-        assert "r1" in out and "r2" in out, "생략이 조용히 통과했다"
+        assert "[1]" in out and "[2]" in out, "무엇이 미신고인지 안 보인다"
+        assert "undeclared" in out, "미신고를 미답으로 단언하면 안 된다"
+        assert "were not answered" not in out, (
+            "모델이 실제로 답했을 수 있다 — 단언하면 거짓이 된다"
+        )
 
     def test_claiming_all_leaves_no_notice(self):
         loop = _drain(
@@ -151,6 +156,9 @@ class TestClaims:
         )
         out = _notice(loop, result="결과", answers=["r1"])
         assert out.startswith("결과")
+        assert "were not answered" in out, (
+            "모델이 직접 밝힌 미답이다 — 여기서는 단언해도 된다"
+        )
         assert "r2" in out and "Ann" in out and "둘째" in out
         assert "r1" not in out, "답한 요청까지 미답으로 뜬다"
 
