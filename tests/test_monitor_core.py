@@ -346,12 +346,17 @@ class TestCoalescingAndMailbox:
         assert seen == [True], "배달 중인데 유휴로 보였다"
         assert not reg.has_active_work()
 
-    def test_counter_survives_a_raising_delivery(self, reg, tmp_path):
+    @pytest.mark.parametrize("once", [True, False], ids=["retire", "flush"])
+    def test_counter_survives_a_raising_delivery(self, reg, tmp_path, once):
         """배달이 터져도 카운터가 새면 세션이 **영영** 안 끝난다.
 
         `_loop` 는 `tick` 의 예외를 삼킨다 — 한 번만 새도 `has_active_work`
         가 영구히 참이 되어 `_quiet()` 이 참이 안 된다. 2판 설계의 누수가
         카운터만 바꿔 되살아난 자리다.
+
+        **발화 경로가 둘**이라 둘 다 돈다: `once=True` 는 `_retire`,
+        `once=False` 는 `_flush`. 한쪽만 보면 다른 쪽의 `finally` 가 없어도
+        통과한다(실제로 그랬다 — 사보타주가 잡았다).
         """
 
         def boom(addr, **kw):
@@ -360,12 +365,14 @@ class TestCoalescingAndMailbox:
         reg.deliver = boom
         log = tmp_path / "b.log"
         log.write_text("")
-        _add(reg, {"type": "match", "file": str(log), "pattern": "X"})
+        _add(reg, {"type": "match", "file": str(log), "pattern": "X"}, once=once)
         reg.tick(time.time())
         log.write_text("X\n")
         with pytest.raises(RuntimeError):
             reg.tick(time.time())
-        assert not reg.has_active_work(), "in-flight 카운터가 샜다"
+        # 카운터를 직접 본다 — `once=False` 면 감시가 **살아남는 것이 정상**
+        # 이라 `has_active_work()` 로는 누수와 생존이 구별되지 않는다.
+        assert reg._inflight == 0, "in-flight 카운터가 샜다"
 
     def test_drain_is_once(self, reg, tmp_path):
         log = tmp_path / "x.log"

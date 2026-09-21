@@ -342,3 +342,74 @@ class TestAgentRegistryIntegration:
             assert "is dead" in err, "죽어가는 에이전트가 항목을 받았다"
         finally:
             agents.shutdown_all()
+
+    def test_monitor_added_while_dying_is_still_dropped(self, reg, tmp_path):
+        """워커 `finally` 의 정본 드롭이 **실제로 지키는 창**.
+
+        `kill()` 의 조기 드롭은 `stop_event.set()` 앞에서 돈다. 그런데 busy
+        에이전트는 stop 뒤에도 현재 턴을 마저 돌고(`join` 은 best-effort),
+        그 턴에서 `monitor add` 를 부를 수 있다 — **드롭 뒤에** 생긴
+        고아다. 조기 드롭만 있으면 그 감시가 죽은 소유자를 물고 남는다.
+        """
+        import threading
+
+        from tests.test_agents_live import make_registry, make_runner, wait_until
+
+        gate = threading.Event()
+        agents = make_registry(tmp_path, runner=make_runner(block=gate))
+        agents.monitors = reg
+        reg.deliver = agents.deliver
+        try:
+            key, err = agents.spawn()
+            assert not err, err
+            agents.request(key, "오래 걸리는 일감")
+            assert wait_until(lambda: agents.get(key).state == "busy")
+
+            agents.kill(key)  # 조기 드롭 + stop_event — 워커는 아직 돈다
+            # 죽어가는 턴이 감시를 하나 더 건다.
+            _add(reg, tmp_path, f"agent:{key}", name="late.log")
+            assert reg.list_all(), "사전 조건: 고아가 실제로 생겨야 한다"
+
+            gate.set()  # 턴 종료 → 워커 finally
+            assert wait_until(lambda: agents.get(key).state == "dead")
+            assert wait_until(lambda: reg.list_all() == []), (
+                "조기 드롭 뒤에 생긴 감시가 남았다 — finally 정본이 비었다"
+            )
+        finally:
+            gate.set()
+            agents.shutdown_all()
+
+
+class TestTeardown:
+    def test_teardown_stops_polling_and_closes(self, reg):
+        """종료가 폴링 스레드를 멈춰야 한다. 종전엔 `stop()` 에 **호출자가
+        하나도 없었다** — 지금까지는 아무도 안 읽는 리스트에 쌓을 뿐이라
+        무해했지만, 이제는 종료 뒤 발화가 **배달**된다.
+        """
+        from agent_cli.runtime import teardown_session
+
+        assert not reg.closed
+        teardown_session(None, None, monitors=reg)
+        assert reg.closed, "종료 뒤 등록·배달이 계속 허용된다"
+        assert reg._stop.is_set(), "폴링 스레드가 안 멈췄다"
+
+    def test_teardown_does_not_wipe_the_previous_session_notice(self, reg, tmp_path):
+        """전체 드롭이 아니라 `closed` 인 이유 — `drop_owner` 가 `delete`
+        처럼 저장하면 살아 있는 행만 쓰는 `_save` 가 정상 종료마다
+        `monitors.json` 을 비워, 다음 세션의 "이전 세션 모니터 N건" 통지가
+        조용히 사라진다(문서화된 §8 동작의 회귀).
+        """
+        import json
+
+        from agent_cli.monitor.registry import MonitorRegistry
+        from agent_cli.runtime import teardown_session
+
+        persisted = MonitorRegistry(session_dir=tmp_path)
+        persisted.stop()
+        persisted.deliver = RecordingDelivery()
+        _add(persisted, tmp_path, "main")
+        path = tmp_path / "monitors.json"
+        assert json.loads(path.read_text()), "등록이 기록되지 않았다"
+
+        teardown_session(None, None, monitors=persisted)
+        assert json.loads(path.read_text()), "종료가 이전 세션 통지를 지웠다"
