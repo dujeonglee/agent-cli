@@ -721,8 +721,7 @@ class TurnDispatcher:
         ``answers`` 부재 = 전부 주장 (종전 행동과 동일 — 하위호환).
         """
         pending = getattr(self.state, "run_requests", None)
-        if not pending or len(pending) < 2:
-            # 요청이 하나면 회계할 것이 없다 — 결과가 곧 그 요청의 답이다.
+        if not pending:
             return answer
         claimed = None
         if isinstance(op.action_input, dict):
@@ -732,23 +731,29 @@ class TurnDispatcher:
             elif isinstance(raw, str) and raw.strip():
                 # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
                 claimed = {raw.strip()}
+
         if claimed is None:
             # **생략은 "전부 답함" 도 "전부 미답" 도 아니다 — 모르는 것이다.**
             #
             # 라이브(xrnway)에서 모델은 꼬리가 매 턴 요구하는데도 `answers`
             # 를 안 실었고, 실제로는 **둘 다 답했다**. 그때 "미답" 이라고
             # 쓰면 하네스가 거짓을 단언한다 — 종전의 조용한 관용보다 나쁘다.
-            # 그렇다고 전부 답한 것으로 쳐 주면 정작 잡으려던 실패(하나만
-            # 답하고 넘어감)가 영영 안 보인다.
+            # 아는 것만 적는다: "어느 것에 답했는지 밝히지 않았다".
             #
-            # 그래서 아는 것만 말한다: "어느 것에 답했는지 밝히지 않았다".
-            # 판단은 사람이 한다 — 자기가 뭘 물었는지 아니까 실제로 구별할
-            # 수 있는 유일한 주체다.
+            # 단건 런에는 안 붙인다. 되돌리기도 안 하는 자리라(아래 이유)
+            # 이 각주가 실측 90% 의 런마다 뜨는데, 요청이 하나면 결과가 곧
+            # 그 답이라 사람이 확인할 것이 없다 — 순수 소음이다.
+            if len(pending) < 2:
+                return answer
             return (
                 f"{answer}\n\n📋 This run merged {len(pending)} requests, but "
                 "`complete` came without `answers` so which ones were addressed "
                 f"is undeclared. Check each:\n{self._request_lines(pending)}"
             )
+
+        # 여기서부터는 모델이 **직접 밝힌** 것이다. 그러니 건수와 무관하게
+        # 그대로 전한다 — 단건 런에서 `answers: []` 를 보냈다면 "이 요청은
+        # 답하지 않았다" 는 모델 자신의 진술이고, 삼키면 안 된다.
         missed = [r for r in pending if r.get("id") not in claimed]
         if not missed:
             return answer

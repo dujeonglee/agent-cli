@@ -109,12 +109,25 @@ class TestRequestsReachTheRun:
 
 
 class TestClaims:
-    def test_single_request_run_is_not_accounted(self):
-        """요청이 하나면 회계할 것이 없다 — 결과가 곧 그 요청의 답이다.
-        실측상 런의 90%가 여기고, 아무 변화도 없어야 한다."""
-        loop = _drain([{"id": "r1", "nickname": "", "text": "a"}])
+    def test_single_request_run_stays_quiet_when_undeclared(self):
+        """단건 런에서 `answers` 생략은 조용히 넘어간다.
+
+        되돌리기도 안 하는 자리라 각주가 실측 90% 런마다 뜨는데, 요청이
+        하나면 결과가 곧 그 답이라 사람이 확인할 것이 없다 — 순수 소음이다.
+        """
+        loop = _drain([{"id": "1", "nickname": "", "text": "a"}])
         assert _notice(loop, result="결과") == "결과"
-        assert _notice(loop, result="결과", answers=[]) == "결과"
+
+    def test_a_declared_miss_surfaces_even_in_a_single_request_run(self):
+        """**모델이 직접 밝힌 미답은 건수와 무관하다** (사용자 지적).
+
+        종전엔 `len(pending) < 2` 로 먼저 빠져나가, 단건 런에서 모델이
+        `answers: []` 로 "이건 안 답했다" 고 말해도 그 진술을 삼켰다.
+        생략(모름)과 신고(앎)는 다른 축이다.
+        """
+        loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
+        out = _notice(loop, result="결과", answers=[])
+        assert "were not answered" in out and "[1]" in out
 
     def test_omitting_answers_is_reported_as_undeclared_not_unanswered(self):
         """**생략은 "미답" 이 아니라 "미신고" 다.**
