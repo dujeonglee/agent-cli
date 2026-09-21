@@ -1101,6 +1101,11 @@ class TestReplyFreshness:
         b = spawn_idle(reg)
         rep = Replies(reg)
         reg.request(b, "일감")
+        # **런이 실제로 돌았는지를 먼저 기다린다.** `state == "idle"` 만 보면
+        # 워커가 아직 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다 —
+        # 그 경합으로 `box["qid"]` 가 비어 CI(3.12)가 KeyError 로 깨졌다.
+        # 시블링 테스트가 이미 쓰는 패턴이다.
+        assert wait_until(lambda: "qid" in box)
         assert wait_until(lambda: reg.get(b).state == "idle")
         assert rep.kinds() == []  # 런 1 은 회신을 안 밀었다
 
