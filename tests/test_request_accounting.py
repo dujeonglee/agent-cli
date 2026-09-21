@@ -755,3 +755,130 @@ class TestClaimsSurviveHistory:
             if m.get("role") == "assistant" and m.get("ops")
         ][-1]
         assert rec["ops"][0]["action_input"]["answers"] == ["1", "2"]
+
+
+# ── ⑧ "이 답이 무엇에 대한 답인가" ────────────────────
+
+
+class TestFinalCarriesTheRequests:
+    """최종답 렌더에 **답한 요청**을 실어 준다.
+
+    합쳐진 런에서는 카드 위치가 알려주지 않는다 — 요청 둘이 한 턴에 들어오고
+    최종답은 하나다. `complete` 의 `answers` id 를 `{id, author, text}` 로
+    풀어 렌더에 넘긴다.
+    """
+
+    @staticmethod
+    def _merged():
+        return _drain(
+            [
+                {"id": "1", "nickname": "Bob", "text": "첫째"},
+                {"id": "2", "nickname": "Ann", "text": "둘째"},
+            ]
+        )
+
+    def _final_calls(self, loop, **ai):
+        import agent_cli.loop.dispatch as D
+
+        seen = []
+        real = D.render_step
+        D.render_step = lambda kind, text, *a, **k: seen.append((kind, k))
+        loop._dispatch._intervene = lambda *a, **k: None
+        try:
+            loop._dispatch._op_complete(
+                "raw", types.SimpleNamespace(thought="t"), _op(**ai), {}
+            )
+        finally:
+            D.render_step = real
+        return [k.get("requests") for kind, k in seen if kind == "final"]
+
+    def test_claimed_requests_reach_the_renderer(self):
+        loop = self._merged()
+        (reqs,) = self._final_calls(loop, result="둘 다", answers=["1", "2"])
+        assert [r["id"] for r in reqs] == ["1", "2"]
+        assert [r["author"] for r in reqs] == ["Bob", "Ann"]
+
+    def test_only_the_claimed_ones(self):
+        loop = self._merged()
+        (reqs,) = self._final_calls(loop, result="첫째만", answers=["1"])
+        assert [r["id"] for r in reqs] == ["1"], "주장 안 한 요청까지 실렸다"
+
+    def test_captured_before_settle_removes_them(self):
+        """`_settle_requests` 가 주장분을 지우므로 **그 전에** 뽑아야 한다."""
+        loop = self._merged()
+        (reqs,) = self._final_calls(loop, result="둘 다", answers=["1", "2"])
+        assert _ids(loop) == [], "정산이 안 돌았다 — 테스트가 순서를 안 본다"
+        assert len(reqs) == 2, "정산 뒤에 뽑아서 빈 목록이 됐다"
+
+    def test_undeclared_carries_nothing(self):
+        """생략은 모름이다 — 추측해서 칩을 그리면 거짓이 된다."""
+        loop = self._merged()
+        loop._state.answers_prompted = True
+        (reqs,) = self._final_calls(loop, result="r")
+        assert not reqs
+
+    def test_unknown_id_resolves_to_nothing(self):
+        loop = self._merged()
+        (reqs,) = self._final_calls(loop, result="r", answers=["nope"])
+        assert reqs == []
+
+
+class TestRequestIdOnUserRecords:
+    """user 레코드의 `request_id` — 회계의 빠져 있던 연결고리.
+
+    id 는 `run_requests` 까지만 가고 레코드엔 안 찍혀서, 디스크의 어떤 것도
+    "이 `answers` 주장이 어느 user 턴을 가리키는지" 를 말할 수 없었다.
+    """
+
+    def test_drained_request_is_stamped(self):
+        loop = _with_ctx([{"id": "7", "nickname": "Bob", "text": "a"}])
+        rec = [m for m in loop.ctx.get_raw_messages() if m.get("role") == "user"][-1]
+        assert rec["request_id"] == "7"
+
+    def test_routed_command_is_not_stamped(self):
+        """라우팅 명령은 요청이 아니다 — 회계와 같은 문."""
+        loop = _drain(
+            [{"id": "7", "nickname": "Bob", "text": "/sh ls"}],
+            route=lambda _t: True,
+        )
+        assert _ids(loop) == []
+
+    def test_system_wake_is_not_stamped(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        loop = _drain(
+            [{"id": "7", "nickname": "", "text": "wake", "system": True}], ctx=ctx
+        )
+        rec = [m for m in loop.ctx.get_raw_messages() if m.get("role") == "user"][-1]
+        assert "request_id" not in rec, "합성 wake 가 사용자 요청으로 찍혔다"
+
+    def test_replay_resolves_ids_back_to_requests(self):
+        """resume 에서도 같은 칩이 뜬다 — id → 요청 맵을 레코드에서 재구성."""
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer.__new__(WebRenderer)
+        r._replay_requests = {}
+        seen = []
+        r.final = lambda text, turn=0, requests=None: seen.append((text, requests))
+        r._replay_requests["2"] = {"id": "2", "author": "Ann", "text": "둘째"}
+        r._replay_assistant_op(
+            "complete", {"result": "done", "answers": ["2", "없는id"]}
+        )
+        (text, reqs) = seen[0]
+        assert text == "done"
+        assert [x["id"] for x in reqs] == ["2"], "모르는 id 를 지어냈다"
+
+    def test_pre_v9_17_session_gets_no_chips(self):
+        """`answers` 가 없던 세션은 칩도 없다 — 위치로 추측하지 않는다."""
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer.__new__(WebRenderer)
+        r._replay_requests = {"1": {"id": "1", "author": "Bob", "text": "a"}}
+        seen = []
+        r.final = lambda text, turn=0, requests=None: seen.append(requests)
+        r._replay_assistant_op("complete", {"result": "done"})
+        assert seen == [[]]

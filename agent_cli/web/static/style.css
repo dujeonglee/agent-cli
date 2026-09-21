@@ -599,6 +599,40 @@ body.multi-viewer .card-user .who {
   padding: 3px var(--time-w) 3px 92px;
   line-height: 1.65;
 }
+/* 최종답이 무엇에 대한 답인지 (v9.19.0) — 본문과 같은 열에 맞춰 들여쓴다.
+   조용한 메타 정보라 본문보다 작고 흐리게: 읽는 것은 답이고, 이건 라벨이다. */
+.final-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 var(--time-w) 6px 92px;
+  font-size: 0.82em;
+  opacity: 0.72;
+}
+.final-answers .fa-label { opacity: 0.7; }
+.final-answers .fa-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  opacity: 0.85;
+}
+.final-answers .fa-id { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.final-answers .fa-who { font-weight: 600; }
+.final-answers .fa-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28ch;
+}
+@media (max-width: 560px) {
+  .final-answers { padding-left: 0; }
+  .final-answers .fa-text { max-width: 16ch; }
+}
 .card-error, .card-sys .sys-text { padding-right: var(--time-w); }
 @media (max-width: 560px) {
   .row { grid-template-columns: 16px 44px 1fr auto; gap: 7px; }

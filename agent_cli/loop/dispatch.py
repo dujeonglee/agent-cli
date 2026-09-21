@@ -646,13 +646,20 @@ class TurnDispatcher:
             return bounced
 
         claimed = _claimed_ids(op.action_input)
+        # **지우기 전에** 뽑는다 — `_settle_requests` 가 주장분을 회계에서
+        # 제거하므로, 그 뒤엔 "이 답이 무엇에 대한 답인지" 를 알 수 없다.
+        answered = (
+            [r for r in (self.state.run_requests or []) if str(r.get("id")) in claimed]
+            if claimed
+            else []
+        )
         still_open = self._settle_requests(claimed)
         nagging = self._should_nag(claimed, still_open)
         if not nagging:
             answer = self._with_unanswered_notice(claimed, still_open, answer)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
-        render_step("final", answer, self.state.turn)
+        render_step("final", answer, self.state.turn, requests=answered)
         if nagging:
             # 기록은 여기서 하지 않는다 — `_intervene` 의 `_append_observation`
             # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과

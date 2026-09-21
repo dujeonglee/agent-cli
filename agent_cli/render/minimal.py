@@ -371,9 +371,15 @@ class MinimalRenderer(Renderer):
             for line in diff_block.split("\n"):
                 self._p(f"     {_colorize_diff_line(line)}", highlight=False)
 
-    def final(self, content: str, turn: int) -> None:
+    def final(self, content: str, turn: int, requests: list | None = None) -> None:
         self._p("")
         self._render_markdown("✅", content)
+        for r in requests or []:
+            who = f" ({r['author']})" if r.get("author") else ""
+            text = (r.get("text") or "").strip().replace("\n", " ")
+            if len(text) > 72:
+                text = text[:71] + "…"
+            self._p(f"  [{_MUTED}]↳ answers [{r.get('id')}]{who} {text}[/]")
         self._p("")
 
     def error(self, content: str, turn: int) -> None:

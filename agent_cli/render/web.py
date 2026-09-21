@@ -290,6 +290,12 @@ class WebRenderer(Renderer):
         #    record and consumed at each main-level final.
         self._run_authors: list[str] | None = None
         self._replay_authors: list[str] = []
+        # 재생용 id → 요청 맵 (v9.19.0). `_add_user_message` 가 user 레코드에
+        # 찍어 둔 `request_id` 로 채우고, 터미널 레코드의 `answers` id 를
+        # 여기서 풀어 final 카드에 실어 준다 — `_replay_authors` 와 같은 모양
+        # (레코드를 훑으며 모으고 final 에서 소비). 라이브는 `run_requests`
+        # 에서 바로 풀므로 이 맵을 쓰지 않는다.
+        self._replay_requests: dict[str, dict] = {}
 
     # ─── Event distribution ─────────────────────────
 
@@ -1111,6 +1117,17 @@ class WebRenderer(Renderer):
                     # hygiene only, live code never compares that string.
                     author = msg.get("author") or ""
                     is_user = msg.get("author_is_user", True) and author != "🤝 agent"
+                    rid = str(msg.get("request_id") or "")
+                    if rid:
+                        # 라벨(`[닉]: `)을 떼어 라이브가 실어 보내는 원문과 같게.
+                        raw = content
+                        if author and raw.startswith(f"[{author}]: "):
+                            raw = raw[len(author) + 4 :]
+                        self._replay_requests[rid] = {
+                            "id": rid,
+                            "author": author,
+                            "text": raw,
+                        }
                     if author and is_user:
                         if author not in self._replay_authors:
                             self._replay_authors.append(author)
@@ -1321,11 +1338,18 @@ class WebRenderer(Renderer):
         ``render_step`` calls; the caller emits the (held) thought first so the
         first op's card carries it."""
         if action == "complete":
+            claimed: list = []
             if isinstance(action_input, dict):
                 final_text = action_input.get("result", "") or ""
+                # v9.17.0 부터 터미널 레코드가 `answers`(요청 id)를 싣는다.
+                # 그 이전 세션에는 없다 — 그러면 칩도 없다(추측하지 않는다).
+                for cid in action_input.get("answers") or []:
+                    req = self._replay_requests.get(str(cid))
+                    if req:
+                        claimed.append(req)
             else:
                 final_text = str(action_input) if action_input else ""
-            self.final(final_text, turn=0)
+            self.final(final_text, turn=0, requests=claimed)
         elif action:
             if isinstance(action_input, dict):
                 tool_input = json.dumps(action_input, ensure_ascii=False)
@@ -1422,12 +1446,25 @@ class WebRenderer(Renderer):
             persistent=True,
         )
 
-    def final(self, content: str, turn: int) -> None:
+    def final(self, content: str, turn: int, requests: list | None = None) -> None:
         payload = {
             "turn": turn,
             "thought": self._pending_thoughts.get(threading.get_ident(), ""),
             "final": content,
         }
+        # ``requests`` (v9.19.0, additive) — 이 최종답이 답한다고 주장한 요청
+        # ``{id, author, text}``. 합쳐진 런에서는 카드 위치만 봐선 무엇에 대한
+        # 답인지 알 수 없다. ``answers``(닉네임 귀속)와 **다른 필드**다 — 이름이
+        # 겹치면 `complete` 의 `answers`(요청 id)까지 셋이 된다.
+        if requests:
+            payload["requests"] = [
+                {
+                    "id": str(r.get("id") or ""),
+                    "author": r.get("author") or "",
+                    "text": (r.get("text") or "").strip(),
+                }
+                for r in requests
+            ]
         # ``answers`` (additive) — only on MAIN-timeline finals: a scope's
         # final answers its caller, not a user. Empty list = a run with no
         # user attribution (🤝 agent-report run); missing = pre-attribution

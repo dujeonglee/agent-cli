@@ -1084,6 +1084,23 @@
         );
       }
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
+      // 이 답이 **무엇에 대한 답인지** (v9.19.0). 합쳐진 런에서는 카드 위치가
+      // 알려주지 않는다 — 요청 둘이 한 턴에 들어오고 최종답은 하나다.
+      // `d.requests` 는 모델이 `complete` 의 `answers` 로 주장한 요청들이고,
+      // 라이브·resume 양쪽에서 같은 모양으로 온다.
+      if (Array.isArray(d.requests) && d.requests.length) {
+        const box = el("div", ["final-answers"]);
+        box.appendChild(el("span", ["fa-label"], "답한 요청"));
+        d.requests.forEach(function (r) {
+          const chip = el("span", ["fa-chip"]);
+          chip.appendChild(el("span", ["fa-id"], "[" + (r.id || "?") + "]"));
+          if (r.author) chip.appendChild(el("span", ["fa-who"], r.author));
+          chip.appendChild(el("span", ["fa-text"], r.text || ""));
+          chip.title = (r.author ? r.author + ": " : "") + (r.text || "");
+          box.appendChild(chip);
+        });
+        card.appendChild(box);
+      }
       if (ch !== "main") lastFinalByChannel[ch] = String(d.final).trim();
       delete pendingStep[ch];
       finishCard(card, d);

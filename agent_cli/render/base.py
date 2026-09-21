@@ -463,8 +463,16 @@ class Renderer(ABC):
         and drives the ✓/✗ icon and `success`/`error` label."""
 
     @abstractmethod
-    def final(self, content: str, turn: int) -> None:
-        """Final answer."""
+    def final(self, content: str, turn: int, requests: list | None = None) -> None:
+        """Final answer.
+
+        ``requests`` (v9.19.0, additive) — the user requests this result
+        **claims to answer**, resolved from ``complete``'s ``answers`` ids to
+        ``{id, author, text}``. Lets a reader see WHICH ask a final belongs to
+        instead of inferring it from position; in a merged run the position
+        tells you nothing. ``None``/empty = nothing claimed (single-user CLI,
+        a sub-loop's final, or a model that did not declare).
+        """
 
     @abstractmethod
     def error(self, content: str, turn: int) -> None:

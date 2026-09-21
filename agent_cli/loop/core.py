@@ -584,20 +584,28 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
-        if self.query_request_id and self.query_author_is_user:
+        starter_rid = self.query_request_id if self.query_author_is_user else ""
+        if starter_rid:
             self._state.run_requests.append(
                 {
-                    "id": self.query_request_id,
+                    "id": starter_rid,
                     "author": self.query_author or "",
                     "text": self.query,
                 }
             )
         self._add_user_message(
-            self.query, self.query_author, is_user=self.query_author_is_user
+            self.query,
+            self.query_author,
+            is_user=self.query_author_is_user,
+            request_id=starter_rid,
         )
 
     def _add_user_message(
-        self, text: str, author: str | None = None, is_user: bool = True
+        self,
+        text: str,
+        author: str | None = None,
+        is_user: bool = True,
+        request_id: str = "",
     ) -> None:
         """Add a user message to the conversation + task log.
 
@@ -610,6 +618,15 @@ class AgentLoop:
         (the 🤝 agent-report starter): it keeps the ``[author]:`` label but is
         excluded from ``run_authors`` (the final's ``answers`` attribution)
         and flagged in the history record so resume replay excludes it too.
+
+        ``request_id`` (v9.19.0) stamps the queue id this message came in
+        with — the **missing link** in the accounting. The id reached
+        ``LoopState.run_requests`` but never the record, so nothing on disk
+        could say which user turn an ``answers`` claim referred to. Resume
+        replay rebuilds the id → request map from these stamps and hands the
+        resolved requests to the final card. Set only for real user requests
+        (the accounting's own gate: a routed command or a synthetic wake is
+        not one).
         """
         labeled = f"[{author}]: {text}" if author else text
         self.task_log.append(labeled)
@@ -617,6 +634,8 @@ class AgentLoop:
         # attribute the query + strip the label for the search surface. The
         # cache / LLM path ignores the extra key.
         record = {"role": "user", "content": labeled}
+        if request_id:
+            record["request_id"] = request_id
         if author:
             record["author"] = author
             if not is_user:
@@ -702,11 +721,13 @@ class AgentLoop:
             # 것이라 미답으로 남으면 안 된다. 합성 wake 아이템도 제외
             # (사람 발화가 아니다).
             rid = item.get("id") or ""
-            if rid and not item.get("system"):
+            if item.get("system"):
+                rid = ""  # 합성 wake — 사람 발화가 아니다
+            if rid:
                 self._state.run_requests.append(
                     {"id": rid, "author": author or "", "text": text}
                 )
-            self._add_user_message(text, author)
+            self._add_user_message(text, author, request_id=rid)
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
