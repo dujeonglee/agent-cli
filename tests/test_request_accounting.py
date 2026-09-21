@@ -262,6 +262,30 @@ class TestSchema:
             "필수로 만들면 기존 complete 이 전부 깨진다"
         )
 
+    def test_the_description_names_the_section_the_tail_actually_renders(self):
+        """설명이 가리키는 이름과 꼬리의 제목이 **같아야** 한다.
+
+        라이브 실측: 설명은 "the tail lists Outstanding Requests" 를 보라는데
+        꼬리는 `## Open Requests` 를 그린다 — 모델에게 없는 이름을 찾으라고
+        하고 있었다. 두 문자열이 따로 살아 있으면 조용히 어긋난다.
+        """
+        from agent_cli.constants import outstanding_requests_block
+        from agent_cli.tools import TOOLS
+
+        block = outstanding_requests_block([{"id": "1", "author": "", "text": "a"}])
+        heading = next(
+            ln.lstrip("# ").strip() for ln in block.splitlines() if ln.startswith("#")
+        )
+        complete = TOOLS["complete"]
+        surfaces = [complete.description] + [
+            v.get("description", "") for v in complete.parameters["properties"].values()
+        ]
+        for text in surfaces:
+            if "tail lists" in text:
+                assert heading in text, (
+                    f"꼬리 제목은 {heading!r} 인데 설명은 다른 이름을 가리킨다: {text!r}"
+                )
+
     def test_description_tells_the_model_what_omitting_means(self):
         """단어 `answers` 만 보면 안 된다 — 지시문을 지워도 통과한다
         (사보타주가 실제로 새어나갔다). **행동과 결과**를 고정한다."""
