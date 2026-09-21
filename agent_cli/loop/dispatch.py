@@ -566,7 +566,7 @@ class TurnDispatcher:
         # 7. Complete tool (text parsing path)
         _debug_log(f"PARSED iter={self.state.turn} action={op.action}")
         if op.action == "complete":
-            return self._op_complete(turn, op, outcome)
+            return self._op_complete(llm_text, turn, op, outcome)
 
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(op.action, op.action_input)
@@ -604,7 +604,7 @@ class TurnDispatcher:
 
         return self._recover_unparsed(llm_text, turn, outcome)
 
-    def _op_complete(self, turn, op, outcome: dict):
+    def _op_complete(self, llm_text: str, turn, op, outcome: dict):
         """terminal ``complete`` op — 최종 답 언랩(A6)·history 기록·final 렌더."""
         if isinstance(op.action_input, dict):
             raw = op.action_input.get("result")
@@ -641,6 +641,9 @@ class TurnDispatcher:
             if unwrapped != raw:
                 answer = unwrapped or answer
 
+        bounced = self._require_answers(llm_text, op, outcome)
+        if bounced is not None:
+            return bounced
         answer = self._with_unanswered_notice(op, answer)
 
         if self.ctx:
@@ -652,6 +655,51 @@ class TurnDispatcher:
         render_step("final", answer, self.state.turn)
 
         return ToolResult(True, output=answer)
+
+    def _require_answers(self, llm_text: str, op, outcome: dict):
+        """요청이 합쳐진 런에서 `answers` 없이 완료하려 하면 **한 번 되돌린다**.
+
+        꼬리(per-turn tail)가 매 턴 요구하는데도 모델이 생략한다 — 라이브
+        실측(xrnway)에서 모델은 꼬리를 읽고 id 까지 알면서("실제 미완 요청은
+        [2],[3]뿐") 필드를 안 채웠다. 안내만으로는 안 되므로 형식 교정으로
+        되돌린다(`format_no_action_retry` 와 같은 자리).
+
+        **`complete` 을 붙잡는 것과 다르다.** 붙잡기란 "다른 요청이 풀릴
+        때까지 결과를 못 내보내는 것" 이고 그건 안 한다(agent-ask 3판에서
+        틀렸던 자리). 이건 같은 턴의 산출물을 **형식만 고쳐 다시 내라**는
+        것이라 기다리는 상대가 없다.
+
+        되묻기는 **런당 한 번**. 끝내 생략하면 받아주고 "미신고" 로 적는다 —
+        무한 되묻기는 런을 태운다.
+        """
+        pending = getattr(self.state, "run_requests", None)
+        if not pending or len(pending) < 2:
+            return None
+        if getattr(self.state, "answers_prompted", False):
+            return None
+        if isinstance(op.action_input, dict):
+            raw = op.action_input.get("answers")
+            if isinstance(raw, list) and raw:
+                return None
+            if isinstance(raw, str) and raw.strip():
+                return None
+        self.state.answers_prompted = True
+        ids = ", ".join(f'"{r.get("id")}"' for r in pending)
+        return self._intervene(
+            llm_text,
+            (
+                f"Observation: `complete` needs `answers` in this run — "
+                f"{len(pending)} user requests were merged into it and the "
+                "harness cannot tell which ones your result covers.\n"
+                f"{self._request_lines(pending)}\n"
+                f"Re-emit `complete` with the same result plus "
+                f"`answers: [{ids}]`, dropping any id you did not actually "
+                "answer."
+            ),
+            "answers required",
+            outcome,
+            recovery_kind="format",
+        )
 
     def _with_unanswered_notice(self, op, answer: str) -> str:
         """이 런에 들어왔는데 `complete` 이 주장하지 않은 요청을 덧붙인다.

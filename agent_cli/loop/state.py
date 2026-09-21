@@ -100,5 +100,9 @@ class LoopState:
     #: **무엇이 답해졌는지**는 아무도 몰랐다 — `run_authors` 는 *누가* 물었는지
     #: 만 안다. CLI 는 요청이 하나뿐이라 비어 있다.
     run_requests: list = field(default_factory=list)
+    #: 이 런에서 `answers` 를 이미 한 번 되물었나. 되묻기는 **한 번**이다 —
+    #: 끝내 안 실으면 받아주고 "미신고" 로 적는다. 무한히 되물으면 고집 센
+    #: 모델이 런을 태운다.
+    answers_prompted: bool = False
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

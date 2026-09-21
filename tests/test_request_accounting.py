@@ -310,3 +310,69 @@ class TestIdsReachTheModel:
         )
         harness = out.replace("hello", "").replace("hi", "")
         assert not HANGUL.findall(harness), f"꼬리에 한글: {harness!r}"
+
+
+# ── ⑤ 거부 — 안내만으로는 안 됐다 ─────────────────────
+
+
+class TestAnswersAreRequired:
+    """라이브(xrnway): 꼬리가 매 턴 요구하는데도 모델이 `answers` 를 생략했다.
+
+    모델은 꼬리를 **읽었다** — 자기 생각에 "실제 미완 요청은 [2],[3]뿐" 이라고
+    id 까지 적었다. 그런데도 필드를 안 채웠다. 안내로는 안 되므로 형식 교정으로
+    한 번 되돌린다.
+    """
+
+    def _complete(self, loop, **ai):
+        op = _op(**ai)
+        return loop._dispatch._op_complete("raw", object(), op, {})
+
+    def _merged(self):
+        return _drain(
+            [
+                {"id": "1", "nickname": "Bob", "text": "a"},
+                {"id": "2", "nickname": "Ann", "text": "b"},
+            ]
+        )
+
+    def test_missing_answers_is_bounced_once(self):
+        loop = self._merged()
+        first = loop._dispatch._require_answers("raw", _op(result="r"), {})
+        assert first is not None, "생략이 그대로 통과했다"
+        assert loop._state.answers_prompted is True
+
+        # 두 번째는 받아준다 — 무한 되묻기는 런을 태운다.
+        second = loop._dispatch._require_answers("raw", _op(result="r"), {})
+        assert second is None, "되묻기가 한 번으로 안 끝난다"
+
+    def test_bounce_names_the_ids_and_the_field(self):
+        loop = self._merged()
+        msgs = []
+        loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
+        loop._dispatch._require_answers("raw", _op(result="r"), {})
+        (msg,) = msgs
+        assert '"1"' in msg and '"2"' in msg, "어떤 id 를 대라는지 안 보인다"
+        assert "answers" in msg and "Re-emit `complete`" in msg
+        assert not HANGUL.findall(msg), f"개입 문구에 한글: {msg!r}"
+
+    def test_present_answers_passes_through(self):
+        loop = self._merged()
+        assert (
+            loop._dispatch._require_answers("raw", _op(result="r", answers=["1"]), {})
+            is None
+        )
+        assert loop._state.answers_prompted is False, "필요 없는데 표식을 세웠다"
+
+    def test_single_request_run_is_never_bounced(self):
+        """실측 90%인 단건 런에 턴을 하나 더 쓰면 안 된다."""
+        loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
+        assert loop._dispatch._require_answers("raw", _op(result="r"), {}) is None
+
+    def test_empty_answers_list_is_bounced(self):
+        """`answers: []` 는 '아무것도 안 답함' 이 아니라 **빈칸**이다 —
+        합쳐진 런에서 아무것도 안 답하고 complete 할 이유가 없다."""
+        loop = self._merged()
+        assert (
+            loop._dispatch._require_answers("raw", _op(result="r", answers=[]), {})
+            is not None
+        )
