@@ -663,8 +663,55 @@ class TestJump:
         assert _wait(lambda: _chip(page, PEER).get_attribute("aria-selected") == "true")
         target = page.locator(f'#messages > .card-msg[data-peer="{AGT}"]')
         assert _wait(lambda: target.is_visible())
-        assert "tv-nav-hl" in (target.get_attribute("class") or ""), (
+        assert _wait(lambda: "tv-nav-hl" in (target.get_attribute("class") or "")), (
             "도착지 하이라이트 없음"
+        )
+
+    def test_highlight_does_not_replay_when_the_tab_is_reopened(self, stack, page):
+        """번쩍임은 **한 번**이다.
+
+        `.tv-nav-hl` 은 CSS 애니메이션이고, 채널 전환은 카드를 `hidden` 으로
+        숨겼다 드러낸다. 숨겨졌던 요소가 다시 표시되면 CSS 애니메이션은
+        **처음부터 다시 재생**된다 — 그래서 클래스를 안 떼면 그 탭을 열
+        때마다 엉뚱하게 또 번쩍였다(사용자 보고).
+        """
+        stack.emit_ready()
+        _roster(stack, AGT, PEER)
+        page.goto(stack.url)
+        assert _wait(lambda: _chip(page, PEER).count() > 0)
+
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author=f"agent:{PEER}", text="요청", to=AGT
+        )
+        stack.renderer.agent_message(
+            key=PEER, direction="in", author=f"agent:{AGT}", text="부탁", to=PEER
+        )
+        assert _wait(lambda: page.locator("#messages > .card-msg").count() == 2)
+
+        _chip(page, AGT).click()
+        chip = _visible_rows(page, "#messages > .card-msg").locator(".peer.can-jump")
+        assert _wait(lambda: chip.count() == 1)
+        chip.click()
+
+        target = page.locator(f'#messages > .card-msg[data-peer="{AGT}"]')
+        assert _wait(lambda: "tv-nav-hl" in (target.get_attribute("class") or "")), (
+            "사전 조건: 점프가 한 번은 번쩍여야 한다"
+        )
+        # 번쩍임이 끝나면 클래스가 떨어진다. `animationend` 와 타이머 폴백
+        # 둘 중 무엇이 떼든 계약은 같다 — 여기서는 **결과**만 본다(둘을
+        # 구별하려면 대기 시간에 의존해야 하고, 그건 CI 에서 흔들린다).
+        assert _wait(
+            lambda: "tv-nav-hl" not in (target.get_attribute("class") or ""),
+            timeout=6.0,
+        ), "애니메이션이 끝나도 클래스가 남았다"
+
+        # 다른 채널로 갔다가 되돌아온다 — 여기서 재생되면 안 된다.
+        _chip(page, AGT).click()
+        assert _wait(lambda: not target.is_visible())
+        _chip(page, PEER).click()
+        assert _wait(lambda: target.is_visible())
+        assert "tv-nav-hl" not in (target.get_attribute("class") or ""), (
+            "탭을 다시 열었더니 하이라이트가 되살아났다"
         )
 
     def test_agent_to_main_is_not_clickable(self, stack, page):

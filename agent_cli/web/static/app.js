@@ -699,7 +699,7 @@
   function appendToTimeline(cardEl, taskId, channel) {
     if (taskId && taskGroups[taskId]) {
       taskGroups[taskId].body.appendChild(cardEl);
-      return;
+      if (e.animationName === "tv-nav-flash") clear();
     }
     // 루트 append 만 채널 필터의 대상이다. `data-ch` 가 **없는** 노드는 어느
     // 채널에서나 보인다(생성 중 한 줄처럼 채널과 무관한 표시).
@@ -2595,9 +2595,44 @@
       $messages.scrollTop -
       10;
     $messages.scrollTop = Math.max(0, top);
+    flashOnce(card);
+  }
+
+  /** 점프 도착지를 한 번 번쩍이고 **클래스를 뗀다**.
+   *
+   * 떼는 것이 핵심이다. `.tv-nav-hl` 은 CSS 애니메이션인데, 채널 전환이
+   * `n.hidden` 으로 카드를 숨겼다 드러낸다(`applyChannelFilter`). 숨겨졌던
+   * 요소가 다시 표시되면 **CSS 애니메이션은 처음부터 다시 재생된다** — 그래서
+   * 클래스를 남겨두면 그 탭을 열 때마다 엉뚱하게 또 번쩍였다(사용자 보고).
+   *
+   * 전환이 빨라 `animationend` 가 안 오는 경우(애니메이션 중 숨겨지면 이벤트가
+   * 안 뜬다)를 위해 타이머도 함께 건다. 같은 카드로 다시 점프하면 이전 타이머는
+   * 취소한다 — 안 그러면 옛 타이머가 **새 번쩍임을 중간에 꺼버린다**.
+   */
+  function flashOnce(card) {
+    if (card.__flashTimer) clearTimeout(card.__flashTimer);
+    if (card.__flashEnd) {
+      card.removeEventListener("animationend", card.__flashEnd);
+    }
     card.classList.remove("tv-nav-hl");
     void card.offsetWidth; // restart the animation
     card.classList.add("tv-nav-hl");
+
+    const clear = function () {
+      if (card.__flashTimer) clearTimeout(card.__flashTimer);
+      if (card.__flashEnd) {
+        card.removeEventListener("animationend", card.__flashEnd);
+      }
+      card.__flashTimer = null;
+      card.__flashEnd = null;
+      card.classList.remove("tv-nav-hl");
+    };
+    card.__flashEnd = function (e) {
+      // 다른 애니메이션의 종료로 꺼지면 안 된다.
+      if (e.animationName === "tv-nav-flash") clear();
+    };
+    card.addEventListener("animationend", card.__flashEnd);
+    card.__flashTimer = setTimeout(clear, 2500);
   }
 
   /** Expand a scope card's collapsed ancestor chain, OUTERMOST first (jumping
