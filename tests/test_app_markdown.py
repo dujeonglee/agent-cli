@@ -22,6 +22,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -129,13 +130,26 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         + f"const out = {call_expr};\n"
         + "process.stdout.write(typeof out === 'string' ? out : JSON.stringify(out));\n"
     )
-    result = subprocess.run(
-        ["node", "-e", harness],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    # 파일로 넘긴다 — ``node -e <script>`` 는 리눅스의 인자 **1개** 상한
+    # (MAX_ARG_STRLEN = 32페이지 = 128 KiB)에 걸린다. app.js 가 커지다
+    # 128,642 바이트에서 벼랑 끝에 서 있었고, 1 KB 를 더한 커밋이 CI 를
+    # 통째로 빨갛게 만들었다(macOS 엔 그 상한이 없어 로컬은 초록 — "로컬
+    # 통과는 증거가 아니다" 의 교과서적 사례). 파일에는 상한이 없다.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", encoding="utf-8", delete=False
+    ) as fh:
+        fh.write(harness)
+        script = fh.name
+    try:
+        result = subprocess.run(
+            ["node", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
     if result.returncode != 0:
         raise AssertionError(
             f"node harness failed: {result.stderr.strip()}\nstdout: {result.stdout!r}"
@@ -419,3 +433,22 @@ class TestAgentIconParity:
         ):
             js = re.findall(r'"([^"]+)"', _js_pool(src, js_name))
             assert js == py_pool, f"{js_name}: 풀이 서버와 다르다"
+
+
+def test_harness_does_not_pass_the_script_as_an_argv_string():
+    """``node -e <script>`` 를 쓰면 안 된다 — 리눅스 인자 1개 상한(128 KiB).
+
+    이 가드는 **플랫폼 독립**이어야 한다. 실제 실행 테스트는 macOS 에서
+    상한이 없어 전부 초록이고 리눅스 CI 에서만 빨갛다 — app.js 가 커지다
+    128,642 바이트에서 벼랑에 걸렸고, 1 KB 를 더한 커밋이 CI 를 통째로
+    무너뜨렸다. 소스를 직접 보는 것만이 어느 OS 에서든 잡는다.
+
+    ``node`` 유무와도 무관해야 하므로 모듈의 skipif 를 타지 않게 별도
+    함수로 둔다(모듈 skipif 는 여전히 적용되지만, 이 검사는 실행이 아니라
+    소스만 본다 — node 없는 개발기에서 건너뛰어도 CI 가 잡는다).
+    """
+    import inspect
+
+    src = inspect.getsource(_run_node_harness)
+    assert '["node", "-e"' not in src, "하네스가 스크립트를 argv 로 넘긴다"
+    assert '["node", script]' in src, "하네스가 파일 실행이 아니다"
