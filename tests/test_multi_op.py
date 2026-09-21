@@ -24,6 +24,7 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
+from tests.loop_ports import TEST_PORTS
 
 # ─── Tool.wrap_single_op ────────────────────────────
 
@@ -188,6 +189,7 @@ def _run(responses, tmp_path, max_turns=5, wire_format=None):
     provider.call.side_effect = [LLMResponse(content=r) for r in responses]
     ctx = ContextManager(session_dir=tmp_path)
     loop = AgentLoop(
+        ports=TEST_PORTS,
         query="Q",
         provider=provider,
         capabilities=_caps(),

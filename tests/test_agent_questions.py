@@ -31,6 +31,7 @@ from agent_cli.subagent.agents_live import (
     QuestionPort,
     build_reply_record,
 )
+from tests.loop_ports import make_ports, split_ports
 from tests.test_agents_live import (
     RecordingRenderer,
     _FakeLoopResult,
@@ -1643,7 +1644,7 @@ def _run_scripted(ctx, emissions, **kw):
         capabilities=_caps(),
         model="test-model",
         ctx=ctx,
-        **kw,
+        **split_ports(dict(kw)),
     ), provider
 
 
@@ -1666,7 +1667,7 @@ class TestFlipToolMount:
                 capabilities=_caps(),
                 model="m",
                 active_tools=["shell"],
-                questions=questions,
+                ports=make_ports(questions=questions),
             )
             return list(loop.tools_list)
 
@@ -1779,7 +1780,7 @@ class TestFlipPrompt:
                 # ``ask`` 는 requires_handler="ctx" — ctx 없이는 벗겨진다.
                 ctx=ContextManager(tmp_path / tag, max_context_tokens=30_000),
                 active_tools=["ask", "shell"],
-                questions=questions,
+                ports=make_ports(questions=questions),
             )
             loop._prompt.rebuild()  # __init__ 은 조립만 — 빌드는 런 시작에
             assert "ask" in loop.tools_list

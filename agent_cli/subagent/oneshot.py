@@ -148,9 +148,12 @@ def _run_single(
     if ctx is None:
         return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 
+    from agent_cli.runtime import ports_for_oneshot
+
     loop_result, duration = run_subagent_message(
         task,
         ctx,
+        ports=ports_for_oneshot(),
         provider=provider,
         capabilities=capabilities,
         model=model,

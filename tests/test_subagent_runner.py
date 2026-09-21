@@ -16,6 +16,7 @@ from agent_cli.subagent.runner import (
     create_subagent_ctx,
     run_subagent_message,
 )
+from tests.loop_ports import TEST_PORTS
 
 # ── apply_role_overrides ────────────────────────
 
@@ -191,6 +192,7 @@ class TestRunSubagentMessage:
         loop_result, duration = run_subagent_message(
             "do the thing",
             ctx,
+            ports=TEST_PORTS,
             provider="P",
             capabilities="C",
             model="m",

@@ -22,6 +22,7 @@ from agent_cli.context.manager import (
     CompactionError,
     ContextManager,
 )
+from tests.loop_ports import TEST_PORTS
 
 # ── Fixtures ─────────────────────────────────────────
 
@@ -1042,6 +1043,7 @@ class TestAgentLoopCompactorCallback:
             supports_thinking=True,  # ditto
         )
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="x",
             provider=FakeProvider(),
             capabilities=caps,

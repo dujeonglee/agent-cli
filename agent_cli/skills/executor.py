@@ -14,6 +14,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.runtime import ports_for_skill
 from agent_cli.skills.models import Skill
 from agent_cli.tools.result import ToolResult
 
@@ -269,7 +270,7 @@ def execute_skill(
             # skill (registry present) gets the full agent tool while an ordinary
             # sub-agent (no registry) stays run-only. Workers it spawns register
             # on the main registry and outlive the skill (main takes them over).
-            agent_registry=agent_registry,
+            ports=ports_for_skill(agent_registry=agent_registry),
             agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,

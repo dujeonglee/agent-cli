@@ -24,6 +24,7 @@ from agent_cli.subagent.agents_live import (
     clamp_max_agents,
     tool_agent,
 )
+from tests.loop_ports import TEST_PORTS, make_ports
 
 
 def wait_until(pred, timeout: float = 5.0) -> bool:
@@ -896,7 +897,13 @@ class TestLoopWiring:
 
         from agent_cli.loop import AgentLoop
 
-        loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
+        loop = AgentLoop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=MagicMock(),
+            capabilities=None,
+            model="m",
+        )
         assert "agent" in loop._config.tools_list
 
     def test_tool_stripped_at_depth_ceiling(self):
@@ -906,6 +913,7 @@ class TestLoopWiring:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
             capabilities=None,
@@ -926,7 +934,7 @@ class TestLoopWiring:
             provider=MagicMock(),
             capabilities=None,
             model="m",
-            agent_registry=reg,
+            ports=make_ports(agent_registry=reg),
         )
         assert "agent" in loop._config.tools_list
 
@@ -1020,7 +1028,7 @@ class TestFullLoopIntegration:
             capabilities=self._caps(),
             model="test-model",
             ctx=ctx,
-            agent_registry=reg,
+            ports=make_ports(agent_registry=reg),
         )
         assert result.success and result.output == "finished"
 
@@ -1063,15 +1071,17 @@ def make_asking_runner(question="which branch?"):
 
     def runner(query, ctx, **kwargs):
         # 상주 에이전트는 **블로킹 핸들러를 받지 않는다**. 받으면 슬롯
-        # 경로가 되살아나 `_answer_kind` 가 비동기 답을 먹어치울 수 있다
-        # (③이 원자적이어야 하는 이유).
-        assert kwargs.get("ask_handler") is None, "블로킹 ask 핸들러가 살아있다"
-        assert kwargs["questions"].nonblocking is True
+        # 경로가 되살아나 `_answer_kind` 가 비동기 답을 먹어치울 수 있다.
+        # C3 에서 포트 자체가 사라졌으므로 그 부재를 여기서 고정한다.
+        ports = kwargs["ports"]
+        assert not hasattr(ports, "ask_handler"), "블로킹 ask 포트가 되살아났다"
+        assert ports.owner.startswith("agent:"), ports.owner
+        assert ports.questions.nonblocking is True
         # 답·독촉 런에서는 다시 묻지 않는다 — 그러면 그 런도 §3.7 로 억제돼
         # 회신이 영영 안 나가고, 테스트가 실제 결함이 아닌 것으로 멈춘다.
         if "answer to your question" in query or "(reminder)" in query:
             return _FakeLoopResult(output=f"resumed with: {query}"), 0.01
-        qid, err = kwargs["questions"].ask(question)
+        qid, err = ports.questions.ask(question)
         return _FakeLoopResult(output=f"asked {qid or err}"), 0.01
 
     return runner
@@ -1161,7 +1171,7 @@ class TestAskRouting:
         def runner(query, ctx, **kwargs):
             seen.append(query)
             if "answer to your question" not in query:
-                kwargs["questions"].ask("which branch?")
+                kwargs["ports"].questions.ask("which branch?")
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=runner)
@@ -2147,7 +2157,7 @@ class TestLiveTeammatesSection:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            agent_registry=reg,
+            ports=make_ports(agent_registry=reg),
         )
         assert result.success
         key = next(iter(reg._agents))
@@ -2326,7 +2336,13 @@ class TestPeerMessaging:
         from agent_cli.loop import AgentLoop
 
         # 핸들러 없음(main) → message 도구 부재
-        loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
+        loop = AgentLoop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=MagicMock(),
+            capabilities=None,
+            model="m",
+        )
         assert "message" not in loop._config.tools_list
         # 핸들러 있음(상주 서브에이전트) → active_tools 에 없어도 강제 탑재
         loop2 = AgentLoop(
@@ -2335,7 +2351,7 @@ class TestPeerMessaging:
             capabilities=None,
             model="m",
             active_tools=["read_file"],
-            message_handler=lambda to, text: "",
+            ports=make_ports(message_handler=lambda to, text: ""),
         )
         assert "message" in loop2._config.tools_list
 
@@ -2384,7 +2400,7 @@ class TestPeerMessaging:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            message_handler=handler,
+            ports=make_ports(message_handler=handler),
             max_turns=5,
         )
         assert result.success
@@ -3366,6 +3382,7 @@ class TestRunMode:
             LLMResponse(content=emit("complete", {"result": "done"})),  # main
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="use run",
             provider=provider,
             capabilities=self._caps(),
@@ -3406,6 +3423,7 @@ class TestRunMode:
             LLMResponse(content=emit("complete", {"result": "done"})),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=self._caps(),
@@ -3450,6 +3468,7 @@ class TestRunMode:
         ]
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         result = AgentLoop(
+            ports=TEST_PORTS,
             query="fan out",
             provider=provider,
             capabilities=self._caps(),

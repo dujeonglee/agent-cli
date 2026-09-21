@@ -9,6 +9,7 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from tests.loop_ports import TEST_PORTS
 
 # Shared test capabilities
 _CAPS = ModelCapabilities(
@@ -222,6 +223,7 @@ class TestLoopStreamingWiring:
         provider.call.return_value = LLMResponse(content='{"thought":"hi"}')
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="test",
             provider=provider,
             capabilities=_CAPS,

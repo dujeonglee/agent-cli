@@ -1371,6 +1371,7 @@ def run(
         build_agent_registry,
         build_monitor_registry,
         main_run_ended,
+        ports_for_run,
         wire_agent_mail,
     )
 
@@ -1536,17 +1537,13 @@ def run(
                 agent_timeout=agent_timeout,
                 ctx=ctx,
                 session=session,
-                mcp_manager=mcp_manager,
                 hooks_config=_disk_hooks,
                 record_turns=record_turns,
                 wire_format=wire_format_plugin,
-                # main 도 같은 포트를 받는다 — 없으면 자기 앞으로 온
-                # 질문에 답할 수단이 없다 (DESIGN.md §4). 레지스트리가 아니라
-                # 포트라 '팀원 안 팀원 금지' 가드는 그대로.
-                agent_registry=agent_registry,
-                monitor_registry=monitor_registry,
-                questions=(
-                    agent_registry.question_port(None) if agent_registry else None
+                ports=ports_for_run(
+                    agent_registry=agent_registry,
+                    monitor_registry=monitor_registry,
+                    mcp_manager=mcp_manager,
                 ),
             )
             main_run_ended(agent_registry)
@@ -2329,7 +2326,7 @@ def web(
     agent_registry = None
     # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
-    from agent_cli.runtime import build_monitor_registry
+    from agent_cli.runtime import build_monitor_registry, ports_for_web
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
 
@@ -2492,8 +2489,6 @@ def web(
                             query=query,
                             query_author=author,
                             query_author_is_user=_wake_verdict != "run",  # noqa: B023 — called immediately, same iteration
-                            dequeue_user_message=server.dequeue_nowait,
-                            route_message=route_one,
                             provider=llm_provider,
                             capabilities=capabilities,
                             model=resolved_model,
@@ -2510,18 +2505,18 @@ def web(
                             stop_event=stop_event,  # noqa: B023 — _run_main is called immediately, same iteration
                             record_turns=record_turns,
                             wire_format=wire_format_plugin,
-                            mcp_manager=mcp_manager,
                             # v8.39.0 수리: run 과 동형 — 종전 web 은
                             # hooks_config 미전달로 채팅 턴에서 디스크
                             # 훅이 미발화했다.
                             hooks_config=_disk_hooks,
-                            agent_registry=agent_registry,
-                            monitor_registry=monitor_registry,
-                            # main 의 답변 수단 (DESIGN.md §4) — 위 run 경로와 동일.
-                            questions=(
-                                agent_registry.question_port(None)
-                                if agent_registry
-                                else None
+                            ports=ports_for_web(
+                                agent_registry=agent_registry,
+                                monitor_registry=monitor_registry,
+                                mcp_manager=mcp_manager,
+                                # 반복마다 새로 만드는 클로저라 포트도
+                                # 메시지마다 새로 짓는다.
+                                dequeue_user_message=server.dequeue_nowait,
+                                route_message=route_one,
                             ),
                         )
 

@@ -675,12 +675,11 @@ class TurnDispatcher:
             port = self.cfg.questions
             if port is not None and port.nonblocking:
                 return self._op_ask_async(llm_text, questions, port, accumulate)
-            # handler 없음(main/delegate)이면 종전 단일-인자 호출 유지 —
-            # 기존 테스트/외부 patcher 의 _handle_ask 교체 표면 보존.
-            if self.cfg.ask_handler is not None:
-                user_response = _handle_ask(questions, handler=self.cfg.ask_handler)
-            else:
-                user_response = _handle_ask(questions)
+            # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
+            # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
+            # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
+            # 질문 포트로 옮겨갔고, 그때 남은 죽은 가지였다.
+            user_response = _handle_ask(questions)
             # ``ask`` is a normal observation-producing op (the user's
             # reply is the observation), not a terminal. In a multi-op turn
             # it accumulates like read/shell so consecutive asks batch into

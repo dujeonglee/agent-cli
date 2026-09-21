@@ -35,6 +35,7 @@ from agent_cli.recovery.recursion import (
     format_depth_limit_error,
     format_recursion_error,
 )
+from tests.loop_ports import TEST_PORTS
 
 # ─── Error-message vocabulary (A) ─────────────────────────────
 
@@ -134,6 +135,7 @@ class TestToolsListDepthCeiling:
         # Provider is unused — AgentLoop.__init__ doesn't call it.
         # We only care about the constructor's tools_list derivation.
         return AgentLoop(
+            ports=TEST_PORTS,
             query="x",
             provider=object(),
             capabilities=_caps(),

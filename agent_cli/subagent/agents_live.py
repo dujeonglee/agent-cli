@@ -2238,13 +2238,18 @@ class AgentRegistry:
         peer_section = build_live_agents_section(
             self, exclude_key=tm.key, via_message_tool=True
         )
+        from agent_cli.runtime import ports_for_resident
+
         return runner(
             query,
             tm.ctx,
-            # ``ask_handler`` 없음 — 상주 에이전트의 ask 는 이제 질문
-            # 포트로 간다(비블로킹). 블로킹 슬롯 경로는 ④에서 제거한다.
-            message_handler=self._make_message_handler(tm),
-            questions=self.question_port(tm.key),
+            # ``ask_handler`` 없음 — 상주 에이전트의 ask 는 질문 포트로
+            # 간다(비블로킹). 죽은 블로킹 슬롯 경로는 C3 에서 제거했다.
+            ports=ports_for_resident(
+                key=tm.key,
+                message_handler=self._make_message_handler(tm),
+                questions=self.question_port(tm.key),
+            ),
             peer_agents_section=peer_section,
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),

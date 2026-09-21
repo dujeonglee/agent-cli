@@ -19,6 +19,7 @@ from agent_cli.wire_formats import (
     resolve_wire_format,
     wire_format_for_model,
 )
+from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
@@ -201,7 +202,12 @@ class TestLoopCtxFallback:
             tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("json_fc")
         )
         loop = AgentLoop(
-            query="q", provider=MagicMock(), capabilities=caps, model="m", ctx=ctx
+            ports=TEST_PORTS,
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
         )
         assert loop.wire_format is ctx.wire_format
 
@@ -213,6 +219,7 @@ class TestLoopCtxFallback:
             tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("json_fc")
         )
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
             capabilities=caps,
@@ -225,7 +232,13 @@ class TestLoopCtxFallback:
     def test_no_ctx_falls_to_default(self, caps):
         from agent_cli.loop.core import AgentLoop
 
-        loop = AgentLoop(query="q", provider=MagicMock(), capabilities=caps, model="m")
+        loop = AgentLoop(
+            ports=TEST_PORTS,
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+        )
         assert loop.wire_format is get_wf(None)
 
 

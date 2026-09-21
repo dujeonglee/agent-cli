@@ -10,6 +10,7 @@ import pytest
 
 from agent_cli.wire_formats import get as get_wf
 from agent_cli.wire_formats.json_fc import JsonFcFormat
+from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
@@ -217,6 +218,7 @@ class TestLoopE2E:
             ),
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="What does note.txt say?",
             provider=provider,
             capabilities=self._caps(),

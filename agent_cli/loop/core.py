@@ -15,6 +15,7 @@ from agent_cli.constants import (
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
+from agent_cli.loop.ports import LoopPorts
 from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -58,6 +59,7 @@ class AgentLoop:
         provider: LLMProvider,
         capabilities: ModelCapabilities,
         model: str,
+        ports: LoopPorts,
         provider_name: str = "openai",
         base_url: str = "",
         api_key: str = "",
@@ -76,22 +78,13 @@ class AgentLoop:
         skill_args: str = "",
         graceful_interrupt: bool = False,
         stop_event=None,
-        dequeue_user_message=None,
-        route_message=None,
         query_author: str | None = None,
         query_author_is_user: bool = True,
         agent_role: str = "",
         agent_name: str = "",
-        mcp_manager=None,
-        hook_runner=None,
         record_turns: bool = True,
         wire_format=None,
         compaction_enabled: bool = True,
-        agent_registry=None,
-        monitor_registry=None,
-        ask_handler=None,
-        message_handler=None,
-        questions=None,
         peer_agents_section: str = "",
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
@@ -115,8 +108,8 @@ class AgentLoop:
         # message (route_message returns False / None) is injected as a steering
         # user turn. ``task_log`` accumulates EVERY user request (starter +
         # injected) so recovery / review reference the full set of asks.
-        self.dequeue_user_message = dequeue_user_message
-        self.route_message = route_message
+        self.dequeue_user_message = ports.dequeue_user_message
+        self.route_message = ports.route_message
         # ``query_author_is_user`` — False for a 🤝 agent-report wake-up: its
         # "author" is a display label, not a user, so it must not enter the
         # run's ``answers`` attribution. ``run_authors`` = the users whose asks
@@ -148,11 +141,10 @@ class AgentLoop:
             tools_list = [
                 t for t in tools_list if not (t in TOOLS and TOOLS[t].depth_gated)
             ]
-        handler_resources = {
-            "ctx": ctx,
-            "message_handler": message_handler,
-            "questions": questions,
-        }
+        # 포트에서 **파생**한다 — 종전엔 여기 3키짜리 dict 리터럴이었고,
+        # 새 포트가 생길 때마다 이 줄을 기억해서 고쳐야 했다. ``ctx`` 는
+        # 포트가 아니므로(§4.2) 여기서 얹는다.
+        handler_resources = {**ports.handler_resources(), "ctx": ctx}
         for tool_name, tool in TOOLS.items():
             required = tool.requires_handler
             if not required:
@@ -196,19 +188,18 @@ class AgentLoop:
             agent_stack=agent_stack,
             capabilities=capabilities,
             wire_format=wire_format,
-            mcp_manager=mcp_manager,
-            hook_runner=hook_runner,
+            mcp_manager=ports.mcp_manager,
+            hook_runner=ports.hook_runner,
             hooks_config=hooks_config,
             session=session,
             agent_role=agent_role,
             graceful_interrupt=graceful_interrupt,
             compaction_enabled=compaction_enabled,
             verbose=verbose,
-            agent_registry=agent_registry,
-            monitor_registry=monitor_registry,
-            ask_handler=ask_handler,
-            message_handler=message_handler,
-            questions=questions,
+            agent_registry=ports.agent_registry,
+            monitor_registry=ports.monitor_registry,
+            message_handler=ports.message_handler,
+            questions=ports.questions,
             peer_agents_section=peer_agents_section,
         )
         self._state = LoopState(

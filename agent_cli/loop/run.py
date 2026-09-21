@@ -12,6 +12,7 @@ from agent_cli.context.manager import ContextManager
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.core import AgentLoop
+from agent_cli.loop.ports import LoopPorts
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import get as _get_wire_format
@@ -22,6 +23,7 @@ def run_loop(
     provider: LLMProvider,
     capabilities: ModelCapabilities,
     model: str,
+    ports: LoopPorts,
     provider_name: str = "openai",
     base_url: str = "",
     api_key: str = "",
@@ -40,22 +42,13 @@ def run_loop(
     skill_args: str = "",
     graceful_interrupt: bool = False,
     stop_event=None,
-    dequeue_user_message=None,
-    route_message=None,
     query_author: str | None = None,
     query_author_is_user: bool = True,
     agent_role: str = "",
     agent_name: str = "",
-    mcp_manager=None,
-    hook_runner=None,
     record_turns: bool = True,
     wire_format=None,
     compaction_enabled: bool = True,
-    agent_registry=None,
-    monitor_registry=None,
-    ask_handler=None,
-    message_handler=None,
-    questions=None,
     peer_agents_section: str = "",
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
@@ -71,6 +64,7 @@ def run_loop(
         provider=provider,
         capabilities=capabilities,
         model=model,
+        ports=ports,
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
@@ -88,22 +82,13 @@ def run_loop(
         agent_stack=agent_stack,
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
-        dequeue_user_message=dequeue_user_message,
-        route_message=route_message,
         query_author=query_author,
         query_author_is_user=query_author_is_user,
         stop_event=stop_event,
         agent_role=agent_role,
         agent_name=agent_name,
-        mcp_manager=mcp_manager,
-        hook_runner=hook_runner,
         record_turns=record_turns,
         wire_format=wire_format,
         compaction_enabled=compaction_enabled,
-        agent_registry=agent_registry,
-        monitor_registry=monitor_registry,
-        ask_handler=ask_handler,
-        message_handler=message_handler,
-        questions=questions,
         peer_agents_section=peer_agents_section,
     ).run()

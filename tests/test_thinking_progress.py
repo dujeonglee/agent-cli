@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 from agent_cli.providers import http as http_mod
 from agent_cli.providers.openai import _map_openai_payload
+from tests.loop_ports import TEST_PORTS
 
 
 class TestStreamDelivery:
@@ -64,6 +65,7 @@ class TestLoopWiring:
             content=json.dumps({"action": "complete", "result": "ok"})
         )
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=ModelCapabilities(

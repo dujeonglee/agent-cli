@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
+from agent_cli.loop.ports import LoopPorts
+
 
 @dataclass(frozen=True)
 class AgentRuntime:
@@ -197,3 +199,158 @@ def teardown_session(
         from agent_cli.context.session import finalize_session
 
         finalize_session(session, ctx)
+
+
+# ── 루프 포트 빌더 — 조립 지점 다섯의 단일 정의 (DESIGN.md §4.4) ──────
+#
+# 종전엔 다섯 곳이 각자 부분집합을 손으로 나열했고, 포트 여덟 중 일곱이
+# 어딘가에선 빠져 있었다 — 그게 의도인지 사고인지 코드 어디에도 없었다.
+# 여기 모아 두면 §2.2 의 표가 **코드가 되고**, 나란히 비교된다.
+#
+# ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **아래 다섯이 전부
+# 즉시 안 만들어진다** — 호스트마다 "연결" 또는 "이래서 미연결" 중 하나를
+# 쓸 수밖에 없다. 사유 문자열은 **문서**지 검증물이 아니다(진위는 아무도
+# 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
+# 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
+
+_WEB_ONLY = "웹 전용 — 대화창 입력 큐가 있는 호스트에만 있다"
+_HOOKS_LATER = "배선만 준비 — 응용이 생기면 연결한다 (사용자 의도, 2026-09)"
+_NO_REGISTRY_IN_SUBLOOP = (
+    "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
+    "단일 가드가 LoopConfig.agent_registry 다"
+)
+_AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
+
+
+def _main_questions(agent_registry):
+    """main 의 답변 수단 (docs/agent-ask/DESIGN.md §4)."""
+    return agent_registry.question_port(None) if agent_registry else None
+
+
+def ports_for_run(*, agent_registry, monitor_registry, mcp_manager) -> LoopPorts:
+    """CLI 한 방 실행 (`agent-cli run …`)."""
+    return LoopPorts(
+        owner="main",
+        questions=_main_questions(agent_registry),
+        agent_registry=agent_registry,
+        monitor_registry=monitor_registry,
+        mcp_manager=mcp_manager,
+        message_handler=None,
+        hook_runner=None,
+        route_message=None,
+        dequeue_user_message=None,
+        unwired={
+            "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
+            "hook_runner": _HOOKS_LATER,
+            "route_message": _WEB_ONLY,
+            "dequeue_user_message": _WEB_ONLY,
+        },
+    )
+
+
+def ports_for_web(
+    *,
+    agent_registry,
+    monitor_registry,
+    mcp_manager,
+    dequeue_user_message,
+    route_message,
+) -> LoopPorts:
+    """웹 워커의 턴 — **메시지마다** 새로 짓는다.
+
+    ``dequeue_user_message``/``route_message`` 가 반복마다 새로 만드는
+    클로저라(main.py, ``noqa: B023``) 세션 수명 객체로 둘 수 없다.
+    """
+    return LoopPorts(
+        owner="main",
+        questions=_main_questions(agent_registry),
+        agent_registry=agent_registry,
+        monitor_registry=monitor_registry,
+        mcp_manager=mcp_manager,
+        dequeue_user_message=dequeue_user_message,
+        route_message=route_message,
+        message_handler=None,
+        hook_runner=None,
+        unwired={
+            "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
+            "hook_runner": _HOOKS_LATER,
+        },
+    )
+
+
+def ports_for_skill(*, agent_registry) -> LoopPorts:
+    """스킬 실행 루프.
+
+    ``owner`` 는 C2 전까지 **자리표시자**다 — 부모 owner 를 나르는 seam 이
+    C2 의 몫이라 지금은 알 수 없다. C2 전에는 아무도 ``owner`` 를 읽지
+    않으므로 행동은 불변이다(§6). 영구 기본값과는 다르다: 저건 누락을
+    영영 가리고, 이건 값이 생길 때까지의 한시적 자리다.
+    """
+    return LoopPorts(
+        owner="main",
+        agent_registry=agent_registry,
+        questions=None,
+        monitor_registry=None,
+        mcp_manager=None,
+        message_handler=None,
+        hook_runner=None,
+        route_message=None,
+        dequeue_user_message=None,
+        unwired={
+            "questions": _AS_BEFORE,
+            "monitor_registry": _AS_BEFORE,
+            "mcp_manager": _AS_BEFORE,
+            "message_handler": _AS_BEFORE,
+            "hook_runner": _HOOKS_LATER,
+            "route_message": _WEB_ONLY,
+            "dequeue_user_message": _WEB_ONLY,
+        },
+    )
+
+
+def ports_for_oneshot() -> LoopPorts:
+    """one-shot delegate — 포트 없음. ``owner`` 는 스킬과 같은 자리표시자."""
+    return LoopPorts(
+        owner="main",
+        questions=None,
+        agent_registry=None,
+        monitor_registry=None,
+        mcp_manager=None,
+        message_handler=None,
+        hook_runner=None,
+        route_message=None,
+        dequeue_user_message=None,
+        unwired={
+            "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
+            "questions": _AS_BEFORE,
+            "monitor_registry": _AS_BEFORE,
+            "mcp_manager": _AS_BEFORE,
+            "message_handler": "one-shot 은 상주가 아니다 — 받을 상대가 없다",
+            "hook_runner": _HOOKS_LATER,
+            "route_message": _WEB_ONLY,
+            "dequeue_user_message": _WEB_ONLY,
+        },
+    )
+
+
+def ports_for_resident(*, key: str, message_handler, questions) -> LoopPorts:
+    """상주 서브에이전트의 런. ``owner`` 만 진짜 값을 갖는다."""
+    return LoopPorts(
+        owner=f"agent:{key}",
+        message_handler=message_handler,
+        questions=questions,
+        agent_registry=None,
+        monitor_registry=None,
+        mcp_manager=None,
+        hook_runner=None,
+        route_message=None,
+        dequeue_user_message=None,
+        unwired={
+            "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
+            "monitor_registry": _AS_BEFORE,
+            "mcp_manager": _AS_BEFORE,
+            "hook_runner": _HOOKS_LATER,
+            "route_message": _WEB_ONLY,
+            "dequeue_user_message": _WEB_ONLY,
+        },
+    )

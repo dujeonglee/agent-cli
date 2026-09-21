@@ -15,6 +15,7 @@ from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
 from agent_cli.wire_formats import get as _get_wf
 from tests.conftest import OMLX_BASE_URL
+from tests.loop_ports import TEST_PORTS
 
 # All tests in this file require a live omlx server.
 pytestmark = pytest.mark.omlx_integration
@@ -26,6 +27,7 @@ class TestSimpleConversation:
     ):
         """Simple question → complete tool without other tool use."""
         result = run_loop(
+            ports=TEST_PORTS,
             query="What is 2+2? Answer with just the number.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -45,6 +47,7 @@ class TestReadFile:
         test_file.write_text("UNIQUE_MARKER_XYZ789")
 
         result = run_loop(
+            ports=TEST_PORTS,
             query=f"Read the file at {test_file} and tell me its exact content.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -59,6 +62,7 @@ class TestShellCommand:
     def test_shell_echo(self, integration_model, omlx_provider, model_capabilities):
         """Shell command → execute → output in answer."""
         result = run_loop(
+            ports=TEST_PORTS,
             query="Run the command 'echo INTEGRATION_TEST_PASS_42' and tell me the output.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -77,6 +81,7 @@ class TestWriteFile:
         target = tmp_path / "agent_output.txt"
 
         result = run_loop(
+            ports=TEST_PORTS,
             query=f"Create a new file at {target} with the content 'hello from agent test'.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -97,6 +102,7 @@ class TestEditFile:
         f.write_text('def greet():\n    return "OLD_VALUE"\n')
 
         result = run_loop(
+            ports=TEST_PORTS,
             query=f"Edit the file {f} to change 'OLD_VALUE' to 'NEW_VALUE'.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -145,6 +151,7 @@ class TestMultiStepToolUse:
         target = tmp_path / "multi_step.txt"
 
         result = run_loop(
+            ports=TEST_PORTS,
             query=(
                 f"First, create a file at {target} containing 'MULTI_STEP_OK'. "
                 f"Then, read that file and tell me its content."
@@ -401,6 +408,7 @@ class TestSkillHooks:
         }
 
         result = run_loop(
+            ports=TEST_PORTS,
             query="Run 'echo hello' in the shell and tell me the output.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -430,6 +438,7 @@ class TestSkillHooks:
         test_file.write_text("test data")
 
         result = run_loop(
+            ports=TEST_PORTS,
             query=f"Read the file {test_file} and tell me its content.",
             provider=omlx_provider,
             capabilities=model_capabilities,
@@ -450,6 +459,7 @@ class TestDelegateSubagent:
     ):
         """Delegate (context=none) runs a subagent that uses tools."""
         result = run_loop(
+            ports=TEST_PORTS,
             query="Use the delegate tool to count .py files in the tests/ directory. "
             "Use this exact delegate call: "
             '{"tasks": [{"task": "Count .py files in tests/ directory using '
@@ -471,6 +481,7 @@ class TestDelegateSubagent:
 
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="First, remember that the secret password is DOLPHIN42. "
             "Then delegate a task with context fork: "
             '{"tasks": [{"task": "What is the secret password mentioned earlier?", '

@@ -259,7 +259,7 @@ class TestSkillRegistryInheritance:
             )
             # The skill's run_loop must receive the SAME registry (else spawn
             # ops in the skill body hit no registry and no-op).
-            assert mock_loop.call_args.kwargs["agent_registry"] is reg
+            assert mock_loop.call_args.kwargs["ports"].agent_registry is reg
 
     def test_skill_subloop_exposes_spawn_but_subagent_does_not(self, caps):
         """Parity: the agent tool advertises spawn when a registry is present
@@ -363,7 +363,7 @@ class TestMainRegistrySlotInheritance:
                 ctx=ctx,
                 **kw,
             )
-            return mock_loop.call_args.kwargs["agent_registry"]
+            return mock_loop.call_args.kwargs["ports"].agent_registry
 
     def test_unspecified_inherits_main_slot(self, caps, ctx):
         from agent_cli.subagent.agents_live import set_main_registry

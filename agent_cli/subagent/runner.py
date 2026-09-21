@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from agent_cli.context.manager import ContextManager
     from agent_cli.loop import LoopResult
+    from agent_cli.loop.ports import LoopPorts
     from agent_cli.providers.base import LLMProvider
     from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -153,6 +154,7 @@ def run_subagent_message(
     query: str,
     ctx: ContextManager,
     *,
+    ports: LoopPorts,
     provider: LLMProvider,
     capabilities: ModelCapabilities,
     model: str,
@@ -172,9 +174,6 @@ def run_subagent_message(
     agent_role: str = "",
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
-    ask_handler=None,
-    message_handler=None,
-    questions=None,
     peer_agents_section: str = "",
 ) -> tuple[LoopResult, float]:
     """``ctx`` 위에서 메시지 1건을 처리 — ``(loop_result, 소요초)``.
@@ -210,9 +209,7 @@ def run_subagent_message(
         agent_role=agent_role,
         hooks_config=hooks_config,
         compaction_enabled=compaction_enabled,
-        ask_handler=ask_handler,
-        message_handler=message_handler,
-        questions=questions,
+        ports=ports,
         peer_agents_section=peer_agents_section,
     )
     return loop_result, time.monotonic() - t0

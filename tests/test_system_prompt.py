@@ -39,6 +39,7 @@ from agent_cli.prompts.system_prompt import (
 )
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import get as _get_wire_format
+from tests.loop_ports import TEST_PORTS
 
 _SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
 # Fixed tool set for the snapshot — deterministic (no CWD / directives / env).
@@ -1141,7 +1142,11 @@ class TestSystemSectionsSingleSource:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
-            query="Q", provider=MagicMock(), capabilities=_make_caps(), model="m"
+            ports=TEST_PORTS,
+            query="Q",
+            provider=MagicMock(),
+            capabilities=_make_caps(),
+            model="m",
         )
         loop._setup()
         return loop
@@ -1192,6 +1197,7 @@ class TestSystemSectionsSingleSource:
             )
         ]
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=_make_caps(),

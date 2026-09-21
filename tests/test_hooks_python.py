@@ -18,6 +18,7 @@ from agent_cli.hooks.events import (
 from agent_cli.hooks.loader import _scan_hook_files, load_python_hooks
 from agent_cli.hooks.runner import HookRunner
 from agent_cli.tools.result import ToolResult
+from tests.loop_ports import split_ports
 
 # ── Events ──────────────────────────────────────────────
 
@@ -449,8 +450,7 @@ class TestLoopHookIntegration:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            hook_runner=hook_runner,
-            **kwargs,
+            **split_ports({"hook_runner": hook_runner, **kwargs}),
         )
 
     def test_fire_hook_with_runner(self, tmp_path):

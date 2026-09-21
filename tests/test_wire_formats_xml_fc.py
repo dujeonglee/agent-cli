@@ -9,6 +9,7 @@ import pytest
 
 from agent_cli.wire_formats import get as get_wf
 from agent_cli.wire_formats.xml_fc import XmlFcFormat
+from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
@@ -587,6 +588,7 @@ class TestLoopE2E:
             "</function>\n</tool_call>",
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="What does note.txt say?",
             provider=provider,
             capabilities=self._caps(),
@@ -619,6 +621,7 @@ class TestLoopE2E:
             "</function>\n</tool_call>",
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read both files",
             provider=provider,
             capabilities=self._caps(),

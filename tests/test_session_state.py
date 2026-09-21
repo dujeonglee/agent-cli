@@ -19,6 +19,7 @@ from agent_cli.prompts.session_state import (
     SESSION_STATE_HEADER,
     build_session_state,
 )
+from tests.loop_ports import TEST_PORTS
 
 # ── 1. rendering ─────────────────────────────────────────────────────
 
@@ -376,6 +377,7 @@ class TestKvWinEndToEnd:
         )
         ctx = _ctx(tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="do it",
             provider=provider,
             capabilities=_caps(),

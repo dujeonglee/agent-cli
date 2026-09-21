@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import get as get_wire_format
+from tests.loop_ports import TEST_PORTS
 
 WF = get_wire_format("json_fc")
 
@@ -621,6 +622,7 @@ class TestEndToEnd:
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         ctx = ContextManager(session_dir=tmp_path)
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=self._caps(),
@@ -660,6 +662,7 @@ class TestEndToEnd:
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         ctx = ContextManager(session_dir=tmp_path)
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=self._caps(),

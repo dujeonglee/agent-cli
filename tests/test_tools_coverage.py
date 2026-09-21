@@ -21,6 +21,7 @@ from agent_cli.tools.read_file import (
 )
 from agent_cli.tools.shell import tool_shell
 from agent_cli.tools.write_file import tool_write_file
+from tests.loop_ports import TEST_PORTS
 
 
 class TestToolResult:
@@ -908,6 +909,7 @@ class TestSignalHandlerThreadSafety:
             from agent_cli.loop import AgentLoop
 
             loop = AgentLoop(
+                ports=TEST_PORTS,
                 query="test",
                 provider=provider,
                 capabilities=caps,

@@ -8,6 +8,7 @@ import pytest
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
+from tests.loop_ports import TEST_PORTS, make_ports, split_ports
 
 
 class TestInspectorNoSynthesis:
@@ -99,6 +100,7 @@ class TestRunLoopComplete:
     def test_direct_complete(self, caps):
         provider = _make_provider(_complete("42"))
         result = run_loop(
+            ports=TEST_PORTS,
             query="What is the answer?",
             provider=provider,
             capabilities=caps,
@@ -115,6 +117,7 @@ class TestRunLoopComplete:
             _complete("File contains: hello world"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read test.txt",
             provider=provider,
             capabilities=caps,
@@ -126,6 +129,7 @@ class TestRunLoopComplete:
         """배열 래퍼 없는 bare complete 객체 — 1-op 관용으로 완료."""
         provider = _make_provider('{"action": "complete", "result": "Simple answer"}')
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -143,6 +147,7 @@ class TestRunLoopComplete:
             json.dumps({"action": "complete", "result": ""}),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read file",
             provider=provider,
             capabilities=caps,
@@ -167,6 +172,7 @@ class TestRunLoopComplete:
             ),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read file",
             provider=provider,
             capabilities=caps,
@@ -185,6 +191,7 @@ class TestRunLoopToolExecution:
             _complete("Executed command"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Run pwd",
             provider=provider,
             capabilities=caps,
@@ -202,6 +209,7 @@ class TestRunLoopToolExecution:
             _complete("ok"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Do something",
             provider=provider,
             capabilities=caps,
@@ -254,6 +262,7 @@ class TestToolExceptionSafetyNet:
             _complete("recovered after tool crashed"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="run something",
             provider=provider,
             capabilities=caps,
@@ -286,6 +295,7 @@ class TestToolExceptionSafetyNet:
             LLMResponse(content=_complete("done")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="x",
             provider=provider,
             capabilities=caps,
@@ -316,6 +326,7 @@ class TestToolExceptionSafetyNet:
             _complete("ok"),
         )
         run_loop(
+            ports=TEST_PORTS,
             query="x",
             provider=provider,
             capabilities=caps,
@@ -344,6 +355,7 @@ class TestToolExceptionSafetyNet:
         )
         with pytest.raises(KeyboardInterrupt):
             run_loop(
+                ports=TEST_PORTS,
                 query="x",
                 provider=provider,
                 capabilities=caps,
@@ -363,6 +375,7 @@ class TestToolExceptionSafetyNet:
         )
         with pytest.raises(SystemExit):
             run_loop(
+                ports=TEST_PORTS,
                 query="x",
                 provider=provider,
                 capabilities=caps,
@@ -387,6 +400,7 @@ class TestToolExceptionSafetyNet:
             _complete("ok"),
         )
         run_loop(
+            ports=TEST_PORTS,
             query="x",
             provider=provider,
             capabilities=caps,
@@ -439,6 +453,7 @@ class TestActionInferenceCorrection:
             _complete("recovered"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="go",
             provider=provider,
             capabilities=caps,
@@ -457,6 +472,7 @@ class TestRunLoopParseFailure:
             _complete("recovered"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="What?",
             provider=provider,
             capabilities=caps,
@@ -478,6 +494,7 @@ class TestRunLoopParseFailure:
         ]
 
         run_loop(
+            ports=TEST_PORTS,
             query="anything",
             provider=provider,
             capabilities=caps,
@@ -510,6 +527,7 @@ class TestRunLoopParseFailure:
         ]
 
         run_loop(
+            ports=TEST_PORTS,
             query="anything",
             provider=provider,
             capabilities=caps,
@@ -536,6 +554,7 @@ class TestRunLoopParseFailure:
         ]
 
         result = run_loop(
+            ports=TEST_PORTS,
             query="anything",
             provider=provider,
             capabilities=caps,
@@ -606,6 +625,7 @@ class TestActionRenderShowsRawEmission:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -649,6 +669,7 @@ class TestActionRenderShowsRawEmission:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -707,6 +728,7 @@ class TestObservationRenderFromStored:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -743,6 +765,7 @@ class TestObservationRenderFromStored:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -791,6 +814,7 @@ class TestRunLoopObservability:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -811,6 +835,7 @@ class TestRunLoopObservability:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("answer"))  # usage=None
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -828,6 +853,7 @@ class TestRunLoopObservability:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("answer"))
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -855,6 +881,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("recovered")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -897,6 +924,7 @@ class TestRunLoopObservability:
             ),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -922,6 +950,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("recovered")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -949,6 +978,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("recovered")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -975,6 +1005,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("recovered")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1005,6 +1036,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("recovered")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1033,6 +1065,7 @@ class TestRunLoopObservability:
             LLMResponse(content=_complete("ok")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1052,6 +1085,7 @@ class TestRunLoopObservability:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("answer"))
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1066,6 +1100,7 @@ class TestRunLoopObservability:
         # disabled even when the flag is on (no place to write).
         provider = _make_provider(_complete("answer"))
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1091,6 +1126,7 @@ class TestRunLoopObservability:
         nested = json.dumps({"result": "the actual story"})
         provider = _make_provider(_complete(nested))
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1114,6 +1150,7 @@ class TestRunLoopObservability:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("just a plain answer"))
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1157,6 +1194,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_complete("done")),  # turn 3: recovery
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="List files",
             provider=provider,
             capabilities=caps,
@@ -1186,6 +1224,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_complete("done")),  # 4: recovery
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="The original user task here",
             provider=provider,
             capabilities=caps,
@@ -1210,6 +1249,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_shell_call("ls")) for _ in range(5)
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="t",
             provider=provider,
             capabilities=caps,
@@ -1237,6 +1277,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_complete("done")),  # 4
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="t",
             provider=provider,
             capabilities=caps,
@@ -1260,6 +1301,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_complete("done")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="t",
             provider=provider,
             capabilities=caps,
@@ -1285,6 +1327,7 @@ class TestRunLoopActionLoop:
             LLMResponse(content=_complete("done")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="t",
             provider=provider,
             capabilities=caps,
@@ -1324,6 +1367,7 @@ class TestRunLoopUnknownTool:
             LLMResponse(content=_complete("recovered")),
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1352,6 +1396,7 @@ class TestRunLoopUnknownTool:
             LLMResponse(content=_complete("ok")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1381,6 +1426,7 @@ class TestRunLoopUnknownTool:
             LLMResponse(content=_complete("recovered")),
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1422,6 +1468,7 @@ class TestRunLoopSchemaMismatch:
             LLMResponse(content=_complete("recovered")),
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1451,6 +1498,7 @@ class TestRunLoopSchemaMismatch:
             LLMResponse(content=_complete("ok")),
         ]
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1476,6 +1524,7 @@ class TestRunLoopSchemaMismatch:
             LLMResponse(content=_complete("recovered")),
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1534,7 +1583,7 @@ class TestToolPolicyDeclarations:
             depth=depth,
             max_depth=max_depth,
             active_tools=list(active_tools) if active_tools else None,
-            message_handler=message_handler,
+            ports=make_ports(message_handler=message_handler),
         )
         return list(loop.tools_list)
 
@@ -1699,6 +1748,7 @@ class TestRunLoopMaxIter:
             json.dumps({"action": "shell", "command": "whoami"}),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Keep going",
             provider=provider,
             capabilities=caps,
@@ -1720,6 +1770,7 @@ class TestToolHistoryTracking:
             _complete("ok"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read file then run command",
             provider=provider,
             capabilities=caps,
@@ -1741,6 +1792,7 @@ class TestEchoAsFinalAnswer:
             ),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Do something",
             provider=provider,
             capabilities=caps,
@@ -1755,6 +1807,7 @@ class TestEchoAsFinalAnswer:
             _complete("found"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Search",
             provider=provider,
             capabilities=caps,
@@ -1769,6 +1822,7 @@ class TestEchoAsFinalAnswer:
             _complete("written"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Write",
             provider=provider,
             capabilities=caps,
@@ -1786,6 +1840,7 @@ class TestRepeatedCallDetection:
         same_call = json.dumps({"action": "read_file", "path": str(test_file)})
         provider = _make_provider(same_call, same_call, same_call)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read file",
             provider=provider,
             capabilities=caps,
@@ -1809,6 +1864,7 @@ class TestRepeatedCallDetection:
             _complete("ok"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Read files",
             provider=provider,
             capabilities=caps,
@@ -1821,6 +1877,7 @@ class TestRunLoopHeadlessMode:
     def test_headless_no_render(self, caps, capsys):
         provider = _make_provider(_complete("answer"))
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1839,6 +1896,7 @@ class TestAskToolAvailability:
         ctx = MagicMock()
         ctx.session_dir = tmp_path
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
@@ -1852,6 +1910,7 @@ class TestAskToolAvailability:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
@@ -1872,6 +1931,7 @@ class TestGracefulInterrupt:
             _complete("should not reach"),
         )
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1898,6 +1958,7 @@ class TestGracefulInterrupt:
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1933,6 +1994,7 @@ class TestGracefulInterrupt:
         ctx = ContextManager(session_dir=tmp_path)
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -1977,7 +2039,12 @@ class TestGracefulInterrupt:
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
         ctx = ContextManager(session_dir=tmp_path)
         loop = AgentLoop(
-            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
         )
         loop.run()
 
@@ -1999,9 +2066,14 @@ class TestGracefulInterrupt:
         from agent_cli.loop import AgentLoop
 
         parent = AgentLoop(
-            query="Q", provider=MagicMock(), capabilities=caps, model="m"
+            ports=TEST_PORTS,
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
         )
         child = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
@@ -2031,7 +2103,12 @@ class TestGracefulInterrupt:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         loop = AgentLoop(
-            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
         )
         result = loop.run()
 
@@ -2059,7 +2136,12 @@ class TestGracefulInterrupt:
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
         ctx = ContextManager(session_dir=tmp_path)
         loop = AgentLoop(
-            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
         )
         loop._interrupted = True
         with patch("agent_cli.loop.core.render_step") as mock_rs:
@@ -2105,6 +2187,7 @@ class TestGracefulInterrupt:
         stop_event = threading.Event()
         ctx = ContextManager(session_dir=tmp_path / "session")
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2144,6 +2227,7 @@ class TestGracefulInterrupt:
         original_handler = signal.getsignal(signal.SIGINT)
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2165,6 +2249,7 @@ class TestGracefulInterrupt:
         original_handler = signal.getsignal(signal.SIGINT)
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2182,6 +2267,7 @@ class TestGracefulInterrupt:
 
         provider = _make_provider(_complete("ok"))
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2205,6 +2291,7 @@ class TestGracefulInterrupt:
 
         provider = _make_provider(_complete("ok"))
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2227,6 +2314,7 @@ class TestGracefulInterrupt:
 
         provider = _make_provider(_complete("should not reach"))
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2245,6 +2333,7 @@ class TestGracefulInterrupt:
         provider.call.side_effect = KeyboardInterrupt()
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2269,6 +2358,7 @@ class TestGracefulInterrupt:
         provider.call.side_effect = [LLMResponse(content=r) for r in test_responses]
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2313,6 +2403,7 @@ class TestGracefulInterrupt:
         ctx = ContextManager(session_dir=tmp_path)
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="Analyze data.txt",
             provider=provider,
             capabilities=caps,
@@ -2388,6 +2479,7 @@ class TestAskTool:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2492,6 +2584,7 @@ class TestAskTool:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Do something",
             provider=provider,
             capabilities=caps,
@@ -2526,6 +2619,7 @@ class TestAskTool:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Help me",
             provider=provider,
             capabilities=caps,
@@ -2553,6 +2647,7 @@ class TestAskTool:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2574,6 +2669,7 @@ class TestAskTool:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Do it",
             provider=provider,
             capabilities=caps,
@@ -2592,6 +2688,7 @@ class TestAskTool:
         )
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="Do something",
             provider=provider,
             capabilities=caps,
@@ -2723,6 +2820,7 @@ class TestAgentLoopClass:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="test",
             provider=MagicMock(),
             capabilities=caps,
@@ -2740,6 +2838,7 @@ class TestAgentLoopClass:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
             capabilities=caps,
@@ -2754,6 +2853,7 @@ class TestAgentLoopClass:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
             capabilities=caps,
@@ -2769,6 +2869,7 @@ class TestAgentLoopClass:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
             capabilities=caps,
@@ -2787,6 +2888,7 @@ class TestAgentLoopClass:
         provider.call.return_value = LLMResponse(content=_complete("42"))
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="what",
             provider=provider,
             capabilities=caps,
@@ -2812,6 +2914,7 @@ class TestContextContinuity:
         )
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="Read file",
             provider=provider,
             capabilities=caps,
@@ -2831,6 +2934,7 @@ class TestContextContinuity:
         provider = _make_provider(_complete("final answer"))
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -2863,6 +2967,7 @@ class TestContextContinuity:
             lambda self: True,
         )
         run_loop(
+            ports=TEST_PORTS,
             query="Help",
             provider=provider,
             capabilities=caps,
@@ -3096,6 +3201,7 @@ class TestProviderCallKwargs:
         """ReAct returns ``{}`` so no plugin kwargs reach the provider."""
         provider = _make_provider(_complete("done"))
         run_loop(
+            ports=TEST_PORTS,
             query="test",
             provider=provider,
             capabilities=caps,
@@ -3119,6 +3225,7 @@ class TestProviderCallKwargs:
 
         provider = _make_provider(_complete("done"))
         run_loop(
+            ports=TEST_PORTS,
             query="test",
             provider=provider,
             capabilities=caps,
@@ -3143,6 +3250,7 @@ class TestProviderPrefill:
         provider.call must not have a trailing assistant message added."""
         provider = _make_provider(_complete("done"))
         run_loop(
+            ports=TEST_PORTS,
             query="hello",
             provider=provider,
             capabilities=caps,
@@ -3177,6 +3285,7 @@ class TestProviderPrefill:
         # and just verify it appears in the messages reaching provider.
         provider = _make_provider(_complete("done"))
         run_loop(
+            ports=TEST_PORTS,
             query="hi",
             provider=provider,
             capabilities=caps,
@@ -3209,6 +3318,7 @@ class TestProviderPrefill:
         # exactly once in the forwarded messages on a single call.
         provider = _make_provider(_complete("ok"))
         run_loop(
+            ports=TEST_PORTS,
             query="hi",
             provider=provider,
             capabilities=caps,
@@ -3319,6 +3429,7 @@ class TestNoOutputTruncation:
 
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="Read the file",
             provider=provider,
             capabilities=caps,
@@ -3395,6 +3506,7 @@ class TestContextOverflowRecovery:
             LLMResponse(content=_complete("recovered")),  # retry succeeds
         ]
         result = run_loop(
+            ports=TEST_PORTS,
             query="do it",
             provider=provider,
             capabilities=caps,
@@ -3418,7 +3530,12 @@ class TestContextOverflowRecovery:
             LLMResponse(content=_complete("recovered")),
         ]
         result = run_loop(
-            query="do it", provider=provider, capabilities=caps, model="test", ctx=ctx
+            ports=TEST_PORTS,
+            query="do it",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
         )
         assert result.output == "recovered"
         assert provider.call.call_count == 2
@@ -3433,6 +3550,7 @@ class TestContextOverflowRecovery:
         provider = MagicMock()
         provider.call.side_effect = [self._typed_overflow() for _ in range(30)]
         result = run_loop(
+            ports=TEST_PORTS,
             query="do it",
             provider=provider,
             capabilities=caps,
@@ -3451,6 +3569,7 @@ class TestContextOverflowRecovery:
         provider = MagicMock()
         provider.call.side_effect = [RuntimeError("Connection refused")]
         run_loop(
+            ports=TEST_PORTS,
             query="do it",
             provider=provider,
             capabilities=caps,
@@ -3476,6 +3595,7 @@ class TestContextOverflowRecovery:
             provider = MagicMock()
             provider.call.side_effect = [exc]
             run_loop(
+                ports=TEST_PORTS,
                 query="do it",
                 provider=provider,
                 capabilities=caps,
@@ -3524,6 +3644,7 @@ class TestFlow1PreventiveCompaction:
             ctx, "reconcile_actual_tokens", wraps=ctx.reconcile_actual_tokens
         ) as spy:
             run_loop(
+                ports=TEST_PORTS,
                 query="q",
                 provider=provider,
                 capabilities=caps,
@@ -3544,6 +3665,7 @@ class TestFlow1PreventiveCompaction:
             seen = []
             with patch.object(ctx, "ensure_within", side_effect=seen.append):
                 run_loop(
+                    ports=TEST_PORTS,
                     query="q",
                     provider=_make_provider(_complete("ok")),
                     capabilities=caps,
@@ -3573,6 +3695,7 @@ class TestFlow1PreventiveCompaction:
         provider = _make_provider(_complete("ok"))  # LLMResponse usage=None
         with patch.object(ctx, "reconcile_actual_tokens") as spy:
             run_loop(
+                ports=TEST_PORTS,
                 query="q",
                 provider=provider,
                 capabilities=caps,
@@ -3596,6 +3719,7 @@ class TestFlow1PreventiveCompaction:
         before = len(ctx.get_raw_messages())
         provider = _make_provider(_complete("ok"))
         result = run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=small_caps,
@@ -3630,6 +3754,7 @@ class TestOutputTruncationGuard:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="write x",
             provider=provider,
             capabilities=caps,
@@ -3656,6 +3781,7 @@ class TestOutputTruncationGuard:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -3685,6 +3811,7 @@ class TestOutputTruncationGuard:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="write y",
             provider=provider,
             capabilities=caps,
@@ -3712,7 +3839,7 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Brave Penguin",
-            dequeue_user_message=dq,
+            ports=make_ports(dequeue_user_message=dq),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -3734,6 +3861,7 @@ class TestMessageInjection:
 
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
+            ports=TEST_PORTS,
             query="just do it",
             provider=_make_provider(_complete("ok")),
             capabilities=caps,
@@ -3767,8 +3895,7 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Pen",
-            dequeue_user_message=dq,
-            route_message=route,
+            ports=make_ports(dequeue_user_message=dq, route_message=route),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -3798,8 +3925,10 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Pen",
-            dequeue_user_message=dq,
-            route_message=lambda _text: False,  # never a command
+            ports=make_ports(
+                dequeue_user_message=dq, route_message=lambda _text: False
+            ),
+            # never a command
             provider=provider,
             capabilities=caps,
             model="m",
@@ -3841,8 +3970,10 @@ class TestMessageInjection:
         run_loop(
             query="starter",
             query_author="Pen",
-            dequeue_user_message=dq,
-            route_message=lambda _text: False,  # all plain chat
+            ports=make_ports(
+                dequeue_user_message=dq, route_message=lambda _text: False
+            ),
+            # all plain chat
             provider=provider,
             capabilities=caps,
             model="m",
@@ -3886,8 +4017,7 @@ class TestMessageInjection:
         run_loop(
             query="plain chat starter",
             query_author="Pen",
-            dequeue_user_message=dq,
-            route_message=route,
+            ports=make_ports(dequeue_user_message=dq, route_message=route),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -4026,6 +4156,7 @@ class TestLoopConfigStateOwnership:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
+            ports=TEST_PORTS,
             query="do it",
             provider=None,
             capabilities=None,
@@ -4145,7 +4276,9 @@ class TestPR3Collaborators:
     def test_sentinels_are_module_constants_shared_via_loop(self):
         from agent_cli.loop import _CONTINUE, _RETRY, AgentLoop
 
-        loop = AgentLoop(query="q", provider=None, capabilities=None, model="m")
+        loop = AgentLoop(
+            ports=TEST_PORTS, query="q", provider=None, capabilities=None, model="m"
+        )
         assert loop._CONTINUE is _CONTINUE and loop._RETRY is _RETRY
         # 위임 표면: loop 의 브리지/디스패처/LLM 콜러가 같은 cfg/state 공유
         assert loop._dispatch.cfg is loop._config and loop._llm.cfg is loop._config
@@ -4163,7 +4296,11 @@ class TestRunAuthors:
         from agent_cli.loop import AgentLoop
 
         return AgentLoop(
-            query="Q", provider=MagicMock(), capabilities=caps, model="m", **kw
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            **split_ports(kw),
         )
 
     def test_user_author_accumulates_and_dedupes(self, caps):
@@ -4334,8 +4471,7 @@ class TestMailAnswersInheritance:
             provider=MagicMock(),
             capabilities=caps,
             model="m",
-            agent_registry=registry,
-            **kw,
+            **split_ports({"agent_registry": registry, **kw}),
         )
 
     def test_wake_run_inherits_reply_answers(self, caps):
@@ -4440,7 +4576,9 @@ class TestRendererAbcPromotion:
                 provider=MagicMock(),
                 capabilities=caps,
                 model="m",
-                dequeue_user_message=lambda: items.pop() if items else None,
+                ports=make_ports(
+                    dequeue_user_message=lambda: items.pop() if items else None
+                ),
             )
             loop._inject_queued_messages()  # push_user_message → no-op
             assert loop.run_authors == ["Bob"]
@@ -4457,6 +4595,7 @@ class TestTaskGuidelinesRideTheTail:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("done"))
         run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
@@ -4489,6 +4628,7 @@ class TestMaxTokensClamp:
         provider = _make_provider(_complete("ok"))
         caps = self._caps(window=60_000, max_out=50_000)
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -4507,6 +4647,7 @@ class TestMaxTokensClamp:
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("ok"))
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -4526,6 +4667,7 @@ class TestMaxTokensClamp:
         provider = _make_provider(_complete("ok"))
         caps = self._caps(window=20_000, max_out=16_000)
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -4565,6 +4707,7 @@ class TestStreamIdleInheritance:
         ctx.set_stream_max_attempts(6)
         provider = _make_provider(_complete("ok"))
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -4589,6 +4732,7 @@ class TestStreamIdleInheritance:
         )
         provider = _make_provider(_complete("ok"))
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,
@@ -4646,6 +4790,7 @@ class TestHeadlessThinkingControl:
         )
         provider = _make_provider(_complete("ok"))
         run_loop(
+            ports=TEST_PORTS,
             query="q",
             provider=provider,
             capabilities=caps,

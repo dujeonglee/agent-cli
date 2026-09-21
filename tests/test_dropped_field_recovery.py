@@ -36,6 +36,7 @@ from agent_cli.recovery.intervention import Intervention
 from agent_cli.tools.registry import infer_action
 from agent_cli.wire_formats import get
 from agent_cli.wire_formats.json_fc import JsonFcFormat
+from tests.loop_ports import TEST_PORTS
 
 # ── Fixtures / helpers ───────────────────────────────
 
@@ -173,6 +174,7 @@ class TestActionRequiredGate:
             _complete("done"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="go",
             provider=provider,
             capabilities=caps,
@@ -199,6 +201,7 @@ class TestActionRequiredGate:
             _complete("done"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="go",
             provider=provider,
             capabilities=caps,
@@ -219,6 +222,7 @@ class TestThoughtRequiredGate:
             _complete("done"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="go",
             provider=provider,
             capabilities=caps,
@@ -235,6 +239,7 @@ class TestThoughtRequiredGate:
             _complete("done"),
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="go",
             provider=provider,
             capabilities=caps,

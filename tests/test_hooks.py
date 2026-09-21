@@ -13,6 +13,7 @@ from agent_cli.hooks import (
     merge_hooks_configs,
     run_hooks,
 )
+from tests.loop_ports import TEST_PORTS
 
 
 def _set_agent_paths(paths):
@@ -929,6 +930,7 @@ class TestDiskHooksThroughLoop:
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
         result = run_loop(
+            ports=TEST_PORTS,
             query="Q",
             provider=provider,
             capabilities=caps,
