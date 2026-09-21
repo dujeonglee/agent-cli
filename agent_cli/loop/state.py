@@ -33,6 +33,9 @@ class LoopConfig:
     등은 ``__init__`` 확정 후 아무도 mutate 하지 않음을 전제.)
     """
 
+    #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"`` (``LoopPorts.owner``).
+    #: 모니터 소유자 라우팅이 `RunContext` 를 거쳐 이걸 읽는다.
+    owner: str = "main"
     model: str = ""
     provider_name: str = "openai"
     base_url: str = ""
@@ -60,10 +63,6 @@ class LoopConfig:
     # None(서브에이전트/headless)이면 AgentLoop.__init__ 이 teammate 도구를
     # tools_list 에서 제거한다 (teammate 안 teammate 금지의 단일 가드).
     agent_registry: object = None
-    # monitor: 조건 감시 레지스트리 (v9.11.0). 턴 경계에서 보고를 drain 해
-    # `tool="monitor"` 관찰 레코드로 주입한다 — `agent_registry` 와 같은 자리.
-    # None(서브에이전트/headless)이면 배달 없음.
-    monitor_registry: object = None
     # v5.11: 에이전트↔에이전트 메시징 훅 — 상주 서브루프에서만 주입.
     # 있으면 ``message`` 도구가 이 callable(to, text)->confirmation 으로
     # 라우팅되고, __init__ 이 message 도구를 tools_list 에 강제 탑재한다.

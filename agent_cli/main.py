@@ -652,6 +652,8 @@ def _dispatch_agent(
     _parent_hooks = _load_hooks() or None
     render_status("running", f"Running agent: {agent_name}...")
     result = tool_delegate(
+        # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 이다.
+        owner="main",
         args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
         parent_ctx=ctx,
         provider=llm_provider,
@@ -761,6 +763,7 @@ def _dispatch_skill(
     _parent_hooks = _load_hooks() or None
     try:
         skill_result = execute_skill(
+            owner="main",  # 루프 밖 디스패치
             skill=skill,
             arguments=arguments,
             provider=llm_provider,
@@ -1402,6 +1405,8 @@ def run(
             hooks_config=_disk_hooks,
         ),
         max_agents=max_agents,
+        # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
+        monitors=monitor_registry,
     )
     # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1).
     # 종전엔 조기-반환 경로들이 각자 나열하다 skill 경로는 registry/MCP,
@@ -1456,9 +1461,6 @@ def run(
             enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
-            # 모니터 보고도 같은 깨우기를 탄다 — 발화 시점에 main 이
-            # 유휴인 것이 정상이라, 안 얹으면 보고가 큐에 앉아 있다.
-            monitors=monitor_registry,
         )
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
@@ -1542,7 +1544,6 @@ def run(
                 wire_format=wire_format_plugin,
                 ports=ports_for_run(
                     agent_registry=agent_registry,
-                    monitor_registry=monitor_registry,
                     mcp_manager=mcp_manager,
                 ),
             )
@@ -1571,6 +1572,7 @@ def run(
             ctx,
             mcp_manager,
             agent_registry=agent_registry,
+            monitors=monitor_registry,
             warn_stuck=warn_stuck,
         )
 
@@ -1733,7 +1735,13 @@ def _write_result_file(path: str, answer) -> None:
 
 
 def _finalize_run(
-    session, ctx, mcp_manager=None, *, agent_registry=None, warn_stuck=False
+    session,
+    ctx,
+    mcp_manager=None,
+    *,
+    agent_registry=None,
+    monitors=None,
+    warn_stuck=False,
 ) -> None:
     """Finalize session after run command — 공용 teardown_session 위임
     (조립기 v8.39.0: registry 종료→스피너→MCP 해제→세션 저장 순서를 한
@@ -1745,6 +1753,7 @@ def _finalize_run(
         ctx,
         agent_registry=agent_registry,
         mcp_manager=mcp_manager,
+        monitors=monitors,
         warn_stuck=warn_stuck,
     )
     if session is None:
@@ -2374,6 +2383,8 @@ def web(
                 hooks_config=_disk_hooks,
             ),
             max_agents=max_agents,
+            # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
+            monitors=monitor_registry,
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
@@ -2387,7 +2398,6 @@ def web(
             enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
-            monitors=monitor_registry,  # run 경로와 동일
         )
         _announce_agent_boot(renderer, revived, auto, agent_registry.stale_questions)
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
@@ -2511,7 +2521,6 @@ def web(
                             hooks_config=_disk_hooks,
                             ports=ports_for_web(
                                 agent_registry=agent_registry,
-                                monitor_registry=monitor_registry,
                                 mcp_manager=mcp_manager,
                                 # 반복마다 새로 만드는 클로저라 포트도
                                 # 메시지마다 새로 짓는다.
@@ -2680,7 +2689,11 @@ def web(
             from agent_cli.runtime import teardown_session
 
             teardown_session(
-                session, ctx, agent_registry=agent_registry, mcp_manager=mcp_manager
+                session,
+                ctx,
+                agent_registry=agent_registry,
+                mcp_manager=mcp_manager,
+                monitors=monitor_registry,
             )
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:

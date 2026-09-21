@@ -347,6 +347,7 @@ class ToolBridge:
                     mcp_manager=self.cfg.mcp_manager,
                 )
             result = tool_delegate(
+                owner=self.cfg.owner,
                 args=raw,
                 parent_ctx=self.ctx,
                 provider=self.provider,
@@ -407,6 +408,7 @@ class ToolBridge:
                 session_dir=self.ctx.session_dir if self.ctx else None,
                 oversized_cap=self._oversized_cap,
                 tools_available=frozenset(self.cfg.tools_list),
+                owner=self.cfg.owner,
             )
             self._run_ctx_cache = cached
         return cached

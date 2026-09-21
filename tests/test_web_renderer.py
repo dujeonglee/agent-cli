@@ -2927,6 +2927,7 @@ class TestCtxDirWiring:
                 model="m",
                 ctx=None,
                 session=None,
+                owner="main",
             )
             start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
             assert captured["session_subdir"], "execute_skill 에 dir 미전달"
@@ -2968,6 +2969,7 @@ class TestCtxDirWiring:
             model="m",
             ctx=ctx,
             session_subdir="skill_plan_PINNED_1",
+            owner="main",
         )
         # history.jsonl 은 첫 메시지에서 lazy 생성이라(스텁 루프는 무기록)
         # 디렉토리 자체 + 결과 산출물로 이름 준수를 확인한다.
@@ -3006,6 +3008,7 @@ class TestCtxDirWiring:
             provider=object(),
             capabilities=self._caps(),
             run_dir_name="run_task_PINNED_9",
+            owner="main",
         )
         assert (tmp_path / "run_task_PINNED_9").is_dir()
         assert (tmp_path / "run_task_PINNED_9" / "result.md").exists()
@@ -3026,6 +3029,7 @@ class TestCtxDirWiring:
         tool_delegate(
             args={"tasks": [{"task": "t", "agent": "explorer"}]},
             capabilities=self._caps(),
+            owner="main",
         )
         start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
         assert captured["run_dir_name"]
@@ -3048,6 +3052,7 @@ class TestCtxDirWiring:
         _run_parallel(
             [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
             capabilities=self._caps(),
+            owner="main",
         )
         starts = {
             dict(d)["ctx_dir"]

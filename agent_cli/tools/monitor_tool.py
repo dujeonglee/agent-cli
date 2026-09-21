@@ -145,12 +145,20 @@ class MonitorTool(Tool):
             return ToolResult(False, error=gate)
 
         once = args.get("once")
-        mon = reg.add(
-            cond,
-            deadline_s=deadline_s,
-            once=True if once is None else bool(once),
-            run=run_cmd,
-        )
+        from agent_cli.monitor.registry import MonitorUnavailable
+
+        try:
+            mon = reg.add(
+                cond,
+                # 보고는 **건 쪽으로** 간다. `ctx` 가 없는 경로(직접 호출)는
+                # main 으로 — 그 경우 애초에 상주 루프가 아니다.
+                owner=ctx.owner if ctx is not None else "main",
+                deadline_s=deadline_s,
+                once=True if once is None else bool(once),
+                run=run_cmd,
+            )
+        except MonitorUnavailable as exc:
+            return ToolResult(False, error=str(exc))
         import time as _t
 
         left = int(mon.deadline_at - _t.time())

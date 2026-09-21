@@ -61,6 +61,8 @@ def _run_single(
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
     run_dir_name: str = "",
+    *,
+    owner: str,
 ) -> ToolResult:
     """Execute a single delegate task.
 
@@ -153,7 +155,7 @@ def _run_single(
     loop_result, duration = run_subagent_message(
         task,
         ctx,
-        ports=ports_for_oneshot(),
+        ports=ports_for_oneshot(owner=owner),
         provider=provider,
         capabilities=capabilities,
         model=model,
@@ -229,6 +231,8 @@ def _run_parallel(
     stop_event=None,
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
+    *,
+    owner: str,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading.
 
@@ -291,6 +295,9 @@ def _run_parallel(
         error_msg = ""
         try:
             results[index] = _run_single(
+                # 병렬 워커도 부모 주소를 물려받는다 — 여기 빠지면 스레드
+                # 안에서 걸린 감시의 보고가 갈 곳을 잃는다.
+                owner=owner,
                 task=spec["task"],
                 context_mode=spec.get("context", "none"),
                 allowed_tools=spec.get("tools"),
@@ -378,6 +385,8 @@ def tool_delegate(
     stop_event=None,
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
+    *,
+    owner: str,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -408,6 +417,9 @@ def tool_delegate(
         "agent_stack": agent_stack,
         "hooks_config": hooks_config,
         "compaction_enabled": compaction_enabled,
+        # 중첩 루프가 자기 주소를 물려받는 유일한 길 — 기본값이 없으므로
+        # 여기서 빠뜨리면 `_run_single`/`_run_parallel` 이 TypeError 다.
+        "owner": owner,
     }
 
     if len(tasks) == 1:

@@ -33,18 +33,15 @@ from agent_cli.runtime import (
 #: 입력을 흘리는지를 봐야지, 호출자가 None 을 준 결과를 보면 안 된다.
 _S = object()
 BUILDERS = {
-    "run": lambda: ports_for_run(
-        agent_registry=_Reg(), monitor_registry=_S, mcp_manager=_S
-    ),
+    "run": lambda: ports_for_run(agent_registry=_Reg(), mcp_manager=_S),
     "web": lambda: ports_for_web(
         agent_registry=_Reg(),
-        monitor_registry=_S,
         mcp_manager=_S,
         dequeue_user_message=_S,
         route_message=_S,
     ),
-    "skill": lambda: ports_for_skill(agent_registry=_Reg()),
-    "oneshot": ports_for_oneshot,
+    "skill": lambda: ports_for_skill(agent_registry=_Reg(), owner="agent:parent"),
+    "oneshot": lambda: ports_for_oneshot(owner="agent:parent"),
     "resident": lambda: ports_for_resident(key="k1", message_handler=_S, questions=_S),
 }
 
@@ -130,11 +127,22 @@ class TestOwner:
         assert BUILDERS[host]().owner == "main"
 
     @pytest.mark.parametrize("host", ["skill", "oneshot"])
-    def test_nested_hosts_are_placeholders_until_c2(self, host):
-        """부모 owner 를 나르는 seam 이 C2 의 몫이라 지금은 알 수 없다.
-        **알면서 틀린 값**이고, 영구 기본값과는 다르다 — 값이 생길 때까지의
-        한시적 자리다. C2 가 이 테스트를 바꾼다."""
-        assert BUILDERS[host]().owner == "main"
+    def test_nested_hosts_inherit_the_parent(self, host):
+        """상주 에이전트 안에서 돈 스킬·delegate 가 건 모니터는 **그
+        에이전트**에게 보고해야 한다. 기본값을 두면 조용히 main 으로 간다."""
+        assert BUILDERS[host]().owner == "agent:parent"
+
+    @pytest.mark.parametrize("builder", ["skill", "oneshot"])
+    def test_nested_builders_require_an_owner(self, builder):
+        """기본값이 없어야 상속 누락이 TypeError 가 된다."""
+        from agent_cli.runtime import ports_for_oneshot, ports_for_skill
+
+        with pytest.raises(TypeError):
+            (
+                ports_for_skill(agent_registry=None)
+                if builder == "skill"
+                else ports_for_oneshot()
+            )
 
 
 class TestHandlerResources:

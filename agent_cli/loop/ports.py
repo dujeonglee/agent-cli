@@ -49,7 +49,6 @@ class LoopPorts:
     questions: Any
     message_handler: Any
     agent_registry: Any
-    monitor_registry: Any
     mcp_manager: Any
     hook_runner: Any
     route_message: Any

@@ -202,6 +202,7 @@ class TestRunSkillDispatchDepthCheck:
             skill_stack=[],
             parent_depth=2,
             max_depth=2,
+            owner="main",
         )
         assert result.success is False
         # Depth-limit message vocabulary.
@@ -228,6 +229,7 @@ class TestRunSkillDispatchDepthCheck:
             skill_stack=[],
             parent_depth=0,
             max_depth=2,
+            owner="main",
         )
         assert result.success is False
         # Not a depth message — the call got past the depth check.
@@ -249,6 +251,7 @@ class TestRunSkillDispatchDepthCheck:
             skill_stack=["plan", "summarize"],
             parent_depth=2,
             max_depth=4,
+            owner="main",
         )
         assert result.success is False
         # Cycle, not depth — different recovery path.
@@ -285,6 +288,7 @@ class TestDelegateDispatchDepthCheck:
             provider=self._make_provider(),
             capabilities=_caps(),
             model="m",
+            owner="main",
         )
         assert result.success is False
         assert "depth" in result.error.lower()
@@ -305,6 +309,7 @@ class TestDelegateDispatchDepthCheck:
             provider=self._make_provider(),
             capabilities=_caps(),
             model="m",
+            owner="main",
         )
         assert result.success is False
         assert "depth" in result.error.lower()
@@ -323,6 +328,7 @@ class TestDelegateDispatchDepthCheck:
             provider=self._make_provider(),
             capabilities=_caps(),
             model="m",
+            owner="main",
         )
         assert result.success is False
         assert "Recursive" in result.error
@@ -450,6 +456,7 @@ class TestSkillBumpsDepth:
             model="m",
             parent_depth=3,
             max_depth=5,
+            owner="main",
         )
         # depth=3+1=4 (one hop above the parent), max_depth passed through.
         assert captured["depth"] == 4
@@ -491,6 +498,7 @@ class TestSkillBumpsDepth:
             provider=object(),
             capabilities=_caps(),
             model="m",
+            owner="main",
             # parent_depth omitted → 0 default
         )
         assert captured["depth"] == 1
@@ -517,6 +525,7 @@ class TestExistingRecursionPathsUnchanged:
             ctx=None,
             session=None,
             skill_stack=["plan", "summarize"],
+            owner="main",
         )
         assert result.success is False
         assert "summarize" in result.error
@@ -536,6 +545,7 @@ class TestExistingRecursionPathsUnchanged:
             provider=MagicMock(),
             capabilities=_caps(),
             model="m",
+            owner="main",
         )
         assert result.success is False
         assert "reviewer" in result.error

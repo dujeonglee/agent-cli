@@ -173,6 +173,7 @@ class AgentLoop:
         # 본문/테스트 무변경. PR-2/3 에서 협력 객체가 이 두 객체를 직접
         # 주입받으면 해당 메서드의 브리지 의존이 자연 소멸한다.
         self._config = LoopConfig(
+            owner=ports.owner,
             model=model,
             provider_name=provider_name,
             base_url=base_url,
@@ -197,7 +198,6 @@ class AgentLoop:
             compaction_enabled=compaction_enabled,
             verbose=verbose,
             agent_registry=ports.agent_registry,
-            monitor_registry=ports.monitor_registry,
             message_handler=ports.message_handler,
             questions=ports.questions,
             peer_agents_section=peer_agents_section,
@@ -466,7 +466,6 @@ class AgentLoop:
                     self.ctx.set_turn(self.turn + 1)
                 self._inject_queued_messages()
                 self._deliver_agent_mail()
-                self._deliver_monitor_reports()
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -686,41 +685,6 @@ class AgentLoop:
                 notice_added = True
             self._add_user_message(text, author)
 
-    def _deliver_monitor_reports(self) -> None:
-        """턴 경계: 미배달 모니터 보고를 **관찰 레코드**로 주입한다 (v9.11.0).
-
-        `_deliver_agent_mail` 의 형제다. 보고문을 입력 큐에 넣지 **않는** 이유
-        (docs/monitor/DESIGN.md §6.1): 큐는 `MailWaker` 의 깨우기 마커를 나르는
-        채널이고, 거기에 내용을 태우면 보고가 **사람 메시지로 위장**된다 —
-        `push_user_message` 가 사용자 카드를 그리고 `QUEUED_REQUEST_NOTICE`
-        ("Another *user request* arrived")가 붙으며, history·resume 재생·검색
-        표면에서 사람 턴과 구별되지 않는다. 게다가 `run` 은 턴 중 큐 주입을
-        하지 않아 배달이 런 종료 후로 밀리고, `--result-file` 이 모니터 보고에
-        대한 응답으로 덮인다.
-
-        ``tool="monitor"`` 는 **아무 데도 등록이 필요 없다**: 재생은 `tool` 키가
-        있는 레코드를 관찰로 취급하고(`context/records.py`), `is_format_intervention`
-        은 `tool == ""` 일 때만 걸리며(그래서 빈 문자열은 금지), 프런트는
-        `tool === "agent"` 만 특수 처리한다. 새 SSE 이벤트도 새 카드도 없다.
-        """
-        registry = self._config.monitor_registry
-        if registry is None:
-            return
-        reports = registry.drain()
-        for report in reports:
-            record = {
-                "role": "user",
-                "tool": "monitor",
-                "success": True,
-                "content": report,
-            }
-            self.messages.append({"role": "user", "content": report})
-            if self.ctx:
-                self.ctx.add(dict(record))
-            render_step(
-                "observation", report, self.turn, tool_name="monitor", success=True
-            )
-
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
         주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="agent"
@@ -757,7 +721,10 @@ class AgentLoop:
                 "observation",
                 record["content"],
                 self.turn,
-                tool_name="agent",
+                # 레코드가 실은 도구명으로 그린다 — 하드코딩하면 모니터
+                # 보고가 **빈 칩을 단 에이전트 회신 카드**로 그려진다
+                # (프런트가 `tool === "agent"` 를 특수 처리한다).
+                tool_name=record["tool"],
                 success=bool(reply.get("success")),
             )
             for a in inherited:

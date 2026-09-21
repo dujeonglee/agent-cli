@@ -52,6 +52,7 @@ class TestCodeAnalystAgent:
             base_url=OMLX_BASE_URL,
             api_key="",
             max_turns=5,
+            owner="main",
         )
         assert result.success
         assert "add" in result.output.lower() or "calculator" in result.output.lower()
@@ -82,6 +83,7 @@ class TestCodeAnalystAgent:
             base_url=OMLX_BASE_URL,
             api_key="",
             max_turns=5,
+            owner="main",
         )
         assert result.success
         output = result.output
@@ -124,6 +126,7 @@ class TestPlanSkill:
                 capabilities=model_capabilities,
                 model=integration_model,
                 ctx=ctx,
+                owner="main",
             )
             assert result.success
 
@@ -161,6 +164,7 @@ class TestPlanSkill:
                 capabilities=model_capabilities,
                 model=integration_model,
                 ctx=ctx,
+                owner="main",
             )
             assert result.success
             assert len(result.output) > 20

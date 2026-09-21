@@ -858,6 +858,7 @@ class TurnDispatcher:
             # workers (an orchestrate skill's whole point); a sub-agent loop has
             # no registry, so its skills stay run-only. See executor.execute_skill.
             agent_registry=self.cfg.agent_registry,
+            owner=self.cfg.owner,
         )
         # Through the same result→observation seam as every other tool: a skill
         # returns its sub-loop's whole output, so it is the single largest

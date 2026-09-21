@@ -52,6 +52,7 @@ class TestToolIntersection:
                 model="test",
                 ctx=ctx,
                 parent_tools=["read_file", "shell"],
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
@@ -71,6 +72,7 @@ class TestToolIntersection:
             model="test",
             ctx=ctx,
             parent_tools=["read_file", "shell"],
+            owner="main",
         )
         assert result is not None
         assert not result.success
@@ -92,6 +94,7 @@ class TestToolIntersection:
                 capabilities=caps,
                 model="test",
                 ctx=ctx,
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
@@ -115,6 +118,7 @@ class TestToolIntersection:
                 model="test",
                 ctx=ctx,
                 parent_tools=["read_file", "shell"],
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
@@ -140,6 +144,7 @@ class TestParentRoleInheritance:
                 model="test",
                 ctx=ctx,
                 parent_role="You are an explorer agent.",
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
@@ -162,6 +167,7 @@ class TestParentRoleInheritance:
                 capabilities=caps,
                 model="test",
                 ctx=ctx,
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
@@ -186,6 +192,7 @@ class TestParentRoleInheritance:
                 model="test",
                 ctx=ctx,
                 compaction_enabled=False,
+                owner="main",
             )
             assert mock_loop.call_args.kwargs.get("compaction_enabled") is False
 
@@ -204,6 +211,7 @@ class TestParentRoleInheritance:
                 capabilities=caps,
                 model="test",
                 ctx=ctx,
+                owner="main",
             )
             assert mock_loop.call_args.kwargs.get("compaction_enabled") is True
 
@@ -224,6 +232,7 @@ class TestSkillSubdir:
                 capabilities=caps,
                 model="test",
                 ctx=ctx,
+                owner="main",
             )
             call_kwargs = mock_loop.call_args
             skill_ctx = call_kwargs.kwargs.get("ctx") or call_kwargs[1].get("ctx")
@@ -256,6 +265,7 @@ class TestSkillRegistryInheritance:
                 model="test",
                 ctx=ctx,
                 agent_registry=reg,
+                owner="main",
             )
             # The skill's run_loop must receive the SAME registry (else spawn
             # ops in the skill body hit no registry and no-op).
@@ -326,6 +336,7 @@ class TestSkillSpawnExecution:
                     ctx=sctx,
                     agent_registry=reg,
                     max_turns=4,
+                    owner="main",
                 )
                 hist = Path(d) / "history.jsonl"
                 rejected = hist.is_file() and "main-session only" in hist.read_text()
@@ -362,6 +373,7 @@ class TestMainRegistrySlotInheritance:
                 model="m",
                 ctx=ctx,
                 **kw,
+                owner="main",
             )
             return mock_loop.call_args.kwargs["ports"].agent_registry
 
@@ -428,6 +440,7 @@ class TestPromptScopeUnification:
                 model="m",
                 ctx=ctx,
                 scope_id=scope_id,
+                owner="main",
             )
         return spy
 

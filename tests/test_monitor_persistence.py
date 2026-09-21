@@ -18,11 +18,13 @@ import pytest
 
 from agent_cli.monitor import build
 from agent_cli.monitor.registry import MonitorRegistry, describe_previous
+from tests.monitor_delivery import RecordingDelivery
 
 
 @pytest.fixture
 def reg(tmp_path):
     r = MonitorRegistry(session_dir=tmp_path)
+    r.deliver = RecordingDelivery()
     r.stop()
     yield r
     r.stop()
@@ -32,6 +34,7 @@ def _add(reg, tmp_path, **kw):
     log = tmp_path / "p.log"
     log.write_text("")
     kw.setdefault("deadline_s", 3600)
+    kw.setdefault("owner", "main")
     return reg.add(build({"type": "match", "file": str(log), "pattern": "X"}), **kw)
 
 
@@ -65,6 +68,7 @@ class TestWriteOnlyPersistence:
         live = reg.add(
             build({"type": "match", "file": str(other), "pattern": "Y"}),
             deadline_s=60,
+            owner="main",
         )
         rows = json.loads((tmp_path / "monitors.json").read_text())["monitors"]
         ids = [r["id"] for r in rows]
@@ -73,10 +77,15 @@ class TestWriteOnlyPersistence:
     def test_no_session_dir_means_no_file(self, tmp_path):
         """headless/서브에이전트 — 디스크를 안 건드린다."""
         r = MonitorRegistry()
+        r.deliver = RecordingDelivery()
         r.stop()
         log = tmp_path / "n.log"
         log.write_text("")
-        r.add(build({"type": "match", "file": str(log), "pattern": "X"}), deadline_s=60)
+        r.add(
+            build({"type": "match", "file": str(log), "pattern": "X"}),
+            deadline_s=60,
+            owner="main",
+        )
         r.stop()
         assert not (tmp_path / "monitors.json").exists()
 
@@ -85,13 +94,16 @@ class TestWriteOnlyPersistence:
         log = tmp_path / "s.log"
         log.write_text("")  # 패치 **전에** — 전역 패치는 이 쓰기도 막는다
         r = MonitorRegistry(session_dir=tmp_path / "nope" / "deeper")
+        r.deliver = RecordingDelivery()
         r.stop()
         monkeypatch.setattr(
             "pathlib.Path.write_text",
             lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
         )
         mon = r.add(
-            build({"type": "match", "file": str(log), "pattern": "X"}), deadline_s=60
+            build({"type": "match", "file": str(log), "pattern": "X"}),
+            deadline_s=60,
+            owner="main",
         )
         assert mon.alive  # 등록은 성공했다
         r.stop()
@@ -105,6 +117,7 @@ class TestResumeDoesNotRevive:
 
         # 새 프로세스를 흉내 — 목록은 읽히지만 **아무것도 살아나지 않는다**
         fresh = MonitorRegistry(session_dir=tmp_path)
+        fresh.deliver = RecordingDelivery()
         fresh.stop()
         assert fresh.list_all() == []
         assert not fresh.has_active_work()
@@ -127,11 +140,14 @@ class TestResumeDoesNotRevive:
             build({"type": "match", "file": str(log), "pattern": "X"}),
             deadline_s=60,
             run="rm -rf /tmp/whatever",
+            owner="main",
         )
         rows = describe_previous(tmp_path)
         assert any("rm -rf" in r for r in rows), "무엇이 있었는지는 알려야 한다"
 
         fresh = MonitorRegistry(session_dir=tmp_path)
+
+        fresh.deliver = RecordingDelivery()
         fresh.stop()
         assert fresh.list_all() == [], "승인 없이 되살아났다"
 

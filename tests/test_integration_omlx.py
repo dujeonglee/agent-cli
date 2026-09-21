@@ -201,6 +201,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert len(result.output) > 10
@@ -231,6 +232,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert len(result.output) > 10
@@ -269,6 +271,7 @@ class TestSkillExecution:
             capabilities=model_capabilities,
             model=integration_model,
             ctx=ctx,
+            owner="main",
         )
         assert result.success
         assert "FORK_CONTENT_ABC" in result.output
@@ -298,6 +301,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert (
@@ -328,6 +332,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert "SHELL_ONLY_MARKER_99" in result.output
@@ -359,6 +364,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert len(result.output) > 0
@@ -386,6 +392,7 @@ class TestSkillExecution:
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
+            owner="main",
         )
         assert result.success
         assert len(result.output) > 5

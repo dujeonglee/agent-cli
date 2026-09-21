@@ -18,11 +18,13 @@ import pytest
 
 from agent_cli.monitor import MonitorRegistry, build, known_types
 from agent_cli.monitor import registry as reg_mod
+from tests.monitor_delivery import RecordingDelivery
 
 
 @pytest.fixture
 def reg():
     r = MonitorRegistry()
+    r.deliver = RecordingDelivery()
     r.stop()  # 테스트는 tick() 을 직접 몬다 — 스레드 타이밍에 의존하지 않는다
     yield r
     r.stop()
@@ -30,6 +32,7 @@ def reg():
 
 def _add(reg, spec, **kw):
     kw.setdefault("deadline_s", 3600)
+    kw.setdefault("owner", "main")
     return reg.add(build(spec), **kw)
 
 
@@ -75,11 +78,11 @@ class TestMatchCondition:
         log.write_text("ERROR: old one\nERROR: old two\n")
         _add(reg, {"type": "match", "file": str(log), "pattern": "ERROR"})
         reg.tick(time.time())
-        assert not reg.has_pending(), "등록 전의 과거 줄이 매치됐다"
+        assert not reg.deliver.calls, "등록 전의 과거 줄이 매치됐다"
 
         log.write_text("ERROR: old one\nERROR: old two\nERROR: new\n")
         reg.tick(time.time())
-        reports = reg.drain()
+        reports = reg.deliver.take()
         assert len(reports) == 1 and "new" in reports[0]
         assert "old one" not in reports[0]
 
@@ -88,13 +91,13 @@ class TestMatchCondition:
         log = tmp_path / "later.log"
         _add(reg, {"type": "match", "file": str(log), "pattern": "GO"})
         reg.tick(time.time())
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
 
         log.write_text("GO\n")
         reg.tick(time.time())  # 첫 관측 → EOF 고정
         log.write_text("GO\nGO again\n")
         reg.tick(time.time())
-        assert reg.has_pending()
+        assert reg.deliver.calls
 
     def test_truncation_resets_the_cursor(self, reg, tmp_path):
         log = tmp_path / "t.log"
@@ -103,7 +106,7 @@ class TestMatchCondition:
         reg.tick(time.time())
         log.write_text("HIT\n")  # 축소 — 오프셋보다 작아졌다
         reg.tick(time.time())
-        assert "HIT" in "".join(reg.drain())
+        assert "HIT" in "".join(reg.deliver.take())
 
     def test_rotation_by_rename_is_caught_via_inode(self, reg, tmp_path):
         """크기만 보면 새 파일이 한 틱 안에 옛 오프셋을 넘어설 때 **줄을 통째로
@@ -116,7 +119,7 @@ class TestMatchCondition:
         log.rename(tmp_path / "r.log.1")  # logrotate 기본 동작
         log.write_text("b" * 80 + "\nHIT here\n" + "c" * 80 + "\n")  # 옛 오프셋 초과
         reg.tick(time.time())
-        assert "HIT here" in "".join(reg.drain()), "rename 로테이션을 놓쳤다"
+        assert "HIT here" in "".join(reg.deliver.take()), "rename 로테이션을 놓쳤다"
 
     def test_only_matching_lines_are_reported(self, reg, tmp_path):
         log = tmp_path / "m.log"
@@ -125,7 +128,7 @@ class TestMatchCondition:
         reg.tick(time.time())
         log.write_text("info\nERROR: x\ndebug\n")
         reg.tick(time.time())
-        out = "".join(reg.drain())
+        out = "".join(reg.deliver.take())
         assert "ERROR: x" in out and "debug" not in out
 
 
@@ -148,16 +151,16 @@ class TestSilenceCondition:
             reg, {"type": "silence", "file": str(tmp_path / "none.log"), "seconds": 60}
         )
         reg.tick(now)
-        assert not reg.has_pending(), "등록 직후 즉시 발화했다"
+        assert not reg.deliver.calls, "등록 직후 즉시 발화했다"
 
     def test_fires_after_the_quiet_window(self, reg, tmp_path):
         log = tmp_path / "q.log"
         log.write_text("x\n")
         mon = _add(reg, {"type": "silence", "file": str(log), "seconds": 60})
         reg.tick(time.time())
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
         reg.tick(time.time() + 61)
-        assert "변화 없음" in "".join(reg.drain())
+        assert "변화 없음" in "".join(reg.deliver.take())
         assert reg.get(mon.id).retired  # once=True 기본
 
     def test_writing_keeps_it_quiet(self, reg, tmp_path):
@@ -173,9 +176,9 @@ class TestSilenceCondition:
         log.write_text("x\ny\n")
         os.utime(log, (t + 40, t + 40))
         reg.tick(t + 61)
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
         reg.tick(t + 101)  # 쓰기 후 61s — 이제 발화
-        assert reg.has_pending()
+        assert reg.deliver.calls
 
 
 # ── 주기 command ────────────────────────────────────────────
@@ -185,12 +188,12 @@ class TestCommandCondition:
     def test_exit_zero_fires_with_stdout_as_the_body(self, reg):
         _add(reg, {"type": "command", "command": "echo hello", "every": "1m"})
         reg.tick(time.time())
-        assert "hello" in "".join(reg.drain())
+        assert "hello" in "".join(reg.deliver.take())
 
     def test_nonzero_exit_does_not_fire(self, reg):
         _add(reg, {"type": "command", "command": "exit 3", "every": "1m"})
         reg.tick(time.time())
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
 
     def test_every_is_honoured_and_clamped_to_the_minimum(self, reg):
         """`every` 하한 60s — 주기 실행은 **변화가 없어도 매 틱 한 턴을
@@ -205,11 +208,11 @@ class TestCommandCondition:
         )
         t = time.time()
         reg.tick(t)
-        reg.drain()
+        reg.deliver.take()
         reg.tick(t + 5)  # 주기 전 — 안 돈다
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
         reg.tick(t + 61)
-        assert reg.has_pending()
+        assert reg.deliver.calls
         assert reg.get(mon.id).alive
 
     def test_timeout_is_reported_not_silent(self, reg, monkeypatch):
@@ -219,7 +222,7 @@ class TestCommandCondition:
         monkeypatch.setattr(conditions, "COMMAND_TIMEOUT_S", 1)
         _add(reg, {"type": "command", "command": "sleep 5", "every": "1m"})
         reg.tick(time.time())
-        out = "".join(reg.drain())  # drain 은 1회성 — 두 번 부르면 둘째는 빈다
+        out = "".join(reg.deliver.take())  # drain 은 1회성 — 두 번 부르면 둘째는 빈다
         assert "끝나지 않음" in out, out
 
 
@@ -237,7 +240,7 @@ class TestRetirementAlwaysReports:
         reg.tick(time.time())
         log.write_text("X\n")
         reg.tick(time.time())
-        out = "".join(reg.drain())
+        out = "".join(reg.deliver.take())
         assert "은퇴" in out and reg.get(mon.id).retired
 
     def test_deadline_expiry_is_reported(self, reg, tmp_path):
@@ -247,9 +250,9 @@ class TestRetirementAlwaysReports:
             reg, {"type": "match", "file": str(log), "pattern": "X"}, deadline_s=60
         )
         reg.tick(time.time())
-        assert not reg.has_pending()
+        assert not reg.deliver.calls
         reg.tick(time.time() + 61)
-        out = "".join(reg.drain())
+        out = "".join(reg.deliver.take())
         assert "만료" in out, f"만료가 조용히 지나갔다: {out!r}"
         assert not reg.get(mon.id).alive
 
@@ -266,7 +269,7 @@ class TestRetirementAlwaysReports:
             reg.tick(time.time() + i)
             if not reg.get(mon.id).alive:
                 break
-        out = "".join(reg.drain())
+        out = "".join(reg.deliver.take())
         assert "상한" in out and not reg.get(mon.id).alive
 
     def test_deadline_is_clamped_not_rejected(self, reg, tmp_path):
@@ -276,8 +279,8 @@ class TestRetirementAlwaysReports:
         log = tmp_path / "c.log"
         log.write_text("")
         spec = {"type": "match", "file": str(log), "pattern": "X"}
-        big = reg.add(build(spec), deadline_s=999_999)
-        small = reg.add(build(spec), deadline_s=1)
+        big = reg.add(build(spec), deadline_s=999_999, owner="main")
+        small = reg.add(build(spec), deadline_s=1, owner="main")
         assert big.deadline_at - big.created_at == pytest.approx(
             MONITOR_DEADLINE_MAX_S, abs=2
         )
@@ -299,23 +302,70 @@ class TestCoalescingAndMailbox:
         for i in range(3):
             log.write_text(f"X{i}\n")
             reg.tick(t + i)  # min_interval(30s) 안
-        reports = reg.drain()
+        reports = reg.deliver.take()
         assert len(reports) <= 1, f"합쳐지지 않고 {len(reports)}건이 됐다"
 
-    def test_has_active_work_covers_both_live_monitors_and_undelivered_reports(
-        self, reg, tmp_path
-    ):
-        """배달 안 된 보고가 남았는데 런이 끝나면 보고가 사라진다."""
+    def test_live_monitor_holds_the_run(self, reg, tmp_path):
+        """살아 있는 감시가 있으면 런이 끝나면 안 된다.
+
+        C2 이후 보고는 **즉시 배달**되므로 "미배달 보고" 라는 상태가 없다 —
+        배달된 뒤의 보존은 받은 쪽(메일박스/inbox)의 생존 판정이 진다.
+        여기 남는 것은 아직 발화하지 않은 감시와 **배달 중**뿐이다.
+        """
         log = tmp_path / "h.log"
         log.write_text("")
         _add(reg, {"type": "match", "file": str(log), "pattern": "X"})
-        assert reg.has_active_work()  # 살아 있는 모니터
+        assert reg.has_active_work()
+        reg.tick(time.time())
+        log.write_text("X\n")
+        reg.tick(time.time())  # once=True → 발화하고 은퇴
+        assert reg.deliver.reports, "발화했는데 배달이 없다"
+        assert not reg.has_active_work()
+
+    def test_delivery_in_flight_holds_the_run(self, reg, tmp_path):
+        """배달 **중**에는 런이 끝나면 안 된다.
+
+        `run` 부작용은 서브프로세스라 `COMMAND_TIMEOUT_S` 까지 걸린다. 그
+        사이 생존 판정이 거짓이 되면 펌프가 보고를 날리며 종료한다 —
+        `_retire` 가 `retired` 를 먼저 세우므로 "살아 있는 감시" 로는 이
+        구간이 안 잡힌다.
+        """
+        seen = []
+
+        def slow_deliver(addr, **kw):
+            seen.append(reg.has_active_work())
+            return ""
+
+        reg.deliver = slow_deliver
+        log = tmp_path / "f.log"
+        log.write_text("")
+        _add(reg, {"type": "match", "file": str(log), "pattern": "X"})
         reg.tick(time.time())
         log.write_text("X\n")
         reg.tick(time.time())
-        assert reg.has_active_work(), "은퇴했지만 미배달 보고가 남았다"
-        reg.drain()
+        assert seen == [True], "배달 중인데 유휴로 보였다"
         assert not reg.has_active_work()
+
+    def test_counter_survives_a_raising_delivery(self, reg, tmp_path):
+        """배달이 터져도 카운터가 새면 세션이 **영영** 안 끝난다.
+
+        `_loop` 는 `tick` 의 예외를 삼킨다 — 한 번만 새도 `has_active_work`
+        가 영구히 참이 되어 `_quiet()` 이 참이 안 된다. 2판 설계의 누수가
+        카운터만 바꿔 되살아난 자리다.
+        """
+
+        def boom(addr, **kw):
+            raise RuntimeError("배달 실패")
+
+        reg.deliver = boom
+        log = tmp_path / "b.log"
+        log.write_text("")
+        _add(reg, {"type": "match", "file": str(log), "pattern": "X"})
+        reg.tick(time.time())
+        log.write_text("X\n")
+        with pytest.raises(RuntimeError):
+            reg.tick(time.time())
+        assert not reg.has_active_work(), "in-flight 카운터가 샜다"
 
     def test_drain_is_once(self, reg, tmp_path):
         log = tmp_path / "x.log"
@@ -324,7 +374,7 @@ class TestCoalescingAndMailbox:
         reg.tick(time.time())
         log.write_text("X\n")
         reg.tick(time.time())
-        assert reg.drain() and reg.drain() == []
+        assert reg.deliver.take() and reg.deliver.take() == []
 
     def test_delete_removes_it(self, reg, tmp_path):
         log = tmp_path / "del.log"
@@ -342,7 +392,7 @@ class TestReportFormat:
         reg.tick(time.time())
         log.write_text("\n".join(lines) + "\n")
         reg.tick(time.time())
-        return reg.drain()[0]
+        return reg.deliver.take()[0]
 
     def test_caps_at_five_lines_with_a_remainder_note(self, reg, tmp_path):
         rep = self._report(reg, tmp_path, [f"X{i}" for i in range(9)])
@@ -381,6 +431,6 @@ class TestRunSideEffect:
         reg.tick(time.time())
         log.write_text("X\n")
         reg.tick(time.time())
-        rep = reg.drain()[0]
+        rep = reg.deliver.take()[0]
         assert marker.exists(), "run 이 실행되지 않았다"
         assert "run" in rep and "exit 0" in rep, f"보고에 실행 흔적이 없다: {rep!r}"

@@ -43,6 +43,8 @@ def _handle_run_skill(
     max_depth: int = 2,
     compaction_enabled: bool = True,
     agent_registry=None,
+    *,
+    owner: str,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -122,6 +124,7 @@ def _handle_run_skill(
 
         provider = create_provider(provider_name, base_url, api_key)
         skill_result = execute_skill(
+            owner=owner,
             skill=skill,
             arguments=arguments,
             provider=provider,

@@ -875,7 +875,8 @@ class TestParallelTimeout:
                 provider=provider,
                 model="test",
                 capabilities=caps,
-                timeout=1,  # 1 second timeout
+                timeout=1,
+                owner="main",  # 1 second timeout
             )
             # At least some tasks should be incomplete
             assert (

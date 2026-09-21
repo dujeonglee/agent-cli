@@ -3359,7 +3359,8 @@ class TestSkillStack:
             ctx=None,
             session=None,
             parent_skill_name="",
-            skill_stack=["optimize"],  # already in stack
+            skill_stack=["optimize"],
+            owner="main",  # already in stack
         )
         error = obs.error if hasattr(obs, "error") else str(obs)
         assert "recursive" in error.lower() or "already" in error.lower()
@@ -3380,7 +3381,8 @@ class TestSkillStack:
             ctx=None,
             session=None,
             parent_skill_name="",
-            skill_stack=["optimize"],  # different skill
+            skill_stack=["optimize"],
+            owner="main",  # different skill
         )
         # Should NOT contain "recursive" error
         output = obs.output if obs.success else obs.error

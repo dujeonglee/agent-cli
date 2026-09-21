@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -268,71 +267,57 @@ class TestRegistryAssembly:
             assert notices == [{"kind": "reply"}]
             om.assert_called_once()
 
-    def test_monitor_reports_share_the_wake(self):
-        """★재발 방지(사용자 제보: 등록은 됐는데 2분 무반응).
+    def test_monitor_delivery_is_wired_at_registry_build(self):
+        """★재발 방지 (사용자 제보: 등록은 됐는데 2분 무반응).
 
-        모니터 보고는 **턴 경계**에서만 소비되는데(`_deliver_monitor_reports`),
-        모니터의 존재 이유가 "오래 걸리는 걸 걸어 두고 딴 일 하라" 라 발화
-        시점에 main 이 유휴인 것이 정상이다 — 깨우지 않으면 보고가 큐에 앉은
-        채 화면에 아무것도 안 나온다. 설계(docs/monitor)가 처음부터 "waker
-        술어에 `or monitors.has_pending()`" 라고 적어 뒀는데 배선만 빠졌다.
+        종전엔 `wire_agent_mail` 이 술어에 `or monitors.has_pending()` 을
+        얹고 `on_report` 를 꽂아 main 을 깨웠는데, **배선만 빠져 있었다** —
+        설계 문서에 미리 적혀 있었는데도. 지금은 그 항 자체가 없다: 보고가
+        주소 배달로 메일박스에 들어오므로 `on_reply` 가 이미 깨운다.
+
+        대신 지켜야 할 것은 **배달 배선이 어떤 루프보다 먼저 선다**는 것이다.
+        `wire_monitor_delivery` 를 `build_agent_registry` 가 부르므로
+        (run `:1387`, web `:2363`) run 의 스킬 조기-반환보다도 앞선다.
         """
         from agent_cli.monitor.registry import MonitorRegistry
+        from agent_cli.runtime import wire_monitor_delivery
 
         registry = MagicMock()
-        registry.restore.return_value = 0
-        registry.auto_spawn.return_value = 0
-        registry.has_pending_replies.return_value = False
         monitors = MonitorRegistry()
-
-        enq2 = MagicMock()
-        waker, _r, _a = wire_agent_mail(
-            registry,
-            enqueue_wake=enq2,
-            on_mail_notice=lambda _r: None,
-            monitors=monitors,
+        monitors.stop()
+        wire_monitor_delivery(registry, monitors)
+        assert monitors.deliver == registry.deliver, "보고가 갈 곳이 없다"
+        assert registry.monitors is monitors, (
+            "역방향이 없으면 워커 finally 가 죽은 소유자의 감시를 못 지운다"
         )
-        # ① 술어: 에이전트 회신이 없어도 모니터 보고가 있으면 깨울 거리다.
-        assert waker._has_pending() is False
-        monitors._pending.append("보고")
-        assert waker._has_pending() is True
 
-        # ② 훅: 보고가 **도착한 순간** 깨운다. 술어만 얹으면 다음 mark_idle
-        #    까지 기다리는데, 유휴로 접어든 뒤 발화하면 그 시점이 안 온다.
-        #    `_notify` 를 직접 부르면 **발화 경로**를 안 타므로, 실제로
-        #    조건을 만족시켜 fire 시킨다(사용자가 겪은 그 상황).
-        assert monitors.on_report == waker.on_mail
-        monitors._pending.clear()
-        waker.idle.set()  # main 이 큐에서 대기 중 = 모니터가 발화하는 정상 상황
+    def test_build_agent_registry_wires_delivery(self):
+        """조립기가 부르는지 — 손으로 부르게 두면 한쪽을 빠뜨린다."""
+        from agent_cli.monitor.registry import MonitorRegistry
 
-        import tempfile
-        import time as _t
-        from pathlib import Path as _P
-
-        from agent_cli.monitor.conditions import build
-
-        with tempfile.TemporaryDirectory() as td:
-            f = _P(td) / "w.log"
-            f.write_text("x")
-            old_ts = _t.time() - 600
-            os.utime(f, (old_ts, old_ts))
-            # ``once=False``: 발화만 하고 은퇴하지 않는다. once 면 `_retire`
-            # 도 보고를 남기며 알리므로, 발화 경로의 알림이 빠져도 가려진다.
-            mon = monitors.add(
-                build({"type": "silence", "file": str(f), "seconds": 1}),
-                deadline_s=600,
-                once=False,
-            )
-            mon.state["registered_at"] = old_ts  # 등록 직후 억제 해제
-            monitors.stop()  # 폴링 스레드 대신 동기 tick 으로 재현
-            monitors.tick(_t.time())
-
-        assert monitors.has_pending(), "조건을 만족했는데 보고가 안 쌓였다"
-        assert enq2.call_count == 1, "유휴 main 에 wake 가 안 들어갔다"
+        monitors = MonitorRegistry()
+        monitors.stop()
+        rt = AgentRuntime(
+            provider=object(),
+            capabilities=object(),
+            model="m",
+            provider_name="p",
+            base_url="u",
+            api_key="k",
+            max_turns=0,
+            depth=0,
+            max_depth=2,
+            timeout=300,
+            session=None,
+        )
+        with patch("agent_cli.subagent.agents_live.set_main_registry"):
+            reg = build_agent_registry(None, rt, monitors=monitors)
+        assert monitors.deliver == reg.deliver
+        assert reg.monitors is monitors
 
     def test_monitor_wiring_is_passed_at_every_call_site(self):
-        """배선은 `main.py` 두 펌프(run/web) **모두**에서 넘어가야 한다 —
-        한쪽만 고치는 것이 이 파일이 존재하는 이유의 사고 유형이다."""
+        """배선은 `main.py` 두 부트스트랩(run/web) **모두**에서 넘어가야
+        한다 — 한쪽만 고치는 것이 이 파일이 존재하는 이유의 사고 유형이다."""
         import ast
         from pathlib import Path
 
@@ -342,15 +327,35 @@ class TestRegistryAssembly:
             for n in ast.walk(ast.parse(src))
             if isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name)
-            and n.func.id == "wire_agent_mail"
+            and n.func.id == "build_agent_registry"
         ]
         assert len(calls) == 2, f"호출부가 {len(calls)}개 — 테스트가 낡았다"
         for c in calls:
             names = {kw.arg for kw in c.keywords if kw.arg}
             assert "monitors" in names, (
-                "wire_agent_mail 호출부 하나가 monitors 를 안 넘긴다 — "
-                "그 경로에서는 모니터 보고가 유휴 main 을 못 깨운다"
+                "build_agent_registry 호출부 하나가 monitors 를 안 넘긴다 — "
+                "그 경로에서는 monitor add 가 통째로 거부된다"
             )
+
+    def test_teardown_stops_the_poll_thread_at_every_call_site(self):
+        """폴링 스레드를 세션 종료가 멈춰야 한다. 종전엔 `stop()` 에
+        **호출자가 하나도 없었다** — 지금까지는 아무도 안 읽는 리스트에
+        쌓을 뿐이라 무해했지만, 이제는 종료 뒤 발화가 **배달**된다."""
+        import ast
+        from pathlib import Path
+
+        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
+        calls = [
+            n
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id in ("teardown_session", "_finalize_run")
+        ]
+        assert len(calls) >= 2, f"호출부가 {len(calls)}개 — 테스트가 낡았다"
+        for c in calls:
+            names = {kw.arg for kw in c.keywords if kw.arg}
+            assert "monitors" in names, "종료 경로 하나가 감시를 안 멈춘다"
 
 
 class TestExitPathConvergence:

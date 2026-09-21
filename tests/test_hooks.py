@@ -374,6 +374,7 @@ class TestSkillHooksWiring:
                 capabilities=caps,
                 model="m",
                 parent_hooks_config=parent_hooks,
+                owner="main",
             )
 
         forwarded = captured.get("hooks_config")
@@ -417,6 +418,7 @@ class TestSkillHooksWiring:
                 provider=MagicMock(),
                 capabilities=caps,
                 model="m",
+                owner="main",
             )
 
         assert captured.get("hooks_config") is None
@@ -509,6 +511,7 @@ class TestSkillHooksEndToEnd:
             provider=provider,
             capabilities=self._caps(),
             model="test",
+            owner="main",
         )
 
         assert log_file.exists(), (
@@ -560,6 +563,7 @@ class TestSkillHooksEndToEnd:
             capabilities=self._caps(),
             model="test",
             parent_hooks_config=parent_hooks,
+            owner="main",
         )
 
         contents = log_file.read_text()
@@ -619,6 +623,7 @@ class TestDelegateHooksWiring:
                 capabilities=caps,
                 model="m",
                 hooks_config=parent_hooks,
+                owner="main",
             )
 
         assert captured.get("hooks_config") is parent_hooks, (
@@ -657,6 +662,7 @@ class TestDelegateHooksWiring:
                 provider=object(),
                 capabilities=caps,
                 model="m",
+                owner="main",
             )
 
         assert captured.get("hooks_config") is None
@@ -725,6 +731,7 @@ class TestAgentFrontmatterHooks:
                 capabilities=self._caps(),
                 model="m",
                 hooks_config=parent_hooks,
+                owner="main",
             )
 
         forwarded = captured.get("hooks_config")
@@ -769,6 +776,7 @@ class TestAgentFrontmatterHooks:
                 provider=object(),
                 capabilities=self._caps(),
                 model="m",
+                owner="main",
             )
 
         forwarded = captured.get("hooks_config")
@@ -804,6 +812,7 @@ class TestAgentFrontmatterHooks:
                 capabilities=self._caps(),
                 model="m",
                 hooks_config=parent_hooks,
+                owner="main",
             )
 
         assert captured.get("hooks_config") is parent_hooks
@@ -866,6 +875,7 @@ class TestAgentFrontmatterHooks:
                 provider=provider,
                 capabilities=self._caps(),
                 model="test",
+                owner="main",
             )
 
             assert log_file.exists(), (

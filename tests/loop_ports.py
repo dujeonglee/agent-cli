@@ -25,7 +25,6 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "questions": None,
         "message_handler": None,
         "agent_registry": None,
-        "monitor_registry": None,
         "mcp_manager": None,
         "hook_runner": None,
         "route_message": None,

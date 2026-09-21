@@ -13,11 +13,13 @@ import time
 import pytest
 
 from agent_cli.monitor import MonitorRegistry, build
+from tests.monitor_delivery import RecordingDelivery
 
 
 @pytest.fixture
 def reg():
     r = MonitorRegistry()
+    r.deliver = RecordingDelivery()
     r.stop()
     yield r
     r.stop()
@@ -44,10 +46,11 @@ def _bare_loop(monitor_registry):
     return loop
 
 
-def _watch(reg, tmp_path, **kw):
-    log = tmp_path / "w.log"
+def _watch(reg, tmp_path, *, name="w.log", **kw):
+    log = tmp_path / name
     log.write_text("")
     kw.setdefault("deadline_s", 3600)
+    kw.setdefault("owner", "main")
     mon = reg.add(build({"type": "match", "file": str(log), "pattern": "X"}), **kw)
     reg.tick(time.time())
     return mon, log
@@ -115,6 +118,8 @@ class TestToolSurface:
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
+
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -131,6 +136,8 @@ class TestToolSurface:
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
+
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -163,6 +170,8 @@ class TestToolSurface:
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
+
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -211,6 +220,7 @@ class TestRegistrationTimeGate:
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "0")
         monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "0")
         r = MonitorRegistry()
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -239,6 +249,7 @@ class TestRegistrationTimeGate:
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
         monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: False)
         r = MonitorRegistry()
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -266,6 +277,7 @@ class TestRegistrationTimeGate:
 
         monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: False)
         r = MonitorRegistry()
+        r.deliver = RecordingDelivery()
         r.stop()
         set_monitor_registry(r)
         try:
@@ -335,7 +347,7 @@ class TestLifetimeInBothRuntimes:
 
         for m in reg.list_all():
             reg.delete(m.id)
-        reg.drain()
+        reg.deliver.take()
         assert done.wait(2.0), "모니터가 사라졌는데 펌프가 안 끝난다"
 
     def test_pump_still_exits_with_no_monitors_at_all(self, tmp_path):
@@ -378,13 +390,18 @@ class TestLifetimeInBothRuntimes:
         t.start()
         assert done.wait(2.0), "모니터 없이도 펌프가 안 끝난다 (회귀)"
 
-    def test_undelivered_report_also_holds_the_pump(self, reg, tmp_path):
-        """은퇴했어도 보고가 남았는데 런이 끝나면 그 보고가 사라진다."""
+    def test_fired_monitor_no_longer_holds_the_pump(self, reg, tmp_path):
+        """C2: 보고는 **즉시 배달**된다 — 레지스트리에 남는 미배달분이 없다.
+
+        종전엔 은퇴한 감시의 보고가 `_pending` 에 남아 런을 붙들었다. 이제
+        보고는 발화 순간 소유자의 메일박스/inbox 로 가고, 보존은 **받은
+        쪽**의 생존 판정이 진다(`AgentRegistry.has_active_work`).
+        """
         mon, log = _watch(reg, tmp_path)
         log.write_text("X\n")
         reg.tick(time.time())
-        assert not reg.get(mon.id).alive and reg.has_active_work()
-        reg.drain()
+        assert not reg.get(mon.id).alive
+        assert reg.deliver.reports, "발화했는데 배달이 없다"
         assert not reg.has_active_work()
 
     def test_web_self_reap_predicate_knows_about_monitors(self, reg, tmp_path):
@@ -413,18 +430,70 @@ class TestLifetimeInBothRuntimes:
 # ── 턴 경계 배달 ────────────────────────────────────────────
 
 
-class TestTurnBoundaryDelivery:
-    def test_reports_become_tool_monitor_observation_records(self, reg, tmp_path):
-        """큐가 아니라 **관찰 레코드**다 (§6.1) — 큐에 태우면 보고가 사람
-        메시지로 위장되고, run 에선 배달이 런 종료 후로 밀린다."""
+class TestDeliveryToTheInstallingAddress:
+    """G1 — 보고는 **설치한 주소로** 간다 (docs/wiring §3.2).
+
+    종전엔 `_pending` 리스트 하나에 쌓고 main 의 턴 경계가 전부 drain 했다.
+    주소가 없으니 에이전트가 건 감시의 보고도 main 이 가져갔다 — 요구가 안
+    되는 게 아니라 **정반대로** 동작했다.
+    """
+
+    def test_main_owned_report_goes_to_main(self, reg, tmp_path):
+        _, log = _watch(reg, tmp_path, owner="main")
+        log.write_text("X boom\n")
+        reg.tick(time.time())
+        assert reg.deliver.addrs == ["main"]
+        assert "boom" in reg.deliver.reports[0]
+
+    def test_agent_owned_report_goes_to_that_agent(self, reg, tmp_path):
+        _, log = _watch(reg, tmp_path, owner="agent:k1")
+        log.write_text("X boom\n")
+        reg.tick(time.time())
+        assert reg.deliver.addrs == ["agent:k1"], "main 이 가로챘다"
+        assert reg.deliver.to("main") == []
+
+    def test_two_owners_do_not_cross(self, reg, tmp_path):
+        _, a = _watch(reg, tmp_path, owner="main", name="a.log")
+        _, b = _watch(reg, tmp_path, owner="agent:k1", name="b.log")
+        a.write_text("X from-main\n")
+        b.write_text("X from-agent\n")
+        reg.tick(time.time())
+        assert "from-main" in "".join(reg.deliver.to("main"))
+        assert "from-agent" in "".join(reg.deliver.to("agent:k1"))
+        assert "from-agent" not in "".join(reg.deliver.to("main"))
+
+    def test_delivery_carries_the_observation_record_shape(self, reg, tmp_path):
+        """메일박스 아이템이 `build_reply_record` 의 monitor 분기로 간다 —
+        종전 `_deliver_monitor_reports` 가 만들던 레코드와 **같은 것**."""
+        from agent_cli.subagent.agents_live import build_reply_record
 
         _, log = _watch(reg, tmp_path)
         log.write_text("X boom\n")
         reg.tick(time.time())
+        (_, kw) = reg.deliver.calls[0]
+        rec = build_reply_record(kw["mail"])
+        assert rec["tool"] == "monitor"
+        assert rec["success"] is True
+        assert "boom" in rec["content"]
 
-        loop = _bare_loop(reg)
-        loop._deliver_monitor_reports()
-        assert len(loop.messages) == 1 and "boom" in loop.messages[0]["content"]
+    def test_success_is_set_or_every_report_renders_as_a_failure(self, reg, tmp_path):
+        """`_deliver_agent_mail` 이 `success=bool(reply.get("success"))` 로
+        그린다 — 키가 없으면 **모든 보고가 빨간 실패 카드**가 된다."""
+        _, log = _watch(reg, tmp_path)
+        log.write_text("X\n")
+        reg.tick(time.time())
+        assert reg.deliver.calls[0][1]["mail"]["success"] is True
+
+    def test_expects_reply_is_false_so_the_run_output_goes_nowhere(self, reg, tmp_path):
+        """감시 보고로 시작한 런의 산출물이 발신자에게 되돌아가면 안 된다 —
+        질문·독촉·peer 회신과 같은 의미다."""
+        _, log = _watch(reg, tmp_path, owner="agent:k1")
+        log.write_text("X\n")
+        reg.tick(time.time())
+        kw = reg.deliver.calls[0][1]
+        assert kw["expects_reply"] is False
+        # author 가 주소가 아니면 그 런에서 거는 ask 가 unroutable 로 취소된다.
+        assert kw["author"] == "main"
 
     def test_record_shape_needs_no_registration_anywhere(self):
         """`tool="monitor"` 가 기존 관찰 경로를 그대로 탄다는 계약.
@@ -443,27 +512,31 @@ class TestTurnBoundaryDelivery:
             {"role": "user", "tool": "", "success": False, "content": "x"}
         )
 
-    def test_drain_is_called_at_the_turn_boundary(self):
-        """소스 핀 — `_deliver_agent_mail` 형제로 같은 자리에 있어야 한다."""
+    def test_mail_delivery_renders_the_records_own_tool(self):
+        """소스 핀 — `_deliver_agent_mail` 이 `tool_name` 을 하드코딩하면
+        모니터 보고가 **빈 칩을 단 에이전트 회신 카드**로 그려진다
+        (프런트가 `tool === "agent"` 를 특수 처리한다)."""
         import inspect
 
         from agent_cli.loop.core import AgentLoop
 
-        src = inspect.getsource(AgentLoop)
-        assert (
-            "self._deliver_agent_mail()\n                self._deliver_monitor_reports()"
-            in src
-        )
+        src = inspect.getsource(AgentLoop._deliver_agent_mail)
+        assert 'tool_name=record["tool"]' in src
+        assert 'tool_name="agent"' not in src
 
-    def test_no_report_no_record(self, reg):
+    def test_registration_without_wiring_is_refused_loudly(self, tmp_path):
+        """배달 배선이 없으면 **등록을 거부**한다 — 조용히 등록해 두고
+        발화 때 보고를 잃는 것보다 낫다."""
+        from agent_cli.monitor.registry import MonitorRegistry, MonitorUnavailable
 
-        loop = _bare_loop(reg)
-        loop._deliver_monitor_reports()
-        assert loop.messages == []
+        bare = MonitorRegistry()
+        bare.stop()
+        with pytest.raises(MonitorUnavailable):
+            _watch(bare, tmp_path)
 
-    def test_absent_registry_is_a_noop(self):
-        """서브에이전트/headless — 배달 없음."""
+    def test_registration_after_teardown_is_refused(self, reg, tmp_path):
+        from agent_cli.monitor.registry import MonitorUnavailable
 
-        loop = _bare_loop(None)
-        loop._deliver_monitor_reports()
-        assert loop.messages == []
+        reg.closed = True
+        with pytest.raises(MonitorUnavailable):
+            _watch(reg, tmp_path)

@@ -76,7 +76,9 @@ class AgentRuntime:
         )
 
 
-def build_agent_registry(session_dir, runtime: AgentRuntime, max_agents=None):
+def build_agent_registry(
+    session_dir, runtime: AgentRuntime, max_agents=None, *, monitors=None
+):
     """AgentRegistry 생성 + main registry 슬롯 등록 (v7.17.0 배선 통일).
 
     runtime 프리필: restore/auto-spawn 된 에이전트가 도구 호출(스폰) 없이
@@ -90,15 +92,37 @@ def build_agent_registry(session_dir, runtime: AgentRuntime, max_agents=None):
         session_dir, runtime=runtime.as_dict(), max_agents=max_agents
     )
     set_main_registry(registry)
+    if monitors is not None:
+        wire_monitor_delivery(registry, monitors)
     return registry
+
+
+def wire_monitor_delivery(registry, monitors) -> None:
+    """모니터 보고를 주소 배달에 잇는다 — 양방향 (docs/wiring §3.3).
+
+    **위치가 아니라 제약이 본질이다.** 이 배선은 `wire_agent_mail` 의
+    `restore`/`auto_spawn` **보다 먼저** 끝나야 한다: 부활한 에이전트의
+    inbox 로 질문이 재배달되고 그 워커들이 즉시 루프를 시작한다. 또 run 의
+    스킬 조기-반환(`try_dispatch_agent_or_skill`)은 `wire_agent_mail` 보다
+    앞서므로, 거기 배선하면 `agent-cli run "/skill …"` 에서 등록이 거부된다.
+    `build_agent_registry` 직후가 두 제약을 만족하는 가장 이른 지점이다.
+
+    역방향(`registry.monitors`)이 필요한 이유: 워커의 `finally` 가
+    `drop_owner` 를 불러야 하는데, `AgentRegistry` 는 모니터 레지스트리를
+    **전혀 몰랐다**. 도구가 쓰는 프로세스 전역을 집어올 수도 있지만
+    주입으로 둔다 — 레지스트리 테스트가 가짜를 꽂을 수 있어야 한다.
+    """
+    monitors.deliver = registry.deliver
+    registry.monitors = monitors
 
 
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
-    `build_agent_registry` 의 형제다. 도구는 모듈 전역으로, 루프는
-    `LoopConfig.monitor_registry` 로 닿는데 **같은 객체**여야 한다 — 여기서
-    하나를 만들어 둘 다에 준다.
+    `build_agent_registry` 의 형제다. 도구는 모듈 전역(`monitor/runtime.py`)
+    으로 닿는다 — 루프가 `LoopConfig.monitor_registry` 로도 닿던 두 번째
+    경로는 주소 배달로 바뀌며 사라졌다(보고를 루프가 drain 하지 않는다).
+    배달 배선은 `wire_monitor_delivery` 가 건다.
     """
     from agent_cli.monitor.registry import MonitorRegistry
     from agent_cli.monitor.runtime import set_monitor_registry
@@ -108,33 +132,20 @@ def build_monitor_registry(session_dir=None):
     return registry
 
 
-def wire_agent_mail(
-    registry, *, enqueue_wake, on_mail_notice, parent_ctx=None, monitors=None
-):
+def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
-    ``monitors`` 가 오면 **깨우기를 공유한다**: 모니터 보고도 턴 경계에서만
-    소비되는데(`AgentLoop._deliver_monitor_reports`), 모니터의 존재 이유가
-    "오래 걸리는 걸 걸어 두고 딴 일 하라" 라 발화 시점에 main 이 유휴인 것이
-    정상이다. 깨우지 않으면 보고가 큐에 앉은 채 사용자는 아무것도 못 본다
-    (사용자 제보: 등록은 됐는데 2분 무반응). 설계(docs/monitor)가 처음부터
-    "waker 술어에 `or monitors.has_pending()` 를 얹어 합치기를 공짜로
-    얻는다" 고 적어 뒀는데 배선만 빠져 있었다.
+    종전엔 ``monitors`` 인자를 받아 술어에 ``or monitors.has_pending()`` 을
+    얹고 ``on_report`` 를 꽂았다. **둘 다 없앴다** — 모니터 보고가 이제
+    주소 배달로 메일박스에 들어오므로, ``has_pending_replies()`` 가 이미
+    참이 되고 ``on_reply`` 가 이미 깨운다. 얹을 항이 없는 것이 가장
+    안전하다: 그 항을 빠뜨린 것이 v9.11.0 의 "발화해도 조용함" 이었다.
 
     Returns ``(waker, revived, auto)`` — 부활/auto-spawn 수는 호출자가
     자기 표면(콘솔/렌더러)으로 알린다."""
     from agent_cli.subagent.agents_live import MailWaker
 
-    def _pending() -> bool:
-        if registry.has_pending_replies():
-            return True
-        return bool(monitors is not None and monitors.has_pending())
-
-    waker = MailWaker(enqueue_wake, _pending)
-    if monitors is not None:
-        # 보고가 **도착한 순간** 깨운다. 술어만 얹으면 다음 `mark_idle` 까지
-        # 기다리는데, 유휴로 접어든 뒤 발화하면 그 시점이 영영 안 온다.
-        monitors.on_report = waker.on_mail
+    waker = MailWaker(enqueue_wake, registry.has_pending_replies)
 
     def _on_agent_mail(reply: dict) -> None:
         on_mail_notice(reply)
@@ -170,6 +181,7 @@ def teardown_session(
     *,
     agent_registry=None,
     mcp_manager=None,
+    monitors=None,
     warn_stuck: bool = False,
 ) -> None:
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
@@ -187,6 +199,18 @@ def teardown_session(
                 f"[{C['accent']}]❓ 에이전트 {', '.join(stuck)} 의 질문에 답하지 "
                 f"않은 채 종료 — 다음 세션에서 트레이에 다시 뜹니다[/]"
             )
+    if monitors is not None:
+        # **에이전트 종료보다 먼저.** 폴링 스레드는 종전에 아무도 안 멈췄고
+        # (`stop()` 은 호출자가 없었다) 지금까지는 아무도 안 읽는 리스트에
+        # 쌓을 뿐이라 무해했다. 이제는 **배달된다** — 종료 뒤 발화하면
+        # `finalize_session` 뒤에 `agents.json` 이 다시 쓰이거나, 세션과
+        # 함께 죽은 감시의 흔적이 다음 세션에 떠오른다.
+        #
+        # 전체 드롭이 아니라 `closed` 인 이유: `drop_owner` 가 `delete` 처럼
+        # 저장하면 살아 있는 행만 쓰는 `_save` 가 `monitors.json` 을 비워,
+        # 다음 세션의 "이전 세션 모니터 N건" 통지가 사라진다.
+        monitors.stop()
+        monitors.closed = True
     if agent_registry is not None:
         agent_registry.shutdown_all()
 
@@ -227,13 +251,12 @@ def _main_questions(agent_registry):
     return agent_registry.question_port(None) if agent_registry else None
 
 
-def ports_for_run(*, agent_registry, monitor_registry, mcp_manager) -> LoopPorts:
+def ports_for_run(*, agent_registry, mcp_manager) -> LoopPorts:
     """CLI 한 방 실행 (`agent-cli run …`)."""
     return LoopPorts(
         owner="main",
         questions=_main_questions(agent_registry),
         agent_registry=agent_registry,
-        monitor_registry=monitor_registry,
         mcp_manager=mcp_manager,
         message_handler=None,
         hook_runner=None,
@@ -251,7 +274,6 @@ def ports_for_run(*, agent_registry, monitor_registry, mcp_manager) -> LoopPorts
 def ports_for_web(
     *,
     agent_registry,
-    monitor_registry,
     mcp_manager,
     dequeue_user_message,
     route_message,
@@ -265,7 +287,6 @@ def ports_for_web(
         owner="main",
         questions=_main_questions(agent_registry),
         agent_registry=agent_registry,
-        monitor_registry=monitor_registry,
         mcp_manager=mcp_manager,
         dequeue_user_message=dequeue_user_message,
         route_message=route_message,
@@ -278,19 +299,17 @@ def ports_for_web(
     )
 
 
-def ports_for_skill(*, agent_registry) -> LoopPorts:
+def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
     """스킬 실행 루프.
 
-    ``owner`` 는 C2 전까지 **자리표시자**다 — 부모 owner 를 나르는 seam 이
-    C2 의 몫이라 지금은 알 수 없다. C2 전에는 아무도 ``owner`` 를 읽지
-    않으므로 행동은 불변이다(§6). 영구 기본값과는 다르다: 저건 누락을
-    영영 가리고, 이건 값이 생길 때까지의 한시적 자리다.
+    ``owner`` 는 **부모에게서 물려받는다** — 상주 에이전트 안에서 돈 스킬이
+    건 모니터는 그 에이전트에게 보고해야 한다. 기본값을 두지 않는 이유는
+    그 상속이 빠지면 조용히 main 으로 가기 때문이다.
     """
     return LoopPorts(
-        owner="main",
+        owner=owner,
         agent_registry=agent_registry,
         questions=None,
-        monitor_registry=None,
         mcp_manager=None,
         message_handler=None,
         hook_runner=None,
@@ -298,7 +317,6 @@ def ports_for_skill(*, agent_registry) -> LoopPorts:
         dequeue_user_message=None,
         unwired={
             "questions": _AS_BEFORE,
-            "monitor_registry": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
             "message_handler": _AS_BEFORE,
             "hook_runner": _HOOKS_LATER,
@@ -308,13 +326,12 @@ def ports_for_skill(*, agent_registry) -> LoopPorts:
     )
 
 
-def ports_for_oneshot() -> LoopPorts:
-    """one-shot delegate — 포트 없음. ``owner`` 는 스킬과 같은 자리표시자."""
+def ports_for_oneshot(*, owner: str) -> LoopPorts:
+    """one-shot delegate — 포트 없음. ``owner`` 는 부모에게서 물려받는다."""
     return LoopPorts(
-        owner="main",
+        owner=owner,
         questions=None,
         agent_registry=None,
-        monitor_registry=None,
         mcp_manager=None,
         message_handler=None,
         hook_runner=None,
@@ -323,7 +340,6 @@ def ports_for_oneshot() -> LoopPorts:
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
             "questions": _AS_BEFORE,
-            "monitor_registry": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
             "message_handler": "one-shot 은 상주가 아니다 — 받을 상대가 없다",
             "hook_runner": _HOOKS_LATER,
@@ -340,14 +356,12 @@ def ports_for_resident(*, key: str, message_handler, questions) -> LoopPorts:
         message_handler=message_handler,
         questions=questions,
         agent_registry=None,
-        monitor_registry=None,
         mcp_manager=None,
         hook_runner=None,
         route_message=None,
         dequeue_user_message=None,
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
-            "monitor_registry": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
             "hook_runner": _HOOKS_LATER,
             "route_message": _WEB_ONLY,

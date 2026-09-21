@@ -61,11 +61,16 @@ class RunContext:
         tools_available: tool names callable in THIS loop (``delegate`` is
             absent inside a depth-limited subagent), so guidance never names
             a tool the model cannot invoke.
+        owner: this loop's address — "main" or "agent:<key>".
     """
 
     session_dir: Path | None = None
     oversized_cap: int = 0
     tools_available: frozenset[str] = frozenset()
+    #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"``. 모니터가 보고를
+    #: **설치한 쪽으로** 보내려면 도구가 자기 주소를 알아야 한다. 루프
+    #: 상수라 캐시(위 docstring 의 "per-call-VARYING" 조건)에 안 걸린다.
+    owner: str = "main"
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────

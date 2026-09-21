@@ -1,7 +1,19 @@
-"""MonitorRegistry — 조건 평가 스레드 + 보고 메일박스 (docs/monitor/DESIGN.md §6).
+"""MonitorRegistry — 조건 평가 스레드 (docs/monitor/DESIGN.md §6, docs/wiring §3.2).
 
-`AgentRegistry` 의 형제다: 스레드를 소유하고, `has_active_work()` 로 런 수명에
-합류하며, 보고를 `_pending` 에 쌓아 **턴 경계에서** 관찰 레코드로 배달된다.
+`AgentRegistry` 의 형제다: 스레드를 소유하고 `has_active_work()` 로 런 수명에
+합류한다. 보고는 **설치한 주소로** 간다 — `deliver` seam 을 통해 main 이면
+메일박스, `agent:<key>` 면 그 에이전트의 inbox(항목 1개 = 런 1개).
+
+## 왜 주소 배달인가 (docs/wiring §1.2)
+
+종전엔 보고를 `_pending` 리스트 하나에 쌓고 main 의 턴 경계가 `drain()` 으로
+전부 가져갔다. 주소가 없으니 **에이전트가 건 감시의 보고도 main 이 가져갔다** —
+요구가 안 되는 게 아니라 정반대로 동작했다. 게다가 소유자별 drain 만 덧붙이면
+main 이 빈 wake 턴을 무한히 도는 라이브락이 된다(설계 2판이 그랬다).
+
+질문·답·독촉이 이미 같은 주소 어휘로 같은 두 백엔드에 배달하고 있었다. 모니터는
+그 **네 번째 고객**이고, 그래서 깨우기 술어도 배달 지점도 새로 만들지 않는다 —
+main 소유 보고는 메일박스에 들어가므로 `MailWaker` 가 **이미** 깨운다.
 
 ## 왜 큐가 아니라 메일박스인가 (§6.1)
 
@@ -11,9 +23,6 @@
 중 큐 주입을 안 해 배달이 런 종료 후로 밀리고, `--result-file` 이 모니터 보고에
 대한 응답으로 덮인다.
 
-`MailWaker` 가 큐에 넣는 건 **깨우기 마커**뿐이고 내용은 메일박스로 간다 —
-여기도 같은 분업을 따른다. 깨우기는 waker 술어에 `or monitors.has_pending()` 를
-얹어 **합치기를 공짜로** 얻는다.
 """
 
 from __future__ import annotations
@@ -39,11 +48,22 @@ REPORT_MAX_LINES = 5  # §10.3
 REPORT_MAX_LINE_CHARS = 500
 
 
+class MonitorUnavailable(RuntimeError):
+    """배달 배선이 없거나 세션이 닫혔다 — 등록해 봐야 보고가 갈 곳이 없다.
+
+    조용히 등록해 두고 발화 때 잃는 것보다 **등록을 거부하는 쪽**이 낫다:
+    이 저장소의 배선 사고는 전부 "조용히 아무 일도 안 일어남" 이었다.
+    """
+
+
 @dataclass
 class Monitor:
     id: str
     cond: Condition
     deadline_at: float
+    #: 보고가 갈 **주소** — ``"main"`` | ``"agent:<key>"`` (docs/wiring §3.2).
+    #: 기본값을 두지 않는다: 주소 없는 모니터는 보고를 잃는다.
+    owner: str
     once: bool = True
     run: str = ""  # 선택 — 보고 **전에** 실행 (§4)
     state: dict = field(default_factory=dict)
@@ -54,6 +74,10 @@ class Monitor:
     _buf: list[str] = field(default_factory=list)
     _last_report: float = 0.0
     retired: str = ""  # "" = 살아 있음, 아니면 해제 사유
+    #: 소유자 사망으로 **폐기**됐는가. `retired` 로는 구분이 안 된다 —
+    #: `_retire` 가 배달 **전에** 사유를 세우므로(멱등성 가드) 은퇴하는
+    #: 모니터는 전부 truthy 다.
+    dropped: bool = False
 
     @property
     def alive(self) -> bool:
@@ -95,14 +119,20 @@ class MonitorRegistry:
 
     def __init__(self, session_dir=None) -> None:
         self._monitors: dict[str, Monitor] = {}
-        self._pending: list[str] = []
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._path = Path(session_dir) / "monitors.json" if session_dir else None
-        # 보고가 쌓였을 때 부르는 훅 — 부트스트랩이 `MailWaker.on_mail` 을
-        # 꽂는다. 에이전트 회신의 `on_reply` 와 같은 자리·같은 이유다.
-        self.on_report: Callable[[], None] | None = None
+        #: 주소 배달 seam (`AgentRegistry.deliver`) — 부트스트랩이 꽂는다.
+        self.deliver: Callable[..., str] | None = None
+        #: 세션 종료 표식 — 종료 뒤의 등록·배달을 막는다. 전체 드롭 대신
+        #: 이걸 쓰는 이유: 드롭이 `_save()` 를 부르면 정상 종료가
+        #: `monitors.json` 을 비워 다음 세션의 "이전 세션 모니터" 통지가
+        #: 사라진다.
+        self.closed = False
+        #: 배달 중(부작용 실행 포함) 건수 — 생존 판정이 이걸 센다. 안 세면
+        #: `run` 펌프가 보고를 날리며 종료할 수 있다.
+        self._inflight = 0
 
     # ── 등록/조회 ──────────────────────────────
 
@@ -110,14 +140,26 @@ class MonitorRegistry:
         self,
         cond: Condition,
         *,
+        owner: str,
         deadline_s: int,
         once: bool = True,
         run: str = "",
     ) -> Monitor:
+        """감시 등록. ``owner`` 로 보고가 간다.
+
+        배달 배선이 없거나 세션이 닫혔으면 :class:`MonitorUnavailable`.
+        도달하면 배선이 깨졌다는 뜻이다 — 조립기가 어떤 루프보다 먼저
+        `deliver` 를 꽂는다(docs/wiring §3.3).
+        """
+        if self.deliver is None:
+            raise MonitorUnavailable("monitor: 배달 배선 없음 (내부 오류)")
+        if self.closed:
+            raise MonitorUnavailable("monitor: 세션이 종료 중이다")
         mon = Monitor(
             id=f"mon-{uuid.uuid4().hex[:6]}",
             cond=cond,
             deadline_at=time.time() + _clamp_deadline(deadline_s),
+            owner=owner,
             once=once,
             run=run,
         )
@@ -131,10 +173,15 @@ class MonitorRegistry:
 
     def delete(self, mon_id: str) -> bool:
         with self._lock:
-            gone = self._monitors.pop(mon_id, None) is not None
-        if gone:
+            mon = self._monitors.pop(mon_id, None)
+            if mon is not None and mon.alive:
+                # pop 만으로는 부족하다 — `tick` 은 `live` 를 **스냅샷**한 뒤
+                # 락 밖에서 돌므로, 삭제된 모니터가 한 번 더 발화할 수 있다.
+                mon.retired = "삭제됨"
+                mon.dropped = True
+        if mon is not None:
             self._save()
-        return gone
+        return mon is not None
 
     def list_all(self) -> list[Monitor]:
         with self._lock:
@@ -153,33 +200,70 @@ class MonitorRegistry:
         `run` 만 고치면 board 인스턴스가 모니터를 데리고 조용히 사라진다.
         """
         with self._lock:
-            return any(m.alive for m in self._monitors.values()) or bool(self._pending)
+            return any(m.alive for m in self._monitors.values()) or self._inflight > 0
 
-    def _notify(self) -> None:
-        """보고가 쌓였다 — 유휴 main 을 깨운다 (best-effort).
+    def drop_owner(self, addr: str) -> int:
+        """소유자가 죽었다 — 그 주소의 감시를 폐기. 살아 있던 건수 반환.
 
-        보고는 **턴 경계**에서만 소비된다(`AgentLoop._deliver_monitor_reports`).
-        그런데 모니터의 존재 이유가 "오래 걸리는 걸 걸어 두고 딴 일 하라" 라
-        발화 시점에 main 이 유휴인 것이 **정상**이다 — 깨우지 않으면 보고가
-        큐에 앉은 채 사용자는 아무것도 못 본다(사용자 제보: 2분 무반응).
+        재부모화하지 않는다: 에이전트가 자기 목적으로 건 감시를 main 이
+        물려받을 이유가 없다.
+
+        **`_save()` 를 부르지 않는다.** `delete` 처럼 저장하면 살아 있는
+        행만 쓰는 `_save` 가 종료 시 `monitors.json` 을 비워, 다음 세션의
+        "이전 세션 모니터" 통지가 사라진다(문서화된 §8 동작의 회귀).
         """
-        cb = self.on_report
-        if cb is None:
-            return
-        try:
-            cb()
-        except Exception:
-            pass  # 깨우기는 보조 — 감시 스레드를 죽이지 않는다
-
-    def has_pending(self) -> bool:
+        n = 0
         with self._lock:
-            return bool(self._pending)
+            for mon in self._monitors.values():
+                if mon.owner != addr:
+                    continue
+                # **`alive` 로 거르지 않는다.** `_retire` 는 멱등성 가드로
+                # 사유를 배달 **전에** 세우므로, 부작용이 도는 사이에
+                # 소유자가 죽으면 그 모니터는 이미 `alive == False` 다.
+                # 거기서 건너뛰면 마지막 보고가 죽은 주소로 간다(테스트가
+                # 잡았다). 이미 배달을 마친 모니터에 `dropped` 를 세우는
+                # 것은 무해하다.
+                if mon.alive:
+                    mon.retired = f"소유자 종료 ({addr})"
+                    n += 1
+                mon.dropped = True
+        return n
 
-    def drain(self) -> list[str]:
-        """미배달 보고 전부 — 턴 경계에서 관찰 레코드로 주입된다."""
+    def _send(self, mon: Monitor, report: str, *, retiring: bool = False) -> str:
+        """소유자에게 배달 — 에러 문자열 또는 "".
+
+        배달 **직전** `_lock` 아래서 살아 있는지 재확인한다. 그 사이
+        `drop_owner`/`delete` 가 들어왔으면 보내지 않는다 — 그래서 "죽은
+        소유자에게 보내고 실패를 통지" 라는 분기가 아예 필요 없어진다.
+
+        ``retiring``: `_retire` 는 멱등성 가드로 `retired` 를 **먼저**
+        세우므로 그 시점의 모니터는 이미 `alive == False` 다. 은퇴 보고는
+        나가야 하므로 그때는 **폐기**(`dropped`)만 본다.
+        """
         with self._lock:
-            out, self._pending = self._pending, []
-            return out
+            gone = mon.dropped if retiring else not mon.alive
+            if gone or self.closed:
+                return ""
+            fn = self.deliver
+        if fn is None:
+            return "배달 배선 없음"
+        return fn(
+            mon.owner,
+            mail={
+                "kind": "monitor",
+                # 없으면 `_deliver_agent_mail` 이 실패 관찰로 그린다.
+                "success": True,
+                "output": report,
+            },
+            text=report,
+            # 에이전트 inbox 로 갈 때 이 값이 `tm.current_author` 가 되고,
+            # 그 런에서 거는 ask 의 **대상**이 된다. 주소가 아닌 값이면
+            # 그 ask 가 "unroutable" 로 취소된다.
+            author="main",
+            # 이 런의 산출물은 어디로도 되돌아가지 않는다 — 질문·독촉·peer
+            # 회신과 같은 의미다.
+            expects_reply=False,
+        )
 
     # ── 평가 스레드 ────────────────────────────
 
@@ -256,15 +340,26 @@ class MonitorRegistry:
         return f"↳ run {mon.run!r}: exit {proc.returncode}{tail_s}"
 
     def _flush(self, mon: Monitor, now: float, *, note: str = "") -> None:
-        lines, mon._buf = mon._buf, []
-        side = self._run_side_effect(mon)
-        extra = " · ".join(x for x in (side, note) if x)
-        report = _format_report(mon, lines, note=extra)
-        mon.wakes += 1
-        mon._last_report = now
+        # 카운터는 **부작용 전에** 올린다 — `run` 서브프로세스가
+        # `COMMAND_TIMEOUT_S` 까지 걸리는데, 그 사이 생존 판정이 거짓이 되면
+        # 펌프가 보고를 날리며 종료한다. 내리는 것은 반드시 `finally` 에서:
+        # `_loop` 가 `tick` 의 예외를 삼키므로 한 번만 새면 카운터가 영원히
+        # 0 이 아니고, 그러면 세션이 **영영 안 끝난다**.
         with self._lock:
-            self._pending.append(report)
-        self._notify()
+            if not mon.alive or self.closed:
+                return
+            self._inflight += 1
+        try:
+            lines, mon._buf = mon._buf, []
+            side = self._run_side_effect(mon)
+            extra = " · ".join(x for x in (side, note) if x)
+            report = _format_report(mon, lines, note=extra)
+            mon.wakes += 1
+            mon._last_report = now
+            self._send(mon, report)
+        finally:
+            with self._lock:
+                self._inflight -= 1
         if mon.alive and mon.wakes >= MAX_WAKES:
             self._retire(mon, f"알림 상한({MAX_WAKES}) 도달 — 해제됨", now)
 
@@ -279,19 +374,28 @@ class MonitorRegistry:
         """
         if mon.retired:
             return
+        # `retired` 를 **먼저** 세운다 — 폴링 스레드와 `drop_owner`/`delete`
+        # 가 겹칠 때의 멱등성 가드다. 그래서 배달 시점엔 은퇴하는 모니터가
+        # 전부 `retired` 이고, 폐기와 구별하려면 `dropped` 가 필요하다.
         mon.retired = why
-        if flush or mon._buf:
-            lines, mon._buf = mon._buf, []
-            side = self._run_side_effect(mon)
-            report = _format_report(
-                mon, lines, note=" · ".join(x for x in (side, why) if x)
-            )
-        else:
-            report = _format_report(mon, [f"({why}) 누적 매치 {mon.matches}건"])
-        mon.wakes += 1
         with self._lock:
-            self._pending.append(report)
-        self._notify()
+            if self.closed:
+                return
+            self._inflight += 1
+        try:
+            if flush or mon._buf:
+                lines, mon._buf = mon._buf, []
+                side = self._run_side_effect(mon)
+                report = _format_report(
+                    mon, lines, note=" · ".join(x for x in (side, why) if x)
+                )
+            else:
+                report = _format_report(mon, [f"({why}) 누적 매치 {mon.matches}건"])
+            mon.wakes += 1
+            self._send(mon, report, retiring=True)
+        finally:
+            with self._lock:
+                self._inflight -= 1
 
     # ── 영속 — 기록하되 **부활시키지 않는다** (§8) ─────────
 

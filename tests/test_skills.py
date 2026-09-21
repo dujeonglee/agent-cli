@@ -531,6 +531,7 @@ class TestSkillExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
+            owner="main",
         )
         assert result is not None
 
@@ -552,6 +553,7 @@ class TestSkillExecution:
             provider=provider,
             capabilities=caps,
             model="m",
+            owner="main",
         )
         # Skill's max_turns should be used (verified by run_loop not exceeding it)
         assert provider.call.called
@@ -573,6 +575,7 @@ class TestSkillExecution:
                 capabilities=caps,
                 model="m",
                 session=fake_session,
+                owner="main",
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is fake_session
@@ -592,6 +595,7 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="m",
+                owner="main",
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is None
@@ -612,6 +616,7 @@ class TestSkillExecution:
                 capabilities=caps,
                 model="m",
                 skill_stack=["summarize"],
+                owner="main",
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["skill_stack"] == ["summarize"]
@@ -637,6 +642,7 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="original-model",
+                owner="main",
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "original-model"
@@ -664,6 +670,7 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="original-model",
+                owner="main",
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "gpt-4o"

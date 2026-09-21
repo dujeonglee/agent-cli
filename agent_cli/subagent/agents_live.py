@@ -290,6 +290,20 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     key = reply.get("key", "")
     label = format_agent_label(key, reply.get("profile", ""), reply.get("name", ""))
 
+    if reply.get("kind") == "monitor":
+        # 종전 `AgentLoop._deliver_monitor_reports` 가 만들던 것과 **같은**
+        # 레코드다 — 배달 경로만 두 번째 drain 지점에서 메일박스로 옮겼다.
+        # `tool="monitor"` 는 아무 데도 등록이 필요 없다: 재생은 `tool` 키가
+        # 있는 레코드를 관찰로 취급하고, `is_format_intervention` 은
+        # `tool == ""` 일 때만 걸리며(그래서 빈 문자열 금지), 프런트는
+        # `tool === "agent"` 만 특수 처리한다.
+        return {
+            "role": "user",
+            "tool": "monitor",
+            "success": bool(reply.get("success")),
+            "content": reply.get("output") or "",
+        }
+
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
         # status 를 조회하기 전에 능동적으로 알린다.
@@ -583,6 +597,11 @@ class AgentRegistry:
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
         # 회신 도착 알림 (CLI 📨 라인 / web transient status) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
+        #: 모니터 레지스트리 — `wire_monitor_delivery` 가 주입한다. 워커의
+        #: `finally` 가 죽은 소유자의 감시를 폐기하려면 참조가 필요하다.
+        #: 배선 안 된 레지스트리(테스트 픽스처 다수)는 `None` 이라 모든
+        #: 소비 지점이 가드한다.
+        self.monitors = None
         # 귀속 승계 (v8.5.0): 현재 런이 서비스 중인 USER 들 — worker 가 런
         # 시작에, main 루프가 조향 주입마다 갱신. main 발신 request 가 이
         # 스냅샷을 아이템에 실어 보내고, 그 회신이 그대로 되가져와 회신을
@@ -984,6 +1003,16 @@ class AgentRegistry:
             expects_reply=True,
         )
 
+    def _drop_monitors(self, key: str) -> int:
+        """이 에이전트가 건 감시를 폐기 — 배선 안 됐으면 no-op."""
+        mons = self.monitors
+        if mons is None:
+            return 0
+        try:
+            return mons.drop_owner(f"agent:{key}")
+        except Exception:
+            return 0
+
     def _purge_questions_for(self, key: str) -> None:
         """에이전트 사망 정리 — **양방향** (§3.8).
 
@@ -1198,7 +1227,13 @@ class AgentRegistry:
         tm = self._agents.get(key)
         if tm is None:
             return f"unknown agent '{key}' (see mode:\"status\" for live keys)"
-        if tm.state == "dead":
+        # `state` 만 보면 창이 뚫린다: `kill`/`shutdown_all` 은
+        # `stop_event` 만 세우고 `state="dead"` 는 워커의 `finally` 에서야
+        # 찍히므로, busy 런이면 몇 분 뒤다. 그 사이 큐에 넣은 항목은
+        # `_SHUTDOWN` 뒤에 줄 서서 **영영 안 읽힌다**. `tm.stop_event` 를
+        # 세우는 곳은 그 둘뿐이라(SIGINT 핸들러는 메인 스레드 전용, 웹
+        # `/api/stop` 은 main 의 이벤트) 죽지 않는데 서는 경로가 없다.
+        if tm.state == "dead" or tm.stop_event.is_set():
             reason = f" ({tm.error})" if tm.error else ""
             return f"agent '{key}' is dead{reason} — spawn a new one"
         if not message.strip():
@@ -1294,18 +1329,25 @@ class AgentRegistry:
         둘이 같은 내용인 호출부(답·독촉)는 같은 문자열을 두 번 준다. 질문만
         본문이 갈린다(main 은 질문 원문, 에이전트는 출처를 머리에 단 한 줄).
         """
-        if addr == "main":
-            self._push_reply(mail)
-            return ""
-        if addr.startswith("agent:"):
-            return self.request(
-                addr.split(":", 1)[1],
-                text,
-                author=author,
-                expects_reply=expects_reply,
-                question_id=question_id,
-                hop=hop,
-            )
+        try:
+            if addr == "main":
+                self._push_reply(mail)
+                return ""
+            if addr.startswith("agent:"):
+                return self.request(
+                    addr.split(":", 1)[1],
+                    text,
+                    author=author,
+                    expects_reply=expects_reply,
+                    question_id=question_id,
+                    hop=hop,
+                )
+        except Exception as exc:  # 배달은 감시 폴링 스레드에서도 불린다
+            # **던지지 않는다.** `MonitorRegistry._flush` 가 in-flight
+            # 카운터를 `finally` 로 내리긴 하지만, 여기서 새면 `_loop` 의
+            # `except Exception: pass` 가 삼켜 그 틱의 남은 모니터가 통째로
+            # 건너뛰어진다. 에러는 문자열로 돌려 호출부가 판단하게 한다.
+            return f"{type(exc).__name__}: {exc}"
         return f"unroutable address '{addr}'"
 
     def _push_reply(self, reply: dict) -> None:
@@ -1520,6 +1562,11 @@ class AgentRegistry:
         if tm is None:
             return f"unknown agent '{key}'"
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
+        # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
+        # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
+        # `_SHUTDOWN` 뒤에 줄 서서 영영 안 읽힌다. 그 턴에서 새로 건 감시는
+        # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
+        self._drop_monitors(tm.key)
         tm.stop_event.set()
         tm.inbox.put(_SHUTDOWN)
         if tm.worker is not None:
@@ -1538,6 +1585,7 @@ class AgentRegistry:
     def shutdown_all(self) -> None:
         """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출."""
         for tm in list(self._agents.values()):
+            self._drop_monitors(tm.key)
             tm.stop_event.set()
             tm.inbox.put(_SHUTDOWN)
         for tm in list(self._agents.values()):
@@ -1994,6 +2042,10 @@ class AgentRegistry:
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을
                 # 저장해 resume 이 알릴 열린 질문이 항상 0건이 된다.
                 self._purge_questions_for(tm.key)
+            # 감시 폐기의 **정본 위치** — kill·크래시·세션 종료가 모두
+            # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
+            # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
+            self._drop_monitors(tm.key)
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()

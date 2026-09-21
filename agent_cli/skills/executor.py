@@ -147,6 +147,8 @@ def execute_skill(
     agent_registry=_INHERIT,
     session_subdir: str = "",
     scope_id: str = "",
+    *,
+    owner: str,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -270,7 +272,7 @@ def execute_skill(
             # skill (registry present) gets the full agent tool while an ordinary
             # sub-agent (no registry) stays run-only. Workers it spawns register
             # on the main registry and outlive the skill (main takes them over).
-            ports=ports_for_skill(agent_registry=agent_registry),
+            ports=ports_for_skill(agent_registry=agent_registry, owner=owner),
             agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,
