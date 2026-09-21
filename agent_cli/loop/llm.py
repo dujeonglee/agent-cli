@@ -109,10 +109,13 @@ class LLMCaller:
         memory = ""
         if self.ctx is not None and self.ctx.session_dir:
             memory = render_index(self.ctx.session_dir)
-        # 요청이 둘 이상 합쳐진 런에서만 — 하나면 회계할 것이 없다.
+        # **1건에도 싣는다.** 합쳐진 런(실측 10%)에서만 보이면 모델이 id
+        # 어휘를 배울 기회가 없다 — 그때 처음 본 필드를 곧바로 채우라는
+        # 요구가 된다. 항상 보여주면 습관이 되고, 거부·통지는 여전히
+        # 합쳐진 런에서만 걸려 90% 런의 턴·각주는 안 는다.
         requests = ""
         pending = getattr(self.state, "run_requests", None)
-        if pending and len(pending) > 1:
+        if pending:
             from agent_cli.constants import outstanding_requests_block
 
             requests = outstanding_requests_block(pending)

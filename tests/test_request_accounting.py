@@ -258,7 +258,7 @@ class TestIdsReachTheModel:
         from agent_cli.prompts.session_state import build_session_state
 
         return build_session_state(
-            requests=outstanding_requests_block(requests) if len(requests) > 1 else ""
+            requests=outstanding_requests_block(requests) if requests else ""
         )
 
     def test_ids_ride_the_per_turn_tail(self):
@@ -269,15 +269,21 @@ class TestIdsReachTheModel:
             ]
         )
         assert "[1]" in blob and "[2]" in blob, "모델이 id 를 못 본다"
-        assert "Outstanding Requests" in blob
+        assert "Open Requests" in blob
         # 단어가 아니라 **행동 지시**를 고정한다 — 뒷문장에도 `answers` 가
         # 나와서, 지시문을 지워도 단어 검사만으로는 통과한다.
-        assert "set `answers`" in blob and "reported to" in blob
+        assert "Set `answers`" in blob and "reported to" in blob
 
-    def test_single_request_run_has_no_block(self):
-        """요청이 하나면 회계할 게 없다 — 꼬리를 더럽히지 않는다."""
+    def test_single_request_run_also_shows_its_id(self):
+        """**1건에도 싣는다** (사용자 지적).
+
+        합쳐진 런(실측 10%)에서만 보이면 모델이 id 어휘를 배울 기회가 없다 —
+        그때 처음 본 필드를 곧바로 채우라는 요구가 된다. 거부·각주는 여전히
+        합쳐진 런에서만이라 90% 런의 턴·소음은 안 는다.
+        """
         blob = self._tail([{"id": "1", "author": "Bob", "text": "하나뿐"}])
-        assert "Outstanding Requests" not in blob
+        assert "[1]" in blob and "Open Requests" in blob
+        assert 'answers: ["1"]' in blob, "무엇을 채우라는지 예시가 없다"
 
     def test_llm_caller_feeds_the_block_only_when_merged(self):
         """렌더러가 아니라 **호출부**가 게이트를 쥔다 — 소스 핀."""
@@ -287,7 +293,7 @@ class TestIdsReachTheModel:
 
         src = inspect.getsource(LLMCaller._build_session_state)
         assert "outstanding_requests_block" in src, "꼬리에 안 실린다"
-        assert "len(pending) > 1" in src, "단건 런에도 실린다"
+        assert "if pending:" in src, "단건 런이 꼬리에서 빠졌다"
         assert "requests=requests" in src
 
     def test_the_block_is_not_persisted(self):
