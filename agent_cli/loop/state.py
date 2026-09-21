@@ -93,5 +93,12 @@ class LoopState:
     messages: list = field(default_factory=list)
     turn: int = 0
     task_log: list = field(default_factory=list)
+    #: 이 런이 응답해야 할 **사용자 요청들** — ``{"id", "author", "text"}``.
+    #: 런 스타터 1건 + 턴 경계 drain 으로 들어온 N건. 웹 큐가 이미 id 를
+    #: 발급하는데(`enqueue` → `{id, …}`, `cancel_pending` 이 쓴다) 루프까지
+    #: 오면서 버려지고 있었다. 그래서 drain-all 이 요청 셋을 한 턴에 합쳐도
+    #: **무엇이 답해졌는지**는 아무도 몰랐다 — `run_authors` 는 *누가* 물었는지
+    #: 만 안다. CLI 는 요청이 하나뿐이라 비어 있다.
+    run_requests: list = field(default_factory=list)
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

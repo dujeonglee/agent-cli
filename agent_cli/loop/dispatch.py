@@ -641,6 +641,8 @@ class TurnDispatcher:
             if unwrapped != raw:
                 answer = unwrapped or answer
 
+        answer = self._with_unanswered_notice(op, answer)
+
         if self.ctx:
             self.ctx.add(
                 self.cfg.wire_format.serialize_terminal_for_history(
@@ -650,6 +652,52 @@ class TurnDispatcher:
         render_step("final", answer, self.state.turn)
 
         return ToolResult(True, output=answer)
+
+    def _with_unanswered_notice(self, op, answer: str) -> str:
+        """이 런에 들어왔는데 `complete` 이 주장하지 않은 요청을 덧붙인다.
+
+        drain-all 은 요청 N건을 한 턴에 합치고 `complete` 은 하나만 나간다.
+        종전엔 **무엇이 답해졌는지** 아무도 몰랐다 — 두 사람이 서로 다른 걸
+        물었는데 모델이 하나만 답해도 조용했다. 질문(`ask`)에 대해 없앤 바로
+        그 클래스가 사용자 요청 쪽에 남아 있었다.
+
+        회계일 뿐 강제가 아니다. `complete` 을 붙잡지 않는다 — 붙잡으면 일을
+        시킨 쪽이 자기와 무관한 요청이 풀릴 때까지 결과를 못 받는다(설계
+        3판에서 한 번 틀렸던 자리). 결과는 그대로 나가고, 빠진 것이 보이게만
+        한다.
+
+        **모델의 주장이 정직한지는 검증할 수 없다.** 답했다고 주장하면 믿는다
+        — `ask` 도 같고, 거기서도 asker 가 읽고 판단한다. 검출되는 것은
+        "아무도 주장하지 않은 요청" 뿐이고, 그것만으로 충분히 값이 있다.
+
+        ``answers`` 부재 = 전부 주장 (종전 행동과 동일 — 하위호환).
+        """
+        pending = getattr(self.state, "run_requests", None)
+        if not pending:
+            return answer
+        claimed = None
+        if isinstance(op.action_input, dict):
+            raw = op.action_input.get("answers")
+            if isinstance(raw, list):
+                claimed = {str(x) for x in raw if x}
+            elif isinstance(raw, str) and raw.strip():
+                # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
+                claimed = {raw.strip()}
+        if claimed is None:
+            return answer
+        missed = [r for r in pending if r.get("id") not in claimed]
+        if not missed:
+            return answer
+        lines = "\n".join(
+            f"   [{r.get('id')}]"
+            + (f" ({r['author']})" if r.get("author") else "")
+            + f' "{(r.get("text") or "").strip()[:120]}"'
+            for r in missed
+        )
+        return (
+            f"{answer}\n\n⏳ {len(missed)} request(s) in this run were not "
+            f"answered:\n{lines}"
+        )
 
     def _op_ask(self, llm_text: str, turn, op, accumulate):
         """``ask`` op — 질문 추출·사용자 응답을 관찰로. 질문이 없으면

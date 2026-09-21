@@ -87,6 +87,36 @@ QUEUED_REQUEST_NOTICE = (
     "the rest."
 )
 
+
+def outstanding_requests_notice(requests: list) -> str:
+    """Ids of every request this run must answer — injected after a drain.
+
+    ``complete`` takes an optional ``answers=[id]`` so unanswered requests can
+    be surfaced, but the model never saw the ids: queued messages render as
+    ``[nickname]: text`` and the queue id died at the loop boundary. The field
+    was therefore unreachable in practice — the machinery existed and the one
+    line that lets the model use it did not (live session cgyx7z: the model
+    emitted ``complete`` with no ``answers`` because it had no ids to name).
+
+    Listed here rather than on every message label: this rides only when a drain
+    actually merged requests, so single-request runs stay clean.
+    """
+    lines = "\n".join(
+        f"   [{r.get('id')}]"
+        + (f" ({r['author']})" if r.get("author") else "")
+        + f' "{(r.get("text") or "").strip()[:120]}"'
+        for r in requests
+    )
+    return (
+        "📋 Outstanding requests in this run:\n"
+        f"{lines}\n"
+        "When you finish, list the ids you actually answered in "
+        "`complete(answers=[...])`. Anything you leave out is reported back "
+        "to the user as unanswered — so omit an id only if you truly did not "
+        "answer it."
+    )
+
+
 # Shown as an observation when a response hits the model's output-token
 # limit (stop_reason == "length"). The truncated action is NOT executed
 # — the loop records this so the model retries with a smaller unit.

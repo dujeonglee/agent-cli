@@ -11,6 +11,7 @@ from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
     QUEUED_REQUEST_NOTICE,
+    outstanding_requests_notice,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
@@ -80,6 +81,7 @@ class AgentLoop:
         stop_event=None,
         query_author: str | None = None,
         query_author_is_user: bool = True,
+        query_request_id: str = "",
         agent_role: str = "",
         agent_name: str = "",
         record_turns: bool = True,
@@ -117,6 +119,9 @@ class AgentLoop:
         # mirrored to the web renderer via ``set_run_authors`` so the final's
         # ``answers`` field is stamped by whoever owns the fact (this loop).
         self.query_author_is_user = query_author_is_user
+        # 런을 연 요청의 id — 웹 워커가 `dequeue_blocking()` 한 아이템의 것.
+        # CLI 는 빈 문자열(요청이 하나뿐이라 회계할 것이 없다).
+        self.query_request_id = query_request_id
         self.run_authors: list[str] = []
         self.provider = provider
         self.ctx = ctx
@@ -581,6 +586,14 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
+        if self.query_request_id and self.query_author_is_user:
+            self._state.run_requests.append(
+                {
+                    "id": self.query_request_id,
+                    "author": self.query_author or "",
+                    "text": self.query,
+                }
+            )
         self._add_user_message(
             self.query, self.query_author, is_user=self.query_author_is_user
         )
@@ -683,7 +696,26 @@ class AgentLoop:
             if not notice_added and self.ctx:
                 self.ctx.add({"role": "user", "content": QUEUED_REQUEST_NOTICE})
                 notice_added = True
+            # 회계 등록은 라우팅 판정 **뒤**다 — 라우팅 명령은 이미 처리된
+            # 것이라 미답으로 남으면 안 된다. 합성 wake 아이템도 제외
+            # (사람 발화가 아니다).
+            rid = item.get("id") or ""
+            if rid and not item.get("system"):
+                self._state.run_requests.append(
+                    {"id": rid, "author": author or "", "text": text}
+                )
             self._add_user_message(text, author)
+        # 드레인이 끝난 뒤에야 이 런의 요청 집합이 확정된다 — 위 통지는
+        # 첫 plain-chat **앞**에 한 번 뜨므로 그 시점엔 아직 모른다.
+        # 그래서 목록은 루프 밖에서, 요청이 둘 이상일 때만 싣는다(하나면
+        # 회계할 것이 없다).
+        if notice_added and self.ctx and len(self._state.run_requests) > 1:
+            self.ctx.add(
+                {
+                    "role": "user",
+                    "content": outstanding_requests_notice(self._state.run_requests),
+                }
+            )
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로

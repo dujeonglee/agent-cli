@@ -2423,6 +2423,9 @@ def web(
                 break
             message = item["text"]
             nickname = item["nickname"]
+            # 큐가 이미 발급한 id — 종전엔 여기서 버려져 런이 "무엇에
+            # 답해야 하는지" 를 몰랐다 (`cancel_pending` 만 쓰던 값).
+            request_id = item.get("id") or ""
             _wake_verdict = _waker.handle_dequeued(message)
             if _wake_verdict == "skip":
                 continue  # 이미 다른 run 이 배달 완료 — 빈 run 을 열지 않는다
@@ -2496,6 +2499,7 @@ def web(
 
                     def _run_main(query: str, author: str):
                         return run_loop(
+                            query_request_id=request_id,  # noqa: B023
                             query=query,
                             query_author=author,
                             query_author_is_user=_wake_verdict != "run",  # noqa: B023 — called immediately, same iteration

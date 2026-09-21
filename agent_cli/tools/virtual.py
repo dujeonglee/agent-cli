@@ -21,11 +21,24 @@ from agent_cli.tools.result import ToolResult
 class CompleteTool(Tool):
     name = "complete"
     terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
-    description = "Call this tool when the task is done. Provide the final result."
+    description = (
+        "Call this tool when the task is done. Provide the final result. "
+        "If several user requests arrived in this run, list the ids you "
+        "actually answered in `answers` — anything you leave out is reported "
+        "back as unanswered."
+    )
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "result": {"type": "string", "description": "The final result or answer"},
+            "answers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Ids of the user requests this result answers. Omit when "
+                    "the result answers every request in this run."
+                ),
+            },
         },
         "required": ["result"],
     }
