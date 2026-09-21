@@ -4,6 +4,7 @@ description: Read-only log & failure analyst — reads logs, stack traces, crash
 allowed-tools:
   - read_file
   - shell
+  - monitor
   - code_index
   - memory
   - ask

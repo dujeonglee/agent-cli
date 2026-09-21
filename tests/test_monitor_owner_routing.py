@@ -463,3 +463,127 @@ class TestDeliveryFailureIsVisible:
 
         reg.tick(time.time())
         assert any("배달 실패" in m for m in seen), "실패가 조용히 사라졌다"
+
+
+class TestEndToEnd:
+    """발화 → 배달 → **그 에이전트의 런**까지 실제로 도는가."""
+
+    def test_agent_owned_report_becomes_a_run_in_that_agent(self, reg, tmp_path):
+        """G1 의 최종 형태: 에이전트가 건 감시가 발화하면 **그 에이전트가
+        깨어나 그 보고를 가지고 한 턴을 돈다**. main 은 아무것도 안 받는다.
+
+        종전엔 정반대였다 — 등록은 전역으로 가서 됐지만 배달은 main 의 턴
+        경계가 전부 가져갔다.
+        """
+        import time
+
+        from tests.test_agents_live import make_registry, wait_until
+
+        seen = []
+
+        def runner(query, ctx, **kw):
+            from tests.test_agents_live import _FakeLoopResult
+
+            seen.append(query)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        agents = make_registry(tmp_path, runner=runner)
+        agents.monitors = reg
+        reg.deliver = agents.deliver
+        try:
+            key, err = agents.spawn()
+            assert not err, err
+            assert wait_until(lambda: agents.get(key).state == "idle")
+
+            _, log = _add(reg, tmp_path, f"agent:{key}")
+            log.write_text("X 빌드 끝\n")
+            reg.tick(time.time())
+
+            assert wait_until(lambda: seen), "에이전트가 안 깨어났다"
+            assert "빌드 끝" in seen[0], seen
+            # main 메일박스는 비어 있어야 한다 — 종전의 가로채기 회귀 방지.
+            assert not agents.has_pending_replies(), "main 이 가로챘다"
+        finally:
+            agents.shutdown_all()
+
+    def test_main_owned_report_reaches_main_not_an_agent(self, reg, tmp_path):
+        import time
+
+        from tests.test_agents_live import make_registry, wait_until
+
+        agents = make_registry(tmp_path)
+        agents.monitors = reg
+        reg.deliver = agents.deliver
+        try:
+            key, _ = agents.spawn()
+            assert wait_until(lambda: agents.get(key).state == "idle")
+            _, log = _add(reg, tmp_path, "main")
+            log.write_text("X main 것\n")
+            reg.tick(time.time())
+
+            assert wait_until(agents.has_pending_replies)
+            (item,) = [r for r in agents.drain_replies() if r.get("kind") == "monitor"]
+            assert "main 것" in item["output"]
+            assert agents.get(key).inbox.qsize() == 0, "에이전트가 가로챘다"
+        finally:
+            agents.shutdown_all()
+
+
+class TestProfileReach:
+    def test_every_builtin_profile_can_install_monitors(self):
+        """내장 프로파일은 전부 `monitor` 를 허용해야 한다.
+
+        v9.14.0 이전엔 여섯 개 **전부** 빠져 있었다 — 배달은 주소대로 가는데
+        정작 그 에이전트가 감시를 **걸 수가 없었다**. 배선과 다른 층의 누락
+        이라 배선 테스트로는 안 잡힌다.
+
+        권한 확대가 아니다: 여섯 개 전부 이미 `shell` 을 가지고 있고,
+        `monitor` 는 같은 셸 권한에 **보고가 반드시 따라오는** 형태다
+        (설계 §4: notify 없는 shell 을 표현할 수 없게 만든 것이 의도).
+        `command`/`run` 은 shell 과 **같은 함수**로 등록 시점에 확인받는다.
+        """
+        import pathlib as _p
+
+        import yaml
+
+        missing = []
+        for f in sorted(_p.Path("agent_cli/agents/builtin").glob("*.md")):
+            head = f.read_text().split("---")[1]
+            allowed = yaml.safe_load(head).get("allowed-tools")
+            if allowed is None:
+                continue  # 제한 없음 = 전부 허용
+            if "monitor" not in allowed:
+                missing.append(f.stem)
+            assert "shell" in allowed, f"{f.stem}: monitor 만 있고 shell 이 없다"
+        assert missing == [], f"monitor 를 못 쓰는 내장 프로파일: {missing}"
+
+    def test_a_profile_allowlist_hides_the_tool(self):
+        """**배달이 되는 것과 도구가 붙는 것은 다른 문제다.**
+
+        `MonitorTool` 은 `requires_handler` 도 `force_mount` 도 없어서
+        프로파일의 `allowed-tools` 가 있으면 그 목록에 들어야 한다. 내장
+        프로파일 여섯 개엔 전부 없다 — 그 에이전트들은 감시를 **걸 수가
+        없다**(걸리면 주소대로 가지만).
+        """
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import make_ports
+
+        def tools(active):
+            return AgentLoop(
+                query="Q",
+                provider=MagicMock(),
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                ),
+                model="m",
+                ports=make_ports(owner="agent:k1"),
+                active_tools=active,
+            )._config.tools_list
+
+        assert "monitor" in tools(None), "제한 없는 에이전트는 감시를 걸 수 있다"
+        assert "monitor" not in tools(["read_file", "shell"])

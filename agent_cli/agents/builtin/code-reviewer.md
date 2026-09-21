@@ -4,6 +4,7 @@ description: Read-only code reviewer — reviews a diff or a body of code for co
 allowed-tools:
   - read_file
   - shell
+  - monitor
   - code_index
   - memory
   - ask

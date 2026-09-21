@@ -4,6 +4,7 @@ description: Persistent coordination agent — receives a goal, a plan, and a ro
 allowed-tools:
   - read_file
   - shell
+  - monitor
   - code_index
   - memory
   - message

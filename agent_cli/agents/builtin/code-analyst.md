@@ -4,6 +4,7 @@ description: Read-only code analyst — explains HOW code works by reading the s
 allowed-tools:
   - read_file
   - shell
+  - monitor
   - code_index
   - read_context
   - memory

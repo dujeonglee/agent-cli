@@ -6,6 +6,7 @@ allowed-tools:
   - write_file
   - edit_file
   - shell
+  - monitor
   - code_index
   - memory
   - ask
