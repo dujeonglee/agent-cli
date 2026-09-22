@@ -114,6 +114,6 @@ class LoopState:
     #: 무제한이면 아무것도 런을 못 멈춘다(개입은 max_turns 미계수, B1 은
     #: 도구 경로에만 있어 반복 complete 을 안 본다). 상한 뒤엔 레지스트리가
     #: 런 요약을 라벨 붙여 폴백 배달한다 — 요청자가 침묵을 받진 않는다.
-    reply_nags: int = 0
+    debt_nags: int = 0
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

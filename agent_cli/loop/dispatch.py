@@ -13,12 +13,13 @@ from agent_cli.loop.skill_invoke import _handle_run_skill
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 
-#: 빚진 회신 없이 `complete` 하려는 상주 에이전트를 독촉하는 상한 (v9.21.0).
+#: message/ask 빚을 남긴 채 `complete` 하려는 주체를 독촉하는 상한 (v9.21.0;
+#: v9.22.0 부터 main·상주 공통, 질문(answer)·회신(reply) 공통).
 #: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
 #: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
 #: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
 #: 오케스트레이터만 1회를 넘겼다.
-MAX_REPLY_NAGS = 3
+MAX_DEBT_NAGS = 3
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
@@ -706,14 +707,22 @@ class TurnDispatcher:
         # `complete` 는 국소라 이 산출물은 요청자에게 가지 않는다 — 한 번
         # 독촉해 `message` 를 보내게 한다. 그래도 안 보내면 레지스트리가 런
         # 요약을 라벨 붙여 폴백 배달하므로 요청자가 침묵을 받진 않는다.
-        owed = self._reply_owed()
-        if owed and self.state.reply_nags < MAX_REPLY_NAGS:
-            self.state.reply_nags += 1
-            # final 을 **그리지 않는다** — 이 산출물은 아무 데도 안 가는 거부다.
-            # 요청 독촉(위 `nagging`)과 다르다: 그쪽은 결과가 실제로 배달된다.
-            # 거부는 실패한 관찰 카드(✗ complete)로 남고, 원문은 그 관찰이
-            # 인용한다 — emission 자체는 저장하지 않는다.
-            return self._nag_reply_owed(llm_text, owed, answer, outcome)
+        # ── message/ask 빚 (v9.22.0, 유형별 통일) ──
+        # 사용자 요청은 위에서 정산했다(수락·키 제거·남은 요청 독촉). 그 뒤에
+        # message/ask 빚이 남아 있으면:
+        #   상주: complete 을 **거부**한다 — 산출물이 아무 데도 안 가므로.
+        #         원문을 인용한 관찰만 남고 emission 은 저장하지 않는다.
+        #   main: complete 을 **수락**한다(최종답은 사용자에게 간다) — 배달·
+        #         기록한 뒤 빚을 독촉하고 루프를 잇는다.
+        # 둘 다 3회까지; 그 뒤엔 런 끝에서 폴백(요약 배달)·닫기(질문).
+        debts = [] if nagging else self._debts()
+        if debts and self.state.debt_nags < MAX_DEBT_NAGS:
+            self.state.debt_nags += 1
+            port = self.cfg.questions
+            if getattr(port, "nonblocking", False):
+                return self._refuse_for_debts(llm_text, answer, debts, outcome)
+            render_step("final", answer, self.state.turn, requests=answered)
+            return self._nag_debts(llm_text, debts, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
         render_step("final", answer, self.state.turn, requests=answered)
@@ -852,45 +861,83 @@ class TurnDispatcher:
             tool_name="complete",
         )
 
-    def _reply_owed(self) -> str:
-        """상주 포트에 "아직 안 갚은 회신 주소" 를 묻는다 — main/일회성은 ""."""
+    def _debts(self) -> list[dict]:
+        """이 런이 아직 갚지 않은 message/ask 빚 — 포트가 없으면 빈 목록."""
         port = self.cfg.questions
-        if port is None or not getattr(port, "nonblocking", False):
-            return ""
-        fn = getattr(port, "reply_owed", None)
-        return fn() if callable(fn) else ""
+        fn = getattr(port, "debts", None) if port is not None else None
+        try:
+            return list(fn()) if callable(fn) else []
+        except Exception:
+            return []
 
-    def _nag_reply_owed(self, llm_text: str, owed: str, answer: str, outcome: dict):
-        """빚진 회신 독촉 (v9.21.0) — 물린 `complete` 의 원문을 **인용**해
-        자기완결로 안내한다(사용자 결정). 그래서 emission 은 저장하지
-        않는다: 컨텍스트에 남길 정보는 전부 이 관찰 안에 있고, 남기면
-        `ops:[complete]` 가 history 에서 final 로 읽힌다."""
-        left = MAX_REPLY_NAGS - self.state.reply_nags
-        tail = (
-            f"({left} more reminder{'s' if left != 1 else ''} before the harness "
-            "sends them your run summary instead.)"
-            if left > 0
-            else "(Last reminder — if you complete again without replying, the "
-            "harness sends them your run summary instead.)"
+    def _debt_lines(self, debts: list[dict], *, resident: bool) -> str:
+        """빚 목록을 갚는 수단과 함께 — main 과 상주는 도구가 다르다."""
+        lines = []
+        for d in debts:
+            if d["kind"] == "answer":
+                lines.append(
+                    f'  - answer question {d["id"]} from {d["to"]}: "{d["text"][:120]}" '
+                    f'→ answer(id="{d["id"]}", text="...")'
+                )
+            else:
+                key = d["to"].split(":", 1)[-1]
+                how = (
+                    'reply(text="...")'
+                    if resident
+                    else f'agent(mode="request", key="{key}", task="...")'
+                )
+                lines.append(f'  - reply to {d["to"]}: "{d["text"][:120]}" → {how}')
+        return "\n".join(lines)
+
+    def _debt_tail(self) -> str:
+        left = MAX_DEBT_NAGS - self.state.debt_nags
+        if left > 0:
+            return (
+                f"({left} more reminder{'s' if left != 1 else ''} before the harness "
+                "settles these for you: unreplied messages get your run summary, "
+                "unanswered questions are closed.)"
+            )
+        return (
+            "(Last reminder — if you complete again without settling these, the "
+            "harness sends your run summary for unreplied messages and closes "
+            "unanswered questions.)"
         )
-        to = "main" if owed == "main" else owed.split(":", 1)[1]
+
+    def _refuse_for_debts(
+        self, llm_text: str, answer: str, debts: list[dict], outcome: dict
+    ):
+        """상주: 빚을 남긴 `complete` 을 거부한다 — 원문을 인용한 관찰 하나,
+        emission 은 저장하지 않는다(v9.21.1 원칙)."""
         return self._intervene(
             llm_text,
             (
-                f"Observation: your `complete` was refused — it reports to no "
-                f"one, and {owed} (who requested this work) is still waiting for "
-                "your reply.\n"
+                "Observation: your `complete` was refused — it reports to no one, "
+                "and you still owe:\n"
+                f"{self._debt_lines(debts, resident=True)}\n"
                 f"You completed with:\n«{answer}»\n"
-                "If that text was your answer to them, send it now with "
-                'reply(text="...") and then `complete` if nothing else remains. '
-                f'If you need something back from them, use message(to="{to}", '
-                'text="...") instead. ' + tail
+                "If that text was your reply, send it with the tool shown; then "
+                "`complete` if nothing else remains. " + self._debt_tail()
             ),
-            "reply owed",
+            "debts owed",
             outcome,
             tool_name="complete",
             render=True,
             store_emission=False,
+        )
+
+    def _nag_debts(self, llm_text: str, debts: list[dict], outcome: dict):
+        """main: `complete` 은 수락됐다(최종답은 사용자에게 갔다) — 남은 빚만
+        독촉하고 루프를 잇는다."""
+        return self._intervene(
+            llm_text,
+            (
+                "Observation: your result was delivered, but you still owe:\n"
+                f"{self._debt_lines(debts, resident=False)}\n"
+                "Settle them now, then `complete` again. " + self._debt_tail()
+            ),
+            "debts owed",
+            outcome,
+            tool_name="complete",
         )
 
     def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:

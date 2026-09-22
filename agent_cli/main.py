@@ -1547,7 +1547,7 @@ def run(
                     mcp_manager=mcp_manager,
                 ),
             )
-            main_run_ended(agent_registry)
+            main_run_ended(agent_registry, loop_result.output or "")
             if loop_result.success:
                 answer = loop_result.output
 
@@ -2533,8 +2533,8 @@ def web(
                             ),
                         )
 
-                    _run_main(message, nickname)
-                    main_run_ended(agent_registry)
+                    _res = _run_main(message, nickname)
+                    main_run_ended(agent_registry, getattr(_res, "output", "") or "")
 
                 except Exception as exc:
                     # Push the error into the renderer so the frontend

@@ -1,7 +1,7 @@
 """주소 배달 seam — `AgentRegistry.deliver` (docs/wiring/DESIGN.md §3.1, C1).
 
 종전엔 `if addr == "main": _push_reply(...) else: request(...)` 가 **세 곳에
-손으로 복제**돼 있었다(`_deliver_question`/`_deliver_answer`/`remind_owed`).
+손으로 복제**돼 있었다(`_deliver_question`/`_deliver_answer`/`kick_owed`).
 C1 은 그 분기를 하나로 접는다 — **행동 불변**이어야 한다.
 
 "같은 두 호출을 같은 인자로 한다" 는 **추론이지 증거가 아니다**: 세 호출부는
@@ -165,14 +165,14 @@ class TestDeliverAnswer:
 # ── ③ 독촉 배달 ────────────────────────────────────────
 
 
-class TestRemindOwed:
+class TestKickOwed:
     def _owe(self, reg, asker: str, target: str) -> None:
         q = _q(asker=asker, target=target, delivered_seq=1)
         reg._questions[q.id] = q
 
     def test_to_main_mailbox_is_keyed_by_the_waiting_asker(self, reg, calls):
         self._owe(reg, asker="a1", target="main")
-        assert reg.remind_owed("main") == 1
+        assert reg.kick_owed("main") == 1
         assert calls.requests == []
         (item,) = calls.mail
         assert item["kind"] == "reminder"
@@ -184,7 +184,7 @@ class TestRemindOwed:
         """발신자는 빚진 쪽이 아니라 **기다리는 쪽** — 안 그러면 창에서
         '자기가 자기에게' 로 읽힌다."""
         self._owe(reg, asker="main", target="agent:k1")
-        assert reg.remind_owed("agent:k1") == 1
+        assert reg.kick_owed("agent:k1") == 1
         assert calls.mail == []
         key, body, kw = calls.requests[0]
         assert key == "k1"

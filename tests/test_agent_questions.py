@@ -27,7 +27,6 @@ import pytest
 
 import agent_cli.render as render_mod
 from agent_cli.subagent.agents_live import (
-    _MAX_QUESTION_NAGS,
     AgentRegistry,
     Question,
     QuestionPort,
@@ -333,22 +332,16 @@ class TestClose:
         assert "상한 초과" in reply["output"]
         assert reg.close_question(qid, "다시") is None  # 멱등
 
-    def test_nag_counter(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "질문")
-        assert reg.bump_question_nag(qid) == 1
-        assert reg.bump_question_nag(qid) == 2
-        assert reg.bump_question_nag("q-nope") == 0
-
 
 # ── G1: 사망 정리 ───────────────────────────────
 
 
 class TestDeath:
     def test_kill_purges_both_directions(self, mkreg, tmp_path, renderer):
+        # B 를 **런 중**에 죽인다(러너를 게이트로 막는다). 런이 끝나 버리면
+        # 런 끝 닫기(v9.22.0)가 먼저 "finished its run without answering" 으로
+        # 닫아, 여기서 보려는 사망 사유가 안 나온다.
         gate = threading.Event()
-        gate.set()
         reg = mkreg(runner=make_runner(block=gate))
         a, b = spawn_idle(reg), spawn_idle(reg)
         # B 앞으로 온 질문 하나, B 가 건 질문 하나.
@@ -373,6 +366,7 @@ class TestDeath:
         assert reg.answer_question(incoming, "답", by=f"agent:{b}").startswith(
             "unknown"
         )
+        gate.set()
 
     def test_shutdown_all_keeps_questions(self, mkreg, tmp_path, renderer):
         """G1: ``_worker`` finally 는 세션 종료에서도 돈다. 거기서 지우면
@@ -451,7 +445,7 @@ class TestPersistence:
         def runner(query, ctx, **kw):
             seen.append(query)
             # 독촉 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 **자기도**
-            # `remind_owed` 를 불러(설계대로의 연쇄) nags 가 2가 되고,
+            # 런 끝에 `close_unanswered` 가 닫으므로,
             # "두 번 깨우지 않는다" 단언이 CI 에서 깨진다.
             if "(reminder)" in query:
                 hold.wait(5)
@@ -464,7 +458,7 @@ class TestPersistence:
         assert wait_until(
             lambda: fresh.get(b).handled >= 0 and any("(reminder)" in x for x in seen)
         )  # 깨웠다 — 독촉 항목이 런을 만들었다
-        assert fresh._questions[q.id].nags == 1  # 두 번 깨우지 않는다
+        assert sum(1 for x in seen if "(reminder)" in x) == 1  # 한 번만 깨운다
         # 이미 읽은 질문을 **다시 배달하지는 않는다** — 상대 ctx 에 남아
         # 있고, 재배달하면 같은 질문을 두 번 묻는 꼴이다.
         assert not [x for x in seen if "[question q-" in x]
@@ -491,7 +485,6 @@ class TestPersistence:
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert fresh._questions[q.id].nags == 1
         rec = next(r for r in fresh.drain_replies() if r.get("kind") == "reminder")
         assert q.id in rec["output"]
         fresh.shutdown_all()
@@ -513,7 +506,7 @@ class TestPersistence:
         def runner(query, ctx, **kw):
             seen.append(query)
             # 질문 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 워커가
-            # `remind_owed` 를 불러 nags 가 1이 되고 독촉 항목이 생긴다
+            # 런 끝에 닫히거나 독촉 항목이 생긴다
             # (설계대로의 동작) — 아래 두 단언과 경합한다. CI(Linux/3.12)
             # 에서 실제로 깨졌다.
             if "[question q-undel" in query:
@@ -530,7 +523,6 @@ class TestPersistence:
         assert wait_until(lambda: fresh._questions["q-undel"].delivered_seq is not None)
         # 미배달이었으므로 kick 대상이 아니다 — 배달과 독촉을 겹쳐 받으면
         # 런 하나가 낭비되고 상한이 일찍 닳는다.
-        assert fresh._questions["q-undel"].nags == 0
         assert not [x for x in seen if "(reminder)" in x]
         hold.set()
         fresh.shutdown_all()
@@ -650,160 +642,6 @@ class TestPersistence:
 
 
 # ── 독촉 런 (§3.4) ──────────────────────────────
-
-
-class TestReminder:
-    def test_result_goes_out_immediately_and_reminder_follows(
-        self, mkreg, tmp_path, renderer
-    ):
-        """**complete 을 붙잡지 않는다.** 붙잡으면 그 런에 일을 시킨 쪽이
-        자기와 무관한 질문이 풀릴 때까지 결과를 못 받는다 — 없애려던 결합이
-        그대로 돌아온다. 결과는 그대로 나가고, 남은 빚은 새 런으로 온다.
-
-        세 게이트로 런 경계를 고정한다 — 독촉 런까지 멈춰 세워야 "질문이
-        아직 열려 있는 시점"의 상태를 경합 없이 관찰할 수 있다.
-        """
-        job, qg, rg = threading.Event(), threading.Event(), threading.Event()
-
-        def runner(query, ctx, **kw):
-            if "(reminder)" in query:
-                rg.wait(5)
-            elif "question q-" in query:
-                qg.wait(5)
-            else:
-                job.wait(5)
-            return _FakeLoopResult(output="ok"), 0.01
-
-        reg = mkreg()
-        reg._runner = runner
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.request(b, "main 이 시킨 일")  # seq 1
-        assert wait_until(lambda: reg.get(b).state == "busy")
-        qid, _ = reg.register_question(a, f"agent:{b}", "이거 맞나요?")  # seq 2
-
-        job.set()
-        # seq 1 의 결과는 질문과 **무관하게** 곧바로 main 에게 간다.
-        assert wait_until(
-            lambda: any(
-                r.get("kind") == "reply" and r.get("seq") == 1
-                for r in reg.drain_replies()
-            )
-        )
-
-        qg.set()  # 질문 런이 답 없이 끝나면 독촉이 새 항목으로 온다
-
-        def reminders():
-            return [
-                c[1]
-                for c in renderer.named("agent_message")
-                if c[1].get("key") == b
-                and c[1].get("direction") == "in"
-                and "(reminder)" in str(c[1].get("text"))
-            ]
-
-        assert wait_until(lambda: bool(reminders()))
-        note = reminders()[0]
-        # 발신자는 **기다리는 쪽** — addr 을 쓰면 "자기가 자기에게" 가 된다.
-        assert note["author"] == f"agent:{a}"
-        assert qid in note["text"]  # 어느 질문인지 지목한다
-        assert f"from {a}" in note["text"]  # 누가 물었는지도
-
-        # 독촉 런이 도는 동안(= 질문이 아직 열린 동안) A 는 아무것도 못 받는다.
-        # 독촉이 expects_reply 면 그 산출물이 A 의 inbox 로 재주입돼 A 가
-        # 답을 받은 줄 안다 — 청탁받은 일이 아니므로 어디로도 가면 안 된다.
-        assert qid in reg._questions
-        assert reg.get(a).handled == 0
-        assert reg.get(a).inbox.qsize() == 0
-        assert [r for r in reg.drain_replies() if r.get("kind") == "reply"] == []
-        rg.set()
-
-    def test_answered_in_run_gets_no_reminder(self, mkreg, tmp_path, renderer):
-        answered = threading.Event()
-
-        def runner(query, ctx, **kw):
-            if "question q-" in query:
-                qid = query.split("question ")[1].split(" ")[0]
-                assert reg.answer_question(qid, "네", by=f"agent:{b}") == ""
-                answered.set()
-            return _FakeLoopResult(output="ok"), 0.01
-
-        reg = mkreg()
-        reg._runner = runner
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.register_question(a, f"agent:{b}", "답할게요")
-        assert answered.wait(5)
-        assert wait_until(lambda: reg.get(b).state == "idle")
-        assert reg._questions == {}
-        assert not [
-            c
-            for c in renderer.named("agent_message")
-            if "reminder" in str(c[1].get("text"))
-        ]
-
-    def test_reminder_cap_closes_and_tells_the_asker(self, mkreg, tmp_path, renderer):
-        """모델이 끝내 안 답해도 asker 가 영원히 기다리지는 않는다."""
-        reg = mkreg()
-        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
-        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
-        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
-        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
-        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
-        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
-        ghost = "agent:agt-noworker"
-        q = Question(
-            id="q-cap01", asker="main", target=ghost, text="질문", delivered_seq=7
-        )
-        reg._questions[q.id] = q
-        for _ in range(_MAX_QUESTION_NAGS):
-            assert reg.remind_owed(ghost) == 1
-        assert reg.remind_owed(ghost) == 0  # 상한 — 닫힌다
-        assert q.id not in reg._questions
-        assert any(
-            "repeated reminders" in (r.get("output") or "") for r in reg.drain_replies()
-        )
-
-    def test_reminder_needs_delivery_not_just_registration(
-        self, mkreg, tmp_path, renderer
-    ):
-        """B1: 큐 뒤에 서 있는(아직 안 꺼낸) 질문으로는 독촉하지 않는다.
-
-        스코프 축은 **배달 여부**이지 seq 동치가 아니다 — seq 로 좁히면
-        독촉 런의 seq 가 달라 두 번째 독촉이 영영 안 나가고 상한조차
-        안 걸린다(아래 ``test_reminder_repeats_until_answered`` 가 반대쪽).
-        """
-        reg = mkreg()
-        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
-        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
-        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
-        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
-        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
-        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
-        ghost = "agent:agt-noworker"
-        q = Question(id="q-scp01", asker="main", target=ghost, text="질문")
-        reg._questions[q.id] = q
-        assert reg.remind_owed(ghost) == 0  # 아직 안 꺼냈다
-        reg.mark_question_delivered(q.id, 4)
-        assert reg.remind_owed(ghost) == 1
-
-    def test_reminder_repeats_until_answered(self, mkreg, tmp_path, renderer):
-        """한 번 읽은 빚은 **답할 때까지 매 런 끝에** 다시 온다 — 사용자의
-        'post turn prompt 로 계속 넣어준다'가 이것이다."""
-        reg = mkreg()
-        # 대상을 **워커 없는 키**로 둔다. 살아 있는 상대를 쓰면 독촉 항목을
-        # 그 워커가 곧바로 처리하고, 그 런의 끝에서 **자기도 remind_owed 를
-        # 부른다**(설계대로의 연쇄). 그러면 이 동기 호출들과 경합해 nags 가
-        # 앞서 나간다 — CI(Linux)에서 실제로 깨졌다. 여기서 재는 것은 배달이
-        # 아니라 bump/상한/닫기 정책이므로 대상은 없어도 된다
-        # (``request`` 는 unknown 으로 실패하고 ``remind_owed`` 는 무시한다).
-        ghost = "agent:agt-noworker"
-        q = Question(
-            id="q-rep01", asker="main", target=ghost, text="질문", delivered_seq=4
-        )
-        reg._questions[q.id] = q
-        assert reg.remind_owed(ghost) == 1  # 런 A 끝
-        assert reg.remind_owed(ghost) == 1  # 런 B 끝 — seq 가 달라도 계속
-        assert reg.answer_question(q.id, "답", by=ghost) == ""
-        assert reg.remind_owed(ghost) == 0  # 답했으면 그친다
 
 
 # ── 사람 알림 · 회신 억제 · 표면 ────────────────
@@ -953,89 +791,6 @@ class TestWebAnswerEndpoint:
 
 
 # ── main 독촉 (§3.4 — 에이전트와 같은 정책, 다른 배달) ──
-
-
-class TestMainReminder:
-    """main 앞 질문의 출처는 **사람이 아니라 에이전트**다: 질문의 주소는
-    ask 시점의 ``current_author`` 이고, 그게 ``main`` 이라는 건 main 이
-    시킨 일을 하던 에이전트가 되묻는 경우뿐이다."""
-
-    def test_drain_marks_delivered_so_main_can_be_reminded(self, mkreg, renderer):
-        """main 에게는 ``drain_replies`` 가 배달 시점이다. 안 찍으면
-        ``questions_owed_by(\"main\")`` 이 영영 비어 독촉도 상한도 없고,
-        §3.7 로 보류된 회신이 영구 정지한다."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "API v1/v2 중 어느 쪽?")
-        assert reg.questions_owed_by("main") == []  # 아직 메일박스에 있다
-        assert reg.remind_owed("main") == 0
-
-        (rec,) = reg.drain_replies()
-        assert rec["kind"] == "question" and rec["id"] == qid
-        owed = reg.questions_owed_by("main")
-        assert [q.id for q in owed] == [qid]
-
-    def test_main_reminder_goes_to_the_mailbox_as_an_observation(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()  # 배달 마킹
-
-        assert reg.remind_owed("main") == 1
-        (rec,) = reg.drain_replies()
-        assert rec["kind"] == "reminder"
-        assert qid in rec["output"]
-        assert f"from {a}" in rec["output"]
-        obs = build_reply_record(rec, registry=reg)
-        assert obs["source"] == "agent_reminder"
-        assert qid in obs["content"]
-
-    def test_main_answering_stops_the_reminder(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()
-        assert reg.remind_owed("main") == 1
-        assert reg.answer_question(qid, "v2", by="main") == ""
-        assert reg.remind_owed("main") == 0
-
-    def test_main_cap_closes_and_tells_the_asker(self, mkreg, renderer):
-        """정책은 에이전트와 **같은 함수**다 — 상한도 같이 걸린다."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()
-        for _ in range(_MAX_QUESTION_NAGS):
-            assert reg.remind_owed("main") == 1
-        assert reg.remind_owed("main") == 0
-        assert qid not in reg._questions
-        assert wait_until(
-            lambda: any(
-                "repeated reminders" in str(c[1].get("text"))
-                for c in renderer.named("agent_message")
-                if c[1].get("key") == a
-            )
-        )
-
-
-class TestReminderRace:
-    def test_answered_between_snapshot_and_bump_is_not_reminded(self, mkreg, renderer):
-        """``remind_owed`` 는 락 밖에서 스냅샷을 잡고 bump 한다. 그 사이
-        답이 들어오면 ``bump_question_nag`` 가 0 을 돌려주는데, 0 을
-        안 걸러내면 ``0 > 6`` 이 거짓이라 **이미 답한 질문으로 독촉**한다.
-        살아 있는 질문의 nags 는 언제나 ≥1 이라 0 은 모호하지 않다."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        ghost = Question(
-            id="q-gone1",
-            asker=a,
-            target="main",
-            text="이미 답한 질문",
-            delivered_seq=0,
-        )
-        reg.questions_owed_by = lambda addr: [ghost]  # 스냅샷만 낡았다
-        assert reg.remind_owed("main") == 0
-        assert reg.drain_replies() == []
 
 
 # ── §3.7 회신 신선도 ────────────────────────────
@@ -1434,6 +1189,7 @@ class TestQuestionPort:
             "nonblocking",
             "reply_owed",
             "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
+            "debts",  # v9.22.0 — main·상주 공통 빚 목록 (answer/reply)
         }
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
@@ -1461,7 +1217,6 @@ class TestPersistShape:
             text="본문",
             asked_seq=4,
             delivered_seq=9,
-            nags=2,
         )
         d = q.as_dict()
         assert d == {
@@ -1472,7 +1227,6 @@ class TestPersistShape:
             "asked_at": q.asked_at,
             "asked_seq": 4,
             "delivered_seq": 9,
-            "nags": 2,
         }
 
     def test_mark_delivered_records_the_first_read_only(self, mkreg, renderer):
@@ -1537,9 +1291,10 @@ class TestUncoveredSurfaces:
             )
         gate.set()
 
-    def test_batch_run_end_also_reminds(self, mkreg, renderer):
-        """독촉은 '런이 끝났다' 는 사실에 붙는다. 핸들러마다 두면 배치
-        경로에서 빠진다 — 실제로 빠졌었고, 그래서 워커 루프로 옮겼다."""
+    def test_batch_run_end_also_closes(self, mkreg, renderer):
+        """런 끝 정리는 '런이 끝났다' 는 사실에 붙는다. 핸들러마다 두면 배치
+        경로에서 빠진다 — 실제로 빠졌었고, 그래서 워커 루프로 옮겼다.
+        v9.22.0 부터 그 정리는 독촉이 아니라 **닫기**다."""
         gate = threading.Event()
         reg = mkreg(runner=make_runner(block=gate))
         b = spawn_idle(reg)
@@ -1547,17 +1302,16 @@ class TestUncoveredSurfaces:
             id="q-batch",
             asker="main",
             target=f"agent:{b}",
-            text="빚",
+            text="배치 전에 배달된 질문",
             delivered_seq=99,
         )
         reg._questions[q.id] = q
         self._human_batch(reg, b, gate, ("하나", "둘"))
+        assert wait_until(lambda: "q-batch" not in reg._questions, timeout=5.0)
         assert wait_until(
             lambda: any(
-                c[1].get("key") == b
-                and c[1].get("direction") == "in"
-                and "(reminder)" in str(c[1].get("text"))
-                for c in renderer.named("agent_message")
+                r.get("kind") == "answer" and "without answering" in r.get("output", "")
+                for r in reg.drain_replies()
             ),
             timeout=5.0,
         )
@@ -1630,10 +1384,10 @@ class TestUncoveredSurfaces:
         a = spawn_idle(reg)
         qid, _ = reg.register_question(a, "main", "어느 쪽?")
         reg.drain_replies()  # 배달 마킹
-        assert main_run_ended(reg) == 1
-        rec = next(r for r in reg.drain_replies() if r.get("kind") == "reminder")
-        assert qid in rec["output"]
-        assert main_run_ended(reg) == 1  # 답할 때까지 계속
+        # v9.22.0: 런 끝은 독촉이 아니라 정리 — 답 안 한 질문을 닫고 asker 에게 알린다
+        assert main_run_ended(reg, "main 요약") == 1
+        assert qid not in reg._questions
+        assert main_run_ended(reg, "main 요약") == 0  # 두 번 닫지 않는다
 
     def test_mail_notice_labels_reminder_and_answer(self, mkreg, renderer):
         """독촉을 '회신 도착' 으로 적으면 사용자가 뭔가 끝난 줄 안다."""
@@ -2087,6 +1841,14 @@ class TestReplyNagCap:
         def reply_owed(self):
             return "agent:agt-a" if not self.replies else ""
 
+        def debts(self):
+            owed = self.reply_owed()
+            return (
+                [{"kind": "reply", "to": owed, "id": "", "text": "일감"}]
+                if owed
+                else []
+            )
+
         def reply(self, text):
             self.replies.append(text)
             return ""
@@ -2420,3 +2182,161 @@ class TestRefusedCompleteIsNotStored:
             refusals[0].get("tool") == "complete"
             and refusals[0].get("success") is False
         )
+
+
+# ── 런 끝의 빚 정리 (v9.22.0 — 런 뒤 독촉을 흡수) ────────
+
+
+class TestRunEndClosure:
+    """독촉은 런 **안**에서 3회(dispatch 빚 목록, main·상주 공통). 그러고도
+    런이 끝나면 답 안 한 질문은 사유와 함께 닫고 asker 에게 알린다. 종전의
+    런 뒤 독촉(`remind_owed`, 6회, 새 런마다 재주입)은 흡수됐다.
+    """
+
+    def test_delivered_unanswered_question_is_closed_and_the_asker_told(
+        self, mkreg, renderer
+    ):
+        reg = mkreg()
+        ghost = "agent:agt-noworker"
+        q = Question(
+            id="q-c01", asker="main", target=ghost, text="질문", delivered_seq=7
+        )
+        reg._questions[q.id] = q
+        assert reg.close_unanswered(ghost) == 1
+        assert q.id not in reg._questions
+        (rec,) = reg.drain_replies()  # asker=main 의 메일박스
+        assert (
+            rec["kind"] == "answer"
+            and "finished its run without answering" in rec["output"]
+        )
+
+    def test_undelivered_question_is_not_closed(self, mkreg, renderer):
+        """줄만 서 있는 질문(아직 안 꺼냄)은 빚이 아니다 — 닫으면 안 된다."""
+        reg = mkreg()
+        ghost = "agent:agt-noworker"
+        q = Question(
+            id="q-c02", asker="main", target=ghost, text="질문"
+        )  # delivered_seq None
+        reg._questions[q.id] = q
+        assert reg.close_unanswered(ghost) == 0
+        assert q.id in reg._questions
+
+    def test_answered_question_is_untouched(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "어느 쪽?")
+        reg.drain_replies()  # 배달 마킹
+        assert reg.answer_question(qid, "v2", by="main") == ""
+        assert reg.close_unanswered("main") == 0
+
+    def test_closing_is_idempotent(self, mkreg, renderer):
+        reg = mkreg()
+        ghost = "agent:agt-noworker"
+        q = Question(
+            id="q-c03", asker="main", target=ghost, text="질문", delivered_seq=1
+        )
+        reg._questions[q.id] = q
+        assert reg.close_unanswered(ghost) == 1
+        assert reg.close_unanswered(ghost) == 0
+
+    def test_worker_run_end_closes_what_the_agent_left(self, mkreg, renderer):
+        """워커 루프의 수렴점 — 런이 끝나면 그 에이전트가 빚진 질문이 닫힌다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        ran = []
+
+        def runner(query, ctx, **kw):
+            ran.append(query)
+            return _FakeLoopResult(output="답 없이 끝"), 0.01
+
+        reg._runner = runner
+        qid, err = reg.register_question(a, f"agent:{b}", "어느 쪽?")
+        assert not err
+        assert wait_until(lambda: ran)  # b 가 질문 항목을 처리했다
+        assert wait_until(lambda: qid not in reg._questions)  # 런 끝에 닫혔다
+
+
+class TestMainRunEnd:
+    """main 의 런 끝 — `end_main_run(output)`: 남은 회신 빚은 라벨 붙은 런
+    요약을 그 에이전트 inbox 로, 답 안 한 질문은 닫는다. main 의 회신 빚은
+    에이전트의 `message(to=main)`(expects_reply=True)만 만든다 — `reply` 는
+    답이라 빚이 아니다."""
+
+    def test_drain_marks_delivered(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "API v1/v2 중 어느 쪽?")
+        assert reg.questions_owed_by("main") == []  # 아직 메일박스에 있다
+        (rec,) = reg.drain_replies()
+        assert rec["kind"] == "question" and rec["id"] == qid
+        assert [q.id for q in reg.questions_owed_by("main")] == [qid]
+
+    def test_run_end_closes_an_unanswered_question(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "어느 쪽?")
+        reg.drain_replies()
+        with SubmitSpy(reg) as spy:
+            assert reg.end_main_run("main 의 요약") == 1
+        assert qid not in reg._questions
+        (call,) = [c for c in spy.calls if c["key"] == a]
+        assert "finished its run without answering" in call["message"]
+
+    def test_answering_before_run_end_leaves_nothing_to_close(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "어느 쪽?")
+        reg.drain_replies()
+        assert reg.answer_question(qid, "v2", by="main") == ""
+        assert reg.end_main_run("요약") == 0
+
+    def test_message_to_main_creates_a_debt_and_reply_does_not(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.begin_main_run()
+        reg.message_to_main(a, "결정해 줘", expects_reply=True)
+        reg.message_to_main(a, "보고", expects_reply=False)
+        recs = reg.drain_replies()
+        assert [r["expects_reply"] for r in recs] == [True, False]
+        # 배달을 흉내 낸다 — core 의 _deliver_agent_mail 이 하는 일
+        for r in recs:
+            if r["expects_reply"]:
+                reg.note_main_owes(r["key"], r["output"])
+        port = reg.question_port(None)
+        assert [d["kind"] for d in port.debts()] == ["reply"]
+        assert port.debts()[0]["to"] == f"agent:{a}"
+
+    def test_agent_request_settles_the_debt(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.begin_main_run()
+        reg.note_main_owes(a, "결정해 줘")
+        assert reg.request(a, "여기 답") == ""  # main 발신
+        assert reg.main_reply_debts() == []
+        assert reg.question_port(None).debts() == []
+
+    def test_unsettled_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.begin_main_run()
+        reg.note_main_owes(a, "결정해 줘")
+        with SubmitSpy(reg) as spy:
+            assert reg.end_main_run("main 은 이렇게 끝냈다") == 1
+        (call,) = [c for c in spy.calls if c["key"] == a]
+        assert call["message"].startswith(_NO_REPLY_LABEL)
+        assert "main 은 이렇게 끝냈다" in call["message"]
+        assert call["expects_reply"] is False
+        assert reg.main_reply_debts() == []
+
+    def test_mail_notice_distinguishes_message_from_reply(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.message_to_main(a, "결정해 줘", expects_reply=True)
+        reg.message_to_main(a, "보고", expects_reply=False)
+        m, r = reg.drain_replies()
+        assert (
+            "expects a reply from you" in build_reply_record(m, registry=reg)["content"]
+        )
+        assert "nothing to send back" in build_reply_record(r, registry=reg)["content"]

@@ -584,6 +584,11 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
+        # main 의 회신 빚은 런 단위 (v9.22.0) — 시작에 비운다.
+        if self._config.owner == "main" and self._config.agent_registry is not None:
+            begin = getattr(self._config.agent_registry, "begin_main_run", None)
+            if callable(begin):
+                begin()
         starter_rid = self.query_request_id if self.query_author_is_user else ""
         if starter_rid:
             self._state.run_requests.append(
@@ -755,6 +760,12 @@ class AgentLoop:
             # 값이라 사이에 끼어든 다른 사용자의 런과 교차 오염 없음.
             # 히스토리 관찰 레코드에도 additive 로 실어(``answers``) resume
             # 재생이 같은 집합을 재도출하게 한다 (라이브/재생 규칙 일치).
+            # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. complete
+            # 직전에 dispatch 가 빚 목록을 물어 독촉한다.
+            if reply.get("expects_reply") and reply.get("key"):
+                note = getattr(registry, "note_main_owes", None)
+                if callable(note):
+                    note(reply["key"], reply.get("output") or "")
             inherited = [a for a in (reply.get("answers") or []) if a]
             if inherited:
                 record["answers"] = list(inherited)

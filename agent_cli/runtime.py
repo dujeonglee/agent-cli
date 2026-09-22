@@ -159,8 +159,12 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     return waker, revived, auto
 
 
-def main_run_ended(agent_registry) -> int:
-    """main 의 런이 끝났다 — 미답 질문이 있으면 독촉한다 (agent-ask §3.4).
+def main_run_ended(agent_registry, output: str = "") -> int:
+    """main 의 런이 끝났다 — 남은 빚을 정리한다 (v9.22.0).
+
+    독촉은 런 **안**에서 3회 있었다(dispatch 의 빚 목록 — 상주와 같은 기계).
+    그러고도 남은 것: 회신 빚은 라벨 붙은 런 요약(``output``)을 그 에이전트
+    inbox 로 폴백 배달하고, 답 안 한 질문은 사유와 함께 닫는다.
 
     상주 에이전트는 워커 루프의 디스패치 수렴점에서 같은 일을 한다. main 은
     펌프가 둘(run/web)이라 호출부가 둘인데, **정의는 하나**여야 한다 —
@@ -172,7 +176,7 @@ def main_run_ended(agent_registry) -> int:
     """
     if agent_registry is None:
         return 0
-    return agent_registry.remind_owed("main")
+    return agent_registry.end_main_run(output or "")
 
 
 def teardown_session(
