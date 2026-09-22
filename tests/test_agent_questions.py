@@ -2217,7 +2217,7 @@ class TestCompleteIsLocal:
         assert seen[0] == ""
         assert "already replied" in seen[1] and "message(to=" in seen[1]
         assert "not started by a request" not in seen[1]
-        assert [c["message"] for c in calls if c["key"] == a][0].startswith("칙령")
+        assert next(c["message"] for c in calls if c["key"] == a).startswith("칙령")
         assert len([c for c in calls if c["key"] == a]) == 1, "두 번째가 배달됐다"
 
     def test_reply_from_main_is_refused(self, mkreg, renderer):
