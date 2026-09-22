@@ -73,11 +73,11 @@ class AskTool(Tool):
     # 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
     # 모델이 추측으로 메우고 끝낸다. complete 해도 이어진다는 걸 알린다.
     RESIDENT_DESCRIPTION = (
-        "Ask a question and KEEP WORKING — you are NOT blocked. The question "
-        "goes to whoever requested your current task; their answer arrives "
-        "later as a NEW message and you continue from there. Carry on with "
-        "anything that does not depend on it. If nothing else can proceed, "
-        "`complete` — you will be resumed when the answer arrives."
+        "Ask a question and KEEP WORKING — you are NOT blocked. By default the "
+        "question goes to whoever gave you this task (main or a person); set "
+        '`to: "user"` to ask the person directly. The answer arrives later as '
+        "a NEW message and you continue from there. Carry on with anything that "
+        "does not depend on it. If nothing else can proceed, `complete`."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -85,6 +85,33 @@ class AskTool(Tool):
             "question": {
                 "type": "string",
                 "description": "The question to ask the user.",
+            },
+        },
+        "required": ["question"],
+    }
+    # 상주 에이전트용 스키마 (v9.20.0). ``to`` 는 상주에게만 뜻이 있다 —
+    # main 의 ``ask`` 는 언제나 사람에게 가므로 공용 스키마에 실으면 main
+    # 이 무의미한 필드를 본다. 프롬프트 렌더가 ``parameter_overrides`` 로
+    # 이 스키마를 고른다(``description_overrides`` 와 같은 자리).
+    #
+    # 왜 필요한가 — 실측(프로브 1790070684): main 이 "사용자한테 질문해 봐"
+    # 라고 시킨 에이전트의 ``ask`` 가 **main 에게** 갔다(주소 = 원 요청자 =
+    # main). 트레이는 사람 주소 질문만 보이므로 사람은 아무것도 못 봤고,
+    # main 은 그 질문에 사용자 대신 답을 **지어냈다**. 종전 파라미터 설명
+    # "The question to ask the user." 는 그 상황에서 거짓말이었다.
+    RESIDENT_PARAMETERS: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "The question."},
+            "to": {
+                "type": "string",
+                "enum": ["requester", "user"],
+                "description": (
+                    "Who receives it. `requester` (default): whoever gave you "
+                    "this task — main or a person. `user`: the person directly; "
+                    "it appears in their question tray and their reply comes "
+                    "back to you. Use `user` whenever a human must decide."
+                ),
             },
         },
         "required": ["question"],

@@ -858,7 +858,12 @@ class TurnDispatcher:
             )
             port = self.cfg.questions
             if port is not None and port.nonblocking:
-                return self._op_ask_async(llm_text, questions, port, accumulate)
+                to = (
+                    op.action_input.get("to")
+                    if isinstance(op.action_input, dict)
+                    else None
+                )
+                return self._op_ask_async(llm_text, questions, port, accumulate, to=to)
             # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
             # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
             # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
@@ -930,15 +935,21 @@ class TurnDispatcher:
         )
         return _CONTINUE
 
-    def _op_ask_async(self, llm_text: str, questions, port, accumulate):
+    def _op_ask_async(self, llm_text: str, questions, port, accumulate, *, to=None):
         """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
 
         질문을 등록하고 즉시 관찰을 돌려준다. 답은 나중에 새 메시지(= 새
         런)로 오고, 그때 이 에이전트의 ctx 는 그대로라 하던 일을 잇는다.
+
+        ``to`` (v9.20.0): ``"user"`` 면 원 요청자 대신 **사람**에게 — ❓
+        트레이에 뜬다. 종전엔 주소가 원 요청자로 고정이라 main 이 시킨
+        일에서 사람에게 물을 방법이 없었고, 그 질문을 받은 main 이 사람
+        대신 답을 지어냈다(실측). 값 검증은 포트가 한다 — 모르는 값은
+        보내지 않고 관찰로 되돌린다(조용한 폴백 금지).
         """
         lines = []
         for q in questions:
-            qid, err = port.ask(q)
+            qid, err = port.ask(q, to=to)
             if err:
                 lines.append(f"could not ask: {err}")
             else:

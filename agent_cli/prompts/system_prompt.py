@@ -614,11 +614,19 @@ _ASK_INLINE_RESIDENT = """\
     policy call, an ambiguous requirement, a destructive choice. Do
     NOT guess and paper over it with a TODO; guessing is the expensive
     mistake here, not asking.
+  - Address it right: by default it goes to whoever gave you this task.
+    If a human must decide, send it to them with `to: "user"` — it lands
+    in their question tray. Do not route a person's decision through an
+    intermediary; they may answer on the person's behalf.
   - Then keep going on everything that does not depend on the answer.
   - When nothing else can proceed, `complete` and report what you did.
-    That is not giving up — you will be resumed with the answer.
-  - Do not re-ask the same question while it is still open; you will
-    be reminded if it goes unanswered."""
+    That is not giving up — if an answer comes, it arrives as a new
+    message and you continue from there. It may never come: a person is
+    free not to answer, and nobody chases them. Do not wait for it and do
+    not poll — an answer cannot reach a run that is still going.
+  - Do not re-ask the same question while it is open (a repeat is folded
+    into the original). If the addressee is another agent and stops
+    answering, you are told so in the same envelope an answer would use."""
 
 
 def _build_tool_inline_guides(
@@ -668,6 +676,7 @@ def _build_tools_section(
     분기).
     """
     overrides = {}
+    param_overrides: dict[str, dict] = {}
     if not has_agent_registry and "agent" in active_tools:
         from agent_cli.tools.agent_tool import AgentTool
 
@@ -678,6 +687,7 @@ def _build_tools_section(
         from agent_cli.tools.virtual import AskTool
 
         overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
+        param_overrides["ask"] = AskTool.RESIDENT_PARAMETERS
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
@@ -685,6 +695,7 @@ def _build_tools_section(
         ),
         wire_format=wire_format,
         description_overrides=overrides or None,
+        parameter_overrides=param_overrides or None,
     )
     return f"## Available Tools\n{tool_block}"
 

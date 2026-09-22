@@ -333,10 +333,16 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # 그건 답이 아니라 일감이라 질문은 열린 채 남고, 독촉이 상한까지
         # 돌다 닫힌다 — 런만 태운다.
         question = reply.get("output") or "(empty question)"
+        # v9.20.0: "사람 대신 답하지 말라" 를 명시한다. 종전 문구는 답하는
+        # 법만 알려줘서, 사용자에게 가야 할 질문을 받은 main 이 사용자의
+        # 답을 **지어냈다**(실측 — 사람은 아무것도 못 봤다).
         tail = (
-            "(The agent is NOT blocked and kept working. Answer it with the "
-            f'`answer` tool: answer(id="{reply.get("id", "")}", text="..."). '
-            "A new request is not an answer.)"
+            "(The agent is NOT blocked and kept working. Answer with the "
+            f'`answer` tool — answer(id="{reply.get("id", "")}", text="...") — '
+            "ONLY if you know the answer yourself. If it is the person's call, "
+            "ask them with `ask` (it waits for their reply) and pass their words "
+            "on with `answer`; never answer on their behalf. A new request is "
+            "not an answer.)"
         )
         content = f"── agent {label} QUESTION ──\n{question}\n{tail}"
         return {
@@ -544,7 +550,7 @@ class QuestionPort:
         """
         return self.key is not None
 
-    def ask(self, text: str) -> tuple[str, str]:
+    def ask(self, text: str, *, to: str | None = None) -> tuple[str, str]:
         """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공.
 
         **main 은 거부한다.** main 의 ``ask`` 는 사람에게 묻는 기존 블로킹
@@ -563,6 +569,13 @@ class QuestionPort:
         tm = self._reg.get(self.key)
         # ask 시점의 ``current_author`` = 원 요청자 = 질문의 주소 (§0).
         target = tm.current_author if tm is not None else "main"
+        # ``to="user"`` (v9.20.0): 원 요청자 대신 사람에게. 주소가 ``user``
+        # 면 ``to_human`` 이라 트레이에 오르고 ``user*`` 누구나 답한다 —
+        # §0 의 "답할 주체 = 주소" 는 그대로다. 답은 asker 에게 간다.
+        if to not in (None, "", "requester"):
+            if to != "user":
+                return "", f'unknown `to` \'{to}\' — use "requester" or "user"'
+            target = "user"
         return self._reg.register_question(self.asker, target, text)
 
     def answer(self, qid: str, text: str) -> str:

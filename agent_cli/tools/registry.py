@@ -245,6 +245,7 @@ def get_tool_descriptions(
     inline_guides: dict[str, str] | None = None,
     wire_format=None,
     description_overrides: dict[str, str] | None = None,
+    parameter_overrides: dict[str, dict] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
@@ -262,6 +263,9 @@ def get_tool_descriptions(
     """
     guides = inline_guides or {}
     overrides = description_overrides or {}
+    # 루프별 스키마 교체 (v9.20.0) — 설명 교체와 같은 자리. 상주 에이전트의
+    # ``ask`` 가 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
+    param_overrides = parameter_overrides or {}
     multi_op = bool(getattr(wire_format, "multi_op", False))
     exposes_complete = getattr(wire_format, "exposes_complete", True)
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
@@ -292,8 +296,9 @@ def get_tool_descriptions(
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
             continue
-        props = schema.parameters.get("properties", {})
-        required = set(schema.parameters.get("required", []))
+        params_schema = param_overrides.get(name, schema.parameters)
+        props = params_schema.get("properties", {})
+        required = set(params_schema.get("required", []))
         if multi_op:
             params = _multi_op_flat_params(name, props, required)
         else:

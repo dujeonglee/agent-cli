@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1418,6 +1420,9 @@ class TestQuestionPort:
         assert isinstance(port, QuestionPort)
 
 
+HANGUL = re.compile(r"[가-힣]")
+
+
 def port_ask(reg, key, text):
     return reg.question_port(key).ask(text)
 
@@ -1838,3 +1843,140 @@ class TestFlipPrompt:
         assert "does NOT block you" in resident
         assert "does NOT block you" not in blocking
         assert "pick by intent" in blocking
+
+
+# ── ⑧ 사람에게 직접 묻기 (`to="user"`, v9.20.0) ────────
+
+
+class TestAskToUser:
+    """실측(프로브 1790070684): main 이 "사용자한테 질문해 봐" 라고 시킨
+    에이전트의 ``ask`` 가 **main 에게** 갔다 — 주소 = 원 요청자 = main.
+    트레이는 사람 주소 질문만 보이므로 사람은 아무것도 못 봤고, 그 질문을
+    받은 main 은 사용자의 답을 **지어냈다**. ``to="user"`` 는 주소 문자열
+    하나를 바꿔 §0 을 지키면서(주소 = user, 답할 주체 = user*) 사람에게
+    직접 닿게 한다. 새 배달 경로는 없다 — 답은 지금처럼 asker 에게 간다.
+    """
+
+    def test_default_still_goes_to_the_requester(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_author = "main"
+        qid, err = reg.question_port(a).ask("기본값")
+        assert not err and reg._questions[qid].target == "main"
+        qid2, err = reg.question_port(a).ask("명시", to="requester")
+        assert not err and reg._questions[qid2].target == "main"
+
+    def test_to_user_lands_in_the_tray_even_when_main_asked(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_author = "main"  # main 이 시킨 일
+        qid, err = reg.question_port(a).ask("사람이 정할 일", to="user")
+        assert not err
+        q = reg._questions[qid]
+        assert q.target == "user" and q.to_human
+        assert [x.id for x in reg.open_human_questions()] == [qid], "트레이에 없다"
+        # main 의 메일박스로는 **안 간다** — 그랬다면 main 이 또 대신 답한다.
+        assert not any(r.get("kind") == "question" for r in reg.drain_replies())
+
+    def test_any_human_answers_and_the_reply_reaches_the_asker(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.get(a).current_author = "main"
+        qid, _ = reg.question_port(a).ask("버릴까 남길까?", to="user")
+        # main 은 답할 수 없다 — 사람에게 간 질문이다 (§0).
+        assert "addressed to the operator" in reg.answer_question(
+            qid, "버려", by="main"
+        )
+        # 아무 뷰어나 답한다 — 답은 asker(에이전트)에게, 주소는 user.
+        with SubmitSpy(reg) as spy:
+            assert reg.answer_question(qid, "남겨", by="user:dj") == ""
+        assert qid not in reg._questions
+        (call,) = spy.calls
+        assert call["key"] == a and "남겨" in call["message"], "답이 asker 에게 안 갔다"
+        assert call["author"] == "user"  # 주소 = user (§0 그대로)
+
+    def test_unknown_to_is_refused_loudly(self, mkreg, renderer):
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, err = reg.question_port(a).ask("어디로?", to="boss")
+        assert not qid and "unknown `to`" in err
+        assert reg._questions == {}, "조용히 기본 주소로 떨어졌다"
+
+    def test_resident_schema_offers_to_and_main_schema_does_not(self, tmp_path):
+        """스키마 오버라이드 배선 — 상주 프롬프트에만 `to` 가 렌더된다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+        from tests.loop_ports import make_ports
+
+        class _Port:
+            nonblocking = True
+
+        def system_for(questions, tag):
+            loop = AgentLoop(
+                query="Q",
+                provider=MagicMock(),
+                capabilities=_caps(),
+                model="m",
+                ctx=ContextManager(tmp_path / tag, max_context_tokens=30_000),
+                active_tools=["ask", "shell"],
+                ports=make_ports(questions=questions),
+            )
+            loop._prompt.rebuild()
+            return loop.system
+
+        resident = system_for(_Port(), "r")
+        main = system_for(None, "m")
+        assert '"to"' in resident and "question tray" in resident
+        assert '"to"' not in main, "main 의 ask 에 무의미한 to 가 떴다"
+        assert "The question to ask the user." not in resident, (
+            "상주 설명이 여전히 '사용자에게' 라고 거짓말한다"
+        )
+
+    def test_guide_no_longer_promises_the_asker_a_reminder(self, tmp_path):
+        from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT as g
+
+        assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
+        assert "nobody chases them" in g
+        assert "cannot reach a run that is still going" in g
+        assert 'to: "user"' in g
+        assert not HANGUL.findall(g)
+
+    def test_main_question_notice_forbids_answering_for_the_person(
+        self, mkreg, renderer
+    ):
+        rec = build_reply_record(
+            {"kind": "question", "id": "q-1", "output": "drop it?", "key": "agt-x"}
+        )
+        text = rec["content"]
+        assert "never answer on their behalf" in text
+        assert "ask them with `ask`" in text
+        assert not HANGUL.findall(text)
+
+    def test_dispatch_passes_to_through_to_the_port(self):
+        """`_op_ask_async` 가 `to` 를 떨어뜨리면 위 전부가 도달 불가다."""
+        import types
+
+        from agent_cli.loop import AgentLoop
+        from tests.loop_ports import make_ports
+
+        seen = []
+
+        class _Port:
+            nonblocking = True
+
+            def ask(self, text, *, to=None):
+                seen.append((text, to))
+                return "q-1", ""
+
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=_caps(),
+            model="m",
+            ports=make_ports(questions=_Port()),
+        )
+        op = types.SimpleNamespace(
+            action="ask", action_input={"question": "정할까요?", "to": "user"}
+        )
+        loop._dispatch._op_ask("raw", types.SimpleNamespace(thought=""), op, None)
+        assert seen == [("정할까요?", "user")]
