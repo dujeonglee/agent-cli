@@ -751,7 +751,7 @@ class TurnDispatcher:
         무한 되묻기는 런을 태운다.
         """
         pending = getattr(self.state, "run_requests", None)
-        if not pending or len(pending) < 2:
+        if not pending:
             return None
         if getattr(self.state, "answers_prompted", False):
             return None
@@ -766,8 +766,9 @@ class TurnDispatcher:
             llm_text,
             (
                 f"Observation: your `complete` was refused — {len(pending)} user "
-                "requests were merged into this run and `answers` is required, so "
-                "the harness cannot tell which ones your result covers.\n"
+                f"request{'s are' if len(pending) != 1 else ' is'} open in this run "
+                "and `answers` is required, so the harness cannot tell which ones "
+                "your result covers.\n"
                 f"{self._request_lines(pending)}\n"
                 f"You completed with:\n«{answer}»\n"
                 f"Re-emit `complete` with that result plus `answers: [{ids}]`, "
@@ -796,8 +797,11 @@ class TurnDispatcher:
         if not pending:
             return []
         if claimed is None:
-            # 단건 런은 결과가 곧 그 답이라 조용히 닫는다(실측 90%).
-            open_now = list(pending) if len(pending) >= 2 else []
+            # 생략은 **모름**이다 — 1건이어도 같다(v9.22.0). "결과가 곧 그 답"
+            # 은 사용자 요청과 에이전트 질문이 한 런에 섞이면 틀리는 추측이다
+            # (에이전트 질문에 답하려던 complete 을 사용자 답으로 배달한다).
+            # 되돌림이 이미 한 번 요구했으니 여기서 회계를 닫고 미신고로 적는다.
+            open_now = list(pending)
             pending.clear()
             return open_now
         remaining = [r for r in pending if str(r.get("id")) not in claimed]
@@ -913,7 +917,6 @@ class TurnDispatcher:
             # 쓰면 하네스가 거짓을 단언한다 — 종전의 조용한 관용보다 나쁘다.
             # 아는 것만 적는다: "어느 것에 답했는지 밝히지 않았다".
             #
-            # 단건 런은 여기 오지 않는다(`_settle_requests` 가 조용히 닫는다).
             return (
                 f"{answer}\n\n📋 This run merged {len(still_open)} requests, but "
                 "`complete` came without `answers` so which ones were addressed "

@@ -131,14 +131,16 @@ class TestRequestsReachTheRun:
 
 
 class TestClaims:
-    def test_single_request_run_stays_quiet_when_undeclared(self):
-        """단건 런에서 `answers` 생략은 조용히 넘어간다.
+    def test_single_request_run_is_undeclared_too(self):
+        """단건 런에서도 `answers` 생략은 **미신고**다 (v9.22.0).
 
-        되돌리기도 안 하는 자리라 각주가 실측 90% 런마다 뜨는데, 요청이
-        하나면 결과가 곧 그 답이라 사람이 확인할 것이 없다 — 순수 소음이다.
+        종전엔 "결과가 곧 그 답" 으로 조용히 닫았다. 사용자 요청과 에이전트
+        질문이 한 런에 섞이면 그 추측이 틀린다 — 에이전트 질문에 답하려던
+        complete 을 사용자 답으로 배달한다. 건수와 무관하게 같은 규칙.
         """
         loop = _drain([{"id": "1", "nickname": "", "text": "a"}])
-        assert _notice(loop, result="결과") == "결과"
+        out = _notice(loop, result="결과")
+        assert out.startswith("결과") and "undeclared" in out and "[1]" in out
 
     def test_a_declared_miss_surfaces_even_in_a_single_request_run(self):
         """**모델이 직접 밝힌 미답은 건수와 무관하다** (사용자 지적).
@@ -444,10 +446,13 @@ class TestAnswersAreRequired:
         )
         assert loop._state.answers_prompted is False, "필요 없는데 표식을 세웠다"
 
-    def test_single_request_run_is_never_bounced(self):
-        """실측 90%인 단건 런에 턴을 하나 더 쓰면 안 된다."""
+    def test_single_request_run_is_bounced_too(self):
+        """단건 런도 되돌린다 (v9.22.0) — 섞임에서 추측이 틀리므로 건수 특례
+        없음. 꼬리가 매 턴 `answers: ["1"]` 까지 써 주니 비용은 필드 하나다."""
         loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
-        assert loop._dispatch._require_answers("raw", _op(result="r"), "r", {}) is None
+        assert (
+            loop._dispatch._require_answers("raw", _op(result="r"), "r", {}) is not None
+        )
 
     def test_empty_answers_list_is_bounced(self):
         """`answers: []` 는 '아무것도 안 답함' 이 아니라 **빈칸**이다 —
@@ -625,12 +630,23 @@ class TestThroughRunLoop:
         assert "were not answered" in result.output
         assert "REQ-B" in result.output
 
-    def test_starter_alone_is_not_bounced_through_the_loop(self):
-        """단건 런은 턴을 더 쓰지 않는다 (실측 90%)."""
-        provider = self._provider(self._env([{"action": "complete", "result": "done"}]))
+    def test_starter_alone_is_bounced_once_then_undeclared(self):
+        """단건 런도 `answers` 를 요구한다 (v9.22.0). 끝내 없으면 미신고."""
+        provider = self._provider(
+            self._env([{"action": "complete", "result": "done"}]),
+            self._env([{"action": "complete", "result": "done"}]),
+        )
+        result = self._run(provider, pending=[])
+        assert provider.call.call_count == 2
+        assert "undeclared" in result.output
+
+    def test_starter_alone_with_answers_is_clean(self):
+        provider = self._provider(
+            self._env([{"action": "complete", "result": "done", "answers": ["1"]}])
+        )
         result = self._run(provider, pending=[])
         assert provider.call.call_count == 1
-        assert "undeclared" not in result.output
+        assert result.output == "done"
 
 
 # ── ⑥ 미답이 남으면 런은 끝나지 않는다 ────────────────
@@ -744,7 +760,8 @@ class TestOpenRequestsHoldTheLoop:
 
         loop = self._merged()
         assert self._complete(loop, result="r", answers=["1"]) is _CONTINUE
-        second = self._complete(loop, result="r", answers=[])
+        # 두 번째도 명시 주장(이미 닫힌 1) — 빈 answers 는 되돌림 대상이라 여기선 안 쓴다
+        second = self._complete(loop, result="r", answers=["1"])
         assert second is not _CONTINUE, "같은 요청을 두 번 독촉했다"
         assert "were not answered" in second.output, "포기했으면 각주는 남겨야 한다"
 
@@ -758,11 +775,11 @@ class TestOpenRequestsHoldTheLoop:
         assert out is not _CONTINUE
         assert "undeclared" in out.output
 
-    def test_single_request_run_is_untouched(self):
+    def test_single_request_run_with_answers_ends_clean(self):
         from agent_cli.loop.dispatch import _CONTINUE
 
         loop = _drain([{"id": "1", "nickname": "", "text": "a"}])
-        out = self._complete(loop, result="답")
+        out = self._complete(loop, result="답", answers=["1"])
         assert out is not _CONTINUE and out.output == "답"
 
 
