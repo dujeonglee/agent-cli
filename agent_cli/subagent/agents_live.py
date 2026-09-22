@@ -635,6 +635,17 @@ class QuestionPort:
             return "main has no requester to reply to"
         owed = self.reply_owed()
         if not owed:
+            tm = self._reg.get(self.key)
+            a = tm.current_author if tm is not None else ""
+            if tm is not None and tm.current_expects_reply and a in tm.replied_this_run:
+                # 이미 갚았다 — 실측(a209hq): player 가 "칙령" 을 보낸 뒤 "칙명"
+                # 으로 정정하려다 "요청으로 시작되지 않은 런" 이라는 거짓
+                # 사유를 받았다. 사유는 정직해야 다음 행동이 맞아진다.
+                return (
+                    f"already replied to {a} in this run — a second reply is not "
+                    "delivered. If you must correct it, send the correction with "
+                    f'message(to="{a.split(":", 1)[-1]}", text="...").'
+                )
             return (
                 "nothing to reply to — this run was not started by a request "
                 "that expects one (it was a delivered reply, a question, or a "

@@ -2201,6 +2201,25 @@ class TestCompleteIsLocal:
         assert "nothing to reply to" in err and "message(to=" in err
         assert not [x for x in calls if x["key"] == a], "거부됐는데 배달됐다"
 
+    def test_second_reply_is_refused_with_the_true_reason(self, mkreg, renderer):
+        """실측(a209hq): 정정하려는 두 번째 reply 가 "요청으로 시작되지 않은
+        런" 이라는 거짓 사유로 거부됐다. 사유는 "이미 답했다" 여야 한다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        seen = []
+
+        def body():
+            port = reg.question_port(b)
+            seen.append(port.reply("칙령"))
+            seen.append(port.reply("칙명"))
+
+        calls = self._run(reg, b, f"agent:{a}", body)
+        assert seen[0] == ""
+        assert "already replied" in seen[1] and "message(to=" in seen[1]
+        assert "not started by a request" not in seen[1]
+        assert [c["message"] for c in calls if c["key"] == a][0].startswith("칙령")
+        assert len([c for c in calls if c["key"] == a]) == 1, "두 번째가 배달됐다"
+
     def test_reply_from_main_is_refused(self, mkreg, renderer):
         reg = mkreg()
         assert "no requester" in reg.question_port(None).reply("x")
