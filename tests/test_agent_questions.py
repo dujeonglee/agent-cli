@@ -1980,3 +1980,92 @@ class TestAskToUser:
         )
         loop._dispatch._op_ask("raw", types.SimpleNamespace(thought=""), op, None)
         assert seen == [("정할까요?", "user")]
+
+
+# ── ⑨ 창의 "→ 보냄" 은 실제 배달만 (v9.20.1) ────────
+
+
+class TestOutboundRecipientIsTruthful:
+    """사용자 제보(tcx7hs): 오케스트레이터 창에 "→ 보냄 · test (peer) ·
+    회신했습니다" 가 떴는데 test 쪽엔 아무것도 도착하지 않았다. 그 런의
+    inbound 가 test 의 **회신**(expects_reply=False)이라 산출물은 설계대로
+    어디로도 안 갔는데, 창·conversation.jsonl 은 라우팅 판정 **전에**
+    ``to=author`` 로 무조건 찍혔다. ``to`` 는 실제 수신자여야 한다 —
+    배달 없는 두 경우는 빈 문자열.
+    """
+
+    def _run_one(self, mkreg, renderer, **req):
+        reg = mkreg()
+        ran = []
+
+        def runner(query, ctx, **kw):
+            ran.append(query)
+            return _FakeLoopResult(output="산출물"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        assert reg.request(b, "일감", **req) == ""
+        assert wait_until(lambda: ran)
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        outs = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "out" and c[1].get("key") == b
+        ]
+        assert len(outs) == 1
+        return reg, b, outs[0]
+
+    def test_peer_message_is_delivered_and_says_so(self, mkreg, renderer):
+        _, _, out = self._run_one(mkreg, renderer, author="agent:agt-x")
+        assert out["to"] == "agent:agt-x"
+
+    def test_reply_to_a_reply_goes_nowhere_and_says_so(self, mkreg, renderer):
+        """핑퐁 방지로 배달이 없는 그 경우 — 창이 '보냈다' 고 하면 안 된다."""
+        _, _, out = self._run_one(
+            mkreg, renderer, author="agent:agt-x", expects_reply=False
+        )
+        assert out["to"] == "", "배달하지 않은 산출물에 수신자가 찍혔다"
+
+    def test_main_request_reply_names_main(self, mkreg, renderer):
+        reg, _b, out = self._run_one(mkreg, renderer, author="main")
+        assert out["to"] == "main"
+        assert any(r.get("kind") == "reply" for r in reg.drain_replies())
+
+    def test_human_window_request_keeps_the_human(self, mkreg, renderer):
+        """user:* 는 창이 곧 배달이다 — 비우면 안 된다."""
+        _, _, out = self._run_one(mkreg, renderer, author="user:bob")
+        assert out["to"] == "user:bob"
+
+    def test_withheld_partial_result_says_nowhere(self, mkreg, renderer):
+        """질문을 건 런의 부분 결과(§3.7)도 배달이 없다."""
+        reg = mkreg()
+        ran = []
+
+        def runner(query, ctx, **kw):
+            reg.register_question(b, "main", "어느 쪽?")
+            ran.append(query)
+            return _FakeLoopResult(output="부분 결과"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.request(b, "일감", author="main")
+        assert wait_until(lambda: ran)
+        assert wait_until(lambda: reg.get(b).state == "idle")
+        (out,) = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1].get("direction") == "out" and c[1].get("key") == b
+        ]
+        assert out["to"] == ""
+
+    def test_conversation_log_carries_the_same_truth(self, mkreg, renderer, tmp_path):
+        """resume 재생이 이 로그를 읽는다 — 창과 같은 값이어야 한다."""
+        import json
+
+        _reg, b, _out = self._run_one(
+            mkreg, renderer, author="agent:agt-x", expects_reply=False
+        )
+        log = tmp_path / "agents" / b / "conversation.jsonl"
+        recs = [json.loads(line) for line in log.read_text().splitlines()]
+        outs = [r for r in recs if r.get("direction") == "out"]
+        assert outs and outs[-1]["to"] == ""

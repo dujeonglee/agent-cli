@@ -2153,6 +2153,16 @@ class AgentRegistry:
         reply_path = self._persist_reply(tm, seq, output)
         tm.handled += 1
         tm.state = "idle"
+        expects_reply = item.get("expects_reply", True)
+        # ``to`` 는 **실제 수신자**다 — 아래 라우팅이 어디로도 안 보내는
+        # 두 경우(질문을 건 런의 부분 결과 억제 §3.7 · 받은 회신에 대한
+        # 산출물, 핑퐁 방지)에는 비운다. 종전엔 라우팅 판정 **전에**
+        # ``to=author`` 로 무조건 찍어서, 창은 "→ 보냄 · test (peer) ·
+        # 회신했습니다" 를 그리고 conversation.jsonl 도 그렇게 남는데 test
+        # 쪽엔 아무것도 도착하지 않았다(사용자 제보 — tcx7hs, 회신에 대한
+        # 회신 4건). resume 재생이 그 로그를 읽으니 거짓이 영속됐다.
+        # user:* 는 창이 곧 배달이라 채운다.
+        delivered_to = "" if (tm.asked_this_run or not expects_reply) else author
         # 대화 창에는 화자 불문 항상 표시 (P4).
         out_payload = {
             "key": tm.key,
@@ -2161,14 +2171,13 @@ class AgentRegistry:
             "text": output,
             "seq": seq,
             "success": success,
-            "to": author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
+            "to": delivered_to,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
             "ts": time.time(),
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
-        expects_reply = item.get("expects_reply", True)
         # ③ 이 런이 질문을 **걸었으면** 재주입만 건너뛴다 (§3.7).
         #
         #    판정은 "아직 열려 있나" 가 **아니다**. 비동기라 답은 보통 이
