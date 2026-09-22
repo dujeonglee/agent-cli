@@ -3662,3 +3662,66 @@ class TestNoteNext:
                 f"{mod}: `a` 승인이 화면에 기록되지 않는다 — "
                 f"세션 내내 재확인 없이 통과하는 정책 변경은 흔적을 남겨야 한다"
             )
+
+
+class TestRejectedCompleteReplay:
+    """하네스가 물린 `complete`(되돌림·회신 독촉)은 원문이 그대로 history 에
+    남는다 — 모델의 다음 턴 prior 라 필요하다. 하지만 저장 형태가
+    `ops:[complete]` 라 분류는 `kind: final`, 재생은 ✅ 카드였다: 라이브에선
+    카드도 없던(되돌림) 또는 ✗ 관찰이던(회신 독촉) 거부가 resume 에서
+    통과한 것처럼 되살아났다. `rejected` 태그(v9.21.0)가 둘 다 막는다.
+    """
+
+    _REJECTED: ClassVar[dict] = {
+        "role": "assistant",
+        "thought": "법칙",
+        "ops": [{"action": "complete", "action_input": {"result": "법칙"}}],
+        "rejected": "reply owed",
+    }
+    _OBS: ClassVar[dict] = {
+        "role": "user",
+        "tool": "complete",
+        "success": False,
+        "content": "Observation: you completed without replying to agent:x …",
+    }
+
+    def test_classifier_does_not_call_it_final(self):
+        from agent_cli.context.records import _classify_record
+
+        kind, tools, text = _classify_record(self._REJECTED)
+        assert kind != "final", "물린 complete 이 final 로 분류됐다"
+        assert "complete" in tools and "법칙" in text
+        # 태그 없는 같은 레코드는 여전히 final — 회귀 없음
+        plain = {k: v for k, v in self._REJECTED.items() if k != "rejected"}
+        assert _classify_record(plain)[0] == "final"
+
+    def test_replay_draws_no_final_for_it(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        ctx = _FakeResumeCtx([self._REJECTED, self._OBS])
+        r.replay_from_history(ctx)
+        events = []
+        while True:
+            try:
+                events.append(conn.queue.get(timeout=0.2))
+            except Exception:
+                break
+        finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
+        assert finals == [], f"물린 complete 이 ✅ final 로 재생됐다: {finals}"
+        obs = [d for e, d in events if e == "observation"]
+        assert obs and obs[0].get("success") is False, "거부 관찰이 안 보인다"
+
+    def test_untagged_complete_still_replays_as_final(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        plain = {k: v for k, v in self._REJECTED.items() if k != "rejected"}
+        r.replay_from_history(_FakeResumeCtx([plain]))
+        events = []
+        while True:
+            try:
+                events.append(conn.queue.get(timeout=0.2))
+            except Exception:
+                break
+        assert any(e == "assistant_turn" and "final" in d for e, d in events)

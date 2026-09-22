@@ -105,6 +105,7 @@ class TurnDispatcher:
         primitives=None,
         recovery_kind: str = "",
         render: bool = False,
+        rejected: str = "",
     ):
         """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
 
@@ -128,6 +129,17 @@ class TurnDispatcher:
         # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
         if not render:
             render_recovery(llm_text, message, reason, self.state.turn)
+        # ``rejected`` (v9.21.0): 물린 `complete` 의 assistant 레코드에 사유를
+        # 찍는다. 원문은 그대로 저장돼야 하지만(모델의 다음 턴 prior), 저장
+        # 형태가 `ops:[complete]` 라 히스토리 분류가 `kind: final` 로 읽고
+        # resume 재생이 ✅ final 카드를 그린다 — 라이브에선 카드도 없던(되돌림)
+        # 또는 ✗ 관찰이던(회신 독촉) 거부가 resume 에서 통과한 것처럼 되살아난다.
+        record = None
+        if rejected:
+            record = dict(
+                self.cfg.wire_format.serialize_assistant_for_history(llm_text)
+            )
+            record["rejected"] = rejected
         _append_observation(
             self.state.messages,
             self.ctx,
@@ -137,6 +149,7 @@ class TurnDispatcher:
             tool_name=tool_name,
             success=False,
             turn=self.state.turn,
+            corrected_record=record,
             render=render,  # False: render_recovery already surfaced it
             recovery_kind=recovery_kind,
         )
@@ -765,6 +778,7 @@ class TurnDispatcher:
             "answers required",
             outcome,
             recovery_kind="format",
+            rejected="answers required",
         )
 
     def _settle_requests(self, claimed):
@@ -867,6 +881,7 @@ class TurnDispatcher:
             outcome,
             tool_name="complete",
             render=True,
+            rejected="reply owed",
         )
 
     def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:

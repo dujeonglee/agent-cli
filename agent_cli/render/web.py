@@ -1144,6 +1144,13 @@ class WebRenderer(Renderer):
         elif role == "assistant":
             thought = msg.get("thought", "") or ""
             ops = msg.get("ops")
+            if msg.get("rejected"):
+                # 하네스가 물린 complete (v9.21.0) — 라이브는 final 을 안
+                # 그렸다(되돌림: 카드 없음 / 회신 독촉: 뒤따르는 ✗ 관찰만).
+                # 재생도 같게: 생각만 들고 있다가 다음 카드에 싣고, op 는
+                # 그리지 않는다. 뒤의 관찰 레코드가 거부를 보여준다.
+                self.thought(thought, turn=0)
+                return
             if isinstance(ops, list) and ops:
                 # Both wire formats store every assistant turn — INCLUDING
                 # the terminal ``complete`` — in the ``ops`` shape

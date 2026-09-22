@@ -2330,3 +2330,54 @@ class TestCompleteIsLocal:
         tm.current_expects_reply = True
         tm.current_author = "user:dj"  # 사람은 창이 곧 배달
         assert port.reply_owed() == ""
+
+
+class TestRejectedCompleteIsTaggedInHistory:
+    """물린 complete 의 history 레코드에 `rejected` 가 찍힌다 — 분류·재생이
+    그걸로 final 과 가른다(`test_web_renderer.TestRejectedCompleteReplay`)."""
+
+    def _records(self, port, *contents):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        p = MagicMock()
+        p.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        run_loop(
+            query="[agent:agt-a]: 일감",
+            provider=p,
+            capabilities=_caps(),
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+            wire_format="json_fc",
+            ports=make_ports(owner="agent:agt-b", questions=port),
+        )
+        return [m for m in ctx.get_raw_messages() if m.get("role") == "assistant"]
+
+    @staticmethod
+    def _env(ops):
+        import json
+
+        return "## Thought\\nt\\n\\n## Action\\n" + json.dumps(ops)
+
+    def test_reply_nag_tags_the_rejected_complete(self):
+        port = TestReplyNagCap._OwedPort()
+        recs = self._records(
+            port,
+            self._env([{"action": "complete", "result": "끝"}]),
+            self._env(
+                [
+                    {"action": "reply", "text": "답"},
+                    {"action": "complete", "result": "끝"},
+                ]
+            ),
+        )
+        tagged = [r for r in recs if r.get("rejected")]
+        assert [r["rejected"] for r in tagged] == ["reply owed"]
+        # 통과한 마지막 complete 은 태그가 없다
+        assert not recs[-1].get("rejected")
