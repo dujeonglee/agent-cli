@@ -109,5 +109,9 @@ class LoopState:
     #: (붙잡기가 아니다 — 결과는 이미 나갔다). 상한이 없으면 고집 센 모델과
     #: 물려 런을 태운다.
     requests_nagged: set = field(default_factory=set)
+    #: 상주 에이전트: 요청자에게 빚진 `message` 없이 `complete` 하려 해서
+    #: 이미 한 번 독촉했나 (v9.21.0). 런당 한 번 — 그래도 안 보내면 레지스트리가
+    #: 런 요약을 라벨 붙여 폴백 배달한다.
+    reply_nagged: bool = False
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

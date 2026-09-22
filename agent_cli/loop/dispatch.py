@@ -599,6 +599,11 @@ class TurnDispatcher:
             if handled is not _NOT_HANDLED:
                 return handled
 
+        if op.action == "reply":
+            handled = self._op_reply(llm_text, turn, op, accumulate)
+            if handled is not _NOT_HANDLED:
+                return handled
+
         if op.action:
             return self._op_execute_tool(llm_text, turn, op, outcome, accumulate)
 
@@ -657,6 +662,16 @@ class TurnDispatcher:
         nagging = self._should_nag(claimed, still_open)
         if not nagging:
             answer = self._with_unanswered_notice(claimed, still_open, answer)
+
+        # 상주 에이전트: 요청자에게 빚진 `message` 없이 끝내려 하나 (v9.21.0).
+        # `complete` 는 국소라 이 산출물은 요청자에게 가지 않는다 — 한 번
+        # 독촉해 `message` 를 보내게 한다. 그래도 안 보내면 레지스트리가 런
+        # 요약을 라벨 붙여 폴백 배달하므로 요청자가 침묵을 받진 않는다.
+        owed = self._reply_owed()
+        if owed and not self.state.reply_nagged:
+            self.state.reply_nagged = True
+            render_step("final", answer, self.state.turn, requests=answered)
+            return self._nag_reply_owed(llm_text, owed, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
         render_step("final", answer, self.state.turn, requests=answered)
@@ -783,6 +798,29 @@ class TurnDispatcher:
                 "answered this time."
             ),
             "open requests remain",
+            outcome,
+            tool_name="complete",
+        )
+
+    def _reply_owed(self) -> str:
+        """상주 포트에 "아직 안 갚은 회신 주소" 를 묻는다 — main/일회성은 ""."""
+        port = self.cfg.questions
+        if port is None or not getattr(port, "nonblocking", False):
+            return ""
+        fn = getattr(port, "reply_owed", None)
+        return fn() if callable(fn) else ""
+
+    def _nag_reply_owed(self, llm_text: str, owed: str, outcome: dict):
+        """빚진 회신 독촉 (v9.21.0) — 결과는 렌더됐고 루프만 이어간다."""
+        return self._intervene(
+            llm_text,
+            (
+                f"Observation: you completed without replying to {owed}, who "
+                "requested this work and is waiting — `complete` alone reports "
+                'to no one. Send your result now with reply(text="..."), or with '
+                "`message` if you need something back from them, then `complete`."
+            ),
+            "reply owed",
             outcome,
             tool_name="complete",
         )
@@ -971,6 +1009,44 @@ class TurnDispatcher:
             f"Observation: {obs}",
             tool_name="ask",
             success=True,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
+
+    def _op_reply(self, llm_text: str, turn, op, accumulate):
+        """``reply`` op (v9.21.0) — 이 런을 시킨 쪽에게 빚진 회신을 갚는다.
+
+        ``_op_answer`` 와 동형. 포트가 없거나 상주가 아니면 ``_NOT_HANDLED``.
+        """
+        port = self.cfg.questions
+        if port is None or not getattr(port, "nonblocking", False):
+            return _NOT_HANDLED
+        args = op.action_input if isinstance(op.action_input, dict) else {}
+        text = str(args.get("text", "")).strip()
+        render_step(
+            "action",
+            "",
+            self.state.turn,
+            tool_name="reply",
+            tool_input=json.dumps(args, ensure_ascii=False),
+        )
+        try:
+            err = port.reply(text)
+        except Exception as e:
+            err = f"reply failed: {type(e).__name__}: {e}"
+        ok = not err
+        obs = "[reply] " + (err or "delivered to whoever requested this work")
+        if accumulate is not None:
+            self.tools.accumulate_raw(accumulate, "reply", obs, ok)
+            return None
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            f"Observation: {obs}",
+            tool_name="reply",
+            success=ok,
             turn=self.state.turn,
         )
         return _CONTINUE

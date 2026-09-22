@@ -114,6 +114,10 @@ _MAX_PEER_HOPS = 6
 # 닫고 런을 정상 종료시킨다. 사람 주소 질문에는 적용하지 않는다(§3.5).
 _MAX_QUESTION_NAGS = 6
 
+#: 빚진 `message` 없이 런이 끝났을 때 요청자에게 가는 폴백 요약의 머리말
+#: (v9.21.0). 라벨이 있어야 받는 쪽이 "명시 회신" 과 구분한다.
+_NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
+
 # 런이 끝났는데 답 안 한 질문이 있을 때 다시 거는 항목의 머리말.
 _OWED_REMINDER = (
     "(reminder) These question(s) are still waiting for your answer. Answer "
@@ -496,6 +500,21 @@ class AgentInstance:
         # 지난다) 그 런의 회신이 진짜 회신이므로, 이 런의 회신은 요청자에게
         # 재주입하지 않는다. 워커가 런 경계마다 리셋한다.
         self.asked_this_run = False
+        # v9.21.0 — `complete` 는 국소다. 런의 산출물은 요청자에게 **자동으로
+        # 가지 않는다**; 남에게 가는 건 `message` 뿐이다. 대신 요청 항목
+        # (`expects_reply=True`)은 **빚**이다: 이 런은 요청자에게 `message`
+        # 하나를 빚지고, 보내면 갚은 것. 갚지 않고 끝내면 루프가 한 번
+        # 독촉하고(dispatch), 그래도 안 보내면 `_handle_request` 가 런 요약을
+        # 라벨 붙여 폴백으로 배달한다 — 침묵은 없다.
+        #
+        # 왜 바꿨나(실측 257zmx, 끝말잇기): 종전엔 피어 `message` 로 시작한
+        # 런의 `complete` 출력이 요청자에게 회신으로 자동 배달됐다. 대화에서는
+        # 상대가 이미 명시 `message` 로 답하므로 그 에코가 **같은 턴의 두 번째
+        # 항목**이 되고, 받은 쪽이 거기에 또 반응해 한 턴에 세 번 답하는
+        # 탈동기가 났다. 위임에서도 오케스트레이터가 같은 보고를 두 번 받았다.
+        self.current_expects_reply = False
+        self.current_answers: list = []  # 요청 항목의 귀속 스냅샷 (폴백/회신에 실림)
+        self.replied_this_run: set[str] = set()  # 이 런에서 message 한 주소들
 
     def snapshot(self) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도)."""
@@ -581,6 +600,62 @@ class QuestionPort:
     def answer(self, qid: str, text: str) -> str:
         """``qid`` 에 답한다. 에러 메시지 또는 빈 문자열."""
         return self._reg.answer_question(qid, text, by=self.me)
+
+    def reply_owed(self) -> str:
+        """이 런이 아직 갚지 않은 회신의 주소 (v9.21.0) — 없으면 "".
+
+        `complete` 는 국소라 산출물이 요청자에게 가지 않는다. 요청 항목으로
+        시작한 런은 요청자에게 `message` 를 빚지고, 루프가 `complete` 직전에
+        여기를 물어 한 번 독촉한다. 사람(user:*)에겐 빚이 없다(창이 곧
+        배달). 질문을 건 런도 없다(§3.7 — 답 런이 같은 빚을 진다).
+        """
+        if self.key is None:
+            return ""
+        tm = self._reg.get(self.key)
+        if tm is None or not tm.current_expects_reply or tm.asked_this_run:
+            return ""
+        a = tm.current_author
+        if a == "user" or a.startswith("user:"):
+            return ""
+        return "" if a in tm.replied_this_run else a
+
+    def reply(self, text: str) -> str:
+        """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열.
+
+        요청자는 하네스가 안다(`to` 없음). 돌려받을 것이 없으므로
+        `expects_reply=False` 로 간다 — 상대에게 새 빚을 지우지 않는다.
+        **빚진 게 없으면 거부한다**(사용자 결정): 회신·질문·독촉으로 시작한
+        런엔 답할 상대가 없고, "확인했습니다" 류의 ack 가 정확히 여기서
+        새어 나온다. 거부 문구가 `message` 로 안내한다.
+        """
+        text = (text or "").strip()
+        if not text:
+            return "empty reply — nothing sent"
+        if self.key is None:
+            return "main has no requester to reply to"
+        owed = self.reply_owed()
+        if not owed:
+            return (
+                "nothing to reply to — this run was not started by a request "
+                "that expects one (it was a delivered reply, a question, or a "
+                "reminder). Do not acknowledge those. If you need something from "
+                'someone, use message(to="...", text="...").'
+            )
+        tm = self._reg.get(self.key)
+        tm.replied_this_run.add(owed)
+        if owed == "main":
+            self._reg.message_to_main(
+                self.key,
+                text,
+                profile=tm.profile_name,
+                name=tm.instance_name,
+                answers=tm.current_answers,
+            )
+            return ""
+        requester = owed.split(":", 1)[1]
+        self._reg._deliver_peer_reply(requester, self.key, text, 0)
+        self._reg._log_outbound(self.key, text, to=requester)
+        return ""
 
 
 class AgentRegistry:
@@ -1399,9 +1474,9 @@ class AgentRegistry:
         # (비동기라 "보고 단계"를 명시 안내 — build_reply_record 꼬리표와 동형).
         text = (
             f"{output}\n\n"
-            "(Use this reply to continue your task. When done, if there is a "
-            "result to report back to whoever requested your work (e.g. main), "
-            "send it with the `message` tool; otherwise just `complete`.)"
+            "(Use this reply to continue your task. Anything you owe someone — a "
+            "result for whoever requested your work, a next move to a peer — goes "
+            "out ONLY via the `message` tool; `complete` alone reports to no one.)"
         )
         self.request(
             requester_key,
@@ -1412,20 +1487,32 @@ class AgentRegistry:
         )
 
     def message_to_main(
-        self, from_key: str, text: str, *, profile: str = "", name: str = ""
+        self,
+        from_key: str,
+        text: str,
+        *,
+        profile: str = "",
+        name: str = "",
+        answers: list | None = None,
     ) -> None:
         """상주 에이전트 → main 메시지 (v5.11). main 은 inbox 대신 mailbox
-        (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭)."""
-        self._push_reply(
-            {
-                "kind": "peer_message",
-                "key": from_key,
-                "profile": profile,
-                "name": name,
-                "success": True,
-                "output": text,
-            }
-        )
+        (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭).
+
+        ``answers`` (v9.21.0): main 의 요청에 대한 **회신**이면 그 요청의
+        귀속 스냅샷을 그대로 싣는다 — 종전엔 자동 회신(`kind:"reply"`)이
+        실어 나르던 것. 자동 회신이 없어졌으니 명시 message 가 실어야
+        main 의 run_authors 합류(v8.5.0 승계)가 유지된다."""
+        rec = {
+            "kind": "peer_message",
+            "key": from_key,
+            "profile": profile,
+            "name": name,
+            "success": True,
+            "output": text,
+        }
+        if answers is not None:
+            rec["answers"] = list(answers)
+        self._push_reply(rec)
         # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
         # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
         # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
@@ -1481,9 +1568,20 @@ class AgentRegistry:
                 return "empty message — nothing sent"
             if to == tm.key:
                 return "cannot message yourself"
+            # `message` 는 언제나 **요청**이다 — 상대에게 회신을 빚지운다
+            # (v9.21.0). 내 요청자에게 보내는 것이면 내 빚도 같이 갚는다:
+            # "여기 내 수, 이제 네 차례" — 항목 하나로 양쪽이 빚진다(끝말잇기가
+            # 성립하는 규칙). 돌려받을 것이 없는 답은 `reply` 다.
+            addr = "main" if to == "main" else f"agent:{to}"
+            settles = tm.current_expects_reply and addr == tm.current_author
+            tm.replied_this_run.add(addr)
             if to == "main":
                 self.message_to_main(
-                    tm.key, text, profile=tm.profile_name, name=tm.instance_name
+                    tm.key,
+                    text,
+                    profile=tm.profile_name,
+                    name=tm.instance_name,
+                    answers=tm.current_answers if settles else None,
                 )
                 return "delivered to main — it will see your message at its next turn."
             # Capture the send time BEFORE request() enqueues — the target's
@@ -1495,8 +1593,8 @@ class AgentRegistry:
                 return err
             self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
             return (
-                f"delivered to {to} — its reply arrives to you as a new message. "
-                f"Keep working or complete; you'll be woken when it comes."
+                f"delivered to {to} — it owes you a reply, which arrives as a new "
+                f"message. Keep working or complete; you'll be woken when it comes."
             )
 
         return handler
@@ -2108,6 +2206,9 @@ class AgentRegistry:
         author = item.get("author", "main")
         tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
         tm.current_seq = seq  # 이 런에서 거는 질문의 asked_seq (§3.2)
+        tm.current_expects_reply = bool(item.get("expects_reply", True))
+        tm.current_answers = list(item.get("answers") or [])
+        tm.replied_this_run = set()
         # 이 항목이 질문이면 **꺼낸 지금** 배달로 친다 — 그 전까지는 큐에서
         # 줄만 서 있었고, 강제·sweep 이 걸리면 상대가 읽지도 않은 질문을
         # "(답변 없음)" 으로 닫아 버린다 (§3.2 런 스코프).
@@ -2154,15 +2255,25 @@ class AgentRegistry:
         tm.handled += 1
         tm.state = "idle"
         expects_reply = item.get("expects_reply", True)
-        # ``to`` 는 **실제 수신자**다 — 아래 라우팅이 어디로도 안 보내는
-        # 두 경우(질문을 건 런의 부분 결과 억제 §3.7 · 받은 회신에 대한
-        # 산출물, 핑퐁 방지)에는 비운다. 종전엔 라우팅 판정 **전에**
-        # ``to=author`` 로 무조건 찍어서, 창은 "→ 보냄 · test (peer) ·
-        # 회신했습니다" 를 그리고 conversation.jsonl 도 그렇게 남는데 test
-        # 쪽엔 아무것도 도착하지 않았다(사용자 제보 — tcx7hs, 회신에 대한
-        # 회신 4건). resume 재생이 그 로그를 읽으니 거짓이 영속됐다.
-        # user:* 는 창이 곧 배달이라 채운다.
-        delivered_to = "" if (tm.asked_this_run or not expects_reply) else author
+        # ── 회신 계약 (v9.21.0) ──
+        # `complete` 는 국소다 — 산출물은 자동으로 아무에게도 가지 않는다.
+        # 요청 항목이면 이 런은 요청자에게 `message` 를 **빚졌고**, 갚았으면
+        # 끝. 안 갚았으면 여기서 런 요약을 라벨 붙여 폴백으로 배달한다 — 루프의
+        # 독촉(dispatch, 런당 한 번)을 지나고도 안 보낸 경우다. 종전엔 산출물이
+        # 무조건 회신으로 갔고, 명시 `message` 와 겹쳐 같은 턴의 항목이 둘이
+        # 됐다(실측 257zmx 끝말잇기: 한 턴에 세 번 답함).
+        #
+        # 질문을 건 런(§3.7)은 폴백도 안 한다 — 답 런이 반드시 하나 생기고
+        # 그 런이 같은 빚을 진다(답 항목도 expects_reply=True).
+        # user:* 는 창이 곧 배달이라 빚이 없다.
+        human = author == "user" or author.startswith("user:")
+        owed = (
+            expects_reply
+            and not human
+            and not tm.asked_this_run
+            and author not in tm.replied_this_run
+        )
+        delivered_to = author if (owed or human) else ""
         # 대화 창에는 화자 불문 항상 표시 (P4).
         out_payload = {
             "key": tm.key,
@@ -2171,66 +2282,34 @@ class AgentRegistry:
             "text": output,
             "seq": seq,
             "success": success,
-            "to": delivered_to,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
+            "to": delivered_to,  # 실제 수신자 — 폴백 배달 또는 창(user:*)
             "ts": time.time(),
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
-        # ③ 이 런이 질문을 **걸었으면** 재주입만 건너뛴다 (§3.7).
-        #
-        #    판정은 "아직 열려 있나" 가 **아니다**. 비동기라 답은 보통 이
-        #    런이 끝나기 **전에** 도착하고, 그러면 그 조건은 안 걸려 부분
-        #    결과가 요청자에게 간다 — 막으려던 상황이 오히려 정상 경로다.
-        #    게다가 그 부분 결과는 **답이 존재하기 전에** 만들어졌는데
-        #    **답을 보낸 뒤에** 도착한다: 요청자는 자기 답이 반영된 최신
-        #    상태로 읽고 다음 단계를 시작한다(peer 면 inbox 항목 = 런 1개라
-        #    잘못된 하위 작업이 실제로 돌아간다).
-        #
-        #    질문을 걸었다면 답 런이 **반드시** 하나 생긴다 — 답·상한 초과·
-        #    상대 사망 셋 다 ``_deliver_answer`` 를 지난다. 그 런의 회신이
-        #    진짜 회신이다. 보장하는 성질은 "정확히 한 번" 이 아니라
-        #    **"회신이 낡지 않는다"** 다(질문 둘이면 답 런도 둘, 회신도 둘 —
-        #    다만 각각 자기 답이 반영된 최신 상태다).
-        #
-        #    창·로그·persist 는 위에서 이미 돌았다 — 억제되는 것은 요청자를
-        #    한 번 더 깨우는 재주입 한 줄뿐이고, 하네스는 아무것도 기다리지
-        #    않는다. 요청자는 질문을 이미 받았으므로 깜깜하지도 않다.
-        if tm.asked_this_run:
-            self._save_state()
-        elif not expects_reply:
-            # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
-            # 어디로도 라우팅하지 않는다(terminal, 핑퐁 방지). 결과에
-            # 이어 다른 주체에게 보낼 게 있으면 명시적 message 로.
-            self._save_state()
-        elif author.startswith("agent:"):
-            # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입.
-            # 청탁된 응답이라 항상 배달(LGTM 억제 없음 — 구독 제거로
-            # watch 노이즈 억제가 불필요해짐, v5.12).
-            requester = author.split(":", 1)[1]
-            self._deliver_peer_reply(requester, tm.key, output, item.get("hop", 0))
-        elif author == "main":
-            # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
-            # 개입 문답은 창에만, main 컨텍스트 비오염).
-            # ``answers`` = 요청 스냅샷 그대로 (귀속 승계) — 회신을
-            # 소비하는 런이 run_authors 에 합류시킨다. question/died
-            # 는 미승계(사용자 답이 아닌 내부 왕복).
-            self._push_reply(
-                {
-                    "kind": "reply",
-                    "key": tm.key,
-                    "profile": tm.profile_name,
-                    "seq": seq,
-                    "success": success,
-                    "output": output,
-                    "duration_s": duration,
-                    "reply_path": reply_path,
-                    "answers": item.get("answers") or [],
-                }
-            )
-        else:
-            self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
+        if owed:
+            summary = f"{_NO_REPLY_LABEL}\n{output}"
+            if author.startswith("agent:"):
+                self._deliver_peer_reply(
+                    author.split(":", 1)[1], tm.key, summary, item.get("hop", 0)
+                )
+            elif author == "main":
+                self._push_reply(
+                    {
+                        "kind": "reply",
+                        "key": tm.key,
+                        "profile": tm.profile_name,
+                        "seq": seq,
+                        "success": success,
+                        "output": summary,
+                        "duration_s": duration,
+                        "reply_path": reply_path,
+                        "answers": item.get("answers") or [],
+                    }
+                )
+        self._save_state()
         tm.current_author = "main"
         tm.current_seq = 0
         self._notify_roster()
@@ -2463,8 +2542,9 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             lines.append(f"initial task NOT queued: {err}")
         else:
             lines.append(
-                "initial task queued — the reply arrives automatically as "
-                "an observation and you will be woken. Do NOT poll status "
+                "initial task queued — the agent reports back with `message`, "
+                "which arrives as an observation and wakes you (if it completes "
+                "without one you get its run summary instead). Do NOT poll status "
                 "or re-send it (re-sends queue duplicate work and slow it "
                 "down). FIRST finish the rest of your plan — spawn the "
                 "other agents / send the other requests you intended, "
@@ -2492,7 +2572,7 @@ def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             f"\n⚠ it now has {backlog} queued requests — if these are "
             f"progress checks or re-sends of the same ask, that is "
             f"interference: each one queues MORE work and delays the "
-            f"answer. Replies arrive automatically; stop re-sending."
+            f"answer. Its `message` back reaches you on its own; stop re-sending."
         )
         if backlog >= 2
         else ""
@@ -2500,9 +2580,10 @@ def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     return ToolResult(
         True,
         output=(
-            f"queued to {key} — the reply will be delivered to you "
-            f"automatically at a later turn (even while you are idle) and "
-            f"you will be woken when it arrives. Do NOT poll status or "
+            f"queued to {key} — the agent reports back with `message`, which "
+            f"reaches you at a later turn (even while you are idle) and wakes "
+            f"you; if it completes without one you get its run summary. Do NOT "
+            f"poll status or "
             f"re-send this request. If your plan still has other work "
             f"(other agents, other requests), do it now; then finish "
             f"this turn with `complete` and wait.{stacked}"
@@ -2528,8 +2609,8 @@ def _agent_resume(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             lines.append(f"task NOT queued: {qerr}")
         else:
             lines.append(
-                "task queued — reply arrives automatically; do not poll, "
-                "finish with `complete` and wait."
+                "task queued — the agent's `message` back arrives as an "
+                "observation; do not poll, finish with `complete` and wait."
             )
     return ToolResult(True, output="\n".join(lines))
 

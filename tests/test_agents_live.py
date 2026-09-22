@@ -129,6 +129,18 @@ class _RecordingRunner:
             return list(self.seen)
 
 
+# v9.21.0 — `complete` 는 국소다. 러너가 요청자에게 `message` 를 안 보내면
+# 레지스트리가 런 요약을 **라벨 붙여** 폴백 배달한다. 아래 테스트들은 가짜
+# 러너가 message 를 안 보내므로 전부 이 경로다 — 라벨을 벗기고 내용을 본다.
+def _unlabel(output: str) -> str:
+    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+    assert output.startswith(_NO_REPLY_LABEL + "\n"), (
+        f"폴백 요약에 라벨이 없다: {output[:60]!r}"
+    )
+    return output[len(_NO_REPLY_LABEL) + 1 :]
+
+
 def make_registry(tmp_path, *, runner=None, **runtime):
     reg = AgentRegistry(
         tmp_path,
@@ -473,7 +485,8 @@ class TestRegistryLifecycle:
         replies = reg.drain_replies()
         assert len(replies) == 1
         r = replies[0]
-        assert r["key"] == key and r["success"] and r["output"] == "done:hello"
+        assert r["key"] == key and r["success"]
+        assert _unlabel(r["output"]) == "done:hello"
         assert not reg.has_pending_replies()  # drain 은 소비
         reg.shutdown_all()
 
@@ -1273,13 +1286,13 @@ class TestResumeRestore:
         )
         # 미배달 회신은 첫 턴 경계 배달 대상으로 복원
         restored = reg2.drain_replies()
-        assert [r["output"] for r in restored] == ["done:hello"]
+        assert [_unlabel(r["output"]) for r in restored] == ["done:hello"]
         # seq 이어가기 — 새 요청은 reply-2 (기존 reply-1 안 덮음)
         assert tm.queued == tm.handled == 1
         reg2.request(key, "again")
         assert wait_until(reg2.has_pending_replies)
         again = reg2.drain_replies()[0]
-        assert again["output"] == "done:again" and again["seq"] == 2
+        assert _unlabel(again["output"]) == "done:again" and again["seq"] == 2
         reg2.shutdown_all()
 
     def test_killed_teammate_not_revived(self, tmp_path, renderer):
@@ -1410,7 +1423,10 @@ class TestHumanInterventionRouting:
         assert wait_until(lambda: len(runner.seen) == 3)
         assert wait_until(lambda: reg.get(key).handled == 3)
         replies = reg.drain_replies()
-        assert sorted(r["output"] for r in replies) == ["done:task A", "done:task B"]
+        assert sorted(_unlabel(r["output"]) for r in replies) == [
+            "done:task A",
+            "done:task B",
+        ]
         reg.shutdown_all()
 
     def test_mixed_batch_splits_at_main_delegation(self, tmp_path, renderer):
@@ -1430,7 +1446,7 @@ class TestHumanInterventionRouting:
         assert wait_until(lambda: len(runner.seen) == 4)
         assert wait_until(lambda: reg.get(key).handled == 4)
         replies = reg.drain_replies()
-        assert len(replies) == 1 and replies[0]["output"] == "done:deleg"
+        assert len(replies) == 1 and _unlabel(replies[0]["output"]) == "done:deleg"
         reg.shutdown_all()
 
     def test_human_request_reply_not_delivered_to_main(self, tmp_path, renderer):
@@ -2267,7 +2283,7 @@ class TestPeerMessaging:
         out = res.output
         assert "Do NOT" in out and "status" in out
         assert "complete" in out
-        assert "woken" in out
+        assert "wakes you" in out
         # v7.11.3: "complete 먼저" 과보정 방지 — 남은 계획(다른 에이전트
         # 스폰 등) 먼저, complete 는 마지막·배칭 가능임을 명시 (실사고:
         # thought 는 "reviewer 도 스폰" 인데 op 는 complete 만 내고 종료)
@@ -2289,7 +2305,7 @@ class TestPeerMessaging:
         gate.set()
         out = res.output
         assert "queued requests" in out  # 적체 수 명시
-        assert "complete" in out and "woken" in out
+        assert "complete" in out and "wakes you" in out
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):

@@ -1040,6 +1040,15 @@ class TestReminderRace:
 # ── §3.7 회신 신선도 ────────────────────────────
 
 
+def _body(output: str) -> str:
+    """폴백 요약의 라벨(v9.21.0)을 벗긴다 — 가짜 러너는 `message` 를 안
+    보내므로 main 이 받는 회신은 전부 라벨 붙은 런 요약이다."""
+    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+    prefix = _NO_REPLY_LABEL + "\n"
+    return output.removeprefix(prefix)
+
+
 class Replies:
     """``drain_replies`` 는 비우므로 누적해서 본다."""
 
@@ -1095,7 +1104,7 @@ class TestReplyFreshness:
 
         assert wait_until(lambda: len(rep.kinds()) == 1, timeout=5.0)
         (only,) = rep.kinds()
-        assert only["output"] == "완성"  # 낡은 "부분 결과" 가 아니다
+        assert _body(only["output"]) == "완성"  # 낡은 "부분 결과" 가 아니다
         assert only["seq"] == 2  # 답 런의 회신
         time.sleep(0.15)
         assert len(rep.kinds()) == 1  # 뒤늦게 하나 더 오지 않는다
@@ -1127,7 +1136,7 @@ class TestReplyFreshness:
 
         assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
         assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert rep.kinds()[0]["output"] == "완성"
+        assert _body(rep.kinds()[0]["output"]) == "완성"
 
     def test_answer_run_reply_reaches_a_peer_requester(self, mkreg, renderer):
         """억제의 대가는 **답 런이 원 요청자에게 도달한다**는 것이다 —
@@ -1186,7 +1195,7 @@ class TestReplyFreshness:
         rep = Replies(reg)
         reg.request(b, "일감")
         assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert rep.kinds()[0]["output"] == "그래도 끝냈다"
+        assert _body(rep.kinds()[0]["output"]) == "그래도 끝냈다"
 
     def test_flag_is_per_run(self, mkreg, renderer):
         """플래그가 런 경계에서 안 지워지면 이후 모든 회신이 사라진다."""
@@ -1207,7 +1216,7 @@ class TestReplyFreshness:
         reg.request(b, "일감 2")
         assert wait_until(lambda: len(calls) == 2)
         assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert rep.kinds()[0]["output"] == "out2"  # 두 번째 런은 밀었다
+        assert _body(rep.kinds()[0]["output"]) == "out2"  # 두 번째 런은 밀었다
 
     def test_capped_question_still_produces_a_reply(self, mkreg, renderer):
         """아무도 답하지 않아도 상한이 질문을 닫고, 그 닫힘이 답 런을
@@ -1413,7 +1422,18 @@ class TestQuestionPort:
         reg = mkreg()
         port = reg.question_port(spawn_idle(reg))
         public = {n for n in dir(port) if not n.startswith("_")}
-        assert public == {"ask", "answer", "key", "me", "asker", "nonblocking"}
+        # `reply_owed` (v9.21.0): 루프가 `complete` 직전에 "아직 안 갚은 회신
+        # 주소" 를 묻는 읽기 전용 표면 — 레지스트리를 노출하지 않는다.
+        assert public == {
+            "ask",
+            "answer",
+            "key",
+            "me",
+            "asker",
+            "nonblocking",
+            "reply_owed",
+            "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
+        }
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
         assert reg.question_port(None).nonblocking is False
@@ -2069,3 +2089,136 @@ class TestOutboundRecipientIsTruthful:
         recs = [json.loads(line) for line in log.read_text().splitlines()]
         outs = [r for r in recs if r.get("direction") == "out"]
         assert outs and outs[-1]["to"] == ""
+
+
+# ── ⑩ complete 는 국소, 배달은 message/reply 뿐 (v9.21.0) ──
+
+
+class TestCompleteIsLocal:
+    """실측(257zmx 끝말잇기): 피어 `message` 로 시작한 런의 `complete` 출력이
+    요청자에게 회신으로 **자동 배달**됐다. 대화에서는 상대가 이미 명시
+    `message` 로 답하므로 그 에코가 같은 턴의 두 번째 항목이 되고, 받은 쪽이
+    거기에 또 반응해 한 턴에 세 번 답했다.
+
+    사용자 결정: `complete` 는 국소. 요청 항목(`expects_reply=True`)은 빚이고,
+    `reply` 가 갚는다(돌려받을 것 없음, `to` 불필요). `message` 는 언제나 요청
+    (상대에게 빚을 지움)이되 내 요청자에게 보내면 내 빚도 갚는다 — "내 수,
+    이제 네 차례". 빚진 게 없는 런의 `reply` 는 거부한다.
+    """
+
+    @staticmethod
+    def _handler(reg, key):
+        return reg._make_message_handler(reg.get(key))
+
+    def _run(self, reg, b, requester, body, **req):
+        ran = []
+
+        def runner(query, ctx, **kw):
+            # 레지스트리 전체가 이 러너를 쓴다 — 상대 에이전트의 런(회신을
+            # 받은 런)에서도 몸체가 돌면 서로 message 를 주고받으며 무한히
+            # 돈다. 원 요청("일감") 런에서만 몸체를 돌린다.
+            ran.append(query)
+            if "일감" in query:
+                body()
+            return _FakeLoopResult(output="런 요약"), 0.01
+
+        reg._runner = runner
+        with SubmitSpy(reg) as spy:
+            assert reg.request(b, "일감", author=requester, **req) == ""
+            assert wait_until(lambda: ran)
+            assert wait_until(lambda: reg.get(b).state == "idle")
+        return spy.calls
+
+    def test_reply_settles_and_nothing_else_is_delivered(self, mkreg, renderer):
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        calls = self._run(
+            reg, b, f"agent:{a}", lambda: reg.question_port(b).reply("답:완료")
+        )
+        to_a = [c for c in calls if c["key"] == a]
+        assert len(to_a) == 1, f"에코가 섞였다: {to_a}"
+        assert to_a[0]["message"].startswith("답:완료")
+        assert to_a[0]["expects_reply"] is False, "reply 가 새 빚을 지웠다"
+
+    def test_message_to_requester_settles_and_opens_their_debt(self, mkreg, renderer):
+        """끝말잇기 규칙 — 항목 하나로 양쪽이 빚진다."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        calls = self._run(
+            reg, b, f"agent:{a}", lambda: self._handler(reg, b)(a, "늘그막, 네 차례")
+        )
+        to_a = [c for c in calls if c["key"] == a]
+        assert len(to_a) == 1, f"폴백까지 갔다(빚이 안 갚혔다): {to_a}"
+        assert to_a[0]["expects_reply"] is True
+
+    def test_message_to_a_third_party_leaves_the_debt(self, mkreg, renderer):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg = mkreg()
+        a, b, c = spawn_idle(reg), spawn_idle(reg), spawn_idle(reg)
+        calls = self._run(
+            reg, b, f"agent:{a}", lambda: self._handler(reg, b)(c, "부탁")
+        )
+        assert [x["expects_reply"] for x in calls if x["key"] == c] == [True]
+        (to_a,) = [x for x in calls if x["key"] == a]
+        assert to_a["message"].startswith(_NO_REPLY_LABEL), (
+            "빚이 안 갚혔는데 폴백이 없다"
+        )
+
+    def test_unpaid_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        calls = self._run(reg, b, f"agent:{a}", lambda: None)
+        (to_a,) = [x for x in calls if x["key"] == a]
+        assert to_a["message"].startswith(_NO_REPLY_LABEL)
+        assert "런 요약" in to_a["message"]
+        assert to_a["expects_reply"] is False
+
+    def test_reply_to_main_carries_attribution(self, mkreg, renderer):
+        reg = mkreg()
+        b = spawn_idle(reg)
+        reg.set_current_run_authors(["dj"])
+        self._run(reg, b, "main", lambda: reg.question_port(b).reply("보고"))
+        mail = reg.drain_replies()
+        assert [m["output"] for m in mail] == ["보고"], f"에코가 섞였다: {mail}"
+        assert mail[0].get("answers") == ["dj"]
+
+    def test_reply_is_refused_when_nothing_is_owed(self, mkreg, renderer):
+        """회신·질문·독촉으로 시작한 런 — ack 가 새는 자리. 거부하고 message 로 안내."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        seen = []
+        calls = self._run(
+            reg,
+            b,
+            f"agent:{a}",
+            lambda: seen.append(reg.question_port(b).reply("확인했습니다")),
+            expects_reply=False,  # 배달 항목으로 시작한 런
+        )
+        (err,) = seen
+        assert "nothing to reply to" in err and "message(to=" in err
+        assert not [x for x in calls if x["key"] == a], "거부됐는데 배달됐다"
+
+    def test_reply_from_main_is_refused(self, mkreg, renderer):
+        reg = mkreg()
+        assert "no requester" in reg.question_port(None).reply("x")
+
+    def test_port_reports_the_debt_and_its_repayment(self, mkreg, renderer):
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        tm = reg.get(b)
+        tm.current_author = f"agent:{a}"
+        tm.current_expects_reply = True
+        tm.replied_this_run = set()
+        port = reg.question_port(b)
+        assert port.reply_owed() == f"agent:{a}"
+        tm.replied_this_run.add(f"agent:{a}")
+        assert port.reply_owed() == ""
+        tm.replied_this_run = set()
+        tm.current_expects_reply = False  # 배달 항목으로 시작한 런
+        assert port.reply_owed() == ""
+        tm.current_expects_reply = True
+        tm.current_author = "user:dj"  # 사람은 창이 곧 배달
+        assert port.reply_owed() == ""

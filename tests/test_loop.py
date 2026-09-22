@@ -1557,11 +1557,13 @@ class TestToolPolicyDeclarations:
             tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
-        if message_handler is not None:
-            if "message" not in tools_list:
-                tools_list = [*tools_list, "message"]
-        else:
-            tools_list = [t for t in tools_list if t != "message"]
+        # ``reply`` (v9.21.0) 는 ``message`` 와 같은 선언 — 상주(핸들러 있음)에만.
+        for name in ("message", "reply"):
+            if message_handler is not None:
+                if name not in tools_list:
+                    tools_list = [*tools_list, name]
+            else:
+                tools_list = [t for t in tools_list if t != name]
         if questions is not None:
             if "answer" not in tools_list:
                 tools_list = [*tools_list, "answer"]
@@ -1626,6 +1628,8 @@ class TestToolPolicyDeclarations:
             "agent": {"depth_gated": True},
             "ask": {"requires_handler": "ctx"},
             "message": {"requires_handler": "message_handler", "force_mount": True},
+            # ``message`` 의 짝 (v9.21.0) — 요청자에게 빚진 회신을 갚는다. 같은 선언.
+            "reply": {"requires_handler": "message_handler", "force_mount": True},
             # 비동기 질문의 짝 — ``message`` 와 같은 선언(포트 없는 루프에선
             # 목록에서 제거, 있으면 강제 탑재). docs/agent-ask/DESIGN.md §3.1
             "answer": {"requires_handler": "questions", "force_mount": True},

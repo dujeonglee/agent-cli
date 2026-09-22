@@ -33,6 +33,7 @@ from agent_cli.tools.virtual import (
     AskTool,
     CompleteTool,
     MessageTool,
+    ReplyTool,
     RunSkillTool,
 )
 from agent_cli.tools.write_file import WriteFileTool
@@ -66,6 +67,10 @@ _ALL_TOOLS.append(MonitorTool())
 # ``requires_handler`` 가 포트 없는 루프에서 알아서 떼므로 무조건 등록한다.
 # 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
 _ALL_TOOLS.append(AnswerTool())
+
+# ↩ ``reply`` — `message` 의 짝 (v9.21.0): 요청자에게 빚진 회신을 갚는다.
+# ``requires_handler="message_handler"`` 라 상주 에이전트에만 붙는다.
+_ALL_TOOLS.append(ReplyTool())
 
 # ⏰ ``schedule`` — only when an external scheduler backs this session
 # (env ``AGENT_CLI_SCHEDULER=1``, set by agent-board). Appended last so the

@@ -137,12 +137,13 @@ class MessageTool(Tool):
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        "Message another running agent (a peer, or `main`) and keep working. "
-        "Async: your message is delivered to them and its reply comes back to "
-        "YOU as a NEW message — you are NOT blocked. See `## Live Agents` for "
-        "who is running and their roles. Use to consult a specialist, hand off "
-        "a sub-question, or report a result. When you have nothing to add to a "
-        "peer's reply, just `complete` (or reply `LGTM`) so the exchange ends."
+        "Message another running agent (a peer, or `main`) when you NEED "
+        "something from them — a decision, an answer, their next move. They "
+        "owe you a reply, which comes back to YOU as a NEW message; you are "
+        "NOT blocked. Sent to whoever requested your current work, it also "
+        "counts as your reply to them. To report a result with nothing "
+        "expected back, use `reply`. `complete` alone reports to no one. See "
+        "`## Live Agents` for who is running. Never send acknowledgements."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -165,6 +166,36 @@ class MessageTool(Tool):
         # callers get a benign echo.
         to = args.get("to", "")
         return ToolResult(True, output=f"(message to {to}: intercepted by loop)")
+
+
+class ReplyTool(Tool):
+    """상주 에이전트 전용 (v9.21.0). 이 런을 시킨 쪽에게 답한다 — `message`
+    와 짝이다(`ask` ↔ `answer` 처럼). `message` 는 상대에게 회신을 **빚지우고**,
+    `reply` 는 내 빚을 **갚는다**(돌려받을 것 없음). 요청자는 하네스가 아니까
+    `to` 가 없다. 빚진 게 없는 런(회신·질문·독촉으로 시작)에서 부르면 거부
+    — "확인했습니다" 류의 ack 가 정확히 거기서 새어 나온다(사용자 결정)."""
+
+    name = "reply"
+    requires_handler = "message_handler"  # 상주에만 — main 은 요청자가 없다
+    force_mount = True
+    description = (
+        "Reply to whoever requested your current work — your result, your "
+        "answer, your report. Nothing is expected back, so this ends the "
+        "exchange cleanly. Use `message` instead when you NEED something from "
+        "them (a decision, their next move). `complete` alone reports to no "
+        "one: reply BEFORE you complete. Refused when nothing is owed."
+    )
+    parameters: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string", "description": "Your reply."},
+        },
+        "required": ["text"],
+    }
+
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        # Placeholder — the loop intercepts `reply` before dispatch.
+        return ToolResult(True, output=str(args.get("text", "")) or "(reply)")
 
 
 class AnswerTool(Tool):
