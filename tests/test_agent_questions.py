@@ -2340,3 +2340,242 @@ class TestMainRunEnd:
             "expects a reply from you" in build_reply_record(m, registry=reg)["content"]
         )
         assert "nothing to send back" in build_reply_record(r, registry=reg)["content"]
+
+
+# ── 유형별 통일 규칙 (v9.22.0) ────────────────────────
+
+
+class TestUnifiedDebtRules:
+    """수신 **유형**으로 규칙이 정해진다 — 루프(main/상주)가 아니라.
+
+    | 유형 | complete 이 오면 |
+    |---|---|
+    | 사용자 요청 | 수락 · answers 의 키 제거 · 남은 요청 독촉 |
+    | message / ask | 미회신이면 거부(상주) / 수락 후 독촉(main) · 3회 · 런 끝 정리 |
+    | 섞임 | 수락 → 요청 정산 → message/ask 독촉 |
+    """
+
+    @staticmethod
+    def _env(ops):
+        import json
+
+        return "## Thought\\nt\\n\\n## Action\\n" + json.dumps(ops)
+
+    def _run(self, *, ports, query, contents, query_request_id="", user_requests=None):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        p = MagicMock()
+        p.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        res = run_loop(
+            query=query,
+            query_author="Bob",
+            query_request_id=query_request_id,
+            user_requests=user_requests,
+            provider=p,
+            capabilities=_caps(),
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+            wire_format="json_fc",
+            ports=ports,
+        )
+        return p, ctx, res
+
+    # ── 상주: 사람 창 요청은 회계에 오른다 ──────────
+
+    def test_human_window_request_gets_accounting_in_the_agent_loop(
+        self, mkreg, renderer
+    ):
+        """에이전트 창의 사용자 요청도 main 과 같다 — answers 필수, 없으면 되돌림."""
+        from agent_cli.runtime import ports_for_resident
+
+        reg = mkreg()
+        b = spawn_idle(reg)
+        ports = ports_for_resident(
+            key=b, message_handler=lambda to, text: "", questions=reg.question_port(b)
+        )
+        tm = reg.get(b)
+        tm.current_author, tm.current_expects_reply = "user:dj", True
+        p, _ctx, res = self._run(
+            ports=ports,
+            query="[user:dj]: 리뷰해줘",
+            user_requests=[{"id": "7", "author": "user:dj", "text": "리뷰해줘"}],
+            contents=[
+                self._env([{"action": "complete", "result": "리뷰 결과"}]),
+                self._env(
+                    [{"action": "complete", "result": "리뷰 결과", "answers": ["7"]}]
+                ),
+            ],
+        )
+        assert p.call.call_count == 2, (
+            "사람 창 요청인데 answers 없는 complete 이 통과했다"
+        )
+        assert res.output == "리뷰 결과"
+
+    def test_registry_passes_human_requests_to_the_runner(self, mkreg, renderer):
+        reg = mkreg()
+        seen = {}
+
+        def runner(query, ctx, **kw):
+            seen["user_requests"] = kw.get("user_requests")
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg._runner = runner
+        b = spawn_idle(reg)
+        reg.request(b, "리뷰해줘", author="user:dj")
+        assert wait_until(lambda: "user_requests" in seen)
+        (req,) = seen["user_requests"]
+        assert req["author"] == "user:dj" and req["text"] == "리뷰해줘" and req["id"]
+
+    def test_agent_originated_request_carries_no_user_accounting(self, mkreg, renderer):
+        reg = mkreg()
+        seen = {}
+
+        def runner(query, ctx, **kw):
+            seen["user_requests"] = kw.get("user_requests")
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg._runner = runner
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.request(b, "일감", author=f"agent:{a}")
+        assert wait_until(lambda: "user_requests" in seen)
+        assert seen["user_requests"] == []
+
+    # ── 상주: 질문(ask) 빚도 거부 대상 ─────────────
+
+    def test_resident_completing_with_an_open_question_is_refused(
+        self, mkreg, renderer
+    ):
+        from agent_cli.runtime import ports_for_resident
+
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        # 워커를 거치지 않고 "배달된 열린 질문" 상태를 만든다 — 워커가
+        # 꺼내면 가짜 러너가 즉시 끝나 `close_unanswered` 가 닫아 버린다.
+        from agent_cli.subagent.agents_live import Question
+
+        qid = "q-test"
+        with reg._cv:
+            reg._questions[qid] = Question(
+                id=qid, asker=a, target=f"agent:{b}", text="어느 쪽?", delivered_seq=1
+            )
+        ports = ports_for_resident(
+            key=b, message_handler=lambda to, text: "", questions=reg.question_port(b)
+        )
+        tm = reg.get(b)
+        tm.current_author, tm.current_expects_reply = f"agent:{a}", False  # 질문 항목
+        p, ctx, _res = self._run(
+            ports=ports,
+            query=f"[question {qid} from {a}]: 어느 쪽?",
+            contents=[
+                self._env([{"action": "complete", "result": "끝"}]),
+                self._env(
+                    [
+                        {"action": "answer", "id": qid, "text": "왼쪽"},
+                        {"action": "complete", "result": "끝"},
+                    ]
+                ),
+            ],
+        )
+        assert p.call.call_count == 2, "질문에 답 안 한 complete 이 통과했다"
+        refusals = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "was refused" in m.get("content", "")
+        ]
+        assert refusals and f'answer(id="{qid}"' in refusals[0]["content"]
+        assert qid not in reg._questions  # 답했다
+
+    # ── main: message 빚은 수락 후 독촉 ────────────
+
+    def test_main_completing_with_an_unreplied_message_is_nagged_not_refused(
+        self, mkreg, renderer
+    ):
+        from tests.loop_ports import make_ports
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+        # 런 시작 시 배달되는 회신 기대 message → main 이 빚진다
+        reg.message_to_main(a, "결정해 줘", expects_reply=True)
+        ports = make_ports(
+            owner="main", agent_registry=reg, questions=reg.question_port(None)
+        )
+        import agent_cli.loop.dispatch as D
+
+        finals = []
+        real = D.render_step
+        D.render_step = lambda kind, text, *x, **k: (
+            finals.append(text) if kind == "final" else None
+        )
+        try:
+            p, ctx, _res = self._run(
+                ports=ports,
+                query="사용자 요청",
+                query_request_id="1",
+                contents=[
+                    self._env(
+                        [{"action": "complete", "result": "답", "answers": ["1"]}]
+                    ),
+                    self._env([{"action": "complete", "result": "답", "answers": []}]),
+                    self._env([{"action": "complete", "result": "답", "answers": []}]),
+                    self._env([{"action": "complete", "result": "끝", "answers": []}]),
+                ],
+            )
+        finally:
+            D.render_step = real
+        # 첫 complete: 사용자 요청은 정산됐고(수락, final 렌더), message 빚이 남아 독촉
+        assert finals and finals[0] == "답", (
+            "main 의 complete 이 거부됐다 — 수락돼야 한다"
+        )
+        nags = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "you still owe" in m.get("content", "")
+        ]
+        assert nags and 'agent(mode="request"' in nags[0]["content"]
+        # 상한 3회 — 네 번째 complete 은 그대로 끝난다 (폴백은 main.py 의
+        # `main_run_ended` → `end_main_run` 이 배달)
+        assert len(nags) == 3 and p.call.call_count == 4
+        assert finals[-1] == "끝"
+        assert reg.main_reply_debts() == [(a, "결정해 줘")]
+
+    def test_mixed_run_settles_requests_then_nags_debts(self, mkreg, renderer):
+        """섞임: 수락 → answers 의 요청 제거 → message/ask 독촉."""
+        from tests.loop_ports import make_ports
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "main", "어느 쪽?")
+        reg.drain_replies()  # main 에 배달 마킹
+        ports = make_ports(
+            owner="main", agent_registry=reg, questions=reg.question_port(None)
+        )
+        p, ctx, _res = self._run(
+            ports=ports,
+            query="사용자 요청",
+            query_request_id="1",
+            contents=[
+                self._env([{"action": "complete", "result": "답", "answers": ["1"]}]),
+                self._env(
+                    [
+                        {"action": "answer", "id": qid, "text": "v2"},
+                        {"action": "complete", "result": "끝", "answers": []},
+                    ]
+                ),
+            ],
+        )
+        obs = [
+            m.get("content", "")
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user"
+        ]
+        blob = "\\n".join(obs)
+        assert "you still owe" in blob and f'answer(id="{qid}"' in blob
+        assert qid not in reg._questions
+        assert p.call.call_count == 2

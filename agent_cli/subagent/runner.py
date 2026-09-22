@@ -173,6 +173,7 @@ def run_subagent_message(
     stop_event=None,
     agent_role: str = "",
     hooks_config: dict | None = None,
+    user_requests: list | None = None,
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
 ) -> tuple[LoopResult, float]:
@@ -208,6 +209,7 @@ def run_subagent_message(
         stop_event=stop_event,
         agent_role=agent_role,
         hooks_config=hooks_config,
+        user_requests=user_requests,
         compaction_enabled=compaction_enabled,
         ports=ports,
         peer_agents_section=peer_agents_section,

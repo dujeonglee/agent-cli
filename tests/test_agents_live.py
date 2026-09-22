@@ -1405,7 +1405,9 @@ class TestHumanInterventionRouting:
         batched = runner.seen[1]
         assert "[user:alice]: msg one" in batched
         assert "[user:bob]: msg two" in batched
-        assert "arrived together" in batched  # _AGENT_BATCH_NOTICE
+        # v9.22.0: 배치 안내문은 없다 — 항목별 id 가 회계로 가고 꼬리·answers 가
+        # "전부 답하라" 를 강제한다(main 의 QUEUED_REQUEST_NOTICE 와 같은 결정).
+        assert "arrived together" not in batched
         assert not reg.has_pending_replies()  # 전부 user:* → 창만
         assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
         reg.shutdown_all()

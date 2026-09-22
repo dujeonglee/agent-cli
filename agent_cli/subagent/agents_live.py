@@ -51,17 +51,6 @@ if TYPE_CHECKING:
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
 _SHUTDOWN = object()
 
-# 사람-직접 요청이 한 턴에 여러 건 배치될 때(C-1) 앞에 붙는 안내 —
-# 에이전트가 최신 것만 답하고 나머지를 흘리지 않게 한다.
-#
-# main 에도 같은 목적의 `QUEUED_REQUEST_NOTICE` 가 있었지만 v9.18.0 에
-# 걷어냈다(꼬리의 `## Open Requests` 와 같은 말을 하면서 혼자 history 에
-# 박혔다). **여기는 남긴다**: 배치는 여러 요청을 `query` 문자열 하나로
-# 합치므로 회계가 셀 id 가 없고, 따라서 그 꼬리도 없다.
-_AGENT_BATCH_NOTICE = (
-    "(Several messages arrived together — respond to ALL of the requests "
-    "below. Do not answer only the latest one and skip the earlier ones.)"
-)
 
 _DEFAULT_MAX_AGENTS = 10
 MAX_AGENTS_MIN = 1  # smallest positive cap; 0 (or less) means unlimited
@@ -2320,8 +2309,17 @@ class AgentRegistry:
             req_ts=item.get("ts"),
         )
         success, output, duration = False, "", 0.0
+        human_item = author == "user" or author.startswith("user:")
         try:
-            loop_result, duration = self._run_message(tm, query)
+            loop_result, duration = self._run_message(
+                tm,
+                query,
+                user_requests=(
+                    [{"id": str(seq), "author": author, "text": text}]
+                    if human_item
+                    else []
+                ),
+            )
             success = bool(loop_result.success)
             output = (
                 loop_result.output
@@ -2419,7 +2417,7 @@ class AgentRegistry:
     ) -> None:
         """사람-직접 요청 2건+ 를 한 턴에 배치 처리(C-1) — 모두 ``user:*`` 발신
         이라 회신은 대화창 전용(⑥), main mailbox 미배달. main 과 동일하게 대기분
-        전부를 한 응답으로 처리(_AGENT_BATCH_NOTICE 안내). 첫 항목의 seq/ts 로
+        전부를 한 응답으로 처리(항목마다 회계 id — 꼬리·answers 가 강제). 첫 항목의 seq/ts 로
         작업 카드 1개(스윔레인은 각 메시지의 in 화살표가 이 카드로 수렴)."""
         first = items[0]
         seq = first["seq"]
@@ -2430,7 +2428,14 @@ class AgentRegistry:
         self._notify_roster()
 
         labeled = [f"[{it.get('author', 'main')}]: {it['text']}" for it in items]
-        query = _AGENT_BATCH_NOTICE + "\n\n" + "\n\n".join(labeled)
+        # v9.22.0: 배치 안내문(`_AGENT_BATCH_NOTICE`)은 뺀다 — 항목마다 id 가
+        # 회계에 올라 꼬리의 `## Open Requests` 와 `answers` 강제가 그 일을 한다
+        # (main 의 QUEUED_REQUEST_NOTICE 를 걷어낸 것과 같은 이유).
+        query = "\n\n".join(labeled)
+        user_requests = [
+            {"id": str(it["seq"]), "author": it.get("author", ""), "text": it["text"]}
+            for it in items
+        ]
         preview = "\n".join(labeled)
 
         renderer.begin_agent_work(
@@ -2438,7 +2443,9 @@ class AgentRegistry:
         )
         success, output, duration = False, "", 0.0
         try:
-            loop_result, duration = self._run_message(tm, query)
+            loop_result, duration = self._run_message(
+                tm, query, user_requests=user_requests
+            )
             success = bool(loop_result.success)
             output = (
                 loop_result.output
@@ -2480,8 +2487,13 @@ class AgentRegistry:
         tm.current_seq = 0
         self._notify_roster()
 
-    def _run_message(self, tm: AgentInstance, query: str):
-        """request 1건 실행 — 실제 러너 또는 테스트 주입 러너."""
+    def _run_message(self, tm: AgentInstance, query: str, *, user_requests=None):
+        """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.
+
+        ``user_requests`` (v9.22.0): 사람이 창에서 직접 시킨 요청들
+        ``{id, author, text}`` — 루프의 회계(`run_requests`)에 오른다.
+        main 과 같은 규칙: `complete` 에 `answers` 가 있어야 하고, 남은 요청은
+        독촉된다. 에이전트·main 발신 항목엔 없다(그건 message/ask 빚이다)."""
         runner = self._runner
         if runner is None:
             from agent_cli.subagent.runner import run_subagent_message
@@ -2509,6 +2521,7 @@ class AgentRegistry:
                 questions=self.question_port(tm.key),
             ),
             peer_agents_section=peer_section,
+            user_requests=list(user_requests or []),
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),
             model=tm.model or rt.get("model", ""),

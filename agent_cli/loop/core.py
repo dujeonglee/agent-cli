@@ -80,6 +80,7 @@ class AgentLoop:
         query_author: str | None = None,
         query_author_is_user: bool = True,
         query_request_id: str = "",
+        user_requests: list | None = None,
         agent_role: str = "",
         agent_name: str = "",
         record_turns: bool = True,
@@ -120,6 +121,10 @@ class AgentLoop:
         # 런을 연 요청의 id — 웹 워커가 `dequeue_blocking()` 한 아이템의 것.
         # CLI 는 빈 문자열(요청이 하나뿐이라 회계할 것이 없다).
         self.query_request_id = query_request_id
+        # v9.22.0 — 상주 에이전트 창에 사람이 직접 입력한 요청(단건·배치).
+        # main 의 스타터 id/드레인과 같은 회계(`run_requests`)에 올린다 —
+        # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
+        self.user_requests = list(user_requests or [])
         self.run_authors: list[str] = []
         self.provider = provider
         self.ctx = ctx
@@ -589,6 +594,15 @@ class AgentLoop:
             begin = getattr(self._config.agent_registry, "begin_main_run", None)
             if callable(begin):
                 begin()
+        for r in self.user_requests:
+            if r.get("id"):
+                self._state.run_requests.append(
+                    {
+                        "id": str(r["id"]),
+                        "author": r.get("author") or "",
+                        "text": r.get("text") or "",
+                    }
+                )
         starter_rid = self.query_request_id if self.query_author_is_user else ""
         if starter_rid:
             self._state.run_requests.append(

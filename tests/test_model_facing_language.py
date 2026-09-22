@@ -6,7 +6,6 @@
 
 v9.14.0 직전 실측으로 세 군데가 새고 있었다:
 
-- `_AGENT_BATCH_NOTICE` — 에이전트의 **query 로 그대로** 들어간다
 - `_with_human_notice` — 에이전트 출력 끝에 붙어 main 이 읽는다
 - **monitor 통째로** — 보고 머리말·은퇴 사유·조건 설명·도구 에러. 모니터가
   v9.11.0 이래 한 번도 제대로 동작한 적이 없어 아무도 못 봤다.
@@ -164,11 +163,6 @@ class TestToolErrors:
 
 class TestInjectedNotices:
     """프롬프트에 직접 주입되는 안내문."""
-
-    def test_agent_batch_notice(self):
-        from agent_cli.subagent.agents_live import _AGENT_BATCH_NOTICE
-
-        _assert_ascii_ish(_AGENT_BATCH_NOTICE, "에이전트 배치 안내")
 
     def test_owed_reminder(self):
         from agent_cli.subagent.agents_live import _OWED_REMINDER
