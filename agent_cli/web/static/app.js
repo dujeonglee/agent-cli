@@ -2346,14 +2346,11 @@
   // (docs/chat-ui §4). 상대 칩이 점프 버튼을 겸한다.
   function ovRenderAgentMsg(d) {
     var out = d.direction === "out" || d.direction === "question";
-    // 빈 `to` = **어디로도 배달되지 않은** 산출물(v9.20.1): 받은 회신에 대한
-    // 응답(핑퐁 방지)이거나 질문을 건 런의 부분 결과. 종전엔 서버가 여기도
-    // 요청자를 찍어서 "→ 보냄 · 회신했습니다" 로 그려졌고, 받는 쪽엔 아무것도
-    // 없었다(사용자 제보). `ovPeerInfo("")` 는 main 으로 읽으므로 먼저 가른다.
-    var terminal = d.direction === "out" && !d.to;
-    var peer = terminal
-      ? { label: "배달 없음", key: "" }
-      : ovPeerInfo(out ? d.to : d.author);
+    // 왕래 줄은 **실제 발신/수신**만이다(v9.21.0). `complete` 산출물은 배달되지
+    // 않으므로 서버가 out 을 내지 않는다 — 에이전트 채널의 ✅ 카드가 그것이다.
+    // 하네스 폴백(독촉 뒤에도 reply 가 없어 런 요약을 대신 보낸 것)은 진짜
+    // 발신이라 `보냄` 이고, 본문 첫 줄의 라벨이 사정을 말한다.
+    var peer = ovPeerInfo(out ? d.to : d.author);
     var text = String(d.text || "");
     var first = text.split("\n").find(function (l) { return l.trim(); }) || text;
     var tail = el("span", ["peer"], peer.label);
@@ -2378,13 +2375,9 @@
         : null;
     card.appendChild(
       makeRow(
-        d.direction === "question" ? "❓" : terminal ? "✓" : out ? "→" : "←",
-        d.direction === "question" ? "질문" : terminal ? "완료" : out ? "보냄" : "받음",
-        dup
-          ? terminal
-            ? "회신 없음 — 받은 회신에 대한 산출물이라 아무에게도 보내지 않았다"
-            : "회신했습니다"
-          : first.trim(),
+        d.direction === "question" ? "❓" : out ? "→" : "←",
+        d.direction === "question" ? "질문" : out ? "보냄" : "받음",
+        dup ? "회신했습니다" : first.trim(),
         body,
         dup ? ["msg", "receipt"] : ["msg"],
         tail

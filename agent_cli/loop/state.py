@@ -109,9 +109,11 @@ class LoopState:
     #: (붙잡기가 아니다 — 결과는 이미 나갔다). 상한이 없으면 고집 센 모델과
     #: 물려 런을 태운다.
     requests_nagged: set = field(default_factory=set)
-    #: 상주 에이전트: 요청자에게 빚진 `message` 없이 `complete` 하려 해서
-    #: 이미 한 번 독촉했나 (v9.21.0). 런당 한 번 — 그래도 안 보내면 레지스트리가
-    #: 런 요약을 라벨 붙여 폴백 배달한다.
-    reply_nagged: bool = False
+    #: 상주 에이전트: 요청자에게 빚진 `reply`/`message` 없이 `complete` 하려
+    #: 해서 독촉한 횟수 (v9.21.0). 상한은 `dispatch.MAX_REPLY_NAGS`(3) —
+    #: 무제한이면 아무것도 런을 못 멈춘다(개입은 max_turns 미계수, B1 은
+    #: 도구 경로에만 있어 반복 complete 을 안 본다). 상한 뒤엔 레지스트리가
+    #: 런 요약을 라벨 붙여 폴백 배달한다 — 요청자가 침묵을 받진 않는다.
+    reply_nags: int = 0
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

@@ -132,8 +132,10 @@ class _RecordingRunner:
 # v9.21.0 — `complete` 는 국소다. 러너가 요청자에게 `message` 를 안 보내면
 # 레지스트리가 런 요약을 **라벨 붙여** 폴백 배달한다. 아래 테스트들은 가짜
 # 러너가 message 를 안 보내므로 전부 이 경로다 — 라벨을 벗기고 내용을 본다.
+from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+
 def _unlabel(output: str) -> str:
-    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
 
     assert output.startswith(_NO_REPLY_LABEL + "\n"), (
         f"폴백 요약에 라벨이 없다: {output[:60]!r}"
@@ -2728,7 +2730,8 @@ class TestConversationReplay:
         recs = self._conv_records(tmp_path, key)
         dirs = [(r["direction"], r["text"]) for r in recs]
         assert ("in", "first job") in dirs
-        assert ("out", "done:first job") in dirs
+        # v9.21.0: 가짜 러너는 reply 를 안 보내므로 이 out 은 하네스 폴백이다
+        assert ("out", _NO_REPLY_LABEL + "\ndone:first job") in dirs
         # 각 레코드는 대화창 페이로드 그대로 — 재생이 파싱 없이 재발행 가능.
         out = next(r for r in recs if r["direction"] == "out")
         assert out["key"] == key and out["to"] == "main" and out["seq"] == 1
@@ -2754,7 +2757,8 @@ class TestConversationReplay:
         assert names[0] == "clear_agent_conversation"
         msgs = renderer.named("agent_message")
         texts = {(c[1]["direction"], c[1]["text"]) for c in msgs}
-        assert ("in", "job") in texts and ("out", "done:job") in texts
+        assert ("in", "job") in texts
+        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
         # 저장된 ts 가 재발행에 실린다.
         assert all("ts" in c[1] for c in msgs)
         reg.shutdown_all()
@@ -2790,7 +2794,8 @@ class TestConversationReplay:
         texts = {
             (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
         }
-        assert ("in", "job") in texts and ("out", "done:job") in texts
+        assert ("in", "job") in texts
+        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
         reg.shutdown_all()
 
     def test_session_restore_replays_conversation(self, tmp_path, renderer):
@@ -2810,7 +2815,8 @@ class TestConversationReplay:
         texts = {
             (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
         }
-        assert ("in", "job") in texts and ("out", "done:job") in texts
+        assert ("in", "job") in texts
+        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
         reg2.shutdown_all()
 
 

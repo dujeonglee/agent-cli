@@ -433,37 +433,6 @@ class TestTrafficRow:
         body = page.locator("#messages").inner_text()
         assert body.count(answer) == 1, "같은 답이 두 번 보인다"
 
-    def test_undelivered_output_is_not_drawn_as_sent(self, stack, page):
-        """빈 `to` = 어디로도 배달되지 않은 산출물(v9.20.1). 종전엔 서버가
-        여기도 요청자를 찍어 "→ 보냄 · test (peer) · 회신했습니다" 로 그려졌고
-        받는 쪽엔 아무것도 없었다(사용자 제보 tcx7hs). `ovPeerInfo("")` 는
-        main 으로 읽으므로 그대로 두면 "💬 main 에게 보냄" 이 된다."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        answer = "COMPLETE — no outstanding actions."
-        stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
-            kind="run",
-            label="회신에 대한 런",
-            agent=AGT,
-            parent="",
-            ctx_dir=f"agents/{AGT}",
-        )
-        stack.renderer.final(answer, turn=1)
-        stack.renderer.agent_message(
-            key=AGT, direction="out", author=AGT, text=answer, to=""
-        )
-        row = page.locator("#messages .card-msg .row")
-        assert _wait(lambda: row.count() == 1)
-        text = row.inner_text()
-        assert "보냄" not in text and "회신했습니다" not in text, text
-        assert "완료" in text and "배달 없음" in text, text
-        assert "main" not in text, "빈 수신자가 main 으로 읽혔다"
-
     def test_reply_without_a_preceding_final_keeps_its_content(self, stack, page):
         """kill→resume 재생은 `agent_message` 만 다시 내보낸다(최종답은 안
         온다) — 그때 이 줄은 그 답의 **유일한 기록**이므로 내용을 그대로

@@ -867,13 +867,14 @@ class TestSurfaces:
         assert "reply" not in kinds  # 답 런의 회신이 진짜 회신이다
         # 억제는 **재주입만** 막는다 — 창·로그·persist 는 그대로 돌아야
         # 사용자가 이 에이전트가 한 일을 본다.
+        # v9.21.0: 배달 없는 산출물은 왕래 줄이 아니다 — out 레코드가 없다.
+        # (에이전트 채널의 final 카드가 그 산출물이다.) persist 는 그대로.
         outs = [
             c[1]
             for c in renderer.named("agent_message")
             if c[1].get("direction") == "out" and c[1].get("key") == b
         ]
-        assert len(outs) == 1
-        assert "부분 결과" in outs[0]["text"]
+        assert outs == []
         assert (tmp_path / "agents" / b / "replies" / "reply-1.md").is_file()
 
     def test_roster_carries_open_questions(self, mkreg, tmp_path, renderer):
@@ -2005,13 +2006,15 @@ class TestAskToUser:
 # ── ⑨ 창의 "→ 보냄" 은 실제 배달만 (v9.20.1) ────────
 
 
-class TestOutboundRecipientIsTruthful:
-    """사용자 제보(tcx7hs): 오케스트레이터 창에 "→ 보냄 · test (peer) ·
-    회신했습니다" 가 떴는데 test 쪽엔 아무것도 도착하지 않았다. 그 런의
-    inbound 가 test 의 **회신**(expects_reply=False)이라 산출물은 설계대로
-    어디로도 안 갔는데, 창·conversation.jsonl 은 라우팅 판정 **전에**
-    ``to=author`` 로 무조건 찍혔다. ``to`` 는 실제 수신자여야 한다 —
-    배달 없는 두 경우는 빈 문자열.
+class TestTrafficRowsAreRealSendsOnly:
+    """창의 왕래 줄(`agent_message` out)은 **실제 발신**에만 생긴다 (v9.21.0).
+
+    v9.20.1 은 배달 없는 산출물에 `to=""` 을 찍어 "배달 없음" 으로 그렸다.
+    그 뒤 `complete` 이 국소가 되면서(어떤 경우에도 배달 없음) 그 줄은 존재
+    이유를 잃었다 — 에이전트 채널의 final 카드가 이미 그것이고, "완료·
+    배달 없음 / 폴백 / 보냄" 셋으로 가를 이유가 없다(사용자 지적). 남는
+    out 은 둘: 하네스 폴백(라벨 달린 런 요약)과 user:* (창이 곧 배달).
+    reply/message 는 보낼 때 스스로 out 을 남긴다.
     """
 
     def _run_one(self, mkreg, renderer, **req):
@@ -2032,63 +2035,149 @@ class TestOutboundRecipientIsTruthful:
             for c in renderer.named("agent_message")
             if c[1].get("direction") == "out" and c[1].get("key") == b
         ]
+        return reg, b, outs
+
+    def test_unpaid_request_yields_one_labelled_fallback_row(self, mkreg, renderer):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        _, _, outs = self._run_one(mkreg, renderer, author="agent:agt-x")
         assert len(outs) == 1
-        return reg, b, outs[0]
+        assert outs[0]["to"] == "agent:agt-x"
+        assert outs[0]["text"].startswith(_NO_REPLY_LABEL)
 
-    def test_peer_message_is_delivered_and_says_so(self, mkreg, renderer):
-        _, _, out = self._run_one(mkreg, renderer, author="agent:agt-x")
-        assert out["to"] == "agent:agt-x"
-
-    def test_reply_to_a_reply_goes_nowhere_and_says_so(self, mkreg, renderer):
-        """핑퐁 방지로 배달이 없는 그 경우 — 창이 '보냈다' 고 하면 안 된다."""
-        _, _, out = self._run_one(
+    def test_delivered_item_run_yields_no_row(self, mkreg, renderer):
+        """받은 회신으로 시작한 런 — 산출물은 아무에게도 안 가고 줄도 없다."""
+        _, _, outs = self._run_one(
             mkreg, renderer, author="agent:agt-x", expects_reply=False
         )
-        assert out["to"] == "", "배달하지 않은 산출물에 수신자가 찍혔다"
+        assert outs == []
 
-    def test_main_request_reply_names_main(self, mkreg, renderer):
-        reg, _b, out = self._run_one(mkreg, renderer, author="main")
-        assert out["to"] == "main"
-        assert any(r.get("kind") == "reply" for r in reg.drain_replies())
+    def test_human_window_request_keeps_its_row(self, mkreg, renderer):
+        _, _, outs = self._run_one(mkreg, renderer, author="user:bob")
+        assert len(outs) == 1 and outs[0]["to"] == "user:bob"
 
-    def test_human_window_request_keeps_the_human(self, mkreg, renderer):
-        """user:* 는 창이 곧 배달이다 — 비우면 안 된다."""
-        _, _, out = self._run_one(mkreg, renderer, author="user:bob")
-        assert out["to"] == "user:bob"
-
-    def test_withheld_partial_result_says_nowhere(self, mkreg, renderer):
-        """질문을 건 런의 부분 결과(§3.7)도 배달이 없다."""
-        reg = mkreg()
-        ran = []
-
-        def runner(query, ctx, **kw):
-            reg.register_question(b, "main", "어느 쪽?")
-            ran.append(query)
-            return _FakeLoopResult(output="부분 결과"), 0.01
-
-        reg._runner = runner
-        b = spawn_idle(reg)
-        reg.request(b, "일감", author="main")
-        assert wait_until(lambda: ran)
-        assert wait_until(lambda: reg.get(b).state == "idle")
-        (out,) = [
-            c[1]
-            for c in renderer.named("agent_message")
-            if c[1].get("direction") == "out" and c[1].get("key") == b
-        ]
-        assert out["to"] == ""
-
-    def test_conversation_log_carries_the_same_truth(self, mkreg, renderer, tmp_path):
-        """resume 재생이 이 로그를 읽는다 — 창과 같은 값이어야 한다."""
+    def test_conversation_log_matches_the_window(self, mkreg, renderer, tmp_path):
         import json
 
-        _reg, b, _out = self._run_one(
+        _, b, _ = self._run_one(
             mkreg, renderer, author="agent:agt-x", expects_reply=False
         )
         log = tmp_path / "agents" / b / "conversation.jsonl"
         recs = [json.loads(line) for line in log.read_text().splitlines()]
-        outs = [r for r in recs if r.get("direction") == "out"]
-        assert outs and outs[-1]["to"] == ""
+        assert [r for r in recs if r.get("direction") == "out"] == []
+
+
+# ── ⑪ 독촉 상한 3회 (v9.21.0) ──────────────────────
+
+
+class TestReplyNagCap:
+    """빚진 회신 없이 `complete` 하면 독촉하되 **3회까지** (사용자 결정).
+
+    무제한이면 아무것도 런을 못 멈춘다 — 개입은 max_turns 를 소모하지 않고,
+    B1 액션-루프 감지는 도구 경로에만 있어 반복 complete 을 안 본다. 상한
+    뒤엔 레지스트리가 런 요약을 라벨 붙여 폴백 배달한다 — 침묵이 아니다.
+    """
+
+    class _OwedPort:
+        nonblocking = True
+
+        def __init__(self):
+            self.replies = []
+
+        def reply_owed(self):
+            return "agent:agt-a" if not self.replies else ""
+
+        def reply(self, text):
+            self.replies.append(text)
+            return ""
+
+    @staticmethod
+    def _env(ops):
+        import json
+
+        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+
+    def _loop(self, port, *contents):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        p = MagicMock()
+        p.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        res = run_loop(
+            query="[agent:agt-a]: 일감",
+            provider=p,
+            capabilities=_caps(),
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+            wire_format="json_fc",
+            ports=make_ports(owner="agent:agt-b", questions=port),
+        )
+        return p, ctx, res
+
+    def test_three_reminders_then_the_run_ends(self):
+        port = self._OwedPort()
+        done = self._env([{"action": "complete", "result": "끝"}])
+        p, ctx, res = self._loop(port, done, done, done, done)
+        nags = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user"
+            and "completed without replying" in m.get("content", "")
+        ]
+        assert len(nags) == 3, f"독촉 {len(nags)}회 — 상한은 3"
+        assert p.call.call_count == 4, "3회 독촉 뒤 네 번째 complete 은 통과해야 한다"
+        assert res.output == "끝"
+        assert "2 more reminders" in nags[0]["content"]
+        assert "Last reminder" in nags[-1]["content"]
+
+    def test_replying_after_a_reminder_stops_them(self):
+        port = self._OwedPort()
+        p, _ctx, res = self._loop(
+            port,
+            self._env([{"action": "complete", "result": "끝"}]),
+            self._env(
+                [
+                    {"action": "reply", "text": "답"},
+                    {"action": "complete", "result": "끝"},
+                ]
+            ),
+        )
+        assert p.call.call_count == 2 and port.replies == ["답"]
+        assert res.output == "끝"
+
+    def test_rejected_complete_is_a_failed_observation_not_a_final(self):
+        """거부된 complete 은 ✅ final 이 아니라 ✗ 관찰로 남는다(실측 a209hq:
+        final 카드로 그려져 통과한 것처럼 보였다)."""
+        import agent_cli.loop.dispatch as D
+
+        seen = []
+        real = D.render_step
+        D.render_step = lambda kind, text, *a, **k: seen.append(
+            (kind, k.get("success"))
+        )
+        try:
+            port = self._OwedPort()
+            self._loop(
+                port,
+                self._env([{"action": "complete", "result": "끝"}]),
+                self._env(
+                    [
+                        {"action": "reply", "text": "답"},
+                        {"action": "complete", "result": "끝"},
+                    ]
+                ),
+            )
+        finally:
+            D.render_step = real
+        finals = [k for k, _ in seen if k == "final"]
+        assert len(finals) == 1, f"거부된 complete 이 final 로 그려졌다: {seen}"
+        assert ("observation", False) in seen, "거부가 실패 관찰로 안 보인다"
 
 
 # ── ⑩ complete 는 국소, 배달은 message/reply 뿐 (v9.21.0) ──

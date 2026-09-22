@@ -12,6 +12,13 @@ from agent_cli.loop.skill_invoke import _handle_run_skill
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
+
+#: 빚진 회신 없이 `complete` 하려는 상주 에이전트를 독촉하는 상한 (v9.21.0).
+#: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
+#: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
+#: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
+#: 오케스트레이터만 1회를 넘겼다.
+MAX_REPLY_NAGS = 3
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
@@ -97,6 +104,7 @@ class TurnDispatcher:
         tool_name: str = "",
         primitives=None,
         recovery_kind: str = "",
+        render: bool = False,
     ):
         """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
 
@@ -112,7 +120,14 @@ class TurnDispatcher:
         ``recovery_kind`` "format" 은 fold 대상 마킹(B1 은 빈 값 유지 —
         액션 루프 넛지는 다음 파싱 성공으로 해소된 게 아니므로 접지 않는다).
         """
-        render_recovery(llm_text, message, reason, self.state.turn)
+        # ``render=True`` (v9.21.0): 거부를 **실패한 관찰 카드**로 남긴다.
+        # 기본(False)은 형식 거부용 — 웹의 recovery() 는 휘발 retry_tick 만
+        # 내고 카드를 안 그린다(거부된 원문은 재시도 기계지 모델의 작업이
+        # 아니다). 그런데 회신 독촉은 모델이 **일을 끝냈다고 주장한 것**을
+        # 하네스가 물리는 것이라, 아무것도 안 그리면 사용자에겐 그 complete
+        # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
+        if not render:
+            render_recovery(llm_text, message, reason, self.state.turn)
         _append_observation(
             self.state.messages,
             self.ctx,
@@ -122,7 +137,7 @@ class TurnDispatcher:
             tool_name=tool_name,
             success=False,
             turn=self.state.turn,
-            render=False,  # render_recovery already surfaced it
+            render=render,  # False: render_recovery already surfaced it
             recovery_kind=recovery_kind,
         )
         if failure_signal is not None:
@@ -685,9 +700,11 @@ class TurnDispatcher:
         # 독촉해 `message` 를 보내게 한다. 그래도 안 보내면 레지스트리가 런
         # 요약을 라벨 붙여 폴백 배달하므로 요청자가 침묵을 받진 않는다.
         owed = self._reply_owed()
-        if owed and not self.state.reply_nagged:
-            self.state.reply_nagged = True
-            render_step("final", answer, self.state.turn, requests=answered)
+        if owed and self.state.reply_nags < MAX_REPLY_NAGS:
+            self.state.reply_nags += 1
+            # final 을 **그리지 않는다** — 이 산출물은 아무 데도 안 가는 거부다.
+            # 요청 독촉(위 `nagging`)과 다르다: 그쪽은 결과가 실제로 배달된다.
+            # 거부는 실패한 관찰 카드(✗ complete)로 남는다(`_intervene(render=True)`).
             return self._nag_reply_owed(llm_text, owed, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
@@ -828,7 +845,15 @@ class TurnDispatcher:
         return fn() if callable(fn) else ""
 
     def _nag_reply_owed(self, llm_text: str, owed: str, outcome: dict):
-        """빚진 회신 독촉 (v9.21.0) — 결과는 렌더됐고 루프만 이어간다."""
+        """빚진 회신 독촉 (v9.21.0) — 거부는 실패 관찰로 남고 루프만 이어간다."""
+        left = MAX_REPLY_NAGS - self.state.reply_nags
+        tail = (
+            f" ({left} more reminder{'s' if left != 1 else ''} before the harness "
+            "sends them your run summary instead.)"
+            if left > 0
+            else " (Last reminder — if you complete again without replying, the "
+            "harness sends them your run summary instead.)"
+        )
         return self._intervene(
             llm_text,
             (
@@ -836,10 +861,12 @@ class TurnDispatcher:
                 "requested this work and is waiting — `complete` alone reports "
                 'to no one. Send your result now with reply(text="..."), or with '
                 "`message` if you need something back from them, then `complete`."
+                + tail
             ),
             "reply owed",
             outcome,
             tool_name="complete",
+            render=True,
         )
 
     def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:

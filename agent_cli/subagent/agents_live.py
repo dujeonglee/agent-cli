@@ -2284,22 +2284,29 @@ class AgentRegistry:
             and not tm.asked_this_run
             and author not in tm.replied_this_run
         )
-        delivered_to = author if (owed or human) else ""
-        # 대화 창에는 화자 불문 항상 표시 (P4).
-        out_payload = {
-            "key": tm.key,
-            "direction": "out",
-            "author": tm.key,
-            "text": output,
-            "seq": seq,
-            "success": success,
-            "to": delivered_to,  # 실제 수신자 — 폴백 배달 또는 창(user:*)
-            "ts": time.time(),
-            "profile": tm.profile_name,
-            "instance_name": tm.instance_name,
-        }
-        renderer.agent_message(**out_payload)
-        self._log_conversation(tm, out_payload)
+        # `complete` 산출물은 **어떤 경우에도** 배달되지 않는다 — 배달은
+        # `reply`/`message` 뿐이고, 그것들은 보낼 때 이미 창에 out 으로 남긴다.
+        # 그러니 여기서 out 레코드를 내는 경우는 **실제 발신** 둘뿐이다:
+        # 하네스 폴백(독촉 뒤에도 안 갚아 런 요약을 대신 보냄 — 본문 첫 줄의
+        # 라벨이 사정을 말한다)과 user:* (창이 곧 배달). 종전엔 산출물마다
+        # out 을 찍어 "→ 보냄 · 회신했습니다" 가 final 을 반복했고(영수증 접기가
+        # 그래서 생겼다), 배달 없는 산출물엔 "완료 · 배달 없음" 을 그려야 했다
+        # (사용자 지적: 셋으로 가를 이유가 없다 — 왕래 줄은 발신만).
+        if owed or human:
+            out_payload = {
+                "key": tm.key,
+                "direction": "out",
+                "author": tm.key,
+                "text": f"{_NO_REPLY_LABEL}\n{output}" if owed else output,
+                "seq": seq,
+                "success": success,
+                "to": author,
+                "ts": time.time(),
+                "profile": tm.profile_name,
+                "instance_name": tm.instance_name,
+            }
+            renderer.agent_message(**out_payload)
+            self._log_conversation(tm, out_payload)
         if owed:
             summary = f"{_NO_REPLY_LABEL}\n{output}"
             if author.startswith("agent:"):
