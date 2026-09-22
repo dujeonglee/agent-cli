@@ -882,3 +882,135 @@ class TestRequestIdOnUserRecords:
         r.final = lambda text, turn=0, requests=None: seen.append(requests)
         r._replay_assistant_op("complete", {"result": "done"})
         assert seen == [[]]
+
+
+# ── ⑨ 에이전트 루프는 건드리지 않는다 ────────────────
+
+
+class TestAgentLoopsAreUntouched:
+    """회계·되돌림·독촉·칩은 **웹 main 루프에만** 걸린다 (사용자 우려).
+
+    `run_requests` 를 채우는 입구는 둘뿐이다 — 스타터의 `query_request_id`
+    와 드레인 포트 `dequeue_user_message`. 둘 다 `main.py` 의 웹 워커만
+    넘긴다. 상주·일회성·스킬 루프의 포트 빌더는 전부 `dequeue_user_message=
+    None` 이고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
+    목록이 항상 비고, 새 기계가 전부 조용하다.
+
+    여기서 **프로덕션 빌더**(`runtime.ports_for_resident` / `ports_for_oneshot`)
+    로 직접 돌린다 — 나중에 누가 에이전트 러너에 id 를 넘기면 독촉이
+    상주 에이전트에 조용히 켜지는 부류라, 테스트 스텁이 아니라 실제
+    조립 지점을 못 박는다.
+    """
+
+    @staticmethod
+    def _env(ops):
+        import json
+
+        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+
+    def _run_agent(self, ports, *contents):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        p = MagicMock()
+        p.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        # 상주 에이전트의 배치는 요청 여럿을 `query` 하나로 합친다
+        # (`process_batch`). 그 모양 그대로.
+        res = run_loop(
+            query="(Several messages arrived together)\n\n[main]: 일감 A\n\n[main]: 일감 B",
+            query_author="",
+            provider=p,
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            ctx=ctx,
+            max_turns=4,
+            wire_format="json_fc",
+            ports=ports,
+        )
+        return p, ctx, res
+
+    @staticmethod
+    def _resident():
+        from agent_cli.runtime import ports_for_resident
+
+        return ports_for_resident(key="agt-x", message_handler=None, questions=None)
+
+    @staticmethod
+    def _oneshot():
+        from agent_cli.runtime import ports_for_oneshot
+
+        return ports_for_oneshot(owner="agent:agt-x")
+
+    def test_resident_complete_without_answers_is_not_bounced_or_nagged(self):
+        p, _ctx, res = self._run_agent(
+            self._resident(),
+            self._env([{"action": "complete", "result": "둘 다 끝"}]),
+        )
+        assert p.call.call_count == 1, "에이전트 complete 이 되돌려지거나 독촉됐다"
+        assert res.output == "둘 다 끝", "에이전트 최종답에 각주가 붙었다"
+
+    def test_oneshot_complete_without_answers_is_not_bounced_or_nagged(self):
+        p, _ctx, res = self._run_agent(
+            self._oneshot(),
+            self._env([{"action": "complete", "result": "끝"}]),
+        )
+        assert p.call.call_count == 1
+        assert res.output == "끝"
+
+    def test_a_spurious_answers_field_from_an_agent_is_inert(self):
+        """`complete` 설명에 `answers` 가 보이니 에이전트 모델이 흉내 낼 수
+        있다 — 셀 요청이 없으니 아무 일도 일어나지 않아야 한다."""
+        p, _ctx, res = self._run_agent(
+            self._resident(),
+            self._env([{"action": "complete", "result": "끝", "answers": ["1", "2"]}]),
+        )
+        assert p.call.call_count == 1
+        assert res.output == "끝"
+
+    def test_agent_prompt_carries_no_open_requests_tail(self):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="[main]: 일감 A\n\n[main]: 일감 B",
+            provider=MagicMock(),
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            ports=self._resident(),
+        )
+        loop._setup()
+        assert loop._state.run_requests == [], "에이전트 루프에 회계가 생겼다"
+        blob = loop._llm._build_session_state(30000)
+        assert "Open Requests" not in blob, "에이전트 꼬리에 요청 목록이 떴다"
+
+    def test_agent_user_records_carry_no_request_id(self):
+        _p, ctx, _res = self._run_agent(
+            self._resident(),
+            self._env([{"action": "complete", "result": "끝"}]),
+        )
+        users = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
+        assert users and all("request_id" not in m for m in users)
+
+    def test_agent_final_renders_no_request_chips(self):
+        import agent_cli.loop.dispatch as D
+
+        seen = []
+        real = D.render_step
+        D.render_step = lambda kind, text, *a, **k: seen.append((kind, k))
+        try:
+            self._run_agent(
+                self._resident(),
+                self._env([{"action": "complete", "result": "끝", "answers": ["1"]}]),
+            )
+        finally:
+            D.render_step = real
+        finals = [k for kind, k in seen if kind == "final"]
+        assert finals and not finals[0].get("requests"), "에이전트 final 에 칩이 붙었다"
