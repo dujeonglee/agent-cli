@@ -412,10 +412,27 @@ class TurnDispatcher:
                     continue
             r = self._dispatch_op(llm_text, turn, op, outcome, accumulate=results)
             if r is not None:
-                # Guard/recovery fired inside the op (B1/A4/A5/no-action):
+                # Guard/recovery fired inside the op (B1/no-action …):
                 # its intervention observation is already appended; flush the
                 # accumulated work after it (rare mid-array edge — order is
                 # intervention-first, results still preserved).
+                #
+                # **뒤에 남은 op 는 실행되지 않는다 — 그걸 말해 준다** (v9.21.0).
+                # 침묵하면 모델은 배치 전체가 돌았다고 믿는다(실측 kdsd0j —
+                # 안 나간 `message` 를 "asked player-1" 로 기억하고 complete).
+                skipped = ops[i + 1 :]
+                if skipped:
+                    names = ", ".join(
+                        f"[{i + 2 + k}/{len(ops)}] {o.action or '?'}"
+                        for k, o in enumerate(skipped)
+                    )
+                    self.tools.accumulate_raw(
+                        results,
+                        "batch",
+                        f"NOT executed — aborted after op {i + 1} failed: {names}. "
+                        "Re-send these; do NOT re-send the ops that already ran.",
+                        False,
+                    )
                 self._flush_op_results(
                     llm_text, results, corrected_record=outcome.get("corrected_record")
                 )
@@ -1261,6 +1278,21 @@ class TurnDispatcher:
         if detect_unknown_tool(tool_name, self.cfg.tools_list):
             avail = ", ".join(self.cfg.tools_list)
             err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
+            if accumulate is not None:
+                # N-op 배치 (v9.21.0): 이 op 만 실패로 적고 **다음 op 로 간다**.
+                # 종전엔 턴 수준 형식 개입으로 배치를 중단했고, 뒤의 op 들은
+                # 아무 말 없이 버려졌다 — 실측(kdsd0j): [shell, memory, memory✗,
+                # message] 에서 message 가 안 나갔는데 관찰은 "[1/2] OK [2/2]
+                # OK" 라 모델이 보냈다고 믿었다. 런타임 실패는 이미 FAILED 로
+                # 적고 계속 가므로, 입력 검증 실패도 같은 모양이어야 한다.
+                outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
+                self.tools.accumulate_raw(
+                    accumulate,
+                    tool_name,
+                    f"{err_msg} Fix this op and re-send it alone.",
+                    False,
+                )
+                return None
             return self._intervene(
                 llm_text,
                 f"Observation: {err_msg}",
@@ -1280,6 +1312,17 @@ class TurnDispatcher:
         )
         if mismatched:
             err_msg = f"{schema_err} Fix action_input and retry."
+            if accumulate is not None:
+                # N-op 배치: 위 A4 와 같은 이유 — 실패 op 로 적고 계속.
+                outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
+                self.tools.accumulate_raw(
+                    accumulate,
+                    tool_name,
+                    f"{schema_err} This op did NOT run. Fix action_input and re-send "
+                    "it alone — the other ops in this batch already ran.",
+                    False,
+                )
+                return None
             return self._intervene(
                 llm_text,
                 f"Observation: {err_msg}",

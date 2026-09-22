@@ -852,3 +852,122 @@ class TestProseRequiresExplicitComplete:
         assert finals[0]["ops"][0]["action_input"]["result"] == (
             "both files were scanned"
         )
+
+
+# ─── 배치 중간의 입력 검증 실패 (v9.21.0) ───────────────
+
+
+class TestMidBatchValidationFailure:
+    """실측(kdsd0j): 오케스트레이터가 [shell, memory, memory(mode="note" ✗),
+    message] 네 op 를 한 턴에 냈다. 세 번째가 스키마 검증에 걸리자 턴 수준
+    형식 개입이 배치를 **중단**했고, 네 번째 `message` 는 아무 말 없이
+    버려졌다 — 관찰은 "[1/2] shell — OK / [2/2] memory — OK" 뿐이라 배치가
+    넷이었다는 흔적조차 없었다. 모델은 "player-1 에게 물었다" 고 믿고
+    complete 했다. 런타임 실패는 이미 `[k/N] — FAILED` 로 적고 다음 op 로
+    가므로, 검증 실패도 같은 모양이어야 한다: 그 op 만 실패로, 나머지는
+    실행, 분모는 배치 크기.
+    """
+
+    def test_bad_op_fails_alone_and_the_rest_still_run(self, tmp_path):
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        f2 = tmp_path / "c.txt"
+        f2.write_text("charlie")
+        result, ctx, provider = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "read_file", "path": str(f1)},
+                        {"action": "memory", "mode": "note", "summary": "x"},  # ✗
+                        {"action": "read_file", "path": str(f2)},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/3]" in m.get("content", "")
+        ]
+        assert len(obs) == 1, "배치가 중단됐다 — 세 op 가 한 관찰로 안 나왔다"
+        body = obs[0]["content"]
+        assert "[1/3] read_file — OK" in body
+        assert "[2/3] memory — FAILED" in body and "did NOT run" in body
+        assert "[3/3] read_file — OK" in body and "charlie" in body, (
+            "잘못된 op 뒤의 op 가 실행되지 않았다"
+        )
+        # 턴 수준 형식 재시도가 아니다 — LLM 호출은 정확히 두 번(배치 + 완료).
+        assert provider.call.call_count == 2
+
+    def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        _, ctx, provider = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "no_such_tool", "x": 1},
+                        {"action": "read_file", "path": str(f1)},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        (obs,) = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2]" in m.get("content", "")
+        ]
+        assert "[1/2] no_such_tool — FAILED" in obs["content"]
+        assert "[2/2] read_file — OK" in obs["content"]
+        assert provider.call.call_count == 2
+
+    def test_a_real_abort_names_the_ops_it_skipped(self, tmp_path):
+        """진짜 중단(가드가 개입으로 배치를 끊는 경우)이 남아 있다면, 안 돌린
+        op 를 **이름으로** 말해야 한다 — 침묵이 이 사고의 본질이었다."""
+        from agent_cli.loop import dispatch as D
+
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        real = D.TurnDispatcher._dispatch_op
+        calls = {"n": 0}
+
+        def abort_on_second(self, llm_text, turn, op, outcome, accumulate=None):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                # 가드가 개입 관찰을 붙이고 센티널을 돌려준 것처럼
+                return self._intervene(
+                    llm_text, "Observation: guard fired", "guard", outcome
+                )
+            return real(self, llm_text, turn, op, outcome, accumulate)
+
+        D.TurnDispatcher._dispatch_op = abort_on_second
+        try:
+            _, ctx, _ = _run(
+                [
+                    _turn(
+                        ops=[
+                            {"action": "read_file", "path": str(f1)},
+                            {"action": "read_file", "path": str(f1)},
+                            {"action": "shell", "command": "echo never"},
+                            {"action": "read_file", "path": str(f1)},
+                        ]
+                    ),
+                    *_finish(),
+                ],
+                tmp_path,
+            )
+        finally:
+            D.TurnDispatcher._dispatch_op = real
+        blob = "\n".join(
+            m.get("content", "")
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user"
+        )
+        assert "NOT executed" in blob, "버려진 op 에 대해 침묵했다"
+        assert "[3/4] shell" in blob and "[4/4] read_file" in blob
+        assert "never" not in blob.replace("echo never", ""), "버려졌다던 op 가 돌았다"
