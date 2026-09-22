@@ -1363,9 +1363,14 @@ class TestUncoveredSurfaces:
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert wait_until(
-            lambda: fresh._questions["q-nodup"].delivered_seq is not None, timeout=5.0
-        )
+
+        # 재배달의 증거: 워커가 꺼내 `delivered_seq` 를 찍었거나, 그 런이
+        # 이미 끝나 `close_unanswered` 가 닫았거나(Linux 에선 폴링보다 빠르다).
+        def redelivered():
+            q2 = fresh._questions.get("q-nodup")
+            return q2 is None or q2.delivered_seq is not None
+
+        assert wait_until(redelivered, timeout=5.0)
         drawn = [
             c
             for c in renderer.named("agent_message")
