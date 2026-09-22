@@ -106,6 +106,7 @@ class TurnDispatcher:
         recovery_kind: str = "",
         render: bool = False,
         rejected: str = "",
+        store_emission: bool = True,
     ):
         """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
 
@@ -152,6 +153,7 @@ class TurnDispatcher:
             corrected_record=record,
             render=render,  # False: render_recovery already surfaced it
             recovery_kind=recovery_kind,
+            store_emission=store_emission,
         )
         if failure_signal is not None:
             outcome["failure_signal"] = failure_signal
@@ -717,8 +719,9 @@ class TurnDispatcher:
             self.state.reply_nags += 1
             # final 을 **그리지 않는다** — 이 산출물은 아무 데도 안 가는 거부다.
             # 요청 독촉(위 `nagging`)과 다르다: 그쪽은 결과가 실제로 배달된다.
-            # 거부는 실패한 관찰 카드(✗ complete)로 남는다(`_intervene(render=True)`).
-            return self._nag_reply_owed(llm_text, owed, outcome)
+            # 거부는 실패한 관찰 카드(✗ complete)로 남고, 원문은 그 관찰이
+            # 인용한다 — emission 자체는 저장하지 않는다.
+            return self._nag_reply_owed(llm_text, owed, answer, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
         render_step("final", answer, self.state.turn, requests=answered)
@@ -858,30 +861,37 @@ class TurnDispatcher:
         fn = getattr(port, "reply_owed", None)
         return fn() if callable(fn) else ""
 
-    def _nag_reply_owed(self, llm_text: str, owed: str, outcome: dict):
-        """빚진 회신 독촉 (v9.21.0) — 거부는 실패 관찰로 남고 루프만 이어간다."""
+    def _nag_reply_owed(self, llm_text: str, owed: str, answer: str, outcome: dict):
+        """빚진 회신 독촉 (v9.21.0) — 물린 `complete` 의 원문을 **인용**해
+        자기완결로 안내한다(사용자 결정). 그래서 emission 은 저장하지
+        않는다: 컨텍스트에 남길 정보는 전부 이 관찰 안에 있고, 남기면
+        `ops:[complete]` 가 history 에서 final 로 읽힌다."""
         left = MAX_REPLY_NAGS - self.state.reply_nags
         tail = (
-            f" ({left} more reminder{'s' if left != 1 else ''} before the harness "
+            f"({left} more reminder{'s' if left != 1 else ''} before the harness "
             "sends them your run summary instead.)"
             if left > 0
-            else " (Last reminder — if you complete again without replying, the "
+            else "(Last reminder — if you complete again without replying, the "
             "harness sends them your run summary instead.)"
         )
+        to = "main" if owed == "main" else owed.split(":", 1)[1]
         return self._intervene(
             llm_text,
             (
-                f"Observation: you completed without replying to {owed}, who "
-                "requested this work and is waiting — `complete` alone reports "
-                'to no one. Send your result now with reply(text="..."), or with '
-                "`message` if you need something back from them, then `complete`."
-                + tail
+                f"Observation: your `complete` was refused — it reports to no "
+                f"one, and {owed} (who requested this work) is still waiting for "
+                "your reply.\n"
+                f"You completed with:\n«{answer}»\n"
+                "If that text was your answer to them, send it now with "
+                'reply(text="...") and then `complete` if nothing else remains. '
+                f'If you need something back from them, use message(to="{to}", '
+                'text="...") instead. ' + tail
             ),
             "reply owed",
             outcome,
             tool_name="complete",
             render=True,
-            rejected="reply owed",
+            store_emission=False,
         )
 
     def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:
@@ -1692,8 +1702,16 @@ def _append_observation(
     corrected_record: dict | None = None,
     render: bool = True,
     recovery_kind: str = "",
+    store_emission: bool = True,
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
+
+    ``store_emission=False`` (v9.21.0): 모델의 원문을 **저장하지 않는다** —
+    관찰만 남긴다. 물린 ``complete`` 에 쓴다: 거부 관찰이 원문을 인용해
+    자기완결로 안내하므로(사용자 결정) 그 emission 을 컨텍스트에 둘 이유가
+    없고, 두면 저장 형태(`ops:[complete]`)가 history 에서 final 로 읽힌다.
+    user 턴이 연속되지만 드레인 주입이 이미 그렇고 프로바이더는 그대로
+    전달한다.
 
     The next-turn prior (the in-memory ``messages`` assistant turn) is
     ALWAYS the rendered history record — ``render_assistant_from_history``
@@ -1731,11 +1749,13 @@ def _append_observation(
         history_record = wire_format.serialize_assistant_for_history(llm_text)
     prior_content = wire_format.render_assistant_from_history(history_record)["content"]
 
-    messages.append({"role": "assistant", "content": prior_content})
+    if store_emission:
+        messages.append({"role": "assistant", "content": prior_content})
     messages.append({"role": "user", "content": obs_msg})
     stored_content = obs_msg
     if ctx:
-        ctx.add(history_record)
+        if store_emission:
+            ctx.add(history_record)
         obs_entry = {
             "role": "user",
             "tool": tool_name,

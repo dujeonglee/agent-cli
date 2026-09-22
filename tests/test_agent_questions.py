@@ -2128,13 +2128,17 @@ class TestReplyNagCap:
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "completed without replying" in m.get("content", "")
+            and "`complete` was refused" in m.get("content", "")
         ]
         assert len(nags) == 3, f"독촉 {len(nags)}회 — 상한은 3"
         assert p.call.call_count == 4, "3회 독촉 뒤 네 번째 complete 은 통과해야 한다"
         assert res.output == "끝"
         assert "2 more reminders" in nags[0]["content"]
         assert "Last reminder" in nags[-1]["content"]
+        # 거부 관찰이 원문을 인용한다 — 그래서 emission 을 따로 둘 필요가 없다
+        assert (
+            "«끝»" in nags[0]["content"] and 'reply(text="...")' in nags[0]["content"]
+        )
 
     def test_replying_after_a_reminder_stops_them(self):
         port = self._OwedPort()
@@ -2332,9 +2336,11 @@ class TestCompleteIsLocal:
         assert port.reply_owed() == ""
 
 
-class TestRejectedCompleteIsTaggedInHistory:
-    """물린 complete 의 history 레코드에 `rejected` 가 찍힌다 — 분류·재생이
-    그걸로 final 과 가른다(`test_web_renderer.TestRejectedCompleteReplay`)."""
+class TestRefusedCompleteIsNotStored:
+    """물린 complete 은 컨텍스트에 남지 않는다(사용자 결정) — 거부 관찰이
+    원문을 인용해 자기완결이라 남길 이유가 없고, 남기면 `ops:[complete]`
+    가 history 에서 final 로 읽힌다. (`answers` 되돌림은 형식 재시도라
+    emission 을 저장하되 `rejected` 태그로 가른다 — 성공 뒤 fold 된다.)"""
 
     def _records(self, port, *contents):
         import tempfile
@@ -2357,27 +2363,46 @@ class TestRejectedCompleteIsTaggedInHistory:
             wire_format="json_fc",
             ports=make_ports(owner="agent:agt-b", questions=port),
         )
-        return [m for m in ctx.get_raw_messages() if m.get("role") == "assistant"]
+        return ctx.get_raw_messages()
 
     @staticmethod
     def _env(ops):
         import json
 
-        return "## Thought\\nt\\n\\n## Action\\n" + json.dumps(ops)
+        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
 
-    def test_reply_nag_tags_the_rejected_complete(self):
+    def test_refused_complete_leaves_only_the_quoting_observation(self):
         port = TestReplyNagCap._OwedPort()
         recs = self._records(
             port,
-            self._env([{"action": "complete", "result": "끝"}]),
+            self._env([{"action": "complete", "result": "법칙"}]),
             self._env(
                 [
-                    {"action": "reply", "text": "답"},
+                    {"action": "reply", "text": "법칙"},
                     {"action": "complete", "result": "끝"},
                 ]
             ),
         )
-        tagged = [r for r in recs if r.get("rejected")]
-        assert [r["rejected"] for r in tagged] == ["reply owed"]
-        # 통과한 마지막 complete 은 태그가 없다
-        assert not recs[-1].get("rejected")
+        completes = [
+            m
+            for m in recs
+            if m.get("role") == "assistant"
+            and any(o.get("action") == "complete" for o in (m.get("ops") or []))
+        ]
+        results = [m["ops"][-1]["action_input"]["result"] for m in completes]
+        assert "법칙" not in results, (
+            "물린 '법칙' complete 이 assistant 레코드로 남았다"
+        )
+        assert "끝" in results  # 통과한 complete 은 남는다
+        refusals = [
+            m
+            for m in recs
+            if m.get("role") == "user"
+            and "`complete` was refused" in m.get("content", "")
+        ]
+        assert len(refusals) == 1
+        assert "«법칙»" in refusals[0]["content"]
+        assert (
+            refusals[0].get("tool") == "complete"
+            and refusals[0].get("success") is False
+        )
