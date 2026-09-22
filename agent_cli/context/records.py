@@ -95,10 +95,7 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
             actions = [
                 o.get("action") for o in ops if isinstance(o, dict) and o.get("action")
             ]
-            # ``rejected`` (v9.21.0): 하네스가 물린 complete — 저장 형태는
-            # 같지만 최종답이 아니다(되돌림·회신 독촉). 검색·재생이 final 로
-            # 읽으면 통과한 것처럼 보인다.
-            is_final = "complete" in actions and not message.get("rejected")
+            is_final = "complete" in actions
             thought = str(message.get("thought") or "")
             parts: list[str] = [thought] if thought else []
             for o in ops:

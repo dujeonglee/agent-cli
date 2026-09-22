@@ -402,28 +402,44 @@ class TestAnswersAreRequired:
 
     def test_missing_answers_is_bounced_once(self):
         loop = self._merged()
-        first = loop._dispatch._require_answers("raw", _op(result="r"), {})
+        first = loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
         assert first is not None, "생략이 그대로 통과했다"
         assert loop._state.answers_prompted is True
 
         # 두 번째는 받아준다 — 무한 되묻기는 런을 태운다.
-        second = loop._dispatch._require_answers("raw", _op(result="r"), {})
+        second = loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
         assert second is None, "되묻기가 한 번으로 안 끝난다"
 
     def test_bounce_names_the_ids_and_the_field(self):
         loop = self._merged()
         msgs = []
         loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
-        loop._dispatch._require_answers("raw", _op(result="r"), {})
+        loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
         (msg,) = msgs
         assert '"1"' in msg and '"2"' in msg, "어떤 id 를 대라는지 안 보인다"
         assert "answers" in msg and "Re-emit `complete`" in msg
         assert not HANGUL.findall(msg), f"개입 문구에 한글: {msg!r}"
 
+    def test_bounce_quotes_the_result_so_nothing_needs_storing(self):
+        """되돌림 관찰이 결과 원문을 인용한다 (v9.21.1) — emission 은 저장하지
+        않는다. 회신 독촉과 같은 원칙: 거부는 자기완결 관찰 하나로."""
+        loop = self._merged()
+        msgs = []
+        loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append((m, k))
+        loop._dispatch._require_answers(
+            "raw", _op(result="둘 다 완료"), "둘 다 완료", {}
+        )
+        ((msg, kw),) = msgs
+        assert "«둘 다 완료»" in msg
+        assert kw.get("store_emission") is False, "물린 complete 이 저장된다"
+        assert kw.get("recovery_kind") == "format", "성공 뒤 fold 돼야 한다"
+
     def test_present_answers_passes_through(self):
         loop = self._merged()
         assert (
-            loop._dispatch._require_answers("raw", _op(result="r", answers=["1"]), {})
+            loop._dispatch._require_answers(
+                "raw", _op(result="r", answers=["1"]), "r", {}
+            )
             is None
         )
         assert loop._state.answers_prompted is False, "필요 없는데 표식을 세웠다"
@@ -431,14 +447,14 @@ class TestAnswersAreRequired:
     def test_single_request_run_is_never_bounced(self):
         """실측 90%인 단건 런에 턴을 하나 더 쓰면 안 된다."""
         loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
-        assert loop._dispatch._require_answers("raw", _op(result="r"), {}) is None
+        assert loop._dispatch._require_answers("raw", _op(result="r"), "r", {}) is None
 
     def test_empty_answers_list_is_bounced(self):
         """`answers: []` 는 '아무것도 안 답함' 이 아니라 **빈칸**이다 —
         합쳐진 런에서 아무것도 안 답하고 complete 할 이유가 없다."""
         loop = self._merged()
         assert (
-            loop._dispatch._require_answers("raw", _op(result="r", answers=[]), {})
+            loop._dispatch._require_answers("raw", _op(result="r", answers=[]), "r", {})
             is not None
         )
 
@@ -518,6 +534,63 @@ class TestThroughRunLoop:
             "되돌림이 LLM 을 다시 부르지 않았다 — 맨 complete 이 통과했다"
         )
         assert result.output.strip() == "A/B done", result.output
+
+    def test_a_bounce_leaves_no_trace_in_the_model_context(self):
+        """재시도는 기록하지 않는다 (v9.21.1): 물린 complete 은 저장되지 않고,
+        되돌림 관찰은 성공 뒤 컨텍스트에서 접힌다. 모델이 보는 것은 성공
+        궤적뿐이다."""
+        provider = self._provider(
+            self._env([{"action": "shell", "shell_command": "echo A"}]),
+            self._env([{"action": "complete", "result": "A/B done"}]),
+            self._env(
+                [{"action": "complete", "result": "A/B done", "answers": ["1", "2"]}]
+            ),
+        )
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+
+        queue = [None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}]
+        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
+        run_loop(
+            query="REQ-A",
+            query_author="Bob",
+            query_request_id="1",
+            provider=provider,
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+            wire_format="json_fc",
+            ports=make_ports(
+                owner="main",
+                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+            ),
+        )
+        assert provider.call.call_count == 3  # 되돌림은 있었다
+        # 물린 complete(answers 없음)은 어디에도 저장되지 않았다
+        bare = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "assistant"
+            and any(
+                o.get("action") == "complete"
+                and "answers" not in (o.get("action_input") or {})
+                for o in (m.get("ops") or [])
+            )
+        ]
+        assert bare == [], "물린 complete 이 저장됐다"
+        # 모델이 보는 컨텍스트에 되돌림 관찰이 남아 있지 않다(성공 뒤 fold)
+        view = "\n".join(
+            str(m.get("content", ""))
+            for m in ctx.get_messages()
+            if m.get("role") == "user"
+        )
+        assert "was refused" not in view, "되돌림이 컨텍스트에 남았다"
 
     def test_partial_claim_keeps_the_loop_running(self):
         """부분 주장은 런을 끝내지 않는다 — 전 경로로 확인한다."""

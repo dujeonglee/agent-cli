@@ -105,7 +105,6 @@ class TurnDispatcher:
         primitives=None,
         recovery_kind: str = "",
         render: bool = False,
-        rejected: str = "",
         store_emission: bool = True,
     ):
         """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
@@ -130,17 +129,11 @@ class TurnDispatcher:
         # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
         if not render:
             render_recovery(llm_text, message, reason, self.state.turn)
-        # ``rejected`` (v9.21.0): 물린 `complete` 의 assistant 레코드에 사유를
-        # 찍는다. 원문은 그대로 저장돼야 하지만(모델의 다음 턴 prior), 저장
-        # 형태가 `ops:[complete]` 라 히스토리 분류가 `kind: final` 로 읽고
-        # resume 재생이 ✅ final 카드를 그린다 — 라이브에선 카드도 없던(되돌림)
-        # 또는 ✗ 관찰이던(회신 독촉) 거부가 resume 에서 통과한 것처럼 되살아난다.
-        record = None
-        if rejected:
-            record = dict(
-                self.cfg.wire_format.serialize_assistant_for_history(llm_text)
-            )
-            record["rejected"] = rejected
+        # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
+        # — 거부 관찰이 원문을 인용해 자기완결이다(사용자 결정). 남기면 저장
+        # 형태(`ops:[complete]`)가 history 에서 final 로 읽히고, 재시도는
+        # 기록하지 않는다는 원칙(v9.8.0 — 형식 거부는 카드가 아니다)과도
+        # 어긋난다.
         _append_observation(
             self.state.messages,
             self.ctx,
@@ -150,7 +143,6 @@ class TurnDispatcher:
             tool_name=tool_name,
             success=False,
             turn=self.state.turn,
-            corrected_record=record,
             render=render,  # False: render_recovery already surfaced it
             recovery_kind=recovery_kind,
             store_emission=store_emission,
@@ -693,7 +685,7 @@ class TurnDispatcher:
             if unwrapped != raw:
                 answer = unwrapped or answer
 
-        bounced = self._require_answers(llm_text, op, outcome)
+        bounced = self._require_answers(llm_text, op, answer, outcome)
         if bounced is not None:
             return bounced
 
@@ -742,7 +734,7 @@ class TurnDispatcher:
             )
         return ToolResult(True, output=answer)
 
-    def _require_answers(self, llm_text: str, op, outcome: dict):
+    def _require_answers(self, llm_text: str, op, answer: str, outcome: dict):
         """요청이 합쳐진 런에서 `answers` 없이 완료하려 하면 **한 번 되돌린다**.
 
         꼬리(per-turn tail)가 매 턴 요구하는데도 모델이 생략한다 — 라이브
@@ -767,21 +759,24 @@ class TurnDispatcher:
             return None
         self.state.answers_prompted = True
         ids = ", ".join(f'"{r.get("id")}"' for r in pending)
+        # 원문을 **인용**한다 — emission 은 저장하지 않으므로(v9.21.1) 모델이
+        # 재발행할 결과가 이 관찰 안에 있어야 한다. 성공하면 형식 개입 fold 가
+        # 이 관찰을 컨텍스트에서 접는다(재시도는 기록하지 않는다).
         return self._intervene(
             llm_text,
             (
-                f"Observation: `complete` needs `answers` in this run — "
-                f"{len(pending)} user requests were merged into it and the "
-                "harness cannot tell which ones your result covers.\n"
+                f"Observation: your `complete` was refused — {len(pending)} user "
+                "requests were merged into this run and `answers` is required, so "
+                "the harness cannot tell which ones your result covers.\n"
                 f"{self._request_lines(pending)}\n"
-                f"Re-emit `complete` with the same result plus "
-                f"`answers: [{ids}]`, dropping any id you did not actually "
-                "answer."
+                f"You completed with:\n«{answer}»\n"
+                f"Re-emit `complete` with that result plus `answers: [{ids}]`, "
+                "dropping any id you did not actually answer."
             ),
             "answers required",
             outcome,
             recovery_kind="format",
-            rejected="answers required",
+            store_emission=False,
         )
 
     def _settle_requests(self, claimed):
