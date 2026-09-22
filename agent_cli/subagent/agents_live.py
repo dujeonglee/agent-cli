@@ -637,6 +637,15 @@ class QuestionPort:
         if not owed:
             tm = self._reg.get(self.key)
             a = tm.current_author if tm is not None else ""
+            if tm is not None and tm.current_expects_reply and _is_human_addr(a):
+                # 사람이 창에서 직접 시킨 런 — 창이 곧 배달이라 빚이 없다(D8).
+                # 종전 문구("요청으로 시작하지 않은 런 … message 를 써라")는
+                # 거짓이었고, 그대로 따르면 message(to="user:…") 가 에이전트가
+                # 아니라 실패한다.
+                return (
+                    "nothing to send — your requester is a person watching this "
+                    "window, and they see your `complete` here. Just `complete`."
+                )
             if tm is not None and tm.current_expects_reply and a in tm.replied_this_run:
                 # 이미 갚았다 — 실측(a209hq): player 가 "칙령" 을 보낸 뒤 "칙명"
                 # 으로 정정하려다 "요청으로 시작되지 않은 런" 이라는 거짓

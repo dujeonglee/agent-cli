@@ -2313,6 +2313,20 @@ class TestCompleteIsLocal:
         assert next(c["message"] for c in calls if c["key"] == a).startswith("칙령")
         assert len([c for c in calls if c["key"] == a]) == 1, "두 번째가 배달됐다"
 
+    def test_reply_in_a_human_window_run_is_refused_truthfully(self, mkreg, renderer):
+        """사람이 창에서 시킨 런 — 빚이 없어 거부되는 건 맞지만, 사유가
+        "요청으로 시작하지 않은 런" 이면 거짓이고 `message(to=user:…)` 로
+        유인해 실패시킨다. 창이 곧 배달임을 말한다."""
+        reg = mkreg()
+        b = spawn_idle(reg)
+        tm = reg.get(b)
+        tm.current_author = "user:dj"
+        tm.current_expects_reply = True
+        tm.replied_this_run = set()
+        err = reg.question_port(b).reply("리뷰 결과")
+        assert "person watching this window" in err and "Just `complete`" in err
+        assert "message(to=" not in err
+
     def test_reply_from_main_is_refused(self, mkreg, renderer):
         reg = mkreg()
         assert "no requester" in reg.question_port(None).reply("x")
