@@ -76,6 +76,19 @@ def spawn_idle(reg):
     return key
 
 
+def wait_run_done(reg, key, *, timeout: float = 3.0) -> bool:
+    """런 하나가 **정리까지** 끝나길 기다린다.
+
+    `state == "idle"` 은 `_handle_request` 가 런 끝 정리(out 왕래 줄 렌더 ·
+    `end_run` 의 폴백 배달·질문 닫기 · `_save_state`) **앞**에 세운다 —
+    그걸 기다리면 아직 안 그려진 out 줄·안 나간 폴백을 볼 수 있다(Linux
+    CI 에서 실제로 졌다, run 35930241864). `current_seq` 는 정리 뒤에 0 으로
+    돌아온다. 호출 전에 러너가 돌았음(`ran`)을 먼저 확인할 것 — 시작 전의
+    0 과 구분이 안 된다.
+    """
+    return wait_until(lambda: reg.get(key).current_seq == 0, timeout=timeout)
+
+
 class SubmitSpy:
     """``request`` 호출 인자를 기록 — 답 배달의 라우팅 인자를 고정한다."""
 
@@ -673,7 +686,7 @@ class TestSurfaces:
         # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
         # 시 실제로 깨졌다). 이 파일의 공통 함정.
         assert wait_until(lambda: ran)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         out = [
             c for c in renderer.named("agent_message") if c[1].get("direction") == "out"
         ][-1][1]["text"]
@@ -703,7 +716,7 @@ class TestSurfaces:
         # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
         # 시 실제로 깨졌다). 이 파일의 공통 함정.
         assert wait_until(lambda: ran)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         kinds = [r["kind"] for r in reg.drain_replies()]
         assert "question" in kinds
         assert "reply" not in kinds  # 답 런의 회신이 진짜 회신이다
@@ -891,7 +904,7 @@ class TestReplyFreshness:
         # 그 경합으로 `box["qid"]` 가 비어 CI(3.12)가 KeyError 로 깨졌다.
         # 시블링 테스트가 이미 쓰는 패턴이다.
         assert wait_until(lambda: "qid" in box)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         assert rep.kinds() == []  # 런 1 은 회신을 안 밀었다
 
         assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
@@ -1035,7 +1048,7 @@ class TestReplyFreshness:
         rep = Replies(reg)
         reg.request(b, "일감")
         assert wait_until(lambda: len(ids) == 2)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         assert rep.kinds() == []
 
         for qid in ids:
@@ -1108,7 +1121,7 @@ class TestReplyFreshness:
         # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
         # 시 실제로 깨졌다). 이 파일의 공통 함정.
         assert wait_until(lambda: ran)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         outs = [
             c[1]
             for c in renderer.named("agent_message")
@@ -1792,7 +1805,7 @@ class TestTrafficRowsAreRealSendsOnly:
         b = spawn_idle(reg)
         assert reg.request(b, "일감", **req) == ""
         assert wait_until(lambda: ran)
-        assert wait_until(lambda: reg.get(b).state == "idle")
+        assert wait_run_done(reg, b)
         outs = [
             c[1]
             for c in renderer.named("agent_message")
@@ -1985,10 +1998,7 @@ class TestCompleteIsLocal:
         with SubmitSpy(reg) as spy:
             assert reg.request(b, "일감", author=requester, **req) == ""
             assert wait_until(lambda: ran)
-            # `state == "idle"` 은 런 끝 정리(`end_run` 의 폴백 배달) **앞**에
-            # 세워진다 — 그걸 기다리면 폴백이 아직 안 나간 순간을 볼 수 있다
-            # (Linux CI 에서 졌다). `current_seq` 는 정리 뒤에 0 으로 돌아온다.
-            assert wait_until(lambda: reg.get(b).current_seq == 0)
+            assert wait_run_done(reg, b)
         return spy.calls
 
     def test_reply_settles_and_nothing_else_is_delivered(self, mkreg, renderer):
@@ -2785,3 +2795,34 @@ class TestAskSuppressionIsPerTarget:
         assert reg.end_run(me, "사용자 답을 기다립니다", seq=1, success=True) >= 1
         recs = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
         assert recs and recs[0]["output"].startswith(_NO_REPLY_LABEL)
+
+
+class TestIdleMeansTheRunIsFullyDone:
+    """v9.22.4 — `state == "idle"`/`handled` 는 런 끝 정리(out 왕래 줄 · `end_run`
+    폴백/닫기 · `_save_state`) **뒤**에 세운다. 종전엔 정리 앞이라 idle 을
+    기다린 관찰자(테스트·로스터)가 아직 안 그려진 순간을 봤다(Linux CI 낙방)."""
+
+    def test_state_is_still_busy_during_run_end_cleanup(self, mkreg, renderer):
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        seen = {}
+        real_end_run = reg.end_run
+
+        def spying_end_run(debtor, output, **meta):
+            if debtor != f"agent:{b}" or seen:  # a 의 폴백 런이 부르는 것은 제외
+                return real_end_run(debtor, output, **meta)
+            tm = reg.get(b)
+            seen["state"] = tm.state
+            seen["handled"] = tm.handled
+            seen["out_drawn"] = any(
+                c[1].get("direction") == "out" and c[1].get("key") == b
+                for c in renderer.named("agent_message")
+            )
+            return real_end_run(debtor, output, **meta)
+
+        reg.end_run = spying_end_run
+        assert reg.request(b, "일감", author=f"agent:{a}", expects_reply=True) == ""
+        assert wait_until(lambda: "state" in seen)
+        assert wait_run_done(reg, b)
+        assert seen == {"state": "busy", "handled": 0, "out_drawn": True}
+        assert reg.get(b).state == "idle" and reg.get(b).handled == 1

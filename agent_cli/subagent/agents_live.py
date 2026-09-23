@@ -2384,8 +2384,10 @@ class AgentRegistry:
         # 다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
         output = self._with_human_notice(tm, seq, output)
         reply_path = self._persist_reply(tm, seq, output)
-        tm.handled += 1
-        tm.state = "idle"
+        # ``handled``/``state`` 는 **정리 뒤**에 세운다 (v9.22.4) — 종전엔 여기서
+        # idle 로 바꿔, "idle 을 기다렸다가 out 줄·폴백을 읽는" 관찰자(테스트
+        # 79곳, 웹의 로스터 갱신)가 아직 안 그려진 순간을 볼 수 있었다(Linux
+        # CI 에서 실제로 졌다). idle 은 '이 런의 일이 다 끝났다' 여야 한다.
         # ── 회신 계약 (v9.21.0) ──
         # `complete` 는 국소다 — 산출물은 자동으로 아무에게도 가지 않는다.
         # 요청 항목이면 이 런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝.
@@ -2430,7 +2432,9 @@ class AgentRegistry:
                 duration_s=duration,
                 reply_path=reply_path,
             )
-        self._save_state()
+        tm.handled += 1
+        self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
+        tm.state = "idle"
         tm.current_author = "main"
         tm.current_seq = 0
         self._notify_roster()
@@ -2493,8 +2497,6 @@ class AgentRegistry:
         # current_author) — 여기 빠뜨리면 알림이 가장 필요한 곳에 없다.
         output = self._with_human_notice(tm, seq, output)
         self._persist_reply(tm, seq, output)
-        tm.handled += len(items)  # N 요청을 한 턴에 처리
-        tm.state = "idle"
         out_payload = {
             "key": tm.key,
             "direction": "out",
@@ -2511,7 +2513,9 @@ class AgentRegistry:
         self._log_conversation(tm, out_payload)
         if not tm.stop_event.is_set():
             self.end_run(me, output)  # 빚 없음(전부 user:*) — 미답 질문 닫기만
+        tm.handled += len(items)  # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4)
         self._save_state()  # 창만(⑥), mailbox push 없음
+        tm.state = "idle"
         tm.current_author = "main"
         tm.current_seq = 0
         self._notify_roster()
