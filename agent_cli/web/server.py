@@ -56,7 +56,10 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB (workspace upload 상한)
+# workspace upload 에 크기 상한은 **없다** (v9.22.1, 사용자 결정 — 종전 50MB).
+# 상한을 없애면서 본문을 통째로 메모리에 올리던 `request.body()` 도 버렸다:
+# 청크 스트리밍으로 임시 파일에 쓰고 완료 시 제자리로 교체한다(부분 업로드가
+# 워크스페이스에 남지 않는다).
 
 
 class _NoCacheStaticFiles(StaticFiles):
@@ -1197,7 +1200,8 @@ def create_app(server: WebServer) -> FastAPI:
         - ``path`` (where the upload is rooted) resolves under the workspace
           (``_safe_workspace_path``) and must already exist; the resolved final
           destination must also be strictly under the workspace.
-        - size capped at ``_MAX_UPLOAD_BYTES`` (413 over).
+        - no size cap; the body is streamed to a temp file next to ``dest``
+          and moved into place only when complete.
         Overwrites an existing file (the user's own workspace) but reports it.
         """
         segments = name.split("/")
@@ -1212,28 +1216,40 @@ def create_app(server: WebServer) -> FastAPI:
         if not target_dir.is_dir():
             raise HTTPException(status_code=400, detail="target dir does not exist")
         dest = server._safe_workspace_path(os.path.join(path, name) if path else name)
-        body = await request.body()
-        if len(body) > _MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"file too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
-            )
         overwritten = dest.exists()
-
-        def _write() -> None:
-            # Create the nested dirs (under the already-validated target).
-            # Safe: ``_safe_workspace_path`` confirmed ``dest`` resolves under
-            # the workspace, so its parents do too. Runs in the executor — a
-            # multi-MB write on slow storage must not stall the event loop.
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(body)
-
-        await asyncio.get_event_loop().run_in_executor(None, _write)
+        loop = asyncio.get_event_loop()
+        # Create the nested dirs (under the already-validated target). Safe:
+        # ``_safe_workspace_path`` confirmed ``dest`` resolves under the
+        # workspace, so its parents do too.
+        await loop.run_in_executor(
+            None, lambda: dest.parent.mkdir(parents=True, exist_ok=True)
+        )
+        # Stream the body: each chunk goes to a temp file in ``dest``'s own
+        # directory (same filesystem → the final ``os.replace`` is atomic), and
+        # the writes run in the executor so a slow disk never stalls the SSE
+        # loop. Nothing is held in memory beyond one chunk, so there is no
+        # size the server cannot take.
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{segments[-1]}.", dir=dest.parent)
+        size = 0
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                async for chunk in request.stream():
+                    if chunk:
+                        await loop.run_in_executor(None, fh.write, chunk)
+                        size += len(chunk)
+            await loop.run_in_executor(None, os.replace, tmp_name, dest)
+        except BaseException:
+            # Partial upload (client vanished, disk full): leave nothing behind.
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
         return JSONResponse(
             {
                 "name": segments[-1],
                 "rel": str(dest.resolve().relative_to(server.workspace)),
-                "size": len(body),
+                "size": size,
                 "overwritten": overwritten,
             }
         )

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pathlib
 import threading
 import time
@@ -2880,13 +2881,21 @@ class TestWorkspaceUpload:
         assert self._post(client, b"x", name="..").status_code == 400
         assert self._post(client, b"x", name=".").status_code == 400
 
-    def test_rejects_oversize(self, server_and_client, tmp_path):
-        from agent_cli.web.server import _MAX_UPLOAD_BYTES
-
+    def test_no_size_cap_and_bytes_round_trip(self, server_and_client, tmp_path):
+        """v9.22.1: 크기 상한 없음(종전 50MB → 413). 본문은 스트리밍으로
+        임시 파일에 쓰여 제자리로 옮겨진다 — 옛 상한보다 큰 업로드가 그대로
+        통과하고 바이트가 같아야 한다."""
         server, _, client = server_and_client
         self._setup(server, tmp_path)
-        big = b"x" * (_MAX_UPLOAD_BYTES + 1)
-        assert self._post(client, big, name="big.bin").status_code == 413
+        big = os.urandom(1024) * (50 * 1024 + 1)  # 50MB + 1KB
+        r = self._post(client, big, name="big.bin")
+        assert r.status_code == 200, r.text
+        assert r.json()["size"] == len(big)
+        assert (tmp_path / "big.bin").read_bytes() == big
+        # 임시 파일이 남지 않는다
+        assert [
+            p.name for p in tmp_path.iterdir() if p.name.startswith(".big.bin.")
+        ] == []
 
     def test_rejects_nonexistent_target_dir(self, server_and_client, tmp_path):
         server, _, client = server_and_client
