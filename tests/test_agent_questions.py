@@ -1985,7 +1985,10 @@ class TestCompleteIsLocal:
         with SubmitSpy(reg) as spy:
             assert reg.request(b, "일감", author=requester, **req) == ""
             assert wait_until(lambda: ran)
-            assert wait_until(lambda: reg.get(b).state == "idle")
+            # `state == "idle"` 은 런 끝 정리(`end_run` 의 폴백 배달) **앞**에
+            # 세워진다 — 그걸 기다리면 폴백이 아직 안 나간 순간을 볼 수 있다
+            # (Linux CI 에서 졌다). `current_seq` 는 정리 뒤에 0 으로 돌아온다.
+            assert wait_until(lambda: reg.get(b).current_seq == 0)
         return spy.calls
 
     def test_reply_settles_and_nothing_else_is_delivered(self, mkreg, renderer):
