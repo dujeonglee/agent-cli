@@ -294,7 +294,13 @@ class ShellTool(Tool):
         return flat
 
     def summary_arg(self, action_input: dict) -> str:
-        return (self.strip_prefix(action_input).get("command") or "")[:60]
+        # 전문이다 (v9.22.3) — 종전 `[:60]` 은 압축 트랜스크립트에서 `-k`
+        # 필터·`-d` 본문·sed 식처럼 뒤쪽에 뜻이 있는 명령을 잘라 요약기가
+        # "무엇을" 했는지 못 쓰게 했고, `oversized_key` 로 쓰일 땐 앞 60자가
+        # 같은 두 명령을 한 파일로 겹치게 했다. 토큰 걱정은 성립하지 않는다:
+        # 이 명령은 방금까지 컨텍스트에 통째로 있던 것이라 트랜스크립트가
+        # 밀려난 양을 넘지 못한다.
+        return self.strip_prefix(action_input).get("command") or ""
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_shell(args)

@@ -626,13 +626,17 @@ class Tool(ABC):
         observation header (e.g. ``write_file(src/x.c)``).
 
         Default: the first non-empty string value (after ``strip_prefix``),
-        capped at 60 chars. Tools with a salient field (path / command /
-        agent) override to pick it deterministically. Sibling of
-        :meth:`touched_paths` — both read the tool's OWN action_input shape.
+        in full — no cap (v9.22.3: the label is the summariser's raw material
+        and doubles as :meth:`oversized_key`; cutting it lost meaning and
+        collided identities). Choosing the salient field is the right kind of
+        abbreviation (``write_file`` → path, not body); cutting that field is
+        not. Tools with a salient field (path / command / agent) override to
+        pick it deterministically. Sibling of :meth:`touched_paths` — both
+        read the tool's OWN action_input shape.
         """
         for v in self.strip_prefix(action_input).values():
             if isinstance(v, str) and v:
-                return v[:60]
+                return v
         return ""
 
     @abstractmethod

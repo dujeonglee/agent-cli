@@ -39,9 +39,29 @@ class TestToolSummaryArg:
         # Flat-native (Step 3): code_index takes a flat single query.
         assert _sa("code_index", {"mode": "fetch", "path": "x.c"}) == "fetch x.c"
 
-    def test_shell_truncates_to_60(self):
-        out = _sa("shell", {"command": "y" * 200})
-        assert len(out) == 60
+    def test_shell_keeps_the_full_command(self):
+        """v9.22.3: 상한 없음 — 종전 `[:60]` 은 `-k` 필터·sed 식을 잘라 요약기가
+        '무엇을' 했는지 못 쓰게 했다."""
+        cmd = (
+            'python3 -m pytest tests/test_x.py -q -p no:randomly -k "Unified and human"'
+        )
+        assert _sa("shell", {"command": cmd}) == cmd
+        assert len(_sa("shell", {"command": "y" * 200})) == 200
+
+    def test_default_label_is_not_capped_either(self):
+        from typing import ClassVar
+
+        from agent_cli.tools.base import Tool
+
+        class T(Tool):
+            name = "t"
+            description = ""
+            parameters: ClassVar[dict] = {"type": "object", "properties": {}}
+
+            def _run(self, args, *, ctx=None):
+                raise NotImplementedError
+
+        assert T().summary_arg({"q": "z" * 300}) == "z" * 300
 
     def test_delegate_agent(self):
         # Flat-native (Step 3): one flat task per op.

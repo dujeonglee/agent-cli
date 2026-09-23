@@ -313,6 +313,37 @@ class TestSummaryTextRendering:
         line = _to_summary_text(rec)
         assert "write_file(r.c)" in line
 
+    def test_summary_transcript_keeps_the_full_shell_command(self):
+        """v9.22.3: 요약기 입력의 명령은 전문이다. 종전 `[:60]` 은 `-k` 필터를
+        잘라 요약이 '무엇을' 돌렸는지 못 쓰게 했다. 토큰은 걱정이 아니다 —
+        이 명령은 방금까지 컨텍스트에 통째로 있던 것이다."""
+        import json
+
+        from agent_cli import wire_formats
+        from agent_cli.context.render import _to_summary_text
+
+        cmd = (
+            "python3 -m pytest tests/test_agent_questions.py -q -p no:randomly "
+            '-k "TestUnifiedDebtRules and human_window"'
+        )
+        plugin = wire_formats.get("json_fc")
+        rec = plugin.serialize_assistant_for_history(
+            "run it\n\n" + json.dumps([{"action": "shell", "command": cmd}])
+        )
+        line = _to_summary_text(rec)
+        assert f"shell({cmd})" in line
+
+    def test_oversized_key_distinguishes_long_commands_sharing_a_prefix(self):
+        """`summary_arg` 는 초과 출력 파일의 식별자(`oversized_key`)로도 쓰인다
+        — 앞 60자가 같은 두 명령이 한 파일로 겹치던 것."""
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["shell"]
+        prefix = "python3 -m pytest tests/test_agent_questions.py -q -p no:randomly "
+        a = tool.oversized_key({"command": prefix + '-k "alpha"'})
+        b = tool.oversized_key({"command": prefix + '-k "beta"'})
+        assert a != b
+
     def test_summary_renders_all_ops_of_multi_op_record(self):
         """Regression: a multi-op format (json_fc) stores ``{ops:[...]}``, not
         a top-level ``{action, action_input}``. ``_to_summary_text`` must
