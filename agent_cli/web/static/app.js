@@ -307,11 +307,16 @@
    * leftover single ``*`` characters that bracket italics can't
    * eat the inner ``*`` of a bold pair. The italic regex requires a
    * non-``*`` prefix character (or start-of-string) so it doesn't
-   * fire on the middle ``*`` of ``***``. */
+   * fire on the middle ``*`` of ``***``.
+   *
+   * CommonMark flanking (v9.22.3): a delimiter followed by whitespace
+   * cannot open, one preceded by whitespace cannot close. Without it a
+   * cron line ``0 9 * * 1-5`` or ``2 * 3 * 4`` lost its stars to an
+   * italic space — in user bubbles and assistant text alike. */
   function renderEmphasis(s) {
-    let html = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+    let html = s.replace(/\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*/g, "<strong>$1</strong>");
     html = html.replace(
-      /(^|[^*])\*([^*\n]+?)\*(?!\*)/g,
+      /(^|[^*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g,
       "$1<em>$2</em>"
     );
     return html;

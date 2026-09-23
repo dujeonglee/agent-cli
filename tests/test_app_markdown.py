@@ -182,6 +182,17 @@ class TestEscapeAndFormat:
         assert "<strong>bold</strong>" in out
         assert "<em>italic</em>" in out
 
+    def test_stars_with_spaces_are_not_emphasis(self):
+        """v9.22.3 CommonMark flanking: 공백을 사이에 둔 별표 쌍은 강조가
+        아니다 — cron 식·곱셈이 사용자 말풍선에서 사라지던 자리."""
+        for text in ("0 9 * * 1-5", "*/5 * * * *", "2 * 3 * 4", "a ** b ** c"):
+            out = _format(text)
+            assert "<em>" not in out and "<strong>" not in out, (text, out)
+            assert out.count("*") == text.count("*"), (text, out)
+        # 진짜 강조는 그대로
+        assert "<em>단어</em>" in _format("앞 *단어* 뒤")
+        assert "<strong>굵게</strong>" in _format("앞 **굵게** 뒤")
+
     def test_unordered_list(self):
         out = _format("- one\n- two\n- three")
         assert "<ul>" in out
