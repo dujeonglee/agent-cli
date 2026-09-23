@@ -518,11 +518,14 @@ class AgentInstance:
         # 지금 처리 중인 항목의 seq — 질문의 런 스코프(Question.asked_seq)가
         # 이 값을 찍는다. 유휴/main 은 0.
         self.current_seq = 0
-        # 이 런이 질문을 **걸었는가** (§3.7). 걸었다면 그 질문은 반드시 답
+        # 이 런이 질문을 건 **주소들** (§3.7). 걸었다면 그 질문은 반드시 답
         # 런을 하나 만들고(답·상한·상대 사망 셋 다 `_deliver_answer` 를
-        # 지난다) 그 런의 회신이 진짜 회신이므로, 이 런의 회신은 요청자에게
-        # 재주입하지 않는다. 워커가 런 경계마다 리셋한다.
-        self.asked_this_run = False
+        # 지난다) 그 런이 **그 주소**에게 같은 빚을 지므로, 이 런의 그 주소
+        # 빚은 억제한다. 주소별인 이유(v9.22.2): 종전 bool 은 사람에게 물은
+        # 런(`ask(to="user")`)의 main 빚까지 억제했는데, 그 답 런의 요청자는
+        # 사람이라 빚이 없어 main 은 결과를 영영 못 받았다. 워커가 런
+        # 경계마다 비운다.
+        self.asked_targets: set[str] = set()
         # 이 런의 회신 빚은 여기 없다 — 레지스트리의 주소별 장부
         # (`AgentRegistry._reply_debts`, v9.22.1) 가 main 과 같은 자리에서 든다.
 
@@ -880,7 +883,7 @@ class AgentRegistry:
                     and q.text == text
                     and q.asked_seq == asked_seq
                 ):
-                    self._mark_asked(asker)
+                    self._mark_asked(asker, target)
                     return q.id, ""
             q = Question(
                 id=_new_question_id(),
@@ -899,18 +902,18 @@ class AgentRegistry:
             return "", err
         # 배달까지 성공한 **뒤에** 세운다 — 실패한 질문에 억제를 걸면
         # 답 런이 안 생기므로 그 런의 회신이 영영 사라진다.
-        self._mark_asked(asker)
+        self._mark_asked(asker, target)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
         # 사람 주소 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
         self._notify_roster()
         return q.id, ""
 
-    def _mark_asked(self, asker: str) -> None:
-        """이 런이 질문을 걸었다고 표시 (§3.7 회신 억제의 판정값)."""
+    def _mark_asked(self, asker: str, target: str) -> None:
+        """이 런이 ``target`` 에게 질문을 걸었다고 표시 (§3.7 회신 억제의 판정값)."""
         tm = self._agents.get(asker)
         if tm is not None:
-            tm.asked_this_run = True
+            tm.asked_targets.add(target)
 
     def _deliver_question(self, q: Question, *, render: bool = True) -> str:
         """질문을 **기존 배관**으로 상대에게. 에러 또는 빈 문자열.
@@ -1120,17 +1123,17 @@ class AgentRegistry:
             return self._reply_debts.get(debtor, {}).get(to)
 
     def reply_debts(self, debtor: str) -> list[ReplyDebt]:
-        """아직 안 갚은 빚 — 사람 주소 제외(창이 곧 배달). 질문을 건 런은
-        빈 목록(§3.7 — 답 런이 같은 빚을 진다; main 의 ask 는 사람에게 가는
+        """아직 안 갚은 빚 — 사람 주소 제외(창이 곧 배달). 이 런이 질문을
+        건 주소의 빚은 제외(§3.7 — 그 답 런이 같은 빚을 진다; 다른 주소, 예컨대
+        사람에게 물었을 때의 main 빚은 남는다. main 의 ask 는 사람에게 가는
         블로킹 프롬프트라 해당 없음)."""
         tm = self._agents.get(debtor.split(":", 1)[1]) if debtor != "main" else None
-        if tm is not None and tm.asked_this_run:
-            return []
+        asked = tm.asked_targets if tm is not None else set()
         with self._cv:
             return [
                 d
                 for d in self._reply_debts.get(debtor, {}).values()
-                if not d.settled and not d.human
+                if not d.settled and not d.human and d.to not in asked
             ]
 
     def end_run(self, debtor: str, output: str, **meta) -> int:
@@ -2218,7 +2221,7 @@ class AgentRegistry:
                 # any_activity()(state 검사 + inbox.qsize — 방금 비움)가 "활동
                 # 없음"으로 오판해 작업 중 세션을 거둘 수 있었다.
                 tm.state = "busy"
-                tm.asked_this_run = False  # 런 경계 (§3.7 회신 억제)
+                tm.asked_targets = set()  # 런 경계 (§3.7 회신 억제)
                 # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
                 # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
                 # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과

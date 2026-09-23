@@ -2741,3 +2741,44 @@ class TestRuleFollowsInboundTypeNotOwner:
             )
         finally:
             reg.shutdown_all()
+
+
+class TestAskSuppressionIsPerTarget:
+    """§3.7 의 회신 억제는 **질문을 건 주소**의 빚에만 (v9.22.2). 근거가
+    "그 답 런이 같은 빚을 진다" 이므로 요청자에게 물었을 때만 성립한다 —
+    사람에게 물은 런(`ask(to="user")`)의 답 런은 요청자가 사람이라 빚이
+    없고, 종전 bool 억제로는 main 이 결과를 영영 못 받았다."""
+
+    def test_asking_the_requester_suppresses_that_debt(self, mkreg, renderer):
+        reg = mkreg()
+        b = spawn_idle(reg)
+        me = f"agent:{b}"
+        tm = reg.get(b)
+        tm.current_author = "main"
+        reg.begin_run(me)
+        reg.note_owes(me, "main", "일감")
+        assert [d.to for d in reg.reply_debts(me)] == ["main"]
+        qid, err = reg.question_port(b).ask("어느 쪽?")  # 기본: 요청자(main)
+        assert not err and qid
+        assert reg.reply_debts(me) == []  # 답 런이 같은 빚을 진다
+
+    def test_asking_the_user_keeps_the_requester_debt(self, mkreg, renderer):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg = mkreg()
+        b = spawn_idle(reg)
+        me = f"agent:{b}"
+        tm = reg.get(b)
+        tm.current_author = "main"
+        reg.begin_run(me)
+        reg.note_owes(me, "main", "일감")
+        qid, err = reg.question_port(b).ask("결정해 주세요", to="user")
+        assert not err and qid
+        assert [d.to for d in reg.reply_debts(me)] == ["main"], (
+            "사람에게 물었다고 main 빚이 사라졌다"
+        )
+        # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
+        reg.drain_replies()  # 트레이 질문 알림 비우기
+        assert reg.end_run(me, "사용자 답을 기다립니다", seq=1, success=True) >= 1
+        recs = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
+        assert recs and recs[0]["output"].startswith(_NO_REPLY_LABEL)
