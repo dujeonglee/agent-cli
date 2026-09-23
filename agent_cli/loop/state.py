@@ -115,5 +115,12 @@ class LoopState:
     #: 도구 경로에만 있어 반복 complete 을 안 본다). 상한 뒤엔 레지스트리가
     #: 런 요약을 라벨 붙여 폴백 배달한다 — 요청자가 침묵을 받진 않는다.
     debt_nags: int = 0
+    #: 이 런이 사용자 요청을 받았는가 (v9.22.1) — 시작 메시지든 턴 경계
+    #: 주입이든 `is_user` 인 것이 하나라도. 빚이 남은 `complete` 의 갈림이
+    #: **이것**이다(수신 유형 규칙): 사용자 요청이 있는 런은 결과가 사용자에게
+    #: 가므로 수락 후 독촉, 없는 런(🤝 웨이크·에이전트 항목)은 거부. 종전엔
+    #: main/상주(`port.nonblocking`)로 갈랐는데 그건 이 값의 근사였다 — main
+    #: 의 웨이크 런과 상주의 사람 창 런에서 틀린다.
+    user_run: bool = False
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

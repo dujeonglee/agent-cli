@@ -210,6 +210,10 @@ def run_subagent_message(
         agent_role=agent_role,
         hooks_config=hooks_config,
         user_requests=user_requests,
+        # 상주 런의 시작 메시지가 **사람의 요청**인가 = 회계에 오른 요청이
+        # 있는가. 에이전트·main 항목(message/ask/회신)으로 시작한 런은 사용자
+        # 런이 아니다 — 빚이 남은 `complete` 은 거기서 거부된다(v9.22.1).
+        query_author_is_user=bool(user_requests),
         compaction_enabled=compaction_enabled,
         ports=ports,
         peer_agents_section=peer_agents_section,

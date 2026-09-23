@@ -306,12 +306,14 @@ class TestAnswer:
     def test_answer_to_main_asker_uses_the_mailbox(self, mkreg, tmp_path, renderer):
         """설계 3판 §3.3 이 빠뜨린 경우 — ``submit`` 의 대상은 상주
         에이전트뿐이라 main 이 asker 면 메일박스로 가야 한다."""
-        reg = mkreg()
+        gate = threading.Event()  # b 의 런을 붙잡는다 — 끝나면 미답 질문이 닫힌다
+        reg = mkreg(runner=make_runner(block=gate))
         b = spawn_idle(reg)
         qid, err = reg.register_question("main", f"agent:{b}", "상태 어때요?")
         assert not err
         reg.drain_replies()
         assert reg.answer_question(qid, "초록", by=f"agent:{b}") == ""
+        gate.set()
         (reply,) = reg.drain_replies()
         assert reply["kind"] == "answer"
         assert reply["id"] == qid
@@ -323,11 +325,13 @@ class TestAnswer:
 
 class TestClose:
     def test_close_delivers_the_reason_to_the_asker(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
+        gate = threading.Event()
+        reg = mkreg(runner=make_runner(block=gate))
         b = spawn_idle(reg)
         qid, _ = reg.register_question("main", f"agent:{b}", "질문")
         reg.drain_replies()
         assert reg.close_question(qid, "상한 초과") is not None
+        gate.set()
         (reply,) = reg.drain_replies()
         assert "상한 초과" in reply["output"]
         assert reg.close_question(qid, "다시") is None  # 멱등
@@ -1178,19 +1182,19 @@ class TestQuestionPort:
         reg = mkreg()
         port = reg.question_port(spawn_idle(reg))
         public = {n for n in dir(port) if not n.startswith("_")}
-        # `reply_owed` (v9.21.0): 루프가 `complete` 직전에 "아직 안 갚은 회신
-        # 주소" 를 묻는 읽기 전용 표면 — 레지스트리를 노출하지 않는다.
-        assert public == {
-            "ask",
-            "answer",
-            "key",
-            "me",
-            "asker",
-            "nonblocking",
-            "reply_owed",
-            "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
-            "debts",  # v9.22.0 — main·상주 공통 빚 목록 (answer/reply)
-        }
+        assert (
+            public
+            == {
+                "ask",
+                "answer",
+                "key",
+                "me",
+                "asker",
+                "nonblocking",
+                "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
+                "debts",  # v9.22.0 — main·상주 공통 빚 목록 (answer/reply); v9.22.1 에서 `reply_owed` 흡수
+            }
+        )
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
         assert reg.question_port(None).nonblocking is False
@@ -1843,16 +1847,10 @@ class TestReplyNagCap:
         def __init__(self):
             self.replies = []
 
-        def reply_owed(self):
-            return "agent:agt-a" if not self.replies else ""
-
         def debts(self):
-            owed = self.reply_owed()
-            return (
-                [{"kind": "reply", "to": owed, "id": "", "text": "일감"}]
-                if owed
-                else []
-            )
+            if self.replies:
+                return []
+            return [{"kind": "reply", "to": "agent:agt-a", "id": "", "text": "일감"}]
 
         def reply(self, text):
             self.replies.append(text)
@@ -1877,6 +1875,7 @@ class TestReplyNagCap:
         ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
         res = run_loop(
             query="[agent:agt-a]: 일감",
+            query_author_is_user=False,  # 에이전트 항목으로 시작한 런 (러너가 넘기는 값)
             provider=p,
             capabilities=_caps(),
             model="m",
@@ -2088,8 +2087,8 @@ class TestCompleteIsLocal:
         b = spawn_idle(reg)
         tm = reg.get(b)
         tm.current_author = "user:dj"
-        tm.current_expects_reply = True
-        tm.replied_this_run = set()
+        reg.begin_run(f"agent:{b}")
+        reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")  # 사람 창 요청 — 빚 아님
         err = reg.question_port(b).reply("리뷰 결과")
         assert "person watching this window" in err and "Just `complete`" in err
         assert "message(to=" not in err
@@ -2101,20 +2100,21 @@ class TestCompleteIsLocal:
     def test_port_reports_the_debt_and_its_repayment(self, mkreg, renderer):
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
+        me = f"agent:{b}"
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"
-        tm.current_expects_reply = True
-        tm.replied_this_run = set()
         port = reg.question_port(b)
-        assert port.reply_owed() == f"agent:{a}"
-        tm.replied_this_run.add(f"agent:{a}")
-        assert port.reply_owed() == ""
-        tm.replied_this_run = set()
-        tm.current_expects_reply = False  # 배달 항목으로 시작한 런
-        assert port.reply_owed() == ""
-        tm.current_expects_reply = True
-        tm.current_author = "user:dj"  # 사람은 창이 곧 배달
-        assert port.reply_owed() == ""
+        reg.begin_run(me)
+        reg.note_owes(me, f"agent:{a}", "일감")
+        assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
+        reg.settle(me, f"agent:{a}")
+        assert port.debts() == []
+        assert reg.reply_debt(me, f"agent:{a}").settled  # "이미 갚았다" 의 근거
+        reg.begin_run(me)  # 배달 항목(expects_reply=False)으로 시작한 런 — 적지 않는다
+        assert port.debts() == []
+        reg.note_owes(me, "user:dj", "리뷰해줘")  # 사람은 창이 곧 배달
+        assert port.debts() == []
+        assert reg.reply_debt(me, "user:dj").human
 
 
 class TestRefusedCompleteIsNotStored:
@@ -2136,6 +2136,7 @@ class TestRefusedCompleteIsNotStored:
         ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
         run_loop(
             query="[agent:agt-a]: 일감",
+            query_author_is_user=False,
             provider=p,
             capabilities=_caps(),
             model="m",
@@ -2262,7 +2263,7 @@ class TestRunEndClosure:
 
 
 class TestMainRunEnd:
-    """main 의 런 끝 — `end_main_run(output)`: 남은 회신 빚은 라벨 붙은 런
+    """main 의 런 끝 — `end_run("main", output)`: 남은 회신 빚은 라벨 붙은 런
     요약을 그 에이전트 inbox 로, 답 안 한 질문은 닫는다. main 의 회신 빚은
     에이전트의 `message(to=main)`(expects_reply=True)만 만든다 — `reply` 는
     답이라 빚이 아니다."""
@@ -2282,7 +2283,7 @@ class TestMainRunEnd:
         qid, _ = reg.register_question(a, "main", "어느 쪽?")
         reg.drain_replies()
         with SubmitSpy(reg) as spy:
-            assert reg.end_main_run("main 의 요약") == 1
+            assert reg.end_run("main", "main 의 요약") == 1
         assert qid not in reg._questions
         (call,) = [c for c in spy.calls if c["key"] == a]
         assert "finished its run without answering" in call["message"]
@@ -2293,12 +2294,12 @@ class TestMainRunEnd:
         qid, _ = reg.register_question(a, "main", "어느 쪽?")
         reg.drain_replies()
         assert reg.answer_question(qid, "v2", by="main") == ""
-        assert reg.end_main_run("요약") == 0
+        assert reg.end_run("main", "요약") == 0
 
     def test_message_to_main_creates_a_debt_and_reply_does_not(self, mkreg, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_main_run()
+        reg.begin_run("main")
         reg.message_to_main(a, "결정해 줘", expects_reply=True)
         reg.message_to_main(a, "보고", expects_reply=False)
         recs = reg.drain_replies()
@@ -2306,7 +2307,7 @@ class TestMainRunEnd:
         # 배달을 흉내 낸다 — core 의 _deliver_agent_mail 이 하는 일
         for r in recs:
             if r["expects_reply"]:
-                reg.note_main_owes(r["key"], r["output"])
+                reg.note_owes("main", f"agent:{r['key']}", r["output"])
         port = reg.question_port(None)
         assert [d["kind"] for d in port.debts()] == ["reply"]
         assert port.debts()[0]["to"] == f"agent:{a}"
@@ -2314,10 +2315,10 @@ class TestMainRunEnd:
     def test_agent_request_settles_the_debt(self, mkreg, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_main_run()
-        reg.note_main_owes(a, "결정해 줘")
+        reg.begin_run("main")
+        reg.note_owes("main", f"agent:{a}", "결정해 줘")
         assert reg.request(a, "여기 답") == ""  # main 발신
-        assert reg.main_reply_debts() == []
+        assert reg.reply_debts("main") == []
         assert reg.question_port(None).debts() == []
 
     def test_unsettled_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
@@ -2325,15 +2326,15 @@ class TestMainRunEnd:
 
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_main_run()
-        reg.note_main_owes(a, "결정해 줘")
+        reg.begin_run("main")
+        reg.note_owes("main", f"agent:{a}", "결정해 줘")
         with SubmitSpy(reg) as spy:
-            assert reg.end_main_run("main 은 이렇게 끝냈다") == 1
+            assert reg.end_run("main", "main 은 이렇게 끝냈다") == 1
         (call,) = [c for c in spy.calls if c["key"] == a]
         assert call["message"].startswith(_NO_REPLY_LABEL)
         assert "main 은 이렇게 끝냈다" in call["message"]
         assert call["expects_reply"] is False
-        assert reg.main_reply_debts() == []
+        assert reg.reply_debts("main") == []
 
     def test_mail_notice_distinguishes_message_from_reply(self, mkreg, renderer):
         reg = mkreg()
@@ -2366,7 +2367,16 @@ class TestUnifiedDebtRules:
 
         return "## Thought\\nt\\n\\n## Action\\n" + json.dumps(ops)
 
-    def _run(self, *, ports, query, contents, query_request_id="", user_requests=None):
+    def _run(
+        self,
+        *,
+        ports,
+        query,
+        contents,
+        query_request_id="",
+        user_requests=None,
+        is_user=True,
+    ):
         import tempfile
         from pathlib import Path
 
@@ -2380,6 +2390,7 @@ class TestUnifiedDebtRules:
         res = run_loop(
             query=query,
             query_author="Bob",
+            query_author_is_user=is_user,
             query_request_id=query_request_id,
             user_requests=user_requests,
             provider=p,
@@ -2406,7 +2417,9 @@ class TestUnifiedDebtRules:
             key=b, message_handler=lambda to, text: "", questions=reg.question_port(b)
         )
         tm = reg.get(b)
-        tm.current_author, tm.current_expects_reply = "user:dj", True
+        tm.current_author = "user:dj"
+        reg.begin_run(f"agent:{b}")
+        reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")
         p, _ctx, res = self._run(
             ports=ports,
             query="[user:dj]: 리뷰해줘",
@@ -2474,10 +2487,12 @@ class TestUnifiedDebtRules:
             key=b, message_handler=lambda to, text: "", questions=reg.question_port(b)
         )
         tm = reg.get(b)
-        tm.current_author, tm.current_expects_reply = f"agent:{a}", False  # 질문 항목
+        tm.current_author = f"agent:{a}"  # 질문 항목 — 회신 빚은 없다
+        reg.begin_run(f"agent:{b}")
         p, ctx, _res = self._run(
             ports=ports,
             query=f"[question {qid} from {a}]: 어느 쪽?",
+            is_user=False,  # 에이전트 항목으로 시작한 런
             contents=[
                 self._env([{"action": "complete", "result": "끝"}]),
                 self._env(
@@ -2548,7 +2563,9 @@ class TestUnifiedDebtRules:
         # `main_run_ended` → `end_main_run` 이 배달)
         assert len(nags) == 3 and p.call.call_count == 4
         assert finals[-1] == "끝"
-        assert reg.main_reply_debts() == [(a, "결정해 줘")]
+        assert [(d.to, d.text) for d in reg.reply_debts("main")] == [
+            (f"agent:{a}", "결정해 줘")
+        ]
 
     def test_mixed_run_settles_requests_then_nags_debts(self, mkreg, renderer):
         """섞임: 수락 → answers 의 요청 제거 → message/ask 독촉."""
@@ -2584,3 +2601,143 @@ class TestUnifiedDebtRules:
         assert "you still owe" in blob and f'answer(id="{qid}"' in blob
         assert qid not in reg._questions
         assert p.call.call_count == 2
+
+
+class TestRuleFollowsInboundTypeNotOwner:
+    """v9.22.1 — 빚이 남은 `complete` 의 갈림은 **이 런이 사용자 요청을
+    받았는가**(`LoopState.user_run`)이지 main/상주가 아니다. 종전의 소유자
+    분기(`port.nonblocking`)는 이 값의 근사였고 두 경우에서 틀렸다."""
+
+    _run = TestUnifiedDebtRules._run
+    _env = staticmethod(TestUnifiedDebtRules._env)
+
+    def test_main_wake_run_with_a_debt_is_refused_like_any_agent_run(
+        self, mkreg, renderer
+    ):
+        """main 의 🤝 웨이크 런(사용자 발화 없음)에 message 빚이 남으면
+        거부 — 종전엔 main 이라는 이유로 '수락 후 독촉' 이었다."""
+        from tests.loop_ports import make_ports
+
+        reg = mkreg()
+        a = spawn_idle(reg)
+        reg.message_to_main(a, "결정해 줘", expects_reply=True)
+        ports = make_ports(
+            owner="main", agent_registry=reg, questions=reg.question_port(None)
+        )
+        finals = []
+        import agent_cli.loop.dispatch as D
+
+        real = D.render_step
+        D.render_step = lambda kind, text, *x, **k: (
+            finals.append(text) if kind == "final" else None
+        )
+        try:
+            _p, ctx, _res = self._run(
+                ports=ports,
+                query="🤝 agent mail",
+                is_user=False,
+                contents=[
+                    self._env([{"action": "complete", "result": "답"}]),
+                    self._env([{"action": "complete", "result": "끝"}]),
+                    self._env([{"action": "complete", "result": "끝"}]),
+                    self._env([{"action": "complete", "result": "끝"}]),
+                ],
+            )
+        finally:
+            D.render_step = real
+        refusals = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user"
+            and "`complete` was refused" in m.get("content", "")
+        ]
+        assert len(refusals) == 3 and "«답»" in refusals[0]["content"]
+        assert 'agent(mode="request"' in refusals[0]["content"]  # main 의 수단
+        assert finals == ["끝"], "거부된 complete 이 final 로 렌더됐다"
+
+    def test_resident_human_window_run_with_a_debt_is_nagged_not_refused(
+        self, mkreg, renderer
+    ):
+        """상주의 사람 창 런(사용자 요청 있음)에 열린 질문이 남으면 수락 후
+        독촉 — 결과는 창의 사람에게 간다. 수단은 상주의 도구(`answer`)."""
+        from agent_cli.runtime import ports_for_resident
+        from agent_cli.subagent.agents_live import Question
+
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        qid = "q-human"
+        with reg._cv:
+            reg._questions[qid] = Question(
+                id=qid, asker=a, target=f"agent:{b}", text="어느 쪽?", delivered_seq=1
+            )
+        ports = ports_for_resident(
+            key=b, message_handler=lambda to, text: "", questions=reg.question_port(b)
+        )
+        tm = reg.get(b)
+        tm.current_author = "user:dj"
+        reg.begin_run(f"agent:{b}")
+        reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")
+        p, ctx, _res = self._run(
+            ports=ports,
+            query="[user:dj]: 리뷰해줘",
+            user_requests=[{"id": "7", "author": "user:dj", "text": "리뷰해줘"}],
+            contents=[
+                self._env(
+                    [{"action": "complete", "result": "리뷰 결과", "answers": ["7"]}]
+                ),
+                self._env(
+                    [
+                        {"action": "answer", "id": qid, "text": "왼쪽"},
+                        {"action": "complete", "result": "끝", "answers": []},
+                    ]
+                ),
+            ],
+        )
+        nags = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "you still owe" in m.get("content", "")
+        ]
+        assert nags and f'answer(id="{qid}"' in nags[0]["content"]
+        assert "`complete` was refused" not in nags[0]["content"]
+        assert qid not in reg._questions and p.call.call_count == 2
+
+    def test_real_runner_marks_agent_items_as_non_user_runs(self, tmp_path, renderer):
+        """레지스트리 → `run_subagent_message` → run_loop 실배선: peer 의
+        요청으로 시작한 런은 사용자 런이 아니어야 빚 남긴 complete 이
+        **거부**된다(3회) — 러너가 `query_author_is_user` 를 안 넘기면
+        run_loop 기본값(True)이 이 런을 사용자 런으로 만들어 독촉으로 샌다."""
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        provider = MagicMock()  # 누가 몇 번 부르든 같은 답 — a 의 폴백 런도 부른다
+        done = LLMResponse(content=self._env([{"action": "complete", "result": "끝"}]))
+        provider.call.side_effect = lambda *a, **k: done
+        reg = AgentRegistry(
+            tmp_path,
+            runtime={"provider": provider, "capabilities": _caps(), "model": "m"},
+            runner=None,  # 진짜 러너
+        )
+        try:
+            a, b = spawn_idle(reg), spawn_idle(reg)
+            assert reg.request(b, "일감", author=f"agent:{a}", expects_reply=True) == ""
+            tb = reg.get(b)
+            assert wait_until(
+                lambda: tb.handled == 1 and tb.state == "idle", timeout=10
+            )
+            refusals = [
+                m
+                for m in tb.ctx.get_raw_messages()
+                if m.get("role") == "user"
+                and "`complete` was refused" in m.get("content", "")
+            ]
+            assert len(refusals) == 3, f"거부 {len(refusals)}회 — 상주 런은 3회 거부"
+            # 상한 뒤 폴백: a 가 라벨 붙은 런 요약을 받는다
+            ta = reg.get(a)
+            assert wait_until(lambda: ta.handled >= 1, timeout=10)
+            assert any(
+                _NO_REPLY_LABEL in (m.get("content") or "")
+                for m in ta.ctx.get_raw_messages()
+            )
+        finally:
+            reg.shutdown_all()

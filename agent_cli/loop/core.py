@@ -589,11 +589,6 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
-        # main 의 회신 빚은 런 단위 (v9.22.0) — 시작에 비운다.
-        if self._config.owner == "main" and self._config.agent_registry is not None:
-            begin = getattr(self._config.agent_registry, "begin_main_run", None)
-            if callable(begin):
-                begin()
         for r in self.user_requests:
             if r.get("id"):
                 self._state.run_requests.append(
@@ -666,6 +661,8 @@ class AgentLoop:
             self.messages.append(record)
         if author and is_user and author not in self.run_authors:
             self.run_authors.append(author)
+        if is_user:
+            self._state.user_run = True
         self._mirror_run_authors()
 
     def _mirror_run_authors(self) -> None:
@@ -777,9 +774,9 @@ class AgentLoop:
             # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. complete
             # 직전에 dispatch 가 빚 목록을 물어 독촉한다.
             if reply.get("expects_reply") and reply.get("key"):
-                note = getattr(registry, "note_main_owes", None)
+                note = getattr(registry, "note_owes", None)
                 if callable(note):
-                    note(reply["key"], reply.get("output") or "")
+                    note("main", f"agent:{reply['key']}", reply.get("output") or "")
             inherited = [a for a in (reply.get("answers") or []) if a]
             if inherited:
                 record["answers"] = list(inherited)

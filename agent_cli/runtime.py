@@ -176,7 +176,7 @@ def main_run_ended(agent_registry, output: str = "") -> int:
     """
     if agent_registry is None:
         return 0
-    return agent_registry.end_main_run(output or "")
+    return agent_registry.end_run("main", output or "")
 
 
 def teardown_session(

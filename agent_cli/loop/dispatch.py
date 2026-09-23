@@ -703,23 +703,20 @@ class TurnDispatcher:
         if not nagging:
             answer = self._with_unanswered_notice(claimed, still_open, answer)
 
-        # 상주 에이전트: 요청자에게 빚진 `message` 없이 끝내려 하나 (v9.21.0).
-        # `complete` 는 국소라 이 산출물은 요청자에게 가지 않는다 — 한 번
-        # 독촉해 `message` 를 보내게 한다. 그래도 안 보내면 레지스트리가 런
-        # 요약을 라벨 붙여 폴백 배달하므로 요청자가 침묵을 받진 않는다.
         # ── message/ask 빚 (v9.22.0, 유형별 통일) ──
         # 사용자 요청은 위에서 정산했다(수락·키 제거·남은 요청 독촉). 그 뒤에
-        # message/ask 빚이 남아 있으면:
-        #   상주: complete 을 **거부**한다 — 산출물이 아무 데도 안 가므로.
-        #         원문을 인용한 관찰만 남고 emission 은 저장하지 않는다.
-        #   main: complete 을 **수락**한다(최종답은 사용자에게 간다) — 배달·
-        #         기록한 뒤 빚을 독촉하고 루프를 잇는다.
+        # message/ask 빚이 남아 있으면 — 갈림은 **이 런이 사용자 요청을
+        # 받았는가**(`state.user_run`)이지 main/상주가 아니다(v9.22.1):
+        #   사용자 요청 없는 런(에이전트 항목·🤝 웨이크): complete 을 **거부**
+        #         — 산출물이 아무 데도 안 가므로. 원문을 인용한 관찰만 남고
+        #         emission 은 저장하지 않는다.
+        #   사용자 요청 있는 런: complete 을 **수락**(결과는 사용자에게 간다)
+        #         — 배달·기록한 뒤 빚을 독촉하고 루프를 잇는다.
         # 둘 다 3회까지; 그 뒤엔 런 끝에서 폴백(요약 배달)·닫기(질문).
         debts = [] if nagging else self._debts()
         if debts and self.state.debt_nags < MAX_DEBT_NAGS:
             self.state.debt_nags += 1
-            port = self.cfg.questions
-            if getattr(port, "nonblocking", False):
+            if not self.state.user_run:
                 return self._refuse_for_debts(llm_text, answer, debts, outcome)
             render_step("final", answer, self.state.turn, requests=answered)
             return self._nag_debts(llm_text, debts, outcome)
@@ -870,8 +867,12 @@ class TurnDispatcher:
         except Exception:
             return []
 
-    def _debt_lines(self, debts: list[dict], *, resident: bool) -> str:
-        """빚 목록을 갚는 수단과 함께 — main 과 상주는 도구가 다르다."""
+    def _debt_lines(self, debts: list[dict]) -> str:
+        """빚 목록을 갚는 수단과 함께. 수단은 **이 루프에 있는 도구**로 고른다
+        — `reply` 는 상주 전용(`port.nonblocking`), main 은 `agent request`.
+        규칙(거부/독촉)과는 별개다: 사람 창 런의 상주는 독촉을 받되 `reply`
+        를 안내받는다."""
+        resident = bool(getattr(self.cfg.questions, "nonblocking", False))
         lines = []
         for d in debts:
             if d["kind"] == "answer":
@@ -906,14 +907,14 @@ class TurnDispatcher:
     def _refuse_for_debts(
         self, llm_text: str, answer: str, debts: list[dict], outcome: dict
     ):
-        """상주: 빚을 남긴 `complete` 을 거부한다 — 원문을 인용한 관찰 하나,
-        emission 은 저장하지 않는다(v9.21.1 원칙)."""
+        """사용자 요청 없는 런: 빚을 남긴 `complete` 을 거부한다 — 원문을
+        인용한 관찰 하나, emission 은 저장하지 않는다(v9.21.1 원칙)."""
         return self._intervene(
             llm_text,
             (
                 "Observation: your `complete` was refused — it reports to no one, "
                 "and you still owe:\n"
-                f"{self._debt_lines(debts, resident=True)}\n"
+                f"{self._debt_lines(debts)}\n"
                 f"You completed with:\n«{answer}»\n"
                 "If that text was your reply, send it with the tool shown; then "
                 "`complete` if nothing else remains. " + self._debt_tail()
@@ -926,13 +927,13 @@ class TurnDispatcher:
         )
 
     def _nag_debts(self, llm_text: str, debts: list[dict], outcome: dict):
-        """main: `complete` 은 수락됐다(최종답은 사용자에게 갔다) — 남은 빚만
-        독촉하고 루프를 잇는다."""
+        """사용자 요청 있는 런: `complete` 은 수락됐다(결과는 사용자에게
+        갔다) — 남은 빚만 독촉하고 루프를 잇는다."""
         return self._intervene(
             llm_text,
             (
                 "Observation: your result was delivered, but you still owe:\n"
-                f"{self._debt_lines(debts, resident=False)}\n"
+                f"{self._debt_lines(debts)}\n"
                 "Settle them now, then `complete` again. " + self._debt_tail()
             ),
             "debts owed",
