@@ -36,19 +36,31 @@ class TestEchoPriorOutput:
         assert lines[2] == "payload"
         assert lines[3] == "---"
 
-    def test_long_content_quoted_in_full(self):
-        # Truncation was removed deliberately — format-failure signals
-        # can sit at either end of the malformed output, so giving the
-        # model only the head sometimes hid the real defect (e.g.
-        # JSON whose closing brace is the missing piece). Full echo
-        # costs more tokens but yields more accurate next-turn fixes.
-        long = "HEAD" + "x" * 2000 + "TAIL"
+    def test_content_up_to_the_cap_is_quoted_in_full(self):
+        from agent_cli.recovery.primitives import ECHO_MAX_CHARS
+
+        text = "HEAD" + "x" * (ECHO_MAX_CHARS - 8) + "TAIL"
+        out = echo_prior_output(text)
+        assert text in out and "omitted" not in out
+
+    def test_long_content_keeps_both_ends(self):
+        """v9.23.2: bounded — but **head and tail** both reach the model.
+
+        The full echo existed because a head-only cut once hid the real
+        defect (JSON whose closing brace is the missing piece; a prose drift
+        that shows only at the tail). Keeping both ends answers that. What
+        the full echo cost: a 32K-character runaway was stored AND quoted
+        whole, and the model imitated the broken fragment for 22 turns
+        (Harbor extract-elf)."""
+        from agent_cli.recovery.primitives import ECHO_HEAD_CHARS, ECHO_TAIL_CHARS
+
+        long = "HEAD" + "x" * 30000 + "TAIL"
         out = echo_prior_output(long)
-        assert "HEAD" in out
-        assert "TAIL" in out  # tail must reach the model too
-        assert "..." not in out
-        # All padding survives — no head-cap artifact.
-        assert out.count("x") == 2000
+        assert out.startswith("Your prior output:\n---\nHEAD")
+        assert out.rstrip().endswith("TAIL\n---") or "TAIL\n---" in out
+        omitted = len(long) - ECHO_HEAD_CHARS - ECHO_TAIL_CHARS
+        assert f"[… {omitted} characters omitted …]" in out
+        assert len(out) < ECHO_HEAD_CHARS + ECHO_TAIL_CHARS + 200
 
     def test_strips_leading_trailing_whitespace(self):
         out = echo_prior_output("  payload  \n\n")

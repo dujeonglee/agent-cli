@@ -10,28 +10,52 @@ See ``docs/robust-harness/DESIGN.md`` §2.2 for the contract.
 
 from __future__ import annotations
 
+#: Longest prior output quoted whole (v9.23.2). Past this the echo keeps the
+#: head and the tail and says how much it dropped.
+ECHO_MAX_CHARS = 2000
+ECHO_HEAD_CHARS = 1400
+ECHO_TAIL_CHARS = 600
+
+
+def bounded_excerpt(text: str) -> str:
+    """``text`` whole when short, else head + ``[… N characters omitted …]`` +
+    tail. Both ends survive because a format failure can sit at either one:
+    a cut-off JSON looks fine at the head, a prose drift shows only at the
+    tail."""
+    if len(text) <= ECHO_MAX_CHARS:
+        return text
+    omitted = len(text) - ECHO_HEAD_CHARS - ECHO_TAIL_CHARS
+    return (
+        text[:ECHO_HEAD_CHARS]
+        + f"\n[… {omitted} characters omitted …]\n"
+        + text[-ECHO_TAIL_CHARS:]
+    )
+
 
 def echo_prior_output(content: str) -> str:
     """Mirror the model's prior emitted text back at it for failure grounding.
 
     Returns the *body* of the echo block — a delimited section quoting
-    ``content`` in full. Caller wraps with framing text appropriate to
-    the failure (e.g. "Your response was not valid JSON.").
+    ``content`` (bounded, see :func:`bounded_excerpt`). Caller wraps with
+    framing text appropriate to the failure (e.g. "Your response was not
+    valid JSON.").
 
     Returns an empty string when ``content`` is empty / whitespace —
     the caller should fall back to a static reminder in that case.
 
-    Why no truncation: format-failure signals can appear at *either*
-    end of a malformed output. A truncated JSON whose closing brace
-    is missing looks fine in the head; a long-prose drift only shows
-    its error at the tail. The full echo costs more tokens but yields
-    a more accurate diagnosis from the model on the next turn. Recovery
-    fires rarely enough that the extra context isn't a hot path.
+    **Bounded since v9.23.2.** The echo used to quote the output whole on the
+    theory that recovery is rare and cheap. The failures that need it most
+    are the long ones: a 32K-character runaway (Harbor extract-elf, Qwen3.8-
+    Flash-Next) was stored AND quoted whole, the model then imitated the
+    broken fragment for 22 turns. The failed emission itself is no longer
+    stored on these paths (``store_emission=False`` — "retries are not
+    recorded", v9.21), so this quote is the only copy; head + tail keeps
+    both places a format error can hide.
     """
     cleaned = content.strip() if content else ""
     if not cleaned:
         return ""
-    return f"Your prior output:\n---\n{cleaned}\n---\n"
+    return f"Your prior output:\n---\n{bounded_excerpt(cleaned)}\n---\n"
 
 
 # ``constrain_format_json`` / ``constrain_action_required`` lived here

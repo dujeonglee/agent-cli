@@ -3720,11 +3720,24 @@ class TestOutputTruncationGuard:
         )
         # The truncated write_file must NOT have run.
         assert not target.exists()
-        # A truncation notice observation was recorded.
-        raw = ctx.get_raw_messages()
-        assert any(m.get("tool") == "output_truncated" for m in raw)
-        # Loop continued and recovered on the retry.
+        # The retry call saw the notice AND a quote of what it was writing —
+        # the quote is the only copy (v9.23.2: the cut-off emission is not
+        # stored as an assistant record — retries are not recorded).
+        retry_msgs = (
+            provider.call.call_args_list[1].kwargs.get("messages")
+            or (provider.call.call_args_list[1].args[0])
+        )
+        blob = "\n".join(str(m.get("content", "")) for m in retry_msgs)
+        assert "cut off at the output-token limit" in blob
+        assert "Your prior output:" in blob and "partial" in blob
+        assert not any(
+            m.get("role") == "assistant" and "partial" in str(m.get("content", ""))
+            for m in retry_msgs
+        ), "the cut-off emission was stored as an assistant record"
+        # Loop continued and recovered on the retry; the note folded away.
         assert result.output == "done"
+        raw = ctx.get_raw_messages()
+        assert not any(m.get("tool") == "output_truncated" for m in raw)
 
     def test_truncated_complete_is_blocked_and_retried(self, caps, tmp_path):
         """Even ``complete`` is blocked on length — a clipped final answer
@@ -4757,3 +4770,90 @@ class TestHeadlessThinkingControl:
         )
         settings = provider.call.call_args_list[0].kwargs["settings"]
         assert settings.thinking == {"enable_thinking": False}
+
+
+class TestRetriesAreNotRecorded:
+    """v9.23.2 — v9.21 의 "재시도는 기록하지 않는다" 를 형식 개입 경로로.
+
+    실측(Harbor extract-elf, Qwen3.8-Flash-Next): 도구 호출 없는 32K자 폭주
+    출력 하나가 assistant 레코드로 **저장**되고 넛지에 **전문 인용**돼
+    컨텍스트가 2만 토큰 늘었다. 재시도가 계속 실패해 fold 도 안 됐고, 모델은
+    그 망가진 조각을 22턴 흉내 내다 `complete("hello")` 로 포기했다."""
+
+    RUNAWAY = (
+        "Let me brute-force search.\n\n<tool_call>\n\n<analysis>\n"
+        + "thinking out loud " * 1800
+        + '\n<tool_call>\n\n<invoke name="shell">\n<tool_call>'
+    )
+
+    @staticmethod
+    def _calls_messages(provider, i):
+        c = provider.call.call_args_list[i]
+        return c.kwargs.get("messages") or c.args[0]
+
+    def _run(self, caps, tmp_path, contents):
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="write extract.js",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        return provider, ctx, result
+
+    def test_runaway_no_action_output_is_not_stored_and_quote_is_bounded(
+        self, caps, tmp_path
+    ):
+        assert len(self.RUNAWAY) > 30000
+        provider, ctx, result = self._run(
+            caps, tmp_path, [self.RUNAWAY, _complete("done")]
+        )
+        msgs = self._calls_messages(provider, 1)
+        # 원문은 assistant 레코드로 들어가지 않았다
+        assert not any(
+            m.get("role") == "assistant"
+            and "thinking out loud" in str(m.get("content"))
+            for m in msgs
+        ), "실패한 출력이 저장됐다"
+        # 넛지는 앞뒤만 인용한다 — 머리의 도입부와 꼬리의 깨진 조각 둘 다
+        blob = "\n".join(str(m.get("content", "")) for m in msgs)
+        assert "Let me brute-force search." in blob
+        assert '<invoke name="shell">' in blob
+        assert "characters omitted" in blob
+        assert blob.count("thinking out loud") < 200, "전문이 인용됐다"
+        # 회복 뒤 넛지는 접힌다 — 컨텍스트에 흔적이 남지 않는다
+        assert result.output == "done"
+        assert not any(
+            "Your prior output" in str(m.get("content", "")) for m in ctx.get_messages()
+        )
+
+    def test_consecutive_failures_do_not_accumulate_the_runaway(self, caps, tmp_path):
+        """재시도가 계속 실패해도(fold 기회 없음) 폭주 원문은 쌓이지 않는다 —
+        extract-elf 에서 입력이 20.9K → 41.7K 토큰으로 뛴 자리."""
+        provider, _ctx, _res = self._run(
+            caps,
+            tmp_path,
+            [self.RUNAWAY, '<tool_call>\n\n<invoke name="shell">', _complete("done")],
+        )
+        third = "\n".join(
+            str(m.get("content", "")) for m in self._calls_messages(provider, 2)
+        )
+        assert third.count("thinking out loud") < 200
+
+    def test_unknown_tool_is_quoted_not_stored(self, caps, tmp_path):
+        bad = json.dumps([{"action": "no_such_tool", "arg": "payload-xyz"}])
+        provider, _ctx, result = self._run(caps, tmp_path, [bad, _complete("done")])
+        msgs = self._calls_messages(provider, 1)
+        assert not any(
+            m.get("role") == "assistant" and "payload-xyz" in str(m.get("content"))
+            for m in msgs
+        )
+        blob = "\n".join(str(m.get("content", "")) for m in msgs)
+        assert "no_such_tool" in blob and "payload-xyz" in blob  # 인용이 유일한 사본
+        assert result.output == "done"

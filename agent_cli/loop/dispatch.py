@@ -42,6 +42,7 @@ from agent_cli.recovery.observability import (
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
+from agent_cli.recovery.primitives import echo_prior_output
 from agent_cli.recovery.wf_recovery import (
     format_no_action_retry,
     format_no_json_retry,
@@ -1393,12 +1394,13 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
-                f"Observation: {err_msg}",
+                f"Observation: {err_msg}\n{echo_prior_output(llm_text)}",
                 "unknown tool",
                 outcome,
                 failure_signal=FAILURE_UNKNOWN_TOOL,
                 tool_name=tool_name,
                 recovery_kind="format",
+                store_emission=False,  # 인용이 유일한 사본 (v9.23.2)
             )
 
         # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
@@ -1423,12 +1425,13 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
-                f"Observation: {err_msg}",
+                f"Observation: {err_msg}\n{echo_prior_output(llm_text)}",
                 "schema mismatch",
                 outcome,
                 failure_signal=FAILURE_SCHEMA_MISMATCH,
                 tool_name=tool_name,
                 recovery_kind="format",
+                store_emission=False,  # 인용이 유일한 사본 (v9.23.2)
             )
         tool_input = normalized  # use post-normalization input for dispatch
 
@@ -1516,6 +1519,11 @@ class TurnDispatcher:
             recovery_reason = "invalid JSON"
         # failure_signal 은 넘기지 않는다 — _handle_text_path 의 초기 분류
         # (NO_OUTPUT/NO_JSON/NO_ACTION)를 그대로 승계.
+        # 재시도는 기록하지 않는다 (v9.21 원칙, v9.23.2 에서 이 경로로 확장):
+        # 실패한 원문은 저장하지 않고 넛지가 앞뒤를 인용한다. 종전엔 원문을
+        # 저장하고 **전문을** 인용해 같은 텍스트가 두 번 들어갔다 — 32K자 폭주
+        # 한 번이 컨텍스트를 2만 토큰 늘렸고, 재시도가 계속 실패해 fold 도 안
+        # 됐다(Harbor extract-elf: 모델이 그 조각을 22턴 흉내 냈다).
         return self._intervene(
             llm_text,
             intervention.message,
@@ -1523,6 +1531,7 @@ class TurnDispatcher:
             outcome,
             primitives=intervention.primitives,
             recovery_kind="format",
+            store_emission=False,
         )
 
     # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용

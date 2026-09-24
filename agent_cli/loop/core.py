@@ -899,21 +899,28 @@ class AgentLoop:
     def _on_output_truncated(self, llm_text: str):
         """Handle a response cut off at ``max_output_tokens``.
 
-        The (incomplete) assistant text is still recorded so the model
-        sees what it was mid-way through, paired with an observation that
-        says the action was NOT executed and to retry smaller. Returns
-        ``_CONTINUE`` so the loop gives the model another turn.
+        The model still sees what it was mid-way through — as a bounded
+        head + tail quote in the observation, not as a stored assistant
+        record (v9.23.2). This path is the runaway case by definition: the
+        output hit the token cap (up to 32K tokens), and it used to be stored
+        whole and never folded. Now it follows the other retries — nothing
+        stored, ``recovery_kind="format"`` so the note folds once the model
+        recovers. Returns ``_CONTINUE`` so the loop gives it another turn.
         """
+        from agent_cli.recovery.primitives import echo_prior_output
+
         _append_observation(
             self.messages,
             self.ctx,
             self.wire_format,
             llm_text,
-            f"Observation: {OUTPUT_TRUNCATED_NOTICE}",
+            f"Observation: {OUTPUT_TRUNCATED_NOTICE}\n{echo_prior_output(llm_text)}",
             tool_name="output_truncated",
             success=False,
             turn=self.turn,
             render=not self.skill_name,
+            recovery_kind="format",
+            store_emission=False,
         )
         _debug_log(
             f"Output truncated (stop_reason=length) at turn {self.turn}; "
