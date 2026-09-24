@@ -2428,7 +2428,9 @@
 
   function claimIn(blk, q) {
     if (q.card) q.card.remove();
-    blk.head.appendChild(runItem(q.d));
+    var it = runItem(q.d);
+    it.dataset.seq = String(q.d.seq || 0);
+    blk.head.appendChild(it);
   }
 
   function ensureRunBlock(d) {
@@ -2484,7 +2486,8 @@
     if (ok && finalCard) {
       finalCard.classList.add("run-final");
       var meta = el("span", ["run-meta"], "✓" + dur);
-      finalCard.insertBefore(meta, finalCard.querySelector(".final"));
+      var finEl = finalCard.querySelector(".final");
+      finEl.insertBefore(meta, finEl.firstChild); // 여백 안 — CSS 참조
       scheduleScroll();
       return;
     }
@@ -2554,19 +2557,24 @@
       ovRenderAskTray();
     }
   }
-  // kill(agent_cleared) → 그 채널의 런 블록·대기 줄·트레이 정리 (resume 재생
-  // 중복 방지). 블록은 타임라인의 카드라, 비우는 것도 DOM 에서 한다.
+  // kill(agent_cleared) → **`agent_msg` 에서 나온 것만** 정리한다: 블록 머리의
+  // 수신 항목 · 폴백 줄 · 대기 줄. 서버도 버퍼에서 `agent_msg` 만 지운다 — 블록
+  // 자체와 그 안의 턴 카드는 스코프·턴 이벤트에서 왔고 서버 버퍼에 그대로
+  // 남는다. 블록까지 지우면(v9.23.0 초판) resume 의 `conversation.jsonl` 재생이
+  // 수신 줄만 다시 보내 붙을 블록이 없어 전부 `⏳ 대기` 로 떨어졌다(사용자 보고
+  // — 새로고침해야 버퍼의 스코프가 블록을 다시 세웠다). 블록과 `runBySeq` 를
+  // 남겨 두면 재생된 수신 줄이 제자리 머리로 돌아온다.
   function ovOnAgentCleared(key) {
+    var ch = cssEsc(key);
     $messages
-      .querySelectorAll(':scope > .card-run[data-ch="' + cssEsc(key) + '"], :scope > .card-queued[data-ch="' + cssEsc(key) + '"]')
+      .querySelectorAll(
+        ':scope > .card-queued[data-ch="' + ch + '"], ' +
+        ':scope > .card-run[data-ch="' + ch + '"] .run-head > .run-item, ' +
+        ':scope > .card-run[data-ch="' + ch + '"] .run-body > .card-fallback'
+      )
       .forEach(function (c) { c.remove(); });
-    Object.keys(runBlocks).forEach(function (tid) {
-      if (runBlocks[tid].key === key) delete runBlocks[tid];
-    });
-    delete runBySeq[key];
     delete queuedIn[key];
     delete pendingFallback[key];
-    delete lastRunByKey[key];
     ovRenderAskTray();
     ovSyncChannels();
   }

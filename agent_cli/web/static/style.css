@@ -582,15 +582,22 @@ body.multi-viewer .card-user .who {
 .run-item .run-item-body { grid-column: 2 / -1; margin-top: 4px; }
 .run-body { display: flex; flex-direction: column; gap: 2px; }
 .run-body .card { max-width: 100%; }
-/* 꼬리 — 최종답이 있으면 그 카드가 꼬리다(점선 위에 ✓ 와 소요 시간). */
-.card-run .run-final { border-top: 1px dashed var(--border); margin-top: 3px; padding-top: 4px; position: relative; }
+/* 꼬리 — 최종답이 있으면 그 카드가 꼬리다(점선 위에 ✓ 와 소요 시간).
+   ✓ 는 최종답의 **왼쪽 여백(92px, 다른 줄의 아이콘·종류 칸과 같은 열)** 안에
+   놓는다. 초판은 여백을 27px 로 줄여 `✓ (58.8s)` 가 본문 첫 줄을 덮었다
+   (사용자 보고). 생각 줄이 위에 있어도 `.final` 기준이라 겹치지 않는다. */
+.card-run .run-final { border-top: 1px dashed var(--border); margin-top: 3px; padding-top: 4px; }
+.card-run .run-final .final { position: relative; }
 .card-run .run-final .run-meta {
-  position: absolute; left: 0; top: 7px;
+  position: absolute; left: 0; top: 5px; width: 86px;
   font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
   color: var(--ok);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.card-run .run-final .final { padding-left: 27px; }
-.card-run .run-final .final-answers { padding-left: 27px; }
+/* 폰 폭은 최종답 여백이 0 이다 — 겹칠 자리 대신 본문 위 한 줄로. */
+@media (max-width: 560px) {
+  .card-run .run-final .run-meta { position: static; display: block; width: auto; }
+}
 .row.run-foot { border-top: 1px dashed var(--border); margin-top: 3px; padding-top: 4px; }
 .row.run-foot .s { color: var(--text); }
 /* 발신 도구 줄 — 아이콘 → 가 방향을 말한다. */

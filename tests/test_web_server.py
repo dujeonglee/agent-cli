@@ -1223,8 +1223,12 @@ class TestStaticUI:
         assert '"agent_cleared"' in js  # SSE 리스너
         assert "ovOnAgentCleared(" in js  # 채널 정리로 라우팅
         cleared = _js_fn_body(js, "ovOnAgentCleared")
-        assert ".card-run[data-ch=" in cleared and "c.remove()" in cleared
-        assert ".card-queued[data-ch=" in cleared  # 아직 런이 안 연 대기 줄도
+        # v9.23.1: `agent_msg` 에서 나온 것만 — 머리 항목·폴백 줄·대기 줄.
+        # 블록은 스코프·턴 이벤트라 서버 버퍼에 남고, resume 재생이 머리를 되돌린다.
+        assert ".run-head > .run-item" in cleared and "c.remove()" in cleared
+        assert ".run-body > .card-fallback" in cleared
+        assert ".card-queued[data-ch=" in cleared
+        assert "delete runBySeq" not in cleared and "delete runBlocks" not in cleared
         assert "ovRenderAskTray()" in cleared  # 트레이 재렌더
 
     def test_agent_observation_renders_markdown(self, server_and_client):

@@ -570,23 +570,78 @@ class TestRunBlock:
         )
         stack.renderer.end_agent_work(key=PEER, seq=1, success=True, duration_s=0.1)
 
-    def test_kill_clears_that_channels_blocks_and_queued_rows(self, stack, page):
-        """kill=정리 / resume=재생 대칭 — 안 지우면 부활 시 같은 대화를 두 번
-        그린다."""
+    def test_kill_then_resume_puts_heads_back_into_their_blocks(self, stack, page):
+        """kill=정리 / resume=재생 — 정리는 **`agent_msg` 에서 나온 것만**.
+
+        서버는 kill 때 버퍼에서 `agent_msg` 만 지우고 스코프·턴 이벤트는 남기며,
+        resume 은 `conversation.jsonl`(수신·폴백 줄)만 재생한다. 초판은 kill 에
+        블록 전체를 지워, 재생된 수신 줄이 붙을 블록이 없어 전부 `⏳ 대기` 로
+        떨어졌다(사용자 보고 — 새로고침해야 나왔다)."""
         self._open(stack, page)
         stack.renderer.agent_message(
             key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, seq=1
         )
         self._begin(stack, seq=1)
+        stack.renderer.final("검토 끝", turn=1)
+        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=1.0)
         stack.renderer.agent_message(
             key=AGT, direction="in", author="main", text="다음 것", to=AGT, seq=2
         )
-        blocks = page.locator(f'#messages > .card-run[data-ch="{AGT}"]')
+        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#1"]')
         queued = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
-        assert _wait(lambda: blocks.count() == 1 and queued.count() == 1)
+        assert _wait(lambda: blk.count() == 1 and queued.count() == 1)
 
+        # kill: 수신 항목·대기 줄은 지워지고, 블록과 그 안의 작업은 남는다.
         stack.renderer.clear_agent_conversation(AGT)
-        assert _wait(lambda: blocks.count() == 0 and queued.count() == 0)
+        assert _wait(lambda: queued.count() == 0)
+        assert _wait(lambda: blk.locator(".run-item").count() == 0)
+        assert blk.count() == 1
+        assert "검토 끝" in blk.inner_text()
+
+        # resume: conversation.jsonl 재생 — 같은 seq 가 제 블록 머리로 돌아온다.
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, seq=1
+        )
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="다음 것", to=AGT, seq=2
+        )
+        assert _wait(lambda: blk.locator(".run-item").count() == 1)
+        assert "리뷰해줘" in blk.locator(".run-item").inner_text()
+        # 런이 안 열린 seq=2 만 대기 — 이미 돈 seq=1 은 대기로 떨어지지 않는다.
+        assert _wait(lambda: queued.count() == 1)
+        assert "다음 것" in queued.inner_text()
+
+    def test_duration_mark_does_not_overlap_the_final_text(self, stack, page):
+        """꼬리의 `✓ (58.8s)` 는 최종답의 왼쪽 여백 안에 있다 — 본문 첫 글자를
+        덮지 않는다(사용자 보고: 초판은 여백을 줄여 겹쳤다). 생각 줄이 위에
+        있어도 마찬가지."""
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        stack.renderer.thought("짧게 확인하고 답한다", 1)
+        stack.renderer.final("B입니다. 준비 완료. 끝말잇기 시작 대기 중.", turn=1)
+        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=58.8)
+        fin = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-final .final')
+        meta = fin.locator(".run-meta")
+        assert _wait(lambda: meta.count() == 1)
+        assert meta.inner_text().strip() == "✓ (58.8s)"
+        mb = meta.bounding_box()
+        # 본문 첫 글자의 위치 = .final 의 콘텐츠 시작(왼쪽 padding 뒤).
+        text_left = page.evaluate(
+            """(el) => {
+                const r = document.createRange();
+                const t = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+                r.setStart(t, 0); r.setEnd(t, 1);
+                return r.getBoundingClientRect().left;
+            }""",
+            fin.element_handle(),
+        )
+        assert mb["x"] + mb["width"] <= text_left + 0.5, (
+            f"✓ 표시가 본문을 덮는다: meta={mb}, text_left={text_left}"
+        )
+        # 생각 줄과도 겹치지 않는다(.final 기준 배치).
+        think = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-final .row.think')
+        tb = think.bounding_box()
+        assert tb and mb["y"] >= tb["y"] + tb["height"] - 0.5
 
 
 class TestAgentWake:
