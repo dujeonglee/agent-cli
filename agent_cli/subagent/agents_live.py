@@ -2418,6 +2418,9 @@ class AgentRegistry:
                 "ts": time.time(),
                 "profile": tm.profile_name,
                 "instance_name": tm.instance_name,
+                # 하네스 폴백 = 도구 호출 없는 유일한 발신 (v9.23.0). 웹은 out 줄을
+                # 그리지 않고(도구 줄이 이미 있다) 이것만 ⚠ 폴백 줄로 그린다.
+                "fallback": owed,
             }
             renderer.agent_message(**out_payload)
             self._log_conversation(tm, out_payload)
@@ -2470,7 +2473,12 @@ class AgentRegistry:
         preview = "\n".join(labeled)
 
         renderer.begin_agent_work(
-            key=tm.key, seq=seq, profile=disp, message=preview, req_ts=first.get("ts")
+            key=tm.key,
+            seq=seq,
+            profile=disp,
+            message=preview,
+            req_ts=first.get("ts"),
+            seqs=[it["seq"] for it in items],  # 런 블록이 N개 수신 줄을 머리로
         )
         success, output, duration = False, "", 0.0
         try:

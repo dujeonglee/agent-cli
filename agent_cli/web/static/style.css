@@ -541,22 +541,66 @@ body.multi-viewer .card-user .who {
 }
 
 
-/* ── 왕래(traffic) — 가로로 건너는 줄 (docs/chat-ui §4) ──────────
-   내부 작업(세로)과 같은 리듬을 쓰되 **방향과 상대**를 싣는다. 왼쪽 세로선이
-   "이건 건너온 것"을 한눈에 구분해 준다. */
-.card-msg { border-left: 2px solid var(--border-2); padding-left: 8px; }
-.row.msg .ic { color: var(--accent-2); font-weight: 600; }
+/* ── 런 블록 (v9.23.0, docs/chat-ui §12) ────────────────────────
+   에이전트 채널의 단위는 런이다: 레일 하나 안에 머리(받은 항목) · 몸통(단계) ·
+   꼬리(결과). 종전의 왕래 줄(← 받음 / → 보냄)은 같은 사실을 도구 줄과 두 번
+   말했다. 상대 이름은 글자로만(`.peer`) — 점프는 main 의 `⚡ agent` 줄에서만. */
 .peer {
   font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
   color: var(--muted);
   white-space: nowrap;
 }
-/* 바로 위 최종답을 그대로 반복하는 회신 줄 — 내용 대신 **영수증**으로만
-   그린다(요약은 회신 사실, 본문 없음). 조건부인 이유는 kill→resume 뒤에는
-   최종답이 재생되지 않아(`_replay_conversation` 은 `agent_message` 만
-   재발행) 이 줄이 그 답의 **유일한 기록**이 되기 때문이다 — 그때는 내용을
-   그대로 싣는다. */
-.row.msg.receipt .s { color: var(--muted); font-style: italic; }
+.card-run {
+  border-left: 2px solid var(--accent-soft-border);
+  padding-left: 10px;
+  margin: 4px 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.card-run.run-ok { border-left-color: var(--ok-soft-border); }
+.card-run.run-fail { border-left-color: var(--fail-soft-border); }
+.card-run > .row-time, .card-run > .card-time { position: static; align-self: flex-end; }
+.run-head { display: flex; flex-direction: column; gap: 2px; padding-bottom: 3px; }
+.run-head:empty { display: none; }
+.run-item {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 9px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.run-item .ic { text-align: center; color: var(--accent-2); font-weight: 700; }
+.run-item .s { color: var(--text); overflow-wrap: anywhere; min-width: 0; }
+.run-item .who {
+  font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.run-item.can { cursor: pointer; }
+.run-item .run-item-body { grid-column: 2 / -1; margin-top: 4px; }
+.run-body { display: flex; flex-direction: column; gap: 2px; }
+.run-body .card { max-width: 100%; }
+/* 꼬리 — 최종답이 있으면 그 카드가 꼬리다(점선 위에 ✓ 와 소요 시간). */
+.card-run .run-final { border-top: 1px dashed var(--border); margin-top: 3px; padding-top: 4px; position: relative; }
+.card-run .run-final .run-meta {
+  position: absolute; left: 0; top: 7px;
+  font: 11px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--ok);
+}
+.card-run .run-final .final { padding-left: 27px; }
+.card-run .run-final .final-answers { padding-left: 27px; }
+.row.run-foot { border-top: 1px dashed var(--border); margin-top: 3px; padding-top: 4px; }
+.row.run-foot .s { color: var(--text); }
+/* 발신 도구 줄 — 아이콘 → 가 방향을 말한다. */
+.row.send .ic { color: var(--accent-2); font-weight: 700; }
+/* 큐에서 기다리는 항목 — 런이 열리면 그 블록의 머리로 옮겨 간다. */
+.card-queued { padding-left: 12px; }
+.row.queued .ic, .row.queued .s { color: var(--muted); }
+/* 하네스 폴백 — 도구 호출 없는 유일한 발신. */
+.card-fallback .row.fallback { background: var(--warn-soft-bg, rgba(210,153,34,.12)); border-radius: 4px; }
+.card-fallback .row.fallback .ic { color: var(--warn); }
 
 /* 점프 가능한 상대만 버튼처럼 보인다 — main 은 매칭 키가 없어 갈 수 없고
    (docs/chat-ui §5), 눌리는 것처럼 보이면 고장으로 읽힌다. */

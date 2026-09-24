@@ -702,6 +702,10 @@
    * registered yet (event raced before ``delegate_task_start``), the
    * card falls back to the main timeline so it isn't dropped. */
   function appendToTimeline(cardEl, taskId, channel) {
+    if (taskId && runBlocks[taskId]) {
+      runBlocks[taskId].body.appendChild(cardEl);
+      return;
+    }
     if (taskId && taskGroups[taskId]) {
       taskGroups[taskId].body.appendChild(cardEl);
       if (e.animationName === "tv-nav-flash") clear();
@@ -755,12 +759,6 @@
    * 한 줄 리듬으로 그리고, 펼치면 **모델이 받은 원문**이 나온다 — 사람이 읽을
    * 요약과 모델을 움직인 지시문을 한 줄 안에서 분리한다.
    */
-  // 채널별 **직전 최종답** — `→ 보냄` 줄이 그걸 그대로 반복하는지 판정한다.
-  // 라이브에서는 최종답 바로 뒤에 회신 줄이 오므로 텍스트가 같으면 중복이고,
-  // kill→resume 뒤에는 최종답이 재생되지 않아(`_replay_conversation` 은
-  // `agent_message` 만 재발행) 같지 않다 → 그때는 줄이 내용을 싣는다.
-  // 채널당 한 칸이고 최종답마다 덮어써서 자라지 않는다.
-  const lastFinalByChannel = {};
 
   function renderAgentWake(d) {
     const card = el("div", ["card", "card-assistant"]);
@@ -992,9 +990,12 @@
       return (who ? who + (task ? " · " : "") : "") + task;
     }
     if (tool === "ask") {
+      if (typeof p.question === "string" && p.question) return p.question;
       const qs = Array.isArray(p.questions) ? p.questions : [];
       return qs.length ? String(qs[0]) + (qs.length > 1 ? " 외 " + (qs.length - 1) : "") : "";
     }
+    // 발신 도구 — 본문이 곧 요약. 상대는 꼬리 칩(`sendPeerChip`)이 맡는다.
+    if (SEND_TOOLS[tool]) return String(p.text || "");
     if (tool === "complete") return String(p.result || "");
     // 알 수 없는 도구: 첫 문자열 값이 대개 가장 설명적이다
     for (const k of Object.keys(p)) {
@@ -1015,6 +1016,44 @@
   /** `⚡ agent` 도구 호출의 대상 칩 — roster 에 있는 **상주** 에이전트일 때만.
    * 일회성 위임(`run`)은 대상이 채널이 아니라 이 카드 안의 중첩 블록이라
    * 갈 곳이 없다(docs/chat-ui §3). 없으면 null → 꼬리 칸 자체가 안 생긴다. */
+  // ── 발신 도구 (v9.23.0) ──────────────────────────────────
+  // `message`/`reply`/`answer`/`ask` 는 왕래다 — 아이콘 `→`, 꼬리에 상대.
+  // 종전엔 같은 발신이 `⚡ message {…}` 도구 줄 **과** `→ 보냄` 왕래 줄로
+  // 두 번 그려졌다. 도구 줄 하나가 그 자리를 맡고, 배달 결과는 스텝 배지
+  // (✓/✗) 가 이미 말한다 — 거부만 펼쳐서 사유가 보인다.
+  const SEND_TOOLS = { message: 1, reply: 1, answer: 1, ask: 1 };
+  function actIcon(tool) {
+    return SEND_TOOLS[tool] ? "→" : "⚡";
+  }
+  /** 상대(또는 질문 id)를 글자로만 — 점프 없음. 반쪽만 눌리는 버튼(peer 만
+   * 되고 main·사람은 안 되던)은 고장으로 읽혀 걷어냈다. */
+  function sendPeerChip(tool, inputStr) {
+    if (!SEND_TOOLS[tool]) return null;
+    let p = {};
+    try {
+      p = JSON.parse(inputStr || "{}");
+    } catch (_e) {
+      return null;
+    }
+    let label = "";
+    if (tool === "message") label = peerLabel(String(p.to || ""));
+    else if (tool === "answer") label = String(p.id || "");
+    else if (tool === "ask") label = p.to === "user" ? "user (사람)" : "요청자";
+    else if (tool === "reply") label = "요청자";
+    return label ? el("span", ["peer"], label) : null;
+  }
+  /** 주소 → 사람이 읽을 이름. `author` 네임스페이스가 이미 셋을 구분한다
+   * (`main` / `user:<닉>` / `agent:<key>` 또는 bare key). 렌더 시점에
+   * 로스터로 해소한다 — replay 에서 agent_msg 가 roster 보다 먼저 와도 된다. */
+  function peerLabel(who) {
+    var w = String(who || "");
+    if (!w || w === "main") return "main";
+    if (w === "user") return "user (사람)";
+    if (w.indexOf("user:") === 0) return w.slice(5) + " (사람)";
+    var k = w.indexOf("agent:") === 0 ? w.slice(6) : w;
+    return ovAgentLabel(k);
+  }
+
   function agentJumpChip(inputStr) {
     let p = {};
     try {
@@ -1028,7 +1067,7 @@
     chip.title = ovAgentLabel(key) + " 채널로 이동";
     chip.addEventListener("click", function (e) {
       e.stopPropagation();
-      ovJump(key, "");
+      ovJump(key);
     });
     return chip;
   }
@@ -1106,7 +1145,6 @@
         });
         card.appendChild(box);
       }
-      if (ch !== "main") lastFinalByChannel[ch] = String(d.final).trim();
       delete pendingStep[ch];
       finishCard(card, d);
       return;
@@ -1129,14 +1167,15 @@
     // main → agent 점프의 출발점. main 쪽에서 상주 에이전트에게 거는 일은
     // **왕래 줄이 아니라 `⚡ agent` 도구 호출**로 나타나므로(docs/chat-ui §5),
     // 상대 칩을 여기 붙인다.
-    const jump = tool === "agent" ? agentJumpChip(input) : null;
+    const jump = tool === "agent" ? agentJumpChip(input) : sendPeerChip(tool, input);
+    const actCls = SEND_TOOLS[tool] ? ["act", "send"] : ["act"];
 
     // 같은 턴의 두 번째 op — 새 카드가 아니라 앞 카드에 행을 더한다.
     const openStep = pendingStep[ch];
     if (openStep && openStep.turn === d.turn) {
       openStep.body.appendChild(
-        makeRow("⚡", tool, actionSummary(tool, input),
-                renderActionInput(tool, input), ["act"], jump)
+        makeRow(actIcon(tool), tool, actionSummary(tool, input),
+                renderActionInput(tool, input), actCls, jump)
       );
       openStep.acts += 1;
       // 배지는 `⚡ 첫도구 +N` 으로 접는다 — 도구 이름을 전부 늘어놓으면
@@ -1160,14 +1199,14 @@
       // 도구 이름은 머리의 `k` 칸에 없으므로 배지로 알린다.
       badges.appendChild(el("span", ["badge", "tool"], "⚡ " + (tool || "?")));
       if (thoughtBody) body.appendChild(thoughtBody);
-      const actRow = makeRow("⚡", tool, actionSummary(tool, input),
-                             renderActionInput(tool, input), ["act"], jump);
+      const actRow = makeRow(actIcon(tool), tool, actionSummary(tool, input),
+                             renderActionInput(tool, input), actCls, jump);
       body.appendChild(actRow);
     } else {
       // 생각이 없으면 행동이 머리로 올라온다 — 도구 이름이 이미 `k` 칸에
       // 있으므로 배지에서는 빼고 성패만 남긴다(같은 사실을 두 번 말하지 않는다).
-      head = makeStepHead("⚡", tool, actionSummary(tool, input), badges,
-                          ["act"], jump || undefined);
+      head = makeStepHead(actIcon(tool), tool, actionSummary(tool, input), badges,
+                          actCls, jump || undefined);
       if (jump) head.appendChild(badges);
       const detail = renderActionInput(tool, input);
       if (detail) {
@@ -2017,8 +2056,11 @@
     // swimlane bar offering navigation to something that does not exist.
     // 채널 귀속은 카드와 무관한 등록이라 먼저, 그리고 **채널 자체인 스코프는
     // 카드를 만들지 않는다**(v9.7.0 — 자기 채널 안에서 자기를 또 묶지 않는다).
+    // 채널 자체인 스코프(상주 에이전트의 런)는 접히는 카드가 아니라 **런
+    // 블록**이다 (v9.23.0, docs/chat-ui §12): 받은 항목이 머리, 단계가 몸통,
+    // 결과가 꼬리. 왕래 줄(보냄/받음)이 하던 "요청 경계" 를 이 블록이 긋는다.
     const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "")
-      ? null
+      ? (ensureRunBlock(d), null)
       : ensureTaskGroup(
           d.task_id,
           d.index || 0,
@@ -2044,6 +2086,10 @@
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
     noteScopeEnd(d.task_id);
+    if (runBlocks[d.task_id]) {
+      closeRunBlock(d);
+      return;
+    }
     // A replayed scope whose turns are not in this session's history closes
     // EMPTY (an old session recorded before turns carried their scope, or a
     // sub-agent whose turns live in its own context). Say why, rather than
@@ -2332,83 +2378,195 @@
       }
     });
   })();
-  // agent 대화 메시지(agent_msg) → 왕래 줄. 주체/대상 라벨은 **렌더 시점에
-  // 해소**한다 — replay 시 agent_msg 가 roster 보다 먼저 와도 이름이 키로
-  // 고정되지 않게.
-  // 왕래 상대 해소 — `author` 네임스페이스가 이미 셋을 구분한다
-  // (`main` / `user:<닉>` / `agent:<key>`). 반환 `key` 가 있으면 **점프 가능**.
-  // main 은 일부러 비운다: main 쪽 대응 줄이 `⚡ agent` 도구 호출이라 매칭 키가
-  // 달라 agent→main 점프는 이번 범위 밖이다(docs/chat-ui §5).
-  function ovPeerInfo(who) {
-    var w = String(who || "");
-    if (!w || w === "main") return { label: "💬 main", key: "" };
-    if (w.indexOf("user:") === 0) return { label: w.slice(5) + " (사람)", key: "" };
-    var k = w.indexOf("agent:") === 0 ? w.slice(6) : w;
-    var known = ovRoster.some(function (t) { return t.key === k; });
-    return { label: ovAgentLabel(k) + " (peer)", key: known ? k : "" };
+  // ── 런 블록 (v9.23.0, docs/chat-ui §12) ─────────────────────
+  // 에이전트 채널의 단위는 **런**이다: 런이 시작될 때 블록이 열리고
+  // (`scope_start`, 앵커 = `key#seq`), 그 런이 받은 항목(들)이 머리, 단계가
+  // 몸통, 결과가 꼬리. 왕래 줄 셋(← 받음 / → 보냄 / ❓ 질문)은 사라졌다:
+  //   · 받음 → 블록 머리. 수신 줄은 **큐에 넣을 때** 나가 런보다 앞서므로
+  //     블록이 없으면 `⏳ 대기` 로 두었다가 그 seq 를 품은 런이 열리면 끌어온다
+  //     (`scope_start.seqs` — 배치는 N개). 앵커를 수신 줄로 잡으면 바쁠 때
+  //     쌓인 3건이 블록 3개를 먼저 연다.
+  //   · 보냄 → 그리지 않는다. `message`/`reply`/`answer` **도구 줄**이 그 발신
+  //     이고(라이브·resume 재생 둘 다 history 에서 온다), 유일한 예외는 도구
+  //     호출 없는 하네스 폴백(`fallback`) — 그것만 ⚠ 줄로 몸통에.
+  //   · 질문 → `→ ask` 도구 줄. 트레이 갱신만 남는다.
+  // resume: `scopes.jsonl` 이 같은 scope_start/end 를 재생하고 에이전트
+  // history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**. 구 세션
+  // (seqs 없음)은 `[index+1]` 하나로 잡고, 그보다 앞 seq 의 미귀속 수신 줄은
+  // 직전 블록의 것으로 본다(배치만 살짝 어긋난다).
+  const runBlocks = {}; // task_id → {card, head, body, key, seqs, closed}
+  const runBySeq = {}; // key → {seq → task_id}
+  const lastRunByKey = {}; // key → task_id (구 세션 폴백)
+  const queuedIn = {}; // key → {seq → {d, card}}  블록이 아직 없는 수신 줄
+  const pendingFallback = {}; // key → {seq → [d]}  블록이 아직 없는 폴백 줄
+
+  function firstLineOf(text) {
+    var t = String(text || "");
+    return (t.split("\n").find(function (l) { return l.trim(); }) || t).trim();
   }
-  // 왕래 한 줄 — 세로로 흐르는 내부 작업과 달리 **방향과 상대**를 싣는다
-  // (docs/chat-ui §4). 상대 칩이 점프 버튼을 겸한다.
-  function ovRenderAgentMsg(d) {
-    var out = d.direction === "out" || d.direction === "question";
-    // 왕래 줄은 **실제 발신/수신**만이다(v9.21.0). `complete` 산출물은 배달되지
-    // 않으므로 서버가 out 을 내지 않는다 — 에이전트 채널의 ✅ 카드가 그것이다.
-    // 하네스 폴백(독촉 뒤에도 reply 가 없어 런 요약을 대신 보낸 것)은 진짜
-    // 발신이라 `보냄` 이고, 본문 첫 줄의 라벨이 사정을 말한다.
-    var peer = ovPeerInfo(out ? d.to : d.author);
+
+  /** 수신 항목 한 줄 — 블록 머리의 그리드(`← 본문 · 누가`). */
+  function runItem(d) {
+    var it = el("div", ["run-item"]);
+    it.appendChild(el("span", ["ic"], "←"));
     var text = String(d.text || "");
-    var first = text.split("\n").find(function (l) { return l.trim(); }) || text;
-    var tail = el("span", ["peer"], peer.label);
-    if (peer.key) {
-      tail.classList.add("can-jump");
-      tail.title = peer.label + " 채널로 이동";
-      tail.addEventListener("click", function (e) {
-        e.stopPropagation(); // 줄 펼침 토글과 분리
-        ovJump(peer.key, d.key);
+    var first = firstLineOf(text);
+    it.appendChild(el("span", ["s"], first));
+    it.appendChild(el("span", ["who"], peerLabel(d.author)));
+    if (text.trim() !== first) {
+      var body = elHtml("div", ["run-item-body", "md"], escapeAndFormat(text));
+      body.hidden = true;
+      it.appendChild(body);
+      it.classList.add("can");
+      it.addEventListener("click", function () {
+        body.hidden = !body.hidden;
+        it.classList.toggle("open", !body.hidden);
       });
     }
-    var card = el("div", ["card", "card-msg"]);
-    if (peer.key) card.dataset.peer = peer.key;
-    // 바로 위 최종답과 같은 답이면 **영수증 한 줄**로만 (사용자 지적: 같은
-    // 내용이 화면에 두 번). 같지 않으면(= resume 재생이라 최종답이 없다)
-    // 이 줄이 유일한 기록이므로 내용을 그대로 싣는다.
-    var dup =
-      d.direction === "out" && lastFinalByChannel[d.key] === text.trim();
-    var body =
-      !dup && text !== first.trim()
-        ? elHtml("div", ["md"], escapeAndFormat(text))
-        : null;
-    card.appendChild(
-      makeRow(
-        d.direction === "question" ? "❓" : out ? "→" : "←",
-        d.direction === "question" ? "질문" : out ? "보냄" : "받음",
-        dup ? "회신했습니다" : first.trim(),
-        body,
-        dup ? ["msg", "receipt"] : ["msg"],
-        tail
-      )
+    return it;
+  }
+
+  function claimIn(blk, q) {
+    if (q.card) q.card.remove();
+    blk.head.appendChild(runItem(q.d));
+  }
+
+  function ensureRunBlock(d) {
+    if (runBlocks[d.task_id]) return runBlocks[d.task_id];
+    var key = scopeChannel[d.task_id] || "";
+    var seqs =
+      Array.isArray(d.seqs) && d.seqs.length
+        ? d.seqs.map(Number)
+        : [Number(d.index || 0) + 1];
+    var card = el("div", ["card", "card-run"]);
+    card.dataset.taskId = d.task_id;
+    var head = el("div", ["run-head"]);
+    var body = el("div", ["run-body"]);
+    card.appendChild(head);
+    card.appendChild(body);
+    var blk = { card: card, head: head, body: body, key: key, seqs: seqs, closed: false };
+    runBlocks[d.task_id] = blk;
+    var bySeq = runBySeq[key] || (runBySeq[key] = {});
+    seqs.forEach(function (sq) { bySeq[sq] = d.task_id; });
+    // 큐에서 먼저 도착한 수신 줄 → 머리. 구 세션 폴백: 이 런보다 앞 seq 의
+    // 미귀속 줄은 직전 런의 것이다(배치를 seqs 없이 기록한 세션).
+    var q = queuedIn[key] || {};
+    var prev = lastRunByKey[key] ? runBlocks[lastRunByKey[key]] : null;
+    Object.keys(q).map(Number).sort(function (x, y) { return x - y; }).forEach(function (sq) {
+      if (seqs.indexOf(sq) >= 0) claimIn(blk, q[sq]);
+      else if (sq < seqs[0]) claimIn(prev || blk, q[sq]);
+      else return;
+      delete q[sq];
+    });
+    var pf = pendingFallback[key] || {};
+    seqs.forEach(function (sq) {
+      (pf[sq] || []).forEach(function (fd) { renderFallbackRow(blk, fd); });
+      delete pf[sq];
+    });
+    lastRunByKey[key] = d.task_id;
+    // 루트에, 자기 채널로. 시각은 첫 수신 줄이 아니라 런 시작이다.
+    finishCard(card, { task_id: "", ts: d.ts }, key);
+    return blk;
+  }
+
+  /** 꼬리 — 최종답이 있으면 **그 카드가 꼬리**(같은 말을 두 번 하지 않는다),
+   * 없으면(중단·오류·complete 없이 끝남) 상태 한 줄. */
+  function closeRunBlock(d) {
+    var blk = runBlocks[d.task_id];
+    if (!blk || blk.closed) return;
+    blk.closed = true;
+    var ok = !!d.success;
+    blk.card.classList.add(ok ? "run-ok" : "run-fail");
+    var dur = d.duration_s != null ? " (" + Number(d.duration_s).toFixed(1) + "s)" : "";
+    var finalCard = null;
+    var fins = blk.body.querySelectorAll(":scope > .card-assistant > .final");
+    if (fins.length) finalCard = fins[fins.length - 1].parentNode;
+    if (ok && finalCard) {
+      finalCard.classList.add("run-final");
+      var meta = el("span", ["run-meta"], "✓" + dur);
+      finalCard.insertBefore(meta, finalCard.querySelector(".final"));
+      scheduleScroll();
+      return;
+    }
+    var foot = makeRow(
+      ok ? "✓" : "✗",
+      ok ? "완료" : "실패",
+      ok ? "결과 없이 끝남" + dur : (d.error || "런이 끝나기 전에 멈춤") + dur,
+      null,
+      ["run-foot", ok ? "ok" : "bad"]
     );
-    // 왕래 줄은 **자기 에이전트 채널**에 속한다 — channelOf(task_id) 가
-    // 아니라 d.key 다. 종전엔 이 세 단계를 손으로 조립했다.
-    finishCard(card, d, d.key);
+    blk.body.appendChild(foot);
+    scheduleScroll();
+  }
+
+  /** 하네스 폴백 — 회신 없이 끝난 런의 요약을 하네스가 대신 보냈다. 본문
+   * 첫 줄은 그 사정을 말하는 라벨이라 요약에서는 뺀다. */
+  function renderFallbackRow(blk, d) {
+    var text = String(d.text || "");
+    var lines = text.split("\n");
+    var rest = lines.slice(1).join("\n").trim();
+    var body = rest ? elHtml("div", ["md"], escapeAndFormat(text)) : null;
+    var tail = el("span", ["peer"], peerLabel(d.to));
+    var row = makeRow("⚠", "폴백", "회신 없이 끝나 하네스가 런 요약을 대신 보냄", body, ["fallback"], tail);
+    var card = el("div", ["card", "card-fallback"]);
+    card.appendChild(row);
+    stampCard(card, d.ts);
+    blk.body.appendChild(card);
+    scheduleScroll();
   }
 
   function ovOnAgentMsg(d) {
     if (!d || !d.key) return;
-    ovRenderAgentMsg(d);
+    var key = d.key;
+    var seq = Number(d.seq || 0);
+    if (d.direction === "in") {
+      var tid = runBySeq[key] && runBySeq[key][seq];
+      if (tid && runBlocks[tid]) {
+        claimIn(runBlocks[tid], { d: d });
+        return;
+      }
+      var card = el("div", ["card", "card-queued"]);
+      card.dataset.seq = String(seq);
+      card.appendChild(
+        makeRow("⏳", "대기", firstLineOf(d.text), null, ["queued"],
+                el("span", ["peer"], peerLabel(d.author)))
+      );
+      // `d.task_id` 는 **보낸 쪽**의 런이다(peer 워커 스레드의 `_emit` 이
+      // 붙인다) — 그걸로 배치하면 이 줄이 남의 블록 몸통에 들어간다. 수신
+      // 줄의 자리는 언제나 자기 채널의 루트.
+      finishCard(card, { ts: d.ts, note: d.note }, key);
+      (queuedIn[key] || (queuedIn[key] = {}))[seq] = { d: d, card: card };
+      return;
+    }
+    if (d.direction === "out") {
+      if (!d.fallback) return; // 도구 줄이 이미 그 발신이다
+      var t2 = runBySeq[key] && runBySeq[key][seq];
+      if (t2 && runBlocks[t2]) renderFallbackRow(runBlocks[t2], d);
+      else {
+        var pf = pendingFallback[key] || (pendingFallback[key] = {});
+        (pf[seq] || (pf[seq] = [])).push(d);
+      }
+      return;
+    }
     if (d.direction === "question") {
-      // 트레이는 **주소가 사람인 질문에만** 뜬다 — 그게 규칙이다. 여기서는
-      // 다시 그리기만 하고, 무엇을 띄울지는 roster 의 `open_questions` 가
-      // 정한다(질문 하나가 곧 항목 하나).
+      // 대화 줄은 `→ ask` 도구 줄이 맡는다. 트레이는 **주소가 사람인 질문에만**
+      // 뜨고, 무엇을 띄울지는 roster 의 `open_questions` 가 정한다.
       ovRenderAskTray();
     }
   }
-  // kill(agent_cleared) → 그 채널 대화·트레이 정리 (resume 재생 중복 방지).
-  // 왕래 줄은 이제 타임라인의 카드라, 비우는 것도 DOM 에서 한다.
+  // kill(agent_cleared) → 그 채널의 런 블록·대기 줄·트레이 정리 (resume 재생
+  // 중복 방지). 블록은 타임라인의 카드라, 비우는 것도 DOM 에서 한다.
   function ovOnAgentCleared(key) {
     $messages
-      .querySelectorAll(':scope > .card-msg[data-ch="' + cssEsc(key) + '"]')
+      .querySelectorAll(':scope > .card-run[data-ch="' + cssEsc(key) + '"], :scope > .card-queued[data-ch="' + cssEsc(key) + '"]')
       .forEach(function (c) { c.remove(); });
+    Object.keys(runBlocks).forEach(function (tid) {
+      if (runBlocks[tid].key === key) delete runBlocks[tid];
+    });
+    delete runBySeq[key];
+    delete queuedIn[key];
+    delete pendingFallback[key];
+    delete lastRunByKey[key];
     ovRenderAskTray();
     ovSyncChannels();
   }
@@ -2541,32 +2699,24 @@
     btn.textContent =
       "↩ " + (ovBack.ch === "main" ? "💬 main" : ovAgentLabel(ovBack.ch)) + " 으로";
   }
-  /** 채널의 앵커 카드로 이동 + 1.6s 하이라이트. ``peer`` 가 주어지면 그 상대와
-   * 주고받은 **가장 최근 왕래 줄**을 앵커로 삼는다(정확히 그 대화를 가리킴).
-   * 없으면 그 채널의 마지막 카드 — 도착은 했음을 보이는 게 아무것도 안 하는
-   * 것보다 낫다. */
-  function ovChannelAnchor(key, peer) {
+  /** 채널의 앵커 카드 = 그 채널의 마지막 카드 — 도착은 했음을 보이는 게
+   * 아무것도 안 하는 것보다 낫다. (왕래 줄 앵커는 v9.23.0 에서 줄과 함께
+   * 사라졌다 — 점프는 main 의 `⚡ agent` 도구 줄에서만 출발한다.) */
+  function ovChannelAnchor(key) {
     var cards = $messages.querySelectorAll(
       ':scope > [data-ch="' + cssEsc(key) + '"]'
     );
-    if (peer) {
-      var hit = null;
-      cards.forEach(function (c) {
-        if (c.dataset.peer === peer) hit = c;
-      });
-      if (hit) return hit;
-    }
     return cards.length ? cards[cards.length - 1] : null;
   }
   function cssEsc(s) {
     return String(s).replace(/["\\]/g, "\\$&");
   }
-  function ovJump(key, peer) {
+  function ovJump(key) {
     if (!key || key === ovActiveChannel) return;
     ovBack = { ch: ovActiveChannel };
     ovSetChannel(key);
     ovRenderBack();
-    var anchor = ovChannelAnchor(key, peer);
+    var anchor = ovChannelAnchor(key);
     if (anchor) {
       expandAncestors(anchor.dataset.taskId || "");
       scrollTimelineTo(anchor);
@@ -3434,17 +3584,28 @@
     // 왕래·시스템 줄·거부된 응답도 대화의 일부다 — 종전엔 여기서 null 로
     // 떨어져 **조용히 export 에서 빠졌다**(감사 발견: classify 가 카드 종류의
     // 두 번째 등록부인데 새 종류가 생겨도 아무 경고가 없다).
-    if (cl.contains("card-msg")) {
-      const k = card.querySelector(".row .k");
+    if (cl.contains("card-run")) {
+      // 런 블록 (v9.23.0) — 머리의 수신 항목이 라벨, 몸통이 본문.
+      const items = Array.from(card.querySelectorAll(".run-head .run-item .s"))
+        .map(function (n) { return n.innerText.trim(); })
+        .filter(Boolean);
+      return {
+        kind: "run",
+        label: items.length ? items.join(" / ") : "run",
+        mono: false,
+        body: ".run-body",
+      };
+    }
+    if (cl.contains("card-queued")) {
       const peer = card.querySelector(".peer");
       return {
-        kind: "message",
-        label:
-          (k ? k.innerText.trim() : "메시지") +
-          (peer ? " · " + peer.innerText.trim() : ""),
+        kind: "queued",
+        label: "대기" + (peer ? " · " + peer.innerText.trim() : ""),
         mono: false,
       };
     }
+    if (cl.contains("card-fallback"))
+      return { kind: "fallback", label: "폴백", mono: false };
     if (cl.contains("card-sys"))
       return { kind: "system", label: "System", mono: false };
     return null; // .gen(생성 중 표시) 등 카드가 아닌 것
@@ -3455,7 +3616,8 @@
   // 대조해 "등록을 잊었다"를 정적으로 잡는다.
   const CARD_KINDS = [
     "card-user", "card-assistant", "card-observation",
-    "card-error", "card-task-group", "card-msg", "card-sys",
+    "card-error", "card-task-group", "card-run", "card-queued", "card-fallback",
+    "card-sys",
   ];
 
   function topCards() {

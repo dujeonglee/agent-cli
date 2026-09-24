@@ -293,8 +293,15 @@ class Renderer(ABC):
         profile: str,
         message: str,
         req_ts: float | str | None = None,
+        seqs: list[int] | None = None,
     ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
+
+        ``seqs`` (v9.23.0) — 이 런이 처리하는 inbox 항목들의 seq. 보통 ``[seq]``
+        이고 사람-직접 배치는 N개. 웹의 런 블록이 이걸로 큐에서 먼저 도착한
+        수신 줄(``agent_message(in)``)을 자기 머리로 끌어온다 — 수신 줄은
+        큐에 넣을 때 나가 런보다 앞서므로, 이 목록 없이는 어느 항목이 이
+        런의 것인지 알 수 없다(배치가 특히 그렇다).
 
         delegate 의 begin_delegate_task 와 달리 **프롬프트 스코프를
         건드리지 않는다** — 스코프는 worker 가 begin_prompt_scope(key) 로
@@ -330,11 +337,14 @@ class Renderer(ABC):
         ts: float | str | None = None,
         profile: str = "",
         instance_name: str = "",
+        fallback: bool = False,
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
         수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는
         "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). ``ts``
-        (5.13) = resume 재생 시 원래 발생 시각. 기본 no-op."""
+        (5.13) = resume 재생 시 원래 발생 시각. ``fallback`` (v9.23.0) =
+        하네스가 대신 보낸 런 요약(회신 없이 끝난 런) — 도구 호출이 없는
+        유일한 발신이라 웹이 이것만 따로 그린다. 기본 no-op."""
 
     def clear_agent_conversation(self, key: str) -> None:
         """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은

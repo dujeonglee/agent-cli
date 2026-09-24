@@ -1410,6 +1410,12 @@ class TestHumanInterventionRouting:
         assert "arrived together" not in batched
         assert not reg.has_pending_replies()  # 전부 user:* → 창만
         assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
+        # v9.23.0: 배치 런의 scope_start 가 항목 seq 전부를 싣는다 — 웹의 런
+        # 블록이 큐에서 먼저 도착한 수신 줄 둘을 자기 머리로 끌어오는 근거.
+        begins = [
+            c[1] for c in renderer.named("begin_agent_work") if c[1]["key"] == key
+        ]
+        assert begins[-1]["seqs"] == [2, 3] and begins[-1]["seq"] == 2
         reg.shutdown_all()
 
     def test_main_delegations_processed_individually(self, tmp_path, renderer):
@@ -2738,6 +2744,12 @@ class TestConversationReplay:
         out = next(r for r in recs if r["direction"] == "out")
         assert out["key"] == key and out["to"] == "main" and out["seq"] == 1
         assert "ts" in out  # resume 재생 시 원래 시각 보존
+        # v9.23.0: 폴백 표시가 레코드에 실려 재생도 같은 줄(⚠ 폴백)을 그린다
+        assert out["fallback"] is True
+        live_out = [
+            c[1] for c in renderer.named("agent_message") if c[1]["direction"] == "out"
+        ]
+        assert live_out and live_out[-1]["fallback"] is True
         reg.shutdown_all()
 
     def test_replay_reemits_records_after_clear(self, tmp_path, renderer):
@@ -2758,6 +2770,8 @@ class TestConversationReplay:
         # 멱등: 먼저 표면 비우고(clear) 그다음 재발행.
         assert names[0] == "clear_agent_conversation"
         msgs = renderer.named("agent_message")
+        # 폴백 표시가 재생을 그대로 통과한다 (v9.23.0)
+        assert any(m[1].get("fallback") for m in msgs if m[1]["direction"] == "out")
         texts = {(c[1]["direction"], c[1]["text"]) for c in msgs}
         assert ("in", "job") in texts
         assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)

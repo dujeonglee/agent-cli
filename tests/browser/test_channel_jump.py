@@ -1,18 +1,20 @@
-"""채널 필터 · 왕래 줄 · 점프 · 중첩 블록 — v9.4.0 ⑥ (docs/chat-ui §3·§5).
+"""채널 필터 · 런 블록 · 점프 · 중첩 블록 — v9.4.0 ⑥ → v9.23.0 §12.
 
-⑥ 이전까지 채널 칩은 **입력 라우팅만** 바꿨다(보이는 것은 그대로). ⑥ 에서
-채널이 타임라인의 필터가 되고, `agent_msg` 가 왕래 줄로 그려지며, 왕래 줄의
-상대 이름이 점프 버튼을 겸한다. 여기서 고정하는 계약:
+⑥ 에서 채널이 타임라인의 필터가 됐고, v9.23.0 에서 에이전트 채널의 단위가
+**런 블록**이 됐다(docs/chat-ui §12). 여기서 고정하는 계약:
 
 1. **채널 = 필터** — `#messages` 직계 자식의 `data-ch` 로 걸러진다. `data-ch`
    가 없는 노드(생성 중 한 줄)는 어느 채널에서나 보인다.
-2. **점프는 한 방향** — main→agent(⚡ agent 도구 호출), peer↔peer(왕래 줄)는
-   가능. **agent→main 은 불가** — main 쪽 대응 줄이 도구 호출이라 매칭 키가
-   달라 이번 범위 밖이고, 눌리는 것처럼 보이면 고장으로 읽힌다.
-3. **돌아가기는 한 단계** — 두 번 점프해도 스택이 쌓이지 않는다(사용자 지적으로
-   스택→단일 변경). 누르면 사라진다.
-4. **중첩 블록** — skill/inline agent 는 좌측 레일, 상주 agent 는 레일 없음
-   (채널 칩이 이미 있어 레일을 주면 중첩처럼 보여 거짓말이 된다).
+2. **런 블록** — 상주 에이전트의 런(`scope_start`, `key#seq`)마다 블록 하나:
+   받은 항목이 머리, 단계가 몸통, 결과가 꼬리. 수신 줄은 큐에 넣을 때 나와
+   런보다 앞서므로 블록이 없으면 `⏳ 대기` 로 두었다가 `seqs` 로 끌어온다.
+   보냄 줄은 없다 — `message`/`reply`/`answer` **도구 줄**이 그 발신이고,
+   도구 호출 없는 하네스 폴백만 ⚠ 줄로 남는다.
+3. **점프는 main → agent 만** — `⚡ agent` 도구 줄의 칩. 왕래 줄의 상대 칩은
+   줄과 함께 사라졌다(peer 만 눌리고 main·사람은 안 눌리던 반쪽 버튼).
+4. **돌아가기는 한 단계** — 누르면 사라진다.
+5. **중첩 블록** — skill/inline agent 는 좌측 레일의 접히는 카드, 상주 agent
+   의 런은 접히지 않는 블록(자기 채널 안에서 자기를 또 접지 않는다).
 
 전부 **렌더된 DOM/가시성**으로 본다 — 소스 핀(tests/test_web_server.py)이
 "호출이 있다"까지만 보는 층이라 필터가 실제로 숨기는지는 여기서만 잡힌다.
@@ -55,17 +57,12 @@ def _visible_rows(page, sel):
 class TestChannelFilter:
     """채널 전환이 **표시**를 바꾼다 (⑥ 이전엔 입력 라우팅만 바뀌었다)."""
 
-    def test_agent_work_lands_flat_in_its_channel_without_a_wrapper_card(
-        self, stack, page
-    ):
-        """상주 에이전트의 작업은 **카드로 감싸지 않고** 그 채널에 평평하게
-        흐른다 (v9.7.0, 사용자 지적).
+    def test_agent_work_lands_in_an_open_run_block_in_its_channel(self, stack, page):
+        """상주 에이전트의 런은 **접히지 않는 런 블록** 안에 흐른다 (v9.23.0).
 
-        ⑥ 이전엔 🦀 스코프 카드가 에이전트 작업을 묶는 유일한 수단이었다.
-        채널이 필터가 된 뒤로는 채널이 그 일을 하므로, 자기 채널 안에서 자기를
-        또 묶으면 아무 정보도 더하지 않으면서 **기본 접힘 뒤로 투명성을 숨기고**
-        (⑥의 목적과 정반대) main 창은 평평한데 agent 창만 한 겹 들어가
-        "같은 컨셉으로 통일"이 깨진다. 요청 경계는 왕래 줄이 이미 긋는다."""
+        v9.7.0 은 🦀 스코프 카드(기본 접힘)를 걷어내 채널에 평평하게 흘렸다 —
+        접힘이 투명성을 숨겨서였다. 블록은 그 자리를 잇되 접히지 않고, 종전
+        왕래 줄이 긋던 "요청 경계" 를 대신 긋는다."""
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
@@ -82,21 +79,21 @@ class TestChannelFilter:
         stack.renderer.thought("먼저 확인한다", 1)
         stack.renderer.final("검토 끝", turn=1)  # thought 는 다음 턴 이벤트에 실린다
 
-        # 래퍼 카드는 생기지 않는다.
-        assert _wait(lambda: page.locator("#messages > .card-assistant").count() > 0)
-        assert page.locator(f'[data-task-id="{AGT}#1"]').count() == 0
-
-        # 내부 턴이 채널 귀속을 그대로 물려받아 main 에서는 숨는다.
-        card = page.locator("#messages > .card-assistant").first
-        assert card.get_attribute("data-ch") == AGT
-        assert not card.is_visible()
+        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#1"]')
+        assert _wait(lambda: blk.count() == 1)
+        # 접히는 스코프 카드가 아니다.
+        assert page.locator(f'.card-task-group[data-task-id="{AGT}#1"]').count() == 0
+        # 내부 턴은 블록 **몸통** 안에 있고, 블록이 채널 귀속을 진다.
+        card = blk.locator(".run-body > .card-assistant").first
+        assert _wait(lambda: card.count() == 1)
+        assert blk.get_attribute("data-ch") == AGT
+        assert not blk.is_visible()
         _chip(page, AGT).click()
-        assert _wait(lambda: card.is_visible())
+        assert _wait(lambda: card.is_visible())  # 클릭 없이 바로 보인다
 
     def test_nested_scope_inside_an_agent_keeps_its_own_card(self, stack, page):
         """에이전트 안에서 열린 skill/inline 은 **여전히 자기 카드**를 갖는다 —
-        래퍼를 없앤 것이 중첩까지 없앤 것은 아니다. 부모 그룹이 없으니
-        `channelOf(parent)` 로 그 에이전트 채널의 루트에 붙는다."""
+        런 블록의 몸통 안에 담긴다(부모 런이 블록이므로)."""
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
@@ -114,10 +111,11 @@ class TestChannelFilter:
         stack.renderer.begin_scope(
             task_id="sk-in", kind="skill", label="plan", parent=f"{AGT}#1"
         )
-        sk = page.locator('[data-task-id="sk-in"]')
+        sk = page.locator(
+            f'.card-run[data-task-id="{AGT}#1"] .run-body [data-task-id="sk-in"]'
+        )
         assert _wait(lambda: sk.count() == 1)
         assert "scope-skill" in (sk.get_attribute("class") or "")
-        assert sk.get_attribute("data-ch") == AGT
         assert sk.is_visible()
 
     def test_main_cards_hide_when_viewing_an_agent_channel(self, stack, page):
@@ -336,65 +334,168 @@ class TestChannelFilter:
         assert _wait(at_bottom), "main 으로 돌아왔는데 맨 아래가 아니다"
 
 
-class TestTrafficRow:
-    """왕래(가로로 건너는 것)는 방향과 상대를 싣는다 — 내부 작업과 같은 리듬."""
+class TestRunBlock:
+    """에이전트 채널의 단위는 런이다 (v9.23.0, docs/chat-ui §12)."""
 
-    def test_incoming_and_outgoing_rows_carry_direction_and_peer(self, stack, page):
+    def _open(self, stack, page, *keys):
         stack.emit_ready()
-        _roster(stack, AGT)
+        _roster(stack, *(keys or (AGT,)))
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, AGT).count() > 0)
         _chip(page, AGT).click()
 
+    def _begin(self, stack, seq=1, seqs=None, key=AGT):
+        stack.renderer.begin_agent_work(
+            key=key, seq=seq, profile="reviewer", message="일감", seqs=seqs
+        )
+
+    def test_incoming_row_waits_then_becomes_the_block_head(self, stack, page):
+        """수신 줄은 큐에 넣을 때 나와 런보다 앞선다 — 블록이 없으면 `⏳ 대기`,
+        그 seq 를 품은 런이 열리면 블록 머리로 옮겨 간다."""
+        self._open(stack, page)
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="방금 커밋 리뷰해줘", to=AGT
+            key=AGT,
+            direction="in",
+            author="main",
+            text="방금 커밋 리뷰해줘",
+            to=AGT,
+            seq=1,
+        )
+        queued = page.locator("#messages > .card-queued .row.queued")
+        assert _wait(lambda: queued.count() == 1)
+        assert queued.locator(".ic").inner_text().strip() == "⏳"
+        assert queued.locator(".k").inner_text().strip() == "대기"
+        assert "main" in queued.locator(".peer").inner_text()
+
+        self._begin(stack, seq=1)
+        item = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        assert _wait(lambda: item.count() == 1)
+        assert page.locator("#messages > .card-queued").count() == 0
+        assert item.locator(".ic").inner_text().strip() == "←"
+        assert "방금 커밋 리뷰해줘" in item.locator(".s").inner_text()
+        assert item.locator(".who").inner_text().strip() == "main"
+
+    def test_incoming_row_after_the_scope_lands_in_the_head(self, stack, page):
+        """resume 재생은 순서를 보장하지 않는다(스코프 재생과 대화 재생이 다른
+        경로) — 블록이 먼저 있으면 수신 줄이 곧장 머리로 간다."""
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        assert _wait(
+            lambda: page.locator(f'.card-run[data-task-id="{AGT}#1"]').count() == 1
+        )
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="늦게 온 수신", to=AGT, seq=1
+        )
+        item = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        assert _wait(lambda: item.count() == 1)
+        assert page.locator("#messages > .card-queued").count() == 0
+
+    def test_batch_claims_all_its_items(self, stack, page):
+        """사람 창 배치: N건이 런 1개 — `scope_start.seqs` 가 머리를 N줄로."""
+        self._open(stack, page)
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="user:dj", text="요약해 줘", to=AGT, seq=2
+        )
+        stack.renderer.agent_message(
+            key=AGT,
+            direction="in",
+            author="user:ann",
+            text="끝나면 알려줘",
+            to=AGT,
+            seq=3,
+        )
+        assert _wait(lambda: page.locator("#messages > .card-queued").count() == 2)
+        self._begin(stack, seq=2, seqs=[2, 3])
+        items = page.locator(f'.card-run[data-task-id="{AGT}#2"] .run-head .run-item')
+        assert _wait(lambda: items.count() == 2)
+        assert page.locator("#messages > .card-queued").count() == 0
+        assert items.nth(0).locator(".who").inner_text().strip() == "dj (사람)"
+        assert items.nth(1).locator(".who").inner_text().strip() == "ann (사람)"
+
+    def test_plain_out_row_draws_nothing_and_fallback_draws_a_row(self, stack, page):
+        """`→ 보냄` 은 없다 — 도구 줄이 그 발신이다. 도구 호출 없는 하네스
+        폴백만 ⚠ 줄로 블록 몸통에 남는다."""
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        assert _wait(lambda: blk.count() == 1)
+        stack.renderer.agent_message(
+            key=AGT, direction="out", author=AGT, text="과일", to="main", seq=1
         )
         stack.renderer.agent_message(
             key=AGT,
             direction="out",
             author=AGT,
-            text="폴백에 테스트가 없습니다",
+            text="(no explicit reply — this is the agent's run summary)\n리뷰 결과 요약",
             to="main",
+            seq=1,
+            fallback=True,
         )
-        rows = page.locator("#messages > .card-msg .row.msg")
-        assert _wait(lambda: rows.count() == 2)
+        fb = blk.locator(".run-body .card-fallback .row.fallback")
+        assert _wait(lambda: fb.count() == 1)
+        assert fb.locator(".k").inner_text().strip() == "폴백"
+        assert "main" in fb.locator(".peer").inner_text()
+        # 평범한 out 은 아무 줄도 만들지 않았다.
+        assert page.locator("#messages").inner_text().count("과일") == 0
 
-        assert rows.nth(0).locator(".ic").inner_text().strip() == "←"
-        assert rows.nth(0).locator(".k").inner_text().strip() == "받음"
-        assert "방금 커밋 리뷰해줘" in rows.nth(0).locator(".s").inner_text()
-        assert rows.nth(1).locator(".ic").inner_text().strip() == "→"
-        assert rows.nth(1).locator(".k").inner_text().strip() == "보냄"
-        # 상대는 양쪽 다 main — 마크업이 문자로 새지 않는다(③ 실사고와 동형).
-        for i in (0, 1):
-            peer = rows.nth(i).locator(".peer")
-            assert "main" in peer.inner_text()
-            assert "<span" not in peer.inner_text()
+    def test_final_becomes_the_foot_with_duration(self, stack, page):
+        """최종답이 있으면 **그 카드가 꼬리**다 — 같은 말을 두 번 하지 않는다."""
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        stack.renderer.final("검토 끝", turn=1)
+        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=2.1)
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        assert _wait(lambda: "run-ok" in (blk.get_attribute("class") or ""))
+        meta = blk.locator(".run-final .run-meta")
+        assert meta.count() == 1 and meta.inner_text().strip() == "✓ (2.1s)"
+        assert blk.locator(".row.run-foot").count() == 0
+        assert blk.inner_text().count("검토 끝") == 1
+
+    def test_failed_run_gets_a_status_foot(self, stack, page):
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        stack.renderer.end_agent_work(
+            key=AGT, seq=1, success=False, duration_s=0.8, error="killed"
+        )
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        assert _wait(lambda: "run-fail" in (blk.get_attribute("class") or ""))
+        foot = blk.locator(".row.run-foot.bad")
+        assert foot.count() == 1
+        assert "killed" in foot.locator(".s").inner_text()
+
+    def test_send_tool_row_has_arrow_peer_and_no_jump(self, stack, page):
+        """`message` 도구 줄이 발신이다: 아이콘 →, 본문이 요약, 꼬리에 상대.
+        상대는 글자다 — 눌리지 않는다."""
+        self._open(stack, page, AGT, PEER)
+        self._begin(stack, seq=1)
+        stack.renderer.action("message", f'{{"to":"{PEER}","text":"과일"}}', turn=1)
+        stack.renderer.observation(
+            f"[message → {PEER}] delivered", turn=1, tool_name="message", success=True
+        )
+        row = page.locator(f'.card-run[data-task-id="{AGT}#1"] .row.act.send')
+        assert _wait(lambda: row.count() == 1)
+        assert row.locator(".ic").inner_text().strip() == "→"
+        assert row.locator(".k").inner_text().strip() == "message"
+        assert row.locator(".s").inner_text().strip() == "과일"
+        peer = row.locator(".peer")
+        assert PEER in peer.inner_text()
+        assert "can-jump" not in (peer.get_attribute("class") or "")
+        # 배달 결과는 스텝 배지가 말한다.
+        assert _wait(
+            lambda: (
+                page.locator(f'.card-run[data-task-id="{AGT}#1"] .badge.ok').count()
+                == 1
+            )
+        )
 
     def test_timestamp_does_not_overlap_the_peer_chip(self, stack, page):
-        """시각과 상대 이름이 **겹쳐 그려지지 않는다** (사용자 지적).
-
-        카드 우상단 시각 배지는 absolute 라 그 아래 줄의 오른쪽 끝(상대 칩)을
-        덮었다. 여백을 상수로 비워두는 첫 수정은 배지 폭 추정에 기대 위태로웠고,
-        지금은 꼬리 칸이 있는 줄이면 **시각을 같은 그리드 안**에 넣는다 —
-        겹칠 자리가 원천적으로 없다. 기하로 봐야 잡히는 부류라 여기서 고정한다."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        stack.renderer.agent_message(
-            key=AGT,
-            direction="out",
-            author=AGT,
-            text="폴백에 테스트가 없습니다",
-            to="main",
-        )
-        row = page.locator("#messages > .card-msg .row.msg")
+        """시각과 상대 이름이 **겹쳐 그려지지 않는다** — 꼬리 칸이 있는 줄은
+        시각을 같은 그리드 안에 넣는다(코너 배지가 칩을 덮던 사고)."""
+        self._open(stack, page, AGT, PEER)
+        self._begin(stack, seq=1)
+        stack.renderer.action("message", f'{{"to":"{PEER}","text":"과일"}}', turn=1)
+        row = page.locator(f'.card-run[data-task-id="{AGT}#1"] .row.act.send')
         assert _wait(lambda: row.count() == 1)
-
-        # 시각은 코너 배지가 아니라 줄 안에 있다.
-        assert page.locator("#messages > .card-msg .card-time").count() == 0
         peer = row.locator(".peer").bounding_box()
         tm = row.locator(".row-time").bounding_box()
         assert peer and tm
@@ -402,59 +503,9 @@ class TestTrafficRow:
             f"상대 칩과 시각이 겹친다: peer={peer}, time={tm}"
         )
 
-    def test_reply_repeating_the_final_becomes_a_receipt(self, stack, page):
-        """`→ 보냄` 이 바로 위 최종답을 그대로 반복하면 **영수증 한 줄**로만
-        (v9.7.0, 사용자 지적: 같은 내용이 화면에 두 번)."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        answer = "기차. 어릴 때 기차 여행하던 기억이 나네요!"
-        stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
-            kind="run",
-            label="한 수",
-            agent=AGT,
-            parent="",
-            ctx_dir=f"agents/{AGT}",
-        )
-        stack.renderer.final(answer, turn=1)
-        stack.renderer.agent_message(
-            key=AGT, direction="out", author=AGT, text=answer, to="main"
-        )
-        row = page.locator("#messages .card-msg .row")
-        assert _wait(lambda: row.count() == 1)
-        assert "receipt" in (row.get_attribute("class") or "")
-        assert row.locator(".s").inner_text().strip() == "회신했습니다"
-        assert row.locator(".row-body").count() == 0
-        # 화면 전체에서 답은 **한 번만** 나온다.
-        body = page.locator("#messages").inner_text()
-        assert body.count(answer) == 1, "같은 답이 두 번 보인다"
-
-    def test_reply_without_a_preceding_final_keeps_its_content(self, stack, page):
-        """kill→resume 재생은 `agent_message` 만 다시 내보낸다(최종답은 안
-        온다) — 그때 이 줄은 그 답의 **유일한 기록**이므로 내용을 그대로
-        싣는다. 무조건 영수증으로 접으면 대화 기록이 사라진다."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        answer = "리플레이로만 남은 회신 본문입니다."
-        stack.renderer.agent_message(
-            key=AGT, direction="out", author=AGT, text=answer, to="main"
-        )
-        row = page.locator("#messages .card-msg .row")
-        assert _wait(lambda: row.count() == 1)
-        assert "receipt" not in (row.get_attribute("class") or "")
-        assert answer in row.locator(".s").inner_text()
-
-    def test_question_row_also_lands_in_the_global_ask_tray(self, stack, page):
-        """질문은 대화에도 남고 트레이에도 뜬다 — 어느 채널을 보고 있든 놓치지
-        않는 것이 트레이의 존재 이유다(docs/chat-ui §6)."""
+    def test_question_row_only_updates_the_tray(self, stack, page):
+        """질문 줄은 그리지 않는다(`→ ask` 도구 줄이 있다). 트레이는 갱신된다 —
+        어느 채널을 보고 있든 놓치지 않는 것이 트레이의 존재 이유다(§6)."""
         stack.emit_ready()
         stack.renderer.agent_roster(
             [
@@ -463,8 +514,6 @@ class TestTrafficRow:
                     "name": AGT,
                     "profile": "rev",
                     "state": "idle",
-                    # 비동기 질문: 트레이의 진실원은 이 목록이다 (상대는
-                    # 막혀 있지 않아 state 로는 알 수 없다).
                     "open_questions": [
                         {
                             "id": "q-ab12",
@@ -473,8 +522,6 @@ class TestTrafficRow:
                             "ts": 0,
                         },
                         {
-                            # 사람이 답할 질문이 아니다 — 트레이에 뜨면
-                            # 사용자가 남의 질문에 끼어들게 된다.
                             "id": "q-cd34",
                             "text": "main 에게 묻는 것",
                             "to": "main",
@@ -494,39 +541,52 @@ class TestTrafficRow:
             text="제가 추가할까요, 지적만 할까요?",
             to="main",
         )
-        # main 채널을 보고 있는데도 트레이에 뜬다.
         tray = page.locator("#ask-tray .ask-item")
         assert _wait(lambda: tray.count() > 0 and tray.first.is_visible())
         assert "제가 추가할까요" in tray.first.inner_text()
-        # **사람 주소인 것만** — main 앞 질문까지 띄우면 사용자가 남의
-        # 질문에 끼어들게 된다(사용자가 정한 규칙, DESIGN.md §3.6).
-        assert tray.count() == 1
+        assert tray.count() == 1  # 사람 주소인 것만
         assert "main 에게 묻는 것" not in page.locator("#ask-tray").inner_text()
-
-        # 대화 쪽 줄은 그 에이전트 채널에 있다.
+        # 채널에는 아무 줄도 생기지 않았다.
         _chip(page, AGT).click()
-        row = page.locator("#messages > .card-msg .row.msg")
-        assert _wait(lambda: row.count() == 1 and row.is_visible())
-        assert row.locator(".ic").inner_text().strip() == "❓"
-        assert row.locator(".k").inner_text().strip() == "질문"
-
-    def test_kill_clears_that_channels_traffic_rows(self, stack, page):
-        """kill=정리 / resume=재생 대칭 — 안 지우면 부활 시 같은 대화를 두 번
-        그린다. 왕래가 DOM 카드가 됐으므로 비우는 곳도 DOM 이다."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT
+        assert (
+            page.locator("#messages > .card-queued, #messages > .card-run").count() == 0
         )
-        rows = page.locator("#messages > .card-msg")
-        assert _wait(lambda: rows.count() == 1)
+
+    def test_incoming_row_ignores_the_senders_task_id(self, stack, page):
+        """수신 줄의 `task_id` 는 **보낸 쪽**의 런이다 — peer 워커 스레드의
+        `_emit` 이 붙인다. 그걸로 배치하면 AGT 앞으로 온 줄이 PEER 의 블록
+        몸통에 들어간다(패치 중 실제로 났던 버그). 자리는 언제나 자기 채널 루트."""
+        self._open(stack, page, AGT, PEER)
+        # PEER 의 런이 이 스레드에 열려 있다 → 이후 emit 은 PEER#1 을 단다.
+        stack.renderer.begin_agent_work(key=PEER, seq=1, profile="doc", message="x")
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author=f"agent:{PEER}", text="부탁", to=AGT, seq=5
+        )
+        queued = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
+        assert _wait(lambda: queued.count() == 1)
+        assert (
+            page.locator(f'.card-run[data-task-id="{PEER}#1"] .card-queued').count()
+            == 0
+        )
+        stack.renderer.end_agent_work(key=PEER, seq=1, success=True, duration_s=0.1)
+
+    def test_kill_clears_that_channels_blocks_and_queued_rows(self, stack, page):
+        """kill=정리 / resume=재생 대칭 — 안 지우면 부활 시 같은 대화를 두 번
+        그린다."""
+        self._open(stack, page)
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, seq=1
+        )
+        self._begin(stack, seq=1)
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="다음 것", to=AGT, seq=2
+        )
+        blocks = page.locator(f'#messages > .card-run[data-ch="{AGT}"]')
+        queued = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
+        assert _wait(lambda: blocks.count() == 1 and queued.count() == 1)
 
         stack.renderer.clear_agent_conversation(AGT)
-        assert _wait(lambda: rows.count() == 0)
+        assert _wait(lambda: blocks.count() == 0 and queued.count() == 0)
 
 
 class TestAgentWake:
@@ -629,167 +689,119 @@ class TestJump:
         assert _wait(lambda: row.count() > 0)
         assert row.locator(".peer").count() == 0
 
-    def test_peer_to_peer_jump_switches_channel_and_highlights(self, stack, page):
-        """peer↔peer 는 양쪽에 대응 줄이 있어 점프가 성립한다. 도착지에서는
-        **그 상대와 주고받은 줄**을 하이라이트한다 — 채널만 바뀌고 어디를 봐야
-        할지 모르면 점프가 아니라 그냥 탭 전환이다."""
-        stack.emit_ready()
-        _roster(stack, AGT, PEER)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, PEER).count() > 0)
-
-        # AGT 채널: PEER 가 보낸 요청. PEER 채널: AGT 가 보낸 요청.
-        stack.renderer.agent_message(
-            key=AGT,
-            direction="in",
-            author=f"agent:{PEER}",
-            text="전송 세대 설명도 넣어주세요",
-            to=AGT,
-        )
-        stack.renderer.agent_message(
-            key=PEER,
-            direction="in",
-            author=f"agent:{AGT}",
-            text="문서 초안 부탁해요",
-            to=PEER,
-        )
-        assert _wait(lambda: page.locator("#messages > .card-msg").count() == 2)
-
-        _chip(page, AGT).click()
-        chip = _visible_rows(page, "#messages > .card-msg").locator(".peer.can-jump")
-        assert _wait(lambda: chip.count() == 1)
-        chip.click()
-
-        assert _wait(lambda: _chip(page, PEER).get_attribute("aria-selected") == "true")
-        target = page.locator(f'#messages > .card-msg[data-peer="{AGT}"]')
-        assert _wait(lambda: target.is_visible())
-        assert _wait(lambda: "tv-nav-hl" in (target.get_attribute("class") or "")), (
-            "도착지 하이라이트 없음"
-        )
-
     def test_highlight_does_not_replay_when_the_tab_is_reopened(self, stack, page):
         """번쩍임은 **한 번**이다.
 
         `.tv-nav-hl` 은 CSS 애니메이션이고, 채널 전환은 카드를 `hidden` 으로
         숨겼다 드러낸다. 숨겨졌던 요소가 다시 표시되면 CSS 애니메이션은
         **처음부터 다시 재생**된다 — 그래서 클래스를 안 떼면 그 탭을 열
-        때마다 엉뚱하게 또 번쩍였다(사용자 보고).
-        """
+        때마다 엉뚱하게 또 번쩍였다(사용자 보고)."""
         stack.emit_ready()
-        _roster(stack, AGT, PEER)
+        _roster(stack, AGT)
         page.goto(stack.url)
-        assert _wait(lambda: _chip(page, PEER).count() > 0)
-
+        assert _wait(lambda: _chip(page, AGT).count() > 0)
+        # 도착 채널에 카드 하나 — 앵커.
         stack.renderer.agent_message(
-            key=AGT, direction="in", author=f"agent:{PEER}", text="요청", to=AGT
+            key=AGT, direction="in", author="main", text="요청", to=AGT, seq=1
         )
-        stack.renderer.agent_message(
-            key=PEER, direction="in", author=f"agent:{AGT}", text="부탁", to=PEER
-        )
-        assert _wait(lambda: page.locator("#messages > .card-msg").count() == 2)
+        assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
 
-        _chip(page, AGT).click()
-        chip = _visible_rows(page, "#messages > .card-msg").locator(".peer.can-jump")
-        assert _wait(lambda: chip.count() == 1)
+        self._delegate_call(stack, AGT)
+        chip = page.locator("#messages > .card-assistant .row.act .peer.can-jump")
+        assert _wait(lambda: chip.count() > 0)
         chip.click()
 
-        target = page.locator(f'#messages > .card-msg[data-peer="{AGT}"]')
+        target = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
         assert _wait(lambda: "tv-nav-hl" in (target.get_attribute("class") or "")), (
             "사전 조건: 점프가 한 번은 번쩍여야 한다"
         )
-        # 번쩍임이 끝나면 클래스가 떨어진다. `animationend` 와 타이머 폴백
-        # 둘 중 무엇이 떼든 계약은 같다 — 여기서는 **결과**만 본다(둘을
-        # 구별하려면 대기 시간에 의존해야 하고, 그건 CI 에서 흔들린다).
         assert _wait(
             lambda: "tv-nav-hl" not in (target.get_attribute("class") or ""),
             timeout=6.0,
         ), "애니메이션이 끝나도 클래스가 남았다"
 
-        # 다른 채널로 갔다가 되돌아온다 — 여기서 재생되면 안 된다.
-        _chip(page, AGT).click()
+        _chip(page, "main").click()
         assert _wait(lambda: not target.is_visible())
-        _chip(page, PEER).click()
+        _chip(page, AGT).click()
         assert _wait(lambda: target.is_visible())
         assert "tv-nav-hl" not in (target.get_attribute("class") or ""), (
             "탭을 다시 열었더니 하이라이트가 되살아났다"
         )
 
-    def test_agent_to_main_is_not_clickable(self, stack, page):
-        """agent→main 은 매칭 키가 달라 이번 범위 밖 — 상대 칩은 **보이되
-        눌리지 않는다**. 돌아가기 버튼이 그 자리를 채운다."""
+    def test_user_sender_is_labelled_as_a_person(self, stack, page):
+        """사람은 채널이 아니다 — 머리의 `(사람)` 꼬리표로 종류를 밝힌다."""
         stack.emit_ready()
         _roster(stack, AGT)
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, AGT).count() > 0)
         _chip(page, AGT).click()
 
+        stack.renderer.begin_agent_work(key=AGT, seq=1, profile="rev", message="x")
         stack.renderer.agent_message(
-            key=AGT, direction="out", author=AGT, text="끝냈습니다", to="main"
+            key=AGT,
+            direction="in",
+            author="user:두정",
+            text="README 갱신해줘",
+            to=AGT,
+            seq=1,
         )
-        peer = page.locator("#messages > .card-msg .peer")
-        assert _wait(lambda: peer.count() == 1)
-        assert "main" in peer.inner_text()
-        assert "can-jump" not in (peer.get_attribute("class") or "")
-
-    def test_user_sender_is_labelled_and_not_a_jump_target(self, stack, page):
-        """사람은 채널이 아니다 — `(사람)` 꼬리표로 종류를 밝히되 점프는 없다."""
-        stack.emit_ready()
-        _roster(stack, AGT)
-        page.goto(stack.url)
-        assert _wait(lambda: _chip(page, AGT).count() > 0)
-        _chip(page, AGT).click()
-
-        stack.renderer.agent_message(
-            key=AGT, direction="in", author="user:두정", text="README 갱신해줘", to=AGT
-        )
-        peer = page.locator("#messages > .card-msg .peer")
-        assert _wait(lambda: peer.count() == 1)
-        assert peer.inner_text().strip() == "두정 (사람)"
-        assert "can-jump" not in (peer.get_attribute("class") or "")
+        who = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-item .who')
+        assert _wait(lambda: who.count() == 1)
+        assert who.inner_text().strip() == "두정 (사람)"
+        assert page.locator(f'.card-run[data-task-id="{AGT}#1"] .can-jump').count() == 0
 
 
 class TestBackIsSingleLevel:
     """돌아가기 스택은 누를 때마다 라벨이 바뀌어 어디로 갈지 예측이 안 된다 —
-    채널 칩이 항상 보이므로 그 복잡도를 살 이유가 없다(사용자 지적)."""
+    채널 칩이 항상 보이므로 그 복잡도를 살 이유가 없다(사용자 지적). 점프의
+    출발점은 main 의 `⚡ agent` 도구 줄뿐이다(v9.23.0)."""
 
-    def _two_hops(self, stack, page):
+    def _setup(self, stack, page):
         stack.emit_ready()
         _roster(stack, AGT, PEER)
         page.goto(stack.url)
         assert _wait(lambda: _chip(page, PEER).count() > 0)
-        stack.renderer.agent_message(
-            key=AGT, direction="in", author=f"agent:{PEER}", text="A", to=AGT
+
+    def _jump_to(self, stack, page, key):
+        # 턴 번호를 매번 올린다 — 같은 턴의 두 번째 op 는 앞 스텝 카드의 (접힌)
+        # 본문에 행으로 들어가 칩이 보이지 않는다.
+        self._turn = getattr(self, "_turn", 0) + 1
+        chips = page.locator("#messages > .card-assistant .row.act .peer.can-jump")
+        n = chips.count()  # 발신 **전에** 센다 — 뒤에 세면 이미 그려진 칩을 또 기다린다
+        stack.renderer.action(
+            "agent",
+            f'{{"mode":"request","key":"{key}","message":"리뷰해줘"}}',
+            turn=self._turn,
         )
-        stack.renderer.agent_message(
-            key=PEER, direction="in", author=f"agent:{AGT}", text="B", to=PEER
-        )
-        assert _wait(lambda: page.locator("#messages > .card-msg").count() == 2)
+        assert _wait(lambda: chips.count() == n + 1)
+        chips.nth(n).click()
+        assert _wait(lambda: _chip(page, key).get_attribute("aria-selected") == "true")
 
     def test_back_button_hidden_until_a_jump(self, stack, page):
-        self._two_hops(stack, page)
+        self._setup(stack, page)
         back = page.locator("#ch-back")
         assert not back.is_visible()
         _chip(page, AGT).click()  # 칩 클릭은 점프가 아니다 — 돌아갈 곳이 없다
         assert not back.is_visible()
 
-    def test_second_jump_replaces_the_first_instead_of_stacking(self, stack, page):
-        """main → AGT → PEER 로 두 번 점프해도 돌아가기는 **한 번**이고, 그
-        목적지는 **직전**(AGT)이다. 스택이면 두 번 눌러야 사라진다."""
-        self._two_hops(stack, page)
+    def test_back_is_one_level_and_vanishes_when_pressed(self, stack, page):
+        """main → AGT 점프 → 돌아가기 → main → PEER 점프: 돌아갈 곳은 언제나
+        **직전**이고, 한 번 누르면 사라진다."""
+        self._setup(stack, page)
         back = page.locator("#ch-back")
 
-        _chip(page, AGT).click()
-        page.locator("#messages > .card-msg:not([hidden]) .peer.can-jump").click()
-        assert _wait(lambda: _chip(page, PEER).get_attribute("aria-selected") == "true")
-        assert back.is_visible()
-        assert AGT in back.inner_text(), (
-            f"돌아갈 곳이 직전이 아님: {back.inner_text()!r}"
-        )
-
+        self._jump_to(stack, page, AGT)
+        assert back.is_visible() and "main" in back.inner_text()
         back.click()
-        assert _wait(lambda: _chip(page, AGT).get_attribute("aria-selected") == "true")
-        # 한 번 누르면 사라진다 — 스택이면 여기서 또 보인다.
+        assert _wait(
+            lambda: _chip(page, "main").get_attribute("aria-selected") == "true"
+        )
         assert _wait(lambda: not back.is_visible()), "돌아가기가 스택으로 쌓였다"
+
+        self._jump_to(stack, page, PEER)
+        assert back.is_visible() and "main" in back.inner_text()
+        back.click()
+        assert _wait(lambda: not back.is_visible())
 
 
 class TestNestedBlocks:
@@ -819,8 +831,12 @@ class TestNestedBlocks:
 
         assert "scope-skill" in cls("sk1")
         assert "scope-inline" in cls("in1")
-        # v9.7.0: 상주 에이전트는 **카드 자체가 없다** — 채널이 그 역할이다.
-        assert page.locator(f'[data-task-id="{AGT}#1"]').count() == 0
+        # 상주 에이전트의 런은 접히는 스코프 카드가 아니라 **런 블록**이다
+        # (v9.23.0) — 레일은 있되 카드 종류가 다르다.
+        run = page.locator(f'[data-task-id="{AGT}#1"]')
+        assert run.count() == 1
+        assert "card-run" in (run.get_attribute("class") or "")
+        assert "card-task-group" not in (run.get_attribute("class") or "")
 
     def test_nested_scope_collapses_inside_its_parent(self, stack, page):
         """중첩 접기: 부모를 접으면 자식 블록도 함께 사라진다 — 중첩이 표시만이

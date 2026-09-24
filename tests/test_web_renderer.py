@@ -3662,3 +3662,48 @@ class TestNoteNext:
                 f"{mod}: `a` 승인이 화면에 기록되지 않는다 — "
                 f"세션 내내 재확인 없이 통과하는 정책 변경은 흔적을 남겨야 한다"
             )
+
+
+class TestRunBlockFields:
+    """런 블록 (v9.23.0, docs/chat-ui §12) 이 서버에서 받는 두 필드.
+
+    `scope_start.seqs` — 이 런이 처리하는 inbox 항목들. 수신 줄은 큐에 넣을
+    때 나가 런보다 앞서므로, 프론트는 이 목록으로 그 줄들을 블록 머리로
+    끌어온다(배치는 N개). `agent_msg.fallback` — 하네스가 대신 보낸 런 요약,
+    도구 호출이 없는 유일한 발신이라 out 줄 중 이것만 그린다."""
+
+    def _next(self, conn, event):
+        while True:
+            e, d = conn.queue.get(timeout=0.5)
+            if e == event:
+                return d
+
+    def test_scope_start_carries_seqs_defaulting_to_the_run_seq(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.begin_agent_work(key="agt-a", seq=3, profile="p", message="일감")
+        d = self._next(conn, "scope_start")
+        assert d["task_id"] == "agt-a#3" and d["seqs"] == [3]
+        r.end_agent_work(key="agt-a", seq=3, success=True, duration_s=0.1)
+
+    def test_scope_start_carries_the_batch_seqs(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.begin_agent_work(
+            key="agt-a", seq=7, profile="p", message="셋", seqs=[7, 8, 9]
+        )
+        assert self._next(conn, "scope_start")["seqs"] == [7, 8, 9]
+        r.end_agent_work(key="agt-a", seq=7, success=True, duration_s=0.1)
+
+    def test_agent_msg_marks_a_fallback_send_only_when_told(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.agent_message(key="agt-a", direction="out", author="agt-a", text="x")
+        assert "fallback" not in self._next(conn, "agent_msg")
+        r.agent_message(
+            key="agt-a", direction="out", author="agt-a", text="y", fallback=True
+        )
+        assert self._next(conn, "agent_msg")["fallback"] is True

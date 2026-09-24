@@ -738,6 +738,7 @@ class WebRenderer(Renderer):
         profile: str,
         message: str,
         req_ts: float | str | None = None,
+        seqs: list[int] | None = None,
     ) -> None:
         tid = threading.get_ident()
         task_id = f"{key}#{seq}"
@@ -770,6 +771,10 @@ class WebRenderer(Renderer):
             # slices it by this scope's [start, end] timestamps to put each
             # request's turns into its own card.
             "ctx_dir": f"agents/{key}",
+            # 이 런이 처리하는 inbox 항목들 (v9.23.0). 프론트의 런 블록이 큐에서
+            # 먼저 도착한 수신 줄을 이걸로 머리로 끌어온다. scopes.jsonl 에
+            # 박혀 resume 재생에서도 같은 블록이 선다.
+            "seqs": [int(s) for s in (seqs or [seq])],
         }
         # nav_ts = the originating request's timestamp (the same value the
         # swimlane user-mark/request arrow carries, via ``agent_message(ts=…)``).
@@ -863,6 +868,7 @@ class WebRenderer(Renderer):
         ts: float | str | None = None,
         profile: str = "",
         instance_name: str = "",
+        fallback: bool = False,
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서).
@@ -889,6 +895,8 @@ class WebRenderer(Renderer):
         }
         if ts is not None:
             data["ts"] = ts
+        if fallback:
+            data["fallback"] = True
         self._emit("agent_msg", data, persistent=True)
 
     def clear_agent_conversation(self, key: str) -> None:

@@ -624,7 +624,13 @@ class TestStaticUI:
         # agent_msg → 왕래 줄 렌더
         am = js.split('es.addEventListener("agent_msg"', 1)[1].split("\n  });", 1)[0]
         assert "ovOnAgentMsg(d)" in am
-        assert "ovRenderAgentMsg(d)" in _js_fn_body(js, "ovOnAgentMsg")
+        # v9.23.0 런 블록: 수신은 블록 머리(없으면 ⏳ 대기), 발신은 폴백만, 질문은
+        # 트레이 갱신만 — 왕래 줄 렌더러(ovRenderAgentMsg)는 사라졌다.
+        om = _js_fn_body(js, "ovOnAgentMsg")
+        assert "claimIn(" in om and '"대기"' in om
+        assert "if (!d.fallback) return;" in om
+        assert "ovRenderAskTray()" in om
+        assert "ovRenderAgentMsg" not in js
         # 입력 라우팅: agent 채널 + chat 이면 /api/agent/<key>/input
         sc = _js_fn_body(js, "submitChatOrPrompt")
         assert 'ovActiveChannel !== "main"' in sc
@@ -636,7 +642,7 @@ class TestStaticUI:
         f = _js_fn_body(js, "applyChannelFilter")
         assert "n.hidden = ch !== ovActiveChannel" in f
         assert "if (ch)" in f  # data-ch 없는 노드는 손대지 않는다
-        assert "#ov-channels" in css and ".card-msg" in css
+        assert "#ov-channels" in css and ".card-run" in css
 
     def test_inspector_follows_active_channel(self, server_and_client):
         """🔍 프롬프트 인스펙터가 현재 대화 채널을 따른다 — main 이면 main 스코프,
@@ -1217,7 +1223,8 @@ class TestStaticUI:
         assert '"agent_cleared"' in js  # SSE 리스너
         assert "ovOnAgentCleared(" in js  # 채널 정리로 라우팅
         cleared = _js_fn_body(js, "ovOnAgentCleared")
-        assert ".card-msg[data-ch=" in cleared and "c.remove()" in cleared
+        assert ".card-run[data-ch=" in cleared and "c.remove()" in cleared
+        assert ".card-queued[data-ch=" in cleared  # 아직 런이 안 연 대기 줄도
         assert "ovRenderAskTray()" in cleared  # 트레이 재렌더
 
     def test_agent_observation_renders_markdown(self, server_and_client):

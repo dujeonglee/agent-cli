@@ -1155,6 +1155,7 @@ class MinimalRenderer(Renderer):
         profile: str,
         message: str,
         req_ts: float | str | None = None,
+        seqs: list[int] | None = None,
     ) -> None:
         self.start_capture()
         self.set_thread_agent(profile or key)
@@ -1184,6 +1185,7 @@ class MinimalRenderer(Renderer):
         ts: float | str | None = None,
         profile: str = "",
         instance_name: str = "",
+        fallback: bool = False,
     ) -> None:
         """CLI 의 teammate 문답 수신 창 — @agt-<key> 명령(사용자 발신)의
         회신/질문은 main 관찰로 배달되지 않으므로(D8) 콘솔 라인이 유일한
