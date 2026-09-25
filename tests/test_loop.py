@@ -4857,3 +4857,76 @@ class TestRetriesAreNotRecorded:
         blob = "\n".join(str(m.get("content", "")) for m in msgs)
         assert "no_such_tool" in blob and "payload-xyz" in blob  # 인용이 유일한 사본
         assert result.output == "done"
+
+
+class TestActionLoopRetriesAreNotRecorded:
+    """v9.23.4 — B1(같은 액션 반복) 에 "재시도는 기록하지 않는다" 를 적용.
+
+    단일 op: 막힌(실행 안 된) 반복 호출을 assistant 레코드로 남기지 않는다 —
+    남기면 실행된 것처럼 읽히고, B1 넛지는 fold 대상이 아니라 영구히 쌓였다.
+    배치: 반복된 op 만 실행 안 됨으로 적고 **나머지 op 는 실행한다** (A4/A5
+    와 같은 모양) — 종전엔 뒤의 새 op 들까지 "aborted" 로 취소됐다."""
+
+    @staticmethod
+    def _run(caps, tmp_path, contents):
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=c) for c in contents]
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="check the log",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        return provider, result
+
+    @staticmethod
+    def _msgs(provider, i):
+        c = provider.call.call_args_list[i]
+        return c.kwargs.get("messages") or c.args[0]
+
+    def test_blocked_repeat_is_not_stored(self, caps, tmp_path):
+        log = tmp_path / "app.log"
+        log.write_text("OK\n")
+        same = "again\n\n" + json.dumps(
+            [{"action": "shell", "command": f"tail -1 {log}"}]
+        )
+        provider, result = self._run(
+            caps, tmp_path, [same, same, same, _complete("ok")]
+        )
+        msgs = self._msgs(provider, 3)
+        calls = [
+            m
+            for m in msgs
+            if m.get("role") == "assistant"
+            and f"tail -1 {log}" in str(m.get("content"))
+        ]
+        assert len(calls) == 1, f"막힌 반복 호출이 저장됐다: {len(calls)}"
+        blob = "\n".join(str(m.get("content", "")) for m in msgs)
+        # 넛지 두 단계는 남는다 — 무엇을 반복했는지 문구가 말한다
+        assert "2 times in a row" in blob and "3 times in a row" in blob
+        assert result.output == "ok"
+
+    def test_repeat_inside_a_batch_skips_only_that_op(self, caps, tmp_path):
+        log = tmp_path / "app.log"
+        log.write_text("OK\n")
+        first = "check\n\n" + json.dumps(
+            [{"action": "shell", "command": f"tail -1 {log}"}]
+        )
+        batch = "again\n\n" + json.dumps(
+            [
+                {"action": "shell", "command": f"tail -1 {log}"},  # 직전과 같다 → B1
+                {"action": "shell", "command": f"wc -c {log}"},
+                {"action": "shell", "command": f"ls {log}"},
+            ]
+        )
+        provider, result = self._run(caps, tmp_path, [first, batch, _complete("ok")])
+        obs = str(self._msgs(provider, 2)[-1].get("content", ""))
+        assert "[1/3] shell — FAILED" in obs and "This op did NOT run" in obs
+        assert "[2/3] shell — OK" in obs and "[3/3] shell — OK" in obs
+        assert "aborted" not in obs, "뒤의 새 op 들이 취소됐다"
+        assert result.output == "ok"

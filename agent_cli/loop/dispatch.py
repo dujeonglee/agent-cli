@@ -1303,8 +1303,28 @@ class TurnDispatcher:
                         "restate_task did not break the repetition."
                     ),
                 )
+            if accumulate is not None:
+                # N-op 배치 (v9.23.4): A4/A5 와 같은 모양 — 이 op 만 실행하지
+                # 않았다고 적고 **다음 op 로 간다**. 종전엔 배치 한가운데서
+                # `_intervene` 을 불러(단일 op 전용 — 턴 되감기 + 자기 관찰)
+                # 배치의 flush 와 겹쳤고, 런이 첫 op 의 shell 출력을 최종답으로
+                # **성공 종료**했다(재현: [새 op, 직전과 같은 op, 새 op]).
+                self.tools.accumulate_raw(
+                    accumulate,
+                    tool_name,
+                    f"{intervention.message} This op did NOT run — the other ops "
+                    "in this batch did.",
+                    False,
+                )
+                return None
             # Level 1 or 2: inject Intervention, skip dispatch,
             # let the next turn try again with the new context.
+            #
+            # 막힌 호출은 저장하지 않는다 (v9.23.4 — "재시도는 기록하지 않는다"
+            # 를 B1 로 확장). 실행되지 않은 반복 호출이 assistant 레코드로 남으면
+            # 실행된 것처럼 읽히고 반복 패턴을 모델에게 보여 준다 — B1 넛지는
+            # fold 대상이 아니라 영구히 쌓였다. 넛지 문구가 이미
+            # `shell({...}) N times` 로 무엇을 반복했는지 말한다.
             return self._intervene(
                 llm_text,
                 intervention.message,
@@ -1313,6 +1333,7 @@ class TurnDispatcher:
                 failure_signal=FAILURE_ACTION_LOOP,
                 tool_name=tool_name,
                 primitives=intervention.primitives,
+                store_emission=False,
             )
 
         # Render the model's ACTUAL emission, not the dispatch-canonical
