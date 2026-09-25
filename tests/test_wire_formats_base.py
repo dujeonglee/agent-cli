@@ -73,7 +73,6 @@ class _MockFormat(WireFormatProtocol):
     defaults (history pipeline, identity hooks) so the mock stays minimal."""
 
     name = "_mock_for_tests"
-    thought_required = False
 
     def format_rules(self) -> str:
         return "Mock rules."
@@ -209,7 +208,6 @@ class TestABCConformance:
     def test_missing_abstractmethod_fails_instantiation(self):
         class Incomplete(WireFormatProtocol):
             name = "incomplete"
-            thought_required = True
             # missing every abstract method
 
         with pytest.raises(TypeError) as exc_info:
@@ -272,7 +270,6 @@ class TestRegistry:
     def test_list_names_sorted(self, isolated_registry):
         class _MockB(WireFormatProtocol):
             name = "bbb"
-            thought_required = False
 
             def format_rules(self) -> str:
                 return ""

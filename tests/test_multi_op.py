@@ -100,7 +100,6 @@ class _MultiOpFormat(WireFormat):
     syntax so the tests drive the LOOP, not a parser."""
 
     name = "_multi_op_test"
-    thought_required = False
     action_required = False
     multi_op = True
     # Completion is an explicit `complete` op (json_fc's model), not a

@@ -1,6 +1,6 @@
 """형식-복구 개입 fold (v4.51.0) — "dynamic context 에는 성공 궤적만".
 
-설계 결정(사용자): 형식 개입(NO_THOUGHT/NO_JSON/NO_ACTION/A4/A5)은 교정의
+설계 결정(사용자): 형식 개입(NO_JSON/NO_ACTION/A4/A5)은 교정의
 일회성 재료 — 다음 파싱 성공 시 [실패 prior, 개입] 쌍을 캐시 뷰에서 접는다.
 B1(행동 루프)과 도구 실행 실패는 과제 정보라 잔류. history.jsonl 불변.
 """

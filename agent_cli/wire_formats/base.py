@@ -177,15 +177,6 @@ class WireFormat(ABC):
     """Short identifier used by the CLI ``--response-format`` option and
     the registry. Convention: lowercase, ``[a-z0-9_-]``."""
 
-    thought_required: bool = True
-    """Whether a missing ``thought`` triggers recovery vs. is tolerated.
-
-    True: the recovery layer fires NO_THOUGHT when an action is emitted
-    without a thought — the loop asks the model to re-emit with reasoning.
-    False: the thought slot is optional and its absence is valid, not a
-    drift signal (e.g. wire formats where the thought is preceding free
-    text outside a structured field). Mirror of :attr:`action_required`."""
-
     action_required: bool = True
     """Whether a missing ``action`` triggers recovery vs. inference.
 
@@ -196,8 +187,8 @@ class WireFormat(ABC):
     tool) and only falls back to NO_ACTION recovery when inference is
     ambiguous/empty. Plugins whose ``action_input`` keys are namespaced —
     so a dropped action name is unambiguously recoverable — set False.
-    Mirror of :attr:`thought_required`. Either flag's recovery path
-    depends on the parser preserving ``action_input`` (see :meth:`parse`)."""
+    The recovery path depends on the parser preserving ``action_input``
+    (see :meth:`parse`)."""
 
     multi_op: bool = False
     """Whether the format expresses several tool ops in one turn.
@@ -464,20 +455,6 @@ class WireFormat(ABC):
         """
 
     # ─── Prompt (default) ───────────────────────────────────────
-
-    @staticmethod
-    def _gated_rule(required: bool, strong: str, soft: str | None = None) -> str:
-        """Pick a Format-Rules clause by a required-flag — the hook that lets
-        ``thought_required`` / ``action_required`` weaken (or drop) a field's
-        rule once an optional phrasing is validated.
-
-        When ``required`` is True, or no ``soft`` variant is supplied, the
-        strong obligation is used. Today every caller omits ``soft``, so the
-        prompt is byte-for-byte unchanged whatever the flags say; supplying a
-        ``soft`` string (or ``""`` to drop the line) is the single edit needed
-        to soften a field's rule later, with no parser/loop change. Symmetric
-        with how the flags already gate the *recovery* side in the loop."""
-        return soft if (not required and soft is not None) else strong
 
     @abstractmethod
     def format_rules(self) -> str:

@@ -294,7 +294,6 @@ class XmlFcFormat(WireFormat):
     """태그-파라미터 function-call wire format (멀티-op)."""
 
     name = "xml_fc"
-    thought_required = False
     action_required = False
     multi_op = True
     # 미닫힘 <think> 가 tool call 을 EOF-삼킴하지 않게 구조 마커에서 정지.

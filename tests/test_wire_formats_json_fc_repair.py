@@ -39,7 +39,6 @@ class TestFlags:
         # finish bugs, fixed at the origin by reviving complete).
         assert WF.multi_op is True
         assert WF.exposes_complete is True
-        assert WF.thought_required is False
         assert WF.action_required is False
 
     def test_registered(self):

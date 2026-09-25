@@ -36,7 +36,6 @@ class TestRegistration:
     def test_flags_mirror_json_fc(self, wf):
         # multi-op flat 계열 공통 플래그 (json_fc 동형)
         assert wf.multi_op is True
-        assert wf.thought_required is False
         assert wf.action_required is False
         assert wf.exposes_complete is True
 

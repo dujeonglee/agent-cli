@@ -653,7 +653,7 @@ class TestStepCard:
         assert self._step(page).first.locator(".step-head").count() == 1
 
     def test_head_is_the_action_when_there_is_no_reasoning(self, stack, page):
-        """살아 있는 두 wire format 이 ``thought_required=False`` 라 생각 없는
+        """살아 있는 두 wire format 모두 생각이 선택이라 생각 없는
         턴이 실측 1/3이다 — 빈 자리에 자리표시를 그리는 대신 행동을 올린다."""
         stack.emit_ready()
         _open_timeline(page, stack)

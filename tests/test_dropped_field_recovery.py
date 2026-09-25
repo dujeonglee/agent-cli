@@ -1,13 +1,15 @@
-"""Dropped-field recovery: ``thought_required`` / ``action_required`` flags.
+"""Dropped-field recovery: the ``action_required`` flag.
 
-Two symmetric wire-format flags govern what happens when an emission is
-missing a structured field:
+The wire-format flag governs what happens when an emission is missing its
+action:
 
   - ``action_required=False`` → a dropped/empty action is recovered by the
     loop via ``infer_action`` on the *preserved* action_input (wire-key
     prefix → tool). ``True`` → straight to NO_ACTION recovery.
-  - ``thought_required=False`` → a missing thought is tolerated. ``True`` →
-    NO_THOUGHT recovery.
+
+A missing *thought* is always tolerated (v9.23.3): the NO_THOUGHT recovery and
+its ``thought_required`` flag were removed as dead code — both shipped
+formats set it False and none implemented ``format_no_thought_retry``.
 
 The parser-side invariant (``WireFormat.parse`` contract) is that
 action_input is preserved even when the action slot is empty/invalid, so
@@ -16,11 +18,9 @@ both flag branches have something to work with. This file pins:
   1. Both shipped parsers (json_fc / xml_fc) preserve action_input across
      dropped-action shapes (v7.0.0 — react 제거로 쌍이 json_fc/xml_fc 로).
   2. Cross-wire parity: same semantic emission → same recovery outcome.
-  3. The loop honors each flag: False → infer/tolerate, True → recover.
-     The shipped plugins both set False, so the True branches are pinned
-     against a synthetic strict plugin. NOTE: ``format_no_thought_retry``
-     는 react 전용 메서드였으므로 (thought_required=True 포맷만 필요)
-     synthetic 이 직접 정의한다.
+  3. The loop honors the flag: False → infer, True → recover. The shipped
+     plugins both set False, so the True branch is pinned against a
+     synthetic strict plugin.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ import pytest
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.recovery.intervention import Intervention
 from agent_cli.tools.registry import infer_action
 from agent_cli.wire_formats import get
 from agent_cli.wire_formats.json_fc import JsonFcFormat
@@ -61,21 +60,12 @@ def _complete(result: str) -> str:
 
 
 class _StrictJson(JsonFcFormat):
-    """Synthetic plugin pinning the True branches of both flags. The
-    shipped plugins are all False, so without this the recovery paths for
-    a *required* field would be untested. parse 는 상속 — loop 의
+    """Synthetic plugin pinning the True branch of ``action_required``. The
+    shipped plugins are False, so without this the recovery path for a
+    *required* action would be untested. parse 는 상속 — loop 의
     플래그-게이트 분기만 다르다."""
 
-    thought_required = True
     action_required = True
-
-    def format_no_thought_retry(self, *, prior_content: str) -> Intervention:
-        # react 전용이던 메서드 — thought_required=True 포맷만 필요해
-        # ABC 에 없다. strict 게이트 검증용 최소 구현.
-        return Intervention(
-            message="Add reasoning prose before the array, then re-emit.",
-            primitives=["no_thought_retry"],
-        )
 
 
 # ── 1. Parser preserves action_input across dropped-action shapes ──
@@ -155,13 +145,13 @@ class TestCrossWireParity:
     def test_shipped_plugins_optional_by_default(self):
         for name in ("json_fc", "xml_fc"):
             plugin = get(name)
-            assert plugin.thought_required is False, name
             assert plugin.action_required is False, name
+            assert not hasattr(plugin, "thought_required"), name  # v9.23.3 제거
 
 
 # ── 3. Loop honors the flags ─────────────────────────
 # 복구 여부는 도구의 파일 부수효과로 측정 (메시지 텍스트 스캔 금지 —
-# NO_ACTION/NO_THOUGHT 개입이 raw 를 echo 하므로 텍스트는 오탐).
+# NO_ACTION 개입이 raw 를 echo 하므로 텍스트는 오탐).
 
 
 class TestActionRequiredGate:
@@ -213,9 +203,9 @@ class TestActionRequiredGate:
         assert not target.exists()
 
 
-class TestThoughtRequiredGate:
-    def test_false_tolerates_missing_thought(self, caps, tmp_path):
-        # 산문 없이 배열만 — thought_required=False (json_fc) → 그대로 실행.
+class TestMissingThoughtIsTolerated:
+    def test_missing_thought_runs(self, caps, tmp_path):
+        # 산문 없이 배열만 — 생각은 선택 → 그대로 실행.
         target = tmp_path / "made.txt"
         provider = _make_provider(
             f'[{{"action": "write_file", "path": "{target}", "content": "data"}}]',
@@ -232,54 +222,12 @@ class TestThoughtRequiredGate:
         assert result.success
         assert target.exists()  # ran despite missing thought
 
-    def test_true_fires_no_thought_recovery(self, caps, tmp_path):
-        target = tmp_path / "made.txt"
-        provider = _make_provider(
-            f'[{{"action": "write_file", "path": "{target}", "content": "data"}}]',
-            _complete("done"),
-        )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="go",
-            provider=provider,
-            capabilities=caps,
-            model="m",
-            wire_format=_StrictJson(),
-        )
-        assert result.success
-        assert provider.call.call_count == 2  # NO_THOUGHT retry happened
-        assert not target.exists()  # recovery before write
+
+# ── 4. Prompt wording ─────────────────────────────
 
 
-# ── 4. Prompt flag hook (output unchanged, gate wired) ──
-
-
-class TestPromptFlagHook:
-    """``_gated_rule`` lets the flags weaken/drop a Format-Rules clause
-    later. Today no plugin supplies a ``soft`` variant, so the prompt is
-    unchanged — the hook is wired but inert."""
-
-    def test_gated_rule_selects_by_flag(self):
-        from agent_cli.wire_formats.base import WireFormat
-
-        assert WireFormat._gated_rule(True, "S", "soft") == "S"
-        assert WireFormat._gated_rule(False, "S", "soft") == "soft"
-        assert WireFormat._gated_rule(False, "S") == "S"
-        assert WireFormat._gated_rule(True, "S") == "S"
-
-    def test_prompts_keep_strong_wording(self):
-        # 플래그는 False 지만 soft 미공급 — 강한 의무 문구가 유지된다.
+class TestPromptWording:
+    def test_prompts_keep_strong_action_wording(self):
+        # action 은 플래그와 무관하게 강한 의무 문구다.
         fr = get("json_fc").format_rules()
         assert 'must have an "action"' in fr
-
-    def test_softening_takes_effect_via_synthetic_plugin(self):
-        # v8.41.0: format_rules_field_specific 훅은 사문 빌더와 함께 제거 —
-        # _gated_rule 은 플러그인이 자기 format_rules 안에서 쓰는 유틸로
-        # 잔존한다 (합성 플러그인의 format_rules 조립으로 동일 계약 검증).
-        class _SoftThought(JsonFcFormat):
-            def format_rules(self) -> str:
-                return f"1. {self._gated_rule(self.thought_required, 'STRONG', 'thought optional')}"
-
-        out = _SoftThought().format_rules()
-        assert "thought optional" in out
-        assert "STRONG" not in out

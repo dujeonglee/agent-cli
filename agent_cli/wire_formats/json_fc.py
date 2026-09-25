@@ -623,7 +623,6 @@ class JsonFcFormat(WireFormat):
     """산문 thought + flat action-array (multi-op, complete 종결)."""
 
     name = "json_fc"
-    thought_required = False
     action_required = False
     multi_op = True
     # 미닫힘 <think> 뒤의 bare 배열(라인 선두 `[`)을 EOF-삼킴에서 보호.

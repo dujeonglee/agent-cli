@@ -26,7 +26,6 @@ from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
     detect_schema_mismatch,
-    detect_thought_missing,
     detect_unknown_tool,
     unwrap_nested_envelope,
 )
@@ -38,7 +37,6 @@ from agent_cli.recovery.observability import (
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     FAILURE_NO_OUTPUT,
-    FAILURE_NO_THOUGHT,
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
@@ -211,8 +209,7 @@ class TurnDispatcher:
         # drift to be corrected by the model, so we skip inference and fall
         # through to the NO_ACTION recovery below. When False (the namespaced
         # format), the action is recoverable from the
-        # preserved action_input, so we infer it. Mirror of how
-        # ``thought_required`` gates the NO_THOUGHT recovery.
+        # preserved action_input, so we infer it.
         action_inferred = False
         if not self.cfg.wire_format.action_required:
             for op in turn.ops:
@@ -297,36 +294,6 @@ class TurnDispatcher:
         Intervention update it before returning so the trailing finally
         records what happened.
         """
-        first_action = next((op.action for op in turn.ops if op.action), None)
-
-        # A7 NO_THOUGHT — action present but thought missing. Retry
-        # before dispatch so the omission does not enter the transcript
-        # as a precedent for future turns (mimicry-strengthening loop:
-        # the raw response is mirrored back on the next turn and
-        # crowds out the system prompt's Format Rule 1).
-        if self.cfg.wire_format.thought_required and detect_thought_missing(
-            turn.thought, first_action
-        ):
-            # ``thought_required`` is False on plugins where the thought
-            # is preceding free text rather than a schema field — for
-            # those, missing thought is not a drift signal.
-            _debug_log(f"NO_THOUGHT: action={first_action!r}, thought={turn.thought!r}")
-            # ReAct-only: format_no_thought_retry lives on the plugin,
-            # not in recovery/builders, because it has no meaning when
-            # ``thought_required`` is False (envelope plugins).
-            intervention = self.cfg.wire_format.format_no_thought_retry(
-                prior_content=llm_text
-            )
-            return self._intervene(
-                llm_text,
-                intervention.message,
-                "no thought",
-                outcome,
-                failure_signal=FAILURE_NO_THOUGHT,
-                primitives=intervention.primitives,
-                recovery_kind="format",
-            )
-
         # NOTE (v8.4.0): prose-only completion (v7.14.0 — accept an action-less
         # prose turn as an implicit `complete`) was REMOVED. Production found
         # the counterexample the 2026-07-23 bakeoff measured as zero: a
@@ -1777,7 +1744,7 @@ def _append_observation(
     leaked mid-turn. Re-feeding such drift would strengthen mimicry (next
     turn's prior, or a resumed session's restored prior, teaches "repeating
     the shape / dropping the action is fine") — the format-runaway root
-    cause, and the same class of failure the NO_THOUGHT retry avoids. This
+    cause. This
     unifies the live prior with the resume prior (both go through render) and
     with the action-inferred correction, which already rendered its record.
 

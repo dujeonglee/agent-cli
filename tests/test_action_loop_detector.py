@@ -15,7 +15,6 @@ from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
     detect_schema_mismatch,
-    detect_thought_missing,
     detect_unknown_tool,
 )
 
@@ -421,49 +420,3 @@ class TestNestedEnvelopeLenientParse:
         from agent_cli.recovery.detectors import unwrap_nested_envelope
 
         assert unwrap_nested_envelope('  \n{"result": "x"}') == "x"
-
-
-class TestDetectThoughtMissing:
-    """A2 NO_THOUGHT detector — fires only when an action is present
-    but the thought field is missing/empty. NO_ACTION (A3) is a
-    different label and must not be conflated.
-    """
-
-    def test_no_action_returns_false(self):
-        # No action means we are in NO_ACTION territory (A3), not A2.
-        assert detect_thought_missing("some thought", None) is False
-        assert detect_thought_missing("", "") is False
-        assert detect_thought_missing(None, None) is False
-
-    def test_action_present_thought_none_returns_true(self):
-        assert detect_thought_missing(None, "read_file") is True
-
-    def test_action_present_empty_thought_returns_true(self):
-        assert detect_thought_missing("", "read_file") is True
-
-    def test_action_present_whitespace_thought_returns_true(self):
-        assert detect_thought_missing("   \n\t", "read_file") is True
-
-    def test_action_present_valid_thought_returns_false(self):
-        assert detect_thought_missing("I want to read the file", "read_file") is False
-
-    def test_complete_action_is_exempt(self):
-        # ``complete`` is the final-answer action — the reasoning slot
-        # carries no next-turn obligation since there is no further
-        # turn to propagate to. Empty thought on complete is no longer
-        # treated as a drift signal. Reverses an earlier design
-        # decision after Phase 2 bakeoff (2026-05-18) measured a
-        # systematic NO_THOUGHT recovery loop on qwen3.6:27b's
-        # ``complete_direct`` (markdown wire format, 5/5 runs).
-        assert detect_thought_missing(None, "complete") is False
-        assert detect_thought_missing("", "complete") is False
-        assert detect_thought_missing("   \n", "complete") is False
-        # A populated thought on complete is still fine (not flagged).
-        assert detect_thought_missing("done", "complete") is False
-
-    def test_non_string_thought_returns_false(self):
-        # If the parser produced a non-string thought (e.g. a dict that
-        # was incorrectly placed there), don't flag — only None / empty
-        # / whitespace strings count as "missing".
-        assert detect_thought_missing({"nested": "x"}, "read_file") is False
-        assert detect_thought_missing(["a", "b"], "read_file") is False

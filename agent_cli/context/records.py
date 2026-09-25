@@ -119,8 +119,8 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
 def is_format_intervention(record: dict) -> bool:
     """형식-복구 개입 관찰인가 — fold(v4.51.0) 계약 술어.
 
-    1차 식별: additive ``recovery == "format"`` 마킹 (NO_THOUGHT/NO_JSON/
-    NO_ACTION/A4/A5 개입이 기록 시 찍음 — B1[행동 루프] 개입과 실제 도구
+    1차 식별: additive ``recovery == "format"`` 마킹 (NO_JSON/NO_ACTION/
+    A4/A5·출력 절단 개입이 기록 시 찍음 — B1[행동 루프] 개입과 실제 도구
     실행 실패는 마킹 없음 = fold 비대상).
     레거시 백스톱: 마킹 도입 전 세션의 파싱 개입은 ``tool == ""`` 규약
     (web replay 가 같은 규약 소비)으로 식별 — 단 A4/A5 는 구 세션에서
