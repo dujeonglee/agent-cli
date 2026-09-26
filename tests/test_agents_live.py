@@ -3653,7 +3653,9 @@ class TestSpawnScalingGuidance:
 
         sub = AgentTool.SUBLOOP_DESCRIPTION
         assert "spawn" not in sub.lower()
-        assert "context window" not in sub  # 스케일링 문구 미유출
+        # 스케일링 문구 미유출 — spawn 문단 고유 표현으로 본다. "context
+        # window" 자체는 v9.24.1 run 문장(분리된 컨텍스트)이 정당하게 쓴다.
+        assert "working memory" not in sub and "N windows" not in sub
 
 
 class TestAttributionInheritance:

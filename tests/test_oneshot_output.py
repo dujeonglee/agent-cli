@@ -500,3 +500,41 @@ class TestExtractResultBody:
         from agent_cli.subagent.report import extract_result_body
 
         assert extract_result_body("그냥 텍스트") == "그냥 텍스트"
+
+
+class TestIterationsAreTurnsRun:
+    """v9.24.1: 반복 수는 루프가 실제로 돈 턴 수다 — 20줄로 잘린 활동 로그의
+    줄 수가 아니다 (Harbor v5 large-scale: 60턴을 쓰고 "20 iterations")."""
+
+    def test_sixty_turns_report_sixty_even_with_a_trimmed_log(self, tmp_path):
+        from unittest.mock import patch
+
+        from agent_cli.tools.result import ToolResult
+
+        def fake_run(task, ctx, **kw):
+            for t in range(1, 61):  # 루프가 매 턴 찍는 것과 같이
+                ctx.set_turn(t)
+                ctx.add(_make_action_msg("shell", {"command": f"echo {t}"}))
+                ctx.add(_make_obs_msg("ok"))
+            return ToolResult(False, error="Max turns (60) reached"), 1.0
+
+        with patch(
+            "agent_cli.subagent.runner.run_subagent_message", side_effect=fake_run
+        ):
+            from unittest.mock import MagicMock
+
+            from agent_cli.providers.capabilities import ModelCapabilities
+
+            r = _run_single(
+                task="t",
+                provider=MagicMock(),
+                capabilities=ModelCapabilities(8192, 2048, False),
+                model="m",
+                parent_ctx=None,
+                session=None,
+                run_dir_name="run_x",
+                owner="main",
+            )
+        text = r.error or r.output
+        assert "... and 40 more" in text  # 로그는 여전히 20줄로 잘린다
+        assert "[Subagent used 60 iterations]" in text

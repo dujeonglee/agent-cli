@@ -43,7 +43,27 @@ class TestBuildSessionState:
 
     def test_turn_with_max_turns(self):
         out = build_session_state(used_tokens=1, budget_tokens=10, turn=7, max_turns=40)
-        assert "turn 7/40" in out
+        assert "turn 7/40 (33 left after this one)" in out
+        assert "LAST turn" not in out
+
+    def test_final_turn_tells_a_subagent_to_report_to_its_caller(self):
+        """v9.24.1: 턴 한도에서 루프는 마무리 없이 멈춘다 — 실측(v5 large-scale)
+        하위 에이전트가 60턴째에도 다음 실험을 계획했고 발견이 전부 사라졌다.
+        마지막 턴에 complete 로 무엇을 보고할지 알려 준다."""
+        out = build_session_state(turn=60, max_turns=60, reports_to_caller=True)
+        assert "turn 60/60 (0 left after this one)" in out
+        assert "LAST turn" in out and "Call complete now" in out
+        assert "The agent that called you receives ONLY" in out
+        assert "damaged" in out  # 파일 손상도 보고 대상
+
+    def test_final_turn_for_the_main_loop_reports_to_the_user(self):
+        out = build_session_state(turn=40, max_turns=40)
+        assert "LAST turn" in out and "The user receives" in out
+        assert "agent that called you" not in out
+
+    def test_no_final_notice_without_a_turn_cap(self):
+        assert "LAST turn" not in build_session_state(turn=500)
+        assert "LAST turn" not in build_session_state(turn=59, max_turns=60)
 
     def test_no_budget_still_reports_usage(self):
         out = build_session_state(used_tokens=1_234)
@@ -440,6 +460,62 @@ class TestKvWinEndToEnd:
             tail = call[1]["messages"][-1]["content"]
             assert SESSION_STATE_HEADER in tail
             assert "context: ~" in tail
+
+
+class TestFinalTurnInTheLoop:
+    """v9.24.1: 루프가 실제로 마지막 허용 턴에 안내를 붙이는지 — 하위 루프
+    (depth ≥ 1)는 호출자에게, 메인은 사용자에게."""
+
+    def _tails(self, tmp_path, *, depth):
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        # memory add 는 테스트 포트에서 확실히 돌고 턴을 넘긴다 (요약을 바꿔
+        # 반복 감지를 피한다).
+        n = iter(range(100))
+        tails: list[str] = []  # 호출 시점의 꼬리 (목록은 이후 턴에 바뀐다)
+        provider = MagicMock()
+        provider.call = MagicMock(
+            side_effect=lambda *a, **k: (
+                tails.append(k["messages"][-1]["content"])
+                or LLMResponse(
+                    content=json.dumps(
+                        {
+                            "action": "memory",
+                            "mode": "add",
+                            "type": "note",
+                            "summary": f"note {next(n)}",
+                        }
+                    )
+                )
+            )
+        )
+        run_loop(
+            ports=TEST_PORTS,
+            query="do it",
+            provider=provider,
+            capabilities=_caps(),
+            model="m",
+            ctx=_ctx(tmp_path),
+            max_turns=3,
+            depth=depth,
+        )
+        return tails
+
+    def test_subagent_is_told_on_its_last_turn_only(self, tmp_path):
+        tails = self._tails(tmp_path, depth=1)
+        assert len(tails) == 3
+        assert "turn 1/3 (2 left after this one)" in tails[0]
+        assert all("LAST turn" not in t for t in tails[:2])
+        assert "LAST turn" in tails[2]
+        assert "The agent that called you receives ONLY" in tails[2]
+
+    def test_main_loop_last_turn_addresses_the_user(self, tmp_path):
+        tails = self._tails(tmp_path, depth=0)
+        assert "LAST turn" in tails[-1] and "The user receives" in tails[-1]
 
 
 # ── 4. Task Guidelines in the tail (v8.52.0) ─────────────────────────

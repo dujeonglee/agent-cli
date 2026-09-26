@@ -359,7 +359,6 @@ class ToolBridge:
                 depth=self.cfg.depth,
                 max_depth=self.cfg.max_depth,
                 max_turns=self.cfg.max_turns,
-                timeout=self.cfg.agent_timeout,
                 session=self.cfg.session,
                 skill_stack=self.cfg.skill_stack,
                 agent_stack=self.cfg.agent_stack,

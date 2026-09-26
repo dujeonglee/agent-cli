@@ -5,10 +5,6 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-from agent_cli.constants import (
-    AGENT_DEFAULT_TIMEOUT,
-)
-
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
@@ -43,7 +39,6 @@ class LoopConfig:
     depth: int = 0
     max_depth: int = 2
     max_turns: int = 0
-    agent_timeout: int = AGENT_DEFAULT_TIMEOUT
     tools_list: list = field(default_factory=list)
     skill_name: str = ""
     skill_args: str = ""

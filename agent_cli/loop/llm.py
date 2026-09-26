@@ -176,6 +176,7 @@ class LLMCaller:
             memory=memory,
             requests=requests,
             guidelines=TASK_GUIDELINES,
+            reports_to_caller=self.cfg.depth > 0,
         )
 
     def _interrupt_check(self) -> bool:

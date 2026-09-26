@@ -38,7 +38,6 @@ _LEGACY_RUN_WEB_KEYS = frozenset(
         "max_turns",
         "depth",
         "max_depth",
-        "timeout",
         "session",
         "hooks_config",
     }
@@ -59,7 +58,6 @@ class TestAgentRuntimeEquivalence:
             "max_turns": 5,
             "depth": 0,
             "max_depth": 2,
-            "timeout": 300,
             "session": object(),
             "hooks_config": {"PreToolUse": []},
         }
@@ -80,7 +78,7 @@ class TestAgentRuntimeEquivalence:
         assert d["capabilities"] is rt.capabilities
         assert d["session"] is rt.session
         assert d["hooks_config"] is rt.hooks_config
-        assert d["model"] == "m" and d["timeout"] == 300 and d["depth"] == 0
+        assert d["model"] == "m" and d["depth"] == 0
 
     def test_compaction_key_addition_is_behaviorally_equivalent(self):
         """run/web 종전 dict 엔 compaction_enabled 키가 없었다 — 소비측이
@@ -95,7 +93,7 @@ class TestAgentRuntimeEquivalence:
 
     def test_from_loop_config_maps_legacy_tool_bridge_fields(self):
         """LoopConfig → AgentRuntime 매핑 == 종전 tool_bridge dict 리터럴의
-        필드 대응 (HEAD 추출: cfg.agent_timeout→timeout 등)."""
+        필드 대응."""
         cfg = MagicMock()
         cfg.capabilities = object()
         cfg.model = "m"
@@ -105,7 +103,6 @@ class TestAgentRuntimeEquivalence:
         cfg.max_turns = 7
         cfg.depth = 1
         cfg.max_depth = 3
-        cfg.agent_timeout = 120
         cfg.session = object()
         cfg.hooks_config = {"PostToolUse": []}
         cfg.compaction_enabled = False
@@ -122,7 +119,6 @@ class TestAgentRuntimeEquivalence:
             "max_turns": 7,
             "depth": 1,
             "max_depth": 3,
-            "timeout": 120,
             "session": cfg.session,
             "hooks_config": cfg.hooks_config,
             "compaction_enabled": False,
@@ -207,7 +203,6 @@ class TestRegistryAssembly:
             max_turns=0,
             depth=0,
             max_depth=2,
-            timeout=300,
             session=None,
         )
         with (
@@ -233,7 +228,6 @@ class TestRegistryAssembly:
             max_turns=0,
             depth=0,
             max_depth=2,
-            timeout=300,
             session=None,
         )
         with (
@@ -307,7 +301,6 @@ class TestRegistryAssembly:
             max_turns=0,
             depth=0,
             max_depth=2,
-            timeout=300,
             session=None,
         )
         with patch("agent_cli.subagent.agents_live.set_main_registry"):

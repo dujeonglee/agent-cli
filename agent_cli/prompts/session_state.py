@@ -67,8 +67,38 @@ def _context_line(used: int, budget: int, turn: int, max_turns: int) -> str:
     elif used:
         parts.append(f"context: ~{used:,} tokens")
     if turn:
-        parts.append(f"turn {turn}" + (f"/{max_turns}" if max_turns else ""))
+        if max_turns:
+            left = max(0, max_turns - turn)
+            parts.append(f"turn {turn}/{max_turns} ({left} left after this one)")
+        else:
+            parts.append(f"turn {turn}")
     return " · ".join(parts)
+
+
+def final_turn_notice(*, reports_to_caller: bool) -> str:
+    """The last-allowed-turn instruction (v9.24.1).
+
+    At the turn cap the loop simply stops (``_on_max_turns``) — no wrap-up
+    turn. Measured (Harbor, v5 large-scale): a sub-agent spent 60 turns and
+    12 minutes, was still planning its next experiment on turn 60, and its
+    caller received only a list of commands — every finding, including "I
+    overwrote /app/mac.vim during a probe", was lost. So on the final turn
+    the model is told plainly that the run ends after it and what to put in
+    ``complete``. It asks for a status report, never for writing unfinished
+    work into the task's deliverables."""
+    who = (
+        "The agent that called you receives ONLY what you put in complete — "
+        "anything you do not write there is lost."
+        if reports_to_caller
+        else "The user receives what you put in complete."
+    )
+    return (
+        "⚠ This is your LAST turn — the run ends after it, whatever you emit. "
+        "Call complete now instead of starting new work. In the result, report "
+        "what you found: what you verified (and how), what you believe but did "
+        "not verify, what is still open, and every file you created, changed or "
+        f"damaged. {who}"
+    )
 
 
 def build_session_state(
@@ -81,8 +111,13 @@ def build_session_state(
     memory: str = "",
     requests: str = "",
     guidelines: str = "",
+    reports_to_caller: bool = False,
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
+
+    ``reports_to_caller`` (v9.24.1) selects the final-turn wording: a
+    sub-agent or skill loop (``depth > 0``) hands its ``complete`` result to
+    the agent that called it; the main loop hands it to the user.
 
     ``guidelines`` is ``TASK_GUIDELINES`` verbatim (v8.52.0 — the WHOLE
     section moved here from the system prompt's primacy zone: bench-measured,
@@ -124,6 +159,10 @@ def build_session_state(
         for b in blocks:
             lines.append("")
             lines.append(b)
+
+    if max_turns and turn >= max_turns:
+        lines.append("")
+        lines.append(final_turn_notice(reports_to_caller=reports_to_caller))
 
     if budget_tokens > 0 and used_tokens >= budget_tokens * COMPACTION_WARN_RATIO:
         lines.append("")

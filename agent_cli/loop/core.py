@@ -7,7 +7,6 @@ import sys
 import threading
 
 from agent_cli.constants import (
-    AGENT_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
 )
@@ -67,7 +66,6 @@ class AgentLoop:
         ctx: ContextManager | None = None,
         depth: int = 0,
         max_depth: int = 2,
-        agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
         active_tools: list[str] | None = None,
         session=None,  # SessionMeta — avoid circular import
         hooks_config: dict | None = None,
@@ -189,7 +187,6 @@ class AgentLoop:
             depth=depth,
             max_depth=max_depth,
             max_turns=max_turns,
-            agent_timeout=agent_timeout,
             tools_list=tools_list,
             skill_name=skill_name,
             skill_args=skill_args,
@@ -288,10 +285,6 @@ class AgentLoop:
     @property
     def max_turns(self):
         return self._config.max_turns
-
-    @property
-    def agent_timeout(self):
-        return self._config.agent_timeout
 
     @property
     def tools_list(self):

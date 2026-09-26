@@ -46,7 +46,6 @@ class AgentRuntime:
     max_turns: int
     depth: int
     max_depth: int
-    timeout: int
     session: Any
     hooks_config: dict | None = None
     compaction_enabled: bool = True
@@ -69,7 +68,6 @@ class AgentRuntime:
             max_turns=cfg.max_turns,
             depth=cfg.depth,
             max_depth=cfg.max_depth,
-            timeout=cfg.agent_timeout,
             session=cfg.session,
             hooks_config=cfg.hooks_config,
             compaction_enabled=cfg.compaction_enabled,

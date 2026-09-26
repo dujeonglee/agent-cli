@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from agent_cli.constants import (
-    AGENT_DEFAULT_TIMEOUT,
-)
 from agent_cli.context.manager import ContextManager
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -32,7 +29,6 @@ def run_loop(
     ctx: ContextManager | None = None,
     depth: int = 0,
     max_depth: int = 2,
-    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     active_tools: list[str] | None = None,
     session=None,  # SessionMeta — avoid circular import
     hooks_config: dict | None = None,
@@ -75,7 +71,6 @@ def run_loop(
         ctx=ctx,
         depth=depth,
         max_depth=max_depth,
-        agent_timeout=agent_timeout,
         active_tools=active_tools,
         session=session,
         hooks_config=hooks_config,

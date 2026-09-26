@@ -59,19 +59,34 @@ REGISTRY_MODES: tuple[str, ...] = tuple(
 class AgentTool(Tool):
     name = "agent"
     depth_gated = True  # 결합 깊이 상한에서 제거 (T3 선언화 — run 도 불가)
+    # run 의 설명 — 메인·서브루프 두 설명이 같은 문장을 쓴다 (v9.24.1).
+    # 초점은 동시성이 아니라 **분리된 컨텍스트**: 종전 "fan out … in
+    # PARALLEL" 은 속도로 읽혔고, 로컬 모델 서버 하나에서 run 둘은 처리량을
+    # 반씩 나눠(실측 11+11 tok/s vs 단독 20) 빨라지지 않은 채 부모만 10분
+    # 멈췄다 (Harbor v4 extract-elf). context 는 none(기본)·fork 둘 다 가능 —
+    # "empty" 로 단정하지 않는다.
+    RUN_DESCRIPTION = (
+        'mode:"run" gives ONE task to a sub-agent with its own context '
+        "window — fresh by default (it knows only the task text, so state "
+        'everything it needs), or a copy of your conversation with context:"fork". '
+        "Whatever it reads and explores afterwards stays in its window; you "
+        "receive only its distilled result, in this turn. Split work into "
+        "several run ops when the parts are independent and each would flood "
+        "your context. They may execute concurrently, but on a single local "
+        "model server they share throughput, so do not split for speed — and "
+        "you are blocked until all of them finish."
+    )
     # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
     # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
     SUBLOOP_DESCRIPTION = (
-        "Run ONE task in a fresh sub-agent and get the result back in this "
-        'turn (mode:"run" only here). Emit several run ops in the same '
-        "turn to fan out independent tasks in PARALLEL. Optional profile/"
-        "instructions give the sub-agent a role."
+        'Work with a one-shot sub-agent (mode:"run" only here). '
+        + RUN_DESCRIPTION
+        + " Optional profile/instructions give the sub-agent a role."
     )
     description = (
-        'Work with sub-agents, one-shot or persistent. mode:"run" executes '
-        "ONE task in a fresh sub-agent and returns its result in this turn — "
-        "emit several run ops in the same turn to fan out independent tasks "
-        'in PARALLEL. mode:"spawn" creates a PERSISTENT agent that keeps '
+        "Work with sub-agents, one-shot or persistent. "
+        + RUN_DESCRIPTION
+        + ' mode:"spawn" creates a PERSISTENT agent that keeps '
         'its context between requests: send follow-ups with mode:"request" '
         "any time and its replies are delivered to you automatically as "
         "observations (no polling). Use run for independent one-shot tasks; "
@@ -94,9 +109,9 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    "run: execute ONE task in a fresh one-shot sub-agent "
-                    "(blocking — result returns in this turn; several run ops "
-                    "in one turn execute in parallel). "
+                    "run: ONE task in a one-shot sub-agent with its own "
+                    "context (blocking — result returns in this turn; several "
+                    "run ops in one turn may execute concurrently). "
                     "spawn: create a PERSISTENT agent (returns its key). "
                     "request: send it a message — returns immediately; the "
                     "reply is DELIVERED to you automatically when ready "

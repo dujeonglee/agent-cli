@@ -52,7 +52,6 @@ STREAM_MAX_ATTEMPTS_MAX = 10
 # AGENT_CLI_STREAM_IDLE_TIMEOUT_S) → CallSettings 로 매 콜 전달, 0=감지 끔.
 DEFAULT_STREAM_IDLE_TIMEOUT_S = STREAM_IDLE_THRESHOLD * STREAM_IDLE_MAX_TICKS
 STREAM_IDLE_TIMEOUT_MAX_S = 3600
-AGENT_DEFAULT_TIMEOUT = 300
 # First-run capability detection probes (thinking support, JSON-format
 # tolerance, context-window overflow). All run once per model and may
 # incur a cold model load, so they share a generous allowance distinct

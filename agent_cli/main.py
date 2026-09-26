@@ -14,7 +14,7 @@ from pathlib import Path
 import typer
 
 from agent_cli.config import get_provider_defaults
-from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.paths import user_dir
@@ -502,7 +502,6 @@ def try_dispatch_agent_or_skill(
     max_turns: int,
     verbose: bool,
     max_depth: int,
-    agent_timeout: int,
     ctx,
     session,
     graceful_interrupt: bool = True,
@@ -555,7 +554,6 @@ def try_dispatch_agent_or_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -592,7 +590,6 @@ def try_dispatch_agent_or_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -620,7 +617,6 @@ def _dispatch_agent(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
@@ -665,7 +661,6 @@ def _dispatch_agent(
         depth=0,
         max_depth=max_depth,
         max_turns=max_turns,
-        timeout=agent_timeout,
         session=session,
         hooks_config=_parent_hooks,
         stop_event=stop_event,
@@ -702,7 +697,6 @@ def _dispatch_skill(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
@@ -775,7 +769,6 @@ def _dispatch_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -1249,11 +1242,6 @@ def run(
         "--max-depth",
         help="Maximum subagent nesting depth",
     ),
-    agent_timeout: int = typer.Option(
-        300,
-        "--agent-timeout",
-        help="Timeout in seconds for subagent delegation",
-    ),
     stall: str | None = typer.Option(
         None,
         "--stall",
@@ -1400,7 +1388,6 @@ def run(
             max_turns=max_turns,
             depth=0,
             max_depth=max_depth,
-            timeout=agent_timeout,
             session=session,
             hooks_config=_disk_hooks,
         ),
@@ -1439,7 +1426,6 @@ def run(
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
-                agent_timeout=agent_timeout,
                 ctx=ctx,
                 session=session,
                 graceful_interrupt=False,
@@ -1503,7 +1489,6 @@ def run(
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
-                agent_timeout=agent_timeout,
                 ctx=ctx,
                 session=session,
             )
@@ -1536,7 +1521,6 @@ def run(
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
-                agent_timeout=agent_timeout,
                 ctx=ctx,
                 session=session,
                 hooks_config=_disk_hooks,
@@ -2078,9 +2062,6 @@ def web(
         0, "--max-context-tokens", help="Max tokens in context window (0=auto)"
     ),
     max_depth: int = typer.Option(2, "--max-depth", help="Subagent nesting depth"),
-    agent_timeout: int = typer.Option(
-        AGENT_DEFAULT_TIMEOUT, "--agent-timeout", help="Subagent timeout (s)"
-    ),
     stall: str | None = typer.Option(
         None,
         "--stall",
@@ -2380,7 +2361,6 @@ def web(
                 max_turns=max_turns,
                 depth=0,
                 max_depth=max_depth,
-                timeout=agent_timeout,
                 session=session,
                 hooks_config=_disk_hooks,
             ),
@@ -2488,7 +2468,6 @@ def web(
                         max_turns=max_turns,
                         verbose=verbose,
                         max_depth=max_depth,
-                        agent_timeout=agent_timeout,
                         ctx=ctx,
                         session=session,
                         graceful_interrupt=True,
@@ -2515,7 +2494,6 @@ def web(
                             verbose=verbose,
                             ctx=ctx,
                             max_depth=max_depth,
-                            agent_timeout=agent_timeout,
                             session=session,
                             graceful_interrupt=True,
                             stop_event=stop_event,  # noqa: B023 — _run_main is called immediately, same iteration

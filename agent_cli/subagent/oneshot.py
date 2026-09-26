@@ -11,7 +11,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from agent_cli.constants import AGENT_DEFAULT_TIMEOUT
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.result import ToolResult
@@ -53,7 +52,6 @@ def _run_single(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -159,7 +157,6 @@ def _run_single(
         provider=provider,
         capabilities=capabilities,
         model=model,
-        timeout=timeout,
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
@@ -183,9 +180,11 @@ def _run_single(
     # Activity log extraction
     delegate_result.activity_log = _extract_activity_log(ctx.get_raw_messages())
 
-    # Iterations count from activity log
-    real_entries = [e for e in delegate_result.activity_log if not e.startswith("...")]
-    delegate_result.iterations = len(real_entries)
+    # Iterations = turns the loop actually ran (v9.24.1). Counting the
+    # activity log was wrong: it is capped at _ACTIVITY_LOG_MAX_ENTRIES, so a
+    # 60-turn sub-agent reported "[Subagent used 20 iterations]" (Harbor v5
+    # large-scale) — and history records also lose turns to compaction.
+    delegate_result.iterations = ctx.current_turn
 
     # Last actions on failure
     if result_str is None:
@@ -224,7 +223,6 @@ def _run_parallel(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -313,7 +311,6 @@ def _run_parallel(
                 depth=depth,
                 max_depth=max_depth,
                 max_turns=max_turns,
-                timeout=timeout,
                 session=session,
                 skill_stack=skill_stack,
                 agent_stack=agent_stack,
@@ -378,7 +375,6 @@ def tool_delegate(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -411,7 +407,6 @@ def tool_delegate(
         "depth": depth,
         "max_depth": max_depth,
         "max_turns": max_turns,
-        "timeout": timeout,
         "session": session,
         "skill_stack": skill_stack,
         "agent_stack": agent_stack,

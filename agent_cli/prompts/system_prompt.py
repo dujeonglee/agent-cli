@@ -235,7 +235,8 @@ def _build_agent_inline(wire_format) -> str:
     hook as identity (action_input is JSON in both formats today).
     """
     # agent run 은 flat-native: one op = one task. 같은 턴의 run op 들은
-    # 병렬(_run_parallel) — mode-aware 배칭이 run 만 묶는다 (5.0.0).
+    # 병렬(_run_parallel) — mode-aware 배칭이 run 만 묶는다 (5.0.0). 문구는
+    # 동시성이 아니라 분리된 컨텍스트를 이유로 든다 (v9.24.1, RUN_DESCRIPTION).
     examples = [
         ("One-shot", {"mode": "run", "task": "Read /tmp/data.csv and count rows"}),
         (
@@ -262,9 +263,10 @@ def _build_agent_inline(wire_format) -> str:
     ]
     if getattr(wire_format, "multi_op", False):
         intro = (
-            "  Each run op executes ONE sub-agent task. Several run ops "
-            "in the\n  same turn run in PARALLEL — emit several only when the "
-            "tasks are\n  independent."
+            "  Each run op gives ONE task to a sub-agent with its own context "
+            "window.\n  Several run ops in the same turn are for independent "
+            "parts that would\n  each flood your context — not for speed; "
+            "you wait for all of them."
         )
         dependency = (
             "  - If task B depends on task A's result, emit only A now; "

@@ -8,7 +8,6 @@ from agent_cli.subagent.oneshot import (
     DelegateResult,
     _format_delegate_output,
     _format_parallel_results,
-    tool_delegate,
 )
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools import _execute_tool as execute_tool
@@ -842,47 +841,6 @@ class TestParallelResultFormat:
         combined = _format_parallel_results(specs, results)
         assert not combined.success
         assert "timed out" in combined.error.lower()
-
-
-class TestParallelTimeout:
-    """Test parallel delegate timeout behavior."""
-
-    def test_parallel_timeout_marks_incomplete(self):
-        """Tasks exceeding timeout are reported as timed out."""
-        import time
-        from unittest.mock import MagicMock, patch
-
-        from agent_cli.providers.base import LLMResponse
-        from agent_cli.providers.capabilities import ModelCapabilities
-
-        caps = ModelCapabilities(
-            context_window=8192,
-            max_output_tokens=2048,
-            supports_thinking=False,
-        )
-        provider = MagicMock()
-        provider.call.return_value = LLMResponse(content="mock")
-
-        def slow_run_loop(**kwargs):
-            from agent_cli.tools.result import ToolResult
-
-            time.sleep(3)  # Longer than timeout
-            return ToolResult(True, output="late result")
-
-        with patch("agent_cli.loop.run_loop", side_effect=slow_run_loop):
-            result = tool_delegate(
-                args={"tasks": [{"task": "Slow A"}, {"task": "Slow B"}]},
-                provider=provider,
-                model="test",
-                capabilities=caps,
-                timeout=1,
-                owner="main",  # 1 second timeout
-            )
-            # At least some tasks should be incomplete
-            assert (
-                "timed out" in (result.error or result.output or "").lower()
-                or result is not None
-            )
 
 
 class TestSignalHandlerThreadSafety:

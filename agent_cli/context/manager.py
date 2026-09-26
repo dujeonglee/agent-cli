@@ -441,6 +441,14 @@ class ContextManager:
         boundary so subsequent history records carry the right ``turn``."""
         self._current_turn = turn
 
+    @property
+    def current_turn(self) -> int:
+        """The last turn index the loop stamped (0 before the first turn).
+        The authoritative "how many turns did this loop run" — unlike
+        counting history records, it survives compaction (old records
+        dropped) and is not skewed by format retries (never recorded)."""
+        return self._current_turn
+
     def _scaled_tokens(self, message: dict) -> int:
         """P0-8b: 카운터 증감용 레코드 토큰 — 로컬 추정 × 보정 계수.
         scale 1.0(기본)이면 추정 그대로(기존 산술과 바이트 동일)."""

@@ -2566,7 +2566,6 @@ class AgentRegistry:
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),
             model=tm.model or rt.get("model", ""),
-            timeout=rt.get("timeout", 300),
             provider_name=rt.get("provider_name", ""),
             base_url=rt.get("base_url", ""),
             api_key=rt.get("api_key", ""),

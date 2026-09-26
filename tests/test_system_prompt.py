@@ -161,7 +161,7 @@ class TestMultiOpPromptBranches:
         )
 
     def test_delegate_one_task_per_op(self, section):
-        assert "Each run op executes ONE sub-agent task" in section
+        assert "Each run op gives ONE task to a sub-agent" in section
         assert 'Always use the "tasks" array format' not in section
 
     def test_ask_guide_uses_no_complete_variant(self, section):
@@ -1497,3 +1497,28 @@ class TestReplyDisciplineSection:
         assert "complete" in body and "automatically returns" in body  # 사실 1
         assert "message" in body and "not forwarded" in body  # 사실 2 (terminal)
         assert "cannot do" in body or "failed" in body  # 실패도 회신
+
+
+class TestRunDescriptionFocusesOnContext:
+    """v9.24.1: run 설명의 이유는 동시성이 아니라 분리된 컨텍스트다 — 종전
+    "fan out … in PARALLEL" 은 속도로 읽혔고, 로컬 서버 하나에서는 빨라지지
+    않은 채 부모만 멈췄다. 메인·서브루프 설명이 같은 문장을 쓰고, fork 로
+    부모 대화를 물려받을 수 있음을 빠뜨리지 않는다."""
+
+    def test_both_descriptions_share_the_run_text(self):
+        from agent_cli.tools.agent_tool import AgentTool
+
+        assert AgentTool.RUN_DESCRIPTION in AgentTool.description
+        assert AgentTool.RUN_DESCRIPTION in AgentTool.SUBLOOP_DESCRIPTION
+        for text in (AgentTool.description, AgentTool.SUBLOOP_DESCRIPTION):
+            assert "PARALLEL" not in text
+            assert "own context window" in text and 'context:"fork"' in text
+            assert "do not split for speed" in text and "blocked" in text
+
+    def test_multi_op_example_intro_gives_the_context_reason(self):
+        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.wire_formats import get
+
+        out = _build_tools_section(["agent"], get("json_fc"))
+        assert "run in PARALLEL" not in out
+        assert "would\n  each flood your context — not for speed" in out

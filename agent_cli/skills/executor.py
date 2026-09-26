@@ -9,7 +9,7 @@ import subprocess
 # 상속)과 "명시 None"(registry 없음 = 서브에이전트 run-only 경계)을 구분한다.
 _INHERIT = object()
 
-from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
@@ -133,7 +133,6 @@ def execute_skill(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx: ContextManager | None = None,
     session=None,
     skill_stack: list[str] | None = None,
@@ -273,7 +272,6 @@ def execute_skill(
             # sub-agent (no registry) stays run-only. Workers it spawns register
             # on the main registry and outlive the skill (main takes them over).
             ports=ports_for_skill(agent_registry=agent_registry, owner=owner),
-            agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,
             session=session,

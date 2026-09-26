@@ -84,7 +84,6 @@ def base_state(tmp_path):
         "max_turns": 0,
         "verbose": False,
         "max_depth": 2,
-        "agent_timeout": 300,
         "ctx": ContextManager(session_dir=tmp_path),
         "session": None,
     }
@@ -624,7 +623,6 @@ class TestLooksLikeSlashCommand:
             max_turns=0,
             verbose=False,
             max_depth=2,
-            agent_timeout=60,
             ctx=None,
             session=None,
         )
