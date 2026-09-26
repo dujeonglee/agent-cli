@@ -901,6 +901,36 @@ class TestMidBatchValidationFailure:
         # 턴 수준 형식 재시도가 아니다 — LLM 호출은 정확히 두 번(배치 + 완료).
         assert provider.call.call_count == 2
 
+    def test_all_failed_batch_does_not_claim_others_ran(self, tmp_path):
+        """v9.24.2 실측(1zfgc2 gameplay): memory 두 개가 둘 다 mode 를 빠뜨렸는데
+        안내는 "the other ops in this batch already ran" 이었다. 공용 문구는
+        실행 여부를 단정하지 않고, 원인 문장과 **다른 줄**에 선다."""
+        _result, ctx, _provider = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "memory", "type": "decision", "summary": "a"},
+                        {"action": "memory", "type": "decision", "summary": "b"},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        body = next(
+            m["content"]
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2]" in m.get("content", "")
+        )
+        assert body.count("— FAILED") == 2
+        assert "already ran" not in body
+        assert "Missing required field(s) for 'memory': mode (string — add" in body
+        assert (
+            "\nThis op did NOT run. The other ops in this batch were still attempted"
+            in body
+        )
+        assert "Expected: {" not in body and len(body) < 1200
+
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")

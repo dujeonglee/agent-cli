@@ -355,6 +355,44 @@ def get_tool_descriptions(
     return "\n".join(roster) + "".join(guide_blocks)
 
 
+def missing_fields_message(
+    tool_name: str, params_schema: dict, missing: list[str]
+) -> str:
+    """One-line "missing required field" error (v9.24.2).
+
+    What the model needs to fix the op: which field is missing, its type and
+    allowed values, and the names it may use. The previous message appended
+    the whole schema as indented JSON (~30 lines, repeated per failed op in a
+    batch — 2.6K chars for two memory ops), and the batch note glued onto its
+    closing brace made the web card's summary read ``} This op did NOT run``.
+    """
+    props = (
+        params_schema.get("properties", {}) if isinstance(params_schema, dict) else {}
+    )
+    required = (
+        params_schema.get("required", []) if isinstance(params_schema, dict) else []
+    )
+
+    def describe(name: str) -> str:
+        prop = props.get(name) or {}
+        bits = [str(prop.get("type", "any"))]
+        if prop.get("enum"):
+            bits.append(" | ".join(str(v) for v in prop["enum"]))
+        elif prop.get("description"):
+            bits.append(str(prop["description"]).split("\n", 1)[0])
+        return f"{name} ({' — '.join(bits)})"
+
+    accepted = ", ".join(f"{n}*" if n in required else n for n in props)
+    msg = (
+        f"Missing required field(s) for '{tool_name}': "
+        + "; ".join(describe(n) for n in missing)
+        + "."
+    )
+    if accepted:
+        msg += f" Parameters: {accepted} (* = required)."
+    return msg
+
+
 def validate_tool_input(
     tool_name: str, action_input: Any
 ) -> tuple[bool, str | None, Any]:
@@ -407,10 +445,7 @@ def validate_tool_input(
     if missing:
         return (
             False,
-            (
-                f"Missing required field(s) for '{tool_name}': {', '.join(missing)}. "
-                f"Expected: {json.dumps(schema.parameters, indent=2)}"
-            ),
+            missing_fields_message(tool_name, schema.parameters, missing),
             action_input,
         )
 

@@ -300,11 +300,20 @@ class TestSemanticValidationHook:
         assert err == "'path' is required for mode='fetch'"
         assert "Expected: {" not in err
 
-    def test_shape_failure_still_carries_schema(self):
+    def test_missing_field_message_is_one_line(self):
+        """v9.24.2: 빠진 필드·타입·허용값·파라미터 이름을 **한 줄**로. 종전엔
+        스키마 전문을 들여쓴 JSON 으로 붙여(op 당 ~30줄) 배치 안내가 닫는
+        괄호에 붙었고 웹 요약이 `} This op did NOT run` 이 됐다."""
         from agent_cli.tools.registry import validate_tool_input
 
+        ok, err, _ = validate_tool_input("memory", {"type": "decision", "summary": "x"})
+        assert not ok and "\n" not in err and "Expected: {" not in err
+        assert err.startswith(
+            "Missing required field(s) for 'memory': mode (string — add | get"
+        )
+        assert "Parameters: mode*, type, summary" in err
         ok, err, _ = validate_tool_input("read_file", {})
-        assert not ok and "Expected: {" in err  # 기존 A5 동작 보존
+        assert not ok and "path (string" in err and "\n" not in err
 
     def test_run_defends_direct_callers(self):
         # 로직 1곳(validate)·실행 2곳 — 직접 호출자도 같은 문구로 거절

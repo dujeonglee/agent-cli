@@ -64,6 +64,16 @@ from agent_cli.wire_formats import try_foreign_parse
 _PARALLEL_BATCH_ENGINES = frozenset({"agent"})
 
 
+#: A batch op rejected before it ran (unknown tool, schema mismatch, repeated
+#: call). One wording for all three (v9.24.2): the old texts claimed "the other
+#: ops in this batch already ran" even when every op had failed, and differed
+#: per path. On its own line so it never glues onto the error text.
+BATCH_OP_SKIPPED_NOTE = (
+    "This op did NOT run. The other ops in this batch were still attempted — "
+    "see their own results. Fix this op and re-send only it."
+)
+
+
 class TurnDispatcher:
     """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
 
@@ -1312,8 +1322,7 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{intervention.message} This op did NOT run — the other ops "
-                    "in this batch did.",
+                    f"{intervention.message}\n{BATCH_OP_SKIPPED_NOTE}",
                     False,
                 )
                 return None
@@ -1376,7 +1385,7 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{err_msg} Fix this op and re-send it alone.",
+                    f"{err_msg}\n{BATCH_OP_SKIPPED_NOTE}",
                     False,
                 )
                 return None
@@ -1406,8 +1415,7 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{schema_err} This op did NOT run. Fix action_input and re-send "
-                    "it alone — the other ops in this batch already ran.",
+                    f"{schema_err}\n{BATCH_OP_SKIPPED_NOTE}",
                     False,
                 )
                 return None

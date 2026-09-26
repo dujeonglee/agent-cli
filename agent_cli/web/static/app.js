@@ -1007,10 +1007,22 @@
   /** 관찰 출력 → 한 줄 요약. **마지막** 유의미한 줄을 쓴다 — 셸·테스트·린트
    *  출력의 결론이 대개 끝에 있고(3826 passed / All checks passed), 실패도
    *  끝에서 드러난다. 첫 줄은 명령 에코나 헤더라 정보가 적다. */
-  function obsSummary(content) {
+  // 한 줄 요약. 성공은 **마지막** 줄(셸·테스트의 결론은 끝에 있다), 실패는
+  // **원인** 줄 (v9.24.2): 오류 원인은 앞에 오고, 끝은 안내 문구거나 긴 덤프의
+  // 꼬리다 — 실측 `✗ memory×2  } This op did NOT run…` (스키마 JSON 의 닫는
+  // 괄호). 배치면 첫 FAILED op 의 다음 줄이 그 op 의 원인이다.
+  const BATCH_HEAD = /^\[\d+\/\d+\]\s/;
+  function obsSummary(content, failed) {
     const lines = String(content || "").split("\n").filter((l) => l.trim());
     if (!lines.length) return "(출력 없음)";
-    return lines[lines.length - 1].trim();
+    if (!failed) return lines[lines.length - 1].trim();
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (BATCH_HEAD.test(lines[i]) && /FAILED\s*$/.test(lines[i])) {
+        return lines[i + 1].trim();
+      }
+    }
+    const first = lines.find((l) => !BATCH_HEAD.test(l)) || lines[0];
+    return first.replace(/^Observation:\s*/, "").trim();
   }
 
   /** `⚡ agent` 도구 호출의 대상 칩 — roster 에 있는 **상주** 에이전트일 때만.
@@ -1383,7 +1395,7 @@
     // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
     // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
     const row = makeRow(
-      d.success ? "✓" : "✗", tool || "결과", obsSummary(content), body,
+      d.success ? "✓" : "✗", tool || "결과", obsSummary(content, !d.success), body,
       [d.success ? "ok" : "bad"]
     );
     if (!d.success) {

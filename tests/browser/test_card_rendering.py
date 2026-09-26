@@ -195,6 +195,35 @@ class TestRowRhythm:
         assert _wait(lambda: self._rows(page).count() > 0)
         assert "3826 passed" in self._rows(page).first.locator(".s").inner_text()
 
+    def test_failed_summary_is_the_cause_not_the_tail(self, stack, page):
+        """v9.24.2: 실패의 한 줄 요약은 **원인** 줄이다 — 끝 줄은 안내 문구나
+        덤프의 꼬리라, 실측 `✗ memory×2  } This op did NOT run…` 이 떴다.
+        배치면 첫 FAILED op 의 원인 줄."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.observation(
+            "[1/2] memory — OK\nSaved memory #1\n\n"
+            "[2/2] memory — FAILED\n"
+            "Missing required field(s) for 'memory': mode (string — add | get).\n"
+            "This op did NOT run. The other ops in this batch were still attempted.",
+            turn=1,
+            tool_name="memory",
+            success=False,
+        )
+        assert _wait(lambda: self._rows(page).count() > 0)
+        s = self._rows(page).first.locator(".s").inner_text()
+        assert s.startswith("Missing required field(s) for 'memory': mode"), s
+        # 단건 실패는 첫 줄 (Observation: 접두 제거)
+        stack.renderer.observation(
+            "Observation: boom: no such file\nhint: check the path",
+            turn=2,
+            tool_name="shell",
+            success=False,
+        )
+        assert _wait(lambda: self._rows(page).count() > 1)
+        s2 = self._rows(page).nth(1).locator(".s").inner_text()
+        assert s2 == "boom: no such file", s2
+
     def test_no_expand_marker_when_nothing_to_expand(self, stack, page):
         """펼칠 게 없는 줄에 ▸ 가 뜨면 눌러도 아무 일이 없어 고장으로 읽힌다."""
         stack.emit_ready()
