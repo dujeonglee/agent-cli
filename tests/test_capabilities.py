@@ -172,6 +172,7 @@ class TestOpenAIRuntimeDetection:
         mock_post.side_effect = [
             self._chat_resp({"content": "Hello!"}),
             self._chat_resp({"content": "<think>reasoning</think>\nHi"}),
+            self._chat_resp({"content": "GRAMMAR-OK"}),  # 3차: 문법 프로브 (v9.24.0)
         ]
 
         from agent_cli.providers.capabilities import _detect_openai_capabilities
@@ -179,8 +180,9 @@ class TestOpenAIRuntimeDetection:
         caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
         assert caps is not None
         assert caps.supports_thinking is True
-        # 두 번 프로브했고, 2차만 enable_thinking 스위치를 켰다.
-        assert mock_post.call_count == 2
+        assert caps.supports_grammar is True
+        # 사고 프로브 둘 + 문법 프로브 하나. 사고 2차만 enable_thinking 을 켰다.
+        assert mock_post.call_count == 3
         second_body = mock_post.call_args_list[1].kwargs["json"]
         assert second_body["chat_template_kwargs"] == {"enable_thinking": True}
         first_body = mock_post.call_args_list[0].kwargs["json"]
@@ -201,7 +203,10 @@ class TestOpenAIRuntimeDetection:
         caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
         assert caps is not None
         assert caps.supports_thinking is True
-        assert mock_post.call_count == 1  # 1차에서 검출 → 재프로브 없음
+        # 1차에서 검출 → 사고 재프로브 없음; 문법 프로브 1회가 더해진다 (v9.24.0).
+        # 그 프로브의 답이 "Hi" 라 문법은 강제되지 않는 것으로 판정된다.
+        assert mock_post.call_count == 2
+        assert caps.supports_grammar is False
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")

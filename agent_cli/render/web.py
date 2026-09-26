@@ -96,7 +96,9 @@ def _iso_to_epoch(ts) -> float | None:
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
 # either republishes the status sidecar (viewers republish on register/unregister).
-_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required", "agent_roster"})
+_STATUS_STICKY_KEYS = frozenset(
+    {"worker_state", "input_required", "agent_roster", "grammar_mode"}
+)
 
 # Fun default nicknames assigned to viewers on connect (browsers can't read
 # the client's OS username, so a friendly auto-label is the practical
@@ -836,6 +838,11 @@ class WebRenderer(Renderer):
         self.set_sticky(
             "confirm_mode", "confirm_mode", {"auto_approve": self._auto_approve}
         )
+
+    def broadcast_grammar(self, state: dict) -> None:
+        """📐 문법 제약 상태(``{override, supported, active}``)를 sticky 로 —
+        칩 동기화·재접속 snapshot·status.json(``grammar``) 의 한 소스 (v9.24.0)."""
+        self.set_sticky("grammar_mode", "grammar_mode", dict(state))
 
     def broadcast_thinking(self, override: dict) -> None:
         """세션 thinking 오버라이드(사고/노력) 변경을 sticky 로 전파 — 여러 뷰어의
@@ -1855,6 +1862,8 @@ class WebRenderer(Renderer):
             viewers = sum(1 for c in self._connections if not c.closed.is_set())
             slot = self._sticky.get("agent_roster")
             roster = slot["payload"].get("roster") if slot else None
+            gslot = self._sticky.get("grammar_mode")
+            grammar = bool(gslot["payload"].get("active")) if gslot else None
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1864,11 +1873,18 @@ class WebRenderer(Renderer):
                 awaiting_input=awaiting,
                 viewers=viewers,
                 agents=self._agents_summary_from(roster),
+                grammar=grammar,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session
 
-    def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
+    def note_system_prompt(
+        self,
+        sections: list[tuple[str, str]],
+        turn: int,
+        *,
+        grammar: tuple[bool, str] | None = None,
+    ) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.
 
         The scope is resolved from the CALLING thread: a delegate worker's
@@ -1898,6 +1914,18 @@ class WebRenderer(Renderer):
                 }
                 for name, text in sections
             ],
+            # 📐 서버가 강제하는 디코딩 문법 — 프롬프트 섹션이 아니라 곁에 두는
+            # 것: 총합(total_chars/est_tokens)에 들어가지 않는다.
+            "grammar": (
+                {
+                    "thinking_open": grammar[0],
+                    "text": grammar[1],
+                    "chars": len(grammar[1]),
+                    "est_tokens": estimate_tokens(grammar[1]),
+                }
+                if grammar
+                else None
+            ),
         }
         with self._lock:
             self._prompt_snapshots[scope] = snapshot

@@ -203,6 +203,22 @@ class WebServer:
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
         self.workspace = Path.cwd().resolve()
 
+    def grammar_state(self) -> dict:
+        """📐 문법 제약 상태 — 칩·status.json·health 가 같은 셋을 본다: 세션
+        오버라이드, 서버 지원 판정(모델 capability — None=아직 모름), 그 둘로
+        정해지는 active (규칙은 루프와 같은 `grammar_active`). 메서드인 이유:
+        부트가 `create_app` **전에** 초기 sticky 를 내보낸다."""
+        from agent_cli.context.manager import grammar_active
+
+        override = self.ctx.grammar_override if self.ctx is not None else None
+        caps = self.runtime.get("capabilities")
+        supported = caps.supports_grammar if caps is not None else None
+        return {
+            "override": override,
+            "supported": supported,
+            "active": grammar_active(override, supported),
+        }
+
     def _safe_workspace_path(self, rel: str) -> Path:
         """Resolve ``rel`` under the workspace root, rejecting traversal /
         symlink escapes. ``""`` / ``"."`` → the workspace root itself."""
@@ -616,6 +632,8 @@ def create_app(server: WebServer) -> FastAPI:
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
             "viewers": server.renderer.viewer_count(),
+            # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형)
+            "grammar": server.grammar_state()["active"],
             # v7.10.0: 상주 에이전트 요약 (없으면 None) — status.json 과
             # 같은 소스(renderer.agents_summary), board 폴백 경로 파리티.
             "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
@@ -666,6 +684,14 @@ def create_app(server: WebServer) -> FastAPI:
             return {"ok": False, "reason": reason}
         total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
         est_tokens = sum(s["est_tokens"] for s in sections)
+        # 📐 디코딩 문법(kind=grammar): 모델이 "받는 것" 이라 같은 목록의
+        # 끝에 보이되, 프롬프트 토큰이 아니므로 총합 뒤에 붙인다.
+        grammar = snapshot.get("grammar") if snapshot is not None else None
+        if grammar:
+            sections = [
+                *sections,
+                {"name": "Decoding grammar", "kind": "grammar", **grammar},
+            ]
         return {
             "ok": True,
             "task_id": task_id,
@@ -863,6 +889,28 @@ def create_app(server: WebServer) -> FastAPI:
         ov = server.ctx.set_thinking_override(enable_thinking=et, reasoning_effort=eff)
         server.renderer.broadcast_thinking(ov)
         return {"ok": True, **ov}
+
+    @app.get("/api/grammar")
+    async def get_grammar():
+        """📐 디코딩 문법 제약 (v9.24.0). ``override`` None=자동/True/False,
+        ``supported`` = 서버가 강제하는가(프로브 결과; None=모름), ``active`` =
+        다음 요청에 실리는가."""
+        return server.grammar_state()
+
+    @app.post("/api/grammar")
+    async def set_grammar(body: dict):
+        """``{mode: "on"|"off"}`` → 세션 오버라이드(on = 기본 = None). 다음 LLM
+        콜부터 반영, sticky 로 다른 뷰어·status.json 동기화. 켜기는 지원으로
+        기록된 모델에서만 효력 — 규칙은 `grammar_active` 하나."""
+        if server.ctx is None:
+            return {"ok": False, "error": "no active context"}
+        mode = str(body.get("mode", "on")).lower()
+        if mode not in ("on", "off"):
+            return {"ok": False, "error": "mode must be on|off"}
+        server.ctx.set_grammar_override(False if mode == "off" else None)
+        state = server.grammar_state()
+        server.renderer.broadcast_grammar(state)
+        return {"ok": True, **state}
 
     @app.get("/api/max-agents")
     async def get_max_agents():

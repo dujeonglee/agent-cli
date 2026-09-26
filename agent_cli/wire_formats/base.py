@@ -494,6 +494,22 @@ class WireFormat(ABC):
         """
         return {}
 
+    def grammar(
+        self, tools: list[tuple[str, dict]], *, thinking_open: bool = False
+    ) -> str | None:
+        """EBNF the server enforces while decoding this turn (v9.24.0) — or
+        ``None`` when the format has no grammar (then the text protocol runs
+        unconstrained and the recovery layer catches what it can).
+
+        ``tools`` is ``[(name, flat params schema {key: (prop, required)},
+        extra_keys_ok)]`` — the SAME set and keys the prompt advertised
+        (registry ``effective_tool_names`` + ``flat_param_schemas`` +
+        ``allows_extra_keys``; a free-form schema admits any key). ``thinking_open``
+        says the chat template left a ``<think>`` block open, so the grammar
+        must let the model close it before the visible turn.
+        """
+        return None
+
     def prefill(self) -> str:
         """Return assistant-turn prefill string, or empty for no prefill.
 

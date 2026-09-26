@@ -647,6 +647,57 @@ class JsonFcFormat(WireFormat):
                     return json.dumps({"action": tool_name, **flat}, ensure_ascii=False)
         return json.dumps(action_input, ensure_ascii=False)
 
+    def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
+        """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops.
+
+        Tool and key names are enumerated (an unknown tool or key cannot be
+        emitted); values follow their declared JSON type; required-ness and
+        duplicates are left to the validator (enforcing required keys in
+        arbitrary order is combinatorial for no gain). Prose may not contain
+        ``[`` so the first ``[`` is the array — and is bounded, which is the
+        whole point against reasoning runaways."""
+        from agent_cli.wire_formats.grammar import (
+            JSON_RULES,
+            json_value_rule,
+            prose_rule,
+            think_prefix,
+            tool_rule_name,
+        )
+
+        pre, pre_rules = think_prefix(thinking_open)
+        # EBNF literals: ``\n`` and ``\"`` are written as the two-character
+        # escapes the grammar dialect reads (raw strings below), never as the
+        # Python characters — a raw newline inside an EBNF ``"…"`` is invalid.
+        # root: 배열로 바로 시작 | 산문 + 빈 줄 + 배열 | 산문만. 호출은 선택
+        # (필수로 하면 EOS 가 마스킹돼 폭주·가짜 호출). 빈 배열도 허용 —
+        # `[` 를 연 순간 op 하나를 지어내게 강제하지 않는다(NO_ACTION 넛지가
+        # 구제). 산문 뒤 개행 하나짜리 `\n[` 는 산문으로 흡수된다(제약이 그
+        # 턴에서 꺼질 뿐 파서는 읽는다) — 줄 첫 `[` 를 산문에서 막는 대가보다
+        # 낫다.
+        lines = [
+            rf'root ::= {pre}( ops | prose "\n\n" ops | prose )',
+            prose_rule("prose", "[", after_blank_line=True),
+            'ops ::= "[" j_ws ( op ( j_ws "," j_ws op )* )? j_ws "]"',
+            "op ::= " + " | ".join(tool_rule_name(n) for n, *_ in tools),
+        ]
+        if pre_rules:
+            lines.append(pre_rules)
+        for name, flat, extra_ok in tools:
+            params = [
+                rf'"\"{k}\"" j_ws ":" j_ws {json_value_rule(prop)}'
+                for k, (prop, _req) in flat.items()
+            ]
+            if extra_ok:  # 자유 스키마(MCP 등) — 아무 키나, 값은 JSON 값
+                params.append("j_member")
+            plist = " | ".join(params) if params else None
+            body = f' ( j_ws "," j_ws ( {plist} ) )*' if plist else ""
+            lines.append(
+                rf'{tool_rule_name(name)} ::= "{{" j_ws "\"action\"" j_ws ":" j_ws '
+                rf'"\"{name}\""{body} j_ws "}}"'
+            )
+        lines.append(JSON_RULES)
+        return "\n".join(lines)
+
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         th = thought if thought is not None else "your reasoning"
         # ``action_input`` is already this format's flat op JSON (via

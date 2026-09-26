@@ -532,6 +532,78 @@ class TestStaticUI:
         assert "api/confirm-mode" in js and 'es.addEventListener("confirm_mode"' in js
         assert "agentcli:confirmmode" in js
 
+    def test_grammar_state_is_available_before_create_app(self, tmp_path):
+        """부트(main.py web)는 `create_app` 전에 초기 sticky 를 내보낸다 —
+        `grammar_state` 가 앱 클로저가 아니라 WebServer 메서드여야 한다(실기동
+        AttributeError 로 잡힘)."""
+        from agent_cli.context.manager import ContextManager
+
+        renderer = WebRenderer(session_dir=str(tmp_path))
+        server = WebServer(
+            renderer, token="t", ctx=ContextManager(session_dir=str(tmp_path))
+        )
+        st = server.grammar_state()  # create_app 이전
+        assert st == {"override": None, "supported": None, "active": False}
+        renderer.broadcast_grammar(st)  # 부트가 하는 그대로
+
+    def test_grammar_api_state_and_wiring(self, tmp_path):
+        """📐 문법 제약 (v9.24.0): GET/POST /api/grammar 가 {override, supported,
+        active} 셋을 주고, 규칙은 루프와 같은 `grammar_active` 다. sticky
+        `grammar_mode` 가 뷰어 동기화·status.json·health 의 한 소스."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        renderer = WebRenderer(session_dir=str(tmp_path))
+        ctx = ContextManager(session_dir=str(tmp_path))
+        # caps 미배선 → supported None(미확인) → on 을 눌러도 active False
+        server = WebServer(renderer, token="t", ctx=ctx)
+        client = TestClient(create_app(server))
+        assert client.get("/api/grammar?token=t").json() == {
+            "override": None,
+            "supported": None,
+            "active": False,
+        }
+        r = client.post("/api/grammar?token=t", json={"mode": "on"})
+        assert r.json() == {
+            "ok": True,
+            "override": None,  # on = 기본
+            "supported": None,
+            "active": False,
+        }
+        assert ctx.grammar_override is None
+        assert (
+            client.post("/api/grammar?token=t", json={"mode": "bogus"}).json()["ok"]
+            is False
+        )
+        # 지원으로 기록된 모델: on(기본)=켬, off=끔; 미지원 모델: on 이어도 끔
+        for supports, mode, active in (
+            (True, "on", True),
+            (True, "off", False),
+            (False, "on", False),
+        ):
+            caps = ModelCapabilities(32768, 4096, False, supports_grammar=supports)
+            srv = WebServer(
+                renderer, token="t", ctx=ctx, runtime={"capabilities": caps}
+            )
+            cli = TestClient(create_app(srv))
+            d = cli.post("/api/grammar?token=t", json={"mode": mode}).json()
+            assert (d["supported"], d["active"]) == (supports, active), (supports, mode)
+            # health 도 같은 값 — board 의 폴백 경로
+            assert cli.get("/api/health").json()["grammar"] is active
+        # sticky → status.json 사이드카에 grammar 가 실린다 (board 📐 배지)
+        import json as _json
+
+        st = _json.loads((tmp_path / "status.json").read_text())
+        assert st["grammar"] is False  # 마지막 POST: supports=False, on → 끔
+        # 프론트 배선
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        assert 'id="grammar-mode"' in html and 'id="grammar-badge"' in html
+        assert "api/grammar" in js and 'es.addEventListener("grammar_mode"' in js
+        assert "GRAMMAR.active" in js  # 생성 중 줄의 📐
+        assert 'if (d.grammar) parts.push("📐")' in js  # 턴 통계의 📐
+        assert "insp-tag" in js  # 인스펙터 섹션 태그
+
     def test_thinking_api_and_wiring(self, tmp_path):
         """🧠 사고/추론 노력 컨트롤(web UI): GET/POST /api/thinking 이 세션 오버라이드를
         읽고/바꾸며(공유 ctx → 다음 LLM 콜 반영), ctx 팝오버 셀렉트가 배선한다.
@@ -1135,6 +1207,7 @@ class TestStaticUI:
             ("maxagents-wrap", "maxagents-chip", "maxagents-pop", "maxagents-input"),
             ("stall-wrap", "stall-chip", "stall-pop", "stall-input"),
             ("thinking-wrap", "thinking-chip", "thinking-pop", "think-enable"),
+            ("grammar-wrap", "grammar-chip", "grammar-pop", "grammar-mode"),
         ):
             assert f'id="{wrap}"' in html and f'id="{chip}"' in html
             assert f'id="{pop}"' in html and f'id="{inner}"' in html
@@ -2244,6 +2317,29 @@ class TestDebugPromptEndpoint:
         # totals are consistent with the per-section figures + join overhead
         assert body["total_chars"] == sum(s["chars"] for s in body["sections"]) + 2
         assert body["est_tokens"] == sum(s["est_tokens"] for s in body["sections"])
+
+    def test_grammar_rides_beside_the_prompt_outside_the_totals(
+        self, server_and_client
+    ):
+        """📐 디코딩 문법은 kind=grammar 로 목록 끝에 보이되 프롬프트 토큰이
+        아니므로 total_chars/est_tokens 에 들어가지 않는다."""
+        _, renderer, client = server_and_client
+        renderer.note_system_prompt(
+            [("Role", "## Role\nYou are an agent.")],
+            turn=3,
+            grammar=(True, 'root ::= think "</think>" prose'),
+        )
+        body = client.get("/api/debug/prompt?token=testtoken").json()
+        prompt = [s for s in body["sections"] if s.get("kind") != "grammar"]
+        (g,) = [s for s in body["sections"] if s.get("kind") == "grammar"]
+        assert body["sections"][-1] is g and g["name"] == "Decoding grammar"
+        assert g["thinking_open"] is True and g["chars"] == len(g["text"])
+        assert body["est_tokens"] == sum(s["est_tokens"] for s in prompt)
+        assert body["total_chars"] == sum(s["chars"] for s in prompt)
+        # 문법 없는 콜은 grammar 섹션도 없다
+        renderer.note_system_prompt([("Role", "x")], turn=4)
+        body = client.get("/api/debug/prompt?token=testtoken").json()
+        assert all(s.get("kind") != "grammar" for s in body["sections"])
 
     def test_latest_snapshot_wins(self, server_and_client):
         _, renderer, client = server_and_client

@@ -206,6 +206,58 @@ def _strip_own_prefix(name: str, text: str) -> str:
     return text.replace(f"{name}_", "")
 
 
+def flat_param_schemas(name: str, params_schema: dict) -> dict[str, tuple[dict, bool]]:
+    """A tool's params in FLAT single-op shape — ``{key: (prop_schema, required)}``.
+
+    The one place that knows how a batch tool's array param unwraps into
+    per-op item fields and how a tool's own wire-key prefix is stripped.
+    :func:`_multi_op_flat_params` renders this for the prompt; the decoding
+    grammar (v9.24.0) enumerates the same keys — the two surfaces must agree
+    or the grammar forbids a key the prompt advertised.
+    """
+    props = params_schema.get("properties", {}) or {}
+    required = set(params_schema.get("required", []) or [])
+    out: dict[str, tuple[dict, bool]] = {}
+    for k, v in props.items():
+        items = v.get("items") if v.get("type") == "array" else None
+        if isinstance(items, dict) and items.get("properties"):
+            item_required = set(items.get("required", []))
+            for ik, iv in items["properties"].items():
+                out[ik] = (iv, ik in item_required)
+        else:
+            out[_strip_own_prefix(name, k)] = (v, k in required)
+    return out
+
+
+def allows_extra_keys(params_schema: dict) -> bool:
+    """Whether a tool's schema accepts keys it does not enumerate — no
+    ``properties`` at all, or ``additionalProperties`` that is not False. A
+    decoding grammar (v9.24.0) must then admit arbitrary keys for that tool
+    instead of forbidding every key; MCP servers ship such schemas."""
+    props = params_schema.get("properties") or {}
+    extra = params_schema.get("additionalProperties", None)
+    return not props or (extra is not False and extra is not None)
+
+
+def effective_tool_names(tool_names: list[str] | None, wire_format=None) -> list[str]:
+    """The tool set a loop actually exposes, in prompt order — the always-
+    present tools added, ``complete`` dropped when the format does not expose
+    it, static tools first and conditional ones last. Shared by the prompt
+    and the decoding grammar so both describe the same set."""
+    exposes_complete = getattr(wire_format, "exposes_complete", True)
+    names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
+    for t in _ALWAYS_INCLUDE:
+        if t == "complete" and not exposes_complete:
+            names = [n for n in names if n != "complete"]
+            continue
+        if t not in names:
+            names = [*names, t]
+    conditional = {"edit_file", "agent"}
+    static_names = [n for n in names if n not in conditional]
+    cond_names = [n for n in names if n in conditional]
+    return static_names + cond_names
+
+
 def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     """Render a batch tool's params as its FLAT single-op shape for multi-op
     formats.
@@ -222,16 +274,8 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     Not doing this is what let the 27B copy the advertised ``reads`` array and
     emit the old ``read_file_reads`` wrapper under json_fc (DESIGN Exp 8).
     """
-    out: dict[str, str] = {}
-    for k, v in props.items():
-        items = v.get("items") if v.get("type") == "array" else None
-        if isinstance(items, dict) and items.get("properties"):
-            item_required = set(items.get("required", []))
-            for ik, iv in items["properties"].items():
-                out[ik] = render_param_value(iv, ik in item_required)
-        else:
-            out[_strip_own_prefix(name, k)] = render_param_value(v, k in required)
-    return out
+    flat = flat_param_schemas(name, {"properties": props, "required": list(required)})
+    return {k: render_param_value(v, req) for k, (v, req) in flat.items()}
 
 
 # Batch-framing sentences to drop from a tool's description under multi-op
@@ -272,22 +316,9 @@ def get_tool_descriptions(
     # ``ask`` 가 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
     param_overrides = parameter_overrides or {}
     multi_op = bool(getattr(wire_format, "multi_op", False))
-    exposes_complete = getattr(wire_format, "exposes_complete", True)
-    names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
-    # Always include essential tools — except `complete` when the format does
-    # not expose it (it completes another way, e.g. a thought-only terminal).
-    for t in _ALWAYS_INCLUDE:
-        if t == "complete" and not exposes_complete:
-            names = [n for n in names if n != "complete"]
-            continue
-        if t not in names:
-            names = [*names, t]
-
-    # Partition: static tools first, conditional tools last
-    conditional = {"edit_file", "agent"}
-    static_names = [n for n in names if n not in conditional]
-    cond_names = [n for n in names if n in conditional]
-    ordered = static_names + cond_names
+    # Always-present tools added / `complete` dropped when unexposed, static
+    # first — one function, shared with the decoding grammar.
+    ordered = effective_tool_names(tool_names, wire_format)
 
     # Two-tier layout: the full tool ROSTER (one-line intro + Input JSON for
     # every tool) first, then the detailed GUIDES (prose + examples). This puts

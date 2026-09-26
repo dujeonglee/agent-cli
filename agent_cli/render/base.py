@@ -155,12 +155,20 @@ class Renderer(ABC):
         """현재 스코프의 ContextManager 를 인스펙터에 등록 — 동적 컨텍스트
         on-demand 조회용. Default no-op."""
 
-    def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
+    def note_system_prompt(
+        self,
+        sections: list[tuple[str, str]],
+        turn: int,
+        *,
+        grammar: tuple[bool, str] | None = None,
+    ) -> None:
         """Record the system prompt (as named sections) sent to the LLM this
-        turn. Concrete no-op — the CLI renderer has no use for it; the web
-        renderer overrides to keep the latest snapshot for the Prompt
-        Inspector (`GET /api/debug/prompt`). Called once per LLM call, so an
-        override must be cheap (store, don't render)."""
+        turn, plus the decoding grammar the server enforces on the call
+        (``(thinking_open, ebnf)``, None when unconstrained). Concrete no-op
+        — the CLI renderer has no use for it; the web renderer overrides to
+        keep the latest snapshot for the Prompt Inspector
+        (`GET /api/debug/prompt`). Called once per LLM call, so an override
+        must be cheap (store, don't render)."""
 
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:

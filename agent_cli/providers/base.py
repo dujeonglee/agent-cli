@@ -122,6 +122,10 @@ class CallSettings:
     #: 요청-시 클램프된 max_tokens. None = capabilities 등록값 사용 —
     #: capabilities 는 순수 모델 서술로 남는다 (v8.53.0 의 replace 대체).
     max_output_tokens: int | None = None
+    #: 이 턴의 디코딩 문법 (EBNF, v9.24.0) — 서버가 지원하고 켜져 있을 때만
+    #: 루프가 채운다(``WireFormat.grammar``). None = 제약 없음. OpenAI 방언은
+    #: ``guided_grammar`` 로 싣고, Anthropic 은 받을 곳이 없어 무시한다.
+    grammar: str | None = None
 
 
 def resolve_thinking_policy(

@@ -2298,6 +2298,8 @@ def web(
     # AgentLoop calls ``header()`` again on each user message; the
     # WebRenderer slot-replaces, so the buffer doesn't accumulate.
     renderer.header(provider, resolved_model, max_turns)
+    # 📐 문법 제약의 초기 상태 — 칩·status.json 이 첫 요청 전에도 사실을 본다.
+    renderer.broadcast_grammar(server.grammar_state())
 
     # On resume, fold prior turns back into the persistent event
     # buffer BEFORE any SSE client connects so the snapshot replay

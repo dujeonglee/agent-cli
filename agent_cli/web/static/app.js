@@ -1444,6 +1444,8 @@
   // `channel -> {el, body, think, retry}`. 귀속은 `channelOf(task_id)` —
   // 카드가 쓰는 그 함수라 필터와 어긋날 수 없다.
   const genByCh = {};
+  // 📐 문법 제약이 실리는 세션인가 — 생성 중 줄이 읽는다(sticky grammar_mode).
+  const GRAMMAR = { active: false };
   // fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
 
   function genSlot(channel) {
@@ -1470,6 +1472,8 @@
     // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
     // 실제로 다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다.
     if (g.retry) parts.push("· ↻ 재시도 " + g.retry);
+    // 문법 제약 중이면 표시 — 속도가 왜 다른지가 이 줄에 있어야 한다.
+    if (GRAMMAR.active) parts.push("· 📐");
     g.el.querySelector(".gen-tok").textContent = parts.join(" ");
     // 매번 다시 붙인다 = **맨 아래로 이동**(appendChild 는 기존 노드를 옮긴다).
     // 진행 표시는 그 채널의 마지막 줄이어야 한다. taskId 를 비워 넘기는 이유:
@@ -1878,6 +1882,13 @@
     );
   });
 
+  es.addEventListener("grammar_mode", function (e) {
+    // 📐 문법 제약 상태 동기화 — 다른 뷰어가 바꾸면(또는 부팅 초기값) sticky 로.
+    const d = JSON.parse(e.data);
+    GRAMMAR.active = !!d.active;
+    document.dispatchEvent(new CustomEvent("agentcli:grammarmode", { detail: d }));
+  });
+
   es.addEventListener("thinking_mode", function (e) {
     // 🧠 사고/노력 컨트롤 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
     document.dispatchEvent(
@@ -1915,6 +1926,7 @@
     if (d.total_out) {
       parts.push("Σ↓" + fmtTok(d.total_out));
     }
+    if (d.grammar) parts.push("📐"); // 이 턴은 문법 제약 하에 생성됐다
     var $base = document.getElementById("tok-base");
     if ($base) $base.textContent = parts.join(" · ");
     $tokenUsage.title =
@@ -3366,6 +3378,15 @@
     }
   }
 
+  // 섹션 종류 → 그룹 제목. 순서는 서버가 준 대로(system → dynamic/tail →
+  // grammar); 모르는 kind 는 system 으로 본다.
+  const INSP_KINDS = {
+    system: "System prompt",
+    dynamic: "Conversation · observations",
+    tail: "Per-turn tail — appended to the LAST message every turn (not system prompt)",
+    grammar: "Decoding grammar — enforced by the server at generation (not prompt tokens)",
+  };
+
   function render(data) {
     lastData = data;
     if (!data || !data.ok) {
@@ -3381,27 +3402,26 @@
     let html = "";
     let lastKind = null;
     data.sections.forEach(function (s) {
-      const kind =
-        s.kind === "dynamic" ? "dynamic" : s.kind === "tail" ? "tail" : "system";
+      const kind = INSP_KINDS[s.kind] ? s.kind : "system";
       if (kind !== lastKind) {
-        html +=
-          '<div class="insp-group">' +
-          (kind === "dynamic"
-            ? "Conversation · observations"
-            : kind === "tail"
-              ? "Per-turn tail — appended to the LAST message every turn (not system prompt)"
-              : "System prompt") +
-          "</div>";
+        html += '<div class="insp-group">' + INSP_KINDS[kind] + "</div>";
         lastKind = kind;
       }
-      const pct = (100 * s.est_tokens) / total;
+      // 📐 문법(kind=grammar)은 프롬프트 토큰이 아니다 — 총합 대비 막대를
+      // 그리지 않고, 생성이 <think> 열린 채 시작하는 변형인지를 태그로 말한다.
+      const isGrammar = kind === "grammar";
+      const nameHtml = isGrammar
+        ? esc(s.name) +
+          '<span class="insp-tag">' + (s.thinking_open ? "생각 열림" : "생각 닫힘") + "</span>"
+        : esc(s.name);
+      const pct = isGrammar ? 0 : (100 * s.est_tokens) / total;
       html +=
         '<details class="insp-sec insp-' + kind +
         '" data-name="' + esc(s.name.toLowerCase()) + '">' +
         "<summary>" +
-        '<span class="insp-name">' + esc(s.name) + "</span>" +
+        '<span class="insp-name">' + nameHtml + "</span>" +
         '<span class="insp-share"><i style="width:' +
-        Math.max(3, pct).toFixed(0) + '%"></i></span>' +
+        (isGrammar ? 0 : Math.max(3, pct)).toFixed(0) + '%"></i></span>' +
         '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
         '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
         "</summary>" +
@@ -4754,6 +4774,74 @@
 })();
 
 // ── 🧠 사고/추론 노력 컨트롤 (thinking, 별도 IIFE) ─────────────────────
+// 📐 문법 제약 칩 (v9.24.0) — 🧠 사고 노브와 같은 틀. 상태 셋(override/supported/
+// active)은 /api/grammar 가 주고 sticky(grammar_mode)로 뷰어끼리 동기화한다.
+(function () {
+  "use strict";
+  const $wrap = document.getElementById("grammar-wrap");
+  const $mode = document.getElementById("grammar-mode");
+  const $badge = document.getElementById("grammar-badge");
+  const $info = document.getElementById("grammar-info");
+  if (!$wrap || !$mode || !$badge || !$info) return;
+
+  function apply(d) {
+    const ov = d ? d.override : null;
+    $mode.value = ov === false ? "off" : "on";
+    const supported = d ? d.supported : null;
+    // 지원으로 기록된 모델에서만 켜고 끈다. 미지원(false)·미확인(null) 은 잠김 —
+    // 지원 여부는 모델 감지 때 판정해 models.json 에 적히는 것이지 여기서
+    // 켜기 요청으로 덮는 게 아니다(부트 프로브를 없앤 이유: 서버가 바쁘면
+    // 그 요청 하나에 인스턴스 열기가 수십 초 밀렸다).
+    const locked = supported !== true;
+    $mode.disabled = locked;
+    $wrap.classList.toggle("is-disabled", locked);
+    $wrap.classList.toggle("is-on", !!(d && d.active));
+    // 배지는 **사실을 말한다**: 강제 / 끔 / 미지원 / 미확인.
+    $badge.textContent =
+      supported === false
+        ? "미지원"
+        : locked
+          ? "미확인"
+          : d && d.active
+            ? "강제"
+            : "끔";
+    $info.textContent =
+      supported === false
+        ? "서버가 문법을 강제하지 못합니다 — 텍스트 프로토콜 + 복구 계층(종전대로)."
+        : locked
+          ? "models.json 에 이 모델의 문법 지원 여부가 없습니다 — 모델 감지(프로브)를 다시 실행하면 채워집니다."
+          : d && d.active
+            ? "다음 요청부터 실립니다. 생성 속도가 느려지는 대신 형식 오류·모르는 도구·본문 폭주가 생성 단계에서 불가능합니다."
+            : "이 세션에서는 문법을 싣지 않습니다.";
+  }
+
+  function post() {
+    if ($mode.disabled) return;
+    fetch("api/grammar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: $mode.value }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.ok) apply(d);
+      })
+      .catch(() => {});
+  }
+
+  fetch("api/grammar")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      apply(d);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  $mode.addEventListener("change", post);
+  document.addEventListener("agentcli:grammarmode", (e) => apply(e.detail || {}));
+})();
+
 // ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort)를 /api/thinking 으로 저장 →
 // 다음 LLM 요청부터 반영(공유 ctx). sticky(thinking_mode) 로 뷰어 동기화.
 (function () {

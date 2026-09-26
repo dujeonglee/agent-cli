@@ -14,7 +14,7 @@ from agent_cli.loop.prompt import SystemPromptSvc
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
-from agent_cli.providers.base import CallSettings
+from agent_cli.providers.base import CallSettings, resolve_thinking_policy
 from agent_cli.render import (
     render_context_dump,
     render_spinner_start,
@@ -67,6 +67,11 @@ class LLMCaller:
         # Size of the last session-state block, reserved from the next turn's
         # compaction budget (see _call_llm).
         self._state_tokens = 0
+        # 디코딩 문법 (v9.24.0) — 도구 집합은 루프 수명 동안 불변이라 한 번
+        # 만들고, `<think>` 열림/닫힘 두 변형만 든다.
+        self._grammar_cache: dict[bool, str | None] | None = None
+        # 직전 콜에 문법이 실렸는가 — 턴 통계(📐)가 읽는다.
+        self._grammar_used = False
 
     # 요청 max_tokens 클램프 (v8.53.0): 예산은 더 이상 max_output 을 선제
     # 예약하지 않으므로(아래 _call_llm), 남은 창을 넘는 max_tokens 요청이
@@ -77,6 +82,49 @@ class LLMCaller:
     # 보내 절단되면 기존 length 가드가, 400 이면 flow 2 가 처리한다.
     _MAX_TOKENS_MARGIN = 512
     _MIN_REQUEST_OUTPUT_TOKENS = 1024
+
+    def _decoding_grammar(self, thinking_override) -> tuple[bool, str] | None:
+        """이 콜의 디코딩 문법 (v9.24.0) — 서버가 강제하고(capabilities
+        ``supports_grammar``) 세션이 끄지 않았을 때만. 도구 집합과 스키마는
+        **프롬프트와 같은 함수**에서 나온다(`effective_tool_names` ·
+        `flat_param_schemas` · `parameter_overrides_for`) — 문법이 프롬프트가
+        가르친 것을 막거나 안 가르친 것을 허용하면 안 된다. `<think>` 블록이
+        열린 채 생성이 시작되는지는 thinking 정책에서 읽는다."""
+        from agent_cli.context.manager import grammar_active
+
+        caps = self.cfg.capabilities
+        override = self.ctx.grammar_override if self.ctx else None
+        if not grammar_active(override, caps.supports_grammar):
+            return None
+        if self._grammar_cache is None:
+            from agent_cli.prompts.system_prompt import parameter_overrides_for
+            from agent_cli.tools.registry import (
+                TOOL_SCHEMAS,
+                allows_extra_keys,
+                effective_tool_names,
+                flat_param_schemas,
+            )
+
+            nonblocking_ask = bool(
+                self.cfg.questions is not None and self.cfg.questions.nonblocking
+            )
+            overrides = parameter_overrides_for(self.cfg.tools_list, nonblocking_ask)
+            tools = []
+            for name in effective_tool_names(self.cfg.tools_list, self.cfg.wire_format):
+                schema = TOOL_SCHEMAS.get(name)
+                if schema is None:
+                    continue
+                params = overrides.get(name, schema.parameters)
+                tools.append(
+                    (name, flat_param_schemas(name, params), allows_extra_keys(params))
+                )
+            self._grammar_cache = {
+                open_: self.cfg.wire_format.grammar(tools, thinking_open=open_)
+                for open_ in (False, True)
+            }
+        policy = resolve_thinking_policy(caps, thinking_override)
+        thinking_open = bool(policy is not None and policy.enabled)
+        return thinking_open, self._grammar_cache[thinking_open]
 
     def _build_session_state(self, budget: int) -> str:
         """The volatile state block appended to the last message each turn —
@@ -211,10 +259,18 @@ class LLMCaller:
             render_spinner_start(f"skill:{self.cfg.skill_name}")
         else:
             render_spinner_start()
+        thinking_override = (self.ctx.thinking_override or None) if self.ctx else None
+        decoding = self._decoding_grammar(thinking_override)
+        grammar = decoding[1] if decoding else None
         # Prompt Inspector snapshot: what THIS call's system prompt looks
         # like, as named sections. No-op for CLI renderers (store-only on
-        # web), so per-turn cost is negligible.
-        render_system_prompt_snapshot(self.prompt.sections, self.state.turn)
+        # web), so per-turn cost is negligible. 문법은 프롬프트가 아니라
+        # 서버가 강제하는 것 — "모델이 받는 것" 이라 같은 창에 보이되,
+        # 섹션이 아니라 별도 인자로 넘겨 프롬프트 토큰 합계에 섞이지 않는다.
+        render_system_prompt_snapshot(
+            self.prompt.sections, self.state.turn, grammar=decoding
+        )
+        self._grammar_used = bool(grammar)
 
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it
@@ -257,9 +313,8 @@ class LLMCaller:
                 # thinking 오버라이드·스트림 무진전 한도·클램프 max_tokens.
                 # 공유 ctx 라 web 변경이 이 콜부터 즉시 반영.
                 settings=CallSettings(
-                    thinking=(
-                        (self.ctx.thinking_override or None) if self.ctx else None
-                    ),
+                    thinking=thinking_override,
+                    grammar=grammar,
                     stream_idle_timeout_s=(
                         self.ctx.stream_idle_timeout_s
                         if self.ctx

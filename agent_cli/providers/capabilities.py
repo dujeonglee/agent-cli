@@ -48,6 +48,10 @@ class ModelCapabilities:
     context_window: int
     max_output_tokens: int
     supports_thinking: bool
+    #: 서버가 디코딩 문법(``guided_grammar``)을 **강제**하는가 (v9.24.0).
+    #: None = 아직 모름(등록 엔트리에 키가 없음) — 첫 사용 때 한 번 프로브해
+    #: 프로세스 안에서 채운다. 사용자가 적은 엔트리는 파일에 다시 쓰지 않는다.
+    supports_grammar: bool | None = None
 
 
 # Fallback for a model we could neither look up (models.json) nor probe
@@ -123,6 +127,10 @@ def get_capabilities(
     # Priority 1: Static registry (models.json)
     entry = get_model_entry(model)
     if entry is not None:
+        # 등록 엔트리에 `supports_grammar` 가 없으면 None(미확인) 그대로 —
+        # 부트에서 프로브하지 않는다. 프로브는 모델 감지(`_detect_capabilities`)
+        # 때 한 번 판정해 저장하는 것: 부트마다 모델에 요청 하나를 내면 서버가
+        # 바쁠 때(벤치 중 실측 54초) 인스턴스 열기가 그만큼 늦어진다.
         return _build_from_entry(entry)
 
     # Priority 2: Runtime detection
@@ -148,6 +156,8 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
         "max_output_tokens": caps.max_output_tokens,
         "supports_thinking": caps.supports_thinking,
     }
+    if caps.supports_grammar is not None:
+        entry["supports_grammar"] = caps.supports_grammar
     if auto_detected:
         entry["_auto_detected"] = True
     return entry
@@ -162,11 +172,35 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
     # Legacy field `supports_tool_calling` — silently ignored if present in
     # older models.json entries; the loop uses ReAct text parsing, not the
     # native tool-calling API on any provider.
+    sg = entry.get("supports_grammar")
     return ModelCapabilities(
         context_window=entry.get("context_window", DEFAULT_CONTEXT_WINDOW),
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_thinking=entry.get("supports_thinking", False),
+        supports_grammar=bool(sg) if sg is not None else None,
     )
+
+
+#: 문법 프로브의 정답 — 서버가 문법을 강제하면 이것만 나올 수 있다.
+_GRAMMAR_PROBE_ANSWER = "GRAMMAR-OK"
+
+
+def probe_grammar_support(
+    provider: str, base_url: str, model: str, api_key: str = ""
+) -> bool:
+    """서버가 ``guided_grammar`` 를 **강제**하는지 한 번 묻는다 (v9.24.0).
+
+    "지원한다" 는 필드를 받아 준다는 뜻이 아니라 출력이 문법에 묶인다는
+    뜻이다 — 모르는 필드를 조용히 버리는 서버(실측: omlx 는 ``guided_regex``
+    를 그렇게 버린다)가 있어 응답 본문으로 판정한다. 어떤 실패도 False.
+    """
+    try:
+        if provider == "openai":
+            t = _OpenAITransport(base_url, model, api_key)
+            return t.grammar_probe()
+    except Exception:
+        return False
+    return False
 
 
 # Compiled patterns for efficiency. 태그 vocab 은 thinking_tags 단일 소스
@@ -242,11 +276,18 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
             )
         max_output = context_window // _OUTPUT_TOKEN_DIVISOR
 
+        _emit_progress(f"Probing decoding-grammar support ({model})")
+        try:
+            supports_grammar = bool(transport.grammar_probe())
+        except Exception:
+            supports_grammar = False
+
         _emit_progress(f"Detection complete for {model}")
         return ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
+            supports_grammar=supports_grammar,
         )
     except UnsupportedModelError:
         # Hard reject — propagate to the CLI instead of degrading to defaults.
@@ -302,6 +343,28 @@ class _OpenAITransport:
         # 하나로 합친다 — 필드/태그 어느 쪽이든 감지.
         reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
         return f"<think>{reasoning}</think>{content}" if reasoning else content
+
+    def grammar_probe(self) -> bool:
+        """``guided_grammar`` 가 출력을 실제로 묶는가 — 한 단어짜리 문법을 보내
+        정확히 그 단어만 돌아오면 True. 사고는 끈다(켜져 있으면 닫는 태그
+        규칙이 없는 문법에 출력이 사고 채널로 갇혀 판정이 흐려진다)."""
+        body: dict = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "Say hello."}],
+            "max_tokens": 16,
+            "temperature": 0,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "guided_grammar": f'root ::= "{_GRAMMAR_PROBE_ANSWER}"',
+        }
+        r = requests.post(
+            f"{self.base}/chat/completions",
+            json=body,
+            headers=self._headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
+        return (msg.get("content") or "").strip() == _GRAMMAR_PROBE_ANSWER
 
     def thinking_probe(self) -> bool:
         """2단계 사고 감지: ① 기본 프로브(모델이 기본으로 사고를 뱉으면 감지).
@@ -402,6 +465,10 @@ class _AnthropicTransport:
                 if isinstance(b, dict) and b.get("type") == "thinking"
             )
         return f"<think>{thinking}</think>{content}" if thinking else content
+
+    def grammar_probe(self) -> bool:
+        """Anthropic Messages API 에는 디코딩 문법을 실을 필드가 없다."""
+        return False
 
     def thinking_probe(self) -> bool:
         """2단계 사고 감지 (transport 공통 계약 — OpenAI 와 동형): ① 기본

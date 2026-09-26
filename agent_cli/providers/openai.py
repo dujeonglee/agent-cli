@@ -84,10 +84,17 @@ class OpenAIProvider:
         if policy is not None:
             if policy.enabled:
                 body["reasoning_effort"] = policy.effort
-            if policy.enable_override is not None:
+            # 문법 제약(v9.24.0) 중에는 사고 스위치를 **항상 명시**한다: 문법이
+            # `<think>` 블록이 열려 있는지(닫는 태그를 먼저 내야 하는지)를
+            # 가정하므로, 서버 기본값에 맡기면 가정과 실제가 어긋나 출력 전체가
+            # 사고 채널에 갇힌다(실측). 제약이 없을 땐 종전대로 오버라이드가
+            # 있을 때만 방출 — 방출 표면 불변.
+            if policy.enable_override is not None or settings.grammar:
                 ctk = dict(body.get("chat_template_kwargs") or {})
                 ctk["enable_thinking"] = policy.enabled
                 body["chat_template_kwargs"] = ctk
+        if settings.grammar:
+            body["guided_grammar"] = settings.grammar
 
         if on_chunk:
             body["stream"] = True

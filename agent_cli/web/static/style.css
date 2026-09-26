@@ -242,6 +242,10 @@ header {
 }
 .knob-btn:hover, .knob-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
 .knob.is-disabled .knob-btn { opacity: 0.45; cursor: not-allowed; }
+/* 📐 문법 제약이 실리는 동안 — 강조색으로 "지금 켜져 있다" 를 말한다 (v9.24.0) */
+.knob.is-on .knob-btn { border-color: var(--accent-soft-border); color: var(--accent-soft-text); background: var(--accent-soft-bg); }
+#grammar-pop { flex-direction: column; align-items: flex-start; white-space: normal; max-width: 320px; }
+#grammar-info { white-space: normal; line-height: 1.5; }
 /* 전용 팝업 — 우측 정렬(헤더 오른편 칩이라 화면 밖으로 안 나가게) */
 .knob-pop {
   position: absolute;
@@ -1219,7 +1223,7 @@ footer {
 
 /* semantic kind hues — system prompt vs conversation. Literal (like the JS
    palette) so they stay stable across themes; used only as subtle accents. */
-:root { --insp-system: var(--accent); --insp-convo: var(--cyan); --insp-tail: var(--warn); }
+:root { --insp-system: var(--accent); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
 
 /* ── Prompt Inspection ─────────────────────── */
 .insp-head {
@@ -1330,6 +1334,7 @@ footer {
 .insp-sec.insp-system { border-left-color: var(--insp-system); }
 .insp-sec.insp-dynamic { border-left-color: var(--insp-convo); }
 .insp-sec.insp-tail { border-left-color: var(--insp-tail); }
+.insp-sec.insp-grammar { border-left-color: var(--insp-grammar); }
 .insp-sec > summary {
   list-style: none;
   cursor: pointer;
@@ -1348,6 +1353,13 @@ footer {
   transition: transform .15s ease;
 }
 .insp-sec[open] > summary::before { transform: rotate(90deg); }
+/* 섹션 이름 옆 태그 — "Decoding grammar" 가 프롬프트가 아니라 서버 규칙임을 (v9.24.0) */
+.insp-tag {
+  font: 10px "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  color: var(--accent-soft-text); background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border); border-radius: 999px;
+  padding: 0 6px; margin-left: 6px; white-space: nowrap;
+}
 .insp-name {
   font-weight: 550;
   font-size: 13px;

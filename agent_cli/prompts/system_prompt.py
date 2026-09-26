@@ -661,6 +661,17 @@ def _build_tool_inline_guides(
     }
 
 
+def parameter_overrides_for(active_tools, nonblocking_ask: bool) -> dict[str, dict]:
+    """루프별 도구 스키마 교체 — 프롬프트와 디코딩 문법(v9.24.0)이 **같은**
+    스키마를 봐야 한다: 상주 에이전트의 ``ask`` 는 ``to`` 를 갖고, main 의
+    ``ask`` 는 갖지 않는다. 한쪽만 알면 문법이 프롬프트가 가르친 키를 막는다."""
+    if nonblocking_ask and "ask" in active_tools:
+        from agent_cli.tools.virtual import AskTool
+
+        return {"ask": AskTool.RESIDENT_PARAMETERS}
+    return {}
+
+
 def _build_tools_section(
     active_tools: list[str],
     wire_format,
@@ -676,7 +687,6 @@ def _build_tools_section(
     분기).
     """
     overrides = {}
-    param_overrides: dict[str, dict] = {}
     if not has_agent_registry and "agent" in active_tools:
         from agent_cli.tools.agent_tool import AgentTool
 
@@ -687,7 +697,7 @@ def _build_tools_section(
         from agent_cli.tools.virtual import AskTool
 
         overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
-        param_overrides["ask"] = AskTool.RESIDENT_PARAMETERS
+    param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(

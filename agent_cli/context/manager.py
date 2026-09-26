@@ -120,6 +120,29 @@ def clamp_stream_max_attempts(attempts: int) -> int:
     return max(1, min(int(attempts), STREAM_MAX_ATTEMPTS_MAX))
 
 
+def default_grammar_override() -> bool | None:
+    """부팅 기본 문법-제약 오버라이드 (v9.24.0) — headless(run)·harbor 에서
+    제어하는 유일한 경로. ``AGENT_CLI_GRAMMAR`` = off|on. 미설정 = None =
+    "서버가 지원하면 켠다". web 의 ``set_grammar_override`` 와 같은 값."""
+    import os
+
+    v = os.environ.get("AGENT_CLI_GRAMMAR", "").strip().lower()
+    if v in ("off", "no", "0", "false"):
+        return False
+    if v in ("on", "yes", "1", "true"):
+        return True
+    return None
+
+
+def grammar_active(override: bool | None, supports: bool | None) -> bool:
+    """문법 제약이 이 콜에 실리는가 — 루프(llm.py)와 웹(칩·status.json·health)이
+    **같은 규칙**을 읽는다. 지원으로 **기록된**(models.json `supports_grammar:
+    true`) 모델에서만 켜지고, 거기서 세션/env 가 off 로 끌 수 있다. 미지원(False)
+    은 물론 미확인(None)에도 어떤 값으로도 켜지지 않는다 — 지원 여부는 모델
+    감지 때 판정하는 것이지 켜기 요청이 덮어쓰는 것이 아니다."""
+    return supports is True and override is not False
+
+
 def default_thinking_override() -> dict:
     """부팅 기본 thinking 오버라이드 — headless(run)·harbor 에서 thinking 을
     제어할 유일한 경로 (v8.58.0). web UI 의 런타임 ``set_thinking_override`` 와
@@ -289,6 +312,8 @@ class ContextManager:
         # LLM 콜이 즉시 읽는다(rebuild 불필요). 기본 {}=미설정(모델 기본값 유지).
         #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"
         self.thinking_override: dict = default_thinking_override()
+        #: 디코딩 문법 제약 (v9.24.0): None=자동(서버 지원 시 켬) / True / False.
+        self.grammar_override: bool | None = default_grammar_override()
         # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정,
         # web ctx 팝오버 "Stall" 로 변경, 서브에이전트는 spawn 시점 상속.
         self.stream_idle_timeout_s: int = default_stream_idle_timeout_s()
@@ -570,6 +595,12 @@ class ContextManager:
         clamp 결과 반환 — 다음 LLM 콜부터 즉시 반영(공유 ctx)."""
         self.stream_max_attempts = clamp_stream_max_attempts(attempts)
         return self.stream_max_attempts
+
+    def set_grammar_override(self, enabled: bool | None) -> bool | None:
+        """세션 문법-제약 오버라이드(web UI). None=자동, True/False=강제. 다음
+        LLM 콜부터 반영(공유 ctx)."""
+        self.grammar_override = None if enabled is None else bool(enabled)
+        return self.grammar_override
 
     def set_thinking_override(
         self, enable_thinking=None, reasoning_effort=None

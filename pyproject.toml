@@ -58,6 +58,9 @@ dev = [
     "hypothesis>=6.0",
     # 실브라우저 테스트 (tests/browser — AGENT_CLI_BROWSER_TESTS=1 옵트인)
     "playwright>=1.40",
+    # 디코딩 문법 수용 감사 (tests/test_decoding_grammar_accept.py) — 서버(omlx)가
+    # 쓰는 엔진으로 문법이 캐노니컬 출력을 막지 않는지 검사. 없으면 그 파일만 skip.
+    "xgrammar>=0.1",
 ]
 # macOS: install gnureadline for proper CJK width in chat input
 macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]

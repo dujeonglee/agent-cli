@@ -213,14 +213,21 @@ def render_context_dump(messages: list[dict], turn: int) -> None:
     _renderer.context_dump(messages, turn)
 
 
-def render_system_prompt_snapshot(sections: list[tuple[str, str]], turn: int) -> None:
+def render_system_prompt_snapshot(
+    sections: list[tuple[str, str]],
+    turn: int,
+    *,
+    grammar: tuple[bool, str] | None = None,
+) -> None:
     """Hand the per-turn system prompt (named sections) to the renderer.
 
     No-op for CLI renderers; the web renderer stores the latest snapshot
     for the Prompt Inspector (``GET /api/debug/prompt``). Routed through the
     renderer — not the server directly — so non-web renderers need no
-    special-casing and the loop stays UI-agnostic."""
-    _renderer.note_system_prompt(sections, turn)
+    special-casing and the loop stays UI-agnostic. ``grammar`` is the
+    decoding grammar the server enforces on this call, ``(thinking_open,
+    ebnf)`` — shown beside the prompt but never counted as prompt tokens."""
+    _renderer.note_system_prompt(sections, turn, grammar=grammar)
 
 
 def consume_directives_reload() -> bool:

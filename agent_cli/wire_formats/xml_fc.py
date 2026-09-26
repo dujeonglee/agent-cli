@@ -320,6 +320,53 @@ class XmlFcFormat(WireFormat):
             return _render_params(action_input)
         return _render_params({"result": action_input})
 
+    def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
+        """prose → one or more ``<tool_call><function=NAME>…</function></tool_call>``.
+
+        Parameter bodies are raw text that may not contain ``</parameter>``
+        (the only thing that ends them) — file contents, code, HTML all pass.
+        Prose may not contain a line-start ``<tool_call>`` (``\n<tool_call>``)
+        so the first such tag is unambiguously the first call; a turn may
+        also start with the tag directly, or hold no call at all. Structural
+        whitespace between tags is ``ws`` (any run of blanks), as lenient as
+        the parser's ``\\s*`` — exact-newline literals masked ``\n\n`` tokens
+        for nothing the parser could not read."""
+        from agent_cli.wire_formats.grammar import (
+            not_containing,
+            prose_rule,
+            think_prefix,
+            tool_rule_name,
+        )
+
+        pre, pre_rules = think_prefix(thinking_open)
+        # EBNF literals: ``\n`` is the two-character escape the grammar
+        # dialect reads (raw strings), never a Python newline.
+        lines = [
+            rf'root ::= {pre}( call | prose "\n" call | prose ) ( ws call )* ws',
+            prose_rule("prose", "<tool_call>"),
+            r"ws ::= [ \t\r\n]*",
+            r'call ::= "<tool_call>" ws fn ws "</tool_call>"',
+            "fn ::= " + " | ".join(tool_rule_name(n) for n, *_ in tools),
+            not_containing("body", "</parameter>"),
+            r"pname ::= [A-Za-z0-9_.\-]+",  # 자유 스키마 도구의 임의 키 — 파서의 [\w.\-]+
+        ]
+        if pre_rules:
+            lines.append(pre_rules)
+        for name, flat, extra_ok in tools:
+            # 인라인(`<parameter=k>x</parameter>`)과 블록(`<parameter=k>\nx\n
+            # </parameter>`) 둘 다 — 이 형식의 렌더(render_action_input)와
+            # 파서가 둘 다 쓴다. body 가 앞뒤 개행을 품을 수 있으니 한 규칙으로
+            # 충분하다. 블록만 요구하던 초판은 형식 자체의 캐노니컬 렌더를
+            # 막았다(xgrammar 수용 감사 — tests/test_decoding_grammar_accept.py).
+            params = [rf'"<parameter={k}>" body "</parameter>" ws' for k in flat]
+            if extra_ok:
+                params.append(r'"<parameter=" pname ">" body "</parameter>" ws')
+            plist = f" ( {' | '.join(params)} )*" if params else ""
+            lines.append(
+                rf'{tool_rule_name(name)} ::= "<function={name}>" ws{plist} "</function>"'
+            )
+        return "\n".join(lines)
+
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         th = thought if thought is not None else "your reasoning"
         # action_input 이 이미 완성된 <function=…> 콜이면 그대로, 파라미터

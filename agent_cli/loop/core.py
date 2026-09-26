@@ -869,6 +869,9 @@ class AgentLoop:
                 self.capabilities.context_window,
                 self._total_output_tokens,
             )
+            # 📐 (v9.24.0): 문법이 실린 콜은 생성 속도가 다르다(실측 −37%) —
+            # 그 이유가 통계 줄 그 자리에 있어야 한다.
+            stats["grammar"] = self._llm._grammar_used
             render_token_usage(stats, self.turn, self.verbose)
 
         # PostLLMCall hook

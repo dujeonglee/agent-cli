@@ -90,6 +90,17 @@
         </select>
       </div>
     </span>
+    <span id="grammar-wrap" class="knob" title="디코딩 문법 제약 — 서버가 지원하면 도구 호출 형식을 생성 단계에서 강제합니다(형식 오류·모르는 도구·본문 폭주 불가). 비용: 생성 속도 저하. 다음 LLM 요청부터 반영. 세션 한정·재시작 시 기본값." hidden>
+      <button id="grammar-chip" class="knob-btn" type="button" data-pop="grammar-pop" aria-haspopup="true" aria-expanded="false">📐 <span id="grammar-badge">미확인</span></button>
+      <div id="grammar-pop" class="knob-pop" hidden>
+        <label for="grammar-mode">문법 제약</label>
+        <select id="grammar-mode" aria-label="Decoding grammar mode">
+          <option value="on">켬 (기본)</option>
+          <option value="off">끔</option>
+        </select>
+        <span id="grammar-info" class="knob-unit"></span>
+      </div>
+    </span>
     <span id="mcp-wrap" class="knob" title="MCP servers connected at boot — connected/total, tool count, and why a server failed. Read-only: register or edit with `agent-cli mcp` (registering runs a local process, which is beyond what the web UI is trusted to do)." hidden>
       <button id="mcp-chip" class="knob-btn" type="button" data-pop="mcp-pop" aria-haspopup="true" aria-expanded="false">🔌 <span id="mcp-badge">0/0</span></button>
       <div id="mcp-pop" class="knob-pop" hidden>

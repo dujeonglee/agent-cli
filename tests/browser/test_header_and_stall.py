@@ -79,7 +79,12 @@ class TestHeaderChips:
         page.goto(stack.url)
         page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
         page.wait_for_timeout(200)
-        for chip in ("#compaction-chip", "#stall-chip", "#thinking-chip"):
+        for chip in (
+            "#compaction-chip",
+            "#stall-chip",
+            "#thinking-chip",
+            "#grammar-chip",
+        ):
             assert page.locator(chip).is_visible(), chip
         # 줄바꿈이 실제로 일어나 헤더가 한 줄보다 높다
         heights = page.evaluate("""() => {
