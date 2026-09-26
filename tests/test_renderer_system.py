@@ -404,10 +404,9 @@ class TestMinimalRendererContract:
 
     def test_demoted_methods_have_safe_defaults(self):
         r = self._minimal()
-        # no-op 6종 — 예외 없이 통과
+        # no-op 4종 — 예외 없이 통과 (raw·context_dump 는 v9.24.3 에 삭제:
+        # --verbose 가 화면이 아니라 verbose.jsonl 로 간다)
         r.turn_sep(1)
-        r.raw("dump", 1, verbose=True)
-        r.context_dump([], 1)
         r.spinner_start("x")
         r.spinner_stop()
         r.dispatch_progress("label", 1, "shell")

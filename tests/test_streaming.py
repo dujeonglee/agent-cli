@@ -390,11 +390,11 @@ class TestTTFTMeasurement:
         return buf.getvalue()
 
     def test_token_usage_non_verbose_hints_raw_access(self):
-        """Non-verbose line tells users raw responses need --verbose."""
+        """Non-verbose line tells users where --verbose puts raw responses."""
         assert "--verbose" in self._minimal_render_to_string(verbose=False)
 
     def test_token_usage_verbose_omits_hint(self):
-        """Verbose mode shows the raw response panel, so no hint here."""
+        """With --verbose on the hint is noise — the file is already being written."""
         assert "--verbose" not in self._minimal_render_to_string(verbose=True)
 
 

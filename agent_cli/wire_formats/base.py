@@ -152,6 +152,12 @@ class ParsedTurn:
     thinking: str | None = None
 
 
+#: Shared opening of the NO_ACTION intervention (see
+#: ``WireFormat.failure_framing_no_action``). Public so formats list it in
+#: ``system_user_prefixes``.
+NO_ACTION_FRAMING = "Your response had no usable tool call"
+
+
 class WireFormat(ABC):
     """Plugin base class for one wire format.
 
@@ -401,13 +407,24 @@ class WireFormat(ABC):
         as the first line of ``format_no_json_retry``'s message.
         """
 
-    @abstractmethod
     def failure_framing_no_action(self) -> str:
-        """Opening line of the intervention when parsing succeeded but
-        ``action`` was missing.
+        """Opening line of the NO_ACTION intervention — one sentence shared
+        by every format, with a format-specific parenthetical
+        (:meth:`no_action_detail`).
 
-        e.g. ``"Your JSON was parsed but has no action."`` for ReAct.
+        NO_ACTION covers two cases: a turn with no tool call at all (prose
+        only — legal under the decoding grammar) and a call that names no
+        known tool. The old per-format lines described only the second
+        ("Your tool call names no tool (empty or invalid <function=> tag)",
+        "Your JSON array had no usable tool call") and were wrong for the
+        now-common first (v9.24.3, board session 1zfgc2).
         """
+        return f"{NO_ACTION_FRAMING} ({self.no_action_detail()})."
+
+    @abstractmethod
+    def no_action_detail(self) -> str:
+        """What a usable tool call looks like in this format, phrased so it
+        is true for both NO_ACTION cases (no call at all / no known tool)."""
 
     @abstractmethod
     def static_retry_hint_no_json(self) -> str:

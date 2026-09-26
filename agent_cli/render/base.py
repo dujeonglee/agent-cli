@@ -556,18 +556,6 @@ class Renderer(ABC):
                 0,
             )
 
-    def raw(self, text: str, turn: int, verbose: bool) -> None:
-        """Raw LLM response (verbose mode). Default no-op (C8) — 디버그
-        전용 대용량 덤프라 표출은 opt-in."""
-
-    def thinking(self, text: str, turn: int) -> None:
-        """Reasoning content from a separate API field (verbose mode).
-
-        Default no-op so existing plugin renderers keep working without
-        forced overrides. Override to surface provider-side reasoning
-        (e.g. Anthropic thinking blocks, OpenAI reasoning).
-        """
-
     def push_user_message(self, content: str, author: str = "") -> None:
         """Echo a user message into the conversation surface (v8.6.0 ABC
         승격 — 종전 web 전용+hasattr 게이트).
@@ -616,9 +604,6 @@ class Renderer(ABC):
     def model_loaded(self, model: str, capabilities) -> None:
         """Loaded model one-liner. Default (C8): 코어 ``status`` 위임."""
         self.status("done", f"model loaded: {model}")
-
-    def context_dump(self, messages: list[dict], turn: int) -> None:
-        """Debug context window dump. Default no-op (C8) — 디버그 전용."""
 
     def consume_directives_dirty(self) -> bool:
         """Atomically read+clear the 'DIRECTIVE.md was edited via the web

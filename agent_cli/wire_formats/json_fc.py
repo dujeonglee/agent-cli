@@ -47,6 +47,7 @@ from agent_cli.wire_formats._json_repair import (
     repair_value_quotes,
 )
 from agent_cli.wire_formats.base import (
+    NO_ACTION_FRAMING,
     Op,
     ParsedAction,
     ParsedTurn,
@@ -933,8 +934,10 @@ class JsonFcFormat(WireFormat):
             "with a valid JSON array of tool calls."
         )
 
-    def failure_framing_no_action(self) -> str:
-        return 'Your JSON array had no usable tool call (missing or unknown "action").'
+    def no_action_detail(self) -> str:
+        return (
+            'no JSON array, or no op whose "action" names a tool from Available Tools'
+        )
 
     def static_retry_hint_no_json(self) -> str:
         return (
@@ -962,5 +965,6 @@ class JsonFcFormat(WireFormat):
     def system_user_prefixes(self) -> tuple[str, ...]:
         return (
             "Your response did not match the expected format",
-            "Your JSON array had no usable tool call",
+            NO_ACTION_FRAMING,
+            "Your JSON array had no usable tool call",  # ≤ v9.24.2 문구 — 옛 세션 resume
         )

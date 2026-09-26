@@ -180,3 +180,13 @@ def _restore_profile_loader():
     orig = _profiles_mod._profile_loader
     yield
     _profiles_mod._profile_loader = orig
+
+
+@pytest.fixture(autouse=True)
+def _reset_verbose_recorder():
+    """``agent_cli.verbose`` 는 프로세스 전역 기록기(v9.24.3) — --verbose 로
+    돈 테스트가 켠 채로 두면 다음 테스트의 루프가 남의 tmp 폴더에 쓴다."""
+    from agent_cli import verbose
+
+    yield
+    verbose.reset()

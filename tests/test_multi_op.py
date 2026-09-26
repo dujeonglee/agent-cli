@@ -149,7 +149,7 @@ class _MultiOpFormat(WireFormat):
     def failure_framing_parse_fail(self) -> str:
         return "Bad format."
 
-    def failure_framing_no_action(self) -> str:
+    def no_action_detail(self) -> str:
         return "No ops."
 
     def static_retry_hint_no_json(self) -> str:

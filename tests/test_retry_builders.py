@@ -124,7 +124,9 @@ class TestFormatNoActionRetry:
         intv = format_no_action_retry(prior_content=content)
         assert content in intv.message
         assert "Your prior output:" in intv.message
-        assert intv.message.startswith("Your JSON array had no usable tool call")
+        assert intv.message.startswith(
+            'Your response had no usable tool call (no JSON array, or no op whose "action"'
+        )
         # Both action paths still presented
         assert '"action"' in intv.message
         assert '"action": "complete"' in intv.message

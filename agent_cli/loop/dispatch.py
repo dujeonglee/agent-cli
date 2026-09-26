@@ -92,6 +92,8 @@ class TurnDispatcher:
         self.ctx = ctx
         self.tools = tools
         self.recorder = recorder
+        #: 마지막 턴의 판정 (--verbose 기록용, v9.24.3) — `_handle_text_path` 가 채운다.
+        self.last_outcome: dict | None = None
         # B1 (action loop) detector. Threshold=2 fires on the second
         # consecutive identical (action, args).
         self.loop_detector = ActionLoopDetector(threshold=2)
@@ -293,6 +295,16 @@ class TurnDispatcher:
                 primitives_applied=outcome["primitives"],
                 usage=usage,
             )
+            # --verbose 기록(v9.24.3)이 원문과 함께 싣는 이 턴의 판정 — 코어가
+            # 응답(사고·종료 사유)과 합쳐 한 줄로 쓴다.
+            self.last_outcome = {
+                "parse_stage": turn.parse_stage,
+                "failure_signal": outcome["failure_signal"],
+                "primitives": list(outcome["primitives"]),
+                "ops": [
+                    {"action": op.action, "input": op.action_input} for op in turn.ops
+                ],
+            }
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
         """Turn-level dispatch: guards, then the ops in array order.

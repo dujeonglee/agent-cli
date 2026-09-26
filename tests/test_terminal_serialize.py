@@ -64,7 +64,7 @@ class TestTerminalSerialize:
             def failure_framing_parse_fail(self):
                 return ""
 
-            def failure_framing_no_action(self):
+            def no_action_detail(self):
                 return ""
 
             def static_retry_hint_no_json(self):

@@ -385,27 +385,6 @@ class MinimalRenderer(Renderer):
     def error(self, content: str, turn: int) -> None:
         self._p(f"  ✗ {content}", highlight=False)
 
-    def raw(self, text: str, turn: int, verbose: bool) -> None:
-        # Non-verbose: stay silent. The per-turn stats line carries a
-        # "(use --verbose to view raw response)" hint instead.
-        if not verbose:
-            return
-        self._p(f"\n  [{_MUTED}]── raw response turn {turn} ──[/]")
-        for line in text.split("\n"):
-            self._p(f"  [{_MUTED}]{line}[/]")
-        self._p(f"  [{_MUTED}]── end raw ──[/]\n")
-
-    def thinking(self, text: str, turn: int) -> None:
-        # Reasoning content from a provider-side field (Anthropic thinking
-        # blocks, OpenAI reasoning). Caller decides whether to invoke
-        # (gated on verbose at the call site).
-        if not text:
-            return
-        self._p(f"\n  [{_MUTED}]── thinking turn {turn} ──[/]")
-        for line in text.split("\n"):
-            self._p(f"  [{_MUTED}]{line}[/]")
-        self._p(f"  [{_MUTED}]── end thinking ──[/]\n")
-
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)
@@ -487,7 +466,7 @@ class MinimalRenderer(Renderer):
         if not msg:
             return
         if not verbose:
-            msg += "  (use --verbose to view raw response)"
+            msg += "  (--verbose records raw responses to verbose.jsonl)"
         self.status("running", msg, turn)
 
     def model_detected(
@@ -516,22 +495,6 @@ class MinimalRenderer(Renderer):
             f"  ● {model} (ctx={capabilities.context_window:,}, {thinking})",
             highlight=False,
         )
-
-    def context_dump(self, messages: list[dict], turn: int) -> None:
-        self._p(
-            f"\n  [{_MUTED}]── context dump (turn {turn}, {len(messages)} msgs) ──[/]"
-        )
-        for i, m in enumerate(messages):
-            role = m.get("role", "?")
-            content = m.get("content", "")
-            if isinstance(content, str):
-                preview = content[:200].replace("\n", "\\n")
-                if len(content) > 200:
-                    preview += f"... ({len(content)} chars)"
-            else:
-                preview = str(content)[:200]
-            self._p(f"  [{_MUTED}][{i}] {role}: {preview}[/]")
-        self._p(f"  [{_MUTED}]── end dump ──[/]\n")
 
     def spinner_start(self, message: str = "") -> None:
         if self.is_capturing:

@@ -1541,15 +1541,6 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
-    def raw(self, text: str, turn: int, verbose: bool) -> None:
-        # verbose-only — transient debug stream.
-        if verbose:
-            self._emit("raw", {"turn": turn, "text": text}, persistent=False)
-
-    def thinking(self, text: str, turn: int) -> None:
-        # Reasoning channel — transient, shown in verbose UI.
-        self._emit("thinking", {"turn": turn, "text": text}, persistent=False)
-
     def status(self, state: str, message: str, turn: int = 0) -> None:
         self._emit(
             "status",
@@ -1707,15 +1698,6 @@ class WebRenderer(Renderer):
                 "model": model,
                 "context_window": getattr(capabilities, "context_window", 0),
             },
-            persistent=False,
-        )
-
-    def context_dump(self, messages: list[dict], turn: int) -> None:
-        # Debug-only — verbose dump for developers. Send raw structured
-        # form so a future debugging UI can render it.
-        self._emit(
-            "context_dump",
-            {"turn": turn, "messages": messages},
             persistent=False,
         )
 

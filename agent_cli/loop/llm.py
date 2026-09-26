@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from agent_cli import verbose as _verbose
 from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.token_estimator import estimate_tokens
@@ -16,7 +17,6 @@ from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
 from agent_cli.providers.base import CallSettings, resolve_thinking_policy
 from agent_cli.render import (
-    render_context_dump,
     render_spinner_start,
     render_spinner_stop,
     render_status,
@@ -230,9 +230,15 @@ class LLMCaller:
             if clamped != self.cfg.capabilities.max_output_tokens:
                 clamped_max_tokens = clamped
 
-        # Context dump (verbose only)
-        if self.cfg.verbose:
-            render_context_dump(self.state.messages, self.state.turn)
+        # --verbose (v9.24.3): what is about to be sent — bounded per-message
+        # view into verbose.jsonl (the conversation itself is history.jsonl).
+        if _verbose.enabled():
+            _verbose.record(
+                "context",
+                scope=_verbose.scope_of(self.ctx.session_dir if self.ctx else None),
+                turn=self.state.turn,
+                messages=_verbose.context_entries(self.state.messages),
+            )
         _debug_log(
             f"LLM_CALL turn={self.state.turn} skill={self.cfg.skill_name or 'main'} msg_count={len(self.state.messages)}"
         )

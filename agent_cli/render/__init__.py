@@ -96,14 +96,6 @@ def render_step(
             print(f"  [{step_type}] (render failed)", file=sys.stderr)
 
 
-def render_raw(text: str, turn: int, verbose: bool) -> None:
-    _renderer.raw(text, turn, verbose)
-
-
-def render_thinking(text: str, turn: int) -> None:
-    _renderer.thinking(text, turn)
-
-
 def render_turn_sep(turn: int) -> None:
     _renderer.turn_sep(turn)
 
@@ -207,10 +199,6 @@ def render_model_detected(
 
 def render_model_loaded(model: str, capabilities) -> None:
     _renderer.model_loaded(model, capabilities)
-
-
-def render_context_dump(messages: list[dict], turn: int) -> None:
-    _renderer.context_dump(messages, turn)
 
 
 def render_system_prompt_snapshot(

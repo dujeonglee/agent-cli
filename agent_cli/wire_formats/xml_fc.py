@@ -36,6 +36,7 @@ import re
 
 from agent_cli.thinking_tags import ORPHAN_THINK_TAG_RE
 from agent_cli.wire_formats.base import (
+    NO_ACTION_FRAMING,
     Op,
     ParsedAction,
     ParsedTurn,
@@ -628,8 +629,8 @@ class XmlFcFormat(WireFormat):
             "tool calls must use <function=...> / <parameter=...> tags."
         )
 
-    def failure_framing_no_action(self) -> str:
-        return "Your tool call names no tool (empty or invalid <function=> tag)."
+    def no_action_detail(self) -> str:
+        return "no <function=TOOL> naming a tool from Available Tools"
 
     def static_retry_hint_no_json(self) -> str:
         return f"{self.failure_framing_parse_fail()} {self.constraint_reminder_call()}"
@@ -643,7 +644,8 @@ class XmlFcFormat(WireFormat):
     def system_user_prefixes(self) -> tuple[str, ...]:
         return (
             "Your response contained no parseable <tool_call> block",
-            "Your tool call names no tool",
+            NO_ACTION_FRAMING,
+            "Your tool call names no tool",  # ≤ v9.24.2 문구 — 옛 세션 resume
         )
 
 

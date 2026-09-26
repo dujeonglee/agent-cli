@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 
+from agent_cli import verbose as _verbose
 from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
@@ -33,18 +34,15 @@ from agent_cli.render import (
     notify_directives_applied,
     notify_memory_applied,
     render_header,
-    render_raw,
     render_run_ended,
     render_step,
     render_system_prompt_snapshot,
-    render_thinking,
     render_token_usage,
     render_turn_sep,
 )
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-from agent_cli.verbose import set_verbose as _set_debug_verbose
 from agent_cli.wire_formats import get as _get_wire_format
 
 
@@ -561,7 +559,11 @@ class AgentLoop:
 
     def _setup(self) -> None:
         """Initialize system prompt and messages."""
-        _set_debug_verbose(self.verbose)
+        # --verbose (v9.24.3): the loop that has the flag — the main one —
+        # points the process-wide recorder at its session. Sub-loops never
+        # switch it off; they record into the same file under their scope.
+        if self.verbose and self.ctx is not None:
+            _verbose.configure(self.ctx.session_dir)
 
         # Build system prompt with session_dir for Context Recovery Guide.
         # Built as named sections — the joined string is what the LLM gets
@@ -837,6 +839,13 @@ class AgentLoop:
 
         response = self._call_llm()
         if hasattr(response, "success"):
+            _verbose.record(
+                "llm_error",
+                scope=self._verbose_scope(),
+                turn=self.turn,
+                model=self.model,
+                error=str(response.error or response.output or ""),
+            )
             return response  # ToolResult (LLM failure)
         if response == self._RETRY:
             return self._CONTINUE
@@ -870,10 +879,50 @@ class AgentLoop:
         # PostLLMCall hook
         self._fire_hook("PostLLMCall", llm_response=llm_text)
 
-        render_raw(llm_text, self.turn, self.verbose)
-        if self.verbose and response.thinking:
-            render_thinking(response.thinking, self.turn)
+        self._dispatch.last_outcome = None
+        # 호출 시점의 턴 — 형식 재시도는 턴을 되감아 같은 번호로 다시 부르므로,
+        # 되감긴 뒤의 값을 쓰면 실패한 호출이 이전 턴으로 기록된다.
+        turn_at_call = self.turn
+        try:
+            return self._finish_response(llm_text, response)
+        finally:
+            if _verbose.enabled():
+                self._record_verbose_call(llm_text, response, turn_at_call)
 
+    def _verbose_scope(self) -> str:
+        return _verbose.scope_of(self.ctx.session_dir if self.ctx else None)
+
+    def _record_verbose_call(self, llm_text: str, response, turn: int) -> None:
+        """One ``llm_call`` record — the raw text next to the harness's
+        verdict on it (v9.24.3; schema in ``agent_cli.verbose``)."""
+        out = self._dispatch.last_outcome or {}
+        usage = response.usage
+        _verbose.record(
+            "llm_call",
+            scope=self._verbose_scope(),
+            turn=turn,
+            model=self.model,
+            text=llm_text,
+            thinking=response.thinking or None,
+            stop_reason=getattr(response, "stop_reason", None),
+            parse_stage=out.get("parse_stage"),
+            failure_signal=out.get("failure_signal"),
+            primitives=out.get("primitives", []),
+            ops=out.get("ops", []),
+            usage={
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cache_read_input_tokens": usage.cache_read_input_tokens,
+                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+            }
+            if usage
+            else {},
+            grammar=bool(self._llm._grammar_used),
+        )
+
+    def _finish_response(self, llm_text: str, response):
+        """Truncation guard, then parse + dispatch (split out so the verbose
+        record wraps both paths)."""
         # Output-truncation guard: when the response hit the model's
         # output-token limit (``stop_reason == "length"``), its action is
         # incomplete — a half-written file (write_file), a truncated

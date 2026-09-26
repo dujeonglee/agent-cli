@@ -98,7 +98,7 @@ class _MockFormat(WireFormatProtocol):
     def failure_framing_parse_fail(self) -> str:
         return "Mock parse fail."
 
-    def failure_framing_no_action(self) -> str:
+    def no_action_detail(self) -> str:
         return "Mock no action."
 
     def static_retry_hint_no_json(self) -> str:
@@ -289,7 +289,7 @@ class TestRegistry:
             def failure_framing_parse_fail(self) -> str:
                 return ""
 
-            def failure_framing_no_action(self) -> str:
+            def no_action_detail(self) -> str:
                 return ""
 
             def static_retry_hint_no_json(self) -> str:
@@ -342,7 +342,9 @@ class TestAllSystemUserPrefixes:
 
         prefixes = all_system_user_prefixes()
         assert "Your response did not match the expected format" in prefixes
-        assert "Your JSON array had no usable tool call" in prefixes
+        assert "Your response had no usable tool call" in prefixes  # v9.24.3 공용
+        assert "Your JSON array had no usable tool call" in prefixes  # 옛 세션 resume
+        assert "Your tool call names no tool" in prefixes
 
     def test_isolated_registry_yields_only_format_agnostic(self, isolated_registry):
         # With a fresh empty registry no plugins contribute prefixes —
@@ -374,3 +376,37 @@ class TestAllSystemUserPrefixes:
 # 제거됐다(산문-only 턴은 항상 NO_ACTION 넛지, 완료는 명시적 complete 만).
 # 새 cross-format 계약은 test_multi_op.TestProseRequiresExplicitComplete 가
 # 실루프로 고정한다.
+
+
+class TestNoActionFramingIsTrueForBothCases:
+    """v9.24.3: NO_ACTION 은 (1) 도구 호출이 아예 없는 턴 — 문법이 허용하는 산문만
+    턴 — 과 (2) 알려진 도구를 지명하지 않은 호출, 둘 다다. 종전 첫 문장은 (2) 만
+    가정했다(xml "Your tool call names no tool (empty or invalid <function=>
+    tag)" 가 산문만 낸 턴에 나감 — 보드 1zfgc2). 두 형식이 공용 문장을 쓰고
+    괄호 안 설명만 다르다."""
+
+    def test_both_formats_share_the_opening_and_cover_the_no_call_case(self):
+        from agent_cli.wire_formats import get
+        from agent_cli.wire_formats.base import NO_ACTION_FRAMING
+
+        for name in ("json_fc", "xml_fc"):
+            wf = get(name)
+            line = wf.failure_framing_no_action()
+            assert line.startswith(NO_ACTION_FRAMING + " (")
+            assert "names no tool" not in line and "JSON array had" not in line
+            assert NO_ACTION_FRAMING in wf.system_user_prefixes()
+            assert wf.static_retry_hint_no_action().startswith(NO_ACTION_FRAMING)
+
+    def test_prose_only_turn_takes_this_path_in_both_formats(self):
+        from agent_cli.recovery.wf_recovery import format_no_action_retry
+        from agent_cli.wire_formats import get
+        from agent_cli.wire_formats.base import NO_ACTION_FRAMING
+
+        for name in ("json_fc", "xml_fc"):
+            wf = get(name)
+            turn = wf.parse_turn("Contracts are clear. Starting with textures.js.")
+            assert turn.ops == [] and turn.parse_stage == 1
+            intv = format_no_action_retry(
+                prior_content="Contracts are clear.", wire_format=wf
+            )
+            assert intv.message.startswith(NO_ACTION_FRAMING)

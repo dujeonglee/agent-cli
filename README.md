@@ -336,7 +336,7 @@ python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
 | **32B+** | ✅ | ✅ | 안정적 — 권장 최소 사양 |
 | **70B+** | ✅✅ | ✅ | agent 위임, 복잡한 스킬 등 고급 기능 안정 |
 
-> **인라인 추론 태그 자동 격리 (5.10.0)**: 일부 모델(MiMo 등)이 응답 content 안에 `<think>…</think>` 류 태그로 긴 추론을 흘립니다 — provider 응답 조립 지점에서 이를 제거해 wire 파싱·컨텍스트를 보호하고, 제거분은 `thinking` 필드로 이동해 `--verbose` 에서 볼 수 있습니다 (닫히지 않은 `<think>` 는 그 지점부터 전부 추론으로 간주). 태그 4종: think/thinking/reasoning/reflection.
+> **인라인 추론 태그 자동 격리 (5.10.0)**: 일부 모델(MiMo 등)이 응답 content 안에 `<think>…</think>` 류 태그로 긴 추론을 흘립니다 — provider 응답 조립 지점에서 이를 제거해 wire 파싱·컨텍스트를 보호하고, 제거분은 `thinking` 필드로 이동해 `--verbose` 기록(`verbose.jsonl` 의 `thinking`)에 남습니다 (닫히지 않은 `<think>` 는 그 지점부터 전부 추론으로 간주). 태그 4종: think/thinking/reasoning/reflection.
 
 **최소: 30B, 권장: 32B+**
 
@@ -364,12 +364,31 @@ agent-cli run "task description" [options]
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~0.95). 낮을수록 일찍 압축 | `0.8` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성 | (없음) |
-| `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
+| `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `json_fc` (**기본** — 산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능(기본은 json_fc) — `docs/multi-wire-format/PHASE2.md` §8). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **미지정 시 해석 체인**: resume 세션의 기록 포맷 > models.json 모델별 `wire_format` 바인딩 > `json_fc` | (해석 체인) |
-
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
+
+**verbose 기록 (v9.24.3)**: `--verbose`(run·web)는 화면에 찍지 않고 메인 세션 폴더의 `verbose.jsonl` 에 JSON 한 줄씩 기록합니다. 메인 에이전트뿐 아니라 **하위 에이전트·스킬·상주 에이전트의 호출도 같은 파일에** `scope`(메인 세션 기준 상대 경로 — `main`, `agents/agt-1a2b`, `run_task_…`)로 구분돼 쌓입니다. **첫 줄은 JSON Schema** 라 파일이 자기 필드를 설명하고, `grep`·`cat` 대신 JSON 쿼리로 분석합니다.
+
+| kind | 담는 것 |
+|---|---|
+| `llm_call` | 모델이 쓴 원문(`text`)·사고(`thinking`)·종료 사유 + 하니스의 판정(`parse_stage`·`failure_signal`·`primitives`)·파싱된 호출(`ops`)·토큰·문법 사용 |
+| `llm_error` | LLM 호출 자체의 실패(전송·서버 오류) |
+| `context` | 호출 직전 메시지별 크기와 앞 300자 (대화 전문은 `history.jsonl`) |
+| `debug` | 하니스 진단 줄 (종전 stderr) |
+
+```bash
+# 실패한 턴과 그때 모델이 실제로 쓴 것
+jq -c 'select(.kind=="llm_call" and .failure_signal!=null) | {scope, turn, failure_signal, text}' verbose.jsonl
+# 한 에이전트의 호출만
+jq -c 'select(.scope=="agents/agt-1a2b")' verbose.jsonl
+# 빈 문자열 인자를 담은 도구 호출
+jq -c 'select(.kind=="llm_call") | .ops[]? | select(any(.input[]?; . == ""))' verbose.jsonl
+```
+
+`turns.jsonl`(`--record-turns`, 기본 켬)은 모델 텍스트 없이 구조만 담는 항상-켬 기록이고, `verbose.jsonl` 은 원문까지 담는 선택 기록입니다. 원문을 매 호출 남기므로 크기가 커질 수 있습니다.
 
 `run` 실행 후 세션이 자동 저장됩니다. `run --resume <id>` 또는 `web --resume <id>`로 이어서 작업할 수 있습니다:
 
