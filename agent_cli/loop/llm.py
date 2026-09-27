@@ -167,6 +167,12 @@ class LLMCaller:
             from agent_cli.constants import outstanding_requests_block
 
             requests = outstanding_requests_block(pending)
+        from agent_cli.constants import open_debts, owed_replies_block
+
+        port = self.cfg.questions
+        debts = owed_replies_block(
+            open_debts(port), resident=bool(getattr(port, "nonblocking", False))
+        )
         return build_session_state(
             used_tokens=self.ctx.get_estimated_tokens() if self.ctx else 0,
             budget_tokens=budget,
@@ -175,6 +181,7 @@ class LLMCaller:
             agents=agents,
             memory=memory,
             requests=requests,
+            debts=debts,
             guidelines=TASK_GUIDELINES,
             reports_to_caller=self.cfg.depth > 0,
         )

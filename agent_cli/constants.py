@@ -73,6 +73,71 @@ OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 INTERRUPT_NOTICE = "⚡ User interrupted. Waiting for new instructions."
 
 
+#: Prefixed to the request a resident agent was working on when the session
+#: restarted (v9.24.5). The run died without a ``complete``; its history is
+#: intact (the ctx resumes), but nothing told the agent to go on — board
+#: session 1zfgc2's engine sat idle after a restart with its task half-done
+#: and ``floorCeil.js`` left broken. Checking state first matters: the last
+#: edit before the cut may have been applied or not.
+RESUMED_RUN_NOTICE = (
+    "[session restarted] Your previous run was interrupted by a session "
+    "restart before you called `complete`. The request you were working on is "
+    "quoted below; your history above shows how far you got. First check the "
+    "current state of anything you changed — the last edit before the restart "
+    "may be half-done. Then finish the request and reply as you normally "
+    "would.\n\nOriginal request:\n"
+)
+
+
+def open_debts(port) -> list[dict]:
+    """The run's unpaid message/ask debts through its question port — ``[]``
+    without a port (v9.22.0 ledger; one reader for the ``complete`` refusal
+    and the per-turn tail)."""
+    fn = getattr(port, "debts", None) if port is not None else None
+    try:
+        return list(fn()) if callable(fn) else []
+    except Exception:
+        return []
+
+
+def debt_lines(debts: list[dict], *, resident: bool) -> str:
+    """Debts, each with the tool that settles it in THIS loop — ``reply`` is
+    resident-only, main answers an agent with ``agent request``. Shared by
+    the ``complete`` refusal and the per-turn tail so both say the same."""
+    lines = []
+    for d in debts:
+        if d["kind"] == "answer":
+            lines.append(
+                f'  - answer question {d["id"]} from {d["to"]}: "{d["text"][:120]}" '
+                f'→ answer(id="{d["id"]}", text="...")'
+            )
+        else:
+            key = d["to"].split(":", 1)[-1]
+            how = (
+                'reply(text="...")'
+                if resident
+                else f'agent(mode="request", key="{key}", task="...")'
+            )
+            lines.append(f'  - reply to {d["to"]}: "{d["text"][:120]}" → {how}')
+    return "\n".join(lines)
+
+
+def owed_replies_block(debts: list[dict], *, resident: bool) -> str:
+    """Unpaid message/ask debts in the PER-TURN TAIL (v9.24.5).
+
+    The tail already listed the human requests of the run (``Open Requests``)
+    but not what agents asked — those showed up only when a ``complete`` was
+    refused. A peer request is the reason a resident run exists, so it is
+    shown every turn like a human one, next to how to settle it."""
+    if not debts:
+        return ""
+    return (
+        "## Owed Replies\n"
+        "Settle these before you `complete` — the harness holds the run open "
+        "while they are unpaid:\n" + debt_lines(debts, resident=resident)
+    )
+
+
 def outstanding_requests_block(requests: list) -> str:
     """이 런이 답해야 할 사용자 요청 — **매 턴 꼬리**에 실린다.
 

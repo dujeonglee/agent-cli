@@ -499,6 +499,13 @@ class AgentInstance:
         self.home_dir = home_dir
 
         self.inbox: SimpleQueue = SimpleQueue()
+        # 받은편지함 미러 (v9.24.5) — ``SimpleQueue`` 는 영속이 안 돼 재시작이
+        # 줄 선 요청을 통째로 증발시켰다(보드 1zfgc2: 엔진 앞 8건). 들어올 때
+        # 추가, 처리를 시작할 때 제거 — ``_save_state`` 가 이 목록을 쓴다.
+        self.inbox_items: list[dict] = []
+        # 지금 처리 중인 항목 — 런이 정상 종료하면 비운다. 재시작 때 남아
+        # 있으면 complete 전에 끊긴 런이다(계속하기 안내로 다시 넣는다).
+        self.in_flight: list[dict] = []
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.ctx: ContextManager | None = None
@@ -1408,8 +1415,14 @@ class AgentRegistry:
         hop: int = 0,
         expects_reply: bool = True,
         question_id: str = "",
+        answers: list | None = None,
+        resumed: bool = False,
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
+
+        ``answers`` (v9.24.5): 귀속 스냅샷을 호출자가 준다 — 재시작 뒤 끊긴
+        런을 다시 넣을 때 원래 요청의 스냅샷을 잇기 위해. 없으면 종전대로
+        main 발신이면 지금 런의 USER 목록.
 
         v9.12 의 ``submit() -> (error, verdict)`` 은 ask 답변 슬롯 배달을
         구분하려던 것인데, 비동기 전환으로 슬롯이 사라져 판정할 것이 없다 —
@@ -1469,13 +1482,17 @@ class AgentRegistry:
             # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
             "ts": send_ts,
         }
-        if author == "main":
+        if resumed:
+            item["resumed"] = True  # 재시작 계속하기 — 다시 끊겨도 또 감싸지 않는다
+        if answers is not None:
+            item["answers"] = list(answers)
+        elif author == "main":
             # 귀속 승계: 이 요청을 만든 런의 USER 들을 요청에 스냅샷 —
             # 회신이 그대로 되가져와, 회신을 접는 런(🤝 웨이크 포함)의
             # 최종답이 원 요청자에게 귀속된다. peer/user 발신은 회신이
             # main mailbox 로 안 가므로 스냅샷 불필요.
             item["answers"] = list(self._current_run_authors)
-        tm.inbox.put(item)
+        self._enqueue(tm, item)
         # 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 — 답만 건너뛰면
         # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다.
         from agent_cli.render import get_renderer
@@ -1501,6 +1518,28 @@ class AgentRegistry:
         self._log_conversation(tm, payload)
         self._notify_roster()
         return ""
+
+    def _enqueue(self, tm: AgentInstance, item: dict) -> None:
+        """받은편지함에 넣고 미러·``agents.json`` 에 남긴다 (v9.24.5)."""
+        with self._cv:
+            tm.inbox_items.append(item)
+        tm.inbox.put(item)
+        self._save_state()
+
+    def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
+        """이 항목들로 런을 시작한다 — 미러에서 빼고 처리 중으로 적는다.
+        꺼냈지만 아직 시작 안 한 항목(배치 수집의 stash)은 미러에 남는다."""
+        seqs = {i.get("seq") for i in items}
+        with self._cv:
+            tm.inbox_items = [i for i in tm.inbox_items if i.get("seq") not in seqs]
+            tm.in_flight = [dict(i) for i in items]
+        self._save_state()
+
+    def _end_items(self, tm: AgentInstance) -> None:
+        """런이 정상 종료했다 — 처리 중 표시를 지운다."""
+        with self._cv:
+            tm.in_flight = []
+        self._save_state()
 
     def deliver(
         self,
@@ -1942,6 +1981,9 @@ class AgentRegistry:
                     # 세션 종료로 멈춘 teammate 는 idle 로 남아 resume 대상.
                     "state": "dead" if (not tm.revivable or tm.error) else "idle",
                     "error": tm.error,
+                    # v9.24.5: 줄 선 요청과 처리 중이던 요청 — 재시작이 되살린다.
+                    "inbox": [dict(i) for i in list(tm.inbox_items)],
+                    "in_flight": [dict(i) for i in list(tm.in_flight)],
                 }
             )
         with self._cv:
@@ -2006,6 +2048,7 @@ class AgentRegistry:
             ]
 
         revived = 0
+        requeued_qids: set[str] = set()
         for e in data.get("agents", []):
             key = e.get("key")
             if not key or key in self._agents or self.session_dir is None:
@@ -2034,6 +2077,15 @@ class AgentRegistry:
                 tm.revivable = False
                 continue
             tm.revive = True
+            in_flight = [i for i in (e.get("in_flight") or []) if isinstance(i, dict)]
+            queued = [i for i in (e.get("inbox") or []) if isinstance(i, dict)]
+            seqs = [int(i.get("seq") or 0) for i in in_flight + queued]
+            tm.queued = max([tm.queued, *seqs])  # 새 seq 가 복원분과 겹치지 않게
+            requeued_qids.update(
+                str(i["question_id"])
+                for i in in_flight + queued
+                if i.get("question_id")
+            )
             tm.worker = threading.Thread(
                 target=self._worker,
                 args=(tm, parent_ctx),
@@ -2047,13 +2099,47 @@ class AgentRegistry:
             # 접속 snapshot 으로 배달). dead(kill) 툼스톤은 재생 안 함 —
             # kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
             self._replay_conversation(tm)
+            self._requeue(tm, in_flight, queued)
             revived += 1
-        self._adopt_questions(restored)
+        self._adopt_questions(restored, requeued_qids)
         self._save_state()
         self._notify_roster()
         return revived
 
-    def _adopt_questions(self, restored: list[Question]) -> None:
+    def _requeue(self, tm: AgentInstance, in_flight: list, queued: list) -> None:
+        """재시작이 남긴 항목을 되돌린다 (v9.24.5) — 끊긴 런이 맨 앞.
+
+        끊긴 런(처리 중이던 첫 항목)은 계속하기 안내를 붙여 ``request`` 로
+        다시 넣는다: 새 seq·대화창 한 줄·같은 발신자(빚 장부가 같은 상대에게
+        답을 강제). 이미 한 번 이어 하던 항목(``resumed``)이면 감싸지 않고
+        그대로 — 재시작이 거듭돼도 안내가 쌓이지 않는다. 나머지(배치의 다른
+        항목, 줄 서 있던 요청)는 이미 대화창·장부에 있으니 조용히 되넣는다."""
+        from agent_cli.constants import RESUMED_RUN_NOTICE
+
+        rest = list(in_flight[1:]) + list(queued)
+        if in_flight:
+            first = in_flight[0]
+            if first.get("resumed"):
+                rest.insert(0, first)
+            else:
+                self.request(
+                    tm.key,
+                    RESUMED_RUN_NOTICE + str(first.get("text") or ""),
+                    author=str(first.get("author") or "main"),
+                    hop=int(first.get("hop") or 0),
+                    expects_reply=bool(first.get("expects_reply", True)),
+                    question_id=str(first.get("question_id") or ""),
+                    answers=first.get("answers"),
+                    resumed=True,
+                )
+        for item in rest:
+            self._enqueue(tm, item)
+
+    def _adopt_questions(
+        self,
+        restored: list[Question],
+        requeued_qids: set[str] | frozenset = frozenset(),
+    ) -> None:
         """resume 이 복원한 질문을 받아들인다 — 에이전트 복원 **뒤에**.
 
         세 가지를 한다.
@@ -2101,7 +2187,14 @@ class AgentRegistry:
         self.stale_questions = dropped
 
         for q in list(self._questions.values()):
-            undelivered_peer = q.delivered_seq is None and q.target.startswith("agent:")
+            undelivered_peer = (
+                q.delivered_seq is None
+                and q.target.startswith("agent:")
+                # v9.24.5: 저장된 받은편지함에서 이미 되넣은 질문은 건너뛴다
+                # (재배달하면 두 번 온다). 옛 형식 파일엔 받은편지함이 없어
+                # 종전대로 여기서 재배달한다.
+                and q.id not in requeued_qids
+            )
             # ``render=False``: 이 질문은 이미 첫 세션에서 창에 그려졌고
             # ``conversation.jsonl`` 에 남아 `_replay_conversation` 이 방금
             # 재생했다 — 다시 그리면 창에 두 번, 로그에 두 줄이 된다.
@@ -2241,12 +2334,15 @@ class AgentRegistry:
                         else:
                             stash = nxt  # 비-사람 항목은 다음 이터레이션으로 이월
                             break
+                    self._begin_items(tm, batch)
                     if len(batch) == 1:
                         self._handle_request(tm, item, renderer, _disp)
                     else:
                         self._handle_human_batch(tm, batch, renderer, _disp)
                 else:
+                    self._begin_items(tm, [item])
                     self._handle_request(tm, item, renderer, _disp)
+                self._end_items(tm)
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error

@@ -110,6 +110,7 @@ def build_session_state(
     agents: str = "",
     memory: str = "",
     requests: str = "",
+    debts: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
 ) -> str:
@@ -132,6 +133,10 @@ def build_session_state(
     omitted ``answers`` anyway). The tail is re-read every turn and is not
     persisted to history.
 
+    ``debts`` (v9.24.5) is the run's unpaid message/ask debts
+    (``constants.owed_replies_block``) — right after ``requests``: both are
+    "who this run still has to answer".
+
     ``agents`` / ``memory`` are the already-rendered sections
     (``build_live_agents_section(include_state=True)`` / ``memory.render_index``)
     — passed in rather than fetched here so this stays a pure function and the
@@ -140,7 +145,11 @@ def build_session_state(
     """
     # ``requests`` 를 먼저 — 미답 요청은 "지금 무엇을 결정해야 하나" 에
     # 가장 가깝다. 꼬리 안에서도 앞이 눈에 띈다.
-    blocks = [b for b in (requests.strip(), agents.strip(), memory.strip()) if b]
+    blocks = [
+        b
+        for b in (requests.strip(), debts.strip(), agents.strip(), memory.strip())
+        if b
+    ]
     ctx_line = _context_line(used_tokens, budget_tokens, turn, max_turns)
     rules = guidelines.strip()
     if not ctx_line and not blocks and not rules:

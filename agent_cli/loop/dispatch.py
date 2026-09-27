@@ -850,35 +850,18 @@ class TurnDispatcher:
 
     def _debts(self) -> list[dict]:
         """이 런이 아직 갚지 않은 message/ask 빚 — 포트가 없으면 빈 목록."""
-        port = self.cfg.questions
-        fn = getattr(port, "debts", None) if port is not None else None
-        try:
-            return list(fn()) if callable(fn) else []
-        except Exception:
-            return []
+        from agent_cli.constants import open_debts
+
+        return open_debts(self.cfg.questions)
 
     def _debt_lines(self, debts: list[dict]) -> str:
-        """빚 목록을 갚는 수단과 함께. 수단은 **이 루프에 있는 도구**로 고른다
-        — `reply` 는 상주 전용(`port.nonblocking`), main 은 `agent request`.
-        규칙(거부/독촉)과는 별개다: 사람 창 런의 상주는 독촉을 받되 `reply`
-        를 안내받는다."""
-        resident = bool(getattr(self.cfg.questions, "nonblocking", False))
-        lines = []
-        for d in debts:
-            if d["kind"] == "answer":
-                lines.append(
-                    f'  - answer question {d["id"]} from {d["to"]}: "{d["text"][:120]}" '
-                    f'→ answer(id="{d["id"]}", text="...")'
-                )
-            else:
-                key = d["to"].split(":", 1)[-1]
-                how = (
-                    'reply(text="...")'
-                    if resident
-                    else f'agent(mode="request", key="{key}", task="...")'
-                )
-                lines.append(f'  - reply to {d["to"]}: "{d["text"][:120]}" → {how}')
-        return "\n".join(lines)
+        """빚 목록을 갚는 수단과 함께 — 턴 꼬리와 같은 공용 렌더링
+        (``constants.debt_lines``). 수단은 이 루프에 있는 도구로 고른다."""
+        from agent_cli.constants import debt_lines
+
+        return debt_lines(
+            debts, resident=bool(getattr(self.cfg.questions, "nonblocking", False))
+        )
 
     def _debt_tail(self) -> str:
         left = MAX_DEBT_NAGS - self.state.debt_nags

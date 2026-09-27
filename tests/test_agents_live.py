@@ -3862,3 +3862,187 @@ class TestSeqAtomicity:
         assert len(set(seqs)) == n, f"duplicate seqs: {sorted(seqs)}"
         assert sorted(seqs) == list(range(1, n + 1))
         reg.shutdown_all()
+
+
+class TestRestartRequeue:
+    """v9.24.5: 재시작이 받은편지함을 증발시키지 않고, 끊긴 런은 계속하기
+    안내와 함께 맨 앞에 다시 온다. 계기(보드 1zfgc2): 엔진이 11시간짜리 런
+    도중 재시작되자 줄 선 오케스트레이터 메시지 8건이 사라졌고(화면엔 영원한
+    "대기"), 하던 일은 floorCeil.js 를 깨뜨린 채 버려졌다."""
+
+    def _state(self, tmp_path):
+        import json
+
+        return json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
+
+    def _entry(self, tmp_path, key):
+        return next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
+
+    def _busy_with_queue(self, tmp_path):
+        """reg1: task-1 을 처리하는 도중(러너가 막힘) task-2·3 이 줄 선다."""
+        gate = threading.Event()
+        started = threading.Event()
+
+        def runner(query, ctx, **kw):
+            started.set()
+            gate.wait(5)
+            return _FakeLoopResult(output=f"done:{query}"), 0.01
+
+        reg1 = make_registry(tmp_path, runner=runner)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.request(key, "task-1")
+        assert started.wait(3)
+        reg1.request(key, "task-2")
+        reg1.request(key, "task-3")
+        return reg1, key, gate
+
+    def test_queue_and_in_flight_are_on_disk(self, tmp_path, renderer):
+        reg1, key, gate = self._busy_with_queue(tmp_path)
+        e = self._entry(tmp_path, key)
+        assert [i["text"] for i in e["in_flight"]] == ["task-1"]
+        assert [i["text"] for i in e["inbox"]] == ["task-2", "task-3"]
+        gate.set()
+        assert wait_until(lambda: self._entry(tmp_path, key)["inbox"] == [])
+        assert wait_until(lambda: self._entry(tmp_path, key)["in_flight"] == [])
+        reg1.shutdown_all()
+
+    def test_restart_mid_run_resumes_first_then_the_queue(self, tmp_path, renderer):
+        from agent_cli.constants import RESUMED_RUN_NOTICE
+
+        reg1, key, gate = self._busy_with_queue(tmp_path)
+        # 프로세스가 죽은 것과 같다 — reg1 을 정리하지 않고 같은 폴더로 복원
+        rec = _RecordingRunner()
+        reg2 = make_registry(tmp_path, runner=rec)
+        assert reg2.restore() == 1
+        assert wait_until(lambda: len(rec.queries()) == 3)
+        first, second, third = rec.queries()
+        assert first == RESUMED_RUN_NOTICE + "task-1"  # 끊긴 런이 맨 앞, 안내와 함께
+        assert (second, third) == ("task-2", "task-3")  # 줄 선 순서 그대로
+        # 새 요청은 복원분과 seq 가 겹치지 않는다
+        assert reg2.get(key).queued >= 4
+        gate.set()
+        reg1.shutdown_all()
+        reg2.shutdown_all()
+
+    def test_continuation_keeps_the_requester_and_shows_in_the_channel(
+        self, tmp_path, renderer
+    ):
+        import json
+
+        from agent_cli.constants import RESUMED_RUN_NOTICE
+
+        reg1, key, gate = self._busy_with_queue(tmp_path)
+        rec = _RecordingRunner()
+        reg2 = make_registry(tmp_path, runner=rec)
+        reg2.restore()
+        assert wait_until(lambda: len(rec.queries()) >= 1)
+        conv = [
+            json.loads(line)
+            for line in (tmp_path / "agents" / key / "conversation.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        cont = [c for c in conv if c["text"].startswith(RESUMED_RUN_NOTICE)]
+        assert len(cont) == 1 and cont[0]["author"] == "main"  # 원래 발신자
+        gate.set()
+        reg1.shutdown_all()
+        reg2.shutdown_all()
+
+    def test_finished_run_is_not_resumed(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        reg1.request(key, "done-task")
+        assert wait_until(reg1.has_pending_replies)
+        assert wait_until(lambda: self._entry(tmp_path, key)["in_flight"] == [])
+        reg1.shutdown_all()
+        rec = _RecordingRunner()
+        reg2 = make_registry(tmp_path, runner=rec)
+        reg2.restore()
+        assert wait_until(lambda: reg2.get(key).state == "idle")
+        time.sleep(0.2)
+        assert rec.queries() == []  # 끝난 런엔 계속하기 안내가 없다
+        reg2.shutdown_all()
+
+    def test_notice_is_not_stacked_on_repeated_restarts(self, tmp_path, renderer):
+        """이어 하던 중 또 재시작되면 그 항목을 다시 감싸지 않는다."""
+        import json
+
+        from agent_cli.constants import RESUMED_RUN_NOTICE
+
+        reg1, key, gate = self._busy_with_queue(tmp_path)
+        gate2 = threading.Event()
+        started2 = threading.Event()
+
+        def blocking(query, ctx, **kw):
+            started2.set()
+            gate2.wait(5)
+            return _FakeLoopResult(output="x"), 0.01
+
+        reg2 = make_registry(tmp_path, runner=blocking)
+        reg2.restore()  # 계속하기 항목으로 런을 시작하고 막힌다
+        assert started2.wait(3)
+        e = self._entry(tmp_path, key)
+        assert e["in_flight"][0].get("resumed") is True
+        rec = _RecordingRunner()
+        reg3 = make_registry(tmp_path, runner=rec)
+        reg3.restore()
+        assert wait_until(lambda: len(rec.queries()) >= 1)
+        assert rec.queries()[0] == RESUMED_RUN_NOTICE + "task-1"  # 한 겹뿐
+        assert json.dumps(rec.queries()).count("[session restarted]") == 1
+        gate.set()
+        gate2.set()
+        for r in (reg1, reg2, reg3):
+            r.shutdown_all()
+
+    def test_old_format_manifest_still_restores(self, tmp_path, renderer):
+        """받은편지함 필드가 없는 옛 agents.json — 종전대로 되살아나고 끝."""
+        import json
+
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+        data = self._state(tmp_path)
+        for e in data["agents"]:
+            e.pop("inbox", None)
+            e.pop("in_flight", None)
+        (tmp_path / "agents.json").write_text(json.dumps(data), encoding="utf-8")
+        rec = _RecordingRunner()
+        reg2 = make_registry(tmp_path, runner=rec)
+        assert reg2.restore() == 1
+        assert wait_until(lambda: reg2.get(key).state == "idle")
+        time.sleep(0.2)
+        assert rec.queries() == []
+        reg2.shutdown_all()
+
+    def test_requeued_question_is_not_delivered_twice(self, tmp_path, renderer):
+        """저장된 받은편지함이 되넣은 질문은 질문 재배달(②)이 건너뛴다."""
+        gate = threading.Event()
+        started = threading.Event()
+
+        def runner(query, ctx, **kw):
+            if query == "work":
+                started.set()
+                gate.wait(5)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg1 = make_registry(tmp_path, runner=runner)
+        asker, _ = reg1.spawn()
+        target, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(target).state == "idle")
+        reg1.request(target, "work")
+        assert started.wait(3)
+        qid, err = reg1.register_question(asker, f"agent:{target}", "Q-unique?")
+        assert err == ""
+        rec = _RecordingRunner()
+        reg2 = make_registry(tmp_path, runner=rec)
+        reg2.restore()
+        asked = f"[question {qid} from {asker}]: Q-unique?"
+        assert wait_until(lambda: any(asked in q for q in rec.queries()))
+        time.sleep(0.3)
+        # 질문 배달만 센다 — 뒤따르는 "(no answer …)" 닫기 알림은 별개
+        assert sum(asked in q for q in rec.queries()) == 1
+        gate.set()
+        reg1.shutdown_all()
+        reg2.shutdown_all()

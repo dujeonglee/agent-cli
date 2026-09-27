@@ -550,3 +550,65 @@ class TestGuidelinesInTail:
             used_tokens=90, budget_tokens=100, guidelines="## Task Guidelines\n- r"
         )
         assert out.index("## Task Guidelines") < out.index("nearly full")
+
+
+_REPLY = {
+    "kind": "reply",
+    "to": "agent:agt-orch",
+    "id": "",
+    "text": "floorCeil 고쳐줘",
+}
+_ANSWER = {"kind": "answer", "to": "agent:agt-a", "id": "q-1", "text": "포트는?"}
+
+
+class TestOwedRepliesInTail:
+    """v9.24.5: peer 가 보낸 요청·질문(빚)을 매 턴 꼬리에 싣는다. 전엔 사람
+    요청(Open Requests)만 보였고 peer 빚은 ``complete`` 가 거절될 때에야
+    드러났다 — 상주 에이전트의 런은 바로 그 peer 요청 때문에 있는데도."""
+
+    def test_block_renders_each_debt_with_its_settling_tool(self):
+        from agent_cli.constants import owed_replies_block
+
+        out = owed_replies_block([_REPLY, _ANSWER], resident=True)
+        assert out.startswith("## Owed Replies")
+        assert 'reply to agent:agt-orch: "floorCeil 고쳐줘" → reply(text="...")' in out
+        assert 'answer(id="q-1", text="...")' in out
+
+    def test_main_loop_settles_a_reply_with_agent_request(self):
+        from agent_cli.constants import owed_replies_block
+
+        out = owed_replies_block([_REPLY], resident=False)
+        assert 'agent(mode="request", key="agt-orch"' in out
+        assert "reply(text=" not in out
+
+    def test_no_debts_no_block(self):
+        from agent_cli.constants import owed_replies_block
+
+        assert owed_replies_block([], resident=True) == ""
+
+    def test_debts_sit_after_requests_in_the_state_block(self):
+        out = build_session_state(
+            requests="## Open Requests\n- r1", debts="## Owed Replies\n- d"
+        )
+        assert out.startswith(SESSION_STATE_HEADER)
+        assert out.index("## Open Requests") < out.index("## Owed Replies")
+
+    def test_loop_tail_carries_the_ports_debts(self, tmp_path):
+        class _Port:
+            nonblocking = True
+
+            def debts(self):
+                return [_REPLY]
+
+        caller, _ = _caller(tmp_path, questions=_Port())
+        out = caller._build_session_state(10_000)
+        assert "## Owed Replies" in out and 'reply(text="...")' in out
+
+    def test_broken_or_missing_port_is_silent(self, tmp_path):
+        class _Broken:
+            def debts(self):
+                raise RuntimeError("x")
+
+        for port in (None, object(), _Broken()):
+            caller, _ = _caller(tmp_path, questions=port)
+            assert "Owed Replies" not in caller._build_session_state(10_000)
