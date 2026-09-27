@@ -316,3 +316,89 @@ class TestXmlFcSameClass:
             "<tool_call>\n<function=complete>\n</function>\n</tool_call>"
         )
         assert [o.action for o in t2.ops] == ["complete"]
+
+
+class TestXmlFcInlineCodeIsQuoted:
+    """v9.24.8: 인라인 코드(한 줄 안의 `…` 쌍)도 인용이다. 형식을 설명하는
+    모델은 태그를 인라인 코드로 연달아 적는다 — 세그먼트 자격(①)을 통과해
+    `NAME` 이 첫 op 가 되고, 모르는 도구 거부가 뒤의 실호출까지 실행하지 않은
+    채 턴을 버렸다(사고 유도 실험 B, 8회 모두). 문장은 그 실험의 실제 출력."""
+
+    XWF = get("xml_fc")
+    REAL = (
+        "\n\n<tool_call>\n<function=shell>\n<parameter=command>cat c.txt</parameter>"
+        "\n</function>\n</tool_call>"
+    )
+    PROSE_KO = (
+        "포맷 설명부터: 도구 호출은 `<tool_call>` 블록 하나에 담는다. 그 안에 "
+        "`<function=이름>`으로 실행할 도구를 지정한 후, `<parameter=키>값</parameter>` "
+        "형태로 각 인자를 넣고, 마지막으로 `</function>`으로 닫는다."
+    )
+    PROSE_EN = (
+        "Tool-call format, spelled out: each call is wrapped in `<tool_call>` … "
+        "`</tool_call>`; inside it `<function=NAME>` gives the tool name, and each "
+        "argument is its own `<parameter=KEY>raw value</parameter>` block."
+    )
+
+    @pytest.mark.parametrize("prose", [PROSE_KO, PROSE_EN], ids=["ko", "en"])
+    def test_format_explanation_does_not_become_an_op(self, prose):
+        turn = self.XWF.parse_turn(prose + self.REAL)
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("shell", {"command": "cat c.txt"})
+        ]
+        assert turn.parse_stage == 1
+
+    def test_inline_quoted_real_call_alone_is_still_rescued(self):
+        """전부 인용이면 드리프트로 보고 수용 — 펜스와 같은 관용."""
+        turn = self.XWF.parse_turn(
+            "`<tool_call><function=shell><parameter=command>ls</parameter>"
+            "</function></tool_call>`"
+        )
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("shell", {"command": "ls"})
+        ]
+
+    def test_backticks_inside_a_value_do_not_mask_calls(self):
+        raw = (
+            "<tool_call>\n<function=shell>\n<parameter=command>echo `date` `x`"
+            "</parameter>\n</function>\n</tool_call>\n"
+            "<tool_call>\n<function=read_file>\n<parameter=path>a.py</parameter>"
+            "\n</function>\n</tool_call>"
+        )
+        turn = self.XWF.parse_turn(raw)
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("shell", {"command": "echo `date` `x`"}),
+            ("read_file", {"path": "a.py"}),
+        ]
+
+    def test_unpaired_backtick_on_a_line_masks_nothing(self):
+        """쌍은 한 줄 안에서만 — 서로 다른 줄의 고아 백틱 둘이 사이의 실호출을
+        가리면, 뒤에 비인용 실호출이 있을 때 앞 호출이 유실된다."""
+        second = self.REAL.replace("cat c.txt", "ls")
+        raw = "a stray ` here" + self.REAL + "\nand another ` there" + second
+        turn = self.XWF.parse_turn(raw)
+        assert [o.action_input["command"] for o in turn.ops] == ["cat c.txt", "ls"]
+
+    def test_fence_ticks_are_not_inline_pairs(self):
+        """``` 의 백틱은 인라인 쌍을 만들지 않는다 — 펜스 규칙이 그대로 동작."""
+        raw = (
+            "```\n<tool_call>\n<function=shell>\n<parameter=command>rm</parameter>"
+            "\n</function>\n</tool_call>\n```\n실제 호출:" + self.REAL
+        )
+        turn = self.XWF.parse_turn(raw)
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("shell", {"command": "cat c.txt"})
+        ]
+
+    def test_documented_limit_unfenced_example_at_line_start(self):
+        """한계(문서화): 펜스·인라인 코드 없이 줄 첫머리에 적은 완전한 예시는
+        실호출과 구분할 수 없다 — 문법으로도 파서로도. 예시를 펜스에 적는
+        것만이 대책이다(실험 B 시험 2회차에서 실제로 나온 모양)."""
+        raw = (
+            "예:\n\n<tool_call>\n<function=read_file>\n<parameter=path>x</parameter>"
+            "\n</function>\n</tool_call>" + self.REAL
+        )
+        assert [o.action for o in self.XWF.parse_turn(raw).ops] == [
+            "read_file",
+            "shell",
+        ]

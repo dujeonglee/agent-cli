@@ -317,6 +317,51 @@ class TestWhatTheGrammarForbids:
         )
 
 
+class TestNoCallInsideTheThinking:
+    """v9.24.8: xml_fc 의 사고 구간은 호출 여는 태그를 못 담는다. 라이브 보드
+    — 상주 에이전트가 닫지 않은 사고 속에서 `<tool_call><function=read_file>…`
+    을 22분 반복(루프백 캡처). 사고 속 호출은 실행되지 않는다."""
+
+    @pytest.fixture
+    def compiled(self, compiler):
+        wf = get("xml_fc")
+        return compiler.compile_grammar(
+            wf.grammar(_tools("xml_fc", True), thinking_open=True)
+        )
+
+    CALL = (
+        "<tool_call>\n<function=read_file>\n<parameter=path>a</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+
+    def test_call_opener_inside_the_thinking_is_blocked(self, compiled):
+        assert not _accepts(
+            compiled, "plan\n" + self.CALL + "\n</think>\n\n" + self.CALL
+        )
+        m = xgr.GrammarMatcher(compiled)
+        assert m.accept_string("I will read it.\n")
+        assert not m.accept_string("<tool_call>")
+
+    def test_the_way_out_is_closing_the_thinking(self, compiled):
+        assert _accepts(compiled, "plan\n</think>\n\n" + self.CALL)
+
+    def test_ordinary_angle_brackets_stay_free(self, compiled):
+        """`<` 가 든 평범한 생각은 전부 통과 — 막는 건 여는 태그 전체뿐.
+        닫는 태그 `</tool_call>` 도 글로는 쓸 수 있다(실행될 수 없는 모양)."""
+        think = "a < b, x<<2, <div>hi</div>, </p>, <tool, <tool_cal, </tool_call>"
+        assert _accepts(compiled, think + "\n</think>\n\n" + self.CALL)
+
+    def test_json_think_region_is_unchanged(self, compiler):
+        wf = get("json_fc")
+        c = compiler.compile_grammar(
+            wf.grammar(_tools("json_fc", False), thinking_open=True)
+        )
+        assert _accepts(
+            c,
+            'see <tool_call> here\n</think>\n\nx\n\n[{"action": "complete", "result": "r"}]',
+        )
+
+
 class TestFreeFormSchemas:
     """MCP 도구처럼 키를 열거하지 않는 스키마 — 문법이 모든 키를 막으면 그 도구는
     영영 못 부른다. `allows_extra_keys` 가 True 면 임의 키를 허용한다."""

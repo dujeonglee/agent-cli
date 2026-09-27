@@ -87,14 +87,26 @@ _PARAM_CLOSED = re.compile(
 #      비인용 후보가 있을 때만** 제외한다. 전부 펜스 안이면 모델이 실호출을
 #      펜스로 감싼 드리프트이므로 그대로 수용(기존 관용 유지). 홀수 ``` 는
 #      쌍을 못 이뤄 아무것도 가리지 않는다 — 파라미터 값 속 고아 펜스가
-#      뒤쪽 실호출을 가리는 사고 방지.
+#      뒤쪽 실호출을 가리는 사고 방지. **인라인 코드(한 줄 안의 `…` 쌍)도
+#      인용이다 (v9.24.8).** 형식을 설명하는 모델은 태그를 인라인 코드로
+#      연달아 적는다(`<function=NAME>` … `<parameter=KEY>값</parameter>`) —
+#      ①을 통과해 `NAME` 이 첫 op 가 되고, 모르는 도구 거부가 뒤의 실호출까지
+#      실행하지 않은 채 턴을 버렸다(유도 실험 8회 중 8회). 실호출은 인라인
+#      코드 안에 오지 않는다(문법이 켜져 있으면 줄 첫머리에서만 시작).
 _FENCE_TICKS = re.compile(r"```")
+# 한 줄 안의 단일 백틱 쌍 — ``` 의 일부인 백틱은 제외.
+_INLINE_CODE = re.compile(r"(?<!`)`(?!`)[^`\n]+`(?!`)")
 
 
 def _fence_spans(text: str) -> list[tuple[int, int]]:
-    """Balanced ``` pair spans. An unpaired trailing fence masks nothing."""
+    """Quoted spans: balanced ``` pairs, then inline code spans outside them.
+    An unpaired trailing fence masks nothing."""
     ticks = [m.start() for m in _FENCE_TICKS.finditer(text)]
-    return [(ticks[i], ticks[i + 1] + 3) for i in range(0, len(ticks) - 1, 2)]
+    spans = [(ticks[i], ticks[i + 1] + 3) for i in range(0, len(ticks) - 1, 2)]
+    for m in _INLINE_CODE.finditer(text):
+        if not any(a <= m.start() < b for a, b in spans[: len(ticks) // 2]):
+            spans.append((m.start(), m.end()))
+    return spans
 
 
 def _call_opens(text: str) -> list[re.Match]:
@@ -345,7 +357,9 @@ class XmlFcFormat(WireFormat):
             tool_rule_name,
         )
 
-        pre, pre_rules = think_prefix(thinking_open)
+        # 사고 구간에는 호출 여는 태그를 못 쓴다(v9.24.8) — 사고 속 호출은
+        # 실행되지 않고, 라이브 보드에서 그 반복이 22분 폭주를 만들었다.
+        pre, pre_rules = think_prefix(thinking_open, forbid=("<tool_call>",))
         # EBNF literals: ``\n`` is the two-character escape the grammar
         # dialect reads (raw strings), never a Python newline.
         # 종결 도구(complete·run_skill)는 마지막 호출로만 — 뒤엔 공백과 EOS

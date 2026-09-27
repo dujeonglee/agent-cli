@@ -70,6 +70,31 @@ class TestGrammarPieces:
         assert pre == 'think "</think>\\n\\n" '
         assert rules.startswith("think ::= ") and '"</think" [^>]' in rules
 
+    def test_not_containing_several_literals_is_a_trie(self):
+        """v9.24.8: 여러 문자열 — 공통 접두 뒤 깨는 글자는 어느 문자열도 잇지
+        않는 글자들. 한 문자열이면 종전 규칙과 바이트까지 같다(다른 문법의
+        모양·비용 불변)."""
+        rule = not_containing("t", ("</think>", "<tool_call>"))
+        assert rule.startswith("t ::= ([^<] | ")
+        assert '"<" [^/t]' in rule  # 공통 접두 `<` 뒤 — 둘 다 잇지 않는 글자
+        assert '"</think" [^>]' in rule and '"<tool_call" [^>]' in rule
+        assert not_containing("b", ("</p>",)) == not_containing("b", "</p>")
+
+    def test_think_prefix_forbid(self):
+        assert think_prefix(True, ()) == think_prefix(True)  # 기본은 종전 그대로
+        _pre, rules = think_prefix(True, ("<tool_call>",))
+        assert '"<tool_call" [^>]' in rules and '"</think" [^>]' in rules
+        assert think_prefix(False, ("<tool_call>",)) == ("", "")
+
+    def test_only_xml_forbids_its_call_opener_in_the_think_region(self):
+        """xml 만 먼저(v9.24.8, 사용자 결정) — json 의 여는 시퀀스(빈 줄 뒤
+        `[`)를 사고에서 막으면 목록 표기까지 막힌다."""
+        xml = get("xml_fc").grammar(_tools(["shell"], "xml_fc"), thinking_open=True)
+        js = get("json_fc").grammar(_tools(["shell"], "json_fc"), thinking_open=True)
+        think = lambda g: next(ln for ln in g.split("\n") if ln.startswith("think ::="))
+        assert '"<tool_call" [^>]' in think(xml)
+        assert "tool" not in think(js)
+
     def test_prose_is_line_based_and_unbounded(self):
         """줄 단위: xml 은 어떤 줄도 `<tool_call>` 로 시작 못 함, json 은 빈 줄 뒤
         (또는 첫 줄)만 `[` 로 시작 못 함. 생각 속 `[`/`<` 는 그 외 어디서나

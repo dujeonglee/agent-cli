@@ -59,22 +59,39 @@ def _rule_name(text: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in text)
 
 
-def _not_containing_alts(literal: str, extra_forbidden: str = "") -> str:
+def _not_containing_alts(
+    literal: str | tuple[str, ...], extra_forbidden: str = ""
+) -> str:
     """The alternatives (one step of text) that cannot complete ``literal``:
     a character that cannot start it, or a proper prefix of it followed by a
     character that breaks it. Wrapped by the callers in ``( )*`` (unbounded)
-    or ``( ){0,n}`` (bounded)."""
-    first = literal[0]
-    alts = [f"[^{_cls(first + extra_forbidden)}]"]
-    for i in range(1, len(literal)):
-        prefix = literal[:i]
-        nxt = literal[i]
+    or ``( ){0,n}`` (bounded).
+
+    ``literal`` may be several strings (v9.24.8 — the think region forbids
+    both ``</think>`` and ``<tool_call>``): the prefixes form a trie, and
+    after each prefix the breaking characters are those that continue NONE
+    of the strings. One string yields exactly the former rule."""
+    lits = (literal,) if isinstance(literal, str) else tuple(literal)
+    firsts = "".join(dict.fromkeys(lit[0] for lit in lits))
+    alts = [f"[^{_cls(firsts + extra_forbidden)}]"]
+    prefixes = sorted({lit[:i] for lit in lits for i in range(1, len(lit))})
+    for prefix in prefixes:
+        nxt = "".join(
+            dict.fromkeys(
+                lit[len(prefix)]
+                for lit in lits
+                if lit.startswith(prefix) and len(lit) > len(prefix)
+            )
+        )
         alts.append(f'"{_esc(prefix)}" [^{_cls(nxt + extra_forbidden)}]')
     return " | ".join(alts)
 
 
-def not_containing(name: str, literal: str, extra_forbidden: str = "") -> str:
-    """Rule ``name`` = any text that does not contain ``literal``.
+def not_containing(
+    name: str, literal: str | tuple[str, ...], extra_forbidden: str = ""
+) -> str:
+    """Rule ``name`` = any text that does not contain ``literal`` (or any of
+    several literals).
 
     The rule can end anywhere, so text that ends with a prefix of the
     literal (``…</param``) is still accepted — and the closing tag that
@@ -154,7 +171,7 @@ def json_value_rule(prop_schema: dict) -> str:
     }.get(t or "", "j_value")
 
 
-def think_prefix(thinking_open: bool) -> tuple[str, str]:
+def think_prefix(thinking_open: bool, forbid: tuple[str, ...] = ()) -> tuple[str, str]:
     """``(root-prefix, rules)`` for a generation that starts inside an open
     ``<think>`` block (the chat template opened it; the model must close it
     before the visible turn). When ``thinking_open`` is False the template
@@ -162,10 +179,19 @@ def think_prefix(thinking_open: bool) -> tuple[str, str]:
 
     Verified live: with thinking on and a grammar that lacks this prefix,
     the whole constrained output stays inside the think channel.
+
+    ``forbid`` (v9.24.8): extra strings the think region may not contain —
+    xml_fc passes its call opener ``<tool_call>``. A call written inside the
+    thinking is never executed (the parser strips thinking first) and it is
+    the one shape the harness cannot rescue: live board, a resident agent
+    repeated ``<tool_call><function=read_file>…`` inside an unclosed think
+    block for 22 minutes (loopback capture). Blocked, the model closes the
+    block and calls for real — induction test 0/8 leaks vs 4/8 unblocked,
+    all 16 normal stops; cost unchanged (0.0025 ms/token, +0.04 s compile).
     """
     if not thinking_open:
         return "", ""
-    return 'think "</think>\\n\\n" ', not_containing("think", "</think>")
+    return 'think "</think>\\n\\n" ', not_containing("think", ("</think>", *forbid))
 
 
 def _line_alts(opener: str) -> str:
