@@ -35,10 +35,12 @@ from agent_cli.wire_formats import get
 from agent_cli.wire_formats.grammar import (
     JSON_NONBLANK_STRING,
     JSON_RULES,
+    call_sequence_rules,
     json_value_rule,
     nonblank_not_containing,
     not_containing,
     prose_rule,
+    terminal_tools,
     think_prefix,
 )
 from tests.loop_ports import TEST_PORTS
@@ -113,8 +115,10 @@ class TestJsonFcGrammar:
         lines = g.splitlines()
         assert lines[0] == 'root ::= ( ops | prose "\\n\\n" ops | prose )'
         assert prose_rule("prose", "[", after_blank_line=True) in g
-        assert 'ops ::= "[" j_ws ( op ( j_ws "," j_ws op )* )? j_ws "]"' in g
-        assert "op ::= t_shell | t_write_file | t_complete" in g  # complete 는 항상
+        assert 'ops ::= "[" j_ws ( calls )? j_ws "]"' in g
+        # complete 는 항상 — 종결 도구라 배열의 마지막 op 로만 (v9.24.6)
+        assert "calls_p ::= ( t_shell | t_write_file )" in g
+        assert "calls_t ::= ( t_complete )" in g
         # 도구 이름과 키가 열거된다 — 모르는 도구/키는 낼 수 없다
         assert 't_shell ::= "{" j_ws "\\"action\\"" j_ws ":" j_ws "\\"shell\\""' in g
         # command 는 minLength 1 — 비어있지 않은 JSON 문자열 (v9.24.4)
@@ -155,28 +159,29 @@ class TestXmlFcGrammar:
         g = get("xml_fc").grammar(_tools(["shell", "write_file"], "xml_fc"))
         lines = g.splitlines()
         # 바로 호출 | 산문 + 개행 + 호출 | 산문만; 호출 사이·끝은 공백 관용(ws)
-        assert (
-            lines[0] == 'root ::= ( call | prose "\\n" call | prose ) ( ws call )* ws'
-        )
+        assert lines[0] == 'root ::= ( calls | prose "\\n" calls | prose ) ws'
         assert prose_rule("prose", "<tool_call>") in g  # 줄 첫 오프너만 제외
         assert "ws ::= [ \\t\\r\\n]*" in g
-        assert 'call ::= "<tool_call>" ws fn ws "</tool_call>"' in g
-        assert "fn ::= t_shell | t_write_file | t_complete" in g
+        assert (
+            'calls_p ::= "<tool_call>" ws ( t_shell | t_write_file ) ws "</tool_call>"'
+            in g
+        )
+        assert 'calls_t ::= "<tool_call>" ws ( t_complete ) ws "</tool_call>"' in g
         # 본문은 </parameter> 를 담을 수 없을 뿐 — `<`, `</`, 펜스 전부 허용
         assert 'body ::= ([^<] | "<" [^/] | "</" [^p]' in g
         # 인라인·블록 스타일 모두 — body 가 앞뒤 개행을 품는다 (수용 감사가 잡은 초판 오류)
         # path 는 minLength 1(비어있지 않은 본문), content 는 빈 파일이 정당해 body
-        nb = nonblank_not_containing("</parameter>")
+        # (v9.24.6: 비어있지 않은 본문은 규칙 하나 ``body_nb`` 를 참조)
+        assert f"body_nb ::= {nonblank_not_containing('</parameter>')}" in g
         assert (
             't_write_file ::= "<function=write_file>" ws ( ( "<parameter=path>" '
-            + nb
-            + ' "</parameter>" ws | "<parameter=content>" body "</parameter>" ws ) )* '
-            '"</function>"'
+            'body_nb "</parameter>" ws | "<parameter=content>" body "</parameter>" '
+            'ws ) )* "</function>"'
         ) in g
 
     def test_thinking_open_variant(self):
         g = get("xml_fc").grammar(_tools(["shell"], "xml_fc"), thinking_open=True)
-        assert g.startswith('root ::= think "</think>\\n\\n" ( call | prose')
+        assert g.startswith('root ::= think "</think>\\n\\n" ( calls | prose')
 
 
 class TestBaseDefault:
@@ -457,7 +462,7 @@ class TestLoopWiring:
             wire_format="xml_fc",
         )
         g = provider.call.call_args.kwargs["settings"].grammar
-        assert '"<tool_call>" ws fn' in g
+        assert 'calls_p ::= "<tool_call>" ws (' in g
 
     def test_inspector_snapshot_carries_the_grammar_beside_the_prompt(self, tmp_path):
         """문법은 프롬프트 섹션이 아니다 — 섹션 목록은 손대지 않고 별도 인자
@@ -554,8 +559,22 @@ class TestSchemaDeclarationsAreSingleSource:
             ("write_file", "path"),
             ("edit_file", "path"),
             ("memory", "summary"),
+            # v9.24.6 — 소통 도구: 빈 값은 핸들러가 어차피 거부한다("empty
+            # message — nothing sent"). 라이브 보드에서 빈 `message` 가 출력
+            # 한도까지 반복됐다 — 문법이 그 값을 애초에 못 내게 한다.
+            ("message", "to"),
+            ("message", "text"),
+            ("reply", "text"),
+            ("answer", "id"),
+            ("answer", "text"),
+            ("ask", "question"),
+            ("run_skill", "name"),
+            ("fetch", "url"),
         ):
             assert ml(tool, key) == 1, (tool, key)
+        from agent_cli.tools.virtual import AskTool
+
+        assert AskTool.RESIDENT_PARAMETERS["properties"]["question"]["minLength"] == 1
         # 빈 값이 정당한 인자 — 빈 파일, 빈 pos 의 append
         assert ml("write_file", "content") is None
         assert ml("edit_file", "pos") is None
@@ -580,6 +599,14 @@ class TestValidatorAgreesWithTheGrammar:
         ok, err, _ = validate_tool_input("read_file", {"path": " "})
         assert not ok and err == "Field 'path' for 'read_file' must not be empty."
 
+    def test_blank_fetch_url_rejected(self):
+        """fetch 는 가로채지 않는 일반 도구 — 문법이 꺼진 서버에서는 검증기가
+        같은 규칙으로 되돌린다(v9.24.6)."""
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("fetch", {"url": "  "})
+        assert not ok and err == "Field 'url' for 'fetch' must not be empty."
+
     def test_optional_empty_string_is_still_dropped_not_rejected(self):
         """선택 인자의 "" 는 종전대로 '안 보냄' 으로 벗겨진다 — enum 위반이
         아니다(모델이 선택 인자를 비워 보내는 습관을 형식 오류로 만들지 않음)."""
@@ -587,3 +614,62 @@ class TestValidatorAgreesWithTheGrammar:
 
         ok, _err, norm = validate_tool_input("memory", {"mode": "list", "type": ""})
         assert ok and "type" not in norm
+
+
+class TestTerminalCallsEndTheTurn:
+    """v9.24.6: 종결 도구(``Tool.terminal``)는 마지막 호출로만. 계기 — 라이브
+    보드(2026-09-27): 상주 에이전트가 ``complete`` 뒤에 EOS 대신 또
+    ``<tool_call>`` 을 열어 ``complete`` 다섯 번 → 빈 ``message`` 반복으로
+    32K 출력 한도까지 25분. 디스패치는 종결 호출 뒤를 보지도 않으니, 그 뒤의
+    호출은 무의미하고 하니스가 구제할 수 없는 유일한 모양이다."""
+
+    def test_terminal_set_is_read_from_the_tool_declaration(self):
+        from agent_cli.tools.registry import TOOLS
+
+        declared = {n for n, t in TOOLS.items() if getattr(t, "terminal", False)}
+        assert {"complete", "run_skill"} <= declared
+        assert terminal_tools(TOOLS) == frozenset(declared)
+        # 레지스트리가 모르는 이름(MCP·가짜)은 종결이 아니다
+        assert terminal_tools(["mcp__x__t", "nope"]) == frozenset()
+
+    def test_no_terminal_tool_keeps_the_former_shape(self):
+        rules = call_sequence_rules(
+            "calls", ["shell", "read_file"], call=lambda f: f"( {f} )", sep="S "
+        )
+        assert rules == [
+            "calls ::= calls_p ( S calls_p )*",
+            "calls_p ::= ( t_shell | t_read_file )",
+        ]
+
+    def test_terminal_only_last(self):
+        rules = call_sequence_rules(
+            "calls", ["shell", "complete"], call=lambda f: f"<{f}>", sep="S "
+        )
+        assert rules[0] == ("calls ::= calls_t | calls_p ( S calls_p )* ( S calls_t )?")
+        assert "calls_p ::= <t_shell>" in rules
+        assert "calls_t ::= <t_complete>" in rules
+
+    def test_only_terminal_tools(self):
+        rules = call_sequence_rules("calls", ["complete"], call=lambda f: f, sep="S ")
+        assert rules == ["calls ::= calls_t", "calls_t ::= t_complete"]
+
+    @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+    def test_both_formats_use_the_shared_sequence(self, fmt):
+        g = get(fmt).grammar(_tools(["shell", "run_skill"], fmt))
+        assert "calls ::= calls_t | calls_p (" in g
+        assert "t_complete" in g.split("calls_t ::=")[1].split("\n")[0]
+        assert "t_run_skill" in g.split("calls_t ::=")[1].split("\n")[0]
+        assert "t_complete" not in g.split("calls_p ::=")[1].split("\n")[0]
+
+
+class TestNonblankBodyIsOneRule:
+    """v9.24.6: xml 의 비어있지 않은 본문은 규칙 하나(``body_nb``)를 참조한다.
+    인자마다 식을 인라인하던 v9.24.4 는 xgrammar 컴파일이 인자 수에 비례해
+    늘었다 — minLength 인자 8개 추가로 1.5s → 3.5s(실제 248K 토크나이저).
+    규칙 하나로 0.17s, 그 구간 토큰당 0.002 → 0.045ms(생성 50ms/토큰의 0.1%)."""
+
+    def test_defined_once_and_referenced_by_every_nonblank_param(self):
+        g = get("xml_fc").grammar(_tools(None, "xml_fc"))
+        assert g.count("body_nb ::=") == 1
+        for key in ("command", "summary", "text", "question", "url"):
+            assert f'"<parameter={key}>" body_nb "</parameter>"' in g, key

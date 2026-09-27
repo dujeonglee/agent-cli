@@ -258,6 +258,7 @@ class FetchTool(Tool):
         "properties": {
             "url": {
                 "type": "string",
+                "minLength": 1,
                 "description": "URL to fetch",
             },
             "depth": {

@@ -322,7 +322,8 @@ class XmlFcFormat(WireFormat):
         return _render_params({"result": action_input})
 
     def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
-        """prose → one or more ``<tool_call><function=NAME>…</function></tool_call>``.
+        """prose → one or more ``<tool_call><function=NAME>…</function></tool_call>``,
+        a terminal call (``complete``) only last.
 
         Parameter bodies are raw text that may not contain ``</parameter>``
         (the only thing that ends them) — file contents, code, HTML all pass.
@@ -333,6 +334,7 @@ class XmlFcFormat(WireFormat):
         the parser's ``\\s*`` — exact-newline literals masked ``\n\n`` tokens
         for nothing the parser could not read."""
         from agent_cli.wire_formats.grammar import (
+            call_sequence_rules,
             enum_literals,
             grammar_params,
             nonblank_not_containing,
@@ -346,18 +348,30 @@ class XmlFcFormat(WireFormat):
         pre, pre_rules = think_prefix(thinking_open)
         # EBNF literals: ``\n`` is the two-character escape the grammar
         # dialect reads (raw strings), never a Python newline.
+        # 종결 도구(complete·run_skill)는 마지막 호출로만 — 뒤엔 공백과 EOS
+        # 뿐이다(v9.24.6, grammar.call_sequence_rules).
         lines = [
-            rf'root ::= {pre}( call | prose "\n" call | prose ) ( ws call )* ws',
+            rf'root ::= {pre}( calls | prose "\n" calls | prose ) ws',
             prose_rule("prose", "<tool_call>"),
             r"ws ::= [ \t\r\n]*",
-            r'call ::= "<tool_call>" ws fn ws "</tool_call>"',
-            "fn ::= " + " | ".join(tool_rule_name(n) for n, *_ in tools),
+            *call_sequence_rules(
+                "calls",
+                [n for n, *_ in tools],
+                call=lambda fn: rf'"<tool_call>" ws ( {fn} ) ws "</tool_call>"',
+                sep="ws ",
+            ),
             not_containing("body", "</parameter>"),
             r"pname ::= [A-Za-z0-9_.\-]+",  # 자유 스키마 도구의 임의 키 — 파서의 [\w.\-]+
         ]
         if pre_rules:
             lines.append(pre_rules)
-        nonblank = nonblank_not_containing("</parameter>")
+        # 비어있지 않은 본문은 규칙 하나로 두고 참조한다 — 인자마다 식을
+        # 인라인하면 xgrammar 컴파일이 인자 수만큼 늘었다(minLength 인자 8개
+        # 추가로 1.5s → 3.5s, 실제 토크나이저). 식 안의 문자 반복은 규칙 안에
+        # 그대로라 토큰당 비용은 `body` 와 같다(모듈 노트의 함정은 star 안의
+        # 하위 규칙 참조).
+        lines.append(f"body_nb ::= {nonblank_not_containing('</parameter>')}")
+        nonblank = "body_nb"
         for name, flat, extra_ok in tools:
             # 인라인(`<parameter=k>x</parameter>`)과 블록(`<parameter=k>\nx\n
             # </parameter>`) 둘 다 — 이 형식의 렌더(render_action_input)와

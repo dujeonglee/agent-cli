@@ -464,3 +464,104 @@ class TestSchemaEnforcement:
         compiled = compiler.compile_grammar(wf.grammar([("mcp__x__t", flat, True)]))
         assert _accepts(compiled, _call(fmt, "mcp__x__t", [("q", "a"), ("other", "v")]))
         assert _accepts(compiled, _call(fmt, "mcp__x__t", [("other", "v")]))
+
+
+def _calls(fmt: str, calls: list[tuple[str, list[tuple[str, object]]]]) -> str:
+    """Several calls in one turn, canonical shape, prose first."""
+    if fmt == "json_fc":
+        ops = ", ".join(
+            "{"
+            + ", ".join(
+                [f'"action": {json.dumps(t)}']
+                + [f"{json.dumps(k)}: {json.dumps(v)}" for k, v in ps]
+            )
+            + "}"
+            for t, ps in calls
+        )
+        return f"x\n\n[{ops}]"
+    return "x\n" + "\n".join(_call(fmt, t, ps).split("\n", 1)[1] for t, ps in calls)
+
+
+_DONE = ("complete", [("result", "done")])
+
+
+@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+class TestTerminalCallIsLast:
+    """v9.24.6: 종결 호출(``complete``·``run_skill``) 뒤에는 공백과 EOS 뿐.
+    라이브 보드(2026-09-27): ``complete`` 뒤에 EOS 대신 ``<tool_call>`` 을 또
+    열어 ``complete`` 다섯 번 → 빈 ``message`` 반복으로 32K 한도까지 25분."""
+
+    @pytest.fixture
+    def compiled(self, compiler, fmt):
+        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt, True)))
+
+    def test_calls_before_the_terminal_one_are_fine(self, compiled, fmt):
+        for seq in (
+            [_DONE],
+            [("reply", [("text", "A")]), _DONE],
+            [("shell", [("command", "ls")]), ("read_file", [("path", "/a")]), _DONE],
+            [("shell", [("command", "ls")]), ("read_file", [("path", "/a")])],
+        ):
+            turn = _calls(fmt, seq)
+            assert _accepts(compiled, turn), turn
+            ops = get(fmt).parse_turn(turn).ops
+            assert [o.action for o in ops] == [t for t, _ in seq]
+
+    def test_nothing_after_a_terminal_call(self, compiled, fmt):
+        for after in (
+            _DONE,  # 실측: complete 반복
+            ("message", [("to", "main"), ("text", "hi")]),  # 실측: 그 뒤 message
+            ("reply", [("text", "A")]),
+            ("shell", [("command", "ls")]),
+        ):
+            turn = _calls(fmt, [("reply", [("text", "A")]), _DONE, after])
+            assert not _accepts(compiled, turn), turn
+        skill = ("run_skill", [("name", "review")])
+        assert _accepts(compiled, _calls(fmt, [skill]))
+        assert not _accepts(compiled, _calls(fmt, [skill, _DONE]))
+
+    def test_the_runaway_is_cut_at_its_first_step(self, compiled, fmt):
+        """폭주의 첫 걸음 — 닫힌 ``complete`` 뒤 새 호출 오프너 — 이 그 자리에서
+        막히고, 그 지점에서 EOS 는 열려 있다(모델이 끝낼 길이 남는다)."""
+        done = _calls(fmt, [_DONE])
+        opener = "\n<tool_call>" if fmt == "xml_fc" else None
+        m = xgr.GrammarMatcher(compiled)
+        if opener is None:  # json: 닫는 `]` 전 — 다음 op 의 `,` 가 막힌다
+            head = done[: -len("]")]
+            assert m.accept_string(head.encode().decode("latin-1"))
+            assert not m.accept_string(", ")
+            assert m.accept_string("]")
+        else:
+            assert m.accept_string(done.encode().decode("latin-1"))
+            assert not m.accept_string(opener)
+        assert m.accept_token(_STOP)
+
+    def test_no_prose_after_the_terminal_call(self, compiled, fmt):
+        done = _calls(fmt, [_DONE])
+        assert not _accepts(compiled, done + "\nDone.")
+        # xml 은 종전대로 호출 뒤 공백 관용(ws), json 은 종전대로 `]` 에서 끝
+        assert _accepts(compiled, done + "\n\n") is (fmt == "xml_fc")
+
+
+@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+@pytest.mark.parametrize("resident", [False, True], ids=["main", "resident"])
+def test_blank_communication_values_are_blocked(compiler, fmt, resident):
+    """v9.24.6: 빈 값이 무의미한 소통 인자 — 실측에서 빈 ``message`` 가
+    한도까지 반복됐다. 핸들러가 어차피 거부하는 값을 애초에 못 낸다."""
+    compiled = compiler.compile_grammar(get(fmt).grammar(_tools(fmt, resident)))
+    cases = [
+        ("message", [("to", "main"), ("text", "{}")]),
+        ("message", [("to", "{}"), ("text", "hi")]),
+        ("reply", [("text", "{}")]),
+        ("answer", [("id", "q-1"), ("text", "{}")]),
+        ("answer", [("id", "{}"), ("text", "yes")]),
+        ("ask", [("question", "{}")]),
+        ("run_skill", [("name", "{}")]),
+        ("fetch", [("url", "{}")]),
+    ]
+    for tool, params in cases:
+        for blank in ("", " ", "\n"):
+            bad = [(k, v.format(blank) if v == "{}" else v) for k, v in params]
+            assert not _accepts(compiled, _call(fmt, tool, bad)), (tool, bad)
+        good = [(k, "v" if v == "{}" else v) for k, v in params]
+        assert _accepts(compiled, _call(fmt, tool, good)), (tool, good)

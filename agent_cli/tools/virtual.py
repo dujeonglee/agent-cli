@@ -84,6 +84,7 @@ class AskTool(Tool):
         "properties": {
             "question": {
                 "type": "string",
+                "minLength": 1,
                 "description": "The question to ask the user.",
             },
         },
@@ -102,7 +103,11 @@ class AskTool(Tool):
     RESIDENT_PARAMETERS: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "question": {"type": "string", "description": "The question."},
+            "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The question.",
+            },
             "to": {
                 "type": "string",
                 "enum": ["requester", "user"],
@@ -150,10 +155,12 @@ class MessageTool(Tool):
         "properties": {
             "to": {
                 "type": "string",
+                "minLength": 1,
                 "description": "Target agent key (from `## Live Agents`), or 'main'.",
             },
             "text": {
                 "type": "string",
+                "minLength": 1,
                 "description": "The message to send.",
             },
         },
@@ -188,7 +195,7 @@ class ReplyTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "text": {"type": "string", "description": "Your reply."},
+            "text": {"type": "string", "minLength": 1, "description": "Your reply."},
         },
         "required": ["text"],
     }
@@ -217,10 +224,12 @@ class AnswerTool(Tool):
         "properties": {
             "id": {
                 "type": "string",
+                "minLength": 1,
                 "description": "The question id, e.g. 'q-1a2b'.",
             },
             "text": {
                 "type": "string",
+                "minLength": 1,
                 "description": "Your answer.",
             },
         },
@@ -252,6 +261,7 @@ class RunSkillTool(Tool):
         "properties": {
             "name": {
                 "type": "string",
+                "minLength": 1,
                 "description": "Skill name (e.g. 'optimize', 'review-code', 'summarize', 'test')",
             },
             "arguments": {

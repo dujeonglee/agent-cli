@@ -349,3 +349,56 @@ def tool_params_expr(
 
 def tool_rule_name(tool: str) -> str:
     return f"t_{_rule_name(tool)}"
+
+
+# ── Terminal calls end the turn (v9.24.6) ─────────────────────────────
+#
+# A turn may hold several calls (parallel reads, ``reply`` then
+# ``complete``), but a TERMINAL tool (``Tool.terminal`` — ``complete``,
+# ``run_skill``) ends it: dispatch runs it and never looks at what follows.
+# So a call after a terminal one is meaningless — and it is the one shape the
+# harness cannot rescue. Live board run (2026-09-27): a resident agent, after
+# its ``reply``, emitted ``complete`` and then, instead of EOS, another
+# ``<tool_call>`` — five ``complete``s with reworded results, drifting into
+# blank ``message`` calls — until the 32K output cap, 25 minutes later. The
+# retry finished in one call. Here the only continuation after a terminal
+# call's close is whitespace and EOS.
+
+
+def terminal_tools(names) -> frozenset[str]:
+    """Which of ``names`` end a turn — read from ``Tool.terminal``, the same
+    declaration dispatch branches on, so the grammar and the loop cannot
+    disagree. Names the registry does not know (MCP, test fakes) are not
+    terminal."""
+    from agent_cli.tools.registry import TOOLS
+
+    return frozenset(
+        n for n in names if getattr(TOOLS.get(n), "terminal", False) is True
+    )
+
+
+def call_sequence_rules(seq: str, names: list[str], *, call, sep: str) -> list[str]:
+    """Rules for ``seq``: one or more calls, a terminal call only LAST.
+
+    ``call(alts)`` wraps a ``|``-joined set of tool rules into this format's
+    single-call shape (xml: the ``<tool_call>`` envelope; json: the op
+    object as is). ``sep`` is what goes between two calls. With no terminal
+    tool the result is exactly the former ``call ( sep call )*``."""
+    term = terminal_tools(names)
+    plain = [tool_rule_name(n) for n in names if n not in term]
+    final = [tool_rule_name(n) for n in names if n in term]
+    lines = []
+    if plain:
+        lines.append(f"{seq}_p ::= {call(' | '.join(plain))}")
+    if final:
+        lines.append(f"{seq}_t ::= {call(' | '.join(final))}")
+    if plain and final:
+        lines.insert(
+            0,
+            f"{seq} ::= {seq}_t | {seq}_p ( {sep}{seq}_p )* ( {sep}{seq}_t )?",
+        )
+    elif plain:
+        lines.insert(0, f"{seq} ::= {seq}_p ( {sep}{seq}_p )*")
+    else:
+        lines.insert(0, f"{seq} ::= {seq}_t")
+    return lines

@@ -649,7 +649,8 @@ class JsonFcFormat(WireFormat):
         return json.dumps(action_input, ensure_ascii=False)
 
     def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
-        """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops.
+        """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops,
+        a terminal op (``complete``) only last.
 
         Tool and key names are enumerated (an unknown tool or key cannot be
         emitted); values follow their declared JSON type; required-ness and
@@ -660,6 +661,7 @@ class JsonFcFormat(WireFormat):
         from agent_cli.wire_formats.grammar import (
             JSON_NONBLANK_STRING,
             JSON_RULES,
+            call_sequence_rules,
             enum_literals,
             grammar_params,
             json_value_rule,
@@ -682,8 +684,15 @@ class JsonFcFormat(WireFormat):
         lines = [
             rf'root ::= {pre}( ops | prose "\n\n" ops | prose )',
             prose_rule("prose", "[", after_blank_line=True),
-            'ops ::= "[" j_ws ( op ( j_ws "," j_ws op )* )? j_ws "]"',
-            "op ::= " + " | ".join(tool_rule_name(n) for n, *_ in tools),
+            # 종결 도구(complete·run_skill)는 배열의 마지막 op 로만 — 뒤엔
+            # `]` 와 EOS 뿐이다(v9.24.6, grammar.call_sequence_rules).
+            'ops ::= "[" j_ws ( calls )? j_ws "]"',
+            *call_sequence_rules(
+                "calls",
+                [n for n, *_ in tools],
+                call=lambda fn: f"( {fn} )",
+                sep='j_ws "," j_ws ',
+            ),
         ]
         if pre_rules:
             lines.append(pre_rules)
