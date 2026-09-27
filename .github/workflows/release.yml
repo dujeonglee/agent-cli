@@ -32,11 +32,11 @@ jobs:
 
       # 그 태그의 트리에서 빌드한다 — 버전이 `agent_cli.__version__` 에서
       # 나오므로 기본 브랜치로 찍으면 옛 태그에 최신 버전이 붙는다.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.t.outputs.tag }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
