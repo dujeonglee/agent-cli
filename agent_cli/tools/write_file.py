@@ -147,7 +147,11 @@ class WriteFileTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path to save"},
+            "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "File path to save",
+            },
             "content": {"type": "string", "description": "File content"},
         },
         "required": ["path", "content"],

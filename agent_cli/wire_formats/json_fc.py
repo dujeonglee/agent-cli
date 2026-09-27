@@ -658,10 +658,14 @@ class JsonFcFormat(WireFormat):
         ``[`` so the first ``[`` is the array — and is bounded, which is the
         whole point against reasoning runaways."""
         from agent_cli.wire_formats.grammar import (
+            JSON_NONBLANK_STRING,
             JSON_RULES,
+            enum_literals,
+            grammar_params,
             json_value_rule,
             prose_rule,
             think_prefix,
+            tool_params_expr,
             tool_rule_name,
         )
 
@@ -684,17 +688,29 @@ class JsonFcFormat(WireFormat):
         if pre_rules:
             lines.append(pre_rules)
         for name, flat, extra_ok in tools:
-            params = [
-                rf'"\"{k}\"" j_ws ":" j_ws {json_value_rule(prop)}'
-                for k, (prop, _req) in flat.items()
-            ]
+            # 열거값·비어있지 않음·강제 존재(v9.24.4)는 공용 조각이 정하고,
+            # 여기는 이 형식에서 인자 하나를 쓰는 모양(`"k": value`)만 준다.
+            items: dict[str, str] = {}
+            forced = []
+            for p in grammar_params(flat):
+                if p.kind == "enum":
+                    value = enum_literals(p.enum, quote='"')
+                elif p.kind == "text_nonempty":
+                    value = JSON_NONBLANK_STRING
+                else:
+                    value = json_value_rule(p.prop)
+                items[p.name] = rf'"\"{p.name}\"" j_ws ":" j_ws {value}'
+                if p.forced:
+                    forced.append(p.name)
             if extra_ok:  # 자유 스키마(MCP 등) — 아무 키나, 값은 JSON 값
-                params.append("j_member")
-            plist = " | ".join(params) if params else None
-            body = f' ( j_ws "," j_ws ( {plist} ) )*' if plist else ""
+                items["*"] = "j_member"
+            expr, extra_rules = tool_params_expr(
+                name, items, forced, sep='j_ws "," j_ws '
+            )
+            lines.extend(extra_rules)
             lines.append(
                 rf'{tool_rule_name(name)} ::= "{{" j_ws "\"action\"" j_ws ":" j_ws '
-                rf'"\"{name}\""{body} j_ws "}}"'
+                rf'"\"{name}\"" {expr} j_ws "}}"'
             )
         lines.append(JSON_RULES)
         return "\n".join(lines)

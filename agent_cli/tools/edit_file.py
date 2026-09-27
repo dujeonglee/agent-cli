@@ -15,6 +15,9 @@ from agent_cli.tools.read_file import (
 )
 from agent_cli.tools.result import ToolResult
 
+#: Edit operations — single source for the schema ``enum`` and the checks.
+EDIT_OPS = ("replace", "append", "prepend", "delete")
+
 
 def _normalize_for_fuzzy(text: str) -> str:
     """Normalize text for fuzzy comparison."""
@@ -109,7 +112,7 @@ def _op_to_span(ed: dict, file_lines: list[str], on_fuzzy) -> tuple[int, int, li
             i = resolve(pos)
             return i, i, lines
         return 0, 0, lines
-    raise RuntimeError(f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.")
+    raise RuntimeError(f"Unknown edit op: '{op}'. Use {'|'.join(EDIT_OPS)}.")
 
 
 def _find_overlap(spans: list[tuple]) -> str | None:
@@ -217,8 +220,8 @@ def _validate_semantics(args: dict) -> str | None:
     호출자(tool_edit_file)가 같은 구현을 소비. ``op`` 기본값 ""(누락=
     오류)은 기존 tool_edit_file 과 바이트 동일 의미론."""
     op = args.get("op", "")
-    if op not in ("replace", "append", "prepend", "delete"):
-        return f"Unknown edit op: '{op}'. Use replace|append|prepend|delete."
+    if op not in EDIT_OPS:
+        return f"Unknown edit op: '{op}'. Use {'|'.join(EDIT_OPS)}."
     for field in ("pos", "end"):
         v = args.get(field)
         if v is not None and not isinstance(v, str):
@@ -347,11 +350,14 @@ class EditFileTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path"},
+            "path": {"type": "string", "minLength": 1, "description": "File path"},
             "op": {
                 "type": "string",
+                "enum": list(EDIT_OPS),
                 "description": "replace | append | prepend | delete",
             },
+            # pos 에는 minLength 를 두지 않는다 — append/prepend 가 빈 pos 를
+            # 파일 끝/처음으로 받는 분기가 실제로 돈다(문서화되진 않았지만).
             "pos": {
                 "type": "string",
                 "description": "Hashline ref (e.g. '5#VR') of the target line",

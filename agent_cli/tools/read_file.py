@@ -324,7 +324,11 @@ class ReadFileTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path to read"},
+            "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "File path to read",
+            },
             "line_start": {
                 "type": "integer",
                 "description": "Start line (1-based). Omit to read from beginning.",

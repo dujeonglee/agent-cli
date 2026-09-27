@@ -333,9 +333,13 @@ class XmlFcFormat(WireFormat):
         the parser's ``\\s*`` — exact-newline literals masked ``\n\n`` tokens
         for nothing the parser could not read."""
         from agent_cli.wire_formats.grammar import (
+            enum_literals,
+            grammar_params,
+            nonblank_not_containing,
             not_containing,
             prose_rule,
             think_prefix,
+            tool_params_expr,
             tool_rule_name,
         )
 
@@ -353,18 +357,34 @@ class XmlFcFormat(WireFormat):
         ]
         if pre_rules:
             lines.append(pre_rules)
+        nonblank = nonblank_not_containing("</parameter>")
         for name, flat, extra_ok in tools:
             # 인라인(`<parameter=k>x</parameter>`)과 블록(`<parameter=k>\nx\n
             # </parameter>`) 둘 다 — 이 형식의 렌더(render_action_input)와
             # 파서가 둘 다 쓴다. body 가 앞뒤 개행을 품을 수 있으니 한 규칙으로
             # 충분하다. 블록만 요구하던 초판은 형식 자체의 캐노니컬 렌더를
             # 막았다(xgrammar 수용 감사 — tests/test_decoding_grammar_accept.py).
-            params = [rf'"<parameter={k}>" body "</parameter>" ws' for k in flat]
+            # 열거값·비어있지 않음·강제 존재(v9.24.4)는 공용 조각이 정하고,
+            # 여기는 이 형식에서 인자 하나를 쓰는 모양만 준다.
+            items: dict[str, str] = {}
+            forced = []
+            for p in grammar_params(flat):
+                if p.kind == "enum":
+                    # 파서는 블록 스타일의 앞뒤 개행 하나를 벗긴다 — 같은 관용.
+                    value = rf'"\n"? {enum_literals(p.enum)} "\n"?'
+                elif p.kind == "text_nonempty":
+                    value = nonblank
+                else:
+                    value = "body"
+                items[p.name] = rf'"<parameter={p.name}>" {value} "</parameter>" ws'
+                if p.forced:
+                    forced.append(p.name)
             if extra_ok:
-                params.append(r'"<parameter=" pname ">" body "</parameter>" ws')
-            plist = f" ( {' | '.join(params)} )*" if params else ""
+                items["*"] = r'"<parameter=" pname ">" body "</parameter>" ws'
+            expr, extra_rules = tool_params_expr(name, items, forced)
+            lines.extend(extra_rules)
             lines.append(
-                rf'{tool_rule_name(name)} ::= "<function={name}>" ws{plist} "</function>"'
+                rf'{tool_rule_name(name)} ::= "<function={name}>" ws {expr} "</function>"'
             )
         return "\n".join(lines)
 

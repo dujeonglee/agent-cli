@@ -203,11 +203,18 @@ class TestWhatTheGrammarForbids:
         # 실제 토크나이저에서 65ms/토큰, 합성 어휘에서 11ms)도 이 구간이 잡는다.
         body = json.dumps('caf\u00e9 "q" \\ tab\t nl\n ' * 6)[1:-1]
         text = "think (?<![A-Za-z]) and b3 << 24 | a[0] " * 3 + "\n\n"
+        # v9.24.4: 열거값·강제 존재(mode 를 맨 뒤에)·비어있지 않은 값 경로도.
         text += (
-            '[{"action": "write_file", "path": "/a", "content": "' + body + '"}]'
+            '[{"action": "write_file", "path": "/a", "content": "' + body + '"}, '
+            '{"action": "memory", "type": "note", "summary": "s", "mode": "add"}]'
             if fmt == "json_fc"
             else "<tool_call>\n<function=write_file>\n<parameter=path>/a</parameter>\n"
-            "<parameter=content>\n" + body + "\n</parameter>\n</function>\n</tool_call>"
+            "<parameter=content>\n"
+            + body
+            + "\n</parameter>\n</function>\n</tool_call>\n"
+            "<tool_call>\n<function=memory>\n<parameter=type>note</parameter>\n"
+            "<parameter=summary>s</parameter>\n<parameter=mode>add</parameter>\n"
+            "</function>\n</tool_call>"
         )
         m = xgr.GrammarMatcher(compiled)
         bm = xgr.allocate_token_bitmask(1, vocab_size)
@@ -355,3 +362,105 @@ class TestFreeFormSchemas:
                 "<parameter=limit>3</parameter>\n</function>\n</tool_call>"
             )
         assert _accepts(compiled, turn)
+
+
+def _call(fmt: str, tool: str, params: list[tuple[str, object]]) -> str:
+    """One call in ``fmt``'s canonical shape, params in the given order."""
+    if fmt == "json_fc":
+        body = "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in params)
+        return f'x\n\n[{{"action": {json.dumps(tool)}{body}}}]'
+    lines = "".join(
+        f"<parameter={k}>{v if isinstance(v, str) else json.dumps(v)}</parameter>\n"
+        for k, v in params
+    )
+    return f"x\n<tool_call>\n<function={tool}>\n{lines}</function>\n</tool_call>"
+
+
+@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+class TestSchemaEnforcement:
+    """v9.24.4: 문법이 모양을 넘어 스키마 일부를 강제한다 — 두 형식이 같은
+    공용 조각(grammar_params · tool_params_expr)을 쓰므로 같은 사례가 두
+    형식에서 똑같이 통과·거부돼야 한다. 계기: 보드 1zfgc2 의 빈 summary·빈
+    type·빠진 mode/op — 문법 안의 출력이라 하니스가 한 턴씩 되돌려야 했다."""
+
+    @pytest.fixture
+    def compiled(self, compiler, fmt):
+        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt, False)))
+
+    # ── 열거값 ──
+    def test_enum_values_only(self, compiled, fmt):
+        ok = [("mode", "add"), ("type", "note"), ("summary", "s")]
+        assert _accepts(compiled, _call(fmt, "memory", ok))
+        assert not _accepts(compiled, _call(fmt, "memory", [("mode", "ad")]))
+        assert not _accepts(
+            compiled, _call(fmt, "memory", [("mode", "add"), ("type", "fact")])
+        )
+        assert not _accepts(
+            compiled, _call(fmt, "memory", [("mode", "add"), ("type", "")])
+        )
+
+    def test_enum_on_every_declared_tool(self, compiled, fmt):
+        # 원래 enum 이 있던 도구(code_index·agent)도, 새로 선언한 도구도
+        assert not _accepts(compiled, _call(fmt, "code_index", [("mode", "fetchh")]))
+        assert _accepts(compiled, _call(fmt, "code_index", [("mode", "build")]))
+        assert not _accepts(
+            compiled,
+            _call(fmt, "edit_file", [("path", "/a"), ("op", "swap"), ("pos", "1#AA")]),
+        )
+
+    # ── 강제 존재 (필수 + 열거값) ──
+    def test_required_enum_param_must_appear_in_any_order(self, compiled, fmt):
+        assert not _accepts(
+            compiled, _call(fmt, "memory", [("type", "note"), ("summary", "s")])
+        )
+        # 순서 무관 — 맨 뒤에 와도
+        assert _accepts(
+            compiled,
+            _call(fmt, "memory", [("type", "note"), ("summary", "s"), ("mode", "add")]),
+        )
+        assert not _accepts(
+            compiled, _call(fmt, "edit_file", [("path", "/a"), ("pos", "1#AA")])
+        )
+        assert _accepts(
+            compiled,
+            _call(
+                fmt, "edit_file", [("pos", "1#AA"), ("path", "/a"), ("op", "delete")]
+            ),
+        )
+
+    def test_free_text_required_params_are_not_forced(self, compiled, fmt):
+        """자유 텍스트 필수 인자는 강제하지 않는다 — 억지로 쓰게 하면 명령·경로를
+        지어낸다. 빠지면 검증기가 한 번 되돌린다(원칙: 구제할 수 있으면 막지 않음)."""
+        assert _accepts(compiled, _call(fmt, "shell", [("timeout", 5)]))
+        assert _accepts(compiled, _call(fmt, "write_file", [("content", "c")]))
+
+    # ── 비어있지 않은 값 (minLength) ──
+    def test_min_length_rejects_empty_and_blank(self, compiled, fmt):
+        # json 의 이스케이프된 개행도 공백 — 검증기(strip)와 같은 판정
+        for blank in ("", "   ", "\n", "\t \n"):
+            assert not _accepts(
+                compiled,
+                _call(fmt, "memory", [("mode", "add"), ("summary", blank)]),
+            ), repr(blank)
+            assert not _accepts(compiled, _call(fmt, "shell", [("command", blank)]))
+        assert _accepts(compiled, _call(fmt, "shell", [("command", " ls")]))
+
+    def test_empty_is_kept_where_it_is_meaningful(self, compiled, fmt):
+        # 빈 파일 쓰기, 빈 pos 의 append(파일 끝) — minLength 를 두지 않았다
+        assert _accepts(
+            compiled, _call(fmt, "write_file", [("path", "/a"), ("content", "")])
+        )
+        assert _accepts(
+            compiled,
+            _call(fmt, "edit_file", [("path", "/a"), ("op", "append"), ("pos", "")]),
+        )
+
+    def test_free_form_tools_keep_accepting_any_key(self, compiler, fmt):
+        """자유형 도구(MCP 등)는 아무 키나 받는 분기가 선언된 키도 받아, 선언된
+        제약을 문법이 보장하지 않는다(문서화된 한계 — 검증기가 잡는다). 여기서
+        지키는 건 '아무 키나' 가 계속 된다는 것."""
+        wf = get(fmt)
+        flat = {"q": ({"type": "string", "minLength": 1}, True)}
+        compiled = compiler.compile_grammar(wf.grammar([("mcp__x__t", flat, True)]))
+        assert _accepts(compiled, _call(fmt, "mcp__x__t", [("q", "a"), ("other", "v")]))
+        assert _accepts(compiled, _call(fmt, "mcp__x__t", [("other", "v")]))

@@ -14,6 +14,10 @@ from agent_cli import memory
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
+#: The modes ``tool_memory`` dispatches on — single source for the schema
+#: ``enum`` (v9.24.4: the decoding grammar and the validator both read it).
+MODES = ("add", "get", "update", "delete", "list")
+
 
 def _dispatch(args: dict, session_dir) -> ToolResult:
     if session_dir is None:
@@ -68,7 +72,7 @@ def _dispatch(args: dict, session_dir) -> ToolResult:
             return ToolResult(True, output=body)
         return ToolResult(
             False,
-            error=(f"unknown mode '{mode}'. Use add | get | update | delete | list."),
+            error=(f"unknown mode '{mode}'. Use {' | '.join(MODES)}."),
         )
     except memory.MemoryError as ex:
         return ToolResult(False, error=str(ex))
@@ -105,14 +109,17 @@ class MemoryTool(Tool):
         "properties": {
             "mode": {
                 "type": "string",
+                "enum": list(MODES),
                 "description": "add | get | update | delete | list",
             },
             "type": {
                 "type": "string",
+                "enum": list(memory.VALID_TYPES),
                 "description": "failure | discovery | decision | note (add/update/list filter)",
             },
             "summary": {
                 "type": "string",
+                "minLength": 1,
                 "description": "One-line index label (required for add)",
             },
             "detail": {

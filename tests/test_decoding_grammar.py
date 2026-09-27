@@ -33,8 +33,10 @@ from agent_cli.tools.registry import (
 )
 from agent_cli.wire_formats import get
 from agent_cli.wire_formats.grammar import (
+    JSON_NONBLANK_STRING,
     JSON_RULES,
     json_value_rule,
+    nonblank_not_containing,
     not_containing,
     prose_rule,
     think_prefix,
@@ -115,7 +117,8 @@ class TestJsonFcGrammar:
         assert "op ::= t_shell | t_write_file | t_complete" in g  # complete 는 항상
         # 도구 이름과 키가 열거된다 — 모르는 도구/키는 낼 수 없다
         assert 't_shell ::= "{" j_ws "\\"action\\"" j_ws ":" j_ws "\\"shell\\""' in g
-        assert '"\\"command\\"" j_ws ":" j_ws j_string' in g
+        # command 는 minLength 1 — 비어있지 않은 JSON 문자열 (v9.24.4)
+        assert '"\\"command\\"" j_ws ":" j_ws ' + JSON_NONBLANK_STRING in g
         assert '"\\"content\\"" j_ws ":" j_ws j_string' in g
         assert '"\\"answers\\"" j_ws ":" j_ws j_array' in g  # complete 의 answers
         assert g.endswith(JSON_RULES)
@@ -162,9 +165,12 @@ class TestXmlFcGrammar:
         # 본문은 </parameter> 를 담을 수 없을 뿐 — `<`, `</`, 펜스 전부 허용
         assert 'body ::= ([^<] | "<" [^/] | "</" [^p]' in g
         # 인라인·블록 스타일 모두 — body 가 앞뒤 개행을 품는다 (수용 감사가 잡은 초판 오류)
+        # path 는 minLength 1(비어있지 않은 본문), content 는 빈 파일이 정당해 body
+        nb = nonblank_not_containing("</parameter>")
         assert (
-            't_write_file ::= "<function=write_file>" ws ( "<parameter=path>" body '
-            '"</parameter>" ws | "<parameter=content>" body "</parameter>" ws )* '
+            't_write_file ::= "<function=write_file>" ws ( ( "<parameter=path>" '
+            + nb
+            + ' "</parameter>" ws | "<parameter=content>" body "</parameter>" ws ) )* '
             '"</function>"'
         ) in g
 
@@ -465,3 +471,119 @@ class TestLoopWiring:
         seen.clear()
         self._run(tmp_path, self._caps(False), snapshot=seen)
         assert seen[-1][1] is None
+
+
+class TestSchemaEnforcementPieces:
+    """v9.24.4 공용 조각 — 형식과 무관한 부분의 계약."""
+
+    def test_grammar_params_kinds_and_forced(self):
+        from agent_cli.wire_formats.grammar import grammar_params
+
+        flat = {
+            "mode": ({"type": "string", "enum": ["a", "b"]}, True),
+            "tag": ({"type": "string", "enum": ["x"]}, False),
+            "path": ({"type": "string", "minLength": 1}, True),
+            "body": ({"type": "string"}, True),
+            "n": ({"type": "integer"}, False),
+            "v": ({}, False),
+        }
+        ps = {p.name: p for p in grammar_params(flat)}
+        assert ps["mode"].kind == "enum" and ps["mode"].enum == ("a", "b")
+        assert ps["mode"].forced  # 필수 + 열거값
+        assert ps["tag"].kind == "enum" and not ps["tag"].forced  # 선택
+        assert ps["path"].kind == "text_nonempty" and not ps["path"].forced
+        assert ps["body"].kind == "text" and not ps["body"].forced
+        assert ps["n"].kind == "integer" and ps["v"].kind == "any"
+
+    def test_tool_params_expr_without_and_with_forced(self):
+        from agent_cli.wire_formats.grammar import tool_params_expr
+
+        items = {"a": "A", "b": "B"}
+        expr, rules = tool_params_expr("t", items, [], sep="S ")
+        assert expr == "( S ( A | B ) )*" and rules == []
+        expr, rules = tool_params_expr("t", items, ["a"], sep="S ")
+        assert rules == ["p_t ::= ( S ( A | B ) )*"]
+        assert expr == "( p_t S A p_t )"
+        expr, _ = tool_params_expr("t", items, ["a", "b"], sep="")
+        assert expr == "( p_t A p_t B p_t | p_t B p_t A p_t )"  # 모든 순서
+        assert tool_params_expr("t", {}, [], sep="") == ("", [])
+
+    def test_nonblank_expression_starts_with_a_nonblank_step(self):
+        from agent_cli.wire_formats.grammar import nonblank_not_containing
+
+        e = nonblank_not_containing("</parameter>")
+        assert e.startswith("[ \\t\\r\\n]* ( [^ \\t\\r\\n<] | ")
+        assert "body" not in e  # 인라인 — 하위 규칙 참조는 비용 함정
+
+    @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+    def test_both_formats_emit_the_forced_rule_for_memory(self, fmt):
+        g = get(fmt).grammar(_tools(["memory"], fmt))
+        assert "p_memory ::= " in g
+        line = next(ln for ln in g.splitlines() if ln.startswith("t_memory ::= "))
+        assert "p_memory" in line
+
+
+class TestSchemaDeclarationsAreSingleSource:
+    """스키마의 enum 은 도구 코드가 실제로 분기하는 상수와 같은 객체에서 온다 —
+    문법·검증기·도구 셋이 어긋나지 않는다."""
+
+    def test_enums_come_from_the_tool_constants(self):
+        from agent_cli import memory
+        from agent_cli.tools import monitor_tool
+        from agent_cli.tools.edit_file import EDIT_OPS
+        from agent_cli.tools.memory_tool import MODES as MEMORY_MODES
+        from agent_cli.tools.registry import TOOL_SCHEMAS
+
+        def enum(tool, key):
+            return TOOL_SCHEMAS[tool].parameters["properties"][key]["enum"]
+
+        assert enum("memory", "mode") == list(MEMORY_MODES)
+        assert enum("memory", "type") == list(memory.VALID_TYPES)
+        assert enum("edit_file", "op") == list(EDIT_OPS)
+        assert enum("monitor", "mode") == list(monitor_tool.MODES)
+
+    def test_min_length_only_where_empty_is_meaningless(self):
+        from agent_cli.tools.registry import TOOL_SCHEMAS
+
+        def ml(tool, key):
+            return TOOL_SCHEMAS[tool].parameters["properties"][key].get("minLength")
+
+        for tool, key in (
+            ("shell", "command"),
+            ("read_file", "path"),
+            ("write_file", "path"),
+            ("edit_file", "path"),
+            ("memory", "summary"),
+        ):
+            assert ml(tool, key) == 1, (tool, key)
+        # 빈 값이 정당한 인자 — 빈 파일, 빈 pos 의 append
+        assert ml("write_file", "content") is None
+        assert ml("edit_file", "pos") is None
+
+
+class TestValidatorAgreesWithTheGrammar:
+    """문법을 못 쓰는 서버에서도 같은 규칙 — 검증기가 같은 선언을 본다."""
+
+    def test_enum_rejected_with_the_allowed_values(self):
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("memory", {"mode": "ad"})
+        assert not ok
+        assert err == (
+            "Field 'mode' for 'memory' must be one of: "
+            "add | get | update | delete | list — got 'ad'."
+        )
+
+    def test_min_length_rejected(self):
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("read_file", {"path": " "})
+        assert not ok and err == "Field 'path' for 'read_file' must not be empty."
+
+    def test_optional_empty_string_is_still_dropped_not_rejected(self):
+        """선택 인자의 "" 는 종전대로 '안 보냄' 으로 벗겨진다 — enum 위반이
+        아니다(모델이 선택 인자를 비워 보내는 습관을 형식 오류로 만들지 않음)."""
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, _err, norm = validate_tool_input("memory", {"mode": "list", "type": ""})
+        assert ok and "type" not in norm

@@ -138,10 +138,13 @@ class TestEmptyStringStripping:
         assert action_input["timeout"] == ""  # original untouched
 
     def test_required_empty_string_not_removed(self):
-        """Empty string on required field should NOT be stripped — validation fails."""
-        ok, _err, _ = validate_tool_input("shell", {"command": ""})
-        # command="" is required and present, but it's an empty string
-        assert ok is True  # type check passes (string), tool itself handles empty
+        """Empty string on a required field is NOT stripped (it would turn into
+        "missing") — it reaches the minLength check (v9.24.4) and is rejected
+        with the field named, the same rule the decoding grammar enforces."""
+        ok, err, _ = validate_tool_input("shell", {"command": ""})
+        assert ok is False and err == "Field 'command' for 'shell' must not be empty."
+        ok, err, _ = validate_tool_input("shell", {"command": "  \n "})
+        assert ok is False and "must not be empty" in err
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""

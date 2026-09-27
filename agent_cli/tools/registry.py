@@ -479,6 +479,28 @@ def validate_tool_input(
                     action_input,
                 )
 
+    # enum · minLength (v9.24.4) — 디코딩 문법이 강제하는 것과 같은 스키마
+    # 선언을 검증기도 본다: 문법을 못 쓰는 서버에서도 규칙이 같아야 한다.
+    for key, value in action_input.items():
+        prop = properties.get(key)
+        if not isinstance(prop, dict):
+            continue
+        enum = prop.get("enum")
+        if enum and value not in enum:
+            allowed = " | ".join(str(v) for v in enum)
+            return (
+                False,
+                f"Field '{key}' for '{tool_name}' must be one of: {allowed} — got {value!r}.",
+                action_input,
+            )
+        min_len = prop.get("minLength") or 0
+        if min_len and isinstance(value, str) and len(value.strip()) < min_len:
+            return (
+                False,
+                f"Field '{key}' for '{tool_name}' must not be empty.",
+                action_input,
+            )
+
     # 6단계 (C7): 도구 의미론 검증 — mode별 조건부 필수/enum/필드 형식.
     # 실패 관찰은 도구가 쓴 짧은 문구 그대로(스키마 전문 비동봉 — 정밀화
     # 결정: shape 실패만 전문 동봉), A5 경로라 SCHEMA_MISMATCH 로 기록됨.

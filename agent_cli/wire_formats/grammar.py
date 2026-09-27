@@ -23,6 +23,9 @@ use ``[^\\n]`` style classes.
 
 from __future__ import annotations
 
+import itertools
+from dataclasses import dataclass, field
+
 #: Prose (the thought before the first tool call): what it may NOT contain is
 #: the format's *opener sequence* (``\n\n[`` / ``\n\n<tool_call>``), never a
 #: bare character, and it is NOT length-bounded. Two Harbor A/B lessons
@@ -207,6 +210,141 @@ def prose_rule(name: str, opener: str, *, after_blank_line: bool = False) -> str
         f"{name}_any ::= [^{nl}]+\n"
         f"{name}_nb ::= {alts}"
     )
+
+
+# ── Schema enforcement (v9.24.4) ─────────────────────────────────────
+#
+# What the grammar enforces beyond the call's SHAPE, and why each is safe
+# (costs measured with the live 248K tokenizer — per-token mask time is
+# unchanged at ~0.004 ms; the one-time compile grows, and the server caches
+# compiled grammars across calls):
+#
+# * ``enum`` values — a parameter with a declared ``enum`` can only take one
+#   of those literals. The model picks among a few words; nothing is invented.
+# * ``minLength >= 1`` strings — the value must hold a non-blank character.
+#   Declared per parameter, not implied by "required": ``write_file.content``
+#   is required yet may legitimately be empty.
+# * FORCED presence — a REQUIRED parameter that is ALSO an enum must appear
+#   (in any order) before the call can close. Only enum-valued ones: forcing
+#   free text would make the model invent a command or path when it meant to
+#   stop; forcing a choice among a few words cannot. Free-text required
+#   parameters stay with the validator (one nudge, then fixed).
+#
+# Free-form tools (``allows_extra_keys`` — MCP and the like) are NOT covered:
+# their any-key alternative also matches a declared key, so a declared
+# constraint can be bypassed through it. Excluding a set of names from the
+# wildcard needs a name-exclusion automaton for little gain; the validator
+# still enforces the same declarations for them.
+#
+# Encoding rules that keep the mask on xgrammar's fast path: character
+# classes and literal alternations only, the non-blank prefix INLINED (a
+# ``body_ne`` sub-rule referencing ``body`` measured 28 ms on some tokens),
+# no bounded group repetition.
+
+
+@dataclass(frozen=True)
+class GrammarParam:
+    """One tool parameter as the grammar sees it — format-agnostic.
+
+    ``kind``: ``"enum"`` · ``"text_nonempty"`` · ``"text"`` · a JSON type
+    name (``"integer"``, ``"number"``, ``"boolean"``, ``"array"``,
+    ``"object"``) · ``"any"``."""
+
+    name: str
+    kind: str
+    prop: dict = field(default_factory=dict, compare=False, hash=False)
+    enum: tuple[str, ...] = ()
+    required: bool = False
+
+    @property
+    def forced(self) -> bool:
+        return self.required and self.kind == "enum"
+
+
+def grammar_params(flat: dict) -> list[GrammarParam]:
+    """``flat_param_schemas`` output → :class:`GrammarParam` list."""
+    out = []
+    for name, (prop, required) in flat.items():
+        prop = prop if isinstance(prop, dict) else {}
+        t = prop.get("type")
+        enum = prop.get("enum")
+        if enum and all(isinstance(v, str) for v in enum):
+            kind = "enum"
+        elif t == "string" and (prop.get("minLength") or 0) >= 1:
+            kind = "text_nonempty"
+        elif t == "string":
+            kind = "text"
+        else:
+            kind = t if isinstance(t, str) else "any"
+        out.append(
+            GrammarParam(
+                name=name,
+                kind=kind,
+                prop=prop,
+                enum=tuple(enum) if kind == "enum" else (),
+                required=bool(required),
+            )
+        )
+    return out
+
+
+def enum_literals(values: tuple[str, ...], quote: str = "") -> str:
+    """``( "a" | "b" )`` — optionally each wrapped in ``quote`` (JSON)."""
+    q = _esc(quote)
+    return "( " + " | ".join(f'"{q}{_esc(v)}{q}"' for v in values) + " )"
+
+
+def nonblank_not_containing(literal: str) -> str:
+    """Inline expression: text that does not contain ``literal`` and holds at
+    least one non-blank character (blank = space, tab, CR, LF).
+
+    Leading blanks, then ONE step of the not-containing automaton whose plain
+    character alternative excludes blanks, then the ordinary continuation —
+    all inline (see the module note on sub-rule cost)."""
+    alts = _not_containing_alts(literal)
+    first = literal[0]
+    step = alts.replace(f"[^{_cls(first)}]", f"[^ \\t\\r\\n{_cls(first)}]", 1)
+    return f"[ \\t\\r\\n]* ( {step} ) ( {alts} )*"
+
+
+#: JSON string holding at least one non-blank character — inline for the
+#: same reason (``j_chars`` is referenced once as a sequence element, the
+#: shape ``j_string`` already has). Blank = raw space/tab/CR/LF AND their
+#: escapes (backslash + n, t, r, f): the validator strips the DECODED value,
+#: so an escaped newline alone must count as blank here too.
+JSON_NONBLANK_STRING = (
+    r'"\"" ( [ \t\n\r] | "\\" [ntrf] )* ( [^"\\ \t\n\r] | "\\" ["\\/b] | "\\u" '
+    r"[0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] ) j_chars " + r'"\""'
+)
+
+
+def tool_params_expr(
+    tool: str, items: dict[str, str], forced: list[str], *, sep: str = ""
+) -> tuple[str, list[str]]:
+    """The parameter part of one tool rule — shared by every format.
+
+    ``items`` maps a parameter name (or an ``"*"`` wildcard for free-form
+    keys) to this format's rendering of ONE occurrence; ``sep`` precedes
+    every occurrence (``""`` for xml_fc, the comma for json_fc). Without
+    forced parameters: any of them, any number of times, in any order —
+    the validator judges required-ness and duplicates. With forced ones:
+    the same free repetition around ONE occurrence of each forced
+    parameter, in every order (at most a handful — n! alternatives).
+    Returns ``(expression, extra_rules)``."""
+    if not items:
+        return "", []
+    any_item = "( " + " | ".join(items.values()) + " )"
+    rep = f"( {sep}{any_item} )*"
+    if not forced:
+        return rep, []
+    rep_rule = f"p_{_rule_name(tool)}"
+    alts = []
+    for perm in itertools.permutations(forced):
+        seq = [rep_rule]
+        for name in perm:
+            seq += [f"{sep}{items[name]}", rep_rule]
+        alts.append(" ".join(seq))
+    return "( " + " | ".join(alts) + " )", [f"{rep_rule} ::= {rep}"]
 
 
 def tool_rule_name(tool: str) -> str:

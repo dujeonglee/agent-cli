@@ -276,7 +276,11 @@ class ShellTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "command": {"type": "string", "description": "Shell command to run"},
+            "command": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Shell command to run",
+            },
             "timeout": {
                 "type": "integer",
                 "description": (

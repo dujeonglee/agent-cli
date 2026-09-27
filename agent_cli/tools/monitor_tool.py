@@ -50,7 +50,11 @@ class MonitorTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "mode": {"type": "string", "description": "add | list | delete"},
+            "mode": {
+                "type": "string",
+                "enum": list(MODES),
+                "description": "add | list | delete",
+            },
             "when": {
                 "type": "object",
                 "description": (
