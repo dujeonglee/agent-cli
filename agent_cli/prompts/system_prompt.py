@@ -1180,7 +1180,19 @@ def build_live_agents_section(
     show_dead = not via_message_tool
     alive = [r for r in rows if r.get("state") != "dead"]
     dead = [r for r in rows if r.get("state") == "dead"] if show_dead else []
+    # 한도 (v9.24.7) — main 꼬리에만. 종전엔 한도가 프롬프트 어디에도 없어
+    # 모델은 넘는 순간의 거부("agent limit reached")로만 알았다. 꼬리는 매 턴
+    # 갱신돼 캐시 비용이 없고, 0개일 때도 싣는다 — 빈 상태에서 한 턴에 여럿을
+    # 띄우는 계획이 한도를 미리 알아야 하는 바로 그 경우다. 서브에이전트
+    # 로스터는 정적이고 spawn 도 못 하니 싣지 않는다.
+    cap = getattr(agent_registry, "max_agents", None)
+    show_cap = include_state and not via_message_tool and isinstance(cap, int)
     if not alive and not dead:
+        if show_cap and cap:
+            return (
+                f"## Live Agents (0/{cap} alive)\n"
+                f"None running. At most {cap} agents can be alive at once."
+            )
         return ""
 
     if via_message_tool:
@@ -1208,7 +1220,15 @@ def build_live_agents_section(
                 'bring one back with `{"mode":"resume","key":"<key>"}` rather '
                 "than spawning a fresh one under the same name."
             )
-    lines = ["## Live Agents", intro]
+    heading = "## Live Agents"
+    if show_cap:
+        heading += f" ({len(alive)}/{cap or '∞'} alive)"
+        if cap and len(alive) >= cap:
+            intro += (
+                f" The limit of {cap} alive agents is reached: a new spawn or "
+                'resume is refused until you `{"mode":"kill","key":"<key>"}` one.'
+            )
+    lines = [heading, intro]
     for s in alive + dead:
         # (v5.0 스냅샷 키 개명 잔재 수정: role → profile)
         who = " · ".join(p for p in (s.get("profile", ""), s.get("name", "")) if p)

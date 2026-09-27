@@ -361,6 +361,22 @@ class TestLoopAssembly:
         out = caller._build_session_state(10_000)
         assert "agt-1" in out and "[idle]" in out
 
+    def test_main_tail_roster_shows_the_agent_limit(self, tmp_path):
+        """v9.24.7: 조립 경로(llm._build_session_state)가 상태 로스터를
+        부르므로 한도가 꼬리에 실린다."""
+
+        class _Reg:
+            max_agents = 2
+
+            def roster_snapshot(self):
+                return [{"key": "agt-1", "state": "busy", "pending_requests": 0}]
+
+            def get(self, key):
+                return None
+
+        caller, _ = _caller(tmp_path, agent_registry=_Reg(), tools_list=["agent"])
+        assert "## Live Agents (1/2 alive)" in caller._build_session_state(10_000)
+
     def test_no_registry_is_safe(self, tmp_path):
         caller, _ = _caller(tmp_path, tools_list=["agent"])
         assert "Live Agents" not in caller._build_session_state(10_000)

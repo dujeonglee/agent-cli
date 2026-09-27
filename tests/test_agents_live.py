@@ -4050,3 +4050,83 @@ class TestRestartRequeue:
         gate.set()
         reg1.shutdown_all()
         reg2.shutdown_all()
+
+
+class TestRosterShowsTheAgentLimit:
+    """v9.24.7: main 꼬리 로스터에 살아 있는 수/한도. 종전엔 한도가
+    프롬프트 어디에도 없어 넘는 순간의 거부로만 알았다."""
+
+    def _section(self, reg, **kw):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        return build_live_agents_section(reg, include_state=True, **kw)
+
+    def test_heading_carries_alive_over_cap(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(3)
+        reg.spawn()
+        k2, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(k2).state == "idle")
+        reg.kill(k2)  # 죽은 개체는 세지 않는다 — alive_count 와 같은 기준
+        out = self._section(reg)
+        assert out.startswith("## Live Agents (1/3 alive)\n")
+        assert "limit" not in out.split("\n", 2)[1]  # 한도 전엔 안내 없음
+        reg.shutdown_all()
+
+    def test_shown_before_the_first_spawn(self, tmp_path, renderer):
+        """빈 상태에서 여럿을 한 번에 띄우는 계획이 한도를 알아야 한다."""
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(4)
+        assert self._section(reg) == (
+            "## Live Agents (0/4 alive)\n"
+            "None running. At most 4 agents can be alive at once."
+        )
+
+    def test_at_the_limit_says_what_is_refused(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(1)
+        reg.spawn()
+        out = self._section(reg)
+        assert out.startswith("## Live Agents (1/1 alive)\n")
+        assert "limit of 1 alive agents is reached" in out
+        assert '"mode":"kill"' in out
+        # 실제 거부와 같은 판정
+        _key, err = reg.spawn()
+        assert err.startswith("agent limit reached (1 alive)")
+        reg.shutdown_all()
+
+    def test_unlimited(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(0)
+        assert self._section(reg) == ""  # 0개·무제한 — 할 말이 없다
+        reg.spawn()
+        assert self._section(reg).startswith("## Live Agents (1/∞ alive)\n")
+        reg.shutdown_all()
+
+    def test_not_on_the_static_or_subagent_rosters(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(3)
+        reg.spawn()
+        # 상태 없는(정적) 로스터·서브에이전트 peer 로스터 — 제목 그대로
+        assert build_live_agents_section(reg).startswith("## Live Agents\n")
+        peer = build_live_agents_section(reg, via_message_tool=True, include_state=True)
+        assert peer.startswith("## Live Agents\n")
+        assert build_live_agents_section(make_registry(tmp_path / "x")) == ""
+        reg.shutdown_all()
+
+    def test_registry_without_a_cap_attribute_is_safe(self):
+        """가짜 레지스트리(테스트·외부)는 max_agents 가 없다 — 종전 출력."""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        class _Reg:
+            def roster_snapshot(self):
+                return [{"key": "agt-1", "state": "idle", "pending_requests": 0}]
+
+            def get(self, key):
+                return None
+
+        assert build_live_agents_section(_Reg(), include_state=True).startswith(
+            "## Live Agents\n"
+        )
