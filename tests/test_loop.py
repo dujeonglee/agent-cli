@@ -4742,10 +4742,22 @@ class TestHeadlessThinkingControl:
             "reasoning_effort": "high",
         }
 
-    def test_unset_is_empty(self, monkeypatch):
+    def test_unset_is_off(self, monkeypatch):
+        """v9.24.8: 기본은 사고 끔(사용자 결정) — 라이브 보드에서 사고 구간
+        안의 도구 호출 반복이 출력 한도까지 갔다. 끔을 **명시**한다(Qwen
+        템플릿은 스위치가 없으면 켠다)."""
         from agent_cli.context.manager import default_thinking_override
 
         monkeypatch.delenv("AGENT_CLI_THINKING", raising=False)
+        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
+        assert default_thinking_override() == {"enable_thinking": False}
+        monkeypatch.setenv("AGENT_CLI_THINKING", "bogus")  # 모르는 값도 끔
+        assert default_thinking_override() == {"enable_thinking": False}
+
+    def test_auto_leaves_it_to_the_server(self, monkeypatch):
+        from agent_cli.context.manager import default_thinking_override
+
+        monkeypatch.setenv("AGENT_CLI_THINKING", "auto")
         monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
         assert default_thinking_override() == {}
 

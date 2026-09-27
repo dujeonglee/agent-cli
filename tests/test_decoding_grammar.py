@@ -248,6 +248,35 @@ class TestProviderBody:
         )
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
 
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_default_thinking_off_is_sent_explicitly(
+        self, mock_post, caps_thinking, monkeypatch
+    ):
+        """v9.24.8: 기본 끔이 스위치로 **명시**된다 — Qwen 템플릿은 스위치가
+        없으면 사고를 켠다. effort 는 싣지 않는다(끔에 상충 신호 없음)."""
+        from agent_cli.context.manager import default_thinking_override
+
+        monkeypatch.delenv("AGENT_CLI_THINKING", raising=False)
+        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
+        ov = default_thinking_override()
+        body = self._call(mock_post, caps_thinking, CallSettings(thinking=ov))
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert "reasoning_effort" not in body
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_default_off_sends_nothing_to_models_without_thinking(self, mock_post):
+        """사고 미지원 모델(gpt-4o 등)엔 종전대로 아무것도 안 보낸다 — 모르는
+        필드를 거부하는 서버 보호(v8.21.1 게이트)."""
+        from agent_cli.context.manager import default_thinking_override
+
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=1024, supports_thinking=False
+        )
+        body = self._call(
+            mock_post, caps, CallSettings(thinking=default_thinking_override())
+        )
+        assert "chat_template_kwargs" not in body and "reasoning_effort" not in body
+
 
 # ── 4. capabilities: 플래그 · 엔트리 왕복 · 프로브 ────
 
@@ -352,7 +381,16 @@ class TestLoopWiring:
             supports_grammar=grammar,
         )
 
-    def _run(self, tmp_path, caps, *, wire="json_fc", env_off=False, snapshot=None):
+    def _run(
+        self,
+        tmp_path,
+        caps,
+        *,
+        wire="json_fc",
+        env_off=False,
+        snapshot=None,
+        thinking=True,
+    ):
         from agent_cli.context.manager import ContextManager
 
         provider = MagicMock()
@@ -360,6 +398,8 @@ class TestLoopWiring:
             LLMResponse(content=json.dumps([{"action": "complete", "result": "ok"}]))
         ]
         ctx = ContextManager(session_dir=tmp_path)
+        if thinking:  # v9.24.8: 기본은 끔 — 열린 think 경로를 보려면 켠다
+            ctx.set_thinking_override(enable_thinking=True)
         if env_off:
             ctx.set_grammar_override(False)
         with patch(
@@ -382,8 +422,13 @@ class TestLoopWiring:
     def test_grammar_passed_when_the_server_enforces(self, tmp_path):
         settings = self._run(tmp_path, self._caps(True))
         g = settings.grammar
-        assert g and g.startswith("root ::= think ")  # supports_thinking → 열린 think
+        assert g and g.startswith("root ::= think ")  # 사고 켬 → 열린 think
         assert "t_complete" in g and "t_shell" in g
+
+    def test_default_thinking_off_means_no_open_think(self, tmp_path):
+        """v9.24.8: 기본은 사고 끔 — 문법도 `<think>` 가 열리지 않은 쪽."""
+        g = self._run(tmp_path, self._caps(True), thinking=False).grammar
+        assert g and not g.startswith("root ::= think ")
 
     def test_not_passed_when_unknown_or_unsupported(self, tmp_path):
         assert self._run(tmp_path, self._caps(None)).grammar is None
@@ -471,7 +516,7 @@ class TestLoopWiring:
         self._run(tmp_path, self._caps(True), snapshot=seen)
         sections, grammar = seen[-1]
         assert all(not n.startswith("Decoding grammar") for n, _ in sections)
-        assert grammar[0] is True  # supports_thinking → <think> 열린 채 시작
+        assert grammar[0] is True  # 사고 켬 → <think> 열린 채 시작
         assert grammar[1].startswith("root ::= think")
         seen.clear()
         self._run(tmp_path, self._caps(False), snapshot=seen)

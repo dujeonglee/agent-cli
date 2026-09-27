@@ -148,10 +148,16 @@ def default_thinking_override() -> dict:
     제어할 유일한 경로 (v8.58.0). web UI 의 런타임 ``set_thinking_override`` 와
     **동일 dict 형태**를 env 로 구성한다:
 
-      - ``AGENT_CLI_THINKING`` = off|on  → ``enable_thinking`` (미설정=모델 기본)
+      - ``AGENT_CLI_THINKING`` = off|on|auto → ``enable_thinking``
+        (미설정 = **끔**, v9.24.8; ``auto`` = 서버·모델 기본에 맡김)
       - ``AGENT_CLI_REASONING_EFFORT`` = low|medium|high|off → ``reasoning_effort``
 
-    둘 다 미설정이면 ``{}`` (모델 기본). **주의**: ``supports_thinking=False``
+    **기본은 사고 끔 (v9.24.8, 사용자 결정)**. 라이브 보드(2026-09-27)에서
+    상주 에이전트가 ``</think>`` 없이 사고 구간 안에 같은 도구 호출을 끝없이
+    반복했다(22분, 패킷 캡처로 확인). 문법은 사고 구간을 제약하지 않고
+    omlx 의 자동 사고 예산도 이 모델엔 걸리지 않아, 남은 상한이 출력 한도뿐
+    이었다. 끔을 **명시**해서 보내야 하는 이유: Qwen 계열 템플릿은 스위치가
+    없으면 사고를 켠다. **주의**: ``supports_thinking=False``
     모델에선 ``resolve_thinking_policy`` 가 이 override 를 무시한다(thinking 을
     아예 못 받는 모델에 파라미터를 안 보내는 게이트) — off 를 실제로 보내려면
     모델이 ``supports_thinking=True`` 여야 한다."""
@@ -159,10 +165,10 @@ def default_thinking_override() -> dict:
 
     ov: dict = {}
     t = os.environ.get("AGENT_CLI_THINKING", "").strip().lower()
-    if t in ("off", "no", "0", "false"):
-        ov["enable_thinking"] = False
-    elif t in ("on", "yes", "1", "true"):
+    if t in ("on", "yes", "1", "true"):
         ov["enable_thinking"] = True
+    elif t != "auto":  # 미설정·off·알 수 없는 값 → 끔
+        ov["enable_thinking"] = False
     eff = os.environ.get("AGENT_CLI_REASONING_EFFORT", "").strip().lower()
     if eff in ("low", "medium", "high", "off"):
         ov["reasoning_effort"] = eff

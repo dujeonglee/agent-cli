@@ -617,7 +617,7 @@ class TestStaticUI:
         client = TestClient(create_app(server))
         # 기본 미설정. caps 미배선(runtime={}) → supports_thinking None(unknown).
         assert client.get("/api/thinking?token=t").json() == {
-            "enable_thinking": None,
+            "enable_thinking": False,  # v9.24.8 기본 끔
             "reasoning_effort": None,
             "supports_thinking": None,
         }
