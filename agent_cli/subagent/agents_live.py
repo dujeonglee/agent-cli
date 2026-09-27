@@ -1535,11 +1535,20 @@ class AgentRegistry:
             tm.in_flight = [dict(i) for i in items]
         self._save_state()
 
-    def _end_items(self, tm: AgentInstance) -> None:
-        """런이 정상 종료했다 — 처리 중 표시를 지운다."""
+    def _close_run(self, tm: AgentInstance, handled: int) -> None:
+        """런 끝 — 두 처리 경로(단건·사람 배치)의 공통 마무리.
+
+        ``handled`` 증가와 처리 중 표시 해제(v9.24.5)를 **한 번의 저장**에
+        싣는다. 해제를 따로 저장하면 회신이 나간 뒤 다음 항목을 꺼내기까지
+        디스크 쓰기가 한 번 더 끼어, 그 사이 idle 로 보이는 창이 넓어진다."""
+        tm.handled += handled
         with self._cv:
             tm.in_flight = []
-        self._save_state()
+        self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
+        tm.state = "idle"
+        tm.current_author = "main"
+        tm.current_seq = 0
+        self._notify_roster()
 
     def deliver(
         self,
@@ -2342,7 +2351,6 @@ class AgentRegistry:
                 else:
                     self._begin_items(tm, [item])
                     self._handle_request(tm, item, renderer, _disp)
-                self._end_items(tm)
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -2531,12 +2539,7 @@ class AgentRegistry:
                 duration_s=duration,
                 reply_path=reply_path,
             )
-        tm.handled += 1
-        self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
-        tm.state = "idle"
-        tm.current_author = "main"
-        tm.current_seq = 0
-        self._notify_roster()
+        self._close_run(tm, 1)
 
     def _handle_human_batch(
         self, tm: AgentInstance, items: list[dict], renderer, disp
@@ -2617,12 +2620,8 @@ class AgentRegistry:
         self._log_conversation(tm, out_payload)
         if not tm.stop_event.is_set():
             self.end_run(me, output)  # 빚 없음(전부 user:*) — 미답 질문 닫기만
-        tm.handled += len(items)  # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4)
-        self._save_state()  # 창만(⑥), mailbox push 없음
-        tm.state = "idle"
-        tm.current_author = "main"
-        tm.current_seq = 0
-        self._notify_roster()
+        # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
+        self._close_run(tm, len(items))
 
     def _run_message(self, tm: AgentInstance, query: str, *, user_requests=None):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.

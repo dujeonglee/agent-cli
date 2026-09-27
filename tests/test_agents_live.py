@@ -292,7 +292,11 @@ class TestBuildReplyRecord:
         # 두 번째 요청은 gate 에 블록 — 배달 시점 state=working 고정
         gate.clear()
         reg.request(key, "second job")
-        assert wait_until(lambda: reg.get(key).state == "busy")
+        # state=="busy" 만 기다리면 첫 런의 꼬리(회신은 busy 인 채 나간다)에
+        # 걸려 곧바로 통과한다 — 두 번째 요청이 실제로 처리 중일 때까지.
+        assert wait_until(
+            lambda: [i["text"] for i in reg.get(key).in_flight] == ["second job"]
+        )
         reply = reg.drain_replies()[0]
         rec = build_reply_record(reply, registry=reg)
         gate.set()  # 릴리스
