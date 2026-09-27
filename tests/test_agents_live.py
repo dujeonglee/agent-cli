@@ -608,8 +608,10 @@ class TestRegistryLifecycle:
         assert wait_until(reg.has_pending_replies)
         r = reg.drain_replies()[0]
         assert not r["success"] and "boom" in r["output"]
-        # worker 는 죽지 않는다 — 다음 요청도 받는다
-        assert reg.get(key).state == "idle"
+        # worker 는 죽지 않는다 — 다음 요청도 받는다. 회신은 busy 인 채로
+        # 나가고(런 끝 정리 전) idle 은 그 뒤라, 곧바로 단정하면 느린 CI 에서
+        # 그 틈에 걸린다(3.11, 2026-09-27) — idle 이 되기를 기다린다.
+        assert wait_until(lambda: reg.get(key).state == "idle")
         reg.shutdown_all()
 
     def test_kill_and_idempotence(self, tmp_path, renderer):
