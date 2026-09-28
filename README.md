@@ -1100,7 +1100,7 @@ C/C++는 dedicated grammar 각각 사용. 그 외 형식은 `read_file` 으로.
 
 C/C++ 코드의 `#define` / `#ifdef` 분기 처리는 **번들된 pure-Python `_unifdef.py`** 가 기본 수행합니다 — 별도 설치 불필요. 시스템에 `unifdef` 바이너리가 있으면 (`brew install unifdef` / `apt install unifdef`) 자동으로 그것을 우선 사용 (battle-tested C 구현).
 
-**기능상 차이 없음** — 두 백엔드는 ifdef/elif/else/endif + `defined()`/논리/비교/산술 표현식에서 byte-identical 출력 (parity 테스트로 보장).
+**기호가 들어간 조건은 같은 결과** — ifdef/elif/else/endif + `defined()`/논리/비교/산술 표현식에서 두 백엔드는 byte-identical 출력 (parity 테스트로 보장). **다른 점 하나: 상수만으로 된 조건**(`#if 0`, `#if 1 … #else`). 시스템 `unifdef` 는 기본적으로 이런 줄을 그대로 두고, 내장 구현은 계산해서 해당하지 않는 쪽을 빈 줄로 지웁니다. 그래서 `#if 0` 안의 죽은 코드는 시스템 백엔드에서만 색인됩니다. 줄 번호는 양쪽 모두 보존됩니다. 이 차이도 테스트로 고정돼 있습니다. 시스템 `unifdef` 가 파싱에 실패하면(예: 짝이 맞지 않는 `#elif`) 그 파일은 자동으로 내장 구현이 처리합니다.
 
 함수 시그니처가 `#ifdef CONFIG_X` 로 분기되는 코드 (커널 드라이버 등에서 흔함):
 

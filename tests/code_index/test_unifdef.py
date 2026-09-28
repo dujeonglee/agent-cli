@@ -435,6 +435,25 @@ class TestParityWithSystemUnifdef:
             f"divergence:\n  flags={flags}\n  ours={ours!r}\n  theirs={theirs!r}"
         )
 
+    @pytest.mark.parametrize(
+        ("src", "ours_expected"),
+        [
+            ("a\n#if 0\nb\n#endif\nc\n", "a\n\n\n\nc\n"),
+            ("a\n#if 1\nb\n#else\nx\n#endif\nc\n", "a\n\nb\n\n\n\nc\n"),
+        ],
+        ids=["if-0", "if-1-else"],
+    )
+    def test_known_divergence_constant_only_conditions(self, src, ours_expected):
+        """Documented (README): a condition made of constants only. The
+        system tool leaves such lines alone by default (it evaluates them only
+        with `-k`); ours evaluates and blanks the dead arm. Line numbers are
+        kept by both. Pinned so a change on either side is noticed — measured
+        on a real driver: 26 of 171 files hit this."""
+        assert _system_unifdef(src, ["-DFOO=1"]) == src
+        ours = run_unifdef(src, ["-DFOO=1"])
+        assert ours == ours_expected
+        assert ours.count("\n") == src.count("\n")
+
 
 # ─── preproc.py integration ───────────────────────────────
 
