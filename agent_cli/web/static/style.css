@@ -43,7 +43,7 @@
   --accent: #7e8db0; --accent-hover: #93a0bf; --accent-2: #9aa6c4;
   --accent-soft-text: #aab4cc; --accent-soft-bg: rgba(126,141,176,.14); --accent-soft-border: rgba(126,141,176,.30);
   --on-accent: #ffffff;
-  --user-bg: #3c4456; --user-time: #aab4cc; --focus-ring: #7e8db0;
+  --user-bg: #3c4456; --user-code-bg: #2b313e; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
   /* 중첩 블록 레일 — 보라=skill(🪄), amber=inline agent(🦀). 팔레트 테마가
      덮지 않는 의미색이라 여기 한 번만 둔다(docs/chat-ui §3). */
@@ -65,7 +65,7 @@
   --bg: #0a0e17; --surface: #111725; --surface-2: #182032; --surface-3: #131a29;
   --accent: #4d8eff; --accent-hover: #6ba0ff; --accent-2: #74a6ff;
   --accent-soft-text: #9cc0ff; --accent-soft-bg: rgba(77,142,255,.14); --accent-soft-border: rgba(77,142,255,.32);
-  --user-bg: #2f6fe0; --user-time: #9cc0ff; --focus-ring: #4d8eff;
+  --user-bg: #2f6fe0; --user-code-bg: #2250a1; --user-time: #9cc0ff; --focus-ring: #4d8eff;
   --accent-shadow: rgba(77,142,255,.45); --accent-soft-bg2: rgba(77,142,255,.18); --accent-soft-bg3: rgba(77,142,255,.12);
   --focus-ring-shadow: rgba(77,142,255,.30); --glass: rgba(17,23,37,.86); --glass-strong: rgba(17,23,37,.92);
   --time-bg: rgba(17,23,37,.72);
@@ -76,7 +76,7 @@
   --accent: #2dd4bf; --accent-hover: #45e0cc; --accent-2: #5ee8d6;
   --on-accent: #04211d;
   --accent-soft-text: #7fe8da; --accent-soft-bg: rgba(45,212,191,.13); --accent-soft-border: rgba(45,212,191,.30);
-  --user-bg: #15897b; --user-time: #7fe8da; --focus-ring: #2dd4bf;
+  --user-bg: #15897b; --user-code-bg: #57aaa0; --user-time: #7fe8da; --focus-ring: #2dd4bf;
   --accent-shadow: rgba(45,212,191,.40); --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
   --focus-ring-shadow: rgba(45,212,191,.28); --glass: rgba(16,20,19,.86); --glass-strong: rgba(16,20,19,.92);
   --time-bg: rgba(16,20,19,.72);
@@ -89,7 +89,7 @@
   --accent: #e0a458; --accent-hover: #ecb56c; --accent-2: #f0c084;
   --on-accent: #1c1610;
   --accent-soft-text: #f0c890; --accent-soft-bg: rgba(224,164,88,.14); --accent-soft-border: rgba(224,164,88,.32);
-  --user-bg: #c0813a; --user-time: #f0c890; --focus-ring: #e0a458;
+  --user-bg: #c0813a; --user-code-bg: #d2a471; --user-time: #f0c890; --focus-ring: #e0a458;
   --accent-shadow: rgba(224,164,88,.42); --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
   --focus-ring-shadow: rgba(224,164,88,.30); --hairline: rgba(255,248,235,.06);
   --glass: rgba(24,20,15,.86); --glass-strong: rgba(24,20,15,.92); --time-bg: rgba(24,20,15,.72);
@@ -102,7 +102,7 @@
   --accent: #6366f1; --accent-hover: #4f46e5; --accent-2: #818cf8;
   --accent-soft-text: #4338ca; --accent-soft-bg: #eef2ff; --accent-soft-border: #c7d2fe;
   --on-accent: #ffffff;
-  --user-bg: #2563eb; --user-time: #93c5fd; --focus-ring: #93c5fd;
+  --user-bg: #2563eb; --user-code-bg: #1b47a9; --user-time: #93c5fd; --focus-ring: #93c5fd;
   --ok: #16a34a; --fail: #dc2626; --warn: #b45309; --cyan: #0891b2;
   --fail-soft-bg: #fef2f2; --fail-soft-fg: #7f1d1d; --fail-soft-border: #fca5a5;
   --warn-soft-bg: #fef3c7; --warn-soft-border: #fed7aa; --warn-soft-fg: #78350f;
@@ -812,6 +812,18 @@ body.multi-viewer .card-user .who {
   border-radius: 0;
   font-size: inherit;
 }
+/* 사용자 말풍선 안의 코드 — 말풍선 색(--user-bg)과 글자색(--on-accent)에
+   맞춘다. 위의 일반 카드 규칙을 그대로 받으면 배경만 테마의 짙은 면색이
+   되고 글자는 말풍선의 --on-accent 를 물려받아, 글자가 짙은 테마(terminal·
+   amber)는 검은 바탕에 검은 글씨, light 는 밝은 회색에 흰 글씨가 됐다(대비
+   1.0~1.1). --user-code-bg 는 테마마다 말풍선 색을 글자와 반대쪽으로 28%
+   민 값 — 대비 6.2~13.0(WCAG AA 4.5 이상, 말풍선 본문보다 높음). */
+.card-user .bubble code,
+.card-user .bubble pre.code {
+  background: var(--user-code-bg);
+  color: inherit;
+}
+.card-user .bubble pre.code code { background: transparent; }
 
 /* ── Footer / input ─────────────────────────── */
 footer {

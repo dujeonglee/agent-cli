@@ -20,6 +20,8 @@ import json
 import threading
 import time
 
+import pytest
+
 LONG_PATH = (
     "/Users/idujeong/workspace/agent-harness/agent-board/data/workspaces/"
     "2ae672d49ce34c1aa96e5dfcd6ff2267/drivers/net/wireless/pcie_scsc/"
@@ -832,3 +834,53 @@ class TestStepCardMultiOp:
         step = page.locator(".card-assistant.step").first
         assert step.locator(".step-head .badge.ok").count() == 0
         assert step.locator(".step-head .badge.bad").count() == 0
+
+
+_CONTRAST_JS = """
+() => {
+  const rgb = s => (s.match(/[\\d.]+/g) || []).slice(0, 4).map(Number);
+  const lum = ([r, g, b]) => [r, g, b].map(v => { v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
+    .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+  // 반투명 배경이면 말풍선 색 위에 합성한다(지금은 불투명이지만 회귀 대비).
+  const over = (top, under) => { const a = top.length > 3 ? top[3] : 1;
+    return [0, 1, 2].map(i => top[i] * a + under[i] * (1 - a)); };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const bubble = document.querySelector('#messages .card-user .bubble');
+  const bb = rgb(getComputedStyle(bubble).backgroundColor);
+  const out = {};
+  for (const [k, sel] of [['inline', ':scope > code, p code'], ['block', 'pre.code']]) {
+    const e = bubble.querySelector(sel) || bubble.querySelector(k === 'inline' ? 'code' : 'pre');
+    const cs = getComputedStyle(e);
+    const fg = rgb(cs.color), bg = over(rgb(cs.backgroundColor), bb);
+    out[k] = Math.round(ratio(fg, bg) * 10) / 10;
+  }
+  return out;
+}
+"""
+
+
+class TestUserBubbleCodeIsReadableInEveryTheme:
+    """사용자 말풍선 안의 코드가 테마에 맞게 보인다 (v9.24.10).
+
+    일반 카드용 인라인 코드 규칙을 그대로 받아 배경만 테마의 짙은 면색이
+    되고 글자는 말풍선의 --on-accent 를 물려받았다 — terminal·amber 는 검은
+    바탕에 검은 글씨, light 는 밝은 회색에 흰 글씨(대비 1.0~1.1). 회사에서
+    쓰던 사용자가 "코드 글씨가 안 보인다"고 보고했다."""
+
+    MSG = "셸로 `sleep 120 && echo A > a.txt` 를 실행해\n```\nls -la\ncat a.txt\n```"
+
+    @pytest.mark.parametrize(
+        "theme", ["slate", "midnight", "terminal", "amber", "light"]
+    )
+    def test_inline_code_and_code_block_meet_aa_contrast(self, stack, page, theme):
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.evaluate(f"document.documentElement.setAttribute('data-theme', '{theme}')")
+        stack.renderer.push_user_message(self.MSG)
+        bubble = page.locator("#messages .card-user .bubble")
+        assert _wait(lambda: bubble.locator("code").count() > 0)
+        assert bubble.locator("pre").count() == 1  # 펜스 블록도 렌더됐다
+        got = page.evaluate(_CONTRAST_JS)
+        assert got["inline"] >= 4.5 and got["block"] >= 4.5, (theme, got)
