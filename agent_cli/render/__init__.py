@@ -6,6 +6,8 @@ All rendering goes through the active Renderer instance.
 
 from __future__ import annotations
 
+import threading
+
 from rich.console import Console
 
 from agent_cli.render.base import Renderer, interactive_lock
@@ -34,6 +36,36 @@ C = {
 }
 
 
+# ── Deferred thought (v9.24.11) ─────────────────────
+# A turn's thought is held until the turn's fate is known. A format-rejected
+# attempt is not stored — the retry replaces it — so its thought must not be
+# drawn either: live board, the thought of a `complete` bounced for missing
+# `answers` stayed on screen joined to the retry's answer, and vanished on
+# reload (history never had it). Held per thread: resident agents render
+# from their own worker threads. Any other output flushes it first, so the
+# order on screen is unchanged — including direct ``get_renderer()`` users
+# such as the shell confirm prompt.
+_pending = threading.local()
+
+
+def _flush_thought() -> None:
+    p = getattr(_pending, "thought", None)
+    if p is None:
+        return
+    _pending.thought = None
+    _draw_thought(*p)
+
+
+def flush_pending_thought() -> None:
+    """Draw the held thought now (the turn it belongs to went through)."""
+    _flush_thought()
+
+
+def drop_pending_thought() -> None:
+    """Discard the held thought — its attempt was rejected and not stored."""
+    _pending.thought = None
+
+
 def set_renderer(renderer: Renderer) -> None:
     """Swap the active renderer."""
     global _renderer
@@ -41,7 +73,9 @@ def set_renderer(renderer: Renderer) -> None:
 
 
 def get_renderer() -> Renderer:
-    """Get the active renderer."""
+    """Get the active renderer (drawing any held thought first — the caller
+    is about to output something that must come after it)."""
+    _flush_thought()
     return _renderer
 
 
@@ -55,6 +89,7 @@ def render_header(
     skill_name: str = "",
     skill_args: str = "",
 ) -> None:
+    _flush_thought()
     _renderer.header(
         provider, model, max_turns, skill_name=skill_name, skill_args=skill_args
     )
@@ -69,10 +104,13 @@ def render_step(
     success: bool = True,
     requests: list | None = None,
 ) -> None:
+    if step_type == "thought":
+        _flush_thought()  # an earlier held thought keeps its place
+        _pending.thought = (content, turn)
+        return
+    _flush_thought()
     try:
-        if step_type == "thought":
-            _renderer.thought(content, turn)
-        elif step_type == "action":
+        if step_type == "action":
             _renderer.action(tool_name or "", tool_input or "", turn)
         elif step_type == "observation":
             _renderer.observation(content, turn, tool_name, success=success)
@@ -96,11 +134,25 @@ def render_step(
             print(f"  [{step_type}] (render failed)", file=sys.stderr)
 
 
+def _draw_thought(content: str, turn: int) -> None:
+    try:
+        _renderer.thought(content, turn)
+    except Exception:
+        try:
+            console.print(f"  [thought] {content[:200]}", highlight=False, markup=False)
+        except Exception:
+            import sys
+
+            print("  [thought] (render failed)", file=sys.stderr)
+
+
 def render_turn_sep(turn: int) -> None:
+    _flush_thought()
     _renderer.turn_sep(turn)
 
 
 def render_status(state: str, message: str, turn: int = 0) -> None:
+    _flush_thought()
     _renderer.status(state, message, turn)
 
 
@@ -112,11 +164,13 @@ def render_run_ended(reason: str, turn: int = 0) -> None:
     줄**이고 "여기서 왜 멈췄나"를 설명하는 유일한 근거라 영속이어야 한다.
     (웹에선 종전에 status 리스너가 없어 아예 안 보였다 — 런이 이유 없이
     멈추는 것처럼 보였다.)"""
+    _flush_thought()
     _renderer.error(reason, turn)
 
 
 def render_stream_reset() -> None:
     """재전송 전 부분 출력 폐기 — 의미는 ``Renderer.stream_reset`` 참조."""
+    _flush_thought()
     _renderer.stream_reset()
 
 
@@ -129,6 +183,7 @@ def render_stream_stall(
     attempts: int = 1,
 ) -> None:
     """스트림 무진전 상태 — 의미는 ``Renderer.stream_stall`` 참조 (v8.60.0)."""
+    _flush_thought()
     _renderer.stream_stall(
         kind=kind,
         elapsed_s=elapsed_s,
@@ -145,10 +200,12 @@ def render_recovery(
     loop is feeding ``intervention_message`` back before retrying. Each
     renderer decides how to delimit the failed emission, the intervention,
     and the retry (web finalizes the stream card; CLI marks + shows them)."""
+    _flush_thought()
     _renderer.recovery(raw_emission, intervention_message, reason, turn)
 
 
 def render_token_usage(stats: dict, turn: int, verbose: bool = False) -> None:
+    _flush_thought()
     _renderer.token_usage(stats, turn, verbose)
 
 
@@ -177,6 +234,7 @@ def render_compaction_progress(
         FIFO fallback handled the over-budget case instead.
 
     The function intentionally accepts only the data needed to render the
+    _flush_thought()
     notice and leaves CLI-vs-web routing to ``_renderer.compaction`` — the
     base renderer's default formats a one-line ``status``, the web renderer
     overrides it to emit a dedicated structured ``compaction`` SSE event
@@ -194,10 +252,12 @@ def render_compaction_progress(
 def render_model_detected(
     model: str, capabilities, provider: str, saved_path: str
 ) -> None:
+    _flush_thought()
     _renderer.model_detected(model, capabilities, provider, saved_path)
 
 
 def render_model_loaded(model: str, capabilities) -> None:
+    _flush_thought()
     _renderer.model_loaded(model, capabilities)
 
 
@@ -215,6 +275,7 @@ def render_system_prompt_snapshot(
     special-casing and the loop stays UI-agnostic. ``grammar`` is the
     decoding grammar the server enforces on this call, ``(thinking_open,
     ebnf)`` — shown beside the prompt but never counted as prompt tokens."""
+    _flush_thought()
     _renderer.note_system_prompt(sections, turn, grammar=grammar)
 
 
@@ -222,6 +283,7 @@ def consume_directives_reload() -> bool:
     """Whether DIRECTIVE.md was edited (web Prompt Inspector) since the last
     check — the loop rebuilds its system prompt when True. Routed through the
     renderer so the loop stays UI-agnostic (False for CLI renderers)."""
+    _flush_thought()
     return _renderer.consume_directives_dirty()
 
 
@@ -229,6 +291,7 @@ def notify_directives_applied() -> None:
     """The loop just rebuilt the system prompt from an edited DIRECTIVE.md →
     tell open Prompt Inspectors to re-fetch so the prompt view reflects the
     now-applied directive (update-when-applied, not on save)."""
+    _flush_thought()
     _renderer.broadcast_directives_changed()
 
 
@@ -236,22 +299,27 @@ def notify_memory_applied() -> None:
     """The loop just rebuilt the system prompt after a `memory` op → tell open
     Prompt Inspectors to re-fetch the prompt view so the ``## Session Memory``
     index reflects the change at the moment it takes effect."""
+    _flush_thought()
     _renderer.broadcast_memory_changed()
 
 
 def render_spinner_start(message: str = "") -> None:
+    _flush_thought()
     _renderer.spinner_start(message)
 
 
 def render_spinner_stop() -> None:
+    _flush_thought()
     _renderer.spinner_stop()
 
 
 def render_push_depth() -> None:
+    _flush_thought()
     _renderer.push_depth()
 
 
 def render_pop_depth() -> None:
+    _flush_thought()
     _renderer.pop_depth()
 
 
@@ -265,6 +333,7 @@ def render_begin_scope(
 ) -> None:
     """Enter a nested scope (skill/run) — single path for skill subloops and
     delegate/one-shot workers. See ``Renderer.begin_scope``."""
+    _flush_thought()
     _renderer.begin_scope(
         task_id=task_id,
         kind=kind,
@@ -282,6 +351,7 @@ def render_end_scope(
     duration_s: float = 0.0,
     error: str = "",
 ) -> None:
+    _flush_thought()
     _renderer.end_scope(
         task_id=task_id,
         kind=kind,
@@ -292,6 +362,7 @@ def render_end_scope(
 
 
 def render_stream_chunk(text: str) -> None:
+    _flush_thought()
     _renderer.stream_chunk(text)
 
 
@@ -302,10 +373,12 @@ def render_thinking_chunk(text: str) -> None:
     실측 — 631s/46K 토큰 단일 생성, 화면·로그 완전 무음 → hang 오진),
     이 이벤트가 사고 진행을 스피너/상단바 카운터로 보이게 한다. transcript
     에는 싣지 않는다(본문 오염 방지). 기본 구현 no-op — 커스텀 렌더러 안전."""
+    _flush_thought()
     _renderer.thinking_chunk(text)
 
 
 def render_stream_end() -> None:
+    _flush_thought()
     _renderer.stream_end()
 
 

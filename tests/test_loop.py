@@ -4942,3 +4942,117 @@ class TestActionLoopRetriesAreNotRecorded:
         assert "[2/3] shell — OK" in obs and "[3/3] shell — OK" in obs
         assert "aborted" not in obs, "뒤의 새 op 들이 취소됐다"
         assert result.output == "ok"
+
+
+class TestRejectedAttemptThoughtIsNotDrawn:
+    """v9.24.11: a format-rejected attempt is not stored — the retry replaces
+    it (v9.21.1/v9.23.2) — so its thought is not drawn either. Live board: the
+    thought of a `complete` bounced for missing `answers` stayed on screen
+    joined to the retry's answer, and vanished on reload. A tool that RAN and
+    failed is real work: its thought stays."""
+
+    def _run(self, tmp_path, caps, *responses, **kw):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.render import get_renderer, set_renderer
+        from agent_cli.render.minimal import MinimalRenderer
+
+        events: list = []
+
+        class Rec(MinimalRenderer):
+            def thought(self, content, turn):
+                events.append(("thought", content))
+
+            def action(self, tool_name, tool_input, turn):
+                events.append(("action", tool_name))
+
+            def final(self, content, turn, **kw):
+                events.append(("final", content))
+
+        old = get_renderer()
+        set_renderer(Rec(Console(file=StringIO())))
+        try:
+            run_loop(
+                ports=TEST_PORTS,
+                query="q",
+                provider=_make_provider(*responses),
+                capabilities=caps,
+                model="m",
+                ctx=ContextManager(session_dir=tmp_path),
+                max_turns=5,
+                **kw,
+            )
+        finally:
+            set_renderer(old)
+        return events
+
+    def test_the_live_case_complete_without_answers(self, tmp_path, caps):
+        """The exact board case (hxkkev, 22:22): the first `complete` lacked
+        `answers`, was bounced, and the retry answered with no prose."""
+        ev = self._run(
+            tmp_path,
+            caps,
+            'long reasoning of the bounced attempt\n\n[{"action": "complete", "result": "r"}]',
+            '[{"action": "complete", "result": "r", "answers": ["1"]}]',
+            query_author="DJ",
+            query_request_id="1",
+        )
+        assert not [c for k, c in ev if k == "thought"]
+        assert [k for k, _ in ev].count("final") == 1
+
+    def test_rejected_single_call_draws_no_action_card(self, tmp_path, caps):
+        ev = self._run(
+            tmp_path,
+            caps,
+            '[{"action": "no_such_tool", "x": 1}]',
+            _complete("done"),
+        )
+        assert ("action", "no_such_tool") not in ev
+
+    def test_a_bad_op_inside_a_batch_is_recorded_and_still_drawn(self, tmp_path, caps):
+        """Batch ops are not rejected — a bad one is recorded as failed and the
+        rest run — so its card and the turn's thought stay."""
+        ev = self._run(
+            tmp_path,
+            caps,
+            'two things\n\n[{"action": "no_such_tool", "x": 1}, '
+            '{"action": "read_file", "path": "' + str(tmp_path) + '"}]',
+            _complete("done"),
+        )
+        assert ("thought", "two things") in ev
+        assert ("action", "no_such_tool") in ev and ("action", "read_file") in ev
+
+    def test_unknown_tool_attempt_thought_is_dropped(self, tmp_path, caps):
+        ev = self._run(
+            tmp_path,
+            caps,
+            'rejected reasoning\n\n[{"action": "no_such_tool", "x": 1}]',
+            'retry reasoning\n\n[{"action": "complete", "result": "done"}]',
+        )
+        thoughts = [c for k, c in ev if k == "thought"]
+        assert "rejected reasoning" not in " ".join(thoughts)
+        assert "retry reasoning" in " ".join(thoughts)
+        assert ("final", "done") in ev
+
+    def test_thought_still_comes_before_the_action(self, tmp_path, caps):
+        ev = self._run(
+            tmp_path,
+            caps,
+            'look first\n\n[{"action": "read_file", "path": "' + str(tmp_path) + '"}]',
+            _complete("ok"),
+        )
+        kinds = [k for k, _ in ev]
+        assert kinds.index("thought") < kinds.index("action")
+
+    def test_a_tool_that_ran_and_failed_keeps_its_thought(self, tmp_path, caps):
+        missing = str(tmp_path / "nope.txt")
+        ev = self._run(
+            tmp_path,
+            caps,
+            'try the file\n\n[{"action": "read_file", "path": "' + missing + '"}]',
+            _complete("ok"),
+        )
+        assert ("thought", "try the file") in ev

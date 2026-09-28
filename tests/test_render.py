@@ -6,7 +6,13 @@ from io import StringIO
 
 from rich.console import Console
 
-from agent_cli.render import get_renderer, render_step, set_renderer
+from agent_cli.render import (
+    drop_pending_thought,
+    flush_pending_thought,
+    get_renderer,
+    render_step,
+    set_renderer,
+)
 from agent_cli.render.minimal import MinimalRenderer
 
 
@@ -144,17 +150,89 @@ class TestColorizeDiffLine:
         assert self._c("+x = [1, 2]") == "[green]+x = \\[1, 2][/green]"
 
 
+def _thought(text: str):
+    """A thought is held until the turn's fate is known (v9.24.11) — draw it."""
+    render_step("thought", text, 1)
+    flush_pending_thought()
+
+
 class TestThoughtRendering:
     def test_thought_icon(self):
-        out = _capture(lambda: render_step("thought", "I need to think...", 1))
+        out = _capture(lambda: _thought("I need to think..."))
         assert "💭" in out
         assert "I need to think" in out
 
     def test_multiline_thought(self):
-        out = _capture(lambda: render_step("thought", "Line 1\nLine 2\nLine 3", 1))
+        out = _capture(lambda: _thought("Line 1\nLine 2\nLine 3"))
         assert "Line 1" in out
         assert "Line 2" in out
         assert "Line 3" in out
+
+
+class TestThoughtIsHeldUntilTheTurnGoesThrough:
+    """v9.24.11: a format-rejected attempt is not stored (the retry replaces
+    it), so its thought must not be drawn either. Live board: the thought of a
+    `complete` bounced for missing `answers` stayed on screen joined to the
+    retry's answer — and vanished on reload, history never had it."""
+
+    def test_not_drawn_on_its_own(self):
+        out = _capture(lambda: render_step("thought", "held", 1))
+        assert "held" not in out
+        drop_pending_thought()
+
+    def test_next_output_draws_it_first(self):
+        def go():
+            render_step("thought", "why", 1)
+            render_step("action", "", 1, tool_name="shell", tool_input="ls")
+
+        out = _capture(go)
+        assert "why" in out and "shell" in out
+        assert out.index("why") < out.index("shell")  # order unchanged
+
+    def test_dropped_thought_is_never_drawn(self):
+        def go():
+            render_step("thought", "rejected attempt", 1)
+            drop_pending_thought()
+            render_step("final", "the retry's answer", 1)
+
+        out = _capture(go)
+        assert "rejected attempt" not in out and "the retry's answer" in out
+
+    def test_direct_renderer_users_see_it_first(self):
+        """The shell confirm prompt and friends go through get_renderer()."""
+        buf = StringIO()
+        old = get_renderer()
+        set_renderer(MinimalRenderer(Console(file=buf, force_terminal=True, width=120)))
+        try:
+            render_step("thought", "before the prompt", 1)
+            get_renderer().status("info", "PROMPT", 1)
+        finally:
+            set_renderer(old)
+        out = buf.getvalue()
+        assert out.index("before the prompt") < out.index("PROMPT")
+
+    def test_a_second_thought_keeps_the_first(self):
+        def go():
+            render_step("thought", "first", 1)
+            render_step("thought", "second", 2)
+            flush_pending_thought()
+
+        out = _capture(go)
+        assert out.index("first") < out.index("second")
+
+    def test_held_per_thread(self):
+        """Resident agents render from their own worker threads — one
+        agent's rejected attempt must not drop another's thought."""
+        import threading
+
+        def go():
+            render_step("thought", "main thought", 1)
+            t = threading.Thread(target=drop_pending_thought)
+            t.start()
+            t.join()
+            flush_pending_thought()
+
+        assert "main thought" in _capture(go)
 
 
 class TestActionRendering:

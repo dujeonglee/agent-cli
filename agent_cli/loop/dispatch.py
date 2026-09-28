@@ -46,6 +46,8 @@ from agent_cli.recovery.wf_recovery import (
     format_no_json_retry,
 )
 from agent_cli.render import (
+    drop_pending_thought,
+    flush_pending_thought,
     render_recovery,
     render_run_ended,
     render_step,
@@ -139,6 +141,12 @@ class TurnDispatcher:
         # 아니다). 그런데 회신 독촉은 모델이 **일을 끝냈다고 주장한 것**을
         # 하네스가 물리는 것이라, 아무것도 안 그리면 사용자에겐 그 complete
         # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
+        # 기록하지 않는 시도의 생각은 그리지도 않는다 (v9.24.11). 생각은
+        # 턴 처리 전 보류돼 있다(render.drop_pending_thought) — 맨 먼저
+        # 버려야 한다: 아래 기록 단계(ctx.add → get_renderer)가 보류분을
+        # 내보내기 때문이다. 기록되는 개입(B1 등)은 그대로 보인다.
+        if not store_emission:
+            drop_pending_thought()
         if not render:
             render_recovery(llm_text, message, reason, self.state.turn)
         # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
@@ -288,6 +296,8 @@ class TurnDispatcher:
         try:
             return self._dispatch_turn(llm_text, turn, outcome)
         finally:
+            # 아무 출력 없이 끝난 턴의 생각도 사라지지 않게 (v9.24.11 안전망)
+            flush_pending_thought()
             self.recorder.record(
                 model=self.cfg.model,
                 parse_stage=turn.parse_stage,
@@ -1349,15 +1359,25 @@ class TurnDispatcher:
         # raw op). The dispatch keeps `tool_input` (wrapped); only the card
         # shows `op.action_input` (pre-wrap).
         display_input = op.action_input if op.action_input is not None else {}
-        render_step(
-            "action",
-            "",
-            self.state.turn,
-            tool_name=tool_name,
-            tool_input=json.dumps(display_input, ensure_ascii=False)
-            if isinstance(display_input, dict)
-            else str(display_input),
-        )
+
+        def show_action() -> None:
+            render_step(
+                "action",
+                "",
+                self.state.turn,
+                tool_name=tool_name,
+                tool_input=json.dumps(display_input, ensure_ascii=False)
+                if isinstance(display_input, dict)
+                else str(display_input),
+            )
+
+        # 단일 호출은 형식 검사(A4/A5)를 **통과한 뒤에** 그린다 (v9.24.11) —
+        # 형식 거절된 시도는 저장되지 않고 재시도가 대신하므로 그 행동 카드도
+        # 생각도 그리지 않는다(v9.8.0 원칙). 먼저 그리면 보류한 생각까지
+        # 내보냈다. 배치(accumulate)는 형식이 틀린 op 도 실패 op 로 **기록**되고
+        # 나머지가 계속되므로 종전대로 먼저 그린다.
+        if accumulate is not None:
+            show_action()
 
         # A4 (Unknown tool) — pre-dispatch detection. Skips _dispatch_tool_with_hooks
         # entirely so the recovery layer is the single source of truth for
@@ -1425,6 +1445,8 @@ class TurnDispatcher:
                 store_emission=False,  # 인용이 유일한 사본 (v9.23.2)
             )
         tool_input = normalized  # use post-normalization input for dispatch
+        if accumulate is None:
+            show_action()
 
         # Execute tool (method tracks self.tools.recent_tool_history,
         # uses self.* for provider/ctx/hooks/etc.)
