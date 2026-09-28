@@ -38,6 +38,55 @@ UNIFDEF_BIN = shutil.which("unifdef")
 # (battle-tested C implementation) when present, fall back to the
 # bundled pure-Python ``_unifdef.run_unifdef`` otherwise.
 KV_RE = re.compile(r"KERNEL_VERSION\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)")
+
+# LINUX_VERSION_CODE when the defconfig does not set it (v9.24.9): the newest
+# representable version (255.255.255), so every ``>= KERNEL_VERSION(...)``
+# branch is taken and the index shows ONE, newest, code path. Without any
+# value both branches stayed in the parse, and the common compat idiom that
+# splits only a function's signature across ``#if/#else`` (body after
+# ``#endif``) lost its body — the function was indexed as two bodiless
+# declarations. A real version in ``.agent-cli/defconfig`` wins.
+LINUX_VERSION_CODE_DEFAULT = "0xffffff"
+DEFAULT_VERSION_FLAG = f"-DLINUX_VERSION_CODE={LINUX_VERSION_CODE_DEFAULT}"
+
+_FLAG_NAME_RE = re.compile(r"-[DU]([A-Za-z_]\w*)")
+# Conditional directives — the only lines ``unifdef`` evaluates symbols in.
+_COND_DIRECTIVE_RE = re.compile(
+    r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|elifdef|elifndef)\b(.*)$", re.MULTILINE
+)
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def with_default_version(flags: list[str]) -> list[str]:
+    """``flags`` plus the default LINUX_VERSION_CODE unless the defconfig
+    already defines or undefines it."""
+    if any(_flag_name(f) == "LINUX_VERSION_CODE" for f in flags):
+        return list(flags)
+    return [*flags, DEFAULT_VERSION_FLAG]
+
+
+def _flag_name(flag: str) -> str | None:
+    m = _FLAG_NAME_RE.match(flag)
+    return m.group(1) if m else None
+
+
+def _flags_touch(text: str, flags: list[str]) -> bool:
+    """Does any ``-D``/``-U`` symbol appear in a conditional directive?
+
+    ``unifdef`` only rewrites ``#if``/``#ifdef``/``#elif``… lines whose
+    expression names a given symbol; a file that names none of them comes
+    back unchanged. Skipping it is therefore output-identical, and it keeps
+    the default LINUX_VERSION_CODE flag from running ``unifdef`` over every
+    C file of a project that has nothing to do with the kernel."""
+    names = {n for n in map(_flag_name, flags) if n}
+    if not names:
+        return False
+    for m in _COND_DIRECTIVE_RE.finditer(text):
+        if names.intersection(_IDENT_RE.findall(m.group(1))):
+            return True
+    return False
+
+
 # IS_ENABLED(X) → defined(X). unifdef can't evaluate function-like macros, but
 # it does evaluate `defined()`, so this lets it prune CONFIG_* branches uniformly.
 IS_ENABLED_RE = re.compile(r"IS_ENABLED\s*\(\s*([A-Za-z_]\w*)\s*\)")
@@ -169,6 +218,9 @@ def parse_defs_file(path: Path) -> list[str]:
         m = re.match(r"#define\s+(\w+)(?:\s+(.+))?$", line)
         if m:
             name, val = m.group(1), (m.group(2) or "").strip()
+            # `KERNEL_VERSION(6, 1, 0)` as a value: unifdef cannot evaluate a
+            # function-like macro, so it silently pruned nothing (v9.24.9).
+            val = resolve_kernel_version(val)
             flags.append(f"-D{name}={val}" if val else f"-D{name}")
             continue
         m = re.match(r"#undef\s+(\w+)$", line)
@@ -383,7 +435,7 @@ def preprocess_source(src: bytes, unifdef_flags: list[str]) -> bytes:
     text = rewrite_decl_macros(text)
     text = rewrite_bare_attributes(text)
     text = rewrite_consecutive_attrs(text)
-    if not unifdef_flags:
+    if not unifdef_flags or not _flags_touch(text, unifdef_flags):
         return text.encode("utf-8")
     return _apply_unifdef(text, unifdef_flags).encode("utf-8")
 
@@ -423,7 +475,13 @@ def compute_preproc(
     undef_unknown_configs: bool,
     verbose: bool,
 ):
-    """Return (unifdef_flags, preproc_info, preproc_fingerprint)."""
+    """Return (unifdef_flags, preproc_info, preproc_fingerprint).
+
+    The flags always carry a LINUX_VERSION_CODE (v9.24.9): the defconfig's,
+    else :data:`LINUX_VERSION_CODE_DEFAULT` (newest). ``preproc_info``
+    reports which one — ``linux_version_code`` and
+    ``linux_version_code_source`` (``defconfig`` | ``default``) — so the
+    assumption is visible to whoever reads the index."""
     unifdef_flags: list[str] = []
     preproc_info = {
         "enabled": False,
@@ -444,27 +502,39 @@ def compute_preproc(
             extras = collect_unknown_configs(root, explicit)
             unifdef_flags.extend(f"-U{k}" for k in extras)
             auto_undef_count = len(extras)
-        # The pure-Python fallback is always available, so the
-        # presence/absence of the system binary no longer gates
-        # whether the preproc pass runs — only whether we got any
-        # flags. ``unifdef_bin`` still reports the system binary path
-        # (for diagnostics / verbose output) but it's no longer a
-        # hard prerequisite.
-        backend = "system" if UNIFDEF_BIN is not None else "pure"
-        preproc_info = {
-            "enabled": bool(unifdef_flags),
-            "defs_file": str(defs_path),
+        preproc_info["defs_file"] = str(defs_path)
+        preproc_info["auto_undef_count"] = auto_undef_count
+    source = (
+        "defconfig"
+        if any(_flag_name(f) == "LINUX_VERSION_CODE" for f in unifdef_flags)
+        else "default"
+    )
+    unifdef_flags = with_default_version(unifdef_flags)
+    lvc = next((f for f in unifdef_flags if _flag_name(f) == "LINUX_VERSION_CODE"), "")
+    # The pure-Python fallback is always available, so the presence/absence
+    # of the system binary no longer gates whether the preproc pass runs.
+    # ``unifdef_bin`` still reports the system binary path (for diagnostics /
+    # verbose output) but it's no longer a hard prerequisite.
+    backend = "system" if UNIFDEF_BIN is not None else "pure"
+    preproc_info.update(
+        {
+            "enabled": True,
             "unifdef_bin": UNIFDEF_BIN,
             "backend": backend,
             "n_flags": len(unifdef_flags),
-            "auto_undef_count": auto_undef_count,
+            # `-DLINUX_VERSION_CODE=v` → v ; `-ULINUX_VERSION_CODE` → "undef"
+            "linux_version_code": lvc.split("=", 1)[1] if "=" in lvc else "undef",
+            "linux_version_code_source": source,
         }
-        if verbose:
-            via = UNIFDEF_BIN if backend == "system" else "_unifdef.py (pure-Python)"
-            msg = f"  [preproc] {defs_path} → {len(unifdef_flags)} flag(s) via {via}"
-            if auto_undef_count:
-                msg += f"  (incl. {auto_undef_count} auto-undef CONFIG_*)"
-            print(msg, file=sys.stderr)
+    )
+    if verbose:
+        via = UNIFDEF_BIN if backend == "system" else "_unifdef.py (pure-Python)"
+        where = defs_path if preproc_info["defs_file"] else "(no defconfig)"
+        msg = f"  [preproc] {where} → {len(unifdef_flags)} flag(s) via {via}"
+        if preproc_info["auto_undef_count"]:
+            msg += f"  (incl. {preproc_info['auto_undef_count']} auto-undef CONFIG_*)"
+        msg += f"  LINUX_VERSION_CODE={preproc_info['linux_version_code']} ({source})"
+        print(msg, file=sys.stderr)
 
     # Fingerprint: anything that would make old parsed data incompatible.
     h = hashlib.sha256()

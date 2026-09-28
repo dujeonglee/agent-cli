@@ -42,6 +42,7 @@ from agent_cli.code_index import (
 )
 from agent_cli.code_index.builder import get_parser
 from agent_cli.code_index.languages import LANGUAGES, language_of
+from agent_cli.code_index.preproc import with_default_version
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
 from agent_cli.tools.base import Tool
 from agent_cli.tools.read_file import format_hashlines_range
@@ -257,7 +258,9 @@ def _on_demand_symbols(file_abs: Path) -> list[dict] | None:
     except OSError:
         return None
     spec = LANGUAGES[lang]
-    cleaned = spec.preprocess(raw, []) if spec.preprocess else raw
+    # 색인 경로와 같은 기본 커널 버전(v9.24.9) — 색인 안팎에서 같은 파일이
+    # 다르게 보이지 않게. 파일에 LINUX_VERSION_CODE 가 없으면 무비용(건너뜀).
+    cleaned = spec.preprocess(raw, with_default_version([])) if spec.preprocess else raw
     parser = get_parser(lang)
     tree = parser.parse(cleaned)
     syms: list = []
@@ -551,6 +554,15 @@ def _do_build(_action_input: dict) -> ToolResult:
         build(root, db, defs_path=defs, verbose=False, force_full=True)
     store = load_index(db)
     defs_note = f" defconfig: {defs}" if defs else " defconfig: (none)"
+    pp = store.meta.get("preprocessing") or {}
+    if pp.get("linux_version_code_source") == "default":
+        defs_note += (
+            f" LINUX_VERSION_CODE assumed {pp.get('linux_version_code')} (newest"
+            " branch of every kernel-version #if); set the real one in"
+            " .agent-cli/defconfig."
+        )
+    elif pp.get("linux_version_code"):
+        defs_note += f" LINUX_VERSION_CODE={pp.get('linux_version_code')}."
     return ToolResult(
         True,
         output=(
@@ -618,7 +630,13 @@ class CodeIndexTool(Tool):
         "Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. "
         "Index at <project_root>/.agent-cli/code_index.db, lazy-built and "
         "incrementally refreshed. For 'list'/'fetch' on paths outside the indexed "
-        "root: on-demand parse (no DB write). Other modes require the indexed root."
+        "root: on-demand parse (no DB write). Other modes require the indexed root.\n"
+        "C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so "
+        "every `>= KERNEL_VERSION(...)` branch is taken. For a specific kernel "
+        "or CONFIG_* set, write `.agent-cli/defconfig` under the root — lines like "
+        "`#define LINUX_VERSION_CODE 393472` (6.1.0 = (6<<16)+(1<<8)+0; "
+        "`KERNEL_VERSION(6, 1, 0)` also works), `#define CONFIG_X 1`, "
+        "`#undef CONFIG_Y`. The index rebuilds when it changes."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-query shape — no `code_index_queries` batch array and no

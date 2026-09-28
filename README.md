@@ -1121,6 +1121,15 @@ static void foo(int x)
 #undef CONFIG_LEGACY
 ```
 
+**커널 버전 분기 — 기본은 최신 (v9.24.9)**: `#if LINUX_VERSION_CODE >= KERNEL_VERSION(…)` 분기는 defconfig 에 버전이 없으면 `LINUX_VERSION_CODE` 를 **최신(0xffffff = 255.255.255)** 으로 가정해 최신 분기 하나만 색인합니다. 종전엔 두 분기가 모두 남아, 분기마다 블록을 여는 함수(`#if … if (a) { #else if (b) { #endif … }`)는 중괄호가 어긋나 **함수 통째로** 색인에서 빠졌고(실측: 커널 밖 Wi-Fi 드라이버 1,146 파일에서 함수 96개), 시그니처만 분기하는 호환 코드는 본문 없는 선언 두 개로 잡혔습니다. 대신 옛 커널용 호환 코드(`< KERNEL_VERSION(…)` 분기)는 색인에서 빠지니, 특정 커널을 다룬다면 버전을 적으세요:
+
+```
+// .agent-cli/defconfig — 대상 커널 6.1.0
+#define LINUX_VERSION_CODE 393472
+```
+
+값은 `(주<<16) + (부<<8) + 수` (셸: `echo $(( (6<<16) + (1<<8) + 0 ))`), 16진수 `0x060100`, `KERNEL_VERSION(6, 1, 0)` 모두 됩니다. 빌드한 커널 트리의 `include/generated/uapi/linux/version.h` 를 그대로 붙여 넣어도 됩니다(`KERNEL_VERSION` 매크로 정의 줄은 무시). `#undef LINUX_VERSION_CODE` 는 종전처럼 두 분기를 모두 남깁니다. 기본값은 조건 지시문에 `LINUX_VERSION_CODE` 가 있는 파일에만 unifdef 를 돌리므로 커널과 무관한 C 프로젝트의 색인 결과·속도는 그대로입니다(실측: 커널 `drivers/net` 5.8천 파일에서 기호·참조 동일, 시간 차 1% 이내). `mode='build'` 출력에 가정한 값이 표시됩니다.
+
 파일은 사용자가 직접 작성합니다 (LLM이 추측하면 잘못된 분기를 인덱싱할 위험). `code_index` tool은 첫 query 시 이 파일이 있으면 자동으로 unifdef 에 전달합니다 — 별도 옵션 불필요. `mode='build'` 출력에 `defconfig:` 라인으로 적용 여부가 보입니다.
 
 C/C++ 사용자도 시스템 `unifdef` 설치 선택 사항 — 번들된 pure-Python 으로 동일 동작. Python/JS/TS/Go/Rust/Java/Markdown 만 쓰는 사용자는 전처리 단계 자체가 no-op.

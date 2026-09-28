@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from agent_cli.code_index import preproc as P
 from agent_cli.code_index.preproc import (
+    DEFAULT_VERSION_FLAG,
     _balanced_close,
     collect_unknown_configs,
     compute_preproc,
@@ -364,18 +368,23 @@ class TestComputePreproc:
         # auto_undef_count is 0 when undef_unknown_configs is False.
         assert info["auto_undef_count"] == 0
 
-    def test_no_defs_returns_disabled_info(self, tmp_path):
-        _, info, _ = compute_preproc(tmp_path, None, True, False)
-        assert info["enabled"] is False
+    def test_no_defs_still_carries_the_default_kernel_version(self, tmp_path):
+        """v9.24.9: defconfig 가 없어도 LINUX_VERSION_CODE 는 최신 기본값 —
+        종전엔 플래그가 비어 전처리가 꺼져 있었다."""
+        flags, info, _ = compute_preproc(tmp_path, None, True, False)
+        assert flags == [DEFAULT_VERSION_FLAG]
+        assert info["enabled"] is True
         assert info["defs_file"] is None
+        assert info["linux_version_code"] == "0xffffff"
+        assert info["linux_version_code_source"] == "default"
 
     def test_path_argument_can_be_missing_file(self, tmp_path):
         # parse_defs_file returns [] for a missing path; compute_preproc
         # accepts that gracefully and falls through to the no-defs branch.
         _, info, fp = compute_preproc(tmp_path, tmp_path / "missing.defs", False, False)
-        assert info["enabled"] is False
-        # Fingerprint identical to "no defs at all" since flags list is
-        # empty in both cases.
+        assert info["defs_file"] is None
+        # Fingerprint identical to "no defs at all" — both carry only the
+        # default version flag.
         _, _, fp_no_defs = compute_preproc(tmp_path, None, False, False)
         assert fp == fp_no_defs
 
@@ -392,3 +401,134 @@ def test_preproc_module_does_not_invoke_unifdef_at_import():
 
     assert mod.UNIFDEF_BIN is None or isinstance(mod.UNIFDEF_BIN, str)
     assert Path(mod.__file__).is_file()
+
+
+# ----- LINUX_VERSION_CODE default + unifdef gating (v9.24.9) -----------------
+
+
+class TestDefaultVersionFlag:
+    def test_added_when_absent(self):
+        assert P.with_default_version([]) == [DEFAULT_VERSION_FLAG]
+        assert P.with_default_version(["-DCONFIG_A=1"]) == [
+            "-DCONFIG_A=1",
+            DEFAULT_VERSION_FLAG,
+        ]
+
+    @pytest.mark.parametrize(
+        "flag", ["-DLINUX_VERSION_CODE=393472", "-ULINUX_VERSION_CODE"]
+    )
+    def test_defconfig_choice_wins(self, flag):
+        assert P.with_default_version([flag]) == [flag]
+
+    def test_input_is_not_mutated(self):
+        flags = ["-DCONFIG_A=1"]
+        P.with_default_version(flags)
+        assert flags == ["-DCONFIG_A=1"]
+
+    def test_default_is_the_newest_representable_version(self):
+        assert int(P.LINUX_VERSION_CODE_DEFAULT, 16) == (255 << 16) + (255 << 8) + 255
+
+
+class TestFlagsTouch:
+    """unifdef only rewrites conditional directives naming a given symbol, so
+    a file that names none of them may skip it (output-identical — verified
+    on 7274 real C/H files: symbols identical, only CRLF/final-newline
+    whitespace differs, which the no-defconfig path never touched anyway)."""
+
+    F = (DEFAULT_VERSION_FLAG,)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "#if LINUX_VERSION_CODE >= 393472",
+            "#if (LINUX_VERSION_CODE < 1)",
+            "  #  elif LINUX_VERSION_CODE",
+            "#ifdef LINUX_VERSION_CODE",
+            "#ifndef LINUX_VERSION_CODE",
+            "#if defined(X) && LINUX_VERSION_CODE > 0",
+        ],
+    )
+    def test_conditional_directives_count(self, line):
+        assert P._flags_touch(f"int a;\n{line}\nint b;\n#endif\n", list(self.F))
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "int a = LINUX_VERSION_CODE;\n",  # plain code
+            "/* LINUX_VERSION_CODE */\n",  # comment line
+            "#define V LINUX_VERSION_CODE\n",  # not a conditional
+            "#include <linux/version.h>\n",
+            "#if MY_LINUX_VERSION_CODE_X > 1\n#endif\n",  # other identifier
+            "",
+        ],
+    )
+    def test_everything_else_does_not(self, text):
+        assert not P._flags_touch(text, list(self.F))
+
+    def test_any_flag_symbol_counts(self):
+        text = "#ifdef CONFIG_PM\nx\n#endif\n"
+        assert P._flags_touch(text, [DEFAULT_VERSION_FLAG, "-UCONFIG_PM"])
+        assert not P._flags_touch(text, [])
+
+    def test_skipped_file_is_returned_unchanged(self, monkeypatch):
+        monkeypatch.setattr(P, "_apply_unifdef", lambda *a: pytest.fail("ran"))
+        src = b"#ifdef DEBUG\nint d;\n#endif\n"
+        assert preprocess_source(src, list(self.F)) == preprocess_source(src, [])
+
+    def test_touched_file_is_pruned_to_the_newest_arm(self):
+        src = (
+            b"#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)\n"
+            b"int newer;\n#else\nint older;\n#endif\n"
+        )
+        out = preprocess_source(src, list(self.F)).decode()
+        assert "int newer;" in out and "int older;" not in out
+        assert out.count("\n") == src.count(b"\n")  # line numbers preserved
+
+
+class TestDefsFileKernelVersionValue:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("KERNEL_VERSION(6, 1, 0)", "393472"),
+            ("KERNEL_VERSION(6,1,0)", "393472"),
+            ("393472", "393472"),
+            ("0x060100", "0x060100"),
+        ],
+    )
+    def test_value_is_resolved(self, tmp_path, value, expected):
+        """unifdef cannot evaluate a function-like macro — the macro value
+        used to prune nothing, silently."""
+        defs = tmp_path / "defconfig"
+        defs.write_text(f"#define LINUX_VERSION_CODE {value}\n")
+        assert parse_defs_file(defs) == [f"-DLINUX_VERSION_CODE={expected}"]
+
+    def test_version_h_can_be_pasted_as_is(self, tmp_path):
+        """include/generated/uapi/linux/version.h — the function-like
+        KERNEL_VERSION definition line is ignored, the number is taken."""
+        defs = tmp_path / "defconfig"
+        defs.write_text(
+            "#define LINUX_VERSION_CODE 393472\n"
+            "#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + ((c) > 255 ? 255 : (c)))\n"
+            "#define LINUX_VERSION_MAJOR 6\n"
+        )
+        assert parse_defs_file(defs) == [
+            "-DLINUX_VERSION_CODE=393472",
+            "-DLINUX_VERSION_MAJOR=6",
+        ]
+
+
+class TestComputePreprocVersionInfo:
+    def test_defconfig_version_is_reported(self, tmp_path):
+        defs = tmp_path / "defs"
+        defs.write_text("#define LINUX_VERSION_CODE KERNEL_VERSION(5, 15, 0)\n")
+        flags, info, _ = compute_preproc(tmp_path, defs, False, False)
+        assert flags == ["-DLINUX_VERSION_CODE=331520"]
+        assert info["linux_version_code"] == "331520"
+        assert info["linux_version_code_source"] == "defconfig"
+
+    def test_fingerprint_changes_with_the_version(self, tmp_path):
+        _, _, fp_default = compute_preproc(tmp_path, None, False, False)
+        defs = tmp_path / "defs"
+        defs.write_text("#define LINUX_VERSION_CODE 393472\n")
+        _, _, fp_61 = compute_preproc(tmp_path, defs, False, False)
+        assert fp_default != fp_61
