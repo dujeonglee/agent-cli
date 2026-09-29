@@ -571,7 +571,7 @@ class TestGuidelinesInTail:
 _REPLY = {
     "kind": "reply",
     "to": "agent:agt-orch",
-    "id": "",
+    "id": "7",
     "text": "floorCeil 고쳐줘",
 }
 _ANSWER = {"kind": "answer", "to": "agent:agt-a", "id": "q-1", "text": "포트는?"}
@@ -587,7 +587,10 @@ class TestOwedRepliesInTail:
 
         out = owed_replies_block([_REPLY, _ANSWER], resident=True)
         assert out.startswith("## Owed Replies")
-        assert 'reply to agent:agt-orch: "floorCeil 고쳐줘" → reply(text="...")' in out
+        assert (
+            '[7] reply to agent:agt-orch: "floorCeil 고쳐줘" → reply(id="7", text="...")'
+            in out
+        )
         assert 'answer(id="q-1", text="...")' in out
 
     def test_main_loop_settles_a_reply_with_agent_request(self):
@@ -618,7 +621,7 @@ class TestOwedRepliesInTail:
 
         caller, _ = _caller(tmp_path, questions=_Port())
         out = caller._build_session_state(10_000)
-        assert "## Owed Replies" in out and 'reply(text="...")' in out
+        assert "## Owed Replies" in out and 'reply(id="7", text="...")' in out
 
     def test_broken_or_missing_port_is_silent(self, tmp_path):
         class _Broken:

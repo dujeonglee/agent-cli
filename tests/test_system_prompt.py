@@ -1482,8 +1482,9 @@ class TestReplyDisciplineSection:
         assert "Reply Discipline" not in main
 
     def test_content_matches_plumbing_facts(self, caps):
-        """문구가 배관 사실과 정합해야 오도하지 않는다: complete=현재 요청자
-        자동 회신, 소비된 peer 회신은 terminal → message 명시 보고 필요."""
+        """문구가 배관 사실과 정합해야 오도하지 않는다 (v9.25.0): complete 는
+        아무에게도 배달되지 않고(v9.21.0), 답은 요청 번호로 `reply(id=…)`,
+        요청은 런 도중에도 도착한다(턴 경계 흡수)."""
         secs = dict(
             build_system_prompt_sections(
                 caps,
@@ -1493,9 +1494,11 @@ class TestReplyDisciplineSection:
             )
         )
         body = secs["Reply Discipline"]
-        assert "EVERY requester" in body  # 강한 각인 (사용자 요구)
-        assert "complete" in body and "automatically returns" in body  # 사실 1
-        assert "message" in body and "not forwarded" in body  # 사실 2 (terminal)
+        assert "EVERY request" in body  # 강한 각인 (사용자 요구)
+        assert "`complete` reports to NO ONE" in body  # 사실 1 (v9.21.0)
+        assert 'reply(id="<request id>"' in body  # 사실 2 (v9.25.0 요청별 번호)
+        assert "WHILE you work" in body and "## Owed Replies" in body  # 사실 3
+        assert "automatically returns" not in body  # v9.21.0 이전의 거짓
         assert "cannot do" in body or "failed" in body  # 실패도 회신
 
 

@@ -83,6 +83,7 @@ main 이 빈 wake 턴을 돌고, `on_run_end` 가 다시 무장 — 무한 루�
 | `monitor_registry`     | ✔ | ✔ | · | · | · |
 | `message_handler`      | · | · | · | · | ✔ |
 | `questions`            | ✔ | ✔ | · | · | ✔ |
+| `absorb_inbox` (v9.25.0) | · | · | · | · | ✔ |
 
 (`ask_handler` 는 실값 생산자가 없어 뺐다 — §4.1 에서 삭제.)
 

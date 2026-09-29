@@ -1129,7 +1129,9 @@ class TurnDispatcher:
             tool_input=json.dumps(args, ensure_ascii=False),
         )
         try:
-            err = port.reply(text)
+            err = port.reply(
+                text, id=str(args.get("id", "") or ""), to=str(args.get("to", "") or "")
+            )
         except Exception as e:
             err = f"reply failed: {type(e).__name__}: {e}"
         ok = not err

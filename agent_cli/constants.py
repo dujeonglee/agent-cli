@@ -113,12 +113,14 @@ def debt_lines(debts: list[dict], *, resident: bool) -> str:
             )
         else:
             key = d["to"].split(":", 1)[-1]
+            rid = d.get("id", "")
             how = (
-                'reply(text="...")'
+                f'reply(id="{rid}", text="...")'
                 if resident
                 else f'agent(mode="request", key="{key}", task="...")'
             )
-            lines.append(f'  - reply to {d["to"]}: "{d["text"][:120]}" → {how}')
+            tag = f"[{rid}] " if rid else ""
+            lines.append(f'  - {tag}reply to {d["to"]}: "{d["text"][:120]}" → {how}')
     return "\n".join(lines)
 
 

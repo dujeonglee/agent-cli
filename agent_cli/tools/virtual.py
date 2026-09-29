@@ -110,12 +110,14 @@ class AskTool(Tool):
             },
             "to": {
                 "type": "string",
-                "enum": ["requester", "user"],
+                "minLength": 1,
                 "description": (
                     "Who receives it. `requester` (default): whoever gave you "
                     "this task — main or a person. `user`: the person directly; "
                     "it appears in their question tray and their reply comes "
-                    "back to you. Use `user` whenever a human must decide."
+                    "back to you. Use `user` whenever a human must decide. "
+                    "`main` or an agent key: that agent — e.g. one whose request "
+                    "arrived while you were working."
                 ),
             },
         },
@@ -186,8 +188,9 @@ class ReplyTool(Tool):
     requires_handler = "message_handler"  # 상주에만 — main 은 요청자가 없다
     force_mount = True
     description = (
-        "Reply to whoever requested your current work — your result, your "
-        "answer, your report. Nothing is expected back, so this ends the "
+        "Reply to a request you were given — your result, your answer, your "
+        "report. `id` names the request (see `## Owed Replies`); each request "
+        "gets its own reply. Nothing is expected back, so this ends that "
         "exchange cleanly. Use `message` instead when you NEED something from "
         "them (a decision, their next move). `complete` alone reports to no "
         "one: reply BEFORE you complete. Refused when nothing is owed."
@@ -195,9 +198,22 @@ class ReplyTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
+            "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The request id from `## Owed Replies`, e.g. '12'.",
+            },
             "text": {"type": "string", "minLength": 1, "description": "Your reply."},
+            "to": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Optional: the requester ('main' or an agent key) — must match "
+                    "the request `id` refers to."
+                ),
+            },
         },
-        "required": ["text"],
+        "required": ["id", "text"],
     }
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:

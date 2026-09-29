@@ -240,6 +240,7 @@ def teardown_session(
 # 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
 
 _WEB_ONLY = "웹 전용 — 대화창 입력 큐가 있는 호스트에만 있다"
+_NO_INBOX = "받은편지함이 없다 — main 은 웹 큐·메일박스, 일회성 루프는 받을 상대가 없다"
 _HOOKS_LATER = "배선만 준비 — 응용이 생기면 연결한다 (사용자 의도, 2026-09)"
 _NO_REGISTRY_IN_SUBLOOP = (
     "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
@@ -264,11 +265,13 @@ def ports_for_run(*, agent_registry, mcp_manager) -> LoopPorts:
         hook_runner=None,
         route_message=None,
         dequeue_user_message=None,
+        absorb_inbox=None,
         unwired={
             "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
             "hook_runner": _HOOKS_LATER,
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
+            "absorb_inbox": _NO_INBOX,
         },
     )
 
@@ -294,9 +297,11 @@ def ports_for_web(
         route_message=route_message,
         message_handler=None,
         hook_runner=None,
+        absorb_inbox=None,
         unwired={
             "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
             "hook_runner": _HOOKS_LATER,
+            "absorb_inbox": _NO_INBOX,
         },
     )
 
@@ -317,6 +322,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
         hook_runner=None,
         route_message=None,
         dequeue_user_message=None,
+        absorb_inbox=None,
         unwired={
             "questions": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
@@ -324,6 +330,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
             "hook_runner": _HOOKS_LATER,
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
+            "absorb_inbox": _NO_INBOX,
         },
     )
 
@@ -339,6 +346,7 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
         hook_runner=None,
         route_message=None,
         dequeue_user_message=None,
+        absorb_inbox=None,
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
             "questions": _AS_BEFORE,
@@ -347,16 +355,21 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
             "hook_runner": _HOOKS_LATER,
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
+            "absorb_inbox": _NO_INBOX,
         },
     )
 
 
-def ports_for_resident(*, key: str, message_handler, questions) -> LoopPorts:
-    """상주 서브에이전트의 런. ``owner`` 만 진짜 값을 갖는다."""
+def ports_for_resident(
+    *, key: str, message_handler, questions, absorb_inbox
+) -> LoopPorts:
+    """상주 서브에이전트의 런. ``absorb_inbox`` (v9.25.0) 가 턴 경계마다
+    받은편지함을 이 런으로 흡수한다."""
     return LoopPorts(
         owner=f"agent:{key}",
         message_handler=message_handler,
         questions=questions,
+        absorb_inbox=absorb_inbox,
         agent_registry=None,
         mcp_manager=None,
         hook_runner=None,

@@ -1030,7 +1030,9 @@ class TestAgentLoopsAreUntouched:
     def _resident():
         from agent_cli.runtime import ports_for_resident
 
-        return ports_for_resident(key="agt-x", message_handler=None, questions=None)
+        return ports_for_resident(
+            key="agt-x", message_handler=None, questions=None, absorb_inbox=None
+        )
 
     @staticmethod
     def _oneshot():

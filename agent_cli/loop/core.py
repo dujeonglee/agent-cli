@@ -107,6 +107,8 @@ class AgentLoop:
         # injected) so recovery / review reference the full set of asks.
         self.dequeue_user_message = ports.dequeue_user_message
         self.route_message = ports.route_message
+        # 상주 에이전트 (v9.25.0): 턴 경계마다 받은편지함을 이 런으로 흡수한다.
+        self.absorb_inbox = ports.absorb_inbox
         # ``query_author_is_user`` — False for a 🤝 agent-report wake-up: its
         # "author" is a display label, not a user, so it must not enter the
         # run's ``answers`` attribution. ``run_authors`` = the users whose asks
@@ -465,6 +467,7 @@ class AgentLoop:
                     self.ctx.set_turn(self.turn + 1)
                 self._inject_queued_messages()
                 self._deliver_agent_mail()
+                self._absorb_inbox()
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -794,6 +797,52 @@ class AgentLoop:
                     merged_authors = True
         if merged_authors:
             self._mirror_run_authors()
+
+    def _absorb_inbox(self) -> None:
+        """턴 경계 (상주 에이전트, v9.25.0): 이 런이 도는 동안 받은편지함에
+        도착한 항목을 지금 흡수한다 — main 이 웹 큐와 메일박스로 하는 일의
+        상주판. 종전엔 런이 끝나야 꺼냈다: 11시간 런(1zfgc2) 동안 오케스트레이터
+        메시지 8건이, 50분 런(2an3cv) 동안 main 의 지시 2건이 안 읽혔다.
+
+        포트가 돌려주는 항목은 둘 중 하나다. ``user_request`` (사람이 이
+        에이전트 창에 직접 쓴 것)는 main 의 큐 주입과 같은 회계를 받는다 —
+        ``run_requests`` 에 올라 꼬리의 ``## Open Requests`` 와 `answers`
+        강제를 받고, 이 런은 **사람 런**이 된다(사람은 창에서 `complete` 의
+        결과를 보므로 그것을 받아들이고 남은 빚만 독촉 — main 과 같은 규칙,
+        사용자 결정). ``record`` (main·동료의 요청, 회신, 질문, 독촉)는 관찰로
+        들어간다 — 요청이면 레지스트리가 이미 빚으로 적어 꼬리의 ``## Owed
+        Replies`` 에 번호와 함께 보인다."""
+        if self.absorb_inbox is None:
+            return
+        items = self.absorb_inbox()
+        if not items:
+            return
+        for it in items:
+            ur = it.get("user_request")
+            if ur:
+                self._state.run_requests.append(
+                    {
+                        "id": ur["id"],
+                        "author": ur.get("author") or "",
+                        "text": ur["text"],
+                    }
+                )
+                # ``_add_user_message`` 가 이 런을 사람 런으로 세운다(user_run)
+                self._add_user_message(
+                    ur["text"], ur.get("author"), request_id=ur["id"]
+                )
+                continue
+            rec = it["record"]
+            self.messages.append({"role": "user", "content": rec["content"]})
+            if self.ctx:
+                self.ctx.add(dict(rec))
+            render_step(
+                "observation",
+                rec["content"],
+                self.turn,
+                tool_name=rec["tool"],
+                success=bool(rec.get("success", True)),
+            )
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a

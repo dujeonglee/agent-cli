@@ -619,7 +619,9 @@ _ASK_INLINE_RESIDENT = """\
   - Address it right: by default it goes to whoever gave you this task.
     If a human must decide, send it to them with `to: "user"` — it lands
     in their question tray. Do not route a person's decision through an
-    intermediary; they may answer on the person's behalf.
+    intermediary; they may answer on the person's behalf. To ask main or
+    another agent — e.g. the sender of a request that arrived while you
+    were working — name them: `to: "main"` or `to: "<agent key>"`.
   - Then keep going on everything that does not depend on the answer.
   - When nothing else can proceed, `complete` and report what you did.
     That is not giving up — if an answer comes, it arrives as a new
@@ -815,23 +817,27 @@ def _load_directives(audience: str = "main") -> str:
     return "## Directives\n\n### DIRECTIVE.md (scope: project)\n" + body
 
 
-# 상주 에이전트 고정 각인 (v7.18.1) — 회신 규율. 여러 요청자(main·창의
-# 사용자·peer)로부터 오는 요청마다 반드시 그 요청자에게 답이 돌아가게 한다.
-# 문구는 배관 사실과 정합: complete 결과는 현재 요청자에게 자동 라우팅되고
-# (author 기반), 배달된 peer 회신의 소비는 terminal 이라 그 시점에 결과를
-# 기다리는 다른 에이전트가 있으면 message 로 명시 보고가 필요하다.
+# 상주 에이전트 고정 각인 (v7.18.1, v9.25.0 개정) — 회신 규율. 여러 요청자
+# (main·창의 사용자·peer)로부터 오는 요청마다 반드시 그 요청자에게 답이
+# 돌아가게 한다. 배관 사실과 정합: `complete` 는 국소(v9.21.0 — 아무에게도
+# 배달되지 않는다), 배달은 `reply`/`message` 뿐이고, 요청은 런 도중에도
+# 도착한다(v9.25.0 — 턴 경계 흡수, 요청마다 번호가 붙은 빚).
 _REPLY_DISCIPLINE_SECTION = """## Reply Discipline (your core duty)
 Requests reach you from DIFFERENT requesters — main, the user in your chat
-window, or peer agents (a delivered message names its sender). EVERY requester
-must get its answer back; never let a request end silently:
+window, or peer agents — and they can arrive WHILE you work: a new request is
+delivered between turns with its id, and `## Owed Replies` at the end of each
+turn lists every request you have not answered yet. EVERY request must get
+its own answer back; never let one end silently:
 
-1. Finishing the current request with `complete` automatically returns your
-   result to WHOEVER sent that request — so make the `result` the actual
-   answer for them, not a generic status line.
-2. When you finish work that ANOTHER agent is waiting on (e.g. an orchestrator
-   that assigned it via message), report the outcome to that agent with
-   `message` before you finish — a consumed reply is not forwarded for you.
-3. If you cannot do what was asked, still reply: say what failed and why.
+1. `complete` reports to NO ONE — it only ends your run. The answer for a
+   requester goes out with `reply(id="<request id>", text="...")`, one reply
+   per request, BEFORE you complete. A request from the user in your chat
+   window is answered by `complete` itself (they see it there).
+2. A request that arrives mid-run does not replace the one you are on: finish
+   or explicitly decline both, each with its own reply.
+3. When you NEED something from a requester or a peer, use `message` (it
+   expects a reply); to ask a question, use `ask` — both name their target.
+4. If you cannot do what was asked, still reply: say what failed and why.
    No requester should ever have to ask twice or poll you."""
 
 
