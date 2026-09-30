@@ -1108,10 +1108,22 @@
   // 꼬리다 — 실측 `✗ memory×2  } This op did NOT run…` (스키마 JSON 의 닫는
   // 괄호). 배치면 첫 FAILED op 의 다음 줄이 그 op 의 원인이다.
   const BATCH_HEAD = /^\[\d+\/\d+\]\s/;
+  // 런 도중 흡수된 요청(v9.25.0 `absorb_pending`) — 머리 `── request [n]
+  // from X (arrived while you were working) ──`, 본문, 꼬리 `(You now owe …)`.
+  // "성공은 마지막 줄" 규칙이 꼬리 상용구만 보여줘 33건이 전부 같은 한 줄로
+  // 보였다(2an3cv). 요청 자체의 첫 줄을 낸다(v9.26.1).
+  const ABSORBED_HEAD = /^── request \[(\d+)\] from (.+?) \(arrived while you were working\) ──$/;
+  function absorbedSummary(lines) {
+    const m = ABSORBED_HEAD.exec(lines[0].replace(/^Observation:\s*/, "").trim());
+    if (!m) return null;
+    const body = lines.slice(1).find((l) => !/^\(You now owe /.test(l.trim()));
+    return "[" + m[1] + "] " + m[2] + ": " + (body ? body.trim() : "");
+  }
+
   function obsSummary(content, failed) {
     const lines = String(content || "").split("\n").filter((l) => l.trim());
     if (!lines.length) return "(출력 없음)";
-    if (!failed) return lines[lines.length - 1].trim();
+    if (!failed) return absorbedSummary(lines) || lines[lines.length - 1].trim();
     for (let i = 0; i < lines.length - 1; i++) {
       if (BATCH_HEAD.test(lines[i]) && /FAILED\s*$/.test(lines[i])) {
         return lines[i + 1].trim();

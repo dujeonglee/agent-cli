@@ -124,6 +124,7 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         "globalThis.__renderLists = renderLists;\n"
         "globalThis.__renderEmphasis = renderEmphasis;\n"
         "globalThis.__markdownInline = markdownInline;\n"
+        "globalThis.__obsSummary = obsSummary;\n"
     )
     harness = (
         stub
@@ -470,3 +471,46 @@ def test_harness_does_not_pass_the_script_as_an_argv_string():
     src = inspect.getsource(_run_node_harness)
     assert '["node", "-e"' not in src, "하네스가 스크립트를 argv 로 넘긴다"
     assert '["node", script]' in src, "하네스가 파일 실행이 아니다"
+
+
+class TestObsSummaryAbsorbedRequest:
+    """런 도중 흡수된 요청 관찰의 한 줄 요약 (v9.26.1).
+
+    "성공은 마지막 줄" 규칙이 이 관찰에선 꼬리 상용구 `(You now owe …)` 만
+    보여줘, 2an3cv 에서 33건이 전부 같은 한 줄로 보였다 — 무엇을 요청받았는지
+    카드를 펼치기 전엔 알 수 없었다."""
+
+    ABSORBED = (
+        "Observation: ── request [6] from agent:agt-6700099c "
+        "(arrived while you were working) ──\n"
+        "FREEZE AMENDMENT — main has ruled on the contract shape.\n"
+        "Second paragraph that must not be picked.\n"
+        "(You now owe agent:agt-6700099c a reply for [6] as well — "
+        'reply(id="6", text="...") when you have it. Your current task stays '
+        "open; see ## Owed Replies.)"
+    )
+
+    def _sum(self, text, failed=False):
+        return _run_node_harness(
+            f"globalThis.__obsSummary(input, {'true' if failed else 'false'})", text
+        )
+
+    def test_shows_who_and_the_first_line_of_the_request(self):
+        assert (
+            self._sum(self.ABSORBED)
+            == "[6] agent:agt-6700099c: FREEZE AMENDMENT — main has ruled on the contract shape."
+        )
+
+    def test_human_request_from_main(self):
+        text = (
+            "── request [22] from main (arrived while you were working) ──\n"
+            "[ORCH DIRECTIVE — pixel byte-order fix]\n"
+            '(You now owe main a reply for [22] as well — reply(id="22", text="...").)'
+        )
+        assert self._sum(text) == "[22] main: [ORCH DIRECTIVE — pixel byte-order fix]"
+
+    def test_other_observations_keep_the_last_line_rule(self):
+        assert self._sum("Observation: first\nlast line") == "last line"
+
+    def test_failed_path_is_untouched(self):
+        assert self._sum("Observation: boom", failed=True) == "boom"
