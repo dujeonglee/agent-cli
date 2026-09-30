@@ -389,6 +389,17 @@ main#messages {
   flex-direction: column;
   gap: 10px;
 }
+/* ↓ 새 메시지 n (v9.26.0) — 위치 고정 중 도착한 카드 수. #messages 밖에
+   fixed 로 띄우고 app.js 가 #messages 의 바닥 가운데에 맞춘다. */
+#jump-new {
+  position: fixed; z-index: 30; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);
+  font-size: 12.5px; font-weight: 600; line-height: 1.2; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.28);
+}
+#jump-new:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+#jump-new:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .card {
   max-width: 100%;
   width: 100%;

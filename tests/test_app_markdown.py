@@ -95,6 +95,10 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         "    if (k === 'querySelectorAll') return function(){ return []; };\n"
         "    if (k === 'remove') return function(){};\n"
         "    if (k === 'style') return {};\n"
+        # v9.26.0 따라가기: #messages[data-pinned] 상태 노출 + 버튼 배치
+        "    if (k === 'dataset') return t.__ds || (t.__ds = {});\n"
+        "    if (k === 'getBoundingClientRect') return function(){ "
+        "return { left: 0, top: 0, width: 0, height: 0, bottom: 0 }; };\n"
         "    return t[k];\n"
         "  },\n"
         "  set: function(t, k, v){ t[k] = v; return true; }\n"
@@ -106,6 +110,9 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         # bootstrap-token strip, not just .get).
         "var URLSearchParams = globalThis.URLSearchParams;\n"
         "var EventSource = function(){ return _stubEl(); };\n"
+        # v9.26.0 따라가기가 로드 시 붙이는 관찰자 — 여기선 아무것도 안 본다.
+        "var MutationObserver = function(){ return { observe: function(){} }; };\n"
+        "var ResizeObserver = function(){ return { observe: function(){} }; };\n"
         "var fetch = function(){ return Promise.resolve({}); };\n"
     )
     expose = (
