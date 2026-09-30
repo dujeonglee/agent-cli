@@ -1363,6 +1363,13 @@ worm_game.html                                                          14자
 매 턴 바뀌는 **휘발 상태**를 시스템 프롬프트가 아니라 **마지막 메시지 뒤**에 덧붙입니다.
 
 ```
+── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──
+
+── standing rules (always in effect) ──
+## Task Guidelines
+- Read a file before changing it …
+…
+
 ── session state (context only — not part of the conversation) ──
 context: ~118,400 / 140,000 tokens (85% — compaction at 100%) · turn 23/40 (17 left after this one)
 
@@ -1392,6 +1399,8 @@ reason to finish early.
 - **시스템 프롬프트에 두면** — 그 섹션 이후 전부(= 남은 시스템 프롬프트 + **대화 전체**)가 무효화됩니다. `memory add` 한 번이 수만 토큰 재계산을 유발했습니다. 이 압박 때문에 로스터는 휘발 상태를 못 실었고, `Environment` 섹션은 날짜를 일부러 뺐습니다.
 - **사용자 요청 바로 뒤에 두면** — 에이전트 루프에서 사용자 요청은 프롬프트 **앞쪽**(요청 1개 + 그 뒤로 assistant/observation 이 N턴 쌓임)이라, 매 턴 블록이 바뀌면 그 뒤 모든 턴이 무효화됩니다. 직관과 반대로 최악입니다.
 - **꼬리에 두면 공짜입니다** — 턴 N 이 `… obs_{N-1} + STATE_N` 로 끝나고 턴 N+1 은 `… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}`. 접두사 일치는 `obs_{N-1}` 에서 끝나는데, 이건 `assistant_N`·`obs_N` 이 새 토큰이라 **어차피 거기서 끝났을 자리**입니다. 잃는 건 이전 블록 자신의 토큰 몇십 개뿐이고, 손실이 **대화 길이와 무관하게 상수**입니다. 그리고 꼬리는 recency attention 이 가장 강한 위치라, "지금 이걸 보고 판단하라"는 내용에 맞습니다.
+
+**경계선 (v9.25.2)**: 꼬리는 사용자 메시지 **본문에 이어** 붙으므로, 모델이 받는 메시지는 `이건 왜 필요한거야?` 바로 뒤에 `## Task Guidelines` 가 오는 모양입니다. 실제로 한 모델이 그 질문에 가이드라인을 설명했습니다 — "이건" 의 가장 가까운 후보가 가이드라인이고, 사용자가 이 블록을 쓰지도 보지도 않는다는 것을 모델은 알 수 없기 때문입니다. 그래서 꼬리의 첫 줄이 그 사실을 말합니다(`the user neither writes nor sees it`). 규칙이 아니라 사실이며, "무시해도 된다" 로 읽힐 말은 넣지 않습니다 — 규칙 헤더의 `always in effect` 는 그대로입니다.
 
 **전달 방식**: 새 메시지를 추가하지 않고 **마지막 메시지 본문에 덧붙입니다** — 프로바이더가 `messages` 를 그대로 전송하므로(`providers/anthropic.py`) 끝에 `role=user` 를 하나 더 붙이면 연속 동일-롤 턴이 되고 처리 방식이 프로바이더마다 갈립니다. `_OBS_COMPLETE_NUDGE` 와 같은 기구로 **feed 시점에만**(복사본에) 적용되며 **`history.jsonl` 에 절대 저장되지 않습니다**(저장하면 낡은 숫자가 매 턴 재공급되고 resume 프리뷰가 오염됩니다).
 

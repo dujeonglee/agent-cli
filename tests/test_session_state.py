@@ -21,6 +21,15 @@ from agent_cli.prompts.session_state import (
 )
 from tests.loop_ports import TEST_PORTS
 
+
+def _after_boundary(out: str) -> str:
+    """The block past its first line (``TAIL_BOUNDARY``, v9.25.2)."""
+    from agent_cli.prompts.session_state import TAIL_BOUNDARY
+
+    assert out.startswith(TAIL_BOUNDARY + "\n\n")
+    return out[len(TAIL_BOUNDARY) + 2 :]
+
+
 # ── 1. rendering ─────────────────────────────────────────────────────
 
 
@@ -28,10 +37,30 @@ class TestBuildSessionState:
     def test_empty_when_there_is_nothing_to_say(self):
         assert build_session_state() == ""
 
+    def test_opens_with_the_boundary_line(self):
+        """v9.25.2: the tail rides on the user's message body, so the model
+        cannot tell where the user stopped. A user asked "이건 왜 필요한거야?"
+        and the model explained the Task Guidelines — the nearest "this". The
+        first line now states the fact that decides it: the user neither
+        writes nor sees what follows."""
+        from agent_cli.prompts.session_state import TAIL_BOUNDARY
+
+        out = build_session_state(used_tokens=1, budget_tokens=10)
+        assert out.startswith(TAIL_BOUNDARY + "\n\n" + SESSION_STATE_HEADER)
+        out = build_session_state(guidelines="## Task Guidelines\n- r")
+        assert out.startswith(TAIL_BOUNDARY + "\n\n" + RULES_HEADER)
+        # a fact, not a licence — nothing that reads as "ignore this"
+        assert "neither writes nor sees" in TAIL_BOUNDARY
+        for word in ("ignore", "not part of", "optional"):
+            assert word not in TAIL_BOUNDARY
+
+    def test_boundary_only_when_there_is_a_tail(self):
+        assert build_session_state() == ""
+
     def test_context_line_with_percentage(self):
         out = build_session_state(used_tokens=48_200, budget_tokens=140_000)
         assert "~48,200 / 140,000 tokens (34% — compaction at 100%)" in out
-        assert out.startswith(SESSION_STATE_HEADER)
+        assert _after_boundary(out).startswith(SESSION_STATE_HEADER)
 
     def test_percentage_says_where_compaction_fires(self):
         """v9.25.1: a reader saw "(90%)" and expected compaction to have run.
@@ -92,7 +121,7 @@ class TestBuildSessionState:
 
     def test_blocks_alone_are_enough_to_render(self):
         out = build_session_state(agents="## Live Agents\n- `a`")
-        assert out.startswith(SESSION_STATE_HEADER)
+        assert _after_boundary(out).startswith(SESSION_STATE_HEADER)
         assert "## Live Agents" in out
 
     def test_blank_blocks_are_dropped(self):
@@ -553,7 +582,7 @@ class TestGuidelinesInTail:
         conversation") 아래 두면 무시해도 되는 메타데이터로 읽힌다(실측).
         자기 헤더(always in effect)를 갖고 상태 블록 **앞**에 선다."""
         out = build_session_state(guidelines="## Task Guidelines\n- rule one")
-        assert out.startswith(RULES_HEADER)
+        assert _after_boundary(out).startswith(RULES_HEADER)
         assert "## Task Guidelines" in out and "- rule one" in out
         assert SESSION_STATE_HEADER not in out  # 상태가 없으면 상태 헤더도 없음
 
@@ -616,7 +645,7 @@ class TestOwedRepliesInTail:
         out = build_session_state(
             requests="## Open Requests\n- r1", debts="## Owed Replies\n- d"
         )
-        assert out.startswith(SESSION_STATE_HEADER)
+        assert _after_boundary(out).startswith(SESSION_STATE_HEADER)
         assert out.index("## Open Requests") < out.index("## Owed Replies")
 
     def test_loop_tail_carries_the_ports_debts(self, tmp_path):

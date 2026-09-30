@@ -3696,6 +3696,13 @@ class TestInspectorTailSections:
         assert [s["kind"] for s in secs[-2:]] == ["tail", "tail"]
         assert "- rule one" in secs[-2]["text"]
         assert "~10" in secs[-1]["text"] or "10" in secs[-1]["text"]
+        # v9.25.2: the boundary line opens the first tail section, and the
+        # conversation section stops before it
+        from agent_cli.prompts.session_state import TAIL_BOUNDARY
+
+        assert secs[-2]["text"].startswith(TAIL_BOUNDARY)
+        assert TAIL_BOUNDARY not in secs[-1]["text"]
+        assert all(TAIL_BOUNDARY not in s["text"] for s in secs[:-2])
 
     def test_message_section_keeps_conversation_only(self, tmp_path):
         from agent_cli.web.inspector import _dynamic_context_sections

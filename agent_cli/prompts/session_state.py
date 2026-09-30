@@ -58,6 +58,19 @@ SESSION_STATE_HEADER = (
 #: 헤더("always in effect")를 갖고 상태 블록 앞에 선다.
 RULES_HEADER = "── standing rules (always in effect) ──"
 
+#: 꼬리 전체의 첫 줄 (v9.25.2). 꼬리는 마지막 사용자 메시지 **본문에 이어**
+#: 붙으므로, 모델이 받는 메시지는 "이건 왜 필요한거야?\n\n── standing rules ──
+#: ## Task Guidelines …" 이다 — "이건" 의 가장 가까운 후보가 가이드라인이고,
+#: 모델은 이 블록을 사용자가 쓰지도 보지도 않는다는 것을 알 길이 없다(회사
+#: 실측: 그 질문에 Task Guidelines 를 설명했다). 규칙이 아니라 **사실**을
+#: 준다: 사용자가 볼 수 없는 글은 사용자의 "이건" 이 될 수 없다. "무시해도
+#: 된다" 로 읽힐 말은 넣지 않는다 — 규칙 헤더의 "always in effect" 는 그대로
+#: (tb21: 면책 문구 아래의 규칙은 지켜지지 않았다).
+TAIL_BOUNDARY = (
+    "── end of message · everything below is added by the harness on every "
+    "turn — the user neither writes nor sees it ──"
+)
+
 
 def _context_line(used: int, budget: int, turn: int, max_turns: int) -> str:
     """``budget`` is the live compaction target, so the percentage is "how
@@ -120,6 +133,9 @@ def build_session_state(
     reports_to_caller: bool = False,
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
+
+    A non-empty block always opens with ``TAIL_BOUNDARY`` (v9.25.2) so the
+    model can tell where the user's text ends and the harness's begins.
 
     ``reports_to_caller`` (v9.24.1) selects the final-turn wording: a
     sub-agent or skill loop (``depth > 0``) hands its ``complete`` result to
@@ -187,4 +203,4 @@ def build_session_state(
             "memory(mode=add) NOW, while you still have it. Keep working; this "
             "is not a reason to finish early."
         )
-    return "\n".join(lines)
+    return "\n".join([TAIL_BOUNDARY, "", *lines])

@@ -5,7 +5,11 @@ C3: web 전송 계층(server.py)에서 분리된 도메인 로직. FastAPI 무�
 
 from __future__ import annotations
 
-from agent_cli.prompts.session_state import RULES_HEADER, SESSION_STATE_HEADER
+from agent_cli.prompts.session_state import (
+    RULES_HEADER,
+    SESSION_STATE_HEADER,
+    TAIL_BOUNDARY,
+)
 from agent_cli.render.web import WebRenderer
 
 
@@ -19,20 +23,27 @@ def _split_tail(content: str) -> tuple[str, list[tuple[str, str]]]:
     이름에 "system" 을 쓰지 않는 것은 의도 — 프로바이더 입장에서 이 텍스트는
     system 이 아니라 user 메시지 본문이다."""
     cut = len(content)
-    for marker in (RULES_HEADER, SESSION_STATE_HEADER):
+    for marker in (TAIL_BOUNDARY, RULES_HEADER, SESSION_STATE_HEADER):
         i = content.find(marker)
         if i != -1:
             cut = min(cut, i)
     if cut == len(content):
         return content, []
     body, tail = content[:cut].rstrip(), content[cut:]
+    # 경계선(v9.25.2)은 꼬리의 첫 줄 — 첫 섹션 본문에 그대로 싣고, 섹션 판정은
+    # 그 다음 헤더로 한다.
+    boundary = ""
+    if tail.startswith(TAIL_BOUNDARY):
+        boundary = TAIL_BOUNDARY + "\n"
+        tail = tail[len(TAIL_BOUNDARY) :].lstrip()
     parts: list[tuple[str, str]] = []
     si = tail.find(SESSION_STATE_HEADER)
     if tail.startswith(RULES_HEADER):
         rules = tail if si == -1 else tail[:si]
-        parts.append(("Standing Rules (per-turn tail)", rules.strip()))
+        parts.append(("Standing Rules (per-turn tail)", boundary + rules.strip()))
+        boundary = ""
     if si != -1:
-        parts.append(("Session State (per-turn tail)", tail[si:].strip()))
+        parts.append(("Session State (per-turn tail)", boundary + tail[si:].strip()))
     return body, parts
 
 
