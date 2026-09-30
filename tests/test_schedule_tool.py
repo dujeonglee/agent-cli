@@ -55,20 +55,24 @@ class TestValidate:
         msg = ScheduleTool().validate({"mode": "delete"})
         assert "'id' is required" in msg and "mode='list'" in msg
 
-    def test_delete_takes_id_or_schedule_id(self):
+    def test_delete_takes_id_only(self):
         """v9.25.3: a live main sent ``delete`` with ``id`` nine times over a
         day and was refused every time — it never learned ``schedule_id``
-        because every other tool calls it ``id``. Both spellings work now."""
+        because every other tool calls it ``id``. v9.25.4: ``schedule_id`` is
+        not an alias either — one spelling, the one every tool uses."""
         t = ScheduleTool()
         assert t.validate({"mode": "delete", "id": "abc"}) is None
-        assert t.validate({"mode": "delete", "schedule_id": "abc"}) is None
+        assert "'id' is required" in t.validate(
+            {"mode": "delete", "schedule_id": "abc"}
+        )
         assert "id" in ScheduleTool.parameters["properties"]
+        assert "schedule_id" not in ScheduleTool.parameters["properties"]
         assert t.summary_arg({"mode": "delete", "id": "abc"}) == "delete abc"
 
 
 class TestDeleteRequest:
-    def test_delete_with_id_writes_schedule_id_to_the_board(self, ws, monkeypatch):
-        """The file contract with agent-board stays ``schedule_id``."""
+    def test_delete_with_id_writes_id_to_the_board(self, ws, monkeypatch):
+        """v9.25.4: the file contract with agent-board (≥ 1.31.3) says ``id`` too."""
         tmp_path, sdir = ws
         monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.05)
         r = _run(ScheduleTool(), {"mode": "delete", "id": "sid9"}, sdir)
@@ -79,8 +83,8 @@ class TestDeleteRequest:
             .splitlines()
         )
         req = json.loads(lines[-1])
-        assert req["op"] == "delete" and req["schedule_id"] == "sid9"
-        assert "id" not in req
+        assert req["op"] == "delete" and req["id"] == "sid9"
+        assert "schedule_id" not in req
 
 
 class TestRun:
@@ -110,10 +114,10 @@ class TestRun:
                     req = json.loads(lines[-1])
                     _board_ack(
                         _acdir(tmp_path),
-                        {req["req_id"]: {"ok": True, "schedule_id": "sid1"}},
+                        {req["req_id"]: {"ok": True, "id": "sid1"}},
                         [
                             {
-                                "schedule_id": "sid1",
+                                "id": "sid1",
                                 "cron": req["cron"],
                                 "human": "매주 월 09:00",
                                 "label": req.get("label", ""),

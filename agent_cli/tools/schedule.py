@@ -13,11 +13,12 @@ Modes:
   inject) + optional ``label`` + optional ``nickname`` (display name the injected
   prompt shows up under; defaults to "⏰ Scheduler" on the board when omitted).
   Schedules FUTURE autonomous work on this post.
-- ``delete`` — ``id`` (from ``list``; ``schedule_id`` is accepted too — v9.25.3:
-  a live main called ``delete`` with ``id`` nine times over a day, was refused
-  each time for the missing ``schedule_id``, and never adapted, because every
-  other tool (memory, monitor, reply, answer) names it ``id``; the schedules
-  it meant to replace piled up to five).
+- ``delete`` — ``id`` (from ``list``). Until v9.25.3 this argument was
+  ``schedule_id``: a live main called ``delete`` with ``id`` nine times over a
+  day, was refused each time, and never adapted, because every other tool
+  (memory, monitor, reply, answer) names it ``id``; the schedules it meant to
+  replace piled up to five. v9.25.4: ``schedule_id`` is gone from the tool AND
+  from the file contract (board ≥ 1.31.3 — no compatibility shim).
 - ``list`` — the post's current schedules.
 """
 
@@ -82,15 +83,14 @@ def _fmt_schedules(state: dict) -> str:
         flag = "" if s.get("enabled", True) else " (disabled)"
         nxt = f" · next {s['next_fire']}" if s.get("next_fire") else ""
         lines.append(
-            f"- [{s['schedule_id']}] {s.get('label') or s.get('human') or s['cron']} "
+            f"- [{s['id']}] {s.get('label') or s.get('human') or s['cron']} "
             f"({s['human']}){flag}{nxt}\n    → {s.get('prompt', '')}"
         )
     return "Schedules for this post:\n" + "\n".join(lines)
 
 
 def _sched_id(args: dict) -> str:
-    """``id`` (what models reach for — every other tool's name) or ``schedule_id``."""
-    return (args.get("id") or args.get("schedule_id") or "").strip()
+    return (args.get("id") or "").strip()
 
 
 class ScheduleTool(Tool):
@@ -100,7 +100,7 @@ class ScheduleTool(Tool):
         "when you're not running — the board restarts this session at the due "
         "time and delivers the prompt. Use for standing/periodic work the user "
         "asked to automate (e.g. a weekly report). Modes: add (cron + prompt "
-        "[+ label]), delete (schedule_id), list. cron is 5 fields "
+        "[+ label]), delete (id), list. cron is 5 fields "
         "'min hour day month weekday' (e.g. '0 9 * * 1' = Mondays 09:00). "
         "Pass 'nickname' to set the display name the injected prompt appears "
         "under (defaults to '⏰ Scheduler'). "
@@ -132,10 +132,6 @@ class ScheduleTool(Tool):
             "id": {
                 "type": "string",
                 "description": "Which schedule to delete (delete; from list)",
-            },
-            "schedule_id": {
-                "type": "string",
-                "description": "Alias of id",
             },
         },
         "required": ["mode"],
@@ -185,7 +181,7 @@ class ScheduleTool(Tool):
                 nickname=(args.get("nickname") or "").strip(),
             )
         elif mode == "delete":
-            req["schedule_id"] = _sched_id(args)
+            req["id"] = _sched_id(args)
 
         try:
             _append_request(acdir, req)
@@ -207,7 +203,7 @@ class ScheduleTool(Tool):
         if mode == "add":
             return ToolResult(
                 True,
-                output=f"Scheduled [{res.get('schedule_id')}].\n{_fmt_schedules(state)}",
+                output=f"Scheduled [{res.get('id')}].\n{_fmt_schedules(state)}",
             )
         if mode == "delete":
             return ToolResult(True, output=f"Deleted.\n{_fmt_schedules(state)}")
