@@ -1266,8 +1266,10 @@ class TestResumeRestore:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "hi")
-        assert wait_until(reg.has_pending_replies)
-        assert len(self._state(tmp_path)["pending"]) == 1
+        # ``_push_reply`` appends in memory (what ``has_pending_replies`` sees)
+        # and mirrors to disk a step later — wait for the mirror itself, not
+        # the in-memory flag (CI Linux caught the gap once: 0 == 1).
+        assert wait_until(lambda: len(self._state(tmp_path)["pending"]) == 1)
         reg.drain_replies()
         assert self._state(tmp_path)["pending"] == []
         reg.shutdown_all()
