@@ -472,7 +472,7 @@ class Tool(ABC):
            assistant: 분석이 완료되었다. hooks.py는 3개의 hook 타입을 지원...
 ```
 
-- Scratchpad 별도 inject 없음. messages만 (토큰 budget 자동 계산, 90% 초과 시 compaction → 그 외 FIFO drop)
+- Scratchpad 별도 inject 없음. messages만 (호출별 압축 목표치 자동 계산, 목표치 초과 시 compaction → 그 외 FIFO drop)
 - 저장: history.jsonl (JSON Lines, 구조화)
 - 표현: 자연어 변환 (thought → "목적. → action(인자)")
 
@@ -614,7 +614,7 @@ lenient/하이브리드 수리를 소유 (self-contained).
 
 #### 2-Tier: Compaction (LLM 요약) → FIFO Fallback
 
-> 두 흐름이 있다. **flow 1 (예방)** — 매 LLM 호출 *직전* `ensure_within(C×r−S−St (r=compaction_ratio 0.8 기본, St=세션상태; **max_output 예약 제거, 요청-시 클램프로 대체 — v8.53.0**))`, 호출 *직후* 서버 실측으로 reconcile.
+> 두 흐름이 있다. **flow 1 (예방)** — 매 LLM 호출 *직전* `ensure_within(C×r−S−St (r=compaction_ratio 0.8 기본, St=세션상태; **max_output 예약 제거, 요청-시 클램프로 대체 — v8.53.0**))`, 호출 *직후* 서버 실측으로 reconcile. **트리거는 "캐시 > 목표치" 하나뿐** — 별도 90% 임계는 없다(v9.25.1: 잔재 `_COMPACTION_THRESHOLD_RATIO` 제거, `fallback_used` 는 호출자가 넘긴 목표치 기준으로 기록, 세션 상태 꼬리의 `context:` 줄이 `(p% — compaction at 100%)` 로 목표치 대비임을 명시).
 > **flow 2 (반응)** — 예방이 빗나가 서버가 400을 던지면 `force_fit`으로 사후 축소+재시도.
 > 아래는 flow 1; flow 2는 이어지는 박스 참조.
 
@@ -880,7 +880,7 @@ def hello():    →    1#VR:def hello():
 
 ### 6.5 Tool Output 전달 방식
 
-Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다 — 단, 한 관찰이 **`context_window // 10`**(loop `_oversized_cap`)를 넘는 병적 대용량(예: 레포 전체 `find`, 전 심볼 `code_index` 덤프)이면 컨텍스트에 안 들이고 **"좁히라"는 nudge 로 거절**합니다(전체는 어디에도 보존 안 함 — 호출 자체는 성공; 모델이 라인범위/`LIMIT`/`grep`/`tee→read_file` 로 다시 받음). 한 메시지가 윈도우를 넘겨 압축을 깨뜨리는 걸 방지(§5.4 과대 출력 캡 참조). 도구별로 `Tool.render_observation`(결과→관찰 본문)·`Tool.apply_oversized_cap`(기본 True)·`Tool.render_oversized`(캡 초과 시 낼 관찰 — 기본 제네릭 nudge, read_file 은 range/`read_symbols`/run 팬아웃 유도) 표면으로 제어. 이전에는 context window의 3% 비율로 잘랐으나(`tools/truncation.py`, 삭제됨) LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거했고, 그 뒤 청크-spill(history 보존 + `json_extract` 회수)도 거절-nudge 로 대체했습니다(spill 보관-회수 기계 제거 → 단순화). context가 budget의 90%를 넘으면 `context/manager.py`의 compaction이 oldest 절반을 LLM 요약으로 흡수하고, 실패/미충족이면 belt-and-braces로 FIFO drop이 메시지 단위로 떨궈냄.
+Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다 — 단, 한 관찰이 **`context_window // 10`**(loop `_oversized_cap`)를 넘는 병적 대용량(예: 레포 전체 `find`, 전 심볼 `code_index` 덤프)이면 컨텍스트에 안 들이고 **"좁히라"는 nudge 로 거절**합니다(전체는 어디에도 보존 안 함 — 호출 자체는 성공; 모델이 라인범위/`LIMIT`/`grep`/`tee→read_file` 로 다시 받음). 한 메시지가 윈도우를 넘겨 압축을 깨뜨리는 걸 방지(§5.4 과대 출력 캡 참조). 도구별로 `Tool.render_observation`(결과→관찰 본문)·`Tool.apply_oversized_cap`(기본 True)·`Tool.render_oversized`(캡 초과 시 낼 관찰 — 기본 제네릭 nudge, read_file 은 range/`read_symbols`/run 팬아웃 유도) 표면으로 제어. 이전에는 context window의 3% 비율로 잘랐으나(`tools/truncation.py`, 삭제됨) LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거했고, 그 뒤 청크-spill(history 보존 + `json_extract` 회수)도 거절-nudge 로 대체했습니다(spill 보관-회수 기계 제거 → 단순화). context가 호출별 압축 목표치를 넘으면 `context/manager.py`의 compaction이 oldest 절반을 LLM 요약으로 흡수하고, 실패/미충족이면 belt-and-braces로 FIFO drop이 메시지 단위로 떨궈냄.
 
 ### 6.5.0b Shell Output: full passthrough (이전 artifact guard 제거됨)
 
@@ -892,7 +892,7 @@ Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달�
 
 현재 정책: **shell 출력은 잘리지 않고 그대로 LLM observation으로 전달**.
 컨텍스트 budget 관리는 messages buffer의 2-tier 관리가 담당
-(`context/manager.py`) — 90% 초과 시 oldest 절반을 LLM 요약으로 흡수,
+(`context/manager.py`) — 호출별 목표치 초과 시 oldest 절반을 LLM 요약으로 흡수,
 요약 실패/미충족이면 FIFO drop으로 떨궈냄. 의도된 거대 출력
 (`find /`, `cat huge.log`)은 모델이 자기 비용 인지하에 호출한 것으로 간주.
 

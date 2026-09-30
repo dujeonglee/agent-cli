@@ -64,7 +64,9 @@ def _current_scope_id() -> str:
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
-_COMPACTION_THRESHOLD_RATIO = 0.9  # trigger when cache > 90% of budget
+# 압축은 캐시가 호출별 목표치(``ensure_within(target)``, 루프가 ``context ×
+# compaction_ratio − system − 세션상태`` 로 계산)를 **넘는 순간** 돈다 — 별도의
+# 90% 임계는 없다(v9.25.1 에 잔재 상수 제거; 꼬리의 퍼센트가 곧 그 목표치 대비).
 _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 
 # Compaction TARGET ratio: the loop squeezes the cache down to this fraction of
@@ -669,7 +671,7 @@ class ContextManager:
             return
 
         try:
-            self._compact()
+            self._compact(target_tokens)
         except CompactionError as e:
             render_compaction_progress(phase="warning", reason=str(e))
 
@@ -700,10 +702,15 @@ class ContextManager:
             render_compaction_progress(phase="warning", reason=str(e))
         return before, self._cache_tokens
 
-    def _compact(self) -> None:
+    def _compact(self, target_tokens: int | None = None) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
         rebuild cache, persist. Raises ``CompactionError`` on summariser
-        failure (callback exception or empty/non-string return)."""
+        failure (callback exception or empty/non-string return).
+
+        ``target_tokens`` is the caller's goal — ``ensure_within`` passes
+        the live per-call target so the recorded ``fallback_used`` says
+        whether its FIFO belt-and-braces will run; ``compact_now`` passes
+        nothing (no FIFO follows a manual pass)."""
         anchor, evict_set, retained = self._split_for_compaction()
         if not evict_set:
             return
@@ -782,10 +789,13 @@ class ContextManager:
             # Determine ``fallback_used`` AFTER the try-block. If we
             # raised, the caller (ensure_within) will run FIFO so
             # mark fallback now. If we succeeded but the cache is
-            # still over threshold, ensure_within's belt-and-braces
-            # will also run FIFO — same flag.
-            threshold = int(self.max_context_tokens * _COMPACTION_THRESHOLD_RATIO)
-            if failure_signal is not None or self._cache_tokens > threshold:
+            # still over the caller's target, ensure_within's
+            # belt-and-braces will also run FIFO — same flag. (Until
+            # v9.25.1 this compared against 90% of the stale
+            # ``max_context_tokens`` budget, not the live target.)
+            if failure_signal is not None or (
+                target_tokens is not None and self._cache_tokens > target_tokens
+            ):
                 fallback_used = True
 
             if self._recorder is not None:

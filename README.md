@@ -1161,7 +1161,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}
 ```
 
-shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 budget의 90%를 넘으면 compaction이 발동해 오래된 절반을 LLM 요약으로 흡수하고, 그 단계에서도 안 들어가면 플레인 FIFO로 떨어뜨립니다.
+shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 압축 목표치(창 × 압축 비율 − 시스템 프롬프트 − 세션 상태; 꼬리의 `context:` 줄이 이 목표치 대비 퍼센트)를 **넘으면** compaction이 발동해 오래된 절반을 LLM 요약으로 흡수하고, 그 단계에서도 안 들어가면 플레인 FIFO로 떨어뜨립니다.
 
 **위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다. 실행될 명령이 별도 줄로 표시되고, **확인을 유발한 위험 키워드만 강조**됩니다 (CLI 는 볼드-레드, 웹 다이얼로그는 `.danger` 스팬):
 
@@ -1364,7 +1364,7 @@ worm_game.html                                                          14자
 
 ```
 ── session state (context only — not part of the conversation) ──
-context: ~118,400 / 140,000 tokens (85%) · turn 23/40 (17 left after this one)
+context: ~118,400 / 140,000 tokens (85% — compaction at 100%) · turn 23/40 (17 left after this one)
 
 ## Open Requests
    [2] (Ann) "REQ-B: 이건 REQ-A 와 별개다"
@@ -1403,7 +1403,7 @@ reason to finish early.
 
 ### 세션 & 컨텍스트 관리 시스템
 
-토큰 budget 기반 컨텍스트 관리. 평상시는 FIFO eviction, 90% 임계 초과 시 LLM 요약 압축(compaction)으로 전환되며, 모든 변경은 `history.jsonl`에 영속화됩니다.
+토큰 budget 기반 컨텍스트 관리. 매 호출 직전 캐시가 압축 목표치를 넘으면 LLM 요약 압축(compaction)이 돌고, 요약이 실패하거나 모자라면 FIFO eviction 으로 떨어지며, 모든 변경은 `history.jsonl`에 영속화됩니다.
 
 #### 컨텍스트 윈도우 레이아웃
 
@@ -1448,9 +1448,9 @@ reason to finish early.
 - `--max-context-tokens`로 수동 override 가능 (0 = 자동)
 - 스킬/agent 서브에이전트는 부모 budget 상속
 
-#### Context Compaction (90% 임계)
+#### Context Compaction (목표치 초과 시)
 
-캐시가 budget의 90%를 넘으면 단순 FIFO drop 대신 LLM 요약 압축이 실행됩니다.
+매 LLM 호출 직전, 캐시가 그 호출의 목표치 `context_window × compaction_ratio(기본 0.8) − 시스템 프롬프트 − 세션 상태` 를 **넘으면** 단순 FIFO drop 대신 LLM 요약 압축이 실행됩니다. 별도의 90% 임계는 없습니다 — 세션 상태 꼬리의 `context: ~N / M tokens (p% — compaction at 100%)` 에서 M 이 바로 이 목표치라, 90% 는 "목표치까지 10% 남음" 이지 경보가 아닙니다.
 
 1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
 2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄

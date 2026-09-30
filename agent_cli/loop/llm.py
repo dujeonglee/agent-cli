@@ -30,12 +30,13 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 _MAX_OVERFLOW_RETRIES = 5
-# Compaction TARGET ratio: compact down to this fraction of available headroom
-# (default 0.8 = leave a 20% margin). Distinct from manager's
-# _COMPACTION_THRESHOLD_RATIO (0.9 = when to TRIGGER). The value now lives on
-# the ContextManager (``self.ctx.compaction_ratio``) so the web slider can tune
-# it live; both the preventive (flow 1) and overflow-recovery (flow 2) target
-# computations in _call_llm read it from there.
+# Compaction ratio: the per-call target is ``context_window × ratio − system −
+# session state`` (default 0.8 = leave a 20% margin) and compaction runs the
+# moment the cache EXCEEDS that target — there is no separate trigger
+# threshold (the manager's old 90% constant was a leftover, removed v9.25.1).
+# The value lives on the ContextManager (``self.ctx.compaction_ratio``) so the
+# web slider can tune it live; both the preventive (flow 1) and
+# overflow-recovery (flow 2) target computations in _call_llm read it from there.
 
 
 class LLMCaller:

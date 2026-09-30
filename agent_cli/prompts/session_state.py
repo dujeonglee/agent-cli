@@ -60,10 +60,15 @@ RULES_HEADER = "── standing rules (always in effect) ──"
 
 
 def _context_line(used: int, budget: int, turn: int, max_turns: int) -> str:
+    """``budget`` is the live compaction target, so the percentage is "how
+    far to compaction". It is spelled out (v9.25.1) because a reader —
+    human or model — took 90% for an alarm and wondered why nothing ran:
+    compaction fires only once the cache passes the target."""
     parts = []
     if budget > 0:
         pct = min(100, round(used * 100 / budget))
-        parts.append(f"context: ~{used:,} / {budget:,} tokens ({pct}%)")
+        note = "compaction at 100%" if pct < 100 else "compaction due"
+        parts.append(f"context: ~{used:,} / {budget:,} tokens ({pct}% — {note})")
     elif used:
         parts.append(f"context: ~{used:,} tokens")
     if turn:

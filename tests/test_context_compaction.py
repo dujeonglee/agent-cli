@@ -63,14 +63,34 @@ def _add(ctx, msg):
 
 
 class TestCompactionTrigger:
-    def test_triggers_above_90_percent(self, tmp_path):
-        """``add`` fires ``_compact`` when cache > 0.9 * budget."""
+    def test_triggers_once_over_the_target(self, tmp_path):
+        """``ensure_within(target)`` fires ``_compact`` when cache > target."""
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=100)
         _add(ctx, {"role": "system", "content": "sys"})
-        # ~10 tokens per message → 11 messages ~ 110 tokens > 90.
+        # ~10 tokens per message → 11 messages ~ 110 tokens > 100.
         for i in range(20):
             _add(ctx, {"role": "user", "content": f"x{i}" * 8})
         assert len(calls) >= 1, "summariser must have been invoked"
+
+    def test_no_separate_90_percent_threshold(self, tmp_path):
+        """v9.25.1: the only trigger is "cache > target". A cache sitting at
+        90–100% of the target is left alone — the tail's percentage is the
+        distance to compaction, not an alarm level. (The manager once carried
+        a ``_COMPACTION_THRESHOLD_RATIO = 0.9`` constant that no longer fired
+        anything; it is gone so nobody reads it as the trigger again.)"""
+        from agent_cli.context import manager as M
+
+        assert not hasattr(M, "_COMPACTION_THRESHOLD_RATIO")
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=10_000)
+        ctx.add({"role": "system", "content": "sys"})
+        ctx.add({"role": "user", "content": "x" * 400})
+        used = ctx.get_estimated_tokens()
+        ctx.ensure_within(int(used / 0.95))  # at 95% of the target
+        assert calls == []
+        ctx.ensure_within(used)  # exactly at the target — still not over
+        assert calls == []
+        ctx.ensure_within(used - 1)  # over it by one token
+        assert len(calls) == 1
 
     def test_skipped_below_threshold(self, tmp_path):
         """Small cache (well under threshold) doesn't trigger."""
@@ -968,6 +988,58 @@ class TestRecorderIntegration:
         first = compaction_rows[0]
         assert first["failure_signal"] == "summary_failed"
         assert first["fallback_used"] is True
+
+    def test_fallback_flag_follows_the_live_target(self, tmp_path):
+        """v9.25.1: ``fallback_used`` says whether ``ensure_within``'s FIFO
+        belt-and-braces ran after the pass. It is judged against the target
+        the caller passed — before, it compared with 90% of the stale
+        ``max_context_tokens`` budget, so a pass that DID fit the live target
+        could still be logged as a fallback (or the reverse)."""
+        from agent_cli.recovery.observability import TurnRecorder
+
+        def rows(sdir):
+            return [
+                json.loads(line)
+                for line in (sdir / "turns.jsonl").read_text().splitlines()
+                if line and json.loads(line).get("event") == "compaction"
+            ]
+
+        # (a) the pass fits the target → no fallback, whatever the budget says
+        sdir = tmp_path / "fits"
+        sdir.mkdir(parents=True)
+        ctx = ContextManager(sdir, max_context_tokens=20)  # budget far below
+        ctx.set_compactor(lambda msgs: "short")
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.add({"role": "system", "content": "sys"})
+        for _ in range(8):
+            ctx.add({"role": "user", "content": "x" * 40})
+        ctx.ensure_within(ctx.get_estimated_tokens() - 1)  # generous target
+        assert rows(sdir)[0]["fallback_used"] is False
+
+        # (b) the pass leaves the cache over the target → FIFO follows → True
+        sdir = tmp_path / "over"
+        sdir.mkdir(parents=True)
+        ctx = ContextManager(sdir, max_context_tokens=100_000)  # budget huge
+        ctx.set_compactor(lambda msgs: "s" * 400)  # summary alone is too big
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.add({"role": "system", "content": "sys"})
+        for _ in range(8):
+            ctx.add({"role": "user", "content": "x" * 40})
+        ctx.ensure_within(30)
+        assert rows(sdir)[0]["fallback_used"] is True
+        assert ctx.get_estimated_tokens() <= 30
+
+        # (c) a manual pass has no FIFO after it → never a fallback
+        sdir = tmp_path / "manual"
+        sdir.mkdir(parents=True)
+        ctx = ContextManager(sdir, max_context_tokens=20)
+        ctx.set_compactor(lambda msgs: "s" * 400)
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.add({"role": "system", "content": "sys"})
+        for _ in range(8):
+            ctx.add({"role": "user", "content": "x" * 40})
+        ctx.compact_now()
+        assert rows(sdir)[0]["fallback_used"] is False
 
 
 # ── 10. render_compaction_progress invariant ─────────

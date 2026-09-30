@@ -30,12 +30,19 @@ class TestBuildSessionState:
 
     def test_context_line_with_percentage(self):
         out = build_session_state(used_tokens=48_200, budget_tokens=140_000)
-        assert "~48,200 / 140,000 tokens (34%)" in out
+        assert "~48,200 / 140,000 tokens (34% — compaction at 100%)" in out
         assert out.startswith(SESSION_STATE_HEADER)
+
+    def test_percentage_says_where_compaction_fires(self):
+        """v9.25.1: a reader saw "(90%)" and expected compaction to have run.
+        The budget IS the compaction target, so the line now says so — the
+        percentage is the distance to it, not an alarm level."""
+        out = build_session_state(used_tokens=126_000, budget_tokens=140_000)
+        assert "(90% — compaction at 100%)" in out
 
     def test_percentage_is_clamped_over_budget(self):
         out = build_session_state(used_tokens=200_000, budget_tokens=140_000)
-        assert "(100%)" in out
+        assert "(100% — compaction due)" in out
 
     def test_turn_without_max_turns(self):
         out = build_session_state(used_tokens=1, budget_tokens=10, turn=7)
