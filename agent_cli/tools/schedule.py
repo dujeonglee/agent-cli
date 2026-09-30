@@ -13,7 +13,11 @@ Modes:
   inject) + optional ``label`` + optional ``nickname`` (display name the injected
   prompt shows up under; defaults to "⏰ Scheduler" on the board when omitted).
   Schedules FUTURE autonomous work on this post.
-- ``delete`` — ``schedule_id`` (from ``list``).
+- ``delete`` — ``id`` (from ``list``; ``schedule_id`` is accepted too — v9.25.3:
+  a live main called ``delete`` with ``id`` nine times over a day, was refused
+  each time for the missing ``schedule_id``, and never adapted, because every
+  other tool (memory, monitor, reply, answer) names it ``id``; the schedules
+  it meant to replace piled up to five).
 - ``list`` — the post's current schedules.
 """
 
@@ -84,6 +88,11 @@ def _fmt_schedules(state: dict) -> str:
     return "Schedules for this post:\n" + "\n".join(lines)
 
 
+def _sched_id(args: dict) -> str:
+    """``id`` (what models reach for — every other tool's name) or ``schedule_id``."""
+    return (args.get("id") or args.get("schedule_id") or "").strip()
+
+
 class ScheduleTool(Tool):
     name = "schedule"
     description = (
@@ -120,9 +129,13 @@ class ScheduleTool(Tool):
                     "add; defaults to '⏰ Scheduler')"
                 ),
             },
+            "id": {
+                "type": "string",
+                "description": "Which schedule to delete (delete; from list)",
+            },
             "schedule_id": {
                 "type": "string",
-                "description": "Which schedule to delete (from list)",
+                "description": "Alias of id",
             },
         },
         "required": ["mode"],
@@ -138,7 +151,7 @@ class ScheduleTool(Tool):
 
     def summary_arg(self, action_input: dict) -> str:
         std = self.strip_prefix(action_input)
-        return f"{std.get('mode', '')} {std.get('label') or std.get('cron') or std.get('schedule_id') or ''}".strip()
+        return f"{std.get('mode', '')} {std.get('label') or std.get('cron') or _sched_id(std)}".strip()
 
     def validate(self, args: dict) -> str | None:
         mode = (args.get("mode") or "").strip()
@@ -148,8 +161,10 @@ class ScheduleTool(Tool):
             return "'prompt' is required for mode='add'"
         if mode == "add" and not (args.get("cron") or "").strip():
             return "'cron' is required for mode='add'"
-        if mode == "delete" and not (args.get("schedule_id") or "").strip():
-            return "'schedule_id' is required for mode='delete'"
+        if mode == "delete" and not _sched_id(args):
+            return (
+                "'id' is required for mode='delete' — the schedule id from mode='list'"
+            )
         return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
@@ -170,7 +185,7 @@ class ScheduleTool(Tool):
                 nickname=(args.get("nickname") or "").strip(),
             )
         elif mode == "delete":
-            req["schedule_id"] = (args.get("schedule_id") or "").strip()
+            req["schedule_id"] = _sched_id(args)
 
         try:
             _append_request(acdir, req)

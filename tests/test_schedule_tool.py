@@ -52,7 +52,35 @@ class TestValidate:
         assert t.validate({"mode": "add", "cron": "0 9 * * 1", "prompt": "x"}) is None
 
     def test_delete_requires_id(self):
-        assert "schedule_id" in ScheduleTool().validate({"mode": "delete"})
+        msg = ScheduleTool().validate({"mode": "delete"})
+        assert "'id' is required" in msg and "mode='list'" in msg
+
+    def test_delete_takes_id_or_schedule_id(self):
+        """v9.25.3: a live main sent ``delete`` with ``id`` nine times over a
+        day and was refused every time — it never learned ``schedule_id``
+        because every other tool calls it ``id``. Both spellings work now."""
+        t = ScheduleTool()
+        assert t.validate({"mode": "delete", "id": "abc"}) is None
+        assert t.validate({"mode": "delete", "schedule_id": "abc"}) is None
+        assert "id" in ScheduleTool.parameters["properties"]
+        assert t.summary_arg({"mode": "delete", "id": "abc"}) == "delete abc"
+
+
+class TestDeleteRequest:
+    def test_delete_with_id_writes_schedule_id_to_the_board(self, ws, monkeypatch):
+        """The file contract with agent-board stays ``schedule_id``."""
+        tmp_path, sdir = ws
+        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.05)
+        r = _run(ScheduleTool(), {"mode": "delete", "id": "sid9"}, sdir)
+        assert r.success  # "submitted, not yet acknowledged"
+        lines = (
+            (_acdir(tmp_path) / "schedule-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        req = json.loads(lines[-1])
+        assert req["op"] == "delete" and req["schedule_id"] == "sid9"
+        assert "id" not in req
 
 
 class TestRun:
