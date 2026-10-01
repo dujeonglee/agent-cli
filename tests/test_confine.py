@@ -177,6 +177,68 @@ class TestGuardGating:
         assert "AGENT_CLI_WORKSPACE_CONFINE=0" in denial
 
 
+class TestDevicePseudoFiles:
+    """`>/dev/null` 은 묻지 않는다 (v9.26.2).
+
+    c28435 라이브: 셸 한 줄의 `2>/dev/null` 이 "워크스페이스 밖" 확인을 띄워
+    상주 에이전트가 사람이 누를 때까지 몇 분씩 섰다. 디스크 상태를 바꿀 수
+    없는 장치 의사파일은 밖이어도 통과 — 블록 장치는 여전히 걸린다."""
+
+    @pytest.mark.parametrize(
+        "dev",
+        [
+            "/dev/null",
+            "/dev/zero",
+            "/dev/stdin",
+            "/dev/stdout",
+            "/dev/stderr",
+            "/dev/tty",
+            "/dev/urandom",
+            "/dev/fd/1",
+        ],
+    )
+    def test_device_passes_without_prompt(self, confined, dev):
+        # pytest 엔 TTY 가 없어 물으면 거절 문자열이 온다 — None 은 안 물은 것
+        assert _confine.guard([dev], "shell", command=f"cmd >{dev}") is None
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cat /tmp/w1.log 2>/dev/null; echo done",
+            "ps -p 28510 >/dev/null && echo STILL || echo EXITED",
+            "ls /tmp/x 2>&1 | tail -1",
+            "cat /tmp/w1.log > /dev/null",
+        ],
+    )
+    def test_redirect_to_a_sink_keeps_a_read_segment_read_only(self, confined, cmd):
+        """``2>/dev/null``·``2>&1`` 은 쓰기가 아니다 — 종전엔 ``>`` 만 보고
+        세그먼트를 "바꿀 수 있음"으로 올려 읽기 대상 `/tmp/w1.log` 를 물었다."""
+        paths = _confine.extract_shell_paths(cmd)
+        assert "/tmp/w1.log" not in paths and "/tmp/x" not in paths
+        assert _confine.guard(paths, "shell", command=cmd) is None
+
+    def test_stderr_redirect_to_a_real_file_is_still_a_write(self, confined):
+        """``2>/tmp/err.log`` — 종전엔 ``2>`` 토큰이 통째로 버려져 밖으로 쓰는
+        stderr 리다이렉션이 게이트를 비켜갔다."""
+        paths = _confine.extract_shell_paths("make 2>/tmp/err.log")
+        assert "/tmp/err.log" in paths
+        denial = _confine.guard(paths, "shell", command="make 2>/tmp/err.log")
+        assert denial is not None and "outside the workspace" in denial
+
+    def test_file_redirect_still_makes_the_segment_mutating(self, confined, tmp_path):
+        out = tmp_path / "outside" / "out.txt"
+        cmd = f"cat /tmp/a.log > {out}"
+        paths = _confine.extract_shell_paths(cmd)
+        assert str(out) in paths
+
+    def test_block_device_still_gated(self, confined):
+        denial = _confine.guard(["/dev/disk0"], "shell", command="dd of=/dev/disk0")
+        assert denial is not None and "outside the workspace" in denial
+
+    def test_write_file_to_dev_null_passes(self, confined):
+        assert _confine.guard(["/dev/null"], "write_file") is None
+
+
 # ── guard: prompt decisions ────────────────────────────────
 
 

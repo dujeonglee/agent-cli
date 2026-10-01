@@ -78,6 +78,34 @@ def resolve_within(path: str, *, root: Path | None = None) -> tuple[Path, bool]:
     return resolved, inside
 
 
+# 쓰기가 무의미한 장치 의사파일 — 밖이지만 묻지 않는다(v9.26.2). `>/dev/null`
+# 하나가 "워크스페이스 밖" 확인을 띄워 상주 에이전트를 몇 분씩 세웠다(c28435
+# 라이브; 사람이 눌러 줘야 풀렸다). 디스크 상태를 바꿀 수 없는 것만 — 블록
+# 장치(`/dev/disk0`)·`/dev/mem` 류는 여전히 묻는다.
+_DEVICE_PASS = frozenset(
+    {
+        "/dev/null",
+        "/dev/zero",
+        "/dev/random",
+        "/dev/urandom",
+        "/dev/stdin",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/tty",
+    }
+)
+_DEV_FD = re.compile(r"^/dev/fd/\d+$")
+
+
+def _device_pass(literal: str, resolved: Path) -> bool:
+    """`/dev/stdin` 류는 심링크라 ``resolve()`` 가 `/dev/fd/0` 로 푼다 — 적힌
+    그대로와 풀린 것 둘 다 본다."""
+    for cand in (str(Path(literal).expanduser()), str(resolved)):
+        if cand in _DEVICE_PASS or _DEV_FD.match(cand):
+            return True
+    return False
+
+
 def _allowlisted(resolved: Path) -> bool:
     for root in _session_root_allowlist:
         rp = Path(root)
@@ -116,7 +144,10 @@ def _is_line_comment(t: str) -> bool:
 
 
 def _path_candidate(tok: str) -> str | None:
-    t = tok.strip("'\"").lstrip("<>")
+    # ``2>/tmp/err.log`` — 숫자 fd 가 붙은 리다이렉션도 대상이 경로다. 종전엔
+    # ``<>`` 만 벗겨 ``2>`` 토큰이 통째로 버려졌고, 밖으로 쓰는 stderr 리다이렉션이
+    # 게이트를 비켜갔다(v9.26.2).
+    t = re.sub(r"^\d*[<>]+", "", tok.strip("'\""))
     # --flag=/path  →  /path
     if t.startswith("--") and "=" in t:
         t = t.split("=", 1)[1]
@@ -151,6 +182,8 @@ _SEGMENT_OPS = {"&&", "||", "|", ";", "&", "\n", "(", ")", "{", "}"}
 
 # 리다이렉션은 **셸**이 쓴다 — 명령이 무엇이든 그 줄은 파일을 만든다.
 _REDIRECT = re.compile(r"(^|[^<>])>{1,2}")
+# 리다이렉션의 **대상** — ``2>/dev/null``·``>&2``·``> out.txt`` 의 오른쪽.
+_REDIRECT_TARGET = re.compile(r"(?:^|[^<>])\d*>{1,2}\s*(\S+)")
 
 # 파일을 만들거나 지우지 **못하는** 명령. 여기 없으면 "바꿀 수 있음"으로
 # 떨어져 지금까지와 똑같이 검사된다 — 목록이 불완전해도 구멍이 안 생긴다.
@@ -238,6 +271,21 @@ def _shell_segments(tokens: list[str]) -> list[list[str]]:
     return [s for s in out if s]
 
 
+def _writes_a_file(cmd: str) -> bool:
+    """리다이렉션 중 **파일에 쓰는 것**이 하나라도 있나. ``2>/dev/null`` 과
+    ``2>&1`` 은 쓰기가 아니다 — 종전엔 ``>`` 만 보고 세그먼트 전체를 "바꿀 수
+    있음"으로 올려, ``cat /tmp/a.log 2>/dev/null`` 의 **읽기** 대상 ``/tmp/a.log``
+    에 "워크스페이스 밖" 확인을 물었다(c28435 라이브, v9.26.2)."""
+    for m in _REDIRECT_TARGET.finditer(cmd):
+        target = m.group(1).strip("'\";)")
+        if target.startswith("&"):
+            continue  # fd 복제 — 파일이 아니다
+        if _device_pass(target, Path(target).expanduser().resolve()):
+            continue
+        return True
+    return False
+
+
 def _can_mutate(seg: list[str], cmd: str) -> bool:
     """이 세그먼트가 파일을 만들/지울 수 있나 — **모르면 True**.
 
@@ -247,8 +295,8 @@ def _can_mutate(seg: list[str], cmd: str) -> bool:
     """
     if not seg:
         return False
-    if _REDIRECT.search(cmd):  # 셸 리다이렉션은 명령 판정을 이긴다
-        return True
+    if _REDIRECT.search(cmd) and _writes_a_file(cmd):
+        return True  # 파일로 가는 셸 리다이렉션은 명령 판정을 이긴다
     name = seg[0].rsplit("/", 1)[-1]
     flags = _WRITE_FLAGS.get(name)
     if flags is not None:
@@ -374,7 +422,7 @@ def guard(
         if not path:
             continue
         resolved, inside = resolve_within(path, root=root)
-        if _allowlisted(resolved):
+        if _allowlisted(resolved) or _device_pass(path, resolved):
             continue
         secret = sensitive_reason(resolved)
         if inside and not secret:
