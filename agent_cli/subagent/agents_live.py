@@ -3074,6 +3074,15 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
         lines.append(
             'send work with {"mode":"request","key":"' + key + '","task":"..."}.'
         )
+    # v10.1.0: peer 채널 안내 — 상주 에이전트끼리는 `message` 로 부르고(키나
+    # 이름), 명단은 그들의 매 턴 꼬리에 있다. 실측(mgv4en): main 이 모르면
+    # 플레이어들에게 `agent(mode="request")` 를 가르쳐 한 턴씩 낭비됐다.
+    _name = str(args.get("name", "") or "")
+    who = f"'{_name}' or key {key}" if _name else f"key {key}"
+    lines.append(
+        f"Peers reach it with their `message` tool as {who}; they see the live "
+        "roster in their own per-turn tail, so you need not relay keys."
+    )
     return ToolResult(True, output="\n".join(lines))
 
 
@@ -3172,18 +3181,31 @@ def tool_agent(
     registry: AgentRegistry | None,
     parent_ctx=None,
     runtime: dict | None = None,
+    resident: bool = False,
 ) -> ToolResult:
     """teammate 도구 mode 디스패치 — ``_MODE_HANDLERS`` 테이블 경유.
-    delegate 처럼 루프가 인터셉트해 provider/ctx 배선(runtime)을 주입한다."""
+    delegate 처럼 루프가 인터셉트해 provider/ctx 배선(runtime)을 주입한다.
+
+    ``resident`` (v10.1.0): 호출한 루프가 상주 에이전트인가 — 거절 문구가
+    peer 채널(`message`)을 가리킨다. 실측(mgv4en): main 이 플레이어들에게
+    `agent(mode="request")` 로 서로 부르라고 지시했고, 둘이 각각 한 턴을
+    "main-session only" 에 썼다 — 종전 문구는 `run` 만 가리켜 길을 안 알려줬다.
+    """
     from agent_cli.tools.agent_tool import REGISTRY_MODES
 
     if registry is None:
+        hint = (
+            " To reach a peer agent or main, use `message` (to = its key or "
+            "name, or 'main')."
+            if resident
+            else ""
+        )
         return ToolResult(
             False,
             error=(
                 f"persistent agent modes ({'/'.join(REGISTRY_MODES)}) are "
                 'main-session only — in this loop use {"mode":"run","task":...} '
-                "for a one-shot sub-agent instead"
+                f"for a one-shot sub-agent instead.{hint}"
             ),
         )
 
