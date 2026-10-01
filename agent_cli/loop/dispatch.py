@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 
 from agent_cli.loop.skill_invoke import _handle_run_skill
 
@@ -174,6 +176,36 @@ class TurnDispatcher:
         self.state.turn -= 1  # 개입은 턴 미계수 (통일 규칙 — docstring 참조)
         return _CONTINUE
 
+    def _record_emission(self, llm_text: str) -> None:
+        """옵트인 원문 기록 (Phase 5 — docs/multi-wire-format/PHASE5.md §7).
+
+        ``AGENT_CLI_RECORD_EMISSIONS=1`` 이면 모델이 낸 텍스트를 파싱 **전에**
+        ``<session>/emissions.jsonl`` 에 한 줄씩 남긴다. history 는 파싱 결과만,
+        turns 는 지표만 담아 원문이 어디에도 없었다 — 파서 등가성 코퍼스와
+        라이브 bakeoff 의 재료다. 기본은 꺼짐(디스크·용량 영향 0)."""
+        if os.environ.get("AGENT_CLI_RECORD_EMISSIONS") != "1":
+            return
+        sdir = getattr(self.ctx, "session_dir", None) if self.ctx is not None else None
+        if not sdir:
+            return
+        try:
+            with open(
+                os.path.join(str(sdir), "emissions.jsonl"), "a", encoding="utf-8"
+            ) as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": time.time(),
+                            "format": self.cfg.wire_format.name,
+                            "text": llm_text,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError:
+            pass  # 기록은 best-effort — 런을 막지 않는다
+
     def _handle_text_path(self, llm_text: str, usage=None):
         """Handle text parsing response (non-JSON fallback).
 
@@ -191,6 +223,7 @@ class TurnDispatcher:
         primitives) before returning, and the trailing finally writes
         the record.
         """
+        self._record_emission(llm_text)
         turn = self.cfg.wire_format.parse_turn(llm_text)
         # Phase 3 — foreign-format 구제 (multi-wire-format DESIGN §9): 바인딩
         # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
