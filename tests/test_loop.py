@@ -945,6 +945,83 @@ class TestRunLoopObservability:
         assert rows[0]["primitives_applied"] == []
         assert rows[1]["failure_signal"] is None
 
+    def test_empty_content_with_thinking_gets_thinking_hint(self, caps, tmp_path):
+        """v10.1.4 (회사 실측 NO_OUTPUT): content 는 비었는데 사고 채널에 글이 있으면
+        재시도 문구가 "사고 채널에 갇혔다" 고 말한다 — 일반 빈 응답 문구가 아니라."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="", thinking="I should call complete now"),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "NO_OUTPUT"
+        assert "thinking_only_hint" in rows[0]["primitives_applied"]
+        # 두 번째 호출의 마지막 user 메시지가 그 힌트
+        msgs = provider.call.call_args_list[1].kwargs["messages"]
+        last = msgs[-1]["content"]
+        assert "thinking channel" in last and "AFTER it" in last
+
+    def test_server_parsed_tool_calls_are_rescued(self, caps, tmp_path):
+        """v10.1.4: 서버의 tool parser 가 호출을 ``tool_calls`` 로 빼내 content 가
+        비면, 바인딩 방언의 캐노니컬 모양으로 되살려 그대로 실행한다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    {"id": "1", "name": "complete", "input": {"result": "via server"}}
+                ],
+            ),
+        ]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        assert result.success and result.output == "via server"
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["parse_stage"] == 1 and rows[0]["failure_signal"] is None
+
+    def test_thinking_stop_is_passed_to_provider(self, caps, tmp_path):
+        """v10.1.4: 방언의 사고 정지점이 프로바이더 호출 kwargs 로 간다 — 미닫힘
+        <think> 를 프로바이더가 EOF 까지 삼키지 않게."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("ok"))]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        kw = provider.call.call_args.kwargs
+        assert "thinking_stop" in kw
+        assert kw["thinking_stop"] is ctx.dialect.thinking_stop
+
     def test_whitespace_only_response_records_no_output_signal(self, caps, tmp_path):
         """Whitespace-only content (newlines, tabs, spaces) must also be
         classified as NO_OUTPUT — operationally identical to empty."""

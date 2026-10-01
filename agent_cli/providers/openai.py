@@ -53,6 +53,8 @@ class OpenAIProvider:
         **kwargs,
     ) -> LLMResponse:
         on_chunk = kwargs.get("on_chunk")
+        # v10.1.4: 방언의 첫 구조 토큰 — 미닫힘 <think> 격리가 여기서 멈춘다
+        thinking_stop = kwargs.get("thinking_stop")
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -110,6 +112,7 @@ class OpenAIProvider:
                     on_chunk,
                     kwargs.get("degeneration_check"),
                     kwargs.get("interrupt_check"),
+                    thinking_stop=thinking_stop,
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
                     on_thinking=kwargs.get("on_thinking"),
@@ -123,7 +126,7 @@ class OpenAIProvider:
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
         )
         raise_for_status_with_body(r)
-        return self._parse_response(r.json())
+        return self._parse_response(r.json(), thinking_stop=thinking_stop)
 
     def _handle_stream(
         self,
@@ -136,6 +139,7 @@ class OpenAIProvider:
         on_thinking=None,
         attempt: int = 1,
         attempts: int = 1,
+        thinking_stop=None,
     ) -> LLMResponse:
         """OpenAI-호환 SSE 스트림 — 골격(idle/파싱/누산/조기종료/interrupt)은
         ``http.run_sse_stream`` 공용, 여기는 이벤트 shape 해석과 usage 조립만
@@ -162,7 +166,7 @@ class OpenAIProvider:
                 eval_ns=acc.decode_ns,
                 ttft_ns=acc.ttft_ns,
             )
-        content, inline_think = strip_think_blocks(acc.content)
+        content, inline_think = strip_think_blocks(acc.content, stop=thinking_stop)
         thinking = "\n\n".join(x for x in (acc.thinking, inline_think) if x)
         return LLMResponse(
             content=content,
@@ -172,13 +176,16 @@ class OpenAIProvider:
             thinking=thinking,
         )
 
-    def _parse_response(self, data: dict) -> LLMResponse:
-        """Parse non-streaming response."""
+    def _parse_response(self, data: dict, *, thinking_stop=None) -> LLMResponse:
+        """Parse non-streaming response. ``thinking_stop`` (v10.1.4): 미닫힘
+        <think> 격리의 정지점(방언의 첫 구조 토큰) — 없으면 EOF 까지."""
         choice = data["choices"][0]
         message = choice["message"]
         # 인라인 <think> 류 태그 격리 (MiMo 등 — 5.10.0) + vLLM 관례
         # reasoning_content 필드. 둘 다 thinking 으로 합류.
-        content, inline_think = strip_think_blocks(message.get("content") or "")
+        content, inline_think = strip_think_blocks(
+            message.get("content") or "", stop=thinking_stop
+        )
         thinking = "\n\n".join(
             x for x in (message.get("reasoning_content") or "", inline_think) if x
         )

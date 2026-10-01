@@ -913,6 +913,15 @@ class AgentLoop:
 
         llm_text = response.content
 
+        if not (llm_text or "").strip() and getattr(response, "tool_calls", None):
+            # v10.1.4: 서버의 tool parser 가 <tool_call> 블록을 content 에서 빼내
+
+            # ``tool_calls`` 필드로 돌려주면 content 가 비어 NO_OUTPUT 이 됐다.
+
+            # 그 호출들을 바인딩 방언의 캐노니컬 모양으로 되살려 같은 경로로 넣는다.
+
+            llm_text = self._render_server_tool_calls(response.tool_calls)
+
         # Show token stats if available (providers report eval durations)
         if response.usage:
             self._total_output_tokens += response.usage.output_tokens or 0
@@ -984,12 +993,33 @@ class AgentLoop:
             self._fire_hook("OnTurnEnd")
             return result
 
-        result = self._handle_text_path(llm_text, response.usage)
+        result = self._handle_text_path(
+            llm_text, response.usage, thinking=response.thinking
+        )
 
         # OnTurnEnd hook
         self._fire_hook("OnTurnEnd")
 
         return result
+
+    def _render_server_tool_calls(self, tool_calls: list[dict]) -> str:
+        """서버가 구조화해 돌려준 호출들 → 바인딩 방언의 캐노니컬 텍스트 (v10.1.4)."""
+        ops = [
+            {
+                "action": tc.get("name") or "",
+                "action_input": (
+                    tc.get("input") if isinstance(tc.get("input"), dict) else {}
+                ),
+            }
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("name")
+        ]
+        if not ops:
+            return ""
+        rendered = self.dialect.render_assistant_from_history(
+            {"thought": "", "ops": ops}
+        )
+        return rendered.get("content") or ""
 
     def _on_output_truncated(self, llm_text: str):
         """Handle a response cut off at ``max_output_tokens``.
@@ -1023,8 +1053,8 @@ class AgentLoop:
         )
         return self._CONTINUE
 
-    def _handle_text_path(self, llm_text: str, usage=None):
-        return self._dispatch._handle_text_path(llm_text, usage)
+    def _handle_text_path(self, llm_text: str, usage=None, *, thinking=None):
+        return self._dispatch._handle_text_path(llm_text, usage, thinking=thinking)
 
     def _task_text(self) -> str:
         return self._dispatch._task_text()

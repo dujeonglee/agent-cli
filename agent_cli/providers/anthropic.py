@@ -73,6 +73,7 @@ class AnthropicProvider:
         **kwargs,
     ) -> LLMResponse:
         on_chunk = kwargs.get("on_chunk")
+        thinking_stop = kwargs.get("thinking_stop")
         url = f"{self.base_url}/messages"
         headers = {
             "Content-Type": "application/json",
@@ -130,6 +131,7 @@ class AnthropicProvider:
                     on_chunk,
                     kwargs.get("degeneration_check"),
                     kwargs.get("interrupt_check"),
+                    thinking_stop=thinking_stop,
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
                     on_thinking=kwargs.get("on_thinking"),
@@ -143,7 +145,7 @@ class AnthropicProvider:
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
         )
         raise_for_status_with_body(r)
-        return self._parse_response(r.json())
+        return self._parse_response(r.json(), thinking_stop=thinking_stop)
 
     def _handle_stream(
         self,
@@ -156,6 +158,7 @@ class AnthropicProvider:
         on_thinking=None,
         attempt: int = 1,
         attempts: int = 1,
+        thinking_stop=None,
     ) -> LLMResponse:
         """Anthropic SSE 스트림 — 골격은 ``http.run_sse_stream`` 공용 (C6,
         v4.48.0). 이로써 idle notice/StreamIdleTimeout·JSONDecodeError 관용이
@@ -196,7 +199,7 @@ class AnthropicProvider:
         # 인라인 <think> 격리 — OpenAI 경로와 동형 (T1 잔여, 리뷰 §4.2).
         # 실 Anthropic 모델은 사고를 thinking 블록으로 내지만, Anthropic-호환
         # 로컬 서버(omlx 등)가 태그를 content 에 흘리면 격리해 thinking 으로.
-        content, inline_think = strip_think_blocks(acc.content)
+        content, inline_think = strip_think_blocks(acc.content, stop=thinking_stop)
         thinking = "\n\n".join(x for x in (acc.thinking, inline_think) if x)
         return LLMResponse(
             content=content,
@@ -206,7 +209,7 @@ class AnthropicProvider:
             thinking=thinking,
         )
 
-    def _parse_response(self, data: dict) -> LLMResponse:
+    def _parse_response(self, data: dict, *, thinking_stop=None) -> LLMResponse:
         """Parse non-streaming response.
 
         text/thinking 블록은 **누산**한다 — 다중 블록 응답에서 마지막 블록만
@@ -247,7 +250,9 @@ class AnthropicProvider:
                 cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
             )
 
-        content, inline_think = strip_think_blocks("".join(text_parts))
+        content, inline_think = strip_think_blocks(
+            "".join(text_parts), stop=thinking_stop
+        )
         thinking = "\n\n".join(x for x in ("".join(think_parts), inline_think) if x)
         return LLMResponse(
             content=content,

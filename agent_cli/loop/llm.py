@@ -339,6 +339,10 @@ class LLMCaller:
                 degeneration_trigger=getattr(
                     self.cfg.dialect, "degeneration_trigger", "#"
                 ),
+                # v10.1.4: 미닫힘 <think> 를 프로바이더가 EOF 까지 삼키면 뒤따르는
+                # 호출까지 사라져 content 가 비고(NO_OUTPUT), 방언의 정지점
+                # (v7.11.4) 은 손도 못 댄다 — 정지점을 프로바이더에 준다.
+                thinking_stop=getattr(self.cfg.dialect, "thinking_stop", None),
                 interrupt_check=self._interrupt_check,
                 # 세션-런타임 노브 스냅샷 (v8.55.0, base.CallSettings):
                 # thinking 오버라이드·스트림 무진전 한도·클램프 max_tokens.
