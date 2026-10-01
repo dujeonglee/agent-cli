@@ -762,3 +762,73 @@ class TestThinkingOpenerDoesNotEatOps:
         )
         assert turn.ops and turn.ops[0].action == "complete"
         assert "leftover musing" in (turn.thinking or "")
+
+
+class TestFormatTokensInsideValues:
+    """v10.1.3: 닫힌 파라미터 값 안의 이름·파라미터 태그는 텍스트다.
+
+    종전엔 세그먼트를 다음 ``<function=`` 에서 무조건 잘라, 포맷 자체를 적은
+    값(문서·동료에게 보내는 형식 예시, 백틱·펜스 안이라도)이 잘리고 유령 op
+    (``shell {}``)가 생겼다 — 회사 xml_fc 파싱 불량 조사 중 발견."""
+
+    @staticmethod
+    def _wrap(call: str) -> str:
+        return f"<tool_call>\n{call}\n</tool_call>"
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "see <parameter=path> literally and <function=shell> too",
+            "doc: write <parameter=path>x</parameter> inside a <function=read_file> block",
+            "use `<function=read_file>` with `<parameter=path>`",
+            "player2, send with <function=message><parameter=to>player3</parameter>",
+            "<config>\n  <timeout>60</timeout>\n</config>",
+            'if a < b and c > d: print("<tool_call>")',
+        ],
+    )
+    def test_value_with_format_tokens_round_trips(self, wf, value):
+        text = self._wrap(
+            wf.render_call("write_file", {"path": "x.txt", "content": value})
+        )
+        t = wf.parse_turn(text)
+        assert [o.action for o in t.ops] == ["write_file"], t.ops  # 유령 op 없음
+        assert t.ops[0].action_input == {"path": "x.txt", "content": value}
+        assert t.parse_stage == 1 and not t.ops[0].truncated
+
+    def test_two_calls_still_split_at_structural_boundary(self, wf):
+        text = (
+            self._wrap(wf.render_call("read_file", {"path": "a"}))
+            + "\n"
+            + self._wrap(wf.render_call("read_file", {"path": "b"}))
+        )
+        t = wf.parse_turn(text)
+        assert [(o.action, o.action_input["path"]) for o in t.ops] == [
+            ("read_file", "a"),
+            ("read_file", "b"),
+        ]
+        assert t.parse_stage == 1
+
+    def test_truncated_last_value_still_recovered(self, wf):
+        text = (
+            "<tool_call>\n<function=write_file>\n<parameter=path>a</parameter>\n"
+            "<parameter=content>cut off here"
+        )
+        t = wf.parse_turn(text)
+        (op,) = t.ops
+        assert op.action == "write_file" and op.truncated
+        assert op.action_input == {"path": "a", "content": "cut off here"}
+        assert t.parse_stage == 2
+        # 미닫힘 값 안의 이름 태그는 종전처럼 구조 토큰이다 — 값이 어디서 끝나는지
+        # 알 길이 없어 보수적으로 자른다(닫힌 값에만 새 규칙이 적용된다).
+        t2 = wf.parse_turn(text.replace("here", "<function=x> here"))
+        assert t2.ops[0].action_input["content"] == "cut off"
+
+    def test_mention_before_call_is_still_prose(self, wf):
+        """자격 없는 언급(파라미터 없는 ``<function=shell>`` 산문)은 종전처럼 호출이
+        아니다 — 구조 위치 규칙이 이 판정을 바꾸지 않는다."""
+        text = "I will use <function=shell> next.\n" + self._wrap(
+            wf.render_call("read_file", {"path": "a"})
+        )
+        t = wf.parse_turn(text)
+        assert [o.action for o in t.ops] == ["read_file"]
+        assert "I will use" in (t.thought or "")
