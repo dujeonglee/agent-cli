@@ -1,6 +1,6 @@
 # 멀티 wire-format — Phase 5: 파서를 코드에서 데이터로 (스펙 + 엔진) · `dialects` 로 개명 (DESIGN)
 
-> 상태: **설계 초안 — 결정 포인트(§10) 승인 대기** (2026-10-01)
+> 상태: **승인 — 구현 진행 중** (2026-10-01). 결정: D1 이름 `dialects` · D2 기본 `json_fc` 유지 · D3 새 스펙은 파서·문법 테스트만("실모델 미검증" 표시) · D4 태그 구제 유지(`recovery/tagged`) · D5 v10.0.0 한 번에 · D6 PR + CI 후 일반 머지
 > 선행: [DESIGN.md](DESIGN.md) P1~P3 바인딩·해석 체인·foreign 구제, [PHASE2.md](PHASE2.md) xml_fc·bakeoff,
 > [PHASE4.md](PHASE4.md) md_array → json_fc. 외부 근거: 툴콜 포맷 조사 리포트(2026-10-01,
 > vLLM structural-tag · llama.cpp autoparser(PR #18675) · HF `response_template`).
@@ -208,19 +208,29 @@ parse_turn(text)
   엔진은 기본 구현(ABC)으로 통일하고, 등가성 코퍼스에서 두 포맷의 옛 `parse()` 와 비교해
   차이가 있으면 그 차이를 §7 에 기록하고 결정한다(사용처는 history 직렬화 기본과 테스트뿐).
 
-### 4.4 `json_recovery.py` — 수리 기계 한 모듈
+### 4.4 `recovery/` — 구제는 한 패키지, 기계는 둘
 
-`_json_repair.py` + `_json_diag.py` + `json_fc.py` 157–597 을 **이동**(수정 없음)해 합친다.
+JSON 수리와 태그 변종 구제는 **같은 역할**(드리프트한 출력을 2단계로 ops 에 되살림)이지만
+코드 공유가 0 인 다른 기계다. 한 파일로 합치지 않고 패키지로 묶는다.
 
-```python
-def decode(text: str, *, expect: Literal["array", "object"], strict_first: bool = True) -> Decoded
-# Decoded = (value | None, repaired: bool, truncated_evidence: bool, diag: str | None)
-def describe_error(json_text) -> str | None          # ← _json_diag
+```
+dialects/recovery/
+  __init__.py   공용 앞단: quote_spans(text) — 균형 ``` 쌍 + 인라인 `…` 인용 영역(v7.28.1/v9.24.8),
+                세그먼트 자격(이름 뒤에 param/closer, EOF 세그먼트는 자격 유지 — A5 진단 보존),
+                Recovered(value, repaired, truncated_evidence, diag) 결과 타입, stage 정책 상수
+  json.py       ← `_json_repair.py` + `_json_diag.py` + `json_fc.py` 157–597 (이동, 무수정)
+                decode(text, *, expect="array"|"object") -> Recovered ; describe_error(json_text)
+  tagged.py     ← `xml_fc.py` 의 `_PARAM_CLOSED`(키-이름 closer), lenient 오픈/값-끝 폴백(v7.11.4)/
+                `_trim_block`, 등록 도구명 라인 앵커(`_lenient_tool_open_re`)
+                extract_params(segment, *, param_open, closers, key_named_closer) ; lenient_calls(text, tool_names)
 ```
 
-호출자는 엔진의 JSON 디코더뿐(json_native: 배열, json_in_tag: 태그 안 객체).
-`diagnose_syntax_error` 도 여기 `describe_error` 를 쓴다. 이름은 `json_recovery.py`
-(`engine.py` 옆이라 "엔진" 을 두 번 쓰지 않는다).
+- 엔진은 `ArgStyle` 로 고른다: `JSON_*` → `recovery.json`, `TAGGED*` → `recovery.tagged`.
+  스펙의 `Lenient` 옵션은 `recovery.tagged` 의 어느 규칙을 켤지 정하는 스위치(D4 = 유지,
+  xml_fc 전용 코드가 아니라 태그 가족 공용).
+- 인용 영역 제외가 공용 앞단이 되면 json_fc 에도 같은 규칙이 걸린다(지금은 `_op_anchor`/
+  `_op_signature` 로 비슷한 일을 따로 함). 등가성 코퍼스에서 차이가 나면 §10 에 올린다.
+- `diagnose_syntax_error` 는 `recovery.json.describe_error` 를 쓴다.
 
 ### 4.5 문법 생성 (`Dialect.grammar`)
 
@@ -296,7 +306,7 @@ agent_cli/dialects/                ← 옛 wire_formats/
   base.py            WireFormat ABC → Dialect ABC 로 이름만 (내용 동일)
   spec.py            DialectSpec, ArgStyle, NameSlot, Lenient, Prose
   engine.py          Dialect(spec): render / parse / grammar / prose / history
-  json_recovery.py   §4.4
+  recovery/          §4.4 — __init__.py(공용 앞단) · json.py · tagged.py
   grammar.py         그대로
   specs/
     __init__.py      네 스펙 import → register
@@ -341,7 +351,7 @@ semver: 패키지 이름·CLI 플래그·models.json 키가 바뀌므로 **MAJOR
 
 | # | 커밋 | 게이트 |
 |---|---|---|
-| S1 | `json_recovery.py` 추출(이동만), `json_fc`/`xml_fc` 가 그것을 import | 전체 테스트 초록, diff = 이동 |
+| S1 | `recovery/` 추출(이동만: json.py ← 수리 기계, tagged.py ← xml lenient), `json_fc`/`xml_fc` 가 그것을 import | 전체 테스트 초록, diff = 이동 |
 | S2 | `spec.py` + `engine.py` + `specs/xml_fc.py`; 옛 `xml_fc.py` → `_legacy/` | 합격선 1·2·3 (xml_fc) |
 | S3 | `specs/json_fc.py`(md_array 관용 삭제 포함); 옛 `json_fc.py` → `_legacy/` | 합격선 1·2·3 (json_fc) |
 | S4 | `specs/hermes_json.py`, `specs/glm_argkey.py` + 표 기반 파서·문법·foreign 구제 테스트 | 테스트 + D3 |
