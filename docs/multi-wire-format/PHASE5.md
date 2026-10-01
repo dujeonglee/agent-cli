@@ -353,7 +353,7 @@ semver: 패키지 이름·CLI 플래그·models.json 키가 바뀌므로 **MAJOR
 |---|---|---|
 | S1 ✅ | `recovery/` 추출(이동만: json.py ← 수리 기계, tagged.py ← xml lenient), `json_fc`/`xml_fc` 가 그것을 import | 전체 테스트 초록, diff = 이동 |
 | S2 ✅ | `spec.py` + `engine.py` + `specs/xml_fc.py`; 옛 `xml_fc.py` → `_legacy/` | 합격선 1·2·3 (xml_fc) — 코퍼스 230건 바이트 동일, 문법·산문·history 동일. 발견: ABC `strip_thinking` 이 classmethod 라 인스턴스 정지점을 못 읽음(엔진이 override) |
-| S3 | `specs/json_fc.py`(md_array 관용 삭제 포함); 옛 `json_fc.py` → `_legacy/` | 합격선 1·2·3 (json_fc) |
+| S3 ✅ | `specs/json_fc.py`(md_array 관용 삭제 포함); 옛 `json_fc.py` → `_legacy/` | 합격선 1·2·3 (json_fc) — 코퍼스 619건(테스트 382 + history 237) 바이트 동일, 문법·산문·history·진단 동일. S3a 에서 테스트의 헤더 모양 가짜 응답 30여 곳을 캐노니컬로 옮기고 헤더 전용 케이스 7개 삭제 |
 | S4 | `specs/hermes_json.py`, `specs/glm_argkey.py` + 표 기반 파서·문법·foreign 구제 테스트 | 테스트 + D3 |
 | S5 | `_legacy/` 삭제, 등가성 하네스는 코퍼스 고정본으로 전환 | 합격선 4 (라이브 bakeoff) |
 | S6 | 개명 `dialects` + 호환층(§6) + 변수명 치환 + 문서 이동 | 전체 테스트·스냅샷·브라우저·보드 연동 |

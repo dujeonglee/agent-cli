@@ -30,6 +30,10 @@ def _legacy(name: str):
         from agent_cli.wire_formats._legacy.xml_fc import XmlFcFormat
 
         return XmlFcFormat()
+    if name == "json_fc":
+        from agent_cli.wire_formats._legacy.json_fc import JsonFcFormat
+
+        return JsonFcFormat()
     pytest.skip(f"no legacy module for {name}")
 
 
@@ -71,7 +75,7 @@ def _action_key(a):
     )
 
 
-PARITY_FORMATS = ["xml_fc"]
+PARITY_FORMATS = ["xml_fc", "json_fc"]
 
 
 @pytest.mark.parametrize("name", PARITY_FORMATS)
@@ -118,6 +122,9 @@ class TestParity:
         for text in _corpus(name):
             assert old.is_degenerate(text) == new.is_degenerate(text), text[:120]
             assert old.sanitize_thought(text) == new.sanitize_thought(text), text[:120]
+            assert old.diagnose_syntax_error(text) == new.diagnose_syntax_error(text), (
+                text[:120]
+            )
         assert old.degeneration_trigger == new.degeneration_trigger
         assert old.thinking_stop.pattern == new.thinking_stop.pattern
 
