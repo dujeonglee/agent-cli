@@ -207,15 +207,20 @@ if _EQUIV_RECORD:
         out = open(_EQUIV_RECORD, "a", encoding="utf-8")  # noqa: SIM115
         for _name in _wf.list_names():
             cls = type(_wf.get(_name))
+            if getattr(cls, "_equiv_wrapped", False):
+                continue  # 스펙 구동 방언은 같은 클래스(Dialect)를 공유 — 한 번만
             orig = cls.parse_turn
 
-            def _wrapped(self, text, _orig=orig, _n=_name):
+            def _wrapped(self, text, _orig=orig):
                 if isinstance(text, str):
                     out.write(
-                        json.dumps({"format": _n, "text": text}, ensure_ascii=False)
+                        json.dumps(
+                            {"format": self.name, "text": text}, ensure_ascii=False
+                        )
                         + "\n"
                     )
                     out.flush()
                 return _orig(self, text)
 
             cls.parse_turn = _wrapped
+            cls._equiv_wrapped = True

@@ -106,7 +106,7 @@ def _tools(fmt: str, resident: bool):
     return out
 
 
-@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc", "hermes_json", "glm_argkey"])
 @pytest.mark.parametrize("resident", [False, True], ids=["main", "resident"])
 @pytest.mark.parametrize("thinking_open", [False, True], ids=["think-off", "think-on"])
 def test_every_tools_canonical_turn_is_accepted(compiler, fmt, resident, thinking_open):
@@ -134,7 +134,7 @@ def test_every_tools_canonical_turn_is_accepted(compiler, fmt, resident, thinkin
     assert not blocked, "\n".join(map(str, blocked))
 
 
-@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+@pytest.mark.parametrize("fmt", ["json_fc", "xml_fc", "hermes_json", "glm_argkey"])
 def test_two_ops_in_one_turn(compiler, fmt):
     wf = get(fmt)
     compiled = compiler.compile_grammar(wf.grammar(_tools(fmt, False)))
@@ -148,11 +148,22 @@ def test_two_ops_in_one_turn(compiler, fmt):
             + json.dumps({"action": "read_file", **json.loads(b)})
             + "]"
         )
-    else:
+    elif fmt == "xml_fc":
         turn = (
             f"ok\n\n<tool_call>\n<function=shell>\n{a}\n</function>\n</tool_call>\n"
             f"<tool_call>\n<function=read_file>\n{b}\n</function>\n</tool_call>"
         )
+    else:
+        # 스펙 구동 방언은 history 재렌더가 곧 캐노니컬 멀티-op 턴
+        turn = wf.render_assistant_from_history(
+            {
+                "thought": "ok",
+                "ops": [
+                    {"action": "shell", "action_input": {"command": "ls"}},
+                    {"action": "read_file", "action_input": {"path": "f.txt"}},
+                ],
+            }
+        )["content"]
     assert _accepts(compiled, turn)
     assert len(wf.parse_turn(turn).ops) == 2
 
@@ -166,7 +177,7 @@ class TestWhatTheGrammarForbids:
         assert not _accepts(compiled, 'x\n\n[{"action": "no_such_tool", "arg": 1}]')
         assert not _accepts(compiled, 'x\n\n[{"action": "shell", "cmd": "ls"}]')
 
-    @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+    @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc", "hermes_json", "glm_argkey"])
     def test_prose_only_turn_stays_expressible(self, compiler, fmt):
         """v3 A/B: 호출을 필수로 하면 산문을 끝내고 턴을 마치려는 순간 EOS 가
         마스킹되어 32K 상한까지 산문이 이어진다(18〜24K 토큰 진행 중 타임아웃).

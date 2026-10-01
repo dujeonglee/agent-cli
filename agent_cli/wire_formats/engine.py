@@ -41,7 +41,7 @@ from agent_cli.wire_formats.recovery.tagged import (
     _lenient_tool_open_re,
     _trim_block,
 )
-from agent_cli.wire_formats.spec import ArgStyle, DialectSpec
+from agent_cli.wire_formats.spec import ArgStyle, DialectSpec, NameSlot
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
@@ -81,21 +81,63 @@ def _fmt_value(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-class _TaggedTokens:
-    """TAGGED 스펙에서 결정적으로 파생되는 정규식 묶음 (한 번 만들어 재사용)."""
+def _tag_names(*tokens: str) -> list[str]:
+    """``<tool_call>``/``<function=``/``</arg_key><arg_value>`` → 태그 이름들 (중복 제거)."""
+    out: list[str] = []
+    for tok in tokens:
+        for name in re.findall(r"</?([\w:.\-]+)", tok or ""):
+            if name not in out:
+                out.append(name)
+    return out
+
+
+class _WrapperTokens:
+    """호출 래퍼(``call``)만 있는 스펙(JSON_IN_TAG)의 정규식 묶음."""
 
     def __init__(self, spec: DialectSpec):
         I = re.IGNORECASE
         co, cc = re.escape(spec.call_open), re.escape(spec.call_close)
-        nw0, nw1 = re.escape(spec.name_wrap[0]), re.escape(spec.name_wrap[1])
-        po, ps = re.escape(spec.param_open_prefix), re.escape(spec.param_open_suffix)
         self.call_open = re.compile(co, I)
         self.call_close = re.compile(cc, I)
-        self.name_open = re.compile(rf"{nw0}([\w.\-]*){nw1}", I)
-        self.name_close = re.compile(re.escape(spec.name_close), I)
+        self.first_struct = self.call_open
+        tags = "|".join(map(re.escape, _tag_names(spec.call_open)))
+        self.sentinel_line = re.compile(rf"^\s*</?(?:{tags})>\s*$", re.MULTILINE | I)
+        self.degen_empty = re.compile(rf"{co}\s*{cc}", I)
+        self.degen_open_run = re.compile(rf"{co}(?=\s*{co})", I)
+
+
+class _TaggedTokens(_WrapperTokens):
+    """TAGGED / TAGGED_PAIR 스펙에서 결정적으로 파생되는 정규식 묶음 (한 번 만들어 재사용)."""
+
+    def __init__(self, spec: DialectSpec):
+        super().__init__(spec)
+        I = re.IGNORECASE
+        co, cc = re.escape(spec.call_open), re.escape(spec.call_close)
+        self.body_head = spec.name_slot is NameSlot.BODY_HEAD
+        if self.body_head:
+            # 이름 = 호출 여는 태그 직후 첫 토큰 (``<tool_call>NAME``) — 호출 단위와
+            # 이름 단위가 같고 닫는 이름 태그는 없다.
+            nw0 = co
+            self.name_open = re.compile(rf"{co}\s*([\w.\-]*)", I)
+            self.name_close = None
+            name_close_ahead = ""
+        else:
+            nw0, nw1 = re.escape(spec.name_wrap[0]), re.escape(spec.name_wrap[1])
+            self.name_open = re.compile(rf"{nw0}([\w.\-]*){nw1}", I)
+            self.name_close = re.compile(re.escape(spec.name_close), I)
+            name_close_ahead = re.escape(spec.name_close) + "|"
         # 첫 구조 토큰: 호출 래퍼 또는 이름 여는 태그의 접두 (``<function=``)
         self.first_struct = re.compile(rf"{co}|{nw0}", I)
-        self.param_open = re.compile(rf"{po}([\w.\-]+){ps}", I)
+        po = re.escape(spec.param_open_prefix)
+        # 키 뒤 접미: TAGGED 는 ``>`` 한 글자, TAGGED_PAIR 는 ``</arg_key><arg_value>`` 처럼
+        # 태그 둘 — 태그 경계마다 공백을 허용한다(GLM-4.5 여러 줄 / 4.7 한 줄 모두).
+        suffix_tags = re.findall(r"<[^>]+>", spec.param_open_suffix)
+        ps = (
+            r"\s*" + r"\s*".join(map(re.escape, suffix_tags))
+            if suffix_tags
+            else re.escape(spec.param_open_suffix)
+        )
+        self.param_open = re.compile(rf"{po}\s*([\w.\-]+)\s*{ps}", I)
         closer = spec.closer_tag_name
         closer_alt = (
             rf"(?:{re.escape(closer)}|\1)"
@@ -107,23 +149,24 @@ class _TaggedTokens:
         # 불일치로 값에 포함된다. closer 는 ``</parameter>`` 또는 (옵션) 키-이름
         # ``</KEY>`` — 실전(2026-07-17) 35B 가 캐노니컬 블록 안에서
         # ``<parameter=path>…</path>`` 로 닫았다.
-        self.struct_ahead = rf"{po}|{re.escape(spec.name_close)}|{cc}|{nw0}|{co}"
+        self.struct_ahead = rf"{po}|{name_close_ahead}{cc}|{nw0}|{co}"
         self.param_closed = re.compile(
-            rf"{po}([\w.\-]+){ps}(.*?)</{closer_alt}>\s*(?={self.struct_ahead}|\Z)",
+            rf"{po}\s*([\w.\-]+)\s*{ps}(.*?)</{closer_alt}>\s*(?={self.struct_ahead}|\Z)",
             re.DOTALL | I,
         )
         self.struct_stop = re.compile(self.struct_ahead, I)
         # thought 산문에 흘린 구조 센티널 라인 (sanitize — prior 재주입 방지)
-        c_tag = re.escape(spec.tag_name(spec.call_open))
-        n_tag = re.escape(spec.tag_name(spec.name_wrap[0]))
-        p_tag = re.escape(spec.tag_name(spec.param_open_prefix))
-        self.sentinel_line = re.compile(
-            rf"^\s*</?(?:{c_tag}|{n_tag}(?:=[\w.\-]*)?|{p_tag}(?:=[\w.\-]*)?)>\s*$",
-            re.MULTILINE | I,
+        tags = "|".join(
+            rf"{re.escape(n)}(?:=[\w.\-]*)?"
+            for n in _tag_names(
+                spec.call_open,
+                spec.name_wrap[0],
+                spec.param_open_prefix,
+                spec.param_open_suffix,
+                spec.param_close,
+            )
         )
-        # format runaway: 빈 래퍼 골격 반복 (≥2 임계)
-        self.degen_empty = re.compile(rf"{co}\s*{cc}", I)
-        self.degen_open_run = re.compile(rf"{co}(?=\s*{co})", I)
+        self.sentinel_line = re.compile(rf"^\s*</?(?:{tags})>\s*$", re.MULTILINE | I)
 
 
 class Dialect(WireFormat):
@@ -138,12 +181,15 @@ class Dialect(WireFormat):
         self.multi_op = spec.multi_op
         self.exposes_complete = spec.exposes_complete
         self.degeneration_trigger = spec.degeneration_trigger
+        self._t = self._w = None
         if spec.args in (ArgStyle.TAGGED, ArgStyle.TAGGED_PAIR):
-            self._t = _TaggedTokens(spec)
+            self._t = self._w = _TaggedTokens(spec)
             # 미닫힘 <think> 가 tool call 을 EOF-삼킴하지 않게 구조 마커에서 정지.
             self.thinking_stop = self._t.first_struct
+        elif spec.args is ArgStyle.JSON_IN_TAG:
+            self._w = _WrapperTokens(spec)
+            self.thinking_stop = self._w.first_struct
         else:
-            self._t = None
             # 미닫힘 <think> 뒤의 bare 배열(라인 선두 `[`)을 EOF-삼킴에서 보호.
             self.thinking_stop = re.compile(r"(?m)^\s*\[")
         # 옛 md_array 프라이어 누출 위생(결정 1 과 별개 — 파싱 관용이 아니라 거부):
@@ -178,7 +224,7 @@ class Dialect(WireFormat):
                 if all(k.startswith(pfx) for k in action_input):
                     flat = {k[len(pfx) :]: v for k, v in action_input.items()}
                     return self.render_call(tool_name, flat)
-        if self.spec.args is ArgStyle.JSON_NATIVE:
+        if self.spec.args in (ArgStyle.JSON_NATIVE, ArgStyle.JSON_IN_TAG):
             return json.dumps(action_input, ensure_ascii=False)
         if isinstance(action_input, dict):
             return self.render_params(action_input)
@@ -202,9 +248,19 @@ class Dialect(WireFormat):
         s = self.spec
         if s.args is ArgStyle.JSON_NATIVE:
             return json.dumps({"action": name, **params}, ensure_ascii=False)
+        if s.args is ArgStyle.JSON_IN_TAG:
+            return json.dumps({"name": name, "arguments": params}, ensure_ascii=False)
         body = self.render_params(params)
         inner = f"\n{body}" if body else ""
+        if s.name_slot is NameSlot.BODY_HEAD:
+            return f"{name}{inner}"
         return f"{s.name_wrap[0]}{name}{s.name_wrap[1]}{inner}\n{s.name_close}"
+
+    def _wrap_call(self, call: str) -> str:
+        """``call`` 래퍼로 감싼다 — BODY_HEAD 는 이름이 여는 태그에 바로 붙는다."""
+        s = self.spec
+        sep = "" if s.name_slot is NameSlot.BODY_HEAD else "\n"
+        return f"{s.call_open}{sep}{call}\n{s.call_close}"
 
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         s = self.spec
@@ -221,6 +277,35 @@ class Dialect(WireFormat):
                 except json.JSONDecodeError:
                     pass
             return f"{th}\n\n[{op}]"
+        if s.args is ArgStyle.JSON_IN_TAG:
+            # 이미 완성된 호출(``{"name": <이 action>, "arguments": {…}}``)이면 그대로,
+            # 아니면 인자 객체로 보고 감싼다. 문자열 검사(``"name" in …``)는 안 된다 —
+            # 인자 이름이 ``name``/``arguments`` 인 도구(run_skill·code_index·agent)가
+            # 있어, 그 인자 객체를 완성된 호출로 오인하면 문법·파서 모두 어긋난다.
+            try:
+                obj = json.loads(action_input)
+            except json.JSONDecodeError:
+                obj = {}
+            if (
+                isinstance(obj, dict)
+                and obj.get("name") == action
+                and isinstance(obj.get("arguments"), dict)
+            ):
+                call = action_input
+            else:
+                call = json.dumps(
+                    {"name": action, "arguments": obj if isinstance(obj, dict) else {}},
+                    ensure_ascii=False,
+                )
+            return f"{th}\n\n{self._wrap_call(call)}"
+        if s.name_slot is NameSlot.BODY_HEAD:
+            # 이미 ``NAME\n<param…`` 꼴이면 그대로, 파라미터 라인들만이면 이름을 앞에.
+            if re.match(r"[\w.\-]+\s*(?:$|<)", action_input or ""):
+                call = action_input
+            else:
+                body = f"\n{action_input}" if action_input else ""
+                call = f"{action}{body}"
+            return f"{th}\n\n{self._wrap_call(call)}"
         # action_input 이 이미 완성된 이름-태그 콜이면 그대로, 파라미터
         # 라인들만이면 action 으로 감싼다.
         if s.name_wrap[0] in action_input:
@@ -228,16 +313,76 @@ class Dialect(WireFormat):
         else:
             body = f"\n{action_input}" if action_input else ""
             call = f"{s.name_wrap[0]}{action}{s.name_wrap[1]}{body}\n{s.name_close}"
-        return f"{th}\n\n{s.call_open}\n{call}\n{s.call_close}"
+        return f"{th}\n\n{self._wrap_call(call)}"
 
     # ─── Grammar ────────────────────────────────────────────────
 
     def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
-        if self.spec.args is ArgStyle.TAGGED:
+        if self.spec.args in (ArgStyle.TAGGED, ArgStyle.TAGGED_PAIR):
             return self._grammar_tagged(tools, thinking_open=thinking_open)
         if self.spec.args is ArgStyle.JSON_NATIVE:
             return self._grammar_json_native(tools, thinking_open=thinking_open)
+        if self.spec.args is ArgStyle.JSON_IN_TAG:
+            return self._grammar_json_in_tag(tools, thinking_open=thinking_open)
         return None
+
+    def _grammar_json_in_tag(self, tools, *, thinking_open: bool) -> str:
+        """prose → one or more ``<call>{"name": NAME, "arguments": {…}}</call>``, a
+        terminal call only last. ``arguments`` 의 키·값 타입은 열거하되 **필수 enum
+        강제(forced)는 걸지 않는다** — 첫 멤버 앞에 쉼표가 없는 객체라 공용
+        ``tool_params_expr`` 의 ``( sep item )*`` 꼴이 맞지 않는다; 검증기가 본다."""
+        from agent_cli.wire_formats.grammar import (
+            JSON_NONBLANK_STRING,
+            JSON_RULES,
+            call_sequence_rules,
+            enum_literals,
+            grammar_params,
+            json_value_rule,
+            prose_rule,
+            think_prefix,
+            tool_rule_name,
+        )
+
+        s = self.spec
+        co, cc = s.call_open, s.call_close
+        pre, pre_rules = think_prefix(thinking_open, forbid=s.forbid_in_think)
+        lines = [
+            rf'root ::= {pre}( calls | prose "\n" calls | prose ) ws',
+            prose_rule("prose", s.prose_opener),
+            r"ws ::= [ \t\r\n]*",
+            *call_sequence_rules(
+                "calls",
+                [n for n, *_ in tools],
+                call=lambda fn: rf'"{co}" ws ( {fn} ) ws "{cc}"',
+                sep="ws ",
+            ),
+        ]
+        if pre_rules:
+            lines.append(pre_rules)
+        for name, flat, extra_ok in tools:
+            items = []
+            for p in grammar_params(flat):
+                if p.kind == "enum":
+                    value = enum_literals(p.enum, quote='"')
+                elif p.kind == "text_nonempty":
+                    value = JSON_NONBLANK_STRING
+                else:
+                    value = json_value_rule(p.prop)
+                items.append(rf'"\"{p.name}\"" j_ws ":" j_ws {value}')
+            if extra_ok:
+                items.append("j_member")
+            rule = tool_rule_name(name)
+            if items:
+                lines.append(f"a_{rule} ::= " + " | ".join(items))
+                args = rf'"{{" j_ws ( a_{rule} ( j_ws "," j_ws a_{rule} )* )? j_ws "}}"'
+            else:
+                args = r'"{" j_ws "}"'
+            lines.append(
+                rf'{rule} ::= "{{" j_ws "\"name\"" j_ws ":" j_ws "\"{name}\"" j_ws "," '
+                rf'j_ws "\"arguments\"" j_ws ":" j_ws {args} j_ws "}}"'
+            )
+        lines.append(JSON_RULES)
+        return "\n".join(lines)
 
     def _grammar_json_native(self, tools, *, thinking_open: bool) -> str:
         """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops, a
@@ -356,9 +501,12 @@ class Dialect(WireFormat):
                 items["*"] = rf'"{po}" pname "{ps}" body "{pc}" ws'
             expr, extra_rules = tool_params_expr(name, items, forced)
             lines.extend(extra_rules)
-            lines.append(
-                rf'{tool_rule_name(name)} ::= "{s.name_wrap[0]}{name}{s.name_wrap[1]}" ws {expr} "{s.name_close}"'
-            )
+            if s.name_slot is NameSlot.BODY_HEAD:
+                lines.append(rf'{tool_rule_name(name)} ::= "{name}" ws {expr}')
+            else:
+                lines.append(
+                    rf'{tool_rule_name(name)} ::= "{s.name_wrap[0]}{name}{s.name_wrap[1]}" ws {expr} "{s.name_close}"'
+                )
         return "\n".join(lines)
 
     # ─── Parsing (TAGGED) ────────────────────────────────────────
@@ -369,9 +517,122 @@ class Dialect(WireFormat):
             turn = self._parse_json_native(text)
             turn.thinking = thinking
             return turn
-        if self._t is None:
-            raise NotImplementedError(f"ArgStyle {self.spec.args} — S4")
+        if self.spec.args is ArgStyle.JSON_IN_TAG:
+            return self._parse_json_in_tag(text, thinking)
         return self._parse_tagged(text, thinking)
+
+    # ─── Parsing (JSON_IN_TAG) ───────────────────────────────────
+
+    @staticmethod
+    def _hermes_op(obj: dict) -> tuple[str | None, dict, bool]:
+        """``{"name", "arguments"}`` 객체 → ``(name, args, drifted)``.
+
+        관용(드리프트로 계수): ``parameters`` 키(Llama 식), 문자열로 직렬화된
+        ``arguments``, 이름·인자 키 없이 평평하게 적힌 인자."""
+        name = obj.get("name")
+        name = name if isinstance(name, str) and name else None
+        drifted = False
+        if "arguments" in obj:
+            args = obj["arguments"]
+        elif "parameters" in obj:
+            args, drifted = obj["parameters"], True
+        else:
+            args = {k: v for k, v in obj.items() if k != "name"}
+            drifted = bool(args)
+        if isinstance(args, str):
+            drifted = True
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        if not isinstance(args, dict):
+            args, drifted = {}, True
+        return name, args, drifted
+
+    def _parse_json_in_tag(self, text: str, thinking) -> ParsedTurn:
+        """``<call>{json}</call>`` 블록 순회 — 자격 = 세그먼트에 ``{`` 가 있다;
+        인용(펜스·인라인) 안 후보는 자격 있는 비인용 후보가 있을 때만 제외."""
+        w = self._w
+        fences = quote_spans(text) if self.spec.lenient.inline_quotes_exclude else []
+        opens = list(w.call_open.finditer(text))
+        cands: list[tuple[re.Match, int, bool]] = []
+        for m in opens:
+            nxt = w.call_open.search(text, m.end())
+            close = w.call_close.search(text, m.end())
+            ends = [x.start() for x in (nxt, close) if x is not None]
+            end = min(ends) if ends else len(text)
+            if "{" in text[m.end() : end]:
+                cands.append((m, end, any(a <= m.start() < b for a, b in fences)))
+        unquoted = [c for c in cands if not c[2]]
+        use = unquoted or cands
+        if not use:
+            return self._parse_json_in_tag_bare(text, thinking)
+        start = use[0][0].start()
+        thought = self.sanitize_thought(text[:start]) or None
+        ops: list[Op] = []
+        drifted = False
+        for m, end, _q in use:
+            seg = text[m.end() : end]
+            parsed, repaired = _extract_op_json(seg)
+            if parsed is None:
+                continue
+            obj = parsed[0] if isinstance(parsed, list) and parsed else parsed
+            if not isinstance(obj, dict):
+                continue
+            name, args, d = self._hermes_op(obj)
+            if name is None and not args:
+                continue
+            trunc = repaired and close_unbalanced(seg)[1]
+            ops.append(Op(action=name, action_input=args, truncated=trunc))
+            drifted |= repaired or d
+        if not ops:
+            if thought:
+                return ParsedTurn(
+                    thought=thought, ops=[], raw=text, parse_stage=1, thinking=thinking
+                )
+            return ParsedTurn(raw=text, parse_stage=0, thinking=thinking)
+        drifted |= len(opens) != len(w.call_close.findall(text))
+        return ParsedTurn(
+            thought=thought,
+            ops=ops,
+            raw=text,
+            parse_stage=2 if drifted else 1,
+            thinking=thinking,
+        )
+
+    def _parse_json_in_tag_bare(self, text: str, thinking) -> ParsedTurn:
+        """래퍼 없이 ``{"name": …, "arguments": …}`` 만 적은 드리프트 — stage 2."""
+        start = _op_anchor(text)
+        if start >= 0:
+            parsed, _rep = _extract_op_json(text[start:])
+            arr = parsed if isinstance(parsed, list) else [parsed]
+            objs = [
+                x
+                for x in arr
+                if isinstance(x, dict) and ("name" in x or "arguments" in x)
+            ]
+            if objs:
+                ops = []
+                for obj in objs:
+                    name, args, _d = self._hermes_op(obj)
+                    if name is None and not args:
+                        continue
+                    ops.append(Op(action=name, action_input=args, truncated=False))
+                if ops:
+                    thought = self.sanitize_thought(text[:start]) or None
+                    return ParsedTurn(
+                        thought=thought,
+                        ops=ops,
+                        raw=text,
+                        parse_stage=2,
+                        thinking=thinking,
+                    )
+        thought = self.sanitize_thought(text)
+        if thought and thought.strip():
+            return ParsedTurn(
+                thought=thought, ops=[], raw=text, parse_stage=1, thinking=thinking
+            )
+        return ParsedTurn(raw=text, parse_stage=0, thinking=thinking)
 
     # ─── Parsing (JSON_NATIVE) ───────────────────────────────────
 
@@ -459,7 +720,7 @@ class Dialect(WireFormat):
             ok = (
                 nxt is None
                 or t.param_open.search(seg) is not None
-                or t.name_close.search(seg) is not None
+                or (t.name_close is not None and t.name_close.search(seg) is not None)
                 or t.call_close.search(seg) is not None
             )
             if ok:
@@ -587,7 +848,7 @@ class Dialect(WireFormat):
             if not params and self.spec.lenient.tag_name_variants:
                 # 하이브리드 변종: 캐노니컬 이름 태그 안에 plain-tag 파라미터.
                 inner = segment
-                close_m = t.name_close.search(inner)
+                close_m = t.name_close.search(inner) if t.name_close else None
                 if close_m is not None:
                     inner = inner[: close_m.start()]
                 params = _extract_params_lenient(inner)
@@ -603,19 +864,20 @@ class Dialect(WireFormat):
         n_name = len(name_opens)
         n_co = len(t.call_open.findall(body))
         n_cc = len(t.call_close.findall(body))
-        n_nc = len(t.name_close.findall(body))
-        drifted = n_co != n_name or n_co != n_cc or n_nc != n_name
+        drifted = n_co != n_name or n_co != n_cc
+        if t.name_close is not None:
+            drifted |= len(t.name_close.findall(body)) != n_name
         return ops, drifted, truncated_any
 
     # ─── Degeneration / sanitize ────────────────────────────────
 
     def is_degenerate(self, text: str) -> bool:
-        if self._t is None:
+        if self._w is None:
             # 캐노니컬 bare-배열 모양의 러너웨이 시그니처는 실측 전 — 옛 헤더
             # 반복(프라이어 누출)만 감지.
             return len(self._md_degen.findall(text)) >= 2
-        hits = len(self._t.degen_empty.findall(text)) + len(
-            self._t.degen_open_run.findall(text)
+        hits = len(self._w.degen_empty.findall(text)) + len(
+            self._w.degen_open_run.findall(text)
         )
         return hits >= 2
 
@@ -623,7 +885,7 @@ class Dialect(WireFormat):
         if not thought:
             return thought
         thought = ORPHAN_THINK_TAG_RE.sub("", thought)
-        sentinel = self._t.sentinel_line if self._t is not None else self._md_sentinel
+        sentinel = self._w.sentinel_line if self._w is not None else self._md_sentinel
         return sentinel.sub("", thought).strip()
 
     def diagnose_syntax_error(self, prior_content: str) -> str | None:
@@ -680,9 +942,9 @@ class Dialect(WireFormat):
                 content = f"{thought}\n\n{rendered}" if thought else rendered
                 return {"role": "assistant", "content": content}
             calls = "\n".join(
-                f"{s.call_open}\n"
-                + self.render_call(o.get("action") or "", o.get("action_input") or {})
-                + f"\n{s.call_close}"
+                self._wrap_call(
+                    self.render_call(o.get("action") or "", o.get("action_input") or {})
+                )
                 for o in ops
                 if isinstance(o, dict)
             )
