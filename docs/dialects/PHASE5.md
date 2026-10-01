@@ -357,7 +357,7 @@ semver: 패키지 이름·CLI 플래그·models.json 키가 바뀌므로 **MAJOR
 | S4 ✅ | `specs/hermes_json.py`, `specs/glm_argkey.py` + 표 기반 파서·문법·foreign 구제 테스트 | D3 = 실모델 미검증 표시. 엔진 일반화(BODY_HEAD·TAGGED_PAIR·JSON_IN_TAG) 뒤에도 xml/json 등가성 유지. 표 테스트 `tests/dialects/test_spec_table.py`(네 방언 공통 왕복 + 방언별 변종 + 교차 foreign 구제), 문법 감사 `tests/dialects/test_grammar_accept_specs.py`(캐노니컬·사고 열림·종결 마지막·빈 통신값·마스크 비용). 발견: hermes 문법은 인자 객체 첫 멤버 앞에 쉼표가 없어 공용 `tool_params_expr` 를 못 써 **필수 enum 강제가 없음**(검증기 담당); bare JSON 배열은 태그 방언 문법에서 산문(막으면 EOS 마스킹) |
 | S5 ✅ | `_legacy/` 삭제, 등가성 하네스는 코퍼스 고정본으로 전환(`tests/equivalence/expected/`) | 합격선 4 — 라이브 bakeoff A(옛 코드 main df2973f) vs B(새 엔진), Qwen3.8-Flash-Next 7태스크×3런×2포맷: 완주 100%/100%, pf 0/0, rec json 0.08→0.12 · xml 0.46→0.33(잡음 범위; B 의 json 3건은 모의 도구의 고정 관찰에 모델이 "도구 고장" 으로 반응한 것과 Claude 식 `<invoke>` 누출 — 파서 무관). 표: `scripts/bakeoff/results/phase2_20261001_A-vs-B.md` |
 | S6 ✅ | 개명 `dialects` + 호환층(§6) + 변수명 치환 + 문서 이동 | 기계 치환 97 파일(`wire_format(s)`→`dialect(s)`, `WireFormat`→`DialectBase`, `WIRE_FORMAT`→`DIALECT`, `wf_recovery`→`dialect_recovery`, 세션 메타·CLI 의 `response_format`→`dialect`; 프로바이더 JSON 모드의 `response_format` 은 별개라 제외). 호환: shim `agent_cli/wire_formats/__init__.py`, CLI `--dialect`/`--response-format` 한 파라미터, models.json `dialect` > `wire_format`, 세션 메타 `response_format`→`dialect`(영구). `tests/test_dialects_compat.py` 11건. 전체 테스트·등가성 코퍼스 초록. 옛 설계 문서(DESIGN·PHASE2·PHASE4)는 당시 이름 그대로 둔다 |
-| S7 | README/ARCHITECTURE/CHANGELOG, 버전 10.0.0, PR → CI 초록 → 머지 → 태그 | CI |
+| S7 ✅ | README/ARCHITECTURE, 버전 10.0.0, PR #47 → CI 초록 → rebase 머지 → 태그 v10.0.0 | CI 4 잡 초록(lint·test 3.11/3.12·browser). CHANGELOG 는 v9.0.0 이후 갱신하지 않는 파일(릴리스 본문이 단일 소스) |
 
 S1~S3 각각 사보타주(옛 코드에 새 테스트) 확인. 큰 되돌림 전 커밋(메모리 규칙).
 
