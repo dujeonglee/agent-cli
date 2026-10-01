@@ -41,5 +41,493 @@
     }
    }
   ]
+ },
+ "tools": {
+  "read_file": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "minLength": 1,
+     "description": "File path to read"
+    },
+    "line_start": {
+     "type": "integer",
+     "description": "Start line (1-based). Omit to read from beginning."
+    },
+    "line_end": {
+     "type": "integer",
+     "description": "End line (1-based, inclusive). Omit to read to end."
+    },
+    "search": {
+     "type": "string",
+     "description": "Regex pattern. Returns only matching lines with surrounding context."
+    },
+    "context": {
+     "type": "integer",
+     "description": "Lines of context before/after each search match (default 5)."
+    },
+    "stat": {
+     "type": "boolean",
+     "description": "Metadata query only — line count, size, first 20 lines. Not a read."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  },
+  "write_file": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "minLength": 1,
+     "description": "File path to save"
+    },
+    "content": {
+     "type": "string",
+     "description": "File content"
+    }
+   },
+   "required": [
+    "path",
+    "content"
+   ]
+  },
+  "shell": {
+   "type": "object",
+   "properties": {
+    "command": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Shell command to run"
+    },
+    "timeout": {
+     "type": "integer",
+     "description": "Max seconds before the command is killed (default 120). RAISE it for long-running commands — builds, installs (pip/npm), large git clone/pull, or test suites — e.g. 300-600; otherwise they're killed at the default."
+    }
+   },
+   "required": [
+    "command"
+   ]
+  },
+  "code_index": {
+   "type": "object",
+   "properties": {
+    "mode": {
+     "type": "string",
+     "enum": [
+      "list",
+      "fetch",
+      "lookup",
+      "kind",
+      "file",
+      "refs",
+      "callers",
+      "callees",
+      "slice",
+      "build"
+     ],
+     "description": "Operation. See tool description for per-mode params."
+    },
+    "path": {
+     "type": "string",
+     "description": "File path. Required for list/fetch/file."
+    },
+    "name": {
+     "type": "string",
+     "description": "Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup')."
+    },
+    "symbol_kind": {
+     "type": "string",
+     "enum": [
+      "function",
+      "type",
+      "variable",
+      "constant",
+      "section"
+     ],
+     "description": "Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading."
+    },
+    "ref_kind": {
+     "type": "string",
+     "enum": [
+      "call",
+      "name",
+      "type"
+     ],
+     "description": "Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position."
+    },
+    "search": {
+     "type": "string",
+     "description": "Optional regex (re.search) to filter symbol names. Applies to list and kind modes."
+    },
+    "with_callees": {
+     "type": "boolean",
+     "description": "slice mode: include callee bodies (transitive up to depth)."
+    },
+    "with_callers": {
+     "type": "boolean",
+     "description": "slice mode: include caller bodies (transitive up to depth)."
+    },
+    "with_types": {
+     "type": "boolean",
+     "description": "slice mode: include types/structs referenced inside target body."
+    },
+    "with_macros": {
+     "type": "boolean",
+     "description": "slice mode: include function-like macros invoked inside target body."
+    },
+    "depth": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 5,
+     "description": "slice mode: transitive depth for callees/callers (default 1)."
+    },
+    "max_bytes": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "slice mode: cap output bytes (default unlimited)."
+    }
+   },
+   "required": [
+    "mode"
+   ]
+  },
+  "complete": {
+   "type": "object",
+   "properties": {
+    "result": {
+     "type": "string",
+     "description": "The final result or answer"
+    },
+    "answers": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Ids of the user requests this result answers. Required whenever the tail lists Open Requests — omitting it there means you answered none of them."
+    }
+   },
+   "required": [
+    "result"
+   ]
+  },
+  "read_context": {
+   "type": "object",
+   "properties": {
+    "read_context_query": {
+     "type": "string",
+     "description": "SQL SELECT over the `history` table (e.g. \"SELECT loc, text FROM history WHERE kind='observation' AND files LIKE '%auth.py%'\"). Omit to get the schema + examples."
+    },
+    "read_context_sessions": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Which sessions populate the table. Default: current session. 'all' = every session, or specific session_id(s). Single string accepted (auto-promoted)."
+    }
+   },
+   "required": []
+  },
+  "memory": {
+   "type": "object",
+   "properties": {
+    "mode": {
+     "type": "string",
+     "enum": [
+      "add",
+      "get",
+      "update",
+      "delete",
+      "list"
+     ],
+     "description": "add | get | update | delete | list"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "failure",
+      "discovery",
+      "decision",
+      "note"
+     ],
+     "description": "failure | discovery | decision | note (add/update/list filter)"
+    },
+    "summary": {
+     "type": "string",
+     "minLength": 1,
+     "description": "One-line index label (required for add)"
+    },
+    "detail": {
+     "type": "string",
+     "description": "Full content, pulled on demand via get (optional)"
+    },
+    "tags": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Optional keywords for list filtering"
+    },
+    "id": {
+     "type": "integer",
+     "description": "Memory id (get/update/delete)"
+    },
+    "tag": {
+     "type": "string",
+     "description": "list mode: filter by a single tag"
+    }
+   },
+   "required": [
+    "mode"
+   ]
+  },
+  "ask": {
+   "type": "object",
+   "properties": {
+    "question": {
+     "type": "string",
+     "minLength": 1,
+     "description": "The question."
+    },
+    "to": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Who receives it. `requester` (default): whoever gave you this task — main or a person. `user`: the person directly; it appears in their question tray and their reply comes back to you. Use `user` whenever a human must decide. `main` or an agent key: that agent — e.g. one whose request arrived while you were working."
+    }
+   },
+   "required": [
+    "question"
+   ]
+  },
+  "message": {
+   "type": "object",
+   "properties": {
+    "to": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Target agent: its key or name (from `## Live Agents`), or 'main'."
+    },
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "description": "The message to send."
+    }
+   },
+   "required": [
+    "to",
+    "text"
+   ]
+  },
+  "run_skill": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Skill name (e.g. 'optimize', 'review-code', 'summarize', 'test')"
+    },
+    "arguments": {
+     "type": "string",
+     "description": "Arguments to pass to the skill (e.g. file path)"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  },
+  "fetch": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "minLength": 1,
+     "description": "URL to fetch"
+    },
+    "depth": {
+     "type": "integer",
+     "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links"
+    }
+   },
+   "required": [
+    "url"
+   ]
+  },
+  "monitor": {
+   "type": "object",
+   "properties": {
+    "mode": {
+     "type": "string",
+     "enum": [
+      "add",
+      "list",
+      "delete"
+     ],
+     "description": "add | list | delete"
+    },
+    "when": {
+     "type": "object",
+     "description": "add: the condition. {type:'match', file, pattern} | {type:'silence', file, seconds} | {type:'command', command, every}"
+    },
+    "run": {
+     "type": "string",
+     "description": "add: optional command to run when it fires"
+    },
+    "deadline": {
+     "type": "string",
+     "description": "add: how long to watch — '2h', '30m', '600' (default 2h)"
+    },
+    "once": {
+     "type": "boolean",
+     "description": "add: retire after the first report (default true)"
+    },
+    "id": {
+     "type": "string",
+     "description": "delete: monitor id from list"
+    }
+   },
+   "required": [
+    "mode"
+   ]
+  },
+  "answer": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1,
+     "description": "The question id, e.g. 'q-1a2b'."
+    },
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Your answer."
+    }
+   },
+   "required": [
+    "id",
+    "text"
+   ]
+  },
+  "reply": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1,
+     "description": "The request id from `## Owed Replies`, e.g. '12'."
+    },
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Your reply."
+    },
+    "to": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Optional: the requester ('main' or an agent key) — must match the request `id` refers to."
+    }
+   },
+   "required": [
+    "id",
+    "text"
+   ]
+  },
+  "edit_file": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "minLength": 1,
+     "description": "File path"
+    },
+    "op": {
+     "type": "string",
+     "enum": [
+      "replace",
+      "append",
+      "prepend",
+      "delete"
+     ],
+     "description": "replace | append | prepend | delete"
+    },
+    "pos": {
+     "type": "string",
+     "description": "Hashline ref (e.g. '5#VR') of the target line"
+    },
+    "end": {
+     "type": "string",
+     "description": "Hashline ref ending an inclusive range (replace/delete)"
+    },
+    "lines": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Replacement / inserted lines"
+    }
+   },
+   "required": [
+    "path",
+    "op",
+    "pos"
+   ]
+  },
+  "agent": {
+   "type": "object",
+   "properties": {
+    "mode": {
+     "type": "string",
+     "enum": [
+      "run",
+      "spawn",
+      "request",
+      "status",
+      "resume",
+      "kill"
+     ],
+     "description": "run: ONE task in a one-shot sub-agent with its own context (blocking — result returns in this turn; several run ops in one turn may execute concurrently). spawn: create a PERSISTENT agent (returns its key). request: send it a message — returns immediately; the reply is DELIVERED to you automatically when ready (never poll, never wait — keep working or complete). status: list live agents and their state. resume: bring a DEAD agent back to life with its full prior context (it remembers everything). kill: terminate one."
+    },
+    "profile": {
+     "type": "string",
+     "description": "run/spawn: profile from .agent-cli/agents/{profile}.md (loaded into the sub-agent's system prompt; omit for a generalist). The SAME profile may be spawned multiple times for parallel independent workstreams — give each instance a distinct `name`."
+    },
+    "name": {
+     "type": "string",
+     "description": "spawn: optional instance label to tell same-profile agents apart (e.g. two coders as 'ui' and 'api'). Display only — always address agents by their key."
+    },
+    "task": {
+     "type": "string",
+     "description": "the instruction for the agent — run: the task to execute (required); request: the message to deliver (required); spawn/resume: optional initial request queued right away"
+    },
+    "instructions": {
+     "type": "string",
+     "description": "run/spawn: inline role text (instant-agent) — becomes part of the sub-agent's system prompt (for a spawned agent: its WHOLE life, survives resume). Use alone for an ad-hoc specialist, or with `profile` to append session-specific directions."
+    },
+    "key": {
+     "type": "string",
+     "description": "agent key returned by spawn (required for request/resume/kill; optional filter for status)"
+    },
+    "tools": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "run/spawn: allowed tools (omit for the default set)"
+    },
+    "context": {
+     "type": "string",
+     "enum": [
+      "none",
+      "fork"
+     ],
+     "description": "run/spawn: none (fresh context) or fork (copy of the current conversation history)"
+    }
+   },
+   "required": [
+    "mode"
+   ]
+  }
  }
 }

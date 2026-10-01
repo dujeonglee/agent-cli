@@ -434,6 +434,24 @@ class TestLoopAssembly:
         caller, _ = _caller(tmp_path, agent_registry=_Reg(), tools_list=["agent"])
         assert "## Live Agents (1/2 alive)" in caller._build_session_state(10_000)
 
+    def test_resident_tail_roster_comes_from_the_port(self, tmp_path):
+        """v10.1.0: 상주 런은 레지스트리 없이 `peer_roster` 포트가 준 로스터를
+        매 턴 꼬리에 싣는다 — 런 도중 spawn 된 동료가 다음 턴에 보인다."""
+        seen = ["## Live Agents\n- `agt-2` (player2) [idle]"]
+        caller, _ = _caller(tmp_path, peer_roster=lambda: seen[0], depth=1)
+        assert "`agt-2` (player2) [idle]" in caller._build_session_state(10_000)
+        seen[0] = (
+            "## Live Agents\n- `agt-2` (player2) [idle]\n- `agt-3` (player3) [busy]"
+        )
+        assert "`agt-3` (player3)" in caller._build_session_state(10_000)
+
+    def test_resident_tail_roster_port_failure_is_safe(self, tmp_path):
+        def boom():
+            raise RuntimeError("x")
+
+        caller, _ = _caller(tmp_path, peer_roster=boom, depth=1)
+        assert "Live Agents" not in caller._build_session_state(10_000)
+
     def test_no_registry_is_safe(self, tmp_path):
         caller, _ = _caller(tmp_path, tools_list=["agent"])
         assert "Live Agents" not in caller._build_session_state(10_000)

@@ -30,6 +30,7 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "route_message": None,
         "dequeue_user_message": None,
         "absorb_inbox": None,
+        "peer_roster": None,
     }
     base.update(overrides)
     return LoopPorts(**base)

@@ -86,6 +86,22 @@ def clamp_max_agents(value) -> int:
 # 비동기라 구조적으로 불가.
 _MAX_PEER_HOPS = 6
 
+#: 배달된 peer 회신의 꼬리표 (v10.1.0 문구). 종전 "`complete` alone reports to no
+#: one" 은 받은 쪽이 작별 인사를 `message` 로 되보내게 만들었고(빚 생성 → 핑퐁),
+#: 실측(cnr60g) 게임 종료 뒤 작별 인사만 다섯 왕복이 돌았다. 되받아칠 것이
+#: 없고 ack 도 원치 않는다는 사실을 말한다.
+_REPLY_TAIL = (
+    "(This is their reply — nothing is owed back and no acknowledgement is "
+    "wanted. Use it to continue your task; when nothing else remains, "
+    "`complete`. Anything you owe someone ELSE still goes out via "
+    "`reply`/`message`.)"
+)
+#: 빚 없는 통지(`message` with expects_reply=false, v10.1.0)의 꼬리표.
+_NOTICE_TAIL = (
+    "(This is a notice — no reply is expected or owed, and no acknowledgement "
+    "is wanted. Use it if it changes your plan; otherwise `complete`.)"
+)
+
 
 # ── 비동기 ask/answer (docs/agent-ask/DESIGN.md 3판) ──────────────
 #
@@ -406,7 +422,14 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # 상주 에이전트가 main 에게 먼저 보낸 메시지 (v5.11) — 회신 대기
         # 아님. main 은 필요하면 agent request 로 답한다.
         msg = reply.get("output") or "(empty message)"
-        if reply.get("expects_reply"):
+        if reply.get("notice"):
+            # v10.1.0: 통지 — 빚도 회신도 아니다. 되받아칠 것 없음.
+            content = (
+                f"── agent {label} notice ──\n{msg}\n"
+                "(No reply is expected or owed. Use it if it changes your plan; "
+                "otherwise there is nothing to do about it.)"
+            )
+        elif reply.get("expects_reply"):
             # v9.22.0: `message` — 회신을 빚진다. 안 갚고 complete 하면 독촉.
             content = (
                 f"── agent {label} message ──\n{msg}\n"
@@ -729,7 +752,11 @@ class QuestionPort:
             return f"no unpaid reply with id '{id}' — you owe: {listing}."
         to = (to or "").strip()
         if to:
-            addr = "main" if to == "main" else (to if ":" in to else f"agent:{to}")
+            # v10.1.0: 키·`agent:` 접두·이름 전부 같은 주소로 (resolve_key)
+            resolved = None if to == "main" else self._reg.resolve_key(to)
+            addr = (
+                "main" if to == "main" else f"agent:{resolved or to.split(':', 1)[-1]}"
+            )
             if addr != d.to:
                 return (
                     f"[{id}] is a request from {d.to}, not {addr} — drop `to` or "
@@ -815,6 +842,30 @@ class AgentRegistry:
 
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
+
+    def resolve_key(self, addr: str) -> str | None:
+        """주소 → 에이전트 키 (v10.1.0). 키 그대로, ``agent:<key>`` 접두, 또는
+        인스턴스 이름(대소문자 무시; 산 것 우선, 유일할 때만). 없으면 None.
+
+        들어오는 메시지는 ``[agent:agt-…]`` 로 표기되고 로스터는 이름을 보여
+        주는데 ``message.to`` 는 맨 키만 받았다 — 모델이 보이는 대로 베껴 쓰면
+        "unknown agent" 였다(실측 cnr60g: `agent:agt-330e6b1a`, `player3`, `2번`).
+        """
+        a = (addr or "").strip().removeprefix("agent:")
+        if not a:
+            return None
+        if a in self._agents:
+            return a
+        low = a.lower()
+        with self._cv:
+            hits = [
+                k
+                for k, t in list(self._agents.items())
+                if t.instance_name and t.instance_name.lower() == low
+            ]
+            alive = [k for k in hits if self._agents[k].state != "dead"]
+        hits = alive or hits
+        return hits[0] if len(hits) == 1 else None
 
     def roster_snapshot(self) -> list[dict]:
         # ``AgentInstance.snapshot`` 은 인스턴스 메서드라 레지스트리의
@@ -1509,9 +1560,14 @@ class AgentRegistry:
         회신=False(terminal — 수신자는 소비만, 재라우팅 없음 → 핑퐁 방지).
         ``hop`` 은 peer 재주입 깊이(_MAX_PEER_HOPS 안전망).
         """
-        tm = self._agents.get(key)
+        resolved = self.resolve_key(key)
+        tm = self._agents.get(resolved) if resolved else None
         if tm is None:
-            return f"unknown agent '{key}' (see mode:\"status\" for live keys)"
+            return (
+                f"unknown agent '{key}' — use a key or name from `## Live Agents` "
+                "(or 'main')"
+            )
+        key = resolved
         # `state` 만 보면 창이 뚫린다: `kill`/`shutdown_all` 은
         # `stop_event` 만 세우고 `state="dead"` 는 워커의 `finally` 에서야
         # 찍히므로, busy 런이면 몇 분 뒤다. 그 사이 큐에 넣은 항목은
@@ -1795,12 +1851,7 @@ class AgentRegistry:
         # 가이던스 꼬리표: 이 회신으로 작업을 이어가고, 마무리되면 요청자
         # (예: main)에 보고할 게 있으면 message, 없으면 complete 하도록 유도
         # (비동기라 "보고 단계"를 명시 안내 — build_reply_record 꼬리표와 동형).
-        text = (
-            f"{output}\n\n"
-            "(Use this reply to continue your task. Anything you owe someone — a "
-            "result for whoever requested your work, a next move to a peer — goes "
-            "out ONLY via the `message` tool; `complete` alone reports to no one.)"
-        )
+        text = f"{output}\n\n{_REPLY_TAIL}"
         self.request(
             requester_key,
             text,
@@ -1818,9 +1869,13 @@ class AgentRegistry:
         name: str = "",
         answers: list | None = None,
         expects_reply: bool = False,
+        notice: bool = False,
     ) -> None:
         """상주 에이전트 → main 메시지 (v5.11). main 은 inbox 대신 mailbox
         (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭).
+
+        ``notice`` (v10.1.0): 빚 없는 통지(`message` with expects_reply=false) —
+        main 의 관찰이 "회신" 도 "요청" 도 아닌 세 번째 모양으로 갈린다.
 
         ``expects_reply`` (v9.22.0): `message` 는 True(main 이 회신을 빚진다),
         `reply` 는 False(답이다). main 의 메일 관찰이 이 값으로 갈린다.
@@ -1840,6 +1895,8 @@ class AgentRegistry:
         if answers is not None:
             rec["answers"] = list(answers)
         rec["expects_reply"] = bool(expects_reply)
+        if notice:
+            rec["notice"] = True
         self._push_reply(rec)
         # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
         # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
@@ -1887,19 +1944,32 @@ class AgentRegistry:
         전송하고 즉시 반환한다. 대상의 회신은 이 에이전트의 inbox 로 새
         메시지처럼 도착한다(발신자는 블록하지 않음)."""
 
-        def handler(to: str, text: str) -> str:
+        def handler(to: str, text: str, expects_reply: bool = True) -> str:
             to = (to or "").strip()
             text = (text or "").strip()
             if not to:
-                return "message needs a 'to' agent key (or 'main')"
+                return "message needs a 'to' agent key or name (or 'main')"
             if not text:
                 return "empty message — nothing sent"
+            if to != "main":
+                # v10.1.0: 키·`agent:` 접두·이름 전부 받는다 (resolve_key).
+                resolved = self.resolve_key(to)
+                if resolved is None:
+                    return (
+                        f"unknown agent '{to}' — use a key or name from "
+                        "`## Live Agents` (or 'main')"
+                    )
+                to = resolved
             if to == tm.key:
                 return "cannot message yourself"
-            # `message` 는 언제나 **요청**이다 — 상대에게 회신을 빚지운다
+            # `message` 는 기본으로 **요청**이다 — 상대에게 회신을 빚지운다
             # (v9.21.0). 내 요청자에게 보내는 것이면 내 빚도 같이 갚는다:
             # "여기 내 수, 이제 네 차례" — 항목 하나로 양쪽이 빚진다(끝말잇기가
             # 성립하는 규칙). 돌려받을 것이 없는 답은 `reply` 다.
+            # ``expects_reply=False`` (v10.1.0) 는 **통지**: 상대가 빚지지 않고,
+            # 내 요청자에게 보냈다면 내 빚은 갚는다(fire-and-forget). 상태
+            # 공유·인수인계·작별 인사가 여기 간다 — 종전엔 이 말들이 전부 요청이
+            # 되어 답이 답을 부르는 핑퐁을 만들었다(실측 cnr60g).
             addr = "main" if to == "main" else f"agent:{to}"
             settled = self.settle(f"agent:{tm.key}", addr)
             if to == "main":
@@ -1909,8 +1979,14 @@ class AgentRegistry:
                     profile=tm.profile_name,
                     name=tm.instance_name,
                     answers=settled.answers if settled is not None else None,
-                    expects_reply=True,
+                    expects_reply=bool(expects_reply),
+                    notice=not expects_reply,
                 )
+                if not expects_reply:
+                    return (
+                        "delivered to main as a notice — no reply is expected or "
+                        "owed. Keep working or complete."
+                    )
                 return (
                     "delivered to main — it owes you a reply, which arrives as a new "
                     "message. Keep working or complete; you'll be woken when it comes."
@@ -1919,10 +1995,25 @@ class AgentRegistry:
             # worker can start (scope_start) the instant it's queued, so a later
             # timestamp on this arrow would render the request AFTER the work.
             send_ts = time.time()
-            err = self.request(to, text, author=f"agent:{tm.key}", expects_reply=True)
+            if expects_reply:
+                err = self.request(
+                    to, text, author=f"agent:{tm.key}", expects_reply=True
+                )
+            else:
+                err = self.request(
+                    to,
+                    f"{text}\n\n{_NOTICE_TAIL}",
+                    author=f"agent:{tm.key}",
+                    expects_reply=False,
+                )
             if err:
                 return err
             self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
+            if not expects_reply:
+                return (
+                    f"delivered to {to} as a notice — no reply is expected or owed. "
+                    "Keep working or complete."
+                )
             return (
                 f"delivered to {to} — it owes you a reply, which arrives as a new "
                 f"message. Keep working or complete; you'll be woken when it comes."
@@ -2806,11 +2897,22 @@ class AgentRegistry:
         # v5.11: 상주 에이전트끼리 서로를 알고(로스터) 부를 수 있게(message)
         # — registry 자체는 서브루프에 넘기지 않는다(agent 상주 모드 차단
         # 유지). 로스터 문자열은 자기 자신 제외.
-        from agent_cli.prompts.system_prompt import build_live_agents_section
-
-        peer_section = build_live_agents_section(
-            self, exclude_key=tm.key, via_message_tool=True
+        # v10.1.0: 시스템 프롬프트에는 **안내만**(정적, 캐시 친화) 싣고, 실제
+        # 로스터는 매 턴 꼬리(`peer_roster` 포트)로 간다 — 런 도중 spawn 된
+        # 동료가 그 런에서 안 보이던 문제(실측 cnr60g) 의 해소. main 의
+        # v8.46.0 이동과 같은 구조.
+        from agent_cli.prompts.system_prompt import (
+            build_live_agents_section,
+            build_peer_roster_intro,
         )
+
+        peer_section = build_peer_roster_intro()
+
+        def peer_roster() -> str:
+            return build_live_agents_section(
+                self, exclude_key=tm.key, via_message_tool=True, include_state=True
+            )
+
         from agent_cli.runtime import ports_for_resident
 
         return runner(
@@ -2823,6 +2925,7 @@ class AgentRegistry:
                 message_handler=self._make_message_handler(tm),
                 questions=self.question_port(tm.key),
                 absorb_inbox=lambda: self.absorb_pending(tm),
+                peer_roster=peer_roster,
             ),
             peer_agents_section=peer_section,
             user_requests=list(user_requests or []),

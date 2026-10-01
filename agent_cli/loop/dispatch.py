@@ -78,6 +78,22 @@ BATCH_OP_SKIPPED_NOTE = (
 )
 
 
+def _flag(value, *, default: bool) -> bool:
+    """도구 인자의 불리언 — bool 그대로, 문자열은 false/no/0/off 만 거짓."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("false", "no", "0", "off"):
+            return False
+        if v in ("true", "yes", "1", "on"):
+            return True
+        return default
+    return bool(value)
+
+
 class TurnDispatcher:
     """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
 
@@ -1077,6 +1093,9 @@ class TurnDispatcher:
         args = op.action_input if isinstance(op.action_input, dict) else {}
         to = str(args.get("to", "")).strip()
         text = str(args.get("text", "")).strip()
+        # v10.1.0: `expects_reply:false` = 빚 없는 통지. 태그 방언은 값을 문자열로
+        # 주므로 "false"/"no"/"0" 도 거짓으로 읽는다.
+        expects_reply = _flag(args.get("expects_reply", True), default=True)
         render_step(
             "action",
             "",
@@ -1085,7 +1104,7 @@ class TurnDispatcher:
             tool_input=json.dumps(args, ensure_ascii=False),
         )
         try:
-            result = handler(to, text)
+            result = handler(to, text, expects_reply=expects_reply)
         except Exception as e:
             result = f"message failed: {type(e).__name__}: {e}"
         obs = f"[message → {to or '?'}] {result}"

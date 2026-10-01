@@ -43,7 +43,7 @@ BUILDERS = {
     "skill": lambda: ports_for_skill(agent_registry=_Reg(), owner="agent:parent"),
     "oneshot": lambda: ports_for_oneshot(owner="agent:parent"),
     "resident": lambda: ports_for_resident(
-        key="k1", message_handler=_S, questions=_S, absorb_inbox=_S
+        key="k1", message_handler=_S, questions=_S, absorb_inbox=_S, peer_roster=_S
     ),
 }
 

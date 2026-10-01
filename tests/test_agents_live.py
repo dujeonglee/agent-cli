@@ -2209,6 +2209,163 @@ class TestPeerMessaging:
         )
         return reg, a, b
 
+    # ── v10.1.0: 빚 없는 통지 · 주소 해석 · 회신 꼬리표 (실측 cnr60g) ──
+
+    def test_notice_to_peer_creates_no_debt(self, tmp_path, renderer):
+        """`message(expects_reply=false)` — 받는 쪽이 빚지지 않고, 꼬리표가 ack 를
+        막는다. 종전엔 모든 message 가 요청이라 작별 인사도 빚이 됐다."""
+        from agent_cli.subagent.agents_live import _NOTICE_TAIL
+
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        out = handler(b, "fyi: I am done", expects_reply=False)
+        assert "notice" in out and "no reply is expected" in out
+        assert wait_until(lambda: reg.get(b).handled >= 1)
+        q = next(q for q in runner.queries() if "fyi: I am done" in q)
+        assert f"[agent:{a}]" in q and _NOTICE_TAIL in q
+        # B 는 A 에게 빚지지 않았다 — 런 요약의 폴백 배달도 없어 A 는 깨지 않는다
+        assert reg.reply_debt(f"agent:{b}", f"agent:{a}") is None
+        assert not wait_until(lambda: reg.get(a).handled >= 1, timeout=0.4)
+        # 대조: 기본(요청)은 빚을 만들고, 그 답(폴백)이 A 를 깨운다
+        handler(b, "need your move")
+        assert wait_until(lambda: reg.get(b).handled >= 2)
+        assert wait_until(lambda: reg.get(a).handled >= 1)
+        reg.shutdown_all()
+
+    def test_notice_to_main_renders_as_notice(self, tmp_path, renderer):
+        runner = _RecordingRunner()
+        reg, a, _b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        out = handler("main", "status: half done", expects_reply=False)
+        assert "notice" in out
+        (rec,) = [
+            r for r in reg.drain_replies() if "half done" in (r.get("output") or "")
+        ]
+        assert rec.get("notice") is True and rec.get("expects_reply") is False
+        content = build_reply_record(rec, registry=reg)["content"]
+        assert "notice" in content and "No reply is expected or owed" in content
+        assert "expects a reply from you" not in content
+        assert "This is its reply" not in content
+        reg.shutdown_all()
+
+    def test_notice_to_requester_still_settles_my_debt(self, tmp_path, renderer):
+        """내 요청자에게 보낸 통지는 내 빚을 갚는다 (fire-and-forget 회신)."""
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        me = f"agent:{a}"
+        reg.begin_run(me)
+        reg.note_owes(me, f"agent:{b}", "do it", id="1")
+        assert reg.reply_debts(me)
+        handler = reg._make_message_handler(reg.get(a))
+        handler(b, "done, no answer needed", expects_reply=False)
+        assert reg.reply_debts(me) == []
+        reg.shutdown_all()
+
+    def test_resolve_key_accepts_prefix_and_name(self, tmp_path, renderer):
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)  # names: alpha / beta
+        assert reg.resolve_key(a) == a
+        assert reg.resolve_key(f"agent:{b}") == b
+        assert reg.resolve_key("beta") == b
+        assert reg.resolve_key("BETA") == b  # 대소문자 무시
+        assert reg.resolve_key("agent:alpha") == a
+        assert reg.resolve_key("gamma") is None
+        assert reg.resolve_key("") is None
+        assert reg.resolve_key("agent:") is None
+        reg.shutdown_all()
+
+    def test_message_and_request_accept_name_and_prefix(self, tmp_path, renderer):
+        """들어오는 라벨(`agent:agt-…`)과 로스터의 이름을 그대로 `to` 에 써도
+        배달된다 — cnr60g 에서 둘 다 "unknown agent" 였다."""
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        assert f"delivered to {b}" in handler(f"agent:{b}", "by prefix")
+        assert f"delivered to {b}" in handler("beta", "by name")
+        assert wait_until(lambda: reg.get(b).handled >= 2)
+        qs = runner.queries()
+        assert any("by prefix" in q for q in qs) and any("by name" in q for q in qs)
+        # 자기 이름으로 자기에게는 거부
+        assert "yourself" in handler("alpha", "x")
+        # 미지 주소는 로스터를 가리킨다
+        assert "## Live Agents" in handler("gamma", "x")
+        # main 의 `agent request` 경로도 같은 해석
+        assert reg.request("beta", "from main by name") == ""
+        assert wait_until(lambda: reg.get(b).handled >= 3)
+        reg.shutdown_all()
+
+    def test_peer_reply_tail_discourages_acknowledgement(self, tmp_path, renderer):
+        from agent_cli.subagent.agents_live import _REPLY_TAIL
+
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        reg._deliver_peer_reply(a, b, "here is my move", hop=0)
+        assert wait_until(lambda: reg.get(a).handled >= 1)
+        q = next(q for q in runner.queries() if "here is my move" in q)
+        assert _REPLY_TAIL in q
+        assert "no acknowledgement is wanted" in q
+        assert "reports to no one" not in q  # 종전 문구 — ack 를 유발했다
+        reg.shutdown_all()
+
+    def test_message_op_passes_expects_reply_flag(self, tmp_path):
+        """dispatch 가 `expects_reply` 를 핸들러에 넘긴다 — 태그 방언의 문자열
+        "false" 도 거짓으로."""
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        sent = []
+
+        def handler(to, text, expects_reply=True):
+            sent.append((to, text, expects_reply))
+            return "ok"
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        provider = MagicMock()
+        script = [
+            json.dumps(
+                {"action": "message", "to": "p", "text": "a", "expects_reply": False}
+            ),
+            json.dumps(
+                {"action": "message", "to": "p", "text": "b", "expects_reply": "false"}
+            ),
+            json.dumps({"action": "message", "to": "p", "text": "c"}),
+            json.dumps({"action": "complete", "result": "done"}),
+        ]
+        provider.call = MagicMock(
+            side_effect=lambda *a, **k: LLMResponse(
+                content=script[provider.call.call_count - 1]
+            )
+        )
+        result = run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            ports=make_ports(message_handler=handler),
+            max_turns=8,
+        )
+        assert result.success
+        assert sent == [("p", "a", False), ("p", "b", False), ("p", "c", True)]
+
+    def test_message_tool_schema_has_expects_reply(self):
+        from agent_cli.tools.virtual import MessageTool
+
+        props = MessageTool.parameters["properties"]
+        assert props["expects_reply"]["type"] == "boolean"
+        assert "expects_reply" not in MessageTool.parameters["required"]
+        assert "name" in props["to"]["description"]
+        assert "NOTICE" in MessageTool.description
+
     def test_peer_request_reply_is_terminal(self, tmp_path, renderer):
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
@@ -2368,7 +2525,7 @@ class TestPeerMessaging:
             capabilities=None,
             model="m",
             active_tools=["read_file"],
-            ports=make_ports(message_handler=lambda to, text: ""),
+            ports=make_ports(message_handler=lambda to, text, **kw: ""),
         )
         assert "message" in loop2._config.tools_list
 
@@ -2395,7 +2552,7 @@ class TestPeerMessaging:
 
         sent = []
 
-        def handler(to, text):
+        def handler(to, text, expects_reply=True):
             sent.append((to, text))
             return f"delivered to {to}"
 

@@ -56,8 +56,17 @@ def _surface(name: str) -> dict:
     return json.loads((EXPECTED / f"{name}.surface.json").read_text(encoding="utf-8"))
 
 
-def _tools(wf):
+def _tools(wf, surface: dict | None = None):
+    """문법 입력 도구 목록. ``surface["tools"]`` (v10.1.0) 가 있으면 **고정 시점의
+    도구 스키마**를 쓴다 — 이 테스트는 방언 엔진의 등가성을 재는 것이지 도구
+    스키마의 불변을 재는 것이 아니다(`message` 에 인자 하나 더한 것이 xml_fc
+    패리티를 깨뜨렸다). 없으면 현재 레지스트리."""
+    frozen = (surface or {}).get("tools")
     out = []
+    if frozen:
+        for n, p in frozen.items():
+            out.append((n, flat_param_schemas(n, p), allows_extra_keys(p)))
+        return out
     for n in effective_tool_names(None, wf):
         p = AskTool.RESIDENT_PARAMETERS if n == "ask" else TOOL_SCHEMAS[n].parameters
         out.append((n, flat_param_schemas(n, p), allows_extra_keys(p)))
@@ -135,7 +144,7 @@ class TestParity:
 
     def test_grammar_byte_identical(self, name):
         wf, s = get(name), _surface(name)
-        tl = _tools(wf)
+        tl = _tools(wf, s)
         assert wf.grammar(tl) == s["grammar"]["off"]
         assert wf.grammar(tl, thinking_open=True) == s["grammar"]["on"]
         extra = [("mcp_x", {"q": ({"type": "string", "minLength": 1}, True)}, True)]

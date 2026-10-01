@@ -247,6 +247,7 @@ _NO_REGISTRY_IN_SUBLOOP = (
     "단일 가드가 LoopConfig.agent_registry 다"
 )
 _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
+_RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
 def _main_questions(agent_registry):
@@ -266,12 +267,14 @@ def ports_for_run(*, agent_registry, mcp_manager) -> LoopPorts:
         route_message=None,
         dequeue_user_message=None,
         absorb_inbox=None,
+        peer_roster=None,
         unwired={
             "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
             "hook_runner": _HOOKS_LATER,
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
             "absorb_inbox": _NO_INBOX,
+            "peer_roster": _RESIDENT_ROSTER,
         },
     )
 
@@ -298,10 +301,12 @@ def ports_for_web(
         message_handler=None,
         hook_runner=None,
         absorb_inbox=None,
+        peer_roster=None,
         unwired={
             "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
             "hook_runner": _HOOKS_LATER,
             "absorb_inbox": _NO_INBOX,
+            "peer_roster": _RESIDENT_ROSTER,
         },
     )
 
@@ -323,6 +328,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
         route_message=None,
         dequeue_user_message=None,
         absorb_inbox=None,
+        peer_roster=None,
         unwired={
             "questions": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
@@ -331,6 +337,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
             "absorb_inbox": _NO_INBOX,
+            "peer_roster": _RESIDENT_ROSTER,
         },
     )
 
@@ -347,6 +354,7 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
         route_message=None,
         dequeue_user_message=None,
         absorb_inbox=None,
+        peer_roster=None,
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
             "questions": _AS_BEFORE,
@@ -356,20 +364,23 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
             "absorb_inbox": _NO_INBOX,
+            "peer_roster": _RESIDENT_ROSTER,
         },
     )
 
 
 def ports_for_resident(
-    *, key: str, message_handler, questions, absorb_inbox
+    *, key: str, message_handler, questions, absorb_inbox, peer_roster
 ) -> LoopPorts:
     """상주 서브에이전트의 런. ``absorb_inbox`` (v9.25.0) 가 턴 경계마다
-    받은편지함을 이 런으로 흡수한다."""
+    받은편지함을 이 런으로 흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에
+    실을 동료 로스터를 돌려준다."""
     return LoopPorts(
         owner=f"agent:{key}",
         message_handler=message_handler,
         questions=questions,
         absorb_inbox=absorb_inbox,
+        peer_roster=peer_roster,
         agent_registry=None,
         mcp_manager=None,
         hook_runner=None,
