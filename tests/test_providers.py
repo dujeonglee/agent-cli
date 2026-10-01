@@ -228,7 +228,7 @@ class TestAnthropicProvider:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_degeneration_check_breaks_stream(self, mock_post, caps_structured):
         # Parity with the openai provider: the early-break optimization is the
-        # wire format's is_degenerate predicate, which is provider-independent.
+        # dialect's is_degenerate predicate, which is provider-independent.
         # As the streamed text accumulates into a runaway it returns True
         # mid-stream → the Anthropic stream closes, the trailing chunk is never
         # read, and the truncated content carries stop_reason="degenerate_runaway".
@@ -316,8 +316,8 @@ class TestDegenerationTrigger:
     """P0-4: 조기종료 게이트 문자는 wire shape 소유 — 종전 '#' 하드코딩은
     xml_fc(<tool_call> 반복 러너웨이)에서 조기종료를 구조적으로 무발화시켰다."""
 
-    def test_wire_formats_declare_trigger(self):
-        from agent_cli.wire_formats import get as get_wire
+    def test_dialects_declare_trigger(self):
+        from agent_cli.dialects import get as get_wire
 
         assert get_wire("json_fc").degeneration_trigger == "#"
         assert get_wire("xml_fc").degeneration_trigger == "<"
@@ -330,7 +330,7 @@ class TestDegenerationTrigger:
 
         src = inspect.getsource(llm_mod)
         assert "degeneration_trigger" in src
-        assert "getattr(\n                    self.cfg.wire_format" in src
+        assert "getattr(\n                    self.cfg.dialect" in src
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_custom_trigger_fires_early_stop(self, mock_post, caps_structured):

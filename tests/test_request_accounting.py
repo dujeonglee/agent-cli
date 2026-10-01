@@ -513,7 +513,7 @@ class TestThroughRunLoop:
             model="m",
             ctx=ctx,
             max_turns=6,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=make_ports(
                 owner="main",
                 dequeue_user_message=lambda: queue.pop(0) if queue else None,
@@ -570,7 +570,7 @@ class TestThroughRunLoop:
             model="m",
             ctx=ctx,
             max_turns=6,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=make_ports(
                 owner="main",
                 dequeue_user_message=lambda: queue.pop(0) if queue else None,
@@ -797,9 +797,9 @@ class TestClaimsSurviveHistory:
 
     @staticmethod
     def _formats():
-        from agent_cli import wire_formats
+        from agent_cli import dialects
 
-        return [wire_formats.get(n) for n in ("json_fc", "xml_fc")]
+        return [dialects.get(n) for n in ("json_fc", "xml_fc")]
 
     @staticmethod
     def _inputs(rec):
@@ -1021,7 +1021,7 @@ class TestAgentLoopsAreUntouched:
             model="m",
             ctx=ctx,
             max_turns=4,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=ports,
         )
         return p, ctx, res

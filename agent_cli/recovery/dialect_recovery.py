@@ -1,10 +1,10 @@
 """Wire-format-dependent intervention builders.
 
 These factories compose recovery primitives with wording sourced from
-the active wire-format plugin (``failure_framing_*``,
+the active dialect plugin (``failure_framing_*``,
 ``constraint_reminder_*``, ``static_retry_hint_*``). When a new plugin
 is added, this module is the audit point: every wf-aware composer
-lives here and pulls strings off the plugin's :class:`WireFormat`
+lives here and pulls strings off the plugin's :class:`DialectBase`
 Protocol, so the per-plugin text stays inside the plugin file and the
 composition stays here.
 
@@ -19,28 +19,28 @@ primitives it owns; lower layers do not depend back on ``recovery``.
 
 from __future__ import annotations
 
+from agent_cli.dialects import get as _get_dialect
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
-from agent_cli.wire_formats import get as _get_wire_format
 
 
-def _resolve_wire_format(wire_format):
-    """Backward-compat fallback to the default wire format (DEFAULT_WIRE_FORMAT).
+def _resolve_dialect(dialect):
+    """Backward-compat fallback to the default dialect (DEFAULT_DIALECT).
 
     The recovery package's format-agnostic boundary is preserved by
     ``recovery/__init__.py`` not re-exporting this module: only callers
-    who explicitly import ``recovery.wf_recovery`` pull in the
-    wire_formats dependency. The format-aware nature of this module is
+    who explicitly import ``recovery.dialect_recovery`` pull in the
+    dialects dependency. The format-aware nature of this module is
     therefore self-evident at the import site, no lazy indirection
     required.
     """
-    if wire_format is not None:
-        return wire_format
-    return _get_wire_format()
+    if dialect is not None:
+        return dialect
+    return _get_dialect()
 
 
 def format_no_json_retry(
-    *, prior_content: str = "", wire_format=None, syntax_error: str | None = None
+    *, prior_content: str = "", dialect=None, syntax_error: str | None = None
 ) -> Intervention:
     """Build the Intervention for an LLM response that failed to parse.
 
@@ -49,12 +49,12 @@ def format_no_json_retry(
     (constrain). Falls back to the plugin's static "no JSON" hint when no
     echoable content is available.
 
-    ``wire_format`` selects which envelope wording to use. Omitting it
-    falls back to the default wire format (DEFAULT_WIRE_FORMAT) so existing callers
+    ``dialect`` selects which envelope wording to use. Omitting it
+    falls back to the default dialect (DEFAULT_DIALECT) so existing callers
     (the loop's pre-Step-6 call sites, every test in
     ``test_retry_builders``) keep their original behavior bit-for-bit.
 
-    ``syntax_error`` (from ``WireFormat.diagnose_syntax_error``) is the
+    ``syntax_error`` (from ``DialectBase.diagnose_syntax_error``) is the
     optional "where it broke" pointer — message + line/column + caret. When
     present it is embedded as its own block after the framing, so the model
     is told the exact fault, not just "not valid JSON". Omitting it (the
@@ -65,7 +65,7 @@ def format_no_json_retry(
 
     Keyword-only to avoid silent positional misuse.
     """
-    wf = _resolve_wire_format(wire_format)
+    wf = _resolve_dialect(dialect)
     echo = echo_prior_output(prior_content)
     if not echo:
         return Intervention(message=wf.static_retry_hint_no_json(), primitives=[])
@@ -80,16 +80,14 @@ def format_no_json_retry(
     return Intervention(message="\n".join(parts), primitives=primitives)
 
 
-def format_no_action_retry(
-    *, prior_content: str = "", wire_format=None
-) -> Intervention:
+def format_no_action_retry(*, prior_content: str = "", dialect=None) -> Intervention:
     """Build the Intervention when parsing succeeded but no action was provided.
 
     Same failure-grounding rationale as ``format_no_json_retry``.
-    ``wire_format`` defaults to the default wire format (DEFAULT_WIRE_FORMAT) —
+    ``dialect`` defaults to the default dialect (DEFAULT_DIALECT) —
     see that builder's docstring for the rationale.
     """
-    wf = _resolve_wire_format(wire_format)
+    wf = _resolve_dialect(dialect)
     echo = echo_prior_output(prior_content)
     if not echo:
         return Intervention(message=wf.static_retry_hint_no_action(), primitives=[])

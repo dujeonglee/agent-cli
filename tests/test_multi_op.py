@@ -20,10 +20,10 @@ import json
 from typing import ClassVar
 from unittest.mock import MagicMock
 
+from agent_cli.dialects.base import DialectBase, Op, ParsedAction, ParsedTurn
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS
-from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 from tests.loop_ports import TEST_PORTS
 
 # ─── Tool.wrap_single_op ────────────────────────────
@@ -67,7 +67,7 @@ class TestWrapSingleOp:
         ★종전 기본값은 ``add_prefix`` 였고, 그것이 오버라이드를 깜빡한
         도구의 **모든 호출을 중앙 검증에서 거절**시켰다(키가 ``monitor_mode``
         가 되어 required ``mode`` 를 못 찾는다). v9.11.0 의 ``monitor`` 가
-        그 상태로 나가 한 번도 동작하지 않았다 — 살아 있는 wire format 이
+        그 상태로 나가 한 번도 동작하지 않았다 — 살아 있는 dialect 이
         둘 다 multi_op 이라 이 경로는 프로덕션에서 항상 탄다.
 
         MCP 어댑터는 같은 함정을 겪고 자기만 항등으로 우회해 뒀었다
@@ -90,10 +90,10 @@ class TestWrapSingleOp:
         assert _Plain().wrap_single_op({"command": "ls"}) == {"command": "ls"}
 
 
-# ─── Mock multi-op wire format ──────────────────────
+# ─── Mock multi-op dialect ──────────────────────
 
 
-class _MultiOpFormat(WireFormat):
+class _MultiOpFormat(DialectBase):
     """Test format: the LLM 'emission' is a JSON object
     ``{"thought": ..., "ops": [{"action": ..., ...params}], "terminal": bool}``
     that parse_turn maps straight onto ParsedTurn — bypassing real wire
@@ -180,7 +180,7 @@ def _finish(thought="done"):
     return [_turn(thought=thought, ops=[{"action": "complete", "result": thought}])]
 
 
-def _run(responses, tmp_path, max_turns=5, wire_format=None):
+def _run(responses, tmp_path, max_turns=5, dialect=None):
     from agent_cli.context.manager import ContextManager
     from agent_cli.loop import AgentLoop
 
@@ -195,7 +195,7 @@ def _run(responses, tmp_path, max_turns=5, wire_format=None):
         model="m",
         ctx=ctx,
         max_turns=max_turns,
-        wire_format=wire_format or _MultiOpFormat(),
+        dialect=dialect or _MultiOpFormat(),
     )
     return loop.run(), ctx, provider
 
@@ -744,7 +744,7 @@ class TestProseRequiresExplicitComplete:
     가리켜 한 턴 안에 수렴시킨다."""
 
     def _get(self, name):
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         return get(name)
 
@@ -759,7 +759,7 @@ class TestProseRequiresExplicitComplete:
                 ),
             ],
             tmp_path,
-            wire_format=self._get("json_fc"),
+            dialect=self._get("json_fc"),
         )
         assert result.success
         assert "auth.py" in result.output
@@ -775,7 +775,7 @@ class TestProseRequiresExplicitComplete:
                 ),
             ],
             tmp_path,
-            wire_format=self._get("xml_fc"),
+            dialect=self._get("xml_fc"),
         )
         assert result.success
         assert "auth.py" in result.output
@@ -790,7 +790,7 @@ class TestProseRequiresExplicitComplete:
                 '[{"action": "complete", "result": "plan written"}]',
             ],
             tmp_path,
-            wire_format=self._get("json_fc"),
+            dialect=self._get("json_fc"),
         )
         assert result.success
         assert result.output == "plan written"
@@ -817,7 +817,7 @@ class TestProseRequiresExplicitComplete:
                 ),
             ],
             tmp_path,
-            wire_format=self._get("xml_fc"),
+            dialect=self._get("xml_fc"),
         )
         assert result.success
         assert provider.call.call_count == 2
@@ -833,7 +833,7 @@ class TestProseRequiresExplicitComplete:
                 '[{"action": "complete", "result": "both files were scanned"}]',
             ],
             tmp_path,
-            wire_format=self._get("json_fc"),
+            dialect=self._get("json_fc"),
         )
         assert result.success
         recs = [

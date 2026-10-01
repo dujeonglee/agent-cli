@@ -32,11 +32,11 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from agent_cli import wire_formats
+from agent_cli import dialects
+from agent_cli.dialects.base import DialectBase, ParsedAction
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS
-from agent_cli.wire_formats.base import ParsedAction, WireFormat
 
 BASE_URL = os.environ.get("OMLX_BASE_URL", "http://192.168.0.44:8000/v1")
 API_KEY = os.environ.get("OMLX_API_KEY", "")  # secret: env only, never committed
@@ -76,7 +76,7 @@ def _flatten(prefixed: dict) -> tuple[str | None, dict]:
     return None, prefixed
 
 
-class MdArrayFormat(WireFormat):
+class MdArrayFormat(DialectBase):
     name = "md_array"
     thought_required = False
     action_required = False
@@ -375,10 +375,10 @@ def _clean_prompt(sp: str) -> str:
 
 
 def call_once(model: str, task: Task) -> Run:
-    plugin = wire_formats.get("md_array")
+    plugin = dialects.get("md_array")
     system = _clean_prompt(
         build_system_prompt(
-            capabilities=CAPS, active_tools=list(task.active_tools), wire_format=plugin
+            capabilities=CAPS, active_tools=list(task.active_tools), dialect=plugin
         )
     )
     body = {
@@ -493,5 +493,5 @@ def main():
 
 
 if __name__ == "__main__":
-    wire_formats.register(MdArrayFormat())
+    dialects.register(MdArrayFormat())
     main()

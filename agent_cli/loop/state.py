@@ -45,7 +45,7 @@ class LoopConfig:
     skill_stack: list = field(default_factory=list)
     agent_stack: list = field(default_factory=list)
     capabilities: object = None
-    wire_format: object = None
+    dialect: object = None
     mcp_manager: object = None
     hook_runner: object = None
     hooks_config: dict | None = None

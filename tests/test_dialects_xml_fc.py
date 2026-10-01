@@ -1,4 +1,4 @@
-"""xml_fc (태그-파라미터) wire format — docs/multi-wire-format/PHASE2.md.
+"""xml_fc (태그-파라미터) dialect — docs/dialects/PHASE2.md.
 
 파서 3-stage(정상/수리/보존)·스키마-주도 타입 강제·raw 값·구분자 충돌·
 히스토리 round-trip·recovery 문구·degenerate·sanitize 를 고정한다.
@@ -7,8 +7,8 @@ D4: thought = 첫 <tool_call> 앞 자유 산문 (<think> 는 stage 0 격리).
 
 import pytest
 
-from agent_cli.wire_formats import get as get_wf
-from agent_cli.wire_formats.xml_fc import XmlFcFormat
+from agent_cli.dialects import get as get_wf
+from agent_cli.dialects.xml_fc import XmlFcFormat
 from tests.loop_ports import TEST_PORTS
 
 
@@ -590,7 +590,7 @@ class TestLoopE2E:
             provider=provider,
             capabilities=self._caps(),
             model="test-model",
-            wire_format="xml_fc",
+            dialect="xml_fc",
         )
         assert result.success
         assert "hello xml world" in result.output
@@ -623,7 +623,7 @@ class TestLoopE2E:
             provider=provider,
             capabilities=self._caps(),
             model="test-model",
-            wire_format="xml_fc",
+            dialect="xml_fc",
         )
         assert result.success
         # 두 op 의 관찰이 둘째 콜의 메시지에 들어갔는지 (positional/kwarg 양쪽)
@@ -641,16 +641,16 @@ class TestBindingIntegration:
         import json as _json
 
         import agent_cli.config as _config
-        from agent_cli.wire_formats import resolve_wire_format
+        from agent_cli.dialects import resolve_dialect
 
         target = tmp_path / "models.json"
         target.write_text(
-            _json.dumps({"models": {"qwen-x": {"wire_format": "xml_fc"}}}),
+            _json.dumps({"models": {"qwen-x": {"dialect": "xml_fc"}}}),
             encoding="utf-8",
         )
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
         monkeypatch.setattr(_config, "_cached_registry", None)
-        wf = resolve_wire_format(explicit=None, session_format=None, model="qwen-x")
+        wf = resolve_dialect(explicit=None, session_format=None, model="qwen-x")
         assert wf.name == "xml_fc"
 
 
@@ -660,7 +660,7 @@ class TestLenientValueIntegrity:
     param 생성. 값 종료는 키-이름/parameter closer 를 우선해야 한다."""
 
     def _wf(self):
-        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.dialects import get as get_wf
 
         return get_wf("xml_fc")
 
@@ -730,7 +730,7 @@ class TestThinkingOpenerDoesNotEatOps:
     있으면 stage 0 가 EOF 까지 잘라 턴의 ops 전체가 무실패 소실."""
 
     def _wf(self):
-        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.dialects import get as get_wf
 
         return get_wf("xml_fc")
 

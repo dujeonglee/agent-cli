@@ -114,7 +114,7 @@ class LLMCaller:
             )
             overrides = parameter_overrides_for(self.cfg.tools_list, nonblocking_ask)
             tools = []
-            for name in effective_tool_names(self.cfg.tools_list, self.cfg.wire_format):
+            for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
                 schema = TOOL_SCHEMAS.get(name)
                 if schema is None:
                     continue
@@ -123,7 +123,7 @@ class LLMCaller:
                     (name, flat_param_schemas(name, params), allows_extra_keys(params))
                 )
             self._grammar_cache = {
-                open_: self.cfg.wire_format.grammar(tools, thinking_open=open_)
+                open_: self.cfg.dialect.grammar(tools, thinking_open=open_)
                 for open_ in (False, True)
             }
         policy = resolve_thinking_policy(caps, thinking_override)
@@ -303,18 +303,16 @@ class LLMCaller:
         # iff the model supports structured output, json_fc never does
         # (markdown shape). This is the single wire ⨯ capability decision
         # point, so the provider never combines the two itself.
-        extra_call_kwargs = self.cfg.wire_format.provider_call_kwargs(
-            self.cfg.capabilities
-        )
+        extra_call_kwargs = self.cfg.dialect.provider_call_kwargs(self.cfg.capabilities)
 
         # Plugin-defined prefill: a string the provider sees as the start
         # of an assistant turn. Forces the model to continue from there,
-        # producing the wire format from the very first generated token.
+        # producing the dialect from the very first generated token.
         # ReAct returns "" (no prefill — its prior already produces ReAct
         # shape). Envelope plugins return e.g. ``<tool_use id="r1" action="``
         # so the model emits the tool name next. Empty string => behaviour
         # is identical to the pre-plugin path.
-        prefill = self.cfg.wire_format.prefill()
+        prefill = self.cfg.dialect.prefill()
         call_messages = self.state.messages
         if prefill:
             call_messages = [
@@ -329,10 +327,10 @@ class LLMCaller:
                 capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
                 on_thinking=on_thinking,
-                degeneration_check=self.cfg.wire_format.is_degenerate,
+                degeneration_check=self.cfg.dialect.is_degenerate,
                 # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".
                 degeneration_trigger=getattr(
-                    self.cfg.wire_format, "degeneration_trigger", "#"
+                    self.cfg.dialect, "degeneration_trigger", "#"
                 ),
                 interrupt_check=self._interrupt_check,
                 # 세션-런타임 노브 스냅샷 (v8.55.0, base.CallSettings):
@@ -429,7 +427,7 @@ class LLMCaller:
 
         ``messages`` arrives in chat-ready ``{role, content}`` form —
         ContextManager._compact does the natural-language conversion
-        via the wire_format plugin before calling here.
+        via the dialect plugin before calling here.
 
         Capabilities are overridden for this one call:
           - ``supports_thinking=False`` — summarisation doesn't benefit

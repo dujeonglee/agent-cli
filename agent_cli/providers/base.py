@@ -9,7 +9,7 @@ from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMP
 from agent_cli.providers.capabilities import ModelCapabilities
 
 # content 인라인 thinking 블록 격리 (5.10.0) — 구현은 thinking_tags 단일
-# 소스로 이주 (multi-wire-format Phase 2 선행 리팩토링). openai.py 와
+# 소스로 이주 (dialects Phase 2 선행 리팩토링). openai.py 와
 # 기존 테스트가 이 경로에서 import 하므로 re-export 로 유지.
 from agent_cli.thinking_tags import (
     strip_think_blocks as strip_think_blocks,  # noqa: PLC0414
@@ -123,7 +123,7 @@ class CallSettings:
     #: capabilities 는 순수 모델 서술로 남는다 (v8.53.0 의 replace 대체).
     max_output_tokens: int | None = None
     #: 이 턴의 디코딩 문법 (EBNF, v9.24.0) — 서버가 지원하고 켜져 있을 때만
-    #: 루프가 채운다(``WireFormat.grammar``). None = 제약 없음. OpenAI 방언은
+    #: 루프가 채운다(``DialectBase.grammar``). None = 제약 없음. OpenAI 방언은
     #: ``guided_grammar`` 로 싣고, Anthropic 은 받을 곳이 없어 무시한다.
     grammar: str | None = None
 

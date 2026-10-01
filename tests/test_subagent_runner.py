@@ -101,13 +101,13 @@ class TestApplyRoleOverrides:
 
 
 class TestCreateSubagentCtx:
-    def test_none_mode_fresh_ctx_inherits_budget_and_wire_format(self, tmp_path):
+    def test_none_mode_fresh_ctx_inherits_budget_and_dialect(self, tmp_path):
         parent = ContextManager(tmp_path / "parent", max_context_tokens=12345)
         ctx, error = create_subagent_ctx("none", parent, tmp_path / "sub")
         assert error == ""
         assert ctx is not None
         assert ctx.max_context_tokens == 12345
-        assert type(ctx.wire_format) is type(parent.wire_format)
+        assert type(ctx.dialect) is type(parent.dialect)
         assert ctx.get_raw_messages() == []
 
     def test_none_mode_without_parent_defaults(self, tmp_path):

@@ -16,6 +16,12 @@ import typer
 from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
+from agent_cli.dialects import (
+    get as _get_dialect,
+)
+from agent_cli.dialects import (
+    resolve_dialect as _resolve_dialect,
+)
 from agent_cli.loop import run_loop
 from agent_cli.paths import user_dir
 from agent_cli.providers import (
@@ -24,12 +30,6 @@ from agent_cli.providers import (
     get_capabilities,
 )
 from agent_cli.render import C, console, get_renderer
-from agent_cli.wire_formats import (
-    get as _get_wire_format,
-)
-from agent_cli.wire_formats import (
-    resolve_wire_format as _resolve_wire_format,
-)
 
 app = typer.Typer(
     name="agent-cli",
@@ -837,28 +837,28 @@ def _prompt_model_capabilities(model: str):
             supports_thinking=supports_thinking,
         )
 
-        # Wire format 바인딩 (바인딩 UX ② — multi-wire-format): 엔트리가
+        # Dialect 바인딩 (바인딩 UX ② — dialects): 엔트리가
         # 대화형으로 생성되는 바로 이 지점에서 선택. auto/빈 입력 = 필드
         # 미기록(해석 체인 위임 — 기본 json_fc), 등록된 이름만 수용
         # (D2: 조용한 오타 폴백 금지 — 재질문).
-        from agent_cli.wire_formats import list_names
+        from agent_cli.dialects import list_names
 
         names = list_names()
-        wf_input = (
+        dialect_input = (
             renderer.prompt_user(
-                f"  Wire format ({' / '.join(['auto'] + names)}) [auto]: ",
+                f"  Dialect ({' / '.join(['auto'] + names)}) [auto]: ",
                 multiline=False,
             )
             .strip()
             .lower()
         )
-        while wf_input and wf_input != "auto" and wf_input not in names:
+        while dialect_input and dialect_input != "auto" and dialect_input not in names:
             console.print(
-                f"[{C['muted']}]  Unknown wire format '{wf_input}'. "
+                f"[{C['muted']}]  Unknown dialect '{dialect_input}'. "
                 f"Available: auto, {', '.join(names)}[/]"
             )
-            wf_input = (
-                renderer.prompt_user("  Wire format [auto]: ", multiline=False)
+            dialect_input = (
+                renderer.prompt_user("  Dialect [auto]: ", multiline=False)
                 .strip()
                 .lower()
             )
@@ -866,8 +866,8 @@ def _prompt_model_capabilities(model: str):
         from agent_cli.providers.capabilities import caps_to_entry
 
         entry = caps_to_entry(caps)
-        if wf_input and wf_input != "auto":
-            entry["wire_format"] = wf_input
+        if dialect_input and dialect_input != "auto":
+            entry["dialect"] = dialect_input
         save_model_entry(model, entry)
         console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
         return caps
@@ -1071,7 +1071,7 @@ def _setup_provider(
 class SessionBootstrap:
     """`run`/`web` 이 공유하는 부트스트랩 산출물 (C4).
 
-    provider 6-튜플 + fail-fast 해석된 wire format + 폴백 적용된 토큰
+    provider 6-튜플 + fail-fast 해석된 dialect + 폴백 적용된 토큰
     예산을 한 번에 — 두 커맨드가 각자 unpack/try-except/분기를 복제하던
     동형 시퀀스의 단일 소유자. 세션 획득(create vs resume UX)·renderer·
     worker 배선은 진짜 다른 부분이라 커맨드별에 남는다.
@@ -1083,7 +1083,7 @@ class SessionBootstrap:
     resolved_url: str
     resolved_key: str
     provider_name: str
-    wire_format: object
+    dialect: object
     max_context_tokens: int
 
 
@@ -1092,16 +1092,16 @@ def _bootstrap_provider(
     model,
     base_url,
     api_key,
-    response_format: str | None,
+    dialect: str | None,
     max_context_tokens: int,
     *,
     session_format: str | None = None,
     quiet: bool = False,
 ) -> SessionBootstrap:
-    """provider 셋업 → wire format 해석 fail-fast → 예산 폴백(70% 통일 공식).
+    """provider 셋업 → dialect 해석 fail-fast → 예산 폴백(70% 통일 공식).
 
-    wire format 해석 체인 (multi-wire-format Phase 1): 명시
-    ``--response-format`` > resume 세션 메타(``session_format``) >
+    dialect 해석 체인 (dialects Phase 1): 명시
+    ``--dialect`` > resume 세션 메타(``session_format``) >
     models.json 모델 바인딩 > DEFAULT. unknown 이름은 어느 소스든
     세션 생성 전에 fail-fast (D2).
     """
@@ -1109,8 +1109,8 @@ def _bootstrap_provider(
         _setup_provider(provider, model, base_url, api_key, quiet=quiet)
     )
     try:
-        wire_format_plugin = _resolve_wire_format(
-            explicit=response_format,
+        dialect_plugin = _resolve_dialect(
+            explicit=dialect,
             session_format=session_format,
             model=resolved_model,
         )
@@ -1128,7 +1128,7 @@ def _bootstrap_provider(
         resolved_url=resolved_url,
         resolved_key=resolved_key,
         provider_name=name,
-        wire_format=wire_format_plugin,
+        dialect=dialect_plugin,
         max_context_tokens=max_context_tokens,
     )
 
@@ -1189,7 +1189,7 @@ def _build_context(
         get_session_dir(session),
         max_context_tokens=boot.max_context_tokens,
         resume=resume,
-        wire_format=boot.wire_format,
+        dialect=boot.dialect,
         # None 이면 ContextManager 가 env/기본값을 고른다 (v8.61.0).
         compaction_ratio=compaction_ratio,
     )
@@ -1278,10 +1278,11 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
-    response_format: str | None = typer.Option(
+    dialect: str | None = typer.Option(
         None,
+        "--dialect",
         "--response-format",
-        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-in: xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Dialect (tool-call wire shape) name. Unset resolves: resumed session's recorded dialect > models.json per-model 'dialect' binding ('wire_format' still read) > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-ins: xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values. --response-format is the pre-v10 alias (removed in v11).",
     ),
     resume: str = typer.Option(
         "",
@@ -1308,18 +1309,18 @@ def run(
         _run_shell_inline(cmd)
         raise typer.Exit(0)
 
-    # C4: run/web 공용 부트스트랩 — provider 6-튜플 + wire format fail-fast +
+    # C4: run/web 공용 부트스트랩 — provider 6-튜플 + dialect fail-fast +
     # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저 —
-    # 그 메타의 response_format 이 해석 체인 순위 2 (명시 플래그 다음).
+    # 그 메타의 dialect 이 해석 체인 순위 2 (명시 플래그 다음).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
         provider,
         model,
         base_url,
         api_key,
-        response_format,
+        dialect,
         max_context_tokens,
-        session_format=(session_resumed.response_format if session_resumed else None),
+        session_format=(session_resumed.dialect if session_resumed else None),
     )
     llm_provider = boot.llm_provider
     capabilities = boot.capabilities
@@ -1327,7 +1328,7 @@ def run(
     resolved_url = boot.resolved_url
     resolved_key = boot.resolved_key
     provider = boot.provider_name
-    wire_format_plugin = boot.wire_format
+    dialect_plugin = boot.dialect
     max_context_tokens = boot.max_context_tokens
 
     # MCP servers
@@ -1342,10 +1343,10 @@ def run(
     if session_resumed is not None:
         session = session_resumed
     else:
-        session = create_session(response_format=boot.wire_format.name)
+        session = create_session(dialect=boot.dialect.name)
     # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
     # resume 가 이어받는다 (meta = 마지막 실행의 truth).
-    session.response_format = boot.wire_format.name
+    session.dialect = boot.dialect.name
     save_meta(session)
     ctx = _build_context(
         session,
@@ -1525,7 +1526,7 @@ def run(
                 session=session,
                 hooks_config=_disk_hooks,
                 record_turns=record_turns,
-                wire_format=wire_format_plugin,
+                dialect=dialect_plugin,
                 ports=ports_for_run(
                     agent_registry=agent_registry,
                     mcp_manager=mcp_manager,
@@ -1561,16 +1562,16 @@ def run(
         )
 
 
-def resume_wire_format(session, current, explicit: str | None):
+def resume_dialect(session, current, explicit: str | None):
     """후결정(대화형) resume 의 포맷 재해석 — 해석 체인 순위 2 와 동형.
 
     명시 플래그가 없고 세션 기록 포맷이 현재와 다르면 기록 이름으로
     재해석한다. 미등록 이름(rename/제거된 포맷)은 Exit(2) — G1: silent
     format switch 금지 (v7.11.4 에서 typer 본문 인라인을 추출해 고정)."""
-    if explicit is not None or session.response_format == current.name:
+    if explicit is not None or session.dialect == current.name:
         return current
     try:
-        return _get_wire_format(session.response_format)
+        return _get_dialect(session.dialect)
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
         raise typer.Exit(2) from exc
@@ -1858,12 +1859,12 @@ def _print_session(s, indent: str = "  ") -> None:
         console.print(f"{indent}    [{C['final']}]→ {_truncate(result, 80)}[/]")
 
 
-def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tuple:
+def _maybe_resume_recent(workspace: str, dialect: str, prompt_fn) -> tuple:
     """No ``--resume`` given: offer the most recent session (shown in the same
     format as the ``sessions`` command) and ask [y/N]. 'y' resumes it; anything
     else (incl. Enter) starts a new session.
 
-    ``response_format`` 은 **해석 완료된** 플러그인 이름 — 새 세션 생성
+    ``dialect`` 은 **해석 완료된** 플러그인 이름 — 새 세션 생성
     branch 의 메타 기록용. resume branch 의 포맷 재해석(기록 포맷 존중)은
     caller(web) 책임 (부트 후 결정되는 경로라 여기선 알 수 없다).
 
@@ -1887,7 +1888,7 @@ def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tup
                 resumed = load_session(last.session_id)
                 if resumed is not None:
                     return resumed, True
-    return create_session(response_format=response_format), False
+    return create_session(dialect=dialect), False
 
 
 _GH_REPO = "dujeonglee/agent-cli"
@@ -2084,12 +2085,13 @@ def web(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
-    response_format: str | None = typer.Option(
+    dialect: str | None = typer.Option(
         None,
+        "--dialect",
         "--response-format",
-        help="Wire format plugin name. Unset resolves: resumed session's "
-        "recorded format > models.json per-model 'wire_format' binding > "
-        "json_fc.",
+        help="Dialect (tool-call wire shape) name. Unset resolves: resumed session's "
+        "recorded dialect > models.json per-model 'dialect' binding ('wire_format' "
+        "still read) > json_fc. --response-format is the pre-v10 alias (removed in v11).",
     ),
     host: str = typer.Option(
         "127.0.0.1",
@@ -2174,16 +2176,16 @@ def web(
 
     # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
     # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거),
-    # 그 메타의 response_format 이 해석 체인 순위 2 (명시 플래그 다음).
+    # 그 메타의 dialect 이 해석 체인 순위 2 (명시 플래그 다음).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
         provider,
         model,
         base_url,
         api_key,
-        response_format,
+        dialect,
         max_context_tokens,
-        session_format=(session_resumed.response_format if session_resumed else None),
+        session_format=(session_resumed.dialect if session_resumed else None),
         quiet=True,
     )
     llm_provider = boot.llm_provider
@@ -2192,7 +2194,7 @@ def web(
     resolved_url = boot.resolved_url
     resolved_key = boot.resolved_key
     provider = boot.provider_name
-    wire_format_plugin = boot.wire_format
+    dialect_plugin = boot.dialect
     max_context_tokens = boot.max_context_tokens
 
     # MCP servers (v4.46.0: run 과 동형 배선 — 이전엔 web 만 미지원이었음)
@@ -2225,21 +2227,19 @@ def web(
         # No --resume: offer the most recent session ([y/N]) or start new.
         prompt_fn = input if sys.stdin.isatty() else None
         session, is_resume = _maybe_resume_recent(
-            os.getcwd(), wire_format_plugin.name, prompt_fn
+            os.getcwd(), dialect_plugin.name, prompt_fn
         )
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
             # 대화형 resume 는 부트 **후에** 결정된다 — 명시 플래그가 없으면
             # 기록된 포맷으로 재해석 (--resume 경로의 체인 순위 2 와 동형).
-            reinterpreted = resume_wire_format(
-                session, wire_format_plugin, response_format
-            )
-            if reinterpreted is not wire_format_plugin:
-                wire_format_plugin = reinterpreted
-                boot = dataclasses.replace(boot, wire_format=wire_format_plugin)
+            reinterpreted = resume_dialect(session, dialect_plugin, dialect)
+            if reinterpreted is not dialect_plugin:
+                dialect_plugin = reinterpreted
+                boot = dataclasses.replace(boot, dialect=dialect_plugin)
     # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
     # resume 가 이어받는다 (meta = 마지막 실행의 truth).
-    session.response_format = wire_format_plugin.name
+    session.dialect = dialect_plugin.name
     save_meta(session)
     ctx = _build_context(
         session,
@@ -2306,7 +2306,7 @@ def web(
     capture_startup_system_prompt(
         renderer,
         capabilities=capabilities,
-        wire_format=wire_format_plugin,
+        dialect=dialect_plugin,
         session_dir=str(ctx.session_dir),
         max_depth=max_depth,
         mcp_manager=mcp_manager,
@@ -2498,7 +2498,7 @@ def web(
                             graceful_interrupt=True,
                             stop_event=stop_event,  # noqa: B023 — _run_main is called immediately, same iteration
                             record_turns=record_turns,
-                            wire_format=wire_format_plugin,
+                            dialect=dialect_plugin,
                             # v8.39.0 수리: run 과 동형 — 종전 web 은
                             # hooks_config 미전달로 채팅 턴에서 디스크
                             # 훅이 미발화했다.

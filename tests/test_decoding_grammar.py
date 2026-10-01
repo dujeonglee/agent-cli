@@ -23,16 +23,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent_cli.loop import run_loop
-from agent_cli.providers.base import CallSettings, LLMResponse
-from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
-    effective_tool_names,
-    flat_param_schemas,
-)
-from agent_cli.wire_formats import get
-from agent_cli.wire_formats.grammar import (
+from agent_cli.dialects import get
+from agent_cli.dialects.grammar import (
     JSON_NONBLANK_STRING,
     JSON_RULES,
     call_sequence_rules,
@@ -42,6 +34,14 @@ from agent_cli.wire_formats.grammar import (
     prose_rule,
     terminal_tools,
     think_prefix,
+)
+from agent_cli.loop import run_loop
+from agent_cli.providers.base import CallSettings, LLMResponse
+from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.tools.registry import (
+    TOOL_SCHEMAS,
+    effective_tool_names,
+    flat_param_schemas,
 )
 from tests.loop_ports import TEST_PORTS
 
@@ -211,9 +211,9 @@ class TestXmlFcGrammar:
 
 class TestBaseDefault:
     def test_formats_without_a_grammar_return_none(self):
-        from agent_cli.wire_formats.base import WireFormat
+        from agent_cli.dialects.base import DialectBase
 
-        assert WireFormat.grammar(get("json_fc"), []) is None  # 기본 구현
+        assert DialectBase.grammar(get("json_fc"), []) is None  # 기본 구현
 
 
 # ── 3. provider: body 에 실리고, 제약 중엔 사고 스위치를 명시 ──
@@ -440,7 +440,7 @@ class TestLoopWiring:
                 capabilities=caps,
                 model="m",
                 ctx=ctx,
-                wire_format=wire,
+                dialect=wire,
             )
         return provider.call.call_args.kwargs["settings"]
 
@@ -529,7 +529,7 @@ class TestLoopWiring:
             capabilities=self._caps(True),
             model="m",
             ctx=ContextManager(session_dir=tmp_path),
-            wire_format="xml_fc",
+            dialect="xml_fc",
         )
         g = provider.call.call_args.kwargs["settings"].grammar
         assert 'calls_p ::= "<tool_call>" ws (' in g
@@ -552,7 +552,7 @@ class TestSchemaEnforcementPieces:
     """v9.24.4 공용 조각 — 형식과 무관한 부분의 계약."""
 
     def test_grammar_params_kinds_and_forced(self):
-        from agent_cli.wire_formats.grammar import grammar_params
+        from agent_cli.dialects.grammar import grammar_params
 
         flat = {
             "mode": ({"type": "string", "enum": ["a", "b"]}, True),
@@ -571,7 +571,7 @@ class TestSchemaEnforcementPieces:
         assert ps["n"].kind == "integer" and ps["v"].kind == "any"
 
     def test_tool_params_expr_without_and_with_forced(self):
-        from agent_cli.wire_formats.grammar import tool_params_expr
+        from agent_cli.dialects.grammar import tool_params_expr
 
         items = {"a": "A", "b": "B"}
         expr, rules = tool_params_expr("t", items, [], sep="S ")
@@ -584,7 +584,7 @@ class TestSchemaEnforcementPieces:
         assert tool_params_expr("t", {}, [], sep="") == ("", [])
 
     def test_nonblank_expression_starts_with_a_nonblank_step(self):
-        from agent_cli.wire_formats.grammar import nonblank_not_containing
+        from agent_cli.dialects.grammar import nonblank_not_containing
 
         e = nonblank_not_containing("</parameter>")
         assert e.startswith("[ \\t\\r\\n]* ( [^ \\t\\r\\n<] | ")

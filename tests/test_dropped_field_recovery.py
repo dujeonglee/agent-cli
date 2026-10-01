@@ -1,6 +1,6 @@
 """Dropped-field recovery: the ``action_required`` flag.
 
-The wire-format flag governs what happens when an emission is missing its
+The dialect flag governs what happens when an emission is missing its
 action:
 
   - ``action_required=False`` → a dropped/empty action is recovered by the
@@ -11,7 +11,7 @@ A missing *thought* is always tolerated (v9.23.3): the NO_THOUGHT recovery and
 its ``thought_required`` flag were removed as dead code — both shipped
 formats set it False and none implemented ``format_no_thought_retry``.
 
-The parser-side invariant (``WireFormat.parse`` contract) is that
+The parser-side invariant (``DialectBase.parse`` contract) is that
 action_input is preserved even when the action slot is empty/invalid, so
 both flag branches have something to work with. This file pins:
 
@@ -29,12 +29,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agent_cli.dialects import get
+from agent_cli.dialects.json_fc import JsonFcFormat
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import infer_action
-from agent_cli.wire_formats import get
-from agent_cli.wire_formats.json_fc import JsonFcFormat
 from tests.loop_ports import TEST_PORTS
 
 # ── Fixtures / helpers ───────────────────────────────
@@ -169,7 +169,7 @@ class TestActionRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=JsonFcFormat(),
+            dialect=JsonFcFormat(),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_ACTION retry (infer can't help)
@@ -196,7 +196,7 @@ class TestActionRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=_StrictJson(),
+            dialect=_StrictJson(),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_ACTION retry happened
@@ -217,7 +217,7 @@ class TestMissingThoughtIsTolerated:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=JsonFcFormat(),
+            dialect=JsonFcFormat(),
         )
         assert result.success
         assert target.exists()  # ran despite missing thought

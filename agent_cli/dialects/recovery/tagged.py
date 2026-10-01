@@ -1,6 +1,6 @@
 """태그 구제 — 붕괴·변종 태그를 파라미터로 되살리는 기계 (Phase 5 S1: 이동만).
 
-옛 ``xml_fc`` 가 자기 안에 두던 것들이다 (docs/multi-wire-format/PHASE5.md §4.4):
+옛 ``xml_fc`` 가 자기 안에 두던 것들이다 (docs/dialects/PHASE5.md §4.4):
 키-이름 closer(``</KEY>``) 수용 정규식, tool-name 태그 변종(``<X>``/``<k>``) 구제,
 값-무결성 우선 closer 판정(v7.11.4), 블록 트림. 태그 가족(xml_fc·glm_argkey) 공용이며
 어느 스펙의 소유물도 아니다 — 스펙의 ``Lenient`` 옵션이 어느 규칙을 켤지 정한다.

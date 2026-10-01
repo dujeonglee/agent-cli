@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.wire_formats import get, list_names, try_foreign_parse
+from agent_cli.dialects import get, list_names, try_foreign_parse
 
 ALL = ["json_fc", "xml_fc", "hermes_json", "glm_argkey"]
 TAGGED = ["xml_fc", "hermes_json", "glm_argkey"]  # <tool_call> 래퍼가 있는 셋

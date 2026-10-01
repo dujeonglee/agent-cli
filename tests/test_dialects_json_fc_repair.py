@@ -1,4 +1,4 @@
-"""json_fc wire format — 수리 기계·completion·history round-trip (md_array 포팅).
+"""json_fc dialect — 수리 기계·completion·history round-trip (md_array 포팅).
 
 md_array 시절 실측 수리 케이스 전량을 신 셰이프(산문 + bare 배열)로 포팅 —
 body 가 동일하므로 수리 기계는 무변경 승계 (PHASE4).
@@ -16,12 +16,12 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+from agent_cli.dialects import get as get_dialect
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.wire_formats import get as get_wire_format
 from tests.loop_ports import TEST_PORTS
 
-WF = get_wire_format("json_fc")
+WF = get_dialect("json_fc")
 
 
 def _wire(thought: str, action_body: str | None) -> str:
@@ -42,7 +42,7 @@ class TestFlags:
         assert WF.action_required is False
 
     def test_registered(self):
-        from agent_cli.wire_formats import list_names
+        from agent_cli.dialects import list_names
 
         assert "json_fc" in list_names()
 
@@ -157,7 +157,7 @@ class TestAnonymousObjectRepair:
         assert t.parse_stage == 2
 
     def test_valid_json_unchanged_and_stage1(self):
-        from agent_cli.wire_formats.recovery.json import _repair_anonymous_op_objects
+        from agent_cli.dialects.recovery.json import _repair_anonymous_op_objects
 
         valid = '[{"action": "read_file", "path": "a"}, {"action": "shell", "command": "ls"}]'
         # both variants leave valid JSON untouched
@@ -514,7 +514,7 @@ class TestFormatRulesBatchSteering:
         # `complete` finish one; assert the batch op count over the whole text.)
         assert WF.format_rules().count('"action": "read_file"') >= 3
         # and it parses as a real multi-op turn
-        from agent_cli.wire_formats import get as _get
+        from agent_cli.dialects import get as _get
 
         ex = (
             "x\n\n"
@@ -592,7 +592,7 @@ class TestEndToEnd:
             model="m",
             ctx=ctx,
             max_turns=6,
-            wire_format=WF,
+            dialect=WF,
         )
         result = loop.run()
         assert result.success
@@ -632,7 +632,7 @@ class TestEndToEnd:
             model="m",
             ctx=ctx,
             max_turns=6,
-            wire_format=WF,
+            dialect=WF,
         )
         result = loop.run()
         assert result.success
@@ -734,7 +734,7 @@ class TestAnonWrapMissingCloserRecovery:
         assert t.ops[0].action_input["content"] == "if (a) {}\n[{bad}]"
 
     def test_merge_helper_noop_on_single_array(self):
-        from agent_cli.wire_formats.recovery.json import _merge_reopened_op_arrays
+        from agent_cli.dialects.recovery.json import _merge_reopened_op_arrays
 
         one = '[{"action": "shell", "command": "ls"}]'
         assert _merge_reopened_op_arrays(one) == (one, False)

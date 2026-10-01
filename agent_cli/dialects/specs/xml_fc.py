@@ -8,8 +8,8 @@ Nemotron 3/3.5, Granite 4.2.
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.base import NO_ACTION_FRAMING
-from agent_cli.wire_formats.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
+from agent_cli.dialects.base import NO_ACTION_FRAMING
+from agent_cli.dialects.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
 
 _REMINDER_CALL = "Respond with one or more <tool_call> blocks, each containing <function=TOOL> with <parameter=NAME>value</parameter> lines. To finish, call <function=complete> with a result parameter."
 _REMINDER_ACTION_REQUIRED = "Each <function=...> must name one tool from Available Tools. If the task is DONE, finish with <function=complete> and a <parameter=result>your final answer</parameter>. If your last message already was the final answer in plain prose, re-emit that answer as the result parameter. If you were about to do something, emit that tool call now. Never stop without an explicit complete."

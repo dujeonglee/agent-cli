@@ -407,7 +407,7 @@ class TestRunCommandTeardownIntegration:
         from agent_cli.tools.result import ToolResult
 
         boot = MagicMock()
-        boot.wire_format.name = "json_fc"
+        boot.dialect.name = "json_fc"
         session = MagicMock()
         session.session_id = "sess-1"
         registry = MagicMock()

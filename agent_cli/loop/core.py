@@ -12,6 +12,7 @@ from agent_cli.constants import (
     OUTPUT_TRUNCATED_NOTICE,
 )
 from agent_cli.context.manager import ContextManager
+from agent_cli.dialects import get as _get_dialect
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
 from agent_cli.loop.ports import LoopPorts
@@ -43,7 +44,6 @@ from agent_cli.render import (
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-from agent_cli.wire_formats import get as _get_wire_format
 
 
 class AgentLoop:
@@ -80,21 +80,21 @@ class AgentLoop:
         agent_role: str = "",
         agent_name: str = "",
         record_turns: bool = True,
-        wire_format=None,
+        dialect=None,
         compaction_enabled: bool = True,
         peer_agents_section: str = "",
     ):
-        # Wire format plugin. Centralizes the parser, recovery wording,
+        # Dialect plugin. Centralizes the parser, recovery wording,
         # prompt section, and lifecycle hooks so adding a new format means
-        # dropping a file in ``agent_cli/wire_formats/`` and re-running with
-        # ``--response-format <name>``.
+        # dropping a file in ``agent_cli/dialects/`` and re-running with
+        # ``--dialect <name>``.
         #
-        # None 폴백은 ctx-우선 (I2 불변식: loop cfg.wire_format ≡
-        # ctx.wire_format). 종전엔 전역 기본으로 떨어져, 비기본 포맷
+        # None 폴백은 ctx-우선 (I2 불변식: loop cfg.dialect ≡
+        # ctx.dialect). 종전엔 전역 기본으로 떨어져, 비기본 포맷
         # 세션의 서브에이전트가 ctx(히스토리 렌더)와 loop(파서·프롬프트)
-        # 포맷이 어긋나는 split-brain 이었다 (G2, multi-wire-format §3).
-        if wire_format is None:
-            wire_format = ctx.wire_format if ctx is not None else _get_wire_format()
+        # 포맷이 어긋나는 split-brain 이었다 (G2, dialects §3).
+        if dialect is None:
+            dialect = ctx.dialect if ctx is not None else _get_dialect()
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
         # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
         # pulls ONE queued message at each turn boundary; ``route_message(text)``
@@ -193,7 +193,7 @@ class AgentLoop:
             skill_stack=skill_stack,
             agent_stack=agent_stack,
             capabilities=capabilities,
-            wire_format=wire_format,
+            dialect=dialect,
             mcp_manager=ports.mcp_manager,
             hook_runner=ports.hook_runner,
             hooks_config=hooks_config,
@@ -311,8 +311,8 @@ class AgentLoop:
         return self._config.capabilities
 
     @property
-    def wire_format(self):
-        return self._config.wire_format
+    def dialect(self):
+        return self._config.dialect
 
     @property
     def mcp_manager(self):
@@ -1006,7 +1006,7 @@ class AgentLoop:
         _append_observation(
             self.messages,
             self.ctx,
-            self.wire_format,
+            self.dialect,
             llm_text,
             f"Observation: {OUTPUT_TRUNCATED_NOTICE}\n{echo_prior_output(llm_text)}",
             tool_name="output_truncated",

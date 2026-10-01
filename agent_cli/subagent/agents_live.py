@@ -2461,7 +2461,7 @@ class AgentRegistry:
             # teammate 는 이전 세션의 문답을 전부 기억한 채 살아난다.
             mode = "resume" if tm.revive else tm.context_mode
             # model=tm.model (role 오버라이드 적용 후) — models.json 바인딩이
-            # 있으면 그 wire format, 없으면 부모 상속 (multi-wire-format P1).
+            # 있으면 그 dialect, 없으면 부모 상속 (dialects P1).
             ctx, err = create_subagent_ctx(
                 mode, parent_ctx, tm.home_dir, model=tm.model
             )

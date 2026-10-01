@@ -77,33 +77,33 @@ def create_subagent_ctx(
     이어받는다 — 세션 resume 시 teammate 재생성용 (복사 없음; delegate
     스키마 enum 에는 없어 LLM 이 직접 선택할 수 없다).
 
-    wire format 은 ``model``(role 오버라이드 적용 후의 effective model)의
+    dialect 은 ``model``(role 오버라이드 적용 후의 effective model)의
     models.json 바인딩이 있으면 그것, 없으면 부모 상속 (부모 없으면
-    ContextManager 기본값) — multi-wire-format Phase 1 (D1: 모델 프라이어
+    ContextManager 기본값) — dialects Phase 1 (D1: 모델 프라이어
     존중이 세션 플래그보다 우선). unknown 바인딩 이름은 spawn 거부
     ``(None, error)`` (D2: 조용한 폴백 금지). 토큰 예산은 부모 상속.
     생성된 live ctx 는 현재 스레드의 인스펙터 스코프에 등록 —
     CLI(minimal 렌더러)에선 no-op.
     """
     from agent_cli.context.manager import DEFAULT_COMPACTION_RATIO, ContextManager
-    from agent_cli.wire_formats import get as _get_wf
-    from agent_cli.wire_formats import wire_format_for_model
+    from agent_cli.dialects import dialect_for_model
+    from agent_cli.dialects import get as _get_wf
 
-    binding = wire_format_for_model(model)
+    binding = dialect_for_model(model)
     if binding is not None:
         try:
-            sub_wire_format = _get_wf(binding)
+            sub_dialect = _get_wf(binding)
         except KeyError as exc:
             return None, str(exc.args[0] if exc.args else exc)
-        if parent_ctx is not None and parent_ctx.wire_format.name != binding:
+        if parent_ctx is not None and parent_ctx.dialect.name != binding:
             from agent_cli.verbose import debug_log
 
             debug_log(
-                f"subagent wire_format: {binding} (model binding: {model}) "
-                f"— parent uses {parent_ctx.wire_format.name}"
+                f"subagent dialect: {binding} (model binding: {model}) "
+                f"— parent uses {parent_ctx.dialect.name}"
             )
     else:
-        sub_wire_format = parent_ctx.wire_format if parent_ctx else None
+        sub_dialect = parent_ctx.dialect if parent_ctx else None
 
     # Inherit the parent's live compaction ratio at creation time (web slider
     # value snapshot) — like max_context_tokens. Changing the slider later only
@@ -117,7 +117,7 @@ def create_subagent_ctx(
             session_dir=subagent_dir,
             max_context_tokens=parent_ctx.max_context_tokens,
             resume=True,
-            wire_format=sub_wire_format,
+            dialect=sub_dialect,
             compaction_ratio=ratio,
         )
     elif context_mode == "resume":
@@ -126,7 +126,7 @@ def create_subagent_ctx(
             session_dir=subagent_dir,
             max_context_tokens=budget,
             resume=True,
-            wire_format=sub_wire_format,
+            dialect=sub_dialect,
             compaction_ratio=ratio,
         )
     else:
@@ -134,7 +134,7 @@ def create_subagent_ctx(
         ctx = ContextManager(
             session_dir=subagent_dir,
             max_context_tokens=budget,
-            wire_format=sub_wire_format,
+            dialect=sub_dialect,
             compaction_ratio=ratio,
         )
 

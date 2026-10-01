@@ -323,10 +323,10 @@ class TestSummaryTextRendering:
         returned "" for every real record — yet the fake-shape tests passed.
         Mirror of ``TestFileExtractHelper.test_uses_real_serialized_shape``.
         """
-        from agent_cli import wire_formats
+        from agent_cli import dialects
         from agent_cli.context.render import _to_summary_text
 
-        plugin = wire_formats.get("json_fc")
+        plugin = dialects.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             'write it\n\n[{"action": "write_file", "path": "r.c", "content": "y"}]'
         )
@@ -339,14 +339,14 @@ class TestSummaryTextRendering:
         이 명령은 방금까지 컨텍스트에 통째로 있던 것이다."""
         import json
 
-        from agent_cli import wire_formats
+        from agent_cli import dialects
         from agent_cli.context.render import _to_summary_text
 
         cmd = (
             "python3 -m pytest tests/test_agent_questions.py -q -p no:randomly "
             '-k "TestUnifiedDebtRules and human_window"'
         )
-        plugin = wire_formats.get("json_fc")
+        plugin = dialects.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             "run it\n\n" + json.dumps([{"action": "shell", "command": cmd}])
         )
@@ -371,10 +371,10 @@ class TestSummaryTextRendering:
         produced thought-only summaries for json_fc (the default since
         2026-06-11), losing every record of which tools ran. Each flat op also
         needs flat→canonical normalization so read_file's ``{path}`` shows."""
-        from agent_cli import wire_formats
+        from agent_cli import dialects
         from agent_cli.context.render import _to_summary_text
 
-        plugin = wire_formats.get("json_fc")
+        plugin = dialects.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             "read then write\n\n"
             '[{"action": "read_file", "path": "a.c"}, '
@@ -581,9 +581,9 @@ class TestFileExtractHelper:
         """Guard the exact gap that caused this bug: extract must work on what
         ``serialize_assistant_for_history`` actually produces — not a
         hand-written dict. If serialization changes, this test moves with it."""
-        from agent_cli import wire_formats
+        from agent_cli import dialects
 
-        plugin = wire_formats.get("json_fc")
+        plugin = dialects.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             'write it\n\n[{"action": "write_file", "path": "r.c", "content": "y"}]'
         )
@@ -597,9 +597,9 @@ class TestFileExtractHelper:
         already canonical (identity wrap); still-prefixed batch tools are
         normalized via their wrap_single_op. json_fc's compaction file list
         was empty before — both gaps fixed."""
-        from agent_cli import wire_formats
+        from agent_cli import dialects
 
-        plugin = wire_formats.get("json_fc")
+        plugin = dialects.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             "t\n\n"
             '[{"action": "read_file", "path": "a.c"}, '

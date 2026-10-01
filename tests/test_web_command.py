@@ -88,7 +88,7 @@ class TestC4Bootstrap:
         m = self._fake_setup(monkeypatch)
         boot = m._bootstrap_provider(None, None, "", "", "json_fc", 0)
         assert boot.resolved_model == "m1" and boot.provider_name == "openai"
-        assert boot.wire_format.name == "json_fc"
+        assert boot.dialect.name == "json_fc"
         # 예산 폴백 = 70% 통일 공식 (run/web 동일)
         assert boot.max_context_tokens == (100_000 * 7) // 10
 

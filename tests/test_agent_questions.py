@@ -1627,8 +1627,8 @@ class TestFlipPrompt:
     def test_resident_ask_description_says_it_does_not_block(self):
         """설명이 'WAIT for their reply' 라고 거짓말하면 모델이 그걸 믿고
         추측으로 메운다."""
+        from agent_cli.dialects import get as get_wf
         from agent_cli.prompts.system_prompt import _build_tools_section
-        from agent_cli.wire_formats import get as get_wf
 
         wf = get_wf("json_fc")
         blocking = _build_tools_section(["ask"], wf)
@@ -1896,7 +1896,7 @@ class TestReplyNagCap:
             model="m",
             ctx=ctx,
             max_turns=10,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=make_ports(owner="agent:agt-b", questions=port),
         )
         return p, ctx, res
@@ -2158,7 +2158,7 @@ class TestRefusedCompleteIsNotStored:
             model="m",
             ctx=ctx,
             max_turns=10,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=make_ports(owner="agent:agt-b", questions=port),
         )
         return ctx.get_raw_messages()
@@ -2414,7 +2414,7 @@ class TestUnifiedDebtRules:
             model="m",
             ctx=ctx,
             max_turns=10,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=ports,
         )
         return p, ctx, res
@@ -3105,7 +3105,7 @@ class TestMidRunAbsorption:
             model="m",
             ctx=ctx,
             max_turns=10,
-            wire_format="json_fc",
+            dialect="json_fc",
             ports=ports_for_resident(
                 key=b,
                 message_handler=reg._make_message_handler(tm),

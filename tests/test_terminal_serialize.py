@@ -1,15 +1,15 @@
 """Terminal (`complete`) history serialization.
 
 The loop's complete handler holds the unwrapped result, not raw text, so it
-records the terminal turn via ``WireFormat.serialize_terminal_for_history``
+records the terminal turn via ``DialectBase.serialize_terminal_for_history``
 rather than ``serialize_assistant_for_history``. This must produce the SAME
 shape the format uses for every other op (homogeneous history), not the base
 singular shape — a regression that once stored `complete` differently from
 the 73 other op turns in a real json_fc session.
 """
 
-from agent_cli.wire_formats.base import WireFormat
-from agent_cli.wire_formats.json_fc import JsonFcFormat
+from agent_cli.dialects.base import DialectBase
+from agent_cli.dialects.json_fc import JsonFcFormat
 
 
 class TestTerminalSerialize:
@@ -23,7 +23,7 @@ class TestTerminalSerialize:
         ]
 
     def test_xml_fc_uses_ops_shape(self):
-        from agent_cli.wire_formats.xml_fc import XmlFcFormat
+        from agent_cli.dialects.xml_fc import XmlFcFormat
 
         rec = XmlFcFormat().serialize_terminal_for_history("done", "the answer")
         assert "action" not in rec
@@ -33,7 +33,7 @@ class TestTerminalSerialize:
 
     def test_json_fc_and_xml_fc_parity(self):
         # both shipped formats store a terminal turn identically
-        from agent_cli.wire_formats.xml_fc import XmlFcFormat
+        from agent_cli.dialects.xml_fc import XmlFcFormat
 
         a = JsonFcFormat().serialize_terminal_for_history("t", "r")
         b = XmlFcFormat().serialize_terminal_for_history("t", "r")
@@ -41,7 +41,7 @@ class TestTerminalSerialize:
 
     def test_base_default_is_singular(self):
         # a hypothetical singular format keeps the {action, action_input} shape
-        class _Singular(WireFormat):
+        class _Singular(DialectBase):
             # minimal concrete: inherit everything, only need the default.
             # v8.41.0 ABC: parse_turn 이 1차 추상 (parse 는 첫-op 투영 기본).
             def render_full_example(self, **k):
@@ -51,7 +51,7 @@ class TestTerminalSerialize:
                 return ""
 
             def parse_turn(self, t):
-                from agent_cli.wire_formats.base import ParsedTurn
+                from agent_cli.dialects.base import ParsedTurn
 
                 return ParsedTurn()
 

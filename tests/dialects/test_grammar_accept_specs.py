@@ -13,13 +13,13 @@ import pytest
 
 xgr = pytest.importorskip("xgrammar")
 
+from agent_cli.dialects import get
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     allows_extra_keys,
     effective_tool_names,
     flat_param_schemas,
 )
-from agent_cli.wire_formats import get
 
 _STOP = 256
 NEW = ["hermes_json", "glm_argkey"]

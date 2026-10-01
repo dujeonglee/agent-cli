@@ -1,4 +1,4 @@
-"""Phase 3 — foreign-format 구제 (multi-wire-format DESIGN §9).
+"""Phase 3 — foreign-format 구제 (dialects DESIGN §9).
 
 바인딩 포맷이 0-op 로 읽는 emission 을 타 등록 포맷 파서가 action-보유
 ops 로 읽어내면 그 turn 으로 진행하고 ``FAILURE_FOREIGN_FORMAT`` 라벨.
@@ -12,10 +12,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agent_cli.dialects import get as get_wf
+from agent_cli.dialects import try_foreign_parse
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.wire_formats import get as get_wf
-from agent_cli.wire_formats import try_foreign_parse
 from tests.loop_ports import TEST_PORTS
 
 # 실측 캡처 (35B, 2026-07-17) — json_fc 회귀 예1. 원본은 md_array 헤더 모양이었고
@@ -43,7 +43,7 @@ CHIMERA = (
 def production_default(monkeypatch):
     """conftest 는 유닛 스위트 전역에서 DEFAULT 를 react 로 핀 — 구제
     순서(DEFAULT 우선)를 검증하는 테스트는 프로덕션 기본(json_fc)으로."""
-    monkeypatch.setattr("agent_cli.wire_formats.DEFAULT_WIRE_FORMAT", "json_fc")
+    monkeypatch.setattr("agent_cli.dialects.DEFAULT_DIALECT", "json_fc")
 
 
 class TestTryForeignParse:
@@ -133,7 +133,7 @@ class TestDispatchRescue:
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
-            wire_format=get_wf("xml_fc"),
+            dialect=get_wf("xml_fc"),
         )
         provider = _provider(leak, _xml_complete("saw payload-xyz"))
         result = run_loop(
@@ -143,7 +143,7 @@ class TestDispatchRescue:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format="xml_fc",
+            dialect="xml_fc",
             record_turns=True,
         )
         assert result.success
@@ -169,7 +169,7 @@ class TestDispatchRescue:
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
-            wire_format=get_wf("xml_fc"),
+            dialect=get_wf("xml_fc"),
         )
         provider = _provider(leak, _xml_complete("done"))
         run_loop(
@@ -179,7 +179,7 @@ class TestDispatchRescue:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format="xml_fc",
+            dialect="xml_fc",
             record_turns=True,
         )
         turns = (tmp_path / "s" / "turns.jsonl").read_text().splitlines()
@@ -200,7 +200,7 @@ class TestDispatchRescue:
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
-            wire_format=get_wf("xml_fc"),
+            dialect=get_wf("xml_fc"),
         )
         provider = _provider(leak, _xml_complete("done"))
         run_loop(
@@ -210,7 +210,7 @@ class TestDispatchRescue:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format="xml_fc",
+            dialect="xml_fc",
         )
         recs = [
             json.loads(line)
@@ -233,7 +233,7 @@ class TestDispatchRescue:
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
-            wire_format=get_wf("xml_fc"),
+            dialect=get_wf("xml_fc"),
         )
         provider = _provider(leak)
         result = run_loop(
@@ -243,7 +243,7 @@ class TestDispatchRescue:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format="xml_fc",
+            dialect="xml_fc",
         )
         assert result.success
         assert result.output == "final answer via leak"
@@ -258,7 +258,7 @@ class TestDispatchRescue:
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
-            wire_format=get_wf("xml_fc"),
+            dialect=get_wf("xml_fc"),
         )
         provider = _provider(
             '[{"action": "read_file", "path>/x</parameter>',  # 깨진 액션 잔해
@@ -271,7 +271,7 @@ class TestDispatchRescue:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format="xml_fc",
+            dialect="xml_fc",
             record_turns=True,
         )
         assert result.success  # NO_ACTION 넛지 후 둘째 emission 으로 완료

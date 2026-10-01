@@ -1201,7 +1201,7 @@ class TestReadContextTool:
                         "session_id": "1781440579",
                         "workspace": "/proj",
                         "updated_at": "2026-06-14 21:36:19",
-                        "response_format": "json_fc",
+                        "dialect": "json_fc",
                     }
                 }
             )

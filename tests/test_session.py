@@ -39,14 +39,14 @@ class TestCreateSession:
         meta = create_session("/tmp/ws")
         assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
 
-    def test_default_response_format_is_json_fc(self):
-        assert create_session().response_format == "json_fc"
+    def test_default_dialect_is_json_fc(self):
+        assert create_session().dialect == "json_fc"
 
-    def test_response_format_stored(self):
+    def test_dialect_stored(self):
         # An explicit non-default choice (xml_fc) is preserved — proves the
         # field stores what's asked, not just the json_fc default.
-        meta = create_session("/tmp/ws", response_format="xml_fc")
-        assert meta.response_format == "xml_fc"
+        meta = create_session("/tmp/ws", dialect="xml_fc")
+        assert meta.dialect == "xml_fc"
 
 
 class TestLoadSession:
@@ -60,15 +60,15 @@ class TestLoadSession:
     def test_load_nonexistent(self, tmp_path):
         assert load_session("999999999") is None
 
-    def test_response_format_round_trips(self, tmp_path):
-        meta = create_session("/tmp/ws", response_format="xml_fc")
+    def test_dialect_round_trips(self, tmp_path):
+        meta = create_session("/tmp/ws", dialect="xml_fc")
         save_meta(meta)
         loaded = load_session(meta.session_id)
         assert loaded is not None
-        assert loaded.response_format == "xml_fc"
+        assert loaded.dialect == "xml_fc"
 
     def test_legacy_session_defaults_to_json_fc(self, tmp_path):
-        """A session.jsonl written before the response_format field existed
+        """A session.jsonl written before the dialect field existed
         (no such key in _meta) loads with the current default (json_fc);
         backward-compat to older defaults (react, then prefix_md) is
         intentionally not preserved — a legacy session resumes on the
@@ -91,7 +91,7 @@ class TestLoadSession:
         )
         loaded = load_session(sid)
         assert loaded is not None
-        assert loaded.response_format == "json_fc"
+        assert loaded.dialect == "json_fc"
 
 
 class TestRecentExchanges:
@@ -295,11 +295,11 @@ class TestRecentExchanges:
         """Loop-emitted role=user messages (retry hints, interrupt
         notice) must NOT pair with completes — they aren't real user
         input. The unified prefix list lives at
-        ``agent_cli.wire_formats.all_system_user_prefixes()``; new
-        system-injected prefixes from a wire-format plugin extend that
+        ``agent_cli.dialects.all_system_user_prefixes()``; new
+        system-injected prefixes from a dialect plugin extend that
         list automatically."""
         from agent_cli.constants import INTERRUPT_NOTICE
-        from agent_cli.wire_formats.json_fc import JsonFcFormat
+        from agent_cli.dialects.json_fc import JsonFcFormat
 
         # Use the plugin's static fallback messages directly so the
         # test exercises the actual production retry-hint strings.

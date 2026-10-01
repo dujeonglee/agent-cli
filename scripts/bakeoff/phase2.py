@@ -1,4 +1,4 @@
-"""Phase 2 bakeoff — multi-turn wire-format compliance through the real loop.
+"""Phase 2 bakeoff — multi-turn dialect compliance through the real loop.
 
 Where Phase 1 measured "does the model emit the wire shape on the
 first try?", Phase 2 measures "does the model *keep* emitting the
@@ -414,7 +414,7 @@ def call_once(
                 max_turns=MAX_TURNS,
                 ctx=ctx,
                 active_tools=list(task.active_tools),
-                wire_format=plugin_name,
+                dialect=plugin_name,
                 record_turns=True,
             )
             elapsed = time.monotonic() - t0

@@ -5,7 +5,7 @@ Conversation history is managed by ContextManager (history.jsonl).
 
 File layout:
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # single-line metadata (id, workspace, updated_at, response_format)
+    session.jsonl          # single-line metadata (id, workspace, updated_at, dialect)
     history.jsonl          # conversation history (managed by ContextManager)
     skill_*/delegate_*/    # skill/delegate subdirectories
 """
@@ -18,9 +18,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_cli.dialects import DEFAULT_DIALECT, all_system_user_prefixes
 from agent_cli.fsio import atomic_write_text
 from agent_cli.paths import sessions_dir
-from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, all_system_user_prefixes
 
 _SESSIONS_DIR = sessions_dir()
 
@@ -30,10 +30,10 @@ class SessionMeta:
     session_id: str
     workspace: str
     updated_at: str
-    # Wire format the session runs under. Recorded so a session's response
+    # Dialect the session runs under. Recorded so a session's response
     # shape is recoverable for debugging / resume. Defaults to
-    # DEFAULT_WIRE_FORMAT for sessions written before this field existed.
-    response_format: str = DEFAULT_WIRE_FORMAT
+    # DEFAULT_DIALECT for sessions written before this field existed.
+    dialect: str = DEFAULT_DIALECT
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -44,7 +44,7 @@ def get_session_dir(meta: SessionMeta) -> Path:
 
 
 def create_session(
-    workspace: str | None = None, response_format: str = DEFAULT_WIRE_FORMAT
+    workspace: str | None = None, dialect: str = DEFAULT_DIALECT
 ) -> SessionMeta:
     """Create a new session for the given workspace (defaults to CWD)."""
     ws = workspace or os.getcwd()
@@ -52,7 +52,7 @@ def create_session(
         session_id=str(int(time.time())),
         workspace=ws,
         updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-        response_format=response_format,
+        dialect=dialect,
     )
 
 
@@ -68,7 +68,7 @@ def save_meta(meta: SessionMeta) -> None:
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
                 "updated_at": meta.updated_at,
-                "response_format": meta.response_format,
+                "dialect": meta.dialect,
             }
         },
         ensure_ascii=False,
@@ -76,6 +76,22 @@ def save_meta(meta: SessionMeta) -> None:
     # 단일-라인 meta rewrite — 다른 프로세스(보드 sessions 조회·resume
     # preview)가 읽는 상태 파일이라 원자 교체 (fsio 패턴).
     atomic_write_text(path, header + "\n")
+
+
+def _meta_from_dict(meta_data: dict) -> SessionMeta:
+    """session.jsonl 의 ``_meta`` → :class:`SessionMeta` (옛 키 호환, 영구).
+
+    - ``created_at`` → ``updated_at`` (초기 세션).
+    - ``response_format`` → ``dialect`` (v10.0.0 개명 전 세션. resume 는 기록된
+      방언으로 이어져야 하므로 이 호환은 지우지 않는다; 저장은 새 키만 쓴다).
+    """
+    meta_data = dict(meta_data)
+    if "created_at" in meta_data and "updated_at" not in meta_data:
+        meta_data["updated_at"] = meta_data.pop("created_at")
+    if "response_format" in meta_data:
+        old = meta_data.pop("response_format")
+        meta_data.setdefault("dialect", old)
+    return SessionMeta(**meta_data)
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
@@ -98,10 +114,7 @@ def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
                 data = json.loads(first_line)
                 if "_meta" in data:
                     meta_data = data["_meta"]
-                    # Backward compat: created_at → updated_at
-                    if "created_at" in meta_data and "updated_at" not in meta_data:
-                        meta_data["updated_at"] = meta_data.pop("created_at")
-                    sessions.append(SessionMeta(**meta_data))
+                    sessions.append(_meta_from_dict(meta_data))
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
 
@@ -121,10 +134,7 @@ def load_session(session_id: str) -> SessionMeta | None:
             data = json.loads(first_line)
             if "_meta" in data:
                 meta_data = data["_meta"]
-                # Backward compat: created_at → updated_at
-                if "created_at" in meta_data and "updated_at" not in meta_data:
-                    meta_data["updated_at"] = meta_data.pop("created_at")
-                return SessionMeta(**meta_data)
+                return _meta_from_dict(meta_data)
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
     return None
@@ -147,8 +157,8 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
     not real user input.
 
     The set of "system notice" prefixes comes from
-    :func:`agent_cli.wire_formats.all_system_user_prefixes` so any
-    registered wire-format plugin's framing strings are picked up
+    :func:`agent_cli.dialects.all_system_user_prefixes` so any
+    registered dialect plugin's framing strings are picked up
     automatically — no edit here when a new plugin is added.
 
     The paired final is the next role=assistant `complete` action's

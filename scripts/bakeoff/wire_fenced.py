@@ -26,9 +26,9 @@ from __future__ import annotations
 import json
 import re
 
-from agent_cli.wire_formats import register
-from agent_cli.wire_formats.base import ParsedTurn
-from agent_cli.wire_formats.json_fc import JsonFcFormat
+from agent_cli.dialects import register
+from agent_cli.dialects.base import ParsedTurn
+from agent_cli.dialects.json_fc import JsonFcFormat
 
 _TC_BLOCK = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
 _TC_OPEN_ONLY = re.compile(r"<tool_call>\s*", re.IGNORECASE)

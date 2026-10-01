@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_cli.context.manager import ContextManager
+from agent_cli.dialects import get as _get_dialect
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -12,7 +13,6 @@ from agent_cli.loop.core import AgentLoop
 from agent_cli.loop.ports import LoopPorts
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.wire_formats import get as _get_wire_format
 
 
 def run_loop(
@@ -45,18 +45,18 @@ def run_loop(
     agent_role: str = "",
     agent_name: str = "",
     record_turns: bool = True,
-    wire_format=None,
+    dialect=None,
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
 ):
-    """Run the agent loop with the given wire-format plugin. Returns ToolResult.
+    """Run the agent loop with the given dialect plugin. Returns ToolResult.
 
-    ``wire_format`` accepts a registered plugin name (str) or a
-    ``WireFormat`` instance directly. ``None`` falls back to the
-    default wire format so existing callers don't need to change.
+    ``dialect`` accepts a registered plugin name (str) or a
+    ``DialectBase`` instance directly. ``None`` falls back to the
+    default dialect so existing callers don't need to change.
     """
-    if isinstance(wire_format, str):
-        wire_format = _get_wire_format(wire_format)
+    if isinstance(dialect, str):
+        dialect = _get_dialect(dialect)
     return AgentLoop(
         query=query,
         provider=provider,
@@ -87,7 +87,7 @@ def run_loop(
         agent_role=agent_role,
         agent_name=agent_name,
         record_turns=record_turns,
-        wire_format=wire_format,
+        dialect=dialect,
         compaction_enabled=compaction_enabled,
         peer_agents_section=peer_agents_section,
     ).run()

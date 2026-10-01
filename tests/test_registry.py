@@ -346,12 +346,12 @@ class TestSemanticValidationHook:
 
     def test_semantic_failure_records_schema_mismatch_via_a5(self):
         # 정밀화 계약 ③: 의미론 실패가 이제 관측 기록(SCHEMA_MISMATCH)에 잡힘
+        from agent_cli.dialects import get as get_wf
+        from agent_cli.dialects.base import Op, ParsedTurn
         from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
-        from agent_cli.wire_formats import get as get_wf
-        from agent_cli.wire_formats.base import Op, ParsedTurn
 
         cfg = LoopConfig(
-            tools_list=["code_index", "complete"], wire_format=get_wf("json_fc")
+            tools_list=["code_index", "complete"], dialect=get_wf("json_fc")
         )
         st = LoopState(query="q")
         d = TurnDispatcher(

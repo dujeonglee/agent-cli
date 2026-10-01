@@ -193,16 +193,16 @@ def _reset_verbose_recorder():
 
 
 # ── Phase 5 등가성 코퍼스 수집 (옵트인) ──────────────────────────────
-# ``AGENT_CLI_EQUIV_RECORD=<file>`` 로 스위트를 돌리면 등록된 모든 wire format 의
+# ``AGENT_CLI_EQUIV_RECORD=<file>`` 로 스위트를 돌리면 등록된 모든 dialect 의
 # ``parse_turn`` 입력을 그 파일에 한 줄씩 남긴다 — 테스트가 손으로 만든 드리프트·
-# 변종·절단 입력이 파서 등가성 코퍼스가 된다(docs/multi-wire-format/PHASE5.md §7).
+# 변종·절단 입력이 파서 등가성 코퍼스가 된다(docs/dialects/PHASE5.md §7).
 _EQUIV_RECORD = os.environ.get("AGENT_CLI_EQUIV_RECORD")
 if _EQUIV_RECORD:
 
     def pytest_configure(config):
         import json
 
-        from agent_cli import wire_formats as _wf
+        from agent_cli import dialects as _wf
 
         out = open(_EQUIV_RECORD, "a", encoding="utf-8")  # noqa: SIM115
         for _name in _wf.list_names():

@@ -606,13 +606,13 @@ class TestActionRenderShowsRawEmission:
         self, caps, monkeypatch, tmp_path
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         target = tmp_path / "f.txt"
         target.write_text("hello world\n")
         recorded = self._capture_render(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -628,7 +628,7 @@ class TestActionRenderShowsRawEmission:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="json_fc",
+            dialect="json_fc",
         )
 
         action_inputs = [
@@ -646,13 +646,13 @@ class TestActionRenderShowsRawEmission:
         # Regression guard: the flat read op executes (identity wrap → run) and
         # returns the file body. We assert the observation carries the content.
         from agent_cli.context.manager import ContextManager
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         target = tmp_path / "f.txt"
         target.write_text("UNIQUE_MARKER_LINE\n")
         recorded = self._capture_render(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -668,7 +668,7 @@ class TestActionRenderShowsRawEmission:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="json_fc",
+            dialect="json_fc",
         )
         observations = [r["content"] for r in recorded if r["type"] == "observation"]
         assert any("UNIQUE_MARKER_LINE" in (o or "") for o in observations)
@@ -699,7 +699,7 @@ class TestObservationRenderFromStored:
         self, caps, monkeypatch, tmp_path
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         # caps.context_window=32768 → cap≈3276 tokens. This file's read output
         # (1500 hashline rows) is well over that, so it must be nudged.
@@ -707,7 +707,7 @@ class TestObservationRenderFromStored:
         big.write_text("\n".join(f"/p/file_{i:04}.py MARKER" for i in range(1500)))
         recorded = self._capture(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -723,7 +723,7 @@ class TestObservationRenderFromStored:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="json_fc",
+            dialect="json_fc",
         )
         obs = [r["content"] for r in recorded if r["type"] == "observation"]
         assert obs, "no observation rendered"
@@ -737,10 +737,10 @@ class TestObservationRenderFromStored:
         """An unknown-tool turn recovers via ``render_recovery`` (not a normal
         observation card). ``_append_observation`` must NOT also render it."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         recorded = self._capture(monkeypatch)
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content='go\n\n[{"action": "no_such_tool", "x": 1}]'),
@@ -754,7 +754,7 @@ class TestObservationRenderFromStored:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="json_fc",
+            dialect="json_fc",
         )
         # the recovery intervention is surfaced by render_recovery, not as a
         # second render_step("observation") card.
@@ -885,7 +885,7 @@ class TestRunLoopObservability:
 
     def test_degenerate_emission_labeled(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         # Empty wire blocks repeated (## Thought/## Action with no body) =
         # format runaway. This emission has NO JSON array → parse_stage 0,
@@ -895,7 +895,7 @@ class TestRunLoopObservability:
         # ordering. Recovery then re-prompts and the model completes. (Real
         # runs break this mid-stream via degeneration_check; the mock provider
         # returns the full text so this exercises the loop's labeling branch.)
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get("json_fc"))
         degen = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n"
         provider = MagicMock()
         provider.call.side_effect = [
@@ -910,7 +910,7 @@ class TestRunLoopObservability:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="json_fc",
+            dialect="json_fc",
         )
         rows = self._read_turns(tmp_path)
         assert rows[0]["failure_signal"] == "DEGENERATE"
@@ -2919,14 +2919,14 @@ class TestAppendObservationHelpers:
 
     def test_append_observation_no_ctx(self):
         """Works without ctx (no crash)."""
+        from agent_cli.dialects import get as get_dialect
         from agent_cli.loop import _append_observation
-        from agent_cli.wire_formats import get as get_wire_format
 
         messages = []
         _append_observation(
             messages,
             None,
-            get_wire_format("json_fc"),
+            get_dialect("json_fc"),
             "llm",
             "obs",
             tool_name="write_file",
@@ -2934,8 +2934,8 @@ class TestAppendObservationHelpers:
         )
         assert len(messages) == 2
 
-    def test_append_observation_routes_history_through_wire_format(self):
-        """ctx receives the dict produced by wire_format.serialize_assistant_for_history.
+    def test_append_observation_routes_history_through_dialect(self):
+        """ctx receives the dict produced by dialect.serialize_assistant_for_history.
 
         The contract is: assistant record in history.jsonl is shaped by the
         plugin, not by loop.py. Verifying this via fake ctx + fake plugin
@@ -3148,9 +3148,9 @@ class TestProviderCallKwargs:
     def test_plugin_kwargs_unpacked_into_provider_call(self, caps, monkeypatch):
         """Overriding the plugin's provider_call_kwargs makes the kwarg
         appear in ``provider.call``'s actual invocation."""
-        from agent_cli.wire_formats import get as get_wire_format
+        from agent_cli.dialects import get as get_dialect
 
-        plugin = get_wire_format("json_fc")
+        plugin = get_dialect("json_fc")
         monkeypatch.setattr(
             plugin,
             "provider_call_kwargs",
@@ -3164,7 +3164,7 @@ class TestProviderCallKwargs:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=plugin,
+            dialect=plugin,
         )
         call_kwargs = provider.call.call_args_list[0].kwargs
         assert call_kwargs.get("custom_hint") == "x"
@@ -3200,9 +3200,9 @@ class TestProviderPrefill:
         appears (a) as a trailing assistant message reaching provider.call,
         and (b) at the front of the response content the loop hands to
         the rest of the pipeline."""
-        from agent_cli.wire_formats import get as get_wire_format
+        from agent_cli.dialects import get as get_dialect
 
-        plugin = get_wire_format("json_fc")
+        plugin = get_dialect("json_fc")
         SENTINEL = "<<PREFILL_MARK>>"
         monkeypatch.setattr(plugin, "prefill", lambda: SENTINEL)
 
@@ -3224,7 +3224,7 @@ class TestProviderPrefill:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=plugin,
+            dialect=plugin,
         )
         forwarded = provider.call.call_args_list[0].kwargs["messages"]
         # Last message is the assistant prefill, content == SENTINEL.
@@ -3236,9 +3236,9 @@ class TestProviderPrefill:
         prefill (history persistence and overflow recovery copy from
         self.messages — adding the prefill there would double-count it
         on the next turn)."""
-        from agent_cli.wire_formats import get as get_wire_format
+        from agent_cli.dialects import get as get_dialect
 
-        plugin = get_wire_format("json_fc")
+        plugin = get_dialect("json_fc")
         monkeypatch.setattr(plugin, "prefill", lambda: "<<PF>>")
 
         # Capture the loop's self.messages at provider.call time. The
@@ -3257,7 +3257,7 @@ class TestProviderPrefill:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=plugin,
+            dialect=plugin,
         )
         forwarded = provider.call.call_args_list[0].kwargs["messages"]
         prefill_msgs = [m for m in forwarded if m.get("content") == "<<PF>>"]
@@ -4160,8 +4160,8 @@ class TestPR3Collaborators:
         return TurnDispatcher(cfg, st, ctx=None, tools=bridge, recorder=None), st
 
     def test_dispatcher_standalone_complete_op(self):
+        from agent_cli.dialects.base import Op, ParsedTurn
         from agent_cli.tools.result import ToolResult
-        from agent_cli.wire_formats.base import Op, ParsedTurn
 
         d, _st = self._dispatcher()
         turn = ParsedTurn(
@@ -4175,8 +4175,8 @@ class TestPR3Collaborators:
         assert r.output == "final answer"
 
     def test_dispatcher_standalone_tool_op_continues(self):
+        from agent_cli.dialects.base import Op, ParsedTurn
         from agent_cli.loop import _CONTINUE
-        from agent_cli.wire_formats.base import Op, ParsedTurn
 
         d, _st = self._dispatcher()
         turn = ParsedTurn(
@@ -4198,8 +4198,8 @@ class TestPR3Collaborators:
         assert d.loop_detector.threshold == 2
 
     def test_op_ask_without_questions_falls_through(self):
+        from agent_cli.dialects.base import Op, ParsedTurn
         from agent_cli.loop import _NOT_HANDLED
-        from agent_cli.wire_formats.base import Op, ParsedTurn
 
         d, _ = self._dispatcher()
         turn = ParsedTurn(thought="t", ops=[Op("ask", {})], raw="", parse_stage=1)
@@ -4345,7 +4345,7 @@ class TestRunAuthors:
         더는 주입하지 않지만(v9.18.0), 그 세션을 resume 하면 프리뷰에서
         걸러져야 한다 — 접두를 지우면 사용자 발화인 척 되살아난다.
         """
-        from agent_cli.wire_formats import all_system_user_prefixes
+        from agent_cli.dialects import all_system_user_prefixes
 
         legacy = (
             "⚡ Another user request arrived while you were mid-task. Address "

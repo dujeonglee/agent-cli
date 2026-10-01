@@ -22,6 +22,7 @@ from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 #: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
 #: 오케스트레이터만 1회를 넘겼다.
 MAX_DEBT_NAGS = 3
+from agent_cli.dialects import try_foreign_parse
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
@@ -30,6 +31,10 @@ from agent_cli.recovery.detectors import (
     detect_schema_mismatch,
     detect_unknown_tool,
     unwrap_nested_envelope,
+)
+from agent_cli.recovery.dialect_recovery import (
+    format_no_action_retry,
+    format_no_json_retry,
 )
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
@@ -43,10 +48,6 @@ from agent_cli.recovery.observability import (
     FAILURE_UNKNOWN_TOOL,
 )
 from agent_cli.recovery.primitives import echo_prior_output
-from agent_cli.recovery.wf_recovery import (
-    format_no_action_retry,
-    format_no_json_retry,
-)
 from agent_cli.render import (
     drop_pending_thought,
     flush_pending_thought,
@@ -57,7 +58,6 @@ from agent_cli.render import (
 from agent_cli.tools import TOOLS, infer_action
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-from agent_cli.wire_formats import try_foreign_parse
 
 # parallel_safe 배치 디스패치 엔진이 실제로 배선된 도구들.
 # ``_dispatch_parallel_batch`` 는 도구별 병렬 엔진 호출을 알아야 하므로,
@@ -159,7 +159,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             message,
             tool_name=tool_name,
@@ -177,7 +177,7 @@ class TurnDispatcher:
         return _CONTINUE
 
     def _record_emission(self, llm_text: str) -> None:
-        """옵트인 원문 기록 (Phase 5 — docs/multi-wire-format/PHASE5.md §7).
+        """옵트인 원문 기록 (Phase 5 — docs/dialects/PHASE5.md §7).
 
         ``AGENT_CLI_RECORD_EMISSIONS=1`` 이면 모델이 낸 텍스트를 파싱 **전에**
         ``<session>/emissions.jsonl`` 에 한 줄씩 남긴다. history 는 파싱 결과만,
@@ -196,7 +196,7 @@ class TurnDispatcher:
                     json.dumps(
                         {
                             "ts": time.time(),
-                            "format": self.cfg.wire_format.name,
+                            "format": self.cfg.dialect.name,
                             "text": llm_text,
                         },
                         ensure_ascii=False,
@@ -224,8 +224,8 @@ class TurnDispatcher:
         the record.
         """
         self._record_emission(llm_text)
-        turn = self.cfg.wire_format.parse_turn(llm_text)
-        # Phase 3 — foreign-format 구제 (multi-wire-format DESIGN §9): 바인딩
+        turn = self.cfg.dialect.parse_turn(llm_text)
+        # Phase 3 — foreign-format 구제 (dialects DESIGN §9): 바인딩
         # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
         # ops 로 읽어내면 그 turn 으로 진행한다 (실측: 35B xml_fc 스트림의
         # json_fc 회귀 — 0-op 마찰의 17%, PHASE2.md §8). 라벨은 아래
@@ -233,7 +233,7 @@ class TurnDispatcher:
         # 포맷의 캐노니컬 shape 재렌더 (누출 raw 재공급 없음 — 자기 교정).
         foreign_source: str | None = None
         if not turn.ops:
-            rescued = try_foreign_parse(self.cfg.wire_format, llm_text)
+            rescued = try_foreign_parse(self.cfg.dialect, llm_text)
             if rescued is not None:
                 turn, foreign_source = rescued
         # fold (v4.51.0): 이 emission 이 파싱 성공(ops 보유)이면 직전의
@@ -257,14 +257,14 @@ class TurnDispatcher:
         # the documented extension point for a future schema-based resolver).
         # Ambiguous/none leaves it to the NO_ACTION recovery below.
         #
-        # Gated on ``action_required``: when the wire format requires an
+        # Gated on ``action_required``: when the dialect requires an
         # explicit action (action_required=True), a dropped action is a
         # drift to be corrected by the model, so we skip inference and fall
         # through to the NO_ACTION recovery below. When False (the namespaced
         # format), the action is recoverable from the
         # preserved action_input, so we infer it.
         action_inferred = False
-        if not self.cfg.wire_format.action_required:
+        if not self.cfg.dialect.action_required:
             for op in turn.ops:
                 if not op.action and isinstance(op.action_input, dict):
                     inferred = infer_action(op.action_input)
@@ -285,7 +285,7 @@ class TurnDispatcher:
         # (turns.jsonl) — the recovery path is unchanged. Empty output is not a
         # runaway (``is_degenerate("")`` is False) so it still falls through to
         # NO_OUTPUT below.
-        if self.cfg.wire_format.is_degenerate(llm_text):
+        if self.cfg.dialect.is_degenerate(llm_text):
             initial_signal = FAILURE_DEGENERATE
         elif foreign_source is not None:
             # 구제 성공 — 실행은 진행하되 라벨로 계수 (turns.jsonl 이 모델별
@@ -526,7 +526,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             f"Observation: {combined}",
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
@@ -646,7 +646,7 @@ class TurnDispatcher:
         if echo_answer:
             if self.ctx:
                 self.ctx.add(
-                    self.cfg.wire_format.serialize_terminal_for_history(
+                    self.cfg.dialect.serialize_terminal_for_history(
                         turn.thought or "", echo_answer
                     )
                 )
@@ -765,7 +765,7 @@ class TurnDispatcher:
 
         if self.ctx:
             self.ctx.add(
-                self.cfg.wire_format.serialize_terminal_for_history(
+                self.cfg.dialect.serialize_terminal_for_history(
                     turn.thought or "",
                     answer,
                     answers=None if claimed is None else sorted(claimed),
@@ -1051,7 +1051,7 @@ class TurnDispatcher:
             _append_observation(
                 self.state.messages,
                 self.ctx,
-                self.cfg.wire_format,
+                self.cfg.dialect,
                 llm_text,
                 obs_msg,
                 tool_name="ask",
@@ -1095,7 +1095,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             f"Observation: {obs}",
             tool_name="message",
@@ -1135,7 +1135,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             f"Observation: {obs}",
             tool_name="ask",
@@ -1175,7 +1175,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             f"Observation: {obs}",
             tool_name="reply",
@@ -1216,7 +1216,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             f"Observation: {obs}",
             tool_name="answer",
@@ -1273,7 +1273,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             obs_msg,
             tool_name="run_skill",
@@ -1295,7 +1295,7 @@ class TurnDispatcher:
         # unchanged. Single-action formats bypass this (their input is
         # already canonical).
         if (
-            getattr(self.cfg.wire_format, "multi_op", False)
+            getattr(self.cfg.dialect, "multi_op", False)
             and tool_name in TOOLS
             and isinstance(tool_input, dict)
         ):
@@ -1526,7 +1526,7 @@ class TurnDispatcher:
         _append_observation(
             self.state.messages,
             self.ctx,
-            self.cfg.wire_format,
+            self.cfg.dialect,
             llm_text,
             obs_msg,
             tool_name=tool_name,
@@ -1552,16 +1552,16 @@ class TurnDispatcher:
                 f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"
             )
             intervention = format_no_action_retry(
-                prior_content=llm_text, wire_format=self.cfg.wire_format
+                prior_content=llm_text, dialect=self.cfg.dialect
             )
             recovery_reason = "no action"
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
-            syntax_error = self.cfg.wire_format.diagnose_syntax_error(llm_text)
+            syntax_error = self.cfg.dialect.diagnose_syntax_error(llm_text)
             intervention = format_no_json_retry(
                 prior_content=llm_text,
-                wire_format=self.cfg.wire_format,
+                dialect=self.cfg.dialect,
                 syntax_error=syntax_error,
             )
             recovery_reason = "invalid JSON"
@@ -1794,7 +1794,7 @@ def _combined_tool_label(names: list[str]) -> str:
 def _append_observation(
     messages: list[dict],
     ctx,
-    wire_format,
+    dialect,
     llm_text: str,
     obs_msg: str,
     *,
@@ -1849,8 +1849,8 @@ def _append_observation(
     if corrected_record is not None:
         history_record = corrected_record
     else:
-        history_record = wire_format.serialize_assistant_for_history(llm_text)
-    prior_content = wire_format.render_assistant_from_history(history_record)["content"]
+        history_record = dialect.serialize_assistant_for_history(llm_text)
+    prior_content = dialect.render_assistant_from_history(history_record)["content"]
 
     if store_emission:
         messages.append({"role": "assistant", "content": prior_content})

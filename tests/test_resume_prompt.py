@@ -30,7 +30,7 @@ def _use_tmp_sessions_dir(tmp_path, monkeypatch):
 
 def _make_session(workspace: str) -> str:
     """Persist a real session for ``workspace`` and return its id."""
-    meta = create_session(workspace, response_format="react")
+    meta = create_session(workspace, dialect="react")
     save_meta(meta)
     return meta.session_id
 
@@ -99,12 +99,12 @@ class TestMaybeResumeRecent:
         assert is_resume is False
         assert session.session_id
 
-    def test_new_session_carries_response_format(self, tmp_path):
+    def test_new_session_carries_dialect(self, tmp_path):
         ws = str(tmp_path / "ws")
         session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "n")
 
         assert is_resume is False
-        assert session.response_format == "react"
+        assert session.dialect == "react"
 
     def test_picks_latest_of_several(self, tmp_path):
         """list_sessions sorts ascending by id (timestamp); the resume offer
@@ -121,7 +121,7 @@ class TestMaybeResumeRecent:
                     session_id=sid,
                     workspace=ws,
                     updated_at="2026-01-01 00:00:00",
-                    response_format="react",
+                    dialect="react",
                 )
             )
 
