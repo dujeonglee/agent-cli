@@ -168,9 +168,22 @@ class OpenAIProvider:
             )
         content, inline_think = strip_think_blocks(acc.content, stop=thinking_stop)
         thinking = "\n\n".join(x for x in (acc.thinking, inline_think) if x)
+        tool_calls = None
+        if acc.tool_calls:
+            tool_calls = []
+            for _idx, slot in sorted(acc.tool_calls.items()):
+                try:
+                    tool_input = (
+                        json.loads(slot["arguments"]) if slot["arguments"] else {}
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    tool_input = {}
+                tool_calls.append(
+                    {"id": slot["id"], "name": slot["name"], "input": tool_input}
+                )
         return LLMResponse(
             content=content,
-            tool_calls=None,
+            tool_calls=tool_calls,
             usage=usage,
             stop_reason=acc.stop_reason,
             thinking=thinking,
@@ -246,10 +259,28 @@ def _map_openai_payload(data: dict) -> StreamEvent | None:
         delta = choices[0].get("delta", {})
         ev.thinking = delta.get("reasoning_content", "") or ""
         ev.text = delta.get("content", "") or ""
+        raw_tcs = delta.get("tool_calls")
+        if isinstance(raw_tcs, list) and raw_tcs:
+            ev.tool_call_deltas = [
+                {
+                    "index": tc.get("index", i),
+                    "id": tc.get("id") or "",
+                    "name": (tc.get("function") or {}).get("name") or "",
+                    "arguments": (tc.get("function") or {}).get("arguments") or "",
+                }
+                for i, tc in enumerate(raw_tcs)
+                if isinstance(tc, dict)
+            ]
         finish = choices[0].get("finish_reason")
         if finish:
             ev.stop_reason = finish
-    if not (ev.text or ev.thinking or ev.stop_reason or ev.usage_fields):
+    if not (
+        ev.text
+        or ev.thinking
+        or ev.stop_reason
+        or ev.usage_fields
+        or ev.tool_call_deltas
+    ):
         return None
     return ev
 
