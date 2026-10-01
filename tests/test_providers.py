@@ -1297,3 +1297,42 @@ class TestDegenerationWindow:
             map_payload=lambda d: StreamEvent(text=d.get("c", "")),
         )
         assert acc.content == "hello world"
+
+
+class TestUnclosedThinkStop:
+    """v10.1.4 (회사 실측 NO_OUTPUT): 모델이 <think> 를 열고 안 닫은 채 호출을 내면
+    프로바이더가 EOF 까지 사고로 삼켜 content 가 비었다. 방언의 정지점(첫 구조
+    토큰)을 받으면 호출 직전에서 멈춘다."""
+
+    RAW = (
+        "<think>\nI should read the file first.\n<tool_call>\n<function=read_file>\n"
+        "<parameter=path>a.py</parameter>\n</function>\n</tool_call>"
+    )
+
+    def test_openai_non_stream_keeps_call_after_unclosed_think(self):
+        import re
+
+        from agent_cli.dialects import get
+
+        provider = OpenAIProvider("http://x/v1", "k")
+        data = {
+            "choices": [{"message": {"content": self.RAW}, "finish_reason": "stop"}]
+        }
+        swallowed = provider._parse_response(data)
+        assert swallowed.content == ""  # 정지점 없이는 종전처럼 EOF 까지
+        kept = provider._parse_response(data, thinking_stop=get("xml_fc").thinking_stop)
+        assert kept.content.startswith("<tool_call>")
+        assert kept.thinking == "I should read the file first."
+        assert isinstance(get("xml_fc").thinking_stop, re.Pattern)
+
+    def test_anthropic_non_stream_keeps_call_after_unclosed_think(self):
+        from agent_cli.dialects import get
+
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        data = {
+            "content": [{"type": "text", "text": self.RAW}],
+            "stop_reason": "end_turn",
+        }
+        kept = provider._parse_response(data, thinking_stop=get("xml_fc").thinking_stop)
+        assert kept.content.startswith("<tool_call>")
+        assert kept.thinking == "I should read the file first."

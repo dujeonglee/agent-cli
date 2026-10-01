@@ -222,7 +222,7 @@ class TurnDispatcher:
         except OSError:
             pass  # 기록은 best-effort — 런을 막지 않는다
 
-    def _handle_text_path(self, llm_text: str, usage=None):
+    def _handle_text_path(self, llm_text: str, usage=None, *, thinking=None):
         """Handle text parsing response (non-JSON fallback).
 
         ``usage`` is the turn's provider ``TokenUsage`` (or None) — passed
@@ -240,6 +240,8 @@ class TurnDispatcher:
         the record.
         """
         self._record_emission(llm_text)
+        # v10.1.4: 빈 content 의 재시도 문구가 사고 채널 유무로 갈린다
+        self._turn_thinking = (thinking or "").strip()
         turn = self.cfg.dialect.parse_turn(llm_text)
         # Phase 3 — foreign-format 구제 (dialects DESIGN §9): 바인딩
         # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
@@ -1582,6 +1584,9 @@ class TurnDispatcher:
                 prior_content=llm_text,
                 dialect=self.cfg.dialect,
                 syntax_error=syntax_error,
+                thinking_only=bool(
+                    not (llm_text or "").strip() and getattr(self, "_turn_thinking", "")
+                ),
             )
             recovery_reason = "invalid JSON"
         # failure_signal 은 넘기지 않는다 — _handle_text_path 의 초기 분류

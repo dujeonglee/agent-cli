@@ -40,7 +40,11 @@ def _resolve_dialect(dialect):
 
 
 def format_no_json_retry(
-    *, prior_content: str = "", dialect=None, syntax_error: str | None = None
+    *,
+    prior_content: str = "",
+    dialect=None,
+    syntax_error: str | None = None,
+    thinking_only: bool = False,
 ) -> Intervention:
     """Build the Intervention for an LLM response that failed to parse.
 
@@ -67,6 +71,19 @@ def format_no_json_retry(
     """
     wf = _resolve_dialect(dialect)
     echo = echo_prior_output(prior_content)
+    if not echo and thinking_only:
+        # v10.1.4 (실측 NO_OUTPUT): content 는 비었는데 사고 채널에는 글이 있다 —
+        # 호출이 사고 안에 갇혔거나(미닫힘 <think>) 사고로 예산을 다 썼다.
+        # "비었다" 가 아니라 **왜** 비었는지 말해야 다음 턴이 달라진다.
+        return Intervention(
+            message=(
+                f"{wf.failure_framing_parse_fail()} Your whole reply stayed in the "
+                "thinking channel — nothing reached the harness. Finish thinking "
+                "first (close it), then write the call AFTER it, outside any "
+                f"thinking tags. {wf.constraint_reminder_call()}"
+            ),
+            primitives=["thinking_only_hint", "constrain_format_json"],
+        )
     if not echo:
         return Intervention(message=wf.static_retry_hint_no_json(), primitives=[])
 
