@@ -62,6 +62,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import create_provider
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.runtime import ports_for_oneshot
 from agent_cli.tools.result import ToolResult
 
 # ── Configuration ────────────────────────────────────────────
@@ -97,11 +98,13 @@ PLUGINS = [
 N_RUNS = int(os.environ.get("BAKEOFF_N_RUNS", "5"))
 MAX_TURNS = int(os.environ.get("BAKEOFF_MAX_TURNS", "10"))
 
+# v9.26: thinking_budget 필드는 사라졌고 supports_grammar 가 생겼다 — 라이브와 같은
+# 조건(문법 제약 켬)으로 잰다. A/B 양쪽이 같은 값이면 비교는 공정하다.
 CAPS = ModelCapabilities(
     context_window=262144,
     max_output_tokens=4096,
     supports_thinking=False,
-    thinking_budget=0,
+    supports_grammar=True,
 )
 
 
@@ -404,6 +407,7 @@ def call_once(
                 provider=provider,
                 capabilities=CAPS,
                 model=model,
+                ports=ports_for_oneshot(owner="main"),  # v9.x: 포트 배선 필수
                 provider_name="openai",
                 base_url=base_url,
                 api_key=api_key,
