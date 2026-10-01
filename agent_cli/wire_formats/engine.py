@@ -30,6 +30,12 @@ from agent_cli.wire_formats.base import (
     _terminal_input,
 )
 from agent_cli.wire_formats.recovery import quote_spans
+from agent_cli.wire_formats.recovery.json import (
+    _extract_op_json,
+    _op_anchor,
+    close_unbalanced,
+    describe_json_error,
+)
 from agent_cli.wire_formats.recovery.tagged import (
     _extract_params_lenient,
     _lenient_tool_open_re,
@@ -138,7 +144,16 @@ class Dialect(WireFormat):
             self.thinking_stop = self._t.first_struct
         else:
             self._t = None
+            # 미닫힘 <think> 뒤의 bare 배열(라인 선두 `[`)을 EOF-삼킴에서 보호.
             self.thinking_stop = re.compile(r"(?m)^\s*\[")
+        # 옛 md_array 프라이어 누출 위생(결정 1 과 별개 — 파싱 관용이 아니라 거부):
+        # thought 에 흘린 헤더 센티널 라인 제거, 빈 헤더 반복 러너웨이 감지.
+        self._md_sentinel = re.compile(
+            r"^\s*##\s*(?:Thought|Action|Input)\s*$", re.MULTILINE
+        )
+        self._md_degen = re.compile(
+            r"##\s*(?:Thought|Action|Input)(?=\s*##\s*(?:Thought|Action|Input))"
+        )
 
     def strip_thinking(self, text: str) -> tuple[str, str | None]:
         """ABC 의 classmethod 는 ``cls.thinking_stop`` 을 읽는다 — 스펙 구동 인스턴스는
@@ -163,6 +178,8 @@ class Dialect(WireFormat):
                 if all(k.startswith(pfx) for k in action_input):
                     flat = {k[len(pfx) :]: v for k, v in action_input.items()}
                     return self.render_call(tool_name, flat)
+        if self.spec.args is ArgStyle.JSON_NATIVE:
+            return json.dumps(action_input, ensure_ascii=False)
         if isinstance(action_input, dict):
             return self.render_params(action_input)
         return self.render_params({"result": action_input})
@@ -183,6 +200,8 @@ class Dialect(WireFormat):
     def render_call(self, name: str, params: dict) -> str:
         """호출 하나의 캐노니컬 본문 (래퍼 ``call`` 제외)."""
         s = self.spec
+        if s.args is ArgStyle.JSON_NATIVE:
+            return json.dumps({"action": name, **params}, ensure_ascii=False)
         body = self.render_params(params)
         inner = f"\n{body}" if body else ""
         return f"{s.name_wrap[0]}{name}{s.name_wrap[1]}{inner}\n{s.name_close}"
@@ -190,6 +209,18 @@ class Dialect(WireFormat):
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         s = self.spec
         th = thought if thought is not None else "your reasoning"
+        if s.args is ArgStyle.JSON_NATIVE:
+            # action_input 은 이미 flat op JSON(render_action_input) — 한 원소 배열로
+            # 감싸고, 표준 키 입력이면 action 을 스플라이스.
+            op = action_input
+            if '"action"' not in op:
+                try:
+                    obj = json.loads(op)
+                    if isinstance(obj, dict):
+                        op = json.dumps({"action": action, **obj}, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    pass
+            return f"{th}\n\n[{op}]"
         # action_input 이 이미 완성된 이름-태그 콜이면 그대로, 파라미터
         # 라인들만이면 action 으로 감싼다.
         if s.name_wrap[0] in action_input:
@@ -204,7 +235,71 @@ class Dialect(WireFormat):
     def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
         if self.spec.args is ArgStyle.TAGGED:
             return self._grammar_tagged(tools, thinking_open=thinking_open)
+        if self.spec.args is ArgStyle.JSON_NATIVE:
+            return self._grammar_json_native(tools, thinking_open=thinking_open)
         return None
+
+    def _grammar_json_native(self, tools, *, thinking_open: bool) -> str:
+        """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops, a
+        terminal op (``complete``) only last. Prose may not contain a paragraph-
+        initial ``[`` so the first one is the array — and is bounded."""
+        from agent_cli.wire_formats.grammar import (
+            JSON_NONBLANK_STRING,
+            JSON_RULES,
+            call_sequence_rules,
+            enum_literals,
+            grammar_params,
+            json_value_rule,
+            prose_rule,
+            think_prefix,
+            tool_params_expr,
+            tool_rule_name,
+        )
+
+        s = self.spec
+        pre, pre_rules = think_prefix(thinking_open, forbid=s.forbid_in_think)
+        # root: 배열로 바로 시작 | 산문 + 빈 줄 + 배열 | 산문만. 호출은 선택,
+        # 빈 배열도 허용(NO_ACTION 넛지가 구제).
+        lines = [
+            rf'root ::= {pre}( ops | prose "\n\n" ops | prose )',
+            prose_rule(
+                "prose", s.prose_opener, after_blank_line=s.prose_after_blank_line
+            ),
+            'ops ::= "[" j_ws ( calls )? j_ws "]"',
+            *call_sequence_rules(
+                "calls",
+                [n for n, *_ in tools],
+                call=lambda fn: f"( {fn} )",
+                sep='j_ws "," j_ws ',
+            ),
+        ]
+        if pre_rules:
+            lines.append(pre_rules)
+        for name, flat, extra_ok in tools:
+            items: dict[str, str] = {}
+            forced = []
+            for p in grammar_params(flat):
+                if p.kind == "enum":
+                    value = enum_literals(p.enum, quote='"')
+                elif p.kind == "text_nonempty":
+                    value = JSON_NONBLANK_STRING
+                else:
+                    value = json_value_rule(p.prop)
+                items[p.name] = rf'"\"{p.name}\"" j_ws ":" j_ws {value}'
+                if p.forced:
+                    forced.append(p.name)
+            if extra_ok:  # 자유 스키마(MCP 등) — 아무 키나, 값은 JSON 값
+                items["*"] = "j_member"
+            expr, extra_rules = tool_params_expr(
+                name, items, forced, sep='j_ws "," j_ws '
+            )
+            lines.extend(extra_rules)
+            lines.append(
+                rf'{tool_rule_name(name)} ::= "{{" j_ws "\"action\"" j_ws ":" j_ws '
+                rf'"\"{name}\"" {expr} j_ws "}}"'
+            )
+        lines.append(JSON_RULES)
+        return "\n".join(lines)
 
     def _grammar_tagged(self, tools, *, thinking_open: bool) -> str:
         """prose → one or more ``<call><name=NAME>…</name></call>``, a terminal call
@@ -270,9 +365,78 @@ class Dialect(WireFormat):
 
     def parse_turn(self, llm_text: str) -> ParsedTurn:
         text, thinking = self.strip_thinking(llm_text)
+        if self.spec.args is ArgStyle.JSON_NATIVE:
+            turn = self._parse_json_native(text)
+            turn.thinking = thinking
+            return turn
         if self._t is None:
-            raise NotImplementedError(f"ArgStyle {self.spec.args} — S3/S4")
+            raise NotImplementedError(f"ArgStyle {self.spec.args} — S4")
         return self._parse_tagged(text, thinking)
+
+    # ─── Parsing (JSON_NATIVE) ───────────────────────────────────
+
+    def _parse_json_native(self, llm_text: str) -> ParsedTurn:
+        """산문 + op JSON 배열/객체 (bare 객체 = 1-op 관용) — 옛 json_fc 의 캐노니컬
+        경로. md_array 헤더 경로는 없다(결정 1)."""
+
+        def _ops(items, truncated_last: bool = False) -> list:
+            # P0-3: EOF 절단 증거(미닫힘 괄호를 close_unbalanced 로 복구)가 있으면
+            # **마지막 op 에만** truncated — 앞선 op 들은 온전하다.
+            last = len(items) - 1
+            return [
+                Op(
+                    action=(
+                        it.get("action") if isinstance(it.get("action"), str) else None
+                    ),
+                    action_input={k: v for k, v in it.items() if k != "action"},
+                    truncated=truncated_last and idx == last,
+                )
+                for idx, it in enumerate(items)
+            ]
+
+        # 앵커는 _op_anchor 가 고른다 — 본문 첫 `[`/`{` 가 아니라 **자격 있는** op
+        # 시작(산문 속 `board[i][j]`, `- [ ]`, `[문서](url)` 를 거른다).
+        start = _op_anchor(llm_text)
+        if start >= 0:
+            thought = self.sanitize_thought(llm_text[:start]) or None
+            body = llm_text[start:]
+            parsed, repaired = _extract_op_json(body)
+            if parsed is not None:
+                arr = parsed if isinstance(parsed, list) else [parsed]
+                items = [x for x in arr if isinstance(x, dict)]
+                stage = 2 if repaired else 1
+                trunc = repaired and close_unbalanced(body)[1]
+                # `any("action")` 가드: 산문 속 `[1,2,3]` 같은 비-op 배열은 thought-only.
+                if any("action" in it for it in items):
+                    return ParsedTurn(
+                        thought=thought,
+                        ops=_ops(items, truncated_last=trunc),
+                        raw=llm_text,
+                        parse_stage=stage,
+                    )
+                # actionless-op 보존 불변식: action 은 없지만 input 을 실은 dict-op 는
+                # 위치 신호(배열이 emission 의 끝)로 op 의도 — infer/NO_ACTION 재료.
+                if (
+                    items
+                    and all(isinstance(x, dict) and x for x in arr)
+                    and llm_text.rstrip().endswith(("]", "}"))
+                ):
+                    return ParsedTurn(
+                        thought=thought,
+                        ops=_ops(items),
+                        raw=llm_text,
+                        parse_stage=stage,
+                    )
+            elif '"action"' in body:
+                # op 시도 흔적이 있는 깨진 JSON — 수리까지 실패한 진짜 파손 → stage 0
+                # (NO_JSON 진단 + 캐럿).
+                return ParsedTurn(thought=thought, raw=llm_text, parse_stage=0)
+
+        # thought-only / blank — 완료가 아니라 NO_ACTION 넛지 대상.
+        thought = self.sanitize_thought(llm_text)
+        if thought and thought.strip():
+            return ParsedTurn(thought=thought, ops=[], raw=llm_text, parse_stage=1)
+        return ParsedTurn(raw=llm_text, parse_stage=0)
 
     def _call_opens(self, text: str) -> list[re.Match]:
         """이름-여는 태그 중 **자격 있는** 것 (후보 검증 ①②, v7.28.1/v9.24.8).
@@ -447,7 +611,9 @@ class Dialect(WireFormat):
 
     def is_degenerate(self, text: str) -> bool:
         if self._t is None:
-            return False
+            # 캐노니컬 bare-배열 모양의 러너웨이 시그니처는 실측 전 — 옛 헤더
+            # 반복(프라이어 누출)만 감지.
+            return len(self._md_degen.findall(text)) >= 2
         hits = len(self._t.degen_empty.findall(text)) + len(
             self._t.degen_open_run.findall(text)
         )
@@ -457,9 +623,16 @@ class Dialect(WireFormat):
         if not thought:
             return thought
         thought = ORPHAN_THINK_TAG_RE.sub("", thought)
-        if self._t is not None:
-            thought = self._t.sentinel_line.sub("", thought)
-        return thought.strip()
+        sentinel = self._t.sentinel_line if self._t is not None else self._md_sentinel
+        return sentinel.sub("", thought).strip()
+
+    def diagnose_syntax_error(self, prior_content: str) -> str | None:
+        if self.spec.args not in (ArgStyle.JSON_NATIVE, ArgStyle.JSON_IN_TAG):
+            return None
+        # 첫 브레이스부터가 JSON 후보.
+        start = next((i for i, c in enumerate(prior_content) if c in "[{"), -1)
+        candidate = prior_content[start:] if start >= 0 else prior_content
+        return describe_json_error(candidate)
 
     # ─── History round-trip (multi-op record) ───────────────────
 
@@ -494,6 +667,18 @@ class Dialect(WireFormat):
         ops = record.get("ops")
         if isinstance(ops, list) and ops:
             s = self.spec
+            if s.args is ArgStyle.JSON_NATIVE:
+                rendered = json.dumps(
+                    [
+                        {"action": o.get("action"), **(o.get("action_input") or {})}
+                        for o in ops
+                        if isinstance(o, dict)
+                    ],
+                    ensure_ascii=False,
+                )
+                thought = record.get("thought", "")
+                content = f"{thought}\n\n{rendered}" if thought else rendered
+                return {"role": "assistant", "content": content}
             calls = "\n".join(
                 f"{s.call_open}\n"
                 + self.render_call(o.get("action") or "", o.get("action_input") or {})
