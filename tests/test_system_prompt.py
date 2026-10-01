@@ -1463,7 +1463,8 @@ class TestPeerRosterIntro:
 
         intro = build_peer_roster_intro()
         assert intro.startswith("## Live Agents")
-        assert "END of every turn" in intro
+        assert "LAST `## Live Agents` section" in intro
+        assert "END of every turn" not in intro  # 턴은 모델이 못 보는 하니스 용어
         assert "key or name" in intro
         assert "agt-" not in intro
 

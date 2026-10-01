@@ -850,17 +850,17 @@ its own answer back; never let one end silently:
 def build_peer_roster_intro() -> str:
     """상주 에이전트 시스템 프롬프트의 `## Live Agents` — **안내만** (v10.1.0).
 
-    실제 명단은 매 턴 꼬리의 `## Live Agents` 가 들고 온다(`peer_roster` 포트).
+    실제 명단은 매 호출 꼬리의 `## Live Agents` 가 들고 온다(`peer_roster` 포트) — 모델에겐 "프롬프트의 마지막 `## Live Agents`" 라고 말한다(턴·경계선은 하니스 용어, 사용자 지적 v10.1.1).
     종전엔 런 시작 시점 명단이 여기 박혀, 런 도중 spawn 된 동료를 그 런이 끝날
     때까지 못 봤다(실측 cnr60g). 이 섹션이 있으면 Reply Discipline 도 따라온다.
     """
     return (
         "## Live Agents\n"
         "Peer agents run alongside you. WHO is running right now — keys, names, "
-        "state — is listed under `## Live Agents` at the END of every turn; read "
-        "it there, it changes as agents are spawned or stopped. Address one with "
-        "`message` by its key or name, or `main` for the main agent. Their reply "
-        "arrives to you as a NEW message — you are not blocked."
+        "state — is the LAST `## Live Agents` section in this prompt; it is "
+        "refreshed on every call, so always read the last one. Address a peer "
+        "with `message` by its key or name, or `main` for the main agent. Their "
+        "reply arrives to you as a NEW message — you are not blocked."
     )
 
 
