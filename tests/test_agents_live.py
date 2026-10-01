@@ -828,6 +828,32 @@ class TestToolTeammate:
         r = tool_agent({"mode": "spawn"}, registry=None)
         assert not r.success and "main-session only" in r.error
         assert '"mode":"run"' in r.error
+        assert "`message`" not in r.error  # 일회성 루프엔 peer 채널이 없다
+
+    def test_no_registry_rejected_in_resident_loop_points_to_message(self):
+        """v10.1.0 (실측 mgv4en): 상주 루프에서 request/spawn 을 부르면 거절
+        문구가 peer 채널 `message` 를 가리킨다 — 키나 이름, 또는 main."""
+        r = tool_agent({"mode": "request", "key": "x"}, registry=None, resident=True)
+        assert not r.success and "main-session only" in r.error
+        assert "use `message`" in r.error and "key or name" in r.error
+
+    def test_spawn_observation_tells_main_how_peers_reach_it(self, tmp_path, renderer):
+        """v10.1.0: spawn 관찰이 peer 채널(message, 키·이름)과 꼬리 로스터를
+        알려 main 이 키를 중계하거나 `agent request` 를 가르치지 않게."""
+        reg = make_registry(tmp_path)
+        r = tool_agent(
+            {"mode": "spawn", "name": "player2", "task": "wait"},
+            registry=reg,
+            runtime=reg.runtime,
+        )
+        assert r.success
+        assert "Peers reach it with their `message` tool as 'player2' or key agt-" in (
+            r.output
+        )
+        assert "roster in their own per-turn tail" in r.output
+        r2 = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
+        assert "`message` tool as key agt-" in r2.output
+        reg.shutdown_all()
 
     def test_spawn_with_initial_task(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
