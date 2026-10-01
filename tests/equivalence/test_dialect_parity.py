@@ -1,13 +1,15 @@
-"""스펙 구동 방언 vs 옛 손 코딩 모듈 — 등가성 합격선 (PHASE5.md §7).
+"""스펙 구동 방언 vs 옛 손 코딩 모듈의 고정 출력 — 등가성 합격선 (PHASE5.md §7).
 
-옛 모듈은 ``agent_cli/wire_formats/_legacy/`` 에 등록 없이 남아 있고(S5 에서 삭제),
-이 테스트가 코퍼스(``tests/equivalence/corpus/<name>.jsonl``) 전건과 표면 전체를
-바이트 단위로 비교한다. 차이가 하나라도 나면 어느 쪽이 맞는지 §10 에 올려
-결정한 뒤 테스트로 고정한다 — 허용 차이 목록은 비어 있어야 한다.
+옛 모듈은 S5 에서 삭제됐다. 삭제 직전에 그 출력을 ``tests/equivalence/expected/``
+에 고정했고(S2·S3 에서 라이브 비교로 바이트 동일을 확인한 뒤), 이 테스트는 그
+고정본과 현재 엔진을 비교한다 — 코퍼스(``corpus/<name>.jsonl``) 전건의 parse·
+투영·history·재렌더·러너웨이·sanitize·진단, 그리고 산문·문법·플래그 표면 전체.
+큰 필드는 sha 로 비교하고 ops 는 그대로 둬 차이가 나면 어디서 났는지 보인다.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -22,26 +24,36 @@ from agent_cli.tools.registry import (
 from agent_cli.tools.virtual import AskTool
 from agent_cli.wire_formats import get
 
-CORPUS = Path(__file__).parent / "corpus"
+HERE = Path(__file__).parent
+CORPUS = HERE / "corpus"
+EXPECTED = HERE / "expected"
+PARITY_FORMATS = ["xml_fc", "json_fc"]
 
 
-def _legacy(name: str):
-    if name == "xml_fc":
-        from agent_cli.wire_formats._legacy.xml_fc import XmlFcFormat
-
-        return XmlFcFormat()
-    if name == "json_fc":
-        from agent_cli.wire_formats._legacy.json_fc import JsonFcFormat
-
-        return JsonFcFormat()
-    pytest.skip(f"no legacy module for {name}")
+def _sha(x) -> str:
+    return hashlib.sha256(
+        json.dumps(x, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()[:16]
 
 
 def _corpus(name: str) -> list[str]:
-    p = CORPUS / f"{name}.jsonl"
-    if not p.is_file():
-        return []
-    return [json.loads(l)["text"] for l in p.open(encoding="utf-8") if l.strip()]
+    return [
+        json.loads(l)["text"]
+        for l in (CORPUS / f"{name}.jsonl").open(encoding="utf-8")
+        if l.strip()
+    ]
+
+
+def _expected(name: str) -> list[dict]:
+    return [
+        json.loads(l)
+        for l in (EXPECTED / f"{name}.jsonl").open(encoding="utf-8")
+        if l.strip()
+    ]
+
+
+def _surface(name: str) -> dict:
+    return json.loads((EXPECTED / f"{name}.surface.json").read_text(encoding="utf-8"))
 
 
 def _tools(wf):
@@ -52,136 +64,80 @@ def _tools(wf):
     return out
 
 
-def _turn_key(t):
-    return (
-        t.thought,
-        [(o.action, o.action_input, o.truncated) for o in t.ops],
-        t.terminal,
-        t.raw,
-        t.parse_stage,
-        t.thinking,
-    )
-
-
-def _action_key(a):
-    return (
-        a.thought,
-        a.action,
-        a.action_input,
-        a.raw,
-        a.parse_stage,
-        a.thinking,
-        a.truncated,
-    )
-
-
-PARITY_FORMATS = ["xml_fc", "json_fc"]
-
-
 @pytest.mark.parametrize("name", PARITY_FORMATS)
 class TestParity:
-    def test_corpus_has_rows(self, name):
-        assert len(_corpus(name)) > 100
+    def test_corpus_and_expected_line_up(self, name):
+        corpus, exp = _corpus(name), _expected(name)
+        assert len(corpus) > 100 and len(corpus) == len(exp)
+        assert all(_sha(t) == e["text_sha"] for t, e in zip(corpus, exp))
 
-    def test_parse_turn_byte_identical(self, name):
-        new, old = get(name), _legacy(name)
+    def test_parse_turn_matches_frozen_legacy(self, name):
+        wf = get(name)
         diffs = []
-        for text in _corpus(name):
-            a, b = _turn_key(old.parse_turn(text)), _turn_key(new.parse_turn(text))
-            if a != b:
-                diffs.append((text[:120], a[:2], b[:2]))
+        for text, e in zip(_corpus(name), _expected(name)):
+            t = wf.parse_turn(text)
+            got = {
+                "thought": t.thought,
+                "ops": [[o.action, o.action_input, o.truncated] for o in t.ops],
+                "terminal": t.terminal,
+                "raw_sha": _sha(t.raw),
+                "parse_stage": t.parse_stage,
+                "thinking": t.thinking,
+            }
+            if got != e["turn"]:
+                diffs.append((text[:120], e["turn"]["ops"][:1], got["ops"][:1]))
         assert not diffs, f"{len(diffs)} differing rows; first: {diffs[0]}"
 
-    def test_parse_projection_identical(self, name):
-        new, old = get(name), _legacy(name)
-        for text in _corpus(name):
-            assert _action_key(old.parse(text)) == _action_key(new.parse(text)), text[
-                :120
-            ]
-
-    def test_history_serialize_identical(self, name):
-        new, old = get(name), _legacy(name)
-        for text in _corpus(name):
-            assert old.serialize_assistant_for_history(
-                text
-            ) == new.serialize_assistant_for_history(text), text[:120]
-
-    def test_history_render_roundtrip_identical(self, name):
-        new, old = get(name), _legacy(name)
-        for text in _corpus(name):
-            rec = old.serialize_assistant_for_history(text)
-            assert old.render_assistant_from_history(
-                rec
-            ) == new.render_assistant_from_history(rec), text[:120]
-        term = old.serialize_terminal_for_history("done", "result", ["r1"])
-        assert term == new.serialize_terminal_for_history("done", "result", ["r1"])
-        assert term == new.serialize_terminal_for_history("done", "result", ["r1"])
-
-    def test_degenerate_and_sanitize_identical(self, name):
-        new, old = get(name), _legacy(name)
-        for text in _corpus(name):
-            assert old.is_degenerate(text) == new.is_degenerate(text), text[:120]
-            assert old.sanitize_thought(text) == new.sanitize_thought(text), text[:120]
-            assert old.diagnose_syntax_error(text) == new.diagnose_syntax_error(text), (
+    def test_projection_history_rerender_match(self, name):
+        wf = get(name)
+        for text, e in zip(_corpus(name), _expected(name)):
+            a = wf.parse(text)
+            assert (
+                _sha(
+                    [
+                        a.thought,
+                        a.action,
+                        a.action_input,
+                        a.raw,
+                        a.parse_stage,
+                        a.thinking,
+                        a.truncated,
+                    ]
+                )
+                == e["action_sha"]
+            ), text[:120]
+            rec = wf.serialize_assistant_for_history(text)
+            assert _sha(rec) == e["history_sha"], text[:120]
+            assert _sha(wf.render_assistant_from_history(rec)) == e["rerender_sha"], (
                 text[:120]
             )
-        assert old.degeneration_trigger == new.degeneration_trigger
-        assert old.thinking_stop.pattern == new.thinking_stop.pattern
+            assert wf.is_degenerate(text) == e["degenerate"], text[:120]
+            assert _sha(wf.sanitize_thought(text)) == e["sanitized_sha"], text[:120]
+            assert _sha(wf.diagnose_syntax_error(text)) == e["diag_sha"], text[:120]
 
-    def test_prose_byte_identical(self, name):
-        new, old = get(name), _legacy(name)
-        assert old.format_rules() == new.format_rules()
-        for m in (
-            "constraint_reminder_call",
-            "constraint_reminder_action_required",
-            "failure_framing_parse_fail",
-            "failure_framing_no_action",
-            "no_action_detail",
-            "static_retry_hint_no_json",
-            "static_retry_hint_no_action",
-            "system_user_prefixes",
-        ):
-            assert getattr(old, m)() == getattr(new, m)(), m
-        assert (old.name, old.multi_op, old.action_required, old.exposes_complete) == (
-            new.name,
-            new.multi_op,
-            new.action_required,
-            new.exposes_complete,
+    def test_prose_flags_and_terminal_record(self, name):
+        wf, s = get(name), _surface(name)
+        assert wf.format_rules() == s["format_rules"]
+        for m, v in s["prose"].items():
+            assert getattr(wf, m)() == v, m
+        assert list(wf.system_user_prefixes()) == s["prefixes"]
+        assert [
+            wf.name,
+            wf.multi_op,
+            wf.action_required,
+            wf.exposes_complete,
+            wf.degeneration_trigger,
+            wf.thinking_stop.pattern,
+        ] == s["flags"]
+        assert (
+            wf.serialize_terminal_for_history("done", "result", ["r1"]) == s["terminal"]
         )
 
-    def test_render_identical(self, name):
-        new, old = get(name), _legacy(name)
-        samples = [
-            {"read_file_path": "src/a.c"},
-            {"write_file_path": "a", "write_file_content": "l1\nl2"},
-            {"shell_command": "ls -la", "shell_timeout": 30},
-            {"result": "done"},
-            "bare",
-            {},
-        ]
-        for s in samples:
-            assert old.render_action_input(s) == new.render_action_input(s), s
-        for th, act, inp in [
-            ("t", "read_file", "<parameter=path>x</parameter>"),
-            (None, "complete", ""),
-            (
-                "t",
-                "shell",
-                "<function=shell>\n<parameter=command>ls</parameter>\n</function>",
-            ),
-        ]:
-            assert old.render_full_example(
-                thought=th, action=act, action_input=inp
-            ) == new.render_full_example(thought=th, action=act, action_input=inp)
-
     def test_grammar_byte_identical(self, name):
-        new, old = get(name), _legacy(name)
-        tools = _tools(old)
-        for open_ in (False, True):
-            assert old.grammar(tools, thinking_open=open_) == new.grammar(
-                tools, thinking_open=open_
-            ), f"thinking_open={open_}"
-        # 자유 스키마 도구(extra keys)와 enum/required 조합도
+        wf, s = get(name), _surface(name)
+        tl = _tools(wf)
+        assert wf.grammar(tl) == s["grammar"]["off"]
+        assert wf.grammar(tl, thinking_open=True) == s["grammar"]["on"]
         extra = [("mcp_x", {"q": ({"type": "string", "minLength": 1}, True)}, True)]
         enum = [
             (
@@ -193,4 +149,4 @@ class TestParity:
                 False,
             )
         ]
-        assert old.grammar(tools + extra + enum) == new.grammar(tools + extra + enum)
+        assert wf.grammar(tl + extra + enum) == s["grammar"]["extra_enum"]

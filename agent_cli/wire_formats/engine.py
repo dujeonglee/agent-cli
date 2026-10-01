@@ -2,7 +2,7 @@
 
 설계: docs/multi-wire-format/PHASE5.md §4.3. 옛 ``xml_fc``/``json_fc`` 모듈의 동작을
 스펙에서 읽은 토큰으로 일반화한 것이라, 각 경로의 주석은 그 모듈에서 가져왔다.
-등가성 합격선(§7)은 옛 모듈을 ``_legacy/`` 에 두고 코퍼스로 잰다.
+등가성 합격선(§7)은 옛 모듈의 고정 출력(``tests/equivalence/expected/``)과 코퍼스로 잰다.
 
 파이프라인::
 
@@ -176,7 +176,9 @@ class Dialect(WireFormat):
         if spec.prose is None:
             raise ValueError(f"dialect '{spec.name}' has no prose fragments")
         self.spec = spec
-        self.name = spec.name
+        # 서브클래스가 클래스 속성 ``name`` 으로 다른 이름을 주면(A/B 변형 — bakeoff
+        # 의 json_fc_fenced) 그것이 이긴다. ABC 는 ``name: str`` 주석만 둔다.
+        self.name = getattr(type(self), "name", None) or spec.name
         self.action_required = spec.action_required
         self.multi_op = spec.multi_op
         self.exposes_complete = spec.exposes_complete
