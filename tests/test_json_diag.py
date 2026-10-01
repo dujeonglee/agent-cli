@@ -10,8 +10,8 @@ broken input, and the ``format_no_json_retry`` embedding.
 import json
 
 from agent_cli.recovery.wf_recovery import format_no_json_retry
-from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats.json_fc import JsonFcFormat
+from agent_cli.wire_formats.recovery.json import describe_json_error
 
 
 class TestDescribeJsonError:

@@ -43,6 +43,13 @@ from agent_cli.wire_formats.base import (
     WireFormat,
     _terminal_input,
 )
+from agent_cli.wire_formats.recovery import quote_spans as _fence_spans
+from agent_cli.wire_formats.recovery.tagged import (
+    _PARAM_CLOSED,
+    _extract_params_lenient,
+    _lenient_tool_open_re,
+    _trim_block,
+)
 
 # ── 구조 토큰 ────────────────────────────────────────────────
 
@@ -52,6 +59,7 @@ _TOOL_CALL_OPEN = re.compile(r"<tool_call>", re.IGNORECASE)
 _TOOL_CALL_CLOSE = re.compile(r"</tool_call>", re.IGNORECASE)
 _FUNC_CLOSE = re.compile(r"</function>", re.IGNORECASE)
 _PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.IGNORECASE)
+
 
 # 닫힌 파라미터 — lookahead 앵커 (§5.3): closer 뒤에 (공백 지나) 다음
 # 구조 토큰이 따라올 때만 경계. 값 안의 고아 closer 는 앵커 불일치로
@@ -64,12 +72,6 @@ _PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.IGNORECASE)
 # ``<parameter=path>…</path>`` 로 닫아, 종전 strict 미닫힘-복구가
 # ``</path>`` 를 값에 포함시킴 → 오염된 경로로 실행(ENOENT ×3).
 # lenient 경로(아무-이름 closer)엔 있던 처리의 strict 대칭.
-_PARAM_CLOSED = re.compile(
-    r"<parameter=([\w.\-]+)>(.*?)</(?:parameter|\1)>\s*"
-    r"(?=<parameter=|</function>|</tool_call>|<function=|<tool_call>|\Z)",
-    re.DOTALL | re.IGNORECASE,
-)
-
 # ── 후보 검증 (v7.28.1) — json_fc 의 op-서명 계층과 동형 ─────────
 #
 # 산문이 구조 토큰을 **언급**하거나(코드 리뷰가 wire format 얘기를 하면 나온다)
@@ -93,22 +95,6 @@ _PARAM_CLOSED = re.compile(
 #      ①을 통과해 `NAME` 이 첫 op 가 되고, 모르는 도구 거부가 뒤의 실호출까지
 #      실행하지 않은 채 턴을 버렸다(유도 실험 8회 중 8회). 실호출은 인라인
 #      코드 안에 오지 않는다(문법이 켜져 있으면 줄 첫머리에서만 시작).
-_FENCE_TICKS = re.compile(r"```")
-# 한 줄 안의 단일 백틱 쌍 — ``` 의 일부인 백틱은 제외.
-_INLINE_CODE = re.compile(r"(?<!`)`(?!`)[^`\n]+`(?!`)")
-
-
-def _fence_spans(text: str) -> list[tuple[int, int]]:
-    """Quoted spans: balanced ``` pairs, then inline code spans outside them.
-    An unpaired trailing fence masks nothing."""
-    ticks = [m.start() for m in _FENCE_TICKS.finditer(text)]
-    spans = [(ticks[i], ticks[i + 1] + 3) for i in range(0, len(ticks) - 1, 2)]
-    for m in _INLINE_CODE.finditer(text):
-        if not any(a <= m.start() < b for a, b in spans[: len(ticks) // 2]):
-            spans.append((m.start(), m.end()))
-    return spans
-
-
 def _call_opens(text: str) -> list[re.Match]:
     """``<function=`` opens that qualify as real calls (rules ① + ② above).
 
@@ -165,86 +151,6 @@ _DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.IGNORECASE)
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
-
-# ── lenient 구제 (tool-name 태그 변종) ───────────────────────
-# 2026-07-17 bakeoff 실측: Qwen3.6-35B-A3B 가 `<function=X>` 를 `<X>` 로,
-# `<parameter=k>` 를 `<k>` 로 붕괴시키는 변종이 0-op(NO_ACTION) 마찰의
-# 83% (30건 캡처 중 25). strict 경로가 0-op 일 때만 발화하는 최후 폴백 —
-# 캐노니컬 emission 은 절대 이 경로에 안 들어온다 (bail-safe). 구제 턴은
-# parse_stage=2(drift) 로 계수되고, prior 는 캐노니컬 shape 로 재렌더되어
-# (B→C) 다음 턴부터 모델을 교정한다.
-
-# lenient 파라미터 오픈: `<parameter=k>` 또는 plain `<k>`. 닫는 태그는
-# 아무 이름이나 수용 (실측: `<parameter=line_start>1</line_start>` 처럼
-# 키-이름으로 닫는 혼합 스타일 존재).
-_LENIENT_PARAM_OPEN = re.compile(r"<(?:parameter=)?([\w.\-]+)>")
-# 값 종료 폴백 (키-closer 부재 시): 라인-선두 다음 오픈 / 구조 닫기 /
-# 라인-끝의 임의 닫는 태그. ★값 **속** 임의 `<tag>` 토큰(HTML content,
-# `grep "<pat>"`, sed 식)에서 끊지 않는다 — 종전 any-token stop 이
-# content 를 빈 값으로 만들고 phantom param 을 만들던 data-loss 의 수리
-# (v7.11.4).
-_LENIENT_VALUE_FALLBACK_STOP = re.compile(
-    r"(?m)^[ \t]*<(?:parameter=)?[\w.\-]+>"  # 다음 param 오픈 (라인 선두)
-    r"|</(?:function|tool_call)>"  # 구조 닫기
-    r"|</[\w.\-]+>[ \t]*\r?$"  # 라인 끝의 임의 closer (오기명 드리프트)
-)
-
-
-def _lenient_tool_open_re() -> re.Pattern:
-    """라인-단독 ``<TOOLNAME>`` 오픈 — 등록 도구명만 (매 파스 재조립: MCP
-    도구가 런타임에 등록될 수 있다). 라인-앵커가 산문 속 인라인 언급
-    (``use the <shell> tool``)의 오인 구제를 차단한다."""
-    from agent_cli.tools.registry import TOOLS
-
-    names = "|".join(re.escape(n) for n in sorted(TOOLS, key=len, reverse=True))
-    return re.compile(rf"^[ \t]*<({names})>[ \t]*\r?$", re.MULTILINE)
-
-
-def _extract_params_lenient(segment: str) -> dict:
-    """혼합 스타일 파라미터 추출 — plain ``<k>v</k>``, canonical
-    ``<parameter=k>v</parameter>``, 키-이름 closer ``<parameter=k>v</k>``
-    전부 수용.
-
-    값의 끝 판정 (v7.11.4 — 값 무결성 우선):
-    1. **자기 closer 우선**: ``</KEY>`` 또는 ``</parameter>`` 의 최근접
-       매치 — 값 속의 임의 ``<tag>`` 토큰(HTML, ``grep "<pat>"``, sed
-       식)은 값의 일부로 보존된다. 같은 줄 다중 param 도 자기 closer
-       로만 끊겨 서로를 삼키지 않는다.
-    2. 자기 closer 가 없으면(closer 생략/오기명 드리프트) 폴백: 라인-선두
-       다음 오픈 / 구조 닫기 / 라인-끝 임의 closer / 세그먼트 끝."""
-    params: dict = {}
-    pos = 0
-    while True:
-        m = _LENIENT_PARAM_OPEN.search(segment, pos)
-        if m is None:
-            break
-        key = m.group(1)
-        own_closer = re.compile(rf"</(?:parameter|{re.escape(key)})\s*>", re.IGNORECASE)
-        cm = own_closer.search(segment, m.end())
-        if cm is not None:
-            value, pos = segment[m.end() : cm.start()], cm.end()
-        else:
-            stop = _LENIENT_VALUE_FALLBACK_STOP.search(segment, m.end())
-            if stop is None:
-                value, pos = segment[m.end() :], len(segment)
-            elif stop.group(0).startswith("</"):
-                value, pos = segment[m.end() : stop.start()], stop.end()
-            else:
-                # closer 생략 — 다음 라인-선두 오픈 직전까지가 값
-                value, pos = segment[m.end() : stop.start()], stop.start()
-        params[key] = _trim_block(value.rstrip())
-    return params
-
-
-def _trim_block(value: str) -> str:
-    """블록 스타일 허용: 여는 태그 직후·닫는 태그 직전 개행 1개만 트림.
-
-    내부 공백/개행은 보존 — raw 값 계약. (render 측이 멀티라인 값을
-    블록 스타일로 쓰므로 이 트림과 대칭 = round-trip 보존.)
-    """
-    value = value.removeprefix("\n")
-    value = value.removesuffix("\n")
-    return value
 
 
 def _coerce_params(action: str, params: dict) -> dict:

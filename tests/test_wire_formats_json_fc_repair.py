@@ -178,7 +178,7 @@ class TestAnonymousObjectRepair:
         assert t.parse_stage == 2
 
     def test_valid_json_unchanged_and_stage1(self):
-        from agent_cli.wire_formats.json_fc import _repair_anonymous_op_objects
+        from agent_cli.wire_formats.recovery.json import _repair_anonymous_op_objects
 
         valid = '[{"action": "read_file", "path": "a"}, {"action": "shell", "command": "ls"}]'
         # both variants leave valid JSON untouched
@@ -770,7 +770,7 @@ class TestAnonWrapMissingCloserRecovery:
         assert t.ops[0].action_input["content"] == "if (a) {}\n[{bad}]"
 
     def test_merge_helper_noop_on_single_array(self):
-        from agent_cli.wire_formats.json_fc import _merge_reopened_op_arrays
+        from agent_cli.wire_formats.recovery.json import _merge_reopened_op_arrays
 
         one = '[{"action": "shell", "command": "ls"}]'
         assert _merge_reopened_op_arrays(one) == (one, False)

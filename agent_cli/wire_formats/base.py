@@ -448,7 +448,7 @@ class WireFormat(ABC):
         JSON (or chooses not to diagnose) keeps the generic NO_JSON hint
         unchanged. JSON-bearing formats override to extract their JSON
         candidate (format-specific) and hand it to
-        ``wire_formats._json_diag.describe_json_error`` (the shared pure
+        ``wire_formats.recovery.json.describe_json_error`` (the shared pure
         formatter). Consumed by ``recovery.wf_recovery.format_no_json_retry``
         via the loop's parse-fail recovery.
         """
