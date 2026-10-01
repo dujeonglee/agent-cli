@@ -232,3 +232,16 @@ MONITOR_DEADLINE_DEFAULT_S = 7200  # 2h — 빠뜨려도 등록이 성공한다
 MONITOR_DEADLINE_MIN_S = 60  # 1m
 MONITOR_DEADLINE_MAX_S = 86400  # 24h — 그 이상은 배치 작업이고 board 소관
 MONITOR_INTERVAL_MIN_S = 60  # 주기 `command` 의 `every` 하한
+
+
+_WORD_CHAR = __import__("re").compile(r"[^\W_]", __import__("re").UNICODE)
+
+
+def has_words(text) -> bool:
+    """글자나 숫자가 하나라도 있는가 (v10.1.2) — 구두점·공백뿐인 값을 거른다.
+
+    실측(board nnq141·재현 5런): xml_fc+문법 강제에서 Qwen3.8 Flash 가
+    `<parameter=task>\n>\n</parameter>` 처럼 **구두점 하나짜리** task/text 를
+    267건 중 8건 냈다. 받은 에이전트는 빈 지시의 뜻을 찾느라 5턴을 썼다.
+    언어 무관(유니코드 문자 클래스)."""
+    return bool(_WORD_CHAR.search(str(text or "")))

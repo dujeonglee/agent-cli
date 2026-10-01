@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+from agent_cli.constants import has_words
 from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.result import ToolResult
 
@@ -205,6 +206,14 @@ class AgentTool(Tool):
             value = args.get(field)
             if not isinstance(value, str) or not value.strip():
                 return f"mode '{mode}' requires a non-empty '{field}'"
+        # v10.1.2: 구두점뿐인 지시(실측 `>`)는 빈 지시다 — 받는 에이전트는 내
+        # 컨텍스트를 못 보므로 뜻을 찾아 헤맨다. 어느 모드든 task 가 있으면 검사.
+        task = args.get("task")
+        if isinstance(task, str) and task.strip() and not has_words(task):
+            return (
+                f"'task' has no words ({task.strip()[:20]!r}) — write the full "
+                "instruction in words; the agent cannot see your context"
+            )
         return None
 
     def parallel_batchable(self, action_input: dict) -> bool:

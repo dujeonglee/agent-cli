@@ -43,6 +43,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
+from agent_cli.constants import has_words
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -699,6 +700,8 @@ class QuestionPort:
         text = (text or "").strip()
         if not text:
             return "empty reply — nothing sent"
+        if not has_words(text):
+            return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
         if self.key is None:
             return "main has no requester to reply to"
         tm = self._reg.get(self.key)
@@ -1951,6 +1954,13 @@ class AgentRegistry:
                 return "message needs a 'to' agent key or name (or 'main')"
             if not text:
                 return "empty message — nothing sent"
+            if not has_words(text):
+                # v10.1.2: 구두점뿐인 메시지(실측 `>`)는 보내지 않는다 — 받은
+                # 쪽이 뜻을 찾느라 턴을 쓴다.
+                return (
+                    f"message has no words ({text[:20]!r}) — nothing sent; say it "
+                    "in words"
+                )
             if to != "main":
                 # v10.1.0: 키·`agent:` 접두·이름 전부 받는다 (resolve_key).
                 resolved = self.resolve_key(to)
