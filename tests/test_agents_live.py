@@ -3478,8 +3478,8 @@ class TestRunMode:
         wf = get_wf("json_fc")
 
         def turn(ops):
-            # json_fc 실제 envelope: ## Thought / ## Action + flat op 배열
-            return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+            # json_fc 캐노니컬 모양: 산문 + flat op 배열
+            return "t\n\n" + json.dumps(ops)
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         provider = MagicMock()

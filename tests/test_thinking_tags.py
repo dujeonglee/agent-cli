@@ -96,8 +96,8 @@ class TestWireFormatStage0:
         wf = get_wf("json_fc")
         turn = wf.parse_turn(
             "<think>internal scratch</think>\n"
-            "## Thought\nreal thought\n\n"
-            '## Action\n[{"action": "read_file", "path": "a.py"}]'
+            "real thought\n\n"
+            '[{"action": "read_file", "path": "a.py"}]'
         )
         assert turn.thinking == "internal scratch"
         assert turn.thought == "real thought"
@@ -109,8 +109,8 @@ class TestWireFormatStage0:
 
         wf = get_wf("json_fc")
         turn = wf.parse_turn(
-            "## Thought\nt\n\n"
-            '## Action\n[{"action": "complete", "result": "done"}]\n'
+            "t\n\n"
+            '[{"action": "complete", "result": "done"}]\n'
             "<think>tail reasoning cut off"
         )
         assert turn.ops and turn.ops[0].action == "complete"

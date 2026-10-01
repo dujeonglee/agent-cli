@@ -489,7 +489,7 @@ class TestThroughRunLoop:
     def _env(ops):
         import json
 
-        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+        return "t\n\n" + json.dumps(ops)
 
     def _run(self, provider, *, pending, request_id="1", **kw):
         import tempfile
@@ -996,7 +996,7 @@ class TestAgentLoopsAreUntouched:
     def _env(ops):
         import json
 
-        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+        return "t\n\n" + json.dumps(ops)
 
     def _run_agent(self, ports, *contents):
         import tempfile

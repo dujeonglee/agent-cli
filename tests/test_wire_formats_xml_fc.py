@@ -409,7 +409,7 @@ class TestCrossFormatParity:
             + _call("shell", {"command": "ls"})
         )
         m = md.parse_turn(
-            "## Thought\nt\n\n## Action\n"
+            "t\n\n"
             '[{"action": "read_file", "path": "a.py"},'
             ' {"action": "shell", "command": "ls"}]'
         )
@@ -503,9 +503,7 @@ class TestLenientToolNameTag:
 
     def test_json_fc_regression_not_rescued_here(self, wf):
         # 타 포맷 누출(17%)은 이 구제 범위 밖 (Phase 3 소관) — thought-only
-        turn = wf.parse_turn(
-            '## Thought\nt\n\n## Action\n[{"action": "shell", "command": "ls"}]'
-        )
+        turn = wf.parse_turn('t\n\n[{"action": "shell", "command": "ls"}]')
         assert turn.ops == []
 
     def test_hybrid_canonical_function_plain_params_recovered(self, wf):

@@ -1875,7 +1875,7 @@ class TestReplyNagCap:
     def _env(ops):
         import json
 
-        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+        return "t\n\n" + json.dumps(ops)
 
     def _loop(self, port, *contents):
         import tempfile
@@ -2167,7 +2167,7 @@ class TestRefusedCompleteIsNotStored:
     def _env(ops):
         import json
 
-        return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+        return "t\n\n" + json.dumps(ops)
 
     def test_refused_complete_leaves_only_the_quoting_observation(self):
         port = TestReplyNagCap._OwedPort()
@@ -2381,7 +2381,7 @@ class TestUnifiedDebtRules:
     def _env(ops):
         import json
 
-        return "## Thought\\nt\\n\\n## Action\\n" + json.dumps(ops)
+        return "t\\n\\n" + json.dumps(ops)
 
     def _run(
         self,

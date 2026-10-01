@@ -107,32 +107,6 @@ class TestCanonicalParse:
         assert turn.ops and turn.ops[0].action == "shell"
 
 
-class TestLegacyHeaderAcceptance:
-    def test_json_fc_shape_accepted_as_drift(self, wf):
-        turn = wf.parse_turn(
-            '## Thought\nt\n\n## Action\n[{"action": "shell", "command": "ls"}]'
-        )
-        assert turn.parse_stage == 2  # legacy = drift 신호
-        assert turn.thought == "t"
-        assert turn.ops[0].action == "shell"
-
-    def test_legacy_headerless_thought_recovered(self, wf):
-        turn = wf.parse_turn(
-            'prose reasoning\n\n## Action\n[{"action": "shell", "command": "ls"}]'
-        )
-        assert turn.parse_stage == 2
-        assert turn.thought == "prose reasoning"
-
-    def test_legacy_prior_rerenders_canonical(self, wf):
-        # 자기 교정: legacy emission 의 레코드가 캐노니컬(헤더 없는)로 재렌더
-        rec = wf.serialize_assistant_for_history(
-            '## Thought\nt\n\n## Action\n[{"action": "shell", "command": "ls"}]'
-        )
-        msg = wf.render_assistant_from_history(rec)
-        assert "## Action" not in msg["content"]
-        assert msg["content"].startswith("t\n\n[")
-
-
 class TestRenderAndHistory:
     def test_render_full_example_no_headers(self, wf):
         out = wf.render_full_example(
@@ -279,10 +253,10 @@ class TestTruncatedPropagation:
         clean = self.w.parse('[{"action":"shell","command":"ls"}]')
         assert clean.truncated is False
 
-    def test_legacy_header_path_flags_truncated(self):
-        # 구 md_array 헤더 경로도 같은 증거 규칙을 탄다.
+    def test_prose_then_truncated_array_flags_last_op(self):
+        # 산문 뒤 미닫힘 배열 — 같은 증거 규칙(수리 + 미닫힘)으로 마지막 op 만.
         t = self.w.parse_turn(
-            "## Thought\n생각\n## Action\n"
+            "생각\n\n"
             '[{"action":"edit_file","path":"a.py","old_lines":["x"],"new_lines":["y"]'
         )
         assert t.parse_stage == 2

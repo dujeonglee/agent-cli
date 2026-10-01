@@ -79,12 +79,12 @@ class TestFormatDiagnose:
         assert JsonFcFormat().diagnose_syntax_error(ok) is None
 
     def test_json_fc_diagnoses_broken_action_body(self):
-        bad = '## Thought\nreasoning\n\n## Action\n[{"action":"shell","command":"ls"}'
+        bad = 'reasoning\n\n[{"action":"shell","command":"ls"}'
         out = JsonFcFormat().diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
     def test_json_fc_legacy_header_valid_returns_none(self):
-        ok = '## Thought\nr\n\n## Action\n[{"action":"shell","command":"ls"}]'
+        ok = 'r\n\n[{"action":"shell","command":"ls"}]'
         assert JsonFcFormat().diagnose_syntax_error(ok) is None
 
     def test_base_default_returns_none(self):
@@ -102,7 +102,7 @@ class TestCrossFormatParity:
         # identical broken op, wrapped per format — both must surface a
         # location, not one silently returning None
         react_in = '{"thought":"t","action":"shell","action_input":{"command":"ls"'
-        md_in = '## Thought\nt\n\n## Action\n[{"action":"shell","command":"ls"'
+        md_in = 't\n\n[{"action":"shell","command":"ls"'
         r = JsonFcFormat().diagnose_syntax_error(react_in)
         m = JsonFcFormat().diagnose_syntax_error(md_in)
         assert r is not None and "^" in r

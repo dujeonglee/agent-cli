@@ -152,7 +152,7 @@ class TestDispatcherIntegration:
         d._handle_text_path('[{"완전 깨진 op — 파싱 불가')
         assert any(is_format_intervention(r) for r in ctx.get_raw_messages())
         # 턴 N+1: 파싱 성공 emission → 개입 쌍이 캐시 뷰에서 소멸
-        good = '## Thought\nok\n## Action\n[{"action":"complete","result":"done"}]'
+        good = 'ok\n\n[{"action":"complete","result":"done"}]'
         d._handle_text_path(good)
         assert all(not is_format_intervention(r) for r in ctx.get_raw_messages())
         # history 에는 남음 (불변) — 개입 레코드가 파일에 보존
