@@ -15,6 +15,7 @@ from agent_cli.loop.prompt import SystemPromptSvc
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
+from agent_cli.prompts.session_state import COMPACTION_NOTICE_STEPS
 from agent_cli.providers.base import CallSettings, resolve_thinking_policy
 from agent_cli.render import (
     render_spinner_start,
@@ -68,6 +69,8 @@ class LLMCaller:
         # Size of the last session-state block, reserved from the next turn's
         # compaction budget (see _call_llm).
         self._state_tokens = 0
+        # 압축 안내 단계 중 아직 안 띄운 것 (v9.26.4) — 넘는 턴에 한 번씩
+        self._compaction_armed: set[float] = set(COMPACTION_NOTICE_STEPS)
         # 디코딩 문법 (v9.24.0) — 도구 집합은 루프 수명 동안 불변이라 한 번
         # 만들고, `<think>` 열림/닫힘 두 변형만 든다.
         self._grammar_cache: dict[bool, str | None] | None = None
@@ -142,7 +145,10 @@ class LLMCaller:
         starts dropping history — early enough for the model to save something
         with ``memory``."""
         from agent_cli.memory import render_index
-        from agent_cli.prompts.session_state import build_session_state
+        from agent_cli.prompts.session_state import (
+            build_session_state,
+            compaction_notice_due,
+        )
         from agent_cli.prompts.system_prompt import (
             TASK_GUIDELINES,
             build_live_agents_section,
@@ -174,9 +180,14 @@ class LLMCaller:
         debts = owed_replies_block(
             open_debts(port), resident=bool(getattr(port, "nonblocking", False))
         )
+        used = self.ctx.get_estimated_tokens() if self.ctx else 0
+        notice, self._compaction_armed = compaction_notice_due(
+            used, budget, self._compaction_armed
+        )
         return build_session_state(
-            used_tokens=self.ctx.get_estimated_tokens() if self.ctx else 0,
+            used_tokens=used,
             budget_tokens=budget,
+            compaction_notice=notice,
             turn=self.state.turn,
             max_turns=self.cfg.max_turns,
             agents=agents,

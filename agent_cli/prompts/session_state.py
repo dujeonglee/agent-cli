@@ -35,14 +35,40 @@ turn afterwards and pollute resume previews).
 
 from __future__ import annotations
 
-#: Report context pressure only past this fraction of the budget. Below it the
-#: number is noise the model would pay attention tokens for and act on wrongly;
-#: above it, it is the one signal that changes what a good agent does next.
-#: Kept OFF by default at low usage rather than always-on for a second reason:
-#: telling a model it is running out of room invites premature ``complete``
-#: (the same failure ``_OBS_COMPLETE_NUDGE`` had to be measured against), so
-#: the warning is phrased as an action to take, not as a shortage to react to.
-COMPACTION_WARN_RATIO = 0.75
+#: 압축 안내가 뜨는 사용량 단계 (v9.26.4). 압축은 호출별 목표치(꼬리의 100%)를
+#: 넘는 순간 돌고, 안내는 **각 단계를 처음 넘는 턴에 한 번씩**만 — 70·80·90%.
+#: 종전(75% 이상 매 턴)은 같은 경보가 턴마다 쌓여 모델을 과하게 보수적으로 만들었다
+#: (사용자 보고). 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장된다
+#: (:func:`compaction_notice_due`). 문구도 결핍이 아니라 사실을 말한다 — 오래된 턴은
+#: 사라지는 게 아니라 구조화 요약으로 대체되고 작업은 그대로 이어진다. 압박을
+#: 알리면 조기 ``complete`` 를 부른다는 ``_OBS_COMPLETE_NUDGE`` 의 실측은 그대로다.
+COMPACTION_NOTICE_STEPS: tuple[float, ...] = (0.7, 0.8, 0.9)
+
+#: 안내 문구 — 정보만, 명령은 하나(memory 는 선택지). "nearly full"·"lose"·"NOW"
+#: 같은 결핍 어휘를 쓰지 않는다. 사용자가 정한 문구 그대로(2026-10-01).
+COMPACTION_NOTICE = (
+    "ℹ Context compaction is coming up: older turns will be replaced by a "
+    "structured summary (task, state, decisions, failures, key facts) and work "
+    "continues as usual. If a detail is worth more than its summary — an exact "
+    "identifier, a failed approach — memory(mode=add) keeps it verbatim. Pace "
+    "and scope stay the same."
+)
+
+
+def compaction_notice_due(
+    used_tokens: int, budget_tokens: int, armed: set[float]
+) -> tuple[bool, set[float]]:
+    """``(안내를 띄울지, 다음 턴의 armed)`` — 처음 넘은 단계가 있으면 True.
+
+    ``armed`` 는 아직 안 띄운 단계. 사용량이 어느 단계 아래로 내려가면(압축 뒤)
+    그 단계는 다시 무장된다. 예산이 없으면 조용하다."""
+    if budget_tokens <= 0:
+        return False, set(COMPACTION_NOTICE_STEPS)
+    pct = used_tokens / budget_tokens
+    rearmed = {t for t in COMPACTION_NOTICE_STEPS if pct < t}
+    crossed = {t for t in armed if pct >= t}
+    return bool(crossed), (armed - crossed) | rearmed
+
 
 #: Marker line that opens the block. Public so callers (and tests) can
 #: locate the boundary between the conversation and the appended state.
@@ -131,8 +157,12 @@ def build_session_state(
     debts: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
+    compaction_notice: bool = False,
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
+
+    ``compaction_notice`` (v9.26.4): 이번 턴에 압축 안내 한 줄을 붙일지 — 호출자가
+    :func:`compaction_notice_due` 로 단계(70·80·90%)를 처음 넘는 턴에만 True 를 준다.
 
     A non-empty block always opens with ``TAIL_BOUNDARY`` (v9.25.2) so the
     model can tell where the user's text ends and the harness's begins.
@@ -194,13 +224,7 @@ def build_session_state(
         lines.append("")
         lines.append(final_turn_notice(reports_to_caller=reports_to_caller))
 
-    if budget_tokens > 0 and used_tokens >= budget_tokens * COMPACTION_WARN_RATIO:
+    if compaction_notice:
         lines.append("")
-        lines.append(
-            "⚠ Context is nearly full. Older turns will be summarised away soon "
-            "— anything you must not lose (a failure you should not repeat, a "
-            "decision and its reason, a hard-won fact) should go into "
-            "memory(mode=add) NOW, while you still have it. Keep working; this "
-            "is not a reason to finish early."
-        )
+        lines.append(COMPACTION_NOTICE)
     return "\n".join([TAIL_BOUNDARY, "", *lines])
