@@ -199,8 +199,10 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
     together against that one read (bottom-up), so a later edit's ref does NOT
     go stale from an earlier edit's line shift. Keep the same-file ops ADJACENT
     — another tool between them breaks the group. OVERLAPPING ranges are
-    rejected as a batch (nothing is written); split those across turns. Editing
-    DIFFERENT files in separate ops is fine — they don't interact.
+    rejected as a batch (nothing is written); split those across turns. If a
+    ref is rejected, nothing is written and the result names every bad op —
+    the other refs stay valid: resend all the ops, fixing only those named.
+    Editing DIFFERENT files in separate ops is fine — they don't interact.
   Each run op gives ONE task to a sub-agent with its own context window.
   Several run ops in the same turn are for independent parts that would
   each flood your context — not for speed; you wait for all of them.

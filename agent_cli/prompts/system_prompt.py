@@ -167,8 +167,10 @@ def _build_edit_file_inline(wire_format) -> str:
     together against that one read (bottom-up), so a later edit's ref does NOT
     go stale from an earlier edit's line shift. Keep the same-file ops ADJACENT
     — another tool between them breaks the group. OVERLAPPING ranges are
-    rejected as a batch (nothing is written); split those across turns. Editing
-    DIFFERENT files in separate ops is fine — they don't interact."""
+    rejected as a batch (nothing is written); split those across turns. If a
+    ref is rejected, nothing is written and the result names every bad op —
+    the other refs stay valid: resend all the ops, fixing only those named.
+    Editing DIFFERENT files in separate ops is fine — they don't interact."""
     else:
         examples = f"""\
   - one edit per call:

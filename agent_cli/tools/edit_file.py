@@ -70,6 +70,23 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         )
 
 
+def _op_label(ed: dict) -> str:
+    """``op 3 (replace 8#ZZ..9#QQ)`` — what the model sent, so it can find the op."""
+    parts = [str(ed.get("op", "?"))]
+    if ed.get("pos"):
+        parts.append(str(ed["pos"]) + (f"..{ed['end']}" if ed.get("end") else ""))
+    return " ".join(parts)
+
+
+_RETRY_HINT = " Re-read the file with read_file to get fresh hashline tags, then retry."
+
+
+def _strip_retry_hint(msg: str) -> str:
+    """The per-ref message ends with a re-read hint; the batch summary says it
+    once for all rejected ops."""
+    return msg.removesuffix(_RETRY_HINT)
+
+
 def _op_to_span(ed: dict, file_lines: list[str], on_fuzzy) -> tuple[int, int, list]:
     """Map one edit op to the half-open ORIGINAL-line span it replaces:
     ``(lo, hi, repl)`` where ``file_lines[lo:hi] = repl``. ``lo == hi`` is a pure
@@ -165,14 +182,36 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     fuzzy_warnings: list[str] = []
 
     # 1. Resolve EVERY op against the original (all-or-nothing on a bad ref).
+    #    Keep going past a bad one (v9.26.3): the model used to learn about
+    #    rejected refs ONE per retry, and the message never said that the other
+    #    refs were fine and the file untouched — so it re-read and re-emitted
+    #    the whole batch each time.
     spans: list[tuple] = []
-    try:
-        for i, ed in enumerate(edits):
+    bad: list[str] = []
+    for i, ed in enumerate(edits):
+        try:
             lo, hi, repl = _op_to_span(ed, file_lines, fuzzy_warnings.append)
             spans.append((lo, hi, repl, i))
-    except RuntimeError as e:
+        except RuntimeError as e:
+            bad.append(f"  op {i + 1} ({_op_label(ed)}): {_strip_retry_hint(str(e))}")
+    if bad:
+        ok = len(edits) - len(bad)
         return ToolResult(
-            False, error=f"edit_file batch: {e} No changes written — re-read and retry."
+            False,
+            error=(
+                f"edit_file batch: {len(bad)} of {len(edits)} edits rejected — nothing "
+                f"written, '{path}' is unchanged.\n"
+                + "\n".join(bad)
+                + "\n"
+                + (
+                    f"The other {ok} ref{'s are' if ok != 1 else ' is'} valid as sent. "
+                    if ok
+                    else ""
+                )
+                + "Re-read the file for fresh tags of the rejected lines only, then "
+                "resend ALL the ops in one turn — the valid ones unchanged, the "
+                "rejected ones with corrected refs."
+            ),
         )
 
     # 2. Reject overlaps before mutating anything.

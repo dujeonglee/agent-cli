@@ -117,6 +117,36 @@ class TestApplyEditsBatch:
         assert not result.success
         # even though edit #1 was valid, nothing is written (all-or-nothing)
         assert p.read_text() == before
+        # v9.26.3: the message names the op, says the rest were fine and that
+        # the file is untouched — so the model resends, not re-derives.
+        assert "1 of 2 edits rejected" in result.error
+        assert "op 2 (replace 2#ZZ): Hash mismatch at line 2" in result.error
+        assert "The other 1 ref is valid as sent" in result.error
+        assert "is unchanged" in result.error
+        assert "resend ALL the ops" in result.error
+        assert result.error.count("Re-read") == 1  # the hint once, not per op
+
+    def test_every_bad_ref_is_reported_at_once(self, tmp_path):
+        """Before v9.26.3 resolution stopped at the first bad ref, so a batch with
+        two bad refs cost two retries — the second surfaced only after the first
+        was fixed."""
+        from agent_cli.tools.edit_file import apply_edits_batch
+
+        lines = ["a", "b", "c", "d"]
+        p = _write(tmp_path, "f.txt", lines)
+        edits = [
+            {"op": "replace", "pos": _ref(1, "a"), "lines": ["A"]},
+            {"op": "replace", "pos": "2#ZZ", "lines": ["B"]},
+            {"op": "delete", "pos": "3#QQ", "end": "3#QQ"},
+            {"op": "replace", "pos": _ref(4, "d"), "lines": ["D"]},
+        ]
+        result = apply_edits_batch(str(p), edits)
+        assert not result.success
+        assert "2 of 4 edits rejected" in result.error
+        assert "op 2 (replace 2#ZZ)" in result.error
+        assert "op 3 (delete 3#QQ..3#QQ)" in result.error
+        assert "The other 2 refs are valid as sent" in result.error
+        assert p.read_text().splitlines() == lines
 
     def test_adjacent_ranges_allowed(self, tmp_path):
         # Adjacent (touching but not overlapping) ranges are fine.
