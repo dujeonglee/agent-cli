@@ -616,13 +616,9 @@ class TestActionRenderShowsRawEmission:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content="## Thought\nread it\n\n## Action\n"
-                f'[{{"action": "read_file", "path": "{target}"}}]'
+                content=f'read it\n\n[{{"action": "read_file", "path": "{target}"}}]'
             ),
-            LLMResponse(
-                content="## Thought\ndone\n\n## Action\n"
-                '[{"action": "complete", "result": "ok"}]'
-            ),
+            LLMResponse(content='done\n\n[{"action": "complete", "result": "ok"}]'),
         ]
         run_loop(
             ports=TEST_PORTS,
@@ -660,13 +656,9 @@ class TestActionRenderShowsRawEmission:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content="## Thought\nread it\n\n## Action\n"
-                f'[{{"action": "read_file", "path": "{target}"}}]'
+                content=f'read it\n\n[{{"action": "read_file", "path": "{target}"}}]'
             ),
-            LLMResponse(
-                content="## Thought\ndone\n\n## Action\n"
-                '[{"action": "complete", "result": "ok"}]'
-            ),
+            LLMResponse(content='done\n\n[{"action": "complete", "result": "ok"}]'),
         ]
         run_loop(
             ports=TEST_PORTS,
@@ -719,13 +711,9 @@ class TestObservationRenderFromStored:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content="## Thought\nread\n\n## Action\n"
-                f'[{{"action": "read_file", "path": "{big}"}}]'
+                content=f'read\n\n[{{"action": "read_file", "path": "{big}"}}]'
             ),
-            LLMResponse(
-                content="## Thought\ndone\n\n## Action\n"
-                '[{"action": "complete", "result": "ok"}]'
-            ),
+            LLMResponse(content='done\n\n[{"action": "complete", "result": "ok"}]'),
         ]
         run_loop(
             ports=TEST_PORTS,
@@ -755,14 +743,8 @@ class TestObservationRenderFromStored:
         ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(
-                content="## Thought\ngo\n\n## Action\n"
-                '[{"action": "no_such_tool", "x": 1}]'
-            ),
-            LLMResponse(
-                content="## Thought\ndone\n\n## Action\n"
-                '[{"action": "complete", "result": "ok"}]'
-            ),
+            LLMResponse(content='go\n\n[{"action": "no_such_tool", "x": 1}]'),
+            LLMResponse(content='done\n\n[{"action": "complete", "result": "ok"}]'),
         ]
         run_loop(
             ports=TEST_PORTS,
@@ -918,10 +900,7 @@ class TestRunLoopObservability:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=degen),
-            LLMResponse(
-                content="## Thought\ndone\n\n## Action\n"
-                '[{"action": "complete", "result": "ok"}]'
-            ),
+            LLMResponse(content='done\n\n[{"action": "complete", "result": "ok"}]'),
         ]
         run_loop(
             ports=TEST_PORTS,

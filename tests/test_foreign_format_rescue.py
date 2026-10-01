@@ -18,27 +18,24 @@ from agent_cli.wire_formats import get as get_wf
 from agent_cli.wire_formats import try_foreign_parse
 from tests.loop_ports import TEST_PORTS
 
-# 실측 캡처 (35B, 2026-07-17) — json_fc 회귀 예1
+# 실측 캡처 (35B, 2026-07-17) — json_fc 회귀 예1. 원본은 md_array 헤더 모양이었고
+# Phase 5(결정 1)에서 헤더 관용을 버리며 캐노니컬 json_fc 모양(산문 + bare 배열)으로
+# 옮겼다 — 구제 기계의 대상은 "바인딩 아닌 등록 포맷의 캐노니컬 출력" 이다.
 MD_ARRAY_LEAK = (
-    "## Thought\n"
     "The shell output shows a directory listing. Let me check app.py.\n\n"
-    "## Action\n"
     '[{"action": "shell", "command": "head -50 app.py"}]'
 )
 
 # 실측 캡처 예5 — json_fc 회귀 + 미닫힘 배열 (json_fc 수리 기계가 살림)
 MD_ARRAY_LEAK_UNCLOSED = (
-    "## Thought\n\n\n"
-    "## Action\n"
+    "\n\n"
     '[{"action": "edit_file", "op": "replace", "path": "src/auth.py", '
     '"pos": "2#KT", "lines": ["    return bcrypt.hashpw(x)"]}'
 )
 
 # 실측 캡처 예4 — 키메라 (JSON 이 중간에 태그로 변이; 어느 파서로도 불가)
 CHIMERA = (
-    "Your reasoning here.\n\n"
-    "## Action\n"
-    '[{"action": "shell", "command">cat app.py</parameter>'
+    'Your reasoning here.\n\n[{"action": "shell", "command">cat app.py</parameter>'
 )
 
 
@@ -132,10 +129,7 @@ class TestDispatchRescue:
 
         f = tmp_path / "note.txt"
         f.write_text("payload-xyz")
-        leak = (
-            "## Thought\nreading the file.\n\n## Action\n"
-            f'[{{"action": "read_file", "path": "{f}"}}]'
-        )
+        leak = f'reading the file.\n\n[{{"action": "read_file", "path": "{f}"}}]'
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
@@ -159,9 +153,9 @@ class TestDispatchRescue:
         msgs = args[0] if args else kwargs.get("messages")
         joined = str(msgs)
         assert "payload-xyz" in joined
-        # prior 캐노니컬 재렌더: 누출 raw(## Action)가 아니라 xml_fc shape
+        # prior 캐노니컬 재렌더: 누출 raw(bare 배열)가 아니라 xml_fc shape
         assert "<function=read_file>" in joined
-        assert "## Action" not in joined
+        assert '[{"action": "read_file"' not in joined
 
     def test_rescue_labeled_foreign_format_in_turns_jsonl(
         self, caps, tmp_path, production_default
@@ -171,7 +165,7 @@ class TestDispatchRescue:
 
         f = tmp_path / "a.txt"
         f.write_text("x")
-        leak = f'## Action\n[{{"action": "read_file", "path": "{f}"}}]'
+        leak = f'reading.\n\n[{{"action": "read_file", "path": "{f}"}}]'
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
@@ -202,7 +196,7 @@ class TestDispatchRescue:
 
         f = tmp_path / "a.txt"
         f.write_text("x")
-        leak = f'## Action\n[{{"action": "read_file", "path": "{f}"}}]'
+        leak = f'reading.\n\n[{{"action": "read_file", "path": "{f}"}}]'
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,
@@ -235,10 +229,7 @@ class TestDispatchRescue:
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
 
-        leak = (
-            "## Thought\ndone.\n\n## Action\n"
-            '[{"action": "complete", "result": "final answer via leak"}]'
-        )
+        leak = 'done.\n\n[{"action": "complete", "result": "final answer via leak"}]'
         ctx = ContextManager(
             session_dir=tmp_path / "s",
             max_context_tokens=100_000,

@@ -89,27 +89,6 @@ class TestParseTurnWork:
         assert t.ops == []
         assert not t.terminal
 
-    def test_missing_thought_header_recovers_leading_prose(self):
-        # Model emitted reasoning WITHOUT the `## Thought` header, then
-        # `## Action`. The leading prose is recovered as the thought (was
-        # dropped → thought=None before).
-        t = WF.parse_turn(
-            "Need to inspect mgt.c first.\n\n"
-            '## Action\n[{"action": "read_file", "path": "mgt.c"}]'
-        )
-        assert t.thought == "Need to inspect mgt.c first."
-        assert [(o.action, o.action_input) for o in t.ops] == [
-            ("read_file", {"path": "mgt.c"})
-        ]
-        # PHASE4: 헤더는 legacy 관용 — 파싱은 되지만 drift(stage 2) 계수
-        assert t.parse_stage == 2
-
-    def test_action_first_no_thought(self):
-        # `## Action` is the very first thing → no leading prose → thought None.
-        t = WF.parse_turn('## Action\n[{"action": "complete", "result": "done"}]')
-        assert t.thought is None
-        assert t.ops[0].action == "complete"
-
 
 class TestAnonymousObjectRepair:
     """Batching ops with large params, the model wraps each op's params in an
@@ -387,32 +366,17 @@ class TestCompletionAndNoAction:
         t = WF.parse_turn("the array [1, 2, 3] is sorted; done.")
         assert t.ops == []
 
-    def test_input_residue_stripped_to_no_action(self):
-        # prefix_md prior leak (`## Action\n\n## Input\n{}`): stripped to 0 ops
-        # → NO_ACTION nudge (no longer mistaken for completion).
-        t = WF.parse_turn(
-            "## Thought\nAll done, reporting.\n\n## Action\n\n\n## Input\n{}"
-        )
-        assert not t.terminal and t.ops == []
-        assert t.thought == "All done, reporting."
-
     def test_empty_containers_are_no_action(self):
         for body in ("{}", "[{}]", "[]"):
             t = WF.parse_turn(_wire("done", body))
             assert not t.terminal and t.ops == [], body
             assert t.parse_stage == 1, body  # thought present → NO_ACTION nudge
 
-    def test_no_op_without_thought_is_parse_failure(self):
-        # No thought + empty container → nothing usable at all → stage 0.
-        assert WF.parse_turn("## Action\n[]").parse_stage == 0
-
     def test_nonempty_nondict_array_yields_no_ops(self):
         # `[1,2,3]` has no dict ops — same "no usable op" family as []/{}: with
         # a thought it's a NO_ACTION nudge (stage 1), never runnable ops.
         t = WF.parse_turn(_wire("x", "[1, 2, 3]"))
         assert not t.terminal and t.ops == []
-        # without a thought there is nothing usable at all → parse failure
-        assert WF.parse_turn("## Action\n[1, 2, 3]").parse_stage == 0
 
     def test_actionless_op_with_real_input_stays_op(self):
         # An op that DOES carry input but dropped its action is work intent —
@@ -475,7 +439,7 @@ class TestHistoryRoundTrip:
         assert rec.get("content") is not None or rec.get("ops") == []
 
     def test_garbage_falls_back_to_sanitized_content(self):
-        rec = WF.serialize_assistant_for_history("## Thought\n\n## Action\n[{broken")
+        rec = WF.serialize_assistant_for_history("\n\n[{broken")
         assert rec.get("content") is not None
         assert "## Thought" not in rec["content"]  # sentinels stripped
 
@@ -553,7 +517,7 @@ class TestFormatRulesBatchSteering:
         from agent_cli.wire_formats import get as _get
 
         ex = (
-            "## Thought\nx\n\n## Action\n"
+            "x\n\n"
             '[{"action": "read_file", "path": "a.py"}, '
             '{"action": "read_file", "path": "b.py"}, '
             '{"action": "read_file", "path": "c.py"}]'

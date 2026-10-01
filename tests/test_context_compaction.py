@@ -376,7 +376,7 @@ class TestSummaryTextRendering:
 
         plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
-            "## Thought\nread then write\n\n## Action\n"
+            "read then write\n\n"
             '[{"action": "read_file", "path": "a.c"}, '
             '{"action": "write_file", "path": "b.c", "content": "x"}]'
         )
@@ -601,7 +601,7 @@ class TestFileExtractHelper:
 
         plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
-            "## Thought\nt\n\n## Action\n"
+            "t\n\n"
             '[{"action": "read_file", "path": "a.c"}, '
             '{"action": "write_file", "path": "b.c", "content": "x"}]'
         )
