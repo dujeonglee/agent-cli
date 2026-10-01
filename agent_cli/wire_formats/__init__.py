@@ -235,11 +235,19 @@ __all__ = [
 # (not the top) so the ``register`` symbol it depends on is already
 # defined when the plugin module is loaded.
 def _register_builtin_plugins() -> None:
+    from agent_cli.wire_formats.engine import Dialect
     from agent_cli.wire_formats.json_fc import JsonFcFormat
+    from agent_cli.wire_formats.specs.glm_argkey import GLM_ARGKEY
+    from agent_cli.wire_formats.specs.hermes_json import HERMES_JSON
     from agent_cli.wire_formats.xml_fc import XmlFcFormat
 
     register(JsonFcFormat())  # default — md_array 후계 (PHASE4, bakeoff 게이트 통과)
     register(XmlFcFormat())  # 태그-파라미터 (multi-wire-format PHASE2)
+    # Phase 5 S4 — 스펙만으로 추가된 방언 (실모델 미검증, PHASE5 D3)
+    register(
+        Dialect(HERMES_JSON)
+    )  # 가족 ① Hermes JSON (Qwen2.5/3/Next, Hermes, Granite 4.0/4.1)
+    register(Dialect(GLM_ARGKEY))  # 가족 ⑤ GLM-4.5 ~ 5.3
 
 
 _register_builtin_plugins()
