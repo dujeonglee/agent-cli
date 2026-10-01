@@ -14,10 +14,12 @@ import json
 
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.prompts.session_state import (
-    COMPACTION_WARN_RATIO,
+    COMPACTION_NOTICE,
+    COMPACTION_NOTICE_STEPS,
     RULES_HEADER,
     SESSION_STATE_HEADER,
     build_session_state,
+    compaction_notice_due,
 )
 from tests.loop_ports import TEST_PORTS
 
@@ -129,32 +131,51 @@ class TestBuildSessionState:
         assert "Live Agents" not in out
 
 
-class TestCompactionWarning:
-    def _at(self, ratio):
-        budget = 100_000
-        return build_session_state(
-            used_tokens=int(budget * ratio), budget_tokens=budget
+class TestCompactionNotice:
+    """v9.26.4 — 단계(70·80·90%)를 처음 넘는 턴에 한 번씩, 문구는 사실만."""
+
+    def test_block_carries_the_notice_only_when_asked(self):
+        out = build_session_state(used_tokens=95, budget_tokens=100)
+        assert (
+            COMPACTION_NOTICE not in out
+        )  # 사용량만으로는 안 뜬다 — 호출자가 단계를 판단
+        out = build_session_state(
+            used_tokens=95, budget_tokens=100, compaction_notice=True
         )
+        assert COMPACTION_NOTICE in out
 
-    def test_silent_below_the_threshold(self):
-        assert "nearly full" not in self._at(COMPACTION_WARN_RATIO - 0.05)
+    def test_wording_is_informative_not_alarming(self):
+        """압박을 알리면 조기 complete 를 부른다 — 결핍 어휘 없이 무엇이 일어나는지만."""
+        for bad in ("nearly full", "lose", "NOW", "finish early", "⚠"):
+            assert bad not in COMPACTION_NOTICE, bad
+        assert "structured summary" in COMPACTION_NOTICE
+        assert "memory(mode=add)" in COMPACTION_NOTICE
+        assert COMPACTION_NOTICE.startswith("ℹ")
 
-    def test_fires_at_the_threshold(self):
-        assert "nearly full" in self._at(COMPACTION_WARN_RATIO)
+    def test_due_once_per_step(self):
+        armed = set(COMPACTION_NOTICE_STEPS)
+        seq = []
+        for pct in (0.5, 0.69, 0.7, 0.72, 0.8, 0.85, 0.9, 0.95, 0.99):
+            due, armed = compaction_notice_due(int(pct * 1000), 1000, armed)
+            seq.append(due)
+        assert seq == [False, False, True, False, True, False, True, False, False]
 
-    def test_fires_above_the_threshold(self):
-        assert "nearly full" in self._at(0.95)
+    def test_jumping_two_steps_fires_once(self):
+        due, armed = compaction_notice_due(850, 1000, set(COMPACTION_NOTICE_STEPS))
+        assert due and armed == {0.9}
 
-    def test_tells_the_model_to_save_not_to_stop(self):
-        """Telling a model it is low on room invites premature ``complete``
-        (the failure ``_OBS_COMPLETE_NUDGE`` had to be measured against), so the
-        warning must read as an action, not a shortage."""
-        out = self._at(0.9)
-        assert "memory(mode=add)" in out
-        assert "not a reason to finish early" in out
+    def test_rearms_after_compaction_lowers_usage(self):
+        armed = set(COMPACTION_NOTICE_STEPS)
+        _, armed = compaction_notice_due(950, 1000, armed)  # 셋 다 소진
+        assert armed == set()
+        due, armed = compaction_notice_due(400, 1000, armed)  # 압축 뒤
+        assert not due and armed == set(COMPACTION_NOTICE_STEPS)
+        due, _ = compaction_notice_due(700, 1000, armed)
+        assert due
 
     def test_never_fires_without_a_budget(self):
-        assert "nearly full" not in build_session_state(used_tokens=10**9)
+        due, armed = compaction_notice_due(10**9, 0, set())
+        assert not due and armed == set(COMPACTION_NOTICE_STEPS)
 
 
 # ── 2. delivery ──────────────────────────────────────────────────────
@@ -597,11 +618,14 @@ class TestGuidelinesInTail:
     def test_guidelines_alone_are_enough_to_render(self):
         assert build_session_state(guidelines="x") != ""
 
-    def test_compaction_warning_stays_last(self):
+    def test_compaction_notice_stays_last(self):
         out = build_session_state(
-            used_tokens=90, budget_tokens=100, guidelines="## Task Guidelines\n- r"
+            used_tokens=90,
+            budget_tokens=100,
+            guidelines="## Task Guidelines\n- r",
+            compaction_notice=True,
         )
-        assert out.index("## Task Guidelines") < out.index("nearly full")
+        assert out.index("## Task Guidelines") < out.index("compaction is coming up")
 
 
 _REPLY = {

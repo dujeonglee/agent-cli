@@ -1402,9 +1402,10 @@ Settle these before you `complete` — the harness holds the run open while they
 ⚠ #1 [failure] uart0 클럭 미설정 시 부팅 로그 없음
 🔀 #2 [decision] dts 대신 defconfig 로 수정하기로
 
-⚠ Context is nearly full. Older turns will be summarised away soon — anything you
-must not lose … should go into memory(mode=add) NOW … Keep working; this is not a
-reason to finish early.
+ℹ Context compaction is coming up: older turns will be replaced by a structured summary
+(task, state, decisions, failures, key facts) and work continues as usual. If a detail is
+worth more than its summary — an exact identifier, a failed approach — memory(mode=add)
+keeps it verbatim. Pace and scope stay the same.
 ```
 
 **왜 꼬리인가 (KV 프리픽스)**: 프로바이더는 프롬프트의 **접두사**를 캐시하고, 이전 호출과 처음 달라지는 토큰에서 재사용이 끊깁니다.
@@ -1421,7 +1422,7 @@ reason to finish early.
 
 **마지막 턴 안내 (v9.24.1)**: 턴 한도(`--max-turns`, 하위 에이전트는 부모 값 상속)가 있으면 턴 줄에 남은 턴 수가 붙고, 마지막 허용 턴에는 "이번이 마지막 턴이다, 새 작업 대신 complete 로 확인한 것·확인 못 한 것·열린 것·만들거나 바꾸거나 망가뜨린 파일을 보고하라"는 안내가 붙습니다. 한도에서 루프는 마무리 없이 멈추기 때문입니다 — Harbor 실측에서 60턴을 쓴 하위 에이전트가 마지막 턴에도 다음 실험을 계획했고, 부모는 명령 목록만 받아 "실험 중 `/app/mac.vim` 을 덮어썼다"는 사실까지 잃었습니다. 하위 에이전트에게는 "호출자는 complete 에 쓴 것만 받는다", 메인에게는 사용자를 대상으로 말합니다. 완성 안 된 결과를 과제 산출물에 쓰라는 게 아니라 **상태를 보고하라**는 안내입니다. 한도가 없으면(기본 0) 붙지 않습니다.
 
-**압축 경고**: 예산의 75%(`COMPACTION_WARN_RATIO`)를 넘으면 한 줄이 추가됩니다. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있어(=`_OBS_COMPLETE_NUDGE` 가 실측으로 방어했던 실패 유형), 문구는 "여유 없음"이 아니라 **"지금 memory 에 남겨라, 계속 진행하라"**는 행동 지시입니다. 그리고 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
+**압축 안내 (v9.26.4)**: 압축은 꼬리의 `context:` 줄이 100% 를 넘는 순간 돕니다. 안내는 **70·80·90% 를 처음 넘는 턴에 한 번씩**만 붙고(`COMPACTION_NOTICE_STEPS`), 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장됩니다. 종전(75% 이상 매 턴, "nearly full … must not lose … NOW")은 같은 경보가 턴마다 쌓여 모델이 지나치게 보수적으로 움직였습니다(사용자 보고). 문구는 결핍이 아니라 사실을 말합니다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 **대체**되고 작업은 그대로 이어진다, `memory` 는 원문 그대로 남기고 싶을 때의 선택지. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있다는 실측(`_OBS_COMPLETE_NUDGE`)은 그대로 유효하므로 "끝내지 마라" 류의 문장도 넣지 않습니다(역설적으로 끝낼 생각을 심음). 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
 
 ### 세션 & 컨텍스트 관리 시스템
 
