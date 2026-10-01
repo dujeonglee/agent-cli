@@ -277,3 +277,25 @@ class TestPromptExamples:
         tail = rules.split("Finishing the task:", 1)[1]
         t = wf.parse_turn(tail)
         assert t.ops and t.ops[-1].action == "complete" and t.parse_stage == 1
+
+
+@pytest.mark.parametrize("name", ["xml_fc", "glm_argkey"])
+def test_format_tokens_inside_values_are_text(name):
+    """v10.1.3: 태그 방언 공통 — 닫힌 파라미터 값 안의 포맷 토큰은 텍스트.
+    유령 op 없이, 값 그대로, 캐노니컬(stage 1)."""
+    wf = get(name)
+    value = (
+        f"example: {wf.spec.call_open}{wf.spec.name_wrap[0] if wf.spec.name_wrap else ''}"
+        "read_file"
+        + (wf.spec.name_wrap[1] if wf.spec.name_wrap else "\n")
+        + wf.spec.param_open_prefix
+        + "path"
+        + wf.spec.param_open_suffix
+        + "a"
+    )
+    t = wf.parse_turn(
+        _render(name, None, [("write_file", {"path": "x", "content": value})])
+    )
+    assert [o.action for o in t.ops] == ["write_file"], _ops(t)
+    assert t.ops[0].action_input == {"path": "x", "content": value}
+    assert t.parse_stage == 1

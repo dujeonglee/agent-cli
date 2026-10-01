@@ -838,12 +838,37 @@ class Dialect(DialectBase):
         qualified_starts = {m.start() for m in self._call_opens(body)}
         ops: list[Op] = []
         truncated_any = False
-        for i, fm in enumerate(name_opens):
-            seg_end = (
-                name_opens[i + 1].start() if i + 1 < len(name_opens) else len(body)
-            )
+        # v10.1.3: 닫힌 파라미터의 **값 안**에 있는 이름·파라미터 태그는 텍스트다.
+        # 종전엔 세그먼트를 다음 이름 태그에서 무조건 잘라, 값에 포맷 자체가
+        # 적힌 경우(문서·동료에게 보내는 형식 예시, 백틱·펜스 안이라도) 값이
+        # 잘리고 유령 op(`shell {}`)가 생겼다. 닫힌 파라미터를 이름 태그 직후부터
+        # 순차 소비한 뒤 그 뒤에서만 다음 이름 태그를 찾는다.
+        consumed_until = -1
+        n_name = 0
+        consumed: list[
+            tuple[int, int]
+        ] = []  # 닫힌 파라미터 값 영역 — 드리프트 계수 제외
+        for fm in name_opens:
+            if fm.start() < consumed_until:
+                continue  # 앞 호출의 닫힌 파라미터 값 안 — 텍스트
+            n_name += 1
             if fm.start() not in qualified_starts:
                 continue
+            cursor = fm.end()
+            while True:
+                nxt = cursor
+                while nxt < len(body) and body[nxt].isspace():
+                    nxt += 1
+                pm = t.param_closed.match(body, nxt)
+                if pm is None:
+                    break
+                cursor = pm.end()
+            consumed_until = cursor
+            if cursor > fm.end():
+                consumed.append((fm.end(), cursor))
+            seg_end = next(
+                (m.start() for m in name_opens if m.start() >= cursor), len(body)
+            )
             segment = body[fm.end() : seg_end]
             params, trunc = self._extract_params(segment)
             hybrid = False
@@ -863,12 +888,19 @@ class Dialect(DialectBase):
             ops.append(Op(action=name, action_input=params, truncated=trunc))
             truncated_any |= trunc or hybrid
 
-        n_name = len(name_opens)
-        n_co = len(t.call_open.findall(body))
-        n_cc = len(t.call_close.findall(body))
+        def _outside(pattern) -> int:
+            # 값 안의 래퍼·닫는 태그는 텍스트 — 드리프트 계수에서 뺀다 (v10.1.3)
+            return sum(
+                1
+                for m in pattern.finditer(body)
+                if not any(a <= m.start() < b for a, b in consumed)
+            )
+
+        n_co = _outside(t.call_open)
+        n_cc = _outside(t.call_close)
         drifted = n_co != n_name or n_co != n_cc
         if t.name_close is not None:
-            drifted |= len(t.name_close.findall(body)) != n_name
+            drifted |= _outside(t.name_close) != n_name
         return ops, drifted, truncated_any
 
     # ─── Degeneration / sanitize ────────────────────────────────
