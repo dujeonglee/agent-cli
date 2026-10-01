@@ -2,7 +2,7 @@
 
 Covers ``agent_cli/dialects/base.py`` (``ParsedAction`` + the
 ``DialectBase`` ABC and its concrete defaults) and the registry in
-``agent_cli/dialects/__init__.py``. Concrete plugins (``JsonFcFormat``
+``agent_cli/dialects/__init__.py``. Concrete dialects (``Dialect(JSON_FC)``
 etc.) are tested in their own files.
 
 A small mock subclass implements every abstract method but inherits the

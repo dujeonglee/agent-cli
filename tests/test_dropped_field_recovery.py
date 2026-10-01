@@ -30,7 +30,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.dialects import get
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -59,13 +60,16 @@ def _complete(result: str) -> str:
     return f'done\n\n[{{"action": "complete", "result": "{result}"}}]'
 
 
-class _StrictJson(JsonFcFormat):
-    """Synthetic plugin pinning the True branch of ``action_required``. The
-    shipped plugins are False, so without this the recovery path for a
+class _StrictJson(Dialect):
+    """Synthetic dialect pinning the True branch of ``action_required``. The
+    shipped specs are False, so without this the recovery path for a
     *required* action would be untested. parse 는 상속 — loop 의
     플래그-게이트 분기만 다르다."""
 
     action_required = True
+
+    def __init__(self):
+        super().__init__(JSON_FC)
 
 
 # ── 1. Parser preserves action_input across dropped-action shapes ──
@@ -169,7 +173,7 @@ class TestActionRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            dialect=JsonFcFormat(),
+            dialect=Dialect(JSON_FC),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_ACTION retry (infer can't help)
@@ -217,7 +221,7 @@ class TestMissingThoughtIsTolerated:
             provider=provider,
             capabilities=caps,
             model="m",
-            dialect=JsonFcFormat(),
+            dialect=Dialect(JSON_FC),
         )
         assert result.success
         assert target.exists()  # ran despite missing thought

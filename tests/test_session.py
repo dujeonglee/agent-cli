@@ -299,11 +299,12 @@ class TestRecentExchanges:
         system-injected prefixes from a dialect plugin extend that
         list automatically."""
         from agent_cli.constants import INTERRUPT_NOTICE
-        from agent_cli.dialects.json_fc import JsonFcFormat
+        from agent_cli.dialects.engine import Dialect
+        from agent_cli.dialects.specs.json_fc import JSON_FC
 
         # Use the plugin's static fallback messages directly so the
         # test exercises the actual production retry-hint strings.
-        react = JsonFcFormat()
+        react = Dialect(JSON_FC)
         retry_no_json = react.static_retry_hint_no_json()
         retry_no_action = react.static_retry_hint_no_action()
 

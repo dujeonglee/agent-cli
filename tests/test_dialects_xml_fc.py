@@ -8,13 +8,14 @@ D4: thought = 첫 <tool_call> 앞 자유 산문 (<think> 는 stage 0 격리).
 import pytest
 
 from agent_cli.dialects import get as get_wf
-from agent_cli.dialects.xml_fc import XmlFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.xml_fc import XML_FC
 from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
 def wf():
-    return XmlFcFormat()
+    return Dialect(XML_FC)
 
 
 def _call(tool: str, params: dict) -> str:

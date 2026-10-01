@@ -11,7 +11,7 @@ JSON **중첩 레이어**(배치-중첩 27B 90% 파괴 전례)였고, 이 변형
 phase2.py 가 import 하면 registry 에 등록되어 ``BAKEOFF_PLUGINS=json_fc_fenced``
 로 선택 가능해진다.
 
-A/B 격리 원칙: JsonFcFormat 서브클래스로 **펜스만** 변수로 만든다 — body(flat
+A/B 격리 원칙: json_fc 스펙을 쓰는 Dialect 서브클래스로 **펜스만** 변수로 만든다 — body(flat
 op 배열)·JSON 수리 기계·recovery 의미론은 전부 상속. 규칙 텍스트도 펜스 관련
 문장만 다르고 배칭 지시는 자구까지 동일하게 유지한다(compact A/B 의 교훈:
 프롬프트의 다른 차이가 배칭 행동을 오염시킨다).
@@ -28,7 +28,8 @@ import re
 
 from agent_cli.dialects import register
 from agent_cli.dialects.base import ParsedTurn
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 
 _TC_BLOCK = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
 _TC_OPEN_ONLY = re.compile(r"<tool_call>\s*", re.IGNORECASE)
@@ -91,8 +92,11 @@ The login() function is implemented and the tests pass.
 </tool_call>"""
 
 
-class JsonFcFencedFormat(JsonFcFormat):
-    name = "json_fc_fenced"
+class JsonFcFencedFormat(Dialect):
+    name = "json_fc_fenced"  # 클래스 속성이 spec.name 을 이긴다 (엔진 규칙)
+
+    def __init__(self):
+        super().__init__(JSON_FC)
 
     def format_rules(self) -> str:
         return _FORMAT_RULES

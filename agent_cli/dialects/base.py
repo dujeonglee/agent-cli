@@ -50,7 +50,7 @@ automatically — ``serialize`` calls ``self.parse()``(기본 = parse_turn 의
 ``self.render_full_example()`` to re-emit the wire shape from the stored
 record.
 
-See ``agent_cli/dialects/json_fc.py`` for the reference implementation.
+See ``agent_cli/dialects/specs/json_fc.py`` (spec) + ``engine.py`` for the reference implementation.
 """
 
 from __future__ import annotations

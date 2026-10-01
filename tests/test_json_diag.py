@@ -9,8 +9,9 @@ broken input, and the ``format_no_json_retry`` embedding.
 
 import json
 
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
 from agent_cli.dialects.recovery.json import describe_json_error
+from agent_cli.dialects.specs.json_fc import JSON_FC
 from agent_cli.recovery.dialect_recovery import format_no_json_retry
 
 
@@ -71,26 +72,29 @@ class TestDescribeJsonError:
 class TestFormatDiagnose:
     def test_json_fc_diagnoses_headerless_broken_array(self):
         bad = 'reasoning prose\n\n[{"action":"shell","command":"ls"}'
-        out = JsonFcFormat().diagnose_syntax_error(bad)
+        out = Dialect(JSON_FC).diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
     def test_json_fc_valid_returns_none(self):
         ok = 'x\n\n[{"action":"shell","command":"ls"}]'
-        assert JsonFcFormat().diagnose_syntax_error(ok) is None
+        assert Dialect(JSON_FC).diagnose_syntax_error(ok) is None
 
     def test_json_fc_diagnoses_broken_action_body(self):
         bad = 'reasoning\n\n[{"action":"shell","command":"ls"}'
-        out = JsonFcFormat().diagnose_syntax_error(bad)
+        out = Dialect(JSON_FC).diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
     def test_json_fc_legacy_header_valid_returns_none(self):
         ok = 'r\n\n[{"action":"shell","command":"ls"}]'
-        assert JsonFcFormat().diagnose_syntax_error(ok) is None
+        assert Dialect(JSON_FC).diagnose_syntax_error(ok) is None
 
     def test_base_default_returns_none(self):
         # a format that does not implement diagnosis falls back to None,
         # so the generic hint path is used unchanged
-        class _Bare(JsonFcFormat):
+        class _Bare(Dialect):
+            def __init__(self):
+                super().__init__(JSON_FC)
+
             def diagnose_syntax_error(self, prior_content):  # seam default
                 return None
 
@@ -103,8 +107,8 @@ class TestCrossFormatParity:
         # location, not one silently returning None
         react_in = '{"thought":"t","action":"shell","action_input":{"command":"ls"'
         md_in = 't\n\n[{"action":"shell","command":"ls"'
-        r = JsonFcFormat().diagnose_syntax_error(react_in)
-        m = JsonFcFormat().diagnose_syntax_error(md_in)
+        r = Dialect(JSON_FC).diagnose_syntax_error(react_in)
+        m = Dialect(JSON_FC).diagnose_syntax_error(md_in)
         assert r is not None and "^" in r
         assert m is not None and "^" in m
 
@@ -113,7 +117,7 @@ class TestNoJsonRetryEmbedding:
     def test_syntax_error_embedded_after_framing(self):
         intv = format_no_json_retry(
             prior_content='{"a": 1 "b": 2}',
-            dialect=JsonFcFormat(),
+            dialect=Dialect(JSON_FC),
             syntax_error='Expecting \',\' delimiter (line 1, column 9)\n    {"a": 1 "b"\n           ^',
         )
         # framing still leads (existing prefix-skip relies on it)
@@ -126,9 +130,11 @@ class TestNoJsonRetryEmbedding:
 
     def test_no_syntax_error_is_bit_for_bit_unchanged(self):
         # omitting syntax_error reproduces the legacy message exactly
-        base = format_no_json_retry(prior_content="some drift", dialect=JsonFcFormat())
+        base = format_no_json_retry(
+            prior_content="some drift", dialect=Dialect(JSON_FC)
+        )
         explicit_none = format_no_json_retry(
-            prior_content="some drift", dialect=JsonFcFormat(), syntax_error=None
+            prior_content="some drift", dialect=Dialect(JSON_FC), syntax_error=None
         )
         assert base.message == explicit_none.message
         assert base.primitives == explicit_none.primitives

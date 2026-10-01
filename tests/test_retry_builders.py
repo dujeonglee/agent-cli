@@ -15,7 +15,8 @@ returned Intervention has the static message and no primitives).
 """
 
 from agent_cli.dialects import all_system_user_prefixes
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.dialect_recovery import (
     format_no_action_retry,
@@ -25,7 +26,7 @@ from agent_cli.recovery.intervention import Intervention
 
 # Static fallbacks live on the wire plugin (Step 7 cleanup) — v7.0.0
 # react 제거 후 기본 플러그인(json_fc) 기준으로 비교.
-_WF = JsonFcFormat()
+_WF = Dialect(JSON_FC)
 RETRY_HINT_NO_JSON = _WF.static_retry_hint_no_json()
 RETRY_HINT_NO_ACTION = _WF.static_retry_hint_no_action()
 SYSTEM_USER_PREFIXES = all_system_user_prefixes()

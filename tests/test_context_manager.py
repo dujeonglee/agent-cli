@@ -538,10 +538,8 @@ class TestDialectAttachment:
     """
 
     def test_default_falls_back_to_json_fc(self, session_dir):
-        from agent_cli.dialects.json_fc import JsonFcFormat
-
         ctx = ContextManager(session_dir, max_context_tokens=1000)
-        assert isinstance(ctx.dialect, JsonFcFormat)
+        assert ctx.dialect.name == "json_fc"
 
     def test_explicit_dialect_is_kept(self, session_dir):
         from agent_cli.dialects import get as get_dialect

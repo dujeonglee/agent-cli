@@ -9,12 +9,13 @@ the 73 other op turns in a real json_fc session.
 """
 
 from agent_cli.dialects.base import DialectBase
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 
 
 class TestTerminalSerialize:
     def test_json_fc_uses_ops_shape(self):
-        rec = JsonFcFormat().serialize_terminal_for_history("done", "the answer")
+        rec = Dialect(JSON_FC).serialize_terminal_for_history("done", "the answer")
         assert rec["role"] == "assistant"
         assert rec["thought"] == "done"
         assert "action" not in rec  # NOT the singular shape
@@ -23,9 +24,10 @@ class TestTerminalSerialize:
         ]
 
     def test_xml_fc_uses_ops_shape(self):
-        from agent_cli.dialects.xml_fc import XmlFcFormat
+        from agent_cli.dialects.engine import Dialect
+        from agent_cli.dialects.specs.xml_fc import XML_FC
 
-        rec = XmlFcFormat().serialize_terminal_for_history("done", "the answer")
+        rec = Dialect(XML_FC).serialize_terminal_for_history("done", "the answer")
         assert "action" not in rec
         assert rec["ops"] == [
             {"action": "complete", "action_input": {"result": "the answer"}}
@@ -33,10 +35,11 @@ class TestTerminalSerialize:
 
     def test_json_fc_and_xml_fc_parity(self):
         # both shipped formats store a terminal turn identically
-        from agent_cli.dialects.xml_fc import XmlFcFormat
+        from agent_cli.dialects.engine import Dialect
+        from agent_cli.dialects.specs.xml_fc import XML_FC
 
-        a = JsonFcFormat().serialize_terminal_for_history("t", "r")
-        b = XmlFcFormat().serialize_terminal_for_history("t", "r")
+        a = Dialect(JSON_FC).serialize_terminal_for_history("t", "r")
+        b = Dialect(XML_FC).serialize_terminal_for_history("t", "r")
         assert a == b
 
     def test_base_default_is_singular(self):
@@ -84,7 +87,7 @@ class TestTerminalSerialize:
     def test_round_trips_through_render(self):
         # the stored terminal record renders to the format's wire prior, same
         # as any other op turn (resume consistency)
-        fmt = JsonFcFormat()
+        fmt = Dialect(JSON_FC)
         rec = fmt.serialize_terminal_for_history("all done", "final result text")
         content = fmt.render_assistant_from_history(rec)["content"]
         assert content.startswith("all done\n\n[")  # PHASE4: 헤더 없는 캐노니컬

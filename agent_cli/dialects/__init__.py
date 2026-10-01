@@ -41,7 +41,7 @@ def register(dialect: DialectBase) -> None:
 
     Plugins call this at the bottom of their module:
 
-        register(JsonFcFormat())
+        register(Dialect(JSON_FC))
     """
     name = dialect.name
     existing = _registry.get(name)
@@ -232,13 +232,14 @@ __all__ = [
 # defined when the plugin module is loaded.
 def _register_builtin_plugins() -> None:
     from agent_cli.dialects.engine import Dialect
-    from agent_cli.dialects.json_fc import JsonFcFormat
     from agent_cli.dialects.specs.glm_argkey import GLM_ARGKEY
     from agent_cli.dialects.specs.hermes_json import HERMES_JSON
-    from agent_cli.dialects.xml_fc import XmlFcFormat
+    from agent_cli.dialects.specs.json_fc import JSON_FC
+    from agent_cli.dialects.specs.xml_fc import XML_FC
 
-    register(JsonFcFormat())  # default — md_array 후계 (PHASE4, bakeoff 게이트 통과)
-    register(XmlFcFormat())  # 태그-파라미터 (dialects PHASE2)
+    # 방언은 스펙 하나 — 넷 다 같은 엔진 (v10.0.1 에서 json_fc/xml_fc 껍데기 클래스 삭제)
+    register(Dialect(JSON_FC))  # default — md_array 후계 (PHASE4, bakeoff 게이트 통과)
+    register(Dialect(XML_FC))  # 태그-파라미터 (dialects PHASE2)
     # Phase 5 S4 — 스펙만으로 추가된 방언 (실모델 미검증, PHASE5 D3)
     register(
         Dialect(HERMES_JSON)

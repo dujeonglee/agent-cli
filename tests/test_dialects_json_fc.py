@@ -9,13 +9,14 @@ md_array 의 후계: 헤더 envelope 제거 (D7=bare 배열, 래퍼 기각). 캐
 import pytest
 
 from agent_cli.dialects import get as get_wf
-from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
 def wf():
-    return JsonFcFormat()
+    return Dialect(JSON_FC)
 
 
 class TestRegistrationAndFlags:
