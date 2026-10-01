@@ -1,10 +1,10 @@
-"""등가성 코퍼스 빌더 (Phase 5 — docs/multi-wire-format/PHASE5.md §3.5·§7).
+"""등가성 코퍼스 빌더 (Phase 5 — docs/dialects/PHASE5.md §3.5·§7).
 
 세 출처를 ``tests/equivalence/corpus/*.jsonl`` 로 고정한다 (한 줄 = ``{format,
 text, source}``, (format, text) 중복 제거):
 
 1. ``--histories DIR…``: 세션 디렉토리들의 ``history.jsonl`` assistant 레코드를
-   **세션이 기록한 포맷**(``session.jsonl`` ``_meta.response_format``)으로 다시
+   **세션이 기록한 포맷**(``session.jsonl`` ``_meta.dialect``)으로 다시
    렌더한 캐노니컬 입력 — 라이브 모델이 실제로 낸 호출 모양.
 2. ``--parse-inputs FILE``: ``AGENT_CLI_EQUIV_RECORD`` 로 스위트를 돌려 모은
    ``parse_turn`` 입력 — 손으로 만든 드리프트·변종·절단.
@@ -34,13 +34,13 @@ MD_ARRAY_MARKER = "## Action"  # 결정 1: md_array 헤더 관용은 버린다 �
 def _session_format(sdir: Path) -> str | None:
     try:
         first = (sdir / "session.jsonl").open(encoding="utf-8").readline()
-        return json.loads(first).get("_meta", {}).get("response_format")
+        return json.loads(first).get("_meta", {}).get("dialect")
     except (OSError, json.JSONDecodeError, AttributeError):
         return None
 
 
 def from_histories(dirs: list[str]):
-    from agent_cli import wire_formats as wf
+    from agent_cli import dialects as wf
 
     for pat in dirs:
         for d in glob.glob(pat):

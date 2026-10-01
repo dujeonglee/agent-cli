@@ -66,10 +66,10 @@ OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 # These get persisted as role=user in history.jsonl but are NOT actual
 # user queries — they're loop-emitted notifications/hints.
 #
-# Per-format retry hints (parse-fail, no-action) live on the wire-format
+# Per-format retry hints (parse-fail, no-action) live on the dialect
 # plugin: ``ReActFormat.static_retry_hint_no_*()``. The unified prefix
 # list for filtering system messages out of resume previews lives at
-# ``agent_cli.wire_formats.all_system_user_prefixes()``.
+# ``agent_cli.dialects.all_system_user_prefixes()``.
 INTERRUPT_NOTICE = "⚡ User interrupted. Waiting for new instructions."
 
 

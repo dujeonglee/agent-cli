@@ -3,7 +3,7 @@
 프로바이더 self-register (v8.41.0, 리뷰 §4.2): 종전엔 프로바이더 추가 시
 ``create_provider`` 분기 + ``capabilities._detect_runtime_capabilities``
 분기 등 여러 곳을 동기 수정해야 했다. 이제 각 프로바이더 모듈이 import
-시점에 :func:`register_provider` 로 스스로 등록하고 (wire_formats 의
+시점에 :func:`register_provider` 로 스스로 등록하고 (dialects 의
 register 와 동형 패턴), capability 프로브 transport 도 프로바이더 클래스가
 ``capability_transport`` 훅으로 소유한다 — **프로바이더 추가 = 모듈 1개
 + 내장 목록(_BUILTIN_MODULES) 1줄**.

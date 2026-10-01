@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.engine import Dialect
-from agent_cli.wire_formats.specs.json_fc import JSON_FC
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.json_fc import JSON_FC
 
 
 class JsonFcFormat(Dialect):

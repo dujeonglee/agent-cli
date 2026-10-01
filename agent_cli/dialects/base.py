@@ -1,6 +1,6 @@
-"""Wire format plugin base class and shared types.
+"""Dialect plugin base class and shared types.
 
-A "wire format" is the on-the-wire shape of a single LLM response — what
+A "dialect" is the on-the-wire shape of a single LLM response — what
 the model is asked to emit, what the parser reads, and what the recovery
 layer shows the model when something goes wrong. The bundle is hot-
 swappable so new format experiments live in their own module and can be
@@ -50,7 +50,7 @@ automatically — ``serialize`` calls ``self.parse()``(기본 = parse_turn 의
 ``self.render_full_example()`` to re-emit the wire shape from the stored
 record.
 
-See ``agent_cli/wire_formats/json_fc.py`` for the reference implementation.
+See ``agent_cli/dialects/json_fc.py`` for the reference implementation.
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ class Op:
     """One tool invocation within a turn — the per-op unit of a ``ParsedTurn``.
 
     Mirrors the action-carrying fields of :class:`ParsedAction`. A
-    single-action wire format (하나도 내장돼 있지 않음 — 미래 플러그인용 기본) yields a turn with exactly
+    single-action dialect (하나도 내장돼 있지 않음 — 미래 플러그인용 기본) yields a turn with exactly
     one ``Op``; a multi-op format yields several.
     """
 
@@ -135,7 +135,7 @@ class ParsedTurn:
     formats never set it (they complete via a ``complete`` op), so it is
     ``False`` for them and the loop's behaviour is unchanged.
 
-    :meth:`WireFormat.parse_turn` (abstract, v8.41.0 — 루프의 1차 경계) 가
+    :meth:`DialectBase.parse_turn` (abstract, v8.41.0 — 루프의 1차 경계) 가
     이 shape 을 반환한다; a plugin opts into multi-op
     only by overriding ``parse_turn``; ``parse`` (and the history round-trip
     built on it) is untouched.
@@ -153,13 +153,13 @@ class ParsedTurn:
 
 
 #: Shared opening of the NO_ACTION intervention (see
-#: ``WireFormat.failure_framing_no_action``). Public so formats list it in
+#: ``DialectBase.failure_framing_no_action``). Public so formats list it in
 #: ``system_user_prefixes``.
 NO_ACTION_FRAMING = "Your response had no usable tool call"
 
 
-class WireFormat(ABC):
-    """Plugin base class for one wire format.
+class DialectBase(ABC):
+    """Plugin base class for one dialect.
 
     Plugins inherit from this class and override the abstract methods
     that define their wire shape. Concrete defaults handle the common
@@ -180,7 +180,7 @@ class WireFormat(ABC):
     """
 
     name: str
-    """Short identifier used by the CLI ``--response-format`` option and
+    """Short identifier used by the CLI ``--dialect`` option and
     the registry. Convention: lowercase, ``[a-z0-9_-]``."""
 
     action_required: bool = True
@@ -384,7 +384,7 @@ class WireFormat(ABC):
     def constraint_reminder_call(self) -> str:
         """One-sentence reminder of the required tool call shape.
 
-        Embedded by ``recovery.wf_recovery.format_no_json_retry`` as
+        Embedded by ``recovery.dialect_recovery.format_no_json_retry`` as
         the "Honor that. <reminder>." tail of the intervention message.
         Should describe the envelope and the inner JSON fields the
         parser expects.
@@ -396,7 +396,7 @@ class WireFormat(ABC):
 
         Should present BOTH paths the model can take:
         invoke a tool *or* call ``complete``. Embedded by
-        ``recovery.wf_recovery.format_no_action_retry``.
+        ``recovery.dialect_recovery.format_no_action_retry``.
         """
 
     @abstractmethod
@@ -448,8 +448,8 @@ class WireFormat(ABC):
         JSON (or chooses not to diagnose) keeps the generic NO_JSON hint
         unchanged. JSON-bearing formats override to extract their JSON
         candidate (format-specific) and hand it to
-        ``wire_formats.recovery.json.describe_json_error`` (the shared pure
-        formatter). Consumed by ``recovery.wf_recovery.format_no_json_retry``
+        ``dialects.recovery.json.describe_json_error`` (the shared pure
+        formatter). Consumed by ``recovery.dialect_recovery.format_no_json_retry``
         via the loop's parse-fail recovery.
         """
         return None
@@ -467,7 +467,7 @@ class WireFormat(ABC):
         plugin's recovery (``failure_framing_*``, ``static_retry_hint_*``).
         Format-agnostic prefixes (``"You have called"``, etc. for B1
         action-loop interventions) live in
-        ``wire_formats._FORMAT_AGNOSTIC_USER_PREFIXES`` and are unioned
+        ``dialects._FORMAT_AGNOSTIC_USER_PREFIXES`` and are unioned
         with this list at consume time.
         """
 
@@ -488,7 +488,7 @@ class WireFormat(ABC):
     def render_action_input(self, action_input: dict) -> str:
         """Render an action_input dict in this format's inner shape.
 
-        The wire format owns serialization. ReAct and tag-wrapped
+        The dialect owns serialization. ReAct and tag-wrapped
         formats all nest action_input as a JSON object, so
         the default serializes with ``json.dumps``. A plugin whose inner
         shape is not JSON (e.g. XML attribute encoding, key:value lines)
@@ -537,7 +537,7 @@ class WireFormat(ABC):
         When non-empty, the loop appends
         ``{"role":"assistant","content":<prefill>}`` as the last message
         before the LLM call. The provider treats this as "continue from
-        here," forcing the wire format from the first generated token.
+        here," forcing the dialect from the first generated token.
         The loop prepends the prefill to the response so downstream
         parsers see a complete emission.
         """

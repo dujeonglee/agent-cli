@@ -376,7 +376,7 @@ class TestStallCliFlags:
         노브 적용뿐이다."""
         from agent_cli.main import _build_context
 
-        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        boot = MagicMock(max_context_tokens=100_000, dialect=None)
         with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
             return _build_context(MagicMock(), boot, **kw)
 
@@ -743,7 +743,7 @@ class TestBootKnobFlags:
         from agent_cli.main import _build_context
 
         monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
-        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        boot = MagicMock(max_context_tokens=100_000, dialect=None)
         with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
             ctx = _build_context(MagicMock(), boot, compaction_ratio=0.9)
         assert ctx.compaction_ratio == pytest.approx(0.9)
@@ -752,7 +752,7 @@ class TestBootKnobFlags:
         from agent_cli.main import _build_context
 
         monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
-        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        boot = MagicMock(max_context_tokens=100_000, dialect=None)
         with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
             ctx = _build_context(MagicMock(), boot)
         assert ctx.compaction_ratio == pytest.approx(0.6)
@@ -767,7 +767,7 @@ class TestBootKnobFlags:
             "AGENT_CLI_STREAM_MAX_ATTEMPTS",
         ):
             monkeypatch.delenv(k, raising=False)
-        boot = MagicMock(max_context_tokens=100_000, wire_format=None)
+        boot = MagicMock(max_context_tokens=100_000, dialect=None)
         with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
             ctx = _build_context(
                 MagicMock(),

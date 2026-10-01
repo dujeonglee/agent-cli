@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.dialects import get
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     allows_extra_keys,
@@ -22,7 +23,6 @@ from agent_cli.tools.registry import (
     flat_param_schemas,
 )
 from agent_cli.tools.virtual import AskTool
-from agent_cli.wire_formats import get
 
 HERE = Path(__file__).parent
 CORPUS = HERE / "corpus"

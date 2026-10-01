@@ -1,4 +1,4 @@
-# 멀티 wire-format — Phase 5: 파서를 코드에서 데이터로 (스펙 + 엔진) · `dialects` 로 개명 (DESIGN)
+# 멀티 dialect — Phase 5: 파서를 코드에서 데이터로 (스펙 + 엔진) · `dialects` 로 개명 (DESIGN)
 
 > 상태: **승인 — 구현 진행 중** (2026-10-01). 결정: D1 이름 `dialects` · D2 기본 `json_fc` 유지 · D3 새 스펙은 파서·문법 테스트만("실모델 미검증" 표시) · D4 태그 구제 유지(`recovery/tagged`) · D5 v10.0.0 한 번에 · D6 PR + CI 후 일반 머지
 > 선행: [DESIGN.md](DESIGN.md) P1~P3 바인딩·해석 체인·foreign 구제, [PHASE2.md](PHASE2.md) xml_fc·bakeoff,
@@ -50,7 +50,7 @@ llama.cpp 는 모델별 파서를 전부 걷어내고 Jinja 템플릿 차분 분
 
 ## 3. 현재 배관 (실측, 2026-10-01 main)
 
-### 3.1 `WireFormat` ABC 표면 (`base.py` 668줄)
+### 3.1 `DialectBase` ABC 표면 (`base.py` 668줄)
 
 | 묶음 | 멤버 | 스펙에서 유도되나 |
 |---|---|---|
@@ -80,9 +80,9 @@ llama.cpp 는 모델별 파서를 전부 걷어내고 Jinja 템플릿 차분 분
 ### 3.3 레지스트리·해석·구제 (`__init__.py` 245줄, `dispatch.py`)
 
 - `register(instance)` 이름 충돌 fail-loud, `get(name)`, `list_names()`,
-  `DEFAULT_WIRE_FORMAT = "json_fc"`.
-- `resolve_wire_format(explicit, session_format, model)`: `--response-format` > resume
-  세션 메타 `response_format` > `models.json` 엔트리 `wire_format` > 기본.
+  `DEFAULT_DIALECT = "json_fc"`.
+- `resolve_dialect(explicit, session_format, model)`: `--dialect` > resume
+  세션 메타 `dialect` > `models.json` 엔트리 `dialect` > 기본.
 - `try_foreign_parse(bound, text)`: 바인딩이 0-op 일 때 등록된 다른 포맷을 **기본 먼저,
   이름순**으로 시도, `parse_stage ∈ {1,2}` + action-보유 op 면 채택 →
   dispatch 가 `corrected_record` 로 바인딩 포맷 캐노니컬 shape 재렌더.
@@ -92,10 +92,10 @@ llama.cpp 는 모델별 파서를 전부 걷어내고 Jinja 템플릿 차분 분
 
 | 접점 | 위치 | 비고 |
 |---|---|---|
-| CLI `--response-format` | `main.py:1283, 2089` | 해석 체인 최우선 |
-| 세션 메타 `response_format` | `context/session.py:55,71`, `main.py:1345,1890` | resume 근거 — **영구 읽기 호환 필요** |
-| `models.json` 키 `wire_format` | `config.py:126`(손 추가 키 보존), `wire_format_for_model` | agent-board admin 드롭다운이 씀 |
-| agent-board | `admin.py:245 list_wire_format_names` → `from agent_cli.wire_formats import list_names`; `app.py:490 view["wire_formats"]`; README | import 경로가 계약 |
+| CLI `--dialect` | `main.py:1283, 2089` | 해석 체인 최우선 |
+| 세션 메타 `dialect` | `context/session.py:55,71`, `main.py:1345,1890` | resume 근거 — **영구 읽기 호환 필요** |
+| `models.json` 키 `dialect` | `config.py:126`(손 추가 키 보존), `dialect_for_model` | agent-board admin 드롭다운이 씀 |
+| agent-board | `admin.py:245 list_dialect_names` → `from agent_cli.dialects import list_names`; `app.py:490 view["dialects"]`; README | import 경로가 계약 |
 | 테스트 | `xml_fc`/`json_fc` 참조 39파일, `parse_turn` 직접 호출 11파일, 스냅샷 `tests/snapshots/tools_section_json_fc.txt` | 산문 바이트 동일이면 무변경 |
 
 ### 3.5 재생 코퍼스
@@ -124,7 +124,7 @@ class NameSlot(Enum):
 
 @dataclass(frozen=True)
 class DialectSpec:
-    name: str                                   # 레지스트리 이름 (= 옛 wire_format 이름)
+    name: str                                   # 레지스트리 이름 (= 옛 dialect 이름)
     # ── 네 축 ──
     section: tuple[str, str] | None = None      # 섹션 래퍼 (MiniMax 류). 없으면 호출이 곧 단위
     call: tuple[str, str] | None                # 호출 단위 (xml/hermes/glm: <tool_call>…</tool_call>; json_native: None)
@@ -182,7 +182,7 @@ json_fc       [{"action": "read_file", "path": "src/main.c"}]            (한 �
 멀티-op(사고 1개 + 호출 여러 개)는 네 스펙 모두 **기본형**: 호출 단위 반복(태그 셋) 또는
 배열 원소 반복(json_fc). 문법은 `call_sequence_rules` 공용(종결 op 마지막).
 
-### 4.3 엔진 `Dialect(WireFormat)` — 파이프라인
+### 4.3 엔진 `Dialect(DialectBase)` — 파이프라인
 
 ```
 parse_turn(text)
@@ -285,7 +285,7 @@ ABC 기본 구현(`parse` + `render_full_example`)을 그대로 쓴다. 두 포�
 
 - `specs/*.py` 가 `DialectSpec` 인스턴스를 정의하고 `register(Dialect(spec))` — 자동 등록
   방식은 지금과 같다(`_register_builtin_plugins`).
-- `resolve_wire_format` → `resolve_dialect`(동작 동일). `try_foreign_parse` 는 무변경 —
+- `resolve_dialect` → `resolve_dialect`(동작 동일). `try_foreign_parse` 는 무변경 —
   등록 스펙이 넷이 되면 구제 폭이 저절로 넓어진다(순서: 기본 먼저, 이름순).
 - 바인딩 기본값 제안(models.json 자동 저장 대상 아님, 문서로): Qwen3-Coder/3.5+/Nemotron 3/
   Granite 4.2 → `xml_fc`, Qwen2.5/3/Next·Hermes·Granite 4.0/4.1 → `hermes_json`, GLM → `glm_argkey`.
@@ -301,9 +301,9 @@ ABC 기본 구현(`parse` + `render_full_example`)을 그대로 쓴다. 두 포�
 ## 5. 파일 배치 (브랜치 `dialects`, 최종)
 
 ```
-agent_cli/dialects/                ← 옛 wire_formats/
+agent_cli/dialects/                ← 옛 dialects/
   __init__.py        register/get/list_names/resolve_dialect/try_foreign_parse/all_system_user_prefixes (+ 호환 별칭)
-  base.py            WireFormat ABC → Dialect ABC 로 이름만 (내용 동일)
+  base.py            DialectBase ABC → Dialect ABC 로 이름만 (내용 동일)
   spec.py            DialectSpec, ArgStyle, NameSlot, Lenient, Prose
   engine.py          Dialect(spec): render / parse / grammar / prose / history
   recovery/          §4.4 — __init__.py(공용 앞단) · json.py · tagged.py
@@ -311,20 +311,20 @@ agent_cli/dialects/                ← 옛 wire_formats/
   specs/
     __init__.py      네 스펙 import → register
     json_fc.py  xml_fc.py  hermes_json.py  glm_argkey.py
-agent_cli/wire_formats/__init__.py ← 한 주버전 동안 남기는 shim: from agent_cli.dialects import *  (agent-board import 호환)
+agent_cli/dialects/__init__.py ← 한 주버전 동안 남기는 shim: from agent_cli.dialects import *  (agent-board import 호환)
 ```
 
-## 6. 개명 `wire_formats` → `dialects` 와 호환층
+## 6. 개명 `dialects` → `dialects` 와 호환층
 
 | 계약 | 신 | 호환 |
 |---|---|---|
-| 패키지 | `agent_cli.dialects` | `agent_cli.wire_formats` shim(재수출 + DeprecationWarning), v11 에서 제거 |
-| CLI | `--dialect NAME` | `--response-format` 숨은 별칭(동작 동일), v11 에서 제거 |
-| models.json | `dialect` | 읽기: `dialect` 우선, 없으면 `wire_format`; 자동 저장은 새 키. 보드 admin 드롭다운은 `list_names` 그대로 |
+| 패키지 | `agent_cli.dialects` | `agent_cli.dialects` shim(재수출 + DeprecationWarning), v11 에서 제거 |
+| CLI | `--dialect NAME` | `--dialect` 숨은 별칭(동작 동일), v11 에서 제거 |
+| models.json | `dialect` | 읽기: `dialect` 우선, 없으면 `dialect`; 자동 저장은 새 키. 보드 admin 드롭다운은 `list_names` 그대로 |
 | 세션 메타 | `dialect` | 읽기: 둘 다 **영구**(옛 세션 resume). 쓰기: 새 키 |
-| 클래스 | `Dialect`, `DialectSpec` | `WireFormat = Dialect` 별칭(shim) |
-| 내부 변수명 `wire_format` (656곳/73파일) | `dialect` | 기계 치환 — 등가성 합격 **뒤** 별도 커밋 |
-| 문서 | README·ARCHITECTURE·docs/multi-wire-format → `docs/dialects/` 로 이동, 옛 경로는 포인터 | |
+| 클래스 | 프로토콜(ABC) `DialectBase`, 엔진 `Dialect(spec)`, `DialectSpec` | `WireFormat = DialectBase` 별칭(shim). S6 결정: 엔진이 이미 `Dialect` 였고(S2~S5 코드·테스트·문서가 그 이름) 모든 등록 인스턴스가 엔진이므로, ABC 쪽을 `DialectBase` 로 둔다 |
+| 내부 변수명 `dialect` (656곳/73파일) | `dialect` | 기계 치환 — 등가성 합격 **뒤** 별도 커밋 |
+| 문서 | README·ARCHITECTURE·docs/dialects → `docs/dialects/` 로 이동, 옛 경로는 포인터 | |
 
 semver: 패키지 이름·CLI 플래그·models.json 키가 바뀌므로 **MAJOR v10.0.0**(별칭을 깔아도
 공개 계약의 정식 이름이 바뀐다). agent-board 는 shim 덕에 무수정이지만 `list_names` import
@@ -356,7 +356,7 @@ semver: 패키지 이름·CLI 플래그·models.json 키가 바뀌므로 **MAJOR
 | S3 ✅ | `specs/json_fc.py`(md_array 관용 삭제 포함); 옛 `json_fc.py` → `_legacy/` | 합격선 1·2·3 (json_fc) — 코퍼스 619건(테스트 382 + history 237) 바이트 동일, 문법·산문·history·진단 동일. S3a 에서 테스트의 헤더 모양 가짜 응답 30여 곳을 캐노니컬로 옮기고 헤더 전용 케이스 7개 삭제 |
 | S4 ✅ | `specs/hermes_json.py`, `specs/glm_argkey.py` + 표 기반 파서·문법·foreign 구제 테스트 | D3 = 실모델 미검증 표시. 엔진 일반화(BODY_HEAD·TAGGED_PAIR·JSON_IN_TAG) 뒤에도 xml/json 등가성 유지. 표 테스트 `tests/dialects/test_spec_table.py`(네 방언 공통 왕복 + 방언별 변종 + 교차 foreign 구제), 문법 감사 `tests/dialects/test_grammar_accept_specs.py`(캐노니컬·사고 열림·종결 마지막·빈 통신값·마스크 비용). 발견: hermes 문법은 인자 객체 첫 멤버 앞에 쉼표가 없어 공용 `tool_params_expr` 를 못 써 **필수 enum 강제가 없음**(검증기 담당); bare JSON 배열은 태그 방언 문법에서 산문(막으면 EOS 마스킹) |
 | S5 ✅ | `_legacy/` 삭제, 등가성 하네스는 코퍼스 고정본으로 전환(`tests/equivalence/expected/`) | 합격선 4 — 라이브 bakeoff A(옛 코드 main df2973f) vs B(새 엔진), Qwen3.8-Flash-Next 7태스크×3런×2포맷: 완주 100%/100%, pf 0/0, rec json 0.08→0.12 · xml 0.46→0.33(잡음 범위; B 의 json 3건은 모의 도구의 고정 관찰에 모델이 "도구 고장" 으로 반응한 것과 Claude 식 `<invoke>` 누출 — 파서 무관). 표: `scripts/bakeoff/results/phase2_20261001_A-vs-B.md` |
-| S6 | 개명 `dialects` + 호환층(§6) + 변수명 치환 + 문서 이동 | 전체 테스트·스냅샷·브라우저·보드 연동 |
+| S6 ✅ | 개명 `dialects` + 호환층(§6) + 변수명 치환 + 문서 이동 | 기계 치환 97 파일(`wire_format(s)`→`dialect(s)`, `WireFormat`→`DialectBase`, `WIRE_FORMAT`→`DIALECT`, `wf_recovery`→`dialect_recovery`, 세션 메타·CLI 의 `response_format`→`dialect`; 프로바이더 JSON 모드의 `response_format` 은 별개라 제외). 호환: shim `agent_cli/wire_formats/__init__.py`, CLI `--dialect`/`--response-format` 한 파라미터, models.json `dialect` > `wire_format`, 세션 메타 `response_format`→`dialect`(영구). `tests/test_dialects_compat.py` 11건. 전체 테스트·등가성 코퍼스 초록. 옛 설계 문서(DESIGN·PHASE2·PHASE4)는 당시 이름 그대로 둔다 |
 | S7 | README/ARCHITECTURE/CHANGELOG, 버전 10.0.0, PR → CI 초록 → 머지 → 태그 | CI |
 
 S1~S3 각각 사보타주(옛 코드에 새 테스트) 확인. 큰 되돌림 전 커밋(메모리 규칙).
@@ -370,7 +370,7 @@ S1~S3 각각 사보타주(옛 코드에 새 테스트) 확인. 큰 되돌림 전
   거부되는지.
 - **foreign 구제**: xml_fc 바인딩에서 hermes_json 누출 → 구제 → corrected_record 가 xml 캐노니컬.
 - **등가성 하네스**(§7.1) 옵트인.
-- **호환층**: `--response-format`/`wire_format` 키/옛 세션 메타 resume, `agent_cli.wire_formats` import.
+- **호환층**: `--dialect`/`dialect` 키/옛 세션 메타 resume, `agent_cli.dialects` import.
 
 ## 10. 결정 포인트 (승인 요청)
 

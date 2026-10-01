@@ -129,12 +129,12 @@ class TestManagerFold:
 
 class TestDispatcherIntegration:
     def test_parse_success_folds_prior_intervention(self, tmp_path):
+        from agent_cli.dialects import get as get_wf
         from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
-        from agent_cli.wire_formats import get as get_wf
 
         wf = get_wf("json_fc")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000)
-        cfg = LoopConfig(tools_list=["shell", "complete"], wire_format=wf)
+        cfg = LoopConfig(tools_list=["shell", "complete"], dialect=wf)
         st = LoopState(query="q")
         from agent_cli.recovery.observability import TurnRecorder
 

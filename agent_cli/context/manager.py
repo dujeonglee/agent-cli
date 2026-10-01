@@ -46,8 +46,8 @@ from agent_cli.context.render import (
     _to_natural_language,
     _to_summary_text,
 )
+from agent_cli.dialects import get as _get_dialect
 from agent_cli.render import get_renderer, render_compaction_progress
-from agent_cli.wire_formats import get as _get_wire_format
 
 
 def _current_scope_id() -> str:
@@ -288,7 +288,7 @@ class ContextManager:
         max_context_tokens: int = 0,
         *,
         resume: bool = False,
-        wire_format=None,
+        dialect=None,
         compaction_enabled: bool = True,
         compaction_ratio: float | None = None,
     ):
@@ -296,12 +296,12 @@ class ContextManager:
         # → in-memory rendering of assistant turns when ``get_messages``
         # is called (overflow recovery, session resume). One ctx instance
         # owns one plugin instance so a single session can never mix
-        # formats. Default falls back to the default wire format
+        # formats. Default falls back to the default dialect
         # for the headless / test paths that don't yet thread the choice
         # through; mirrors the pattern in ``AgentLoop.__init__``.
-        if wire_format is None:
-            wire_format = _get_wire_format()
-        self.wire_format = wire_format
+        if dialect is None:
+            dialect = _get_dialect()
+        self.dialect = dialect
 
         self.session_dir = Path(session_dir)
         self.max_context_tokens = (
@@ -437,7 +437,7 @@ class ContextManager:
         if self._nl_cache is not None and not (
             len(self._cache) == 1 and message.get("role") == "system"
         ):
-            self._nl_cache.append(_to_natural_language(message, self.wire_format))
+            self._nl_cache.append(_to_natural_language(message, self.dialect))
         self._cache_tokens += msg_tokens
         self._append_to_history(message)
         # Return the stored message so callers can render exactly what was
@@ -510,7 +510,7 @@ class ContextManager:
         # the synthesised summary / file-list messages slot in
         # immediately after it so the LLM sees ``system → summary →
         # files → dynamic`` in that order. System messages stay
-        # verbatim (no wire-format conversion); ``_to_natural_language``
+        # verbatim (no dialect conversion); ``_to_natural_language``
         # only handles user / assistant records and would misroute a
         # system entry through the assistant rendering path.
         if cache and cache[0].get("role") == "system":
@@ -543,8 +543,7 @@ class ContextManager:
         n_rest = len(cache) - rest_start
         if self._nl_cache is None or len(self._nl_cache) != n_rest:
             self._nl_cache = [
-                _to_natural_language(msg, self.wire_format)
-                for msg in cache[rest_start:]
+                _to_natural_language(msg, self.dialect) for msg in cache[rest_start:]
             ]
         result.extend(self._nl_cache)
 

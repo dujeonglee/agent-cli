@@ -1,7 +1,7 @@
 """Tests for the failure-grounding retry message builders.
 
 These functions live in ``agent_cli.recovery.common_recovery`` (B1
-action loop) and ``agent_cli.recovery.wf_recovery`` (A-class wf-aware
+action loop) and ``agent_cli.recovery.dialect_recovery`` (A-class wf-aware
 builders). They produce the :class:`Intervention` injected into the
 conversation when an LLM response failed to parse / lacked an action.
 
@@ -14,14 +14,14 @@ Falls back to the static template when ``prior_content`` is empty (the
 returned Intervention has the static message and no primitives).
 """
 
+from agent_cli.dialects import all_system_user_prefixes
+from agent_cli.dialects.json_fc import JsonFcFormat
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
-from agent_cli.recovery.intervention import Intervention
-from agent_cli.recovery.wf_recovery import (
+from agent_cli.recovery.dialect_recovery import (
     format_no_action_retry,
     format_no_json_retry,
 )
-from agent_cli.wire_formats import all_system_user_prefixes
-from agent_cli.wire_formats.json_fc import JsonFcFormat
+from agent_cli.recovery.intervention import Intervention
 
 # Static fallbacks live on the wire plugin (Step 7 cleanup) — v7.0.0
 # react 제거 후 기본 플러그인(json_fc) 기준으로 비교.

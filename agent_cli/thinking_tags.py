@@ -1,4 +1,4 @@
-"""Thinking-tag 스트리핑 단일 소스 (multi-wire-format Phase 2 선행 리팩토링).
+"""Thinking-tag 스트리핑 단일 소스 (dialects Phase 2 선행 리팩토링).
 
 일부 모델(MiMo·Qwen 계열)이 CoT 를 별도 API 필드가 아니라 content 안의
 태그로 흘린다 — **모델-런타임 quirk 이지 wire-shape 의 속성이 아니다**.
@@ -8,7 +8,7 @@
 
   - providers/openai (①②): content 정규화 — 컴팩션 요약·✨ directive 등
     **비-파서 소비자** 보호 (5.10.0 의 존재 이유).
-  - WireFormat.strip_thinking (①②, 파서 stage 0): provider 를 안 거치는
+  - DialectBase.strip_thinking (①②, 파서 stage 0): provider 를 안 거치는
     경로(anthropic/http 의 content-태그 leak, bench 의 provider 우회,
     직접 파서 호출)의 유일 방어.
   - providers/capabilities: thinking 지원 탐지 프로브의 태그 vocab.

@@ -1,6 +1,6 @@
 """thinking_tags 단일 소스 — vocab·strip·정규식 계약 (Phase 2 선행 리팩토링).
 
-층별 소비자(providers/openai ①②, WireFormat.strip_thinking stage 0,
+층별 소비자(providers/openai ①②, DialectBase.strip_thinking stage 0,
 capabilities vocab, json_fc ③ 정규식)가 전부 여기서 import 하므로,
 이 모듈의 계약이 곧 4곳의 계약이다.
 """
@@ -78,20 +78,20 @@ class TestOrphanRegexes:
         assert TRAILING_THINK_TAG_RE.sub("", "a</think>b") == "a</think>b"
 
 
-class TestWireFormatStage0:
+class TestDialectStage0:
     def test_abc_helper_contract(self):
         # (cleaned, thinking|None) — thinking 없으면 None (react 계약).
-        from agent_cli.wire_formats import WireFormat
+        from agent_cli.dialects import DialectBase
 
-        assert WireFormat.strip_thinking("plain") == ("plain", None)
-        cleaned, thinking = WireFormat.strip_thinking("<think>t</think>x")
+        assert DialectBase.strip_thinking("plain") == ("plain", None)
+        cleaned, thinking = DialectBase.strip_thinking("<think>t</think>x")
         assert cleaned == "x"
         assert thinking == "t"
 
     def test_json_fc_stage0_strips_leading_block(self):
         # 종전 갭: json_fc 는 ①② 자체 처리가 없어 provider 미경유 경로에서
         # 선두 think 블록이 thought 로 오염됐다 — stage 0 helper 로 봉합.
-        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.dialects import get as get_wf
 
         wf = get_wf("json_fc")
         turn = wf.parse_turn(
@@ -105,7 +105,7 @@ class TestWireFormatStage0:
         assert turn.ops[0].action == "read_file"
 
     def test_json_fc_unclosed_opener_recovered(self):
-        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.dialects import get as get_wf
 
         wf = get_wf("json_fc")
         turn = wf.parse_turn(
@@ -117,7 +117,7 @@ class TestWireFormatStage0:
         assert "tail reasoning cut off" in (turn.thinking or "")
 
     def test_json_fc_stage0_still_captures_thinking(self):
-        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.dialects import get as get_wf
 
         wf = get_wf("json_fc")
         pa = wf.parse('<think>scratch</think>[{"action": "complete", "result": "r"}]')

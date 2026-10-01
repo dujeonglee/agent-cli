@@ -2,16 +2,16 @@
 *where* its JSON broke (line/column + caret) instead of a generic
 "not valid JSON" nudge.
 
-Covers the pure util (``describe_json_error``), each JSON wire format's
+Covers the pure util (``describe_json_error``), each JSON dialect's
 ``diagnose_syntax_error`` extraction, cross-format parity on the same
 broken input, and the ``format_no_json_retry`` embedding.
 """
 
 import json
 
-from agent_cli.recovery.wf_recovery import format_no_json_retry
-from agent_cli.wire_formats.json_fc import JsonFcFormat
-from agent_cli.wire_formats.recovery.json import describe_json_error
+from agent_cli.dialects.json_fc import JsonFcFormat
+from agent_cli.dialects.recovery.json import describe_json_error
+from agent_cli.recovery.dialect_recovery import format_no_json_retry
 
 
 class TestDescribeJsonError:
@@ -113,7 +113,7 @@ class TestNoJsonRetryEmbedding:
     def test_syntax_error_embedded_after_framing(self):
         intv = format_no_json_retry(
             prior_content='{"a": 1 "b": 2}',
-            wire_format=JsonFcFormat(),
+            dialect=JsonFcFormat(),
             syntax_error='Expecting \',\' delimiter (line 1, column 9)\n    {"a": 1 "b"\n           ^',
         )
         # framing still leads (existing prefix-skip relies on it)
@@ -126,11 +126,9 @@ class TestNoJsonRetryEmbedding:
 
     def test_no_syntax_error_is_bit_for_bit_unchanged(self):
         # omitting syntax_error reproduces the legacy message exactly
-        base = format_no_json_retry(
-            prior_content="some drift", wire_format=JsonFcFormat()
-        )
+        base = format_no_json_retry(prior_content="some drift", dialect=JsonFcFormat())
         explicit_none = format_no_json_retry(
-            prior_content="some drift", wire_format=JsonFcFormat(), syntax_error=None
+            prior_content="some drift", dialect=JsonFcFormat(), syntax_error=None
         )
         assert base.message == explicit_none.message
         assert base.primitives == explicit_none.primitives

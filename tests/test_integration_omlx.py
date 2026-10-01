@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
+from agent_cli.dialects import get as _get_wf
 from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
-from agent_cli.wire_formats import get as _get_wf
 from tests.conftest import OMLX_BASE_URL
 from tests.loop_ports import TEST_PORTS
 

@@ -1,15 +1,15 @@
-"""json_fc (산문 + bare op 배열) — multi-wire-format PHASE4.
+"""json_fc (산문 + bare op 배열) — dialects PHASE4.
 
 md_array 의 후계: 헤더 envelope 제거 (D7=bare 배열, 래퍼 기각). 캐노니컬
 파싱·legacy 헤더 관용(stage 2)·round-trip·recovery 문구를 고정한다.
-상세 JSON-수리 케이스는 test_wire_formats_json_fc_repair.py (md_array
+상세 JSON-수리 케이스는 test_dialects_json_fc_repair.py (md_array
 포팅분)가 커버한다.
 """
 
 import pytest
 
-from agent_cli.wire_formats import get as get_wf
-from agent_cli.wire_formats.json_fc import JsonFcFormat
+from agent_cli.dialects import get as get_wf
+from agent_cli.dialects.json_fc import JsonFcFormat
 from tests.loop_ports import TEST_PORTS
 
 
@@ -196,7 +196,7 @@ class TestLoopE2E:
             provider=provider,
             capabilities=self._caps(),
             model="m",
-            wire_format="json_fc",
+            dialect="json_fc",
         )
         assert result.success
         assert "hello json world" in result.output
@@ -214,7 +214,7 @@ class TestTruncatedPropagation:
     온전한 op 를 과잉 수리하지 않게), 비-절단 수리는 플래그하지 않는다."""
 
     def setup_method(self):
-        from agent_cli.wire_formats import get
+        from agent_cli.dialects import get
 
         self.w = get("json_fc")
 

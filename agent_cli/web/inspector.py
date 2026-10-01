@@ -106,7 +106,7 @@ def capture_startup_system_prompt(
     renderer: WebRenderer,
     *,
     capabilities,
-    wire_format,
+    dialect,
     session_dir: str,
     max_depth: int,
     mcp_manager=None,
@@ -128,7 +128,7 @@ def capture_startup_system_prompt(
             active_tools=list(TOOLS.keys()),
             session_dir=session_dir,
             mcp_manager=mcp_manager,
-            wire_format=wire_format,
+            dialect=dialect,
             depth=0,
             max_depth=max_depth,
         )

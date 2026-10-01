@@ -51,16 +51,16 @@ class TestCompactionRatio:
 
 @pytest.fixture
 def wf():
-    """ReAct wire-format plugin used by ``_to_natural_language`` tests.
+    """ReAct dialect plugin used by ``_to_natural_language`` tests.
 
     The function takes the plugin as a parameter so the assistant
     branch can delegate to ``render_assistant_from_history``. Tests
-    against the plugin's behavior live in ``test_wire_formats_json_fc``;
+    against the plugin's behavior live in ``test_dialects_json_fc``;
     here we only need a real plugin that produces the same string
     shapes the legacy free function used to."""
-    from agent_cli.wire_formats import get as get_wire_format
+    from agent_cli.dialects import get as get_dialect
 
-    return get_wire_format("json_fc")
+    return get_dialect("json_fc")
 
 
 # ── FIFO Behavior ─────────────────────────────────────
@@ -524,11 +524,11 @@ class TestGetMessagesIntegration:
         assert "delegate_coder_f1a9_20260405T143230456/" in msgs[0]["content"]
 
 
-# ── wire_format attachment ────────────────────────────
+# ── dialect attachment ────────────────────────────
 
 
-class TestWireFormatAttachment:
-    """ContextManager owns a wire_format plugin per instance.
+class TestDialectAttachment:
+    """ContextManager owns a dialect plugin per instance.
 
     H4 attaches a plugin to each ctx so ``get_messages()`` can route the
     history → message conversion through the plugin without the
@@ -538,19 +538,19 @@ class TestWireFormatAttachment:
     """
 
     def test_default_falls_back_to_json_fc(self, session_dir):
-        from agent_cli.wire_formats.json_fc import JsonFcFormat
+        from agent_cli.dialects.json_fc import JsonFcFormat
 
         ctx = ContextManager(session_dir, max_context_tokens=1000)
-        assert isinstance(ctx.wire_format, JsonFcFormat)
+        assert isinstance(ctx.dialect, JsonFcFormat)
 
-    def test_explicit_wire_format_is_kept(self, session_dir):
-        from agent_cli.wire_formats import get as get_wire_format
+    def test_explicit_dialect_is_kept(self, session_dir):
+        from agent_cli.dialects import get as get_dialect
 
-        plugin = get_wire_format("xml_fc")
-        ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=plugin)
+        plugin = get_dialect("xml_fc")
+        ctx = ContextManager(session_dir, max_context_tokens=1000, dialect=plugin)
         # Identity, not just equality — the same instance the caller
         # passed in must survive on the ctx.
-        assert ctx.wire_format is plugin
+        assert ctx.dialect is plugin
 
     def test_custom_plugin_instance_attached_unchanged(self, session_dir):
         """A non-registered plugin (e.g. a test stand-in) is accepted.
@@ -565,8 +565,8 @@ class TestWireFormatAttachment:
             name = "_stub"
 
         stub = _StubFormat()
-        ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=stub)
-        assert ctx.wire_format is stub
+        ctx = ContextManager(session_dir, max_context_tokens=1000, dialect=stub)
+        assert ctx.dialect is stub
 
 
 # ── history.jsonl retrieval enrich (read_context JSON query) ──
@@ -766,7 +766,7 @@ class TestGetMessagesIncrementalCache:
         """Ground truth: render every dynamic record from scratch."""
         cache = ctx.get_raw_messages()
         rest = cache[1:] if cache and cache[0].get("role") == "system" else cache
-        return [_to_natural_language(m, ctx.wire_format) for m in rest]
+        return [_to_natural_language(m, ctx.dialect) for m in rest]
 
     def test_matches_full_rerender_after_adds(self, ctx):
         for m in self._msgs():
@@ -818,7 +818,7 @@ class TestGetMessagesIncrementalCache:
         out = resumed.get_messages()
         cache = resumed.get_raw_messages()
         rest = cache[1:] if cache[0].get("role") == "system" else cache
-        expected = [_to_natural_language(m, resumed.wire_format) for m in rest]
+        expected = [_to_natural_language(m, resumed.dialect) for m in rest]
         assert out[-len(expected) :] == expected
 
     def test_returned_list_is_independent(self, ctx):

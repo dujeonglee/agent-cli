@@ -8,7 +8,7 @@ json_fc 가 소비하는 공용 util.
 
 import json
 
-from agent_cli.wire_formats.recovery.json import _extract_op_json, close_unbalanced
+from agent_cli.dialects.recovery.json import _extract_op_json, close_unbalanced
 
 # The captured shape: a 6-op read_file batch the model emitted in full but
 # never closed (session 1781336790, delegate_explorer_b763fb). Trimmed paths.

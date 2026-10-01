@@ -1,6 +1,6 @@
 """JSON 구제 — 깨진 JSON 을 op 로 되살리는 기계 (Phase 5 S1: 이동만).
 
-세 겹이 한 모듈로 모였다 (docs/multi-wire-format/PHASE5.md §4.4):
+세 겹이 한 모듈로 모였다 (docs/dialects/PHASE5.md §4.4):
 1. 토큰 수준 수리 — 옛 ``_json_repair`` (이스케이프·괄호 불균형·따옴표).
 2. 진단 — 옛 ``_json_diag`` (어디서 깨졌는지, 재시도 힌트용).
 3. op 수준 추출·수리 — 옛 ``json_fc`` 157–597 (산문 속 첫 JSON, 다시 열린
@@ -13,8 +13,8 @@
 ──────────────────────────── 옛 _json_repair 머리말 ────────────────────────────
 JSON structural repair — pure, format-agnostic string→string fixes.
 
-Sibling to ``_json_diag``: same rationale for living off the ``WireFormat``
-base (a pure JSON concern, not wire-format behaviour, shared by every
+Sibling to ``_json_diag``: same rationale for living off the ``DialectBase``
+base (a pure JSON concern, not dialect behaviour, shared by every
 JSON-bearing format so each need not carry a private copy that can drift).
 
 Four fixes, all deliberately conservative + bail-if-invalid (the CALLER
@@ -43,12 +43,12 @@ JSON syntax diagnostics — turn a ``json.JSONDecodeError`` into a
 human/model-readable pointer (message + line/column + a caret under the
 offending character).
 
-This is a pure JSON-layer utility, NOT wire-format behaviour: given any
+This is a pure JSON-layer utility, NOT dialect behaviour: given any
 JSON candidate string it describes the first structural error, knowing
 nothing about ReAct vs json_fc. The format-specific part — *which*
 substring of the model's emission is the JSON candidate — stays in each
 format's ``diagnose_syntax_error`` (which calls this). Kept off the
-``WireFormat`` base for exactly that reason; sharing a caret formatter is
+``DialectBase`` base for exactly that reason; sharing a caret formatter is
 a JSON concern, not a coupling between formats.
 
 Used only on the recovery path (NO_JSON), after ``repair_json`` and the
@@ -301,7 +301,7 @@ def describe_json_error(json_text: str | None) -> str | None:
                    ^
 
     Returns ``None`` unless the candidate actually *looks like* a JSON
-    object/array attempt (starts with ``{`` or ``[``). Our wire formats only
+    object/array attempt (starts with ``{`` or ``[``). Our dialects only
     ever emit objects/arrays, so a candidate that doesn't start that way is
     bare prose, not malformed JSON — pointing a caret at "Expecting value,
     column 1" there is noise; the generic "output ONLY JSON" hint already

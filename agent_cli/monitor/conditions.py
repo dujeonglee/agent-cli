@@ -1,6 +1,6 @@
 """감시 조건 3종 — `type` 키로 찾는 작은 레지스트리 (docs/monitor/DESIGN.md §4.2).
 
-조건 추가 = 클래스 하나 + `@register`, 소비 지점 0. `WireFormat`·`Tool`·
+조건 추가 = 클래스 하나 + `@register`, 소비 지점 0. `DialectBase`·`Tool`·
 `render/<name>.py` 와 같은 방식이다.
 
 세 종류로 좁힌 경위는 §4.2 에 있다. 요약하면:

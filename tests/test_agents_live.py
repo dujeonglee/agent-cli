@@ -1071,8 +1071,8 @@ class TestFullLoopIntegration:
     def test_subloop_gets_reduced_agent_description(self, tmp_path):
         # 5.0.0 모드 축소: 서브루프(레지스트리 없음)의 Available Tools 는
         # run 전용 축소 설명, main 은 상주 모드 포함 전체 설명.
+        from agent_cli.dialects import get as get_wf
         from agent_cli.prompts.system_prompt import _build_tools_section
-        from agent_cli.wire_formats import get as get_wf
 
         wf = get_wf("json_fc")
         sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
@@ -2471,13 +2471,13 @@ class TestUnifiedMessagingV512:
         reg = make_registry(tmp_path)
         # 프로파일 없이 instructions 만 (instant-agent)
         k, err = reg.spawn(
-            instructions="You are a wire-format specialist for this repo. "
+            instructions="You are a dialect specialist for this repo. "
             "You know every plugin."
         )
         assert not err
         wait_until(lambda: reg.get(k).state == "idle")
-        assert reg.get(k).description.startswith("You are a wire-format specialist")
-        assert "wire-format specialist" in build_live_agents_section(reg)
+        assert reg.get(k).description.startswith("You are a dialect specialist")
+        assert "dialect specialist" in build_live_agents_section(reg)
         reg.shutdown_all()
 
 
@@ -3246,11 +3246,11 @@ class TestInstantAgent:
 
     def test_instructions_only_spawn_becomes_role(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        key, err = reg.spawn(instructions="너는 wire-format 전문가다.")
+        key, err = reg.spawn(instructions="너는 dialect 전문가다.")
         assert err == ""
         tm = reg.get(key)
-        assert tm.role_prompt == "너는 wire-format 전문가다."
-        assert tm.instructions == "너는 wire-format 전문가다."
+        assert tm.role_prompt == "너는 dialect 전문가다."
+        assert tm.instructions == "너는 dialect 전문가다."
         reg.shutdown_all()
 
     def test_profile_plus_instructions_overlay(self, tmp_path, renderer, monkeypatch):
@@ -3471,9 +3471,9 @@ class TestRunMode:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
+        from agent_cli.dialects import get as get_wf
         from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.wire_formats import get as get_wf
 
         wf = get_wf("json_fc")
 
@@ -3503,7 +3503,7 @@ class TestRunMode:
             capabilities=self._caps(),
             model="m",
             ctx=ctx,
-            wire_format=wf,
+            dialect=wf,
         ).run()
         assert result.success
         combined = [

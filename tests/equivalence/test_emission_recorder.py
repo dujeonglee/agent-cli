@@ -14,7 +14,7 @@ from agent_cli.loop.dispatch import TurnDispatcher
 def _fake(session_dir):
     return SimpleNamespace(
         ctx=SimpleNamespace(session_dir=session_dir),
-        cfg=SimpleNamespace(wire_format=SimpleNamespace(name="xml_fc")),
+        cfg=SimpleNamespace(dialect=SimpleNamespace(name="xml_fc")),
     )
 
 

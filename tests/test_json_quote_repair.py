@@ -9,8 +9,8 @@ force a bogus op — notably bare keywords like ``true`` are left alone).
 
 import json
 
-import agent_cli.wire_formats as wf_mod
-from agent_cli.wire_formats.recovery.json import _extract_op_json, repair_value_quotes
+import agent_cli.dialects as dialect_mod
+from agent_cli.dialects.recovery.json import _extract_op_json, repair_value_quotes
 
 
 def _action(body: str) -> str:
@@ -90,7 +90,7 @@ class TestJsonFcRecovery:
         assert parsed == [{"action": "read_file", "path": "mgt.c"}]
 
     def test_parse_turn_end_to_end(self):
-        wf = wf_mod.get("json_fc")
+        wf = dialect_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action": "read_file", "path": mgt.c"}]'))
         assert turn.parse_stage == 2  # recovered via repair
         assert [(o.action, o.action_input) for o in turn.ops] == [
@@ -98,12 +98,12 @@ class TestJsonFcRecovery:
         ]
 
     def test_parse_turn_valid_stays_stage_1(self):
-        wf = wf_mod.get("json_fc")
+        wf = dialect_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action": "read_file", "path": "mgt.c"}]'))
         assert turn.parse_stage == 1  # no repair needed
 
     def test_unrepairable_stays_no_json(self):
         # bare keyword typo isn't a missing-quote case → NO_JSON, model retries
-        wf = wf_mod.get("json_fc")
+        wf = dialect_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action":"complete","ok": ture}]'))
         assert turn.parse_stage == 0

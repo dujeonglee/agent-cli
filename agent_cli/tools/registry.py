@@ -108,7 +108,7 @@ def infer_action(action_input: Any) -> str | None:
     """Recover a missing action name from the shape of *action_input* — the
     resolver behind the loop's dropped-action recovery SEAM.
 
-    When the wire format drops the action name (parse_stage 3 — a
+    When the dialect drops the action name (parse_stage 3 — a
     ``## Action`` header with an empty tool slot) but the input is a
     well-formed dict, each tool's :meth:`Tool.claims` predicate votes on
     whether the payload is its own. Returns the tool name iff **exactly
@@ -125,7 +125,7 @@ def infer_action(action_input: Any) -> str | None:
     across tools); it falls to NO_ACTION today and is the documented extension
     point where a future schema-based resolver would plug into this same seam.
     The real foundation is the parse-preservation invariant (action_input
-    survives a dropped action) — see WireFormat.parse / parse_turn.
+    survives a dropped action) — see DialectBase.parse / parse_turn.
     """
     if not isinstance(action_input, dict):
         return None
@@ -239,12 +239,12 @@ def allows_extra_keys(params_schema: dict) -> bool:
     return not props or (extra is not False and extra is not None)
 
 
-def effective_tool_names(tool_names: list[str] | None, wire_format=None) -> list[str]:
+def effective_tool_names(tool_names: list[str] | None, dialect=None) -> list[str]:
     """The tool set a loop actually exposes, in prompt order — the always-
     present tools added, ``complete`` dropped when the format does not expose
     it, static tools first and conditional ones last. Shared by the prompt
     and the decoding grammar so both describe the same set."""
-    exposes_complete = getattr(wire_format, "exposes_complete", True)
+    exposes_complete = getattr(dialect, "exposes_complete", True)
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
     for t in _ALWAYS_INCLUDE:
         if t == "complete" and not exposes_complete:
@@ -292,7 +292,7 @@ _MULTI_OP_DESC_REWRITES: dict[str, list[tuple[str, str]]] = {}
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
-    wire_format=None,
+    dialect=None,
     description_overrides: dict[str, str] | None = None,
     parameter_overrides: dict[str, dict] | None = None,
 ) -> str:
@@ -301,7 +301,7 @@ def get_tool_descriptions(
     Args:
         tool_names: Filter to specific tools. None = all tools.
         inline_guides: Map of tool name → extra guide text to append.
-        wire_format: the active ``WireFormat``. When it is multi-op, each
+        dialect: the active ``DialectBase``. When it is multi-op, each
             tool's own wire-key prefix is stripped from its description and
             param keys (flat ``{action, params}`` convention); when it does not
             expose ``complete``, that tool is omitted from the always-included
@@ -315,10 +315,10 @@ def get_tool_descriptions(
     # 루프별 스키마 교체 (v9.20.0) — 설명 교체와 같은 자리. 상주 에이전트의
     # ``ask`` 가 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
     param_overrides = parameter_overrides or {}
-    multi_op = bool(getattr(wire_format, "multi_op", False))
+    multi_op = bool(getattr(dialect, "multi_op", False))
     # Always-present tools added / `complete` dropped when unexposed, static
     # first — one function, shared with the decoding grammar.
-    ordered = effective_tool_names(tool_names, wire_format)
+    ordered = effective_tool_names(tool_names, dialect)
 
     # Two-tier layout: the full tool ROSTER (one-line intro + Input JSON for
     # every tool) first, then the detailed GUIDES (prose + examples). This puts

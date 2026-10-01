@@ -1,14 +1,14 @@
 """Wire-format-agnostic intervention builders.
 
 These factories compose recovery primitives whose wording does not
-depend on which wire-format plugin is active — every plugin sees
+depend on which dialect plugin is active — every plugin sees
 identical text. Currently this is the B1 (action loop) family: the
 nudge does not reference JSON, ``<tool_use>``, or any other format-
 specific shape, so it stays here regardless of the chosen plugin.
 
-WF-aware builders live in ``recovery.wf_recovery``. Splitting along
-the wf-dependence axis means: when a new wire-format plugin appears,
-this module needs zero edits, while ``wf_recovery`` is where any
+WF-aware builders live in ``recovery.dialect_recovery``. Splitting along
+the wf-dependence axis means: when a new dialect plugin appears,
+this module needs zero edits, while ``dialect_recovery`` is where any
 plugin-specific recovery glue is added or audited.
 
 The dependency direction stays one-way: ``recovery`` depends on

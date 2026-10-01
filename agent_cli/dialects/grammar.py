@@ -9,7 +9,7 @@ runaway inside the body (Harbor extract-elf: 32K characters of analysis
 inside an open ``<tool_call>``). Prevention where it is available; the
 recovery layer stays for servers that cannot enforce.
 
-Each wire format renders its own grammar (:meth:`WireFormat.grammar`) from
+Each dialect renders its own grammar (:meth:`DialectBase.grammar`) from
 the **same tool set the prompt advertises** — the grammar must never allow a
 tool the prompt did not describe, nor forbid one it did. This module holds
 the format-agnostic pieces: xgrammar-flavoured EBNF for JSON values, the

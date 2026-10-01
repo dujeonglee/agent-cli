@@ -9,8 +9,8 @@ Granite 4.0/4.1, SmolLM3 가 그대로 쓴 모양 — 2026 년 현재 가장 넓
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.base import NO_ACTION_FRAMING
-from agent_cli.wire_formats.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
+from agent_cli.dialects.base import NO_ACTION_FRAMING
+from agent_cli.dialects.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
 
 _REMINDER_CALL = (
     "Respond with one or more <tool_call> blocks, each containing ONE JSON "

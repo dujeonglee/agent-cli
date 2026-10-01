@@ -402,9 +402,9 @@ class TestPromptInspectorDynamic:
         """Part 2: build + capture the system prompt at web startup so the
         inspector shows it before any message (the loop only captures on an
         LLM call)."""
+        from agent_cli.dialects import get
         from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.web.inspector import capture_startup_system_prompt
-        from agent_cli.wire_formats import get
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -416,7 +416,7 @@ class TestPromptInspectorDynamic:
         capture_startup_system_prompt(
             renderer,
             capabilities=caps,
-            wire_format=get("json_fc"),
+            dialect=get("json_fc"),
             session_dir="",
             max_depth=2,
         )

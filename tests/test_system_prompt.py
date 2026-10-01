@@ -27,6 +27,7 @@ from typing import ClassVar
 
 import pytest
 
+from agent_cli.dialects import get as _get_dialect
 from agent_cli.prompts.system_prompt import (
     TASK_GUIDELINES,
     _build_agent_inline,
@@ -38,7 +39,6 @@ from agent_cli.prompts.system_prompt import (
     build_system_prompt_sections,
 )
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.wire_formats import get as _get_wire_format
 from tests.loop_ports import TEST_PORTS
 
 _SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
@@ -52,7 +52,7 @@ class TestToolsSectionSnapshot:
     deterministic (unlike the full prompt, which carries CWD / directives), so
     it snapshots cleanly. Regenerate with::
 
-        python -c "from agent_cli import wire_formats as w; \
+        python -c "from agent_cli import dialects as w; \
 from agent_cli.prompts.system_prompt import _build_tools_section as b; \
 [open(f'tests/snapshots/tools_section_{n}.txt','w').write( \
 b(['read_file','shell','code_index','edit_file','agent','ask'], w.get(n))) \
@@ -64,7 +64,7 @@ for n in ('json_fc',)]"
         expected = (_SNAPSHOT_DIR / f"tools_section_{name}.txt").read_text(
             encoding="utf-8"
         )
-        actual = _build_tools_section(_SNAPSHOT_TOOLS, _get_wire_format(name))
+        actual = _build_tools_section(_SNAPSHOT_TOOLS, _get_dialect(name))
         assert actual == expected, (
             f"{name} Available Tools section changed — if intentional, "
             "regenerate the snapshot (see class docstring)."
@@ -72,7 +72,7 @@ for n in ('json_fc',)]"
 
 
 class _MultiOpFormat:
-    """Minimal stand-in for a multi-op wire format (json_fc-style): flat
+    """Minimal stand-in for a multi-op dialect (json_fc-style): flat
     ``{action, plain params}`` ops, no per-tool batch, no `complete` tool.
     Duck-typed — the prompt layer only reads ``multi_op`` /
     ``exposes_complete`` and calls ``render_action_input``."""
@@ -481,8 +481,8 @@ class TestBuildSystemPrompt:
         code_index fetch guide points at edit_file, which used to be introduced
         only afterward). Attention: establish the full tool roster before any
         usage example."""
+        from agent_cli.dialects import get as get_wf
         from agent_cli.prompts.system_prompt import _build_tools_section
-        from agent_cli.wire_formats import get as get_wf
 
         section = _build_tools_section(
             ["read_file", "code_index", "edit_file", "agent", "shell"],
@@ -975,17 +975,17 @@ class TestLoadDirectives:
 class TestDelegateInlineAgent:
     """AG-27 ~ AG-28: delegate inline guide agent-field tests.
 
-    Step 4 of the wire_format extraction turned the constant
-    ``_DELEGATE_INLINE`` into a builder ``_build_agent_inline(wire_format)``;
+    Step 4 of the dialect extraction turned the constant
+    ``_DELEGATE_INLINE`` into a builder ``_build_agent_inline(dialect)``;
     the assertions below check the rendered guide rather than the
     pre-render literal. Behavior is unchanged for the ``"react"``
     plugin.
     """
 
     def _delegate_guide(self) -> str:
-        from agent_cli import wire_formats
+        from agent_cli import dialects
 
-        return _build_agent_inline(wire_formats.get("json_fc"))
+        return _build_agent_inline(dialects.get("json_fc"))
 
     def test_delegate_inline_mentions_agent(self):
         guide = self._delegate_guide()
@@ -1202,9 +1202,7 @@ class TestSystemSectionsSingleSource:
             provider=provider,
             capabilities=_make_caps(),
             model="m",
-            wire_format=__import__("agent_cli.wire_formats", fromlist=["get"]).get(
-                "json_fc"
-            ),
+            dialect=__import__("agent_cli.dialects", fromlist=["get"]).get("json_fc"),
         )
         with patch("agent_cli.loop.llm.render_system_prompt_snapshot") as snap:
             loop.run()
@@ -1388,14 +1386,14 @@ class TestJoinDirectiveScopes:
 
 
 class TestAntiHtmlEmphasis:
-    """HTML-편향 모델 대응 (5.10.1) — 두 wire format 모두 초기 규칙과
+    """HTML-편향 모델 대응 (5.10.1) — 두 dialect 모두 초기 규칙과
     파싱-실패 복구 힌트에서 HTML/XML 태그 발화를 강하게 금지한다
     (self-contained 원칙: 포맷별 자체 문구, 공유 빌더 없음)."""
 
     def _fmt(self, name):
-        from agent_cli import wire_formats
+        from agent_cli import dialects
 
-        return wire_formats.get(name)
+        return dialects.get(name)
 
     def test_format_rules_forbid_html_both_formats(self):
         for name in ("json_fc",):
@@ -1519,8 +1517,8 @@ class TestRunDescriptionFocusesOnContext:
             assert "do not split for speed" in text and "blocked" in text
 
     def test_multi_op_example_intro_gives_the_context_reason(self):
+        from agent_cli.dialects import get
         from agent_cli.prompts.system_prompt import _build_tools_section
-        from agent_cli.wire_formats import get
 
         out = _build_tools_section(["agent"], get("json_fc"))
         assert "run in PARALLEL" not in out

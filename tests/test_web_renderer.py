@@ -1460,7 +1460,7 @@ class TestReplayFromHistory:
         data = r._event_buffer[0][1]
         assert data["thought"] == "I should read the file"
         assert data["action"]["tool_name"] == "read_file"
-        # action_input is wire-format JSON so the frontend can render
+        # action_input is dialect JSON so the frontend can render
         # the same way the live path emits.
         import json as _json
 
@@ -1508,7 +1508,7 @@ class TestReplayFromHistory:
         assert "user_message" in names
         assert "assistant_turn" in names
 
-    # ── Real ``ops`` shape (what both wire formats actually serialize) ──
+    # ── Real ``ops`` shape (what both dialects actually serialize) ──
     # The tests above use the legacy singular ``{action, action_input}`` shape
     # (kept working for old history files). json_fc / react store EVERY
     # assistant turn — including terminal ``complete`` — in the ``ops`` shape,

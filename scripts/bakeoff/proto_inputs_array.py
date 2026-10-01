@@ -16,7 +16,7 @@ Baseline = the current default `prefix_md` on the same tasks (single action
 per turn) for a turn-cost / compliance comparison.
 
 Scoring is format-compliance only (this is the gate from
-prefix_md_full_dropped: "a new wire format must bakeoff first — sanity ≠
+prefix_md_full_dropped: "a new dialect must bakeoff first — sanity ≠
 real"). Run:
 
     OMLX_API_KEY=... python scripts/bakeoff/proto_inputs_array.py
@@ -32,11 +32,11 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from agent_cli import wire_formats
+from agent_cli import dialects
+from agent_cli.dialects.base import DialectBase, ParsedAction
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import infer_action
-from agent_cli.wire_formats.base import ParsedAction, WireFormat
 
 # BASE_URL is a LAN address — safe to default. The API key is a secret: read
 # from the environment only, never committed (mirrors phase1.py).
@@ -63,8 +63,8 @@ CAPS = ModelCapabilities(
 )
 
 
-# ── The prototype wire format ────────────────────────────────
-class InputsArrayFormat(WireFormat):
+# ── The prototype dialect ────────────────────────────────
+class InputsArrayFormat(DialectBase):
     """`{thought, inputs:[{prefixed_keys}, ...]}` — no `action` field."""
 
     name = "inputs_array"
@@ -269,9 +269,9 @@ class Run:
 
 
 def call_once(model: str, plugin_name: str, task: Task) -> Run:
-    plugin = wire_formats.get(plugin_name)
+    plugin = dialects.get(plugin_name)
     system = build_system_prompt(
-        capabilities=CAPS, active_tools=list(task.active_tools), wire_format=plugin
+        capabilities=CAPS, active_tools=list(task.active_tools), dialect=plugin
     )
     body = {
         "model": model,
@@ -432,5 +432,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    wire_formats.register(InputsArrayFormat())
+    dialects.register(InputsArrayFormat())
     main()

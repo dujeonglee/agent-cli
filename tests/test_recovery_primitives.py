@@ -80,8 +80,8 @@ class TestEchoPriorOutput:
 
 # ``TestConstrainFormatJson`` and ``TestConstrainActionRequired`` lived
 # here as long as ``constrain_format_json`` / ``constrain_action_required``
-# were primitives. They moved onto the wire-format plugin in Step 7;
-# their replacements live in ``test_wire_formats_react.py``
+# were primitives. They moved onto the dialect plugin in Step 7;
+# their replacements live in ``test_dialects_react.py``
 # (``TestRecoveryReminders``).
 
 

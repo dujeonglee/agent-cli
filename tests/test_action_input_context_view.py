@@ -22,9 +22,9 @@ from agent_cli.context.render import (
     _estimate_message_tokens,
     _to_natural_language,
 )
+from agent_cli.dialects import get as get_wire
 from agent_cli.tools import TOOLS
 from agent_cli.tools.base import Tool
-from agent_cli.wire_formats import get as get_wire
 
 
 def _assistant_write(content="line1\nline2\nline3"):
@@ -156,7 +156,7 @@ class TestContextViewElision:
 class TestThroughContextManager:
     def test_history_keeps_full_body_even_when_view_elides(self, tmp_path, monkeypatch):
         monkeypatch.setitem(TOOLS, "write_file", _ElidingTool())
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get_wire("json_fc"))
+        ctx = ContextManager(session_dir=tmp_path, dialect=get_wire("json_fc"))
         ctx.add(_assistant_write("FULL\nBODY\nHERE"))
         # on-disk history is faithful (full body), regardless of context view
         last = [

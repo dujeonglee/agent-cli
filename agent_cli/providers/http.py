@@ -413,7 +413,7 @@ def interruptible_lines(
 # 라벨링)을 복제하고 있었고, idle 처리·JSONDecodeError 관용은 openai/
 # anthropic 한쪽에만 있는 비대칭까지 있었다. 골격을 여기(이미
 # post_with_retry 를 공유하는 인프라 계층)로 수렴 — provider 는 자기
-# 이벤트 shape 해석(map_payload)만 소유한다. wire-format self-contained
+# 이벤트 shape 해석(map_payload)만 소유한다. dialect self-contained
 # 규율과 같은 정신: 독립 진화가 필요한 부분(이벤트 shape)만 provider 에.
 
 

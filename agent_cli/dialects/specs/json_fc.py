@@ -9,8 +9,8 @@ json_fc 는 우리 고유 모양이라 어느 모델의 네이티브 프라이�
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.base import NO_ACTION_FRAMING
-from agent_cli.wire_formats.spec import ArgStyle, DialectSpec, NameSlot, Prose
+from agent_cli.dialects.base import NO_ACTION_FRAMING
+from agent_cli.dialects.spec import ArgStyle, DialectSpec, NameSlot, Prose
 
 _REMINDER_CALL = 'Respond with plain-prose reasoning followed by ONE JSON array of {"action": ..., params} ops. To finish, use a `complete` op: {"action": "complete", "result": "<final answer>"}.'
 _REMINDER_ACTION_REQUIRED = 'Each array element must include an "action" field naming one tool from Available Tools. If the task is DONE, emit a `complete` op: {"action": "complete", "result": "<final answer>"}. If your last message already was the final answer in plain prose, re-emit that answer as the `result`. If you were about to do something, emit that tool call now. Never stop without an explicit `complete`.'

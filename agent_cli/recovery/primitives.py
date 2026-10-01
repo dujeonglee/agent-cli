@@ -59,7 +59,7 @@ def echo_prior_output(content: str) -> str:
 
 
 # ``constrain_format_json`` / ``constrain_action_required`` lived here
-# as ReAct-shape JSON reminders. They moved onto the wire-format plugin
+# as ReAct-shape JSON reminders. They moved onto the dialect plugin
 # in Step 7: ``ReActFormat.constraint_reminder_call()`` /
 # ``constraint_reminder_action_required()``. recovery/primitives.py
 # now holds only format-agnostic primitives — ``echo_prior_output`` for

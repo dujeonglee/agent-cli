@@ -21,23 +21,23 @@ import platform
 import re
 from pathlib import Path
 
+from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS, get_tool_descriptions
-from agent_cli.wire_formats import get as _get_wire_format
 
 
-def _rai_prefixed(wire_format, tool_name: str, action_input: dict) -> str:
+def _rai_prefixed(dialect, tool_name: str, action_input: dict) -> str:
     """Render an inline-guide example, with two ownerships kept where they
     belong: the tool owns the key prefix (:meth:`Tool.add_prefix`) and the
-    wire format owns serialization (:meth:`WireFormat.render_action_input`).
+    dialect owns serialization (:meth:`DialectBase.render_action_input`).
 
     Inline guides are authored as plain dicts in standard keys
     (``{"path": ...}``). They never hand-write namespaced keys and never
     assume JSON — both the ``{name}_`` prefix and the JSON (or non-JSON)
     serialization are applied here from their single sources.
     """
-    return wire_format.render_action_input(TOOLS[tool_name].add_prefix(action_input))
+    return dialect.render_action_input(TOOLS[tool_name].add_prefix(action_input))
 
 
 # ── DIRECTIVE.md search paths ────────────────────
@@ -115,17 +115,17 @@ TASK_GUIDELINES = """\
 - Report outcomes honestly — if verification failed or was not run, say so explicitly."""
 
 # ── Section 4: Format Rules ──────────────────────
-# Lives on the wire-format plugin: ``ReActFormat.format_rules()``.
-# build_system_prompt() pulls it through ``wire_format.format_rules()``.
+# Lives on the dialect plugin: ``ReActFormat.format_rules()``.
+# build_system_prompt() pulls it through ``dialect.format_rules()``.
 
 
 # ── Inline guides for tools ──────────────────────
-def _build_edit_file_inline(wire_format) -> str:
+def _build_edit_file_inline(dialect) -> str:
     """Build the edit_file inline guide.
 
     The op-semantics / hashline / constraints prose is wire-agnostic — every
     plugin gets the SAME explanatory text at the SAME level of detail. Only
-    the worked example passes through ``wire_format.render_action_input`` so
+    the worked example passes through ``dialect.render_action_input`` so
     each wire shows it in its own shape (json_fc renders the JSON action_input
     verbatim; a future plugin whose action_input is not a JSON dict transforms
     here — same hook delegate/read_file already use). The wire-shape rules
@@ -134,7 +134,7 @@ def _build_edit_file_inline(wire_format) -> str:
     """
 
     def rai(j):
-        return _rai_prefixed(wire_format, "edit_file", j)
+        return _rai_prefixed(dialect, "edit_file", j)
 
     def _indent(s: str) -> str:
         return "\n".join("      " + ln for ln in s.split("\n"))
@@ -151,7 +151,7 @@ def _build_edit_file_inline(wire_format) -> str:
             "lines": ['    return "hello"'],
         }
     )
-    if getattr(wire_format, "multi_op", False):
+    if getattr(dialect, "multi_op", False):
         examples = f"""\
   - one edit per op:
 {_indent(ex_single)}"""
@@ -220,7 +220,7 @@ def _build_edit_file_inline(wire_format) -> str:
 {same_file}"""
 
 
-def _build_agent_inline(wire_format) -> str:
+def _build_agent_inline(dialect) -> str:
     """Build the delegate inline guide.
 
     Each ``Examples:`` line shows only the action_input dict for the
@@ -231,7 +231,7 @@ def _build_agent_inline(wire_format) -> str:
     placeholder reasoning emissions.
 
     The action_input fragment is rendered through
-    ``wire_format.render_action_input`` so a future plugin whose
+    ``dialect.render_action_input`` so a future plugin whose
     action_input shape isn't a JSON dict can transform here without
     touching this builder. ReAct and envelope both implement that
     hook as identity (action_input is JSON in both formats today).
@@ -263,7 +263,7 @@ def _build_agent_inline(wire_format) -> str:
             },
         ),
     ]
-    if getattr(wire_format, "multi_op", False):
+    if getattr(dialect, "multi_op", False):
         intro = (
             "  Each run op gives ONE task to a sub-agent with its own context "
             "window.\n  Several run ops in the same turn are for independent "
@@ -285,7 +285,7 @@ def _build_agent_inline(wire_format) -> str:
     # header, and inlining the wire-shape envelope per example
     # anchored small models toward placeholder reasoning emissions.
     rendered = "\n".join(
-        f"  - {label}: {_rai_prefixed(wire_format, 'agent', args)}"
+        f"  - {label}: {_rai_prefixed(dialect, 'agent', args)}"
         for _, (label, args) in enumerate(examples, start=1)
     )
     return f"""\
@@ -303,7 +303,7 @@ def _build_agent_inline(wire_format) -> str:
 {rendered}\""""
 
 
-def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
+def _build_read_file_inline(active_tools: list[str], dialect) -> str:
     """Build the read_file inline guide.
 
     When ``code_index`` is active, the Flow paragraph routes
@@ -320,19 +320,19 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
 
     Each mode's example shows only the action_input dict — wire-shape
     learning is carried by the Format Rules section
-    (``wire_format.format_rules()``) and the Skills / Agents
+    (``dialect.format_rules()``) and the Skills / Agents
     invocation examples (``render_full_example``). Repeating the
     wire-shape envelope at every example anchored small models toward
     placeholder reasoning emissions in the first probe.
 
     The action_input fragment passes through
-    ``wire_format.render_action_input`` so plugins whose action_input
+    ``dialect.render_action_input`` so plugins whose action_input
     shape is not a JSON dict can transform here without changing the
     builder. Both current plugins return identity.
     """
 
     def rai(j):
-        return _rai_prefixed(wire_format, "read_file", j)
+        return _rai_prefixed(dialect, "read_file", j)
 
     # read_file is flat-native (consolidation roadmap Step 3): one op reads ONE
     # file — there is no per-tool batch array in any wire shape, so the examples
@@ -348,7 +348,7 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     ex_search = rai({"path": "app.py", "search": "login", "context": 5})
     ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
     ex_full = rai({"path": "app.py"})
-    if getattr(wire_format, "multi_op", False):
+    if getattr(dialect, "multi_op", False):
         intro = """\
 
   Each read_file op targets ONE file. To read several files, emit one
@@ -400,7 +400,7 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     return base_modes + flow
 
 
-def _build_code_index_inline(wire_format) -> str:
+def _build_code_index_inline(dialect) -> str:
     """Build the code_index inline guide.
 
     Pulls the supported extension list from
@@ -414,7 +414,7 @@ def _build_code_index_inline(wire_format) -> str:
     for the rationale (small-model placeholder anchoring).
 
     The action_input fragment passes through
-    ``wire_format.render_action_input`` so a future plugin can swap the
+    ``dialect.render_action_input`` so a future plugin can swap the
     inner shape without changing this builder. Both current plugins
     return identity.
     """
@@ -422,13 +422,13 @@ def _build_code_index_inline(wire_format) -> str:
 
     exts = ", ".join(get_supported_extensions())
 
-    multi_op = getattr(wire_format, "multi_op", False)
+    multi_op = getattr(dialect, "multi_op", False)
 
     def rai(item):
         # code_index is flat-native (Step 3): one op = one query, no
         # `queries` wrapper in any wire shape. The op array (multi-op) or
         # successive turns (single-op) replace the old per-tool batch.
-        return _rai_prefixed(wire_format, "code_index", item)
+        return _rai_prefixed(dialect, "code_index", item)
 
     list_py = rai({"mode": "list", "path": "auth.py"})
     list_cpp = rai({"mode": "list", "path": "src/foo.cpp"})
@@ -636,7 +636,7 @@ _ASK_INLINE_RESIDENT = """\
 
 
 def _build_tool_inline_guides(
-    active_tools: list[str], wire_format, *, nonblocking_ask: bool = False
+    active_tools: list[str], dialect, *, nonblocking_ask: bool = False
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
@@ -655,15 +655,15 @@ def _build_tool_inline_guides(
     else:
         ask = (
             _ASK_INLINE
-            if getattr(wire_format, "exposes_complete", True)
+            if getattr(dialect, "exposes_complete", True)
             else _ASK_INLINE_NO_COMPLETE
         )
     return {
-        "read_file": _build_read_file_inline(active_tools, wire_format),
-        "edit_file": _build_edit_file_inline(wire_format),
-        "agent": _build_agent_inline(wire_format),
+        "read_file": _build_read_file_inline(active_tools, dialect),
+        "edit_file": _build_edit_file_inline(dialect),
+        "agent": _build_agent_inline(dialect),
         "ask": ask,
-        "code_index": _build_code_index_inline(wire_format),
+        "code_index": _build_code_index_inline(dialect),
     }
 
 
@@ -680,7 +680,7 @@ def parameter_overrides_for(active_tools, nonblocking_ask: bool) -> dict[str, di
 
 def _build_tools_section(
     active_tools: list[str],
-    wire_format,
+    dialect,
     *,
     has_agent_registry: bool = True,
     nonblocking_ask: bool = False,
@@ -707,9 +707,9 @@ def _build_tools_section(
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
-            active_tools, wire_format, nonblocking_ask=nonblocking_ask
+            active_tools, dialect, nonblocking_ask=nonblocking_ask
         ),
-        wire_format=wire_format,
+        dialect=dialect,
         description_overrides=overrides or None,
         parameter_overrides=param_overrides or None,
     )
@@ -852,7 +852,7 @@ def build_system_prompt_sections(
     parent_role: str = "",
     session_dir: str = "",
     mcp_manager=None,
-    wire_format=None,
+    dialect=None,
     depth: int = 0,
     max_depth: int = 0,
     agent_registry=None,
@@ -876,14 +876,14 @@ def build_system_prompt_sections(
       - delegate: agent_role replaces ROLE_PROMPT
       - skill: parent_role (inherited from caller)
 
-    ``wire_format`` (a ``WireFormat`` plugin) supplies the response-format
-    section. Omitting it falls back to the default wire format (DEFAULT_WIRE_FORMAT)
+    ``dialect`` (a ``DialectBase`` plugin) supplies the dialect
+    section. Omitting it falls back to the default dialect (DEFAULT_DIALECT)
     so existing callers keep their pre-plugin behavior — that backward-
     compat default also lets unit tests construct a prompt without
     threading the registry through.
     """
-    if wire_format is None:
-        wire_format = _get_wire_format()
+    if dialect is None:
+        dialect = _get_dialect()
 
     sections: list[tuple[str, str]] = []
 
@@ -901,7 +901,7 @@ def build_system_prompt_sections(
     # tb21 실측: 35B-A3B 가 Primacy 의 원칙(백업·간결)을 0/1 무시, 같은
     # 문장을 마지막 메시지 꼬리에 두면 3/3 준수 — recency 가 실제로 먹히는
     # 위치. 상수 ``TASK_GUIDELINES`` 는 단일 소스로 여기 유지.
-    sections.append(("Response Format", wire_format.format_rules()))
+    sections.append(("Response Format", dialect.format_rules()))
 
     # ── Middle: reference material ──
     sections.append(
@@ -909,7 +909,7 @@ def build_system_prompt_sections(
             "Available Tools",
             _build_tools_section(
                 active_tools,
-                wire_format,
+                dialect,
                 has_agent_registry=agent_registry is not None,
                 nonblocking_ask=nonblocking_ask,
             ),
@@ -924,12 +924,12 @@ def build_system_prompt_sections(
         if mcp_desc:
             sections.append(("MCP Tools", f"## MCP Tools\n{mcp_desc}"))
 
-    skill_desc = build_skill_descriptions(wire_format=wire_format)
+    skill_desc = build_skill_descriptions(dialect=dialect)
     if skill_desc:
         sections.append(("Skills", skill_desc))
 
     if "agent" in active_tools:
-        profiles_desc = build_agent_profiles_section(wire_format=wire_format)
+        profiles_desc = build_agent_profiles_section(dialect=dialect)
         if profiles_desc:
             sections.append(("Agent Profiles", profiles_desc))
     # v5.11: 상주 서브에이전트는 registry 없이(상주 모드 차단 유지) 미리
@@ -990,7 +990,7 @@ def build_system_prompt(
     parent_role: str = "",
     session_dir: str = "",
     mcp_manager=None,
-    wire_format=None,
+    dialect=None,
     depth: int = 0,
     max_depth: int = 0,
 ) -> str:
@@ -1008,7 +1008,7 @@ def build_system_prompt(
             parent_role=parent_role,
             session_dir=session_dir,
             mcp_manager=mcp_manager,
-            wire_format=wire_format,
+            dialect=dialect,
             depth=depth,
             max_depth=max_depth,
         )
@@ -1090,15 +1090,15 @@ def _build_context_recovery(session_dir: str) -> str:
     )
 
 
-def build_agent_profiles_section(wire_format=None) -> str:
+def build_agent_profiles_section(dialect=None) -> str:
     """## Agent Profiles — 프로파일 카탈로그 (5.0.0 통합 광고).
 
     run(일회성)과 spawn(상주) 이 같은 카탈로그를 쓴다. 서브루프에도
     노출된다 (run 이 profile 을 받으므로) — Live Agents 와 달리
     레지스트리 게이트가 없다. ``disable-model-invocation`` 제외.
     """
-    if wire_format is None:
-        wire_format = _get_wire_format()
+    if dialect is None:
+        dialect = _get_dialect()
 
     try:
         from agent_cli.subagent.profiles import available_profiles
@@ -1109,17 +1109,17 @@ def build_agent_profiles_section(wire_format=None) -> str:
     if not profiles:
         return ""
 
-    run_example = wire_format.render_full_example(
+    run_example = dialect.render_full_example(
         thought=None,
         action="agent",
-        action_input=wire_format.render_action_input(
+        action_input=dialect.render_action_input(
             {"mode": "run", "profile": "profile-name", "task": "..."}
         ),
     )
-    spawn_example = wire_format.render_full_example(
+    spawn_example = dialect.render_full_example(
         thought=None,
         action="agent",
-        action_input=wire_format.render_action_input(
+        action_input=dialect.render_action_input(
             {"mode": "spawn", "profile": "profile-name", "task": "..."}
         ),
     )
@@ -1268,17 +1268,17 @@ def build_live_agents_section(
     return "\n".join(lines)
 
 
-def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> str:
+def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
     """Build skill descriptions for system prompt injection.
 
     Excludes skills flagged ``disable-model-invocation: true`` (frontmatter).
     If skills is None, loads from disk.
 
-    ``wire_format=None`` falls back to the default wire format (DEFAULT_WIRE_FORMAT)
+    ``dialect=None`` falls back to the default dialect (DEFAULT_DIALECT)
     (same backward-compat default as ``build_agent_descriptions``).
     """
-    if wire_format is None:
-        wire_format = _get_wire_format()
+    if dialect is None:
+        dialect = _get_dialect()
 
     if skills is None:
         try:
@@ -1294,10 +1294,10 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
     # render_full_example with thought=None — skill docs need the
     # action name visible (matches the sibling ``build_agent_descriptions``
     # form). See its docstring for the thought=None rationale.
-    example = wire_format.render_full_example(
+    example = dialect.render_full_example(
         thought=None,
         action="run_skill",
-        action_input=wire_format.render_action_input(
+        action_input=dialect.render_action_input(
             {"name": "skill-name", "arguments": "..."}
         ),
     )

@@ -1,8 +1,8 @@
-"""Unit tests for the wire-format plugin base layer.
+"""Unit tests for the dialect plugin base layer.
 
-Covers ``agent_cli/wire_formats/base.py`` (``ParsedAction`` + the
-``WireFormat`` ABC and its concrete defaults) and the registry in
-``agent_cli/wire_formats/__init__.py``. Concrete plugins (``JsonFcFormat``
+Covers ``agent_cli/dialects/base.py`` (``ParsedAction`` + the
+``DialectBase`` ABC and its concrete defaults) and the registry in
+``agent_cli/dialects/__init__.py``. Concrete plugins (``JsonFcFormat``
 etc.) are tested in their own files.
 
 A small mock subclass implements every abstract method but inherits the
@@ -15,16 +15,15 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.wire_formats import (
+from agent_cli.dialects import (
+    DialectBase,
     Op,
     ParsedAction,
     ParsedTurn,
-    WireFormat,
     get,
     list_names,
     register,
 )
-from agent_cli.wire_formats.base import WireFormat as WireFormatProtocol
 
 # ─── ParsedAction ──────────────────────────────────
 
@@ -65,8 +64,8 @@ class TestParsedAction:
 # ─── Mock plugin used by registry tests ─────────────
 
 
-class _MockFormat(WireFormatProtocol):
-    """Minimal WireFormat implementation for registry / ABC tests.
+class _MockFormat(DialectBase):
+    """Minimal DialectBase implementation for registry / ABC tests.
 
     Implements every abstract method (v8.41.0 ABC: ``parse_turn`` 이 1차
     추상, ``parse`` 는 첫-op 투영 기본 상속); inherits the concrete
@@ -126,7 +125,7 @@ class _ConfigurableFormat(_MockFormat):
 
 
 class TestParseDefaultProjection:
-    """``WireFormat.parse`` defaults to the first-op projection of
+    """``DialectBase.parse`` defaults to the first-op projection of
     ``parse_turn`` — 레거시 단수 소비자(history 직렬화 기본·직접 호출)용.
     v8.41.0 역전: 종전엔 parse 가 추상 + parse_turn 기본이 그것을 감쌌는데
     등록 포맷 전부 multi-op 라 그 기본이 사문이었다."""
@@ -193,7 +192,7 @@ class TestParseDefaultProjection:
 
 
 class TestABCConformance:
-    """A typical plugin shape should be a valid WireFormat subclass.
+    """A typical plugin shape should be a valid DialectBase subclass.
 
     The base is an ABC, so missing ``@abstractmethod`` implementations
     fail at instantiation rather than at the isinstance check — that
@@ -203,10 +202,10 @@ class TestABCConformance:
 
     def test_mock_inherits_from_base(self):
         plugin = _MockFormat()
-        assert isinstance(plugin, WireFormatProtocol)
+        assert isinstance(plugin, DialectBase)
 
     def test_missing_abstractmethod_fails_instantiation(self):
-        class Incomplete(WireFormatProtocol):
+        class Incomplete(DialectBase):
             name = "incomplete"
             # missing every abstract method
 
@@ -220,7 +219,7 @@ class TestABCConformance:
         class Unrelated:
             name = "unrelated"
 
-        assert not isinstance(Unrelated(), WireFormatProtocol)
+        assert not isinstance(Unrelated(), DialectBase)
 
 
 # ─── Registry ──────────────────────────────────────
@@ -234,9 +233,9 @@ def isolated_registry(monkeypatch):
     across tests would couple test order. We monkeypatch the module-level
     dict so both ``register`` and ``get`` see the override.
     """
-    from agent_cli import wire_formats as wf_pkg
+    from agent_cli import dialects as dialect_pkg
 
-    monkeypatch.setattr(wf_pkg, "_registry", {})
+    monkeypatch.setattr(dialect_pkg, "_registry", {})
     yield
 
 
@@ -268,7 +267,7 @@ class TestRegistry:
         assert "_mock_for_tests" in str(exc_info.value)
 
     def test_list_names_sorted(self, isolated_registry):
-        class _MockB(WireFormatProtocol):
+        class _MockB(DialectBase):
             name = "bbb"
 
             def format_rules(self) -> str:
@@ -309,14 +308,14 @@ class TestRegistry:
         assert list_names() == ["_mock_for_tests", "bbb"]
 
     def test_real_world_top_level_imports_work(self):
-        """The package re-exports ``ParsedAction`` and ``WireFormat`` so
+        """The package re-exports ``ParsedAction`` and ``DialectBase`` so
         callers don't have to drill into ``base``. Caught by import-time
         symbol resolution — failing here means external callers break."""
-        from agent_cli.wire_formats import ParsedAction as PA
-        from agent_cli.wire_formats import WireFormat as WF
+        from agent_cli.dialects import DialectBase as WF
+        from agent_cli.dialects import ParsedAction as PA
 
         assert PA is ParsedAction
-        assert WF is WireFormat
+        assert WF is DialectBase
 
 
 class TestAllSystemUserPrefixes:
@@ -327,18 +326,18 @@ class TestAllSystemUserPrefixes:
     returned list automatically."""
 
     def test_includes_format_agnostic_prefixes(self):
-        from agent_cli.wire_formats import all_system_user_prefixes
+        from agent_cli.dialects import all_system_user_prefixes
 
         prefixes = all_system_user_prefixes()
         # B1 (action loop) and interrupt — emitted by code paths
-        # outside any single wire format.
+        # outside any single dialect.
         assert "⚡ User interrupted." in prefixes
         assert "You have called" in prefixes
         assert "You were asked to:" in prefixes
 
     def test_includes_registered_plugin_prefixes(self):
         # 내장 플러그인은 import 시 등록 — framing prefix 가 자동 합류.
-        from agent_cli.wire_formats import all_system_user_prefixes
+        from agent_cli.dialects import all_system_user_prefixes
 
         prefixes = all_system_user_prefixes()
         assert "Your response did not match the expected format" in prefixes
@@ -350,7 +349,7 @@ class TestAllSystemUserPrefixes:
         # With a fresh empty registry no plugins contribute prefixes —
         # only the format-agnostic baseline remains. This confirms the
         # function actually pulls from the registry rather than caching.
-        from agent_cli.wire_formats import all_system_user_prefixes
+        from agent_cli.dialects import all_system_user_prefixes
 
         prefixes = all_system_user_prefixes()
         assert "⚡ User interrupted." in prefixes
@@ -360,7 +359,7 @@ class TestAllSystemUserPrefixes:
         # Registering a new plugin must extend ``all_system_user_prefixes``
         # without touching session.py or any other consumer — that is
         # the whole point of routing through this function.
-        from agent_cli.wire_formats import all_system_user_prefixes, register
+        from agent_cli.dialects import all_system_user_prefixes, register
 
         before = all_system_user_prefixes()
         plugin = _MockFormat()  # name "_mock_for_tests"
@@ -386,8 +385,8 @@ class TestNoActionFramingIsTrueForBothCases:
     괄호 안 설명만 다르다."""
 
     def test_both_formats_share_the_opening_and_cover_the_no_call_case(self):
-        from agent_cli.wire_formats import get
-        from agent_cli.wire_formats.base import NO_ACTION_FRAMING
+        from agent_cli.dialects import get
+        from agent_cli.dialects.base import NO_ACTION_FRAMING
 
         for name in ("json_fc", "xml_fc"):
             wf = get(name)
@@ -398,15 +397,15 @@ class TestNoActionFramingIsTrueForBothCases:
             assert wf.static_retry_hint_no_action().startswith(NO_ACTION_FRAMING)
 
     def test_prose_only_turn_takes_this_path_in_both_formats(self):
-        from agent_cli.recovery.wf_recovery import format_no_action_retry
-        from agent_cli.wire_formats import get
-        from agent_cli.wire_formats.base import NO_ACTION_FRAMING
+        from agent_cli.dialects import get
+        from agent_cli.dialects.base import NO_ACTION_FRAMING
+        from agent_cli.recovery.dialect_recovery import format_no_action_retry
 
         for name in ("json_fc", "xml_fc"):
             wf = get(name)
             turn = wf.parse_turn("Contracts are clear. Starting with textures.js.")
             assert turn.ops == [] and turn.parse_stage == 1
             intv = format_no_action_retry(
-                prior_content="Contracts are clear.", wire_format=wf
+                prior_content="Contracts are clear.", dialect=wf
             )
             assert intv.message.startswith(NO_ACTION_FRAMING)

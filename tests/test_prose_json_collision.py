@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.wire_formats import get
+from agent_cli.dialects import get
 
 WF = get("json_fc")
 OPS = '[{"action": "read_file", "path": "a.py"}]'

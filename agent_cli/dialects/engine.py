@@ -1,6 +1,6 @@
 """Dialect — 스펙 하나로 렌더·파서·문법·산문·history 왕복을 만드는 엔진 (Phase 5).
 
-설계: docs/multi-wire-format/PHASE5.md §4.3. 옛 ``xml_fc``/``json_fc`` 모듈의 동작을
+설계: docs/dialects/PHASE5.md §4.3. 옛 ``xml_fc``/``json_fc`` 모듈의 동작을
 스펙에서 읽은 토큰으로 일반화한 것이라, 각 경로의 주석은 그 모듈에서 가져왔다.
 등가성 합격선(§7)은 옛 모듈의 고정 출력(``tests/equivalence/expected/``)과 코퍼스로 잰다.
 
@@ -22,26 +22,26 @@ from __future__ import annotations
 import json
 import re
 
-from agent_cli.thinking_tags import ORPHAN_THINK_TAG_RE
-from agent_cli.wire_formats.base import (
+from agent_cli.dialects.base import (
+    DialectBase,
     Op,
     ParsedTurn,
-    WireFormat,
     _terminal_input,
 )
-from agent_cli.wire_formats.recovery import quote_spans
-from agent_cli.wire_formats.recovery.json import (
+from agent_cli.dialects.recovery import quote_spans
+from agent_cli.dialects.recovery.json import (
     _extract_op_json,
     _op_anchor,
     close_unbalanced,
     describe_json_error,
 )
-from agent_cli.wire_formats.recovery.tagged import (
+from agent_cli.dialects.recovery.tagged import (
     _extract_params_lenient,
     _lenient_tool_open_re,
     _trim_block,
 )
-from agent_cli.wire_formats.spec import ArgStyle, DialectSpec, NameSlot
+from agent_cli.dialects.spec import ArgStyle, DialectSpec, NameSlot
+from agent_cli.thinking_tags import ORPHAN_THINK_TAG_RE
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
@@ -169,8 +169,8 @@ class _TaggedTokens(_WrapperTokens):
         self.sentinel_line = re.compile(rf"^\s*</?(?:{tags})>\s*$", re.MULTILINE | I)
 
 
-class Dialect(WireFormat):
-    """스펙 구동 와이어 포맷 — ``WireFormat`` ABC 의 전 표면을 스펙에서 유도."""
+class Dialect(DialectBase):
+    """스펙 구동 와이어 포맷 — ``DialectBase`` ABC 의 전 표면을 스펙에서 유도."""
 
     def __init__(self, spec: DialectSpec):
         if spec.prose is None:
@@ -333,7 +333,7 @@ class Dialect(WireFormat):
         terminal call only last. ``arguments`` 의 키·값 타입은 열거하되 **필수 enum
         강제(forced)는 걸지 않는다** — 첫 멤버 앞에 쉼표가 없는 객체라 공용
         ``tool_params_expr`` 의 ``( sep item )*`` 꼴이 맞지 않는다; 검증기가 본다."""
-        from agent_cli.wire_formats.grammar import (
+        from agent_cli.dialects.grammar import (
             JSON_NONBLANK_STRING,
             JSON_RULES,
             call_sequence_rules,
@@ -390,7 +390,7 @@ class Dialect(WireFormat):
         """prose → one bare JSON array of ``{"action": <name>, <params>}`` ops, a
         terminal op (``complete``) only last. Prose may not contain a paragraph-
         initial ``[`` so the first one is the array — and is bounded."""
-        from agent_cli.wire_formats.grammar import (
+        from agent_cli.dialects.grammar import (
             JSON_NONBLANK_STRING,
             JSON_RULES,
             call_sequence_rules,
@@ -452,7 +452,7 @@ class Dialect(WireFormat):
         """prose → one or more ``<call><name=NAME>…</name></call>``, a terminal call
         (``complete``) only last. Parameter bodies are raw text that may not
         contain the param closer (the only thing that ends them)."""
-        from agent_cli.wire_formats.grammar import (
+        from agent_cli.dialects.grammar import (
             call_sequence_rules,
             enum_literals,
             grammar_params,

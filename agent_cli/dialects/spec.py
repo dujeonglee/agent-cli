@@ -3,7 +3,7 @@
 생태계(vLLM structural-tag · llama.cpp autoparser · HF response_template)가 쓰는
 네 축 — **시작 트리거 · 호출 단위 구분자 · 이름 위치 · 인자 포맷** — 에 우리 축
 (산문 thought, 종결 op, 문법 opener, 러너웨이 시그니처, 구제 옵션, 산문 조각)을
-더한 것이 스펙이다. :mod:`agent_cli.wire_formats.engine` 의 ``Dialect`` 가 스펙
+더한 것이 스펙이다. :mod:`agent_cli.dialects.engine` 의 ``Dialect`` 가 스펙
 하나로 렌더·파서·문법·산문·history 왕복을 전부 만든다.
 
 스펙은 데이터다 — 메서드가 없다. 모양이 다른 포맷은 스펙 필드가 다르고, 같은
@@ -77,7 +77,7 @@ class DialectSpec:
     """한 방언의 전부 — ``Dialect(spec)`` 가 이것만 읽는다."""
 
     name: str
-    """레지스트리 이름 (= ``--response-format`` 값, 세션 메타, models.json 바인딩)."""
+    """레지스트리 이름 (= ``--dialect`` 값, 세션 메타, models.json 바인딩)."""
 
     # ── 네 축 ──
     call: tuple[str, str] | None

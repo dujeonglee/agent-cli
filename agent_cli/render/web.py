@@ -1160,7 +1160,7 @@ class WebRenderer(Renderer):
             thought = msg.get("thought", "") or ""
             ops = msg.get("ops")
             if isinstance(ops, list) and ops:
-                # Both wire formats store every assistant turn — INCLUDING
+                # Both dialects store every assistant turn — INCLUDING
                 # the terminal ``complete`` — in the ``ops`` shape
                 # (``serialize_terminal_for_history`` / ``serialize_
                 # assistant_for_history``). Emit the thought once (held),

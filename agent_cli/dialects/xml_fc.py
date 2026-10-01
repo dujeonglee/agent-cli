@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.engine import Dialect
-from agent_cli.wire_formats.specs.xml_fc import XML_FC
+from agent_cli.dialects.engine import Dialect
+from agent_cli.dialects.specs.xml_fc import XML_FC
 
 
 class XmlFcFormat(Dialect):
-    """태그-파라미터 function-call wire format (멀티-op) — ``XML_FC`` 스펙."""
+    """태그-파라미터 function-call dialect (멀티-op) — ``XML_FC`` 스펙."""
 
     def __init__(self):
         super().__init__(XML_FC)

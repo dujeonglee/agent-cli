@@ -123,7 +123,7 @@ def save_model_entry(model: str, entry: dict) -> bool:
         return False
     if existing_entry is not None:
         # refresh 는 프로브 산출 필드만 갱신 — 사용자가 auto-detected 엔트리에
-        # 손으로 추가한 키(예: wire_format 바인딩)는 보존 (multi-wire-format
+        # 손으로 추가한 키(예: dialect 바인딩)는 보존 (dialects
         # §7-A1). caps_to_entry 는 capabilities 필드만 내므로 단순 병합으로 충분.
         entry = {**existing_entry, **entry}
 

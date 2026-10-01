@@ -103,7 +103,7 @@ def _sum_message_tokens(messages) -> int:
     return sum(_estimate_message_tokens(m) for m in messages)
 
 
-def _to_natural_language(msg: dict, wire_format) -> dict:
+def _to_natural_language(msg: dict, dialect) -> dict:
     """Convert a JSON history record to a natural-language message for the LLM.
 
     Input formats (from history.jsonl):
@@ -115,7 +115,7 @@ def _to_natural_language(msg: dict, wire_format) -> dict:
     Output format (for chat completion):
         {"role": "user"|"assistant", "content": "...natural language..."}
 
-    Assistant records are handed off to ``wire_format.render_assistant_
+    Assistant records are handed off to ``dialect.render_assistant_
     from_history`` so each plugin owns the on-disk → message conversion
     for its own format. The user / tool branches live here because they
     are format-agnostic.
@@ -130,7 +130,7 @@ def _to_natural_language(msg: dict, wire_format) -> dict:
 
     # Re-feed the context view (bulky action_input bodies elided per-tool;
     # default identity → unchanged today). History/cache stay faithful.
-    return wire_format.render_assistant_from_history(_context_view(msg))
+    return dialect.render_assistant_from_history(_context_view(msg))
 
 
 _SUMMARY_CONTENT_EXCERPT = 200  # chars of tool-result content kept per line
