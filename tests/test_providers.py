@@ -1336,3 +1336,37 @@ class TestUnclosedThinkStop:
         kept = provider._parse_response(data, thinking_stop=get("xml_fc").thinking_stop)
         assert kept.content.startswith("<tool_call>")
         assert kept.thinking == "I should read the file first."
+
+
+class TestStreamedToolCalls:
+    """v10.1.5: 서버 tool parser 가 호출을 ``delta.tool_calls`` 조각으로 보내면
+    content 가 비어 NO_OUTPUT 이었다. 조각을 index 별로 모아 ``tool_calls`` 로
+    돌려주면 루프(v10.1.4 `_render_server_tool_calls`)가 캐노니컬로 되살린다."""
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_delta_tool_calls_are_accumulated(self, mock_post, caps_structured):
+        sse = [
+            b'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_file","arguments":""}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"path\\": "}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"a.py\\"}"}}]}}]}',
+            b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":33}}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = OpenAIProvider("http://x/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda t: None,
+        )
+        assert result.content == ""
+        assert result.tool_calls == [
+            {"id": "c1", "name": "read_file", "input": {"path": "a.py"}}
+        ]
+        assert result.usage.output_tokens == 33

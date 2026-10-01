@@ -431,6 +431,9 @@ class StreamEvent:
     stop_reason: str | None = None
     usage_fields: dict | None = None
     done: bool = False
+    #: v10.1.5: 서버 tool parser 가 빼낸 호출 조각(OpenAI 스트리밍 ``delta.tool_calls``)
+    #: — ``[{"index", "id", "name", "arguments"}]``, arguments 는 조각 문자열.
+    tool_call_deltas: list[dict] | None = None
 
 
 @dataclass
@@ -443,6 +446,8 @@ class StreamAccum:
     usage_fields: dict = field(default_factory=dict)
     ttft_ns: int = 0
     decode_ns: int = 0
+    #: v10.1.5: index → {"id", "name", "arguments"(조각 이어붙임)} — 서버가 빼낸 호출
+    tool_calls: dict = field(default_factory=dict)
 
 
 def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=None):
@@ -637,11 +642,33 @@ def run_sse_stream(
         ev = map_payload(data)
         if ev is None:
             continue
-        if ev.usage_fields or ev.thinking or ev.text or ev.stop_reason or ev.done:
+        if (
+            ev.usage_fields
+            or ev.thinking
+            or ev.text
+            or ev.stop_reason
+            or ev.done
+            or ev.tool_call_deltas
+        ):
             # 실제 진전 — keep-alive(빈 delta) 프레임은 여기 도달하지 못한다.
             clock.touch()
         if ev.usage_fields:
             acc.usage_fields.update(ev.usage_fields)
+        if ev.tool_call_deltas:
+            # 서버가 content 대신 구조화해 보낸 호출 — 조각을 index 별로 모은다.
+            # content 가 비어 NO_OUTPUT 이 되던 경로의 스트리밍판 (v10.1.5).
+            if not t_first:
+                t_first = _time.perf_counter_ns()
+            for d in ev.tool_call_deltas:
+                slot = acc.tool_calls.setdefault(
+                    d.get("index", 0), {"id": "", "name": "", "arguments": ""}
+                )
+                if d.get("id"):
+                    slot["id"] = d["id"]
+                if d.get("name"):
+                    slot["name"] = d["name"]
+                if d.get("arguments"):
+                    slot["arguments"] += d["arguments"]
         if ev.thinking:
             thinking_parts.append(ev.thinking)
             if on_thinking is not None:
