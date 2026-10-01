@@ -205,6 +205,7 @@ class AgentLoop:
             agent_registry=ports.agent_registry,
             message_handler=ports.message_handler,
             questions=ports.questions,
+            peer_roster=ports.peer_roster,
             peer_agents_section=peer_agents_section,
         )
         self._state = LoopState(

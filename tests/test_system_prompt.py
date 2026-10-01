@@ -1455,6 +1455,33 @@ class TestPathRule:
         assert "RELATIVE" in sections["Environment"]
 
 
+class TestPeerRosterIntro:
+    """v10.1.0: 상주 시스템 프롬프트의 `## Live Agents` 는 안내만 — 명단은 꼬리."""
+
+    def test_intro_points_to_the_tail_and_has_no_members(self):
+        from agent_cli.prompts.system_prompt import build_peer_roster_intro
+
+        intro = build_peer_roster_intro()
+        assert intro.startswith("## Live Agents")
+        assert "END of every turn" in intro
+        assert "key or name" in intro
+        assert "agt-" not in intro
+
+    def test_intro_still_triggers_reply_discipline(self, caps):
+        from agent_cli.prompts.system_prompt import build_peer_roster_intro
+
+        names = [
+            n
+            for n, _ in build_system_prompt_sections(
+                caps,
+                active_tools=["read_file"],
+                agent_role="r",
+                peer_agents_section=build_peer_roster_intro(),
+            )
+        ]
+        assert "Live Agents" in names and "Reply Discipline" in names
+
+
 class TestReplyDisciplineSection:
     """상주 에이전트 고정 각인 (v7.18.1) — 여러 요청자(main·창 사용자·peer)의
     요청마다 반드시 그 요청자에게 회신이 돌아가야 한다는 핵심 계약. 상주
@@ -1498,6 +1525,8 @@ class TestReplyDisciplineSection:
         assert "WHILE you work" in body and "## Owed Replies" in body  # 사실 3
         assert "automatically returns" not in body  # v9.21.0 이전의 거짓
         assert "cannot do" in body or "failed" in body  # 실패도 회신
+        assert "expects_reply: false" in body  # v10.1.0 통지
+        assert "never answer it with thanks" in body
 
 
 class TestRunDescriptionFocusesOnContext:

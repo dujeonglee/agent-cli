@@ -144,13 +144,16 @@ class MessageTool(Tool):
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        "Message another running agent (a peer, or `main`) when you NEED "
-        "something from them — a decision, an answer, their next move. They "
-        "owe you a reply, which comes back to YOU as a NEW message; you are "
-        "NOT blocked. Sent to whoever requested your current work, it also "
-        "counts as your reply to them. To report a result with nothing "
-        "expected back, use `reply`. `complete` alone reports to no one. See "
-        "`## Live Agents` for who is running. Never send acknowledgements."
+        "Message another running agent (a peer, or `main`). By default it is a "
+        "REQUEST: you NEED something from them — a decision, an answer, their "
+        "next move — and they owe you a reply, which comes back to YOU as a NEW "
+        "message; you are NOT blocked. With `expects_reply: false` it is a "
+        "NOTICE: a status update, a hand-off note, a goodbye — nothing is owed "
+        "back and the receiver must not acknowledge it. Sent to whoever "
+        "requested your current work, either form also counts as your reply to "
+        "them. To answer a request you received, use `reply`. `complete` alone "
+        "reports to no one. See `## Live Agents` for who is running. Never send "
+        "thanks or acknowledgements."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -158,12 +161,21 @@ class MessageTool(Tool):
             "to": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Target agent key (from `## Live Agents`), or 'main'.",
+                "description": (
+                    "Target agent: its key or name (from `## Live Agents`), or 'main'."
+                ),
             },
             "text": {
                 "type": "string",
                 "minLength": 1,
                 "description": "The message to send.",
+            },
+            "expects_reply": {
+                "type": "boolean",
+                "description": (
+                    "true (default): a request — the receiver owes you a reply. "
+                    "false: a notice — nothing owed, no acknowledgement wanted."
+                ),
             },
         },
         "required": ["to", "text"],

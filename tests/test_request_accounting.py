@@ -1031,7 +1031,11 @@ class TestAgentLoopsAreUntouched:
         from agent_cli.runtime import ports_for_resident
 
         return ports_for_resident(
-            key="agt-x", message_handler=None, questions=None, absorb_inbox=None
+            key="agt-x",
+            message_handler=None,
+            questions=None,
+            absorb_inbox=None,
+            peer_roster=None,
         )
 
     @staticmethod

@@ -161,6 +161,13 @@ class LLMCaller:
             agents = build_live_agents_section(
                 self.cfg.agent_registry, include_state=True
             )
+        elif self.cfg.peer_roster is not None:
+            # 상주 에이전트 (v10.1.0): 레지스트리 없이 포트가 준 로스터 — 매 턴
+            # 새로 만들어지므로 런 도중 spawn 된 동료도 다음 턴에 보인다.
+            try:
+                agents = self.cfg.peer_roster() or ""
+            except Exception:
+                agents = ""
         memory = ""
         if self.ctx is not None and self.ctx.session_dir:
             memory = render_index(self.ctx.session_dir)

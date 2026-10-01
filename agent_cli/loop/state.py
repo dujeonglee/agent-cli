@@ -62,6 +62,8 @@ class LoopConfig:
     # 있으면 ``message`` 도구가 이 callable(to, text)->confirmation 으로
     # 라우팅되고, __init__ 이 message 도구를 tools_list 에 강제 탑재한다.
     message_handler: object = None
+    #: 상주 전용 (v10.1.0) — 꼬리 로스터 콜러블 (`LoopPorts.peer_roster`)
+    peer_roster: object = None
     # 비동기 ask/answer 의 단일 seam (docs/agent-ask/DESIGN.md §4) —
     # ``QuestionPort``. 레지스트리가 아니라 포트라 위의 "teammate 안
     # teammate 금지" 가드는 그대로다. main 도 받는다(답할 수단이 필요).

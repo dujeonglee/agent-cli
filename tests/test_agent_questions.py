@@ -2431,9 +2431,10 @@ class TestUnifiedDebtRules:
         b = spawn_idle(reg)
         ports = ports_for_resident(
             key=b,
-            message_handler=lambda to, text: "",
+            message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
             absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
+            peer_roster=None,
         )
         tm = reg.get(b)
         tm.current_author = "user:dj"
@@ -2504,9 +2505,10 @@ class TestUnifiedDebtRules:
             )
         ports = ports_for_resident(
             key=b,
-            message_handler=lambda to, text: "",
+            message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
             absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
+            peer_roster=None,
         )
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"  # 질문 항목 — 회신 빚은 없다
@@ -2694,9 +2696,10 @@ class TestRuleFollowsInboundTypeNotOwner:
             )
         ports = ports_for_resident(
             key=b,
-            message_handler=lambda to, text: "",
+            message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
             absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
+            peer_roster=None,
         )
         tm = reg.get(b)
         tm.current_author = "user:dj"
@@ -3111,6 +3114,7 @@ class TestMidRunAbsorption:
                 message_handler=reg._make_message_handler(tm),
                 questions=reg.question_port(b),
                 absorb_inbox=lambda: reg.absorb_pending(tm),
+                peer_roster=None,
             ),
         )
         return calls, ctx, res
