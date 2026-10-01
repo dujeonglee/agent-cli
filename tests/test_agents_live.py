@@ -2237,6 +2237,24 @@ class TestPeerMessaging:
 
     # ── v10.1.0: 빚 없는 통지 · 주소 해석 · 회신 꼬리표 (실측 cnr60g) ──
 
+    def test_message_and_reply_with_no_words_are_not_sent(self, tmp_path, renderer):
+        """v10.1.2: 구두점뿐인 message/reply 는 보내지 않는다 (실측 `>`)."""
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        out = handler(b, ">")
+        assert "no words" in out and "nothing sent" in out
+        assert not wait_until(lambda: reg.get(b).handled >= 1, timeout=0.4)
+        me = f"agent:{a}"
+        reg.begin_run(me)
+        reg.note_owes(me, f"agent:{b}", "do it", id="1")
+        port = reg.question_port(a)
+        err = port.reply("...", id="1")
+        assert "no words" in err
+        assert reg.reply_debts(me)  # 빚은 그대로
+        assert port.reply("done", id="1") == ""
+        reg.shutdown_all()
+
     def test_notice_to_peer_creates_no_debt(self, tmp_path, renderer):
         """`message(expects_reply=false)` — 받는 쪽이 빚지지 않고, 꼬리표가 ack 를
         막는다. 종전엔 모든 message 가 요청이라 작별 인사도 빚이 됐다."""
@@ -3739,6 +3757,26 @@ class TestAgentTaskFieldUnification:
             err = tool.validate({"mode": mode, "key": "agt-x", "message": "지시"})
             assert err is not None, mode
             assert "'task'" in err, err  # 교정 방향이 필드-정밀해야 자가 교정된다
+
+    def test_task_with_no_words_is_rejected(self):
+        """v10.1.2 (실측 nnq141·재현): `<parameter=task>\n>\n</parameter>` —
+        구두점 하나짜리 지시는 빈 지시다. 모든 모드의 task 에 적용, 글자·숫자가
+        하나라도 있으면 통과(언어 무관)."""
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["agent"]
+        for mode in ("spawn", "request", "run"):
+            args = {"mode": mode, "key": "agt-x", "task": "\n>\n"}
+            err = tool.validate(args)
+            assert err is not None and "no words" in err and "'task'" in err, (
+                mode,
+                err,
+            )
+        assert tool.validate({"mode": "request", "key": "agt-x", "task": "가"}) is None
+        assert tool.validate({"mode": "run", "task": "x1"}) is None
+        assert (
+            tool.validate({"mode": "spawn", "name": "p2"}) is None
+        )  # task 생략은 허용
 
     def test_request_requires_task_not_message(self):
         from agent_cli.tools.registry import TOOLS
