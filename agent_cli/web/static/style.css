@@ -1163,7 +1163,7 @@ footer {
 
 /* ── Prompt Inspector ───────────────────────── */
 /* header icon buttons — btn-icon + 헤더 전용 크기/간격 */
-#theme-btn, #directive-btn, #export-btn, #files-btn {
+#theme-btn, #directive-btn, #copy-all-btn, #files-btn {
   font-size: 18px; margin-left: 4px; flex-shrink: 0;
 }
 
@@ -1517,47 +1517,6 @@ footer {
 /* footer main-prompt inspect button (🔍) */
 #insp-main-btn { font-size: 16px; align-self: flex-end; flex-shrink: 0; }
 
-/* ── Export selection mode ───────────────────── */
-.export-check { display: none; }
-body.export-mode #messages > .card { position: relative; padding-left: 2.2rem; }
-body.export-mode #messages > .card > .export-check {
-  display: inline-block;
-  position: absolute;
-  left: 0.7rem;
-  top: 0.7rem;
-  width: 1rem;
-  height: 1rem;
-  cursor: pointer;
-  z-index: 2;
-}
-
-#export-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  padding: 0.5rem 0.9rem;
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
-  font-size: 0.9rem;
-}
-/* The `display: flex/inline-flex` ID rules above outweigh the UA
-   `[hidden] { display: none }` (attribute selector), so the `hidden`
-   attribute is inert without these explicit higher-specificity rules —
-   the bar / Jira form would never hide. (Same pattern as `#abort[hidden]`.) */
-#export-bar .exp-all { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
-#export-count { color: var(--muted); min-width: 6rem; }
-#export-bar .exp-actions { display: inline-flex; gap: 0.4rem; }
-#export-cancel { margin-left: 0.2rem; }
-#export-jira-form { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-#export-jira-form input { padding: 0.25rem 0.4rem; }
-#export-jira-url { width: 13rem; }
-#export-jira-user, #export-jira-secret { width: 9rem; }
-#export-jira-issue { width: 7rem; }
-.exp-hint { color: var(--muted); font-size: 0.78rem; cursor: help; }
-.exp-warn { color: var(--warn); font-size: 0.78rem; }
-.exp-msg { color: var(--muted); }
-.exp-msg a { color: var(--accent); }
 
 /* ─── Workspace download drawer (📥) ─── */
 #download-backdrop {
@@ -1749,3 +1708,17 @@ body.export-mode #messages > .card > .export-check {
 .insp-sub { font-size: 11.5px; color: var(--muted); padding: 2px 2px 6px; }
 .insp-sec.insp-grp { border-left-color: var(--border-2); }
 .insp-nest { padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ── 카드 복사 ⧉ (v10.8.0, export 대체) — 호버 때만 보이는 작은 버튼 ── */
+.card-copy {
+  position: absolute; right: 8px; top: 20px; z-index: 2;
+  font-size: 12px; line-height: 1; padding: 2px 6px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  opacity: 0; cursor: pointer; transition: opacity .12s ease;
+}
+.card:hover > .card-copy, .card-copy:focus-visible, .card-copy.done { opacity: 1; }
+.card-copy:hover { color: var(--text); background: var(--surface-2); }
+.card-copy.done { color: var(--ok); border-color: var(--ok-soft-border); }
+.card-user > .card-copy { right: auto; left: 8px; }
+.card-task-group > .card-copy { top: 6px; right: 36px; }
+#copy-all-btn.done { color: var(--ok); }

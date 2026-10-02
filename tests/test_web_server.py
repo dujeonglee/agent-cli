@@ -27,8 +27,6 @@ import os
 import pathlib
 import threading
 import time
-from typing import ClassVar
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1274,32 +1272,45 @@ class TestStaticUI:
         # "(0 edits)"); it shows the op/ref instead.
         assert "editCount" not in body
 
-    def test_export_ui_wired(self, server_and_client):
-        # Frontend↔backend contract guard for the Export feature: the page has
-        # the export controls and app.js hits the export endpoints. Keeps the
-        # JS (untested by an engine here) from silently drifting off the
-        # server endpoints, which ARE tested in TestExportEndpoints.
+    def test_copy_ui_wired(self, server_and_client):
+        """v10.8.0: export(📤·선택 모드·HTML/Jira) 는 사라지고 **복사**가 대신한다 —
+        헤더의 ⧉(대화 전체, 마크다운)와 카드마다 ⧉. 프런트↔백 계약: export
+        엔드포인트를 더 부르지 않고, 카드 마크다운 레지스트리가 실재한다."""
         _, _, client = server_and_client
         html = client.get("/").text
+        assert 'id="copy-all-btn"' in html
         for el_id in ("export-btn", "export-bar", "export-all", "export-jira-form"):
-            assert f'id="{el_id}"' in html, el_id
+            assert f'id="{el_id}"' not in html, el_id
         js = client.get("/static/app.js").text
-        assert "api/export/html" in js
-        assert "api/export/jira" in js
-        assert "api/export/jira/targets" in js
-        # 이 바는 `hidden` 속성으로 여닫는데, 작성자의 `display` 선언이 UA 의
-        # `[hidden]{display:none}` 을 이겨 **속성만 붙고 안 숨는** 사고가
-        # 났었다. v9.8.0 부터 셀렉터마다 가드를 붙이는 대신 **전역 한 줄**로
-        # 부류를 없앴다 — 같은 사고가 네 번(`#stall-pop`·`.card-user`·
-        # `.hd-chip`·`#ov-channels`) 난 뒤의 결론이다. 개별 가드 15개를 지웠고,
-        # 이 한 줄이 그 전부를 덮는다. 지워지면 넷이 한꺼번에 재발한다.
+        assert "api/export" not in js
+        assert "function cardMarkdown(" in js and "function timelineMarkdown(" in js
+        assert "window.__cardMarkdown" in js  # 브라우저 테스트가 읽는 공개면
+        assert "attachCopy(cardEl)" in js  # finishCard 한 곳에서 모든 카드에
+        assert "window.__copyText" in js  # 클립보드 헬퍼는 하나
         css = client.get("/static/style.css").text
+        assert ".card-copy" in css
+        assert (
+            "#export-bar" not in css and ".exp-" not in css and "export-mode" not in css
+        )
+        # `hidden` 전역 가드(v9.8.0) — 네 번 재발한 사고의 단일 수리
         assert "[hidden] { display: none !important; }" in css
-        # v9.4.0 ②: 표면이 #messages 하나라 "타임라인을 띄우는" 훅이 사라졌다.
-        # 종전엔 개요/흐름 모드에서 #messages 가 닫힌 드로어 안이라 export 진입이
-        # 그걸 열어야 했다(v8.13.2 "뭘 고를지 안 나옴" 수리). 이제 항상 보인다 —
-        # 되살아나면 표면이 다시 갈라졌다는 뜻이라 부재를 고정한다.
         assert "__showTimeline" not in js
+
+    def test_export_endpoints_are_gone(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/export/jira/targets?token=testtoken").status_code == 404
+        assert (
+            client.post("/api/export/html?token=testtoken", json={}).status_code == 404
+        )
+        assert (
+            client.post("/api/export/jira?token=testtoken", json={}).status_code == 404
+        )
+        import importlib
+
+        import pytest
+
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("agent_cli.integrations")
 
     def test_compaction_slider_wired(self, server_and_client):
         # 5.13 compaction 슬라이더 배선 계약: index.html 요소 + app.js 가
@@ -2592,187 +2603,6 @@ class TestDebugPromptScopedEndpoints:
         assert (
             client.delete("/api/debug/prompt?token=wrong&task_id=x").status_code == 401
         )
-
-
-class TestExportEndpoints:
-    """Export feature endpoints: HTML download + Jira comment + targets.
-
-    Token-authenticated and read-only (no controller gate). Jira config /
-    HTTP POST are patched so these run without a live (paid) Jira."""
-
-    # Credentials are no longer stored server-side; deployment is pinned so the
-    # targets endpoint doesn't probe the network during tests.
-    _CFG: ClassVar[dict] = {
-        "jira": {
-            "instances": {
-                "work": {
-                    "base_url": "https://work.atlassian.net",
-                    "deployment": "cloud",
-                },
-                "dc": {"base_url": "https://jira.corp", "deployment": "server"},
-            },
-            "default": "work",
-        }
-    }
-
-    def test_targets_requires_token(self, server_and_client):
-        _, _, client = server_and_client
-        assert client.get("/api/export/jira/targets").status_code == 401  # no auth
-        assert client.get("/api/export/jira/targets?token=wrong").status_code == 401
-
-    def test_targets_lists_instances_with_deployment(self, server_and_client):
-        _, _, client = server_and_client
-        with patch("agent_cli.config.load_config", return_value=self._CFG):
-            r = client.get("/api/export/jira/targets?token=testtoken")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["ok"] is True
-        by_name = {t["name"]: t for t in data["targets"]}
-        assert set(by_name) == {"work", "dc"}
-        assert by_name["work"]["deployment"] == "cloud"
-        assert by_name["dc"]["deployment"] == "server"
-
-    def test_html_export_returns_attachment(self, server_and_client):
-        _, _, client = server_and_client
-        r = client.post(
-            "/api/export/html?token=testtoken",
-            json={
-                "title": "S",
-                "entries": [{"kind": "user", "label": "User", "body": "hi there"}],
-            },
-        )
-        assert r.status_code == 200
-        assert "text/html" in r.headers["content-type"]
-        assert "attachment" in r.headers["content-disposition"]
-        assert "hi there" in r.text and "<!doctype html>" in r.text
-
-    def test_html_export_requires_token_and_list(self, server_and_client):
-        _, _, client = server_and_client
-        assert client.post("/api/export/html", json={}).status_code == 401
-        r = client.post("/api/export/html?token=testtoken", json={"entries": "x"})
-        assert r.status_code == 400
-
-    def test_jira_export_cloud_posts_adf_as_user(self, server_and_client):
-        _, _, client = server_and_client
-        with (
-            patch("agent_cli.config.load_config", return_value=self._CFG),
-            patch("agent_cli.integrations.jira.requests.post") as post,
-        ):
-            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={
-                    "issue_key": "PROJ-3",
-                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
-                    "auth": {"user": "me@co.com", "secret": "tok"},
-                },
-            )
-        assert r.status_code == 200
-        data = r.json()
-        assert data["ok"] is True
-        assert data["url"] == "https://work.atlassian.net/browse/PROJ-3"
-        assert data["deployment"] == "cloud"
-        # ADF posted to v3 with the USER's credentials (not a server account)
-        call = post.call_args
-        assert call.args[0].endswith("/rest/api/3/issue/PROJ-3/comment")
-        assert call.kwargs["auth"] == ("me@co.com", "tok")
-        assert call.kwargs["json"]["body"]["type"] == "doc"
-
-    def test_jira_export_server_posts_wiki_as_user(self, server_and_client):
-        _, _, client = server_and_client
-        with (
-            patch("agent_cli.config.load_config", return_value=self._CFG),
-            patch("agent_cli.integrations.jira.requests.post") as post,
-        ):
-            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={
-                    "target": "dc",
-                    "issue_key": "DC-9",
-                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
-                    "auth": {"user": "alice", "secret": "pw"},
-                },
-            )
-        assert r.status_code == 200
-        data = r.json()
-        assert data["deployment"] == "server"
-        call = post.call_args
-        assert call.args[0].endswith("/rest/api/2/issue/DC-9/comment")
-        assert call.kwargs["auth"] == ("alice", "pw")
-        # v2 body is a wiki-markup STRING, not ADF
-        assert isinstance(call.kwargs["json"]["body"], str)
-        assert "*User*" in call.kwargs["json"]["body"]
-
-    def test_jira_export_user_supplied_https_url_zero_config(self, server_and_client):
-        # No config at all: the user types the base_url in the UI and it works.
-        _, _, client = server_and_client
-        with (
-            patch("agent_cli.config.load_config", return_value={}),
-            patch("agent_cli.integrations.jira.requests.post") as post,
-        ):
-            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={
-                    "base_url": "https://mine.atlassian.net",
-                    "issue_key": "X-1",
-                    "deployment": "cloud",
-                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
-                    "auth": {"user": "me@x.com", "secret": "tok"},
-                },
-            )
-        assert r.status_code == 200
-        assert r.json()["url"] == "https://mine.atlassian.net/browse/X-1"
-        assert post.call_args.args[0].startswith("https://mine.atlassian.net/rest/")
-
-    def test_jira_export_user_supplied_http_url_ok(self, server_and_client):
-        # A user-typed http:// base_url is now allowed (plaintext risk is a UI
-        # warning, not a hard block). deployment is given explicitly so
-        # detect_deployment does not hit the network.
-        _, _, client = server_and_client
-        with (
-            patch("agent_cli.config.load_config", return_value={}),
-            patch("agent_cli.integrations.jira.requests.post") as post,
-        ):
-            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={
-                    "base_url": "http://insecure.lan",
-                    "issue_key": "X-1",
-                    "deployment": "cloud",
-                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
-                    "auth": {"user": "u", "secret": "s"},
-                },
-            )
-        assert r.status_code == 200
-        assert r.json()["url"] == "http://insecure.lan/browse/X-1"
-        assert post.call_args.args[0].startswith("http://insecure.lan/rest/")
-
-    def test_jira_export_missing_auth_is_400(self, server_and_client):
-        _, _, client = server_and_client
-        with patch("agent_cli.config.load_config", return_value=self._CFG):
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={"issue_key": "P-1", "entries": []},
-            )
-        assert r.status_code == 400
-        assert "credentials" in r.json()["detail"].lower()
-
-    def test_jira_export_no_config_is_400(self, server_and_client):
-        _, _, client = server_and_client
-        with patch("agent_cli.config.load_config", return_value={}):
-            r = client.post(
-                "/api/export/jira?token=testtoken",
-                json={
-                    "issue_key": "P-1",
-                    "entries": [],
-                    "auth": {"user": "u", "secret": "s"},
-                },
-            )
-        assert r.status_code == 400
-        assert "No Jira instances" in r.json()["detail"]
 
 
 class TestWorkspaceDownload:

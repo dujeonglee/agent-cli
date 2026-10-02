@@ -114,7 +114,7 @@
       <div id="theme-menu" role="menu" hidden></div>
     </span>
     <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
-    <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
+    <button id="copy-all-btn" class="btn-icon" type="button" title="대화 전체 복사 — 보이는 대화를 마크다운으로 클립보드에">⧉</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
             title="⚡ 자동 승인: 위험 명령(rm 등)·워크스페이스 밖 접근의 확인 프롬프트를 건너뛰고 자동 허용합니다. 세션 한정·재시작 시 해제. 신뢰된 작업에서만 켜세요.">⚡ 확인 없이 실행</button>
@@ -136,32 +136,6 @@
        그렸고 투명성(도구·reasoning)이 드로어 안에만 있었다. 뷰 토글·드로어·
        content-split 이 전부 사라지고 타임라인이 곧 본문이다. -->
   <main id="messages"></main>
-  <!-- Export selection action bar (shown only in export mode) -->
-  <div id="export-bar" hidden>
-    <label class="exp-all"><input type="checkbox" id="export-all"> All</label>
-    <span id="export-count">0 selected</span>
-    <span class="exp-actions">
-      <button id="export-html" type="button" class="btn-ghost" title="Download as HTML">⬇ HTML</button>
-      <button id="export-jira-btn" type="button" class="btn-ghost" title="Post as Jira comment">Jira…</button>
-      <button id="export-cancel" type="button" class="btn-icon" title="Cancel">✕</button>
-    </span>
-    <span id="export-jira-form" hidden>
-      <select id="export-jira-target" title="Jira instance"></select>
-      <input id="export-jira-url" type="url" autocomplete="off" placeholder="https://your-jira" title="Jira base URL">
-      <span id="export-jira-http-warn" class="exp-warn" hidden>⚠ http sends credentials in plaintext. Use only on a trusted network.</span>
-      <select id="export-jira-deployment" title="Jira type">
-        <option value="cloud">Cloud</option>
-        <option value="server">Server/DC</option>
-      </select>
-      <input id="export-jira-user" type="text" autocomplete="off" placeholder="email">
-      <input id="export-jira-secret" type="password" autocomplete="off" placeholder="API token">
-      <input id="export-jira-issue" type="text" placeholder="ISSUE-123" autocomplete="off">
-      <button id="export-jira-send" type="button" class="btn-primary">Send</button>
-      <span class="exp-hint" title="Credentials are stored only in this browser (localStorage) and sent over your LAN connection to post as you.">🔒 your account · saved in this browser</span>
-    </span>
-    <span id="export-msg" class="exp-msg"></span>
-  </div>
-
   <!-- Workspace files drawer (📁) — download (select + zip) + upload (drop) -->
   <div id="download-backdrop" hidden></div>
   <aside id="download-drawer" aria-hidden="true">

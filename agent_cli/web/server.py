@@ -39,7 +39,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
@@ -992,109 +992,6 @@ def create_app(server: WebServer) -> FastAPI:
         not deletable (it regenerates every turn)."""
         removed = server.renderer.delete_prompt_scope(task_id)
         return {"ok": True, "removed": removed}
-
-    @app.get("/api/export/jira/targets")
-    async def export_jira_targets():
-        """Configured Jira instance names + base URLs (+ deployment) for the
-        export dropdown. Token-authenticated; NEVER returns credentials (none
-        are stored server-side). Each target's ``deployment`` is the
-        config-pinned value or, when absent, probed from serverInfo so the UI
-        pre-selects the right credential fields. Empty list when no Jira is
-        configured (the UI then disables the Jira option)."""
-        from agent_cli.config import load_config
-        from agent_cli.integrations import jira as jira_mod
-
-        targets = jira_mod.list_targets(load_config())
-        for t in targets:
-            if not t.get("deployment"):
-                t["deployment"] = jira_mod.detect_deployment(t["base_url"])
-        return {"ok": True, "targets": targets}
-
-    @app.post("/api/export/html")
-    async def export_html(request: Request):
-        """Render selected transcript entries to a self-contained HTML doc and
-        return it as a download. Body: ``{title?, entries: [...]}``. Read-only,
-        so token-auth (no controller check) — any authenticated viewer may
-        export what they can see."""
-        from agent_cli.integrations import export as export_mod
-
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        entries = body.get("entries")
-        if not isinstance(entries, list):
-            raise HTTPException(status_code=400, detail="entries must be a list")
-        title = body.get("title") or ""
-        # Rendering a long transcript to HTML is CPU-bound — off the loop.
-        doc = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: export_mod.entries_to_html(entries, title=str(title))
-        )
-        return Response(
-            content=doc,
-            media_type="text/html; charset=utf-8",
-            headers={
-                "Content-Disposition": 'attachment; filename="agent-cli-export.html"'
-            },
-        )
-
-    @app.post("/api/export/jira")
-    async def export_jira(request: Request):
-        """Post selected transcript entries as ONE Jira comment, AS THE
-        FRONTEND USER. Body: ``{target?, base_url?, issue_key, deployment?,
-        entries: [...], auth: {user, secret}}``. ``base_url`` (optional) lets the
-        user point at a URL not in config — works with no config at all, but an
-        unconfigured URL must be https. Otherwise the named instance is resolved
-        from config. Renders entries to ADF (Cloud) or wiki markup (Server/DC)
-        per ``deployment`` and POSTs with the user-supplied credentials, which
-        are used ONLY for this request — never logged or persisted. Returns
-        ``{ok, url}`` or 400 with the error."""
-        from agent_cli.config import load_config
-        from agent_cli.integrations import export as export_mod
-        from agent_cli.integrations import jira as jira_mod
-
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        entries = body.get("entries")
-        if not isinstance(entries, list):
-            raise HTTPException(status_code=400, detail="entries must be a list")
-        issue_key = body.get("issue_key") or ""
-        target = body.get("target")
-        auth = body.get("auth") or {}
-        user = str(auth.get("user") or "").strip()
-        secret = str(auth.get("secret") or "")
-        if not user or not secret:
-            raise HTTPException(
-                status_code=400,
-                detail="Jira credentials are required (your account + token/password).",
-            )
-        try:
-            inst = jira_mod.resolve_target(load_config(), target, body.get("base_url"))
-            deployment = (
-                jira_mod._normalize_deployment(body.get("deployment"))
-                or inst.get("deployment")
-                or jira_mod.detect_deployment(inst["base_url"])
-                or "cloud"
-            )
-            if deployment == "server":
-                comment_body = export_mod.entries_to_wiki(entries)
-            else:
-                comment_body = export_mod.entries_to_adf(entries)
-            url = jira_mod.post_comment(
-                inst["base_url"],
-                deployment,
-                user,
-                secret,
-                issue_key,
-                comment_body,
-            )
-        except jira_mod.JiraError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        return JSONResponse(
-            {"ok": True, "url": url, "target": inst["name"], "deployment": deployment}
-        )
 
     @app.get("/api/workspace/tree")
     async def workspace_tree(path: str = Query("")):
