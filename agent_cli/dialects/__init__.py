@@ -1,4 +1,4 @@
-"""Dialects — the on-the-wire shape of a single LLM response (v10.0.0, 옛 ``wire_formats``).
+"""Dialects — the on-the-wire shape of a single LLM response.
 
 A dialect bundles prompt rules, parser, decoding grammar, recovery messages and
 history round-trip for one tool-call shape. Since Phase 5 a dialect is **data**:
@@ -7,9 +7,8 @@ driven by the single :class:`~agent_cli.dialects.engine.Dialect` engine. The
 loop / prompts / recovery layers depend only on :class:`DialectBase` (the
 protocol) and :class:`ParsedAction` (data) — they never branch on a name.
 
-The CLI ``--dialect <name>`` option (``--response-format`` alias until v11)
-resolves through :func:`get`. 내장 방언(json_fc·xml_fc·hermes_json·glm_argkey)은
-패키지 import 시 등록된다. ``agent_cli.wire_formats`` 는 재수출 shim(v11 제거).
+The CLI ``--dialect <name>`` option resolves through :func:`get`. 내장
+방언(json_fc·xml_fc·hermes_json·glm_argkey)은 패키지 import 시 등록된다.
 """
 
 from __future__ import annotations
@@ -84,7 +83,7 @@ def list_names() -> list[str]:
 
 
 def dialect_for_model(model: str) -> str | None:
-    """models.json 모델 엔트리의 ``dialect`` 바인딩 이름 (없으면 None; 옛 키 ``wire_format`` 도 읽음).
+    """models.json 모델 엔트리의 ``dialect`` 바인딩 이름 (없으면 None).
 
     바인딩은 capabilities(모델이 뭘 할 수 있나)가 아니라 "우리가 어떤
     shape 로 말할까"라 ``ModelCapabilities`` 에 태우지 않고 모델명-키로
@@ -100,11 +99,8 @@ def dialect_for_model(model: str) -> str | None:
     entry = get_model_entry(model)
     if not entry:
         return None
-    # v10.0.0: 새 키 ``dialect`` 우선, 옛 키 ``wire_format`` 은 계속 읽는다
-    # (손으로 쓴 models.json·보드가 쓴 엔트리). 자동 저장은 새 키만 쓴다.
+    # v10.4.0: ``dialect`` 키만 읽는다 — 옛 ``wire_format`` 키는 바인딩이 아니다.
     binding = entry.get("dialect")
-    if not (isinstance(binding, str) and binding):
-        binding = entry.get("wire_format")
     return binding if isinstance(binding, str) and binding else None
 
 
