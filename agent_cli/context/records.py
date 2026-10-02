@@ -134,20 +134,22 @@ def is_format_intervention(record: dict) -> bool:
 
 
 def fold_resolved_intervention_indices(records: list) -> list[int]:
-    """fold 대상 인덱스(내림차순) — "개입 관찰 뒤에 파싱-성공 assistant
-    레코드(ops 보유)가 존재"하면 그 개입과 **직전 실패 assistant** 를 접는다.
+    """fold 대상 인덱스(내림차순) — 개입 관찰 뒤에 **파싱-성공 assistant
+    (ops 보유)** 가 있거나 **더 새로운 형식 개입** 이 있으면 그 개입과 직전 실패
+    assistant 를 접는다. 컨텍스트에는 언제나 마지막 넛지 하나만 남는다
+    (v10.2.3 — 종전엔 성공만 해소였고, 연속 실패 동안 넛지가 쌓였다).
 
-    순수 함수: live(성공 직후 호출 — 이때는 아직 성공 레코드가 캐시에 없어
-    꼬리 개입도 접도록 caller 가 ``assume_tail_resolved`` 의미로 사용)와
-    resume(레코드만 보고 재판정) 이 같은 규칙을 공유하기 위한 기반.
-    여기서는 레코드-기반 판정만: 뒤에 ops-보유 assistant 가 있는 개입.
+    순수 함수: live(새 개입 직전·성공 직후 호출 — 이때는 아직 그 레코드가
+    캐시에 없어 꼬리 개입도 접도록 caller 가 ``assume_tail_resolved`` 의미로
+    사용)와 resume(레코드만 보고 재판정) 이 같은 규칙을 공유하기 위한 기반.
     """
     out: list[int] = []
     for i, rec in enumerate(records):
         if not is_format_intervention(rec):
             continue
         resolved = any(
-            r.get("role") == "assistant" and iter_record_ops(r)
+            (r.get("role") == "assistant" and iter_record_ops(r))
+            or is_format_intervention(r)
             for r in records[i + 1 :]
         )
         if not resolved:

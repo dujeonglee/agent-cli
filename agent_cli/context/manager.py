@@ -1021,9 +1021,9 @@ class ContextManager:
         - False: resume 경로 — 레코드만으로 재판정(개입 뒤 ops-보유
           assistant 존재). live 가 접은 뒤 저장된 순서와 동일 결과 →
           live↔resume 동일 뷰(사이드카 상태 불필요).
-        - 연속 실패는 자연 처리: 미해소(꼬리) 개입은 남고, 새 개입이
-          그 앞의 것을 해소 조건 충족 전이라도 live 호출로 접는다 —
-          컨텍스트에는 항상 최신 개입 1개만.
+        - 연속 실패: 새 형식 개입을 붙이기 직전에도 dispatcher 가 같은 live
+          호출을 한다(v10.2.3) — 컨텍스트에는 항상 최신 개입 1개만. resume 은
+          "뒤에 더 새로운 개입이 있음" 을 해소로 보아 같은 뷰로 수렴한다.
         반환: 접은 레코드 수.
         """
         from agent_cli.context.records import (
