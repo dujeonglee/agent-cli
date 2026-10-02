@@ -5,7 +5,7 @@ Conversation history is managed by ContextManager (history.jsonl).
 
 File layout:
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # single-line metadata (id, workspace, updated_at, dialect)
+    session.jsonl          # single-line metadata (id, workspace, updated_at)
     history.jsonl          # conversation history (managed by ContextManager)
     skill_*/delegate_*/    # skill/delegate subdirectories
 """
@@ -15,10 +15,10 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
-from agent_cli.dialects import DEFAULT_DIALECT, all_system_user_prefixes
+from agent_cli.dialects import all_system_user_prefixes
 from agent_cli.fsio import atomic_write_text
 from agent_cli.paths import sessions_dir
 
@@ -30,10 +30,6 @@ class SessionMeta:
     session_id: str
     workspace: str
     updated_at: str
-    # Dialect the session runs under. Recorded so a session's response
-    # shape is recoverable for debugging / resume. Defaults to
-    # DEFAULT_DIALECT for sessions written before this field existed.
-    dialect: str = DEFAULT_DIALECT
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -43,16 +39,13 @@ def get_session_dir(meta: SessionMeta) -> Path:
     return d
 
 
-def create_session(
-    workspace: str | None = None, dialect: str = DEFAULT_DIALECT
-) -> SessionMeta:
+def create_session(workspace: str | None = None) -> SessionMeta:
     """Create a new session for the given workspace (defaults to CWD)."""
     ws = workspace or os.getcwd()
     return SessionMeta(
         session_id=str(int(time.time())),
         workspace=ws,
         updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-        dialect=dialect,
     )
 
 
@@ -68,7 +61,6 @@ def save_meta(meta: SessionMeta) -> None:
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
                 "updated_at": meta.updated_at,
-                "dialect": meta.dialect,
             }
         },
         ensure_ascii=False,
@@ -79,19 +71,18 @@ def save_meta(meta: SessionMeta) -> None:
 
 
 def _meta_from_dict(meta_data: dict) -> SessionMeta:
-    """session.jsonl 의 ``_meta`` → :class:`SessionMeta` (옛 키 호환, 영구).
+    """session.jsonl 의 ``_meta`` → :class:`SessionMeta`.
 
     - ``created_at`` → ``updated_at`` (초기 세션).
-    - ``response_format`` → ``dialect`` (v10.0.0 개명 전 세션. resume 는 기록된
-      방언으로 이어져야 하므로 이 호환은 지우지 않는다; 저장은 새 키만 쓴다).
+    - 모르는 키는 버린다 — 메타는 읽는 쪽이 아는 필드만 의미가 있다
+      (v10.3.0 전 세션의 ``dialect``/``response_format`` 은 더 이상 읽지
+      않는다: 방언은 모델 바인딩이 정한다).
     """
     meta_data = dict(meta_data)
     if "created_at" in meta_data and "updated_at" not in meta_data:
         meta_data["updated_at"] = meta_data.pop("created_at")
-    if "response_format" in meta_data:
-        old = meta_data.pop("response_format")
-        meta_data.setdefault("dialect", old)
-    return SessionMeta(**meta_data)
+    known = {f.name for f in fields(SessionMeta)}
+    return SessionMeta(**{k: v for k, v in meta_data.items() if k in known})
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:

@@ -107,6 +107,22 @@ def get_available_integration_models() -> list[str]:
 _available_models = get_available_integration_models()
 
 
+# ── 방언 강제 (v10.3.0) ────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _force_json_fc_dialect(monkeypatch):
+    """스위트 전체를 ``--dialect json_fc`` 로 띄운 것과 같게 둔다.
+
+    해석 체인에 기본값이 없어졌으므로(강제 > 모델 바인딩 > 에러) 모델을
+    안 묶는 수백 개의 픽스처가 그대로 돌려면 강제가 필요하다. 체인 자체를
+    검사하는 테스트는 ``dialects._override`` 를 None 으로 되돌린다.
+    """
+    import agent_cli.dialects as _dialects
+
+    monkeypatch.setattr(_dialects, "_override", "json_fc")
+
+
 # ── Auto-reset loaders after each test ────────────────────
 
 

@@ -348,9 +348,9 @@ class TestPromptModelCapabilities:
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
 
-        # context, supports_thinking(y), dialect auto("") — budget 프롬프트는
-        # v8.21.0 에서 제거(정적 thinking_budget 필드 삭제).
-        inputs = iter(["131072", "y", ""])
+        # context, supports_thinking(y), dialect(필수, v10.3.0) — budget
+        # 프롬프트는 v8.21.0 에서 제거(정적 thinking_budget 필드 삭제).
+        inputs = iter(["131072", "y", "json_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
@@ -366,12 +366,13 @@ class TestPromptModelCapabilities:
         assert saved["models"]["test-model"]["context_window"] == 131072
 
     def test_defaults_on_empty_input(self, monkeypatch, tmp_path):
-        """Empty input uses defaults."""
+        """Empty input uses defaults — except the dialect, which has none."""
         import agent_cli.config as config_mod
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        monkeypatch.setattr("builtins.input", lambda _: "")
+        inputs = iter(["", "", "json_fc"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
         assert caps is not None
@@ -392,8 +393,8 @@ class TestPromptModelCapabilities:
 
 class TestPromptDialectBinding:
     """바인딩 UX ② (dialects): 대화형 모델 등록 지점에 dialect
-    질문 한 줄 — 엔트리 생성 위치 = 발생 원인 위치. auto/빈 입력 = 필드
-    미기록 (해석 체인 위임), 등록된 이름만 수용 (오타는 재질문)."""
+    질문 한 줄 — 엔트리 생성 위치 = 발생 원인 위치. v10.3.0: 바인딩은
+    필수 — auto·빈 입력 없이 등록된 이름 하나를 받을 때까지 재질문."""
 
     def _saved_entry(self, tmp_path):
         import json
@@ -413,26 +414,16 @@ class TestPromptDialectBinding:
         assert caps is not None
         assert self._saved_entry(tmp_path)["dialect"] == "xml_fc"
 
-    def test_auto_omits_field(self, monkeypatch, tmp_path):
+    def test_auto_and_empty_reprompt(self, monkeypatch, tmp_path):
         import agent_cli.config as config_mod
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["4096", "n", "auto"])
+        inputs = iter(["4096", "n", "", "auto", "xml_fc"])  # 둘 다 답이 아니다
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         assert _prompt_model_capabilities("test-model") is not None
-        assert "dialect" not in self._saved_entry(tmp_path)
-
-    def test_empty_omits_field(self, monkeypatch, tmp_path):
-        import agent_cli.config as config_mod
-        from agent_cli.main import _prompt_model_capabilities
-
-        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        monkeypatch.setattr("builtins.input", lambda _: "")
-
-        assert _prompt_model_capabilities("test-model") is not None
-        assert "dialect" not in self._saved_entry(tmp_path)
+        assert self._saved_entry(tmp_path)["dialect"] == "xml_fc"
 
     def test_unknown_name_reprompts_until_valid(self, monkeypatch, tmp_path):
         import agent_cli.config as config_mod

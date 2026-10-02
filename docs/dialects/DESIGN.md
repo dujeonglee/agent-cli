@@ -104,6 +104,12 @@ CLI --response-format (기본 md_array)
 
 ### 4.2 해석 체인 — `resolve_wire_format()`
 
+> **v10.3.0 갱신.** 체인은 `--dialect`(프로세스 전체 강제) > models.json 바인딩 둘뿐이다.
+> 순위 2(세션 메타)와 4(기본값)는 제거 — 세션 메타는 재시작 후 main(메타)과 상주
+> 에이전트(바인딩)의 방언을 갈라놓았고, 기본값은 "묶이지 않은 모델" 을 조용히 감췄다.
+> 묶이지 않은 모델은 `DialectUnbound` 로 부트/spawn 거부. 서브에이전트도 같은 함수를
+> 부른다(§5 의 "플래그는 서브 바인딩을 덮지 않는다" 는 뒤집힘). 아래는 Phase 1 당시 기록.
+
 `agent_cli/wire_formats/__init__.py`에 추가 (레지스트리 옆; wire_formats →
 config 단방향 import, 순환 없음 — config는 wire_formats를 import하지 않는다):
 
@@ -177,6 +183,8 @@ def create_subagent_ctx(context_mode, parent_ctx, subagent_dir, *, model: str = 
     wf = _get(binding) if binding else (parent_ctx.wire_format if parent_ctx else None)
 ```
 
+- (v10.3.0: 체인은 main 과 동일 — `--dialect` 강제 > effective model 바인딩 > spawn 거부.
+  부모 상속 없음. 아래는 Phase 1 당시 기록.)
 - 체인: **effective model 바인딩 > 부모 상속** (부모 없으면 ContextManager
   기본). 세션의 명시 플래그는 서브에이전트 모델 바인딩을 **덮지 않는다**
   — 플래그는 main 스트림에 대한 사용자의 선택이고, 서브 모델의 프라이어가

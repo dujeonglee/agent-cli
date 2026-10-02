@@ -6,7 +6,8 @@
       "max_output_tokens": 8192,
       "supports_structured_output": false,
       "supports_thinking": true,
-      "supports_strict_schema": true
+      "supports_strict_schema": true,
+      "dialect": "json_fc"
     },
     "gpt-4o": {
       "provider": "openai",
@@ -14,7 +15,8 @@
       "max_output_tokens": 4096,
       "supports_structured_output": true,
       "supports_thinking": false,
-      "supports_strict_schema": true
+      "supports_strict_schema": true,
+      "dialect": "json_fc"
     }
   },
   "provider_defaults": {

@@ -651,7 +651,10 @@ class TestBindingIntegration:
         )
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
         monkeypatch.setattr(_config, "_cached_registry", None)
-        wf = resolve_dialect(explicit=None, session_format=None, model="qwen-x")
+        import agent_cli.dialects as _dialects
+
+        monkeypatch.setattr(_dialects, "_override", None)
+        wf = resolve_dialect("qwen-x")
         assert wf.name == "xml_fc"
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import os
 import re
 import subprocess
@@ -17,10 +16,10 @@ from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
-    get as _get_dialect,
+    resolve_dialect as _resolve_dialect,
 )
 from agent_cli.dialects import (
-    resolve_dialect as _resolve_dialect,
+    set_dialect_override as _set_dialect_override,
 )
 from agent_cli.loop import run_loop
 from agent_cli.paths import user_dir
@@ -837,37 +836,27 @@ def _prompt_model_capabilities(model: str):
             supports_thinking=supports_thinking,
         )
 
-        # Dialect 바인딩 (바인딩 UX ② — dialects): 엔트리가
-        # 대화형으로 생성되는 바로 이 지점에서 선택. auto/빈 입력 = 필드
-        # 미기록(해석 체인 위임 — 기본 json_fc), 등록된 이름만 수용
-        # (D2: 조용한 오타 폴백 금지 — 재질문).
+        # Dialect 바인딩: 엔트리가 대화형으로 생성되는 바로 이 지점에서
+        # 고른다. 기본값·auto 는 없다 (v10.3.0) — 등록된 이름 하나를
+        # 받을 때까지 재질문 (D2: 조용한 오타 폴백 금지).
         from agent_cli.dialects import list_names
 
         names = list_names()
-        dialect_input = (
-            renderer.prompt_user(
-                f"  Dialect ({' / '.join(['auto'] + names)}) [auto]: ",
-                multiline=False,
-            )
-            .strip()
-            .lower()
-        )
-        while dialect_input and dialect_input != "auto" and dialect_input not in names:
+        prompt = f"  Dialect ({' / '.join(names)}): "
+        dialect_input = renderer.prompt_user(prompt, multiline=False).strip().lower()
+        while dialect_input not in names:
             console.print(
                 f"[{C['muted']}]  Unknown dialect '{dialect_input}'. "
-                f"Available: auto, {', '.join(names)}[/]"
+                f"Available: {', '.join(names)}[/]"
             )
             dialect_input = (
-                renderer.prompt_user("  Dialect [auto]: ", multiline=False)
-                .strip()
-                .lower()
+                renderer.prompt_user(prompt, multiline=False).strip().lower()
             )
 
         from agent_cli.providers.capabilities import caps_to_entry
 
         entry = caps_to_entry(caps)
-        if dialect_input and dialect_input != "auto":
-            entry["dialect"] = dialect_input
+        entry["dialect"] = dialect_input
         save_model_entry(model, entry)
         console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
         return caps
@@ -1095,25 +1084,20 @@ def _bootstrap_provider(
     dialect: str | None,
     max_context_tokens: int,
     *,
-    session_format: str | None = None,
     quiet: bool = False,
 ) -> SessionBootstrap:
     """provider 셋업 → dialect 해석 fail-fast → 예산 폴백(70% 통일 공식).
 
-    dialect 해석 체인 (dialects Phase 1): 명시
-    ``--dialect`` > resume 세션 메타(``session_format``) >
-    models.json 모델 바인딩 > DEFAULT. unknown 이름은 어느 소스든
-    세션 생성 전에 fail-fast (D2).
+    dialect 해석 체인 (v10.3.0): 명시 ``--dialect`` (프로세스 전체 강제)
+    > models.json 모델 바인딩. 둘 다 없거나 unknown 이름이면 세션 생성
+    전에 fail-fast (D2) — 기본값 없음, 사용자가 모델에 방언을 묶는다.
     """
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, name = (
         _setup_provider(provider, model, base_url, api_key, quiet=quiet)
     )
+    _set_dialect_override(dialect)
     try:
-        dialect_plugin = _resolve_dialect(
-            explicit=dialect,
-            session_format=session_format,
-            model=resolved_model,
-        )
+        dialect_plugin = _resolve_dialect(resolved_model)
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
         raise typer.Exit(2) from exc
@@ -1289,7 +1273,7 @@ def run(
         None,
         "--dialect",
         "--response-format",
-        help="Dialect (tool-call wire shape) name. Unset resolves: resumed session's recorded dialect > models.json per-model 'dialect' binding ('wire_format' still read) > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-ins: xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values. --response-format is the pre-v10 alias (removed in v11).",
+        help="Dialect (tool-call wire shape) name — forces it for the whole session (main and every sub-agent). Unset: each agent uses its model's models.json 'dialect' binding ('wire_format' still read); an unbound model is an error. Built-ins: json_fc (plain-prose reasoning + a flat JSON op array; multi-op), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values. --response-format is the pre-v10 alias (removed in v11).",
     ),
     resume: str = typer.Option(
         "",
@@ -1317,8 +1301,8 @@ def run(
         raise typer.Exit(0)
 
     # C4: run/web 공용 부트스트랩 — provider 6-튜플 + dialect fail-fast +
-    # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저 —
-    # 그 메타의 dialect 이 해석 체인 순위 2 (명시 플래그 다음).
+    # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저
+    # (unknown ID fail-fast).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
         provider,
@@ -1327,7 +1311,6 @@ def run(
         api_key,
         dialect,
         max_context_tokens,
-        session_format=(session_resumed.dialect if session_resumed else None),
     )
     llm_provider = boot.llm_provider
     capabilities = boot.capabilities
@@ -1347,13 +1330,7 @@ def run(
 
     from agent_cli.context.session import create_session, save_meta
 
-    if session_resumed is not None:
-        session = session_resumed
-    else:
-        session = create_session(dialect=boot.dialect.name)
-    # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
-    # resume 가 이어받는다 (meta = 마지막 실행의 truth).
-    session.dialect = boot.dialect.name
+    session = session_resumed if session_resumed is not None else create_session()
     save_meta(session)
     ctx = _build_context(
         session,
@@ -1567,21 +1544,6 @@ def run(
             monitors=monitor_registry,
             warn_stuck=warn_stuck,
         )
-
-
-def resume_dialect(session, current, explicit: str | None):
-    """후결정(대화형) resume 의 포맷 재해석 — 해석 체인 순위 2 와 동형.
-
-    명시 플래그가 없고 세션 기록 포맷이 현재와 다르면 기록 이름으로
-    재해석한다. 미등록 이름(rename/제거된 포맷)은 Exit(2) — G1: silent
-    format switch 금지 (v7.11.4 에서 typer 본문 인라인을 추출해 고정)."""
-    if explicit is not None or session.dialect == current.name:
-        return current
-    try:
-        return _get_dialect(session.dialect)
-    except KeyError as exc:
-        console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
-        raise typer.Exit(2) from exc
 
 
 def web_instance_is_active(renderer, server, agent_registry, monitors=None) -> bool:
@@ -1866,14 +1828,10 @@ def _print_session(s, indent: str = "  ") -> None:
         console.print(f"{indent}    [{C['final']}]→ {_truncate(result, 80)}[/]")
 
 
-def _maybe_resume_recent(workspace: str, dialect: str, prompt_fn) -> tuple:
+def _maybe_resume_recent(workspace: str, prompt_fn) -> tuple:
     """No ``--resume`` given: offer the most recent session (shown in the same
     format as the ``sessions`` command) and ask [y/N]. 'y' resumes it; anything
     else (incl. Enter) starts a new session.
-
-    ``dialect`` 은 **해석 완료된** 플러그인 이름 — 새 세션 생성
-    branch 의 메타 기록용. resume branch 의 포맷 재해석(기록 포맷 존중)은
-    caller(web) 책임 (부트 후 결정되는 경로라 여기선 알 수 없다).
 
     ``prompt_fn`` is the y/N reader — ``input`` on a TTY, ``None`` when
     non-interactive (pipes / cron), in which case we never prompt and always
@@ -1895,7 +1853,7 @@ def _maybe_resume_recent(workspace: str, dialect: str, prompt_fn) -> tuple:
                 resumed = load_session(last.session_id)
                 if resumed is not None:
                     return resumed, True
-    return create_session(dialect=dialect), False
+    return create_session(), False
 
 
 _GH_REPO = "dujeonglee/agent-cli"
@@ -2096,9 +2054,10 @@ def web(
         None,
         "--dialect",
         "--response-format",
-        help="Dialect (tool-call wire shape) name. Unset resolves: resumed session's "
-        "recorded dialect > models.json per-model 'dialect' binding ('wire_format' "
-        "still read) > json_fc. --response-format is the pre-v10 alias (removed in v11).",
+        help="Dialect (tool-call wire shape) name — forces it for the whole session "
+        "(main and every sub-agent). Unset: each agent uses its model's models.json "
+        "'dialect' binding ('wire_format' still read); an unbound model is an error. "
+        "--response-format is the pre-v10 alias (removed in v11).",
     ),
     host: str = typer.Option(
         "127.0.0.1",
@@ -2182,8 +2141,7 @@ def web(
     from agent_cli.render import set_renderer
 
     # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
-    # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거),
-    # 그 메타의 dialect 이 해석 체인 순위 2 (명시 플래그 다음).
+    # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
         provider,
@@ -2192,7 +2150,6 @@ def web(
         api_key,
         dialect,
         max_context_tokens,
-        session_format=(session_resumed.dialect if session_resumed else None),
         quiet=True,
     )
     llm_provider = boot.llm_provider
@@ -2233,20 +2190,9 @@ def web(
     else:
         # No --resume: offer the most recent session ([y/N]) or start new.
         prompt_fn = input if sys.stdin.isatty() else None
-        session, is_resume = _maybe_resume_recent(
-            os.getcwd(), dialect_plugin.name, prompt_fn
-        )
+        session, is_resume = _maybe_resume_recent(os.getcwd(), prompt_fn)
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
-            # 대화형 resume 는 부트 **후에** 결정된다 — 명시 플래그가 없으면
-            # 기록된 포맷으로 재해석 (--resume 경로의 체인 순위 2 와 동형).
-            reinterpreted = resume_dialect(session, dialect_plugin, dialect)
-            if reinterpreted is not dialect_plugin:
-                dialect_plugin = reinterpreted
-                boot = dataclasses.replace(boot, dialect=dialect_plugin)
-    # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
-    # resume 가 이어받는다 (meta = 마지막 실행의 truth).
-    session.dialect = dialect_plugin.name
     save_meta(session)
     ctx = _build_context(
         session,

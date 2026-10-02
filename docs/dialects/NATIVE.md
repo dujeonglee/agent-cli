@@ -19,8 +19,8 @@
 
 ## 2. 선택 방식 (결정 — 사용자 확인 완료: 명시 바인딩만, 자동 감지 없음)
 
-- **바인딩은 명시, 감지도 하지 않는다.** 기존 해석 체인 그대로: `--dialect native_fc` > resume 세션 메타 >
-  models.json `dialect` > 기본 `json_fc`. 하니스가 서버를 프로브하거나 몰래 바꾸지 않는다(DESIGN D2 fail-fast 원칙;
+- **바인딩은 명시, 감지도 하지 않는다.** 해석 체인(v10.3.0): `--dialect native_fc`(세션 전체 강제) >
+  models.json `dialect`. 바인딩 없는 모델은 에러. 하니스가 서버를 프로브하거나 몰래 바꾸지 않는다(DESIGN D2 fail-fast 원칙;
   방언이 바뀌면 프롬프트·기록 내보내기·투명성이 달라져 사용자가 알아야 한다). `supports_native_tools` 같은
   capability 필드도 두지 않는다 — 서버가 지원하는지는 사용자가 안다.
 - **안내만.** `OUTPUT_SWALLOWED` 경고(v10.1.7) 문구에 선택지 하나를 더한다: "json_fc 로 바인딩하거나, 서버가
@@ -79,7 +79,7 @@
   관찰이 같은 규칙을 쓰므로 짝이 맞고, 서버가 준 id 를 되돌릴 필요는 없다(대화 안에서 일관되면 된다). 기록 스키마 무변경.
 - **배치 관찰은 op 별 조각을 항상 저장(방언 중립, v10.2.2).** 관찰 레코드에 `parts: [{tool, success, content}]` 를 더한다 — 어느 방언으로 기록했든 같다(v10.2.0 은 native 에서만 저장해 json_fc 세션을 native 로 이으면 호출·결과 짝이 안 맞았다; 렌더 추상화는 저장 때 버린 경계를 되살릴 수 없다). 텍스트 방언은 렌더에서 무시,
   native 는 op 마다 `tool` 메시지 하나). 종전 합친 본문 `content` 는 그대로 — 웹 재생·텍스트 방언 호환.
-- **N3 기본값.** `DEFAULT_DIALECT = json_fc`. `native_fc` 는 바인딩으로만.
+- **N3 기본값.** 없음 (v10.3.0 — 라이브러리 내부 `DEFAULT_DIALECT = json_fc` 는 생성자·테스트용). 모든 방언이 바인딩으로만.
 - **N4 릴리스.** MINOR v10.2.0 한 번. 브랜치 `native-fc`, PR + CI. 프로바이더는 OpenAI 호환만 — Anthropic 바인딩이면 부트에서
   fail-fast("native_fc 는 OpenAI 호환 프로바이더에서만").
 

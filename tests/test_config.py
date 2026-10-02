@@ -533,3 +533,27 @@ class TestSaveConfig:
         from agent_cli.config import has_config
 
         assert has_config() is True
+
+
+class TestRegistryReloadOnChange:
+    """v10.3.0: models.json 이 바뀌면 재시작 없이 다음 조회가 다시 읽는다
+    (보드 어드민의 바인딩 편집 → 다음 spawn 부터 반영)."""
+
+    def test_edit_is_seen_without_reload(self, tmp_path, monkeypatch):
+        import os
+
+        target = tmp_path / "models.json"
+        target.write_text(json.dumps({"models": {"m": {"dialect": "json_fc"}}}))
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        assert get_model_entry("m")["dialect"] == "json_fc"
+
+        target.write_text(json.dumps({"models": {"m": {"dialect": "xml_fc"}}}))
+        os.utime(target, ns=(0, target.stat().st_mtime_ns + 1_000_000))
+        assert get_model_entry("m")["dialect"] == "xml_fc"
+
+    def test_unchanged_file_is_not_reread(self, tmp_path, monkeypatch):
+        target = tmp_path / "models.json"
+        target.write_text(json.dumps({"models": {"m": {"dialect": "json_fc"}}}))
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        first = _config._load_registry()
+        assert _config._load_registry() is first

@@ -81,8 +81,8 @@ llama.cpp 는 모델별 파서를 전부 걷어내고 Jinja 템플릿 차분 분
 
 - `register(instance)` 이름 충돌 fail-loud, `get(name)`, `list_names()`,
   `DEFAULT_DIALECT = "json_fc"`.
-- `resolve_dialect(explicit, session_format, model)`: `--dialect` > resume
-  세션 메타 `dialect` > `models.json` 엔트리 `dialect` > 기본.
+- `resolve_dialect(model)` (v10.3.0 축소): `--dialect` 강제 > `models.json` 엔트리
+  `dialect`; 없으면 `DialectUnbound`. (세션 메타·기본값은 v10.3.0 에서 제거.)
 - `try_foreign_parse(bound, text)`: 바인딩이 0-op 일 때 등록된 다른 포맷을 **기본 먼저,
   이름순**으로 시도, `parse_stage ∈ {1,2}` + action-보유 op 면 채택 →
   dispatch 가 `corrected_record` 로 바인딩 포맷 캐노니컬 shape 재렌더.
@@ -93,7 +93,7 @@ llama.cpp 는 모델별 파서를 전부 걷어내고 Jinja 템플릿 차분 분
 | 접점 | 위치 | 비고 |
 |---|---|---|
 | CLI `--dialect` | `main.py:1283, 2089` | 해석 체인 최우선 |
-| 세션 메타 `dialect` | `context/session.py:55,71`, `main.py:1345,1890` | resume 근거 — **영구 읽기 호환 필요** |
+| 세션 메타 `dialect` | `context/session.py:55,71`, `main.py:1345,1890` | resume 근거 — v10.3.0 에서 제거(방언은 모델 바인딩) |
 | `models.json` 키 `dialect` | `config.py:126`(손 추가 키 보존), `dialect_for_model` | agent-board admin 드롭다운이 씀 |
 | agent-board | `admin.py:245 list_dialect_names` → `from agent_cli.dialects import list_names`; `app.py:490 view["dialects"]`; README | import 경로가 계약 |
 | 테스트 | `xml_fc`/`json_fc` 참조 39파일, `parse_turn` 직접 호출 11파일, 스냅샷 `tests/snapshots/tools_section_json_fc.txt` | 산문 바이트 동일이면 무변경 |
@@ -321,7 +321,7 @@ agent_cli/dialects/__init__.py ← 한 주버전 동안 남기는 shim: from age
 | 패키지 | `agent_cli.dialects` | `agent_cli.dialects` shim(재수출 + DeprecationWarning), v11 에서 제거 |
 | CLI | `--dialect NAME` | `--dialect` 숨은 별칭(동작 동일), v11 에서 제거 |
 | models.json | `dialect` | 읽기: `dialect` 우선, 없으면 `dialect`; 자동 저장은 새 키. 보드 admin 드롭다운은 `list_names` 그대로 |
-| 세션 메타 | `dialect` | 읽기: 둘 다 **영구**(옛 세션 resume). 쓰기: 새 키 |
+| 세션 메타 | `dialect` | v10.3.0 에서 필드 제거 — 읽지도 쓰지도 않는다 |
 | 클래스 | 프로토콜(ABC) `DialectBase`, 엔진 `Dialect(spec)`, `DialectSpec` | `WireFormat = DialectBase` 별칭(shim). S6 결정: 엔진이 이미 `Dialect` 였고(S2~S5 코드·테스트·문서가 그 이름) 모든 등록 인스턴스가 엔진이므로, ABC 쪽을 `DialectBase` 로 둔다 |
 | 내부 변수명 `dialect` (656곳/73파일) | `dialect` | 기계 치환 — 등가성 합격 **뒤** 별도 커밋 |
 | 문서 | README·ARCHITECTURE·docs/dialects → `docs/dialects/` 로 이동, 옛 경로는 포인터 | |
