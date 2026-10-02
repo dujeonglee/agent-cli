@@ -53,6 +53,12 @@ FAILURE_NESTED_ENVELOPE = (
 )
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
 FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (labelled); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
+# v10.10.0: cut generations are rows too — before, a call that hit the output
+# cap was never written (dispatch never ran), so "which limit?" needed the
+# server log. ``stop_detail`` says which: model_cap / context_clamp /
+# server_cap for a "length" stop, the detector's reason for "runaway".
+FAILURE_OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
+FAILURE_RUNAWAY = "RUNAWAY"
 FAILURE_FOREIGN_FORMAT = "FOREIGN_FORMAT"  # A9 (Phase 3): 바인딩 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 구제 — 실행은 진행(라벨만), 구제 소스는 primitives 의 "foreign_parse:<name>" 로 기록. 실측: 35B xml_fc 스트림의 md_array 회귀 (PHASE2.md §8)
 
 
@@ -87,6 +93,34 @@ class TurnRecord:
     output_tokens: int = 0
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
+    # v10.10.0: set only on rows the loop did NOT dispatch (a "length" or
+    # "runaway" stop). None on a dispatched turn — it means "normal", not
+    # "unknown".
+    stop_reason: str | None = None
+    stop_detail: str | None = None
+
+
+def classify_output_cap(
+    output_tokens: int | None, requested: int | None, clamped: bool
+) -> str:
+    """Which limit ended a ``length`` stop (v10.10.0).
+
+    ``requested`` is the ``max_tokens`` the loop sent, ``clamped`` whether the
+    loop shrank it to fit the context window (``LLMCaller._call_llm``).
+
+    - ``model_cap``: the model's own output cap was reached.
+    - ``context_clamp``: the loop's window-fit clamp was reached — the only
+      way the context ends a generation, since the server never gets a
+      request whose prompt + output exceed the window.
+    - ``server_cap``: the server stopped short of what was asked (omlx
+      clamps on its own; its log prints max_tokens vs request_max_tokens).
+    - ``unknown``: no usage or no request size to compare.
+    """
+    if output_tokens is None or not requested:
+        return "unknown"
+    if output_tokens >= requested:
+        return "context_clamp" if clamped else "model_cap"
+    return "server_cap"
 
 
 class TurnRecorder:
@@ -126,11 +160,14 @@ class TurnRecorder:
         failure_signal: str | None = None,
         primitives_applied: list[str] | None = None,
         usage: TokenUsage | None = None,
+        stop_reason: str | None = None,
+        stop_detail: str | None = None,
     ) -> None:
         """Append one record to ``turns.jsonl``. No-op when disabled.
 
         ``usage`` is the turn's ``LLMResponse.usage`` (None when the
-        provider reported nothing → zero counts)."""
+        provider reported nothing → zero counts). ``stop_reason`` /
+        ``stop_detail`` (v10.10.0) are given only for a cut generation."""
         if self._path is None:
             return
 
@@ -147,6 +184,8 @@ class TurnRecorder:
             cache_creation_input_tokens=(
                 usage.cache_creation_input_tokens if usage else 0
             ),
+            stop_reason=stop_reason,
+            stop_detail=stop_detail,
         )
         line = json.dumps(asdict(rec), ensure_ascii=False)
         # Parent dir is normally created by ContextManager. Recreate

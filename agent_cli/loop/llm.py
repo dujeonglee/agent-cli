@@ -76,6 +76,10 @@ class LLMCaller:
         self._grammar_cache: dict[bool, str | None] | None = None
         # 직전 콜에 문법이 실렸는가 — 턴 통계(📐)가 읽는다.
         self._grammar_used = False
+        # 직전 콜이 보낸 max_tokens 와 그것이 창 맞춤 클램프였는지 (v10.10.0) —
+        # length 절단이 어느 상한이었는지(classify_output_cap) 코어가 판정.
+        self.last_max_tokens_requested: int | None = None
+        self.last_max_tokens_clamped = False
 
     # 요청 max_tokens 클램프 (v8.53.0): 예산은 더 이상 max_output 을 선제
     # 예약하지 않으므로(아래 _call_llm), 남은 창을 넘는 max_tokens 요청이
@@ -285,6 +289,12 @@ class LLMCaller:
             )
             if clamped != self.cfg.capabilities.max_output_tokens:
                 clamped_max_tokens = clamped
+        self.last_max_tokens_requested = (
+            clamped_max_tokens
+            if clamped_max_tokens is not None
+            else self.cfg.capabilities.max_output_tokens
+        )
+        self.last_max_tokens_clamped = clamped_max_tokens is not None
 
         # --verbose (v9.24.3): what is about to be sent — bounded per-message
         # view into verbose.jsonl (the conversation itself is history.jsonl).

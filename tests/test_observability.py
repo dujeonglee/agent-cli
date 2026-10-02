@@ -174,6 +174,8 @@ class TestSchemaInvariants:
             "output_tokens",
             "cache_read_input_tokens",
             "cache_creation_input_tokens",
+            "stop_reason",  # v10.10.0: a label, never text
+            "stop_detail",
         }
 
     def test_failure_signals_are_stable_strings(self):

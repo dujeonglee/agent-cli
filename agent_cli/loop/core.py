@@ -10,6 +10,7 @@ from agent_cli import verbose as _verbose
 from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
+    RUNAWAY_NOTICE,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as _get_dialect
@@ -28,7 +29,10 @@ from agent_cli.memory import consume_memory_reload
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.observability import (
+    FAILURE_OUTPUT_TRUNCATED,
+    FAILURE_RUNAWAY,
     TurnRecorder,
+    classify_output_cap,
 )
 from agent_cli.render import (
     consume_directives_reload,
@@ -1020,7 +1024,13 @@ class AgentLoop:
         # it; record a notice so the model retries with a smaller unit.
         # (continuation — resuming the cut-off output — is a follow-up.)
         if getattr(response, "stop_reason", None) == "length":
-            result = self._on_output_truncated(llm_text)
+            result = self._on_output_truncated(llm_text, response)
+            self._fire_hook("OnTurnEnd")
+            return result
+        # v10.10.0: the stream-side detector stopped a runaway — same
+        # contract (not dispatched, retried smaller), own notice and row.
+        if getattr(response, "stop_reason", None) == "runaway":
+            result = self._on_runaway(llm_text, response)
             self._fire_hook("OnTurnEnd")
             return result
 
@@ -1059,7 +1069,7 @@ class AgentLoop:
             ensure_ascii=False,
         )
 
-    def _on_output_truncated(self, llm_text: str):
+    def _on_output_truncated(self, llm_text: str, response=None):
         """Handle a response cut off at ``max_output_tokens``.
 
         The model still sees what it was mid-way through — as a bounded
@@ -1085,9 +1095,63 @@ class AgentLoop:
             recovery_kind="format",
             store_emission=False,
         )
+        # v10.10.0: the cut call is a row too, with WHICH limit ended it —
+        # before, it was never written (dispatch never ran) and answering
+        # "context or output cap?" needed the server log.
+        usage = getattr(response, "usage", None)
+        detail = classify_output_cap(
+            usage.output_tokens if usage else None,
+            self._llm.last_max_tokens_requested,
+            self._llm.last_max_tokens_clamped,
+        )
+        self.recorder.record(
+            model=self.model,
+            parse_stage=0,
+            failure_signal=FAILURE_OUTPUT_TRUNCATED,
+            usage=usage,
+            stop_reason="length",
+            stop_detail=detail,
+        )
         _debug_log(
-            f"Output truncated (stop_reason=length) at turn {self.turn}; "
-            "action not dispatched"
+            f"Output truncated (stop_reason=length, {detail}) at turn "
+            f"{self.turn}; action not dispatched"
+        )
+        return self._CONTINUE
+
+    def _on_runaway(self, llm_text: str, response):
+        """The stream-side detector (providers/runaway.py) stopped the
+        generation (v10.10.0). Same shape as the cap cut: nothing stored,
+        a bounded quote of the real content (trailing filler stripped so the
+        tail shows where it went wrong), a row with the detector's reason."""
+        from agent_cli.providers.runaway import REASON_TEXT
+        from agent_cli.recovery.primitives import echo_prior_output
+
+        detail = getattr(response, "stop_detail", "") or "unknown"
+        what = REASON_TEXT.get(detail, "filler")
+        _append_observation(
+            self.messages,
+            self.ctx,
+            self.dialect,
+            llm_text,
+            f"Observation: {RUNAWAY_NOTICE.format(what=what)}\n"
+            f"{echo_prior_output(llm_text.rstrip())}",
+            tool_name="runaway",
+            success=False,
+            turn=self.turn,
+            render=not self.skill_name,
+            recovery_kind="format",
+            store_emission=False,
+        )
+        self.recorder.record(
+            model=self.model,
+            parse_stage=0,
+            failure_signal=FAILURE_RUNAWAY,
+            usage=getattr(response, "usage", None),
+            stop_reason="runaway",
+            stop_detail=detail,
+        )
+        _debug_log(
+            f"Runaway stopped ({detail}) at turn {self.turn}; action not dispatched"
         )
         return self._CONTINUE
 

@@ -70,6 +70,7 @@ from agent_cli.context.overflow import (
     is_context_overflow,
     parse_overflow_amounts,
 )
+from agent_cli.providers.runaway import RunawayDetector
 from agent_cli.verbose import debug_log
 
 _DEFAULT_ATTEMPTS = 10
@@ -445,6 +446,8 @@ class StreamAccum:
     content: str = ""
     thinking: str = ""
     stop_reason: str | None = None
+    #: v10.10.0: 합성 stop_reason 의 사유 — "runaway" 면 감지 규칙 이름
+    stop_detail: str = ""
     usage_fields: dict = field(default_factory=dict)
     ttft_ns: int = 0
     decode_ns: int = 0
@@ -598,6 +601,7 @@ def run_sse_stream(
         max_ticks = max(1, int(-(-float(idle_timeout_s) // STREAM_IDLE_THRESHOLD)))
 
     acc = StreamAccum()
+    runaway = RunawayDetector()
     # 리스트 누적 + 종료 시 1회 join (v8.41.0 — 리뷰 §4.2 효율): 인스턴스
     # 속성 str += 는 CPython 의 로컬-변수 최적화 밖이라 장출력에서 O(n²).
     content_parts: list[str] = []
@@ -705,6 +709,15 @@ def run_sse_stream(
                 and degeneration_check(_tail_text(content_parts, _DEGEN_WINDOW))
             ):
                 acc.stop_reason = "degenerate_runaway"
+                r.close()
+                break
+            # v10.10.0: 내용 무관 폭주(공백 행렬·낱말 없는 채움) — 방언 게이트는
+            # 트리거 문자가 있는 청크만 보므로 공백 폭주를 32K 토큰까지 못 봤다
+            # (67qcmb: 27~40분 × 3). 청크마다 O(1) + 꼬리창 한 번 훑기.
+            reason = runaway.feed(ev.text)
+            if reason is not None:
+                acc.stop_reason = "runaway"
+                acc.stop_detail = reason
                 r.close()
                 break
         if ev.stop_reason:

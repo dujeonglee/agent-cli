@@ -189,6 +189,17 @@ OUTPUT_TRUNCATED_NOTICE = (
     "of one big write_file."
 )
 
+# v10.10.0: the stream-side runaway detector (providers/runaway.py) stopped
+# the generation. Same contract as the cap cut — not executed, retry smaller
+# — but the model is told what it did, so it does not blame the context.
+RUNAWAY_NOTICE = (
+    "⚠️ Your previous response ran away: after its real content it "
+    "degenerated into {what}, so the stream was stopped. Its action was "
+    "incomplete and was NOT executed. Re-emit the action from the start as "
+    "a smaller unit — a shorter command, or build a large file incrementally "
+    "with edit_file."
+)
+
 
 # ── duration 파서 — 표면 둘이 공유 (v9.11.0) ────────────────
 #

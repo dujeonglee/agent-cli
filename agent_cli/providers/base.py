@@ -54,9 +54,12 @@ class LLMResponse:
     #   "stop"   = 정상 종료   (OpenAI stop / Anthropic end_turn·stop_sequence)
     #   "length" = 출력 절단   (OpenAI length / Anthropic max_tokens)
     #   합성: "interrupted"(사용자 중단) / "degenerate_runaway"(조기 종료)
+    #         / "runaway"(v10.10.0 — 내용 무관 폭주 감지, 사유는 stop_detail)
     # 루프의 출력-절단 가드가 "length" 를 비교하므로, 원어를 그대로 흘리면
     # 가드가 그 프로바이더에서 무발화한다(실사고 — anthropic._STOP_REASON_MAP).
     stop_reason: str | None = None
+    #: "runaway" 의 감지 규칙 이름 (providers/runaway.REASON_TEXT 의 키); 그 외 "".
+    stop_detail: str = ""
     # Reasoning content surfaced via a separate API field (e.g. Anthropic
     # thinking blocks, OpenAI reasoning). Empty string when the provider
     # doesn't expose it or the model didn't produce any.
