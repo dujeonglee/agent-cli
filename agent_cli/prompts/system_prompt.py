@@ -80,7 +80,7 @@ CONTEXT_DISCIPLINE = """\
 
 Your context window is your single most important resource. Every thought,
 tool call, and observation accumulates across turns. When it fills, older
-information drops — and reasoning quality drops with it.
+turns are replaced by a structured summary automatically and work continues.
 
 Treat every token you add as a cost:
 

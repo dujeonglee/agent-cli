@@ -47,7 +47,7 @@ class TestBuildSessionState:
         writes nor sees what follows."""
         from agent_cli.prompts.session_state import TAIL_BOUNDARY
 
-        out = build_session_state(used_tokens=1, budget_tokens=10)
+        out = build_session_state(turn=1)
         assert out.startswith(TAIL_BOUNDARY + "\n\n" + SESSION_STATE_HEADER)
         out = build_session_state(guidelines="## Task Guidelines\n- r")
         assert out.startswith(TAIL_BOUNDARY + "\n\n" + RULES_HEADER)
@@ -59,28 +59,27 @@ class TestBuildSessionState:
     def test_boundary_only_when_there_is_a_tail(self):
         assert build_session_state() == ""
 
-    def test_context_line_with_percentage(self):
-        out = build_session_state(used_tokens=48_200, budget_tokens=140_000)
-        assert "~48,200 / 140,000 tokens (34% — compaction at 100%)" in out
+    def test_tail_carries_no_usage_figure(self):
+        """v10.9.0: no ``context: ~used / budget (p% — compaction at 100%)``.
+        Room 67qcmb: a resident agent sat at 95–99% for two hours refusing
+        every edit as a "half-edit risk" and never crossed 100%, so compaction
+        never ran. The only lever the figure gave the model was shrinking its
+        own work. ``build_session_state`` no longer even takes the numbers."""
+        import inspect
+
+        params = inspect.signature(build_session_state).parameters
+        assert "used_tokens" not in params and "budget_tokens" not in params
+        out = build_session_state(turn=7, max_turns=40, compaction_notice=True)
+        for bad in ("context:", "%", "compaction at", "compaction due", "tokens"):
+            assert bad not in out.replace(COMPACTION_NOTICE, ""), bad
         assert _after_boundary(out).startswith(SESSION_STATE_HEADER)
 
-    def test_percentage_says_where_compaction_fires(self):
-        """v9.25.1: a reader saw "(90%)" and expected compaction to have run.
-        The budget IS the compaction target, so the line now says so — the
-        percentage is the distance to it, not an alarm level."""
-        out = build_session_state(used_tokens=126_000, budget_tokens=140_000)
-        assert "(90% — compaction at 100%)" in out
-
-    def test_percentage_is_clamped_over_budget(self):
-        out = build_session_state(used_tokens=200_000, budget_tokens=140_000)
-        assert "(100% — compaction due)" in out
-
     def test_turn_without_max_turns(self):
-        out = build_session_state(used_tokens=1, budget_tokens=10, turn=7)
+        out = build_session_state(turn=7)
         assert "turn 7" in out and "turn 7/" not in out
 
     def test_turn_with_max_turns(self):
-        out = build_session_state(used_tokens=1, budget_tokens=10, turn=7, max_turns=40)
+        out = build_session_state(turn=7, max_turns=40)
         assert "turn 7/40 (33 left after this one)" in out
         assert "LAST turn" not in out
 
@@ -103,17 +102,11 @@ class TestBuildSessionState:
         assert "LAST turn" not in build_session_state(turn=500)
         assert "LAST turn" not in build_session_state(turn=59, max_turns=60)
 
-    def test_no_budget_still_reports_usage(self):
-        out = build_session_state(used_tokens=1_234)
-        assert "~1,234 tokens" in out
-        assert "%" not in out
-
     def test_agents_and_memory_keep_their_original_headings(self):
         """The sections moved verbatim out of the system prompt — the model
         must not have to re-learn what it is looking at."""
         out = build_session_state(
-            used_tokens=1,
-            budget_tokens=10,
+            turn=1,
             agents="## Live Agents\n- `agt-1`",
             memory="## Session Memory (1)\n✗ #1 [failure] boom",
         )
@@ -127,22 +120,22 @@ class TestBuildSessionState:
         assert "## Live Agents" in out
 
     def test_blank_blocks_are_dropped(self):
-        out = build_session_state(used_tokens=1, budget_tokens=10, agents="   ")
+        out = build_session_state(turn=1, agents="   ")
         assert "Live Agents" not in out
 
 
 class TestCompactionNotice:
-    """v9.26.4 — 단계(70·80·90%)를 처음 넘는 턴에 한 번씩, 문구는 사실만."""
+    """v9.26.4 — 단계를 처음 넘는 턴에 한 번씩, 문구는 사실만. v10.9.0 — 단계는
+    80% 하나(꼬리에 퍼센트가 없어졌으니 단계별 안내가 기댈 숫자도 없다)."""
 
     def test_block_carries_the_notice_only_when_asked(self):
-        out = build_session_state(used_tokens=95, budget_tokens=100)
-        assert (
-            COMPACTION_NOTICE not in out
-        )  # 사용량만으로는 안 뜬다 — 호출자가 단계를 판단
-        out = build_session_state(
-            used_tokens=95, budget_tokens=100, compaction_notice=True
-        )
+        out = build_session_state(turn=9)
+        assert COMPACTION_NOTICE not in out  # 호출자가 단계를 판단
+        out = build_session_state(turn=9, compaction_notice=True)
         assert COMPACTION_NOTICE in out
+
+    def test_single_step_at_eighty_percent(self):
+        assert COMPACTION_NOTICE_STEPS == (0.8,)
 
     def test_wording_is_informative_not_alarming(self):
         """압박을 알리면 조기 complete 를 부른다 — 결핍 어휘 없이 무엇이 일어나는지만."""
@@ -155,22 +148,22 @@ class TestCompactionNotice:
     def test_due_once_per_step(self):
         armed = set(COMPACTION_NOTICE_STEPS)
         seq = []
-        for pct in (0.5, 0.69, 0.7, 0.72, 0.8, 0.85, 0.9, 0.95, 0.99):
+        for pct in (0.5, 0.7, 0.79, 0.8, 0.85, 0.9, 0.95, 0.99):
             due, armed = compaction_notice_due(int(pct * 1000), 1000, armed)
             seq.append(due)
-        assert seq == [False, False, True, False, True, False, True, False, False]
+        assert seq == [False, False, False, True, False, False, False, False]
 
-    def test_jumping_two_steps_fires_once(self):
-        due, armed = compaction_notice_due(850, 1000, set(COMPACTION_NOTICE_STEPS))
-        assert due and armed == {0.9}
+    def test_jumping_past_the_step_fires_once(self):
+        due, armed = compaction_notice_due(950, 1000, set(COMPACTION_NOTICE_STEPS))
+        assert due and armed == set()
 
     def test_rearms_after_compaction_lowers_usage(self):
         armed = set(COMPACTION_NOTICE_STEPS)
-        _, armed = compaction_notice_due(950, 1000, armed)  # 셋 다 소진
+        _, armed = compaction_notice_due(950, 1000, armed)  # 소진
         assert armed == set()
         due, armed = compaction_notice_due(400, 1000, armed)  # 압축 뒤
         assert not due and armed == set(COMPACTION_NOTICE_STEPS)
-        due, _ = compaction_notice_due(700, 1000, armed)
+        due, _ = compaction_notice_due(800, 1000, armed)
         assert due
 
     def test_never_fires_without_a_budget(self):
@@ -550,7 +543,7 @@ class TestKvWinEndToEnd:
         for call in provider.call.call_args_list:
             tail = call[1]["messages"][-1]["content"]
             assert SESSION_STATE_HEADER in tail
-            assert "context: ~" in tail
+            assert "turn " in tail and "context:" not in tail
 
 
 class TestFinalTurnInTheLoop:
@@ -626,11 +619,7 @@ class TestGuidelinesInTail:
         assert SESSION_STATE_HEADER not in out  # 상태가 없으면 상태 헤더도 없음
 
     def test_rules_come_before_the_disclaimed_state_block(self):
-        out = build_session_state(
-            used_tokens=1,
-            budget_tokens=100,
-            guidelines="## Task Guidelines\n- r",
-        )
+        out = build_session_state(turn=1, guidelines="## Task Guidelines\n- r")
         assert out.index(RULES_HEADER) < out.index(SESSION_STATE_HEADER)
 
     def test_guidelines_alone_are_enough_to_render(self):
@@ -638,8 +627,7 @@ class TestGuidelinesInTail:
 
     def test_compaction_notice_stays_last(self):
         out = build_session_state(
-            used_tokens=90,
-            budget_tokens=100,
+            turn=9,
             guidelines="## Task Guidelines\n- r",
             compaction_notice=True,
         )
