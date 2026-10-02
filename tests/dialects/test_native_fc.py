@@ -264,8 +264,10 @@ class TestLoop:
             a["thought"] == "I will read it." and a["ops"][0]["action"] == "read_file"
         )
 
-    def test_batch_observation_stores_parts_only_for_native(self, tmp_path, caps):
-        for name, expect_parts in (("native_fc", True), ("json_fc", False)):
+    def test_batch_observation_stores_parts_for_every_dialect(self, tmp_path, caps):
+        """기록은 방언 중립(v10.2.2): json_fc 세션도 op 별 조각을 남겨 native 로
+        이어 읽을 때 호출 N 개에 `tool` 메시지 N 개가 짝지어진다."""
+        for name in ("native_fc", "json_fc"):
             d = tmp_path / name
             ctx = ContextManager(
                 session_dir=d, max_context_tokens=30_000, dialect=get(name)
@@ -306,6 +308,20 @@ class TestLoop:
                 if l
             ]
             obs = next(r for r in rows if r.get("role") == "user" and r.get("tool"))
-            assert ("parts" in obs) is expect_parts, name
-            if expect_parts:
-                assert [p["tool"] for p in obs["parts"]] == ["read_file", "read_file"]
+            assert [p["tool"] for p in obs["parts"]] == ["read_file", "read_file"], name
+            # 어느 방언의 세션이든 native 로 다시 읽으면 호출과 결과가 짝을 이룬다.
+            resumed = ContextManager(
+                session_dir=d,
+                max_context_tokens=30_000,
+                dialect=get("native_fc"),
+                resume=True,
+            )
+            msgs = resumed.get_messages()
+            calls = [
+                c["id"]
+                for m in msgs
+                if m["role"] == "assistant"
+                for c in m.get("tool_calls", [])
+            ]
+            results = [m["tool_call_id"] for m in msgs if m["role"] == "tool"]
+            assert calls[:2] == results == ["call_1_0", "call_1_1"], name
