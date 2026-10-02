@@ -349,13 +349,17 @@ class Renderer(ABC):
         profile: str = "",
         instance_name: str = "",
         fallback: bool = False,
+        absorbed_into: int | None = None,
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
         수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는
         "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). ``ts``
         (5.13) = resume 재생 시 원래 발생 시각. ``fallback`` (v9.23.0) =
         하네스가 대신 보낸 런 요약(회신 없이 끝난 런) — 도구 호출이 없는
-        유일한 발신이라 웹이 이것만 따로 그린다. 기본 no-op."""
+        유일한 발신이라 웹이 이것만 따로 그린다. ``direction="absorbed"`` +
+        ``absorbed_into`` (v10.8.2) = 받은편지함의 이 항목(seq)이 **도는 런**
+        (``absorbed_into`` = 그 런의 seq)에 턴 경계에서 흡수됐다 — 웹이 ⏳ 대기
+        줄을 그 런 블록 머리로 옮긴다. 기본 no-op."""
 
     def clear_agent_conversation(self, key: str) -> None:
         """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은

@@ -2883,6 +2883,34 @@
       (queuedIn[key] || (queuedIn[key] = {}))[seq] = { d: d, card: card };
       return;
     }
+    if (d.direction === "absorbed") {
+      // 런 도중 턴 경계에서 흡수됨 (v10.8.2): 그 seq 의 ⏳ 대기 줄을 **도는 런**
+      // (absorbed_into) 블록 머리로 옮긴다 — 새 런이 열리지 않으니 종전엔 배달
+      // 뒤에도 "대기" 로 남았다. 블록이 없으면(재생 순서·구 세션) 줄만 ✓ 로.
+      var into = Number(d.absorbed_into || 0);
+      var q = queuedIn[key] && queuedIn[key][seq];
+      var tidInto = runBySeq[key] && runBySeq[key][into];
+      if (tidInto && runBlocks[tidInto]) {
+        var blkInto = runBlocks[tidInto];
+        if (q) {
+          claimIn(blkInto, q);
+          delete queuedIn[key][seq];
+        } else if (!blkInto.head.querySelector('.run-item[data-seq="' + seq + '"]')) {
+          claimIn(blkInto, { d: d }); // 대기 줄이 안 왔다(버퍼 창 밖) — 머리에 직접
+        }
+        if (blkInto.seqs.indexOf(seq) < 0) blkInto.seqs.push(seq);
+        (runBySeq[key] || (runBySeq[key] = {}))[seq] = tidInto;
+        return;
+      }
+      if (q) {
+        var row = q.card.querySelector(".row");
+        row.classList.add("absorbed");
+        row.querySelector(".ic").textContent = "✓";
+        row.querySelector(".k").textContent = "흡수";
+        row.title = "런 " + into + " 에 턴 경계에서 흡수됨";
+      }
+      return;
+    }
     if (d.direction === "out") {
       if (!d.fallback) return; // 도구 줄이 이미 그 발신이다
       var t2 = runBySeq[key] && runBySeq[key][seq];

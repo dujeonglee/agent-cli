@@ -390,6 +390,61 @@ class TestRunBlock:
         assert _wait(lambda: item.count() == 1)
         assert page.locator("#messages > .card-queued").count() == 0
 
+    def test_mid_run_absorption_moves_the_waiting_row_into_the_running_block(
+        self, stack, page
+    ):
+        """v10.8.2: 런 1 이 도는 동안 도착한 seq 2 는 ⏳ 대기로 섰다가, 서버가
+        턴 경계에서 흡수했다고 알리면(direction=absorbed, absorbed_into=1) 런 1
+        블록의 머리로 옮겨 간다 — 새 런이 열리지 않아도. 종전엔 영원히 대기였다."""
+        self._open(stack, page)
+        self._begin(stack, seq=1)
+        assert _wait(
+            lambda: page.locator(f'.card-run[data-task-id="{AGT}#1"]').count() == 1
+        )
+        stack.renderer.agent_message(
+            key=AGT,
+            direction="in",
+            author="main",
+            text="런 중에 온 지시",
+            to=AGT,
+            seq=2,
+        )
+        assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
+        stack.renderer.agent_message(
+            key=AGT,
+            direction="absorbed",
+            author="main",
+            text="런 중에 온 지시",
+            to=AGT,
+            seq=2,
+            absorbed_into=1,
+        )
+        items = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        assert _wait(lambda: items.count() == 1)
+        assert page.locator("#messages > .card-queued").count() == 0
+        assert "런 중에 온 지시" in items.first.locator(".s").inner_text()
+        assert items.first.get_attribute("data-seq") == "2"
+
+    def test_absorption_without_a_visible_block_marks_the_row(self, stack, page):
+        """블록이 없으면(버퍼 창 밖·구 세션) 줄만 ✓ 흡수 로 바뀐다 — 대기로 남지 않는다."""
+        self._open(stack, page)
+        stack.renderer.agent_message(
+            key=AGT, direction="in", author="main", text="지시", to=AGT, seq=5
+        )
+        assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
+        stack.renderer.agent_message(
+            key=AGT,
+            direction="absorbed",
+            author="main",
+            text="지시",
+            to=AGT,
+            seq=5,
+            absorbed_into=4,
+        )
+        row = page.locator("#messages > .card-queued .row")
+        assert _wait(lambda: row.locator(".ic").inner_text().strip() == "✓")
+        assert row.locator(".k").inner_text().strip() == "흡수"
+
     def test_batch_claims_all_its_items(self, stack, page):
         """사람 창 배치: N건이 런 1개 — `scope_start.seqs` 가 머리를 N줄로."""
         self._open(stack, page)

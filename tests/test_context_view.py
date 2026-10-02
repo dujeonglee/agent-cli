@@ -363,3 +363,26 @@ class TestSnapshotEnd:
         while not c1.queue.empty():
             live.append(c1.queue.get_nowait()[0])
         assert "snapshot_end" not in live  # 기존 접속은 viewers 갱신만 받는다
+
+
+class TestAbsorbedAgentMessage:
+    def test_absorbed_into_rides_on_the_payload(self):
+        r = WebRenderer()
+        c = WebConnection(id="c")
+        r.register_connection(c)
+        r.agent_message(
+            key="agt-1",
+            direction="absorbed",
+            author="main",
+            text="t",
+            seq=2,
+            to="agt-1",
+            absorbed_into=1,
+        )
+        ev, data = c.queue.get_nowait()
+        assert ev == "agent_msg"
+        assert data["direction"] == "absorbed" and data["absorbed_into"] == 1
+        r.agent_message(
+            key="agt-1", direction="in", author="main", text="t", seq=3, to="agt-1"
+        )
+        assert "absorbed_into" not in c.queue.get_nowait()[1]

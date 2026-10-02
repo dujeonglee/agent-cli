@@ -1701,10 +1701,29 @@ class AgentRegistry:
             tm.inbox_items = [i for i in tm.inbox_items if i.get("seq") not in seqs]
             tm.in_flight.extend(dict(i) for i in items)
         out: list[dict] = []
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
         for item in items:
             author = item.get("author", "main")
             text = item["text"]
             seq = str(item["seq"])
+            # 웹의 ⏳ 대기 줄은 그 seq 로 **새 런**이 열릴 때만 블록 머리로 옮겨졌다
+            # — 런 도중 흡수는 새 런을 열지 않아 배달 뒤에도 "대기" 로 남았다
+            # (실측 67qcmb/qa: 7분 생성 중 도착 → 다음 경계에 배달, 카드는 그대로).
+            # 흡수를 알리고 conversation.jsonl 에도 남겨 resume 재생이 같게 한다.
+            absorbed = {
+                "key": tm.key,
+                "direction": "absorbed",
+                "author": author,
+                "text": text,
+                "seq": item["seq"],
+                "to": tm.key,
+                "ts": time.time(),
+                "absorbed_into": tm.current_seq,
+            }
+            renderer.agent_message(**absorbed)
+            self._log_conversation(tm, absorbed)
             if item.get("question_id"):
                 self.mark_question_delivered(item["question_id"], tm.current_seq)
             if _is_human_addr(author):

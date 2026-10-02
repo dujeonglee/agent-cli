@@ -907,6 +907,7 @@ class WebRenderer(Renderer):
         profile: str = "",
         instance_name: str = "",
         fallback: bool = False,
+        absorbed_into: int | None = None,
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서).
@@ -935,6 +936,8 @@ class WebRenderer(Renderer):
             data["ts"] = ts
         if fallback:
             data["fallback"] = True
+        if absorbed_into is not None:
+            data["absorbed_into"] = absorbed_into
         self._emit("agent_msg", data, persistent=True)
 
     def clear_agent_conversation(self, key: str) -> None:
