@@ -32,7 +32,7 @@ def bounded_excerpt(text: str) -> str:
     )
 
 
-def echo_prior_output(content: str) -> str:
+def echo_prior_output(content: str, *, excerpt: bool = True) -> str:
     """Mirror the model's prior emitted text back at it for failure grounding.
 
     Returns the *body* of the echo block — a delimited section quoting
@@ -51,11 +51,16 @@ def echo_prior_output(content: str) -> str:
     stored on these paths (``store_emission=False`` — "retries are not
     recorded", v9.21), so this quote is the only copy; head + tail keeps
     both places a format error can hide.
+
+    ``excerpt=False`` (v10.5.0): ``content`` is already a bounded excerpt
+    (the structured nudge record stores it that way) — quote it as is.
+    Bounding twice would cut the head+tail form a second time.
     """
     cleaned = content.strip() if content else ""
     if not cleaned:
         return ""
-    return f"Your prior output:\n---\n{bounded_excerpt(cleaned)}\n---\n"
+    body = bounded_excerpt(cleaned) if excerpt else cleaned
+    return f"Your prior output:\n---\n{body}\n---\n"
 
 
 # ``constrain_format_json`` / ``constrain_action_required`` lived here

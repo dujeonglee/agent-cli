@@ -1093,6 +1093,10 @@ class WebRenderer(Renderer):
         # which then replay flat as before).
         self._replay_task_id = force_task_id or msg.get("task_id") or None
         role = msg.get("role")
+        if role == "user" and isinstance(msg.get("nudge"), dict):
+            # 구조화 형식 넛지 (v10.5.0): 라이브는 카드를 그리지 않는다
+            # (render_recovery 의 휘발 retry_tick 뿐) — 재생도 같다.
+            return
         if role == "user":
             # ``tool`` key presence — not truthiness — signals an
             # observation entry. ``_append_observation`` always

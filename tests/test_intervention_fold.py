@@ -164,7 +164,7 @@ class TestDispatcherIntegration:
         # 턴 N+1: 또 실패 → 넛지는 마지막 것 하나만 남는다(v10.2.3)
         d._handle_text_path('[{"두 번째도 깨진 op')
         left = [r for r in ctx.get_raw_messages() if is_format_intervention(r)]
-        assert len(left) == 1 and "두 번째도" in left[0]["content"]
+        assert len(left) == 1 and "두 번째도" in left[0]["nudge"]["prior"]
         # 턴 N+2: 파싱 성공 emission → 개입이 캐시 뷰에서 소멸
         good = 'ok\n\n[{"action":"complete","result":"done"}]'
         d._handle_text_path(good)
