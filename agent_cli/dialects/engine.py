@@ -983,23 +983,16 @@ class Dialect(DialectBase):
         artifact = record.get("artifact") or ""
         if artifact:
             content = f"{content}\n→ {artifact}"
-        parts = record.get("parts")
-        if isinstance(parts, list) and parts:
-            return [
-                {
-                    "role": "tool",
-                    "tool_call_id": self.call_id(assistant_index, i),
-                    "content": str(p.get("content") or ""),
-                }
-                for i, p in enumerate(parts)
-                if isinstance(p, dict)
-            ]
+        # 배치 관찰은 op 별 조각(`parts`)으로, 단일 관찰은 본문 하나로 — 둘 다
+        # 조각 목록 하나로 보고 op 순서대로 `tool` 메시지를 낸다.
+        parts = record.get("parts") or [{"content": content}]
         return [
             {
                 "role": "tool",
-                "tool_call_id": self.call_id(assistant_index, 0),
-                "content": str(content),
+                "tool_call_id": self.call_id(assistant_index, i),
+                "content": str(p.get("content") or ""),
             }
+            for i, p in enumerate(parts)
         ]
 
     def render_assistant_from_history(

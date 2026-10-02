@@ -558,20 +558,18 @@ class TurnDispatcher:
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
             turn=self.state.turn,
-            # v10.2.0: 서버 파싱 방언은 op 마다 `tool` 메시지를 내보내야 해 조각을
-            # 함께 저장한다(텍스트 방언 기록은 그대로 — 두 배로 안 커진다).
-            parts=(
-                [
-                    {
-                        "tool": r["tool_name"],
-                        "success": bool(r["success"]),
-                        "content": r["observation"],
-                    }
-                    for r in results
-                ]
-                if getattr(self.cfg.dialect, "server_parsed", False)
-                else None
-            ),
+            # 기록은 방언 중립(v10.2.2): op 별 조각을 항상 남긴다 — 서버 파싱
+            # 방언으로 다시 읽을 때 op 마다 `tool` 메시지가 필요하고, 합친
+            # 본문에서는 경계를 되살릴 수 없다(v10.2.0 은 native 에서만 저장해
+            # json_fc 세션을 native 로 이으면 호출·결과 짝이 안 맞았다).
+            parts=[
+                {
+                    "tool": r["tool_name"],
+                    "success": bool(r["success"]),
+                    "content": r["observation"],
+                }
+                for r in results
+            ],
             corrected_record=corrected_record,
         )
 
