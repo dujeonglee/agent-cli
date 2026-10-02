@@ -333,6 +333,89 @@ class TestPromptInspectorDynamic:
         assert any("analyze the project" in s["name"] for s in secs)
         assert all(s["est_tokens"] >= 0 and "text" in s for s in secs)
 
+    def test_native_tool_calls_and_tool_results_are_shown(self):
+        """native_fc (v10.2.1): assistant 본문이 ``tool_calls`` 에 있고 관찰이
+        ``tool`` 역할이면 — content 만 읽던 인스펙터는 `[assistant]` 0자 카드였다
+        (사용자 제보). 호출 줄이 본문에 적히고, tool 라벨은 호출 id 를 단다."""
+        from agent_cli.web.inspector import _dynamic_context_sections
+
+        ctx = _FakeInspectorCtx(
+            [
+                {"role": "user", "content": "[DJ]: explain ids.py"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1_0",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "src/ids.py"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1_0", "content": "1#AB:x = 1"},
+                {
+                    "role": "assistant",
+                    "content": "Reading first.",
+                    "tool_calls": [
+                        {
+                            "id": "call_3_0",
+                            "type": "function",
+                            "function": {
+                                "name": "complete",
+                                "arguments": '{"result": "done"}',
+                            },
+                        }
+                    ],
+                },
+            ]
+        )
+        secs = _dynamic_context_sections(ctx)
+        assert len(secs) == 4
+        a1, t1, a2 = secs[1], secs[2], secs[3]
+        assert a1["name"].startswith("[assistant] ⚡ read_file")
+        assert a1["chars"] > 0 and "call_1_0" in a1["text"]
+        assert t1["name"].startswith("[tool call_1_0] 1#AB")
+        assert a2["name"] == "[assistant] Reading first."
+        assert (
+            a2["text"] == 'Reading first.\n\n⚡ complete {"result": "done"}  (call_3_0)'
+        )
+
+    def test_endpoint_shows_function_schemas_as_tools_sections(self):
+        """native_fc (v10.2.1): 프롬프트 대신 요청 ``tools[]`` 로 간 함수 스키마가
+        kind=tools 섹션으로 시스템 뒤·대화 앞에 보이고 토큰 합계에 든다."""
+        renderer = WebRenderer()
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+        renderer.note_system_prompt(
+            [("Role", "you are an agent")], turn=1, tools=[schema]
+        )
+        ctx = _FakeInspectorCtx([{"role": "user", "content": "[DJ]: hi"}])
+        server = WebServer(renderer, token="t", ctx=ctx)
+        data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
+        kinds = [s["kind"] for s in data["sections"]]
+        assert kinds == ["system", "tools", "dynamic"]
+        tool_sec = data["sections"][1]
+        assert tool_sec["name"] == "function: read_file"
+        assert '"description": "Read a file."' in tool_sec["text"]
+        assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
+        # 텍스트 방언(tools 없음)은 종전 그대로.
+        renderer.note_system_prompt([("Role", "you are an agent")], turn=2)
+        data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
+        assert [s["kind"] for s in data["sections"]] == ["system", "dynamic"]
+
     def test_endpoint_includes_system_and_dynamic(self):
         renderer = WebRenderer()
         renderer.note_system_prompt([("System Prompt", "you are an agent")], turn=2)

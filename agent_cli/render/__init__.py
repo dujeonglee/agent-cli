@@ -266,6 +266,7 @@ def render_system_prompt_snapshot(
     turn: int,
     *,
     grammar: tuple[bool, str] | None = None,
+    tools: list[dict] | None = None,
 ) -> None:
     """Hand the per-turn system prompt (named sections) to the renderer.
 
@@ -274,9 +275,13 @@ def render_system_prompt_snapshot(
     renderer — not the server directly — so non-web renderers need no
     special-casing and the loop stays UI-agnostic. ``grammar`` is the
     decoding grammar the server enforces on this call, ``(thinking_open,
-    ebnf)`` — shown beside the prompt but never counted as prompt tokens."""
+    ebnf)`` — shown beside the prompt but never counted as prompt tokens.
+    ``tools`` is the function-schema list a server-parsed dialect (native_fc)
+    sends as the request's ``tools[]`` instead of an ``## Available Tools``
+    section — the server's chat template renders it into the prompt, so the
+    inspector shows it as prompt content (v10.2.1)."""
     _flush_thought()
-    _renderer.note_system_prompt(sections, turn, grammar=grammar)
+    _renderer.note_system_prompt(sections, turn, grammar=grammar, tools=tools)
 
 
 def consume_directives_reload() -> bool:

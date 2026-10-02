@@ -161,10 +161,12 @@ class Renderer(ABC):
         turn: int,
         *,
         grammar: tuple[bool, str] | None = None,
+        tools: list[dict] | None = None,
     ) -> None:
         """Record the system prompt (as named sections) sent to the LLM this
         turn, plus the decoding grammar the server enforces on the call
-        (``(thinking_open, ebnf)``, None when unconstrained). Concrete no-op
+        (``(thinking_open, ebnf)``, None when unconstrained) and the function
+        schemas sent as request ``tools[]`` (native_fc; None otherwise). Concrete no-op
         — the CLI renderer has no use for it; the web renderer overrides to
         keep the latest snapshot for the Prompt Inspector
         (`GET /api/debug/prompt`). Called once per LLM call, so an override

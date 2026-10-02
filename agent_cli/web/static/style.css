@@ -1246,7 +1246,7 @@ footer {
 
 /* semantic kind hues — system prompt vs conversation. Literal (like the JS
    palette) so they stay stable across themes; used only as subtle accents. */
-:root { --insp-system: var(--accent); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
+:root { --insp-system: var(--accent); --insp-tools: var(--scope-agent, var(--accent)); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
 
 /* ── Prompt Inspection ─────────────────────── */
 .insp-head {
@@ -1355,6 +1355,7 @@ footer {
   overflow: hidden;
 }
 .insp-sec.insp-system { border-left-color: var(--insp-system); }
+.insp-sec.insp-tools { border-left-color: var(--insp-tools); }
 .insp-sec.insp-dynamic { border-left-color: var(--insp-convo); }
 .insp-sec.insp-tail { border-left-color: var(--insp-tail); }
 .insp-sec.insp-grammar { border-left-color: var(--insp-grammar); }
@@ -1401,6 +1402,7 @@ footer {
 }
 .insp-share i { display: block; height: 100%; background: var(--muted); }
 .insp-system .insp-share i { background: var(--insp-system); }
+.insp-tools .insp-share i { background: var(--insp-tools); }
 .insp-dynamic .insp-share i { background: var(--insp-convo); }
 .insp-tok {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;

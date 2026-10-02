@@ -429,7 +429,7 @@ class TestLoopWiring:
             ctx.set_grammar_override(False)
         with patch(
             "agent_cli.loop.llm.render_system_prompt_snapshot",
-            side_effect=lambda sections, turn, grammar=None: (
+            side_effect=lambda sections, turn, grammar=None, tools=None: (
                 snapshot.append((sections, grammar)) if snapshot is not None else None
             ),
         ):
