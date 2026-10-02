@@ -653,14 +653,14 @@ class TestBootKnobFlags:
     @pytest.mark.parametrize(
         "env,expected",
         [
-            (None, 0.8),
+            (None, 1.0),
             ("0.6", 0.6),
             ("0.5", 0.5),
             ("0.95", 0.95),
             ("0.1", 0.5),  # clamp ↓
-            ("9", 0.95),  # clamp ↑
-            ("abc", 0.8),
-            ("", 0.8),
+            ("9", 1.0),  # clamp ↑
+            ("abc", 1.0),
+            ("", 1.0),
         ],
     )
     def test_compaction_env_default(self, monkeypatch, env, expected):

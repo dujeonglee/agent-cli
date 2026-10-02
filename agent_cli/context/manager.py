@@ -80,10 +80,20 @@ _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 # Lives on the ContextManager (not a loop constant) so the web UI can adjust it
 # live — the loop and the web server share one ctx instance, so a slider write
 # is read by the next LLM call with no dirty-flag rebuild. Clamped to
-# [_MIN, _MAX] so a stray value can't disable compaction or over-squeeze.
-DEFAULT_COMPACTION_RATIO = 0.8
+# [_MIN, _MAX] so a stray value can't over-squeeze.
+#
+# v10.11.0: default and max are 1.0 — "compact when the window is actually
+# needed". The loop's request clamp (``max_tokens = window − prompt − margin``)
+# shrinks the output budget as the window fills; when a generation hits that
+# clamp and ends with ``length``, the loop compacts right there
+# (``core._on_output_truncated``, detail ``context_clamp``) and the model
+# re-emits with the room back. The preventive target still reserves the
+# request's minimum output (``LLMCaller._MIN_REQUEST_OUTPUT_TOKENS`` +
+# margin) so a full cache never produces an over-window request. Lower
+# ratios keep the old behaviour: compact ahead of need, at a fixed fraction.
+DEFAULT_COMPACTION_RATIO = 1.0
 COMPACTION_RATIO_MIN = 0.5
-COMPACTION_RATIO_MAX = 0.95
+COMPACTION_RATIO_MAX = 1.0
 COMPACTION_RATIO_STEP = 0.05
 STREAM_IDLE_TIMEOUT_MIN_S = 60
 

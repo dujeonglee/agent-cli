@@ -3534,25 +3534,25 @@ class TestCompactionEndpoint:
     def test_get_returns_ratio_and_range(self, tmp_path):
         _, _, client, _ctx = self._client_with_ctx(tmp_path)
         d = client.get("/api/compaction?token=testtoken").json()
-        assert d["ratio"] == 0.8
-        assert d["min"] == 0.5 and d["max"] == 0.95 and d["step"] == 0.05
+        assert d["ratio"] == 1.0
+        assert d["min"] == 0.5 and d["max"] == 1.0 and d["step"] == 0.05
 
     def test_get_default_when_no_ctx(self, server_and_client):
         _, _, client = server_and_client
         d = client.get("/api/compaction?token=testtoken").json()
-        assert d["ratio"] == 0.8  # DEFAULT — no live ctx
+        assert d["ratio"] == 1.0  # DEFAULT — no live ctx
 
     def test_post_sets_ctx_and_clamps(self, tmp_path):
         _, _, client, ctx = self._client_with_ctx(tmp_path)
         d = client.post("/api/compaction?token=testtoken", json={"ratio": 0.6}).json()
         assert d["ok"] and d["ratio"] == 0.6 and ctx.compaction_ratio == 0.6
         d2 = client.post("/api/compaction?token=testtoken", json={"ratio": 1.5}).json()
-        assert d2["ratio"] == 0.95 and ctx.compaction_ratio == 0.95  # clamp
+        assert d2["ratio"] == 1.0 and ctx.compaction_ratio == 1.0  # clamp
 
     def test_post_bad_ratio_errors_unchanged(self, tmp_path):
         _, _, client, ctx = self._client_with_ctx(tmp_path)
         d = client.post("/api/compaction?token=testtoken", json={"ratio": "x"}).json()
-        assert d["ok"] is False and ctx.compaction_ratio == 0.8
+        assert d["ok"] is False and ctx.compaction_ratio == 1.0
 
     def test_post_broadcasts_sticky_to_new_viewer(self, tmp_path):
         _, renderer, client, _ctx = self._client_with_ctx(tmp_path)

@@ -263,10 +263,13 @@ class LLMCaller:
             # 예약해 ratio 0.8 이 "창의 42%" 에서 발화하는 비직관을 낳았다
             # (262K 창 + 등록 max_output 131K 실측). 출력은 예약 대신 아래
             # 요청-시 클램프 + 기존 length 가드 / flow 2 가 담당한다.
+            # v10.11.0: 최소 출력 몫(하한+여유)도 뺀다 — 비율 1.0 이면 캐시가 창을
+            # 다 채워 아래 클램프가 하한 1024 를 내고도 창을 넘는 요청이 됐다.
             target = max(
                 int(self.cfg.capabilities.context_window * self.ctx.compaction_ratio)
                 - sys_tokens
-                - self._state_tokens,
+                - self._state_tokens
+                - (self._MIN_REQUEST_OUTPUT_TOKENS + self._MAX_TOKENS_MARGIN),
                 1,
             )
             self.ctx.ensure_within(target)

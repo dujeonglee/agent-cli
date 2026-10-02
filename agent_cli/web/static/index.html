@@ -41,11 +41,11 @@
     </button>
     <!-- v8.57.0: 세션 노브 4종 — 값-배지 칩 + 전용 팝업 (구 ctx 팝오버 이사).
          wrap/내부 입력 id 전부 보존 → compaction·maxagents·stall·thinking IIFE 무수정. -->
-    <span id="compaction-wrap" class="knob" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). Session-only. Sub-agents inherit the value at spawn time." hidden>
-      <button id="compaction-chip" class="knob-btn" type="button" data-pop="compaction-pop" aria-haspopup="true" aria-expanded="false">🗜️ <span id="compaction-badge">80%</span></button>
+    <span id="compaction-wrap" class="knob" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). 100% = only when a generation is actually cut by the window (then compact and retry). Session-only. Sub-agents inherit the value at spawn time." hidden>
+      <button id="compaction-chip" class="knob-btn" type="button" data-pop="compaction-pop" aria-haspopup="true" aria-expanded="false">🗜️ <span id="compaction-badge">100%</span></button>
       <div id="compaction-pop" class="knob-pop" hidden>
-        <label id="compaction-label" for="compaction-range">Compact 80%</label>
-        <input id="compaction-range" type="range" min="50" max="95" step="5" value="80"
+        <label id="compaction-label" for="compaction-range">Compact 100%</label>
+        <input id="compaction-range" type="range" min="50" max="100" step="5" value="100"
                aria-label="Context compaction threshold %">
       </div>
     </span>

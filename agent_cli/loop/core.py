@@ -8,6 +8,7 @@ import threading
 
 from agent_cli import verbose as _verbose
 from agent_cli.constants import (
+    CONTEXT_CLAMP_NOTICE,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
     RUNAWAY_NOTICE,
@@ -28,6 +29,7 @@ from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.memory import consume_memory_reload
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.recovery.failures import record_failure
 from agent_cli.recovery.observability import (
     FAILURE_OUTPUT_TRUNCATED,
     FAILURE_RUNAWAY,
@@ -974,6 +976,7 @@ class AgentLoop:
         self._fire_hook("PostLLMCall", llm_response=llm_text)
 
         self._dispatch.last_outcome = None
+        self._cut_signal = None  # set by the length/runaway paths (v10.11.0)
         # 호출 시점의 턴 — 형식 재시도는 턴을 되감아 같은 번호로 다시 부르므로,
         # 되감긴 뒤의 값을 쓰면 실패한 호출이 이전 턴으로 기록된다.
         turn_at_call = self.turn
@@ -982,6 +985,41 @@ class AgentLoop:
         finally:
             if _verbose.enabled():
                 self._record_verbose_call(llm_text, response, turn_at_call)
+            self._record_failure(llm_text, response, turn_at_call)
+
+    def _record_failure(self, llm_text: str, response, turn: int) -> None:
+        """v10.11.0: every generation the loop labelled as failed — format
+        drift from dispatch, or a cut/runaway — goes to failures.jsonl WITH
+        its text (turns.jsonl never carries text, verbose.jsonl needs the
+        flag). Always on; a clean session writes nothing."""
+        out = self._dispatch.last_outcome or {}
+        signal = out.get("failure_signal") or self._cut_signal
+        if not signal or self.ctx is None or not self.ctx.session_dir:
+            return
+        usage = getattr(response, "usage", None)
+        record_failure(
+            self.ctx.session_dir,
+            turn=turn,
+            model=self.model,
+            dialect=getattr(self.dialect, "name", "?"),
+            failure_signal=signal,
+            stop_reason=getattr(response, "stop_reason", None),
+            stop_detail=getattr(response, "stop_detail", "") or None,
+            parse_stage=out.get("parse_stage"),
+            primitives=list(out.get("primitives", [])),
+            text=llm_text or "",
+            thinking=(getattr(response, "thinking", "") or None),
+            usage=(
+                {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_input_tokens": usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                }
+                if usage
+                else None
+            ),
+        )
 
     def _verbose_scope(self) -> str:
         return _verbose.scope_of(self.ctx.session_dir if self.ctx else None)
@@ -1082,19 +1120,6 @@ class AgentLoop:
         """
         from agent_cli.recovery.primitives import echo_prior_output
 
-        _append_observation(
-            self.messages,
-            self.ctx,
-            self.dialect,
-            llm_text,
-            f"Observation: {OUTPUT_TRUNCATED_NOTICE}\n{echo_prior_output(llm_text)}",
-            tool_name="output_truncated",
-            success=False,
-            turn=self.turn,
-            render=not self.skill_name,
-            recovery_kind="format",
-            store_emission=False,
-        )
         # v10.10.0: the cut call is a row too, with WHICH limit ended it —
         # before, it was never written (dispatch never ran) and answering
         # "context or output cap?" needed the server log.
@@ -1103,6 +1128,28 @@ class AgentLoop:
             usage.output_tokens if usage else None,
             self._llm.last_max_tokens_requested,
             self._llm.last_max_tokens_clamped,
+        )
+        self._cut_signal = FAILURE_OUTPUT_TRUNCATED
+        # v10.11.0: the clamp IS the window being full — compact now, before
+        # the notice, so the retry sees the room back (ratio 1.0 means this
+        # is the normal compaction trigger, not a rescue).
+        notice = OUTPUT_TRUNCATED_NOTICE
+        if detail == "context_clamp" and self.ctx is not None:
+            before, after = self.ctx.compact_now()
+            if after < before:
+                notice = CONTEXT_CLAMP_NOTICE
+        _append_observation(
+            self.messages,
+            self.ctx,
+            self.dialect,
+            llm_text,
+            f"Observation: {notice}\n{echo_prior_output(llm_text)}",
+            tool_name="output_truncated",
+            success=False,
+            turn=self.turn,
+            render=not self.skill_name,
+            recovery_kind="format",
+            store_emission=False,
         )
         self.recorder.record(
             model=self.model,
@@ -1128,6 +1175,7 @@ class AgentLoop:
 
         detail = getattr(response, "stop_detail", "") or "unknown"
         what = REASON_TEXT.get(detail, "filler")
+        self._cut_signal = FAILURE_RUNAWAY
         _append_observation(
             self.messages,
             self.ctx,
