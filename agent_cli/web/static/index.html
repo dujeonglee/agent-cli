@@ -226,21 +226,23 @@
   <!-- Prompt Inspection drawer — opened CONTEXTUALLY from a conversation
        agent/skill card (🔍) or the main-prompt footer button. Scope is fixed
        to what was clicked (no scope chips). -->
-  <div id="inspector-backdrop" hidden></div>
-  <aside id="inspector" aria-hidden="true" role="dialog" aria-modal="true"
-    aria-label="Prompt Inspection">
+  <!-- 🔍 컨텍스트 인스펙터 — 도킹 드로어(모달 아님). 대화 밖에서 모델이 받는 것:
+       시스템·함수 스키마·매턴 꼬리(직전 턴 diff)·문법·예산. 대화는 챗이 곧 모델 시점. -->
+  <aside id="inspector" aria-hidden="true" role="complementary" aria-label="컨텍스트 인스펙터">
     <div class="insp-head">
       <span id="insp-scope-tag" class="insp-scope-tag"></span>
       <div id="insp-scope-name" class="insp-scope-name"></div>
       <button id="insp-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
+    <div id="insp-origin" class="insp-origin" hidden></div>
     <div class="insp-bar">
       <span id="insp-meta" class="insp-meta"></span>
+      <span id="insp-live" class="insp-live"></span>
       <span class="insp-bar-sp"></span>
       <button id="insp-collapse" type="button" class="insp-mini" title="모든 섹션 접기">⤢ 접기</button>
-      <button id="insp-copyall" type="button" class="insp-mini" title="전체 프롬프트 복사">⧉ 전체 복사</button>
+      <button id="insp-copyall" type="button" class="insp-mini" title="시스템·함수·꼬리 전체 복사">⧉ 전체 복사</button>
     </div>
-    <input id="insp-search" type="search" placeholder="섹션 필터…" autocomplete="off">
+    <div id="insp-budget" class="insp-budget" hidden></div>
     <div id="insp-sections" class="insp-sections"></div>
   </aside>
   <footer>
@@ -255,7 +257,7 @@
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>
       <button id="insp-main-btn" type="button" class="btn-icon"
-        title="프롬프트 인스펙션 — 현재 대화 상대(main 또는 선택한 에이전트)의 시스템 프롬프트+컨텍스트">🔍</button>
+        title="컨텍스트 인스펙터 — 현재 대화 상대(main 또는 선택한 에이전트)가 대화 밖에서 받는 것: 시스템·함수·꼬리·예산 (대화는 이 창이 곧 모델 시점)">🔍</button>
       <button id="send" type="button" class="btn-primary">Send</button>
       <button id="chat-stop" type="button" class="btn-danger" hidden title="Stop the current run">Stop</button>
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>

@@ -228,3 +228,40 @@ def build_session_state(
         lines.append("")
         lines.append(COMPACTION_NOTICE)
     return "\n".join([TAIL_BOUNDARY, "", *lines])
+
+
+def split_tail(content: str) -> tuple[str, list[tuple[str, str]]]:
+    """마지막 메시지 본문에서 매턴 꼬리(standing rules + session state)를 분리.
+
+    v10.7.0: 인스펙터(web)에서 이리로 — LLM 호출 스냅샷(loop/llm.py)도 같은 분리를
+    쓰므로 마커가 사는 모듈이 소유한다(loop → web 역방향 import 금지).
+
+    ``get_messages`` 는 Task Guidelines(v8.52.x)와 세션 상태(v8.46.0)를
+    마지막 user 메시지 **본문 끝에** 붙인다 — 인스펙터가 메시지를 그대로
+    섹션화하면 이 꼬리가 `[user] Observation…` 안에 묻혀 발견이 안 된다.
+    실제 요청 위치(항상 맨 끝)를 그대로 반영해 독립 섹션으로 떼어낸다.
+    이름에 "system" 을 쓰지 않는 것은 의도 — 프로바이더 입장에서 이 텍스트는
+    system 이 아니라 user 메시지 본문이다."""
+    cut = len(content)
+    for marker in (TAIL_BOUNDARY, RULES_HEADER, SESSION_STATE_HEADER):
+        i = content.find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    if cut == len(content):
+        return content, []
+    body, tail = content[:cut].rstrip(), content[cut:]
+    # 경계선(v9.25.2)은 꼬리의 첫 줄 — 첫 섹션 본문에 그대로 싣고, 섹션 판정은
+    # 그 다음 헤더로 한다.
+    boundary = ""
+    if tail.startswith(TAIL_BOUNDARY):
+        boundary = TAIL_BOUNDARY + "\n"
+        tail = tail[len(TAIL_BOUNDARY) :].lstrip()
+    parts: list[tuple[str, str]] = []
+    si = tail.find(SESSION_STATE_HEADER)
+    if tail.startswith(RULES_HEADER):
+        rules = tail if si == -1 else tail[:si]
+        parts.append(("Standing Rules (per-turn tail)", boundary + rules.strip()))
+        boundary = ""
+    if si != -1:
+        parts.append(("Session State (per-turn tail)", boundary + tail[si:].strip()))
+    return body, parts

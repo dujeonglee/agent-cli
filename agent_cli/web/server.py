@@ -49,7 +49,6 @@ from agent_cli.render.web import WebConnection, WebRenderer
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
-from agent_cli.web.inspector import _dynamic_context_sections
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -651,59 +650,61 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/debug/prompt")
     async def debug_prompt(task_id: str = Query("")):
-        """Prompt Inspector data for a scope: the latest LLM call's system
-        prompt as named sections with size figures. ``task_id`` selects a
-        delegate sub-agent's prompt; empty (default) is the main loop. Token-
-        authenticated; fetched on demand when the inspector drawer opens (the
-        ~16KB payload is never pushed over SSE). ``ok=False`` before that
-        scope's first LLM call."""
-        snapshot = server.renderer.prompt_snapshot(task_id)
-        # System sections (kind=system, from the latest LLM call's snapshot —
-        # may be absent before the first call) + the live DYNAMIC context
-        # (conversation + observations, kind=dynamic) for the MAIN scope.
-        # Showing dynamic without a system snapshot is what fills the inspector
-        # the moment a resumed session loads (ctx restored, no LLM call yet).
-        # Sub-agent scopes (task_id) keep system-only — their ctx isn't here.
-        system_sections = []
-        turn = None
-        if snapshot is not None:
-            system_sections = [
-                {**s, "kind": s.get("kind", "system")}
-                for s in snapshot.get("sections", [])
-            ]
-            turn = snapshot.get("turn")
-        # v4.52.0: 서브 스코프(agent/skill)도 동적 컨텍스트 — 렌더러가
-        # 스코프별 live ctx(실행 중) 또는 종료-시 고정 스냅샷을 보유.
-        if task_id:
-            dynamic = server.renderer.scope_dynamic_sections(task_id)
-        else:
-            dynamic = _dynamic_context_sections(server.ctx)
-        # native_fc (v10.2.1): 요청 ``tools[]`` 의 함수 스키마 — 시스템 프롬프트의
-        # `## Available Tools` 자리(서버 템플릿이 거기 그린다)라 시스템 뒤·대화 앞.
-        tool_sections = (
-            list(snapshot.get("tools") or []) if snapshot is not None else []
-        )
-        sections = system_sections + tool_sections + dynamic
-        if not sections:
+        """컨텍스트 인스펙터(드로어) 데이터 — **대화 밖에서 모델이 받는 것**
+        (v10.7.0, docs/inspector-model-view §2.2·§3.3). 대화는 챗이 곧 모델
+        시점이라 여기 없다. ``task_id`` 는 스코프(빈 값 = main). 마지막 LLM
+        호출의 스냅샷 기준: 시스템 섹션·함수 스키마(native_fc)·매턴 꼬리(+직전
+        턴 꼬리 ``tail_prev`` 로 diff)·디코딩 문법, 예산(``budget``), 스코프
+        사실(``scope``). 그 스코프의 첫 LLM 호출 전이면 ``ok=False``."""
+        renderer = server.renderer
+        snapshot = renderer.prompt_snapshot(task_id)
+        if snapshot is None:
             reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
             return {"ok": False, "reason": reason}
-        total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
+        system_sections = [
+            {**s, "kind": s.get("kind", "system")} for s in snapshot.get("sections", [])
+        ]
+        tool_sections = list(snapshot.get("tools") or [])
+        tail_sections = list(snapshot.get("tail") or [])
+        sections = system_sections + tool_sections + tail_sections
         est_tokens = sum(s["est_tokens"] for s in sections)
-        # 📐 디코딩 문법(kind=grammar): 모델이 "받는 것" 이라 같은 목록의
-        # 끝에 보이되, 프롬프트 토큰이 아니므로 총합 뒤에 붙인다.
-        grammar = snapshot.get("grammar") if snapshot is not None else None
+        total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
+        grammar = snapshot.get("grammar")
         if grammar:
             sections = [
                 *sections,
                 {"name": "Decoding grammar", "kind": "grammar", **grammar},
             ]
+        info = renderer.prompt_scope_info(task_id)
+        if not task_id and server.ctx is not None:
+            # 테스트 더미 ctx 는 추정 토큰이 없을 수 있다 — 그러면 0.
+            est = getattr(server.ctx, "get_estimated_tokens", None)
+            info["convo_tokens"] = est() if callable(est) else 0
+            info["compactions"] = getattr(server.ctx, "compaction_count", 0)
+        caps = server.runtime.get("capabilities") if server.runtime else None
+        window = int(getattr(caps, "context_window", 0) or 0)
+        budget = {
+            "system": sum(s["est_tokens"] for s in system_sections),
+            "tools": sum(s["est_tokens"] for s in tool_sections),
+            "tail": sum(s["est_tokens"] for s in tail_sections),
+            "convo": int(info.pop("convo_tokens", 0) or 0),
+            "window": window,
+            "compactions": int(info.pop("compactions", 0) or 0),
+        }
+        budget["total"] = (
+            budget["system"] + budget["tools"] + budget["tail"] + budget["convo"]
+        )
         return {
             "ok": True,
             "task_id": task_id,
-            "turn": turn if turn is not None else 0,
+            "turn": snapshot.get("turn") or 0,
             "sections": sections,
             "total_chars": total_chars,
             "est_tokens": est_tokens,
+            "tail_prev": snapshot.get("tail_prev") or [],
+            "prev_turn": snapshot.get("prev_turn"),
+            "budget": budget,
+            "scope": info,
         }
 
     @app.get("/api/directives")

@@ -162,6 +162,7 @@ class Renderer(ABC):
         *,
         grammar: tuple[bool, str] | None = None,
         tools: list[dict] | None = None,
+        tail: list[tuple[str, str]] | None = None,
     ) -> None:
         """Record the system prompt (as named sections) sent to the LLM this
         turn, plus the decoding grammar the server enforces on the call

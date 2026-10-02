@@ -280,8 +280,12 @@ def render_system_prompt_snapshot(
     *,
     grammar: tuple[bool, str] | None = None,
     tools: list[dict] | None = None,
+    tail: list[tuple[str, str]] | None = None,
 ) -> None:
     """Hand the per-turn system prompt (named sections) to the renderer.
+
+    ``tail`` (v10.7.0): 이 호출의 마지막 메시지 끝에 붙은 매턴 꼬리(standing
+    rules·session state) — 드로어가 직전 턴과 diff 로 보여 준다.
 
     No-op for CLI renderers; the web renderer stores the latest snapshot
     for the Prompt Inspector (``GET /api/debug/prompt``). Routed through the
@@ -294,7 +298,9 @@ def render_system_prompt_snapshot(
     section — the server's chat template renders it into the prompt, so the
     inspector shows it as prompt content (v10.2.1)."""
     _flush_thought()
-    _renderer.note_system_prompt(sections, turn, grammar=grammar, tools=tools)
+    _renderer.note_system_prompt(
+        sections, turn, grammar=grammar, tools=tools, tail=tail
+    )
 
 
 def consume_directives_reload() -> bool:

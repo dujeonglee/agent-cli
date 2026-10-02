@@ -1213,7 +1213,6 @@ footer {
 /* ── Inspection + Directive drawers (인스펙터 재설계) ───────────────
    Flat/solid sheets — solid surface, hairline border, one soft shadow (no
    heavy glass blur). Both drawers share the slide-in chrome. */
-#inspector-backdrop,
 #directive-backdrop {
   position: fixed;
   inset: 0;
@@ -1222,7 +1221,6 @@ footer {
   transition: opacity .2s ease;
   z-index: 40;
 }
-#inspector-backdrop.open,
 #directive-backdrop.open { opacity: 1; }
 
 #inspector,
@@ -1309,17 +1307,6 @@ footer {
 }
 .insp-mini:hover { background: var(--surface-2); color: var(--text); }
 
-#insp-search {
-  margin: 10px 16px 0;
-  flex: 0 0 auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-3);
-  color: var(--text);
-  padding: 7px 10px;
-  font-size: 13px;
-}
-#insp-search:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
 
 .insp-sections {
   flex: 1 1 auto;
@@ -1734,3 +1721,31 @@ body.export-mode #messages > .card > .export-check {
 .card.ctx-summary .row { grid-template-columns: 18px auto 1fr auto; }
 .card.ctx-summary .row .k { color: var(--cyan); }
 .card.ctx-summary .ctx-body { font-size: 12.5px; color: var(--text-2); margin: 4px 0 0 83px; white-space: pre-wrap; }
+
+/* ── 컨텍스트 인스펙터 (v10.7.0, docs/inspector-model-view §2.2) ──
+   도킹: 열려 있는 동안 챗·푸터가 드로어 폭만큼 오른쪽 여백을 둔다(모달 아님). */
+@media (min-width: 900px) {
+  body.insp-open main#messages, body.insp-open footer { margin-right: min(560px, 94vw); }
+}
+.insp-scope-tag.tag-inline { background: var(--surface-2); color: var(--accent-2); }
+.insp-origin { display: flex; align-items: center; gap: 10px; padding: 6px 16px 0; font-size: 12px; color: var(--text-2); }
+.insp-origin a { color: var(--accent-2); text-decoration: underline; cursor: pointer; }
+.insp-live { font: 11px "Jetendard", ui-monospace, monospace; color: var(--ok); }
+.insp-live.ended { color: var(--muted); }
+.insp-budget { margin: 10px 16px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-3); flex: 0 0 auto; }
+.insp-budget .bl { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; }
+.insp-budget .bn { font: 12px "Jetendard", ui-monospace, monospace; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.insp-budget .bbar { display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: var(--surface-2); margin: 7px 0; }
+.insp-budget .bbar i { display: block; height: 100%; }
+.insp-budget .bleg { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11.5px; color: var(--text-2); align-items: center; }
+.insp-budget .bleg b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.insp-budget .bleg .n { font-family: "Jetendard", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.insp-budget .bleg .insp-tag { margin-left: auto; }
+.insp-tag.ins { color: var(--ok); background: var(--ok-soft-bg); border-color: var(--ok-soft-border); }
+.insp-tag.del { color: var(--fail-soft-fg); background: var(--fail-soft-bg); border-color: var(--fail-soft-border); }
+.insp-diff { margin: 0; padding: 8px 11px 10px; border-top: 1px solid var(--border); font: 12px/1.5 "Jetendard", ui-monospace, monospace; color: var(--text-2); white-space: pre-wrap; }
+.insp-diff .ins { display: block; background: var(--ok-soft-bg); color: var(--text); }
+.insp-diff .del { display: block; background: var(--fail-soft-bg); text-decoration: line-through; opacity: .85; }
+.insp-sub { font-size: 11.5px; color: var(--muted); padding: 2px 2px 6px; }
+.insp-sec.insp-grp { border-left-color: var(--border-2); }
+.insp-nest { padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 6px; }
