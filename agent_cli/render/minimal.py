@@ -1149,12 +1149,15 @@ class MinimalRenderer(Renderer):
         profile: str = "",
         instance_name: str = "",
         fallback: bool = False,
+        absorbed_into: int | None = None,
     ) -> None:
         """CLI 의 teammate 문답 수신 창 — @agt-<key> 명령(사용자 발신)의
         회신/질문은 main 관찰로 배달되지 않으므로(D8) 콘솔 라인이 유일한
         수신 표면이다. main 발신 문답은 관찰 배달과 이중 표시되지 않게
         건너뛴다."""
-        if to == "main" or direction == "in":
+        # "absorbed"(v10.8.2) 는 웹의 대기 줄 정리 신호 — 터미널은 흡수된 본문을
+        # 관찰로 이미 찍는다.
+        if to == "main" or direction in ("in", "absorbed"):
             return
         from agent_cli.agent_icon import agent_display_name, agent_icon
 

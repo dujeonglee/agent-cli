@@ -3019,6 +3019,42 @@ class TestMidRunAbsorption:
         assert wait_run_done(reg, b)
         assert tm.handled == 3 and tm.in_flight == []
 
+    def test_absorption_is_announced_and_logged(self, mkreg, renderer):
+        """v10.8.2: 흡수한 항목마다 ``agent_msg direction="absorbed"`` 를 내고
+        (absorbed_into = 도는 런의 seq) conversation.jsonl 에도 남긴다 — 웹의
+        ⏳ 대기 줄이 도는 런 블록으로 옮겨가고, resume 재생도 같은 그림이 된다.
+        종전엔 배달 뒤에도 "대기" 로 남았다(67qcmb/qa 실측)."""
+        reg, a, b, gate = self._busy(mkreg)
+        tm = reg.get(b)
+        assert reg.request(b, "추가 지시", author="main") == ""
+        assert (
+            reg.request(b, "회신 본문", author=f"agent:{a}", expects_reply=False) == ""
+        )
+        renderer.calls.clear()
+        reg.absorb_pending(tm)
+        absorbed = [
+            kw
+            for name, kw in renderer.calls
+            if name == "agent_message" and kw.get("direction") == "absorbed"
+        ]
+        assert [(m["seq"], m["absorbed_into"], m["to"]) for m in absorbed] == [
+            (2, 1, b),
+            (3, 1, b),
+        ]
+        assert absorbed[0]["author"] == "main" and absorbed[0]["text"] == "추가 지시"
+        assert absorbed[1]["author"] == f"agent:{a}"
+        logged = [
+            json.loads(ln)
+            for ln in (tm.home_dir / "conversation.jsonl").read_text().splitlines()
+            if ln.strip()
+        ]
+        assert [
+            (r["seq"], r["absorbed_into"])
+            for r in logged
+            if r.get("direction") == "absorbed"
+        ] == [(2, 1), (3, 1)]
+        gate.set()
+
     def test_human_item_becomes_a_user_request(self, mkreg, renderer):
         reg, _a, b, gate = self._busy(mkreg)
         tm = reg.get(b)

@@ -620,6 +620,7 @@ body.multi-viewer .card-user .who {
 /* 큐에서 기다리는 항목 — 런이 열리면 그 블록의 머리로 옮겨 간다. */
 .card-queued { padding-left: 12px; }
 .row.queued .ic, .row.queued .s { color: var(--muted); }
+.row.queued.absorbed .ic { color: var(--ok); } /* 런 도중 흡수됨 (v10.8.2) */
 /* 하네스 폴백 — 도구 호출 없는 유일한 발신. */
 .card-fallback .row.fallback { background: var(--warn-soft-bg, rgba(210,153,34,.12)); border-radius: 4px; }
 .card-fallback .row.fallback .ic { color: var(--warn); }
