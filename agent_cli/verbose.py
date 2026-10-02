@@ -246,10 +246,12 @@ def record(kind: str, *, scope: str = "?", turn: int | None = None, **fields) ->
 
 def context_entries(messages: list[dict]) -> list[dict]:
     """Bounded per-message view for a ``context`` record."""
+    from agent_cli.context.render import message_display_text
+
     out = []
     for m in messages:
-        content = m.get("content", "")
-        text = content if isinstance(content, str) else json.dumps(content, default=str)
+        # content 밖(native_fc 의 ``tool_calls``)도 센다 — 인스펙터와 같은 표시 함수.
+        text = message_display_text(m)
         out.append(
             {
                 "role": str(m.get("role", "?")),

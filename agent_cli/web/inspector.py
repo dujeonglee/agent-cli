@@ -5,6 +5,7 @@ C3: web 전송 계층(server.py)에서 분리된 도메인 로직. FastAPI 무�
 
 from __future__ import annotations
 
+from agent_cli.context.render import message_display_text, message_label
 from agent_cli.prompts.session_state import (
     RULES_HEADER,
     SESSION_STATE_HEADER,
@@ -70,9 +71,9 @@ def _dynamic_context_sections(ctx) -> list[dict]:
     for idx, m in enumerate(messages):
         if m.get("role") == "system":
             continue  # already shown as the system snapshot
-        content = m.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
+        # native_fc 의 assistant 는 본문이 ``tool_calls`` 에 있다 — content 만 읽으면
+        # 빈 카드가 된다(사용자 제보, v10.2.1). 역할 라벨도 ``tool`` 이면 호출 id 를 단다.
+        content = message_display_text(m)
         # 마지막 메시지만 매턴 꼬리를 실을 수 있다 (get_messages 계약) —
         # 떼어낸 꼬리는 kind="tail" 로 목록 맨 끝(실제 위치와 동형).
         if idx == len(messages) - 1:
@@ -87,7 +88,7 @@ def _dynamic_context_sections(ctx) -> list[dict]:
                         "kind": "tail",
                     }
                 )
-        role = m.get("role", "?")
+        role = message_label(m)
         first = content.strip().split("\n", 1)[0][:60]
         name = f"[{role}] {first}" if first else f"[{role}]"
         sections.append(

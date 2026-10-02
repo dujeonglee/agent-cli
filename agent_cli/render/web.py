@@ -136,6 +136,17 @@ class WebConnection:
     closed: threading.Event = field(default_factory=threading.Event)
 
 
+def _tool_name(schema: dict) -> str:
+    fn = schema.get("function") if isinstance(schema, dict) else None
+    if isinstance(fn, dict) and fn.get("name"):
+        return str(fn["name"])
+    return str(schema.get("name", "?")) if isinstance(schema, dict) else "?"
+
+
+def _tool_text(schema: dict) -> str:
+    return json.dumps(schema, ensure_ascii=False, indent=2, default=str)
+
+
 class WebRenderer(Renderer):
     """Renderer for ``agent-cli web``.
 
@@ -1866,6 +1877,7 @@ class WebRenderer(Renderer):
         turn: int,
         *,
         grammar: tuple[bool, str] | None = None,
+        tools: list[dict] | None = None,
     ) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.
 
@@ -1908,6 +1920,19 @@ class WebRenderer(Renderer):
                 if grammar
                 else None
             ),
+            # native_fc (v10.2.1): 프롬프트 대신 요청 ``tools[]`` 로 간 함수 스키마.
+            # 서버 템플릿이 프롬프트에 그려 넣으므로 섹션(kind=tools)으로 보이고
+            # 토큰 합계에도 든다(실측 ~90 → 341 토큰, NATIVE.md §3).
+            "tools": [
+                {
+                    "name": f"function: {_tool_name(t)}",
+                    "text": _tool_text(t),
+                    "chars": len(_tool_text(t)),
+                    "est_tokens": estimate_tokens(_tool_text(t)),
+                    "kind": "tools",
+                }
+                for t in (tools or [])
+            ],
         }
         with self._lock:
             self._prompt_snapshots[scope] = snapshot

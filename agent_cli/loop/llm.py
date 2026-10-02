@@ -324,7 +324,10 @@ class LLMCaller:
         # 서버가 강제하는 것 — "모델이 받는 것" 이라 같은 창에 보이되,
         # 섹션이 아니라 별도 인자로 넘겨 프롬프트 토큰 합계에 섞이지 않는다.
         render_system_prompt_snapshot(
-            self.prompt.sections, self.state.turn, grammar=decoding
+            self.prompt.sections,
+            self.state.turn,
+            grammar=decoding,
+            tools=self._function_schemas(),
         )
         self._grammar_used = bool(grammar)
 

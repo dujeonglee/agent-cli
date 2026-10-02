@@ -83,6 +83,28 @@ class TestRecorder:
         (e,) = verbose.context_entries([{"role": "user", "content": big}])
         assert e == {"role": "user", "chars": 5000, "head": "x" * 300}
 
+    def test_context_entries_count_native_tool_calls(self):
+        """native_fc (v10.2.1): assistant 의 ``tool_calls`` 도 ``chars``/``head`` 에
+        든다 — content 만 세면 호출 턴이 0자로 기록된다."""
+        (e,) = verbose.context_entries(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1_0",
+                            "type": "function",
+                            "function": {"name": "shell", "arguments": '{"cmd": "ls"}'},
+                        }
+                    ],
+                }
+            ]
+        )
+        assert e["role"] == "assistant"
+        assert e["head"] == '⚡ shell {"cmd": "ls"}  (call_1_0)'
+        assert e["chars"] == len(e["head"])
+
     def test_debug_log_goes_to_the_file_not_stderr(self, tmp_path, capsys):
         p = verbose.configure(tmp_path)
         verbose.debug_log("probe")

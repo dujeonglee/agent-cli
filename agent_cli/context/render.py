@@ -240,3 +240,43 @@ def _convert_observation(msg: dict) -> dict:
         parts.append(f"→ {artifact}")
 
     return {"role": "user", "content": "\n".join(parts)}
+
+
+def message_label(msg: dict) -> str:
+    """사람이 보는 역할 라벨 — ``tool`` 메시지는 어느 호출의 결과인지 ``tool_call_id``
+    를 붙인다(native_fc, v10.2.1). 인스펙터 섹션 이름이 쓴다."""
+    role = str(msg.get("role", "?"))
+    call_id = msg.get("tool_call_id")
+    return f"{role} {call_id}" if role == "tool" and call_id else role
+
+
+def message_display_text(msg: dict) -> str:
+    """사람이 보는 메시지 본문 — ``content`` 에 더해, native_fc 가 구조 필드로 보내는
+    ``tool_calls`` 를 한 줄씩 적는다(v10.2.1). 인스펙터·verbose ``context`` 레코드가
+    같은 함수를 써서, 모델이 받은 것이 ``content`` 밖에 있어도 빈 카드가 되지 않는다.
+    문법·토큰 추정과는 무관한 표시 전용이다."""
+    content = msg.get("content")
+    if content is None:
+        text = ""
+    elif isinstance(content, str):
+        text = content
+    else:
+        text = json.dumps(content, ensure_ascii=False, default=str)
+    calls = msg.get("tool_calls")
+    if not isinstance(calls, list) or not calls:
+        return text
+    lines = []
+    for call in calls:
+        if not isinstance(call, dict):
+            lines.append(str(call))
+            continue
+        fn = call.get("function") or {}
+        name = fn.get("name", "?") if isinstance(fn, dict) else "?"
+        args = fn.get("arguments", "") if isinstance(fn, dict) else ""
+        if not isinstance(args, str):
+            args = json.dumps(args, ensure_ascii=False, default=str)
+        call_id = call.get("id", "")
+        line = f"⚡ {name} {args}".rstrip()
+        lines.append(f"{line}  ({call_id})" if call_id else line)
+    block = "\n".join(lines)
+    return f"{text.rstrip()}\n\n{block}" if text.strip() else block

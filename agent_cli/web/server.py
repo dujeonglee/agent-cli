@@ -678,7 +678,12 @@ def create_app(server: WebServer) -> FastAPI:
             dynamic = server.renderer.scope_dynamic_sections(task_id)
         else:
             dynamic = _dynamic_context_sections(server.ctx)
-        sections = system_sections + dynamic
+        # native_fc (v10.2.1): 요청 ``tools[]`` 의 함수 스키마 — 시스템 프롬프트의
+        # `## Available Tools` 자리(서버 템플릿이 거기 그린다)라 시스템 뒤·대화 앞.
+        tool_sections = (
+            list(snapshot.get("tools") or []) if snapshot is not None else []
+        )
+        sections = system_sections + tool_sections + dynamic
         if not sections:
             reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
             return {"ok": False, "reason": reason}

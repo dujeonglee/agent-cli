@@ -40,6 +40,7 @@
 | 산문만 온 턴 | NO_ACTION 넛지 | `tool_calls` 없고 content 만 → 같은 NO_ACTION 넛지(문구는 "함수를 호출하라") |
 | 문법·구제·foreign 구제 | 있음 | 없음(서버 파싱). 서버 파싱 실패 신호: `finish_reason: length`·빈 `tool_calls`·arguments JSON 불량 → `SCHEMA_MISMATCH` 경로 재사용 |
 | 원문 기록(`AGENT_CLI_RECORD_EMISSIONS`) | 모델 원문 | 없음 — 투명성 손실. `AGENT_CLI_DUMP_STREAM` 으로만 본다 |
+| 🔍 인스펙터 | 시스템 프롬프트 섹션 + 대화 | 같은 뷰에 **`Function schemas` 그룹**(요청 `tools[]`, 함수마다 한 섹션, 토큰 합계 포함) 이 더해지고, assistant 카드는 `tool_calls` 를 `⚡ 도구 {인자}  (call id)` 줄로, 관찰은 `[tool call_<n>_<i>]` 라벨로 보인다(v10.2.1 — content 만 읽어 빈 카드였던 제보) |
 
 관찰이 `tool` 역할로 가면 지금 user 역할 관찰 뒤에 붙던 꼬리(per-turn tail, `_OBS_COMPLETE_NUDGE`)의
 자리가 문제다. OpenAI 규약상 `tool` 메시지 뒤에 바로 assistant 가 와야 하는 서버도 있으므로,

@@ -3502,6 +3502,7 @@
   // grammar); 모르는 kind 는 system 으로 본다.
   const INSP_KINDS = {
     system: "System prompt",
+    tools: "Function schemas — sent as request tools[] (native_fc); the server's chat template renders them into the prompt",
     dynamic: "Conversation · observations",
     tail: "Per-turn tail — appended to the LAST message every turn (not system prompt)",
     grammar: "Decoding grammar — enforced by the server at generation (not prompt tokens)",
