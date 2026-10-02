@@ -843,8 +843,78 @@
     }
     appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
     ctxApplyToCard(cardEl, (ev && ev.task_id) || "", channel);
+    attachCopy(cardEl);
     scheduleScroll();
   }
+
+  // ── 복사 (v10.8.0) — export 를 대신한다 ──────────────────────────
+  // 카드마다 ⧉ 하나: 그 카드를 **마크다운**으로 클립보드에. 헤더의 ⧉ 는 보이는
+  // 대화 전체(현재 채널)를 같은 포맷으로 이어 붙인다. 카드는 자기 마크다운을
+  // `_md`(함수)로 가진다 — 렌더 결과(HTML)를 되긁지 않고 원문(최종답의 마크다운
+  // 소스, 도구 입력 JSON, 관찰 원문)에서 만든다. 인라인 카드는 자식 카드를 재귀.
+  function fence(text, lang) {
+    const body = String(text == null ? "" : text);
+    // 본문에 ``` 가 있으면 더 긴 울타리로
+    let f = "```";
+    while (body.indexOf(f) !== -1) f += "`";
+    return f + (lang || "") + "\n" + body.replace(/\n$/, "") + "\n" + f;
+  }
+  function cardMarkdown(card) {
+    if (!card || !card.classList) return "";
+    if (typeof card._md === "function") return card._md() || "";
+    if (card.classList.contains("card-task-group")) {
+      const title = card.querySelector(":scope > .task-header > .task-title");
+      const meta = card.querySelector(":scope > .task-header > .task-meta");
+      const body = card.querySelector(":scope > .task-body");
+      const kids = body ? Array.prototype.slice.call(body.children) : [];
+      const inner = kids.map(cardMarkdown).filter(Boolean).join("\n\n");
+      return (
+        "#### " + ((title && title.textContent) || "") +
+        (meta && meta.textContent ? " — " + meta.textContent : "") +
+        (inner ? "\n\n" + inner : "")
+      );
+    }
+    if (card.classList.contains("card-sys")) {
+      const t = card.querySelector(".sys-text");
+      return t && t.textContent ? "_" + t.textContent + "_" : "";
+    }
+    return "";
+  }
+  function timelineMarkdown() {
+    return Array.prototype.slice
+      .call($messages.children)
+      .filter(function (n) { return !n.hidden; }) // 현재 채널에 보이는 것만
+      .map(cardMarkdown)
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  function flashCopied(btn) {
+    const old = btn.textContent;
+    btn.textContent = "✓";
+    btn.classList.add("done");
+    setTimeout(function () { btn.textContent = old; btn.classList.remove("done"); }, 1000);
+  }
+  function attachCopy(card) {
+    if (!card.classList || card.querySelector(":scope > .card-copy")) return;
+    if (typeof card._md !== "function" && !card.classList.contains("card-task-group")) return;
+    const btn = el("button", ["card-copy"], "⧉");
+    btn.type = "button";
+    btn.title = "이 카드 복사 (마크다운)";
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      copyToClipboard(cardMarkdown(card)).then(function () { flashCopied(btn); });
+    });
+    card.appendChild(btn);
+  }
+  window.__cardMarkdown = cardMarkdown; // 브라우저 테스트가 읽는다
+  window.__timelineMarkdown = timelineMarkdown;
+  (function () {
+    const btn = document.getElementById("copy-all-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      copyToClipboard(timelineMarkdown()).then(function () { flashCopied(btn); });
+    });
+  })();
 
   // ── 모델 시점 (v10.6.0, docs/inspector-model-view) ─────────────
   // 챗이 곧 그 에이전트의 모델 시점이다. 서버의 sticky `ctx_view` 가 스코프별로
@@ -898,6 +968,8 @@
     let body = s.text || "";
     if (s.files && s.files.length) body += "\n파일: " + s.files.join(", ");
     card.appendChild(el("div", ["ctx-body"], body));
+    card._md = function () { return "> ⊙ **압축 요약** · " + meta + "\n>\n> " + body.split("\n").join("\n> "); };
+    attachCopy(card);
     return card;
   }
   function ctxApplyView(key) {
@@ -950,6 +1022,7 @@
         ["wake"]
       )
     );
+    card._md = function () { return "**🤝 메일**" + (raw ? "\n\n" + fence(raw) : ""); };
     finishCard(card, d);
   }
 
@@ -1104,6 +1177,7 @@
     const bubble = elHtml("div", ["bubble"], escapeAndFormat(body));
     if (author) bubble.insertBefore(el("span", ["who"], author), bubble.firstChild);
     card.appendChild(bubble);
+    card._md = function () { return "**👤 " + (author || "사용자") + "**\n\n" + body; };
     // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
     // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
     finishCard(card, { ts: ts, task_id: MAIN.task_id });
@@ -1332,6 +1406,7 @@
         );
       }
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
+      card._md = function () { return (t ? "💭 " + t + "\n\n" : "") + String(d.final); };
       // 이 답이 **무엇에 대한 답인지** (v9.19.0). 합쳐진 런에서는 카드 위치가
       // 알려주지 않는다 — 요청 둘이 한 턴에 들어오고 최종답은 하나다.
       // `d.requests` 는 모델이 `complete` 의 `answers` 로 주장한 요청들이고,
@@ -1361,6 +1436,7 @@
           makeRow("💭", "생각", first.trim(), thoughtBody, ["think"])
         );
       }
+      card._md = function () { return t ? "💭 " + t : ""; };
       delete pendingStep[ch];
       finishCard(card, d);
       return;
@@ -1382,6 +1458,7 @@
                 renderActionInput(tool, input), actCls, jump)
       );
       openStep.acts += 1;
+      openStep.md.actions.push({ tool: tool, input: input });
       // 배지는 `⚡ 첫도구 +N` 으로 접는다 — 도구 이름을 전부 늘어놓으면
       // 머리 한 줄이 배지로 밀린다.
       if (openStep.toolBadge) {
@@ -1431,12 +1508,31 @@
     card.appendChild(body);
     // 관찰이 이 카드를 찾아 붙는다. 못 찾으면 종전대로 단독 카드로 떨어진다
     // (안전망 — 구조적으로는 관찰이 행동 없이 오지 않는다).
+    // 복사용 원문 — 행동은 같은 턴의 op 마다, 관찰은 붙을 때 쌓인다.
+    const md = { thought: t, actions: [{ tool: tool, input: input }], obs: [] };
+    card._md = function () { return stepMarkdown(md); };
     pendingStep[ch] = {
       card: card, head: head, body: body, badges: badges,
       turn: d.turn, acts: 1, firstTool: tool || "?",
       toolBadge: badges.querySelector(".badge.tool"),
+      md: md,
     };
     finishCard(card, d);
+  }
+
+  /** 스텝 카드의 마크다운: 💭 생각 → ⚡ 도구 + 입력(JSON) → ✓/✗ 도구 + 관찰 원문. */
+  function stepMarkdown(md) {
+    const parts = [];
+    if (md.thought) parts.push("💭 " + md.thought);
+    md.actions.forEach(function (a) {
+      let input = a.input;
+      try { input = JSON.stringify(JSON.parse(a.input), null, 2); } catch (_e) {}
+      parts.push("⚡ `" + (a.tool || "?") + "`" + (input ? "\n" + fence(input, "json") : ""));
+    });
+    md.obs.forEach(function (o) {
+      parts.push((o.success ? "✓" : "✗") + " `" + (o.tool || "결과") + "`" + (o.content ? "\n" + fence(o.content) : ""));
+    });
+    return parts.join("\n\n");
   }
 
   /** Render the action_input portion of an assistant_turn card.
@@ -1605,6 +1701,7 @@
     // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
     if (step && step.turn === d.turn) {
       delete pendingStep[ch];
+      step.md.obs.push({ tool: tool, content: content, success: !!d.success });
       step.body.appendChild(row);
       step.badges.appendChild(
         el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
@@ -1625,6 +1722,9 @@
     // 안전망: 붙일 스텝을 못 찾았다. 조용히 버리면 결과가 **사라지므로**
     // 종전대로 단독 카드로 떨어뜨린다 — 최악이 "안 묶임" 이지 "유실" 이 아니다.
     card.appendChild(row);
+    card._md = function () {
+      return (d.success ? "✓" : "✗") + " `" + (tool || "결과") + "`" + (content ? "\n" + fence(content) : "");
+    };
     finishCard(card, d);
   }
 
@@ -1950,6 +2050,7 @@
     }
     return Promise.resolve();
   }
+  window.__copyText = copyToClipboard; // 다른 IIFE(인스펙터)가 같은 헬퍼를 쓴다
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
@@ -3588,16 +3689,8 @@
       btn.textContent = "✓";
       setTimeout(function () { btn.textContent = old; }, 1000);
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(flash).catch(function () {});
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); flash(); } catch (e) {}
-      document.body.removeChild(ta);
-    }
+    // 메인 IIFE 의 헬퍼 하나로 — LAN http(비보안 컨텍스트) 폴백 포함.
+    window.__copyText(text).then(flash).catch(function () {});
   }
 
   // 줄 단위 LCS diff — 꼬리는 수십 줄이라 O(n·m) 으로 충분하다.
@@ -3742,10 +3835,12 @@
     const sys = [], tools = [], tail = [];
     let grammar = null;
     data.sections.forEach(function (s) {
+      // 프로세스는 옛 코드·화면은 새 코드인 창(업그레이드 직후)에서 옛 서버가
+      // 대화 섹션(dynamic)을 보낼 수 있다 — 시스템에 섞지 않고 버린다.
       if (s.kind === "tools") tools.push(s);
       else if (s.kind === "tail") tail.push(s);
       else if (s.kind === "grammar") grammar = s;
-      else sys.push(s);
+      else if (s.kind === "system" || !s.kind) sys.push(s);
     });
     const prevByName = {};
     (data.tail_prev || []).forEach(function (s) { prevByName[s.name] = s.text; });
@@ -3884,411 +3979,6 @@
   });
 })();
 
-// ── Export feature (self-contained IIFE) ───────────────────────────────
-//
-// Decoupled from the main render loop: it reads top-level cards straight
-// from #messages (classifying by card class, body from innerText), so it
-// needs no hook into the card renderers. Selection happens in place via
-// per-card checkboxes shown only in export mode; the bottom action bar
-// exports the selected entries as a downloaded HTML file or a Jira comment.
-(function () {
-  "use strict";
-
-  const $btn = document.getElementById("export-btn");
-  const $bar = document.getElementById("export-bar");
-  const $messages = document.getElementById("messages");
-  if (!$btn || !$bar || !$messages) return;
-
-  const $all = document.getElementById("export-all");
-  const $count = document.getElementById("export-count");
-  const $html = document.getElementById("export-html");
-  const $jiraBtn = document.getElementById("export-jira-btn");
-  const $cancel = document.getElementById("export-cancel");
-  const $jiraForm = document.getElementById("export-jira-form");
-  const $jiraTarget = document.getElementById("export-jira-target");
-  const $jiraUrl = document.getElementById("export-jira-url");
-  const $jiraDeployment = document.getElementById("export-jira-deployment");
-  const $jiraUser = document.getElementById("export-jira-user");
-  const $jiraSecret = document.getElementById("export-jira-secret");
-  const $jiraIssue = document.getElementById("export-jira-issue");
-  const $jiraSend = document.getElementById("export-jira-send");
-  const $jiraHttpWarn = document.getElementById("export-jira-http-warn");
-  const $msg = document.getElementById("export-msg");
-
-  let exportMode = false;
-  const selected = new Set(); // selected card elements
-
-  // Classify a top-level card → {kind, label, mono, body?(selector)} or null
-  // to skip (transient streaming / rejected raw cards).
-  function classify(card) {
-    const cl = card.classList;
-    if (!cl || !cl.contains("card")) return null;
-    if (cl.contains("card-user"))
-      return { kind: "user", label: "User", mono: false, body: ".bubble" };
-    if (cl.contains("card-assistant"))
-      return { kind: "assistant", label: "Assistant", mono: false };
-    if (cl.contains("card-observation")) {
-      // v9.4.0 ③: obs-head 가 행(.row)으로 바뀌었다 — 라벨은 도구 이름
-      // 칸(.k)에서 뽑는다(종전 "✓ shell" 대신 "shell").
-      const kind = card.querySelector(".row .k");
-      return {
-        kind: "observation",
-        label: kind ? kind.innerText.trim() : "Observation",
-        mono: true,
-        body: ".obs-body",
-      };
-    }
-    if (cl.contains("card-error"))
-      return { kind: "error", label: "Error", mono: true };
-    if (cl.contains("card-task-group")) {
-      const t = card.querySelector(".task-title");
-      return {
-        kind: "agent",
-        label: t ? t.innerText.trim() : "agent",
-        mono: false,
-        body: ".task-body",
-      };
-    }
-    // 왕래·시스템 줄·거부된 응답도 대화의 일부다 — 종전엔 여기서 null 로
-    // 떨어져 **조용히 export 에서 빠졌다**(감사 발견: classify 가 카드 종류의
-    // 두 번째 등록부인데 새 종류가 생겨도 아무 경고가 없다).
-    if (cl.contains("card-run")) {
-      // 런 블록 (v9.23.0) — 머리의 수신 항목이 라벨, 몸통이 본문.
-      const items = Array.from(card.querySelectorAll(".run-head .run-item .s"))
-        .map(function (n) { return n.innerText.trim(); })
-        .filter(Boolean);
-      return {
-        kind: "run",
-        label: items.length ? items.join(" / ") : "run",
-        mono: false,
-        body: ".run-body",
-      };
-    }
-    if (cl.contains("card-queued")) {
-      const peer = card.querySelector(".peer");
-      return {
-        kind: "queued",
-        label: "대기" + (peer ? " · " + peer.innerText.trim() : ""),
-        mono: false,
-      };
-    }
-    if (cl.contains("card-fallback"))
-      return { kind: "fallback", label: "폴백", mono: false };
-    if (cl.contains("card-sys"))
-      return { kind: "system", label: "System", mono: false };
-    return null; // .gen(생성 중 표시) 등 카드가 아닌 것
-  }
-
-  // classify 가 아는 카드 클래스 — 새 카드 종류를 만들 때 여기에 없으면
-  // export 에서 조용히 빠진다. 소스 핀 테스트가 이 목록과 classify 본문을
-  // 대조해 "등록을 잊었다"를 정적으로 잡는다.
-  const CARD_KINDS = [
-    "card-user", "card-assistant", "card-observation",
-    "card-error", "card-task-group", "card-run", "card-queued", "card-fallback",
-    "card-sys",
-  ];
-
-  function topCards() {
-    return Array.from($messages.children).filter(function (c) {
-      return classify(c) !== null;
-    });
-  }
-
-  function attachCheckbox(card) {
-    if (card.querySelector(":scope > .export-check")) return;
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "export-check";
-    cb.checked = selected.has(card);
-    // Don't let a checkbox click bubble to card-collapse handlers.
-    cb.addEventListener("click", function (e) {
-      e.stopPropagation();
-    });
-    cb.addEventListener("change", function () {
-      if (cb.checked) selected.add(card);
-      else selected.delete(card);
-      updateBar();
-    });
-    card.insertBefore(cb, card.firstChild);
-  }
-
-  function detachCheckboxes() {
-    $messages.querySelectorAll(".export-check").forEach(function (c) {
-      c.remove();
-    });
-  }
-
-  function updateBar() {
-    const cards = topCards();
-    $count.textContent = selected.size + " selected";
-    $all.checked = cards.length > 0 && selected.size === cards.length;
-    $all.indeterminate = selected.size > 0 && selected.size < cards.length;
-    const has = selected.size > 0;
-    $html.disabled = !has;
-    $jiraBtn.disabled = !has;
-  }
-
-  // Checkbox cards that arrive while export mode is active (e.g. a still-
-  // running agent appends more turns).
-  const observer = new MutationObserver(function (muts) {
-    if (!exportMode) return;
-    muts.forEach(function (m) {
-      m.addedNodes.forEach(function (n) {
-        if (n.nodeType === 1 && classify(n)) attachCheckbox(n);
-      });
-    });
-    updateBar();
-  });
-
-  function enter() {
-    exportMode = true;
-    selected.clear();
-    document.body.classList.add("export-mode");
-    $bar.hidden = false;
-    hideJiraForm();
-    $msg.textContent = "";
-    topCards().forEach(attachCheckbox);
-    observer.observe($messages, { childList: true });
-    updateBar();
-  }
-
-  function exit() {
-    exportMode = false;
-    observer.disconnect();
-    detachCheckboxes();
-    selected.clear();
-    document.body.classList.remove("export-mode");
-    $bar.hidden = true;
-  }
-
-  function collectEntries() {
-    return topCards()
-      .filter(function (c) {
-        return selected.has(c);
-      })
-      .map(function (card) {
-        const c = classify(card);
-        const bodyEl = c.body ? card.querySelector(c.body) : card;
-        const body = (bodyEl ? bodyEl.innerText : card.innerText) || "";
-        return { kind: c.kind, label: c.label, body: body.trim(), mono: c.mono };
-      });
-  }
-
-  async function exportHtml() {
-    $msg.textContent = "Exporting…";
-    try {
-      const resp = await fetch("api/export/html", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: document.title, entries: collectEntries() }),
-      });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "agent-cli-export-" + Date.now() + ".html";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      $msg.textContent = "";
-      exit();
-    } catch (e) {
-      $msg.textContent = "Export failed: " + e.message;
-    }
-  }
-
-  async function loadJiraTargets() {
-    try {
-      const r = await fetch("api/export/jira/targets");
-      const d = await r.json();
-      return (d && d.targets) || [];
-    } catch (_e) {
-      return [];
-    }
-  }
-
-  // Credentials live ONLY in this browser's localStorage — never stored
-  // server-side; the comment is posted as the front-end user. They are keyed by
-  // base_url (the real scope of where the credentials are sent), so a typed /
-  // edited URL carries its own saved login. LAST_URL remembers the URL to
-  // prefill when there is no configured default (zero-config use).
-  var JIRA_LAST_URL = "agentcli_jira_url";
-  function credKey(url) {
-    return "agentcli_jira_cred_" + (url || "").replace(/\/+$/, "");
-  }
-  function loadCreds(url) {
-    try {
-      return JSON.parse(localStorage.getItem(credKey(url)) || "{}") || {};
-    } catch (_e) {
-      return {};
-    }
-  }
-  function saveCreds(url, user, secret) {
-    try {
-      localStorage.setItem(credKey(url), JSON.stringify({ user: user, secret: secret }));
-    } catch (_e) {}
-  }
-
-  // deployment → placeholder labels for the credential fields. Cloud uses
-  // email + API token; Server/DC uses username + password (or PAT).
-  function applyDeploymentLabels(dep) {
-    const server = dep === "server";
-    $jiraUser.placeholder = server ? "username" : "email";
-    $jiraSecret.placeholder = server ? "password / PAT" : "API token";
-  }
-
-  // Known config targets keyed by name → {base_url, deployment} so picking a
-  // target fills the URL + toggle; the URL field is still freely editable.
-  let jiraTargetsByName = {};
-
-  // Show a plaintext-credential warning when the (user-typed) URL is http://.
-  // https / config URLs are TLS-protected; empty hides it.
-  function updateJiraHttpWarn() {
-    if (!$jiraHttpWarn) return;
-    const url = $jiraUrl.value.trim().toLowerCase();
-    $jiraHttpWarn.hidden = !url.startsWith("http://");
-  }
-
-  // Reload the saved login + toggle for whatever URL is currently in the field.
-  function onJiraUrlChange() {
-    const c = loadCreds($jiraUrl.value.trim());
-    $jiraUser.value = c.user || "";
-    $jiraSecret.value = c.secret || "";
-    updateJiraHttpWarn();
-  }
-
-  function onJiraTargetChange() {
-    const t = jiraTargetsByName[$jiraTarget.value];
-    if (t) {
-      $jiraUrl.value = t.base_url || "";
-      const dep = t.deployment || "cloud";
-      $jiraDeployment.value = dep;
-      applyDeploymentLabels(dep);
-    }
-    onJiraUrlChange();
-  }
-
-  async function showJiraForm() {
-    const targets = await loadJiraTargets();
-    jiraTargetsByName = {};
-    $jiraTarget.innerHTML = "";
-    targets.forEach(function (t) {
-      const o = document.createElement("option");
-      o.value = t.name;
-      o.textContent = t.name;
-      if (t.default) o.selected = true;
-      $jiraTarget.appendChild(o);
-      jiraTargetsByName[t.name] = t;
-    });
-    // Hide the selector when there are 0 or 1 instances; the URL field is the
-    // entry point either way (config targets prefill it; otherwise type it).
-    $jiraTarget.style.display = targets.length > 1 ? "" : "none";
-    $jiraForm.hidden = false;
-    $msg.textContent = "";
-    if (targets.length) {
-      onJiraTargetChange();
-    } else {
-      // Zero-config: prefill the last-used URL (if any) + its saved login.
-      $jiraUrl.value = localStorage.getItem(JIRA_LAST_URL) || "";
-      applyDeploymentLabels($jiraDeployment.value);
-      onJiraUrlChange();
-    }
-    if (!$jiraUrl.value) $jiraUrl.focus();
-    else if ($jiraUser.value && $jiraSecret.value) $jiraIssue.focus();
-    else $jiraUser.focus();
-  }
-
-  function hideJiraForm() {
-    $jiraForm.hidden = true;
-  }
-
-  async function sendJira() {
-    const url = $jiraUrl.value.trim().replace(/\/+$/, "");
-    if (!url) {
-      $msg.textContent = "Enter your Jira base URL (e.g. https://your.atlassian.net).";
-      return;
-    }
-    const issue = $jiraIssue.value.trim();
-    if (!issue) {
-      $msg.textContent = "Enter an issue key (e.g. PROJ-123).";
-      return;
-    }
-    const user = $jiraUser.value.trim();
-    const secret = $jiraSecret.value;
-    if (!user || !secret) {
-      $msg.textContent = "Enter your Jira account and token/password.";
-      return;
-    }
-    $jiraSend.disabled = true;
-    $msg.textContent = "Posting to Jira…";
-    try {
-      const r = await fetch("api/export/jira", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          target: $jiraTarget.value,
-          base_url: url,
-          issue_key: issue,
-          deployment: $jiraDeployment.value,
-          entries: collectEntries(),
-          auth: { user: user, secret: secret },
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok || !d.ok) throw new Error((d && d.detail) || "HTTP " + r.status);
-      saveCreds(url, user, secret);
-      try { localStorage.setItem(JIRA_LAST_URL, url); } catch (_e) {}
-      $msg.innerHTML =
-        'Posted → <a href="' +
-        d.url +
-        '" target="_blank" rel="noopener">' +
-        issue +
-        "</a>";
-      setTimeout(exit, 2500);
-    } catch (e) {
-      $msg.textContent = "Jira failed: " + e.message;
-    } finally {
-      $jiraSend.disabled = false;
-    }
-  }
-
-  // ── Wiring ──
-  $btn.addEventListener("click", function () {
-    if (exportMode) exit();
-    else enter();
-  });
-  $cancel.addEventListener("click", exit);
-  $all.addEventListener("change", function () {
-    const cards = topCards();
-    if ($all.checked) cards.forEach(function (c) { selected.add(c); });
-    else selected.clear();
-    $messages.querySelectorAll(".export-check").forEach(function (cb) {
-      cb.checked = selected.has(cb.parentNode);
-    });
-    updateBar();
-  });
-  $html.addEventListener("click", exportHtml);
-  $jiraBtn.addEventListener("click", function () {
-    if ($jiraForm.hidden) showJiraForm();
-    else hideJiraForm();
-  });
-  $jiraSend.addEventListener("click", sendJira);
-  $jiraTarget.addEventListener("change", onJiraTargetChange);
-  $jiraUrl.addEventListener("change", onJiraUrlChange);
-  // Re-evaluate the plaintext warning live as the URL is typed.
-  $jiraUrl.addEventListener("input", onJiraUrlChange);
-  $jiraDeployment.addEventListener("change", function () {
-    applyDeploymentLabels($jiraDeployment.value);
-  });
-  $jiraIssue.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      sendJira();
-    }
-  });
-})();
 
 // ─── Workspace files (📁) — one drawer: download (select → zip) + upload
 // (drag-drop into the drawer → uploads to the directory clicked in the tree,
