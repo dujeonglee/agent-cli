@@ -945,7 +945,9 @@ class TestStaticUI:
         }
 
         emitted = set(re.findall(r'_emit\(\s*"([a-z_]+)"', web_src))
-        emitted |= set(re.findall(r'set_sticky\(\s*"[a-z_]+",\s*"([a-z_]+)"', web_src))
+        emitted |= set(
+            re.findall(r'set_sticky\(\s*"[a-z_:]+"[^,]*,\s*"([a-z_]+)"', web_src)
+        )
         # f-string / 직접 큐 삽입 경로
         emitted |= {"stream_tick", "thinking_tick"}  # _emit(f"{kind}_tick", …)
         emitted |= {"transcript_truncated", "identity", "viewers"}  # snapshot 삽입
@@ -1354,15 +1356,17 @@ class TestStaticUI:
         import agent_cli.main as main_mod
 
         src = inspect.getsource(main_mod)
-        assert "renderer.agent_wake(message)" in src
+        assert "renderer.agent_wake(message, hidx=ctx.next_ordinal)" in src
         # 깨우기 분기에서 말풍선 경로로 돌아가지 않았는지
         wake_branch = src.split('if _wake_verdict == "run":', 2)[-1].split(
             "agent_registry.set_current_run_authors", 1
         )[0]
         assert "push_user_message" in wake_branch  # else 가지(진짜 사용자)는 유지
-        assert wake_branch.index("renderer.agent_wake(message)") < wake_branch.index(
-            "push_user_message"
-        ), "깨우기 분기가 여전히 말풍선을 그린다"
+        assert wake_branch.index(
+            "renderer.agent_wake(message, hidx=ctx.next_ordinal)"
+        ) < wake_branch.index("push_user_message"), (
+            "깨우기 분기가 여전히 말풍선을 그린다"
+        )
 
     def test_agent_conversation_clear_wired(self, server_and_client):
         """kill=정리 계약: 서버의 ``agent_cleared`` 를 받아 그 key 의 왕래

@@ -47,7 +47,11 @@ from agent_cli.context.render import (
     render_history_message,
 )
 from agent_cli.dialects import get as _get_dialect
-from agent_cli.render import get_renderer, render_compaction_progress
+from agent_cli.render import (
+    get_renderer,
+    render_compaction_progress,
+    render_context_view,
+)
 
 
 def _current_scope_id() -> str:
@@ -338,6 +342,9 @@ class ContextManager:
         # 테스트로 실증). in-memory 전용(레코드 dict 오염 없음).
         self._cache_hidx: list[int] = []
         self._history_ordinal: int = 0  # 지금까지 add 된(=history 의) 레코드 수
+        # 모델 시점 뷰(v10.6.0): 마지막 압축의 (전, 후) 토큰 — resume 땐 None.
+        self._last_compaction_tokens: tuple[int, int] | None = None
+        self._folded_count: int = 0  # fold 로 캐시에서 뺀 형식 넛지(+실패 원문) 수
         self._cache_tokens: int = 0
         # P0-8b: 추정→실측 보정 계수. ``reconcile_actual_tokens`` 가 카운터를
         # 서버 실측으로 재앵커한 뒤에도 증감(add/evict/fold/force_fit)은 로컬
@@ -443,6 +450,23 @@ class ContextManager:
         # Return the stored message so callers can render exactly what was
         # stored (live card == ctx == resume).
         return message
+
+    def cache_ordinals(self) -> list[int]:
+        """캐시 레코드들의 history 서수 (``get_raw_messages()`` 와 같은 순서) —
+        resume 재생이 카드에 ``hidx`` 를 싣는 데 쓴다 (v10.6.0)."""
+        return list(self._cache_hidx)
+
+    @property
+    def next_ordinal(self) -> int:
+        """다음 ``add`` 가 받을 history 서수 — 레코드보다 먼저 그려지는 카드
+        (assistant·final·사용자 에코)가 자기 레코드를 가리키는 데 쓴다 (v10.6.0)."""
+        return self._history_ordinal
+
+    @property
+    def last_ordinal(self) -> int | None:
+        """마지막으로 ``add`` 된 레코드의 history 서수 (없으면 None) — 레코드
+        뒤에 그려지는 카드(관찰)용."""
+        return self._history_ordinal - 1 if self._history_ordinal else None
 
     def set_turn(self, turn: int) -> None:
         """Set the current LLM turn index. The loop calls this at each turn
@@ -823,11 +847,13 @@ class ContextManager:
                     duration_ms=duration_ms,
                 )
 
+        self._last_compaction_tokens = (old_tokens, self._cache_tokens)
         render_compaction_progress(
             phase="done",
             old_tokens=old_tokens,
             new_tokens=self._cache_tokens,
         )
+        self._notify_context_view()
 
     def _split_for_compaction(
         self,
@@ -915,6 +941,7 @@ class ContextManager:
         the cache (summary is capped, retained tail is half-by-tokens).
         """
         target = target_tokens if target_tokens is not None else self.max_context_tokens
+        dropped = 0
         while self._cache_tokens > target and len(self._cache) > 1:
             removed = self._cache.pop(0)
             self._nl_cache = None  # front pop → rendered mirror stale
@@ -922,9 +949,12 @@ class ContextManager:
             # P0-8a: 오프셋 = 버린 레코드의 **실제 history 위치** + 1 —
             # ``+= 1`` 은 fold 가 만든 중간 공백을 몰라 과소 전진했다.
             self._dynamic_start_index = self._cache_hidx.pop(0) + 1
+            dropped += 1
         # Persist updated offset so an interrupted run survives.
         if self._summary or self._compaction_count or self._dynamic_start_index:
             self._save_compaction_json()
+        if dropped:
+            self._notify_context_view()
 
     def force_fit(self, target_tokens: int, actual_tokens: int | None = None) -> bool:
         """Aggressively shrink the cache after a context-overflow rejection.
@@ -1002,6 +1032,7 @@ class ContextManager:
                 )
                 self._dynamic_start_index = self._cache_hidx.pop(0) + 1  # P0-8a
                 self._save_compaction_json()
+                self._notify_context_view()
 
         return len(self._cache) < before_len
 
@@ -1057,7 +1088,68 @@ class ContextManager:
                 0,  # P0-8b
             )
         self._nl_cache = None  # 벌크 변형 → 렌더 미러 재빌드
+        self._folded_count += len(idxs)
+        self._notify_context_view()
         return len(idxs)
+
+    # ── 모델 시점 뷰 (v10.6.0, docs/inspector-model-view §3.1) ─────────
+
+    def context_view(self) -> dict:
+        """챗이 "모델 시점" 을 그리는 데 필요한 사실.
+
+        ``gone``: 캐시에 남은 첫 동적 레코드의 history 서수 ``{"hidx": n}`` — 그
+        앞(서수 < n)은 전부 빠졌다(압축·FIFO·복원 트림은 모두 앞에서부터 비우므로
+        경계 하나면 된다; fold 는 중간의 넛지를 빼지만 넛지는 카드가 없다). 빠진 게
+        없으면 None. 카드는 자기 ``hidx``(이벤트에 실림)로 판정한다 — 턴 번호는
+        런마다 1 부터 다시 시작해 경계가 될 수 없다(실측).
+        ``summary``: 압축 요약 본문·파일 목록·대체한 턴 범위(history 의 turn)·전후
+        토큰(resume 땐 None). 압축은 드문 사건이라 파일 읽기는 싸다.
+        """
+        view: dict = {
+            "gone": None,
+            "summary": None,
+            "compactions": self._compaction_count,
+            "folded_nudges": self._folded_count,
+        }
+        first_cached = next(
+            (
+                h
+                for h, m in zip(self._cache_hidx, self._cache)
+                if m.get("role") != "system"
+            ),
+            None,
+        )
+        records = (
+            store.load_records(self._history_path)
+            if first_cached is not None and self._history_path.is_file()
+            else []
+        )
+        first_dyn = 1 if records and records[0].get("role") == "system" else 0
+        evicted = records[first_dyn:first_cached] if first_cached is not None else []
+        turns = None
+        if evicted:
+            view["gone"] = {"hidx": first_cached}
+            turns = [
+                int(evicted[0].get("turn", 0) or 0),
+                int(evicted[-1].get("turn", 0) or 0),
+            ]
+        if self._summary:
+            before, after = self._last_compaction_tokens or (None, None)
+            view["summary"] = {
+                "text": self._summary,
+                "files": list(self._file_list),
+                "turns": turns,
+                "before_tokens": before,
+                "after_tokens": after,
+            }
+        return view
+
+    def _notify_context_view(self) -> None:
+        """캐시가 바뀐 지점(압축·FIFO·fold)마다 — 실패가 루프를 막지 않는다."""
+        try:
+            render_context_view(self.context_view())
+        except Exception:  # 표시면이 저장·루프를 깨면 안 된다
+            pass
 
     def _append_to_history(self, message: dict) -> None:
         """enrich(turn 은 manager 소유) 후 history.jsonl 에 append.

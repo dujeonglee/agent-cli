@@ -558,6 +558,7 @@ class AgentLoop:
                 self.turn,
                 tool_name="interrupt",
                 success=False,
+                hidx=getattr(self.ctx, "last_ordinal", None),
             )
         _debug_log(f"Graceful interrupt at turn {self.turn}")
         return ToolResult(False, error="Interrupted by user")
@@ -726,7 +727,11 @@ class AgentLoop:
             labeled = f"[{author}]: {text}" if author else text
             # Echo the dequeued message as a conversation card BEFORE routing —
             # mirrors the worker's run-starter echo (CLI 기본은 no-op).
-            renderer.push_user_message(labeled, author=author or "")
+            renderer.push_user_message(
+                labeled,
+                author=author or "",
+                hidx=getattr(self.ctx, "next_ordinal", None),
+            )
             if self.route_message is not None and self.route_message(text):
                 # Routed as a command — record the ask; ctx may have changed.
                 self.task_log.append(labeled)
@@ -787,6 +792,7 @@ class AgentLoop:
                 "observation",
                 record["content"],
                 self.turn,
+                hidx=getattr(self.ctx, "last_ordinal", None),
                 # 레코드가 실은 도구명으로 그린다 — 하드코딩하면 모니터
                 # 보고가 **빈 칩을 단 에이전트 회신 카드**로 그려진다
                 # (프런트가 `tool === "agent"` 를 특수 처리한다).
@@ -842,6 +848,7 @@ class AgentLoop:
                 "observation",
                 rec["content"],
                 self.turn,
+                hidx=getattr(self.ctx, "last_ordinal", None),
                 tool_name=rec["tool"],
                 success=bool(rec.get("success", True)),
             )

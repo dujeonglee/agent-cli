@@ -103,7 +103,13 @@ def render_step(
     tool_input: str | None = None,
     success: bool = True,
     requests: list | None = None,
+    hidx: int | None = None,
 ) -> None:
+    # ``hidx`` (v10.6.0): 이 카드가 그리는 history 레코드의 서수 — 챗의 모델 시점
+    # 경계 판정용. 레코드보다 먼저 그리는 카드는 ``ctx.next_ordinal``, 뒤에 그리는
+    # 카드는 ``ctx.last_ordinal`` 을 넘긴다. CLI 는 무시한다.
+    if hidx is not None:
+        _renderer.note_record(hidx)
     if step_type == "thought":
         _flush_thought()  # an earlier held thought keeps its place
         _pending.thought = (content, turn)
@@ -207,6 +213,13 @@ def render_recovery(
 def render_token_usage(stats: dict, turn: int, verbose: bool = False) -> None:
     _flush_thought()
     _renderer.token_usage(stats, turn, verbose)
+
+
+def render_context_view(view: dict) -> None:
+    """컨텍스트 캐시가 바뀐 뒤(압축·FIFO·fold·복원) ContextManager 가 부른다 —
+    챗이 "모델 시점" 을 그리는 사실(docs/inspector-model-view §3.1). CLI 는 no-op,
+    web 은 스코프별 sticky ``ctx_view`` 이벤트."""
+    _renderer.context_view(view)
 
 
 def render_compaction_progress(

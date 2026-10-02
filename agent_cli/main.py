@@ -2206,6 +2206,9 @@ def web(
         session_dir=str(get_session_dir(session)),  # writes status.json here
     )
     set_renderer(renderer)
+    # 모델 시점의 첫 뷰 (v10.6.0): resume 로 복원된 캐시(압축 경계·요약)를 첫
+    # 뷰어가 바로 본다 — 복원은 렌더러보다 먼저 일어나 통지를 못 받았다.
+    renderer.context_view(ctx.context_view())
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
     server = WebServer(
@@ -2377,9 +2380,11 @@ def web(
             if _wake_verdict == "run":
                 # 기계가 만든 깨우기 — 사람 발화가 아니다. 말풍선으로 그리면
                 # 사용자가 저렇게 타이핑한 것처럼 보인다(사용자 제보).
-                renderer.agent_wake(message)
+                renderer.agent_wake(message, hidx=ctx.next_ordinal)
             else:
-                renderer.push_user_message(f"[{nickname}]: {message}", author=nickname)
+                renderer.push_user_message(
+                    f"[{nickname}]: {message}", author=nickname, hidx=ctx.next_ordinal
+                )
             # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령
             # (@agent request 등)이 만든 요청도 이 런의 요청자를 물려받도록
             # 워커가 먼저 세팅 — run_loop 는 주입 때마다 재갱신한다.

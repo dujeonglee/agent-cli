@@ -842,7 +842,88 @@
       cardEl.appendChild(n);
     }
     appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
+    ctxApplyToCard(cardEl, (ev && ev.task_id) || "", channel);
     scheduleScroll();
+  }
+
+  // ── 모델 시점 (v10.6.0, docs/inspector-model-view) ─────────────
+  // 챗이 곧 그 에이전트의 모델 시점이다. 서버의 sticky `ctx_view` 가 스코프별로
+  // "캐시에서 빠진 접두사의 경계 {turn, kind}" 와 압축 요약을 보내면, 경계 앞의
+  // 카드는 흐려지고(ctx-gone — 접지 않는다: 무엇이 빠졌는지 보여야 요약을 믿을
+  // 수 있다) 경계 바로 뒤에 점선 요약 카드가 선다. 뷰의 열쇠는 **컨테이너**다:
+  // 인라인 카드(task group)면 그 카드, 아니면 채널(main / 상주 에이전트 key) —
+  // 상주 에이전트의 런 스코프 id 는 런마다 다르므로 채널로 모은다.
+  const ctxViews = {}; // viewKey → ctx_view payload
+  function ctxViewKey(taskId) {
+    if (taskId && (taskGroups[taskId] || runBlocks[taskId])) return taskId;
+    return channelOf(taskId || "");
+  }
+  // 경계는 history 레코드 서수 하나(`gone.hidx` = 캐시에 남은 첫 레코드) —
+  // 카드는 자기 레코드의 서수(`data-hidx`, 이벤트의 `hidx`)가 그보다 작으면 빠진 것.
+  // 턴 번호는 런마다 1 부터 다시 시작해 경계가 될 수 없다(실측).
+  function ctxCardGone(card, gone) {
+    if (!gone || card.dataset.hidx === undefined) return false;
+    return Number(card.dataset.hidx) < gone.hidx;
+  }
+  function ctxApplyToCard(card, taskId, channel) {
+    if (!card.dataset || card.dataset.hidx === undefined) return;
+    const key = (taskId && (taskGroups[taskId] || runBlocks[taskId])) ? taskId
+      : (channel || channelOf(taskId || ""));
+    const v = ctxViews[key];
+    if (!v) return;
+    card.classList.toggle("ctx-gone", ctxCardGone(card, v.gone));
+  }
+  /** 뷰의 카드들: 인라인 카드 본문의 자식, 또는 루트에서 그 채널에 속한 것. */
+  function ctxCards(key) {
+    if (taskGroups[key]) return { parent: taskGroups[key].body, cards: Array.prototype.slice.call(taskGroups[key].body.children) };
+    if (runBlocks[key]) return { parent: runBlocks[key].body, cards: Array.prototype.slice.call(runBlocks[key].body.children) };
+    return {
+      parent: $messages,
+      cards: Array.prototype.slice.call($messages.children).filter(function (n) {
+        return n.dataset && n.dataset.ch === key;
+      }),
+    };
+  }
+  function ctxSummaryCard(v) {
+    const card = el("div", ["card", "ctx-summary"]);
+    const s = v.summary;
+    let meta = "";
+    if (s.turns && s.turns.length === 2) meta += "턴 " + s.turns[0] + "–" + s.turns[1];
+    if (s.before_tokens != null && s.after_tokens != null) {
+      meta += (meta ? " · " : "") + fmtTok(s.before_tokens) + " → " + fmtTok(s.after_tokens) + " tok";
+    }
+    if (!meta) meta = "압축 " + (v.compactions || 1) + "회";
+    const row = makeRow("⊙", "압축 요약", meta, null, []);
+    card.appendChild(row);
+    let body = s.text || "";
+    if (s.files && s.files.length) body += "\n파일: " + s.files.join(", ");
+    card.appendChild(el("div", ["ctx-body"], body));
+    return card;
+  }
+  function ctxApplyView(key) {
+    const v = ctxViews[key];
+    if (!v) return;
+    const found = ctxCards(key);
+    let lastGone = null;
+    found.cards.forEach(function (c) {
+      if (c.classList.contains("ctx-summary")) return;
+      const gone = ctxCardGone(c, v.gone);
+      c.classList.toggle("ctx-gone", gone);
+      if (gone) lastGone = c;
+    });
+    // 요약 카드: 스코프당 하나, 마지막 흐린 카드 바로 뒤(없으면 맨 앞).
+    const old = found.cards.find(function (c) { return c.classList.contains("ctx-summary"); });
+    if (old) old.remove();
+    if (!v.summary) return;
+    const card = ctxSummaryCard(v);
+    if (!taskGroups[key] && !runBlocks[key]) card.dataset.ch = key;
+    if (lastGone) lastGone.insertAdjacentElement("afterend", card);
+    else {
+      const first = found.cards.find(function (c) { return !c.classList.contains("ctx-summary"); });
+      if (first) first.insertAdjacentElement("beforebegin", card);
+      else found.parent.appendChild(card);
+    }
+    applyChannelFilter(card);
   }
 
   /** 에이전트 메일이 idle 한 main 을 깨워 런이 시작됐다 (v9.7.0).
@@ -858,6 +939,7 @@
 
   function renderAgentWake(d) {
     const card = el("div", ["card", "card-assistant"]);
+    if (d.hidx != null) card.dataset.hidx = String(d.hidx);
     const raw = String((d && d.text) || "");
     card.appendChild(
       makeRow(
@@ -1011,8 +1093,9 @@
    * 분기하면 **스냅샷 재생 순서에 종속**된다(`viewers` 가 늦게 오면 이미 그린
    * 카드들이 영영 안 바뀐다). 클래스 토글이면 나중에 온 뷰어 정보가 과거
    * 카드에도 소급된다. */
-  function renderUserMessage(content, ts, author) {
+  function renderUserMessage(content, ts, author, hidx) {
     const card = el("div", ["card", "card-user"]);
+    if (hidx != null) card.dataset.hidx = String(hidx);
     let body = content;
     if (author) {
       const tag = "[" + author + "]: ";
@@ -1232,6 +1315,7 @@
 
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
+    if (d.hidx != null) card.dataset.hidx = String(d.hidx);
     const ch = channelOf(d.task_id);
     const t = d.thought ? String(d.thought).trim() : "";
     const first = t ? t.split("\n").find((l) => l.trim()) || t : "";
@@ -1486,6 +1570,7 @@
   function renderObservation(d) {
     const card = el("div", ["card", "card-observation"]);
     card.classList.add(d.success ? "ok" : "fail");
+    if (d.hidx != null) card.dataset.hidx = String(d.hidx);
     const content = d.content || "";
     const tool = d.tool_name || "";
     // An `agent` observation is a subagent's prose answer (run 결과의
@@ -2064,7 +2149,7 @@
 
   es.addEventListener("user_message", function (e) {
     const d = JSON.parse(e.data);
-    renderUserMessage(d.content, d.ts, d.author || "");
+    renderUserMessage(d.content, d.ts, d.author || "", d.hidx);
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
     qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
@@ -2094,6 +2179,13 @@
 
   es.addEventListener("compaction", function (e) {
     renderCompaction(JSON.parse(e.data));
+  });
+  // 모델 시점 (v10.6.0): 스코프별 sticky — 재접속 스냅샷에도 실린다.
+  es.addEventListener("ctx_view", function (e) {
+    const d = JSON.parse(e.data || "{}");
+    const key = ctxViewKey(d.task_id || "");
+    ctxViews[key] = d;
+    ctxApplyView(key);
   });
 
   es.addEventListener("agent_mail", function (e) {
