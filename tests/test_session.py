@@ -39,40 +39,11 @@ class TestCreateSession:
         meta = create_session("/tmp/ws")
         assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
 
-    def test_default_dialect_is_json_fc(self):
-        assert create_session().dialect == "json_fc"
-
-    def test_dialect_stored(self):
-        # An explicit non-default choice (xml_fc) is preserved — proves the
-        # field stores what's asked, not just the json_fc default.
-        meta = create_session("/tmp/ws", dialect="xml_fc")
-        assert meta.dialect == "xml_fc"
-
 
 class TestLoadSession:
-    def test_load_existing(self, tmp_path):
-        meta = create_session("/tmp/ws")
-        save_meta(meta)
-        loaded = load_session(meta.session_id)
-        assert loaded is not None
-        assert loaded.session_id == meta.session_id
-
-    def test_load_nonexistent(self, tmp_path):
-        assert load_session("999999999") is None
-
-    def test_dialect_round_trips(self, tmp_path):
-        meta = create_session("/tmp/ws", dialect="xml_fc")
-        save_meta(meta)
-        loaded = load_session(meta.session_id)
-        assert loaded is not None
-        assert loaded.dialect == "xml_fc"
-
-    def test_legacy_session_defaults_to_json_fc(self, tmp_path):
-        """A session.jsonl written before the dialect field existed
-        (no such key in _meta) loads with the current default (json_fc);
-        backward-compat to older defaults (react, then prefix_md) is
-        intentionally not preserved — a legacy session resumes on the
-        current default."""
+    def test_unknown_meta_keys_are_dropped(self, tmp_path):
+        """v10.3.0 전 세션은 메타에 ``dialect`` 를 적었다 — 더 이상 읽지
+        않으며, 모르는 키가 있어도 로드는 된다."""
         sid = "1700000000"
         d = session_mod._SESSIONS_DIR / sid
         d.mkdir(parents=True, exist_ok=True)
@@ -83,15 +54,25 @@ class TestLoadSession:
                         "session_id": sid,
                         "workspace": "/tmp",
                         "updated_at": "2026-01-01 00:00:00",
+                        "dialect": "xml_fc",
                     }
                 }
             )
-            + "\n",
-            encoding="utf-8",
+            + "\n"
         )
         loaded = load_session(sid)
         assert loaded is not None
-        assert loaded.dialect == "json_fc"
+        assert not hasattr(loaded, "dialect")
+
+    def test_load_existing(self, tmp_path):
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        loaded = load_session(meta.session_id)
+        assert loaded is not None
+        assert loaded.session_id == meta.session_id
+
+    def test_load_nonexistent(self, tmp_path):
+        assert load_session("999999999") is None
 
 
 class TestRecentExchanges:

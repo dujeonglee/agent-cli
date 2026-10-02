@@ -30,7 +30,7 @@ def _use_tmp_sessions_dir(tmp_path, monkeypatch):
 
 def _make_session(workspace: str) -> str:
     """Persist a real session for ``workspace`` and return its id."""
-    meta = create_session(workspace, dialect="react")
+    meta = create_session(workspace)
     save_meta(meta)
     return meta.session_id
 
@@ -40,7 +40,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         sid = _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "y")
+        session, is_resume = _maybe_resume_recent(ws, lambda _p: "y")
 
         assert is_resume is True
         assert session.session_id == sid
@@ -49,7 +49,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         sid = _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "  Y\n")
+        session, is_resume = _maybe_resume_recent(ws, lambda _p: "  Y\n")
 
         assert is_resume is True
         assert session.session_id == sid
@@ -61,7 +61,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "n")
+        session, is_resume = _maybe_resume_recent(ws, lambda _p: "n")
 
         assert is_resume is False
         assert session.session_id
@@ -71,7 +71,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "")
+        session, is_resume = _maybe_resume_recent(ws, lambda _p: "")
 
         assert is_resume is False
         assert session.session_id
@@ -82,7 +82,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, "react", None)
+        session, is_resume = _maybe_resume_recent(ws, None)
 
         assert is_resume is False
         assert session.session_id
@@ -94,17 +94,10 @@ class TestMaybeResumeRecent:
         def _fail_prompt(_p):
             raise AssertionError("must not prompt when there is no session")
 
-        session, is_resume = _maybe_resume_recent(ws, "react", _fail_prompt)
+        session, is_resume = _maybe_resume_recent(ws, _fail_prompt)
 
         assert is_resume is False
         assert session.session_id
-
-    def test_new_session_carries_dialect(self, tmp_path):
-        ws = str(tmp_path / "ws")
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "n")
-
-        assert is_resume is False
-        assert session.dialect == "react"
 
     def test_picks_latest_of_several(self, tmp_path):
         """list_sessions sorts ascending by id (timestamp); the resume offer
@@ -121,11 +114,10 @@ class TestMaybeResumeRecent:
                     session_id=sid,
                     workspace=ws,
                     updated_at="2026-01-01 00:00:00",
-                    dialect="react",
                 )
             )
 
-        session, is_resume = _maybe_resume_recent(ws, "react", lambda _p: "y")
+        session, is_resume = _maybe_resume_recent(ws, lambda _p: "y")
 
         assert is_resume is True
         assert session.session_id == "1700000003"

@@ -1,9 +1,9 @@
 """v10.0.0 — ``wire_formats`` → ``dialects`` 개명의 호환층 (docs/dialects/PHASE5.md §6).
 
-네 계약이 옛 이름으로도 계속 동작하는지 고정한다:
-패키지 shim · CLI ``--response-format`` 별칭 · models.json ``wire_format`` 키 ·
-세션 메타 ``response_format`` 키. shim 과 CLI 별칭은 v11 에서 빠지고, 세션 메타의
-옛 키 읽기는 영구다(옛 세션 resume).
+세 계약이 옛 이름으로도 계속 동작하는지 고정한다:
+패키지 shim · CLI ``--response-format`` 별칭 · models.json ``wire_format`` 키.
+shim 과 CLI 별칭은 v11 에서 빠진다. (세션 메타의 방언 키는 v10.3.0 에서
+사라졌다 — 방언은 모델 바인딩이 정한다.)
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import typer
 
 import agent_cli.config as _config
 from agent_cli import dialects
-from agent_cli.context import session as session_mod
 from agent_cli.dialects import dialect_for_model
 
 
@@ -103,53 +102,3 @@ class TestModelsJsonOldKey:
             tmp_path, monkeypatch, {"m": {"dialect": "", "wire_format": "xml_fc"}}
         )
         assert dialect_for_model("m") == "xml_fc"
-
-
-class TestSessionMetaOldKey:
-    def _write(self, sessions_dir, sid: str, meta: dict):
-        d = sessions_dir / sid
-        d.mkdir(parents=True)
-        (d / "session.jsonl").write_text(
-            json.dumps({"_meta": meta}) + "\n", encoding="utf-8"
-        )
-
-    def test_load_session_maps_response_format(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path)
-        self._write(
-            tmp_path,
-            "100",
-            {
-                "session_id": "100",
-                "workspace": "/w",
-                "updated_at": "2026-01-01 00:00:00",
-                "response_format": "xml_fc",
-            },
-        )
-        meta = session_mod.load_session("100")
-        assert meta is not None
-        assert meta.dialect == "xml_fc"
-
-    def test_list_sessions_maps_response_format(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path)
-        self._write(
-            tmp_path,
-            "101",
-            {
-                "session_id": "101",
-                "workspace": "/w",
-                "created_at": "2026-01-01 00:00:00",
-                "response_format": "xml_fc",
-            },
-        )
-        [meta] = session_mod.list_sessions()
-        assert meta.dialect == "xml_fc"
-        assert meta.updated_at == "2026-01-01 00:00:00"
-
-    def test_save_writes_new_key_only(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path)
-        meta = session_mod.create_session(workspace="/w", dialect="xml_fc")
-        session_mod.save_meta(meta)
-        line = (tmp_path / meta.session_id / "session.jsonl").read_text()
-        data = json.loads(line)["_meta"]
-        assert data["dialect"] == "xml_fc"
-        assert "response_format" not in data

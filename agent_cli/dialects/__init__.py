@@ -149,27 +149,43 @@ def try_foreign_parse(bound: DialectBase, llm_text: str):
     return None
 
 
-def resolve_dialect(
-    *,
-    explicit: str | None,
-    session_format: str | None,
-    model: str = "",
-) -> DialectBase:
-    """해석 체인: 명시 플래그 > resume 세션 메타 > 모델 바인딩 > DEFAULT.
+_override: str | None = None
 
-    - ``explicit``: 사용자가 직접 준 ``--dialect`` (미지정 = None).
-      사용자의 말이 항상 최우선 (D1).
-    - ``session_format``: resume 세션 메타의 ``dialect`` — 세션이
-      그 포맷으로 축적한 transcript 와의 정합 우선. 바인딩이 나중에
-      바뀌어도 기존 세션은 기록된 포맷으로 안정 resume (새 바인딩은
-      새 세션부터).
-    - ``model``: 해석된 모델명 — models.json 바인딩 조회용.
 
-    unknown 이름은 어느 소스든 ``KeyError`` (D2: 조용한 폴백은 "바인딩
-    됐다고 믿는" 오진을 만든다 — fail-fast). 전부 None 이면
-    ``DEFAULT_DIALECT`` — 종전과 바이트 동일 경로.
+def set_dialect_override(name: str | None) -> None:
+    """``--dialect`` 를 프로세스 전체에 강제한다 — main 이 부트 때 한 번 호출.
+
+    플래그는 세션(프로세스) 단위의 사용자 결정이라 main 과 모든
+    서브에이전트가 같은 값을 본다. None 이면 강제 없음.
     """
-    name = explicit or session_format or dialect_for_model(model)
+    global _override
+    _override = name
+
+
+class DialectUnbound(KeyError):
+    """모델에 방언이 묶여 있지 않다 — 해석 체인의 두 소스가 모두 비었다."""
+
+    def __init__(self, model: str):
+        from agent_cli.config import _GLOBAL_MODELS_PATH
+
+        super().__init__(
+            f"No dialect for model '{model or '(none)'}'. Set \"dialect\" on its "
+            f"entry in {_GLOBAL_MODELS_PATH} (one of: {', '.join(list_names())}) "
+            f"or pass --dialect."
+        )
+
+
+def resolve_dialect(model: str) -> DialectBase:
+    """해석 체인 (v10.3.0): ``--dialect`` 강제 > models.json 모델 바인딩.
+
+    둘 다 없으면 :class:`DialectUnbound` — 기본값은 없다. 방언은 모델에
+    묶인 설정이고, 묶이지 않은 모델은 사용자가 묶어야 한다. unknown
+    이름은 어느 소스든 ``KeyError`` (D2: 조용한 폴백 금지). main 과
+    서브에이전트가 같은 함수를 부르므로 체인도 하나다.
+    """
+    name = _override or dialect_for_model(model)
+    if name is None:
+        raise DialectUnbound(model)
     return get(name)
 
 
@@ -212,6 +228,7 @@ def all_system_user_prefixes() -> tuple[str, ...]:
 
 __all__ = [
     "DialectBase",
+    "DialectUnbound",
     "Op",
     "ParsedAction",
     "ParsedTurn",
@@ -221,6 +238,7 @@ __all__ = [
     "list_names",
     "register",
     "resolve_dialect",
+    "set_dialect_override",
     "try_foreign_parse",
 ]
 

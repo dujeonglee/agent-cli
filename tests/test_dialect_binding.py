@@ -1,8 +1,10 @@
-"""Wire-format 모델별 바인딩 (Phase 1) — docs/dialects/DESIGN.md §8.
+"""방언 모델별 바인딩 — docs/dialects/DESIGN.md §8, v10.3.0 체인.
 
-해석 체인(명시 > resume 메타 > 모델 바인딩 > DEFAULT), models.json
-``dialect`` 필드 조회, 서브에이전트 effective-model 바인딩,
-AgentLoop ctx-우선 폴백(G2), 부트스트랩 배선(G1)을 고정한다.
+해석 체인(``--dialect`` 강제 > 모델 바인딩 > 에러 — 기본값·세션 메타·
+부모 상속 없음), models.json ``dialect`` 필드 조회, 서브에이전트
+effective-model 바인딩, AgentLoop ctx-우선 폴백(G2), 부트스트랩 배선을
+고정한다. 스위트 전역 픽스처가 json_fc 를 강제하므로 체인 테스트는
+``_override`` 를 None 으로 되돌린다.
 """
 
 import json
@@ -11,7 +13,9 @@ from unittest.mock import MagicMock
 import pytest
 
 import agent_cli.config as _config
+import agent_cli.dialects as _dialects
 from agent_cli.dialects import (
+    DialectUnbound,
     dialect_for_model,
     resolve_dialect,
 )
@@ -37,6 +41,7 @@ def models_file(tmp_path, monkeypatch):
     target.write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
     monkeypatch.setattr(_config, "_cached_registry", None)
+    monkeypatch.setattr(_dialects, "_override", None)
 
 
 @pytest.fixture
@@ -79,43 +84,41 @@ class TestDialectForModel:
 
 
 class TestResolveDialect:
-    def test_explicit_beats_meta_and_binding(self, models_file):
-        wf = resolve_dialect(
-            explicit="xml_fc", session_format="json_fc", model="bound-md"
-        )
-        assert wf.name == "xml_fc"
+    def test_override_beats_binding(self, models_file):
+        _dialects.set_dialect_override("xml_fc")
+        assert resolve_dialect("bound-md").name == "xml_fc"
 
-    def test_meta_beats_binding(self, models_file):
-        wf = resolve_dialect(explicit=None, session_format="xml_fc", model="bound-md")
-        assert wf.name == "xml_fc"
+    def test_binding_used_without_override(self, models_file):
+        assert resolve_dialect("bound-md").name == "json_fc"
+        assert resolve_dialect("bound-xml").name == "xml_fc"
 
-    def test_binding_used_when_no_explicit_no_meta(self, models_file):
-        wf = resolve_dialect(explicit=None, session_format=None, model="bound-md")
-        assert wf.name == "json_fc"
+    def test_unbound_model_raises(self, models_file):
+        # v10.3.0: 기본값 없음 — 묶이지 않은 모델은 사용자가 묶어야 한다
+        with pytest.raises(DialectUnbound) as ei:
+            resolve_dialect("unbound")
+        msg = ei.value.args[0]
+        assert "unbound" in msg and "models.json" in msg and "--dialect" in msg
 
-    def test_all_absent_falls_to_default(self, models_file):
-        wf = resolve_dialect(explicit=None, session_format=None, model="unbound")
-        assert wf is get_wf(None)  # DEFAULT_DIALECT (suite pin 존중)
+    def test_no_model_raises(self, models_file):
+        with pytest.raises(DialectUnbound):
+            resolve_dialect("")
 
-    def test_no_model_falls_to_default(self, models_file):
-        wf = resolve_dialect(explicit=None, session_format=None, model="")
-        assert wf is get_wf(None)
+    def test_override_rescues_unbound_model(self, models_file):
+        _dialects.set_dialect_override("json_fc")
+        assert resolve_dialect("unbound").name == "json_fc"
 
-    def test_unknown_explicit_raises(self, models_file):
+    def test_unknown_override_raises(self, models_file):
+        _dialects.set_dialect_override("nope")
         with pytest.raises(KeyError):
-            resolve_dialect(explicit="nope", session_format=None, model="")
-
-    def test_unknown_meta_raises(self, models_file):
-        with pytest.raises(KeyError):
-            resolve_dialect(explicit=None, session_format="nope", model="")
+            resolve_dialect("bound-md")
 
     def test_unknown_binding_raises(self, models_file):
         # D2: 조용한 폴백 금지 — 바인딩 오타는 fail-fast
         with pytest.raises(KeyError):
-            resolve_dialect(explicit=None, session_format=None, model="bad-bound")
+            resolve_dialect("bad-bound")
 
 
-# ── create_subagent_ctx — effective model 바인딩 (G3) ────────
+# ── create_subagent_ctx — main 과 같은 체인 ─────────────────
 
 
 class TestSubagentBinding:
@@ -136,22 +139,34 @@ class TestSubagentBinding:
         assert error == ""
         assert ctx.dialect.name == "json_fc"
 
-    def test_unbound_model_inherits_parent(self, tmp_path, models_file):
+    def test_unbound_model_rejects_spawn(self, tmp_path, models_file):
+        # v10.3.0: 부모 상속 없음 — 묶이지 않은 모델은 spawn 거부
         from agent_cli.subagent.runner import create_subagent_ctx
 
         parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx(
             "none", parent, tmp_path / "sub", model="unbound"
         )
-        assert error == ""
-        assert ctx.dialect is parent.dialect
+        assert ctx is None
+        assert "No dialect for model 'unbound'" in error
 
-    def test_no_model_inherits_parent(self, tmp_path, models_file):
-        # 기존 동작 회귀 가드 — model 미전달 = 종전 부모 상속
+    def test_no_model_rejects_spawn(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
 
         parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx("none", parent, tmp_path / "sub")
+        assert ctx is None
+        assert "No dialect" in error
+
+    def test_override_forces_subagent_too(self, tmp_path, models_file):
+        # --dialect 는 세션 전체 강제 — 서브 모델의 바인딩도 덮는다
+        from agent_cli.subagent.runner import create_subagent_ctx
+
+        _dialects.set_dialect_override("xml_fc")
+        parent = self._parent(tmp_path, "xml_fc")
+        ctx, error = create_subagent_ctx(
+            "none", parent, tmp_path / "sub", model="bound-md"
+        )
         assert error == ""
         assert ctx.dialect is parent.dialect
 
@@ -240,7 +255,7 @@ class TestLoopCtxFallback:
         assert loop.dialect is get_wf(None)
 
 
-# ── _bootstrap_provider 배선 (G1 — resume 메타 존중) ─────────
+# ── _bootstrap_provider 배선 ─────────────────────────────
 
 
 class TestBootstrapWiring:
@@ -253,52 +268,47 @@ class TestBootstrapWiring:
         )
         return (provider, caps, resolved_model, "http://x", "", "openai")
 
-    def test_resume_meta_respected_without_flag(self, monkeypatch, models_file):
-        # G1: react 세션을 플래그 없이 resume → react 유지
-        import agent_cli.main as main_mod
+    def _exit_code(self, ei):
+        return getattr(ei.value, "exit_code", getattr(ei.value, "code", None))
 
-        monkeypatch.setattr(
-            main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
-        )
-        boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, None, 0, session_format="xml_fc"
-        )
-        assert boot.dialect.name == "xml_fc"
-
-    def test_explicit_flag_beats_resume_meta(self, monkeypatch, models_file):
-        import agent_cli.main as main_mod
-
-        monkeypatch.setattr(
-            main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
-        )
-        boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, "json_fc", 0, session_format="xml_fc"
-        )
-        assert boot.dialect.name == "json_fc"
-
-    def test_model_binding_used_for_new_session(self, monkeypatch, models_file):
+    def test_model_binding_used(self, monkeypatch, models_file):
         import agent_cli.main as main_mod
 
         monkeypatch.setattr(
             main_mod,
             "_setup_provider",
-            lambda *a, **k: self._fake_setup(resolved_model="bound-md"),
+            lambda *a, **k: self._fake_setup(resolved_model="bound-xml"),
         )
-        boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, None, 0, session_format=None
-        )
-        assert boot.dialect.name == "json_fc"
+        boot = main_mod._bootstrap_provider("openai", None, None, None, None, 0)
+        assert boot.dialect.name == "xml_fc"
 
-    def test_no_sources_falls_to_default(self, monkeypatch, models_file):
+    def test_explicit_flag_beats_binding_and_is_process_wide(
+        self, monkeypatch, models_file
+    ):
+        import agent_cli.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_setup_provider",
+            lambda *a, **k: self._fake_setup(resolved_model="bound-xml"),
+        )
+        boot = main_mod._bootstrap_provider("openai", None, None, None, "json_fc", 0)
+        assert boot.dialect.name == "json_fc"
+        # 부트가 강제를 프로세스에 심었다 — 서브에이전트도 같은 값을 본다
+        assert resolve_dialect("bound-xml").name == "json_fc"
+
+    def test_unbound_model_exits_2(self, monkeypatch, models_file):
+        import click
+        import typer
+
         import agent_cli.main as main_mod
 
         monkeypatch.setattr(
             main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
         )
-        boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, None, 0, session_format=None
-        )
-        assert boot.dialect is get_wf(None)
+        with pytest.raises((typer.Exit, click.exceptions.Exit, SystemExit)) as ei:
+            main_mod._bootstrap_provider("openai", None, None, None, None, 0)
+        assert self._exit_code(ei) == 2
 
     def test_cli_flag_default_is_none(self):
         # D3: --dialect default None — 명시성 감지의 전제
@@ -310,73 +320,3 @@ class TestBootstrapWiring:
             param = inspect.signature(cmd).parameters["dialect"]
             # typer.Option 객체의 default 속성이 None 이어야 한다
             assert param.default.default is None, cmd.__name__
-
-
-class TestResumeDialectHelper:
-    """★감사 #3 (v7.11.4): 대화형-resume 재해석이 typer 본문 인라인이라
-    무검증이었음 — 헬퍼 추출 후 고정. G1(silent format switch 금지):
-    기록 포맷이 미등록 이름이면 조용한 default 폴백이 아니라 Exit(2)."""
-
-    def _session(self, fmt):
-        from agent_cli.context.session import create_session
-
-        s = create_session()
-        s.dialect = fmt
-        return s
-
-    def _current(self):
-        from agent_cli.dialects import get as get_wf
-
-        return get_wf("xml_fc")
-
-    def test_explicit_flag_wins_no_reinterpret(self):
-        from agent_cli.main import resume_dialect
-
-        cur = self._current()
-        out = resume_dialect(self._session("json_fc"), cur, "xml_fc")
-        assert out is cur  # 명시 플래그 = 체인 1순위
-
-    def test_recorded_format_reinterpreted(self):
-        from agent_cli.main import resume_dialect
-
-        out = resume_dialect(self._session("json_fc"), self._current(), None)
-        assert out.name == "json_fc"
-
-    def test_same_format_passthrough(self):
-        from agent_cli.main import resume_dialect
-
-        cur = self._current()
-        assert resume_dialect(self._session("xml_fc"), cur, None) is cur
-
-    def test_unknown_recorded_format_exits_2(self):
-        import click
-        import pytest
-        import typer
-
-        from agent_cli.main import resume_dialect
-
-        with pytest.raises((typer.Exit, click.exceptions.Exit, SystemExit)) as ei:
-            resume_dialect(
-                self._session("md_array"), self._current(), None
-            )  # v6.0.0 에서 rename 된 이름 — 조용한 폴백 금지
-        code = getattr(ei.value, "exit_code", getattr(ei.value, "code", None))
-        assert code == 2
-
-    def test_writeback_persists_to_meta(self, tmp_path, monkeypatch):
-        """run/web 의 write-back(session.dialect=해석값; save_meta)
-        이 실제 meta 파일에 남는지 — 연속 resume 포맷 drift 방지."""
-        import json
-
-        import agent_cli.context.session as sess_mod
-        from agent_cli.context.session import create_session, save_meta
-
-        monkeypatch.setattr(sess_mod, "_SESSIONS_DIR", tmp_path / "sessions")
-        s = create_session()
-        s.dialect = "xml_fc"
-        save_meta(s)
-        line = (
-            (tmp_path / "sessions" / s.session_id / "session.jsonl")
-            .read_text()
-            .splitlines()[0]
-        )
-        assert json.loads(line)["_meta"]["dialect"] == "xml_fc"

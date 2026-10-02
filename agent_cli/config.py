@@ -41,6 +41,9 @@ _SEARCH_PATHS = [
 ]
 
 _cached_registry: dict[str, Any] | None = None
+# 캐시가 읽은 시점의 파일 수정 시각 — 바뀌면 다음 조회가 다시 읽는다
+# (v10.3.0: 보드 어드민이 바인딩을 고치면 재시작 없이 다음 spawn 부터 반영).
+_cached_stamp: tuple | None = None
 
 # 프로바이더별 기본 **주소**만. 모델 이름은 여기 두지 않는다 (v9.5.0):
 # `gpt-4o` / `claude-sonnet-4-…` 같은 추측은 로컬 서버(omlx·vLLM·LM Studio)에서
@@ -54,9 +57,14 @@ _PROVIDER_FALLBACK_URLS = {
 }
 
 
+def _registry_stamp() -> tuple:
+    return tuple(p.stat().st_mtime_ns if p.is_file() else None for p in _SEARCH_PATHS)
+
+
 def _load_registry() -> dict[str, Any]:
-    global _cached_registry
-    if _cached_registry is not None:
+    global _cached_registry, _cached_stamp
+    stamp = _registry_stamp()
+    if _cached_registry is not None and stamp == _cached_stamp:
         return _cached_registry
 
     # Merge: load global first, then overlay project-local on top
@@ -75,6 +83,7 @@ def _load_registry() -> dict[str, Any]:
                 print(f"[warn] Failed to load {p}: {e}", file=sys.stderr)
 
     _cached_registry = merged
+    _cached_stamp = stamp
     return _cached_registry
 
 
