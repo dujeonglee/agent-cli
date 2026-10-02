@@ -46,13 +46,18 @@ from __future__ import annotations
 #: ``_OBS_COMPLETE_NUDGE`` 의 실측은 그대로다.
 COMPACTION_NOTICE_STEPS: tuple[float, ...] = (0.8,)
 
-#: 안내 문구 — 정보만, 명령은 하나(memory 는 선택지). "nearly full"·"lose"·"NOW"
+#: 안내 문구 — 정보만, 명령은 없고 memory 는 선택지. "nearly full"·"lose"·"NOW"
 #: 같은 결핍 어휘를 쓰지 않는다. 사용자가 정한 문구 그대로(2026-10-01).
+#: v10.9.1: 더는 맞지 않는 메모리(해결된 블로커·뒤집힌 결정)를 지우라는 안내를
+#: 같이 — 메모리 색인은 매 턴 꼬리에 실리고 압축을 그대로 통과하므로, 어느 항목이
+#: 낡았는지 아직 판단할 수 있는(압축 전) 지금이 정리할 때다.
 COMPACTION_NOTICE = (
     "ℹ Context compaction is coming up: older turns will be replaced by a "
     "structured summary (task, state, decisions, failures, key facts) and work "
     "continues as usual. If a detail is worth more than its summary — an exact "
-    "identifier, a failed approach — memory(mode=add) keeps it verbatim. Pace "
+    "identifier, a failed approach — memory(mode=add) keeps it verbatim, and a "
+    "memory that no longer applies — a resolved blocker, a superseded decision "
+    "— goes with memory(mode=delete, id=N) so the index stays current. Pace "
     "and scope stay the same."
 )
 
