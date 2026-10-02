@@ -570,7 +570,7 @@ class WebRenderer(Renderer):
         with self._lock:
             self._thread_prompt_scopes.setdefault(tid, []).append(scope_id)
             if label:
-                self._prompt_scope_labels[scope_id] = {"agent": label}
+                self._prompt_scope_labels[scope_id] = {"agent": label, "kind": "agent"}
 
     def end_prompt_scope(self, scope_id: str) -> None:
         """스코프 pop + 동적 컨텍스트 고정(live→final)."""
@@ -691,6 +691,8 @@ class WebRenderer(Renderer):
             self._prompt_scope_labels[task_id] = {
                 "agent": agent or label,
                 "index": index,
+                "kind": kind,
+                "parent": eff_parent or "",
             }
         # Tag this thread so a confirm/ask it triggers can name it.
         self.set_thread_agent(agent or label or f"scope #{index + 1}")
@@ -1937,8 +1939,12 @@ class WebRenderer(Renderer):
         *,
         grammar: tuple[bool, str] | None = None,
         tools: list[dict] | None = None,
+        tail: list[tuple[str, str]] | None = None,
     ) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.
+
+        ``tail`` (v10.7.0): 이 호출의 매턴 꼬리 섹션. 같은 스코프의 직전 스냅샷
+        꼬리를 ``tail_prev``/``prev_turn`` 으로 넘겨 드로어가 diff 를 그린다.
 
         The scope is resolved from the CALLING thread: a delegate worker's
         snapshot lands under its ``task_id`` (the same ``_thread_to_task``
@@ -1992,9 +1998,49 @@ class WebRenderer(Renderer):
                 }
                 for t in (tools or [])
             ],
+            "tail": [
+                {
+                    "name": name,
+                    "text": text,
+                    "chars": len(text),
+                    "est_tokens": estimate_tokens(text),
+                    "kind": "tail",
+                }
+                for name, text in (tail or [])
+            ],
         }
         with self._lock:
+            prev = self._prompt_snapshots.get(scope)
+            snapshot["tail_prev"] = list(prev.get("tail") or []) if prev else []
+            snapshot["prev_turn"] = prev.get("turn") if prev else None
             self._prompt_snapshots[scope] = snapshot
+
+    def prompt_scope_info(self, scope: str = _MAIN_SCOPE) -> dict[str, Any]:
+        """드로어 머리의 스코프 사실 (v10.7.0): ``{kind, label, parent, ended,
+        convo_tokens, compactions}``. kind = main | agent(상주) | run | skill.
+        ``convo_tokens`` 는 그 스코프 컨텍스트의 대화 추정 토큰 — 살아 있으면 ctx,
+        끝났으면 종료 시 고정 섹션의 합(main 은 서버가 ctx 로 채운다)."""
+        if scope == _MAIN_SCOPE:
+            return {"kind": "main", "label": "main", "parent": "", "ended": False}
+        with self._lock:
+            meta = dict(self._prompt_scope_labels.get(scope, {}))
+            ctx = self._scope_ctxs.get(scope)
+            final = self._scope_dynamic_final.get(scope)
+        kind = meta.get("kind") or ("agent" if scope.startswith("agt-") else "run")
+        info: dict[str, Any] = {
+            "kind": kind,
+            "label": meta.get("agent") or scope,
+            "parent": meta.get("parent") or "",
+            "ended": ctx is None and final is not None,
+        }
+        if ctx is not None:
+            info["convo_tokens"] = ctx.get_estimated_tokens()
+            info["compactions"] = ctx.compaction_count
+        elif final is not None:
+            info["convo_tokens"] = sum(
+                s.get("est_tokens", 0) for s in final if s.get("kind") != "tail"
+            )
+        return info
 
     def prompt_snapshot(self, scope: str = _MAIN_SCOPE) -> dict[str, Any] | None:
         """Latest system-prompt snapshot for ``scope`` (``_MAIN_SCOPE`` = main

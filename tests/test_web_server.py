@@ -386,7 +386,8 @@ class TestPromptInspectorDynamic:
 
     def test_endpoint_shows_function_schemas_as_tools_sections(self):
         """native_fc (v10.2.1): 프롬프트 대신 요청 ``tools[]`` 로 간 함수 스키마가
-        kind=tools 섹션으로 시스템 뒤·대화 앞에 보이고 토큰 합계에 든다."""
+        kind=tools 섹션으로 시스템 뒤에 보이고 토큰 합계에 든다. 대화 섹션은
+        없다 (v10.7.0 — 대화는 챗이 곧 모델 시점)."""
         renderer = WebRenderer()
         schema = {
             "type": "function",
@@ -406,74 +407,129 @@ class TestPromptInspectorDynamic:
         server = WebServer(renderer, token="t", ctx=ctx)
         data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
         kinds = [s["kind"] for s in data["sections"]]
-        assert kinds == ["system", "tools", "dynamic"]
+        assert kinds == ["system", "tools"]
         tool_sec = data["sections"][1]
         assert tool_sec["name"] == "function: read_file"
         assert '"description": "Read a file."' in tool_sec["text"]
         assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
-        # 텍스트 방언(tools 없음)은 종전 그대로.
+        assert data["budget"]["tools"] == tool_sec["est_tokens"]
+        # 텍스트 방언(tools 없음)은 시스템만.
         renderer.note_system_prompt([("Role", "you are an agent")], turn=2)
         data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
-        assert [s["kind"] for s in data["sections"]] == ["system", "dynamic"]
+        assert [s["kind"] for s in data["sections"]] == ["system"]
 
-    def test_endpoint_includes_system_and_dynamic(self):
-        renderer = WebRenderer()
-        renderer.note_system_prompt([("System Prompt", "you are an agent")], turn=2)
-        ctx = _FakeInspectorCtx(
-            [
-                {"role": "user", "content": "[DJ]: hello"},
-                {"role": "assistant", "content": "## Thought\nhi"},
-            ]
-        )
-        server = WebServer(renderer, token="t", ctx=ctx)
-        client = TestClient(create_app(server))
-        r = client.get("/api/debug/prompt?token=t")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["ok"]
-        kinds = [s.get("kind") for s in data["sections"]]
-        assert "system" in kinds and "dynamic" in kinds
-        # system section first, dynamic after
-        assert kinds[0] == "system"
-        assert kinds.count("dynamic") == 2
-
-    def test_compaction_summary_is_not_counted_twice(self, tmp_path):
-        """Regression: ``build_inspector_sections`` used to synthesise the
-        compaction summary + touched-file list as pseudo SYSTEM sections while
-        ``_dynamic_context_sections`` already emitted them as the real
-        ``role=user`` messages they are — so the endpoint returned each twice
-        and double-counted its tokens. The synthesis is gone; the summary must
-        appear exactly once, on the dynamic side."""
+    def test_endpoint_has_no_conversation_and_reports_budget(self, tmp_path):
+        """v10.7.0: 드로어는 대화 밖만 — 대화 섹션(kind=dynamic)이 없고, 대신
+        ``budget`` 에 시스템·함수·꼬리·대화(ctx 추정)·창 크기·압축 횟수가 온다."""
         from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         renderer = WebRenderer()
-        renderer.note_system_prompt([("System Prompt", "you are an agent")], turn=1)
+        renderer.note_system_prompt(
+            [("System Prompt", "you are an agent")],
+            turn=2,
+            tail=[("Session State (per-turn tail)", "## Session State\nturn 2")],
+        )
         ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
-        ctx._summary = "earlier: user asked X, we did Y"
-        ctx._file_list = ["a.py"]
-        ctx.add({"role": "user", "content": "hello"})
-
-        server = WebServer(renderer, token="t", ctx=ctx)
+        ctx.add({"role": "user", "content": "hello " * 50})
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        server = WebServer(renderer, token="t", ctx=ctx, runtime={"capabilities": caps})
         data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
         assert data["ok"]
-        blob = "\n".join(s["text"] for s in data["sections"])
-        assert blob.count("earlier: user asked X, we did Y") == 1
-        assert blob.count("- a.py") == 1
-        # and the token total reflects one copy, not two
-        assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
+        kinds = [s["kind"] for s in data["sections"]]
+        assert "dynamic" not in kinds
+        assert kinds == ["system", "tail"]
+        b = data["budget"]
+        assert b["system"] == data["sections"][0]["est_tokens"]
+        assert b["tail"] == data["sections"][1]["est_tokens"]
+        assert b["convo"] == ctx.get_estimated_tokens() and b["convo"] > 0
+        assert b["window"] == 32768 and b["compactions"] == 0
+        assert b["total"] == b["system"] + b["tools"] + b["tail"] + b["convo"]
+        assert data["scope"] == {
+            "kind": "main",
+            "label": "main",
+            "parent": "",
+            "ended": False,
+        }
+        # 프롬프트 토큰 합계(est_tokens)는 대화를 포함하지 않는다
+        assert data["est_tokens"] == b["system"] + b["tail"]
 
-    def test_dynamic_shows_before_any_llm_call_on_resume(self):
-        """Part 1: a resumed session has ctx messages but no system snapshot
-        yet (the loop captures only on an LLM call). The inspector must still
-        show the restored conversation immediately, not 'no LLM call yet'."""
-        renderer = WebRenderer()  # NO note_system_prompt → no snapshot
+    def test_tail_prev_rotates_per_scope_for_the_diff(self):
+        """꼬리 diff 의 재료: 같은 스코프의 직전 스냅샷 꼬리가 ``tail_prev`` 와
+        ``prev_turn`` 으로 온다. 첫 스냅샷에는 없다."""
+        renderer = WebRenderer()
+        renderer.note_system_prompt(
+            [("S", "x")],
+            turn=1,
+            tail=[("Session State (per-turn tail)", "turn 1\n- a")],
+        )
+        server = WebServer(renderer, token="t", ctx=_FakeInspectorCtx([]))
+        client = TestClient(create_app(server))
+        d1 = client.get("/api/debug/prompt?token=t").json()
+        assert d1["tail_prev"] == [] and d1["prev_turn"] is None
+        renderer.note_system_prompt(
+            [("S", "x")],
+            turn=2,
+            tail=[("Session State (per-turn tail)", "turn 2\n- a\n- b")],
+        )
+        d2 = client.get("/api/debug/prompt?token=t").json()
+        assert d2["prev_turn"] == 1
+        assert [s["text"] for s in d2["tail_prev"]] == ["turn 1\n- a"]
+        assert [s["text"] for s in d2["sections"] if s["kind"] == "tail"] == [
+            "turn 2\n- a\n- b"
+        ]
+
+    def test_inline_scope_reports_kind_parent_and_ended(self):
+        """인라인 스코프의 드로어 머리(출처 줄)용 사실: kind·parent·종료 여부.
+        종료 뒤에도 스냅샷은 남고 ``ended`` 가 참이 된다."""
+        renderer = WebRenderer()
+        sid = "run-1"
+        renderer.begin_scope(task_id=sid, kind="run", label="review", agent="reviewer")
+        try:
+            renderer.note_system_prompt([("Role", "reviewer")], turn=1)
+            server = WebServer(renderer, token="t", ctx=_FakeInspectorCtx([]))
+            client = TestClient(create_app(server))
+            live = client.get(f"/api/debug/prompt?token=t&task_id={sid}").json()
+        finally:
+            renderer.end_scope(task_id=sid)
+        assert live["ok"]
+        assert live["scope"]["kind"] == "run" and live["scope"]["label"] == "reviewer"
+        assert live["scope"]["parent"] == "" and live["scope"]["ended"] is False
+        # 종료 — 라이브 ctx 가 없었으므로 final 도 없다 → ended 는 "끝났다" 를 모른다;
+        # ctx 를 등록한 스코프만 종료를 안다 (아래 테스트).
+        done = client.get(f"/api/debug/prompt?token=t&task_id={sid}").json()
+        assert done["ok"] and done["scope"]["kind"] == "run"
+
+    def test_scope_with_ctx_knows_it_ended(self):
+        renderer = WebRenderer()
+        sid = "run-2"
+        renderer.begin_scope(task_id=sid, kind="run", label="t", agent="worker")
+        try:
+            renderer.note_scope_ctx(
+                _FakeInspectorCtx([{"role": "user", "content": "task"}])
+            )
+            renderer.note_system_prompt([("Role", "worker")], turn=1)
+        finally:
+            renderer.end_scope(task_id=sid)
+        server = WebServer(renderer, token="t", ctx=_FakeInspectorCtx([]))
+        data = (
+            TestClient(create_app(server))
+            .get(f"/api/debug/prompt?token=t&task_id={sid}")
+            .json()
+        )
+        assert data["scope"]["ended"] is True
+        assert data["budget"]["convo"] > 0  # 종료 시 고정된 대화의 토큰
+
+    def test_no_snapshot_is_not_ok_even_with_messages(self):
+        """v10.7.0: 스냅샷(LLM 호출 또는 시작 캡처)이 없으면 ok=False — 대화는
+        챗이 보여 주므로 드로어가 대신 그릴 것이 없다."""
+        renderer = WebRenderer()
         ctx = _FakeInspectorCtx([{"role": "user", "content": "[DJ]: resumed question"}])
         server = WebServer(renderer, token="t", ctx=ctx)
-        client = TestClient(create_app(server))
-        data = client.get("/api/debug/prompt?token=t").json()
-        assert data["ok"]  # not blocked by the missing system snapshot
-        assert all(s["kind"] == "dynamic" for s in data["sections"])
-        assert any("resumed question" in s["name"] for s in data["sections"])
+        data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
+        assert data["ok"] is False
 
     def test_empty_session_no_snapshot_no_messages_is_not_ok(self):
         renderer = WebRenderer()
@@ -877,6 +933,7 @@ class TestStaticUI:
             # 정규식 산물(문자열 연결로 만들어지는 조각)
             "c",
             "kind",
+            "cls",  # 인스펙터 sectionHtml(s, cls, …) 의 `class="insp-sec " + cls`
         }
 
         used = set()

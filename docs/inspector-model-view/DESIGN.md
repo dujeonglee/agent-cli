@@ -1,6 +1,6 @@
 # 컨텍스트 인스펙터 — 챗이 곧 모델 시점 (DESIGN)
 
-> 상태: **P1 구현 (v10.6.0) — P2·P3 대기** (2026-10-02). 시안: https://claude.ai/artifact/MZHYxZyskHEjnULGnYwuFG (v4).
+> 상태: **P1 (v10.6.0)·P2 (v10.7.0) 구현 — P3 대기** (2026-10-02). 시안: https://claude.ai/artifact/MZHYxZyskHEjnULGnYwuFG (v4).
 > 결정(사용자): ① 챗 창은 **항상** 그 에이전트의 모델 시점 ② 컨텍스트에서 빠진 카드는 **흐린 채로 둔다**(숨기지 않음)
 > ③ 인라인 카드의 상속분은 **기본 접힘** ④ 드로어의 대화 요약 줄·섹션 필터 삭제 ⑤ 드로어 제목은 스코프 이름만.
 > 선행: [docs/inspector-redesign-plan.md](../inspector-redesign-plan.md) (v8.11.0 — 스코프별 드로어·카드 🔍), [docs/chat-ui/DESIGN.md](../chat-ui/DESIGN.md) (채널·중첩 카드).

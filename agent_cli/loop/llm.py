@@ -87,6 +87,14 @@ class LLMCaller:
     _MAX_TOKENS_MARGIN = 512
     _MIN_REQUEST_OUTPUT_TOKENS = 1024
 
+    def _tail_sections(self) -> list[tuple[str, str]]:
+        """이 호출의 마지막 메시지에 붙은 매턴 꼬리 (v10.7.0 드로어 diff 용)."""
+        from agent_cli.prompts.session_state import split_tail
+
+        msgs = self.state.messages
+        last = msgs[-1].get("content") if msgs else None
+        return split_tail(last)[1] if isinstance(last, str) else []
+
     def _function_schemas(self) -> list[dict] | None:
         """native_fc (v10.2.0): 요청에 실을 OpenAI 함수 스키마 — 프롬프트의
         `## Available Tools` 와 **같은 소스**(effective_tool_names · 스키마 ·
@@ -328,6 +336,7 @@ class LLMCaller:
             self.state.turn,
             grammar=decoding,
             tools=self._function_schemas(),
+            tail=self._tail_sections(),
         )
         self._grammar_used = bool(grammar)
 

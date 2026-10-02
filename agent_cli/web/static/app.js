@@ -2117,6 +2117,8 @@
     // Top-bar readout: context occupancy %, this turn's in/out, and the
     // cumulative session output. Server sends raw counts; we format here.
     const d = JSON.parse(e.data);
+    // 🔍 인스펙터(별도 IIFE)가 열려 있으면 턴마다 다시 가져온다.
+    window.dispatchEvent(new CustomEvent("agentcli:turn-usage", { detail: d }));
     const parts = [];
     const inTok = d.in || 0;
     const win = d.context_window || 0;
@@ -2966,6 +2968,15 @@
   })();
   // 🔍 인스펙터가 열 스코프 = 현재 대화 채널. main → main 스코프, agent → 그
   // agent 의 프롬프트 스냅샷(task_id=agent key). 인스펙터 IIFE 가 읽는다.
+  // 🔍 드로어의 "↑ 카드로" — 인라인 카드로 점프 (조상 펼치기 + 스크롤).
+  window.__jumpToScope = function (taskId) {
+    const g = taskGroups[taskId];
+    if (!g) return;
+    expandAncestors(taskId);
+    g.body.hidden = false;
+    g.chevron.textContent = "▼";
+    scrollTimelineTo(g.card);
+  };
   window.__inspectorScope = function () {
     if (ovActiveChannel === "main") return { scope: "", name: "Main", kind: "main" };
     return { scope: ovActiveChannel, name: ovAgentLabel(ovActiveChannel), kind: "agent" };
@@ -3532,33 +3543,32 @@
   });
 })();
 
-// ── Prompt Inspection (contextual) ─────────────────────────
-// Opened from a conversation agent/skill card (🔍) or the main-prompt footer
-// button, SCOPED to what was clicked (no scope chips). Fetches
-// /api/debug/prompt?task_id= on open; renders system + dynamic sections with
-// semantic colors, group headers, per-section share bar + copy.
+// ── 컨텍스트 인스펙터 (v10.7.0, docs/inspector-model-view §2.2) ─────────
+// 대화 밖에서 모델이 받는 것만 담는 **도킹** 드로어: 시스템 프롬프트·함수
+// 스키마·매턴 꼬리(직전 턴 diff)·디코딩 문법·예산. 대화 목록은 없다 — 왼쪽
+// 챗이 곧 모델 시점이다. 스코프 = 현재 채널(main / 상주 에이전트) 또는 인라인
+// 카드의 🔍 가 고정한 스코프. 열려 있는 동안 턴마다(token_usage) 다시 가져온다.
 (function () {
   "use strict";
 
   const $drawer = document.getElementById("inspector");
-  const $backdrop = document.getElementById("inspector-backdrop");
   const $tag = document.getElementById("insp-scope-tag");
   const $name = document.getElementById("insp-scope-name");
+  const $origin = document.getElementById("insp-origin");
   const $meta = document.getElementById("insp-meta");
-  const $search = document.getElementById("insp-search");
+  const $live = document.getElementById("insp-live");
+  const $budget = document.getElementById("insp-budget");
   const $sections = document.getElementById("insp-sections");
   const $collapse = document.getElementById("insp-collapse");
   const $copyall = document.getElementById("insp-copyall");
   const $mainBtn = document.getElementById("insp-main-btn");
   if (!$drawer) return;
 
-  let activeScope = ""; // "" = main loop; a task_id = an agent/skill scope
+  let activeScope = ""; // "" = main; a task_id = 인라인 카드 / 상주 에이전트 스코프
+  let activeKind = "main";
+  let activeName = "main";
   let lastData = null;
 
-  // 메인 IIFE 의 escapeHtml 과 **같은 커버리지**를 유지한다 — 종전엔 `'` 가
-  // 빠져 있었다. 현재 사용처는 전부 텍스트 아니면 큰따옴표 속성이라 안전하지만,
-  // 작은따옴표 속성에 한 번 쓰이는 순간 주입 경로가 된다(두 이스케이퍼의
-  // 커버리지가 다르다는 것 자체가 함정이다).
   function esc(s) {
     return String(s)
       .replace(/&/g, "&amp;")
@@ -3568,9 +3578,9 @@
       .replace(/'/g, "&#39;");
   }
   function fmtTok(n) {
+    n = Number(n) || 0;
     return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
   }
-
   function copyText(text, btn) {
     const flash = function () {
       if (!btn) return;
@@ -3590,85 +3600,209 @@
     }
   }
 
-  // 섹션 종류 → 그룹 제목. 순서는 서버가 준 대로(system → dynamic/tail →
-  // grammar); 모르는 kind 는 system 으로 본다.
-  const INSP_KINDS = {
-    system: "System prompt",
-    tools: "Function schemas — sent as request tools[] (native_fc); the server's chat template renders them into the prompt",
-    dynamic: "Conversation · observations",
-    tail: "Per-turn tail — appended to the LAST message every turn (not system prompt)",
-    grammar: "Decoding grammar — enforced by the server at generation (not prompt tokens)",
-  };
+  // 줄 단위 LCS diff — 꼬리는 수십 줄이라 O(n·m) 으로 충분하다.
+  function lineDiff(prev, cur) {
+    const a = prev.split("\n"), b = cur.split("\n");
+    const n = a.length, m = b.length;
+    const dp = [];
+    for (let i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0, ins = 0, del = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push(["=", b[j]]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(["-", a[i]]); i++; del++; }
+      else { out.push(["+", b[j]]); j++; ins++; }
+    }
+    while (i < n) { out.push(["-", a[i++]]); del++; }
+    while (j < m) { out.push(["+", b[j++]]); ins++; }
+    return { lines: out, ins: ins, del: del };
+  }
+
+  function sectionHtml(s, cls, open, extraTag) {
+    return (
+      '<details class="insp-sec ' + cls + '"' + (open ? " open" : "") + ">" +
+      "<summary>" +
+      '<span class="insp-name">' + esc(s.name) + (extraTag || "") + "</span>" +
+      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      "</summary>" +
+      '<pre class="insp-body">' + esc(s.text) + "</pre>" +
+      "</details>"
+    );
+  }
+
+  function tailHtml(s, prevByName, prevTurn) {
+    const prev = prevByName[s.name];
+    let tags = "";
+    let body = '<pre class="insp-body">' + esc(s.text) + "</pre>";
+    let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
+    if (prev !== undefined) {
+      const d = lineDiff(prev, s.text);
+      open = !!(d.ins || d.del); // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다
+      if (d.ins || d.del) {
+        if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
+        if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
+        if (prevTurn != null) tags += '<span class="insp-tag">vs 턴 ' + esc(prevTurn) + "</span>";
+        body =
+          '<pre class="insp-diff">' +
+          d.lines
+            .map(function (l) {
+              if (l[0] === "+") return '<span class="ins">+ ' + esc(l[1]) + "</span>";
+              if (l[0] === "-") return '<span class="del">- ' + esc(l[1]) + "</span>";
+              return esc(l[1]);
+            })
+            .join("\n") +
+          "</pre>";
+      } else {
+        tags += '<span class="insp-tag">변화 없음</span>';
+      }
+    }
+    return (
+      '<details class="insp-sec insp-tail"' + (open ? " open" : "") + ">" +
+      "<summary>" +
+      '<span class="insp-name">' + esc(s.name) + tags + "</span>" +
+      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      "</summary>" +
+      body +
+      "</details>"
+    );
+  }
+
+  function groupHtml(title, tag, tok, inner, open) {
+    return (
+      '<details class="insp-sec insp-grp"' + (open ? " open" : "") + ">" +
+      "<summary>" +
+      '<span class="insp-name">' + title + (tag ? '<span class="insp-tag">' + tag + "</span>" : "") + "</span>" +
+      '<span class="insp-tok">' + (tok == null ? "—" : fmtTok(tok)) + "</span>" +
+      "</summary>" +
+      '<div class="insp-nest">' + inner + "</div>" +
+      "</details>"
+    );
+  }
+
+  function renderBudget(b, ended) {
+    if (!b) { $budget.hidden = true; return; }
+    const total = Math.max(1, b.total || 0);
+    const seg = function (v, css) {
+      return '<i style="width:' + ((100 * (v || 0)) / total).toFixed(1) + "%;background:var(" + css + ')"></i>';
+    };
+    const head = b.window
+      ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
+      : fmtTok(b.total);
+    $budget.innerHTML =
+      '<div class="bl"><span>컨텍스트 예산' + (ended ? " (종료 시)" : "") + '</span><span class="bn">' + head + "</span></div>" +
+      '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
+      '<div class="bleg">' +
+      '<span><b style="background:var(--insp-system)"></b>시스템 <span class="n">' + fmtTok(b.system) + "</span></span>" +
+      (b.tools ? '<span><b style="background:var(--insp-tools)"></b>함수 스키마 <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
+      '<span><b style="background:var(--insp-convo)"></b>대화 <span class="n">' + fmtTok(b.convo) + "</span></span>" +
+      '<span><b style="background:var(--insp-tail)"></b>꼬리 <span class="n">' + fmtTok(b.tail) + "</span></span>" +
+      (b.compactions ? '<span class="insp-tag">⊙ 압축 ' + b.compactions + "회</span>" : "") +
+      "</div>";
+    $budget.hidden = false;
+  }
 
   function render(data) {
     lastData = data;
     if (!data || !data.ok) {
       $meta.textContent = "";
+      $live.textContent = "";
+      $budget.hidden = true;
       $sections.innerHTML =
         '<div class="insp-empty">아직 LLM 호출이 없습니다 — 먼저 메시지를 보내세요.</div>';
       return;
     }
+    const scope = data.scope || {};
+    const ended = !!scope.ended;
+    const inline = activeKind === "run" || activeKind === "skill";
+    // 머리: 스코프 이름만. 인라인·종료 스코프는 출처 줄.
+    if (inline) {
+      const parent = scope.parent ? "상위 스코프" : "main";
+      $origin.innerHTML =
+        "<span>" + esc(parent) + " 안에서 돈 " + (activeKind === "skill" ? "스킬" : "인라인 에이전트") +
+        " · " + (ended ? "종료" : "진행 중") + "</span>" +
+        '<a id="insp-jump">↑ 카드로</a><a id="insp-back">main 으로 돌아가기</a>';
+      $origin.hidden = false;
+    } else {
+      $origin.hidden = true;
+    }
+    const b = data.budget || null;
     $meta.textContent =
-      "turn " + data.turn + " · " + fmtTok(data.est_tokens) + " tok · " +
-      data.sections.length + " 섹션";
-    const total = Math.max(1, data.est_tokens);
-    let html = "";
-    let lastKind = null;
+      (ended ? data.turn + " 턴" : "turn " + data.turn) + " · " + fmtTok(b ? b.total : data.est_tokens) + " tok";
+    $live.textContent = ended ? "끝날 때 스냅샷 — 더 안 바뀜" : "● 턴 " + data.turn + " 에 갱신";
+    $live.classList.toggle("ended", ended);
+    renderBudget(b, ended);
+
+    const sys = [], tools = [], tail = [];
+    let grammar = null;
     data.sections.forEach(function (s) {
-      const kind = INSP_KINDS[s.kind] ? s.kind : "system";
-      if (kind !== lastKind) {
-        html += '<div class="insp-group">' + INSP_KINDS[kind] + "</div>";
-        lastKind = kind;
-      }
-      // 📐 문법(kind=grammar)은 프롬프트 토큰이 아니다 — 총합 대비 막대를
-      // 그리지 않고, 생성이 <think> 열린 채 시작하는 변형인지를 태그로 말한다.
-      const isGrammar = kind === "grammar";
-      const nameHtml = isGrammar
-        ? esc(s.name) +
-          '<span class="insp-tag">' + (s.thinking_open ? "생각 열림" : "생각 닫힘") + "</span>"
-        : esc(s.name);
-      const pct = isGrammar ? 0 : (100 * s.est_tokens) / total;
-      html +=
-        '<details class="insp-sec insp-' + kind +
-        '" data-name="' + esc(s.name.toLowerCase()) + '">' +
-        "<summary>" +
-        '<span class="insp-name">' + nameHtml + "</span>" +
-        '<span class="insp-share"><i style="width:' +
-        (isGrammar ? 0 : Math.max(3, pct)).toFixed(0) + '%"></i></span>' +
-        '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
-        '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
-        "</summary>" +
-        '<pre class="insp-body">' + esc(s.text) + "</pre>" +
-        "</details>";
+      if (s.kind === "tools") tools.push(s);
+      else if (s.kind === "tail") tail.push(s);
+      else if (s.kind === "grammar") grammar = s;
+      else sys.push(s);
     });
+    const prevByName = {};
+    (data.tail_prev || []).forEach(function (s) { prevByName[s.name] = s.text; });
+
+    let html = "";
+    html += '<div class="insp-group">' + (ended ? "꼬리 — 마지막 턴" : "매 턴 바뀜") + "</div>";
+    if (tail.length) {
+      tail.forEach(function (s) { html += tailHtml(s, prevByName, data.prev_turn); });
+    } else {
+      html += '<div class="insp-sub">이 호출에는 꼬리가 없었다.</div>';
+    }
+    html += '<div class="insp-group">' + (inline ? "고정 — 이 런 동안 안 바뀜" : activeKind === "agent" ? "고정 — 이 에이전트가 사는 동안 안 바뀜" : "고정 — 이 세션에서 안 바뀜") + "</div>";
+    const sysTok = sys.reduce(function (a, s) { return a + (s.est_tokens || 0); }, 0);
+    html += groupHtml(
+      "시스템 프롬프트 · " + sys.length + " 섹션", "", sysTok,
+      sys.map(function (s) { return sectionHtml(s, "insp-system", false); }).join(""),
+      false
+    );
+    if (tools.length) {
+      const toolTok = tools.reduce(function (a, s) { return a + (s.est_tokens || 0); }, 0);
+      html += groupHtml(
+        "Function schemas · " + tools.length + " 함수", "요청 tools[]", toolTok,
+        tools.map(function (s) { return sectionHtml(s, "insp-tools", false); }).join(""),
+        false
+      );
+    }
+    if (grammar) {
+      html += sectionHtml(
+        { name: "📐 디코딩 문법", text: grammar.text, est_tokens: grammar.est_tokens },
+        "insp-grammar", false,
+        '<span class="insp-tag">' + (grammar.thinking_open ? "생각 열림" : "생각 닫힘") + " · 서버가 강제</span>"
+      );
+    } else {
+      html +=
+        '<details class="insp-sec insp-grammar"><summary><span class="insp-name">📐 디코딩 문법' +
+        '<span class="insp-tag">없음 — 서버가 파싱</span></span><span class="insp-tok">—</span></summary></details>';
+    }
     $sections.innerHTML = html;
     $collapse.textContent = "⤢ 접기";
-    applyFilter();
-  }
-
-  function applyFilter() {
-    const q = $search.value.trim().toLowerCase();
-    $sections.querySelectorAll(".insp-sec").forEach(function (el) {
-      if (!q) {
-        el.hidden = false;
-        return;
-      }
-      const name = el.getAttribute("data-name") || "";
-      const body = el.querySelector(".insp-body").textContent.toLowerCase();
-      const hit = name.includes(q) || body.includes(q);
-      el.hidden = !hit;
-      if (hit && body.includes(q) && q.length >= 2) el.open = true;
+    const jump = document.getElementById("insp-jump");
+    if (jump) jump.addEventListener("click", function () {
+      if (window.__jumpToScope) window.__jumpToScope(activeScope);
+    });
+    const back = document.getElementById("insp-back");
+    if (back) back.addEventListener("click", function () {
+      window.__openInspector("", "main", "main");
     });
   }
 
-  // Per-section copy — stop the click from toggling the <details>.
+  // 섹션 복사 — <details> 토글로 번지지 않게.
   $sections.addEventListener("click", function (e) {
     const cp = e.target.closest(".insp-cp");
     if (!cp) return;
     e.preventDefault();
     e.stopPropagation();
     const det = cp.closest(".insp-sec");
-    const body = det && det.querySelector(".insp-body");
+    const body = det && det.querySelector(".insp-body, .insp-diff");
     if (body) copyText(body.textContent, cp);
   });
 
@@ -3682,6 +3816,7 @@
   $copyall.addEventListener("click", function () {
     if (!lastData || !lastData.ok) return;
     const all = lastData.sections
+      .filter(function (s) { return s.kind !== "grammar"; })
       .map(function (s) { return "### " + s.name + "\n" + s.text; })
       .join("\n\n");
     copyText(all, $copyall);
@@ -3694,39 +3829,34 @@
       .then(render)
       .catch(function () {
         $sections.innerHTML =
-          '<div class="insp-empty">프롬프트 스냅샷을 불러오지 못했습니다.</div>';
+          '<div class="insp-empty">스냅샷을 불러오지 못했습니다.</div>';
       });
   }
 
+  function isOpen() { return $drawer.classList.contains("open"); }
   function open() {
-    $backdrop.hidden = false;
-    requestAnimationFrame(function () {
-      $backdrop.classList.add("open");
-      $drawer.classList.add("open");
-    });
+    $drawer.classList.add("open");
     $drawer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("insp-open"); // 도킹 — 챗 폭이 줄고 챗은 그대로 보인다
   }
   function close() {
-    $backdrop.classList.remove("open");
     $drawer.classList.remove("open");
     $drawer.setAttribute("aria-hidden", "true");
-    setTimeout(function () { $backdrop.hidden = true; }, 260);
+    document.body.classList.remove("insp-open");
   }
 
-  // Public entry — open scoped to a conversation agent/skill (or the main loop).
-  // scope: "" = main; a task_id = that card's scope. kind: "main"|"run"|"skill".
+  // 공개 진입 — 인라인 카드 🔍 또는 하단 🔍(현재 채널). scope: "" = main;
+  // kind: "main" | "agent" | "run" | "skill".
   window.__openInspector = function (scope, name, kind) {
-    // Resident-agent work-span cards carry a per-invocation id `<agentId>#<n>`,
-    // but the prompt snapshot is keyed by the BASE agent id (`<agentId>`). One-
-    // shot delegates (`delegate-…`) and skills (`skill-…`) have no `#` suffix, so
-    // stripping a trailing `#<n>` normalizes the resident case and is a no-op for
-    // the rest. (Verified live: `agt-x#1` card → snapshot under `agt-x`.)
+    // 상주 에이전트의 런 카드 id 는 `<key>#<n>` 이지만 스냅샷은 `<key>` 로 저장된다.
     activeScope = (scope || "").replace(/#\d+$/, "");
-    const tag = kind === "skill" ? "skill" : !scope || kind === "main" ? "main" : "agent";
+    activeKind = !scope || kind === "main" ? "main" : kind === "skill" ? "skill" : kind === "agent" ? "agent" : "run";
+    activeName = name || (activeKind === "main" ? "main" : scope);
+    const tag = activeKind === "run" ? "inline" : activeKind;
     $tag.textContent = tag;
     $tag.className = "insp-scope-tag tag-" + tag;
-    $name.textContent = name || (tag === "main" ? "Main" : scope);
-    $search.value = "";
+    $name.textContent = "🔍 " + activeName;
+    $origin.hidden = true;
     $sections.innerHTML = '<div class="insp-empty">불러오는 중…</div>';
     open();
     loadPrompt();
@@ -3734,26 +3864,23 @@
 
   if ($mainBtn)
     $mainBtn.addEventListener("click", function () {
-      // 현재 대화 채널의 프롬프트/컨텍스트를 연다(main 또는 활성 agent).
+      if (isOpen()) { close(); return; }
       const s =
         (window.__inspectorScope && window.__inspectorScope()) ||
-        { scope: "", name: "Main", kind: "main" };
+        { scope: "", name: "main", kind: "main" };
       window.__openInspector(s.scope, s.name, s.kind);
     });
   document.getElementById("insp-close").addEventListener("click", close);
-  $backdrop.addEventListener("click", close);
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && $drawer.classList.contains("open")) close();
+    if (e.key === "Escape" && isOpen()) close();
   });
-  $search.addEventListener("input", applyFilter);
 
-  // Live refresh of the currently-open scope. The "prompt-changed" relay is
-  // gone with the server event that fed it (v8.46.0 — the agent roster left the
-  // system prompt for the per-turn tail block, so there is nothing to patch
-  // between turns); memory still notifies, and the reload picks the new note up
-  // from the dynamic half.
+  // 열려 있는 동안 턴마다 갱신 — 메인 IIFE 가 token_usage 를 받아 알린다.
+  window.addEventListener("agentcli:turn-usage", function () {
+    if (isOpen() && !(lastData && lastData.scope && lastData.scope.ended)) loadPrompt();
+  });
   window.addEventListener("agentcli:memory-changed", function () {
-    if ($drawer.classList.contains("open")) loadPrompt();
+    if (isOpen()) loadPrompt();
   });
 })();
 
