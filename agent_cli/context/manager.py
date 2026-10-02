@@ -43,8 +43,8 @@ from agent_cli.context.records import _classify_record
 from agent_cli.context.render import (
     _estimate_message_tokens,
     _sum_message_tokens,
-    _to_natural_language,
     _to_summary_text,
+    render_history_message,
 )
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.render import get_renderer, render_compaction_progress
@@ -437,7 +437,7 @@ class ContextManager:
         if self._nl_cache is not None and not (
             len(self._cache) == 1 and message.get("role") == "system"
         ):
-            self._nl_cache.append(_to_natural_language(message, self.dialect))
+            self._nl_cache.append(self._render_record(len(self._cache) - 1))
         self._cache_tokens += msg_tokens
         self._append_to_history(message)
         # Return the stored message so callers can render exactly what was
@@ -543,9 +543,10 @@ class ContextManager:
         n_rest = len(cache) - rest_start
         if self._nl_cache is None or len(self._nl_cache) != n_rest:
             self._nl_cache = [
-                _to_natural_language(msg, self.dialect) for msg in cache[rest_start:]
+                self._render_record(i) for i in range(rest_start, len(cache))
             ]
-        result.extend(self._nl_cache)
+        for group in self._nl_cache:
+            result.extend(group)
 
         # ── tail annotations (feed time only, never persisted) ──────────
         # Both are appended to the LAST message rather than added as new ones:
@@ -564,11 +565,26 @@ class ContextManager:
         # recency, and zero KV-prefix cost (see prompts/session_state.py).
         if self._session_state:
             tail += "\n\n" + self._session_state
-        if tail and result and result[-1].get("role") == "user":
+        if tail and result and result[-1].get("role") in ("user", "tool"):
+            # 서버 파싱 방언(v10.2.0)은 마지막이 `tool` 메시지 — 꼬리는 그 본문 끝에.
             last = dict(result[-1])
             last["content"] = last.get("content", "") + tail
             result[-1] = last
         return result
+
+    def _render_record(self, i: int) -> list[dict]:
+        """캐시 레코드 ``i`` → 요청 메시지 목록 (v10.2.0). 관찰은 바로 앞 assistant
+        레코드의 index 로 호출 id 를 짝 맞춘다(서버 파싱 방언)."""
+        msg = self._cache[i]
+        assistant_index = None
+        if msg.get("role") == "user" and msg.get("tool"):
+            for j in range(i - 1, -1, -1):
+                if self._cache[j].get("role") == "assistant":
+                    assistant_index = j
+                    break
+        return render_history_message(
+            msg, self.dialect, index=i, assistant_index=assistant_index
+        )
 
     def set_session_state(self, text: str) -> None:
         """Set the session-state block appended to the last message by

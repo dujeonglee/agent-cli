@@ -97,6 +97,9 @@ class OpenAIProvider:
                 body["chat_template_kwargs"] = ctk
         if settings.grammar:
             body["guided_grammar"] = settings.grammar
+        if settings.tools:
+            body["tools"] = settings.tools
+            body["tool_choice"] = "auto"
 
         if on_chunk:
             body["stream"] = True

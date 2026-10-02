@@ -103,6 +103,30 @@ def _sum_message_tokens(messages) -> int:
     return sum(_estimate_message_tokens(m) for m in messages)
 
 
+def render_history_message(
+    msg: dict, dialect, *, index: int, assistant_index: int | None
+) -> list[dict]:
+    """레코드 하나 → 요청 메시지 **목록** (v10.2.0). 방언이 관찰 렌더를 소유한다:
+    `render_observation_from_history` 가 None 이면 종전 user 텍스트 한 건, 아니면
+    그 목록(서버 파싱 방언은 op 마다 `tool` 메시지). assistant 는 `index` 를 받아
+    호출 id 를 합성한다. 텍스트 방언에서는 바이트 동일한 한 건이다."""
+    role = msg.get("role", "user")
+    if role == "user" and msg.get("tool"):
+        rendered = dialect.render_observation_from_history(
+            msg, index=index, assistant_index=assistant_index
+        )
+        if rendered is not None:
+            return list(rendered)
+        return [_convert_observation(msg)]
+    if role == "user":
+        return [{"role": "user", "content": msg.get("content", "")}]
+    try:
+        return [dialect.render_assistant_from_history(_context_view(msg), index=index)]
+    except TypeError:
+        # 서드파티 플러그인이 옛 시그니처(record 만)를 구현한 경우
+        return [dialect.render_assistant_from_history(_context_view(msg))]
+
+
 def _to_natural_language(msg: dict, dialect) -> dict:
     """Convert a JSON history record to a natural-language message for the LLM.
 

@@ -625,6 +625,20 @@ class DialectBase(ABC):
             "action_input": _terminal_input(result, answers),
         }
 
+    #: v10.2.0 — 서버가 호출을 파싱하는 방언인가 (요청 `tools`, 응답 `tool_calls`).
+    server_parsed: bool = False
+
+    def render_observation_from_history(
+        self, record: dict, *, index: int, assistant_index: int | None
+    ) -> list[dict] | None:
+        """관찰 레코드 → 요청 메시지들 (v10.2.0, NATIVE.md N2 — 방언 소유).
+
+        ``None`` 이면 기본 user 텍스트(`context.render._convert_observation`).
+        서버 파싱 방언은 op 마다 `{"role": "tool", "tool_call_id": …}` 를 돌려준다;
+        id 는 렌더 시점에 결정적으로 합성(``call_<assistant_index>_<op>``)되어 앞
+        assistant 의 ``tool_calls`` 와 짝이 맞는다. 기록 스키마는 바뀌지 않는다."""
+        return None
+
     def render_assistant_from_history(self, record: dict) -> dict:
         """Convert a history.jsonl assistant record into a message dict.
 

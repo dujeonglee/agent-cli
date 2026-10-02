@@ -320,6 +320,8 @@ class Dialect(DialectBase):
     # ─── Grammar ────────────────────────────────────────────────
 
     def grammar(self, tools, *, thinking_open: bool = False) -> str | None:
+        if self.spec.server_parsed:
+            return None  # 서버가 파싱한다 — 디코딩 문법 없음
         if self.spec.args in (ArgStyle.TAGGED, ArgStyle.TAGGED_PAIR):
             return self._grammar_tagged(tools, thinking_open=thinking_open)
         if self.spec.args is ArgStyle.JSON_NATIVE:
@@ -959,8 +961,72 @@ class Dialect(DialectBase):
             ],
         }
 
-    def render_assistant_from_history(self, record: dict) -> dict:
+    @property
+    def server_parsed(self) -> bool:
+        return bool(self.spec.server_parsed)
+
+    @staticmethod
+    def call_id(assistant_index: int | None, op_index: int) -> str:
+        """렌더 시 합성하는 호출 id — assistant 와 뒤따르는 관찰이 같은 규칙."""
+        return (
+            f"call_{assistant_index if assistant_index is not None else 0}_{op_index}"
+        )
+
+    def render_observation_from_history(
+        self, record: dict, *, index: int, assistant_index: int | None
+    ) -> list[dict] | None:
+        if not self.spec.server_parsed:
+            return None
+        content = record.get("content") or ""
+        if isinstance(content, str) and content.startswith("Observation: "):
+            content = content[len("Observation: ") :]
+        artifact = record.get("artifact") or ""
+        if artifact:
+            content = f"{content}\n→ {artifact}"
+        parts = record.get("parts")
+        if isinstance(parts, list) and parts:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": self.call_id(assistant_index, i),
+                    "content": str(p.get("content") or ""),
+                }
+                for i, p in enumerate(parts)
+                if isinstance(p, dict)
+            ]
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": self.call_id(assistant_index, 0),
+                "content": str(content),
+            }
+        ]
+
+    def render_assistant_from_history(
+        self, record: dict, *, index: int | None = None
+    ) -> dict:
         ops = record.get("ops")
+        if isinstance(ops, list) and ops and self.spec.server_parsed:
+            # 서버 네이티브: 구조화 메시지 (NATIVE.md §3). content 는 thought 만.
+            msg: dict = {
+                "role": "assistant",
+                "content": record.get("thought") or "",
+                "tool_calls": [
+                    {
+                        "id": self.call_id(index, i),
+                        "type": "function",
+                        "function": {
+                            "name": o.get("action") or "",
+                            "arguments": json.dumps(
+                                o.get("action_input") or {}, ensure_ascii=False
+                            ),
+                        },
+                    }
+                    for i, o in enumerate(ops)
+                    if isinstance(o, dict)
+                ],
+            }
+            return msg
         if isinstance(ops, list) and ops:
             s = self.spec
             if s.args is ArgStyle.JSON_NATIVE:

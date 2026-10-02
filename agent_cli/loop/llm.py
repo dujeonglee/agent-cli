@@ -87,6 +87,27 @@ class LLMCaller:
     _MAX_TOKENS_MARGIN = 512
     _MIN_REQUEST_OUTPUT_TOKENS = 1024
 
+    def _function_schemas(self) -> list[dict] | None:
+        """native_fc (v10.2.0): 요청에 실을 OpenAI 함수 스키마 — 프롬프트의
+        `## Available Tools` 와 **같은 소스**(effective_tool_names · 스키마 ·
+        parameter_overrides · 인라인 가이드)로 만든다. description = 한 줄 설명 +
+        가이드 전문(NATIVE.md N1). 캐시해 두고 재사용한다."""
+        if not getattr(self.cfg.dialect, "server_parsed", False):
+            return None
+        if getattr(self, "_function_schemas_cache", None) is None:
+            from agent_cli.prompts.system_prompt import function_schemas_for
+
+            nonblocking_ask = bool(
+                self.cfg.questions is not None and self.cfg.questions.nonblocking
+            )
+            self._function_schemas_cache = function_schemas_for(
+                self.cfg.tools_list,
+                self.cfg.dialect,
+                has_agent_registry=self.cfg.agent_registry is not None,
+                nonblocking_ask=nonblocking_ask,
+            )
+        return self._function_schemas_cache
+
     def _decoding_grammar(self, thinking_override) -> tuple[bool, str] | None:
         """이 콜의 디코딩 문법 (v9.24.0) — 서버가 강제하고(capabilities
         ``supports_grammar``) 세션이 끄지 않았을 때만. 도구 집합과 스키마는
@@ -98,6 +119,8 @@ class LLMCaller:
 
         caps = self.cfg.capabilities
         override = self.ctx.grammar_override if self.ctx else None
+        if getattr(self.cfg.dialect, "server_parsed", False):
+            return None  # v10.2.0: 서버가 파싱한다 — 문법 없음
         if not grammar_active(override, caps.supports_grammar):
             return None
         if self._grammar_cache is None:
@@ -361,6 +384,7 @@ class LLMCaller:
                         else STREAM_MAX_ATTEMPTS
                     ),
                     max_output_tokens=clamped_max_tokens,
+                    tools=self._function_schemas(),
                 ),
                 **extra_call_kwargs,
             )

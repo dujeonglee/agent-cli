@@ -931,18 +931,20 @@ class AgentLoop:
                 f"server reported {response.usage.output_tokens} output tokens but "
                 "delivered no text — a server-side parser likely consumed the "
                 f"'{self.dialect.name}' tool-call block. On this server bind the "
-                'model to json_fc (models.json "dialect": "json_fc") or disable '
-                "the server's tool-call parser.",
+                'model to json_fc (models.json "dialect": "json_fc"), or to '
+                "native_fc if the server returns tool_calls for requests that "
+                "carry `tools`, or disable the server's tool-call parser.",
                 self.turn,
             )
-        if not (llm_text or "").strip() and getattr(response, "tool_calls", None):
+        if getattr(response, "tool_calls", None):
             # v10.1.4: 서버의 tool parser 가 <tool_call> 블록을 content 에서 빼내
-
             # ``tool_calls`` 필드로 돌려주면 content 가 비어 NO_OUTPUT 이 됐다.
-
-            # 그 호출들을 바인딩 방언의 캐노니컬 모양으로 되살려 같은 경로로 넣는다.
-
-            llm_text = self._render_server_tool_calls(response.tool_calls)
+            # 그 호출들을 flat op 배열 텍스트로 되살려 같은 파서 경로로 넣는다.
+            # v10.2.0 (native_fc): content(thought)가 있으면 그 뒤에 붙인다.
+            rendered = self._render_server_tool_calls(response.tool_calls)
+            if rendered:
+                head = (llm_text or "").strip()
+                llm_text = f"{head}\n\n{rendered}" if head else rendered
 
         # Show token stats if available (providers report eval durations)
         if response.usage:
@@ -1041,10 +1043,14 @@ class AgentLoop:
         ]
         if not ops:
             return ""
-        rendered = self.dialect.render_assistant_from_history(
-            {"thought": "", "ops": ops}
+        # flat op 배열 텍스트 — json_fc 와 native_fc 는 이 모양을 그대로 파싱하고,
+        # 태그 방언은 레지스트리의 타 방언 구제(json_fc)로 건져 캐노니컬로 재렌더한다.
+        import json as _json
+
+        return _json.dumps(
+            [{"action": o["action"], **(o["action_input"] or {})} for o in ops],
+            ensure_ascii=False,
         )
-        return rendered.get("content") or ""
 
     def _on_output_truncated(self, llm_text: str):
         """Handle a response cut off at ``max_output_tokens``.

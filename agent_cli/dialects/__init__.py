@@ -235,6 +235,7 @@ def _register_builtin_plugins() -> None:
     from agent_cli.dialects.specs.glm_argkey import GLM_ARGKEY
     from agent_cli.dialects.specs.hermes_json import HERMES_JSON
     from agent_cli.dialects.specs.json_fc import JSON_FC
+    from agent_cli.dialects.specs.native_fc import NATIVE_FC
     from agent_cli.dialects.specs.xml_fc import XML_FC
 
     # 방언은 스펙 하나 — 넷 다 같은 엔진 (v10.0.1 에서 json_fc/xml_fc 껍데기 클래스 삭제)
@@ -245,6 +246,7 @@ def _register_builtin_plugins() -> None:
         Dialect(HERMES_JSON)
     )  # 가족 ① Hermes JSON (Qwen2.5/3/Next, Hermes, Granite 4.0/4.1)
     register(Dialect(GLM_ARGKEY))  # 가족 ⑤ GLM-4.5 ~ 5.3
+    register(Dialect(NATIVE_FC))  # 서버 네이티브 함수 호출 (NATIVE.md, v10.2.0)
 
 
 _register_builtin_plugins()

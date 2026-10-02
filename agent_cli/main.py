@@ -1117,6 +1117,13 @@ def _bootstrap_provider(
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
         raise typer.Exit(2) from exc
+    if getattr(dialect_plugin, "server_parsed", False) and name != "openai":
+        # v10.2.0: native_fc 는 OpenAI 호환 `tools`/`tool_calls` 만 안다 (NATIVE.md N4)
+        console.print(
+            f"[{C['error']}]dialect '{dialect_plugin.name}' needs an OpenAI-compatible "
+            f"provider (tools/tool_calls); provider is '{name}'.[/]"
+        )
+        raise typer.Exit(2)
     if max_context_tokens <= 0:
         from agent_cli.context.manager import compute_token_budget
 
