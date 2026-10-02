@@ -435,6 +435,20 @@
   // 종전(~v9.25)은 근처에서 플래그만 바꿔 **다음 이벤트가 와야** 따라갔고,
   // 로드 뒤 늦게 자란 내용은 바닥을 놓쳤다(사용자 보고: "기본이 맨 아래여야").
   let pinned = true;
+  // 열 때(v10.8.1): 스냅샷이 다 재생될 때까지 타임라인을 숨기고 스크롤도 하지
+  // 않는다 — 카드가 붙을 때마다 내려가는 모습 대신, `snapshot_end` 에서 한 번에
+  // 맨 아래로 점프한 뒤 보여 준다. 재접속은 전체 리로드(es.onerror)라 같은 길.
+  let loading = true;
+  document.body.classList.add("loading");
+  function revealAtBottom() {
+    if (!loading) return;
+    loading = false;
+    setScrollTop($messages.scrollHeight);
+    document.body.classList.remove("loading");
+  }
+  // 옛 서버(snapshot_end 없음)와의 창: 2초면 어차피 다 왔다. 브라우저 전역이
+  // 있을 때만 — 노드 마크다운 하네스(test_app_markdown)는 이 IIFE 를 그대로 돈다.
+  if (typeof requestAnimationFrame === "function") setTimeout(revealAtBottom, 2000);
   const SCROLL_BOTTOM_THRESHOLD = 48; // px — 메시지 두 줄쯤 (시안에서 확인)
   let _unseen = 0; // 위치 고정 중 도착한 카드 수
   let _programmaticTop = -1; // 우리가 쓴 scrollTop — 그 이벤트는 판정에서 제외
@@ -546,6 +560,7 @@
     for (const rec of records)
       for (const n of rec.addedNodes)
         if (n.nodeType === 1 && !n.hidden) added++;
+    if (loading) return; // 재생 중엔 숨겨져 있다 — snapshot_end 가 한 번에 내린다
     if (pinned) {
       if (added) scheduleScroll();
     } else if (added) {
@@ -3234,6 +3249,9 @@
   // ── Identity + viewer roster ───────
   // Every connection is equal (all may send input / queue). conn_id is needed
   // only to mark "(you)" in the roster and to own queued messages.
+  es.addEventListener("snapshot_end", function () {
+    revealAtBottom();
+  });
   es.addEventListener("identity", function (e) {
     myConnId = JSON.parse(e.data).conn_id;
     // 상주 에이전트 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.

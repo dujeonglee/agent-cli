@@ -480,6 +480,10 @@ class WebRenderer(Renderer):
             for c in self._connections:
                 if c is not conn and not c.closed.is_set():
                     c.queue.put(("viewers", payload))
+            # 스냅샷의 끝 (v10.8.1): 클라이언트는 여기까지 타임라인을 숨긴 채 재생하고
+            # 한 번에 맨 아래로 점프한 뒤 보여 준다 — 열 때마다 카드가 쌓이며
+            # 내려가는 스크롤이 보이지 않는다. 그 다음부터는 라이브 이벤트다.
+            snapshot.append(("snapshot_end", {"events": len(snapshot)}))
         self._publish_status()  # viewers changed (outside lock: does disk I/O)
         return snapshot
 

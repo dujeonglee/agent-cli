@@ -1005,6 +1005,9 @@ class TestStaticUI:
         )
         # f-string / 직접 큐 삽입 경로
         emitted |= {"stream_tick", "thinking_tick"}  # _emit(f"{kind}_tick", …)
+        emitted |= {
+            "snapshot_end"
+        }  # register_connection 이 스냅샷 끝에 넣는다 (v10.8.1)
         emitted |= {"transcript_truncated", "identity", "viewers"}  # snapshot 삽입
 
         # `(?<![A-Za-z$_])` 필수 — 없으면 `$messages.addEventListener("scroll")`
@@ -2304,9 +2307,10 @@ class TestStreamGenerator:
         # ``viewers`` is a cross-cutting count broadcast that can appear in the
         # snapshot or interleave on join/leave — skip it so sequence asserts
         # stay about the events under test.
+        # ``snapshot_end`` (v10.8.1) likewise marks the snapshot boundary only.
         while True:
             ev = await asyncio.wait_for(gen.__anext__(), timeout=timeout)
-            if ev.get("event") != "viewers":
+            if ev.get("event") not in ("viewers", "snapshot_end"):
                 return ev
 
     async def test_replay_buffer_on_connect(self):
