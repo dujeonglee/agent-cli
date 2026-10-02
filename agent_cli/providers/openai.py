@@ -189,6 +189,7 @@ class OpenAIProvider:
             tool_calls=tool_calls,
             usage=usage,
             stop_reason=acc.stop_reason,
+            stop_detail=acc.stop_detail,
             thinking=thinking,
         )
 

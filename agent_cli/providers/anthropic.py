@@ -206,6 +206,7 @@ class AnthropicProvider:
             tool_calls=None,
             usage=usage,
             stop_reason=_normalize_stop_reason(acc.stop_reason),
+            stop_detail=acc.stop_detail,
             thinking=thinking,
         )
 
