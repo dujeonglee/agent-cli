@@ -691,6 +691,15 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Context Window Discipline" in prompt
         assert "single most important resource" in prompt
+        # v10.9.0: filling = automatic structured summary, not loss (67qcmb —
+        # "older information drops … reasoning quality drops" taught a resident
+        # agent that a full window ends its work; it stalled at 98% for 2 h).
+        assert "replaced by a structured summary automatically" in prompt
+        for bad in ("information drops", "quality drops", "lose"):
+            assert (
+                bad
+                not in prompt.split("## Context Window Discipline")[1].split("##")[0]
+            )
         assert "Read only what you need" in prompt
 
     def test_format_rules_present(self):

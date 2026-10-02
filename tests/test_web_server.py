@@ -3657,8 +3657,7 @@ class TestInspectorTailSections:
         )
         ctx.set_session_state(
             build_session_state(
-                used_tokens=10,
-                budget_tokens=100,
+                turn=3,
                 guidelines="## Task Guidelines\n- rule one",
             )
         )
@@ -3673,7 +3672,7 @@ class TestInspectorTailSections:
         assert names[-1] == "Session State (per-turn tail)"
         assert [s["kind"] for s in secs[-2:]] == ["tail", "tail"]
         assert "- rule one" in secs[-2]["text"]
-        assert "~10" in secs[-1]["text"] or "10" in secs[-1]["text"]
+        assert "turn 3" in secs[-1]["text"]  # v10.9.0: 수치 없음, 턴 카운터만
         # v9.25.2: the boundary line opens the first tail section, and the
         # conversation section stops before it
         from agent_cli.prompts.session_state import TAIL_BOUNDARY

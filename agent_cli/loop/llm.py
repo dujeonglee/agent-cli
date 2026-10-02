@@ -171,10 +171,11 @@ class LLMCaller:
         the model's budget. Reuses the same section renderers the system prompt
         used before the move, so the model sees identical headings.
 
-        ``budget`` is the live compaction target, so the "context is nearly
-        full" warning fires a turn or two BEFORE ``ensure_within`` actually
-        starts dropping history — early enough for the model to save something
-        with ``memory``."""
+        ``budget`` is the live compaction target; it decides only whether the
+        one-time ``COMPACTION_NOTICE`` (80%, v10.9.0) rides this turn — early
+        enough for the model to save something with ``memory``. The tail
+        itself carries no usage figure (v10.9.0: the percentage made models
+        stall just under the target, see ``session_state._context_line``)."""
         from agent_cli.memory import render_index
         from agent_cli.prompts.session_state import (
             build_session_state,
@@ -223,8 +224,6 @@ class LLMCaller:
             used, budget, self._compaction_armed
         )
         return build_session_state(
-            used_tokens=used,
-            budget_tokens=budget,
             compaction_notice=notice,
             turn=self.state.turn,
             max_turns=self.cfg.max_turns,

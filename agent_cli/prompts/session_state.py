@@ -35,14 +35,16 @@ turn afterwards and pollute resume previews).
 
 from __future__ import annotations
 
-#: 압축 안내가 뜨는 사용량 단계 (v9.26.4). 압축은 호출별 목표치(꼬리의 100%)를
-#: 넘는 순간 돌고, 안내는 **각 단계를 처음 넘는 턴에 한 번씩**만 — 70·80·90%.
-#: 종전(75% 이상 매 턴)은 같은 경보가 턴마다 쌓여 모델을 과하게 보수적으로 만들었다
-#: (사용자 보고). 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장된다
-#: (:func:`compaction_notice_due`). 문구도 결핍이 아니라 사실을 말한다 — 오래된 턴은
-#: 사라지는 게 아니라 구조화 요약으로 대체되고 작업은 그대로 이어진다. 압박을
-#: 알리면 조기 ``complete`` 를 부른다는 ``_OBS_COMPLETE_NUDGE`` 의 실측은 그대로다.
-COMPACTION_NOTICE_STEPS: tuple[float, ...] = (0.7, 0.8, 0.9)
+#: 압축 안내가 뜨는 사용량 단계. 압축은 호출별 목표치를 넘는 순간 돌고, 안내는
+#: **단계를 처음 넘는 턴에 한 번**만. v9.26.4 는 70·80·90% 셋이었고(종전 75% 이상
+#: 매 턴은 같은 경보가 턴마다 쌓여 모델을 과하게 보수적으로 만들었다 — 사용자 보고),
+#: v10.9.0 에서 80% 하나로 줄였다 — 꼬리의 퍼센트 줄이 사라져(아래 ``_context_line``)
+#: 단계별 안내가 기댈 숫자가 없고, memory 힌트는 한 번이면 족하다. 압축이 돌아
+#: 사용량이 내려가면 다시 무장된다(:func:`compaction_notice_due`). 문구는 결핍이
+#: 아니라 사실을 말한다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 대체되고
+#: 작업은 그대로 이어진다. 압박을 알리면 조기 ``complete`` 를 부른다는
+#: ``_OBS_COMPLETE_NUDGE`` 의 실측은 그대로다.
+COMPACTION_NOTICE_STEPS: tuple[float, ...] = (0.8,)
 
 #: 안내 문구 — 정보만, 명령은 하나(memory 는 선택지). "nearly full"·"lose"·"NOW"
 #: 같은 결핍 어휘를 쓰지 않는다. 사용자가 정한 문구 그대로(2026-10-01).
@@ -98,18 +100,23 @@ TAIL_BOUNDARY = (
 )
 
 
-def _context_line(used: int, budget: int, turn: int, max_turns: int) -> str:
-    """``budget`` is the live compaction target, so the percentage is "how
-    far to compaction". It is spelled out (v9.25.1) because a reader —
-    human or model — took 90% for an alarm and wondered why nothing ran:
-    compaction fires only once the cache passes the target."""
+def _context_line(turn: int, max_turns: int) -> str:
+    """The turn counter only.
+
+    Until v10.8.x this line also carried ``context: ~used / budget tokens
+    (p% — compaction at 100%)``. Measured (room 67qcmb, 2026-10-02): a
+    resident agent sat at 95–99% for two hours, refusing every edit as a
+    "half-edit risk", answering TAKEOVER and completing with "STOPPING at
+    99%" — and because it only ever added a few hundred tokens a turn, it
+    never crossed 100%, so compaction never ran and the headroom never came
+    back. The number gave the model exactly one lever, shrinking its own
+    work, and that lever is the harm. Compaction is the harness's job: it
+    runs between turns, replaces older turns with a structured summary,
+    never cuts a response (the output budget is separate — ``compaction_ratio``
+    leaves ≥20% of the window for output), and work continues. So the model
+    gets no figure to manage. The one-time ``COMPACTION_NOTICE`` (80%) stays
+    as the memory hint; its threshold is the caller's, not the tail's."""
     parts = []
-    if budget > 0:
-        pct = min(100, round(used * 100 / budget))
-        note = "compaction at 100%" if pct < 100 else "compaction due"
-        parts.append(f"context: ~{used:,} / {budget:,} tokens ({pct}% — {note})")
-    elif used:
-        parts.append(f"context: ~{used:,} tokens")
     if turn:
         if max_turns:
             left = max(0, max_turns - turn)
@@ -147,8 +154,6 @@ def final_turn_notice(*, reports_to_caller: bool) -> str:
 
 def build_session_state(
     *,
-    used_tokens: int = 0,
-    budget_tokens: int = 0,
     turn: int = 0,
     max_turns: int = 0,
     agents: str = "",
@@ -162,7 +167,8 @@ def build_session_state(
     """Render the block, or ``""`` when there is nothing worth saying.
 
     ``compaction_notice`` (v9.26.4): 이번 턴에 압축 안내 한 줄을 붙일지 — 호출자가
-    :func:`compaction_notice_due` 로 단계(70·80·90%)를 처음 넘는 턴에만 True 를 준다.
+    :func:`compaction_notice_due` 로 단계(v10.9.0: 80% 하나)를 처음 넘는 턴에만
+    True 를 준다. 사용량 수치 자체는 꼬리에 없다(v10.9.0, ``_context_line``).
 
     A non-empty block always opens with ``TAIL_BOUNDARY`` (v9.25.2) so the
     model can tell where the user's text ends and the harness's begins.
@@ -201,7 +207,7 @@ def build_session_state(
         for b in (requests.strip(), debts.strip(), agents.strip(), memory.strip())
         if b
     ]
-    ctx_line = _context_line(used_tokens, budget_tokens, turn, max_turns)
+    ctx_line = _context_line(turn, max_turns)
     rules = guidelines.strip()
     if not ctx_line and not blocks and not rules:
         return ""
