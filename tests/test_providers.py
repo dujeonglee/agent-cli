@@ -1370,3 +1370,36 @@ class TestStreamedToolCalls:
             {"id": "c1", "name": "read_file", "input": {"path": "a.py"}}
         ]
         assert result.usage.output_tokens == 33
+
+
+class TestStreamDump:
+    """v10.1.6: ``AGENT_CLI_DUMP_STREAM`` — 서버가 보낸 SSE 줄을 해석 전 그대로 파일에."""
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_raw_lines_are_dumped(
+        self, mock_post, caps_structured, tmp_path, monkeypatch
+    ):
+        dump = tmp_path / "stream.log"
+        monkeypatch.setenv("AGENT_CLI_DUMP_STREAM", str(dump))
+        sse = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"hmm"}}]}',
+            b'data: {"choices":[{"delta":{"content":"hi"}}]}',
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = OpenAIProvider("http://x/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda t: None,
+        )
+        assert result.content == "hi" and result.thinking == "hmm"
+        text = dump.read_text()
+        assert text.count("### stream ") == 1
+        assert '"reasoning_content":"hmm"' in text and "data: [DONE]" in text
