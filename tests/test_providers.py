@@ -1403,3 +1403,37 @@ class TestStreamDump:
         text = dump.read_text()
         assert text.count("### stream ") == 1
         assert '"reasoning_content":"hmm"' in text and "data: [DONE]" in text
+
+
+class TestNativeToolsInBody:
+    """v10.2.0: CallSettings.tools → 요청 body `tools` + `tool_choice: auto`."""
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_tools_are_sent_when_set(self, mock_post, caps_structured):
+        mock_post.return_value = _mock_response(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+        provider = OpenAIProvider("http://x/v1", "k")
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "f", "parameters": {"type": "object"}},
+            }
+        ]
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            settings=CallSettings(tools=tools),
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["tools"] == tools and body["tool_choice"] == "auto"
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps_structured,
+            settings=CallSettings(),
+        )
+        assert "tools" not in mock_post.call_args.kwargs["json"]

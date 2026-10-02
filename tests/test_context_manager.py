@@ -777,13 +777,13 @@ class TestGetMessagesIncrementalCache:
         import agent_cli.context.manager as mgr
 
         calls = {"n": 0}
-        real = mgr._to_natural_language
+        real = mgr.render_history_message  # v10.2.0: 레코드별 렌더 이음새
 
-        def counting(msg, wf):
+        def counting(msg, wf, **kw):
             calls["n"] += 1
-            return real(msg, wf)
+            return real(msg, wf, **kw)
 
-        monkeypatch.setattr(mgr, "_to_natural_language", counting)
+        monkeypatch.setattr(mgr, "render_history_message", counting)
         msgs = self._msgs()
         for m in msgs:
             ctx.add(m)

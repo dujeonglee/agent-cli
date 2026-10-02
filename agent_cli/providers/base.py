@@ -126,6 +126,9 @@ class CallSettings:
     #: 루프가 채운다(``DialectBase.grammar``). None = 제약 없음. OpenAI 방언은
     #: ``guided_grammar`` 로 싣고, Anthropic 은 받을 곳이 없어 무시한다.
     grammar: str | None = None
+    #: v10.2.0 — 서버 네이티브 함수 호출(native_fc): OpenAI 함수 스키마 목록.
+    #: None = 보내지 않음. Anthropic 경로는 받지 않는다(부트에서 fail-fast).
+    tools: list[dict] | None = None
 
 
 def resolve_thinking_policy(

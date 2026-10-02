@@ -678,6 +678,55 @@ def parameter_overrides_for(active_tools, nonblocking_ask: bool) -> dict[str, di
     return {}
 
 
+def function_schemas_for(
+    active_tools: list[str],
+    dialect,
+    *,
+    has_agent_registry: bool = True,
+    nonblocking_ask: bool = False,
+) -> list[dict]:
+    """native_fc (v10.2.0): `## Available Tools` 와 같은 재료로 OpenAI 함수 스키마
+    목록을 만든다 — 같은 도구 집합·같은 설명 오버라이드·같은 파라미터 오버라이드·
+    같은 인라인 가이드(전문, NATIVE.md N1). 프롬프트가 가르치는 것과 요청이
+    싣는 것이 어긋나지 않게 한 함수에서 나온다."""
+    from agent_cli.tools.registry import TOOL_SCHEMAS, effective_tool_names
+
+    overrides: dict[str, str] = {}
+    if not has_agent_registry and "agent" in active_tools:
+        from agent_cli.tools.agent_tool import AgentTool
+
+        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
+    if nonblocking_ask and "ask" in active_tools:
+        from agent_cli.tools.virtual import AskTool
+
+        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
+    param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
+    guides = _build_tool_inline_guides(
+        active_tools, dialect, nonblocking_ask=nonblocking_ask
+    )
+    out: list[dict] = []
+    for name in effective_tool_names(active_tools, dialect):
+        schema = TOOL_SCHEMAS.get(name)
+        if schema is None:
+            continue
+        description = overrides.get(name, schema.description)
+        guide = (guides.get(name) or "").strip()
+        if guide:
+            description = f"{description}\n\n{guide}"
+        params = param_overrides.get(name, schema.parameters)
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": params,
+                },
+            }
+        )
+    return out
+
+
 def _build_tools_section(
     active_tools: list[str],
     dialect,
@@ -925,17 +974,20 @@ def build_system_prompt_sections(
     sections.append(("Response Format", dialect.format_rules()))
 
     # ── Middle: reference material ──
-    sections.append(
-        (
-            "Available Tools",
-            _build_tools_section(
-                active_tools,
-                dialect,
-                has_agent_registry=agent_registry is not None,
-                nonblocking_ask=nonblocking_ask,
-            ),
+    # v10.2.0 (native_fc): 도구는 요청 `tools` 로 가고 서버 템플릿이 프롬프트에
+    # 넣는다 — 여기 또 넣으면 중복(실측 90 → 341 토큰). 섹션을 뺀다.
+    if not getattr(dialect, "server_parsed", False):
+        sections.append(
+            (
+                "Available Tools",
+                _build_tools_section(
+                    active_tools,
+                    dialect,
+                    has_agent_registry=agent_registry is not None,
+                    nonblocking_ask=nonblocking_ask,
+                ),
+            )
         )
-    )
 
     # MCP tools (if manager provided)
     if mcp_manager:

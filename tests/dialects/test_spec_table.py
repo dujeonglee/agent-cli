@@ -26,8 +26,14 @@ def _ops(turn):
 
 
 class TestRegistry:
-    def test_four_builtin_dialects(self):
-        assert list_names() == ["glm_argkey", "hermes_json", "json_fc", "xml_fc"]
+    def test_five_builtin_dialects(self):
+        assert list_names() == [
+            "glm_argkey",
+            "hermes_json",
+            "json_fc",
+            "native_fc",
+            "xml_fc",
+        ]
 
     @pytest.mark.parametrize("name", ALL)
     def test_surface_is_complete(self, name):

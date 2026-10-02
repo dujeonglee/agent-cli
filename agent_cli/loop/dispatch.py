@@ -558,6 +558,20 @@ class TurnDispatcher:
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
             turn=self.state.turn,
+            # v10.2.0: 서버 파싱 방언은 op 마다 `tool` 메시지를 내보내야 해 조각을
+            # 함께 저장한다(텍스트 방언 기록은 그대로 — 두 배로 안 커진다).
+            parts=(
+                [
+                    {
+                        "tool": r["tool_name"],
+                        "success": bool(r["success"]),
+                        "content": r["observation"],
+                    }
+                    for r in results
+                ]
+                if getattr(self.cfg.dialect, "server_parsed", False)
+                else None
+            ),
             corrected_record=corrected_record,
         )
 
@@ -1842,6 +1856,7 @@ def _append_observation(
     render: bool = True,
     recovery_kind: str = "",
     store_emission: bool = True,
+    parts: list[dict] | None = None,
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
@@ -1908,6 +1923,8 @@ def _append_observation(
         # 라 구 세션 레코드(필드 없음)는 fold 대상 아님 = 안전 기본.
         if recovery_kind:
             obs_entry["recovery"] = recovery_kind
+        if parts:
+            obs_entry["parts"] = parts
         stored = ctx.add(obs_entry)
         # ctx.add returns the stored (possibly spilled) message; tolerate a
         # ctx stub that returns None (some tests) by keeping obs_msg.
