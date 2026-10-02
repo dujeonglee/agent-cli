@@ -168,6 +168,11 @@ class TurnDispatcher:
             drop_pending_thought()
         if not render:
             render_recovery(llm_text, message, reason, self.state.turn)
+        # 넛지는 마지막 실패 것만 남긴다(v10.2.3, 사용자 결정): 앞선 미해소
+        # 형식 개입은 이 새 개입이 대체한다 — 쌓이면 실패 원문 인용이 겹쳐
+        # 모방 재료가 된다(v4.51.0 이 피하려던 것). 성공 시 전체 접기는 그대로.
+        if recovery_kind == "format" and self.ctx is not None:
+            self.ctx.fold_resolved_interventions(assume_tail_resolved=True)
         # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
         # — 거부 관찰이 원문을 인용해 자기완결이다(사용자 결정). 남기면 저장
         # 형태(`ops:[complete]`)가 history 에서 final 로 읽히고, 재시도는

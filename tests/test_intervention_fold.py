@@ -93,16 +93,26 @@ class TestManagerFold:
         )
 
     def test_consecutive_failures_keep_only_latest(self, tmp_path):
-        # live 흐름 재현: 실패1→개입1→(파싱성공X, 재실패)→fold 호출 없음…
-        # 두 번째 성공 시 fold 가 해소분+꼬리 전부 접는다
+        # v10.2.3: 새 개입이 앞의 미해소 개입을 대체한다 — 레코드 판정(resume)
+        # 만으로도 마지막 넛지 하나만 남는다.
+        recs = [
+            _fail_prior(),
+            _intervention(content="개입 1"),
+            _fail_prior(),
+            _intervention(content="개입 2"),
+        ]
+        assert fold_resolved_intervention_indices(recs) == [1, 0]
         ctx = self._ctx(tmp_path)
-        ctx.add(_fail_prior())
-        ctx.add(_intervention(content="개입 1"))
-        ctx.add(_fail_prior())
-        ctx.add(_intervention(content="개입 2"))
+        for r in recs:
+            ctx.add(r)
+        resumed = ContextManager(
+            tmp_path / "s", max_context_tokens=100_000, resume=True
+        )
+        left = [r for r in resumed.get_raw_messages() if is_format_intervention(r)]
+        assert [r["content"] for r in left] == ["개입 2"]
+        # 성공이 오면 꼬리까지 전부 접힌다(종전과 같다).
         ctx.fold_resolved_interventions(assume_tail_resolved=True)
-        cache = ctx.get_raw_messages()
-        assert all(not is_format_intervention(r) for r in cache)
+        assert all(not is_format_intervention(r) for r in ctx.get_raw_messages())
 
     def test_history_jsonl_is_immutable(self, tmp_path):
         ctx = self._ctx(tmp_path)
@@ -151,7 +161,11 @@ class TestDispatcherIntegration:
         # 깨진 op-array 를 쓴다.)
         d._handle_text_path('[{"완전 깨진 op — 파싱 불가')
         assert any(is_format_intervention(r) for r in ctx.get_raw_messages())
-        # 턴 N+1: 파싱 성공 emission → 개입 쌍이 캐시 뷰에서 소멸
+        # 턴 N+1: 또 실패 → 넛지는 마지막 것 하나만 남는다(v10.2.3)
+        d._handle_text_path('[{"두 번째도 깨진 op')
+        left = [r for r in ctx.get_raw_messages() if is_format_intervention(r)]
+        assert len(left) == 1 and "두 번째도" in left[0]["content"]
+        # 턴 N+2: 파싱 성공 emission → 개입이 캐시 뷰에서 소멸
         good = 'ok\n\n[{"action":"complete","result":"done"}]'
         d._handle_text_path(good)
         assert all(not is_format_intervention(r) for r in ctx.get_raw_messages())
