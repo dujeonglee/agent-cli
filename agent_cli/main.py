@@ -1272,8 +1272,7 @@ def run(
     dialect: str | None = typer.Option(
         None,
         "--dialect",
-        "--response-format",
-        help="Dialect (tool-call wire shape) name — forces it for the whole session (main and every sub-agent). Unset: each agent uses its model's models.json 'dialect' binding ('wire_format' still read); an unbound model is an error. Built-ins: json_fc (plain-prose reasoning + a flat JSON op array; multi-op), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values. --response-format is the pre-v10 alias (removed in v11).",
+        help="Dialect (tool-call wire shape) name — forces it for the whole session (main and every sub-agent). Unset: each agent uses its model's models.json 'dialect' binding; an unbound model is an error. Built-ins: json_fc (plain-prose reasoning + a flat JSON op array; multi-op), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values.",
     ),
     resume: str = typer.Option(
         "",
@@ -2053,11 +2052,9 @@ def web(
     dialect: str | None = typer.Option(
         None,
         "--dialect",
-        "--response-format",
         help="Dialect (tool-call wire shape) name — forces it for the whole session "
         "(main and every sub-agent). Unset: each agent uses its model's models.json "
-        "'dialect' binding ('wire_format' still read); an unbound model is an error. "
-        "--response-format is the pre-v10 alias (removed in v11).",
+        "'dialect' binding; an unbound model is an error.",
     ),
     host: str = typer.Option(
         "127.0.0.1",
