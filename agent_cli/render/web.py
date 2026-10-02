@@ -57,6 +57,13 @@ from agent_cli.render.base import ConfirmOption, Renderer
 _EVENT_BUFFER_MAX = 5000
 
 
+# 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
+# ``hidx`` 가 이들에만 붙는다.
+_CARD_EVENTS = frozenset(
+    {"assistant_turn", "observation", "user_message", "agent_wake"}
+)
+
+
 class _JsonReady(dict):
     """A fan-out payload dict carrying its own serialized form.
 
@@ -240,6 +247,9 @@ class WebRenderer(Renderer):
         self._scope_depths: dict[str, int] = {}
         # 스레드 → 다음 카드에 붙일 표시 전용 주석 (``note_next``)
         self._pending_notes: dict[int, str] = {}
+        # 다음 카드 이벤트가 가리킬 history 레코드 서수 (v10.6.0, 모델 시점) —
+        # 스레드 로컬, 카드 이벤트 하나가 소비한다.
+        self._pending_hidx: dict[int, int] = {}
         # 스코프(task_id) → 스트리밍 누적 {stream_chars, thinking_chars, last_*}.
         # 인스턴스 하나로 두면 동시에 도는 에이전트들의 토큰이 더해진다 (v9.9.0).
         self._tick_state: dict[str, dict[str, float]] = {}
@@ -356,6 +366,10 @@ class WebRenderer(Renderer):
         note = self._pending_notes.pop(tid, None)
         if note and "note" not in data:
             data = {**data, "note": note}
+        if event in _CARD_EVENTS and "hidx" not in data:
+            hidx = self._pending_hidx.pop(tid, None)
+            if hidx is not None:
+                data = {**data, "hidx": hidx}
         # Server-stamp emit time once, at the single fan-out point, so every
         # card-producing event (incl. delegate/skill inner cards, which route
         # through here with their ``task_id``) carries a ``ts``. Baked into the
@@ -1021,7 +1035,15 @@ class WebRenderer(Renderer):
             if event == "scope_start" and data.get("ctx_dir"):
                 self._replay_scope_inner(data, scope_ends.get(data.get("task_id")))
 
-        for msg in ctx.get_raw_messages():
+        # 캐시 레코드의 history 서수를 같이 돈다 — 재생 카드의 ``hidx`` (모델 시점).
+        # 서수를 모르는 ctx(테스트 더미)는 None → 카드에 hidx 없음(흐려지지 않음).
+        msgs = ctx.get_raw_messages()
+        ordinals = (
+            ctx.cache_ordinals()
+            if hasattr(ctx, "cache_ordinals")
+            else [None] * len(msgs)
+        )
+        for msg, hidx in zip(msgs, ordinals):
             # Resumed cards show the step's original time (from the enriched
             # history record), not the resume moment. ``_restore_cache`` loads
             # full records, so ``ts`` survives in the cache; legacy pre-ts
@@ -1029,7 +1051,7 @@ class WebRenderer(Renderer):
             record_ts = msg.get("ts")
             if pending and record_ts:
                 _flush_scopes_until(record_ts)
-            self._replay_record(msg)
+            self._replay_record(msg, hidx=hidx)
         # Any scope that outlived the last replayed turn (or a session with no
         # turns at all) still needs its bar + closing card.
         self._replay_task_id = None
@@ -1076,7 +1098,12 @@ class WebRenderer(Renderer):
     }
 
     def _replay_record(
-        self, msg: dict, *, force_task_id: str | None = None, sub: bool = False
+        self,
+        msg: dict,
+        *,
+        force_task_id: str | None = None,
+        sub: bool = False,
+        hidx: int | None = None,
     ) -> None:
         """Re-emit ONE history record as its persistent event(s).
 
@@ -1088,6 +1115,8 @@ class WebRenderer(Renderer):
         internal task prompt / injected requests, which the live run never
         shows as timeline cards — mirroring live means skipping them."""
         self._replay_ts = msg.get("ts")
+        if hidx is not None:
+            self.note_record(hidx)  # 첫 카드 이벤트가 소비 — op 마다 다시 찍는다
         # Route this turn into its scope's card (written by
         # ``ContextManager._enrich_record``; absent on pre-v7.28 sessions,
         # which then replay flat as before).
@@ -1126,7 +1155,7 @@ class WebRenderer(Renderer):
                             self._replay_authors.append(a)
                 self.observation(
                     content,
-                    turn=0,
+                    turn=int(msg.get("turn", 0) or 0),
                     tool_name=msg.get("tool", ""),
                     success=msg.get("success", True),
                 )
@@ -1174,6 +1203,7 @@ class WebRenderer(Renderer):
         elif role == "assistant":
             thought = msg.get("thought", "") or ""
             ops = msg.get("ops")
+            rturn = int(msg.get("turn", 0) or 0)
             if isinstance(ops, list) and ops:
                 # Both dialects store every assistant turn — INCLUDING
                 # the terminal ``complete`` — in the ``ops`` shape
@@ -1182,18 +1212,22 @@ class WebRenderer(Renderer):
                 # then flush one card per op. Without this branch the whole
                 # assistant side (thought / action / final) is dropped on
                 # resume — only the singular legacy shape was handled.
-                self.thought(thought, turn=0)
+                self.thought(thought, turn=rturn)
                 for op in ops:
                     if isinstance(op, dict):
+                        if hidx is not None:
+                            self.note_record(hidx)
                         self._replay_assistant_op(
-                            op.get("action", "") or "", op.get("action_input", {})
+                            op.get("action", "") or "",
+                            op.get("action_input", {}),
+                            turn=rturn,
                         )
             elif msg.get("action"):
                 # Legacy singular ``{action, action_input}`` shape — kept for
                 # old history files / the base (non-multi-op) format.
-                self.thought(thought, turn=0)
+                self.thought(thought, turn=rturn)
                 self._replay_assistant_op(
-                    msg.get("action", "") or "", msg.get("action_input", {})
+                    msg.get("action", "") or "", msg.get("action_input", {}), turn=rturn
                 )
             else:
                 # Raw content-only assistant turn (e.g. a NO_JSON emission
@@ -1201,7 +1235,7 @@ class WebRenderer(Renderer):
                 # transcript isn't silently missing it.
                 content = msg.get("content", "")
                 if content:
-                    self.final(content, turn=0)
+                    self.final(content, turn=rturn)
 
     def _replay_scope_inner(self, data: dict, end_ts: float | None) -> None:
         """Replay a scope's OWN turns (from its ``ctx_dir`` history) into its
@@ -1235,7 +1269,8 @@ class WebRenderer(Renderer):
         except OSError:
             return
         task_id = data.get("task_id")
-        for raw in lines:
+        # 줄 번호 = 그 컨텍스트의 history 서수 (빈 줄도 센다 — add 가 쓴 줄만 있다)
+        for line_no, raw in enumerate(lines):
             raw = raw.strip()
             if not raw:
                 continue
@@ -1251,7 +1286,7 @@ class WebRenderer(Renderer):
                     continue
                 if end_ts is not None and rec_ts > float(end_ts) + 0.001:
                     continue
-            self._replay_record(msg, force_task_id=task_id, sub=True)
+            self._replay_record(msg, force_task_id=task_id, sub=True, hidx=line_no)
         # Restore the scope's original stamp so the following scope_end (same
         # pending stream) carries its own ts, not the last inner record's.
         self._replay_task_id = None
@@ -1362,11 +1397,12 @@ class WebRenderer(Renderer):
         frontend tells the user when a bar has no card to jump to."""
         self.replay_from_history(ctx, scope_events=self._scope_replay_events())
 
-    def _replay_assistant_op(self, action: str, action_input) -> None:
+    def _replay_assistant_op(self, action: str, action_input, *, turn: int = 0) -> None:
         """Emit one assistant op as a replay card — ``final`` for a terminal
         ``complete``, otherwise an ``action`` card. Mirrors the live
         ``render_step`` calls; the caller emits the (held) thought first so the
-        first op's card carries it."""
+        first op's card carries it. ``turn`` = the record's turn (v10.6.0 —
+        the model-view boundary needs it; it used to be 0 on replay)."""
         if action == "complete":
             claimed: list = []
             if isinstance(action_input, dict):
@@ -1379,13 +1415,13 @@ class WebRenderer(Renderer):
                         claimed.append(req)
             else:
                 final_text = str(action_input) if action_input else ""
-            self.final(final_text, turn=0, requests=claimed)
+            self.final(final_text, turn=turn, requests=claimed)
         elif action:
             if isinstance(action_input, dict):
                 tool_input = json.dumps(action_input, ensure_ascii=False)
             else:
                 tool_input = str(action_input)
-            self.action(action, tool_input, turn=0)
+            self.action(action, tool_input, turn=turn)
 
     @property
     def persistent_count(self) -> int:
@@ -1643,7 +1679,7 @@ class WebRenderer(Renderer):
         스코프끼리 섞이지 않는다."""
         self._pending_notes[threading.get_ident()] = text
 
-    def agent_wake(self, text: str) -> None:
+    def agent_wake(self, text: str, hidx: int | None = None) -> None:
         """에이전트 메일이 런을 깨웠다 — **전용 이벤트**로 낸다.
 
         종전엔 ``push_user_message`` 로 흘러 `.card-user`(오른쪽 파란 말풍선)로
@@ -1655,7 +1691,26 @@ class WebRenderer(Renderer):
         **persistent=True**: ``agent_mail`` 힌트(도착 순간에만 의미)와 달리
         이건 **그 런이 왜 시작됐는지**를 설명하는 기록이라 재접속 replay 에도
         실려야 한다. 모델 컨텍스트 주입은 별개 경로(run_loop)라 무관하다."""
+        if hidx is not None:
+            self.note_record(hidx)
         self._emit("agent_wake", {"text": text}, persistent=True)
+
+    def note_record(self, hidx: int) -> None:
+        self._pending_hidx[threading.get_ident()] = hidx
+
+    def context_view(self, view: dict) -> None:
+        """스코프별 sticky ``ctx_view`` (v10.6.0, docs/inspector-model-view §3.1).
+
+        sticky 인 이유: 캐시의 현재 모양은 "최신 하나" 가 진실이고 재접속한
+        뷰어도 그것으로 카드를 흐려야 한다(압축 마커처럼 휘발이 아니다).
+        ``task_id`` 는 이 스레드의 스코프 — 인라인 카드 안의 컨텍스트와 상주
+        에이전트 채널이 각자 자기 뷰를 받는다. 프런트는 task_id 를 채널/카드로
+        해석한다(상주 에이전트의 런 스코프 → 그 에이전트 채널).
+        """
+        scope = self.current_scope()
+        payload = {**view, "task_id": scope} if scope else dict(view)
+        # 슬롯 이름은 스코프별 — 리터럴 이벤트명은 리스너 감사 테스트가 읽는다.
+        self.set_sticky("ctx_view:" + scope, "ctx_view", payload)
 
     def compaction(
         self,
@@ -2237,9 +2292,15 @@ class WebRenderer(Renderer):
         else:
             self._input_queue.put(payload.get("content", ""))
 
-    def push_user_message(self, content: str, author: str = "") -> None:
+    def push_user_message(
+        self, content: str, author: str = "", hidx: int | None = None
+    ) -> None:
         """Echo a user-typed chat message into the persistent event
         stream so the frontend renders it as a card.
+
+        ``hidx`` (v10.6.0, additive): the history record's ordinal — the card
+        needs it for the model-view boundary (``ctx_view``). None for UI-only
+        echoes that have no record.
 
         Callers: the worker's run-start echo, the loop's turn-boundary
         injection echo, the ask-answer UI echo, and resume replay. Goes
@@ -2255,6 +2316,8 @@ class WebRenderer(Renderer):
         payload: dict = {"content": content}
         if author:
             payload["author"] = author
+        if hidx is not None:
+            self.note_record(hidx)
         self._emit("user_message", payload, persistent=True)
 
     def set_run_authors(self, authors: list[str]) -> None:

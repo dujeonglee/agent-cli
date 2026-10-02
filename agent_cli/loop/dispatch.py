@@ -203,6 +203,14 @@ class TurnDispatcher:
         self.state.turn -= 1  # 개입은 턴 미계수 (통일 규칙 — docstring 참조)
         return _CONTINUE
 
+    def _next_hidx(self) -> int | None:
+        """레코드보다 **먼저** 그리는 카드(행동·최종답)의 history 서수 (v10.6.0)."""
+        return getattr(self.ctx, "next_ordinal", None)
+
+    def _last_hidx(self) -> int | None:
+        """레코드 **뒤에** 그리는 카드(관찰·에코 최종답)의 history 서수."""
+        return getattr(self.ctx, "last_ordinal", None)
+
     def _record_emission(self, llm_text: str) -> None:
         """옵트인 원문 기록 (Phase 5 — docs/dialects/PHASE5.md §7).
 
@@ -608,6 +616,7 @@ class TurnDispatcher:
                 "action",
                 "",
                 self.state.turn,
+                hidx=self._next_hidx(),
                 tool_name=tool_name,
                 tool_input=json.dumps(disp, ensure_ascii=False)
                 if isinstance(disp, dict)
@@ -660,6 +669,7 @@ class TurnDispatcher:
                 "action",
                 "",
                 self.state.turn,
+                hidx=self._next_hidx(),
                 tool_name="edit_file",
                 tool_input=json.dumps(disp, ensure_ascii=False),
             )
@@ -698,7 +708,7 @@ class TurnDispatcher:
                         turn.thought or "", echo_answer
                     )
                 )
-            render_step("final", echo_answer, self.state.turn)
+            render_step("final", echo_answer, self.state.turn, hidx=self._last_hidx())
 
             return ToolResult(True, output=echo_answer)
 
@@ -799,11 +809,19 @@ class TurnDispatcher:
             self.state.debt_nags += 1
             if not self.state.user_run:
                 return self._refuse_for_debts(llm_text, answer, debts, outcome)
-            render_step("final", answer, self.state.turn, requests=answered)
+            render_step(
+                "final",
+                answer,
+                self.state.turn,
+                requests=answered,
+                hidx=self._next_hidx(),
+            )
             return self._nag_debts(llm_text, debts, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
-        render_step("final", answer, self.state.turn, requests=answered)
+        render_step(
+            "final", answer, self.state.turn, requests=answered, hidx=self._next_hidx()
+        )
         if nagging:
             # 기록은 여기서 하지 않는다 — `_intervene` 의 `_append_observation`
             # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과
@@ -1068,6 +1086,7 @@ class TurnDispatcher:
                 "action",
                 "",
                 self.state.turn,
+                hidx=self._next_hidx(),
                 tool_name="ask",
                 tool_input=json.dumps(op.action_input, ensure_ascii=False)
                 if isinstance(op.action_input, dict)
@@ -1132,6 +1151,7 @@ class TurnDispatcher:
             "action",
             "",
             self.state.turn,
+            hidx=self._next_hidx(),
             tool_name="message",
             tool_input=json.dumps(args, ensure_ascii=False),
         )
@@ -1209,6 +1229,7 @@ class TurnDispatcher:
             "action",
             "",
             self.state.turn,
+            hidx=self._next_hidx(),
             tool_name="reply",
             tool_input=json.dumps(args, ensure_ascii=False),
         )
@@ -1252,6 +1273,7 @@ class TurnDispatcher:
             "action",
             "",
             self.state.turn,
+            hidx=self._next_hidx(),
             tool_name="answer",
             tool_input=json.dumps(args, ensure_ascii=False),
         )
@@ -1287,6 +1309,7 @@ class TurnDispatcher:
             "action",
             "",
             self.state.turn,
+            hidx=self._next_hidx(),
             tool_name="run_skill",
             tool_input=json.dumps(skill_input, ensure_ascii=False),
         )
@@ -1451,6 +1474,7 @@ class TurnDispatcher:
                 "action",
                 "",
                 self.state.turn,
+                hidx=self._next_hidx(),
                 tool_name=tool_name,
                 tool_input=json.dumps(display_input, ensure_ascii=False)
                 if isinstance(display_input, dict)
@@ -1952,4 +1976,11 @@ def _append_observation(
         display = stored_content
         if isinstance(display, str) and display.startswith("Observation: "):
             display = display[len("Observation: ") :]
-        render_step("observation", display, turn, tool_name=tool_name, success=success)
+        render_step(
+            "observation",
+            display,
+            turn,
+            tool_name=tool_name,
+            success=success,
+            hidx=getattr(ctx, "last_ordinal", None),  # 더미 ctx(테스트)는 None
+        )

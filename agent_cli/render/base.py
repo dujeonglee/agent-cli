@@ -378,7 +378,7 @@ class Renderer(ABC):
         으로 두고, 웹만 override 한다(웹은 트레이가 답하는 순간 사라져 흔적이
         없다). 필수 구현 아님."""
 
-    def agent_wake(self, text: str) -> None:
+    def agent_wake(self, text: str, hidx: int | None = None) -> None:
         """에이전트 메일이 idle 한 main 을 깨워 런이 시작됐음 (v9.7.0).
 
         ``text`` 는 **모델이 실제로 받은 지시문**이다 — 사람용 문장이 아니라
@@ -558,9 +558,25 @@ class Renderer(ABC):
                 0,
             )
 
-    def push_user_message(self, content: str, author: str = "") -> None:
+    def note_record(self, hidx: int) -> None:
+        """다음 카드 이벤트가 가리킬 history 레코드 서수 (v10.6.0). 기본 no-op —
+        web 이 스레드 로컬로 받아 ``assistant_turn``/``observation``/``user_message``
+        /``agent_wake`` 페이로드에 ``hidx`` 로 싣는다."""
+
+    def context_view(self, view: dict) -> None:
+        """컨텍스트 캐시의 "모델 시점" 사실 (v10.6.0, docs/inspector-model-view §3.1):
+        ``{"gone": {"turn", "kind"} | None, "summary": {...} | None, "compactions", "folded_nudges"}``.
+        기본 no-op — CLI 는 타임라인을 다시 그리지 않는다. web 이 스코프별 sticky
+        ``ctx_view`` 로 override."""
+
+    def push_user_message(
+        self, content: str, author: str = "", hidx: int | None = None
+    ) -> None:
         """Echo a user message into the conversation surface (v8.6.0 ABC
         승격 — 종전 web 전용+hasattr 게이트).
+
+        ``hidx`` (v10.6.0): 이 메시지의 history 레코드 서수 — 챗의 모델 시점
+        (압축 경계) 판정에 쓴다. 레코드가 없는 UI 전용 에코는 None.
 
         Web 은 persistent ``user_message`` 이벤트로 override; CLI 는 no-op
         기본 — 사용자가 방금 타이핑한 내용을 터미널에 다시 찍을 이유가
