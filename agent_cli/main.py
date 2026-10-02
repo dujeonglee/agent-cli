@@ -1246,7 +1246,7 @@ def run(
     compaction_ratio: float | None = typer.Option(
         None,
         "--compaction-ratio",
-        help="Context compaction target as a fraction of the window (0.5-0.95). Lower = compact earlier. Overrides AGENT_CLI_COMPACTION_RATIO; default 0.8",
+        help="Context compaction target as a fraction of the window (0.5-1.0). 1.0 = compact only when a generation is cut by the window. Lower = compact earlier. Overrides AGENT_CLI_COMPACTION_RATIO; default 1.0",
     ),
     max_agents: int | None = typer.Option(
         None,
@@ -2040,7 +2040,7 @@ def web(
     compaction_ratio: float | None = typer.Option(
         None,
         "--compaction-ratio",
-        help="Context compaction target as a fraction of the window (0.5-0.95). Lower = compact earlier. Default 0.8",
+        help="Context compaction target as a fraction of the window (0.5-1.0). 1.0 = compact only when a generation is cut by the window. Lower = compact earlier. Default 1.0",
     ),
     max_agents: int | None = typer.Option(
         None,

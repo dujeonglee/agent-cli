@@ -189,6 +189,16 @@ OUTPUT_TRUNCATED_NOTICE = (
     "of one big write_file."
 )
 
+# v10.11.0: the cut was the loop's window-fit clamp (the context was full),
+# and the loop has just compacted — so the model is told the room is back and
+# to re-emit as it was, not to shrink its work (OUTPUT_TRUNCATED_NOTICE's
+# "smaller unit" advice would be the wrong lesson here).
+CONTEXT_CLAMP_NOTICE = (
+    "⚠️ Your previous response was cut off because the context window was "
+    "full. Older turns have now been compacted into a summary and the room "
+    "is back. The cut action was NOT executed — re-emit it as it was."
+)
+
 # v10.10.0: the stream-side runaway detector (providers/runaway.py) stopped
 # the generation. Same contract as the cap cut — not executed, retry smaller
 # — but the model is told what it did, so it does not blame the context.

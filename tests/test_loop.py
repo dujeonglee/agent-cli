@@ -4739,7 +4739,10 @@ class TestMaxTokensClamp:
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path, compaction_ratio=0.95)
-        for _ in range(40):
+        # 30, not 40 (v10.11.0): the preventive target now also reserves the
+        # request's minimum output, so 40 of these crossed it and the first
+        # provider call became the compaction summary, not the turn.
+        for _ in range(30):
             ctx.add({"role": "user", "content": "word " * 200})
         provider = _make_provider(_complete("ok"))
         caps = self._caps(window=20_000, max_out=16_000)

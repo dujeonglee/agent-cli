@@ -31,21 +31,22 @@ def _add(ctx, msg):
 
 
 class TestCompactionRatio:
-    """Live-tunable compaction target ratio (web slider). Default 0.8,
-    clamped to [0.5, 0.95] on both construction and set."""
+    """Live-tunable compaction target ratio (web slider). Default 1.0
+    (v10.11.0 — compact when a generation is cut by the window), clamped to
+    [0.5, 1.0] on both construction and set."""
 
     def test_default(self, tmp_path):
-        assert ContextManager(tmp_path).compaction_ratio == 0.8
+        assert ContextManager(tmp_path).compaction_ratio == 1.0
 
     def test_construction_clamps(self, tmp_path):
-        assert ContextManager(tmp_path, compaction_ratio=2.0).compaction_ratio == 0.95
+        assert ContextManager(tmp_path, compaction_ratio=2.0).compaction_ratio == 1.0
         assert ContextManager(tmp_path, compaction_ratio=0.1).compaction_ratio == 0.5
 
     def test_set_clamps_and_returns_stored(self, tmp_path):
         ctx = ContextManager(tmp_path)
         assert ctx.set_compaction_ratio(0.6) == 0.6
         assert ctx.compaction_ratio == 0.6
-        assert ctx.set_compaction_ratio(1.5) == 0.95  # over-cap → max
+        assert ctx.set_compaction_ratio(1.5) == 1.0  # over-cap → max
         assert ctx.set_compaction_ratio(0.2) == 0.5  # under → min
 
 

@@ -204,7 +204,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_GRAMMAR` | — | 디코딩 문법 제약: `off` 로 끔 (미설정/`on` = 기본 켬). web UI 📐 노브의 headless 대응. 켜기는 `models.json` 에 `supports_grammar: true` 로 **기록된** 모델에서만 효력 — 미지원(false)·미확인(키 없음) 모델엔 어떤 값으로도 켜지지 않는다 (v9.24.0) |
 | `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. `--stall` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.55.0) |
 | `AGENT_CLI_STREAM_MAX_ATTEMPTS` | — | 무진전 시 **총** 전송 횟수(첫 전송 포함), 1~10, 기본 4. 최대 대기 = 한도 × 이 값. `--stall-attempts` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.60.0) |
-| `AGENT_CLI_COMPACTION_RATIO` | — | 컨텍스트 압축 목표 비율 (0.5~0.95, 기본 0.8). 낮을수록 일찍·자주 압축. `--compaction-ratio` 또는 웹 🗜️ 노브로 세션 중 변경 (v8.61.0) |
+| `AGENT_CLI_COMPACTION_RATIO` | — | 컨텍스트 압축 목표 비율 (0.5~1.0, 기본 1.0 — 창에 잘릴 때만 압축, v10.11.0). 낮을수록 일찍·자주 압축. `--compaction-ratio` 또는 웹 🗜️ 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_MAX_AGENTS` | — | 동시 생존 서브에이전트 상한 (0 = 무제한, 기본 10). `--max-agents` 또는 웹 👥 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`read_context` 가 모두 같은 루트를 봄 (v8.50.0) |
 
@@ -351,12 +351,18 @@ agent-cli run "task description" [options]
 | `--max-depth` | 중첩 깊이 (agent + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--stall` | 스트림 무진전 한도 — `600`(초)·`10m`(분)·`0`(끔). env 보다 우선 | `10m` |
 | `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
-| `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~0.95). 낮을수록 일찍 압축 | `0.8` |
+| `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성 | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
+
+**실패 기록 `failures.jsonl` (v10.11.0)**: 루프가 쓸 수 없었던 생성은 **본문과 함께** 세션 디렉터리(에이전트는 각자 디렉터리)의 `failures.jsonl` 에 한 줄씩 남습니다 — 형식 이탈(`NO_JSON`·`NO_ACTION`·`DEGENERATE`·`SCHEMA_MISMATCH` 등 dispatch 의 `failure_signal` 전부), 출력 절단(`OUTPUT_TRUNCATED`, `stop_detail` = model_cap/context_clamp/server_cap), 폭주(`RUNAWAY`, 감지 규칙), 삼켜진 출력. 필드: `v, ts, turn, model, dialect, failure_signal, stop_reason, stop_detail, parse_stage, primitives, usage, text, text_truncated, thinking`. `turns.jsonl` 은 본문을 싣지 않고(사생활 계약) `verbose.jsonl` 은 `--verbose` 일 때만 쓰므로, 67qcmb 의 32K 폭주처럼 "모델이 실제로 뭘 냈나" 를 사후에 볼 길이 없던 구멍을 메웁니다. 항상 켜져 있고 깨끗한 세션은 파일이 생기지 않습니다. 본문은 1,000,000자에서 머리/꼬리로 잘리고 `text_truncated` 가 켜집니다.
+
+```bash
+jq -c '{turn, failure_signal, stop_reason, stop_detail, chars: (.text|length)}' .agent-cli/sessions/<id>/failures.jsonl
+```
 | `--dialect` | Dialect 플러그인 이름. 빌트인: `json_fc` (산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능 — `docs/dialects/PHASE2.md` §8). `hermes_json` (`<tool_call>{"name": …, "arguments": {…}}</tool_call>` — Hermes 2~4·Qwen2.5/3/Next·Granite 4.0/4.1 의 네이티브 모양, **실모델 미검증**: 파서·문법·foreign 구제 테스트만), `glm_argkey` (`<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>` — GLM-4.5~5.3, **실모델 미검증**). v9.27.0 부터 포맷은 코드가 아니라 **스펙(데이터)** 이다 — `agent_cli/dialects/specs/` 에 `DialectSpec` 하나를 추가하면 렌더·파서·문법·구제가 엔진에서 나온다(`docs/dialects/PHASE5.md`). `agent_cli/dialects/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **지정하면 세션 전체(main 과 모든 서브에이전트)에 강제**. 미지정이면 각 에이전트는 자기 모델의 models.json `dialect` 바인딩을 쓰고, **바인딩 없는 모델은 에러**(기본값 없음, v10.3.0) | (모델 바인딩) |
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
 
@@ -1476,7 +1482,9 @@ keeps it verbatim. Pace and scope stay the same.
 
 #### Context Compaction (목표치 초과 시)
 
-매 LLM 호출 직전, 캐시가 그 호출의 목표치 `context_window × compaction_ratio(기본 0.8) − 시스템 프롬프트 − 세션 상태` 를 **넘으면** 단순 FIFO drop 대신 LLM 요약 압축이 실행됩니다. 별도의 90% 임계는 없습니다 — 세션 상태 꼬리의 `context: ~N / M tokens (p% — compaction at 100%)` 에서 M 이 바로 이 목표치라, 90% 는 "목표치까지 10% 남음" 이지 경보가 아닙니다.
+**창이 곧 트리거 (v10.11.0)**: 기본 `compaction_ratio` 는 **1.0** 입니다. 하니스는 요청마다 `max_tokens` 를 `창 − 프롬프트 − 512` 로 줄이므로 창이 차면 출력 몫이 줄고, 생성이 그 클램프에 닿아 `length` 로 끝나면(`stop_detail=context_clamp`) 루프가 **그 자리에서 압축**(`compact_now`, 오래된 절반을 요약)하고 모델에게 "창이 차서 잘렸고 이제 압축해 자리가 돌아왔으니 그대로 다시 내라" 고 알립니다(`CONTEXT_CLAMP_NOTICE` — 출력 상한 절단의 "더 작은 단위로" 와 구분: 줄이라는 교훈이 아님). 압축이 아무것도 못 걷어내면 평소 절단 알림입니다. 즉 압축은 추정 비율이 아니라 **실제로 창이 필요해진 순간**에 돕니다 — 67qcmb 에서 고정 80% 목표치가 필요보다 일찍 압축하고, 그 퍼센트를 본 모델이 목표치 바로 아래서 두 시간 멈췄던 데 대한 답입니다. 비용은 잘린 생성 한 번(클램프 크기 이하)뿐이고, 작은 응답은 창이 거의 찼어도 그대로 지나갑니다. 비율을 낮추면 종전처럼 고정 비율에서 미리 압축합니다. 예방 목표치는 비율과 무관하게 **요청의 최소 출력 몫(1,024 + 여유 512)** 을 항상 남깁니다 — 1.0 에서 캐시가 창을 다 채워 창을 넘는 요청이 나가지 않도록.
+
+매 LLM 호출 직전, 캐시가 그 호출의 목표치 `context_window × compaction_ratio − 시스템 프롬프트 − 세션 상태 − 최소 출력 몫` 을 **넘으면** 단순 FIFO drop 대신 LLM 요약 압축이 실행됩니다(비율 1.0 에서는 거대한 관찰 등이 창을 한 번에 채운 경우의 안전망). 별도의 90% 임계는 없고, 꼬리에는 사용량 수치가 없습니다(v10.9.0).
 
 1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
 2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄

@@ -132,7 +132,7 @@ class TestCreateSubagentCtx:
     def test_no_parent_uses_default_ratio(self, tmp_path):
         ctx, error = create_subagent_ctx("none", None, tmp_path / "sub")
         assert error == "" and ctx is not None
-        assert ctx.compaction_ratio == 0.8  # DEFAULT_COMPACTION_RATIO
+        assert ctx.compaction_ratio == 1.0  # DEFAULT_COMPACTION_RATIO (v10.11.0)
 
     def test_fork_without_parent_is_error(self, tmp_path):
         ctx, error = create_subagent_ctx("fork", None, tmp_path / "sub")
