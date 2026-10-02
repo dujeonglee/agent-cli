@@ -43,6 +43,9 @@ FAILURE_NO_OUTPUT = (
     "NO_OUTPUT"  # A1b: parse stage 0 but content is empty/whitespace-only
 )
 FAILURE_NO_ACTION = "NO_ACTION"  # A3: JSON parsed but action field missing
+# v10.1.7: 서버가 출력 토큰을 셌는데 content·사고·tool_calls 가 전부 비었다 — 서버측
+# 파서가 블록을 삼킨 것(실측: 게이트웨이가 xml_fc 의 <tool_call> 을 content 에서 지움).
+FAILURE_OUTPUT_SWALLOWED = "OUTPUT_SWALLOWED"
 FAILURE_UNKNOWN_TOOL = "UNKNOWN_TOOL"  # A4: action references a tool not in registry
 FAILURE_SCHEMA_MISMATCH = "SCHEMA_MISMATCH"  # A5: action_input violates tool schema
 FAILURE_NESTED_ENVELOPE = (

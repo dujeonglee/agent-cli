@@ -1022,6 +1022,57 @@ class TestRunLoopObservability:
         assert "thinking_stop" in kw
         assert kw["thinking_stop"] is ctx.dialect.thinking_stop
 
+    def test_tokens_but_no_text_is_output_swallowed(self, caps, tmp_path):
+        """v10.1.7 (회사 실측): 서버가 output 토큰을 셌는데 content·사고·tool_calls 가
+        전부 비면 NO_OUTPUT 이 아니라 OUTPUT_SWALLOWED — 재시도 문구는 bare JSON
+        배열 우회를 알리고, 사용자에겐 경고가 한 번 간다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="", usage=TokenUsage(input_tokens=9000, output_tokens=33)
+            ),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "OUTPUT_SWALLOWED"
+        assert "swallowed_output_hint" in rows[0]["primitives_applied"]
+        last = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
+        assert "consumed your tool-call block" in last and "bare JSON array" in last
+
+    def test_empty_with_zero_tokens_stays_no_output(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="", usage=TokenUsage(input_tokens=9000, output_tokens=0)
+            ),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        assert self._read_turns(tmp_path)[0]["failure_signal"] == "NO_OUTPUT"
+
     def test_whitespace_only_response_records_no_output_signal(self, caps, tmp_path):
         """Whitespace-only content (newlines, tabs, spaces) must also be
         classified as NO_OUTPUT — operationally identical to empty."""

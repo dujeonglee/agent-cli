@@ -36,6 +36,7 @@ from agent_cli.render import (
     notify_memory_applied,
     render_header,
     render_run_ended,
+    render_status,
     render_step,
     render_system_prompt_snapshot,
     render_token_usage,
@@ -913,6 +914,27 @@ class AgentLoop:
 
         llm_text = response.content
 
+        # v10.1.7: 토큰은 났는데 content·사고·tool_calls 전부 빔 = 서버가 삼켰다.
+        # 하니스가 되살릴 재료가 없으니 사용자에게 한 번 알리고 신호로 남긴다.
+        swallowed = (
+            not (llm_text or "").strip()
+            and not (getattr(response, "thinking", "") or "").strip()
+            and not getattr(response, "tool_calls", None)
+            and response.usage is not None
+            and (response.usage.output_tokens or 0) > 0
+        )
+        self._swallowed_turn = swallowed  # _finish_response 가 dispatch 에 넘긴다
+        if swallowed and not getattr(self, "_warned_swallowed", False):
+            self._warned_swallowed = True
+            render_status(
+                "warn",
+                f"server reported {response.usage.output_tokens} output tokens but "
+                "delivered no text — a server-side parser likely consumed the "
+                f"'{self.dialect.name}' tool-call block. On this server bind the "
+                'model to json_fc (models.json "dialect": "json_fc") or disable '
+                "the server's tool-call parser.",
+                self.turn,
+            )
         if not (llm_text or "").strip() and getattr(response, "tool_calls", None):
             # v10.1.4: 서버의 tool parser 가 <tool_call> 블록을 content 에서 빼내
 
@@ -994,7 +1016,10 @@ class AgentLoop:
             return result
 
         result = self._handle_text_path(
-            llm_text, response.usage, thinking=response.thinking
+            llm_text,
+            response.usage,
+            thinking=response.thinking,
+            swallowed=getattr(self, "_swallowed_turn", False),
         )
 
         # OnTurnEnd hook
@@ -1053,8 +1078,12 @@ class AgentLoop:
         )
         return self._CONTINUE
 
-    def _handle_text_path(self, llm_text: str, usage=None, *, thinking=None):
-        return self._dispatch._handle_text_path(llm_text, usage, thinking=thinking)
+    def _handle_text_path(
+        self, llm_text: str, usage=None, *, thinking=None, swallowed: bool = False
+    ):
+        return self._dispatch._handle_text_path(
+            llm_text, usage, thinking=thinking, swallowed=swallowed
+        )
 
     def _task_text(self) -> str:
         return self._dispatch._task_text()
