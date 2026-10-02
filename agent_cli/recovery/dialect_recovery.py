@@ -45,6 +45,7 @@ def format_no_json_retry(
     dialect=None,
     syntax_error: str | None = None,
     thinking_only: bool = False,
+    swallowed: bool = False,
 ) -> Intervention:
     """Build the Intervention for an LLM response that failed to parse.
 
@@ -71,6 +72,22 @@ def format_no_json_retry(
     """
     wf = _resolve_dialect(dialect)
     echo = echo_prior_output(prior_content)
+    if not echo and swallowed:
+        # v10.1.7 (실측): 서버가 토큰은 셌는데 글을 안 줬다 — 서버측 파서가 호출
+        # 블록을 삼킨 것. 같은 모양으로 다시 내면 또 삼킨다. 레지스트리가 bare
+        # JSON 배열을 타 방언(json_fc)으로 건지므로 그 길을 알려 준다.
+        return Intervention(
+            message=(
+                "The server counted output tokens but delivered NO text — a "
+                "server-side parser most likely consumed your tool-call block "
+                "before it reached the harness. Do not repeat the same shape. "
+                "Emit the call as a bare JSON array instead: "
+                '[{"action": "<tool>", ...params}] — the harness accepts it and '
+                "re-renders it. (The user has been told the binding should "
+                "change to json_fc on this server.)"
+            ),
+            primitives=["swallowed_output_hint"],
+        )
     if not echo and thinking_only:
         # v10.1.4 (실측 NO_OUTPUT): content 는 비었는데 사고 채널에는 글이 있다 —
         # 호출이 사고 안에 갇혔거나(미닫힘 <think>) 사고로 예산을 다 썼다.
