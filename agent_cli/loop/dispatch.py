@@ -33,8 +33,8 @@ from agent_cli.recovery.detectors import (
     unwrap_nested_envelope,
 )
 from agent_cli.recovery.dialect_recovery import (
-    format_no_action_retry,
-    format_no_json_retry,
+    build_format_nudge,
+    make_format_nudge,
 )
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
@@ -139,8 +139,12 @@ class TurnDispatcher:
         recovery_kind: str = "",
         render: bool = False,
         store_emission: bool = True,
+        nudge: dict | None = None,
     ):
         """개입(회복 넛지) 공통 마무리 — 종전 5곳 복제 블록의 단일화.
+
+        ``nudge`` (v10.5.0): 파싱 실패의 구조화 기록 — 있으면 관찰 레코드는
+        ``message`` 대신 이것만 저장한다(문장은 읽을 때 방언이 조립).
 
         render_recovery → 관찰 append(render=False — 이미 표면화됨) → outcome
         기록 → 턴 미계수 → ``_CONTINUE``. **턴 계수 통일 규칙**: 개입 턴은
@@ -190,6 +194,7 @@ class TurnDispatcher:
             render=render,  # False: render_recovery already surfaced it
             recovery_kind=recovery_kind,
             store_emission=store_emission,
+            nudge=nudge,
         )
         if failure_signal is not None:
             outcome["failure_signal"] = failure_signal
@@ -1597,18 +1602,15 @@ class TurnDispatcher:
             _debug_log(
                 f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"
             )
-            intervention = format_no_action_retry(
-                prior_content=llm_text, dialect=self.cfg.dialect
-            )
+            nudge = make_format_nudge("no_action", llm_text)
             recovery_reason = "no action"
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
-            syntax_error = self.cfg.dialect.diagnose_syntax_error(llm_text)
-            intervention = format_no_json_retry(
-                prior_content=llm_text,
-                dialect=self.cfg.dialect,
-                syntax_error=syntax_error,
+            nudge = make_format_nudge(
+                "no_json",
+                llm_text,
+                syntax_error=self.cfg.dialect.diagnose_syntax_error(llm_text),
                 thinking_only=bool(
                     not (llm_text or "").strip() and getattr(self, "_turn_thinking", "")
                 ),
@@ -1618,6 +1620,9 @@ class TurnDispatcher:
                 ),
             )
             recovery_reason = "invalid JSON"
+        # 저장은 구조(nudge)만, 문장은 방언이 조립한다 (v10.5.0) — 라이브
+        # 메시지와 캐시 렌더·resume 이 같은 build_format_nudge 를 쓴다.
+        intervention = build_format_nudge(nudge, self.cfg.dialect)
         # failure_signal 은 넘기지 않는다 — _handle_text_path 의 초기 분류
         # (NO_OUTPUT/NO_JSON/NO_ACTION)를 그대로 승계.
         # 재시도는 기록하지 않는다 (v9.21 원칙, v9.23.2 에서 이 경로로 확장):
@@ -1633,6 +1638,7 @@ class TurnDispatcher:
             primitives=intervention.primitives,
             recovery_kind="format",
             store_emission=False,
+            nudge=nudge,
         )
 
     # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
@@ -1860,8 +1866,13 @@ def _append_observation(
     recovery_kind: str = "",
     store_emission: bool = True,
     parts: list[dict] | None = None,
+    nudge: dict | None = None,
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
+
+    ``nudge`` (v10.5.0): 구조화 형식 넛지 — 레코드에 ``content`` 대신
+    ``nudge`` 를 저장한다. 요청 메시지(``obs_msg``)는 호출자가 같은 구조에서
+    현재 방언으로 조립한 것이라 라이브 == 렌더.
 
     ``store_emission=False`` (v9.21.0): 모델의 원문을 **저장하지 않는다** —
     관찰만 남긴다. 물린 ``complete`` 에 쓴다: 거부 관찰이 원문을 인용해
@@ -1913,12 +1924,11 @@ def _append_observation(
     if ctx:
         if store_emission:
             ctx.add(history_record)
-        obs_entry = {
-            "role": "user",
-            "tool": tool_name,
-            "success": success,
-            "content": obs_msg,
-        }
+        obs_entry = {"role": "user", "tool": tool_name, "success": success}
+        if nudge is not None:
+            obs_entry["nudge"] = nudge
+        else:
+            obs_entry["content"] = obs_msg
         if artifact:
             obs_entry["artifact"] = artifact
         # 개입 마킹 (fold, v4.51.0): "format"=파싱/스키마 개입 — 해소 시

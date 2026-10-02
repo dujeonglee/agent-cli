@@ -61,7 +61,7 @@ def _estimate_message_tokens(msg: dict) -> int:
     """Estimate tokens for a single message dict."""
     msg = _context_view(msg)  # count what is actually re-fed (elided body)
     total = 4  # role + formatting overhead
-    for key in ("content", "thought", "action_input"):
+    for key in ("content", "thought", "action_input", "nudge"):
         val = msg.get(key)
         if val is None:
             continue
@@ -111,6 +111,16 @@ def render_history_message(
     그 목록(서버 파싱 방언은 op 마다 `tool` 메시지). assistant 는 `index` 를 받아
     호출 id 를 합성한다. 텍스트 방언에서는 바이트 동일한 한 건이다."""
     role = msg.get("role", "user")
+    if role == "user" and isinstance(msg.get("nudge"), dict):
+        # 구조화 형식 넛지 (v10.5.0): 저장은 사실만, 문장은 읽는 방언이 조립.
+        from agent_cli.recovery.dialect_recovery import build_format_nudge
+
+        return [
+            {
+                "role": "user",
+                "content": build_format_nudge(msg["nudge"], dialect).message,
+            }
+        ]
     if role == "user" and msg.get("tool"):
         rendered = dialect.render_observation_from_history(
             msg, index=index, assistant_index=assistant_index

@@ -81,6 +81,11 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
     if role == "user":
         if "tool" in message:  # tool observation
             text = content.removeprefix(_OBSERVATION_PREFIX)
+            nudge = message.get("nudge")
+            if isinstance(nudge, dict):  # 구조화 형식 넛지 (v10.5.0) — 문장 없음
+                text = (
+                    f"format nudge ({nudge.get('reason')}): {nudge.get('prior') or ''}"
+                )
             return "observation", [str(message.get("tool") or "")], text
         # human query — strip the "[author]: " label for the search surface
         author = message.get("author")

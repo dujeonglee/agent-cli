@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.recovery.intervention import Intervention
-from agent_cli.recovery.primitives import echo_prior_output
+from agent_cli.recovery.primitives import bounded_excerpt, echo_prior_output
 
 
 def _resolve_dialect(dialect):
@@ -46,6 +46,7 @@ def format_no_json_retry(
     syntax_error: str | None = None,
     thinking_only: bool = False,
     swallowed: bool = False,
+    prior_is_excerpt: bool = False,
 ) -> Intervention:
     """Build the Intervention for an LLM response that failed to parse.
 
@@ -68,10 +69,13 @@ def format_no_json_retry(
     Returns an :class:`Intervention` carrying both the user-role message
     to inject and the names of primitives composed (for observability).
 
+    ``prior_is_excerpt`` (v10.5.0): ``prior_content`` is the bounded excerpt
+    a structured nudge record stored — quote it without bounding again.
+
     Keyword-only to avoid silent positional misuse.
     """
     wf = _resolve_dialect(dialect)
-    echo = echo_prior_output(prior_content)
+    echo = echo_prior_output(prior_content, excerpt=not prior_is_excerpt)
     if not echo and swallowed:
         # v10.1.7 (실측): 서버가 토큰은 셌는데 글을 안 줬다 — 서버측 파서가 호출
         # 블록을 삼킨 것. 같은 모양으로 다시 내면 또 삼킨다. 레지스트리가 bare
@@ -114,7 +118,9 @@ def format_no_json_retry(
     return Intervention(message="\n".join(parts), primitives=primitives)
 
 
-def format_no_action_retry(*, prior_content: str = "", dialect=None) -> Intervention:
+def format_no_action_retry(
+    *, prior_content: str = "", dialect=None, prior_is_excerpt: bool = False
+) -> Intervention:
     """Build the Intervention when parsing succeeded but no action was provided.
 
     Same failure-grounding rationale as ``format_no_json_retry``.
@@ -122,7 +128,7 @@ def format_no_action_retry(*, prior_content: str = "", dialect=None) -> Interven
     see that builder's docstring for the rationale.
     """
     wf = _resolve_dialect(dialect)
-    echo = echo_prior_output(prior_content)
+    echo = echo_prior_output(prior_content, excerpt=not prior_is_excerpt)
     if not echo:
         return Intervention(message=wf.static_retry_hint_no_action(), primitives=[])
 
@@ -137,4 +143,62 @@ def format_no_action_retry(*, prior_content: str = "", dialect=None) -> Interven
     return Intervention(
         message=msg,
         primitives=["echo_prior_output", "constrain_action_required"],
+    )
+
+
+# ── 구조화 넛지 레코드 (v10.5.0) ────────────────────────────────
+# 저장은 방언과 독립이어야 한다: history 에는 파싱 실패의 **사실**(이유·인용·
+# 진단·플래그)만 남기고, 모델이 읽을 문장은 읽는 시점의 방언이 조립한다.
+# 종전엔 조립된 문장을 content 로 저장해 다른 방언으로 resume 하면 엉뚱한
+# 규칙("JSON 배열로 끝내라")이 재생됐다. 라이브 메시지도 같은 함수로
+# 만들므로 라이브 == 캐시 == resume 이 구성상 같다.
+
+FORMAT_NUDGE_REASONS = ("no_json", "no_action")
+
+
+def make_format_nudge(
+    reason: str,
+    llm_text: str,
+    *,
+    syntax_error: str | None = None,
+    thinking_only: bool = False,
+    swallowed: bool = False,
+) -> dict:
+    """파싱 실패 한 건의 구조화 기록 — ``{"reason", "prior", …}``.
+
+    ``prior`` 는 실패 원문의 **경계 발췌**(v9.23.2 의 head+tail) — 원문 전체는
+    저장하지 않는다(32K 폭주 교훈). 플래그·진단은 참일 때만 키가 생긴다.
+    ``syntax_error`` 는 실패 시점 방언의 진단문(위치·캐럿)이다 — 원문이 없어
+    다시 만들 수 없으므로 데이터로 남긴다.
+    """
+    if reason not in FORMAT_NUDGE_REASONS:
+        raise ValueError(f"unknown format nudge reason: {reason!r}")
+    cleaned = (llm_text or "").strip()
+    nudge: dict = {
+        "reason": reason,
+        "prior": bounded_excerpt(cleaned) if cleaned else "",
+    }
+    if syntax_error:
+        nudge["syntax_error"] = syntax_error
+    if thinking_only:
+        nudge["thinking_only"] = True
+    if swallowed:
+        nudge["swallowed"] = True
+    return nudge
+
+
+def build_format_nudge(nudge: dict, dialect) -> Intervention:
+    """구조화 넛지 → 현재 ``dialect`` 의 문장 (라이브·캐시 렌더·resume 공용)."""
+    prior = str(nudge.get("prior") or "")
+    if nudge.get("reason") == "no_action":
+        return format_no_action_retry(
+            prior_content=prior, dialect=dialect, prior_is_excerpt=True
+        )
+    return format_no_json_retry(
+        prior_content=prior,
+        dialect=dialect,
+        syntax_error=nudge.get("syntax_error") or None,
+        thinking_only=bool(nudge.get("thinking_only")),
+        swallowed=bool(nudge.get("swallowed")),
+        prior_is_excerpt=True,
     )
