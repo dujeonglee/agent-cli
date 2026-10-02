@@ -55,11 +55,13 @@ Budgets (fixed)
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import requests
 
@@ -618,6 +620,17 @@ def run_sse_stream(
         )
 
     clock = ProgressClock()
+    # v10.1.6: 원문 스트림 덤프 — ``AGENT_CLI_DUMP_STREAM=<파일>`` 이면 서버가 보낸
+    # 줄을 해석 전에 그대로 덧붙인다(호출마다 구분선). verbose 는 해석 결과만 담아
+    # "content 가 비었다" 의 원인(서버가 어느 필드로 보냈나)을 못 보여 줬다.
+    dump_path = os.environ.get("AGENT_CLI_DUMP_STREAM", "")
+    dump = None
+    if dump_path:
+        try:
+            dump = open(dump_path, "a", encoding="utf-8")  # noqa: SIM115 — 루프 내내 열어 둔다
+            dump.write(f"\n### stream {datetime.now(timezone.utc).isoformat()}\n")
+        except OSError:
+            dump = None
     for line in interruptible_lines(
         r,
         interrupt_check,
@@ -629,6 +642,8 @@ def run_sse_stream(
         if not line:
             continue
         line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+        if dump is not None:
+            dump.write(line_str + "\n")
         if not line_str.startswith("data: "):
             continue
         payload = line_str[6:]
@@ -697,6 +712,8 @@ def run_sse_stream(
         if ev.done:
             break
 
+    if dump is not None:
+        dump.close()
     acc.content = "".join(content_parts)
     acc.thinking = "".join(thinking_parts)
     # Reader stopped early because the user interrupted; flag still set →
