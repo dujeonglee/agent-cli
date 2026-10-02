@@ -339,3 +339,27 @@ class TestStaticWiring:
         assert "dataset.hidx" in js and "gone.hidx" in js
         assert "ctxApplyToCard(cardEl" in js  # finishCard 가 새 카드에도 적용
         assert ".card.ctx-gone" in css and ".card.ctx-summary" in css
+
+
+class TestSnapshotEnd:
+    """v10.8.1: 스냅샷의 마지막 항목은 ``snapshot_end`` — 클라이언트가 그때까지
+    타임라인을 숨기고 한 번에 맨 아래로 점프한다."""
+
+    def test_snapshot_ends_with_marker_and_count(self):
+        r = WebRenderer()
+        r.push_user_message("a")
+        r.push_user_message("b")
+        snapshot = r.register_connection(WebConnection(id="c"))
+        assert snapshot[-1][0] == "snapshot_end"
+        assert snapshot[-1][1] == {"events": len(snapshot) - 1}
+        assert sum(1 for e, _ in snapshot if e == "snapshot_end") == 1
+
+    def test_marker_is_not_a_live_event(self):
+        r = WebRenderer()
+        c1 = WebConnection(id="c1")
+        r.register_connection(c1)
+        r.register_connection(WebConnection(id="c2"))  # 두 번째 접속
+        live = []
+        while not c1.queue.empty():
+            live.append(c1.queue.get_nowait()[0])
+        assert "snapshot_end" not in live  # 기존 접속은 viewers 갱신만 받는다

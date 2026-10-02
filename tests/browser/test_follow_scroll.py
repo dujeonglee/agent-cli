@@ -50,12 +50,24 @@ def _scroll_to(page, top):
 
 class TestFollowScroll:
     def test_opens_at_the_bottom(self, stack, page):
-        """규칙 1 — 스냅샷을 재생한 뒤 바닥에 있다."""
+        """규칙 1 — 스냅샷을 재생한 뒤 바닥에 있다. v10.8.1: 재생 중엔 타임라인이
+        숨겨져 있고(`body.loading`), 공개되는 순간 이미 바닥이다 — 내려가는
+        스크롤이 보이지 않는다."""
         stack.emit_ready()
         _fill(stack, 40)
         page.goto(stack.url)
-        assert _wait(lambda: _cards(page) >= 40)
-        assert _wait(lambda: _dist(page) < 2), f"열자마자 바닥이 아니다: {_dist(page)}"
+        page.wait_for_function(
+            "!document.body.classList.contains('loading')", timeout=8000
+        )
+        # 공개 직후 — 기다리지 않고 바로 — 바닥이고 카드는 다 있다
+        assert _dist(page) < 2, f"공개 순간 바닥이 아니다: {_dist(page)}"
+        assert _cards(page) >= 40
+        assert (
+            page.evaluate(
+                "getComputedStyle(document.getElementById('messages')).visibility"
+            )
+            == "visible"
+        )
         assert page.locator("#jump-new").is_hidden()
 
     def test_scrolled_up_holds_and_counts(self, stack, page):

@@ -498,8 +498,13 @@ class TestConnectionLifecycle:
         # First entry is this connection's identity (it learns conn_id before
         # anything else); the rest is the usual buffer replay.
         assert snapshot[0] == ("identity", {"conn_id": "c1"})
-        kinds = [event for event, _ in snapshot if event not in ("identity", "viewers")]
+        kinds = [
+            event
+            for event, _ in snapshot
+            if event not in ("identity", "viewers", "snapshot_end")
+        ]
         assert kinds == ["assistant_turn", "observation"]
+        assert snapshot[-1][0] == "snapshot_end"  # v10.8.1: 스냅샷의 끝 표시
 
     def test_pending_prompt_replays_to_reconnecting_client(self):
         # A pending ``ask``/prompt must be sticky: a client that connects WHILE
@@ -1775,12 +1780,13 @@ class TestWorkerStateReconnect:
         snapshot = r.register_connection(conn)
         # the viewer-count event is positionally irrelevant — filter it so the
         # ready-first / worker_state-trails invariant stays the assertion
-        names = [e for e, _ in snapshot if e != "viewers"]
+        names = [e for e, _ in snapshot if e not in ("viewers", "snapshot_end")]
         # role leads (connection identity), then ready.
         assert names[0] == "identity"
         assert names[1] == "ready"
-        # worker_state trails.
+        # worker_state trails (snapshot_end 는 그 뒤, 경계 표시일 뿐).
         assert names[-1] == "worker_state"
+        assert snapshot[-1][0] == "snapshot_end"
 
 
 class TestWorkerLoopIntegration:

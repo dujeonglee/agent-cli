@@ -1722,3 +1722,6 @@ footer {
 .card-user > .card-copy { right: auto; left: 8px; }
 .card-task-group > .card-copy { top: 6px; right: 36px; }
 #copy-all-btn.done { color: var(--ok); }
+
+/* 열 때 스냅샷 재생 중 — 타임라인은 숨긴 채 쌓고, snapshot_end 에서 맨 아래로 점프한 뒤 보인다 (v10.8.1) */
+body.loading #messages { visibility: hidden; }
