@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 import sys
 
 import pytest
@@ -66,7 +67,10 @@ class TestNoCliAlias:
             main_mod.app, ["run", "--response-format", "json_fc", "hi"]
         )
         assert result.exit_code == 2
-        assert "No such option: --response-format" in result.output
+        # 리눅스 CI 는 typer 의 rich 출력에 색상 코드가 섞여 옵션 문자열이
+        # 쪼개진다 — ANSI 를 벗긴 뒤 검사 (macOS 로컬만 초록이던 함정).
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "No such option: --response-format" in plain
         assert booted == []
 
 
