@@ -1431,6 +1431,8 @@ keeps it verbatim. Pace and scope stay the same.
 
 **모델에게 가는 문구는 전부 영어, `thought` 용어 정리 (v10.11.1)**: 프롬프트 전수 조사에서 모델 입력에 닿는 한글 네 문장을 찾아 영어로 바꿨습니다 — `monitor` 의 `deadline`/`every` 형식 오류 둘(`parse_duration`; CLI `--stall` 오류도 같은 문구), 프로필이 요구한 모델이 서버에 없을 때의 spawn 거절(이제 "다른 프로필로 spawn 하거나 사용자에게 알리라" 는 다음 행동 포함), 내장 create-agent 스킬의 예시 과제. 사람에게만 보이는 표면(확인 대화상자·콘솔 알림·웹 UI)은 그대로 한글입니다. 또 응답 형식은 "brief reasoning as plain prose" 인데 Context Window Discipline 이 여전히 "Every thought" / "Keep `thought` short" 라고 하던 것을 "Every line of reasoning" / "Keep your reasoning brief" 로 맞췄습니다 — 없는 필드 이름은 `## Thought` 헤더를 되살릴 빌미이고, 그 헤더 반복은 폭주로 잡힙니다. `complete` 를 숨기는 방언용이던 `exposes_complete` 플래그와 ask 안내 변형(`_ASK_INLINE_NO_COMPLETE`, "a thought-only turn")은 쓰는 방언이 없어 삭제했습니다. 회귀 테스트(`tests/test_prompt_language.py`)가 다섯 방언의 시스템 프롬프트·내장 프로필/스킬에 한글이 없고 `thought` 가 없음을 지킵니다.
 
+**없는 것을 가리키던 프롬프트 문구 정리 (v10.11.2)**: 프롬프트 검토에서 나온 다섯 건입니다. ① `json_fc` 형식 규칙 6 은 "태그·`##` 헤더 금지" 에 범위가 없어 HTML 파일 쓰기나 마크다운 `result` 까지 금지로 읽혔습니다 — 금지 문구는 그대로 두고, 이것이 **턴을 쓰는 방식**에 대한 규칙이며 값(파일 내용·`result`·메시지 본문) 안은 자유라는 한 문장을 덧붙였습니다(금지를 약하게 고쳐 쓴 판은 omlx 실측에서 나아진 것이 없어 채택하지 않았습니다). ② `run_skill` 설명이 내장에 없는 스킬 이름(`optimize`, `review-code` 등)을 예로 들던 것을 Available Skills 목록 참조로 바꿨습니다. ③ 내장 `create-agent` 스킬의 예시가 v10 이전의 중첩 `action_input` 모양이던 것을 평평한 모양으로 고쳤습니다. ④ Context Recovery 가 `history.jsonl` 을 `read_file` 로 통째로 읽으라던 것을 `read_context` 조회로 바꾸고, 그 도구가 노출된 루프에서만 냅니다. ⑤ 오류 문구의 `action_input`, 실행 컨텍스트의 `delegate` 같은 옛 용어를 `arguments`/`agent` 로 바꿨습니다. `tests/test_prompt_language.py` 가 재유입을 막습니다.
+
 **폭주 생성 조기 종료 + 잘린 호출 기록 (v10.10.0)**: 같은 방에서 생성 셋이 셸 명령의 `node -e "` 뒤에서 탭·공백·채움 문자로 무너져 32,768 토큰 출력 상한까지 달렸습니다 — 각 27~40분, 합계 106분, 결과는 전부 폐기. 방언 수준 조기 종료(v8.41.0)는 트리거 문자(`#`/`<`)가 있는 청크에서 헤더 반복만 보므로 공백 폭주를 보지 못했습니다. 이제 스트림이 **내용 무관 감지기**(`providers/runaway.py`)를 청크마다 돌립니다 — 공백만 2,048자 이어지거나(`whitespace_run`) 마지막 4,096자에 영숫자가 2% 미만이면(`no_words`; 한글·CJK 는 낱말로 셈, `0,0,0,…` 맵 격자는 절반이 숫자라 안 걸림) 스트림을 닫고 `stop_reason="runaway"` 로 돌아옵니다. 루프는 출력 상한 절단과 같은 계약으로 처리합니다 — 실행하지 않고, 실제 내용까지만 인용해 "폭주했으니 더 작은 단위로 다시" 라고 알리며(컨텍스트 탓이 아님을 분명히), 모델이 복구하면 접힙니다. 그리고 **잘린 호출도 turns.jsonl 행**이 됩니다(종전엔 디스패치가 안 돌아 기록이 없어 서버 로그가 필요했음): `failure_signal` OUTPUT_TRUNCATED/RUNAWAY, `stop_reason` length/runaway, `stop_detail` — length 는 `model_cap`(모델 출력 상한) / `context_clamp`(하니스가 창에 맞춰 줄인 max_tokens 에 도달 — 컨텍스트가 생성을 끝내는 유일한 경로) / `server_cap`(요청보다 적게 생성하고 멈춤 — omlx 는 스스로 줄임), runaway 는 감지 규칙 이름.
 
 **압축 안내 (v9.26.4)**: 압축은 캐시가 호출별 목표치를 넘는 순간 돕니다. 안내는 **단계를 처음 넘는 턴에 한 번**만 붙고(`COMPACTION_NOTICE_STEPS`), 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장됩니다. **v10.9.1**: 안내가 `memory(mode=add)` 와 함께 **더는 맞지 않는 메모리(해결된 블로커·뒤집힌 결정)는 `memory(mode=delete, id=N)` 로 지우라**고도 말합니다 — 메모리 색인은 매 턴 꼬리에 실리고 압축을 그대로 통과하므로, 어느 항목이 낡았는지 아직 판단할 수 있는 압축 전이 정리할 때입니다. 종전(75% 이상 매 턴, "nearly full … must not lose … NOW")은 같은 경보가 턴마다 쌓여 모델이 지나치게 보수적으로 움직였습니다(사용자 보고). 문구는 결핍이 아니라 사실을 말합니다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 **대체**되고 작업은 그대로 이어진다, `memory` 는 원문 그대로 남기고 싶을 때의 선택지. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있다는 실측(`_OBS_COMPLETE_NUDGE`)은 그대로 유효하므로 "끝내지 마라" 류의 문장도 넣지 않습니다(역설적으로 끝낼 생각을 심음). 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
@@ -1520,8 +1522,8 @@ keeps it verbatim. Pace and scope stay the same.
 #### Context Recovery
 
 FIFO에서 밀려난 과거 메시지가 필요할 때:
-- System prompt에 `history.jsonl` 경로 안내 (Context Recovery Guide)
-- LLM이 `read_file(history.jsonl)` 실행하여 과거 맥락 복구
+- System prompt 가 `read_context` 조회를 안내 (Context Recovery Guide — 그 도구가 노출된 루프에만)
+- LLM이 `read_context` 로 필요한 행만 SQL 조회하여 과거 맥락 복구 (v10.11.2 — 종전의 `read_file(history.jsonl)` 통째 읽기는 긴 세션에서 창을 넘겼다)
 - history.jsonl 내 artifact 경로로 run/skill 상세 결과 접근 가능
 
 #### 세션 관리

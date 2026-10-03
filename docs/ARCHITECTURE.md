@@ -464,7 +464,7 @@ class Tool(ABC):
            Task Guidelines + Format Rules (thought에 목적+이유 필수)
            Available Tools / Skills / Agents
            DIRECTIVE.md / Environment
-           Context Recovery Guide ("read_file({session_dir}/history.jsonl)")
+           Context Recovery Guide (read_context 조회 안내 — 그 도구가 노출된 루프만, v10.11.2)
 
 [messages] user: "hooks.py 분석해줘"
            assistant: hooks.py를 분석하기 위해 파일을 읽겠다. → read_file(hooks.py)
@@ -698,7 +698,7 @@ flow 2는 서버 신호(400 + 실제 토큰 수)를 ground truth로 삼아 사�
 - **스트림 무진전 표시 (`stream_stall`, v8.60.0 — agent_mail_hint 와 동형 패턴)**: `providers/http.py` 가 문자열 대신 **구조화**해 `render_stream_stall(kind, elapsed_s, limit_s, attempt, attempts)` 호출. 표시는 이벤트를 두 부류로 가른다 — `kind="wait"` 는 30초마다 **반복**(한 시도에 최대 20회)이라 **제자리 갱신**, `kind="resend"` 는 드문 **전이**라 기록, `kind="clear"` 는 대기 종료 정리. **base 기본**은 `status` 위임(CLI/커스텀 그대로). **MinimalRenderer override**: TTY 면 마르퀴와 같은 한 줄 슬롯에 `\r` 로 제자리 페인트(종전엔 시도당 20줄 × 4시도 = 80줄이 쌓여 정작 재전송·실패가 묻혔다), **비-TTY(harbor·파이프·instance.log)는 기본 구현(줄 출력) 유지** — `\r` 이 무의미하고 줄이 남는 편이 사후 진단에 유리. **WebRenderer override**: 전용 `stream_stall` SSE 이벤트 + wait 는 **sticky 슬롯**(긴 대기 중 접속한 뷰어도 현재 상태를 봐야 하므로 재접속 snapshot 에 실림; 전이/정리 시 슬롯 비움). 프론트는 `app.js` `stream_stall` 리스너 → `renderStreamStall` 이 `.stall-line`(진행바 포함) 하나를 재사용. **이것이 원래 버그의 수리** — 종전엔 이 알림이 전부 `status` 로 나갔고 app.js 에 그 리스너가 없어 **웹에서 통째로 드롭**, 사용자는 40분간 빈 화면 뒤 "LLM call failed" 만 봤다. 계약 테스트 `test_web_renderer.py::TestStreamStallDisplay`(프론트 배선 가드 포함)·`test_render.py::TestStreamStallCli`·브라우저 `TestStreamStallDisplay`.
 - **부분 출력 폐기 (`stream_reset`, v8.61.0)**: 재전송 직전에 호출 — **base 기본 no-op**(부분 출력을 화면에 들고 있지 않은 렌더러는 할 일이 없다), MinimalRenderer 는 마르퀴 버퍼(`_stream_buf`/`_think_buf`/`_stream_chunks`)를 0 으로 되돌리고 줄을 지우며, WebRenderer 는 전용 transient `stream_reset` 이벤트(프론트 `clearStreamingCard(d.task_id)`). **`stream_end` 를 재사용할 수 없다** — 프론트가 그걸 "곧 assistant_turn 이 대체한다"로 읽어 카드를 남기기 때문(여기선 대체가 아니라 폐기). `_emit` 이 스코프 task_id 를 자동 부착해 서브에이전트 카드도 제 것만 지워진다. 계약 테스트 `test_render.py::TestStreamResetCli`·`test_web_renderer.py::TestStreamResetWeb`·브라우저 `test_reset_discards_partial_output`(중복 이어붙기 실재현).
 - **Scratchpad 없음.** history.jsonl이 대화 기록이자 artifact 인덱스
-- **Context inject 없음.** LLM이 필요할 때 read_file로 pull
+- **Context inject 없음.** LLM이 필요할 때 read_context 로 pull
 - System prompt에 Context Recovery Guide 포함
 - 스킬/agent 서브에이전트는 부모 budget 상속
 
