@@ -233,7 +233,9 @@ class TestBuildSystemPromptSections:
 
     def test_section_names_present_and_ordered(self):
         sections = build_system_prompt_sections(
-            _make_caps(), ["read_file", "shell", "agent"], session_dir="/tmp/s"
+            _make_caps(),
+            ["read_file", "read_context", "shell", "agent"],
+            session_dir="/tmp/s",
         )
         names = [n for n, _ in sections]
         # Primacy → Middle → Recency ordering of the always-present sections
@@ -1061,20 +1063,29 @@ class TestSessionIdRemoved:
 class TestContextRecoveryGuide:
     def test_recovery_guide_present(self, caps):
         prompt = build_system_prompt(
-            caps, ["read_file"], session_dir="/tmp/sessions/abc"
+            caps, ["read_file", "read_context"], session_dir="/tmp/sessions/abc"
         )
         assert "## Context Recovery" in prompt
-        assert "history.jsonl" in prompt
-        assert "/tmp/sessions/abc" in prompt
+        assert "read_context" in prompt
+
+    def test_no_recovery_without_the_tool(self, caps):
+        """A profile whose tool list omits read_context is not told to use it."""
+        prompt = build_system_prompt(
+            caps, ["read_file"], session_dir="/tmp/sessions/abc"
+        )
+        assert "## Context Recovery" not in prompt
 
     def test_no_recovery_without_session_dir(self, caps):
         prompt = build_system_prompt(caps, ["read_file"])
         assert "## Context Recovery" not in prompt
 
     def test_build_context_recovery_format(self):
-        result = _build_context_recovery("/tmp/test")
-        assert "read_file" in result
-        assert "/tmp/test/history.jsonl" in result
+        """The guide names read_context, never the raw history file — read
+        whole, a long session's history.jsonl overflows the window."""
+        result = _build_context_recovery()
+        assert "read_context_query=" in result
+        assert "read_file" not in result
+        assert "history.jsonl" not in result
 
 
 class TestThoughtGuidelines:
@@ -1097,7 +1108,9 @@ class TestRecencySectionOrder:
     """
 
     def test_environment_before_recovery(self, caps):
-        prompt = build_system_prompt(caps, ["read_file"], session_dir="/tmp/test")
+        prompt = build_system_prompt(
+            caps, ["read_file", "read_context"], session_dir="/tmp/test"
+        )
         env_pos = prompt.find("## Environment")
         recovery_pos = prompt.find("## Context Recovery")
         assert env_pos >= 0 and recovery_pos >= 0
@@ -1114,7 +1127,7 @@ class TestRecencySectionOrder:
 
         prompt = build_system_prompt(
             caps,
-            ["read_file"],
+            ["read_file", "read_context"],
             skill_stack=["my-skill"],
             session_dir="/tmp/test",
         )
@@ -1128,7 +1141,7 @@ class TestRecencySectionOrder:
         """When Execution Context is included, no Recency section follows it."""
         prompt = build_system_prompt(
             caps,
-            ["read_file"],
+            ["read_file", "read_context"],
             skill_stack=["my-skill"],
             session_dir="/tmp/test",
         )
