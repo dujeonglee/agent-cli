@@ -26,7 +26,6 @@ class TestRegistrationAndFlags:
     def test_flags(self, wf):
         assert wf.multi_op is True
         assert wf.action_required is False
-        assert wf.exposes_complete is True
 
 
 class TestCanonicalParse:

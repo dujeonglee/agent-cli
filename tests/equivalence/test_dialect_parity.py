@@ -134,7 +134,6 @@ class TestParity:
             wf.name,
             wf.multi_op,
             wf.action_required,
-            wf.exposes_complete,
             wf.degeneration_trigger,
             wf.thinking_stop.pattern,
         ] == s["flags"]

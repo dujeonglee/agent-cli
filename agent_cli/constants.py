@@ -239,9 +239,12 @@ def parse_duration(raw: str) -> int:
     try:
         value = int(t)
     except ValueError:
-        raise ValueError(f"{raw!r} — 초(600) · 분(10m) · 시(2h) 형식이어야 합니다")
+        raise ValueError(
+            f"{raw!r} is not a duration — use seconds (600), minutes (10m) or "
+            "hours (2h)"
+        )
     if value < 0:
-        raise ValueError("음수는 쓸 수 없습니다")
+        raise ValueError("a duration cannot be negative")
     return value * mult
 
 

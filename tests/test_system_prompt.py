@@ -73,12 +73,10 @@ for n in ('json_fc',)]"
 
 class _MultiOpFormat:
     """Minimal stand-in for a multi-op dialect (json_fc-style): flat
-    ``{action, plain params}`` ops, no per-tool batch, no `complete` tool.
-    Duck-typed — the prompt layer only reads ``multi_op`` /
-    ``exposes_complete`` and calls ``render_action_input``."""
+    ``{action, plain params}`` ops, no per-tool batch. Duck-typed — the
+    prompt layer only reads ``multi_op`` and calls ``render_action_input``."""
 
     multi_op = True
-    exposes_complete = False
 
     def render_action_input(self, action_input: dict) -> str:
         import json as _json
@@ -97,15 +95,21 @@ class TestMultiOpPromptBranches:
     """The multi-op / no-complete prompt rendering (DESIGN §5): per-tool batch
     prose is dropped (the op array IS the batch — nesting a batch array inside
     the op array is what broke 27B), param keys lose their wire prefix (flat
-    op convention), and `complete` is withheld. Single-action formats are
+    op convention). Single-action formats are
     byte-guarded by the snapshot test above."""
 
     @pytest.fixture
     def section(self):
         return _build_tools_section(_SNAPSHOT_TOOLS, _MultiOpFormat())
 
-    def test_complete_not_listed(self, section):
-        assert "- complete:" not in section
+    def test_complete_is_always_listed(self, section):
+        """v10.11.1: the ``exposes_complete`` switch is gone — every format
+        finishes by calling ``complete`` (no format has withheld it since the
+        thought-only terminal was dropped), so it is always offered and the
+        ask guide always speaks of ``complete``."""
+        assert "- complete:" in section
+        assert "`ask` vs `complete`" in section
+        assert "thought-only" not in section
         # ready_for_review tool was removed entirely
         assert "ready_for_review" not in section
 
@@ -163,10 +167,6 @@ class TestMultiOpPromptBranches:
     def test_delegate_one_task_per_op(self, section):
         assert "Each run op gives ONE task to a sub-agent" in section
         assert 'Always use the "tasks" array format' not in section
-
-    def test_ask_guide_uses_no_complete_variant(self, section):
-        assert "`ask` vs finishing" in section
-        assert "`ask` vs `complete`" not in section
 
     # NOTE: the "singular format keeps batch + complete" inverse test was
     # removed when react became multi-op (Step 2) — no shipped single-op
@@ -529,7 +529,9 @@ class TestBuildSystemPrompt:
     def test_json_format_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "JSON" in prompt
-        assert "thought" in prompt
+        # v10.11.1: the format speaks of "reasoning", never a `thought` field
+        assert "reasoning as plain prose" in prompt
+        assert "thought" not in prompt
 
     def test_no_session_section(self):
         """No ## Session section (the session_id feature + param were removed)."""

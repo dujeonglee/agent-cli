@@ -209,14 +209,6 @@ class DialectBase(ABC):
     batch-specific guide prose; the "one op per target" instruction lives once
     in :meth:`format_rules`. See docs/inputs-array-schema/DESIGN.md §5."""
 
-    exposes_complete: bool = True
-    """Whether ``complete`` is offered to the model as a tool.
-
-    True (default): ``complete`` appears in the Available Tools listing — the
-    model finishes by calling it. False: ``complete`` is withheld (the format
-    signals completion another way, e.g. a thought-only terminal turn), so the
-    prompt layer omits it from the always-included tools."""
-
     # ─── Prompt (abstract) ──────────────────────────────────────
 
     @abstractmethod

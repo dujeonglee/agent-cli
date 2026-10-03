@@ -116,7 +116,6 @@ class DialectSpec:
     prose: Prose | None = None
     action_required: bool = False
     multi_op: bool = True
-    exposes_complete: bool = True
     #: v10.2.0 — 서버가 호출을 파싱한다(요청 `tools`, 응답 `tool_calls`). 문법·구제·
     #: 원문 기록 없음, 기록은 같은 `{thought, ops}`, 내보낼 때만 구조화 메시지.
     server_parsed: bool = False
