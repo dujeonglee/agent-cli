@@ -1414,6 +1414,14 @@ class TestAntiHtmlEmphasis:
             assert "<tool_call>" in rules and "<div>" in rules, name
             assert "UNPARSEABLE" in rules, name
 
+    def test_format_rules_scope_the_ban_to_the_turn_shape(self):
+        """금지는 턴을 쓰는 방식에만 — 값(파일 내용·result) 안의 태그·마크다운은
+        허용이라고 명시한다 (v10.11.2). 금지 문구 자체는 그대로 둔다: 약하게
+        고쳐 쓴 판은 실측에서 나아진 것이 없었다."""
+        rules = self._fmt("json_fc").format_rules()
+        assert "This is about how YOU write the turn" in rules
+        assert "may contain any tags or markdown" in rules
+
     def test_retry_hint_reminds_no_html(self):
         for name in ("json_fc",):
             hint = self._fmt(name).static_retry_hint_no_json()

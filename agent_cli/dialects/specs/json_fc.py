@@ -58,6 +58,8 @@ Rules:
    (## ...). This protocol is plain prose + ONE JSON array, NOTHING else.
    A turn containing tags or headers is UNPARSEABLE and completely wasted —
    if you feel the urge to open a tag, write the JSON array instead.
+   (This is about how YOU write the turn. Text you pass as a value — file
+   content, `result`, a message body — may contain any tags or markdown.)
 7. If an observation shows an error, fix parameters and retry.
 8. Respond in the user's language.
 
