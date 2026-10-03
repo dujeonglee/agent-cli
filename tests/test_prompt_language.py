@@ -141,3 +141,18 @@ class TestRunSkillNamesNoPhantomSkills:
         assert "Available Skills" in text
         for phantom in ("optimize", "review-code", "summarize", "test generation"):
             assert phantom not in text, phantom
+
+
+class TestBuiltinSkillsUseTheFlatCallShape:
+    """create-agent.md showed ``{"action": "agent", "action_input": {...}}`` —
+    the nested shape no dialect has emitted since v10. Arguments sit flat on
+    the op."""
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted(
+            glob.glob(str(PKG / "skills" / "builtin" / "**" / "*.md"), recursive=True)
+        ),
+    )
+    def test_no_nested_action_input(self, path):
+        assert "action_input" not in Path(path).read_text(encoding="utf-8")
