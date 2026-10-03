@@ -3405,7 +3405,7 @@ class TestSkillStack:
         assert "Call stack: main → agent:reviewer → skill:summarize" in ctx
         assert "summarize" in ctx
         assert "reviewer" in ctx
-        assert "Do not delegate" in ctx
+        assert "Do not run or invoke" in ctx
 
     def test_skill_stack_blocks_recursive(self, caps, tmp_path):
         """Same skill in stack → blocked with error."""

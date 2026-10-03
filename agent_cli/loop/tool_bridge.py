@@ -162,7 +162,7 @@ class ToolBridge:
                     f"Tool '{tool_name}' raised "
                     f"{type(e).__name__}: {e}. "
                     f"This is likely a malformed input or an internal "
-                    f"tool error. Review the action_input shape and "
+                    f"tool error. Review the arguments and "
                     f"retry, or try a different approach if the same "
                     f"input keeps failing."
                 ),
@@ -226,7 +226,7 @@ class ToolBridge:
                     f"Tool 'edit_file' raised "
                     f"{type(e).__name__}: {e}. "
                     f"This is likely a malformed input or an internal "
-                    f"tool error. Review the action_input shape and "
+                    f"tool error. Review the arguments and "
                     f"retry, or try a different approach if the same "
                     f"input keeps failing."
                 ),

@@ -1533,7 +1533,7 @@ class TurnDispatcher:
             tool_name, tool_input
         )
         if mismatched:
-            err_msg = f"{schema_err} Fix action_input and retry."
+            err_msg = f"{schema_err} Fix the arguments and retry."
             if accumulate is not None:
                 # N-op 배치: 위 A4 와 같은 이유 — 실패 op 로 적고 계속.
                 outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH

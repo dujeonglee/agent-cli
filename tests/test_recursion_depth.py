@@ -375,7 +375,10 @@ class TestExecutionContextDepth:
         # to wrap up instead of attempting another nest.
         assert re.search(r"depth limit reached", out, re.IGNORECASE)
         assert "run_skill" in out
-        assert "delegate" in out
+        # The tool has been ``agent`` since v5 — ``delegate`` is a name the
+        # model cannot call (v10.11.2).
+        assert "'agent'" in out
+        assert "delegate" not in out
 
     def test_max_depth_zero_keeps_old_behaviour(self):
         # max_depth=0 is the "I don't know the limit" sentinel used

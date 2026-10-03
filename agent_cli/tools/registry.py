@@ -420,7 +420,7 @@ def validate_tool_input(
                 return (
                     False,
                     (
-                        f"action_input for '{tool_name}' must be a JSON object, "
+                        f"arguments for '{tool_name}' must be a JSON object, "
                         f"got string: {action_input!r}"
                     ),
                     action_input,
@@ -430,7 +430,7 @@ def validate_tool_input(
         return (
             False,
             (
-                f"action_input for '{tool_name}' must be a JSON object, "
+                f"arguments for '{tool_name}' must be a JSON object, "
                 f"got {type(action_input).__name__}"
             ),
             action_input,
