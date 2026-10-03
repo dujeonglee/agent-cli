@@ -34,11 +34,11 @@ def _wire(thought: str, action_body: str | None) -> str:
 class TestFlags:
     def test_multi_op_and_complete_exposed(self):
         # Completion is an explicit `complete` op (proven prefix_md/react
-        # model), NOT thought-only — exposes_complete reverted to True
-        # (DESIGN Exp 8: thought-only termination caused a recurring class of
-        # finish bugs, fixed at the origin by reviving complete).
+        # model), NOT a prose-only turn (DESIGN Exp 8: prose-only termination
+        # caused a recurring class of finish bugs, fixed at the origin by
+        # reviving complete). v10.11.1: the opt-out flag itself is gone.
         assert WF.multi_op is True
-        assert WF.exposes_complete is True
+        assert not hasattr(WF, "exposes_complete")
         assert WF.action_required is False
 
     def test_registered(self):

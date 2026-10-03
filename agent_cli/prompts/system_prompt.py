@@ -78,15 +78,15 @@ You are an AI assistant that solves tasks step-by-step using available tools."""
 CONTEXT_DISCIPLINE = """\
 ## Context Window Discipline
 
-Your context window is your single most important resource. Every thought,
-tool call, and observation accumulates across turns. When it fills, older
+Your context window is your single most important resource. Every line of
+reasoning, tool call, and observation accumulates across turns. When it fills, older
 turns are replaced by a structured summary automatically and work continues.
 
 Treat every token you add as a cost:
 
 - Read only what you need. Prefer search or targeted reads over full reads;
   narrow shell commands at the source rather than dumping output.
-- Keep `thought` short. Do not restate what the observation already shows.
+- Keep your reasoning brief. Do not restate what the observation already shows.
 - Large irrelevant context (off-topic content, huge dumps, verbose logs)
   crowds out what you actually need. Filter at the source.
 
@@ -575,35 +575,6 @@ _ASK_INLINE = """\
   conversation would still flow, it's not a real question — use
   `complete`."""
 
-# Variant for formats that do NOT expose `complete` (they finish with a
-# thought-only terminal turn instead) — same intent guidance, ending phrased
-# as "finish" rather than a tool call.
-_ASK_INLINE_NO_COMPLETE = """\
-
-  `ask` vs finishing — pick by intent, not tone:
-  - `ask`: you GENUINELY cannot proceed without information from the
-    user. A real question with real alternatives where you don't know
-    the right answer. "Which of these two paths should I take?",
-    "What's the production database name?", "Should I overwrite this
-    file or keep both?".
-  - finish (a thought-only turn): every other ending. Task done, user
-    said goodbye, user said thanks, user gave a casual reply, you
-    finished your answer and have nothing else to do. The conversation
-    does NOT need a question to continue — the user can simply reply
-    at the next prompt if they want more.
-
-  Common mistakes that keep the loop alive when it should end:
-  - "Was that helpful?" / "Anything else?" / "Let me know if you have
-    questions" — these are pleasantries, not questions. Just finish.
-  - "Goodbye!" / "See you next time!" / "👋" — closing remarks. Finish.
-  - Restating the user's last message back as a question
-    ("So you want X?") when their meaning was already clear. Answer
-    and finish.
-
-  Rule of thumb: if your "question" could be a statement and the
-  conversation would still flow, it's not a real question — finish."""
-
-
 # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 위 두 변형은 "묻느냐
 # 끝내느냐" 를 가르지만, 비동기에서는 **그 둘이 배타적이지 않다** — 물어
 # 두고 끝내는 것이 정상이고, 답이 오면 이어서 깨어난다. 잘못 고르는 비용도
@@ -646,18 +617,12 @@ def _build_tool_inline_guides(
 
     ``edit_file``'s guide has no top-level call examples — its dict
     literals are inner ``edits[i]`` items (not full calls). ``ask``'s
-    guide carries no examples either, but it references `complete`, so
-    formats that don't expose `complete` get the variant phrased around
-    finishing instead.
+    guide carries no examples either.
     """
     if nonblocking_ask:
         ask = _ASK_INLINE_RESIDENT
     else:
-        ask = (
-            _ASK_INLINE
-            if getattr(dialect, "exposes_complete", True)
-            else _ASK_INLINE_NO_COMPLETE
-        )
+        ask = _ASK_INLINE
     return {
         "read_file": _build_read_file_inline(active_tools, dialect),
         "edit_file": _build_edit_file_inline(dialect),

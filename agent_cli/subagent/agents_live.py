@@ -1385,12 +1385,14 @@ class AgentRegistry:
             )
         except ModelNotFound as e:
             near = e.listing.suggest(model)
-            hint = f" (비슷한 이름: {near})" if near else ""
+            # 모델이 읽는 거절 관찰이다(spawn 의 결과) — 영어로, 다음 행동과 함께.
+            hint = f" (closest name: {near})" if near else ""
             avail = ", ".join(e.listing.models[:6])
-            where = f"프로파일 '{profile}'" if profile else "역할 설정"
+            where = f"profile '{profile}'" if profile else "the role settings"
             return (
-                f"{where} 이(가) 요구한 모델 '{model}' 이(가) 서버에 없습니다"
-                f"{hint}. 사용 가능: {avail}"
+                f"the model '{model}' required by {where} is not on the server"
+                f"{hint}. Available: {avail}. Spawn with a different profile, "
+                "or tell the user the profile's model must be fixed."
             )
         except NoModelSelected:
             return ""

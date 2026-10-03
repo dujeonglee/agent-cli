@@ -109,7 +109,7 @@ Profiles are referenced by the `agent` tool:
 
 ```json
 {"action": "agent", "action_input": {
-    "mode": "spawn", "profile": "code-reviewer", "task": "리뷰 전담으로 상주"
+    "mode": "spawn", "profile": "code-reviewer", "task": "Stay on as the dedicated reviewer"
 }}
 ```
 

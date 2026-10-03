@@ -181,7 +181,6 @@ class Dialect(DialectBase):
         self.name = getattr(type(self), "name", None) or spec.name
         self.action_required = spec.action_required
         self.multi_op = spec.multi_op
-        self.exposes_complete = spec.exposes_complete
         self.degeneration_trigger = spec.degeneration_trigger
         self._t = self._w = None
         if spec.args in (ArgStyle.TAGGED, ArgStyle.TAGGED_PAIR):

@@ -38,7 +38,7 @@ class TestRegistry:
     @pytest.mark.parametrize("name", ALL)
     def test_surface_is_complete(self, name):
         wf = get(name)
-        assert wf.name == name and wf.multi_op and wf.exposes_complete
+        assert wf.name == name and wf.multi_op
         assert "## Response Format" in wf.format_rules()
         for m in (
             "constraint_reminder_call",

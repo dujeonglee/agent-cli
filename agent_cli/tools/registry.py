@@ -241,15 +241,12 @@ def allows_extra_keys(params_schema: dict) -> bool:
 
 def effective_tool_names(tool_names: list[str] | None, dialect=None) -> list[str]:
     """The tool set a loop actually exposes, in prompt order — the always-
-    present tools added, ``complete`` dropped when the format does not expose
-    it, static tools first and conditional ones last. Shared by the prompt
-    and the decoding grammar so both describe the same set."""
-    exposes_complete = getattr(dialect, "exposes_complete", True)
+    present tools added (``complete`` among them: every format finishes by
+    calling it, v10.11.1), static tools first and conditional ones last.
+    Shared by the prompt and the decoding grammar so both describe the same
+    set."""
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
     for t in _ALWAYS_INCLUDE:
-        if t == "complete" and not exposes_complete:
-            names = [n for n in names if n != "complete"]
-            continue
         if t not in names:
             names = [*names, t]
     conditional = {"edit_file", "agent"}

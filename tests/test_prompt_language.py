@@ -1,0 +1,127 @@
+"""v10.11.1 — everything the harness sends to the MODEL is English, and no
+prompt still speaks of a ``thought`` field.
+
+Found by the prompt inventory (2026-10-03): four Korean sentences reached the
+model — two ``parse_duration`` errors (monitor ``deadline``/``every``), the
+spawn refusal for a profile whose model is not on the server, and an example
+task in the built-in create-agent skill. They were human-facing strings
+reused on a model-facing path. Human-only surfaces (confirm dialogs, console
+notices, the web UI) stay Korean and are not covered here.
+"""
+
+from __future__ import annotations
+
+import glob
+import re
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import agent_cli
+from agent_cli import dialects
+from agent_cli.constants import parse_duration
+from agent_cli.prompts import system_prompt as sp
+from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.tools import TOOLS
+
+HANGUL = re.compile(r"[\uac00-\ud7a3]")
+PKG = Path(agent_cli.__file__).parent
+
+
+def _system_prompt(name: str, **kw) -> str:
+    caps = ModelCapabilities(
+        context_window=32768, max_output_tokens=4096, supports_thinking=False
+    )
+    return "\n\n".join(
+        text
+        for _n, text in sp.build_system_prompt_sections(
+            caps, sorted(TOOLS), dialect=dialects.get(name), **kw
+        )
+    )
+
+
+class TestNoKoreanReachesTheModel:
+    @pytest.mark.parametrize("name", dialects.list_names())
+    def test_system_prompt_is_english(self, name):
+        for kw in ({}, {"nonblocking_ask": True}, {"depth": 1, "max_depth": 1}):
+            hits = [
+                ln
+                for ln in _system_prompt(name, **kw).splitlines()
+                if HANGUL.search(ln)
+            ]
+            assert not hits, hits[:3]
+
+    def test_builtin_profiles_and_skills_are_english(self):
+        files = glob.glob(str(PKG / "agents/builtin/*.md")) + glob.glob(
+            str(PKG / "skills/builtin/**/*.md"), recursive=True
+        )
+        assert len(files) >= 10
+        for f in files:
+            hits = [ln for ln in Path(f).read_text().splitlines() if HANGUL.search(ln)]
+            assert not hits, (f, hits[:3])
+
+    @pytest.mark.parametrize("raw", ["abc", "10x", "", "1.5h"])
+    def test_duration_errors_are_english(self, raw):
+        with pytest.raises(ValueError) as e:
+            parse_duration(raw)
+        assert not HANGUL.search(str(e.value))
+        assert "seconds (600), minutes (10m) or hours (2h)" in str(e.value)
+
+    def test_negative_duration_error_is_english(self):
+        with pytest.raises(ValueError) as e:
+            parse_duration("-5")
+        assert str(e.value) == "a duration cannot be negative"
+
+    def test_model_unavailable_refusal_is_english(self):
+        from agent_cli.model_check import ModelNotFound
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        listing = MagicMock()
+        listing.suggest.return_value = "qwen-x"
+        listing.models = ["qwen-x", "qwen-y"]
+        err = ModelNotFound.__new__(ModelNotFound)
+        err.listing = listing
+        reg = AgentRegistry.__new__(AgentRegistry)
+        reg.runtime = {"base_url": "http://x/v1"}
+        with patch("agent_cli.model_check.verify_model", side_effect=err):
+            msg = reg._model_unavailable("qwen-z", "code-writer")
+        assert not HANGUL.search(msg)
+        assert "the model 'qwen-z' required by profile 'code-writer'" in msg
+        assert "(closest name: qwen-x)" in msg and "Available: qwen-x, qwen-y" in msg
+        assert "Spawn with a different profile" in msg
+        with patch("agent_cli.model_check.verify_model", side_effect=err):
+            assert "the role settings" in reg._model_unavailable("qwen-z", "")
+
+
+class TestNoThoughtFieldInPrompts:
+    """The response format is "brief reasoning as plain prose" — there is no
+    ``thought`` field or ``## Thought`` header for the model to fill, and the
+    stream detector treats a repeated ``## Thought`` as a runaway."""
+
+    @pytest.mark.parametrize("name", dialects.list_names())
+    def test_system_prompt_never_says_thought(self, name):
+        for kw in ({}, {"nonblocking_ask": True}):
+            text = _system_prompt(name, **kw)
+            hits = [
+                ln
+                for ln in text.splitlines()
+                if re.search(r"\bthoughts?\b|thought-only", ln, re.IGNORECASE)
+            ]
+            assert not hits, hits[:3]
+
+    def test_context_discipline_uses_the_format_rules_word(self):
+        assert "Keep your reasoning brief" in sp.CONTEXT_DISCIPLINE
+        assert (
+            "Every line of\nreasoning, tool call, and observation"
+            in sp.CONTEXT_DISCIPLINE
+        )
+
+    def test_tail_guidelines_never_say_thought(self):
+        assert not re.search(r"\bthoughts?\b", sp.TASK_GUIDELINES, re.IGNORECASE)
+
+    def test_no_complete_variant_is_gone(self):
+        assert not hasattr(sp, "_ASK_INLINE_NO_COMPLETE")
+        for name in dialects.list_names():
+            assert not hasattr(dialects.get(name), "exposes_complete")
+            assert "- complete:" in _system_prompt(name) or name == "native_fc"

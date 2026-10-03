@@ -103,8 +103,7 @@ class _MultiOpFormat(DialectBase):
     action_required = False
     multi_op = True
     # Completion is an explicit `complete` op (json_fc's model), not a
-    # terminal flag — exposes_complete True, parse_turn never sets terminal.
-    exposes_complete = True
+    # terminal flag — parse_turn never sets terminal.
 
     def parse_turn(self, llm_text: str) -> ParsedTurn:
         try:
