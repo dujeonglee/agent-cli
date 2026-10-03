@@ -156,3 +156,29 @@ class TestBuiltinSkillsUseTheFlatCallShape:
     )
     def test_no_nested_action_input(self, path):
         assert "action_input" not in Path(path).read_text(encoding="utf-8")
+
+
+class TestNoStaleTermsReachTheModel:
+    """``action_input`` (the pre-v10 nested argument key) and ``delegate`` (the
+    tool renamed ``agent`` in v5) lingered in error messages and in the
+    Execution Context. A model cannot act on a word that names nothing it can
+    emit or call."""
+
+    def test_execution_context_names_the_agent_tool(self):
+        out = sp._build_execution_context(["plan"], ["reviewer"], depth=2, max_depth=2)
+        assert "delegate" not in out
+        assert "'run_skill' or 'agent' calls" in out
+
+    def test_schema_errors_say_arguments(self):
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("read_file", 42)
+        assert not ok
+        assert "arguments for 'read_file'" in err
+        assert "action_input" not in err
+
+    @pytest.mark.parametrize("rel", ["loop/dispatch.py", "loop/tool_bridge.py"])
+    def test_recovery_messages_say_arguments(self, rel):
+        src = (PKG / rel).read_text(encoding="utf-8")
+        assert "Fix action_input" not in src
+        assert "action_input shape and" not in src

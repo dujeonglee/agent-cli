@@ -1101,7 +1101,7 @@ def _build_execution_context(
         blocked.extend(skill_stack)
     if blocked:
         lines.append(
-            f"Do not delegate to or invoke: {', '.join(blocked)} (already in call stack)."
+            f"Do not run or invoke: {', '.join(blocked)} (already in call stack)."
         )
 
     if max_depth > 0 and depth >= max_depth:
@@ -1112,7 +1112,7 @@ def _build_execution_context(
         # recovery turn.
         lines.append(
             f"Depth limit reached ({depth}/{max_depth}): no further "
-            f"'run_skill' or 'delegate' calls are possible from here. "
+            f"'run_skill' or 'agent' calls are possible from here. "
             f"Finish the current level with 'complete'."
         )
 
