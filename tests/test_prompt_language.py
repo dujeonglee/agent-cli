@@ -125,3 +125,19 @@ class TestNoThoughtFieldInPrompts:
         for name in dialects.list_names():
             assert not hasattr(dialects.get(name), "exposes_complete")
             assert "- complete:" in _system_prompt(name) or name == "native_fc"
+
+
+# ── v10.11.2 — wording that pointed at things that do not exist ─────────────
+
+
+class TestRunSkillNamesNoPhantomSkills:
+    """The ``run_skill`` description used to offer 'optimize', 'review-code',
+    'summarize' and 'test' as example names. None is a built-in skill, so a
+    model following the example called a skill that is not there."""
+
+    def test_description_points_at_the_listing(self):
+        tool = TOOLS["run_skill"]
+        text = tool.description + tool.parameters["properties"]["name"]["description"]
+        assert "Available Skills" in text
+        for phantom in ("optimize", "review-code", "summarize", "test generation"):
+            assert phantom not in text, phantom

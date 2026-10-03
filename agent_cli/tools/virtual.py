@@ -281,8 +281,8 @@ class RunSkillTool(Tool):
         "a summary instead of full output."
     )
     description = (
-        "Run a registered skill by name. Use this to invoke specialized "
-        "prompt-based workflows like code review, optimization, or test generation."
+        "Run a registered skill by name — a prompt-based workflow listed under "
+        "Available Skills."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -290,7 +290,7 @@ class RunSkillTool(Tool):
             "name": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Skill name (e.g. 'optimize', 'review-code', 'summarize', 'test')",
+                "description": "Skill name, exactly as listed under Available Skills",
             },
             "arguments": {
                 "type": "string",
