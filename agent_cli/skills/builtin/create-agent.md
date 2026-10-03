@@ -99,18 +99,15 @@ Project profiles override user-global profiles with the same name.
 
 ## How profiles are used
 
-Profiles are referenced by the `agent` tool:
+Profiles are referenced by the `agent` tool. The arguments are shown as JSON —
+emit them in your own tool-call format:
 
 ```json
-{"action": "agent", "action_input": {
-    "mode": "run", "profile": "code-reviewer", "task": "Review this code", "context": "fork"
-}}
+{"action": "agent", "mode": "run", "profile": "code-reviewer", "task": "Review this code", "context": "fork"}
 ```
 
 ```json
-{"action": "agent", "action_input": {
-    "mode": "spawn", "profile": "code-reviewer", "task": "Stay on as the dedicated reviewer"
-}}
+{"action": "agent", "mode": "spawn", "profile": "code-reviewer", "task": "Stay on as the dedicated reviewer"}
 ```
 
 A spawned resident agent can be reached at any time — main or any peer
