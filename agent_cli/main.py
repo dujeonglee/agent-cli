@@ -1133,8 +1133,23 @@ def _load_resume_session(resume_id: str):
     if session is None:
         console.print(f"[{C['error']}]Session '{resume_id}' not found.[/]")
         raise typer.Exit(code=1)
+    _claim_session(session)
     console.print(f"[{C['accent']}]Resuming session {resume_id}[/]")
     return session
+
+
+def _claim_session(session) -> None:
+    """한 세션 = 한 프로세스 (docs/schedule/DESIGN.md §4.3). 다른 프로세스가
+    이미 연 세션이면 여기서 끝낸다 — 둘이 같은 history 에 쓰고 같은 예약을
+    발화하는 것을 기동 시점에 막는다."""
+    from agent_cli.context.session import get_session_dir
+    from agent_cli.context.session_lock import SessionBusy, claim_session
+
+    try:
+        claim_session(get_session_dir(session))
+    except SessionBusy as e:
+        console.print(f"[{C['error']}]{e}.[/]")
+        raise typer.Exit(code=1) from None
 
 
 def _parse_stall(raw: str | None) -> int | None:
@@ -1330,6 +1345,7 @@ def run(
     from agent_cli.context.session import create_session, save_meta
 
     session = session_resumed if session_resumed is not None else create_session()
+    _claim_session(session)
     save_meta(session)
     ctx = _build_context(
         session,
@@ -2190,6 +2206,7 @@ def web(
         session, is_resume = _maybe_resume_recent(os.getcwd(), prompt_fn)
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
+    _claim_session(session)
     save_meta(session)
     ctx = _build_context(
         session,
