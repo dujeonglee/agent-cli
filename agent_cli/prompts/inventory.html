@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>프롬프트 인벤토리</title>
+<style>
+:root{
+  --bg:#f7f8f6; --surface:#ffffff; --ink:#1b2420; --muted:#5d6b64; --line:#d6ddd8;
+  --accent:#0f7a5a; --accent-soft:#e2f2ec; --code:#eef1ee; --bar:#b9d9cc;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){color-scheme:dark;
+    --bg:#121715; --surface:#1a211e; --ink:#e6ece8; --muted:#9aa8a0; --line:#2e3833;
+    --accent:#4fc79f; --accent-soft:#16332a; --code:#222b27; --bar:#27584a;}
+}
+:root[data-theme="dark"]{color-scheme:dark;
+  --bg:#121715; --surface:#1a211e; --ink:#e6ece8; --muted:#9aa8a0; --line:#2e3833;
+  --accent:#4fc79f; --accent-soft:#16332a; --code:#222b27; --bar:#27584a;}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",system-ui,sans-serif;padding-inline:16px;padding-block:24px 56px}
+main{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1{font-size:1.5rem;margin:0 0 4px;line-height:1.25}
+h2{font-size:1.05rem;margin:0}
+.meta{color:var(--muted);font-size:.88rem;margin:0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.86em}
+.controls{display:flex;flex-wrap:wrap;gap:14px 22px}
+.group{display:flex;flex-direction:column;gap:6px}
+.group span{font-size:.76rem;color:var(--muted);letter-spacing:.04em}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+button{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:5px 11px;cursor:pointer}
+button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px;font-variant-numeric:tabular-nums;font-size:.9rem}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:.78rem}
+tr.sel td{background:var(--accent-soft)}
+.list{display:flex;flex-direction:column;gap:6px}
+details{background:var(--surface);border:1px solid var(--line);border-radius:8px}
+summary{cursor:pointer;padding:9px 12px;display:grid;grid-template-columns:minmax(0,1fr) 70px;gap:10px;align-items:center;list-style:none}
+summary::-webkit-details-marker{display:none}
+.name{font-weight:600;overflow-wrap:anywhere}
+.when{display:block;font-weight:400;color:var(--muted);font-size:.84rem}
+.tok{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-size:.86rem}
+.barwrap{grid-column:1/-1;height:5px;background:var(--code);border-radius:3px;overflow:hidden}
+.bar{height:100%;background:var(--bar)}
+pre{margin:0;padding:12px;border-top:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;line-height:1.5;max-height:520px;overflow:auto}
+.sub{padding:8px 12px 0;color:var(--muted);font-size:.78rem;letter-spacing:.04em}
+.total{color:var(--muted);font-size:.9rem;margin:0}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>프롬프트 인벤토리</h1>
+  <p class="meta" id="meta">불러오는 중…</p>
+</header>
+
+<section>
+  <h2 style="margin-bottom:10px">시스템 프롬프트 크기 (추정 토큰)</h2>
+  <div class="scroll"><table id="summary"></table></div>
+  <p class="meta" style="margin-top:8px">native_fc 는 "프롬프트 + 요청에 실리는 함수 스키마" 로 적었습니다. 줄을 누르면 그 방언으로 바뀝니다.</p>
+</section>
+
+<section class="controls">
+  <div class="group"><span>방언</span><div class="seg" id="dialects"></div></div>
+  <div class="group"><span>상황</span><div class="seg" id="scenarios"></div></div>
+  <div class="group"><span>보기</span><div class="seg" id="views"></div></div>
+</section>
+
+<section>
+  <p class="total" id="total"></p>
+  <div class="list" id="list" style="margin-top:10px"></div>
+</section>
+</main>
+
+<script type="application/json" id="inventory-data">__INVENTORY_DATA__</script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const data=JSON.parse(document.getElementById('inventory-data').textContent);
+
+  const SC_KO={main:'메인 루프',subagent:'서브에이전트',narrowed:'좁힌 도구 목록'};
+  const VIEWS=[['sections','프롬프트 섹션'],['tools','도구'],['runtime','실행 중 문구']];
+  const names=Object.keys(data.dialects);
+  const st={d:names.includes('json_fc')?'json_fc':names[0],s:'main',v:'sections'};
+  const fmt=n=>n.toLocaleString('en-US');
+  const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+  $('meta').innerHTML='agent-cli v'+esc(data.agent_cli_version)+' · <code>python -m agent_cli.prompts.inventory</code> 출력 · 실행 위치 <code>'+esc(data.cwd.split('/').slice(-2).join('/'))+'</code>';
+
+  function seg(el,items,key){
+    el.innerHTML='';
+    items.forEach(([k,label])=>{
+      const b=document.createElement('button');
+      b.textContent=label; b.setAttribute('aria-pressed',String(st[key]===k));
+      b.onclick=()=>{st[key]=k;render();};
+      el.appendChild(b);
+    });
+  }
+
+  function summary(){
+    const keys=Object.keys(data.scenarios);
+    let h='<thead><tr><th>방언</th>'+keys.map(k=>'<th>'+SC_KO[k]+'</th>').join('')+'</tr></thead><tbody>';
+    names.forEach(n=>{
+      h+='<tr data-d="'+n+'" class="'+(n===st.d?'sel':'')+'" style="cursor:pointer"><td>'+n+'</td>'+keys.map(k=>{
+        const s=data.dialects[n].scenarios[k];
+        return '<td>'+(s.functions_tokens!=null?fmt(s.system_tokens)+' + '+fmt(s.functions_tokens):fmt(s.system_tokens))+'</td>';
+      }).join('')+'</tr>';
+    });
+    $('summary').innerHTML=h+'</tbody>';
+    $('summary').querySelectorAll('tr[data-d]').forEach(tr=>tr.onclick=()=>{st.d=tr.dataset.d;render();});
+  }
+
+  function row(name,tokens,max,body,when){
+    const d=document.createElement('details');
+    d.innerHTML='<summary><span class="name">'+esc(name)+(when?'<span class="when">'+esc(when)+'</span>':'')+'</span><span class="tok">'+fmt(tokens)+'</span><span class="barwrap"><span class="bar" style="display:block;width:'+Math.max(1,Math.round(tokens/max*100))+'%"></span></span></summary>'+body;
+    return d;
+  }
+  const pre=t=>'<pre>'+esc(t)+'</pre>';
+
+  function render(){
+    seg($('dialects'),names.map(n=>[n,n]),'d');
+    seg($('scenarios'),Object.keys(data.scenarios).map(k=>[k,SC_KO[k]]),'s');
+    seg($('views'),VIEWS,'v');
+    summary();
+    const D=data.dialects[st.d], S=D.scenarios[st.s], L=$('list');
+    L.innerHTML='';
+    $('scenarios').parentElement.style.opacity=st.v==='sections'?1:.45;
+    if(st.v==='sections'){
+      const fn=S.functions||[];
+      const max=Math.max(...S.sections.map(x=>x.tokens),...fn.map(x=>x.tokens),1);
+      $('total').textContent='섹션 '+S.sections.length+'개 · '+fmt(S.system_tokens)+' 토큰'+(fn.length?' · 함수 스키마 '+fn.length+'개 · '+fmt(S.functions_tokens)+' 토큰':'')+' · 쓸 수 있는 도구 '+S.tools.length+'개';
+      S.sections.forEach(x=>L.appendChild(row(x.name,x.tokens,max,pre(x.text))));
+      fn.forEach(x=>L.appendChild(row('함수: '+x.name,x.tokens,max,pre(x.description)+'<div class="sub">parameters</div>'+pre(JSON.stringify(x.parameters,null,2)))));
+    }else if(st.v==='tools'){
+      const max=Math.max(...D.tools.map(t=>t.description_tokens+t.guide_tokens),1);
+      $('total').textContent='내장 도구 '+D.tools.length+'개 (프롬프트에 나오는 순서) · 숫자는 설명 + 안내 토큰';
+      D.tools.forEach(t=>L.appendChild(row(t.name,t.description_tokens+t.guide_tokens,max,
+        '<div class="sub">설명</div>'+pre(t.description)+(t.guide?'<div class="sub">안내</div>'+pre(t.guide):'')+'<div class="sub">parameters</div>'+pre(JSON.stringify(t.parameters,null,2)))));
+    }else{
+      const max=Math.max(...D.runtime.map(r=>r.tokens),1);
+      $('total').textContent='실행 중 끼어드는 문구 '+D.runtime.length+'개 (손으로 관리하는 목록)';
+      D.runtime.forEach(r=>L.appendChild(row(r.id,r.tokens,max,pre(r.text),r.when)));
+    }
+  }
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 """Prompt inventory — everything the harness tells a model, read off the code.
 
 ``python -m agent_cli.prompts.inventory -o inventory.json``
+``python -m agent_cli.prompts.inventory --html inventory.html``
 
 A hand-written inventory goes stale with the next prompt change. This one is
 assembled by the same functions the loop calls, so it is what a model would
@@ -14,6 +15,10 @@ see at the commit it ran on:
   These live outside the prompt builder, so they are a hand-kept list
   (:func:`_runtime_texts`); a text added elsewhere has to be added here.
 
+``--html`` writes the same data as one self-contained page (the JSON is
+embedded in ``inventory.html``'s data slot; no network, no build step) to
+browse it: pick a dialect and a scenario, open a section.
+
 Some sections depend on where it runs (Environment, and the project's own
 skills / profiles / DIRECTIVE.md) — the output records ``cwd`` for that
 reason. Run it from the repository root for the built-in baseline.
@@ -26,6 +31,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent_cli import __version__, dialects
 from agent_cli.context.render import estimate_tokens
@@ -255,21 +261,44 @@ def build_inventory() -> dict:
     return out
 
 
+#: Where the page template keeps the data (inside a JSON ``<script>``).
+_DATA_SLOT = "__INVENTORY_DATA__"
+
+
+def render_html(inventory: dict) -> str:
+    """The inventory as one self-contained HTML page.
+
+    The data goes into a ``<script type="application/json">`` element, whose
+    content the browser never parses as markup — except for a closing
+    ``</script>``, so ``</`` is written ``<\\/`` (still valid JSON)."""
+    template = Path(__file__).with_name("inventory.html").read_text(encoding="utf-8")
+    data = json.dumps(inventory, ensure_ascii=False).replace("</", "<\\/")
+    return template.replace(_DATA_SLOT, data, 1)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m agent_cli.prompts.inventory",
-        description="Write everything the harness tells a model as JSON.",
+        description="Write everything the harness tells a model, as JSON or a page.",
     )
     parser.add_argument(
         "-o", "--output", default="-", help="output file ('-' = stdout, the default)"
     )
+    parser.add_argument(
+        "--html",
+        metavar="FILE",
+        help="write a self-contained page to browse the inventory instead of JSON",
+    )
     args = parser.parse_args(argv)
-    text = json.dumps(build_inventory(), ensure_ascii=False, indent=2) + "\n"
+    inventory = build_inventory()
+    if args.html:
+        Path(args.html).write_text(render_html(inventory), encoding="utf-8")
+        return 0
+    text = json.dumps(inventory, ensure_ascii=False, indent=2) + "\n"
     if args.output == "-":
         sys.stdout.write(text)
     else:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(text)
+        Path(args.output).write_text(text, encoding="utf-8")
     return 0
 
 

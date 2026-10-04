@@ -1,4 +1,4 @@
-"""Prompt inventory (v10.15.0) — ``python -m agent_cli.prompts.inventory``.
+"""Prompt inventory (v10.15.0; ``--html`` v10.16.0) — ``python -m agent_cli.prompts.inventory``.
 
 The inventory is read off the same functions the loop calls. These tests pin
 its shape and the few facts a reader relies on; the prompt wording itself is
@@ -106,3 +106,63 @@ class TestCli:
     def test_stdout_by_default(self, capsys):
         assert main([]) == 0
         assert json.loads(capsys.readouterr().out)["dialects"]
+
+
+class TestHtml:
+    """``--html`` (v10.16.0): the same data as one self-contained page."""
+
+    @staticmethod
+    def _embedded(page: str) -> dict:
+        import re
+
+        m = re.search(
+            r'<script type="application/json" id="inventory-data">(.*?)</script>',
+            page,
+            re.DOTALL,
+        )
+        assert m, "data element not found"
+        return json.loads(m.group(1))
+
+    def test_page_embeds_exactly_the_inventory(self, inv):
+        from agent_cli.prompts.inventory import render_html
+
+        page = render_html(inv)
+        assert page.startswith("<!doctype html>")
+        assert "__INVENTORY_DATA__" not in page
+        assert self._embedded(page) == inv
+
+    def test_page_needs_no_network(self, inv):
+        """Opened from disk, or published as is: no external script, style or
+        fetch — a prompt URL inside the DATA is fine, a loaded one is not."""
+        import re
+
+        from agent_cli.prompts.inventory import render_html
+
+        page = render_html({"dialects": {}, "scenarios": {}})
+        assert not re.search(r'(src|href)\s*=\s*["\']https?:', page)
+        assert "fetch(" not in page and "@import" not in page
+
+    def test_a_closing_script_tag_in_a_prompt_cannot_end_the_data(self):
+        from agent_cli.prompts.inventory import render_html
+
+        hostile = {"text": "</script><script>alert(1)</script>"}
+        page = render_html(hostile)
+        assert "</script><script>alert(1)" not in page
+        assert self._embedded(page) == hostile
+
+    def test_cli_writes_the_page(self, tmp_path):
+        out = tmp_path / "inventory.html"
+        assert main(["--html", str(out)]) == 0
+        data = self._embedded(out.read_text(encoding="utf-8"))
+        assert data["agent_cli_version"] == __version__
+
+    def test_template_ships_in_the_wheel(self):
+        """Not a .py file — it needs a package-data entry or a pip install
+        raises FileNotFoundError on --html."""
+        from pathlib import Path
+
+        import agent_cli.prompts.inventory as mod
+
+        assert Path(mod.__file__).with_name("inventory.html").is_file()
+        pyproject = Path(mod.__file__).parents[2] / "pyproject.toml"
+        assert '"prompts/inventory.html"' in pyproject.read_text(encoding="utf-8")
