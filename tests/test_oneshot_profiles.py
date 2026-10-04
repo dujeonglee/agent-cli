@@ -375,8 +375,10 @@ class TestRunSingleWithAgent:
         assert result.success
         assert captured_kwargs["active_tools"] == ["read_file"]
 
-    def test_task_tools_overrides_agent_tools(self, tmp_path, monkeypatch):
-        """AG-18: Task-level tools take priority over agent allowed-tools."""
+    def test_task_tools_outside_the_profile_are_rejected(self, tmp_path, monkeypatch):
+        """AG-18 (v10.14.0): the profile's allowed-tools is an upper bound —
+        task-level tools used to replace it, giving a read-only profile
+        `shell`. With nothing in common the run is refused before any loop."""
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "reader.md").write_text(
@@ -416,8 +418,10 @@ class TestRunSingleWithAgent:
             owner="main",
         )
 
-        assert result.success
-        assert captured_kwargs["active_tools"] == ["shell"]
+        assert not result.success
+        assert "Delegation rejected" in result.error
+        assert "shell" in result.error and "read_file" in result.error
+        assert captured_kwargs == {}
 
     def test_agent_model_override(self, tmp_path, monkeypatch):
         """AG-19: Agent model config overrides default model."""

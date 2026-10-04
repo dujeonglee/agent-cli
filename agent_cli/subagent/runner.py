@@ -33,6 +33,11 @@ if TYPE_CHECKING:
     from agent_cli.providers.capabilities import ModelCapabilities
 
 
+class ProfileToolsError(ValueError):
+    """An ``agent`` call's ``tools`` shares nothing with the profile's
+    ``allowed-tools``. The message is model-facing."""
+
+
 def apply_role_overrides(
     config: dict,
     *,
@@ -42,12 +47,30 @@ def apply_role_overrides(
 ) -> tuple[list[str] | None, str, dict | None]:
     """역할 md config 를 오버레이해 (allowed_tools, model, hooks_config) 반환.
 
-    우선순위는 delegate 의 기존 규칙 그대로: 명시 task 파라미터 >
-    역할 config. hooks 는 교체가 아니라 caller 설정 **위에 병합** —
-    부모 matcher 가 계속 적용된다 (Skill.hooks 와 동일 의미).
+    model 은 역할 config 가 이긴다. hooks 는 교체가 아니라 caller 설정 **위에
+    병합** — 부모 matcher 가 계속 적용된다 (Skill.hooks 와 동일 의미).
+
+    도구는 프로파일의 ``allowed-tools`` 가 **상한**이다 (v10.14.0). 호출의
+    ``tools`` 는 그 안에서 좁히기만 한다 — 종전엔 ``tools`` 가 있으면
+    프로파일 목록을 통째로 대체해, 읽기 전용 프로파일에
+    ``tools: [write_file]`` 를 주면 쓰기 도구가 생겼다. 겹치는 도구가
+    하나도 없으면 :class:`ProfileToolsError` (빈 목록을 돌려주면 루프가
+    "제한 없음" 으로 읽는다). 프로파일에 목록이 없으면 ``tools`` 그대로.
     """
-    if allowed_tools is None and config.get("allowed-tools"):
-        allowed_tools = config["allowed-tools"]
+    profile_tools = config.get("allowed-tools")
+    if profile_tools:
+        if allowed_tools is None:
+            allowed_tools = profile_tools
+        else:
+            requested = allowed_tools
+            allowed_tools = [t for t in requested if t in profile_tools]
+            if not allowed_tools:
+                raise ProfileToolsError(
+                    f"`tools` ({', '.join(requested)}) has nothing in common with "
+                    f"what this profile allows ({', '.join(profile_tools)}). "
+                    "`tools` can only narrow a profile's set — omit it to use the "
+                    "whole set, or use a profile that allows those tools."
+                )
 
     role_model = config.get("model")
     if role_model and isinstance(role_model, str):

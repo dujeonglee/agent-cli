@@ -8,6 +8,8 @@ delegate 가 러너의 유일한 소비자인 동안(P0)의 게이트는 두 겹
 
 from __future__ import annotations
 
+import pytest
+
 import agent_cli.loop as loop_mod
 import agent_cli.subagent.runner as runner_mod
 from agent_cli.context.manager import ContextManager
@@ -39,9 +41,44 @@ class TestApplyRoleOverrides:
         )
         assert tools == ["read_file"]
 
-    def test_explicit_allowed_tools_beat_config(self):
+    def test_explicit_tools_narrow_the_profile_set(self):
+        """v10.14.0: the profile's list is an upper bound. `tools` used to
+        replace it, so a read-only profile gained write tools."""
         tools, _, _ = apply_role_overrides(
-            {"allowed-tools": ["read_file"]},
+            {"allowed-tools": ["read_file", "shell", "code_index"]},
+            allowed_tools=["shell", "write_file", "edit_file"],
+            model="",
+            hooks_config=None,
+        )
+        assert tools == ["shell"]
+
+    def test_explicit_tools_inside_the_profile_set_pass_through(self):
+        tools, _, _ = apply_role_overrides(
+            {"allowed-tools": ["read_file", "shell"]},
+            allowed_tools=["read_file"],
+            model="",
+            hooks_config=None,
+        )
+        assert tools == ["read_file"]
+
+    def test_nothing_in_common_is_rejected_not_unrestricted(self):
+        """An empty list would read as "no restriction" downstream
+        (``active_tools or list(TOOLS)``) — the widest outcome for the
+        narrowest request."""
+        from agent_cli.subagent.runner import ProfileToolsError
+
+        with pytest.raises(ProfileToolsError) as e:
+            apply_role_overrides(
+                {"allowed-tools": ["read_file"]},
+                allowed_tools=["shell"],
+                model="",
+                hooks_config=None,
+            )
+        assert "shell" in str(e.value) and "read_file" in str(e.value)
+
+    def test_profile_without_a_list_leaves_tools_alone(self):
+        tools, _, _ = apply_role_overrides(
+            {"description": "x"},
             allowed_tools=["shell"],
             model="",
             hooks_config=None,

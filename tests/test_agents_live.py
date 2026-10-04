@@ -464,6 +464,29 @@ class TestRegistryLifecycle:
         assert err == "" and key.startswith("agt-")
         reg.shutdown_all()
 
+    def test_spawn_tools_cannot_widen_the_profile(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """v10.14.0: 프로파일의 allowed-tools 가 상한 — `tools` 는 그 안에서
+        좁히기만 한다. 겹치는 것이 없으면 뜨기 전에 거절한다."""
+        monkeypatch.setattr(
+            "agent_cli.subagent.profiles.load_profile",
+            lambda name: (
+                "본문",
+                {"name": "ro", "allowed-tools": ["read_file", "shell"]},
+                "",
+            ),
+        )
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn(profile="ro", allowed_tools=["write_file"])
+        assert key == "", "읽기 전용 프로파일이 쓰기 도구를 얻었다"
+        assert "write_file" in err and "read_file, shell" in err
+
+        key, err = reg.spawn(profile="ro", allowed_tools=["shell", "write_file"])
+        assert err == ""
+        assert reg._agents[key].allowed_tools == ["shell"]
+        reg.shutdown_all()
+
     def test_spawn_limit(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         reg.set_max_agents(1)

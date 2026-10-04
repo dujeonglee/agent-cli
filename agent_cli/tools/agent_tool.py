@@ -169,7 +169,11 @@ class AgentTool(Tool):
             "tools": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "run/spawn: allowed tools (omit for the default set)",
+                "description": (
+                    "run/spawn: tools the sub-agent may use. Omit for the "
+                    "profile's set (all tools without a profile). With a "
+                    "profile it can only narrow that set."
+                ),
             },
             "context": {
                 "type": "string",
@@ -222,7 +226,11 @@ class AgentTool(Tool):
             "tools": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "allowed tools (omit for the default set)",
+                "description": (
+                    "tools the sub-agent may use. Omit for the profile's set "
+                    "(all tools without a profile). With a profile it can "
+                    "only narrow that set."
+                ),
             },
             "context": {
                 "type": "string",
