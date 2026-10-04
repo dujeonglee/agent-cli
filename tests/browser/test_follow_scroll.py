@@ -41,7 +41,7 @@ def _dist(page):
 
 
 def _cards(page):
-    return page.locator("#messages > *").count()
+    return page.locator("#messages > .card").count()
 
 
 def _scroll_to(page, top):

@@ -36,6 +36,7 @@ replayed — they are runtime UX, not state.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import threading
@@ -46,6 +47,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Any, ClassVar
 
+from agent_cli.fsio import atomic_write_json
 from agent_cli.render.base import ConfirmOption, Renderer
 
 # Replay-buffer bound (persistent events). ~3-4 persistent events per turn →
@@ -262,6 +264,16 @@ class WebRenderer(Renderer):
         # 스냅샷과 대칭)하고 live 참조 해제(ctx 장기 홀드 방지).
         self._scope_ctxs: dict[str, Any] = {}
         self._scope_dynamic_final: dict[str, list[dict]] = {}
+        # 종료한 스코프의 대화 크기·압축 횟수 — 종료 시점에 고정한다.
+        self._scope_final: dict[str, dict[str, int]] = {}
+        # 스코프(프롬프트 스코프)별 마지막 ``ctx_view`` — resume 이 되살린다.
+        self._scope_ctx_views: dict[str, dict[str, Any]] = {}
+        # 모델 시점 틀의 on-disk 사본 (스코프당 파일 하나). 스냅샷은 메모리에만
+        # 있어 resume 하면 맨 위 카드·꼬리 띠가 비었다 — 마지막 호출 기준의
+        # 틀을 그대로 되살리려고 남긴다. None(CLI·테스트) → 저장 안 함.
+        self._prompt_view_dir = (
+            (self._status_dir / "prompt_views") if self._status_dir else None
+        )
         # ── Sticky state registry ───────────────────────────────────
         # A "sticky" state is a single server value that is (a) broadcast live
         # to connected clients AND (b) replayed into each NEW connection's
@@ -616,6 +628,13 @@ class WebRenderer(Renderer):
             return
         with self._lock:
             self._scope_dynamic_final[scope] = final
+            self._scope_final[scope] = {
+                "convo_tokens": sum(
+                    s.get("est_tokens", 0) for s in final if s.get("kind") != "tail"
+                ),
+                "compactions": int(getattr(ctx, "compaction_count", 0) or 0),
+            }
+        self._persist_prompt_view(scope)
 
     def scope_dynamic_sections(self, scope: str) -> list[dict]:
         """스코프의 동적 컨텍스트 섹션 — 실행 중이면 live ctx 로 실시간,
@@ -1720,6 +1739,15 @@ class WebRenderer(Renderer):
         payload = {**view, "task_id": scope} if scope else dict(view)
         # 슬롯 이름은 스코프별 — 리터럴 이벤트명은 리스너 감사 테스트가 읽는다.
         self.set_sticky("ctx_view:" + scope, "ctx_view", payload)
+        # 서브 스코프의 뷰는 resume 이 되살릴 수 있게 남긴다(main 은 ctx 가 진실).
+        # 턴마다 오지만 모양이 바뀔 때만 쓴다.
+        prompt_scope = self._current_prompt_scope(threading.get_ident())
+        if prompt_scope != _MAIN_SCOPE:
+            with self._lock:
+                changed = self._scope_ctx_views.get(prompt_scope) != payload
+                self._scope_ctx_views[prompt_scope] = payload
+            if changed:
+                self._persist_prompt_view(prompt_scope)
 
     def compaction(
         self,
@@ -2026,6 +2054,87 @@ class WebRenderer(Renderer):
             snapshot["tail_prev"] = list(prev.get("tail") or []) if prev else []
             snapshot["prev_turn"] = prev.get("turn") if prev else None
             self._prompt_snapshots[scope] = snapshot
+        self._persist_prompt_view(scope)
+
+    # ─── 모델 시점 틀의 on-disk 사본 (resume) ───────────────
+
+    def _prompt_view_path(self, scope: str) -> Path | None:
+        if self._prompt_view_dir is None:
+            return None
+        # 스코프 id 는 ``#``·``/`` 를 품을 수 있다 — 파일 이름은 해시로.
+        name = (
+            "main"
+            if scope == _MAIN_SCOPE
+            else hashlib.sha1(scope.encode("utf-8")).hexdigest()[:16]
+        )
+        return self._prompt_view_dir / f"{name}.json"
+
+    def _persist_prompt_view(self, scope: str) -> None:
+        """그 스코프의 틀(스냅샷·라벨·종료 정보·ctx_view)을 파일 하나로 남긴다.
+        best-effort — 쓰기 실패가 LLM 호출을 막지 않는다."""
+        path = self._prompt_view_path(scope)
+        if path is None:
+            return
+        with self._lock:
+            record = {
+                "v": 1,
+                "scope": scope,
+                "meta": self._prompt_scope_labels.get(scope),
+                "snapshot": self._prompt_snapshots.get(scope),
+                "final": self._scope_final.get(scope),
+                "ctx_view": self._scope_ctx_views.get(scope),
+            }
+        if record["snapshot"] is None and record["ctx_view"] is None:
+            return
+        try:
+            atomic_write_json(path, record)
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def restore_prompt_views(self) -> bool:
+        """resume: 파일로 남긴 틀을 되살린다. main 스냅샷을 되살렸으면 True —
+        호출부는 그때 시작 시점 캡처를 건너뛴다(마지막 호출 기준 그대로).
+
+        서브 스코프의 ``ctx_view`` 는 sticky 로 다시 낸다 — main 은 복원된
+        ``ctx`` 가 진실이라 여기서 내지 않는다. 프로세스가 런 도중 죽어 종료
+        기록이 없는 인라인 스코프는 종료로 본다(되살아나지 않는다)."""
+        if self._prompt_view_dir is None or not self._prompt_view_dir.is_dir():
+            return False
+        main_restored = False
+        views: list[dict[str, Any]] = []
+        for path in sorted(self._prompt_view_dir.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # 찢어진 파일 하나가 나머지를 막지 않는다
+            if not isinstance(record, dict) or not isinstance(record.get("scope"), str):
+                continue
+            scope = record["scope"]
+            snapshot = record.get("snapshot")
+            meta = record.get("meta")
+            final = record.get("final")
+            view = record.get("ctx_view")
+            with self._lock:
+                if isinstance(snapshot, dict):
+                    self._prompt_snapshots[scope] = snapshot
+                    main_restored = main_restored or scope == _MAIN_SCOPE
+                if isinstance(meta, dict):
+                    self._prompt_scope_labels[scope] = meta
+                if scope == _MAIN_SCOPE:
+                    continue
+                resident = isinstance(meta, dict) and meta.get("kind") == "agent"
+                if isinstance(final, dict):
+                    self._scope_final[scope] = final
+                elif not resident and isinstance(snapshot, dict):
+                    self._scope_final[scope] = {"convo_tokens": 0, "compactions": 0}
+                if isinstance(view, dict):
+                    self._scope_ctx_views[scope] = view
+                    views.append(view)
+        for view in views:
+            self.set_sticky(
+                "ctx_view:" + str(view.get("task_id") or ""), "ctx_view", view
+            )
+        return main_restored
 
     def prompt_scope_info(self, scope: str = _MAIN_SCOPE) -> dict[str, Any]:
         """드로어 머리의 스코프 사실 (v10.7.0): ``{kind, label, parent, ended,
@@ -2037,7 +2146,7 @@ class WebRenderer(Renderer):
         with self._lock:
             meta = dict(self._prompt_scope_labels.get(scope, {}))
             ctx = self._scope_ctxs.get(scope)
-            final = self._scope_dynamic_final.get(scope)
+            final = self._scope_final.get(scope)
         kind = meta.get("kind") or ("agent" if scope.startswith("agt-") else "run")
         info: dict[str, Any] = {
             "kind": kind,
@@ -2049,9 +2158,8 @@ class WebRenderer(Renderer):
             info["convo_tokens"] = ctx.get_estimated_tokens()
             info["compactions"] = ctx.compaction_count
         elif final is not None:
-            info["convo_tokens"] = sum(
-                s.get("est_tokens", 0) for s in final if s.get("kind") != "tail"
-            )
+            info["convo_tokens"] = final.get("convo_tokens", 0)
+            info["compactions"] = final.get("compactions", 0)
         return info
 
     def prompt_snapshot(self, scope: str = _MAIN_SCOPE) -> dict[str, Any] | None:
@@ -2100,6 +2208,14 @@ class WebRenderer(Renderer):
             self._prompt_scope_labels.pop(scope, None)
             self._scope_ctxs.pop(scope, None)
             self._scope_dynamic_final.pop(scope, None)
+            self._scope_final.pop(scope, None)
+            self._scope_ctx_views.pop(scope, None)
+        path = self._prompt_view_path(scope)
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         return removed
 
     def dispatch_progress(

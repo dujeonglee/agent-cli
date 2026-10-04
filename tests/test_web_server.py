@@ -739,7 +739,7 @@ class TestStaticUI:
         assert "api/grammar" in js and 'es.addEventListener("grammar_mode"' in js
         assert "GRAMMAR.active" in js  # 생성 중 줄의 📐
         assert 'if (d.grammar) parts.push("📐")' in js  # 턴 통계의 📐
-        assert "insp-tag" in js  # 인스펙터 섹션 태그
+        assert "insp-tag" in js  # 모델 시점 틀의 섹션 태그
 
     def test_thinking_api_and_wiring(self, tmp_path):
         """🧠 사고/추론 노력 컨트롤(web UI): GET/POST /api/thinking 이 세션 오버라이드를
@@ -853,26 +853,24 @@ class TestStaticUI:
         assert "if (ch)" in f  # data-ch 없는 노드는 손대지 않는다
         assert "#ov-channels" in css and ".card-run" in css
 
-    def test_inspector_follows_active_channel(self, server_and_client):
-        """🔍 프롬프트 인스펙터가 현재 대화 채널을 따른다 — main 이면 main 스코프,
-        agent 채널이면 그 agent 의 프롬프트 스냅샷(task_id=agent key)."""
+    def test_model_view_frame_follows_active_channel(self, server_and_client):
+        """모델 시점 틀(v10.17.0)이 🔍 드로어를 대신한다 — 맨 위 "맨 처음 받는 것"
+        과 입력창 위 "매 턴 끝에 붙는 것" 이 현재 채널의 스냅샷을 따른다
+        (main → main 스코프, agent 채널 → task_id=agent key)."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = client.get("/static/app.js").text
-        # 활성 채널 스코프 노출 (main → main, agent → agent key)
-        assert "window.__inspectorScope = function" in js
-        assert 'return { scope: "", name: "Main", kind: "main" }' in js
-        assert (
-            "return { scope: ovActiveChannel, name: ovAgentLabel(ovActiveChannel), "
-            'kind: "agent" }' in js
-        )
-        # 🔍 버튼이 그 스코프로 인스펙터를 연다(항상 main 아님)
-        assert "window.__inspectorScope && window.__inspectorScope()" in js
-        assert "window.__openInspector(s.scope, s.name, s.kind)" in js
-        # 인스펙터는 이미 task_id 스코프 fetch 지원(회귀 가드)
-        assert '"?task_id=" + encodeURIComponent(activeScope)' in js
-        # 버튼 title 이 main 한정이 아님
-        assert "현재 대화 상대" in html
+        # 드로어·🔍 버튼은 없다 — 틀이 놓일 자리만 있다
+        assert 'id="inspector"' not in html and 'id="insp-main-btn"' not in html
+        assert 'id="ctx-tail"' in html and 'id="ctx-budget"' in html
+        assert "__openInspector" not in js and "task-inspect" not in js
+        # 채널 틀의 스코프: main → "", 그 외 → 채널 key
+        assert 'frameMake(key, key === "main" ? "" : key, true)' in js
+        assert '"?task_id=" + encodeURIComponent(f.scope)' in js
+        # 채널 전환이 띠·예산 줄을 바꾼다
+        assert "frameShowChannel(ovActiveChannel);" in _js_fn_body(js, "ovSetChannel")
+        # 인라인 카드(agent/skill)도 같은 틀을 갖는다
+        assert "frameForCard(taskId, header, body);" in js
 
     def test_el_is_text_by_default_elhtml_explicit(self, server_and_client):
         """P0-6②: el() 3번째 인자는 textContent(기본이 안전 — 모델/서버 원문을
@@ -1289,7 +1287,7 @@ class TestStaticUI:
         assert "function cardMarkdown(" in js and "function timelineMarkdown(" in js
         assert "window.__cardMarkdown" in js  # 브라우저 테스트가 읽는 공개면
         assert "attachCopy(cardEl)" in js  # finishCard 한 곳에서 모든 카드에
-        assert "window.__copyText" in js  # 클립보드 헬퍼는 하나
+        assert "function copyToClipboard(" in js  # 클립보드 헬퍼는 하나
         css = client.get("/static/style.css").text
         assert ".card-copy" in css
         assert (

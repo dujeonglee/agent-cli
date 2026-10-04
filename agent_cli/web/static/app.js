@@ -696,30 +696,11 @@
     const statusEl = el("span", ["task-status"], "starting…");
     const subEl = el("span", ["task-sub"]);
     const meta = el("span", ["task-meta"]);
-    // 🔍 프롬프트 인스펙션 (재설계): 이 agent/skill 스코프의 프롬프트를 연다.
-    // 카드가 이미 data-task-id 를 들고 있어(카드=스냅샷 scope_id 통일) 바로
-    // 조회 가능. 클릭이 카드 접기 토글로 번지지 않게 stopPropagation.
-    const inspectBtn = el("button", ["task-inspect"], "🔍");
-    inspectBtn.type = "button";
-    inspectBtn.title = "프롬프트 인스펙션";
-    inspectBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      if (window.__openInspector) {
-        const label =
-          kind === "skill"
-            ? taskText
-            : agent
-              ? agent + ": " + taskText
-              : taskText;
-        window.__openInspector(taskId, label, kind || "run");
-      }
-    });
     header.appendChild(chevron);
     header.appendChild(title);
     header.appendChild(subEl);
     header.appendChild(statusEl);
     header.appendChild(meta);
-    header.appendChild(inspectBtn);
 
     const body = el("div", ["task-body"]);
     body.hidden = true; // default collapsed
@@ -752,12 +733,15 @@
 
     card.appendChild(header);
     card.appendChild(body);
+    // 모델 시점 틀: 머리 아래 "맨 처음 받는 것", 몸통 아래 "매 턴 끝에 붙는 것".
+    // 몸통이 접혀 있으면 CSS 가 둘 다 감춘다.
+    frameForCard(taskId, header, body);
     // 중첩 위치는 **부모**가 정하고(`task_id: parent`), 채널 귀속은 **자기
     // 것**이다(세 번째 인자) — 부모가 카드 없는 상주 스코프면 루트로 떨어지는데
     // 그때 부모 채널로 찍히면 출처가 어긋난다. 종전엔 append 뒤에 `data-ch` 를
     // 다시 칠했고, 이제 인자 하나로 끝난다.
     //
-    // `ts` 를 주지 않는 이유: 헤더 우상단은 이미 `🔍`·`✓ (2.1s)` 가 쓰고 있어
+    // `ts` 를 주지 않는 이유: 헤더 우상단은 이미 `✓ (2.1s)` 가 쓰고 있어
     // 코너 배지가 겹친다(어제 왕래 줄에서 겪은 그 부류). 스코프 카드는 소요
     // 시간을 `meta` 에 따로 보이므로 시각이 없어도 잃는 게 없다.
     finishCard(card, { task_id: parent }, scopeChannel[taskId]);
@@ -819,7 +803,7 @@
     }
     if (taskId && taskGroups[taskId]) {
       taskGroups[taskId].body.appendChild(cardEl);
-      if (e.animationName === "tv-nav-flash") clear();
+      return;
     }
     // 루트 append 만 채널 필터의 대상이다. `data-ch` 가 **없는** 노드는 어느
     // 채널에서나 보인다(생성 중 한 줄처럼 채널과 무관한 표시).
@@ -857,7 +841,7 @@
       cardEl.appendChild(n);
     }
     appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
-    ctxApplyToCard(cardEl, (ev && ev.task_id) || "", channel);
+    ctxApplyToCard(cardEl, (ev && ev.task_id) || "");
     attachCopy(cardEl);
     scheduleScroll();
   }
@@ -882,7 +866,8 @@
       const meta = card.querySelector(":scope > .task-header > .task-meta");
       const body = card.querySelector(":scope > .task-body");
       const kids = body ? Array.prototype.slice.call(body.children) : [];
-      const inner = kids.map(cardMarkdown).filter(Boolean).join("\n\n");
+      const topEl = card.querySelector(":scope > .ctx-top");
+      const inner = (topEl ? [topEl] : []).concat(kids).map(cardMarkdown).filter(Boolean).join("\n\n");
       return (
         "#### " + ((title && title.textContent) || "") +
         (meta && meta.textContent ? " — " + meta.textContent : "") +
@@ -931,16 +916,31 @@
     });
   })();
 
-  // ── 모델 시점 (v10.6.0, docs/inspector-model-view) ─────────────
-  // 챗이 곧 그 에이전트의 모델 시점이다. 서버의 sticky `ctx_view` 가 스코프별로
-  // "캐시에서 빠진 접두사의 경계 {turn, kind}" 와 압축 요약을 보내면, 경계 앞의
-  // 카드는 흐려지고(ctx-gone — 접지 않는다: 무엇이 빠졌는지 보여야 요약을 믿을
-  // 수 있다) 경계 바로 뒤에 점선 요약 카드가 선다. 뷰의 열쇠는 **컨테이너**다:
-  // 인라인 카드(task group)면 그 카드, 아니면 채널(main / 상주 에이전트 key) —
-  // 상주 에이전트의 런 스코프 id 는 런마다 다르므로 채널로 모은다.
+  // ── 모델 시점 (v10.17.0, docs/inspector-model-view) ─────────────
+  // 화면은 위에서 아래로 **모델이 받는 순서**다. main · 상주 에이전트 채널 ·
+  // 인라인 카드(agent/skill)가 같은 세 부분을 가진다:
+  //   맨 위  "맨 처음 받는 것"   — 시스템 프롬프트·함수 스키마·문법·압축 요약
+  //   가운데 대화               — 지금 컨텍스트에 있는 카드
+  //   맨 아래 "매 턴 끝에 붙는 것" — 매턴 꼬리(직전 턴과의 diff)
+  // 컨텍스트에서 빠진 카드는 한 묶음으로 접힌다(기본 접힘, 펼치면 흐린 카드).
+  // 종전의 🔍 드로어가 보여 주던 것이 전부 이 틀 안에 있다.
+  //
+  // 서버의 sticky `ctx_view` 가 스코프별로 "캐시에서 빠진 접두사의 경계" 와 압축
+  // 요약을 보낸다. 뷰의 열쇠는 **컨테이너**다: 인라인 카드면 그 카드(task_id),
+  // 아니면 채널(main / 상주 에이전트 key) — 상주 에이전트의 런 스코프 id 는
+  // 런마다 다르므로 채널로 모은다(그 에이전트의 컨텍스트는 런을 넘어 이어진다).
   const ctxViews = {}; // viewKey → ctx_view payload
+  const ctxFoldOpen = {}; // viewKey → "컨텍스트 밖 대화" 묶음을 펼쳤나
+  const ctxFoldRows = {}; // viewKey → 묶음 머리 줄
+  const ctxApplyTimers = {};
+  const frames = {}; // viewKey → 틀 {key, scope, channel, top, tail, body, data, …}
+  const $ctxTail = document.getElementById("ctx-tail");
+  const $ctxBudget = document.getElementById("ctx-budget");
+
   function ctxViewKey(taskId) {
-    if (taskId && (taskGroups[taskId] || runBlocks[taskId])) return taskId;
+    // 인라인 카드의 틀은 카드가 닫힌 뒤에도 남는다(`taskGroups` 항목은 종료 때
+    // 풀린다) — 재접속 스냅샷이 끝난 스코프의 뷰를 채널에 잘못 덮지 않게 한다.
+    if (taskId && frames[taskId] && !frames[taskId].channel) return taskId;
     return channelOf(taskId || "");
   }
   // 경계는 history 레코드 서수 하나(`gone.hidx` = 캐시에 남은 첫 레코드) —
@@ -950,68 +950,491 @@
     if (!gone || card.dataset.hidx === undefined) return false;
     return Number(card.dataset.hidx) < gone.hidx;
   }
-  function ctxApplyToCard(card, taskId, channel) {
+  function ctxApplyToCard(card, taskId) {
     if (!card.dataset || card.dataset.hidx === undefined) return;
-    const key = (taskId && (taskGroups[taskId] || runBlocks[taskId])) ? taskId
-      : (channel || channelOf(taskId || ""));
+    const key = ctxViewKey(taskId);
     const v = ctxViews[key];
     if (!v) return;
-    card.classList.toggle("ctx-gone", ctxCardGone(card, v.gone));
+    // 빠진 카드가 뷰보다 늦게 오면(재생 순서) 묶음을 다시 센다 — 한 번으로 합쳐서.
+    if (ctxCardGone(card, v.gone)) ctxScheduleApply(key);
   }
-  /** 뷰의 카드들: 인라인 카드 본문의 자식, 또는 루트에서 그 채널에 속한 것. */
+  function ctxScheduleApply(key) {
+    if (ctxApplyTimers[key]) return;
+    ctxApplyTimers[key] = setTimeout(function () {
+      delete ctxApplyTimers[key];
+      ctxApplyView(key);
+    }, 0);
+  }
+  /** 뷰의 카드들. `root` 는 그 카드가 놓인 컨테이너 직계 노드 — 채널에서는
+   * 런 블록 안의 카드도 그 채널의 대화라 블록을 풀어 넣는다. */
   function ctxCards(key) {
-    if (taskGroups[key]) return { parent: taskGroups[key].body, cards: Array.prototype.slice.call(taskGroups[key].body.children) };
-    if (runBlocks[key]) return { parent: runBlocks[key].body, cards: Array.prototype.slice.call(runBlocks[key].body.children) };
-    return {
-      parent: $messages,
-      cards: Array.prototype.slice.call($messages.children).filter(function (n) {
-        return n.dataset && n.dataset.ch === key;
-      }),
-    };
+    const f = frames[key];
+    const out = [];
+    if (f && !f.channel) {
+      Array.prototype.forEach.call(f.body.children, function (n) {
+        if (n.classList.contains("card")) out.push({ card: n, root: n });
+      });
+      return { parent: f.body, cards: out };
+    }
+    Array.prototype.forEach.call($messages.children, function (n) {
+      if (!n.dataset || n.dataset.ch !== key || !n.classList.contains("card")) return;
+      if (n.classList.contains("card-run")) {
+        const body = n.querySelector(":scope > .run-body");
+        Array.prototype.forEach.call(body ? body.children : [], function (c) {
+          if (c.classList.contains("card")) out.push({ card: c, root: n });
+        });
+      } else {
+        out.push({ card: n, root: n });
+      }
+    });
+    return { parent: $messages, cards: out };
   }
-  function ctxSummaryCard(v) {
-    const card = el("div", ["card", "ctx-summary"]);
+  function ctxFoldRow(key) {
+    const row = el("button", ["ctx-fold"]);
+    row.type = "button";
+    row.appendChild(el("span", ["ctx-chev"], "▶"));
+    row.appendChild(el("span", ["ctx-title"], "컨텍스트 밖 대화"));
+    row.appendChild(el("span", ["ctx-count"], ""));
+    row.appendChild(el("span", ["ctx-note"], "모델은 이 구간을 보지 못합니다"));
+    row.addEventListener("click", function () {
+      ctxFoldOpen[key] = !ctxFoldOpen[key];
+      ctxApplyView(key);
+    });
+    return row;
+  }
+  function ctxApplyView(key) {
+    const v = ctxViews[key];
+    if (!v) return;
+    const found = ctxCards(key);
+    const open = !!ctxFoldOpen[key];
+    let first = null;
+    let n = 0;
+    const blocks = []; // 런 블록 → {el, all, gone}
+    found.cards.forEach(function (it) {
+      const c = it.card;
+      const gone = ctxCardGone(c, v.gone);
+      c.classList.toggle("ctx-gone", gone);
+      c.classList.toggle("ctx-folded", gone && !open);
+      if (gone) {
+        c.dataset.ctxKey = key;
+        n += 1;
+        if (!first) first = it.root;
+      }
+      if (it.root !== c && c.dataset.hidx !== undefined) {
+        let b = blocks.length && blocks[blocks.length - 1].el === it.root ? blocks[blocks.length - 1] : null;
+        if (!b) { b = { el: it.root, all: 0, gone: 0 }; blocks.push(b); }
+        b.all += 1;
+        if (gone) b.gone += 1;
+      }
+    });
+    // 기록이 전부 빠진 런 블록은 블록째 접는다(머리만 남아 떠 있지 않게).
+    blocks.forEach(function (b) {
+      const whole = b.all > 0 && b.gone === b.all;
+      b.el.classList.toggle("ctx-gone", whole);
+      b.el.classList.toggle("ctx-folded", whole && !open);
+      if (whole) b.el.dataset.ctxKey = key;
+    });
+    let row = ctxFoldRows[key];
+    if (!n) {
+      if (row) { row.remove(); delete ctxFoldRows[key]; }
+    } else {
+      if (!row) {
+        row = ctxFoldRows[key] = ctxFoldRow(key);
+        if (found.parent === $messages) row.dataset.ch = key;
+      }
+      if (row.nextElementSibling !== first) first.insertAdjacentElement("beforebegin", row);
+      if (found.parent === $messages) applyChannelFilter(row);
+      row.classList.toggle("open", open);
+      row.setAttribute("aria-expanded", open ? "true" : "false");
+      row.querySelector(".ctx-chev").textContent = open ? "▼" : "▶";
+      row.querySelector(".ctx-count").textContent = "카드 " + n + "개";
+    }
+    if (frames[key]) frameRender(frames[key]); // 압축 요약은 맨 위 카드에 산다
+  }
+  /** 접힌 묶음 안의 카드로 점프하려면 먼저 묶음을 편다. */
+  function ctxReveal(node) {
+    const folded = node && node.closest ? node.closest(".ctx-folded") : null;
+    if (!folded || !folded.dataset.ctxKey) return;
+    ctxFoldOpen[folded.dataset.ctxKey] = true;
+    ctxApplyView(folded.dataset.ctxKey);
+  }
+
+  // ── 틀: 맨 위 카드 + 맨 아래 띠 ──
+  // 데이터는 `GET api/debug/prompt?task_id=` (그 스코프의 마지막 LLM 호출
+  // 스냅샷). 보일 때만 가져온다 — 재생이 인라인 카드를 수백 개 만들어도 접힌
+  // 카드는 요청을 내지 않는다(IntersectionObserver: 안 보이는 요소는 교차하지
+  // 않는다). 턴이 끝나면(`token_usage`) 보이는 틀만 다시 가져온다.
+  const frameSeen = window.IntersectionObserver
+    ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting && en.target.__frame) frameLoad(en.target.__frame);
+        });
+      })
+    : null;
+
+  function frameMake(key, scope, channel) {
+    const f = {
+      key: key, scope: scope, channel: channel,
+      top: el("div", ["ctx-top"]), tail: el("div", ["ctx-tail"]),
+      body: null, data: null, stale: true, loading: false, again: false,
+      open: { top: false, tail: false }, sig: { top: "", tail: "" },
+    };
+    frames[key] = f;
+    ["top", "tail"].forEach(function (which) {
+      const part = f[which];
+      part.__frame = f;
+      part.addEventListener("click", function (e) { frameClick(f, which, e); });
+      if (frameSeen) frameSeen.observe(part);
+    });
+    // 복사: 맨 위 카드가 압축 요약을 싣는다(대화 복사에 요약이 빠지지 않게).
+    f.top._md = function () {
+      const v = ctxViews[key];
+      const s = v && v.summary;
+      if (!s) return "";
+      let body = s.text || "";
+      if (s.files && s.files.length) body += "\n파일: " + s.files.join(", ");
+      return "> ⊙ **압축 요약** · " + frameSummaryMeta(v) + "\n>\n> " + body.split("\n").join("\n> ");
+    };
+    frameRender(f);
+    if (!frameSeen) frameLoad(f);
+    return f;
+  }
+  /** 채널(main / 상주 에이전트)의 틀 — 맨 위 카드는 타임라인 맨 앞, 띠는 입력창 위. */
+  function frameForChannel(key) {
+    if (frames[key]) return frames[key];
+    const f = frameMake(key, key === "main" ? "" : key, true);
+    f.top.dataset.ch = key;
+    $messages.insertBefore(f.top, $messages.firstChild);
+    applyChannelFilter(f.top);
+    if ($ctxTail) $ctxTail.appendChild(f.tail);
+    f.tail.hidden = key !== ovActiveChannel;
+    return f;
+  }
+  /** 인라인 카드의 틀 — 맨 위 카드는 머리 바로 아래, 띠는 몸통 바로 아래. */
+  function frameForCard(taskId, header, body) {
+    if (frames[taskId]) return frames[taskId];
+    const f = frameMake(taskId, taskId, false);
+    f.body = body;
+    header.insertAdjacentElement("afterend", f.top);
+    body.insertAdjacentElement("afterend", f.tail);
+    return f;
+  }
+  /** 채널 전환 — 띠와 예산 줄은 지금 채널의 것만 보인다. */
+  function frameShowChannel(key) {
+    frameForChannel(key);
+    Object.keys(frames).forEach(function (k) {
+      if (frames[k].channel) frames[k].tail.hidden = k !== key;
+    });
+    frameRenderBudget(frames[key]);
+  }
+  /** 이벤트의 task_id → 틀. 상주 에이전트의 런(`<key>#<n>`)은 그 채널의 틀. */
+  function frameOfScope(taskId) {
+    if (!taskId) return frames.main || null;
+    return frames[taskId] || frames[taskId.replace(/#\d+$/, "")] ||
+      (runBlocks[taskId] ? frames[channelOf(taskId)] : null) || null;
+  }
+  function frameVisible(f) {
+    return f.top.offsetParent !== null || f.tail.offsetParent !== null;
+  }
+  /** 그 스코프의 스냅샷이 바뀌었다 — 보이면 지금, 아니면 다음에 보일 때 가져온다. */
+  function frameTouch(f) {
+    if (!f) return;
+    f.stale = true;
+    if (frameVisible(f)) frameLoad(f);
+  }
+  function frameLoad(f) {
+    if (!f.stale) return;
+    if (f.loading) { f.again = true; return; }
+    f.loading = true;
+    f.stale = false;
+    const q = f.scope ? "?task_id=" + encodeURIComponent(f.scope) : "";
+    fetch("api/debug/prompt" + q)
+      .then(function (r) { return r.json(); })
+      .then(function (data) { f.data = data; })
+      .catch(function () { f.stale = true; })
+      .then(function () {
+        f.loading = false;
+        frameRender(f);
+        if (f.again) { f.again = false; f.stale = true; frameLoad(f); }
+      });
+  }
+
+  // 줄 단위 LCS diff — 꼬리는 수십 줄이라 O(n·m) 으로 충분하다.
+  function lineDiff(prev, cur) {
+    const a = prev.split("\n"), b = cur.split("\n");
+    const n = a.length, m = b.length;
+    const dp = [];
+    for (let i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0, ins = 0, del = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push(["=", b[j]]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(["-", a[i]]); i++; del++; }
+      else { out.push(["+", b[j]]); j++; ins++; }
+    }
+    while (i < n) { out.push(["-", a[i++]]); del++; }
+    while (j < m) { out.push(["+", b[j++]]); ins++; }
+    return { lines: out, ins: ins, del: del };
+  }
+  function frameSecHtml(s, cls, extraTag) {
+    return (
+      '<details class="insp-sec ' + cls + '" data-sec="' + escapeHtml(cls + ":" + s.name) + '">' +
+      "<summary>" +
+      '<span class="insp-name">' + escapeHtml(s.name) + (extraTag || "") + "</span>" +
+      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      "</summary>" +
+      '<pre class="insp-body">' + escapeHtml(s.text) + "</pre>" +
+      "</details>"
+    );
+  }
+  function frameTailSecHtml(s, d, prevTurn) {
+    let tags = "";
+    let body = '<pre class="insp-body">' + escapeHtml(s.text) + "</pre>";
+    let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
+    if (d) {
+      open = !!(d.ins || d.del); // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다
+      if (open) {
+        if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
+        if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
+        if (prevTurn != null) tags += '<span class="insp-tag">vs 턴 ' + escapeHtml(prevTurn) + "</span>";
+        body =
+          '<pre class="insp-diff">' +
+          d.lines
+            .map(function (l) {
+              if (l[0] === "+") return '<span class="ins">+ ' + escapeHtml(l[1]) + "</span>";
+              if (l[0] === "-") return '<span class="del">- ' + escapeHtml(l[1]) + "</span>";
+              return escapeHtml(l[1]);
+            })
+            .join("\n") +
+          "</pre>";
+      } else {
+        tags += '<span class="insp-tag">변화 없음</span>';
+      }
+    }
+    return (
+      '<details class="insp-sec insp-tail"' + (open ? " open" : "") + ">" +
+      "<summary>" +
+      '<span class="insp-name">' + escapeHtml(s.name) + tags + "</span>" +
+      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      "</summary>" +
+      body +
+      "</details>"
+    );
+  }
+  function frameBudgetHtml(b, ended) {
+    const total = Math.max(1, b.total || 0);
+    const seg = function (v, css) {
+      return '<i style="width:' + ((100 * (v || 0)) / total).toFixed(1) + "%;background:var(" + css + ')"></i>';
+    };
+    const head = b.window
+      ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
+      : fmtTok(b.total);
+    return (
+      '<div class="bl"><span>모델이 지금 보는 양' + (ended ? " (종료 시)" : "") + '</span><span class="bn">' + head + "</span></div>" +
+      '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
+      '<div class="bleg">' +
+      '<span><b style="background:var(--insp-system)"></b>시스템 <span class="n">' + fmtTok(b.system) + "</span></span>" +
+      (b.tools ? '<span><b style="background:var(--insp-tools)"></b>함수 스키마 <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
+      '<span><b style="background:var(--insp-convo)"></b>대화 <span class="n">' + fmtTok(b.convo) + "</span></span>" +
+      '<span><b style="background:var(--insp-tail)"></b>꼬리 <span class="n">' + fmtTok(b.tail) + "</span></span>" +
+      (b.compactions ? '<span class="insp-tag">⊙ 압축 ' + b.compactions + "회</span>" : "") +
+      "</div>"
+    );
+  }
+  function frameRenderBudget(f) {
+    if (!$ctxBudget || !f || !f.channel || f.key !== ovActiveChannel) return;
+    const b = f.data && f.data.ok ? f.data.budget : null;
+    $ctxBudget.hidden = !b;
+    if (b) $ctxBudget.innerHTML = frameBudgetHtml(b, false);
+  }
+  function frameSummaryMeta(v) {
     const s = v.summary;
     let meta = "";
     if (s.turns && s.turns.length === 2) meta += "턴 " + s.turns[0] + "–" + s.turns[1];
     if (s.before_tokens != null && s.after_tokens != null) {
       meta += (meta ? " · " : "") + fmtTok(s.before_tokens) + " → " + fmtTok(s.after_tokens) + " tok";
     }
-    if (!meta) meta = "압축 " + (v.compactions || 1) + "회";
-    const row = makeRow("⊙", "압축 요약", meta, null, []);
-    card.appendChild(row);
-    let body = s.text || "";
-    if (s.files && s.files.length) body += "\n파일: " + s.files.join(", ");
-    card.appendChild(el("div", ["ctx-body"], body));
-    card._md = function () { return "> ⊙ **압축 요약** · " + meta + "\n>\n> " + body.split("\n").join("\n> "); };
-    attachCopy(card);
-    return card;
+    return meta || "압축 " + (v.compactions || 1) + "회";
   }
-  function ctxApplyView(key) {
-    const v = ctxViews[key];
-    if (!v) return;
-    const found = ctxCards(key);
-    let lastGone = null;
-    found.cards.forEach(function (c) {
-      if (c.classList.contains("ctx-summary")) return;
-      const gone = ctxCardGone(c, v.gone);
-      c.classList.toggle("ctx-gone", gone);
-      if (gone) lastGone = c;
+  function frameBarHtml(title, open, chips, right) {
+    return (
+      '<button type="button" class="ctx-bar" aria-expanded="' + (open ? "true" : "false") + '">' +
+      '<span class="ctx-chev">' + (open ? "▼" : "▶") + "</span>" +
+      '<span class="ctx-title">' + title + "</span>" +
+      '<span class="ctx-chips">' + chips.join('<span class="ctx-dot"> · </span>') + "</span>" +
+      '<span class="ctx-right">' + right + "</span>" +
+      "</button>"
+    );
+  }
+  /** 다시 그려도 사용자가 펼쳐 둔 섹션은 그대로 둔다. */
+  function frameSetHtml(part, html) {
+    const openSecs = {};
+    part.querySelectorAll("details[open][data-sec]").forEach(function (d) {
+      openSecs[d.dataset.sec] = true;
     });
-    // 요약 카드: 스코프당 하나, 마지막 흐린 카드 바로 뒤(없으면 맨 앞).
-    const old = found.cards.find(function (c) { return c.classList.contains("ctx-summary"); });
-    if (old) old.remove();
-    if (!v.summary) return;
-    const card = ctxSummaryCard(v);
-    if (!taskGroups[key] && !runBlocks[key]) card.dataset.ch = key;
-    if (lastGone) lastGone.insertAdjacentElement("afterend", card);
-    else {
-      const first = found.cards.find(function (c) { return !c.classList.contains("ctx-summary"); });
-      if (first) first.insertAdjacentElement("beforebegin", card);
-      else found.parent.appendChild(card);
-    }
-    applyChannelFilter(card);
+    part.innerHTML = html;
+    part.querySelectorAll("details[data-sec]").forEach(function (d) {
+      if (openSecs[d.dataset.sec]) d.open = true;
+    });
   }
+  function frameRender(f) {
+    const d = f.data;
+    const ok = !!(d && d.ok);
+    const v = ctxViews[f.key];
+    const sum = v && v.summary;
+    const ended = !f.channel && ok && d.scope && d.scope.ended;
+    const sys = [], tools = [], tail = [];
+    let grammar = null;
+    if (ok) {
+      d.sections.forEach(function (s) {
+        if (s.kind === "tools") tools.push(s);
+        else if (s.kind === "tail") tail.push(s);
+        else if (s.kind === "grammar") grammar = s;
+        else if (s.kind === "system" || !s.kind) sys.push(s);
+      });
+    }
+    const pending = !ok && (f.loading || f.stale);
+
+    // ── 맨 위: 맨 처음 받는 것 ──
+    const chips = [];
+    if (ok) {
+      const hooks = sys.filter(function (s) { return /^Hook: /.test(s.name); }).length;
+      chips.push("시스템 프롬프트 " + sys.length + "개 섹션");
+      if (hooks) chips.push("훅 섹션 " + hooks);
+      if (tools.length) chips.push("함수 스키마 " + tools.length + "개");
+      if (grammar) chips.push("디코딩 문법");
+    } else {
+      chips.push(pending ? "…" : "아직 모델 호출 없음");
+    }
+    if (sum) {
+      const t = sum.turns && sum.turns.length === 2 ? " 턴 " + sum.turns[0] + "–" + sum.turns[1] : "";
+      chips.push('<span class="ctx-sumchip">압축 요약' + t + "</span>");
+    }
+    const b = ok ? d.budget : null;
+    let top = frameBarHtml(
+      "맨 처음 받는 것", f.open.top, chips,
+      b ? fmtTok((b.system || 0) + (b.tools || 0)) + " tok" : ""
+    );
+    if (f.open.top) {
+      top += '<div class="ctx-body">';
+      if (ok) {
+        top += '<div class="ctx-actions"><button type="button" class="insp-mini ctx-copyall" title="시스템·함수 스키마 전체 복사">⧉ 전체 복사</button></div>';
+        if (!f.channel && b) top += '<div class="insp-budget">' + frameBudgetHtml(b, ended) + "</div>";
+        top += '<div class="insp-group">시스템 프롬프트</div>';
+        top += sys.map(function (s) {
+          return frameSecHtml(s, "insp-system", /^Hook: /.test(s.name) ? '<span class="insp-tag">훅 · 턴마다 바뀔 수 있음</span>' : "");
+        }).join("");
+        if (tools.length) {
+          top += '<div class="insp-group">함수 스키마 — 요청 tools[]</div>';
+          top += tools.map(function (s) { return frameSecHtml(s, "insp-tools", ""); }).join("");
+        }
+        top += '<div class="insp-group">요청 설정</div>';
+        top += grammar
+          ? frameSecHtml(
+              { name: "디코딩 문법", text: grammar.text, est_tokens: grammar.est_tokens },
+              "insp-grammar",
+              '<span class="insp-tag">' + (grammar.thinking_open ? "생각 열림" : "생각 닫힘") + " · 서버가 강제</span>"
+            )
+          : '<div class="insp-sub">디코딩 문법 없음 — 서버가 파싱한다.</div>';
+      } else {
+        top += '<div class="insp-sub">' + (pending ? "불러오는 중…" : "이 스코프는 아직 모델을 호출하지 않았다.") + "</div>";
+      }
+      if (sum) {
+        let body = sum.text || "";
+        if (sum.files && sum.files.length) body += "\n파일: " + sum.files.join(", ");
+        top +=
+          '<div class="insp-group">압축 요약 — 밀려난 대화 대신 모델이 보는 글</div>' +
+          '<div class="ctx-summary"><div class="ctx-summary-meta">' + escapeHtml(frameSummaryMeta(v)) + "</div>" +
+          '<div class="ctx-summary-body">' + escapeHtml(body) + "</div></div>";
+      }
+      top += "</div>";
+    }
+    if (top !== f.sig.top) { f.sig.top = top; frameSetHtml(f.top, top); }
+    f.top.classList.toggle("open", f.open.top);
+
+    // ── 맨 아래: 매 턴 끝에 붙는 것 ──
+    const prevByName = {};
+    ((ok && d.tail_prev) || []).forEach(function (s) { prevByName[s.name] = s.text; });
+    let ins = 0, del = 0, tailTok = 0;
+    const diffs = tail.map(function (s) {
+      tailTok += s.est_tokens || 0;
+      if (prevByName[s.name] === undefined) return null;
+      const df = lineDiff(prevByName[s.name], s.text);
+      ins += df.ins;
+      del += df.del;
+      return df;
+    });
+    const tchips = [];
+    if (!ok) tchips.push(pending ? "…" : "아직 모델 호출 없음");
+    else if (!tail.length) tchips.push(d.turn ? "이 호출에는 꼬리가 없었다" : "첫 모델 호출 때 채워진다");
+    else {
+      if (ended) tchips.push("종료 시점 상태");
+      // 꼬리 본문에서 읽는다: `turn 3/30 …` 한 줄과 `## ` 제목들.
+      const text = tail.map(function (s) { return s.text; }).join("\n");
+      const tm = /^turn (\d+)\/(\d+)/m.exec(text);
+      tchips.push(tm ? "턴 " + tm[1] + "/" + tm[2] : "턴 " + d.turn);
+      text.split("\n").forEach(function (line) {
+        const hm = /^## (.+)$/.exec(line);
+        if (hm) tchips.push(escapeHtml(hm[1]));
+      });
+    }
+    let right = "";
+    if (ins) right += '<span class="insp-tag ins">+' + ins + "</span>";
+    if (del) right += '<span class="insp-tag del">−' + del + "</span>";
+    if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs 턴 ' + escapeHtml(d.prev_turn) + "</span>";
+    if (tailTok) right += fmtTok(tailTok) + " tok";
+    let tl = frameBarHtml("매 턴 끝에 붙는 것", f.open.tail, tchips, right);
+    if (f.open.tail) {
+      tl += '<div class="ctx-body">';
+      if (tail.length) {
+        tl += '<div class="insp-sub">' + (ended ? "끝날 때 스냅샷 — 더 안 바뀐다." : "마지막 모델 호출(턴 " + escapeHtml(d.turn) + ") 기준.") + "</div>";
+        tl += tail.map(function (s, i) { return frameTailSecHtml(s, diffs[i], d.prev_turn); }).join("");
+      } else {
+        tl += '<div class="insp-sub">' + tchips[0] + "</div>";
+      }
+      tl += "</div>";
+    }
+    if (tl !== f.sig.tail) { f.sig.tail = tl; f.tail.innerHTML = tl; }
+    f.tail.classList.toggle("open", f.open.tail);
+    frameRenderBudget(f);
+  }
+  function frameClick(f, which, e) {
+    const cp = e.target.closest(".insp-cp");
+    if (cp) {
+      // 섹션 복사 — <details> 토글로 번지지 않게.
+      e.preventDefault();
+      e.stopPropagation();
+      const det = cp.closest(".insp-sec");
+      const body = det && det.querySelector(".insp-body, .insp-diff");
+      if (body) copyToClipboard(body.textContent).then(function () { flashCopied(cp); });
+      return;
+    }
+    const all = e.target.closest(".ctx-copyall");
+    if (all) {
+      e.stopPropagation();
+      if (!f.data || !f.data.ok) return;
+      const text = f.data.sections
+        .filter(function (s) { return s.kind !== "grammar" && s.kind !== "tail"; })
+        .map(function (s) { return "### " + s.name + "\n" + s.text; })
+        .join("\n\n");
+      copyToClipboard(text).then(function () { flashCopied(all); });
+      return;
+    }
+    if (e.target.closest(".ctx-bar")) {
+      e.stopPropagation(); // 인라인 카드의 몸통 클릭(접기)으로 번지지 않게
+      f.open[which] = !f.open[which];
+      frameRender(f);
+      frameLoad(f);
+    }
+  }
+  window.__ctxFrames = frames; // 브라우저 테스트가 읽는다
 
   /** 에이전트 메일이 idle 한 main 을 깨워 런이 시작됐다 (v9.7.0).
    *
@@ -2065,7 +2488,6 @@
     }
     return Promise.resolve();
   }
-  window.__copyText = copyToClipboard; // 다른 IIFE(인스펙터)가 같은 헬퍼를 쓴다
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
@@ -2229,17 +2651,19 @@
   });
 
   es.addEventListener("memory_changed", function () {
-    // A `memory` op updated the ## Session Memory index → refresh the prompt
-    // view (memory has no editor, so prompt-only).
-    window.dispatchEvent(new CustomEvent("agentcli:memory-changed"));
+    // A `memory` op updated the ## Session Memory index.
+    // 메모리 인덱스는 꼬리에 실린다 — 채널 틀을 다시 가져온다.
+    Object.keys(frames).forEach(function (k) {
+      if (frames[k].channel) frameTouch(frames[k]);
+    });
   });
 
   es.addEventListener("token_usage", function (e) {
     // Top-bar readout: context occupancy %, this turn's in/out, and the
     // cumulative session output. Server sends raw counts; we format here.
     const d = JSON.parse(e.data);
-    // 🔍 인스펙터(별도 IIFE)가 열려 있으면 턴마다 다시 가져온다.
-    window.dispatchEvent(new CustomEvent("agentcli:turn-usage", { detail: d }));
+    // 모델 시점 틀: 이 호출을 낸 스코프의 스냅샷이 바뀌었다.
+    frameTouch(frameOfScope(d.task_id || ""));
     const parts = [];
     const inTok = d.in || 0;
     const win = d.context_window || 0;
@@ -2420,9 +2844,6 @@
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
     noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
-    // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
-    // if it's open, so a new sub-agent's chip appears live.
-    window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
   });
 
   es.addEventListener("scope_status", function (e) {
@@ -2435,6 +2856,7 @@
     noteScopeEnd(d.task_id);
     if (runBlocks[d.task_id]) {
       closeRunBlock(d);
+      frameTouch(frameOfScope(d.task_id));
       return;
     }
     // A replayed scope whose turns are not in this session's history closes
@@ -2457,6 +2879,7 @@
       }
     }
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
+    frameTouch(frames[d.task_id]); // 종료 시점 상태로 고정된다
   });
 
   // ── 타임라인 = 유일한 표면 (v9.4.0 ②, docs/chat-ui) ──
@@ -3060,6 +3483,7 @@
     ovActiveChannel = key || "main";
     ovSyncChannels();
     applyChannelFilter();
+    frameShowChannel(ovActiveChannel);
     ovApplyChannelInput();
     pin();
   }
@@ -3115,21 +3539,6 @@
       ovRenderBack();
     });
   })();
-  // 🔍 인스펙터가 열 스코프 = 현재 대화 채널. main → main 스코프, agent → 그
-  // agent 의 프롬프트 스냅샷(task_id=agent key). 인스펙터 IIFE 가 읽는다.
-  // 🔍 드로어의 "↑ 카드로" — 인라인 카드로 점프 (조상 펼치기 + 스크롤).
-  window.__jumpToScope = function (taskId) {
-    const g = taskGroups[taskId];
-    if (!g) return;
-    expandAncestors(taskId);
-    g.body.hidden = false;
-    g.chevron.textContent = "▼";
-    scrollTimelineTo(g.card);
-  };
-  window.__inspectorScope = function () {
-    if (ovActiveChannel === "main") return { scope: "", name: "Main", kind: "main" };
-    return { scope: ovActiveChannel, name: ovAgentLabel(ovActiveChannel), kind: "agent" };
-  };
   (function () {
     var bar = document.getElementById("ov-channels");
     if (!bar) return;
@@ -3147,6 +3556,7 @@
       ovSetChannel(key);
     });
     ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
+    frameShowChannel(ovActiveChannel); // main 의 맨 위 카드·꼬리 띠
   })();
 
   /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
@@ -3154,6 +3564,7 @@
    * the whole team view sideways in the mockup. The container is the one
    * surface that should move. */
   function scrollTimelineTo(card) {
+    ctxReveal(card); // 접힌 "컨텍스트 밖 대화" 안이면 먼저 편다
     // Off auto-follow so a live scrollToBottom() can't yank us back down.
     // (프로그램 스크롤로 표시 — 도착지가 바닥 근처여도 규칙 2 가 되붙이지 않는다.)
     unpin();
@@ -3694,342 +4105,6 @@
     if (e.key === "Escape" && $drawer.classList.contains("open")) close();
   });
 })();
-
-// ── 컨텍스트 인스펙터 (v10.7.0, docs/inspector-model-view §2.2) ─────────
-// 대화 밖에서 모델이 받는 것만 담는 **도킹** 드로어: 시스템 프롬프트·함수
-// 스키마·매턴 꼬리(직전 턴 diff)·디코딩 문법·예산. 대화 목록은 없다 — 왼쪽
-// 챗이 곧 모델 시점이다. 스코프 = 현재 채널(main / 상주 에이전트) 또는 인라인
-// 카드의 🔍 가 고정한 스코프. 열려 있는 동안 턴마다(token_usage) 다시 가져온다.
-(function () {
-  "use strict";
-
-  const $drawer = document.getElementById("inspector");
-  const $tag = document.getElementById("insp-scope-tag");
-  const $name = document.getElementById("insp-scope-name");
-  const $origin = document.getElementById("insp-origin");
-  const $meta = document.getElementById("insp-meta");
-  const $live = document.getElementById("insp-live");
-  const $budget = document.getElementById("insp-budget");
-  const $sections = document.getElementById("insp-sections");
-  const $collapse = document.getElementById("insp-collapse");
-  const $copyall = document.getElementById("insp-copyall");
-  const $mainBtn = document.getElementById("insp-main-btn");
-  if (!$drawer) return;
-
-  let activeScope = ""; // "" = main; a task_id = 인라인 카드 / 상주 에이전트 스코프
-  let activeKind = "main";
-  let activeName = "main";
-  let lastData = null;
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-  function fmtTok(n) {
-    n = Number(n) || 0;
-    return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
-  }
-  function copyText(text, btn) {
-    const flash = function () {
-      if (!btn) return;
-      const old = btn.textContent;
-      btn.textContent = "✓";
-      setTimeout(function () { btn.textContent = old; }, 1000);
-    };
-    // 메인 IIFE 의 헬퍼 하나로 — LAN http(비보안 컨텍스트) 폴백 포함.
-    window.__copyText(text).then(flash).catch(function () {});
-  }
-
-  // 줄 단위 LCS diff — 꼬리는 수십 줄이라 O(n·m) 으로 충분하다.
-  function lineDiff(prev, cur) {
-    const a = prev.split("\n"), b = cur.split("\n");
-    const n = a.length, m = b.length;
-    const dp = [];
-    for (let i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
-    for (let i = n - 1; i >= 0; i--) {
-      for (let j = m - 1; j >= 0; j--) {
-        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-    const out = [];
-    let i = 0, j = 0, ins = 0, del = 0;
-    while (i < n && j < m) {
-      if (a[i] === b[j]) { out.push(["=", b[j]]); i++; j++; }
-      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(["-", a[i]]); i++; del++; }
-      else { out.push(["+", b[j]]); j++; ins++; }
-    }
-    while (i < n) { out.push(["-", a[i++]]); del++; }
-    while (j < m) { out.push(["+", b[j++]]); ins++; }
-    return { lines: out, ins: ins, del: del };
-  }
-
-  function sectionHtml(s, cls, open, extraTag) {
-    return (
-      '<details class="insp-sec ' + cls + '"' + (open ? " open" : "") + ">" +
-      "<summary>" +
-      '<span class="insp-name">' + esc(s.name) + (extraTag || "") + "</span>" +
-      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
-      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
-      "</summary>" +
-      '<pre class="insp-body">' + esc(s.text) + "</pre>" +
-      "</details>"
-    );
-  }
-
-  function tailHtml(s, prevByName, prevTurn) {
-    const prev = prevByName[s.name];
-    let tags = "";
-    let body = '<pre class="insp-body">' + esc(s.text) + "</pre>";
-    let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
-    if (prev !== undefined) {
-      const d = lineDiff(prev, s.text);
-      open = !!(d.ins || d.del); // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다
-      if (d.ins || d.del) {
-        if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
-        if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
-        if (prevTurn != null) tags += '<span class="insp-tag">vs 턴 ' + esc(prevTurn) + "</span>";
-        body =
-          '<pre class="insp-diff">' +
-          d.lines
-            .map(function (l) {
-              if (l[0] === "+") return '<span class="ins">+ ' + esc(l[1]) + "</span>";
-              if (l[0] === "-") return '<span class="del">- ' + esc(l[1]) + "</span>";
-              return esc(l[1]);
-            })
-            .join("\n") +
-          "</pre>";
-      } else {
-        tags += '<span class="insp-tag">변화 없음</span>';
-      }
-    }
-    return (
-      '<details class="insp-sec insp-tail"' + (open ? " open" : "") + ">" +
-      "<summary>" +
-      '<span class="insp-name">' + esc(s.name) + tags + "</span>" +
-      '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
-      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
-      "</summary>" +
-      body +
-      "</details>"
-    );
-  }
-
-  function groupHtml(title, tag, tok, inner, open) {
-    return (
-      '<details class="insp-sec insp-grp"' + (open ? " open" : "") + ">" +
-      "<summary>" +
-      '<span class="insp-name">' + title + (tag ? '<span class="insp-tag">' + tag + "</span>" : "") + "</span>" +
-      '<span class="insp-tok">' + (tok == null ? "—" : fmtTok(tok)) + "</span>" +
-      "</summary>" +
-      '<div class="insp-nest">' + inner + "</div>" +
-      "</details>"
-    );
-  }
-
-  function renderBudget(b, ended) {
-    if (!b) { $budget.hidden = true; return; }
-    const total = Math.max(1, b.total || 0);
-    const seg = function (v, css) {
-      return '<i style="width:' + ((100 * (v || 0)) / total).toFixed(1) + "%;background:var(" + css + ')"></i>';
-    };
-    const head = b.window
-      ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
-      : fmtTok(b.total);
-    $budget.innerHTML =
-      '<div class="bl"><span>컨텍스트 예산' + (ended ? " (종료 시)" : "") + '</span><span class="bn">' + head + "</span></div>" +
-      '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
-      '<div class="bleg">' +
-      '<span><b style="background:var(--insp-system)"></b>시스템 <span class="n">' + fmtTok(b.system) + "</span></span>" +
-      (b.tools ? '<span><b style="background:var(--insp-tools)"></b>함수 스키마 <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
-      '<span><b style="background:var(--insp-convo)"></b>대화 <span class="n">' + fmtTok(b.convo) + "</span></span>" +
-      '<span><b style="background:var(--insp-tail)"></b>꼬리 <span class="n">' + fmtTok(b.tail) + "</span></span>" +
-      (b.compactions ? '<span class="insp-tag">⊙ 압축 ' + b.compactions + "회</span>" : "") +
-      "</div>";
-    $budget.hidden = false;
-  }
-
-  function render(data) {
-    lastData = data;
-    if (!data || !data.ok) {
-      $meta.textContent = "";
-      $live.textContent = "";
-      $budget.hidden = true;
-      $sections.innerHTML =
-        '<div class="insp-empty">아직 LLM 호출이 없습니다 — 먼저 메시지를 보내세요.</div>';
-      return;
-    }
-    const scope = data.scope || {};
-    const ended = !!scope.ended;
-    const inline = activeKind === "run" || activeKind === "skill";
-    // 머리: 스코프 이름만. 인라인·종료 스코프는 출처 줄.
-    if (inline) {
-      const parent = scope.parent ? "상위 스코프" : "main";
-      $origin.innerHTML =
-        "<span>" + esc(parent) + " 안에서 돈 " + (activeKind === "skill" ? "스킬" : "인라인 에이전트") +
-        " · " + (ended ? "종료" : "진행 중") + "</span>" +
-        '<a id="insp-jump">↑ 카드로</a><a id="insp-back">main 으로 돌아가기</a>';
-      $origin.hidden = false;
-    } else {
-      $origin.hidden = true;
-    }
-    const b = data.budget || null;
-    $meta.textContent =
-      (ended ? data.turn + " 턴" : "turn " + data.turn) + " · " + fmtTok(b ? b.total : data.est_tokens) + " tok";
-    $live.textContent = ended ? "끝날 때 스냅샷 — 더 안 바뀜" : "● 턴 " + data.turn + " 에 갱신";
-    $live.classList.toggle("ended", ended);
-    renderBudget(b, ended);
-
-    const sys = [], tools = [], tail = [];
-    let grammar = null;
-    data.sections.forEach(function (s) {
-      // 프로세스는 옛 코드·화면은 새 코드인 창(업그레이드 직후)에서 옛 서버가
-      // 대화 섹션(dynamic)을 보낼 수 있다 — 시스템에 섞지 않고 버린다.
-      if (s.kind === "tools") tools.push(s);
-      else if (s.kind === "tail") tail.push(s);
-      else if (s.kind === "grammar") grammar = s;
-      else if (s.kind === "system" || !s.kind) sys.push(s);
-    });
-    const prevByName = {};
-    (data.tail_prev || []).forEach(function (s) { prevByName[s.name] = s.text; });
-
-    let html = "";
-    html += '<div class="insp-group">' + (ended ? "꼬리 — 마지막 턴" : "매 턴 바뀜") + "</div>";
-    if (tail.length) {
-      tail.forEach(function (s) { html += tailHtml(s, prevByName, data.prev_turn); });
-    } else {
-      html += '<div class="insp-sub">이 호출에는 꼬리가 없었다.</div>';
-    }
-    html += '<div class="insp-group">' + (inline ? "고정 — 이 런 동안 안 바뀜" : activeKind === "agent" ? "고정 — 이 에이전트가 사는 동안 안 바뀜" : "고정 — 이 세션에서 안 바뀜") + "</div>";
-    const sysTok = sys.reduce(function (a, s) { return a + (s.est_tokens || 0); }, 0);
-    html += groupHtml(
-      "시스템 프롬프트 · " + sys.length + " 섹션", "", sysTok,
-      sys.map(function (s) { return sectionHtml(s, "insp-system", false); }).join(""),
-      false
-    );
-    if (tools.length) {
-      const toolTok = tools.reduce(function (a, s) { return a + (s.est_tokens || 0); }, 0);
-      html += groupHtml(
-        "Function schemas · " + tools.length + " 함수", "요청 tools[]", toolTok,
-        tools.map(function (s) { return sectionHtml(s, "insp-tools", false); }).join(""),
-        false
-      );
-    }
-    if (grammar) {
-      html += sectionHtml(
-        { name: "📐 디코딩 문법", text: grammar.text, est_tokens: grammar.est_tokens },
-        "insp-grammar", false,
-        '<span class="insp-tag">' + (grammar.thinking_open ? "생각 열림" : "생각 닫힘") + " · 서버가 강제</span>"
-      );
-    } else {
-      html +=
-        '<details class="insp-sec insp-grammar"><summary><span class="insp-name">📐 디코딩 문법' +
-        '<span class="insp-tag">없음 — 서버가 파싱</span></span><span class="insp-tok">—</span></summary></details>';
-    }
-    $sections.innerHTML = html;
-    $collapse.textContent = "⤢ 접기";
-    const jump = document.getElementById("insp-jump");
-    if (jump) jump.addEventListener("click", function () {
-      if (window.__jumpToScope) window.__jumpToScope(activeScope);
-    });
-    const back = document.getElementById("insp-back");
-    if (back) back.addEventListener("click", function () {
-      window.__openInspector("", "main", "main");
-    });
-  }
-
-  // 섹션 복사 — <details> 토글로 번지지 않게.
-  $sections.addEventListener("click", function (e) {
-    const cp = e.target.closest(".insp-cp");
-    if (!cp) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const det = cp.closest(".insp-sec");
-    const body = det && det.querySelector(".insp-body, .insp-diff");
-    if (body) copyText(body.textContent, cp);
-  });
-
-  $collapse.addEventListener("click", function () {
-    const secs = $sections.querySelectorAll(".insp-sec");
-    const anyOpen = Array.prototype.some.call(secs, function (d) { return d.open; });
-    secs.forEach(function (d) { d.open = !anyOpen; });
-    $collapse.textContent = anyOpen ? "⤢ 펼치기" : "⤢ 접기";
-  });
-
-  $copyall.addEventListener("click", function () {
-    if (!lastData || !lastData.ok) return;
-    const all = lastData.sections
-      .filter(function (s) { return s.kind !== "grammar"; })
-      .map(function (s) { return "### " + s.name + "\n" + s.text; })
-      .join("\n\n");
-    copyText(all, $copyall);
-  });
-
-  function loadPrompt() {
-    const q = activeScope ? "?task_id=" + encodeURIComponent(activeScope) : "";
-    return fetch("api/debug/prompt" + q)
-      .then(function (r) { return r.json(); })
-      .then(render)
-      .catch(function () {
-        $sections.innerHTML =
-          '<div class="insp-empty">스냅샷을 불러오지 못했습니다.</div>';
-      });
-  }
-
-  function isOpen() { return $drawer.classList.contains("open"); }
-  function open() {
-    $drawer.classList.add("open");
-    $drawer.setAttribute("aria-hidden", "false");
-    document.body.classList.add("insp-open"); // 도킹 — 챗 폭이 줄고 챗은 그대로 보인다
-  }
-  function close() {
-    $drawer.classList.remove("open");
-    $drawer.setAttribute("aria-hidden", "true");
-    document.body.classList.remove("insp-open");
-  }
-
-  // 공개 진입 — 인라인 카드 🔍 또는 하단 🔍(현재 채널). scope: "" = main;
-  // kind: "main" | "agent" | "run" | "skill".
-  window.__openInspector = function (scope, name, kind) {
-    // 상주 에이전트의 런 카드 id 는 `<key>#<n>` 이지만 스냅샷은 `<key>` 로 저장된다.
-    activeScope = (scope || "").replace(/#\d+$/, "");
-    activeKind = !scope || kind === "main" ? "main" : kind === "skill" ? "skill" : kind === "agent" ? "agent" : "run";
-    activeName = name || (activeKind === "main" ? "main" : scope);
-    const tag = activeKind === "run" ? "inline" : activeKind;
-    $tag.textContent = tag;
-    $tag.className = "insp-scope-tag tag-" + tag;
-    $name.textContent = "🔍 " + activeName;
-    $origin.hidden = true;
-    $sections.innerHTML = '<div class="insp-empty">불러오는 중…</div>';
-    open();
-    loadPrompt();
-  };
-
-  if ($mainBtn)
-    $mainBtn.addEventListener("click", function () {
-      if (isOpen()) { close(); return; }
-      const s =
-        (window.__inspectorScope && window.__inspectorScope()) ||
-        { scope: "", name: "main", kind: "main" };
-      window.__openInspector(s.scope, s.name, s.kind);
-    });
-  document.getElementById("insp-close").addEventListener("click", close);
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && isOpen()) close();
-  });
-
-  // 열려 있는 동안 턴마다 갱신 — 메인 IIFE 가 token_usage 를 받아 알린다.
-  window.addEventListener("agentcli:turn-usage", function () {
-    if (isOpen() && !(lastData && lastData.scope && lastData.scope.ended)) loadPrompt();
-  });
-  window.addEventListener("agentcli:memory-changed", function () {
-    if (isOpen()) loadPrompt();
-  });
-})();
-
 
 // ─── Workspace files (📁) — one drawer: download (select → zip) + upload
 // (drag-drop into the drawer → uploads to the directory clicked in the tree,
