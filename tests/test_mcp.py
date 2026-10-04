@@ -306,12 +306,14 @@ class TestMcpAdapter:
         # end-to-end: the wrapped op still validates against the MCP schema
         from agent_cli.tools.registry import TOOLS, validate_tool_input
 
-        TOOLS["github.search"] = tool
+        TOOLS["mcp__github__search"] = tool
         try:
-            ok, err, _ = validate_tool_input("github.search", tool.wrap_single_op(flat))
+            ok, err, _ = validate_tool_input(
+                "mcp__github__search", tool.wrap_single_op(flat)
+            )
             assert ok is True, err
         finally:
-            del TOOLS["github.search"]
+            del TOOLS["mcp__github__search"]
 
     def test_register_mcp_tools(self):
         from unittest.mock import MagicMock
@@ -336,12 +338,12 @@ class TestMcpAdapter:
         ]
 
         tools = register_mcp_tools(manager)
-        assert "github.list_issues" in tools
-        assert "github.create_pr" in tools
+        assert "mcp__github__list_issues" in tools
+        assert "mcp__github__create_pr" in tools
         # Tool instances, not bare callables — registry contract (.run/.parameters)
-        assert isinstance(tools["github.list_issues"], McpTool)
-        assert hasattr(tools["github.list_issues"], "run")
-        assert hasattr(tools["github.list_issues"], "parameters")
+        assert isinstance(tools["mcp__github__list_issues"], McpTool)
+        assert hasattr(tools["mcp__github__list_issues"], "run")
+        assert hasattr(tools["mcp__github__list_issues"], "parameters")
 
     def test_mcp_dispatch_through_registry(self):
         """Regression for the Tool-ABC migration gap (423608e): MCP tools
@@ -380,18 +382,18 @@ class TestMcpAdapter:
         TOOLS.update(registered)  # exactly what main.py does
         try:
             # validation path (recovery A5 detector wraps this)
-            ok, err, _conv = validate_tool_input("gh.search", {"query": "x"})
+            ok, err, _conv = validate_tool_input("mcp__gh__search", {"query": "x"})
             assert ok, err
             # missing required field is reported, not crashed
-            bad_ok, bad_err, _ = validate_tool_input("gh.search", {})
+            bad_ok, bad_err, _ = validate_tool_input("mcp__gh__search", {})
             assert not bad_ok
             assert "query" in bad_err
             # dispatch path (loop._invoke_regular → _execute_tool)
-            result = _execute_tool("gh.search", {"query": "x"})
+            result = _execute_tool("mcp__gh__search", {"query": "x"})
             assert result.success
             assert "ok" in result.output
         finally:
-            del TOOLS["gh.search"]
+            del TOOLS["mcp__gh__search"]
 
     def test_build_mcp_tool_descriptions(self):
         from unittest.mock import MagicMock
@@ -414,7 +416,7 @@ class TestMcpAdapter:
         ]
 
         desc = build_mcp_tool_descriptions(manager)
-        assert "github.list_issues" in desc
+        assert "mcp__github__list_issues" in desc
         assert "List GitHub issues" in desc
         assert "repo" in desc
 
@@ -874,3 +876,58 @@ class TestWrongTransportDiagnosis:
         from agent_cli.mcp.client import humanize_error
 
         assert "전송 방식" not in humanize_error("400 Bad Request", None)
+
+
+class TestMcpToolName:
+    """v10.14.0: ``mcp__{server}__{tool}`` — a legal function name in every
+    dialect (the old ``{server}.{tool}`` broke the OpenAI/Anthropic name rule,
+    which native_fc sends verbatim)."""
+
+    LEGAL = __import__("re").compile(r"[A-Za-z0-9_-]{1,64}")
+
+    def test_plain_names(self):
+        from agent_cli.mcp.adapter import mcp_tool_name
+
+        assert mcp_tool_name("github", "list_issues") == "mcp__github__list_issues"
+        assert mcp_tool_name("my-srv", "get-item") == "mcp__my-srv__get-item"
+
+    def test_other_characters_become_underscores(self):
+        from agent_cli.mcp.adapter import mcp_tool_name
+
+        # MCP itself allows dots in a tool name
+        assert mcp_tool_name("jira", "issues.search") == "mcp__jira__issues_search"
+        assert mcp_tool_name("my srv", "a/b") == "mcp__my_srv__a_b"
+
+    def test_long_names_fit_and_stay_distinct(self):
+        from agent_cli.mcp.adapter import mcp_tool_name
+
+        a = mcp_tool_name("s" * 40, "t" * 60 + "a")
+        b = mcp_tool_name("s" * 40, "t" * 60 + "b")
+        assert len(a) == 64 and len(b) == 64 and a != b
+        assert self.LEGAL.fullmatch(a) and self.LEGAL.fullmatch(b)
+        # deterministic — the name is stored in history and in allowed-tools
+        assert a == mcp_tool_name("s" * 40, "t" * 60 + "a")
+
+    def test_registered_name_is_what_native_fc_sends(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli import dialects
+        from agent_cli.mcp.adapter import McpTool
+        from agent_cli.prompts.system_prompt import function_schemas_for
+        from agent_cli.tools.registry import TOOLS
+
+        tool = McpTool(
+            MagicMock(), "jira", "issues.search", "Search", {"type": "object"}
+        )
+        TOOLS[tool.name] = tool
+        try:
+            names = [
+                f["function"]["name"]
+                for f in function_schemas_for(
+                    ["read_file", tool.name], dialects.get("native_fc")
+                )
+            ]
+        finally:
+            del TOOLS[tool.name]
+        assert "mcp__jira__issues_search" in names
+        assert all(self.LEGAL.fullmatch(n) for n in names)

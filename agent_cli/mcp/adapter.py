@@ -13,7 +13,9 @@ path with no special-casing.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
@@ -21,12 +23,36 @@ from agent_cli.tools.base import Tool
 from agent_cli.tools.registry import render_param_value
 from agent_cli.tools.result import ToolResult
 
+#: Every MCP tool name starts with this — a hook matcher or an
+#: ``allowed-tools`` reader can tell an MCP tool from a built-in by name alone.
+MCP_PREFIX = "mcp__"
+
+#: Function-name limit of the OpenAI and Anthropic tool APIs.
+_NAME_MAX = 64
+_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def mcp_tool_name(server: str, tool: str) -> str:
+    """The name a model calls an MCP tool by: ``mcp__{server}__{tool}``.
+
+    It has to be a legal function name for a server-parsed dialect
+    (``^[A-Za-z0-9_-]{1,64}$``), so one name works in every dialect. MCP
+    itself allows more (dots, up to 128 characters): other characters become
+    ``_``, and a name over the limit keeps its head and ends in a hash of the
+    full name so two long names stay distinct.
+    """
+    name = f"{MCP_PREFIX}{_NAME_UNSAFE.sub('_', server)}__{_NAME_UNSAFE.sub('_', tool)}"
+    if len(name) <= _NAME_MAX:
+        return name
+    digest = hashlib.sha1(f"{server}\0{tool}".encode()).hexdigest()[:8]
+    return f"{name[: _NAME_MAX - 9]}_{digest}"
+
 
 class McpTool(Tool):
     """A connected MCP tool exposed as an agent-cli :class:`Tool`.
 
-    ``name`` is the qualified ``{server}.{tool}`` so it never collides with
-    a native tool. ``parameters`` is the server-advertised JSON Schema, so
+    ``name`` is ``mcp__{server}__{tool}`` (:func:`mcp_tool_name`) so it never
+    collides with a native tool. ``parameters`` is the server-advertised JSON Schema, so
     the registry validates MCP input the same way it validates native
     tools. ``_run`` forwards the (prefix-stripped) args to the MCP server.
 
@@ -47,7 +73,7 @@ class McpTool(Tool):
         description: str,
         parameters: dict,
     ) -> None:
-        self.name = f"{server}.{tool_name}"
+        self.name = mcp_tool_name(server, tool_name)
         self.description = description or "(no description)"
         self.parameters = parameters or {"type": "object", "properties": {}}
         self._manager = manager
@@ -103,20 +129,20 @@ def register_mcp_tools(
 ) -> dict[str, Tool]:
     """Register all connected MCP tools as :class:`McpTool` instances.
 
-    Returns dict of ``{"{server}.{tool}": McpTool}`` ready to merge into
+    Returns dict of ``{"mcp__{server}__{tool}": McpTool}`` ready to merge into
     ``TOOLS``. Values are ``Tool`` subclasses (not bare callables) so they
     satisfy the registry's ``.parameters`` / ``.run()`` contract.
     """
     tools: dict[str, Tool] = {}
     for tool_info in manager.list_tools():
-        qualified_name = f"{tool_info.server}.{tool_info.name}"
-        tools[qualified_name] = McpTool(
+        tool = McpTool(
             manager,
             tool_info.server,
             tool_info.name,
             tool_info.description,
             tool_info.input_schema,
         )
+        tools[tool.name] = tool
     return tools
 
 
@@ -131,7 +157,7 @@ def build_mcp_tool_descriptions(manager: McpClientManager) -> str:
 
     lines = []
     for tool in all_tools:
-        qualified_name = f"{tool.server}.{tool.name}"
+        qualified_name = mcp_tool_name(tool.server, tool.name)
         desc = tool.description or "(no description)"
         # Build params summary from input_schema. Same renderer as native
         # tools (registry.render_param_value) so both surfaces show type +

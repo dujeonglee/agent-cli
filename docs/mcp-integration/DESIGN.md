@@ -12,7 +12,7 @@ LLM이 빌트인 도구와 동일하게 MCP 도구를 사용할 수 있게 함.
 
 - **MCP 도구 = 일반 도구**: Available Tools에 동일하게 표시, 동일하게 호출
 - **자동 연결**: 세션 시작 시 mcp.json 기반 자동 spawn/connect
-- **네임스페이스**: `{server}.{tool}` 형식으로 충돌 방지
+- **네임스페이스**: `mcp__{server}__{tool}` 이름으로 충돌 방지 (v10.14.0 — 함수 이름 규칙에 맞춤; 종전 `{server}.{tool}`)
 - **SDK 사용**: `mcp` Python 패키지 (직접 구현 X)
 
 ## 3. Configuration
@@ -106,7 +106,7 @@ LLM 호출:
   │   └─ sse: HTTP 연결 → initialize handshake
   │
   ├─ 도구 목록 조회 (tools/list)
-  │   └─ {server}.{tool} 형식으로 TOOLS에 등록
+  │   └─ mcp__{server}__{tool} 이름으로 TOOLS에 등록
   │
   ├─ system prompt 빌드 (MCP 도구 포함)
   └─ 대화 시작

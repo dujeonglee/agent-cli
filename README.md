@@ -1622,10 +1622,10 @@ agent-cli mcp remove <이름>
 
 #### 사용
 
-세션 시작 시 자동 연결됩니다 (`run`·`web` 양쪽 — web 은 v4.46.0 부터). MCP 도구는 `{server}.{tool}` 형식으로 LLM이 자동 사용:
+세션 시작 시 자동 연결됩니다 (`run`·`web` 양쪽 — web 은 v4.46.0 부터). MCP 도구는 `mcp__{server}__{tool}` 이름으로 LLM이 자동 사용합니다 (v10.14.0 — 종전 `{server}.{tool}`). 함수 이름 규칙(영문자·숫자·`_`·`-`, 64자)에 맞춘 이름이라 `native_fc` 를 포함한 모든 방언에서 같습니다. 서버·도구 이름의 다른 문자(점 등)는 `_` 로 바뀌고, 64자를 넘으면 앞부분 + 전체 이름의 해시 8자로 줄입니다. 프로파일·스킬의 `allowed-tools` 나 훅 matcher 에 옛 이름을 적어 두었다면 새 이름으로 고쳐야 합니다.
 
 ```json
-{"action": "github.list_issues", "action_input": {"repo": "owner/repo"}}
+[{"action": "mcp__github__list_issues", "repo": "owner/repo"}]
 ```
 
 ### 스트리밍 출력
