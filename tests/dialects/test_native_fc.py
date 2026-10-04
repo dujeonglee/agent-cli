@@ -325,3 +325,116 @@ class TestLoop:
             ]
             results = [m["tool_call_id"] for m in msgs if m["role"] == "tool"]
             assert calls[:2] == results == ["call_1_0", "call_1_1"], name
+
+
+def _unpaired(messages: list[dict]) -> list[str]:
+    """`tool` messages that do not answer a call of the assistant message
+    right before them — what the OpenAI message rules reject."""
+    open_ids: set[str] = set()
+    bad = []
+    for m in messages:
+        if m["role"] == "assistant":
+            open_ids = {t["id"] for t in m.get("tool_calls") or []}
+        elif m["role"] == "tool":
+            if m["tool_call_id"] in open_ids:
+                open_ids.discard(m["tool_call_id"])
+            else:
+                bad.append(m["tool_call_id"])
+        else:
+            open_ids = set()
+    return bad
+
+
+class TestRejectedCallKeepsTheMessageOrderValid:
+    """v10.14.0. A format-rejected call (unknown tool, bad arguments) is not
+    stored, so its rejection has no assistant `tool_calls` to answer. It used
+    to go out as a `tool` message anyway — with no call before it, or reusing
+    the id of an earlier, already answered call."""
+
+    def _run(self, tmp_path, caps, wf, responses, active_tools=None):
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        provider = MagicMock()
+        provider.call.side_effect = responses
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+            active_tools=active_tools,
+        )
+        assert result.success
+        return [c.kwargs["messages"] for c in provider.call.call_args_list]
+
+    @staticmethod
+    def _call(name, args, content=""):
+        return LLMResponse(
+            content=content,
+            tool_calls=[{"id": "x", "name": name, "input": args}],
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+        )
+
+    def test_unknown_tool_on_the_first_turn(self, tmp_path, caps, wf):
+        calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                self._call("shell", {"command": "ls"}),
+                self._call("complete", {"result": "done"}),
+            ],
+            active_tools=["read_file"],
+        )
+        second = calls[1]
+        assert _unpaired(second) == []
+        assert second[-1]["role"] == "user"
+        assert "Unknown tool 'shell'" in second[-1]["content"]
+
+    def test_bad_arguments_on_the_first_turn(self, tmp_path, caps, wf):
+        calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                self._call("read_file", {"bogus": 1}),
+                self._call("complete", {"result": "done"}),
+            ],
+        )
+        assert _unpaired(calls[1]) == []
+        assert calls[1][-1]["role"] == "user"
+
+    def test_rejection_after_an_answered_call_does_not_reuse_its_id(
+        self, tmp_path, caps, wf
+    ):
+        calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                self._call("read_file", {"path": "nope.txt"}),
+                self._call("shell", {"command": "ls"}),
+                self._call("complete", {"result": "done"}),
+            ],
+            active_tools=["read_file"],
+        )
+        third = calls[2]
+        assert _unpaired(third) == []
+        assert [m["role"] for m in third[-3:]] == ["assistant", "tool", "user"]
+        assert "Unknown tool 'shell'" in third[-1]["content"]
+
+    def test_a_paired_observation_is_still_a_tool_message(self, tmp_path, caps, wf):
+        calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                self._call("read_file", {"path": "nope.txt"}),
+                self._call("complete", {"result": "done"}),
+            ],
+        )
+        assert _unpaired(calls[1]) == []
+        assert calls[1][-1]["role"] == "tool"
