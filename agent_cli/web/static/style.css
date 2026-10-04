@@ -1224,7 +1224,6 @@ footer {
 }
 #directive-backdrop.open { opacity: 1; }
 
-#inspector,
 #directive-editor {
   position: fixed;
   top: 0;
@@ -1240,7 +1239,6 @@ footer {
   display: flex;
   flex-direction: column;
 }
-#inspector.open,
 #directive-editor.open { transform: translateX(0); }
 
 /* semantic kind hues — system prompt vs conversation. Literal (like the JS
@@ -1248,54 +1246,9 @@ footer {
 :root { --insp-system: var(--accent); --insp-tools: var(--scope-agent, var(--accent)); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
 
 /* ── Prompt Inspection ─────────────────────── */
-.insp-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-.insp-scope-tag {
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  font-size: 10px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  color: var(--muted);
-  flex: none;
-}
-.insp-scope-tag.tag-agent { background: var(--accent-soft-bg); color: var(--accent-soft-text); }
-.insp-scope-tag.tag-skill { background: var(--surface-2); color: var(--insp-convo); }
-.insp-scope-name {
-  font-weight: 640;
-  font-size: 15px;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#insp-close, #de-close { font-size: 16px; }
-#insp-close:hover, #de-close:hover { background: var(--surface-2); color: var(--text); }
+#de-close { font-size: 16px; }
+#de-close:hover { background: var(--surface-2); color: var(--text); }
 
-.insp-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-3);
-  flex: 0 0 auto;
-}
-.insp-meta {
-  color: var(--text-2);
-  font-size: 11.5px;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-.insp-bar-sp { flex: 1; }
 .insp-mini {
   font-size: 11.5px;
   color: var(--text-2);
@@ -1309,30 +1262,14 @@ footer {
 .insp-mini:hover { background: var(--surface-2); color: var(--text); }
 
 
-.insp-sections {
-  flex: 1 1 auto;
-  /* min-height:0 lets the flex child scroll instead of overgrowing the drawer. */
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 6px 16px 16px;
-}
-/* Sticky group header — replaces the old faint divider; labels SYSTEM vs
-   CONVERSATION so the two halves read at a glance. */
+/* 묶음 제목 — 시스템 프롬프트 / 함수 스키마 / 요청 설정 / 압축 요약. */
 .insp-group {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  flex: 0 0 auto;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 10.5px;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--muted);
-  background: var(--surface);
-  padding: 10px 2px 4px;
+  color: var(--text-2);
+  padding: 8px 2px 2px;
 }
 .insp-sec {
   flex: 0 0 auto;
@@ -1344,7 +1281,6 @@ footer {
 }
 .insp-sec.insp-system { border-left-color: var(--insp-system); }
 .insp-sec.insp-tools { border-left-color: var(--insp-tools); }
-.insp-sec.insp-dynamic { border-left-color: var(--insp-convo); }
 .insp-sec.insp-tail { border-left-color: var(--insp-tail); }
 .insp-sec.insp-grammar { border-left-color: var(--insp-grammar); }
 .insp-sec > summary {
@@ -1380,18 +1316,6 @@ footer {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.insp-share {
-  width: 44px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--surface-2);
-  overflow: hidden;
-  flex: none;
-}
-.insp-share i { display: block; height: 100%; background: var(--muted); }
-.insp-system .insp-share i { background: var(--insp-system); }
-.insp-tools .insp-share i { background: var(--insp-tools); }
-.insp-dynamic .insp-share i { background: var(--insp-convo); }
 .insp-tok {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
@@ -1427,7 +1351,6 @@ footer {
   max-height: min(420px, 50vh);
   overflow-y: auto;
 }
-.insp-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; }
 
 /* ── Directive Editor ─────────────────────── */
 .de-head {
@@ -1498,26 +1421,6 @@ footer {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* ── Timeline card 🔍 inspect action ─────────── */
-.task-inspect {
-  margin-left: 6px;
-  flex: none;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  opacity: .5;
-  padding: 2px 5px;
-  border-radius: 6px;
-  transition: opacity .12s ease, background .12s ease;
-}
-.card-task-group:hover .task-inspect { opacity: .8; }
-.task-inspect:hover { opacity: 1; background: var(--hairline-strong); }
-
-/* footer main-prompt inspect button (🔍) */
-#insp-main-btn { font-size: 16px; align-self: flex-end; flex-shrink: 0; }
-
 
 /* ─── Workspace download drawer (📥) ─── */
 #download-backdrop {
@@ -1668,30 +1571,66 @@ footer {
 
 /* Custom fast tooltip (replaces the slow native <title>). */
 
-/* ── 모델 시점 (v10.6.0, docs/inspector-model-view) ──
-   컨텍스트에서 빠진 카드는 흐리게 두고(접지 않는다) 꼬리표를 단다. 압축 요약은
-   그 자리에 점선 카드로 선다 — 모델은 흐린 카드 대신 이것을 본다. */
-.card.ctx-gone { opacity: .38; }
+/* ── 모델 시점 (v10.17.0, docs/inspector-model-view) ──
+   화면은 위에서 아래로 모델이 받는 순서다: 맨 위 "맨 처음 받는 것"(.ctx-top),
+   대화, 맨 아래 "매 턴 끝에 붙는 것"(.ctx-tail). main·상주 에이전트 채널·인라인
+   카드가 같은 부품을 쓴다. 컨텍스트에서 빠진 카드는 한 묶음(.ctx-fold)으로
+   접히고, 펼치면 흐리게 보인다. */
+.card.ctx-gone { opacity: .5; }
 .card.ctx-gone .row .s::after, .card.ctx-gone .bubble::after, .card.ctx-gone .final::after {
   content: "컨텍스트 밖"; font: 10px ui-monospace, monospace; color: var(--fail);
   border: 1px solid var(--fail-soft-border); border-radius: 999px; padding: 0 6px; margin-left: 8px; vertical-align: 1px;
 }
 .card.ctx-gone .bubble::after { color: inherit; border-color: currentColor; opacity: .85; }
-.card.ctx-summary { border: 1px dashed var(--cyan); border-radius: 10px; padding: 8px 12px; margin: 4px 0; }
-.card.ctx-summary .row { grid-template-columns: 18px auto 1fr auto; }
-.card.ctx-summary .row .k { color: var(--cyan); }
-.card.ctx-summary .ctx-body { font-size: 12.5px; color: var(--text-2); margin: 4px 0 0 83px; white-space: pre-wrap; }
-
-/* ── 컨텍스트 인스펙터 (v10.7.0, docs/inspector-model-view §2.2) ──
-   도킹: 열려 있는 동안 챗·푸터가 드로어 폭만큼 오른쪽 여백을 둔다(모달 아님). */
-@media (min-width: 900px) {
-  body.insp-open main#messages, body.insp-open footer { margin-right: min(560px, 94vw); }
+.card.ctx-folded { display: none; }
+.ctx-fold {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px;
+  padding: 6px 12px; border: 1px dashed var(--border-2); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px;
+  text-align: left; cursor: pointer; flex: none;
 }
-.insp-scope-tag.tag-inline { background: var(--surface-2); color: var(--accent-2); }
-.insp-origin { display: flex; align-items: center; gap: 10px; padding: 6px 16px 0; font-size: 12px; color: var(--text-2); }
-.insp-origin a { color: var(--accent-2); text-decoration: underline; cursor: pointer; }
-.insp-live { font: 11px "Jetendard", ui-monospace, monospace; color: var(--ok); }
-.insp-live.ended { color: var(--muted); }
+.ctx-fold:hover { background: var(--surface-3); color: var(--text); }
+.ctx-fold .ctx-title { font-weight: 600; }
+.ctx-fold .ctx-count { font-variant-numeric: tabular-nums; }
+.ctx-fold .ctx-note { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+.ctx-top, .ctx-tail { border: 1px solid var(--border-2); border-radius: 10px; background: var(--surface); flex: none; }
+.ctx-top { border-color: var(--accent-soft-border); }
+.ctx-tail { border-color: var(--warn-soft-border); }
+.ctx-bar {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px;
+  padding: 6px 12px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--text-2); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.ctx-bar:hover { background: var(--surface-3); }
+.ctx-chev { flex: none; font-size: 9px; color: var(--muted); }
+.ctx-top .ctx-title, .ctx-tail .ctx-title { flex: none; font-weight: 600; }
+.ctx-top .ctx-title { color: var(--accent-soft-text); }
+.ctx-tail .ctx-title { color: var(--warn-soft-fg); }
+.ctx-chips { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-dot { color: var(--muted); }
+.ctx-sumchip { color: var(--cyan); }
+.ctx-right { flex: none; display: inline-flex; align-items: center; gap: 6px; font: 11px "Jetendard", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.ctx-vs { color: var(--muted); }
+.ctx-body { display: flex; flex-direction: column; gap: 5px; padding: 4px 12px 12px; max-height: min(520px, 55vh); overflow-y: auto; }
+.ctx-actions { display: flex; justify-content: flex-end; }
+.ctx-copyall { flex: none; }
+.ctx-summary { border: 1px dashed var(--cyan); border-radius: 9px; padding: 8px 12px; }
+.ctx-summary-meta { font: 11.5px "Jetendard", ui-monospace, monospace; color: var(--cyan); }
+.ctx-summary-body { font-size: 12.5px; color: var(--text-2); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+/* 입력창 위 띠 · 머리말 아래 예산 줄 (채널) */
+#ctx-tail { margin-bottom: 8px; }
+#ctx-tail .ctx-body { max-height: min(340px, 38vh); }
+#ctx-tail:empty { display: none; }
+#ctx-budget { margin: 0; border-width: 0 0 1px; border-radius: 0; padding: 6px 16px; }
+#ctx-budget .bbar { height: 6px; margin: 5px 0; }
+/* 인라인 카드 안: 머리 아래·몸통 아래. 몸통이 접히면 틀도 감춘다. */
+.card-task-group > .ctx-top, .card-task-group > .ctx-tail { margin: 6px 10px; }
+.card-task-group:has(> .task-body[hidden]) > .ctx-top,
+.card-task-group:has(> .task-body[hidden]) > .ctx-tail { display: none; }
+.ctx-body .insp-budget { margin: 0; }
+
+.insp-tag.ins { color: var(--ok); background: var(--ok-soft-bg); border-color: var(--ok-soft-border); }
+.insp-tag.del { color: var(--fail-soft-fg); background: var(--fail-soft-bg); border-color: var(--fail-soft-border); }
 .insp-budget { margin: 10px 16px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-3); flex: 0 0 auto; }
 .insp-budget .bl { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; }
 .insp-budget .bn { font: 12px "Jetendard", ui-monospace, monospace; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -1701,14 +1640,10 @@ footer {
 .insp-budget .bleg b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 .insp-budget .bleg .n { font-family: "Jetendard", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .insp-budget .bleg .insp-tag { margin-left: auto; }
-.insp-tag.ins { color: var(--ok); background: var(--ok-soft-bg); border-color: var(--ok-soft-border); }
-.insp-tag.del { color: var(--fail-soft-fg); background: var(--fail-soft-bg); border-color: var(--fail-soft-border); }
 .insp-diff { margin: 0; padding: 8px 11px 10px; border-top: 1px solid var(--border); font: 12px/1.5 "Jetendard", ui-monospace, monospace; color: var(--text-2); white-space: pre-wrap; }
 .insp-diff .ins { display: block; background: var(--ok-soft-bg); color: var(--text); }
 .insp-diff .del { display: block; background: var(--fail-soft-bg); text-decoration: line-through; opacity: .85; }
 .insp-sub { font-size: 11.5px; color: var(--muted); padding: 2px 2px 6px; }
-.insp-sec.insp-grp { border-left-color: var(--border-2); }
-.insp-nest { padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 6px; }
 
 /* ── 카드 복사 ⧉ (v10.8.0, export 대체) — 호버 때만 보이는 작은 버튼 ── */
 .card-copy {

@@ -103,7 +103,7 @@ def _wait_settled(page, expected_cards: int, timeout: float = 30.0) -> None:
     """카드 수가 목표치에 도달하고 rAF 병합분이 flush 될 때까지 대기."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        n = page.evaluate("document.querySelectorAll('#messages > *').length")
+        n = page.evaluate("document.querySelectorAll('#messages > .card').length")
         if n >= expected_cards:
             break
         time.sleep(0.05)
@@ -128,7 +128,7 @@ class TestRenderCoalescingRuntime:
         _wait_settled(page, _TOTAL_EVENTS)
 
         perf = page.evaluate("window.__perf")
-        cards = page.evaluate("document.querySelectorAll('#messages > *').length")
+        cards = page.evaluate("document.querySelectorAll('#messages > .card').length")
         # 여유(headroom) 가시화 — ``-s`` 로 실행 시 상한 대비 실측이 보인다.
         print(
             f"\n[coalescing] events={_TOTAL_EVENTS} → "
@@ -175,7 +175,9 @@ class TestRenderKpi:
 
         row = {
             "events": events,
-            "cards": page.evaluate("document.querySelectorAll('#messages > *').length"),
+            "cards": page.evaluate(
+                "document.querySelectorAll('#messages > .card').length"
+            ),
             "blocking_ms": blocking_ms,
             "worst_long_task_ms": worst_ms,
             "load_to_settled_ms": elapsed_ms,

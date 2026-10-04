@@ -2341,13 +2341,17 @@ def web(
     # moment the drawer opens — no need to send a message first.
     from agent_cli.web.inspector import capture_startup_system_prompt
 
-    capture_startup_system_prompt(
-        renderer,
-        capabilities=capabilities,
-        dialect=dialect_plugin,
-        session_dir=str(ctx.session_dir),
-        max_depth=max_depth,
-    )
+    # resume: 파일로 남긴 틀(맨 위 카드·꼬리 띠·서브 스코프의 뷰)을 되살린다.
+    # main 을 되살렸으면 캡처를 건너뛴다 — 화면은 "마지막 모델 호출 기준" 이고,
+    # 새로 조립한 프롬프트로 덮으면 그 호출의 꼬리가 사라진다.
+    if not (is_resume and renderer.restore_prompt_views()):
+        capture_startup_system_prompt(
+            renderer,
+            capabilities=capabilities,
+            dialect=dialect_plugin,
+            session_dir=str(ctx.session_dir),
+            max_depth=max_depth,
+        )
 
     from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 

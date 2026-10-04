@@ -338,7 +338,11 @@ class TestStaticWiring:
         assert "ctx-gone" in js and "ctx-summary" in js
         assert "dataset.hidx" in js and "gone.hidx" in js
         assert "ctxApplyToCard(cardEl" in js  # finishCard 가 새 카드에도 적용
-        assert ".card.ctx-gone" in css and ".card.ctx-summary" in css
+        # v10.17.0: 빠진 카드는 한 묶음으로 접히고, 요약은 맨 위 카드 안에 산다
+        assert "ctx-folded" in js and "ctx-fold" in js
+        assert ".card.ctx-gone" in css and ".card.ctx-folded" in css
+        assert ".ctx-fold" in css and ".ctx-summary" in css
+        assert ".ctx-top" in css and ".ctx-tail" in css
 
 
 class TestSnapshotEnd:
