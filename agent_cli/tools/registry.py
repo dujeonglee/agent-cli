@@ -38,44 +38,51 @@ from agent_cli.tools.virtual import (
 )
 from agent_cli.tools.write_file import WriteFileTool
 
-# Instantiated once. Insertion order is preserved into ``TOOLS`` (dict
-# keeps order) and matches the historical ``TOOL_SCHEMAS`` ordering for
-# KV-cache stability in the system prompt.
+# Instantiated once, in PROMPT ORDER: tools that are used together sit together
+# (v10.13.0). Until then the order was the order tools happened to be added —
+# new ones were appended "to keep the existing order" — with ``edit_file`` and
+# ``agent`` moved to the very end, so the model read ``write_file`` near the top
+# and ``edit_file`` a dozen tools later, and the pairs ``ask``/``answer`` and
+# ``message``/``reply`` were split. A loop's system prompt is fixed for the
+# life of the loop, so the order has no per-turn cache cost.
+#
+#   files      read → edit → write (edit is the default way to change a file;
+#              its guide builds on read_file's hashline output) → code_index
+#              (``fetch`` feeds edit_file)
+#   execution  shell, fetch, and the two that act later: monitor, schedule
+#   memory     read_context, memory
+#   people     ask/answer, message/reply, agent, run_skill
+#   finish     complete
 _ALL_TOOLS: list[Tool] = [
     ReadFileTool(),
-    WriteFileTool(),
     EditFileTool(),
-    ShellTool(),
+    WriteFileTool(),
     CodeIndexTool(),
-    CompleteTool(),
+    ShellTool(),
+    FetchTool(),
+    # 🔔 native: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다.
+    MonitorTool(),
+    # ⏰ native since v10.12.0 — the scheduler runs in this process
+    # (``agent_cli/schedule/``).
+    ScheduleTool(),
     ReadContextTool(),
     MemoryTool(),
     AskTool(),
+    # 💬 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1). ``requires_handler``
+    # 가 포트 없는 루프에서 알아서 뗀다.
+    AnswerTool(),
     MessageTool(),
-    RunSkillTool(),
-    FetchTool(),
+    # ↩ `message` 의 짝 (v9.21.0): 요청자에게 빚진 회신을 갚는다.
+    # ``requires_handler="message_handler"`` 라 상주 에이전트에만 붙는다.
+    ReplyTool(),
     AgentTool(),
+    RunSkillTool(),
+    CompleteTool(),
 ]
 
-# 🔔 ``monitor`` — native: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다.
-# 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
-_ALL_TOOLS.append(MonitorTool())
-
-# 💬 ``answer`` — 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1).
-# ``requires_handler`` 가 포트 없는 루프에서 알아서 떼므로 무조건 등록한다.
-# 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
-_ALL_TOOLS.append(AnswerTool())
-
-# ↩ ``reply`` — `message` 의 짝 (v9.21.0): 요청자에게 빚진 회신을 갚는다.
-# ``requires_handler="message_handler"`` 라 상주 에이전트에만 붙는다.
-_ALL_TOOLS.append(ReplyTool())
-
-# ⏰ ``schedule`` — native since v10.12.0: the scheduler runs in this process
-# (``agent_cli/schedule/``), so the tool is always registered. Until then it
-# was a thin client of agent-board's scheduler behind ``AGENT_CLI_SCHEDULER``.
-_ALL_TOOLS.append(ScheduleTool())
-
 TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
+#: Prompt order of the built-in tools (MCP tools join ``TOOLS`` later).
+_BUILTIN_ORDER: tuple[str, ...] = tuple(TOOLS)
 
 # Back-compat alias — schema consumers (system prompt, MCP adapter, input
 # validation) read .name/.description/.parameters, which Tool instances
@@ -239,17 +246,21 @@ def allows_extra_keys(params_schema: dict) -> bool:
 def effective_tool_names(tool_names: list[str] | None, dialect=None) -> list[str]:
     """The tool set a loop actually exposes, in prompt order — the always-
     present tools added (``complete`` among them: every format finishes by
-    calling it, v10.11.1), static tools first and conditional ones last.
-    Shared by the prompt and the decoding grammar so both describe the same
-    set."""
+    calling it, v10.11.1). Shared by the prompt and the decoding grammar so
+    both describe the same set.
+
+    The order is the registry's (``_ALL_TOOLS`` — related tools together,
+    v10.13.0), NOT the caller's: a profile's ``allowed-tools`` list or a
+    hand-written tool list must not decide where a tool sits in the prompt.
+    Names the registry does not know at import time (MCP tools, added to
+    ``TOOLS`` at boot) keep the caller's order, after the built-ins."""
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
     for t in _ALWAYS_INCLUDE:
         if t not in names:
             names = [*names, t]
-    conditional = {"edit_file", "agent"}
-    static_names = [n for n in names if n not in conditional]
-    cond_names = [n for n in names if n in conditional]
-    return static_names + cond_names
+    rank = {name: i for i, name in enumerate(_BUILTIN_ORDER)}
+    builtin = sorted((n for n in names if n in rank), key=rank.__getitem__)
+    return builtin + [n for n in names if n not in rank]
 
 
 def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
@@ -301,8 +312,7 @@ def get_tool_descriptions(
             expose ``complete``, that tool is omitted from the always-included
             set. ``None`` keeps the default (prefixed, ``complete`` shown).
 
-    Tools are ordered: always-present first (KV cache stable),
-    conditional (edit_file, delegate) last.
+    Tools are ordered by ``effective_tool_names`` (related tools together).
     """
     guides = inline_guides or {}
     overrides = description_overrides or {}
