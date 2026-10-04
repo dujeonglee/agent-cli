@@ -310,7 +310,7 @@ class TestAddFlow:
         assert p.asked.count("   서버 이름") == 1  # 이름은 다시 묻지 않는다
 
     def test_name_with_dot_rejected(self, proj, monkeypatch):
-        """도구 이름이 {서버}.{도구} 라 점은 파싱을 깨뜨린다."""
+        """도구 이름이 mcp__{서버}__{도구} — 함수 이름 규칙 밖 문자는 받지 않는다."""
         # name(거부) · name · command · args · env(빈 줄)
         _script_prompts(
             monkeypatch, prompt=["bad.name", "ok", "python3", "", ""], intp=[1]
@@ -318,7 +318,7 @@ class TestAddFlow:
         with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)):
             w, buf = _wizard()
             assert w.add()
-        assert "점(.)" in buf.getvalue()
+        assert "영문자·숫자" in buf.getvalue()
         assert "ok" in W.read_servers(proj / ".agent-cli" / "mcp.json")
 
     def test_existing_name_asks_before_overwrite(self, proj, monkeypatch):

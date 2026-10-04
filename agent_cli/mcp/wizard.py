@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -368,9 +369,12 @@ class McpWizard:
             if not name:
                 self.console.print("   [red]이름은 비울 수 없습니다.[/]")
                 continue
-            if "." in name or " " in name:
-                # 도구 이름이 {서버}.{도구} 라 점·공백은 파싱을 깨뜨린다
-                self.console.print("   [red]이름에 점(.)이나 공백은 쓸 수 없습니다.[/]")
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                # 도구 이름이 mcp__{서버}__{도구} 이고 함수 이름 규칙을 따른다 —
+                # 다른 문자는 `_` 로 바뀌어 적은 이름과 달라진다
+                self.console.print(
+                    "   [red]이름은 영문자·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다.[/]"
+                )
                 continue
             if name in existing and not Confirm.ask(
                 f"   '{name}' 이 이미 있습니다. 덮어쓸까요?", default=False
