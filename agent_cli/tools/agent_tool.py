@@ -183,6 +183,59 @@ class AgentTool(Tool):
         "required": ["mode"],
     }
 
+    # 서브루프용 스키마 — 설명만 run 전용이고 스키마는 여섯 모드를 전부 나열하던
+    # 불일치를 없앤다 (v10.13.0). 프롬프트와 디코딩 문법이 같은 스키마를 보므로
+    # 서브에이전트는 spawn/request 를 배우지도, 낼 수도 없다. 상주 전용 인자
+    # (name·key)는 빠지고 나머지 설명은 run 기준으로 다시 쓴다.
+    SUBLOOP_PARAMETERS: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["run"],
+                "description": (
+                    "run: ONE task in a one-shot sub-agent with its own "
+                    "context (blocking — result returns in this turn; several "
+                    "run ops in one turn may execute concurrently)."
+                ),
+            },
+            "profile": {
+                "type": "string",
+                "description": (
+                    "profile from .agent-cli/agents/{profile}.md (loaded into "
+                    "the sub-agent's system prompt; omit for a generalist)."
+                ),
+            },
+            "task": {
+                "type": "string",
+                "description": "the task for the sub-agent to execute (required)",
+            },
+            "instructions": {
+                "type": "string",
+                "description": (
+                    "inline role text (instant-agent) — becomes part of the "
+                    "sub-agent's system prompt. Use alone for an ad-hoc "
+                    "specialist, or with `profile` to append task-specific "
+                    "directions."
+                ),
+            },
+            "tools": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "allowed tools (omit for the default set)",
+            },
+            "context": {
+                "type": "string",
+                "enum": ["none", "fork"],
+                "description": (
+                    "none (fresh context) or fork (copy of the current "
+                    "conversation history)"
+                ),
+            },
+        },
+        "required": ["mode"],
+    }
+
     # run fan-out 용 — 배치 합류 여부는 parallel_batchable(mode-aware)이 결정.
     parallel_safe = True
 

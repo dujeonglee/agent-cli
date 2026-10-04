@@ -522,10 +522,50 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
         assert "parallel" in prompt.lower()
 
-    def test_delegate_guide_mentions_run_examples(self):
+    def test_agent_guide_shows_run_and_spawn_to_a_loop_that_can_spawn(self):
         # 5.0.0: tasks 배열 없음 — run/spawn 예시가 가이드에 존재
-        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
-        assert '"mode": "run"' in prompt and '"mode": "spawn"' in prompt
+        tools = _build_tools_section(["shell", "agent"], _get_dialect("json_fc"))
+        assert '"mode": "run"' in tools and '"mode": "spawn"' in tools
+
+    def test_sub_loop_sees_run_only_everywhere(self):
+        """A loop without an agent registry can only ``run``. Its description
+        said so, but the schema still listed all six modes, the guide showed a
+        spawn example and Agent Profiles advertised mode:"spawn" — a
+        sub-agent that followed them was refused (v10.13.0)."""
+        sections = dict(build_system_prompt_sections(_make_caps(), ["shell", "agent"]))
+        tools, profiles = sections["Available Tools"], sections["Agent Profiles"]
+        assert '"mode": "run"' in tools and '"mode": "run"' in profiles
+        # 가이드·프로파일 섹션의 예시와 안내 (프로파일 설명 본문은 제외 —
+        # "Spawn-only" 같은 단어가 프로파일 자기소개에 들어 있다).
+        for text in (tools, profiles.split("\n- `", 1)[0]):
+            assert '"mode": "spawn"' not in text
+            assert 'mode:"spawn"' not in text
+        # 스키마 줄: 상주 전용 모드가 나열되지 않는다
+        for word in ("spawn:", "request:", "resume:", "kill:", "status:"):
+            assert word not in tools, word
+
+    def test_sub_loop_agent_schema_is_run_only_for_prompt_and_grammar(self):
+        """프롬프트와 디코딩 문법이 같은 스키마를 본다 — 서브에이전트는
+        spawn 을 배우지도, 낼 수도 없다."""
+        from agent_cli.prompts.system_prompt import parameter_overrides_for
+
+        params = parameter_overrides_for(["agent"], False, has_agent_registry=False)[
+            "agent"
+        ]
+        assert params["properties"]["mode"]["enum"] == ["run"]
+        assert "key" not in params["properties"]
+        assert "name" not in params["properties"]
+        assert parameter_overrides_for(["agent"], False, has_agent_registry=True) == {}
+
+    def test_agent_guide_context_list_holds_only_context_values(self):
+        """ "Context modes" used to list ``tools`` and ``agent`` beside
+        none/fork — neither is a context value, and ``agent`` is the pre-v5
+        name of the ``profile`` argument. A stray closing quote ended the
+        guide."""
+        guide = _build_agent_inline(_get_dialect("json_fc"))
+        assert '- "tools"' not in guide and '- "agent"' not in guide
+        assert "profile (optional)" in guide and "tools (optional)" in guide
+        assert not guide.rstrip().endswith('"')
 
     def test_profiles_advertised_with_agent_tool(self):
         """5.0.0: agent 도구 포함 시 프로파일 카탈로그가 광고된다."""
