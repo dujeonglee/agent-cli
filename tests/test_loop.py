@@ -1519,6 +1519,33 @@ class TestRunLoopUnknownTool:
         assert "bogus" in observation
         assert "Available:" in observation
 
+    def test_available_list_is_the_one_in_the_prompt(self, caps, tmp_path):
+        """v10.14.0: built by ``effective_tool_names`` like the prompt — the raw
+        tool list left out ``complete`` (always callable) and kept the
+        caller's order."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=json.dumps({"action": "bogus"})),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            active_tools=["shell", "read_file"],
+        )
+        observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
+        assert "Unknown tool 'bogus'. Available: read_file, shell, complete" in (
+            observation
+        )
+
     def test_unknown_tool_does_not_consume_turn_budget(self, caps, tmp_path):
         """턴 계수 통일 규칙(리뷰 §4.1): A4 개입은 도구를 실행하지 않은 회복
         넛지이므로 max_turns 예산을 소모하지 않는다 — max_turns=1 에서도

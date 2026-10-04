@@ -57,6 +57,7 @@ from agent_cli.render import (
     render_step,
 )
 from agent_cli.tools import TOOLS, infer_action
+from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -1497,7 +1498,11 @@ class TurnDispatcher:
         # for "did you mean" suggestions is deferred to Step 4b once
         # observability data shows whether it improves recovery.
         if detect_unknown_tool(tool_name, self.cfg.tools_list):
-            avail = ", ".join(self.cfg.tools_list)
+            # 프롬프트·함수 스키마와 같은 함수에서 (v10.14.0) — `tools_list` 만
+            # 쓰면 항상 실리는 `complete` 이 빠지고 순서도 프롬프트와 달랐다.
+            avail = ", ".join(
+                effective_tool_names(self.cfg.tools_list, self.cfg.dialect)
+            )
             err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
             if accumulate is not None:
                 # N-op 배치 (v9.21.0): 이 op 만 실패로 적고 **다음 op 로 간다**.
