@@ -392,7 +392,11 @@ class TestRejectedCallKeepsTheMessageOrderValid:
         second = calls[1]
         assert _unpaired(second) == []
         assert second[-1]["role"] == "user"
-        assert "Unknown tool 'shell'" in second[-1]["content"]
+        # the list is the one the model was given — `complete` included
+        assert (
+            "Unknown tool 'shell'. Available: read_file, complete"
+            in second[-1]["content"]
+        )
 
     def test_bad_arguments_on_the_first_turn(self, tmp_path, caps, wf):
         calls = self._run(
