@@ -71,6 +71,7 @@ def _run_single(
     """
     from agent_cli.subagent.agents_live import compose_role_prompt
     from agent_cli.subagent.runner import (
+        ProfileToolsError,
         apply_role_overrides,
         create_subagent_ctx,
         run_subagent_message,
@@ -120,13 +121,16 @@ def _run_single(
 
         agent_role = role_prompt
 
-        # Agent config overrides (lower priority than explicit task params)
-        allowed_tools, model, hooks_config = apply_role_overrides(
-            agent_config,
-            allowed_tools=allowed_tools,
-            model=model,
-            hooks_config=hooks_config,
-        )
+        # Agent config overrides — the profile's tools are an upper bound
+        try:
+            allowed_tools, model, hooks_config = apply_role_overrides(
+                agent_config,
+                allowed_tools=allowed_tools,
+                model=model,
+                hooks_config=hooks_config,
+            )
+        except ProfileToolsError as e:
+            return ToolResult(False, error=f"Delegation rejected: {e}")
 
     # instant (5.0.0 run 모드): 인라인 지시를 프로파일 본문 뒤에 합성 —
     # 상주 spawn 과 동일 규칙 (파일=일반, 인라인=세션 특정).

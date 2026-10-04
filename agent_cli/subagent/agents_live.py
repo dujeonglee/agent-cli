@@ -1468,7 +1468,10 @@ class AgentRegistry:
         hooks_config = self.runtime.get("hooks_config")
         if profile:
             from agent_cli.subagent.profiles import load_profile
-            from agent_cli.subagent.runner import apply_role_overrides
+            from agent_cli.subagent.runner import (
+                ProfileToolsError,
+                apply_role_overrides,
+            )
 
             body, config, error = load_profile(profile)
             if error:
@@ -1476,12 +1479,15 @@ class AgentRegistry:
             role_prompt = body or ""
             description = str(config.get("description", "") or "")
             inherited = model
-            allowed_tools, model, hooks_config = apply_role_overrides(
-                config,
-                allowed_tools=allowed_tools,
-                model=model,
-                hooks_config=hooks_config,
-            )
+            try:
+                allowed_tools, model, hooks_config = apply_role_overrides(
+                    config,
+                    allowed_tools=allowed_tools,
+                    model=model,
+                    hooks_config=hooks_config,
+                )
+            except ProfileToolsError as e:
+                return "", str(e)
             # 역할 md 가 상속 모델을 덮어썼다면 그 이름도 확인한다 (v9.5.0).
             # 상속분은 부팅 때 이미 검증됐지만 역할이 지정한 이름은 처음 보는
             # 값이고, 안 보면 **그 에이전트의 첫 턴에 가서야** 404 로 드러난다

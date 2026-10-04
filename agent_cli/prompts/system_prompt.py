@@ -289,7 +289,7 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
   - "fork": the sub-agent receives a copy of the current conversation history.
   profile (optional): a predefined agent from .agent-cli/agents/{{name}}.md — the
     file defines the sub-agent's role/principles and can set allowed-tools/model.
-  tools (optional): restrict which tools the sub-agent can use.
+  tools (optional): restrict which tools the sub-agent can use. With a profile, it can only narrow the profile's own set.
   Constraints:
 {dependency}
   Examples:
