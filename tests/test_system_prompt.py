@@ -868,12 +868,20 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Session" not in prompt
 
-    def test_static_tools_before_conditional(self):
-        """Static tools (shell, read_file) should appear before conditional (edit_file)."""
-        prompt = build_system_prompt(_make_caps(), ["read_file", "shell", "edit_file"])
-        shell_pos = prompt.index("- shell:")
-        edit_pos = prompt.index("- edit_file:")
-        assert shell_pos < edit_pos
+    def test_file_tools_sit_together_whatever_order_the_caller_gave(self):
+        """Tools that are used together are introduced together (v10.13.0):
+        read → edit → write, then the rest. Until then ``edit_file`` was moved
+        to the very end ("conditional last"), a dozen tools after
+        ``write_file`` — and the order followed whatever list the caller
+        passed, so a profile's ``allowed-tools`` decided the prompt layout."""
+        prompt = build_system_prompt(
+            _make_caps(), ["shell", "write_file", "edit_file", "read_file"]
+        )
+        pos = [
+            prompt.index(f"- {n}:")
+            for n in ("read_file", "edit_file", "write_file", "shell", "complete")
+        ]
+        assert pos == sorted(pos)
 
     def test_read_artifact_removed(self):
         """read_artifact tool removed from system prompt."""

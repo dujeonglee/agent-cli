@@ -61,14 +61,11 @@ def _watch(reg, tmp_path, *, name="w.log", **kw):
 
 class TestToolSurface:
     def test_monitor_is_a_native_tool_always_registered(self):
-        """`schedule` 과 달리 env 게이트가 없다 — 시간을 재는 것도 발화도
-        이 프로세스 안에서 일어나므로 board 가 필요 없다."""
-        from agent_cli.tools.registry import _ALL_TOOLS, TOOLS
+        """env 게이트가 없다 — 시간을 재는 것도 발화도 이 프로세스 안에서
+        일어나므로 board 가 필요 없다 (v10.12.0 부터 `schedule` 도 같다)."""
+        from agent_cli.tools.registry import TOOLS
 
         assert "monitor" in TOOLS
-        # KV 캐시 안정: 기존 도구 순서를 건드리지 않고 **끝에** 붙는다.
-        names = [t.name for t in _ALL_TOOLS]
-        assert names.index("monitor") > names.index("agent")
 
     def test_description_carries_the_launch_idioms(self):
         """35B 대상에서 도구 설명은 산문이 아니라 **제품**이다 (§4.4).

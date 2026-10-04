@@ -142,7 +142,7 @@ class TestJsonFcGrammar:
         assert prose_rule("prose", "[", after_blank_line=True) in g
         assert 'ops ::= "[" j_ws ( calls )? j_ws "]"' in g
         # complete 는 항상 — 종결 도구라 배열의 마지막 op 로만 (v9.24.6)
-        assert "calls_p ::= ( t_shell | t_write_file )" in g
+        assert "calls_p ::= ( t_write_file | t_shell )" in g
         assert "calls_t ::= ( t_complete )" in g
         # 도구 이름과 키가 열거된다 — 모르는 도구/키는 낼 수 없다
         assert 't_shell ::= "{" j_ws "\\"action\\"" j_ws ":" j_ws "\\"shell\\""' in g
@@ -174,9 +174,9 @@ class TestJsonFcGrammar:
 
     def test_tool_set_matches_the_prompt(self):
         # 프롬프트와 같은 함수(effective_tool_names)에서 나온다 — complete 추가,
-        # 조건부 도구는 뒤로.
-        tools = _tools(["edit_file", "shell"])
-        assert [n for n, *_ in tools] == ["shell", "complete", "edit_file"]
+        # 순서는 호출자가 준 목록이 아니라 레지스트리의 것 (v10.13.0).
+        tools = _tools(["shell", "edit_file"])
+        assert [n for n, *_ in tools] == ["edit_file", "shell", "complete"]
 
 
 class TestXmlFcGrammar:
@@ -188,7 +188,7 @@ class TestXmlFcGrammar:
         assert prose_rule("prose", "<tool_call>") in g  # 줄 첫 오프너만 제외
         assert "ws ::= [ \\t\\r\\n]*" in g
         assert (
-            'calls_p ::= "<tool_call>" ws ( t_shell | t_write_file ) ws "</tool_call>"'
+            'calls_p ::= "<tool_call>" ws ( t_write_file | t_shell ) ws "</tool_call>"'
             in g
         )
         assert 'calls_t ::= "<tool_call>" ws ( t_complete ) ws "</tool_call>"' in g

@@ -701,7 +701,7 @@ def _build_tools_section(
 ) -> str:
     """Build Available Tools section with inline guides.
 
-    Static tools come first (stable for KV cache), conditional tools last.
+    Order comes from ``effective_tool_names`` — related tools together.
     ``has_agent_registry=False``(서브루프)면 agent 도구 설명을 run 전용
     축소판으로 스왑 — 모드 축소 노출 (설계 §3.2: 스키마 사본 없이 렌더만
     분기).
