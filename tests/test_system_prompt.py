@@ -270,7 +270,6 @@ class TestBuildSystemPromptSections:
         names = [n for n, _ in sections]
         assert "Context Recovery" not in names  # no session_dir
         assert "Agents" not in names  # no delegate
-        assert "MCP Tools" not in names  # no mcp_manager
 
     def test_agent_role_replaces_role_section(self):
         sections = build_system_prompt_sections(

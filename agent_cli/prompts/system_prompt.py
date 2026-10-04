@@ -2,7 +2,7 @@
 
 Layout (optimized for LLM attention):
   Primacy  — Role, Context Discipline, Task Guidelines, Format Rules
-  Middle   — Available Tools (guides inlined), MCP Tools, Skills, Agents
+  Middle   — Available Tools (guides inlined; MCP tools included), Skills, Agents
   Recency  — Environment, Context Recovery, Directives, Execution Context
 
 Recency ordering rationale (passive → active, persistent → immediate):
@@ -926,7 +926,6 @@ def build_system_prompt_sections(
     agent_role: str = "",
     parent_role: str = "",
     session_dir: str = "",
-    mcp_manager=None,
     dialect=None,
     depth: int = 0,
     max_depth: int = 0,
@@ -993,14 +992,6 @@ def build_system_prompt_sections(
                 ),
             )
         )
-
-    # MCP tools (if manager provided)
-    if mcp_manager:
-        from agent_cli.mcp.adapter import build_mcp_tool_descriptions
-
-        mcp_desc = build_mcp_tool_descriptions(mcp_manager)
-        if mcp_desc:
-            sections.append(("MCP Tools", f"## MCP Tools\n{mcp_desc}"))
 
     # Only where the tool it tells the model to use is callable — a profile
     # with a narrowed tool list (or a loop at the depth limit, where run_skill
@@ -1075,7 +1066,6 @@ def build_system_prompt(
     agent_role: str = "",
     parent_role: str = "",
     session_dir: str = "",
-    mcp_manager=None,
     dialect=None,
     depth: int = 0,
     max_depth: int = 0,
@@ -1093,7 +1083,6 @@ def build_system_prompt(
             agent_role=agent_role,
             parent_role=parent_role,
             session_dir=session_dir,
-            mcp_manager=mcp_manager,
             dialect=dialect,
             depth=depth,
             max_depth=max_depth,
