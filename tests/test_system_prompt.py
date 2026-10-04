@@ -32,6 +32,7 @@ from agent_cli.prompts.system_prompt import (
     TASK_GUIDELINES,
     _build_agent_inline,
     _build_context_recovery,
+    _build_edit_file_inline,
     _build_environment_section,
     _build_tools_section,
     _load_directives,
@@ -405,26 +406,33 @@ class TestBuildSystemPrompt:
             or "could be a statement" in flat
         )
 
-    def test_hashline_guide_demands_current_turn_read(self):
-        """Pre-call routine: "Always read the file first" was too lax —
-        models reused hashes from earlier turns and got hash mismatches
-        on edit. The guide must require the read to happen in the
-        CURRENT turn, and must call out that code_index fetch counts as
-        a fresh read (its output is hashline-formatted), so the model
-        doesn't waste a turn doing a redundant read_file after fetch."""
+    def test_hashline_guide_ties_refs_to_the_latest_view_of_the_lines(self):
+        """Pre-call routine. "Always read the file first" was too lax — models
+        reused hashes from earlier turns and got hash mismatches. The fix then
+        said "read the target lines in the CURRENT turn", which cannot be done:
+        a read's result arrives NEXT turn (v10.13.0). What the rule means is
+        named instead — refs come from the latest output that showed the
+        lines, and refs older than the file's last change are dead. It must
+        still say that fetch / write_file / edit_file output counts, so the
+        model doesn't spend a turn on a redundant read_file."""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["edit_file", "code_index"])
         flat = re.sub(r"\s+", " ", prompt)
-        # Current-turn / immediacy is asserted (case-insensitive: the
-        # source uses CURRENT in caps for emphasis).
-        assert "current turn" in flat.lower()
-        # The drift mechanism is named — hashes from earlier turns are
-        # not reusable because something else may have touched the file.
-        assert "drift" in flat.lower()
-        # code_index mode='fetch' is acknowledged as a fresh read so the
-        # model doesn't double-read.
-        assert "code_index mode='fetch'" in flat or "fetch counts" in flat.lower()
+        assert "current turn" not in flat.lower()
+        assert "the most recent output that showed those lines" in flat
+        assert "Refs from before the file last changed no longer match" in flat
+        assert "code_index mode='fetch'" in flat
+        assert "what write_file / edit_file returned" in flat
+
+    def test_edit_guide_does_not_restate_the_edit_vs_write_rule(self):
+        """The rule is told once, in write_file's description (the point of
+        choice, right below edit_file). The edit guide used to carry it three
+        more times, the last one contradicting the first."""
+        guide = _build_edit_file_inline(_get_dialect("json_fc"))
+        assert "edit vs write" not in guide
+        assert "Use write_file only for creating new files" not in guide
+        assert "beats rewriting" not in guide
 
     def test_hashline_guide_reframes_mismatch_as_guardrail(self):
         """Post-error tone: a hash mismatch must read as a guardrail,
@@ -1593,3 +1601,56 @@ class TestRunDescriptionFocusesOnContext:
         out = _build_tools_section(["agent"], get("json_fc"))
         assert "run in PARALLEL" not in out
         assert "would\n  each flood your context — not for speed" in out
+
+
+class TestEditVsWriteRule:
+    """v10.13.0 — the rule is told ONCE, where the choice is made.
+
+    It used to be told four times and disagreed with itself: "a NEW file or a
+    genuine FULL rewrite" (write_file's description, the top of the edit
+    guide) vs "only for creating new files" (the end of the edit guide)."""
+
+    def _desc(self, tools):
+        from agent_cli.prompts.system_prompt import description_overrides_for
+        from agent_cli.tools import TOOLS
+
+        return description_overrides_for(tools).get(
+            "write_file", TOOLS["write_file"].description
+        )
+
+    def test_full_rewrite_of_a_small_file_is_allowed(self):
+        d = self._desc(["write_file", "edit_file"])
+        assert "a NEW file, or to rewrite a SMALL file in full" in d
+        assert "To change part of an existing file use edit_file" in d
+
+    def test_names_the_way_out_when_an_edit_keeps_failing(self):
+        """A model that kept failing edit_file had been told rewriting was off
+        limits — the description now says when it is fine."""
+        d = self._desc(["write_file", "edit_file"])
+        assert (
+            "If the same edit keeps failing on a small file, rewriting it is fine" in d
+        )
+
+    def test_edit_file_says_it_is_the_default(self):
+        from agent_cli.tools import TOOLS
+
+        assert "the default way to modify an existing file" in (
+            TOOLS["edit_file"].description
+        )
+
+    def test_without_edit_file_the_description_points_at_nothing(self):
+        d = self._desc(["write_file", "read_file"])
+        assert "edit_file" not in d
+        prompt = build_system_prompt(_make_caps(), ["write_file", "read_file"])
+        assert "edit_file" not in prompt
+
+    def test_native_schema_and_prompt_carry_the_same_description(self):
+        from agent_cli.prompts.system_prompt import function_schemas_for
+
+        tools = ["write_file", "read_file"]
+        (fn,) = [
+            f["function"]
+            for f in function_schemas_for(tools, _get_dialect("native_fc"))
+            if f["function"]["name"] == "write_file"
+        ]
+        assert fn["description"] == self._desc(tools)

@@ -129,14 +129,27 @@ def tool_write_file(args: dict) -> ToolResult:
 
 class WriteFileTool(Tool):
     name = "write_file"
+    # The edit-vs-write rule lives HERE and only here (v10.13.0): this is where
+    # the choice is made, and ``edit_file`` sits right above it in the prompt.
+    # It used to be told four times — twice contradicting itself ("a NEW file
+    # or a genuine FULL rewrite" here and atop the edit guide, "only for
+    # creating new files" at the guide's end). A full rewrite is allowed for a
+    # small file, and named as the way out when an edit keeps failing: a model
+    # that kept failing edit_file had been told rewriting was off limits.
     description = (
-        "Create or overwrite a file with raw content. Returns hashline format "
-        "(LINE#HASH:content) so you can edit_file immediately — no read_file "
-        "needed. Use write_file ONLY for a NEW file or a genuine FULL rewrite. "
-        "To change PART of an existing file, use edit_file instead: re-writing "
-        "the whole file re-sends every line into your context each turn (the "
-        "file appears twice — your write + its echo) and stays there, eating "
-        "your context window; edit_file costs only the changed lines."
+        "Create a file, or overwrite one, with raw content. Use it for a NEW "
+        "file, or to rewrite a SMALL file in full. To change part of an "
+        "existing file use edit_file: rewriting sends the whole file through "
+        "your context twice (your content + its echo) and it stays there, "
+        "while edit_file costs only the changed lines. If the same edit keeps "
+        "failing on a small file, rewriting it is fine. Returns hashline "
+        "format (LINE#HASH:content), so you can edit_file right after — no "
+        "read_file needed."
+    )
+    #: For a loop that has no ``edit_file`` — nothing to point at.
+    DESCRIPTION_WITHOUT_EDIT = (
+        "Create a file, or overwrite one, with raw content. Returns hashline "
+        "format (LINE#HASH:content)."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-target shape — no `write_file_` wire-key prefix. `wrap_single_op`

@@ -182,14 +182,6 @@ def _build_edit_file_inline(dialect) -> str:
 
     return f"""
 
-  edit vs write — to change PART of an existing file, use edit_file, NOT
-  write_file with the whole file. WHY THIS MATTERS TO YOU: re-writing a file
-  re-sends every one of its lines into your context each turn (the file shows
-  up TWICE — your write_file content + its hashline echo) and stays there,
-  eating your context window and crowding out the reasoning space you need to
-  stay sharp. edit_file costs only the changed lines. Reserve write_file for a
-  NEW file or a genuine FULL rewrite; for a small/partial change, edit_file.
-
   To write file CONTENT, use write_file (or edit_file) — NEVER a shell heredoc
   (`cat <<EOF > file`). Code in a shell command string is escaped TWICE (shell
   quoting, then JSON), so quotes / newlines / `$` routinely break your emission
@@ -205,18 +197,14 @@ def _build_edit_file_inline(dialect) -> str:
        delete (remove pos[..end] range, no lines).
 {examples}
   Constraints:
-  - Read the target lines in the CURRENT turn before edit_file. Hashes
-    from earlier turns drift if anything else touched the file — do not
-    reuse them. (Both code_index mode='fetch' AND write_file count as a
-    fresh read — their output is already hashline-formatted and pipes
-    straight into edit_file. So right after you write_file a file, you
-    can edit_file it with the returned hashlines — no read_file needed.
-    For a small change to an existing file, that beats rewriting the
-    whole file with write_file.)
+  - Take refs from the most recent output that showed those lines: a
+    read_file, a code_index mode='fetch', or what write_file / edit_file
+    returned (all hashline-formatted — no extra read_file needed). Refs
+    from before the file last changed no longer match: read the region
+    again first.
   - A hash mismatch is not a failure — it is a guardrail signaling the
     file moved between your read and your edit. Re-read the region (or
-    re-fetch the symbol) and retry with the fresh tags.
-  - Use write_file only for creating new files, not for editing existing ones.\
+    re-fetch the symbol) and retry with the fresh tags.\
 {same_file}"""
 
 
@@ -632,6 +620,34 @@ def _build_tool_inline_guides(
     }
 
 
+def description_overrides_for(
+    active_tools, *, has_agent_registry: bool = True, nonblocking_ask: bool = False
+) -> dict[str, str]:
+    """루프별 도구 설명 교체 — ``## Available Tools`` 와 native 함수 스키마가
+    **같은** 설명을 싣도록 한 함수에서 나온다.
+
+    - 서브루프(레지스트리 없음)의 ``agent`` 는 run 전용 축소판 (설계 §3.2).
+    - 상주 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their reply"
+      라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
+    - ``edit_file`` 이 없는 루프의 ``write_file`` 은 없는 도구를 가리키지
+      않는다 (v10.13.0).
+    """
+    overrides: dict[str, str] = {}
+    if not has_agent_registry and "agent" in active_tools:
+        from agent_cli.tools.agent_tool import AgentTool
+
+        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
+    if nonblocking_ask and "ask" in active_tools:
+        from agent_cli.tools.virtual import AskTool
+
+        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
+    if "write_file" in active_tools and "edit_file" not in active_tools:
+        from agent_cli.tools.write_file import WriteFileTool
+
+        overrides["write_file"] = WriteFileTool.DESCRIPTION_WITHOUT_EDIT
+    return overrides
+
+
 def parameter_overrides_for(active_tools, nonblocking_ask: bool) -> dict[str, dict]:
     """루프별 도구 스키마 교체 — 프롬프트와 디코딩 문법(v9.24.0)이 **같은**
     스키마를 봐야 한다: 상주 에이전트의 ``ask`` 는 ``to`` 를 갖고, main 의
@@ -656,15 +672,11 @@ def function_schemas_for(
     싣는 것이 어긋나지 않게 한 함수에서 나온다."""
     from agent_cli.tools.registry import TOOL_SCHEMAS, effective_tool_names
 
-    overrides: dict[str, str] = {}
-    if not has_agent_registry and "agent" in active_tools:
-        from agent_cli.tools.agent_tool import AgentTool
-
-        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
-    if nonblocking_ask and "ask" in active_tools:
-        from agent_cli.tools.virtual import AskTool
-
-        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
+    overrides = description_overrides_for(
+        active_tools,
+        has_agent_registry=has_agent_registry,
+        nonblocking_ask=nonblocking_ask,
+    )
     param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
     guides = _build_tool_inline_guides(
         active_tools, dialect, nonblocking_ask=nonblocking_ask
@@ -706,17 +718,11 @@ def _build_tools_section(
     축소판으로 스왑 — 모드 축소 노출 (설계 §3.2: 스키마 사본 없이 렌더만
     분기).
     """
-    overrides = {}
-    if not has_agent_registry and "agent" in active_tools:
-        from agent_cli.tools.agent_tool import AgentTool
-
-        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
-    if nonblocking_ask and "ask" in active_tools:
-        # 상주 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their
-        # reply" 라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
-        from agent_cli.tools.virtual import AskTool
-
-        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
+    overrides = description_overrides_for(
+        active_tools,
+        has_agent_registry=has_agent_registry,
+        nonblocking_ask=nonblocking_ask,
+    )
     param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
     tool_block = get_tool_descriptions(
         active_tools,
