@@ -965,11 +965,9 @@ class Dialect(DialectBase):
         return bool(self.spec.server_parsed)
 
     @staticmethod
-    def call_id(assistant_index: int | None, op_index: int) -> str:
+    def call_id(assistant_index: int, op_index: int) -> str:
         """렌더 시 합성하는 호출 id — assistant 와 뒤따르는 관찰이 같은 규칙."""
-        return (
-            f"call_{assistant_index if assistant_index is not None else 0}_{op_index}"
-        )
+        return f"call_{assistant_index}_{op_index}"
 
     def render_observation_from_history(
         self, record: dict, *, index: int, assistant_index: int | None
@@ -982,6 +980,11 @@ class Dialect(DialectBase):
         artifact = record.get("artifact") or ""
         if artifact:
             content = f"{content}\n→ {artifact}"
+        if assistant_index is None:
+            # 짝이 되는 호출이 없다(형식 거절 — 거절된 호출은 저장되지 않는다).
+            # `tool` 메시지는 바로 앞 assistant 의 tool_calls 에 대한 답이어야
+            # 하므로, 호출 없는 턴의 넛지와 같은 user 메시지로 낸다 (v10.14.0).
+            return [{"role": "user", "content": content}]
         # 배치 관찰은 op 별 조각(`parts`)으로, 단일 관찰은 본문 하나로 — 둘 다
         # 조각 목록 하나로 보고 op 순서대로 `tool` 메시지를 낸다.
         parts = record.get("parts") or [{"content": content}]
@@ -1005,7 +1008,7 @@ class Dialect(DialectBase):
                 "content": record.get("thought") or "",
                 "tool_calls": [
                     {
-                        "id": self.call_id(index, i),
+                        "id": self.call_id(index or 0, i),
                         "type": "function",
                         "function": {
                             "name": o.get("action") or "",

@@ -608,14 +608,20 @@ class ContextManager:
 
     def _render_record(self, i: int) -> list[dict]:
         """캐시 레코드 ``i`` → 요청 메시지 목록 (v10.2.0). 관찰은 바로 앞 assistant
-        레코드의 index 로 호출 id 를 짝 맞춘다(서버 파싱 방언)."""
+        레코드의 index 로 호출 id 를 짝 맞춘다(서버 파싱 방언).
+
+        짝은 **바로 앞 레코드**가 호출을 가진 assistant 일 때만 성립한다
+        (v10.14.0). 형식 거절(모르는 도구·인자 오류)은 거절된 호출을 저장하지
+        않으므로 그 관찰 앞에는 짝이 없다 — 종전엔 더 앞의 assistant 를 찾아
+        붙여 같은 호출 id 의 `tool` 메시지가 둘이 되거나, 아예 없으면 호출 없는
+        `tool` 메시지가 나갔다(OpenAI 규격 위반 — 엄격한 서버는 400). 짝이
+        없으면 ``assistant_index=None`` 이고 방언이 user 메시지로 낸다."""
         msg = self._cache[i]
         assistant_index = None
-        if msg.get("role") == "user" and msg.get("tool"):
-            for j in range(i - 1, -1, -1):
-                if self._cache[j].get("role") == "assistant":
-                    assistant_index = j
-                    break
+        if msg.get("role") == "user" and msg.get("tool") and i > 0:
+            prev = self._cache[i - 1]
+            if prev.get("role") == "assistant" and prev.get("ops"):
+                assistant_index = i - 1
         return render_history_message(
             msg, self.dialect, index=i, assistant_index=assistant_index
         )
