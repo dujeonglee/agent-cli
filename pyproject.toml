@@ -94,6 +94,8 @@ agent_cli = [
     # auto-review reviewer, explorer, and create-* skills would all go missing.
     "agents/builtin/**/*.md",
     "skills/builtin/**/*.md",
+    # The page template of ``python -m agent_cli.prompts.inventory --html``.
+    "prompts/inventory.html",
     # Built-in DIRECTIVE presets (persona/task fragments) shipped read-only.
 ]
 
