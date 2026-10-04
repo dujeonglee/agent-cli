@@ -307,80 +307,13 @@ class _FakeInspectorCtx:
     def get_messages(self):
         return self._messages
 
+    def get_estimated_tokens(self):
+        return 7 * len(self._messages)
+
 
 class TestPromptInspectorDynamic:
-    """Phase A: the Prompt Inspector shows the DYNAMIC context (conversation +
-    observations) alongside the static system prompt, reusing the sections
-    pipeline (kind=system | dynamic)."""
-
-    def test_dynamic_sections_helper(self):
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        assert _dynamic_context_sections(None) == []
-        ctx = _FakeInspectorCtx(
-            [
-                {"role": "system", "content": "you are an agent"},  # skipped
-                {"role": "user", "content": "[DJ]: analyze the project"},
-                {"role": "user", "content": "[read_file]\nfile body..."},
-                {"role": "assistant", "content": "## Thought\nok\n## Action\n[...]"},
-            ]
-        )
-        secs = _dynamic_context_sections(ctx)
-        assert all(s["kind"] == "dynamic" for s in secs)
-        assert len(secs) == 3  # system skipped
-        assert any("analyze the project" in s["name"] for s in secs)
-        assert all(s["est_tokens"] >= 0 and "text" in s for s in secs)
-
-    def test_native_tool_calls_and_tool_results_are_shown(self):
-        """native_fc (v10.2.1): assistant 본문이 ``tool_calls`` 에 있고 관찰이
-        ``tool`` 역할이면 — content 만 읽던 인스펙터는 `[assistant]` 0자 카드였다
-        (사용자 제보). 호출 줄이 본문에 적히고, tool 라벨은 호출 id 를 단다."""
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        ctx = _FakeInspectorCtx(
-            [
-                {"role": "user", "content": "[DJ]: explain ids.py"},
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": "call_1_0",
-                            "type": "function",
-                            "function": {
-                                "name": "read_file",
-                                "arguments": '{"path": "src/ids.py"}',
-                            },
-                        }
-                    ],
-                },
-                {"role": "tool", "tool_call_id": "call_1_0", "content": "1#AB:x = 1"},
-                {
-                    "role": "assistant",
-                    "content": "Reading first.",
-                    "tool_calls": [
-                        {
-                            "id": "call_3_0",
-                            "type": "function",
-                            "function": {
-                                "name": "complete",
-                                "arguments": '{"result": "done"}',
-                            },
-                        }
-                    ],
-                },
-            ]
-        )
-        secs = _dynamic_context_sections(ctx)
-        assert len(secs) == 4
-        a1, t1, a2 = secs[1], secs[2], secs[3]
-        assert a1["name"].startswith("[assistant] ⚡ read_file")
-        assert a1["chars"] > 0 and "call_1_0" in a1["text"]
-        assert t1["name"].startswith("[tool call_1_0] 1#AB")
-        assert a2["name"] == "[assistant] Reading first."
-        assert (
-            a2["text"] == 'Reading first.\n\n⚡ complete {"result": "done"}  (call_3_0)'
-        )
+    """``GET /api/debug/prompt`` — 모델 시점 틀이 읽는 스코프별 스냅샷
+    (시스템·함수 스키마·꼬리·예산·스코프 사실). 대화 섹션은 없다."""
 
     def test_endpoint_shows_function_schemas_as_tools_sections(self):
         """native_fc (v10.2.1): 프롬프트 대신 요청 ``tools[]`` 로 간 함수 스키마가
@@ -518,7 +451,7 @@ class TestPromptInspectorDynamic:
             .json()
         )
         assert data["scope"]["ended"] is True
-        assert data["budget"]["convo"] > 0  # 종료 시 고정된 대화의 토큰
+        assert data["budget"]["convo"] == 7  # 종료 시 고정된 대화 크기
 
     def test_no_snapshot_is_not_ok_even_with_messages(self):
         """v10.7.0: 스냅샷(LLM 호출 또는 시작 캡처)이 없으면 ok=False — 대화는
@@ -2517,96 +2450,6 @@ def _note_agent_scope(renderer, *, task_id, index, agent, sections, turn):
     th.join(timeout=2.0)
 
 
-class TestDebugPromptScopedEndpoints:
-    """The inspector can target a delegate sub-agent via ``?task_id=`` and
-    list/delete scopes. Main (no task_id) and each agent are isolated; agent
-    snapshots persist post-mortem; main is not deletable."""
-
-    def test_task_id_selects_agent_scope(self, server_and_client):
-        _, renderer, client = server_and_client
-        renderer.note_system_prompt([("Role", "main role")], turn=1)
-        _note_agent_scope(
-            renderer,
-            task_id="task-A",
-            index=0,
-            agent="explorer",
-            sections=[("Role", "explorer role")],
-            turn=2,
-        )
-        # No task_id → main.
-        main = client.get("/api/debug/prompt?token=testtoken").json()
-        assert main["ok"] is True
-        assert main["sections"][0]["text"] == "main role"
-        # task_id → that agent.
-        agent = client.get("/api/debug/prompt?token=testtoken&task_id=task-A").json()
-        assert agent["ok"] is True
-        assert agent["task_id"] == "task-A"
-        assert agent["sections"][0]["text"] == "explorer role"
-
-    def test_unknown_agent_scope_reports_agent_specific_reason(self, server_and_client):
-        _, _, client = server_and_client
-        body = client.get("/api/debug/prompt?token=testtoken&task_id=ghost").json()
-        assert body["ok"] is False
-        assert "agent" in body["reason"]
-
-    def test_scopes_lists_main_and_agents(self, server_and_client):
-        _, renderer, client = server_and_client
-        renderer.note_system_prompt([("Role", "main")], turn=1)
-        _note_agent_scope(
-            renderer,
-            task_id="task-A",
-            index=0,
-            agent="explorer",
-            sections=[("Role", "A")],
-            turn=1,
-        )
-        body = client.get("/api/debug/prompt/scopes?token=testtoken").json()
-        assert body["ok"] is True
-        ids = [s["id"] for s in body["scopes"]]
-        assert ids[0] == ""  # main pinned first
-        labels = {s["id"]: s["label"] for s in body["scopes"]}
-        assert labels[""] == "Main"
-        assert labels["task-A"] == "explorer·1"
-
-    def test_scopes_requires_token(self, server_and_client):
-        _, _, client = server_and_client
-        assert client.get("/api/debug/prompt/scopes").status_code == 401  # default-deny
-        assert client.get("/api/debug/prompt/scopes?token=wrong").status_code == 401
-
-    def test_delete_drops_agent_scope(self, server_and_client):
-        _, renderer, client = server_and_client
-        _note_agent_scope(
-            renderer,
-            task_id="task-A",
-            index=0,
-            agent="explorer",
-            sections=[("Role", "A")],
-            turn=1,
-        )
-        r = client.delete("/api/debug/prompt?token=testtoken&task_id=task-A")
-        assert r.status_code == 200
-        assert r.json() == {"ok": True, "removed": True}
-        # Gone afterwards.
-        gone = client.get("/api/debug/prompt?token=testtoken&task_id=task-A").json()
-        assert gone["ok"] is False
-
-    def test_delete_main_is_rejected_noop(self, server_and_client):
-        _, renderer, client = server_and_client
-        renderer.note_system_prompt([("Role", "main")], turn=1)
-        r = client.delete("/api/debug/prompt?token=testtoken&task_id=")
-        assert r.json()["removed"] is False
-        # Main still present.
-        assert client.get("/api/debug/prompt?token=testtoken").json()["ok"] is True
-
-    def test_delete_requires_token_and_task_id(self, server_and_client):
-        _, _, client = server_and_client
-        # Unauthenticated → 401 (middleware default-deny, before param check).
-        assert client.delete("/api/debug/prompt").status_code == 401
-        assert (
-            client.delete("/api/debug/prompt?token=wrong&task_id=x").status_code == 401
-        )
-
-
 class TestWorkspaceDownload:
     """Workspace file tree + zip download. Token-auth, read-only. The
     workspace root is overridden to a tmp dir so tests are isolated and
@@ -3633,69 +3476,6 @@ class TestRenderCoalescing:
     def _js(self):
         with open("agent_cli/web/static/app.js", encoding="utf-8") as f:
             return f.read()
-
-
-class TestInspectorTailSections:
-    """v8.54.0: 매턴 꼬리(standing rules + session state)를 마지막 메시지에서
-    분리해 kind="tail" 독립 섹션으로 — 목록 맨 끝(실제 요청 위치와 동형)."""
-
-    def _ctx(self, tmp_path):
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.prompts.session_state import build_session_state
-
-        ctx = ContextManager(session_dir=tmp_path)
-        ctx.add({"role": "user", "content": "do the task"})
-        ctx.add(
-            {
-                "role": "user",
-                "tool": "shell",
-                "success": True,
-                "content": "Observation: ok",
-            }
-        )
-        ctx.set_session_state(
-            build_session_state(
-                turn=3,
-                guidelines="## Task Guidelines\n- rule one",
-            )
-        )
-        return ctx
-
-    def test_tail_split_into_named_sections_at_the_end(self, tmp_path):
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        secs = _dynamic_context_sections(self._ctx(tmp_path))
-        names = [s["name"] for s in secs]
-        assert names[-2] == "Standing Rules (per-turn tail)"
-        assert names[-1] == "Session State (per-turn tail)"
-        assert [s["kind"] for s in secs[-2:]] == ["tail", "tail"]
-        assert "- rule one" in secs[-2]["text"]
-        assert "turn 3" in secs[-1]["text"]  # v10.9.0: 수치 없음, 턴 카운터만
-        # v9.25.2: the boundary line opens the first tail section, and the
-        # conversation section stops before it
-        from agent_cli.prompts.session_state import TAIL_BOUNDARY
-
-        assert secs[-2]["text"].startswith(TAIL_BOUNDARY)
-        assert TAIL_BOUNDARY not in secs[-1]["text"]
-        assert all(TAIL_BOUNDARY not in s["text"] for s in secs[:-2])
-
-    def test_message_section_keeps_conversation_only(self, tmp_path):
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        secs = _dynamic_context_sections(self._ctx(tmp_path))
-        obs = [s for s in secs if s["kind"] == "dynamic"][-1]
-        assert "Observation: ok" in obs["text"]
-        assert "Task Guidelines" not in obs["text"]  # 중복 표시 없음
-        assert "session state" not in obs["text"]
-
-    def test_no_tail_no_extra_sections(self, tmp_path):
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        ctx = ContextManager(session_dir=tmp_path)
-        ctx.add({"role": "user", "content": "hello"})
-        secs = _dynamic_context_sections(ctx)
-        assert all(s["kind"] == "dynamic" for s in secs)
 
 
 class TestStreamIdleEndpoint:

@@ -84,12 +84,6 @@ class TestPersist:
         assert len(names) == 1 and "/" not in names[0] and ".." not in names[0]
         assert not (tmp_path.parent / "agt-1#3").exists()
 
-    def test_deleting_a_scope_removes_its_file(self, tmp_path):
-        r = WebRenderer(session_dir=str(tmp_path))
-        _run_scope(r, "t-1")
-        assert r.delete_prompt_scope("t-1") is True
-        assert list((tmp_path / "prompt_views").glob("*.json")) == []
-
 
 class TestRestore:
     def _resumed(self, tmp_path) -> WebRenderer:

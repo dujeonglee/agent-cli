@@ -235,7 +235,7 @@ class WebRenderer(Renderer):
         # ``ready`` slot: only the most recent LLM call's prompt per scope
         # is kept (an on-demand view, not a history). Sub-agent snapshots
         # persist after the agent finishes so its prompt stays inspectable
-        # post-mortem; the frontend drops one via ``DELETE``.
+        # post-mortem.
         self._prompt_snapshots: dict[str, dict[str, Any]] = {}
         # Scope-label metadata (task_id → {"agent", "index"}) captured at
         # ``begin_delegate_task`` so the inspector chip row can name each
@@ -259,11 +259,9 @@ class WebRenderer(Renderer):
         # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹
         # 라우팅)와 분리 — 프런트 카드 그룹핑은 delegate 전용 시각 장치.
         self._thread_prompt_scopes: dict[int, list[str]] = {}
-        # 스코프별 동적 컨텍스트: live ContextManager 참조(실행 중 on-demand)
-        # → 종료 시 텍스트 고정(_scope_dynamic_final, 사후 검사 — 시스템
-        # 스냅샷과 대칭)하고 live 참조 해제(ctx 장기 홀드 방지).
+        # 스코프별 live ContextManager 참조 — 실행 중인 스코프의 대화 크기를
+        # 읽는다. 종료 때 숫자만 고정하고(_scope_final) 참조는 놓는다.
         self._scope_ctxs: dict[str, Any] = {}
-        self._scope_dynamic_final: dict[str, list[dict]] = {}
         # 종료한 스코프의 대화 크기·압축 횟수 — 종료 시점에 고정한다.
         self._scope_final: dict[str, dict[str, int]] = {}
         # 스코프(프롬프트 스코프)별 마지막 ``ctx_view`` — resume 이 되살린다.
@@ -603,8 +601,8 @@ class WebRenderer(Renderer):
         self._finalize_prompt_scope(scope_id)
 
     def note_scope_ctx(self, ctx) -> None:
-        """현재 스코프의 ContextManager 등록 — 인스펙터가 동적 컨텍스트를
-        on-demand 조회. main 스코프는 무시(server.ctx 가 이미 담당)."""
+        """현재 스코프의 ContextManager 등록 — 모델 시점 틀이 그 스코프의 대화
+        크기를 읽는다. main 스코프는 무시(server.ctx 가 이미 담당)."""
         scope = self._current_prompt_scope(threading.get_ident())
         if scope == _MAIN_SCOPE or ctx is None:
             return
@@ -612,45 +610,22 @@ class WebRenderer(Renderer):
             self._scope_ctxs[scope] = ctx
 
     def _finalize_prompt_scope(self, scope: str) -> None:
-        """live ctx → 최종 동적 섹션 텍스트 고정 후 참조 해제. best-effort
-        (고정 실패가 태스크 종료를 막지 않음)."""
+        """스코프 종료 — 대화 크기·압축 횟수를 고정하고 live ctx 참조를 놓는다
+        (ctx 장기 홀드 방지). best-effort: 고정 실패가 태스크 종료를 막지 않는다."""
         with self._lock:
             ctx = self._scope_ctxs.pop(scope, None)
         if ctx is None:
             return
         try:
-            # lazy: web.inspector → render.web 역방향 import 가 이미 있어
-            # 모듈-로드 순환 회피.
-            from agent_cli.web.inspector import _dynamic_context_sections
-
-            final = _dynamic_context_sections(ctx)
+            final = {
+                "convo_tokens": int(ctx.get_estimated_tokens()),
+                "compactions": int(getattr(ctx, "compaction_count", 0) or 0),
+            }
         except Exception:
             return
         with self._lock:
-            self._scope_dynamic_final[scope] = final
-            self._scope_final[scope] = {
-                "convo_tokens": sum(
-                    s.get("est_tokens", 0) for s in final if s.get("kind") != "tail"
-                ),
-                "compactions": int(getattr(ctx, "compaction_count", 0) or 0),
-            }
+            self._scope_final[scope] = final
         self._persist_prompt_view(scope)
-
-    def scope_dynamic_sections(self, scope: str) -> list[dict]:
-        """스코프의 동적 컨텍스트 섹션 — 실행 중이면 live ctx 로 실시간,
-        종료 후면 고정 스냅샷, 둘 다 없으면 빈 리스트. 디버그 엔드포인트의
-        task_id 분기가 소비 (main 은 server.ctx 경로 그대로)."""
-        with self._lock:
-            ctx = self._scope_ctxs.get(scope)
-        if ctx is not None:
-            try:
-                from agent_cli.web.inspector import _dynamic_context_sections
-
-                return _dynamic_context_sections(ctx)
-            except Exception:
-                return []
-        with self._lock:
-            return list(self._scope_dynamic_final.get(scope, []))
 
     def current_scope(self) -> str:
         """This thread's innermost open scope id ("" = main). Captured by code
@@ -2168,55 +2143,6 @@ class WebRenderer(Renderer):
         no captured prompt yet. Public read surface for the debug endpoint."""
         with self._lock:
             return self._prompt_snapshots.get(scope)
-
-    def prompt_scopes(self) -> list[dict[str, Any]]:
-        """Scopes that currently have a captured prompt, for the inspector
-        chip row. Main first (if present), then sub-agents in capture order.
-        Each entry: ``{id, label, turn, est_tokens, main}``."""
-        out: list[dict[str, Any]] = []
-        with self._lock:
-            for scope, snap in self._prompt_snapshots.items():
-                is_main = scope == _MAIN_SCOPE
-                if is_main:
-                    label = "Main"
-                else:
-                    meta = self._prompt_scope_labels.get(scope, {})
-                    agent = meta.get("agent") or "agent"
-                    idx = meta.get("index")
-                    label = f"{agent}·{idx + 1}" if isinstance(idx, int) else agent
-                out.append(
-                    {
-                        "id": scope,
-                        "label": label,
-                        "turn": snap.get("turn"),
-                        "est_tokens": snap.get("est_tokens"),
-                        "main": is_main,
-                    }
-                )
-        # Main pinned first; stable sort keeps sub-agents in insertion order.
-        out.sort(key=lambda s: 0 if s["main"] else 1)
-        return out
-
-    def delete_prompt_scope(self, scope: str) -> bool:
-        """Drop a sub-agent's prompt snapshot (inspector ✕ button). Main is
-        not deletable — it regenerates every turn and is the default view.
-        Returns True if a snapshot was actually removed."""
-        if scope == _MAIN_SCOPE:
-            return False
-        with self._lock:
-            removed = self._prompt_snapshots.pop(scope, None) is not None
-            self._prompt_scope_labels.pop(scope, None)
-            self._scope_ctxs.pop(scope, None)
-            self._scope_dynamic_final.pop(scope, None)
-            self._scope_final.pop(scope, None)
-            self._scope_ctx_views.pop(scope, None)
-        path = self._prompt_view_path(scope)
-        if path is not None:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        return removed
 
     def dispatch_progress(
         self,

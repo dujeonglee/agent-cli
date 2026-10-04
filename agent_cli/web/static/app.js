@@ -1805,8 +1805,14 @@
   // 곳을 고르기"** 다. 도구 이름과 성패는 그 선택에 쓰이는 정보라, 같은 줄
   // 오른쪽 끝에 두면 줄 수를 안 늘리고 실패한 스텝이 목록에서 튀어나온다.
 
-  // 채널별 **관찰을 기다리는 스텝 카드** 한 장. DOM 을 뒤지지 않는 이유는
+  // **스코프별** 관찰을 기다리는 스텝 카드 한 장. DOM 을 뒤지지 않는 이유는
   // 카드가 루트가 아니라 task group 본문에 들어갈 수 있어서다(appendToTimeline).
+  //
+  // ★ 열쇠는 채널이 아니라 **스코프**다(`stepKey`). 턴 번호는 루프마다 1 부터라
+  // main 의 턴 1(`⚡ agent`)이 열려 있는 동안 그 서브에이전트의 턴 1 이 오면
+  // 채널 열쇠로는 "같은 턴의 두 번째 op" 로 보인다 — 서브에이전트의 스텝이 main
+  // 의 카드 안으로 들어가고, 자기 카드에는 최종답만 남고, main 의 `agent` 관찰은
+  // 짝을 잃어 따로 떨어졌다(라이브만 — resume 재생은 순서가 달라 멀쩡했다).
   //
   // ★ 병합 단위는 **턴**이지 "직전 행동" 이 아니다. 서버는 `action()` 을
   // op 마다 부르므로 다중 op 턴은 `assistant_turn` 을 **N개** 내고 관찰은
@@ -1815,6 +1821,9 @@
   // 회귀를 냈다(사용자 제보, 한 세션의 다중 op 턴 30건). 같은 턴의 두 번째
   // 행동은 새 카드가 아니라 **그 카드의 본문**으로 들어간다.
   const pendingStep = {};
+  function stepKey(d) {
+    return d.task_id ? "scope:" + d.task_id : "main";
+  }
 
   /** 스텝 카드의 머리 행 — 통째로 눌러 본문을 여닫는다. */
   function makeStepHead(icon, kind, summary, badges, cls, tailNode) {
@@ -1828,7 +1837,6 @@
   function renderAssistantTurn(d) {
     const card = el("div", ["card", "card-assistant"]);
     if (d.hidx != null) card.dataset.hidx = String(d.hidx);
-    const ch = channelOf(d.task_id);
     const t = d.thought ? String(d.thought).trim() : "";
     const first = t ? t.split("\n").find((l) => l.trim()) || t : "";
     const thoughtBody = t && t !== first.trim()
@@ -1862,7 +1870,7 @@
         });
         card.appendChild(box);
       }
-      delete pendingStep[ch];
+      delete pendingStep[stepKey(d)];
       finishCard(card, d);
       return;
     }
@@ -1875,7 +1883,7 @@
         );
       }
       card._md = function () { return t ? "💭 " + t : ""; };
-      delete pendingStep[ch];
+      delete pendingStep[stepKey(d)];
       finishCard(card, d);
       return;
     }
@@ -1889,7 +1897,7 @@
     const actCls = SEND_TOOLS[tool] ? ["act", "send"] : ["act"];
 
     // 같은 턴의 두 번째 op — 새 카드가 아니라 앞 카드에 행을 더한다.
-    const openStep = pendingStep[ch];
+    const openStep = pendingStep[stepKey(d)];
     if (openStep && openStep.turn === d.turn) {
       openStep.body.appendChild(
         makeRow(actIcon(tool), tool, actionSummary(tool, input),
@@ -1949,7 +1957,7 @@
     // 복사용 원문 — 행동은 같은 턴의 op 마다, 관찰은 붙을 때 쌓인다.
     const md = { thought: t, actions: [{ tool: tool, input: input }], obs: [] };
     card._md = function () { return stepMarkdown(md); };
-    pendingStep[ch] = {
+    pendingStep[stepKey(d)] = {
       card: card, head: head, body: body, badges: badges,
       turn: d.turn, acts: 1, firstTool: tool || "?",
       toolBadge: badges.querySelector(".badge.tool"),
@@ -2133,12 +2141,11 @@
     }
 
     // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
-    const ch = channelOf(d.task_id);
-    const step = pendingStep[ch];
+    const step = pendingStep[stepKey(d)];
     // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
     // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
     if (step && step.turn === d.turn) {
-      delete pendingStep[ch];
+      delete pendingStep[stepKey(d)];
       step.md.obs.push({ tool: tool, content: content, success: !!d.success });
       step.body.appendChild(row);
       step.badges.appendChild(
