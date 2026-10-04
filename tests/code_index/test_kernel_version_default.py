@@ -237,9 +237,26 @@ class TestTheToolSurfacesIt:
         assert out.startswith("# drv_probe (function) :18-25")
         assert "of_device_id" in out and "probe_common(pdev)" in out
 
-    def test_the_tool_description_says_how_to_set_it(self):
-        from agent_cli.tools.code_index import CodeIndexTool
+    def test_the_model_is_told_how_to_set_it(self):
+        """The note lives in the code_index GUIDE (v10.13.0 — it used to be in
+        the description, which repeated the guide in a second wording). Every
+        dialect gets it: the text formats in ``## Available Tools``, native_fc
+        appended to the function description."""
+        from agent_cli import dialects
+        from agent_cli.prompts.system_prompt import (
+            _build_tools_section,
+            function_schemas_for,
+        )
 
-        d = CodeIndexTool.description
-        assert ".agent-cli/defconfig" in d and "#define LINUX_VERSION_CODE" in d
-        assert "KERNEL_VERSION(6, 1, 0)" in d
+        text = _build_tools_section(["code_index"], dialects.get("json_fc"))
+        (fn,) = [
+            f["function"]
+            for f in function_schemas_for(["code_index"], dialects.get("native_fc"))
+            if f["function"]["name"] == "code_index"
+        ]
+        for d in (text, fn["description"]):
+            flat = " ".join(d.split())
+            assert ".agent-cli/defconfig" in flat
+            assert "#define LINUX_VERSION_CODE" in flat
+            assert "KERNEL_VERSION(6, 1, 0)" in flat
+            assert "assumed newest" in flat

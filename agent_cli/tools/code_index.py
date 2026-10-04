@@ -612,31 +612,17 @@ def _dispatch_one(query: dict) -> ToolResult:
 
 class CodeIndexTool(Tool):
     name = "code_index"
+    # One sentence — what the tool is for. The modes, the index location, the
+    # path-scope rule and the defconfig notes are told ONCE, in the guide
+    # (``_build_code_index_inline``), which every dialect renders with this
+    # description. Until v10.13.0 the description repeated all four (1.5 KB of
+    # the same facts in a second wording; its defconfig note said "write the
+    # file" while the guide's said "ask the user").
     description = (
-        "Code/markdown index query via persistent tree-sitter SQLite store "
-        "(read-only). Each op runs one query with its own mode.\n"
-        "Modes:\n"
-        "  list      - file outline (defs + structural symbols, line ranges) [path]\n"
-        "  fetch     - single symbol body, hashline format for edit_file [path, name]\n"
-        "  lookup    - find symbol by name across the index [name, symbol_kind?]\n"
-        "  kind      - list all symbols of a kind across the index [symbol_kind]\n"
-        "  file      - all symbols in a single file (index lookup) [path]\n"
-        "  refs      - all ref sites for a name [name, ref_kind?]\n"
-        "  callers   - functions that call this one [name]\n"
-        "  callees   - functions called by this one [name]\n"
-        "  slice     - markdown LLM context: def body + optional callees/callers/"
-        "types/macros [name, ...]\n"
-        "  build     - force full rebuild (rare - lazy build handles normal cases)\n"
-        "Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. "
-        "Index at <project_root>/.agent-cli/code_index.db, lazy-built and "
-        "incrementally refreshed. For 'list'/'fetch' on paths outside the indexed "
-        "root: on-demand parse (no DB write). Other modes require the indexed root.\n"
-        "C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so "
-        "every `>= KERNEL_VERSION(...)` branch is taken. For a specific kernel "
-        "or CONFIG_* set, write `.agent-cli/defconfig` under the root — lines like "
-        "`#define LINUX_VERSION_CODE 393472` (6.1.0 = (6<<16)+(1<<8)+0; "
-        "`KERNEL_VERSION(6, 1, 0)` also works), `#define CONFIG_X 1`, "
-        "`#undef CONFIG_Y`. The index rebuilds when it changes."
+        "Query a persistent tree-sitter index of the project's code and "
+        "markdown (read-only): file outlines, symbol bodies, definitions, "
+        "references, callers and callees. One op runs one query, chosen by "
+        "`mode`."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-query shape — no `code_index_queries` batch array and no
@@ -662,7 +648,7 @@ class CodeIndexTool(Tool):
                     "slice",
                     "build",
                 ],
-                "description": "Operation. See tool description for per-mode params.",
+                "description": "Which query to run — the modes are described in the code_index guide.",
             },
             "path": {
                 "type": "string",
