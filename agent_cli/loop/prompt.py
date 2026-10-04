@@ -38,7 +38,6 @@ class SystemPromptSvc:
             agent_stack=self.cfg.agent_stack,
             agent_role=self.cfg.agent_role,
             session_dir=session_dir,
-            mcp_manager=self.cfg.mcp_manager,
             dialect=self.cfg.dialect,
             depth=self.cfg.depth,
             max_depth=self.cfg.max_depth,

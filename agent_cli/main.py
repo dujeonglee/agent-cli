@@ -2347,7 +2347,6 @@ def web(
         dialect=dialect_plugin,
         session_dir=str(ctx.session_dir),
         max_depth=max_depth,
-        mcp_manager=mcp_manager,
     )
 
     from agent_cli.web.slash import WebDispatchOutput, handle_slash_command

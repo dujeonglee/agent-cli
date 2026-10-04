@@ -14,13 +14,11 @@ path with no special-casing.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
 from agent_cli.tools.base import Tool
-from agent_cli.tools.registry import render_param_value
 from agent_cli.tools.result import ToolResult
 
 #: Every MCP tool name starts with this — a hook matcher or an
@@ -144,37 +142,3 @@ def register_mcp_tools(
         )
         tools[tool.name] = tool
     return tools
-
-
-def build_mcp_tool_descriptions(manager: McpClientManager) -> str:
-    """Build tool description text for MCP tools (for system prompt).
-
-    Returns formatted string compatible with get_tool_descriptions output.
-    """
-    all_tools = manager.list_tools()
-    if not all_tools:
-        return ""
-
-    lines = []
-    for tool in all_tools:
-        qualified_name = mcp_tool_name(tool.server, tool.name)
-        desc = tool.description or "(no description)"
-        # Build params summary from input_schema. Same renderer as native
-        # tools (registry.render_param_value) so both surfaces show type +
-        # required + nested item shape identically. MCP keys are not
-        # prefixed — kept verbatim.
-        params = ""
-        if tool.input_schema and "properties" in tool.input_schema:
-            props = tool.input_schema["properties"]
-            required = set(tool.input_schema.get("required", []))
-            params_str = json.dumps(
-                {k: render_param_value(v, k in required) for k, v in props.items()},
-                ensure_ascii=False,
-            )
-            params = f"  Input JSON: {params_str}"
-        entry = f"- {qualified_name}: {desc}"
-        if params:
-            entry += f"\n{params}"
-        lines.append(entry)
-
-    return "\n".join(lines)

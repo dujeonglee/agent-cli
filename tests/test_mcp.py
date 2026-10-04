@@ -395,40 +395,47 @@ class TestMcpAdapter:
         finally:
             del TOOLS["mcp__gh__search"]
 
-    def test_build_mcp_tool_descriptions(self):
+    def test_mcp_tools_are_told_once_in_the_tool_list(self):
+        """v10.14.0: no separate ``## MCP Tools`` section. An MCP tool is a
+        ``TOOLS`` entry, so the roster already shows it (name · description ·
+        Input JSON) — the section repeated it, and advertised it to loops
+        whose tool list left it out."""
         from unittest.mock import MagicMock
 
-        from agent_cli.mcp.adapter import build_mcp_tool_descriptions
-        from agent_cli.mcp.client import McpToolInfo
+        from agent_cli import dialects
+        from agent_cli.mcp.adapter import McpTool
+        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.tools.registry import TOOLS
 
-        manager = MagicMock()
-        manager.list_tools.return_value = [
-            McpToolInfo(
-                server="github",
-                name="list_issues",
-                description="List GitHub issues",
-                input_schema={
-                    "properties": {
-                        "repo": {"type": "string", "description": "Repository name"}
-                    }
-                },
-            ),
-        ]
-
-        desc = build_mcp_tool_descriptions(manager)
-        assert "mcp__github__list_issues" in desc
-        assert "List GitHub issues" in desc
-        assert "repo" in desc
-
-    def test_build_descriptions_empty(self):
-        from unittest.mock import MagicMock
-
-        from agent_cli.mcp.adapter import build_mcp_tool_descriptions
-
-        manager = MagicMock()
-        manager.list_tools.return_value = []
-
-        assert build_mcp_tool_descriptions(manager) == ""
+        tool = McpTool(
+            MagicMock(),
+            "github",
+            "list_issues",
+            "List GitHub issues",
+            {"type": "object", "properties": {"repo": {"type": "string"}}},
+        )
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        TOOLS[tool.name] = tool
+        try:
+            wide = build_system_prompt(
+                caps, ["read_file", tool.name], dialect=dialects.get("json_fc")
+            )
+            narrow = build_system_prompt(
+                caps, ["read_file"], dialect=dialects.get("json_fc")
+            )
+            native = build_system_prompt(
+                caps, ["read_file", tool.name], dialect=dialects.get("native_fc")
+            )
+        finally:
+            del TOOLS[tool.name]
+        assert wide.count("- mcp__github__list_issues: List GitHub issues") == 1
+        assert '"repo"' in wide and "## MCP Tools" not in wide
+        assert "mcp__github__list_issues" not in narrow
+        # native_fc carries tools as function schemas, not prompt text
+        assert "mcp__github__list_issues" not in native
 
 
 class TestMcpSdkIsADeclaredDependency:
