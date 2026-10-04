@@ -857,6 +857,85 @@ def create_app(server: WebServer) -> FastAPI:
             return {"servers": [], "connected": 0, "total": 0, "tool_count": 0}
         return mgr.summary()
 
+    # ── ⏰ 예약 (docs/schedule/DESIGN.md §6.4) ──────────────────────────
+    # 예약은 세션의 것이고 이 프로세스가 발화한다. 화면은 여기 하나다 —
+    # 보드는 세션 폴더의 파일을 읽어 배지만 그린다.
+
+    def _schedules():
+        from agent_cli.schedule.runtime import get_schedule_registry
+
+        reg = get_schedule_registry()
+        if reg is None:
+            raise HTTPException(status_code=503, detail="no schedule registry")
+        return reg
+
+    def _schedule_or_404(reg, sched_id: str):
+        if reg.get(sched_id) is None:
+            raise HTTPException(status_code=404, detail="no such schedule")
+
+    @app.get("/api/schedules")
+    async def list_schedules():
+        from agent_cli.schedule.view import schedules_view
+
+        return schedules_view(_schedules())
+
+    @app.post("/api/schedules")
+    async def add_schedule(body: dict):
+        from agent_cli.schedule.registry import ScheduleError
+        from agent_cli.schedule.view import schedules_view
+
+        reg = _schedules()
+        try:
+            reg.add(
+                str(body.get("cron") or ""),
+                str(body.get("prompt") or ""),
+                label=str(body.get("label") or ""),
+                nickname=str(body.get("nickname") or ""),
+                source="user",
+            )
+        except ScheduleError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        return schedules_view(reg)
+
+    @app.delete("/api/schedules/{sched_id}")
+    async def delete_schedule(sched_id: str):
+        from agent_cli.schedule.view import schedules_view
+
+        reg = _schedules()
+        _schedule_or_404(reg, sched_id)
+        reg.delete(sched_id)
+        return schedules_view(reg)
+
+    @app.post("/api/schedules/{sched_id}/toggle")
+    async def toggle_schedule(sched_id: str, body: dict):
+        from agent_cli.schedule.view import schedules_view
+
+        reg = _schedules()
+        _schedule_or_404(reg, sched_id)
+        reg.set_enabled(sched_id, bool(body.get("enabled")))
+        return schedules_view(reg)
+
+    @app.post("/api/schedules/{sched_id}/run-now")
+    async def run_schedule_now(sched_id: str):
+        """즉시 발화 — 놓친 발화의 "지금 실행" 과 수동 실행 버튼 공용."""
+        from agent_cli.schedule.view import schedules_view
+
+        reg = _schedules()
+        _schedule_or_404(reg, sched_id)
+        if not reg.run_now(sched_id):
+            raise HTTPException(status_code=409, detail="could not queue the prompt")
+        return schedules_view(reg)
+
+    @app.post("/api/schedules/{sched_id}/dismiss")
+    async def dismiss_schedule(sched_id: str):
+        """놓친 발화 건너뛰기."""
+        from agent_cli.schedule.view import schedules_view
+
+        reg = _schedules()
+        _schedule_or_404(reg, sched_id)
+        reg.dismiss(sched_id)
+        return schedules_view(reg)
+
     @app.get("/api/confirm-mode")
     async def get_confirm_mode():
         """⚡ 자동 승인(확인 없이 실행) 현재 상태 — 헤더 체크박스 초기화용."""

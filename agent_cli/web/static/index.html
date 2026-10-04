@@ -114,6 +114,7 @@
       <div id="theme-menu" role="menu" hidden></div>
     </span>
     <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
+    <button id="schedule-btn" class="btn-icon" type="button" title="예약 — 정해진 시각에 요청을 자동으로 넣습니다">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
     <button id="copy-all-btn" class="btn-icon" type="button" title="대화 전체 복사 — 보이는 대화를 마크다운으로 클립보드에">⧉</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
@@ -131,6 +132,9 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
+  <!-- 놓친 예약 (docs/schedule/DESIGN.md §5): 꺼져 있던 동안 지난 발화는 자동
+       실행하지 않고 여기서 묻는다. -->
+  <div id="sched-missed" hidden></div>
   <!-- v9.4.0 ②: 대화 표면은 #messages 하나 (docs/chat-ui).
        종전엔 개요(요약) · 전문(드로어) · 흐름(스윔레인) 셋이 같은 대화를 각자
        그렸고 투명성(도구·reasoning)이 드로어 안에만 있었다. 뷰 토글·드로어·
@@ -162,6 +166,42 @@
   </aside>
 
   <!-- (구 상주 에이전트 대화 드로어는 v8.29.0 에서 개요 채널로 통합·제거) -->
+
+  <!-- ⏰ 예약 서랍 (v10.12.0, docs/schedule/DESIGN.md §6.4) — 이 세션의 예약
+       목록·추가·최근 이력. 예약은 이 프로세스가 발화한다. -->
+  <div id="schedule-backdrop" hidden></div>
+  <aside id="schedule-drawer" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-label="예약">
+    <div class="de-head">
+      <div class="de-title">⏰ 예약</div>
+      <span class="de-path">켜진 예약이 있으면 이 세션은 꺼지지 않습니다</span>
+      <button id="sched-close" type="button" class="btn-icon" title="Close">✕</button>
+    </div>
+    <div id="sched-list" class="sched-list"></div>
+    <form id="sched-form" class="sched-form" autocomplete="off">
+      <div class="sched-form-title">예약 추가</div>
+      <div class="sched-presets" id="sched-presets">
+        <button type="button" class="btn-ghost" data-cron="0 9 * * *">매일 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 9 * * 1-5">평일 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 9 * * 1">매주 월 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 * * * *">매시 정각</button>
+      </div>
+      <div class="sched-row">
+        <input id="sched-cron" type="text" placeholder="cron — 분 시 일 월 요일 (예: 0 9 * * 1)" aria-label="cron">
+        <input id="sched-label" type="text" placeholder="이름 (선택)" aria-label="이름">
+      </div>
+      <textarea id="sched-prompt" rows="3" placeholder="그 시각에 넣을 요청 (예: 주간 보고를 작성해줘)" aria-label="요청"></textarea>
+      <div class="sched-row">
+        <input id="sched-nickname" type="text" placeholder="표시 이름 (선택 — 기본 ⏰ Scheduler)" aria-label="표시 이름">
+        <button id="sched-add" type="submit" class="btn-primary">추가</button>
+      </div>
+      <div id="sched-status" class="de-status"></div>
+    </form>
+    <details class="sched-log-wrap">
+      <summary>최근 이력</summary>
+      <div id="sched-log" class="sched-log"></div>
+    </details>
+  </aside>
 
   <!-- Directive Editor drawer (📝 toolbar) — dedicated directive editing.
        Split out of the old Prompt Inspector: this surface ONLY edits the

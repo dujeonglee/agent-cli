@@ -2367,6 +2367,7 @@ def web(
     # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
     schedule_registry.enqueue = server.enqueue_scheduled
+    schedule_registry.on_change = renderer.broadcast_schedules_changed
     schedule_registry.start()
 
     def _worker_loop() -> None:

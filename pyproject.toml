@@ -133,3 +133,4 @@ ignore = [
 # here), so the schedule engine works in naive local datetimes end to end.
 "agent_cli/schedule/*" = ["DTZ"]
 "tests/test_schedule*.py" = ["DTZ"]
+"tests/browser/test_schedule*.py" = ["DTZ"]

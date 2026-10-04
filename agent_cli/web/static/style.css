@@ -1726,3 +1726,77 @@ footer {
 
 /* 열 때 스냅샷 재생 중 — 타임라인은 숨긴 채 쌓고, snapshot_end 에서 맨 아래로 점프한 뒤 보인다 (v10.8.1) */
 body.loading #messages { visibility: hidden; }
+
+/* ── ⏰ 예약 서랍 (v10.12.0) ─────────────────────────────────────────
+   Directive Editor 와 같은 슬라이드-인 시트. */
+#schedule-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  opacity: 0;
+  transition: opacity .2s ease;
+  z-index: 40;
+}
+#schedule-backdrop.open { opacity: 1; }
+#schedule-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(560px, 94vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 34px var(--shadow);
+  transform: translateX(105%);
+  transition: transform .26s cubic-bezier(.32, .72, .28, 1);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+#schedule-drawer.open { transform: translateX(0); }
+#schedule-btn { position: relative; }
+.sched-badge {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+  color: var(--text-2);
+}
+.sched-badge.missed { color: var(--warn); font-weight: 640; }
+.sched-list { flex: 1 1 auto; overflow-y: auto; padding: 8px 16px; display: flex; flex-direction: column; gap: 8px; }
+.sched-empty { color: var(--text-2); font-size: 12.5px; padding: 18px 0; }
+.sched-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sched-item.off { opacity: .6; }
+.sched-item.missed { border-color: var(--warn); }
+.sched-item-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sched-item-name { font-weight: 620; font-size: 13px; }
+.sched-item-when { color: var(--text-2); font-size: 12px; }
+.sched-item-cron { font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: var(--text-2); }
+.sched-item-prompt { font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sched-item-meta { color: var(--text-2); font-size: 11.5px; }
+.sched-item-missed { color: var(--warn); font-size: 12px; }
+.sched-item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sched-item-actions button { font-size: 12px; padding: 3px 9px; }
+.sched-form { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.sched-form-title { font-weight: 620; font-size: 13px; }
+.sched-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.sched-presets button { font-size: 11.5px; padding: 2px 8px; }
+.sched-row { display: flex; gap: 8px; }
+.sched-row input { flex: 1 1 0; min-width: 0; }
+.sched-form input, .sched-form textarea {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 12.5px;
+}
+.sched-form textarea { resize: vertical; }
+.sched-log-wrap { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 8px 16px 14px; font-size: 12px; color: var(--text-2); }
+.sched-log-wrap summary { cursor: pointer; }
+.sched-log { max-height: 160px; overflow-y: auto; margin-top: 6px; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace; font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
+/* 놓친 예약 — 대화 위 한 줄씩 */
+#sched-missed { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.sched-missed-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.sched-missed-row .sched-missed-text { flex: 1 1 auto; min-width: 0; }
+.sched-missed-row button { font-size: 12px; padding: 2px 9px; }
