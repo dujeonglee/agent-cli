@@ -130,6 +130,21 @@ def build_monitor_registry(session_dir=None):
     return registry
 
 
+def build_schedule_registry(session_dir=None):
+    """schedule 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
+
+    만들기만 한다 — 발화는 입력 큐가 필요하므로, 호출자가 ``enqueue`` 를 꽂은
+    뒤 ``start()`` 를 부른다(첫 정산이 꺼져 있던 동안 지난 발화를 질문으로
+    남긴다). docs/schedule/DESIGN.md §6.
+    """
+    from agent_cli.schedule.registry import ScheduleRegistry
+    from agent_cli.schedule.runtime import set_schedule_registry
+
+    registry = ScheduleRegistry(session_dir=session_dir)
+    set_schedule_registry(registry)
+    return registry
+
+
 def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
