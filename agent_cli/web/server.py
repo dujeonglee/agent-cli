@@ -660,7 +660,9 @@ def create_app(server: WebServer) -> FastAPI:
         시점이라 여기 없다. ``task_id`` 는 스코프(빈 값 = main). 마지막 LLM
         호출의 스냅샷 기준: 시스템 섹션·함수 스키마(native_fc)·매턴 꼬리(+직전
         턴 꼬리 ``tail_prev`` 로 diff)·디코딩 문법, 예산(``budget``), 스코프
-        사실(``scope``). 그 스코프의 첫 LLM 호출 전이면 ``ok=False``."""
+        사실(``scope``). 그 스코프의 첫 LLM 호출 전이면 ``ok=False``.
+        ``budget`` 은 서버 실측(v10.18.0) — 실측이 없으면 ``measured=False`` 이고
+        칸은 None 이다."""
         renderer = server.renderer
         snapshot = renderer.prompt_snapshot(task_id)
         if snapshot is None:
@@ -682,23 +684,27 @@ def create_app(server: WebServer) -> FastAPI:
             ]
         info = renderer.prompt_scope_info(task_id)
         if not task_id and server.ctx is not None:
-            # 테스트 더미 ctx 는 추정 토큰이 없을 수 있다 — 그러면 0.
-            est = getattr(server.ctx, "get_estimated_tokens", None)
-            info["convo_tokens"] = est() if callable(est) else 0
             info["compactions"] = getattr(server.ctx, "compaction_count", 0)
         caps = server.runtime.get("capabilities") if server.runtime else None
-        window = int(getattr(caps, "context_window", 0) or 0)
+        # 모델이 지금 보는 양 — **서버가 센 값만** 쓴다. 그 스코프의 마지막 호출에
+        # 실측이 없으면(첫 호출 전·usage 를 안 주는 서버·옛 세션) 칸을 추정으로
+        # 채우지 않고 비워 둔다(None → 화면은 N/A, 다음 호출 뒤에 채워진다).
+        usage = renderer.scope_usage(task_id) or {}
+        split = usage.get("split") if isinstance(usage.get("split"), dict) else None
+        measured = int(usage.get("in") or 0) if split else 0
         budget = {
-            "system": sum(s["est_tokens"] for s in system_sections),
-            "tools": sum(s["est_tokens"] for s in tool_sections),
-            "tail": sum(s["est_tokens"] for s in tail_sections),
-            "convo": int(info.pop("convo_tokens", 0) or 0),
-            "window": window,
+            "measured": bool(measured),
+            "turn": usage.get("turn") if measured else None,
+            "total": measured or None,
+            "system": split.get("system") if measured else None,
+            "tools": split.get("tools") if measured else None,
+            "tail": split.get("tail") if measured else None,
+            "convo": split.get("convo") if measured else None,
+            "window": int(
+                usage.get("context_window") or getattr(caps, "context_window", 0) or 0
+            ),
             "compactions": int(info.pop("compactions", 0) or 0),
         }
-        budget["total"] = (
-            budget["system"] + budget["tools"] + budget["tail"] + budget["convo"]
-        )
         return {
             "ok": True,
             "task_id": task_id,

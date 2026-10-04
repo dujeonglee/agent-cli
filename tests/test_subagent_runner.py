@@ -166,6 +166,28 @@ class TestCreateSubagentCtx:
             assert error == "" and ctx is not None
             assert ctx.compaction_ratio == 0.6, mode
 
+    def test_inherits_parent_token_ratio(self, tmp_path):
+        # v10.18.0: 실측 토큰/바이트 비율도 물려받는다 — 세 모드 모두. 자기
+        # 디렉토리에 저장된 실측이 있으면(resume) 그쪽이 이긴다.
+        parent = ContextManager(tmp_path / "parent", max_context_tokens=1000)
+        parent.add({"role": "user", "content": "hi"})
+        parent.reconcile_actual_tokens(500, request_bytes=2000)
+        assert parent.token_ratio == 0.25
+        for mode, sub in (("none", "s1"), ("fork", "s2"), ("resume", "s3")):
+            ctx, error = create_subagent_ctx(mode, parent, tmp_path / sub)
+            assert error == "" and ctx is not None
+            assert ctx.token_ratio == 0.25, mode
+
+        own = tmp_path / "s4"
+        mine = ContextManager(own, max_context_tokens=1000)
+        mine.reconcile_actual_tokens(1000, request_bytes=2000)
+        ctx, _ = create_subagent_ctx("resume", parent, own)
+        assert ctx.token_ratio == 0.5
+
+    def test_no_parent_has_no_token_ratio(self, tmp_path):
+        ctx, _ = create_subagent_ctx("none", None, tmp_path / "sub")
+        assert ctx.token_ratio is None
+
     def test_no_parent_uses_default_ratio(self, tmp_path):
         ctx, error = create_subagent_ctx("none", None, tmp_path / "sub")
         assert error == "" and ctx is not None

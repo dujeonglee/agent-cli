@@ -42,10 +42,12 @@ from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.records import _classify_record
 from agent_cli.context.render import (
     _estimate_message_tokens,
+    _message_bytes,
     _sum_message_tokens,
     _to_summary_text,
     render_history_message,
 )
+from agent_cli.context.token_estimator import estimate_tokens, utf8_len
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.render import (
     get_renderer,
@@ -245,6 +247,19 @@ _OBS_COMPLETE_NUDGE = (
 )
 
 
+#: 실측 토큰/바이트 비율의 허용 범위. 토큰 하나는 대개 1바이트 이상이라 1 을
+#: 넘기 어렵고(작은 요청은 채팅 템플릿 몫으로 조금 넘는다), 영문은 약 0.25,
+#: 한글은 약 0.4~0.6 이다. 범위 밖 실측이 산술을 뒤집지 않게 자른다.
+TOKEN_RATIO_MIN = 0.05
+TOKEN_RATIO_MAX = 2.0
+
+
+def _clamp_token_ratio(ratio: float | None) -> float | None:
+    if ratio is None or ratio <= 0:
+        return None
+    return min(max(float(ratio), TOKEN_RATIO_MIN), TOKEN_RATIO_MAX)
+
+
 def clamp_compaction_ratio(ratio: float) -> float:
     return max(COMPACTION_RATIO_MIN, min(COMPACTION_RATIO_MAX, float(ratio)))
 
@@ -305,6 +320,7 @@ class ContextManager:
         dialect=None,
         compaction_enabled: bool = True,
         compaction_ratio: float | None = None,
+        token_ratio: float | None = None,
     ):
         # Wire-format plugin attached to this ctx — drives the on-disk
         # → in-memory rendering of assistant turns when ``get_messages``
@@ -356,13 +372,18 @@ class ContextManager:
         self._last_compaction_tokens: tuple[int, int] | None = None
         self._folded_count: int = 0  # fold 로 캐시에서 뺀 형식 넛지(+실패 원문) 수
         self._cache_tokens: int = 0
-        # P0-8b: 추정→실측 보정 계수. ``reconcile_actual_tokens`` 가 카운터를
-        # 서버 실측으로 재앵커한 뒤에도 증감(add/evict/fold/force_fit)은 로컬
-        # chars/4 추정을 쓰므로 단위가 섞여 — CJK(추정 과소)에선 카운터가 느리게
-        # 줄어 필요 이상으로 오래 evict(컨텍스트 과잉 손실), 과대면 과소 evict
-        # (오버플로 재발) — 재앵커 시점의 실측/추정 비율로 증감을 스케일해
-        # 정합시킨다. 1.0(기본·미실측·추정-기반 재계산 후)이면 산술 바이트 동일.
-        self._token_scale: float = 1.0
+        # 서버 실측으로 잰 **토큰/바이트 비율** (v10.18.0). None = 아직 실측이
+        # 없다 → chars/4 추정. 호출마다 ``reconcile_actual_tokens`` 가 갱신하고
+        # ``token_ratio.json`` 에 남긴다; resume 은 그 값을 그대로 읽어 캐시
+        # 크기를 재개 전과 같은 척도로 센다. 새로 만든 서브 컨텍스트는 부모의
+        # 비율을 물려받는다(같은 모델·같은 토크나이저).
+        #
+        # 종전 계수는 ``실측 ÷ 추정`` 이었다. 실측에는 매턴 꼬리 같은 고정
+        # 덩어리가 들어 있어, 대화가 짧으면 계수가 상한(8배)까지 부풀었다 —
+        # 다음 메시지 하나가 8배로 세어져 압축이 일찍 걸린다. 바이트당 비율은
+        # 분모가 보낸 요청 전체라 대화 길이에 흔들리지 않는다.
+        self._token_ratio: float | None = _clamp_token_ratio(token_ratio)
+        self._token_ratio_samples: int = 0
         # Rendered (natural-language) mirror of the cache's dynamic slice —
         # everything after the optional leading system message, in order.
         # ``get_messages`` used to re-run ``_to_natural_language`` over the
@@ -412,7 +433,12 @@ class ContextManager:
 
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
+        self._token_ratio_path = self.session_dir / "token_ratio.json"
         if resume:
+            saved = store.load_token_ratio(self._token_ratio_path)
+            if saved is not None:  # 자기 실측이 물려받은 값보다 우선
+                self._token_ratio = _clamp_token_ratio(saved[0])
+                self._token_ratio_samples = saved[1]
             self._load_compaction_json()
             if self._history_path.is_file():
                 self._restore_cache()
@@ -444,7 +470,7 @@ class ContextManager:
         loop's result→observation seam, so no message reaching here can blow
         past the window and break compaction.
         """
-        msg_tokens = self._scaled_tokens(message)  # P0-8b: 실측 앵커와 단위 정합
+        msg_tokens = self._scaled_tokens(message)  # 실측 앵커와 같은 척도
         self._cache.append(message)
         self._cache_hidx.append(self._history_ordinal)  # P0-8a: history 정렬
         self._history_ordinal += 1
@@ -491,43 +517,77 @@ class ContextManager:
         dropped) and is not skewed by format retries (never recorded)."""
         return self._current_turn
 
+    @property
+    def token_ratio(self) -> float | None:
+        """실측 토큰/바이트 비율, 없으면 None (서브 컨텍스트가 물려받는다)."""
+        return self._token_ratio
+
+    def estimate_text_tokens(self, text: str | None) -> int:
+        """캐시 밖 텍스트(시스템 프롬프트·매턴 꼬리)의 토큰 — 캐시와 같은 척도.
+        실측 비율이 있으면 바이트 × 비율, 없으면 chars/4."""
+        if self._token_ratio is None:
+            return estimate_tokens(text)
+        return round(utf8_len(text) * self._token_ratio)
+
     def _scaled_tokens(self, message: dict) -> int:
-        """P0-8b: 카운터 증감용 레코드 토큰 — 로컬 추정 × 보정 계수.
-        scale 1.0(기본)이면 추정 그대로(기존 산술과 바이트 동일)."""
-        est = _estimate_message_tokens(message)
-        if self._token_scale == 1.0:
-            return est
-        return max(1, round(est * self._token_scale))
+        """카운터 증감용 레코드 토큰 — 실측 비율이 있으면 바이트 × 비율,
+        없으면 chars/4 추정 그대로."""
+        if self._token_ratio is None:
+            return _estimate_message_tokens(message)
+        return max(1, round(_message_bytes(message) * self._token_ratio))
+
+    def _sum_tokens(self, messages) -> int:
+        return sum(self._scaled_tokens(m) for m in messages)
 
     def reconcile_actual_tokens(
-        self, actual_total_tokens: int, system_tokens: int = 0
+        self,
+        actual_total_tokens: int,
+        *,
+        request_bytes: int = 0,
+        outside_bytes: int = 0,
     ) -> None:
         """Re-anchor the cache token count to the server's actual input
-        count (flow 1, part B).
+        count, and refresh the tokens-per-byte ratio from it.
 
-        ``actual_total_tokens`` is what the provider reported for the
-        last call's prompt (``usage.input_tokens`` + cache fields) — it
-        covers system + messages. The cache holds only messages, so we
-        subtract ``system_tokens`` (measured by the loop for that same
-        call) and store the remainder.
+        ``actual_total_tokens`` is what the provider reported for the last
+        call's prompt (``usage.input_tokens`` + cache fields). It covers the
+        whole request; ``request_bytes`` is that request's UTF-8 size and
+        ``outside_bytes`` the part of it that is not the cache (system prompt,
+        function schemas, per-turn tail).
 
-        The local ``chars/4`` estimate under-counts CJK badly; replacing
-        the accumulated estimate with ground truth each call means error
-        never compounds across turns — at most one turn's worth of
-        newly-added (still-estimated) messages drifts before the next
-        reconcile. No-op when the provider reported no usage (cold start
-        / provider without usage), leaving the running estimate in place.
+        Ratio: the first measurement is taken as is; after that
+        ``new = (previous + actual / request_bytes) / 2``. Consecutive requests
+        overlap almost entirely, so the average mostly matters right after a
+        compaction or when a server reports an odd count once.
+
+        Counter: the total stays the server's number — the cache gets
+        ``actual − outside`` (outside at the refreshed ratio). The ratio only
+        prices what is added before the next call, and the whole cache after a
+        resume. No-op when the provider reported no usage (cold start /
+        provider without usage), leaving the running estimate in place.
         """
         if actual_total_tokens <= 0:
             return
-        anchored = max(actual_total_tokens - system_tokens, 0)
-        # P0-8b: 이후 증감(추정 단위)을 실측 단위로 환산할 계수 갱신.
-        # 클램프 [0.25, 8.0] — 퇴화 분모/이상 실측이 산술을 뒤집지 않게
-        # (CJK 실측 계수는 대략 2~3×). 추정 합이 0(빈 캐시)이면 유지.
-        est_total = _sum_message_tokens(self._cache)
-        if est_total > 0 and anchored > 0:
-            self._token_scale = min(max(anchored / est_total, 0.25), 8.0)
-        self._cache_tokens = anchored
+        if request_bytes > 0:
+            measured = _clamp_token_ratio(actual_total_tokens / request_bytes)
+            self._token_ratio = (
+                measured
+                if self._token_ratio is None
+                else (self._token_ratio + measured) / 2
+            )
+            self._token_ratio_samples += 1
+            try:
+                store.save_token_ratio(
+                    self._token_ratio_path, self._token_ratio, self._token_ratio_samples
+                )
+            except OSError:
+                pass  # best-effort: 기록 실패가 턴을 막지 않는다
+        outside = (
+            round(outside_bytes * self._token_ratio)
+            if self._token_ratio is not None
+            else outside_bytes // 4
+        )
+        self._cache_tokens = max(actual_total_tokens - outside, 0)
 
     def get_messages(self) -> list[dict]:
         """Return cached messages converted to natural language for LLM.
@@ -825,8 +885,7 @@ class ContextManager:
             self._cache_hidx = self._cache_hidx[:n_anchor] + retained_hidx
             self._cache = anchor + retained
             self._nl_cache = None  # bulk rebuild → re-render on next get
-            self._cache_tokens = _sum_message_tokens(self._cache)
-            self._token_scale = 1.0  # P0-8b: 추정 기반 재계산 → 계수 리셋
+            self._cache_tokens = self._sum_tokens(self._cache)
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
             # P0-8a: resume 오프셋 = 첫 retained 레코드의 **실제 history 위치**
@@ -1259,19 +1318,18 @@ class ContextManager:
             # P0-8a: forward slice 는 history 와 연속이므로 서수 = 구간 range.
             self._cache_hidx = list(range(self._dynamic_start_index, len(messages)))
             self._history_ordinal = len(messages)
-            self._cache_tokens = _sum_message_tokens(forward)
-            self._token_scale = 1.0  # P0-8b: 추정 기반 로드
+            self._cache_tokens = self._sum_tokens(forward)
             # If even the forward slice exceeds budget (budget shrank
             # since the previous run), trim oldest until it fits.
             while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
                 removed = self._cache.pop(0)
-                self._cache_tokens -= _estimate_message_tokens(removed)
+                self._cache_tokens -= self._scaled_tokens(removed)
                 self._dynamic_start_index = self._cache_hidx.pop(0) + 1  # P0-8a
             self.fold_resolved_interventions()  # v4.51.0 — 위와 동일 재적용
             return
 
         # Legacy path: invalid or absent offset → reverse-load.
-        total = _sum_message_tokens(messages)
+        total = self._sum_tokens(messages)
         start_idx = 0
         if total > self.max_context_tokens:
             running = total
@@ -1279,7 +1337,7 @@ class ContextManager:
                 if running <= self.max_context_tokens:
                     start_idx = i
                     break
-                running -= _estimate_message_tokens(msg)
+                running -= self._scaled_tokens(msg)
             else:
                 start_idx = len(messages) - 1
 
@@ -1288,7 +1346,7 @@ class ContextManager:
         # 소비하므로 캐시와 길이/순서가 일치해야 한다.
         self._cache_hidx = list(range(start_idx, len(messages)))
         self._history_ordinal = len(messages)
-        self._cache_tokens = _sum_message_tokens(self._cache)
+        self._cache_tokens = self._sum_tokens(self._cache)
         # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
         # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
         self.fold_resolved_interventions()

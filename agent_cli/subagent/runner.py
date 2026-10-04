@@ -126,6 +126,9 @@ def create_subagent_ctx(
     # value snapshot) — like max_context_tokens. Changing the slider later only
     # affects newly spawned/resumed sub-agents; re-spawn to apply a new value.
     ratio = parent_ctx.compaction_ratio if parent_ctx else DEFAULT_COMPACTION_RATIO
+    # 실측 토큰/바이트 비율도 물려받는다 — 같은 모델이면 첫 호출 전부터 부모와
+    # 같은 척도로 센다(자기 디렉토리에 실측이 남아 있으면 그쪽이 우선).
+    inherited_ratio = parent_ctx.token_ratio if parent_ctx else None
     if context_mode == "fork":
         if parent_ctx is None:
             return None, "fork requires parent context"
@@ -136,6 +139,7 @@ def create_subagent_ctx(
             resume=True,
             dialect=sub_dialect,
             compaction_ratio=ratio,
+            token_ratio=inherited_ratio,
         )
     elif context_mode == "resume":
         budget = parent_ctx.max_context_tokens if parent_ctx else 0
@@ -145,6 +149,7 @@ def create_subagent_ctx(
             resume=True,
             dialect=sub_dialect,
             compaction_ratio=ratio,
+            token_ratio=inherited_ratio,
         )
     else:
         budget = parent_ctx.max_context_tokens if parent_ctx else 0
@@ -153,6 +158,7 @@ def create_subagent_ctx(
             max_context_tokens=budget,
             dialect=sub_dialect,
             compaction_ratio=ratio,
+            token_ratio=inherited_ratio,
         )
 
     # P3 (v8.55.0): 스트림 무진전 한도도 spawn 시점 스냅샷 상속 — compaction

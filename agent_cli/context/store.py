@@ -69,3 +69,24 @@ def fork_history(src: Path, dst_dir: Path) -> Path:
     if src.is_file():
         shutil.copy2(src, target)
     return target
+
+
+def save_token_ratio(path: Path, ratio: float, samples: int) -> None:
+    """token_ratio.json 원자 저장 — 서버 실측으로 잰 토큰/바이트 비율."""
+    atomic_write_json(path, {"version": 1, "ratio": ratio, "samples": samples})
+
+
+def load_token_ratio(path: Path) -> tuple[float, int] | None:
+    """token_ratio.json 로드 — 부재/파손/이상값은 None (미실측으로 시작)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return None
+    ratio = data.get("ratio")
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or ratio <= 0:
+        return None
+    samples = data.get("samples")
+    return float(ratio), samples if isinstance(samples, int) else 1

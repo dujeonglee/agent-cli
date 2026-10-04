@@ -27,9 +27,8 @@ class _Ctx:
             {"role": "user", "content": "do the task " * 20},
         ]
 
-    def get_estimated_tokens(self):
-        return 123
 
+_SPLIT = {"system": 400, "tools": 0, "tail": 190, "convo": 310}
 
 _SECTIONS = [("Role", "You are an agent."), ("Hook: lint", "## lint\nrun ruff")]
 
@@ -51,6 +50,7 @@ def _run_scope(renderer, sid: str, *, view: dict | None = None) -> None:
         renderer.note_system_prompt(
             [("Role", "reviewer")], turn=3, tools=None, tail=_tail(3)
         )
+        renderer.token_usage({"in": 900, "out": 12, "split": _SPLIT}, 3)
         if view is not None:
             renderer.context_view(view)
     finally:
@@ -113,7 +113,8 @@ class TestRestore:
         after = _prompt(self._resumed(tmp_path), "t-1")
         assert after["ok"] and after["scope"] == before["scope"]
         assert after["scope"]["kind"] == "skill" and after["scope"]["ended"] is True
-        assert after["budget"]["convo"] == before["budget"]["convo"] > 0
+        assert after["budget"] == before["budget"]
+        assert after["budget"]["measured"] is True and after["budget"]["convo"] == 310
         assert after["budget"]["compactions"] == 2
         assert [s["name"] for s in after["sections"]] == [
             s["name"] for s in before["sections"]
@@ -150,6 +151,32 @@ class TestRestore:
         resumed = self._resumed(tmp_path)
         snapshot = resumed.register_connection(WebConnection(id="c"))
         assert not [d for e, d in snapshot if e == "ctx_view"]
+
+    def test_measured_usage_comes_back_and_refills_the_header(self, tmp_path):
+        """재개 직후에도 "모델이 지금 보는 양" 은 마지막 실측 — 종전엔 추정으로
+        돌아가 다른 숫자가 됐다(실측 1.3K → 178). 머리말의 ctx 칩도 같이."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.note_system_prompt(_SECTIONS, turn=2, tail=_tail(2))
+        stats = {"in": 9100, "out": 55, "context_window": 32768, "split": _SPLIT}
+        r.token_usage(stats, 2)
+        before = _prompt(r)["budget"]
+        resumed = self._resumed(tmp_path)
+        assert _prompt(resumed)["budget"] == before
+        assert before["measured"] is True and before["total"] == 9100
+        snapshot = resumed.register_connection(WebConnection(id="c"))
+        assert [d for e, d in snapshot if e == "token_usage"] == [{**stats, "turn": 2}]
+
+    def test_no_measurement_stays_unmeasured_after_resume(self, tmp_path):
+        """실측이 없던 세션(옛 세션·첫 호출 전)은 재개해도 N/A — 숫자를 지어내지
+        않는다. 다음 호출이 채운다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.note_system_prompt(_SECTIONS, turn=1, tail=_tail(1))
+        resumed = self._resumed(tmp_path)
+        assert _prompt(resumed)["budget"]["measured"] is False
+        snapshot = resumed.register_connection(WebConnection(id="c"))
+        assert not [d for e, d in snapshot if e == "token_usage"]
+        resumed.token_usage({"in": 500, "out": 1, "split": _SPLIT}, 1)
+        assert _prompt(resumed)["budget"]["total"] == 500
 
     def test_torn_file_does_not_block_the_rest(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))

@@ -264,6 +264,8 @@ class WebRenderer(Renderer):
         self._scope_ctxs: dict[str, Any] = {}
         # 종료한 스코프의 대화 크기·압축 횟수 — 종료 시점에 고정한다.
         self._scope_final: dict[str, dict[str, int]] = {}
+        # 스코프별 마지막 ``token_usage`` — 서버가 센 입력·출력과 칸 나눔.
+        self._scope_usage: dict[str, dict[str, Any]] = {}
         # 스코프(프롬프트 스코프)별 마지막 ``ctx_view`` — resume 이 되살린다.
         self._scope_ctx_views: dict[str, dict[str, Any]] = {}
         # 모델 시점 틀의 on-disk 사본 (스코프당 파일 하나). 스냅샷은 메모리에만
@@ -617,10 +619,7 @@ class WebRenderer(Renderer):
         if ctx is None:
             return
         try:
-            final = {
-                "convo_tokens": int(ctx.get_estimated_tokens()),
-                "compactions": int(getattr(ctx, "compaction_count", 0) or 0),
-            }
+            final = {"compactions": int(getattr(ctx, "compaction_count", 0) or 0)}
         except Exception:
             return
         with self._lock:
@@ -1755,7 +1754,14 @@ class WebRenderer(Renderer):
         readout. Raw stats go over the wire (the frontend formats); the
         latest is cached so a refresh repopulates the bar from snapshot.
         """
-        self.set_sticky("token_usage", "token_usage", {**stats, "turn": turn})
+        payload = {**stats, "turn": turn}
+        self.set_sticky("token_usage", "token_usage", payload)
+        # 스코프별로도 남긴다 — 모델 시점 틀의 "모델이 지금 보는 양" 은 그 스코프의
+        # 마지막 실측이고, resume 뒤에도 같은 숫자여야 한다.
+        scope = self._current_prompt_scope(threading.get_ident())
+        with self._lock:
+            self._scope_usage[scope] = payload
+        self._persist_prompt_view(scope)
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
@@ -2058,6 +2064,7 @@ class WebRenderer(Renderer):
                 "snapshot": self._prompt_snapshots.get(scope),
                 "final": self._scope_final.get(scope),
                 "ctx_view": self._scope_ctx_views.get(scope),
+                "usage": self._scope_usage.get(scope),
             }
         if record["snapshot"] is None and record["ctx_view"] is None:
             return
@@ -2076,6 +2083,7 @@ class WebRenderer(Renderer):
         if self._prompt_view_dir is None or not self._prompt_view_dir.is_dir():
             return False
         main_restored = False
+        main_usage: dict[str, Any] | None = None
         views: list[dict[str, Any]] = []
         for path in sorted(self._prompt_view_dir.glob("*.json")):
             try:
@@ -2089,7 +2097,12 @@ class WebRenderer(Renderer):
             meta = record.get("meta")
             final = record.get("final")
             view = record.get("ctx_view")
+            usage = record.get("usage")
             with self._lock:
+                if isinstance(usage, dict):
+                    self._scope_usage[scope] = usage
+                    if scope == _MAIN_SCOPE:
+                        main_usage = usage
                 if isinstance(snapshot, dict):
                     self._prompt_snapshots[scope] = snapshot
                     main_restored = main_restored or scope == _MAIN_SCOPE
@@ -2101,7 +2114,7 @@ class WebRenderer(Renderer):
                 if isinstance(final, dict):
                     self._scope_final[scope] = final
                 elif not resident and isinstance(snapshot, dict):
-                    self._scope_final[scope] = {"convo_tokens": 0, "compactions": 0}
+                    self._scope_final[scope] = {"compactions": 0}
                 if isinstance(view, dict):
                     self._scope_ctx_views[scope] = view
                     views.append(view)
@@ -2109,6 +2122,8 @@ class WebRenderer(Renderer):
             self.set_sticky(
                 "ctx_view:" + str(view.get("task_id") or ""), "ctx_view", view
             )
+        if main_usage is not None:  # 머리말의 ctx 칩도 마지막 실측으로
+            self.set_sticky("token_usage", "token_usage", main_usage)
         return main_restored
 
     def prompt_scope_info(self, scope: str = _MAIN_SCOPE) -> dict[str, Any]:
@@ -2130,12 +2145,15 @@ class WebRenderer(Renderer):
             "ended": ctx is None and final is not None,
         }
         if ctx is not None:
-            info["convo_tokens"] = ctx.get_estimated_tokens()
             info["compactions"] = ctx.compaction_count
         elif final is not None:
-            info["convo_tokens"] = final.get("convo_tokens", 0)
             info["compactions"] = final.get("compactions", 0)
         return info
+
+    def scope_usage(self, scope: str = _MAIN_SCOPE) -> dict[str, Any] | None:
+        """그 스코프의 마지막 ``token_usage`` (서버 실측), 없으면 None."""
+        with self._lock:
+            return self._scope_usage.get(scope)
 
     def prompt_snapshot(self, scope: str = _MAIN_SCOPE) -> dict[str, Any] | None:
         """Latest system-prompt snapshot for ``scope`` (``_MAIN_SCOPE`` = main

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.context.token_estimator import estimate_tokens, utf8_len
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
@@ -57,21 +57,21 @@ def _context_view(message: dict) -> dict:
     return {**message, "action_input": view} if view is not ai else message
 
 
-def _estimate_message_tokens(msg: dict) -> int:
-    """Estimate tokens for a single message dict."""
+def _message_texts(msg: dict):
+    """The strings a record contributes to the re-fed context — the one walk
+    both size measures below share (chars/4 estimate, UTF-8 bytes)."""
     msg = _context_view(msg)  # count what is actually re-fed (elided body)
-    total = 4  # role + formatting overhead
     for key in ("content", "thought", "action_input", "nudge"):
         val = msg.get(key)
         if val is None:
             continue
         if isinstance(val, str):
-            total += estimate_tokens(val)
+            yield val
         elif isinstance(val, dict):
-            total += estimate_tokens(json.dumps(val, ensure_ascii=False))
+            yield json.dumps(val, ensure_ascii=False)
     action = msg.get("action", "")
     if action:
-        total += estimate_tokens(action)
+        yield action
     # Multi-op (json_fc 기본 / xml_fc) assistant records carry their
     # action(s) + action_input + complete result inside ``ops`` — count them,
     # else every assistant turn is undercounted to just its ``thought`` (a
@@ -84,15 +84,47 @@ def _estimate_message_tokens(msg: dict) -> int:
                 continue
             op_action = op.get("action")
             if op_action:
-                total += estimate_tokens(op_action)
+                yield op_action
             op_input = op.get("action_input")
             if isinstance(op_input, str):
-                total += estimate_tokens(op_input)
+                yield op_input
             elif isinstance(op_input, dict):
-                total += estimate_tokens(json.dumps(op_input, ensure_ascii=False))
+                yield json.dumps(op_input, ensure_ascii=False)
     artifact = msg.get("artifact", "")
     if artifact:
-        total += estimate_tokens(artifact)
+        yield artifact
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    """Estimate tokens for a single message dict (chars/4 — used until the
+    server has measured a request, see ``ContextManager.reconcile_actual_tokens``)."""
+    # 4 = role + formatting overhead
+    return 4 + sum(estimate_tokens(t) for t in _message_texts(msg))
+
+
+def _message_bytes(msg: dict) -> int:
+    """UTF-8 size of what a record contributes — the unit the measured
+    tokens-per-byte ratio is applied to (v10.18.0)."""
+    return sum(utf8_len(t) for t in _message_texts(msg))
+
+
+def request_bytes(messages, tools=None) -> int:
+    """UTF-8 size of a request as sent: every message's content (plus a
+    server-parsed dialect's ``tool_calls``) and the ``tools[]`` schemas. The
+    denominator of the tokens-per-byte ratio — the server's input count covers
+    exactly this text (plus its chat template)."""
+    total = 0
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            total += utf8_len(content)
+        elif content is not None:
+            total += utf8_len(json.dumps(content, ensure_ascii=False, default=str))
+        calls = m.get("tool_calls")
+        if calls:
+            total += utf8_len(json.dumps(calls, ensure_ascii=False, default=str))
+    if tools:
+        total += utf8_len(json.dumps(tools, ensure_ascii=False, default=str))
     return total
 
 
