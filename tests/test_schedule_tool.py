@@ -1,229 +1,152 @@
-"""``schedule`` tool — env-gated file contract to an external scheduler (board).
+"""``schedule`` tool — add/delete/list against the session's in-process
+registry (docs/schedule/DESIGN.md §6.2).
 
-agent-cli writes a request line + reads the board's ack back; env off ⇒ the
-tool is not even registered (plain CLI surface unchanged).
+Until v10.12.0 the tool was a file-contract client of agent-board's scheduler
+and existed only under ``AGENT_CLI_SCHEDULER=1``; a plain CLI session had no
+scheduling. It is now always registered and answers immediately.
 """
 
 from __future__ import annotations
 
-import importlib
-import json
-import threading
+import re
+from datetime import datetime, timedelta
 
 import pytest
 
-from agent_cli.tools.base import RunContext
+from agent_cli.schedule.registry import AGENT_CAP, ScheduleRegistry
+from agent_cli.schedule.runtime import set_schedule_registry
+from agent_cli.tools import TOOLS
 from agent_cli.tools.schedule import ScheduleTool
+
+HANGUL = re.compile(r"[가-힣]")
+
+
+class Clock:
+    def __init__(self, now):
+        self.now = now
+
+    def __call__(self):
+        return self.now
 
 
 @pytest.fixture
-def ws(tmp_path):
-    """A session dir <ws>/.agent-cli/sessions/<sid> + the .agent-cli dir."""
-    sdir = tmp_path / ".agent-cli" / "sessions" / "S1"
-    sdir.mkdir(parents=True)
-    return tmp_path, sdir
+def clock():
+    return Clock(datetime(2026, 10, 5, 8, 0, 0))
 
 
-def _acdir(tmp_path):
-    return tmp_path / ".agent-cli"
+@pytest.fixture
+def reg(tmp_path, clock):
+    r = ScheduleRegistry(tmp_path, clock=clock)
+    r.start = lambda: None
+    set_schedule_registry(r)
+    yield r
+    set_schedule_registry(None)
 
 
-def _run(tool, args, sdir):
-    return tool.run(args, ctx=RunContext(session_dir=sdir))
-
-
-def _board_ack(acdir, results, schedules=None):
-    """Simulate the board applying requests → writing schedule-state.json."""
-    acdir.mkdir(parents=True, exist_ok=True)
-    (acdir / "schedule-state.json").write_text(
-        json.dumps({"results": results, "schedules": schedules or []}),
-        encoding="utf-8",
-    )
-
-
-class TestValidate:
-    def test_bad_mode(self):
-        assert "invalid mode" in ScheduleTool().validate({"mode": "nope"})
-
-    def test_add_requires_cron_and_prompt(self):
-        t = ScheduleTool()
-        assert "prompt" in t.validate({"mode": "add", "cron": "0 9 * * 1"})
-        assert "cron" in t.validate({"mode": "add", "prompt": "x"})
-        assert t.validate({"mode": "add", "cron": "0 9 * * 1", "prompt": "x"}) is None
-
-    def test_delete_requires_id(self):
-        msg = ScheduleTool().validate({"mode": "delete"})
-        assert "'id' is required" in msg and "mode='list'" in msg
-
-    def test_delete_takes_id_only(self):
-        """v9.25.3: a live main sent ``delete`` with ``id`` nine times over a
-        day and was refused every time — it never learned ``schedule_id``
-        because every other tool calls it ``id``. v9.25.4: ``schedule_id`` is
-        not an alias either — one spelling, the one every tool uses."""
-        t = ScheduleTool()
-        assert t.validate({"mode": "delete", "id": "abc"}) is None
-        assert "'id' is required" in t.validate(
-            {"mode": "delete", "schedule_id": "abc"}
-        )
-        assert "id" in ScheduleTool.parameters["properties"]
-        assert "schedule_id" not in ScheduleTool.parameters["properties"]
-        assert t.summary_arg({"mode": "delete", "id": "abc"}) == "delete abc"
-
-
-class TestDeleteRequest:
-    def test_delete_with_id_writes_id_to_the_board(self, ws, monkeypatch):
-        """v9.25.4: the file contract with agent-board (≥ 1.31.3) says ``id`` too."""
-        tmp_path, sdir = ws
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.05)
-        r = _run(ScheduleTool(), {"mode": "delete", "id": "sid9"}, sdir)
-        assert r.success  # "submitted, not yet acknowledged"
-        lines = (
-            (_acdir(tmp_path) / "schedule-requests.jsonl")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
-        req = json.loads(lines[-1])
-        assert req["op"] == "delete" and req["id"] == "sid9"
-        assert "schedule_id" not in req
-
-
-class TestRun:
-    def test_no_session_dir(self):
-        r = ScheduleTool().run({"mode": "list"}, ctx=RunContext(session_dir=None))
-        assert not r.success and "no active session" in r.error
-
-    def test_add_writes_request_and_returns_ack(self, ws, monkeypatch):
-        tmp_path, sdir = ws
-        tool = ScheduleTool()
-        # 보드 역할: 요청 파일에 라인이 생기면 그 req_id 로 state 를 써 준다
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 2.0)
-
-        def fake_board():
-            import time as _t
-
-            for _ in range(40):
-                try:
-                    lines = (
-                        (_acdir(tmp_path) / "schedule-requests.jsonl")
-                        .read_text(encoding="utf-8")
-                        .splitlines()
-                    )
-                except OSError:
-                    lines = []
-                if lines:
-                    req = json.loads(lines[-1])
-                    _board_ack(
-                        _acdir(tmp_path),
-                        {req["req_id"]: {"ok": True, "id": "sid1"}},
-                        [
-                            {
-                                "id": "sid1",
-                                "cron": req["cron"],
-                                "human": "매주 월 09:00",
-                                "label": req.get("label", ""),
-                                "prompt": req["prompt"],
-                                "enabled": True,
-                            }
-                        ],
-                    )
-                    return
-                _t.sleep(0.02)
-
-        th = threading.Thread(target=fake_board)
-        th.start()
-        r = _run(
-            tool,
-            {
-                "mode": "add",
-                "cron": "0 9 * * 1",
-                "prompt": "주간 보고",
-                "label": "주간",
-            },
-            sdir,
-        )
-        th.join()
-        assert r.success
-        assert "sid1" in r.output
-        # 요청 파일에 실제 라인이 append 됐는지
-        reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
-        assert json.loads(reqs[-1])["op"] == "add"
-
-    def test_add_includes_nickname_in_request(self, ws, monkeypatch):
-        tmp_path, sdir = ws
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.3)
-        _run(
-            ScheduleTool(),
-            {
-                "mode": "add",
-                "cron": "0 9 * * 1",
-                "prompt": "주간 보고",
-                "nickname": "주간봇",
-            },
-            sdir,
-        )
-        reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
-        req = json.loads(reqs[-1])
-        assert req["nickname"] == "주간봇"
-
-    def test_add_defaults_nickname_to_empty(self, ws, monkeypatch):
-        tmp_path, sdir = ws
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.3)
-        _run(ScheduleTool(), {"mode": "add", "cron": "0 9 * * 1", "prompt": "x"}, sdir)
-        reqs = (_acdir(tmp_path) / "schedule-requests.jsonl").read_text().splitlines()
-        assert json.loads(reqs[-1])["nickname"] == ""
-
-    def test_rejected_ack_is_error(self, ws, monkeypatch):
-        tmp_path, sdir = ws
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 2.0)
-
-        def fake_board():
-            import time as _t
-
-            for _ in range(40):
-                p = _acdir(tmp_path) / "schedule-requests.jsonl"
-                if p.exists() and p.read_text().strip():
-                    req = json.loads(p.read_text().splitlines()[-1])
-                    _board_ack(
-                        _acdir(tmp_path), {req["req_id"]: {"error": "cap reached"}}
-                    )
-                    return
-                _t.sleep(0.02)
-
-        th = threading.Thread(target=fake_board)
-        th.start()
-        r = _run(
-            tool_run_add(), {"mode": "add", "cron": "* * * * *", "prompt": "x"}, sdir
-        )
-        th.join()
-        assert not r.success and "cap reached" in r.error
-
-    def test_no_ack_is_soft_success(self, ws, monkeypatch):
-        # 보드가 응답 안 함(스캐너 지연/미기동) → 부드러운 성공 안내
-        _tmp, sdir = ws
-        monkeypatch.setattr("agent_cli.tools.schedule._ACK_TIMEOUT_S", 0.3)
-        r = _run(ScheduleTool(), {"mode": "list"}, sdir)
-        assert r.success and "hasn't acknowledged" in r.output
-
-
-def tool_run_add():
+@pytest.fixture
+def tool():
     return ScheduleTool()
 
 
-class TestRegistryGate:
-    def test_absent_without_env(self, monkeypatch):
+class TestRegistration:
+    def test_always_registered(self, monkeypatch):
+        """No env gate: a plain ``agent-cli web``/``run`` has the tool."""
         monkeypatch.delenv("AGENT_CLI_SCHEDULER", raising=False)
-        import agent_cli.tools.registry as reg
+        assert "schedule" in TOOLS
+        assert not hasattr(ScheduleTool, "env_enabled")
 
-        reg = importlib.reload(reg)
-        assert "schedule" not in reg.TOOLS
+    def test_description_states_the_lifetime(self, tool):
+        d = tool.description
+        assert "saved with the session" in d
+        assert "NOT run automatically" in d
+        assert "board" not in d  # 보드는 더 이상 이 기능의 일부가 아니다
 
-    def test_present_with_env(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_SCHEDULER", "1")
-        import agent_cli.tools.registry as reg
 
-        reg = importlib.reload(reg)
-        try:
-            assert "schedule" in reg.TOOLS
-        finally:
-            monkeypatch.delenv("AGENT_CLI_SCHEDULER", raising=False)
-            importlib.reload(reg)  # 다른 테스트 오염 방지 — 기본(미등록)으로 복구
+class TestValidate:
+    def test_mode_and_required_fields(self, tool):
+        assert "invalid mode" in tool.validate({"mode": "nope"})
+        assert "'prompt' is required" in tool.validate(
+            {"mode": "add", "cron": "* * * * *"}
+        )
+        assert "'cron' is required" in tool.validate({"mode": "add", "prompt": "x"})
+        assert "'id' is required" in tool.validate({"mode": "delete"})
+        assert tool.validate({"mode": "list"}) is None
+
+
+class TestRun:
+    def test_add_registers_as_agent_and_lists(self, tool, reg):
+        res = tool._run(
+            {
+                "mode": "add",
+                "cron": "0 9 * * 1",
+                "prompt": "weekly report",
+                "label": "Weekly",
+            }
+        )
+        (s,) = reg.list_all()
+        assert res.success and f"Scheduled [{s.id}]" in res.output
+        assert s.source == "agent"
+        assert "Weekly — cron '0 9 * * 1' · next 2026-10-05 09:00" in res.output
+        assert "→ weekly report" in res.output
+
+    def test_add_passes_nickname(self, tool, reg):
+        tool._run(
+            {"mode": "add", "cron": "0 9 * * *", "prompt": "x", "nickname": "Morning"}
+        )
+        assert reg.list_all()[0].nickname == "Morning"
+
+    def test_bad_cron_is_rejected_with_the_reason(self, tool, reg):
+        res = tool._run({"mode": "add", "cron": "99 9 * * *", "prompt": "x"})
+        assert not res.success and "schedule add rejected: invalid cron" in res.error
+        assert reg.list_all() == []
+
+    def test_agent_cap(self, tool, reg):
+        for _ in range(AGENT_CAP):
+            assert tool._run(
+                {"mode": "add", "cron": "0 9 * * *", "prompt": "x"}
+            ).success
+        res = tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "x"})
+        assert not res.success and "delete one first" in res.error
+
+    def test_delete_by_id(self, tool, reg):
+        tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "x"})
+        sid = reg.list_all()[0].id
+        res = tool._run({"mode": "delete", "id": sid})
+        assert res.success and "No schedules in this session." in res.output
+
+    def test_delete_unknown_id_shows_what_exists(self, tool, reg):
+        tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "keep me"})
+        res = tool._run({"mode": "delete", "id": "nope"})
+        assert not res.success
+        assert "no schedule 'nope'" in res.error and "keep me" in res.error
+
+    def test_list_marks_disabled_and_missed(self, tool, reg, clock):
+        tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "a"})
+        tool._run({"mode": "add", "cron": "0 10 * * *", "prompt": "b"})
+        _a, b = reg.list_all()
+        reg.set_enabled(b.id, False)
+        clock.now += timedelta(hours=3)
+        reg.settle()
+        out = tool._run({"mode": "list"}).output
+        assert "MISSED 2026-10-05T09:00:00 — not run" in out
+        assert "disabled" in out
+
+    def test_listing_is_english_even_with_korean_ui_labels(self, tool, reg):
+        """``cron.describe`` 는 화면용 한글 라벨("매주 월 09:00")이다 — 모델에게
+        가는 목록은 cron 원문을 쓴다 (tests/test_prompt_language.py 의 원칙)."""
+        tool._run({"mode": "add", "cron": "0 9 * * 1", "prompt": "x"})
+        assert not HANGUL.search(tool._run({"mode": "list"}).output)
+
+    def test_no_registry_is_an_error_not_a_crash(self, tool):
+        set_schedule_registry(None)
+        res = tool._run({"mode": "list"})
+        assert not res.success and "no active session" in res.error
+
+
+class TestMonitorPointsAtSchedule:
+    def test_monitor_description_no_longer_says_board(self):
+        """v10.11.2 검토 A3: monitor 가 "On a board session, … schedule" 이라며
+        보드 밖에서는 없는 도구를 권했다. 이제 schedule 은 항상 있다."""
+        d = TOOLS["monitor"].description
+        assert "board" not in d
+        assert "prefer `schedule`" in d and "survives a restart" in d

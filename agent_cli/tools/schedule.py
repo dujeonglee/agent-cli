@@ -1,92 +1,57 @@
-"""``schedule`` tool — register/delete recurring prompt injections for THIS post.
+"""``schedule`` tool — recurring prompts for THIS session (docs/schedule/DESIGN.md).
 
-Only active under an external scheduler (env ``AGENT_CLI_SCHEDULER=1``, set by
-agent-board when it spawns the instance). agent-cli itself has no scheduler and
-knows nothing about the board: the tool just appends a JSONL request to
-``<workspace>/.agent-cli/schedule-requests.jsonl`` and reads the board's ack
-back from ``schedule-state.json`` (the file contract in agent-board's
-docs/schedule-design.md §7). Without the env var the tool is never registered,
-so a plain CLI session's surface is unchanged.
+The scheduler lives in this process (``agent_cli/schedule/``): the tool talks
+to the session's :class:`ScheduleRegistry` directly and the answer is
+immediate. At each cron time the prompt enters the input queue as if the user
+had sent it, under the schedule's nickname.
+
+Until v10.12.0 this tool was a thin client of agent-board's scheduler — it
+appended to ``schedule-requests.jsonl`` and polled ``schedule-state.json`` for
+the board's ack, and was registered only under ``AGENT_CLI_SCHEDULER=1``. A
+plain ``agent-cli web``/``run`` had no scheduling at all. The file contract and
+the env gate are gone.
 
 Modes:
-- ``add`` — ``cron`` (5-field, e.g. "0 9 * * 1") + ``prompt`` (the request to
-  inject) + optional ``label`` + optional ``nickname`` (display name the injected
-  prompt shows up under; defaults to "⏰ Scheduler" on the board when omitted).
-  Schedules FUTURE autonomous work on this post.
-- ``delete`` — ``id`` (from ``list``). Until v9.25.3 this argument was
-  ``schedule_id``: a live main called ``delete`` with ``id`` nine times over a
-  day, was refused each time, and never adapted, because every other tool
-  (memory, monitor, reply, answer) names it ``id``; the schedules it meant to
-  replace piled up to five. v9.25.4: ``schedule_id`` is gone from the tool AND
-  from the file contract (board ≥ 1.31.3 — no compatibility shim).
-- ``list`` — the post's current schedules.
+- ``add`` — ``cron`` (5-field, local time) + ``prompt`` + optional ``label`` +
+  optional ``nickname`` (display name of the injected prompt; default
+  "⏰ Scheduler").
+- ``delete`` — ``id`` (from ``list``). Named ``id`` like every other tool
+  (memory, monitor, reply, answer): as ``schedule_id`` a live main was refused
+  nine times in a day and never adapted (v9.25.3).
+- ``list`` — the session's schedules.
 """
 
 from __future__ import annotations
 
-import json
-import time
-import uuid
-from pathlib import Path
 from typing import ClassVar
 
+from agent_cli.schedule.registry import ScheduleError
+from agent_cli.schedule.runtime import get_schedule_registry
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
-_REQUESTS = "schedule-requests.jsonl"
-_STATE = "schedule-state.json"
-_ACK_TIMEOUT_S = 6.0  # board 스캐너(1s)+rearm 반영 대기 상한
 
-
-def is_enabled() -> bool:
-    """True when an external scheduler is present (agent-board spawned us)."""
-    import os
-
-    return os.environ.get("AGENT_CLI_SCHEDULER") == "1"
-
-
-def _agent_cli_dir(session_dir: Path) -> Path:
-    # session_dir = <ws>/.agent-cli/sessions/<sid>  →  <ws>/.agent-cli
-    return Path(session_dir).parent.parent
-
-
-def _read_state(acdir: Path) -> dict:
-    try:
-        return json.loads((acdir / _STATE).read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
-def _append_request(acdir: Path, req: dict) -> None:
-    acdir.mkdir(parents=True, exist_ok=True)
-    with (acdir / _REQUESTS).open("a", encoding="utf-8") as f:
-        f.write(json.dumps(req, ensure_ascii=False) + "\n")
-
-
-def _await_ack(acdir: Path, req_id: str) -> dict | None:
-    """Poll the state file until the board records THIS request's result."""
-    deadline = time.monotonic() + _ACK_TIMEOUT_S
-    while time.monotonic() < deadline:
-        res = _read_state(acdir).get("results", {}).get(req_id)
-        if res is not None:
-            return res
-        time.sleep(0.2)
-    return None
-
-
-def _fmt_schedules(state: dict) -> str:
-    scheds = state.get("schedules", [])
+def _fmt_schedules(registry) -> str:
+    """The model-facing listing — English only, so the cron is shown raw
+    (``cron.describe`` is a Korean label for the UI)."""
+    scheds = registry.list_all()
     if not scheds:
-        return "No schedules for this post."
+        return "No schedules in this session."
     lines = []
     for s in scheds:
-        flag = "" if s.get("enabled", True) else " (disabled)"
-        nxt = f" · next {s['next_fire']}" if s.get("next_fire") else ""
-        lines.append(
-            f"- [{s['id']}] {s.get('label') or s.get('human') or s['cron']} "
-            f"({s['human']}){flag}{nxt}\n    → {s.get('prompt', '')}"
-        )
-    return "Schedules for this post:\n" + "\n".join(lines)
+        nxt = registry.next_fire(s)
+        bits = [f"cron '{s.cron}'"]
+        if not s.enabled:
+            bits.append("disabled")
+        elif nxt is not None:
+            bits.append(f"next {nxt.strftime('%Y-%m-%d %H:%M')}")
+        if s.missed_at:
+            bits.append(
+                f"MISSED {s.missed_at} — not run; the user decides run-now or skip"
+            )
+        name = f"{s.label} — " if s.label else ""
+        lines.append(f"- [{s.id}] {name}{' · '.join(bits)}\n    → {s.prompt}")
+    return "Schedules in this session:\n" + "\n".join(lines)
 
 
 def _sched_id(args: dict) -> str:
@@ -96,15 +61,16 @@ def _sched_id(args: dict) -> str:
 class ScheduleTool(Tool):
     name = "schedule"
     description = (
-        "Schedule a recurring request to be injected into THIS post later, even "
-        "when you're not running — the board restarts this session at the due "
-        "time and delivers the prompt. Use for standing/periodic work the user "
-        "asked to automate (e.g. a weekly report). Modes: add (cron + prompt "
-        "[+ label]), delete (id), list. cron is 5 fields "
-        "'min hour day month weekday' (e.g. '0 9 * * 1' = Mondays 09:00). "
-        "Pass 'nickname' to set the display name the injected prompt appears "
-        "under (defaults to '⏰ Scheduler'). "
-        "Only available when a scheduler backs this session."
+        "Schedule a recurring request for THIS session: at each cron time the "
+        "prompt arrives as if the user had sent it. Use for standing/periodic "
+        "work the user asked to automate (e.g. a weekly report). Modes: add "
+        "(cron + prompt [+ label, nickname]), delete (id), list. cron is 5 "
+        "fields 'min hour day month weekday' in local time (e.g. '0 9 * * 1' = "
+        "Mondays 09:00). 'nickname' sets the display name the prompt appears "
+        "under (default '⏰ Scheduler'). Schedules are saved with the session "
+        "and this process stays up while one is enabled. A fire that came due "
+        "while the process was down is NOT run automatically — the user is "
+        "asked whether to run it."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -137,11 +103,6 @@ class ScheduleTool(Tool):
         "required": ["mode"],
     }
 
-    @staticmethod
-    def env_enabled() -> bool:
-        """Registry gate — only present when an external scheduler is set."""
-        return is_enabled()
-
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
 
@@ -164,47 +125,31 @@ class ScheduleTool(Tool):
         return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        session_dir = ctx.session_dir if ctx else None
-        if session_dir is None:
-            return ToolResult(
-                False, error="schedule unavailable: no active session directory."
-            )
-        acdir = _agent_cli_dir(session_dir)
+        registry = get_schedule_registry()
+        if registry is None:
+            return ToolResult(False, error="schedule unavailable: no active session.")
         mode = (args.get("mode") or "").strip()
-        req_id = uuid.uuid4().hex[:8]
-        req: dict = {"op": mode, "req_id": req_id}
         if mode == "add":
-            req.update(
-                cron=(args.get("cron") or "").strip(),
-                prompt=(args.get("prompt") or "").strip(),
-                label=(args.get("label") or "").strip(),
-                nickname=(args.get("nickname") or "").strip(),
-            )
-        elif mode == "delete":
-            req["id"] = _sched_id(args)
-
-        try:
-            _append_request(acdir, req)
-        except OSError as e:
-            return ToolResult(False, error=f"schedule: could not write request: {e}")
-
-        res = _await_ack(acdir, req_id)
-        state = _read_state(acdir)
-        if res is None:
+            try:
+                s = registry.add(
+                    args.get("cron") or "",
+                    args.get("prompt") or "",
+                    label=args.get("label") or "",
+                    nickname=args.get("nickname") or "",
+                    source="agent",
+                )
+            except ScheduleError as e:
+                return ToolResult(False, error=f"schedule add rejected: {e}")
             return ToolResult(
-                True,
-                output=(
-                    "Request submitted; the scheduler hasn't acknowledged yet "
-                    "(it may apply within a few seconds). Use mode=list to confirm."
-                ),
-            )
-        if res.get("error"):
-            return ToolResult(False, error=f"schedule {mode} rejected: {res['error']}")
-        if mode == "add":
-            return ToolResult(
-                True,
-                output=f"Scheduled [{res.get('id')}].\n{_fmt_schedules(state)}",
+                True, output=f"Scheduled [{s.id}].\n{_fmt_schedules(registry)}"
             )
         if mode == "delete":
-            return ToolResult(True, output=f"Deleted.\n{_fmt_schedules(state)}")
-        return ToolResult(True, output=_fmt_schedules(state))
+            sid = _sched_id(args)
+            if not registry.delete(sid):
+                return ToolResult(
+                    False,
+                    error=f"schedule delete rejected: no schedule {sid!r}.\n"
+                    f"{_fmt_schedules(registry)}",
+                )
+            return ToolResult(True, output=f"Deleted.\n{_fmt_schedules(registry)}")
+        return ToolResult(True, output=_fmt_schedules(registry))

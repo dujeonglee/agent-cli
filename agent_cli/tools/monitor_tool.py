@@ -44,8 +44,8 @@ class MonitorTool(Tool):
         "retires after one report. Optional run='<cmd>' executes before the "
         "report and its exit code is included. You are always notified; there "
         "is no silent action.\n"
-        "On a board session, periodic reporting is better served by `schedule` "
-        "— it survives after this session ends, while a monitor does not."
+        "For periodic work on a clock prefer `schedule` — it is saved with the "
+        "session and survives a restart, while a monitor does not."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
