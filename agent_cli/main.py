@@ -1361,6 +1361,7 @@ def run(
         AgentRuntime,
         build_agent_registry,
         build_monitor_registry,
+        build_schedule_registry,
         main_run_ended,
         ports_for_run,
         wire_agent_mail,
@@ -1369,6 +1370,7 @@ def run(
     # monitor 는 native — board 도 env 도 없이 항상 조립된다 (`schedule` 과의
     # 차이: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다).
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
@@ -1535,6 +1537,16 @@ def run(
             if loop_result.success:
                 answer = loop_result.output
 
+        # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
+        # 않는다 (docs/schedule/DESIGN.md §6.3).
+        schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
+            None, prompt, nickname=nickname
+        )
+        schedule_registry.start()
+        _sched_notice = _missed_schedules_notice(schedule_registry)
+        if _sched_notice:
+            console.print(f"[{C['muted']}]{_sched_notice}[/]")
+
         input_queue.enqueue(None, query)
         warn_stuck = True  # 메인 펌프 경로에서만 답변-대기 경고 (종전 표면)
         try:
@@ -1544,6 +1556,10 @@ def run(
                 agent_registry,
                 _run_one,
                 monitors=monitor_registry,
+                schedules=schedule_registry,
+                on_schedule_wait=lambda: console.print(
+                    f"[{C['muted']}]{_schedule_wait_notice(schedule_registry)}[/]"
+                ),
             )
         except KeyboardInterrupt:
             answer = None
@@ -1559,14 +1575,18 @@ def run(
             monitors=monitor_registry,
             warn_stuck=warn_stuck,
         )
+        schedule_registry.stop()
 
 
-def web_instance_is_active(renderer, server, agent_registry, monitors=None) -> bool:
+def web_instance_is_active(
+    renderer, server, agent_registry, monitors=None, schedules=None
+) -> bool:
     """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
 
     True 조건: 라이브 뷰어 존재 ∨ main worker busy ∨ 상주 에이전트 활동
     (working / 미처리 inbox — main 유휴여도 백그라운드 작업 소실 방지)
-    ∨ 대기 메시지 큐 비어있지 않음 ∨ **살아 있는 모니터/미배달 보고**.
+    ∨ 대기 메시지 큐 비어있지 않음 ∨ **살아 있는 모니터/미배달 보고**
+    ∨ **켜진 예약** (v10.12.0 — 예약이 있으면 "유지" 처럼 꺼지지 않는다).
     ``agent_registry`` 는 web() 의 worker 부트스트랩이 늦게 채우는 nonlocal
     이라 None 허용.
 
@@ -1580,11 +1600,20 @@ def web_instance_is_active(renderer, server, agent_registry, monitors=None) -> b
         or (agent_registry is not None and agent_registry.any_activity())
         or server.pending_count() > 0
         or (monitors is not None and monitors.has_active_work())
+        or (schedules is not None and schedules.has_active_work())
     )
 
 
 def _run_message_pump(
-    input_queue, waker, registry, run_one, *, monitors=None, poll_secs=0.5
+    input_queue,
+    waker,
+    registry,
+    run_one,
+    *,
+    monitors=None,
+    schedules=None,
+    on_schedule_wait=None,
+    poll_secs=0.5,
 ):
     """CLI ``run`` 의 큐 펌프 (teammate P5) — web ``_worker_loop`` 와 같은
     "큐에 뭔가 있으면 재기동" 모델을 공용 InputQueue 위에서 돈다.
@@ -1604,7 +1633,24 @@ def _run_message_pump(
         세션이 되지 않는다."""
         if input_queue.pending_count() or registry.has_active_work():
             return False
-        return not (monitors is not None and monitors.has_active_work())
+        if monitors is not None and monitors.has_active_work():
+            return False
+        return not _waiting_on_schedules()
+
+    announced = False
+
+    def _waiting_on_schedules() -> bool:
+        """켜진 예약이 있으면 끝나지 않는다 — 예약은 모니터와 달리 기한이 없어
+        Ctrl-C 까지 기다린다. 끝나 버리면 "매시간 확인하겠다" 는 약속이 조용히
+        사라진다. 기다리기 시작할 때 한 번 알린다."""
+        nonlocal announced
+        if schedules is None or not schedules.has_active_work():
+            announced = False
+            return False
+        if not announced and on_schedule_wait is not None:
+            on_schedule_wait()
+        announced = True
+        return True
 
     while True:
         if _quiet():
@@ -1624,6 +1670,28 @@ def _run_message_pump(
             continue  # 이미 배달 완료된 wake — 빈 run 을 열지 않는다
         run_one(item["text"], wake=(verdict == "run"))
         waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
+
+
+def _schedule_wait_notice(schedules) -> str:
+    """`run` 이 예약 때문에 끝나지 않고 기다릴 때의 한 줄."""
+    n = sum(1 for s in schedules.list_all() if s.enabled)
+    nxt = schedules.next_wake()
+    when = nxt.strftime("%m-%d %H:%M") if nxt else "?"
+    return f"⏰ 예약 {n}개 대기 중 — 다음 발화 {when}. Ctrl-C 로 종료합니다."
+
+
+def _missed_schedules_notice(schedules) -> str:
+    """꺼져 있던 동안 지난 예약을 **실행하지 않고 알린다** (자동 실행 없음 —
+    docs/schedule/DESIGN.md §6.5). `run` 에는 물을 화면이 없어 알리기만 한다."""
+    schedules.settle()
+    rows = [s for s in schedules.list_all() if s.missed_at]
+    if not rows:
+        return ""
+    listing = "\n".join(f"  {s.label or s.cron} — {s.missed_at} ({s.id})" for s in rows)
+    return (
+        f"⏰ 놓친 예약 {len(rows)}건은 실행되지 않았습니다 — web 화면에서 "
+        f"지금 실행/건너뛰기를 고르세요:\n{listing}"
+    )
 
 
 def _previous_monitors_notice(session_dir) -> str:
@@ -2288,9 +2356,18 @@ def web(
     agent_registry = None
     # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
-    from agent_cli.runtime import build_monitor_registry, ports_for_web
+    from agent_cli.runtime import (
+        build_monitor_registry,
+        build_schedule_registry,
+        ports_for_web,
+    )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
+    # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
+    schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
+    schedule_registry.enqueue = server.enqueue_scheduled
+    schedule_registry.start()
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
@@ -2610,7 +2687,11 @@ def web(
 
         monitor = IdleMonitor(
             is_active=lambda: web_instance_is_active(
-                renderer, server, agent_registry, monitor_registry
+                renderer,
+                server,
+                agent_registry,
+                monitor_registry,
+                schedule_registry,
             ),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
@@ -2651,6 +2732,7 @@ def web(
                 mcp_manager=mcp_manager,
                 monitors=monitor_registry,
             )
+            schedule_registry.stop()
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
             console.print(f"[red]Failed to save session: {exc}[/]")

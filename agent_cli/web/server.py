@@ -257,6 +257,11 @@ class WebServer:
         nickname = self.renderer.nickname_for(conn_id)
         return self._queue.enqueue(conn_id, text, nickname=nickname)
 
+    def enqueue_scheduled(self, text: str, nickname: str) -> dict:
+        """예약 발화 — 사용자 요청처럼 큐에 들어가되 표시 이름은 예약의 것이다
+        (docs/schedule/DESIGN.md §5). 연결이 없으므로 ``conn_id`` 는 없다."""
+        return self._queue.enqueue(None, text, nickname=nickname)
+
     def enqueue_system(self, conn_id: str | None, text: str) -> dict:
         """사람이 보내지 않은 합성 입력(에이전트 메일 깨우기)을 큐에 넣는다.
 
