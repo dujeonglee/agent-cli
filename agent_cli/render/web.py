@@ -1864,6 +1864,11 @@ class WebRenderer(Renderer):
         (so concurrent editors don't show stale content). Transient event."""
         self._emit("directives_changed", {}, persistent=False)
 
+    def broadcast_schedules_changed(self) -> None:
+        """예약이 바뀌었다(추가·삭제·발화·놓침) → ⏰ 서랍과 놓친 예약 카드가
+        다시 가져온다. Transient event."""
+        self._emit("schedules_changed", {}, persistent=False)
+
     def broadcast_memory_changed(self) -> None:
         """Tell every open Prompt Inspector to re-fetch the prompt view after a
         `memory` op updated the `## Session Memory` index. Transient event."""
