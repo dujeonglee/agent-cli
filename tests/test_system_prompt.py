@@ -197,7 +197,7 @@ class TestMultiOpPromptBranches:
         assert '"mode": "string, required' in flat
         assert '"queries":' not in flat
         assert '"code_index_queries":' not in flat
-        assert "Each op runs one query" in flat
+        assert "One op runs one query" in flat
         assert "Provide queries as a LIST" not in flat
 
     def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):
@@ -1694,3 +1694,41 @@ class TestEditVsWriteRule:
             if f["function"]["name"] == "write_file"
         ]
         assert fn["description"] == self._desc(tools)
+
+
+class TestCodeIndexToldOnce:
+    """v10.13.0 — the code_index description is one sentence; the modes, the
+    index location, the path-scope rule and the defconfig notes are in the
+    guide only. The description used to repeat all four (about 1.5 KB)."""
+
+    def _block(self):
+        return _build_tools_section(["code_index"], _get_dialect("json_fc"))
+
+    def test_description_is_one_short_sentence_pair(self):
+        from agent_cli.tools import TOOLS
+
+        d = TOOLS["code_index"].description
+        assert len(d) < 260
+        assert "Modes:" not in d and "defconfig" not in d and "Languages:" not in d
+
+    @pytest.mark.parametrize(
+        "fact",
+        [
+            "mode='list'",
+            "mode='slice'",
+            "mode='build'",
+            ".agent-cli/code_index.db",
+            "OUTSIDE the indexed root",
+            "Supported extensions:",
+            "is assumed newest",
+        ],
+    )
+    def test_every_fact_survives_exactly_once(self, fact):
+        assert self._block().count(fact) == 1, fact
+
+    def test_defconfig_is_written_by_the_model_not_requested(self):
+        """The decision was "write `.agent-cli/defconfig`"; the guide still
+        said "ask the user to add a defconfig"."""
+        flat = " ".join(self._block().split())
+        assert "write a defconfig" in flat
+        assert "ask the user" not in flat

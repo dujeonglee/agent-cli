@@ -533,12 +533,17 @@ def _build_code_index_inline(dialect) -> str:
 
   Defconfig (C/C++ kernel-style only): if
   ``<project_root>/.agent-cli/defconfig`` exists it is fed to ``unifdef``
-  to prune ``#ifdef CONFIG_*`` branches before tree-sitter parses. Use
-  ``#define CONFIG_FOO`` / ``#undef CONFIG_BAR`` lines. Without it,
+  to prune ``#if`` / ``#ifdef CONFIG_*`` branches before tree-sitter parses.
+  ``LINUX_VERSION_CODE`` is assumed newest (0xffffff) unless the file sets
+  it, so every ``>= KERNEL_VERSION(...)`` branch is taken. For a specific
+  kernel or CONFIG_* set, write that file — lines like
+  ``#define LINUX_VERSION_CODE 393472`` (6.1.0 = (6<<16)+(1<<8)+0;
+  ``KERNEL_VERSION(6, 1, 0)`` also works), ``#define CONFIG_FOO 1``,
+  ``#undef CONFIG_BAR``. The index rebuilds when it changes. Without it,
   functions whose signature is split by ``#ifdef`` (common in kernel
   drivers) may parse as ERROR nodes and disappear from the index — if
   ``mode='lookup'`` returns only a declaration when you expected a
-  definition, ask the user to add a defconfig."""
+  definition, write a defconfig."""
 
 
 _ASK_INLINE = """\

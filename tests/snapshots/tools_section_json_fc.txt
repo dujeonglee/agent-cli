@@ -3,21 +3,8 @@
   Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
 - edit_file: Change part of a file — the default way to modify an existing file. Addresses lines by the hashline refs that read_file returns. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
   Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
-- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
-Modes:
-  list      - file outline (defs + structural symbols, line ranges) [path]
-  fetch     - single symbol body, hashline format for edit_file [path, name]
-  lookup    - find symbol by name across the index [name, symbol_kind?]
-  kind      - list all symbols of a kind across the index [symbol_kind]
-  file      - all symbols in a single file (index lookup) [path]
-  refs      - all ref sites for a name [name, ref_kind?]
-  callers   - functions that call this one [name]
-  callees   - functions called by this one [name]
-  slice     - markdown LLM context: def body + optional callees/callers/types/macros [name, ...]
-  build     - force full rebuild (rare - lazy build handles normal cases)
-Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <project_root>/.agent-cli/code_index.db, lazy-built and incrementally refreshed. For 'list'/'fetch' on paths outside the indexed root: on-demand parse (no DB write). Other modes require the indexed root.
-C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>= KERNEL_VERSION(...)` branch is taken. For a specific kernel or CONFIG_* set, write `.agent-cli/defconfig` under the root — lines like `#define LINUX_VERSION_CODE 393472` (6.1.0 = (6<<16)+(1<<8)+0; `KERNEL_VERSION(6, 1, 0)` also works), `#define CONFIG_X 1`, `#undef CONFIG_Y`. The index rebuilds when it changes.
-  Input JSON: {"mode": "string, required — Operation. See tool description for per-mode params.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
+- code_index: Query a persistent tree-sitter index of the project's code and markdown (read-only): file outlines, symbol bodies, definitions, references, callers and callees. One op runs one query, chosen by `mode`.
+  Input JSON: {"mode": "string, required — Which query to run — the modes are described in the code_index guide.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
 - shell: Run a shell command and return stdout/stderr.
   Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Max seconds before the command is killed (default 120). RAISE it for long-running commands — builds, installs (pip/npm), large git clone/pull, or test suites — e.g. 300-600; otherwise they're killed at the default."}
 - ask: Ask the user ONE question and WAIT for their reply. One question per op — to ask several, emit several `ask` ops in the array (each is answered in turn), the same way you batch read_file. Use only when you cannot proceed without specific input; otherwise end with `complete`.
@@ -161,12 +148,17 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
 
   Defconfig (C/C++ kernel-style only): if
   ``<project_root>/.agent-cli/defconfig`` exists it is fed to ``unifdef``
-  to prune ``#ifdef CONFIG_*`` branches before tree-sitter parses. Use
-  ``#define CONFIG_FOO`` / ``#undef CONFIG_BAR`` lines. Without it,
+  to prune ``#if`` / ``#ifdef CONFIG_*`` branches before tree-sitter parses.
+  ``LINUX_VERSION_CODE`` is assumed newest (0xffffff) unless the file sets
+  it, so every ``>= KERNEL_VERSION(...)`` branch is taken. For a specific
+  kernel or CONFIG_* set, write that file — lines like
+  ``#define LINUX_VERSION_CODE 393472`` (6.1.0 = (6<<16)+(1<<8)+0;
+  ``KERNEL_VERSION(6, 1, 0)`` also works), ``#define CONFIG_FOO 1``,
+  ``#undef CONFIG_BAR``. The index rebuilds when it changes. Without it,
   functions whose signature is split by ``#ifdef`` (common in kernel
   drivers) may parse as ERROR nodes and disappear from the index — if
   ``mode='lookup'`` returns only a declaration when you expected a
-  definition, ask the user to add a defconfig.
+  definition, write a defconfig.
   `ask` vs `complete` — pick by intent, not tone:
   - `ask`: you GENUINELY cannot proceed without information from the
     user. A real question with real alternatives where you don't know
