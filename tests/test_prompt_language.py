@@ -182,3 +182,26 @@ class TestNoStaleTermsReachTheModel:
         src = (PKG / rel).read_text(encoding="utf-8")
         assert "Fix action_input" not in src
         assert "action_input shape and" not in src
+
+
+class TestSkillsSectionNeedsTheTool:
+    """``## Available Skills`` tells the model to "use the run_skill tool". It
+    was emitted even to a loop without ``run_skill`` — a narrowed profile, or
+    a loop at the depth limit where the tool is removed (v10.13.0)."""
+
+    def _names(self, tools):
+        caps = ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        )
+        return [
+            n
+            for n, _ in sp.build_system_prompt_sections(
+                caps, tools, dialect=dialects.get("json_fc")
+            )
+        ]
+
+    def test_present_with_run_skill(self):
+        assert "Skills" in self._names(["shell", "run_skill"])
+
+    def test_absent_without_run_skill(self):
+        assert "Skills" not in self._names(["shell", "read_file"])
