@@ -1367,8 +1367,8 @@ def run(
         wire_agent_mail,
     )
 
-    # monitor 는 native — board 도 env 도 없이 항상 조립된다 (`schedule` 과의
-    # 차이: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다).
+    # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
+    # 일어난다. board 도 env 도 없이 항상 조립된다.
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
 

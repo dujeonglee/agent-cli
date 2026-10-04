@@ -57,9 +57,7 @@ _ALL_TOOLS: list[Tool] = [
     AgentTool(),
 ]
 
-# 🔔 ``monitor`` — native. `schedule` 과 달리 **무조건** 등록된다: 시간을 재는
-# 것도 발화도 이 프로세스 안에서 일어나므로 board 도 env 도 필요 없다
-# (`schedule` 은 board 스케줄러의 얇은 클라이언트라 그쪽이 없으면 빈 껍데기다).
+# 🔔 ``monitor`` — native: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다.
 # 끝에 붙여 기존 도구 순서(KV 캐시 안정)를 보존한다.
 _ALL_TOOLS.append(MonitorTool())
 
@@ -72,11 +70,10 @@ _ALL_TOOLS.append(AnswerTool())
 # ``requires_handler="message_handler"`` 라 상주 에이전트에만 붙는다.
 _ALL_TOOLS.append(ReplyTool())
 
-# ⏰ ``schedule`` — only when an external scheduler backs this session
-# (env ``AGENT_CLI_SCHEDULER=1``, set by agent-board). Appended last so the
-# base tool order (KV-cache stability) is unchanged for plain CLI sessions.
-if ScheduleTool.env_enabled():
-    _ALL_TOOLS.append(ScheduleTool())
+# ⏰ ``schedule`` — native since v10.12.0: the scheduler runs in this process
+# (``agent_cli/schedule/``), so the tool is always registered. Until then it
+# was a thin client of agent-board's scheduler behind ``AGENT_CLI_SCHEDULER``.
+_ALL_TOOLS.append(ScheduleTool())
 
 TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
 
