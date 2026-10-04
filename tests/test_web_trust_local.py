@@ -47,27 +47,27 @@ class TestTrustLocalEndToEnd:
     @pytest.mark.asyncio
     async def test_loopback_bypasses_token(self):
         async with _client(_app(True), "127.0.0.1") as c:
-            r = await c.get("/api/debug/prompt/scopes")  # NO token
+            r = await c.get("/api/debug/prompt")  # NO token
             assert r.status_code == 200
 
     @pytest.mark.asyncio
     async def test_non_loopback_is_not_bypassed(self):
         # no token + non-loopback → rejected (422 missing / 401 wrong), NOT 200
         async with _client(_app(True), "10.0.0.5") as c:
-            assert (await c.get("/api/debug/prompt/scopes")).status_code >= 400
+            assert (await c.get("/api/debug/prompt")).status_code >= 400
             # wrong token from non-loopback → token is actually validated (401)
-            r = await c.get("/api/debug/prompt/scopes?token=nope")
+            r = await c.get("/api/debug/prompt?token=nope")
             assert r.status_code == 401
 
     @pytest.mark.asyncio
     async def test_trust_off_loopback_is_not_bypassed(self):
         async with _client(_app(False), "127.0.0.1") as c:
-            assert (await c.get("/api/debug/prompt/scopes")).status_code >= 400
-            r = await c.get("/api/debug/prompt/scopes?token=nope")
+            assert (await c.get("/api/debug/prompt")).status_code >= 400
+            r = await c.get("/api/debug/prompt?token=nope")
             assert r.status_code == 401
 
     @pytest.mark.asyncio
     async def test_valid_token_still_works_from_anywhere(self):
         async with _client(_app(True), "10.0.0.5") as c:
-            r = await c.get("/api/debug/prompt/scopes?token=secret")
+            r = await c.get("/api/debug/prompt?token=secret")
             assert r.status_code == 200

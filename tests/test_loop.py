@@ -29,37 +29,6 @@ class TestInspectorNoSynthesis:
         assert not hasattr(prompt_mod, "build_inspector_sections")
         assert not hasattr(loop_pkg, "build_inspector_sections")
 
-    def test_summary_and_files_appear_exactly_once(self, tmp_path):
-        """End-to-end on the real objects: one occurrence each, from the
-        dynamic half only."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
-        ctx._summary = "earlier: user asked X, we did Y"
-        ctx._file_list = ["a.py", "b/c.py"]
-        ctx.add({"role": "user", "content": "hello"})
-
-        texts = [s["text"] for s in _dynamic_context_sections(ctx)]
-        joined = "\n".join(texts)
-        assert joined.count("earlier: user asked X, we did Y") == 1
-        assert joined.count("- a.py") == 1
-
-    def test_dynamic_sections_match_what_the_llm_receives(self, tmp_path):
-        """The inspector's dynamic half is derived from ``get_messages()``, so
-        it is the LLM's view by construction — including tail annotations."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.web.inspector import _dynamic_context_sections
-
-        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
-        ctx.add({"role": "user", "content": "hello"})
-        ctx.set_session_state("── session state ──\ncontext: ~1 / 2 tokens")
-
-        sent = [m for m in ctx.get_messages() if m.get("role") != "system"]
-        shown = _dynamic_context_sections(ctx)
-        assert [m["content"] for m in sent] == [s["text"] for s in shown]
-        assert "session state" in shown[-1]["text"]
-
 
 def _complete(result: str) -> str:
     """Build a complete tool JSON response."""

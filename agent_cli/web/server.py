@@ -1064,19 +1064,6 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"생성 실패: {e}") from e
         return {"content": content}
 
-    @app.get("/api/debug/prompt/scopes")
-    async def debug_prompt_scopes():
-        """Scopes that currently have a captured system prompt — the main loop
-        plus any delegate sub-agents — for the inspector's scope chip row."""
-        return {"ok": True, "scopes": server.renderer.prompt_scopes()}
-
-    @app.delete("/api/debug/prompt")
-    async def debug_prompt_delete(task_id: str = Query(...)):
-        """Drop a sub-agent's captured prompt (inspector ✕ button). Main is
-        not deletable (it regenerates every turn)."""
-        removed = server.renderer.delete_prompt_scope(task_id)
-        return {"ok": True, "removed": removed}
-
     @app.get("/api/workspace/tree")
     async def workspace_tree(path: str = Query("")):
         """List one directory level of the workspace (lazy tree expansion).

@@ -1,68 +1,11 @@
-"""Prompt Inspector 지원 — 동적 컨텍스트 섹션 + 시작 시 프롬프트 캡처.
+"""모델 시점 틀 지원 — 시작 시 시스템 프롬프트 캡처.
 
 C3: web 전송 계층(server.py)에서 분리된 도메인 로직. FastAPI 무의존.
 """
 
 from __future__ import annotations
 
-from agent_cli.context.render import message_display_text, message_label
-from agent_cli.prompts.session_state import split_tail
 from agent_cli.render.web import WebRenderer
-
-
-def _dynamic_context_sections(ctx) -> list[dict]:
-    """The Prompt Inspector's DYNAMIC half: the conversation + observations
-    currently in the context window (``ctx.get_messages()`` minus the system
-    prompt, which the inspector shows separately as ``kind="system"``).
-
-    One message → one section, the SAME shape as the system sections so the
-    frontend renders them identically (no new render path). ``kind="dynamic"``
-    marks them. Reads a snapshot copy of the cache (``list(...)``) to avoid a
-    rare race with the worker thread appending mid-read (debug view — best
-    effort, no lock)."""
-    if ctx is None:
-        return []
-    from agent_cli.context.token_estimator import estimate_tokens
-
-    sections: list[dict] = []
-    tail_sections: list[dict] = []
-    try:
-        messages = list(ctx.get_messages())
-    except Exception:
-        return []
-    for idx, m in enumerate(messages):
-        if m.get("role") == "system":
-            continue  # already shown as the system snapshot
-        # native_fc 의 assistant 는 본문이 ``tool_calls`` 에 있다 — content 만 읽으면
-        # 빈 카드가 된다(사용자 제보, v10.2.1). 역할 라벨도 ``tool`` 이면 호출 id 를 단다.
-        content = message_display_text(m)
-        # 마지막 메시지만 매턴 꼬리를 실을 수 있다 (get_messages 계약) —
-        # 떼어낸 꼬리는 kind="tail" 로 목록 맨 끝(실제 위치와 동형).
-        if idx == len(messages) - 1:
-            content, tail = split_tail(content)
-            for name, text in tail:
-                tail_sections.append(
-                    {
-                        "name": name,
-                        "text": text,
-                        "chars": len(text),
-                        "est_tokens": estimate_tokens(text),
-                        "kind": "tail",
-                    }
-                )
-        role = message_label(m)
-        first = content.strip().split("\n", 1)[0][:60]
-        name = f"[{role}] {first}" if first else f"[{role}]"
-        sections.append(
-            {
-                "name": name,
-                "text": content,
-                "chars": len(content),
-                "est_tokens": estimate_tokens(content),
-                "kind": "dynamic",
-            }
-        )
-    return sections + tail_sections
 
 
 def capture_startup_system_prompt(

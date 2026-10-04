@@ -279,3 +279,60 @@ def test_copy_all_keeps_the_summary_and_folded_cards(stack, page):
     md = page.evaluate("() => window.__timelineMarkdown()")
     assert md.startswith("> ⊙ **압축 요약** · 턴 1–2")
     assert "gomoku.html 을 리뷰해줘" in md  # 접힌 카드도 대화의 일부다
+
+
+def _main_calls_one_shot_agent(stack):
+    """라이브 순서 그대로: main 턴 1 `agent` → 서브에이전트 턴 1 `shell` · 관찰 ·
+    턴 2 최종답 → 스코프 종료 → main 의 `agent` 관찰 → main 턴 2 최종답.
+    턴 번호는 루프마다 1 부터라 main 의 턴 1 과 서브에이전트의 턴 1 이 겹친다."""
+    r = stack.renderer
+    r.thought("서브에이전트를 실행한다", turn=1)
+    r.action("agent", '{"mode": "run", "task": "count lines"}', turn=1)
+
+    def sub():
+        r.begin_scope(task_id="d1", kind="run", index=0, agent="", label="agent")
+        r.thought("wc 로 센다", turn=1)
+        r.action("shell", '{"command": "wc -l notes.txt"}', turn=1)
+        r.observation("3 notes.txt", turn=1, tool_name="shell", success=True)
+        r.final("3", turn=2)
+        r.end_scope(task_id="d1", kind="run", success=True, duration_s=1.0)
+
+    t = threading.Thread(target=sub)
+    t.start()
+    t.join()
+    r.observation("STATUS: success", turn=1, tool_name="agent", success=True)
+    r.final("3줄입니다", turn=2)
+
+
+def test_sub_agent_steps_stay_in_its_own_card(stack, page):
+    """서브에이전트의 스텝이 main 의 스텝 카드로 들어가면 안 된다 — 종전엔 스텝
+    병합의 열쇠가 채널이라 "같은 턴의 두 번째 op" 로 보였다(라이브만)."""
+    stack.emit_ready()
+    _main_calls_one_shot_agent(stack)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(stack.url)
+    page.wait_for_selector("#messages > .card-assistant .final", timeout=8000)
+    got = page.evaluate(
+        """() => {
+            const tools = el => [...el.querySelectorAll('.row.act .k')].map(e => e.textContent);
+            const steps = [...document.querySelectorAll('#messages > .card-assistant.step')];
+            const g = document.querySelector('.card-task-group > .task-body');
+            return {
+                mainTools: steps.map(tools),
+                mainObs: steps.map(s => s.querySelectorAll('.row.ok, .row.bad').length),
+                orphanObs: document.querySelectorAll('#messages > .card-observation').length,
+                subCards: [...g.children].filter(c => c.classList.contains('card'))
+                            .map(c => c.classList.contains('step') ? 'step' : 'final'),
+                subTools: [...g.querySelectorAll(':scope > .card.step')].map(tools),
+                subObs: g.querySelectorAll(':scope > .card.step .row.ok').length,
+            };
+        }"""
+    )
+    assert got["mainTools"] == [["agent"]], got  # main 의 카드에는 자기 행동만
+    assert got["mainObs"] == [1] and got["orphanObs"] == 0, got  # 관찰은 제 짝에
+    assert got["subCards"] == ["step", "final"], (
+        got
+    )  # 서브에이전트의 스텝은 자기 카드에
+    assert got["subTools"] == [["shell"]] and got["subObs"] == 1, got
+    assert errors == []

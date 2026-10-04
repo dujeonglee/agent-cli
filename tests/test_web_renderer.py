@@ -1932,70 +1932,6 @@ class TestPromptInspectorScopes:
         assert r.prompt_snapshot("task-A")["sections"][0]["text"] == "A"
         assert r.prompt_snapshot("task-B")["sections"][0]["text"] == "B"
 
-    def test_scopes_lists_main_first_then_agents_with_labels(self):
-        r = WebRenderer()
-        _note_in_delegate_scope(
-            r,
-            task_id="task-A",
-            index=0,
-            agent="explorer",
-            sections=[("Role", "A")],
-            turn=2,
-        )
-        r.note_system_prompt([("Role", "main")], turn=9)
-        _note_in_delegate_scope(
-            r,
-            task_id="task-B",
-            index=1,
-            agent="coder",
-            sections=[("Role", "B")],
-            turn=4,
-        )
-        scopes = r.prompt_scopes()
-        # Main pinned first regardless of capture order.
-        assert scopes[0]["id"] == ""
-        assert scopes[0]["label"] == "Main"
-        assert scopes[0]["main"] is True
-        rest = {s["id"]: s for s in scopes[1:]}
-        assert rest["task-A"]["label"] == "explorer·1"  # index+1, 1-based
-        assert rest["task-B"]["label"] == "coder·2"
-        assert rest["task-A"]["turn"] == 2
-        assert all(s["main"] is False for s in scopes[1:])
-
-    def test_scopes_excludes_agents_without_a_captured_prompt(self):
-        # delegate_task_start registers a label, but no LLM call yet → no chip.
-        r = WebRenderer()
-
-        def worker():
-            r.begin_scope(task_id="task-A", index=0, agent="explorer", label="t")
-
-        th = threading.Thread(target=worker)
-        th.start()
-        th.join(timeout=2.0)
-        assert r.prompt_scopes() == []
-
-    def test_delete_drops_agent_scope(self):
-        r = WebRenderer()
-        _note_in_delegate_scope(
-            r,
-            task_id="task-A",
-            index=0,
-            agent="explorer",
-            sections=[("Role", "A")],
-            turn=1,
-        )
-        assert r.delete_prompt_scope("task-A") is True
-        assert r.prompt_snapshot("task-A") is None
-        assert r.prompt_scopes() == []
-        # Idempotent: deleting again is a no-op False.
-        assert r.delete_prompt_scope("task-A") is False
-
-    def test_main_scope_is_not_deletable(self):
-        r = WebRenderer()
-        r.note_system_prompt([("Role", "main")], turn=1)
-        assert r.delete_prompt_scope("") is False
-        assert r.prompt_snapshot() is not None
-
     def test_agent_snapshot_survives_task_end(self):
         r = WebRenderer()
 
@@ -2009,8 +1945,7 @@ class TestPromptInspectorScopes:
         th.join(timeout=2.0)
         # The agent finished, but its prompt stays inspectable post-mortem.
         assert r.prompt_snapshot("task-A") is not None
-        labels = {s["id"]: s["label"] for s in r.prompt_scopes()}
-        assert labels.get("task-A") == "explorer·1"
+        assert r.prompt_scope_info("task-A")["label"] == "explorer"
 
 
 # ── Nickname mid-session change ────────────────────
@@ -2248,9 +2183,7 @@ class TestPromptScopeStack:
         assert (
             "SKILL PROMPT" in r.prompt_snapshot("skill-plan-abc")["sections"][0]["text"]
         )
-        # 칩 목록에 skill 라벨 등장
-        labels = [sc["label"] for sc in r.prompt_scopes()]
-        assert "skill:plan" in labels
+        assert r.prompt_scope_info("skill-plan-abc")["label"] == "skill:plan"
 
     def test_nested_delegate_then_skill_resolves_top(self):
         r = WebRenderer()
@@ -2263,39 +2196,10 @@ class TestPromptScopeStack:
         assert "NESTED" in r.prompt_snapshot("skill-opt-1")["sections"][0]["text"]
         assert "AGENT" in r.prompt_snapshot("delegate-1-x")["sections"][0]["text"]
 
-    def test_scope_ctx_live_then_frozen(self, tmp_path):
-        r = WebRenderer()
-        ctx = self._ctx(tmp_path, "s1")
-        r.begin_prompt_scope("skill-x-1", label="skill:x")
-        r.note_scope_ctx(ctx)
-        live = r.scope_dynamic_sections("skill-x-1")
-        assert live and any("질문-s1" in sec.get("text", "") for sec in live)
-        # live 반영: ctx 에 추가되면 즉시 보임
-        ctx.add({"role": "user", "content": "추가-관찰"})
-        assert any(
-            "추가-관찰" in sec.get("text", "")
-            for sec in r.scope_dynamic_sections("skill-x-1")
-        )
-        r.end_prompt_scope("skill-x-1")
-        # 고정 스냅샷으로 전환(live 참조 해제) — 여전히 조회 가능
-        assert "skill-x-1" not in r._scope_ctxs
-        frozen = r.scope_dynamic_sections("skill-x-1")
-        assert any("추가-관찰" in sec.get("text", "") for sec in frozen)
-
     def test_main_scope_ctx_is_ignored(self, tmp_path):
         r = WebRenderer()
         r.note_scope_ctx(self._ctx(tmp_path, "m"))  # 스코프 없음 = main
         assert r._scope_ctxs == {}
-
-    def test_delete_scope_cleans_dynamic_stores(self, tmp_path):
-        r = WebRenderer()
-        r.begin_prompt_scope("skill-y-1", label="skill:y")
-        r.note_scope_ctx(self._ctx(tmp_path, "y"))
-        r.note_system_prompt([("Base", "Y")], turn=1)
-        r.end_prompt_scope("skill-y-1")
-        assert r.delete_prompt_scope("skill-y-1") is True
-        assert r.scope_dynamic_sections("skill-y-1") == []
-        assert r.prompt_snapshot("skill-y-1") is None
 
 
 class TestTeammateWork:
@@ -2331,8 +2235,8 @@ class TestTeammateWork:
         assert "TM PROMPT" in r.prompt_snapshot("agt-9")["sections"][0]["text"]
         assert r.prompt_snapshot("agt-9#1") is None
         # 스코프는 end_agent_work 이후에도 살아 있다 (kill 때만 고정)
-        labels = [sc["label"] for sc in r.prompt_scopes()]
-        assert "teammate:anon" in labels
+        info = r.prompt_scope_info("agt-9")
+        assert info["label"] == "teammate:anon" and info["ended"] is False
         r.end_prompt_scope("agt-9")
 
 
