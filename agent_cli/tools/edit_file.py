@@ -374,7 +374,8 @@ def tool_edit_file(args: dict) -> ToolResult:
 class EditFileTool(Tool):
     name = "edit_file"
     description = (
-        "Edit a file using a hashline ref from read_file. "
+        "Change part of a file — the default way to modify an existing file. "
+        "Addresses lines by the hashline refs that read_file returns. "
         "Ops: replace, append, prepend, delete. "
         "delete removes the pos..end range and takes no lines; "
         "replace with lines=[] also deletes (legacy form)."

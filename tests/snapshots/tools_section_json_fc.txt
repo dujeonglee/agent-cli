@@ -1,7 +1,7 @@
 ## Available Tools
 - read_file: Read a file. Lines are tagged as LINE#HASH:content for editing. Modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
   Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
-- edit_file: Edit a file using a hashline ref from read_file. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
+- edit_file: Change part of a file — the default way to modify an existing file. Addresses lines by the hashline refs that read_file returns. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
   Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
 - code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
 Modes:
@@ -53,14 +53,6 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
   stat alone is never enough — if you stop after stat, you have only
   seen the first 20 lines.
 
-  edit vs write — to change PART of an existing file, use edit_file, NOT
-  write_file with the whole file. WHY THIS MATTERS TO YOU: re-writing a file
-  re-sends every one of its lines into your context each turn (the file shows
-  up TWICE — your write_file content + its hashline echo) and stays there,
-  eating your context window and crowding out the reasoning space you need to
-  stay sharp. edit_file costs only the changed lines. Reserve write_file for a
-  NEW file or a genuine FULL rewrite; for a small/partial change, edit_file.
-
   To write file CONTENT, use write_file (or edit_file) — NEVER a shell heredoc
   (`cat <<EOF > file`). Code in a shell command string is escaped TWICE (shell
   quoting, then JSON), so quotes / newlines / `$` routinely break your emission
@@ -77,18 +69,14 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
   - one edit per op:
       {"action": "edit_file", "path": "app.py", "op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
   Constraints:
-  - Read the target lines in the CURRENT turn before edit_file. Hashes
-    from earlier turns drift if anything else touched the file — do not
-    reuse them. (Both code_index mode='fetch' AND write_file count as a
-    fresh read — their output is already hashline-formatted and pipes
-    straight into edit_file. So right after you write_file a file, you
-    can edit_file it with the returned hashlines — no read_file needed.
-    For a small change to an existing file, that beats rewriting the
-    whole file with write_file.)
+  - Take refs from the most recent output that showed those lines: a
+    read_file, a code_index mode='fetch', or what write_file / edit_file
+    returned (all hashline-formatted — no extra read_file needed). Refs
+    from before the file last changed no longer match: read the region
+    again first.
   - A hash mismatch is not a failure — it is a guardrail signaling the
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
-  - Use write_file only for creating new files, not for editing existing ones.
   - SEVERAL edits to the SAME file → emit them as consecutive edit_file ops in
     ONE turn, each ref taken from your LAST read of the file. Do NOT pre-adjust
     line numbers for your other edits: same-file ops in a turn are applied
