@@ -970,6 +970,9 @@ class AgentLoop:
             # 📐 (v9.24.0): 문법이 실린 콜은 생성 속도가 다르다(실측 −37%) —
             # 그 이유가 통계 줄 그 자리에 있어야 한다.
             stats["grammar"] = self._llm._grammar_used
+            # 실측 입력의 칸 나눔 — 웹의 "모델이 지금 보는 양" 이 쓴다(v10.18.0).
+            if self._llm.last_input_split is not None:
+                stats["split"] = self._llm.last_input_split
             render_token_usage(stats, self.turn, self.verbose)
 
         # PostLLMCall hook

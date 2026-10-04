@@ -307,9 +307,6 @@ class _FakeInspectorCtx:
     def get_messages(self):
         return self._messages
 
-    def get_estimated_tokens(self):
-        return 7 * len(self._messages)
-
 
 class TestPromptInspectorDynamic:
     """``GET /api/debug/prompt`` — 모델 시점 틀이 읽는 스코프별 스냅샷
@@ -343,7 +340,8 @@ class TestPromptInspectorDynamic:
         assert tool_sec["name"] == "function: read_file"
         assert '"description": "Read a file."' in tool_sec["text"]
         assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
-        assert data["budget"]["tools"] == tool_sec["est_tokens"]
+        # 예산은 서버 실측만 — 아직 실측이 없으니 칸은 비어 있다
+        assert data["budget"]["measured"] is False and data["budget"]["tools"] is None
         # 텍스트 방언(tools 없음)은 시스템만.
         renderer.note_system_prompt([("Role", "you are an agent")], turn=2)
         data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
@@ -351,7 +349,8 @@ class TestPromptInspectorDynamic:
 
     def test_endpoint_has_no_conversation_and_reports_budget(self, tmp_path):
         """v10.7.0: 드로어는 대화 밖만 — 대화 섹션(kind=dynamic)이 없고, 대신
-        ``budget`` 에 시스템·함수·꼬리·대화(ctx 추정)·창 크기·압축 횟수가 온다."""
+        ``budget`` 이 온다. 예산은 **서버가 센 값만**(v10.18.0): 실측 전에는 칸이
+        None(화면 N/A), 실측이 오면 그 합계와 칸 나눔 그대로."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -373,11 +372,32 @@ class TestPromptInspectorDynamic:
         assert "dynamic" not in kinds
         assert kinds == ["system", "tail"]
         b = data["budget"]
-        assert b["system"] == data["sections"][0]["est_tokens"]
-        assert b["tail"] == data["sections"][1]["est_tokens"]
-        assert b["convo"] == ctx.get_estimated_tokens() and b["convo"] > 0
+        assert b["measured"] is False and b["turn"] is None
+        assert [b[k] for k in ("total", "system", "tools", "tail", "convo")] == [
+            None
+        ] * 5
         assert b["window"] == 32768 and b["compactions"] == 0
-        assert b["total"] == b["system"] + b["tools"] + b["tail"] + b["convo"]
+        # 호출이 끝나 실측이 왔다 — 추정이 아니라 그 숫자 그대로
+        split = {"system": 900, "tools": 0, "tail": 300, "convo": 800}
+        renderer.token_usage(
+            {"in": 2000, "out": 40, "context_window": 16000, "split": split}, 2
+        )
+        b = (
+            TestClient(create_app(server))
+            .get("/api/debug/prompt?token=t")
+            .json()["budget"]
+        )
+        assert b["measured"] is True and b["turn"] == 2 and b["total"] == 2000
+        assert {k: b[k] for k in split} == split
+        assert b["window"] == 16000  # 그 호출의 창
+        # split 없는 usage(옛 기록)는 실측으로 치지 않는다 — 칸을 지어내지 않는다
+        renderer.token_usage({"in": 2100, "out": 1, "context_window": 16000}, 3)
+        b = (
+            TestClient(create_app(server))
+            .get("/api/debug/prompt?token=t")
+            .json()["budget"]
+        )
+        assert b["measured"] is False and b["total"] is None
         assert data["scope"] == {
             "kind": "main",
             "label": "main",
@@ -385,7 +405,7 @@ class TestPromptInspectorDynamic:
             "ended": False,
         }
         # 프롬프트 토큰 합계(est_tokens)는 대화를 포함하지 않는다
-        assert data["est_tokens"] == b["system"] + b["tail"]
+        assert data["est_tokens"] == sum(x["est_tokens"] for x in data["sections"])
 
     def test_tail_prev_rotates_per_scope_for_the_diff(self):
         """꼬리 diff 의 재료: 같은 스코프의 직전 스냅샷 꼬리가 ``tail_prev`` 와
@@ -451,7 +471,7 @@ class TestPromptInspectorDynamic:
             .json()
         )
         assert data["scope"]["ended"] is True
-        assert data["budget"]["convo"] == 7  # 종료 시 고정된 대화 크기
+        assert data["budget"]["measured"] is False  # 실측 없이 끝난 스코프 — N/A
 
     def test_no_snapshot_is_not_ok_even_with_messages(self):
         """v10.7.0: 스냅샷(LLM 호출 또는 시작 캡처)이 없으면 ok=False — 대화는

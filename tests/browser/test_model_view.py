@@ -336,3 +336,39 @@ def test_sub_agent_steps_stay_in_its_own_card(stack, page):
     )  # 서브에이전트의 스텝은 자기 카드에
     assert got["subTools"] == [["shell"]] and got["subObs"] == 1, got
     assert errors == []
+
+
+def test_budget_shows_only_what_the_server_measured(stack, page):
+    """모델이 지금 보는 양: 실측이 없으면 N/A, 호출이 끝나면 그 숫자 그대로."""
+    _seed_main(stack, gone=None)
+    _open(page, stack)
+    text = page.inner_text("#ctx-budget")
+    assert "N/A" in text and "다음 모델 호출 뒤에" in text
+    assert (
+        page.evaluate("() => document.querySelectorAll('#ctx-budget .bbar').length")
+        == 0
+    )
+    stack.renderer.token_usage(
+        {
+            "in": 9100,
+            "out": 40,
+            "context_window": 32768,
+            "split": {"system": 8000, "tools": 0, "tail": 700, "convo": 400},
+        },
+        5,
+    )
+    page.wait_for_function(
+        "() => /턴 5 실측/.test(document.querySelector('#ctx-budget').textContent)",
+        timeout=8000,
+    )
+    text = page.inner_text("#ctx-budget")
+    assert "9.1K / 32.8K (28%)" in text
+    assert "시스템 8.0K" in text.replace("\n", " ") and "대화 400" in text.replace(
+        "\n", " "
+    )
+    # 막대는 창 대비 — 네 칸의 폭 합이 28% 근처다
+    widths = page.evaluate(
+        "() => [...document.querySelectorAll('#ctx-budget .bbar i')]"
+        ".map(e => parseFloat(e.style.width))"
+    )
+    assert 27 < sum(widths) < 29

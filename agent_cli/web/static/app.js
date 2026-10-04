@@ -1228,16 +1228,31 @@
       "</details>"
     );
   }
+  /** 모델이 지금 보는 양 — **서버가 센 값만** 그린다. 실측이 없으면(첫 호출 전 ·
+   * usage 를 안 주는 서버 · 옛 세션) 추정으로 채우지 않고 N/A 로 둔다; 다음
+   * 호출이 끝나면 채워진다. 칸은 실측 합계를 바이트 비율로 나눈 것이라 합이
+   * 합계와 같다. 막대는 창 대비(빈 자리 = 남은 창). */
   function frameBudgetHtml(b, ended) {
-    const total = Math.max(1, b.total || 0);
+    const label = "모델이 지금 보는 양" + (ended ? " (종료 시)" : "");
+    if (!b.measured) {
+      return (
+        '<div class="bl"><span>' + label + '</span><span class="bn">N/A</span></div>' +
+        '<div class="bleg"><span>' +
+        (ended ? "서버가 센 기록이 없다." : "서버가 센 값이 아직 없다 — 다음 모델 호출 뒤에 채워진다.") +
+        "</span></div>"
+      );
+    }
+    const base = Math.max(1, b.window || b.total);
     const seg = function (v, css) {
-      return '<i style="width:' + ((100 * (v || 0)) / total).toFixed(1) + "%;background:var(" + css + ')"></i>';
+      return '<i style="width:' + Math.min(100, (100 * (v || 0)) / base).toFixed(1) + "%;background:var(" + css + ')"></i>';
     };
-    const head = b.window
-      ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
-      : fmtTok(b.total);
+    const head =
+      (b.window
+        ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
+        : fmtTok(b.total)) +
+      (b.turn != null ? " · 턴 " + escapeHtml(b.turn) + " 실측" : " · 실측");
     return (
-      '<div class="bl"><span>모델이 지금 보는 양' + (ended ? " (종료 시)" : "") + '</span><span class="bn">' + head + "</span></div>" +
+      '<div class="bl"><span>' + label + '</span><span class="bn">' + head + "</span></div>" +
       '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
       '<div class="bleg">' +
       '<span><b style="background:var(--insp-system)"></b>시스템 <span class="n">' + fmtTok(b.system) + "</span></span>" +
@@ -1320,7 +1335,8 @@
     const b = ok ? d.budget : null;
     let top = frameBarHtml(
       "맨 처음 받는 것", f.open.top, chips,
-      b ? fmtTok((b.system || 0) + (b.tools || 0)) + " tok" : ""
+      // 섹션 배지와 같은 척도(추정) — 실측 합계는 예산 줄이 보여 준다.
+      ok ? "~" + fmtTok(sys.concat(tools).reduce(function (n, x) { return n + (x.est_tokens || 0); }, 0)) + " tok" : ""
     );
     if (f.open.top) {
       top += '<div class="ctx-body">';

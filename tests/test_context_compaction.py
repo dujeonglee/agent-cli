@@ -1207,27 +1207,31 @@ class TestReconcileActualTokens:
     """flow 1 (part B): re-anchor cache token count to the server's
     actual input count."""
 
-    def test_anchors_to_server_count_minus_system(self, tmp_path):
+    def test_anchors_to_server_count_minus_what_is_not_the_cache(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
         ctx._cache_tokens = 50  # bogus chars/4 estimate
-        ctx.reconcile_actual_tokens(500, system_tokens=120)
-        assert ctx._cache_tokens == 380  # 500 (system+messages) − 120 system
+        # 1000 바이트 요청이 500 토큰 → 0.5 토큰/바이트. 캐시 밖(시스템·꼬리)
+        # 240 바이트 = 120 토큰.
+        ctx.reconcile_actual_tokens(500, request_bytes=1000, outside_bytes=240)
+        assert ctx._cache_tokens == 380
 
     def test_zero_actual_is_noop(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
         ctx._cache_tokens = 50
-        ctx.reconcile_actual_tokens(0)
+        ctx.reconcile_actual_tokens(0, request_bytes=1000)
         assert ctx._cache_tokens == 50  # provider had no usage → estimate kept
+        assert ctx.token_ratio is None
 
-    def test_system_larger_than_actual_floors_at_zero(self, tmp_path):
+    def test_outside_larger_than_actual_floors_at_zero(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
-        ctx.reconcile_actual_tokens(100, system_tokens=200)
+        ctx.reconcile_actual_tokens(100, request_bytes=100, outside_bytes=400)
         assert ctx._cache_tokens == 0
 
-    def test_default_system_tokens_zero(self, tmp_path):
+    def test_without_sizes_the_total_is_taken_as_the_cache(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
         ctx.reconcile_actual_tokens(300)
         assert ctx._cache_tokens == 300
+        assert ctx.token_ratio is None  # 잴 분모가 없으면 비율도 없다
 
 
 class TestEnsureWithin:
@@ -1348,91 +1352,85 @@ class TestSumMessageTokens:
         assert _sum_message_tokens([]) == 0
 
 
-class TestTokenScaleAccounting:
-    """P0-8b: 실측 재앵커 후의 증감 단위 정합 — reconcile 이 계산한 실측/추정
-    비율(_token_scale)로 add/evict/fold/force_fit 의 증감을 환산한다.
-    scale 1.0(기본·미실측)이면 산술 바이트 동일(기존 계약 보존)."""
+class TestTokenRatio:
+    """실측 토큰/바이트 비율 (v10.18.0). 종전 계수는 ``실측 ÷ 추정`` 이라 실측에
+    든 고정 덩어리(매턴 꼬리) 때문에 짧은 대화에서 상한(8배)까지 부풀었다.
+    바이트당 비율은 분모가 보낸 요청 전체라 대화 길이에 흔들리지 않는다."""
 
-    def _ctx(self, tmp_path, budget=100_000):
-        return ContextManager(tmp_path / "s", max_context_tokens=budget)
+    def _ctx(self, tmp_path, budget=100_000, **kw):
+        return ContextManager(tmp_path / "s", max_context_tokens=budget, **kw)
 
     def _msg(self, n_chars=400, role="user"):
         return {"role": role, "content": "x" * n_chars}
 
-    def test_default_scale_is_identity(self, tmp_path):
-        # reconcile 없이는 scale 1.0 — _scaled_tokens == 순수 추정 (계약 보존).
+    def test_unmeasured_is_the_plain_estimate(self, tmp_path):
         ctx = self._ctx(tmp_path)
         m = self._msg(400)
         from agent_cli.context.render import _estimate_message_tokens
 
-        assert ctx._token_scale == 1.0
+        assert ctx.token_ratio is None
         assert ctx._scaled_tokens(m) == _estimate_message_tokens(m)
+        assert ctx.estimate_text_tokens("x" * 400) == 100  # chars/4
 
-    def test_reconcile_sets_scale_from_ratio(self, tmp_path):
+    def test_first_measurement_is_taken_as_is_then_averaged(self, tmp_path):
         ctx = self._ctx(tmp_path)
-        for _ in range(4):
-            ctx.add(self._msg(400))
-        est = ctx.get_estimated_tokens()  # scale 1.0 이므로 = 추정 합
-        # 서버 실측이 추정의 2배(CJK 류 과소평가 시나리오)
-        ctx.reconcile_actual_tokens(est * 2, system_tokens=0)
-        assert abs(ctx._token_scale - 2.0) < 0.01
-        assert ctx.get_estimated_tokens() == est * 2
+        ctx.reconcile_actual_tokens(500, request_bytes=1000)
+        assert ctx.token_ratio == 0.5  # 기본값과 평균 내지 않는다
+        ctx.reconcile_actual_tokens(1000, request_bytes=1000)
+        assert ctx.token_ratio == 0.75  # (0.5 + 1.0) / 2
+        ctx.reconcile_actual_tokens(1000, request_bytes=1000)
+        assert ctx.token_ratio == 0.875
 
-    def test_evict_uses_scaled_subtraction(self, tmp_path):
-        """실측 2× 앵커에서 evict: 스케일 감산이면 레코드당 2×est 씩 줄어 —
-        비스케일(1×est 감산) 대비 절반의 레코드만 버리고 목표 도달(과잉
-        evict 방지가 이 수리의 목적)."""
+    def test_total_stays_the_server_count_whatever_the_average(self, tmp_path):
+        """평균 낸 비율로 합계를 다시 계산하면 방금 받은 정답에서 멀어진다 —
+        합계는 실측, 비율은 그 뒤에 더해지는 것에만 쓴다."""
+        ctx = self._ctx(tmp_path)
+        ctx.reconcile_actual_tokens(500, request_bytes=1000)
+        ctx.reconcile_actual_tokens(900, request_bytes=1000)  # 비율 0.7
+        assert ctx.get_estimated_tokens() == 900
+
+    def test_fixed_overhead_does_not_inflate_the_ratio(self, tmp_path):
+        """짧은 대화 + 큰 꼬리: 실측 1300 토큰 중 캐시는 일부다. 종전 계수는
+        1300 ÷ (캐시 추정 178) ≈ 7.3 이었고, 그 뒤 4K 추정 메시지 하나가 29K 로
+        세어졌다."""
+        ctx = self._ctx(tmp_path)
+        ctx.add(self._msg(700))
+        ctx.reconcile_actual_tokens(1300, request_bytes=5200, outside_bytes=4500)
+        assert ctx.token_ratio == 0.25
+        before = ctx.get_estimated_tokens()
+        ctx.add(self._msg(16_000))  # chars/4 로 4K
+        assert ctx.get_estimated_tokens() - before == 4000
+
+    def test_bytes_not_chars_price_an_added_message(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.reconcile_actual_tokens(500, request_bytes=1000)  # 0.5
+        base = ctx.get_estimated_tokens()
+        ctx.add({"role": "user", "content": "가" * 100})  # 300 바이트
+        assert ctx.get_estimated_tokens() - base == 150
+        ctx.add({"role": "user", "content": "a" * 100})  # 100 바이트
+        assert ctx.get_estimated_tokens() - base == 200
+
+    def test_ratio_is_clamped(self, tmp_path):
+        from agent_cli.context.manager import TOKEN_RATIO_MAX, TOKEN_RATIO_MIN
+
+        hi = self._ctx(tmp_path / "hi")
+        hi.reconcile_actual_tokens(1_000_000, request_bytes=10)
+        assert hi.token_ratio == TOKEN_RATIO_MAX
+        lo = self._ctx(tmp_path / "lo")
+        lo.reconcile_actual_tokens(1, request_bytes=1_000_000)
+        assert lo.token_ratio == TOKEN_RATIO_MIN
+
+    def test_evict_subtracts_at_the_ratio(self, tmp_path):
         ctx = self._ctx(tmp_path)
         n = 10
         for _ in range(n):
             ctx.add(self._msg(400))
-        est_total = ctx.get_estimated_tokens()
-        per = est_total // n
-        ctx.reconcile_actual_tokens(est_total * 2)
-        # 목표: 실측 단위로 레코드 2개어치만 줄이면 되는 수준
-        target = est_total * 2 - (2 * per * 2)
-        ctx._evict_fifo(target)
-        # 스케일 감산 → 정확히 2개 pop (비스케일이면 4개 pop 됐을 것)
+        ctx.reconcile_actual_tokens(8000, request_bytes=4000)  # 2.0 → 레코드당 800
+        ctx._evict_fifo(8000 - 1600)
         assert len(ctx._cache) == n - 2
-        assert ctx.get_estimated_tokens() <= target
+        assert ctx.get_estimated_tokens() == 6400
 
-    def test_scale_clamped_against_degenerate_ratio(self, tmp_path):
-        ctx = self._ctx(tmp_path)
-        ctx.add(self._msg(4))  # est ≈ 1 token
-        ctx.reconcile_actual_tokens(1_000_000)
-        assert ctx._token_scale == 8.0  # 상한 클램프
-        ctx.reconcile_actual_tokens(1)
-        assert ctx._token_scale == 0.25  # 하한 클램프
-
-    def test_zero_usage_reconcile_keeps_scale(self, tmp_path):
-        ctx = self._ctx(tmp_path)
-        ctx.add(self._msg(400))
-        ctx.reconcile_actual_tokens(0)  # no-op 계약 유지
-        assert ctx._token_scale == 1.0
-
-    def test_estimate_basis_recompute_resets_scale(self, tmp_path):
-        """카운터가 추정 기반으로 재계산되면(basis 전환) scale 도 1.0 으로 —
-        아니면 다음 evict 가 추정-기반 카운터에 스케일 감산(이중 보정)."""
-        ctx = self._ctx(tmp_path, budget=10_000)
-        for _ in range(6):
-            ctx.add(self._msg(2000))
-        ctx.reconcile_actual_tokens(ctx.get_estimated_tokens() * 2)
-        assert ctx._token_scale == 2.0
-        # 요약 콜백 없는 compact 폴백 경로 대신 resume 로 basis 전환 검증:
-        # 저장→재로드 (forward-slice) 시 추정 기반 재계산 + scale 1.0.
-        ctx._evict_fifo(ctx.get_estimated_tokens() - 1)  # 오프셋 하나 이상 확보
-        resumed = ContextManager(
-            ctx.session_dir
-            if hasattr(ctx, "session_dir")
-            else ctx._history_path.parent,
-            max_context_tokens=10_000,
-            resume=True,
-        )
-        assert resumed._token_scale == 1.0
-
-    def test_fold_uses_scaled_subtraction(self, tmp_path):
-        """fold 감산도 스케일 단위 — 실측 앵커 카운터에서 접힌 개입만큼
-        실측-단위로 줄어 카운터가 음수/과대 잔존하지 않는다."""
+    def test_fold_subtracts_at_the_ratio(self, tmp_path):
         ctx = self._ctx(tmp_path)
         ctx.add({"role": "assistant", "content": "…broken…"})
         ctx.add(
@@ -1443,10 +1441,55 @@ class TestTokenScaleAccounting:
                 "content": "Observation: invalid JSON — fix format",
             }
         )
-        est = ctx.get_estimated_tokens()
-        ctx.reconcile_actual_tokens(est * 2)
-        before = ctx.get_estimated_tokens()
+        from agent_cli.context.render import _message_bytes
+
+        size = sum(_message_bytes(m) for m in ctx._cache)
+        ctx.reconcile_actual_tokens(size * 2, request_bytes=size)
         folded = ctx.fold_resolved_interventions(assume_tail_resolved=True)
         assert folded == 2
-        # 감산이 스케일(2×) 단위로 일어나 0 근처(전부 접힘)로 수렴
-        assert ctx.get_estimated_tokens() <= max(before - est, 0) + 2
+        assert ctx.get_estimated_tokens() <= 2  # 전부 접힘 — 실측 단위로 0 근처
+
+    def test_resume_counts_the_cache_on_the_saved_ratio(self, tmp_path):
+        """재개 직후에도 재개 전과 같은 척도 — 종전엔 chars/4 로 돌아가 한글
+        대화가 실제보다 훨씬 작게 세어졌다(같은 캐시가 162 토큰)."""
+        ctx = self._ctx(tmp_path)
+        for _ in range(3):
+            ctx.add({"role": "user", "content": "가" * 200})  # 600 바이트씩
+        ctx.reconcile_actual_tokens(900, request_bytes=1800)  # 0.5
+        resumed = self._ctx(tmp_path, resume=True)
+        assert resumed.token_ratio == 0.5
+        assert resumed.get_estimated_tokens() == 900
+
+    def test_new_session_in_the_same_dir_does_not_read_it(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.reconcile_actual_tokens(500, request_bytes=1000)
+        assert self._ctx(tmp_path).token_ratio is None  # resume 가 아니다
+
+    def test_broken_file_means_unmeasured(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.reconcile_actual_tokens(500, request_bytes=1000)
+        for bad in ("{not json", '{"version": 1, "ratio": -3}', '{"version": 9}'):
+            (tmp_path / "s" / "token_ratio.json").write_text(bad)
+            assert self._ctx(tmp_path, resume=True).token_ratio is None
+
+    def test_inherited_ratio_yields_to_own_measurement(self, tmp_path):
+        """서브 컨텍스트는 부모의 비율로 시작하고, 자기 실측이 남아 있으면 그쪽."""
+        fresh = self._ctx(tmp_path, token_ratio=0.4)
+        assert fresh.token_ratio == 0.4
+        fresh.reconcile_actual_tokens(600, request_bytes=1000)
+        assert fresh.token_ratio == 0.5
+        again = self._ctx(tmp_path, resume=True, token_ratio=0.1)
+        assert again.token_ratio == 0.5
+
+    def test_compaction_recount_keeps_the_ratio(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        for _ in range(6):
+            ctx.add(self._msg(2000))
+        ctx.reconcile_actual_tokens(6000, request_bytes=12_000)  # 0.5
+        ctx.compact_now()
+        assert ctx.token_ratio == 0.5
+        from agent_cli.context.render import _message_bytes
+
+        assert ctx.get_estimated_tokens() == sum(
+            max(1, round(_message_bytes(m) * 0.5)) for m in ctx._cache
+        )

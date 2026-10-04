@@ -3712,7 +3712,19 @@ class TestFlow1PreventiveCompaction:
                 ctx=ctx,
             )
         spy.assert_called()
-        assert spy.call_args.args[0] == 600  # 500 + 30 + 70
+        args, kwargs = spy.call_args
+        assert args[0] == 600  # 500 + 30 + 70
+        # 분모는 보낸 요청 전체(시스템 프롬프트 + 메시지), 캐시 밖 몫은 그 일부다
+        sent = provider.call.call_args.kwargs
+        system_bytes = len(sent["system"].encode("utf-8"))
+        message_bytes = sum(len(m["content"].encode("utf-8")) for m in sent["messages"])
+        assert kwargs["request_bytes"] == system_bytes + message_bytes
+        assert system_bytes < kwargs["outside_bytes"] < kwargs["request_bytes"]
+        # 첫 실측이 곧 비율이고(가짜 usage 가 작아 하한에 걸린다), 세션 폴더에 남는다
+        from agent_cli.context.manager import TOKEN_RATIO_MIN
+
+        assert ctx.token_ratio == max(600 / kwargs["request_bytes"], TOKEN_RATIO_MIN)
+        assert (ctx.session_dir / "token_ratio.json").is_file()
 
     def test_target_scales_with_compaction_ratio(self, caps, tmp_path):
         """flow-1 target = context × ratio − system − state (v8.53.0 — 총입력
@@ -5162,3 +5174,60 @@ class TestRejectedAttemptThoughtIsNotDrawn:
             _complete("ok"),
         )
         assert ("thought", "try the file") in ev
+
+
+class TestInputSplit:
+    """턴 통계가 서버 실측 입력을 칸으로 나눠 싣는다 (v10.18.0) — 웹의 "모델이
+    지금 보는 양" 은 추정 합이 아니라 이 값이다."""
+
+    def test_split_sums_to_the_server_count(self, caps, tmp_path):
+        from unittest.mock import patch
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.base import TokenUsage
+
+        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=_complete("ok"),
+                usage=TokenUsage(input_tokens=9000, output_tokens=5),
+            ),
+        ]
+        seen = []
+        with patch(
+            "agent_cli.loop.core.render_token_usage",
+            side_effect=lambda stats, turn, verbose=False: seen.append(stats),
+        ):
+            run_loop(
+                ports=TEST_PORTS,
+                query="줄 수를 세어줘",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+        split = seen[0]["split"]
+        assert sum(split.values()) == seen[0]["in"] == 9000
+        assert split["system"] > 0 and split["tail"] > 0 and split["convo"] > 0
+        assert split["tools"] == 0  # 텍스트 방언 — 함수 스키마는 프롬프트 안
+
+    def test_no_usage_no_split(self, caps, tmp_path):
+        from unittest.mock import patch
+
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path / "s", max_context_tokens=100_000)
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("ok"))]
+        with patch("agent_cli.loop.core.render_token_usage") as spy:
+            run_loop(
+                ports=TEST_PORTS,
+                query="q",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+        spy.assert_not_called()
+        assert ctx.token_ratio is None

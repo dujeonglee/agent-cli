@@ -7,7 +7,8 @@ from dataclasses import replace
 from agent_cli import verbose as _verbose
 from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
 from agent_cli.context.overflow import classify_overflow
-from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.context.render import request_bytes
+from agent_cli.context.token_estimator import utf8_len
 from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -69,6 +70,9 @@ class LLMCaller:
         # Size of the last session-state block, reserved from the next turn's
         # compaction budget (see _call_llm).
         self._state_tokens = 0
+        self._state_bytes = 0
+        # 마지막 호출의 실측 입력을 칸으로 나눈 것 (``_input_split``) — 턴 통계가 싣는다.
+        self.last_input_split: dict | None = None
         # 압축 안내 단계 중 아직 안 띄운 것 (v9.26.4) — 넘는 턴에 한 번씩
         self._compaction_armed: set[float] = set(COMPACTION_NOTICE_STEPS)
         # 디코딩 문법 (v9.24.0) — 도구 집합은 루프 수명 동안 불변이라 한 번
@@ -98,6 +102,36 @@ class LLMCaller:
         msgs = self.state.messages
         last = msgs[-1].get("content") if msgs else None
         return split_tail(last)[1] if isinstance(last, str) else []
+
+    def _input_split(self, total: int) -> dict | None:
+        """서버가 센 입력 ``total`` 을 시스템·함수 스키마·꼬리·대화로 나눈다.
+
+        서버는 합계만 준다. 캐시 밖 세 칸은 바이트 × 실측 비율로 매기고 대화는
+        나머지다 — 네 칸의 합이 실측과 정확히 같다. 화면의 "모델이 지금 보는 양"
+        이 이 값을 쓴다(추정 합이 아니라 실측)."""
+        ratio = self.ctx.token_ratio if self.ctx else None
+        if ratio is None:
+            return None
+        system = round(utf8_len(self.prompt.system) * ratio)
+        tools = round(utf8_len(self._function_schemas_text()) * ratio)
+        tail = round(self._state_bytes * ratio)
+        return {
+            "system": system,
+            "tools": tools,
+            "tail": tail,
+            "convo": max(total - system - tools - tail, 0),
+        }
+
+    def _function_schemas_text(self) -> str:
+        """요청 ``tools[]`` 의 JSON 본문 — 캐시 밖 고정 몫의 크기를 잴 때 쓴다."""
+        tools = self._function_schemas()
+        if not tools:
+            return ""
+        if getattr(self, "_function_schemas_text_cache", None) is None:
+            import json
+
+            self._function_schemas_text_cache = json.dumps(tools, ensure_ascii=False)
+        return self._function_schemas_text_cache
 
     def _function_schemas(self) -> list[dict] | None:
         """native_fc (v10.2.0): 요청에 실을 OpenAI 함수 스키마 — 프롬프트의
@@ -256,7 +290,10 @@ class LLMCaller:
         # reflects real headroom (not a fixed budget). ``sys_tokens`` is
         # reused below to reconcile the cache against the server's actual
         # input count once the call succeeds.
-        sys_tokens = estimate_tokens(self.prompt.system) if self.ctx else 0
+        # 캐시와 같은 척도로 센다(실측 비율이 있으면 바이트 × 비율). 함수 스키마
+        # (native_fc 의 요청 ``tools[]``)도 캐시 밖 고정 몫이다.
+        outside_text = self.prompt.system + self._function_schemas_text()
+        sys_tokens = self.ctx.estimate_text_tokens(outside_text) if self.ctx else 0
         clamped_max_tokens: int | None = None
         if self.ctx:
             # v8.53.0: cap 은 **총입력(system + 대화 + 세션상태) 기준** —
@@ -278,7 +315,8 @@ class LLMCaller:
             )
             self.ctx.ensure_within(target)
             state = self._build_session_state(target)
-            self._state_tokens = estimate_tokens(state)
+            self._state_tokens = self.ctx.estimate_text_tokens(state)
+            self._state_bytes = utf8_len(state)
             self.ctx.set_session_state(state)
             self.state.messages = self.ctx.get_messages()
             # 요청 max_tokens 를 남은 창에 맞춰 클램프 (모듈 상수 주석 참조)
@@ -424,12 +462,20 @@ class LLMCaller:
 
                 response = _replace(response, content=prefill + response.content)
             # flow 1 (part B) — re-anchor the cache to the server's actual
-            # input count so the chars/4 estimate can't compound across
-            # turns. usage covers system+messages; ctx subtracts the same
-            # sys_tokens used for the threshold above. No-op without usage.
+            # input count and refresh the tokens-per-byte ratio from it, so an
+            # estimate can't compound across turns. usage covers the whole
+            # request; everything that is not the cache (system prompt,
+            # function schemas, per-turn tail) is subtracted. No-op without
+            # usage.
             if self.ctx and response.usage:
                 self.ctx.reconcile_actual_tokens(
-                    response.usage.total_input_tokens, system_tokens=sys_tokens
+                    response.usage.total_input_tokens,
+                    request_bytes=utf8_len(self.prompt.system)
+                    + request_bytes(self.state.messages, self._function_schemas()),
+                    outside_bytes=utf8_len(outside_text) + self._state_bytes,
+                )
+                self.last_input_split = self._input_split(
+                    response.usage.total_input_tokens
                 )
             # A successful call means we're no longer in overflow for this
             # turn — reset the counter so a later turn gets a fresh budget
