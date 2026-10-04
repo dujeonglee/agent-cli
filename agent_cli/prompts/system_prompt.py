@@ -997,9 +997,13 @@ def build_system_prompt_sections(
         if mcp_desc:
             sections.append(("MCP Tools", f"## MCP Tools\n{mcp_desc}"))
 
-    skill_desc = build_skill_descriptions(dialect=dialect)
-    if skill_desc:
-        sections.append(("Skills", skill_desc))
+    # Only where the tool it tells the model to use is callable — a profile
+    # with a narrowed tool list (or a loop at the depth limit, where run_skill
+    # is removed) would otherwise be told to invoke skills it cannot run.
+    if "run_skill" in active_tools:
+        skill_desc = build_skill_descriptions(dialect=dialect)
+        if skill_desc:
+            sections.append(("Skills", skill_desc))
 
     if "agent" in active_tools:
         profiles_desc = build_agent_profiles_section(
