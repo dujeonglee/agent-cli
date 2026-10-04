@@ -208,7 +208,7 @@ def _build_edit_file_inline(dialect) -> str:
 {same_file}"""
 
 
-def _build_agent_inline(dialect) -> str:
+def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
     """Build the delegate inline guide.
 
     Each ``Examples:`` line shows only the action_input dict for the
@@ -241,16 +241,20 @@ def _build_agent_inline(dialect) -> str:
                 "profile": "code-analyst",
             },
         ),
-        (
-            "Persistent",
-            {
-                "mode": "spawn",
-                "profile": "code-writer",
-                "name": "ui",
-                "task": "own the UI module",
-            },
-        ),
     ]
+    if has_agent_registry:
+        # 서브루프는 run 만 쓴다 — 쓸 수 없는 spawn 예시를 보여 주지 않는다.
+        examples.append(
+            (
+                "Persistent",
+                {
+                    "mode": "spawn",
+                    "profile": "code-writer",
+                    "name": "ui",
+                    "task": "own the UI module",
+                },
+            )
+        )
     if getattr(dialect, "multi_op", False):
         intro = (
             "  Each run op gives ONE task to a sub-agent with its own context "
@@ -279,16 +283,17 @@ def _build_agent_inline(dialect) -> str:
     return f"""\
 
 {intro}
-  Context modes per task:
-  - "none" (default): subagent starts with no context. Task must be self-contained.
-  - "fork": subagent receives a copy of the current conversation history.
-  - "tools": optionally restrict which tools the subagent can use.
-  - "agent": optionally specify a predefined agent from .agent-cli/agents/{{name}}.md.
-    The agent file defines the subagent's role/principles and can set allowed-tools/model.
+  context (per task):
+  - "none" (default): the sub-agent starts with no context. The task must be
+    self-contained.
+  - "fork": the sub-agent receives a copy of the current conversation history.
+  profile (optional): a predefined agent from .agent-cli/agents/{{name}}.md — the
+    file defines the sub-agent's role/principles and can set allowed-tools/model.
+  tools (optional): restrict which tools the sub-agent can use.
   Constraints:
 {dependency}
   Examples:
-{rendered}\""""
+{rendered}"""
 
 
 def _build_read_file_inline(active_tools: list[str], dialect) -> str:
@@ -595,7 +600,11 @@ _ASK_INLINE_RESIDENT = """\
 
 
 def _build_tool_inline_guides(
-    active_tools: list[str], dialect, *, nonblocking_ask: bool = False
+    active_tools: list[str],
+    dialect,
+    *,
+    nonblocking_ask: bool = False,
+    has_agent_registry: bool = True,
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
@@ -614,7 +623,7 @@ def _build_tool_inline_guides(
     return {
         "read_file": _build_read_file_inline(active_tools, dialect),
         "edit_file": _build_edit_file_inline(dialect),
-        "agent": _build_agent_inline(dialect),
+        "agent": _build_agent_inline(dialect, has_agent_registry=has_agent_registry),
         "ask": ask,
         "code_index": _build_code_index_inline(dialect),
     }
@@ -648,15 +657,25 @@ def description_overrides_for(
     return overrides
 
 
-def parameter_overrides_for(active_tools, nonblocking_ask: bool) -> dict[str, dict]:
+def parameter_overrides_for(
+    active_tools, nonblocking_ask: bool, has_agent_registry: bool = True
+) -> dict[str, dict]:
     """루프별 도구 스키마 교체 — 프롬프트와 디코딩 문법(v9.24.0)이 **같은**
-    스키마를 봐야 한다: 상주 에이전트의 ``ask`` 는 ``to`` 를 갖고, main 의
-    ``ask`` 는 갖지 않는다. 한쪽만 알면 문법이 프롬프트가 가르친 키를 막는다."""
+    스키마를 봐야 한다. 한쪽만 알면 문법이 프롬프트가 가르친 키를 막는다.
+
+    - 상주 에이전트의 ``ask`` 는 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
+    - 서브루프(레지스트리 없음)의 ``agent`` 는 ``run`` 만 갖는다 (v10.13.0).
+    """
+    overrides: dict[str, dict] = {}
     if nonblocking_ask and "ask" in active_tools:
         from agent_cli.tools.virtual import AskTool
 
-        return {"ask": AskTool.RESIDENT_PARAMETERS}
-    return {}
+        overrides["ask"] = AskTool.RESIDENT_PARAMETERS
+    if not has_agent_registry and "agent" in active_tools:
+        from agent_cli.tools.agent_tool import AgentTool
+
+        overrides["agent"] = AgentTool.SUBLOOP_PARAMETERS
+    return overrides
 
 
 def function_schemas_for(
@@ -677,9 +696,14 @@ def function_schemas_for(
         has_agent_registry=has_agent_registry,
         nonblocking_ask=nonblocking_ask,
     )
-    param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
+    param_overrides = parameter_overrides_for(
+        active_tools, nonblocking_ask, has_agent_registry
+    )
     guides = _build_tool_inline_guides(
-        active_tools, dialect, nonblocking_ask=nonblocking_ask
+        active_tools,
+        dialect,
+        nonblocking_ask=nonblocking_ask,
+        has_agent_registry=has_agent_registry,
     )
     out: list[dict] = []
     for name in effective_tool_names(active_tools, dialect):
@@ -723,11 +747,16 @@ def _build_tools_section(
         has_agent_registry=has_agent_registry,
         nonblocking_ask=nonblocking_ask,
     )
-    param_overrides = parameter_overrides_for(active_tools, nonblocking_ask)
+    param_overrides = parameter_overrides_for(
+        active_tools, nonblocking_ask, has_agent_registry
+    )
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
-            active_tools, dialect, nonblocking_ask=nonblocking_ask
+            active_tools,
+            dialect,
+            nonblocking_ask=nonblocking_ask,
+            has_agent_registry=has_agent_registry,
         ),
         dialect=dialect,
         description_overrides=overrides or None,
@@ -973,7 +1002,9 @@ def build_system_prompt_sections(
         sections.append(("Skills", skill_desc))
 
     if "agent" in active_tools:
-        profiles_desc = build_agent_profiles_section(dialect=dialect)
+        profiles_desc = build_agent_profiles_section(
+            dialect=dialect, has_agent_registry=agent_registry is not None
+        )
         if profiles_desc:
             sections.append(("Agent Profiles", profiles_desc))
     # v5.11: 상주 서브에이전트는 registry 없이(상주 모드 차단 유지) 미리
@@ -1143,12 +1174,17 @@ def _build_context_recovery() -> str:
     )
 
 
-def build_agent_profiles_section(dialect=None) -> str:
+def build_agent_profiles_section(
+    dialect=None, *, has_agent_registry: bool = True
+) -> str:
     """## Agent Profiles — 프로파일 카탈로그 (5.0.0 통합 광고).
 
     run(일회성)과 spawn(상주) 이 같은 카탈로그를 쓴다. 서브루프에도
     노출된다 (run 이 profile 을 받으므로) — Live Agents 와 달리
     레지스트리 게이트가 없다. ``disable-model-invocation`` 제외.
+
+    ``has_agent_registry=False``(서브루프): run 만 쓸 수 있으므로 spawn 안내와
+    예시를 싣지 않는다 (v10.13.0).
     """
     if dialect is None:
         dialect = _get_dialect()
@@ -1177,16 +1213,23 @@ def build_agent_profiles_section(dialect=None) -> str:
         ),
     )
     indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())
-    lines = [
-        "## Agent Profiles",
-        (
-            "Profiles give a sub-agent a specialist role. Use them one-shot "
-            '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
-            "keeps its context across your requests):"
-        ),
-        indent(run_example),
-        indent(spawn_example),
-    ]
+    if has_agent_registry:
+        lines = [
+            "## Agent Profiles",
+            (
+                "Profiles give a sub-agent a specialist role. Use them one-shot "
+                '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
+                "keeps its context across your requests):"
+            ),
+            indent(run_example),
+            indent(spawn_example),
+        ]
+    else:
+        lines = [
+            "## Agent Profiles",
+            'Profiles give a sub-agent a specialist role (mode:"run"):',
+            indent(run_example),
+        ]
     for name, desc in profiles:
         suffix = f" — {desc}" if desc else ""
         lines.append(f"- `{name}`{suffix}")

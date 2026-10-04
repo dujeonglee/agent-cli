@@ -147,7 +147,11 @@ class LLMCaller:
             nonblocking_ask = bool(
                 self.cfg.questions is not None and self.cfg.questions.nonblocking
             )
-            overrides = parameter_overrides_for(self.cfg.tools_list, nonblocking_ask)
+            overrides = parameter_overrides_for(
+                self.cfg.tools_list,
+                nonblocking_ask,
+                self.cfg.agent_registry is not None,
+            )
             tools = []
             for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
                 schema = TOOL_SCHEMAS.get(name)

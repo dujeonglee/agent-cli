@@ -194,12 +194,13 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
   Each run op gives ONE task to a sub-agent with its own context window.
   Several run ops in the same turn are for independent parts that would
   each flood your context — not for speed; you wait for all of them.
-  Context modes per task:
-  - "none" (default): subagent starts with no context. Task must be self-contained.
-  - "fork": subagent receives a copy of the current conversation history.
-  - "tools": optionally restrict which tools the subagent can use.
-  - "agent": optionally specify a predefined agent from .agent-cli/agents/{name}.md.
-    The agent file defines the subagent's role/principles and can set allowed-tools/model.
+  context (per task):
+  - "none" (default): the sub-agent starts with no context. The task must be
+    self-contained.
+  - "fork": the sub-agent receives a copy of the current conversation history.
+  profile (optional): a predefined agent from .agent-cli/agents/{name}.md — the
+    file defines the sub-agent's role/principles and can set allowed-tools/model.
+  tools (optional): restrict which tools the sub-agent can use.
   Constraints:
   - If task B depends on task A's result, emit only A now; use its
     result next turn.
@@ -207,4 +208,4 @@ C/C++ #if branches: LINUX_VERSION_CODE is assumed newest (0xffffff) so every `>=
   - One-shot: {"action": "agent", "mode": "run", "task": "Read /tmp/data.csv and count rows"}
   - With context: {"action": "agent", "mode": "run", "task": "Fix the bug we found", "context": "fork"}
   - With profile: {"action": "agent", "mode": "run", "task": "Analyze the auth module and cite risks", "profile": "code-analyst"}
-  - Persistent: {"action": "agent", "mode": "spawn", "profile": "code-writer", "name": "ui", "task": "own the UI module"}"
+  - Persistent: {"action": "agent", "mode": "spawn", "profile": "code-writer", "name": "ui", "task": "own the UI module"}
