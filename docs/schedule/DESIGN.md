@@ -1,6 +1,6 @@
 # Schedule — 세션 소유 예약 실행 설계
 
-> 상태: **설계 확정, 코드 미착수** (2026-10-04 공동 설계)
+> 상태: **agent-cli 구현 완료 (v10.12.0)** · agent-board 는 v1.34.0 (2026-10-04 공동 설계)
 > 저장소: agent-cli(주) + agent-board(삭제·표시) — 짝 릴리스
 > 대체하는 문서: `agent-board/docs/schedule-design.md` (2026-08-13, 보드 내부 스케줄러)
 
@@ -61,7 +61,7 @@
       "nickname": "",
       "enabled": true,
       "created_at": "2026-10-04T10:12:00",
-      "enabled_at": "2026-10-04T10:12:00",
+      "settled_at": "2026-10-05T09:00:02",
       "last_fired_at": "2026-10-05T09:00:02",
       "missed_at": null
     }
@@ -107,24 +107,24 @@ open in another process (pid N)" 로 끝낸다(`web` · `run` 공통, 종료 코
   wait(rearm_event, timeout=min(next − now, 300s))       # 300s = 절전·시계 점프 안전망
   for s in enabled:
     prev = now 기준 직전 발화 시각
-    if prev <= enabled_at:              continue          # 만들기·켜기 전 것은 놓친 게 아니다
-    if last_fired_at >= prev:           continue          # 이미 실행 (exactly-once)
+    if settled_at >= prev:              continue          # 이미 정리됨 (exactly-once)
     if now − prev > 120s:               missed(s, prev)   # 자동 실행 금지
     else:                               fire(s, prev)
 
 fire(s, due):
   input_queue.enqueue(text=s.prompt, nickname=s.nickname or "⏰ Scheduler")
-  last_fired_at = now; missed_at = null; log "fired"
-  실패 시: missed_at = due; log "failed"
+  last_fired_at = settled_at = now; missed_at = null; log "fired"
+  실패 시: missed(s, due) 와 같되 log "failed" — 깰 때마다 재시도하지 않는다
 
 missed(s, due):
-  이미 missed_at 이 있으면 덮어쓴다 (여러 주기 놓쳐도 질문 1건); log "missed"
+  missed_at = settled_at = due (여러 주기 놓쳐도 덮어써서 질문 1건); log "missed"
 ```
 
 - 프로세스 기동 시에도 같은 정산을 한 번 돈다 — 꺼져 있던 동안 지난 것이 여기서
   `missed` 가 된다.
-- `enabled_at` 은 만들 때와 다시 켤 때 갱신한다 — 만들기 전과 꺼 둔 동안은 놓친
-  것으로 치지 않는다.
+- `settled_at` = "이 시각까지의 발화는 전부 정리됐다". 만들 때·다시 켤 때·발화·
+  놓침 판정·건너뛰기에 갱신한다 — exactly-once 가드이자, 만들기 전과 꺼 둔 동안이
+  놓친 것으로 잡히지 않는 근거다. `last_fired_at` 은 표시용이다.
 
 ## 6. agent-cli 변경
 
@@ -164,6 +164,9 @@ missed(s, due):
 | POST | `/api/schedules/{id}/toggle` | 켜기·끄기 |
 | POST | `/api/schedules/{id}/run-now` | 즉시 발화 (missed 해소 겸용) |
 | POST | `/api/schedules/{id}/dismiss` | 놓친 발화 건너뛰기 |
+
+뷰는 `agent_cli/schedule/view.py` 가 만든다(`human` = `cron.describe` 한글 라벨 —
+화면용이다. 모델에게 가는 도구 출력은 cron 원문을 쓴다).
 
 - 헤더에 ⏰ 버튼 + 서랍: 목록 행(👤/🤖 · label · "매주 월 09:00" · 다음 발화 ·
   토글·지금 실행·삭제), 추가 폼, 최근 이력.
