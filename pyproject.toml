@@ -127,3 +127,9 @@ ignore = [
     "S110",
     "S112",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# cron fields mean SERVER-LOCAL wall-clock time ("0 9 * * 1" = Monday 09:00
+# here), so the schedule engine works in naive local datetimes end to end.
+"agent_cli/schedule/*" = ["DTZ"]
+"tests/test_schedule*.py" = ["DTZ"]
