@@ -184,7 +184,9 @@ missed(s, due):
 - **삭제**: `scheduler.py`, `sched_contract.py`, `cron.py`, `schedules` 테이블과
   store 메서드, 예약 API 여섯 개, ⏰ 패널 UI, spawn 시 `AGENT_CLI_SCHEDULER` env.
 - **이전(1회)**: 기동 때 `schedules` 테이블이 있으면 각 post 의 세션 폴더
-  `schedules.json` 으로 옮기고 테이블을 지운다. `session_id` 가 아직 없는 post 의
+  `schedules.json` 으로 옮기고 테이블을 지운다. 그 방의 인스턴스가 떠 있으면 먼저
+  멈춘다 — 예약 파일은 프로세스가 기동 때만 읽으므로, 떠 있는 프로세스 밑에서 쓰면
+  반영되지 않고 다음 저장에 덮인다(멈춘 방은 아래 "다시 띄우기" 가 되살린다). `session_id` 가 아직 없는 post 의
   예약은 옮길 곳이 없으므로 로그에 남기고 버린다(발화한 적 없는 방이다).
 - **배지**: live_events 스캐너가 세션 폴더의 `schedules.json` 을 읽어 목록 카드에
   `⏰ N` 과 놓친 발화 표시만 한다. 누르면 방을 연다.
@@ -198,7 +200,8 @@ missed(s, due):
 - 순서: agent-cli 먼저. 그 사이(새 cli + 옛 보드)에는 보드 스케줄러가 계속 DB 의
   예약을 주입하고 cli 의 새 예약은 따로 돈다 — 중복은 없지만 두 곳에 예약이 있는
   상태이므로 간격을 두지 않고 이어서 낸다.
-- 보드 v1.34.0 은 cli ≥ 10.12.0 을 요구한다(기존 버전 게이트).
+- 보드 v1.34.0 은 cli ≥ 10.12.0 과 짝이다. 보드에는 cli 버전 게이트가 없어 강제하지는
+  않는다 — 옛 cli 를 띄우면 그 방에는 예약 기능이 없을 뿐이다(README 에 명시).
 
 ## 9. 구현 순서 (커밋 단위)
 
@@ -213,10 +216,10 @@ agent-cli:
 5. web API + ⏰ 서랍 + 놓친 발화 카드 (브라우저 테스트)
 6. README · ARCHITECTURE · 버전
 
-agent-board:
-1. DB → 파일 이전 + 스케줄러·계약·API·UI 삭제
-2. 배지 + 다시 띄우기
-3. 문서 · 버전
+agent-board (한 커밋으로 냈다 — 삭제와 대체가 서로 물려 있다):
+1. DB → 파일 이전(`session_schedules.migrate_legacy`) + 스케줄러·계약·API·패널 삭제
+2. 배지(`session_schedules.summary`) + 다시 띄우기(`ScheduleReviver`, 방당 60초에 한 번)
+3. 복제본은 예약 파일을 물려받지 않는다 · 문서 · 버전
 
 ## 10. 위험
 
