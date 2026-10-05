@@ -498,6 +498,20 @@ body.multi-viewer .card-user .who {
 .card-assistant.step.open { border-left-color: var(--accent-soft-border); }
 /* 실패한 스텝은 목록에서 **튀어나와야** 한다 — 접혀 있어도 찾을 수 있게. */
 .card-assistant.step.failed { border-left-color: var(--fail-soft-border); background: var(--fail-soft-bg); }
+/* 실패한 스텝은 접혀 있다(v10.19.0) — 머리 아래 한 줄이 원인을 말한다.
+   펼치면 관찰 본문이 같은 말을 하므로 숨긴다. */
+.step-why {
+  display: flex; gap: 8px; align-items: baseline; margin: 0 0 3px 27px;
+  font-size: 12px; color: var(--fail); cursor: pointer; min-width: 0;
+}
+.step-why .why-ic { flex: none; width: 14px; text-align: center; }
+.step-why .why-tool { font: 11px ui-monospace, monospace; flex: none; }
+.step-why .why-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.card-assistant.step.open > .step-why { display: none; }
+/* 최종답 카드의 생각은 펼쳐 두되 답보다 흐리게 — 답이 먼저 읽힌다. 펼친 동안
+   머리 줄의 첫 줄 요약은 본문과 겹치므로 감춘다. */
+.row.final-think .row-body { color: var(--muted); font-size: .94em; }
+.row.final-think.open > .s { visibility: hidden; }
 /* 머리 행의 펼침 표시는 **항상 보인다**(`.row.can` 은 hover 에만 보인다).
    스텝 카드의 존재 이유가 '펼치면 더 있다' 라서, 표시가 hover 에만 있으면
    그냥 한 줄로 읽히고 아무도 펼치지 않는다. */

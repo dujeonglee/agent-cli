@@ -1868,9 +1868,17 @@
       // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
       // 아니라 로그가 된다. 묶음 카드도 아니다(뒤따를 관찰이 없다).
       if (t) {
-        card.appendChild(
-          makeRow("💭", "생각", first.trim(), thoughtBody, ["think"])
-        );
+        // 생각은 **펼친 채로** 둔다(v10.19.0) — 모델이 할 말을 생각 칸에 쓰고
+        // 최종답에는 한 단어만 내는 일이 있고(실측 `out`), 접혀 있으면 빈 답을
+        // 받은 것으로 보인다. 답보다 흐리게 그려 답이 먼저 읽히게 한다.
+        // 한 줄짜리 생각은 머리 줄이 전부다(긴 요약은 줄바꿈된다) — 펼칠 게 없다.
+        const think = makeRow("💭", "생각", first.trim(), thoughtBody, ["think", "final-think"]);
+        if (thoughtBody) {
+          thoughtBody.classList.remove("hide");
+          think.classList.add("open");
+          think.querySelector(".x").textContent = "▾";
+        }
+        card.appendChild(think);
       }
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
       card._md = function () { return (t ? "💭 " + t + "\n\n" : "") + String(d.final); };
@@ -2145,8 +2153,10 @@
       tool === "agent"
         ? elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(content))
         : elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(content)));
-    // 실패는 **펼친 채로** 둔다 — 접힌 한 줄로는 왜 실패했는지 알 수 없고,
-    // 사용자가 지금 봐야 하는 유일한 줄이다.
+    // 실패도 **접어 둔다**(v10.19.0) — 펼쳐진 실패가 화면을 차지해 바로 옆의
+    // 성공한 스텝을 가렸다(실측: 파일을 만든 카드를 못 찾음). 접힌 줄이 원인을
+    // 말한다: 요약 칸이 원인 줄이고(`obsSummary`), 스텝 카드는 머리 아래에
+    // `✗ 도구 · 원인` 한 줄을 단다.
     // 종류 칸은 **도구 이름** — "결과"라고만 쓰면 어느 도구의 결과인지 알 수
     // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
     // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
@@ -2154,13 +2164,6 @@
       d.success ? "✓" : "✗", tool || "결과", obsSummary(content, !d.success), body,
       [d.success ? "ok" : "bad"]
     );
-    if (!d.success) {
-      body.classList.remove("hide");
-      row.classList.add("open");
-      const mark = row.querySelector(".x");
-      if (mark) mark.textContent = "▾";
-    }
-
     // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
     const step = pendingStep[stepKey(d)];
     // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
@@ -2173,13 +2176,19 @@
         el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
       );
       if (!d.success) {
-        // 실패는 **펼친 채로** 둔다 — 접힌 한 줄로는 왜 실패했는지 알 수 없고,
-        // 사용자가 지금 봐야 하는 유일한 줄이다(종전 규칙 그대로).
-        step.body.hidden = false;
-        step.head.classList.add("open");
-        step.card.classList.add("failed", "open");
-        const hm = step.head.querySelector(".x");
-        if (hm) hm.textContent = "▾";
+        // 카드는 접힌 채 — 빨간 표시와 원인 한 줄만 낸다. 펼치면 관찰 본문이
+        // 바로 보이게 그 행은 열어 둔다(실패를 보러 연 것이므로).
+        step.card.classList.add("failed");
+        body.classList.remove("hide");
+        row.classList.add("open");
+        const mark = row.querySelector(".x");
+        if (mark) mark.textContent = "▾";
+        const why = el("div", ["step-why"]);
+        why.appendChild(el("span", ["why-ic"], "✗"));
+        why.appendChild(el("span", ["why-tool"], tool || "결과"));
+        why.appendChild(el("span", ["why-text"], obsSummary(content, true)));
+        why.addEventListener("click", function () { step.head.click(); });
+        step.card.insertBefore(why, step.body);
       }
       scheduleScroll();
       return;
