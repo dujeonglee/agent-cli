@@ -940,8 +940,13 @@
   function ctxViewKey(taskId) {
     // 인라인 카드의 틀은 카드가 닫힌 뒤에도 남는다(`taskGroups` 항목은 종료 때
     // 풀린다) — 재접속 스냅샷이 끝난 스코프의 뷰를 채널에 잘못 덮지 않게 한다.
-    if (taskId && frames[taskId] && !frames[taskId].channel) return taskId;
-    return channelOf(taskId || "");
+    if (!taskId) return "main";
+    if (frames[taskId] && !frames[taskId].channel) return taskId;
+    // 상주 에이전트의 뷰는 런 스코프(`key#seq`)가 아니라 그 에이전트의 프롬프트
+    // 스코프 = **채널 key 그대로** 온다. 모르는 id 를 main 으로 돌리면 그 뷰가
+    // main 의 뷰를 덮어 "컨텍스트 밖 대화" 가 통째로 사라진다(v10.18.1) — 모르는
+    // id 는 자기 열쇠로 둔다.
+    return scopeChannel[taskId] || taskId;
   }
   // 경계는 history 레코드 서수 하나(`gone.hidx` = 캐시에 남은 첫 레코드) —
   // 카드는 자기 레코드의 서수(`data-hidx`, 이벤트의 `hidx`)가 그보다 작으면 빠진 것.

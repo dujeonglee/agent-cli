@@ -62,6 +62,10 @@
 - fold 된 넛지는 카드가 없으므로 경계와 무관 — 개수만 싣는다.
 - 소스: `ContextManager` 가 압축/fold/복원 후 `render.note_context_view(view)` 를 부르고, 웹 렌더러가 스코프 `task_id` 를 붙여 emit.
   CLI 렌더러는 no-op.
+- **`task_id` 의 세 모양** (v10.18.1): `""` = main, 인라인 스코프 id = 그 카드, **상주 에이전트는 채널 key 그대로**
+  (`agt-…` — 런 스코프 `key#seq` 가 아니라 프롬프트 스코프다. 컨텍스트가 런을 넘어 이어지므로). 프런트 `ctxViewKey` 는
+  틀이 있는 인라인 id → 그 카드, `scope_start` 로 배운 런 스코프 → 그 채널, **그 밖의 id 는 자기 자신**으로 푼다.
+  모르는 id 를 main 으로 돌리던 종전 규칙은 에이전트의 뷰가 main 의 뷰를 덮어 묶음을 지웠다.
 
 ### 3.2 `scope_start` 확장
 
