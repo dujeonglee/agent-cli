@@ -169,8 +169,9 @@ class TestRowRhythm:
         row.locator(".s").click()
         assert _wait(lambda: not body.is_visible())
 
-    def test_failed_observation_starts_expanded(self, stack, page):
-        """실패는 사용자가 **지금 봐야 하는** 유일한 줄이라 펼친 채로 시작한다."""
+    def test_failed_observation_stays_folded_with_its_cause(self, stack, page):
+        """v10.19.0: 실패도 접어 둔다 — 펼쳐진 실패가 옆의 성공한 스텝을 가렸다.
+        접힌 줄의 요약이 원인을 말한다."""
         stack.emit_ready()
         _open_timeline(page, stack)
         stack.renderer.observation(
@@ -179,9 +180,10 @@ class TestRowRhythm:
         assert _wait(lambda: self._rows(page).count() > 0)
         row = self._rows(page).first
         assert row.locator(".ic").inner_text().strip() == "✗"
-        assert row.locator(".row-body").is_visible(), (
-            "실패가 접혀 있으면 원인이 안 보인다"
-        )
+        assert not row.locator(".row-body").is_visible()
+        assert "boom: no such file" in row.locator(".s").inner_text()
+        row.locator(".s").click()
+        assert _wait(lambda: row.locator(".row-body").is_visible())
 
     def test_summary_is_the_last_meaningful_line(self, stack, page):
         """셸·테스트·린트의 결론은 대개 **끝**에 있다(3826 passed / All checks
@@ -700,9 +702,10 @@ class TestStepCard:
         assert head.locator(".badge.tool").count() == 0
         assert head.locator(".badge.ok").count() == 1
 
-    def test_failure_opens_the_card_and_marks_it(self, stack, page):
-        """접힌 한 줄로는 왜 실패했는지 알 수 없다 — 종전 규칙을 묶은 뒤에도
-        지킨다. 게다가 접힌 목록에서 실패한 스텝을 찾을 수 있어야 한다."""
+    def test_failure_stays_folded_and_says_why(self, stack, page):
+        """v10.19.0: 실패한 스텝은 접힌 채 — 빨간 표시와 `✗ 도구 · 원인` 한 줄.
+        접힌 목록에서 실패를 찾을 수 있고, 한 번 펼치면 관찰 본문이 바로 보인다
+        (종전엔 펼친 채로 두어 옆 스텝을 가렸다)."""
         stack.emit_ready()
         _open_timeline(page, stack)
         stack.renderer.thought("수정이 먹었는지 확인", 1)
@@ -713,10 +716,32 @@ class TestStepCard:
         assert _wait(lambda: self._step(page).count() == 1)
 
         card = self._step(page).first
-        assert _wait(lambda: card.locator(".step-body").is_visible())
+        assert _wait(lambda: card.locator(".step-why").count() == 1)
+        assert not card.locator(".step-body").is_visible()
         assert "failed" in (card.get_attribute("class") or "")
         assert card.locator(".step-head .badge.bad").count() == 1
-        assert "assert 2 == 1" in card.inner_text()
+        why = card.locator(".step-why")
+        assert why.is_visible()
+        assert "shell" in why.inner_text() and "assert 2 == 1" in why.inner_text()
+
+        why.click()  # 원인 줄도 카드를 연다
+        assert _wait(lambda: card.locator(".step-body").is_visible())
+        assert card.locator(".step-body .row.bad .row-body").is_visible()
+        assert not why.is_visible()  # 펼치면 본문이 같은 말을 한다
+
+    def test_final_card_shows_the_whole_thought(self, stack, page):
+        """v10.19.0: 최종답 카드의 생각은 펼친 채 — 모델이 할 말을 생각 칸에 쓰고
+        답에는 한 단어만 내면(실측 `out`) 접힌 화면은 빈 답으로 보인다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("첫 줄\n\n둘째 문단에 진짜 내용이 있다", 1)
+        stack.renderer.final("out", 1)
+        assert _wait(lambda: page.locator(".card-assistant .final").count() == 1)
+        think = page.locator(".card-assistant .row.final-think").first
+        assert think.locator(".row-body").is_visible()
+        assert "둘째 문단에 진짜 내용이 있다" in think.locator(".row-body").inner_text()
+        think.locator(".k").click()  # 접을 수는 있다
+        assert _wait(lambda: not think.locator(".row-body").is_visible())
 
     def test_final_answer_is_not_folded_into_a_step(self, stack, page):
         """최종답은 읽히려고 있는 것이라 접으면 대화가 아니라 로그가 된다.
