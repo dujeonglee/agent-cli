@@ -273,6 +273,42 @@ def test_ended_inline_scope_view_stays_in_its_card(stack, page):
     assert "압축 요약" in page.inner_text("#messages > .ctx-top .ctx-bar")
 
 
+def test_resident_agent_view_does_not_replace_mains(stack, page):
+    """상주 에이전트의 뷰는 런 스코프(`key#seq`)가 아니라 그 에이전트의 프롬프트
+    스코프 = 채널 key 로 온다. 프런트가 모르는 id 를 main 으로 돌려, 에이전트가
+    하나라도 있는 방에서는 main 의 "컨텍스트 밖 대화" 가 통째로 사라졌다
+    (j8hrge 실측, v10.18.1). 에이전트의 뷰는 자기 채널에 묶음을 만든다."""
+    key = "agt-res1"
+    _seed_main(stack)
+    r = stack.renderer
+    r.agent_roster([{"key": key, "name": "sprites", "profile": "p", "state": "idle"}])
+
+    def body():
+        r.begin_prompt_scope(key, label="agent:sprites")
+        r.begin_agent_work(key=key, seq=1, profile="p", message="일해줘")
+        for hidx in (1, 2, 3):
+            r.note_record(hidx)
+            r.observation(f"out {hidx}", turn=hidx, tool_name="shell", success=True)
+        r.context_view({"gone": {"hidx": 3}, "summary": None, "compactions": 1})
+        r.end_agent_work(key=key, seq=1, success=True, duration_s=1.0)
+
+    t = threading.Thread(target=body)
+    t.start()
+    t.join()
+    _open(page, stack)
+    page.wait_for_selector("#messages > .ctx-fold", state="attached", timeout=8000)
+    s = page.evaluate(
+        """() => ({
+            rows: [...document.querySelectorAll('#messages > .ctx-fold')]
+                    .map(e => e.dataset.ch + ':' + e.querySelector('.ctx-count').textContent),
+            main: document.querySelectorAll('#messages > .card[data-ch="main"].ctx-gone').length,
+            agent: document.querySelectorAll('.card-run .card.ctx-gone').length,
+        })"""
+    )
+    assert sorted(s["rows"]) == ["agt-res1:카드 2개", "main:카드 3개"]
+    assert s["main"] == 3 and s["agent"] == 2
+
+
 def test_copy_all_keeps_the_summary_and_folded_cards(stack, page):
     _seed_main(stack)
     _open(page, stack)

@@ -1707,7 +1707,8 @@ class WebRenderer(Renderer):
         뷰어도 그것으로 카드를 흐려야 한다(압축 마커처럼 휘발이 아니다).
         ``task_id`` 는 이 스레드의 스코프 — 인라인 카드 안의 컨텍스트와 상주
         에이전트 채널이 각자 자기 뷰를 받는다. 프런트는 task_id 를 채널/카드로
-        해석한다(상주 에이전트의 런 스코프 → 그 에이전트 채널).
+        해석한다. 상주 에이전트의 task_id 는 런 스코프(``key#seq``)가 아니라 그
+        에이전트의 프롬프트 스코프 = **채널 key** 다(런을 넘어 이어지는 컨텍스트).
         """
         scope = self.current_scope()
         payload = {**view, "task_id": scope} if scope else dict(view)
