@@ -1,7 +1,8 @@
 """Tests for built-in agent (worker profile) loading and discovery.
 
-The built-in set is five general-purpose workers (main drives orchestration):
-code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst.
+The built-in set is five code workers (main drives orchestration) —
+code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst — plus
+`general` (v10.21.0) for the tasks none of them covers.
 """
 
 from agent_cli.subagent.profiles import _BUILTIN_PROFILES_DIR, load_profile
@@ -12,9 +13,10 @@ WORKERS = (
     "code-analyst",
     "unittest-writer",
     "log-analyst",
+    "general",
 )
 READ_ONLY = ("code-reviewer", "code-analyst", "log-analyst")
-WRITING = ("code-writer", "unittest-writer")
+WRITING = ("code-writer", "unittest-writer", "general")
 
 
 def _set_agent_paths(paths):
@@ -30,7 +32,7 @@ class TestBuiltinAgentsDirectory:
     def test_builtin_dir_exists(self):
         assert _BUILTIN_PROFILES_DIR.is_dir()
 
-    def test_builtin_dir_has_the_five_workers(self):
+    def test_builtin_dir_has_the_workers(self):
         names = {p.stem for p in _BUILTIN_PROFILES_DIR.glob("*.md")}
         assert set(WORKERS) <= names, f"missing: {set(WORKERS) - names}"
 
@@ -251,3 +253,34 @@ class TestOrchestratorProfile:
         assert "memory" in flat
         # 직접 구현 금지
         assert "never write code" in flat
+
+
+class TestGeneralProfile:
+    """v10.21.0 — 전문가가 없는 일(조사·정리·보고서 파일)의 범용 워커."""
+
+    def test_description_sends_code_work_to_the_specialists(self):
+        _, config, _ = load_profile("general")
+        desc = config["description"]
+        for name in (
+            "code-writer",
+            "code-reviewer",
+            "code-analyst",
+            "unittest-writer",
+            "log-analyst",
+        ):
+            assert name in desc, name
+        assert "NOT for code" in desc
+
+    def test_can_write_files_but_not_spawn_agents(self):
+        _, config, _ = load_profile("general")
+        tools = config["allowed-tools"]
+        assert "write_file" in tools and "edit_file" in tools
+        assert "fetch" in tools and "shell" in tools
+        assert "agent" not in tools
+
+    def test_body_contract(self):
+        role, _, _ = load_profile("general")
+        assert "Files written:" in role
+        assert "Do not modify files you did not create" in role
+        assert "Say where each fact came from" in role
+        assert "ask" in role and "ONE focused question" in role
