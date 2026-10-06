@@ -118,6 +118,23 @@ def format_no_json_retry(
     return Intervention(message="\n".join(parts), primitives=primitives)
 
 
+def format_split_calls_retry(
+    *, prior_content: str = "", dialect=None, prior_is_excerpt: bool = False
+) -> Intervention:
+    """호출이 두 군데 이상에 있던 출력의 되묻기 (v10.24.0) — 다른 형식 거부와
+    같은 모양: 무슨 일인지, 직전 출력 인용, 방언의 호출 형식 상기."""
+    wf = _resolve_dialect(dialect)
+    echo = echo_prior_output(prior_content, excerpt=not prior_is_excerpt)
+    parts = [f"{SPLIT_CALLS_FRAMING} {SPLIT_CALLS_INSTRUCTION}"]
+    if echo:
+        parts += ["", echo]
+    parts.append(wf.constraint_reminder_call())
+    return Intervention(
+        message="\n".join(parts),
+        primitives=["echo_prior_output", "constrain_single_call_site"],
+    )
+
+
 def format_no_action_retry(
     *, prior_content: str = "", dialect=None, prior_is_excerpt: bool = False
 ) -> Intervention:
@@ -153,7 +170,21 @@ def format_no_action_retry(
 # 규칙("JSON 배열로 끝내라")이 재생됐다. 라이브 메시지도 같은 함수로
 # 만들므로 라이브 == 캐시 == resume 이 구성상 같다.
 
-FORMAT_NUDGE_REASONS = ("no_json", "no_action")
+FORMAT_NUDGE_REASONS = ("no_json", "no_action", "split_calls")
+
+#: v10.24.0: 호출이 산문으로 나뉜 두 군데 이상에 있던 출력의 되묻기. 실측
+#: (Qwen3.8-Flash-Next, json_fc, 문법 없이, 20회씩): 산문 속 예시 뒤의 진짜
+#: 호출 → 진짜만 다시 보냄 20/20; 진짜 호출 뒤에 결과를 상상한 호출 → 앞의
+#: 진짜만 19/20(나머지 1 은 호출 없음). 방향으로 고르면 한쪽씩 틀린다.
+SPLIT_CALLS_FRAMING = (
+    "Your response contained tool calls in more than one place, separated by "
+    "prose, so the harness cannot tell which of them you meant to run — NOTHING "
+    "was executed."
+)
+SPLIT_CALLS_INSTRUCTION = (
+    "Re-send ONLY the calls you want executed now, together at the very end of "
+    "your response. Do not write example or hypothetical calls in your prose."
+)
 
 
 def make_format_nudge(
@@ -190,6 +221,10 @@ def make_format_nudge(
 def build_format_nudge(nudge: dict, dialect) -> Intervention:
     """구조화 넛지 → 현재 ``dialect`` 의 문장 (라이브·캐시 렌더·resume 공용)."""
     prior = str(nudge.get("prior") or "")
+    if nudge.get("reason") == "split_calls":
+        return format_split_calls_retry(
+            prior_content=prior, dialect=dialect, prior_is_excerpt=True
+        )
     if nudge.get("reason") == "no_action":
         return format_no_action_retry(
             prior_content=prior, dialect=dialect, prior_is_excerpt=True

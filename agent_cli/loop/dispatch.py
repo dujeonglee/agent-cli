@@ -1716,7 +1716,12 @@ class TurnDispatcher:
         bare prose). Thinking-channel echo is excluded from v1 — see
         docs/robust-harness/DESIGN.md §2.2.
         """
-        if turn.parse_stage > 0:
+        if getattr(turn, "split_calls", False):
+            # 호출이 산문으로 나뉜 두 군데 이상 — 고르지 않고 되묻는다 (v10.24.0).
+            _debug_log(f"Split tool calls (not dispatched):\n{llm_text}")
+            nudge = make_format_nudge("split_calls", llm_text)
+            recovery_reason = "split calls"
+        elif turn.parse_stage > 0:
             # Parsed OK but no action -- LLM forgot to include the action
             _debug_log(
                 f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"

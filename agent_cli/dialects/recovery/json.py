@@ -440,6 +440,37 @@ def _op_signature(value) -> int:
 _OP_OPENER = re.compile(r'\[\s*\{|\{\s*"action"')
 
 
+def op_group_count(text: str) -> int:
+    """산문으로 **나뉜** op 배열 묶음의 수 (v10.24.0).
+
+    묶음 = 공백으로만 이어진 최상위 op 배열들(모델이 op 마다 배열을 다시 연
+    모양 — ``_merge_reopened_op_arrays`` 가 하나로 합친다). 묶음이 둘 이상이면
+    호출이 두 군데에 있는 것이다: 산문 속 예시 뒤의 진짜 호출이거나, 진짜 호출
+    뒤에 결과를 상상하고 이어 쓴 호출. 글자만으로는 가릴 수 없고 어느 쪽을
+    골라도 한 경우에는 틀린 호출을 실행한다(첫 것 → 예시를 실행, 마지막 →
+    상상한 결과 위의 호출을 실행) — 그래서 고르지 않고 되묻는다. 파싱되는
+    op-서명(tier 1) 배열만 센다: 문자열 값 안의 배열, 산문의 ``[1, 2]``, 깨진
+    조각은 세지 않는다."""
+    spans: list[tuple[int, int]] = []
+    for start, end in _json_spans(text):
+        try:
+            value = json.loads(text[start:end])
+        except json.JSONDecodeError:
+            continue
+        if _op_signature(value) == 1:
+            spans.append((start, end))
+    top = [
+        s
+        for s in spans
+        if not any(s != o and s[0] >= o[0] and s[1] <= o[1] for o in spans)
+    ]
+    groups = 0
+    for i, (start, _end) in enumerate(top):
+        if i == 0 or text[top[i - 1][1] : start].strip():
+            groups += 1
+    return groups
+
+
 def _op_anchor(text: str) -> int:
     """Where the op payload starts, or -1 when there is no candidate at all.
 
@@ -450,9 +481,11 @@ def _op_anchor(text: str) -> int:
 
     * ``[{op1}]\\n[{op2}]`` (array reopened per op) — both tier 1, anchor on the
       first, so ``_merge_reopened_op_arrays`` still sees the whole group.
-    * op array, prose, op array — both tier 1, anchor on the first: the
-      deliberately conservative "no merge across prose, first array wins"
-      contract (test_prose_between_arrays_defense).
+    * op array, prose, op array — both tier 1, anchor on the first. The parser
+      no longer reaches here with that shape (v10.24.0): ``op_group_count``
+      rejects it first and the loop asks the model to re-send, because "first
+      array wins" ran the example call whenever the prose held one. The
+      anchor rule itself is unchanged — no merge across prose.
     * trailing ``</think>`` / closing prose after the ops — tier 0, ignored.
 
     Scanning from the back instead would have satisfied the leading-prose cases

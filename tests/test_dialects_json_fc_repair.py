@@ -786,16 +786,78 @@ class TestMultiArrayHappyPathRecovery:
         assert [o.action for o in t.ops] == ["complete"]
 
     def test_prose_between_arrays_defense(self):
-        # Non-whitespace text between the arrays → conservative, no merge (the
-        # boundary must be whitespace-adjacent). Only the first op is taken.
+        # Non-whitespace text between the arrays → no merge (the boundary must
+        # be whitespace-adjacent). v10.24.0: and no guess either — the first
+        # array used to be taken and the second silently dropped; now the turn
+        # carries no ops and is flagged, so the loop asks the model to re-send.
         body = (
             '[{"action": "write_file", "path": "a.c"}]\n'
             "이제 다음 파일:\n"
             '[{"action": "write_file", "path": "b.c"}]'
         )
         t = WF.parse_turn(_wire("x", body))
-        assert t.parse_stage == 1
-        assert [o.action_input["path"] for o in t.ops] == ["a.c"]
+        assert t.parse_stage == 0 and t.split_calls
+        assert t.ops == []
+
+
+class TestSplitCalls:
+    """v10.24.0 — 호출이 산문으로 나뉜 두 군데 이상에 있으면 고르지 않는다."""
+
+    def test_decoy_in_prose_then_real_call(self):
+        t = WF.parse_turn(
+            'A call like [{"action": "read_file", "path": "README.md"}] would be '
+            'the wrong file.\n\n[{"action": "read_file", "path": "notes.txt"}]'
+        )
+        assert t.split_calls and t.ops == []
+
+    def test_real_call_then_imagined_follow_up(self):
+        t = WF.parse_turn(
+            '[{"action": "read_file", "path": "notes.txt"}]\n\n'
+            'It starts with "hello", so now I write it:\n\n'
+            '[{"action": "write_file", "path": "first.txt", "content": "hello"}]'
+        )
+        assert t.split_calls and t.ops == []
+
+    def test_whitespace_adjacent_arrays_still_merge(self):
+        # op 마다 배열을 다시 연 모양(실측 27B)은 한 묶음 — 전부 실행.
+        t = WF.parse_turn(
+            '[{"action": "read_file", "path": "a"}]\n[{"action": "read_file", "path": "b"}]'
+        )
+        assert not t.split_calls
+        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+
+    def test_arrays_inside_a_string_value_do_not_count(self):
+        t = WF.parse_turn(
+            'Writing the example file.\n\n[{"action": "write_file", "path": "ex.md", '
+            '"content": "use [{\\"action\\": \\"read_file\\"}] then text then '
+            '[{\\"action\\": \\"complete\\"}]"}]'
+        )
+        assert not t.split_calls
+        assert [o.action for o in t.ops] == ["write_file"]
+
+    def test_non_op_brackets_in_prose_do_not_count(self):
+        t = WF.parse_turn(
+            'Check board[1][2] and the list [1, 2, 3] and {"k": "v"} first.\n\n'
+            '[{"action": "read_file", "path": "a"}]'
+        )
+        assert not t.split_calls
+        assert [o.action for o in t.ops] == ["read_file"]
+
+    def test_nudge_tells_what_happened_and_quotes_the_output(self):
+        from agent_cli.recovery.dialect_recovery import (
+            build_format_nudge,
+            make_format_nudge,
+        )
+
+        text = '[{"action": "read_file", "path": "a"}]\nthen\n[{"action": "read_file", "path": "b"}]'
+        nudge = make_format_nudge("split_calls", text)
+        msg = build_format_nudge(nudge, WF).message
+        assert msg.startswith(
+            "Your response contained tool calls in more than one place"
+        )
+        assert "NOTHING was executed" in msg
+        assert "Re-send ONLY the calls you want executed now" in msg
+        assert "Your prior output:" in msg and '"path": "b"' in msg
 
     def test_brace_bracket_inside_content_string_not_merged(self):
         # A `}[{` sequence INSIDE a content value must not trigger a fold — the
