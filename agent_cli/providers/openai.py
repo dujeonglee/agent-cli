@@ -12,6 +12,7 @@ import requests
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
     STOP_INCOMPLETE_TOOL_CALL,
+    STOP_SERVER_ERROR,
 )
 from agent_cli.providers.base import (
     CallSettings,
@@ -176,14 +177,12 @@ class OpenAIProvider:
         if acc.tool_calls:
             tool_calls = []
             for _idx, slot in sorted(acc.tool_calls.items()):
-                try:
-                    tool_input = (
-                        json.loads(slot["arguments"]) if slot["arguments"] else {}
-                    )
-                except (json.JSONDecodeError, ValueError):
-                    tool_input = {}
                 tool_calls.append(
-                    {"id": slot["id"], "name": slot["name"], "input": tool_input}
+                    {
+                        "id": slot["id"],
+                        "name": slot["name"],
+                        **_tool_call_input(slot["arguments"]),
+                    }
                 )
         return LLMResponse(
             content=content,
@@ -214,15 +213,12 @@ class OpenAIProvider:
         if raw_tool_calls:
             tool_calls = []
             for tc in raw_tool_calls:
-                try:
-                    tool_input = json.loads(tc["function"]["arguments"])
-                except (json.JSONDecodeError, ValueError, KeyError):
-                    tool_input = {}
+                fn = tc.get("function") or {}
                 tool_calls.append(
                     {
                         "id": tc.get("id", ""),
-                        "name": tc["function"]["name"],
-                        "input": tool_input,
+                        "name": fn.get("name") or "",
+                        **_tool_call_input(fn.get("arguments") or ""),
                     }
                 )
 
@@ -243,6 +239,23 @@ class OpenAIProvider:
         )
 
 
+def _tool_call_input(arguments: str) -> dict:
+    """서버가 준 호출 인자 문자열 → ``{"input": dict}`` 또는, JSON 이 아니면
+    ``{"input": None, "arguments": <원문>}`` (v10.20.0). 종전엔 깨진 인자를
+    빈 dict 로 바꿔 그대로 호출했다 — 모델은 "필수 인자 없음" 이라는 엉뚱한
+    안내를 받고, `complete` 면 런이 답 없이 끝났다(실측 재현). 원문을 살려
+    루프가 어디서 깨졌는지 말해 주게 한다. 빈 문자열은 인자 없는 호출."""
+    if not arguments:
+        return {"input": {}}
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, ValueError):
+        return {"input": None, "arguments": arguments}
+    if not isinstance(parsed, dict):
+        return {"input": None, "arguments": arguments}
+    return {"input": parsed}
+
+
 def _map_openai_payload(data: dict) -> StreamEvent | None:
     """OpenAI-호환 chunk 하나 → 정규화 StreamEvent (provider 고유 부분 전부).
 
@@ -251,16 +264,25 @@ def _map_openai_payload(data: dict) -> StreamEvent | None:
     - ``delta.reasoning_content`` → thinking (vLLM 관례 — qwen3/R1 계열;
       OpenAI 호스티드는 미노출이라 자연 무시)
     - ``finish_reason`` → stop_reason
-    - 스트림 안의 ``error`` 중 ``code == "incomplete_tool_call"`` → stop_reason
-      (v10.19.1). omlx 는 출력이 도구 호출 **도중에** 끝나면(대개 출력 한도)
-      finish_reason·usage 없이 이 오류 하나만 보낸다. 종전엔 choices 가 없어
-      버려졌고, 루프에는 빈 응답(NO_OUTPUT)으로 보여 모델이 "아무것도 안
-      냈다" 는 안내만 받고 같은 큰 호출을 되풀이했다(실측: 10런에서 124번).
+    - 스트림 안의 ``error`` → stop_reason (v10.19.1 / v10.20.0). omlx 는 출력이
+      도구 호출 **도중에** 끝나면 finish_reason·usage 없이 오류
+      ``incomplete_tool_call`` 하나만 보낸다; 다른 오류도 같은 모양으로 온다.
+      종전엔 choices 가 없어 버려졌고, 루프에는 빈 응답(NO_OUTPUT)으로 보여
+      모델이 "아무것도 안 냈다" 는 안내만 받고 같은 호출을 되풀이했다(실측:
+      10런에서 124번). 도구 호출 중 끊김은 자기 코드를, 그 밖의 오류는
+      ``server_error`` 를 stop_reason 으로, 서버의 문구를 stop_detail 로 올린다.
     """
     ev = StreamEvent()
     err = data.get("error")
-    if isinstance(err, dict) and err.get("code") == STOP_INCOMPLETE_TOOL_CALL:
-        ev.stop_reason = STOP_INCOMPLETE_TOOL_CALL
+    if isinstance(err, dict):
+        code = str(err.get("code") or err.get("type") or "")
+        if code == STOP_INCOMPLETE_TOOL_CALL:
+            ev.stop_reason = STOP_INCOMPLETE_TOOL_CALL
+        else:
+            ev.stop_reason = STOP_SERVER_ERROR
+            ev.stop_detail = ": ".join(
+                x for x in (code, str(err.get("message") or "")) if x
+            )
         return ev
     usage_data = data.get("usage")
     if usage_data:

@@ -224,6 +224,15 @@ INCOMPLETE_TOOL_CALL_NOTICE = (
     "with edit_file."
 )
 
+# v10.20.0: the server sent an error inside the stream (anything but the
+# incomplete-call code above). Nothing was delivered, so nothing ran; the
+# model is told what the server said instead of "your response was empty".
+STOP_SERVER_ERROR = "server_error"
+SERVER_ERROR_NOTICE = (
+    "⚠️ The server reported an error while generating your previous response "
+    "({detail}), so nothing was delivered and nothing was executed. Try again."
+)
+
 
 # ── duration 파서 — 표면 둘이 공유 (v9.11.0) ────────────────
 #

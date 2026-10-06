@@ -13,7 +13,9 @@ from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
     RUNAWAY_NOTICE,
+    SERVER_ERROR_NOTICE,
     STOP_INCOMPLETE_TOOL_CALL,
+    STOP_SERVER_ERROR,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as _get_dialect
@@ -33,6 +35,7 @@ from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.failures import record_failure
 from agent_cli.recovery.observability import (
+    FAILURE_NO_OUTPUT,
     FAILURE_OUTPUT_TRUNCATED,
     FAILURE_RUNAWAY,
     TurnRecorder,
@@ -951,15 +954,23 @@ class AgentLoop:
                 "carry `tools`, or disable the server's tool-call parser.",
                 self.turn,
             )
+        self._server_ops = None
         if getattr(response, "tool_calls", None):
-            # v10.1.4: 서버의 tool parser 가 <tool_call> 블록을 content 에서 빼내
-            # ``tool_calls`` 필드로 돌려주면 content 가 비어 NO_OUTPUT 이 됐다.
-            # 그 호출들을 flat op 배열 텍스트로 되살려 같은 파서 경로로 넣는다.
-            # v10.2.0 (native_fc): content(thought)가 있으면 그 뒤에 붙인다.
-            rendered = self._render_server_tool_calls(response.tool_calls)
-            if rendered:
-                head = (llm_text or "").strip()
-                llm_text = f"{head}\n\n{rendered}" if head else rendered
+            if self.dialect.server_parsed:
+                # v10.20.0: 서버 파싱 방언은 호출 목록에서 턴을 바로 만든다 —
+                # 텍스트로 바꿔 다시 파싱하면 산문 속 배열이 호출을 이긴다.
+                self._server_ops = self.dialect.ops_from_server_calls(
+                    response.tool_calls
+                )
+            else:
+                # v10.1.4: 서버의 tool parser 가 <tool_call> 블록을 content 에서
+                # 빼내 ``tool_calls`` 로 돌려주면 content 가 비어 NO_OUTPUT 이
+                # 됐다. 그 호출들을 flat op 배열 텍스트로 되살려 같은 파서
+                # 경로로 넣는다.
+                rendered = self._render_server_tool_calls(response.tool_calls)
+                if rendered:
+                    head = (llm_text or "").strip()
+                    llm_text = f"{head}\n\n{rendered}" if head else rendered
 
         # Show token stats if available (providers report eval durations)
         if response.usage:
@@ -1081,12 +1092,19 @@ class AgentLoop:
             result = self._on_runaway(llm_text, response)
             self._fire_hook("OnTurnEnd")
             return result
+        # v10.20.0: the server sent an error inside the stream — nothing was
+        # delivered. Say what it said instead of "your response was empty".
+        if getattr(response, "stop_reason", None) == STOP_SERVER_ERROR:
+            result = self._on_server_error(response)
+            self._fire_hook("OnTurnEnd")
+            return result
 
         result = self._handle_text_path(
             llm_text,
             response.usage,
             thinking=response.thinking,
             swallowed=getattr(self, "_swallowed_turn", False),
+            server_ops=getattr(self, "_server_ops", None),
         )
 
         # OnTurnEnd hook
@@ -1183,6 +1201,36 @@ class AgentLoop:
         )
         return self._CONTINUE
 
+    def _on_server_error(self, response):
+        """An in-stream server error (v10.20.0): the server stopped the
+        generation itself and sent its reason. Nothing is stored; the notice
+        quotes the server so the model does not blame its own output."""
+        detail = getattr(response, "stop_detail", "") or "no detail"
+        self._cut_signal = FAILURE_NO_OUTPUT
+        _append_observation(
+            self.messages,
+            self.ctx,
+            self.dialect,
+            "",
+            f"Observation: {SERVER_ERROR_NOTICE.format(detail=detail)}",
+            tool_name="server_error",
+            success=False,
+            turn=self.turn,
+            render=not self.skill_name,
+            recovery_kind="format",
+            store_emission=False,
+        )
+        self.recorder.record(
+            model=self.model,
+            parse_stage=0,
+            failure_signal=FAILURE_NO_OUTPUT,
+            usage=getattr(response, "usage", None),
+            stop_reason=STOP_SERVER_ERROR,
+            stop_detail=detail,
+        )
+        _debug_log(f"Server stream error ({detail}) at turn {self.turn}")
+        return self._CONTINUE
+
     def _on_runaway(self, llm_text: str, response):
         """The stream-side detector (providers/runaway.py) stopped the
         generation (v10.10.0). Same shape as the cap cut: nothing stored,
@@ -1222,10 +1270,20 @@ class AgentLoop:
         return self._CONTINUE
 
     def _handle_text_path(
-        self, llm_text: str, usage=None, *, thinking=None, swallowed: bool = False
+        self,
+        llm_text: str,
+        usage=None,
+        *,
+        thinking=None,
+        swallowed: bool = False,
+        server_ops=None,
     ):
         return self._dispatch._handle_text_path(
-            llm_text, usage, thinking=thinking, swallowed=swallowed
+            llm_text,
+            usage,
+            thinking=thinking,
+            swallowed=swallowed,
+            server_ops=server_ops,
         )
 
     def _task_text(self) -> str:

@@ -83,6 +83,34 @@
 - **N4 릴리스.** MINOR v10.2.0 한 번. 브랜치 `native-fc`, PR + CI. 프로바이더는 OpenAI 호환만 — Anthropic 바인딩이면 부트에서
   fail-fast("native_fc 는 OpenAI 호환 프로바이더에서만").
 
+## 5.1 v10.20.0 — 되먹임 검토에서 고친 것
+
+컨텍스트에 남는 모양을 실제 세션(호출 메시지 520개)으로 다시 렌더해 검토했다.
+
+- **N5 모든 호출에 결과.** OpenAI 규격은 `tool_calls` 마다 같은 id 의 `tool` 메시지를 요구하는데 기록은 그렇지 않은
+  턴을 만든다 — 같은 파일 편집 N 개는 한 번에 적용돼 결과가 하나(병렬 배치·중단된 배치의 남은 호출도 같다), `complete` 는
+  결과가 없다(실측: 520 중 25). 엄격한 서버는 400, 너그러운 서버에서도 모델은 "불렀는데 결과가 없는 호출" 을 본다.
+  `DialectBase.pair_call_results` (기본 통과) 를 `ContextManager.get_messages` 가 마지막에 부르고, native 는 빠진 id 에
+  채운다: 합쳐진 호출 → "다른 호출과 함께 처리됨", 종결 호출 → `completed task: <그 턴이 답한 요청 첫 줄 80자>`.
+  기록 무변경 — 옛 세션도 읽을 때 맞는다. 종결 문구는 실측(6턴 대화 × 12~20, "호출 없이 산문만" 거부율)으로 골랐다:
+  없음 10.0% · "Delivered to the user." 17.5% · 지난 최종답을 산문 assistant 로 71%(모델이 그대로 따라 함 — 탈락) ·
+  "completed task" 11.1% · "completed task: <요청>" 9.7%(사용자 제안, 채택).
+- **N6 호출은 다시 파싱하지 않는다.** 종전엔 서버의 `tool_calls` 를 flat op 배열 **텍스트**로 바꿔 산문 뒤에 붙이고
+  `parse_turn` 에 넣었다 — 산문(content)에 `[{"action": …}]` 이 있으면 "첫 배열이 이긴다" 규칙으로 그쪽이 호출이 되고
+  실제 호출은 버려졌다(재현; 실측 1,651턴에서 발생 0). 이제 `Dialect.ops_from_server_calls` 가 호출 목록에서 op 를 바로
+  만들고 루프는 `server_ops` 로 받는다(산문은 생각으로만). 기록은 `corrected_record` 로 ops shape 를 쓴다.
+- **N7 깨진 인자는 실행하지 않는다.** provider 는 JSON 이 아닌 인자를 빈 dict 로 바꿨다 — 모델은 "필수 인자 없음" 이라는
+  엉뚱한 안내를 받고, `complete` 면 **런이 답 없이 끝났다**(재현). 이제 `{"input": None, "arguments": <원문>}` 으로 넘기고
+  op 의 `action_input` 이 문자열이면 dispatch 가 "인자가 JSON 이 아님(어디서)" 을 알린다(배치면 그 자리에 메모, 홀로면
+  형식 개입; `SCHEMA_MISMATCH`). 텍스트 방언의 서버-삼킴 구제 경로(`_render_server_tool_calls`)는 종전대로.
+- **N8 스트림 오류.** omlx 는 오류를 `data: {"error": …}` 한 줄로 보낸다. `incomplete_tool_call` 은 잘림(v10.19.1), 그 밖은
+  `server_error` stop_reason + 서버 문구(stop_detail) — 모델은 "응답이 비었다" 대신 서버의 말을 받는다(`NO_OUTPUT` 행에
+  stop_reason/stop_detail 로 구분).
+- 검토에서 **문제 아님**으로 확인한 것: 배치 안의 거부(깨진 인자·인자 누락·모르는 도구)는 자기 호출 id 에 붙는다(회귀
+  테스트); 호출 id 가 캐시 위치 기반이라 압축으로 바뀌어도 그 지점부터는 어차피 내용이 달라 추가 비용 없음. **남겨 둔 것**:
+  하니스 꼬리말(세션 상태·complete 안내)이 마지막 `tool` 메시지 본문 끝에 붙는다 — native 는 뒤에 user 메시지를 둘 수
+  있으므로 분리가 가능하나 행동 변화라 측정 뒤에.
+
 ## 6. 합격선
 
 1. 로컬 omlx 가 `tools` 를 지원하면: 끝말잇기·실제 작업 6태스크를 `native_fc` 로 완주, NO_ACTION 외 신호 0.

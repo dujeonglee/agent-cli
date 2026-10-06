@@ -631,6 +631,11 @@ class DialectBase(ABC):
         assistant 의 ``tool_calls`` 와 짝이 맞는다. 기록 스키마는 바뀌지 않는다."""
         return None
 
+    def pair_call_results(self, messages: list[dict]) -> list[dict]:
+        """렌더된 요청 메시지 목록의 마무리 (v10.20.0). 서버 파싱 방언은 모든
+        ``tool_calls`` 가 같은 id 의 `tool` 메시지를 갖게 한다; 그 외는 그대로."""
+        return messages
+
     def render_assistant_from_history(self, record: dict) -> dict:
         """Convert a history.jsonl assistant record into a message dict.
 

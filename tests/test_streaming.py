@@ -463,11 +463,13 @@ class TestRunSseStreamSkeleton:
         assert acc.stop_reason == "incomplete_tool_call"
         assert acc.content == ""
 
-    def test_other_stream_error_is_not_a_stop_reason(self):
+    def test_other_stream_error_is_a_server_error_stop(self):
+        """그 밖의 스트림 오류는 ``server_error`` + 서버 문구 (v10.20.0)."""
         acc, _chunks = self._run(
             ['data: {"error": {"message": "boom", "code": "server_busy"}}']
         )
-        assert acc.stop_reason is None
+        assert acc.stop_reason == "server_error"
+        assert acc.stop_detail == "server_busy: boom"
 
     def test_broken_json_line_tolerated(self):
         # C6 대칭화: JSONDecodeError 관용은 이제 양 provider 골격 공통

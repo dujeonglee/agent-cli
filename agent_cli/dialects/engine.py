@@ -169,6 +169,31 @@ class _TaggedTokens(_WrapperTokens):
         self.sentinel_line = re.compile(rf"^\s*</?(?:{tags})>\s*$", re.MULTILINE | I)
 
 
+#: 결과 없는 호출에 렌더 때 채우는 `tool` 메시지 본문 (``pair_call_results``).
+#: 종결 문구는 실측으로 골랐다(v10.20.0, 6턴 대화 × 12~20, "호출 없이 산문만" 거부율):
+#: 없음 10.0% · "Delivered to the user." 17.5% · 지난 최종답을 산문 assistant 로 71%
+#: · "completed task" 11.1% · "completed task: <답한 요청>" 9.7%. 긴 안내 문구는
+#: 모델이 산문 답을 따라 하게 만들었고, 답한 요청을 인용하면 어느 요청이 닫혔는지
+#: 보인다(사용자 제안).
+_TERMINAL_CALL_RESULT = "completed task"
+_REQUEST_EXCERPT_CHARS = 80
+
+
+def _request_excerpt(content) -> str:
+    """사용자 요청의 첫 줄, 80자까지 — 종결 결과에 인용한다."""
+    return str(content or "").strip().split("\n")[0][:_REQUEST_EXCERPT_CHARS]
+
+
+def _terminal_call_result(request: str) -> str:
+    return f"{_TERMINAL_CALL_RESULT}: {request}" if request else _TERMINAL_CALL_RESULT
+
+
+_MERGED_CALL_RESULT = (
+    "No separate result — this call was handled together with the other calls "
+    "of this turn; see their results."
+)
+
+
 class Dialect(DialectBase):
     """스펙 구동 와이어 포맷 — ``DialectBase`` ABC 의 전 표면을 스펙에서 유도."""
 
@@ -964,6 +989,29 @@ class Dialect(DialectBase):
     def server_parsed(self) -> bool:
         return bool(self.spec.server_parsed)
 
+    def ops_from_server_calls(self, tool_calls: list[dict]) -> list[Op]:
+        """서버가 파싱해 준 호출 목록 → 이 턴의 op 들 (v10.20.0, 서버 파싱 방언).
+
+        종전엔 호출을 flat op 배열 **텍스트**로 바꿔 ``parse_turn`` 에 다시
+        넣었다 — 산문(content)에 `[{"action": …}]` 모양이 있으면 그쪽이
+        "첫 배열" 로 이겨 실제 호출이 버려졌다(재현: 생각 속 배열 + 실제 호출
+        → 생각 속 배열만 실행). 호출은 서버가 이미 구조로 줬으니 그대로 쓴다.
+        인자가 JSON 이 아니었던 호출(provider 가 ``input=None`` + 원문
+        ``arguments``)은 ``action_input`` 에 그 **문자열**을 싣는다 — dispatch
+        가 실행 대신 "인자가 JSON 이 아님" 을 알린다."""
+        ops: list[Op] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict) or not tc.get("name"):
+                continue
+            inp = tc.get("input")
+            if isinstance(inp, dict):
+                ops.append(Op(action=tc["name"], action_input=inp))
+            else:
+                ops.append(
+                    Op(action=tc["name"], action_input=str(tc.get("arguments") or ""))
+                )
+        return ops
+
     @staticmethod
     def call_id(assistant_index: int, op_index: int) -> str:
         """렌더 시 합성하는 호출 id — assistant 와 뒤따르는 관찰이 같은 규칙."""
@@ -996,6 +1044,60 @@ class Dialect(DialectBase):
             }
             for i, p in enumerate(parts)
         ]
+
+    def pair_call_results(self, messages: list[dict]) -> list[dict]:
+        """모든 ``tool_calls`` 가 같은 id 의 `tool` 메시지를 갖게 한다 (v10.20.0).
+
+        OpenAI 규격은 호출마다 결과를 요구한다. 기록은 그렇지 않은 턴을 만든다:
+        같은 파일 편집 N 개는 한 번에 적용돼 결과가 하나고(병렬 배치·중단된
+        배치의 남은 호출도 같다), 종결 호출(`complete`)은 결과가 없다. 종전엔
+        답 없는 호출이 그대로 나갔다 — 엄격한 서버는 400, 너그러운 서버에서도
+        모델은 불렀는데 결과가 없는 호출을 본다. 결과는 호출 순서대로 붙으므로
+        (``render_observation_from_history``) 빠진 id 는 뒤쪽이고, 거기에 짧은
+        안내를 채운다: 종결 호출에는 "completed task: <그 턴이 답한 요청>"
+        (앞선 마지막 사용자 요청의 첫 줄 — 하니스 안내문은 제외), 합쳐진
+        호출에는 "다른 호출과 함께 처리됨". 기록은 바꾸지 않는다 — 옛 세션도
+        읽을 때 맞는다."""
+        if not self.spec.server_parsed:
+            return messages
+        from agent_cli.dialects import all_system_user_prefixes
+
+        nudge_prefixes = all_system_user_prefixes()
+        out: list[dict] = []
+        i = 0
+        n = len(messages)
+        last_request = ""
+        while i < n:
+            msg = messages[i]
+            calls = msg.get("tool_calls") if msg.get("role") == "assistant" else None
+            if not calls:
+                if msg.get("role") == "user" and not any(
+                    str(msg.get("content") or "").startswith(p) for p in nudge_prefixes
+                ):
+                    last_request = _request_excerpt(msg.get("content"))
+                out.append(msg)
+                i += 1
+                continue
+            j = i + 1
+            answered: dict[str, dict] = {}
+            while j < n and messages[j].get("role") == "tool":
+                answered[messages[j].get("tool_call_id") or ""] = messages[j]
+                j += 1
+            out.append(msg)
+            for c in calls:
+                reply = answered.get(c["id"])
+                if reply is None:
+                    name = (c.get("function") or {}).get("name")
+                    reply = {
+                        "role": "tool",
+                        "tool_call_id": c["id"],
+                        "content": _terminal_call_result(last_request)
+                        if name == self.spec.terminal_op
+                        else _MERGED_CALL_RESULT,
+                    }
+                out.append(reply)
+            i = j
+        return out
 
     def render_assistant_from_history(
         self, record: dict, *, index: int | None = None
