@@ -437,6 +437,8 @@ class StreamEvent:
     #: v10.1.5: 서버 tool parser 가 빼낸 호출 조각(OpenAI 스트리밍 ``delta.tool_calls``)
     #: — ``[{"index", "id", "name", "arguments"}]``, arguments 는 조각 문자열.
     tool_call_deltas: list[dict] | None = None
+    #: v10.20.0: 서버가 스트림 안에 보낸 오류의 사유(``stop_reason`` 과 함께)
+    stop_detail: str = ""
 
 
 @dataclass
@@ -722,6 +724,8 @@ def run_sse_stream(
                 break
         if ev.stop_reason:
             acc.stop_reason = ev.stop_reason
+            if ev.stop_detail:
+                acc.stop_detail = ev.stop_detail
         if ev.done:
             break
 

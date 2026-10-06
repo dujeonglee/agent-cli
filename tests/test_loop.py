@@ -3958,6 +3958,48 @@ class TestOutputTruncationGuard:
             rows[0]["stop_detail"],
         ) == ("OUTPUT_TRUNCATED", "incomplete_tool_call", "incomplete_tool_call")
 
+    def test_server_stream_error_quotes_the_server(self, caps, tmp_path):
+        """서버가 스트림 안에서 오류를 보내면 "응답이 비었다" 가 아니라 서버의
+        문구를 받는다 (v10.20.0)."""
+        from agent_cli.context.manager import ContextManager
+
+        outs = [
+            LLMResponse(
+                content="", stop_reason="server_error", stop_detail="server_busy: boom"
+            ),
+            LLMResponse(content=_complete("done")),
+        ]
+        seen = []
+
+        def call(*args, **kwargs):
+            msgs = kwargs.get("messages") or args[0]
+            seen.append("\n".join(str(m.get("content", "")) for m in msgs))
+            return outs[len(seen) - 1]
+
+        provider = MagicMock()
+        provider.call.side_effect = call
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert "server reported an error" in seen[1]
+        assert "server_busy: boom" in seen[1]
+        assert "contained no" not in seen[1]
+        assert result.output == "done"
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "turns.jsonl").read_text().splitlines()
+        ]
+        assert (rows[0]["stop_reason"], rows[0]["stop_detail"]) == (
+            "server_error",
+            "server_busy: boom",
+        )
+
     def test_normal_stop_dispatches_action(self, caps, tmp_path):
         """stop_reason='stop' (or None) → action runs as usual (no guard)."""
         from agent_cli.context.manager import ContextManager

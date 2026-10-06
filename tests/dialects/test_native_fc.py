@@ -324,7 +324,9 @@ class TestLoop:
                 for c in m.get("tool_calls", [])
             ]
             results = [m["tool_call_id"] for m in msgs if m["role"] == "tool"]
-            assert calls[:2] == results == ["call_1_0", "call_1_1"], name
+            assert calls[:2] == results[:2] == ["call_1_0", "call_1_1"], name
+            # 종결 호출까지 포함해 모든 호출에 결과가 있다 (v10.20.0).
+            assert calls == results, name
 
 
 def _unpaired(messages: list[dict]) -> list[str]:
@@ -442,3 +444,310 @@ class TestRejectedCallKeepsTheMessageOrderValid:
         )
         assert _unpaired(calls[1]) == []
         assert calls[1][-1]["role"] == "tool"
+
+
+class TestEveryCallGetsAResult:
+    """v10.20.0. OpenAI 규격: 모든 ``tool_calls`` 뒤에는 같은 id 의 `tool`
+    메시지가 온다. 기록은 그렇지 않은 턴을 만든다 — 같은 파일 편집 N 개는
+    결과가 하나, `complete` 는 결과가 없다. 렌더에서 채운다."""
+
+    def _run(self, tmp_path, caps, wf, responses):
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        provider = MagicMock()
+        provider.call.side_effect = responses
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+        )
+        return result, ctx, [c.kwargs["messages"] for c in provider.call.call_args_list]
+
+    @staticmethod
+    def _resp(calls, content=""):
+        return LLMResponse(
+            content=content,
+            tool_calls=[
+                {"id": f"x{i}", "name": n, "input": a} for i, (n, a) in enumerate(calls)
+            ],
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+        )
+
+    def test_merged_same_file_edits_answer_every_call(self, tmp_path, caps, wf):
+        f = tmp_path / "f.txt"
+        f.write_text("a\nb\nc\n")
+        from agent_cli.tools.read_file import compute_line_hash
+
+        refs = [
+            f"{i}#{compute_line_hash(i, line)}"
+            for i, line in enumerate(["a", "b", "c"], 1)
+        ]
+        result, _ctx, calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                self._resp(
+                    [
+                        (
+                            "edit_file",
+                            {
+                                "path": str(f),
+                                "op": "replace",
+                                "pos": refs[0],
+                                "lines": "A",
+                            },
+                        ),
+                        (
+                            "edit_file",
+                            {
+                                "path": str(f),
+                                "op": "replace",
+                                "pos": refs[2],
+                                "lines": "C",
+                            },
+                        ),
+                    ]
+                ),
+                self._resp([("complete", {"result": "done"})]),
+            ],
+        )
+        assert result.output == "done"
+        second = calls[1]
+        assert _unpaired(second) == []
+        tools = [m for m in second if m["role"] == "tool"]
+        assert [m["tool_call_id"] for m in tools] == ["call_1_0", "call_1_1"]
+        assert "Edit complete" in tools[0]["content"]
+        assert "handled together" in tools[1]["content"]
+
+    def test_complete_gets_a_result_on_resume(self, tmp_path, caps, wf):
+        _result, _ctx, _calls = self._run(
+            tmp_path, caps, wf, [self._resp([("complete", {"result": "done"})])]
+        )
+        resumed = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf, resume=True
+        )
+        resumed.add({"role": "user", "content": "next"})
+        msgs = resumed.get_messages()
+        assert _unpaired(msgs) == []
+        i = next(k for k, m in enumerate(msgs) if m.get("tool_calls"))
+        assert msgs[i]["tool_calls"][0]["function"]["name"] == "complete"
+        assert msgs[i + 1] == {
+            "role": "tool",
+            "tool_call_id": "call_1_0",
+            "content": "completed task: Q",
+        }
+        assert msgs[i + 2]["role"] == "user"
+
+    def test_text_dialect_is_untouched(self):
+        d = get("json_fc")
+        msgs = [{"role": "assistant", "content": "x"}, {"role": "user", "content": "y"}]
+        assert d.pair_call_results(msgs) is msgs
+
+
+class TestServerCallsAreNotReparsed:
+    """v10.20.0. 호출은 서버가 구조로 준다 — 텍스트로 바꿔 다시 파싱하지 않는다."""
+
+    def _run(self, tmp_path, caps, wf, responses):
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        provider = MagicMock()
+        provider.call.side_effect = responses
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+        )
+        return result, ctx, [c.kwargs["messages"] for c in provider.call.call_args_list]
+
+    def test_array_in_the_prose_does_not_replace_the_real_call(
+        self, tmp_path, caps, wf
+    ):
+        """종전: 산문 속 `[{"action": …}]` 이 "첫 배열" 로 이겨 실제 호출이 버려졌다."""
+        (tmp_path / "real.txt").write_text("REAL")
+        result, ctx, calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                LLMResponse(
+                    content='Not [{"action": "read_file", "path": "decoy.txt"}] — the real one:',
+                    tool_calls=[
+                        {
+                            "id": "x",
+                            "name": "read_file",
+                            "input": {"path": str(tmp_path / "real.txt")},
+                        }
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {"id": "y", "name": "complete", "input": {"result": "done"}}
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+            ],
+        )
+        assert result.output == "done"
+        tool_msgs = [m for m in calls[1] if m["role"] == "tool"]
+        assert "REAL" in tool_msgs[0]["content"]
+        rec = next(r for r in ctx.get_raw_messages() if r.get("ops"))
+        assert rec["ops"][0]["action_input"]["path"].endswith("real.txt")
+        assert "decoy" in rec["thought"]  # 산문은 생각으로 남는다
+
+    def test_broken_arguments_are_reported_not_executed(self, tmp_path, caps, wf):
+        """provider 가 JSON 이 아닌 인자를 원문으로 넘기면: 실행 없이 어디서
+        깨졌는지 알린다. 종전엔 빈 인자로 실행돼 "필수 인자 없음" 이 됐다."""
+        target = tmp_path / "x.txt"
+        result, _ctx, calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "x",
+                            "name": "write_file",
+                            "input": None,
+                            "arguments": f'{{"path": "{target}", "content": "oops',
+                        }
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {"id": "y", "name": "complete", "input": {"result": "done"}}
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+            ],
+        )
+        assert result.output == "done"
+        assert not target.exists()
+        nudge = calls[1][-1]["content"]
+        assert "were not valid JSON" in nudge
+        assert "Missing required" not in nudge
+        assert '"content": "oops' in nudge  # 원문 인용
+
+    def test_broken_complete_does_not_end_the_run(self, tmp_path, caps, wf):
+        """종전: `complete` 의 깨진 인자가 빈 dict 가 되어 런이 답 없이 끝났다."""
+        result, _ctx, calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "x",
+                            "name": "complete",
+                            "input": None,
+                            "arguments": '{"result": "half',
+                        }
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {"id": "y", "name": "complete", "input": {"result": "whole"}}
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+            ],
+        )
+        assert result.output == "whole"
+        assert len(calls) == 2
+
+    def test_batch_rejections_land_on_their_own_call_ids(self, tmp_path, caps, wf):
+        """배치 안의 거부(깨진 인자·인자 누락·모르는 도구)는 자기 호출 id 의
+        `tool` 메시지로 간다 — 결과가 다른 호출에 붙지 않는다."""
+        (tmp_path / "a.txt").write_text("A")
+        (tmp_path / "d.txt").write_text("D")
+        result, _ctx, calls = self._run(
+            tmp_path,
+            caps,
+            wf,
+            [
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "1",
+                            "name": "read_file",
+                            "input": {"path": str(tmp_path / "a.txt")},
+                        },
+                        {
+                            "id": "2",
+                            "name": "read_file",
+                            "input": None,
+                            "arguments": "{bad",
+                        },
+                        {"id": "3", "name": "read_file", "input": {}},
+                        {"id": "4", "name": "nosuch_tool", "input": {"x": 1}},
+                        {
+                            "id": "5",
+                            "name": "read_file",
+                            "input": {"path": str(tmp_path / "d.txt")},
+                        },
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        {"id": "y", "name": "complete", "input": {"result": "done"}}
+                    ],
+                    usage=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
+            ],
+        )
+        assert result.output == "done"
+        tools = [m for m in calls[1] if m["role"] == "tool"]
+        assert [m["tool_call_id"] for m in tools] == [f"call_1_{i}" for i in range(5)]
+        assert "A" in tools[0]["content"]
+        assert "not valid JSON" in tools[1]["content"]
+        assert "Missing required" in tools[2]["content"]
+        assert "Unknown tool" in tools[3]["content"]
+        assert "D" in tools[4]["content"]
+
+    def test_terminal_result_quotes_the_request_it_answered(self):
+        """종결 결과는 그 턴이 답한 요청(첫 줄, 80자)을 인용한다 — 하니스
+        안내문(형식 넛지 등)은 요청이 아니다."""
+        d = get("native_fc")
+        long_req = "x" * 100 + "\nsecond line"
+        msgs = [
+            {"role": "user", "content": long_req},
+            {"role": "user", "content": "Your response contained no function call — …"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_2_0",
+                        "type": "function",
+                        "function": {"name": "complete", "arguments": "{}"},
+                    }
+                ],
+            },
+        ]
+        out = d.pair_call_results(msgs)
+        assert out[-1]["content"] == "completed task: " + "x" * 80
+        # 요청이 없으면 문구만
+        assert d.pair_call_results(msgs[2:])[-1]["content"] == "completed task"

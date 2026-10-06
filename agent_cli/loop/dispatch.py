@@ -23,6 +23,8 @@ from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 #: 오케스트레이터만 1회를 넘겼다.
 MAX_DEBT_NAGS = 3
 from agent_cli.dialects import try_foreign_parse
+from agent_cli.dialects.base import ParsedTurn
+from agent_cli.dialects.recovery.json import describe_json_error
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
@@ -191,6 +193,9 @@ class TurnDispatcher:
             recovery_kind=recovery_kind,
             store_emission=store_emission,
             nudge=nudge,
+            corrected_record=outcome.get("corrected_record")
+            if store_emission
+            else None,
         )
         if failure_signal is not None:
             outcome["failure_signal"] = failure_signal
@@ -238,7 +243,13 @@ class TurnDispatcher:
             pass  # 기록은 best-effort — 런을 막지 않는다
 
     def _handle_text_path(
-        self, llm_text: str, usage=None, *, thinking=None, swallowed: bool = False
+        self,
+        llm_text: str,
+        usage=None,
+        *,
+        thinking=None,
+        swallowed: bool = False,
+        server_ops: list | None = None,
     ):
         """Handle text parsing response (non-JSON fallback).
 
@@ -255,12 +266,38 @@ class TurnDispatcher:
         that fire an Intervention mutate ``outcome`` (failure_signal +
         primitives) before returning, and the trailing finally writes
         the record.
+
+        ``server_ops`` (v10.20.0): 서버 파싱 방언이 호출 목록에서 바로 만든
+        op 들 — ``llm_text`` 는 산문(생각)뿐이라 파싱하지 않는다. 기록은
+        ``corrected_record`` 로 ops shape 를 쓴다(산문만 직렬화하면 호출이
+        사라진다).
         """
         self._record_emission(llm_text)
         # v10.1.4: 빈 content 의 재시도 문구가 사고 채널 유무로 갈린다
         self._turn_thinking = (thinking or "").strip()
         self._turn_swallowed = bool(swallowed)
-        turn = self.cfg.dialect.parse_turn(llm_text)
+        server_record: dict | None = None
+        if server_ops:
+            thought = self.cfg.dialect.sanitize_thought(llm_text) or None
+            turn = ParsedTurn(
+                thought=thought, ops=list(server_ops), raw=llm_text, parse_stage=1
+            )
+            server_record = {
+                "role": "assistant",
+                "thought": thought or "",
+                "ops": [
+                    {
+                        "action": op.action,
+                        # 깨진 인자(str)는 실행되지 않는다 — 기록에는 빈 인자로.
+                        "action_input": op.action_input
+                        if isinstance(op.action_input, dict)
+                        else {},
+                    }
+                    for op in turn.ops
+                ],
+            }
+        else:
+            turn = self.cfg.dialect.parse_turn(llm_text)
         # Phase 3 — foreign-format 구제 (dialects DESIGN §9): 바인딩
         # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
         # ops 로 읽어내면 그 turn 으로 진행한다 (실측: 35B xml_fc 스트림의
@@ -268,7 +305,7 @@ class TurnDispatcher:
         # 분류에서 FOREIGN_FORMAT, 직렬화는 corrected_record 로 바인딩
         # 포맷의 캐노니컬 shape 재렌더 (누출 raw 재공급 없음 — 자기 교정).
         foreign_source: str | None = None
-        if not turn.ops:
+        if not turn.ops and server_ops is None:
             rescued = try_foreign_parse(self.cfg.dialect, llm_text)
             if rescued is not None:
                 turn, foreign_source = rescued
@@ -350,6 +387,8 @@ class TurnDispatcher:
             "primitives": ["action_inferred"] if action_inferred else [],
             "action_inferred": action_inferred,
         }
+        if server_record is not None:
+            outcome["corrected_record"] = server_record
         if foreign_source is not None:
             outcome["primitives"].append(f"foreign_parse:{foreign_source}")
             # 구제 turn 의 직렬화 원본 — 바인딩 포맷의 serialize 가 raw 를
@@ -690,8 +729,14 @@ class TurnDispatcher:
         ``None`` in that case ("executed, keep going"); every other branch
         returns a ToolResult/sentinel as before.
         """
-        # 7. Complete tool (text parsing path)
         _debug_log(f"PARSED iter={self.state.turn} action={op.action}")
+        # v10.20.0: 서버가 준 호출인데 인자가 JSON 이 아니었다(provider 가 원문을
+        # 문자열로 넘김). 어느 도구든 실행하지 않는다 — `complete` 도: 종전엔
+        # 빈 dict 로 바뀌어 "(Completed without result)" 로 런이 끝났다.
+        if isinstance(op.action_input, str):
+            return self._op_bad_arguments(llm_text, op, outcome, accumulate)
+
+        # 7. Complete tool (text parsing path)
         if op.action == "complete":
             return self._op_complete(llm_text, turn, op, outcome)
 
@@ -1613,6 +1658,34 @@ class TurnDispatcher:
         return _CONTINUE
 
     # No usable action on this op — fall through to recovery.
+    def _op_bad_arguments(self, llm_text: str, op, outcome: dict, accumulate):
+        """호출 인자가 JSON 이 아닌 op (v10.20.0) — 실행 없이 어디서 깨졌는지
+        알린다. 배치 안이면 그 op 의 자리에 실패 메모로, 홀로면 형식 개입으로."""
+        tool_name = op.action or "?"
+        raw = str(op.action_input)
+        where = describe_json_error(raw) or "not a JSON object"
+        err_msg = (
+            f"The arguments of your `{tool_name}` call were not valid JSON "
+            f"({where}), so the call was NOT executed. Re-send it with the "
+            "arguments as one JSON object."
+        )
+        outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
+        if accumulate is not None:
+            self.tools.accumulate_raw(
+                accumulate, tool_name, f"{err_msg}\n{BATCH_OP_SKIPPED_NOTE}", False
+            )
+            return None
+        return self._intervene(
+            llm_text,
+            f"Observation: {err_msg}\n{echo_prior_output(raw)}",
+            "bad arguments",
+            outcome,
+            failure_signal=FAILURE_SCHEMA_MISMATCH,
+            tool_name=tool_name,
+            recovery_kind="format",
+            store_emission=False,  # 인용(원문 인자)이 유일한 사본
+        )
+
     def _recover_unparsed(self, llm_text: str, turn, outcome: dict):
         """Missing action or parse failure — retry with the appropriate hint.
 

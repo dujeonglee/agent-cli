@@ -641,6 +641,8 @@ class ContextManager:
             ]
         for group in self._nl_cache:
             result.extend(group)
+        # 서버 파싱 방언: 호출마다 결과가 있게 맞춘다 (v10.20.0).
+        result = self.dialect.pair_call_results(result)
 
         # ── tail annotations (feed time only, never persisted) ──────────
         # Both are appended to the LAST message rather than added as new ones:
