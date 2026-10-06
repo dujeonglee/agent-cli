@@ -280,6 +280,142 @@ class TestReplayCarriesTurnsAndOrdinals:
         assert "hidx" not in conn.queue.get_nowait()[1]
 
 
+class TestResumeDrawsTheEvictedCards:
+    """압축으로 빠진 구간은 라이브에서 화면에 남아 "컨텍스트 밖 대화" 로 접힌다.
+    재시작한 세션도 그 카드를 다시 그려야 접을 것이 있다 — 종전의 재생은 캐시만
+    돌아, 재시작한 방에서는 그 묶음이 통째로 없었다 (vrga27 실측, v10.24.1)."""
+
+    def test_evicted_records_are_the_prefix_with_their_ordinals(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        assert ctx.evicted_records() == []  # 빠진 게 없다
+        ctx.compact_now()
+        gone = ctx.context_view()["gone"]["hidx"]
+        records = [json.loads(ln) for ln in ctx.history_path.read_text().splitlines()]
+        evicted = ctx.evicted_records()
+        # 선두 system(서수 0)은 대화가 아니다 — 1 부터 경계 직전까지, 빈틈 없이
+        assert [h for h, _ in evicted] == list(range(1, gone))
+        assert [m for _, m in evicted] == records[1:gone]
+
+    def test_in_memory_context_has_nothing_evicted(self, tmp_path):
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=1000)
+        assert ctx.evicted_records() == []
+
+    def test_resumed_session_replays_the_cards_before_the_boundary(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        ctx.compact_now()
+        gone = ctx.context_view()["gone"]["hidx"]
+        resumed = ContextManager(
+            tmp_path / "s", max_context_tokens=100_000, resume=True
+        )
+        r = WebRenderer()
+        r.replay_from_history(resumed)
+        cards = [
+            (e, dict(d))
+            for e, d in r._event_buffer
+            if e in ("user_message", "assistant_turn", "observation")
+        ]
+        ordinals = [d["hidx"] for _, d in cards]
+        assert ordinals == sorted(ordinals)  # 대화 순서 그대로
+        # 빠진 구간 전부(1..경계-1)와 남은 구간이 다 카드로 온다
+        assert set(range(1, gone)) <= set(ordinals)
+        assert max(ordinals) == len(ctx.history_path.read_text().splitlines()) - 1
+        # 맨 처음 요청도 다시 보인다
+        assert cards[0][0] == "user_message" and cards[0][1]["hidx"] == 1
+        assert cards[0][1]["content"] == "do the thing"
+
+    def test_evicted_cards_come_before_the_cached_ones(self):
+        class _Ctx:
+            def get_raw_messages(self):
+                return [{"role": "user", "content": "남은 요청"}]
+
+            def cache_ordinals(self):
+                return [5]
+
+            def evicted_records(self):
+                return [
+                    (3, {"role": "user", "content": "빠진 요청"}),
+                    (4, {"role": "user", "tool": "shell", "content": "out"}),
+                ]
+
+        r = WebRenderer()
+        r.replay_from_history(_Ctx())
+        got = [(e, dict(d)["hidx"]) for e, d in r._event_buffer]
+        assert got == [("user_message", 3), ("observation", 4), ("user_message", 5)]
+
+
+class TestInlineCardKnowsTheRecordThatOpenedIt:
+    """에이전트·스킬 카드는 main 의 레코드가 아니라 사이드카에서 그려져 번호가
+    없었다 — 호출한 레코드가 컨텍스트에서 빠져도 카드는 접히지도 흐려지지도
+    않았다 (v10.24.1). ``scope_start`` 가 부모 컨텍스트의 서수를 싣는다."""
+
+    @staticmethod
+    def _starts(r):
+        return {
+            dict(d)["task_id"]: dict(d)
+            for e, d in r._event_buffer
+            if e == "scope_start"
+        }
+
+    def test_scope_start_carries_the_parents_latest_record(self):
+        r = WebRenderer()
+        r.push_user_message("리뷰해줘", hidx=6)
+        r.note_record(7)
+        r.observation("ok", turn=1, tool_name="shell")
+        r.begin_scope(task_id="t1", kind="run", agent="reviewer", label="리뷰")
+        # 카드 안의 서수는 그 에이전트 자신의 history — 부모와 섞이지 않는다
+        r.note_record(2)
+        r.observation("inner", turn=1, tool_name="shell")
+        r.begin_scope(task_id="t2", kind="skill", label="skill:plan")
+        r.end_scope(task_id="t2", kind="skill")
+        r.end_scope(task_id="t1", kind="run")
+        r.begin_scope(task_id="t3", kind="run", label="다음")
+        r.end_scope(task_id="t3", kind="run")
+        starts = self._starts(r)
+        assert starts["t1"]["hidx"] == 7
+        assert starts["t2"]["hidx"] == 2 and starts["t2"]["parent"] == "t1"
+        assert starts["t3"]["hidx"] == 7  # main 의 서수는 카드 안의 일로 안 바뀐다
+        assert "t1" not in r._container_hidx and "t2" not in r._container_hidx
+
+    def test_no_ordinal_no_field(self):
+        r = WebRenderer()
+        r.push_user_message("번호 없는 카드")
+        r.begin_scope(task_id="t1", kind="run", label="x")
+        assert "hidx" not in self._starts(r)["t1"]
+
+    def test_parallel_worker_reads_the_passed_parent(self):
+        import threading
+
+        r = WebRenderer()
+        r.push_user_message("둘 다 해줘", hidx=4)
+        t = threading.Thread(
+            target=lambda: r.begin_scope(
+                task_id="w1", kind="run", label="워커", parent=""
+            )
+        )
+        t.start()
+        t.join()
+        assert self._starts(r)["w1"]["hidx"] == 4
+
+    def test_ordinal_survives_resume_through_the_sidecar(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.push_user_message("리뷰해줘", hidx=3)
+        r.begin_scope(task_id="t1", kind="run", label="리뷰")
+        r.end_scope(task_id="t1", kind="run")
+        logged = [
+            json.loads(ln)
+            for ln in (tmp_path / "scopes.jsonl").read_text().splitlines()
+        ]
+        assert logged[0]["event"] == "scope_start" and logged[0]["hidx"] == 3
+
+        class _Empty:
+            def get_raw_messages(self):
+                return []
+
+        resumed = WebRenderer(session_dir=str(tmp_path))
+        resumed.replay_session(_Empty())
+        assert self._starts(resumed)["t1"]["hidx"] == 3
+
+
 class TestLiveDispatchOrdinals:
     """라이브 경로: 행동 카드는 자기 assistant 레코드(레코드보다 먼저 그려짐),
     관찰 카드는 자기 관찰 레코드의 서수를 싣는다."""

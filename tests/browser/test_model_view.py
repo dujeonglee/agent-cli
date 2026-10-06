@@ -273,6 +273,66 @@ def test_ended_inline_scope_view_stays_in_its_card(stack, page):
     assert "압축 요약" in page.inner_text("#messages > .ctx-top .ctx-bar")
 
 
+class _CtxAt(_Ctx):
+    """서수가 ``start`` 부터인 캐시 — 재생을 두 토막으로 나눠 그 사이에 인라인
+    카드를 연다."""
+
+    def __init__(self, msgs, start):
+        super().__init__(msgs)
+        self._start = start
+
+    def cache_ordinals(self):
+        return list(range(self._start, self._start + len(self._msgs)))
+
+
+def test_inline_card_folds_with_the_record_that_opened_it(stack, page):
+    """에이전트 카드는 자기를 연 레코드(부모 컨텍스트의 서수)를 안다 — 그 레코드가
+    빠지면 카드째 묶음으로 들어간다. 종전엔 번호가 없어 호출이 컨텍스트에서 빠진
+    뒤에도 멀쩡히 떠 있었다 (vrga27 실측, v10.24.1). 경계 뒤에 열린 카드는 남는다."""
+    r = stack.renderer
+    stack.emit_ready()
+    hist = _history7()
+    r.replay_from_history(_CtxAt(hist[:3], 0))
+    _run_inline(stack, "t1")  # 서수 2 뒤에 열린다 — 경계(4) 앞
+    r.replay_from_history(_CtxAt(hist[3:], 3))
+    _run_inline(stack, "t2")  # 서수 6 뒤 — 컨텍스트 안
+    r.note_system_prompt(_SECTIONS, 4, grammar=(False, "root ::= x"), tail=_tail(4))
+    r.context_view({"gone": {"hidx": 4}, "summary": _SUMMARY, "compactions": 1})
+    errors = _open(page, stack)
+    page.wait_for_selector("#messages > .ctx-fold", timeout=8000)
+    state = lambda: page.evaluate(
+        """() => {
+            const g = id => document.querySelector(
+                '.card-task-group[data-task-id="' + id + '"]');
+            const tag = (e, sel) => getComputedStyle(
+                e.querySelector(sel), '::after').content;
+            return {
+                text: document.querySelector('#messages > .ctx-fold').textContent,
+                t1: [g('t1').dataset.hidx, g('t1').classList.contains('ctx-gone'),
+                     g('t1').offsetParent !== null],
+                t2: [g('t2').dataset.hidx, g('t2').classList.contains('ctx-gone'),
+                     g('t2').offsetParent !== null],
+                head1: tag(g('t1'), ':scope > .task-header .task-title'),
+                head2: tag(g('t2'), ':scope > .task-header .task-title'),
+                inner: [...g('t1').querySelectorAll(
+                    '.task-body .row .s, .task-body .bubble, .task-body .final')]
+                    .map(e => getComputedStyle(e, '::after').content),
+            };
+        }"""
+    )
+    s = state()
+    assert "카드 4개" in s["text"]  # main 의 빠진 카드 3 + 에이전트 카드 1
+    assert s["t1"] == ["2", True, False]  # 묶음 안, 기본 접힘
+    assert s["t2"] == ["6", False, True]
+    page.click("#messages > .ctx-fold")
+    s = state()
+    assert s["t1"] == ["2", True, True]  # 펼치면 흐린 카드로
+    assert "컨텍스트 밖" in s["head1"] and "컨텍스트 밖" not in s["head2"]
+    # 속 카드는 그 에이전트 자신의 컨텍스트로 판정한다 — 꼬리표를 물려받지 않는다
+    assert s["inner"] and all("컨텍스트 밖" not in c for c in s["inner"])
+    assert errors == []
+
+
 def test_resident_agent_view_does_not_replace_mains(stack, page):
     """상주 에이전트의 뷰는 런 스코프(`key#seq`)가 아니라 그 에이전트의 프롬프트
     스코프 = 채널 key 로 온다. 프런트가 모르는 id 를 main 으로 돌려, 에이전트가

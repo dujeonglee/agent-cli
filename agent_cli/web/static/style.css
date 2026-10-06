@@ -1596,6 +1596,15 @@ footer {
   border: 1px solid var(--fail-soft-border); border-radius: 999px; padding: 0 6px; margin-left: 8px; vertical-align: 1px;
 }
 .card.ctx-gone .bubble::after { color: inherit; border-color: currentColor; opacity: .85; }
+/* 빠진 인라인 카드(에이전트·스킬)는 꼬리표를 머리에 단다. 속 카드는 그 에이전트
+   자신의 컨텍스트로 판정하므로, 바깥 카드가 빠졌다고 꼬리표를 물려받지 않는다. */
+.card-task-group.ctx-gone > .task-header .task-title::after {
+  content: "컨텍스트 밖"; font: 10px ui-monospace, monospace; color: var(--fail);
+  border: 1px solid var(--fail-soft-border); border-radius: 999px; padding: 0 6px; margin-left: 8px; vertical-align: 1px;
+}
+.card-task-group.ctx-gone .card:not(.ctx-gone) .row .s::after,
+.card-task-group.ctx-gone .card:not(.ctx-gone) .bubble::after,
+.card-task-group.ctx-gone .card:not(.ctx-gone) .final::after { content: none; }
 .card.ctx-folded { display: none; }
 .ctx-fold {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px;

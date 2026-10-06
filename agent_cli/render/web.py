@@ -252,6 +252,9 @@ class WebRenderer(Renderer):
         # 다음 카드 이벤트가 가리킬 history 레코드 서수 (v10.6.0, 모델 시점) —
         # 스레드 로컬, 카드 이벤트 하나가 소비한다.
         self._pending_hidx: dict[int, int] = {}
+        # 컨테이너(스코프 task_id, main 은 "")별 마지막 카드의 history 서수 —
+        # 그 안에서 열리는 인라인 카드가 "나를 부른 레코드" 로 싣는다 (v10.24.1).
+        self._container_hidx: dict[str, int] = {}
         # 스코프(task_id) → 스트리밍 누적 {stream_chars, thinking_chars, last_*}.
         # 인스턴스 하나로 두면 동시에 도는 에이전트들의 토큰이 더해진다 (v9.9.0).
         self._tick_state: dict[str, dict[str, float]] = {}
@@ -382,6 +385,10 @@ class WebRenderer(Renderer):
             hidx = self._pending_hidx.pop(tid, None)
             if hidx is not None:
                 data = {**data, "hidx": hidx}
+        if event in _CARD_EVENTS and data.get("hidx") is not None:
+            self._container_hidx[str(data.get("task_id") or "")] = data["hidx"]
+        elif event == "scope_end":  # 닫힌 스코프는 더는 누구의 부모도 아니다
+            self._container_hidx.pop(str(data.get("task_id") or ""), None)
         # Server-stamp emit time once, at the single fan-out point, so every
         # card-producing event (incl. delegate/skill inner cards, which route
         # through here with their ``task_id``) carries a ``ts``. Baked into the
@@ -669,7 +676,14 @@ class WebRenderer(Renderer):
         ``ctx_dir`` — the scope's own context directory relative to the session
         dir. Logged into the resume sidecar with the rest of the payload; the
         resume replay uses it to re-emit the scope's INNER turns into its card
-        (they live in that directory's ``history.jsonl``, not in main's)."""
+        (they live in that directory's ``history.jsonl``, not in main's).
+
+        The event also carries ``hidx`` — the history ordinal of the record
+        that opened this scope, in the PARENT's context (the parent's latest
+        card: the calling step, or the user's command for a slash-invoked
+        skill). The chat judges the whole card by it: once that record leaves
+        the parent's context, the card folds into "컨텍스트 밖 대화" with the
+        rest (v10.24.1). Absent when the parent's cards carry no ordinal."""
         tid = threading.get_ident()
         with self._lock:
             stack = self._thread_prompt_scopes.setdefault(tid, [])
@@ -681,6 +695,7 @@ class WebRenderer(Renderer):
             # nesting rather than collapsing the child onto main's slot.
             depth = 0 if not eff_parent else self._scope_depths.get(eff_parent, 0) + 1
             self._scope_depths[task_id] = depth
+            caller_hidx = self._container_hidx.get(eff_parent)
             self._thread_to_task[tid] = task_id
             stack.append(task_id)
             # Remember the chip-row label for this scope; the snapshot itself
@@ -706,6 +721,8 @@ class WebRenderer(Renderer):
             payload["ts"] = ts
         if ctx_dir:
             payload["ctx_dir"] = ctx_dir
+        if caller_hidx is not None:
+            payload["hidx"] = caller_hidx
         self._emit("scope_start", payload, persistent=True)
 
     def end_scope(
@@ -993,9 +1010,11 @@ class WebRenderer(Renderer):
         """Re-emit persistent events from ``ctx`` so reconnecting
         clients see prior turns.
 
-        Walks the ContextManager's raw cache (already populated by
-        ``ContextManager(..., resume=True)``) and translates each
-        message back into the live-loop's persistent event sequence:
+        Walks the records evicted from the cache first (compaction · FIFO ·
+        restore trim — ``ctx.evicted_records()``), then the ContextManager's
+        raw cache (already populated by ``ContextManager(..., resume=True)``),
+        and translates each message back into the live-loop's persistent
+        event sequence:
         ``user_message`` for user input, ``observation`` for tool
         results, ``assistant_turn`` for assistant thought/action/final.
 
@@ -1045,7 +1064,12 @@ class WebRenderer(Renderer):
             if hasattr(ctx, "cache_ordinals")
             else [None] * len(msgs)
         )
-        for msg, hidx in zip(msgs, ordinals):
+        # 캐시에서 빠진 접두사도 그린다 (v10.24.1) — 라이브에서는 빠진 카드가
+        # 화면에 남아 "컨텍스트 밖 대화" 로 접히는데, 캐시만 돌면 재시작한
+        # 세션에는 접을 카드가 없어 그 묶음이 통째로 사라졌다. 서수가 경계
+        # (``ctx_view.gone.hidx``)보다 작으므로 프런트가 같은 규칙으로 접는다.
+        evicted = ctx.evicted_records() if hasattr(ctx, "evicted_records") else []
+        for hidx, msg in [*evicted, *zip(ordinals, msgs)]:
             # Resumed cards show the step's original time (from the enriched
             # history record), not the resume moment. ``_restore_cache`` loads
             # full records, so ``ts`` survives in the cache; legacy pre-ts
