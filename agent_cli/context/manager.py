@@ -661,8 +661,12 @@ class ContextManager:
         # recency, and zero KV-prefix cost (see prompts/session_state.py).
         if self._session_state:
             tail += "\n\n" + self._session_state
-        if tail and result and result[-1].get("role") in ("user", "tool"):
-            # 서버 파싱 방언(v10.2.0)은 마지막이 `tool` 메시지 — 꼬리는 그 본문 끝에.
+        if tail and result and result[-1].get("role") == "tool":
+            # 서버 파싱 방언: 꼬리는 도구 결과가 아니라 하니스의 말 — `tool` 뒤에
+            # user 메시지로 따로 둔다 (OpenAI 규격상 허용; 종전엔 본문 끝에 붙여
+            # 도구가 한 말처럼 보였다).
+            result.append({"role": "user", "content": tail.strip()})
+        elif tail and result and result[-1].get("role") == "user":
             last = dict(result[-1])
             last["content"] = last.get("content", "") + tail
             result[-1] = last
