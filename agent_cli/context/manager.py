@@ -1205,21 +1205,7 @@ class ContextManager:
             "compactions": self._compaction_count,
             "folded_nudges": self._folded_count,
         }
-        first_cached = next(
-            (
-                h
-                for h, m in zip(self._cache_hidx, self._cache)
-                if m.get("role") != "system"
-            ),
-            None,
-        )
-        records = (
-            store.load_records(self._history_path)
-            if first_cached is not None and self._history_path.is_file()
-            else []
-        )
-        first_dyn = 1 if records and records[0].get("role") == "system" else 0
-        evicted = records[first_dyn:first_cached] if first_cached is not None else []
+        first_cached, evicted = self._evicted_prefix()
         turns = None
         if evicted:
             view["gone"] = {"hidx": first_cached}
@@ -1237,6 +1223,35 @@ class ContextManager:
                 "after_tokens": after,
             }
         return view
+
+    def _evicted_prefix(self) -> tuple[int | None, list[dict]]:
+        """(캐시에 남은 첫 동적 레코드의 history 서수, 그 앞에서 빠진 레코드들).
+
+        압축·FIFO·복원 트림은 모두 앞에서부터 비우므로 빠진 것은 접두사 하나다.
+        history 의 선두 system 레코드는 대화가 아니라 세지 않는다."""
+        first_cached = next(
+            (
+                h
+                for h, m in zip(self._cache_hidx, self._cache)
+                if m.get("role") != "system"
+            ),
+            None,
+        )
+        if first_cached is None or not self._history_path.is_file():
+            return first_cached, []
+        records = store.load_records(self._history_path)
+        first_dyn = 1 if records and records[0].get("role") == "system" else 0
+        return first_cached, records[first_dyn:first_cached]
+
+    def evicted_records(self) -> list[tuple[int, dict]]:
+        """캐시에서 빠진 접두사의 ``(history 서수, 레코드)`` — resume 재생이
+        "컨텍스트 밖 대화" 의 카드를 다시 그리는 데 쓴다 (v10.24.1). 라이브에서는
+        빠진 카드가 화면에 남아 접히는데, 재생이 캐시만 돌면 그 카드가 아예
+        없어 접을 것이 없었다."""
+        first_cached, evicted = self._evicted_prefix()
+        if first_cached is None:
+            return []
+        return list(zip(range(first_cached - len(evicted), first_cached), evicted))
 
     def _notify_context_view(self) -> None:
         """캐시가 바뀐 지점(압축·FIFO·fold)마다 — 실패가 루프를 막지 않는다."""

@@ -673,11 +673,14 @@
   /** 스코프 카드를 연다. 중첩 블록의 종류는 `kind` 가 가른다 (docs/chat-ui §3):
    * `skill` → 🪄 보라 레일, 그 외 → 🦀 inline agent · amber 레일.
    * 상주 에이전트는 여기 오지 않는다 (``noteScopeChannel`` 참조). */
-  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth) {
+  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, hidx) {
     if (taskGroups[taskId]) return taskGroups[taskId];
 
     const card = el("div", ["card", "card-task-group"]);
     card.dataset.taskId = taskId;
+    // 이 카드를 연 레코드의 서수(부모 컨텍스트 기준) — 그 레코드가 부모의
+    // 컨텍스트에서 빠지면 카드째 "컨텍스트 밖 대화" 로 접힌다 (v10.24.1).
+    if (hidx != null) card.dataset.hidx = String(hidx);
     card.dataset.kind = kind || "run";
     card.dataset.depth = String(depth || 0);
     card.classList.add(kind === "skill" ? "scope-skill" : "scope-inline");
@@ -2877,6 +2880,7 @@
           d.kind || "run",
           d.parent || "",
           d.depth || 0,
+          d.hidx,
         );
     // Register the parent link + light up the ancestors' "child running" hint.
     // AFTER ensureTaskGroup so the new card is already nested inside its parent.
