@@ -9,9 +9,11 @@ import threading
 from agent_cli import verbose as _verbose
 from agent_cli.constants import (
     CONTEXT_CLAMP_NOTICE,
+    INCOMPLETE_TOOL_CALL_NOTICE,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
     RUNAWAY_NOTICE,
+    STOP_INCOMPLETE_TOOL_CALL,
 )
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as _get_dialect
@@ -1064,7 +1066,12 @@ class AgentLoop:
         # command (shell), or a clipped answer (complete). Do NOT dispatch
         # it; record a notice so the model retries with a smaller unit.
         # (continuation — resuming the cut-off output — is a follow-up.)
-        if getattr(response, "stop_reason", None) == "length":
+        # v10.19.1: an ``incomplete_tool_call`` stop is the same cut seen from
+        # a server that reports it as a stream error (omlx, native calls).
+        if getattr(response, "stop_reason", None) in (
+            "length",
+            STOP_INCOMPLETE_TOOL_CALL,
+        ):
             result = self._on_output_truncated(llm_text, response)
             self._fire_hook("OnTurnEnd")
             return result
@@ -1119,7 +1126,9 @@ class AgentLoop:
         output hit the token cap (up to 32K tokens), and it used to be stored
         whole and never folded. Now it follows the other retries — nothing
         stored, ``recovery_kind="format"`` so the note folds once the model
-        recovers. Returns ``_CONTINUE`` so the loop gives it another turn.
+        recovers — and replaces an earlier unresolved one (v10.19.1: only the
+        latest notice stays in context across consecutive cuts). Returns
+        ``_CONTINUE`` so the loop gives it another turn.
         """
         from agent_cli.recovery.primitives import echo_prior_output
 
@@ -1133,10 +1142,16 @@ class AgentLoop:
             self._llm.last_max_tokens_clamped,
         )
         self._cut_signal = FAILURE_OUTPUT_TRUNCATED
+        stop_reason = getattr(response, "stop_reason", None) or "length"
+        notice = OUTPUT_TRUNCATED_NOTICE
+        if stop_reason == STOP_INCOMPLETE_TOOL_CALL:
+            # No usage comes with the stream error, so the cap can't be
+            # classified — the row says what the server said instead.
+            detail = STOP_INCOMPLETE_TOOL_CALL
+            notice = INCOMPLETE_TOOL_CALL_NOTICE
         # v10.11.0: the clamp IS the window being full — compact now, before
         # the notice, so the retry sees the room back (ratio 1.0 means this
         # is the normal compaction trigger, not a rescue).
-        notice = OUTPUT_TRUNCATED_NOTICE
         if detail == "context_clamp" and self.ctx is not None:
             before, after = self.ctx.compact_now()
             if after < before:
@@ -1159,11 +1174,11 @@ class AgentLoop:
             parse_stage=0,
             failure_signal=FAILURE_OUTPUT_TRUNCATED,
             usage=usage,
-            stop_reason="length",
+            stop_reason=stop_reason,
             stop_detail=detail,
         )
         _debug_log(
-            f"Output truncated (stop_reason=length, {detail}) at turn "
+            f"Output truncated (stop_reason={stop_reason}, {detail}) at turn "
             f"{self.turn}; action not dispatched"
         )
         return self._CONTINUE

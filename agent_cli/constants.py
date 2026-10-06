@@ -210,6 +210,20 @@ RUNAWAY_NOTICE = (
     "with edit_file."
 )
 
+# v10.19.1: the response ended in the middle of a native tool call. omlx sends
+# an in-stream ``incomplete_tool_call`` error instead of a ``length`` finish
+# (the unfinished call is withheld, so there is nothing to quote). Same
+# contract as the cap cut — not executed, retry smaller — worded for what the
+# model can act on: the call was too large for one response.
+STOP_INCOMPLETE_TOOL_CALL = "incomplete_tool_call"
+INCOMPLETE_TOOL_CALL_NOTICE = (
+    "⚠️ Your previous response ended in the middle of a tool call, so the "
+    "call was incomplete and was NOT executed. One call was too large for a "
+    "single response. Retry with a smaller unit — e.g. write the first part "
+    "of a large file with write_file, then add the rest in further calls "
+    "with edit_file."
+)
+
 
 # ── duration 파서 — 표면 둘이 공유 (v9.11.0) ────────────────
 #
