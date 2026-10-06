@@ -3875,6 +3875,89 @@ class TestOutputTruncationGuard:
         )
         assert result.output == "full answer"
 
+    @pytest.mark.parametrize("stop_reason", ["length", "runaway"])
+    def test_consecutive_cuts_keep_only_the_latest_notice(
+        self, caps, tmp_path, stop_reason
+    ):
+        """연속으로 끊겨도 다음 호출에는 **마지막** 안내·인용 하나만 실린다
+        (v10.19.1). 종전엔 이 경로가 접기를 안 거쳐, 세 번 끊기면 실패 인용
+        셋이 쌓여 같은 실수의 재료가 됐다."""
+        from agent_cli.context.manager import ContextManager
+
+        outs = [
+            LLMResponse(
+                content=json.dumps(
+                    {"action": "write_file", "path": "x", "content": f"partial{i}"}
+                ),
+                stop_reason=stop_reason,
+            )
+            for i in (1, 2, 3)
+        ]
+        outs.append(LLMResponse(content=_complete("done")))
+        seen = []
+
+        def call(*args, **kwargs):
+            # 메시지 목록은 루프가 제자리에서 고치므로 호출 시점에 찍어 둔다.
+            msgs = kwargs.get("messages") or args[0]
+            blob = "\n".join(str(m.get("content", "")) for m in msgs)
+            seen.append([q for q in ("partial1", "partial2", "partial3") if q in blob])
+            return outs[len(seen) - 1]
+
+        provider = MagicMock()
+        provider.call.side_effect = call
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="write x",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert seen == [[], ["partial1"], ["partial2"], ["partial3"]]
+        assert result.output == "done"
+
+    def test_incomplete_tool_call_gets_its_own_notice(self, caps, tmp_path):
+        """서버가 도구 호출 도중 끊김을 알리면(빈 본문) "아무것도 안 냈다" 가
+        아니라 "호출이 중간에 끊겼다 — 더 작게" 를 받는다 (v10.19.1)."""
+        from agent_cli.context.manager import ContextManager
+
+        outs = [
+            LLMResponse(content="", stop_reason="incomplete_tool_call"),
+            LLMResponse(content=_complete("done")),
+        ]
+        seen = []
+
+        def call(*args, **kwargs):
+            msgs = kwargs.get("messages") or args[0]
+            seen.append("\n".join(str(m.get("content", "")) for m in msgs))
+            return outs[len(seen) - 1]
+
+        provider = MagicMock()
+        provider.call.side_effect = call
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="write x",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert "ended in the middle of a tool call" in seen[1]
+        assert "smaller unit" in seen[1]
+        assert "output-token limit" not in seen[1]
+        assert result.output == "done"
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "turns.jsonl").read_text().splitlines()
+        ]
+        assert (
+            rows[0]["failure_signal"],
+            rows[0]["stop_reason"],
+            rows[0]["stop_detail"],
+        ) == ("OUTPUT_TRUNCATED", "incomplete_tool_call", "incomplete_tool_call")
+
     def test_normal_stop_dispatches_action(self, caps, tmp_path):
         """stop_reason='stop' (or None) → action runs as usual (no guard)."""
         from agent_cli.context.manager import ContextManager

@@ -446,6 +446,29 @@ class TestRunSseStreamSkeleton:
         assert acc.usage_fields == {"input_tokens": 10, "output_tokens": 2}
         assert acc.ttft_ns > 0 and acc.decode_ns >= 0
 
+    def test_incomplete_tool_call_error_becomes_a_stop_reason(self):
+        """omlx 는 출력이 도구 호출 도중에 끝나면 finish_reason 없이 스트림
+        오류 하나만 보낸다 (v10.19.1). 버리면 루프에는 빈 응답으로 보인다."""
+        acc, _chunks = self._run(
+            [
+                'data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}',
+                (
+                    'data: {"error": {"message": "Model output contains an '
+                    'unrecoverable tool call.", "type": "server_error", '
+                    '"param": null, "code": "incomplete_tool_call"}}'
+                ),
+                "data: [DONE]",
+            ]
+        )
+        assert acc.stop_reason == "incomplete_tool_call"
+        assert acc.content == ""
+
+    def test_other_stream_error_is_not_a_stop_reason(self):
+        acc, _chunks = self._run(
+            ['data: {"error": {"message": "boom", "code": "server_busy"}}']
+        )
+        assert acc.stop_reason is None
+
     def test_broken_json_line_tolerated(self):
         # C6 대칭화: JSONDecodeError 관용은 이제 양 provider 골격 공통
         acc, _chunks = self._run(

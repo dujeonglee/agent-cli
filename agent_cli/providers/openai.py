@@ -11,6 +11,7 @@ import requests
 
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
+    STOP_INCOMPLETE_TOOL_CALL,
 )
 from agent_cli.providers.base import (
     CallSettings,
@@ -250,8 +251,17 @@ def _map_openai_payload(data: dict) -> StreamEvent | None:
     - ``delta.reasoning_content`` → thinking (vLLM 관례 — qwen3/R1 계열;
       OpenAI 호스티드는 미노출이라 자연 무시)
     - ``finish_reason`` → stop_reason
+    - 스트림 안의 ``error`` 중 ``code == "incomplete_tool_call"`` → stop_reason
+      (v10.19.1). omlx 는 출력이 도구 호출 **도중에** 끝나면(대개 출력 한도)
+      finish_reason·usage 없이 이 오류 하나만 보낸다. 종전엔 choices 가 없어
+      버려졌고, 루프에는 빈 응답(NO_OUTPUT)으로 보여 모델이 "아무것도 안
+      냈다" 는 안내만 받고 같은 큰 호출을 되풀이했다(실측: 10런에서 124번).
     """
     ev = StreamEvent()
+    err = data.get("error")
+    if isinstance(err, dict) and err.get("code") == STOP_INCOMPLETE_TOOL_CALL:
+        ev.stop_reason = STOP_INCOMPLETE_TOOL_CALL
+        return ev
     usage_data = data.get("usage")
     if usage_data:
         ev.usage_fields = {
