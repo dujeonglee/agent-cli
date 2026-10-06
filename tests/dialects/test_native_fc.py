@@ -120,7 +120,7 @@ class TestRenderToRequest:
 
 
 class TestContextManagerAssembly:
-    def test_messages_pair_ids_and_tail_goes_on_last_tool_message(self, tmp_path, wf):
+    def test_messages_pair_ids_and_tail_is_its_own_user_message(self, tmp_path, wf):
         ctx = ContextManager(
             session_dir=tmp_path, max_context_tokens=20_000, dialect=wf
         )
@@ -151,13 +151,14 @@ class TestContextManagerAssembly:
         ctx.set_session_state("## Live Agents\n(none)")
         msgs = ctx.get_messages()
         roles = [m["role"] for m in msgs]
-        assert roles == ["system", "user", "assistant", "tool", "tool"]
+        # 꼬리(세션 상태·complete 안내)는 도구 결과가 아니라 하니스의 말 — `tool`
+        # 뒤 user 메시지로 따로 (v10.22.0; 종전엔 마지막 tool 본문 끝에 붙였다).
+        assert roles == ["system", "user", "assistant", "tool", "tool", "user"]
         ids = [tc["id"] for tc in msgs[2]["tool_calls"]]
-        assert [m["tool_call_id"] for m in msgs[3:]] == ids
-        assert (
-            msgs[-1]["content"].startswith("B")
-            and "## Live Agents" in msgs[-1]["content"]
-        )
+        assert [m["tool_call_id"] for m in msgs[3:5]] == ids
+        assert msgs[4]["content"] == "B"
+        assert msgs[-1]["content"].startswith("(If nothing remains to do")
+        assert "## Live Agents" in msgs[-1]["content"]
         # 같은 기록을 텍스트 방언으로 읽으면 종전 모양 (스키마 공유)
         ctx2 = ContextManager(
             session_dir=tmp_path,
@@ -443,7 +444,8 @@ class TestRejectedCallKeepsTheMessageOrderValid:
             ],
         )
         assert _unpaired(calls[1]) == []
-        assert calls[1][-1]["role"] == "tool"
+        assert calls[1][-2]["role"] == "tool"
+        assert calls[1][-1]["role"] == "user"  # 꼬리(complete 안내)
 
 
 class TestEveryCallGetsAResult:
