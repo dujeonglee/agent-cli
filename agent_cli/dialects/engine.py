@@ -34,6 +34,7 @@ from agent_cli.dialects.recovery.json import (
     _op_anchor,
     close_unbalanced,
     describe_json_error,
+    op_group_count,
 )
 from agent_cli.dialects.recovery.tagged import (
     _extract_params_lenient,
@@ -685,6 +686,11 @@ class Dialect(DialectBase):
                 )
                 for idx, it in enumerate(items)
             ]
+
+        # 호출이 산문으로 나뉜 두 군데 이상에 있으면 고르지 않는다 (v10.24.0) —
+        # 첫 것도 마지막 것도 한 경우에는 틀린 호출이다(``op_group_count``).
+        if op_group_count(llm_text) >= 2:
+            return ParsedTurn(raw=llm_text, parse_stage=0, split_calls=True)
 
         # 앵커는 _op_anchor 가 고른다 — 본문 첫 `[`/`{` 가 아니라 **자격 있는** op
         # 시작(산문 속 `board[i][j]`, `- [ ]`, `[문서](url)` 를 거른다).

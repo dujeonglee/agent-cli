@@ -203,6 +203,8 @@ _FORMAT_AGNOSTIC_USER_PREFIXES: tuple[str, ...] = (
     "⚡ Another user request arrived",
     "You have called",
     "You were asked to:",
+    # v10.24.0: 호출이 두 군데에 있던 출력의 되묻기 (dialect_recovery.SPLIT_CALLS_FRAMING)
+    "Your response contained tool calls in more than one place",
 )
 
 

@@ -5356,3 +5356,65 @@ class TestInputSplit:
             )
         spy.assert_not_called()
         assert ctx.token_ratio is None
+
+
+class TestSplitCallsAreAskedAgain:
+    """v10.24.0 — 호출이 산문으로 나뉜 두 군데에 있으면 어느 것도 실행하지 않고
+    형식 거부로 되묻는다(다른 형식 거부와 같은 규칙: 저장 안 함·인용·성공 시 접힘)."""
+
+    def test_nothing_runs_until_the_model_resends_one_call_site(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        real = tmp_path / "notes.txt"
+        real.write_text("hello world\n")
+        imagined = tmp_path / "first.txt"
+        split = (
+            json.dumps([{"action": "read_file", "path": str(real)}])
+            + '\n\nIt starts with "hello", so now I write it:\n\n'
+            + json.dumps(
+                [{"action": "write_file", "path": str(imagined), "content": "hello"}]
+            )
+        )
+        outs = [
+            LLMResponse(content=split),
+            LLMResponse(
+                content=json.dumps([{"action": "read_file", "path": str(real)}])
+            ),
+            LLMResponse(content=_complete("done")),
+        ]
+        seen = []
+
+        def call(*args, **kwargs):
+            msgs = kwargs.get("messages") or args[0]
+            seen.append("\n".join(str(m.get("content", "")) for m in msgs))
+            return outs[len(seen) - 1]
+
+        provider = MagicMock()
+        provider.call.side_effect = call
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="read notes.txt and write its first line to first.txt",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert result.output == "done"
+        assert not imagined.exists(), "상상한 결과 위의 호출이 실행됐다"
+        # 되묻기: 무슨 일인지 + 직전 출력 인용, 아무것도 실행 안 됨
+        assert "tool calls in more than one place" in seen[1]
+        assert "so now I write it" in seen[1]
+        assert "hello world" not in seen[1]  # read_file 도 아직 안 돌았다
+        # 다시 보낸 뒤에는 실행됐고, 되묻기는 접혔다
+        assert "hello world" in seen[2]
+        assert "tool calls in more than one place" not in seen[2]
+        raw = ctx.get_raw_messages()
+        assert not any(
+            (m.get("nudge") or {}).get("reason") == "split_calls" for m in raw
+        )
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "turns.jsonl").read_text().splitlines()
+        ]
+        assert rows[0]["failure_signal"] == "NO_JSON"

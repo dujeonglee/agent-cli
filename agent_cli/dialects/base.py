@@ -150,6 +150,9 @@ class ParsedTurn:
     raw: str = ""
     parse_stage: int = 0
     thinking: str | None = None
+    #: v10.24.0: 호출이 산문으로 나뉜 두 군데 이상에 있었다 — 어느 것도 고르지
+    #: 않고(``ops`` 빔, ``parse_stage`` 0) 형식 거부로 되묻는다.
+    split_calls: bool = False
 
 
 #: Shared opening of the NO_ACTION intervention (see

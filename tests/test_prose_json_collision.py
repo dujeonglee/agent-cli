@@ -98,15 +98,17 @@ class TestPositionSemanticsPreserved:
         )
         assert _paths(turn) == [("read_file", "a"), ("read_file", "b")]
 
-    def test_prose_between_arrays_stays_conservative(self):
-        # 산문이 끼면 병합하지 않고 첫 배열만 (기존 방어 유지).
+    def test_prose_between_arrays_is_not_guessed(self):
+        # 산문이 끼면 병합하지 않는다 — 그리고 어느 쪽도 고르지 않는다
+        # (v10.24.0; 종전엔 첫 배열만 실행하고 뒤를 조용히 버렸다).
         turn = WF.parse_turn(
             "`y[1]` 먼저.\n"
             '[{"action": "write_file", "path": "a.c"}]\n'
             "이제 다음 파일:\n"
             '[{"action": "write_file", "path": "b.c"}]'
         )
-        assert _paths(turn) == [("write_file", "a.c")]
+        assert _paths(turn) == []
+        assert turn.split_calls and turn.parse_stage == 0
 
 
 class TestRepairPathStillReachable:
