@@ -587,9 +587,20 @@ class DialectBase(ABC):
         }
 
     def serialize_terminal_for_history(
-        self, thought: str, result: str, answers: list[str] | None = None
+        self,
+        thought: str,
+        result: str,
+        answers: list[str] | None = None,
+        *,
+        open_requests: list[str] | None = None,
     ) -> dict:
         """History record for a terminal ``complete`` turn.
+
+        ``open_requests`` (v10.23.0): the request ids still open AFTER this
+        claim was settled — a record-level additive field, only when the model
+        sent ``answers``. The server-parsed render reads it to word the call's
+        result as the harness's own bookkeeping ("removed from the queue …
+        still pending …"); nothing at render time knows the queue otherwise.
 
         The loop's complete handler holds the (possibly nested-envelope-
         unwrapped) result rather than the raw emission, so it cannot route
@@ -610,6 +621,7 @@ class DialectBase(ABC):
         run declared answered, and a live investigation read the rebuilt
         record as proof the model had sent nothing.
         """
+        del open_requests  # 단일 op shape 의 기본 구현은 쓰지 않는다 (engine 이 덮어씀)
         return {
             "role": "assistant",
             "thought": thought or "",
@@ -635,6 +647,11 @@ class DialectBase(ABC):
         """렌더된 요청 메시지 목록의 마무리 (v10.20.0). 서버 파싱 방언은 모든
         ``tool_calls`` 가 같은 id 의 `tool` 메시지를 갖게 한다; 그 외는 그대로."""
         return messages
+
+    def render_terminal_result(self, record: dict, *, index: int) -> dict | None:
+        """종결 레코드의 결과 메시지 (v10.23.0) — 서버 파싱 방언이 `complete`
+        호출에 붙일 `tool` 메시지. 기본 None(텍스트 방언: 결과 없음)."""
+        return None
 
     def render_assistant_from_history(self, record: dict) -> dict:
         """Convert a history.jsonl assistant record into a message dict.

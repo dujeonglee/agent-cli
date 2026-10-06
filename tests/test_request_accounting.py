@@ -615,6 +615,62 @@ class TestThroughRunLoop:
         )
         assert result.output.strip() == "B done too", result.output
 
+    def test_terminal_records_carry_the_settled_queue(self):
+        """종결 레코드는 정산 뒤 남은 요청 id 를 함께 남긴다 (v10.23.0) —
+        독촉 경로(부분 주장)와 최종 경로 둘 다. 서버 파싱 렌더가 `complete`
+        결과를 하니스의 회계로 쓰는 재료."""
+        provider = self._provider(
+            self._env([{"action": "shell", "shell_command": "echo A"}]),
+            self._env([{"action": "complete", "result": "A done", "answers": ["1"]}]),
+            self._env(
+                [{"action": "complete", "result": "B done too", "answers": ["2"]}]
+            ),
+        )
+        ctx_holder = {}
+
+        def run_and_keep(prov, **kw):
+            import tempfile
+            from pathlib import Path
+
+            from agent_cli.context.manager import ContextManager
+            from agent_cli.loop import run_loop
+
+            queue = list(kw.pop("pending"))
+            ctx = ContextManager(
+                Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000
+            )
+            ctx_holder["ctx"] = ctx
+            return run_loop(
+                query="REQ-A",
+                query_author="Bob",
+                query_request_id="1",
+                provider=prov,
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                ),
+                model="m",
+                ctx=ctx,
+                max_turns=6,
+                dialect="json_fc",
+                ports=make_ports(
+                    owner="main",
+                    dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                ),
+            )
+
+        run_and_keep(
+            provider, pending=[None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}]
+        )
+        terminals = [
+            m
+            for m in ctx_holder["ctx"].get_raw_messages()
+            if m.get("role") == "assistant"
+            and any(o.get("action") == "complete" for o in (m.get("ops") or []))
+        ]
+        assert [t.get("open_requests") for t in terminals] == [["2"], []]
+
     def test_a_stubborn_model_cannot_burn_the_run(self):
         """같은 요청을 두 번 독촉하지 않는다 — 각주로 닫는다."""
         provider = self._provider(

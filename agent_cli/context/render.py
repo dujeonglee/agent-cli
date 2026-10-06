@@ -136,12 +136,21 @@ def _sum_message_tokens(messages) -> int:
 
 
 def render_history_message(
-    msg: dict, dialect, *, index: int, assistant_index: int | None
+    msg: dict,
+    dialect,
+    *,
+    index: int,
+    assistant_index: int | None,
+    answered: bool = False,
 ) -> list[dict]:
     """레코드 하나 → 요청 메시지 **목록** (v10.2.0). 방언이 관찰 렌더를 소유한다:
     `render_observation_from_history` 가 None 이면 종전 user 텍스트 한 건, 아니면
     그 목록(서버 파싱 방언은 op 마다 `tool` 메시지). assistant 는 `index` 를 받아
-    호출 id 를 합성한다. 텍스트 방언에서는 바이트 동일한 한 건이다."""
+    호출 id 를 합성한다. 텍스트 방언에서는 바이트 동일한 한 건이다.
+
+    ``answered`` (v10.23.0): 이 assistant 레코드 바로 뒤에 짝이 되는 관찰이
+    저장돼 있다(예: 부분 응답 뒤의 독촉) — 그 관찰이 호출의 답이므로 종결
+    결과를 합성하지 않는다(같은 id 의 `tool` 메시지가 둘이 되지 않게)."""
     role = msg.get("role", "user")
     if role == "user" and isinstance(msg.get("nudge"), dict):
         # 구조화 형식 넛지 (v10.5.0): 저장은 사실만, 문장은 읽는 방언이 조립.
@@ -163,10 +172,17 @@ def render_history_message(
     if role == "user":
         return [{"role": "user", "content": msg.get("content", "")}]
     try:
-        return [dialect.render_assistant_from_history(_context_view(msg), index=index)]
+        rendered = dialect.render_assistant_from_history(
+            _context_view(msg), index=index
+        )
     except TypeError:
         # 서드파티 플러그인이 옛 시그니처(record 만)를 구현한 경우
         return [dialect.render_assistant_from_history(_context_view(msg))]
+    # 종결 호출의 결과 (v10.23.0): 서버 파싱 방언은 `complete` 에 하니스의
+    # 회계("큐에서 제거, 남은 것") 를 `tool` 메시지로 붙인다. 텍스트 방언은 None.
+    terminal = None if answered else getattr(dialect, "render_terminal_result", None)
+    extra = terminal(msg, index=index) if terminal is not None else None
+    return [rendered, extra] if extra else [rendered]
 
 
 def _to_natural_language(msg: dict, dialect) -> dict:

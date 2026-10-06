@@ -176,7 +176,9 @@ class ToolBridge:
 
         return result
 
-    def dispatch_edit_batch(self, path: str, edits: list) -> ToolResult:
+    def dispatch_edit_batch(
+        self, path: str, edits: list
+    ) -> tuple[ToolResult, list[dict]]:
         """같은 파일 edit_file 배치 디스패치 — 단건 경로와 **동일한 훅/이력
         계약** (P0-2). 종전 dispatch 가 ``apply_edits_batch`` 를 직접 불러
         Pre/PostToolUse 훅과 ``recent_tool_history``(B1 입력)가 배치에서만
@@ -192,8 +194,12 @@ class ToolBridge:
           - **PostToolUse 는 1회**(물리 실행이 1회 — 포매터류 훅이 edit 수만큼
             중복 실행되지 않게), **이력은 edit 별**(B1 이 각 편집을 보게).
           - 예외 안전망·문구는 단건 오케스트레이터와 동일.
+
+        반환: 합친 ToolResult 와 **edit 별 결과 조각** (v10.23.0 — 호출마다
+        자기 결과를 받는다; ``apply_edits_batch_parts``). 블록·예외는 조각이
+        모두 같은 문구다.
         """
-        from agent_cli.tools.edit_file import apply_edits_batch
+        from agent_cli.tools.edit_file import apply_edits_batch_parts
 
         processed: list = []
         for args in edits:
@@ -208,11 +214,14 @@ class ToolBridge:
                 blocked.error += (
                     f" (batch of {len(edits)} same-file edits — none applied)"
                 )
-                return blocked
+                return blocked, [
+                    {"success": False, "content": blocked.error} for _ in edits
+                ]
             processed.append(args if isinstance(args, dict) else input_dict)
 
+        parts: list[dict] | None = None
         try:
-            result = apply_edits_batch(path, processed)
+            result, parts = apply_edits_batch_parts(path, processed)
         except Exception as e:  # 단건 경로와 동일 안전망 (KeyboardInterrupt 전파)
             import traceback as _tb
 
@@ -232,11 +241,13 @@ class ToolBridge:
                 ),
             )
 
+        if parts is None:
+            parts = [{"success": False, "content": result.error} for _ in edits]
         first = processed[0] if processed else {}
         self._run_post_hooks("edit_file", first, result)
         for args in processed:
             self._record_tool_history("edit_file", args, result)
-        return result
+        return result, parts
 
     # ── 1. PreToolUse hooks ────────────────────────────────────────
     def _run_pre_hooks(

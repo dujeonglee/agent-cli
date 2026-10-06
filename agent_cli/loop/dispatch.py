@@ -711,9 +711,21 @@ class TurnDispatcher:
 
         path = batch_ops[0].action_input.get("path")
         edits = [op.action_input for op in batch_ops]
-        result = self.tools.dispatch_edit_batch(path, edits)
+        result, parts = self.tools.dispatch_edit_batch(path, edits)
+        # 호출마다 자기 결과 (v10.23.0): 앞의 조각들은 작아서 그대로, 마지막
+        # 조각은 파일 전체 에코를 업고 있어 예산·스필을 타는 일반 관찰 경로로.
+        for part in parts[:-1]:
+            self.tools.accumulate_raw(
+                accumulate, "edit_file", part["content"], bool(part["success"])
+            )
+        last = parts[-1]
+        last_result = (
+            ToolResult(True, output=last["content"], artifact=result.artifact)
+            if last["success"]
+            else ToolResult(False, error=last["content"])
+        )
         self.tools.accumulate_observation(
-            accumulate, "edit_file", result, batch_ops[0].action_input
+            accumulate, "edit_file", last_result, batch_ops[-1].action_input
         )
 
     def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
@@ -868,17 +880,27 @@ class TurnDispatcher:
             # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과
             # 함께 저장한다. 둘 다 넣으면 history 에 같은 final 이 두 번 들어가고
             # 웹 타임라인에도 같은 카드가 두 장 뜬다(라이브 실측).
+            # 저장되는 emission 이 종결 레코드의 모양(answers·남은 요청)을 갖게.
+            outcome["corrected_record"] = self._terminal_record(
+                turn, answer, claimed, still_open
+            )
             return self._nag_open_requests(llm_text, still_open, outcome)
 
         if self.ctx:
-            self.ctx.add(
-                self.cfg.dialect.serialize_terminal_for_history(
-                    turn.thought or "",
-                    answer,
-                    answers=None if claimed is None else sorted(claimed),
-                )
-            )
+            self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
         return ToolResult(True, output=answer)
+
+    def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:
+        """종결 레코드 — `answers` 가 있으면 정산 뒤 남은 요청 id 도 함께
+        (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다)."""
+        return self.cfg.dialect.serialize_terminal_for_history(
+            turn.thought or "",
+            answer,
+            answers=None if claimed is None else sorted(claimed),
+            open_requests=None
+            if claimed is None
+            else [str(r.get("id")) for r in still_open],
+        )
 
     def _require_answers(self, llm_text: str, op, answer: str, outcome: dict):
         """요청이 합쳐진 런에서 `answers` 없이 완료하려 하면 **한 번 되돌린다**.
