@@ -159,7 +159,50 @@ def _find_overlap(spans: list[tuple]) -> str | None:
 
 
 def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
+    """``apply_edits_batch_parts`` 의 합친 결과만 — 단일 ToolResult 소비자용."""
+    result, _parts = apply_edits_batch_parts(path, edits)
+    return result
+
+
+_EDIT_PART_DIFF_LINES = 6  # op 별 조각에 보이는 -/+ 줄 수 상한 (한쪽당)
+
+
+def _edit_part(ed: dict, lo: int, hi: int, repl: list[str], original: list[str]) -> str:
+    """편집 하나의 결과 조각 (v10.23.0) — 원본 기준 줄 범위와 그 자리의 -/+."""
+    label = _op_label(ed)
+    if lo == hi:
+        head = f"{label}: inserted {len(repl)} line(s) after original line {lo}"
+    elif not repl:
+        head = f"{label}: deleted original lines {lo + 1}–{hi} ({hi - lo} line(s))"
+    else:
+        head = (
+            f"{label}: replaced original lines {lo + 1}–{hi} "
+            f"({hi - lo} → {len(repl)} line(s))"
+        )
+    body: list[str] = []
+    for sign, lines in (("-", original[lo:hi]), ("+", repl)):
+        shown = lines[:_EDIT_PART_DIFF_LINES]
+        body += [f"{sign} {line}" for line in shown]
+        if len(lines) > len(shown):
+            body.append(f"  … {len(lines) - len(shown)} more {sign} line(s)")
+    return head + ("\n" + "\n".join(body) if body else "")
+
+
+def apply_edits_batch_parts(
+    path: str, edits: list[dict]
+) -> tuple[ToolResult, list[dict]]:
     """Apply SEVERAL edits to ONE file against a single original read.
+
+    Returns the combined ``ToolResult`` **and** one part per edit, in emit
+    order — ``{"success", "content"}`` (v10.23.0). The harness knows every
+    edit's span, so each call gets its own result instead of one merged
+    message: the per-edit parts carry the op's original-line range and its
+    -/+ lines; the LAST part also carries the file-level summary and the
+    fresh-hashline echo (the state after all edits, nearest to the next
+    turn). On rejection every part says what happened to ITS op — the bad
+    ref's reason, or "valid as sent, not applied" — and the last part carries
+    the re-send instruction. Text dialects render the parts with ``[i/N]``
+    headers; native_fc sends each as the ``tool`` message of its call.
 
     All refs resolve against the same original content, so a later edit's
     hashline ref stays valid even if an earlier edit shifts lines; bottom-up
@@ -171,13 +214,18 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     (path + edits → ToolResult), no loop/ctx/renderer coupling."""
     from agent_cli.tools import _confine
 
+    def _all(err: str) -> tuple[ToolResult, list[dict]]:
+        return ToolResult(False, error=err), [
+            {"success": False, "content": err} for _ in edits
+        ]
+
     denial = _confine.guard([path], "edit_file")
     if denial:
-        return ToolResult(False, error=denial)
+        return _all(denial)
     try:
         original_text = Path(path).read_text(encoding="utf-8")
     except Exception as e:
-        return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
+        return _all(f"edit_file: cannot read '{path}': {e}")
     file_lines = original_text.split("\n")
     fuzzy_warnings: list[str] = []
 
@@ -187,43 +235,65 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     #    refs were fine and the file untouched — so it re-read and re-emitted
     #    the whole batch each time.
     spans: list[tuple] = []
-    bad: list[str] = []
+    bad: dict[int, str] = {}
     for i, ed in enumerate(edits):
         try:
             lo, hi, repl = _op_to_span(ed, file_lines, fuzzy_warnings.append)
             spans.append((lo, hi, repl, i))
         except RuntimeError as e:
-            bad.append(f"  op {i + 1} ({_op_label(ed)}): {_strip_retry_hint(str(e))}")
+            bad[i] = f"op {i + 1} ({_op_label(ed)}): {_strip_retry_hint(str(e))}"
     if bad:
         ok = len(edits) - len(bad)
-        return ToolResult(
+        resend = (
+            "Re-read the file for fresh tags of the rejected lines only, then "
+            "resend ALL the ops in one turn — the valid ones unchanged, the "
+            "rejected ones with corrected refs."
+        )
+        combined = ToolResult(
             False,
             error=(
                 f"edit_file batch: {len(bad)} of {len(edits)} edits rejected — nothing "
                 f"written, '{path}' is unchanged.\n"
-                + "\n".join(bad)
+                + "\n".join(f"  {line}" for line in bad.values())
                 + "\n"
                 + (
                     f"The other {ok} ref{'s are' if ok != 1 else ' is'} valid as sent. "
                     if ok
                     else ""
                 )
-                + "Re-read the file for fresh tags of the rejected lines only, then "
-                "resend ALL the ops in one turn — the valid ones unchanged, the "
-                "rejected ones with corrected refs."
+                + resend
             ),
         )
+        parts = []
+        for i, ed in enumerate(edits):
+            if i in bad:
+                text = f"{bad[i]} — nothing written, '{path}' is unchanged."
+            else:
+                text = (
+                    f"{_op_label(ed)}: ref valid as sent — not applied, the batch "
+                    f"is all-or-nothing and '{path}' is unchanged."
+                )
+            parts.append({"success": False, "content": text})
+        parts[-1]["content"] += "\n" + resend
+        return combined, parts
 
     # 2. Reject overlaps before mutating anything.
     overlap = _find_overlap(spans)
     if overlap:
-        return ToolResult(
-            False,
-            error=(
-                f"edit_file batch: overlapping edits — {overlap}. Split them across "
-                f"turns (re-read between). No changes written."
-            ),
+        text = (
+            f"edit_file batch: overlapping edits — {overlap}. Split them across "
+            f"turns (re-read between). No changes written."
         )
+        return ToolResult(False, error=text), [
+            {"success": False, "content": f"{_op_label(ed)}: not applied — {text}"}
+            for ed in edits
+        ]
+
+    # op 별 조각은 원본 기준 — 적용(아래)으로 줄이 밀리기 전에 만든다.
+    parts = [
+        {"success": True, "content": _edit_part(edits[i], lo, hi, repl, file_lines)}
+        for lo, hi, repl, i in sorted(spans, key=lambda s: s[3])
+    ]
 
     # 3. Bottom-up apply: highest line first so lower indices don't shift.
     #    Tie-break by emit index (descending) so same-position inserts keep
@@ -236,7 +306,7 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     try:
         Path(path).write_text(result_text, encoding="utf-8")
     except Exception as e:
-        return ToolResult(False, error=f"edit_file: cannot write '{path}': {e}")
+        return _all(f"edit_file: cannot write '{path}': {e}")
 
     msg = f"Edit complete: {path} ({len(edits)} edits, {len(file_lines)} lines)"
     if fuzzy_warnings:
@@ -247,7 +317,8 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     from agent_cli.tools.code_index import post_hook
 
     post_hook(path)
-    return ToolResult(True, output=msg)
+    parts[-1]["content"] += "\n\n" + msg
+    return ToolResult(True, output=msg), parts
 
 
 def _validate_semantics(args: dict) -> str | None:

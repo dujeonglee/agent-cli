@@ -185,6 +185,9 @@ def _request_excerpt(content) -> str:
 
 
 def _terminal_call_result(request: str) -> str:
+    """`answers` 없는 종결 호출의 결과 — 앞선 마지막 요청의 첫 줄을 인용한다
+    (실측으로 고른 모양). `answers` 가 있는 종결은 ``render_terminal_result``
+    가 회계 문구로 먼저 채운다."""
     return f"{_TERMINAL_CALL_RESULT}: {request}" if request else _TERMINAL_CALL_RESULT
 
 
@@ -972,9 +975,14 @@ class Dialect(DialectBase):
         return {"role": "assistant", "content": self.sanitize_thought(raw_text) or ""}
 
     def serialize_terminal_for_history(
-        self, thought: str, result: str, answers: list[str] | None = None
+        self,
+        thought: str,
+        result: str,
+        answers: list[str] | None = None,
+        *,
+        open_requests: list[str] | None = None,
     ) -> dict:
-        return {
+        record = {
             "role": "assistant",
             "thought": thought or "",
             "ops": [
@@ -984,6 +992,48 @@ class Dialect(DialectBase):
                 }
             ],
         }
+        if answers is not None and open_requests is not None:
+            record["open_requests"] = [str(x) for x in open_requests]
+        return record
+
+    def render_terminal_result(self, record: dict, *, index: int) -> dict | None:
+        """`complete` 호출의 `tool` 메시지 — 하니스가 실제로 한 회계로 쓴다
+        (v10.23.0, 사용자 제안): 주장된 요청은 열린 요청 목록에서 지워지고
+        남은 것은 다음 독촉의 대상이다. `answers` 가 없는 레코드는 None —
+        그때는 ``pair_call_results`` 가 답한 요청을 인용해 채운다."""
+        if not self.spec.server_parsed:
+            return None
+        ops = record.get("ops")
+        if not isinstance(ops, list):
+            return None
+        for i, op in enumerate(ops):
+            if not isinstance(op, dict) or op.get("action") != self.spec.terminal_op:
+                continue
+            ai = op.get("action_input")
+            answers = ai.get("answers") if isinstance(ai, dict) else None
+            if isinstance(answers, str) and answers.strip():
+                answers = [answers.strip()]
+            ids = [str(a) for a in answers if a] if isinstance(answers, list) else []
+            if not ids:
+                return None
+            text = (
+                f"{_TERMINAL_CALL_RESULT}. Request{'s' if len(ids) != 1 else ''} "
+                + "".join(f"[{x}]" for x in ids)
+                + " removed from the user request queue."
+            )
+            pending = record.get("open_requests")
+            if isinstance(pending, list):
+                text += (
+                    " Still pending: " + "".join(f"[{x}]" for x in pending) + "."
+                    if pending
+                    else " No request pending."
+                )
+            return {
+                "role": "tool",
+                "tool_call_id": self.call_id(index, i),
+                "content": text,
+            }
+        return None
 
     @property
     def server_parsed(self) -> bool:

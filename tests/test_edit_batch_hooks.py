@@ -91,7 +91,7 @@ class TestDispatchEditBatchHooks:
         runner = _FakeHookRunner()
         bridge = _bridge(runner)
 
-        result = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
+        result, _parts = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
 
         assert result.success
         assert p.read_text().splitlines() == ["a", "B", "c", "D", "e"]
@@ -116,7 +116,7 @@ class TestDispatchEditBatchHooks:
         runner = _FakeHookRunner(block_when=lambda inp: inp.get("lines") == ["D"])
         bridge = _bridge(runner)
 
-        result = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
+        result, _parts = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
 
         assert not result.success
         assert "Blocked by PreToolUse hook" in result.error  # 단건 동형 문구
@@ -138,7 +138,7 @@ class TestDispatchEditBatchHooks:
             return None
 
         bridge = _bridge(_FakeHookRunner(modify_when=modify))
-        result = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
+        result, _parts = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
 
         assert result.success
         assert p.read_text().splitlines() == ["a", "B-MODIFIED", "c", "D", "e"]
@@ -151,13 +151,13 @@ class TestDispatchEditBatchHooks:
         def boom(path, edits):
             raise TypeError("kaboom")
 
-        monkeypatch.setattr(ef, "apply_edits_batch", boom)
+        monkeypatch.setattr(ef, "apply_edits_batch_parts", boom)
         lines = ["a", "b", "c", "d", "e"]
         p = _write(tmp_path, "f.txt", lines)
         runner = _FakeHookRunner()
         bridge = _bridge(runner)
 
-        result = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
+        result, _parts = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
 
         assert not result.success
         assert result.error.startswith("Tool 'edit_file' raised TypeError: kaboom")
@@ -172,7 +172,7 @@ class TestDispatchEditBatchHooks:
         p = _write(tmp_path, "f.txt", lines)
         bridge = _bridge(runner=None)
         # 정상 배치
-        assert bridge.dispatch_edit_batch(str(p), _two_edits(lines)).success
+        assert bridge.dispatch_edit_batch(str(p), _two_edits(lines))[0].success
         assert p.read_text().splitlines() == ["a", "B", "c", "D", "e"]
         # 겹침 배치 → 실패 + 파일 불변 (기존 apply 계약 보존)
         cur = p.read_text().splitlines()
@@ -181,7 +181,7 @@ class TestDispatchEditBatchHooks:
             {"op": "replace", "pos": _ref(2, cur[1]), "lines": ["Y"]},
         ]
         before = p.read_text()
-        r = bridge.dispatch_edit_batch(str(p), overlap)
+        r, _parts = bridge.dispatch_edit_batch(str(p), overlap)
         assert not r.success
         assert p.read_text() == before
         # 실패도 이력에 남는다 (B1 이 오류 반복을 본다).

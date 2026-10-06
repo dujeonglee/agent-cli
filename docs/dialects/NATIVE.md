@@ -95,6 +95,12 @@
   기록 무변경 — 옛 세션도 읽을 때 맞는다. 종결 문구는 실측(6턴 대화 × 12~20, "호출 없이 산문만" 거부율)으로 골랐다:
   없음 10.0% · "Delivered to the user." 17.5% · 지난 최종답을 산문 assistant 로 71%(모델이 그대로 따라 함 — 탈락) ·
   "completed task" 11.1% · "completed task: <요청>" 9.7%(사용자 제안, 채택).
+- **N5-1 (v10.23.0) 합쳐진 편집도 호출마다 결과, 종결 결과는 회계.** `apply_edits_batch_parts` 가 편집마다 조각
+  (원본 줄 범위 + -/+)을 내고 마지막 조각에 파일 요약·에코를 얹는다 — 기록의 `parts` 가 그대로 호출 수와 같아 N5 의
+  "함께 처리됨" 채움은 병렬 에이전트 배치·중단된 배치에만 남는다. `complete` 에 `answers` 가 있으면 종결 레코드에
+  `open_requests`(정산 뒤 남은 id, 추가 필드)를 남기고 `Dialect.render_terminal_result` 가 `tool` 메시지로
+  "completed task. Requests [17][18] removed from the user request queue. Still pending: [19]." 를 낸다(없으면
+  pair_call_results 의 요청 인용). 실측(짝수 줄 10개 편집, 12런): 호출 55 → 39, 실패 5 → 0.
 - **N6 호출은 다시 파싱하지 않는다.** 종전엔 서버의 `tool_calls` 를 flat op 배열 **텍스트**로 바꿔 산문 뒤에 붙이고
   `parse_turn` 에 넣었다 — 산문(content)에 `[{"action": …}]` 이 있으면 "첫 배열이 이긴다" 규칙으로 그쪽이 호출이 되고
   실제 호출은 버려졌다(재현; 실측 1,651턴에서 발생 0). 이제 `Dialect.ops_from_server_calls` 가 호출 목록에서 op 를 바로

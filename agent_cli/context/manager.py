@@ -688,8 +688,21 @@ class ContextManager:
             prev = self._cache[i - 1]
             if prev.get("role") == "assistant" and prev.get("ops"):
                 assistant_index = i - 1
+        # 종결 레코드 뒤에 짝 관찰(독촉)이 있으면 그것이 답 — 합성하지 않는다.
+        answered = False
+        if (
+            msg.get("role") == "assistant"
+            and msg.get("ops")
+            and i + 1 < len(self._cache)
+        ):
+            nxt = self._cache[i + 1]
+            answered = nxt.get("role") == "user" and bool(nxt.get("tool"))
         return render_history_message(
-            msg, self.dialect, index=i, assistant_index=assistant_index
+            msg,
+            self.dialect,
+            index=i,
+            assistant_index=assistant_index,
+            answered=answered,
         )
 
     def set_session_state(self, text: str) -> None:

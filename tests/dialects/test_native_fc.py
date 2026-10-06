@@ -480,7 +480,7 @@ class TestEveryCallGetsAResult:
             usage=TokenUsage(input_tokens=10, output_tokens=5),
         )
 
-    def test_merged_same_file_edits_answer_every_call(self, tmp_path, caps, wf):
+    def test_same_file_edits_each_get_their_own_result(self, tmp_path, caps, wf):
         f = tmp_path / "f.txt"
         f.write_text("a\nb\nc\n")
         from agent_cli.tools.read_file import compute_line_hash
@@ -524,8 +524,20 @@ class TestEveryCallGetsAResult:
         assert _unpaired(second) == []
         tools = [m for m in second if m["role"] == "tool"]
         assert [m["tool_call_id"] for m in tools] == ["call_1_0", "call_1_1"]
-        assert "Edit complete" in tools[0]["content"]
-        assert "handled together" in tools[1]["content"]
+        # 호출마다 자기 결과 (v10.23.0): 각 편집의 원본 줄 범위와 -/+, 마지막
+        # 호출에 파일 요약 + 새 해시라인 에코.
+        assert tools[0]["content"].startswith(
+            f"replace {refs[0]}: replaced original lines 1–1"
+        )
+        assert "- a\n+ A" in tools[0]["content"]
+        assert "Edit complete" not in tools[0]["content"]
+        assert tools[1]["content"].startswith(
+            f"replace {refs[2]}: replaced original lines 3–3"
+        )
+        assert "- c\n+ C" in tools[1]["content"]
+        assert (
+            "Edit complete" in tools[1]["content"] and "2 edits," in tools[1]["content"]
+        )
 
     def test_complete_gets_a_result_on_resume(self, tmp_path, caps, wf):
         _result, _ctx, _calls = self._run(
@@ -753,3 +765,136 @@ class TestServerCallsAreNotReparsed:
         assert out[-1]["content"] == "completed task: " + "x" * 80
         # 요청이 없으면 문구만
         assert d.pair_call_results(msgs[2:])[-1]["content"] == "completed task"
+
+    def test_terminal_result_states_the_harness_bookkeeping(self):
+        """`answers` 가 있으면 `complete` 의 결과는 하니스가 실제로 한 회계다
+        (v10.23.0): 주장된 요청은 큐에서 지워지고, 남은 것이 보인다."""
+        from agent_cli.context.render import render_history_message
+
+        d = get("native_fc")
+        rec = d.serialize_terminal_for_history(
+            "", "done", answers=["17", "18"], open_requests=["19"]
+        )
+        assert rec["open_requests"] == ["19"]
+        msgs = render_history_message(rec, d, index=4, assistant_index=None)
+        assert [m["role"] for m in msgs] == ["assistant", "tool"]
+        assert msgs[1]["tool_call_id"] == "call_4_0"
+        assert msgs[1]["content"] == (
+            "completed task. Requests [17][18] removed from the user request "
+            "queue. Still pending: [19]."
+        )
+        # 남은 것이 없을 때·하나일 때
+        rec = d.serialize_terminal_for_history(
+            "", "x", answers=["17"], open_requests=[]
+        )
+        assert render_history_message(rec, d, index=1, assistant_index=None)[1][
+            "content"
+        ] == (
+            "completed task. Request [17] removed from the user request queue. "
+            "No request pending."
+        )
+        # 옛 세션(answers 는 있고 남은 목록은 없음) — 회계 뒷문장 없이
+        rec = d.serialize_terminal_for_history("", "x", answers=["17"])
+        assert "open_requests" not in rec
+        assert render_history_message(rec, d, index=1, assistant_index=None)[1][
+            "content"
+        ].endswith("queue.")
+        # answers 없음 → 결과 메시지 없음 (pair_call_results 가 요청 인용으로 채움)
+        rec = d.serialize_terminal_for_history("", "x")
+        assert len(render_history_message(rec, d, index=1, assistant_index=None)) == 1
+        # 텍스트 방언은 그대로 한 건
+        rec_t = get("json_fc").serialize_terminal_for_history(
+            "", "x", answers=["17"], open_requests=[]
+        )
+        assert (
+            len(
+                render_history_message(
+                    rec_t, get("json_fc"), index=1, assistant_index=None
+                )
+            )
+            == 1
+        )
+
+
+class TestTerminalBookkeepingReachesTheModel:
+    """실제 루프: `answers` 를 보낸 complete 뒤 다음 요청 본문에 회계 `tool`
+    메시지가 실린다 (v10.23.0) — 렌더 함수가 아니라 provider 가 받은 messages 로."""
+
+    def test_next_request_carries_the_settled_queue(self, tmp_path, caps, wf):
+        from tests.loop_ports import make_ports
+
+        queue = [None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}]
+
+        def resp(calls, content=""):
+            return LLMResponse(
+                content=content,
+                tool_calls=[
+                    {"id": f"x{i}", "name": n, "input": a}
+                    for i, (n, a) in enumerate(calls)
+                ],
+                usage=TokenUsage(input_tokens=10, output_tokens=5),
+            )
+
+        (tmp_path / "a.txt").write_text("A")
+        provider = MagicMock()
+        provider.call.side_effect = [
+            resp([("read_file", {"path": str(tmp_path / "a.txt")})]),
+            resp([("complete", {"result": "A done", "answers": ["1"]})]),
+            resp([("complete", {"result": "B done", "answers": ["2"]})]),
+        ]
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        result = run_loop(
+            query="REQ-A",
+            query_author="Bob",
+            query_request_id="1",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+            dialect=wf,
+            ports=make_ports(
+                owner="main",
+                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+            ),
+        )
+        assert result.output.strip() == "B done"
+        # 부분 응답(독촉이 이어짐): 그 complete 의 답은 독촉 관찰 하나다 —
+        # 회계 문구를 따로 합성해 같은 id 를 둘로 만들지 않는다.
+        third = provider.call.call_args_list[2].kwargs["messages"]
+        assert _unpaired(third) == []
+        i = next(
+            k
+            for k, m in enumerate(third)
+            if any(
+                t["function"]["name"] == "complete" for t in m.get("tool_calls") or []
+            )
+        )
+        replies = [m for m in third[i + 1 :] if m["role"] == "tool"]
+        assert len(replies) == 1
+        assert "still unanswered" in replies[0]["content"]
+        assert '[2] (Ann) "REQ-B"' in replies[0]["content"]
+        # 최종 complete(남은 것 없음) 뒤에 이어지는 요청: 회계 문구가 답이다.
+        resumed = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf, resume=True
+        )
+        resumed.add({"role": "user", "content": "REQ-C"})
+        msgs = resumed.get_messages()
+        assert _unpaired(msgs) == []
+        last_complete = max(
+            k
+            for k, m in enumerate(msgs)
+            if any(
+                t["function"]["name"] == "complete" for t in m.get("tool_calls") or []
+            )
+        )
+        assert msgs[last_complete + 1] == {
+            "role": "tool",
+            "tool_call_id": msgs[last_complete]["tool_calls"][0]["id"],
+            "content": (
+                "completed task. Request [2] removed from the user request queue. "
+                "No request pending."
+            ),
+        }
