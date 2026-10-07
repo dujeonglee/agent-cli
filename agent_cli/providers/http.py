@@ -35,11 +35,18 @@ overloaded, so a short re-send usually recovers — exactly like
 ``ConnectionError`` does when connecting directly. The error response is closed
 and the request re-sent from scratch (no partial to resume).
 
+Rate limiting — ``429`` (and Anthropic's ``529`` overloaded) — IS retried too
+(v10.25.0), on a third budget with a growing wait: the server is saying "not
+now", not "never", so the request is re-sent after ``Retry-After`` when the
+response names it, else after an exponential pause (2s, 4s, … 64s). This is the
+case a shared gateway (LiteLLM in front of a vendor API) hits under load; before
+v10.25.0 a single 429 failed the turn and ended the run.
+
 Other HTTP error responses (4xx, a bare 500) are NOT retried — they are raised
 via ``raise_for_status_with_body`` by the caller after this function returns and
-represent a server decision that retrying won't change. When the 5xx retries are
-exhausted the last error response is returned unchanged, so the caller still
-surfaces it (with body) exactly as before.
+represent a server decision that retrying won't change. When the 5xx or 429
+retries are exhausted the last error response is returned unchanged, so the
+caller still surfaces it (with body) exactly as before.
 
 Budgets (fixed)
 ---------------
@@ -47,9 +54,12 @@ Budgets (fixed)
   total attempts including the first.
 - Transient gateway 5xx (502/503/504): ``_DEFAULT_STATUS_ATTEMPTS`` (3),
   a budget separate from the network one.
-- Backoff: fixed ``_DEFAULT_DELAY`` (1s) between attempts, not exponential —
-  single-user on-prem, so thundering-herd / rate-limit concerns don't apply;
-  the 1s just gives a restarting server headroom for ConnectionError.
+- Rate limit (429/529): ``_RATE_LIMIT_ATTEMPTS`` (8), separate again — sharing
+  the 5xx budget would spend it in three seconds and defeat the wait.
+- Backoff: fixed ``_DEFAULT_DELAY`` (1s) between network/5xx attempts — a
+  restarting server only needs headroom, not politeness. Rate-limit attempts
+  wait ``Retry-After`` (capped at ``_RETRY_AFTER_CAP``) or the exponential
+  schedule above, because there the pause IS the remedy.
 """
 
 from __future__ import annotations
@@ -62,6 +72,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 
@@ -180,6 +191,54 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
 # a bounded re-send usually recovers — unlike 4xx (bad request) or a bare 500.
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 
+# v10.25.0 — 속도 제한. 429 는 표준, 529 는 Anthropic 의 "overloaded" (같은
+# 뜻: 지금은 안 되니 잠시 뒤에). 공유 게이트웨이(LiteLLM) 뒤에서 여러 사용자가
+# 한 벤더 키를 나눠 쓰면 부하 때 흔히 맞는데, 종전엔 4xx 라 바로 턴 실패 →
+# 런 종료였다. 예산을 5xx 와 **분리**하는 이유는 위 _BROKEN_STREAM_ATTEMPTS
+# 와 같다: 1초 간격 3회로는 제한 창(보통 수십 초)을 넘기지 못한다.
+_RATE_LIMIT_STATUS: frozenset[int] = frozenset({429, 529})
+_RATE_LIMIT_ATTEMPTS = 8
+# Retry-After 가 없을 때의 대기: 2·4·8·…·64초 (7번 기다리면 총 ≈3분).
+_RATE_LIMIT_BASE_DELAY = 2.0
+_RATE_LIMIT_MAX_DELAY = 64.0
+# 서버가 준 Retry-After 는 따르되 이 이상은 기다리지 않는다 — 잘못 설정된
+# 게이트웨이의 한 시간짜리 값에 런을 묶어 두지 않기 위해.
+_RETRY_AFTER_CAP = 120.0
+
+
+def retry_after_seconds(r: requests.Response) -> float | None:
+    """``Retry-After`` 헤더를 초로 읽는다 — 정수 초 또는 HTTP-date 둘 다.
+    없거나 읽을 수 없으면 None (호출자가 지수 대기로 넘어간다). 음수(과거
+    날짜)는 0, 상한은 ``_RETRY_AFTER_CAP``."""
+    try:
+        raw = r.headers.get("Retry-After")
+    except Exception:  # 헤더 객체가 없는 모의 응답 등
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+    if raw.isdigit():
+        seconds = float(raw)
+    else:
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, min(seconds, _RETRY_AFTER_CAP))
+
+
+def _rate_limit_delay(r: requests.Response, failures: int) -> float:
+    """``failures`` 번째 속도 제한 응답 뒤에 기다릴 초: 서버의 Retry-After
+    가 있으면 그것, 없으면 2·4·8·… (상한 ``_RATE_LIMIT_MAX_DELAY``)."""
+    server = retry_after_seconds(r)
+    if server is not None:
+        return server
+    return min(_RATE_LIMIT_BASE_DELAY * 2 ** (failures - 1), _RATE_LIMIT_MAX_DELAY)
+
+
 # 스트림 본문이 끝까지 오지 않고 끊긴 경우. requests 는 urllib3 ProtocolError
 # (종결 청크 없는 EOF / IncompleteRead)를 ChunkedEncodingError 로, 디코딩
 # 중단은 ContentDecodingError 로 감싼다 — 둘 다 RequestException 직계라
@@ -197,18 +256,20 @@ def post_with_retry(
     retry_statuses: frozenset[int] = _RETRYABLE_STATUS,
     **kwargs,
 ) -> requests.Response:
-    """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors
-    and on transient gateway ``5xx`` responses.
+    """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors,
+    on transient gateway ``5xx`` responses and on rate limiting.
 
-    Two independent budgets: ``_DEFAULT_ATTEMPTS`` (10) for
-    ``Timeout``/``ConnectionError`` raised *before* any status arrives, and
+    Three independent budgets: ``_DEFAULT_ATTEMPTS`` (10) for
+    ``Timeout``/``ConnectionError`` raised *before* any status arrives,
     ``_DEFAULT_STATUS_ATTEMPTS`` (3) for a response whose status is in
-    ``retry_statuses`` (default 502/503/504). Both share ``_DEFAULT_DELAY``
-    (1s) for the pause between attempts.
+    ``retry_statuses`` (default 502/503/504) — both pausing ``_DEFAULT_DELAY``
+    (1s) — and ``_RATE_LIMIT_ATTEMPTS`` (8) for ``_RATE_LIMIT_STATUS``
+    (429/529), pausing ``Retry-After`` or an exponential 2s→64s.
 
-    When the 5xx budget is exhausted the last error response is returned
+    When a status budget is exhausted the last error response is returned
     unchanged — the caller's ``raise_for_status_with_body`` then surfaces it
-    (with body). Any other status (2xx, 4xx, bare 500) returns immediately.
+    (with body). Any other status (2xx, other 4xx, bare 500) returns
+    immediately.
 
     ``post_fn`` is passed in explicitly (not imported from ``requests``
     here) so that existing test patches of
@@ -226,6 +287,7 @@ def post_with_retry(
     last_exc: BaseException | None = None
     net_failures = 0
     status_failures = 0
+    rate_failures = 0
 
     while True:
         try:
@@ -269,6 +331,31 @@ def post_with_retry(
                 f"sleeping {delay}s"
             )
             time.sleep(delay)
+            continue
+
+        # Rate limited: wait as long as the server asks (or back off) and
+        # re-send — on its own budget, since the wait is the whole point.
+        if r.status_code in _RATE_LIMIT_STATUS:
+            rate_failures += 1
+            if rate_failures >= _RATE_LIMIT_ATTEMPTS:
+                debug_log(
+                    f"[retry] HTTP {r.status_code} on {url}: exhausted "
+                    f"{_RATE_LIMIT_ATTEMPTS} attempts; surfacing to caller"
+                )
+                return r
+            wait = _rate_limit_delay(r, rate_failures)
+            r.close()
+            render_status(
+                "running",
+                f"LLM rate limited (HTTP {r.status_code}) — retrying in "
+                f"{wait:.0f}s ({rate_failures + 1}/{_RATE_LIMIT_ATTEMPTS})",
+            )
+            debug_log(
+                f"[retry] HTTP {r.status_code} on {url}: attempt "
+                f"{rate_failures}/{_RATE_LIMIT_ATTEMPTS} rate limited; "
+                f"sleeping {wait:.1f}s"
+            )
+            time.sleep(wait)
             continue
 
         return r

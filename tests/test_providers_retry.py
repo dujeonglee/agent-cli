@@ -180,6 +180,143 @@ class TestRetryOnGatewayStatus:
         assert "running" in states
 
 
+def _rate_limited(status: int = 429, retry_after: str | None = None) -> MagicMock:
+    """429/529 응답 — ``retry_after`` 가 있으면 그 헤더를 단다 (없으면 헤더 없음)."""
+    resp = _status_response(status)
+    resp.headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return resp
+
+
+class TestRetryOnRateLimit:
+    """429 (and Anthropic's 529) is re-sent on its own budget (8) after
+    ``Retry-After`` or an exponential 2s→64s pause — v10.25.0. Before, a single
+    429 from a shared gateway failed the turn and ended the run."""
+
+    @pytest.mark.parametrize("status", [429, 529])
+    def test_rate_limit_retried_then_success(self, status):
+        good = _ok_response()
+        post_fn = MagicMock(side_effect=[_rate_limited(status), good])
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is good
+        assert post_fn.call_count == 2
+
+    def test_backoff_doubles_without_retry_after(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited() for _ in range(4)] + [_ok_response()]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        waits = [c.args[0] for c in http_mod.time.sleep.call_args_list]
+        assert waits == [2.0, 4.0, 8.0, 16.0]
+
+    def test_backoff_is_capped(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited() for _ in range(7)] + [_ok_response()]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        waits = [c.args[0] for c in http_mod.time.sleep.call_args_list]
+        assert waits == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 64.0]
+
+    def test_retry_after_seconds_header_wins_over_backoff(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited(retry_after="17"), _ok_response()]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        http_mod.time.sleep.assert_called_once_with(17.0)
+
+    def test_retry_after_http_date_is_honoured(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        when = datetime.now(timezone.utc) + timedelta(seconds=30)
+        post_fn = MagicMock(
+            side_effect=[
+                _rate_limited(retry_after=format_datetime(when)),
+                _ok_response(),
+            ]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        (wait,) = http_mod.time.sleep.call_args.args
+        assert 27.0 <= wait <= 30.0
+
+    def test_retry_after_is_capped(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited(retry_after="3600"), _ok_response()]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        http_mod.time.sleep.assert_called_once_with(http_mod._RETRY_AFTER_CAP)
+
+    def test_retry_after_in_the_past_waits_zero(self):
+        post_fn = MagicMock(
+            side_effect=[
+                _rate_limited(retry_after="Wed, 21 Oct 2015 07:28:00 GMT"),
+                _ok_response(),
+            ]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        http_mod.time.sleep.assert_called_once_with(0.0)
+
+    def test_unreadable_retry_after_falls_back_to_backoff(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited(retry_after="soon"), _ok_response()]
+        )
+        post_with_retry(post_fn, "http://x/llm")
+        http_mod.time.sleep.assert_called_once_with(http_mod._RATE_LIMIT_BASE_DELAY)
+
+    def test_error_response_closed_before_resend(self):
+        bad = _rate_limited()
+        post_fn = MagicMock(side_effect=[bad, _ok_response()])
+        post_with_retry(post_fn, "http://x/llm")
+        bad.close.assert_called_once()
+
+    def test_exhaustion_returns_last_response_for_caller_to_raise(self):
+        responses = [_rate_limited() for _ in range(http_mod._RATE_LIMIT_ATTEMPTS + 1)]
+        post_fn = MagicMock(side_effect=responses)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is responses[http_mod._RATE_LIMIT_ATTEMPTS - 1]
+        assert post_fn.call_count == http_mod._RATE_LIMIT_ATTEMPTS
+        # 마지막 시도 뒤에는 기다리지 않는다.
+        assert http_mod.time.sleep.call_count == http_mod._RATE_LIMIT_ATTEMPTS - 1
+
+    def test_rate_limit_and_gateway_budgets_are_independent(self):
+        # 3 × 502 would exhaust the 5xx budget; a 429 between them must not
+        # count against it, and vice versa.
+        good = _ok_response()
+        post_fn = MagicMock(
+            side_effect=[
+                _status_response(502),
+                _rate_limited(),
+                _status_response(502),
+                _rate_limited(),
+                good,
+            ]
+        )
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is good
+        assert post_fn.call_count == 5
+
+    def test_disabling_gateway_retry_keeps_rate_limit_retry(self):
+        good = _ok_response()
+        post_fn = MagicMock(side_effect=[_rate_limited(), good])
+        result = post_with_retry(post_fn, "http://x/llm", retry_statuses=frozenset())
+        assert result is good
+
+    def test_render_status_names_the_wait(self):
+        post_fn = MagicMock(
+            side_effect=[_rate_limited(retry_after="5"), _ok_response()]
+        )
+        with patch("agent_cli.render.render_status") as mock_status:
+            post_with_retry(post_fn, "http://x/llm")
+        (state, text) = mock_status.call_args.args
+        assert state == "running"
+        assert "429" in text and "5s" in text and "2/8" in text
+
+    def test_other_4xx_still_not_retried(self):
+        bad = _status_response(401)
+        post_fn = MagicMock(return_value=bad)
+        assert post_with_retry(post_fn, "http://x/llm") is bad
+        assert post_fn.call_count == 1
+
+
 class TestExhaustion:
     # Pin attempts=3 so these exercise the exhaustion MECHANISM independent of
     # the default (10) — the default is covered separately below.
@@ -394,6 +531,37 @@ class TestProviderWiring:
             assert resp.content == "ok"
             assert mock_post.call_count == 2
             bad.close.assert_called_once()
+
+    def test_openai_waits_out_a_gateway_429(self):
+        """A LiteLLM-style 429 with Retry-After on the OpenAI path is waited
+        out and re-sent — the turn no longer fails on the first rate limit."""
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.providers.openai import OpenAIProvider
+
+        caps = ModelCapabilities(
+            context_window=4096,
+            max_output_tokens=1024,
+            supports_thinking=False,
+        )
+        bad = MagicMock()
+        bad.status_code = 429
+        bad.headers = {"Retry-After": "3"}
+        good = MagicMock()
+        good.status_code = 200
+        good.raise_for_status.return_value = None
+        good.json.return_value = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        with patch(
+            "agent_cli.providers.openai.requests.post",
+            side_effect=[bad, good],
+        ) as mock_post:
+            provider = OpenAIProvider("https://gateway.example/v1", "test-key")
+            resp = provider.call(messages=[], system="", model="m", capabilities=caps)
+            assert resp.content == "ok"
+            assert mock_post.call_count == 2
+            http_mod.time.sleep.assert_called_once_with(3.0)
 
 
 class TestRaiseForStatusWithBody:
