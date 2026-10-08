@@ -223,6 +223,16 @@ class MinimalRenderer(Renderer):
         # chunk. Reset to 0 in `stream_end`.
         self._last_term_w: int = 0
         self._last_painted_w: int = 0
+        # Marquee counters (~N tokens · 思 N · talking frame). Eager, not
+        # lazy: ``stream_end`` resets the buffers even when no chunk ever
+        # arrived (a tool-call-only response), and a lazy ``hasattr``
+        # guard keyed on ``_stream_buf`` then skipped ``_last_frame_time``
+        # — the next ``stream_chunk`` raised AttributeError and killed
+        # the LLM call (v10.25.1).
+        self._stream_buf = ""
+        self._stream_chunks = 0
+        self._think_buf = ""
+        self._last_frame_time = 0.0
         # Parallel-delegate orchestration. Owned entirely by
         # MinimalRenderer (was previously driven from tool_delegate
         # via the parallel_live_panel context manager). The Live
@@ -392,7 +402,6 @@ class MinimalRenderer(Renderer):
     def stream_reset(self) -> None:
         """마르퀴 누적(~N tokens · 思 N)을 0 으로 되돌리고 줄을 지운다 —
         재전송 후 카운터가 옛 시도분을 이어 세면 실제보다 부풀어 보인다."""
-        self._marquee_init()
         self._stream_buf = ""
         self._stream_chunks = 0
         self._think_buf = ""
@@ -429,7 +438,6 @@ class MinimalRenderer(Renderer):
             )
             return
         if kind == "wait":
-            self._marquee_init()
             left = max(0, int(limit_s) - int(elapsed_s))
             prefix = f"{self._prefix}  " if self._depth > 0 else "  "
             line = (
@@ -610,20 +618,11 @@ class MinimalRenderer(Renderer):
             f.write("\r\x1b[K\x1b[1A")
         f.write("\r\x1b[K")
 
-    def _marquee_init(self) -> None:
-        if not hasattr(self, "_stream_buf"):
-            self._stream_buf = ""
-            self._stream_chunks = 0
-            self._last_frame_time = 0.0
-        if not hasattr(self, "_think_buf"):
-            self._think_buf = ""
-
     def stream_chunk(self, text: str) -> None:
         if self.is_capturing:
             # Skip streaming in capture mode (parallel delegates).
             # The talking-face progress indicator is for live TTY only.
             return
-        self._marquee_init()
         self._stream_buf += text
         self._paint_marquee()
 
@@ -632,7 +631,6 @@ class MinimalRenderer(Renderer):
         # content 없이 사고만 이어지는 러너웨이가 무음이 되지 않게 한다.
         if self.is_capturing:
             return
-        self._marquee_init()
         self._think_buf += text
         self._paint_marquee()
 
