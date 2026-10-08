@@ -1285,10 +1285,22 @@ class TestStreamResetCli:
 
     def test_safe_when_nothing_streamed(self):
         """스트림이 시작되기도 전(TTFT 무진전)에 불려도 터지지 않아야 한다 —
-        _marquee_init 전이면 버퍼 속성 자체가 없다."""
+        마르퀴 상태는 생성자에서 초기화된다 (v10.25.1)."""
         r, _buf = self._tty()
         r.stream_reset()  # must not raise
         assert r._stream_buf == ""
+
+    def test_chunk_after_chunkless_response_paints(self):
+        """도구 호출만 있던 응답(청크 0) 뒤 stream_end → 다음 응답의 첫 청크.
+        v10.25.0 까지는 stream_end 가 _stream_buf 만 만들어 지연 초기화를 건너뛰고
+        _last_frame_time 이 없어 AttributeError 로 LLM 호출이 죽었다 (v10.25.1)."""
+        r, buf = self._tty()
+        r.stream_end()
+        r.stream_chunk("first chunk of the next response")
+        assert "tokens" in buf.getvalue()
+        r.stream_end()
+        r.thinking_chunk("thought")
+        assert "思" in buf.getvalue()
 
     def test_capture_mode_is_a_noop_on_screen(self):
         """병렬 delegate 캡처 중엔 화면 페인트가 없다 — 버퍼만 비운다."""
