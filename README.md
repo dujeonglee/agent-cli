@@ -555,7 +555,7 @@ agent-cli setup
 
 `run`과 `web` 모두 세션을 `.agent-cli/sessions/{session_id}/`에 자동 저장합니다. 세션 종료 시 컨텍스트 윈도우 내용이 요약으로 저장됩니다. `--resume`으로 이전 세션을 이어서 작업할 수 있습니다. 세션 루트는 `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 옮길 수 있습니다(헤드리스/CI·벤치 — `run`·`web`·`sessions`·`--resume` 이 모두 같은 루트를 봅니다, v8.50.0).
 
-모델이 만드는 **임시 파일**(중간 결과·보조 스크립트·다운로드)은 `.agent-cli/tmp/` 에 두도록 꼬리의 Task Guidelines 가 안내합니다(v10.27.0) — `/tmp` 에 쌓이지 않고 프로젝트와 함께 지워지며, 워크스페이스 안이라 봉쇄 확인도 묻지 않습니다. 임시 파일 과제 8종 × 3회 실측: 시스템 임시 경로 사용 15/24 → 1/24 런, 봉쇄 거절 13 → 3. 절대 경로로 알려 주는 변형은 그 경로가 셸 명령 63% 에 `cd /abs && ` 로 번져 op 가 두 배가 되어 기각했습니다(상대 경로 규칙과 한 목소리).
+모델이 만드는 **임시 파일**(중간 결과·보조 스크립트·다운로드·백업본)은 `.agent-cli/tmp/` 에 두도록 꼬리의 Task Guidelines 가 안내합니다(v10.27.0; v10.28.0 부터 "입력 파일을 변경·소비하는 명령 전에 원본을 복사해 두라"는 백업 규칙도 같은 줄에 있어 백업본이 가는 곳이 한 군데입니다 — 전에는 위치 없이 "안전한 곳"이라고만 해서 소스 옆에 `.bak` 이 남았습니다) — `/tmp` 에 쌓이지 않고 프로젝트와 함께 지워지며, 워크스페이스 안이라 봉쇄 확인도 묻지 않습니다. 임시 파일 과제 8종 × 3회 실측: 시스템 임시 경로 사용 15/24 → 1/24 런, 봉쇄 거절 13 → 3. 절대 경로로 알려 주는 변형은 그 경로가 셸 명령 63% 에 `cd /abs && ` 로 번져 op 가 두 배가 되어 기각했습니다(상대 경로 규칙과 한 목소리).
 
 ```bash
 # 현재 워크스페이스의 세션 목록
@@ -1438,7 +1438,7 @@ worm_game.html                                                          14자
 ── standing rules (always in effect) ──
 ## Task Guidelines
 - Read a file before changing it …
-- Scratch files … go in `.agent-cli/tmp/` under the working directory …
+- Scratch files — … backups — go in `.agent-cli/tmp/` under the working directory … copy the original there first …
 …
 
 ── session state (context only — not part of the conversation) ──
