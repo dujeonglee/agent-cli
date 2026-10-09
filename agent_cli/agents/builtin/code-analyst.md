@@ -6,7 +6,7 @@ allowed-tools:
   - shell
   - monitor
   - code_index
-  - read_context
+  - history
   - memory
   - ask
 ---

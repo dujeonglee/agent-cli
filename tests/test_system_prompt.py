@@ -238,7 +238,7 @@ class TestBuildSystemPromptSections:
     def test_section_names_present_and_ordered(self):
         sections = build_system_prompt_sections(
             _make_caps(),
-            ["read_file", "read_context", "shell", "agent"],
+            ["read_file", "history", "shell", "agent"],
             session_dir="/tmp/s",
         )
         names = [n for n, _ in sections]
@@ -1163,13 +1163,13 @@ class TestSessionIdRemoved:
 class TestContextRecoveryGuide:
     def test_recovery_guide_present(self, caps):
         prompt = build_system_prompt(
-            caps, ["read_file", "read_context"], session_dir="/tmp/sessions/abc"
+            caps, ["read_file", "history"], session_dir="/tmp/sessions/abc"
         )
         assert "## Context Recovery" in prompt
-        assert "read_context" in prompt
+        assert "history" in prompt
 
     def test_no_recovery_without_the_tool(self, caps):
-        """A profile whose tool list omits read_context is not told to use it."""
+        """A profile whose tool list omits history is not told to use it."""
         prompt = build_system_prompt(
             caps, ["read_file"], session_dir="/tmp/sessions/abc"
         )
@@ -1180,10 +1180,14 @@ class TestContextRecoveryGuide:
         assert "## Context Recovery" not in prompt
 
     def test_build_context_recovery_format(self):
-        """The guide names read_context, never the raw history file — read
-        whole, a long session's history.jsonl overflows the window."""
+        """The guide names the history tool, never the raw history file —
+        read whole, a long session's history.jsonl overflows the window.
+        v10.29.0: the example is written as the model emits it, with the
+        plain ``query`` key (the wire strips the tool prefix), not the
+        stale ``read_context_query=`` spelling."""
         result = _build_context_recovery()
-        assert "read_context_query=" in result
+        assert 'history(query="SELECT' in result
+        assert "_query=" not in result
         assert "read_file" not in result
         assert "history.jsonl" not in result
 
@@ -1209,7 +1213,7 @@ class TestRecencySectionOrder:
 
     def test_environment_before_recovery(self, caps):
         prompt = build_system_prompt(
-            caps, ["read_file", "read_context"], session_dir="/tmp/test"
+            caps, ["read_file", "history"], session_dir="/tmp/test"
         )
         env_pos = prompt.find("## Environment")
         recovery_pos = prompt.find("## Context Recovery")
@@ -1227,7 +1231,7 @@ class TestRecencySectionOrder:
 
         prompt = build_system_prompt(
             caps,
-            ["read_file", "read_context"],
+            ["read_file", "history"],
             skill_stack=["my-skill"],
             session_dir="/tmp/test",
         )
@@ -1241,7 +1245,7 @@ class TestRecencySectionOrder:
         """When Execution Context is included, no Recency section follows it."""
         prompt = build_system_prompt(
             caps,
-            ["read_file", "read_context"],
+            ["read_file", "history"],
             skill_stack=["my-skill"],
             session_dir="/tmp/test",
         )

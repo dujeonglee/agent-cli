@@ -39,7 +39,7 @@ def user_dir() -> Path:
 
 
 def sessions_dir() -> Path:
-    """세션 루트 (v8.50.0) — 종전 3개 모듈(context/session·tools/context·
+    """세션 루트 (v8.50.0) — 종전 3개 모듈(context/session·tools/history·
     main web 인스턴스 파일)이 각자 `.agent-cli/sessions` 를 손으로 조립하던
     것의 단일 소스. ``AGENT_CLI_SESSIONS_DIR`` 가 설정되면 그 경로
     (``~`` 확장) — 작업 트리에 세션을 남기지 않을 곳(헤드리스/CI 자동화,

@@ -1013,7 +1013,7 @@ def build_system_prompt_sections(
     # Context Recovery Guide (replaces session_id + git context)
     # Only where the tool it names is callable — a profile with a narrowed
     # tool list would otherwise be told to use something it does not have.
-    if session_dir and "read_context" in active_tools:
+    if session_dir and "history" in active_tools:
         sections.append(("Context Recovery", _build_context_recovery()))
 
     # U-C: main 루프(depth 0)만 @main 블록을, 모든 서브루프(run/spawn/skill)는
@@ -1142,18 +1142,18 @@ def _build_execution_context(
 def _build_context_recovery() -> str:
     """Build Context Recovery Guide for system prompt.
 
-    Points at ``read_context`` — never at the raw ``history.jsonl``: a long
+    Points at ``history`` — never at the raw ``history.jsonl``: a long
     session's file read whole would overflow the window it was evicted to
-    relieve, while ``read_context`` projects/limits and refuses an oversized
+    relieve, while ``history`` projects/limits and refuses an oversized
     result (v10.11.2).
     """
     return (
         "## Context Recovery\n"
         "Older turns may have been replaced by a summary. If you need something "
-        "that is no longer in the current messages, query it with read_context "
-        "— e.g.\n"
-        '  read_context_query="SELECT loc, substr(text,1,200) FROM history '
-        "WHERE text LIKE '%keyword%' LIMIT 20\""
+        "that is no longer in the current messages, query it with the history "
+        "tool — e.g.\n"
+        '  history(query="SELECT loc, substr(text,1,200) FROM history '
+        "WHERE text LIKE '%keyword%' LIMIT 20\")"
     )
 
 

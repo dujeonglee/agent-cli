@@ -117,7 +117,7 @@ class TestUnifiedNudge:
 
     def test_shape_is_identical_across_tools(self, tmp_path):
         """Same four elements for every tool — that is the unification."""
-        for name in ("shell", "fetch", "code_index", "read_context"):
+        for name in ("shell", "fetch", "code_index", "history"):
             n = _nudge(name, self._body(), tmp_path=tmp_path)
             assert n.startswith(f"[{name}:")
             assert "NOT added to context" in n
@@ -132,7 +132,7 @@ class TestUnifiedNudge:
     def test_root_cause_line_is_the_tools_own_hint(self, tmp_path):
         n = _nudge("shell", self._body(), tmp_path=tmp_path)
         assert TOOLS["shell"].oversized_retry_hint in n
-        n = _nudge("read_context", self._body(), tmp_path=tmp_path)
+        n = _nudge("history", self._body(), tmp_path=tmp_path)
         assert "LIMIT" in n and "substr(text,1,200)" in n
 
     def test_reports_size_and_cap(self, tmp_path):
@@ -533,7 +533,7 @@ class TestCtxAddPureStorage:
         assert ctx.add(asst)["content"] == "ok"
 
 
-# ── read_context returns content VERBATIM (the truncation-bug fix) ────
+# ── history returns content VERBATIM (the truncation-bug fix) ────
 
 
 class TestReadContextVerbatim:
@@ -555,11 +555,11 @@ class TestReadContextVerbatim:
         return sdir
 
     def test_full_content_not_truncated_at_200(self, tmp_path):
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
         long = "A" * 5000  # well over the old 200-char cell cap
         sdir = self._session(tmp_path, "Observation: " + long)
-        res = tool_read_context(
+        res = tool_history(
             {"query": "SELECT text FROM history WHERE turn=3"}, session_dir=sdir
         )
         assert res.success, res.error
@@ -567,11 +567,11 @@ class TestReadContextVerbatim:
         assert "…" not in res.output
 
     def test_newlines_and_indent_preserved(self, tmp_path):
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
         code = "1#def f():\n2#    if x:\n3#        return y"
         sdir = self._session(tmp_path, code)
-        res = tool_read_context(
+        res = tool_history(
             {"query": "SELECT text FROM history WHERE turn=3"}, session_dir=sdir
         )
         assert res.success, res.error
@@ -580,12 +580,10 @@ class TestReadContextVerbatim:
         assert "3#        return y" in res.output
 
     def test_content_column_removed(self, tmp_path):
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
         sdir = self._session(tmp_path, "hi")
-        res = tool_read_context(
-            {"query": "SELECT content FROM history"}, session_dir=sdir
-        )
+        res = tool_history({"query": "SELECT content FROM history"}, session_dir=sdir)
         # the spill-era 'content' column is gone → querying it is an error
         assert not res.success
 

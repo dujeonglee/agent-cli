@@ -9,7 +9,7 @@ allowed-tools:
   - monitor
   - fetch
   - code_index
-  - read_context
+  - history
   - memory
   - ask
 ---

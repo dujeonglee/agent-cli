@@ -80,7 +80,7 @@ class RunContext:
 # builders and six ``render_oversized`` overrides — which meant a new tool got
 # the *generic* advice ("pipe through head/grep", "tee it to a file") even when
 # that advice was nonsense for it (MCP), and two tools (code_index,
-# read_context) dropped their body without saving it anywhere, so a large
+# history) dropped their body without saving it anywhere, so a large
 # result could never be looked at again.
 #
 # Now there is exactly one policy, applied by :meth:`Tool.render_oversized`
@@ -482,7 +482,7 @@ class Tool(ABC):
         ranges quoted in the nudge stay valid) and agent (the run's
         ``result.md``). They return that path so the nudge points at the
         original instead of littering the session with a byte-identical copy.
-        Everything else — shell, fetch, code_index, read_context, MCP — has
+        Everything else — shell, fetch, code_index, history, MCP — has
         nothing on disk and returns ``""``.
 
         A returned path that does not exist is ignored (the seam persists
