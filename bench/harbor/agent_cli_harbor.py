@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import atif
+import wheels
 from harbor.agents.installed.base import (
     BaseInstalledAgent,
     CliFlag,
@@ -55,16 +56,6 @@ def _container_url(url: str) -> str:
     return re.sub(
         r"//(127\.0\.0\.1|localhost)(?=[:/]|$)", "//host.docker.internal", url
     )
-
-
-def _newest_wheel() -> Path:
-    wheels = sorted((_REPO_ROOT / "dist").glob("agent_cli-*.whl"))
-    if not wheels:
-        raise FileNotFoundError(
-            f"no agent-cli wheel under {_REPO_ROOT / 'dist'} — run "
-            "`python3 -m build --wheel` first, or pass --ak wheel=<path>"
-        )
-    return wheels[-1]
 
 
 class AgentCli(BaseInstalledAgent):
@@ -99,7 +90,11 @@ class AgentCli(BaseInstalledAgent):
         **kwargs,
     ):
         super().__init__(logs_dir, *args, **kwargs)
-        self._wheel = Path(wheel).expanduser() if wheel else _newest_wheel()
+        self._wheel = (
+            Path(wheel).expanduser()
+            if wheel
+            else wheels.newest_wheel(_REPO_ROOT / "dist")
+        )
         self._models_json = Path(models_json).expanduser() if models_json else None
         self._host_cfg = (
             _read_json(Path(host_config).expanduser()) if host_config else {}
