@@ -34,5 +34,5 @@
 - `~/.agent-cli/` — 유저(머신) 설정: `config.json` · `models.json`(자동 저장 대상). **이것뿐** (v9.0.0, docs/config-scopes)
 - `.agent-cli/` — 프로젝트 설정 (.gitignore 대상, skills/ 만 커밋): `mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md`
 - `.agent-cli/sessions/` — 세션 + `chat_history` (`AGENT_CLI_SESSIONS_DIR` 로 이전 가능)
-- `.agent-cli/tmp/` — 모델의 임시 파일 자리 (v10.27.0, 꼬리 Task Guidelines 가 안내; 프로젝트와 함께 지워짐)
+- `.agent-cli/tmp/` — 모델의 임시 파일·백업본 자리 (v10.27.0, 꼬리 Task Guidelines 가 안내; v10.28.0 백업 규칙도 같은 줄; 프로젝트와 함께 지워짐)
 - `agent_cli/default_models.json` — 패키지 기본 모델 정의

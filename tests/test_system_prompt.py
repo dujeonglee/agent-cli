@@ -663,6 +663,26 @@ class TestBuildSystemPrompt:
         assert "never in /tmp" in TASK_GUIDELINES
         assert "{scratch_dir}" not in TASK_GUIDELINES  # no absolute path
 
+    def test_backup_rule_lives_in_the_scratch_bullet(self):
+        """v10.28.0: the v8.51.0 backup rule ("copy the original somewhere
+        safe first") named no location, so the copy landed next to the source
+        (3/3 runs on main) or wherever the model improvised — and in the
+        Harbor db-wal-recovery run the model backed the WAL up into
+        ``.agent-cli/tmp/`` and then opened sqlite3 on the copy there too.
+        The rule now lives inside the scratch-files bullet, so there is ONE
+        place scratch and backup copies go. Measured on 3 backup-needing tasks
+        × 3 (main vs candidate): copies in ``.agent-cli/tmp/`` 7/9 → 9/9,
+        backup made after the first consuming command 2 → 1, mean ops
+        9.8 → 8.7, all 18 runs correct with the WAL intact."""
+        assert "somewhere safe" not in TASK_GUIDELINES
+        scratch = next(
+            b for b in TASK_GUIDELINES.split("\n- ") if b.startswith("Scratch files")
+        )
+        assert "backups" in scratch
+        assert "copy the original there first" in scratch
+        assert "opening a database" in scratch
+        assert "a mere open can destroy state" in scratch
+
     def test_task_guidelines_require_terse_reasoning(self):
         """v8.59.0: 간결한 reasoning 지시 — Harbor tb21 실측에서 출력 토큰을
         18~92% 줄였고(3/3 일관) 품질 저하 신호 없음. ASD-STE100 규격 원문보다
