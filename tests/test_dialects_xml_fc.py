@@ -89,9 +89,9 @@ class TestParseHappyPath:
 
     def test_empty_param_function_yields_op(self, wf):
         turn = wf.parse_turn(
-            "<tool_call>\n<function=read_context>\n</function>\n</tool_call>"
+            "<tool_call>\n<function=history>\n</function>\n</tool_call>"
         )
-        assert turn.ops[0].action == "read_context"
+        assert turn.ops[0].action == "history"
         assert turn.ops[0].action_input == {}
 
     def test_no_blocks_thought_only_is_zero_op_stage1(self, wf):
@@ -534,7 +534,7 @@ class TestLenientToolNameTag:
 
     def test_paramless_canonical_function_unaffected_by_hybrid_fallback(self, wf):
         turn = wf.parse_turn(
-            "<tool_call>\n<function=read_context>\n</function>\n</tool_call>"
+            "<tool_call>\n<function=history>\n</function>\n</tool_call>"
         )
         assert turn.parse_stage == 1
         assert turn.ops[0].action_input == {}

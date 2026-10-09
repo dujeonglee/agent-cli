@@ -893,7 +893,7 @@ class TestToolsRegistry:
     """Tests for unified TOOLS dict with virtual tools."""
 
     def test_tools_contains_all_real_tools(self):
-        real_tools = {"read_file", "write_file", "edit_file", "shell", "read_context"}
+        real_tools = {"read_file", "write_file", "edit_file", "shell", "history"}
         assert real_tools.issubset(set(TOOLS.keys()))
 
     def test_tools_contains_virtual_tools(self):
@@ -1151,8 +1151,8 @@ class TestReadFileSearch:
         assert result.output.count("─── lines") == 1
 
 
-class TestReadContextTool:
-    """Cover read_context's list/search modes, scope filter, sessions
+class TestHistoryTool:
+    """Cover history's list/search modes, scope filter, sessions
     selector, preview formatting, and truncation behavior."""
 
     # ── Helpers ────────────────────────────────────────────────
@@ -1164,12 +1164,31 @@ class TestReadContextTool:
         return sdir
 
     def _patch_base(self, monkeypatch, tmp_path: Path) -> Path:
-        import agent_cli.tools.context as ctx_mod
+        import agent_cli.tools.history as ctx_mod
 
         base = tmp_path / "sessions"
         base.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(ctx_mod, "_SESSIONS_DIR", base)
         return base
+
+    # ── Name and keys ──────────────────────────────────────────
+
+    def test_named_history_with_plain_keys(self):
+        """v10.29.0: the tool is ``history`` (was ``read_context``) and its
+        schema uses the plain ``query``/``sessions`` keys like every other
+        tool — the old schema hard-coded ``read_context_query`` while the
+        wire already advertised ``query``, so the description contradicted
+        the key the model had to emit. Measured on previous-session recall
+        (3 tasks × 3, four names): ``history`` was reached at the first op
+        9/9 with 2.8 ops on average vs 4.1–4.8 for the others, and
+        ``context_recall`` went to the ``memory`` tool first 3/9."""
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["history"]
+        assert "read_context" not in TOOLS
+        assert set(tool.parameters["properties"]) == {"query", "sessions"}
+        assert "query='SELECT" in tool.description
+        assert "read_context" not in tool.description
 
     # ── No-query help ──────────────────────────────────────────
 
@@ -1177,9 +1196,9 @@ class TestReadContextTool:
         import agent_cli.context.session as session_mod
 
         monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context({})
+        result = tool_history({})
         assert result.success
         assert "history" in result.output and "SELECT" in result.output
         # schema columns shown
@@ -1210,9 +1229,9 @@ class TestReadContextTool:
         (sdir / "history.jsonl").write_text(
             _json.dumps({"role": "user", "content": "[두웅]: analyze this"}) + "\n"
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context({})  # no query → help
+        result = tool_history({})  # no query → help
         assert result.success
         assert "1781440579" in result.output
 
@@ -1221,9 +1240,9 @@ class TestReadContextTool:
     def test_select_returns_rows(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"hello world"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT kind, text FROM history"}, session_dir=cur
         )
         assert result.success
@@ -1234,19 +1253,19 @@ class TestReadContextTool:
         # Locked-down / custom CPython without _sqlite3 and no pysqlite3:
         # the module still imports (core tool) and a query returns a clear
         # error instead of crashing the registry.
-        import agent_cli.tools.context as ctx_mod
+        import agent_cli.tools.history as ctx_mod
 
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
         monkeypatch.setattr(ctx_mod, "_sqlite", lambda: None)
 
-        result = ctx_mod.tool_read_context(
+        result = ctx_mod.tool_history(
             {"query": "SELECT text FROM history"}, session_dir=cur
         )
         assert not result.success
         assert "sqlite" in result.error.lower()
         # help (no query) does not need sqlite and still works
-        assert ctx_mod.tool_read_context({}, session_dir=cur).success
+        assert ctx_mod.tool_history({}, session_dir=cur).success
 
     def test_kind_classified_on_read(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
@@ -1260,9 +1279,9 @@ class TestReadContextTool:
                 '{"role":"assistant","thought":"d","ops":[{"action":"complete","action_input":{"result":"r"}}]}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT kind FROM history ORDER BY seq"}, session_dir=cur
         )
         assert result.success
@@ -1286,9 +1305,9 @@ class TestReadContextTool:
                 '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"db.py"}}]}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT loc, files FROM history WHERE files LIKE '%auth.py%'"},
             session_dir=cur,
         )
@@ -1307,9 +1326,9 @@ class TestReadContextTool:
                 '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{"cmd":"ls"}}]}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT kind FROM history WHERE tools LIKE '%read_file%'"},
             session_dir=cur,
         )
@@ -1328,9 +1347,9 @@ class TestReadContextTool:
                 '{"role":"user","content":"[Bob]: do Y","author":"Bob"}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT text, author FROM history WHERE author='Alice'"},
             session_dir=cur,
         )
@@ -1348,9 +1367,9 @@ class TestReadContextTool:
                 '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{}}],"turn":2}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT turn FROM history WHERE turn>=1 ORDER BY turn"},
             session_dir=cur,
         )
@@ -1368,9 +1387,9 @@ class TestReadContextTool:
                 '{"role":"assistant","thought":"unrelated","ops":[{"action":"shell","action_input":{}}]}',
             ],
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT text FROM history WHERE text LIKE '%auth%'"},
             session_dir=cur,
         )
@@ -1382,9 +1401,9 @@ class TestReadContextTool:
         base = self._patch_base(monkeypatch, tmp_path)
         self._make_session(base, "s1", ['{"role":"user","content":"a"}'])
         self._make_session(base, "s2", ['{"role":"user","content":"b"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}
         )
         assert result.success
@@ -1395,28 +1414,26 @@ class TestReadContextTool:
     def test_delete_rejected(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context({"query": "DELETE FROM history"}, session_dir=cur)
+        result = tool_history({"query": "DELETE FROM history"}, session_dir=cur)
         assert not result.success
         assert "select" in result.error.lower()
 
     def test_drop_rejected(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context({"query": "DROP TABLE history"}, session_dir=cur)
+        result = tool_history({"query": "DROP TABLE history"}, session_dir=cur)
         assert not result.success
 
     def test_bad_sql_friendly_error(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
-            {"query": "SELECT nope FROM history"}, session_dir=cur
-        )
+        result = tool_history({"query": "SELECT nope FROM history"}, session_dir=cur)
         assert not result.success
         assert "sql error" in result.error.lower()
 
@@ -1426,9 +1443,9 @@ class TestReadContextTool:
         base = self._patch_base(monkeypatch, tmp_path)
         self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
         self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT session FROM history", "sessions": "s1"}
         )
         assert result.success
@@ -1436,11 +1453,9 @@ class TestReadContextTool:
 
     def test_sessions_unknown_errors(self, tmp_path, monkeypatch):
         self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
-            {"query": "SELECT * FROM history", "sessions": "nope"}
-        )
+        result = tool_history({"query": "SELECT * FROM history", "sessions": "nope"})
         assert not result.success
         assert "not found" in result.error.lower()
 
@@ -1451,11 +1466,9 @@ class TestReadContextTool:
         cur = self._make_session(
             base, "s", ["not json", '{"role":"user","content":"valid line"}']
         )
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
-            {"query": "SELECT text FROM history"}, session_dir=cur
-        )
+        result = tool_history({"query": "SELECT text FROM history"}, session_dir=cur)
         assert result.success
         assert "valid line" in result.output
 
@@ -1466,16 +1479,16 @@ class TestReadContextTool:
         sub = cur / "delegate-1"
         sub.mkdir()
         (sub / "history.jsonl").write_text('{"role":"user","content":"sub line"}\n')
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT loc, text FROM history"}, session_dir=cur
         )
         assert result.success
         assert "sub line" in result.output and "delegate-1" in result.output
 
     def test_no_row_cap_returns_all_rows(self, tmp_path, monkeypatch):
-        """The old 50-row cap is gone — read_context returns ALL matching rows
+        """The old 50-row cap is gone — history returns ALL matching rows
         verbatim. Result size is governed by the loop's oversized-observation
         cap (a narrow-it nudge), not a silent row/cell truncation. The model
         keeps results small via LIMIT/substr projection."""
@@ -1486,11 +1499,9 @@ class TestReadContextTool:
             _json.dumps({"role": "user", "content": f"line {i}"}) for i in range(80)
         ]
         cur = self._make_session(base, "s", lines)
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
-            {"query": "SELECT text FROM history"}, session_dir=cur
-        )
+        result = tool_history({"query": "SELECT text FROM history"}, session_dir=cur)
         assert result.success
         assert "80 row(s)" in result.output
         assert "line 79" in result.output  # all rows present, none capped
@@ -1499,9 +1510,9 @@ class TestReadContextTool:
     def test_no_rows_message(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"hi"}'])
-        from agent_cli.tools.context import tool_read_context
+        from agent_cli.tools.history import tool_history
 
-        result = tool_read_context(
+        result = tool_history(
             {"query": "SELECT text FROM history WHERE kind='final'"}, session_dir=cur
         )
         assert result.success
@@ -1513,7 +1524,7 @@ class TestReadContextTool:
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(base, "s", ['{"role":"user","content":"plumbing"}'])
         result = execute_tool(
-            "read_context",
+            "history",
             {"query": "SELECT text FROM history"},
             ctx=RunContext(session_dir=cur),
         )

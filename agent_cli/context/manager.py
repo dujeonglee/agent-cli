@@ -400,7 +400,7 @@ class ContextManager:
         self._history_path = self.session_dir / "history.jsonl"
         self._compaction_path = self.session_dir / "compaction.json"
         # Current LLM turn — stamped onto each history.jsonl record's retrieval
-        # `turn` field so read_context can range/group by turn. The loop sets
+        # `turn` field so history can range/group by turn. The loop sets
         # it at each turn boundary; 0 covers the run-starting query.
         self._current_turn: int = 0
 
@@ -1269,7 +1269,7 @@ class ContextManager:
 
     def _enrich_record(self, message: dict) -> dict:
         """Build the history.jsonl record: the round-trip message + retrieval
-        keys for read_context's structured JSON queries.
+        keys for history's structured JSON queries.
 
         Additive — round-trip fields (role/thought/ops/content/tool/success)
         are preserved verbatim (resume/compaction read them unchanged); we ADD

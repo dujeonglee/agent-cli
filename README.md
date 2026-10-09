@@ -206,7 +206,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_STREAM_MAX_ATTEMPTS` | — | 무진전 시 **총** 전송 횟수(첫 전송 포함), 1~10, 기본 4. 최대 대기 = 한도 × 이 값. `--stall-attempts` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.60.0) |
 | `AGENT_CLI_COMPACTION_RATIO` | — | 컨텍스트 압축 목표 비율 (0.5~1.0, 기본 1.0 — 창에 잘릴 때만 압축, v10.11.0). 낮을수록 일찍·자주 압축. `--compaction-ratio` 또는 웹 🗜️ 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_MAX_AGENTS` | — | 동시 생존 서브에이전트 상한 (0 = 무제한, 기본 10). `--max-agents` 또는 웹 👥 노브로 세션 중 변경 (v8.61.0) |
-| `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`read_context` 가 모두 같은 루트를 봄 (v8.50.0) |
+| `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`history` 가 모두 같은 루트를 봄 (v8.50.0) |
 
 > **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. **속도 제한(429, Anthropic 의 529)은 기다렸다 다시 보낸다 (v10.25.0)**: 또 하나의 독립 카운터로 최대 8회, 응답에 `Retry-After` 가 있으면 그만큼(상한 120초), 없으면 2·4·8·…·64초로 늘려 가며 기다린다(헤더 없이 다 쓰면 약 3분). 회사 게이트웨이(LiteLLM 등) 뒤에서 여러 사람이 한 벤더 키를 나눠 쓸 때 맞는 오류인데, 종전엔 4xx 라 첫 429 에 턴이 실패하고 런이 끝났다. 기다리는 동안 상태 줄에 `LLM rate limited (HTTP 429) — retrying in 17s (2/8)` 가 뜬다. 그 밖의 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고, body 가 10분 연속 침묵하면 연결을 끊고 재전송한다 — **총 4회**(첫 전송 포함)까지, 즉 최장 40분 뒤 실패. 이 두 축만은 고정이 아니라 세션 노브다: 한도는 `--stall`, 횟수는 `--stall-attempts`(웹은 ⏳ 칩 하나에 두 입력, 팝업이 곱한 최대 대기를 같이 보여준다). 대기 중에는 남은 시간과 `시도 n/4` 가 웹·CLI 양쪽에 표시되고, 반복되는 대기는 한 줄을 제자리 갱신하며 재전송·실패만 기록으로 남는다. 스트림이 **중간에 끊긴 경우**(서버가 종결 청크 없이 연결을 닫음 — 재시작·프록시 끊김·OOM)도 재전송한다: 고정 10회, 1초 간격, 무진전 예산과 **별개**(즉시 실패라 공유하면 순식간에 소진된다). 재전송 전에는 항상 부분 출력을 걷는다 — 재전송은 생성을 처음부터 다시 하므로 남겨두면 새 출력이 옛 부분 뒤에 이어붙어 보인다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
 >
@@ -584,12 +584,12 @@ Sessions for /path/to/project:
 
 **`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
 
-LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
+LLM은 `history` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
 
 ### 세션 메모리 (`memory` 도구)
 
 LLM 이 세션 중 **중대한 실패·중요한 발견·결정·메모**를 명시적으로 기록하고 필요할 때 꺼내
-쓰는 도구입니다. `read_context`(raw 이력 SQL 질의)와 달리 **LLM 이 큐레이션한 durable
+쓰는 도구입니다. `history`(raw 이력 SQL 질의)와 달리 **LLM 이 큐레이션한 durable
 salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니다.**
 
 - **왜 필요한가**: 컨텍스트가 예산의 90% 를 넘으면 오래된 대화가 요약/드롭됩니다. "왜 이
@@ -897,7 +897,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "complete 로 턴을 마치고 기다려라" 힌트가 붙음). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
-| `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
+| `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
@@ -998,7 +998,9 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 **거절된 시도는 화면에도 그리지 않습니다 (v9.24.11)**: 형식 거절(`answers` 누락, 모르는 도구, 인자 형식 오류 등)된 시도의 "생각"과 행동 카드는 이제 화면에 나타나지 않습니다. 생성 중 줄의 "↻ 재시도 N"만 남습니다. 종전엔 거절 판정 전에 생각이 먼저 그려져, 거절된 시도의 생각이 재시도의 답과 이어져 한 응답처럼 보였고, 새로고침하면(기록에 없어서) 사라졌습니다. 생각은 그 턴이 통과할 때까지 잠시 보류되며, 다음 출력 직전에 그려지므로 화면 순서는 그대로입니다. 도구가 **실행된 뒤** 실패한 경우(없는 파일 읽기 등)와 배치 안의 잘못된 호출(실패로 기록되고 나머지는 실행)은 실제 작업이라 종전대로 보입니다.
 
-### read_context — 세션 이력 조회
+### history — 세션 이력 조회
+
+(v10.29.0 — 구 `read_context`. "context" 는 모델이 지금 들고 있는 것이고 이 도구는 거기서 빠진 것을 되찾으니 이름이 반대 방향이었습니다. 새 세션에서 "지난 세션의 …가 뭐였지?" 되묻기 3과제 × 3회로 `read_context`·`context_recall`·`recall`·`history` 를 비교: `history` 는 9/9 첫 op 에 바로 이 도구, 평균 2.8 op (다른 이름 4.1~4.8); `context_recall` 은 "recall" 이 `memory` 설명과 겹쳐 3/9 가 메모부터 뒤졌습니다. 별칭은 없습니다 — 프로파일의 `allowed-tools` 에 `read_context` 가 있으면 `history` 로 바꾸세요. 스키마 키도 다른 도구처럼 맨 `query`·`sessions` 입니다.)
 
 이전 또는 현재 세션의 이력을 **SQL 로 질의**합니다. LLM이 context window 밖으로 evict/compaction된 정보가 필요할 때 자발적으로 사용합니다. history.jsonl 이 인메모리 `history` 테이블로 적재되고, LLM이 `SELECT` 를 작성합니다(읽기전용).
 
@@ -1008,19 +1010,19 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 ```json
 // 스키마 + 예시 + 세션 목록 보기 (query 생략)
-{"action": "read_context", "action_input": {}}
+{"action": "history", "action_input": {}}
 
 // auth.py 를 건드린 관측만 — 먼저 미리보기로 훑기
-{"action": "read_context", "action_input": {"query": "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' AND files LIKE '%auth.py%' LIMIT 30"}}
+{"action": "history", "action_input": {"query": "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' AND files LIKE '%auth.py%' LIMIT 30"}}
 
 // 특정 사용자(웹 멀티유저)의 질문만
-{"action": "read_context", "action_input": {"query": "SELECT text FROM history WHERE kind='query' AND author='두정'"}}
+{"action": "history", "action_input": {"query": "SELECT text FROM history WHERE kind='query' AND author='두정'"}}
 
 // 키워드 + 턴 범위 + 정렬/제한
-{"action": "read_context", "action_input": {"query": "SELECT loc, text FROM history WHERE text LIKE '%인증%' AND turn>=5 ORDER BY turn LIMIT 20"}}
+{"action": "history", "action_input": {"query": "SELECT loc, text FROM history WHERE text LIKE '%인증%' AND turn>=5 ORDER BY turn LIMIT 20"}}
 
 // 다른 세션까지 — sessions 로 적재 범위 지정(all 또는 특정 id)
-{"action": "read_context", "action_input": {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}}
+{"action": "history", "action_input": {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}}
 ```
 
 **읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(run/skill subdir 포함).
@@ -1032,7 +1034,7 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 1. **전문은 항상 파일로** — 도구가 이미 파일에 썼으면 그 파일(`read_file` 의 원본 경로, `agent` run 의 `<run_dir>/result.md`), 아니면 `<session_dir>/oversized/<tool>-<hash>.txt` 에 **lazy 저장**(캡에 걸릴 때만 — 일반 호출엔 디스크 쓰기 0). 세션 디렉터리가 없는 headless 실행은 임시 디렉터리로 폴백하므로 "넘치면 파일에 남는다"가 예외 없이 성립합니다.
 2. **head/tail 발췌 동봉** — 앞뒤 일부(캡의 15% 이내로 클램프)를 그대로 보여줍니다. 빌드/테스트 로그처럼 **답이 꼬리에 있는** 경우가 많아, 상당수는 추가 왕복 없이 그 자리에서 끝납니다.
 3. **회수 경로 3종** — ① `read_file(path, search='regex')` 문자열/정규식 매칭, ② `read_file(path, line_start, line_end)` 범위 읽기, ③ **분할 정복**: 파일을 캡에 맞는 `k` 섹션으로 쪼개 **한 턴에 `agent(mode="run")` op 를 k 개**(agent-cli 가 동시 실행) 내고 각자 요약만 반환 → 부모는 distilled 만 병합. ③ 은 `agent` 가 실제 호출 가능할 때만 표시됩니다(depth 한계 서브에이전트에선 자동 생략).
-4. **근본 원인 한 줄** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위/`code_index mode='fetch'`, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `read_context` → `LIMIT`/projection/`substr`.
+4. **근본 원인 한 줄** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위/`code_index mode='fetch'`, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `history` → `LIMIT`/projection/`substr`.
 
 - **도구별 제어 (`Tool` 표면)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 끔; **`Tool.oversized_retry_hint`**(위 4번 한 줄)와 **`Tool.oversized_source_path()`**(이미 디스크에 있는 전문의 경로)만 도구가 정의합니다. `Tool.render_oversized()` 는 **어떤 도구도 오버라이드하지 않습니다** — 정책이 한 곳에 있으므로 MCP 서버 도구를 포함해 새 도구가 아무 것도 안 해도 올바르게 동작합니다. per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더 두 표면에 동일하게 전달됩니다.
 - **경로는 작업 디렉토리 상대로 표시**: 넛지가 돌려주는 파일 경로는 모델이 다음 호출에 그대로 받아쓰는 인자가 되고, `action_input` 은 그 뒤 매 턴 재공급됩니다. 그래서 `display_path()` 가 작업 디렉토리 아래에 있는 경로를 상대경로로 줄입니다 — `/Users/…/ws/b5rztq/.agent-cli/sessions/…/oversized/shell-3f9ac2.txt` → `.agent-cli/sessions/…/oversized/shell-3f9ac2.txt`. 한 넛지 안에 경로가 3~4번 등장하므로 절약이 배가됩니다. headless 임시 디렉토리는 작업 디렉토리 밖이라 절대경로를 유지합니다.
@@ -1328,7 +1330,7 @@ spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할
 - **export 제거 → 카드별 ⧉ 복사 (v10.8.0)**: 📤 Export(선택 모드 · HTML 다운로드 · Jira 코멘트 게시)와 `integrations/`(jira.py·export.py), `/api/export/*`, `jira` 설정이 사라졌습니다. 대신 카드마다 ⧉ 로 그 카드를 마크다운으로 복사하고, 헤더의 ⧉ 로 보이는 대화 전체를 복사합니다(위 **⧉ 복사** 참고). 클립보드 헬퍼는 하나로 합쳤고(워크스페이스 id 칩·인스펙터·카드가 같은 함수), 드로어는 옛 서버가 보내는 대화 섹션(`dynamic`)을 시스템에 섞지 않고 무시합니다(업그레이드 직후 "프로세스는 옛 코드, 화면은 새 코드" 창).
 - **🔍 드로어 재편 — 대화 밖에서 모델이 받는 것만 (v10.7.0, P2)**: 드로어에서 대화 목록·섹션 필터·대화 요약 줄이 빠지고(대화는 챗이 곧 모델 시점), 모달이 아니라 **도킹**됩니다(열려 있는 동안 챗 폭이 줄고 챗은 그대로 보임). 제목은 스코프 이름만(`main` / 상주 에이전트 이름 / `🦀 reviewer: …`), 인라인 스코프는 위에 출처 줄(`main 안에서 돈 인라인 에이전트 · 종료 — ↑ 카드로 · main 으로 돌아가기`). 예산 한 줄(시스템·함수 스키마·대화·꼬리 막대 + `총합 / 창 (%)` + `⊙ 압축 n회`), 그룹 "매 턴 바뀜"(매턴 꼬리 섹션 — **직전 턴과의 줄 diff**, `+n −m vs 턴 p` 또는 `변화 없음`)과 "고정"(시스템 프롬프트 · N 섹션 / Function schemas · N 함수 / 📐 디코딩 문법, 접힌 묶음). 열려 있는 동안 턴마다 자동 갱신(`● 턴 N 에 갱신`), 종료된 인라인 스코프는 `끝날 때 스냅샷`. 서버: LLM 호출 스냅샷이 그 호출의 꼬리를 싣고(`render_system_prompt_snapshot(tail=)`, `split_tail` 은 `prompts/session_state` 로 이동) 같은 스코프의 직전 꼬리를 `tail_prev`/`prev_turn` 으로 돌리며, `/api/debug/prompt` 는 `budget`·`scope {kind, label, parent, ended}` 를 더하고 `dynamic` 섹션을 내지 않습니다(스냅샷 없으면 `ok=False`).
 - **챗이 곧 모델 시점 — 컨텍스트 밖 카드 흐림 + 압축 요약 카드 (v10.6.0, P1)**: 웹 챗이 그 에이전트의 컨텍스트를 그대로 보여 줍니다. 압축·FIFO 로 캐시에서 빠진 카드는 흐려지고 "컨텍스트 밖" 꼬리표가 붙으며(접지 않습니다 — 무엇이 빠졌는지 보여야 요약을 믿을 수 있습니다), 빠진 구간 바로 뒤에 점선 `⊙ 압축 요약` 카드(요약 본문·파일 목록·대체한 턴 범위·전후 토큰)가 섭니다. 서버는 캐시가 바뀔 때마다(압축·FIFO·fold·resume 복원) 스코프별 sticky `ctx_view` 이벤트로 **캐시에 남은 첫 레코드의 history 서수 `gone.hidx`** 와 요약을 보내고, 모든 카드 이벤트(`assistant_turn`·`observation`·`user_message`·`agent_wake`)가 자기 레코드의 서수 `hidx` 를 실어 카드가 그보다 앞인지 판정합니다 — 압축은 항상 앞에서부터 비우므로 경계 하나면 되고, 턴 번호는 런마다 1 부터 다시 시작해 경계가 될 수 없습니다(실측). main·상주 에이전트 채널·인라인 카드 안이 같은 규칙입니다. resume 재생 카드도 레코드의 서수와 `turn` 을 싣습니다(종전 턴 0). 설계: `docs/inspector-model-view/DESIGN.md` (P2 드로어 재편·P3 인라인 머리말은 다음).
-- **형식 넛지는 구조로 저장, 문장은 읽을 때 (v10.5.0)**: "저장은 방언과 독립" 원칙의 마지막 구멍을 막았습니다. 파싱 실패 관찰(`recovery: "format"`)이 방언이 조립한 안내 문장을 `content` 로 저장해, 다른 방언으로 resume 하면 "JSON 배열로 끝내라" 같은 엉뚱한 규칙이 재생됐습니다. 이제 레코드에는 `nudge: {reason: no_json|no_action, prior: <실패 원문의 경계 발췌>, syntax_error?, thinking_only?, swallowed?}` 만 남고, 모델이 읽는 문장은 라이브·캐시 렌더·resume 모두 같은 `build_format_nudge` 가 현재 방언으로 조립합니다. 웹 재생은 라이브와 같이 넛지 카드를 그리지 않고, `read_context` 는 `format nudge (<reason>): <발췌>` 로 검색됩니다. 다른 형식 개입(모르는 도구·스키마 불일치·answers 요구)은 하네스 문장이라 그대로입니다.
+- **형식 넛지는 구조로 저장, 문장은 읽을 때 (v10.5.0)**: "저장은 방언과 독립" 원칙의 마지막 구멍을 막았습니다. 파싱 실패 관찰(`recovery: "format"`)이 방언이 조립한 안내 문장을 `content` 로 저장해, 다른 방언으로 resume 하면 "JSON 배열로 끝내라" 같은 엉뚱한 규칙이 재생됐습니다. 이제 레코드에는 `nudge: {reason: no_json|no_action, prior: <실패 원문의 경계 발췌>, syntax_error?, thinking_only?, swallowed?}` 만 남고, 모델이 읽는 문장은 라이브·캐시 렌더·resume 모두 같은 `build_format_nudge` 가 현재 방언으로 조립합니다. 웹 재생은 라이브와 같이 넛지 카드를 그리지 않고, `history` 는 `format nudge (<reason>): <발췌>` 로 검색됩니다. 다른 형식 개입(모르는 도구·스키마 불일치·answers 요구)은 하네스 문장이라 그대로입니다.
 - **옛 이름 호환층 제거 (v10.4.0)**: models.json 의 옛 키 `wire_format` 은 더 이상 바인딩으로 읽지 않습니다(그 키만 있는 엔트리는 미설정). CLI 별칭 `--response-format` 과 import shim `agent_cli.wire_formats` 도 지웠습니다 — v11 로 미뤄 뒀던 정리를 "호환 없음" 규칙에 맞춰 당겼습니다. 보드 v1.33.0 이 같은 규칙으로 바인딩 없는 모델을 표시·차단합니다.
 - **방언은 모델 바인딩이 정한다 — 세션 메타·기본값·부모 상속 제거 (v10.3.0)**: 해석 체인이 `--dialect`(세션 전체 강제) > models.json 모델 `dialect` 바인딩, 둘뿐입니다. 종전의 세션 메타 기록은 보드 어드민에서 바인딩을 바꾸고 재시작하면 resume 한 main 은 옛 방언, 되살린 상주 에이전트는 새 방언으로 갈라놓았고, 기본 `json_fc` 는 "묶이지 않은 모델" 을 조용히 감췄습니다. 이제 바인딩 없는 모델은 부트(main)와 spawn(서브에이전트) 모두 `No dialect for model '…'` 로 멈추고 models.json 에 `dialect` 를 적으라고 안내합니다 — 대화형 모델 등록도 `auto` 없이 방언 하나를 반드시 고릅니다. 서브에이전트는 main 과 같은 체인을 타므로 `--dialect` 가 서브 모델의 바인딩도 덮습니다(종전엔 바인딩이 이김). 함께, models.json 은 수정 시각이 바뀌면 다시 읽으므로 보드에서 바인딩을 고치면 **재시작 없이 다음 spawn 부터** 반영됩니다(살아 있는 에이전트의 방언은 spawn 시점에 고정). `session.jsonl` 의 `dialect` 키는 더 이상 쓰지도 읽지도 않습니다.
 - **형식 넛지는 마지막 것 하나만 (v10.2.3)**: 파싱 실패가 이어지면 넛지(`recovery: "format"` 관찰)가 실패 횟수만큼 컨텍스트에 쌓였다가 다음 파싱 성공 때 한꺼번에 접혔습니다(v4.51.0 의 fold 는 성공만 해소로 봤고, docstring 의 "항상 최신 1개" 는 구현이 없었습니다). 이제 새 형식 넛지를 붙이기 직전에 앞선 미해소 넛지를 접고, resume 의 레코드 판정도 "뒤에 더 새로운 넛지가 있음" 을 해소로 봐 같은 뷰로 수렴합니다. 모델은 언제나 마지막 실패의 넛지와 그 원문 인용만 봅니다(사용자 결정 — 쌓인 실패 인용은 모방 재료). `history.jsonl` 과 챗 카드는 종전처럼 전부 남습니다.
@@ -1495,11 +1497,11 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 
 **도구 제약이 방언·경로와 무관하게 같은 뜻이 되도록 (v10.14.0)**: `native_fc` 에서 스킬·프로파일의 도구 제약이 동작하는지 점검하다 나온 다섯 건입니다(제약 자체는 동작했습니다 — 요청의 함수 목록이 좁혀지고, 목록 밖 호출은 실행 없이 거절됩니다). ① `native_fc` 에서 형식 거절(모르는 도구·인자 오류) 뒤 다음 요청에 **짝이 없는 `tool` 메시지**가 실렸습니다 — 거절된 호출은 저장하지 않는데 관찰은 `tool` 로 렌더해, 앞에 호출이 없거나 이미 답한 호출 id 를 다시 썼습니다. OpenAI 메시지 규칙 위반입니다(omlx 는 받아 줍니다). 이제 관찰은 **바로 앞 레코드가 호출을 가진 assistant 일 때만** `tool` 이고, 아니면 `user` 메시지입니다. ② 거절 문구의 `Available:` 목록에 `complete` 가 빠져 있던 것을 프롬프트와 같은 함수(`effective_tool_names`)로 만듭니다. ③ MCP 도구 이름이 `{server}.{tool}` → **`mcp__{server}__{tool}`** — 점은 함수 이름 규칙에 없는 문자입니다. 프로파일·스킬의 `allowed-tools` 나 훅 matcher 에 옛 이름이 있으면 고쳐야 합니다(호환층 없음). ④ `## MCP Tools` 섹션을 없앴습니다 — MCP 도구는 이미 Available Tools 에 실리는데 섹션이 한 번 더 설명했고, 도구 목록을 좁힌 루프에도 못 쓰는 도구를 광고했습니다. ⑤ `agent` 호출의 `tools` 가 프로파일의 `allowed-tools` 를 대체하던 것을 **프로파일이 상한**이 되게 고쳤습니다.
 
-**도구 안내를 같이 쓰는 것끼리 묶고, 같은 말을 한 번만 합니다 (v10.13.0)**: ① 시스템 프롬프트의 도구 순서를 용도별로 다시 묶었습니다 — 파일(`read_file`→`edit_file`→`write_file`→`code_index`), 실행(`shell`·`fetch`·`monitor`·`schedule`), 기억(`read_context`·`memory`), 사람/에이전트(`ask`/`answer`·`message`/`reply`·`agent`·`run_skill`), `complete`. 종전엔 도구가 추가된 순서 그대로였고 `edit_file` 은 맨 끝에 있었습니다. 순서는 프로파일의 `allowed-tools` 순서와 무관합니다. ② "수정은 edit, 새 파일·작은 파일의 전체 재작성은 write" 규칙을 `write_file` 설명 한 곳에만 둡니다(종전 네 번, 그중 둘은 서로 모순). 같은 편집이 거듭 실패하는 작은 파일은 다시 써도 된다고 명시합니다. ③ `edit_file` 안내의 "CURRENT turn 에 읽어라" 는 지킬 수 없는 지시였습니다(읽기 결과는 다음 턴에 옵니다) — "그 줄을 보여 준 가장 최근 출력의 ref 를 쓰고, 파일이 바뀌기 전의 ref 는 다시 읽어라" 로 고쳤습니다. ④ 서브에이전트의 `agent` 도구는 설명·스키마·예시·Agent Profiles 모두 `run` 만 보여 줍니다(종전엔 설명만 그랬습니다). ⑤ `code_index` 설명을 한 문장으로 줄이고 모드·범위 규칙·defconfig 는 안내에만 둡니다. defconfig 는 모델이 직접 씁니다("사용자에게 요청" 문구 삭제). ⑥ `run_skill` 이 없는 루프에는 Available Skills 섹션을 내지 않습니다. 로컬 omlx(Qwen3.8-Flash-Next, json_fc)에서 과제 8개 × 5회를 main 과 번갈아 돌린 결과: 완주 40/40 대 40/40, 모델 호출 189 → 174, 형식 실패 18 → 8, 도구 오류 21 → 12, 해시 불일치 1 → 0, 첫 호출 입력 9,550 → 9,131 토큰. 과제당 5회라 차이의 크기보다 "나빠진 과제가 없다" 는 쪽만 근거로 삼습니다.
+**도구 안내를 같이 쓰는 것끼리 묶고, 같은 말을 한 번만 합니다 (v10.13.0)**: ① 시스템 프롬프트의 도구 순서를 용도별로 다시 묶었습니다 — 파일(`read_file`→`edit_file`→`write_file`→`code_index`), 실행(`shell`·`fetch`·`monitor`·`schedule`), 기억(`history`·`memory`), 사람/에이전트(`ask`/`answer`·`message`/`reply`·`agent`·`run_skill`), `complete`. 종전엔 도구가 추가된 순서 그대로였고 `edit_file` 은 맨 끝에 있었습니다. 순서는 프로파일의 `allowed-tools` 순서와 무관합니다. ② "수정은 edit, 새 파일·작은 파일의 전체 재작성은 write" 규칙을 `write_file` 설명 한 곳에만 둡니다(종전 네 번, 그중 둘은 서로 모순). 같은 편집이 거듭 실패하는 작은 파일은 다시 써도 된다고 명시합니다. ③ `edit_file` 안내의 "CURRENT turn 에 읽어라" 는 지킬 수 없는 지시였습니다(읽기 결과는 다음 턴에 옵니다) — "그 줄을 보여 준 가장 최근 출력의 ref 를 쓰고, 파일이 바뀌기 전의 ref 는 다시 읽어라" 로 고쳤습니다. ④ 서브에이전트의 `agent` 도구는 설명·스키마·예시·Agent Profiles 모두 `run` 만 보여 줍니다(종전엔 설명만 그랬습니다). ⑤ `code_index` 설명을 한 문장으로 줄이고 모드·범위 규칙·defconfig 는 안내에만 둡니다. defconfig 는 모델이 직접 씁니다("사용자에게 요청" 문구 삭제). ⑥ `run_skill` 이 없는 루프에는 Available Skills 섹션을 내지 않습니다. 로컬 omlx(Qwen3.8-Flash-Next, json_fc)에서 과제 8개 × 5회를 main 과 번갈아 돌린 결과: 완주 40/40 대 40/40, 모델 호출 189 → 174, 형식 실패 18 → 8, 도구 오류 21 → 12, 해시 불일치 1 → 0, 첫 호출 입력 9,550 → 9,131 토큰. 과제당 5회라 차이의 크기보다 "나빠진 과제가 없다" 는 쪽만 근거로 삼습니다.
 
 **예약 실행이 agent-cli 의 기능이 됐습니다 (v10.12.0)**: 스케줄러를 agent-board 에서 이 프로세스 안으로 옮겼습니다(`agent_cli/schedule/`, 설계 `docs/schedule/DESIGN.md`). `schedule` 도구는 항상 등록되고, 보드와의 요청·회신 파일 계약(`schedule-requests.jsonl`/`schedule-state.json`)과 `AGENT_CLI_SCHEDULER` 게이트는 삭제됐습니다. 예약은 세션 폴더에 저장되고, 켜진 예약이 있으면 `web`·`run` 모두 꺼지지 않으며, 꺼져 있던 동안 지난 발화는 자동 실행하지 않고 묻습니다. web 헤더에 ⏰ 서랍(목록·추가·이력)과 놓친 예약 카드가 생겼습니다. 함께, 같은 세션을 두 프로세스가 여는 것을 기동 시점에 거부합니다(`session.lock`). **agent-board 는 1.34.0 이상과 짝지어 쓰세요** — 그 전 보드는 자기 스케줄러로 따로 발화합니다.
 
-**없는 것을 가리키던 프롬프트 문구 정리 (v10.11.2)**: 프롬프트 검토에서 나온 다섯 건입니다. ① `json_fc` 형식 규칙 6 은 "태그·`##` 헤더 금지" 에 범위가 없어 HTML 파일 쓰기나 마크다운 `result` 까지 금지로 읽혔습니다 — 금지 문구는 그대로 두고, 이것이 **턴을 쓰는 방식**에 대한 규칙이며 값(파일 내용·`result`·메시지 본문) 안은 자유라는 한 문장을 덧붙였습니다(금지를 약하게 고쳐 쓴 판은 omlx 실측에서 나아진 것이 없어 채택하지 않았습니다). ② `run_skill` 설명이 내장에 없는 스킬 이름(`optimize`, `review-code` 등)을 예로 들던 것을 Available Skills 목록 참조로 바꿨습니다. ③ 내장 `create-agent` 스킬의 예시가 v10 이전의 중첩 `action_input` 모양이던 것을 평평한 모양으로 고쳤습니다. ④ Context Recovery 가 `history.jsonl` 을 `read_file` 로 통째로 읽으라던 것을 `read_context` 조회로 바꾸고, 그 도구가 노출된 루프에서만 냅니다. ⑤ 오류 문구의 `action_input`, 실행 컨텍스트의 `delegate` 같은 옛 용어를 `arguments`/`agent` 로 바꿨습니다. `tests/test_prompt_language.py` 가 재유입을 막습니다.
+**없는 것을 가리키던 프롬프트 문구 정리 (v10.11.2)**: 프롬프트 검토에서 나온 다섯 건입니다. ① `json_fc` 형식 규칙 6 은 "태그·`##` 헤더 금지" 에 범위가 없어 HTML 파일 쓰기나 마크다운 `result` 까지 금지로 읽혔습니다 — 금지 문구는 그대로 두고, 이것이 **턴을 쓰는 방식**에 대한 규칙이며 값(파일 내용·`result`·메시지 본문) 안은 자유라는 한 문장을 덧붙였습니다(금지를 약하게 고쳐 쓴 판은 omlx 실측에서 나아진 것이 없어 채택하지 않았습니다). ② `run_skill` 설명이 내장에 없는 스킬 이름(`optimize`, `review-code` 등)을 예로 들던 것을 Available Skills 목록 참조로 바꿨습니다. ③ 내장 `create-agent` 스킬의 예시가 v10 이전의 중첩 `action_input` 모양이던 것을 평평한 모양으로 고쳤습니다. ④ Context Recovery 가 `history.jsonl` 을 `read_file` 로 통째로 읽으라던 것을 `history` 조회로 바꾸고, 그 도구가 노출된 루프에서만 냅니다. ⑤ 오류 문구의 `action_input`, 실행 컨텍스트의 `delegate` 같은 옛 용어를 `arguments`/`agent` 로 바꿨습니다. `tests/test_prompt_language.py` 가 재유입을 막습니다.
 
 **폭주 생성 조기 종료 + 잘린 호출 기록 (v10.10.0)**: 같은 방에서 생성 셋이 셸 명령의 `node -e "` 뒤에서 탭·공백·채움 문자로 무너져 32,768 토큰 출력 상한까지 달렸습니다 — 각 27~40분, 합계 106분, 결과는 전부 폐기. 방언 수준 조기 종료(v8.41.0)는 트리거 문자(`#`/`<`)가 있는 청크에서 헤더 반복만 보므로 공백 폭주를 보지 못했습니다. 이제 스트림이 **내용 무관 감지기**(`providers/runaway.py`)를 청크마다 돌립니다 — 공백만 2,048자 이어지거나(`whitespace_run`) 마지막 4,096자에 영숫자가 2% 미만이면(`no_words`; 한글·CJK 는 낱말로 셈, `0,0,0,…` 맵 격자는 절반이 숫자라 안 걸림) 스트림을 닫고 `stop_reason="runaway"` 로 돌아옵니다. 루프는 출력 상한 절단과 같은 계약으로 처리합니다 — 실행하지 않고, 실제 내용까지만 인용해 "폭주했으니 더 작은 단위로 다시" 라고 알리며(컨텍스트 탓이 아님을 분명히), 모델이 복구하면 접힙니다. 그리고 **잘린 호출도 turns.jsonl 행**이 됩니다(종전엔 디스패치가 안 돌아 기록이 없어 서버 로그가 필요했음): `failure_signal` OUTPUT_TRUNCATED/RUNAWAY, `stop_reason` length/runaway, `stop_detail` — length 는 `model_cap`(모델 출력 상한) / `context_clamp`(하니스가 창에 맞춰 줄인 max_tokens 에 도달 — 컨텍스트가 생성을 끝내는 유일한 경로) / `server_cap`(요청보다 적게 생성하고 멈춤 — omlx 는 스스로 줄임), runaway 는 감지 규칙 이름.
 
@@ -1590,8 +1592,8 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 #### Context Recovery
 
 FIFO에서 밀려난 과거 메시지가 필요할 때:
-- System prompt 가 `read_context` 조회를 안내 (Context Recovery Guide — 그 도구가 노출된 루프에만)
-- LLM이 `read_context` 로 필요한 행만 SQL 조회하여 과거 맥락 복구 (v10.11.2 — 종전의 `read_file(history.jsonl)` 통째 읽기는 긴 세션에서 창을 넘겼다)
+- System prompt 가 `history` 조회를 안내 (Context Recovery Guide — 그 도구가 노출된 루프에만)
+- LLM이 `history` 로 필요한 행만 SQL 조회하여 과거 맥락 복구 (v10.11.2 — 종전의 `read_file(history.jsonl)` 통째 읽기는 긴 세션에서 창을 넘겼다)
 - history.jsonl 내 artifact 경로로 run/skill 상세 결과 접근 가능
 
 #### 세션 관리

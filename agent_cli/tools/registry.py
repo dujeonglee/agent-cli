@@ -19,9 +19,9 @@ from typing import Any
 from agent_cli.tools.agent_tool import AgentTool
 from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.code_index import CodeIndexTool
-from agent_cli.tools.context import ReadContextTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
+from agent_cli.tools.history import HistoryTool
 from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.monitor_tool import MonitorTool
 from agent_cli.tools.read_file import ReadFileTool
@@ -50,7 +50,7 @@ from agent_cli.tools.write_file import WriteFileTool
 #              its guide builds on read_file's hashline output) → code_index
 #              (``fetch`` feeds edit_file)
 #   execution  shell, fetch, and the two that act later: monitor, schedule
-#   memory     read_context, memory
+#   memory     history, memory
 #   people     ask/answer, message/reply, agent, run_skill
 #   finish     complete
 _ALL_TOOLS: list[Tool] = [
@@ -65,7 +65,7 @@ _ALL_TOOLS: list[Tool] = [
     # ⏰ native since v10.12.0 — the scheduler runs in this process
     # (``agent_cli/schedule/``).
     ScheduleTool(),
-    ReadContextTool(),
+    HistoryTool(),
     MemoryTool(),
     AskTool(),
     # 💬 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1). ``requires_handler``

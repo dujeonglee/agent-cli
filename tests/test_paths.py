@@ -143,10 +143,10 @@ class TestSessionsDir:
         assert sessions_dir() == Path(_A) / "sessions"
 
     def test_consumers_pin_the_same_root(self):
-        """종전 3곳의 손-조립 리터럴과 등가 — session/tools.context 상수가
+        """종전 3곳의 손-조립 리터럴과 등가 — session/tools.history 상수가
         같은 함수에서 파생 (main 의 web 인스턴스 파일은 get_session_dir 경유)."""
         import agent_cli.context.session as session_mod
-        import agent_cli.tools.context as ctx_mod
+        import agent_cli.tools.history as ctx_mod
 
         assert session_mod._SESSIONS_DIR == Path(_A) / "sessions"
         assert ctx_mod._SESSIONS_DIR == Path(_A) / "sessions"

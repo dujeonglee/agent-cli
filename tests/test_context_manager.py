@@ -568,12 +568,12 @@ class TestDialectAttachment:
         assert ctx.dialect is stub
 
 
-# ── history.jsonl retrieval enrich (read_context JSON query) ──
+# ── history.jsonl retrieval enrich (history JSON query) ──
 
 
 class TestClassifyRecord:
     """`_classify_record` derives (kind, tools, text) from record shape — the
-    single source the write-time enrich AND read_context's on-read query share."""
+    single source the write-time enrich AND history's on-read query share."""
 
     def test_query(self):
         kind, tools, text = _classify_record(

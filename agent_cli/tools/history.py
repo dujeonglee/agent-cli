@@ -1,4 +1,12 @@
-"""read_context tool — query session history with SQL.
+"""history tool — query session history with SQL.
+
+Named ``history`` (v10.29.0, was ``read_context``): the thing it reaches is
+what has LEFT the model's context — the session record — so a "read context"
+name pointed the wrong way, and the SQL the model writes already says ``FROM
+history``. Measured on 3 previous-session recall tasks × 3 against
+``read_context`` / ``context_recall`` / ``recall``: ``history`` was found at
+the first op 9/9 with the fewest ops (2.8 vs 4.1–4.8); ``context_recall``
+went to the ``memory`` tool first 3/9 ("recall" reads as the memory notes).
 
 The LLM composes a SQL ``SELECT`` against a ``history`` table built on demand
 from history.jsonl. One query primitive instead of a pile of filter params: the
@@ -38,7 +46,7 @@ from agent_cli.tools.result import ToolResult
 
 _SESSIONS_DIR = sessions_dir()
 
-# read_context is a CORE tool (always registered), so this module must import
+# history is a CORE tool (always registered), so this module must import
 # even where SQLite is unavailable. Some locked-down / custom CPython builds
 # ship without the ``sqlite3`` extension and (on non-x86_64) can't get the
 # ``pysqlite3-binary`` fallback either. Resolve SQLite LAZILY via the
@@ -74,7 +82,7 @@ _COLUMNS = (
 # ── Public entry point ────────────────────────────────────────────
 
 
-def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolResult:
+def tool_history(args: dict, *, session_dir: Path | None = None) -> ToolResult:
     """Run a SQL query over session history.
 
     ``args``: ``{query: "SELECT …", sessions?: current|all|<id>|[…]}``.
@@ -92,7 +100,7 @@ def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolRes
         return ToolResult(
             False,
             error=(
-                "read_context needs SQLite, which this Python build lacks "
+                "history needs SQLite, which this Python build lacks "
                 "(no _sqlite3 extension and no pysqlite3 fallback). History "
                 "query is unavailable on this host."
             ),
@@ -280,7 +288,7 @@ def _run_sql(conn, query: str) -> ToolResult:
 
 def _cell(value: Any) -> str:
     """Render one cell value VERBATIM (no truncation, no whitespace collapse).
-    read_context returns faithful content; an oversized result is caught by the
+    history returns faithful content; an oversized result is caught by the
     loop's oversized-observation cap (a narrow-it nudge), not silently mangled
     here. The model is expected to project/limit large queries (e.g.
     ``SELECT loc, substr(text,1,200) … LIMIT 30`` for a scan)."""
@@ -342,8 +350,8 @@ def _help(session_dir: Path | None) -> ToolResult:
     )
     examples = "\n".join(f"  {q}" for q in _HELP_EXAMPLES)
     parts = [
-        "read_context: query session history with SQL (read-only SELECT over the",
-        "`history` table; pass it as read_context_query).",
+        "history: query session history with SQL (read-only SELECT over the",
+        "`history` table; pass it as `query`).",
         "",
         "Table `history` (one row per turn record):",
         schema,
@@ -352,10 +360,7 @@ def _help(session_dir: Path | None) -> ToolResult:
             "  kind: query=user ask · action=tool-call turn · observation=tool result"
             " · final=complete answer · raw=unparsed"
         ),
-        (
-            "  Default scope = current session; pass read_context_sessions='all' or"
-            " id(s) for others."
-        ),
+        ("  Default scope = current session; pass sessions='all' or id(s) for others."),
         "",
         "Examples:",
         examples,
@@ -369,10 +374,10 @@ def _help(session_dir: Path | None) -> ToolResult:
     return ToolResult(True, output="\n".join(parts))
 
 
-class ReadContextTool(Tool):
-    name = "read_context"
+class HistoryTool(Tool):
+    name = "history"
     description = (
-        "Query past/current session history with SQL. read_context_query='SELECT "
+        "Query past/current session history with SQL. query='SELECT "
         "… FROM history WHERE …' (read-only). Columns: session, loc, seq, kind"
         "(query/action/observation/final/raw/system), turn, ts, tools, files, "
         "author, text. Search by kind/tools/files/author/turn; the text column "
@@ -382,12 +387,12 @@ class ReadContextTool(Tool):
         "then SELECT text … for the one row you want. An oversized result is "
         "rejected with a narrow-it nudge rather than dumped. Omit the query to "
         "see the schema + examples + session list. Default scope = current "
-        "session; read_context_sessions='all'/id(s) for others."
+        "session; sessions='all'/id(s) for others."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "read_context_query": {
+            "query": {
                 "type": "string",
                 "description": (
                     'SQL SELECT over the `history` table (e.g. "SELECT loc, text '
@@ -395,7 +400,7 @@ class ReadContextTool(Tool):
                     "'%auth.py%'\"). Omit to get the schema + examples."
                 ),
             },
-            "read_context_sessions": {
+            "sessions": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
@@ -415,4 +420,4 @@ class ReadContextTool(Tool):
     )
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_read_context(args, session_dir=ctx.session_dir if ctx else None)
+        return tool_history(args, session_dir=ctx.session_dir if ctx else None)

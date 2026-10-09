@@ -26,7 +26,7 @@ class TestBuiltinOrder:
         assert _adjacent("ask", "answer")
         assert _adjacent("message", "reply")
         assert _adjacent("monitor", "schedule")
-        assert _adjacent("read_context", "memory")
+        assert _adjacent("history", "memory")
 
     def test_complete_is_last(self):
         assert ORDER[-1] == "complete"

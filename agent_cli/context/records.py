@@ -3,7 +3,7 @@
 assistant 레코드의 두 저장 shape(멀티-op ``ops`` / 단수 legacy)과
 관찰/query 레코드를 "어떻게 읽고 분류하나"의 유일한 소유자.
 manager(enrich)·delegate report(활동로그)·review(tool-calls)·
-tools/read_context 가 소비 — 예전 tools/context.py 의 private 침범이
+tools/history 가 소비 — 예전 tools/history.py 의 private 침범이
 계약 모듈의 공개 소비로 정당화된다.
 """
 
@@ -70,7 +70,7 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
                 thought+op summaries for actions, the result for a final)
 
     Pure function of the record shape — no prefix-convention guessing leaks
-    into read_context; this is the single place that encodes it.
+    into history; this is the single place that encodes it.
     """
     role = message.get("role")
     content = str(message.get("content") or "")
