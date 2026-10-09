@@ -61,7 +61,7 @@ API 키는 `--ae AGENT_CLI_API_KEY=…`. 로컬 모델은 `-n 1~2` 가 현실적
 | `response_format` | (해석 체인) | `--response-format json_fc|xml_fc` |
 | `max_depth` | (agent-cli 기본) | `--max-depth` |
 | `prompt_template_path` | (없음) | Jinja 템플릿(`{{ instruction }}`) — `prompt.j2` 는 비대화형 규칙(`ask` 금지·검증 후 `complete`) 추가 |
-| `wheel` | `dist/` 최신 | 컨테이너에 설치할 wheel 경로 |
+| `wheel` | `dist/` 최신(버전 숫자 비교 — 사전순이면 9.24 가 10.27 을 이긴다) | 컨테이너에 설치할 wheel 경로 |
 | `models_json` | `~/.agent-cli/models.json` | 주입할 모델 레지스트리 (`""` 면 미주입 → 런타임 프로빙) |
 | `python` | 3.12 | uv 가 컨테이너에 확보할 파이썬 |
 
@@ -94,4 +94,4 @@ API 키는 `--ae AGENT_CLI_API_KEY=…`. 로컬 모델은 `-n 1~2` 가 현실적
   (`code_index` 도구 사용 시).
 
 `bench/runs` 는 gitignore 대상. 커밋되는 것은 `agent_cli_harbor.py`·`atif.py`·`prompt.j2`·
-`test_atif.py`·이 README.
+`test_atif.py`·`wheels.py`·`test_wheels.py`·이 README.
