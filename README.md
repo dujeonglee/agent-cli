@@ -1238,6 +1238,8 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 | `run` | 일회성 — 답변 반환 후 소멸 | 독립적인 일회성 작업, 병렬 팬아웃 |
 | `spawn` / `request` / `status` / `resume` / `kill` | **상주** — 답변 후에도 컨텍스트 유지 | 반복 협업, 역할별 장기 작업 |
 
+모델이 받는 **선택 기준은 비용 우선**입니다 (v10.26.0): 위임하면 요약만 돌아오고(읽은 것은 그 창에 남고, 틀린 것도 같은 어조로 돌아온다), 여러 파일을 읽어야 결론이 나올 때 위임하고 몇 번의 호출이면 직접 하며 **의심스러우면 직접** 합니다. spawn 은 같은 영역에 여러 라운드의 질문이 이어질 때만, 영역당 하나. 넘긴 일은 다시 하지 않고 제 몫을 끝낸 뒤 `complete` — 회신이 오면 main 이 깨어납니다. (종전의 "에이전트마다 창이 있으니 N배로 늘려라" 식 장려는 큰 프로젝트에서 spawn 8개 + 본인 중복 조사로 타임아웃을 만들어 교체했습니다.)
+
 ```json
 {"action": "agent", "action_input": {"mode": "run", "task": "Read /tmp/data.csv and count rows"}}
 {"action": "agent", "action_input": {"mode": "run", "task": "Fix the bug we found", "context": "fork"}}

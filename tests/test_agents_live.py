@@ -2050,7 +2050,9 @@ class TestLiveTeammatesSection:
         assert '"mode":"resume"' in desc
         assert "..." in desc and "x" * 198 not in desc  # 197자 + "..." 캡 폴백
         assert '"mode":"request"' in desc  # 재사용 유도
-        assert "distinct `name`" in desc  # 다중 인스턴스 안내
+        # v10.26.0: 다중 인스턴스 안내는 `profile` 파라미터 한 곳에만 — 이
+        # 섹션은 "이미 있는 것을 다시 쓰라" 만 말한다.
+        assert "Spawn ADDITIONAL" not in desc and "distinct `name`" not in desc
         reg.shutdown_all()
 
     def test_dead_hidden_from_subagent_peer_roster(self, tmp_path, renderer):
@@ -3876,29 +3878,36 @@ class TestAgentTaskFieldUnification:
         assert '"message"' not in res.output
 
 
-class TestSpawnScalingGuidance:
-    """spawn 장려 문구 계약 (v8.1.0, 사용자 제안 — 컨텍스트 창 스케일링 논리).
+class TestDelegationGuidanceIsCostFirst:
+    """위임 안내 계약 (v10.26.0 — v8.1.0 의 "창 스케일링" 장려를 비용 우선으로
+    교체). 큰 프로젝트 실측에서 장려 문구는 spawn 8개를 띄워 놓고 본인도
+    같은 조사를 반복하다 두 턴을 다 잘라먹었고, 비용 우선 문구는 같은
+    세트에서 폭주 0·넘긴 뒤 중복 0 이었다.
 
-    핵심 계약 2개: ①장려는 반드시 **조건·규율과 한 몸**이어야 한다(agent 사용은
-    가장 약한 준수 영역 — 무조건 장려는 과발동을 만든다) ②spawn 이 불가능한
-    서브루프 설명(SUBLOOP_DESCRIPTION)에는 이 문구가 새지 않아야 한다.
+    핵심 계약 3개: ①위임의 비용(요약만 온다·틀린 것도 같은 어조)과 "의심
+    스러우면 직접" 이 run 설명에 있다 ②넘긴 뒤에는 직접 하지 않는다
+    ③spawn 이 불가능한 서브루프 설명(SUBLOOP_DESCRIPTION)에는 spawn 문구가
+    새지 않는다.
     """
 
-    def test_description_carries_the_scaling_rationale(self):
+    def test_run_description_states_the_cost_and_the_default(self):
         from agent_cli.tools.registry import TOOLS
 
         d = TOOLS["agent"].description
-        assert "OWN full context window" in d  # 창 스케일링 논리
-        assert "distilled" in d  # 증류 인터페이스 (내 창은 깨끗하게)
-        assert "ONE area" in d and "disjoint" in d  # orchestrate 와 같은 규율
+        assert "only its summary" in d and "both handoffs drop detail" in d
+        assert "same confident tone" in d  # 틀린 것도 자신 있게 돌아온다
+        assert "handful of calls" in d and "when in doubt, do it yourself" in d
+        assert "OWN full context window" not in d and "N windows" not in d
 
-    def test_encouragement_is_conditional_not_blanket(self):
+    def test_handed_work_is_not_redone_and_spawn_is_for_follow_ups(self):
         from agent_cli.tools.registry import TOOLS
 
         d = TOOLS["agent"].description
-        # "언제 안 쓰는지"가 같이 있어야 한다 — 과발동 가드.
-        assert "small one-off" in d
-        assert "cheaper" in d
+        assert "do not also do it yourself" in d
+        assert "you are woken when its reply arrives" in d
+        assert "several rounds of questions" in d  # spawn 의 유일한 사유
+        assert "One agent per area" in d and "disjoint" in d
+        assert "Prefer spawn" not in d
 
     def test_subloop_description_has_no_spawn_encouragement(self):
         from agent_cli.tools.agent_tool import AgentTool

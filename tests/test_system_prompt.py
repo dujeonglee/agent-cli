@@ -166,7 +166,10 @@ class TestMultiOpPromptBranches:
         )
 
     def test_delegate_one_task_per_op(self, section):
-        assert "Each run op gives ONE task to a sub-agent" in section
+        # v10.26.0: "ONE task" 는 RUN_DESCRIPTION 한 곳에만 — 인라인 가이드의
+        # 머리말("Each run op gives ONE task …")은 그 중복이라 제거됐다.
+        assert 'mode:"run" gives ONE task to a sub-agent' in section
+        assert "Each run op gives ONE task" not in section
         assert 'Always use the "tasks" array format' not in section
 
     # NOTE: the "singular format keeps batch + complete" inverse test was
@@ -556,14 +559,18 @@ class TestBuildSystemPrompt:
         assert "name" not in params["properties"]
         assert parameter_overrides_for(["agent"], False, has_agent_registry=True) == {}
 
-    def test_agent_guide_context_list_holds_only_context_values(self):
+    def test_agent_guide_does_not_restate_the_parameters(self):
         """ "Context modes" used to list ``tools`` and ``agent`` beside
         none/fork — neither is a context value, and ``agent`` is the pre-v5
         name of the ``profile`` argument. A stray closing quote ended the
-        guide."""
+        guide. v10.26.0: the guide no longer restates ``context`` / ``profile``
+        / ``tools`` at all — each is told once, in its parameter description —
+        and keeps only the dependency constraint plus the examples."""
         guide = _build_agent_inline(_get_dialect("json_fc"))
         assert '- "tools"' not in guide and '- "agent"' not in guide
-        assert "profile (optional)" in guide and "tools (optional)" in guide
+        assert "context (per task)" not in guide
+        assert "profile (optional)" not in guide and "tools (optional)" not in guide
+        assert "Constraints:" in guide and "Examples:" in guide
         assert not guide.rstrip().endswith('"')
 
     def test_profiles_advertised_with_agent_tool(self):
@@ -1056,9 +1063,16 @@ class TestDelegateInlineAgent:
         return _build_agent_inline(dialects.get("json_fc"))
 
     def test_delegate_inline_mentions_agent(self):
+        from agent_cli.tools import TOOLS
+
         guide = self._delegate_guide()
         assert '"agent"' in guide
-        assert ".agent-cli/agents/" in guide
+        # v10.26.0: the profile path lives in the ``profile`` parameter only.
+        assert ".agent-cli/agents/" not in guide
+        assert (
+            ".agent-cli/agents/"
+            in (TOOLS["agent"].parameters["properties"]["profile"]["description"])
+        )
 
     def test_delegate_inline_agent_example(self):
         guide = self._delegate_guide()
@@ -1620,8 +1634,9 @@ class TestReplyDisciplineSection:
 class TestRunDescriptionFocusesOnContext:
     """v9.24.1: run 설명의 이유는 동시성이 아니라 분리된 컨텍스트다 — 종전
     "fan out … in PARALLEL" 은 속도로 읽혔고, 로컬 서버 하나에서는 빨라지지
-    않은 채 부모만 멈췄다. 메인·서브루프 설명이 같은 문장을 쓰고, fork 로
-    부모 대화를 물려받을 수 있음을 빠뜨리지 않는다."""
+    않은 채 부모만 멈췄다. 메인·서브루프 설명이 같은 문장을 쓴다. v10.26.0:
+    fork 는 ``context`` 파라미터 한 곳에서만 설명하고, "속도용이 아니다" 는
+    도구 섹션 전체에 한 번만 나온다(인라인 머리말의 복사본 제거)."""
 
     def test_both_descriptions_share_the_run_text(self):
         from agent_cli.tools.agent_tool import AgentTool
@@ -1630,16 +1645,20 @@ class TestRunDescriptionFocusesOnContext:
         assert AgentTool.RUN_DESCRIPTION in AgentTool.SUBLOOP_DESCRIPTION
         for text in (AgentTool.description, AgentTool.SUBLOOP_DESCRIPTION):
             assert "PARALLEL" not in text
-            assert "own context window" in text and 'context:"fork"' in text
-            assert "do not split for speed" in text and "blocked" in text
+            assert "stays in its window" in text
+            assert "not for speed" in text and "blocked" in text
+        for params in (AgentTool.parameters, AgentTool.SUBLOOP_PARAMETERS):
+            ctx = params["properties"]["context"]["description"]
+            assert "fork" in ctx and "copy of your conversation" in ctx
 
-    def test_multi_op_example_intro_gives_the_context_reason(self):
+    def test_not_for_speed_is_said_once_in_the_tools_section(self):
         from agent_cli.dialects import get
         from agent_cli.prompts.system_prompt import _build_tools_section
 
         out = _build_tools_section(["agent"], get("json_fc"))
         assert "run in PARALLEL" not in out
-        assert "would\n  each flood your context — not for speed" in out
+        assert out.count("not for speed") == 1
+        assert "Each run op gives ONE task" not in out
 
 
 class TestEditVsWriteRule:
