@@ -256,18 +256,11 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
             )
         )
     if getattr(dialect, "multi_op", False):
-        intro = (
-            "  Each run op gives ONE task to a sub-agent with its own context "
-            "window.\n  Several run ops in the same turn are for independent "
-            "parts that would\n  each flood your context — not for speed; "
-            "you wait for all of them."
-        )
         dependency = (
             "  - If task B depends on task A's result, emit only A now; "
             "use its\n    result next turn."
         )
     else:
-        intro = "  Each run call executes ONE sub-agent task."
         dependency = (
             "  - If task B depends on task A's result, call run twice: "
             "first A,\n    then use A's result to call B."
@@ -282,14 +275,6 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
     )
     return f"""\
 
-{intro}
-  context (per task):
-  - "none" (default): the sub-agent starts with no context. The task must be
-    self-contained.
-  - "fork": the sub-agent receives a copy of the current conversation history.
-  profile (optional): a predefined agent from .agent-cli/agents/{{name}}.md — the
-    file defines the sub-agent's role/principles and can set allowed-tools/model.
-  tools (optional): restrict which tools the sub-agent can use. With a profile, it can only narrow the profile's own set.
   Constraints:
 {dependency}
   Examples:
@@ -1214,11 +1199,7 @@ def build_agent_profiles_section(
     if has_agent_registry:
         lines = [
             "## Agent Profiles",
-            (
-                "Profiles give a sub-agent a specialist role. Use them one-shot "
-                '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
-                "keeps its context across your requests):"
-            ),
+            "Profiles give a sub-agent a specialist role (run or spawn):",
             indent(run_example),
             indent(spawn_example),
         ]
@@ -1311,10 +1292,7 @@ def build_live_agents_section(
             "These agents are ALREADY running and remember all previous "
             "exchanges — send follow-up work with "
             '`{"mode":"request","key":"<key>","task":"..."}` instead of '
-            "spawning a new one for the same thread of work. Spawn ADDITIONAL "
-            "instances of a profile (each with a distinct `name`) only for "
-            "parallel INDEPENDENT workstreams — e.g. several code-writers on "
-            "disjoint files."
+            "spawning a new one for the same thread of work."
         )
         if dead:
             intro += (

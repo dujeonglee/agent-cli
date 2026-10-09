@@ -67,15 +67,16 @@ class AgentTool(Tool):
     # 멈췄다 (Harbor v4 extract-elf). context 는 none(기본)·fork 둘 다 가능 —
     # "empty" 로 단정하지 않는다.
     RUN_DESCRIPTION = (
-        'mode:"run" gives ONE task to a sub-agent with its own context '
-        "window — fresh by default (it knows only the task text, so state "
-        'everything it needs), or a copy of your conversation with context:"fork". '
-        "Whatever it reads and explores afterwards stays in its window; you "
-        "receive only its distilled result, in this turn. Split work into "
-        "several run ops when the parts are independent and each would flood "
-        "your context. They may execute concurrently, but on a single local "
-        "model server they share throughput, so do not split for speed — and "
-        "you are blocked until all of them finish."
+        'mode:"run" gives ONE task to a sub-agent and you get back only its '
+        "summary: whatever it read stays in its window, both handoffs drop "
+        "detail, and its mistakes return in the same confident tone as its "
+        "findings. Delegate when answering would mean reading across many "
+        "files and you want the conclusion, not the file dumps. Do it "
+        "yourself when it is a handful of calls or a lookup whose target you "
+        "already know; when in doubt, do it yourself. Several run ops in one "
+        "turn are for independent parts that would each flood your context — "
+        "not for speed: on a single local model server they share throughput, "
+        "and you are blocked until all of them finish."
     )
     # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
     # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
@@ -87,21 +88,14 @@ class AgentTool(Tool):
     description = (
         "Work with sub-agents, one-shot or persistent. "
         + RUN_DESCRIPTION
-        + ' mode:"spawn" creates a PERSISTENT agent that keeps '
-        'its context between requests: send follow-ups with mode:"request" '
-        "any time and its replies are delivered to you automatically as "
-        "observations (no polling). Use run for independent one-shot tasks; "
-        "use spawn/request for iterative work. Spawning scales the team's "
-        "working memory: each agent has its OWN full context window, so "
-        "splitting a large job across N specialists gives N windows of "
-        "combined context while yours stays clean — agents absorb the raw "
-        "exploration (file contents, search results, dead ends) and send "
-        "back distilled answers. An agent that has studied one area answers "
-        "follow-ups from full detail, more precisely than re-deriving from "
-        "your compacted history. Prefer spawn when work is large, "
-        "multi-part, or will need follow-ups; give each agent ONE area "
-        "(disjoint files/subsystems). For a small one-off lookup, run — or "
-        "doing it yourself — is cheaper than coordinating an agent."
+        + ' Spawn (mode:"spawn") only when the same area will take several '
+        "rounds of questions — an agent that has studied one area answers "
+        "follow-ups from full detail. One agent per area (disjoint "
+        "files/subsystems). Once you have handed work to an agent, do not "
+        "also do it yourself: finish what is yours, then complete — you are "
+        "woken when its reply arrives; never predict a pending reply. Queue "
+        "only requests that do not depend on a reply still pending; send the "
+        "dependent one after you have read it."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -110,17 +104,14 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    "run: ONE task in a one-shot sub-agent with its own "
-                    "context (blocking — result returns in this turn; several "
-                    "run ops in one turn may execute concurrently). "
-                    "spawn: create a PERSISTENT agent (returns its key). "
-                    "request: send it a message — returns immediately; the "
-                    "reply is DELIVERED to you automatically when ready "
-                    "(never poll, never wait — keep working or complete). "
-                    "status: list live agents and their state. "
-                    "resume: bring a DEAD agent back to life with its full "
-                    "prior context (it remembers everything). "
-                    "kill: terminate one."
+                    "run: ONE task, blocking — the result returns in this "
+                    "turn. spawn: create a PERSISTENT agent that keeps its "
+                    "context between requests (returns its key). request: "
+                    "send it a message — returns immediately; the reply is "
+                    "DELIVERED to you as an observation when ready. status: "
+                    "list live agents and their state. resume: bring a DEAD "
+                    "agent back with its full prior context. kill: terminate "
+                    "one."
                 ),
             },
             "profile": {
@@ -128,9 +119,8 @@ class AgentTool(Tool):
                 "description": (
                     "run/spawn: profile from .agent-cli/agents/{profile}.md "
                     "(loaded into the sub-agent's system prompt; omit for a "
-                    "generalist). The SAME profile may be spawned multiple times "
-                    "for parallel independent workstreams — give each instance "
-                    "a distinct `name`."
+                    "generalist). The same profile may be spawned more than "
+                    "once — give each instance a distinct `name`."
                 ),
             },
             "name": {
@@ -144,9 +134,12 @@ class AgentTool(Tool):
             "task": {
                 "type": "string",
                 "description": (
-                    "the instruction for the agent — run: the task to execute "
-                    "(required); request: the message to deliver (required); "
-                    "spawn/resume: optional initial request queued right away"
+                    "run: the task (required); request: the message "
+                    "(required); spawn/resume: optional first request. Brief "
+                    "it like a peer: the goal, what you already ruled out, and "
+                    "which files to read — point at them, do not retype them. "
+                    "Give it the code, not your conclusion: an agent handed "
+                    "your hypothesis tends to return it confirmed."
                 ),
             },
             "instructions": {
@@ -179,8 +172,9 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["none", "fork"],
                 "description": (
-                    "run/spawn: none (fresh context) or fork (copy of the "
-                    "current conversation history)"
+                    "run/spawn: none (default) — the agent starts fresh and "
+                    "knows only the task text; fork — it gets a copy of your "
+                    "conversation so far."
                 ),
             },
         },
@@ -198,9 +192,7 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["run"],
                 "description": (
-                    "run: ONE task in a one-shot sub-agent with its own "
-                    "context (blocking — result returns in this turn; several "
-                    "run ops in one turn may execute concurrently)."
+                    "run: ONE task, blocking — the result returns in this turn."
                 ),
             },
             "profile": {
@@ -212,7 +204,13 @@ class AgentTool(Tool):
             },
             "task": {
                 "type": "string",
-                "description": "the task for the sub-agent to execute (required)",
+                "description": (
+                    "the task (required). Brief it like a peer: the goal, what "
+                    "you already ruled out, and which files to read — point at "
+                    "them, do not retype them. Give it the code, not your "
+                    "conclusion: an agent handed your hypothesis tends to "
+                    "return it confirmed."
+                ),
             },
             "instructions": {
                 "type": "string",
@@ -236,8 +234,9 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["none", "fork"],
                 "description": (
-                    "none (fresh context) or fork (copy of the current "
-                    "conversation history)"
+                    "none (default) — the agent starts fresh and knows only "
+                    "the task text; fork — it gets a copy of your conversation "
+                    "so far."
                 ),
             },
         },
