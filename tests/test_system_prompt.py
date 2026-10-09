@@ -652,6 +652,17 @@ class TestBuildSystemPrompt:
         assert "Read a file before changing it" in TASK_GUIDELINES
         assert "code, config, docs" in TASK_GUIDELINES
 
+    def test_task_guidelines_put_scratch_files_in_agent_cli_tmp(self):
+        """v10.27.0: scratch files go in ``.agent-cli/tmp/`` under the
+        workspace — a RELATIVE path, in line with the Environment path rule.
+        Measured on 8 scratch-heavy tasks × 3 (main / relative / absolute):
+        system-temp use fell 15/24 → 1/24 and gate refusals 13 → 3; the
+        absolute-path variant bled its path into 63% of shell commands
+        (``cd /abs/… &&``) and doubled the op count, so it was rejected."""
+        assert "`.agent-cli/tmp/`" in TASK_GUIDELINES
+        assert "never in /tmp" in TASK_GUIDELINES
+        assert "{scratch_dir}" not in TASK_GUIDELINES  # no absolute path
+
     def test_task_guidelines_require_terse_reasoning(self):
         """v8.59.0: 간결한 reasoning 지시 — Harbor tb21 실측에서 출력 토큰을
         18~92% 줄였고(3/3 일관) 품질 저하 신호 없음. ASD-STE100 규격 원문보다

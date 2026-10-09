@@ -104,6 +104,7 @@ TASK_GUIDELINES = """\
 - Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.
 - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
 - Do not create new files unless the task requires it.
+- Scratch files — intermediate results, helper scripts, downloads — go in `.agent-cli/tmp/` under the working directory (create it if missing), never in /tmp or another system temp dir: they are cleaned up with the project and need no confirmation.
 - Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.
 - If an approach fails, diagnose the cause before switching tactics.
 - Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.
