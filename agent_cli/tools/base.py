@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,12 @@ class RunContext:
     #: **설치한 쪽으로** 보내려면 도구가 자기 주소를 알아야 한다. 루프
     #: 상수라 캐시(위 docstring 의 "per-call-VARYING" 조건)에 안 걸린다.
     owner: str = "main"
+    #: 모델이 **마지막 도구 결과를 받은 시각**을 돌려주는 콜러블 (v10.34.0,
+    #: None = 아직 없음). 값이 아니라 콜러블인 이유: 호출마다 변하는 값을
+    #: 필드로 두면 위 캐시를 버려야 한다 — 콜러블은 루프 상수이고 읽을 때
+    #: 브리지의 현재 값을 본다. `monitor` 가 "등록 때 이미 있던 파일이 모델이
+    #: 못 본 내용인지" 를 이것과 mtime 으로 가른다.
+    observed_at: Callable[[], float | None] | None = None
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────

@@ -151,6 +151,11 @@ class MonitorTool(Tool):
         once = args.get("once")
         from agent_cli.monitor.registry import MonitorUnavailable
 
+        # 등록 시점의 파일 상태 → 초기 커서 + 모델에게 줄 근거 (v10.34.0,
+        # conditions.MatchCondition.register). `observed_at` 은 모델이 마지막
+        # 도구 결과를 받은 시각 — "그 뒤에 수정됐다" 가 "모델이 못 본 내용" 이다.
+        observed_at = ctx.observed_at() if ctx is not None and ctx.observed_at else None
+        state, note = cond.register(observed_at=observed_at)
         try:
             mon = reg.add(
                 cond,
@@ -160,6 +165,7 @@ class MonitorTool(Tool):
                 deadline_s=deadline_s,
                 once=True if once is None else bool(once),
                 run=run_cmd,
+                state=state,
             )
         except MonitorUnavailable as exc:
             return ToolResult(False, error=str(exc))
@@ -172,6 +178,7 @@ class MonitorTool(Tool):
                 f"monitor {mon.id} watching {mon.cond.describe()} for {left}s"
                 f"{'' if mon.once else ' (repeating)'}. "
                 f"You will be notified automatically — do NOT poll."
+                f"{' ' + note if note else ''}"
             ),
         )
 

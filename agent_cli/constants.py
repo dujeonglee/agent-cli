@@ -279,6 +279,27 @@ MONITOR_DEADLINE_DEFAULT_S = 7200  # 2h — 빠뜨려도 등록이 성공한다
 MONITOR_DEADLINE_MIN_S = 60  # 1m
 MONITOR_DEADLINE_MAX_S = 86400  # 24h — 그 이상은 배치 작업이고 board 소관
 MONITOR_INTERVAL_MIN_S = 60  # 주기 `command` 의 `every` 하한
+#: `match` 등록 때 파일이 이미 있고 **모델의 마지막 관찰 이후**에 수정됐으면 이
+#: 크기까지는 내용 전부를 새 줄로 본다(커서 0 → 다음 틱 발화). 결과·상태 파일
+#: (`done.txt`)과 누적 로그를 가르는 대용 지표 — 로그는 mtime 이 방금이어도 앞쪽
+#: 수만 줄이 어제 것이라 0 부터 읽으면 옛 사건이 새 사건으로 보고된다. 0 = 자동
+#: 발화 없음(항상 정보만), -1 = 무제한. env `AGENT_CLI_MONITOR_REPLAY_MAX_BYTES`.
+MONITOR_REPLAY_MAX_BYTES = 65536
+#: 등록 정보에 실을 "마지막 매칭 줄" 을 찾을 때 읽는 꼬리 — 큰 로그도 비용이 고정.
+MONITOR_PREVIEW_TAIL_BYTES = 4096
+
+
+def monitor_replay_max_bytes() -> int:
+    """운영자 노브 — 잘못된 값은 기본값으로(헤드리스에서 조용한 실패 대신 안전한 기본)."""
+    import os
+
+    raw = os.environ.get("AGENT_CLI_MONITOR_REPLAY_MAX_BYTES", "").strip()
+    if not raw:
+        return MONITOR_REPLAY_MAX_BYTES
+    try:
+        return max(-1, int(raw))
+    except ValueError:
+        return MONITOR_REPLAY_MAX_BYTES
 
 
 _WORD_CHAR = __import__("re").compile(r"[^\W_]", __import__("re").UNICODE)
