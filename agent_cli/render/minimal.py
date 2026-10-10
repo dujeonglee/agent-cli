@@ -395,6 +395,14 @@ class MinimalRenderer(Renderer):
     def error(self, content: str, turn: int) -> None:
         self._p(f"  ✗ {content}", highlight=False)
 
+    def push_user_message(
+        self, content: str, author: str = "", hidx: int | None = None
+    ) -> None:
+        """런 도중 합류한 요청(예약 발화 등)의 에코 (v10.33.0) — run 도 web
+        처럼 턴 경계에서 큐를 주입하므로, 합류한 사실이 콘솔에도 보여야 한다.
+        런 시작 질의는 호출자가 이미 보여 주므로 여기 오지 않는다."""
+        self._p(f"  📨 {content}", highlight=False, markup=False)
+
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)

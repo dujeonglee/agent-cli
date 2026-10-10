@@ -21,25 +21,6 @@ class Clock:
         return self.now
 
 
-class _Waker:
-    def __init__(self):
-        self.idle = threading.Event()
-
-    def mark_idle(self):
-        pass
-
-    def handle_dequeued(self, text):
-        return None
-
-    def on_run_end(self):
-        pass
-
-
-class _Agents:
-    def has_active_work(self):
-        return False
-
-
 class _Renderer:
     def has_live_connections(self):
         return False
@@ -67,24 +48,17 @@ def reg(tmp_path, clock):
 
 class TestRunPump:
     def _pump(self, q, reg, calls, waits):
-        from agent_cli.main import _run_message_pump
+        from tests.pump_support import make_pump, run_pump_in_thread
 
-        done = threading.Event()
-
-        def run():
-            _run_message_pump(
-                q,
-                _Waker(),
-                _Agents(),
-                lambda text, wake: calls.append(text),
+        return run_pump_in_thread(
+            make_pump(
+                queue=q,
+                run_main=lambda req: calls.append(req.text),
                 schedules=reg,
                 on_schedule_wait=lambda: waits.append(1),
                 poll_secs=0.02,
             )
-            done.set()
-
-        threading.Thread(target=run, daemon=True).start()
-        return done
+        )
 
     def test_pump_ends_when_there_is_no_schedule(self, reg):
         q, calls, waits = InputQueue(), [], []

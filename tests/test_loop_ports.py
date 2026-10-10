@@ -22,19 +22,17 @@ import pytest
 
 from agent_cli.loop.ports import LoopPorts
 from agent_cli.runtime import (
+    ports_for_main,
     ports_for_oneshot,
     ports_for_resident,
-    ports_for_run,
     ports_for_skill,
-    ports_for_web,
 )
 
 #: 조립 지점 다섯 — 각 입력은 **None 이 아닌 센티넬**이다. 빌더가 자기
 #: 입력을 흘리는지를 봐야지, 호출자가 None 을 준 결과를 보면 안 된다.
 _S = object()
 BUILDERS = {
-    "run": lambda: ports_for_run(agent_registry=_Reg(), mcp_manager=_S),
-    "web": lambda: ports_for_web(
+    "main": lambda: ports_for_main(
         agent_registry=_Reg(),
         mcp_manager=_S,
         dequeue_user_message=_S,
@@ -124,9 +122,8 @@ class TestOwner:
     def test_resident_carries_its_key(self):
         assert BUILDERS["resident"]().owner == "agent:k1"
 
-    @pytest.mark.parametrize("host", ["run", "web"])
-    def test_main_hosts_are_main(self, host):
-        assert BUILDERS[host]().owner == "main"
+    def test_main_host_is_main(self):
+        assert BUILDERS["main"]().owner == "main"
 
     @pytest.mark.parametrize("host", ["skill", "oneshot"])
     def test_nested_hosts_inherit_the_parent(self, host):

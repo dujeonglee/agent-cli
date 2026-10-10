@@ -152,12 +152,13 @@ class WebDispatchOutput:
             success=False,
         )
 
-    def agent_result(self, result) -> None:
+    def agent_result(self, result, *, ok: bool = True) -> None:
         # No-op. The delegate path (``_dispatch_agent`` →
         # ``tool_delegate``) already emits the final answer through
         # the renderer's observation channel — re-emitting here would
-        # surface the same body twice in the chat thread.
-        del result
+        # surface the same body twice in the chat thread. ``ok`` is the
+        # console adapter's --result-file signal; the web has no file.
+        del result, ok
 
     def skill_not_found(self, name: str) -> None:
         self.renderer.observation(

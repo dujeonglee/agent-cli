@@ -53,7 +53,7 @@ class _RecordingOutput(DispatchOutput):
     def agent_not_found(self, name):
         self.calls.append(("agent_not_found", name))
 
-    def agent_result(self, result):
+    def agent_result(self, result, *, ok=True):
         self.calls.append(("agent_result", result))
 
     def skill_not_found(self, name):

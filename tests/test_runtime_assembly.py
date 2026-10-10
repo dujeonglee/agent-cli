@@ -395,6 +395,43 @@ class TestExitPathConvergence:
             assert "AgentRuntime(" in body
 
 
+class _ItemsPump:
+    """SessionPump 대역 — 큐 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
+    순서(라우팅 → run_main → run_ended)로 한 번씩 돌린다."""
+
+    items = (("hi", False),)
+
+    def __init__(self, deps):
+        self.deps = deps
+
+    def run(self):
+        import threading
+
+        from agent_cli.pump import RunRequest
+
+        for text, wake in self.items:
+            if not wake and self.deps.surface.route(text):
+                continue
+            res = self.deps.run_main(
+                RunRequest(
+                    text=text,
+                    author=None,
+                    author_is_user=not wake,
+                    request_id="",
+                    stop_event=threading.Event(),
+                    wake=wake,
+                )
+            )
+            self.deps.surface.run_ended(res)
+            self.after_item(res)
+
+    def after_item(self, res):
+        pass
+
+    def route(self, text):  # run_main 의 ports 가 참조한다 (런 도중 주입 라우팅)
+        return self.deps.surface.route(text)
+
+
 class TestRunCommandTeardownIntegration:
     """run 커맨드를 CliRunner 로 실제 구동해 경로별 teardown 수렴을 검증 —
     구조 핀(소스 스크레이프)보다 강한 실행 증거. 종전엔 skill 조기-반환이
@@ -404,12 +441,16 @@ class TestRunCommandTeardownIntegration:
     def _run_with(
         self, query, *, pump=None, dispatch_result=False, run_loop=None, args=()
     ):
+        """``pump`` 는 SessionPump 대역 클래스(기본 :class:`_ItemsPump` — 큐
+        대신 ``items`` 를 한 번씩 돌린다)."""
         from contextlib import ExitStack
 
         from agent_cli.tools.result import ToolResult
 
         if run_loop is None:
             run_loop = MagicMock(return_value=ToolResult(True, output="ans"))
+        if pump is None:
+            pump = _ItemsPump
         boot = MagicMock()
         boot.dialect.name = "json_fc"
         session = MagicMock()
@@ -446,12 +487,7 @@ class TestRunCommandTeardownIntegration:
                 )
             )
             st.enter_context(patch("agent_cli.main.run_loop", run_loop))
-            if pump is None:
-
-                def pump(input_queue, waker, reg, run_one, **kw):
-                    run_one("hi", wake=False)
-
-            st.enter_context(patch("agent_cli.main._run_message_pump", pump))
+            st.enter_context(patch("agent_cli.pump.SessionPump", pump))
             td = st.enter_context(patch("agent_cli.runtime.teardown_session"))
             result = self._invoke_cli(query, *args)
             calls["teardown"] = td
@@ -475,25 +511,28 @@ class TestRunCommandTeardownIntegration:
         assert kw["mcp_manager"] == "MCP"  # 종전에도 메인 경로는 MCP 정리
         assert kw["warn_stuck"] is True  # 메인 펌프 경로 전용 경고 표면 유지
 
-    def test_skill_early_return_now_tears_down_completely(self):
-        """수리 계약: skill 조기-반환도 registry+MCP 를 정리한다 (종전:
-        _finalize_run(session, ctx) 만 — registry 미종료 + MCP 미해제)."""
+    def test_skill_dispatch_tears_down_completely(self):
+        """수리 계약: skill 디스패치도 registry+MCP 를 정리한다 (종전:
+        _finalize_run(session, ctx) 만 — registry 미종료 + MCP 미해제).
+        v10.33.0 부터 디스패치가 펌프 안의 라우팅이라 조기-반환 경로가 없고,
+        답변-대기 경고(warn_stuck)도 메인 경로와 같이 켜진다."""
         c = self._run_with("/some-skill args", dispatch_result=True)
         assert c["result"].exit_code == 0, c["result"].output
         c["teardown"].assert_called_once()
         kw = c["teardown"].call_args.kwargs
         assert kw["agent_registry"] is c["registry"]
         assert kw["mcp_manager"] == "MCP"
-        assert kw["warn_stuck"] is False  # 조기-반환 경로는 경고 없음 (종전 표면)
+        assert kw["warn_stuck"] is True
 
     def test_pump_exception_still_tears_down(self):
         """크래시 경로도 finally 로 수렴 — 종전엔 예외 시 MCP 미해제·세션
         미저장(펌프 내부 finally 는 registry 만 정리)이었다."""
 
-        def boom(input_queue, waker, reg, run_one, **kw):
-            raise RuntimeError("pump crashed")
+        class _Boom(_ItemsPump):
+            def run(self):
+                raise RuntimeError("pump crashed")
 
-        c = self._run_with("hi", pump=boom)
+        c = self._run_with("hi", pump=_Boom)
         assert c["result"].exit_code != 0  # 예외는 그대로 전파 (동작 보존)
         c["teardown"].assert_called_once()
         kw = c["teardown"].call_args.kwargs
@@ -522,8 +561,9 @@ class TestSessionHasLiveWork:
         import inspect
 
         from agent_cli import main
+        from agent_cli.pump import QuietPolicy
 
-        for fn in (main._run_message_pump, main.web_instance_is_active):
+        for fn in (QuietPolicy.should_stop, main.web_instance_is_active):
             assert "session_has_live_work(" in inspect.getsource(fn), fn.__name__
 
 
@@ -543,12 +583,12 @@ class TestResultFileIsWrittenPerRun:
         out = tmp_path / "r.txt"
         seen = {}
 
-        def pump(input_queue, waker, reg, run_one, **kw):
-            run_one("hi", wake=False)
-            seen["exists_while_pump_alive"] = out.exists()  # 모니터 대기 중인 자리
+        class _Pump(_ItemsPump):
+            def after_item(self, res):
+                seen["exists_while_pump_alive"] = out.exists()  # 모니터 대기 중인 자리
 
         c = TestRunCommandTeardownIntegration()._run_with(
-            "hi", pump=pump, args=("--result-file", str(out))
+            "hi", pump=_Pump, args=("--result-file", str(out))
         )
         assert c["result"].exit_code == 0, c["result"].output
         assert seen["exists_while_pump_alive"] is True
@@ -562,12 +602,11 @@ class TestResultFileIsWrittenPerRun:
             side_effect=[self._res(True, "first"), self._res(True, "second")]
         )
 
-        def pump(input_queue, waker, reg, run_one, **kw):
-            run_one("hi", wake=False)
-            run_one("wake", wake=True)
+        class _Two(_ItemsPump):
+            items = (("hi", False), ("wake", True))
 
         c = TestRunCommandTeardownIntegration()._run_with(
-            "hi", pump=pump, run_loop=run_loop, args=("--result-file", str(out))
+            "hi", pump=_Two, run_loop=run_loop, args=("--result-file", str(out))
         )
         assert c["result"].exit_code == 0, c["result"].output
         assert out.read_text(encoding="utf-8") == "second"
@@ -579,12 +618,11 @@ class TestResultFileIsWrittenPerRun:
             side_effect=[self._res(True, "first"), self._res(False, "boom")]
         )
 
-        def pump(input_queue, waker, reg, run_one, **kw):
-            run_one("hi", wake=False)
-            run_one("wake", wake=True)
+        class _Two(_ItemsPump):
+            items = (("hi", False), ("wake", True))
 
         c = TestRunCommandTeardownIntegration()._run_with(
-            "hi", pump=pump, run_loop=run_loop, args=("--result-file", str(out))
+            "hi", pump=_Two, run_loop=run_loop, args=("--result-file", str(out))
         )
         assert c["result"].exit_code == 0, c["result"].output
         assert out.read_text(encoding="utf-8") == "first"
