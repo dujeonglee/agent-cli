@@ -55,7 +55,7 @@ class TestRunPump:
                 queue=q,
                 run_main=lambda req: calls.append(req.text),
                 schedules=reg,
-                on_schedule_wait=lambda: waits.append(1),
+                on_wait=lambda kind: waits.append(kind),
                 poll_secs=0.02,
             )
         )
@@ -79,7 +79,7 @@ class TestRunPump:
 
         assert not done.wait(0.3), "켜진 예약이 있는데 펌프가 끝났다"
         assert calls == ["task"]
-        assert waits == [1], "기다리기 시작할 때 한 번만 알린다"
+        assert waits == ["schedules"], "기다리기 시작할 때 한 번만 알린다"
 
         clock.now += timedelta(minutes=1)  # 09:00
         reg._rearm.set()

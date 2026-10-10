@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from agent_cli.context.token_estimator import estimate_tokens
 
@@ -71,6 +72,8 @@ class ToolBridge:
         # Lazy one-shot cache for _run_ctx() — see its docstring.
         self._run_ctx_cache: RunContext | None = None
         self.recent_tool_history: list[dict] = []
+        #: 모델이 마지막 도구 결과를 받은 시각 — RunContext.observed_at 이 읽는다.
+        self.last_observation_at: float | None = None
 
     @property
     def _turn_obs_budget(self) -> int:
@@ -421,6 +424,7 @@ class ToolBridge:
                 oversized_cap=self._oversized_cap,
                 tools_available=frozenset(self.cfg.tools_list),
                 owner=self.cfg.owner,
+                observed_at=lambda: self.last_observation_at,
             )
             self._run_ctx_cache = cached
         return cached
@@ -621,3 +625,4 @@ class ToolBridge:
                 "success": result.success,
             }
         )
+        self.last_observation_at = time.time()

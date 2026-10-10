@@ -159,8 +159,11 @@ class MonitorRegistry:
         deadline_s: int,
         once: bool = True,
         run: str = "",
+        state: dict | None = None,
     ) -> Monitor:
-        """감시 등록. ``owner`` 로 보고가 간다.
+        """감시 등록. ``owner`` 로 보고가 간다. ``state`` 는 조건의
+        :meth:`Condition.register` 가 돌려준 초기 커서 — 공개 **전에** 심는다
+        (폴링 스레드가 첫 틱을 먼저 돌면 EOF 로 잡아 버린다).
 
         배달 배선이 없거나 세션이 닫혔으면 :class:`MonitorUnavailable`.
         도달하면 배선이 깨졌다는 뜻이다 — 조립기가 어떤 루프보다 먼저
@@ -180,6 +183,8 @@ class MonitorRegistry:
         )
         # `silence` 가 등록 직후 즉시 발화하지 않도록 기준 시각을 심는다.
         mon.state["registered_at"] = mon.created_at
+        if state:
+            mon.state.update(state)
         with self._lock:
             self._monitors[mon.id] = mon
         self._save()

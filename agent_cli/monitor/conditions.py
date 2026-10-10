@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,14 @@ class Condition(ABC):
 
     @abstractmethod
     def check(self, st: dict, *, now: float) -> Match | None: ...
+
+    def register(self, *, observed_at: float | None) -> tuple[dict, str]:
+        """등록 시점 한 번 — ``(초기 상태, 등록 관찰에 덧붙일 한 줄)``.
+
+        ``observed_at`` 은 모델이 **마지막 도구 결과를 받은 시각**(없으면 None).
+        기본은 아무것도 안 한다; `match` 가 "파일이 이미 있을 때" 를 여기서 다룬다.
+        """
+        return {}, ""
 
     def describe(self) -> str:
         """보고문 머리줄에 쓸 한 줄 — 모니터가 여럿일 때 어느 것인지 알아야 한다."""
@@ -112,6 +121,17 @@ class MatchCondition(Condition):
     전부가 새 줄이다. 첫 관측에서 EOF 로 잡으면 통째로 생기는 파일(결과를
     한 번에 쓰는 스크립트, `done.txt` 류)은 영영 발화하지 않는다(v10.31.1).
 
+    **등록 때 파일이 이미 있으면** (v10.34.0, :meth:`register`): 하니스는 그
+    내용이 "지난 빌드의 ERROR(역사)" 인지 "방금 끝난 작업의 READY(사건)" 인지
+    내용만으로는 알 수 없다. 그래서 판정 대신 **근거**를 준다 — 등록 관찰에
+    mtime 과 "모델의 마지막 도구 결과 **이후/이전** 수정" 과 패턴에 맞는 마지막
+    줄(꼬리 `MONITOR_PREVIEW_TAIL_BYTES` 만 읽음)을 적는다. 애매하지 않은 경우
+    (이후 수정 + 파일이 `MONITOR_REPLAY_MAX_BYTES` 이하)만 커서를 0 에 두어
+    다음 틱에 정상 발화시킨다 — 작은 파일은 결과·상태 파일이라 전부 새 내용일
+    확률이 높고, 큰 파일은 누적 로그라 앞쪽이 옛것일 확률이 높다(틀려도 안전한
+    쪽: 큰 결과 파일은 알림 대신 정보로 온다). 실측 사례: 넛지 A/B cand-4 —
+    `done.txt` 가 등록 2초 전에 써져 EOF 시작으로는 영영 안 울렸다.
+
     **전제: append-only 로그.** 같은 크기로 제자리 덮어쓰기(rewrite-in-place)는
     보이지 않는다 — 크기도 inode 도 안 바뀌기 때문이다. 감시 대상은 리다이렉션된
     스크립트 출력이라 append 가 정상이고, 이걸 잡으려면 매 틱 전문을 다시 읽어야
@@ -141,6 +161,65 @@ class MatchCondition(Condition):
 
     def describe(self) -> str:
         return f"match · {self.file}"
+
+    def register(self, *, observed_at: float | None) -> tuple[dict, str]:
+        from agent_cli.constants import (
+            MONITOR_PREVIEW_TAIL_BYTES,
+            monitor_replay_max_bytes,
+        )
+
+        path = Path(self.file).expanduser()
+        stt = _stat(path)
+        if stt is None:
+            return {}, ""  # 없는 파일 = 대기; 나타나면 0 부터 (check 참조)
+        size, mtime = stt.st_size, stt.st_mtime
+        after = observed_at is not None and mtime > observed_at
+        when = time.strftime("%H:%M:%S", time.localtime(mtime))
+        age = max(0, int(time.time() - mtime))
+        cap = monitor_replay_max_bytes()
+        if after and (cap < 0 or size <= cap):
+            # 모델이 못 본 내용이고 작다 — 전부 새 줄로 본다.
+            note = (
+                f"The file already exists (modified {when}, {age}s ago, after your "
+                f"last tool result) and is small, so its current contents count "
+                f"as new lines — expect a report shortly."
+            )
+            return {"offset": 0, "ino": stt.st_ino}, note
+        if observed_at is None:
+            rel = "before this registration"
+        elif after:
+            rel = "after your last tool result"
+        else:
+            rel = "before your last tool result"
+        last = self._last_matching_line(path, size, MONITOR_PREVIEW_TAIL_BYTES)
+        tail = (
+            f"Its last line matching the pattern: {last!r} — not a new event; "
+            f"decide whether it is what you are waiting for."
+            if last is not None
+            else "No existing line matches the pattern."
+        )
+        note = (
+            f"The file already exists (modified {when}, {age}s ago, {rel}); "
+            f"lines written before now are NOT reported. {tail}"
+        )
+        return {}, note
+
+    def _last_matching_line(self, path: Path, size: int, tail_bytes: int) -> str | None:
+        """꼬리 ``tail_bytes`` 안에서 패턴에 맞는 마지막 줄 — 큰 로그도 비용 고정."""
+        try:
+            with path.open("rb") as f:
+                if size > tail_bytes:
+                    f.seek(size - tail_bytes)
+                chunk = f.read()
+        except OSError:
+            return None
+        lines = chunk.decode("utf-8", errors="replace").splitlines()
+        if size > tail_bytes and lines:
+            lines = lines[1:]  # 잘린 첫 줄은 버린다
+        for ln in reversed(lines):
+            if self._re.search(ln):
+                return ln
+        return None
 
     def check(self, st: dict, *, now: float) -> Match | None:
         path = Path(self.file).expanduser()

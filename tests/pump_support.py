@@ -86,7 +86,7 @@ def make_pump(
     surface=None,
     monitors=None,
     schedules=None,
-    on_schedule_wait=None,
+    on_wait=None,
     poll_secs=0.05,
 ):
     """run 수명 정책의 펌프. ``run_main`` 은 ``RunRequest`` 를 받는다."""
@@ -105,7 +105,7 @@ def make_pump(
                 agent_registry=registry,
                 monitors=monitors,
                 schedules=schedules,
-                on_schedule_wait=on_schedule_wait,
+                on_wait=on_wait,
                 poll_secs=poll_secs,
             ),
         )

@@ -1559,8 +1559,14 @@ def run(
                     agent_registry=agent_registry,
                     monitors=monitor_registry,
                     schedules=schedule_registry,
-                    on_schedule_wait=lambda: console.print(
-                        f"[{C['muted']}]{_schedule_wait_notice(schedule_registry)}[/]"
+                    on_wait=lambda kind: console.print(
+                        f"[{C['muted']}]"
+                        + (
+                            _monitor_wait_notice(monitor_registry)
+                            if kind == "monitors"
+                            else _schedule_wait_notice(schedule_registry)
+                        )
+                        + "[/]"
                     ),
                 ),
             )
@@ -1624,6 +1630,19 @@ def web_instance_is_active(
             monitors=monitors,
             schedules=schedules,
         )
+    )
+
+
+def _monitor_wait_notice(monitors) -> str:
+    """`run` 이 살아 있는 모니터 때문에 끝나지 않고 기다릴 때의 한 줄 (v10.34.0)
+    — 예약 대기는 알리면서 모니터 대기는 조용하던 비대칭의 수리. 모니터는
+    deadline 이 유계라 그 시각을 적는다."""
+    live = monitors.list_all()
+    latest = max((m.deadline_at for m in live), default=time.time())
+    when = time.strftime("%m-%d %H:%M", time.localtime(latest))
+    return (
+        f"🔔 모니터 {len(live)}개 대기 중 — 가장 늦은 만료 {when}. "
+        f"보고가 오면 이어서 돌고, Ctrl-C 로 종료합니다."
     )
 
 

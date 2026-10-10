@@ -219,7 +219,7 @@ class TestQuietPolicy:
                 agent_registry=reg,
                 monitors=monitors,
                 schedules=schedules,
-                on_schedule_wait=(lambda: waits.append(1))
+                on_wait=(lambda kind: waits.append(kind))
                 if waits is not None
                 else None,
             ),
@@ -244,12 +244,14 @@ class TestQuietPolicy:
         waits: list[int] = []
         policy, _ = self._policy(schedules=sched, waits=waits)
         assert not policy.should_stop() and not policy.should_stop()
-        assert waits == [1], "기다리기 시작할 때 한 번만 알린다"
+        assert waits == ["schedules"], "기다리기 시작할 때 한 번만 알린다"
         sched.has_active_work.return_value = False
         assert policy.should_stop()
         sched.has_active_work.return_value = True
         assert not policy.should_stop()
-        assert waits == [1, 1], "예약이 사라졌다 다시 생기면 다시 알린다"
+        assert waits == ["schedules", "schedules"], (
+            "예약이 사라졌다 다시 생기면 다시 알린다"
+        )
 
     def test_poll_secs_is_bounded_and_forever_has_none(self):
         assert self._policy()[0].poll_secs == 0.5
@@ -322,3 +324,42 @@ class TestRunRequest:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             req.text = "u"  # type: ignore[misc]
+
+
+class TestQuietPolicyWaitNotice:
+    """모니터만 남아 기다릴 때도 한 번 알린다 (v10.34.0) — 종전엔 예약 대기만
+    알리고 모니터 대기는 조용해, `complete` 뒤 안 울리는 모니터가 붙든 run 이
+    멈춘 것처럼 보였다(넛지 A/B cand-4)."""
+
+    def test_monitor_wait_is_announced_once_and_kind_switch_announces_again(self):
+        live = MagicMock(has_active_work=MagicMock(return_value=True))
+        dead = MagicMock(has_active_work=MagicMock(return_value=False))
+        waits: list[str] = []
+        policy = QuietPolicy(
+            queue=InputQueue(),
+            agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
+            monitors=live,
+            schedules=dead,
+            on_wait=waits.append,
+        )
+        assert not policy.should_stop() and not policy.should_stop()
+        assert waits == ["monitors"]
+        live.has_active_work.return_value = False
+        dead.has_active_work.return_value = True  # 모니터 은퇴, 예약만 남음
+        assert not policy.should_stop()
+        assert waits == ["monitors", "schedules"]
+        dead.has_active_work.return_value = False
+        assert policy.should_stop()
+
+    def test_queue_or_agent_activity_is_not_a_wait(self):
+        waits: list[str] = []
+        q = InputQueue()
+        q.enqueue(None, "x")
+        policy = QuietPolicy(
+            queue=q,
+            agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
+            monitors=MagicMock(has_active_work=MagicMock(return_value=True)),
+            on_wait=waits.append,
+        )
+        assert not policy.should_stop()
+        assert waits == []  # 큐에 할 일이 있으면 "대기" 가 아니다
