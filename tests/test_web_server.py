@@ -1371,23 +1371,25 @@ class TestStaticUI:
         assert events == ["agent_wake"]
 
     def test_wake_call_site_does_not_use_push_user_message(self, server_and_client):
-        """main 웹 워커 루프의 분기 자체를 고정 — 렌더러만 고쳐도 호출부가
-        옛 경로로 남아 있으면 아무 소용이 없다."""
-        import inspect
+        """호출부 자체를 고정 — 렌더러만 고쳐도 호출부가 옛 경로로 남아 있으면
+        아무 소용이 없다. v10.33.1 부터 호출부는 ``WebSurface.echo`` 다."""
+        from unittest.mock import MagicMock
 
-        import agent_cli.main as main_mod
+        from agent_cli.web.surface import WebSurface
 
-        src = inspect.getsource(main_mod)
-        assert "renderer.agent_wake(message, hidx=ctx.next_ordinal)" in src
-        # 깨우기 분기에서 말풍선 경로로 돌아가지 않았는지
-        wake_branch = src.split('if _wake_verdict == "run":', 2)[-1].split(
-            "agent_registry.set_current_run_authors", 1
-        )[0]
-        assert "push_user_message" in wake_branch  # else 가지(진짜 사용자)는 유지
-        assert wake_branch.index(
-            "renderer.agent_wake(message, hidx=ctx.next_ordinal)"
-        ) < wake_branch.index("push_user_message"), (
-            "깨우기 분기가 여전히 말풍선을 그린다"
+        renderer = MagicMock()
+        ctx = MagicMock(next_ordinal=7)
+        surface = WebSurface(
+            renderer=renderer, server=MagicMock(), ctx=ctx, dispatch=None
+        )
+        surface.echo({"text": "New agent mail has arrived."}, wake=True)
+        renderer.agent_wake.assert_called_once_with(
+            "New agent mail has arrived.", hidx=7
+        )
+        renderer.push_user_message.assert_not_called()  # 깨우기는 말풍선이 아니다
+        surface.echo({"text": "hi", "nickname": "dj"}, wake=False)
+        renderer.push_user_message.assert_called_once_with(
+            "[dj]: hi", author="dj", hidx=7
         )
 
     def test_agent_conversation_clear_wired(self, server_and_client):

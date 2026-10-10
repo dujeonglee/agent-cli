@@ -49,8 +49,8 @@ agent-cli run "Analyze this project" -p openai
 # Anthropic
 agent-cli run "Read README.md and summarize" -p anthropic
 
-# 직접 셸 명령 (LLM 없이)
-agent-cli run "/sh ls -la"
+# 직접 셸 명령 (LLM 없이) — web 채팅 전용 (`/help`·`/sh`·`/compact`); run 에서 `/sh …` 는 모델에게 질의로 갑니다
+# (web)  /sh ls -la
 
 # 스킬 실행
 agent-cli run "/review-code src/auth.py"

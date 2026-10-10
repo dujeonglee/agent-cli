@@ -2308,7 +2308,9 @@ def web(
             max_depth=max_depth,
         )
 
-    from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
+    from agent_cli.pump import ForeverPolicy, PumpDeps, RunRequest, SessionPump
+    from agent_cli.web.slash import WebDispatchOutput
+    from agent_cli.web.surface import WebSurface
 
     # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
     agent_registry = None
@@ -2329,13 +2331,15 @@ def web(
     schedule_registry.start()
 
     def _worker_loop() -> None:
-        """Pop chat messages and drive AgentLoop in a background thread.
+        """Assemble the session and drive the session pump in a background
+        thread (v10.33.1 — the loop itself is ``pump.SessionPump``, shared
+        with ``run``; what differs is ``WebSurface`` + ``ForeverPolicy``).
 
         Each ``run_loop`` invocation reuses the same ``ctx``, so history
         accumulates across messages — the web UI is the interactive,
-        multi-turn surface. Dispatch order per message:
+        multi-turn surface. Dispatch order per message (``WebSurface.route``):
           1. ``handle_slash_command`` — web-specific stateless cmds
-             (``/help``, ``/sh``)
+             (``/help``, ``/sh``, ``/compact``)
           2. ``try_dispatch_agent_or_skill`` — shared with ``run``,
              covers ``@``/``/`` listings + invocations + not-found
           3. Otherwise the message is a conversation turn → ``run_loop``.
@@ -2350,7 +2354,6 @@ def web(
         from agent_cli.runtime import (
             AgentRuntime,
             build_agent_registry,
-            main_run_ended,
             wire_agent_mail,
         )
 
@@ -2391,148 +2394,75 @@ def web(
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
         if _mon_notice:
             renderer.status("running", _mon_notice)
-        while True:
-            # Tell the frontend we're waiting for the next user
-            # message. Goes through ``_latest_worker_state`` so a
-            # refreshed client also lands on the right send-button
-            # state via snapshot replay, not just live listeners.
-            renderer.worker_idle()
-            # mark_idle (not bare idle.set): re-arms if a reply landed in the
-            # on_run_end()→idle window — else web parks forever (no timeout).
-            _waker.mark_idle()
-            item = server.dequeue_blocking()
-            _waker.idle.clear()
-            if item is server.SHUTDOWN:
-                # Server shutdown — break out so the worker thread
-                # can exit cleanly instead of being killed daemon-style.
-                # No worker_busy flip here: SHUTDOWN isn't a user
-                # message, and the connections are being torn down
-                # anyway.
-                break
-            message = item["text"]
-            nickname = item["nickname"]
-            # 큐가 이미 발급한 id — 종전엔 여기서 버려져 런이 "무엇에
-            # 답해야 하는지" 를 몰랐다 (`cancel_pending` 만 쓰던 값).
-            request_id = item.get("id") or ""
-            _wake_verdict = _waker.handle_dequeued(message)
-            if _wake_verdict == "skip":
-                continue  # 이미 다른 run 이 배달 완료 — 빈 run 을 열지 않는다
-            if _wake_verdict == "run":
-                nickname = "🤝 agent"
-            # Real user message — flip to busy until the next dequeue
-            # (after handle_slash_command / try_dispatch_agent_or_skill /
-            # run_loop finish). Anything that follows — including a
-            # ``prompt_user`` / ``confirm`` wait — keeps the worker in
-            # the busy state until the next loop iteration.
-            renderer.worker_busy()
-            # Echo the dequeued message as a conversation card (input no
-            # longer echoes — it sits in the live queue display until popped).
-            # ``author`` only for a real USER starter: a 🤝 agent-report run
-            # has no user to attribute, so the team view gets no user mark
-            # and the run's final carries an empty ``answers`` list.
-            if _wake_verdict == "run":
-                # 기계가 만든 깨우기 — 사람 발화가 아니다. 말풍선으로 그리면
-                # 사용자가 저렇게 타이핑한 것처럼 보인다(사용자 제보).
-                renderer.agent_wake(message, hidx=ctx.next_ordinal)
-            else:
-                renderer.push_user_message(
-                    f"[{nickname}]: {message}", author=nickname, hidx=ctx.next_ordinal
-                )
-            # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령
-            # (@agent request 등)이 만든 요청도 이 런의 요청자를 물려받도록
-            # 워커가 먼저 세팅 — run_loop 는 주입 때마다 재갱신한다.
-            agent_registry.set_current_run_authors(
-                [] if _wake_verdict == "run" else [nickname]
+        surface = WebSurface(
+            renderer=renderer,
+            server=server,
+            ctx=ctx,
+            dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
+                text,
+                web_output,
+                agent_registry=_registry,
+                llm_provider=llm_provider,
+                capabilities=capabilities,
+                resolved_model=resolved_model,
+                provider=provider,
+                resolved_url=resolved_url,
+                resolved_key=resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                max_depth=max_depth,
+                ctx=ctx,
+                session=session,
+                graceful_interrupt=True,
+                stop_event=stop_event,
+            ),
+        )
+
+        def _run_main(req: RunRequest):
+            return run_loop(
+                query=req.text,
+                query_author=req.author,
+                query_author_is_user=req.author_is_user,
+                query_request_id=req.request_id,
+                stop_event=req.stop_event,
+                graceful_interrupt=surface.graceful_interrupt,
+                provider=llm_provider,
+                capabilities=capabilities,
+                model=resolved_model,
+                provider_name=provider,
+                base_url=resolved_url,
+                api_key=resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                ctx=ctx,
+                max_depth=max_depth,
+                session=session,
+                record_turns=record_turns,
+                dialect=dialect_plugin,
+                # v8.39.0 수리: run 과 동형 — 종전 web 은 hooks_config
+                # 미전달로 채팅 턴에서 디스크 훅이 미발화했다.
+                hooks_config=_disk_hooks,
+                ports=ports_for_main(
+                    agent_registry=agent_registry,
+                    mcp_manager=mcp_manager,
+                    dequeue_user_message=server.dequeue_nowait,
+                    route_message=pump.route,
+                ),
             )
-            # Fresh stop handle for this turn so the web "Stop" button
-            # (POST /api/stop → server.trigger_stop) can signal the loop
-            # to exit at the next turn boundary — the same ``stop_event``
-            # path Ctrl+C uses in the CLI. Threaded into chat, /skill, and
-            # @agent (delegate) runs. Cleared in ``finally`` so a stop
-            # press between turns (no active handle) is a no-op.
-            stop_event = threading.Event()
-            server.set_stop_handle(stop_event)
-            try:
-                # Single routing path shared by the run-STARTER and every
-                # mid-run injected (queued) message: ``/help``·``/sh``·
-                # ``/compact`` then ``@agent``·``/skill``. Returns True when the
-                # message was a command (handled here). Threaded into the loop
-                # as ``route_message`` so an injected ``/sh`` / ``@agent``
-                # behaves exactly as one typed at run-start instead of leaking
-                # in as literal chat text.
-                def route_one(text: str) -> bool:
-                    if handle_slash_command(text, renderer, ctx=ctx):
-                        return True
-                    return try_dispatch_agent_or_skill(
-                        text,
-                        web_output,
-                        agent_registry=_registry,
-                        llm_provider=llm_provider,
-                        capabilities=capabilities,
-                        resolved_model=resolved_model,
-                        provider=provider,
-                        resolved_url=resolved_url,
-                        resolved_key=resolved_key,
-                        max_turns=max_turns,
-                        verbose=verbose,
-                        max_depth=max_depth,
-                        ctx=ctx,
-                        session=session,
-                        graceful_interrupt=True,
-                        stop_event=stop_event,  # noqa: B023 — route_one runs only within this turn iteration
-                    )
 
-                if route_one(message):
-                    continue
-                try:
-
-                    def _run_main(query: str, author: str):
-                        return run_loop(
-                            query_request_id=request_id,  # noqa: B023
-                            query=query,
-                            query_author=author,
-                            query_author_is_user=_wake_verdict != "run",  # noqa: B023 — called immediately, same iteration
-                            provider=llm_provider,
-                            capabilities=capabilities,
-                            model=resolved_model,
-                            provider_name=provider,
-                            base_url=resolved_url,
-                            api_key=resolved_key,
-                            max_turns=max_turns,
-                            verbose=verbose,
-                            ctx=ctx,
-                            max_depth=max_depth,
-                            session=session,
-                            graceful_interrupt=True,
-                            stop_event=stop_event,  # noqa: B023 — _run_main is called immediately, same iteration
-                            record_turns=record_turns,
-                            dialect=dialect_plugin,
-                            # v8.39.0 수리: run 과 동형 — 종전 web 은
-                            # hooks_config 미전달로 채팅 턴에서 디스크
-                            # 훅이 미발화했다.
-                            hooks_config=_disk_hooks,
-                            ports=ports_for_main(
-                                agent_registry=agent_registry,
-                                mcp_manager=mcp_manager,
-                                # 반복마다 새로 만드는 클로저라 포트도
-                                # 메시지마다 새로 짓는다.
-                                dequeue_user_message=server.dequeue_nowait,
-                                route_message=route_one,
-                            ),
-                        )
-
-                    _res = _run_main(message, nickname)
-                    main_run_ended(agent_registry, getattr(_res, "output", "") or "")
-
-                except Exception as exc:
-                    # Push the error into the renderer so the frontend
-                    # sees it rather than dying silently. Worker keeps
-                    # spinning to handle the next message.
-                    renderer.error(f"Worker error: {exc}", 0)
-            finally:
-                server.set_stop_handle(None)
-                # 레이스 봉합 (P4 D3): run 마지막 턴 경계 이후 도착분.
-                _waker.on_run_end()
+        # 세션 펌프 (v10.33.1, docs/pump/DESIGN.md): run 과 같은 루프 —
+        # 수명은 ForeverPolicy(서버 종료의 SHUTDOWN 까지), 표면은 WebSurface.
+        pump = SessionPump(
+            PumpDeps(
+                queue=server,
+                waker=_waker,
+                agent_registry=_registry,
+                run_main=_run_main,
+                surface=surface,
+                policy=ForeverPolicy(),
+            )
+        )
+        pump.run()
 
     def _worker_loop_guarded() -> None:
         """worker 사망 = 세션 무력화(큐만 쌓이고 소비 불가) — 조용히 죽는
