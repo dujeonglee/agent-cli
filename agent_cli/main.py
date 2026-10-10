@@ -1593,13 +1593,19 @@ def web_instance_is_active(
     에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
     여기서 자기를 거두고, 그러면 살아 있는 모니터가 조용히 죽는다. 펌프
     (`_run_message_pump`)와 **같은 한 줄이 두 곳에** 들어가야 한다."""
+    from agent_cli.runtime import session_has_live_work
+
     return bool(
         renderer.has_live_connections()
         or renderer.worker_is_busy()
+        # any_activity (미배달 회신 제외) — run 펌프의 has_active_work 와
+        # 다른 뜻이라 공용 술어 밖에 둔다 (runtime.session_has_live_work).
         or (agent_registry is not None and agent_registry.any_activity())
-        or server.pending_count() > 0
-        or (monitors is not None and monitors.has_active_work())
-        or (schedules is not None and schedules.has_active_work())
+        or session_has_live_work(
+            pending_count=server.pending_count(),
+            monitors=monitors,
+            schedules=schedules,
+        )
     )
 
 
@@ -1623,16 +1629,18 @@ def _run_message_pump(
     KeyboardInterrupt 는 호출자 정책(중단 처리)이라 그대로 전파.
     """
     from agent_cli.input_queue import InputQueue
+    from agent_cli.runtime import session_has_live_work
 
     def _quiet() -> bool:
         """정지해도 되는가 — 모니터가 살아 있거나 미배달 보고가 있으면 아니다.
 
         `has_active_work()` 가 유휴 판정을 좁게 잡는 것과 같은
-        자리다. 모니터 쪽은 `deadline` 이 **필수로 유계**라(§7.1) 안 끝나는
-        세션이 되지 않는다."""
-        if input_queue.pending_count() or registry.has_active_work():
-            return False
-        if monitors is not None and monitors.has_active_work():
+        자리다(미배달 회신 포함 — web 의 any_activity 와 다른 뜻, runtime.
+        session_has_live_work 참조). 모니터 쪽은 `deadline` 이 **필수로
+        유계**라(§7.1) 안 끝나는 세션이 되지 않는다."""
+        if registry.has_active_work() or session_has_live_work(
+            pending_count=input_queue.pending_count(), monitors=monitors
+        ):
             return False
         return not _waiting_on_schedules()
 
