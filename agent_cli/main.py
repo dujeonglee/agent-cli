@@ -261,8 +261,10 @@ class DispatchOutput:
         """Surface an unknown agent name."""
         raise NotImplementedError
 
-    def agent_result(self, result) -> None:
-        """Final answer string from a delegated agent. ``None`` = silent."""
+    def agent_result(self, result, *, ok: bool = True) -> None:
+        """Final answer string from a delegated agent. ``None`` = silent.
+        ``ok`` 는 run 엔진의 실제 성공 여부 — 실패 텍스트를 성공 답변처럼
+        기록하지 않기 위한 신호(``--result-file``, 5.6.0)."""
         raise NotImplementedError
 
     def skill_not_found(self, name: str) -> None:
@@ -280,6 +282,50 @@ class DispatchOutput:
 
     def agent_dispatch_result(self, text: str, success: bool) -> None:
         """``@agt-<key>``/``@<profile>-spawn`` 의 결과/에러 (기본: 무시)."""
+
+
+class _ConsoleSurface:
+    """``agent-cli run`` 의 펌프 표면 (``pump.PumpSurface``, v10.33.0).
+
+    web 과 다른 것만 여기 있다: 유휴/바쁨 신호는 없고(프런트가 없다), 깨우기는
+    한 줄, 중단은 Ctrl-C(``graceful_interrupt=False``), 런 예외는 전파,
+    런 성공은 ``--result-file``. ``/sh`` 는 run 에 핸들러가 없어 라우팅하지
+    않는다(web 은 ``handle_slash_command`` 가 먼저 받는다)."""
+
+    graceful_interrupt = False
+
+    def __init__(self, *, result_file: str, dispatch):
+        self._result_file = result_file
+        self._dispatch = dispatch  # (text, stop_event) -> bool
+        self._stop: threading.Event | None = None
+
+    def idle(self) -> None:
+        pass
+
+    def busy(self) -> None:
+        pass
+
+    def echo(self, item: dict, *, wake: bool) -> None:
+        if wake:
+            console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
+
+    def bind_stop(self, event: threading.Event | None) -> None:
+        self._stop = event
+
+    def route(self, text: str) -> bool:
+        if text.startswith("/sh"):
+            return False
+        return self._dispatch(text, self._stop)
+
+    def run_ended(self, result) -> None:
+        # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
+        # deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면 `complete` 한 답이
+        # 파일로는 안 나온다(v10.31.2). 뒤 런이 또 성공하면 덮어쓴다.
+        if result.success:
+            _write_result_file(self._result_file, result.output)
+
+    def run_failed(self, exc: Exception) -> bool:
+        return False
 
 
 def _parse_at_profile(name: str) -> tuple[str, str]:
@@ -375,7 +421,14 @@ def _try_dispatch_agent_command(
 
 
 class _ConsoleDispatchOutput(DispatchOutput):
-    """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
+    """CLI-flavoured output — colour, Rich markup, plain ``console.print``.
+
+    ``result_file`` (v10.33.0): ``@agent task`` 의 답도 ``--result-file`` 에
+    기록한다 — 종전엔 run 의 전용 분기가 썼는데, 그 분기가 세션 펌프의
+    라우팅으로 흡수되면서 이 어댑터가 그 자리를 잇는다."""
+
+    def __init__(self, result_file: str = ""):
+        self._result_file = result_file
 
     def agent_dispatch_result(self, text: str, success: bool) -> None:
         # markup=False — 상태 텍스트의 [code-analyst] 같은 브래킷이 rich
@@ -414,13 +467,19 @@ class _ConsoleDispatchOutput(DispatchOutput):
         console.print(f"[{C['error']}]Agent not found: @{name}[/]")
         console.print(f"[{C['muted']}]Type @ to list available agents[/]")
 
-    def agent_result(self, result) -> None:
+    def agent_result(self, result, *, ok: bool = True) -> None:
         # ``_dispatch_agent`` already streams the agent's thoughts /
         # tool calls through the renderer; this is the CLI's
         # trailing "headline" green print so the final answer is
         # also immediately visible above the next prompt.
         if result is not None:
             console.print(f"\n[{C['final']}]{result}[/]")
+        # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문만
+        # 기록 — 메인 경로(loop_result.output=원문)와 계약 일치.
+        if ok and result is not None and self._result_file:
+            from agent_cli.subagent.report import extract_result_body
+
+            _write_result_file(self._result_file, extract_result_body(str(result)))
 
     def skill_not_found(self, name: str) -> None:
         console.print(f"[{C['error']}]Unknown command: /{name}[/]")
@@ -563,7 +622,7 @@ def try_dispatch_agent_or_skill(
             return True
         if session is not None:
             save_meta(session)  # refresh updated_at (query field removed)
-        output.agent_result(result)
+        output.agent_result(result, ok=_ok)
         return True
 
     if message.startswith("/") and looks_like_slash_command(message):
@@ -1362,8 +1421,7 @@ def run(
         build_agent_registry,
         build_monitor_registry,
         build_schedule_registry,
-        main_run_ended,
-        ports_for_run,
+        ports_for_main,
         wire_agent_mail,
     )
 
@@ -1403,44 +1461,14 @@ def run(
     # 경로에서만 켠다 (종전 표면 보존).
     warn_stuck = False
     try:
-        # Skill dispatch: /skill-name args — web 의 route_one 과 같은 공용
-        # 입구 (try_dispatch_agent_or_skill → _dispatch_skill) 로 v7.17.0
-        # 통일. 종전 run 전용 fast-path 는 _dispatch_skill 을 직접 불러
-        # (a) registry 미배선 (spawn "main-session only" 거부 사고의 ③경로)
-        # (b) not-found 폴스루(오타 /명령이 LLM 쿼리로 샘) 로 web 과 갈렸다.
-        # 이제 not-found 도 web 과 같이 소비+표시, /skills 리스팅도 동작.
-        # 외곽 가드는 run 특유 보존: /sh 는 run 에 핸들러가 없고, 경로-선두
-        # 쿼리는 통과(looks_like).
-        if (
-            query.startswith("/")
-            and not query.startswith("/sh")
-            and looks_like_slash_command(query)
-            # 단락 평가: 가드 통과 시에만 dispatch 실행(부수효과 포함)
-            and try_dispatch_agent_or_skill(
-                query,
-                _ConsoleDispatchOutput(),
-                llm_provider=llm_provider,
-                capabilities=capabilities,
-                resolved_model=resolved_model,
-                provider=provider,
-                resolved_url=resolved_url,
-                resolved_key=resolved_key,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=False,
-                agent_registry=agent_registry,
-            )
-        ):
-            return
-
-        # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue
-        # 에 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로
-        # 들어온다. 정지 = 큐 비고 + teammate 활성 작업 없음(quiescence).
-        # teammate 를 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료.
+        # 세션 펌프 (v10.33.0, docs/pump/DESIGN.md): web 과 같은 루프 —
+        # 초기 질의를 InputQueue 에 넣고, teammate 회신의 wake 아이템
+        # (MailWaker)·예약 발화도 같은 큐로 들어온다. ``/skill``·``@agent``
+        # 는 펌프 안의 라우팅(_ConsoleSurface.route)이 web 의 route_one 과
+        # 같은 공용 입구(try_dispatch_agent_or_skill)로 처리한다. 정지 =
+        # 큐·에이전트·모니터·예약 전부 조용(QuietPolicy).
         from agent_cli.input_queue import InputQueue
+        from agent_cli.pump import PumpDeps, QuietPolicy, RunRequest, SessionPump
 
         input_queue = InputQueue()
         waker, revived, auto = wire_agent_mail(
@@ -1465,52 +1493,36 @@ def run(
         if _mon_notice:
             console.print(f"[{C['muted']}]{_mon_notice}[/]")
 
-        # 상주 방향 @ 명령: @agents / @agt-<key> [메시지] / @<profile>-spawn.
-        # --resume 세션에서 재생성된 상주 에이전트에게 CLI 로 직접 말 걸기.
-        if query.startswith("@") and _try_dispatch_agent_command(
-            query, _ConsoleDispatchOutput(), agent_registry
-        ):
-            # 회신까지 대기 — MinimalRenderer.agent_message 가 콘솔로 출력.
-            try:
-                while agent_registry.has_active_work():
-                    time.sleep(0.3)
-            except KeyboardInterrupt:
-                pass
-            return
-
-        # Agent dispatch: @agent-name task
-        if query.startswith("@"):
-            answer, dispatch_ok = _dispatch_agent(
-                query,
-                llm_provider,
-                capabilities,
-                resolved_model,
-                provider,
-                resolved_url,
-                resolved_key,
+        surface = _ConsoleSurface(
+            result_file=result_file,
+            dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
+                text,
+                _ConsoleDispatchOutput(result_file=result_file),
+                llm_provider=llm_provider,
+                capabilities=capabilities,
+                resolved_model=resolved_model,
+                provider=provider,
+                resolved_url=resolved_url,
+                resolved_key=resolved_key,
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
                 ctx=ctx,
                 session=session,
-            )
-            if answer is not _AGENT_NOT_FOUND:
-                if answer is not None:
-                    console.print(f"\n[{C['final']}]{answer}[/]")
-                # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴
-                # 원문만 기록 — 메인 경로(loop_result.output=원문)와 계약
-                # 일치.
-                if dispatch_ok and answer is not None:
-                    from agent_cli.subagent.report import extract_result_body
+                graceful_interrupt=False,
+                stop_event=stop_event,
+                agent_registry=agent_registry,
+            ),
+        )
 
-                    _write_result_file(result_file, extract_result_body(str(answer)))
-                return
-
-        def _run_one(text: str, *, wake: bool) -> None:
-            if wake:
-                console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
-            loop_result = run_loop(
-                query=text,
+        def _run_main(req: RunRequest):
+            return run_loop(
+                query=req.text,
+                query_author=req.author,
+                query_author_is_user=req.author_is_user,
+                query_request_id=req.request_id,
+                stop_event=req.stop_event,
+                graceful_interrupt=surface.graceful_interrupt,
                 provider=llm_provider,
                 capabilities=capabilities,
                 model=resolved_model,
@@ -1525,19 +1537,34 @@ def run(
                 hooks_config=_disk_hooks,
                 record_turns=record_turns,
                 dialect=dialect_plugin,
-                ports=ports_for_run(
+                # 런 도중 주입도 web 과 같다 — 예약 발화가 다음 턴 경계에
+                # 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다.
+                ports=ports_for_main(
                     agent_registry=agent_registry,
                     mcp_manager=mcp_manager,
+                    dequeue_user_message=input_queue.dequeue_nowait,
+                    route_message=pump.route,
                 ),
             )
-            main_run_ended(agent_registry, loop_result.output or "")
-            if loop_result.success:
-                # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가
-                # 있으면 그 deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면
-                # `complete` 한 답이 파일로는 안 나온다(v10.31.2 실측: 모델이
-                # 건 모니터가 안 울려 420s 타임아웃까지 파일 없음). 모니터가
-                # 깨운 뒤 런이 또 성공하면 그 답으로 덮어쓴다.
-                _write_result_file(result_file, loop_result.output)
+
+        pump = SessionPump(
+            PumpDeps(
+                queue=input_queue,
+                waker=waker,
+                agent_registry=agent_registry,
+                run_main=_run_main,
+                surface=surface,
+                policy=QuietPolicy(
+                    queue=input_queue,
+                    agent_registry=agent_registry,
+                    monitors=monitor_registry,
+                    schedules=schedule_registry,
+                    on_schedule_wait=lambda: console.print(
+                        f"[{C['muted']}]{_schedule_wait_notice(schedule_registry)}[/]"
+                    ),
+                ),
+            )
+        )
 
         # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
         # 않는다 (docs/schedule/DESIGN.md §6.3).
@@ -1550,19 +1577,9 @@ def run(
             console.print(f"[{C['muted']}]{_sched_notice}[/]")
 
         input_queue.enqueue(None, query)
-        warn_stuck = True  # 메인 펌프 경로에서만 답변-대기 경고 (종전 표면)
+        warn_stuck = True
         try:
-            _run_message_pump(
-                input_queue,
-                waker,
-                agent_registry,
-                _run_one,
-                monitors=monitor_registry,
-                schedules=schedule_registry,
-                on_schedule_wait=lambda: console.print(
-                    f"[{C['muted']}]{_schedule_wait_notice(schedule_registry)}[/]"
-                ),
-            )
+            pump.run()
         except KeyboardInterrupt:
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
     finally:
@@ -1591,8 +1608,9 @@ def web_instance_is_active(
 
     ``monitors`` (v9.11.0): 설계 초판은 "web 은 무한 대기라 수명 문제는 run
     에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
-    여기서 자기를 거두고, 그러면 살아 있는 모니터가 조용히 죽는다. 펌프
-    (`_run_message_pump`)와 **같은 한 줄이 두 곳에** 들어가야 한다."""
+    여기서 자기를 거두고, 그러면 살아 있는 모니터가 조용히 죽는다. run 펌프의
+    수명 정책(`pump.QuietPolicy`)과 같은 술어(`runtime.session_has_live_work`)를
+    본다."""
     from agent_cli.runtime import session_has_live_work
 
     return bool(
@@ -1607,76 +1625,6 @@ def web_instance_is_active(
             schedules=schedules,
         )
     )
-
-
-def _run_message_pump(
-    input_queue,
-    waker,
-    registry,
-    run_one,
-    *,
-    monitors=None,
-    schedules=None,
-    on_schedule_wait=None,
-    poll_secs=0.5,
-):
-    """CLI ``run`` 의 큐 펌프 (teammate P5) — web ``_worker_loop`` 와 같은
-    "큐에 뭔가 있으면 재기동" 모델을 공용 InputQueue 위에서 돈다.
-
-    정지 판정: 큐가 비었고 registry 에 활성 작업(busy·큐잉 요청·미배달
-    회신)이 없으면 종료. 활성 작업이 남아 있으면 poll 간격으로 재확인 —
-    회신이 도착하면 MailWaker 가 wake 아이템을 큐에 넣어 즉시 깨어난다.
-    KeyboardInterrupt 는 호출자 정책(중단 처리)이라 그대로 전파.
-    """
-    from agent_cli.input_queue import InputQueue
-    from agent_cli.runtime import session_has_live_work
-
-    def _quiet() -> bool:
-        """정지해도 되는가 — 모니터가 살아 있거나 미배달 보고가 있으면 아니다.
-
-        `has_active_work()` 가 유휴 판정을 좁게 잡는 것과 같은
-        자리다(미배달 회신 포함 — web 의 any_activity 와 다른 뜻, runtime.
-        session_has_live_work 참조). 모니터 쪽은 `deadline` 이 **필수로
-        유계**라(§7.1) 안 끝나는 세션이 되지 않는다."""
-        if registry.has_active_work() or session_has_live_work(
-            pending_count=input_queue.pending_count(), monitors=monitors
-        ):
-            return False
-        return not _waiting_on_schedules()
-
-    announced = False
-
-    def _waiting_on_schedules() -> bool:
-        """켜진 예약이 있으면 끝나지 않는다 — 예약은 모니터와 달리 기한이 없어
-        Ctrl-C 까지 기다린다. 끝나 버리면 "매시간 확인하겠다" 는 약속이 조용히
-        사라진다. 기다리기 시작할 때 한 번 알린다."""
-        nonlocal announced
-        if schedules is None or not schedules.has_active_work():
-            announced = False
-            return False
-        if not announced and on_schedule_wait is not None:
-            on_schedule_wait()
-        announced = True
-        return True
-
-    while True:
-        if _quiet():
-            return
-        # mark_idle (not bare idle.set): if a reply is already pending (e.g. it
-        # landed in the on_run_end()→idle window), arm a wake now so the reply
-        # is delivered instead of the pump spinning on the poll timeout.
-        waker.mark_idle()
-        item = input_queue.dequeue_blocking(timeout=poll_secs)
-        waker.idle.clear()
-        if item is InputQueue.SHUTDOWN:
-            return
-        if item is None:
-            continue  # timeout — 정지 조건을 다시 판정
-        verdict = waker.handle_dequeued(item["text"])
-        if verdict == "skip":
-            continue  # 이미 배달 완료된 wake — 빈 run 을 열지 않는다
-        run_one(item["text"], wake=(verdict == "run"))
-        waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
 
 
 def _schedule_wait_notice(schedules) -> str:
@@ -2369,7 +2317,7 @@ def web(
     from agent_cli.runtime import (
         build_monitor_registry,
         build_schedule_registry,
-        ports_for_web,
+        ports_for_main,
     )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
@@ -2563,7 +2511,7 @@ def web(
                             # hooks_config 미전달로 채팅 턴에서 디스크
                             # 훅이 미발화했다.
                             hooks_config=_disk_hooks,
-                            ports=ports_for_web(
+                            ports=ports_for_main(
                                 agent_registry=agent_registry,
                                 mcp_manager=mcp_manager,
                                 # 반복마다 새로 만드는 클로저라 포트도

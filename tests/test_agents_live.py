@@ -1692,8 +1692,8 @@ class TestQuiescenceHelpers:
 
 
 class TestRunMessagePump:
-    """CLI run 의 큐 펌프 — 초기 질의 1회 / teammate 회신 wake 재기동 /
-    quiescence 종료 / 빈 wake skip. (main.py 모듈 함수라 실제 배선 검증.)"""
+    """CLI run 의 큐 펌프(세션 펌프 + QuietPolicy, v10.33.0) — 초기 질의 1회 /
+    teammate 회신 wake 재기동 / quiescence 종료 / 빈 wake skip."""
 
     class _FakeReg:
         def __init__(self):
@@ -1706,10 +1706,22 @@ class TestRunMessagePump:
         def has_active_work(self):
             return self.pending or self.busy
 
-    def _pump(self, queue, waker, reg, run_one):
-        from agent_cli.main import _run_message_pump
+        def set_current_run_authors(self, authors):
+            pass
 
-        _run_message_pump(queue, waker, reg, run_one, poll_secs=0.05)
+        def end_run(self, owner, output=""):
+            return 0
+
+    def _pump(self, queue, waker, reg, run_one):
+        from tests.pump_support import make_pump
+
+        make_pump(
+            queue=queue,
+            waker=waker,
+            registry=reg,
+            run_main=lambda req: run_one(req.text, wake=req.wake),
+            poll_secs=0.05,
+        ).run()
 
     def test_plain_run_executes_once_and_exits(self):
         from agent_cli.input_queue import InputQueue

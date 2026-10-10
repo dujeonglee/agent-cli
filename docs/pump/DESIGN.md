@@ -1,6 +1,14 @@
 # 세션 펌프 통합 — run(텍스트 UI) 과 web 이 같은 루프를 돈다
 
-상태: **초안 (설계 검토용, 구현 전)**. 2026-10-11.
+상태: 2026-10-11. **1단계 완료 (v10.32.1)** `session_has_live_work` ·
+**2단계 완료 (v10.33.0)** `agent_cli/pump.py` + `_ConsoleSurface` 로 run 전환,
+`ports_for_main` · **3단계 남음** web 을 `WebSurface` 로.
+
+2단계에서 설계와 달라진 점: `RunRequest` 가 ``run_loop`` 의 query*/stop
+인자 묶음으로 추가됐고, ``@agent task`` 의 결과 파일은 ``DispatchOutput.
+agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/skill``
+디스패치 뒤 ``warn_stuck`` 이 메인 경로와 같이 켜진다(종전 False — 조기
+반환 경로가 사라졌다).
 
 ## 1. 왜
 

@@ -299,23 +299,7 @@ class TestLifetimeInBothRuntimes:
     def test_run_pump_does_not_exit_while_a_monitor_lives(self, reg, tmp_path):
         """모니터가 살아 있는데 런이 끝나면 감시가 조용히 사라진다."""
         from agent_cli.input_queue import InputQueue
-        from agent_cli.main import _run_message_pump
-
-        class _Waker:
-            idle = __import__("threading").Event()
-
-            def mark_idle(self):
-                pass
-
-            def handle_dequeued(self, text):
-                return None
-
-            def on_run_end(self):
-                pass
-
-        class _Reg:
-            def has_active_work(self):
-                return False
+        from tests.pump_support import make_pump, run_pump_in_thread
 
         _watch(reg, tmp_path)
         q = InputQueue()
@@ -323,23 +307,14 @@ class TestLifetimeInBothRuntimes:
 
         # 모니터가 살아 있으면 펌프가 안 끝난다 → 별도 스레드로 돌리고
         # 해제한 뒤 끝나는지 본다.
-        import threading
-
-        done = threading.Event()
-
-        def pump():
-            _run_message_pump(
-                q,
-                _Waker(),
-                _Reg(),
-                lambda t, wake: calls.append(t),
+        done = run_pump_in_thread(
+            make_pump(
+                queue=q,
+                run_main=lambda req: calls.append(req.text),
                 monitors=reg,
                 poll_secs=0.05,
             )
-            done.set()
-
-        t = threading.Thread(target=pump, daemon=True)
-        t.start()
+        )
         assert not done.wait(0.4), "모니터가 살아 있는데 펌프가 끝났다"
 
         for m in reg.list_all():
@@ -350,41 +325,11 @@ class TestLifetimeInBothRuntimes:
     def test_pump_still_exits_with_no_monitors_at_all(self, tmp_path):
         """회귀 가드 — monitors=None 이면 종전 그대로."""
         from agent_cli.input_queue import InputQueue
-        from agent_cli.main import _run_message_pump
+        from tests.pump_support import make_pump, run_pump_in_thread
 
-        class _Waker:
-            idle = __import__("threading").Event()
-
-            def mark_idle(self):
-                pass
-
-            def handle_dequeued(self, text):
-                return None
-
-            def on_run_end(self):
-                pass
-
-        class _Reg:
-            def has_active_work(self):
-                return False
-
-        import threading
-
-        done = threading.Event()
-        t = threading.Thread(
-            target=lambda: (
-                _run_message_pump(
-                    InputQueue(),
-                    _Waker(),
-                    _Reg(),
-                    lambda *a, **k: None,
-                    poll_secs=0.05,
-                ),
-                done.set(),
-            ),
-            daemon=True,
+        done = run_pump_in_thread(
+            make_pump(queue=InputQueue(), run_main=lambda req: None, poll_secs=0.05)
         )
-        t.start()
         assert done.wait(2.0), "모니터 없이도 펌프가 안 끝난다 (회귀)"
 
     def test_fired_monitor_no_longer_holds_the_pump(self, reg, tmp_path):

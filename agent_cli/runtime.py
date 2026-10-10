@@ -254,7 +254,7 @@ def teardown_session(
 # 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
 # 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
 
-_WEB_ONLY = "웹 전용 — 대화창 입력 큐가 있는 호스트에만 있다"
+_WEB_ONLY = "main 루프 전용 — 입력 큐가 있는 호스트(run·web)에만 있다"
 _NO_INBOX = "받은편지함이 없다 — main 은 웹 큐·메일박스, 일회성 루프는 받을 상대가 없다"
 _HOOKS_LATER = "배선만 준비 — 응용이 생기면 연결한다 (사용자 의도, 2026-09)"
 _NO_REGISTRY_IN_SUBLOOP = (
@@ -268,7 +268,7 @@ _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리�
 def session_has_live_work(*, pending_count: int, monitors=None, schedules=None) -> bool:
     """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약 (v10.32.1).
 
-    `run` 의 큐 펌프 정지 판정(`_run_message_pump._quiet`)과 `web` 의 idle
+    `run` 의 큐 펌프 정지 판정(`pump.QuietPolicy.should_stop`)과 `web` 의 idle
     self-reap 술어(`web_instance_is_active`)가 **같은 항을 같은 함수로** 본다.
     종전엔 모니터(v9.11.0)·예약(v10.12.0)이 붙을 때마다 두 곳에 같은 한 줄을
     넣어야 했고, 초판 모니터는 web 쪽 한 줄을 빠뜨려 뷰어 없는 인스턴스가
@@ -279,8 +279,7 @@ def session_has_live_work(*, pending_count: int, monitors=None, schedules=None) 
     reap 돼도 resume 이 `agents.json` 에서 회신을 복원하므로 `any_activity()`
     (미배달 제외, 열린 사람 질문 포함). 한 함수에 넣으면 플래그가 생긴다.
 
-    run 의 예약 항은 아직 `_waiting_on_schedules`(한 번 알리는 대기 안내)에
-    남아 있다 — 펌프 통합(docs/pump/DESIGN.md §3.2)에서 수명 정책으로 흡수.
+    run 의 예약 항은 `QuietPolicy` 가 한 번 알리는 대기 안내와 함께 든다.
     """
     if pending_count:
         return True
@@ -294,41 +293,19 @@ def _main_questions(agent_registry):
     return agent_registry.question_port(None) if agent_registry else None
 
 
-def ports_for_run(*, agent_registry, mcp_manager) -> LoopPorts:
-    """CLI 한 방 실행 (`agent-cli run …`)."""
-    return LoopPorts(
-        owner="main",
-        questions=_main_questions(agent_registry),
-        agent_registry=agent_registry,
-        mcp_manager=mcp_manager,
-        message_handler=None,
-        hook_runner=None,
-        route_message=None,
-        dequeue_user_message=None,
-        absorb_inbox=None,
-        peer_roster=None,
-        unwired={
-            "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
-            "hook_runner": _HOOKS_LATER,
-            "route_message": _WEB_ONLY,
-            "dequeue_user_message": _WEB_ONLY,
-            "absorb_inbox": _NO_INBOX,
-            "peer_roster": _RESIDENT_ROSTER,
-        },
-    )
-
-
-def ports_for_web(
+def ports_for_main(
     *,
     agent_registry,
     mcp_manager,
     dequeue_user_message,
     route_message,
 ) -> LoopPorts:
-    """웹 워커의 턴 — **메시지마다** 새로 짓는다.
+    """main 루프의 턴 — run 과 web 이 같다 (v10.33.0, docs/pump/DESIGN.md).
 
-    ``dequeue_user_message``/``route_message`` 가 반복마다 새로 만드는
-    클로저라(main.py, ``noqa: B023``) 세션 수명 객체로 둘 수 없다.
+    종전엔 ``ports_for_run``(주입 없음)과 ``ports_for_web``(주입 있음)이
+    갈렸다. 세션 펌프가 하나가 되면서 run 도 런 도중 주입을 받는다 — 예약
+    발화가 다음 턴 경계에 요청으로 합류하고, 합성 깨우기는 ``SessionPump.
+    route`` 가 소비한다. ``route_message`` 는 펌프의 메서드라 세션 수명이다.
     """
     return LoopPorts(
         owner="main",
