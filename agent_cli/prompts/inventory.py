@@ -226,6 +226,7 @@ def _runtime_texts(dialect) -> list[dict]:
             args_repr='{"command": "ls"}',
             repeat_count=level + 1,
             task="<the user's request>",
+            prior_result="<what that call returned the previous time>",
         )
         if intervention is not None:
             entries.append(
