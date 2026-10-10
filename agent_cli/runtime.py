@@ -265,6 +265,30 @@ _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
+def session_has_live_work(*, pending_count: int, monitors=None, schedules=None) -> bool:
+    """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약 (v10.32.1).
+
+    `run` 의 큐 펌프 정지 판정(`_run_message_pump._quiet`)과 `web` 의 idle
+    self-reap 술어(`web_instance_is_active`)가 **같은 항을 같은 함수로** 본다.
+    종전엔 모니터(v9.11.0)·예약(v10.12.0)이 붙을 때마다 두 곳에 같은 한 줄을
+    넣어야 했고, 초판 모니터는 web 쪽 한 줄을 빠뜨려 뷰어 없는 인스턴스가
+    살아 있는 모니터를 데리고 자기를 거뒀다.
+
+    에이전트 항은 **일부러 넣지 않는다** — 둘의 뜻이 다르다. run 은 미배달
+    회신을 배달하고 끝나야 하므로 `has_active_work()`(미배달 포함), web 은
+    reap 돼도 resume 이 `agents.json` 에서 회신을 복원하므로 `any_activity()`
+    (미배달 제외, 열린 사람 질문 포함). 한 함수에 넣으면 플래그가 생긴다.
+
+    run 의 예약 항은 아직 `_waiting_on_schedules`(한 번 알리는 대기 안내)에
+    남아 있다 — 펌프 통합(docs/pump/DESIGN.md §3.2)에서 수명 정책으로 흡수.
+    """
+    if pending_count:
+        return True
+    if monitors is not None and monitors.has_active_work():
+        return True
+    return schedules is not None and schedules.has_active_work()
+
+
 def _main_questions(agent_registry):
     """main 의 답변 수단 (docs/agent-ask/DESIGN.md §4)."""
     return agent_registry.question_port(None) if agent_registry else None

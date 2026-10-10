@@ -501,6 +501,32 @@ class TestRunCommandTeardownIntegration:
         assert kw["mcp_manager"] == "MCP"
 
 
+class TestSessionHasLiveWork:
+    """큐·모니터·예약 항을 run 펌프와 web self-reap 이 같은 함수로 본다
+    (v10.32.1). 초판 모니터가 web 쪽 한 줄을 빠뜨린 자리의 구조적 봉합."""
+
+    def test_each_term_alone_is_live(self):
+        from agent_cli.runtime import session_has_live_work
+
+        live = MagicMock(has_active_work=MagicMock(return_value=True))
+        dead = MagicMock(has_active_work=MagicMock(return_value=False))
+        assert session_has_live_work(pending_count=1)
+        assert session_has_live_work(pending_count=0, monitors=live)
+        assert session_has_live_work(pending_count=0, schedules=live)
+        assert not session_has_live_work(pending_count=0, monitors=dead, schedules=dead)
+        assert not session_has_live_work(pending_count=0)
+
+    def test_both_hosts_consult_it(self):
+        """구조 핀: 펌프의 `_quiet` 와 `web_instance_is_active` 둘 다 — 한쪽만
+        고치면 다시 두 벌이 된다."""
+        import inspect
+
+        from agent_cli import main
+
+        for fn in (main._run_message_pump, main.web_instance_is_active):
+            assert "session_has_live_work(" in inspect.getsource(fn), fn.__name__
+
+
 class TestResultFileIsWrittenPerRun:
     """`--result-file` 은 런이 성공으로 끝난 자리에서 쓴다 (v10.31.2).
 
