@@ -125,6 +125,39 @@ class TestProbeProgress:
         for w in forbidden:
             assert w not in out.lower(), f"primitive leaked '{w}'"
 
+    def test_quotes_prior_result_in_a_fence(self):
+        # v10.32.0: 직전 결과를 인용한다 — 모델이 컨텍스트를 뒤지지 않게
+        out = probe_progress(
+            action="shell",
+            args_repr='{"command": "ls"}',
+            repeat_count=2,
+            prior_result="a.py\nb.py",
+        )
+        assert "The previous call already returned:\n---\na.py\nb.py\n---" in out
+        assert "Re-read" not in out
+
+    def test_prior_result_is_bounded(self):
+        from agent_cli.recovery.primitives import ECHO_MAX_CHARS
+
+        out = probe_progress(
+            action="x", args_repr="{}", repeat_count=2, prior_result="z" * 5000
+        )
+        assert "characters omitted" in out
+        assert len(out) < ECHO_MAX_CHARS + 400
+
+    def test_without_prior_result_points_at_context(self):
+        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        assert "already in your context" in out
+        assert "---" not in out
+
+    def test_complete_is_conditional_on_the_task(self):
+        # 종전 "summarize what you have learned and call complete" 는 complete 을
+        # 첫 번째 출구로 제시했다 — 이제 과제가 끝났을 때만, 반복을 끝내려고는 아님
+        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        assert "Call complete only if the task itself is finished" in out
+        assert "not to end the repetition" in out
+        assert "summarize" not in out
+
 
 class TestRestateTask:
     def test_includes_task_anchor(self):

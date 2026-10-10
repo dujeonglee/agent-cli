@@ -603,13 +603,20 @@ class ToolBridge:
         """Append one row to ``self.recent_tool_history`` (B1 action-loop
         detector reads from it). Records both successes and failures so
         the detector sees the same call repeated in error loops.
+
+        ``result`` keeps a bounded excerpt (head + tail, v10.32.0) rather
+        than 200 chars: the B1 nudge quotes it back to the model as "what
+        the previous call already returned", and 200 chars of a listing or
+        a grep hit was too little to act on.
         """
+        from agent_cli.recovery.primitives import bounded_excerpt
+
         obs = result.output if result.success else result.error
         self.recent_tool_history.append(
             {
                 "tool": tool_name,
                 "input": _normalize_input(tool_input),
-                "result": obs[:200],
+                "result": bounded_excerpt(obs or ""),
                 "turn": self.state.turn,
                 "success": result.success,
             }

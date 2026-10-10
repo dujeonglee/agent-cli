@@ -25,7 +25,7 @@ MAX_DEBT_NAGS = 3
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
-from agent_cli.loop.tool_bridge import ToolBridge
+from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
@@ -1477,12 +1477,30 @@ class TurnDispatcher:
                 if isinstance(tool_input, dict)
                 else str(tool_input)
             )
+            # v10.32.0: 넛지에 직전 결과를 인용한다 — "다시 읽어라" 대신
+            # 그 결과를 눈앞에 둔다(사용자 제안). 이력의 마지막 행이 정확히
+            # 이 호출(도구+정규화 인자)일 때만: 직전 emission 이 dispatch
+            # 전에 거부됐으면(A4/A5) 이력에 없어 짝이 안 맞고, 그땐 인용 없이
+            # "결과는 이미 컨텍스트에 있다" 로 간다.
+            prior_result: str | None = None
+            last = (
+                self.tools.recent_tool_history[-1]
+                if self.tools.recent_tool_history
+                else None
+            )
+            if (
+                last
+                and last.get("tool") == tool_name
+                and last.get("input") == _normalize_input(tool_input)
+            ):
+                prior_result = last.get("result") or ""
             intervention = format_action_loop_intervention(
                 level=loop_level,
                 action=tool_name,
                 args_repr=args_repr,
                 repeat_count=self.loop_detector.consecutive_count,
                 task=self._task_text(),
+                prior_result=prior_result,
             )
             if intervention is None:
                 # Level ≥3: recovery exhausted — hard fail with a
@@ -1525,6 +1543,9 @@ class TurnDispatcher:
             # 실행된 것처럼 읽히고 반복 패턴을 모델에게 보여 준다 — B1 넛지는
             # fold 대상이 아니라 영구히 쌓였다. 넛지 문구가 이미
             # `shell({...}) N times` 로 무엇을 반복했는지 말한다.
+            # ``recovery_kind="loop"`` (v10.32.0): 넛지도 일회성 교정 재료라
+            # 다음 파싱 성공(또는 더 새로운 개입)에 캐시 뷰에서 접는다 —
+            # 형식 개입과 같은 fold. 종전엔 빈 값이라 런 끝까지 남았다.
             return self._intervene(
                 llm_text,
                 intervention.message,
@@ -1533,6 +1554,7 @@ class TurnDispatcher:
                 failure_signal=FAILURE_ACTION_LOOP,
                 tool_name=tool_name,
                 primitives=intervention.primitives,
+                recovery_kind="loop",
                 store_emission=False,
             )
 
@@ -2066,7 +2088,9 @@ def _append_observation(
         # 여기(모든 관찰의 단일 기록점)에 둔다: 종전엔 ``_intervene`` 에만 있어
         # 이 함수를 직접 부르는 출력 잘림·폭주 중단 안내가 연속 실패 동안
         # 쌓였다(v10.19.1 — 세 번 잘리면 인용 셋이 다음 호출에 실렸다).
-        if recovery_kind == "format":
+        # "loop"(B1, v10.32.0)도 같은 자리: 2단계 넛지가 붙기 직전 1단계
+        # 넛지를 접어 컨텍스트엔 항상 최신 개입 하나만 남는다.
+        if recovery_kind:
             ctx.fold_resolved_interventions(assume_tail_resolved=True)
         if store_emission:
             ctx.add(history_record)

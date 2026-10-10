@@ -1153,6 +1153,7 @@ class ContextManager:
         """
         from agent_cli.context.records import (
             fold_resolved_intervention_indices,
+            is_folding_intervention,
             is_format_intervention,
         )
 
@@ -1160,12 +1161,17 @@ class ContextManager:
             # live 경로(파싱 성공 직후): 성공이 확인된 순간, 캐시의 **모든**
             # 형식 개입이 소비 완료다 — 연속 실패로 쌓인 [실패,개입]×k 전체를
             # 접는다("성공 궤적만" 의미론; 개별 해소-증거 판정 불필요 —
-            # 호출 시점 자체가 해소 신호).
+            # 호출 시점 자체가 해소 신호). B1 루프 넛지(v10.32.0)도 같이
+            # 접되 그 앞 레코드는 실행된 호출의 관찰이라 넛지만 뺀다.
             idxs = []
             for i, rec in enumerate(self._cache):
-                if is_format_intervention(rec):
+                if is_folding_intervention(rec):
                     idxs.append(i)
-                    if i > 0 and self._cache[i - 1].get("role") == "assistant":
+                    if (
+                        is_format_intervention(rec)
+                        and i > 0
+                        and self._cache[i - 1].get("role") == "assistant"
+                    ):
                         idxs.append(i - 1)
             idxs = sorted(set(idxs), reverse=True)
         else:

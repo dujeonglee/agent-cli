@@ -138,6 +138,25 @@ def is_format_intervention(record: dict) -> bool:
     return record.get("tool") == "" and not record.get("success", True)
 
 
+def is_loop_intervention(record: dict) -> bool:
+    """B1(행동 루프) 넛지 관찰인가 — ``recovery == "loop"`` 마킹 (v10.32.0).
+
+    형식 개입과 달리 직전 assistant 레코드는 실패 emission 이 아니라(막힌
+    반복 호출은 저장하지 않는다, v9.23.4) 실행된 호출의 관찰이므로, fold 는
+    이 레코드 하나만 접는다.
+    """
+    return (
+        record.get("role") == "user"
+        and "tool" in record
+        and record.get("recovery") == "loop"
+    )
+
+
+def is_folding_intervention(record: dict) -> bool:
+    """fold 대상 개입 전부 — 형식(``format``) + 행동 루프(``loop``)."""
+    return is_format_intervention(record) or is_loop_intervention(record)
+
+
 def fold_resolved_intervention_indices(records: list) -> list[int]:
     """fold 대상 인덱스(내림차순) — 개입 관찰 뒤에 **파싱-성공 assistant
     (ops 보유)** 가 있거나 **더 새로운 형식 개입** 이 있으면 그 개입과 직전 실패
@@ -150,16 +169,22 @@ def fold_resolved_intervention_indices(records: list) -> list[int]:
     """
     out: list[int] = []
     for i, rec in enumerate(records):
-        if not is_format_intervention(rec):
+        if not is_folding_intervention(rec):
             continue
         resolved = any(
             (r.get("role") == "assistant" and iter_record_ops(r))
-            or is_format_intervention(r)
+            or is_folding_intervention(r)
             for r in records[i + 1 :]
         )
         if not resolved:
             continue
         out.append(i)
-        if i > 0 and records[i - 1].get("role") == "assistant":
-            out.append(i - 1)  # 직전 실패 emission 도 함께
+        # 형식 개입만 직전 실패 emission 을 함께 접는다 — 루프 넛지 앞은
+        # 실행된 호출의 관찰(user)이고, 그 앞 assistant 는 실제 작업이다.
+        if (
+            is_format_intervention(rec)
+            and i > 0
+            and records[i - 1].get("role") == "assistant"
+        ):
+            out.append(i - 1)
     return sorted(set(out), reverse=True)
