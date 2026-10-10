@@ -240,12 +240,19 @@ class AnswerTool(Tool):
     # — main 도 자기 앞으로 온 질문에 답해야 한다.
     requires_handler = "questions"
     force_mount = True
+    # v10.30.0: 사용자 요청과의 혼동을 설명에서 막는다 — 꼬리 Open Requests
+    # 의 `[1] (nick) "하이"` 를 "나한테 온 질문, id 1" 로 읽고
+    # `answer(id="1")` 을 부른 실측(dj72nx, Qwen3.6-35B). 인사말이 포트에서
+    # 거부돼 사용자에게 가지 않았다. 이 도구는 에이전트 질문 봉투 전용이다.
     description = (
-        "Answer a question that was addressed to you. Its id arrived with the "
-        "question (e.g. `[question q-1a2b from agt-x9]`). The asker is NOT "
-        "blocked and kept working, but it cannot finish the part that depends "
-        "on your answer. If you genuinely cannot answer, say so with `answer` "
-        "rather than ignoring it — silence only stalls them."
+        "Answer a question another AGENT asked you. Its id arrived in the "
+        "question envelope (e.g. `[question q-1a2b from agt-x9]`). NOT for "
+        "user messages: the numbered Open Requests in the tail (`[1] (nick) "
+        '"..."`) are user requests — reply to those in `complete`\'s `result` '
+        "and list their numbers in `answers`. The asker is NOT blocked and "
+        "kept working, but it cannot finish the part that depends on your "
+        "answer. If you genuinely cannot answer, say so with `answer` rather "
+        "than ignoring it — silence only stalls them."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -253,7 +260,10 @@ class AnswerTool(Tool):
             "id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The question id, e.g. 'q-1a2b'.",
+                "description": (
+                    "The question id from the envelope, e.g. 'q-1a2b' — never "
+                    "an Open Requests number."
+                ),
             },
             "text": {
                 "type": "string",
