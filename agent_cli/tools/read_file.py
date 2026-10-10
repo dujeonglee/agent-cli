@@ -58,10 +58,19 @@ def _parse_ref(ref: str) -> tuple[int, str]:
             f"(e.g. 5#VR). Re-read the file with read_file to get "
             f"fresh hashline tags."
         )
-    m = re.match(r"^(\d+)#([A-Z]{2})$", ref)
+    # ``LINE#HASH:text`` is a whole read_file line pasted as the ref
+    # (Qwen3.6-35B, Harbor financial-document-processor: ``pos:
+    # "67#YB:def extract_total(text):"`` twice). The tag before the colon
+    # is exactly the ref the model meant and the text after it carries no
+    # extra meaning, so accept it — rejecting it only cost the model a
+    # retry it then gave up on (8/8 edit_file failures → full rewrite).
+    # Only a single pasted line qualifies: a multi-line paste is
+    # ambiguous about which line the ref points at and still errors.
+    m = re.match(r"^(\d+)#([A-Z]{2})(?::[^\n]*)?$", ref)
     if not m:
         raise RuntimeError(
-            f"Invalid hashline ref: '{ref}'. Expected format: LINE#HASH (e.g. 5#VR)"
+            f"Invalid hashline ref: '{ref}'. Expected format: LINE#HASH "
+            f"(e.g. 5#VR) — the tag at the start of a read_file line."
         )
     return int(m.group(1)), m.group(2)
 

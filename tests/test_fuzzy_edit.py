@@ -109,6 +109,56 @@ class TestParseRefTypeGuard:
         assert line == 5 and h == "VR"
 
 
+class TestParseRefPastedLine:
+    """A whole ``read_file`` line pasted as the ref (Qwen3.6-35B, Harbor
+    financial-document-processor: ``pos: "67#YB:def extract_total(text):"``,
+    twice, each rejected with "Invalid hashline ref"). The tag before the
+    colon is unambiguously the ref the model meant, so it is accepted;
+    a multi-line paste is not (which line was meant?) and still errors.
+    """
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "67#YB:def extract_total(text):",
+            "103#WW:    if total_candidates:",
+            "5#VR:",
+            "5#VR:a:b: c",
+        ],
+    )
+    def test_pasted_line_yields_tag(self, ref):
+        line, h = _parse_ref(ref)
+        assert (line, h) == (int(ref.split("#")[0]), ref.split("#")[1][:2])
+
+    @pytest.mark.parametrize(
+        "bad_ref",
+        [
+            "67#YB def extract_total(text):",  # no colon separator
+            "67#YB:def a():\n68#MQ:    pass",  # two pasted lines
+            "#YB:def a():",
+            "67:def a():",
+        ],
+    )
+    def test_other_shapes_still_rejected(self, bad_ref):
+        with pytest.raises(RuntimeError, match="Expected format: LINE#HASH"):
+            _parse_ref(bad_ref)
+
+    def test_edit_file_applies_pasted_ref(self, tmp_path):
+        f = tmp_path / "x.py"
+        f.write_text("def a():\n    return 1\n")
+        tag = compute_line_hash(2, "    return 1")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "op": "replace",
+                "pos": f"2#{tag}:    return 1",
+                "lines": ["    return 2"],
+            }
+        )
+        assert result.success is True, result.error
+        assert f.read_text() == "def a():\n    return 2\n"
+
+
 class TestEditFileFieldTypeValidation:
     """The user-reported crash: an LLM (typically a smaller model that's
     not careful with JSON typing) sent ``pos: 5`` instead of ``pos: "5#VR"``
