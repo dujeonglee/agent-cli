@@ -401,11 +401,15 @@ class TestRunCommandTeardownIntegration:
     registry/MCP, @agent 경로가 MCP 정리를 누락했다(리뷰 §4.1) — 이제 모든
     경로(예외 포함)가 teardown_session 1회 호출로 끝난다."""
 
-    def _run_with(self, query, *, pump=None, dispatch_result=False):
+    def _run_with(
+        self, query, *, pump=None, dispatch_result=False, run_loop=None, args=()
+    ):
         from contextlib import ExitStack
 
         from agent_cli.tools.result import ToolResult
 
+        if run_loop is None:
+            run_loop = MagicMock(return_value=ToolResult(True, output="ans"))
         boot = MagicMock()
         boot.dialect.name = "json_fc"
         session = MagicMock()
@@ -441,12 +445,7 @@ class TestRunCommandTeardownIntegration:
                     return_value=dispatch_result,
                 )
             )
-            st.enter_context(
-                patch(
-                    "agent_cli.main.run_loop",
-                    return_value=ToolResult(True, output="ans"),
-                )
-            )
+            st.enter_context(patch("agent_cli.main.run_loop", run_loop))
             if pump is None:
 
                 def pump(input_queue, waker, reg, run_one, **kw):
@@ -454,18 +453,18 @@ class TestRunCommandTeardownIntegration:
 
             st.enter_context(patch("agent_cli.main._run_message_pump", pump))
             td = st.enter_context(patch("agent_cli.runtime.teardown_session"))
-            result = self._invoke_cli(query)
+            result = self._invoke_cli(query, *args)
             calls["teardown"] = td
             calls["registry"] = registry
             calls["result"] = result
         return calls
 
-    def _invoke_cli(self, query):
+    def _invoke_cli(self, query, *args):
         from typer.testing import CliRunner
 
         from agent_cli.main import app
 
-        return CliRunner().invoke(app, ["run", query])
+        return CliRunner().invoke(app, ["run", query, *args])
 
     def test_main_path_full_teardown(self):
         c = self._run_with("hi")
@@ -500,3 +499,75 @@ class TestRunCommandTeardownIntegration:
         kw = c["teardown"].call_args.kwargs
         assert kw["agent_registry"] is c["registry"]
         assert kw["mcp_manager"] == "MCP"
+
+
+class TestResultFileIsWrittenPerRun:
+    """`--result-file` 은 런이 성공으로 끝난 자리에서 쓴다 (v10.31.2).
+
+    종전엔 펌프가 반환한 뒤 한 번 썼는데, 펌프는 살아 있는 모니터가 있으면
+    그 deadline(기본 2h)까지 돈다 — 모델이 건 모니터가 안 울리면 `complete`
+    한 답이 파일로는 영영 안 나왔다(A/B 실측: 420s 타임아웃까지 파일 없음)."""
+
+    def _res(self, ok, out):
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(ok, output=out) if ok else ToolResult(False, error=out)
+
+    def test_written_before_the_pump_returns(self, tmp_path):
+        out = tmp_path / "r.txt"
+        seen = {}
+
+        def pump(input_queue, waker, reg, run_one, **kw):
+            run_one("hi", wake=False)
+            seen["exists_while_pump_alive"] = out.exists()  # 모니터 대기 중인 자리
+
+        c = TestRunCommandTeardownIntegration()._run_with(
+            "hi", pump=pump, args=("--result-file", str(out))
+        )
+        assert c["result"].exit_code == 0, c["result"].output
+        assert seen["exists_while_pump_alive"] is True
+        assert out.read_text(encoding="utf-8") == "ans"
+
+    def test_a_later_successful_run_overwrites(self, tmp_path):
+        """모니터가 깨워 돈 두 번째 런의 답이 최종 — 종전(마지막 성공값 한 번
+        기록)과 같은 내용이다."""
+        out = tmp_path / "r.txt"
+        run_loop = MagicMock(
+            side_effect=[self._res(True, "first"), self._res(True, "second")]
+        )
+
+        def pump(input_queue, waker, reg, run_one, **kw):
+            run_one("hi", wake=False)
+            run_one("wake", wake=True)
+
+        c = TestRunCommandTeardownIntegration()._run_with(
+            "hi", pump=pump, run_loop=run_loop, args=("--result-file", str(out))
+        )
+        assert c["result"].exit_code == 0, c["result"].output
+        assert out.read_text(encoding="utf-8") == "second"
+
+    def test_a_later_failed_run_keeps_the_earlier_answer(self, tmp_path):
+        """실패 런은 파일을 안 쓴다(기존 계약) — 앞 런의 성공 답이 남는다."""
+        out = tmp_path / "r.txt"
+        run_loop = MagicMock(
+            side_effect=[self._res(True, "first"), self._res(False, "boom")]
+        )
+
+        def pump(input_queue, waker, reg, run_one, **kw):
+            run_one("hi", wake=False)
+            run_one("wake", wake=True)
+
+        c = TestRunCommandTeardownIntegration()._run_with(
+            "hi", pump=pump, run_loop=run_loop, args=("--result-file", str(out))
+        )
+        assert c["result"].exit_code == 0, c["result"].output
+        assert out.read_text(encoding="utf-8") == "first"
+
+    def test_no_success_means_no_file(self, tmp_path):
+        out = tmp_path / "r.txt"
+        run_loop = MagicMock(return_value=self._res(False, "boom"))
+        c = TestRunCommandTeardownIntegration()._run_with(
+            "hi", run_loop=run_loop, args=("--result-file", str(out))
+        )
+        assert c["result"].exit_code == 0, c["result"].output
+        assert not out.exists()

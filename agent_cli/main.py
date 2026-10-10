@@ -1506,10 +1506,7 @@ def run(
                     _write_result_file(result_file, extract_result_body(str(answer)))
                 return
 
-        answer = None
-
         def _run_one(text: str, *, wake: bool) -> None:
-            nonlocal answer
             if wake:
                 console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
             loop_result = run_loop(
@@ -1535,7 +1532,12 @@ def run(
             )
             main_run_ended(agent_registry, loop_result.output or "")
             if loop_result.success:
-                answer = loop_result.output
+                # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가
+                # 있으면 그 deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면
+                # `complete` 한 답이 파일로는 안 나온다(v10.31.2 실측: 모델이
+                # 건 모니터가 안 울려 420s 타임아웃까지 파일 없음). 모니터가
+                # 깨운 뒤 런이 또 성공하면 그 답으로 덮어쓴다.
+                _write_result_file(result_file, loop_result.output)
 
         # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
         # 않는다 (docs/schedule/DESIGN.md §6.3).
@@ -1562,10 +1564,7 @@ def run(
                 ),
             )
         except KeyboardInterrupt:
-            answer = None
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
-
-        _write_result_file(result_file, answer)
     finally:
         _finalize_run(
             session,
