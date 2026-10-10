@@ -1284,7 +1284,9 @@ class TestRunLoopActionLoop:
         retry_msg = third_call_messages[-1]["content"]
         assert "You have called" in retry_msg
         assert "shell" in retry_msg
-        assert "Re-read the previous responses" in retry_msg
+        # v10.32.0: 직전 결과를 인용한다 — "다시 읽어라" 가 아니라
+        assert "The previous call already returned:" in retry_msg
+        assert "Take a different action" in retry_msg
         # Must NOT include task anchor (that's restate_task's job)
         assert "You were asked to:" not in retry_msg
 
@@ -5162,8 +5164,42 @@ class TestActionLoopRetriesAreNotRecorded:
         ]
         assert len(calls) == 1, f"막힌 반복 호출이 저장됐다: {len(calls)}"
         blob = "\n".join(str(m.get("content", "")) for m in msgs)
-        # 넛지 두 단계는 남는다 — 무엇을 반복했는지 문구가 말한다
-        assert "2 times in a row" in blob and "3 times in a row" in blob
+        # v10.32.0: 넛지는 최신 하나만 — 2단계가 붙을 때 1단계는 접힌다
+        assert "3 times in a row" in blob
+        assert "2 times in a row" not in blob, "1단계 넛지가 2단계 뒤에도 남았다"
+        assert result.output == "ok"
+
+    def test_nudge_quotes_prior_result_and_folds_after_recovery(self, caps, tmp_path):
+        """v10.32.0 — 1단계 넛지는 직전 결과를 인용하고(모델이 찾아 읽지 않게),
+        다음 파싱 성공 턴에 접힌다. 실행된 호출과 그 관찰은 그대로 남는다."""
+        log = tmp_path / "app.log"
+        log.write_text("MARKER-7731\n")
+        same = "again\n\n" + json.dumps(
+            [{"action": "shell", "command": f"tail -1 {log}"}]
+        )
+        other = "next\n\n" + json.dumps([{"action": "shell", "command": "pwd"}])
+        provider, result = self._run(
+            caps, tmp_path, [same, same, other, _complete("ok")]
+        )
+        # 넛지 턴(세 번째 호출)의 메시지에 넛지가 있고 직전 결과를 품는다
+        # (리스트는 그 뒤 관찰이 제자리 추가되므로 [-1] 이 아니라 찾아서 본다)
+        nudges = [
+            str(m.get("content", ""))
+            for m in self._msgs(provider, 2)
+            if "2 times in a row" in str(m.get("content", ""))
+        ]
+        assert len(nudges) == 1
+        assert "MARKER-7731" in nudges[0]
+        assert "Call complete only if the task itself is finished" in nudges[0]
+        # 다른 행동(pwd)이 통과한 뒤의 호출: 넛지는 접히고 원래 관찰은 남는다
+        msgs = self._msgs(provider, 3)
+        blob = "\n".join(str(m.get("content", "")) for m in msgs)
+        assert "2 times in a row" not in blob, "넛지가 회복 뒤에도 남았다"
+        assert blob.count("MARKER-7731") == 1  # 실행된 호출의 관찰만
+        assert any(
+            m.get("role") == "assistant" and f"tail -1 {log}" in str(m.get("content"))
+            for m in msgs
+        )
         assert result.output == "ok"
 
     def test_repeat_inside_a_batch_skips_only_that_op(self, caps, tmp_path):

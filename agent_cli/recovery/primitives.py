@@ -81,21 +81,43 @@ def _loop_observed(action: str, args_repr: str, repeat_count: int) -> str:
     return f"You have called {action}({args_repr}) {repeat_count} times in a row"
 
 
-def probe_progress(*, action: str, args_repr: str, repeat_count: int) -> str:
-    """Nudge the model to consult its existing context (B1, level 1).
+def probe_progress(
+    *,
+    action: str,
+    args_repr: str,
+    repeat_count: int,
+    prior_result: str | None = None,
+) -> str:
+    """Hand the model what the repeated call already returned (B1, level 1).
 
-    Intent: "look at what you already have." A gentle first-level
-    intervention — does NOT re-anchor the task or ask diagnostic
-    questions. Just points out the loop fact and tells the model to
-    re-read previous responses before deciding.
+    Intent: "you already have this." A gentle first-level intervention —
+    does NOT re-anchor the task or ask diagnostic questions. States the
+    loop fact, quotes the previous call's result (``prior_result``, bounded
+    like :func:`echo_prior_output`) so the model need not hunt for it, and
+    asks for a different action. ``complete`` is mentioned only as
+    conditional on the task being finished (v10.32.0): the earlier wording
+    offered "summarize and call complete" as the first of two equal exits,
+    and a Qwen3.6-35B Harbor trial took it two turns after the nudge with
+    a known defect left in the deliverable.
+
+    ``prior_result`` is None when the caller cannot pair the repeat with an
+    executed call (e.g. the earlier emission was rejected before dispatch);
+    the text then says the result is already in context.
 
     See ``docs/robust-harness/DESIGN.md`` §2.2.
     """
+    head = f"{_loop_observed(action, args_repr, repeat_count)}. "
+    if prior_result is None:
+        body = "Its result is already in your context. "
+    else:
+        body = (
+            "The previous call already returned:\n---\n"
+            f"{bounded_excerpt(prior_result)}\n---\n"
+        )
     return (
-        f"{_loop_observed(action, args_repr, repeat_count)}. "
-        "Re-read the previous responses already in your context. "
-        "Either summarize what you have learned and call complete, "
-        "or take a different action."
+        head + body + "Take a different action based on that result. "
+        "Call complete only if the task itself is finished, "
+        "not to end the repetition."
     )
 
 
