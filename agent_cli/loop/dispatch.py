@@ -1344,6 +1344,15 @@ class TurnDispatcher:
             err = port.answer(qid, text)
         except Exception as e:
             err = f"answer failed: {type(e).__name__}: {e}"
+        if err and self._is_open_request_id(qid):
+            # v10.30.0: 모델이 사용자 요청 번호를 질문 id 로 썼다 — 포트의
+            # "unknown question" 은 길을 안 알려줘 다음 턴이 메타 문장으로
+            # 끝났다(dj72nx 실측). 어디로 답해야 하는지를 결과 문구로 돌려준다.
+            err = (
+                f"'{qid}' is user request [{qid}], not an agent question — "
+                f"reply to it in `complete`'s `result` and set "
+                f'`answers: ["{qid}"]`'
+            )
         ok = not err
         obs = f"[answer → {qid or '?'}] " + (err or "delivered to the asker")
         if accumulate is not None:
@@ -1360,6 +1369,11 @@ class TurnDispatcher:
             turn=self.state.turn,
         )
         return _CONTINUE
+
+    def _is_open_request_id(self, qid: str) -> bool:
+        """``qid`` 가 이 런의 열린 사용자 요청 번호인가 (`_op_answer` 되묻기용)."""
+        pending = getattr(self.state, "run_requests", None) or []
+        return any(str(r.get("id")) == qid for r in pending)
 
     def _op_run_skill(self, llm_text: str, turn, op):
         """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는

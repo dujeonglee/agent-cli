@@ -1567,6 +1567,47 @@ class TestFlipDispatch:
         assert rec["success"] is False
         assert "unknown or already-answered" in rec["content"]
 
+    def test_answer_with_a_user_request_number_points_to_complete(
+        self, mkreg, tmp_path, renderer
+    ):
+        """v10.30.0: 꼬리의 `[1] (nick) "하이"` 를 질문으로 읽고 `answer(id="1")`
+        을 부르면(dj72nx 실측) "unknown question" 대신 **어디로 답해야 하는지**
+        를 돌려준다 — 그 인사말은 사용자에게 안 갔으니 다음 턴이 `complete`
+        로 다시 답하게."""
+        from agent_cli.context.manager import ContextManager
+
+        reg = mkreg()
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        result, _ = _run_scripted(
+            ctx,
+            [
+                json.dumps({"action": "answer", "id": "1", "text": "안녕하세요!"}),
+                json.dumps({"action": "complete", "result": "안녕!", "answers": ["1"]}),
+            ],
+            questions=reg.question_port(None),
+            query_request_id="1",
+            query_author="Chill Capybara",
+        )
+        rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "answer")
+        assert rec["success"] is False
+        assert "user request [1], not an agent question" in rec["content"]
+        assert '`answers: ["1"]`' in rec["content"]
+        assert "unknown or already-answered" not in rec["content"]
+        assert result.success and result.output == "안녕!"
+
+    def test_answer_description_separates_user_requests(self):
+        """설명 자체가 혼동의 출발점이었다 — 'a question addressed to you' 는
+        사용자 메시지에도 맞는 말이다."""
+        from agent_cli.tools.virtual import AnswerTool
+
+        d = AnswerTool.description
+        assert "another AGENT" in d and "NOT for user messages" in d
+        assert "Open Requests" in d and "`answers`" in d
+        assert (
+            "never an Open Requests number"
+            in (AnswerTool.parameters["properties"]["id"]["description"])
+        )
+
     def test_main_ask_still_blocks(self, mkreg, tmp_path, renderer):
         """main·delegate 의 ``ask``(사람에게 묻기)는 무변경이다 — 포트를
         받아도 비블로킹 분기를 타면 안 된다."""
