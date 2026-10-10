@@ -24,13 +24,18 @@ from typing import Any, Protocol
 
 from agent_cli.input_queue import InputQueue
 
+#: 합성 깨우기 런의 작성자 — 사람이 아니다. history 레코드에 ``author`` +
+#: ``author_is_user=False`` 로 남아 web 재생이 깨우기 카드로 그린다(없으면
+#: 사용자 말풍선이 된다 — ``_add_user_message`` 는 author 가 있어야 플래그를 쓴다).
+WAKE_AUTHOR = "🤝 agent"
+
 
 @dataclass(frozen=True, kw_only=True)
 class RunRequest:
     """런 하나의 입력 — ``run_loop`` 의 ``query*``·``stop_event`` 인자 묶음."""
 
     text: str
-    author: str | None  # None = 단일 사용자(run 의 argv 질의) — run_loop 기본값
+    author: str | None  # None = 단일 사용자(run 의 argv 질의); 깨우기는 WAKE_AUTHOR
     author_is_user: bool  # 합성 깨우기(wake)는 사람 발화가 아니다
     request_id: str  # 큐가 발급한 id ("" = 없음) — 런이 "무엇에 답하는지"
     stop_event: threading.Event  # 이 런만의 중단 핸들 (web Stop 버튼)
@@ -183,11 +188,13 @@ class SessionPump:
             wake = verdict == "run"
             d.surface.busy()
             d.surface.echo(item, wake=wake)
-            author = None if wake else (item.get("nickname") or None)
+            author = WAKE_AUTHOR if wake else (item.get("nickname") or None)
             # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
             # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
-            # 재갱신한다.
-            d.agent_registry.set_current_run_authors([author] if author else [])
+            # 재갱신한다. 깨우기 런엔 귀속할 사용자가 없다.
+            d.agent_registry.set_current_run_authors(
+                [author] if author and not wake else []
+            )
             stop_event = threading.Event()
             d.surface.bind_stop(stop_event)
             try:

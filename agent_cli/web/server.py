@@ -271,13 +271,15 @@ class WebServer:
         위한 자리이고 항상 None 이다."""
         return self._queue.enqueue(conn_id, text, nickname="", system=True)
 
-    def dequeue_blocking(self):
+    def dequeue_blocking(self, timeout: float | None = None):
         """Worker-idle: block until a message is queued (or shutdown).
 
         Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called, else
-        the queued item dict. Workers compare with ``is WebServer.SHUTDOWN``.
+        the queued item dict (``None`` on ``timeout``). Workers compare with
+        ``is WebServer.SHUTDOWN``. ``timeout`` is the pump's poll (web's
+        ``ForeverPolicy`` passes None — the server is the pump's queue).
         """
-        return self._queue.dequeue_blocking()
+        return self._queue.dequeue_blocking(timeout)
 
     def dequeue_nowait(self) -> dict | None:
         """Turn-boundary (running loop): pop one queued message if available,

@@ -128,8 +128,10 @@ class TestWake:
             waker=waker,
             registry=reg,
         ).run()
-        assert seen[0].wake is True and seen[0].author is None
-        assert seen[0].author_is_user is False
+        from agent_cli.pump import WAKE_AUTHOR
+
+        assert seen[0].wake is True and seen[0].author == WAKE_AUTHOR
+        assert seen[0].author_is_user is False  # 레코드가 깨우기 카드로 재생된다
         assert ("echo", "WAKE", True) in surface.calls
         assert reg.authors == [[]]
         # 깨우기 텍스트는 라우팅하지 않는다 (사람 명령이 아니다)
