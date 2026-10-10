@@ -407,22 +407,21 @@ class _ItemsPump:
     def run(self):
         import threading
 
-        from agent_cli.pump import RunRequest
+        from agent_cli.pump import WAKE_AUTHOR, RunRequest
 
         for text, wake in self.items:
             if not wake and self.deps.surface.route(text):
                 continue
-            res = self.deps.run_main(
-                RunRequest(
-                    text=text,
-                    author=None,
-                    author_is_user=not wake,
-                    request_id="",
-                    stop_event=threading.Event(),
-                    wake=wake,
-                )
+            req = RunRequest(
+                text=text,
+                author=WAKE_AUTHOR if wake else None,
+                author_is_user=not wake,
+                request_id="",
+                stop_event=threading.Event(),
+                wake=wake,
             )
-            self.deps.surface.run_ended(res)
+            res = self.deps.run_main(req)
+            self.deps.surface.run_ended(res, req)
             self.after_item(res)
 
     def after_item(self, res):
@@ -594,9 +593,9 @@ class TestResultFileIsWrittenPerRun:
         assert seen["exists_while_pump_alive"] is True
         assert out.read_text(encoding="utf-8") == "ans"
 
-    def test_a_later_successful_run_overwrites(self, tmp_path):
-        """모니터가 깨워 돈 두 번째 런의 답이 최종 — 종전(마지막 성공값 한 번
-        기록)과 같은 내용이다."""
+    def test_a_wake_run_does_not_overwrite_the_query_answer(self, tmp_path):
+        """모니터 만료 통지에 깨어난 런의 "No new action required" 가 진짜 답을
+        덮어썼다(v10.34.0 스모크) — 결과 파일은 argv 질의 런의 답뿐이다."""
         out = tmp_path / "r.txt"
         run_loop = MagicMock(
             side_effect=[self._res(True, "first"), self._res(True, "second")]
@@ -609,7 +608,34 @@ class TestResultFileIsWrittenPerRun:
             "hi", pump=_Two, run_loop=run_loop, args=("--result-file", str(out))
         )
         assert c["result"].exit_code == 0, c["result"].output
-        assert out.read_text(encoding="utf-8") == "second"
+        assert out.read_text(encoding="utf-8") == "first"
+
+    def test_a_wake_run_does_not_fill_in_for_a_failed_query_run(self, tmp_path):
+        """질의 런이 실패했으면 파일은 없어야 한다 — 뒤 깨우기 런의 답을 채우면
+        실패가 성공으로 둔갑한다(max-turns 뒤 만료 통지 → "nothing to do")."""
+        out = tmp_path / "r.txt"
+        run_loop = MagicMock(
+            side_effect=[self._res(False, "max turns"), self._res(True, "rescued")]
+        )
+
+        class _Two(_ItemsPump):
+            items = (("hi", False), ("wake", True))
+
+        c = TestRunCommandTeardownIntegration()._run_with(
+            "hi", pump=_Two, run_loop=run_loop, args=("--result-file", str(out))
+        )
+        assert c["result"].exit_code == 0, c["result"].output
+        assert not out.exists()
+
+    def test_write_is_atomic_and_skips_an_empty_answer(self, tmp_path):
+        from agent_cli.main import _write_result_file
+
+        out = tmp_path / "r.txt"
+        _write_result_file(str(out), "")
+        assert not out.exists()
+        _write_result_file(str(out), "ans")
+        assert out.read_text(encoding="utf-8") == "ans"
+        assert [p.name for p in tmp_path.iterdir()] == ["r.txt"], "temp 파일이 남았다"
 
     def test_a_later_failed_run_keeps_the_earlier_answer(self, tmp_path):
         """실패 런은 파일을 안 쓴다(기존 계약) — 앞 런의 성공 답이 남는다."""

@@ -57,7 +57,7 @@ class WebSurface:
             return True
         return self._dispatch(text, self._stop)
 
-    def run_ended(self, result) -> None:
+    def run_ended(self, result, req) -> None:
         pass  # 화면이 결과다
 
     def run_failed(self, exc: Exception) -> bool:

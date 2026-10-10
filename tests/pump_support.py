@@ -37,7 +37,7 @@ class FakeSurface:
         self.calls.append(("route", text))
         return text in self.routed
 
-    def run_ended(self, result):
+    def run_ended(self, result, req):
         self.calls.append(("run_ended", result))
 
     def run_failed(self, exc):
