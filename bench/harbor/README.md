@@ -53,6 +53,28 @@ harbor run -d swebench-verified@1.0 -l 20 …
 `-m provider/model` 은 Harbor 관례 — `openai/…` 는 모든 OpenAI 호환 서버, `anthropic/…` 도 가능.
 API 키는 `--ae AGENT_CLI_API_KEY=…`. 로컬 모델은 `-n 1~2` 가 현실적(단일 서버).
 
+### 비교 런 — Hermes (`hermes_local.py`)
+
+같은 모델·같은 과제로 [hermes-agent](https://github.com/NousResearch/hermes-agent) 를 돌려
+나란히 본다. Harbor 0.24.0 의 내장 Hermes 어댑터는 설치 끝과 버전 조회에 `hermes version`
+서브커맨드를 쓰는데 hermes-agent main(2026-10)은 `hermes --version` 플래그만 받아 설치가
+exit 2 로 끝난다 — `HermesLocal` 이 그 두 자리만 고친다(`--version` 은 지연 의존성 준비를
+건너뛰므로 `hermes sessions && hermes --version` 순서). 0.24.0 은 로컬 0.22.0 과 격리해 `uvx`
+로 돌린다(`-t` 가 `org/name` 형식이라 과제 필터는 `-i`):
+
+```bash
+cd bench/harbor
+export OPENAI_API_KEY=<로컬 서버 키> OPENAI_BASE_URL=http://host.docker.internal:8000/v1
+PYTHONPATH=. uvx --from harbor==0.24.0 harbor run -d NovitaAI/tb21-file-recovery \
+  --agent-import-path hermes_local:HermesLocal -m openai/Qwen3.6-35B-A3B-8bit -n 1 \
+  --job-name tb21-hermes -o ../runs/harbor
+# 과제 하나만: -i terminal-bench/<task>
+```
+
+Hermes 는 타임아웃 런에 로그를 남기지 않는다(세션 export 가 끝에만). 2026-10-10 결과:
+agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통과 과제만 다르다
+(`bench/runs/harbor/tb21-hermes-35b-a3b`).
+
 ### `--ak` (어댑터 kwargs)
 
 | kwarg | 기본 | 설명 |
@@ -82,8 +104,9 @@ API 키는 `--ae AGENT_CLI_API_KEY=…`. 로컬 모델은 `-n 1~2` 가 현실적
 
 ## 테스트
 
-`python3 -m pytest bench/harbor` — ATIF 변환기(`atif.py`, stdlib 전용) 단위 테스트.
-제품 스위트(`tests/`)와 분리.
+`python3 -m pytest bench/harbor` — ATIF 변환기(`atif.py`, stdlib 전용)·wheel 선택 단위 테스트.
+제품 스위트(`tests/`)와 분리. `test_hermes_local.py` 는 harbor 가 import 될 때만 돈다 —
+`uvx --from harbor==0.24.0 --with pytest python -m pytest bench/harbor/test_hermes_local.py`.
 
 ## 주의
 
