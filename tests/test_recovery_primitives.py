@@ -85,53 +85,57 @@ class TestEchoPriorOutput:
 # (``TestRecoveryReminders``).
 
 
+def _probe(action="x", args_repr="{}", repeat_count=2, prior_result="prior-out"):
+    # v10.32.0: ``prior_result`` 는 필수 — 1단계는 실행된 호출의 반복에만 나간다
+    return probe_progress(
+        action=action,
+        args_repr=args_repr,
+        repeat_count=repeat_count,
+        prior_result=prior_result,
+    )
+
+
 class TestProbeProgress:
     def test_includes_action_args_count(self):
-        out = probe_progress(
-            action="read_file", args_repr='{"path": "x.py"}', repeat_count=2
-        )
+        out = _probe(action="read_file", args_repr='{"path": "x.py"}')
         assert "read_file" in out
         assert '{"path": "x.py"}' in out
         assert "2 times in a row" in out
 
     def test_starts_with_loop_observed_phrase(self):
         # Shared phrase across B1 primitives — also a SYSTEM_USER_PREFIXES match
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
-        assert out.startswith("You have called")
+        assert _probe().startswith("You have called")
 
     def test_does_not_repeat_task_anchor(self):
         # probe_progress is the LIGHT nudge — must NOT include task anchor
-        # (that is restate_task's job)
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        # (that is restate_task's job); the only fenced block is the result
+        out = _probe()
         assert "You were asked to:" not in out
-        assert "---" not in out  # no fenced task block
+        assert out.count("---") == 2
 
     def test_does_not_ask_diagnostic_questions(self):
         # probe_progress focuses on "look at what you have", not on
         # "why is this needed / what is missing" — those are restate_task's
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        out = _probe()
         # No metacognitive prompts about task↔action causality
         assert "Why does the task" not in out
         assert "NOT getting" not in out
 
-    def test_offers_two_paths_complete_or_different(self):
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+    def test_offers_complete_only_conditionally_and_different_action(self):
+        out = _probe()
         assert "complete" in out
         assert "different action" in out
 
     def test_does_not_reference_provider_or_channel(self):
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        out = _probe()
         forbidden = ["ollama", "anthropic", "thinking", "reasoning"]
         for w in forbidden:
             assert w not in out.lower(), f"primitive leaked '{w}'"
 
     def test_quotes_prior_result_in_a_fence(self):
         # v10.32.0: 직전 결과를 인용한다 — 모델이 컨텍스트를 뒤지지 않게
-        out = probe_progress(
-            action="shell",
-            args_repr='{"command": "ls"}',
-            repeat_count=2,
-            prior_result="a.py\nb.py",
+        out = _probe(
+            action="shell", args_repr='{"command": "ls"}', prior_result="a.py\nb.py"
         )
         assert "The previous call already returned:\n---\na.py\nb.py\n---" in out
         assert "Re-read" not in out
@@ -139,21 +143,14 @@ class TestProbeProgress:
     def test_prior_result_is_bounded(self):
         from agent_cli.recovery.primitives import ECHO_MAX_CHARS
 
-        out = probe_progress(
-            action="x", args_repr="{}", repeat_count=2, prior_result="z" * 5000
-        )
+        out = _probe(prior_result="z" * 5000)
         assert "characters omitted" in out
         assert len(out) < ECHO_MAX_CHARS + 400
-
-    def test_without_prior_result_points_at_context(self):
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
-        assert "already in your context" in out
-        assert "---" not in out
 
     def test_complete_is_conditional_on_the_task(self):
         # 종전 "summarize what you have learned and call complete" 는 complete 을
         # 첫 번째 출구로 제시했다 — 이제 과제가 끝났을 때만, 반복을 끝내려고는 아님
-        out = probe_progress(action="x", args_repr="{}", repeat_count=2)
+        out = _probe()
         assert "Call complete only if the task itself is finished" in out
         assert "not to end the repetition" in out
         assert "summarize" not in out

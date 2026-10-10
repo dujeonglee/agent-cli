@@ -1470,57 +1470,63 @@ class TurnDispatcher:
         loop_level = self.loop_detector.observe(
             tool_name, tool_input, prev_was_error=prev_was_error
         )
-        if loop_level >= 1:
+        # 짝 (v10.32.0): 이력의 마지막 행이 정확히 이 호출(도구+정규화 인자)
+        # 이면 그 결과가 "직전 결과". 감지기는 dispatch 전에 세므로 A4/A5 로
+        # **실행 전에 거부된** 호출도 센다 — 그 반복은 결과를 본 적이 없는
+        # 재시도라 루프 넛지가 아니라 거부 안내를 다시 받아야 한다(사용자
+        # 지적). 그래서 1·2단계는 짝이 있을 때만 끼어들고, 짝이 없으면 아래
+        # A4/A5 로 흘려 보낸다. 상한(4번째 동일 반복 = 하드 실패)은 짝과
+        # 무관하게 유지 — 같은 거부를 세 번 받고도 같은 인자를 보내는 건
+        # 개입 턴이 max_turns 를 안 세는 이상 다른 상한이 없다.
+        last = (
+            self.tools.recent_tool_history[-1]
+            if self.tools.recent_tool_history
+            else None
+        )
+        paired = bool(
+            last
+            and last.get("tool") == tool_name
+            and last.get("input") == _normalize_input(tool_input)
+        )
+        if loop_level >= 1 and (paired or loop_level >= 3):
             outcome["failure_signal"] = FAILURE_ACTION_LOOP
             args_repr = (
                 json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
                 if isinstance(tool_input, dict)
                 else str(tool_input)
             )
-            # v10.32.0: 넛지에 직전 결과를 인용한다 — "다시 읽어라" 대신
-            # 그 결과를 눈앞에 둔다(사용자 제안). 이력의 마지막 행이 정확히
-            # 이 호출(도구+정규화 인자)일 때만: 직전 emission 이 dispatch
-            # 전에 거부됐으면(A4/A5) 이력에 없어 짝이 안 맞고, 그땐 인용 없이
-            # "결과는 이미 컨텍스트에 있다" 로 간다.
-            prior_result: str | None = None
-            last = (
-                self.tools.recent_tool_history[-1]
-                if self.tools.recent_tool_history
+            intervention = (
+                format_action_loop_intervention(
+                    level=loop_level,
+                    action=tool_name,
+                    args_repr=args_repr,
+                    repeat_count=self.loop_detector.consecutive_count,
+                    task=self._task_text(),
+                    prior_result=last.get("result") or "",
+                )
+                if paired
                 else None
             )
-            if (
-                last
-                and last.get("tool") == tool_name
-                and last.get("input") == _normalize_input(tool_input)
-            ):
-                prior_result = last.get("result") or ""
-            intervention = format_action_loop_intervention(
-                level=loop_level,
-                action=tool_name,
-                args_repr=args_repr,
-                repeat_count=self.loop_detector.consecutive_count,
-                task=self._task_text(),
-                prior_result=prior_result,
-            )
             if intervention is None:
-                # Level ≥3: recovery exhausted — hard fail with a
-                # message that cites which primitives were already
-                # tried so the user knows we did not give up early.
+                # Level ≥3: recovery exhausted — hard fail. The message
+                # says what was tried: the two nudges (paired), or the same
+                # rejection three times (unpaired — no result ever came).
                 _debug_log(
                     f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
-                    f"level={loop_level} skill_name={self.cfg.skill_name}"
+                    f"level={loop_level} paired={paired} "
+                    f"skill_name={self.cfg.skill_name}"
+                )
+                tried = (
+                    "tried probe_progress and restate_task without recovery"
+                    if paired
+                    else "the same arguments were rejected before every run"
                 )
                 render_run_ended(
-                    f"Action loop unresolved: {tool_name} repeated; "
-                    "tried probe_progress and restate_task without "
-                    "recovery. Stopping."
+                    f"Action loop unresolved: {tool_name} repeated; {tried}. Stopping."
                 )
                 return ToolResult(
                     False,
-                    error=(
-                        "Action loop unresolved: probe_progress and "
-                        "restate_task did not break the repetition."
-                    ),
+                    error=f"Action loop unresolved: {tried}.",
                 )
             if accumulate is not None:
                 # N-op 배치 (v9.23.4): A4/A5 와 같은 모양 — 이 op 만 실행하지

@@ -28,12 +28,14 @@ def format_action_loop_intervention(
     args_repr: str,
     repeat_count: int,
     task: str,
-    prior_result: str | None = None,
+    prior_result: str,
 ) -> Intervention | None:
     """Compose the B1 (action loop) Intervention for a given escalation level.
 
     ``prior_result`` (v10.32.0): what the repeated call returned when it
     last ran — level 1 quotes it instead of telling the model to re-read.
+    The caller only composes a level for a repeat of an executed call, so
+    this is always the paired result (level 2 does not use it).
 
     Skips the temperature-down level from DESIGN.md §2.3 — temperature
     handling diverges across providers, which would leak runtime
