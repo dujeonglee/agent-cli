@@ -35,11 +35,17 @@ class RunRequest:
     """런 하나의 입력 — ``run_loop`` 의 ``query*``·``stop_event`` 인자 묶음."""
 
     text: str
-    author: str | None  # None = 단일 사용자(run 의 argv 질의); 깨우기는 WAKE_AUTHOR
+    author: str | None  # None = run 의 argv 질의; 깨우기는 WAKE_AUTHOR; 예약은 그 이름
     author_is_user: bool  # 합성 깨우기(wake)는 사람 발화가 아니다
     request_id: str  # 큐가 발급한 id ("" = 없음) — 런이 "무엇에 답하는지"
     stop_event: threading.Event  # 이 런만의 중단 핸들 (web Stop 버튼)
     wake: bool
+
+    @property
+    def is_query(self) -> bool:
+        """run 의 argv 질의 런인가 — 깨우기(author=WAKE_AUTHOR)도 예약(author=
+        이름)도 아닌 것. ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""
+        return self.author is None and not self.wake
 
 
 class LifetimePolicy(Protocol):
@@ -135,8 +141,9 @@ class PumpSurface(Protocol):
     def route(self, text: str) -> bool:
         """``/``·``@`` 명령이면 처리하고 True — 런을 열지 않는다."""
 
-    def run_ended(self, result: Any) -> None:
-        """런이 끝났다(ToolResult) — run 은 ``--result-file``."""
+    def run_ended(self, result: Any, req: RunRequest) -> None:
+        """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``req`` 로 그 런이
+        무엇이었는지(argv 질의 / 깨우기 / 예약) 안다."""
 
     def run_failed(self, exc: Exception) -> bool:
         """런이 예외로 죽었다. True = 삼키고 계속(web), False = 전파(run)."""
@@ -210,22 +217,21 @@ class SessionPump:
                 if not wake and d.surface.route(text):
                     continue
                 try:
-                    result = d.run_main(
-                        RunRequest(
-                            text=text,
-                            author=author,
-                            author_is_user=not wake,
-                            request_id=item.get("id") or "",
-                            stop_event=stop_event,
-                            wake=wake,
-                        )
+                    req = RunRequest(
+                        text=text,
+                        author=author,
+                        author_is_user=not wake,
+                        request_id=item.get("id") or "",
+                        stop_event=stop_event,
+                        wake=wake,
                     )
+                    result = d.run_main(req)
                     from agent_cli.runtime import main_run_ended
 
                     main_run_ended(
                         d.agent_registry, getattr(result, "output", "") or ""
                     )
-                    d.surface.run_ended(result)
+                    d.surface.run_ended(result, req)
                 except Exception as exc:
                     if not d.surface.run_failed(exc):
                         raise

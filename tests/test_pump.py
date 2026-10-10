@@ -281,12 +281,40 @@ class TestConsoleSurface:
         assert s.route("@agent t") is True
         assert s.route("plain words") is False  # 디스패치가 False 를 돌려준다
 
-    def test_run_ended_writes_only_a_success(self, tmp_path):
+    def _req(self, *, wake=False, author=None):
+        from agent_cli.pump import WAKE_AUTHOR
+
+        return RunRequest(
+            text="t",
+            author=WAKE_AUTHOR if wake else author,
+            author_is_user=not wake,
+            request_id="",
+            stop_event=threading.Event(),
+            wake=wake,
+        )
+
+    def test_run_ended_writes_only_a_successful_query_run(self, tmp_path):
         s, out, _ = self._surface(tmp_path)
-        s.run_ended(ToolResult(False, error="boom"))
+        s.run_ended(ToolResult(False, error="boom"), self._req())
         assert not out.exists()
-        s.run_ended(ToolResult(True, output="ans"))
+        s.run_ended(ToolResult(True, output="later"), self._req(wake=True))
+        assert not out.exists(), "깨우기 런의 답은 결과 파일이 아니다"
+        s.run_ended(ToolResult(True, output="sched"), self._req(author="⏰ nightly"))
+        assert not out.exists(), "예약 런의 답도 아니다"
+        s.run_ended(ToolResult(True, output="ans"), self._req())
         assert out.read_text(encoding="utf-8") == "ans"
+        s.run_ended(ToolResult(True, output="again"), self._req(wake=True))
+        assert out.read_text(encoding="utf-8") == "ans"
+
+    def test_skill_result_also_lands_in_the_file(self, tmp_path):
+        from agent_cli.main import _ConsoleDispatchOutput
+
+        out = tmp_path / "s.txt"
+        o = _ConsoleDispatchOutput(result_file=str(out))
+        o.skill_result("review", None)
+        assert not out.exists()
+        o.skill_result("review", "looks good")
+        assert out.read_text(encoding="utf-8") == "looks good"
 
     def test_errors_propagate_and_ctrl_c_is_the_interrupt(self, tmp_path):
         s, _, _ = self._surface(tmp_path)

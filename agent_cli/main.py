@@ -317,11 +317,16 @@ class _ConsoleSurface:
             return False
         return self._dispatch(text, self._stop)
 
-    def run_ended(self, result) -> None:
+    def run_ended(self, result, req) -> None:
         # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
         # deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면 `complete` 한 답이
-        # 파일로는 안 나온다(v10.31.2). 뒤 런이 또 성공하면 덮어쓴다.
-        if result.success:
+        # 파일로는 안 나온다(v10.31.2). **argv 질의 런의 답만** 쓴다(v10.34.1):
+        # 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 런의 답은 그
+        # 통지에 대한 반응이지 사용자 질의의 답이 아니다 — 모니터 만료에 깨어난
+        # 런의 "No new action required" 가 진짜 답을 덮어쓴 실측(v10.34.0 스모크).
+        # "파일이 없을 때만 깨우기 답을 쓴다" 도 두지 않는다: 질의 런이 max-turns
+        # 로 실패한 뒤 그 문장이 성공 답으로 둔갑한다.
+        if result.success and req.is_query:
             _write_result_file(self._result_file, result.output)
 
     def run_failed(self, exc: Exception) -> bool:
@@ -488,6 +493,9 @@ class _ConsoleDispatchOutput(DispatchOutput):
     def skill_result(self, name: str, result) -> None:
         if result is not None:
             console.print(f"\n[{C['final']}]{result}[/]")
+            # `/skill` 의 답도 결과 파일로 (v10.34.1) — `@agent task` 와 같은
+            # "run 의 최종 답" 인데 이 경로만 안 쓰던 비대칭.
+            _write_result_file(self._result_file, result)
             return
         console.print(
             f"\n[{C['accent']}]Skill /{name} stopped without final answer. "
@@ -1736,11 +1744,23 @@ def _agent_mail_notice(reply: dict) -> None:
 
 
 def _write_result_file(path: str, answer) -> None:
-    """``--result-file`` — 성공 답변만 원문 기록 (실패/무답=파일 미생성)."""
-    if not path or answer is None:
+    """``--result-file`` — 성공 답변만 원문 기록 (실패/무답/빈 답=파일 미생성).
+
+    원자적으로 쓴다(같은 디렉터리의 temp → ``os.replace``): 파일을 폴링하는
+    소비자가 반쪽을 읽지 않게 — ``status.json`` 과 같은 관례(v10.34.1).
+    """
+    if not path or answer is None or not str(answer):
         return
+    target = Path(path)
     try:
-        Path(path).write_text(str(answer), encoding="utf-8")
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent or ".")
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(answer))
+        os.replace(tmp, target)
     except OSError as e:
         console.print(f"[{C['error']}]--result-file 기록 실패: {e}[/]")
 
