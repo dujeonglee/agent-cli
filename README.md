@@ -385,7 +385,7 @@ agent-cli run "task description" [options]
 | `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
-| `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성 | (없음) |
+| `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). `@profile` 실행도 관찰 래퍼(STATUS/RESULT)를 벗긴 원문만 기록. 실패 시 파일 미생성. **런이 성공으로 끝나는 즉시** 씁니다(v10.31.2) — 모델이 걸어 둔 모니터·예약 때문에 프로세스가 더 살아 있어도 파일은 `complete` 시점에 생기고, 모니터가 깨워 돈 뒤 런이 또 성공하면 그 답으로 덮어씁니다 (종전엔 프로세스가 끝날 때 한 번 써서, 안 울리는 모니터가 남으면 deadline 까지 파일이 없었습니다) | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
