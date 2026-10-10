@@ -6,7 +6,9 @@
 - `exit`/`interval` 은 **없다** — 조건은 셋뿐이다(§4.2)
 - 해제 **세 경로 전부** 마지막 보고를 남긴다(초판은 `max_wakes` 만 그랬다)
 - `silence` 는 `max(mtime, registered_at)` 기준 — mtime 만 쓰면 등록 즉시 발화
-- `match` 커서는 **등록 시점 EOF** 에서 시작 — 0 이면 과거 로그가 통째로 매치
+- `match` 커서는 **등록 시점 EOF** 에서 시작 — 0 이면 과거 로그가 통째로 매치.
+  단 등록 때 **없던** 파일은 0 에서(v10.31.1) — EOF 고정이면 통째로 생기는
+  파일에 영영 발화하지 않는다
 - 로그로테이트(rename)를 `st_ino` 로 본다 — 크기만 보면 한 틱 안에 넘어설 때 놓친다
 """
 
@@ -91,13 +93,47 @@ class TestMatchCondition:
         log = tmp_path / "later.log"
         _add(reg, {"type": "match", "file": str(log), "pattern": "GO"})
         reg.tick(time.time())
+        reg.tick(time.time())
         assert not reg.deliver.calls
 
-        log.write_text("GO\n")
-        reg.tick(time.time())  # 첫 관측 → EOF 고정
-        log.write_text("GO\nGO again\n")
+        log.write_text("info\nGO\n")
         reg.tick(time.time())
-        assert reg.deliver.calls
+        reports = reg.deliver.take()
+        assert len(reports) == 1 and "GO" in reports[0]
+
+    def test_file_created_whole_after_registration_fires(self, reg, tmp_path):
+        """등록 때 없던 파일은 **0 에서** 본다 — 결과를 한 번에 쓰는 스크립트
+        (`done.txt` 류)는 첫 관측이 곧 마지막 관측이라, EOF 고정이면 영영
+        발화하지 않는다(v10.31.1 — A/B 실측에서 run 이 타임아웃까지 매달렸다)."""
+        log = tmp_path / "done.txt"
+        _add(reg, {"type": "match", "file": str(log), "pattern": "READY"})
+        reg.tick(time.time())
+        log.write_text("READY-7731\n")  # 생긴 뒤 다시 쓰이지 않는다
+        reg.tick(time.time())
+        assert "READY-7731" in "".join(reg.deliver.take())
+
+    def test_file_present_at_registration_still_skips_its_past(self, reg, tmp_path):
+        """없던 파일의 0 시작이 **있던 파일의 EOF 시작**을 바꾸지 않는다 —
+        둘은 등록 순간의 존재 여부로만 갈린다."""
+        old = tmp_path / "old.log"
+        old.write_text("READY old\n")
+        _add(reg, {"type": "match", "file": str(old), "pattern": "READY"})
+        reg.tick(time.time())
+        reg.tick(time.time())
+        assert not reg.deliver.calls
+
+    def test_file_deleted_then_recreated_is_read_from_zero(self, reg, tmp_path):
+        """있던 파일이 사라졌다 다시 생기면 inode 가 달라 커서가 리셋된다 —
+        사라진 동안의 `setdefault` 는 기존 커서를 건드리지 않는다."""
+        log = tmp_path / "r.log"
+        log.write_text("x" * 100 + "\n")
+        _add(reg, {"type": "match", "file": str(log), "pattern": "HIT"})
+        reg.tick(time.time())
+        log.unlink()
+        reg.tick(time.time())
+        log.write_text("HIT\n")  # 옛 오프셋(101)보다 작은 새 파일
+        reg.tick(time.time())
+        assert "HIT" in "".join(reg.deliver.take())
 
     def test_truncation_resets_the_cursor(self, reg, tmp_path):
         log = tmp_path / "t.log"
