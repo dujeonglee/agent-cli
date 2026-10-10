@@ -163,6 +163,7 @@ class TestFormatActionLoopIntervention:
             "args_repr": '{"path": "x.py"}',
             "repeat_count": 2,
             "task": "Refactor the parser",
+            "prior_result": "1#VR:import os",  # v10.32.0: 1단계가 인용
         }
         base.update(overrides)
         return base
@@ -176,8 +177,9 @@ class TestFormatActionLoopIntervention:
         assert intv.primitives == ["probe_progress"]
         # probe_progress message: NO task anchor
         assert "You were asked to:" not in intv.message
-        # Has the loop fact + complete option
+        # Has the loop fact + the prior result + conditional complete
         assert "read_file" in intv.message
+        assert "1#VR:import os" in intv.message
         assert "complete" in intv.message
 
     def test_level_two_uses_restate_task(self):

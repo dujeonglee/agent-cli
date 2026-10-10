@@ -1341,6 +1341,59 @@ class TestRunLoopActionLoop:
         assert "probe_progress" in result.error
         assert "restate_task" in result.error
 
+    def test_repeat_of_a_rejected_call_gets_the_rejection_again(self, caps, tmp_path):
+        """v10.32.0 — 실행 전에 거부된(A5) 호출을 그대로 다시 보내는 건 결과를
+        본 적 없는 재시도다: 루프 넛지가 아니라 거부 안내를 다시 받는다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bad = json.dumps({"action": "write_file", "content": "x"})  # path 누락
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bad),
+            LLMResponse(content=bad),  # 동일 반복 — 감지기는 2회째
+            LLMResponse(content=_complete("ok")),
+        ]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert result.success
+        third = "\n".join(
+            str(m.get("content", ""))
+            for m in provider.call.call_args_list[2].kwargs["messages"]
+        )
+        assert "times in a row" not in third
+        assert "Missing required field" in third
+
+    def test_four_rejected_repeats_hard_fail(self, caps, tmp_path):
+        """짝이 없어도 상한은 유지 — 같은 거부를 세 번 받고도 같은 인자를
+        보내면 4번째에 멈춘다(개입 턴은 max_turns 를 안 세므로 유일한 상한)."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bad = json.dumps({"action": "write_file", "content": "x"})
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=bad) for _ in range(5)]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert not result.success
+        assert "loop" in result.error.lower()
+        assert "rejected before every run" in result.error
+        assert "probe_progress" not in result.error
+
     def test_different_action_resets_counter(self, caps, tmp_path):
         """B1 only fires on *consecutive* identical calls. A different
         action between repeats clears the counter."""

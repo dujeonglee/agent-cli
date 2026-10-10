@@ -86,7 +86,7 @@ def probe_progress(
     action: str,
     args_repr: str,
     repeat_count: int,
-    prior_result: str | None = None,
+    prior_result: str,
 ) -> str:
     """Hand the model what the repeated call already returned (B1, level 1).
 
@@ -100,22 +100,17 @@ def probe_progress(
     and a Qwen3.6-35B Harbor trial took it two turns after the nudge with
     a known defect left in the deliverable.
 
-    ``prior_result`` is None when the caller cannot pair the repeat with an
-    executed call (e.g. the earlier emission was rejected before dispatch);
-    the text then says the result is already in context.
+    ``prior_result`` is always what the call returned when it last ran:
+    the caller fires this level only for a repeat of an *executed* call
+    (a repeat of a call rejected before dispatch is a retry, not a loop).
 
     See ``docs/robust-harness/DESIGN.md`` §2.2.
     """
-    head = f"{_loop_observed(action, args_repr, repeat_count)}. "
-    if prior_result is None:
-        body = "Its result is already in your context. "
-    else:
-        body = (
-            "The previous call already returned:\n---\n"
-            f"{bounded_excerpt(prior_result)}\n---\n"
-        )
     return (
-        head + body + "Take a different action based on that result. "
+        f"{_loop_observed(action, args_repr, repeat_count)}. "
+        "The previous call already returned:\n---\n"
+        f"{bounded_excerpt(prior_result)}\n---\n"
+        "Take a different action based on that result. "
         "Call complete only if the task itself is finished, "
         "not to end the repetition."
     )
