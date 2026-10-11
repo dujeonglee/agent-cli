@@ -801,8 +801,9 @@ def pre_llm_call(ctx):
 
     # Context 조작
     ctx.inject_message("system", "remember this")
-    ctx.inject_system_section("Memory", "facts...")
-    ctx.remove_system_section("Memory")
+    ctx.inject_system_section("Memory", "facts...")   # 제목별 병합 — 같은 제목은 교체, 다른 제목은 유지
+    ctx.remove_system_section("Memory")                # (v10.36.0: OnSessionStart 에서 넣은 섹션도 프롬프트에 반영 —
+                                                        #  종전엔 PreLLMCall 의 섹션만 적용돼 이 예시가 동작하지 않았음)
 
     # 도구 제어 (PreToolUse only)
     ctx.block("reason")

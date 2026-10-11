@@ -52,9 +52,14 @@ class SystemPromptSvc:
         self.system = "\n\n".join(t for _, t in self.sections)
 
     def apply_hook_sections(self, hook_ctx) -> None:
-        """Apply dynamic sections from hook context — idempotent across turns
-        (previous ``Hook: `` sections are replaced). The ``<!-- HOOK_SECTIONS
-        -->`` marker keeps the joined string byte-identical to the historical
+        """Apply dynamic sections from hook context — **merged by title**
+        (v10.36.0): a section a hook re-injects every ``PreLLMCall`` replaces
+        the previous one of the same title (idempotent across turns), while a
+        section injected once at ``OnSessionStart`` stays for the session.
+        Before, every apply dropped all earlier ``Hook: `` sections, so a
+        session-start section would have vanished at the first LLM call even
+        once the loop started applying it. The ``<!-- HOOK_SECTIONS -->``
+        marker keeps the joined string byte-identical to the historical
         format."""
         if not hook_ctx or not hook_ctx.system_sections:
             return
@@ -64,10 +69,14 @@ class SystemPromptSvc:
         if not self.sections and self.system:
             self.sections = [("Base", self.system)]
         static = [s for s in self.sections if not s[0].startswith("Hook: ")]
-        hook_sections = [
-            (f"Hook: {title}", f"## {title}\n{content}")
-            for title, content in hook_ctx.system_sections.items()
-        ]
+        merged: dict[str, str] = {
+            name[len("Hook: ") :]: text.removeprefix("<!-- HOOK_SECTIONS -->\n")
+            for name, text in self.sections
+            if name.startswith("Hook: ")
+        }
+        for title, content in hook_ctx.system_sections.items():
+            merged[title] = f"## {title}\n{content}"
+        hook_sections = [(f"Hook: {title}", text) for title, text in merged.items()]
         first_name, first_text = hook_sections[0]
         hook_sections[0] = (
             first_name,

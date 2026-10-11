@@ -151,3 +151,63 @@ class TestBuiltinHooksDir:
         r = bridge._dispatch_tool_with_hooks("shell", {"command": "echo hi"})
         assert r.success
         assert seen.read_text().splitlines() == ["shell"]
+
+
+class TestSessionStartSectionsReachThePrompt:
+    """`OnSessionStart` 가 주입한 시스템 섹션은 프롬프트에 남는다 (v10.36.0).
+
+    종전엔 루프가 `PreLLMCall` 컨텍스트의 섹션만 적용하고 `OnSessionStart` 반환값을
+    버렸다 — README 의 `on_session_start → inject_system_section` 예시가 동작하지
+    않았고, 내장 스냅샷 훅의 안내가 모델에 닿지 않았다(Harbor 실측: 모델이
+    `agent-cli snapshot restore` 를 한 번도 안 쓰고 `.agent-cli` 를 스스로 뒤졌다).
+    그리고 `apply_hook_sections` 는 매번 앞의 훅 섹션을 **전부** 버려 첫 LLM 호출에서
+    사라졌을 것이다 — 이제 제목별 병합이다.
+    """
+
+    def _loop(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import split_ports
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=2048, supports_thinking=False
+        )
+        return AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            **split_ports({}),
+        )
+
+    def test_session_start_section_survives_a_pre_llm_call_section(self):
+        from agent_cli.hooks.context import HookContext
+
+        loop = self._loop()
+        start = HookContext(event="OnSessionStart")
+        start.inject_system_section("Workspace snapshot", "restore with …")
+        loop._apply_system_sections(start)
+        assert "## Workspace snapshot" in loop.system
+
+        per_call = HookContext(event="PreLLMCall")
+        per_call.inject_system_section("Memory", "v1")
+        loop._apply_system_sections(per_call)
+        assert "## Workspace snapshot" in loop.system and "## Memory\nv1" in loop.system
+
+        again = HookContext(event="PreLLMCall")
+        again.inject_system_section("Memory", "v2")
+        loop._apply_system_sections(again)
+        assert "## Memory\nv2" in loop.system and "v1" not in loop.system
+        assert loop.system.count("## Workspace snapshot") == 1
+        assert loop.system.count("<!-- HOOK_SECTIONS -->") == 1
+
+    def test_run_applies_the_session_start_context(self):
+        """구조 핀: `run()` 이 OnSessionStart 의 반환값을 적용한다."""
+        import inspect
+
+        from agent_cli.loop.core import AgentLoop
+
+        src = inspect.getsource(AgentLoop.run)
+        assert '_apply_system_sections(self._fire_hook("OnSessionStart"))' in src

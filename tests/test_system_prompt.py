@@ -1297,7 +1297,10 @@ class TestSystemSectionsSingleSource:
         names = [n for n, _ in loop._system_sections]
         assert "Hook: Sprint Goals" in names
 
-    def test_hook_reapply_replaces_not_accumulates(self):
+    def test_hook_reapply_merges_by_title(self):
+        """v10.36.0: 제목별 병합 — 같은 제목은 교체(턴마다 재주입해도 안 쌓임),
+        다른 제목은 남는다(OnSessionStart 에서 한 번 넣은 섹션이 첫 LLM 호출의
+        PreLLMCall 섹션에 밀려 사라지지 않게). 종전엔 적용마다 앞 섹션을 전부 버렸다."""
         loop = self._loop()
 
         class A:
@@ -1306,10 +1309,15 @@ class TestSystemSectionsSingleSource:
         class B:
             system_sections: ClassVar[dict] = {"Two": "2"}
 
+        class A2:
+            system_sections: ClassVar[dict] = {"One": "1b"}
+
         loop._apply_system_sections(A())
         loop._apply_system_sections(B())
         names = [n for n, _ in loop._system_sections]
-        assert "Hook: Two" in names and "Hook: One" not in names
+        assert "Hook: One" in names and "Hook: Two" in names
+        loop._apply_system_sections(A2())
+        assert loop.system.count("## One") == 1 and "## One\n1b" in loop.system
         assert loop.system.count("<!-- HOOK_SECTIONS -->") == 1
 
     def test_snapshot_sent_to_renderer_each_call(self):
