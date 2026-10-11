@@ -368,7 +368,9 @@ class TestBuiltinHook:
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0.2")
         store = build_snapshot_store()
-        store._last_checkpoint = time.monotonic() - 1  # 시작 커밋 뒤 간격이 지났다고 친다
+        store._last_checkpoint = (
+            time.monotonic() - 1
+        )  # 시작 커밋 뒤 간격이 지났다고 친다
         n0 = store.stats.commits
         hook = self._hook()
         (ws / "src" / "a.py").write_text("v2\n")
