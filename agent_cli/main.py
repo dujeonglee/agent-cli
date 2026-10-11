@@ -1861,6 +1861,62 @@ def mcp_remove(name: str = typer.Argument(..., help="서버 이름")):
     raise typer.Exit(code=0 if McpWizard().remove(name) else 1)
 
 
+snapshot_app = typer.Typer(
+    help="워크스페이스 git 스냅샷 (docs/snapshot/DESIGN.md) — 망친 입력 되돌리기",
+    no_args_is_help=True,
+)
+app.add_typer(snapshot_app, name="snapshot")
+
+
+@snapshot_app.command("list")
+def snapshot_list(limit: int = typer.Option(20, "--limit", "-n")):
+    """스냅샷(커밋) 목록 — 최신이 위."""
+    from agent_cli.snapshot import open_existing
+
+    store = open_existing()
+    if not store.enabled:
+        console.print(f"[{C['error']}]{store.reason}[/]")
+        raise typer.Exit(1)
+    for sha, msg in store.log(limit):
+        console.print(f"{sha}  {msg}", markup=False)
+
+
+@snapshot_app.command("restore")
+def snapshot_restore(
+    path: str = typer.Argument(..., help="되돌릴 파일/디렉터리 (워크스페이스 기준)"),
+    at: str = typer.Option(
+        None, "--at", help="특정 스냅샷(커밋). 생략하면 지금 디스크와 다른 가장 최근 판"
+    ),
+):
+    """파일을 스냅샷에서 되돌린다 — 모델이 안내받는 복구 명령."""
+    from agent_cli.snapshot import open_existing
+
+    store = open_existing()
+    if not store.enabled:
+        console.print(f"[{C['error']}]{store.reason}[/]")
+        raise typer.Exit(1)
+    ok, msg = store.restore(path, at=at)
+    console.print(msg, markup=False)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@snapshot_app.command("diff")
+def snapshot_diff(
+    since: str = typer.Option("HEAD~1", "--since"),
+    to: str = typer.Option("HEAD", "--to"),
+):
+    """두 스냅샷 사이에 바뀐 파일 (A/M/D)."""
+    from agent_cli.snapshot import open_existing
+
+    store = open_existing()
+    if not store.enabled:
+        console.print(f"[{C['error']}]{store.reason}[/]")
+        raise typer.Exit(1)
+    for status, name in store.changed_files(since, to):
+        console.print(f"{status}  {name}", markup=False)
+
+
 @app.command()
 def sessions(
     workspace: str | None = typer.Option(
