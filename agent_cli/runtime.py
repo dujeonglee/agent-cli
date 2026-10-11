@@ -114,6 +114,20 @@ def wire_monitor_delivery(registry, monitors) -> None:
     registry.monitors = monitors
 
 
+def build_hook_runner():
+    """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
+    빌더(`ports_for_main/resident/skill/oneshot`)가 `hooks.runtime.get_hook_runner`
+    로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 `LoopConfig.hooks_config`
+    경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
+    푼다."""
+    from agent_cli.hooks.runner import HookRunner
+    from agent_cli.hooks.runtime import set_hook_runner
+
+    runner = HookRunner(shell_hooks_config=None)
+    set_hook_runner(runner)
+    return runner
+
+
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
@@ -230,6 +244,9 @@ def teardown_session(
         monitors.closed = True
     if agent_registry is not None:
         agent_registry.shutdown_all()
+    from agent_cli.hooks.runtime import set_hook_runner
+
+    set_hook_runner(None)  # 세션 훅 러너 해제 (v10.35.0)
 
     from agent_cli.render import render_spinner_stop
 
@@ -256,7 +273,23 @@ def teardown_session(
 
 _WEB_ONLY = "main 루프 전용 — 입력 큐가 있는 호스트(run·web)에만 있다"
 _NO_INBOX = "받은편지함이 없다 — main 은 웹 큐·메일박스, 일회성 루프는 받을 상대가 없다"
-_HOOKS_LATER = "배선만 준비 — 응용이 생기면 연결한다 (사용자 의도, 2026-09)"
+_NO_HOOK_RUNNER = (
+    "세션 부트스트랩(run/web 의 build_hook_runner)을 거치지 않은 직접 호출 경로"
+)
+
+
+def _hook_runner_port():
+    """네 포트 빌더가 같은 세션 러너를 받는다 (v10.35.0)."""
+    from agent_cli.hooks.runtime import get_hook_runner
+
+    return get_hook_runner()
+
+
+def _hook_unwired() -> dict:
+    """러너가 없을 때만 `unwired` 에 사유를 싣는다 — 있으면 배선된 포트다."""
+    return {} if _hook_runner_port() is not None else {"hook_runner": _NO_HOOK_RUNNER}
+
+
 _NO_REGISTRY_IN_SUBLOOP = (
     "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
     "단일 가드가 LoopConfig.agent_registry 다"
@@ -315,12 +348,12 @@ def ports_for_main(
         dequeue_user_message=dequeue_user_message,
         route_message=route_message,
         message_handler=None,
-        hook_runner=None,
+        hook_runner=_hook_runner_port(),
         absorb_inbox=None,
         peer_roster=None,
         unwired={
             "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
-            "hook_runner": _HOOKS_LATER,
+            **_hook_unwired(),
             "absorb_inbox": _NO_INBOX,
             "peer_roster": _RESIDENT_ROSTER,
         },
@@ -340,7 +373,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
         questions=None,
         mcp_manager=None,
         message_handler=None,
-        hook_runner=None,
+        hook_runner=_hook_runner_port(),
         route_message=None,
         dequeue_user_message=None,
         absorb_inbox=None,
@@ -349,7 +382,7 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
             "questions": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
             "message_handler": _AS_BEFORE,
-            "hook_runner": _HOOKS_LATER,
+            **_hook_unwired(),
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
             "absorb_inbox": _NO_INBOX,
@@ -366,7 +399,7 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
         agent_registry=None,
         mcp_manager=None,
         message_handler=None,
-        hook_runner=None,
+        hook_runner=_hook_runner_port(),
         route_message=None,
         dequeue_user_message=None,
         absorb_inbox=None,
@@ -376,7 +409,7 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
             "questions": _AS_BEFORE,
             "mcp_manager": _AS_BEFORE,
             "message_handler": "one-shot 은 상주가 아니다 — 받을 상대가 없다",
-            "hook_runner": _HOOKS_LATER,
+            **_hook_unwired(),
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
             "absorb_inbox": _NO_INBOX,
@@ -399,13 +432,13 @@ def ports_for_resident(
         peer_roster=peer_roster,
         agent_registry=None,
         mcp_manager=None,
-        hook_runner=None,
+        hook_runner=_hook_runner_port(),
         route_message=None,
         dequeue_user_message=None,
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
             "mcp_manager": _AS_BEFORE,
-            "hook_runner": _HOOKS_LATER,
+            **_hook_unwired(),
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
         },

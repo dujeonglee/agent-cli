@@ -128,7 +128,12 @@ class TestFreshProcessWiring:
         assert "REAL DIRECTIVE" in got["directive"]
         assert "GHOST DIRECTIVE" not in got["directive"]
         assert got["hooks_events"] == []  # 홈의 차단 훅 미로드
-        assert got["hook_dirs"] == [str(proj / ".agent-cli" / "hooks")]
+        from agent_cli.hooks.loader import BUILTIN_HOOKS_DIR
+
+        assert got["hook_dirs"] == [
+            str(BUILTIN_HOOKS_DIR),  # 패키지 내장 (v10.35.0) — 홈이 아니다
+            str(proj / ".agent-cli" / "hooks"),
+        ]
         assert got["skills"] == ["real"]
         assert got["agents"] == ["real"]
 

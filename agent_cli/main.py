@@ -1427,6 +1427,7 @@ def run(
     from agent_cli.runtime import (
         AgentRuntime,
         build_agent_registry,
+        build_hook_runner,
         build_monitor_registry,
         build_schedule_registry,
         ports_for_main,
@@ -1436,6 +1437,7 @@ def run(
     # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
     # 일어난다. board 도 env 도 없이 항상 조립된다.
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
 
     _disk_hooks = _load_hooks() or None
@@ -2356,12 +2358,14 @@ def web(
     # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
     from agent_cli.runtime import (
+        build_hook_runner,
         build_monitor_registry,
         build_schedule_registry,
         ports_for_main,
     )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
     # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
