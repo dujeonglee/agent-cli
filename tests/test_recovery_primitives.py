@@ -7,11 +7,119 @@ return a text fragment, never reference provider/model/channel names.
 See docs/robust-harness/DESIGN.md §2.2.
 """
 
+import pytest
+
 from agent_cli.recovery.primitives import (
+    CALL_VALUE_MAX_CHARS,
     echo_prior_output,
     probe_progress,
     restate_task,
+    summarize_call,
+    summarize_value,
 )
+
+
+class TestSummarizeValue:
+    """값 요약 규칙 (v10.37.0): 짧은 스칼라는 그대로, 긴 문자열은 길이만,
+    배열·객체는 개수만 — 한 줄이 한 줄로 남게."""
+
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            ("replace", '"replace"'),
+            ("12#AB", '"12#AB"'),
+            ('say "hi"', '"say \\"hi\\""'),
+            ("한글 경로.txt", '"한글 경로.txt"'),
+            ("x" * CALL_VALUE_MAX_CHARS, '"' + "x" * CALL_VALUE_MAX_CHARS + '"'),
+            ("x" * (CALL_VALUE_MAX_CHARS + 1), "<41 chars>"),
+            ("y" * 2341, "<2,341 chars>"),
+            ([], "[0 items]"),
+            (["a"], "[1 item]"),
+            ([1, 2, 3], "[3 items]"),
+            ({}, "{0 keys}"),
+            ({"a": 1}, "{1 key}"),
+            ({"a": 1, "b": 2}, "{2 keys}"),
+            (True, "true"),
+            (False, "false"),
+            (None, "null"),
+            (12, "12"),
+            (1.5, "1.5"),
+        ],
+    )
+    def test_rules(self, value, shown):
+        assert summarize_value(value) == shown
+
+    def test_long_string_is_never_quoted(self):
+        body = "secret " * 400
+        out = summarize_value(body)
+        assert "secret" not in out and out.startswith("<") and out.endswith(" chars>")
+
+
+class TestSummarizeCall:
+    """거부된 호출의 한 줄 (v10.37.0): `You sent: tool(k=v, …) — missing: a;
+    unknown: b. <hint>` — native_fc 에서 모델이 자기 호출을 보는 유일한 자리."""
+
+    def test_missing_field_shape(self):
+        out = summarize_call(
+            "edit_file",
+            {"op": "replace", "pos": "12#AB", "lines": ["x"]},
+            missing=["path"],
+        )
+        assert out == (
+            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) '
+            "— missing: path. Re-emit the whole call with every required field."
+        )
+
+    def test_missing_and_unknown_are_both_named(self):
+        out = summarize_call(
+            "shell", {"cmd": "ls"}, missing=["command"], unknown=["cmd"]
+        )
+        assert 'shell(cmd="ls") — missing: command; unknown: cmd.' in out
+        assert out.endswith("Re-emit the whole call with every required field.")
+
+    def test_several_missing_fields_are_comma_joined(self):
+        out = summarize_call("write_file", {}, missing=["path", "content"])
+        assert "You sent: write_file() — missing: path, content." in out
+
+    def test_no_gaps_asks_to_fix_the_named_argument(self):
+        """타입·enum·의미 검증 실패: 빠진 건 없고 앞 문장이 어느 인자인지 말했다."""
+        out = summarize_call("memory", {"mode": "nope", "summary": "s"})
+        assert out == (
+            'You sent: memory(mode="nope", summary="s"). '
+            "Fix the argument named above and re-emit the whole call."
+        )
+
+    def test_hint_override(self):
+        out = summarize_call("bogus", {"path": "a"}, hint="Use a listed name.")
+        assert out == 'You sent: bogus(path="a"). Use a listed name.'
+
+    def test_argument_order_is_as_sent(self):
+        out = summarize_call("t", {"z": 1, "a": 2})
+        assert "t(z=1, a=2)" in out
+
+    def test_long_values_do_not_bloat_the_line(self):
+        out = summarize_call("write_file", {"content": "x" * 5000}, missing=["path"])
+        assert "x" * 50 not in out
+        assert "write_file(content=<5,000 chars>) — missing: path." in out
+        assert len(out) < 160
+
+    @pytest.mark.parametrize(
+        ("tool_input", "args"),
+        [
+            (None, ""),
+            ("", '""'),
+            ("not json at all", '"not json at all"'),
+            ("z" * 100, "<100 chars>"),
+            ([{"a": 1}], "[1 item]"),
+        ],
+    )
+    def test_non_object_input_is_summarized_as_one_value(self, tool_input, args):
+        assert summarize_call("t", tool_input).startswith(f"You sent: t({args})")
+
+    def test_never_names_a_provider_or_model(self):
+        out = summarize_call("edit_file", {"op": "x"}, missing=["path"])
+        for word in ("openai", "anthropic", "qwen", "omlx", "native"):
+            assert word not in out.lower()
 
 
 class TestEchoPriorOutput:

@@ -50,7 +50,7 @@ from agent_cli.recovery.observability import (
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
-from agent_cli.recovery.primitives import echo_prior_output
+from agent_cli.recovery.primitives import echo_prior_output, summarize_call
 from agent_cli.render import (
     drop_pending_thought,
     flush_pending_thought,
@@ -59,7 +59,7 @@ from agent_cli.render import (
     render_step,
 )
 from agent_cli.tools import TOOLS, infer_action
-from agent_cli.tools.registry import effective_tool_names
+from agent_cli.tools.registry import effective_tool_names, schema_gaps
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -1608,6 +1608,13 @@ class TurnDispatcher:
                 effective_tool_names(self.cfg.tools_list, self.cfg.dialect)
             )
             err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
+            # 거부된 호출의 한 줄 요약 (v10.37.0): 저장되지 않는 호출을 모델이
+            # 볼 수 있는 유일한 자리. native_fc 는 산문 인용이 비어 이것만 남는다.
+            sent = summarize_call(
+                tool_name,
+                display_input,
+                hint="Re-emit it under one of the available names.",
+            )
             if accumulate is not None:
                 # N-op 배치 (v9.21.0): 이 op 만 실패로 적고 **다음 op 로 간다**.
                 # 종전엔 턴 수준 형식 개입으로 배치를 중단했고, 뒤의 op 들은
@@ -1619,13 +1626,13 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{err_msg}\n{BATCH_OP_SKIPPED_NOTE}",
+                    f"{err_msg}\n{sent}\n{BATCH_OP_SKIPPED_NOTE}",
                     False,
                 )
                 return None
             return self._intervene(
                 llm_text,
-                f"Observation: {err_msg}\n{echo_prior_output(llm_text)}",
+                f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "unknown tool",
                 outcome,
                 failure_signal=FAILURE_UNKNOWN_TOOL,
@@ -1643,19 +1650,25 @@ class TurnDispatcher:
         )
         if mismatched:
             err_msg = f"{schema_err} Fix the arguments and retry."
+            # 틈(빠진 필수·모르는 키)은 검증이 본 모양(`tool_input`)에서, 인자는
+            # 모델이 쓴 모양(`display_input`)으로 — 카드와 같은 이유.
+            missing, unknown = schema_gaps(tool_name, tool_input)
+            sent = summarize_call(
+                tool_name, display_input, missing=missing, unknown=unknown
+            )
             if accumulate is not None:
                 # N-op 배치: 위 A4 와 같은 이유 — 실패 op 로 적고 계속.
                 outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{schema_err}\n{BATCH_OP_SKIPPED_NOTE}",
+                    f"{schema_err}\n{sent}\n{BATCH_OP_SKIPPED_NOTE}",
                     False,
                 )
                 return None
             return self._intervene(
                 llm_text,
-                f"Observation: {err_msg}\n{echo_prior_output(llm_text)}",
+                f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "schema mismatch",
                 outcome,
                 failure_signal=FAILURE_SCHEMA_MISMATCH,
