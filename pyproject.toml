@@ -134,5 +134,7 @@ ignore = [
 # cron fields mean SERVER-LOCAL wall-clock time ("0 9 * * 1" = Monday 09:00
 # here), so the schedule engine works in naive local datetimes end to end.
 "agent_cli/schedule/*" = ["DTZ"]
+# 내장 훅은 프로젝트 훅과 같은 파일 규칙(숫자 접두 = 실행 순서)을 따른다.
+"agent_cli/hooks/builtin/*.py" = ["N999"]
 "tests/test_schedule*.py" = ["DTZ"]
 "tests/browser/test_schedule*.py" = ["DTZ"]

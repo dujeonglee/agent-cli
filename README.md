@@ -30,6 +30,7 @@ pip install -e ".[dev]"
 ```bash
 agent-cli update          # 최신 릴리스 확인 → 확인 후 설치
 agent-cli update --check  # 새 버전 있는지 확인만 (설치 안 함)
+agent-cli snapshot list   # 워크스페이스 스냅샷 목록 · restore <path> · diff (v10.36.0)
 ```
 
 GitHub CLI(`gh`)로 최신 릴리스 태그를 확인하고(private repo 인증은 `gh` 로그인이 처리 — 토큰 설정 불필요), 릴리스에 첨부된 wheel을 받아 `pip`로 업그레이드합니다. 개발용 editable 설치(`pip install -e .`)에서는 덮어쓰지 않고 `git pull`을 안내합니다(`--force`로 우회).
@@ -301,6 +302,32 @@ nohup CMD > /tmp/x.log 2>&1 & echo $!     # 양쪽 스트림 모두 리다이렉
 python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
 ( CMD; echo "EXIT:$?" ) > /tmp/x.log 2>&1 &   # 종료 코드가 필요하면
 ```
+
+### 📸 snapshot — 망친 입력 되돌리기 (v10.36.0)
+
+하니스가 작업 디렉터리를 **git 그림자 저장소**(`.agent-cli/snapshot.git`, bare — 작업
+디렉터리엔 `.git` 이 생기지 않고, 이미 git 저장소여도 그 히스토리를 건드리지 않음)에
+자동으로 커밋해 둡니다: 세션 시작 때 한 번, 그 뒤 `shell`·`edit_file`·`write_file`
+호출 **직전**마다(최소 10초 간격, 변경 없으면 커밋 없음). 모델에겐 시스템 프롬프트로
+"망쳤으면 `agent-cli snapshot restore <path>`" 만 알립니다.
+
+- 왜 지시가 아니라 구조인가: "손대기 전에 백업하라" 는 지시는 로컬 35B 급이 무시합니다
+  (실측 0/5). 반면 "망치면 여기서 복구하라" 는 구조는 따릅니다 — 벤치 `db-wal-recovery`
+  (백업 없이 DB 를 열어 WAL 이 소멸하는 과제)가 0/5 → 2/3, 세 trial 모두 안내대로 복구.
+- `agent-cli snapshot list` — 스냅샷 목록 · `agent-cli snapshot restore <path> [--at <commit>]`
+  — 되돌리기(기본은 **지금 디스크와 다른 가장 최근 판** — 망가진 상태가 다음 체크포인트에
+  커밋돼 있어도 그 전 판을 고름) · `agent-cli snapshot diff [--since --to]` — 바뀐 파일.
+- 범위: 작업 디렉터리 전체. 워크스페이스의 `.gitignore` 는 **무시**합니다(보호해야 할
+  `*.db`·`data/` 가 거기 적혀 있기 일쑤). 제외: `.agent-cli`·`node_modules`·`__pycache__`·`.venv`.
+  하위 git 저장소는 참조(gitlink)로만 기록되고 그 안의 커밋 안 된 변경은 담기지 않습니다 —
+  안내가 "그 저장소의 `git checkout`" 으로 가릅니다.
+- git 이 없으면 기능이 꺼지고 사람에게만 한 줄(`📸 스냅샷 꺼짐`) — 모델에게 없는 사본을
+  약속하지 않습니다. 사용자 git 설정(이름·메일·gpgsign·hooksPath)은 보지 않습니다.
+- 노브: `AGENT_CLI_SNAPSHOT=0` 끔 · `AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S` · 상한 장치
+  `AGENT_CLI_SNAPSHOT_FILE_MAX_BYTES`(초과 파일 제외) · `AGENT_CLI_SNAPSHOT_FILE_COUNT_MAX`
+  (초과 시 시작 스냅샷만) — 둘 다 기본 **무제한**.
+- 구현은 내장 훅 `agent_cli/hooks/builtin/10_snapshot.py` + `agent_cli/snapshot.py`
+  (docs/snapshot/DESIGN.md). 프로젝트 훅이 덧붙일 수 있습니다.
 
 ### ⏰ schedule — 예약 실행
 

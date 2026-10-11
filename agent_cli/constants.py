@@ -289,6 +289,54 @@ MONITOR_REPLAY_MAX_BYTES = 65536
 MONITOR_PREVIEW_TAIL_BYTES = 4096
 
 
+# ── 워크스페이스 스냅샷 (docs/snapshot/DESIGN.md, v10.36.0) ──────────────
+#: 체크포인트 최소 간격 — 여러 루프가 턴마다 부르므로 stat 한 바퀴 비용을 묶는다.
+SNAPSHOT_MIN_INTERVAL_S = 10.0
+#: 상한 장치 — 기본 **무제한**(-1, 사용자 결정). 파일 크기를 넘으면 그 파일만 제외,
+#: 파일 수를 넘으면 시작 스냅샷만 찍고 턴 단위 체크포인트를 끈다.
+SNAPSHOT_FILE_MAX_BYTES = -1
+SNAPSHOT_FILE_COUNT_MAX = -1
+
+
+def snapshot_knobs() -> dict:
+    """env 노브 — `AGENT_CLI_SNAPSHOT=0` 끔, `AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S`,
+    `AGENT_CLI_SNAPSHOT_FILE_MAX_BYTES`, `AGENT_CLI_SNAPSHOT_FILE_COUNT_MAX`.
+    잘못된 값은 기본값(헤드리스에서 조용한 실패 대신 안전한 기본)."""
+    import os
+
+    def _int(name: str, default: int) -> int:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            return max(-1, int(raw))
+        except ValueError:
+            return default
+
+    def _float(name: str, default: float) -> float:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return default
+
+    return {
+        "enabled": os.environ.get("AGENT_CLI_SNAPSHOT", "1").strip().lower()
+        not in ("0", "false", "no", "off"),
+        "min_interval_s": _float(
+            "AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", SNAPSHOT_MIN_INTERVAL_S
+        ),
+        "file_max_bytes": _int(
+            "AGENT_CLI_SNAPSHOT_FILE_MAX_BYTES", SNAPSHOT_FILE_MAX_BYTES
+        ),
+        "file_count_max": _int(
+            "AGENT_CLI_SNAPSHOT_FILE_COUNT_MAX", SNAPSHOT_FILE_COUNT_MAX
+        ),
+    }
+
+
 def monitor_replay_max_bytes() -> int:
     """운영자 노브 — 잘못된 값은 기본값으로(헤드리스에서 조용한 실패 대신 안전한 기본)."""
     import os
