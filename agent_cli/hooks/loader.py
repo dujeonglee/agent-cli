@@ -9,14 +9,17 @@ from pathlib import Path
 
 from agent_cli.hooks.events import ALL_EVENTS, EVENT_TO_FUNC
 
+#: 패키지 내장 훅 — 프로젝트 훅보다 먼저 (v10.35.0, 스킬·에이전트 builtin 과 같은 관례).
+BUILTIN_HOOKS_DIR = Path(__file__).parent / "builtin"
+
 
 def _hook_dirs() -> list[Path]:
-    """Return hook directories in execution order: project → user."""
+    """Return hook directories in execution order: builtin → project."""
     from agent_cli.paths import project_dir
 
     # v9.0.0: 프로젝트만 (docs/config-scopes). 종전엔 ~/.agent-cli/hooks 도
     # 같이 실행했다(누적) — 전역 정책 수단이었으나 사용자 결정으로 제거.
-    return [project_dir() / "hooks"]
+    return [BUILTIN_HOOKS_DIR, project_dir() / "hooks"]
 
 
 def _scan_hook_files(dirs: list[Path] | None = None) -> list[Path]:
@@ -32,7 +35,11 @@ def _scan_hook_files(dirs: list[Path] | None = None) -> list[Path]:
     for d in dirs:
         if not d.is_dir():
             continue
-        found = sorted(d.glob("*.py"), key=lambda p: p.name)
+        # 밑줄 파일(`__init__.py`, 헬퍼)은 훅이 아니다.
+        found = sorted(
+            (p for p in d.glob("*.py") if not p.name.startswith("_")),
+            key=lambda p: p.name,
+        )
         files.extend(found)
     return files
 

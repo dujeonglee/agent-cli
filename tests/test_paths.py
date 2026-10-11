@@ -68,10 +68,15 @@ class TestSingleScopePins:
 
         assert hooks_shell._HOOKS_PATHS == [Path.cwd() / _A / "hooks.json"]
 
-    def test_hook_dirs_is_project_only(self):
+    def test_hook_dirs_is_builtin_plus_project(self):
+        """사용자 홈(`~/.agent-cli/hooks`)은 없다 — 패키지 내장 훅(v10.35.0)이
+        프로젝트 훅 앞에 올 뿐이다(스킬·에이전트의 builtin 과 같은 모양)."""
         import agent_cli.hooks.loader as hooks_loader
 
-        assert hooks_loader._hook_dirs() == [Path.cwd() / _A / "hooks"]
+        assert hooks_loader._hook_dirs() == [
+            hooks_loader.BUILTIN_HOOKS_DIR,
+            Path.cwd() / _A / "hooks",
+        ]
 
     def test_skills_is_project_plus_builtin(self):
         import agent_cli.skills.loader as skills_loader

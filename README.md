@@ -701,7 +701,7 @@ ${SESSION_ID} for the current session ID.
 
 ### Python Hooks
 
-`.agent-cli/hooks/*.py` (v9.0.0 — 프로젝트만; `~/.agent-cli/hooks/` 는 읽지 않음):
+`.agent-cli/hooks/*.py` (v9.0.0 — 프로젝트만; `~/.agent-cli/hooks/` 는 읽지 않음). **v10.35.0 부터 실제로 돕니다** — 종전엔 러너가 어느 루프에도 연결돼 있지 않아 문서와 달리 Python 훅이 실행되지 않았습니다. 이제 세션당 러너 하나를 main·상주 에이전트·스킬·일회성 에이전트 루프가 모두 공유하고, 패키지 내장 훅(`agent_cli/hooks/builtin/`)이 프로젝트 훅보다 먼저 돕니다. 밑줄로 시작하는 파일은 훅으로 읽지 않습니다:
 
 ```python
 # .agent-cli/hooks/00_memory.py
