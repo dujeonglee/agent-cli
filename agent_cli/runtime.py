@@ -128,6 +128,49 @@ def build_hook_runner():
     return runner
 
 
+def build_snapshot_store():
+    """세션 스냅샷 저장소 (v10.36.0, docs/snapshot/DESIGN.md) — run/web 부트스트랩이
+    `build_hook_runner` 옆에서 부른다. 여기서 만드는 이유: 루프의 tools_list 는
+    LoopConfig 조립 때 정해지므로 `snapshot` 도구를 "저장소가 있을 때만" 광고하려면
+    훅(OnSessionStart — 그보다 늦다)이 아니라 부트스트랩에서 저장소가 서야 한다.
+    내장 훅은 이 저장소에 체크포인트·안내만 얹는다.
+
+    끔(`AGENT_CLI_SNAPSHOT=0`)·git 없음·init 실패 → None 을 두고 사람에게 한 줄.
+    모델에겐 도구도 안내도 가지 않는다(없는 기능을 약속하지 않는다)."""
+    from pathlib import Path
+
+    from agent_cli.constants import snapshot_knobs
+    from agent_cli.render import get_renderer
+    from agent_cli.snapshot import get_snapshot, reset_snapshot
+
+    reset_snapshot()
+    if not snapshot_knobs()["enabled"]:
+        return None
+    store = get_snapshot(Path.cwd(), create=True)
+    if store is None or not store.enabled:
+        get_renderer().status(
+            "running", f"📸 스냅샷 꺼짐 — {store.reason if store else 'unavailable'}"
+        )
+        reset_snapshot()
+        return None
+    get_renderer().status(
+        "running",
+        f"📸 스냅샷 준비 — {store.git_dir.relative_to(store.workspace)} "
+        f"({store.stats.seconds:.1f}s, 하위 저장소 {len(store.nested)}개)",
+    )
+    return store
+
+
+def snapshot_resource():
+    """`Tool.requires_handler="snapshot"` 이 보는 세션 자원 — 준비된 저장소, 아니면 None."""
+    from pathlib import Path
+
+    from agent_cli.snapshot import get_snapshot
+
+    store = get_snapshot(Path.cwd())
+    return store if store is not None and store.enabled else None
+
+
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 

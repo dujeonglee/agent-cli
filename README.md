@@ -323,8 +323,9 @@ python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
   `*.db`·`data/` 가 거기 적혀 있기 일쑤). 제외: `.agent-cli`·`node_modules`·`__pycache__`·`.venv`.
   하위 git 저장소는 참조(gitlink)로만 기록되고 그 안의 커밋 안 된 변경은 담기지 않습니다 —
   안내가 "그 저장소의 `git checkout`" 으로 가릅니다.
-- git 이 없으면 기능이 꺼지고 사람에게만 한 줄(`📸 스냅샷 꺼짐`) — 모델에게 없는 사본을
-  약속하지 않습니다. 사용자 git 설정(이름·메일·gpgsign·hooksPath)은 보지 않습니다.
+- git 이 없으면(또는 끄면) 기능이 꺼지고 사람에게만 한 줄(`📸 스냅샷 꺼짐`) — 모델에게는
+  안내도 가지 않고 **`snapshot` 도구 자체가 프롬프트에서 빠집니다**(없는 기능을 약속하지
+  않음). 사용자 git 설정(이름·메일·gpgsign·hooksPath)은 보지 않습니다.
 - 노브: `AGENT_CLI_SNAPSHOT=0` 끔 · `AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S` · 상한 장치
   `AGENT_CLI_SNAPSHOT_FILE_MAX_BYTES`(초과 파일 제외) · `AGENT_CLI_SNAPSHOT_FILE_COUNT_MAX`
   (초과 시 시작 스냅샷만) — 둘 다 기본 **무제한**.
