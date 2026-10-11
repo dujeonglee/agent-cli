@@ -1727,6 +1727,9 @@ class TestToolPolicyDeclarations:
                 tools_list = [*tools_list, "answer"]
         else:
             tools_list = [t for t in tools_list if t != "answer"]
+        # ``snapshot`` (v10.36.0) 은 세션 저장소가 섰을 때만 — 이 테스트는 저장소를
+        # 세우지 않으므로 기준선도 뺀다(세우는 경우는 test_snapshot 의 광고 테스트).
+        tools_list = [t for t in tools_list if t != "snapshot"]
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
@@ -1791,6 +1794,8 @@ class TestToolPolicyDeclarations:
             # 비동기 질문의 짝 — ``message`` 와 같은 선언(포트 없는 루프에선
             # 목록에서 제거, 있으면 강제 탑재). docs/agent-ask/DESIGN.md §3.1
             "answer": {"requires_handler": "questions", "force_mount": True},
+            # 📸 세션 저장소가 서지 않았으면(git 없음·끔) 광고하지 않는다 (v10.36.0).
+            "snapshot": {"requires_handler": "snapshot"},
         }
         defaults = {
             "terminal": False,

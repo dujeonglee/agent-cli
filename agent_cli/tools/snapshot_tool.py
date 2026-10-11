@@ -30,6 +30,9 @@ MODES = ("restore", "list")
 
 class SnapshotTool(Tool):
     name = "snapshot"
+    #: 세션 저장소(`runtime.snapshot_resource`)가 없으면 — git 없음·`AGENT_CLI_SNAPSHOT=0`·
+    #: init 실패 — tools_list 에서 벗겨져 프롬프트에 나오지 않는다 (없는 기능을 약속하지 않는다).
+    requires_handler = "snapshot"
     description = (
         "Restore a file from the workspace snapshots the harness takes "
         "automatically (at session start and before each shell / edit_file / "

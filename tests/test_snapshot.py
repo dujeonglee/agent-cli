@@ -238,50 +238,66 @@ class TestKnobs:
 
 
 class TestBuiltinHook:
+    """저장소는 `runtime.build_snapshot_store` 가 세우고, 훅은 안내·체크포인트만."""
+
     def _hook(self):
         from agent_cli.hooks.loader import BUILTIN_HOOKS_DIR, _load_module
 
         mod = _load_module(BUILTIN_HOOKS_DIR / "10_snapshot.py")
         assert mod is not None
-        mod._announced.clear()
         return mod
 
-    def test_session_start_injects_the_notice_only_on_success(self, ws, monkeypatch):
+    def test_notice_only_when_the_bootstrap_built_a_store(self, ws, monkeypatch):
+        from agent_cli.runtime import build_snapshot_store
+
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         hook = self._hook()
         ctx = MagicMock()
+        hook.on_session_start(ctx)  # 부트스트랩 전 — 저장소 없음
+        ctx.inject_system_section.assert_not_called()
+        assert build_snapshot_store() is not None
         hook.on_session_start(ctx)
         ctx.inject_system_section.assert_called_once()
         title, body = ctx.inject_system_section.call_args.args
         assert title == "Workspace snapshot" and "`snapshot` tool" in body
         assert get_snapshot(ws).head() is not None
 
-    def test_disabled_by_knob_means_no_notice_and_no_repo(self, ws, monkeypatch):
+    def test_disabled_by_knob_means_no_store_no_notice(self, ws, monkeypatch):
+        from agent_cli.runtime import build_snapshot_store
+
         monkeypatch.chdir(ws)
         monkeypatch.setenv("AGENT_CLI_SNAPSHOT", "0")
-        hook = self._hook()
+        assert build_snapshot_store() is None
         ctx = MagicMock()
-        hook.on_session_start(ctx)
+        self._hook().on_session_start(ctx)
         ctx.inject_system_section.assert_not_called()
         assert not (ws / ".agent-cli").exists()
 
-    def test_git_missing_means_no_notice(self, ws, monkeypatch):
+    def test_git_missing_means_no_store_and_a_human_line(self, ws, monkeypatch):
+        from unittest.mock import patch
+
+        from agent_cli.runtime import build_snapshot_store
+
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         monkeypatch.setattr("agent_cli.snapshot.shutil.which", lambda _n: None)
-        hook = self._hook()
+        renderer = MagicMock()
+        with patch("agent_cli.render.get_renderer", return_value=renderer):
+            assert build_snapshot_store() is None
+        assert "스냅샷 꺼짐" in renderer.status.call_args.args[1]
         ctx = MagicMock()
-        hook.on_session_start(ctx)
+        self._hook().on_session_start(ctx)
         ctx.inject_system_section.assert_not_called()
 
     def test_pre_tool_use_checkpoints_mutating_tools_only(self, ws, monkeypatch):
+        from agent_cli.runtime import build_snapshot_store
+
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0")
+        store = build_snapshot_store()
         hook = self._hook()
-        hook.on_session_start(MagicMock())
-        store = get_snapshot(ws)
         h0 = store.head()
         (ws / "src" / "a.py").write_text("v2\n")
         hook.pre_tool_use(MagicMock(tool_name="read_file", turn=3))
@@ -293,15 +309,68 @@ class TestBuiltinHook:
         assert next(m for _, m in store.log()).startswith("session end")
 
     def test_second_loop_reuses_the_store(self, ws, monkeypatch):
-        """서브에이전트 루프의 OnSessionStart 가 또 와도 init 은 한 번."""
+        """서브에이전트 루프의 OnSessionStart 가 또 와도 저장소는 하나, init 도 한 번."""
+        from agent_cli.runtime import build_snapshot_store
+
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        store = build_snapshot_store()
+        n = store.stats.commits
         hook = self._hook()
         hook.on_session_start(MagicMock())
-        store = get_snapshot(ws)
-        n = store.stats.commits
         hook.on_session_start(MagicMock())
         assert get_snapshot(ws) is store and store.stats.commits == n
+
+
+class TestToolAdvertising:
+    """`snapshot` 도구는 저장소가 섰을 때만 tools_list 에 남는다 (requires_handler)."""
+
+    def _tools(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import split_ports
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=2048, supports_thinking=False
+        )
+        loop = AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            **split_ports({}),
+        )
+        return list(loop._config.tools_list)
+
+    def test_absent_without_a_store(self, ws, monkeypatch):
+        monkeypatch.chdir(ws)
+        assert "snapshot" not in self._tools()
+
+    def test_present_with_a_store(self, ws, monkeypatch):
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        assert build_snapshot_store() is not None
+        tools = self._tools()
+        assert "snapshot" in tools
+        assert tools.index("snapshot") == tools.index("schedule") + 1
+
+    def test_both_bootstraps_build_the_store(self):
+        import ast
+        from pathlib import Path
+
+        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
+        calls = [
+            n
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "build_snapshot_store"
+        ]
+        assert len(calls) == 2, f"호출부가 {len(calls)}개 — run/web 둘 다여야 한다"
 
 
 def test_scan_cost_is_bounded_when_unchanged(ws):
