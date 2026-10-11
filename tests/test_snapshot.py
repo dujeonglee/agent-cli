@@ -308,6 +308,80 @@ class TestBuiltinHook:
         hook.on_session_end(MagicMock(turn=9))
         assert next(m for _, m in store.log()).startswith("session end")
 
+    @pytest.mark.parametrize("tool", ["edit_file", "write_file", "shell"])
+    def test_each_mutating_tool_checkpoints(self, ws, monkeypatch, tool):
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0")
+        store = build_snapshot_store()
+        h0 = store.head()
+        (ws / "src" / "a.py").write_text("changed\n")
+        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2))
+        assert store.head() != h0, f"{tool} 직전에 체크포인트가 없다"
+        assert next(m for _, m in store.log()) == f"before {tool} (turn 2)"
+
+    @pytest.mark.parametrize(
+        "tool", ["read_file", "code_index", "monitor", "agent", "fetch"]
+    )
+    def test_non_mutating_tools_do_not(self, ws, monkeypatch, tool):
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0")
+        store = build_snapshot_store()
+        h0 = store.head()
+        (ws / "src" / "a.py").write_text("changed\n")
+        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2))
+        assert store.head() == h0
+
+    def test_a_batch_of_three_ops_within_the_interval_commits_once(
+        self, ws, monkeypatch
+    ):
+        """한 턴의 shell·edit·write 배치 — 훅은 op 마다 불리지만 최소 간격 안이라 첫
+        op 앞의 체크포인트 하나만 남는다(배치 직전 상태)."""
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "3600")
+        store = build_snapshot_store()
+        store._last_checkpoint = 0.0  # 시작 커밋 뒤 간격이 지났다고 친다
+        n0 = store.stats.commits
+        hook = self._hook()
+        for tool in ("shell", "edit_file", "write_file"):
+            (ws / "src" / "a.py").write_text(f"by {tool}\n")
+            hook.pre_tool_use(MagicMock(tool_name=tool, turn=4))
+        assert store.stats.commits == n0 + 1
+        assert next(m for _, m in store.log()) == "before shell (turn 4)"
+
+    def test_an_op_after_the_interval_commits_again(self, ws, monkeypatch):
+        """간격이 지나면(긴 shell 뒤의 edit) 중간 상태도 남는다 — 간격은 비용 제한이지
+        "턴당 하나" 가 아니다."""
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0.2")
+        store = build_snapshot_store()
+        store._last_checkpoint = 0.0  # 시작 커밋 뒤 간격이 지났다고 친다
+        n0 = store.stats.commits
+        hook = self._hook()
+        (ws / "src" / "a.py").write_text("v2\n")
+        hook.pre_tool_use(MagicMock(tool_name="shell", turn=4))
+        (ws / "src" / "a.py").write_text("v3\n")
+        hook.pre_tool_use(MagicMock(tool_name="edit_file", turn=4))  # 간격 안 — 건너뜀
+        assert store.stats.commits == n0 + 1
+        time.sleep(0.25)
+        hook.pre_tool_use(MagicMock(tool_name="write_file", turn=4))  # 간격 지남
+        assert store.stats.commits == n0 + 2
+        assert [m for _, m in store.log()][:2] == [
+            "before write_file (turn 4)",
+            "before shell (turn 4)",
+        ]
+
     def test_second_loop_reuses_the_store(self, ws, monkeypatch):
         """서브에이전트 루프의 OnSessionStart 가 또 와도 저장소는 하나, init 도 한 번."""
         from agent_cli.runtime import build_snapshot_store
