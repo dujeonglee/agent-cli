@@ -23,7 +23,7 @@ from agent_cli.context.manager import (
 from agent_cli.loop import run_loop
 from agent_cli.loop.llm import LLMCaller
 from agent_cli.providers.base import LLMResponse, ModelCapabilities, TokenUsage
-from agent_cli.recovery.failures import FILE_NAME, TEXT_CAP, record_failure
+from agent_cli.recovery.failures import FILE_NAME, TEXT_CAP, VERSION, record_failure
 from tests.test_loop import TEST_PORTS, _complete, _make_provider
 
 
@@ -207,7 +207,7 @@ class TestFailuresLog:
         assert r["text"] == "this is not json at all"
         assert r["model"] == "m" and r["dialect"] == "json_fc"
         assert r["parse_stage"] == 1 and isinstance(r["primitives"], list)
-        assert r["turn"] == 1 and r["v"] == 1 and r["text_truncated"] is False
+        assert r["turn"] == 1 and r["v"] == VERSION and r["text_truncated"] is False
 
     def test_cut_and_runaway_are_recorded(self, caps, tmp_path):
         provider = MagicMock()

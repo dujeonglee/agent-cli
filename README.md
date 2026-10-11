@@ -429,10 +429,12 @@ agent-cli run "task description" [options]
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
 
-**실패 기록 `failures.jsonl` (v10.11.0)**: 루프가 쓸 수 없었던 생성은 **본문과 함께** 세션 디렉터리(에이전트는 각자 디렉터리)의 `failures.jsonl` 에 한 줄씩 남습니다 — 형식 이탈(`NO_JSON`·`NO_ACTION`·`DEGENERATE`·`SCHEMA_MISMATCH` 등 dispatch 의 `failure_signal` 전부), 출력 절단(`OUTPUT_TRUNCATED`, `stop_detail` = model_cap/context_clamp/server_cap), 폭주(`RUNAWAY`, 감지 규칙), 삼켜진 출력. 필드: `v, ts, turn, model, dialect, failure_signal, stop_reason, stop_detail, parse_stage, primitives, usage, text, text_truncated, thinking`. `turns.jsonl` 은 본문을 싣지 않고(사생활 계약) `verbose.jsonl` 은 `--verbose` 일 때만 쓰므로, 67qcmb 의 32K 폭주처럼 "모델이 실제로 뭘 냈나" 를 사후에 볼 길이 없던 구멍을 메웁니다. 항상 켜져 있고 깨끗한 세션은 파일이 생기지 않습니다. 본문은 1,000,000자에서 머리/꼬리로 잘리고 `text_truncated` 가 켜집니다.
+**실패 기록 `failures.jsonl` (v10.11.0)**: 루프가 쓸 수 없었던 생성은 **본문과 함께** 세션 디렉터리(에이전트는 각자 디렉터리)의 `failures.jsonl` 에 한 줄씩 남습니다 — 형식 이탈(`NO_JSON`·`NO_ACTION`·`DEGENERATE`·`SCHEMA_MISMATCH` 등 dispatch 의 `failure_signal` 전부), 출력 절단(`OUTPUT_TRUNCATED`, `stop_detail` = model_cap/context_clamp/server_cap), 폭주(`RUNAWAY`, 감지 규칙), 삼켜진 출력. 필드: `v, ts, turn, model, dialect, failure_signal, stop_reason, stop_detail, parse_stage, primitives, usage, text, text_truncated, thinking, tool_calls, tool_calls_truncated`. **`tool_calls` (v10.38.0, 기록 `v`=2)** 는 서버가 구조로 준 호출 목록 그대로입니다 — `[{id, name, input}]`, 인자가 JSON 이 아니었으면 `input` 대신 원문 `arguments`. native 함수 호출은 호출이 `text` 밖에 있어, 종전엔 거부된 호출의 인자가 어느 로그에도 없었습니다(v10.37.0 회귀 런에서 `mode` 없이 거부된 `memory` 호출은 길이만 남았다). 인자 안의 문자열도 본문과 같은 1,000,000자 규칙으로 잘리고 `tool_calls_truncated` 가 켜집니다. `--verbose` 의 `llm_call` 도 같은 필드를 싣습니다(두 기록은 한 헬퍼에서 필드를 받는다). `turns.jsonl` 은 본문을 싣지 않고(사생활 계약) `verbose.jsonl` 은 `--verbose` 일 때만 쓰므로, 67qcmb 의 32K 폭주처럼 "모델이 실제로 뭘 냈나" 를 사후에 볼 길이 없던 구멍을 메웁니다. 항상 켜져 있고 깨끗한 세션은 파일이 생기지 않습니다. 본문은 1,000,000자에서 머리/꼬리로 잘리고 `text_truncated` 가 켜집니다.
 
 ```bash
 jq -c '{turn, failure_signal, stop_reason, stop_detail, chars: (.text|length)}' .agent-cli/sessions/<id>/failures.jsonl
+# 거부된 호출과 그 인자 (native 함수 호출)
+jq -c 'select(.tool_calls) | {turn, failure_signal, calls: [.tool_calls[] | {name, input}]}' .agent-cli/sessions/<id>/failures.jsonl
 ```
 | `--dialect` | Dialect 플러그인 이름. 빌트인: `json_fc` (산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능 — `docs/dialects/PHASE2.md` §8). `hermes_json` (`<tool_call>{"name": …, "arguments": {…}}</tool_call>` — Hermes 2~4·Qwen2.5/3/Next·Granite 4.0/4.1 의 네이티브 모양, **실모델 미검증**: 파서·문법·foreign 구제 테스트만), `glm_argkey` (`<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>` — GLM-4.5~5.3, **실모델 미검증**). v9.27.0 부터 포맷은 코드가 아니라 **스펙(데이터)** 이다 — `agent_cli/dialects/specs/` 에 `DialectSpec` 하나를 추가하면 렌더·파서·문법·구제가 엔진에서 나온다(`docs/dialects/PHASE5.md`). `agent_cli/dialects/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **지정하면 세션 전체(main 과 모든 서브에이전트)에 강제**. 미지정이면 각 에이전트는 자기 모델의 models.json `dialect` 바인딩을 쓰고, **바인딩 없는 모델은 에러**(기본값 없음, v10.3.0) | (모델 바인딩) |
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
@@ -443,7 +445,7 @@ jq -c '{turn, failure_signal, stop_reason, stop_detail, chars: (.text|length)}' 
 
 | kind | 담는 것 |
 |---|---|
-| `llm_call` | 모델이 쓴 원문(`text`)·사고(`thinking`)·종료 사유 + 하니스의 판정(`parse_stage`·`failure_signal`·`primitives`)·파싱된 호출(`ops`)·토큰·문법 사용 |
+| `llm_call` | 모델이 쓴 원문(`text`)·사고(`thinking`)·종료 사유 + 하니스의 판정(`parse_stage`·`failure_signal`·`primitives`)·파싱된 호출(`ops`)·서버가 구조로 준 호출(`tool_calls`, v10.38.0 — native 함수 호출은 호출이 여기에만 있다)·`stop_detail`·토큰·문법 사용 |
 | `llm_error` | LLM 호출 자체의 실패(전송·서버 오류) |
 | `context` | 호출 직전 메시지별 크기와 앞 300자 (대화 전문은 `history.jsonl`) |
 | `debug` | 하니스 진단 줄 (종전 stderr) |

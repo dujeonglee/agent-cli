@@ -1014,29 +1014,24 @@ class AgentLoop:
                 self._record_verbose_call(llm_text, response, turn_at_call)
             self._record_failure(llm_text, response, turn_at_call)
 
-    def _record_failure(self, llm_text: str, response, turn: int) -> None:
-        """v10.11.0: every generation the loop labelled as failed — format
-        drift from dispatch, or a cut/runaway — goes to failures.jsonl WITH
-        its text (turns.jsonl never carries text, verbose.jsonl needs the
-        flag). Always on; a clean session writes nothing."""
+    def _generation_fields(self, llm_text: str, response) -> dict:
+        """What one generation was and what dispatch made of it — the fields
+        failures.jsonl and verbose.jsonl share (v10.38.0). ``tool_calls`` is
+        the server's structured call list as delivered: under a server-parsed
+        dialect the calls are not in ``text``, so without it a rejected call's
+        arguments were recorded nowhere."""
         out = self._dispatch.last_outcome or {}
-        signal = out.get("failure_signal") or self._cut_signal
-        if not signal or self.ctx is None or not self.ctx.session_dir:
-            return
         usage = getattr(response, "usage", None)
-        record_failure(
-            self.ctx.session_dir,
-            turn=turn,
-            model=self.model,
-            dialect=getattr(self.dialect, "name", "?"),
-            failure_signal=signal,
-            stop_reason=getattr(response, "stop_reason", None),
-            stop_detail=getattr(response, "stop_detail", "") or None,
-            parse_stage=out.get("parse_stage"),
-            primitives=list(out.get("primitives", [])),
-            text=llm_text or "",
-            thinking=(getattr(response, "thinking", "") or None),
-            usage=(
+        return {
+            "model": self.model,
+            "text": llm_text or "",
+            "thinking": getattr(response, "thinking", "") or None,
+            "tool_calls": getattr(response, "tool_calls", None) or None,
+            "stop_reason": getattr(response, "stop_reason", None),
+            "stop_detail": getattr(response, "stop_detail", "") or None,
+            "parse_stage": out.get("parse_stage"),
+            "primitives": list(out.get("primitives", [])),
+            "usage": (
                 {
                     "input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,
@@ -1046,6 +1041,23 @@ class AgentLoop:
                 if usage
                 else None
             ),
+        }
+
+    def _record_failure(self, llm_text: str, response, turn: int) -> None:
+        """v10.11.0: every generation the loop labelled as failed — format
+        drift from dispatch, or a cut/runaway — goes to failures.jsonl WITH
+        its text (turns.jsonl never carries text, verbose.jsonl needs the
+        flag). Always on; a clean session writes nothing."""
+        out = self._dispatch.last_outcome or {}
+        signal = out.get("failure_signal") or self._cut_signal
+        if not signal or self.ctx is None or not self.ctx.session_dir:
+            return
+        record_failure(
+            self.ctx.session_dir,
+            turn=turn,
+            dialect=getattr(self.dialect, "name", "?"),
+            failure_signal=signal,
+            **self._generation_fields(llm_text, response),
         )
 
     def _verbose_scope(self) -> str:
@@ -1055,28 +1067,14 @@ class AgentLoop:
         """One ``llm_call`` record — the raw text next to the harness's
         verdict on it (v9.24.3; schema in ``agent_cli.verbose``)."""
         out = self._dispatch.last_outcome or {}
-        usage = response.usage
         _verbose.record(
             "llm_call",
             scope=self._verbose_scope(),
             turn=turn,
-            model=self.model,
-            text=llm_text,
-            thinking=response.thinking or None,
-            stop_reason=getattr(response, "stop_reason", None),
-            parse_stage=out.get("parse_stage"),
             failure_signal=out.get("failure_signal"),
-            primitives=out.get("primitives", []),
             ops=out.get("ops", []),
-            usage={
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cache_read_input_tokens": usage.cache_read_input_tokens,
-                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-            }
-            if usage
-            else {},
             grammar=bool(self._llm._grammar_used),
+            **self._generation_fields(llm_text, response),
         )
 
     def _finish_response(self, llm_text: str, response):

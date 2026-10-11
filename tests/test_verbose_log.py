@@ -70,7 +70,12 @@ class TestRecorder:
         verbose.record("debug", scope="main", message="hello")
         rows = _lines(p)
         assert rows[0]["kind"] == "schema" and rows[0]["schema"] == verbose.SCHEMA
-        assert rows[1] == {**rows[1], "kind": "debug", "message": "hello", "v": 1}
+        assert rows[1] == {
+            **rows[1],
+            "kind": "debug",
+            "message": "hello",
+            "v": verbose.VERSION,
+        }
 
     def test_scope_is_relative_to_the_main_session(self, tmp_path):
         verbose.configure(tmp_path)
