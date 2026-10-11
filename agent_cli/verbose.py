@@ -47,12 +47,12 @@ from typing import Any
 from agent_cli.fsio import append_line
 
 #: Record format version — bump when a field changes meaning.
-VERSION = 1
+VERSION = 2
 
 FILE_NAME = "verbose.jsonl"
 
 _USAGE = {
-    "type": "object",
+    "type": ["object", "null"],
     "properties": {
         "input_tokens": {"type": "integer"},
         "output_tokens": {"type": "integer"},
@@ -93,7 +93,13 @@ SCHEMA: dict[str, Any] = {
                 "reasoning channel. `parse_stage`: 0 unparsed, 1 canonical, 2 "
                 "repaired. `failure_signal` is null on a clean turn, else e.g. "
                 "NO_JSON, NO_ACTION, UNKNOWN_TOOL, SCHEMA_MISMATCH, ACTION_LOOP. "
-                "`ops` are the parsed tool calls. On an output-token cut "
+                "`ops` are the parsed tool calls; `tool_calls` is the server's "
+                "structured call list as delivered ({id, name, input}, or "
+                "`arguments` — the raw string — when they were not JSON), null "
+                "when the server sent none. Under a server-parsed dialect "
+                "(native_fc) the calls are only there, not in `text`. "
+                "`stop_detail` names the cause of a cut or a stopped runaway. "
+                "On an output-token cut "
                 "(stop_reason 'length') the turn is not parsed: parse fields are "
                 "null."
             ),
@@ -103,6 +109,19 @@ SCHEMA: dict[str, Any] = {
                 "text": {"type": "string"},
                 "thinking": {"type": ["string", "null"]},
                 "stop_reason": {"type": ["string", "null"]},
+                "stop_detail": {"type": ["string", "null"]},
+                "tool_calls": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "input": {},
+                            "arguments": {"type": "string"},
+                        },
+                    },
+                },
                 "parse_stage": {"type": ["integer", "null"]},
                 "failure_signal": {"type": ["string", "null"]},
                 "primitives": {"type": "array", "items": {"type": "string"}},
