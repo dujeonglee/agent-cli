@@ -348,7 +348,9 @@ class TestBuiltinHook:
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "3600")
         store = build_snapshot_store()
-        store._last_checkpoint = 0.0  # 시작 커밋 뒤 간격이 지났다고 친다
+        # 시작 커밋 뒤 간격이 지났다고 친다 — monotonic 은 부팅 기준이라 0.0 으로
+        # 두면 갓 켜진 CI 러너(uptime < 3600s)에서 "아직 간격 안" 이 된다.
+        store._last_checkpoint = time.monotonic() - 3601
         n0 = store.stats.commits
         hook = self._hook()
         for tool in ("shell", "edit_file", "write_file"):
@@ -366,7 +368,7 @@ class TestBuiltinHook:
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0.2")
         store = build_snapshot_store()
-        store._last_checkpoint = 0.0  # 시작 커밋 뒤 간격이 지났다고 친다
+        store._last_checkpoint = time.monotonic() - 1  # 시작 커밋 뒤 간격이 지났다고 친다
         n0 = store.stats.commits
         hook = self._hook()
         (ws / "src" / "a.py").write_text("v2\n")
