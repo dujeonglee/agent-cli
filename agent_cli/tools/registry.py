@@ -402,24 +402,6 @@ def missing_fields_message(
     return msg
 
 
-def schema_gaps(tool_name: str, action_input: Any) -> tuple[list[str], list[str]]:
-    """``(missing required, unknown keys)`` of ``action_input`` against the
-    tool schema (v10.37.0) — what the rejected-call summary names after the
-    call. Unknown keys are not a validation failure by themselves
-    (`parameter_overrides` keeps the shared schema lenient) but a missing
-    field next to an unfamiliar key is usually one misnamed argument, so
-    both are listed. Empty lists for an unknown tool or a non-object input.
-    """
-    schema = TOOL_SCHEMAS.get(tool_name)
-    if schema is None or not isinstance(action_input, dict):
-        return [], []
-    required = schema.parameters.get("required", [])
-    properties = schema.parameters.get("properties", {})
-    missing = [f for f in required if f not in action_input]
-    unknown = [k for k in action_input if k not in properties]
-    return missing, unknown
-
-
 def validate_tool_input(
     tool_name: str, action_input: Any
 ) -> tuple[bool, str | None, Any]:
@@ -466,9 +448,10 @@ def validate_tool_input(
             action_input,
         )
 
-    # Check required fields
+    # Check required fields — 판정은 도구가 한다(`Tool.schema_gaps`): 거부
+    # 요약(`summarize_call`)이 같은 답을 읽는다.
     required = schema.parameters.get("required", [])
-    missing = [f for f in required if f not in action_input]
+    missing, _unknown = schema.schema_gaps(action_input)
     if missing:
         return (
             False,

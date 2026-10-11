@@ -124,6 +124,13 @@ class AskTool(Tool):
         "required": ["question"],
     }
 
+    def _known_keys(self) -> frozenset[str]:
+        """상주 스키마의 키(``to``)도 아는 키다 — 검증은 공용 스키마로 하지만
+        상주 에이전트는 ``to`` 를 정당하게 보낸다(`parameter_overrides`)."""
+        return super()._known_keys() | frozenset(
+            self.RESIDENT_PARAMETERS.get("properties", {})
+        )
+
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # Placeholder for direct/test callers — the loop intercepts `ask`
         # before dispatch. ``question`` is the flat single-question field; the

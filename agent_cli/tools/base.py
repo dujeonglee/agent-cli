@@ -617,6 +617,40 @@ class Tool(ABC):
         """
         return flat
 
+    def schema_gaps(self, action_input: object) -> tuple[list[str], list[str]]:
+        """``(missing required, unknown keys)`` of a call against this tool's
+        schema (v10.37.0) — the facts a rejection names after the call.
+
+        One definition, two readers: central validation takes ``missing`` to
+        reject the call (``registry.validate_tool_input``), and the recovery
+        layer takes both to tell the model what it sent
+        (``recovery.primitives.summarize_call``). The tool states facts only;
+        the wording stays in the recovery layer, one place for every tool.
+
+        Unknown keys are **not** a validation failure (validation ignores
+        them), but a missing field next to an unfamiliar key is usually one
+        misnamed argument, so the summary lists both. Order: ``missing`` in
+        schema ``required`` order, ``unknown`` in the order sent. A non-object
+        input has no keys to compare — ``([], [])``.
+
+        Default reads ``self.parameters``. Override when the keys a caller may
+        legitimately send differ from that schema — a per-loop schema
+        (``AskTool``: residents may send ``to``) or a future batch-shaped tool
+        whose flat op is re-wrapped by :meth:`wrap_single_op`.
+        """
+        if not isinstance(action_input, dict):
+            return [], []
+        required = self.parameters.get("required", [])
+        known = self._known_keys()
+        missing = [f for f in required if f not in action_input]
+        unknown = [k for k in action_input if k not in known]
+        return missing, unknown
+
+    def _known_keys(self) -> frozenset[str]:
+        """Keys a call may carry without being reported as unknown by
+        :meth:`schema_gaps` — the schema's ``properties``."""
+        return frozenset(self.parameters.get("properties", {}))
+
     def touched_paths(self, action_input: dict) -> list[str]:
         """File-list entries this action contributes during compaction.
 

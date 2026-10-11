@@ -59,7 +59,7 @@ from agent_cli.render import (
     render_step,
 )
 from agent_cli.tools import TOOLS, infer_action
-from agent_cli.tools.registry import effective_tool_names, schema_gaps
+from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -1650,9 +1650,10 @@ class TurnDispatcher:
         )
         if mismatched:
             err_msg = f"{schema_err} Fix the arguments and retry."
-            # 틈(빠진 필수·모르는 키)은 검증이 본 모양(`tool_input`)에서, 인자는
-            # 모델이 쓴 모양(`display_input`)으로 — 카드와 같은 이유.
-            missing, unknown = schema_gaps(tool_name, tool_input)
+            # 틈(빠진 필수·모르는 키)은 도구가 답한다 — 검증이 본 모양
+            # (`tool_input`)으로 묻고, 인자는 모델이 쓴 모양(`display_input`)
+            # 으로 보여 준다(카드와 같은 이유).
+            missing, unknown = TOOLS[tool_name].schema_gaps(tool_input)
             sent = summarize_call(
                 tool_name, display_input, missing=missing, unknown=unknown
             )
