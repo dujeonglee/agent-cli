@@ -3,6 +3,7 @@
 상태: 2026-10-11 **구현 완료 — PR ① v10.35.0(훅 배선), PR ② v10.36.0(저장소+내장 훅+CLI)**. 라이브 측정은 §4. 결정: 훅 배선은 네 루프 전부 · 기본 켬(내장 훅) ·
 `.agent-cli/snapshot/` · GC 는 시작·마지막 매니페스트 유지 · `shutil` 만(외부 `cp` 없음 — OS
 독립) · 상한 노브는 기본 **무제한**(장치만) · 최소 간격 10초 · 시작 스냅샷은 전체 복사.
+(이후 엔진은 §3 대로 git 그림자 저장소로, 복구 표면은 네이티브 `snapshot` 도구로 확정 — 2026-10-11.)
 
 ## 1. 왜
 
@@ -61,8 +62,10 @@ git --git-dir=.agent-cli/snapshot.git --work-tree=. checkout HEAD~1 -- main.db-w
 - `checkpoint(label)` — `add -A --force` → 변경 있을 때만 `commit`. 최소 간격 10초.
   `--force` 와 `core.excludesFile` 무력화로 워크스페이스 `.gitignore` 를 무시한다(보호해야
   할 `*.db`·`data/` 가 거기 적혀 있기 일쑤).
-- `changed(a, b)` — `diff --name-status`. `restore(commit, path)` — `checkout <c> -- <path>`
-  (후속 도구용; 모델은 안내된 git 명령으로 직접 한다).
+- `changed(a, b)` — `diff --name-status`. `restore(path, at)` — **네이티브 `snapshot` 도구**가 부른다
+  (`tools/snapshot_tool.py`, mode restore/list). 재측정에서 모델이 안내된 CLI(`agent-cli snapshot
+  restore`)를 2/3 trial 에서 정확히 썼지만, 쉘로 우리 바이너리를 치는 건 PATH 에 기대고 도구와
+  중복이라 도구로 확정하고 CLI 는 제거했다.
 - **모든 호출의 env 고정**: `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`(사용자 전역
   설정 차단 — gpgsign·hooksPath·autocrlf·excludesFile·safe.directory 를 한꺼번에 무력화),
   `GIT_AUTHOR_*`/`GIT_COMMITTER_*` = `agent-cli snapshot <snapshot@agent-cli>`(사용자 identity

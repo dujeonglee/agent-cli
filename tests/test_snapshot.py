@@ -254,7 +254,7 @@ class TestBuiltinHook:
         hook.on_session_start(ctx)
         ctx.inject_system_section.assert_called_once()
         title, body = ctx.inject_system_section.call_args.args
-        assert title == "Workspace snapshot" and "agent-cli snapshot restore" in body
+        assert title == "Workspace snapshot" and "`snapshot` tool" in body
         assert get_snapshot(ws).head() is not None
 
     def test_disabled_by_knob_means_no_notice_and_no_repo(self, ws, monkeypatch):
@@ -302,34 +302,6 @@ class TestBuiltinHook:
         n = store.stats.commits
         hook.on_session_start(MagicMock())
         assert get_snapshot(ws) is store and store.stats.commits == n
-
-
-class TestCli:
-    def test_list_restore_diff(self, ws, monkeypatch):
-        from typer.testing import CliRunner
-
-        from agent_cli.main import app
-
-        monkeypatch.chdir(ws)
-        s = _store(ws)
-        (ws / "main.db-wal").unlink()
-        s.checkpoint("after", force=True)
-        r = CliRunner().invoke(app, ["snapshot", "list"])
-        assert r.exit_code == 0 and "session start" in r.output
-        r = CliRunner().invoke(app, ["snapshot", "diff"])
-        assert r.exit_code == 0 and "D  main.db-wal" in r.output
-        r = CliRunner().invoke(app, ["snapshot", "restore", "main.db-wal"])
-        assert r.exit_code == 0, r.output
-        assert (ws / "main.db-wal").read_bytes() == b"wal-bytes"
-
-    def test_no_repo_is_a_clear_error(self, tmp_path, monkeypatch):
-        from typer.testing import CliRunner
-
-        from agent_cli.main import app
-
-        monkeypatch.chdir(tmp_path)
-        r = CliRunner().invoke(app, ["snapshot", "list"])
-        assert r.exit_code == 1 and "no snapshot repository" in r.output
 
 
 def test_scan_cost_is_bounded_when_unchanged(ws):

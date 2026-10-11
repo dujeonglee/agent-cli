@@ -2,8 +2,10 @@
 
 "손대기 전에 백업하라" 는 지시는 로컬 35B 급이 무시한다(0/5). 그래서 **구조**로
 푼다: 하니스가 런 시작과 변경 도구 호출 직전마다 작업 디렉터리를 커밋해 두고,
-모델에겐 "망쳤으면 `agent-cli snapshot restore <path>`" 만 알린다(어댑터 흉내
-실험: db-wal 0/5 → 2/3, 세 trial 모두 안내대로 복구).
+모델에겐 "망쳤으면 `snapshot` 도구(mode restore)" 만 알린다(어댑터 흉내 실험:
+db-wal 0/5 → 2/3, 세 trial 모두 안내대로 복구). 복구는 네이티브 도구
+(``tools/snapshot_tool.py``)다 — 쉘로 우리 CLI 를 치게 하는 안은 PATH 에 기대고
+도구와 중복이라 출시 전에 뺐다.
 
 **그림자 저장소**: 저장소(`GIT_DIR`)는 `.agent-cli/snapshot.git`(bare), 작업 트리
 (`GIT_WORK_TREE`)는 워크스페이스. 워크스페이스에 `.git` 이 생기지 않고, 이미
@@ -313,9 +315,9 @@ class GitSnapshot:
         return r.stdout.strip() or None
 
     def restore(self, path: str, *, at: str | None = None) -> tuple[bool, str]:
-        """``path`` 를 되돌린다. ``at`` 이 없으면 **지금 디스크와 다른 가장 최근
-        스냅샷**(파일이 없으면 가장 최근에 있던 스냅샷) — 망가진 상태가 다음
-        체크포인트에서 HEAD 로 커밋돼 있어도 그 전 판을 고른다."""
+        """``path`` 를 되돌린다 (``snapshot`` 도구가 부른다). ``at`` 이 없으면 **지금
+        디스크와 다른 가장 최근 스냅샷**(파일이 없으면 가장 최근에 있던 스냅샷) —
+        망가진 상태가 다음 체크포인트에서 HEAD 로 커밋돼 있어도 그 전 판을 고른다."""
         if not self.enabled:
             return False, self.reason
         path = path.rstrip("/")
@@ -352,11 +354,10 @@ class GitSnapshot:
             "command is always on record."
         )
         howto = (
-            "If an input file gets damaged or disappears, restore it with "
-            "`agent-cli snapshot restore <path>` — it brings back the most recent "
-            "snapshot whose content differs from what is on disk now. "
-            "`agent-cli snapshot list` shows the snapshots; "
-            "`agent-cli snapshot restore <path> --at <commit>` picks one."
+            "If an input file gets damaged or disappears, call the `snapshot` tool "
+            "with mode `restore` and the file's path — it brings back the most "
+            "recent snapshot whose content differs from what is on disk now. "
+            "Mode `list` shows the snapshots; `at` picks a specific one."
         )
         lines = [intro, howto]
         if self.nested:
@@ -404,18 +405,3 @@ def reset_snapshot() -> None:
     global _STORE
     with _STORE_LOCK:
         _STORE = None
-
-
-def open_existing(workspace: Path | None = None) -> GitSnapshot:
-    """CLI 용 — 이미 있는 그림자 저장소를 연다(없으면 enabled=False)."""
-    ws = Path(workspace or Path.cwd()).resolve()
-    store = GitSnapshot(ws)
-    if (store.git_dir / "HEAD").exists():
-        ok, why = git_available()
-        store.enabled, store.reason = ok, why if not ok else "ok"
-    else:
-        store.enabled, store.reason = (
-            False,
-            f"no snapshot repository at {store.git_dir}",
-        )
-    return store

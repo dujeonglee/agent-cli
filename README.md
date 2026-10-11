@@ -30,7 +30,6 @@ pip install -e ".[dev]"
 ```bash
 agent-cli update          # 최신 릴리스 확인 → 확인 후 설치
 agent-cli update --check  # 새 버전 있는지 확인만 (설치 안 함)
-agent-cli snapshot list   # 워크스페이스 스냅샷 목록 · restore <path> · diff (v10.36.0)
 ```
 
 GitHub CLI(`gh`)로 최신 릴리스 태그를 확인하고(private repo 인증은 `gh` 로그인이 처리 — 토큰 설정 불필요), 릴리스에 첨부된 wheel을 받아 `pip`로 업그레이드합니다. 개발용 editable 설치(`pip install -e .`)에서는 덮어쓰지 않고 `git pull`을 안내합니다(`--force`로 우회).
@@ -309,14 +308,17 @@ python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
 디렉터리엔 `.git` 이 생기지 않고, 이미 git 저장소여도 그 히스토리를 건드리지 않음)에
 자동으로 커밋해 둡니다: 세션 시작 때 한 번, 그 뒤 `shell`·`edit_file`·`write_file`
 호출 **직전**마다(최소 10초 간격, 변경 없으면 커밋 없음). 모델에겐 시스템 프롬프트로
-"망쳤으면 `agent-cli snapshot restore <path>`" 만 알립니다.
+"망쳤으면 `snapshot` 도구(mode restore)" 만 알립니다.
 
 - 왜 지시가 아니라 구조인가: "손대기 전에 백업하라" 는 지시는 로컬 35B 급이 무시합니다
   (실측 0/5). 반면 "망치면 여기서 복구하라" 는 구조는 따릅니다 — 벤치 `db-wal-recovery`
   (백업 없이 DB 를 열어 WAL 이 소멸하는 과제)가 0/5 → 2/3, 세 trial 모두 안내대로 복구.
-- `agent-cli snapshot list` — 스냅샷 목록 · `agent-cli snapshot restore <path> [--at <commit>]`
-  — 되돌리기(기본은 **지금 디스크와 다른 가장 최근 판** — 망가진 상태가 다음 체크포인트에
-  커밋돼 있어도 그 전 판을 고름) · `agent-cli snapshot diff [--since --to]` — 바뀐 파일.
+- 복구는 **네이티브 도구 `snapshot`** 입니다 — `{"mode":"restore","path":"main.db-wal"}` 한
+  호출(기본은 **지금 디스크와 다른 가장 최근 판** — 망가진 상태가 다음 체크포인트에 커밋돼
+  있어도 그 전 판을 고름; `at` 로 특정 스냅샷), `{"mode":"list"}` 는 스냅샷 목록. `monitor`·
+  `schedule` 처럼 프로세스 안의 저장소를 직접 씁니다 — 쉘로 CLI 를 치게 하는 안은 PATH 에
+  기대고 도구와 중복이라 출시 전에 뺐습니다. 사람은 `git --git-dir=.agent-cli/snapshot.git
+  --work-tree=. log/checkout` 으로 같은 저장소를 봅니다.
 - 범위: 작업 디렉터리 전체. 워크스페이스의 `.gitignore` 는 **무시**합니다(보호해야 할
   `*.db`·`data/` 가 거기 적혀 있기 일쑤). 제외: `.agent-cli`·`node_modules`·`__pycache__`·`.venv`.
   하위 git 저장소는 참조(gitlink)로만 기록되고 그 안의 커밋 안 된 변경은 담기지 않습니다 —

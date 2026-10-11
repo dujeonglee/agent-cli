@@ -28,6 +28,7 @@ from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
 from agent_cli.tools.shell import ShellTool
+from agent_cli.tools.snapshot_tool import SnapshotTool
 from agent_cli.tools.virtual import (
     AnswerTool,
     AskTool,
@@ -49,7 +50,8 @@ from agent_cli.tools.write_file import WriteFileTool
 #   files      read → edit → write (edit is the default way to change a file;
 #              its guide builds on read_file's hashline output) → code_index
 #              (``fetch`` feeds edit_file)
-#   execution  shell, fetch, and the two that act later: monitor, schedule
+#   execution  shell, fetch, the two that act later: monitor, schedule — and
+#              snapshot, the way back after shell damaged an input (v10.36.0)
 #   memory     history, memory
 #   people     ask/answer, message/reply, agent, run_skill
 #   finish     complete
@@ -65,6 +67,9 @@ _ALL_TOOLS: list[Tool] = [
     # ⏰ native since v10.12.0 — the scheduler runs in this process
     # (``agent_cli/schedule/``).
     ScheduleTool(),
+    # 📸 native: the store lives in this process (``agent_cli/snapshot.py``);
+    # the built-in hook takes the snapshots, this tool restores from them.
+    SnapshotTool(),
     HistoryTool(),
     MemoryTool(),
     AskTool(),
