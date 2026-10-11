@@ -10,11 +10,87 @@ See ``docs/robust-harness/DESIGN.md`` §2.2 for the contract.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+
 #: Longest prior output quoted whole (v9.23.2). Past this the echo keeps the
 #: head and the tail and says how much it dropped.
 ECHO_MAX_CHARS = 2000
 ECHO_HEAD_CHARS = 1400
 ECHO_TAIL_CHARS = 600
+
+
+#: Scalars longer than this are shown as ``<N chars>`` in :func:`summarize_call`
+#: — the summary names the fields, it does not repeat a 2 KB file body.
+CALL_VALUE_MAX_CHARS = 40
+
+
+def summarize_value(value: object) -> str:
+    """One token per argument value for :func:`summarize_call`.
+
+    Short strings verbatim (JSON-quoted), long strings as ``<N chars>``,
+    arrays as ``[n items]``, objects as ``{n keys}``, other scalars as their
+    JSON literal.
+    """
+    if isinstance(value, str):
+        if len(value) <= CALL_VALUE_MAX_CHARS:
+            return json.dumps(value, ensure_ascii=False)
+        return f"<{len(value):,} chars>"
+    if isinstance(value, list):
+        return f"[{len(value)} item{'' if len(value) == 1 else 's'}]"
+    if isinstance(value, dict):
+        return f"{{{len(value)} key{'' if len(value) == 1 else 's'}}}"
+    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+        return json.dumps(value)
+    return str(value)
+
+
+def summarize_call(
+    tool_name: str,
+    tool_input: object,
+    *,
+    missing: Sequence[str] = (),
+    unknown: Sequence[str] = (),
+    hint: str | None = None,
+) -> str:
+    """One line that shows the model the call it just sent (v10.37.0).
+
+    ``You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) —
+    missing: path. Re-emit the whole call with every required field.``
+
+    Why it exists: a call rejected before dispatch (A4/A5) is not stored, so
+    the rejection text is the model's only copy. Text dialects also get
+    :func:`echo_prior_output`, but under native function calling the prose
+    is empty and the model saw *only* "Missing required field(s) … path" —
+    with nothing to compare against it re-sent the same call four times
+    (Harbor regex-log, v10.36.0). Values are summarized
+    (:func:`summarize_value`) so the line stays one line.
+
+    ``hint`` overrides the trailing instruction; by default it follows from
+    what is wrong (missing fields → re-emit whole call; otherwise fix the
+    named argument).
+    """
+    if isinstance(tool_input, dict):
+        args = ", ".join(f"{k}={summarize_value(v)}" for k, v in tool_input.items())
+    elif tool_input is None:
+        args = ""
+    else:
+        args = summarize_value(tool_input)
+    line = f"You sent: {tool_name}({args})"
+    gaps = []
+    if missing:
+        gaps.append("missing: " + ", ".join(missing))
+    if unknown:
+        gaps.append("unknown: " + ", ".join(unknown))
+    if gaps:
+        line += " — " + "; ".join(gaps)
+    if hint is None:
+        hint = (
+            "Re-emit the whole call with every required field."
+            if missing
+            else "Fix the argument named above and re-emit the whole call."
+        )
+    return f"{line}. {hint}"
 
 
 def bounded_excerpt(text: str) -> str:

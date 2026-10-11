@@ -1542,6 +1542,10 @@ class TestRunLoopUnknownTool:
         assert "Unknown tool" in observation
         assert "bogus" in observation
         assert "Available:" in observation
+        # v10.37.0: 보낸 호출의 한 줄 요약이 원문 인용 앞에 선다.
+        assert "You sent: bogus(" in observation
+        assert "Re-emit it under one of the available names." in observation
+        assert observation.index("You sent:") < observation.index("Your prior output:")
 
     def test_available_list_is_the_one_in_the_prompt(self, caps, tmp_path):
         """v10.14.0: built by ``effective_tool_names`` like the prompt — the raw
@@ -1669,6 +1673,88 @@ class TestRunLoopSchemaMismatch:
         # Error mentions which field is missing and the schema
         assert "path" in observation
         assert "Missing required field" in observation
+        # v10.37.0: 보낸 호출의 한 줄 요약 — 무엇을 보냈고 무엇이 빠졌는지.
+        assert (
+            "You sent: write_file() — missing: path, content. "
+            "Re-emit the whole call with every required field." in observation
+        )
+
+    def test_summary_shows_sent_arguments_and_the_gap(self, caps, tmp_path):
+        """실측(v10.36.0 regex-log, turn 10·21): 모델은 edit_file 을 path 없이
+        네 번 보냈다. 요약은 보낸 인자(값은 요약)와 빠진 이름을 한 줄에 둔다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bad_call = json.dumps(
+            {
+                "action": "edit_file",
+                "op": "replace",
+                "pos": "12#AB",
+                "lines": ["x" * 500],
+                "cmd": "unused",
+            }
+        )
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bad_call),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
+        assert (
+            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item], '
+            'cmd="unused") — missing: path; unknown: cmd.' in observation
+        )
+        assert "x" * 100 not in observation.split("Your prior output:")[0]
+
+    def test_server_parsed_call_with_no_prose_still_shows_what_was_sent(
+        self, caps, tmp_path
+    ):
+        """native 함수 호출(v10.36.0 회귀 런 extract-moves turn 10 의 history.jsonl):
+        산문이 비어 `echo_prior_output` 이 빈 문자열이라 모델은 "Missing required
+        field(s) … path" **만** 봤다 — 자기 호출이 어디에도 없어 같은 호출을 반복.
+        요약 줄은 산문과 무관하게 항상 붙는다."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "1",
+                        "name": "edit_file",
+                        "input": {"op": "replace", "pos": "12#AB", "lines": ["y"]},
+                    }
+                ],
+            ),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            ports=TEST_PORTS,
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
+        assert "Missing required field(s) for 'edit_file': path" in observation
+        assert (
+            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) '
+            "— missing: path. Re-emit the whole call with every required field."
+            in observation
+        )
 
     def test_schema_mismatch_does_not_consume_turn_budget(self, caps, tmp_path):
         """턴 계수 통일 규칙(리뷰 §4.1): A5 개입도 A7/B1/NO_JSON 과 동형으로

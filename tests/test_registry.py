@@ -1,5 +1,7 @@
 """Tests for tools/registry."""
 
+import pytest
+
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     TOOLS,
@@ -370,3 +372,42 @@ class TestSemanticValidationHook:
         obs = [m for m in st.messages if m["role"] == "user"][-1]
         assert "'path' is required for mode='fetch'" in obs["content"]
         assert "Expected: {" not in obs["content"]
+
+
+class TestSchemaGaps:
+    """`schema_gaps` (v10.37.0) — 거부된 호출 요약이 이름 붙이는 틈."""
+
+    def test_missing_required_and_unknown_keys(self):
+        from agent_cli.tools.registry import schema_gaps
+
+        missing, unknown = schema_gaps("shell", {"cmd": "ls"})
+        assert missing == ["command"] and unknown == ["cmd"]
+
+    def test_required_order_is_the_schema_order(self):
+        from agent_cli.tools.registry import TOOLS, schema_gaps
+
+        required = TOOLS["edit_file"].parameters["required"]
+        missing, unknown = schema_gaps("edit_file", {})
+        assert missing == required and unknown == []
+
+    def test_complete_input_has_no_gaps(self):
+        from agent_cli.tools.registry import schema_gaps
+
+        assert schema_gaps("shell", {"command": "ls"}) == ([], [])
+
+    def test_optional_fields_are_not_unknown(self):
+        from agent_cli.tools.registry import schema_gaps
+
+        missing, unknown = schema_gaps("shell", {"command": "ls", "timeout": 5})
+        assert missing == [] and unknown == []
+
+    @pytest.mark.parametrize("bad", ["a string", None, 3, ["x"]])
+    def test_non_object_input_has_no_gaps(self, bad):
+        from agent_cli.tools.registry import schema_gaps
+
+        assert schema_gaps("shell", bad) == ([], [])
+
+    def test_unknown_tool_has_no_gaps(self):
+        from agent_cli.tools.registry import schema_gaps
+
+        assert schema_gaps("bogus", {"path": "a"}) == ([], [])

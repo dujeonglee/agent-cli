@@ -924,11 +924,15 @@ class TestMidBatchValidationFailure:
         assert body.count("— FAILED") == 2
         assert "already ran" not in body
         assert "Missing required field(s) for 'memory': mode (string — add" in body
+        # v10.37.0: 배치 안의 거부 op 도 같은 한 줄 요약 — 원인 문장과 메모 사이.
         assert (
-            "\nThis op did NOT run. The other ops in this batch were still attempted"
+            '\nYou sent: memory(type="decision", summary="a") — missing: mode. '
+            "Re-emit the whole call with every required field.\n"
+            "This op did NOT run. The other ops in this batch were still attempted"
             in body
         )
-        assert "Expected: {" not in body and len(body) < 1200
+        assert 'summary="b") — missing: mode.' in body
+        assert "Expected: {" not in body and len(body) < 1500
 
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
         f1 = tmp_path / "a.txt"
