@@ -470,7 +470,10 @@ class AgentLoop:
             self._install_signal_handler()
         try:
             self._setup()
-            self._fire_hook("OnSessionStart")
+            # OnSessionStart 가 주입한 시스템 섹션도 반영한다 (v10.36.0) — 종전엔
+            # 반환값을 버려 README 의 `on_session_start → inject_system_section`
+            # 예시가 동작하지 않았다(내장 스냅샷 훅의 안내가 모델에 안 닿았다).
+            self._apply_system_sections(self._fire_hook("OnSessionStart"))
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
