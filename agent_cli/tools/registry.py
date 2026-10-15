@@ -18,6 +18,7 @@ from typing import Any
 
 from agent_cli.tools.agent_tool import AgentTool
 from agent_cli.tools.base import RunContext, Tool
+from agent_cli.tools.browser_tool import BrowserTool
 from agent_cli.tools.code_index import CodeIndexTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
@@ -50,7 +51,8 @@ from agent_cli.tools.write_file import WriteFileTool
 #   files      read → edit → write (edit is the default way to change a file;
 #              its guide builds on read_file's hashline output) → code_index
 #              (``fetch`` feeds edit_file)
-#   execution  shell, fetch, the two that act later: monitor, schedule — and
+#   execution  shell, fetch, browser (fetch's pair for JavaScript pages),
+#              the two that act later: monitor, schedule — and
 #              snapshot, the way back after shell damaged an input (v10.36.0)
 #   memory     history, memory
 #   people     ask/answer, message/reply, agent, run_skill
@@ -62,6 +64,9 @@ _ALL_TOOLS: list[Tool] = [
     CodeIndexTool(),
     ShellTool(),
     FetchTool(),
+    # 🌐 fetch 의 짝: JavaScript 가 그리는 페이지·클릭이 필요한 페이지.
+    # ``requires_handler="browser"`` — playwright 가 없으면 광고되지 않는다.
+    BrowserTool(),
     # 🔔 native: 시간을 재는 것도 발화도 이 프로세스 안에서 일어난다.
     MonitorTool(),
     # ⏰ native since v10.12.0 — the scheduler runs in this process
