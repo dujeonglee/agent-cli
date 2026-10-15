@@ -1097,15 +1097,15 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 
 | mode | 인자 | 하는 일 |
 |---|---|---|
-| `open` | `url` | 이동 → 헤더(URL·제목) + 스냅샷 |
+| `open` | `url` | 이동 → 헤더(URL·제목) + 스냅샷(큰 페이지는 예산 안의 깊이까지, 아래) |
 | `snapshot` | `ref?`, `depth?` | 페이지(또는 `ref` 랜드마크 아래)의 트리 — 긴 텍스트는 80자에서 자름 |
 | `find` | `text` 또는 `regex` | 스냅샷에 보이는 모양(`link "Aurora Lamp"`)으로 맞는 노드만, 조상 경로와 함께 |
 | `text` | `ref?` | 읽을 글만 (본문·기사 — 스냅샷 대신 이걸로) |
-| `click` / `type` / `select` / `press` | `ref` / `ref, text, submit?` / `ref, value` / `key` | 조작. 페이지가 바뀌면 결과에 새 스냅샷이 포함됨 |
+| `click` / `type` / `select` / `press` | `ref` / `ref, text, submit?` / `ref, value` / `key` | 조작. 페이지가 바뀌면 결과에 새 스냅샷이 포함됨(`open` 과 같은 예산) |
 | `back` / `close` | — | 뒤로 / 종료 |
 
 - **ref 는 페이지 로드 단위**로 유효합니다. 번호는 세션 내내 올라가기만 해서 옛 번호의 뜻이 바뀌지 않고, 페이지가 바뀐 뒤 옛 번호를 쓰면 "stale — take a new snapshot" 으로 거부됩니다. 같은 페이지 안에서는 DOM 이 바뀌어도 그 요소가 남아 있는 한 계속 맞습니다(ref = role + 이름 + 순번 → Playwright `get_by_role().nth()`; 공개 API 만 씀).
-- **큰 페이지**: 결과가 창의 1/10 을 넘으면 다른 도구처럼 [과대 출력 캡](#과대-출력-캡-oversized-observation)을 탑니다. 좁히는 길은 `snapshot(ref=<랜드마크>)`·`depth`·`find`·`text` — 안내 문구가 이를 가리킵니다.
+- **큰 페이지**: 이동·조작 뒤 자동으로 붙는 스냅샷은 **과대 출력 캡(창의 1/10)의 1/4 안에 드는 깊이까지만** 보이고, `[snapshot cut to depth D: n of N nodes …]` 한 줄이 나머지를 `find`·`text`·`snapshot(ref=)` 로 안내합니다(숨은 요소도 ref 가 있어 `find` 로 찾은 번호를 바로 누를 수 있음). 명시적 `snapshot` 은 전체이고, 그 결과가 캡을 넘으면 다른 도구처럼 [과대 출력 캡](#과대-출력-캡-oversized-observation)을 탑니다. 좁히는 길은 `snapshot(ref=<랜드마크>)`·`depth`·`find`·`text` — 안내 문구가 이를 가리킵니다.
 - **안전**: 코드 실행 모드 없음. `http(s)` 만(`file://` 거부). `AGENT_CLI_BROWSER_HOSTS` 허용 목록 — 이동·클릭이 목록 밖 호스트로 끝나면 빈 페이지로 돌리고 거절. `alert`/`confirm` 은 자동으로 닫고 결과에 한 줄 남김. 다운로드 거부. 프로필은 메모리 전용(세션이 끝나면 쿠키·로그인 소멸). **결제·전송·삭제처럼 되돌릴 수 없는 동작은 하니스가 구분하지 못합니다** — 로그인된 사이트에는 쓰지 말고, 허용 목록으로 갈 수 있는 곳을 묶으세요.
 - **동시성**: 세션당 브라우저 하나를 전용 스레드가 소유하고 모든 호출(서브에이전트 포함)을 직렬화합니다. 시간 제한은 이동 30초, 조작 10초.
 - 실측·비교(Playwright MCP 대비 기본 비용·턴 수)는 릴리스 노트와 `docs/browser/DESIGN.md` §7.

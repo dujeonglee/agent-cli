@@ -35,9 +35,19 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from agent_cli.constants import browser_knobs
+from agent_cli.context.token_estimator import estimate_tokens
 
 #: 스냅샷에서 텍스트 노드·이름을 자르는 길이 — 긴 본문은 ``text`` 모드로.
 TEXT_CAP = 80
+#: 이동·조작 뒤 **자동으로** 붙는 스냅샷의 예산 — 과대 출력 캡의 이 비율.
+#: 실측(DESIGN §7): 위키백과 문서 전체 트리(~25K 토큰)가 그대로 실리면 262K
+#: 창에서 컨텍스트가 두 배, 32K 창에서는 캡→파일→검색 경로로 밀려 틀렸다.
+#: 예산 안에 드는 가장 깊은 depth 까지만 보이고 나머지는 find/text/snapshot
+#: 으로 안내한다. 명시적 ``snapshot`` 은 예산 없이 전체(캡까지). 0.5 로도
+#: 재 봤다: 32K 창은 5/5 로 고쳐졌지만 262K 창에서는 두 페이지(메인 통째
+#: + 문서 depth 7)가 겹쳐 최대 컨텍스트 40K 그대로 — 자동분은 이동마다
+#: 쌓이므로 창의 2.5% 로 둔다.
+AUTO_SNAPSHOT_SHARE = 0.25
 #: 조작 가능한 role — ref 를 붙이고 click/type/select 를 허용한다.
 INTERACTIVE_ROLES = frozenset(
     {
@@ -212,6 +222,24 @@ def render_nodes(nodes: list[Node], *, depth: int | None = None) -> str:
             continue
         lines.append(render_node(node, base_depth=base))
     return "\n".join(lines)
+
+
+def render_within(nodes: list[Node], budget: int) -> tuple[str, int | None]:
+    """``budget``(토큰, 0 = 무제한) 안에 드는 **가장 깊은 depth** 로 렌더.
+    전체가 들어가면 ``(전체, None)``; 아니면 ``(잘린 트리, depth)`` — depth 0
+    (뿌리 줄들)은 예산과 무관하게 항상 보인다(빈 결과를 돌려주지 않는다)."""
+    full = render_nodes(nodes)
+    if budget <= 0 or estimate_tokens(full) <= budget:
+        return full, None
+    base = nodes[0].depth if nodes else 0
+    deepest = max((n.depth - base for n in nodes), default=0)
+    best, best_depth = render_nodes(nodes, depth=0), 0
+    for d in range(1, deepest + 1):
+        cand = render_nodes(nodes, depth=d)
+        if estimate_tokens(cand) > budget:
+            break
+        best, best_depth = cand, d
+    return best, best_depth
 
 
 def find_nodes(nodes: list[Node], *, text: str = "", regex: str = "") -> list[str]:
@@ -407,19 +435,35 @@ class BrowserSession:
             loc = root.get_by_role(target.role)
         return loc.nth(target.nth)
 
-    def _snapshot_text(self, ref: str = "", depth: int | None = None) -> str:
-        page = self._page
-        root = self._locator(ref) if ref else page.locator("body")
+    def _read_nodes(self, ref: str = "") -> list[Node]:
+        """트리를 읽고 ref 를 붙인다 — 스냅샷·자동 스냅샷·find 가 같은 길."""
+        root = self._locator(ref) if ref else self._page.locator("body")
         nodes = parse_aria(root.aria_snapshot())
         refs = assign_refs(
             nodes, start=self._next_ref, generation=self.generation, scope=ref
         )
         self._refs.update(refs)
         self._next_ref += len(refs)
-        body = render_nodes(nodes, depth=depth)
-        return body or "(empty)"
+        return nodes
 
-    def _after_action(self, page, before: PageState, what: str) -> str:
+    def _snapshot_text(self, ref: str = "", depth: int | None = None) -> str:
+        return render_nodes(self._read_nodes(ref), depth=depth) or "(empty)"
+
+    def _auto_snapshot(self, budget: int) -> str:
+        """이동 뒤 자동으로 붙는 스냅샷 — ``budget``(토큰) 안에 드는 깊이까지.
+        ref 는 보이지 않는 노드에도 붙어 있어 ``find`` 가 바로 찾는다."""
+        nodes = self._read_nodes()
+        body, depth = render_within(nodes, budget)
+        if depth is None:
+            return body or "(empty)"
+        shown = body.count("\n") + 1
+        return (
+            f"{body}\n[snapshot cut to depth {depth}: {shown} of {len(nodes)} nodes "
+            f"(whole tree ~{estimate_tokens(render_nodes(nodes)):,} tokens) — use "
+            "find(text=…), text(ref=…) or snapshot(ref=<landmark>) for the part you need]"
+        )
+
+    def _after_action(self, page, before: PageState, what: str, budget: int) -> str:
         try:
             page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
         except Exception:
@@ -429,15 +473,16 @@ class BrowserSession:
         if after.url != before.url:
             self._new_document()
             return (
-                f"{what} — page changed\n{self._header(after)}\n{self._snapshot_text()}"
+                f"{what} — page changed\n{self._header(after)}\n"
+                f"{self._auto_snapshot(budget)}"
             )
         return (
             f"{what} — same page ({after.url}); take a snapshot to see what changed"
             + ("\n" + self._header(after) if self._dialogs else "")
         )
 
-    # ── 모드 ──
-    def open(self, url: str) -> str:
+    # ── 모드 ── (``budget`` = 자동 스냅샷 예산, 토큰; 0 = 무제한)
+    def open(self, url: str, *, budget: int = 0) -> str:
         self._check_host(url)
 
         def go():
@@ -445,17 +490,17 @@ class BrowserSession:
             page.goto(url, wait_until="domcontentloaded")
             self._enforce_host_after(page)
             self._new_document()
-            return f"{self._header(self._state())}\n{self._snapshot_text()}"
+            return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
 
         return self._call(go)
 
-    def back(self) -> str:
+    def back(self, *, budget: int = 0) -> str:
         def go():
             page = self._need_page()
             page.go_back(wait_until="domcontentloaded")
             self._enforce_host_after(page)
             self._new_document()
-            return f"{self._header(self._state())}\n{self._snapshot_text()}"
+            return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
 
         return self._call(go)
 
@@ -471,11 +516,7 @@ class BrowserSession:
     def find(self, *, text: str = "", regex: str = "") -> str:
         def go():
             page = self._need_page()
-            nodes = parse_aria(page.locator("body").aria_snapshot())
-            refs = assign_refs(nodes, start=self._next_ref, generation=self.generation)
-            self._refs.update(refs)
-            self._next_ref += len(refs)
-            hits = find_nodes(nodes, text=text, regex=regex)
+            hits = find_nodes(self._read_nodes(), text=text, regex=regex)
             if not hits:
                 return f"no match for {regex or text!r} on {page.url}"
             return f"{len(hits)} match(es) on {page.url}:\n" + "\n".join(
@@ -495,17 +536,19 @@ class BrowserSession:
 
         return self._call(go)
 
-    def click(self, ref: str) -> str:
+    def click(self, ref: str, *, budget: int = 0) -> str:
         def go():
             page = self._need_page()
             before = self._state()
             target = self._interactive(ref)
             self._locator(ref).click()
-            return self._after_action(page, before, f"clicked {target}")
+            return self._after_action(page, before, f"clicked {target}", budget)
 
         return self._call(go)
 
-    def type(self, ref: str, text: str, submit: bool = False) -> str:
+    def type(
+        self, ref: str, text: str, submit: bool = False, *, budget: int = 0
+    ) -> str:
         def go():
             page = self._need_page()
             before = self._state()
@@ -516,26 +559,28 @@ class BrowserSession:
             if submit:
                 loc.press("Enter")
                 what += " and pressed Enter"
-            return self._after_action(page, before, what)
+            return self._after_action(page, before, what, budget)
 
         return self._call(go)
 
-    def select(self, ref: str, value: str) -> str:
+    def select(self, ref: str, value: str, *, budget: int = 0) -> str:
         def go():
             page = self._need_page()
             before = self._state()
             target = self._interactive(ref)
             self._locator(ref).select_option(value)
-            return self._after_action(page, before, f"selected {value!r} in {target}")
+            return self._after_action(
+                page, before, f"selected {value!r} in {target}", budget
+            )
 
         return self._call(go)
 
-    def press(self, key: str) -> str:
+    def press(self, key: str, *, budget: int = 0) -> str:
         def go():
             page = self._need_page()
             before = self._state()
             page.keyboard.press(key)
-            return self._after_action(page, before, f"pressed {key}")
+            return self._after_action(page, before, f"pressed {key}", budget)
 
         return self._call(go)
 

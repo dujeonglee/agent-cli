@@ -54,7 +54,9 @@ class BrowserTool(Tool):
         "'text' {ref?} returns the readable text of the page or an element — use "
         "it for articles and long content, snapshots cut long text. 'back', "
         "'close'. Refs stay valid until the next page load; when an action "
-        "changes the page the result already includes the new snapshot."
+        "changes the page the result already includes the new snapshot (cut to "
+        "the depth that fits when the page is big — the hidden part is still "
+        "reachable by find/text/snapshot)."
     )
     oversized_retry_hint = (
         "snapshot one landmark (snapshot with ref=<its ref>) or a shallower depth, "
@@ -127,7 +129,7 @@ class BrowserTool(Tool):
         return f"{mode} {rest}".strip()
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        from agent_cli.browser import BrowserError, get_browser
+        from agent_cli.browser import AUTO_SNAPSHOT_SHARE, BrowserError, get_browser
 
         mode = str(args.get("mode", "")).strip()
         session = get_browser(create=mode == "open")
@@ -136,8 +138,11 @@ class BrowserTool(Tool):
                 False,
                 error="browser: no page is open — call mode 'open' with a url first",
             )
+        # 이동 뒤 자동 스냅샷 예산 — 과대 출력 캡(창/10)의 일부. 캡이 꺼져
+        # 있으면(0) 예산도 없다.
+        budget = int((ctx.oversized_cap if ctx else 0) * AUTO_SNAPSHOT_SHARE)
         try:
-            out = self._dispatch(session, mode, args)
+            out = self._dispatch(session, mode, args, budget)
         except BrowserError as e:
             return ToolResult(False, error=f"browser: {e}")
         except Exception as e:
@@ -146,10 +151,10 @@ class BrowserTool(Tool):
         return ToolResult(True, output=out)
 
     @staticmethod
-    def _dispatch(session, mode: str, args: dict) -> str:
+    def _dispatch(session, mode: str, args: dict, budget: int = 0) -> str:
         ref = str(args.get("ref", "") or "").strip()
         if mode == "open":
-            return session.open(str(args["url"]).strip())
+            return session.open(str(args["url"]).strip(), budget=budget)
         if mode == "snapshot":
             depth = args.get("depth")
             return session.snapshot(ref, int(depth) if depth is not None else None)
@@ -161,13 +166,15 @@ class BrowserTool(Tool):
         if mode == "text":
             return session.text(ref)
         if mode == "click":
-            return session.click(ref)
+            return session.click(ref, budget=budget)
         if mode == "type":
-            return session.type(ref, str(args["text"]), bool(args.get("submit", False)))
+            return session.type(
+                ref, str(args["text"]), bool(args.get("submit", False)), budget=budget
+            )
         if mode == "select":
-            return session.select(ref, str(args["value"]))
+            return session.select(ref, str(args["value"]), budget=budget)
         if mode == "press":
-            return session.press(str(args["key"]).strip())
+            return session.press(str(args["key"]).strip(), budget=budget)
         if mode == "back":
-            return session.back()
+            return session.back(budget=budget)
         return session.close()
