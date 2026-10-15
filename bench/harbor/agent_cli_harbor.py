@@ -63,7 +63,7 @@ class AgentCli(BaseInstalledAgent):
     ``~/.agent-cli/models.json`` — 컨테이너 안 런타임 프로빙 생략용; 빈 문자열
     이면 미주입), ``host_config``(기본 ``~/.agent-cli/config.json`` — 접속
     정보 폴백), ``python``(uv 가 확보할 파이썬, 기본 3.12), 그리고 CLI_FLAGS 의
-    ``max_turns``·``response_format``·``max_depth``.
+    ``max_turns``·``response_format``·``max_depth``·``verbose``(``--ak verbose=true`` → ``--verbose``).
 
     접속 정보 우선순위: ``--ae AGENT_CLI_BASE_URL/API_KEY`` (또는 호스트 env)
     > 호스트 config.json(같은 provider 일 때; loopback 은 host.docker.internal
@@ -77,6 +77,7 @@ class AgentCli(BaseInstalledAgent):
         CliFlag("max_turns", cli="--max-turns", type="int", default=60),
         CliFlag("response_format", cli="--response-format", type="str"),
         CliFlag("max_depth", cli="--max-depth", type="int"),
+        CliFlag("verbose", cli="--verbose", type="bool"),
     ]
 
     def __init__(
