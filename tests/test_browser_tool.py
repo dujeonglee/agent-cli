@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from agent_cli import browser as B
+from agent_cli.tools.base import RunContext
 from agent_cli.tools.browser_tool import MODES, BrowserTool
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 
@@ -155,6 +156,18 @@ class TestRender:
         refs = B.assign_refs(nodes, start=1, generation=1)
         assert refs["e1"].name == name  # locator keeps the full name
         assert "…(+20 chars)" in B.render_nodes(nodes)
+
+    def test_render_within_keeps_the_deepest_depth_that_fits(self):
+        nodes = B.parse_aria(SHOP)
+        full = B.render_nodes(nodes)
+        assert B.render_within(nodes, 0) == (full, None)  # 0 = no budget
+        assert B.render_within(nodes, B.estimate_tokens(full)) == (full, None)
+        d1 = B.render_nodes(nodes, depth=1)
+        assert B.estimate_tokens(d1) < B.estimate_tokens(full)
+        assert B.render_within(nodes, B.estimate_tokens(d1)) == (d1, 1)
+        # a budget too small even for depth 1 still shows the roots, never ""
+        assert B.render_within(nodes, 1) == ("- navigation\n- main", 0)
+        assert B.render_within([], 1) == ("", None)
 
 
 class TestFind:
@@ -384,6 +397,33 @@ class TestSessionWithFakePage:
         assert page.lookups[-1] == ("link", "Aurora Lamp", True) and s.generation == 2
         with pytest.raises(B.BrowserError, match="stale ref .*take a new snapshot"):
             s.click(link)
+
+    def test_auto_snapshot_is_budgeted_but_refs_cover_hidden_nodes(self, fake):
+        """큰 페이지: 이동 뒤 자동 스냅샷은 예산 안의 깊이까지만 — 숨은 노드도
+        ref 는 받았으니 find/click 이 바로 되고, 명시적 snapshot 은 전체."""
+        s, _ = fake
+        nodes = B.parse_aria(SHOP)
+        B.assign_refs(nodes, start=1, generation=1)  # the session's refs match
+        budget = B.estimate_tokens(B.render_nodes(nodes, depth=1))
+        out = s.open("http://shop.test/", budget=budget)
+        assert out.startswith("[page] http://shop.test/ — Gadget Shop\n")
+        assert '- link "Home" [ref=e2]' in out and '- link "Aurora Lamp"' not in out
+        assert out.endswith(
+            f"[snapshot cut to depth 1: {out.count(chr(10)) - 1} of {len(nodes)} nodes "
+            f"(whole tree ~{B.estimate_tokens(B.render_nodes(nodes)):,} tokens) — use "
+            "find(text=…), text(ref=…) or snapshot(ref=<landmark>) for the part you need]"
+        )
+        link = next(
+            k
+            for k, r in s._refs.items()
+            if r.role == "link" and r.name == "Aurora Lamp"
+        )
+        assert 'link "Aurora Lamp" [ref=e' in s.find(text="aurora")
+        assert "[snapshot cut" not in s.snapshot()  # explicit = whole tree
+        # the ref assigned to the hidden link at open time is live for click
+        out = s.click(link, budget=1)  # navigation → budgeted again, depth 0 floor
+        assert out.startswith('clicked link "Aurora Lamp" — page changed\n')
+        assert "[snapshot cut to depth 0: 2 of 2 nodes" in out
 
     def test_nth_is_passed_to_the_locator(self, fake):
         s, page = fake
@@ -639,7 +679,7 @@ class TestToolDispatch:
                 "Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting"
             )
 
-        monkeypatch.setattr(session, "click", lambda ref: boom())
+        monkeypatch.setattr(session, "click", lambda ref, **kw: boom())
         r = t.run({"mode": "click", "ref": "e2"})
         assert (
             r.error == "browser: RuntimeError: Locator.click: Timeout 10000ms exceeded."
@@ -649,6 +689,26 @@ class TestToolDispatch:
         box = next(k for k, r in session._refs.items() if r.role == "textbox")
         r = t.run({"mode": "type", "ref": box, "text": "x", "submit": True})
         assert r.success and r.output.startswith("typed 'x' into")
+
+    def test_budget_comes_from_the_loop_cap(self, monkeypatch, fake):
+        """예산 = 과대 출력 캡 × AUTO_SNAPSHOT_SHARE; ctx 가 없으면(캡 0) 전체."""
+        session, _ = fake
+        monkeypatch.setattr(B, "get_browser", lambda create=False: session)
+        seen = []
+
+        def spy(url, *, budget=0):
+            seen.append(budget)
+            return "[page] x"
+
+        monkeypatch.setattr(session, "open", spy)
+        t = TOOLS["browser"]
+        t.run({"mode": "open", "url": "http://shop.test/"})
+        t.run(
+            {"mode": "open", "url": "http://shop.test/"},
+            ctx=RunContext(oversized_cap=3_276),
+        )
+        assert seen == [0, int(3_276 * B.AUTO_SNAPSHOT_SHARE)]
+        assert B.AUTO_SNAPSHOT_SHARE == 0.25
 
     def test_get_browser_singleton_and_reset(self, monkeypatch):
         monkeypatch.setattr(B, "_SESSION", None)
