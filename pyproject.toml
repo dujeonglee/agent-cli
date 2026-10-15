@@ -65,6 +65,10 @@ dev = [
 ]
 # macOS: install gnureadline for proper CJK width in chat input
 macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]
+# Optional ``browser`` tool (headless Chrome/Chromium via Playwright, docs/browser/DESIGN.md)
+# — install with `pip install agent-cli[browser]`; a browser engine is also needed
+# (an installed Google Chrome, or `playwright install chromium`).
+browser = ["playwright>=1.40"]
 # Optional `agent-cli web` LAN UI — install with `pip install agent-cli[web]`
 web = [
     "fastapi>=0.110",

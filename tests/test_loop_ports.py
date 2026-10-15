@@ -161,7 +161,11 @@ class TestHandlerResources:
         아니면 그 도구는 **어느 루프에서도** 안 붙는다(조용한 실종)."""
         from agent_cli.tools import TOOLS
 
-        # ``ctx`` 와 ``snapshot`` 은 포트가 아닌 세션 자원 — core 가 얹는다.
-        available = set(BUILDERS["oneshot"]().handler_resources()) | {"ctx", "snapshot"}
+        # ``ctx``·``snapshot``·``browser`` 는 포트가 아닌 세션 자원 — core 가 얹는다.
+        available = set(BUILDERS["oneshot"]().handler_resources()) | {
+            "ctx",
+            "snapshot",
+            "browser",
+        }
         required = {t.requires_handler for t in TOOLS.values() if t.requires_handler}
         assert required <= available, f"해결 불가한 요구: {required - available}"

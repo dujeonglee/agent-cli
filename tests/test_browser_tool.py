@@ -1,0 +1,700 @@
+"""``browser`` tool + ``agent_cli.browser`` engine — without Playwright.
+
+The pure functions (aria parsing, ref assignment, rendering, find, host
+allow-list) are tested directly; the session is driven with a fake page that
+mimics the slice of the Playwright API the engine uses, so the thread/queue,
+ref generations, host enforcement and observation wording all run for real.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from agent_cli import browser as B
+from agent_cli.tools.browser_tool import MODES, BrowserTool
+from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
+
+SHOP = """\
+- navigation:
+  - link "Home":
+    - /url: /a
+- main:
+  - heading "Shop" [level=1]
+  - paragraph: {long}
+  - table:
+    - rowgroup:
+      - row "Aurora Lamp $39.50":
+        - cell "Aurora Lamp":
+          - link "Aurora Lamp":
+            - /url: item.html?n=Aurora
+  - text: Email
+  - textbox "Email"
+  - combobox "Branch":
+    - option "All" [selected]
+    - option "North"
+  - button "Search"
+  - button "Search"
+  - button "Say \\"hi\\""
+""".format(long="Long paragraph text. " * 8)
+
+ITEM = """\
+- heading "Aurora Lamp" [level=1]
+- button "Show specifications"
+"""
+
+
+# ── 순수 함수 ──────────────────────────────────────────────────────────────
+
+
+class TestHostAllowed:
+    def test_http_only(self):
+        assert B.host_allowed("file:///etc/passwd", ()) is not None
+        assert B.host_allowed("javascript:alert(1)", ()) is not None
+        assert B.host_allowed("ftp://x/", ()) is not None
+        assert B.host_allowed("https://example.com/x", ()) is None
+
+    def test_no_host(self):
+        assert "no host" in B.host_allowed("http:///x", ())
+
+    def test_allow_list_with_subdomains(self):
+        hosts = ("example.com", "localhost")
+        assert B.host_allowed("http://example.com/", hosts) is None
+        assert B.host_allowed("http://a.b.example.com/", hosts) is None
+        assert B.host_allowed("http://localhost:8765/x", hosts) is None
+        why = B.host_allowed("http://evil-example.com/", hosts)
+        assert "evil-example.com" in why and "AGENT_CLI_BROWSER_HOSTS" in why
+
+    def test_knobs_parse_hosts(self, monkeypatch):
+        from agent_cli.constants import browser_knobs
+
+        monkeypatch.setenv("AGENT_CLI_BROWSER_HOSTS", " Example.COM, .b.org ,, ")
+        monkeypatch.setenv("AGENT_CLI_BROWSER_TOOL", "off")
+        k = browser_knobs()
+        assert k["hosts"] == ("example.com", "b.org") and k["enabled"] is False
+
+
+class TestParseAria:
+    def test_roles_names_attrs_text_props(self):
+        nodes = B.parse_aria(SHOP)
+        by = {(n.depth, n.role, n.name): n for n in nodes}
+        assert by[(0, "navigation", "")].depth == 0
+        assert by[(1, "link", "Home")].depth == 1
+        assert nodes[2].prop == "/url: /a" and nodes[2].depth == 2
+        assert by[(1, "heading", "Shop")].attrs == "[level=1]"
+        assert by[(1, "paragraph", "")].text.startswith("Long paragraph")
+        assert by[(1, "text", "")].text == "Email"
+        assert by[(2, "option", "All")].attrs == "[selected]"
+        assert by[(1, "button", 'Say "hi"')].name == 'Say "hi"'
+
+    def test_unparseable_line_becomes_text(self):
+        nodes = B.parse_aria("- 123 weird\nnot a list line\n")
+        assert (
+            len(nodes) == 1 and nodes[0].role == "text" and nodes[0].text == "123 weird"
+        )
+
+
+class TestRefs:
+    def test_interactive_and_landmarks_get_refs_generic_do_not(self):
+        nodes = B.parse_aria(SHOP)
+        refs = B.assign_refs(nodes, start=1, generation=3)
+        roles = {r.role for r in refs.values()}
+        assert {
+            "navigation",
+            "link",
+            "main",
+            "heading",
+            "table",
+            "textbox",
+            "combobox",
+            "option",
+            "button",
+        } <= roles
+        assert "paragraph" not in roles and "cell" not in roles and "row" not in roles
+        assert all(r.generation == 3 for r in refs.values())
+        assert [n.ref for n in nodes if n.role == "paragraph"] == [""]
+
+    def test_nth_counts_same_role_and_name(self):
+        nodes = B.parse_aria(SHOP)
+        refs = B.assign_refs(nodes, start=10, generation=1)
+        searches = [
+            (k, r.nth)
+            for k, r in refs.items()
+            if r.role == "button" and r.name == "Search"
+        ]
+        assert [n for _, n in searches] == [0, 1]
+        assert searches[0][0] == "e20" and searches[1][0] == "e21"  # start=10 honoured
+        assert refs["e10"].role == "navigation"
+
+    def test_scope_is_recorded(self):
+        nodes = B.parse_aria(ITEM)
+        refs = B.assign_refs(nodes, start=1, generation=1, scope="e7")
+        assert all(r.scope == "e7" for r in refs.values())
+
+
+class TestRender:
+    def test_truncates_long_text_and_marks_refs(self):
+        nodes = B.parse_aria(SHOP)
+        B.assign_refs(nodes, start=1, generation=1)
+        out = B.render_nodes(nodes)
+        para = next(ln for ln in out.splitlines() if "paragraph" in ln)
+        assert "…(+" in para and len(para) < 140
+        assert '- heading "Shop" [level=1] [ref=e4]' in out
+        assert '- button "Search" [ref=' in out
+        assert "    - /url: /a" in out
+
+    def test_depth_filter_relative_to_root(self):
+        nodes = B.parse_aria(SHOP)
+        out = B.render_nodes(nodes, depth=0)
+        assert out.splitlines() == ["- navigation", "- main"]
+        nodes = B.parse_aria('  - main:\n    - heading "X"\n      - text: deep\n')
+        assert B.render_nodes(nodes, depth=1) == '- main\n  - heading "X"'
+
+    def test_long_name_is_cut_in_render_only(self):
+        name = "x" * 100
+        nodes = B.parse_aria(f'- button "{name}"\n')
+        refs = B.assign_refs(nodes, start=1, generation=1)
+        assert refs["e1"].name == name  # locator keeps the full name
+        assert "…(+20 chars)" in B.render_nodes(nodes)
+
+
+class TestFind:
+    def test_text_match_with_path_and_ref(self):
+        nodes = B.parse_aria(SHOP)
+        B.assign_refs(nodes, start=1, generation=1)
+        hits = B.find_nodes(nodes, text="aurora lamp")
+        assert any(h.startswith("main > table > rowgroup > row") for h in hits)
+        link = [h for h in hits if '> link "Aurora Lamp" [ref=' in h]
+        assert link, hits
+
+    def test_regex_matches_rendered_form(self):
+        nodes = B.parse_aria(SHOP)
+        hits = B.find_nodes(nodes, regex=r'^link "Aurora')
+        assert hits == [
+            'main > table > rowgroup > row "Aurora Lamp $39.50" > cell "Aurora Lamp" > link "Aurora Lamp"'
+        ]
+
+    def test_no_match(self):
+        assert B.find_nodes(B.parse_aria(SHOP), text="zzz") == []
+
+
+class TestAvailability:
+    def test_off_by_knob(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_BROWSER_TOOL", "0")
+        assert B.browser_available() is False
+
+    def test_absent_without_playwright(self, monkeypatch):
+        monkeypatch.delenv("AGENT_CLI_BROWSER_TOOL", raising=False)
+        monkeypatch.setattr(B.importlib.util, "find_spec", lambda name: None)
+        assert B.browser_available() is False
+
+    def test_present(self, monkeypatch):
+        monkeypatch.delenv("AGENT_CLI_BROWSER_TOOL", raising=False)
+        monkeypatch.setattr(B.importlib.util, "find_spec", lambda name: object())
+        assert B.browser_available() is True
+
+
+# ── 가짜 페이지로 도는 세션 ────────────────────────────────────────────────
+
+
+class FakeLocator:
+    def __init__(self, page, role=None, name=None, nth=0, snapshot=None):
+        self.page, self.role, self.name, self.index = page, role, name, nth
+        self._snapshot = snapshot
+
+    def nth(self, n):
+        return FakeLocator(self.page, self.role, self.name, n, self._snapshot)
+
+    def get_by_role(self, role, name=None, exact=False):
+        self.page.lookups.append((role, name, exact))
+        return FakeLocator(self.page, role, name)
+
+    def aria_snapshot(self):
+        if self._snapshot is not None:
+            return self._snapshot
+        return self.page.scoped.get((self.role, self.name), self.page.tree)
+
+    def inner_text(self):
+        return self.page.text_of.get(
+            (self.role, self.name or ""), "BODY TEXT\n\n\n\nmore"
+        )
+
+    def _act(self, what):
+        self.page.actions.append((what, self.role, self.name, self.index))
+        nav = self.page.navigates.get((self.role, self.name, self.index))
+        if nav:
+            self.page.load(*nav)
+
+    def click(self):
+        self._act("click")
+
+    def fill(self, text):
+        self._act(("fill", text))
+
+    def press(self, key):
+        self._act(("press", key))
+
+    def select_option(self, value):
+        self._act(("select", value))
+
+
+class FakeKeyboard:
+    def __init__(self, page):
+        self.page = page
+
+    def press(self, key):
+        self.page.actions.append(("key", key))
+
+
+class FakePage:
+    def __init__(self):
+        self.url, self._title, self.tree = "about:blank", "", ""
+        self.pages = {}  # url -> (title, tree)
+        self.scoped = {}  # (role, name) -> subtree
+        self.text_of = {}
+        self.navigates = {}  # (role, name, nth) -> (url)
+        self.actions, self.lookups, self.gotos = [], [], []
+        self.keyboard = FakeKeyboard(self)
+        self.handlers = {}
+        self.history = []
+
+    def load(self, url):
+        self.history.append(self.url)
+        self.url = url
+        self._title, self.tree = self.pages.get(url, ("", ""))
+
+    # playwright surface
+    def title(self):
+        return self._title
+
+    def goto(self, url, **kw):
+        self.gotos.append(url)
+        self.load(self.pages.get(url, (None,))[0] is None and url or url)
+
+    def go_back(self, **kw):
+        self.load(self.history.pop())
+
+    def locator(self, sel):
+        assert sel == "body"
+        return FakeLocator(self, snapshot=None)
+
+    def get_by_role(self, role, name=None, exact=False):
+        self.lookups.append((role, name, exact))
+        return FakeLocator(self, role, name)
+
+    def wait_for_load_state(self, *a, **k):
+        pass
+
+    def set_default_timeout(self, ms):
+        pass
+
+    def set_default_navigation_timeout(self, ms):
+        pass
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+
+class FakeDialog:
+    type, message = "alert", "hello"
+
+    def __init__(self):
+        self.dismissed = False
+
+    def dismiss(self):
+        self.dismissed = True
+
+
+@pytest.fixture
+def fake():
+    page = FakePage()
+    page.pages["http://shop.test/"] = ("Gadget Shop", SHOP)
+    page.pages["http://shop.test/item"] = ("Item", ITEM)
+    page.navigates[("link", "Aurora Lamp", 0)] = ("http://shop.test/item",)
+    page.scoped[("combobox", "Branch")] = (
+        '- combobox "Branch":\n  - option "All" [selected]\n  - option "North"\n'
+    )
+    page.text_of[("main", "")] = "MAIN ONLY"
+    session = B.BrowserSession(
+        knobs={"enabled": True, "hosts": ("shop.test",), "executable": ""}
+    )
+
+    def ensure():  # the real one also registers the dialog handler
+        session._page = page
+        page.on("dialog", session._on_dialog)
+        return page
+
+    session._ensure_page = ensure  # type: ignore[method-assign]
+    yield session, page
+    session.close()
+
+
+class TestSessionWithFakePage:
+    def test_open_returns_header_and_refs(self, fake):
+        s, page = fake
+        out = s.open("http://shop.test/")
+        assert out.startswith("[page] http://shop.test/ — Gadget Shop\n")
+        assert '- link "Home" [ref=e2]' in out and '- button "Search" [ref=e' in out
+        assert page.gotos == ["http://shop.test/"] and s.generation == 1
+
+    def test_refused_url_never_reaches_the_page(self, fake):
+        s, page = fake
+        with pytest.raises(B.BrowserError, match="AGENT_CLI_BROWSER_HOSTS"):
+            s.open("http://other.test/")
+        with pytest.raises(B.BrowserError, match="http\\(s\\)"):
+            s.open("file:///x")
+        assert page.gotos == []
+
+    def test_refs_are_monotonic_across_snapshots(self, fake):
+        s, _ = fake
+        first = s.open("http://shop.test/")
+        second = s.snapshot()
+        assert "[ref=e1]" in first and "[ref=e1]" not in second
+        n = len(s._refs)
+        assert f"[ref=e{n}]" in second
+
+    def test_click_non_interactive_is_refused(self, fake):
+        s, _ = fake
+        s.open("http://shop.test/")
+        with pytest.raises(
+            B.BrowserError, match="heading, not something you can act on"
+        ):
+            s.click("e4")
+
+    def test_unknown_and_malformed_refs(self, fake):
+        s, _ = fake
+        s.open("http://shop.test/")
+        with pytest.raises(B.BrowserError, match="unknown ref e99"):
+            s.click("e99")
+        with pytest.raises(B.BrowserError, match="ref must look like e12"):
+            s.click("Search")
+
+    def test_click_navigation_bumps_generation_and_stales_old_refs(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        link = next(
+            k
+            for k, r in s._refs.items()
+            if r.role == "link" and r.name == "Aurora Lamp"
+        )
+        out = s.click(link)
+        assert out.startswith(
+            'clicked link "Aurora Lamp" — page changed\n[page] http://shop.test/item — Item'
+        )
+        assert '- button "Show specifications" [ref=' in out
+        assert page.lookups[-1] == ("link", "Aurora Lamp", True) and s.generation == 2
+        with pytest.raises(B.BrowserError, match="stale ref .*take a new snapshot"):
+            s.click(link)
+
+    def test_nth_is_passed_to_the_locator(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        second = [
+            k for k, r in s._refs.items() if r.role == "button" and r.name == "Search"
+        ][1]
+        out = s.click(second)
+        assert out.startswith('clicked button "Search" — same page (http://shop.test/)')
+        assert page.actions[-1] == ("click", "button", "Search", 1)
+
+    def test_type_select_press(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        box = next(k for k, r in s._refs.items() if r.role == "textbox")
+        combo = next(k for k, r in s._refs.items() if r.role == "combobox")
+        assert s.type(box, "glass", submit=True).startswith(
+            "typed 'glass' into textbox \"Email\" and pressed Enter"
+        )
+        assert page.actions[-2:] == [
+            (("fill", "glass"), "textbox", "Email", 0),
+            (("press", "Enter"), "textbox", "Email", 0),
+        ]
+        assert s.select(combo, "North").startswith(
+            "selected 'North' in combobox \"Branch\""
+        )
+        assert s.press("Tab").startswith("pressed Tab — same page")
+        assert page.actions[-1] == ("key", "Tab")
+
+    def test_find_and_text(self, fake):
+        s, _ = fake
+        s.open("http://shop.test/")
+        out = s.find(text="aurora")
+        assert out.startswith("4 match(es) on http://shop.test/:")
+        assert '> link "Aurora Lamp" [ref=' in out
+        assert s.find(regex="zzz") == "no match for 'zzz' on http://shop.test/"
+        text = s.text()
+        assert (
+            text.startswith("[text of http://shop.test/ — ")
+            and "BODY TEXT\n\nmore" in text
+        )
+
+    def test_scoped_snapshot_and_text_resolve_through_the_scope(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        combo = next(k for k, r in s._refs.items() if r.role == "combobox")
+        out = s.snapshot(combo)
+        assert (
+            out.splitlines()[1]
+            == '- combobox "Branch" [ref=e' + str(len(s._refs) - 2) + "]"
+        )
+        north = next(
+            k for k, r in s._refs.items() if r.name == "North" and r.scope == combo
+        )
+        s.click(north)
+        # resolved as combobox → option: two lookups, the inner one last
+        assert page.lookups[-1] == ("option", "North", True) and page.lookups[-2] == (
+            "combobox",
+            "Branch",
+            True,
+        )
+        main = next(k for k, r in s._refs.items() if r.role == "main")
+        assert s.text(main).endswith("MAIN ONLY")
+
+    def test_back_reloads_previous_document(self, fake):
+        s, _ = fake
+        s.open("http://shop.test/")
+        link = next(k for k, r in s._refs.items() if r.name == "Aurora Lamp")
+        s.click(link)
+        out = s.back()
+        assert (
+            out.startswith("[page] http://shop.test/ — Gadget Shop")
+            and s.generation == 3
+        )
+
+    def test_redirect_to_disallowed_host_is_undone(self, fake):
+        s, page = fake
+        page.pages["http://shop.test/go"] = ("Go", "")
+        page.navigates[("link", "Home", 0)] = ("http://tracker.example/",)
+        s.open("http://shop.test/")
+        home = next(k for k, r in s._refs.items() if r.name == "Home")
+        with pytest.raises(
+            B.BrowserError, match="left the page: host 'tracker.example'"
+        ):
+            s.click(home)
+        assert page.url == "about:blank" and page.gotos[-1] == "about:blank"
+
+    def test_dialog_is_dismissed_and_reported_once(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        d = FakeDialog()
+        page.handlers["dialog"](d)
+        assert d.dismissed
+        out = s.snapshot()
+        assert "[dialog dismissed] alert: hello" in out
+        assert "[dialog dismissed]" not in s.snapshot()
+
+    def test_close_then_calls_fail_and_need_page_before_open(self, fake):
+        s, _ = fake
+        with pytest.raises(B.BrowserError, match="no page is open"):
+            s.snapshot()
+        s.open("http://shop.test/")
+        assert s.close() == "browser closed" and s.closed
+        assert s.close() == "browser already closed"
+        with pytest.raises(B.BrowserError, match="browser is closed"):
+            s.snapshot()
+
+    def test_owner_thread_serialises_calls(self, fake):
+        s, _ = fake
+        s.open("http://shop.test/")
+        import threading
+
+        seen = []
+
+        def worker():
+            seen.append(threading.get_ident() != threading.main_thread().ident)
+            s.snapshot()
+
+        ts = [threading.Thread(target=worker) for _ in range(4)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        assert all(seen) and s._thread.name == "agent-cli-browser"
+
+
+class TestLaunchFallback:
+    def test_tries_executable_chrome_then_chromium_and_reports_all(self, monkeypatch):
+        calls = []
+
+        class FailChromium:
+            def launch(self, **kw):
+                calls.append(kw)
+                raise RuntimeError("nope\nsecond line")
+
+        class PW:
+            chromium = FailChromium()
+
+            def stop(self):
+                calls.append("stopped")
+
+        import types
+
+        fake_mod = types.SimpleNamespace(
+            sync_playwright=lambda: types.SimpleNamespace(start=lambda: PW())
+        )
+        monkeypatch.setitem(__import__("sys").modules, "playwright.sync_api", fake_mod)
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "playwright",
+            types.SimpleNamespace(sync_api=fake_mod),
+        )
+        s = B.BrowserSession(
+            knobs={"enabled": True, "hosts": (), "executable": "/opt/chrome"}
+        )
+        with pytest.raises(B.BrowserError) as ei:
+            s.open("http://x.test/")
+        msg = str(ei.value)
+        assert (
+            "executable: nope" in msg
+            and "chrome: nope" in msg
+            and "chromium: nope" in msg
+        )
+        assert "second line" not in msg and "playwright install chromium" in msg
+        assert (
+            calls[0]["executable_path"] == "/opt/chrome"
+            and calls[1]["channel"] == "chrome"
+            and calls[-1] == "stopped"
+        )
+        s.close()
+
+
+# ── 도구 표면 ────────────────────────────────────────────────────────────
+
+
+class TestToolSchema:
+    def test_registered_after_fetch_and_gated(self):
+        assert isinstance(TOOLS["browser"], BrowserTool)
+        order = list(_BUILTIN_ORDER)
+        assert order.index("browser") == order.index("fetch") + 1
+        assert TOOLS["browser"].requires_handler == "browser"
+
+    def test_schema_shape(self):
+        p = TOOLS["browser"].parameters
+        assert p["required"] == ["mode"]
+        assert p["properties"]["mode"]["enum"] == list(MODES)
+        assert set(p["properties"]) == {
+            "mode",
+            "url",
+            "ref",
+            "text",
+            "regex",
+            "submit",
+            "value",
+            "key",
+            "depth",
+        }
+
+    @pytest.mark.parametrize(
+        "args, msg",
+        [
+            ({"mode": "fly"}, "mode must be one of"),
+            ({"mode": "open"}, "open requires `url`"),
+            ({"mode": "click"}, "click requires `ref`"),
+            ({"mode": "type", "ref": "e1"}, "type requires `text`"),
+            ({"mode": "select", "ref": "e1"}, "select requires `value`"),
+            ({"mode": "press"}, "press requires `key`"),
+            ({"mode": "find"}, "find requires `text` or `regex`"),
+        ],
+    )
+    def test_validate_per_mode(self, args, msg):
+        assert msg in TOOLS["browser"].validate(args)
+
+    def test_validate_ok(self):
+        t = TOOLS["browser"]
+        for a in (
+            {"mode": "snapshot"},
+            {"mode": "back"},
+            {"mode": "find", "regex": "x"},
+            {"mode": "type", "ref": "e1", "text": "x"},
+        ):
+            assert t.validate(a) is None
+
+    def test_summary_arg(self):
+        t = TOOLS["browser"]
+        assert t.summary_arg({"mode": "open", "url": "http://x/"}) == "open http://x/"
+        assert t.summary_arg({"mode": "click", "ref": "e3"}) == "click e3"
+        assert t.summary_arg({"mode": "back"}) == "back"
+
+    def test_retry_hint_names_the_narrowing_modes(self):
+        hint = TOOLS["browser"].oversized_retry_hint
+        assert "ref=" in hint and "find(" in hint and "text(" in hint
+
+
+class TestToolDispatch:
+    def test_action_before_open(self, monkeypatch):
+        monkeypatch.setattr(B, "_SESSION", None)
+        r = TOOLS["browser"].run({"mode": "snapshot"})
+        assert not r.success and "no page is open" in r.error
+
+    def test_open_creates_a_session_and_errors_are_observations(
+        self, monkeypatch, fake
+    ):
+        session, _ = fake
+        monkeypatch.setattr(B, "_SESSION", None)
+        monkeypatch.setattr(B, "get_browser", lambda create=False: session)
+        t = TOOLS["browser"]
+        r = t.run({"mode": "open", "url": "http://shop.test/"})
+        assert r.success and r.output.startswith("[page] http://shop.test/")
+        r = t.run({"mode": "click", "ref": "e4"})
+        assert not r.success and r.error.startswith("browser: e4 is a heading")
+
+        def boom():
+            raise RuntimeError(
+                "Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting"
+            )
+
+        monkeypatch.setattr(session, "click", lambda ref: boom())
+        r = t.run({"mode": "click", "ref": "e2"})
+        assert (
+            r.error == "browser: RuntimeError: Locator.click: Timeout 10000ms exceeded."
+        )
+        r = t.run({"mode": "snapshot", "depth": "1"})
+        assert r.success and "- navigation" in r.output
+        box = next(k for k, r in session._refs.items() if r.role == "textbox")
+        r = t.run({"mode": "type", "ref": box, "text": "x", "submit": True})
+        assert r.success and r.output.startswith("typed 'x' into")
+
+    def test_get_browser_singleton_and_reset(self, monkeypatch):
+        monkeypatch.setattr(B, "_SESSION", None)
+        assert B.get_browser() is None
+        a = B.get_browser(create=True)
+        assert B.get_browser() is a and B.get_browser(create=True) is a
+        a.closed = True
+        b = B.get_browser(create=True)
+        assert b is not a
+        B.reset_browser()
+        assert B.get_browser() is None and b.closed
+
+
+class TestAdvertising:
+    def _tools(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import split_ports
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=2048, supports_thinking=False
+        )
+        loop = AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            **split_ports({}),
+        )
+        return list(loop._config.tools_list)
+
+    def test_absent_when_unavailable(self, monkeypatch):
+        monkeypatch.setattr(B, "browser_available", lambda: False)
+        assert "browser" not in self._tools()
+
+    def test_present_when_available(self, monkeypatch):
+        monkeypatch.setattr(B, "browser_available", lambda: True)
+        tools = self._tools()
+        assert "browser" in tools and tools.index("browser") == tools.index("fetch") + 1
+
+    def test_teardown_closes_the_browser(self, monkeypatch):
+        from agent_cli import runtime
+
+        closed = []
+        monkeypatch.setattr(B, "reset_browser", lambda: closed.append(True))
+        runtime.teardown_session(None, None)
+        assert closed == [True]

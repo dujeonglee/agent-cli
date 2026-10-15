@@ -361,3 +361,20 @@ def has_words(text) -> bool:
     267건 중 8건 냈다. 받은 에이전트는 빈 지시의 뜻을 찾느라 5턴을 썼다.
     언어 무관(유니코드 문자 클래스)."""
     return bool(_WORD_CHAR.search(str(text or "")))
+
+
+def browser_knobs() -> dict:
+    """env 노브 — `AGENT_CLI_BROWSER_TOOL=0` 끔, `AGENT_CLI_BROWSER_HOSTS`(쉼표 목록,
+    비면 전부 허용), `AGENT_CLI_BROWSER_EXECUTABLE`(브라우저 실행 파일)."""
+    import os
+
+    hosts = [
+        h.strip().lower().lstrip(".")
+        for h in os.environ.get("AGENT_CLI_BROWSER_HOSTS", "").split(",")
+    ]
+    return {
+        "enabled": os.environ.get("AGENT_CLI_BROWSER_TOOL", "1").strip().lower()
+        not in ("0", "false", "no", "off"),
+        "hosts": tuple(h for h in hosts if h),
+        "executable": os.environ.get("AGENT_CLI_BROWSER_EXECUTABLE", "").strip(),
+    }

@@ -198,6 +198,9 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 + 민감 경로 사전 (기본 on). `0` 으로 끄면 둘 다 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
+| `AGENT_CLI_BROWSER_TOOL` | — | `0` 이면 `browser` 도구를 끈다 (기본: playwright 가 깔려 있으면 켜짐) |
+| `AGENT_CLI_BROWSER_HOSTS` | — | `browser` 가 열 수 있는 호스트 (쉼표 목록, 하위 도메인 포함; 비면 전부) |
+| `AGENT_CLI_BROWSER_EXECUTABLE` | — | `browser` 가 띄울 브라우저 실행 파일 (기본: 설치된 Chrome → Playwright Chromium) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
@@ -942,6 +945,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
+| `browser` | 헤드리스 브라우저 — JavaScript 가 그리는 페이지를 읽고 클릭·입력 (v10.39.0). 스냅샷의 `[ref=eN]` 로 조작. 선택 설치 `agent-cli[browser]` — playwright 가 없으면 도구 자체가 프롬프트에서 빠짐. [아래 참고](#브라우저-도구-browser) |
 | `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "complete 로 턴을 마치고 기다려라" 힌트가 붙음). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
@@ -1078,6 +1082,33 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 ```
 
 **읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(run/skill subdir 포함).
+
+### 브라우저 도구 (`browser`)
+
+JavaScript 가 그리는 페이지, 버튼을 눌러야 나오는 내용, 폼 입력이 필요하면 `browser` 를 씁니다 (정적 HTML 은 `fetch` 로 충분). 창 없이(헤드리스) Chrome/Chromium 을 띄우고, 페이지를 **접근성 트리 텍스트**로 돌려줍니다 — 버튼·링크·입력칸·랜드마크마다 `[ref=eN]` 이 붙고, 모델은 그 번호로 조작합니다. 설계와 근거는 `docs/browser/DESIGN.md`.
+
+```bash
+pip install 'agent-cli[browser]'      # playwright (Node.js 를 따로 깔 필요 없음 — 드라이버 동봉)
+# 브라우저 엔진: 설치된 Google Chrome 을 쓴다. 없으면:
+playwright install chromium
+```
+
+playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프트에 나오지 않습니다**(`snapshot` 과 같은 규칙 — 없는 기능을 약속하지 않음). 브라우저는 첫 호출 때 뜨고(안 쓰는 세션은 비용 0), 세션이 끝나면 닫힙니다.
+
+| mode | 인자 | 하는 일 |
+|---|---|---|
+| `open` | `url` | 이동 → 헤더(URL·제목) + 스냅샷 |
+| `snapshot` | `ref?`, `depth?` | 페이지(또는 `ref` 랜드마크 아래)의 트리 — 긴 텍스트는 80자에서 자름 |
+| `find` | `text` 또는 `regex` | 스냅샷에 보이는 모양(`link "Aurora Lamp"`)으로 맞는 노드만, 조상 경로와 함께 |
+| `text` | `ref?` | 읽을 글만 (본문·기사 — 스냅샷 대신 이걸로) |
+| `click` / `type` / `select` / `press` | `ref` / `ref, text, submit?` / `ref, value` / `key` | 조작. 페이지가 바뀌면 결과에 새 스냅샷이 포함됨 |
+| `back` / `close` | — | 뒤로 / 종료 |
+
+- **ref 는 페이지 로드 단위**로 유효합니다. 번호는 세션 내내 올라가기만 해서 옛 번호의 뜻이 바뀌지 않고, 페이지가 바뀐 뒤 옛 번호를 쓰면 "stale — take a new snapshot" 으로 거부됩니다. 같은 페이지 안에서는 DOM 이 바뀌어도 그 요소가 남아 있는 한 계속 맞습니다(ref = role + 이름 + 순번 → Playwright `get_by_role().nth()`; 공개 API 만 씀).
+- **큰 페이지**: 결과가 창의 1/10 을 넘으면 다른 도구처럼 [과대 출력 캡](#과대-출력-캡-oversized-observation)을 탑니다. 좁히는 길은 `snapshot(ref=<랜드마크>)`·`depth`·`find`·`text` — 안내 문구가 이를 가리킵니다.
+- **안전**: 코드 실행 모드 없음. `http(s)` 만(`file://` 거부). `AGENT_CLI_BROWSER_HOSTS` 허용 목록 — 이동·클릭이 목록 밖 호스트로 끝나면 빈 페이지로 돌리고 거절. `alert`/`confirm` 은 자동으로 닫고 결과에 한 줄 남김. 다운로드 거부. 프로필은 메모리 전용(세션이 끝나면 쿠키·로그인 소멸). **결제·전송·삭제처럼 되돌릴 수 없는 동작은 하니스가 구분하지 못합니다** — 로그인된 사이트에는 쓰지 말고, 허용 목록으로 갈 수 있는 곳을 묶으세요.
+- **동시성**: 세션당 브라우저 하나를 전용 스레드가 소유하고 모든 호출(서브에이전트 포함)을 직렬화합니다. 시간 제한은 이동 30초, 조작 10초.
+- 실측·비교(Playwright MCP 대비 기본 비용·턴 수)는 릴리스 노트와 `docs/browser/DESIGN.md` §7.
 
 ### 과대 출력 캡 (oversized observation)
 
@@ -1721,9 +1752,9 @@ agent-cli mcp remove <이름>
 [{"action": "mcp__github__list_issues", "repo": "owner/repo"}]
 ```
 
-#### 예: 헤드리스 브라우저 (Playwright MCP)
+#### 대안: Playwright MCP 서버
 
-agent-cli 에는 브라우저 도구가 없습니다. JavaScript 가 그리는 페이지를 읽거나 클릭·입력이 필요하면 Microsoft 의 Playwright MCP 서버를 붙일 수 있습니다. 창 없이(헤드리스) 브라우저를 띄우고, 페이지를 **접근성 트리 텍스트**(버튼·링크·입력칸에 `[ref=e12]` 번호)로 돌려줘 텍스트 전용 모델도 번호로 조작합니다. 정적 HTML 만 필요하면 내장 `fetch` 로 충분합니다. 아래는 동작을 확인한 구성이고, agent-cli 가 보증하는 기능은 아닙니다 — 한계를 먼저 보세요.
+내장 [`browser` 도구](#브라우저-도구-browser)(v10.39.0) 대신 Microsoft 의 Playwright MCP 서버를 붙일 수도 있습니다 — 스크린샷·네트워크 디버깅·드래그·파일 업로드처럼 내장 도구가 일부러 빼 둔 기능이 필요할 때.
 
 ```json
 {
@@ -1736,20 +1767,7 @@ agent-cli 에는 브라우저 도구가 없습니다. JavaScript 가 그리는 �
 }
 ```
 
-- **버전 고정**: 서버가 아직 0.0.x 라 도구 이름·동작이 버전마다 바뀝니다. 아래 수치는 0.0.83 기준입니다.
-- **브라우저**: 기본은 **설치된 Google Chrome** 을 띄웁니다(실행 중 프로세스로 확인). Chrome 이 없으면 `args` 에 `"--browser", "chromium"` 을 더하고 `npx -y @playwright/mcp@0.0.83 install-browser chrome-for-testing` 로 Chrome for Testing 을 받습니다(`cdn.playwright.dev`, 받는 곳은 `--dry-run` 으로 미리 확인). 이미 있는 실행 파일은 `--executable-path` 로 가리킵니다.
-- **외부 접속**: 설치 때 npm 레지스트리, Chrome 이 없으면 위 CDN 이 필요합니다. 실행 중 브라우저가 스스로 외부와 통신하는지는 확인하지 않았습니다.
-- **`--isolated`**: 브라우저 프로필을 메모리에만 둡니다(세션마다 깨끗한 상태, 로그인·쿠키가 디스크에 남지 않음).
-- **기본 비용**: 도구 25개의 설명이 매 요청에 실려 첫 요청이 약 5,000토큰 늘어납니다(실측 10,595 → 15,630).
-- **큰 페이지**: 위키백과 문서 하나의 전체 스냅샷이 59,000–89,000자입니다. 창의 1/10 을 넘으면 다른 도구와 같이 [과대 출력 캡](#과대-출력-캡-oversized-observation)으로 파일에 저장되고 모델이 검색해 읽습니다. 범위를 좁히는 수단은 서버에 있습니다 — `browser_find`(문자열·정규식으로 필요한 요소만), `browser_snapshot` 의 `target`·`depth`, `browser_evaluate` 로 본문 텍스트만. 어느 쪽을 쓰는지는 모델마다 다릅니다.
-
-**한계**
-
-- **도구를 고를 수 없습니다.** 서버의 `--caps` 는 기능을 더하기만 하고, agent-cli 의 `mcp.json` 에도 서버별 도구 선택이 없습니다. 쓰지 않는 도구(스크린샷·네트워크 디버깅·드래그 등)도 25개 그대로 실립니다. 프로파일·스킬의 `allowed-tools` 로 좁힌 루프에서만 줄어듭니다.
-- **임의 코드 실행 도구를 끌 수 없습니다.** `browser_run_code_unsafe`(Playwright 코드), `browser_evaluate`(페이지 JavaScript)가 항상 열려 있습니다. 로그인된 사이트나 결제 화면처럼 되돌릴 수 없는 동작이 가능한 곳에 쓰지 말고, `--allowed-origins`/`--blocked-origins` 로 갈 수 있는 곳을 묶으세요.
-- **실측 범위가 좁습니다.** 로컬 페이지 2종과 위키백과 한 사이트, 과제당 3–5회입니다.
-
-실측(2026-10, `native_fc`): `Qwen3.6-35B-A3B-8bit` 는 JavaScript 로 그려지는 로컬 페이지 2종과 위키백과 검색 과제를 thinking on/off 30회 모두 맞혔고, 창을 64K·32K 로 줄여 스냅샷이 파일로 빠지면 위키백과가 첫 6회 4/6, 32K 로 추가 10회 10/10 (틀린 2회는 긴 본문을 검색으로 띄엄띄엄 읽다 덜 정확한 문장을 고른 것). `Qwen3.8-Flash-Next-oQ4e-mtp` 는 32K 창 위키백과 10/10 — 전체 스냅샷 대신 `browser_find` 를 주로 써 파일로 빠지는 일 자체가 적었습니다.
+알고 쓸 것(2026-10 실측, 내장 도구를 만든 이유이기도 합니다): Node.js 와 npm 접속이 필요하고, 0.0.x 라 버전마다 도구가 바뀌며(고정 권장), 도구 25개의 설명이 매 요청에 실려 첫 요청이 약 5,000토큰 늘고(10,595 → 15,630), 도구를 고를 수 없어 `browser_run_code_unsafe`·`browser_evaluate` 같은 임의 코드 실행 도구가 항상 열려 있습니다. 기본 브라우저는 설치된 Google Chrome 이고 없으면 `--browser chromium` + `npx -y @playwright/mcp@0.0.83 install-browser chrome-for-testing`. 큰 페이지 스냅샷(위키백과 59K–89K자)은 과대 출력 캡으로 파일에 저장됩니다.
 
 ### 스트리밍 출력
 

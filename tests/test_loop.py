@@ -1882,6 +1882,8 @@ class TestToolPolicyDeclarations:
             "answer": {"requires_handler": "questions", "force_mount": True},
             # 📸 세션 저장소가 서지 않았으면(git 없음·끔) 광고하지 않는다 (v10.36.0).
             "snapshot": {"requires_handler": "snapshot"},
+            # 🌐 playwright 가 없거나 꺼져 있으면 광고하지 않는다 (v10.39.0).
+            "browser": {"requires_handler": "browser"},
         }
         defaults = {
             "terminal": False,

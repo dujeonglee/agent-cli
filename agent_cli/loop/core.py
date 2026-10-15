@@ -162,14 +162,15 @@ class AgentLoop:
         # 포트에서 **파생**한다 — 종전엔 여기 3키짜리 dict 리터럴이었고,
         # 새 포트가 생길 때마다 이 줄을 기억해서 고쳐야 했다. ``ctx`` 는
         # 포트가 아니므로(§4.2) 여기서 얹는다.
-        from agent_cli.runtime import snapshot_resource
+        from agent_cli.runtime import browser_resource, snapshot_resource
 
         # ``snapshot`` 도 포트가 아닌 세션 자원(v10.36.0) — 저장소가 서지 않았으면
-        # (git 없음·끔) 도구를 광고하지 않는다.
+        # (git 없음·끔) 도구를 광고하지 않는다. ``browser`` 도 같다(playwright 없음·끔).
         handler_resources = {
             **ports.handler_resources(),
             "ctx": ctx,
             "snapshot": snapshot_resource(),
+            "browser": browser_resource(),
         }
         for tool_name, tool in TOOLS.items():
             required = tool.requires_handler

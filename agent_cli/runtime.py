@@ -171,6 +171,15 @@ def snapshot_resource():
     return store if store is not None and store.enabled else None
 
 
+def browser_resource():
+    """`Tool.requires_handler="browser"` 이 보는 세션 자원 — playwright 가 있고
+    `AGENT_CLI_BROWSER_TOOL` 이 꺼져 있지 않으면 True(브라우저 자체는 첫 호출 때
+    뜬다), 아니면 None → 도구가 프롬프트에서 빠진다."""
+    from agent_cli.browser import browser_available
+
+    return True if browser_available() else None
+
+
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
@@ -294,6 +303,9 @@ def teardown_session(
     from agent_cli.render import render_spinner_stop
 
     render_spinner_stop()
+    from agent_cli.browser import reset_browser
+
+    reset_browser()  # 세션 브라우저 종료 (없으면 no-op)
     if mcp_manager:
         mcp_manager.disconnect_all()
     if session is not None:
