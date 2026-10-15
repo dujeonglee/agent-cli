@@ -1742,7 +1742,7 @@ agent-cli 에는 브라우저 도구가 없습니다. JavaScript 가 그리는 �
 - **큰 페이지**: 위키백과 문서 하나의 전체 스냅샷이 59,000–89,000자입니다. 창의 1/10 을 넘으면 다른 도구와 같이 [과대 출력 캡](#과대-출력-캡-oversized-observation)으로 파일에 저장되고 모델이 검색해 읽습니다. 범위를 좁히는 수단은 서버에 있습니다 — `browser_find`(문자열·정규식으로 필요한 요소만), `browser_snapshot` 의 `target`·`depth`, `browser_evaluate` 로 본문 텍스트만. 어느 쪽을 쓰는지는 모델마다 다릅니다.
 - **임의 코드 실행 도구**: `browser_run_code_unsafe`(Playwright 코드), `browser_evaluate`(페이지 JavaScript)가 기본으로 열려 있습니다. 로그인된 사이트나 결제 화면을 다루게 할 거라면 `--allowed-origins`/`--blocked-origins` 로 갈 수 있는 곳을 묶으세요.
 
-실측(2026-10, `native_fc`): `Qwen3.6-35B-A3B-8bit` 는 JavaScript 로 그려지는 로컬 페이지 2종과 위키백과 검색 과제를 thinking on/off 30회 모두 맞혔고, 창을 64K·32K 로 줄여 스냅샷이 파일로 빠지자 위키백과가 4/6 → 추가 5회 5/5 (틀린 2회는 긴 본문을 검색으로 띄엄띄엄 읽다 덜 정확한 문장을 고른 것). `Qwen3.8-Flash-Next-oQ4e-mtp` 는 32K 창 위키백과 10/10 — 전체 스냅샷 대신 `browser_find` 를 주로 써 파일로 빠지는 일 자체가 적었습니다.
+실측(2026-10, `native_fc`): `Qwen3.6-35B-A3B-8bit` 는 JavaScript 로 그려지는 로컬 페이지 2종과 위키백과 검색 과제를 thinking on/off 30회 모두 맞혔고, 창을 64K·32K 로 줄여 스냅샷이 파일로 빠지면 위키백과가 첫 6회 4/6, 32K 로 추가 10회 10/10 (틀린 2회는 긴 본문을 검색으로 띄엄띄엄 읽다 덜 정확한 문장을 고른 것). `Qwen3.8-Flash-Next-oQ4e-mtp` 는 32K 창 위키백과 10/10 — 전체 스냅샷 대신 `browser_find` 를 주로 써 파일로 빠지는 일 자체가 적었습니다.
 
 ### 스트리밍 출력
 
