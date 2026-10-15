@@ -1723,24 +1723,31 @@ agent-cli mcp remove <이름>
 
 #### 예: 헤드리스 브라우저 (Playwright MCP)
 
-agent-cli 에는 브라우저 도구가 없습니다. JavaScript 가 그리는 페이지를 읽거나 클릭·입력이 필요하면 Microsoft 의 Playwright MCP 서버를 등록합니다. 창 없이(헤드리스) Chromium 을 띄우고, 페이지를 **접근성 트리 텍스트**(버튼·링크·입력칸에 `[ref=e12]` 번호)로 돌려줘 텍스트 전용 모델도 번호로 조작합니다. 정적 HTML 만 필요하면 내장 `fetch` 로 충분합니다.
+agent-cli 에는 브라우저 도구가 없습니다. JavaScript 가 그리는 페이지를 읽거나 클릭·입력이 필요하면 Microsoft 의 Playwright MCP 서버를 붙일 수 있습니다. 창 없이(헤드리스) 브라우저를 띄우고, 페이지를 **접근성 트리 텍스트**(버튼·링크·입력칸에 `[ref=e12]` 번호)로 돌려줘 텍스트 전용 모델도 번호로 조작합니다. 정적 HTML 만 필요하면 내장 `fetch` 로 충분합니다. 아래는 동작을 확인한 구성이고, agent-cli 가 보증하는 기능은 아닙니다 — 한계를 먼저 보세요.
 
 ```json
 {
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]
+      "args": ["-y", "@playwright/mcp@0.0.83", "--headless", "--isolated"]
     }
   }
 }
 ```
 
-- **외부 접속은 설치 때만**: npm 패키지와 Chromium(약 150MB, `npx playwright install chromium`)을 받습니다. 실행 중엔 로컬 브라우저와만 통신합니다 — 인터넷이 막힌 곳은 이미 깔린 Chrome 을 쓰거나 `PLAYWRIGHT_BROWSERS_PATH` 로 옮겨 온 브라우저를 가리킵니다.
+- **버전 고정**: 서버가 아직 0.0.x 라 도구 이름·동작이 버전마다 바뀝니다. 아래 수치는 0.0.83 기준입니다.
+- **브라우저**: 기본은 **설치된 Google Chrome** 을 띄웁니다(실행 중 프로세스로 확인). Chrome 이 없으면 `args` 에 `"--browser", "chromium"` 을 더하고 `npx -y @playwright/mcp@0.0.83 install-browser chrome-for-testing` 로 Chrome for Testing 을 받습니다(`cdn.playwright.dev`, 받는 곳은 `--dry-run` 으로 미리 확인). 이미 있는 실행 파일은 `--executable-path` 로 가리킵니다.
+- **외부 접속**: 설치 때 npm 레지스트리, Chrome 이 없으면 위 CDN 이 필요합니다. 실행 중 브라우저가 스스로 외부와 통신하는지는 확인하지 않았습니다.
 - **`--isolated`**: 브라우저 프로필을 메모리에만 둡니다(세션마다 깨끗한 상태, 로그인·쿠키가 디스크에 남지 않음).
 - **기본 비용**: 도구 25개의 설명이 매 요청에 실려 첫 요청이 약 5,000토큰 늘어납니다(실측 10,595 → 15,630).
 - **큰 페이지**: 위키백과 문서 하나의 전체 스냅샷이 59,000–89,000자입니다. 창의 1/10 을 넘으면 다른 도구와 같이 [과대 출력 캡](#과대-출력-캡-oversized-observation)으로 파일에 저장되고 모델이 검색해 읽습니다. 범위를 좁히는 수단은 서버에 있습니다 — `browser_find`(문자열·정규식으로 필요한 요소만), `browser_snapshot` 의 `target`·`depth`, `browser_evaluate` 로 본문 텍스트만. 어느 쪽을 쓰는지는 모델마다 다릅니다.
-- **임의 코드 실행 도구**: `browser_run_code_unsafe`(Playwright 코드), `browser_evaluate`(페이지 JavaScript)가 기본으로 열려 있습니다. 로그인된 사이트나 결제 화면을 다루게 할 거라면 `--allowed-origins`/`--blocked-origins` 로 갈 수 있는 곳을 묶으세요.
+
+**한계**
+
+- **도구를 고를 수 없습니다.** 서버의 `--caps` 는 기능을 더하기만 하고, agent-cli 의 `mcp.json` 에도 서버별 도구 선택이 없습니다. 쓰지 않는 도구(스크린샷·네트워크 디버깅·드래그 등)도 25개 그대로 실립니다. 프로파일·스킬의 `allowed-tools` 로 좁힌 루프에서만 줄어듭니다.
+- **임의 코드 실행 도구를 끌 수 없습니다.** `browser_run_code_unsafe`(Playwright 코드), `browser_evaluate`(페이지 JavaScript)가 항상 열려 있습니다. 로그인된 사이트나 결제 화면처럼 되돌릴 수 없는 동작이 가능한 곳에 쓰지 말고, `--allowed-origins`/`--blocked-origins` 로 갈 수 있는 곳을 묶으세요.
+- **실측 범위가 좁습니다.** 로컬 페이지 2종과 위키백과 한 사이트, 과제당 3–5회입니다.
 
 실측(2026-10, `native_fc`): `Qwen3.6-35B-A3B-8bit` 는 JavaScript 로 그려지는 로컬 페이지 2종과 위키백과 검색 과제를 thinking on/off 30회 모두 맞혔고, 창을 64K·32K 로 줄여 스냅샷이 파일로 빠지면 위키백과가 첫 6회 4/6, 32K 로 추가 10회 10/10 (틀린 2회는 긴 본문을 검색으로 띄엄띄엄 읽다 덜 정확한 문장을 고른 것). `Qwen3.8-Flash-Next-oQ4e-mtp` 는 32K 창 위키백과 10/10 — 전체 스냅샷 대신 `browser_find` 를 주로 써 파일로 빠지는 일 자체가 적었습니다.
 
