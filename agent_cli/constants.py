@@ -387,3 +387,34 @@ def browser_knobs() -> dict:
         else "auto",
         "executable": os.environ.get("AGENT_CLI_BROWSER_EXECUTABLE", "").strip(),
     }
+
+
+# ── 감사자 (docs/auditor/DESIGN.md, v10.42.0) ──────────────────────────────
+
+#: 하니스가 띄우는 상주 감사자의 프로파일·인스턴스 이름 — 둘이 같아 채널 칩은
+#: `auditor` 하나다. `spawn` 의 표시 이름 중복 거부가 "항상 하나" 를 보장한다.
+AUDITOR_NAME = "auditor"
+
+#: 스폰·부활·재시작 직후 감사자에게 보내는 첫 요청 — 감사자가 알아야 할 하니스
+#: 사실은 둘뿐이다: main 의 history 파일 경로와 깨우기 런의 발신자 문자열.
+#: 모니터는 세션을 넘지 못하므로 매 부팅마다 보낸다(프로파일의 "시작 의식").
+AUDITOR_START_BRIEF = (
+    "You are this session's auditor. main's history file: {history}\n"
+    "Wake runs (not started by a person) have query author {wake!r} — skip them.\n"
+    "Do your startup ritual now: if monitor(list) shows no monitor on that file, "
+    'register monitor(add, when={{"type":"match","file":"{history}",'
+    '"pattern":"\\"kind\\": \\"final\\""}}, once=false, deadline="24h"). '
+    "Then complete — nothing to audit yet."
+)
+
+
+def auditor_enabled() -> bool:
+    """`AGENT_CLI_AUDITOR=1` — 세션 감사자를 띄운다 (v10.42.0, 기본 꺼짐)."""
+    import os
+
+    return os.environ.get("AGENT_CLI_AUDITOR", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )

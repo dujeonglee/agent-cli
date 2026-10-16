@@ -202,6 +202,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_BROWSER_HOSTS` | — | `browser` 가 열 수 있는 호스트 (쉼표 목록, 하위 도메인 포함; 비면 전부) |
 | `AGENT_CLI_BROWSER_EXECUTABLE` | — | `browser` 가 띄울 브라우저 실행 파일 (기본: 설치된 Chrome → Playwright Chromium) |
 | `AGENT_CLI_BROWSER_HEADLESS` | — | `auto`(기본): 헤드리스로 시작, 사이트가 사람 확인을 요구하면 보이는 창으로 전환 · `1`: 항상 헤드리스 · `0`: 처음부터 보이는 창 |
+| `AGENT_CLI_AUDITOR` | — | `1` 이면 세션 감사자 상주 (v10.42.0, 기본 꺼짐): main 의 사용자 런이 `complete` 할 때마다 그 런의 기록만 읽고 요청별 충족 여부를 판정, 미충족이 있으면 main 에게 `message` 로 보냄 (아래 "세션 감사자") |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
@@ -290,6 +291,7 @@ monitor(add, when={"type":"match","file":"/tmp/b.log","pattern":"ERROR|FAILED"})
   (알림 없는 실행은 만들 수 없습니다 — 새벽에 명령이 돌았는데 아무도 모르는
   상태를 막기 위해서입니다)
 - `command`/`run` 은 **등록할 때** 확인받습니다. 발화할 땐 사람이 없으니까요
+- `command`/`run` 은 **`shell` 도구가 있는 에이전트만** 걸 수 있습니다 (v10.42.0 — 읽기 전용 프로파일에겐 `match`/`silence` 만; monitor 가 셸 권한의 뒷문이 되지 않게)
 - 내장 에이전트 프로파일 여섯 개도 monitor 를 씁니다 (v9.14.0). 권한이
   넓어진 것은 아닙니다 — 여섯 다 이미 `shell` 을 가지고 있고, monitor 는
   같은 셸 권한에 **보고가 반드시 따라오는** 형태입니다
@@ -1353,6 +1355,7 @@ run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(
   - `log-analyst`(읽기 전용 — 로그·스택트레이스·크래시에서 **근본 원인**: bottom-up 프레임·cascade 첫 도미노·트리거 조건, 증거 인용).
   - `general`(v10.21.0 — **전문가가 없는 일**: 조사·자료 수집·정리, 단순 명령 실행 후 보고, 리포트·문서 **파일 작성**. 코드 작성·리뷰·분석·테스트·로그는 해당 전문가에게 넘기라고 명시. 시킨 산출물만 새로 만들고 자기가 만들지 않은 파일은 지목됐을 때만 고침, `Files written:` 보고, 사실마다 출처. 에이전트 생성 도구는 없음. 보드에서 `@general 이 폴더 조사해서 report.md 로 정리해줘` 처럼 직접 부르는 손잡이.)
   - `orchestrator`(spawn 전용 조율자 — /orchestrate 가 소환한 워커 로스터(키)를 받아 **peer `message` 로 배정→수집→리뷰→수리 루프를 자율 주행**. 워커 회신은 orchestrator 에게만 라우팅되어 main 을 깨우지 않고, main 은 최종 보고/에스컬레이션만 받음. 스스로 spawn 불가 — 워커가 더 필요하면 main 에 message 로 요청).
+- **세션 감사자 `auditor` (v10.42.0, `AGENT_CLI_AUDITOR=1`)**: 하니스가 띄우는 상주 에이전트 — 모델이 고르는 프로파일이 아닙니다(광고 안 함). 시작하면 main 세션의 `history.jsonl` 에 `monitor(match "kind": "final")` 를 걸어 **main 이 `complete` 할 때마다** 깨어나고, `history` 도구로 **그 런의 서수 구간만** 읽어 요청마다 `met`(근거 서수) · `unmet` · `unverifiable`(종결문이 주장하지만 관찰에 근거가 없음 — "테스트 통과" 인데 shell 기록이 없는 경우) 을 판정합니다. 미충족이 있으면 `message(to="main")` 로 보내 main 이 **한 번 더** 손보고(그 런은 깨우기 런이라 다시 감사하지 않음 — 고리 상한), 전부 충족이면 자기 채널에 `complete` 만 남깁니다. 도구는 `history`·`monitor`·`read_file`·`code_index`·`memory` 뿐(쓰기·`shell`·`ask` 없음). 노브를 끄면 다음 부팅에서 내려가고, 켜면 하나만 뜹니다(툼스톤은 부활). 설계·측정: `docs/auditor/DESIGN.md`.
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 dialect 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
 
