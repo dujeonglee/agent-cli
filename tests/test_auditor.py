@@ -75,6 +75,7 @@ class TestProfile:
             '\\"kind\\": \\"final\\"',  # 구독 패턴 (md 안에선 JSON 이스케이프)
             "seq BETWEEN",  # 서수 구간만
             'sessions:"<main session id from the harness>"',  # 자기 history 가 아니라 main 의
+            "loc LIKE '<session id>/history.jsonl:%'",  # 에이전트 파일(자기 것 포함)을 뺀다
             "kind='final' ORDER BY seq DESC LIMIT 1",  # b = 최신 final
             "skip: not a user run",  # 깨우기 런 건너뛰기 = 고리 상한
             "unverifiable",  # 근거 없는 주장
@@ -93,6 +94,9 @@ class TestBrief:
         )
         assert "/w/.agent-cli/s/history.jsonl" in brief
         assert 'sessions:"1791"' in brief  # 감사자의 history 기본값은 자기 것
+        assert (
+            "loc LIKE '1791/history.jsonl:%'" in brief
+        )  # 같은 테이블에 에이전트 파일도 있다
         assert repr(WAKE_AUTHOR) in brief
         assert '"type":"match"' in brief and "once=false" in brief
 
@@ -325,3 +329,44 @@ class TestLifetime:
             assert mons.passive_owners == {f"agent:{tm.key}"}
         finally:
             reg.shutdown_all()
+
+
+class TestHistoryTableMixesAgentFiles:
+    """실측(A-smoke): `sessions:"<id>"` 테이블은 `agents/<key>/history.jsonl` 도
+    싣고 `seq` 는 파일별 줄 번호라, 감사자 자신의 시작 런 `final`(seq 7) 이 main
+    의 "직전 final" 로 잡혀 구간이 8..43 으로 틀렸다. `loc LIKE` 필터가 답이다."""
+
+    def test_loc_filter_keeps_only_mains_file(self, tmp_path):
+        from agent_cli.tools.history import tool_history
+
+        sdir = tmp_path / "sess"
+        main = ContextManager(sdir, max_context_tokens=10_000)
+        aud = ContextManager(sdir / "agents" / "agt-1", max_context_tokens=10_000)
+        for ctx, n in ((aud, 2), (main, 5)):
+            ctx.set_turn(1)
+            ctx.add({"role": "user", "content": f"q-{n}"})
+            for _ in range(n):
+                ctx.add(
+                    {"role": "user", "tool": "shell", "success": True, "content": "o"}
+                )
+            ctx.add(
+                {
+                    "role": "assistant",
+                    "thought": "",
+                    "ops": [{"action": "complete", "action_input": {"result": "r"}}],
+                }
+            )
+        sid = sdir.name
+        mixed = tool_history(
+            {"query": "SELECT seq FROM history WHERE kind='final' ORDER BY seq"},
+            session_dir=sdir,
+        )
+        assert "seq=4" in mixed.output and "seq=7" in mixed.output  # 둘 다 섞여 있다
+        only_main = tool_history(
+            {
+                "query": "SELECT seq FROM history WHERE kind='final' "
+                f"AND loc LIKE '{sid}/history.jsonl:%' ORDER BY seq"
+            },
+            session_dir=sdir,
+        )
+        assert "seq=7" in only_main.output and "seq=4" not in only_main.output

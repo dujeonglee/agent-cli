@@ -401,7 +401,8 @@ AUDITOR_NAME = "auditor"
 AUDITOR_START_BRIEF = (
     "You are this session's auditor. main's history file: {history}\n"
     "main's session id: {session} — EVERY history call must pass "
-    'sessions:"{session}" (without it you query your own history, not main\'s).\n'
+    "sessions:\"{session}\" and the filter loc LIKE '{session}/history.jsonl:%' "
+    "(without them you read your own history, which that table also holds).\n"
     "Wake runs (not started by a person) have query author {wake!r} — skip them.\n"
     "Do your startup ritual now: if monitor(list) shows no monitor on that file, "
     'register monitor(add, when={{"type":"match","file":"{history}",'
