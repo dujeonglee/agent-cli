@@ -973,7 +973,11 @@ class TestMidBatchValidationFailure:
             if calls["n"] == 2:
                 # 가드가 개입 관찰을 붙이고 센티널을 돌려준 것처럼
                 return self._intervene(
-                    llm_text, "Observation: guard fired", "guard", outcome
+                    llm_text,
+                    "Observation: guard fired",
+                    "guard",
+                    outcome,
+                    record=turn.record,
                 )
             return real(self, llm_text, turn, op, outcome, accumulate)
 

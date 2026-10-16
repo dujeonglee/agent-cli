@@ -1816,7 +1816,10 @@ class TestAskToUser:
         op = types.SimpleNamespace(
             action="ask", action_input={"question": "정할까요?", "to": "user"}
         )
-        loop._dispatch._op_ask("raw", types.SimpleNamespace(thought=""), op, None)
+        turn = types.SimpleNamespace(
+            thought="", record={"role": "assistant", "content": ""}
+        )
+        loop._dispatch._op_ask("raw", turn, op, None)
         assert seen == [("정할까요?", "user")]
 
 

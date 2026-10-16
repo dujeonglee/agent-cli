@@ -60,6 +60,12 @@ def _op(**action_input):
     return types.SimpleNamespace(action="complete", action_input=action_input)
 
 
+#: `_require_answers(llm_text, turn, …)` 의 turn — 저장될 레코드만 있으면 된다.
+_TURN = types.SimpleNamespace(
+    thought="", record={"role": "assistant", "content": "raw"}
+)
+
+
 def _ids(loop):
     return [r["id"] for r in loop._state.run_requests]
 
@@ -404,19 +410,19 @@ class TestAnswersAreRequired:
 
     def test_missing_answers_is_bounced_once(self):
         loop = self._merged()
-        first = loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
+        first = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
         assert first is not None, "생략이 그대로 통과했다"
         assert loop._state.answers_prompted is True
 
         # 두 번째는 받아준다 — 무한 되묻기는 런을 태운다.
-        second = loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
+        second = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
         assert second is None, "되묻기가 한 번으로 안 끝난다"
 
     def test_bounce_names_the_ids_and_the_field(self):
         loop = self._merged()
         msgs = []
         loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
-        loop._dispatch._require_answers("raw", _op(result="r"), "r", {})
+        loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
         (msg,) = msgs
         assert '"1"' in msg and '"2"' in msg, "어떤 id 를 대라는지 안 보인다"
         assert "answers" in msg and "Re-emit `complete`" in msg
@@ -429,7 +435,7 @@ class TestAnswersAreRequired:
         msgs = []
         loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append((m, k))
         loop._dispatch._require_answers(
-            "raw", _op(result="둘 다 완료"), "둘 다 완료", {}
+            "raw", _TURN, _op(result="둘 다 완료"), "둘 다 완료", {}
         )
         ((msg, kw),) = msgs
         assert "«둘 다 완료»" in msg
@@ -440,7 +446,7 @@ class TestAnswersAreRequired:
         loop = self._merged()
         assert (
             loop._dispatch._require_answers(
-                "raw", _op(result="r", answers=["1"]), "r", {}
+                "raw", _TURN, _op(result="r", answers=["1"]), "r", {}
             )
             is None
         )
@@ -451,7 +457,8 @@ class TestAnswersAreRequired:
         없음. 꼬리가 매 턴 `answers: ["1"]` 까지 써 주니 비용은 필드 하나다."""
         loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
         assert (
-            loop._dispatch._require_answers("raw", _op(result="r"), "r", {}) is not None
+            loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
+            is not None
         )
 
     def test_empty_answers_list_is_bounced(self):
@@ -459,7 +466,9 @@ class TestAnswersAreRequired:
         합쳐진 런에서 아무것도 안 답하고 complete 할 이유가 없다."""
         loop = self._merged()
         assert (
-            loop._dispatch._require_answers("raw", _op(result="r", answers=[]), "r", {})
+            loop._dispatch._require_answers(
+                "raw", _TURN, _op(result="r", answers=[]), "r", {}
+            )
             is not None
         )
 
