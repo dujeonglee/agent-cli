@@ -28,6 +28,8 @@ PAGES = {
 <label>Branch <select id=b><option value=all>All</option><option value=river>Riverside</option></select></label>
 <button>Search</button></form><div id=r></div><script>f.onsubmit=e=>{e.preventDefault();
 r.textContent=q.value+' @ '+b.value+' → Shelf R-03'}</script>""",
+    "/challenge.html": """<!doctype html><title>Just a moment…</title><p>Unfortunately, bots use this site too.
+Please complete the following challenge to confirm you are human.</p><input type=checkbox id=c><label for=c>I am not a robot</label>""",
 }
 
 
@@ -94,6 +96,29 @@ def test_form_type_select_submit(session, site):
     out = s.click(_ref(s, "button", "Search"))
     assert "same page" in out
     assert "glass @ river → Shelf R-03" in s.text()
+
+
+def test_challenge_page_is_blocked_when_headless_is_pinned(site):
+    """사람 확인 페이지: ``AGENT_CLI_BROWSER_HEADLESS=1`` 이면 창 없이 ``[blocked]``,
+    조작은 거부 (auto 의 창 띄우기는 화면이 필요해 여기서 안 돈다)."""
+    pytest.importorskip("playwright.sync_api")
+    s = B.BrowserSession(
+        knobs={
+            "enabled": True,
+            "hosts": ("127.0.0.1",),
+            "executable": "",
+            "headless": "1",
+        }
+    )
+    try:
+        out = s.open(f"{site}/challenge.html")
+        assert out.startswith(f"[blocked] {site}/challenge.html — bot challenge (")
+        assert "AGENT_CLI_BROWSER_HEADLESS=1" in out and not s.visible
+        with pytest.raises(B.BrowserError, match="human-verification challenge"):
+            s.press("Enter")
+        assert "I am not a robot" in s.text()  # reading is still allowed
+    finally:
+        s.close()
 
 
 def test_host_rule_and_engine_label(session, site):

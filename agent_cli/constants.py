@@ -365,16 +365,25 @@ def has_words(text) -> bool:
 
 def browser_knobs() -> dict:
     """env 노브 — `AGENT_CLI_BROWSER_TOOL=0` 끔, `AGENT_CLI_BROWSER_HOSTS`(쉼표 목록,
-    비면 전부 허용), `AGENT_CLI_BROWSER_EXECUTABLE`(브라우저 실행 파일)."""
+    비면 전부 허용), `AGENT_CLI_BROWSER_EXECUTABLE`(브라우저 실행 파일),
+    `AGENT_CLI_BROWSER_HEADLESS` = `auto`(기본: 헤드리스로 시작, 사람 확인에
+    막히면 보이는 창으로 전환) | `1`(항상 헤드리스) | `0`(처음부터 보이는 창)."""
     import os
 
+    off = ("0", "false", "no", "off")
     hosts = [
         h.strip().lower().lstrip(".")
         for h in os.environ.get("AGENT_CLI_BROWSER_HOSTS", "").split(",")
     ]
+    headless = os.environ.get("AGENT_CLI_BROWSER_HEADLESS", "auto").strip().lower()
     return {
         "enabled": os.environ.get("AGENT_CLI_BROWSER_TOOL", "1").strip().lower()
-        not in ("0", "false", "no", "off"),
+        not in off,
         "hosts": tuple(h for h in hosts if h),
+        "headless": "0"
+        if headless in off
+        else "1"
+        if headless in ("1", "true", "yes", "on")
+        else "auto",
         "executable": os.environ.get("AGENT_CLI_BROWSER_EXECUTABLE", "").strip(),
     }
