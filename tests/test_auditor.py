@@ -262,3 +262,63 @@ class TestAssembly:
         while not conn.queue.empty():
             events.append(conn.queue.get_nowait())
         assert any(e == "status" and "🔎" in str(d) for e, d in events), events
+
+
+class TestLifetime:
+    """감사자의 구독이 세션 수명을 쥐면 안 되고(run 이 안 끝남·web 이 안 꺼짐),
+    반대로 수명에서 빼기만 하면 main 의 complete 직후 폴링 틱(1초) 전에 run 이
+    끝나 구독이 헛돈다. 둘 다 여기서 못 박는다 (DESIGN §3.6)."""
+
+    def test_passive_owner_monitors_do_not_keep_the_session_alive(self, tmp_path):
+        from agent_cli.monitor.conditions import MatchCondition
+        from agent_cli.monitor.registry import MonitorRegistry
+
+        reg = MonitorRegistry()
+        reg.stop()
+        reg.deliver = lambda *a, **k: ""
+        log = tmp_path / "h.jsonl"
+        log.write_text("")
+        try:
+            reg.add(
+                MatchCondition(str(log), "final"), owner="agent:aud", deadline_s=3600
+            )
+            assert reg.has_active_work()
+            reg.mark_passive("agent:aud")
+            assert not reg.has_active_work()
+            reg.add(MatchCondition(str(log), "x"), owner="main", deadline_s=3600)
+            assert reg.has_active_work()  # 다른 소유자의 감시는 여전히 센다
+        finally:
+            reg.stop()
+
+    def test_quiet_policy_ticks_monitors_before_deciding(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.pump import QuietPolicy
+
+        order: list[str] = []
+        monitors = MagicMock()
+        monitors.tick.side_effect = lambda now: order.append("tick")
+        monitors.has_active_work.return_value = False
+        agents = MagicMock()
+        agents.has_active_work.side_effect = lambda: (order.append("agents"), False)[1]
+        policy = QuietPolicy(
+            queue=InputQueue(), agent_registry=agents, monitors=monitors
+        )
+        assert policy.should_stop()
+        assert order[:2] == ["tick", "agents"]
+
+    def test_ensure_auditor_marks_its_monitors_passive(self, tmp_path):
+        from agent_cli.monitor.registry import MonitorRegistry
+
+        reg = make_registry(tmp_path)
+        mons = MonitorRegistry()
+        mons.stop()
+        reg.monitors = mons
+        ctx = _ctx(tmp_path)
+        try:
+            assert ensure_auditor(reg, parent_ctx=ctx, enabled=True) == "spawned"
+            (tm,) = _auditors(reg)
+            assert mons.passive_owners == {f"agent:{tm.key}"}
+        finally:
+            reg.shutdown_all()

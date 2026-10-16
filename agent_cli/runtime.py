@@ -274,6 +274,12 @@ def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> str:
         outcome = "resumed"
     else:
         key = tm.key
+    # 감사자의 구독은 세션을 살려 두지 않는다 — main 이 끝나면 run 도 끝나야
+    # 하고(감사는 QuietPolicy 가 멈추기 전에 돌리는 틱으로 그 전에 일어난다),
+    # 뷰어 없는 web 인스턴스가 24시간 감시를 데리고 안 꺼지면 안 된다.
+    monitors = getattr(registry, "monitors", None)
+    if monitors is not None and hasattr(monitors, "mark_passive"):
+        monitors.mark_passive(f"agent:{key}")
     from agent_cli.pump import WAKE_AUTHOR
 
     brief = AUDITOR_START_BRIEF.format(

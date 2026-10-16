@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -99,6 +100,12 @@ class QuietPolicy:
     def should_stop(self) -> bool:
         from agent_cli.runtime import session_has_live_work
 
+        # 판정 전에 모니터를 한 틱 돌린다 (v10.42.0): 방금 끝난 런이 history 에
+        # 남긴 줄을 구독한 쪽(감사자)이 있으면 그 보고가 **지금** inbox 에
+        # 들어가 아래 `has_active_work()` 가 참이 된다. 폴링 스레드의 1초
+        # 틱에 맡기면 그 사이에 run 이 끝나 구독이 헛돈다.
+        if self.monitors is not None and hasattr(self.monitors, "tick"):
+            self.monitors.tick(time.time())
         if self.agent_registry.has_active_work() or self.queue.pending_count():
             self._announced = None
             return False
