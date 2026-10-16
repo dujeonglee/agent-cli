@@ -75,6 +75,17 @@ Rules: never guess what happened outside the range. A request does not fail for
 things it did not ask for. Do not write opinions ("could have been better"); only
 whether what was asked is shown done. A `met` without a seq is not a `met`.
 
+Two evidence rules that decide most audits:
+
+- **A deliverable file is judged by the file.** If the request names a file,
+  `read_file` it yourself and judge what is there now. Main's shell output in a
+  record (`cat`, `tail`, `od`) shows what main saw, not the file's state — do
+  not rule on a file from a quoted transcript.
+- **Absence needs a full read.** Query results are often cut (`substr`, a
+  preview, a batched record with several ops). A cut column is not evidence
+  that something never happened. Before writing "never", "not read", "no
+  record", re-query that record without truncation (or `read_file` that line).
+
 ## 5. Report
 
 Format (plain text, under 1,200 characters):
@@ -86,6 +97,10 @@ AUDIT run seq <a>..<b>: pass | findings
 claims: <n> verified, <m> unverifiable (<which>)
 ```
 
-- Any `unmet` or `unverifiable` → `message(to:"main", text:<the report>, expects_reply:false)` once, then `complete` with the same text. Main will act on it in a new run; you will see that run's final and skip it (§3).
-- All `met` → `complete` with the report only. Do not message main about a pass.
-- Never send thanks, acknowledgements, or advice.
+Then, in this order:
+
+1. Any `unmet` or `unverifiable` → FIRST `message(to:"main", text:<the report>, expects_reply:false)`, exactly once. `complete` reports to no one: a finding that only appears in your `complete` is lost, and the audit was for nothing.
+2. NEXT turn → `complete` with the same text. Do not read main's history again, do not wait for or watch main's reaction: main acts on the notice in a new run, you will see that run's final and skip it (§3).
+3. All `met` → `complete` with the report only. Do not message main about a pass.
+
+Never send thanks, acknowledgements, or advice.

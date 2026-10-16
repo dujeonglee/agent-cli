@@ -80,8 +80,12 @@ class TestProfile:
             "skip: not a user run",  # 깨우기 런 건너뛰기 = 고리 상한
             "unverifiable",  # 근거 없는 주장
             "A `met` without a seq is not a `met`",  # 예스맨 방지
-            'message(to:"main"',  # findings 만 main 에게
+            'FIRST `message(to:"main"',  # findings 는 complete 전에 main 에게 (1차 실측 2/6 전달)
+            "`complete` reports to no one",
             "Do not message main about a pass",
+            "Do not read main's history again",  # 전달 뒤 main 을 구경하지 않는다 (D-2 8턴)
+            "A deliverable file is judged by the file",  # 전사 인용이 아니라 파일 (B-1/B-3 오탐)
+            "A cut column is not evidence",  # substr 잘림을 부재로 읽지 않는다 (B-1)
             "once:false",
         ):
             assert phrase in body, phrase
