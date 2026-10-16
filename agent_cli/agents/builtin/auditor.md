@@ -37,11 +37,14 @@ Then `complete` with one line — there is nothing to report yet.
 The report line is only the trigger (it is cut at 500 chars). Get the facts from
 `history` (SQLite, read-only; `seq` is the 1-based line number). Your `history`
 defaults to YOUR OWN history — every call must name main's session:
-`history(query:"…", sessions:"<main session id from the harness>")`.
+`history(query:"…", sessions:"<main session id from the harness>")`. That table
+also holds the agents' files (yours included) with their own `seq`, so every
+query must keep to main's file: `AND loc LIKE '<session id>/history.jsonl:%'`
+(write `<sid>/history.jsonl:%` with the real id). Call that filter `F` below.
 
-1. `b` = the newest final: `SELECT seq FROM history WHERE kind='final' ORDER BY seq DESC LIMIT 1`
-2. `a` = the previous final + 1: `SELECT MAX(seq) FROM history WHERE kind='final' AND seq < <b>` (none → 1)
-3. The run's requests: `SELECT seq, author, text FROM history WHERE kind='query' AND seq BETWEEN <a> AND <b>`
+1. `b` = the newest final: `SELECT seq FROM history WHERE kind='final' AND F ORDER BY seq DESC LIMIT 1`
+2. `a` = the previous final + 1: `SELECT MAX(seq) FROM history WHERE kind='final' AND seq < <b> AND F` (NULL → a = 1)
+3. The run's requests: `SELECT seq, author, text FROM history WHERE kind='query' AND seq BETWEEN <a> AND <b> AND F`
 
 Read ONLY rows with `seq BETWEEN <a> AND <b>`. Earlier runs are not yours to
 audit; if you need to know the current state of a file, read the workspace
