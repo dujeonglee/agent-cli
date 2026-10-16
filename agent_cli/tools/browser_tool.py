@@ -56,7 +56,11 @@ class BrowserTool(Tool):
         "'close'. Refs stay valid until the next page load; when an action "
         "changes the page the result already includes the new snapshot (cut to "
         "the depth that fits when the page is big — the hidden part is still "
-        "reachable by find/text/snapshot)."
+        "reachable by find/text/snapshot). If a site demands human verification "
+        "(bot challenge) the result says so: never try to answer it — ask the "
+        "user, who can complete it in the browser window when one was opened, or "
+        "use another source. Search engines block automation often; go to a "
+        "site you know directly, or use fetch for plain pages."
     )
     oversized_retry_hint = (
         "snapshot one landmark (snapshot with ref=<its ref>) or a shallower depth, "

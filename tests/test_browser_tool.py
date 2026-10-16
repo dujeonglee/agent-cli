@@ -190,6 +190,39 @@ class TestFind:
         assert B.find_nodes(B.parse_aria(SHOP), text="zzz") == []
 
 
+class TestChallenge:
+    SORRY = "https://www.google.com/sorry/index?continue=https://www.google.com/search"
+    DDG = (
+        "DuckDuckGo Unfortunately, bots use DuckDuckGo too. Please complete the "
+        "following challenge to confirm this search was made by a human."
+    )
+
+    def test_google_sorry_path_is_a_block_whatever_the_text(self):
+        assert B.is_challenge(self.SORRY, "", "") == "unusual-traffic block"
+
+    def test_short_page_with_a_marker(self):
+        assert B.is_challenge("https://x.test/", "DuckDuckGo", self.DDG).startswith(
+            "bot challenge ("
+        )
+        assert B.is_challenge("https://x.test/", "Just a moment…", "") == (
+            "bot challenge ('just a moment')"
+        )
+        assert B.is_challenge("https://x.test/", "", "비정상적인 트래픽이 감지") == (
+            "bot challenge ('비정상적인 트래픽')"
+        )
+
+    def test_long_page_about_captchas_is_not_a_challenge(self):
+        article = ("A CAPTCHA asks you to prove you are not a robot. " * 80)[:3000]
+        assert len(article) > B.CHALLENGE_TEXT_CAP
+        assert (
+            B.is_challenge("https://en.wikipedia.org/wiki/CAPTCHA", "CAPTCHA", article)
+            == ""
+        )
+
+    def test_ordinary_short_page(self):
+        assert B.is_challenge("https://x.test/", "Shop", "Aurora Lamp $39.50") == ""
+
+
 class TestAvailability:
     def test_off_by_knob(self, monkeypatch):
         monkeypatch.setenv("AGENT_CLI_BROWSER_TOOL", "0")
@@ -227,6 +260,8 @@ class FakeLocator:
         return self.page.scoped.get((self.role, self.name), self.page.tree)
 
     def inner_text(self):
+        if self.role is None:  # body — per page, so a challenge page can be told
+            return self.page.body_text.get(self.page.url, "BODY TEXT\n\n\n\nmore")
         return self.page.text_of.get(
             (self.role, self.name or ""), "BODY TEXT\n\n\n\nmore"
         )
@@ -264,7 +299,9 @@ class FakePage:
         self.pages = {}  # url -> (title, tree)
         self.scoped = {}  # (role, name) -> subtree
         self.text_of = {}
+        self.body_text = {}  # url -> inner_text of body
         self.navigates = {}  # (role, name, nth) -> (url)
+        self.context = FakeContext(None, None)
         self.actions, self.lookups, self.gotos = [], [], []
         self.keyboard = FakeKeyboard(self)
         self.handlers = {}
@@ -305,6 +342,34 @@ class FakePage:
 
     def on(self, event, handler):
         self.handlers[event] = handler
+
+
+class FakeContext:
+    def __init__(self, browser, storage_state):
+        self.browser, self.storage_state_in = browser, storage_state
+
+    def storage_state(self):
+        return {"cookies": [{"name": "seen"}]}
+
+    def new_page(self):
+        page = self.browser.make_page()
+        page.context = self
+        return page
+
+
+class FakeBrowser:
+    """``_launch`` 의 대역 — 새 페이지는 같은 사이트(pages)를 본다."""
+
+    def __init__(self, make_page, headless):
+        self.make_page, self.headless, self.closed = make_page, headless, False
+        self.context_kw = None
+
+    def new_context(self, **kw):
+        self.context_kw = kw
+        return FakeContext(self, kw.get("storage_state"))
+
+    def close(self):
+        self.closed = True
 
 
 class FakeDialog:
@@ -424,6 +489,21 @@ class TestSessionWithFakePage:
         out = s.click(link, budget=1)  # navigation → budgeted again, depth 0 floor
         assert out.startswith('clicked link "Aurora Lamp" — page changed\n')
         assert "[snapshot cut to depth 0: 2 of 2 nodes" in out
+
+    def test_headless_knob_default_is_auto(self, monkeypatch):
+        from agent_cli.constants import browser_knobs
+
+        monkeypatch.delenv("AGENT_CLI_BROWSER_HEADLESS", raising=False)
+        assert browser_knobs()["headless"] == "auto"
+        for raw, want in (
+            ("0", "0"),
+            ("off", "0"),
+            ("1", "1"),
+            ("true", "1"),
+            ("x", "auto"),
+        ):
+            monkeypatch.setenv("AGENT_CLI_BROWSER_HEADLESS", raw)
+            assert browser_knobs()["headless"] == want
 
     def test_nth_is_passed_to_the_locator(self, fake):
         s, page = fake
@@ -546,6 +626,149 @@ class TestSessionWithFakePage:
         [t.start() for t in ts]
         [t.join() for t in ts]
         assert all(seen) and s._thread.name == "agent-cli-browser"
+
+
+SORRY_URL = "http://shop.test/sorry/index?continue=/"
+SORRY_TEXT = "페이지 정보 Google의 시스템이 컴퓨터 네트워크에서 비정상적인 트래픽을 감지했습니다."
+
+
+@pytest.fixture
+def blocked(monkeypatch):
+    """사람 확인에 걸리는 사이트 + ``_launch`` 대역: 어떤 창이 떴는지 기록한다."""
+    pages = {
+        "http://shop.test/": ("Gadget Shop", SHOP),
+        "http://shop.test/item": ("Item", ITEM),
+        SORRY_URL: ("", '- text: 비정상적인 트래픽\n- link "왜"\n'),
+    }
+    body = {SORRY_URL: SORRY_TEXT}
+    launches: list[FakeBrowser] = []
+
+    def make_page():
+        page = FakePage()
+        page.pages, page.body_text = pages, body
+        page.navigates[("link", "Aurora Lamp", 0)] = (SORRY_URL,)
+        return page
+
+    def launch(self, *, headless):
+        b = FakeBrowser(make_page, headless)
+        launches.append(b)
+        return b
+
+    monkeypatch.setattr(B.BrowserSession, "_launch", launch)
+
+    def make(headless_knob):
+        s = B.BrowserSession(
+            knobs={
+                "enabled": True,
+                "hosts": ("shop.test",),
+                "executable": "",
+                "headless": headless_knob,
+            }
+        )
+        return s
+
+    yield make, launches, body
+    B.reset_browser()
+
+
+class TestVerificationSwitch:
+    def test_auto_opens_a_window_carries_state_and_refuses_actions(self, blocked):
+        make, launches, _ = blocked
+        s = make("auto")
+        try:
+            out = s.open("http://shop.test/")
+            assert out.startswith("[page] http://shop.test/") and s.visible is False
+            assert [b.headless for b in launches] == [True]
+            link = next(k for k, r in s._refs.items() if r.name == "Aurora Lamp")
+            out = s.click(link)
+            assert out.startswith(
+                'clicked link "Aurora Lamp" — page changed\n[verification needed] '
+            )
+            assert (
+                "unusual-traffic block" in out
+                and "A visible browser window was opened" in out
+            )
+            assert "stays visible for the rest of this session" in out
+            # a second, headed browser with the first one's cookies; the first is closed
+            assert [b.headless for b in launches] == [True, False]
+            assert launches[0].closed and launches[1].context_kw["storage_state"] == {
+                "cookies": [{"name": "seen"}]
+            }
+            assert s.visible and s._page.url == SORRY_URL and s.generation == 3
+            # acting on the challenge page is refused before anything else
+            with pytest.raises(B.BrowserError, match="human-verification challenge"):
+                s.click(link)
+            s.snapshot()
+            ref = next(k for k, r in s._refs.items() if r.name == "왜")
+            with pytest.raises(
+                B.BrowserError,
+                match="human-verification challenge .*complete it in the visible browser window",
+            ):
+                s.click(ref)
+            # still pending: the snapshot header says so
+            assert "[browser] visible — verification still pending" in s.snapshot()
+            # the user solves it: the page moves on; the next header says passed, once
+            s._page.load("http://shop.test/item")
+            out = s.snapshot()
+            assert (
+                "[browser] visible — verification passed; staying visible for this session"
+                in out
+            )
+            assert "[browser]" not in s.snapshot()
+            assert s.visible  # never back to headless
+        finally:
+            s.close()
+        assert launches[1].closed
+
+    def test_headless_1_reports_blocked_without_a_window(self, blocked):
+        make, launches, _ = blocked
+        s = make("1")
+        try:
+            out = s.open(SORRY_URL)
+            assert out.startswith(f"[blocked] {SORRY_URL} — unusual-traffic block.")
+            assert "AGENT_CLI_BROWSER_HEADLESS=1" in out and "official API" in out
+            assert len(launches) == 1 and s.visible is False
+            with pytest.raises(
+                B.BrowserError, match="Ask the user, use the site's official API"
+            ):
+                s.press("Enter")
+        finally:
+            s.close()
+
+    def test_auto_falls_back_to_blocked_when_no_window_can_open(
+        self, blocked, monkeypatch
+    ):
+        make, launches, _ = blocked
+        s = make("auto")
+        real = B.BrowserSession._launch
+
+        def launch(self, *, headless):
+            if not headless:
+                raise B.BrowserError(
+                    "no browser could be launched — chrome: no display"
+                )
+            return real(self, headless=headless)
+
+        monkeypatch.setattr(B.BrowserSession, "_launch", launch)
+        try:
+            out = s.open(SORRY_URL)
+            assert out.startswith("[blocked] ") and "no display" in out
+            assert s.visible is False and not launches[0].closed
+        finally:
+            s.close()
+
+    def test_headless_0_starts_visible_and_only_asks(self, blocked):
+        make, launches, _ = blocked
+        s = make("0")
+        try:
+            out = s.open(SORRY_URL)
+            assert [b.headless for b in launches] == [False] and s.visible
+            assert (
+                out.startswith("[verification needed] ")
+                and "window is visible on this machine" in out
+            )
+        finally:
+            s.close()
 
 
 class TestLaunchFallback:

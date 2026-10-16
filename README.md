@@ -201,6 +201,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_BROWSER_TOOL` | — | `0` 이면 `browser` 도구를 끈다 (기본: playwright 가 깔려 있으면 켜짐) |
 | `AGENT_CLI_BROWSER_HOSTS` | — | `browser` 가 열 수 있는 호스트 (쉼표 목록, 하위 도메인 포함; 비면 전부) |
 | `AGENT_CLI_BROWSER_EXECUTABLE` | — | `browser` 가 띄울 브라우저 실행 파일 (기본: 설치된 Chrome → Playwright Chromium) |
+| `AGENT_CLI_BROWSER_HEADLESS` | — | `auto`(기본): 헤드리스로 시작, 사이트가 사람 확인을 요구하면 보이는 창으로 전환 · `1`: 항상 헤드리스 · `0`: 처음부터 보이는 창 |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
@@ -1107,6 +1108,7 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 - **ref 는 페이지 로드 단위**로 유효합니다. 번호는 세션 내내 올라가기만 해서 옛 번호의 뜻이 바뀌지 않고, 페이지가 바뀐 뒤 옛 번호를 쓰면 "stale — take a new snapshot" 으로 거부됩니다. 같은 페이지 안에서는 DOM 이 바뀌어도 그 요소가 남아 있는 한 계속 맞습니다(ref = role + 이름 + 순번 → Playwright `get_by_role().nth()`; 공개 API 만 씀).
 - **큰 페이지**: 이동·조작 뒤 자동으로 붙는 스냅샷은 **과대 출력 캡(창의 1/10)의 1/4 안에 드는 깊이까지만** 보이고, `[snapshot cut to depth D: n of N nodes …]` 한 줄이 나머지를 `find`·`text`·`snapshot(ref=)` 로 안내합니다(숨은 요소도 ref 가 있어 `find` 로 찾은 번호를 바로 누를 수 있음). 명시적 `snapshot` 은 전체이고, 그 결과가 캡을 넘으면 다른 도구처럼 [과대 출력 캡](#과대-출력-캡-oversized-observation)을 탑니다. 좁히는 길은 `snapshot(ref=<랜드마크>)`·`depth`·`find`·`text` — 안내 문구가 이를 가리킵니다.
 - **안전**: 코드 실행 모드 없음. `http(s)` 만(`file://` 거부). `AGENT_CLI_BROWSER_HOSTS` 허용 목록 — 이동·클릭이 목록 밖 호스트로 끝나면 빈 페이지로 돌리고 거절. `alert`/`confirm` 은 자동으로 닫고 결과에 한 줄 남김. 다운로드 거부. 프로필은 메모리 전용(세션이 끝나면 쿠키·로그인 소멸). **결제·전송·삭제처럼 되돌릴 수 없는 동작은 하니스가 구분하지 못합니다** — 로그인된 사이트에는 쓰지 말고, 허용 목록으로 갈 수 있는 곳을 묶으세요.
+- **사람 확인(차단·CAPTCHA)**: 구글의 "비정상적인 트래픽" 차단이나 DuckDuckGo 의 챌린지처럼 사이트가 사람 확인을 요구하면, 도구는 스냅샷 대신 `[verification needed] …` 를 돌려주고 **보이는 브라우저 창을 띄웁니다**(`AGENT_CLI_BROWSER_HEADLESS=auto`, 기본; 쿠키를 옮겨 같은 세션). 모델은 `ask` 로 사용자에게 묻고 멈추며, 사용자가 그 창에서 확인을 마치고 답하면 같은 창에서 이어 갑니다(세션 끝까지 보이는 채로). 챌린지 페이지에서의 클릭·입력은 거부됩니다. 창을 못 띄우는 환경(서버·CI)이나 `=1` 이면 `[blocked] …` 로 끝나고, 모델은 다른 출처나 공식 API 를 쓰거나 사용자에게 묻습니다. **우회·위장(UA 변조, 자동 풀이)은 하지 않습니다.** 검색 엔진은 자동화를 자주 막으니, 아는 사이트로 바로 가거나 `fetch` 를 쓰는 편이 낫습니다.
 - **동시성**: 세션당 브라우저 하나를 전용 스레드가 소유하고 모든 호출(서브에이전트 포함)을 직렬화합니다. 시간 제한은 이동 30초, 조작 10초.
 - 실측·비교(Playwright MCP 대비 기본 비용·턴 수)는 릴리스 노트와 `docs/browser/DESIGN.md` §7.
 

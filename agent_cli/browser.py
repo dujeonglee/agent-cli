@@ -242,6 +242,45 @@ def render_within(nodes: list[Node], budget: int) -> tuple[str, int | None]:
     return best, best_depth
 
 
+#: 사람 확인(챌린지) 페이지의 표지 — 본문이 짧고 이 중 하나가 있으면. 긴 페이지는
+#: 단어가 있어도(CAPTCHA 를 설명하는 문서) 챌린지가 아니다.
+CHALLENGE_TEXT_CAP = 2_500
+CHALLENGE_MARKERS = (
+    "unusual traffic",
+    "비정상적인 트래픽",
+    "verify you are human",
+    "verify that you are human",
+    "confirm you are human",
+    "confirm this search was made by a human",
+    "not a robot",
+    "로봇이 아닙니다",
+    "complete the following challenge",
+    "just a moment",
+    "checking your browser",
+    "attention required",
+    "enable javascript and cookies to continue",
+    "captcha",
+)
+
+
+def is_challenge(url: str, title: str, text: str) -> str:
+    """사람 확인 페이지면 그 이유(짧은 꼬리표), 아니면 ``""``.
+
+    두 모양을 안다(2026-10 실측): Google 의 ``/sorry/`` 경로("비정상적인
+    트래픽"), 그리고 짧은 본문에 챌린지 문구가 있는 페이지(DuckDuckGo html 판
+    "bots use DuckDuckGo too … complete the following challenge", Cloudflare
+    "Just a moment…"). 본문이 ``CHALLENGE_TEXT_CAP`` 보다 길면 문구가 있어도
+    아니다 — CAPTCHA 를 다루는 문서가 걸리지 않도록."""
+    path = urlparse(url).path.lower()
+    if path.startswith("/sorry"):
+        return "unusual-traffic block"
+    if len(text) > CHALLENGE_TEXT_CAP:
+        return ""
+    hay = f"{title}\n{text}".lower()
+    hit = next((m for m in CHALLENGE_MARKERS if m in hay), "")
+    return f"bot challenge ({hit!r})" if hit else ""
+
+
 def find_nodes(nodes: list[Node], *, text: str = "", regex: str = "") -> list[str]:
     """``text``(대소문자 무시 부분일치) 또는 ``regex`` 에 맞는 노드를 조상
     경로와 함께 — ``main > list > listitem > link "X" [ref=e5]``."""
@@ -304,6 +343,14 @@ class BrowserSession:
     _refs: dict[str, _RefTarget] = field(default_factory=dict, repr=False)
     _dialogs: list[str] = field(default_factory=list, repr=False)
     closed: bool = False
+    #: 보이는 창인가 — ``AGENT_CLI_BROWSER_HEADLESS=0`` 이거나 사람 확인 때문에
+    #: 헤드리스에서 전환됐다. 한번 보이면 세션 끝까지 보인다.
+    visible: bool = False
+    #: 마지막으로 본 페이지의 챌린지 이유 ("" = 아님). 조작 거부의 근거.
+    _challenge: str = ""
+    #: 창을 띄운 뒤 사용자가 아직 확인을 마치지 않았다 — 다음 스냅샷 머리에
+    #: 통과/대기 한 줄을 붙이고, 통과하면 끈다.
+    _verification_pending: bool = False
 
     # ── 스레드 ──
     def _call(self, fn):
@@ -333,12 +380,16 @@ class BrowserSession:
                 fut.set_exception(e)
 
     # ── 실행 ──
-    def _ensure_page(self):
-        if self._page is not None:
-            return self._page
-        from playwright.sync_api import sync_playwright
+    def _launch(self, *, headless: bool):
+        """브라우저를 띄워 돌려준다. 실행 파일 → 설치된 Chrome → Playwright
+        Chromium 순으로 시도. Playwright 드라이버는 스레드당 하나(``_pw``) —
+        같은 스레드에서 두 번 시작하면 "Sync API inside the asyncio loop" 로
+        거부되므로, 보이는 창으로 옮길 때도 드라이버는 그대로 두고 브라우저만
+        새로 띄운다."""
+        if self._pw is None:
+            from playwright.sync_api import sync_playwright
 
-        pw = sync_playwright().start()
+            self._pw = sync_playwright().start()
         tried = []
         candidates: list[tuple[str, dict]] = []
         if self.knobs.get("executable"):
@@ -346,30 +397,127 @@ class BrowserSession:
                 ("executable", {"executable_path": self.knobs["executable"]})
             )
         candidates += [("chrome", {"channel": "chrome"}), ("chromium", {})]
-        browser = None
         for label, kw in candidates:
             try:
-                browser = pw.chromium.launch(headless=True, **kw)
+                browser = self._pw.chromium.launch(headless=headless, **kw)
                 self.engine = label
-                break
+                return browser
             except Exception as e:
                 tried.append(f"{label}: {_first_line(e)}")
-        if browser is None:
-            pw.stop()
-            raise BrowserError(
-                "no browser could be launched — "
-                + "; ".join(tried)
-                + ". Install one with `playwright install chromium` (or set "
-                "AGENT_CLI_BROWSER_EXECUTABLE to an existing Chrome/Chromium)."
-            )
-        context = browser.new_context(accept_downloads=False)
+        if self._browser is None:  # 첫 기동 실패 — 드라이버도 거둔다
+            self._pw.stop()
+            self._pw = None
+        raise BrowserError(
+            "no browser could be launched — "
+            + "; ".join(tried)
+            + ". Install one with `playwright install chromium` (or set "
+            "AGENT_CLI_BROWSER_EXECUTABLE to an existing Chrome/Chromium)."
+        )
+
+    def _attach(self, browser, storage_state=None):
+        """컨텍스트·페이지를 만들고 세션에 건다. ``storage_state`` 는 보이는 창으로
+        옮겨 갈 때 가져오는 쿠키·로컬스토리지."""
+        kw = {"storage_state": storage_state} if storage_state else {}
+        context = browser.new_context(accept_downloads=False, **kw)
         page = context.new_page()
         page.set_default_timeout(ACTION_TIMEOUT_MS)
         page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
         page.on("dialog", self._on_dialog)
-        self._pw, self._browser, self._page = pw, browser, page
-        atexit.register(self.close)
+        self._browser, self._page = browser, page
         return page
+
+    def _ensure_page(self):
+        if self._page is not None:
+            return self._page
+        headless = self.knobs.get("headless", "auto") != "0"
+        browser = self._launch(headless=headless)
+        self.visible = not headless
+        atexit.register(self.close)
+        return self._attach(browser)
+
+    def _show_window(self, url: str) -> str:
+        """헤드리스 → 보이는 창. 쿠키·스토리지를 옮기고 같은 URL 을 다시 연다.
+        성공이면 ``""``, 아니면 못 띄운 이유(화면 없는 서버 등)."""
+        try:
+            state = self._page.context.storage_state()
+        except Exception:
+            state = None
+        try:
+            browser = self._launch(headless=False)
+        except BrowserError as e:
+            return str(e)
+        old_browser = self._browser
+        self._attach(browser, state)
+        try:
+            old_browser.close()
+        except Exception:
+            pass
+        self.visible = True
+        self._verification_pending = True
+        self._page.goto(url, wait_until="domcontentloaded")
+        self._new_document()
+        return ""
+
+    def _challenge_on(self, page) -> str:
+        """현재 페이지가 사람 확인 페이지인지 — 이유 또는 ``""``. 결과를
+        ``_challenge`` 에 남겨 조작 거부가 본다."""
+        try:
+            text = page.locator("body").inner_text()
+        except Exception:
+            text = ""
+        self._challenge = is_challenge(page.url, self._state().title, text)
+        return self._challenge
+
+    def _refuse_challenge(self, page):
+        if self._challenge and self._challenge_on(page):
+            raise BrowserError(
+                f"this page is a human-verification challenge ({self._challenge}) "
+                "— automation must not answer it. "
+                + (
+                    "The user must complete it in the visible browser window; then call snapshot."
+                    if self.visible
+                    else "Ask the user, use the site's official API or another source."
+                )
+            )
+
+    def _landed(self, budget: int) -> str:
+        """이동이 끝난 뒤의 관찰 — 보통은 헤더 + 자동 스냅샷, 사람 확인 페이지면
+        창을 띄우고(`auto`) 그 사실을 알리는 한 덩어리."""
+        page = self._page
+        why = self._challenge_on(page)
+        if not why:
+            return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
+        url = page.url
+        lead = (
+            f"[verification needed] {url} — {why}. Automation cannot pass this, "
+            "and must not try to work around it with other tools (curl with a "
+            "browser user agent, retries, proxies)."
+        )
+        if self.visible:
+            return (
+                f"{lead} The browser window is visible on this machine; ask the "
+                "user to complete the verification there, then call snapshot to continue."
+            )
+        failed = (
+            self._show_window(url)
+            if self.knobs.get("headless", "auto") == "auto"
+            else "AGENT_CLI_BROWSER_HEADLESS=1"
+        )
+        if not failed:
+            return (
+                f"{lead} A visible browser window was opened on this machine with "
+                "the same session; ask the user to complete the verification there, "
+                "then call snapshot to continue. The browser stays visible for the "
+                "rest of this session."
+            )
+        return (
+            f"[blocked] {url} — {why}. Automation cannot pass this and no browser "
+            f"window can be shown here ({_first_line(failed)}). Do not try to work "
+            "around it with other tools (curl with a browser user agent, retries, "
+            "proxies) — that is answering the challenge by other means. Ask the "
+            "user, use the site's official API or another source, or fetch a "
+            "different page."
+        )
 
     def _on_dialog(self, dialog):
         self._dialogs.append(f"{dialog.type}: {dialog.message}"[:200])
@@ -414,6 +562,18 @@ class BrowserSession:
         if self._dialogs:
             head += "\n[dialog dismissed] " + " | ".join(self._dialogs)
             self._dialogs = []
+        if self._verification_pending:
+            if self._challenge_on(self._page):
+                head += (
+                    "\n[browser] visible — verification still pending; the user "
+                    "must complete it in the window"
+                )
+            else:
+                self._verification_pending = False
+                head += (
+                    "\n[browser] visible — verification passed; staying visible "
+                    "for this session"
+                )
         return head
 
     def _locator(self, ref: str):
@@ -472,10 +632,7 @@ class BrowserSession:
         after = self._state()
         if after.url != before.url:
             self._new_document()
-            return (
-                f"{what} — page changed\n{self._header(after)}\n"
-                f"{self._auto_snapshot(budget)}"
-            )
+            return f"{what} — page changed\n{self._landed(budget)}"
         return (
             f"{what} — same page ({after.url}); take a snapshot to see what changed"
             + ("\n" + self._header(after) if self._dialogs else "")
@@ -490,7 +647,7 @@ class BrowserSession:
             page.goto(url, wait_until="domcontentloaded")
             self._enforce_host_after(page)
             self._new_document()
-            return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
+            return self._landed(budget)
 
         return self._call(go)
 
@@ -500,7 +657,7 @@ class BrowserSession:
             page.go_back(wait_until="domcontentloaded")
             self._enforce_host_after(page)
             self._new_document()
-            return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
+            return self._landed(budget)
 
         return self._call(go)
 
@@ -540,6 +697,7 @@ class BrowserSession:
         def go():
             page = self._need_page()
             before = self._state()
+            self._refuse_challenge(page)
             target = self._interactive(ref)
             self._locator(ref).click()
             return self._after_action(page, before, f"clicked {target}", budget)
@@ -552,6 +710,7 @@ class BrowserSession:
         def go():
             page = self._need_page()
             before = self._state()
+            self._refuse_challenge(page)
             target = self._interactive(ref)
             loc = self._locator(ref)
             loc.fill(text)
@@ -567,6 +726,7 @@ class BrowserSession:
         def go():
             page = self._need_page()
             before = self._state()
+            self._refuse_challenge(page)
             target = self._interactive(ref)
             self._locator(ref).select_option(value)
             return self._after_action(
@@ -579,6 +739,7 @@ class BrowserSession:
         def go():
             page = self._need_page()
             before = self._state()
+            self._refuse_challenge(page)
             page.keyboard.press(key)
             return self._after_action(page, before, f"pressed {key}", budget)
 
