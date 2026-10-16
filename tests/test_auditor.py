@@ -34,7 +34,7 @@ def _auditors(reg):
 
 def _pattern():
     """브리프가 감사자에게 시키는 모니터 정규식 — 브리프 문장에서 그대로 뽑는다."""
-    brief = AUDITOR_START_BRIEF.format(history="/h", wake=WAKE_AUTHOR)
+    brief = AUDITOR_START_BRIEF.format(history="/h", session="s1", wake=WAKE_AUTHOR)
     m = re.search(r'"pattern":"((?:\\.|[^"\\])*)"', brief)
     assert m, brief
     return json.loads(f'"{m.group(1)}"')
@@ -74,6 +74,7 @@ class TestProfile:
         for phrase in (
             '\\"kind\\": \\"final\\"',  # 구독 패턴 (md 안에선 JSON 이스케이프)
             "seq BETWEEN",  # 서수 구간만
+            'sessions:"<main session id from the harness>"',  # 자기 history 가 아니라 main 의
             "kind='final' ORDER BY seq DESC LIMIT 1",  # b = 최신 final
             "skip: not a user run",  # 깨우기 런 건너뛰기 = 고리 상한
             "unverifiable",  # 근거 없는 주장
@@ -88,9 +89,10 @@ class TestProfile:
 class TestBrief:
     def test_brief_names_history_path_wake_author_and_pattern(self):
         brief = AUDITOR_START_BRIEF.format(
-            history="/w/.agent-cli/s/history.jsonl", wake=WAKE_AUTHOR
+            history="/w/.agent-cli/s/history.jsonl", session="1791", wake=WAKE_AUTHOR
         )
         assert "/w/.agent-cli/s/history.jsonl" in brief
+        assert 'sessions:"1791"' in brief  # 감사자의 history 기본값은 자기 것
         assert repr(WAKE_AUTHOR) in brief
         assert '"type":"match"' in brief and "once=false" in brief
 
@@ -169,6 +171,7 @@ class TestEnsureAuditor:
             assert wait_until(lambda: len(runner.queries()) == 1)
             brief = runner.queries()[0]
             assert str(ctx.history_path) in brief and repr(WAKE_AUTHOR) in brief
+            assert f'sessions:"{ctx.session_dir.name}"' in brief
             assert json.dumps(_pattern())[1:-1] in brief  # JSON 안에 이스케이프된 채로
             # 두 번째 부팅(restore 로 되살아난 것과 같다): 새로 띄우지 않고 브리프만 다시
             assert ensure_auditor(reg, parent_ctx=ctx, enabled=True) == ""

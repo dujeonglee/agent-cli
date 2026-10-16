@@ -400,6 +400,8 @@ AUDITOR_NAME = "auditor"
 #: 모니터는 세션을 넘지 못하므로 매 부팅마다 보낸다(프로파일의 "시작 의식").
 AUDITOR_START_BRIEF = (
     "You are this session's auditor. main's history file: {history}\n"
+    "main's session id: {session} — EVERY history call must pass "
+    'sessions:"{session}" (without it you query your own history, not main\'s).\n'
     "Wake runs (not started by a person) have query author {wake!r} — skip them.\n"
     "Do your startup ritual now: if monitor(list) shows no monitor on that file, "
     'register monitor(add, when={{"type":"match","file":"{history}",'
