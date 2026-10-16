@@ -150,6 +150,11 @@ class ParsedTurn:
     raw: str = ""
     parse_stage: int = 0
     thinking: str | None = None
+    #: 이 턴이 history 에 저장되는 assistant 레코드 — ``TurnDispatcher._handle_text_path``
+    #: 가 **한 번** 만든다(서버 파싱 호출·타 포맷 구제·이름 복원·텍스트 파싱 중 어느
+    #: 길이든). 관찰을 기록하는 모든 경로가 이걸 쓰고 원문을 다시 파싱하지 않는다
+    #: (v10.42.0 — 가상 op 경로가 원문만 직렬화해 빈 레코드를 남기던 사고의 수리).
+    record: dict | None = None
     #: v10.24.0: 호출이 산문으로 나뉜 두 군데 이상에 있었다 — 어느 것도 고르지
     #: 않고(``ops`` 빔, ``parse_stage`` 0) 형식 거부로 되묻는다.
     split_calls: bool = False
