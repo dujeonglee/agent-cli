@@ -76,7 +76,7 @@ class TestProfile:
             "seq BETWEEN",  # 서수 구간만
             'sessions:"<main session id from the harness>"',  # 자기 history 가 아니라 main 의
             "loc LIKE '<session id>/history.jsonl:%'",  # 에이전트 파일(자기 것 포함)을 뺀다
-            "kind='final' ORDER BY seq DESC LIMIT 1",  # b = 최신 final
+            "kind='final' AND F ORDER BY seq DESC LIMIT 1",  # b = 최신 final (main 파일만)
             "skip: not a user run",  # 깨우기 런 건너뛰기 = 고리 상한
             "unverifiable",  # 근거 없는 주장
             "A `met` without a seq is not a `met`",  # 예스맨 방지
