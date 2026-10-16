@@ -132,11 +132,11 @@ class TurnDispatcher:
     def _intervene(
         self,
         llm_text: str,
-        record: dict | None,
         message: str,
         reason: str,
         outcome: dict,
         *,
+        record: dict | None,
         failure_signal: str | None = None,
         tool_name: str = "",
         primitives=None,
@@ -919,7 +919,6 @@ class TurnDispatcher:
         # 이 관찰을 컨텍스트에서 접는다(재시도는 기록하지 않는다).
         return self._intervene(
             llm_text,
-            turn.record,
             (
                 f"Observation: your `complete` was refused — {len(pending)} user "
                 f"request{'s are' if len(pending) != 1 else ' is'} open in this run "
@@ -932,6 +931,7 @@ class TurnDispatcher:
             ),
             "answers required",
             outcome,
+            record=turn.record,
             recovery_kind="format",
             store_emission=False,
         )
@@ -994,7 +994,6 @@ class TurnDispatcher:
         ids = ", ".join(f'"{r.get("id")}"' for r in still_open)
         return self._intervene(
             llm_text,
-            turn.record,
             (
                 f"Observation: your result was delivered, but {len(still_open)} "
                 "user request(s) in this run are still unanswered — you did not "
@@ -1006,6 +1005,7 @@ class TurnDispatcher:
             ),
             "open requests remain",
             outcome,
+            record=turn.record,
             tool_name="complete",
         )
 
@@ -1045,7 +1045,6 @@ class TurnDispatcher:
         인용한 관찰 하나, emission 은 저장하지 않는다(v9.21.1 원칙)."""
         return self._intervene(
             llm_text,
-            turn.record,
             (
                 "Observation: your `complete` was refused — it reports to no one, "
                 "and you still owe:\n"
@@ -1056,6 +1055,7 @@ class TurnDispatcher:
             ),
             "debts owed",
             outcome,
+            record=turn.record,
             tool_name="complete",
             render=True,
             store_emission=False,
@@ -1066,7 +1066,6 @@ class TurnDispatcher:
         갔다) — 남은 빚만 독촉하고 루프를 잇는다."""
         return self._intervene(
             llm_text,
-            turn.record,
             (
                 "Observation: your result was delivered, but you still owe:\n"
                 f"{self._debt_lines(debts)}\n"
@@ -1074,6 +1073,7 @@ class TurnDispatcher:
             ),
             "debts owed",
             outcome,
+            record=turn.record,
             tool_name="complete",
         )
 
@@ -1547,10 +1547,10 @@ class TurnDispatcher:
             # 형식 개입과 같은 fold. 종전엔 빈 값이라 런 끝까지 남았다.
             return self._intervene(
                 llm_text,
-                turn.record,
                 intervention.message,
                 f"action loop ({tool_name}, level {loop_level})",
                 outcome,
+                record=turn.record,
                 failure_signal=FAILURE_ACTION_LOOP,
                 tool_name=tool_name,
                 primitives=intervention.primitives,
@@ -1626,10 +1626,10 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
-                turn.record,
                 f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "unknown tool",
                 outcome,
+                record=turn.record,
                 failure_signal=FAILURE_UNKNOWN_TOOL,
                 tool_name=tool_name,
                 recovery_kind="format",
@@ -1664,10 +1664,10 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
-                turn.record,
                 f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "schema mismatch",
                 outcome,
+                record=turn.record,
                 failure_signal=FAILURE_SCHEMA_MISMATCH,
                 tool_name=tool_name,
                 recovery_kind="format",
@@ -1740,10 +1740,10 @@ class TurnDispatcher:
             return None
         return self._intervene(
             llm_text,
-            turn.record,
             f"Observation: {err_msg}\n{echo_prior_output(raw)}",
             "bad arguments",
             outcome,
+            record=turn.record,
             failure_signal=FAILURE_SCHEMA_MISMATCH,
             tool_name=tool_name,
             recovery_kind="format",
@@ -1798,10 +1798,10 @@ class TurnDispatcher:
         # 됐다(Harbor extract-elf: 모델이 그 조각을 22턴 흉내 냈다).
         return self._intervene(
             llm_text,
-            turn.record,
             intervention.message,
             recovery_reason,
             outcome,
+            record=turn.record,
             primitives=intervention.primitives,
             recovery_kind="format",
             store_emission=False,
