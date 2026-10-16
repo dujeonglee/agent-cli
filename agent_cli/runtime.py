@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.constants import AUDITOR_NAME, AUDITOR_START_BRIEF, auditor_enabled
+from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME, auditor_enabled
 from agent_cli.loop.ports import LoopPorts
 
 
@@ -221,8 +221,9 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     참이 되고 ``on_reply`` 가 이미 깨운다. 얹을 항이 없는 것이 가장
     안전하다: 그 항을 빠뜨린 것이 v9.11.0 의 "발화해도 조용함" 이었다.
 
-    Returns ``(waker, revived, auto)`` — 부활/auto-spawn 수는 호출자가
-    자기 표면(콘솔/렌더러)으로 알린다."""
+    Returns ``(waker, revived, auto, auditor)`` — 부활/auto-spawn 수는 호출자가
+    자기 표면(콘솔/렌더러)으로 알린다; ``auditor`` 는 `SessionAuditor` 핸들
+    (노브 off 나 세션 없음이면 None — 펌프의 ``PumpDeps.auditor`` 자리)."""
     from agent_cli.subagent.agents_live import MailWaker
 
     waker = MailWaker(enqueue_wake, registry.has_pending_replies)
@@ -240,55 +241,89 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     return waker, revived, auto, auditor
 
 
-def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> str:
-    """세션 감사자를 노브대로 맞춘다 (docs/auditor/DESIGN.md §3.2) — 살아 있는
-    감사자는 늘 0 또는 1 이다. 돌려주는 값은 부팅 알림용 한 단어:
-    ``""``(변화 없음) · ``"spawned"`` · ``"resumed"``(죽은 툼스톤 부활) ·
-    ``"killed"``(노브가 꺼졌는데 되살아났다) · ``"error: …"``.
+class SessionAuditor:
+    """세션 감사자 핸들 (docs/auditor/DESIGN.md 3판) — 살아 있는 감사자는 늘
+    0 또는 1 이고, 하니스가 하는 일은 둘뿐이다: 노브대로 띄우거나 내리기
+    (`ensure_auditor`), 그리고 **main 의 사용자 런이 끝날 때마다** 그 런의
+    history 구간을 `request(expects_reply=True)` 로 보내기(`run_ended`).
 
-    켜져 있으면 — 어떻게 살아났든 — **시작 브리프를 보낸다**: 모니터는 세션을
-    넘지 못하므로 restore 로 되살아난 감사자도 다시 걸어야 한다. 세션이 없으면
-    (``parent_ctx`` None) 감시할 history 가 없으니 아무것도 하지 않는다.
+    감사 결과는 회신 빚이 되돌린다 — 감사자는 `reply` 하기 전엔 `complete`
+    가 거절되고, 3회 독촉 뒤에도 안 하면 런 요약이 폴백 배달된다. 판정문을
+    하니스가 읽지 않으니 형식 의존이 없고, 회신이 main 을 깨우는 것은 기존
+    MailWaker 다. 고리 상한은 코드다: 깨우기 런(감사 회신으로 깨어난 런)은
+    `run_ended` 가 요청을 보내지 않는다.
+
+    ``outcome`` 은 부팅 알림용 한 단어: ``""``(변화 없음) · ``"spawned"`` ·
+    ``"resumed"``(죽은 툼스톤 부활) · ``"killed"``(노브가 꺼졌는데 되살아났다) ·
+    ``"error: …"``. 감사자가 없으면(노브 off·스폰 실패) ``key`` 가 비고 핸들은
+    아무것도 보내지 않는다 — 조립은 한 모양이다.
+    """
+
+    def __init__(self, registry, ctx, key: str, outcome: str) -> None:
+        self.registry = registry
+        self.ctx = ctx
+        self.key = key
+        self.outcome = outcome
+        # 지금까지의 history 레코드 수 — 이 프로세스 전의 history 는 감사하지
+        # 않는다. 레코드 n 개면 마지막 줄의 `seq`(1 기준 줄 번호)가 n 이다.
+        self._cursor: int = ctx.next_ordinal
+
+    @property
+    def active(self) -> bool:
+        return bool(self.key)
+
+    def run_ended(self, req, *, ok: bool) -> str:
+        """main 의 런이 끝났다. 사용자 런이고 `complete` 로 끝났으면 그 런의
+        구간을 감사 요청으로 보낸다. 커서는 **모든** 런이 앞당긴다 — 실패한
+        런·깨우기 런의 레코드가 다음 감사 구간에 섞이지 않게.
+
+        돌려주는 값: 보낸 요청 본문(빈 문자열 = 안 보냈다)."""
+        a, b = self._cursor + 1, self.ctx.next_ordinal  # seq 는 1 기준 줄 번호
+        self._cursor = b
+        if not self.key or b < a:
+            return ""
+        if not ok or req.wake or not req.author_is_user:
+            return ""
+        tm = self.registry.instance_for(AUDITOR_NAME, AUDITOR_NAME)
+        if tm is None or tm.state == "dead":
+            return ""
+        text = AUDIT_REQUEST.format(
+            a=a,
+            b=b,
+            session=self.ctx.session_dir.name,
+            history=str(self.ctx.history_path),
+        )
+        error = self.registry.request(tm.key, text, author="main", expects_reply=True)
+        return "" if error else text
+
+
+def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> SessionAuditor | None:
+    """세션 감사자를 노브대로 맞춘다 (docs/auditor/DESIGN.md §3.2) — 살아 있는
+    감사자는 늘 0 또는 1 이다. 돌려주는 핸들의 ``outcome`` 이 부팅 알림이고
+    ``active`` 가 거짓이면(노브 off·스폰 실패) 핸들은 비활성이다. 세션이
+    없으면(``parent_ctx`` None) 감사할 history 가 없으니 None.
     """
     if parent_ctx is None:
-        return ""
+        return None
     tm = registry.instance_for(AUDITOR_NAME, AUDITOR_NAME)
     if not enabled:
         if tm is not None and tm.state != "dead":
             registry.kill(tm.key)
-            return "killed"
-        return ""
-    outcome = ""
+            return SessionAuditor(registry, parent_ctx, "", "killed")
+        return SessionAuditor(registry, parent_ctx, "", "")
     if tm is None:
         key, error = registry.spawn(
             profile=AUDITOR_NAME, name=AUDITOR_NAME, parent_ctx=parent_ctx
         )
         if error:
-            return f"error: {error}"
-        outcome = "spawned"
-    elif tm.state == "dead":
-        key = tm.key
-        error = registry.resume_teammate(key, parent_ctx=parent_ctx)
+            return SessionAuditor(registry, parent_ctx, "", f"error: {error}")
+        return SessionAuditor(registry, parent_ctx, key, "spawned")
+    if tm.state == "dead":
+        error = registry.resume_teammate(tm.key, parent_ctx=parent_ctx)
         if error:
-            return f"error: {error}"
-        outcome = "resumed"
-    else:
-        key = tm.key
-    # 감사자의 구독은 세션을 살려 두지 않는다 — main 이 끝나면 run 도 끝나야
-    # 하고(감사는 QuietPolicy 가 멈추기 전에 돌리는 틱으로 그 전에 일어난다),
-    # 뷰어 없는 web 인스턴스가 24시간 감시를 데리고 안 꺼지면 안 된다.
-    monitors = getattr(registry, "monitors", None)
-    if monitors is not None and hasattr(monitors, "mark_passive"):
-        monitors.mark_passive(f"agent:{key}")
-    from agent_cli.pump import WAKE_AUTHOR
-
-    brief = AUDITOR_START_BRIEF.format(
-        history=str(parent_ctx.history_path),
-        session=parent_ctx.session_dir.name,  # 감사자의 history 기본값은 자기 것
-        wake=WAKE_AUTHOR,
-    )
-    error = registry.request(key, brief, author="main", expects_reply=False)
-    return f"error: {error}" if error else outcome
+            return SessionAuditor(registry, parent_ctx, "", f"error: {error}")
+        return SessionAuditor(registry, parent_ctx, tm.key, "resumed")
+    return SessionAuditor(registry, parent_ctx, tm.key, "")
 
 
 def main_run_ended(agent_registry, output: str = "") -> int:

@@ -395,19 +395,18 @@ def browser_knobs() -> dict:
 #: `auditor` 하나다. `spawn` 의 표시 이름 중복 거부가 "항상 하나" 를 보장한다.
 AUDITOR_NAME = "auditor"
 
-#: 스폰·부활·재시작 직후 감사자에게 보내는 첫 요청 — 감사자가 알아야 할 하니스
-#: 사실은 둘뿐이다: main 의 history 파일 경로와 깨우기 런의 발신자 문자열.
-#: 모니터는 세션을 넘지 못하므로 매 부팅마다 보낸다(프로파일의 "시작 의식").
-AUDITOR_START_BRIEF = (
-    "You are this session's auditor. main's history file: {history}\n"
-    "main's session id: {session} — EVERY history call must pass "
-    "sessions:\"{session}\" and the filter loc LIKE '{session}/history.jsonl:%' "
-    "(without them you read your own history, which that table also holds).\n"
-    "Wake runs (not started by a person) have query author {wake!r} — skip them.\n"
-    "Do your startup ritual now: if monitor(list) shows no monitor on that file, "
-    'register monitor(add, when={{"type":"match","file":"{history}",'
-    '"pattern":"\\"kind\\": \\"final\\""}}, once=false, deadline="24h"). '
-    "Then complete — nothing to audit yet."
+#: main 의 사용자 런이 끝날 때마다 하니스가 감사자에게 보내는 요청
+#: (`runtime.SessionAuditor.run_ended`, expects_reply=True) — 감사자가 알아야 할
+#: 하니스 사실은 셋뿐이다: 세션 id(history 도구의 범위·파일 필터), 감사할 서수
+#: 구간, 그리고 답은 `reply` 로 돌아와야 한다는 것(회신 빚이 complete 를 막는다).
+AUDIT_REQUEST = (
+    "Audit main's run that just ended: history seq {a}..{b} of session {session} "
+    "(main's history file: {history}).\n"
+    'EVERY history call must pass sessions:"{session}" and the filter '
+    "loc LIKE '{session}/history.jsonl:%' (without them you read your own history, "
+    "which that table also holds), and read only rows with seq BETWEEN {a} AND {b}.\n"
+    "Judge every request in that range as your profile says and send the report "
+    "with `reply` — this request owes a reply; `complete` is not a report."
 )
 
 

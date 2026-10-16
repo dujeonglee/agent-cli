@@ -247,15 +247,17 @@ class TestRegistryAssembly:
         enq = MagicMock()
 
         registry.instance_for.return_value = None  # 감사자 없음 (노브 기본 꺼짐)
+        ctx = MagicMock()
         waker, revived, auto, auditor = wire_agent_mail(
             registry,
             enqueue_wake=enq,
             on_mail_notice=notices.append,
-            parent_ctx="CTX",
+            parent_ctx=ctx,
         )
-        assert (revived, auto, auditor) == (2, 1, "")
-        registry.restore.assert_called_once_with(parent_ctx="CTX")
-        registry.auto_spawn.assert_called_once_with(parent_ctx="CTX")
+        assert (revived, auto) == (2, 1)
+        assert auditor.outcome == "" and not auditor.active  # 비활성 핸들
+        registry.restore.assert_called_once_with(parent_ctx=ctx)
+        registry.auto_spawn.assert_called_once_with(parent_ctx=ctx)
         # on_reply 훅: 알림 먼저, waker.on_mail 다음
         with patch.object(waker, "on_mail") as om:
             registry.on_reply({"kind": "reply"})
@@ -477,7 +479,7 @@ class TestRunCommandTeardownIntegration:
             st.enter_context(
                 patch(
                     "agent_cli.runtime.wire_agent_mail",
-                    return_value=(MagicMock(), 0, 0, ""),
+                    return_value=(MagicMock(), 0, 0, None),
                 )
             )
             st.enter_context(
