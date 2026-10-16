@@ -1492,7 +1492,7 @@ def run(
         )
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
-        if auditor:
+        if _auditor_boot_line(auditor):
             console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
         if agent_registry.stale_questions:
             # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
@@ -1568,6 +1568,7 @@ def run(
                 agent_registry=agent_registry,
                 run_main=_run_main,
                 surface=surface,
+                auditor=auditor,
                 policy=QuietPolicy(
                     queue=input_queue,
                     agent_registry=agent_registry,
@@ -1703,8 +1704,12 @@ def _previous_monitors_notice(session_dir) -> str:
     )
 
 
-def _auditor_boot_line(outcome: str) -> str:
-    """감사자 부팅 결과(`ensure_auditor`) 한 줄 — run 콘솔·web 상태 공용."""
+def _auditor_boot_line(auditor) -> str:
+    """감사자 부팅 결과(`SessionAuditor.outcome`) 한 줄 — run 콘솔·web 상태 공용.
+    빈 문자열 = 알릴 것 없음(노브 off·변화 없음·세션 없음)."""
+    outcome = auditor.outcome if auditor is not None else ""
+    if not outcome:
+        return ""
     if outcome.startswith("error:"):
         return f"🔎 감사자를 띄우지 못했습니다 — {outcome[6:].strip()}"
     return {
@@ -1715,7 +1720,7 @@ def _auditor_boot_line(outcome: str) -> str:
 
 
 def _announce_agent_boot(
-    renderer, revived: int, auto: int, stale: int = 0, *, auditor: str = ""
+    renderer, revived: int, auto: int, stale: int = 0, *, auditor=None
 ) -> None:
     """web 부트스트랩의 teammate 재생성/auto-spawn/감사자 알림.
 
@@ -1732,7 +1737,7 @@ def _announce_agent_boot(
         )
     if auto:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
-    if auditor:
+    if _auditor_boot_line(auditor):
         renderer.status("running", _auditor_boot_line(auditor))
 
 
@@ -2525,6 +2530,7 @@ def web(
                 agent_registry=_registry,
                 run_main=_run_main,
                 surface=surface,
+                auditor=auditor,
                 policy=ForeverPolicy(),
             )
         )

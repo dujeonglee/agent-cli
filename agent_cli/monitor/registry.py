@@ -148,10 +148,6 @@ class MonitorRegistry:
         #: 배달 중(부작용 실행 포함) 건수 — 생존 판정이 이걸 센다. 안 세면
         #: `run` 펌프가 보고를 날리며 종료할 수 있다.
         self._inflight = 0
-        #: 세션을 살려 두지 **않는** 소유자들 (v10.42.0) — 감사자의 구독처럼
-        #: "main 이 일할 때만 뜻이 있는" 감시. 살아 있어도 `has_active_work` 에
-        #: 안 세어 run 이 끝나고 web 이 자기를 거둘 수 있다. 발화·배달은 그대로.
-        self.passive_owners: set[str] = set()
 
     # ── 등록/조회 ──────────────────────────────
 
@@ -228,17 +224,7 @@ class MonitorRegistry:
         `run` 만 고치면 board 인스턴스가 모니터를 데리고 조용히 사라진다.
         """
         with self._lock:
-            return (
-                any(
-                    m.alive and m.owner not in self.passive_owners
-                    for m in self._monitors.values()
-                )
-                or self._inflight > 0
-            )
-
-    def mark_passive(self, owner: str) -> None:
-        """``owner`` 의 감시는 세션 수명에 안 센다 (v10.42.0, 감사자)."""
-        self.passive_owners.add(owner)
+            return any(m.alive for m in self._monitors.values()) or self._inflight > 0
 
     def drop_owner(self, addr: str) -> int:
         """소유자가 죽었다 — 그 주소의 감시를 폐기. 살아 있던 건수 반환.

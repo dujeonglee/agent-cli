@@ -88,6 +88,7 @@ def make_pump(
     schedules=None,
     on_wait=None,
     poll_secs=0.05,
+    auditor=None,
 ):
     """run 수명 정책의 펌프. ``run_main`` 은 ``RunRequest`` 를 받는다."""
     from agent_cli.pump import PumpDeps, QuietPolicy, SessionPump
@@ -100,6 +101,7 @@ def make_pump(
             agent_registry=registry,
             run_main=run_main,
             surface=surface if surface is not None else FakeSurface(),
+            auditor=auditor,
             policy=QuietPolicy(
                 queue=queue,
                 agent_registry=registry,
