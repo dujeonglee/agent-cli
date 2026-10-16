@@ -273,6 +273,11 @@ class AgentLoop:
             self.ctx.set_recorder(self.recorder)
             if self.compaction_enabled:
                 self.ctx.set_compactor(self._llm_compact_summarize)
+            # 미답 요청의 원문은 압축·FIFO 에서 핀 (v10.41.0) — 라이브로 읽는다:
+            # 런 도중 흡수된 요청도, 답해서 빠진 요청도 다음 압축에 바로 반영.
+            self.ctx.set_open_requests(
+                lambda: [str(r.get("id")) for r in self._state.run_requests]
+            )
 
     # ── C1 PR-1 property 브리지 ──────────────────────────────────
     # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
