@@ -132,6 +132,7 @@ class TurnDispatcher:
     def _intervene(
         self,
         llm_text: str,
+        record: dict | None,
         message: str,
         reason: str,
         outcome: dict,
@@ -184,7 +185,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            record,
             message,
             tool_name=tool_name,
             success=False,
@@ -193,9 +194,6 @@ class TurnDispatcher:
             recovery_kind=recovery_kind,
             store_emission=store_emission,
             nudge=nudge,
-            corrected_record=outcome.get("corrected_record")
-            if store_emission
-            else None,
         )
         if failure_signal is not None:
             outcome["failure_signal"] = failure_signal
@@ -269,7 +267,7 @@ class TurnDispatcher:
 
         ``server_ops`` (v10.20.0): 서버 파싱 방언이 호출 목록에서 바로 만든
         op 들 — ``llm_text`` 는 산문(생각)뿐이라 파싱하지 않는다. 기록은
-        ``corrected_record`` 로 ops shape 를 쓴다(산문만 직렬화하면 호출이
+        ``turn.record`` 에 ops shape 로 한 번 만든다(산문만 직렬화하면 호출이
         사라진다).
         """
         self._record_emission(llm_text)
@@ -387,16 +385,18 @@ class TurnDispatcher:
             "primitives": ["action_inferred"] if action_inferred else [],
             "action_inferred": action_inferred,
         }
-        if server_record is not None:
-            outcome["corrected_record"] = server_record
         if foreign_source is not None:
             outcome["primitives"].append(f"foreign_parse:{foreign_source}")
-            # 구제 turn 의 직렬화 원본 — 바인딩 포맷의 serialize 가 raw 를
-            # 재파싱하면 0-op(bare content)로 돌아가므로, 관찰 append 가
-            # 이 레코드를 쓰게 한다 (ops shape = cross-format 계약이라
-            # 바인딩 포맷의 render 가 캐노니컬로 재방출). inference 이후에
-            # 조립해 복원된 action 이름까지 반영.
-            outcome["corrected_record"] = {
+        # 이 턴의 history 레코드 — **여기서 한 번** 만든다(v10.42.0). 종전엔
+        # 관찰을 기록하는 쪽이 원문을 다시 파싱했고, 서버 파싱·구제·이름 복원은
+        # 선택 인자 ``corrected_record`` 로 덮어쓰는 구조라 그 인자를 안 넘긴
+        # 가상 op 경로(reply·message·answer·ask)가 `{"content": ""}` 를 남겼다.
+        # 서버 호출·구제·복원은 ops shape(방언 중립, 바인딩 포맷의 render 가
+        # 캐노니컬로 재방출 — 누출 raw 재공급 없음); 텍스트 파싱은 방언의 직렬화.
+        if server_record is not None:
+            turn.record = server_record
+        elif foreign_source is not None or action_inferred:
+            turn.record = {
                 "role": "assistant",
                 "thought": turn.thought or "",
                 "ops": [
@@ -404,6 +404,8 @@ class TurnDispatcher:
                     for op in turn.ops
                 ],
             }
+        else:
+            turn.record = self.cfg.dialect.serialize_assistant_for_history(llm_text)
 
         try:
             return self._dispatch_turn(llm_text, turn, outcome)
@@ -488,9 +490,7 @@ class TurnDispatcher:
             # the work done so far (chronological order for the model).
             # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
             if tool is not None and tool.terminal:
-                self._flush_op_results(
-                    llm_text, results, corrected_record=outcome.get("corrected_record")
-                )
+                self._flush_op_results(turn.record, results)
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Parallel batch: a run of ≥2 consecutive ops of the SAME
@@ -568,30 +568,19 @@ class TurnDispatcher:
                         "Re-send these; do NOT re-send the ops that already ran.",
                         False,
                     )
-                self._flush_op_results(
-                    llm_text, results, corrected_record=outcome.get("corrected_record")
-                )
+                self._flush_op_results(turn.record, results)
                 return r
             i += 1
-        self._flush_op_results(
-            llm_text, results, corrected_record=outcome.get("corrected_record")
-        )
+        self._flush_op_results(turn.record, results)
         return _CONTINUE
 
-    def _flush_op_results(
-        self,
-        llm_text: str,
-        results: list[dict],
-        *,
-        corrected_record: dict | None = None,
-    ) -> None:
+    def _flush_op_results(self, record: dict, results: list[dict]) -> None:
         """Append ONE combined observation for accumulated op results.
 
         Per-op header lines (``[i/N] tool — OK/FAILED``) frame each op's
         output; turn success = all ops succeeded (any-fail ⇒ failed so the
         model retries the failed op next turn). No-op when nothing ran.
-        ``corrected_record`` (foreign-format 구제 턴) — raw 재파싱 대신 이
-        레코드로 직렬화해 prior 가 바인딩 포맷 캐노니컬로 재렌더되게.
+        ``record`` 는 이 턴의 history 레코드(``turn.record``).
         """
         if not results:
             return
@@ -606,7 +595,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            record,
             f"Observation: {combined}",
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
@@ -623,7 +612,6 @@ class TurnDispatcher:
                 }
                 for r in results
             ],
-            corrected_record=corrected_record,
         )
 
     def _dispatch_parallel_batch(
@@ -746,7 +734,7 @@ class TurnDispatcher:
         # 문자열로 넘김). 어느 도구든 실행하지 않는다 — `complete` 도: 종전엔
         # 빈 dict 로 바뀌어 "(Completed without result)" 로 런이 끝났다.
         if isinstance(op.action_input, str):
-            return self._op_bad_arguments(llm_text, op, outcome, accumulate)
+            return self._op_bad_arguments(llm_text, turn, op, outcome, accumulate)
 
         # 7. Complete tool (text parsing path)
         if op.action == "complete":
@@ -830,7 +818,7 @@ class TurnDispatcher:
             if unwrapped != raw:
                 answer = unwrapped or answer
 
-        bounced = self._require_answers(llm_text, op, answer, outcome)
+        bounced = self._require_answers(llm_text, turn, op, answer, outcome)
         if bounced is not None:
             return bounced
 
@@ -861,7 +849,7 @@ class TurnDispatcher:
         if debts and self.state.debt_nags < MAX_DEBT_NAGS:
             self.state.debt_nags += 1
             if not self.state.user_run:
-                return self._refuse_for_debts(llm_text, answer, debts, outcome)
+                return self._refuse_for_debts(llm_text, turn, answer, debts, outcome)
             render_step(
                 "final",
                 answer,
@@ -869,7 +857,7 @@ class TurnDispatcher:
                 requests=answered,
                 hidx=self._next_hidx(),
             )
-            return self._nag_debts(llm_text, debts, outcome)
+            return self._nag_debts(llm_text, turn, debts, outcome)
 
         # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
         render_step(
@@ -880,11 +868,10 @@ class TurnDispatcher:
             # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과
             # 함께 저장한다. 둘 다 넣으면 history 에 같은 final 이 두 번 들어가고
             # 웹 타임라인에도 같은 카드가 두 장 뜬다(라이브 실측).
-            # 저장되는 emission 이 종결 레코드의 모양(answers·남은 요청)을 갖게.
-            outcome["corrected_record"] = self._terminal_record(
-                turn, answer, claimed, still_open
-            )
-            return self._nag_open_requests(llm_text, still_open, outcome)
+            # 저장되는 emission 이 종결 레코드의 모양(answers·남은 요청)을 갖게 —
+            # 이 턴의 레코드를 종결 레코드로 바꾼다.
+            turn.record = self._terminal_record(turn, answer, claimed, still_open)
+            return self._nag_open_requests(llm_text, turn, still_open, outcome)
 
         if self.ctx:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
@@ -902,7 +889,7 @@ class TurnDispatcher:
             else [str(r.get("id")) for r in still_open],
         )
 
-    def _require_answers(self, llm_text: str, op, answer: str, outcome: dict):
+    def _require_answers(self, llm_text: str, turn, op, answer: str, outcome: dict):
         """요청이 합쳐진 런에서 `answers` 없이 완료하려 하면 **한 번 되돌린다**.
 
         꼬리(per-turn tail)가 매 턴 요구하는데도 모델이 생략한다 — 라이브
@@ -932,6 +919,7 @@ class TurnDispatcher:
         # 이 관찰을 컨텍스트에서 접는다(재시도는 기록하지 않는다).
         return self._intervene(
             llm_text,
+            turn.record,
             (
                 f"Observation: your `complete` was refused — {len(pending)} user "
                 f"request{'s are' if len(pending) != 1 else ' is'} open in this run "
@@ -989,7 +977,7 @@ class TurnDispatcher:
         nagged = self.state.requests_nagged
         return any(str(r.get("id")) not in nagged for r in still_open)
 
-    def _nag_open_requests(self, llm_text: str, still_open, outcome: dict):
+    def _nag_open_requests(self, llm_text: str, turn, still_open, outcome: dict):
         """최종답은 내보내고 **루프는 계속** 돌린다.
 
         `complete` 을 **붙잡는 것과 다르다**. 붙잡기란 다른 요청이 풀릴 때까지
@@ -1006,6 +994,7 @@ class TurnDispatcher:
         ids = ", ".join(f'"{r.get("id")}"' for r in still_open)
         return self._intervene(
             llm_text,
+            turn.record,
             (
                 f"Observation: your result was delivered, but {len(still_open)} "
                 "user request(s) in this run are still unanswered — you did not "
@@ -1050,12 +1039,13 @@ class TurnDispatcher:
         )
 
     def _refuse_for_debts(
-        self, llm_text: str, answer: str, debts: list[dict], outcome: dict
+        self, llm_text: str, turn, answer: str, debts: list[dict], outcome: dict
     ):
         """사용자 요청 없는 런: 빚을 남긴 `complete` 을 거부한다 — 원문을
         인용한 관찰 하나, emission 은 저장하지 않는다(v9.21.1 원칙)."""
         return self._intervene(
             llm_text,
+            turn.record,
             (
                 "Observation: your `complete` was refused — it reports to no one, "
                 "and you still owe:\n"
@@ -1071,11 +1061,12 @@ class TurnDispatcher:
             store_emission=False,
         )
 
-    def _nag_debts(self, llm_text: str, debts: list[dict], outcome: dict):
+    def _nag_debts(self, llm_text: str, turn, debts: list[dict], outcome: dict):
         """사용자 요청 있는 런: `complete` 은 수락됐다(결과는 사용자에게
         갔다) — 남은 빚만 독촉하고 루프를 잇는다."""
         return self._intervene(
             llm_text,
+            turn.record,
             (
                 "Observation: your result was delivered, but you still owe:\n"
                 f"{self._debt_lines(debts)}\n"
@@ -1162,7 +1153,9 @@ class TurnDispatcher:
                     if isinstance(op.action_input, dict)
                     else None
                 )
-                return self._op_ask_async(llm_text, questions, port, accumulate, to=to)
+                return self._op_ask_async(
+                    turn.record, questions, port, accumulate, to=to
+                )
             # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
             # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
             # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
@@ -1182,7 +1175,7 @@ class TurnDispatcher:
                 self.state.messages,
                 self.ctx,
                 self.cfg.dialect,
-                llm_text,
+                turn.record,
                 obs_msg,
                 tool_name="ask",
                 success=True,
@@ -1230,7 +1223,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            turn.record,
             f"Observation: {obs}",
             tool_name="message",
             success=True,
@@ -1238,7 +1231,7 @@ class TurnDispatcher:
         )
         return _CONTINUE
 
-    def _op_ask_async(self, llm_text: str, questions, port, accumulate, *, to=None):
+    def _op_ask_async(self, record: dict, questions, port, accumulate, *, to=None):
         """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
 
         질문을 등록하고 즉시 관찰을 돌려준다. 답은 나중에 새 메시지(= 새
@@ -1270,7 +1263,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            record,
             f"Observation: {obs}",
             tool_name="ask",
             success=True,
@@ -1311,7 +1304,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            turn.record,
             f"Observation: {obs}",
             tool_name="reply",
             success=ok,
@@ -1362,7 +1355,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            turn.record,
             f"Observation: {obs}",
             tool_name="answer",
             success=ok,
@@ -1425,7 +1418,7 @@ class TurnDispatcher:
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            turn.record,
             obs_msg,
             tool_name="run_skill",
             success=skill_tool_result.success,
@@ -1554,6 +1547,7 @@ class TurnDispatcher:
             # 형식 개입과 같은 fold. 종전엔 빈 값이라 런 끝까지 남았다.
             return self._intervene(
                 llm_text,
+                turn.record,
                 intervention.message,
                 f"action loop ({tool_name}, level {loop_level})",
                 outcome,
@@ -1632,6 +1626,7 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
+                turn.record,
                 f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "unknown tool",
                 outcome,
@@ -1669,6 +1664,7 @@ class TurnDispatcher:
                 return None
             return self._intervene(
                 llm_text,
+                turn.record,
                 f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 "schema mismatch",
                 outcome,
@@ -1711,32 +1707,21 @@ class TurnDispatcher:
         # to the corrected wire shape so neither the next turn nor a
         # resume re-feeds the raw drift (mimicry-strengthening).
         obs_msg = f"Observation: {observation}"
-        # foreign-format 구제(ops 레코드)가 우선 — 단수 inference 보정은
-        # 구제가 없을 때만 (구제 레코드는 inference 결과까지 이미 반영).
-        corrected = outcome.get("corrected_record")
-        if corrected is None and outcome.get("action_inferred"):
-            corrected = {
-                "role": "assistant",
-                "thought": turn.thought or "",
-                "action": op.action,
-                "action_input": op.action_input,
-            }
         _append_observation(
             self.state.messages,
             self.ctx,
             self.cfg.dialect,
-            llm_text,
+            turn.record,
             obs_msg,
             tool_name=tool_name,
             success=tool_result.success,
             artifact=tool_result.artifact,
-            corrected_record=corrected,
             turn=self.state.turn,
         )
         return _CONTINUE
 
     # No usable action on this op — fall through to recovery.
-    def _op_bad_arguments(self, llm_text: str, op, outcome: dict, accumulate):
+    def _op_bad_arguments(self, llm_text: str, turn, op, outcome: dict, accumulate):
         """호출 인자가 JSON 이 아닌 op (v10.20.0) — 실행 없이 어디서 깨졌는지
         알린다. 배치 안이면 그 op 의 자리에 실패 메모로, 홀로면 형식 개입으로."""
         tool_name = op.action or "?"
@@ -1755,6 +1740,7 @@ class TurnDispatcher:
             return None
         return self._intervene(
             llm_text,
+            turn.record,
             f"Observation: {err_msg}\n{echo_prior_output(raw)}",
             "bad arguments",
             outcome,
@@ -1812,6 +1798,7 @@ class TurnDispatcher:
         # 됐다(Harbor extract-elf: 모델이 그 조각을 22턴 흉내 냈다).
         return self._intervene(
             llm_text,
+            turn.record,
             intervention.message,
             recovery_reason,
             outcome,
@@ -2034,21 +2021,26 @@ def _append_observation(
     messages: list[dict],
     ctx,
     dialect,
-    llm_text: str,
+    record: dict | None,
     obs_msg: str,
     *,
     tool_name: str,
     success: bool,
     turn: int = 0,
     artifact: str = "",
-    corrected_record: dict | None = None,
     render: bool = True,
     recovery_kind: str = "",
     store_emission: bool = True,
     parts: list[dict] | None = None,
     nudge: dict | None = None,
 ) -> None:
-    """Text parsing: append assistant + observation + sync ctx.
+    """Append assistant (``record``) + observation + sync ctx.
+
+    ``record`` (v10.42.0) 는 이 턴의 history 레코드 — ``ParsedTurn.record``,
+    ``_handle_text_path`` 가 한 번 만든다. 여기서는 원문을 파싱하지 않는다:
+    저장하는 모든 경로가 같은 레코드를 쓰므로 "어느 경로가 구조화 기록을
+    빠뜨렸나" 가 생길 수 없다. ``store_emission=False`` 면 None 이어도 된다
+    (저장할 emission 이 없다).
 
     ``nudge`` (v10.5.0): 구조화 형식 넛지 — 레코드에 ``content`` 대신
     ``nudge`` 를 저장한다. 요청 메시지(``obs_msg``)는 호출자가 같은 구조에서
@@ -2074,12 +2066,6 @@ def _append_observation(
     unifies the live prior with the resume prior (both go through render) and
     with the action-inferred correction, which already rendered its record.
 
-    ``corrected_record`` (set after an action-name correction, where
-    ``infer_action`` recovered a dropped action from the action_input key
-    prefixes) supplies the structured record directly instead of re-parsing
-    the raw. The correction stays traceable via the TurnRecorder
-    (``parse_stage=3`` + ``action_inferred``).
-
     For history.jsonl (via ctx.add), the same record is stored, so the
     on-disk history retains structured form.
 
@@ -2091,13 +2077,11 @@ def _append_observation(
     from a plain user chat turn, so empty-string ``tool_name`` (used
     by format-retry paths) still routes through ``observation()``.
     """
-    if corrected_record is not None:
-        history_record = corrected_record
-    else:
-        history_record = dialect.serialize_assistant_for_history(llm_text)
-    prior_content = dialect.render_assistant_from_history(history_record)["content"]
-
     if store_emission:
+        if record is None:
+            raise ValueError("_append_observation: a stored emission needs its record")
+        history_record = record
+        prior_content = dialect.render_assistant_from_history(history_record)["content"]
         messages.append({"role": "assistant", "content": prior_content})
     messages.append({"role": "user", "content": obs_msg})
     stored_content = obs_msg

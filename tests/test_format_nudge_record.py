@@ -26,13 +26,14 @@ from agent_cli.recovery.dialect_recovery import (
 from agent_cli.recovery.primitives import ECHO_MAX_CHARS, bounded_excerpt
 
 
-def _dispatcher(tmp_path, dialect_name="json_fc"):
+def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
+    """``cfg_overrides`` — 포트 등 LoopConfig 필드(예: ``questions=``)."""
     from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
     from agent_cli.recovery.observability import TurnRecorder
 
     wf = get_dialect(dialect_name)
     ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
-    cfg = LoopConfig(tools_list=["shell", "complete"], dialect=wf)
+    cfg = LoopConfig(tools_list=["shell", "complete"], dialect=wf, **cfg_overrides)
     st = LoopState(query="q")
     d = TurnDispatcher(
         cfg,

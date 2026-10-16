@@ -3187,7 +3187,7 @@ class TestContextContinuity:
 
 
 class TestAppendObservationHelpers:
-    """Test _append_native_observation and _append_observation."""
+    """Test _append_observation — the single recording seam."""
 
     def test_append_observation_no_ctx(self):
         """Works without ctx (no crash)."""
@@ -3195,25 +3195,23 @@ class TestAppendObservationHelpers:
         from agent_cli.loop import _append_observation
 
         messages = []
+        wf = get_dialect("json_fc")
         _append_observation(
             messages,
             None,
-            get_dialect("json_fc"),
-            "llm",
+            wf,
+            wf.serialize_assistant_for_history("llm"),
             "obs",
             tool_name="write_file",
             success=True,
         )
         assert len(messages) == 2
 
-    def test_append_observation_routes_history_through_dialect(self):
-        """ctx receives the dict produced by dialect.serialize_assistant_for_history.
-
-        The contract is: assistant record in history.jsonl is shaped by the
-        plugin, not by loop.py. Verifying this via fake ctx + fake plugin
-        catches any future regression that re-introduces a json.loads() call
-        directly in loop.
-        """
+    def test_append_observation_stores_the_given_record(self):
+        """ctx receives the turn record the caller hands in (``ParsedTurn.record``,
+        built once by ``_handle_text_path``) — the helper never re-parses raw
+        text (v10.42.0: the re-parse default is what let the virtual-op paths
+        store ``{"content": ""}`` under native_fc)."""
         from agent_cli.loop import _append_observation
 
         captured: list[dict] = []
@@ -3230,16 +3228,17 @@ class TestAppendObservationHelpers:
                 return {"role": "assistant", "content": record["raw"]}
 
         messages: list[dict] = []
+        plugin = _FakePlugin()
         _append_observation(
             messages,
             _FakeCtx(),
-            _FakePlugin(),
-            "LLM_TEXT",
+            plugin,
+            plugin.serialize_assistant_for_history("LLM_TEXT"),
             "OBS",
             tool_name="write_file",
             success=True,
         )
-        # captured[0] is assistant record from plugin; captured[1] is observation.
+        # captured[0] is the record as given; captured[1] is observation.
         assert captured[0] == {
             "role": "assistant",
             "marker": "from_plugin",
@@ -3279,7 +3278,7 @@ class TestAppendObservationHelpers:
             messages,
             None,
             _FakePlugin(),
-            "LLM_TEXT",
+            {"role": "assistant", "content": "LLM_TEXT"},
             "OBS",
             tool_name="write_file",
             success=True,
@@ -3314,7 +3313,7 @@ class TestAppendObservationHelpers:
             [],
             _FakeCtx(),
             _FakePlugin(),
-            "LLM",
+            {"role": "assistant", "content": "LLM"},
             "Observation: oops",
             tool_name="edit_file",
             success=False,
@@ -3351,7 +3350,7 @@ class TestAppendObservationHelpers:
             [],
             _FakeCtx(),
             _FakePlugin(),
-            "LLM",
+            {"role": "assistant", "content": "LLM"},
             "format retry message",
             tool_name="",
             success=False,
@@ -3383,7 +3382,7 @@ class TestAppendObservationHelpers:
             [],
             _FakeCtx(),
             _FakePlugin(),
-            "LLM",
+            {"role": "assistant", "content": "LLM"},
             "Observation: skill done",
             tool_name="run_skill",
             success=True,

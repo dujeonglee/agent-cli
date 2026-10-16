@@ -1193,7 +1193,7 @@ class AgentLoop:
             self.messages,
             self.ctx,
             self.dialect,
-            llm_text,
+            None,  # 저장하지 않는 emission (store_emission=False)
             f"Observation: {notice}\n{echo_prior_output(llm_text)}",
             tool_name="output_truncated",
             success=False,
@@ -1226,7 +1226,7 @@ class AgentLoop:
             self.messages,
             self.ctx,
             self.dialect,
-            "",
+            None,  # 저장하지 않는 emission (store_emission=False)
             f"Observation: {SERVER_ERROR_NOTICE.format(detail=detail)}",
             tool_name="server_error",
             success=False,
@@ -1261,7 +1261,7 @@ class AgentLoop:
             self.messages,
             self.ctx,
             self.dialect,
-            llm_text,
+            None,  # 저장하지 않는 emission (store_emission=False)
             f"Observation: {RUNAWAY_NOTICE.format(what=what)}\n"
             f"{echo_prior_output(llm_text.rstrip())}",
             tool_name="runaway",
