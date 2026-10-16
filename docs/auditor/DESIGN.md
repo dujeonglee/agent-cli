@@ -88,6 +88,11 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 - 추가 비용은 사용자 런당 감사자 런 하나(시스템 ~3K + 조회 결과 + 출력 ~300). 깨우기 런에도 모니터는 발화하므로 "skip" 런이 하나 더 생긴다(한두 턴). §6 에서 실측.
 - 모델: v1 은 main 과 같은 바인딩(프로파일 `model` 비움).
 
+### 3.6a 수명 — 구독이 세션을 쥐지 않고, 세션이 구독을 앞지르지 않는다 (구현 중 발견)
+
+- 문제 둘: ① 살아 있는 모니터는 `session_has_live_work` 로 **run 을 안 끝내고 web 의 idle self-reap 을 막는다** — 감사자의 24시간 반복 구독이 있으면 `agent-cli run` 이 영영 안 끝나고 board 인스턴스가 안 꺼진다. ② 그렇다고 수명에서 빼기만 하면 main 의 complete 직후 폴링 틱(1초) **전에** run 이 끝나 구독이 헛돈다.
+- 해법: `MonitorRegistry.mark_passive(owner)` — `ensure_auditor` 가 감사자 주소를 수동으로 표시하면 그 감시는 `has_active_work` 에 안 센다(발화·배달은 그대로). 그리고 `QuietPolicy.should_stop` 이 **판정 전에 `monitors.tick()` 을 한 번** 돌린다: 방금 끝난 런의 final 줄이 이미 history 에 있으므로 감사자 inbox 에 보고가 들어가고, `agent_registry.has_active_work()` 가 참이 되어 run 은 감사·되먹임 런이 끝날 때까지 산다. web 은 뷰어가 없고 감사자가 쉬면 평소처럼 거둬지고, 다음 부팅의 브리프가 구독을 다시 건다.
+
 ### 3.7 하니스 변경 — 거의 없음
 
 | 파일 | 변경 | LOC |
@@ -96,6 +101,7 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 | `agent_cli/constants.py` | `AGENT_CLI_AUDITOR` 노브 | +10 |
 | `agent_cli/runtime.py` | 노브 on: 스폰(브리프 = history 경로·WAKE_AUTHOR) / off: 되살아난 감사자 kill | +35 |
 | `agent_cli/subagent/agents_live.py` | `instance_for(profile, name)` — 툼스톤 포함 조회. 라벨 충돌은 `resume_teammate` 로 푼다(같은 키 부활) | +12 |
+| `agent_cli/monitor/registry.py` · `agent_cli/pump.py` | `passive_owners`/`mark_passive` · `should_stop` 전 `tick` (§3.6a) | +20 |
 | `agent_cli/tools/monitor_tool.py` | `command`/`run` 은 `shell` 이 있는 루프만 — 감사자가 monitor 를 셸 뒷문으로 못 쓰게 (구현 중 발견: 종전엔 "monitor 있는 프로파일은 전부 shell 도 있다" 는 가정으로만 지켜졌다) | +14 |
 | tests | `tests/test_auditor.py`(13): 노브·프로파일 도구 집합/규칙 문구·브리프·패턴이 final 줄에만 맞음·seq=줄 번호·스폰 단일성(on/off/resume)·부팅 알림·조립 4-튜플; monitor shell 게이트 1 | +260 |
 | docs | README(노브·동작), ARCHITECTURE, 이 문서 §6 | — |
