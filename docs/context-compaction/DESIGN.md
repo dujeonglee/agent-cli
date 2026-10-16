@@ -160,6 +160,20 @@ def _split_for_compaction(
     return anchor, evict, retained
 ```
 
+**미답 요청 원문 핀 (v10.41.0).** 위 걷기에서 `_pinned_indices()` 의 레코드 —
+루프가 `set_open_requests(cb)` 로 등록한 `run_requests` 의 id 를 `request_id`
+로 단 user 레코드 — 는 evict 에 넣지 않고 `kept` 에 모아 `retained` 의 머리에
+원래 순서대로 둔다. 목표(`target_evict`)와 총량 모두 핀을 제외하고 센다.
+근거: 요청 본문은 history 에만 있고 꼬리 `## Open Requests` 는 앞 120자뿐이라,
+오래 미답인 요청을 요약기에 맡기면 흐려졌다(요약 프롬프트의 TASK 는 "원래
+요청" 이지 "아직 안 답한 요청" 이 아니다). 요약 상한(`_SUMMARY_CHAR_CAP//4`
+토큰)보다 큰 요청은 핀하지 않는다 — 원문 보존은 요약보다 쌀 때만 뜻이 있다.
+핀은 FIFO(`_pop_oldest_evictable`)도 건너뛰되, 핀과 꼬리만 남으면 핀을 버린다
+(창에 안 맞는 프롬프트는 구제 불가 — 전진 보장이 우선). resume 오프셋은
+마지막으로 빠진 레코드 **다음** 캐시 서수다(핀 서수로 두면 요약된 구간을
+다시 읽는다; resume 땐 런이 끝나 핀도 없다). 모델 시점 뷰는 `gone.kept` 로
+경계 앞에 남은 핀 서수를 알리고 프런트는 그 카드를 접지 않는다.
+
 ### 2.4 `_summarize_messages(messages) -> str`
 
 LLM 호출 한 번 — 재귀 단계도 같은 호출 path.
@@ -624,3 +638,16 @@ finally:
 - subagent는 별도 ContextManager 인스턴스 (`session_dir/delegate_*`)
 - parent의 _file_list에 subagent 내부 파일 액션 누락
 - v1는 `<delegate:agent_name>` placeholder만. v2에서 delegate 결과 metadata 통해 통합 검토
+
+### 8.7 미답 요청과 압축 (v10.41.0 — 결정)
+
+- 문제: 런 도중 흡수된 요청이 오래 미답인 채 압축의 오래된 절반에 들면 꼬리의
+  120자와 요약기의 해석만 남았다.
+- 선택지: ① 원문을 evict 에서 제외(채택) ② 요약 프롬프트에 OPEN REQUESTS
+  헤딩 + `run_requests` 입력 ③ 꼬리의 120자 제한 해제. ②는 요약기 품질에
+  기대고, ③은 긴 요청이면 꼬리가 매 턴 비대해진다.
+- 효과: 스타터 요청도 id 를 받으면(`query_request_id`) `run_requests` 에 있으므로
+  런이 열려 있는 동안은 원문이 남는다 — FR-CC-4 의 "첫 query 는 anchor 아님" 은 런을 넘어서만 유효하다.
+- 한계: 핀된 요청의 원문은 요약기 입력에서 빠지므로 요약의 TASK 는 그 요청을
+  모른다(꼬리와 원문이 있으니 중복 없음). 측정: 창을 줄인 런처로 요청 흡수 →
+  압축 → 답변에 그 요청의 세부가 남는지(아래 §9).

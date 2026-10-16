@@ -31,7 +31,7 @@ off the manager reverts to the historical plain-FIFO behaviour.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +43,6 @@ from agent_cli.context.records import _classify_record
 from agent_cli.context.render import (
     _estimate_message_tokens,
     _message_bytes,
-    _sum_message_tokens,
     _to_summary_text,
     render_history_message,
 )
@@ -419,6 +418,10 @@ class ContextManager:
         self._compaction_count: int = 0
         self._last_compacted_at: str = ""
         self._dynamic_start_index: int = 0
+        # 미답 사용자 요청의 id 를 돌려주는 콜백 (v10.41.0) — 그 요청의 user
+        # 레코드는 압축·FIFO 에서 **원문 그대로** 남긴다. 루프가 등록한다
+        # (`LoopState.run_requests`); 없으면 핀도 없다.
+        self._open_requests: Callable[[], Iterable[str]] | None = None
 
         # Compaction can be disabled via the constructor flag, which the
         # ``AgentLoop`` plumbs from its own constructor argument.
@@ -454,6 +457,34 @@ class ContextManager:
         """Register a TurnRecorder instance for compaction event logging
         (NFR-CC-6). May be ``None`` (headless / no session)."""
         self._recorder = recorder
+
+    def set_open_requests(self, callback: Callable[[], Iterable[str]]) -> None:
+        """미답 사용자 요청 id 를 돌려주는 콜백 등록 (v10.41.0). 압축·FIFO 는
+        호출 시점에 평가해, 그 id 의 ``request_id`` 를 단 user 레코드를 자르지
+        않는다 — 요청 본문은 history 에만 있고 꼬리 ``## Open Requests`` 는 앞
+        120자뿐이라, 요약기에 맡기면 오래 미답인 요청이 흐려졌다. 답하고 나면
+        목록에서 빠지니 다음 압축 때 자연히 잘린다."""
+        self._open_requests = callback
+
+    def _pinned_indices(self) -> set[int]:
+        """지금 자르면 안 되는 캐시 인덱스 — 미답 요청의 user 레코드.
+
+        요약 상한(``_SUMMARY_CHAR_CAP``)보다 큰 요청은 핀하지 않는다: 원문
+        보존은 요약보다 쌀 때만 뜻이 있고, 붙여넣은 로그 같은 거대 요청을
+        영구히 들고 있으면 나머지 작업 맥락이 그만큼 밀려난다."""
+        if self._open_requests is None:
+            return set()
+        ids = {str(i) for i in self._open_requests()}
+        if not ids:
+            return set()
+        cap = _SUMMARY_CHAR_CAP // 4
+        return {
+            i
+            for i, m in enumerate(self._cache)
+            if m.get("role") == "user"
+            and str(m.get("request_id", "")) in ids
+            and _estimate_message_tokens(m) <= cap
+        }
 
     def add(self, message: dict) -> dict:
         """Add a message to cache and persist to history.jsonl.
@@ -898,20 +929,23 @@ class ContextManager:
             # Cap and store.
             self._summary = new_summary[:_SUMMARY_CHAR_CAP]
             self._file_list = self._merge_file_lists(self._file_list, new_paths)
-            # P0-8a: hidx 재조립 — anchor 유지 + evict 슬라이스 드롭.
-            n_anchor = len(anchor)
-            retained_hidx = self._cache_hidx[n_anchor + len(evict_set) :]
-            self._cache_hidx = self._cache_hidx[:n_anchor] + retained_hidx
+            # P0-8a: hidx 재조립 — 레코드 동일성으로 따라간다. 핀된 요청은
+            # evict 구간 **안**에서 retained 로 옮겨지므로 슬라이스로는 안 된다.
+            hidx_of = {id(m): h for m, h in zip(self._cache, self._cache_hidx)}
+            retained_hidx = [hidx_of[id(m)] for m in retained]
+            self._cache_hidx = self._cache_hidx[: len(anchor)] + retained_hidx
             self._cache = anchor + retained
             self._nl_cache = None  # bulk rebuild → re-render on next get
             self._cache_tokens = self._sum_tokens(self._cache)
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
-            # P0-8a: resume 오프셋 = 첫 retained 레코드의 **실제 history 위치**
-            # (없으면 지금까지의 전체 서수) — ``+= len(evict_set)`` 은 fold 가
-            # 만든 공백을 몰라 과소 전진했다.
-            self._dynamic_start_index = (
-                retained_hidx[0] if retained_hidx else self._history_ordinal
+            # P0-8a: resume 오프셋 = 마지막으로 빠진 레코드 **다음** 캐시 레코드의
+            # 실제 history 위치(없으면 지금까지의 전체 서수) — ``+= len(evict_set)``
+            # 은 fold 가 만든 공백을 몰라 과소 전진했다. 핀된 요청의 서수는 그
+            # 앞이라 경계가 아니다(resume 땐 런이 끝나 핀도 없다).
+            last_evicted = max(hidx_of[id(m)] for m in evict_set)
+            self._dynamic_start_index = next(
+                (h for h in retained_hidx if h > last_evicted), self._history_ordinal
             )
             self._save_compaction_json()
         except CompactionError:
@@ -962,7 +996,11 @@ class ContextManager:
         First user query is intentionally NOT an anchor (RFC FR-CC-4):
         sessions evolve and the first query loses anchoring value as
         work progresses. Its content is captured in the LLM summary
-        anyway.
+        anyway — unless the run still owes it an answer (v10.41.0):
+        a user record whose ``request_id`` is in the loop's open
+        requests (``_pinned_indices``) is skipped by the evict walk and
+        placed at the head of ``retained``, verbatim, in its original
+        order. It counts toward neither the evict target nor its total.
         """
         anchor: list[dict] = []
         dynamic_start = 0
@@ -974,7 +1012,14 @@ class ContextManager:
         if not dynamic:
             return anchor, [], []
 
-        dynamic_tokens = _sum_message_tokens(dynamic)
+        pinned = {
+            i - dynamic_start for i in self._pinned_indices() if i >= dynamic_start
+        }
+        dynamic_tokens = sum(
+            _estimate_message_tokens(m)
+            for i, m in enumerate(dynamic)
+            if i not in pinned
+        )
         target_evict = dynamic_tokens // 2
 
         # Edge case: a single huge dynamic message would otherwise be
@@ -982,15 +1027,22 @@ class ContextManager:
         # first message in that case — better to lose context detail
         # than to spin in an infinite compaction loop.
         evict: list[dict] = []
+        kept: list[dict] = []
         evicted_tokens = 0
-        for msg in dynamic:
+        end = len(dynamic)
+        for i, msg in enumerate(dynamic):
+            if i in pinned:
+                kept.append(msg)
+                continue
             evict.append(msg)
             evicted_tokens += _estimate_message_tokens(msg)
             if evicted_tokens >= target_evict:
+                end = i + 1
                 break
 
-        retained = dynamic[len(evict) :]
-        return anchor, evict, retained
+        if not evict:
+            return anchor, [], dynamic
+        return anchor, evict, kept + dynamic[end:]
 
     def _summarize_messages(self, messages: list[dict]) -> str:
         """Invoke the registered compactor callback. Raises
@@ -1037,12 +1089,7 @@ class ContextManager:
         target = target_tokens if target_tokens is not None else self.max_context_tokens
         dropped = 0
         while self._cache_tokens > target and len(self._cache) > 1:
-            removed = self._cache.pop(0)
-            self._nl_cache = None  # front pop → rendered mirror stale
-            self._cache_tokens -= self._scaled_tokens(removed)  # P0-8b
-            # P0-8a: 오프셋 = 버린 레코드의 **실제 history 위치** + 1 —
-            # ``+= 1`` 은 fold 가 만든 중간 공백을 몰라 과소 전진했다.
-            self._dynamic_start_index = self._cache_hidx.pop(0) + 1
+            self._pop_oldest_evictable()
             dropped += 1
         # Persist updated offset so an interrupted run survives.
         if self._summary or self._compaction_count or self._dynamic_start_index:
@@ -1118,17 +1165,27 @@ class ContextManager:
             # estimate under-counted), yet the server rejected the
             # prompt. Pop one oldest message so the retry makes headway.
             if len(self._cache) >= before_len and len(self._cache) > 1:
-                removed = self._cache.pop(0)
-                self._nl_cache = None  # front pop → rendered mirror stale
-                self._cache_tokens = max(
-                    self._cache_tokens - self._scaled_tokens(removed),
-                    0,  # P0-8b
-                )
-                self._dynamic_start_index = self._cache_hidx.pop(0) + 1  # P0-8a
+                self._pop_oldest_evictable()
                 self._save_compaction_json()
                 self._notify_context_view()
 
         return len(self._cache) < before_len
+
+    def _pop_oldest_evictable(self) -> None:
+        """FIFO 한 칸 — 가장 오래된 레코드를 버리되 핀된(미답 요청) 레코드는
+        건너뛴다. 핀된 것과 마지막 레코드만 남았으면 핀된 것을 버린다(전진
+        보장이 핀보다 우선 — 창에 안 맞는 프롬프트는 구제 불가).
+        ``_cache_tokens`` 는 ``_scaled_tokens`` 로 깎고(P0-8b) 오프셋은 버린
+        레코드의 실제 history 위치 + 1 로 전진한다(P0-8a — ``+= 1`` 은 fold 가
+        만든 중간 공백을 몰라 과소 전진했다)."""
+        pinned = self._pinned_indices()
+        i = next((k for k in range(len(self._cache) - 1) if k not in pinned), 0)
+        removed = self._cache.pop(i)
+        self._nl_cache = None  # 캐시 변형 → 렌더 미러 재빌드
+        self._cache_tokens = max(self._cache_tokens - self._scaled_tokens(removed), 0)
+        self._dynamic_start_index = max(
+            self._dynamic_start_index, self._cache_hidx.pop(i) + 1
+        )
 
     # ── Persistence ──────────────────────────────────
 
@@ -1211,13 +1268,17 @@ class ContextManager:
             "compactions": self._compaction_count,
             "folded_nudges": self._folded_count,
         }
-        first_cached, evicted = self._evicted_prefix()
+        first_cached, kept, evicted = self._evicted_prefix()
         turns = None
         if evicted:
             view["gone"] = {"hidx": first_cached}
+            if kept:
+                # 경계 앞인데 남은 핀 요청(v10.41.0) — 프런트가 이 카드는 접지
+                # 않는다.
+                view["gone"]["kept"] = kept
             turns = [
-                int(evicted[0].get("turn", 0) or 0),
-                int(evicted[-1].get("turn", 0) or 0),
+                int(evicted[0][1].get("turn", 0) or 0),
+                int(evicted[-1][1].get("turn", 0) or 0),
             ]
         if self._summary:
             before, after = self._last_compaction_tokens or (None, None)
@@ -1230,34 +1291,49 @@ class ContextManager:
             }
         return view
 
-    def _evicted_prefix(self) -> tuple[int | None, list[dict]]:
-        """(캐시에 남은 첫 동적 레코드의 history 서수, 그 앞에서 빠진 레코드들).
+    def _kept_before_boundary(self) -> list[int]:
+        """경계(``_dynamic_start_index``) 앞인데 캐시에 남은 동적 레코드의 서수 —
+        압축·FIFO 가 건너뛴 핀된 요청(v10.41.0). 핀이 없으면 비어 있다: 경계는
+        늘 캐시의 첫 동적 레코드 이하로만 움직인다."""
+        return sorted(
+            h
+            for h, m in zip(self._cache_hidx, self._cache)
+            if m.get("role") != "system" and h < self._dynamic_start_index
+        )
 
-        압축·FIFO·복원 트림은 모두 앞에서부터 비우므로 빠진 것은 접두사 하나다.
-        history 의 선두 system 레코드는 대화가 아니라 세지 않는다."""
+    def _evicted_prefix(self) -> tuple[int | None, list[int], list[tuple[int, dict]]]:
+        """(경계 = 캐시에 남은 첫 **안 핀된** 동적 레코드의 history 서수, 경계 앞에
+        남은 핀 서수들, 그 앞에서 빠진 ``(서수, 레코드)``).
+
+        압축·FIFO·복원 트림은 모두 앞에서부터 비우므로 빠진 것은 접두사 하나 —
+        핀된 요청만 그 안에서 남는다. history 의 선두 system 레코드는 대화가
+        아니라 세지 않는다."""
+        kept = self._kept_before_boundary()
         first_cached = next(
             (
                 h
                 for h, m in zip(self._cache_hidx, self._cache)
-                if m.get("role") != "system"
+                if m.get("role") != "system" and h not in kept
             ),
             None,
         )
         if first_cached is None or not self._history_path.is_file():
-            return first_cached, []
+            return first_cached, kept, []
         records = store.load_records(self._history_path)
         first_dyn = 1 if records and records[0].get("role") == "system" else 0
-        return first_cached, records[first_dyn:first_cached]
+        evicted = [
+            (h, records[h])
+            for h in range(first_dyn, min(first_cached, len(records)))
+            if h not in kept
+        ]
+        return first_cached, kept, evicted
 
     def evicted_records(self) -> list[tuple[int, dict]]:
         """캐시에서 빠진 접두사의 ``(history 서수, 레코드)`` — resume 재생이
         "컨텍스트 밖 대화" 의 카드를 다시 그리는 데 쓴다 (v10.24.1). 라이브에서는
         빠진 카드가 화면에 남아 접히는데, 재생이 캐시만 돌면 그 카드가 아예
         없어 접을 것이 없었다."""
-        first_cached, evicted = self._evicted_prefix()
-        if first_cached is None:
-            return []
-        return list(zip(range(first_cached - len(evicted), first_cached), evicted))
+        return self._evicted_prefix()[2]
 
     def _notify_context_view(self) -> None:
         """캐시가 바뀐 지점(압축·FIFO·fold)마다 — 실패가 루프를 막지 않는다."""

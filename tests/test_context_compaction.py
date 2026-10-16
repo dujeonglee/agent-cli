@@ -464,6 +464,7 @@ class TestFileList:
                 "action_input": {"path": "a.py", "content": "x"},
             },
         ]
+        ctx._cache_hidx = [0, 1]  # 캐시와 병행하는 history 서수
         ctx._cache_tokens = 1000
         ctx._compact()
         assert ctx.file_list.count("a.py") == 1
@@ -1493,3 +1494,159 @@ class TestTokenRatio:
         assert ctx.get_estimated_tokens() == sum(
             max(1, round(_message_bytes(m) * 0.5)) for m in ctx._cache
         )
+
+
+# ── 13. 미답 요청 원문 핀 (v10.41.0) ─────────────────
+
+
+def _pinned_ctx(tmp_path, open_ids, *, compaction_enabled=True):
+    """system + 요청 q1 + 6턴 + 요청 q2 + 6턴. ``open_ids`` 는 라이브로 읽히는
+    미답 요청 목록(테스트가 뒤에서 바꿀 수 있게 리스트 그대로 넘긴다)."""
+    ctx, calls = _make_ctx(
+        tmp_path, max_context_tokens=100_000, compaction_enabled=compaction_enabled
+    )
+    ctx.set_open_requests(lambda: list(open_ids))
+    ctx.add({"role": "system", "content": "sys"})
+    ctx.add({"role": "user", "content": "do the thing", "request_id": "q1"})
+    for n in range(6):
+        _pinned_turn(ctx, n)
+    ctx.add({"role": "user", "content": "also fix the footer", "request_id": "q2"})
+    for n in range(6, 12):
+        _pinned_turn(ctx, n)
+    return ctx, calls
+
+
+def _pinned_turn(ctx, n):
+    ctx.set_turn(n)
+    ctx.add(
+        {
+            "role": "assistant",
+            "thought": f"t{n}",
+            "ops": [{"action": "shell", "action_input": {"cmd": f"c{n}" * 40}}],
+        }
+    )
+    ctx.add(
+        {"role": "user", "tool": "shell", "success": True, "content": f"o{n} " * 60}
+    )
+
+
+def _request_records(ctx):
+    return [m for m in ctx.get_raw_messages() if m.get("request_id")]
+
+
+class TestOpenRequestsPinned:
+    """미답 사용자 요청의 user 레코드는 압축·FIFO 가 자르지 않는다 — 요청 본문은
+    history 에만 있고 꼬리 ``## Open Requests`` 는 앞 120자뿐이라, 요약기에
+    맡기면 오래 미답인 요청이 흐려졌다."""
+
+    def test_open_request_survives_compaction_verbatim(self, tmp_path):
+        ctx, calls = _pinned_ctx(tmp_path, ["q1", "q2"])
+        before, after = ctx.compact_now()
+        assert after < before and ctx.summary  # 압축은 일어났다
+        reqs = _request_records(ctx)
+        assert [r["content"] for r in reqs] == ["do the thing", "also fix the footer"]
+        # 요약기 입력(빠진 구간의 transcript)에 요청 본문이 없다 — 요약 대상이 아니다
+        assert "do the thing" not in calls[0][0]["content"]
+        # 핀된 레코드는 앵커 바로 뒤, 원래 순서대로
+        raw = ctx.get_raw_messages()
+        assert raw[0]["role"] == "system" and raw[1] is reqs[0]
+        # hidx 는 레코드를 따라간다(슬라이스가 아니다) — q1 은 history 서수 1
+        assert len(ctx.cache_ordinals()) == len(raw)
+        assert ctx.cache_ordinals()[1] == 1
+
+    def test_answered_request_is_evicted_on_the_next_compaction(self, tmp_path):
+        open_ids = ["q1", "q2"]
+        ctx, _ = _pinned_ctx(tmp_path, open_ids)
+        ctx.compact_now()
+        assert [r["request_id"] for r in _request_records(ctx)] == ["q1", "q2"]
+        open_ids.remove("q1")  # 답했다
+        for n in range(12, 18):
+            _pinned_turn(ctx, n)
+        ctx.compact_now()
+        assert [r["request_id"] for r in _request_records(ctx)] == ["q2"]
+
+    def test_pinned_records_count_toward_neither_target_nor_total(self, tmp_path):
+        """핀 유무가 **다른** 레코드의 퇴거 수를 바꾸지 않는다."""
+        ctx_a, calls_a = _pinned_ctx(tmp_path / "a", [])
+        ctx_b, calls_b = _pinned_ctx(tmp_path / "b", ["q1", "q2"])
+        ctx_a.compact_now()
+        ctx_b.compact_now()
+        evicted_a = calls_a[0][0]["content"].count("\n")
+        evicted_b = calls_b[0][0]["content"].count("\n")
+        # b 의 transcript 는 요청 두 줄만큼 짧다(요청이 안 들어가서), 나머지는 같다
+        assert 0 <= evicted_a - evicted_b <= 2
+        assert len(ctx_b.get_raw_messages()) == len(ctx_a.get_raw_messages()) + 2
+
+    def test_only_pinned_dynamic_is_a_noop(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=10)
+        ctx.set_open_requests(lambda: ["q1"])
+        ctx.add({"role": "system", "content": "sys"})
+        ctx.add({"role": "user", "content": "do it", "request_id": "q1"})
+        ctx.compact_now()
+        assert calls == [] and ctx.summary == ""
+        assert len(ctx.get_raw_messages()) == 2
+
+    def test_request_bigger_than_the_summary_cap_is_not_pinned(self, tmp_path):
+        """원문 보존은 요약보다 쌀 때만 — 붙여넣은 로그 같은 거대 요청은 요약기로."""
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=100_000)
+        ctx.set_open_requests(lambda: ["big"])
+        ctx.add({"role": "system", "content": "sys"})
+        ctx.add({"role": "user", "content": "log: " + "x" * 9000, "request_id": "big"})
+        for n in range(8):
+            _pinned_turn(ctx, n)
+        ctx.compact_now()
+        assert _request_records(ctx) == []
+
+    def test_boundary_is_after_the_evicted_span_not_the_pin(self, tmp_path):
+        """resume 오프셋은 마지막으로 빠진 레코드 다음이다 — 핀의 서수(1)로 두면
+        resume 이 요약된 구간을 다시 읽어 들인다."""
+        ctx, _ = _pinned_ctx(tmp_path, ["q1", "q2"])
+        ctx.compact_now()
+        boundary = ctx._dynamic_start_index
+        assert boundary > 1
+        hidx = ctx.cache_ordinals()
+        raw = ctx.get_raw_messages()
+        assert hidx[1] == 1
+        # 요청이 아닌 레코드는 전부 경계 이후 — 핀(q1·q2)만 그 앞에 남는다
+        assert all(
+            h >= boundary for h, m in zip(hidx[1:], raw[1:]) if not m.get("request_id")
+        )
+        resumed = ContextManager(
+            tmp_path / "session", max_context_tokens=100_000, resume=True
+        )
+        # 런이 끝났으니 핀도 없다: 경계부터, 요청 원문은 요약 몫
+        assert resumed.cache_ordinals()[0] == boundary
+        assert "do the thing" not in json.dumps(resumed.get_raw_messages())
+        assert resumed.summary == ctx.summary
+
+    def test_fifo_skips_pinned_until_only_the_pin_and_the_tail_remain(self, tmp_path):
+        ctx, _ = _pinned_ctx(tmp_path, ["q1"], compaction_enabled=False)
+        n = len(ctx.get_raw_messages())
+        ctx.ensure_within(ctx._cache_tokens // 3)
+        assert len(ctx.get_raw_messages()) < n
+        assert [r["request_id"] for r in _request_records(ctx)] == ["q1"]
+        # 더 조이면 핀과 마지막 레코드만 남고, 그 다음엔 핀도 버린다(전진 보장)
+        ctx.ensure_within(1)
+        raw = ctx.get_raw_messages()
+        assert len(raw) == 1 and raw[0].get("request_id") is None
+
+    def test_force_fit_forward_progress_skips_the_pin(self, tmp_path):
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=100_000, compaction_enabled=False
+        )
+        ctx.set_open_requests(lambda: ["q1"])
+        ctx.add({"role": "user", "content": "do it", "request_id": "q1"})
+        ctx.add({"role": "user", "tool": "shell", "success": True, "content": "o1"})
+        ctx.add({"role": "user", "tool": "shell", "success": True, "content": "o2"})
+        # 추정치가 바닥보다 작아 비율 퇴거가 아무것도 안 버리는 경우 → 한 칸 전진
+        assert ctx.force_fit(target_tokens=10_000, actual_tokens=10_001)
+        assert [m.get("content") for m in ctx.get_raw_messages()] == ["do it", "o2"]
+
+    def test_without_a_callback_nothing_is_pinned(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=100_000)
+        ctx.add({"role": "system", "content": "sys"})
+        ctx.add({"role": "user", "content": "do the thing", "request_id": "q1"})
+        for n in range(8):
+            _pinned_turn(ctx, n)
+        ctx.compact_now()
+        assert _request_records(ctx) == []

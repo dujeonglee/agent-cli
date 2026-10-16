@@ -526,3 +526,39 @@ class TestAbsorbedAgentMessage:
             key="agt-1", direction="in", author="main", text="t", seq=3, to="agt-1"
         )
         assert "absorbed_into" not in c.queue.get_nowait()[1]
+
+
+class TestPinnedRequestInTheView:
+    """압축이 원문으로 남긴 미답 요청(v10.41.0)은 경계 앞에 있어도 "빠진 것" 이
+    아니다 — 뷰는 ``gone.kept`` 로 예외를 알리고, 빠진 접두사에서도 뺀다."""
+
+    def _ctx(self, tmp_path):
+        ctx = _ctx(tmp_path)  # 턴 0 의 질문 "do the thing" 이 hidx 1
+        ctx.set_open_requests(lambda: ["q1"])
+        ctx._cache[1]["request_id"] = "q1"
+        return ctx
+
+    def test_kept_pin_is_listed_and_not_counted_as_evicted(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        ctx.compact_now()
+        g = ctx.context_view()["gone"]
+        assert g["kept"] == [1] and g["hidx"] > 1
+        evicted = ctx.evicted_records()
+        assert [h for h, _ in evicted] == list(range(2, g["hidx"]))
+        # 캐시엔 남아 있다
+        assert 1 in ctx.cache_ordinals()
+
+    def test_no_pin_means_no_kept_key(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        ctx.compact_now()
+        assert "kept" not in ctx.context_view()["gone"]
+
+    def test_frontend_honours_kept(self):
+        from pathlib import Path
+
+        import agent_cli.web as web_pkg
+
+        js = (Path(web_pkg.__file__).parent / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        assert "gone.kept" in js

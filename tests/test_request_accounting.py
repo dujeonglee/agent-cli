@@ -1166,3 +1166,19 @@ class TestAgentLoopsAreUntouched:
             D.render_step = real
         finals = [k for kind, k in seen if kind == "final"]
         assert finals and not finals[0].get("requests"), "에이전트 final 에 칩이 붙었다"
+
+
+class TestOpenRequestsArePinnedInContext:
+    """루프는 `run_requests` 의 id 를 ctx 에 라이브 콜백으로 등록한다(v10.41.0) —
+    압축·FIFO 가 미답 요청의 user 레코드를 원문으로 남기는 근거."""
+
+    def test_callback_reads_run_requests_live(self):
+        loop = _with_ctx(
+            [{"id": "r1", "text": "first"}, {"id": "r2", "text": "second"}]
+        )
+        assert loop.ctx._open_requests() == ["r1", "r2"]
+        loop._state.run_requests.pop(0)  # 정산으로 빠지면 바로 반영
+        assert loop.ctx._open_requests() == ["r2"]
+        # 그 id 를 단 user 레코드가 핀 대상이다
+        pinned = [loop.ctx._cache[i]["request_id"] for i in loop.ctx._pinned_indices()]
+        assert pinned == ["r2"]

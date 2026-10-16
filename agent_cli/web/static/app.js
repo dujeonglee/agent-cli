@@ -954,9 +954,12 @@
   // 경계는 history 레코드 서수 하나(`gone.hidx` = 캐시에 남은 첫 레코드) —
   // 카드는 자기 레코드의 서수(`data-hidx`, 이벤트의 `hidx`)가 그보다 작으면 빠진 것.
   // 턴 번호는 런마다 1 부터 다시 시작해 경계가 될 수 없다(실측).
+  // 예외는 `gone.kept` — 경계 앞인데 압축이 원문으로 남긴 미답 요청(v10.41.0).
   function ctxCardGone(card, gone) {
     if (!gone || card.dataset.hidx === undefined) return false;
-    return Number(card.dataset.hidx) < gone.hidx;
+    const h = Number(card.dataset.hidx);
+    if (gone.kept && gone.kept.includes(h)) return false;
+    return h < gone.hidx;
   }
   function ctxApplyToCard(card, taskId) {
     if (!card.dataset || card.dataset.hidx === undefined) return;
