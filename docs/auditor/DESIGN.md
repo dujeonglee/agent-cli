@@ -1,6 +1,6 @@
 # 감사자(auditor) — main 의 complete 마다 결과를 감사하고 되먹인다
 
-> 상태: **구현됨 (v10.42.0, 2026-10-16) — §6 측정 전, 기본값 off**
+> 상태: **구현됨 (v10.42.0, 2026-10-16) — §6.1 1차 실측 뒤 프로파일 2판, 2차 실측 중, 기본값 off**
 > 결정(사용자): ① 서수 구간만 읽는다 ② 결과는 사용자에게도 보인다 ③ 트리거는 하니스 코드가 아니라 **기존 구독(`monitor`)** 으로 ④ 전달은 **기존 에이전트 메시지 경로**로 ⑤ 측정 계획 동의.
 > 1판과의 차이: 하니스가 브리프를 만들어 감사자에게 넣는 구조를 버렸다. 감사자는 보통 상주 에이전트이고, 자기가 main 의 history 에 `monitor` 를 걸어 `complete` 를 구독한다. 새 카드·새 이벤트·판정 파서가 없다.
 
@@ -97,7 +97,7 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 
 | 파일 | 변경 | LOC |
 |---|---|---|
-| `agent_cli/agents/builtin/auditor.md` | 프로파일·역할 프롬프트(시작 의식·구간·건너뛰기·판정·전달) | +110 |
+| `agent_cli/agents/builtin/auditor.md` | 프로파일·역할 프롬프트(시작 의식·구간·건너뛰기·판정·전달; 2판 §6.1) | +106 |
 | `agent_cli/constants.py` | `AGENT_CLI_AUDITOR` 노브 | +10 |
 | `agent_cli/runtime.py` | 노브 on: 스폰(브리프 = history 경로·WAKE_AUTHOR) / off: 되살아난 감사자 kill | +35 |
 | `agent_cli/subagent/agents_live.py` | `instance_for(profile, name)` — 툼스톤 포함 조회. 라벨 충돌은 `resume_teammate` 로 푼다(같은 키 부활) | +12 |
@@ -139,6 +139,32 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 지표: 포착률, 오탐률, 되먹임 1회 해결률, 고리(사용자 런당 감사 ≤1·되먹임 ≤1 — 로그로 검증), 완료당 추가 토큰·지연, **구간 밖 조회 횟수**, **깨우기 런 건너뛰기 정확도**.
 
 통과 기준(제안): 결함 과제 포착 ≥ 4/5, 깨끗한 과제 오탐 ≤ 1/5, 되먹임 1회 해결 ≥ 3/5, 완료당 추가 토큰 ≤ main 런의 1/3, 건너뛰기 5/5. 못 미치면 기본값 off 유지, 프롬프트는 증거 규칙 쪽으로만 손본다(과제 통과용 튜닝 금지).
+
+### 6.1 1차 실측 (2026-10-16, 프로파일 1판, A/B/D × 3)
+
+C 는 뺐다 — 테스트 파일이 없는 프로젝트에서 "통과했다" 는 허위 주장을 결정적으로 심을 방법이 없다(운에 기대는 과제). D 는 턴 상한 12.
+
+| 런 | main 의 결과 (실제) | 감사자 판정 | 맞음 | message→main | 깨우기 런 |
+|---|---|---|---|---|---|
+| A-1 | 14 읽고 REPORT.md 작성 | pass | ○ | — | — |
+| A-2 | "complete" 인데 REPORT.md 없음 | findings(unmet) → 깨우기 런에서 작성 → pass | ○ ○ | ○ | 1, 해결 |
+| A-3 | 3/14 읽고 포기 complete | findings(unmet) | ○ | **×** | — |
+| B-1 | 작성, 체크섬 마지막 줄 | findings: [1] met, **[14] unmet** | **오탐** | × | — |
+| B-2 | REPORT.md 없이 complete | findings(unmet ×2) | ○ | **×** | — |
+| B-3 | 작성, 체크섬 마지막 줄 | findings: [1] met, **[13] partial** | **오탐** | × | — |
+| D-1 | 턴 상한 → final 없음 | (발화 없음) | — | — | — |
+| D-2 | 9/14 읽고 complete | findings → 깨우기 런에서 완성 → pass | ○ ○ | ○ | 1, 해결 |
+| D-3 | 턴 상한 → final 없음 | (발화 없음) | — | — | — |
+
+하니스 몫은 전부 맞았다: 모니터 등록 9/9 한 번씩, final 마다 발화 8/8, `sessions:` 누락 0, main 파일 필터 누락 0(§3.3 수정 뒤), 되먹임 고리 ≤1 (A-2·D-2 둘 다 깨우기 런 하나로 끝, 그 런은 건너뛰거나 "closure only" 로 판정), 아홉 런 모두 rc=0 으로 종료(§3.6a passive).
+
+모델 몫에서 셋이 드러났다:
+
+1. **전달 누락 4/6** — findings 를 `complete` 에만 쓰고 main 에게 `message` 하지 않았다(A-3·B-1·B-2·B-3). 1판 §5 는 "findings → message, then complete" 를 불릿 하나로 적었다. 2판: 번호 절차로, `message` 가 먼저이고 "`complete` reports to no one" 을 명시.
+2. **오탐 2/2 (B-1·B-3)** — 파일은 `…\n\nchecksum: 4471-zeta\n` 으로 끝나 요구를 충족하는데, main 이 찍은 `tail`/`od -c` 전사를 읽고 "빈 줄이 뒤따른다/앞선다" 고 판정했다. B-1 은 또 `substr(text,1,120)` 으로 잘린 배치 레코드(한 턴 7 ops)를 보고 "ledger/metrics 는 read_file 로 읽지 않았다" 고 했다 — 실제로는 읽었다. 2판 §4: "파일은 파일로 판정(read_file)", "잘린 열은 부재의 증거가 아니다".
+3. **전달 뒤 구경 (D-2)** — message 뒤 8턴 동안 main 의 history 를 다시 읽으며 반응을 지켜보다 다음 발화에 흡수됐다. 2판 §5: 전달 다음 턴에 complete, main 을 다시 읽지 않는다.
+
+D 의 턴 상한 12 는 main 이 포기 complete 조차 못 하고 죽는 값이었다(2/3 final 없음 → 감사 대상 없음). 2차는 16 으로 — 14 모듈을 다 읽을 수는 없고(최소 17턴) 포기 complete 는 할 수 있는 값. 비용: 감사 런당 액션 4~18, 감사자 history 레코드 17~103개/세션.
 
 ## 7. 열린 질문
 
