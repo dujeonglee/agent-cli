@@ -127,3 +127,19 @@ def test_host_rule_and_engine_label(session, site):
         s.open("http://example.com/")
     s.open(f"{site}/item.html")
     assert s.engine in ("chrome", "chromium")
+
+
+def test_open_recovers_after_the_page_is_closed(session, site):
+    """실제 브라우저: 페이지(컨텍스트)가 닫힌 뒤 ``open`` 은 새로 띄워 이어 간다 —
+    종전엔 ``TargetClosedError`` 가 반복됐다 (v10.41.1)."""
+    s = session
+    s.open(f"{site}/item.html")
+    s._call(lambda: s._page.context.close())  # 사용자가 창을 닫은 것과 같다
+    with pytest.raises(B.BrowserError, match="window was closed"):
+        s.snapshot()
+    out = s.open(f"{site}/item.html")
+    assert (
+        out.startswith(f"[page] {site}/item.html")
+        and "[browser] the previous window was closed" in out
+    )
+    assert "[browser]" not in s.snapshot()

@@ -306,6 +306,10 @@ class FakePage:
         self.keyboard = FakeKeyboard(self)
         self.handlers = {}
         self.history = []
+        self.closed = False  # 사용자가 창을 닫았다
+
+    def is_closed(self):
+        return self.closed
 
     def load(self, url):
         self.history.append(self.url)
@@ -370,6 +374,9 @@ class FakeBrowser:
 
     def close(self):
         self.closed = True
+
+    def is_connected(self):
+        return not self.closed
 
 
 class FakeDialog:
@@ -981,3 +988,80 @@ class TestAdvertising:
         monkeypatch.setattr(B, "reset_browser", lambda: closed.append(True))
         runtime.teardown_session(None, None)
         assert closed == [True]
+
+
+class TestWindowClosed:
+    """보이는 창을 사용자가 닫거나 브라우저가 죽은 뒤 (v10.41.1). 실측(다나와 세션):
+    죽은 페이지를 그대로 쓰면 ``TargetClosedError`` 가 ``close`` 할 때까지 매 턴
+    반복됐다. 이제 ``open`` 은 같은 가시성으로 새 창을 띄우고 머리에 한 줄 알리며,
+    다른 동작은 "창이 닫혔다 — open 으로 새로" 로 거부한다."""
+
+    def _visible_session(self, blocked):
+        make, launches, _ = blocked
+        s = make("auto")
+        s.open("http://shop.test/")
+        link = next(k for k, r in s._refs.items() if r.name == "Aurora Lamp")
+        s.click(link)  # 챌린지 → 보이는 창으로 전환
+        assert s.visible and [b.headless for b in launches] == [True, False]
+        return s, launches
+
+    def test_open_after_the_user_closed_the_window_relaunches_visible(self, blocked):
+        s, launches = self._visible_session(blocked)
+        try:
+            gen = s.generation
+            s._page.closed = True  # 사용자가 창을 닫았다
+            out = s.open("http://shop.test/item")
+            assert out.startswith("[page] http://shop.test/item — Item\n")
+            assert (
+                "[browser] the previous window was closed (by the user or a crash); "
+                "this is a new one — cookies and logins from the old window are gone"
+                in out
+            )
+            # 세 번째 브라우저, 역시 보이는 창; 옛 것은 닫았고 쿠키는 옮기지 않았다
+            assert [b.headless for b in launches] == [True, False, False]
+            assert launches[1].closed and launches[2].context_kw == {
+                "accept_downloads": False
+            }
+            assert s.visible and s.generation > gen
+            assert not s._verification_pending and s._challenge == ""
+            # 알림은 한 번뿐
+            assert "[browser]" not in s.snapshot()
+        finally:
+            s.close()
+
+    def test_actions_on_a_closed_window_say_so_instead_of_target_closed(self, blocked):
+        s, _ = self._visible_session(blocked)
+        try:
+            s._page.closed = True
+            for call in (s.snapshot, lambda: s.find(text="x"), s.text, s.back):
+                with pytest.raises(
+                    B.BrowserError,
+                    match="browser window was closed .*call mode 'open'",
+                ):
+                    call()
+            with pytest.raises(B.BrowserError, match="window was closed"):
+                s.click("e1")
+        finally:
+            s.close()
+
+    def test_dead_headless_browser_is_relaunched_headless(self, blocked):
+        make, launches, _ = blocked
+        s = make("1")
+        try:
+            s.open("http://shop.test/")
+            launches[0].closed = True  # 브라우저 프로세스가 죽었다 (is_connected False)
+            out = s.open("http://shop.test/")
+            assert "[browser] the previous window was closed" in out
+            assert [b.headless for b in launches] == [True, True] and not s.visible
+        finally:
+            s.close()
+
+    def test_live_window_is_reused(self, blocked):
+        make, launches, _ = blocked
+        s = make("1")
+        try:
+            s.open("http://shop.test/")
+            s.open("http://shop.test/item")
+            assert len(launches) == 1 and "[browser]" not in s.snapshot()
+        finally:
+            s.close()
