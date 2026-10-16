@@ -147,6 +147,20 @@ class MonitorTool(Tool):
         gate = _gate_commands(cond, run_cmd)
         if gate:
             return ToolResult(False, error=gate)
+        # `command`/`run` 은 셸 권한이다 — `shell` 이 없는 루프(감사자처럼
+        # 읽기 전용 프로파일)에선 `match`/`silence` 만 된다 (v10.42.0). 종전엔
+        # monitor 를 가진 프로파일이 전부 shell 도 가져 가정으로만 지켜졌다.
+        if (
+            (run_cmd or cond.type == "command")
+            and ctx is not None
+            and ctx.tools_available
+            and "shell" not in ctx.tools_available
+        ):
+            return ToolResult(
+                False,
+                error="monitor: `command` conditions and `run` need the shell tool, "
+                "which this agent does not have — use `match` or `silence`",
+            )
 
         once = args.get("once")
         from agent_cli.monitor.registry import MonitorUnavailable

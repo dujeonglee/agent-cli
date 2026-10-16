@@ -554,8 +554,57 @@ class TestProfileReach:
                 continue  # 제한 없음 = 전부 허용
             if "monitor" not in allowed:
                 missing.append(f.stem)
-            assert "shell" in allowed, f"{f.stem}: monitor 만 있고 shell 이 없다"
+            # shell 없는 프로파일(감사자, v10.42.0)은 monitor 의 command/run 을
+            # 도구가 거부한다 — 아래 test_command_and_run_need_shell 이 못 박는다.
+            assert "shell" in allowed or f.stem == "auditor", (
+                f"{f.stem}: monitor 만 있고 shell 이 없다"
+            )
         assert missing == [], f"monitor 를 못 쓰는 내장 프로파일: {missing}"
+
+    def test_command_and_run_need_shell(self, tmp_path):
+        """shell 이 없는 루프는 `command` 조건·`run` 을 걸 수 없다 — monitor 가
+        셸 권한의 뒷문이 되지 않게 (v10.42.0, 감사자 프로파일의 전제)."""
+        from agent_cli.monitor.registry import MonitorRegistry
+        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.tools.base import RunContext
+        from agent_cli.tools.monitor_tool import MonitorTool
+
+        reg = MonitorRegistry()
+        reg.stop()
+        reg.deliver = lambda *a, **k: ""  # 배달처만 있으면 된다 — 발화는 안 본다
+        set_monitor_registry(reg)
+        try:
+            no_shell = RunContext(tools_available=frozenset({"monitor", "read_file"}))
+            tool = MonitorTool()
+            log = tmp_path / "x.log"
+            log.write_text("")
+            r = tool._run(
+                {
+                    "mode": "add",
+                    "when": {"type": "command", "command": "true", "every": 60},
+                },
+                ctx=no_shell,
+            )
+            assert not r.success and "need the shell tool" in r.error
+            r = tool._run(
+                {
+                    "mode": "add",
+                    "when": {"type": "match", "file": str(log), "pattern": "x"},
+                    "run": "true",
+                },
+                ctx=no_shell,
+            )
+            assert not r.success and "need the shell tool" in r.error
+            r = tool._run(
+                {
+                    "mode": "add",
+                    "when": {"type": "match", "file": str(log), "pattern": "x"},
+                },
+                ctx=no_shell,
+            )
+            assert r.success, r.error
+        finally:
+            set_monitor_registry(None)
 
     def test_a_profile_allowlist_hides_the_tool(self):
         """**배달이 되는 것과 도구가 붙는 것은 다른 문제다.**

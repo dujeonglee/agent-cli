@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
+from agent_cli.constants import AUDITOR_NAME, AUDITOR_START_BRIEF, auditor_enabled
 from agent_cli.loop.ports import LoopPorts
 
 
@@ -235,7 +236,51 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).
     revived = registry.restore(parent_ctx=parent_ctx)
     auto = registry.auto_spawn(parent_ctx=parent_ctx)
-    return waker, revived, auto
+    auditor = ensure_auditor(registry, parent_ctx=parent_ctx, enabled=auditor_enabled())
+    return waker, revived, auto, auditor
+
+
+def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> str:
+    """세션 감사자를 노브대로 맞춘다 (docs/auditor/DESIGN.md §3.2) — 살아 있는
+    감사자는 늘 0 또는 1 이다. 돌려주는 값은 부팅 알림용 한 단어:
+    ``""``(변화 없음) · ``"spawned"`` · ``"resumed"``(죽은 툼스톤 부활) ·
+    ``"killed"``(노브가 꺼졌는데 되살아났다) · ``"error: …"``.
+
+    켜져 있으면 — 어떻게 살아났든 — **시작 브리프를 보낸다**: 모니터는 세션을
+    넘지 못하므로 restore 로 되살아난 감사자도 다시 걸어야 한다. 세션이 없으면
+    (``parent_ctx`` None) 감시할 history 가 없으니 아무것도 하지 않는다.
+    """
+    if parent_ctx is None:
+        return ""
+    tm = registry.instance_for(AUDITOR_NAME, AUDITOR_NAME)
+    if not enabled:
+        if tm is not None and tm.state != "dead":
+            registry.kill(tm.key)
+            return "killed"
+        return ""
+    outcome = ""
+    if tm is None:
+        key, error = registry.spawn(
+            profile=AUDITOR_NAME, name=AUDITOR_NAME, parent_ctx=parent_ctx
+        )
+        if error:
+            return f"error: {error}"
+        outcome = "spawned"
+    elif tm.state == "dead":
+        key = tm.key
+        error = registry.resume_teammate(key, parent_ctx=parent_ctx)
+        if error:
+            return f"error: {error}"
+        outcome = "resumed"
+    else:
+        key = tm.key
+    from agent_cli.pump import WAKE_AUTHOR
+
+    brief = AUDITOR_START_BRIEF.format(
+        history=str(parent_ctx.history_path), wake=WAKE_AUTHOR
+    )
+    error = registry.request(key, brief, author="main", expects_reply=False)
+    return f"error: {error}" if error else outcome
 
 
 def main_run_ended(agent_registry, output: str = "") -> int:

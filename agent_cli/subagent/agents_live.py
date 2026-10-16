@@ -843,6 +843,18 @@ class AgentRegistry:
         주석 참조). worker(런 시작)와 main 루프(조향 주입)가 호출한다."""
         self._current_run_authors = list(authors)
 
+    def instance_for(self, profile: str, name: str) -> AgentInstance | None:
+        """표시 이름 ``(profile, name)`` 의 개체 — 죽은 툼스톤도 돌려준다
+        (하니스 소유 에이전트의 부활/정리용, v10.42.0). 없으면 None."""
+        return next(
+            (
+                tm
+                for tm in list(self._agents.values())
+                if (tm.profile_name, tm.instance_name) == (profile, name)
+            ),
+            None,
+        )
+
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
 

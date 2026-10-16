@@ -1483,7 +1483,7 @@ def run(
         from agent_cli.pump import PumpDeps, QuietPolicy, RunRequest, SessionPump
 
         input_queue = InputQueue()
-        waker, revived, auto = wire_agent_mail(
+        waker, revived, auto, auditor = wire_agent_mail(
             agent_registry,
             # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
             enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
@@ -1492,6 +1492,8 @@ def run(
         )
         if revived:
             console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
+        if auditor:
+            console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
         if agent_registry.stale_questions:
             # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
             # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
@@ -1701,8 +1703,21 @@ def _previous_monitors_notice(session_dir) -> str:
     )
 
 
-def _announce_agent_boot(renderer, revived: int, auto: int, stale: int = 0) -> None:
-    """web 부트스트랩의 teammate 재생성/auto-spawn 알림.
+def _auditor_boot_line(outcome: str) -> str:
+    """감사자 부팅 결과(`ensure_auditor`) 한 줄 — run 콘솔·web 상태 공용."""
+    if outcome.startswith("error:"):
+        return f"🔎 감사자를 띄우지 못했습니다 — {outcome[6:].strip()}"
+    return {
+        "spawned": "🔎 세션 감사자 상주 시작 (AGENT_CLI_AUDITOR=1)",
+        "resumed": "🔎 세션 감사자 부활 (AGENT_CLI_AUDITOR=1)",
+        "killed": "🔎 감사자를 내렸습니다 (AGENT_CLI_AUDITOR 꺼짐)",
+    }.get(outcome, f"🔎 감사자: {outcome}")
+
+
+def _announce_agent_boot(
+    renderer, revived: int, auto: int, stale: int = 0, *, auditor: str = ""
+) -> None:
+    """web 부트스트랩의 teammate 재생성/auto-spawn/감사자 알림.
 
     v4.60.1 사고의 재발 방지 지점: 인라인 status() 오호출(시그니처)이
     worker 스레드를 부트에서 죽여 "큐만 쌓이고 소비 안 됨"으로 보였다 —
@@ -1717,6 +1732,8 @@ def _announce_agent_boot(renderer, revived: int, auto: int, stale: int = 0) -> N
         )
     if auto:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
+    if auditor:
+        renderer.status("running", _auditor_boot_line(auditor))
 
 
 def _agent_mail_notice(reply: dict) -> None:
@@ -2431,13 +2448,15 @@ def web(
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
         # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
-        _waker, revived, auto = wire_agent_mail(
+        _waker, revived, auto, auditor = wire_agent_mail(
             _registry,
             enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
         )
-        _announce_agent_boot(renderer, revived, auto, agent_registry.stale_questions)
+        _announce_agent_boot(
+            renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
+        )
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
         if _mon_notice:
             renderer.status("running", _mon_notice)
