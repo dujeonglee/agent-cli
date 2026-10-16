@@ -283,7 +283,9 @@ def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> str:
     from agent_cli.pump import WAKE_AUTHOR
 
     brief = AUDITOR_START_BRIEF.format(
-        history=str(parent_ctx.history_path), wake=WAKE_AUTHOR
+        history=str(parent_ctx.history_path),
+        session=parent_ctx.session_dir.name,  # 감사자의 history 기본값은 자기 것
+        wake=WAKE_AUTHOR,
     )
     error = registry.request(key, brief, author="main", expects_reply=False)
     return f"error: {error}" if error else outcome

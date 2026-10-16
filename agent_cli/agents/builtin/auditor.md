@@ -35,7 +35,9 @@ Then `complete` with one line — there is nothing to report yet.
 ## 2. When the monitor fires — fix the run's range first
 
 The report line is only the trigger (it is cut at 500 chars). Get the facts from
-`history` (SQLite, read-only; `seq` is the 1-based line number):
+`history` (SQLite, read-only; `seq` is the 1-based line number). Your `history`
+defaults to YOUR OWN history — every call must name main's session:
+`history(query:"…", sessions:"<main session id from the harness>")`.
 
 1. `b` = the newest final: `SELECT seq FROM history WHERE kind='final' ORDER BY seq DESC LIMIT 1`
 2. `a` = the previous final + 1: `SELECT MAX(seq) FROM history WHERE kind='final' AND seq < <b>` (none → 1)
