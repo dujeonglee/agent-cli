@@ -92,6 +92,7 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 - **재개**: 사용자가 창에서 풀고 답하면 모델은 `snapshot` 을 부른다. 머리에 `[browser] visible — verification passed; staying visible for this session` 이 한 번 붙고(아직이면 `… still pending …`), 그 뒤는 보통 흐름. **헤드리스로 되돌아가지 않는다** — 확인을 통과한 쿠키는 그 브라우저에 묶여 있고, 되옮기는 것은 확인 결과를 자동화로 재사용하는 일이다.
 - **하지 않는 것**: User-Agent 위장, 스텔스 플러그인, 챌린지 자동 풀이. 구글의 IP 차단은 창을 띄워도 다시 걸릴 수 있다 — 도구가 푸는 게 아니라 사람이 푼다. 관찰 문구에 "다른 도구로 우회하지 말 것(브라우저 UA 를 단 curl·재시도·프록시)" 을 명시한다 — 1차 측정에서 DDG 고정 모드 5회 중 2회가 `[blocked]` 를 받고 셸에서 `curl -A "Mozilla/5.0 …"` 를 시도했다(통과는 못 함).
 - 되묻기는 새 UI 가 아니라 기존 `ask` 도구(블로킹: web 은 `awaiting_input`, run 은 프롬프트). 하니스가 더한 건 관찰 문구 두 개와 스냅샷 머리 한 줄뿐.
+- **창이 닫히면** (v10.41.1): 사용자가 보이는 창을 닫거나 브라우저가 죽으면 페이지 핸들은 남아 있어도 모든 호출이 `TargetClosedError` 로 끝난다 — 실측(다나와 세션)에서 `close` 할 때까지 다섯 턴이 그렇게 날아갔다. 이제 `_alive()`(`page.is_closed()`·`browser.is_connected()`)로 묻는다: `open` 은 같은 가시성(보였으면 보이게)으로 새 브라우저를 띄우고 머리에 `[browser] the previous window was closed (by the user or a crash); this is a new one — cookies and logins from the old window are gone` 을 한 번 붙인다(옮길 컨텍스트가 없으니 쿠키는 못 가져간다). 다른 동작은 "the browser window was closed — call mode 'open' …" 으로 거부한다.
 
 ## 5. 동시성 · 수명 · 시간 제한
 

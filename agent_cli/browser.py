@@ -351,6 +351,9 @@ class BrowserSession:
     #: 창을 띄운 뒤 사용자가 아직 확인을 마치지 않았다 — 다음 스냅샷 머리에
     #: 통과/대기 한 줄을 붙이고, 통과하면 끈다.
     _verification_pending: bool = False
+    #: 창이 닫혀(사용자가 닫았거나 브라우저가 죽음) 새로 띄웠다 — 다음 머리에
+    #: 한 줄 알리고 끈다. 쿠키·로그인은 옛 창과 함께 사라졌다.
+    _window_lost: bool = False
 
     # ── 스레드 ──
     def _call(self, fn):
@@ -426,13 +429,39 @@ class BrowserSession:
         self._browser, self._page = browser, page
         return page
 
+    def _alive(self) -> bool:
+        """페이지와 브라우저가 아직 살아 있나. 사용자가 보이는 창을 닫거나
+        브라우저가 죽으면 거짓 — 그 뒤의 모든 호출은 ``TargetClosedError`` 로
+        끝나므로(실측: 다나와 세션에서 다섯 턴 연속), 묻지 않고 쓰면 안 된다."""
+        page, browser = self._page, self._browser
+        if page is None:
+            return False
+        try:
+            if page.is_closed():
+                return False
+            return browser is None or bool(browser.is_connected())
+        except Exception:
+            return False
+
     def _ensure_page(self):
         if self._page is not None:
-            return self._page
-        headless = self.knobs.get("headless", "auto") != "0"
+            if self._alive():
+                return self._page
+            # 창이 닫혔다 — 같은 가시성으로 새로 띄운다. 쿠키·로그인은 옛 창과
+            # 함께 사라졌다(옮길 컨텍스트가 없다); ``_header`` 가 한 줄 알린다.
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+            self._page = self._browser = None
+            self._challenge, self._verification_pending = "", False
+            self._window_lost = True
+            self._new_document()
+        else:
+            atexit.register(self.close)
+        headless = self.knobs.get("headless", "auto") != "0" and not self.visible
         browser = self._launch(headless=headless)
         self.visible = not headless
-        atexit.register(self.close)
         return self._attach(browser)
 
     def _show_window(self, url: str) -> str:
@@ -562,6 +591,13 @@ class BrowserSession:
         if self._dialogs:
             head += "\n[dialog dismissed] " + " | ".join(self._dialogs)
             self._dialogs = []
+        if self._window_lost:
+            self._window_lost = False
+            head += (
+                "\n[browser] the previous window was closed (by the user or a "
+                "crash); this is a new one — cookies and logins from the old "
+                "window are gone"
+            )
         if self._verification_pending:
             if self._challenge_on(self._page):
                 head += (
@@ -775,6 +811,12 @@ class BrowserSession:
     def _need_page(self):
         if self._page is None:
             raise BrowserError("no page is open — call mode 'open' with a url first")
+        if not self._alive():
+            raise BrowserError(
+                "the browser window was closed (by the user or a crash) — call "
+                "mode 'open' with a url to start a new one; cookies and logins "
+                "from the old window are gone"
+            )
         return self._page
 
     def _interactive(self, ref: str) -> str:
