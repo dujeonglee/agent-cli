@@ -42,6 +42,7 @@ import random
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
@@ -201,6 +202,9 @@ class WebRenderer(Renderer):
         # 🔎 감사 런 진행 중 (v10.42.0) — status.json `auditing` 의 소스. 하니스
         # 작업 실행기의 on_change 가 note_harness 로 갱신한다.
         self._auditing = False
+        #: 노브 상태 한 장을 다시 계산하는 손 (web 부트가 `server.knob_session` 으로
+        #: 묶는다) — 렌더러는 노브 표를 모른다.
+        self.knob_state: Callable[[str], dict | None] | None = None
         # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
         # consumes it each LLM call to rebuild its system prompt.
         self._directives_dirty = False
@@ -869,14 +873,15 @@ class WebRenderer(Renderer):
 
     def note_harness(self, in_flight: int) -> None:
         """하니스 작업(감사) 진행 수가 바뀌었다 — status.json ``auditing`` 갱신
-        (board 가 "결과 확인 중" 을 그린다). 하니스 작업 스레드에서 불린다."""
+        (board 가 "결과 확인 중" 을 그린다). 하니스 작업 스레드에서 불린다.
+        🔎 칩의 "감사 중" 배지는 같은 노브 상태로 산다 — 배지 글자는 서버가
+        계산하므로(v10.45.0) 상태 한 장을 `knob_state` 로 다시 받아 싣는다."""
         with self._lock:
             self._auditing = in_flight > 0
-            slot = self._sticky.get("knob:auditor")
-            payload = dict(slot["payload"]) if slot else None
         self._publish_status()
-        if payload is not None:  # 🔎 칩의 "감사 중" 배지도 같은 sticky 로 산다
-            self.broadcast_knob({**payload, "in_flight": in_flight})
+        fresh = self.knob_state("auditor") if self.knob_state else None
+        if fresh is not None:
+            self.broadcast_knob(fresh)
 
     def agent_message(
         self,

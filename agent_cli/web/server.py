@@ -869,7 +869,9 @@ def create_app(server: WebServer) -> FastAPI:
         """세션 노브 전부 (v10.43.0, docs/knobs/DESIGN.md §5.1) — `knobs.KNOBS` 를
         돌며 상태 한 장씩. 칩·재접속 초기화가 이 한 요청으로 끝난다. 종전
         `/api/thinking`·`/api/grammar`·`/api/max-agents`·`/api/compaction`·
-        `/api/stream-idle`·`/api/confirm-mode`·`/api/auditor` 를 대체."""
+        `/api/stream-idle`·`/api/confirm-mode`·`/api/auditor` 를 대체. v10.45.0:
+        상태 한 장에 칩 모양(``ui``)·배지·설명·묶음(``group``)까지 실려 프런트의
+        렌더러 하나가 칩을 그린다 (§5.2)."""
         from agent_cli.knobs import web_states
 
         return {"knobs": web_states(server.knob_session())}
@@ -879,7 +881,7 @@ def create_app(server: WebServer) -> FastAPI:
         """``{value}`` → 표의 `parse` → 소유자의 `set` → sticky ``knob:<name>`` 으로
         다른 뷰어 동기화. 다음 LLM 호출(또는 다음 확인·런)부터 실린다. 잘못된
         값·거부(모델 미등록 등)는 ``{ok: false, error}`` 로 — 아무것도 바꾸지 않는다."""
-        from agent_cli.knobs import KNOB_BY_NAME, web_state
+        from agent_cli.knobs import KNOB_BY_NAME, web_state, web_states
 
         knob = KNOB_BY_NAME.get(name)
         if knob is None:
@@ -892,7 +894,9 @@ def create_app(server: WebServer) -> FastAPI:
         except ValueError as exc:
             return {"ok": False, "error": f"{name}: {exc}"}
         state = web_state(knob, session)
-        server.renderer.broadcast_knob(state)
+        # 한 노브가 다른 노브의 상태를 바꾼다 — 모델은 사고·문법의 잠김을, 묶음
+        # 멤버는 묶음 배지를. 전부 다시 계산해 sticky 를 맞춘다 (열 장, 싸다).
+        server.renderer.broadcast_knobs(web_states(session))
         return {"ok": True, **state}
 
     @app.post("/api/directives/generate")

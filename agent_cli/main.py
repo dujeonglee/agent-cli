@@ -1773,6 +1773,48 @@ def mcp_remove(name: str = typer.Argument(..., help="서버 이름")):
     raise typer.Exit(code=0 if McpWizard().remove(name) else 1)
 
 
+def _knob_state(name: str, server) -> dict | None:
+    from agent_cli.knobs import KNOB_BY_NAME, web_state
+
+    knob = KNOB_BY_NAME.get(name)
+    return web_state(knob, server.knob_session()) if knob else None
+
+
+@app.command()
+def knobs(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the knob table as JSON (for tools like agent-board).",
+    ),
+):
+    """List the session knobs — one table for run flags, env and the web chips."""
+    import json
+
+    from agent_cli.knobs import table_spec
+
+    spec = table_spec()
+    if as_json:
+        typer.echo(json.dumps(spec, ensure_ascii=False, indent=2))
+        return
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style=C["accent"], box=None, pad_edge=False)
+    for col in ("knob", "flag", "env", "kind", "default", "label"):
+        table.add_column(col)
+    for k in spec:
+        choices = "|".join(k["choices"]) if k["choices"] else ""
+        table.add_row(
+            k["name"],
+            k["flag"] + (f" / {k['short']}" if k["short"] else ""),
+            k["env"],
+            k["kind"] + (f" ({choices})" if choices else ""),
+            "" if k["default"] is None else str(k["default"]),
+            k["ui"]["icon"] + " " + k["label"] if k["ui"]["icon"] else k["label"],
+        )
+    console.print(table)
+
+
 @app.command()
 def sessions(
     workspace: str | None = typer.Option(
@@ -2303,6 +2345,8 @@ def web(
             knob_args, ctx=ctx, registry=_registry, renderer=renderer, auditor=auditor
         )
         server.auditor = auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
+        # 감사 진행 수가 바뀌면 렌더러가 🔎 상태 한 장을 다시 받아 싣는다 (v10.45.0)
+        renderer.knob_state = lambda name: _knob_state(name, server)
         # 노브 전부의 초기 sticky — 칩·status.json(문법)이 첫 요청 전에도 사실을 본다.
         from agent_cli.knobs import web_states
 

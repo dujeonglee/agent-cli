@@ -1,6 +1,6 @@
 # 세션 노브 — 한 번 선언, 표면 셋이 파생 (`agent_cli/knobs.py`)
 
-> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17), 2단계 구현됨 (v10.44.0)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
+> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17), 2단계 구현됨 (v10.44.0), 3단계 칩 일반화 구현됨 (v10.45.0)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
 > 결정(사용자): ① `run` 의 제어면은 실행 인자(시작 뒤 입력 프롬프트가 없다 — §1) ② 노브 추상화 + 표면별 적응 인터페이스 ③ 1단계부터, 2·3단계는 별도 PR ④ **모델도 노브**, 노브 값은 **캐시하지 말고 영향을 미치는 코드가 직접 읽어 적용**(모델을 바꾸면 다음 LLM 호출에서 적용) — 그러면서 같은 정보를 두 곳에 들던 복사본과 죽은 코드를 정리.
 
 ## 0. 한 줄 요약
@@ -114,11 +114,14 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 - 칩은 그대로(디자인 결정)되 `KNOBS` 클라이언트 하나(`all/get/set/on`)를 쓴다 — 한 칩이 두 노브를 들 때(⏳ 한도·시도, 🧠 사고·노력)는 각 노브를 따로 저장하고 다른 축의 마지막 값을 들고 있다. 📐 셀렉트는 노브 값 그대로 `auto`(기본, 지원되면 켬)/`off`.
 - 테스트 `tests/test_knobs_web.py`: 표의 모든 노브가 GET 에 표 순서로 나오고 POST 로 바뀌며 sticky 와 재접속 snapshot 에 실린다(표에서 돈다); 404·잘못된 값·소유자 없음은 무변경; 소유자 의미(clamp·무제한 0·무진전 0=끔·두 축 독립) 유지; 잠김 사유는 서버가; status.json `grammar` 는 같은 sticky; 프런트는 `fetch("api/<old>")` 없이 `KNOBS` 만.
 
-### 5.2 3단계 — 칩 일반화·보드·문서
+### 5.2 3단계 — 칩 일반화·보드·문서 (칩·문서 구현됨 v10.45.0, 보드는 짝 릴리스)
 
-- 칩 IIFE 일곱 대신 `knobs` IIFE 하나가 `/api/knobs` 메타로 칩을 그린다(bool·선택지는 select, 범위는 number, 잠김은 배지, 설명은 `info`). 새 노브는 프런트 코드 없이 칩이 생긴다. 회귀 위험이 가장 크므로 브라우저 테스트로 잰다.
-- `web` 이 같은 플래그를 받으므로 보드의 글 설정에 노브를 두고 spawn 인자로 넘긴다(보드 짝 릴리스).
-- README 의 env·CLI·web 표를 `KNOBS` 에서 만들어 손으로 적은 표와 대조하는 테스트 — 문서가 코드에서 벗어나지 못한다.
+- **칩의 모양도 표에 있다.** `Knob.ui: KnobUI(icon, group, placement chip|header, control ""|range|unlimited|options, scale, unit, choice_labels)` 와 서버가 계산하는 글자 셋 `badge(session)`·`note(session)`·`on(session)`. 묶음은 `KNOB_GROUPS[name] = KnobGroup(icon, label, help, badge, note)` — ⏳(stall·stall_attempts: 배지 `10m×4`/`off`, 설명 "10분 × 4회 = 최대 40분 후 실패"), 🧠(thinking·reasoning_effort: 배지 `off`/노력/`미지원`). `web_state` 한 장에 `ui`·`badge`·`note`·`on`·`group{name,icon,label,help,members,badge,note}` 가 실리고, 🤖 는 `options`(models.json 에서 이 세션의 방언에 묶인 이름들; `--dialect` 강제면 전부). 배지·설명·잠김 사유는 **서버의 말**이다 — 프런트에 노브 이름도 배지 글자도 없다(테스트가 부재를 고정).
+- **프런트는 렌더러 하나.** app.js 의 `KNOBS` 클라이언트(`all/set`)와 IIFE 하나가 GET api/knobs 의 상태로 `#knobs`(칩)·`#knobs-header`(⚡ 토글)에 칩을 만든다: 종류→컨트롤(choice·bool·options → select, range → 슬라이더, unlimited → number+체크박스, number/duration → number, text → text), `scale` 로 화면 단위(분·%) 변환, 묶음은 한 팝업의 3열 그리드, 잠김은 비활성+툴팁 사유(같은 사유는 한 번), `on` 은 `.is-on`, `available=false` 는 숨김. id 규칙 `knob-<칩>-{wrap,chip,pop,badge,note}` / `knob-<노브>`. 칩별 IIFE 일곱·마크업·id 별 CSS 삭제, CSS 는 `.knob-pop` 공통 + `.knob-pop.is-group` + `.knob-toggle` + `.knob-note`.
+- **한 번의 set 이 열 장을 다시 싣는다.** 모델은 사고·문법의 잠김을, 묶음 멤버는 묶음 배지를 바꾸므로 `POST /api/knobs/{name}` 뒤 `broadcast_knobs(web_states(session))`. 조작 중(focus)인 입력은 덮지 않는다 — 옆 칸에 막 적은 값이 change 전에 되돌아가던 경합(브라우저 테스트가 잡음). 하니스 진행 수는 `renderer.knob_state(name)`(web 부트가 `server.knob_session` 으로 묶음)로 🔎 상태 한 장을 다시 계산한다 — 종전 payload 에 `in_flight` 만 덧씌우던 길 삭제.
+- **`agent-cli knobs [--json]`** — `table_spec()`(이름·플래그·env·종류·선택지·기본값·ui, 값 없음)을 보드 같은 바깥에 준다. 보드(v1.36.0 예정)는 이걸로 글 설정의 노브 폼을 만들고 `Post.knobs` → spawn 플래그 / 라이브 `/api/knobs` 로 넘긴다.
+- **문서가 표에서 벗어나지 못한다.** `tests/test_knobs.py::TestReadmeFollowsTheTable` — README 의 CLI 표 한 줄에 그 노브의 env 와 칩 아이콘이 함께 있고 `agent-cli knobs` 가 적혀 있다; env 표는 종전 테스트.
+- **테스트.** 단위: `TestChipShapeIsDeclaredInTheTable`(아이콘/묶음 선언, 칩 이름 충돌 없음, 배지·설명·`on`·배율, 묶음 배지=두 축의 곱, 미지원 모델의 잠김, 문법 배지 셋, 모델 options 의 방언 묶음), `TestKnobsCommand`, `tests/test_knobs_web.py::TestChipShapeComesFromTheServer`(멤버 하나 set → 다른 멤버 sticky 의 묶음 배지, 모델 전환 → 사고·노력 잠김 재송출), 정적 배선(`test_header_knob_chips_wired`: 옛 id 부재·`#knobs`·공통 CSS). 실브라우저 `tests/browser/test_knob_chips.py`: 표의 열 노브가 칩 일곱+토글 하나, 배지는 서버의 말, 입력 한 번이 소유자(ctx·registry·renderer·auditor·binding)까지 닿는 왕복(셀렉트·슬라이더 %→비율·무제한 0·bool·헤더 토글·모델 전환), 잠김(사고 미지원 → 두 셀렉트 비활성·"미지원"·사유 한 번), 묶음 배지·설명·한도 0 → 시도 잠김, 팝업 하나씩, 두 뷰어 동기화, 감사 진행 → "감사 중", 거부 되돌리기. `tests/browser/conftest.py` 의 `WebStack` 이 소유자 넷을 전부 꽂는다.
 
 ## 6. 위험
 

@@ -312,7 +312,7 @@ class TestAuditFixes:
         빈 칩이 첫 페인트부터 보였다. 형제 클래스들엔 가드가 다 있었다."""
         stack.emit_ready()
         page.goto(stack.url)
-        for cid in ("#chip-ws", "#confirm-mode-btn"):
+        for cid in ("#chip-ws", "#knob-auto_approve"):
             el = page.locator(cid)
             if el.get_attribute("hidden") is not None:
                 assert not el.is_visible(), f"{cid} 가 hidden 인데 보인다"

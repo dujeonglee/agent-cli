@@ -34,14 +34,6 @@ class SessionAuditor:
     def in_flight(self) -> int:
         return self.jobs.in_flight if self.jobs is not None else 0
 
-    def state(self) -> dict:
-        """🔎 칩·`/api/auditor`·sticky 가 같이 읽는 한 모양."""
-        return {
-            "enabled": self.enabled,
-            "available": self.jobs is not None,
-            "in_flight": self.in_flight,
-        }
-
     def run_ended(self, req, *, ok: bool) -> str:
         """main 의 런이 끝났다. 사용자 런이고 `complete` 로 끝났으면 그 런의
         구간을 감사 작업으로 돌린다. 커서는 **모든** 런이 앞당긴다 — 실패한

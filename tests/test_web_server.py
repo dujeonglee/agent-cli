@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import threading
 import time
 
@@ -1121,31 +1122,32 @@ class TestStaticUI:
             importlib.import_module("agent_cli.integrations")
 
     def test_header_knob_chips_wired(self, server_and_client):
-        # v8.57.0 헤더 배선 계약: 토큰 상세(#token-usage)는 헤더에 상시 노출
-        # (구 ctx 게이지 칩·팝오버 폐기), 세션 노브 4종은 값-배지 칩(knob),
-        # 좁은 창은 보따리(🎒) 오버플로. 내부 입력 id 는 IIFE 계약이라 보존.
+        # 헤더 배선 계약: 토큰 상세(#token-usage)는 헤더에 상시 노출(구 ctx 게이지
+        # 칩·팝오버 폐기). 세션 노브 칩은 v10.45.0 부터 마크업이 아니라 app.js 의
+        # 렌더러가 GET api/knobs 의 상태로 `#knobs`(칩)·`#knobs-header`(토글)에
+        # 그린다 — 손으로 적은 칩 마크업·칩별 IIFE 가 되살아나면 표 밖의 두 번째
+        # 정의가 돌아온 것.
         _, _, client = server_and_client
         html = client.get("/static/index.html").text
         assert 'id="token-usage"' in html and 'id="chip-ws"' in html
-        # 구 게이지/팝오버 id 는 제거됐다
         assert 'id="chip-ctx"' not in html and 'id="ctx-popover"' not in html
-        # 노브 칩 4종 + 각자 팝업 + 보존된 입력 id
-        for wrap, chip, pop, inner in (
-            (
-                "compaction-wrap",
-                "compaction-chip",
-                "compaction-pop",
-                "compaction-range",
-            ),
-            ("maxagents-wrap", "maxagents-chip", "maxagents-pop", "maxagents-input"),
-            ("stall-wrap", "stall-chip", "stall-pop", "stall-input"),
-            ("thinking-wrap", "thinking-chip", "thinking-pop", "think-enable"),
-            ("grammar-wrap", "grammar-chip", "grammar-pop", "grammar-mode"),
+        assert 'id="knobs"' in html and 'id="knobs-header"' in html
+        for old in (
+            "compaction-wrap",
+            "maxagents-wrap",
+            "stall-wrap",
+            "thinking-wrap",
+            "grammar-wrap",
+            "auditor-wrap",
+            "confirm-mode-btn",
+            "think-enable",
+            "grammar-mode",
         ):
-            assert f'id="{wrap}"' in html and f'id="{chip}"' in html
-            assert f'id="{pop}"' in html and f'id="{inner}"' in html
+            assert old not in html, old
+        assert 'id="mcp-wrap"' in html  # 🔌 는 노브가 아니다(읽기 전용) — 마크업 유지
         js = client.get("/static/app.js").text
-        assert "knob-btn" in js  # 노브 칩 토글
+        assert "knob-btn" in js  # 노브 칩 토글(문서 위임 — 생성된 칩에도 듣는다)
+        assert '"knob-" + name + "-wrap"' in js and '"knob-" + d.name' in js
         # v9.8.0: 헤더의 💭 세그먼트 제거 — 생성 중 줄이 같은 숫자를 이미 보여
         # 화면에 두 번 있었다. 되살아나면 그 중복이 돌아온 것이므로 부재를 고정.
         assert "tok-think" not in js
@@ -1154,6 +1156,16 @@ class TestStaticUI:
         assert "pouch" not in html and "pouch" not in js
         css = client.get("/static/style.css").text
         assert ".hd-chip" in css and ".knob-btn" in css
+        # 칩 CSS 도 id 별 규칙이 아니라 공통 — 묶음 그리드·헤더 토글·설명 줄
+        assert ".knob-pop.is-group:not([hidden])" in css
+        assert ".knob-toggle.on" in css and ".knob-note" in css
+        for old in (
+            "#stall-pop",
+            "#grammar-info",
+            "#thinking-wrap",
+            "#confirm-mode-btn",
+        ):
+            assert not re.search(rf"^{re.escape(old)}", css, re.MULTILINE), old
 
     def test_agent_mail_hint_wired(self, server_and_client):
         # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``
