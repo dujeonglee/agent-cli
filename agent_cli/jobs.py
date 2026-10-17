@@ -150,9 +150,12 @@ class JobRegistry:
         if not jobs:
             return ""
         now = now or time.time()
-        lines = [
-            "## Background jobs (running — you are told when each one ends; do not poll)"
-        ]
+        head = (
+            "## Background jobs (running — you are told when each one ends; do not "
+            "poll. Nothing else to do? Call `complete` and say you are waiting: the "
+            "notice wakes you.)"
+        )
+        lines = [head]
         for j in jobs:
             lines.append(
                 f"- job #{j.id} · pid {j.pid} · {j.elapsed(now)} · `{_short(j.command)}` "

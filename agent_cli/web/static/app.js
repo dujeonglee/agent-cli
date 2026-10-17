@@ -1547,6 +1547,16 @@
   }
 
   function renderAgentMail(d) {
+    // 모니터 보고·작업 종료 통지는 에이전트가 아니다 — key 가 없어 종전엔
+    // "Agent ? replied" 로 그려졌다 (v10.47.1).
+    if (d.kind === "monitor") {
+      finishCard(sysLine("🔔", "Monitor report arrived"), d);
+      return;
+    }
+    if (d.kind === "job") {
+      finishCard(sysLine("🧵", "Background job finished"), d);
+      return;
+    }
     const who = d.key ? "Agent " + d.key : "Agent";
     const label =
       d.kind === "question"

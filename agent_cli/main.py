@@ -1684,6 +1684,12 @@ def _agent_mail_notice(reply: dict) -> None:
     elif kind == "harness":
         # 하니스 작업(감사)의 결과 — 에이전트 회신이 아니다 (v10.42.0)
         line = f"🔎 {reply.get('job') or 'harness'} 결과 도착"
+    elif kind == "monitor":
+        # 모니터 보고 — 에이전트가 아니라 key 가 없다 (종전엔 "에이전트 ? 회신")
+        line = "🔔 모니터 보고 도착"
+    elif kind == "job":
+        # 백그라운드 작업 종료 통지 (v10.47.0) — 마찬가지로 에이전트가 아니다
+        line = "🧵 백그라운드 작업 종료 통지"
     else:
         line = f"📨 에이전트 {key} 회신 도착"
     try:
