@@ -153,7 +153,7 @@ class TestTail:
         assert "job #1 · pid " in out and "1m30s" in out and "`sleep 60`" in out
         assert "→ .agent-cli/tmp/jobs/1.log" in out and "stop it: `kill " in out
         assert "job #2" not in out
-        assert "do not poll" in out
+        assert "do not poll" in out and "Call `complete`" in out
 
     def test_nothing_when_nothing_runs(self, reg):
         job = reg.start("true", owner="main")
@@ -407,6 +407,8 @@ class TestAssembly:
         assert "`background: true`" in TASK_GUIDELINES
         assert ".agent-cli/tmp/jobs/" in TASK_GUIDELINES
         assert "Do not poll the log" in TASK_GUIDELINES
+        assert "call `complete` saying you are waiting" in TASK_GUIDELINES
+        assert "do not fill turns with unrelated actions" in TASK_GUIDELINES
         assert "`kill <pid>`" in TASK_GUIDELINES
 
 

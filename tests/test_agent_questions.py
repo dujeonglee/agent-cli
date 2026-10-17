@@ -1426,6 +1426,11 @@ class TestUncoveredSurfaces:
         ):
             _agent_mail_notice({"kind": kind, "key": "agt-x"})
             assert want in seen[-1], (kind, seen[-1])
+        # 모니터 보고·백그라운드 작업 통지는 에이전트가 아니다 — key 없이 와도
+        # "에이전트 ? 회신" 이 되면 안 된다 (v10.47.1, 보드 방 실측 "Agent ? replied")
+        for kind, want in (("monitor", "모니터 보고"), ("job", "백그라운드 작업 종료")):
+            _agent_mail_notice({"kind": kind})
+            assert want in seen[-1] and "?" not in seen[-1], (kind, seen[-1])
 
     def test_async_question_record_points_at_the_answer_tool(self, mkreg, renderer):
         """main 이 새 request 를 보내면 그건 답이 아니라 일감이다 — 질문은

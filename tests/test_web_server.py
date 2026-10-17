@@ -1183,6 +1183,8 @@ class TestStaticUI:
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         assert 'addEventListener("agent_mail"' in js
+        # 모니터 보고·작업 종료는 에이전트가 아니다 — 종류별 라벨 (v10.47.1)
+        assert "Monitor report arrived" in js and "Background job finished" in js
         assert "renderAgentMail" in js
         # 웹은 key/kind 로 자체 영문 라벨을 조립한다 (백엔드 `text` 는 CLI
         # 한글 status 라인 — 웹 미표시, WebUI 영문화 5.18.3). 한글 누출 방지.
