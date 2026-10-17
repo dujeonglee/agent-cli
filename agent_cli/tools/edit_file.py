@@ -6,7 +6,8 @@ overlaps, apply bottom-up, write once. A lone op is a batch of one — there is
 no second implementation of the op semantics to drift. Fuzzy ref matching was
 removed in v10.48.0: its acceptance condition (the NORMALIZED current line
 hashing to the ORIGINAL line's tag) almost never holds, and it fired 0 times in
-460 recorded edits; a stale ref is a hash mismatch and the model re-reads.
+460 recorded edits; a stale ref is a hash mismatch, and since v10.50.0 the
+error shows the current lines around it with fresh refs (no re-read turn).
 """
 
 from __future__ import annotations
@@ -16,26 +17,48 @@ from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
-from agent_cli.tools.read_file import _verify_ref
+from agent_cli.tools.read_file import _verify_ref, format_hashlines_range
 from agent_cli.tools.result import ToolResult
 
 #: Edit operations — single source for the schema ``enum`` and the checks.
 EDIT_OPS = ("replace", "append", "prepend", "delete")
 
 
+#: Lines shown on each side of a mismatched ref (v10.50.0). Session replay
+#: (5 recorded mismatches × 10, Qwen3.6-35B-A3B): the old "re-read the file"
+#: hint was followed 50/50 times — every slip cost a whole read turn; a ±3
+#: window with fresh refs got 41/50 straight retries and 0 edits on a wrong
+#: line. ±2 missed the intended line once (the model edited a neighbour), and a
+#: "did you mean <tag's line>" hint misled: models usually get the line NUMBER
+#: right and the tag wrong.
+_MISMATCH_WINDOW = 3
+
+
+def _mismatch_window(lines: list[str], line_num: int) -> str:
+    """The current lines around *line_num* with fresh refs — read from disk at
+    the failed apply, so never staler than anything in the model's context."""
+    lo = max(1, line_num - _MISMATCH_WINDOW)
+    hi = min(len(lines), line_num + _MISMATCH_WINDOW)
+    return (
+        f"Current lines {lo}–{hi} (fresh refs — retry from these, no re-read "
+        f"needed):\n" + format_hashlines_range(lines, lo - 1, hi)
+    )
+
+
 def _resolve_ref(lines: list[str], ref: str) -> int:
-    """Exact ref → 0-based index. A hash mismatch keeps the edit tool's own
-    wording (the file moved since the read — re-read and retry); parse and
-    range errors pass through from ``_verify_ref`` unchanged."""
+    """Exact ref → 0-based index. A hash mismatch says which ref failed and
+    shows the current lines around it (:func:`_mismatch_window`) — first line
+    the verdict, the rest the window; parse and range errors pass through from
+    ``_verify_ref`` unchanged."""
     try:
         return _verify_ref(lines, ref)
     except RuntimeError as exc:
         if not str(exc).startswith("Hash mismatch"):
             raise
-        line_num = str(exc).split("line ", 1)[1].split(":", 1)[0]
+        line_num = int(str(exc).split("line ", 1)[1].split(":", 1)[0])
         raise RuntimeError(
             f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
-            f"current content.{_RETRY_HINT}"
+            f"current content.\n{_mismatch_window(lines, line_num)}"
         ) from None
 
 
@@ -45,15 +68,6 @@ def _op_label(ed: dict) -> str:
     if ed.get("pos"):
         parts.append(str(ed["pos"]) + (f"..{ed['end']}" if ed.get("end") else ""))
     return " ".join(parts)
-
-
-_RETRY_HINT = " Re-read the file with read_file to get fresh hashline tags, then retry."
-
-
-def _strip_retry_hint(msg: str) -> str:
-    """The per-ref message ends with a re-read hint; the batch summary says it
-    once for all rejected ops."""
-    return msg.removesuffix(_RETRY_HINT)
 
 
 def _op_to_span(ed: dict, file_lines: list[str]) -> tuple[int, int, list]:
@@ -196,7 +210,8 @@ def apply_edits_batch_parts(
     #    refs were fine and the file untouched — so it re-read and re-emitted
     #    the whole batch each time.
     spans: list[tuple] = []
-    bad: dict[int, str] = {}
+    bad: dict[int, str] = {}  # verdict line per rejected op
+    window: dict[int, str] = {}  # its current-lines window (hash mismatch only)
     raw: dict[int, str] = {}
     for i, ed in enumerate(edits):
         try:
@@ -204,7 +219,10 @@ def apply_edits_batch_parts(
             spans.append((lo, hi, repl, i))
         except RuntimeError as e:
             raw[i] = str(e)
-            bad[i] = f"op {i + 1} ({_op_label(ed)}): {_strip_retry_hint(str(e))}"
+            head, _, win = str(e).partition("\n")
+            bad[i] = f"op {i + 1} ({_op_label(ed)}): {head}"
+            if win:
+                window[i] = win
     if bad and len(edits) == 1:
         # A lone op keeps the single-edit wording it always had (v10.48.0 —
         # same core, same model-facing text): op errors bare, ref errors
@@ -215,17 +233,26 @@ def apply_edits_batch_parts(
         return ToolResult(False, error=err), [{"success": False, "content": err}]
     if bad:
         ok = len(edits) - len(bad)
+        fix = (
+            "Correct the rejected refs from the current lines shown (no re-read "
+            "needed), then"
+            if len(window) == len(bad)
+            else "Re-read the file for fresh tags of the rejected lines only, then"
+        )
         resend = (
-            "Re-read the file for fresh tags of the rejected lines only, then "
-            "resend ALL the ops in one turn — the valid ones unchanged, the "
-            "rejected ones with corrected refs."
+            f"{fix} resend ALL the ops in one turn — the valid ones unchanged, "
+            "the rejected ones with corrected refs."
         )
         combined = ToolResult(
             False,
             error=(
                 f"edit_file batch: {len(bad)} of {len(edits)} edits rejected — nothing "
                 f"written, '{path}' is unchanged.\n"
-                + "\n".join(f"  {line}" for line in bad.values())
+                + "\n".join(
+                    f"  {line}"
+                    + ("\n" + window[i] if i in window else "").replace("\n", "\n    ")
+                    for i, line in bad.items()
+                )
                 + "\n"
                 + (
                     f"The other {ok} ref{'s are' if ok != 1 else ' is'} valid as sent. "
@@ -239,6 +266,8 @@ def apply_edits_batch_parts(
         for i, ed in enumerate(edits):
             if i in bad:
                 text = f"{bad[i]} — nothing written, '{path}' is unchanged."
+                if i in window:
+                    text += "\n" + window[i]
             else:
                 text = (
                     f"{_op_label(ed)}: ref valid as sent — not applied, the batch "

@@ -204,8 +204,9 @@ def _build_edit_file_inline(dialect) -> str:
     from before the file last changed no longer match: read the region
     again first.
   - A hash mismatch is not a failure — it is a guardrail signaling the
-    file moved between your read and your edit. Re-read the region (or
-    re-fetch the symbol) and retry with the fresh tags.\
+    ref does not match the file. The error shows the current lines around
+    it with fresh tags: retry from those. Re-read only if the line you
+    meant is not shown.\
 {same_file}"""
 
 
