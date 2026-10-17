@@ -261,6 +261,64 @@ class TestChipShapeComesFromTheServer:
         assert "꺼져" in at["group"]["note"]
 
 
+class TestStatusFileMirrorsTheKnobs:
+    """v10.46.0: ``status.json.knobs`` 는 노브 현재 값 전부 — 보드가 방의 값을
+    거울처럼 기록해 다음 spawn 에 같은 플래그로 돌려준다 (docs/knobs/DESIGN.md §5.3)."""
+
+    def _status(self, tmp_path):
+        from agent_cli.web.instance_file import read_status_file
+
+        return read_status_file(tmp_path)
+
+    def test_boot_broadcast_writes_every_knob(self, tmp_path):
+        from agent_cli.knobs import web_states
+
+        server, renderer, _client = _full(tmp_path)
+        renderer.broadcast_knobs(web_states(server.knob_session()))  # web 부트와 같다
+        knobs = self._status(tmp_path)["knobs"]
+        assert set(knobs) == {k.name for k in KNOBS}
+        assert knobs["model"] == "m1" and knobs["thinking"] == "off"
+        assert knobs["stall"] == 600 and knobs["auto_approve"] is False
+
+    def test_each_set_rewrites_the_file(self, tmp_path, monkeypatch):
+        import json
+
+        import agent_cli.config as _config
+        import agent_cli.dialects as _dialects
+
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "m1": {"context_window": 32768, "dialect": "json_fc"},
+                        "m2": {"context_window": 8000, "dialect": "json_fc"},
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        monkeypatch.setattr(_config, "_cached_registry", None)
+        monkeypatch.setattr(_dialects, "_override", None)
+        _s, _r, client = _full(tmp_path)
+        _post(client, "model", "m2")
+        _post(client, "stall_attempts", 7)
+        _post(client, "auditor", True)
+        knobs = self._status(tmp_path)["knobs"]
+        assert knobs["model"] == "m2" and knobs["stall_attempts"] == 7
+        assert knobs["auditor"] is True
+
+    def test_unavailable_knobs_are_left_out(self, tmp_path):
+        """소유자 없는 노브(값 없음)는 쓰지 않는다 — 보드가 빈 값을 플래그로 넘기지 않게."""
+        from agent_cli.knobs import web_states
+
+        renderer = WebRenderer(session_dir=str(tmp_path))
+        server = WebServer(renderer, token=TOKEN, ctx=ContextManager(tmp_path / "s"))
+        renderer.broadcast_knobs(web_states(server.knob_session()))
+        knobs = self._status(tmp_path)["knobs"]
+        assert "stall" in knobs and "model" not in knobs and "max_agents" not in knobs
+
+
 class TestFrontendIsOneRenderer:
     def test_chips_are_rendered_not_written(self, tmp_path):
         _s, _r, client = _full(tmp_path)
