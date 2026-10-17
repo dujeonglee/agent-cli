@@ -84,7 +84,7 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 ### 3.7 켜고 끄기 — 부팅값 + web 칩 (결정 ⑥)
 
 - `AGENT_CLI_AUDITOR`(기본 off)는 `SessionAuditor.enabled` 의 **초기값**이다. 실행기(`HarnessJobs`)는 세션이 있으면 늘 조립되므로 세션 도중 켜고 끌 수 있다.
-- web: 🔎 칩(`#auditor-wrap`, 📐 문법 노브와 같은 틀) ↔ `GET/POST /api/auditor` `{enabled, available, in_flight}` ↔ sticky `auditor_mode` 로 뷰어 동기화. 끄면 다음 사용자 런부터 감사하지 않고, 진행 중 감사는 끝까지 돌아 결과가 배달된다. 세션 한정 — 재시작 시 env 값.
+- web: 🔎 칩(`#auditor-wrap`, 📐 문법 노브와 같은 틀) ↔ 노브 `auditor` 의 web 표면 `GET /api/knobs`·`POST /api/knobs/auditor` `{value}` ↔ sticky `knob:auditor`(`in_flight` 포함) 로 뷰어 동기화 (v10.44.0, docs/knobs/DESIGN.md §5.1). 끄면 다음 사용자 런부터 감사하지 않고, 진행 중 감사는 끝까지 돌아 결과가 배달된다. 세션 한정 — 재시작 시 env 값.
 - 보드: 감사자는 레지스트리에 없으니 🤖 칩에 안 보인다. 대신 `status.json` 의 `auditing`(하니스 작업 `on_change` → `WebRenderer.note_harness`)으로 행 상태 "결과 확인 중"(agent-board v1.35.0; 우선순위 ❗ 응답 필요 > 응답 중 > **결과 확인 중** > 에이전트 작업 중 > 대기).
 - run: 부팅 때 "🔎 세션 감사자 켜짐" 한 줄(켜져 있을 때만), 감사만 남아 기다릴 때 "🔎 감사가 끝나길 기다립니다" 한 번.
 

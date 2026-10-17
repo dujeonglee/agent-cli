@@ -106,7 +106,7 @@ def _iso_to_epoch(ts) -> float | None:
 # → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
 # either republishes the status sidecar (viewers republish on register/unregister).
 _STATUS_STICKY_KEYS = frozenset(
-    {"worker_state", "input_required", "agent_roster", "grammar_mode"}
+    {"worker_state", "input_required", "agent_roster", "knob:grammar"}
 )
 
 # Fun default nicknames assigned to viewers on connect (browsers can't read
@@ -857,69 +857,26 @@ class WebRenderer(Renderer):
         복원 (다른 sticky 슬롯과 동일 기계)."""
         self.set_sticky("agent_roster", "agent_roster", {"roster": roster})
 
-    def broadcast_compaction_ratio(self, ratio: float) -> None:
-        """5.13: compaction 슬라이더 값 변경을 다른 뷰어에 sticky 로 전파 —
-        여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
-        self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
+    def broadcast_knob(self, state: dict) -> None:
+        """노브 상태 한 장(`knobs.web_state`)을 sticky ``knob:<name>`` 으로 — 칩
+        동기화·재접속 snapshot·status.json(문법 ``active``)의 한 소스 (v10.43.0;
+        종전 노브별 sticky 일곱 개를 대체)."""
+        self.set_sticky(f"knob:{state['name']}", "knob", dict(state))
 
-    def broadcast_stream_idle(self, seconds: int, attempts: int | None = None) -> None:
-        """P3 (v8.55.0): Stall(스트림 무진전 한도) 변경을 타 뷰어에 sticky
-        전파 — 팝오버 입력 동기화 + 재접속 snapshot. v8.60.0: 같은 ⏳ 노브의
-        2번째 축(총 시도 횟수)도 같은 sticky 슬롯에 실어 한 번에 동기화한다
-        (두 값은 최대 대기의 두 인수라 따로 도착하면 파생 표시가 깜빡인다)."""
-        payload: dict = {"seconds": seconds}
-        if attempts is not None:
-            payload["attempts"] = attempts
-        self.set_sticky("stream_idle", "stream_idle", payload)
-
-    def set_auto_approve(self, on: bool) -> None:
-        """⚡ 자동 승인 토글 설정 + 다른 뷰어에 sticky 로 전파(체크박스 동기화·재접속
-        snapshot 복원). confirm() 이 이 플래그를 읽어 안전 프롬프트를 건너뛴다."""
-        super().set_auto_approve(on)
-        self.set_sticky(
-            "confirm_mode", "confirm_mode", {"auto_approve": self.auto_approve}
-        )
-
-    def broadcast_grammar(self, state: dict) -> None:
-        """📐 문법 제약 상태(``{override, supported, active}``)를 sticky 로 —
-        칩 동기화·재접속 snapshot·status.json(``grammar``) 의 한 소스 (v9.24.0)."""
-        self.set_sticky("grammar_mode", "grammar_mode", dict(state))
-
-    def broadcast_auditor(self, state: dict) -> None:
-        """🔎 세션 감사자 상태(``{enabled, available, in_flight}``)를 sticky 로 —
-        칩 동기화·재접속 snapshot 의 한 소스 (v10.42.0)."""
-        self.set_sticky("auditor_mode", "auditor_mode", dict(state))
+    def broadcast_knobs(self, states: list[dict]) -> None:
+        for state in states:
+            self.broadcast_knob(state)
 
     def note_harness(self, in_flight: int) -> None:
         """하니스 작업(감사) 진행 수가 바뀌었다 — status.json ``auditing`` 갱신
         (board 가 "결과 확인 중" 을 그린다). 하니스 작업 스레드에서 불린다."""
         with self._lock:
             self._auditing = in_flight > 0
-            slot = self._sticky.get("auditor_mode")
+            slot = self._sticky.get("knob:auditor")
             payload = dict(slot["payload"]) if slot else None
         self._publish_status()
         if payload is not None:  # 🔎 칩의 "감사 중" 배지도 같은 sticky 로 산다
-            self.set_sticky(
-                "auditor_mode", "auditor_mode", {**payload, "in_flight": in_flight}
-            )
-
-    def broadcast_thinking(self, override: dict) -> None:
-        """세션 thinking 오버라이드(사고/노력) 변경을 sticky 로 전파 — 여러 뷰어의
-        컨트롤이 동기화되고 재접속 snapshot 에도 실린다."""
-        self.set_sticky(
-            "thinking_mode",
-            "thinking_mode",
-            {
-                "enable_thinking": override.get("enable_thinking"),
-                "reasoning_effort": override.get("reasoning_effort"),
-            },
-        )
-
-    def broadcast_max_agents(self, value: int) -> None:
-        """5.16: 에이전트 상한 변경을 다른 뷰어에 sticky 로 전파 — 여러
-        브라우저의 입력/무제한 체크박스가 동기화되고 재접속 snapshot 에도 실린다.
-        value=0 은 무제한."""
-        self.set_sticky("max_agents", "max_agents", {"value": value})
+            self.broadcast_knob({**payload, "in_flight": in_flight})
 
     def agent_message(
         self,
@@ -1980,7 +1937,7 @@ class WebRenderer(Renderer):
             viewers = sum(1 for c in self._connections if not c.closed.is_set())
             slot = self._sticky.get("agent_roster")
             roster = slot["payload"].get("roster") if slot else None
-            gslot = self._sticky.get("grammar_mode")
+            gslot = self._sticky.get("knob:grammar")
             grammar = bool(gslot["payload"].get("active")) if gslot else None
             auditing = self._auditing
         try:

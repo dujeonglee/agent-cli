@@ -281,11 +281,16 @@ class TestDangerousShellWaitsForViewer:
         assert r.auto_approve is False  # 기본 OFF(안전)
         r.set_auto_approve(True)
         assert r.auto_approve is True
-        # sticky 로 브로드캐스트되어 재접속 snapshot 에 실린다.
+        # 전파는 노브 sticky (`knob:auto_approve`, v10.43.0) — 서버가 set 뒤에 낸다.
+        from agent_cli.knobs import KNOB_BY_NAME, KnobSession, web_state
+
+        r.broadcast_knob(
+            web_state(KNOB_BY_NAME["auto_approve"], KnobSession(renderer=r))
+        )
         conn = WebConnection(id="v")
         snap = r.register_connection(conn)
-        cm = [d for ev, d in snap if ev == "confirm_mode"]
-        assert cm and cm[0].get("auto_approve") is True
+        cm = [d for ev, d in snap if ev == "knob" and d.get("name") == "auto_approve"]
+        assert cm and cm[0].get("value") is True
 
     def test_confirm_payload_carries_command_and_danger_spans(self, monkeypatch):
         """The confirm event payload includes the raw command and the

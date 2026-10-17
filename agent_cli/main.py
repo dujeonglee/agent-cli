@@ -2182,8 +2182,6 @@ def web(
     # AgentLoop calls ``header()`` again on each user message; the
     # WebRenderer slot-replaces, so the buffer doesn't accumulate.
     renderer.header(binding.provider_name, binding.model, max_turns)
-    # 📐 문법 제약의 초기 상태 — 칩·status.json 이 첫 요청 전에도 사실을 본다.
-    renderer.broadcast_grammar(server.grammar_state())
 
     # On resume, fold prior turns back into the persistent event
     # buffer BEFORE any SSE client connects so the snapshot replay
@@ -2304,10 +2302,11 @@ def web(
         _apply_knobs(
             knob_args, ctx=ctx, registry=_registry, renderer=renderer, auditor=auditor
         )
-        renderer.broadcast_grammar(server.grammar_state())
-        server.auditor = auditor  # 🔎 칩의 /api/auditor 가 켜고 끈다
-        if auditor is not None:
-            renderer.broadcast_auditor(auditor.state())
+        server.auditor = auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
+        # 노브 전부의 초기 sticky — 칩·status.json(문법)이 첫 요청 전에도 사실을 본다.
+        from agent_cli.knobs import web_states
+
+        renderer.broadcast_knobs(web_states(server.knob_session()))
         _waker, revived, auto = wire_agent_mail(
             _registry,
             enqueue_wake=server.enqueue_system,
