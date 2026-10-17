@@ -110,23 +110,6 @@ def clamp_stream_idle_timeout(seconds: int) -> int:
     return max(STREAM_IDLE_TIMEOUT_MIN_S, min(s, STREAM_IDLE_TIMEOUT_MAX_S))
 
 
-def default_compaction_ratio() -> float:
-    """부팅 기본 — env AGENT_CLI_COMPACTION_RATIO 오버라이드 (v8.61.0).
-
-    종전엔 이 노브를 부팅 시점에 지정할 수단이 아예 없어(웹 슬라이더 전용)
-    headless·harbor 는 매번 0.8 로 시작했다. 잘못된 값은 조용히 기본값으로
-    떨어진다 — clamp 가 [0.5, 0.95] 를 보장하므로 범위 밖도 안전하다."""
-    import os
-
-    raw = os.environ.get("AGENT_CLI_COMPACTION_RATIO", "")
-    if not raw:
-        return DEFAULT_COMPACTION_RATIO
-    try:
-        return clamp_compaction_ratio(float(raw))
-    except ValueError:
-        return DEFAULT_COMPACTION_RATIO
-
-
 def clamp_stream_max_attempts(attempts: int) -> int:
     """무진전 재전송 **총** 시도 횟수 clamp (v8.60.0): [1, 10].
     1 = 재전송 없음(첫 전송만). 한도(``clamp_stream_idle_timeout``)와 달리
@@ -137,20 +120,6 @@ def clamp_stream_max_attempts(attempts: int) -> int:
     return max(1, min(int(attempts), STREAM_MAX_ATTEMPTS_MAX))
 
 
-def default_grammar_override() -> bool | None:
-    """부팅 기본 문법-제약 오버라이드 (v9.24.0) — headless(run)·harbor 에서
-    제어하는 유일한 경로. ``AGENT_CLI_GRAMMAR`` = off|on. 미설정 = None =
-    "서버가 지원하면 켠다". web 의 ``set_grammar_override`` 와 같은 값."""
-    import os
-
-    v = os.environ.get("AGENT_CLI_GRAMMAR", "").strip().lower()
-    if v in ("off", "no", "0", "false"):
-        return False
-    if v in ("on", "yes", "1", "true"):
-        return True
-    return None
-
-
 def grammar_active(override: bool | None, supports: bool | None) -> bool:
     """문법 제약이 이 콜에 실리는가 — 루프(llm.py)와 웹(칩·status.json·health)이
     **같은 규칙**을 읽는다. 지원으로 **기록된**(models.json `supports_grammar:
@@ -158,69 +127,6 @@ def grammar_active(override: bool | None, supports: bool | None) -> bool:
     은 물론 미확인(None)에도 어떤 값으로도 켜지지 않는다 — 지원 여부는 모델
     감지 때 판정하는 것이지 켜기 요청이 덮어쓰는 것이 아니다."""
     return supports is True and override is not False
-
-
-def default_thinking_override() -> dict:
-    """부팅 기본 thinking 오버라이드 — headless(run)·harbor 에서 thinking 을
-    제어할 유일한 경로 (v8.58.0). web UI 의 런타임 ``set_thinking_override`` 와
-    **동일 dict 형태**를 env 로 구성한다:
-
-      - ``AGENT_CLI_THINKING`` = off|on|auto → ``enable_thinking``
-        (미설정 = **끔**, v9.24.8; ``auto`` = 서버·모델 기본에 맡김)
-      - ``AGENT_CLI_REASONING_EFFORT`` = low|medium|high|off → ``reasoning_effort``
-
-    **기본은 사고 끔 (v9.24.8, 사용자 결정)**. 라이브 보드(2026-09-27)에서
-    상주 에이전트가 ``</think>`` 없이 사고 구간 안에 같은 도구 호출을 끝없이
-    반복했다(22분, 패킷 캡처로 확인). 문법은 사고 구간을 제약하지 않고
-    omlx 의 자동 사고 예산도 이 모델엔 걸리지 않아, 남은 상한이 출력 한도뿐
-    이었다. 끔을 **명시**해서 보내야 하는 이유: Qwen 계열 템플릿은 스위치가
-    없으면 사고를 켠다. **주의**: ``supports_thinking=False``
-    모델에선 ``resolve_thinking_policy`` 가 이 override 를 무시한다(thinking 을
-    아예 못 받는 모델에 파라미터를 안 보내는 게이트) — off 를 실제로 보내려면
-    모델이 ``supports_thinking=True`` 여야 한다."""
-    import os
-
-    ov: dict = {}
-    t = os.environ.get("AGENT_CLI_THINKING", "").strip().lower()
-    if t in ("on", "yes", "1", "true"):
-        ov["enable_thinking"] = True
-    elif t != "auto":  # 미설정·off·알 수 없는 값 → 끔
-        ov["enable_thinking"] = False
-    eff = os.environ.get("AGENT_CLI_REASONING_EFFORT", "").strip().lower()
-    if eff in ("low", "medium", "high", "off"):
-        ov["reasoning_effort"] = eff
-    return ov
-
-
-def default_stream_idle_timeout_s() -> int:
-    """부팅 기본 — env AGENT_CLI_STREAM_IDLE_TIMEOUT_S(초) 오버라이드."""
-    import os
-
-    from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
-
-    raw = os.environ.get("AGENT_CLI_STREAM_IDLE_TIMEOUT_S", "")
-    if not raw:
-        return DEFAULT_STREAM_IDLE_TIMEOUT_S
-    try:
-        return clamp_stream_idle_timeout(int(raw))
-    except ValueError:
-        return DEFAULT_STREAM_IDLE_TIMEOUT_S
-
-
-def default_stream_max_attempts() -> int:
-    """부팅 기본 — env AGENT_CLI_STREAM_MAX_ATTEMPTS 오버라이드 (v8.60.0).
-    한도의 env 와 짝 — headless/harbor 에서 최대 대기를 두 축으로 조절."""
-    import os
-
-    from agent_cli.constants import STREAM_MAX_ATTEMPTS
-
-    raw = os.environ.get("AGENT_CLI_STREAM_MAX_ATTEMPTS", "")
-    if not raw:
-        return STREAM_MAX_ATTEMPTS
-    try:
-        return clamp_stream_max_attempts(int(raw))
-    except ValueError:
-        return STREAM_MAX_ATTEMPTS
 
 
 # ── Observation complete-nudge ───────────────────────────────
@@ -340,23 +246,31 @@ class ContextManager:
         # loop's per-call ``× compaction_ratio`` can never disable compaction.
         # None = 미지정 → env(AGENT_CLI_COMPACTION_RATIO) 또는 기본값.
         # 명시값(서브에이전트 상속·테스트)은 그대로 clamp (v8.61.0).
+        from agent_cli.constants import (
+            DEFAULT_STREAM_IDLE_TIMEOUT_S,
+            STREAM_MAX_ATTEMPTS,
+        )
+
+        # 노브 기본값 (v10.43.0): env·CLI 는 여기서 읽지 않는다 — `knobs.KNOBS` 가
+        # 선언하고 부트가 `apply_all` 로 main ctx 에 적용한다. 서브에이전트 ctx 는
+        # 부모의 현재 값을 물려받는다(`subagent.runner.create_subagent_ctx`).
         self.compaction_ratio = (
-            default_compaction_ratio()
+            DEFAULT_COMPACTION_RATIO
             if compaction_ratio is None
             else clamp_compaction_ratio(compaction_ratio)
         )
-        # Per-session thinking/reasoning override (web UI 컨트롤). 공유 ctx 라 다음
-        # LLM 콜이 즉시 읽는다(rebuild 불필요). 기본 {}=미설정(모델 기본값 유지).
-        #   enable_thinking: None|bool · reasoning_effort: None|"low"|"medium"|"high"|"off"
-        self.thinking_override: dict = default_thinking_override()
+        # Per-session thinking/reasoning override. 공유 ctx 라 다음 LLM 콜이 즉시
+        # 읽는다. enable_thinking: None|bool · reasoning_effort: None|"low"|…|"off".
+        # 기본은 **끔을 명시** (v9.24.8, 사용자 결정): Qwen 계열 템플릿은 스위치가
+        # 없으면 사고를 켜고, 라이브 보드(2026-09-27)에서 상주 에이전트가 `</think>`
+        # 없이 사고 구간 안에서 같은 도구 호출을 22분 반복했다.
+        self.thinking_override: dict = {"enable_thinking": False}
         #: 디코딩 문법 제약 (v9.24.0): None=자동(서버 지원 시 켬) / True / False.
-        self.grammar_override: bool | None = default_grammar_override()
-        # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정,
-        # web ctx 팝오버 "Stall" 로 변경, 서브에이전트는 spawn 시점 상속.
-        self.stream_idle_timeout_s: int = default_stream_idle_timeout_s()
-        # v8.60.0: 한도와 한 쌍인 **총** 시도 횟수(첫 전송 포함). 최대 대기 =
-        # stream_idle_timeout_s × stream_max_attempts — 같은 ⏳ 노브의 2번째 입력.
-        self.stream_max_attempts: int = default_stream_max_attempts()
+        self.grammar_override: bool | None = None
+        # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정.
+        self.stream_idle_timeout_s: int = DEFAULT_STREAM_IDLE_TIMEOUT_S
+        # v8.60.0: 한도와 한 쌍인 **총** 시도 횟수(첫 전송 포함).
+        self.stream_max_attempts: int = STREAM_MAX_ATTEMPTS
         self._cache: list[dict] = []
         # P0-8a: 캐시 레코드별 history.jsonl 서수(index) 병행 리스트 — 캐시와
         # 항상 같은 길이/순서. fold 가 캐시 **중간**을 제거해도(오프셋은 prefix-

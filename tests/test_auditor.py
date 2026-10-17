@@ -18,10 +18,11 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME, auditor_enabled
+from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME
 from agent_cli.context.manager import ContextManager
 from agent_cli.harness.auditor import SessionAuditor, build_auditor
 from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
+from agent_cli.knobs import KNOB_BY_NAME, KnobSession
 from agent_cli.pump import WAKE_AUTHOR, RunRequest
 from agent_cli.subagent.profiles import available_profiles, load_profile
 from agent_cli.tools.result import ToolResult
@@ -68,18 +69,6 @@ class _FakeJobs:
 
     def stop(self):
         self.stopped = True
-
-
-class TestKnob:
-    def test_default_off_and_truthy_words(self, monkeypatch):
-        monkeypatch.delenv("AGENT_CLI_AUDITOR", raising=False)
-        assert auditor_enabled() is False
-        for v in ("1", "true", "YES", " on "):
-            monkeypatch.setenv("AGENT_CLI_AUDITOR", v)
-            assert auditor_enabled() is True, v
-        for v in ("0", "false", "no", "off", ""):
-            monkeypatch.setenv("AGENT_CLI_AUDITOR", v)
-            assert auditor_enabled() is False, v
 
 
 class TestProfile:
@@ -434,42 +423,34 @@ class TestAssembly:
         registry.runtime = {"model": "m"}
         return registry
 
-    def test_wire_agent_mail_builds_the_handle_from_the_knob(self, monkeypatch):
-        from agent_cli.runtime import wire_agent_mail
-
-        ctx = MagicMock()
-        ctx.next_ordinal = 7
-        monkeypatch.setenv("AGENT_CLI_AUDITOR", "1")
+    def test_build_auditor_starts_disabled_until_the_knob_sets_it(self, tmp_path):
+        """켜는 것은 노브 `auditor`(`knobs.apply_all`: CLI > env > 기본값) — 여기선
+        env 를 읽지 않는다. 실행기는 세션이 있으면 늘 선다."""
         changes: list[int] = []
-        _w, _r, _a, auditor = wire_agent_mail(
-            self._registry(),
-            enqueue_wake=MagicMock(),
-            on_mail_notice=lambda r: None,
-            parent_ctx=ctx,
-            on_harness_change=changes.append,
+        auditor = build_auditor(
+            self._registry(), parent_ctx=_ctx(tmp_path), on_change=changes.append
         )
-        assert auditor.enabled and auditor.active and auditor.in_flight == 0
+        assert not auditor.enabled and not auditor.active and auditor.jobs is not None
         assert auditor.jobs.on_change == changes.append
         assert auditor.jobs.runtime == {"model": "m"}
-        monkeypatch.delenv("AGENT_CLI_AUDITOR")
-        _w, _r, _a, off = wire_agent_mail(
-            self._registry(),
-            enqueue_wake=MagicMock(),
-            on_mail_notice=lambda r: None,
-            parent_ctx=ctx,
-        )
-        assert not off.enabled and not off.active and off.jobs is not None
+        KNOB_BY_NAME["auditor"].set(KnobSession(auditor=auditor), True)
+        assert auditor.enabled and auditor.active and auditor.in_flight == 0
 
     def test_no_session_means_no_handle(self):
+        assert build_auditor(self._registry(), parent_ctx=None) is None
+
+    def test_wire_agent_mail_does_not_build_it(self):
+        """감사자는 wire 앞에서 만들고 노브를 적용한다 — 상한 노브가 restore/
+        auto-spawn 의 게이트라서. wire 는 (waker, revived, auto) 셋만 돌려준다."""
         from agent_cli.runtime import wire_agent_mail
 
-        _w, _r, _a, auditor = wire_agent_mail(
+        out = wire_agent_mail(
             self._registry(),
             enqueue_wake=MagicMock(),
             on_mail_notice=lambda r: None,
-            parent_ctx=None,
+            parent_ctx=MagicMock(),
         )
-        assert auditor is None
+        assert len(out) == 3
 
     def test_delivery_goes_through_the_registry_mailbox(self, tmp_path):
         """`build_auditor` 의 배달은 모니터 보고와 같은 `registry.deliver("main")`."""

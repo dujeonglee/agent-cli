@@ -5106,57 +5106,16 @@ class TestStreamIdleInheritance:
 
 
 class TestHeadlessThinkingControl:
-    """v8.58.0: headless(run)·harbor thinking 제어 — env AGENT_CLI_THINKING /
-    AGENT_CLI_REASONING_EFFORT 가 ctx.thinking_override 초기값을 채우고,
-    provider.call 의 CallSettings.thinking 으로 흘러 요청 body 에 반영된다."""
-
-    def test_env_off_sets_override(self, monkeypatch, tmp_path):
-        from agent_cli.context.manager import (
-            ContextManager,
-            default_thinking_override,
-        )
-
-        monkeypatch.setenv("AGENT_CLI_THINKING", "off")
-        assert default_thinking_override() == {"enable_thinking": False}
-        assert ContextManager(session_dir=tmp_path).thinking_override == {
-            "enable_thinking": False
-        }
-
-    def test_env_effort_and_on(self, monkeypatch):
-        from agent_cli.context.manager import default_thinking_override
-
-        monkeypatch.setenv("AGENT_CLI_THINKING", "on")
-        monkeypatch.setenv("AGENT_CLI_REASONING_EFFORT", "high")
-        assert default_thinking_override() == {
-            "enable_thinking": True,
-            "reasoning_effort": "high",
-        }
-
-    def test_unset_is_off(self, monkeypatch):
-        """v9.24.8: 기본은 사고 끔(사용자 결정) — 라이브 보드에서 사고 구간
-        안의 도구 호출 반복이 출력 한도까지 갔다. 끔을 **명시**한다(Qwen
-        템플릿은 스위치가 없으면 켠다)."""
-        from agent_cli.context.manager import default_thinking_override
-
-        monkeypatch.delenv("AGENT_CLI_THINKING", raising=False)
-        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
-        assert default_thinking_override() == {"enable_thinking": False}
-        monkeypatch.setenv("AGENT_CLI_THINKING", "bogus")  # 모르는 값도 끔
-        assert default_thinking_override() == {"enable_thinking": False}
-
-    def test_auto_leaves_it_to_the_server(self, monkeypatch):
-        from agent_cli.context.manager import default_thinking_override
-
-        monkeypatch.setenv("AGENT_CLI_THINKING", "auto")
-        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
-        assert default_thinking_override() == {}
+    """ctx 의 thinking_override(기본 = 끔 명시, v9.24.8; env·CLI 는 노브 `thinking`
+    — tests/test_knobs.py)가 provider.call 의 CallSettings.thinking 으로 흘러 요청
+    body 에 반영된다."""
 
     def test_env_off_reaches_provider_call(self, monkeypatch, tmp_path):
-        """env off → ctx override → CallSettings.thinking (엔드-투-엔드)."""
+        """ctx 기본(끔 명시) → CallSettings.thinking (엔드-투-엔드)."""
         from agent_cli.context.manager import ContextManager
 
-        monkeypatch.setenv("AGENT_CLI_THINKING", "off")
         ctx = ContextManager(session_dir=tmp_path)
+        assert ctx.thinking_override == {"enable_thinking": False}
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=1024, supports_thinking=True
         )

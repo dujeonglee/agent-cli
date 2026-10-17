@@ -9,13 +9,13 @@
 
 from __future__ import annotations
 
-from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME, auditor_enabled
+from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME
 from agent_cli.harness.jobs import HarnessJobs
 
 
 class SessionAuditor:
-    """세션당 하나. ``enabled`` 가 노브다 — 부팅값은 `AGENT_CLI_AUDITOR`, web 의
-    🔎 칩이 세션 도중 바꾼다(`/api/auditor`). 꺼져 있어도 커서는 같이 움직여
+    """세션당 하나. ``enabled`` 가 노브 `auditor` 의 자리다 — 부팅값은 CLI > env
+    (`knobs`), web 의 🔎 칩이 세션 도중 바꾼다(`/api/auditor`). 꺼져 있어도 커서는 같이 움직여
     다시 켰을 때 그 사이 런이 다음 구간에 섞이지 않고, 진행 중이던 감사는
     끝까지 돈다(결과는 배달된다). ``jobs`` 가 None(세션 없음)이면 비활성."""
 
@@ -70,9 +70,10 @@ class SessionAuditor:
 
 def build_auditor(registry, *, parent_ctx, on_change=None) -> SessionAuditor | None:
     """세션의 감사자 핸들 — 세션이 없으면(``parent_ctx`` None) 감사할 history 가
-    없으니 None. 실행기는 늘 조립하고 노브(`AGENT_CLI_AUDITOR`)는 ``enabled``
-    초기값일 뿐이라 세션 도중 켜고 끌 수 있다. 결과는
-    ``registry.deliver("main", …)`` 로 main 메일함에 — 모니터 보고와 같은 길이다."""
+    없으니 None. 실행기는 늘 조립하고 ``enabled`` 는 꺼진 채 시작한다 — 켜는 것은
+    노브 `auditor`(`knobs.apply_all`: CLI > env > 기본값, web 🔎 칩이 세션 도중
+    바꿈). 결과는 ``registry.deliver("main", …)`` 로 main 메일함에 — 모니터
+    보고와 같은 길이다."""
     if parent_ctx is None:
         return None
 
@@ -91,4 +92,4 @@ def build_auditor(registry, *, parent_ctx, on_change=None) -> SessionAuditor | N
         deliver=deliver,
         on_change=on_change,
     )
-    return SessionAuditor(jobs, parent_ctx, enabled=auditor_enabled())
+    return SessionAuditor(jobs, parent_ctx, enabled=False)

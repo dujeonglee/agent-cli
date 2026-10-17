@@ -211,9 +211,7 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
-def wire_agent_mail(
-    registry, *, enqueue_wake, on_mail_notice, parent_ctx=None, on_harness_change=None
-):
+def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
     종전엔 ``monitors`` 인자를 받아 술어에 ``or monitors.has_pending()`` 을
@@ -222,12 +220,10 @@ def wire_agent_mail(
     참이 되고 ``on_reply`` 가 이미 깨운다. 얹을 항이 없는 것이 가장
     안전하다: 그 항을 빠뜨린 것이 v9.11.0 의 "발화해도 조용함" 이었다.
 
-    Returns ``(waker, revived, auto, auditor)`` — 부활/auto-spawn 수는 호출자가
-    자기 표면(콘솔/렌더러)으로 알린다; ``auditor`` 는 `harness.auditor.SessionAuditor`
-    핸들(세션 없음이면 None — 펌프의 ``PumpDeps.auditor`` 자리).
-    ``on_harness_change(n)`` 은 진행 중 하니스 작업 수의 변화 — web 이 status.json
-    의 ``auditing`` 을 이것으로 쓴다."""
-    from agent_cli.harness.auditor import build_auditor
+    Returns ``(waker, revived, auto)`` — 부활/auto-spawn 수는 호출자가 자기
+    표면(콘솔/렌더러)으로 알린다. 감사자 핸들(`harness.auditor.build_auditor`)은
+    호출자가 **이 앞에서** 만들고 노브를 적용한다(`knobs.apply_all`) — 상한
+    노브가 restore/auto_spawn 의 게이트이기 때문이다 (v10.43.0)."""
     from agent_cli.subagent.agents_live import MailWaker
 
     waker = MailWaker(enqueue_wake, registry.has_pending_replies)
@@ -241,10 +237,7 @@ def wire_agent_mail(
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).
     revived = registry.restore(parent_ctx=parent_ctx)
     auto = registry.auto_spawn(parent_ctx=parent_ctx)
-    auditor = build_auditor(
-        registry, parent_ctx=parent_ctx, on_change=on_harness_change
-    )
-    return waker, revived, auto, auditor
+    return waker, revived, auto
 
 
 def main_run_ended(agent_registry, output: str = "") -> int:

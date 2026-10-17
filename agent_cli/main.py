@@ -21,6 +21,7 @@ from agent_cli.dialects import (
 from agent_cli.dialects import (
     set_dialect_override as _set_dialect_override,
 )
+from agent_cli.knobs import knob_options
 from agent_cli.loop import run_loop
 from agent_cli.paths import user_dir
 from agent_cli.providers import (
@@ -1219,62 +1220,33 @@ def _claim_session(session) -> None:
         raise typer.Exit(code=1) from None
 
 
-def _parse_stall(raw: str | None) -> int | None:
-    """``--stall`` 값 → 초. ``"600"``(초) · ``"10m"``(분) · ``"0"``(감지 끔).
-
-    문법은 ``constants.parse_duration`` 이 소유한다 (monitor 의 ``deadline``
-    과 공유 — 같은 문법을 두 번 구현하면 갈라진다). ``"2h"`` 도 받게 됐는데
-    시간 단위 stall 은 의미가 없지만 **문법이 갈리는 게 더 나쁘다**.
-
-    None/빈 문자열은 **미지정**(None) — env·기본값이 그대로 이긴다. 0 과
-    구분해야 하므로 sentinel 을 0 으로 쓸 수 없다 (0 = 명시적 "끔").
-    잘못된 값은 typer.BadParameter 로 즉시 실패 — 조용히 기본값으로
-    떨어지면 헤드리스에서 오타가 드러나지 않는다."""
-    if raw is None or not str(raw).strip():
-        return None
-    from agent_cli.constants import parse_duration
-
-    try:
-        return parse_duration(raw)
-    except ValueError as exc:
-        # 문법은 공용 파서가, **표면별 예외**는 호출자가 — 도구 쪽은 같은
-        # 파서를 ToolResult 로 변환한다 (constants.parse_duration 주석).
-        raise typer.BadParameter(f"--stall: {exc}") from None
-
-
-def _build_context(
-    session,
-    boot: SessionBootstrap,
-    *,
-    resume: bool = False,
-    stall: str | None = None,
-    stall_attempts: int | None = None,
-    compaction_ratio: float | None = None,
-):
+def _build_context(session, boot: SessionBootstrap, *, resume: bool = False):
     """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로).
-
-    무진전 노브 우선순위는 **CLI 인자 > env > 기본값** — env·기본값은
-    ContextManager.__init__ 이 이미 적용했으므로 여기선 인자가 주어진
-    축만 덮어쓴다 (v8.60.0)."""
+    노브(압축 비율·무진전 한도·사고·문법)는 여기서 받지 않는다 — 소유자들이
+    전부 선 뒤 `knobs.apply_all` 이 CLI > env > 기본값으로 적용한다 (v10.43.0)."""
     from agent_cli.context.session import get_session_dir
 
-    ctx = ContextManager(
+    return ContextManager(
         get_session_dir(session),
         max_context_tokens=boot.max_context_tokens,
         resume=resume,
         dialect=boot.dialect,
-        # None 이면 ContextManager 가 env/기본값을 고른다 (v8.61.0).
-        compaction_ratio=compaction_ratio,
     )
-    seconds = _parse_stall(stall)
-    if seconds is not None:
-        ctx.set_stream_idle_timeout(seconds)
-    if stall_attempts is not None:
-        ctx.set_stream_max_attempts(stall_attempts)
-    return ctx
+
+
+def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
+    """부팅 노브 적용 — run/web 공용 한 줄. 소유자 넷이 선 뒤, 상주 에이전트
+    복원·auto-spawn **전에**(상한이 그 게이트다)."""
+    from agent_cli.knobs import KnobSession, apply_all, resolve_all
+
+    apply_all(
+        KnobSession(ctx=ctx, registry=registry, renderer=renderer, auditor=auditor),
+        resolve_all(knob_args),
+    )
 
 
 @app.command()
+@knob_options
 def run(
     query: str = typer.Argument(..., help="Task to execute"),
     provider: str | None = typer.Option(
@@ -1315,26 +1287,6 @@ def run(
         "--max-depth",
         help="Maximum subagent nesting depth",
     ),
-    stall: str | None = typer.Option(
-        None,
-        "--stall",
-        help="Stream stall limit before re-sending: 600 (seconds), 10m (minutes), 0 (off). Overrides AGENT_CLI_STREAM_IDLE_TIMEOUT_S; default 10m",
-    ),
-    stall_attempts: int | None = typer.Option(
-        None,
-        "--stall-attempts",
-        help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Overrides AGENT_CLI_STREAM_MAX_ATTEMPTS; default 4",
-    ),
-    compaction_ratio: float | None = typer.Option(
-        None,
-        "--compaction-ratio",
-        help="Context compaction target as a fraction of the window (0.5-1.0). 1.0 = compact only when a generation is cut by the window. Lower = compact earlier. Overrides AGENT_CLI_COMPACTION_RATIO; default 1.0",
-    ),
-    max_agents: int | None = typer.Option(
-        None,
-        "--max-agents",
-        help="Max concurrently live sub-agents; 0 = unlimited. Overrides AGENT_CLI_MAX_AGENTS; default 10",
-    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -1369,6 +1321,7 @@ def run(
         "(스크립팅·헤드리스 자동화). 실패/무답 시 "
         "파일을 만들지 않고 exit code 로 판별.",
     ),
+    knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
@@ -1414,14 +1367,7 @@ def run(
     session = session_resumed if session_resumed is not None else create_session()
     _claim_session(session)
     save_meta(session)
-    ctx = _build_context(
-        session,
-        boot,
-        resume=session_resumed is not None,
-        stall=stall,
-        stall_attempts=stall_attempts,
-        compaction_ratio=compaction_ratio,
-    )
+    ctx = _build_context(session, boot, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.runtime import (
@@ -1448,7 +1394,7 @@ def run(
     # 회신의 세션-넘김 보존은 P3(manifest/outbox). 생성은 skill dispatch
     # 앞 (v7.17.0 배선 통일 — execute_skill 이 main 슬롯에서 자동 상속),
     # restore/auto_spawn/waker 배선은 종전 위치 그대로 dispatch 뒤.
-    auditor = None  # 🔎 wire_agent_mail 이 채운다 — finally 가 먼저 닿아도 안전
+    auditor = None  # 🔎 아래서 만든다 — finally 가 먼저 닿아도 안전
     agent_registry = build_agent_registry(
         ctx.session_dir if ctx else None,
         AgentRuntime(
@@ -1464,7 +1410,6 @@ def run(
             session=session,
             hooks_config=_disk_hooks,
         ),
-        max_agents=max_agents,
         # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
         monitors=monitor_registry,
     )
@@ -1480,11 +1425,22 @@ def run(
         # 는 펌프 안의 라우팅(_ConsoleSurface.route)이 web 의 route_one 과
         # 같은 공용 입구(try_dispatch_agent_or_skill)로 처리한다. 정지 =
         # 큐·에이전트·모니터·예약 전부 조용(QuietPolicy).
+        from agent_cli.harness.auditor import build_auditor
         from agent_cli.input_queue import InputQueue
         from agent_cli.pump import PumpDeps, QuietPolicy, RunRequest, SessionPump
 
+        # 노브는 소유자 넷(ctx·registry·renderer·auditor)이 선 뒤, 복원·auto-spawn
+        # 전에 — `--max-agents` 가 그 게이트다 (v10.43.0).
+        auditor = build_auditor(agent_registry, parent_ctx=ctx)
+        _apply_knobs(
+            knob_args,
+            ctx=ctx,
+            registry=agent_registry,
+            renderer=get_renderer(),
+            auditor=auditor,
+        )
         input_queue = InputQueue()
-        waker, revived, auto, auditor = wire_agent_mail(
+        waker, revived, auto = wire_agent_mail(
             agent_registry,
             # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
             enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
@@ -2110,7 +2066,9 @@ def update(
 
 
 @app.command()
+@knob_options
 def web(
+    knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
     provider: str | None = typer.Option(
         None,
         "--provider",
@@ -2140,26 +2098,6 @@ def web(
         0, "--max-context-tokens", help="Max tokens in context window (0=auto)"
     ),
     max_depth: int = typer.Option(2, "--max-depth", help="Subagent nesting depth"),
-    stall: str | None = typer.Option(
-        None,
-        "--stall",
-        help="Stream stall limit before re-sending: 600 (seconds), 10m (minutes), 0 (off). Default 10m",
-    ),
-    stall_attempts: int | None = typer.Option(
-        None,
-        "--stall-attempts",
-        help="TOTAL send attempts on stall, first send included (1-10). Max wait = --stall x this. Default 4",
-    ),
-    compaction_ratio: float | None = typer.Option(
-        None,
-        "--compaction-ratio",
-        help="Context compaction target as a fraction of the window (0.5-1.0). 1.0 = compact only when a generation is cut by the window. Lower = compact earlier. Default 1.0",
-    ),
-    max_agents: int | None = typer.Option(
-        None,
-        "--max-agents",
-        help="Max concurrently live sub-agents; 0 = unlimited. Default 10",
-    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
     dialect: str | None = typer.Option(
@@ -2305,14 +2243,7 @@ def web(
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
     _claim_session(session)
     save_meta(session)
-    ctx = _build_context(
-        session,
-        boot,
-        resume=is_resume,
-        stall=stall,
-        stall_attempts=stall_attempts,
-        compaction_ratio=compaction_ratio,
-    )
+    ctx = _build_context(session, boot, resume=is_resume)
 
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(
@@ -2452,7 +2383,6 @@ def web(
                 session=session,
                 hooks_config=_disk_hooks,
             ),
-            max_agents=max_agents,
             # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
             monitors=monitor_registry,
         )
@@ -2463,17 +2393,27 @@ def web(
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
         # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
-        _waker, revived, auto, auditor = wire_agent_mail(
+        from agent_cli.harness.auditor import build_auditor
+
+        # 감사 런 진행 중 → status.json `auditing` (board "결과 확인 중")
+        auditor = build_auditor(
+            _registry, parent_ctx=ctx, on_change=renderer.note_harness
+        )
+        # 노브 적용 — 소유자 넷이 선 뒤, 복원·auto-spawn 전 (v10.43.0). 📐 sticky
+        # 는 부트 초기값이 이미 나갔으니 적용 뒤 다시 낸다.
+        _apply_knobs(
+            knob_args, ctx=ctx, registry=_registry, renderer=renderer, auditor=auditor
+        )
+        renderer.broadcast_grammar(server.grammar_state())
+        server.auditor = auditor  # 🔎 칩의 /api/auditor 가 켜고 끈다
+        if auditor is not None:
+            renderer.broadcast_auditor(auditor.state())
+        _waker, revived, auto = wire_agent_mail(
             _registry,
             enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
-            # 감사 런 진행 중 → status.json `auditing` (board "결과 확인 중")
-            on_harness_change=renderer.note_harness,
         )
-        server.auditor = auditor  # 🔎 칩의 /api/auditor 가 켜고 끈다
-        if auditor is not None:
-            renderer.broadcast_auditor(auditor.state())
         _announce_agent_boot(
             renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
         )
