@@ -18,16 +18,16 @@ from agent_cli.constants import (
     STOP_SERVER_ERROR,
 )
 from agent_cli.context.manager import ContextManager
-from agent_cli.dialects import get as _get_dialect
-from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
-from agent_cli.loop.llm import LLMCaller, _build_token_stats
-from agent_cli.loop.ports import LoopPorts
-from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
+from agent_cli.dialects import get as _get_dialect
+from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
+from agent_cli.loop.llm import LLMCaller, _build_token_stats
+from agent_cli.loop.ports import LoopPorts
+from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.state import _CONTINUE, _RETRY, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.memory import consume_memory_reload
@@ -64,13 +64,15 @@ class AgentLoop:
     def __init__(
         self,
         query: str,
-        provider: LLMProvider,
-        capabilities: ModelCapabilities,
-        model: str,
-        ports: LoopPorts,
+        provider: LLMProvider | None = None,
+        capabilities: ModelCapabilities | None = None,
+        model: str = "",
+        ports: LoopPorts | None = None,
         provider_name: str = "openai",
         base_url: str = "",
         api_key: str = "",
+        *,
+        binding=None,
         max_turns: int = 0,
         verbose: bool = False,
         ctx: ContextManager | None = None,
@@ -96,17 +98,28 @@ class AgentLoop:
         compaction_enabled: bool = True,
         peer_agents_section: str = "",
     ):
-        # Dialect plugin. Centralizes the parser, recovery wording,
-        # prompt section, and lifecycle hooks so adding a new format means
-        # dropping a file in ``agent_cli/dialects/`` and re-running with
-        # ``--dialect <name>``.
-        #
-        # None 폴백은 ctx-우선 (I2 불변식: loop cfg.dialect ≡
-        # ctx.dialect). 종전엔 전역 기본으로 떨어져, 비기본 포맷
-        # 세션의 서브에이전트가 ctx(히스토리 렌더)와 loop(파서·프롬프트)
-        # 포맷이 어긋나는 split-brain 이었다 (G2, dialects §3).
-        if dialect is None:
-            dialect = ctx.dialect if ctx is not None else _get_dialect()
+        # 모델·능력·방언·프로바이더는 ``binding``(providers/binding, v10.43.0) 의
+        # 것 — LoopConfig 의 속성이 매 호출 읽는다(I2 불변식: loop 의 방언 ≡ ctx
+        # 의 방언 — ctx 도 같은 바인딩에서 만들어진다). 세션 코드는 바인딩을
+        # 넘기고, 부품(provider/capabilities/model/…/dialect)은 바인딩 없이 부르는
+        # 쪽(테스트·일회성)을 위한 **정적 바인딩의 유일한 조립 자리**다: 방언 폴백은
+        # 명시 > ctx > 기본(G2 — ctx 와 loop 의 포맷이 갈리는 split-brain 방지).
+        if binding is None:
+            from agent_cli.providers.binding import ModelBinding
+
+            if isinstance(dialect, str):
+                dialect = _get_dialect(dialect)
+            binding = ModelBinding(
+                provider=provider,
+                provider_name=provider_name,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                capabilities=capabilities,
+                dialect=dialect
+                if dialect is not None
+                else (ctx.dialect if ctx is not None else _get_dialect()),
+            )
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
         # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
         # pulls ONE queued message at each turn boundary; ``route_message(text)``
@@ -136,7 +149,7 @@ class AgentLoop:
         # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
         self.user_requests = list(user_requests or [])
         self.run_authors: list[str] = []
-        self.provider = provider
+        self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
         self.agent_role = agent_role
 
@@ -201,10 +214,7 @@ class AgentLoop:
         # 주입받으면 해당 메서드의 브리지 의존이 자연 소멸한다.
         self._config = LoopConfig(
             owner=ports.owner,
-            model=model,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
+            binding=binding,
             depth=depth,
             max_depth=max_depth,
             max_turns=max_turns,
@@ -213,8 +223,6 @@ class AgentLoop:
             skill_args=skill_args,
             skill_stack=skill_stack,
             agent_stack=agent_stack,
-            capabilities=capabilities,
-            dialect=dialect,
             mcp_manager=ports.mcp_manager,
             hook_runner=ports.hook_runner,
             hooks_config=hooks_config,
@@ -244,9 +252,11 @@ class AgentLoop:
         self._prompt = SystemPromptSvc(self._config, ctx)
         # C1 PR-3: LLM 콜은 LLMCaller 소유(overflow_retries 포함) — 위임/
         # property 가 기존 표면 유지.
-        self._llm = LLMCaller(self._config, self._state, ctx, provider, self._prompt)
+        self._llm = LLMCaller(
+            self._config, self._state, ctx, self.provider, self._prompt
+        )
         # C1 PR-2: 도구 호출 브리지 — cfg/state/ctx/provider 명시 주입.
-        self._tools = ToolBridge(self._config, self._state, ctx, provider)
+        self._tools = ToolBridge(self._config, self._state, ctx, self.provider)
         # Sentinels — 모듈 상수 별칭 (C1 PR-3: dispatcher/LLM 콜과 공유)
         self._CONTINUE = _CONTINUE
         self._RETRY = _RETRY
@@ -292,14 +302,6 @@ class AgentLoop:
     @property
     def provider_name(self):
         return self._config.provider_name
-
-    @property
-    def base_url(self):
-        return self._config.base_url
-
-    @property
-    def api_key(self):
-        return self._config.api_key
 
     @property
     def depth(self):

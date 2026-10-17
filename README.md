@@ -192,7 +192,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 |
 | `AGENT_CLI_BASE_URL` | `base_url` | API 엔드포인트 |
 | `AGENT_CLI_API_KEY` | `api_key` | API 키 |
-| `AGENT_CLI_MODEL` | `default_model` | 기본 모델 |
+| `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 노브는 2단계). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. config.json 의 `default_model` 은 파일에서만 읽는다 |
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
@@ -431,6 +431,7 @@ agent-cli run "task description" [options]
 | `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
+| `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (models.json 에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`) | config `default_model` |
 | `--thinking` | 사고 `off`·`on`·`auto` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브) | `off` |
 | `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`) | `auto` |
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |

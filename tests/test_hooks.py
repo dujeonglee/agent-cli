@@ -13,6 +13,7 @@ from agent_cli.hooks import (
     merge_hooks_configs,
     run_hooks,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS
 
 
@@ -370,9 +371,9 @@ class TestSkillHooksWiring:
             execute_skill(
                 skill=skill,
                 arguments="",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="m"
+                ),
                 parent_hooks_config=parent_hooks,
                 owner="main",
             )
@@ -415,9 +416,9 @@ class TestSkillHooksWiring:
             execute_skill(
                 skill=skill,
                 arguments="",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="m"
+                ),
                 owner="main",
             )
 
@@ -508,9 +509,9 @@ class TestSkillHooksEndToEnd:
         execute_skill(
             skill=skill,
             arguments="",
-            provider=provider,
-            capabilities=self._caps(),
-            model="test",
+            binding=make_binding(
+                provider=provider, capabilities=self._caps(), model="test"
+            ),
             owner="main",
         )
 
@@ -559,9 +560,9 @@ class TestSkillHooksEndToEnd:
         execute_skill(
             skill=skill,
             arguments="",
-            provider=provider,
-            capabilities=self._caps(),
-            model="test",
+            binding=make_binding(
+                provider=provider, capabilities=self._caps(), model="test"
+            ),
             parent_hooks_config=parent_hooks,
             owner="main",
         )
@@ -619,9 +620,9 @@ class TestDelegateHooksWiring:
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
             tool_delegate(
                 args={"tasks": [{"task": "trivial"}]},
-                provider=object(),  # non-None, not actually used by fake run_loop
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider=object(), capabilities=caps, model="m"
+                ),  # non-None, not actually used by fake run_loop
                 hooks_config=parent_hooks,
                 owner="main",
             )
@@ -659,9 +660,7 @@ class TestDelegateHooksWiring:
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
             tool_delegate(
                 args={"tasks": [{"task": "trivial"}]},
-                provider=object(),
-                capabilities=caps,
-                model="m",
+                binding=make_binding(provider=object(), capabilities=caps, model="m"),
                 owner="main",
             )
 
@@ -727,9 +726,9 @@ class TestAgentFrontmatterHooks:
         ):
             tool_delegate(
                 args={"tasks": [{"task": "t", "agent": "probe"}]},
-                provider=object(),
-                capabilities=self._caps(),
-                model="m",
+                binding=make_binding(
+                    provider=object(), capabilities=self._caps(), model="m"
+                ),
                 hooks_config=parent_hooks,
                 owner="main",
             )
@@ -773,9 +772,9 @@ class TestAgentFrontmatterHooks:
         ):
             tool_delegate(
                 args={"tasks": [{"task": "t", "agent": "probe"}]},
-                provider=object(),
-                capabilities=self._caps(),
-                model="m",
+                binding=make_binding(
+                    provider=object(), capabilities=self._caps(), model="m"
+                ),
                 owner="main",
             )
 
@@ -808,9 +807,9 @@ class TestAgentFrontmatterHooks:
         ):
             tool_delegate(
                 args={"tasks": [{"task": "t", "agent": "probe"}]},
-                provider=object(),
-                capabilities=self._caps(),
-                model="m",
+                binding=make_binding(
+                    provider=object(), capabilities=self._caps(), model="m"
+                ),
                 hooks_config=parent_hooks,
                 owner="main",
             )
@@ -872,9 +871,9 @@ class TestAgentFrontmatterHooks:
             tool_delegate(
                 args={"tasks": [{"task": "Go.", "agent": "probe"}]},
                 parent_ctx=parent_ctx,
-                provider=provider,
-                capabilities=self._caps(),
-                model="test",
+                binding=make_binding(
+                    provider=provider, capabilities=self._caps(), model="test"
+                ),
                 owner="main",
             )
 

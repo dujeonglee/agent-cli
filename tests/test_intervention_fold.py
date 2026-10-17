@@ -12,6 +12,7 @@ from agent_cli.context.records import (
     fold_resolved_intervention_indices,
     is_format_intervention,
 )
+from tests.binding_support import make_binding
 
 
 def _fail_prior():
@@ -144,7 +145,9 @@ class TestDispatcherIntegration:
 
         wf = get_wf("json_fc")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000)
-        cfg = LoopConfig(tools_list=["shell", "complete"], dialect=wf)
+        cfg = LoopConfig(
+            tools_list=["shell", "complete"], binding=make_binding(dialect=wf)
+        )
         st = LoopState(query="q")
         from agent_cli.recovery.observability import TurnRecorder
 

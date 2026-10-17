@@ -24,6 +24,7 @@ from typing import ClassVar
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebConnection, WebRenderer
 from agent_cli.web.instance_file import read_status_file
+from tests.binding_support import make_binding
 
 
 def _qget(conn, timeout=0.5):
@@ -2830,11 +2831,13 @@ class TestCtxDirWiring:
             )
             skill_invoke._handle_run_skill(
                 {"name": "plan", "arguments": ""},
-                provider_name="openai",
-                base_url="",
-                api_key="",
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="",
+                    api_key="",
+                    capabilities=caps,
+                    model="m",
+                ),
                 ctx=None,
                 session=None,
                 owner="main",
@@ -2874,9 +2877,7 @@ class TestCtxDirWiring:
         execute_skill(
             skill=Skill(name="plan", description="", prompt_template="do it"),
             arguments="",
-            provider=object(),
-            capabilities=caps,
-            model="m",
+            binding=make_binding(provider=object(), capabilities=caps, model="m"),
             ctx=ctx,
             session_subdir="skill_plan_PINNED_1",
             owner="main",
@@ -2915,8 +2916,7 @@ class TestCtxDirWiring:
         _run_single(
             task="do",
             parent_ctx=parent,
-            provider=object(),
-            capabilities=self._caps(),
+            binding=make_binding(provider=object(), capabilities=self._caps()),
             run_dir_name="run_task_PINNED_9",
             owner="main",
         )
@@ -2938,7 +2938,7 @@ class TestCtxDirWiring:
         monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
         tool_delegate(
             args={"tasks": [{"task": "t", "agent": "explorer"}]},
-            capabilities=self._caps(),
+            binding=make_binding(capabilities=self._caps()),
             owner="main",
         )
         start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
@@ -2961,7 +2961,7 @@ class TestCtxDirWiring:
         monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
         _run_parallel(
             [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
-            capabilities=self._caps(),
+            binding=make_binding(capabilities=self._caps()),
             owner="main",
         )
         starts = {

@@ -97,28 +97,28 @@ def sanitize_generated(text: str) -> str:
 
 
 def generate_directive_section(
-    audience: str, brief: str, current: str, *, runtime: dict
+    audience: str, brief: str, current: str, *, binding
 ) -> str:
     """brief → directive 초안 (활성 스코프용, 미저장 반환).
 
     ``provider.call`` 1회 (블로킹 — 전송 계층이 executor 오프로드).
-    ``runtime`` = {provider(객체), model, capabilities}. 입력 오류는
+    ``binding`` = 세션의 `ModelBinding`(provider 객체·model·capabilities — 복사본 아님). 입력 오류는
     ValueError(→400), 호출/결과 실패는 RuntimeError(→502).
     """
     if audience not in VALID_AUDIENCES:
         raise ValueError(f"unknown audience: {audience}")
     if not brief.strip():
         raise ValueError("brief 가 비어 있습니다")
-    if not runtime or runtime.get("provider") is None:
+    if binding is None or binding.provider is None:
         raise ValueError("LLM 이 배선되지 않았습니다")
 
     task = build_generation_task(audience, brief, current)
     try:
-        resp = runtime["provider"].call(
+        resp = binding.provider.call(
             messages=[{"role": "user", "content": task}],
             system=_WRITER_SYSTEM,
-            model=runtime.get("model", ""),
-            capabilities=runtime.get("capabilities"),
+            model=binding.model,
+            capabilities=binding.capabilities,
         )
     except Exception as e:  # provider/network — 전송 계층이 502 로
         raise RuntimeError(f"생성 실패: {e}") from e

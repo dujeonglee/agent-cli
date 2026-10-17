@@ -105,9 +105,9 @@ class TestModelsJsonOldKeyIgnored:
 
     def test_subagent_spawn_refused_on_old_key_only(self, tmp_path, monkeypatch):
         # 보드가 옛 키만 가진 엔트리를 "미설정" 으로 보여 주는 것과 같은 판정
-        from agent_cli.subagent.runner import create_subagent_ctx
+        from agent_cli.dialects import DialectUnbound
+        from tests.binding_support import make_binding
 
         self._models(tmp_path, monkeypatch, {"m": {"wire_format": "xml_fc"}})
-        ctx, error = create_subagent_ctx("none", None, tmp_path / "sub", model="m")
-        assert ctx is None
-        assert "No dialect for model 'm'" in error
+        with pytest.raises(DialectUnbound, match="No dialect for model"):
+            make_binding(model="parent").pinned("m")

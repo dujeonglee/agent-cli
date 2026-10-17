@@ -129,66 +129,51 @@ class TestSubagentBinding:
             tmp_path / "parent", max_context_tokens=1000, dialect=get_wf(name)
         )
 
+    def _binding(self, name="xml_fc", model="parent-model"):
+        from tests.binding_support import make_binding
+
+        return make_binding(model=model, dialect=name)
+
     def test_bound_model_overrides_parent_format(self, tmp_path, models_file):
+        """프로파일이 고정한 모델은 자기 바인딩(방언)으로 돈다 — `pinned` 복사본."""
         from agent_cli.subagent.runner import create_subagent_ctx
 
         parent = self._parent(tmp_path, "xml_fc")
+        child = self._binding("xml_fc").pinned("bound-md")
+        assert child.dialect.name == "json_fc" and child.model == "bound-md"
         ctx, error = create_subagent_ctx(
-            "none", parent, tmp_path / "sub", model="bound-md"
+            "none", parent, tmp_path / "sub", binding=child
         )
         assert error == ""
         assert ctx.dialect.name == "json_fc"
 
-    def test_unbound_model_rejects_spawn(self, tmp_path, models_file):
+    def test_unbound_model_rejects_pin(self, models_file):
         # v10.3.0: 부모 상속 없음 — 묶이지 않은 모델은 spawn 거부
-        from agent_cli.subagent.runner import create_subagent_ctx
+        with pytest.raises(DialectUnbound, match="No dialect for model"):
+            self._binding().pinned("unbound")
 
-        parent = self._parent(tmp_path, "xml_fc")
-        ctx, error = create_subagent_ctx(
-            "none", parent, tmp_path / "sub", model="unbound"
-        )
-        assert ctx is None
-        assert "No dialect for model 'unbound'" in error
-
-    def test_no_model_rejects_spawn(self, tmp_path, models_file):
+    def test_no_binding_inherits_parent_ctx_dialect(self, tmp_path, models_file):
+        """바인딩이 없으면(테스트·일회성) 부모 ctx 의 방언·예산을 쓴다."""
         from agent_cli.subagent.runner import create_subagent_ctx
 
         parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx("none", parent, tmp_path / "sub")
-        assert ctx is None
-        assert "No dialect" in error
+        assert error == "" and ctx.dialect is parent.dialect
 
-    def test_override_forces_subagent_too(self, tmp_path, models_file):
+    def test_override_forces_subagent_too(self, models_file):
         # --dialect 는 세션 전체 강제 — 서브 모델의 바인딩도 덮는다
-        from agent_cli.subagent.runner import create_subagent_ctx
-
         _dialects.set_dialect_override("xml_fc")
-        parent = self._parent(tmp_path, "xml_fc")
-        ctx, error = create_subagent_ctx(
-            "none", parent, tmp_path / "sub", model="bound-md"
-        )
-        assert error == ""
-        assert ctx.dialect is parent.dialect
+        child = self._binding("xml_fc").pinned("bound-md")
+        assert child.dialect.name == "xml_fc"
 
-    def test_bad_binding_rejects_spawn(self, tmp_path, models_file):
+    def test_bad_binding_rejects_pin(self, models_file):
         # D2: unknown 바인딩 이름 → spawn 거부 (세션은 안 죽음)
-        from agent_cli.subagent.runner import create_subagent_ctx
+        with pytest.raises(KeyError, match="no_such_format"):
+            self._binding().pinned("bad-bound")
 
-        parent = self._parent(tmp_path, "xml_fc")
-        ctx, error = create_subagent_ctx(
-            "none", parent, tmp_path / "sub", model="bad-bound"
-        )
-        assert ctx is None
-        assert "no_such_format" in error
-
-    def test_bound_model_without_parent(self, tmp_path, models_file):
-        from agent_cli.subagent.runner import create_subagent_ctx
-
-        ctx, error = create_subagent_ctx(
-            "none", None, tmp_path / "sub", model="bound-md"
-        )
-        assert error == ""
-        assert ctx.dialect.name == "json_fc"
+    def test_same_model_pins_to_itself(self, models_file):
+        b = self._binding("json_fc", model="bound-md")
+        assert b.pinned("bound-md") is b and b.pinned("") is b
 
     def test_fork_mode_applies_binding(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
@@ -196,7 +181,7 @@ class TestSubagentBinding:
         parent = self._parent(tmp_path, "xml_fc")
         parent.add({"role": "user", "content": "hi"})
         ctx, error = create_subagent_ctx(
-            "fork", parent, tmp_path / "sub", model="bound-md"
+            "fork", parent, tmp_path / "sub", binding=self._binding().pinned("bound-md")
         )
         assert error == ""
         assert ctx.dialect.name == "json_fc"

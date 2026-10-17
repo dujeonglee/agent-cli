@@ -32,6 +32,7 @@ from agent_cli.main import (
     _ConsoleDispatchOutput,
     try_dispatch_agent_or_skill,
 )
+from tests.binding_support import make_binding
 
 # ── Recording adapter ───────────────────────────────────
 
@@ -75,12 +76,13 @@ def base_state(tmp_path):
     from agent_cli.context.manager import ContextManager
 
     return {
-        "llm_provider": MagicMock(),
-        "capabilities": MagicMock(),
-        "resolved_model": "test-model",
-        "provider": "openai",
-        "resolved_url": "http://localhost:11434",
-        "resolved_key": "",
+        "binding": make_binding(
+            provider=MagicMock(),
+            capabilities=MagicMock(),
+            model="test-model",
+            provider_name="openai",
+            base_url="http://localhost:11434",
+        ),
         "max_turns": 0,
         "verbose": False,
         "max_depth": 2,
@@ -614,12 +616,14 @@ class TestLooksLikeSlashCommand:
         handled = try_dispatch_agent_or_skill(
             "/Users/idujeong/workspace 를 봐줘",
             _Out(),
-            llm_provider=None,
-            capabilities=None,
-            resolved_model="m",
-            provider="openai",
-            resolved_url="",
-            resolved_key="",
+            binding=make_binding(
+                provider=None,
+                capabilities=None,
+                model="m",
+                provider_name="openai",
+                base_url="",
+                api_key="",
+            ),
             max_turns=0,
             verbose=False,
             max_depth=2,

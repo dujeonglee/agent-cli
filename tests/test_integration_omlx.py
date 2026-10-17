@@ -14,6 +14,7 @@ import pytest
 from agent_cli.dialects import get as _get_wf
 from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
+from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
 from tests.loop_ports import TEST_PORTS
 
@@ -198,9 +199,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success
@@ -229,9 +232,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success
@@ -267,9 +272,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             ctx=ctx,
             owner="main",
         )
@@ -298,9 +305,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments="",
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success
@@ -329,9 +338,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments="",
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success
@@ -361,9 +372,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments="Alice",
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success
@@ -389,9 +402,11 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments="elephant mouse",
-            provider=omlx_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
+            binding=make_binding(
+                provider=omlx_provider,
+                capabilities=model_capabilities,
+                model=integration_model,
+            ),
             owner="main",
         )
         assert result.success

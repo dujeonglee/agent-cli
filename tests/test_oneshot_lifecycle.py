@@ -35,6 +35,7 @@ import threading
 from rich.console import Console
 
 from agent_cli.render.minimal import MinimalRenderer
+from tests.binding_support import make_binding
 
 
 def _make_renderer(*, force_terminal: bool = False) -> MinimalRenderer:
@@ -676,10 +677,12 @@ class TestParallelBatchScopeIdentity:
             r.begin_scope(task_id=wrap_scope, kind="skill", label="skill:plan")
         _run_parallel(
             [{"task": f"t{i}", "agent": f"a{i}"} for i in range(n)],
-            capabilities=ModelCapabilities(
-                context_window=32768,
-                max_output_tokens=4096,
-                supports_thinking=False,
+            binding=make_binding(
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                )
             ),
             owner="main",
         )
@@ -729,10 +732,12 @@ class TestParallelBatchScopeIdentity:
         monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", slow)
         _run_parallel(
             [{"task": f"t{i}"} for i in range(2)],
-            capabilities=ModelCapabilities(
-                context_window=32768,
-                max_output_tokens=4096,
-                supports_thinking=False,
+            binding=make_binding(
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                )
             ),
             owner="main",
         )

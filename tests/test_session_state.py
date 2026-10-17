@@ -21,6 +21,7 @@ from agent_cli.prompts.session_state import (
     build_session_state,
     compaction_notice_due,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS
 
 
@@ -387,7 +388,7 @@ def _caller(tmp_path, **cfg_kw):
     from agent_cli.loop.state import LoopConfig, LoopState
 
     ctx = _ctx(tmp_path)
-    config = LoopConfig(capabilities=_caps(), **cfg_kw)
+    config = LoopConfig(binding=make_binding(capabilities=_caps()), **cfg_kw)
     state = LoopState()
     return LLMCaller(config, state, ctx, provider=None, prompt=None), ctx
 

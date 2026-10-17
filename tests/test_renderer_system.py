@@ -322,14 +322,16 @@ class TestDispatchAgent:
         )
         provider = MagicMock()
 
+        from tests.binding_support import make_binding
+
         result, _ok = _dispatch_agent(
             "@nonexistent_agent_xyz do something",
-            provider,
-            caps,
-            "test",
-            "openai",
-            "http://127.0.0.1:8000/v1",
-            "",
+            make_binding(
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                base_url="http://127.0.0.1:8000/v1",
+            ),
         )
         assert result is _AGENT_NOT_FOUND
 

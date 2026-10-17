@@ -19,6 +19,7 @@ import pytest
 from agent_cli.context.manager import ContextManager
 from agent_cli.render import get_renderer, set_renderer
 from agent_cli.render.web import WebConnection, WebRenderer
+from tests.binding_support import make_binding
 
 
 class _CapturingRenderer(WebRenderer):
@@ -434,7 +435,9 @@ class TestLiveDispatchOrdinals:
             wf = get_dialect("json_fc")
             ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
             ctx.add({"role": "user", "content": "q"})
-            cfg = LoopConfig(tools_list=["read_file", "complete"], dialect=wf)
+            cfg = LoopConfig(
+                tools_list=["read_file", "complete"], binding=make_binding(dialect=wf)
+            )
             st = LoopState(query="q")
             d = TurnDispatcher(
                 cfg,

@@ -22,39 +22,30 @@ from agent_cli.runtime import (
     teardown_session,
     wire_agent_mail,
 )
+from tests.binding_support import make_binding
 
 _MAIN_SRC = Path("agent_cli/main.py").read_text(encoding="utf-8")
 
-# 종전(v8.38.0 HEAD) run/web 의 registry runtime dict 키 — 12키
-# (compaction_enabled 부재; 소비측 rt.get("compaction_enabled", True) 기본).
+# run/web 의 registry runtime dict 키 (v10.43.0: 모델·능력·프로바이더 여섯 값은
+# `binding` 하나 — 세션의 ModelBinding 을 참조한다). compaction_enabled 는 소비측
+# 기본(True)과 같아 늘 싣는다.
 _LEGACY_RUN_WEB_KEYS = frozenset(
-    {
-        "provider",
-        "capabilities",
-        "model",
-        "provider_name",
-        "base_url",
-        "api_key",
-        "max_turns",
-        "depth",
-        "max_depth",
-        "session",
-        "hooks_config",
-    }
+    {"binding", "max_turns", "depth", "max_depth", "session", "hooks_config"}
 )
-# 종전 tool_bridge 의 13키 (= 캐노니컬).
 _LEGACY_CANONICAL_KEYS = _LEGACY_RUN_WEB_KEYS | {"compaction_enabled"}
 
 
 class TestAgentRuntimeEquivalence:
     def _rt(self, **overrides):
         base = {
-            "provider": object(),
-            "capabilities": object(),
-            "model": "m",
-            "provider_name": "openai",
-            "base_url": "http://x/v1",
-            "api_key": "k",
+            "binding": make_binding(
+                provider=object(),
+                capabilities=object(),
+                model="m",
+                provider_name="openai",
+                base_url="http://x/v1",
+                api_key="k",
+            ),
             "max_turns": 5,
             "depth": 0,
             "max_depth": 2,
@@ -74,11 +65,10 @@ class TestAgentRuntimeEquivalence:
         보존 (dataclasses.asdict 의 재귀 dict 변환 금지 계약)."""
         rt = self._rt()
         d = rt.as_dict()
-        assert d["provider"] is rt.provider
-        assert d["capabilities"] is rt.capabilities
+        assert d["binding"] is rt.binding
         assert d["session"] is rt.session
         assert d["hooks_config"] is rt.hooks_config
-        assert d["model"] == "m" and d["depth"] == 0
+        assert d["binding"].model == "m" and d["depth"] == 0
 
     def test_compaction_key_addition_is_behaviorally_equivalent(self):
         """run/web 종전 dict 엔 compaction_enabled 키가 없었다 — 소비측이
@@ -92,40 +82,28 @@ class TestAgentRuntimeEquivalence:
         assert new_dict["compaction_enabled"] is True  # 기본값 == 소비측 기본
 
     def test_from_loop_config_maps_legacy_tool_bridge_fields(self):
-        """LoopConfig → AgentRuntime 매핑 == 종전 tool_bridge dict 리터럴의
-        필드 대응."""
+        """LoopConfig → AgentRuntime 매핑 — 바인딩은 **같은 객체**(복사 아님)."""
         cfg = MagicMock()
-        cfg.capabilities = object()
-        cfg.model = "m"
-        cfg.provider_name = "anthropic"
-        cfg.base_url = "http://y/v1"
-        cfg.api_key = "kk"
+        cfg.binding = make_binding(model="m", provider_name="anthropic")
         cfg.max_turns = 7
         cfg.depth = 1
         cfg.max_depth = 3
         cfg.session = object()
         cfg.hooks_config = {"PostToolUse": []}
         cfg.compaction_enabled = False
-        provider = object()
 
-        d = AgentRuntime.from_loop_config(cfg, provider).as_dict()
+        d = AgentRuntime.from_loop_config(cfg).as_dict()
         assert d == {
-            "provider": provider,
-            "capabilities": cfg.capabilities,
-            "model": "m",
-            "provider_name": "anthropic",
-            "base_url": "http://y/v1",
-            "api_key": "kk",
+            "binding": cfg.binding,
             "max_turns": 7,
             "depth": 1,
             "max_depth": 3,
             "session": cfg.session,
-            "hooks_config": cfg.hooks_config,
+            "hooks_config": {"PostToolUse": []},
             "compaction_enabled": False,
         }
+        assert d["binding"] is cfg.binding
 
-
-class TestTeardownSession:
     def _mocks(self, *, stuck=()):
         registry = MagicMock()
         registry.open_human_question_keys.return_value = list(stuck)
@@ -194,12 +172,14 @@ class TestRegistryAssembly:
     def test_build_agent_registry_registers_main_slot(self):
         """생성 + main 슬롯 등록 (v7.17.0 배선) — runtime 은 as_dict 로 전달."""
         rt = AgentRuntime(
-            provider=object(),
-            capabilities=object(),
-            model="m",
-            provider_name="p",
-            base_url="u",
-            api_key="k",
+            binding=make_binding(
+                provider=object(),
+                capabilities=object(),
+                model="m",
+                provider_name="p",
+                base_url="u",
+                api_key="k",
+            ),
             max_turns=0,
             depth=0,
             max_depth=2,
@@ -219,12 +199,14 @@ class TestRegistryAssembly:
         """CLI ``--max-agents`` 가 registry 까지 닿는지 — 이 배선이 끊기면
         플래그가 조용히 무시된다(기본 10 으로 돈다)."""
         rt = AgentRuntime(
-            provider=object(),
-            capabilities=object(),
-            model="m",
-            provider_name="p",
-            base_url="u",
-            api_key="k",
+            binding=make_binding(
+                provider=object(),
+                capabilities=object(),
+                model="m",
+                provider_name="p",
+                base_url="u",
+                api_key="k",
+            ),
             max_turns=0,
             depth=0,
             max_depth=2,
@@ -293,12 +275,14 @@ class TestRegistryAssembly:
         monitors = MonitorRegistry()
         monitors.stop()
         rt = AgentRuntime(
-            provider=object(),
-            capabilities=object(),
-            model="m",
-            provider_name="p",
-            base_url="u",
-            api_key="k",
+            binding=make_binding(
+                provider=object(),
+                capabilities=object(),
+                model="m",
+                provider_name="p",
+                base_url="u",
+                api_key="k",
+            ),
             max_turns=0,
             depth=0,
             max_depth=2,

@@ -14,6 +14,7 @@ import os
 
 import pytest
 
+from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
 
 pytestmark = pytest.mark.omlx_integration
@@ -45,12 +46,14 @@ class TestCodeAnalystAgent:
                     }
                 ]
             },
-            provider=omlx_provider,
-            model=integration_model,
-            capabilities=model_capabilities,
-            provider_name="openai",
-            base_url=OMLX_BASE_URL,
-            api_key="",
+            binding=make_binding(
+                provider=omlx_provider,
+                model=integration_model,
+                capabilities=model_capabilities,
+                provider_name="openai",
+                base_url=OMLX_BASE_URL,
+                api_key="",
+            ),
             max_turns=5,
             owner="main",
         )
@@ -76,12 +79,14 @@ class TestCodeAnalystAgent:
                     }
                 ]
             },
-            provider=omlx_provider,
-            model=integration_model,
-            capabilities=model_capabilities,
-            provider_name="openai",
-            base_url=OMLX_BASE_URL,
-            api_key="",
+            binding=make_binding(
+                provider=omlx_provider,
+                model=integration_model,
+                capabilities=model_capabilities,
+                provider_name="openai",
+                base_url=OMLX_BASE_URL,
+                api_key="",
+            ),
             max_turns=5,
             owner="main",
         )
@@ -122,9 +127,11 @@ class TestPlanSkill:
             result = execute_skill(
                 skill=skill,
                 arguments="add a hello command that prints hello world",
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                ),
                 ctx=ctx,
                 owner="main",
             )
@@ -160,9 +167,11 @@ class TestPlanSkill:
             result = execute_skill(
                 skill=skill,
                 arguments="add a version command that shows the current version",
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                ),
                 ctx=ctx,
                 owner="main",
             )

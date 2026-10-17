@@ -169,11 +169,14 @@ class _Registry:
 
 class TestApplyReachesTheOwners:
     def _session(self, tmp_path):
+        from tests.binding_support import make_binding
+
         return KnobSession(
             ctx=ContextManager(tmp_path / "s", max_context_tokens=10_000),
             registry=_Registry(),
             renderer=_renderer(),
             auditor=SimpleNamespace(enabled=False),
+            binding=make_binding(model="m"),
         )
 
     def test_every_knob_round_trips_through_its_owner(self, tmp_path):
@@ -191,7 +194,9 @@ class TestApplyReachesTheOwners:
         }
         apply_all(s, values)
         for k in KNOBS:
-            assert k.get(s) == values[k.name], k.name
+            if k.name in values:
+                assert k.get(s) == values[k.name], k.name
+        assert KNOB_BY_NAME["model"].get(s) == "m"  # 값 없음 → 손대지 않는다
         assert s.ctx.thinking_override == {
             "enable_thinking": True,
             "reasoning_effort": "high",
@@ -217,7 +222,8 @@ class TestApplyReachesTheOwners:
             monkeypatch.delenv(k.env, raising=False)
         s = self._session(tmp_path)
         for k in KNOBS:
-            assert k.get(s) == k.default, k.name
+            if k.default is not None:  # 모델의 기본은 config/프로바이더가 정한다
+                assert k.get(s) == k.default, k.name
 
     def test_missing_owners_are_skipped_not_crashed(self, tmp_path):
         """headless 부트(세션 없음)·테스트는 소유자 일부가 None — 표는 그 노브를
@@ -278,6 +284,78 @@ class TestCliSurface:
         assert r.exit_code != 0 and "--grammar" in r.output and seen == {}
 
 
+class TestModelKnob:
+    """모델 노브 — 바인딩을 바꾸면 **다음 LLM 호출**부터 새 모델·능력이 실린다
+    (복사본 없음). models.json 에 있고 이 세션의 방언에 묶인 모델만."""
+
+    @pytest.fixture
+    def models(self, tmp_path, monkeypatch):
+        import json
+
+        import agent_cli.config as _config
+        import agent_cli.dialects as _dialects
+
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "a": {"context_window": 80000, "dialect": "json_fc"},
+                        "b": {"context_window": 20000, "dialect": "json_fc"},
+                        "x": {"context_window": 8000, "dialect": "xml_fc"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        monkeypatch.setattr(_config, "_cached_registry", None)
+        monkeypatch.setattr(_dialects, "_override", None)
+
+    def test_switch_applies_to_the_next_call_without_copies(self, tmp_path, models):
+        from agent_cli.loop.state import LoopConfig
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.binding_support import make_binding
+
+        b = make_binding(
+            model="a",
+            capabilities=ModelCapabilities(80000, 1000, False),
+            dialect="json_fc",
+        )
+        cfg = LoopConfig(binding=b)
+        ctx = ContextManager(tmp_path / "s", binding=b)
+        s = KnobSession(binding=b)
+        assert cfg.model == "a" and ctx.max_context_tokens == 80000 * 7 // 10
+        assert KNOB_BY_NAME["model"].set(s, "b") == "b"
+        assert cfg.model == "b" and cfg.capabilities.context_window == 20000
+        assert ctx.max_context_tokens == 20000 * 7 // 10  # 예산도 따라간다
+        assert KNOB_BY_NAME["model"].get(s) == "b"
+
+    def test_unknown_or_foreign_dialect_models_are_refused(self, models):
+        from tests.binding_support import make_binding
+
+        b = make_binding(model="a", dialect="json_fc")
+        with pytest.raises(ValueError, match="not in models.json"):
+            KNOB_BY_NAME["model"].set(KnobSession(binding=b), "nope")
+        with pytest.raises(ValueError, match="dialect 'xml_fc'"):
+            KNOB_BY_NAME["model"].set(KnobSession(binding=b), "x")
+        assert b.model == "a"  # 거부는 아무것도 바꾸지 않는다
+        assert b.switch("a") == ""  # 같은 이름은 no-op
+
+    def test_pinned_copy_is_not_followed_by_switch(self, models):
+        from tests.binding_support import make_binding
+
+        b = make_binding(model="a", dialect="json_fc")
+        child = b.pinned("b")
+        assert child.model == "b" and child is not b
+        assert b.switch("a") == "" and child.model == "b"
+
+    def test_cli_short_alias(self):
+        app, seen = TestCliSurface()._app()
+        r = CliRunner().invoke(app, ["q", "-m", "zeta"])
+        assert r.exit_code == 0 and seen == {"model": "zeta"}
+
+
 class TestSubagentsInheritTheSessionValues:
     def test_child_ctx_copies_thinking_and_grammar_from_parent(self, tmp_path):
         """종전엔 ctx 마다 env 를 다시 읽어 web 🧠·📐 노브가 팀원·delegate 에
@@ -287,9 +365,7 @@ class TestSubagentsInheritTheSessionValues:
         parent = ContextManager(tmp_path / "s", max_context_tokens=10_000)
         parent.set_thinking_override(enable_thinking=True, reasoning_effort="low")
         parent.set_grammar_override(False)
-        child, err = create_subagent_ctx(
-            "none", parent, tmp_path / "s" / "run_x", model=""
-        )
+        child, err = create_subagent_ctx("none", parent, tmp_path / "s" / "run_x")
         assert err == "" and child is not None
         assert child.thinking_override == {
             "enable_thinking": True,

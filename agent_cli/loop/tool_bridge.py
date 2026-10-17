@@ -364,12 +364,7 @@ class ToolBridge:
                 owner=self.cfg.owner,
                 args=raw,
                 parent_ctx=self.ctx,
-                provider=self.provider,
-                model=self.cfg.model,
-                capabilities=self.cfg.capabilities,
-                provider_name=self.cfg.provider_name,
-                base_url=self.cfg.base_url,
-                api_key=self.cfg.api_key,
+                binding=self.cfg.binding,
                 depth=self.cfg.depth,
                 max_depth=self.cfg.max_depth,
                 max_turns=self.cfg.max_turns,
@@ -400,7 +395,7 @@ class ToolBridge:
             # 상주 루프 = message 핸들러가 꽂힌 루프 (v10.1.0 거절 문구용)
             resident=self.cfg.message_handler is not None,
             # 단일 정의 (v8.39.0 조립기) — 종전 13키 dict 리터럴 3벌 중 하나.
-            runtime=AgentRuntime.from_loop_config(self.cfg, self.provider).as_dict(),
+            runtime=AgentRuntime.from_loop_config(self.cfg).as_dict(),
         )
 
     # ── per-call loop context (execute + render seams share it) ─────

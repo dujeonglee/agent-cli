@@ -420,7 +420,7 @@ class TestAssembly:
         registry = MagicMock()
         registry.restore.return_value = 0
         registry.auto_spawn.return_value = 0
-        registry.runtime = {"model": "m"}
+        registry.runtime = {"binding": "b"}
         return registry
 
     def test_build_auditor_starts_disabled_until_the_knob_sets_it(self, tmp_path):
@@ -432,7 +432,7 @@ class TestAssembly:
         )
         assert not auditor.enabled and not auditor.active and auditor.jobs is not None
         assert auditor.jobs.on_change == changes.append
-        assert auditor.jobs.runtime == {"model": "m"}
+        assert auditor.jobs.runtime == {"binding": "b"}
         KNOB_BY_NAME["auditor"].set(KnobSession(auditor=auditor), True)
         assert auditor.enabled and auditor.active and auditor.in_flight == 0
 
@@ -558,7 +558,7 @@ class TestJobsRuntimeContract:
     def test_runtime_keeps_only_runner_keys(self, tmp_path):
         jobs = HarnessJobs(
             session_ctx=_ctx(tmp_path),
-            runtime={"model": "m", "timeout": 5, "provider": "p"},
+            runtime={"binding": "b", "timeout": 5, "provider": "p"},
             deliver=lambda *a: "",
         )
-        assert jobs.runtime == {"model": "m", "provider": "p"}
+        assert jobs.runtime == {"binding": "b"}  # 여섯 값은 바인딩 하나 (v10.43.0)

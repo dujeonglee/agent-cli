@@ -8,6 +8,7 @@ import pytest
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS, make_ports, split_ports
 
 
@@ -3556,11 +3557,13 @@ class TestSkillStack:
 
         obs = _handle_run_skill(
             skill_input={"name": "optimize", "arguments": "./"},
-            provider_name="openai",
-            base_url="http://localhost:11434",
-            api_key="",
-            capabilities=caps,
-            model="test",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="http://localhost:11434",
+                api_key="",
+                capabilities=caps,
+                model="test",
+            ),
             ctx=None,
             session=None,
             parent_skill_name="",
@@ -3578,11 +3581,13 @@ class TestSkillStack:
         # NOT be blocked by the stack check
         obs = _handle_run_skill(
             skill_input={"name": "summarize", "arguments": "./"},
-            provider_name="openai",
-            base_url="http://localhost:11434",
-            api_key="",
-            capabilities=caps,
-            model="test",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="http://localhost:11434",
+                api_key="",
+                capabilities=caps,
+                model="test",
+            ),
             ctx=None,
             session=None,
             parent_skill_name="",
@@ -4466,7 +4471,9 @@ class TestLoopConfigStateOwnership:
         from agent_cli.loop import AgentLoop, LoopConfig, LoopState
 
         loop = AgentLoop.__new__(AgentLoop)
-        loop._config = LoopConfig(model="m1", tools_list=["shell"], depth=1)
+        loop._config = LoopConfig(
+            binding=make_binding(model="m1"), tools_list=["shell"], depth=1
+        )
         loop._state = LoopState(query="q")
         return loop
 
@@ -4475,9 +4482,9 @@ class TestLoopConfigStateOwnership:
 
         from agent_cli.loop import LoopConfig
 
-        cfg = LoopConfig(model="m")
+        cfg = LoopConfig(binding=make_binding(model="m"))
         try:
-            cfg.model = "other"  # type: ignore[misc]
+            cfg.depth = 9  # type: ignore[misc]
         except dataclasses.FrozenInstanceError:
             pass
         else:  # pragma: no cover

@@ -7,7 +7,6 @@ import re
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -560,12 +559,7 @@ def try_dispatch_agent_or_skill(
     message: str,
     output: DispatchOutput,
     *,
-    llm_provider,
-    capabilities,
-    resolved_model: str,
-    provider: str,
-    resolved_url: str,
-    resolved_key: str,
+    binding,
     max_turns: int,
     verbose: bool,
     max_depth: int,
@@ -612,12 +606,7 @@ def try_dispatch_agent_or_skill(
             return True
         result, _ok = _dispatch_agent(
             message,
-            llm_provider,
-            capabilities,
-            resolved_model,
-            provider,
-            resolved_url,
-            resolved_key,
+            binding,
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
@@ -648,12 +637,7 @@ def try_dispatch_agent_or_skill(
             return True
         result = _dispatch_skill(
             message,
-            llm_provider,
-            capabilities,
-            resolved_model,
-            provider,
-            resolved_url,
-            resolved_key,
+            binding,
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
@@ -675,12 +659,7 @@ def try_dispatch_agent_or_skill(
 
 def _dispatch_agent(
     query: str,
-    llm_provider,
-    capabilities,
-    resolved_model: str,
-    provider: str,
-    resolved_url: str,
-    resolved_key: str,
+    binding,
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
@@ -719,12 +698,7 @@ def _dispatch_agent(
         owner="main",
         args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
         parent_ctx=ctx,
-        provider=llm_provider,
-        model=resolved_model,
-        capabilities=capabilities,
-        provider_name=provider,
-        base_url=resolved_url,
-        api_key=resolved_key,
+        binding=binding,
         depth=0,
         max_depth=max_depth,
         max_turns=max_turns,
@@ -755,12 +729,7 @@ def _dispatch_agent(
 
 def _dispatch_skill(
     query: str,
-    llm_provider,
-    capabilities,
-    resolved_model: str,
-    provider: str,
-    resolved_url: str,
-    resolved_key: str,
+    binding,
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
@@ -827,12 +796,7 @@ def _dispatch_skill(
             owner="main",  # 루프 밖 디스패치
             skill=skill,
             arguments=arguments,
-            provider=llm_provider,
-            capabilities=capabilities,
-            model=resolved_model,
-            provider_name=provider,
-            base_url=resolved_url,
-            api_key=resolved_key,
+            binding=binding,
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
@@ -1049,6 +1013,7 @@ def _setup_provider(
     base_url: str | None,
     api_key: str | None,
     quiet: bool = False,
+    explicit: bool = False,
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
     _maybe_setup()
@@ -1076,7 +1041,7 @@ def _setup_provider(
         provider,
         resolved_url,
         resolved_key,
-        explicit=bool(model),
+        explicit=explicit or bool(model),
         quiet=quiet,
     )
     llm_provider = create_provider(provider, resolved_url, resolved_key)
@@ -1124,26 +1089,6 @@ def _setup_provider(
     )
 
 
-@dataclass(frozen=True)
-class SessionBootstrap:
-    """`run`/`web` 이 공유하는 부트스트랩 산출물 (C4).
-
-    provider 6-튜플 + fail-fast 해석된 dialect + 폴백 적용된 토큰
-    예산을 한 번에 — 두 커맨드가 각자 unpack/try-except/분기를 복제하던
-    동형 시퀀스의 단일 소유자. 세션 획득(create vs resume UX)·renderer·
-    worker 배선은 진짜 다른 부분이라 커맨드별에 남는다.
-    """
-
-    llm_provider: object
-    capabilities: object
-    resolved_model: str
-    resolved_url: str
-    resolved_key: str
-    provider_name: str
-    dialect: object
-    max_context_tokens: int
-
-
 def _bootstrap_provider(
     provider,
     model,
@@ -1153,15 +1098,18 @@ def _bootstrap_provider(
     max_context_tokens: int,
     *,
     quiet: bool = False,
-) -> SessionBootstrap:
-    """provider 셋업 → dialect 해석 fail-fast → 예산 폴백(70% 통일 공식).
+    explicit_model: bool = False,
+):
+    """provider 셋업 → dialect 해석 fail-fast → 세션의 `ModelBinding` 하나.
 
     dialect 해석 체인 (v10.3.0): 명시 ``--dialect`` (프로세스 전체 강제)
     > models.json 모델 바인딩. 둘 다 없거나 unknown 이름이면 세션 생성
     전에 fail-fast (D2) — 기본값 없음, 사용자가 모델에 방언을 묶는다.
     """
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, name = (
-        _setup_provider(provider, model, base_url, api_key, quiet=quiet)
+        _setup_provider(
+            provider, model, base_url, api_key, quiet=quiet, explicit=explicit_model
+        )
     )
     _set_dialect_override(dialect)
     try:
@@ -1176,19 +1124,19 @@ def _bootstrap_provider(
             f"provider (tools/tool_calls); provider is '{name}'.[/]"
         )
         raise typer.Exit(2)
-    if max_context_tokens <= 0:
-        from agent_cli.context.manager import compute_token_budget
+    from agent_cli.providers.binding import ModelBinding
 
-        max_context_tokens = compute_token_budget(capabilities.context_window)
-    return SessionBootstrap(
-        llm_provider=llm_provider,
-        capabilities=capabilities,
-        resolved_model=resolved_model,
-        resolved_url=resolved_url,
-        resolved_key=resolved_key,
+    # 세션이 드는 모델 하나 (v10.43.0) — 루프·ctx·팀원·web 은 이 객체를 참조만
+    # 하고, 토큰 예산은 창에서 매번 계산한다(명시 --max-context-tokens 만 고정).
+    return ModelBinding(
+        provider=llm_provider,
         provider_name=name,
+        base_url=resolved_url,
+        api_key=resolved_key,
+        model=resolved_model,
+        capabilities=capabilities,
         dialect=dialect_plugin,
-        max_context_tokens=max_context_tokens,
+        context_budget_override=max(0, int(max_context_tokens or 0)),
     )
 
 
@@ -1220,18 +1168,22 @@ def _claim_session(session) -> None:
         raise typer.Exit(code=1) from None
 
 
-def _build_context(session, boot: SessionBootstrap, *, resume: bool = False):
-    """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로).
-    노브(압축 비율·무진전 한도·사고·문법)는 여기서 받지 않는다 — 소유자들이
-    전부 선 뒤 `knobs.apply_all` 이 CLI > env > 기본값으로 적용한다 (v10.43.0)."""
+def _build_context(session, binding, *, resume: bool = False):
+    """세션 + 모델 바인딩으로 ContextManager 조립 (run/web 단일 경로). 방언과
+    토큰 예산은 바인딩에서 매번 읽는다. 노브(압축 비율·무진전 한도·사고·문법)는
+    여기서 받지 않는다 — 소유자들이 전부 선 뒤 `knobs.apply_all` 이 CLI > env >
+    기본값으로 적용한다 (v10.43.0)."""
     from agent_cli.context.session import get_session_dir
 
-    return ContextManager(
-        get_session_dir(session),
-        max_context_tokens=boot.max_context_tokens,
-        resume=resume,
-        dialect=boot.dialect,
-    )
+    return ContextManager(get_session_dir(session), binding=binding, resume=resume)
+
+
+def _boot_model(knob_args) -> str | None:
+    """부팅 모델: 노브 `model` 의 CLI > env; 없으면 None(config `default_model` →
+    프로바이더 기본)."""
+    from agent_cli.knobs import KNOB_BY_NAME
+
+    return KNOB_BY_NAME["model"].resolve((knob_args or {}).get("model"))
 
 
 def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
@@ -1254,12 +1206,6 @@ def run(
         "--provider",
         "-p",
         help="LLM provider: openai | anthropic (default: openai)",
-    ),
-    model: str | None = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model ID (uses provider default if not specified)",
     ),
     base_url: str | None = typer.Option(
         None,
@@ -1338,22 +1284,15 @@ def run(
     # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저
     # (unknown ID fail-fast).
     session_resumed = _load_resume_session(resume) if resume else None
-    boot = _bootstrap_provider(
+    binding = _bootstrap_provider(
         provider,
-        model,
+        _boot_model(knob_args),
         base_url,
         api_key,
         dialect,
         max_context_tokens,
+        explicit_model="model" in (knob_args or {}),
     )
-    llm_provider = boot.llm_provider
-    capabilities = boot.capabilities
-    resolved_model = boot.resolved_model
-    resolved_url = boot.resolved_url
-    resolved_key = boot.resolved_key
-    provider = boot.provider_name
-    dialect_plugin = boot.dialect
-    max_context_tokens = boot.max_context_tokens
 
     # MCP servers
     mcp_manager, mcp_tools = _setup_mcp()
@@ -1367,7 +1306,7 @@ def run(
     session = session_resumed if session_resumed is not None else create_session()
     _claim_session(session)
     save_meta(session)
-    ctx = _build_context(session, boot, resume=session_resumed is not None)
+    ctx = _build_context(session, binding, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.runtime import (
@@ -1398,12 +1337,7 @@ def run(
     agent_registry = build_agent_registry(
         ctx.session_dir if ctx else None,
         AgentRuntime(
-            provider=llm_provider,
-            capabilities=capabilities,
-            model=resolved_model,
-            provider_name=provider,
-            base_url=resolved_url,
-            api_key=resolved_key,
+            binding=binding,
             max_turns=max_turns,
             depth=0,
             max_depth=max_depth,
@@ -1469,12 +1403,7 @@ def run(
             dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
                 text,
                 _ConsoleDispatchOutput(result_file=result_file),
-                llm_provider=llm_provider,
-                capabilities=capabilities,
-                resolved_model=resolved_model,
-                provider=provider,
-                resolved_url=resolved_url,
-                resolved_key=resolved_key,
+                binding=binding,
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
@@ -1494,12 +1423,7 @@ def run(
                 query_request_id=req.request_id,
                 stop_event=req.stop_event,
                 graceful_interrupt=surface.graceful_interrupt,
-                provider=llm_provider,
-                capabilities=capabilities,
-                model=resolved_model,
-                provider_name=provider,
-                base_url=resolved_url,
-                api_key=resolved_key,
+                binding=binding,
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
@@ -1507,7 +1431,6 @@ def run(
                 session=session,
                 hooks_config=_disk_hooks,
                 record_turns=record_turns,
-                dialect=dialect_plugin,
                 # 런 도중 주입도 web 과 같다 — 예약 발화가 다음 턴 경계에
                 # 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다.
                 ports=ports_for_main(
@@ -2075,12 +1998,6 @@ def web(
         "-p",
         help="LLM provider: openai | anthropic (default: openai)",
     ),
-    model: str | None = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model ID (uses provider default if not specified)",
-    ),
     base_url: str | None = typer.Option(
         None,
         "--base-url",
@@ -2191,23 +2108,16 @@ def web(
     # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
     # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거).
     session_resumed = _load_resume_session(resume) if resume else None
-    boot = _bootstrap_provider(
+    binding = _bootstrap_provider(
         provider,
-        model,
+        _boot_model(knob_args),
         base_url,
         api_key,
         dialect,
         max_context_tokens,
         quiet=True,
+        explicit_model="model" in (knob_args or {}),
     )
-    llm_provider = boot.llm_provider
-    capabilities = boot.capabilities
-    resolved_model = boot.resolved_model
-    resolved_url = boot.resolved_url
-    resolved_key = boot.resolved_key
-    provider = boot.provider_name
-    dialect_plugin = boot.dialect
-    max_context_tokens = boot.max_context_tokens
 
     # MCP servers (v4.46.0: run 과 동형 배선 — 이전엔 web 만 미지원이었음)
     mcp_manager, mcp_tools = _setup_mcp()
@@ -2243,7 +2153,7 @@ def web(
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
     _claim_session(session)
     save_meta(session)
-    ctx = _build_context(session, boot, resume=is_resume)
+    ctx = _build_context(session, binding, resume=is_resume)
 
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(
@@ -2262,21 +2172,16 @@ def web(
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
-        # ✨ directive 생성의 LLM 배선 — 산문 직접 호출(5.7.0).
-        # provider 는 콜마다 무상태라 요청 스레드에서 안전; 세션/렌더러는
-        # 비공유 (메인 타임라인 무접촉 유지).
-        runtime={
-            "provider": llm_provider,
-            "model": resolved_model,
-            "capabilities": capabilities,
-        },
+        # 세션의 모델 바인딩 (v10.43.0) — ✨ directive 생성·🧠/📐 칩의 능력 조회가
+        # 복사본이 아니라 이걸 읽는다.
+        binding=binding,
     )
 
     # Prime the session-info ``ready`` so a client opening the page
     # before the first chat turn already sees the top-bar populated.
     # AgentLoop calls ``header()`` again on each user message; the
     # WebRenderer slot-replaces, so the buffer doesn't accumulate.
-    renderer.header(provider, resolved_model, max_turns)
+    renderer.header(binding.provider_name, binding.model, max_turns)
     # 📐 문법 제약의 초기 상태 — 칩·status.json 이 첫 요청 전에도 사실을 본다.
     renderer.broadcast_grammar(server.grammar_state())
 
@@ -2307,8 +2212,8 @@ def web(
     if not (is_resume and renderer.restore_prompt_views()):
         capture_startup_system_prompt(
             renderer,
-            capabilities=capabilities,
-            dialect=dialect_plugin,
+            capabilities=binding.capabilities,
+            dialect=binding.dialect,
             session_dir=str(ctx.session_dir),
             max_depth=max_depth,
         )
@@ -2371,12 +2276,7 @@ def web(
         agent_registry = build_agent_registry(
             ctx.session_dir if ctx else None,
             AgentRuntime(
-                provider=llm_provider,
-                capabilities=capabilities,
-                model=resolved_model,
-                provider_name=provider,
-                base_url=resolved_url,
-                api_key=resolved_key,
+                binding=binding,
                 max_turns=max_turns,
                 depth=0,
                 max_depth=max_depth,
@@ -2428,12 +2328,7 @@ def web(
                 text,
                 web_output,
                 agent_registry=_registry,
-                llm_provider=llm_provider,
-                capabilities=capabilities,
-                resolved_model=resolved_model,
-                provider=provider,
-                resolved_url=resolved_url,
-                resolved_key=resolved_key,
+                binding=binding,
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
@@ -2452,19 +2347,13 @@ def web(
                 query_request_id=req.request_id,
                 stop_event=req.stop_event,
                 graceful_interrupt=surface.graceful_interrupt,
-                provider=llm_provider,
-                capabilities=capabilities,
-                model=resolved_model,
-                provider_name=provider,
-                base_url=resolved_url,
-                api_key=resolved_key,
+                binding=binding,
                 max_turns=max_turns,
                 verbose=verbose,
                 ctx=ctx,
                 max_depth=max_depth,
                 session=session,
                 record_turns=record_turns,
-                dialect=dialect_plugin,
                 # v8.39.0 수리: run 과 동형 — 종전 web 은 hooks_config
                 # 미전달로 채팅 턴에서 디스크 훅이 미발화했다.
                 hooks_config=_disk_hooks,
@@ -2524,7 +2413,9 @@ def web(
     resolved_port = port if port is not None else pick_port(host, 0xC0DE)
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
     ui_url = f"http://{display_host}:{resolved_port}/?token={server.token}"
-    console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")
+    console.print(
+        f"\n[bright_cyan]agent-cli web[/]  ({binding.provider_name} · {binding.model})"
+    )
     console.print(f"  UI:      [yellow]{ui_url}[/]")
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
