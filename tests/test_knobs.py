@@ -25,6 +25,10 @@ from agent_cli.knobs import KNOB_BY_NAME, KNOBS, KnobSession, apply_all, resolve
 _PKG = Path(__file__).resolve().parent.parent / "agent_cli"
 
 
+def _plain(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 def _registered_options(command: str) -> set[str]:
     """등록된 click 파라미터의 옵션 이름 집합 (help 렌더를 파싱하지 않는다 —
     Rich 색상이 켜진 CI 에서 리터럴 `--x` 가 사라진다, tests/test_stream_idle)."""
@@ -281,7 +285,8 @@ class TestCliSurface:
     def test_bad_value_fails_before_the_session_starts(self):
         app, seen = self._app()
         r = CliRunner().invoke(app, ["q", "--grammar", "maybe"])
-        assert r.exit_code != 0 and "--grammar" in r.output and seen == {}
+        # Rich 가 CI(색상 on)에서 옵션명을 글자 단위로 스타일링한다 — ANSI 를 벗겨 본다
+        assert r.exit_code != 0 and "grammar" in _plain(r.output) and seen == {}
 
 
 class TestModelKnob:

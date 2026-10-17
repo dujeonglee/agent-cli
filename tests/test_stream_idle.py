@@ -653,5 +653,7 @@ class TestSharedDurationParser:
             print(knob_args)
 
         r = CliRunner().invoke(app, ["--stall", "10x"])
-        assert r.exit_code != 0 and "--stall" in r.output
+        import re
+
+        assert r.exit_code != 0 and "stall" in re.sub(r"\x1b\[[0-9;]*m", "", r.output)
         assert CliRunner().invoke(app, []).output.strip() == "{}"
