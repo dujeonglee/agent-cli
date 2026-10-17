@@ -4628,11 +4628,11 @@
 
 
 // ── 세션 노브 클라이언트 (v10.43.0, docs/knobs/DESIGN.md §5.1) ─────────────
-// 칩들이 같은 둘을 쓴다: 한 번의 GET api/knobs (상태 한 장씩, `knobs.web_state`
-// 모양) 와 POST api/knobs/<name> {value}. 다른 뷰어의 변경은 SSE `knob` →
-// `agentcli:knob` 으로 오고 `on(name, fn)` 이 name 으로 거른다. 종전 노브별
-// 엔드포인트 일곱(api/compaction·stream-idle·max-agents·confirm-mode·thinking·
-// grammar·auditor)과 이벤트 일곱을 대체.
+// 한 번의 GET api/knobs (상태 한 장씩, `knobs.web_state` 모양) 와 POST
+// api/knobs/<name> {value}. 다른 뷰어의 변경(과 서버가 다시 계산한 상태)은
+// SSE `knob` → `agentcli:knob` 으로 온다. 종전 노브별 엔드포인트 일곱(api/
+// compaction·stream-idle·max-agents·confirm-mode·thinking·grammar·auditor)과
+// 이벤트 일곱을 대체.
 const KNOBS = (function () {
   let loaded = null;
   function all() {
@@ -4644,9 +4644,6 @@ const KNOBS = (function () {
     }
     return loaded;
   }
-  function get(name) {
-    return all().then((ks) => ks.find((k) => k.name === name) || null);
-  }
   function set(name, value) {
     return fetch("api/knobs/" + name, {
       method: "POST",
@@ -4657,133 +4654,249 @@ const KNOBS = (function () {
       .then((d) => (d && d.ok ? d : null))
       .catch(() => null);
   }
-  function on(name, fn) {
-    document.addEventListener("agentcli:knob", (e) => {
-      const d = e.detail || {};
-      if (d.name === name) fn(d);
-    });
-  }
-  return { all, get, set, on };
+  return { all, set };
 })();
 
-// ── 컨텍스트 압축 임계 슬라이더 (5.13) ──────────────────────────────────
-// 헤더의 토큰 사용량 옆 슬라이더로 compaction 목표 비율을 세션 한정 변경.
-// web·loop 이 같은 ctx 를 공유하므로 저장 즉시 다음 LLM 콜에 반영. 다른
-// 뷰어는 sticky(knob:compaction_ratio) 로 동기화. 별도 IIFE — 메인
-// 렌더 루프 무수정(인스펙터·테마 등과 동일 패턴).
+// ── 노브 칩 렌더러 (v10.45.0, docs/knobs/DESIGN.md §5.2) ───────────────────
+// 칩은 서버의 노브 표에서 나온다: 상태 한 장(kind·ui·badge·note·locked·on·
+// group)이 곧 칩이다. 종류(kind)와 컨트롤 변형(ui.control)으로 입력을 고르고,
+// 배지·설명·잠김 사유는 서버가 준 글자를 보여줄 뿐 여기서 계산하지 않는다.
+// 묶음(ui.group)은 한 칩·한 팝업에 멤버 컨트롤을 나란히 — 배지·설명은 묶음 것.
+// 새 노브는 표에 선언 한 줄이면 칩이 생긴다. 종전 칩별 IIFE 일곱(🗜️ 👥 ⏳ 🧠
+// 📐 🔎 ⚡)을 대체. id 는 규칙적이다: 칩 `knob-<chip>-{wrap,chip,pop,badge,note}`
+// (chip = 묶음 이름 또는 노브 이름), 컨트롤 `knob-<노브 이름>`.
 (function () {
   "use strict";
-  const $wrap = document.getElementById("compaction-wrap");
-  const $range = document.getElementById("compaction-range");
-  const $label = document.getElementById("compaction-label");
-  if (!$wrap || !$range || !$label) return;
+  const $chips = document.getElementById("knobs");
+  const $header = document.getElementById("knobs-header");
+  if (!$chips || !$header) return;
 
-  const pctOf = (ratio) => Math.round(ratio * 100);
-  var $badge = document.getElementById("compaction-badge");
-  function setLabel(pct) {
-    $label.textContent = "Compact " + pct + "%";
-    if ($badge) $badge.textContent = pct + "%";
-  }
-  function applyRatio(ratio) {
-    const pct = pctOf(ratio);
-    $range.value = pct;
-    setLabel(pct);
-  }
+  const chips = {}; // chip name → {wrap, btn, badge, pop, note, members: {knob → control}}
+  const states = {}; // knob name → 마지막 상태
 
-  // 초기 로드: 현재 비율 + 슬라이더 범위(min/max/step). 성공 시 노출.
-  KNOBS.get("compaction_ratio").then((d) => {
-    if (!d || !d.available) return;
-    if (typeof d.min === "number") $range.min = pctOf(d.min);
-    if (typeof d.max === "number") $range.max = pctOf(d.max);
-    if (typeof d.step === "number") $range.step = Math.max(1, pctOf(d.step));
-    if (typeof d.value === "number") applyRatio(d.value);
-    $wrap.hidden = false;
-  });
-
-  // 드래그 중엔 라벨만 실시간, 놓을 때 저장(POST). clamp 결과를 되반영.
-  $range.addEventListener("input", () => setLabel($range.value));
-  $range.addEventListener("change", () => {
-    KNOBS.set("compaction_ratio", Number($range.value) / 100).then((d) => {
-      if (d && typeof d.value === "number") applyRatio(d.value);
+  function el(tag, attrs, text) {
+    const n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach((k) => {
+      if (k === "className") n.className = attrs[k];
+      else if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
     });
-  });
-
-  // 다른 뷰어가 바꾸면 동기화.
-  KNOBS.on("compaction_ratio", (d) => {
-    if (typeof d.value === "number") applyRatio(d.value);
-  });
-})();
-
-// ── 스트림 무진전(Stall) 한도 (P3, v8.55.0) ────────────────────────────
-// ctx 팝오버에서 "마지막 토큰 이후 N분 무진전 시 재접속·재전송" 한도를 세션
-// 한정 변경. keep-alive 는 진전이 아님. 0 = 감지 끔. compaction IIFE 동형.
-(function () {
-  "use strict";
-  const $wrap = document.getElementById("stall-wrap");
-  const $input = document.getElementById("stall-input");
-  if (!$wrap || !$input) return;
-
-  const toMin = (s) => (s <= 0 ? 0 : Math.round(s / 60));
-  const $badge = document.getElementById("stall-badge");
-  const $att = document.getElementById("stall-attempts");
-  const $derived = document.getElementById("stall-derived");
-  let lastSeconds = 600; // 두 노브(stall·stall_attempts)가 한 칩 — 다른 축의 마지막 값
-
-  // 배지가 "10m×4" 인 이유: 곱(40m)만 보이면 어느 축을 고칠지 알 수 없고,
-  // 한 축만 보이면 최대 대기를 머릿속에서 계산해야 한다. 곱은 파생 줄이 진다.
-  function apply(seconds, attempts) {
-    lastSeconds = seconds;
-    const m = toMin(seconds);
-    const n =
-      typeof attempts === "number"
-        ? attempts
-        : $att
-          ? Math.max(1, Number($att.value) || 1)
-          : 1;
-    // 편집 중인 입력은 덮어쓰지 않는다 — 다른 칸에 타이핑하던 값을 잃지 않게.
-    if (document.activeElement !== $input) $input.value = m;
-    if ($att && document.activeElement !== $att) $att.value = n;
-    if ($badge) $badge.textContent = m === 0 ? "off" : m + "m×" + n;
-    // 한도 0 = 감지 끔 → 시도 횟수라는 개념 자체가 성립하지 않는다.
-    if ($att) $att.disabled = m === 0;
-    if ($derived) {
-      $derived.classList.toggle("is-off", m === 0);
-      $derived.textContent =
-        m === 0
-          ? "무진전 감지가 꺼져 있어 재전송하지 않습니다"
-          : m + "분 × " + n + "회 = 최대 " + m * n + "분 후 실패";
-    }
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function chipNameOf(d) {
+    return d.group ? d.group.name : d.name;
+  }
+  function scaleOf(d) {
+    return (d.ui && d.ui.scale) || 1;
+  }
+  // 배율 곱·나눗셈의 부동소수 찌꺼기(600.0000001, 5.000000000000001)를 걷는다.
+  function tidy(x) {
+    return Math.round(x * 1e6) / 1e6;
+  }
+  function unscale(d, shown) {
+    return tidy(Number(shown) / scaleOf(d)); // 화면 값 → 저장 값
+  }
+  function post(d, value) {
+    KNOBS.set(d.name, value).then((r) => {
+      // 거부(미등록 모델 등)·실패면 마지막 상태로 되돌린다 — 서버는 아무것도 안 바꿨다.
+      if (!r) apply(states[d.name], true);
+    });
+  }
+  // 조작 중인 입력은 서버 상태로 덮지 않는다 — 한 노브를 바꾸면 서버가 열 장을
+  // 다 다시 보내므로, 옆 칸에 막 적은 값이 change 전에 옛 값으로 되돌아가던
+  // 경합(브라우저 테스트가 잡음). 거부 되돌리기(force)만 예외.
+  function editing($x, force) {
+    return !force && document.activeElement === $x;
+  }
+  function setNumberBounds($in, d) {
+    const sc = scaleOf(d);
+    if (typeof d.min === "number") $in.min = tidy(d.min * sc);
+    if (typeof d.max === "number") $in.max = tidy(d.max * sc);
+    if (typeof d.step === "number") $in.step = tidy(d.step * sc);
+  }
+  function labelOf(d, v) {
+    const m = (d.ui && d.ui.choice_labels) || {};
+    return Object.prototype.hasOwnProperty.call(m, v) ? m[v] : v;
   }
 
-  KNOBS.all().then((ks) => {
-    const st = ks.find((k) => k.name === "stall");
-    const at = ks.find((k) => k.name === "stall_attempts");
-    if (!st || !st.available) return;
-    apply(st.value, at && typeof at.value === "number" ? at.value : undefined);
-    $wrap.hidden = false;
-  });
+  // 컨트롤 — {nodes: [라벨, 입력, 단위…], write(d), disable(bool)}
+  function makeControl(d) {
+    const id = "knob-" + d.name;
+    const control = (d.ui && d.ui.control) || "";
+    const $label = el("label", { for: id }, d.label);
+    const unit = d.ui && d.ui.unit ? el("span", { className: "knob-unit" }, d.ui.unit) : null;
+    let nodes, write, disable;
 
-  $input.addEventListener("change", () => {
-    const minutes = Math.max(0, Math.round(Number($input.value) || 0));
-    KNOBS.set("stall", minutes * 60).then((d) => {
-      if (d && typeof d.value === "number") apply(d.value, undefined);
-    });
-  });
-  if ($att) {
-    $att.addEventListener("change", () => {
-      const n = Math.max(1, Math.round(Number($att.value) || 1));
-      KNOBS.set("stall_attempts", n).then((d) => {
-        if (d && typeof d.value === "number") apply(lastSeconds, d.value);
+    if (d.kind === "choice" || d.kind === "bool" || control === "options") {
+      const $sel = el("select", { id: id, "aria-label": d.label });
+      let keys = [];
+      function fill(st, force) {
+        if (editing($sel, force)) return;
+        const current = d.kind === "bool" ? (st.value ? "on" : "off") : String(st.value);
+        let opts = d.kind === "bool" ? ["off", "on"] : (st.choices || st.options || []).slice();
+        if (opts.indexOf(current) < 0) opts.push(current);
+        if (opts.join("\n") !== keys.join("\n")) {
+          keys = opts;
+          $sel.textContent = "";
+          opts.forEach((v) => $sel.appendChild(el("option", { value: v }, labelOf(st, v))));
+        }
+        $sel.value = current;
+      }
+      $sel.addEventListener("change", () => {
+        if ($sel.disabled) return;
+        post(d, d.kind === "bool" ? $sel.value === "on" : $sel.value);
       });
-    });
+      nodes = [$label, $sel, unit];
+      write = fill;
+      disable = (b) => ($sel.disabled = b);
+    } else if (control === "range") {
+      const $in = el("input", { id: id, type: "range", "aria-label": d.label });
+      $in.addEventListener("change", () => post(d, unscale(d, $in.value)));
+      nodes = [$label, $in, unit];
+      write = (st, force) => {
+        $label.textContent = st.label + " " + st.badge; // 슬라이더 옆에 지금 값
+        if (editing($in, force)) return;
+        setNumberBounds($in, st);
+        $in.value = tidy(st.value * scaleOf(st));
+      };
+      disable = (b) => ($in.disabled = b);
+    } else if (control === "unlimited") {
+      const $in = el("input", { id: id, type: "number", "aria-label": d.label });
+      const $chk = el("input", { id: id + "-unlimited", type: "checkbox" });
+      const $chkLabel = el("label", { className: "knob-check" });
+      $chkLabel.appendChild($chk);
+      $chkLabel.appendChild(document.createTextNode("Unlimited"));
+      let last = 1; // 무제한 해제 시 되돌릴 마지막 유한값
+      $in.addEventListener("change", () => {
+        let v = Number($in.value);
+        const min = Number($in.min) || 1;
+        if (!Number.isFinite(v) || v < min) v = min;
+        post(d, unscale(d, v));
+      });
+      $chk.addEventListener("change", () => post(d, $chk.checked ? 0 : last));
+      nodes = [$label, $in, $chkLabel, unit];
+      write = (st, force) => {
+        const unlimited = st.value === 0;
+        $chk.checked = unlimited;
+        $in.disabled = unlimited || !!st.locked;
+        if (!unlimited) last = st.value;
+        if (editing($in, force)) return;
+        setNumberBounds($in, st);
+        if (!unlimited) $in.value = tidy(st.value * scaleOf(st));
+      };
+      disable = (b) => ($chk.disabled = b);
+    } else if (d.kind === "number" || d.kind === "duration") {
+      const $in = el("input", { id: id, type: "number", "aria-label": d.label });
+      $in.addEventListener("change", () => {
+        if ($in.disabled) return;
+        post(d, unscale(d, $in.value === "" ? 0 : $in.value));
+      });
+      nodes = [$label, $in, unit];
+      write = (st, force) => {
+        if (editing($in, force)) return;
+        setNumberBounds($in, st);
+        $in.value = tidy(st.value * scaleOf(st));
+      };
+      disable = (b) => ($in.disabled = b);
+    } else {
+      const $in = el("input", { id: id, type: "text", "aria-label": d.label });
+      $in.addEventListener("change", () => post(d, $in.value));
+      nodes = [$label, $in, unit];
+      write = (st, force) => {
+        if (!editing($in, force)) $in.value = st.value === null ? "" : String(st.value);
+      };
+      disable = (b) => ($in.disabled = b);
+    }
+    return { nodes: nodes.filter(Boolean), write: write, disable: disable };
   }
 
-  KNOBS.on("stall", (d) => {
-    if (typeof d.value === "number") apply(d.value, undefined);
-  });
-  KNOBS.on("stall_attempts", (d) => {
-    if (typeof d.value === "number") apply(lastSeconds, d.value);
-  });
+  // 헤더 자리(ui.placement="header") — 팝업 없는 토글 버튼 하나 (⚡ 자동 승인).
+  function buildToggle(d) {
+    const $btn = el("button", {
+      id: "knob-" + d.name,
+      className: "hd-chip hd-chip-btn knob-toggle",
+      type: "button",
+      "aria-pressed": "false",
+      hidden: "",
+    });
+    $btn.addEventListener("click", () => post(d, !states[d.name].value));
+    $header.appendChild($btn);
+    return { wrap: $btn, toggle: true };
+  }
+
+  function buildChip(d) {
+    const name = chipNameOf(d);
+    const g = d.group;
+    const $wrap = el("span", { id: "knob-" + name + "-wrap", className: "knob", hidden: "" });
+    const $badge = el("span", { id: "knob-" + name + "-badge" });
+    const $btn = el("button", {
+      id: "knob-" + name + "-chip",
+      className: "knob-btn",
+      type: "button",
+      "data-pop": "knob-" + name + "-pop",
+      "aria-haspopup": "true",
+      "aria-expanded": "false",
+    });
+    $btn.appendChild(document.createTextNode(((g ? g.icon : d.ui.icon) || "") + " "));
+    $btn.appendChild($badge);
+    const $pop = el("div", {
+      id: "knob-" + name + "-pop",
+      className: "knob-pop" + (g ? " is-group" : ""),
+      hidden: "",
+    });
+    const $note = el("span", { id: "knob-" + name + "-note", className: "knob-note" });
+    $wrap.appendChild($btn);
+    $wrap.appendChild($pop);
+    $chips.appendChild($wrap);
+    return { wrap: $wrap, btn: $btn, badge: $badge, pop: $pop, note: $note, members: {} };
+  }
+
+  function apply(d, force) {
+    if (!d) return;
+    states[d.name] = d;
+    const name = d.ui && d.ui.placement === "header" ? d.name : chipNameOf(d);
+    let chip = chips[name];
+    if (!chip) {
+      chip = chips[name] = d.ui && d.ui.placement === "header" ? buildToggle(d) : buildChip(d);
+    }
+    if (chip.toggle) {
+      chip.wrap.hidden = !d.available;
+      chip.wrap.textContent = (d.ui.icon || "") + " " + (d.badge || d.label);
+      chip.wrap.title = d.locked || d.help;
+      chip.wrap.classList.toggle("on", !!d.on);
+      chip.wrap.setAttribute("aria-pressed", String(!!d.value));
+      chip.wrap.disabled = !!d.locked;
+      return;
+    }
+    let ctl = chip.members[d.name];
+    if (!ctl) {
+      ctl = chip.members[d.name] = makeControl(d);
+      ctl.nodes.forEach((n) => chip.pop.appendChild(n));
+      chip.pop.appendChild(chip.note); // 설명 줄은 항상 맨 아래
+    }
+    ctl.write(d, force);
+    ctl.disable(!!d.locked);
+    // 묶음이면 배지·설명·가시성은 묶음 것(서버가 멤버 전부를 보고 계산), 아니면 제 것.
+    const members = d.group ? d.group.members.map((m) => states[m]).filter(Boolean) : [d];
+    const badge = d.group ? d.group.badge : d.badge;
+    const note = d.group ? d.group.note : d.note;
+    const available = d.group ? d.group.badge !== null : d.available;
+    const locked = members.every((m) => m.locked);
+    chip.wrap.hidden = !available;
+    chip.badge.textContent = badge === null || badge === undefined ? "" : String(badge);
+    chip.note.textContent = note || "";
+    chip.note.hidden = !note;
+    chip.wrap.title = locked
+      ? Array.from(new Set(members.map((m) => m.locked))).join(" · ") // 같은 사유는 한 번
+      : d.group
+        ? d.group.help
+        : d.help;
+    chip.wrap.classList.toggle("is-disabled", locked);
+    chip.wrap.classList.toggle("is-on", members.some((m) => m.on));
+  }
+
+  KNOBS.all().then((ks) => ks.forEach(apply));
+  document.addEventListener("agentcli:knob", (e) => apply(e.detail));
 })();
 
 // ── 🔌 MCP 상태 칩 (v9.2.0, docs/mcp-ui §D) ──────────────────────
@@ -4840,261 +4953,6 @@ const KNOBS = (function () {
     .then((r) => (r.ok ? r.json() : null))
     .then(render)
     .catch(() => {});
-})();
-
-// ── 에이전트 상한 제어 (5.16) ────────────────────────────────
-// 헤더의 압축 슬라이더 옆에서 동시 생존 에이전트 수를 세션 한정 변경.
-// 숫자 입력 + 무제한 체크박스(체크 시 입력 비활성화, value=0 전송). 레지스트리
-// 가 다음 spawn/resume 게이트에서 즉시 새 값을 읽고, 다른 뷰어는
-// sticky(max_agents) 로 동기화. 별도 IIFE — 메인 렌더 루프 무수정.
-(function () {
-  "use strict";
-  const $wrap = document.getElementById("maxagents-wrap");
-  const $input = document.getElementById("maxagents-input");
-  const $unlim = document.getElementById("maxagents-unlimited");
-  if (!$wrap || !$input || !$unlim) return;
-
-  let lastValue = 10; // 무제한 해제 시 되돌릴 마지막 유한값
-
-  // value=0 → 무제한(체크+입력 비활성). >0 → 유한(체크 해제+입력 활성).
-  var $badge = document.getElementById("maxagents-badge");
-  function applyValue(value) {
-    if (value === 0) {
-      $unlim.checked = true;
-      $input.disabled = true;
-    } else {
-      $unlim.checked = false;
-      $input.disabled = false;
-      $input.value = value;
-      lastValue = value;
-    }
-    if ($badge) $badge.textContent = value === 0 ? "∞" : String(value);
-  }
-
-  function post(value) {
-    KNOBS.set("max_agents", value).then((d) => {
-      if (d && typeof d.value === "number") applyValue(d.value);
-    });
-  }
-
-  // 초기 로드: 현재 값 + 최소값. 성공 시 노출.
-  KNOBS.get("max_agents").then((d) => {
-    if (!d || !d.available) return;
-    if (typeof d.min === "number") $input.min = d.min;
-    if (typeof d.value === "number") applyValue(d.value);
-    $wrap.hidden = false;
-  });
-
-  // 숫자 입력 변경 → 저장 (min 미만/빈값은 min 으로 바닥).
-  $input.addEventListener("change", () => {
-    let v = parseInt($input.value, 10);
-    const min = parseInt($input.min, 10) || 1;
-    if (!Number.isFinite(v) || v < min) v = min;
-    post(v);
-  });
-  // 무제한 토글 → 체크면 0(무제한), 해제면 마지막 유한값 복원.
-  $unlim.addEventListener("change", () => {
-    post($unlim.checked ? 0 : lastValue);
-  });
-
-  // 다른 뷰어가 바꾸면 동기화.
-  KNOBS.on("max_agents", (d) => {
-    if (typeof d.value === "number") applyValue(d.value);
-  });
-})();
-
-// ── ⚡ 자동 승인 헤더 토글 (confirm-mode, 별도 IIFE) ───────────────────
-// 헤더 버튼으로 노출(팝오버 밖). 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고 자동
-// 허용(세션 한정·런타임). KNOBS 로 초기화·저장, sticky(knob:auto_approve) 동기화.
-(function () {
-  "use strict";
-  const $btn = document.getElementById("confirm-mode-btn");
-  if (!$btn) return;
-  let on = false;
-
-  function apply(v) {
-    on = !!v;
-    $btn.setAttribute("aria-pressed", on ? "true" : "false");
-    $btn.classList.toggle("on", on); // 활성 시 amber 경고색
-  }
-
-  KNOBS.get("auto_approve").then((d) => {
-    if (!d || !d.available) return;
-    apply(!!d.value);
-    $btn.hidden = false;
-  });
-
-  $btn.addEventListener("click", () => {
-    apply(!on);
-    KNOBS.set("auto_approve", on).then((d) => {
-      if (d && typeof d.value === "boolean") apply(d.value);
-    });
-  });
-
-  KNOBS.on("auto_approve", (d) => {
-    if (typeof d.value === "boolean") apply(d.value);
-  });
-})();
-
-// ── 🧠 사고/추론 노력 컨트롤 (thinking, 별도 IIFE) ─────────────────────
-// 📐 문법 제약 칩 (v9.24.0) — 🧠 사고 노브와 같은 틀. 상태 셋(override/supported/
-// active·locked)은 api/knobs 가 주고 sticky(knob:grammar)로 뷰어끼리 동기화한다.
-(function () {
-  "use strict";
-  const $wrap = document.getElementById("grammar-wrap");
-  const $mode = document.getElementById("grammar-mode");
-  const $badge = document.getElementById("grammar-badge");
-  const $info = document.getElementById("grammar-info");
-  if (!$wrap || !$mode || !$badge || !$info) return;
-
-  function apply(d) {
-    // 노브 값 auto|on|off — 셀렉트는 "auto(기본, 지원되면 켬)" 와 "off" 둘.
-    $mode.value = d.value === "off" ? "off" : "auto";
-    const supported = d.supported;
-    // 지원으로 기록된 모델에서만 켜고 끈다. 미지원(false)·미확인(null) 은 잠김 —
-    // 지원 여부는 모델 감지 때 판정해 models.json 에 적히는 것이지 여기서
-    // 켜기 요청으로 덮는 게 아니다. 사유는 서버(`locked`)가 준다.
-    const locked = !!d.locked;
-    $mode.disabled = locked;
-    $wrap.classList.toggle("is-disabled", locked);
-    $wrap.classList.toggle("is-on", !!d.active);
-    // 배지는 **사실을 말한다**: 강제 / 끔 / 미지원 / 미확인.
-    $badge.textContent =
-      supported === false ? "미지원" : locked ? "미확인" : d.active ? "강제" : "끔";
-    $info.textContent =
-      supported === false
-        ? "서버가 문법을 강제하지 못합니다 — 텍스트 프로토콜 + 복구 계층(종전대로)."
-        : locked
-          ? "models.json 에 이 모델의 문법 지원 여부가 없습니다 — 모델 감지(프로브)를 다시 실행하면 채워집니다."
-          : d.active
-            ? "다음 요청부터 실립니다. 생성 속도가 느려지는 대신 형식 오류·모르는 도구·본문 폭주가 생성 단계에서 불가능합니다."
-            : "이 세션에서는 문법을 싣지 않습니다.";
-  }
-
-  function post() {
-    if ($mode.disabled) return;
-    KNOBS.set("grammar", $mode.value).then((d) => {
-      if (d) apply(d);
-    });
-  }
-
-  KNOBS.get("grammar").then((d) => {
-    if (!d || !d.available) return;
-    apply(d);
-    $wrap.hidden = false;
-  });
-
-  $mode.addEventListener("change", post);
-  KNOBS.on("grammar", apply);
-})();
-
-// 🔎 세션 감사자 칩 (v10.42.0) — 📐 문법 노브와 같은 틀. 상태(enabled/available/
-// in_flight)는 api/knobs 가 주고 sticky(knob:auditor)로 뷰어끼리 동기화한다.
-(function () {
-  "use strict";
-  const $wrap = document.getElementById("auditor-wrap");
-  const $mode = document.getElementById("auditor-mode");
-  const $badge = document.getElementById("auditor-badge");
-  const $info = document.getElementById("auditor-info");
-  if (!$wrap || !$mode || !$badge || !$info) return;
-
-  function apply(d) {
-    const on = !!d.value;
-    const busy = !!(d.in_flight > 0);
-    $mode.value = on ? "on" : "off";
-    $wrap.classList.toggle("is-on", on);
-    // 배지는 사실을 말한다: 감사 중 / 켬 / 끔 (끄더라도 진행 중 감사는 끝까지 돈다).
-    $badge.textContent = busy ? "감사 중" : on ? "켬" : "끔";
-    $info.textContent = busy
-      ? "감사 런이 돌고 있습니다 — 결과는 main 채널에 카드로 옵니다."
-      : on
-        ? "다음 사용자 런부터, 런이 끝날 때마다 그 런의 기록만 읽는 감사 런이 돕니다."
-        : "이 세션에서는 감사하지 않습니다.";
-  }
-
-  function post() {
-    KNOBS.set("auditor", $mode.value === "on").then((d) => {
-      if (d) apply(d);
-    });
-  }
-
-  KNOBS.get("auditor").then((d) => {
-    if (!d || !d.available) return; // 세션 없음 — 감사할 history 가 없다
-    apply(d);
-    $wrap.hidden = false;
-  });
-
-  $mode.addEventListener("change", post);
-  KNOBS.on("auditor", (d) => {
-    if (d.available) $wrap.hidden = false;
-    apply(d);
-  });
-})();
-
-// ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort) = 노브 thinking·reasoning_effort
-// → 다음 LLM 요청부터 반영(공유 ctx). sticky(knob:<name>) 로 뷰어 동기화.
-(function () {
-  "use strict";
-  const $wrap = document.getElementById("thinking-wrap");
-  const $en = document.getElementById("think-enable");
-  const $eff = document.getElementById("think-effort");
-  if (!$wrap || !$en || !$eff) return;
-
-  // 두 노브(thinking·reasoning_effort)가 한 칩 — 각자 자기 셀렉트에 산다.
-  const $badge = document.getElementById("thinking-badge");
-  function badge() {
-    // 배지: off → "off", effort 지정 → 그 값, 그 외 → "auto". 잠긴(미지원) 상태면
-    // 덮어쓰지 않는다 — 동기화가 와도 "미지원"이 `auto` 로 되돌아가면 안 된다.
-    if ($badge && !$wrap.classList.contains("is-disabled")) {
-      $badge.textContent =
-        $en.value === "off" ? "off" : $eff.value !== "auto" ? $eff.value : "auto";
-    }
-  }
-  function applyThinking(d) {
-    $en.value = ["on", "off", "auto"].includes(d.value) ? d.value : "auto";
-    // 모델이 사고를 지원 안 하면 provider 가 사고 파라미터를 아예 안 넣으므로
-    // 컨트롤을 잠근다. 사유는 서버(`locked`)가 준다; unknown 이면 잠그지 않음.
-    const locked = !!d.locked;
-    $en.disabled = locked;
-    $eff.disabled = locked;
-    $wrap.classList.toggle("is-disabled", locked);
-    if (locked) {
-      $wrap.title = "이 모델은 사고(thinking)를 지원하지 않습니다 — 사고/노력 조정 불가.";
-      // 배지로 **사실을 말한다** — 칩을 숨기지 않는 이유: 숨기면 "이 모델은 사고
-      // 미지원"이라는 사실 자체를 알 길이 없어진다.
-      if ($badge) $badge.textContent = "미지원";
-    }
-    badge();
-  }
-  function applyEffort(d) {
-    const eff = d.value || "auto";
-    $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
-    badge();
-  }
-
-  KNOBS.all().then((ks) => {
-    const th = ks.find((k) => k.name === "thinking");
-    const ef = ks.find((k) => k.name === "reasoning_effort");
-    if (!th || !th.available) return;
-    if (ef) applyEffort(ef);
-    applyThinking(th);
-    $wrap.hidden = false;
-  });
-
-  $en.addEventListener("change", () => {
-    if ($en.disabled) return; // 미지원 모델 — 잠긴 상태에선 저장 안 함
-    KNOBS.set("thinking", $en.value).then((d) => {
-      if (d) applyThinking(d);
-    });
-  });
-  $eff.addEventListener("change", () => {
-    if ($eff.disabled) return;
-    KNOBS.set("reasoning_effort", $eff.value).then((d) => {
-      if (d) applyEffort(d);
-    });
-  });
-  KNOBS.on("thinking", applyThinking);
-  KNOBS.on("reasoning_effort", applyEffort);
 })();
 
 // ── 노브 칩 팝업 토글 (v8.57.0) ─────────────────────────────────

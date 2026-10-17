@@ -242,10 +242,10 @@ header {
 }
 .knob-btn:hover, .knob-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
 .knob.is-disabled .knob-btn { opacity: 0.45; cursor: not-allowed; }
-/* 📐 문법 제약이 실리는 동안 — 강조색으로 "지금 켜져 있다" 를 말한다 (v9.24.0) */
+/* 켜져 있는 노브(서버의 `on`: 📐 강제·🔎 켬) — 강조색으로 "지금 켜져 있다" 를 말한다 (v9.24.0) */
 .knob.is-on .knob-btn { border-color: var(--accent-soft-border); color: var(--accent-soft-text); background: var(--accent-soft-bg); }
-#grammar-pop { flex-direction: column; align-items: flex-start; white-space: normal; max-width: 320px; }
-#grammar-info { white-space: normal; line-height: 1.5; }
+/* 렌더러의 두 자리 — 칩과 헤더 토글이 헤더 flex 의 직접 자식으로 흐른다 (줄바꿈 포함) */
+#knobs, #knobs-header { display: contents; }
 /* 전용 팝업 — 우측 정렬(헤더 오른편 칩이라 화면 밖으로 안 나가게) */
 .knob-pop {
   position: absolute;
@@ -264,34 +264,45 @@ header {
   padding: 10px 12px;
   z-index: 60;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  white-space: nowrap;
+  max-width: 320px;
+  white-space: normal;
 }
 .knob-pop.align-right { left: auto; right: 0; }
-.knob-unit { color: var(--muted); font-size: 11px; }
-/* ⏳ 노브만 두 축(무진전 한도 × 시도) — 한 줄 flex 로는 6칸이 헤더를 넘치므로
-   3열 그리드로 두 입력을 라벨 정렬하고, 파생값(최대 대기)을 아래 폭 전체에
-   둔다. 곱을 설정하는 자리에서 바로 보여 "3인데 왜 40분?"을 없앤다 (v8.60.0). */
-/* ``:not([hidden])`` 필수 — id 선택자는 ``.knob-pop[hidden]{display:none}``
-   보다 특이도가 높아, 그냥 ``#stall-pop{display:grid}`` 로 쓰면 hidden 속성을
-   이겨 팝업이 항상 펼쳐진 채로 렌더된다 (브라우저 테스트가 잡은 실버그). */
-#stall-pop:not([hidden]) {
+.knob-unit { color: var(--muted); font-size: 11px; white-space: nowrap; }
+/* 팝업 안의 컨트롤 — 노브 종류별 입력이 같은 옷을 입는다 (v10.45.0: id 별 규칙 → 공통) */
+.knob-pop label {
+  color: var(--muted); font-size: 11px; white-space: nowrap;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+.knob-pop label.knob-check { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+.knob-pop input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.knob-pop input[type="range"] { width: 84px; height: 3px; cursor: pointer; accent-color: var(--accent); }
+.knob-pop input[type="number"], .knob-pop input[type="text"] {
+  width: 44px; font-size: 11px; padding: 1px 4px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+.knob-pop input[type="text"] { width: 160px; }
+.knob-pop select { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+.knob-pop input:disabled, .knob-pop select:disabled { opacity: 0.4; cursor: not-allowed; }
+/* 설명 줄(서버의 note·묶음 note) — 팝업 폭 전체를 차지하는 마지막 줄 */
+.knob-note { flex-basis: 100%; grid-column: 1 / -1; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+/* 묶음 팝업(⏳ 한도 × 시도, 🧠 사고 × 노력) — 한 줄 flex 로는 6칸이 헤더를 넘치므로
+   3열 그리드로 멤버 입력을 라벨 정렬하고, 설명 줄을 아래 폭 전체에 둔다 (v8.60.0). */
+/* ``:not([hidden])`` 필수 — 그냥 ``display:grid`` 로 쓰면 hidden 속성을 이겨
+   팝업이 항상 펼쳐진 채로 렌더된다 (브라우저 테스트가 잡은 실버그). */
+.knob-pop.is-group:not([hidden]) {
   display: grid;
   grid-template-columns: auto auto 1fr;
   gap: 6px 8px;
   align-items: center;
   justify-items: start;
 }
-#stall-pop input {
-  width: 44px; font-size: 11px; padding: 1px 4px;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-#stall-pop input:disabled { opacity: 0.4; cursor: not-allowed; }
-.knob-derived { grid-column: 1 / -1; color: var(--accent); font-size: 11px; }
 /* 🔌 MCP 상태 팝업 — 읽기 전용 목록. 입력이 없는 유일한 노브라 세로 스택
    (다른 팝업은 한 줄 flex). 상태는 색 점 하나로: 초록=붙음 · 빨강=실패. */
 #mcp-pop:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 300px; white-space: normal; }
@@ -307,18 +318,11 @@ header {
 .mcp-ft { border-top: 1px solid var(--border); padding-top: 7px; font-size: 11px; color: var(--muted); line-height: 1.5; }
 .mcp-ft code { font-size: 11px; color: var(--accent); background: var(--surface); padding: 0 4px; border-radius: 3px; }
 #mcp-wrap.has-fail > .knob-btn { border-color: var(--fail); color: var(--fail); }
-/* 한도 0(감지 끔)이면 곱이 무의미 — 강조를 걷고 시도 입력도 잠근다. */
-.knob-derived.is-off { color: var(--muted); }
 /* 헤더는 flex-wrap:wrap — 좁아지면 둘째 줄로 접혀 모든 칩이 항상 보인다
    (v8.57.1: 보따리 오버플로 제거, 자동 줄바꿈으로 단순화). */
-/* 🧠 사고/노력 셀렉트 */
-#thinking-wrap select { font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
-/* 모델이 사고 미지원(supports_thinking=false)이면 컨트롤 잠금 표시 */
-#thinking-wrap.is-disabled { opacity: 0.45; }
-#thinking-wrap select:disabled { cursor: not-allowed; }
-/* ⚡ 자동 승인 헤더 토글: 켜지면 안전 게이트 꺼짐을 amber 경고색으로 명확히 */
-#confirm-mode-btn { font-size: 12px; }
-#confirm-mode-btn.on { color: var(--warn); border-color: var(--warn); font-weight: 700; }
+/* ⚡ 헤더 토글 노브(ui.placement="header"): 켜지면 안전 게이트 꺼짐을 amber 경고색으로 명확히 */
+.knob-toggle { font-size: 12px; }
+.knob-toggle.on { color: var(--warn); border-color: var(--warn); font-weight: 700; }
 /* 두 블록으로 쪼개져 `flex:1`(basis 0 에서 확장)과 `max-width:28ch`(캡)이
    싸우고 있었다 — 캡이 조용히 이기고 있었으므로 그쪽을 남긴다. */
 #info {
@@ -341,27 +345,6 @@ header {
 /* 💭 사고 카운터 세그먼트 — thinking_tick 이 부착 (러너웨이 가시화) */
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
-#compaction-label {
-  color: var(--muted); font-size: 11px; white-space: nowrap;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  cursor: default;
-}
-#compaction-range {
-  width: 84px; height: 3px; cursor: pointer; accent-color: var(--accent);
-}
-#maxagents-label, #maxagents-unlim-label {
-  color: var(--muted); font-size: 11px; white-space: nowrap;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-#maxagents-unlim-label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
-#maxagents-unlimited { accent-color: var(--accent); cursor: pointer; }
-#maxagents-input {
-  width: 44px; font-size: 11px; padding: 1px 4px;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-}
-#maxagents-input:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* First-connect nickname bar */
 #name-bar {

@@ -413,3 +413,202 @@ class TestRunBootApplies:
         )
         assert (key, comment) == ("y", "")
         assert "자동 승인" in r.con.file.getvalue()
+
+
+class TestChipShapeIsDeclaredInTheTable:
+    """3단계 (v10.45.0, docs/knobs/DESIGN.md §5.2): 칩의 모양도 표에 있다. 프런트의
+    렌더러 하나가 `ui`·`badge`·`note`·`on`·`group` 으로 그리므로, 여기서 고정하는
+    것은 "모든 노브가 그려질 수 있는 선언을 가진다" 와 "묶음·배지는 서버의 말" 이다."""
+
+    def _session(self, tmp_path, **caps):
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.binding_support import make_binding
+
+        kw = {"supports_grammar": True}
+        kw.update(caps)
+        return KnobSession(
+            ctx=ContextManager(tmp_path / "s"),
+            registry=_Registry(),
+            renderer=SimpleNamespace(auto_approve=False),
+            auditor=SimpleNamespace(enabled=False, in_flight=0),
+            binding=make_binding(
+                model="m", capabilities=ModelCapabilities(32768, 4096, True, **kw)
+            ),
+        )
+
+    def test_every_knob_has_an_icon_or_a_group(self):
+        for k in KNOBS:
+            assert (k.ui.icon or k.ui.group) and k.ui.placement in ("chip", "header"), (
+                k.name
+            )
+            if k.ui.group:
+                assert k.ui.group in K.KNOB_GROUPS, k.name
+            if k.ui.placement == "header":
+                assert isinstance(k.kind, K.Bool), k.name  # 헤더 자리는 토글만
+
+    def test_groups_have_at_least_two_members_and_chip_names_do_not_collide(self):
+        chips = []
+        for k in KNOBS:
+            if k.ui.placement != "chip":
+                continue
+            name = k.ui.group or k.name
+            if name not in chips:
+                chips.append(name)
+        # 묶음 이름이 묶음 밖 노브 이름과 같으면 두 칩이 같은 id 를 다툰다
+        for g in K.KNOB_GROUPS:
+            members = [k.name for k in KNOBS if k.ui.group == g]
+            assert len(members) >= 2, g
+            assert all(k.ui.group == g for k in KNOBS if k.name == g), g
+        assert len(chips) == len(set(chips))
+
+    def test_state_carries_badge_note_on_group_and_scaled_bounds(self, tmp_path):
+        s = self._session(tmp_path)
+        by = {st["name"]: st for st in K.web_states(s)}
+        assert (
+            by["compaction_ratio"]["badge"] == "100%"
+            and by["compaction_ratio"]["ui"]["scale"] == 100
+        )
+        assert by["max_agents"]["badge"] == "10"
+        s.registry.max_agents = 0
+        assert K.web_state(KNOB_BY_NAME["max_agents"], s)["badge"] == "∞"
+        assert by["grammar"]["badge"] == "강제" and by["grammar"]["on"] is True
+        assert by["auditor"]["badge"] == "끔" and by["auditor"]["on"] is False
+        assert (
+            by["auto_approve"]["badge"] == "확인 없이 실행"
+            and by["auto_approve"]["ui"]["placement"] == "header"
+        )
+        assert by["model"]["badge"] == "m" and "json_fc" in by["model"]["note"]
+        assert by["thinking"]["group"]["badge"] == "off"
+        for st in by.values():
+            assert st["group"] is None or st["group"]["name"] == st["ui"]["group"]
+
+    def test_group_badge_is_the_product_of_both_axes(self, tmp_path):
+        s = self._session(tmp_path)
+        g = K.web_group("stall", s)
+        assert g["badge"] == "10m×4" and "최대 40분" in g["note"]
+        assert g["members"] == ["stall", "stall_attempts"] and g["icon"] == "⏳"
+        s.ctx.set_stream_idle_timeout(0)
+        g = K.web_group("stall", s)
+        assert g["badge"] == "off" and "꺼져" in g["note"]
+        assert KNOB_BY_NAME["stall_attempts"].locked(s)
+        s.ctx.set_stream_idle_timeout(180)
+        s.ctx.set_stream_max_attempts(2)
+        assert K.web_group("stall", s)["badge"] == "3m×2"
+        # 🧠 — 끄면 "off", 켜고 노력을 주면 그 노력, 미지원 모델이면 "미지원"
+        s.ctx.set_thinking_override(enable_thinking=True, reasoning_effort="high")
+        assert K.web_group("thinking", s)["badge"] == "high"
+        s2 = self._session(tmp_path)
+        s2.binding.capabilities = s2.binding.capabilities.__class__(
+            32768, 4096, False, supports_grammar=True
+        )
+        assert K.web_group("thinking", s2)["badge"] == "미지원"
+        assert KNOB_BY_NAME["reasoning_effort"].locked(s2)
+
+    def test_unavailable_group_member_hides_the_group(self):
+        s = KnobSession()  # 소유자 없음
+        st = K.web_state(KNOB_BY_NAME["stall"], s)
+        assert st["available"] is False and st["group"] is None and st["badge"] is None
+
+    def test_grammar_badges_say_the_fact(self, tmp_path):
+        for supported, badge in ((True, "강제"), (False, "미지원"), (None, "미확인")):
+            s = self._session(tmp_path, supports_grammar=supported)
+            st = K.web_state(KNOB_BY_NAME["grammar"], s)
+            assert st["badge"] == badge, supported
+            assert st["note"]
+        s = self._session(tmp_path)
+        s.ctx.set_grammar_override(False)
+        assert K.web_state(KNOB_BY_NAME["grammar"], s)["badge"] == "끔"
+
+    def test_model_options_are_bound_to_the_session_dialect(
+        self, tmp_path, monkeypatch
+    ):
+        import json
+
+        import agent_cli.config as _config
+        import agent_cli.dialects as _dialects
+
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "a": {"context_window": 80000, "dialect": "json_fc"},
+                        "x": {"context_window": 8000, "dialect": "xml_fc"},
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        monkeypatch.setattr(_config, "_cached_registry", None)
+        monkeypatch.setattr(_dialects, "_override", None)
+        s = self._session(tmp_path)
+        assert K.web_state(KNOB_BY_NAME["model"], s)["options"] == ["a"]
+        monkeypatch.setattr(_dialects, "_override", "json_fc")  # --dialect 강제
+        assert K.web_state(KNOB_BY_NAME["model"], s)["options"] == [
+            "a",
+            "x",
+        ]  # 강제면 전부
+
+
+class TestKnobsCommand:
+    """`agent-cli knobs [--json]` — 표의 정적 선언을 바깥(agent-board)에 준다."""
+
+    def test_json_is_the_table(self):
+        import json
+
+        from agent_cli.main import app
+
+        r = CliRunner().invoke(app, ["knobs", "--json"])
+        assert r.exit_code == 0, r.output
+        spec = json.loads(r.output)
+        assert spec == K.table_spec()
+        assert [k["name"] for k in spec] == [k.name for k in KNOBS]
+        for row in spec:
+            assert {
+                "name",
+                "label",
+                "help",
+                "flag",
+                "short",
+                "env",
+                "kind",
+                "choices",
+                "default",
+                "ui",
+            } == set(row)
+            assert row["kind"] in ("text", "choice", "bool", "number", "duration")
+        by = {k["name"]: k for k in spec}
+        assert (
+            by["model"]["short"] == "-m" and by["model"]["ui"]["control"] == "options"
+        )
+        assert (
+            by["thinking"]["choices"] == ["off", "on", "auto"]
+            and by["thinking"]["ui"]["group"] == "thinking"
+        )
+        assert by["stall"]["kind"] == "duration" and by["stall"]["default"] == 600
+
+    def test_plain_lists_every_knob(self):
+        from agent_cli.main import app
+
+        r = CliRunner().invoke(app, ["knobs"])
+        assert r.exit_code == 0, r.output
+        out = _plain(r.output)
+        for k in KNOBS:
+            assert k.name[:8] in out, k.name  # 좁은 터미널은 열을 줄임표로 접는다
+
+
+class TestReadmeFollowsTheTable:
+    def test_cli_table_rows_carry_env_and_chip_icon(self):
+        """README 의 CLI 표 한 줄에 그 노브의 env 와 칩 아이콘(묶음은 묶음 아이콘)이
+        함께 적혀 있다 — 세 표면이 한 노브라는 사실이 문서에서도 한 줄이다."""
+        readme = (_PKG.parent / "README.md").read_text(encoding="utf-8")
+        for k in KNOBS:
+            row = next(
+                (ln for ln in readme.splitlines() if ln.startswith(f"| `{k.flag}`")),
+                None,
+            )
+            assert row, k.flag
+            assert k.env in row, (k.flag, k.env)
+            icon = k.ui.icon or K.KNOB_GROUPS[k.ui.group].icon
+            assert icon in row, (k.flag, icon)
+        assert "agent-cli knobs" in readme

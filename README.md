@@ -192,7 +192,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 |
 | `AGENT_CLI_BASE_URL` | `base_url` | API 엔드포인트 |
 | `AGENT_CLI_API_KEY` | `api_key` | API 키 |
-| `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 노브는 2단계). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. config.json 의 `default_model` 은 파일에서만 읽는다 |
+| `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 🤖 칩 v10.45.0). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. config.json 의 `default_model` 은 파일에서만 읽는다 |
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
@@ -216,7 +216,7 @@ agent-cli run "task" -m gpt-4o-mini
 
 > **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. **속도 제한(429, Anthropic 의 529)은 기다렸다 다시 보낸다 (v10.25.0)**: 또 하나의 독립 카운터로 최대 8회, 응답에 `Retry-After` 가 있으면 그만큼(상한 120초), 없으면 2·4·8·…·64초로 늘려 가며 기다린다(헤더 없이 다 쓰면 약 3분). 회사 게이트웨이(LiteLLM 등) 뒤에서 여러 사람이 한 벤더 키를 나눠 쓸 때 맞는 오류인데, 종전엔 4xx 라 첫 429 에 턴이 실패하고 런이 끝났다. 기다리는 동안 상태 줄에 `LLM rate limited (HTTP 429) — retrying in 17s (2/8)` 가 뜬다. 그 밖의 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고, body 가 10분 연속 침묵하면 연결을 끊고 재전송한다 — **총 4회**(첫 전송 포함)까지, 즉 최장 40분 뒤 실패. 이 두 축만은 고정이 아니라 세션 노브다: 한도는 `--stall`, 횟수는 `--stall-attempts`(웹은 ⏳ 칩 하나에 두 입력, 팝업이 곱한 최대 대기를 같이 보여준다). 대기 중에는 남은 시간과 `시도 n/4` 가 웹·CLI 양쪽에 표시되고, 반복되는 대기는 한 줄을 제자리 갱신하며 재전송·실패만 기록으로 남는다. 스트림이 **중간에 끊긴 경우**(서버가 종결 청크 없이 연결을 닫음 — 재시작·프록시 끊김·OOM)도 재전송한다: 고정 10회, 1초 간격, 무진전 예산과 **별개**(즉시 실패라 공유하면 순식간에 소진된다). 재전송 전에는 항상 부분 출력을 걷는다 — 재전송은 생성을 처음부터 다시 하므로 남겨두면 새 출력이 옛 부분 뒤에 이어붙어 보인다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
 >
-> **세션 노브의 수명**: 웹 헤더의 🗜️ 👥 ⏳ 🧠 ⚡ 는 전부 **세션 한정**(서버 메모리)이다. 브라우저 창을 닫거나 다른 기기로 다시 붙어도 값은 유지되지만(sticky 스냅샷), **프로세스를 재시작하면 기본값으로 돌아간다** — `--resume` 으로도 복원되지 않는다(세션 메타에 담지 않는다; 특히 ⚡ 자동 승인처럼 안전 게이트를 끄는 설정이 재시작을 넘어 살아남으면 위험하다). 재시작 후에도 값을 유지하려면 위 env 또는 CLI 인자로 부팅 시점에 지정한다. 🎨 테마·닉네임만 브라우저 localStorage 라 예외적으로 계속 남는다.
+> **세션 노브의 수명**: 웹 헤더의 🤖 🧠 📐 👥 🗜️ ⏳ 🔎 ⚡ 는 전부 **세션 한정**(서버 메모리)이다. 칩은 손으로 그린 것이 아니라 노브 표(`agent_cli/knobs.py`, `agent-cli knobs` 로 출력)에서 나온다 (v10.45.0): 표의 선언 한 줄이 `run`/`web` 플래그·env·칩 하나를 함께 만들고, 배지 글자·설명·잠김 사유는 서버가 계산해 보낸다. 브라우저 창을 닫거나 다른 기기로 다시 붙어도 값은 유지되지만(sticky 스냅샷), **프로세스를 재시작하면 기본값으로 돌아간다** — `--resume` 으로도 복원되지 않는다(세션 메타에 담지 않는다; 특히 ⚡ 자동 승인처럼 안전 게이트를 끄는 설정이 재시작을 넘어 살아남으면 위험하다). 재시작 후에도 값을 유지하려면 위 env 또는 CLI 인자로 부팅 시점에 지정한다. 🎨 테마·닉네임만 브라우저 localStorage 라 예외적으로 계속 남는다.
 >
 > **컨텍스트 컴팩션**은 항상 켜져 있다(호출별 압축 목표치를 넘으면 LLM 요약; 실패/여전히 초과 시 플레인 FIFO drop 으로 폴백). 서브에이전트에도 전파된다. 아직 답하지 않은 사용자 요청(꼬리 `## Open Requests` 에 있는 것)의 본문은 요약하지 않고 **원문 그대로** 남긴다(v10.41.0) — 답하고 나면 다음 압축 때 잘린다. 채팅의 "컨텍스트 밖 대화" 묶음에서도 그 카드는 접히지 않는다.
 
@@ -427,13 +427,13 @@ agent-cli run "task description" [options]
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
 | `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
 | `--max-depth` | 중첩 깊이 (agent + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
-| `--stall` | 스트림 무진전 한도 — `600`(초)·`10m`(분)·`0`(끔). env 보다 우선 | `10m` |
-| `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
-| `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 | `1.0` |
-| `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
-| `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (models.json 에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`) | config `default_model` |
+| `--stall` | 스트림 무진전 한도 — `600`(초)·`10m`(분)·`0`(끔) (env `AGENT_CLI_STREAM_IDLE_TIMEOUT_S`, 웹 ⏳ 칩의 첫 입력) | `10m` |
+| `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 (env `AGENT_CLI_STREAM_MAX_ATTEMPTS`, 웹 ⏳ 칩의 둘째 입력; 한도 0 이면 잠김) | `4` |
+| `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 (env `AGENT_CLI_COMPACTION_RATIO`, 웹 🗜️ 슬라이더) | `1.0` |
+| `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) (env `AGENT_CLI_MAX_AGENTS`, 웹 👥 칩) | `10` |
+| `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (models.json 에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`, 웹 🤖 칩 — 같은 방언의 모델 목록에서 고른다, v10.45.0) | config `default_model` |
 | `--thinking` | 사고 `off`·`on`·`auto` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브) | `off` |
-| `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`) | `auto` |
+| `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`, 웹 🧠 칩의 둘째 셀렉트) | `auto` |
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
 | `--auto-approve` / `--no-auto-approve` | 확인 프롬프트를 묻지 않고 허용 (env `AGENT_CLI_AUTO_APPROVE`, 웹 ⚡ 노브) | 꺼짐 |
 | `--auditor` / `--no-auditor` | 세션 감사 (env `AGENT_CLI_AUDITOR`, 웹 🔎 칩; 아래 "세션 감사자") | 꺼짐 |
@@ -645,6 +645,15 @@ Sessions for /path/to/project:
 **`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
 
 LLM은 `history` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
+
+### `knobs` — 노브 표
+
+세션 노브(모델·사고·추론 노력·문법·에이전트 상한·압축 비율·무진전 한도/시도·자동 승인·감사)는 `agent_cli/knobs.py` 의 표 하나에 선언돼 있고, `run`/`web` 의 플래그·env·웹 헤더의 칩이 전부 그 표에서 파생된다 (docs/knobs/DESIGN.md). 이 명령은 그 표를 보여준다 — `--json` 은 보드처럼 밖에서 노브를 다루는 도구를 위한 것(이름·플래그·env·종류·선택지·기본값·칩 모양 힌트, 값은 없음).
+
+```bash
+agent-cli knobs          # 표 — 노브 · 플래그 · env · 종류 · 기본값 · 라벨
+agent-cli knobs --json   # 같은 것을 JSON 배열로 (agent-board 가 spawn 폼을 이걸로 만든다)
+```
 
 ### 세션 메모리 (`memory` 도구)
 

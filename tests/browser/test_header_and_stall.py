@@ -56,18 +56,18 @@ class TestHeaderChips:
         # 넓은 뷰포트 — 노브가 보따리로 수납되지 않은 상태를 보장.
         page.set_viewport_size({"width": 1500, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         page.wait_for_timeout(300)
-        assert page.locator("#stall-pop").is_hidden()
-        page.click("#stall-chip")
-        assert page.locator("#stall-pop").is_visible()
-        assert page.locator("#stall-pop #stall-input").is_visible()
+        assert page.locator("#knob-stall-pop").is_hidden()
+        page.click("#knob-stall-chip")
+        assert page.locator("#knob-stall-pop").is_visible()
+        assert page.locator("#knob-stall-pop #knob-stall").is_visible()
         page.keyboard.press("Escape")
-        assert _wait(lambda: page.locator("#stall-pop").is_hidden(), timeout=3)
+        assert _wait(lambda: page.locator("#knob-stall-pop").is_hidden(), timeout=3)
         # v8.57.4: 왼쪽 칩 팝업이 화면 밖으로 잘리지 않는다(오른쪽으로 펼침).
-        page.click("#compaction-chip")
+        page.click("#knob-compaction_ratio-chip")
         inview = page.evaluate(
-            "() => { var b=document.querySelector('#compaction-pop').getBoundingClientRect();"
+            "() => { var b=document.querySelector('#knob-compaction_ratio-pop').getBoundingClientRect();"
             " return b.left >= -1 && b.right <= window.innerWidth + 1; }"
         )
         assert inview
@@ -77,13 +77,13 @@ class TestHeaderChips:
         # 모든 노브 칩이 계속 보인다(숨김/수납 없음).
         page.set_viewport_size({"width": 420, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         page.wait_for_timeout(200)
         for chip in (
-            "#compaction-chip",
-            "#stall-chip",
-            "#thinking-chip",
-            "#grammar-chip",
+            "#knob-compaction_ratio-chip",
+            "#knob-stall-chip",
+            "#knob-thinking-chip",
+            "#knob-grammar-chip",
         ):
             assert page.locator(chip).is_visible(), chip
         # 줄바꿈이 실제로 일어나 헤더가 한 줄보다 높다
@@ -97,7 +97,7 @@ class TestHeaderChips:
         # v8.57.2: 우측 그룹(액션·viewers·conn)도 잘리지 않고 화면 안 (margin-left:auto
         # 가 wrap 을 헝클던 문제 방지). confirm/viewers/rename 을 보이게 한 뒤 검사.
         page.evaluate(
-            "() => { var c=document.getElementById('confirm-mode-btn'); if(c)c.hidden=false;"
+            "() => { var c=document.getElementById('knob-auto_approve'); if(c)c.hidden=false;"
             " var v=document.getElementById('viewers'); if(v)v.textContent='1 viewer - Dizzy Ferret (you)';"
             " var r=document.getElementById('rename-btn'); if(r)r.hidden=false; }"
         )
@@ -109,8 +109,8 @@ class TestHeaderChips:
         )
         assert offscreen == [], offscreen
         # 좁은 창에서도 칩 클릭 → 팝업 정상
-        page.click("#stall-chip")
-        assert page.locator("#stall-pop").is_visible()
+        page.click("#knob-stall-chip")
+        assert page.locator("#knob-stall-pop").is_visible()
 
 
 class TestStallKnobTwoAxes:
@@ -122,16 +122,16 @@ class TestStallKnobTwoAxes:
     def test_popup_holds_both_inputs_and_derived_total(self, stack, page):
         page.set_viewport_size({"width": 1500, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
-        assert page.inner_text("#stall-badge").strip() == "10m×4"
-        page.click("#stall-chip")
-        assert page.locator("#stall-pop #stall-input").is_visible()
-        assert page.locator("#stall-pop #stall-attempts").is_visible()
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
+        assert page.inner_text("#knob-stall-badge").strip() == "10m×4"
+        page.click("#knob-stall-chip")
+        assert page.locator("#knob-stall-pop #knob-stall").is_visible()
+        assert page.locator("#knob-stall-pop #knob-stall_attempts").is_visible()
         # 곱을 설정하는 자리에서 바로 보여준다 — "3인데 왜 40분?"의 수리.
-        assert "최대 40분" in page.inner_text("#stall-derived")
+        assert "최대 40분" in page.inner_text("#knob-stall-note")
         # 두 입력 + 파생 줄이 팝업 안에 들어가고 화면 밖으로 안 나간다.
         inview = page.evaluate(
-            "() => { var b=document.querySelector('#stall-pop').getBoundingClientRect();"
+            "() => { var b=document.querySelector('#knob-stall-pop').getBoundingClientRect();"
             " return b.left >= -1 && b.right <= window.innerWidth + 1; }"
         )
         assert inview
@@ -141,44 +141,44 @@ class TestStallKnobTwoAxes:
         스트림은 옛 값으로 돈다."""
         page.set_viewport_size({"width": 1500, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
-        page.click("#stall-chip")
-        page.fill("#stall-attempts", "6")
-        page.dispatch_event("#stall-attempts", "change")
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
+        page.click("#knob-stall-chip")
+        page.fill("#knob-stall_attempts", "6")
+        page.dispatch_event("#knob-stall_attempts", "change")
         assert _wait(lambda: stack.ctx.stream_max_attempts == 6)
-        assert _wait(lambda: page.inner_text("#stall-badge").strip() == "10m×6")
-        assert "최대 60분" in page.inner_text("#stall-derived")
+        assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "10m×6")
+        assert "최대 60분" in page.inner_text("#knob-stall-note")
 
     def test_changing_limit_keeps_attempts(self, stack, page):
         """한 축을 바꿔도 다른 축은 살아 있어야 한다 — 서로 덮어쓰면
         시도를 고칠 때마다 한도가 기본값으로 되돌아간다."""
         page.set_viewport_size({"width": 1500, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
-        page.click("#stall-chip")
-        page.fill("#stall-attempts", "6")
-        page.dispatch_event("#stall-attempts", "change")
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
+        page.click("#knob-stall-chip")
+        page.fill("#knob-stall_attempts", "6")
+        page.dispatch_event("#knob-stall_attempts", "change")
         # 서버 도달이 아니라 **화면 반영**을 기다린다 — 응답의 apply() 가
         # 아직 안 돌았는데 다음 칸을 채우면 그 값이 덮어써질 수 있다.
-        assert _wait(lambda: page.inner_text("#stall-badge").strip() == "10m×6")
+        assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "10m×6")
         assert stack.ctx.stream_max_attempts == 6
-        page.fill("#stall-input", "5")
-        page.dispatch_event("#stall-input", "change")
+        page.fill("#knob-stall", "5")
+        page.dispatch_event("#knob-stall", "change")
         assert _wait(lambda: stack.ctx.stream_idle_timeout_s == 300)
         assert stack.ctx.stream_max_attempts == 6
-        assert _wait(lambda: page.inner_text("#stall-badge").strip() == "5m×6")
+        assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "5m×6")
 
     def test_zero_limit_disables_attempts_input(self, stack, page):
         """한도 0 = 감지 끔 → 시도 횟수라는 개념이 성립하지 않는다."""
         page.set_viewport_size({"width": 1500, "height": 720})
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
-        page.click("#stall-chip")
-        page.fill("#stall-input", "0")
-        page.dispatch_event("#stall-input", "change")
-        assert _wait(lambda: page.inner_text("#stall-badge").strip() == "off")
-        assert _wait(lambda: page.locator("#stall-attempts").is_disabled())
-        assert "꺼져" in page.inner_text("#stall-derived")
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
+        page.click("#knob-stall-chip")
+        page.fill("#knob-stall", "0")
+        page.dispatch_event("#knob-stall", "change")
+        assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "off")
+        assert _wait(lambda: page.locator("#knob-stall_attempts").is_disabled())
+        assert "꺼져" in page.inner_text("#knob-stall-note")
 
 
 class TestStreamStallDisplay:
@@ -190,7 +190,7 @@ class TestStreamStallDisplay:
 
     def test_wait_appears_and_updates_in_place(self, stack, page):
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         stack.renderer.stream_stall(
             kind="wait", elapsed_s=90, limit_s=600, attempt=1, attempts=4
         )
@@ -207,7 +207,7 @@ class TestStreamStallDisplay:
 
     def test_resend_is_kept_and_wait_line_is_replaced(self, stack, page):
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         stack.renderer.stream_stall(
             kind="wait", elapsed_s=600, limit_s=600, attempt=1, attempts=4
         )
@@ -226,7 +226,7 @@ class TestStreamStallDisplay:
         한 줄**만 뜬다. 라이브 타이핑이 되살아나면 그 버그도 같이 돌아오므로
         부재를 고정한다."""
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         stack.renderer.stream_chunk("파일을 확인해 보")
         assert _wait(lambda: page.locator("#messages .gen").count() == 1)
         # 본문 텍스트는 어디에도 없다
@@ -239,7 +239,7 @@ class TestStreamStallDisplay:
 
     def test_clear_leaves_nothing_behind(self, stack, page):
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         stack.renderer.stream_stall(
             kind="wait", elapsed_s=120, limit_s=600, attempt=1, attempts=4
         )
@@ -282,7 +282,7 @@ class TestMcpChip:
     def test_hidden_when_no_servers(self, stack, page):
         stack.server.mcp_manager = None
         page.goto(stack.url)
-        page.wait_for_selector("#stall-wrap:not([hidden])", timeout=8000)
+        page.wait_for_selector("#knob-stall-wrap:not([hidden])", timeout=8000)
         page.wait_for_timeout(300)
         assert page.locator("#mcp-wrap").is_hidden()  # 0/0 은 소음
 

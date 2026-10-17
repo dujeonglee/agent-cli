@@ -208,11 +208,7 @@ class TestRunEnded:
         꺼져 있던 동안의 레코드가 다음 구간에 섞이지 않는다."""
         ctx = _ctx(tmp_path)
         h, jobs = self._handle(ctx, enabled=False)
-        assert not h.active and h.state() == {
-            "enabled": False,
-            "available": True,
-            "in_flight": 0,
-        }
+        assert not h.active and not h.enabled and h.in_flight == 0
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert h.run_ended(_req(), ok=True) == "" and jobs.runs == []
@@ -224,7 +220,7 @@ class TestRunEnded:
     def test_no_session_handle_and_stopped_jobs_send_nothing(self, tmp_path):
         ctx = _ctx(tmp_path)
         h = SessionAuditor(None, ctx, enabled=True)
-        assert not h.active and h.in_flight == 0 and h.state()["available"] is False
+        assert not h.active and h.in_flight == 0 and h.jobs is None
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert h.run_ended(_req(), ok=True) == ""
@@ -536,27 +532,49 @@ class TestWebKnob:
         )
 
     def test_in_flight_reaches_status_file_and_the_chip(self, tmp_path):
-        from agent_cli.knobs import KNOB_BY_NAME, KnobSession, web_state
+        from agent_cli.knobs import KNOB_BY_NAME, web_state
         from agent_cli.web.instance_file import read_status_file
 
         ctx = _ctx(tmp_path)
         auditor = SessionAuditor(_FakeJobs(), ctx, enabled=True)
-        renderer, _server, _client = self._app(tmp_path, auditor)
-        renderer.broadcast_knob(
-            web_state(KNOB_BY_NAME["auditor"], KnobSession(auditor=auditor))
+        renderer, server, _client = self._app(tmp_path, auditor)
+        # web 부트의 배선: 진행 수가 바뀌면 상태 한 장을 다시 계산해 싣는다 (v10.45.0)
+        renderer.knob_state = lambda name: web_state(
+            KNOB_BY_NAME[name], server.knob_session()
         )
+        auditor.jobs.in_flight = 1
         renderer.note_harness(1)
         assert read_status_file(tmp_path)["auditing"] is True
-        assert renderer._sticky["knob:auditor"]["payload"]["in_flight"] == 1
+        payload = renderer._sticky["knob:auditor"]["payload"]
+        assert payload["in_flight"] == 1 and payload["badge"] == "감사 중"
+        auditor.jobs.in_flight = 0
         renderer.note_harness(0)
         assert read_status_file(tmp_path)["auditing"] is False
+        assert renderer._sticky["knob:auditor"]["payload"]["badge"] == "켬"
 
-    def test_frontend_has_the_chip(self, tmp_path):
-        _r, _s, client = self._app(tmp_path, None)
-        html = client.get("/?token=t").text
-        js = client.get("/static/app.js?token=t").text
-        assert 'id="auditor-wrap"' in html and 'id="auditor-mode"' in html
-        assert 'KNOBS.get("auditor")' in js and 'KNOBS.on("auditor"' in js
+    def test_without_the_wiring_status_still_updates(self, tmp_path):
+        renderer, _server, _client = self._app(tmp_path, None)
+        renderer.note_harness(1)  # knob_state 없음 — status.json 만
+        from agent_cli.web.instance_file import read_status_file
+
+        assert read_status_file(tmp_path)["auditing"] is True
+        assert "knob:auditor" not in renderer._sticky
+
+    def test_chip_comes_from_the_table(self, tmp_path):
+        """🔎 칩은 표의 선언이다 (v10.45.0) — 아이콘·선택지 글자·배지·설명·켜짐."""
+        from agent_cli.knobs import KNOB_BY_NAME, KnobSession, web_state
+
+        k = KNOB_BY_NAME["auditor"]
+        assert k.ui.icon == "🔎" and k.ui.placement == "chip"
+        assert k.ui.choice_labels == {"off": "끔 (기본)", "on": "켬"}
+        auditor = SessionAuditor(_FakeJobs(), _ctx(tmp_path), enabled=True)
+        st = web_state(k, KnobSession(auditor=auditor))
+        assert (
+            st["badge"] == "켬" and st["on"] is True and "다음 사용자 런" in st["note"]
+        )
+        auditor.jobs.in_flight = 2
+        st = web_state(k, KnobSession(auditor=auditor))
+        assert st["badge"] == "감사 중" and "돌고 있습니다" in st["note"]
 
 
 class TestJobsRuntimeContract:

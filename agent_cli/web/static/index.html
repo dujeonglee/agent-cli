@@ -39,79 +39,9 @@
             title="">
       <span id="ws-copy-ic">📋</span><span id="ws-tail" class="hd-chip-text"></span>
     </button>
-    <!-- v8.57.0: 세션 노브 4종 — 값-배지 칩 + 전용 팝업 (구 ctx 팝오버 이사).
-         wrap/내부 입력 id 전부 보존 → compaction·maxagents·stall·thinking IIFE 무수정. -->
-    <span id="compaction-wrap" class="knob" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). 100% = only when a generation is actually cut by the window (then compact and retry). Session-only. Sub-agents inherit the value at spawn time." hidden>
-      <button id="compaction-chip" class="knob-btn" type="button" data-pop="compaction-pop" aria-haspopup="true" aria-expanded="false">🗜️ <span id="compaction-badge">100%</span></button>
-      <div id="compaction-pop" class="knob-pop" hidden>
-        <label id="compaction-label" for="compaction-range">Compact 100%</label>
-        <input id="compaction-range" type="range" min="50" max="100" step="5" value="100"
-               aria-label="Context compaction threshold %">
-      </div>
-    </span>
-    <span id="maxagents-wrap" class="knob" title="Max number of live resident agents. Session-only. Checking Unlimited disables the input. Lowering the cap doesn't kill existing agents (only blocks new spawns)." hidden>
-      <button id="maxagents-chip" class="knob-btn" type="button" data-pop="maxagents-pop" aria-haspopup="true" aria-expanded="false">👥 <span id="maxagents-badge">10</span></button>
-      <div id="maxagents-pop" class="knob-pop" hidden>
-        <label id="maxagents-label" for="maxagents-input">Agents</label>
-        <input id="maxagents-input" type="number" min="1" step="1" value="10"
-               aria-label="Max concurrent agents">
-        <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
-      </div>
-    </span>
-    <span id="stall-wrap" class="knob" title="Server-stall watchdog — reconnect &amp; resend after N minutes with no generated token (keep-alives don't count). 0 disables. Attempts is the TOTAL number of sends including the first, so the longest possible wait is N minutes x attempts. Session-only; sub-agents inherit at spawn." hidden>
-      <button id="stall-chip" class="knob-btn" type="button" data-pop="stall-pop" aria-haspopup="true" aria-expanded="false">⏳ <span id="stall-badge">10m×4</span></button>
-      <div id="stall-pop" class="knob-pop" hidden>
-        <label id="stall-label" for="stall-input">무진전</label>
-        <input id="stall-input" type="number" min="0" max="60" step="1" value="10"
-               aria-label="Stream stall timeout (minutes; 0 = off)">
-        <span class="knob-unit">min · 0 = off</span>
-        <label id="stall-att-label" for="stall-attempts">시도</label>
-        <input id="stall-attempts" type="number" min="1" max="10" step="1" value="4"
-               aria-label="Total send attempts on stall, first send included">
-        <span class="knob-unit">회 · 첫 전송 포함</span>
-        <span id="stall-derived" class="knob-derived">10분 × 4회 = 최대 40분 후 실패</span>
-      </div>
-    </span>
-    <span id="thinking-wrap" class="knob" title="사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 유효합니다. 세션 한정·재시작 시 자동." hidden>
-      <button id="thinking-chip" class="knob-btn" type="button" data-pop="thinking-pop" aria-haspopup="true" aria-expanded="false">🧠 <span id="thinking-badge">auto</span></button>
-      <div id="thinking-pop" class="knob-pop" hidden>
-        <label for="think-enable">사고</label>
-        <select id="think-enable" aria-label="Thinking on/off">
-          <option value="auto">자동</option>
-          <option value="on">켜기</option>
-          <option value="off">끄기</option>
-        </select>
-        <label for="think-effort">노력</label>
-        <select id="think-effort" aria-label="Reasoning effort">
-          <option value="auto">자동</option>
-          <option value="low">low</option>
-          <option value="medium">medium</option>
-          <option value="high">high</option>
-        </select>
-      </div>
-    </span>
-    <span id="grammar-wrap" class="knob" title="디코딩 문법 제약 — 서버가 지원하면 도구 호출 형식을 생성 단계에서 강제합니다(형식 오류·모르는 도구·본문 폭주 불가). 비용: 생성 속도 저하. 다음 LLM 요청부터 반영. 세션 한정·재시작 시 기본값." hidden>
-      <button id="grammar-chip" class="knob-btn" type="button" data-pop="grammar-pop" aria-haspopup="true" aria-expanded="false">📐 <span id="grammar-badge">미확인</span></button>
-      <div id="grammar-pop" class="knob-pop" hidden>
-        <label for="grammar-mode">문법 제약</label>
-        <select id="grammar-mode" aria-label="Decoding grammar mode">
-          <option value="auto">켬 (기본 — 지원되면)</option>
-          <option value="off">끔</option>
-        </select>
-        <span id="grammar-info" class="knob-unit"></span>
-      </div>
-    </span>
-    <span id="auditor-wrap" class="knob" title="세션 감사자 — 켜면 사용자 런이 끝날 때마다 하니스가 그 런의 기록만 읽는 감사 런을 돌리고, 요청별 충족 판정을 main 에게 전합니다(main 이 한 번 더 손봅니다). 비용: 런마다 감사 런 하나 + main 의 짧은 깨우기 런. 다음 런부터 반영, 진행 중 감사는 끝까지 돕니다. 세션 한정·재시작 시 AGENT_CLI_AUDITOR 값." hidden>
-      <button id="auditor-chip" class="knob-btn" type="button" data-pop="auditor-pop" aria-haspopup="true" aria-expanded="false">🔎 <span id="auditor-badge">끔</span></button>
-      <div id="auditor-pop" class="knob-pop" hidden>
-        <label for="auditor-mode">세션 감사</label>
-        <select id="auditor-mode" aria-label="Session auditor mode">
-          <option value="off">끔 (기본)</option>
-          <option value="on">켬</option>
-        </select>
-        <span id="auditor-info" class="knob-unit"></span>
-      </div>
-    </span>
+    <!-- 세션 노브 칩 (v10.45.0): app.js 의 렌더러가 GET api/knobs 의 상태로 여기에
+         칩을 그린다 — 마크업은 표(agent_cli/knobs.py)에서 나온다. id 규칙은 app.js 참고. -->
+    <span id="knobs"></span>
     <span id="mcp-wrap" class="knob" title="MCP servers connected at boot — connected/total, tool count, and why a server failed. Read-only: register or edit with `agent-cli mcp` (registering runs a local process, which is beyond what the web UI is trusted to do)." hidden>
       <button id="mcp-chip" class="knob-btn" type="button" data-pop="mcp-pop" aria-haspopup="true" aria-expanded="false">🔌 <span id="mcp-badge">0/0</span></button>
       <div id="mcp-pop" class="knob-pop" hidden>
@@ -128,8 +58,8 @@
     <button id="schedule-btn" class="btn-icon" type="button" title="예약 — 정해진 시각에 요청을 자동으로 넣습니다">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
     <button id="copy-all-btn" class="btn-icon" type="button" title="대화 전체 복사 — 보이는 대화를 마크다운으로 클립보드에">⧉</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
-    <button id="confirm-mode-btn" class="hd-chip hd-chip-btn" type="button" hidden aria-pressed="false"
-            title="⚡ 자동 승인: 위험 명령(rm 등)·워크스페이스 밖 접근의 확인 프롬프트를 건너뛰고 자동 허용합니다. 세션 한정·재시작 시 해제. 신뢰된 작업에서만 켜세요.">⚡ 확인 없이 실행</button>
+    <!-- 헤더 자리 노브(ui.placement="header", ⚡ 자동 승인) — 렌더러가 토글 버튼을 넣는다 -->
+    <span id="knobs-header"></span>
     <button id="share-btn" class="btn-icon" type="button" title="접속 링크 복사 (토큰 포함 — 이 링크를 받은 사람도 접속)">🔗</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" class="btn-icon" type="button" title="Change nickname" hidden>✎</button>

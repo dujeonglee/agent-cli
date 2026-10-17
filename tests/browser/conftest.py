@@ -65,7 +65,29 @@ class WebStack:
         # 브라우저 층에서 왕복을 검증할 수 없다 (v8.60.0).
         self._ctxdir = tempfile.mkdtemp(prefix="agentcli-browser-ctx-")
         self.ctx = ContextManager(session_dir=pathlib.Path(self._ctxdir))
-        self.server = WebServer(self.renderer, token=self.token, ctx=self.ctx)
+        # 노브 소유자 넷을 전부 꽂는다 (v10.45.0) — 칩은 소유자가 있는 노브만
+        # 그려지므로(available), 렌더러 하나가 열 노브를 다 그리는지 보려면
+        # registry·auditor·binding 도 있어야 한다.
+        from types import SimpleNamespace
+
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.subagent.agents_live import AgentRegistry
+        from tests.binding_support import make_binding
+
+        caps = ModelCapabilities(32768, 4096, True, supports_grammar=True)
+        self.binding = make_binding(capabilities=caps, model="Test-Model-8bit")
+        self.server = WebServer(
+            self.renderer, token=self.token, ctx=self.ctx, binding=self.binding
+        )
+        self.server.agent_registry = AgentRegistry(pathlib.Path(self._ctxdir))
+        self.auditor = SimpleNamespace(enabled=False, in_flight=0)
+        self.server.auditor = self.auditor
+        # 실 부트(main.py web)와 같은 배선 — 감사 진행 수가 바뀌면 🔎 상태 한 장을 다시 싣는다
+        from agent_cli.knobs import KNOB_BY_NAME, web_state
+
+        self.renderer.knob_state = lambda name: web_state(
+            KNOB_BY_NAME[name], self.server.knob_session()
+        )
         app = create_app(self.server)
         # 포트 0 = OS 임시 할당 — 병렬/반복 실행 충돌 없음.
         self._config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")

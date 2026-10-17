@@ -27,7 +27,7 @@ import inspect
 import os
 import typing
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 # ── 종류 — 문자열 ↔ 값 ───────────────────────────────────────────────────
@@ -154,6 +154,35 @@ class KnobSession:
 
 
 @dataclass(frozen=True)
+class KnobUI:
+    """칩 모양 힌트 (3단계) — 데이터이지 코드가 아니다. 프런트의 렌더러 하나가 이걸로
+    칩을 그린다: 새 노브는 선언 한 줄이면 칩이 생긴다."""
+
+    icon: str = ""
+    #: 같은 그룹은 한 칩(한 팝업)에 함께 — `KNOB_GROUPS` 가 아이콘·배지·설명을 가진다.
+    group: str = ""
+    #: "chip"(헤더 팝업 칩) | "header"(헤더의 토글 버튼 — 자동 승인)
+    placement: str = "chip"
+    #: 컨트롤 변형: "" 기본(종류대로) | "range"(숫자 슬라이더)
+    #: | "unlimited"(0 = 무제한 체크박스) | "options"(서버가 준 options 의 셀렉트)
+    control: str = ""
+    #: 표시 배율 — 화면 값 = 저장 값 × scale (초→분은 1/60, 비율→% 는 100)
+    scale: float = 1.0
+    unit: str = ""
+    #: 선택지의 표시 이름 (값 → 라벨)
+    choice_labels: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class KnobGroup:
+    icon: str
+    label: str
+    help: str
+    badge: Callable[[KnobSession], str]
+    note: Callable[[KnobSession], str] | None = None
+
+
+@dataclass(frozen=True)
 class Knob:
     """노브 하나. ``name`` 은 API·sticky 이름, ``flag`` 는 CLI, ``env`` 는 부팅
     env. ``get``/``set`` 은 `KnobSession` 의 소유자 하나만 만진다."""
@@ -172,6 +201,12 @@ class Knob:
     #: web 표면용 — 값 영역·파생 사실(범위, 지원 여부, 진행 수)과 잠김 사유.
     info: Callable[[KnobSession], dict] | None = None
     locked: Callable[[KnobSession], str | None] | None = None
+    #: 칩 모양(3단계): 아이콘·그룹·자리·컨트롤 변형; 배지 글자·설명 한 줄·"켜짐" 강조는
+    #: 서버가 계산한 문자열/불리언으로 간다 — 프런트는 보여주기만 한다.
+    ui: KnobUI = field(default_factory=KnobUI)
+    badge: Callable[[KnobSession], str] | None = None
+    note: Callable[[KnobSession], str] | None = None
+    on: Callable[[KnobSession], bool] | None = None
 
     def available(self, session: KnobSession) -> bool:
         """소유자가 서 있는가 — 없으면(headless 부트·세션 없음) 적용할 곳이 없다."""
@@ -280,6 +315,120 @@ def _model_info(s: KnobSession) -> dict:
     }
 
 
+def _model_options(s: KnobSession) -> list[str]:
+    """models.json 에 등록되고 이 세션의 방언으로 풀리는 모델들 — `binding.switch`
+    가 받는 것과 같은 규칙(`resolve_dialect` 가 `--dialect` 강제를 안다)."""
+    from agent_cli.config import _load_registry
+    from agent_cli.dialects import resolve_dialect
+
+    out = []
+    for name in sorted(_load_registry().get("models", {})):
+        try:
+            if resolve_dialect(name).name == s.binding.dialect.name:
+                out.append(name)
+        except KeyError:  # 방언 바인딩 없는 모델 — switch 도 거부한다
+            continue
+    return out
+
+
+def _grammar_badge(s: KnobSession) -> str:
+    info = _grammar_info(s)
+    if info["supported"] is False:
+        return "미지원"
+    if info["supported"] is None:
+        return "미확인"
+    return "강제" if info["active"] else "끔"
+
+
+def _grammar_note(s: KnobSession) -> str:
+    info = _grammar_info(s)
+    if info["supported"] is False:
+        return (
+            "서버가 문법을 강제하지 못합니다 — 텍스트 프로토콜 + 복구 계층(종전대로)."
+        )
+    if info["supported"] is None:
+        return "models.json 에 이 모델의 문법 지원 여부가 없습니다 — 모델 감지(프로브)를 다시 실행하면 채워집니다."
+    if info["active"]:
+        return "다음 요청부터 실립니다. 생성 속도가 느려지는 대신 형식 오류·모르는 도구·본문 폭주가 생성 단계에서 불가능합니다."
+    return "이 세션에서는 문법을 싣지 않습니다."
+
+
+def _auditor_badge(s: KnobSession) -> str:
+    if s.auditor.in_flight > 0:
+        return "감사 중"
+    return "켬" if s.auditor.enabled else "끔"
+
+
+def _auditor_note(s: KnobSession) -> str:
+    if s.auditor.in_flight > 0:
+        return "감사 런이 돌고 있습니다 — 결과는 main 채널에 카드로 옵니다."
+    if s.auditor.enabled:
+        return (
+            "다음 사용자 런부터, 런이 끝날 때마다 그 런의 기록만 읽는 감사 런이 돕니다."
+        )
+    return "이 세션에서는 감사하지 않습니다."
+
+
+def _minutes(seconds: int) -> int:
+    return 0 if seconds <= 0 else max(1, round(seconds / 60))
+
+
+def _stall_badge(s: KnobSession) -> str:
+    m = _minutes(s.ctx.stream_idle_timeout_s)
+    return "off" if m == 0 else f"{m}m×{s.ctx.stream_max_attempts}"
+
+
+def _stall_note(s: KnobSession) -> str:
+    m = _minutes(s.ctx.stream_idle_timeout_s)
+    n = s.ctx.stream_max_attempts
+    if m == 0:
+        return "무진전 감지가 꺼져 있어 재전송하지 않습니다"
+    return f"{m}분 × {n}회 = 최대 {m * n}분 후 실패"
+
+
+def _thinking_badge(s: KnobSession) -> str:
+    if _thinking_locked(s):
+        return "미지원"
+    if _thinking_get(s) == "off":
+        return "off"
+    eff = _effort_get(s)
+    return eff if eff != "auto" else "auto"
+
+
+def _thinking_note(s: KnobSession) -> str:
+    return (
+        _thinking_locked(s)
+        or "다음 LLM 요청부터 반영됩니다. 사고 끄기는 토큰 절약, 노력은 백엔드가 존중할 때만."
+    )
+
+
+#: 한 칩에 함께 그리는 노브 묶음 — 묶음의 아이콘·배지·설명은 여기서 계산한다.
+KNOB_GROUPS: dict[str, KnobGroup] = {
+    "stall": KnobGroup(
+        icon="⏳",
+        label="무진전",
+        help=(
+            "Server-stall watchdog — reconnect & resend after N minutes with no "
+            "generated token (keep-alives don't count). 0 disables. Attempts is the "
+            "TOTAL number of sends, first included; max wait = limit × attempts."
+        ),
+        badge=_stall_badge,
+        note=_stall_note,
+    ),
+    "thinking": KnobGroup(
+        icon="🧠",
+        label="사고",
+        help=(
+            "사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 "
+            "절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 "
+            "유효합니다. 세션 한정·재시작 시 자동."
+        ),
+        badge=_thinking_badge,
+        note=_thinking_note,
+    ),
+}
+
+
 def _model_set(s: KnobSession, v: str) -> str:
     error = s.binding.switch(v)
     if error:
@@ -304,6 +453,13 @@ KNOBS: tuple[Knob, ...] = (
         owner="binding",
         get=lambda s: s.binding.model,
         set=_model_set,
+        ui=KnobUI(icon="🤖", control="options"),
+        badge=lambda s: s.binding.model,
+        note=lambda s: (
+            f"방언 {s.binding.dialect.name} · 창 {_caps(s).context_window:,} 토큰 — 같은 방언에 묶인 모델만 바꿀 수 있습니다."
+            if _caps(s)
+            else ""
+        ),
         info=_model_info,
     ),
     Knob(
@@ -322,6 +478,10 @@ KNOBS: tuple[Knob, ...] = (
         default="off",
         get=_thinking_get,
         set=_thinking_set,
+        ui=KnobUI(
+            group="thinking",
+            choice_labels={"off": "끄기", "on": "켜기", "auto": "자동"},
+        ),
         info=_thinking_info,
         locked=_thinking_locked,
     ),
@@ -336,6 +496,9 @@ KNOBS: tuple[Knob, ...] = (
         default="auto",
         get=_effort_get,
         set=_effort_set,
+        ui=KnobUI(group="thinking", choice_labels={"auto": "자동"}),
+        # 사고 미지원 모델이면 노력도 뜻이 없다 — 🧠 칩의 두 셀렉트가 같이 잠긴다
+        locked=_thinking_locked,
     ),
     Knob(
         name="grammar",
@@ -351,6 +514,17 @@ KNOBS: tuple[Knob, ...] = (
         default="auto",
         get=_grammar_get,
         set=_grammar_set,
+        ui=KnobUI(
+            icon="📐",
+            choice_labels={
+                "auto": "켬 (기본 — 지원되면)",
+                "on": "켬 (강제)",
+                "off": "끔",
+            },
+        ),
+        badge=_grammar_badge,
+        note=_grammar_note,
+        on=lambda s: bool(_grammar_info(s)["active"]),
         info=_grammar_info,
         locked=_grammar_locked,
     ),
@@ -365,6 +539,10 @@ KNOBS: tuple[Knob, ...] = (
         default=10,
         get=lambda s: s.registry.max_agents,
         set=lambda s, v: s.registry.set_max_agents(v),
+        ui=KnobUI(icon="👥", control="unlimited"),
+        badge=lambda s: (
+            "∞" if s.registry.max_agents == 0 else str(s.registry.max_agents)
+        ),
         info=lambda s: {"min": 1, "unlimited": s.registry.max_agents == 0},
     ),
     Knob(
@@ -382,6 +560,8 @@ KNOBS: tuple[Knob, ...] = (
         default=1.0,
         get=lambda s: s.ctx.compaction_ratio,
         set=lambda s, v: s.ctx.set_compaction_ratio(v),
+        ui=KnobUI(icon="🗜️", control="range", scale=100, unit="%"),
+        badge=lambda s: f"{round(s.ctx.compaction_ratio * 100)}%",
         info=lambda s: {"min": 0.5, "max": 1.0, "step": 0.05},
     ),
     Knob(
@@ -398,7 +578,8 @@ KNOBS: tuple[Knob, ...] = (
         default=600,
         get=lambda s: s.ctx.stream_idle_timeout_s,
         set=lambda s, v: s.ctx.set_stream_idle_timeout(v),
-        info=lambda s: {"min": 60, "max": 3600},
+        ui=KnobUI(group="stall", scale=1 / 60, unit="min · 0 = off"),
+        info=lambda s: {"min": 0, "max": 3600, "step": 60},
     ),
     Knob(
         name="stall_attempts",
@@ -414,6 +595,13 @@ KNOBS: tuple[Knob, ...] = (
         default=4,
         get=lambda s: s.ctx.stream_max_attempts,
         set=lambda s, v: s.ctx.set_stream_max_attempts(v),
+        ui=KnobUI(group="stall", unit="회 · 첫 전송 포함"),
+        # 한도 0 = 감지 끔 → 시도 횟수라는 개념이 성립하지 않는다 (v8.60.0 규칙)
+        locked=lambda s: (
+            "무진전 감지가 꺼져 있습니다 (한도 0)"
+            if s.ctx.stream_idle_timeout_s <= 0
+            else None
+        ),
         info=lambda s: {"min": 1, "max": 10},
     ),
     Knob(
@@ -431,6 +619,9 @@ KNOBS: tuple[Knob, ...] = (
         default=False,
         get=lambda s: bool(s.renderer.auto_approve),
         set=lambda s, v: s.renderer.set_auto_approve(v),
+        ui=KnobUI(icon="⚡", placement="header"),
+        badge=lambda s: "확인 없이 실행",
+        on=lambda s: bool(s.renderer.auto_approve),
     ),
     Knob(
         name="auditor",
@@ -447,6 +638,10 @@ KNOBS: tuple[Knob, ...] = (
         default=False,
         get=lambda s: bool(s.auditor.enabled),
         set=lambda s, v: setattr(s.auditor, "enabled", bool(v)) or bool(v),
+        ui=KnobUI(icon="🔎", choice_labels={"off": "끔 (기본)", "on": "켬"}),
+        badge=_auditor_badge,
+        note=_auditor_note,
+        on=lambda s: bool(s.auditor.enabled),
         info=lambda s: {"in_flight": s.auditor.in_flight},
     ),
 )
@@ -474,16 +669,64 @@ def web_state(knob: Knob, session: KnobSession) -> dict:
         "value": knob.get(session) if available else None,
         "locked": None,
     }
+    state["ui"] = asdict(knob.ui)
+    state["badge"] = None
+    state["note"] = ""
+    state["on"] = False
+    state["group"] = None
     if available:
         if knob.locked is not None:
             state["locked"] = knob.locked(session)
         if knob.info is not None:
             state.update(knob.info(session))
+        if knob.ui.control == "options":
+            state["options"] = _model_options(session)
+        state["badge"] = knob.badge(session) if knob.badge else str(state["value"])
+        state["note"] = knob.note(session) if knob.note else ""
+        state["on"] = bool(knob.on(session)) if knob.on else False
+        if knob.ui.group:
+            state["group"] = web_group(knob.ui.group, session)
     return state
+
+
+def web_group(name: str, session: KnobSession) -> dict:
+    """묶음 칩의 아이콘·배지·설명 — 멤버 어느 쪽이 바뀌어도 같이 실린다."""
+    g = KNOB_GROUPS[name]
+    members = [k for k in KNOBS if k.ui.group == name]
+    available = all(k.available(session) for k in members)
+    return {
+        "name": name,
+        "icon": g.icon,
+        "label": g.label,
+        "help": g.help,
+        "members": [k.name for k in members],
+        "badge": g.badge(session) if available else None,
+        "note": (g.note(session) if g.note and available else ""),
+    }
 
 
 def web_states(session: KnobSession) -> list[dict]:
     return [web_state(k, session) for k in KNOBS]
+
+
+def table_spec() -> list[dict]:
+    """표의 정적 선언 — `agent-cli knobs --json` 이 보드 같은 바깥 쪽에 준다.
+    값·소유자 없이 이름·플래그·env·종류·선택지·기본값·모양 힌트만."""
+    return [
+        {
+            "name": k.name,
+            "label": k.label,
+            "help": k.help,
+            "flag": k.flag,
+            "short": k.short,
+            "env": k.env,
+            "kind": type(k.kind).__name__.lower(),
+            "choices": list(k.kind.choices() or ()) or None,
+            "default": k.default,
+            "ui": asdict(k.ui),
+        }
+        for k in KNOBS
+    ]
 
 
 # ── 부팅 — CLI > env > 기본값을 소유자에 적용 ────────────────────────────

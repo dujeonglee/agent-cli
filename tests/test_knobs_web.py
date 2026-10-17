@@ -184,8 +184,85 @@ class TestLockedReasonsComeFromTheServer:
         assert st["dialect"] and st["locked"] is None
 
 
-class TestFrontendUsesOneClient:
-    def test_chips_go_through_knobs_client(self, tmp_path):
+class TestChipShapeComesFromTheServer:
+    """3단계(v10.45.0, §5.2): 상태 한 장에 칩 모양이 다 실린다 — 프런트는 그린다."""
+
+    def test_every_state_carries_ui_badge_note_on_group(self, tmp_path):
+        _s, _r, client = _full(tmp_path)
+        for k in client.get(f"/api/knobs?token={TOKEN}").json()["knobs"]:
+            assert {"ui", "badge", "note", "on", "group"} <= set(k), k["name"]
+            assert {
+                "icon",
+                "group",
+                "placement",
+                "control",
+                "scale",
+                "unit",
+                "choice_labels",
+            } <= set(k["ui"])
+            assert isinstance(k["badge"], str) and k["badge"], k["name"]  # 배지는 글자
+
+    def test_group_members_share_one_badge(self, tmp_path):
+        _s, _r, client = _full(tmp_path)
+        st, at = _get(client, "stall"), _get(client, "stall_attempts")
+        assert st["group"]["name"] == at["group"]["name"] == "stall"
+        assert st["group"]["members"] == ["stall", "stall_attempts"]
+        assert st["group"]["badge"] == at["group"]["badge"] == "10m×4"
+        assert "최대 40분" in st["group"]["note"]
+
+    def test_setting_one_member_rebroadcasts_the_other(self, tmp_path):
+        """묶음 배지는 두 멤버의 곱 — 한쪽을 바꾸면 다른 쪽 sticky 도 새 배지를 들어야
+        재접속 snapshot 이 옛 배지를 재생하지 않는다."""
+        _s, renderer, client = _full(tmp_path)
+        client.post(f"/api/knobs/stall_attempts?token={TOKEN}", json={"value": 6})
+        for name in ("stall", "stall_attempts"):
+            assert (
+                renderer._sticky[f"knob:{name}"]["payload"]["group"]["badge"] == "10m×6"
+            )
+
+    def test_model_switch_rebroadcasts_the_dependent_locks(self, tmp_path, monkeypatch):
+        """모델이 바뀌면 사고·문법의 잠김이 바뀔 수 있다 — 전부 다시 싣는다."""
+        import json
+
+        import agent_cli.config as _config
+        import agent_cli.dialects as _dialects
+
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "m1": {"context_window": 32768, "dialect": "json_fc"},
+                        "m2": {
+                            "context_window": 8000,
+                            "dialect": "json_fc",
+                            "supports_thinking": False,
+                        },
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        monkeypatch.setattr(_config, "_cached_registry", None)
+        monkeypatch.setattr(_dialects, "_override", None)
+        _s, renderer, client = _full(tmp_path)
+        assert _get(client, "model")["options"] == ["m1", "m2"]
+        assert _get(client, "thinking")["locked"] is None
+        r = client.post(f"/api/knobs/model?token={TOKEN}", json={"value": "m2"}).json()
+        assert r["ok"] and r["badge"] == "m2"
+        assert renderer._sticky["knob:thinking"]["payload"]["locked"]
+        assert renderer._sticky["knob:reasoning_effort"]["payload"]["locked"]
+
+    def test_stall_zero_locks_attempts(self, tmp_path):
+        _s, _r, client = _full(tmp_path)
+        client.post(f"/api/knobs/stall?token={TOKEN}", json={"value": 0})
+        at = _get(client, "stall_attempts")
+        assert at["locked"] and at["group"]["badge"] == "off"
+        assert "꺼져" in at["group"]["note"]
+
+
+class TestFrontendIsOneRenderer:
+    def test_chips_are_rendered_not_written(self, tmp_path):
         _s, _r, client = _full(tmp_path)
         js = client.get(f"/static/app.js?token={TOKEN}").text
         html = client.get(f"/?token={TOKEN}").text
@@ -199,27 +276,18 @@ class TestFrontendUsesOneClient:
             'fetch("api/stream-idle',
             'fetch("api/confirm-mode',
             'fetch("api/auditor',
+            "KNOBS.on(",  # 칩별 구독 — 렌더러 하나가 전부 듣는다
+            "KNOBS.get(",
         ):
             assert old not in js, old
-        for name in (
+        assert js.count('document.addEventListener("agentcli:knob"') == 1
+        assert 'id="knobs"' in html and 'id="knobs-header"' in html
+        # 노브 이름·배지 글자가 프런트에 박혀 있지 않다 — 서버의 말을 보여줄 뿐
+        for word in (
             "compaction_ratio",
-            "stall",
-            "stall_attempts",
             "max_agents",
-            "auto_approve",
-            "grammar",
-            "auditor",
-            "thinking",
             "reasoning_effort",
+            "미지원",
+            "감사 중",
         ):
-            assert f'KNOBS.on("{name}"' in js, name
-        for el in (
-            'id="compaction-range"',
-            'id="maxagents-input"',
-            'id="stall-input"',
-            'id="think-enable"',
-            'id="grammar-mode"',
-            'id="auditor-mode"',
-            'id="confirm-mode-btn"',
-        ):
-            assert el in html, el
+            assert word not in js, word
