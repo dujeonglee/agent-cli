@@ -1599,7 +1599,7 @@ def _auditor_boot_line(auditor) -> str:
     (기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끈다). 빈 문자열 = 알릴 것 없음."""
     if auditor is None or not auditor.enabled:
         return ""
-    return "🔎 세션 감사자 켜짐 (AGENT_CLI_AUDITOR=1) — 사용자 런마다 그 런의 기록을 감사합니다"
+    return "🔎 세션 감사자 켜짐 (--auditor · AGENT_CLI_AUDITOR · 🔎 칩) — 사용자 런마다 그 런의 기록을 감사합니다"
 
 
 def _announce_agent_boot(
