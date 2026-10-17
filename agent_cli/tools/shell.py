@@ -335,7 +335,9 @@ class ShellTool(Tool):
                     "true = start the command as a background job owned by the "
                     "harness (returns at once with the job id, pid and log path; "
                     "you are notified when it ends). Use for test suites, builds, "
-                    "installs — anything over about a minute."
+                    "installs — anything over about a minute. Give the PLAIN "
+                    "command: no trailing `&`, no redirection, no `echo EXIT` — "
+                    "the harness logs it and reports the exit code."
                 ),
             },
         },

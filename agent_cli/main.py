@@ -294,8 +294,12 @@ class _ConsoleSurface:
 
     graceful_interrupt = False
 
-    def __init__(self, *, result_file: str, dispatch):
+    def __init__(self, *, result_file: str, dispatch, jobs=None):
         self._result_file = result_file
+        self._jobs = jobs
+        #: argv 질의 런이 자기 백그라운드 작업을 남긴 채 끝났다 (v10.47.0) — 그
+        #: 작업의 통지로 깨어난 런의 답이 질의의 나머지 답이므로 파일에 쓴다.
+        self._continuing = False
         self._dispatch = dispatch  # (text, stop_event) -> bool
         self._stop: threading.Event | None = None
 
@@ -326,8 +330,19 @@ class _ConsoleSurface:
         # 런의 "No new action required" 가 진짜 답을 덮어쓴 실측(v10.34.0 스모크).
         # "파일이 없을 때만 깨우기 답을 쓴다" 도 두지 않는다: 질의 런이 max-turns
         # 로 실패한 뒤 그 문장이 성공 답으로 둔갑한다.
-        if result.success and req.is_query:
+        # v10.47.0 예외: 질의 런이 **자기 백그라운드 작업**(`shell background:true`)
+        # 이 돌고 있는 채로 끝났으면, 모델은 "끝나면 알려준다" 에 기대어 답을
+        # 미룬 것이다(실측 D-fix-1: 결과 파일엔 "still waiting on job #2" 만
+        # 남고 진짜 요약은 깨우기 런에 있었다). 그래서 그 뒤 첫 깨우기 런의
+        # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
+        if not result.success:
+            return
+        if req.is_query:
             _write_result_file(self._result_file, result.output)
+            self._continuing = bool(self._jobs is not None and self._jobs.running())
+        elif req.wake and self._continuing:
+            _write_result_file(self._result_file, result.output)
+            self._continuing = bool(self._jobs.running())
 
     def run_failed(self, exc: Exception) -> bool:
         return False
@@ -1403,6 +1418,7 @@ def run(
 
         surface = _ConsoleSurface(
             result_file=result_file,
+            jobs=job_registry,  # 질의가 작업을 남기고 끝나면 깨우기 답도 결과 파일에
             dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
                 text,
                 _ConsoleDispatchOutput(result_file=result_file),
