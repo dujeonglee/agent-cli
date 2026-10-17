@@ -507,8 +507,16 @@ class TurnDispatcher:
             # A lone edit_file, or edits on different paths, take the normal
             # per-op path. Only consecutive same-path edits group — interleaving
             # another tool (e.g. write→edit) breaks the run, preserving order.
-            if op.action == "edit_file" and isinstance(op.action_input, dict):
-                path = op.action_input.get("path")
+            path = (
+                op.action_input.get("path")
+                if isinstance(op.action_input, dict)
+                else None
+            )
+            if op.action == "edit_file" and isinstance(path, str) and path:
+                # 경로가 진짜 문자열일 때만 묶는다 (v10.49.0) — 경로 없는 op 끼리
+                # (`None == None`) 묶여 스키마 검사를 건너뛰고 "cannot read 'None'"
+                # 이 op 수만큼 나왔다(편집 A/B 실측 base-t4-3, 16건). 홀로 가면
+                # A5 가 "Missing required field(s) … path" 로 답한다.
                 j = i
                 while (
                     j < len(ops)
@@ -573,6 +581,68 @@ class TurnDispatcher:
             i += 1
         self._flush_op_results(turn.record, results)
         return _CONTINUE
+
+    def _emit_obs(
+        self, record, accumulate, tool_name: str, obs: str, ok: bool, *, render=True
+    ):
+        """한 op 이 관찰을 냈다 — 묶음이면 모으고, 홀로면 바로 붙인다 (v10.49.0 C3).
+
+        종전엔 ask·message·reply·answer 가 이 if/else 를 각자 다섯 벌 들고
+        있었다. 모양은 그대로다: 묶음 ``accumulate_raw`` → ``None``(다음 op),
+        홀로 ``Observation: …`` 관찰 → ``_CONTINUE``."""
+        if accumulate is not None:
+            self.tools.accumulate_raw(accumulate, tool_name, obs, ok)
+            return None
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.dialect,
+            record,
+            f"Observation: {obs}",
+            tool_name=tool_name,
+            success=ok,
+            turn=self.state.turn,
+            render=render,
+        )
+        return _CONTINUE
+
+    def _reject_op(
+        self,
+        llm_text: str,
+        turn,
+        outcome: dict,
+        accumulate,
+        *,
+        tool_name: str,
+        batch_note: str,
+        alone: str,
+        reason: str,
+        signal: str,
+    ):
+        """이 op 을 실행하지 않는다 — 입력 검증 실패의 한 길 (v10.49.0 C3).
+
+        **묶음 안이면** 실패 op 로 적고 다음 op 로 간다(v9.21.0 — 뒤의 op 이
+        조용히 버려지던 kdsd0j 의 수리). **홀로면** 형식 개입: 원문을 인용하고
+        재시도는 저장하지 않으며 턴을 세지 않는다(인용이 유일한 사본, v9.23.2).
+        이 차이는 의도다 — 홀로 망가진 호출은 되묻는 게 싸고, 묶음의 나머지는
+        이미 실행됐을 수 있다. A4(모르는 도구)·A5(스키마)·인자 JSON 오류가 쓴다."""
+        outcome["failure_signal"] = signal
+        if accumulate is not None:
+            self.tools.accumulate_raw(
+                accumulate, tool_name, f"{batch_note}\n{BATCH_OP_SKIPPED_NOTE}", False
+            )
+            return None
+        return self._intervene(
+            llm_text,
+            alone,
+            reason,
+            outcome,
+            record=turn.record,
+            failure_signal=signal,
+            tool_name=tool_name,
+            recovery_kind="format",
+            store_emission=False,
+        )
 
     def _flush_op_results(self, record: dict, results: list[dict]) -> None:
         """Append ONE combined observation for accumulated op results.
@@ -1165,24 +1235,14 @@ class TurnDispatcher:
             # reply is the observation), not a terminal. In a multi-op turn
             # it accumulates like read/shell so consecutive asks batch into
             # the one combined observation; alone it appends its own.
-            if accumulate is not None:
-                self.tools.accumulate_raw(
-                    accumulate, "ask", f"User responded:\n{user_response}", True
-                )
-                return None
-            obs_msg = f"Observation: User responded:\n{user_response}"
-            _append_observation(
-                self.state.messages,
-                self.ctx,
-                self.cfg.dialect,
+            return self._emit_obs(
                 turn.record,
-                obs_msg,
-                tool_name="ask",
-                success=True,
-                turn=self.state.turn,
+                accumulate,
+                "ask",
+                f"User responded:\n{user_response}",
+                True,
                 render=False,  # the answer is surfaced by the input UI
             )
-            return _CONTINUE
 
         return _NOT_HANDLED
 
@@ -1216,20 +1276,7 @@ class TurnDispatcher:
         except Exception as e:
             result = f"message failed: {type(e).__name__}: {e}"
         obs = f"[message → {to or '?'}] {result}"
-        if accumulate is not None:
-            self.tools.accumulate_raw(accumulate, "message", obs, True)
-            return None
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.dialect,
-            turn.record,
-            f"Observation: {obs}",
-            tool_name="message",
-            success=True,
-            turn=self.state.turn,
-        )
-        return _CONTINUE
+        return self._emit_obs(turn.record, accumulate, "message", obs, True)
 
     def _op_ask_async(self, record: dict, questions, port, accumulate, *, to=None):
         """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
@@ -1256,20 +1303,7 @@ class TurnDispatcher:
             "on the answer; it will arrive as a new message. If nothing else "
             "can proceed, `complete` — you will be resumed when it arrives."
         )
-        if accumulate is not None:
-            self.tools.accumulate_raw(accumulate, "ask", obs, True)
-            return None
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.dialect,
-            record,
-            f"Observation: {obs}",
-            tool_name="ask",
-            success=True,
-            turn=self.state.turn,
-        )
-        return _CONTINUE
+        return self._emit_obs(record, accumulate, "ask", obs, True)
 
     def _op_reply(self, llm_text: str, turn, op, accumulate):
         """``reply`` op (v9.21.0) — 이 런을 시킨 쪽에게 빚진 회신을 갚는다.
@@ -1297,20 +1331,7 @@ class TurnDispatcher:
             err = f"reply failed: {type(e).__name__}: {e}"
         ok = not err
         obs = "[reply] " + (err or "delivered to whoever requested this work")
-        if accumulate is not None:
-            self.tools.accumulate_raw(accumulate, "reply", obs, ok)
-            return None
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.dialect,
-            turn.record,
-            f"Observation: {obs}",
-            tool_name="reply",
-            success=ok,
-            turn=self.state.turn,
-        )
-        return _CONTINUE
+        return self._emit_obs(turn.record, accumulate, "reply", obs, ok)
 
     def _op_answer(self, llm_text: str, turn, op, accumulate):
         """``answer`` op — 열린 질문에 id 로 짝지어 답한다 (§3.1).
@@ -1348,20 +1369,7 @@ class TurnDispatcher:
             )
         ok = not err
         obs = f"[answer → {qid or '?'}] " + (err or "delivered to the asker")
-        if accumulate is not None:
-            self.tools.accumulate_raw(accumulate, "answer", obs, ok)
-            return None
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.dialect,
-            turn.record,
-            f"Observation: {obs}",
-            tool_name="answer",
-            success=ok,
-            turn=self.state.turn,
-        )
-        return _CONTINUE
+        return self._emit_obs(turn.record, accumulate, "answer", obs, ok)
 
     def _is_open_request_id(self, qid: str) -> bool:
         """``qid`` 가 이 런의 열린 사용자 요청 번호인가 (`_op_answer` 되묻기용)."""
@@ -1605,31 +1613,16 @@ class TurnDispatcher:
                 display_input,
                 hint="Re-emit it under one of the available names.",
             )
-            if accumulate is not None:
-                # N-op 배치 (v9.21.0): 이 op 만 실패로 적고 **다음 op 로 간다**.
-                # 종전엔 턴 수준 형식 개입으로 배치를 중단했고, 뒤의 op 들은
-                # 아무 말 없이 버려졌다 — 실측(kdsd0j): [shell, memory, memory✗,
-                # message] 에서 message 가 안 나갔는데 관찰은 "[1/2] OK [2/2]
-                # OK" 라 모델이 보냈다고 믿었다. 런타임 실패는 이미 FAILED 로
-                # 적고 계속 가므로, 입력 검증 실패도 같은 모양이어야 한다.
-                outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
-                self.tools.accumulate_raw(
-                    accumulate,
-                    tool_name,
-                    f"{err_msg}\n{sent}\n{BATCH_OP_SKIPPED_NOTE}",
-                    False,
-                )
-                return None
-            return self._intervene(
+            return self._reject_op(
                 llm_text,
-                f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
-                "unknown tool",
+                turn,
                 outcome,
-                record=turn.record,
-                failure_signal=FAILURE_UNKNOWN_TOOL,
+                accumulate,
                 tool_name=tool_name,
-                recovery_kind="format",
-                store_emission=False,  # 인용이 유일한 사본 (v9.23.2)
+                batch_note=f"{err_msg}\n{sent}",
+                alone=f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
+                reason="unknown tool",
+                signal=FAILURE_UNKNOWN_TOOL,
             )
 
         # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
@@ -1648,26 +1641,16 @@ class TurnDispatcher:
             sent = summarize_call(
                 tool_name, display_input, missing=missing, unknown=unknown
             )
-            if accumulate is not None:
-                # N-op 배치: 위 A4 와 같은 이유 — 실패 op 로 적고 계속.
-                outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
-                self.tools.accumulate_raw(
-                    accumulate,
-                    tool_name,
-                    f"{schema_err}\n{sent}\n{BATCH_OP_SKIPPED_NOTE}",
-                    False,
-                )
-                return None
-            return self._intervene(
+            return self._reject_op(
                 llm_text,
-                f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
-                "schema mismatch",
+                turn,
                 outcome,
-                record=turn.record,
-                failure_signal=FAILURE_SCHEMA_MISMATCH,
+                accumulate,
                 tool_name=tool_name,
-                recovery_kind="format",
-                store_emission=False,  # 인용이 유일한 사본 (v9.23.2)
+                batch_note=f"{schema_err}\n{sent}",
+                alone=f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
+                reason="schema mismatch",
+                signal=FAILURE_SCHEMA_MISMATCH,
             )
         tool_input = normalized  # use post-normalization input for dispatch
         if accumulate is None:
@@ -1728,22 +1711,16 @@ class TurnDispatcher:
             f"({where}), so the call was NOT executed. Re-send it with the "
             "arguments as one JSON object."
         )
-        outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
-        if accumulate is not None:
-            self.tools.accumulate_raw(
-                accumulate, tool_name, f"{err_msg}\n{BATCH_OP_SKIPPED_NOTE}", False
-            )
-            return None
-        return self._intervene(
+        return self._reject_op(
             llm_text,
-            f"Observation: {err_msg}\n{echo_prior_output(raw)}",
-            "bad arguments",
+            turn,
             outcome,
-            record=turn.record,
-            failure_signal=FAILURE_SCHEMA_MISMATCH,
+            accumulate,
             tool_name=tool_name,
-            recovery_kind="format",
-            store_emission=False,  # 인용(원문 인자)이 유일한 사본
+            batch_note=err_msg,
+            alone=f"Observation: {err_msg}\n{echo_prior_output(raw)}",
+            reason="bad arguments",
+            signal=FAILURE_SCHEMA_MISMATCH,
         )
 
     def _recover_unparsed(self, llm_text: str, turn, outcome: dict):
