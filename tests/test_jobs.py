@@ -57,7 +57,7 @@ class TestStartAndFinish:
 
     def test_exit_is_logged_and_the_owner_is_told(self, reg, tmp_path):
         job = reg.start("echo hello; echo world; exit 3", owner="main")
-        assert _wait(lambda: not job.running)
+        assert _wait(lambda: reg.deliver.calls)  # 통지 배달까지(rc 는 그보다 먼저 선다)
         assert job.rc == 3 and job.ended_at is not None
         log = (tmp_path / job.log).read_text()
         assert "hello\nworld\n" in log and "[job #1 exited rc=3 after" in log
@@ -78,14 +78,14 @@ class TestStartAndFinish:
 
     def test_success_mail_and_agent_owner(self, reg):
         job = reg.start("true", owner="agent:x1")
-        assert _wait(lambda: not job.running)
+        assert _wait(lambda: reg.deliver.calls)  # 통지 배달까지(rc 는 그보다 먼저 선다)
         assert job.rc == 0
         assert reg.deliver.addrs == ["agent:x1"]
         assert reg.deliver.calls[0][1]["mail"]["success"] is True
 
     def test_tail_is_capped(self, reg):
         job = reg.start("for i in $(seq 1 20); do echo line$i; done", owner="main")
-        assert _wait(lambda: not job.running)
+        assert _wait(lambda: reg.deliver.calls)  # 통지 배달까지(rc 는 그보다 먼저 선다)
         text = reg.deliver.reports[0]
         assert "line13" in text and "line12" not in text  # 마지막 8줄
         assert "(last 8 line(s))" in text
@@ -248,6 +248,35 @@ class TestShellToolSurface:
         r = ShellTool()._run({"command": "rm -rf x", "background": True})
         assert not r.success and r.error == "Refused: nope" and reg.running() == []
 
+    @pytest.mark.parametrize(
+        "cmd, token",
+        [
+            ("nohup python3 -m pytest -q > x.log 2>&1 & echo $!", "nohup"),
+            ("(python3 -m pytest -q > x.log 2>&1; echo EXIT:$?) &", "&"),
+            ("python3 -m pytest -q &", "&"),
+            ("setsid python3 -u -m pytest -q", "setsid"),
+            ("python3 -m pytest -q & sleep 2; echo started", "&"),
+        ],
+    )
+    def test_self_detaching_commands_are_refused(self, reg, cmd, token):
+        """재측정 E-fix-1: `background:true` 에 `nohup … &` 를 넣어 작업이 1초 만에
+        끝나고 진짜 일은 추적 밖으로 — 문구 대신 거부한다."""
+        from agent_cli.tools.shell import ShellTool
+
+        r = ShellTool()._run({"command": cmd, "background": True})
+        assert not r.success and f"`{token}`" in r.error and "PLAIN" in r.error
+        assert reg.running() == []
+
+    @pytest.mark.parametrize(
+        "cmd",
+        ["python3 -m pytest -q && echo ok", "make build 2>&1", "sh scripts/check.sh"],
+    )
+    def test_plain_commands_pass(self, reg, cmd):
+        from agent_cli.tools.shell import ShellTool
+
+        r = ShellTool()._run({"command": cmd + "; sleep 0.2", "background": True})
+        assert r.success, r.error
+
     def test_schema_advertises_background(self):
         from agent_cli.tools.shell import ShellTool
 
@@ -363,14 +392,38 @@ class TestResultFileContinuation:
 
     def test_query_that_leaves_a_job_takes_the_wake_answer(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)
+        surface.busy()
         job = reg.start("sleep 60", owner="main")
         surface.run_ended(self._ok("still waiting on job #1"), self._req(query=True))
         assert out.read_text() == "still waiting on job #1"
         reg.kill(job)  # 작업이 끝났다(통지 → 깨우기 런)
+        surface.busy()
         surface.run_ended(self._ok("14 passed in 150s"), self._req(query=False))
         assert out.read_text() == "14 passed in 150s"
+        surface.busy()
         surface.run_ended(self._ok("later chatter"), self._req(query=False))
-        assert out.read_text() == "14 passed in 150s"  # 한 번만
+        assert out.read_text() == "14 passed in 150s"  # 사슬이 닫혔다
+
+    def test_chain_follows_jobs_started_by_wake_runs(self, reg, tmp_path):
+        """재측정 E-fix-2: 질의 런의 1초짜리 작업이 런 종료와 같은 순간에 끝나고,
+        깨우기 런이 진짜 스위트(job #3)를 띄웠다 — 사슬은 그 작업의 통지 런까지
+        이어져야 한다."""
+        surface, out = self._surface(tmp_path, reg)
+        surface.busy()
+        quick = reg.start("true", owner="main")
+        assert _wait(lambda: not quick.running)  # 질의 런이 끝나기 전에 이미 끝났다
+        surface.run_ended(self._ok("waiting for job #1"), self._req(query=True))
+        surface.busy()  # 깨우기 런 #1 — 여기서 진짜 스위트를 띄운다
+        full = reg.start("sleep 60", owner="main")
+        surface.run_ended(self._ok("waiting for job #2"), self._req(query=False))
+        assert out.read_text() == "waiting for job #2"
+        reg.kill(full)
+        surface.busy()  # 깨우기 런 #2 — 작업 없음 → 답이고 사슬이 닫힌다
+        surface.run_ended(self._ok("14 passed"), self._req(query=False))
+        assert out.read_text() == "14 passed"
+        surface.busy()
+        surface.run_ended(self._ok("chatter"), self._req(query=False))
+        assert out.read_text() == "14 passed"
 
     def test_failed_runs_never_write(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)

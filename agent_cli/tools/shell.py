@@ -209,12 +209,44 @@ def _guard(cmd: str) -> tuple[str | None, str]:
     return (denial or None), user_comment
 
 
+_DETACH_TOKENS = re.compile(r"(?:^|[\s;|(&])(nohup|setsid|disown)\b")
+_TRAILING_AMP = re.compile(r"&\s*(?:\)|;|$)|&\s+(?:echo|sleep|true|wait)\b")
+
+
+def _detaches_itself(cmd: str) -> str:
+    """``background=true`` 에 모델이 제 손으로 떼어 내는 조각이 있으면 그 조각 —
+    `nohup`/`setsid`/`disown`, 또는 명령 끝(혹은 `) ;` 앞)의 `&`. `&&` 는 아니다."""
+    stripped = re.sub(r"&&", " ", cmd)
+    m = _DETACH_TOKENS.search(stripped)
+    if m:
+        return m.group(1)
+    if _TRAILING_AMP.search(stripped):
+        return "&"
+    return ""
+
+
 def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
     """``background: true`` (v10.47.0, docs/jobs/DESIGN.md) — 하니스가 자식으로
     띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다."""
     from agent_cli.jobs import JobsUnavailable, get_job_registry
 
     cmd = args.get("command", "")
+    detached = _detaches_itself(cmd)
+    if detached:
+        # 재측정(E-fix-1): 안내에도 모델이 `nohup … & echo $!` 를 그대로 넣어
+        # 작업이 1초 만에 "끝나고" 진짜 일은 추적 밖으로 떨어졌다. 문구 대신
+        # 거부한다 — 모델이 평문으로 다시 보낸다.
+        return ToolResult(
+            False,
+            error=(
+                f"background=true takes the PLAIN command — yours contains `{detached}`, "
+                "which would detach the real work from the job (the job would end at "
+                "once and nothing would be tracked or reported). Re-send the same "
+                "command without `&`, `nohup`, `setsid`, `disown` or output "
+                "redirection: the harness runs it in the background, logs it and "
+                "tells you when it ends."
+            ),
+        )
     denied, _comment = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)

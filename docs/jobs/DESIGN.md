@@ -30,8 +30,8 @@
 
 그냥 `cmd &` 는 종전대로 된다(추적 없음) — 안내가 `background: true` 로 유도한다.
 
-- **명령은 평문으로.** 첫 재측정(D-fix-1)에서 모델이 `background: true` 에 `( … ) > log 2>&1 &` 를 그대로 넣어 작업이 1초 만에 "끝났다"(안쪽 `&` 가 진짜 일을 떼어 냈다). `background` 설명과 Task Guidelines 가 "`&`·리다이렉션·`echo EXIT` 없이 평문" 을 못 박는다.
-- **`--result-file` 의 예외.** 질의 런이 자기 작업이 돌고 있는 채로 끝나면(모델은 "끝나면 알려준다" 에 기대어 답을 미룬다) 그 뒤 첫 깨우기 런의 답을 결과 파일에 **덮어쓴다**(`main._ConsoleSurface.run_ended`, `_continuing`). 작업 없이 끝난 질의는 v10.34.1 규칙 그대로(깨우기 답은 안 쓴다). 실측 D-fix-1: 파일엔 "still waiting on job #2" 만 남고 진짜 요약은 깨우기 런에 있었다.
+- **명령은 평문으로 — 하니스가 거부한다 (v10.47.1).** 두 번째 재측정(E-fix-1)에서도 안내를 넘어 `nohup … & echo $!` 가 들어와 작업이 1초 만에 끝나고 진짜 일이 추적 밖으로 떨어졌다. `tool_shell_background` 가 `nohup`/`setsid`/`disown`·끝의 `&` 를 보면 거부하고 평문으로 다시 보내게 한다(`_detaches_itself`). 첫 재측정(D-fix-1)에서 모델이 `background: true` 에 `( … ) > log 2>&1 &` 를 그대로 넣어 작업이 1초 만에 "끝났다"(안쪽 `&` 가 진짜 일을 떼어 냈다). `background` 설명과 Task Guidelines 가 "`&`·리다이렉션·`echo EXIT` 없이 평문" 을 못 박는다.
+- **`--result-file` 의 예외.** 질의 런이 백그라운드 작업을 **썼으면**(끝났어도 — 1초짜리 작업의 통지가 런 종료와 겹친 경합, E-fix-2) 그 뒤 깨우기 런들의 답을 결과 파일에 **덮어쓴다**(`main._ConsoleSurface.run_ended`, `_continuing`·`_used_jobs`). 사슬은 깨우기 런이 작업을 새로 띄우지도(`started_since(run_start)`) 돌리고 있지도 않을 때 닫힌다 — E-fix-2 처럼 깨우기 런이 진짜 스위트를 띄우는 경우를 따라간다. 작업 없이 끝난 질의는 v10.34.1 규칙 그대로. 실측 D-fix-1: 파일엔 "still waiting on job #2" 만 남고 진짜 요약은 깨우기 런에 있었다.
 
 - **기다리는 동안 (v10.47.1).** 보드 방 실측(pwm1n9): 작업을 띄운 뒤 할 일이 없자 모델이 "기다리겠다" 산문만 7번 내 no_action 넛지를 받고, 넛지에 떠밀려 없는 파일 읽기·code_index 조회 같은 빈 행동을 하다 `complete` 했다(결과 자체는 통지 뒤 깨우기 런에서 정답). 규칙은 "행동 하나" 인데 할 행동이 없는 상태였다. 그래서 Task Guidelines 와 꼬리의 작업 블록 머리에 "할 일이 없으면 `complete` 로 기다린다고 말하라 — 통지가 깨운다, 빈 행동으로 턴을 채우지 말라" 를 넣었다. 넛지 수로 잰다(종전 D 런 check 8·4·5, fix 9·2·0).
 

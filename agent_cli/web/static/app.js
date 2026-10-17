@@ -1751,9 +1751,14 @@
     return "[" + m[1] + "] " + m[2] + ": " + (body ? body.trim() : "");
   }
 
+  // 보고문(🔔 모니터 보고·🧵 작업 종료 통지)은 **첫 줄이 요약**이다 — 마지막 줄은
+  // 부작용 명령의 결과나 "fired once — monitor retired" 같은 꼬리라 접힌 머리줄에
+  // 쓰면 무슨 보고인지 안 보인다 (v10.47.1, 보드 방 실측).
+  const REPORT_HEAD = /^(🔔 monitor |🧵 job #)/;
   function obsSummary(content, failed) {
     const lines = String(content || "").split("\n").filter((l) => l.trim());
     if (!lines.length) return "(출력 없음)";
+    if (REPORT_HEAD.test(lines[0].trim())) return lines[0].trim();
     if (!failed) return absorbedSummary(lines) || lines[lines.length - 1].trim();
     for (let i = 0; i < lines.length - 1; i++) {
       if (BATCH_HEAD.test(lines[i]) && /FAILED\s*$/.test(lines[i])) {

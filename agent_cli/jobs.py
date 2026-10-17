@@ -137,6 +137,11 @@ class JobRegistry:
                 if j.running and (owner is None or j.owner == owner)
             ]
 
+    def started_since(self, ts: float) -> list[Job]:
+        """``ts`` 이후에 띄운 작업(끝난 것 포함) — "이 런이 작업을 썼는가" 의 근거."""
+        with self._lock:
+            return [j for j in self._jobs.values() if j.started_at >= ts]
+
     def has_active_work(self) -> bool:
         """돌고 있는 작업(또는 통지 배달 중)이 있으면 세션이 끝나면 안 된다."""
         with self._lock:

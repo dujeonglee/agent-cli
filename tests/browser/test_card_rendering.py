@@ -154,6 +154,32 @@ class TestRowRhythm:
         assert _wait(lambda: self._rows(page).count() > 0)
         assert self._rows(page).first.locator(".k").inner_text().strip() == "shell"
 
+    def test_report_observations_fold_to_their_first_line(self, stack, page):
+        """🔔 모니터 보고·🧵 작업 통지는 첫 줄이 요약 — 마지막 줄(부작용 결과·
+        'fired once — monitor retired')을 머리줄로 쓰면 무슨 보고인지 안 보인다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        report = (
+            "🔔 monitor mon-543e0a (silence · .agent-cli/tmp/jobs/1.log · 20s)   0m ago · 1 hit(s)\n"
+            "  .agent-cli/tmp/jobs/1.log — no change for 20s\n"
+            "  ↳ run 'if kill -0 39540; then echo STILL_RUNNING; fi': exit 0 · STILL_RUNNING · fired once — monitor retired"
+        )
+        stack.renderer.observation(report, turn=1, tool_name="monitor", success=True)
+        job = "🧵 job #1 finished rc=0 after 3m00s — `sh scripts/check.sh`\n  log: x\n  [check] done"
+        stack.renderer.observation(job, turn=1, tool_name="job", success=True)
+        assert _wait(lambda: self._rows(page).count() >= 2)
+        heads = [
+            self._rows(page).nth(i).locator(".s").inner_text().strip() for i in range(2)
+        ]
+        assert (
+            heads[0].startswith("🔔 monitor mon-543e0a") and "retired" not in heads[0]
+        )
+        assert heads[1].startswith("🧵 job #1 finished rc=0")
+        # 셸 출력은 종전대로 마지막 줄
+        stack.renderer.observation("a\nb\nc", turn=1, tool_name="shell", success=True)
+        assert _wait(lambda: self._rows(page).count() >= 3)
+        assert self._rows(page).nth(2).locator(".s").inner_text().strip() == "c"
+
     def test_body_collapsed_by_default_and_toggles(self, stack, page):
         stack.emit_ready()
         _open_timeline(page, stack)
