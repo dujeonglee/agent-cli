@@ -124,7 +124,11 @@ class TestApplyEditsBatch:
         assert "The other 1 ref is valid as sent" in result.error
         assert "is unchanged" in result.error
         assert "resend ALL the ops" in result.error
-        assert result.error.count("Re-read") == 1  # the hint once, not per op
+        # v10.50.0: a mismatch shows the current lines instead of a re-read
+        # recipe — the fix-and-resend instruction once, not per op.
+        assert "Re-read" not in result.error
+        assert result.error.count("Correct the rejected refs") == 1
+        assert f"    {_ref(2, 'b')}:b" in result.error  # window, indented under its op
 
     def test_every_bad_ref_is_reported_at_once(self, tmp_path):
         """Before v9.26.3 resolution stopped at the first bad ref, so a batch with
@@ -147,6 +151,47 @@ class TestApplyEditsBatch:
         assert "op 3 (delete 3#QQ..3#QQ)" in result.error
         assert "The other 2 refs are valid as sent" in result.error
         assert p.read_text().splitlines() == lines
+
+    def test_mismatch_part_carries_its_window(self, tmp_path):
+        """v10.50.0: the per-op part (what the model reads for a batch) ends with
+        that op's current lines; the fix-and-resend line rides on the last part."""
+        from agent_cli.tools.edit_file import apply_edits_batch_parts
+
+        lines = ["a", "b", "c", "d"]
+        p = _write(tmp_path, "f.txt", lines)
+        edits = [
+            {"op": "replace", "pos": _ref(1, "a"), "lines": ["A"]},
+            {"op": "replace", "pos": "3#ZZ", "lines": ["C"]},
+        ]
+        _res, parts = apply_edits_batch_parts(str(p), edits)
+        bad = parts[1]["content"].splitlines()
+        assert bad[0].startswith("op 2 (replace 3#ZZ): Hash mismatch at line 3")
+        assert bad[0].endswith("is unchanged.")
+        # _write ends with a newline: line 5 is the empty last line, as read_file shows it
+        assert bad[1].startswith("Current lines 1–5 (fresh refs")
+        assert bad[2:6] == [f"{_ref(i + 1, x)}:{x}" for i, x in enumerate(lines)]
+        assert bad[-1].startswith("Correct the rejected refs from the current lines")
+        assert "Current lines" not in parts[0]["content"]  # the valid op: no window
+
+    def test_mixed_rejections_keep_the_reread_recipe(self, tmp_path):
+        """A bad op with no window (unknown op, range, format) still needs a read
+        — the resend line says so; the mismatch op keeps its window."""
+        from agent_cli.tools.edit_file import apply_edits_batch
+
+        p = _write(tmp_path, "f.txt", ["a", "b"])
+        result = apply_edits_batch(
+            str(p),
+            [
+                {"op": "replace", "pos": "1#ZZ", "lines": ["A"]},
+                {"op": "replace", "pos": "9#ZZ", "lines": ["B"]},
+            ],
+        )
+        assert "Current lines 1–3" in result.error
+        assert "out of range" in result.error
+        assert (
+            "Re-read the file for fresh tags of the rejected lines only" in result.error
+        )
+        assert "Correct the rejected refs" not in result.error
 
     def test_adjacent_ranges_allowed(self, tmp_path):
         # Adjacent (touching but not overlapping) ranges are fine.

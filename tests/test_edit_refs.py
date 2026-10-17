@@ -27,16 +27,72 @@ class TestRefVerification:
         )
         assert r.success and f.read_text() == "def hi():\n    pass"
 
-    def test_stale_hash_is_rejected_with_the_reread_recipe(self, tmp_path):
+    def test_stale_hash_is_rejected_with_the_current_lines(self, tmp_path):
         f = _file(tmp_path, "def hello():")
         r = tool_edit_file(
             {"path": str(f), "op": "replace", "pos": "1#ZZ", "lines": ["x"]}
         )
         assert not r.success and f.read_text() == "def hello():"
-        assert "Hash mismatch at line 1" in r.error
-        assert "Re-read" in r.error and "read_file" in r.error
-        assert r.error.startswith("edit_file apply failed: ")  # 단건 문구 그대로
+        assert r.error == (
+            "edit_file apply failed: Hash mismatch at line 1: ref '1#ZZ' does "
+            "not match current content.\n"
+            "Current lines 1–1 (fresh refs — retry from these, no re-read "
+            f"needed):\n1#{compute_line_hash(1, 'def hello():')}:def hello():"
+        )
         assert "batch" not in r.error
+
+
+class TestMismatchWindow:
+    """v10.50.0: a hash mismatch shows ±3 current lines with fresh refs. Replay
+    of recorded slips: the old re-read hint was obeyed 50/50 (a read turn per
+    slip); ±3 got 41/50 direct retries, ±2 once edited a neighbour."""
+
+    def _body(self, n):
+        return "\n".join(f"v{i} = {i}" for i in range(1, n + 1))
+
+    def _window(self, err):
+        return err.split("needed):\n", 1)[1].splitlines()
+
+    def test_three_lines_each_side_with_valid_refs(self, tmp_path):
+        f = _file(tmp_path, self._body(20))
+        r = tool_edit_file({"path": str(f), "op": "replace", "pos": "10#ZZ"})
+        assert "Current lines 7–13 " in r.error
+        shown = self._window(r.error)
+        assert [s.split("#")[0] for s in shown] == [str(i) for i in range(7, 14)]
+        for i, s in zip(range(7, 14), shown):  # every shown ref is usable as-is
+            assert s == f"{i}#{compute_line_hash(i, f'v{i} = {i}')}:v{i} = {i}"
+
+    @pytest.mark.parametrize("line,span", [(1, "1–4"), (2, "1–5"), (20, "17–20")])
+    def test_clamped_at_the_file_edges(self, tmp_path, line, span):
+        f = _file(tmp_path, self._body(20))
+        r = tool_edit_file({"path": str(f), "op": "replace", "pos": f"{line}#ZZ"})
+        assert f"Current lines {span} " in r.error
+
+    def test_a_retry_from_the_window_applies(self, tmp_path):
+        f = _file(tmp_path, self._body(9))
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": "5#ZZ", "lines": ["x"]}
+        )
+        ref5 = next(s for s in self._window(r.error) if s.startswith("5#"))
+        ok = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": ref5.split(":")[0], "lines": ["x"]}
+        )
+        assert ok.success and f.read_text().split("\n")[4] == "x"
+
+    def test_no_did_you_mean_for_a_matching_tag_nearby(self, tmp_path):
+        """The tag's line is the wrong guess as often as not (the model gets the
+        number right and the tag wrong) — replay showed it misleads."""
+        f = _file(tmp_path, self._body(9))
+        tag4 = compute_line_hash(4, "v4 = 4")
+        r = tool_edit_file({"path": str(f), "op": "replace", "pos": f"5#{tag4}"})
+        assert "did you mean" not in r.error.lower()
+
+    def test_range_and_format_errors_keep_their_wording(self, tmp_path):
+        f = _file(tmp_path, self._body(3))
+        r = tool_edit_file({"path": str(f), "op": "replace", "pos": "9#ZZ"})
+        assert "out of range" in r.error and "Current lines" not in r.error
+        r = tool_edit_file({"path": str(f), "op": "replace", "pos": "#ZZ"})
+        assert "Invalid hashline ref" in r.error and "Current lines" not in r.error
 
     def test_out_of_range_is_rejected(self, tmp_path):
         f = _file(tmp_path, "only one line")

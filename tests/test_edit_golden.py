@@ -1,10 +1,15 @@
-"""edit_file 의미의 황금 말뭉치 (v10.48.0) — 단건·묶음 경로 통합의 회귀 가드.
+"""edit_file 의미의 황금 말뭉치 — 편집 경로 변경의 회귀 가드.
 
-v10.48.0 에서 단건 편집을 묶음 N=1 로 보내고 퍼지 매칭을 지웠다. 그 **이전**
-구현(v10.47.1)으로 무작위 편집 400건(단건 절반·같은 파일 묶음 절반, 오래된 ref·
-범위 밖·붙여 넣은 줄·형식 오류·잘못된 op 포함)을 돌린 결과를 그대로 얼려 두었다
-(`tests/fixtures/edit_golden_pre_v10_48.json`). 성공 여부·결과 파일·모델이 읽는
-문구·op 별 조각이 바이트 단위로 같아야 한다. 이후 편집 경로를 손대는 변경(턴
+무작위 편집 400건(단건 절반·같은 파일 묶음 절반, 오래된 ref·범위 밖·붙여 넣은
+줄·형식 오류·잘못된 op 포함)의 결과를 얼려 두었다 (`tests/fixtures/edit_golden.json`).
+성공 여부·결과 파일·모델이 읽는 문구·op 별 조각이 바이트 단위로 같아야 한다.
+
+- v10.48.0: 단건 편집을 묶음 N=1 로 보내고 퍼지 매칭을 지우기 **전**의 구현
+  (v10.47.1)으로 만들었다.
+- v10.50.0: hash mismatch 가 재읽기 지시 대신 주변 ±3줄 창을 보여 준다. 다시
+  만들 때 바뀐 사례 78건이 정확히 hash mismatch 사례 78건이고, 창을 걷어 내고
+  재전송 문장을 되돌리면 옛 문구와 바이트 단위로 같음을 확인했다(성공·결과
+  파일은 400건 모두 불변). 이후 편집 경로를 손대는 변경(턴
 디스패치 통합, 에코 형식)이 의미를 조용히 바꾸면 여기서 깨진다 — 의도한 변경이면
 말뭉치를 다시 만들고 차이를 PR 에 적는다.
 """
@@ -19,7 +24,7 @@ import pytest
 from agent_cli.tools.edit_file import apply_edits_batch_parts, tool_edit_file
 
 _CASES = json.loads(
-    (Path(__file__).parent / "fixtures" / "edit_golden_pre_v10_48.json").read_text(
+    (Path(__file__).parent / "fixtures" / "edit_golden.json").read_text(
         encoding="utf-8"
     )
 )
@@ -39,7 +44,7 @@ def test_corpus_covers_both_paths_and_failures():
 
 
 @pytest.mark.parametrize("i", range(len(_CASES)))
-def test_matches_the_pre_v10_48_implementation(tmp_path, i):
+def test_matches_the_frozen_corpus(tmp_path, i):
     case = _CASES[i]
     f = tmp_path / "f.txt"
     f.write_text(case["text"], encoding="utf-8")
