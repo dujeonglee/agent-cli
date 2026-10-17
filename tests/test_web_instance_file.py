@@ -90,6 +90,24 @@ class TestStatusFile:
         write_status_file(nested, busy=False, awaiting_input=False, viewers=0)
         assert (nested / "status.json").exists()
 
+    def test_knobs_are_additive(self, tmp_path):
+        """v10.46.0: 노브 현재 값은 ``knobs`` 로 실리고, 없으면 키가 생기지 않는다
+        (구버전 보드와 같은 모양 유지)."""
+        write_status_file(tmp_path, busy=False, awaiting_input=False, viewers=0)
+        assert "knobs" not in read_status_file(tmp_path)
+        write_status_file(
+            tmp_path,
+            busy=False,
+            awaiting_input=False,
+            viewers=0,
+            knobs={"model": "m1", "thinking": "off", "stall": 600},
+        )
+        assert read_status_file(tmp_path)["knobs"] == {
+            "model": "m1",
+            "thinking": "off",
+            "stall": 600,
+        }
+
     def test_overwrite_replaces(self, tmp_path):
         write_status_file(tmp_path, busy=True, awaiting_input=True, viewers=1)
         write_status_file(tmp_path, busy=False, awaiting_input=False, viewers=0)

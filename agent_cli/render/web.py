@@ -104,11 +104,15 @@ def _iso_to_epoch(ts) -> float | None:
 
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
-# → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
-# either republishes the status sidecar (viewers republish on register/unregister).
-_STATUS_STICKY_KEYS = frozenset(
-    {"worker_state", "input_required", "agent_roster", "knob:grammar"}
-)
+# → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents, and
+# every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
+# them republishes the status sidecar (viewers republish on register/unregister).
+_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required", "agent_roster"})
+
+
+def _flips_status(name: str) -> bool:
+    return name in _STATUS_STICKY_KEYS or name.startswith("knob:")
+
 
 # Fun default nicknames assigned to viewers on connect (browsers can't read
 # the client's OS username, so a friendly auto-label is the practical
@@ -450,7 +454,7 @@ class WebRenderer(Renderer):
                 "position": position,
             }
         self._emit(event, payload, persistent=False)
-        if name in _STATUS_STICKY_KEYS:  # busy / awaiting flipped → refresh file
+        if _flips_status(name):  # busy / awaiting / knob flipped → refresh file
             self._publish_status()
 
     def clear_sticky(self, name: str) -> None:
@@ -459,7 +463,7 @@ class WebRenderer(Renderer):
         client must NOT be handed the already-resolved prompt."""
         with self._lock:
             self._sticky.pop(name, None)
-        if name in _STATUS_STICKY_KEYS:  # awaiting cleared → refresh file
+        if _flips_status(name):  # awaiting cleared → refresh file
             self._publish_status()
 
     def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
@@ -1945,6 +1949,12 @@ class WebRenderer(Renderer):
             gslot = self._sticky.get("knob:grammar")
             grammar = bool(gslot["payload"].get("active")) if gslot else None
             auditing = self._auditing
+            # v10.46.0 — 노브 현재 값 전부 (소유자 있는 것만; sticky 가 곧 최신값)
+            knobs = {
+                slot["payload"]["name"]: slot["payload"]["value"]
+                for key, slot in self._sticky.items()
+                if key.startswith("knob:") and slot["payload"].get("available")
+            }
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1956,6 +1966,7 @@ class WebRenderer(Renderer):
                 agents=self._agents_summary_from(roster),
                 grammar=grammar,
                 auditing=auditing,
+                knobs=knobs or None,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

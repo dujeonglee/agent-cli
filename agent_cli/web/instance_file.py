@@ -94,8 +94,13 @@ def write_status_file(
     agents: dict | None = None,
     grammar: bool | None = None,
     auditing: bool | None = None,
+    knobs: dict | None = None,
 ) -> Path:
     """Atomically (over)write the live status sidecar. Returns the path.
+
+    ``knobs`` (v10.46.0, additive): 세션 노브의 현재 값 ``{name: value}`` —
+    보드가 방의 값을 거울처럼 기록해 다음 spawn 에 같은 플래그로 돌려준다
+    (방에서 🤖 로 바꾼 모델이 재시작 뒤에도 남는다). ``None`` 이면 생략.
 
     ``agents`` (v7.10.0, additive): 상주 에이전트 요약
     ``{"alive", "working", "list": [{key, profile, name, state}, ...]}`` —
@@ -112,6 +117,8 @@ def write_status_file(
         info["grammar"] = grammar
     if auditing is not None:  # v10.42.0 — 감사 런 진행 중 (board "결과 확인 중")
         info["auditing"] = auditing
+    if knobs is not None:  # v10.46.0 — 노브 현재 값 (board 거울)
+        info["knobs"] = knobs
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은

@@ -124,6 +124,14 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 - **문서가 표에서 벗어나지 못한다.** `tests/test_knobs.py::TestReadmeFollowsTheTable` — README 의 CLI 표 한 줄에 그 노브의 env 와 칩 아이콘이 함께 있고 `agent-cli knobs` 가 적혀 있다; env 표는 종전 테스트.
 - **테스트.** 단위: `TestChipShapeIsDeclaredInTheTable`(아이콘/묶음 선언, 칩 이름 충돌 없음, 배지·설명·`on`·배율, 묶음 배지=두 축의 곱, 미지원 모델의 잠김, 문법 배지 셋, 모델 options 의 방언 묶음), `TestKnobsCommand`, `tests/test_knobs_web.py::TestChipShapeComesFromTheServer`(멤버 하나 set → 다른 멤버 sticky 의 묶음 배지, 모델 전환 → 사고·노력 잠김 재송출), 정적 배선(`test_header_knob_chips_wired`: 옛 id 부재·`#knobs`·공통 CSS). 실브라우저 `tests/browser/test_knob_chips.py`: 표의 열 노브가 칩 일곱+토글 하나, 배지는 서버의 말, 입력 한 번이 소유자(ctx·registry·renderer·auditor·binding)까지 닿는 왕복(셀렉트·슬라이더 %→비율·무제한 0·bool·헤더 토글·모델 전환), 잠김(사고 미지원 → 두 셀렉트 비활성·"미지원"·사유 한 번), 묶음 배지·설명·한도 0 → 시도 잠김, 팝업 하나씩, 두 뷰어 동기화, 감사 진행 → "감사 중", 거부 되돌리기. `tests/browser/conftest.py` 의 `WebStack` 이 소유자 넷을 전부 꽂는다.
 
+### 5.3 보드는 거울이다 (agent-cli v10.46.0 + 보드 v1.36.0)
+
+- 방이 떠 있는 동안 노브의 진실은 세션 하나(소유자 넷)이고, 뷰어 간 동기화는 sticky `knob:<name>` 한 길이다(마지막 쓴 사람이 이긴다). 보드는 떠 있는 방에 **쓰지 않는다** — 두 군데서 쓰는 상태를 만들지 않기 위해.
+- agent-cli 는 노브가 바뀔 때마다 `status.json` 에 `knobs: {이름: 값}` 을 쓴다(`render/web.py::_publish_status`, 소유자 없는 노브 제외). 보드는 지금 `grammar`·`auditing` 을 읽는 길로 이 값을 읽어 카드에 보여 주고 저장값과 다르면 기록한다. HTTP 폴링 없음. 10.45.0 이하 인스턴스는 키가 없어 보드가 기록하지 않는다.
+- 다음 spawn 은 저장된 `knobs` 를 `agent-cli knobs --json` 표의 `flag` 로 인자로 바꿔 넘긴다(bool 은 `--x`/`--no-x`). 그래서 방에서 🤖 로 바꾼 모델이 재시작 뒤에도 남는다 — 종전엔 보드의 옛 `model_id` 로 되돌아갔다.
+- 보드의 노브 입력은 **새 글 폼(⚙ 고급 접기) 한 번**뿐이고 카드의 ⚙ 패널은 항상 읽기 전용이다. 모델 변경 API(`POST /api/posts/{id}/model`)와 §16 게이트는 지운다. 뜰 수 없는 방(모델 삭제·방언 미설정)은 📋 복제로 다른 모델을 골라 살린다 — 읽기 전용 규칙에 예외를 두지 않는다.
+- 테스트 `tests/test_knobs_web.py::TestStatusFileMirrorsTheKnobs`(부트 송출로 열 노브 전부, set 마다 다시 씀, 소유자 없는 노브 제외), `tests/test_web_instance_file.py::test_knobs_are_additive`.
+
 ## 6. 위험
 
 - typer 합성 시그니처는 `__signature__`·`__annotations__` 두 속성에 의존한다 — typer 를 올릴 때 `tests/test_knobs.py::TestCliSurface` 가 먼저 깨진다.
