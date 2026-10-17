@@ -723,7 +723,13 @@ def table_spec() -> list[dict]:
             "kind": type(k.kind).__name__.lower(),
             "choices": list(k.kind.choices() or ()) or None,
             "default": k.default,
-            "ui": asdict(k.ui),
+            # 묶음 노브(🧠 사고·노력, ⏳ 한도·시도)의 아이콘은 묶음 것 — 바깥(보드)은
+            # KNOB_GROUPS 를 모르므로 행마다 채워 준다
+            "ui": {
+                **asdict(k.ui),
+                "icon": k.ui.icon
+                or (KNOB_GROUPS[k.ui.group].icon if k.ui.group else ""),
+            },
         }
         for k in KNOBS
     ]

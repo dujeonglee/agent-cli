@@ -581,6 +581,12 @@ class TestKnobsCommand:
         assert (
             by["model"]["short"] == "-m" and by["model"]["ui"]["control"] == "options"
         )
+        # 묶음 노브도 아이콘을 든다 — 보드 칩이 ⚙ 로 떨어지지 않게 (v10.46.1)
+        assert (
+            by["thinking"]["ui"]["icon"] == "🧠" == by["reasoning_effort"]["ui"]["icon"]
+        )
+        assert by["stall"]["ui"]["icon"] == "⏳" and by["grammar"]["ui"]["icon"] == "📐"
+        assert all(k["ui"]["icon"] for k in spec)
         assert (
             by["thinking"]["choices"] == ["off", "on", "auto"]
             and by["thinking"]["ui"]["group"] == "thinking"
