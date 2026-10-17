@@ -84,7 +84,7 @@ class TestStartAndFinish:
         assert reg.deliver.calls[0][1]["mail"]["success"] is True
 
     def test_tail_is_capped(self, reg):
-        job = reg.start("for i in $(seq 1 20); do echo line$i; done", owner="main")
+        reg.start("for i in $(seq 1 20); do echo line$i; done", owner="main")
         assert _wait(lambda: reg.deliver.calls)  # 통지 배달까지(rc 는 그보다 먼저 선다)
         text = reg.deliver.reports[0]
         assert "line13" in text and "line12" not in text  # 마지막 8줄
