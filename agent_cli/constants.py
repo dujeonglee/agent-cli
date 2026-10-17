@@ -391,27 +391,29 @@ def browser_knobs() -> dict:
 
 # ── 감사자 (docs/auditor/DESIGN.md, v10.42.0) ──────────────────────────────
 
-#: 하니스가 띄우는 상주 감사자의 프로파일·인스턴스 이름 — 둘이 같아 채널 칩은
-#: `auditor` 하나다. `spawn` 의 표시 이름 중복 거부가 "항상 하나" 를 보장한다.
+#: 하니스 작업 `auditor` 의 이름 — 프로파일 파일(`agents/harness/auditor.md`),
+#: 런 디렉토리(`harness/auditor/<a>-<b>/`), 메일의 `job`, main 채널 칩이 전부 이
+#: 하나다.
 AUDITOR_NAME = "auditor"
 
-#: main 의 사용자 런이 끝날 때마다 하니스가 감사자에게 보내는 요청
-#: (`runtime.SessionAuditor.run_ended`, expects_reply=True) — 감사자가 알아야 할
-#: 하니스 사실은 셋뿐이다: 세션 id(history 도구의 범위·파일 필터), 감사할 서수
-#: 구간, 그리고 답은 `reply` 로 돌아와야 한다는 것(회신 빚이 complete 를 막는다).
+#: main 의 사용자 런이 끝날 때마다 하니스가 감사 작업에 주는 과제
+#: (`harness.auditor.SessionAuditor.run_ended`) — 감사자가 알아야 할 하니스 사실은
+#: 셋뿐이다: 세션 id(history 도구의 범위·파일 필터), 감사할 서수 구간, 그리고
+#: 보고는 `complete` 의 result 라는 것(하니스가 그걸 main 에게 전한다 — 4판).
 AUDIT_REQUEST = (
     "Audit main's run that just ended: history seq {a}..{b} of session {session} "
     "(main's history file: {history}).\n"
     'EVERY history call must pass sessions:"{session}" and the filter '
-    "loc LIKE '{session}/history.jsonl:%' (without them you read your own history, "
-    "which that table also holds), and read only rows with seq BETWEEN {a} AND {b}.\n"
-    "Judge every request in that range as your profile says and send the report "
-    "with `reply` — this request owes a reply; `complete` is not a report."
+    "loc LIKE '{session}/history.jsonl:%' (that table also holds the session's "
+    "other agents' files), and read only rows with seq BETWEEN {a} AND {b}.\n"
+    "Judge every request in that range as your profile says. Your `complete` "
+    "result IS the report — the harness delivers it to main; there is nobody "
+    "else to tell."
 )
 
 
 def auditor_enabled() -> bool:
-    """`AGENT_CLI_AUDITOR=1` — 세션 감사자를 띄운다 (v10.42.0, 기본 꺼짐)."""
+    """`AGENT_CLI_AUDITOR=1` — 세션 감사자를 켠다 (v10.42.0, 기본 꺼짐)."""
     import os
 
     return os.environ.get("AGENT_CLI_AUDITOR", "").strip().lower() in (

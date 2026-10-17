@@ -1448,6 +1448,7 @@ def run(
     # 회신의 세션-넘김 보존은 P3(manifest/outbox). 생성은 skill dispatch
     # 앞 (v7.17.0 배선 통일 — execute_skill 이 main 슬롯에서 자동 상속),
     # restore/auto_spawn/waker 배선은 종전 위치 그대로 dispatch 뒤.
+    auditor = None  # 🔎 wire_agent_mail 이 채운다 — finally 가 먼저 닿아도 안전
     agent_registry = build_agent_registry(
         ctx.session_dir if ctx else None,
         AgentRuntime(
@@ -1574,11 +1575,14 @@ def run(
                     agent_registry=agent_registry,
                     monitors=monitor_registry,
                     schedules=schedule_registry,
+                    harness=auditor,
                     on_wait=lambda kind: console.print(
                         f"[{C['muted']}]"
                         + (
                             _monitor_wait_notice(monitor_registry)
                             if kind == "monitors"
+                            else _HARNESS_WAIT_NOTICE
+                            if kind == "harness"
                             else _schedule_wait_notice(schedule_registry)
                         )
                         + "[/]"
@@ -1610,13 +1614,14 @@ def run(
             mcp_manager,
             agent_registry=agent_registry,
             monitors=monitor_registry,
+            harness=auditor,
             warn_stuck=warn_stuck,
         )
         schedule_registry.stop()
 
 
 def web_instance_is_active(
-    renderer, server, agent_registry, monitors=None, schedules=None
+    renderer, server, agent_registry, monitors=None, schedules=None, harness=None
 ) -> bool:
     """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
 
@@ -1644,6 +1649,7 @@ def web_instance_is_active(
             pending_count=server.pending_count(),
             monitors=monitors,
             schedules=schedules,
+            harness=harness,
         )
     )
 
@@ -1704,19 +1710,17 @@ def _previous_monitors_notice(session_dir) -> str:
     )
 
 
+_HARNESS_WAIT_NOTICE = (
+    "🔎 감사가 끝나길 기다립니다 — 결과는 main 에게 전달되고, 그 런이 끝나면 종료합니다"
+)
+
+
 def _auditor_boot_line(auditor) -> str:
-    """감사자 부팅 결과(`SessionAuditor.outcome`) 한 줄 — run 콘솔·web 상태 공용.
-    빈 문자열 = 알릴 것 없음(노브 off·변화 없음·세션 없음)."""
-    outcome = auditor.outcome if auditor is not None else ""
-    if not outcome:
+    """감사자 부팅 상태 한 줄 — run 콘솔·web 상태 공용. 켜져 있을 때만 알린다
+    (기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끈다). 빈 문자열 = 알릴 것 없음."""
+    if auditor is None or not auditor.enabled:
         return ""
-    if outcome.startswith("error:"):
-        return f"🔎 감사자를 띄우지 못했습니다 — {outcome[6:].strip()}"
-    return {
-        "spawned": "🔎 세션 감사자 상주 시작 (AGENT_CLI_AUDITOR=1)",
-        "resumed": "🔎 세션 감사자 부활 (AGENT_CLI_AUDITOR=1)",
-        "killed": "🔎 감사자를 내렸습니다 (AGENT_CLI_AUDITOR 꺼짐)",
-    }.get(outcome, f"🔎 감사자: {outcome}")
+    return "🔎 세션 감사자 켜짐 (AGENT_CLI_AUDITOR=1) — 사용자 런마다 그 런의 기록을 감사합니다"
 
 
 def _announce_agent_boot(
@@ -1758,6 +1762,9 @@ def _agent_mail_notice(reply: dict) -> None:
         line = f"❓ 에이전트 {key} 미답 질문 독촉"
     elif kind == "answer":
         line = f"💬 {key} 답변 도착"
+    elif kind == "harness":
+        # 하니스 작업(감사)의 결과 — 에이전트 회신이 아니다 (v10.42.0)
+        line = f"🔎 {reply.get('job') or 'harness'} 결과 도착"
     else:
         line = f"📨 에이전트 {key} 회신 도착"
     try:
@@ -1798,6 +1805,7 @@ def _finalize_run(
     *,
     agent_registry=None,
     monitors=None,
+    harness=None,
     warn_stuck=False,
 ) -> None:
     """Finalize session after run command — 공용 teardown_session 위임
@@ -1811,6 +1819,7 @@ def _finalize_run(
         agent_registry=agent_registry,
         mcp_manager=mcp_manager,
         monitors=monitors,
+        harness=harness,
         warn_stuck=warn_stuck,
     )
     if session is None:
@@ -2379,6 +2388,7 @@ def web(
 
     # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
     agent_registry = None
+    auditor = None  # 🔎 세션 감사자 핸들 — worker 부트가 채운다 (v10.42.0)
     # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
     from agent_cli.runtime import (
@@ -2426,7 +2436,7 @@ def web(
             wire_agent_mail,
         )
 
-        nonlocal agent_registry
+        nonlocal agent_registry, auditor
         agent_registry = build_agent_registry(
             ctx.session_dir if ctx else None,
             AgentRuntime(
@@ -2458,7 +2468,12 @@ def web(
             enqueue_wake=server.enqueue_system,
             on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
+            # 감사 런 진행 중 → status.json `auditing` (board "결과 확인 중")
+            on_harness_change=renderer.note_harness,
         )
+        server.auditor = auditor  # 🔎 칩의 /api/auditor 가 켜고 끈다
+        if auditor is not None:
+            renderer.broadcast_auditor(auditor.state())
         _announce_agent_boot(
             renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
         )
@@ -2653,6 +2668,7 @@ def web(
                 agent_registry,
                 monitor_registry,
                 schedule_registry,
+                harness=auditor,
             ),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
@@ -2692,6 +2708,7 @@ def web(
                 agent_registry=agent_registry,
                 mcp_manager=mcp_manager,
                 monitors=monitor_registry,
+                harness=auditor,
             )
             schedule_registry.stop()
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

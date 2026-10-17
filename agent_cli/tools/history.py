@@ -182,13 +182,15 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
     """
     from agent_cli.context._file_extract import extract_file_paths
     from agent_cli.context.records import _classify_record
+    from agent_cli.context.session import conversation_history_files
 
     rows: list[tuple] = []
     for sdir in target_dirs:
         if not sdir.is_dir():
             continue
         session_id = sdir.name
-        for hp in sorted(sdir.rglob("history.jsonl")):
+        # 배치는 context.session 이 안다 — 하니스 작업의 기록은 대화가 아니다.
+        for hp in conversation_history_files(sdir):
             rel = hp.relative_to(sdir)
             try:
                 with open(hp, encoding="utf-8") as f:

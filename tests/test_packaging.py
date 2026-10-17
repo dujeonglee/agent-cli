@@ -40,7 +40,11 @@ def _covered(rel: str, patterns: list[str]) -> bool:
 
 class TestBuiltinResourcesPackaged:
     def _builtin_files(self) -> list[str]:
-        roots = [_PKG / "agents" / "builtin", _PKG / "skills" / "builtin"]
+        roots = [
+            _PKG / "agents" / "builtin",
+            _PKG / "agents" / "harness",  # 하니스 작업 프로파일 (v10.42.0)
+            _PKG / "skills" / "builtin",
+        ]
         out: list[str] = []
         for root in roots:
             for f in root.rglob("*.md"):

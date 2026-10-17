@@ -198,6 +198,9 @@ class WebRenderer(Renderer):
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
         self._worker_busy = False
+        # 🔎 감사 런 진행 중 (v10.42.0) — status.json `auditing` 의 소스. 하니스
+        # 작업 실행기의 on_change 가 note_harness 로 갱신한다.
+        self._auditing = False
         # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
         # consumes it each LLM call to rebuild its system prompt.
         self._directives_dirty = False
@@ -884,6 +887,24 @@ class WebRenderer(Renderer):
         """📐 문법 제약 상태(``{override, supported, active}``)를 sticky 로 —
         칩 동기화·재접속 snapshot·status.json(``grammar``) 의 한 소스 (v9.24.0)."""
         self.set_sticky("grammar_mode", "grammar_mode", dict(state))
+
+    def broadcast_auditor(self, state: dict) -> None:
+        """🔎 세션 감사자 상태(``{enabled, available, in_flight}``)를 sticky 로 —
+        칩 동기화·재접속 snapshot 의 한 소스 (v10.42.0)."""
+        self.set_sticky("auditor_mode", "auditor_mode", dict(state))
+
+    def note_harness(self, in_flight: int) -> None:
+        """하니스 작업(감사) 진행 수가 바뀌었다 — status.json ``auditing`` 갱신
+        (board 가 "결과 확인 중" 을 그린다). 하니스 작업 스레드에서 불린다."""
+        with self._lock:
+            self._auditing = in_flight > 0
+            slot = self._sticky.get("auditor_mode")
+            payload = dict(slot["payload"]) if slot else None
+        self._publish_status()
+        if payload is not None:  # 🔎 칩의 "감사 중" 배지도 같은 sticky 로 산다
+            self.set_sticky(
+                "auditor_mode", "auditor_mode", {**payload, "in_flight": in_flight}
+            )
 
     def broadcast_thinking(self, override: dict) -> None:
         """세션 thinking 오버라이드(사고/노력) 변경을 sticky 로 전파 — 여러 뷰어의
@@ -1964,6 +1985,7 @@ class WebRenderer(Renderer):
             roster = slot["payload"].get("roster") if slot else None
             gslot = self._sticky.get("grammar_mode")
             grammar = bool(gslot["payload"].get("active")) if gslot else None
+            auditing = self._auditing
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1974,6 +1996,7 @@ class WebRenderer(Renderer):
                 viewers=viewers,
                 agents=self._agents_summary_from(roster),
                 grammar=grammar,
+                auditing=auditing,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

@@ -2675,6 +2675,14 @@
     document.dispatchEvent(new CustomEvent("agentcli:grammarmode", { detail: d }));
   });
 
+  es.addEventListener("auditor_mode", function (e) {
+    // 🔎 세션 감사자 상태 동기화 (v10.42.0) — 다른 뷰어가 켜고 끄면(또는 부팅
+    // 초기값) sticky 로.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:auditormode", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("thinking_mode", function (e) {
     // 🧠 사고/노력 컨트롤 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
     document.dispatchEvent(
@@ -5040,6 +5048,60 @@
 
   $mode.addEventListener("change", post);
   document.addEventListener("agentcli:grammarmode", (e) => apply(e.detail || {}));
+})();
+
+// 🔎 세션 감사자 칩 (v10.42.0) — 📐 문법 노브와 같은 틀. 상태(enabled/available/
+// in_flight)는 /api/auditor 가 주고 sticky(auditor_mode)로 뷰어끼리 동기화한다.
+(function () {
+  "use strict";
+  const $wrap = document.getElementById("auditor-wrap");
+  const $mode = document.getElementById("auditor-mode");
+  const $badge = document.getElementById("auditor-badge");
+  const $info = document.getElementById("auditor-info");
+  if (!$wrap || !$mode || !$badge || !$info) return;
+
+  function apply(d) {
+    const on = !!(d && d.enabled);
+    const busy = !!(d && d.in_flight > 0);
+    $mode.value = on ? "on" : "off";
+    $wrap.classList.toggle("is-on", on);
+    // 배지는 사실을 말한다: 감사 중 / 켬 / 끔 (끄더라도 진행 중 감사는 끝까지 돈다).
+    $badge.textContent = busy ? "감사 중" : on ? "켬" : "끔";
+    $info.textContent = busy
+      ? "감사 런이 돌고 있습니다 — 결과는 main 채널에 카드로 옵니다."
+      : on
+        ? "다음 사용자 런부터, 런이 끝날 때마다 그 런의 기록만 읽는 감사 런이 돕니다."
+        : "이 세션에서는 감사하지 않습니다.";
+  }
+
+  function post() {
+    fetch("api/auditor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: $mode.value === "on" }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.ok) apply(d);
+      })
+      .catch(() => {});
+  }
+
+  fetch("api/auditor")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d || !d.available) return; // 세션 없음 — 감사할 history 가 없다
+      apply(d);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  $mode.addEventListener("change", post);
+  document.addEventListener("agentcli:auditormode", (e) => {
+    const d = e.detail || {};
+    if (d.available) $wrap.hidden = false;
+    apply(d);
+  });
 })();
 
 // ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort)를 /api/thinking 으로 저장 →
