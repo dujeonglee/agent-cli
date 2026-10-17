@@ -195,6 +195,53 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
         return None, user_comment
 
 
+def _guard(cmd: str) -> tuple[str | None, str]:
+    """위험 키워드 확인 + 워크스페이스 봉쇄 — 포그라운드·백그라운드가 같은 문.
+    ``(거부 사유 | None, 승인 코멘트)``."""
+    denied, user_comment = confirm_dangerous(cmd)
+    if denied:
+        return denied, ""
+    from agent_cli.tools import _confine
+
+    denial = _confine.guard(
+        _confine.extract_shell_paths(cmd), "shell command", command=cmd
+    )
+    return (denial or None), user_comment
+
+
+def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
+    """``background: true`` (v10.47.0, docs/jobs/DESIGN.md) — 하니스가 자식으로
+    띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다."""
+    from agent_cli.jobs import JobsUnavailable, get_job_registry
+
+    cmd = args.get("command", "")
+    denied, _comment = _guard(cmd)
+    if denied:
+        return ToolResult(False, error=denied)
+    reg = get_job_registry()
+    if reg is None:
+        return ToolResult(
+            False,
+            error="background jobs are not available in this run — run it in the "
+            "foreground with a timeout instead",
+        )
+    try:
+        job = reg.start(cmd, owner=owner)
+    except JobsUnavailable as exc:
+        return ToolResult(False, error=str(exc))
+    except OSError as exc:
+        return ToolResult(False, error=f"could not start the job: {exc}")
+    return ToolResult(
+        True,
+        output=(
+            f"job #{job.id} started (pid {job.pid}) — output goes to "
+            f"{job.log.as_posix()}. You will be told when it ends, with its exit "
+            f"code and the log's last lines; keep working meanwhile. To stop it: "
+            f"`kill {job.pid}`."
+        ),
+    )
+
+
 def tool_shell(args: dict) -> ToolResult:
     """Run a shell command and return stdout/stderr."""
 
@@ -204,26 +251,12 @@ def tool_shell(args: dict) -> ToolResult:
             False, error="Empty command. Provide a shell command to execute."
         )
 
-    denied, user_comment = confirm_dangerous(cmd)
+    denied, user_comment = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
 
-    # Workspace confinement: best-effort extract literal path tokens (absolute
-    # paths + ``..`` escapes) and gate any that fall outside the workspace. This
-    # is separate from the dangerous-keyword guard above (a command can be
-    # outside-workspace without being destructive, and vice-versa). Blind to
-    # paths inside $(...) / python -c / variables — documented in _confine.
-    from agent_cli.tools import _confine
-
-    # Pass the raw command so the confirm can highlight the offending
-    # out-of-workspace path tokens inside it (action stays generic — the command
-    # itself is now shown, not duplicated in the prompt text).
-    denial = _confine.guard(
-        _confine.extract_shell_paths(cmd), "shell command", command=cmd
-    )
-    if denial:
-        return ToolResult(False, error=denial)
-
+    # (Workspace confinement rides in ``_guard`` — best-effort literal path
+    # tokens, blind to $(...) / python -c / variables; documented in _confine.)
     timeout = int(args.get("timeout", 120))
     try:
         # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and
@@ -259,7 +292,13 @@ def tool_shell(args: dict) -> ToolResult:
 
 class ShellTool(Tool):
     name = "shell"
-    description = "Run a shell command and return stdout/stderr."
+    description = (
+        "Run a shell command and return stdout/stderr. For anything that may "
+        "run longer than about a minute (a test suite, a build, an install, a "
+        "large clone) pass background=true: the harness starts it for you, "
+        "sends its output to a log under .agent-cli/tmp/jobs/ and tells you "
+        "when it ends (exit code + last lines) — keep working meanwhile."
+    )
     oversized_retry_hint = (
         "narrow the command itself: add `grep`/`head`/`tail`, target fewer "
         "files, or pass a quieter flag (-q/--no-progress) so the bulk is never "
@@ -284,10 +323,19 @@ class ShellTool(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Max seconds before the command is killed (default 120). "
-                    "RAISE it for long-running commands — builds, installs "
-                    "(pip/npm), large git clone/pull, or test suites — e.g. "
-                    "300-600; otherwise they're killed at the default."
+                    "Max seconds before a FOREGROUND command is killed (default "
+                    "120). Do not raise it to sit through a long command — use "
+                    "background=true for that. Raise it only for a short wait "
+                    "you must block on."
+                ),
+            },
+            "background": {
+                "type": "boolean",
+                "description": (
+                    "true = start the command as a background job owned by the "
+                    "harness (returns at once with the job id, pid and log path; "
+                    "you are notified when it ends). Use for test suites, builds, "
+                    "installs — anything over about a minute."
                 ),
             },
         },
@@ -307,4 +355,13 @@ class ShellTool(Tool):
         return self.strip_prefix(action_input).get("command") or ""
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        if args.get("background") is True or str(
+            args.get("background", "")
+        ).lower() in (
+            "true",
+            "1",
+            "yes",
+        ):
+            owner = getattr(ctx, "owner", None) or "main"
+            return tool_shell_background(args, owner=owner)
         return tool_shell(args)

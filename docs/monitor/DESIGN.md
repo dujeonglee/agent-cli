@@ -603,3 +603,12 @@ def parse_duration(raw: str) -> int:
 **재사용 주장은 그 대상을 직접 읽어 확인하기 전까지 가설이다.** 초판은 셋 다
 이름만 보고 성질을 추정했다. v9.9.x 의 `~` 구멍도 같은 모양이었다(추출기는
 `~/` 를 후보로 잡는데 해소기가 확장을 안 함 — 두 함수 사이에서만 보였다).
+
+## 12. `match` 의 조용함 한도 (v10.47.0)
+
+셸 안내 문구 A/B(2026-10-17, docs/jobs/DESIGN.md §1)에서 `match` 가 두 번 run 을 멈췄다: 스크립트가 쓰지 않는 `^EXIT_CODE=` 를 기다린 경우와, 모델의 `pkill` 이 끝 줄을 쓸 서브셸까지 죽여 writer 가 사라진 경우. 둘 다 deadline(2시간)까지 아무 일도 없었다.
+
+- `MatchCondition(file, pattern, silent_s)` — 매 틱 파일의 `(size, mtime)` 를 `st["sig"]` 로 들고, 바뀌면 `st["last_change"]` 를 갱신한다. `silent_s` 동안 안 바뀌면(없는 파일은 등록 시각부터) `Match(retire=…)` 를 돌려주고 레지스트리가 `_retire` 로 **마지막 보고를 남기고** 물러난다. 보고문: `silent for 10m without a match — the file unchanged since HH:MM:SS | never appeared; the writer is probably gone. Retiring (set \`silent\` to change the limit).`
+- 도구: `monitor add … silent: "10m"` (문자열 기간, `0` = 끔). 기본 `MONITOR_SILENT_DEFAULT_S = 600`. `silence` 타입은 그대로다 — 그건 조건 자체이고 이건 `match` 의 안전장치다.
+- 테스트 `tests/test_monitor_silent.py`: 기본·사용자값·0·잘못된 값, 생기지 않는 파일, 변하면 시계 리셋, 한도 전 매치 우선, `silence` 불변, 영속 설명 불변.
+

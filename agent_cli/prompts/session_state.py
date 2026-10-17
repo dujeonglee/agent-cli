@@ -165,6 +165,7 @@ def build_session_state(
     memory: str = "",
     requests: str = "",
     debts: str = "",
+    jobs: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
     compaction_notice: bool = False,
@@ -207,9 +208,17 @@ def build_session_state(
     """
     # ``requests`` 를 먼저 — 미답 요청은 "지금 무엇을 결정해야 하나" 에
     # 가장 가깝다. 꼬리 안에서도 앞이 눈에 띈다.
+    # ``jobs`` (v10.47.0): 이 루프가 띄운 백그라운드 작업(PID·로그) — 끝나면
+    # 통지가 오므로 돌고 있는 것만 보인다 (docs/jobs/DESIGN.md).
     blocks = [
         b
-        for b in (requests.strip(), debts.strip(), agents.strip(), memory.strip())
+        for b in (
+            requests.strip(),
+            debts.strip(),
+            jobs.strip(),
+            agents.strip(),
+            memory.strip(),
+        )
         if b
     ]
     ctx_line = _context_line(turn, max_turns)

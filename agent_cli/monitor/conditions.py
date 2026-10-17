@@ -31,9 +31,12 @@ COMMAND_TIMEOUT_S = 30
 
 @dataclass
 class Match:
-    """조건 발화 1건. ``lines`` 가 보고문 본문이 된다."""
+    """조건 발화 1건. ``lines`` 가 보고문 본문이 된다. ``retire`` 가 비어 있지
+    않으면 발화가 아니라 **물러남**(사유) — 레지스트리가 마지막 보고를 남기고
+    감시를 해제한다 (v10.47.0 `match` 의 조용함 한도)."""
 
     lines: list[str] = field(default_factory=list)
+    retire: str = ""
 
 
 class Condition(ABC):
@@ -140,10 +143,14 @@ class MatchCondition(Condition):
 
     type = "match"
 
-    def __init__(self, file: str, pattern: str):
+    def __init__(self, file: str, pattern: str, silent_s: int = 0):
         self.file = file
         self.pattern = pattern
         self._re = re.compile(pattern)
+        #: 조용함 한도(초, v10.47.0): 파일이 이만큼 안 바뀌면(없는 채로도) 물러난다.
+        #: 0 = 끔. 셸 A/B 실측: 끝 줄을 안 쓰는 로그·죽은 producer 의 로그를 2시간
+        #: 기다리다 run 이 멈췄다 — 멈춤을 깨우기로 바꾼다.
+        self.silent_s = max(0, int(silent_s))
 
     @classmethod
     def from_spec(cls, spec: dict) -> MatchCondition:
@@ -157,7 +164,17 @@ class MatchCondition(Condition):
             re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"match: bad regex {pattern!r} — {exc}") from None
-        return cls(file, pattern)
+        from agent_cli.constants import MONITOR_SILENT_DEFAULT_S, parse_duration
+
+        raw = spec.get("silent")
+        if raw in (None, ""):
+            silent_s = MONITOR_SILENT_DEFAULT_S
+        else:
+            try:
+                silent_s = parse_duration(str(raw))
+            except ValueError as exc:
+                raise ValueError(f"match: silent — {exc}") from None
+        return cls(file, pattern, silent_s)
 
     def describe(self) -> str:
         return f"match · {self.file}"
@@ -221,9 +238,35 @@ class MatchCondition(Condition):
                 return ln
         return None
 
+    def _silent(self, st: dict, stt: os.stat_result | None, now: float) -> Match | None:
+        """조용함 한도 — 파일의 (크기, mtime) 가 마지막으로 바뀐 시각을 ``st`` 에
+        들고, 한도를 넘으면 물러남을 돌려준다. 없는 파일은 등록 시각부터 센다."""
+        if not self.silent_s:
+            return None
+        sig = (stt.st_size, stt.st_mtime) if stt is not None else None
+        if st.get("sig") != sig:
+            st["sig"] = sig
+            st["last_change"] = now
+            return None
+        since = st.get("last_change") or st.get("registered_at") or now
+        if now - since < self.silent_s:
+            return None
+        m = self.silent_s // 60
+        when = time.strftime("%H:%M:%S", time.localtime(since))
+        what = "never appeared" if stt is None else f"unchanged since {when}"
+        return Match(
+            retire=(
+                f"silent for {m}m without a match — the file {what}; the writer is "
+                f"probably gone. Retiring (set `silent` to change the limit)."
+            )
+        )
+
     def check(self, st: dict, *, now: float) -> Match | None:
         path = Path(self.file).expanduser()
         stt = _stat(path)
+        quiet = self._silent(st, stt, now)
+        if quiet is not None:
+            return quiet
         if stt is None:
             # 아직 없는 파일 = **대기**, 죽음이 아니다. 스크립트가 나중에
             # 만드는 로그가 정상 경로다(§9 테스트 계획). 나타나면 전부 새

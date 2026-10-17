@@ -40,8 +40,10 @@ class MonitorTool(Tool):
         "PYTHONUNBUFFERED=1, or stdbuf -oL.\n"
         "For an exit code, make the script write one: "
         "( CMD; echo \"EXIT:$?\" ) > /tmp/x.log 2>&1 &  then match '^EXIT:'.\n"
-        "deadline defaults to 2h (60s-24h). once defaults to true — the monitor "
-        "retires after one report. Optional run='<cmd>' executes before the "
+        "deadline defaults to 2h (60s-24h). A `match` also retires (with a "
+        "report) when the file stays unchanged for `silent` (default 10m, 0 = "
+        "off) — a dead writer wakes you instead of hanging. once defaults to "
+        "true — the monitor retires after one report. Optional run='<cmd>' executes before the "
         "report and its exit code is included. You are always notified; there "
         "is no silent action.\n"
         "For periodic work on a clock prefer `schedule` — it is saved with the "
@@ -74,6 +76,13 @@ class MonitorTool(Tool):
             "once": {
                 "type": "boolean",
                 "description": "add: retire after the first report (default true)",
+            },
+            "silent": {
+                "type": "string",
+                "description": (
+                    "add, match only: retire with a report when the file has not "
+                    "changed for this long — '10m', '600', '0' = off (default 10m)"
+                ),
             },
             "id": {"type": "string", "description": "delete: monitor id from list"},
         },
@@ -127,8 +136,11 @@ class MonitorTool(Tool):
         from agent_cli.constants import MONITOR_DEADLINE_DEFAULT_S, parse_duration
         from agent_cli.monitor import build
 
+        when = dict(args.get("when") or {})
+        if args.get("silent") not in (None, ""):
+            when["silent"] = args.get("silent")  # match 만 읽는다
         try:
-            cond = build(args.get("when") or {})
+            cond = build(when)
         except ValueError as exc:
             # 문법 오류는 **ToolResult** 로 — 예외는 도구 경계를 못 넘는다
             # (constants.parse_duration 과 같은 분업).

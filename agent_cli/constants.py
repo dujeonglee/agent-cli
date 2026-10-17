@@ -279,6 +279,8 @@ MONITOR_DEADLINE_DEFAULT_S = 7200  # 2h — 빠뜨려도 등록이 성공한다
 MONITOR_DEADLINE_MIN_S = 60  # 1m
 MONITOR_DEADLINE_MAX_S = 86400  # 24h — 그 이상은 배치 작업이고 board 소관
 MONITOR_INTERVAL_MIN_S = 60  # 주기 `command` 의 `every` 하한
+#: `match` 의 조용함 한도 기본 (v10.47.0): 파일이 이만큼 안 바뀌면 물러난다 (0 = 끔)
+MONITOR_SILENT_DEFAULT_S = 600
 #: `match` 등록 때 파일이 이미 있고 **모델의 마지막 관찰 이후**에 수정됐으면 이
 #: 크기까지는 내용 전부를 새 줄로 본다(커서 0 → 다음 틱 발화). 결과·상태 파일
 #: (`done.txt`)과 누적 로그를 가르는 대용 지표 — 로그는 mtime 이 방금이어도 앞쪽

@@ -340,6 +340,15 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "source": "harness",
         }
 
+    if reply.get("kind") == "job":
+        # 백그라운드 작업 종료 통지 (v10.47.0) — 모니터 보고와 같은 모양의 관찰
+        return {
+            "role": "user",
+            "tool": "job",
+            "success": bool(reply.get("success")),
+            "content": reply.get("output") or "",
+        }
+
     if reply.get("kind") == "monitor":
         # 종전 `AgentLoop._deliver_monitor_reports` 가 만들던 것과 **같은**
         # 레코드다 — 배달 경로만 두 번째 drain 지점에서 메일박스로 옮겼다.
@@ -825,6 +834,9 @@ class AgentRegistry:
         #: 배선 안 된 레지스트리(테스트 픽스처 다수)는 `None` 이라 모든
         #: 소비 지점이 가드한다.
         self.monitors = None
+        #: 백그라운드 작업 레지스트리 (v10.47.0) — `wire_job_delivery` 가 꽂는다;
+        #: 워커 종료가 `_drop_monitors` 와 같은 자리에서 그 에이전트의 작업을 죽인다
+        self.jobs = None
         # 귀속 승계 (v8.5.0): 현재 런이 서비스 중인 USER 들 — worker 가 런
         # 시작에, main 루프가 조향 주입마다 갱신. main 발신 request 가 이
         # 스냅샷을 아이템에 실어 보내고, 그 회신이 그대로 되가져와 회신을
@@ -1344,14 +1356,16 @@ class AgentRegistry:
         )
 
     def _drop_monitors(self, key: str) -> int:
-        """이 에이전트가 건 감시를 폐기 — 배선 안 됐으면 no-op."""
-        mons = self.monitors
-        if mons is None:
-            return 0
-        try:
-            return mons.drop_owner(f"agent:{key}")
-        except Exception:
-            return 0
+        """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — 배선 안 됐으면 no-op."""
+        n = 0
+        for reg in (self.monitors, self.jobs):
+            if reg is None:
+                continue
+            try:
+                n += reg.drop_owner(f"agent:{key}")
+            except Exception:
+                pass
+        return n
 
     def _purge_questions_for(self, key: str) -> None:
         """에이전트 사망 정리 — **양방향** (§3.8).
