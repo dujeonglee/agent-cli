@@ -605,18 +605,26 @@ class TestStaticUI:
             assert gone not in js, gone
         assert ".detail-panel" not in css
 
-    def test_grammar_state_is_available_before_create_app(self, tmp_path):
-        """부트(main.py web)는 `create_app` 전에 초기 sticky 를 내보낸다 —
-        `grammar_state` 가 앱 클로저가 아니라 WebServer 메서드여야 한다(실기동
-        AttributeError 로 잡힘)."""
+    def test_health_grammar_is_the_knob_state(self, tmp_path):
+        """`/api/health.grammar` 는 📐 노브 상태 한 장의 `active` — 종전 별도
+        `grammar_state()` 계산(중복)은 v10.45.0 에서 삭제."""
         from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.binding_support import make_binding
 
         renderer = WebRenderer(session_dir=str(tmp_path))
         server = WebServer(
             renderer, token="t", ctx=ContextManager(session_dir=str(tmp_path))
         )
-        st = server.grammar_state()  # create_app 이전
-        assert st == {"override": None, "supported": None, "active": False}
+        client = TestClient(create_app(server))
+        assert client.get("/api/health").json()["grammar"] is False  # 능력 미확인
+        server.binding = make_binding(
+            capabilities=ModelCapabilities(32768, 4096, True, supports_grammar=True)
+        )
+        assert client.get("/api/health").json()["grammar"] is True
+        server.ctx.set_grammar_override(False)
+        assert client.get("/api/health").json()["grammar"] is False
+        assert not hasattr(server, "grammar_state")
 
     def test_agent_channel_bar_and_routing_wired(self, server_and_client):
         """대화 채널 칩 바(main/agent)로 채널을 고르고, **타임라인이 그 채널로
