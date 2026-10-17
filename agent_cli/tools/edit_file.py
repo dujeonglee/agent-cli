@@ -1,73 +1,42 @@
-"""Edit file tool with hashline verification and fuzzy matching."""
+"""Edit file tool — hashline-verified edits, one apply core (v10.48.0).
+
+A single ``edit_file`` op and a run of same-file ops go through the SAME core
+(:func:`apply_edits_batch_parts`): resolve every ref against one read, reject
+overlaps, apply bottom-up, write once. A lone op is a batch of one — there is
+no second implementation of the op semantics to drift. Fuzzy ref matching was
+removed in v10.48.0: its acceptance condition (the NORMALIZED current line
+hashing to the ORIGINAL line's tag) almost never holds, and it fired 0 times in
+460 recorded edits; a stale ref is a hash mismatch and the model re-reads.
+"""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
-from agent_cli.tools.read_file import (
-    _parse_ref,
-    _verify_ref,
-    compute_line_hash,
-)
+from agent_cli.tools.read_file import _verify_ref
 from agent_cli.tools.result import ToolResult
 
 #: Edit operations — single source for the schema ``enum`` and the checks.
 EDIT_OPS = ("replace", "append", "prepend", "delete")
 
 
-def _normalize_for_fuzzy(text: str) -> str:
-    """Normalize text for fuzzy comparison."""
-    # Whitespace: tabs to spaces, collapse multiple spaces
-    text = text.replace("\t", " ")
-    text = re.sub(r" {2,}", " ", text)
-    text = text.strip()
-    # Quotes: smart quotes to straight
-    text = text.replace("‘", "'").replace("’", "'")
-    text = text.replace("“", '"').replace("”", '"')
-    # Dashes: em/en/minus to hyphen
-    text = text.replace("—", "-").replace("–", "-").replace("−", "-")
-    return text
-
-
-def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
-    """Try exact verify first, then fuzzy match on failure.
-
-    Returns (0-based index, was_fuzzy). Raises RuntimeError if both fail.
-    """
+def _resolve_ref(lines: list[str], ref: str) -> int:
+    """Exact ref → 0-based index. A hash mismatch keeps the edit tool's own
+    wording (the file moved since the read — re-read and retry); parse and
+    range errors pass through from ``_verify_ref`` unchanged."""
     try:
-        idx = _verify_ref(lines, ref)
-        return idx, False
-    except RuntimeError:
-        # Try fuzzy: re-parse ref, compare normalized content
-        line_num, expected_hash = _parse_ref(ref)
-        if line_num < 1 or line_num > len(lines):
+        return _verify_ref(lines, ref)
+    except RuntimeError as exc:
+        if not str(exc).startswith("Hash mismatch"):
             raise
-
-        # The hash mismatch might be due to whitespace/quote differences.
-        # Check if the line at this position is "close enough" by comparing
-        # normalized versions.
-        actual_line = lines[line_num - 1]
-
-        # We don't have the original line content, only the hash.
-        # So fuzzy matching works by trusting the line number
-        # if the hash is only off due to normalization differences.
-        # Recompute hash on normalized content to see if it matches.
-        norm_hash = compute_line_hash(line_num, _normalize_for_fuzzy(actual_line))
-        if norm_hash == expected_hash:
-            return line_num - 1, True
-
-        # Hash mismatch even after normalization — the file changed since the
-        # last read_file (external write, or an earlier edit_file op this turn
-        # shifted/rewrote this line). Re-read to get fresh hashline tags.
+        line_num = str(exc).split("line ", 1)[1].split(":", 1)[0]
         raise RuntimeError(
             f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
-            f"current content. Re-read the file with read_file to get fresh "
-            f"hashline tags, then retry."
-        )
+            f"current content.{_RETRY_HINT}"
+        ) from None
 
 
 def _op_label(ed: dict) -> str:
@@ -87,14 +56,12 @@ def _strip_retry_hint(msg: str) -> str:
     return msg.removesuffix(_RETRY_HINT)
 
 
-def _op_to_span(ed: dict, file_lines: list[str], on_fuzzy) -> tuple[int, int, list]:
+def _op_to_span(ed: dict, file_lines: list[str]) -> tuple[int, int, list]:
     """Map one edit op to the half-open ORIGINAL-line span it replaces:
     ``(lo, hi, repl)`` where ``file_lines[lo:hi] = repl``. ``lo == hi`` is a pure
     insertion. Refs are resolved against ``file_lines`` (the single original
-    read) via the shared ``fuzzy_verify_ref``; ``on_fuzzy(msg)`` collects warns.
-    Raises ``RuntimeError`` on a bad op / ref (caller turns it into a clean
-    Observation). Used by the batch path; the single-edit ``tool_edit_file``
-    keeps its own inline apply to preserve its exact model-facing messages."""
+    read) with ``_verify_ref``. Raises ``RuntimeError`` on a bad op / ref (the
+    caller turns it into a clean Observation)."""
     op = ed.get("op", "")
     pos = ed.get("pos")
     end = ed.get("end")
@@ -105,12 +72,7 @@ def _op_to_span(ed: dict, file_lines: list[str], on_fuzzy) -> tuple[int, int, li
         lines = []
 
     def resolve(ref):
-        idx, was_fuzzy = fuzzy_verify_ref(file_lines, ref)
-        if was_fuzzy:
-            on_fuzzy(
-                f"[warn] Fuzzy match used for ref '{ref}' — hash mismatch tolerated"
-            )
-        return idx
+        return _resolve_ref(file_lines, ref)
 
     if op in ("replace", "delete"):
         if not pos:
@@ -210,7 +172,7 @@ def apply_edits_batch_parts(
     any bad ref or overlapping pair → nothing is written and the model re-emits
     the whole group (a partial write would re-introduce the drift it avoids).
 
-    Reuses ``fuzzy_verify_ref`` / ``format_diff`` / ``post_hook``; pure function
+    Reuses ``_verify_ref`` / ``format_diff`` / ``post_hook``; pure function
     (path + edits → ToolResult), no loop/ctx/renderer coupling."""
     from agent_cli.tools import _confine
 
@@ -227,7 +189,6 @@ def apply_edits_batch_parts(
     except Exception as e:
         return _all(f"edit_file: cannot read '{path}': {e}")
     file_lines = original_text.split("\n")
-    fuzzy_warnings: list[str] = []
 
     # 1. Resolve EVERY op against the original (all-or-nothing on a bad ref).
     #    Keep going past a bad one (v9.26.3): the model used to learn about
@@ -236,12 +197,22 @@ def apply_edits_batch_parts(
     #    the whole batch each time.
     spans: list[tuple] = []
     bad: dict[int, str] = {}
+    raw: dict[int, str] = {}
     for i, ed in enumerate(edits):
         try:
-            lo, hi, repl = _op_to_span(ed, file_lines, fuzzy_warnings.append)
+            lo, hi, repl = _op_to_span(ed, file_lines)
             spans.append((lo, hi, repl, i))
         except RuntimeError as e:
+            raw[i] = str(e)
             bad[i] = f"op {i + 1} ({_op_label(ed)}): {_strip_retry_hint(str(e))}"
+    if bad and len(edits) == 1:
+        # A lone op keeps the single-edit wording it always had (v10.48.0 —
+        # same core, same model-facing text): op errors bare, ref errors
+        # prefixed. No "batch" vocabulary for a model that sent one edit.
+        err = raw[0]
+        if not err.endswith("requires 'pos'."):
+            err = f"edit_file apply failed: {err}"
+        return ToolResult(False, error=err), [{"success": False, "content": err}]
     if bad:
         ok = len(edits) - len(bad)
         resend = (
@@ -308,9 +279,12 @@ def apply_edits_batch_parts(
     except Exception as e:
         return _all(f"edit_file: cannot write '{path}': {e}")
 
-    msg = f"Edit complete: {path} ({len(edits)} edits, {len(file_lines)} lines)"
-    if fuzzy_warnings:
-        msg += "\n" + "\n".join(fuzzy_warnings)
+    n = len(edits)
+    msg = (
+        f"Edit complete: {path} ({len(file_lines)} lines)"
+        if n == 1
+        else f"Edit complete: {path} ({n} edits, {len(file_lines)} lines)"
+    )
     echo = render_change_echo(original_text, result_text, path)
     if echo:
         msg += "\n\n" + echo
@@ -344,102 +318,17 @@ def _validate_semantics(args: dict) -> str | None:
 
 
 def tool_edit_file(args: dict) -> ToolResult:
-    """Apply a single hashline-based edit to a file (fuzzy matching support).
+    """Apply ONE hashline edit — a batch of one through the shared core.
 
     Flat-native (consolidation roadmap Step 3): one op = one edit. Several
-    edits to one file are emitted as several edit_file ops in the same turn —
-    hashline refs are content-addressed, so a later op's ref still resolves
-    (via fuzzy match) after an earlier op shifts line numbers.
+    edits to one file are several edit_file ops in a turn; the loop groups a
+    consecutive same-path run into one :func:`apply_edits_batch_parts` call.
     """
-    path = args.get("path", "")
-    op = args.get("op", "")
-    pos = args.get("pos")
-    end = args.get("end")
-    new_lines = args.get("lines")
-
     semantic_err = _validate_semantics(args)
     if semantic_err:
         return ToolResult(False, error=semantic_err)
-
-    from agent_cli.tools import _confine
-
-    denial = _confine.guard([path], "edit_file")
-    if denial:
-        return ToolResult(False, error=denial)
-
-    if isinstance(new_lines, str):
-        new_lines = new_lines.split("\n")
-    if new_lines is None:
-        new_lines = []
-
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-    except Exception as e:
-        return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
-
-    original_text = text
-    file_lines = text.split("\n")
-    fuzzy_warnings: list[str] = []
-
-    def _resolve(ref: str) -> int:
-        idx, was_fuzzy = fuzzy_verify_ref(file_lines, ref)
-        if was_fuzzy:
-            fuzzy_warnings.append(
-                f"[warn] Fuzzy match used for ref '{ref}' — hash mismatch tolerated"
-            )
-        return idx
-
-    # Resolve all refs BEFORE mutating so a bad ref fails without a partial
-    # write. ``delete`` = replace the pos..end range with nothing; ``lines`` is
-    # not part of delete's schema (replace+lines=[] remains the legacy delete
-    # form).
-    try:
-        if op in ("replace", "delete"):
-            if not pos:
-                return ToolResult(False, error=f"{op} requires 'pos'.")
-            repl = [] if op == "delete" else new_lines
-            start_idx = _resolve(pos)
-            if end:
-                end_idx = _resolve(end)
-                file_lines[start_idx : end_idx + 1] = repl
-            else:
-                file_lines[start_idx : start_idx + 1] = repl
-
-        elif op == "append":
-            if pos:
-                idx = _resolve(pos)
-                file_lines[idx + 1 : idx + 1] = new_lines
-            else:
-                file_lines.extend(new_lines)
-
-        elif op == "prepend":
-            if pos:
-                idx = _resolve(pos)
-                file_lines[idx:idx] = new_lines
-            else:
-                file_lines[0:0] = new_lines
-    except RuntimeError as e:
-        return ToolResult(False, error=f"edit_file apply failed: {e}")
-
-    result_text = "\n".join(file_lines)
-    try:
-        Path(path).write_text(result_text, encoding="utf-8")
-    except Exception as e:
-        return ToolResult(False, error=f"edit_file: cannot write '{path}': {e}")
-
-    msg = f"Edit complete: {path} ({len(file_lines)} lines)"
-    if fuzzy_warnings:
-        msg += "\n" + "\n".join(fuzzy_warnings)
-    echo = render_change_echo(original_text, result_text, path)
-    if echo:
-        msg += "\n\n" + echo
-    # Refresh code_index after a successful edit. Best-effort —
-    # post_hook swallows its own exceptions so an indexing hiccup
-    # never poisons the user-facing edit.
-    from agent_cli.tools.code_index import post_hook
-
-    post_hook(path)
-    return ToolResult(True, output=msg)
+    result, _parts = apply_edits_batch_parts(args.get("path", ""), [args])
+    return result
 
 
 class EditFileTool(Tool):
