@@ -24,6 +24,7 @@ from agent_cli.constants import parse_duration
 from agent_cli.prompts import system_prompt as sp
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools import TOOLS
+from tests.binding_support import make_binding
 
 HANGUL = re.compile(r"[\uac00-\ud7a3]")
 PKG = Path(agent_cli.__file__).parent
@@ -83,7 +84,7 @@ class TestNoKoreanReachesTheModel:
         err = ModelNotFound.__new__(ModelNotFound)
         err.listing = listing
         reg = AgentRegistry.__new__(AgentRegistry)
-        reg.runtime = {"base_url": "http://x/v1"}
+        reg.runtime = {"binding": make_binding(base_url="http://x/v1")}
         with patch("agent_cli.model_check.verify_model", side_effect=err):
             msg = reg._model_unavailable("qwen-z", "code-writer")
         assert not HANGUL.search(msg)

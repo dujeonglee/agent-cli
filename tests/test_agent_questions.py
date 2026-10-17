@@ -32,6 +32,7 @@ from agent_cli.subagent.agents_live import (
     QuestionPort,
     build_reply_record,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import make_ports, split_ports
 from tests.test_agents_live import (
     RecordingRenderer,
@@ -2787,7 +2788,11 @@ class TestRuleFollowsInboundTypeNotOwner:
         provider.call.side_effect = lambda *a, **k: done
         reg = AgentRegistry(
             tmp_path,
-            runtime={"provider": provider, "capabilities": _caps(), "model": "m"},
+            runtime={
+                "binding": make_binding(
+                    provider=provider, capabilities=_caps(), model="m"
+                )
+            },
             runner=None,  # 진짜 러너
         )
         try:

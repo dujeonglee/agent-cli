@@ -1,7 +1,7 @@
 # 세션 노브 — 한 번 선언, 표면 셋이 파생 (`agent_cli/knobs.py`)
 
-> 상태: **1단계 구현됨 (v10.43.0, 2026-10-17)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트. 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
-> 결정(사용자): ① `run` 의 제어면은 실행 인자(시작 뒤 입력 프롬프트가 없다 — §1) ② 노브 추상화 + 표면별 적응 인터페이스 ③ 1단계부터, 2·3단계는 별도 PR.
+> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
+> 결정(사용자): ① `run` 의 제어면은 실행 인자(시작 뒤 입력 프롬프트가 없다 — §1) ② 노브 추상화 + 표면별 적응 인터페이스 ③ 1단계부터, 2·3단계는 별도 PR ④ **모델도 노브**, 노브 값은 **캐시하지 말고 영향을 미치는 코드가 직접 읽어 적용**(모델을 바꾸면 다음 LLM 호출에서 적용) — 그러면서 같은 정보를 두 곳에 들던 복사본과 죽은 코드를 정리.
 
 ## 0. 한 줄 요약
 
@@ -47,6 +47,7 @@ v10.42.0 까지 같은 노브가 세 표면에 손으로 따로 배선돼 있었
 | `stall_attempts` | `--stall-attempts` | `AGENT_CLI_STREAM_MAX_ATTEMPTS` | int 1–10 | 4 | ctx |
 | `auto_approve` | `--auto-approve/--no-auto-approve` | `AGENT_CLI_AUTO_APPROVE` | bool | off | renderer |
 | `auditor` | `--auditor/--no-auditor` | `AGENT_CLI_AUDITOR` | bool | off | auditor |
+| `model` | `--model` / `-m` | `AGENT_CLI_MODEL` | 이름 | None(config `default_model` → 프로바이더 기본) | binding |
 
 범위 보정(clamp)은 종전처럼 소유자의 setter 가 한다(`set_compaction_ratio`·`set_max_agents` …). 잘못된 CLI 값은 즉시 실패(`typer.BadParameter`, 세션을 세우기 전), 잘못된 env 값은 기본값으로 떨어진다(종전 env 들의 동작 그대로).
 
@@ -65,6 +66,20 @@ web 은 📐 sticky 의 부트 초기값이 적용 전에 나가므로 적용 �
 ### 2.3 CLI 표면의 기술 선택
 
 typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `inspect.Signature` 를 합성해 `wrapper.__signature__` 로 둔다(typer 0.15 가 `inspect.signature` 를 존중). `from __future__ import annotations` 모듈의 문자열 주석은 `typing.get_type_hints` 로 풀어 박는다(안 풀면 "Type not yet supported: str"). bool 노브는 `--x/--no-x` 스위치 쌍, 나머지는 값을 받는 옵션이고 값 파싱은 데코레이터가 `Knob.parse` 로 한다. 정적 매개변수 + 테스트로 물러서는 대안은 쓰지 않았다 — 두 명령의 플래그 집합이 같은 표에서 나오므로 어긋날 수 없다.
+
+### 2.4 1.5단계 — 모델 노브와 "읽는 자리에서 읽기" (결정 ④)
+
+아홉 노브는 처음부터 소유자에만 값이 있었다(§2 — `apply_all` 은 쓰고 끝, 쓰는 쪽은 매번 소유자를 읽는다). 모델만 달랐다. 부팅 때 `_bootstrap_provider` 가 모델 → 능력(창 크기·사고·문법 지원) → 방언을 풀어 **값으로 복사**했다: `SessionBootstrap` → run/web 지역변수 여섯 개 → `LoopConfig.model/capabilities/dialect`(런마다) → `AgentRuntime`(팀원·하니스 런) → `WebServer.runtime` dict, 그리고 ctx 의 토큰 예산(창의 70%). 다섯 곳이 같은 정보를 들었고 세션 도중 바꿀 길이 없었다.
+
+- **`ModelBinding`** (`providers/binding.py`) 하나를 세션이 든다: provider(엔드포인트, 고정)·model·capabilities(바꿀 수 있음)·dialect(고정)·예산 오버라이드. `LoopConfig` 는 `binding` 필드 하나와 **매번 바인딩을 읽는 속성**(`model`·`capabilities`·`dialect`·`provider`·`provider_name`)으로 바뀌었고, `llm.py` 는 호출마다 `cfg.model`·`cfg.capabilities` 를 통해 바인딩을 읽는다. `ContextManager.max_context_tokens` 는 속성이 되어 바인딩의 창에서 매번 계산한다(명시 `--max-context-tokens` 만 고정). 팀원·하니스·delegate·스킬 런은 `AgentRuntime.binding` / `execute_skill(binding=)` / `tool_delegate(binding=)` 로 같은 객체를 참조한다. 그래서 `binding.switch("<model>")` 뒤의 **다음 LLM 호출**부터 새 모델·능력·예산이 실린다 — 캐시도 무효화도 없다.
+- **`switch` 의 조건**: models.json 에 등록된 모델(능력을 프로브 없이 안다 — 미등록 모델 프로브는 수십 초), 그 모델의 방언이 세션 방언과 같을 것(history 렌더가 방언별; `--dialect` 강제면 어떤 모델이든). 거부는 사유를 돌려주고 아무것도 바꾸지 않는다. 같은 이름은 no-op.
+- **`pinned(model)`**: 프로파일·스킬이 모델을 고정한 런은 그 모델의 능력·방언을 가진 **복사본**으로 돈다(종전 `create_subagent_ctx` 의 `resolve_dialect(model)` 규칙 그대로). 세션 바인딩의 `switch` 는 그 복사본에 닿지 않는다 — 고정은 고정이다.
+- **노브 `model`**: `--model/-m`(기존 정적 옵션을 표가 흡수 — `Knob.short`), env `AGENT_CLI_MODEL`(config.py 의 env 맵에서 제거 — 읽는 곳은 `knobs.py` 뿐), 기본값 None(= config `default_model` → 프로바이더 기본, `main._boot_model`). 부팅에서는 `_bootstrap_provider` 가 그 값으로 바인딩을 만들고, `apply_all` 은 같은 이름이라 no-op. web 표면은 2단계 `/api/knobs` 에서.
+- **정적 부품의 조립 자리는 하나**: `AgentLoop.__init__` 만 `provider/capabilities/model/…/dialect` 부품을 받아 바인딩을 만든다(바인딩 없이 부르는 테스트·일회성용; 방언 폴백 명시 > ctx > 기본). `run_loop` 는 통과만 하고, `execute_skill`·`tool_delegate`·`_run_single`·`run_subagent_message`·`_handle_run_skill`·`try_dispatch_agent_or_skill`·`AgentRuntime`·`WebServer` 는 **바인딩만** 받는다.
+
+**지운 것(복사본·죽은 코드)**: `SessionBootstrap` 데이터클래스; run/web 의 `llm_provider/capabilities/resolved_model/resolved_url/resolved_key/provider/dialect_plugin/max_context_tokens` 지역변수와 그것을 네 함수(`try_dispatch_agent_or_skill`·`_dispatch_agent`·`_dispatch_skill`·`_run_main`)로 나르던 여섯 인자; `LoopConfig` 의 여섯 값 필드와 `AgentLoop`/`LoopConfig` 의 `base_url`·`api_key` 속성(아무도 안 읽었다); `AgentRuntime` 의 여섯 값 필드와 `from_loop_config(cfg, provider)` 의 provider 인자; `WebServer.runtime` dict(`/api/thinking`·`/api/grammar`·`/api/debug/prompt`·✨ 생성이 각자 꺼내 쓰던 `capabilities`/`provider`); `generate_directive_section(runtime=)`; `oneshot`/`runner`/`executor`/`skill_invoke` 의 여섯 매개변수; `skill_invoke` 가 스킬마다 `create_provider` 로 새 프로바이더 객체를 만들던 것; `executor` 가 스킬 디렉토리 이름을 손으로 짓던 중복(`generate_subdir_name(SKILL_PREFIX)` 로); `create_subagent_ctx` 의 fork/resume/none 세 벌 `ContextManager(...)` 생성(하나로); `harness/jobs.RUNTIME_KEYS` 의 여섯 키; `config._ENV_MAP` 의 `AGENT_CLI_MODEL`.
+
+**테스트**: `tests/binding_support.make_binding` 이 테스트의 정적 바인딩 도우미; `tests/test_knobs.py::TestModelKnob` — 바꾸면 `LoopConfig.model`·`capabilities`·ctx 예산이 **같은 호출 없이** 따라간다(복사본 없음), 미등록·다른 방언 거부, `pinned` 복사본은 `switch` 를 따라가지 않는다, `-m` 별칭; `test_dialect_binding` 의 서브에이전트 바인딩 테스트는 `pinned` 규칙으로 이전.
 
 ## 3. 바뀐 것 (1단계)
 

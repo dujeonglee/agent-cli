@@ -12,8 +12,6 @@ _INHERIT = object()
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.runtime import ports_for_skill
 from agent_cli.skills.models import Skill
 from agent_cli.tools.result import ToolResult
@@ -124,12 +122,7 @@ def substitute_arguments(
 def execute_skill(
     skill: Skill,
     arguments: str,
-    provider: LLMProvider,
-    capabilities: ModelCapabilities,
-    model: str,
-    provider_name: str = "openai",
-    base_url: str = "",
-    api_key: str = "",
+    binding,
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
@@ -196,15 +189,13 @@ def execute_skill(
     )
 
     effective_max_turns = skill.max_turns if skill.max_turns > 0 else max_turns
-    effective_model = skill.model if skill.model else model
+    # 스킬이 모델을 고정했으면 그 모델의 바인딩(능력·방언) — 세션 바인딩은 그대로.
+    effective_binding = binding.pinned(skill.model) if skill.model else binding
 
     # Skill creates its own subdir with history.jsonl
     skill_ctx = None
     skill_dir_name = ""
     if ctx:
-        import os
-        import time as _time
-
         # ``session_subdir`` — pre-named by the scope-opening caller so the
         # resume sidecar's ``ctx_dir`` and this ctx's actual directory agree
         # (the card's inner turns replay from it). Self-naming stays as the
@@ -212,16 +203,16 @@ def execute_skill(
         if session_subdir:
             skill_dir_name = session_subdir
         else:
-            name = skill.name or "skill"
-            hash_part = os.urandom(3).hex()
-            ts = _time.strftime("%Y%m%dT%H%M%S", _time.gmtime())
-            ms = f"{int(_time.time() * 1000) % 1000:03d}"
-            skill_dir_name = f"skill_{name}_{hash_part}_{ts}{ms}"
+            from agent_cli.context.session import SKILL_PREFIX
+            from agent_cli.subagent.report import generate_subdir_name
+
+            skill_dir_name = generate_subdir_name(SKILL_PREFIX, skill.name or "skill")
         skill_session_dir = ctx.session_dir / skill_dir_name
         skill_ctx = ContextManager(
             session_dir=skill_session_dir,
-            max_context_tokens=ctx.max_context_tokens,
+            max_context_tokens=ctx._budget_override,
             dialect=ctx.dialect,
+            binding=effective_binding,
         )
 
     effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)
@@ -254,12 +245,7 @@ def execute_skill(
     try:
         loop_result = run_loop(
             query=prompt,
-            provider=provider,
-            capabilities=capabilities,
-            model=effective_model,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
+            binding=effective_binding,
             max_turns=effective_max_turns,
             verbose=verbose,
             depth=parent_depth + 1,

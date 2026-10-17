@@ -21,6 +21,7 @@ from agent_cli.harness.jobs import (
 )
 from agent_cli.loop.ports import LoopPorts
 from agent_cli.tools.result import ToolResult
+from tests.binding_support import make_binding
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
 
@@ -33,8 +34,7 @@ def _jobs(tmp_path, runner, **kw):
     jobs = HarnessJobs(
         session_ctx=_ctx(tmp_path),
         runtime={
-            "model": "m",
-            "provider": "p",
+            "binding": make_binding(model="m", provider="p"),
             "max_turns": 9,
             "hooks_config": {"x": 1},
         },
@@ -92,7 +92,7 @@ class TestRun:
         assert seen["active_tools"] == ["history", "read_file", "code_index"]
         assert seen["agent_name"] == "auditor" and "Auditor" in seen["agent_role"]
         assert seen["hooks_config"] is None
-        assert seen["max_turns"] == 9 and seen["provider"] == "p"
+        assert seen["max_turns"] == 9 and seen["binding"].provider == "p"
         assert seen["stop_event"] is jobs._stop
 
     def test_failure_delivers_the_reason(self, tmp_path):

@@ -18,6 +18,7 @@ from agent_cli.subagent.report import (
     _format_delegate_output,
     _summarize_action,
 )
+from tests.binding_support import make_binding
 
 # ── Test helpers ─────────────────────────────────────────────
 # Fixtures produce the REAL on-disk assistant record shapes the extractors
@@ -527,9 +528,11 @@ class TestIterationsAreTurnsRun:
 
             r = _run_single(
                 task="t",
-                provider=MagicMock(),
-                capabilities=ModelCapabilities(8192, 2048, False),
-                model="m",
+                binding=make_binding(
+                    provider=MagicMock(),
+                    capabilities=ModelCapabilities(8192, 2048, False),
+                    model="m",
+                ),
                 parent_ctx=None,
                 session=None,
                 run_dir_name="run_x",

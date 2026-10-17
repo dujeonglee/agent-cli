@@ -169,7 +169,6 @@ _ENV_MAP = {
     "AGENT_CLI_PROVIDER": "provider",
     "AGENT_CLI_BASE_URL": "base_url",
     "AGENT_CLI_API_KEY": "api_key",
-    "AGENT_CLI_MODEL": "default_model",
 }
 
 _cached_config: dict[str, str] | None = None

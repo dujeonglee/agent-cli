@@ -18,6 +18,7 @@ from agent_cli.subagent.runner import (
     create_subagent_ctx,
     run_subagent_message,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS
 
 # ── apply_role_overrides ────────────────────────
@@ -252,9 +253,7 @@ class TestRunSubagentMessage:
             "do the thing",
             ctx,
             ports=TEST_PORTS,
-            provider="P",
-            capabilities="C",
-            model="m",
+            binding=make_binding(provider="P", capabilities="C", model="m"),
             depth=1,
             max_depth=3,
             active_tools=["shell"],

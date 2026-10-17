@@ -50,6 +50,19 @@ class Kind:
         return ""
 
 
+class Text(Kind):
+    """자유 문자열(모델 이름 등) — 검증은 소유자의 setter 가 한다."""
+
+    def parse(self, text: Any) -> str:
+        v = str(text).strip()
+        if not v:
+            raise ValueError("expected a non-empty value")
+        return v
+
+    def describe(self) -> str:
+        return "name"
+
+
 class Choice(Kind):
     def __init__(self, *choices: str) -> None:
         self._choices = tuple(choices)
@@ -134,6 +147,7 @@ class KnobSession:
     registry: Any = None
     renderer: Any = None
     auditor: Any = None
+    binding: Any = None  # providers/binding.ModelBinding — 모델 노브의 소유자
 
 
 # ── 선언 ─────────────────────────────────────────────────────────────────
@@ -154,6 +168,7 @@ class Knob:
     owner: str  # KnobSession 의 필드 이름 — 그 소유자 하나만 만진다
     get: Callable[[KnobSession], Any]
     set: Callable[[KnobSession, Any], Any]
+    short: str = ""  # CLI 짧은 별칭 (`-m`)
 
     def available(self, session: KnobSession) -> bool:
         """소유자가 서 있는가 — 없으면(headless 부트·세션 없음) 적용할 곳이 없다."""
@@ -218,7 +233,31 @@ def _grammar_set(s: KnobSession, v: str) -> str:
     return v
 
 
+def _model_set(s: KnobSession, v: str) -> str:
+    error = s.binding.switch(v)
+    if error:
+        raise ValueError(error)
+    return s.binding.model
+
+
 KNOBS: tuple[Knob, ...] = (
+    Knob(
+        name="model",
+        flag="--model",
+        short="-m",
+        env="AGENT_CLI_MODEL",
+        label="모델",
+        help=(
+            "Model ID (default: config.json default_model, then the provider's "
+            "default). Mid-session switches apply from the next LLM call; the "
+            "model must be in models.json and bound to this session's dialect."
+        ),
+        kind=Text(),
+        default=None,
+        owner="binding",
+        get=lambda s: s.binding.model,
+        set=_model_set,
+    ),
     Knob(
         name="thinking",
         owner="ctx",
@@ -371,8 +410,10 @@ def apply_all(session: KnobSession, values: Mapping[str, Any]) -> None:
     """부팅값을 소유자들에 적용한다 — 소유자 넷이 모두 선 뒤, 그리고 상주
     에이전트 복원·auto-spawn **전에**(상한이 그 게이트다)."""
     for knob in KNOBS:
-        if knob.name in values and knob.available(session):
-            knob.set(session, values[knob.name])
+        value = values.get(knob.name)
+        # None = 값 없음(모델: config/프로바이더 기본) — 소유자가 없어도 건너뛴다.
+        if value is not None and knob.available(session):
+            knob.set(session, value)
 
 
 # ── CLI 표면 — 표에서 typer 옵션을 합성한다 ─────────────────────────────
@@ -404,8 +445,9 @@ def knob_options(fn: Callable) -> Callable:
             ann: Any = bool | None
         else:
             hint = knob.kind.describe()
+            names = [knob.flag] + ([knob.short] if knob.short else [])
             default = typer.Option(
-                None, knob.flag, help=f"{knob.help} [{hint}; env {knob.env}]"
+                None, *names, help=f"{knob.help} [{hint}; env {knob.env}]"
             )
             ann = str | None
         extra.append(

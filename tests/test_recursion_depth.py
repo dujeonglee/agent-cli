@@ -35,6 +35,7 @@ from agent_cli.recovery.recursion import (
     format_depth_limit_error,
     format_recursion_error,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS
 
 # ─── Error-message vocabulary (A) ─────────────────────────────
@@ -192,11 +193,13 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="openai",
-            base_url="",
-            api_key="",
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="",
+                api_key="",
+                capabilities=_caps(),
+                model="m",
+            ),
             ctx=None,
             session=None,
             skill_stack=[],
@@ -219,11 +222,13 @@ class TestRunSkillDispatchDepthCheck:
         # found", proving we got past the depth check.
         result = _handle_run_skill(
             {"name": "does_not_exist"},
-            provider_name="openai",
-            base_url="",
-            api_key="",
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="",
+                api_key="",
+                capabilities=_caps(),
+                model="m",
+            ),
             ctx=None,
             session=None,
             skill_stack=[],
@@ -241,11 +246,13 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="openai",
-            base_url="",
-            api_key="",
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="",
+                api_key="",
+                capabilities=_caps(),
+                model="m",
+            ),
             ctx=None,
             session=None,
             skill_stack=["plan", "summarize"],
@@ -285,9 +292,9 @@ class TestDelegateDispatchDepthCheck:
             agent_stack=["main_agent"],  # reviewer not in stack
             depth=2,
             max_depth=2,
-            provider=self._make_provider(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider=self._make_provider(), capabilities=_caps(), model="m"
+            ),
             owner="main",
         )
         assert result.success is False
@@ -306,9 +313,9 @@ class TestDelegateDispatchDepthCheck:
             agent_stack=[],
             depth=2,
             max_depth=2,
-            provider=self._make_provider(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider=self._make_provider(), capabilities=_caps(), model="m"
+            ),
             owner="main",
         )
         assert result.success is False
@@ -325,9 +332,9 @@ class TestDelegateDispatchDepthCheck:
             agent_stack=["main", "reviewer"],
             depth=1,
             max_depth=4,
-            provider=self._make_provider(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider=self._make_provider(), capabilities=_caps(), model="m"
+            ),
             owner="main",
         )
         assert result.success is False
@@ -454,9 +461,7 @@ class TestSkillBumpsDepth:
         execute_skill(
             skill=skill,
             arguments="",
-            provider=object(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(provider=object(), capabilities=_caps(), model="m"),
             parent_depth=3,
             max_depth=5,
             owner="main",
@@ -498,9 +503,7 @@ class TestSkillBumpsDepth:
         execute_skill(
             skill=skill,
             arguments="",
-            provider=object(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(provider=object(), capabilities=_caps(), model="m"),
             owner="main",
             # parent_depth omitted → 0 default
         )
@@ -520,11 +523,13 @@ class TestExistingRecursionPathsUnchanged:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="openai",
-            base_url="",
-            api_key="",
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(
+                provider_name="openai",
+                base_url="",
+                api_key="",
+                capabilities=_caps(),
+                model="m",
+            ),
             ctx=None,
             session=None,
             skill_stack=["plan", "summarize"],
@@ -545,9 +550,7 @@ class TestExistingRecursionPathsUnchanged:
             agent_stack=["main", "reviewer"],
             depth=0,
             max_depth=4,
-            provider=MagicMock(),
-            capabilities=_caps(),
-            model="m",
+            binding=make_binding(provider=MagicMock(), capabilities=_caps(), model="m"),
             owner="main",
         )
         assert result.success is False

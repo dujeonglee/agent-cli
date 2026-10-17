@@ -1379,16 +1379,15 @@ class AgentRegistry:
         """역할이 요구한 모델이 서버에 없으면 사람이 읽을 이유를, 아니면 ""."""
         from agent_cli.model_check import ModelNotFound, NoModelSelected, verify_model
 
-        rt = self.runtime or {}
-        base_url = rt.get("base_url", "")
-        if not base_url:
+        binding = (self.runtime or {}).get("binding")
+        if binding is None or not binding.base_url:
             return ""  # 확인할 수단이 없으면 막지 않는다 (부팅 정책과 동일)
         try:
             verify_model(
                 model,
-                base_url,
-                rt.get("api_key", ""),
-                rt.get("provider_name", "openai") or "openai",
+                binding.base_url,
+                binding.api_key,
+                binding.provider_name or "openai",
             )
         except ModelNotFound as e:
             near = e.listing.suggest(model)
@@ -1471,7 +1470,8 @@ class AgentRegistry:
         role_prompt = ""
         description = ""
         config: dict = {}
-        model = self.runtime.get("model", "")
+        binding = self.runtime.get("binding")
+        model = binding.model if binding is not None else ""
         hooks_config = self.runtime.get("hooks_config")
         if profile:
             from agent_cli.subagent.profiles import load_profile
@@ -2597,8 +2597,18 @@ class AgentRegistry:
             mode = "resume" if tm.revive else tm.context_mode
             # model=tm.model (role 오버라이드 적용 후) — models.json 바인딩이
             # 있으면 그 dialect, 없으면 부모 상속 (dialects P1).
+            # 세션 바인딩(또는 프로파일이 고정한 모델의 바인딩 복사본) — ctx 의
+            # 방언·예산이 거기서 온다 (v10.43.0).
+            binding = self.runtime.get("binding")
+            if binding is not None and tm.model and tm.model != binding.model:
+                try:
+                    binding = binding.pinned(tm.model)
+                except KeyError as exc:
+                    tm.error = str(exc.args[0] if exc.args else exc)
+                    crash = f"context creation failed: {tm.error}"
+                    return
             ctx, err = create_subagent_ctx(
-                mode, parent_ctx, tm.home_dir, model=tm.model
+                mode, parent_ctx, tm.home_dir, binding=binding
             )
             if ctx is None:
                 tm.error = err
@@ -2973,12 +2983,13 @@ class AgentRegistry:
             ),
             peer_agents_section=peer_section,
             user_requests=list(user_requests or []),
-            provider=rt.get("provider"),
-            capabilities=rt.get("capabilities"),
-            model=tm.model or rt.get("model", ""),
-            provider_name=rt.get("provider_name", ""),
-            base_url=rt.get("base_url", ""),
-            api_key=rt.get("api_key", ""),
+            # 세션 바인딩을 참조한다 — 모델 노브가 바뀌면 팀원의 다음 호출도 따라간다.
+            # 프로파일이 모델을 고정한 팀원은 그 모델의 바인딩 복사본.
+            binding=(
+                rt["binding"].pinned(tm.model)
+                if rt.get("binding") is not None and tm.model
+                else rt.get("binding")
+            ),
             max_turns=rt.get("max_turns", 0),
             depth=rt.get("depth", 0),
             max_depth=rt.get("max_depth", 2),

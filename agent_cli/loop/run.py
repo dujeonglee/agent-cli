@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.dialects import get as _get_dialect
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -17,13 +16,15 @@ from agent_cli.providers.capabilities import ModelCapabilities
 
 def run_loop(
     query: str,
-    provider: LLMProvider,
-    capabilities: ModelCapabilities,
-    model: str,
-    ports: LoopPorts,
+    provider: LLMProvider | None = None,
+    capabilities: ModelCapabilities | None = None,
+    model: str = "",
+    ports: LoopPorts | None = None,
     provider_name: str = "openai",
     base_url: str = "",
     api_key: str = "",
+    *,
+    binding=None,
     max_turns: int = 0,
     verbose: bool = False,
     ctx: ContextManager | None = None,
@@ -49,14 +50,12 @@ def run_loop(
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
 ):
-    """Run the agent loop with the given dialect plugin. Returns ToolResult.
+    """Run the agent loop. Returns ToolResult — `AgentLoop(...).run()` 의 함수 꼴.
 
-    ``dialect`` accepts a registered plugin name (str) or a
-    ``DialectBase`` instance directly. ``None`` falls back to the
-    default dialect so existing callers don't need to change.
+    세션 코드는 ``binding``(`providers.binding.ModelBinding`)을 넘긴다; 부품
+    (``provider``/``capabilities``/``model``/…/``dialect``)은 바인딩 없이 부르는
+    쪽을 위한 것으로, 정적 바인딩 조립은 `AgentLoop.__init__` 한 곳이 한다.
     """
-    if isinstance(dialect, str):
-        dialect = _get_dialect(dialect)
     return AgentLoop(
         query=query,
         provider=provider,
@@ -66,6 +65,7 @@ def run_loop(
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
+        binding=binding,
         max_turns=max_turns,
         verbose=verbose,
         ctx=ctx,

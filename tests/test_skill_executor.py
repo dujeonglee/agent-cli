@@ -8,6 +8,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.skills.executor import execute_skill
 from agent_cli.skills.models import Skill
+from tests.binding_support import make_binding
 
 
 @pytest.fixture
@@ -47,9 +48,9 @@ class TestToolIntersection:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 parent_tools=["read_file", "shell"],
                 owner="main",
@@ -67,9 +68,7 @@ class TestToolIntersection:
         result = execute_skill(
             skill=skill,
             arguments="test",
-            provider=MagicMock(),
-            capabilities=caps,
-            model="test",
+            binding=make_binding(provider=MagicMock(), capabilities=caps, model="test"),
             ctx=ctx,
             parent_tools=["read_file", "shell"],
             owner="main",
@@ -90,9 +89,9 @@ class TestToolIntersection:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 owner="main",
             )
@@ -113,9 +112,9 @@ class TestToolIntersection:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 parent_tools=["read_file", "shell"],
                 owner="main",
@@ -139,9 +138,9 @@ class TestParentRoleInheritance:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 parent_role="You are an explorer agent.",
                 owner="main",
@@ -163,9 +162,9 @@ class TestParentRoleInheritance:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 owner="main",
             )
@@ -187,9 +186,9 @@ class TestParentRoleInheritance:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 compaction_enabled=False,
                 owner="main",
@@ -207,9 +206,9 @@ class TestParentRoleInheritance:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 owner="main",
             )
@@ -228,9 +227,9 @@ class TestSkillSubdir:
             execute_skill(
                 skill=skill,
                 arguments="test",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 owner="main",
             )
@@ -260,9 +259,9 @@ class TestSkillRegistryInheritance:
             execute_skill(
                 skill=skill,
                 arguments="orchestrate this",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="test",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="test"
+                ),
                 ctx=ctx,
                 agent_registry=reg,
                 owner="main",
@@ -330,9 +329,7 @@ class TestSkillSpawnExecution:
                 execute_skill(
                     skill,
                     "make it",
-                    prov,
-                    caps,
-                    "m",
+                    make_binding(provider=prov, capabilities=caps, model="m"),
                     ctx=sctx,
                     agent_registry=reg,
                     max_turns=4,
@@ -368,9 +365,9 @@ class TestMainRegistrySlotInheritance:
             execute_skill(
                 skill=skill,
                 arguments="t",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="m"
+                ),
                 ctx=ctx,
                 **kw,
                 owner="main",
@@ -435,9 +432,9 @@ class TestPromptScopeUnification:
             execute_skill(
                 skill=skill,
                 arguments="",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="m",
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=caps, model="m"
+                ),
                 ctx=ctx,
                 scope_id=scope_id,
                 owner="main",

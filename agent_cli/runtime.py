@@ -37,12 +37,9 @@ class AgentRuntime:
     키-생략과 행동 동일하다.
     """
 
-    provider: Any
-    capabilities: Any
-    model: str
-    provider_name: str
-    base_url: str
-    api_key: str
+    #: 세션의 `ModelBinding` (v10.43.0) — 팀원·하니스 런이 복사본이 아니라 이것을
+    #: 참조한다. 프로파일이 모델을 고정하면 `binding.pinned(model)`.
+    binding: Any
     max_turns: int
     depth: int
     max_depth: int
@@ -56,15 +53,10 @@ class AgentRuntime:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
     @classmethod
-    def from_loop_config(cls, cfg, provider) -> AgentRuntime:
+    def from_loop_config(cls, cfg) -> AgentRuntime:
         """LoopConfig → AgentRuntime (tool_bridge 의 상주 모드 인터셉트용)."""
         return cls(
-            provider=provider,
-            capabilities=cfg.capabilities,
-            model=cfg.model,
-            provider_name=cfg.provider_name,
-            base_url=cfg.base_url,
-            api_key=cfg.api_key,
+            binding=cfg.binding,
             max_turns=cfg.max_turns,
             depth=cfg.depth,
             max_depth=cfg.max_depth,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent_cli.subagent.oneshot import _run_single
 from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
 from agent_cli.tools.result import ToolResult
+from tests.binding_support import make_binding
 
 
 def _validate_agent_name(name: str) -> bool:
@@ -227,9 +228,9 @@ class TestRunSingleWithAgent:
         result = _run_single(
             task="Write tests",
             agent_name="tester",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -262,9 +263,9 @@ class TestRunSingleWithAgent:
 
         _run_single(
             task="Do work",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             compaction_enabled=False,
             owner="main",
         )
@@ -295,9 +296,9 @@ class TestRunSingleWithAgent:
 
         _run_single(
             task="Do work",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
         assert captured_kwargs["compaction_enabled"] is True
@@ -323,9 +324,9 @@ class TestRunSingleWithAgent:
         result = _run_single(
             task="Review code",
             agent_name="nonexistent",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -366,9 +367,9 @@ class TestRunSingleWithAgent:
         result = _run_single(
             task="Read files",
             agent_name="reader",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -412,9 +413,9 @@ class TestRunSingleWithAgent:
             task="Run shell",
             agent_name="reader",
             allowed_tools=["shell"],
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -457,14 +458,14 @@ class TestRunSingleWithAgent:
         result = _run_single(
             task="Think hard",
             agent_name="smart",
-            provider=FakeProvider(),
-            model="default-model",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="default-model", capabilities=caps
+            ),
             owner="main",
         )
 
         assert result.success
-        assert captured_kwargs["model"] == "special-model"
+        assert captured_kwargs["binding"].model == "special-model"
 
     def test_without_agent_unchanged(self, tmp_path, monkeypatch):
         """AG-20: Empty agent_name preserves existing behavior."""
@@ -492,9 +493,9 @@ class TestRunSingleWithAgent:
         result = _run_single(
             task="Do something",
             agent_name="",
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -528,9 +529,9 @@ class TestToolDelegatePassesAgent:
 
         tool_delegate(
             args={"tasks": [{"task": "Review", "agent": "reviewer"}]},
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -564,9 +565,9 @@ class TestToolDelegatePassesAgent:
                 {"task": "Review code", "agent": "reviewer"},
                 {"task": "Check security", "agent": "security"},
             ],
-            provider=FakeProvider(),
-            model="test",
-            capabilities=caps,
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            ),
             owner="main",
         )
 
@@ -634,9 +635,9 @@ class TestToolDelegatePassesAgent:
         for _ in range(5):
             _run_parallel(
                 task_specs=specs,
-                provider=FakeProvider(),
-                model="test",
-                capabilities=caps,
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                ),
                 owner="main",
             )
 

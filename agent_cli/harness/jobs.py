@@ -36,12 +36,7 @@ _profile_loader = ResourceLoader([HARNESS_PROFILES_DIR])
 #: 모양이다 (`runtime` 인자의 계약).
 RUNTIME_KEYS = frozenset(
     {
-        "provider",
-        "capabilities",
-        "model",
-        "provider_name",
-        "base_url",
-        "api_key",
+        "binding",
         "max_turns",
         "depth",
         "max_depth",
@@ -150,14 +145,17 @@ class HarnessJobs:
             run_subagent_message,
         )
 
+        binding = self.runtime.get("binding")
         allowed_tools, model, _hooks = apply_role_overrides(
             meta,
             allowed_tools=None,
-            model=self.runtime.get("model", ""),
+            model=binding.model if binding is not None else "",
             hooks_config=None,
         )
+        if binding is not None and model and model != binding.model:
+            binding = binding.pinned(model)  # 프로파일이 고정한 모델
         run_dir = harness_run_dir(self.ctx.session_dir, job, label)
-        ctx, err = create_subagent_ctx("none", self.ctx, run_dir, model=model)
+        ctx, err = create_subagent_ctx("none", self.ctx, run_dir, binding=binding)
         if ctx is None:
             return False, f"{job} could not start: {err}"
         runner = self._runner or run_subagent_message
@@ -169,7 +167,7 @@ class HarnessJobs:
             agent_name=job,
             agent_role=body,
             stop_event=self._stop,
-            **{**self.runtime, "model": model, "hooks_config": None},
+            **{**self.runtime, "binding": binding, "hooks_config": None},
         )
         if result.success:
             return True, result.output or ""

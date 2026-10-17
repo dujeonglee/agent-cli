@@ -1385,11 +1385,7 @@ class TurnDispatcher:
         )
         skill_tool_result = _handle_run_skill(
             skill_input,
-            self.cfg.provider_name,
-            self.cfg.base_url,
-            self.cfg.api_key,
-            self.cfg.capabilities,
-            self.cfg.model,
+            self.cfg.binding,
             self.ctx,
             self.cfg.session,
             self.cfg.skill_name,

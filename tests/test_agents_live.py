@@ -24,6 +24,7 @@ from agent_cli.subagent.agents_live import (
     clamp_max_agents,
     tool_agent,
 )
+from tests.binding_support import make_binding
 from tests.loop_ports import TEST_PORTS, make_ports
 
 
@@ -418,7 +419,9 @@ class TestRegistryLifecycle:
             "agent_cli.subagent.profiles.load_profile",
             lambda name: ("역할 본문", {"name": "ghost", "model": "gone-model"}, ""),
         )
-        reg = make_registry(tmp_path, base_url="http://127.0.0.1:8000/v1")
+        reg = make_registry(
+            tmp_path, binding=make_binding(base_url="http://127.0.0.1:8000/v1")
+        )
         key, err = reg.spawn(profile="ghost")
         assert key == "", "없는 모델을 요구하는 에이전트가 떴다"
         assert "gone-model" in err and "ghost" in err
@@ -440,7 +443,9 @@ class TestRegistryLifecycle:
             "agent_cli.subagent.profiles.load_profile",
             lambda name: ("본문", {"name": "x", "model": "unverifiable"}, ""),
         )
-        reg = make_registry(tmp_path, base_url="http://127.0.0.1:8000/v1")
+        reg = make_registry(
+            tmp_path, binding=make_binding(base_url="http://127.0.0.1:8000/v1")
+        )
         key, err = reg.spawn(profile="x")
         assert err == "" and key.startswith("agt-")
         reg.shutdown_all()

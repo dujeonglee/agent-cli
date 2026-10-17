@@ -29,8 +29,6 @@ if TYPE_CHECKING:
     from agent_cli.context.manager import ContextManager
     from agent_cli.loop import LoopResult
     from agent_cli.loop.ports import LoopPorts
-    from agent_cli.providers.base import LLMProvider
-    from agent_cli.providers.capabilities import ModelCapabilities
 
 
 class ProfileToolsError(ValueError):
@@ -91,7 +89,7 @@ def create_subagent_ctx(
     parent_ctx: ContextManager | None,
     subagent_dir: Path,
     *,
-    model: str = "",
+    binding=None,
 ) -> tuple[ContextManager | None, str]:
     """서브에이전트 ctx 생성 — ``(ctx, error)``.
 
@@ -108,61 +106,47 @@ def create_subagent_ctx(
     CLI(minimal 렌더러)에선 no-op.
     """
     from agent_cli.context.manager import DEFAULT_COMPACTION_RATIO, ContextManager
-    from agent_cli.dialects import resolve_dialect
 
-    try:
-        sub_dialect = resolve_dialect(model)
-    except KeyError as exc:
-        return None, str(exc.args[0] if exc.args else exc)
-    if parent_ctx is not None and parent_ctx.dialect is not sub_dialect:
+    # 방언·예산은 바인딩의 것 (v10.43.0): 세션 바인딩을 그대로 참조하거나, 프로파일이
+    # 모델을 고정했으면 `binding.pinned(model)` 복사본(그 모델의 능력·방언). 바인딩
+    # 없이 부르면(테스트·일회성) 부모 ctx 의 방언·예산을 쓴다.
+    if binding is None and parent_ctx is not None:
+        binding = parent_ctx.binding
+    if (
+        binding is not None
+        and parent_ctx is not None
+        and binding.dialect is not parent_ctx.dialect
+    ):
         from agent_cli.verbose import debug_log
 
         debug_log(
-            f"subagent dialect: {sub_dialect.name} (model binding: {model}) "
-            f"— parent uses {parent_ctx.dialect.name}"
+            f"subagent dialect: {binding.dialect.name} (model binding: "
+            f"{binding.model}) — parent uses {parent_ctx.dialect.name}"
         )
-
-    # Inherit the parent's live compaction ratio at creation time (web slider
-    # value snapshot) — like max_context_tokens. Changing the slider later only
-    # affects newly spawned/resumed sub-agents; re-spawn to apply a new value.
+    sub_dialect = (
+        binding.dialect
+        if binding is not None
+        else (parent_ctx.dialect if parent_ctx is not None else None)
+    )
     ratio = parent_ctx.compaction_ratio if parent_ctx else DEFAULT_COMPACTION_RATIO
-    # 실측 토큰/바이트 비율도 물려받는다 — 같은 모델이면 첫 호출 전부터 부모와
-    # 같은 척도로 센다(자기 디렉토리에 실측이 남아 있으면 그쪽이 우선).
     inherited_ratio = parent_ctx.token_ratio if parent_ctx else None
+    # 바인딩 없는 부모(테스트)의 명시 예산만 물려받는다 — 바인딩이 있으면 ctx 가 매번
+    # 바인딩에서 읽는다.
+    budget = parent_ctx._budget_override if parent_ctx is not None else 0
     if context_mode == "fork":
         if parent_ctx is None:
             return None, "fork requires parent context"
         parent_ctx.fork_history_to(subagent_dir)
-        ctx = ContextManager(
-            session_dir=subagent_dir,
-            max_context_tokens=parent_ctx.max_context_tokens,
-            resume=True,
-            dialect=sub_dialect,
-            compaction_ratio=ratio,
-            token_ratio=inherited_ratio,
-        )
-    elif context_mode == "resume":
-        budget = parent_ctx.max_context_tokens if parent_ctx else 0
-        ctx = ContextManager(
-            session_dir=subagent_dir,
-            max_context_tokens=budget,
-            resume=True,
-            dialect=sub_dialect,
-            compaction_ratio=ratio,
-            token_ratio=inherited_ratio,
-        )
-    else:
-        budget = parent_ctx.max_context_tokens if parent_ctx else 0
-        ctx = ContextManager(
-            session_dir=subagent_dir,
-            max_context_tokens=budget,
-            dialect=sub_dialect,
-            compaction_ratio=ratio,
-            token_ratio=inherited_ratio,
-        )
+    ctx = ContextManager(
+        session_dir=subagent_dir,
+        max_context_tokens=budget,
+        resume=context_mode in ("fork", "resume"),
+        dialect=sub_dialect,
+        binding=binding,
+        compaction_ratio=ratio,
+        token_ratio=inherited_ratio,
+    )
 
-    # P3 (v8.55.0): 스트림 무진전 한도도 spawn 시점 스냅샷 상속 — compaction
-    # ratio 와 동형 (이후 부모 변경은 새 spawn 에만 적용).
     if parent_ctx is not None and ctx is not None:
         ctx.stream_idle_timeout_s = parent_ctx.stream_idle_timeout_s
         ctx.stream_max_attempts = parent_ctx.stream_max_attempts
@@ -182,12 +166,7 @@ def run_subagent_message(
     ctx: ContextManager,
     *,
     ports: LoopPorts,
-    provider: LLMProvider,
-    capabilities: ModelCapabilities,
-    model: str,
-    provider_name: str = "",
-    base_url: str = "",
-    api_key: str = "",
+    binding,
     max_turns: int = 0,
     depth: int = 0,
     max_depth: int = 2,
@@ -215,12 +194,7 @@ def run_subagent_message(
     t0 = time.monotonic()
     loop_result = run_loop(
         query=query,
-        provider=provider,
-        capabilities=capabilities,
-        model=model,
-        provider_name=provider_name,
-        base_url=base_url,
-        api_key=api_key,
+        binding=binding,
         max_turns=max_turns,
         verbose=False,
         depth=depth + 1,

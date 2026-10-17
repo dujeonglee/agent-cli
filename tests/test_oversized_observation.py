@@ -33,6 +33,7 @@ from agent_cli.tools.base import (
     persist_oversized,
 )
 from agent_cli.tools.result import ToolResult
+from tests.binding_support import make_binding
 
 
 def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
@@ -320,7 +321,7 @@ def _bridge(window):
     return ToolBridge(
         LoopConfig(
             tools_list=list(TOOLS.keys()),
-            capabilities=_Caps() if window is not None else None,
+            binding=make_binding(capabilities=_Caps()) if window is not None else None,
         ),
         LoopState(),
         ctx=None,

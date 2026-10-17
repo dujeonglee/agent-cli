@@ -11,8 +11,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -43,12 +41,7 @@ def _run_single(
     agent_name: str = "",
     instructions: str = "",
     parent_ctx: ContextManager | None = None,
-    provider: LLMProvider | None = None,
-    model: str = "",
-    capabilities: ModelCapabilities | None = None,
-    provider_name: str = "",
-    base_url: str = "",
-    api_key: str = "",
+    binding=None,
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
@@ -80,7 +73,7 @@ def _run_single(
     if not task.strip():
         return ToolResult(False, error="Delegation rejected: empty task")
 
-    if provider is None or capabilities is None:
+    if binding is None or binding.provider is None or binding.capabilities is None:
         return ToolResult(
             False, error="Delegation rejected: missing provider/capabilities"
         )
@@ -114,6 +107,7 @@ def _run_single(
 
     # ── Agent loading ──
     agent_role = ""
+    model = ""  # 프로파일 `model` 오버라이드만 — 세션 모델은 바인딩에 있다
     if agent_name:
         role_prompt, agent_config, error = load_profile(agent_name)
         if error:
@@ -126,7 +120,7 @@ def _run_single(
             allowed_tools, model, hooks_config = apply_role_overrides(
                 agent_config,
                 allowed_tools=allowed_tools,
-                model=model,
+                model=binding.model if binding is not None else "",
                 hooks_config=hooks_config,
             )
         except ProfileToolsError as e:
@@ -148,7 +142,15 @@ def _run_single(
     # Context + run_loop — 공용 러너 (subagent/runner.py). dialect
     # 해석(effective model 바인딩 > 부모 상속)·예산 상속, fork 히스토리
     # 복사, 인스펙터 스코프 등록(v4.52.0)이 전부 러너 안이다.
-    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, run_dir, model=model)
+    # 프로파일이 모델을 고정했으면 그 모델의 바인딩(능력·방언) — 세션 바인딩은 그대로.
+    if binding is not None and model and model != binding.model:
+        try:
+            binding = binding.pinned(model)
+        except KeyError as exc:
+            return ToolResult(False, error=f"Delegation rejected: {exc.args[0]}")
+    ctx, ctx_error = create_subagent_ctx(
+        context_mode, parent_ctx, run_dir, binding=binding
+    )
     if ctx is None:
         return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 
@@ -158,12 +160,7 @@ def _run_single(
         task,
         ctx,
         ports=ports_for_oneshot(owner=owner),
-        provider=provider,
-        capabilities=capabilities,
-        model=model,
-        provider_name=provider_name,
-        base_url=base_url,
-        api_key=api_key,
+        binding=binding,
         max_turns=max_turns,
         depth=depth,
         max_depth=max_depth,
@@ -218,12 +215,7 @@ def _run_single(
 def _run_parallel(
     task_specs: list[dict],
     parent_ctx: ContextManager | None = None,
-    provider: LLMProvider | None = None,
-    model: str = "",
-    capabilities: ModelCapabilities | None = None,
-    provider_name: str = "",
-    base_url: str = "",
-    api_key: str = "",
+    binding=None,
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
@@ -306,12 +298,7 @@ def _run_parallel(
                 agent_name=spec.get("agent", ""),
                 instructions=spec.get("instructions", ""),
                 parent_ctx=parent_ctx,
-                provider=provider,
-                model=model,
-                capabilities=capabilities,
-                provider_name=provider_name,
-                base_url=base_url,
-                api_key=api_key,
+                binding=binding,
                 depth=depth,
                 max_depth=max_depth,
                 max_turns=max_turns,
@@ -370,12 +357,7 @@ def _run_parallel(
 def tool_delegate(
     args: dict,
     parent_ctx: ContextManager | None = None,
-    provider: LLMProvider | None = None,
-    model: str = "",
-    capabilities: ModelCapabilities | None = None,
-    provider_name: str = "",
-    base_url: str = "",
-    api_key: str = "",
+    binding=None,
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
@@ -402,12 +384,7 @@ def tool_delegate(
 
     common_kwargs = {
         "parent_ctx": parent_ctx,
-        "provider": provider,
-        "model": model,
-        "capabilities": capabilities,
-        "provider_name": provider_name,
-        "base_url": base_url,
-        "api_key": api_key,
+        "binding": binding,
         "depth": depth,
         "max_depth": max_depth,
         "max_turns": max_turns,

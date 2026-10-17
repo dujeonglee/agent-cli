@@ -7,7 +7,6 @@ import time
 from agent_cli.constants import (
     OBS_SUCCESS,
 )
-from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render import (
     render_begin_scope,
     render_end_scope,
@@ -25,11 +24,7 @@ from agent_cli.verbose import debug_log as _debug_log
 
 def _handle_run_skill(
     skill_input: dict,
-    provider_name: str,
-    base_url: str,
-    api_key: str,
-    capabilities: ModelCapabilities,
-    model: str,
+    binding,
     ctx,
     session,
     parent_skill_name: str = "",
@@ -121,19 +116,11 @@ def _handle_run_skill(
     t0 = time.monotonic()
 
     try:
-        from agent_cli.providers import create_provider
-
-        provider = create_provider(provider_name, base_url, api_key)
         skill_result = execute_skill(
             owner=owner,
             skill=skill,
             arguments=arguments,
-            provider=provider,
-            capabilities=capabilities,
-            model=model,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
+            binding=binding,  # 세션의 모델 바인딩 — 스킬마다 프로바이더를 새로 만들지 않는다
             max_depth=max_depth,
             ctx=ctx,
             session=session,

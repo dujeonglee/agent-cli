@@ -24,6 +24,7 @@ from agent_cli.recovery.dialect_recovery import (
     make_format_nudge,
 )
 from agent_cli.recovery.primitives import ECHO_MAX_CHARS, bounded_excerpt
+from tests.binding_support import make_binding
 
 
 def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
@@ -33,7 +34,11 @@ def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
 
     wf = get_dialect(dialect_name)
     ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
-    cfg = LoopConfig(tools_list=["shell", "complete"], dialect=wf, **cfg_overrides)
+    cfg = LoopConfig(
+        tools_list=["shell", "complete"],
+        binding=make_binding(dialect=wf),
+        **cfg_overrides,
+    )
     st = LoopState(query="q")
     d = TurnDispatcher(
         cfg,

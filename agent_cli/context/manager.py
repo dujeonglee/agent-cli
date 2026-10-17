@@ -223,25 +223,23 @@ class ContextManager:
         *,
         resume: bool = False,
         dialect=None,
+        binding=None,
         compaction_enabled: bool = True,
         compaction_ratio: float | None = None,
         token_ratio: float | None = None,
     ):
-        # Wire-format plugin attached to this ctx — drives the on-disk
-        # → in-memory rendering of assistant turns when ``get_messages``
-        # is called (overflow recovery, session resume). One ctx instance
-        # owns one plugin instance so a single session can never mix
-        # formats. Default falls back to the default dialect
-        # for the headless / test paths that don't yet thread the choice
-        # through; mirrors the pattern in ``AgentLoop.__init__``.
+        # 세션의 모델 바인딩 (v10.43.0, providers/binding): 방언은 여기서 한 번
+        # 받고(세션 수명 — 한 ctx 는 한 포맷), 토큰 예산은 `max_context_tokens`
+        # 속성이 **매번** 바인딩의 창에서 읽는다 — 모델이 바뀌면 다음 압축 판정부터
+        # 새 예산. 명시 ``max_context_tokens`` 는 바인딩 없이 쓰는 쪽(테스트·fork
+        # 상속)의 고정값. ``dialect`` 없고 바인딩도 없으면 기본 방언(headless·테스트).
+        self.binding = binding
         if dialect is None:
-            dialect = _get_dialect()
+            dialect = binding.dialect if binding is not None else _get_dialect()
         self.dialect = dialect
 
         self.session_dir = Path(session_dir)
-        self.max_context_tokens = (
-            max_context_tokens if max_context_tokens > 0 else DEFAULT_TOKEN_BUDGET
-        )
+        self._budget_override = max(0, int(max_context_tokens or 0))
         # Live-tunable compaction target (web slider). Clamped on set so the
         # loop's per-call ``× compaction_ratio`` can never disable compaction.
         # None = 미지정 → env(AGENT_CLI_COMPACTION_RATIO) 또는 기본값.
@@ -671,6 +669,15 @@ class ContextManager:
     @property
     def compaction_count(self) -> int:
         return self._compaction_count
+
+    @property
+    def max_context_tokens(self) -> int:
+        """컨텍스트 예산 — 명시값 > 바인딩(창의 70%, 모델이 바뀌면 따라감) > 기본."""
+        if self._budget_override > 0:
+            return self._budget_override
+        if self.binding is not None:
+            return self.binding.max_context_tokens
+        return DEFAULT_TOKEN_BUDGET
 
     def set_compaction_ratio(self, ratio: float) -> float:
         """Set the live compaction target ratio (web slider). Clamped to

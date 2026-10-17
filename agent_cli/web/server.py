@@ -152,13 +152,13 @@ class WebServer:
         ctx=None,
         trust_local: bool = False,
         base_path: str = "",
-        runtime: dict | None = None,
+        binding=None,
     ) -> None:
         self.renderer = renderer
-        # ✨ directive 생성이 쓰는 LLM 배선 (provider 객체·model·capabilities·
-        # provider_name·base_url·api_key·session·ctx). None(테스트/미배선)
-        # 이면 생성 엔드포인트가 503. run 엔진 경유라 worker 루프와 독립.
-        self.runtime = runtime or {}
+        #: 세션의 `ModelBinding` (v10.43.0) — 능력(🧠/📐 잠김)·✨ directive 생성의
+        #: LLM 호출이 복사본이 아니라 이걸 읽는다. None(테스트/기동 전)이면 생성
+        #: 엔드포인트가 503, 능력은 unknown.
+        self.binding = binding
         # --trust-local: skip token auth for loopback requests (the gateway in
         # front of a 127.0.0.1-bound instance already authenticated the user).
         self.trust_local = trust_local
@@ -213,7 +213,7 @@ class WebServer:
         from agent_cli.context.manager import grammar_active
 
         override = self.ctx.grammar_override if self.ctx is not None else None
-        caps = self.runtime.get("capabilities")
+        caps = self.binding.capabilities if self.binding is not None else None
         supported = caps.supports_grammar if caps is not None else None
         return {
             "override": override,
@@ -692,7 +692,7 @@ def create_app(server: WebServer) -> FastAPI:
         info = renderer.prompt_scope_info(task_id)
         if not task_id and server.ctx is not None:
             info["compactions"] = getattr(server.ctx, "compaction_count", 0)
-        caps = server.runtime.get("capabilities") if server.runtime else None
+        caps = server.binding.capabilities if server.binding is not None else None
         # 모델이 지금 보는 양 — **서버가 센 값만** 쓴다. 그 스코프의 마지막 호출에
         # 실측이 없으면(첫 호출 전·usage 를 안 주는 서버·옛 세션) 칸을 추정으로
         # 채우지 않고 비워 둔다(None → 화면은 N/A, 다음 호출 뒤에 채워진다).
@@ -967,7 +967,7 @@ def create_app(server: WebServer) -> FastAPI:
         아예 안 넣으므로 프론트가 컨트롤을 비활성화한다(v8.21.1). caps 미배선(테스트/
         부트 전)이면 None → 프론트는 비활성화하지 않음(unknown)."""
         ov = server.ctx.thinking_override if server.ctx is not None else {}
-        caps = server.runtime.get("capabilities")
+        caps = server.binding.capabilities if server.binding is not None else None
         supports = bool(caps.supports_thinking) if caps is not None else None
         return {
             "enable_thinking": ov.get("enable_thinking"),
@@ -1074,7 +1074,7 @@ def create_app(server: WebServer) -> FastAPI:
         재실측 16/16 무누출, 5.7.0), 결과는 **미저장** 반환(에디터가 활성 탭에
         반영, 사용자 검토 후 저장). Body: ``{audience, brief, current?}``.
         LLM 미배선 503. 수십 초 블로킹 — executor 오프로드."""
-        if not server.runtime or server.runtime.get("provider") is None:
+        if server.binding is None or server.binding.provider is None:
             raise HTTPException(status_code=503, detail="LLM not available")
 
         def _run() -> str:
@@ -1082,7 +1082,7 @@ def create_app(server: WebServer) -> FastAPI:
                 str(body.get("audience") or ""),
                 str(body.get("brief") or ""),
                 str(body.get("current") or ""),
-                runtime=server.runtime,
+                binding=server.binding,
             )
 
         try:

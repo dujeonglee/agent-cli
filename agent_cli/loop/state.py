@@ -32,10 +32,10 @@ class LoopConfig:
     #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"`` (``LoopPorts.owner``).
     #: 모니터 소유자 라우팅이 `RunContext` 를 거쳐 이걸 읽는다.
     owner: str = "main"
-    model: str = ""
-    provider_name: str = "openai"
-    base_url: str = ""
-    api_key: str = ""
+    #: 세션의 모델 바인딩 (v10.43.0, providers/binding) — model·capabilities·
+    #: dialect·provider 는 아래 속성이 **매번** 여기서 읽는다. 값을 복사해 두지
+    #: 않으므로 `binding.switch()` 가 바꾼 모델은 다음 LLM 호출부터 실린다.
+    binding: object = None
     depth: int = 0
     max_depth: int = 2
     max_turns: int = 0
@@ -44,8 +44,6 @@ class LoopConfig:
     skill_args: str = ""
     skill_stack: list = field(default_factory=list)
     agent_stack: list = field(default_factory=list)
-    capabilities: object = None
-    dialect: object = None
     mcp_manager: object = None
     hook_runner: object = None
     hooks_config: dict | None = None
@@ -72,6 +70,27 @@ class LoopConfig:
     # 문자열(자기 제외) — registry 자체는 안 넘기고(상주 모드 차단 유지)
     # 프롬프트 가시성만 준다.
     peer_agents_section: str = ""
+
+    # ── 바인딩을 읽는 속성 — 저장하지 않는다 ──
+    @property
+    def model(self) -> str:
+        return self.binding.model if self.binding is not None else ""
+
+    @property
+    def capabilities(self):
+        return self.binding.capabilities if self.binding is not None else None
+
+    @property
+    def dialect(self):
+        return self.binding.dialect if self.binding is not None else None
+
+    @property
+    def provider(self):
+        return self.binding.provider if self.binding is not None else None
+
+    @property
+    def provider_name(self) -> str:
+        return self.binding.provider_name if self.binding is not None else "openai"
 
 
 @dataclass

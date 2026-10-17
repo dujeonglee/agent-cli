@@ -40,6 +40,7 @@ from agent_cli.web.server import (
     pick_port,
     suppress_incomplete_response_log,
 )
+from tests.binding_support import make_binding
 
 
 @pytest.fixture
@@ -365,7 +366,9 @@ class TestPromptInspectorDynamic:
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
-        server = WebServer(renderer, token="t", ctx=ctx, runtime={"capabilities": caps})
+        server = WebServer(
+            renderer, token="t", ctx=ctx, binding=make_binding(capabilities=caps)
+        )
         data = TestClient(create_app(server)).get("/api/debug/prompt?token=t").json()
         assert data["ok"]
         kinds = [s["kind"] for s in data["sections"]]
@@ -673,7 +676,7 @@ class TestStaticUI:
         ):
             caps = ModelCapabilities(32768, 4096, False, supports_grammar=supports)
             srv = WebServer(
-                renderer, token="t", ctx=ctx, runtime={"capabilities": caps}
+                renderer, token="t", ctx=ctx, binding=make_binding(capabilities=caps)
             )
             cli = TestClient(create_app(srv))
             d = cli.post("/api/grammar?token=t", json={"mode": mode}).json()
@@ -741,7 +744,7 @@ class TestStaticUI:
                 context_window=32768, max_output_tokens=4096, supports_thinking=supports
             )
             srv2 = WebServer(
-                renderer, token="t", ctx=ctx, runtime={"capabilities": caps}
+                renderer, token="t", ctx=ctx, binding=make_binding(capabilities=caps)
             )
             cli2 = TestClient(create_app(srv2))
             assert (
@@ -3087,7 +3090,7 @@ class TestDirectivesGenerate:
         server = WebServer(
             renderer,
             token="t",
-            runtime={"provider": provider, "model": "m1", "capabilities": object()},
+            binding=make_binding(provider=provider, model="m1", capabilities=object()),
         )
         return server, TestClient(create_app(server))
 

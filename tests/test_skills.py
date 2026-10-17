@@ -18,6 +18,7 @@ from agent_cli.skills.executor import (
 )
 from agent_cli.skills.loader import _parse_skill_file, load_skills
 from agent_cli.skills.models import Skill
+from tests.binding_support import make_binding
 
 
 @pytest.fixture
@@ -528,9 +529,9 @@ class TestSkillExecution:
         result = execute_skill(
             skill=skill,
             arguments="test.py",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
+            binding=make_binding(
+                provider=provider, capabilities=caps, model="test-model"
+            ),
             owner="main",
         )
         assert result is not None
@@ -550,9 +551,7 @@ class TestSkillExecution:
         execute_skill(
             skill=skill,
             arguments="task",
-            provider=provider,
-            capabilities=caps,
-            model="m",
+            binding=make_binding(provider=provider, capabilities=caps, model="m"),
             owner="main",
         )
         # Skill's max_turns should be used (verified by run_loop not exceeding it)
@@ -571,9 +570,7 @@ class TestSkillExecution:
             execute_skill(
                 skill=skill,
                 arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="m",
+                binding=make_binding(provider=provider, capabilities=caps, model="m"),
                 session=fake_session,
                 owner="main",
             )
@@ -592,9 +589,7 @@ class TestSkillExecution:
             execute_skill(
                 skill=skill,
                 arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="m",
+                binding=make_binding(provider=provider, capabilities=caps, model="m"),
                 owner="main",
             )
             _, kwargs = mock_run_loop.call_args
@@ -612,9 +607,7 @@ class TestSkillExecution:
             execute_skill(
                 skill=skill,
                 arguments="./",
-                provider=provider,
-                capabilities=caps,
-                model="m",
+                binding=make_binding(provider=provider, capabilities=caps, model="m"),
                 skill_stack=["summarize"],
                 owner="main",
             )
@@ -639,13 +632,13 @@ class TestSkillExecution:
             execute_skill(
                 skill=skill,
                 arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="original-model",
+                binding=make_binding(
+                    provider=provider, capabilities=caps, model="original-model"
+                ),
                 owner="main",
             )
             _, kwargs = mock_run_loop.call_args
-            assert kwargs["model"] == "original-model"
+            assert kwargs["binding"].model == "original-model"
 
     def test_execute_with_model_override(self, caps):
         """skill.model set → run_loop called with the overridden model."""
@@ -667,13 +660,13 @@ class TestSkillExecution:
             execute_skill(
                 skill=skill,
                 arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="original-model",
+                binding=make_binding(
+                    provider=provider, capabilities=caps, model="original-model"
+                ),
                 owner="main",
             )
             _, kwargs = mock_run_loop.call_args
-            assert kwargs["model"] == "gpt-4o"
+            assert kwargs["binding"].model == "gpt-4o"
 
 
 class TestYamlOptional:
