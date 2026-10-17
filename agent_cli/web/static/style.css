@@ -323,18 +323,6 @@ header {
 /* ⚡ 헤더 토글 노브(ui.placement="header"): 켜지면 안전 게이트 꺼짐을 amber 경고색으로 명확히 */
 .knob-toggle { font-size: 12px; }
 .knob-toggle.on { color: var(--warn); border-color: var(--warn); font-weight: 700; }
-/* 두 블록으로 쪼개져 `flex:1`(basis 0 에서 확장)과 `max-width:28ch`(캡)이
-   싸우고 있었다 — 캡이 조용히 이기고 있었으므로 그쪽을 남긴다. */
-#info {
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 28ch;
-  margin-right: 12px;
-}
 #token-usage {
   color: var(--text-2);
   font-size: 11px;
@@ -548,7 +536,9 @@ body.multi-viewer .card-user .who {
   /* 좁은 화면에선 시각을 접는다 — 남기면 요약이 거의 안 남는다.
      비워뒀던 자리도 같이 회수한다. */
   .row .row-time, .card-time { display: none; }
-  .card-assistant .final { padding-right: 0; }
+  /* ✔ complete 표식 (v10.47.1) — 최종 답 카드가 앞 액션 카드의 산문으로 읽히지 않게 */
+.final-tag { font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px; }
+.card-assistant .final { padding-right: 0; }
   .card-error, .card-sys .sys-text { padding-right: 0; }
 }
 
@@ -1484,7 +1474,6 @@ footer {
   /* the header tool bar (info + toggles + emoji buttons) overflowed the frame
      on phones — let it wrap to multiple rows instead of spilling sideways */
   header { flex-wrap: wrap; gap: 4px 6px; padding: 8px 12px; }
-  #info { flex-basis: 100%; margin-right: 0; }   /* model/workspace on its own row */
   #token-usage { margin-right: auto; }            /* push the toggles to the right */
   #viewers { max-width: 50vw; }
 }

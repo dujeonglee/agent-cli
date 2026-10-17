@@ -46,7 +46,6 @@
   const $send = document.getElementById("send");
   const $chatStop = document.getElementById("chat-stop");
   const $abort = document.getElementById("abort");
-  const $info = document.getElementById("info");
   const $tokenUsage = document.getElementById("token-usage");
   const $status = document.getElementById("conn-status");
   const $inputArea = document.getElementById("input-area");
@@ -1896,6 +1895,9 @@
         }
         card.appendChild(think);
       }
+      // 이 카드가 `complete` 임을 **표식**으로 (v10.47.1): 종전엔 본문과 각주만
+      // 있어 바로 위 액션 카드(monitor 등)에 이어진 산문처럼 읽혔다(보드 방 실측).
+      card.appendChild(el("div", ["final-tag"], "✔ complete"));
       card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
       card._md = function () { return (t ? "💭 " + t + "\n\n" : "") + String(d.final); };
       // 이 답이 **무엇에 대한 답인지** (v9.19.0). 합쳐진 런에서는 카드 위치가
@@ -2551,8 +2553,7 @@
     // unavailable so we never render a dangling " · " separator.
     // 칩 헤더 (v7.1.0): 모델 칩 = 모델명만 (provider 는 hover), 워크스
     // 페이스는 별도 칩에 꼬리(마지막 세그먼트)만 — hover 로 전체 경로.
-    $info.textContent = d.model;
-    $info.title = d.provider + " · " + d.model;
+    // 모델은 🤖 노브 칩이 보여 준다 (v10.47.1 — 종전 #info 모델 박스 삭제)
     if (d.workspace) {
       // ws 칩 = 클릭-복사 버튼 (별도 내부 버튼은 칩 높이보다 커서 세로
       // 클리핑됐던 실사용 피드백의 수리). 표시는 마지막 2세그먼트,
