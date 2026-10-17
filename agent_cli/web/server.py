@@ -218,22 +218,6 @@ class WebServer:
             binding=self.binding,
         )
 
-    def grammar_state(self) -> dict:
-        """📐 문법 제약 상태 — 칩·status.json·health 가 같은 셋을 본다: 세션
-        오버라이드, 서버 지원 판정(모델 capability — None=아직 모름), 그 둘로
-        정해지는 active (규칙은 루프와 같은 `grammar_active`). 메서드인 이유:
-        부트가 `create_app` **전에** 초기 sticky 를 내보낸다."""
-        from agent_cli.context.manager import grammar_active
-
-        override = self.ctx.grammar_override if self.ctx is not None else None
-        caps = self.binding.capabilities if self.binding is not None else None
-        supported = caps.supports_grammar if caps is not None else None
-        return {
-            "override": override,
-            "supported": supported,
-            "active": grammar_active(override, supported),
-        }
-
     def _safe_workspace_path(self, rel: str) -> Path:
         """Resolve ``rel`` under the workspace root, rejecting traversal /
         symlink escapes. ``""`` / ``"."`` → the workspace root itself."""
@@ -654,8 +638,9 @@ def create_app(server: WebServer) -> FastAPI:
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
             "viewers": server.renderer.viewer_count(),
-            # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형)
-            "grammar": server.grammar_state()["active"],
+            # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형) —
+            # 노브 표의 같은 한 장(v10.45.0: 종전 `grammar_state` 중복 계산 삭제)
+            "grammar": bool(_knob("grammar").get("active")),
             # v7.10.0: 상주 에이전트 요약 (없으면 None) — status.json 과
             # 같은 소스(renderer.agents_summary), board 폴백 경로 파리티.
             "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
@@ -863,6 +848,11 @@ def create_app(server: WebServer) -> FastAPI:
         _schedule_or_404(reg, sched_id)
         reg.dismiss(sched_id)
         return schedules_view(reg)
+
+    def _knob(name: str) -> dict:
+        from agent_cli.knobs import KNOB_BY_NAME, web_state
+
+        return web_state(KNOB_BY_NAME[name], server.knob_session())
 
     @app.get("/api/knobs")
     async def get_knobs():
