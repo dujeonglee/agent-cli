@@ -1,0 +1,437 @@
+"""세션 노브 — 한 번 선언하고 표면들이 파생한다 (v10.43.0, docs/knobs/DESIGN.md).
+
+세션 도중 바꿀 수 있고 다음 LLM 호출(또는 다음 확인·런)에 영향을 주는 값들이
+"노브" 다. 종전엔 같은 노브가 세 표면(env 읽기·CLI 플래그·web API/칩)에 손으로
+따로 배선돼 있었고, 그래서 셋(사고·문법·자동 승인)과 감사는 `run` 에 플래그가
+없었다. 비대칭의 원인은 노브의 **정의가 어디에도 없었던 것** — 표면마다 자기
+식으로 노브를 알고 있었다.
+
+여기서는 `Knob` 이 선언이고 ``KNOBS`` 가 유일한 목록이다. 표면은 **표면당 하나**
+씩만 적는다(노브 × 표면 어댑터가 아니다 — 그건 복사·붙여넣기가 옷만 갈아입는
+것): `env_value`(env 표면), `knob_options`(CLI 표면 — typer 시그니처를 표에서
+합성), 그리고 web 은 2단계에서 `/api/knobs` 하나로 온다. 노브는 typer·FastAPI·
+sticky 를 모르고, 표면은 어떤 노브가 있는지 모른다. 새 노브는 선언 한 줄이다.
+
+우선순위는 **CLI 인자 > env > 기본값**, 전부 세션 한정(재시작 시 다시 해석).
+잘못된 CLI 값은 즉시 실패(`typer.BadParameter`), 잘못된 env 값은 기본값으로
+떨어진다(종전 env 들의 동작 그대로 — 헤드리스에서 오타가 세션을 못 세우는 것과
+조용히 기본값으로 가는 것 사이의 기존 결정).
+
+상태 소유자는 흩어져 있다(ctx·registry·renderer·auditor). `KnobSession` 이 그
+넷을 한 묶음으로 들고, 각 노브의 ``get``/``set`` 이 자기 소유자만 만진다.
+"""
+
+from __future__ import annotations
+
+import inspect
+import os
+import typing
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+# ── 종류 — 문자열 ↔ 값 ───────────────────────────────────────────────────
+
+
+class Kind:
+    """노브 값의 종류: 파싱·검증·표시. 하위 클래스 셋뿐이다."""
+
+    #: CLI 에서 값 없는 스위치 쌍(`--x/--no-x`)으로 받을지.
+    is_flag = False
+
+    def parse(self, text: Any) -> Any:  # pragma: no cover — 하위 클래스가 구현
+        raise NotImplementedError
+
+    def choices(self) -> tuple[str, ...] | None:
+        return None
+
+    def describe(self) -> str:
+        """CLI help·칩 설명에 붙는 값 영역 한 토막."""
+        return ""
+
+
+class Choice(Kind):
+    def __init__(self, *choices: str) -> None:
+        self._choices = tuple(choices)
+
+    def parse(self, text: Any) -> str:
+        v = str(text).strip().lower()
+        if v not in self._choices:
+            raise ValueError(
+                f"expected one of {', '.join(self._choices)}; got {text!r}"
+            )
+        return v
+
+    def choices(self) -> tuple[str, ...]:
+        return self._choices
+
+    def describe(self) -> str:
+        return "|".join(self._choices)
+
+
+class Bool(Kind):
+    is_flag = True
+    _ON = ("1", "true", "yes", "on")
+    _OFF = ("0", "false", "no", "off")
+
+    def parse(self, text: Any) -> bool:
+        if isinstance(text, bool):
+            return text
+        v = str(text).strip().lower()
+        if v in self._ON:
+            return True
+        if v in self._OFF:
+            return False
+        raise ValueError(f"expected on|off; got {text!r}")
+
+    def describe(self) -> str:
+        return "on|off"
+
+
+class Number(Kind):
+    """정수/실수. 범위 보정(clamp)은 소유자의 setter 가 한다 — 종전 그대로
+    (`set_compaction_ratio`·`set_max_agents` 등이 clamp 를 소유)."""
+
+    def __init__(self, cast: Callable[[str], Any], *, unit: str = "") -> None:
+        self._cast = cast
+        self._unit = unit
+
+    def parse(self, text: Any) -> Any:
+        if isinstance(text, (int, float)) and not isinstance(text, bool):
+            return self._cast(text)
+        try:
+            return self._cast(str(text).strip())
+        except ValueError:
+            raise ValueError(f"expected a number; got {text!r}") from None
+
+    def describe(self) -> str:
+        return self._unit
+
+
+class Duration(Kind):
+    """`600`(초)·`10m`(분)·`0`(끔) — `constants.parse_duration` 과 같은 문법."""
+
+    def parse(self, text: Any) -> int:
+        if isinstance(text, int) and not isinstance(text, bool):
+            return text
+        from agent_cli.constants import parse_duration
+
+        return parse_duration(str(text).strip())
+
+    def describe(self) -> str:
+        return "600 | 10m | 0"
+
+
+# ── 상태 소유자 묶음 ─────────────────────────────────────────────────────
+
+
+@dataclass
+class KnobSession:
+    """노브가 만지는 소유자들 — run/web 부트가 조립 뒤 한 번 만들고, web 은
+    `/api/knobs`(2단계)가 같은 것을 든다. 없는 소유자는 None(테스트·부트 전)."""
+
+    ctx: Any = None
+    registry: Any = None
+    renderer: Any = None
+    auditor: Any = None
+
+
+# ── 선언 ─────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Knob:
+    """노브 하나. ``name`` 은 API·sticky 이름, ``flag`` 는 CLI, ``env`` 는 부팅
+    env. ``get``/``set`` 은 `KnobSession` 의 소유자 하나만 만진다."""
+
+    name: str
+    flag: str
+    env: str
+    label: str
+    help: str
+    kind: Kind
+    default: Any
+    owner: str  # KnobSession 의 필드 이름 — 그 소유자 하나만 만진다
+    get: Callable[[KnobSession], Any]
+    set: Callable[[KnobSession, Any], Any]
+
+    def available(self, session: KnobSession) -> bool:
+        """소유자가 서 있는가 — 없으면(headless 부트·세션 없음) 적용할 곳이 없다."""
+        return getattr(session, self.owner, None) is not None
+
+    def parse(self, text: Any) -> Any:
+        return self.kind.parse(text)
+
+    def env_value(self, environ: Mapping[str, str] | None = None) -> Any:
+        """env 표면 — 미설정·빈 값·잘못된 값은 None(= 기본값으로)."""
+        raw = (os.environ if environ is None else environ).get(self.env, "")
+        if not str(raw).strip():
+            return None
+        try:
+            return self.parse(raw)
+        except ValueError:
+            return None
+
+    def resolve(self, cli_value: Any = None, environ=None) -> Any:
+        """CLI 인자 > env > 기본값."""
+        if cli_value is not None:
+            return cli_value
+        env_v = self.env_value(environ)
+        return self.default if env_v is None else env_v
+
+
+# ── 노브 — 소유자별 접근자 ───────────────────────────────────────────────
+
+
+def _thinking_get(s: KnobSession) -> str:
+    et = s.ctx.thinking_override.get("enable_thinking")
+    return "auto" if et is None else ("on" if et else "off")
+
+
+def _thinking_set(s: KnobSession, v: str) -> str:
+    s.ctx.set_thinking_override(
+        enable_thinking=None if v == "auto" else (v == "on"),
+        reasoning_effort=s.ctx.thinking_override.get("reasoning_effort"),
+    )
+    return v
+
+
+def _effort_get(s: KnobSession) -> str:
+    return s.ctx.thinking_override.get("reasoning_effort") or "auto"
+
+
+def _effort_set(s: KnobSession, v: str) -> str:
+    s.ctx.set_thinking_override(
+        enable_thinking=s.ctx.thinking_override.get("enable_thinking"),
+        reasoning_effort=None if v == "auto" else v,
+    )
+    return v
+
+
+def _grammar_get(s: KnobSession) -> str:
+    ov = s.ctx.grammar_override
+    return "auto" if ov is None else ("on" if ov else "off")
+
+
+def _grammar_set(s: KnobSession, v: str) -> str:
+    s.ctx.set_grammar_override(None if v == "auto" else (v == "on"))
+    return v
+
+
+KNOBS: tuple[Knob, ...] = (
+    Knob(
+        name="thinking",
+        owner="ctx",
+        flag="--thinking",
+        env="AGENT_CLI_THINKING",
+        label="사고",
+        help=(
+            "Model thinking for this session: off (default — a model without a "
+            "switch thinks forever), on, or auto (server/model default). Takes "
+            "effect from the next LLM call; a model without thinking support "
+            "ignores it."
+        ),
+        kind=Choice("off", "on", "auto"),
+        default="off",
+        get=_thinking_get,
+        set=_thinking_set,
+    ),
+    Knob(
+        name="reasoning_effort",
+        owner="ctx",
+        flag="--reasoning-effort",
+        env="AGENT_CLI_REASONING_EFFORT",
+        label="추론 노력",
+        help="Reasoning effort when the backend honours it: auto (default), low, medium, high, off.",
+        kind=Choice("auto", "low", "medium", "high", "off"),
+        default="auto",
+        get=_effort_get,
+        set=_effort_set,
+    ),
+    Knob(
+        name="grammar",
+        owner="ctx",
+        flag="--grammar",
+        env="AGENT_CLI_GRAMMAR",
+        label="디코딩 문법",
+        help=(
+            "Decoding grammar that forces the tool-call shape at generation: "
+            "auto (default — on when models.json records support), on, off."
+        ),
+        kind=Choice("auto", "on", "off"),
+        default="auto",
+        get=_grammar_get,
+        set=_grammar_set,
+    ),
+    Knob(
+        name="max_agents",
+        owner="registry",
+        flag="--max-agents",
+        env="AGENT_CLI_MAX_AGENTS",
+        label="에이전트 상한",
+        help="Max concurrently live sub-agents; 0 = unlimited (default 10).",
+        kind=Number(int, unit="count"),
+        default=10,
+        get=lambda s: s.registry.max_agents,
+        set=lambda s, v: s.registry.set_max_agents(v),
+    ),
+    Knob(
+        name="compaction_ratio",
+        owner="ctx",
+        flag="--compaction-ratio",
+        env="AGENT_CLI_COMPACTION_RATIO",
+        label="압축 비율",
+        help=(
+            "Context compaction target as a fraction of the window (0.5-1.0). "
+            "1.0 (default) = compact only when a generation is cut by the window; "
+            "lower = compact earlier."
+        ),
+        kind=Number(float, unit="0.5-1.0"),
+        default=1.0,
+        get=lambda s: s.ctx.compaction_ratio,
+        set=lambda s, v: s.ctx.set_compaction_ratio(v),
+    ),
+    Knob(
+        name="stall",
+        owner="ctx",
+        flag="--stall",
+        env="AGENT_CLI_STREAM_IDLE_TIMEOUT_S",
+        label="스트림 무진전 한도",
+        help=(
+            "Stream stall limit before re-sending: 600 (seconds), 10m (minutes), "
+            "0 (off). Default 10m."
+        ),
+        kind=Duration(),
+        default=600,
+        get=lambda s: s.ctx.stream_idle_timeout_s,
+        set=lambda s, v: s.ctx.set_stream_idle_timeout(v),
+    ),
+    Knob(
+        name="stall_attempts",
+        owner="ctx",
+        flag="--stall-attempts",
+        env="AGENT_CLI_STREAM_MAX_ATTEMPTS",
+        label="무진전 시도 횟수",
+        help=(
+            "TOTAL send attempts on stall, first send included (1-10). "
+            "Max wait = --stall x this. Default 4."
+        ),
+        kind=Number(int, unit="1-10"),
+        default=4,
+        get=lambda s: s.ctx.stream_max_attempts,
+        set=lambda s, v: s.ctx.set_stream_max_attempts(v),
+    ),
+    Knob(
+        name="auto_approve",
+        owner="renderer",
+        flag="--auto-approve",
+        env="AGENT_CLI_AUTO_APPROVE",
+        label="자동 승인",
+        help=(
+            "Skip every confirmation prompt (dangerous shell commands, path "
+            "guards) and allow — on the terminal there is nobody to ask. "
+            "Default off."
+        ),
+        kind=Bool(),
+        default=False,
+        get=lambda s: bool(s.renderer.auto_approve),
+        set=lambda s, v: s.renderer.set_auto_approve(v),
+    ),
+    Knob(
+        name="auditor",
+        owner="auditor",
+        flag="--auditor",
+        env="AGENT_CLI_AUDITOR",
+        label="세션 감사",
+        help=(
+            "Audit every finished user run with a harness job that reads only "
+            "that run's records and reports per-request verdicts to main "
+            "(docs/auditor/DESIGN.md). Default off."
+        ),
+        kind=Bool(),
+        default=False,
+        get=lambda s: bool(s.auditor.enabled),
+        set=lambda s, v: setattr(s.auditor, "enabled", bool(v)) or bool(v),
+    ),
+)
+
+KNOB_BY_NAME: dict[str, Knob] = {k.name: k for k in KNOBS}
+
+
+# ── 부팅 — CLI > env > 기본값을 소유자에 적용 ────────────────────────────
+
+
+def resolve_all(cli_values: Mapping[str, Any] | None = None, environ=None) -> dict:
+    """모든 노브의 부팅값 ``{name: value}``."""
+    cli_values = cli_values or {}
+    return {k.name: k.resolve(cli_values.get(k.name), environ) for k in KNOBS}
+
+
+def apply_all(session: KnobSession, values: Mapping[str, Any]) -> None:
+    """부팅값을 소유자들에 적용한다 — 소유자 넷이 모두 선 뒤, 그리고 상주
+    에이전트 복원·auto-spawn **전에**(상한이 그 게이트다)."""
+    for knob in KNOBS:
+        if knob.name in values and knob.available(session):
+            knob.set(session, values[knob.name])
+
+
+# ── CLI 표면 — 표에서 typer 옵션을 합성한다 ─────────────────────────────
+
+
+def knob_options(fn: Callable) -> Callable:
+    """`run`/`web` 에 노브 플래그 전부를 붙이는 데코레이터 — 두 명령이 같은
+    표에서 같은 플래그를 받으니 어긋날 수 없다. 꾸며진 함수는 ``knob_args``
+    키워드 하나로 ``{name: parsed_value}``(준 것만)를 받는다. 잘못된 값은
+    여기서 `typer.BadParameter` — 세션을 세우기 전에 실패한다."""
+    import typer
+
+    # `from __future__ import annotations` 모듈의 함수는 주석이 문자열이다 —
+    # typer 는 `get_type_hints` 로 푸는데 합성 시그니처엔 그 길이 없으니 여기서
+    # 풀어 실제 타입을 박는다.
+    hints = typing.get_type_hints(fn)
+    sig = inspect.signature(fn)
+    base = [
+        p.replace(annotation=hints.get(p.name, p.annotation))
+        for p in sig.parameters.values()
+        if p.name != "knob_args"
+    ]
+    extra = []
+    for knob in KNOBS:
+        if knob.kind.is_flag:
+            default = typer.Option(
+                None, f"{knob.flag}/--no-{knob.flag[2:]}", help=knob.help
+            )
+            ann: Any = bool | None
+        else:
+            hint = knob.kind.describe()
+            default = typer.Option(
+                None, knob.flag, help=f"{knob.help} [{hint}; env {knob.env}]"
+            )
+            ann = str | None
+        extra.append(
+            inspect.Parameter(
+                knob.name,
+                inspect.Parameter.KEYWORD_ONLY,
+                default=default,
+                annotation=ann,
+            )
+        )
+
+    def wrapper(*args, **kwargs):
+        knob_args: dict[str, Any] = {}
+        for knob in KNOBS:
+            raw = kwargs.pop(knob.name, None)
+            if raw is None:
+                continue
+            try:
+                knob_args[knob.name] = knob.parse(raw)
+            except ValueError as exc:
+                raise typer.BadParameter(f"{knob.flag}: {exc}") from None
+        return fn(*args, knob_args=knob_args, **kwargs)
+
+    wrapper.__signature__ = sig.replace(parameters=base + extra)  # type: ignore[attr-defined]
+    wrapper.__annotations__ = {p.name: p.annotation for p in base + extra}
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    wrapper.__module__ = fn.__module__
+    return wrapper

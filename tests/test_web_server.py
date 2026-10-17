@@ -612,9 +612,9 @@ class TestStaticUI:
             "/api/confirm-mode?token=testtoken", json={"auto_approve": True}
         )
         assert r.json() == {"ok": True, "auto_approve": True}
-        assert renderer._auto_approve is True
+        assert renderer.auto_approve is True
         client.post("/api/confirm-mode?token=testtoken", json={"auto_approve": False})
-        assert renderer._auto_approve is False
+        assert renderer.auto_approve is False
         # UI 배선: 헤더 토글 버튼(팝오버 밖) + IIFE + sticky 동기화
         html = client.get("/").text
         js = client.get("/static/app.js").text
@@ -3549,12 +3549,12 @@ class TestStreamIdleEndpoint:
         vals = [d.get("seconds") for (ev, d) in snap if ev == "stream_idle"]
         assert vals == [300]
 
-    def test_env_default_and_zero(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("AGENT_CLI_STREAM_IDLE_TIMEOUT_S", "300")
+    def test_default_and_zero(self, tmp_path):
+        from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(tmp_path)
-        assert ctx.stream_idle_timeout_s == 300
+        ctx = ContextManager(tmp_path)  # env/CLI 는 노브 `stall` (tests/test_knobs.py)
+        assert ctx.stream_idle_timeout_s == DEFAULT_STREAM_IDLE_TIMEOUT_S
         assert ctx.set_stream_idle_timeout(0) == 0
 
     # ── v8.60.0: 같은 엔드포인트가 2번째 축(총 시도 횟수)도 나른다 ──

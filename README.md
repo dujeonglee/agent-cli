@@ -211,6 +211,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_STREAM_MAX_ATTEMPTS` | — | 무진전 시 **총** 전송 횟수(첫 전송 포함), 1~10, 기본 4. 최대 대기 = 한도 × 이 값. `--stall-attempts` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.60.0) |
 | `AGENT_CLI_COMPACTION_RATIO` | — | 컨텍스트 압축 목표 비율 (0.5~1.0, 기본 1.0 — 창에 잘릴 때만 압축, v10.11.0). 낮을수록 일찍·자주 압축. `--compaction-ratio` 또는 웹 🗜️ 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_MAX_AGENTS` | — | 동시 생존 서브에이전트 상한 (0 = 무제한, 기본 10). `--max-agents` 또는 웹 👥 노브로 세션 중 변경 (v8.61.0) |
+| `AGENT_CLI_AUTO_APPROVE` | — | `1` 이면 확인 프롬프트(위험 셸 명령·경로 가드)를 묻지 않고 허용 (v10.43.0, 기본 꺼짐). `--auto-approve` 또는 웹 ⚡ 노브. `run` 은 물을 사람이 없는 자리라 이 값이 곧 승인면 |
 | `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`history` 가 모두 같은 루트를 봄 (v8.50.0) |
 
 > **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. **속도 제한(429, Anthropic 의 529)은 기다렸다 다시 보낸다 (v10.25.0)**: 또 하나의 독립 카운터로 최대 8회, 응답에 `Retry-After` 가 있으면 그만큼(상한 120초), 없으면 2·4·8·…·64초로 늘려 가며 기다린다(헤더 없이 다 쓰면 약 3분). 회사 게이트웨이(LiteLLM 등) 뒤에서 여러 사람이 한 벤더 키를 나눠 쓸 때 맞는 오류인데, 종전엔 4xx 라 첫 429 에 턴이 실패하고 런이 끝났다. 기다리는 동안 상태 줄에 `LLM rate limited (HTTP 429) — retrying in 17s (2/8)` 가 뜬다. 그 밖의 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고, body 가 10분 연속 침묵하면 연결을 끊고 재전송한다 — **총 4회**(첫 전송 포함)까지, 즉 최장 40분 뒤 실패. 이 두 축만은 고정이 아니라 세션 노브다: 한도는 `--stall`, 횟수는 `--stall-attempts`(웹은 ⏳ 칩 하나에 두 입력, 팝업이 곱한 최대 대기를 같이 보여준다). 대기 중에는 남은 시간과 `시도 n/4` 가 웹·CLI 양쪽에 표시되고, 반복되는 대기는 한 줄을 제자리 갱신하며 재전송·실패만 기록으로 남는다. 스트림이 **중간에 끊긴 경우**(서버가 종결 청크 없이 연결을 닫음 — 재시작·프록시 끊김·OOM)도 재전송한다: 고정 10회, 1초 간격, 무진전 예산과 **별개**(즉시 실패라 공유하면 순식간에 소진된다). 재전송 전에는 항상 부분 출력을 걷는다 — 재전송은 생성을 처음부터 다시 하므로 남겨두면 새 출력이 옛 부분 뒤에 이어붙어 보인다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
@@ -430,6 +431,13 @@ agent-cli run "task description" [options]
 | `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 | `4` |
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) | `10` |
+| `--thinking` | 사고 `off`·`on`·`auto` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브) | `off` |
+| `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`) | `auto` |
+| `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
+| `--auto-approve` / `--no-auto-approve` | 확인 프롬프트를 묻지 않고 허용 (env `AGENT_CLI_AUTO_APPROVE`, 웹 ⚡ 노브) | 꺼짐 |
+| `--auditor` / `--no-auditor` | 세션 감사 (env `AGENT_CLI_AUDITOR`, 웹 🔎 칩; 아래 "세션 감사자") | 꺼짐 |
+
+> 위 노브 아홉 축(`--thinking`·`--reasoning-effort`·`--grammar`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |

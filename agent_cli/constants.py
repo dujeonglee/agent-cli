@@ -400,6 +400,7 @@ AUDITOR_NAME = "auditor"
 #: (`harness.auditor.SessionAuditor.run_ended`) — 감사자가 알아야 할 하니스 사실은
 #: 셋뿐이다: 세션 id(history 도구의 범위·파일 필터), 감사할 서수 구간, 그리고
 #: 보고는 `complete` 의 result 라는 것(하니스가 그걸 main 에게 전한다 — 4판).
+#: 켜고 끄기는 노브 `auditor` (`knobs.KNOBS`: env AGENT_CLI_AUDITOR · --auditor · 🔎 칩).
 AUDIT_REQUEST = (
     "Audit main's run that just ended: history seq {a}..{b} of session {session} "
     "(main's history file: {history}).\n"
@@ -410,15 +411,3 @@ AUDIT_REQUEST = (
     "result IS the report — the harness delivers it to main; there is nobody "
     "else to tell."
 )
-
-
-def auditor_enabled() -> bool:
-    """`AGENT_CLI_AUDITOR=1` — 세션 감사자를 켠다 (v10.42.0, 기본 꺼짐)."""
-    import os
-
-    return os.environ.get("AGENT_CLI_AUDITOR", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )

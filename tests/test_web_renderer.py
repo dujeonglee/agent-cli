@@ -277,9 +277,9 @@ class TestDangerousShellWaitsForViewer:
 
     def test_auto_approve_defaults_off_and_broadcasts(self):
         r = WebRenderer()
-        assert r._auto_approve is False  # 기본 OFF(안전)
+        assert r.auto_approve is False  # 기본 OFF(안전)
         r.set_auto_approve(True)
-        assert r._auto_approve is True
+        assert r.auto_approve is True
         # sticky 로 브로드캐스트되어 재접속 snapshot 에 실린다.
         conn = WebConnection(id="v")
         snap = r.register_connection(conn)

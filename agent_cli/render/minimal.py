@@ -876,6 +876,10 @@ class MinimalRenderer(Renderer):
         delegate-originated confirms, and when ``command`` is supplied it is
         printed on its own line with the dangerous tokens highlighted.
         """
+        if self.auto_approve:  # ⚡ 노브 `auto_approve` — 터미널에도 물을 사람이 없다
+            label = command or prompt.strip().split("\n", 1)[0]
+            self.con.print(f"⚡ 자동 승인됨 (확인 없이 실행): {label}", highlight=False)
+            return (options[0].key if options else default_key, "")
 
         def _read():
             self._emit_prompt_meta_header(include_action=True)

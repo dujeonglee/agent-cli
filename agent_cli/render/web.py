@@ -219,9 +219,6 @@ class WebRenderer(Renderer):
         # 오귀속됐다(CLI 는 스레드 캡처라 무사했던 비대칭). emit 하는 스레드가
         # 자기 tid 슬롯만 읽고 지운다; delegate 종료 시 pop 으로 누수 방지.
         self._pending_thoughts: dict[int, str] = {}
-        # ⚡ 자동 승인 (per-session, runtime-only): confirm() 안전 게이트를 끄고
-        # 위험 명령/경로 확인을 자동 허용. 기본 OFF, 재시작 시 리셋.
-        self._auto_approve: bool = False
         # Counter of persistent events in the SSE replay buffer.
         self._persistent_count: int = 0
         # Optional workspace path piggybacks on the ``ready`` event so
@@ -878,9 +875,9 @@ class WebRenderer(Renderer):
     def set_auto_approve(self, on: bool) -> None:
         """⚡ 자동 승인 토글 설정 + 다른 뷰어에 sticky 로 전파(체크박스 동기화·재접속
         snapshot 복원). confirm() 이 이 플래그를 읽어 안전 프롬프트를 건너뛴다."""
-        self._auto_approve = bool(on)
+        super().set_auto_approve(on)
         self.set_sticky(
-            "confirm_mode", "confirm_mode", {"auto_approve": self._auto_approve}
+            "confirm_mode", "confirm_mode", {"auto_approve": self.auto_approve}
         )
 
     def broadcast_grammar(self, state: dict) -> None:
@@ -2382,7 +2379,7 @@ class WebRenderer(Renderer):
         # prompt and allow immediately (options[0] = the affirmative — y/allow in
         # both guards). Leave an observation so the timeline still records WHAT
         # ran without asking. Off by default; resets on restart (runtime-only).
-        if self._auto_approve:
+        if self.auto_approve:
             allow = options[0].key if options else default_key
             label = command or prompt.strip().split("\n", 1)[0]
             self.observation(

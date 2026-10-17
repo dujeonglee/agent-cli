@@ -279,11 +279,10 @@ class TestProviderBody:
     ):
         """v9.24.8: 기본 끔이 스위치로 **명시**된다 — Qwen 템플릿은 스위치가
         없으면 사고를 켠다. effort 는 싣지 않는다(끔에 상충 신호 없음)."""
-        from agent_cli.context.manager import default_thinking_override
+        from agent_cli.knobs import KNOB_BY_NAME
 
-        monkeypatch.delenv("AGENT_CLI_THINKING", raising=False)
-        monkeypatch.delenv("AGENT_CLI_REASONING_EFFORT", raising=False)
-        ov = default_thinking_override()
+        assert KNOB_BY_NAME["thinking"].default == "off"  # 노브 기본 = ctx 기본
+        ov = {"enable_thinking": False}  # ContextManager 의 초기값 (v9.24.8)
         body = self._call(mock_post, caps_thinking, CallSettings(thinking=ov))
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
         assert "reasoning_effort" not in body
@@ -292,13 +291,11 @@ class TestProviderBody:
     def test_default_off_sends_nothing_to_models_without_thinking(self, mock_post):
         """사고 미지원 모델(gpt-4o 등)엔 종전대로 아무것도 안 보낸다 — 모르는
         필드를 거부하는 서버 보호(v8.21.1 게이트)."""
-        from agent_cli.context.manager import default_thinking_override
-
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=1024, supports_thinking=False
         )
         body = self._call(
-            mock_post, caps, CallSettings(thinking=default_thinking_override())
+            mock_post, caps, CallSettings(thinking={"enable_thinking": False})
         )
         assert "chat_template_kwargs" not in body and "reasoning_effort" not in body
 
@@ -374,15 +371,7 @@ class TestCapabilityFlag:
 
 
 class TestOverride:
-    def test_env_default(self, monkeypatch):
-        from agent_cli.context.manager import default_grammar_override
-
-        monkeypatch.delenv("AGENT_CLI_GRAMMAR", raising=False)
-        assert default_grammar_override() is None
-        monkeypatch.setenv("AGENT_CLI_GRAMMAR", "off")
-        assert default_grammar_override() is False
-        monkeypatch.setenv("AGENT_CLI_GRAMMAR", "on")
-        assert default_grammar_override() is True
+    # env/CLI → 오버라이드는 노브 `grammar` (tests/test_knobs.py)
 
     def test_runtime_setter(self, tmp_path):
         from agent_cli.context.manager import ContextManager

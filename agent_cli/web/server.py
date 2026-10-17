@@ -810,24 +810,20 @@ def create_app(server: WebServer) -> FastAPI:
         두 축을 한 엔드포인트가 나르는 이유: 최대 대기 = 한도 × 시도 라
         따로 읽으면 프론트가 두 응답을 기다려 파생값을 계산해야 한다."""
         from agent_cli.constants import (
+            DEFAULT_STREAM_IDLE_TIMEOUT_S,
             STREAM_IDLE_TIMEOUT_MAX_S,
+            STREAM_MAX_ATTEMPTS,
             STREAM_MAX_ATTEMPTS_MAX,
         )
-        from agent_cli.context.manager import (
-            STREAM_IDLE_TIMEOUT_MIN_S,
-            default_stream_idle_timeout_s,
-            default_stream_max_attempts,
-        )
+        from agent_cli.context.manager import STREAM_IDLE_TIMEOUT_MIN_S
 
         has_ctx = server.ctx is not None
         seconds = (
             server.ctx.stream_idle_timeout_s
             if has_ctx
-            else default_stream_idle_timeout_s()
+            else DEFAULT_STREAM_IDLE_TIMEOUT_S
         )
-        attempts = (
-            server.ctx.stream_max_attempts if has_ctx else default_stream_max_attempts()
-        )
+        attempts = server.ctx.stream_max_attempts if has_ctx else STREAM_MAX_ATTEMPTS
         return {
             "seconds": seconds,
             "min": STREAM_IDLE_TIMEOUT_MIN_S,
@@ -952,7 +948,7 @@ def create_app(server: WebServer) -> FastAPI:
     @app.get("/api/confirm-mode")
     async def get_confirm_mode():
         """⚡ 자동 승인(확인 없이 실행) 현재 상태 — 헤더 체크박스 초기화용."""
-        return {"auto_approve": bool(getattr(server.renderer, "_auto_approve", False))}
+        return {"auto_approve": bool(server.renderer.auto_approve)}
 
     @app.post("/api/confirm-mode")
     async def set_confirm_mode(body: dict):

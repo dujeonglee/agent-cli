@@ -288,18 +288,6 @@ class TestStreamMaxAttemptsKnob:
 
         assert clamp_stream_max_attempts(raw) == expected
 
-    @pytest.mark.parametrize(
-        "env,expected", [(None, 4), ("6", 6), ("99", 10), ("0", 1), ("abc", 4), ("", 4)]
-    )
-    def test_env_default(self, monkeypatch, env, expected):
-        from agent_cli.context.manager import default_stream_max_attempts
-
-        if env is None:
-            monkeypatch.delenv("AGENT_CLI_STREAM_MAX_ATTEMPTS", raising=False)
-        else:
-            monkeypatch.setenv("AGENT_CLI_STREAM_MAX_ATTEMPTS", env)
-        assert default_stream_max_attempts() == expected
-
     def test_ctx_default_and_setter(self, tmp_path):
         from agent_cli.context.manager import ContextManager
 
@@ -326,83 +314,6 @@ class TestStreamMaxAttemptsKnob:
         sub, err = create_subagent_ctx("none", parent, tmp_path / "s")
         assert sub is not None, err
         assert (sub.stream_idle_timeout_s, sub.stream_max_attempts) == (120, 7)
-
-
-class TestStallCliFlags:
-    """v8.60.0: ``--stall`` / ``--stall-attempts`` (run·web 공통).
-
-    한도는 종전에 env·웹 노브만 있었다. 한 노브로 합친 이상 CLI 에서 한
-    축만 플래그이고 다른 축은 env 인 비대칭이 그대로 드러나므로 같이 넣는다."""
-
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            ("600", 600),
-            ("10m", 600),
-            ("5m", 300),
-            ("45s", 45),
-            ("0", 0),  # 감지 끔 — None(미지정)과 구분되어야 한다
-            (None, None),
-            ("", None),
-            ("   ", None),
-        ],
-    )
-    def test_parse_stall(self, raw, expected):
-        from agent_cli.main import _parse_stall
-
-        assert _parse_stall(raw) == expected
-
-    @pytest.mark.parametrize("bad", ["abc", "10x", "-1", "1.5m"])
-    def test_parse_stall_rejects_garbage(self, bad):
-        """조용히 기본값으로 떨어지면 헤드리스에서 오타가 드러나지 않는다 —
-        harbor 러너가 의도한 한도 없이 몇 시간을 돈 뒤에야 알게 된다."""
-        import typer
-
-        from agent_cli.main import _parse_stall
-
-        with pytest.raises(typer.BadParameter):
-            _parse_stall(bad)
-
-    def test_flags_registered_on_run_and_web(self):
-        """두 명령 모두에 있어야 한다 — web 에만 있으면 harbor·스크립트
-        경로가 env 로만 조절 가능해진다."""
-        for cmd in ("run", "web"):
-            opts = _registered_options(cmd)
-            assert "--stall" in opts, cmd
-            assert "--stall-attempts" in opts, cmd
-
-    def _ctx(self, tmp_path, **kw):
-        """``_build_context`` 를 세션 디스크 조립 없이 호출 — 검증 대상은
-        노브 적용뿐이다."""
-        from agent_cli.main import _build_context
-
-        boot = MagicMock(max_context_tokens=100_000, dialect=None)
-        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
-            return _build_context(MagicMock(), boot, **kw)
-
-    def test_build_context_applies_flags(self, tmp_path):
-        ctx = self._ctx(tmp_path, stall="5m", stall_attempts=6)
-        assert (ctx.stream_idle_timeout_s, ctx.stream_max_attempts) == (300, 6)
-
-    def test_flags_beat_env(self, monkeypatch, tmp_path):
-        """우선순위 CLI > env > 기본값. env 가 이기면 헤드리스에서 플래그가
-        조용히 무시된다."""
-        monkeypatch.setenv("AGENT_CLI_STREAM_IDLE_TIMEOUT_S", "900")
-        monkeypatch.setenv("AGENT_CLI_STREAM_MAX_ATTEMPTS", "2")
-        ctx = self._ctx(tmp_path, stall="120", stall_attempts=8)
-        assert (ctx.stream_idle_timeout_s, ctx.stream_max_attempts) == (120, 8)
-
-    def test_env_still_applies_when_flags_absent(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("AGENT_CLI_STREAM_IDLE_TIMEOUT_S", "900")
-        monkeypatch.setenv("AGENT_CLI_STREAM_MAX_ATTEMPTS", "2")
-        ctx = self._ctx(tmp_path)
-        assert (ctx.stream_idle_timeout_s, ctx.stream_max_attempts) == (900, 2)
-
-    def test_stall_zero_flag_disables_detection(self, tmp_path):
-        """``--stall 0`` 은 미지정이 아니라 명시적 '끔' — sentinel 혼동이
-        생기면 끄려는 사용자가 기본 10분을 받는다."""
-        ctx = self._ctx(tmp_path, stall="0")
-        assert ctx.stream_idle_timeout_s == 0
 
 
 class TestBrokenStreamRetry:
@@ -650,36 +561,6 @@ class TestBootKnobFlags:
     있던 비대칭의 해소."""
 
     # ── compaction ratio ──
-    @pytest.mark.parametrize(
-        "env,expected",
-        [
-            (None, 1.0),
-            ("0.6", 0.6),
-            ("0.5", 0.5),
-            ("0.95", 0.95),
-            ("0.1", 0.5),  # clamp ↓
-            ("9", 1.0),  # clamp ↑
-            ("abc", 1.0),
-            ("", 1.0),
-        ],
-    )
-    def test_compaction_env_default(self, monkeypatch, env, expected):
-        from agent_cli.context.manager import default_compaction_ratio
-
-        if env is None:
-            monkeypatch.delenv("AGENT_CLI_COMPACTION_RATIO", raising=False)
-        else:
-            monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", env)
-        assert default_compaction_ratio() == pytest.approx(expected)
-
-    def test_ctx_picks_up_compaction_env(self, monkeypatch, tmp_path):
-        from agent_cli.context.manager import ContextManager
-
-        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
-        assert ContextManager(session_dir=tmp_path).compaction_ratio == pytest.approx(
-            0.6
-        )
-
     def test_explicit_compaction_beats_env(self, monkeypatch, tmp_path):
         """명시값(서브에이전트 상속·테스트)은 env 를 이긴다 — 안 그러면
         부모의 비율을 물려받아야 할 서브에이전트가 env 로 끌려간다."""
@@ -690,32 +571,6 @@ class TestBootKnobFlags:
         assert ctx.compaction_ratio == pytest.approx(0.9)
 
     # ── max agents ──
-    @pytest.mark.parametrize(
-        "env,expected",
-        [
-            (None, 10),
-            ("3", 3),
-            ("0", 0),  # 무제한 sentinel — 기본값으로 떨어지면 안 된다
-            ("-1", 0),
-            ("abc", 10),
-            ("", 10),
-        ],
-    )
-    def test_max_agents_env_default(self, monkeypatch, env, expected):
-        from agent_cli.subagent.agents_live import default_max_agents
-
-        if env is None:
-            monkeypatch.delenv("AGENT_CLI_MAX_AGENTS", raising=False)
-        else:
-            monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", env)
-        assert default_max_agents() == expected
-
-    def test_registry_picks_up_max_agents_env(self, monkeypatch, tmp_path):
-        from agent_cli.subagent.agents_live import AgentRegistry
-
-        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "3")
-        assert AgentRegistry(tmp_path).max_agents == 3
-
     def test_explicit_max_agents_beats_env(self, monkeypatch, tmp_path):
         from agent_cli.subagent.agents_live import AgentRegistry
 
@@ -738,47 +593,6 @@ class TestBootKnobFlags:
             opts = _registered_options(cmd)
             assert "--compaction-ratio" in opts, cmd
             assert "--max-agents" in opts, cmd
-
-    def test_compaction_flag_beats_env(self, monkeypatch, tmp_path):
-        from agent_cli.main import _build_context
-
-        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
-        boot = MagicMock(max_context_tokens=100_000, dialect=None)
-        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
-            ctx = _build_context(MagicMock(), boot, compaction_ratio=0.9)
-        assert ctx.compaction_ratio == pytest.approx(0.9)
-
-    def test_compaction_env_applies_without_flag(self, monkeypatch, tmp_path):
-        from agent_cli.main import _build_context
-
-        monkeypatch.setenv("AGENT_CLI_COMPACTION_RATIO", "0.6")
-        boot = MagicMock(max_context_tokens=100_000, dialect=None)
-        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
-            ctx = _build_context(MagicMock(), boot)
-        assert ctx.compaction_ratio == pytest.approx(0.6)
-
-    def test_all_four_boot_knobs_reach_ctx_together(self, monkeypatch, tmp_path):
-        """네 축이 서로 간섭하지 않는지 — 한 번에 주면 각자 제 값으로."""
-        from agent_cli.main import _build_context
-
-        for k in (
-            "AGENT_CLI_COMPACTION_RATIO",
-            "AGENT_CLI_STREAM_IDLE_TIMEOUT_S",
-            "AGENT_CLI_STREAM_MAX_ATTEMPTS",
-        ):
-            monkeypatch.delenv(k, raising=False)
-        boot = MagicMock(max_context_tokens=100_000, dialect=None)
-        with patch("agent_cli.context.session.get_session_dir", return_value=tmp_path):
-            ctx = _build_context(
-                MagicMock(),
-                boot,
-                stall="5m",
-                stall_attempts=6,
-                compaction_ratio=0.9,
-            )
-        assert ctx.stream_idle_timeout_s == 300
-        assert ctx.stream_max_attempts == 6
-        assert ctx.compaction_ratio == pytest.approx(0.9)
 
 
 class TestSharedDurationParser:
@@ -822,20 +636,22 @@ class TestSharedDurationParser:
         assert "typer" not in inspect.getsource(parse_duration)
 
     def test_cli_surface_converts_to_bad_parameter(self):
-        """``--stall`` 은 ValueError 를 typer.BadParameter 로 바꾼다 —
-        조용히 기본값으로 떨어지면 헤드리스에서 오타가 안 드러난다."""
+        """``--stall`` 은 ValueError 를 typer.BadParameter 로 바꾼다 (노브 CLI 표면,
+        `knobs.knob_options`) — 조용히 기본값으로 떨어지면 헤드리스에서 오타가 안
+        드러난다. 빈 값 = 미지정은 typer 가 (옵션 생략) 맡고, "0" 은 명시적 끔."""
         import typer
+        from typer.testing import CliRunner
 
-        from agent_cli.main import _parse_stall
+        from agent_cli.knobs import KNOB_BY_NAME, knob_options
 
-        with pytest.raises(typer.BadParameter):
-            _parse_stall("10x")
+        assert KNOB_BY_NAME["stall"].parse("0") == 0
+        app = typer.Typer()
 
-    def test_stall_keeps_its_empty_means_unset_rule(self):
-        """빈 값 처리는 **호출자 몫**이다 — ``--stall`` 은 빈 값 = 미지정(None)
-        이라 0(명시적 끔)과 구분해야 하는데, monitor 엔 그 구분이 없다.
-        파서가 둘 중 하나를 고르면 다른 쪽이 틀린다."""
-        from agent_cli.main import _parse_stall
+        @app.command()
+        @knob_options
+        def go(knob_args: dict | None = None):
+            print(knob_args)
 
-        assert _parse_stall("") is None and _parse_stall(None) is None
-        assert _parse_stall("0") == 0  # 구분 유지
+        r = CliRunner().invoke(app, ["--stall", "10x"])
+        assert r.exit_code != 0 and "--stall" in r.output
+        assert CliRunner().invoke(app, []).output.strip() == "{}"

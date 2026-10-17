@@ -64,6 +64,13 @@ class Renderer(ABC):
         self._thread_agent: dict[int, str] = {}  # tid → delegate label
         self._thread_thought: dict[int, str] = {}  # tid → last reasoning
         self._thread_action: dict[int, str] = {}  # tid → last action line
+        # ⚡ 자동 승인 (노브 `auto_approve`, v10.43.0 — 종전 web 전용): confirm()
+        # 이 묻지 않고 첫 선택지(허용)로 답한다. 세션 한정, 기본 off.
+        self.auto_approve: bool = False
+
+    def set_auto_approve(self, on: bool) -> None:
+        """⚡ 자동 승인 토글 — web 은 sticky 전파를 덧붙인다."""
+        self.auto_approve = bool(on)
 
     # ── Depth (nesting) ──────────────────────────────
 
