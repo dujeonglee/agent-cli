@@ -205,6 +205,19 @@ class WebServer:
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
         self.workspace = Path.cwd().resolve()
 
+    def knob_session(self):
+        """노브의 소유자 묶음 (`knobs.KnobSession`) — 지금 서버가 든 것들로 매번
+        만든다(worker 부트가 registry·auditor 를 늦게 꽂는다)."""
+        from agent_cli.knobs import KnobSession
+
+        return KnobSession(
+            ctx=self.ctx,
+            registry=self.agent_registry,
+            renderer=self.renderer,
+            auditor=self.auditor,
+            binding=self.binding,
+        )
+
     def grammar_state(self) -> dict:
         """📐 문법 제약 상태 — 칩·status.json·health 가 같은 셋을 본다: 세션
         오버라이드, 서버 지원 판정(모델 capability — None=아직 모름), 그 둘로
@@ -762,100 +775,6 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
-    @app.get("/api/compaction")
-    async def get_compaction():
-        """현재 compaction 목표 비율 + 슬라이더 범위(min/max/step). 라이브
-        ctx 가 없으면(headless) 기본값. 프론트가 슬라이더 초기화에 사용."""
-        from agent_cli.context.manager import (
-            COMPACTION_RATIO_MAX,
-            COMPACTION_RATIO_MIN,
-            COMPACTION_RATIO_STEP,
-            DEFAULT_COMPACTION_RATIO,
-        )
-
-        ratio = (
-            server.ctx.compaction_ratio
-            if server.ctx is not None
-            else DEFAULT_COMPACTION_RATIO
-        )
-        return {
-            "ratio": ratio,
-            "min": COMPACTION_RATIO_MIN,
-            "max": COMPACTION_RATIO_MAX,
-            "step": COMPACTION_RATIO_STEP,
-        }
-
-    @app.post("/api/compaction")
-    async def set_compaction(body: dict):
-        """세션 한정 compaction 목표 비율 변경. web 과 loop 이 같은 ctx 를
-        공유하므로 다음 LLM 콜이 즉시 새 값을 읽는다(rebuild 불필요). 값은
-        [min,max] 로 clamp 되고, 다른 뷰어엔 sticky 브로드캐스트로 슬라이더
-        동기화. 서브에이전트는 spawn/resume 시점에 이 값을 상속(기존 서브는
-        불변 — 재spawn 으로 적용)."""
-        if server.ctx is None:
-            return {"ok": False, "error": "no active context"}
-        try:
-            ratio = float(body.get("ratio"))
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "ratio must be a number"}
-        clamped = server.ctx.set_compaction_ratio(ratio)
-        server.renderer.broadcast_compaction_ratio(clamped)
-        return {"ok": True, "ratio": clamped}
-
-    @app.get("/api/stream-idle")
-    async def get_stream_idle():
-        """현재 스트림 무진전(no-token) 한도(초) + 총 시도 횟수 + 입력 범위.
-        한도 0=감지 끔. 프론트 ⏳ 노브 초기화용 (P3 v8.55.0, 시도 v8.60.0).
-
-        두 축을 한 엔드포인트가 나르는 이유: 최대 대기 = 한도 × 시도 라
-        따로 읽으면 프론트가 두 응답을 기다려 파생값을 계산해야 한다."""
-        from agent_cli.constants import (
-            DEFAULT_STREAM_IDLE_TIMEOUT_S,
-            STREAM_IDLE_TIMEOUT_MAX_S,
-            STREAM_MAX_ATTEMPTS,
-            STREAM_MAX_ATTEMPTS_MAX,
-        )
-        from agent_cli.context.manager import STREAM_IDLE_TIMEOUT_MIN_S
-
-        has_ctx = server.ctx is not None
-        seconds = (
-            server.ctx.stream_idle_timeout_s
-            if has_ctx
-            else DEFAULT_STREAM_IDLE_TIMEOUT_S
-        )
-        attempts = server.ctx.stream_max_attempts if has_ctx else STREAM_MAX_ATTEMPTS
-        return {
-            "seconds": seconds,
-            "min": STREAM_IDLE_TIMEOUT_MIN_S,
-            "max": STREAM_IDLE_TIMEOUT_MAX_S,
-            "attempts": attempts,
-            "attempts_min": 1,
-            "attempts_max": STREAM_MAX_ATTEMPTS_MAX,
-        }
-
-    @app.post("/api/stream-idle")
-    async def set_stream_idle(body: dict):
-        """세션 한정 무진전 한도/시도 횟수 변경 — 다음 LLM 콜 즉시 반영(공유
-        ctx), clamp 결과 반환, sticky 로 타 뷰어 동기화. 한도 0=감지 끔.
-
-        두 키 모두 **선택** — 보낸 축만 바뀐다. v8.55.0 의 ``{"seconds": N}``
-        단독 호출은 그대로 유효(구 프론트 호환)."""
-        if server.ctx is None:
-            return {"ok": False, "error": "no active context"}
-        if "seconds" not in body and "attempts" not in body:
-            return {"ok": False, "error": "seconds or attempts required"}
-        try:
-            if "seconds" in body:
-                server.ctx.set_stream_idle_timeout(int(body["seconds"]))
-            if "attempts" in body:
-                server.ctx.set_stream_max_attempts(int(body["attempts"]))
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "seconds/attempts must be integers"}
-        seconds = server.ctx.stream_idle_timeout_s
-        attempts = server.ctx.stream_max_attempts
-        server.renderer.broadcast_stream_idle(seconds, attempts)
-        return {"ok": True, "seconds": seconds, "attempts": attempts}
-
     @app.get("/api/mcp")
     async def get_mcp_status():
         """🔌 칩용 — 부팅 시 MCP 서버별 연결 상태·도구 수·실패 이유 (v9.2.0).
@@ -945,126 +864,35 @@ def create_app(server: WebServer) -> FastAPI:
         reg.dismiss(sched_id)
         return schedules_view(reg)
 
-    @app.get("/api/confirm-mode")
-    async def get_confirm_mode():
-        """⚡ 자동 승인(확인 없이 실행) 현재 상태 — 헤더 체크박스 초기화용."""
-        return {"auto_approve": bool(server.renderer.auto_approve)}
+    @app.get("/api/knobs")
+    async def get_knobs():
+        """세션 노브 전부 (v10.43.0, docs/knobs/DESIGN.md §5.1) — `knobs.KNOBS` 를
+        돌며 상태 한 장씩. 칩·재접속 초기화가 이 한 요청으로 끝난다. 종전
+        `/api/thinking`·`/api/grammar`·`/api/max-agents`·`/api/compaction`·
+        `/api/stream-idle`·`/api/confirm-mode`·`/api/auditor` 를 대체."""
+        from agent_cli.knobs import web_states
 
-    @app.post("/api/confirm-mode")
-    async def set_confirm_mode(body: dict):
-        """세션 한정 자동 승인 토글. 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고
-        자동 허용(타임라인에 관찰로 기록). 런타임 전용 — 재시작 시 OFF 로 리셋.
-        다른 뷰어엔 sticky 브로드캐스트로 체크박스 동기화."""
-        on = bool(body.get("auto_approve"))
-        server.renderer.set_auto_approve(on)
-        return {"ok": True, "auto_approve": on}
+        return {"knobs": web_states(server.knob_session())}
 
-    @app.get("/api/thinking")
-    async def get_thinking():
-        """세션 thinking 오버라이드(사고 on/off·reasoning_effort). ctx 없으면 빈값.
-        `{enable_thinking, reasoning_effort, supports_thinking}` — 컨트롤 초기화.
-        `supports_thinking` (모델 capability): False 면 provider 가 사고 파라미터를
-        아예 안 넣으므로 프론트가 컨트롤을 비활성화한다(v8.21.1). caps 미배선(테스트/
-        부트 전)이면 None → 프론트는 비활성화하지 않음(unknown)."""
-        ov = server.ctx.thinking_override if server.ctx is not None else {}
-        caps = server.binding.capabilities if server.binding is not None else None
-        supports = bool(caps.supports_thinking) if caps is not None else None
-        return {
-            "enable_thinking": ov.get("enable_thinking"),
-            "reasoning_effort": ov.get("reasoning_effort"),
-            "supports_thinking": supports,
-        }
+    @app.post("/api/knobs/{name}")
+    async def set_knob(name: str, body: dict):
+        """``{value}`` → 표의 `parse` → 소유자의 `set` → sticky ``knob:<name>`` 으로
+        다른 뷰어 동기화. 다음 LLM 호출(또는 다음 확인·런)부터 실린다. 잘못된
+        값·거부(모델 미등록 등)는 ``{ok: false, error}`` 로 — 아무것도 바꾸지 않는다."""
+        from agent_cli.knobs import KNOB_BY_NAME, web_state
 
-    @app.post("/api/thinking")
-    async def set_thinking(body: dict):
-        """세션 thinking 오버라이드 변경 — 다음 LLM 콜에 즉시 반영(공유 ctx). None/
-        "auto" = 미설정(모델 기본). 다른 뷰어엔 sticky 브로드캐스트로 컨트롤 동기화."""
-        if server.ctx is None:
-            return {"ok": False, "error": "no active context"}
-        et = body.get("enable_thinking")
-        eff = body.get("reasoning_effort")
-        if eff in ("auto", ""):
-            eff = None
-        ov = server.ctx.set_thinking_override(enable_thinking=et, reasoning_effort=eff)
-        server.renderer.broadcast_thinking(ov)
-        return {"ok": True, **ov}
-
-    @app.get("/api/grammar")
-    async def get_grammar():
-        """📐 디코딩 문법 제약 (v9.24.0). ``override`` None=자동/True/False,
-        ``supported`` = 서버가 강제하는가(프로브 결과; None=모름), ``active`` =
-        다음 요청에 실리는가."""
-        return server.grammar_state()
-
-    @app.post("/api/grammar")
-    async def set_grammar(body: dict):
-        """``{mode: "on"|"off"}`` → 세션 오버라이드(on = 기본 = None). 다음 LLM
-        콜부터 반영, sticky 로 다른 뷰어·status.json 동기화. 켜기는 지원으로
-        기록된 모델에서만 효력 — 규칙은 `grammar_active` 하나."""
-        if server.ctx is None:
-            return {"ok": False, "error": "no active context"}
-        mode = str(body.get("mode", "on")).lower()
-        if mode not in ("on", "off"):
-            return {"ok": False, "error": "mode must be on|off"}
-        server.ctx.set_grammar_override(False if mode == "off" else None)
-        state = server.grammar_state()
-        server.renderer.broadcast_grammar(state)
-        return {"ok": True, **state}
-
-    @app.get("/api/max-agents")
-    async def get_max_agents():
-        """현재 동시 생존 에이전트 상한 + 입력 최소값/기본값. 레지스트리가
-        없으면(headless·부트 전) 기본값. 프론트가 입력·체크박스 초기화에
-        사용. value=0 이면 무제한(unlimited=True)."""
-        from agent_cli.subagent.agents_live import (
-            _DEFAULT_MAX_AGENTS,
-            MAX_AGENTS_MIN,
-        )
-
-        reg = server.agent_registry
-        value = reg.max_agents if reg is not None else _DEFAULT_MAX_AGENTS
-        return {
-            "value": value,
-            "min": MAX_AGENTS_MIN,
-            "default": _DEFAULT_MAX_AGENTS,
-            "unlimited": value == 0,
-        }
-
-    @app.post("/api/max-agents")
-    async def set_max_agents(body: dict):
-        """세션 한정 에이전트 상한 변경. ``value <= 0`` 이면 무제한. 레지스트리
-        가 즉시 새 값을 읽어(다음 spawn/resume 게이트) 반영되고, 다른 뷰어엔
-        sticky 브로드캐스트로 입력/체크박스 동기화. 상한을 낮춰도 기존 에이전트
-        는 안 죽임 — 새 spawn 만 막음."""
-        reg = server.agent_registry
-        if reg is None:
-            return {"ok": False, "error": "agent registry not ready"}
+        knob = KNOB_BY_NAME.get(name)
+        if knob is None:
+            raise HTTPException(status_code=404, detail=f"unknown knob '{name}'")
+        session = server.knob_session()
+        if not knob.available(session):
+            return {"ok": False, "error": f"{name}: no session owner to apply to"}
         try:
-            value = int(body.get("value"))
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "value must be an integer"}
-        stored = reg.set_max_agents(value)
-        server.renderer.broadcast_max_agents(stored)
-        return {"ok": True, "value": stored, "unlimited": stored == 0}
-
-    @app.get("/api/auditor")
-    async def get_auditor():
-        """🔎 세션 감사자 (v10.42.0). ``{enabled, available, in_flight}`` —
-        ``available`` 이 거짓이면(세션 없음) 칩을 숨긴다."""
-        if server.auditor is None:
-            return {"enabled": False, "available": False, "in_flight": 0}
-        return server.auditor.state()
-
-    @app.post("/api/auditor")
-    async def set_auditor(body: dict):
-        """``{enabled: bool}`` → 다음 사용자 런부터 감사 여부. 진행 중인 감사는
-        끝까지 돈다(결과는 배달된다). sticky 로 다른 뷰어 동기화. 세션 한정 —
-        재시작 시 `AGENT_CLI_AUDITOR` 로 돌아간다."""
-        if server.auditor is None:
-            return {"ok": False, "error": "no session to audit"}
-        server.auditor.enabled = bool(body.get("enabled"))
-        state = server.auditor.state()
-        server.renderer.broadcast_auditor(state)
+            knob.set(session, knob.parse(body.get("value")))
+        except ValueError as exc:
+            return {"ok": False, "error": f"{name}: {exc}"}
+        state = web_state(knob, session)
+        server.renderer.broadcast_knob(state)
         return {"ok": True, **state}
 
     @app.post("/api/directives/generate")

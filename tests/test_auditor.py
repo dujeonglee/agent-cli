@@ -495,8 +495,9 @@ class TestAssembly:
 
 
 class TestWebKnob:
-    """🔎 칩 — `/api/auditor` 가 세션 도중 켜고 끄고, sticky 로 뷰어를 맞추고,
-    진행 중 수는 status.json `auditing` 으로 보드에 간다."""
+    """🔎 칩 — 노브 `auditor` 의 web 표면은 `/api/knobs` (2단계): 세션 도중 켜고
+    끄고, sticky `knob:auditor` 로 뷰어를 맞추고, 진행 중 수는 status.json
+    `auditing` 과 같은 sticky 의 `in_flight` 로 보드·칩에 간다."""
 
     def _app(self, tmp_path, auditor):
         from fastapi.testclient import TestClient
@@ -509,40 +510,44 @@ class TestWebKnob:
         server.auditor = auditor
         return renderer, server, TestClient(create_app(server))
 
+    def _state(self, client, name="auditor"):
+        ks = client.get("/api/knobs?token=t").json()["knobs"]
+        return next(k for k in ks if k["name"] == name)
+
     def test_api_reads_and_flips_the_knob(self, tmp_path):
         ctx = _ctx(tmp_path)
         auditor = SessionAuditor(_FakeJobs(), ctx, enabled=False)
         renderer, _server, client = self._app(tmp_path, auditor)
-        assert client.get("/api/auditor?token=t").json() == {
-            "enabled": False,
-            "available": True,
-            "in_flight": 0,
-        }
-        r = client.post("/api/auditor?token=t", json={"enabled": True}).json()
-        assert r["ok"] and r["enabled"] is True and auditor.enabled
-        assert renderer._sticky["auditor_mode"]["payload"]["enabled"] is True
+        st = self._state(client)
+        assert st["available"] and st["value"] is False and st["in_flight"] == 0
+        r = client.post("/api/knobs/auditor?token=t", json={"value": True}).json()
+        assert r["ok"] and r["value"] is True and auditor.enabled
+        assert renderer._sticky["knob:auditor"]["payload"]["value"] is True
         assert client.get("/api/health?token=t").json()["auditing"] is False
-        r = client.post("/api/auditor?token=t", json={"enabled": False}).json()
+        r = client.post("/api/knobs/auditor?token=t", json={"value": "off"}).json()
         assert r["ok"] and not auditor.enabled
 
     def test_no_session_hides_the_chip(self, tmp_path):
         _r, _s, client = self._app(tmp_path, None)
-        assert client.get("/api/auditor?token=t").json()["available"] is False
+        assert self._state(client)["available"] is False
         assert (
-            client.post("/api/auditor?token=t", json={"enabled": True}).json()["ok"]
+            client.post("/api/knobs/auditor?token=t", json={"value": True}).json()["ok"]
             is False
         )
 
     def test_in_flight_reaches_status_file_and_the_chip(self, tmp_path):
+        from agent_cli.knobs import KNOB_BY_NAME, KnobSession, web_state
         from agent_cli.web.instance_file import read_status_file
 
         ctx = _ctx(tmp_path)
         auditor = SessionAuditor(_FakeJobs(), ctx, enabled=True)
         renderer, _server, _client = self._app(tmp_path, auditor)
-        renderer.broadcast_auditor(auditor.state())
+        renderer.broadcast_knob(
+            web_state(KNOB_BY_NAME["auditor"], KnobSession(auditor=auditor))
+        )
         renderer.note_harness(1)
         assert read_status_file(tmp_path)["auditing"] is True
-        assert renderer._sticky["auditor_mode"]["payload"]["in_flight"] == 1
+        assert renderer._sticky["knob:auditor"]["payload"]["in_flight"] == 1
         renderer.note_harness(0)
         assert read_status_file(tmp_path)["auditing"] is False
 
@@ -551,7 +556,7 @@ class TestWebKnob:
         html = client.get("/?token=t").text
         js = client.get("/static/app.js?token=t").text
         assert 'id="auditor-wrap"' in html and 'id="auditor-mode"' in html
-        assert "api/auditor" in js and "auditor_mode" in js
+        assert 'KNOBS.get("auditor")' in js and 'KNOBS.on("auditor"' in js
 
 
 class TestJobsRuntimeContract:

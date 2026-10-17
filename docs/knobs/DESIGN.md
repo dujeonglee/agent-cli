@@ -1,6 +1,6 @@
 # 세션 노브 — 한 번 선언, 표면 셋이 파생 (`agent_cli/knobs.py`)
 
-> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
+> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17), 2단계 구현됨 (v10.44.0)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
 > 결정(사용자): ① `run` 의 제어면은 실행 인자(시작 뒤 입력 프롬프트가 없다 — §1) ② 노브 추상화 + 표면별 적응 인터페이스 ③ 1단계부터, 2·3단계는 별도 PR ④ **모델도 노브**, 노브 값은 **캐시하지 말고 영향을 미치는 코드가 직접 읽어 적용**(모델을 바꾸면 다음 LLM 호출에서 적용) — 그러면서 같은 정보를 두 곳에 들던 복사본과 죽은 코드를 정리.
 
 ## 0. 한 줄 요약
@@ -106,11 +106,13 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 
 ## 5. 다음 단계
 
-### 5.1 2단계 — web 표면 통일
+### 5.1 2단계 — web 표면 통일 (구현됨, v10.44.0)
 
-- `GET /api/knobs` 가 `KNOBS` 를 돌며 `{name, kind, choices 또는 range, value, default, locked(사유 또는 null), label, info}` 를 주고, `POST /api/knobs/{name}` 이 `Knob.parse → Knob.set` 뒤 sticky `knob:<name>` 하나를 낸다. 잠김(사고 미지원 모델, 문법 지원 미확인)은 `Knob.locked(session)` 이 사유를 돌려준다(표에 접근자 하나 추가).
-- 개별 엔드포인트 일곱(`/api/thinking`, `/api/grammar`, `/api/max-agents`, `/api/compaction`, `/api/stream-idle`, `/api/confirm-mode`, `/api/auditor`)과 렌더러의 `broadcast_*` 일곱을 **별칭 없이** 지운다. 보드는 이 엔드포인트를 쓰지 않는다(status.json·health 만). status.json 의 `grammar`·`auditing` 은 노브가 아니라 상태라 남는다.
-- 칩은 그대로 두되 새 API 를 부른다. 테스트는 표의 모든 이름에 GET/POST 가 되는지를 표에서 돌린다.
+- `GET /api/knobs` 가 `KNOBS` 를 돌며 노브마다 상태 한 장(`knobs.web_state`): `{name, label, help, flag, env, kind, choices, default, available, value, locked, …info}`. `info` 는 노브가 선언한 파생 사실(범위 min/max/step, `supported`/`active`, `supports_thinking`, `in_flight`, 모델의 `dialect`/`context_window`), `locked` 는 잠김 사유(사고 미지원 모델, 문법 지원 미확인/미지원). 소유자가 없으면 `available: false` 에 값 없음.
+- `POST /api/knobs/{name}` `{value}` → `Knob.parse` → `Knob.set` → sticky `knob:<name>`(이벤트 `knob`) 하나. 미지名 404, 잘못된 값·거부(모델 미등록 등)·소유자 없음은 `{ok:false, error}` 로 아무것도 바꾸지 않는다. 다음 LLM 호출(또는 다음 확인·런)부터 실린다.
+- **지운 것(별칭 없이)**: 개별 엔드포인트 열네 핸들러(`/api/thinking`·`/api/grammar`·`/api/max-agents`·`/api/compaction`·`/api/stream-idle`·`/api/confirm-mode`·`/api/auditor` 의 GET/POST), 렌더러의 `broadcast_compaction_ratio`·`broadcast_stream_idle`·`broadcast_grammar`·`broadcast_auditor`·`broadcast_thinking`·`broadcast_max_agents` 와 `set_auto_approve` 오버라이드(sticky), 프런트의 노브별 fetch 열넷·SSE 리스너 일곱·`agentcli:*` 이벤트 일곱. status.json 의 `grammar`·`auditing` 은 노브가 아니라 상태라 남고, `knob:grammar`·`knob:auditor` sticky 에서 읽는다. 보드는 이 엔드포인트를 쓰지 않았다.
+- 칩은 그대로(디자인 결정)되 `KNOBS` 클라이언트 하나(`all/get/set/on`)를 쓴다 — 한 칩이 두 노브를 들 때(⏳ 한도·시도, 🧠 사고·노력)는 각 노브를 따로 저장하고 다른 축의 마지막 값을 들고 있다. 📐 셀렉트는 노브 값 그대로 `auto`(기본, 지원되면 켬)/`off`.
+- 테스트 `tests/test_knobs_web.py`: 표의 모든 노브가 GET 에 표 순서로 나오고 POST 로 바뀌며 sticky 와 재접속 snapshot 에 실린다(표에서 돈다); 404·잘못된 값·소유자 없음은 무변경; 소유자 의미(clamp·무제한 0·무진전 0=끔·두 축 독립) 유지; 잠김 사유는 서버가; status.json `grammar` 는 같은 sticky; 프런트는 `fetch("api/<old>")` 없이 `KNOBS` 만.
 
 ### 5.2 3단계 — 칩 일반화·보드·문서
 

@@ -2230,7 +2230,7 @@
   // `channel -> {el, body, think, retry}`. 귀속은 `channelOf(task_id)` —
   // 카드가 쓰는 그 함수라 필터와 어긋날 수 없다.
   const genByCh = {};
-  // 📐 문법 제약이 실리는 세션인가 — 생성 중 줄이 읽는다(sticky grammar_mode).
+  // 📐 문법 제약이 실리는 세션인가 — 생성 중 줄이 읽는다(sticky knob:grammar).
   const GRAMMAR = { active: false };
   // fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
 
@@ -2622,19 +2622,13 @@
     if (d && d.key) ovOnAgentCleared(d.key);
   });
 
-  es.addEventListener("compaction_ratio", function (e) {
-    // 5.13: 다른 뷰어가 압축 슬라이더를 바꾸면 sticky 로 전파 — 슬라이더
-    // IIFE 로 중계해 이 탭의 슬라이더도 동기화한다.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:compaction", { detail: JSON.parse(e.data) }),
-    );
-  });
-
-  es.addEventListener("stream_idle", function (e) {
-    // P3: 다른 뷰어의 Stall(무진전 한도) 변경을 IIFE 로 중계.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:streamidle", { detail: JSON.parse(e.data) }),
-    );
+  es.addEventListener("knob", function (e) {
+    // 세션 노브 상태 한 장 (v10.43.0, `/api/knobs` 와 같은 모양) — 다른 뷰어가
+    // 바꾸면(또는 부팅 초기값) sticky `knob:<name>` 으로. 칩 IIFE 들이 name 으로
+    // 거른다(KNOBS.on). 종전 노브별 SSE 이벤트 일곱 개를 대체.
+    const d = JSON.parse(e.data);
+    if (d && d.name === "grammar") GRAMMAR.active = !!d.active;
+    document.dispatchEvent(new CustomEvent("agentcli:knob", { detail: d }));
   });
 
   es.addEventListener("thinking_tick", function (e) {
@@ -2651,43 +2645,6 @@
     // 헤더 배지만 갱신하면 대화 쪽은 조용해 멎은 것처럼 읽힌다.
     genSlot(channelOf(d.task_id || "")).think = d.tokens;
     showGenerating(d.task_id);
-  });
-
-  es.addEventListener("max_agents", function (e) {
-    // 5.16: 다른 뷰어가 에이전트 상한을 바꾸면 sticky 로 전파 — maxagents
-    // IIFE 로 중계해 이 탭의 입력/체크박스도 동기화한다.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:maxagents", { detail: JSON.parse(e.data) }),
-    );
-  });
-
-  es.addEventListener("confirm_mode", function (e) {
-    // ⚡ 자동 승인 체크박스 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:confirmmode", { detail: JSON.parse(e.data) }),
-    );
-  });
-
-  es.addEventListener("grammar_mode", function (e) {
-    // 📐 문법 제약 상태 동기화 — 다른 뷰어가 바꾸면(또는 부팅 초기값) sticky 로.
-    const d = JSON.parse(e.data);
-    GRAMMAR.active = !!d.active;
-    document.dispatchEvent(new CustomEvent("agentcli:grammarmode", { detail: d }));
-  });
-
-  es.addEventListener("auditor_mode", function (e) {
-    // 🔎 세션 감사자 상태 동기화 (v10.42.0) — 다른 뷰어가 켜고 끄면(또는 부팅
-    // 초기값) sticky 로.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:auditormode", { detail: JSON.parse(e.data) }),
-    );
-  });
-
-  es.addEventListener("thinking_mode", function (e) {
-    // 🧠 사고/노력 컨트롤 동기화 — 다른 뷰어가 바꾸면 sticky 로 전파.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:thinkingmode", { detail: JSON.parse(e.data) }),
-    );
   });
 
   es.addEventListener("directives_changed", function () {
@@ -4670,10 +4627,49 @@
 })();
 
 
+// ── 세션 노브 클라이언트 (v10.43.0, docs/knobs/DESIGN.md §5.1) ─────────────
+// 칩들이 같은 둘을 쓴다: 한 번의 GET api/knobs (상태 한 장씩, `knobs.web_state`
+// 모양) 와 POST api/knobs/<name> {value}. 다른 뷰어의 변경은 SSE `knob` →
+// `agentcli:knob` 으로 오고 `on(name, fn)` 이 name 으로 거른다. 종전 노브별
+// 엔드포인트 일곱(api/compaction·stream-idle·max-agents·confirm-mode·thinking·
+// grammar·auditor)과 이벤트 일곱을 대체.
+const KNOBS = (function () {
+  let loaded = null;
+  function all() {
+    if (!loaded) {
+      loaded = fetch("api/knobs")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => (d && d.knobs) || [])
+        .catch(() => []);
+    }
+    return loaded;
+  }
+  function get(name) {
+    return all().then((ks) => ks.find((k) => k.name === name) || null);
+  }
+  function set(name, value) {
+    return fetch("api/knobs/" + name, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => (d && d.ok ? d : null))
+      .catch(() => null);
+  }
+  function on(name, fn) {
+    document.addEventListener("agentcli:knob", (e) => {
+      const d = e.detail || {};
+      if (d.name === name) fn(d);
+    });
+  }
+  return { all, get, set, on };
+})();
+
 // ── 컨텍스트 압축 임계 슬라이더 (5.13) ──────────────────────────────────
 // 헤더의 토큰 사용량 옆 슬라이더로 compaction 목표 비율을 세션 한정 변경.
 // web·loop 이 같은 ctx 를 공유하므로 저장 즉시 다음 LLM 콜에 반영. 다른
-// 뷰어는 sticky(compaction_ratio) 브로드캐스트로 동기화. 별도 IIFE — 메인
+// 뷰어는 sticky(knob:compaction_ratio) 로 동기화. 별도 IIFE — 메인
 // 렌더 루프 무수정(인스펙터·테마 등과 동일 패턴).
 (function () {
   "use strict";
@@ -4695,38 +4691,26 @@
   }
 
   // 초기 로드: 현재 비율 + 슬라이더 범위(min/max/step). 성공 시 노출.
-  fetch("api/compaction")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d) return;
-      if (typeof d.min === "number") $range.min = pctOf(d.min);
-      if (typeof d.max === "number") $range.max = pctOf(d.max);
-      if (typeof d.step === "number") $range.step = Math.max(1, pctOf(d.step));
-      if (typeof d.ratio === "number") applyRatio(d.ratio);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
+  KNOBS.get("compaction_ratio").then((d) => {
+    if (!d || !d.available) return;
+    if (typeof d.min === "number") $range.min = pctOf(d.min);
+    if (typeof d.max === "number") $range.max = pctOf(d.max);
+    if (typeof d.step === "number") $range.step = Math.max(1, pctOf(d.step));
+    if (typeof d.value === "number") applyRatio(d.value);
+    $wrap.hidden = false;
+  });
 
   // 드래그 중엔 라벨만 실시간, 놓을 때 저장(POST). clamp 결과를 되반영.
   $range.addEventListener("input", () => setLabel($range.value));
   $range.addEventListener("change", () => {
-    const ratio = Number($range.value) / 100;
-    fetch("api/compaction", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ratio: ratio }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && typeof d.ratio === "number") applyRatio(d.ratio);
-      })
-      .catch(() => {});
+    KNOBS.set("compaction_ratio", Number($range.value) / 100).then((d) => {
+      if (d && typeof d.value === "number") applyRatio(d.value);
+    });
   });
 
   // 다른 뷰어가 바꾸면 동기화.
-  document.addEventListener("agentcli:compaction", (e) => {
-    const d = e.detail || {};
-    if (typeof d.ratio === "number") applyRatio(d.ratio);
+  KNOBS.on("compaction_ratio", (d) => {
+    if (typeof d.value === "number") applyRatio(d.value);
   });
 })();
 
@@ -4743,10 +4727,12 @@
   const $badge = document.getElementById("stall-badge");
   const $att = document.getElementById("stall-attempts");
   const $derived = document.getElementById("stall-derived");
+  let lastSeconds = 600; // 두 노브(stall·stall_attempts)가 한 칩 — 다른 축의 마지막 값
 
   // 배지가 "10m×4" 인 이유: 곱(40m)만 보이면 어느 축을 고칠지 알 수 없고,
   // 한 축만 보이면 최대 대기를 머릿속에서 계산해야 한다. 곱은 파생 줄이 진다.
   function apply(seconds, attempts) {
+    lastSeconds = seconds;
     const m = toMin(seconds);
     const n =
       typeof attempts === "number"
@@ -4754,9 +4740,7 @@
         : $att
           ? Math.max(1, Number($att.value) || 1)
           : 1;
-    // 편집 중인 입력은 덮어쓰지 않는다. 한 축을 바꾸면 응답이 **두 축 모두**
-    // 실어 오므로, 그대로 쓰면 다른 칸에 타이핑하던 값이 서버 값으로 되돌아가
-    // 사용자가 방금 친 숫자를 잃는다(두 입력이 한 팝업에 생기며 드러난 경합).
+    // 편집 중인 입력은 덮어쓰지 않는다 — 다른 칸에 타이핑하던 값을 잃지 않게.
     if (document.activeElement !== $input) $input.value = m;
     if ($att && document.activeElement !== $att) $att.value = n;
     if ($badge) $badge.textContent = m === 0 ? "off" : m + "m×" + n;
@@ -4771,41 +4755,34 @@
     }
   }
 
-  fetch("api/stream-idle")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d) return;
-      if (typeof d.seconds === "number") apply(d.seconds, d.attempts);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
-
-  function push(payload) {
-    fetch("api/stream-idle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && typeof d.seconds === "number") apply(d.seconds, d.attempts);
-      })
-      .catch(() => {});
-  }
+  KNOBS.all().then((ks) => {
+    const st = ks.find((k) => k.name === "stall");
+    const at = ks.find((k) => k.name === "stall_attempts");
+    if (!st || !st.available) return;
+    apply(st.value, at && typeof at.value === "number" ? at.value : undefined);
+    $wrap.hidden = false;
+  });
 
   $input.addEventListener("change", () => {
     const minutes = Math.max(0, Math.round(Number($input.value) || 0));
-    push({ seconds: minutes * 60 });
+    KNOBS.set("stall", minutes * 60).then((d) => {
+      if (d && typeof d.value === "number") apply(d.value, undefined);
+    });
   });
   if ($att) {
     $att.addEventListener("change", () => {
-      push({ attempts: Math.max(1, Math.round(Number($att.value) || 1)) });
+      const n = Math.max(1, Math.round(Number($att.value) || 1));
+      KNOBS.set("stall_attempts", n).then((d) => {
+        if (d && typeof d.value === "number") apply(lastSeconds, d.value);
+      });
     });
   }
 
-  document.addEventListener("agentcli:streamidle", (e) => {
-    const d = e.detail || {};
-    if (typeof d.seconds === "number") apply(d.seconds, d.attempts);
+  KNOBS.on("stall", (d) => {
+    if (typeof d.value === "number") apply(d.value, undefined);
+  });
+  KNOBS.on("stall_attempts", (d) => {
+    if (typeof d.value === "number") apply(lastSeconds, d.value);
   });
 })();
 
@@ -4895,28 +4872,18 @@
   }
 
   function post(value) {
-    fetch("api/max-agents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: value }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && typeof d.value === "number") applyValue(d.value);
-      })
-      .catch(() => {});
+    KNOBS.set("max_agents", value).then((d) => {
+      if (d && typeof d.value === "number") applyValue(d.value);
+    });
   }
 
   // 초기 로드: 현재 값 + 최소값. 성공 시 노출.
-  fetch("api/max-agents")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d) return;
-      if (typeof d.min === "number") $input.min = d.min;
-      if (typeof d.value === "number") applyValue(d.value);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
+  KNOBS.get("max_agents").then((d) => {
+    if (!d || !d.available) return;
+    if (typeof d.min === "number") $input.min = d.min;
+    if (typeof d.value === "number") applyValue(d.value);
+    $wrap.hidden = false;
+  });
 
   // 숫자 입력 변경 → 저장 (min 미만/빈값은 min 으로 바닥).
   $input.addEventListener("change", () => {
@@ -4931,15 +4898,14 @@
   });
 
   // 다른 뷰어가 바꾸면 동기화.
-  document.addEventListener("agentcli:maxagents", (e) => {
-    const d = e.detail || {};
+  KNOBS.on("max_agents", (d) => {
     if (typeof d.value === "number") applyValue(d.value);
   });
 })();
 
 // ── ⚡ 자동 승인 헤더 토글 (confirm-mode, 별도 IIFE) ───────────────────
 // 헤더 버튼으로 노출(팝오버 밖). 켜면 위험 명령/경로 확인 프롬프트를 건너뛰고 자동
-// 허용(세션 한정·런타임). GET 초기화, 클릭 토글→POST, sticky(confirm_mode) 동기화.
+// 허용(세션 한정·런타임). KNOBS 로 초기화·저장, sticky(knob:auto_approve) 동기화.
 (function () {
   "use strict";
   const $btn = document.getElementById("confirm-mode-btn");
@@ -4952,38 +4918,27 @@
     $btn.classList.toggle("on", on); // 활성 시 amber 경고색
   }
 
-  fetch("api/confirm-mode")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d) return;
-      apply(!!d.auto_approve);
-      $btn.hidden = false;
-    })
-    .catch(() => {});
+  KNOBS.get("auto_approve").then((d) => {
+    if (!d || !d.available) return;
+    apply(!!d.value);
+    $btn.hidden = false;
+  });
 
   $btn.addEventListener("click", () => {
     apply(!on);
-    fetch("api/confirm-mode", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auto_approve: on }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && typeof d.auto_approve === "boolean") apply(d.auto_approve);
-      })
-      .catch(() => {});
+    KNOBS.set("auto_approve", on).then((d) => {
+      if (d && typeof d.value === "boolean") apply(d.value);
+    });
   });
 
-  document.addEventListener("agentcli:confirmmode", (e) => {
-    const d = e.detail || {};
-    if (typeof d.auto_approve === "boolean") apply(d.auto_approve);
+  KNOBS.on("auto_approve", (d) => {
+    if (typeof d.value === "boolean") apply(d.value);
   });
 })();
 
 // ── 🧠 사고/추론 노력 컨트롤 (thinking, 별도 IIFE) ─────────────────────
 // 📐 문법 제약 칩 (v9.24.0) — 🧠 사고 노브와 같은 틀. 상태 셋(override/supported/
-// active)은 /api/grammar 가 주고 sticky(grammar_mode)로 뷰어끼리 동기화한다.
+// active·locked)은 api/knobs 가 주고 sticky(knob:grammar)로 뷰어끼리 동기화한다.
 (function () {
   "use strict";
   const $wrap = document.getElementById("grammar-wrap");
@@ -4993,65 +4948,48 @@
   if (!$wrap || !$mode || !$badge || !$info) return;
 
   function apply(d) {
-    const ov = d ? d.override : null;
-    $mode.value = ov === false ? "off" : "on";
-    const supported = d ? d.supported : null;
+    // 노브 값 auto|on|off — 셀렉트는 "auto(기본, 지원되면 켬)" 와 "off" 둘.
+    $mode.value = d.value === "off" ? "off" : "auto";
+    const supported = d.supported;
     // 지원으로 기록된 모델에서만 켜고 끈다. 미지원(false)·미확인(null) 은 잠김 —
     // 지원 여부는 모델 감지 때 판정해 models.json 에 적히는 것이지 여기서
-    // 켜기 요청으로 덮는 게 아니다(부트 프로브를 없앤 이유: 서버가 바쁘면
-    // 그 요청 하나에 인스턴스 열기가 수십 초 밀렸다).
-    const locked = supported !== true;
+    // 켜기 요청으로 덮는 게 아니다. 사유는 서버(`locked`)가 준다.
+    const locked = !!d.locked;
     $mode.disabled = locked;
     $wrap.classList.toggle("is-disabled", locked);
-    $wrap.classList.toggle("is-on", !!(d && d.active));
+    $wrap.classList.toggle("is-on", !!d.active);
     // 배지는 **사실을 말한다**: 강제 / 끔 / 미지원 / 미확인.
     $badge.textContent =
-      supported === false
-        ? "미지원"
-        : locked
-          ? "미확인"
-          : d && d.active
-            ? "강제"
-            : "끔";
+      supported === false ? "미지원" : locked ? "미확인" : d.active ? "강제" : "끔";
     $info.textContent =
       supported === false
         ? "서버가 문법을 강제하지 못합니다 — 텍스트 프로토콜 + 복구 계층(종전대로)."
         : locked
           ? "models.json 에 이 모델의 문법 지원 여부가 없습니다 — 모델 감지(프로브)를 다시 실행하면 채워집니다."
-          : d && d.active
+          : d.active
             ? "다음 요청부터 실립니다. 생성 속도가 느려지는 대신 형식 오류·모르는 도구·본문 폭주가 생성 단계에서 불가능합니다."
             : "이 세션에서는 문법을 싣지 않습니다.";
   }
 
   function post() {
     if ($mode.disabled) return;
-    fetch("api/grammar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: $mode.value }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && d.ok) apply(d);
-      })
-      .catch(() => {});
+    KNOBS.set("grammar", $mode.value).then((d) => {
+      if (d) apply(d);
+    });
   }
 
-  fetch("api/grammar")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d) return;
-      apply(d);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
+  KNOBS.get("grammar").then((d) => {
+    if (!d || !d.available) return;
+    apply(d);
+    $wrap.hidden = false;
+  });
 
   $mode.addEventListener("change", post);
-  document.addEventListener("agentcli:grammarmode", (e) => apply(e.detail || {}));
+  KNOBS.on("grammar", apply);
 })();
 
 // 🔎 세션 감사자 칩 (v10.42.0) — 📐 문법 노브와 같은 틀. 상태(enabled/available/
-// in_flight)는 /api/auditor 가 주고 sticky(auditor_mode)로 뷰어끼리 동기화한다.
+// in_flight)는 api/knobs 가 주고 sticky(knob:auditor)로 뷰어끼리 동기화한다.
 (function () {
   "use strict";
   const $wrap = document.getElementById("auditor-wrap");
@@ -5061,8 +4999,8 @@
   if (!$wrap || !$mode || !$badge || !$info) return;
 
   function apply(d) {
-    const on = !!(d && d.enabled);
-    const busy = !!(d && d.in_flight > 0);
+    const on = !!d.value;
+    const busy = !!(d.in_flight > 0);
     $mode.value = on ? "on" : "off";
     $wrap.classList.toggle("is-on", on);
     // 배지는 사실을 말한다: 감사 중 / 켬 / 끔 (끄더라도 진행 중 감사는 끝까지 돈다).
@@ -5075,37 +5013,26 @@
   }
 
   function post() {
-    fetch("api/auditor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: $mode.value === "on" }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && d.ok) apply(d);
-      })
-      .catch(() => {});
+    KNOBS.set("auditor", $mode.value === "on").then((d) => {
+      if (d) apply(d);
+    });
   }
 
-  fetch("api/auditor")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d || !d.available) return; // 세션 없음 — 감사할 history 가 없다
-      apply(d);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
+  KNOBS.get("auditor").then((d) => {
+    if (!d || !d.available) return; // 세션 없음 — 감사할 history 가 없다
+    apply(d);
+    $wrap.hidden = false;
+  });
 
   $mode.addEventListener("change", post);
-  document.addEventListener("agentcli:auditormode", (e) => {
-    const d = e.detail || {};
+  KNOBS.on("auditor", (d) => {
     if (d.available) $wrap.hidden = false;
     apply(d);
   });
 })();
 
-// ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort)를 /api/thinking 으로 저장 →
-// 다음 LLM 요청부터 반영(공유 ctx). sticky(thinking_mode) 로 뷰어 동기화.
+// ctx 팝오버의 두 셀렉트(사고 on/off·reasoning effort) = 노브 thinking·reasoning_effort
+// → 다음 LLM 요청부터 반영(공유 ctx). sticky(knob:<name>) 로 뷰어 동기화.
 (function () {
   "use strict";
   const $wrap = document.getElementById("thinking-wrap");
@@ -5113,70 +5040,61 @@
   const $eff = document.getElementById("think-effort");
   if (!$wrap || !$en || !$eff) return;
 
-  // 서버 상태(null|bool / null|str) → 셀렉트 값(auto/on/off, auto/low/…).
+  // 두 노브(thinking·reasoning_effort)가 한 칩 — 각자 자기 셀렉트에 산다.
   const $badge = document.getElementById("thinking-badge");
-  function apply(d) {
-    const et = d ? d.enable_thinking : undefined;
-    $en.value = et === true ? "on" : et === false ? "off" : "auto";
-    const eff = (d && d.reasoning_effort) || "auto";
-    $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
-    // 배지: off → "off", effort 지정 → 그 값, 그 외 → "auto"
-    // 잠긴(미지원) 상태면 배지를 덮어쓰지 않는다 — sticky 동기화가 와도
-    // "미지원"이 `auto` 로 되돌아가면 안 된다.
+  function badge() {
+    // 배지: off → "off", effort 지정 → 그 값, 그 외 → "auto". 잠긴(미지원) 상태면
+    // 덮어쓰지 않는다 — 동기화가 와도 "미지원"이 `auto` 로 되돌아가면 안 된다.
     if ($badge && !$wrap.classList.contains("is-disabled")) {
       $badge.textContent =
         $en.value === "off" ? "off" : $eff.value !== "auto" ? $eff.value : "auto";
     }
   }
-
-  // 모델이 사고를 지원 안 하면(supports_thinking=false) provider 가 사고
-  // 파라미터를 아예 안 넣으므로 컨트롤을 잠근다. null/undefined(unknown)면 잠그지 않음.
-  function setSupported(supported) {
-    const locked = supported === false;
+  function applyThinking(d) {
+    $en.value = ["on", "off", "auto"].includes(d.value) ? d.value : "auto";
+    // 모델이 사고를 지원 안 하면 provider 가 사고 파라미터를 아예 안 넣으므로
+    // 컨트롤을 잠근다. 사유는 서버(`locked`)가 준다; unknown 이면 잠그지 않음.
+    const locked = !!d.locked;
     $en.disabled = locked;
     $eff.disabled = locked;
     $wrap.classList.toggle("is-disabled", locked);
     if (locked) {
       $wrap.title = "이 모델은 사고(thinking)를 지원하지 않습니다 — 사고/노력 조정 불가.";
-      // 배지로 **사실을 말한다** (v9.8.0). 종전엔 잠긴 채로 `auto` 라고 적혀
-      // 있어, 눌러야만 "아무것도 못 한다"를 알 수 있었다 — 그 모델을 쓰는 내내
-      // 죽은 칩이 자리를 차지했다. 칩을 숨기지 않는 이유: 숨기면 "이 모델은
-      // 사고 미지원"이라는 사실 자체를 알 길이 없어진다.
+      // 배지로 **사실을 말한다** — 칩을 숨기지 않는 이유: 숨기면 "이 모델은 사고
+      // 미지원"이라는 사실 자체를 알 길이 없어진다.
       if ($badge) $badge.textContent = "미지원";
     }
+    badge();
+  }
+  function applyEffort(d) {
+    const eff = d.value || "auto";
+    $eff.value = ["low", "medium", "high"].includes(eff) ? eff : "auto";
+    badge();
   }
 
-  function post() {
+  KNOBS.all().then((ks) => {
+    const th = ks.find((k) => k.name === "thinking");
+    const ef = ks.find((k) => k.name === "reasoning_effort");
+    if (!th || !th.available) return;
+    if (ef) applyEffort(ef);
+    applyThinking(th);
+    $wrap.hidden = false;
+  });
+
+  $en.addEventListener("change", () => {
     if ($en.disabled) return; // 미지원 모델 — 잠긴 상태에선 저장 안 함
-    const et = $en.value === "on" ? true : $en.value === "off" ? false : null;
-    const eff = $eff.value === "auto" ? "auto" : $eff.value;
-    fetch("api/thinking", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enable_thinking: et, reasoning_effort: eff }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && d.ok) apply(d);
-      })
-      .catch(() => {});
-  }
-
-  fetch("api/thinking")
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      // 노출 가드 — 다른 세 노브는 전부 `if (!d) return;` 인데 이 칩만 빠져
-      // 있어 **조회 실패에도 `auto` 배지가 떴다**(백엔드 없는 칩).
-      if (!d) return;
-      apply(d);
-      setSupported(d.supports_thinking);
-      $wrap.hidden = false;
-    })
-    .catch(() => {});
-
-  $en.addEventListener("change", post);
-  $eff.addEventListener("change", post);
-  document.addEventListener("agentcli:thinkingmode", (e) => apply(e.detail || {}));
+    KNOBS.set("thinking", $en.value).then((d) => {
+      if (d) applyThinking(d);
+    });
+  });
+  $eff.addEventListener("change", () => {
+    if ($eff.disabled) return;
+    KNOBS.set("reasoning_effort", $eff.value).then((d) => {
+      if (d) applyEffort(d);
+    });
+  });
+  KNOBS.on("thinking", applyThinking);
+  KNOBS.on("reasoning_effort", applyEffort);
 })();
 
 // ── 노브 칩 팝업 토글 (v8.57.0) ─────────────────────────────────

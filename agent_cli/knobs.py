@@ -169,6 +169,9 @@ class Knob:
     get: Callable[[KnobSession], Any]
     set: Callable[[KnobSession, Any], Any]
     short: str = ""  # CLI 짧은 별칭 (`-m`)
+    #: web 표면용 — 값 영역·파생 사실(범위, 지원 여부, 진행 수)과 잠김 사유.
+    info: Callable[[KnobSession], dict] | None = None
+    locked: Callable[[KnobSession], str | None] | None = None
 
     def available(self, session: KnobSession) -> bool:
         """소유자가 서 있는가 — 없으면(headless 부트·세션 없음) 적용할 곳이 없다."""
@@ -233,6 +236,50 @@ def _grammar_set(s: KnobSession, v: str) -> str:
     return v
 
 
+def _caps(s: KnobSession):
+    return s.binding.capabilities if s.binding is not None else None
+
+
+def _thinking_info(s: KnobSession) -> dict:
+    caps = _caps(s)
+    return {"supports_thinking": None if caps is None else bool(caps.supports_thinking)}
+
+
+def _thinking_locked(s: KnobSession) -> str | None:
+    caps = _caps(s)
+    if caps is not None and not caps.supports_thinking:
+        return "this model does not support thinking"
+    return None
+
+
+def _grammar_info(s: KnobSession) -> dict:
+    from agent_cli.context.manager import grammar_active
+
+    caps = _caps(s)
+    supported = caps.supports_grammar if caps is not None else None
+    return {
+        "supported": supported,
+        "active": grammar_active(s.ctx.grammar_override, supported),
+    }
+
+
+def _grammar_locked(s: KnobSession) -> str | None:
+    supported = _grammar_info(s)["supported"]
+    if supported is False:
+        return "the server cannot enforce a grammar for this model"
+    if supported is None:
+        return "grammar support for this model is not recorded in models.json"
+    return None
+
+
+def _model_info(s: KnobSession) -> dict:
+    caps = _caps(s)
+    return {
+        "dialect": s.binding.dialect.name,
+        "context_window": caps.context_window if caps is not None else None,
+    }
+
+
 def _model_set(s: KnobSession, v: str) -> str:
     error = s.binding.switch(v)
     if error:
@@ -257,6 +304,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="binding",
         get=lambda s: s.binding.model,
         set=_model_set,
+        info=_model_info,
     ),
     Knob(
         name="thinking",
@@ -274,6 +322,8 @@ KNOBS: tuple[Knob, ...] = (
         default="off",
         get=_thinking_get,
         set=_thinking_set,
+        info=_thinking_info,
+        locked=_thinking_locked,
     ),
     Knob(
         name="reasoning_effort",
@@ -301,6 +351,8 @@ KNOBS: tuple[Knob, ...] = (
         default="auto",
         get=_grammar_get,
         set=_grammar_set,
+        info=_grammar_info,
+        locked=_grammar_locked,
     ),
     Knob(
         name="max_agents",
@@ -313,6 +365,7 @@ KNOBS: tuple[Knob, ...] = (
         default=10,
         get=lambda s: s.registry.max_agents,
         set=lambda s, v: s.registry.set_max_agents(v),
+        info=lambda s: {"min": 1, "unlimited": s.registry.max_agents == 0},
     ),
     Knob(
         name="compaction_ratio",
@@ -329,6 +382,7 @@ KNOBS: tuple[Knob, ...] = (
         default=1.0,
         get=lambda s: s.ctx.compaction_ratio,
         set=lambda s, v: s.ctx.set_compaction_ratio(v),
+        info=lambda s: {"min": 0.5, "max": 1.0, "step": 0.05},
     ),
     Knob(
         name="stall",
@@ -344,6 +398,7 @@ KNOBS: tuple[Knob, ...] = (
         default=600,
         get=lambda s: s.ctx.stream_idle_timeout_s,
         set=lambda s, v: s.ctx.set_stream_idle_timeout(v),
+        info=lambda s: {"min": 60, "max": 3600},
     ),
     Knob(
         name="stall_attempts",
@@ -359,6 +414,7 @@ KNOBS: tuple[Knob, ...] = (
         default=4,
         get=lambda s: s.ctx.stream_max_attempts,
         set=lambda s, v: s.ctx.set_stream_max_attempts(v),
+        info=lambda s: {"min": 1, "max": 10},
     ),
     Knob(
         name="auto_approve",
@@ -391,10 +447,43 @@ KNOBS: tuple[Knob, ...] = (
         default=False,
         get=lambda s: bool(s.auditor.enabled),
         set=lambda s, v: setattr(s.auditor, "enabled", bool(v)) or bool(v),
+        info=lambda s: {"in_flight": s.auditor.in_flight},
     ),
 )
 
 KNOB_BY_NAME: dict[str, Knob] = {k.name: k for k in KNOBS}
+
+
+# ── web 표면 — 한 모양 (`/api/knobs`, sticky `knob`) ────────────────────
+
+
+def web_state(knob: Knob, session: KnobSession) -> dict:
+    """칩·`/api/knobs`·sticky 가 같이 읽는 노브 상태 한 장. 소유자가 없으면
+    ``available: false`` 에 값 없음."""
+    available = knob.available(session)
+    state: dict = {
+        "name": knob.name,
+        "label": knob.label,
+        "help": knob.help,
+        "flag": knob.flag,
+        "env": knob.env,
+        "kind": type(knob.kind).__name__.lower(),
+        "choices": knob.kind.choices(),
+        "default": knob.default,
+        "available": available,
+        "value": knob.get(session) if available else None,
+        "locked": None,
+    }
+    if available:
+        if knob.locked is not None:
+            state["locked"] = knob.locked(session)
+        if knob.info is not None:
+            state.update(knob.info(session))
+    return state
+
+
+def web_states(session: KnobSession) -> list[dict]:
+    return [web_state(k, session) for k in KNOBS]
 
 
 # ── 부팅 — CLI > env > 기본값을 소유자에 적용 ────────────────────────────
