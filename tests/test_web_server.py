@@ -1164,6 +1164,10 @@ class TestStaticUI:
         assert "pouch" not in html and "pouch" not in js
         css = client.get("/static/style.css").text
         assert ".hd-chip" in css and ".knob-btn" in css
+        # v10.47.1: 헤더 모델 박스(#info)는 🤖 노브 칩과 중복이라 삭제; 최종 답
+        # 카드에는 "✔ complete" 표식
+        assert 'id="info"' not in html and "#info" not in css
+        assert '"final-tag"' in js and "✔ complete" in js and ".final-tag" in css
         # 칩 CSS 도 id 별 규칙이 아니라 공통 — 묶음 그리드·헤더 토글·설명 줄
         assert ".knob-pop.is-group:not([hidden])" in css
         assert ".knob-toggle.on" in css and ".knob-note" in css

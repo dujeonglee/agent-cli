@@ -246,6 +246,8 @@ class TestRowRhythm:
         stack.renderer.final("여기 답이 있습니다", 1)
         assert _wait(lambda: page.locator(".card-assistant .final").count() > 0)
         fin = page.locator(".card-assistant .final").first
+        # ✔ complete 표식이 본문 위에 붙는다 (v10.47.1) — 앞 카드의 산문이 아니다
+        assert page.inner_text(".card-assistant .final-tag").strip() == "✔ complete"
         assert fin.is_visible()
         assert "여기 답이 있습니다" in fin.inner_text()
 
