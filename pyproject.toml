@@ -97,6 +97,7 @@ agent_cli = [
     # so they need explicit inclusion or pip installs ship without them — the
     # auto-review reviewer, explorer, and create-* skills would all go missing.
     "agents/builtin/**/*.md",
+    "agents/harness/**/*.md",
     "skills/builtin/**/*.md",
     # The page template of ``python -m agent_cli.prompts.inventory --html``.
     "prompts/inventory.html",

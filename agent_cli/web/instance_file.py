@@ -93,6 +93,7 @@ def write_status_file(
     viewers: int,
     agents: dict | None = None,
     grammar: bool | None = None,
+    auditing: bool | None = None,
 ) -> Path:
     """Atomically (over)write the live status sidecar. Returns the path.
 
@@ -109,6 +110,8 @@ def write_status_file(
         info["agents"] = agents
     if grammar is not None:  # v9.24.0 — 문법 제약이 실리는 세션 (board 📐 배지)
         info["grammar"] = grammar
+    if auditing is not None:  # v10.42.0 — 감사 런 진행 중 (board "결과 확인 중")
+        info["auditing"] = auditing
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은

@@ -1,11 +1,15 @@
-"""세션 감사자 (docs/auditor/DESIGN.md 3판, v10.42.0) — 하니스 몫의 회귀 가드.
+"""세션 감사자 (docs/auditor/DESIGN.md 4판, v10.42.0) — 하니스 몫의 회귀 가드.
 
-하니스가 하는 일은 셋뿐이다: ① 노브대로 감사자를 하나 띄우거나 내린다
-(살아 있는 감사자는 늘 0 또는 1) ② main 의 **사용자 런**이 `complete` 로
-끝날 때마다 그 런의 history 구간을 `request(expects_reply=True)` 로 보낸다
-(깨우기 런·실패한 런은 보내지 않는다 — 고리 상한은 코드) ③ 프로파일이
-약속한 도구 집합·판정 규칙을 그대로 싣는다. 감사 자체(구간 조회·판정)는
-모델의 일이라 실측(§6)으로만 잰다. 회신은 기존 회신 빚이 되돌린다.
+4판에서 감사자는 **팀원이 아니라 하니스 작업**이다(`agent_cli/harness/`).
+하니스가 하는 일은 셋뿐이다: ① main 의 **사용자 런**이 `complete` 로 끝날 때마다
+그 런의 history 구간을 적은 과제로 감사 런 하나를 돌린다(깨우기 런·실패한 런은
+돌리지 않는다 — 고리 상한은 코드) ② 그 런의 `complete` 결과를 main 메일함에 넣는다
+(모델의 선택이 아니다) ③ 프로파일이 약속한 도구 집합·판정 규칙을 그대로 싣는다.
+감사 자체(구간 조회·판정)는 모델의 일이라 실측(§6)으로만 잰다.
+
+노브는 `AGENT_CLI_AUDITOR`(부팅값, 기본 꺼짐) + web 🔎 칩(`/api/auditor`, 세션
+도중). 레지스트리 격리(로스터·주소·agents.json·상한에 없음)는
+`tests/test_harness_jobs.py` 가 고정한다.
 """
 
 from __future__ import annotations
@@ -16,23 +20,16 @@ from unittest.mock import MagicMock
 
 from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME, auditor_enabled
 from agent_cli.context.manager import ContextManager
+from agent_cli.harness.auditor import SessionAuditor, build_auditor
+from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
 from agent_cli.pump import WAKE_AUTHOR, RunRequest
-from agent_cli.runtime import SessionAuditor, ensure_auditor
 from agent_cli.subagent.profiles import available_profiles, load_profile
 from agent_cli.tools.result import ToolResult
-from tests.test_agents_live import _RecordingRunner, make_registry, wait_until
+from tests.test_agents_live import make_registry, make_runner, wait_until
 
 
 def _ctx(tmp_path):
     return ContextManager(tmp_path / "s", max_context_tokens=10_000)
-
-
-def _auditors(reg):
-    return [
-        tm
-        for tm in reg._agents.values()
-        if (tm.profile_name, tm.instance_name) == (AUDITOR_NAME, AUDITOR_NAME)
-    ]
 
 
 def _req(*, wake: bool = False, author=None) -> RunRequest:
@@ -56,6 +53,23 @@ def _complete(ctx, result="done"):
     )
 
 
+class _FakeJobs:
+    """`HarnessJobs` 의 표면만 — run() 호출을 기록한다."""
+
+    def __init__(self, error: str = ""):
+        self.runs: list[tuple[str, str, str]] = []
+        self.error = error
+        self.stopped = False
+        self.in_flight = 0
+
+    def run(self, job, label, task):
+        self.runs.append((job, label, task))
+        return self.error
+
+    def stop(self):
+        self.stopped = True
+
+
 class TestKnob:
     def test_default_off_and_truthy_words(self, monkeypatch):
         monkeypatch.delenv("AGENT_CLI_AUDITOR", raising=False)
@@ -69,49 +83,55 @@ class TestKnob:
 
 
 class TestProfile:
-    def test_tool_set_is_read_only_and_cannot_ask_or_delegate(self):
-        _, cfg, err = load_profile(AUDITOR_NAME)
-        assert err is None
-        assert cfg["allowed-tools"] == ["history", "read_file", "code_index", "memory"]
+    def test_lives_outside_the_user_catalog(self):
+        """하니스 프로파일은 `agents/harness/` 에만 있다 — 사용자 카탈로그
+        (`@agents`·spawn·delegate)가 그 이름을 **모른다**. 광고 표지가 아니라
+        검색 경로의 부재가 격리다."""
+        body, cfg, err = load_harness_profile(AUDITOR_NAME)
+        assert err == "" and body and cfg
+        assert AUDITOR_NAME not in [n for n, _ in available_profiles()]
+        assert AUDITOR_NAME not in [n for n, _ in available_profiles(include_meta=True)]
+        _b, _c, user_err = load_profile(AUDITOR_NAME)
+        assert user_err and "not found" in user_err
+
+    def test_tool_set_is_read_only_and_cannot_ask_message_or_delegate(self):
+        _, cfg, _ = load_harness_profile(AUDITOR_NAME)
+        assert cfg["allowed-tools"] == ["history", "read_file", "code_index"]
         for forbidden in ("shell", "ask", "write_file", "edit_file", "agent", "fetch"):
             assert forbidden not in cfg["allowed-tools"]
-        # 하니스 소유 — 모델에게 광고하지 않는다(main 이 두 번째를 띄우지 않게)
-        assert cfg.get("disable-model-invocation") is True
-        assert AUDITOR_NAME not in [n for n, _ in available_profiles()]
+        assert "disable-model-invocation" not in cfg  # 카탈로그 밖이라 표지가 필요 없다
 
     def test_body_carries_the_rules_the_design_relies_on(self):
-        body, _, _ = load_profile(AUDITOR_NAME)
+        body, _, _ = load_harness_profile(AUDITOR_NAME)
         for phrase in (
             "seq BETWEEN",  # 서수 구간만
-            'sessions:"<main session id from the request>"',  # 자기 history 가 아니라 main 의
-            "loc LIKE '<session id>/history.jsonl:%'",  # 에이전트 파일(자기 것 포함)을 뺀다
+            'sessions:"<main session id from the task>"',  # 자기 history 가 아니라 main 의
+            "loc LIKE '<session id>/history.jsonl:%'",  # 다른 에이전트 파일을 뺀다
             "unverifiable",  # 근거 없는 주장
             "A `met` without a seq is not a `met`",  # 예스맨 방지
-            "sent with `reply`",  # 보고는 회신 — 하니스가 빚으로 강제 (1·2차 실측 2/10 전달)
-            "`complete` is refused",
-            "`pass` and `findings` alike go back the same way",
-            "A deliverable file is judged by the file",  # 전사 인용이 아니라 파일 (B-1/B-3 오탐)
-            "A cut column is not evidence",  # substr 잘림을 부재로 읽지 않는다 (B-1)
+            "Your `complete` result IS the report",  # 4판: 보고 = complete 결과
+            "A deliverable file is judged by the file",  # 전사 인용이 아니라 파일
+            "A cut column is not evidence",  # substr 잘림을 부재로 읽지 않는다
             "Do not keep probing",  # 없는 파일을 40턴 찾던 B-3
         ):
             assert phrase in body, phrase
-        # 2판까지의 구독·message 경로는 사라졌다 — 모델이 고를 길을 남기지 않는다
-        assert "monitor(" not in body and "message(" not in body
+        # 3판까지의 reply·message·구독 경로는 사라졌다 — 모델이 고를 길이 없다
+        for gone in ("`reply`", "message(", "monitor(", "`complete` is refused"):
+            assert gone not in body, gone
 
 
 class TestRequestText:
-    def test_request_names_range_session_filter_and_reply(self):
+    def test_request_names_range_session_filter_and_complete(self):
         text = AUDIT_REQUEST.format(a=12, b=40, session="1791", history="/w/h.jsonl")
         assert "seq 12..40" in text and "seq BETWEEN 12 AND 40" in text
-        assert 'sessions:"1791"' in text  # 감사자의 history 기본값은 자기 것
-        assert (
-            "loc LIKE '1791/history.jsonl:%'" in text
-        )  # 같은 테이블에 에이전트 파일도
+        assert 'sessions:"1791"' in text
+        assert "loc LIKE '1791/history.jsonl:%'" in text
         assert "/w/h.jsonl" in text
-        assert "`reply`" in text and "`complete` is not a report" in text
+        assert "`complete`" in text and "IS the report" in text
+        assert "reply" not in text
 
     def test_history_seq_is_the_one_based_line_number(self, tmp_path):
-        """요청의 `seq a..b` 와 프로파일의 SQL 은 `seq` 가 줄 번호(1 기준)라는
+        """과제의 `seq a..b` 와 프로파일의 SQL 은 `seq` 가 줄 번호(1 기준)라는
         전제 위에 있다 — 서수(0 기준)와 다르니 핸들이 +1 한다."""
         from agent_cli.tools.history import tool_history
 
@@ -129,99 +149,21 @@ class TestRequestText:
         rows = res.output
         assert "seq=3 | kind=final" in rows, rows
         assert f"seq=4 | kind=query | author={WAKE_AUTHOR}" in rows, rows
-        assert ctx.next_ordinal == 4  # 레코드 4개 = 마지막 seq 4
-
-
-class TestEnsureAuditor:
-    def test_off_without_an_auditor_is_an_inert_handle(self, tmp_path):
-        reg = make_registry(tmp_path)
-        h = ensure_auditor(reg, parent_ctx=_ctx(tmp_path), enabled=False)
-        assert h.outcome == "" and not h.active
-        assert _auditors(reg) == []
-        assert h.run_ended(_req(), ok=True) == ""
-
-    def test_no_session_means_nothing_to_audit(self, tmp_path):
-        reg = make_registry(tmp_path)
-        assert ensure_auditor(reg, parent_ctx=None, enabled=True) is None
-        assert _auditors(reg) == []
-
-    def test_on_spawns_exactly_one_and_sends_nothing_at_boot(self, tmp_path):
-        runner = _RecordingRunner()
-        reg = make_registry(tmp_path, runner=runner)
-        ctx = _ctx(tmp_path)
-        try:
-            h = ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            assert h.outcome == "spawned" and h.active
-            (tm,) = _auditors(reg)
-            assert tm.state != "dead" and h.key == tm.key
-            # 두 번째 부팅(restore 로 되살아난 것과 같다): 새로 띄우지 않는다
-            again = ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            assert again.outcome == "" and again.key == tm.key
-            assert len(_auditors(reg)) == 1
-            # 시작 브리프·구독 의식이 없다 — 감사자는 요청이 올 때까지 논다
-            assert not wait_until(lambda: runner.queries(), timeout=0.3)
-        finally:
-            reg.shutdown_all()
-
-    def test_off_kills_a_live_auditor_once(self, tmp_path):
-        reg = make_registry(tmp_path)
-        ctx = _ctx(tmp_path)
-        try:
-            ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            assert (
-                ensure_auditor(reg, parent_ctx=ctx, enabled=False).outcome == "killed"
-            )
-            (tm,) = _auditors(reg)
-            assert wait_until(lambda: tm.state == "dead")
-            assert ensure_auditor(reg, parent_ctx=ctx, enabled=False).outcome == ""
-        finally:
-            reg.shutdown_all()
-
-    def test_on_after_off_resumes_the_tombstone_instead_of_a_second_instance(
-        self, tmp_path
-    ):
-        reg = make_registry(tmp_path)
-        ctx = _ctx(tmp_path)
-        try:
-            ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            ensure_auditor(reg, parent_ctx=ctx, enabled=False)
-            (tm,) = _auditors(reg)
-            assert wait_until(lambda: tm.state == "dead")
-            h = ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            assert h.outcome == "resumed" and h.key == tm.key
-            (revived,) = _auditors(
-                reg
-            )  # 부활은 같은 키의 새 개체 — 툼스톤이 둘이 되지 않는다
-            assert revived.key == tm.key and revived.state != "dead"
-        finally:
-            reg.shutdown_all()
-
-    def test_boot_line_for_each_outcome(self):
-        from agent_cli.main import _auditor_boot_line
-
-        line = lambda o: _auditor_boot_line(SimpleNamespace(outcome=o))
-        assert "상주 시작" in line("spawned")
-        assert "부활" in line("resumed")
-        assert "내렸습니다" in line("killed")
-        assert "boom" in line("error: boom")
-        assert line("") == "" and _auditor_boot_line(None) == ""
+        assert ctx.next_ordinal == 4
 
 
 class TestRunEnded:
     """main 의 런이 끝났을 때 — 사용자 런이 complete 로 끝났을 때만, 그 런의
-    레코드 구간만, 회신을 빚지는 요청으로."""
+    레코드 구간만, 감사 작업 하나로."""
 
-    def _handle(self, ctx, *, registry=None, key="agt-aud"):
-        reg = registry if registry is not None else MagicMock()
-        if registry is None:
-            reg.instance_for.return_value = SimpleNamespace(key=key, state="idle")
-            reg.request.return_value = ""
-        return SessionAuditor(reg, ctx, key, "spawned"), reg
+    def _handle(self, ctx, *, enabled=True, jobs=None):
+        jobs = jobs if jobs is not None else _FakeJobs()
+        return SessionAuditor(jobs, ctx, enabled=enabled), jobs
 
-    def test_user_run_sends_the_runs_range_as_a_reply_owing_request(self, tmp_path):
+    def test_user_run_starts_one_audit_job_for_the_runs_range(self, tmp_path):
         ctx = _ctx(tmp_path)
         ctx.add({"role": "system", "content": "sys"})  # seq 1 — 핸들 전의 history
-        h, reg = self._handle(ctx)  # 커서 = 다음 서수 (seq 2)
+        h, jobs = self._handle(ctx)  # 커서 = 다음 서수 (seq 2)
         ctx.set_turn(1)
         ctx.add({"role": "user", "content": "do it"})  # seq 2
         _complete(ctx)  # seq 3
@@ -229,13 +171,11 @@ class TestRunEnded:
         assert "seq 2..3" in text and "seq BETWEEN 2 AND 3" in text
         assert f'sessions:"{ctx.session_dir.name}"' in text
         assert str(ctx.history_path) in text
-        reg.request.assert_called_once_with(
-            "agt-aud", text, author="main", expects_reply=True
-        )
+        assert jobs.runs == [(AUDITOR_NAME, "2-3", text)]
 
     def test_consecutive_runs_get_disjoint_ranges(self, tmp_path):
         ctx = _ctx(tmp_path)
-        h, _reg = self._handle(ctx)
+        h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "one"})
         _complete(ctx)
         assert "seq 1..2" in h.run_ended(_req(), ok=True)
@@ -243,55 +183,162 @@ class TestRunEnded:
         ctx.add({"role": "user", "tool": "shell", "success": True, "content": "x"})
         _complete(ctx)
         assert "seq 3..5" in h.run_ended(_req(), ok=True)
+        assert [label for _, label, _ in jobs.runs] == ["1-2", "3-5"]
 
     def test_wake_run_is_not_audited_but_still_moves_the_cursor(self, tmp_path):
-        """고리 상한: 감사 회신으로 깨어난 런은 감사하지 않는다 — 그리고 그
+        """고리 상한: 감사 결과로 깨어난 런은 감사하지 않는다 — 그리고 그
         레코드가 다음 사용자 런의 구간에 섞이지도 않는다."""
         ctx = _ctx(tmp_path)
-        h, reg = self._handle(ctx)
+        h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "wake", "author": WAKE_AUTHOR})
         _complete(ctx)
         assert h.run_ended(_req(wake=True), ok=True) == ""
-        reg.request.assert_not_called()
+        assert jobs.runs == []
         ctx.add({"role": "user", "content": "next"})
         _complete(ctx)
         assert "seq 3..4" in h.run_ended(_req(), ok=True)
 
     def test_failed_run_has_no_final_to_audit(self, tmp_path):
         ctx = _ctx(tmp_path)
-        h, reg = self._handle(ctx)
+        h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "q"})
         assert h.run_ended(_req(), ok=False) == ""  # 턴 소진·중단
-        reg.request.assert_not_called()
+        assert jobs.runs == []
         ctx.add({"role": "user", "content": "q2"})
         _complete(ctx)
         assert "seq 2..3" in h.run_ended(_req(), ok=True)
 
-    def test_empty_run_and_dead_auditor_send_nothing(self, tmp_path):
+    def test_empty_run_sends_nothing(self, tmp_path):
         ctx = _ctx(tmp_path)
-        h, reg = self._handle(ctx)
+        h, jobs = self._handle(ctx)
         assert h.run_ended(_req(), ok=True) == ""  # 레코드가 없다
+        assert jobs.runs == []
+
+    def test_disabled_knob_skips_but_keeps_the_cursor_moving(self, tmp_path):
+        """🔎 칩으로 끈 동안의 런은 감사하지 않고, 다시 켜면 그 뒤 런만 본다 —
+        꺼져 있던 동안의 레코드가 다음 구간에 섞이지 않는다."""
+        ctx = _ctx(tmp_path)
+        h, jobs = self._handle(ctx, enabled=False)
+        assert not h.active and h.state() == {
+            "enabled": False,
+            "available": True,
+            "in_flight": 0,
+        }
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        reg.instance_for.return_value = SimpleNamespace(key="agt-aud", state="dead")
-        assert h.run_ended(_req(), ok=True) == ""
-        reg.request.assert_not_called()
+        assert h.run_ended(_req(), ok=True) == "" and jobs.runs == []
+        h.enabled = True
+        ctx.add({"role": "user", "content": "q2"})
+        _complete(ctx)
+        assert "seq 3..4" in h.run_ended(_req(), ok=True)
 
-    def test_live_registry_delivers_the_request_as_the_auditors_run(self, tmp_path):
-        runner = _RecordingRunner()
-        reg = make_registry(tmp_path, runner=runner)
+    def test_no_session_handle_and_stopped_jobs_send_nothing(self, tmp_path):
         ctx = _ctx(tmp_path)
-        try:
-            h = ensure_auditor(reg, parent_ctx=ctx, enabled=True)
-            ctx.add({"role": "user", "content": "q"})
-            _complete(ctx)
-            text = h.run_ended(_req(), ok=True)
-            assert text and wait_until(lambda: runner.queries() == [text])
-            # 러너가 reply 를 안 했으니 폴백 요약이 main 의 메일박스로 돌아온다 —
-            # 어느 쪽이든 main 은 감사 결과를 받는다.
-            assert wait_until(reg.has_pending_replies)
-        finally:
-            reg.shutdown_all()
+        h = SessionAuditor(None, ctx, enabled=True)
+        assert not h.active and h.in_flight == 0 and h.state()["available"] is False
+        ctx.add({"role": "user", "content": "q"})
+        _complete(ctx)
+        assert h.run_ended(_req(), ok=True) == ""
+        h.stop()  # jobs 없음 — no-op
+        h2, jobs = self._handle(ctx)
+        h2.stop()
+        assert jobs.stopped and not h2.active
+        ctx.add({"role": "user", "content": "q2"})
+        _complete(ctx)
+        assert h2.run_ended(_req(), ok=True) == "" and jobs.runs == []
+
+    def test_job_start_error_reports_nothing_sent(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        h, _jobs = self._handle(ctx, jobs=_FakeJobs(error="no profile"))
+        ctx.add({"role": "user", "content": "q"})
+        _complete(ctx)
+        assert h.run_ended(_req(), ok=True) == ""
+
+
+class TestLiveDelivery:
+    """실 레지스트리 + 실 `HarnessJobs`(가짜 러너): 감사 런의 complete 결과가 main
+    메일함에 하니스 결과로 들어온다 — 모델이 고르는 전달이 아니다."""
+
+    def _live(self, tmp_path, runner):
+        # 가짜 러너는 기록을 남기지 않으므로, 런 디렉토리 검증용으로 한 줄 적는다
+        inner = runner
+
+        def runner(query, ctx, **kw):
+            ctx.add({"role": "user", "content": query})
+            return inner(query, ctx, **kw)
+
+        reg = make_registry(tmp_path)
+        ctx = _ctx(tmp_path)
+        auditor = build_auditor(reg, parent_ctx=ctx)
+        auditor.enabled = True
+        auditor.jobs._runner = runner
+        return reg, ctx, auditor
+
+    def test_complete_result_lands_in_mains_mailbox(self, tmp_path):
+        reg, ctx, auditor = self._live(tmp_path, make_runner("AUDIT pass"))
+        ctx.add({"role": "user", "content": "q"})
+        _complete(ctx)
+        text = auditor.run_ended(_req(), ok=True)
+        assert text
+        assert wait_until(reg.has_pending_replies)
+        (mail,) = reg.drain_replies()
+        assert mail["kind"] == "harness" and mail["job"] == AUDITOR_NAME
+        assert mail["success"] is True and mail["output"] == f"AUDIT pass:{text}"
+        assert wait_until(lambda: auditor.in_flight == 0)
+        # 기록은 세션 안 harness/ 밑 — 팀원 자리(agents/)도, agents.json 도 아니다
+        run_dir = ctx.session_dir / "harness" / AUDITOR_NAME / "1-2"
+        assert (run_dir / "history.jsonl").is_file()
+        assert not (ctx.session_dir / "agents").exists()
+
+    def test_unfinished_run_delivers_the_reason_instead(self, tmp_path):
+        """턴 소진·오류로 complete 가 없어도 main 은 결과 한 장을 받는다."""
+
+        def runner(query, ctx, **kw):
+            return ToolResult(False, error="Max turns (16) reached"), 0.0
+
+        reg, ctx, auditor = self._live(tmp_path, runner)
+        ctx.add({"role": "user", "content": "q"})
+        _complete(ctx)
+        assert auditor.run_ended(_req(), ok=True)
+        assert wait_until(reg.has_pending_replies)
+        (mail,) = reg.drain_replies()
+        assert mail["success"] is False
+        assert mail["output"] == "auditor did not complete: Max turns (16) reached"
+
+    def test_in_flight_counts_until_delivered_and_stop_ends_it(self, tmp_path):
+        gate = threading.Event()
+        reg, ctx, auditor = self._live(tmp_path, make_runner("x", block=gate))
+        ctx.add({"role": "user", "content": "q"})
+        _complete(ctx)
+        assert auditor.run_ended(_req(), ok=True)
+        assert auditor.in_flight == 1 and not reg.has_pending_replies()
+        gate.set()
+        assert wait_until(lambda: auditor.in_flight == 0)
+        assert reg.has_pending_replies()
+        auditor.stop()
+        assert not auditor.active and auditor.jobs.stopped
+
+
+class TestMailRecord:
+    def test_harness_result_is_an_observation_with_no_debt(self):
+        from agent_cli.subagent.agents_live import build_reply_record
+
+        rec = build_reply_record(
+            {"kind": "harness", "job": "auditor", "success": True, "output": "AUDIT"}
+        )
+        assert rec["role"] == "user" and rec["tool"] == "auditor"
+        assert rec["source"] == "harness" and rec["success"] is True
+        assert rec["content"].startswith("── auditor ──\nAUDIT")
+        assert "nothing to send back" in rec["content"]
+
+    def test_mail_notice_line(self, monkeypatch):
+        from agent_cli.main import _agent_mail_notice
+
+        hints: list[dict] = []
+        r = SimpleNamespace(agent_mail_hint=lambda **kw: hints.append(kw))
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        _agent_mail_notice({"kind": "harness", "job": "auditor"})
+        assert hints and "🔎 auditor 결과 도착" in hints[0]["text"]
 
 
 class TestPumpWiring:
@@ -323,29 +370,132 @@ class TestPumpWiring:
         assert done.wait(2.0)
 
 
-class TestAssembly:
-    def test_wire_agent_mail_returns_the_handle(self, monkeypatch):
-        from agent_cli.runtime import wire_agent_mail
+class TestLiveness:
+    """진행 중인 감사는 결과를 배달해야 끝난다 — run 펌프와 web 의 idle self-reap
+    둘 다 같은 술어(`session_has_live_work`)로 기다린다."""
 
-        monkeypatch.setenv("AGENT_CLI_AUDITOR", "1")
+    def test_session_has_live_work_counts_in_flight_harness_jobs(self):
+        from agent_cli.runtime import session_has_live_work
+
+        busy = SimpleNamespace(in_flight=1)
+        idle = SimpleNamespace(in_flight=0)
+        assert session_has_live_work(pending_count=0, harness=busy)
+        assert not session_has_live_work(pending_count=0, harness=idle)
+        assert not session_has_live_work(pending_count=0, harness=None)
+
+    def test_quiet_policy_waits_and_announces_once(self):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.pump import QuietPolicy
+
+        reg = SimpleNamespace(has_active_work=lambda: False)
+        harness = SimpleNamespace(in_flight=1)
+        waits: list[str] = []
+        pol = QuietPolicy(
+            queue=InputQueue(),
+            agent_registry=reg,
+            harness=harness,
+            on_wait=waits.append,
+        )
+        assert pol.should_stop() is False and pol.should_stop() is False
+        assert waits == ["harness"]
+        harness.in_flight = 0
+        assert pol.should_stop() is True
+
+    def test_web_instance_stays_active_while_auditing(self):
+        from agent_cli.main import web_instance_is_active
+
+        r = SimpleNamespace(
+            has_live_connections=lambda: False, worker_is_busy=lambda: False
+        )
+        s = SimpleNamespace(pending_count=lambda: 0)
+        assert web_instance_is_active(r, s, None, harness=SimpleNamespace(in_flight=1))
+        assert not web_instance_is_active(
+            r, s, None, harness=SimpleNamespace(in_flight=0)
+        )
+
+    def test_teardown_stops_the_harness_before_the_registry(self):
+        from agent_cli.runtime import teardown_session
+
+        order: list[str] = []
+        harness = SimpleNamespace(stop=lambda: order.append("harness"))
+        reg = SimpleNamespace(
+            shutdown_all=lambda: order.append("registry"),
+            open_human_question_keys=list,
+        )
+        teardown_session(None, None, agent_registry=reg, harness=harness)
+        assert order == ["harness", "registry"]
+
+
+class TestAssembly:
+    def _registry(self):
         registry = MagicMock()
         registry.restore.return_value = 0
         registry.auto_spawn.return_value = 0
-        registry.instance_for.return_value = None
-        registry.spawn.return_value = ("agt-1", "")
+        registry.runtime = {"model": "m"}
+        return registry
+
+    def test_wire_agent_mail_builds_the_handle_from_the_knob(self, monkeypatch):
+        from agent_cli.runtime import wire_agent_mail
+
         ctx = MagicMock()
         ctx.next_ordinal = 7
+        monkeypatch.setenv("AGENT_CLI_AUDITOR", "1")
+        changes: list[int] = []
         _w, _r, _a, auditor = wire_agent_mail(
-            registry,
+            self._registry(),
+            enqueue_wake=MagicMock(),
+            on_mail_notice=lambda r: None,
+            parent_ctx=ctx,
+            on_harness_change=changes.append,
+        )
+        assert auditor.enabled and auditor.active and auditor.in_flight == 0
+        assert auditor.jobs.on_change == changes.append
+        assert auditor.jobs.runtime == {"model": "m"}
+        monkeypatch.delenv("AGENT_CLI_AUDITOR")
+        _w, _r, _a, off = wire_agent_mail(
+            self._registry(),
             enqueue_wake=MagicMock(),
             on_mail_notice=lambda r: None,
             parent_ctx=ctx,
         )
-        assert auditor.outcome == "spawned" and auditor.key == "agt-1"
-        registry.spawn.assert_called_once_with(
-            profile=AUDITOR_NAME, name=AUDITOR_NAME, parent_ctx=ctx
+        assert not off.enabled and not off.active and off.jobs is not None
+
+    def test_no_session_means_no_handle(self):
+        from agent_cli.runtime import wire_agent_mail
+
+        _w, _r, _a, auditor = wire_agent_mail(
+            self._registry(),
+            enqueue_wake=MagicMock(),
+            on_mail_notice=lambda r: None,
+            parent_ctx=None,
         )
-        registry.request.assert_not_called()  # 부팅 때 보낼 것이 없다
+        assert auditor is None
+
+    def test_delivery_goes_through_the_registry_mailbox(self, tmp_path):
+        """`build_auditor` 의 배달은 모니터 보고와 같은 `registry.deliver("main")`."""
+        registry = self._registry()
+        registry.deliver.return_value = ""
+        auditor = build_auditor(registry, parent_ctx=_ctx(tmp_path))
+        auditor.jobs._deliver(AUDITOR_NAME, True, "AUDIT pass")
+        registry.deliver.assert_called_once_with(
+            "main",
+            mail={
+                "kind": "harness",
+                "job": AUDITOR_NAME,
+                "success": True,
+                "output": "AUDIT pass",
+            },
+            text="AUDIT pass",
+            author=AUDITOR_NAME,
+            expects_reply=False,
+        )
+
+    def test_boot_line_only_when_enabled(self):
+        from agent_cli.main import _auditor_boot_line
+
+        assert "켜짐" in _auditor_boot_line(SimpleNamespace(enabled=True))
+        assert _auditor_boot_line(SimpleNamespace(enabled=False)) == ""
+        assert _auditor_boot_line(None) == ""
 
     def test_web_boot_announces_the_auditor(self):
         from agent_cli.main import _announce_agent_boot
@@ -355,7 +505,7 @@ class TestAssembly:
         conn = WebConnection(id="c")
         r.register_connection(conn)
         _announce_agent_boot(
-            r, revived=0, auto=0, auditor=SimpleNamespace(outcome="spawned")
+            r, revived=0, auto=0, auditor=SimpleNamespace(enabled=True)
         )
         events = []
         while not conn.queue.empty():
@@ -363,35 +513,71 @@ class TestAssembly:
         assert any(e == "status" and "🔎" in str(d) for e, d in events), events
 
 
-class TestHistoryTableMixesAgentFiles:
-    """실측(A-smoke): `sessions:"<id>"` 테이블은 `agents/<key>/history.jsonl` 도
-    싣고 `seq` 는 파일별 줄 번호라, 감사자 자신의 런 `final` 이 main 의 것으로
-    잡혀 구간이 틀렸다. `loc LIKE` 필터가 답이다 — 요청문과 프로파일 둘 다 싣는다."""
+class TestWebKnob:
+    """🔎 칩 — `/api/auditor` 가 세션 도중 켜고 끄고, sticky 로 뷰어를 맞추고,
+    진행 중 수는 status.json `auditing` 으로 보드에 간다."""
 
-    def test_loc_filter_keeps_only_mains_file(self, tmp_path):
-        from agent_cli.tools.history import tool_history
+    def _app(self, tmp_path, auditor):
+        from fastapi.testclient import TestClient
+
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.web.server import WebServer, create_app
+
+        renderer = WebRenderer(session_dir=str(tmp_path))
+        server = WebServer(renderer, token="t")
+        server.auditor = auditor
+        return renderer, server, TestClient(create_app(server))
+
+    def test_api_reads_and_flips_the_knob(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        auditor = SessionAuditor(_FakeJobs(), ctx, enabled=False)
+        renderer, _server, client = self._app(tmp_path, auditor)
+        assert client.get("/api/auditor?token=t").json() == {
+            "enabled": False,
+            "available": True,
+            "in_flight": 0,
+        }
+        r = client.post("/api/auditor?token=t", json={"enabled": True}).json()
+        assert r["ok"] and r["enabled"] is True and auditor.enabled
+        assert renderer._sticky["auditor_mode"]["payload"]["enabled"] is True
+        assert client.get("/api/health?token=t").json()["auditing"] is False
+        r = client.post("/api/auditor?token=t", json={"enabled": False}).json()
+        assert r["ok"] and not auditor.enabled
+
+    def test_no_session_hides_the_chip(self, tmp_path):
+        _r, _s, client = self._app(tmp_path, None)
+        assert client.get("/api/auditor?token=t").json()["available"] is False
+        assert (
+            client.post("/api/auditor?token=t", json={"enabled": True}).json()["ok"]
+            is False
+        )
+
+    def test_in_flight_reaches_status_file_and_the_chip(self, tmp_path):
+        from agent_cli.web.instance_file import read_status_file
 
         ctx = _ctx(tmp_path)
-        ctx.add({"role": "user", "content": "main q"})
-        _complete(ctx, "main done")
-        agent_dir = ctx.session_dir / "agents" / "agt-1"
-        agent_ctx = ContextManager(agent_dir, max_context_tokens=10_000)
-        agent_ctx.add({"role": "user", "content": "agent q"})
-        _complete(agent_ctx, "agent done")
-        sid = ctx.session_dir.name
-        plain = tool_history(
-            {"query": "SELECT loc FROM history WHERE kind='final' ORDER BY seq"},
-            session_dir=ctx.session_dir,
+        auditor = SessionAuditor(_FakeJobs(), ctx, enabled=True)
+        renderer, _server, _client = self._app(tmp_path, auditor)
+        renderer.broadcast_auditor(auditor.state())
+        renderer.note_harness(1)
+        assert read_status_file(tmp_path)["auditing"] is True
+        assert renderer._sticky["auditor_mode"]["payload"]["in_flight"] == 1
+        renderer.note_harness(0)
+        assert read_status_file(tmp_path)["auditing"] is False
+
+    def test_frontend_has_the_chip(self, tmp_path):
+        _r, _s, client = self._app(tmp_path, None)
+        html = client.get("/?token=t").text
+        js = client.get("/static/app.js?token=t").text
+        assert 'id="auditor-wrap"' in html and 'id="auditor-mode"' in html
+        assert "api/auditor" in js and "auditor_mode" in js
+
+
+class TestJobsRuntimeContract:
+    def test_runtime_keeps_only_runner_keys(self, tmp_path):
+        jobs = HarnessJobs(
+            session_ctx=_ctx(tmp_path),
+            runtime={"model": "m", "timeout": 5, "provider": "p"},
+            deliver=lambda *a: "",
         )
-        assert plain.success and "agents/agt-1/history.jsonl" in plain.output
-        filtered = tool_history(
-            {
-                "query": (
-                    "SELECT loc FROM history WHERE kind='final' "
-                    f"AND loc LIKE '{sid}/history.jsonl:%' ORDER BY seq"
-                )
-            },
-            session_dir=ctx.session_dir,
-        )
-        assert filtered.success and "agents/" not in filtered.output
-        assert f"{sid}/history.jsonl:2" in filtered.output
+        assert jobs.runtime == {"model": "m", "provider": "p"}

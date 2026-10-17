@@ -1,12 +1,12 @@
 # 감사자(auditor) — main 의 complete 마다 결과를 감사하고 되먹인다
 
-> 상태: **구현됨 (v10.42.0, 2026-10-16~17) — 3판: 하니스가 런마다 회신을 빚지는 요청을 보낸다. §6.3·§6.4 실측 완료(전달 5/5·4/4, 이중 회신 수리), 기본값 off**
-> 결정(사용자): ① 서수 구간만 읽는다 ② 결과는 사용자에게도 보인다 ③ 트리거는 **하니스가 main 의 런 종료마다 보내는 `request(expects_reply=True)`** (2판까지의 `monitor` 구독을 대체 — §6.2 실측 뒤 사용자 제안) ④ 전달은 **기존 회신 빚** — 감사자는 `reply` 하기 전엔 `complete` 가 거절된다 ⑤ 측정 계획 동의.
-> 판의 역사: 1판(하니스 파서·카드) → 2판(감사자가 `monitor` 로 구독, findings 만 `message`; §6.1·§6.2 실측에서 전달 2/10) → 3판(이 문서).
+> 상태: **구현됨 (v10.42.0, 2026-10-16~17) — 4판: 감사자는 팀원이 아니라 하니스 작업(`agent_cli/harness/`). 결과 전달은 하니스가 한다. §6.5 실측 뒤 기본값 off, web 🔎 칩으로 세션 도중 on/off**
+> 결정(사용자): ① 서수 구간만 읽는다 ② 결과는 사용자에게도 보인다 ③ 트리거는 **하니스가 main 의 런 종료마다** ④ 전달은 **감사 런의 `complete` 결과를 하니스가 main 메일함에** — 모델의 선택이 아니다 ⑤ 하니스 전용 에이전트는 **구조적으로 격리**: 레지스트리 밖, 프로파일은 `agents/harness/`, 기록은 `<세션>/harness/`, `history` 테이블 밖, 보드는 🤖 칩 대신 "결과 확인 중" ⑥ 켜고 끄기는 env 부팅값 + web 칩(기본 꺼짐).
+> 판의 역사: 1판(하니스 파서·카드) → 2판(감사자가 `monitor` 로 구독, findings 만 `message`; §6.1·§6.2 실측에서 전달 2/10) → 3판(상주 팀원 + 하니스 요청·회신 빚; §6.3·§6.4 전달 5/5·4/4, 그러나 로스터·`message`·kill·상한·agents.json 에 노출) → 4판(이 문서).
 
 ## 0. 한 줄 요약
 
-세션 노브로 내장 프로파일 `auditor` 를 상주로 띄운다. main 의 **사용자 런**이 `complete` 로 끝날 때마다 하니스(`SessionAuditor.run_ended`)가 그 런의 history 구간 `seq a..b` 를 적은 요청을 감사자에게 **회신을 빚지는** 형태로 보낸다. 감사자는 `history` 도구로 **그 구간만** 읽고 요청별 충족/미충족/확인불가를 증거 서수와 함께 판정해 `reply` 로 돌려준다 — 빚이 있는 동안 `complete` 는 거절되므로 보고는 모델의 선택이 아니다. 회신은 기존 메일 경로로 main 채널에 카드로 그려지고 main 을 깨운다; main 은 findings 를 손보고(통과면 바로 끝내고) complete 한다. 그 깨우기 런에는 하니스가 요청을 보내지 않는다 — 고리 상한은 코드다. 새 카드·새 이벤트·판정 파서가 없다.
+main 의 **사용자 런**이 `complete` 로 끝날 때마다 하니스(`harness.auditor.SessionAuditor.run_ended`)가 그 런의 history 구간 `seq a..b` 를 적은 과제로 **감사 런 하나**를 돌린다(`harness.jobs.HarnessJobs` — 일회성 서브에이전트, 프로파일 `agents/harness/auditor.md`). 감사자는 `history` 도구로 **그 구간만** 읽어 요청별 충족을 증거 서수와 함께 판정하고 `complete` 한다. 그 결과를 하니스가 main 메일함에 넣고(`registry.deliver("main", kind:"harness")`), `MailWaker` 가 main 을 깨운다. main 은 findings 를 새 런에서 손본다. 그 런은 감사하지 않는다(고리 ≤1, 코드). 켜고 끄기: `AGENT_CLI_AUDITOR`(부팅값, 기본 off) + web 🔎 칩(`/api/auditor`).
 
 ## 1. 왜
 
@@ -16,47 +16,45 @@
 
 ## 2. 목표 / 비목표
 
-목표: 사용자 런마다 complete 를 한 번 감사하고, 미충족이 있으면 main 이 한 번 더 손보게 한다. 감사는 증거 기반이다(충족을 보여주는 레코드 서수를 못 짚으면 미충족/확인불가). 사용자는 결과를 본다.
+목표: 사용자 런마다 complete 를 한 번 감사하고, 미충족이 있으면 main 이 한 번 더 손보게 한다. 감사는 증거 기반이다(충족을 보여주는 레코드 서수를 못 짚으면 미충족/확인불가). 사용자는 결과를 본다. 감사자는 **하니스의 것**이다 — 모델도 사용자도 팀원으로 다루지 못한다.
 
-비목표: 정적 필터 단계. 감사가 main 을 블로킹하는 것. 세션 전체 history 접근. 감사의 감사. 감사자가 직접 고치는 것(쓰기 도구 없음). 감사자가 사용자에게 묻는 것(`ask` 없음). 새 UI.
+비목표: 정적 필터 단계. 감사가 main 을 블로킹하는 것. 세션 전체 history 접근. 감사의 감사. 감사자가 직접 고치는 것(쓰기 도구 없음). 감사자가 누구에게 묻는 것(`ask`·`message` 없음). 감사 결과의 파싱(하니스는 배달만).
 
 ## 3. 구조
 
 ```
-main 세션                                         auditor (상주, 같은 세션의 teammate)
+main 세션                                          하니스 작업 auditor (일회성, <세션>/harness/auditor/<a>-<b>/)
   사용자 런 끝 (complete → history 에 final 한 줄)
     펌프: main_run_ended → SessionAuditor.run_ended(req, ok)
-      사용자 런이고 ok 일 때만 ──────────────────▶ request(expects_reply=True):
-      "Audit … seq a..b of session <sid>"                history: 구간의 query/action/observation 조회
-      (a = 런 전 커서+1, b = 지금 레코드 수)             read_file / code_index: 현재 워크스페이스 확인
-                                                        판정 → reply(AUDIT 본문)   ← 빚: reply 전 complete 거절
-  main 메일함 ◀── 회신 (기존 경로, 카드) ────────────┘
-  MailWaker → 🤝 wake 런: main 이 관찰로 보고 findings 를 손본다(pass 면 바로 complete)
-    펌프: run_ended(req.wake=True) → 요청 없음        ← 고리 상한
+      사용자 런이고 ok 이고 enabled 일 때만 ─▶ HarnessJobs.run("auditor", "a-b", AUDIT_REQUEST):
+      "Audit … seq a..b of session <sid>"            history(sessions:<sid>, loc LIKE '<sid>/history.jsonl:%', seq BETWEEN a AND b)
+                                                     read_file / code_index (현재 워크스페이스)
+                                                     complete(result = "AUDIT run seq a..b: pass | findings …")
+    메일함 ◀── registry.deliver("main", {kind:"harness", job:"auditor", success, output}) ── 하니스가 넣는다
+    MailWaker → 🤝 런: 관찰 "── auditor ──" → findings 면 손보고 complete (이 런은 감사 안 함)
 ```
 
-### 3.1 프로파일 `auditor` (내장, `agent_cli/agents/builtin/auditor.md`)
+### 3.1 하니스 작업 — 팀원이 아니다 (4판, 사용자 결정 ⑤)
 
-- `allowed-tools`: `history`, `read_file`, `code_index`, `memory`. `shell` 은 **넣지 않는다** — 존재·크기 확인은 `read_file`·`code_index` 로 되고, 테스트를 다시 돌리는 식으로 main 의 일을 중복하는 길을 처음부터 막는다. `monitor` 도 없다(3판: 구독할 것이 없다). 쓰기 도구·`agent`·`ask`·`browser`·`fetch` 없음. `message`·`reply` 는 상주 기본 능력으로 강제 탑재된다.
-- `auto-spawn` frontmatter 는 쓰지 않는다. 켜고 끄는 것은 부팅 노브 `AGENT_CLI_AUDITOR`(v1 기본 **off**; §6 뒤 결정).
-- 역할 프롬프트의 뼈대:
-  1. **요청이 런을 가리킨다**: 세션 id 와 `seq a..b` 는 요청에 있다. 감사자는 런을 찾지도, 구독하지도, 어느 런이 감사 대상인지 정하지도 않는다.
-  2. **구간만**: `history(sessions:"<sid>")` 에 `loc LIKE '<sid>/history.jsonl:%'`(§3.3) 와 `seq BETWEEN a AND b`. 파일의 현재 상태는 워크스페이스에서.
-  3. **판정**: 요청마다 `met`(충족을 보여주는 서수 + 근거 한 줄) / `unmet` / `unverifiable`(종결문의 사실 주장에 구간 안 근거 레코드가 없다). 추측 금지, 의견 금지. 증거 규칙 둘(§6.1 에서): 파일은 `read_file` 로 직접 판정하고, 잘린 열(`substr`)은 부재의 증거가 아니다. 두 번 직접 확인해 없으면 그게 결론이다(§6.2 B-3 의 40턴 탐색 방지).
-  4. **보고**: pass 든 findings 든 `reply` 로. 그 뒤 `complete` 한 줄. 감사·인사·조언 금지.
+3판은 감사자를 상주 팀원으로 띄웠다. 동작은 했지만(§6.3·§6.4) 레지스트리에 있는 한 **모든 조회면**에 실렸다: main 과 다른 팀원의 `## Live Agents` 로스터, `message(to:"auditor")`, `agent` 의 request/kill, `agents.json`, `max_agents` 한 자리, 보드 🤖 칩. 감사받는 쪽(main)이 감사자를 끄거나 "다시 봐서 pass 로" 라고 시킬 수 있는 구조였다. 필터로 가리는 대신 **구조**로 뺐다:
 
-### 3.2 스폰과 수명 — on/off 를 반복해도 하나
+- `agent_cli/harness/jobs.py` `HarnessJobs` — 하니스가 자기 몫으로 돌리는 일회성 런의 실행기. `AgentRegistry` 에 들지 않으므로 로스터·주소 해석·manifest·상한·칩 어디에도 없다(격리 = 부재; `tests/test_harness_jobs.py` 가 고정). 팀원과 공유하는 것은 런 기계뿐: `create_subagent_ctx` + `run_subagent_message` + `ports_for_oneshot`(질문 포트·레지스트리·메시지 없음 → `ask`·`message`·`reply` 가 도구에 없다).
+- 프로파일은 `agent_cli/agents/harness/<job>.md` — 사용자 카탈로그(`subagent/profiles` 의 검색 경로 `agents/builtin` + 프로젝트 `agents/`) 밖이라 `@agents`·spawn·delegate 가 이름 자체를 모른다. `disable-model-invocation` 같은 표지가 필요 없다. 프로젝트가 덮어쓰지도 못한다.
+- 기록은 `<세션>/harness/<job>/<label>/` — 세션과 함께 지워지고 이전되지만 `history` 테이블 밖(§3.3).
+- 결과는 `deliver(job, success, output)` → `registry.deliver("main", mail={kind:"harness", …})` — 모니터 보고가 이미 쓰는 길. main 은 `build_reply_record` 의 harness 레코드(`tool=<job>`, 빚 없음)로 본다.
+- 수명: `in_flight` 가 `session_has_live_work(harness=)` 의 한 항 — run 은 결과 배달까지 기다리고(`QuietPolicy` 가 "🔎 감사가 끝나길 기다립니다" 한 번), web 의 idle self-reap 도 같은 술어. `teardown_session(harness=)` 가 세운다. 배달 **뒤에야** `in_flight` 가 줄어 결과 전에 세션이 끝나지 못한다.
 
-- 부팅 때 노브가 켜져 있으면 `runtime.ensure_auditor` 가 restore/auto_spawn 자리에서 `spawn(profile="auditor", name="auditor")`. `spawn` 은 살아 있는 같은 `(profile, name)` 을 거부하므로 resume 으로 되살아난 감사자가 있으면 두 번째는 생기지 않는다; 죽은 툼스톤이면 같은 키로 `resume_teammate`. 부팅 때 보내는 것은 없다 — 감사자는 첫 요청까지 논다.
-- 노브가 꺼져 있는데 agents.json 에서 감사자가 되살아나면 부팅 직후 **kill** 한다. 세션마다 on/off 를 바꿔도 살아 있는 감사자는 늘 0 또는 1 이다.
-- 돌려주는 것은 `SessionAuditor` 핸들 하나(`outcome` 부팅 알림, `active`, `run_ended`) — 펌프 `PumpDeps.auditor` 자리에 꽂힌다. 비활성 핸들은 아무것도 보내지 않으므로 run/web 조립이 한 모양이다.
-- 수명은 저절로 맞는다: 회신을 빚진 감사자 런은 살아 있는 작업이라 `run` 은 기다리고, 회신이 main 을 깨우고, 그 런이 끝나면 조용해진다. 2판의 passive 모니터·판정 전 tick 은 전부 사라졌다.
+### 3.2 세션 디렉토리 배치 — 한 곳의 선언
 
-### 3.3 읽기 범위 — 서수 구간만 (결정)
+종전엔 만드는 쪽 셋(main ctx `history.jsonl`, 팀원 `agents/<key>/`, delegate/스킬 `run_*`/`skill_*`)이 각자 이름을 박았고, 읽는 쪽(`history` 도구)은 `rglob("history.jsonl")` 로 "세션 밑은 전부 대화" 라고 추정했다. 하니스 런은 모델의 대화가 아니므로 그 추정이 틀리는데, 로더에 "단 `harness` 는 빼고" 를 끼우면 규칙과 예외가 다른 모듈에 흩어진다. 그래서 `context/session.py` 가 배치를 **한 번** 선언한다: `AGENTS_DIR`·`RUN_PREFIX`·`SKILL_PREFIX`·`HARNESS_DIR`·`HISTORY_NAME`, `harness_run_dir()`, `conversation_history_files()`(모델이 한 대화의 기록 전부 = 하니스 subtree 만 제외). 만드는 쪽 넷과 읽는 쪽 하나가 이 이름만 쓴다. `tests/test_session_layout.py`: 세션 밑 모든 history 파일은 대화이거나 하니스 밑이다(조용한 누락 없음).
 
-- 구간은 하니스가 잰다(`SessionAuditor` 의 커서 — 런 전 레코드 수 +1 .. 런 뒤 레코드 수; 모든 런이 커서를 앞당겨 실패한 런·깨우기 런의 레코드가 다음 구간에 섞이지 않는다). 읽기 제한은 지시다 — `history` 도구에 구간 고정 인자를 더하지 않는다. §6 에서 구간 밖 조회 횟수를 센다. 실제로 새면 v2 에서 도구 쪽 클램프.
+(처음 제안은 "대화 = 명시 목록(agents/·run_*·skill_*)" 이었는데, 이름 바뀌기 전 세션의 `delegate_*` 가 빠지고 새 종류의 런은 픽스처에 넣어야만 테스트가 잡는다 — 선언의 자리와 소유자는 같으니 "하니스 subtree 제외" 로 적었다.)
+
+### 3.3 읽기 범위 — 서수 구간만 (결정 ①)
+
+- 구간은 하니스가 잰다(`SessionAuditor` 의 커서 — 런 전 레코드 수 +1 .. 런 뒤 레코드 수; **모든** 런이 커서를 앞당겨 실패한 런·깨우기 런·꺼져 있던 동안의 레코드가 다음 구간에 섞이지 않는다). 읽기 제한은 지시다 — `history` 도구에 구간 고정 인자를 더하지 않는다. §6 에서 구간 밖 조회 횟수를 센다.
 - 구간 밖이 필요해 보이는 경우(이전 런의 파일을 이번에 고쳤다)는 과거 대화가 아니라 **현재 워크스페이스**를 `read_file`·`code_index` 로 본다.
-- `seq` 는 history.jsonl 의 1 기준 줄 번호(= 캐시 서수 hidx + 1). **실측(A-smoke)**: `history` 의 세션 테이블은 `agents/<key>/history.jsonl` 도 싣고 `seq` 는 파일별이라, 감사자 자신의 시작 런 `final`(seq 7) 이 main 의 직전 final 로 잡혀 구간이 8..43 으로 틀렸다(모델이 1..7 을 읽어 스스로 바로잡았지만 그게 "구간 밖 조회" 1건). 모든 질의에 `loc LIKE '<sid>/history.jsonl:%'` 를 넣는다 — 요청문(`AUDIT_REQUEST`)과 프로파일이 강제.
+- `seq` 는 history.jsonl 의 1 기준 줄 번호(= 캐시 서수 hidx + 1). 테이블은 팀원·delegate 파일도 싣고 `seq` 는 파일별이라 모든 질의에 `loc LIKE '<sid>/history.jsonl:%'` 를 넣는다 — 과제문(`AUDIT_REQUEST`)과 프로파일이 강제. 감사 런 자신의 기록은 테이블에 없다(§3.2) — 포함하면 감사 과제가 사용자 요청 모양(`kind='query'`)으로 main 의 무필터 질의에 섞였다(4차 A-1 세션에서 확인). 감사 결과는 main 파일의 메일 관찰에 있으니 잃는 것이 없다.
 
 ### 3.4 판정 본문 — 문법 강제 없음
 
@@ -67,45 +65,53 @@ AUDIT run seq 99..142: findings
 claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq 99..142)
 ```
 
-- 읽는 쪽은 사람과 main 뿐이다 — 하니스는 회신을 배달만 하고 파싱하지 않으므로 EBNF 문법을 걸 이유가 없다. 문법은 "구제 불가한 것만 막는다"는 원칙이고, 문법 변경은 토크나이저로 토큰당 비용을 재야 한다 — 산문 판정에 그 비용을 치를 가치가 없다.
-- 구조가 꼭 필요해지면(예: 카드가 요청별 칩을 그린다) 길은 EBNF 가 아니라 **도구 호출**이다: `verdict {run, items:[{id, status, seq, why}]}` 같은 도구를 감사자에게만 주면 기존 인자 검증(스키마)으로 모양이 보장되고 native_fc 에선 서버가 강제한다. v1 범위 밖.
+- 읽는 쪽은 사람과 main 뿐이다 — 하니스는 결과를 배달만 하고 파싱하지 않으므로 EBNF 문법을 걸 이유가 없다. 구조가 꼭 필요해지면 길은 문법이 아니라 **도구 호출**(`verdict {…}` 스키마). v1 범위 밖.
+- 증거 규칙 둘(§6.1·§6.2 에서): 파일은 `read_file` 로 직접 판정하고, 잘린 열(`substr`)은 부재의 증거가 아니다. 두 번 직접 확인해 없으면 그게 결론이다.
 
-### 3.5 전달 — 회신 빚 (3판)
+### 3.5 전달 — 하니스가 한다 (4판)
 
-- 하니스의 요청이 `expects_reply=True` 라 감사자는 회신 빚을 진다: 꼬리의 `## Owed Replies` 가 매 턴 보이고, `complete` 는 빚이 남아 있으면 거절되며(3회 독촉), 그래도 안 하면 런 요약이 라벨 붙어 폴백 배달된다. 어느 길이든 main 은 감사 결과를 받는다 — 2판의 "모델이 `message` 를 고른다" 가 1·2차 실측에서 2/10 이었던 자리.
-- 회신 → main 메일함 → `MailWaker` 가 유휴 main 을 깨움 → 🤝 런에서 관찰 레코드로 들어가고 **main 채널에 에이전트 회신 카드**로 그려진다. 사용자는 이걸 본다. pass 도 같은 길이라 §7 A 는 해소됐다 — 비용은 사용자 런마다 main 의 짧은 깨우기 런 하나(관찰 읽고 complete).
-- 귀속: `request(author="main")` 은 지금 런의 사용자 목록을 스냅샷하므로 회신은 그 런의 요청자에게 귀속된다(다중 사용자 웹).
-- 고리: `run_ended` 는 `req.wake` 또는 `not req.author_is_user` 면 보내지 않는다. 사용자 런 1 : 감사 1 : 되먹임 ≤ 1 — 코드가 보장하고 §6 이 로그로 확인한다.
+- 1·2판은 모델이 `message` 를 고르게 했다(전달 2/10). 3판은 회신 빚으로 강제했다(전달 9/9 — 그러나 `complete` 거절·독촉·폴백·이중 회신이라는 기계가 따라왔고, native_fc 의 빈 턴 레코드 버그도 거기서 드러났다). 4판은 전달을 모델에서 **완전히 뺀다**: 감사 런의 `complete` 결과가 곧 보고이고 하니스가 그걸 메일함에 넣는다. 2차 실측의 "이 모델은 `complete` 가 곧 보고" 라는 습관이 그대로 전달 수단이 된다.
+- 런이 턴 소진·오류·크래시로 `complete` 없이 끝나면 하니스가 "auditor did not complete: <사유>" / "auditor crashed: …" 를 대신 배달한다 — 판정문은 아니지만 "결론을 못 냈다" 는 사실이 전달된다.
+- 회신 → main 메일함 → `MailWaker` 가 유휴 main 을 깨움 → 🤝 런에서 관찰 `── auditor ──` 로 들어가고 **main 채널에 카드**로 그려진다. 사용자는 이걸 본다. pass 도 같은 길(§7 A 해소) — 비용은 사용자 런마다 main 의 짧은 깨우기 런 하나.
+- 고리: `run_ended` 는 `req.wake` 또는 `not req.author_is_user` 면 돌리지 않는다. 사용자 런 1 : 감사 1 : 되먹임 ≤ 1.
 
 ### 3.6 비용·상한
 
-- 감사자 런 = 요청 한 줄 + history 조회 1~3회 + read_file 몇 개 + 판정 + reply. 상주 턴 상한이 폭주를 막는다(§6.2 B-3: 40턴).
-- 추가 비용은 사용자 런당 감사자 런 하나 + main 의 깨우기 런 하나(pass 면 한두 턴). §6 에서 실측.
-- 모델: v1 은 main 과 같은 바인딩(프로파일 `model` 비움).
+- 감사 런 = 과제 한 줄 + history 조회 1~3회 + read_file 몇 개 + 판정 + complete. 컨텍스트는 감사마다 새로 시작해 쌓이지 않는다(3판 상주는 감사마다 커졌다). 턴 상한은 delegate 와 같은 값(`AgentRuntime.max_turns`).
+- 추가 비용은 사용자 런당 감사 런 하나 + main 의 깨우기 런 하나(pass 면 한두 턴). §6 에서 실측.
+- 모델: main 과 같은 바인딩(프로파일 `model` 비움). 세션 셸 훅은 감사 런에 싣지 않는다.
 
-### 3.7 하니스 변경
+### 3.7 켜고 끄기 — 부팅값 + web 칩 (결정 ⑥)
+
+- `AGENT_CLI_AUDITOR`(기본 off)는 `SessionAuditor.enabled` 의 **초기값**이다. 실행기(`HarnessJobs`)는 세션이 있으면 늘 조립되므로 세션 도중 켜고 끌 수 있다.
+- web: 🔎 칩(`#auditor-wrap`, 📐 문법 노브와 같은 틀) ↔ `GET/POST /api/auditor` `{enabled, available, in_flight}` ↔ sticky `auditor_mode` 로 뷰어 동기화. 끄면 다음 사용자 런부터 감사하지 않고, 진행 중 감사는 끝까지 돌아 결과가 배달된다. 세션 한정 — 재시작 시 env 값.
+- 보드: 감사자는 레지스트리에 없으니 🤖 칩에 안 보인다. 대신 `status.json` 의 `auditing`(하니스 작업 `on_change` → `WebRenderer.note_harness`)으로 행 상태 "결과 확인 중"(agent-board v1.35.0; 우선순위 ❗ 응답 필요 > 응답 중 > **결과 확인 중** > 에이전트 작업 중 > 대기).
+- run: 부팅 때 "🔎 세션 감사자 켜짐" 한 줄(켜져 있을 때만), 감사만 남아 기다릴 때 "🔎 감사가 끝나길 기다립니다" 한 번.
+
+### 3.8 하니스 변경
 
 | 파일 | 변경 | LOC |
 |---|---|---|
-| `agent_cli/agents/builtin/auditor.md` | 프로파일·역할 프롬프트(구간·판정·증거 규칙·reply) 3판 | +87 |
-| `agent_cli/constants.py` | `AGENT_CLI_AUDITOR` 노브 · `AUDIT_REQUEST` | +22 |
-| `agent_cli/runtime.py` | `SessionAuditor`(핸들·커서·`run_ended`) · `ensure_auditor`(스폰/부활/kill) | +75 |
-| `agent_cli/pump.py` | `PumpDeps.auditor` · 런 종료마다 `run_ended` | +7 |
-| `agent_cli/main.py` | 부팅 알림 · 두 펌프에 핸들 전달 | +10 |
-| `agent_cli/subagent/agents_live.py` | `instance_for(profile, name)` — 툼스톤 포함 조회 | +12 |
-| `agent_cli/tools/monitor_tool.py` | `command`/`run` 은 `shell` 이 있는 루프만 — 2판 구현 중 발견한 구멍, 감사자와 무관하게 남긴다 | +14 |
-| tests | `tests/test_auditor.py`(22): 노브·프로파일 도구 집합/규칙 문구·요청문·seq=줄 번호·스폰 단일성(on/off/resume)·`run_ended` 구간/깨우기/실패/빈 런/죽은 감사자·실 레지스트리 배달·펌프 배선·조립·부팅 알림; monitor shell 게이트 1 | +330 |
-| docs | README(노브·동작), ARCHITECTURE, 이 문서 §6 | — |
+| `agent_cli/harness/jobs.py` · `auditor.py` | 하니스 작업 실행기 · 감사자 정책(커서·`run_ended`·`enabled`·`state`) · `build_auditor` | +287 |
+| `agent_cli/agents/harness/auditor.md` | 프로파일 4판 (builtin 에서 이동; 보고 = `complete` 결과; 도구 셋) | 84 |
+| `agent_cli/context/session.py` | 배치 선언: 이름 상수·`harness_run_dir`·`conversation_history_files` | +43 |
+| `agent_cli/tools/history.py` · `subagent/agents_live.py` · `subagent/report.py` · `loop/skill_invoke.py` | 배치 이름을 선언에서 가져온다; `build_reply_record` harness 레코드; `instance_for` 제거 | ±30 |
+| `agent_cli/runtime.py` | `SessionAuditor`/`ensure_auditor` 제거 → `build_auditor`; `session_has_live_work(harness=)`; `teardown_session(harness=)` | −68 |
+| `agent_cli/pump.py` · `main.py` | `QuietPolicy(harness=)` + 대기 안내; 두 펌프·idle 술어·종료에 핸들; `server.auditor`; 메일 알림 | +25 |
+| `agent_cli/render/web.py` · `web/server.py` · `web/instance_file.py` · `web/static/*` | `broadcast_auditor`·`note_harness`; `/api/auditor`·`health.auditing`; `status.json auditing`; 🔎 칩 | +120 |
+| `agent_cli/constants.py` | `AUDIT_REQUEST` 4판 문구 | ±8 |
+| tests | `test_auditor.py`(35)·`test_harness_jobs.py`(14)·`test_session_layout.py`(5); runtime_assembly·monitor_owner_routing·packaging 수정 | +600 |
+| docs | README(노브·동작), ARCHITECTURE(harness/·session.py·history.py 외), 이 문서 | — |
 
-새 이벤트·카드·파서·history 레코드 종류는 없다. 2판의 `MonitorRegistry.passive_owners`·`QuietPolicy` 의 판정 전 `tick` 은 되돌렸다.
+3판의 `instance_for` 툼스톤 조회, 회신 빚 의존, `memory` 도구, 상주 spawn/resume/kill 분기는 전부 사라졌다. 턴 레코드 수리(native_fc 가상 op 빈 기록, `tests/test_server_parsed_virtual_ops.py`)는 하니스 버그라 남는다.
 
 ## 4. 시퀀스 (findings)
 
 1. 사용자 런 #7: 요청 [12] "모듈별 함수 이름을 REPORT.md 에" → main 이 7개만 읽고 complete(answers=[12]) → history 99..142 줄.
-2. 펌프: `run_ended(req 사용자, ok)` → 감사자에게 "Audit … seq 99..142" (회신 빚).
-3. 감사자 런: 구간 조회, read_file 7건·write_file 없음 → `reply("AUDIT run seq 99..142: findings / [12] unmet …")` → complete 한 줄.
-4. main 채널에 회신 카드. MailWaker → 🤝 런 #8: main 이 나머지를 읽고 REPORT.md 를 쓰고 complete.
-5. 펌프: `run_ended(req.wake)` → 요청 없음. 조용해지면 run 종료.
+2. 펌프: `run_ended(req 사용자, ok)` → `HarnessJobs.run("auditor", "99-142", "Audit … seq 99..142")` — 스레드 하나, `in_flight`=1, 보드 "결과 확인 중".
+3. 감사 런(`harness/auditor/99-142/`): 구간 조회, read_file 7건·write_file 없음 → `complete("AUDIT run seq 99..142: findings / [12] unmet …")`.
+4. 하니스: `deliver` → main 메일함(kind harness) → `in_flight`=0. 📨 "🔎 auditor 결과 도착". MailWaker → 🤝 런 #8: main 이 나머지를 읽고 REPORT.md 를 쓰고 complete.
+5. 펌프: `run_ended(req.wake)` → 감사 없음. 조용해지면 run 종료.
 6. 사용자 런 #9 가 오면 1 부터.
 
 ## 5. 위험
@@ -113,7 +119,8 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 - **감사자가 SQL 지시를 안 지킴**(구간 밖): 측정 지표로 둔다. 새면 v2 도구 클램프(§3.3).
 - **예스맨**: 증거 서수 요구로 줄인다. 그래도 서수를 지어낼 수 있다.
 - **감사자의 오류**: 틀린 findings 는 main 을 한 번 더 돌린다(최대 1회). main 은 감사문을 관찰로 볼 뿐 따를 의무가 없다. §6.1 의 오탐 둘은 증거 규칙으로 줄였다.
-- **폭주**: 없는 파일을 계속 찾는 식의 탐색(§6.2 B-3)은 상주 턴 상한이 끊고, 그 경우 폴백 배달(런 요약)이 main 에게 간다 — 판정문은 아니지만 "감사자가 결론을 못 냈다" 는 사실은 전달된다.
+- **폭주**: 없는 파일을 계속 찾는 식의 탐색(§6.2 B-3)은 턴 상한이 끊고, 하니스가 사유를 배달한다.
+- **격리의 역방향**: 감사자가 main 이나 팀원에게 말을 걸 길은 없다(`message`·`ask` 없음). 사용자가 감사자와 대화할 길도 없다 — 의도다. 판정을 고치려면 프로파일을 고친다.
 
 ## 6. 측정 계획 (구현 뒤, 기본값 결정 전) — 동의됨
 
@@ -212,5 +219,6 @@ B 는 뺐다 — 이 모델·32K 창에서 main 이 2/3 턴을 소진해 감사 
 
 ## 7. 열린 질문
 
-- **A. pass 를 main 채널에도 보일지** — 3판에서 해소: 회신이라 pass 도 main 채널 카드로 보인다. 비용은 사용자 런마다 main 의 짧은 깨우기 런 하나.
-- **B. 기본값**: off 유지 (§6.3).
+- **A. pass 를 main 채널에도 보일지** — 해소: 결과 카드라 pass 도 보인다. 비용은 사용자 런마다 main 의 짧은 깨우기 런 하나.
+- **B. 기본값**: off 유지. web 🔎 칩으로 세션마다 켜 보며 쓴다(사용자 결정 ⑥).
+- **C. `agent-cli run` 에서의 노브 제어** — 별도 조사(사용자 업무 2·3번: run 의 `/노브` 또는 실행 인자, web 노브와의 대칭을 구조로 강제하는 설계).

@@ -552,11 +552,6 @@ class TestProfileReach:
             allowed = yaml.safe_load(head).get("allowed-tools")
             if allowed is None:
                 continue  # 제한 없음 = 전부 허용
-            if f.stem == "auditor":
-                # 읽기 전용 감사자(v10.42.0)는 shell 도 monitor 도 없다 — 감시를
-                # 거는 쪽이 아니라 하니스 요청에 답하는 쪽이다.
-                assert "shell" not in allowed and "monitor" not in allowed
-                continue
             if "monitor" not in allowed:
                 missing.append(f.stem)
             assert "shell" in allowed, f"{f.stem}: monitor 만 있고 shell 이 없다"

@@ -101,6 +101,17 @@
         <span id="grammar-info" class="knob-unit"></span>
       </div>
     </span>
+    <span id="auditor-wrap" class="knob" title="세션 감사자 — 켜면 사용자 런이 끝날 때마다 하니스가 그 런의 기록만 읽는 감사 런을 돌리고, 요청별 충족 판정을 main 에게 전합니다(main 이 한 번 더 손봅니다). 비용: 런마다 감사 런 하나 + main 의 짧은 깨우기 런. 다음 런부터 반영, 진행 중 감사는 끝까지 돕니다. 세션 한정·재시작 시 AGENT_CLI_AUDITOR 값." hidden>
+      <button id="auditor-chip" class="knob-btn" type="button" data-pop="auditor-pop" aria-haspopup="true" aria-expanded="false">🔎 <span id="auditor-badge">끔</span></button>
+      <div id="auditor-pop" class="knob-pop" hidden>
+        <label for="auditor-mode">세션 감사</label>
+        <select id="auditor-mode" aria-label="Session auditor mode">
+          <option value="off">끔 (기본)</option>
+          <option value="on">켬</option>
+        </select>
+        <span id="auditor-info" class="knob-unit"></span>
+      </div>
+    </span>
     <span id="mcp-wrap" class="knob" title="MCP servers connected at boot — connected/total, tool count, and why a server failed. Read-only: register or edit with `agent-cli mcp` (registering runs a local process, which is beyond what the web UI is trusted to do)." hidden>
       <button id="mcp-chip" class="knob-btn" type="button" data-pop="mcp-pop" aria-haspopup="true" aria-expanded="false">🔌 <span id="mcp-badge">0/0</span></button>
       <div id="mcp-pop" class="knob-pop" hidden>

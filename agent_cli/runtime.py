@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.constants import AUDIT_REQUEST, AUDITOR_NAME, auditor_enabled
 from agent_cli.loop.ports import LoopPorts
 
 
@@ -212,7 +211,9 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
-def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
+def wire_agent_mail(
+    registry, *, enqueue_wake, on_mail_notice, parent_ctx=None, on_harness_change=None
+):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
     종전엔 ``monitors`` 인자를 받아 술어에 ``or monitors.has_pending()`` 을
@@ -222,8 +223,11 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     안전하다: 그 항을 빠뜨린 것이 v9.11.0 의 "발화해도 조용함" 이었다.
 
     Returns ``(waker, revived, auto, auditor)`` — 부활/auto-spawn 수는 호출자가
-    자기 표면(콘솔/렌더러)으로 알린다; ``auditor`` 는 `SessionAuditor` 핸들
-    (노브 off 나 세션 없음이면 None — 펌프의 ``PumpDeps.auditor`` 자리)."""
+    자기 표면(콘솔/렌더러)으로 알린다; ``auditor`` 는 `harness.auditor.SessionAuditor`
+    핸들(세션 없음이면 None — 펌프의 ``PumpDeps.auditor`` 자리).
+    ``on_harness_change(n)`` 은 진행 중 하니스 작업 수의 변화 — web 이 status.json
+    의 ``auditing`` 을 이것으로 쓴다."""
+    from agent_cli.harness.auditor import build_auditor
     from agent_cli.subagent.agents_live import MailWaker
 
     waker = MailWaker(enqueue_wake, registry.has_pending_replies)
@@ -237,93 +241,10 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).
     revived = registry.restore(parent_ctx=parent_ctx)
     auto = registry.auto_spawn(parent_ctx=parent_ctx)
-    auditor = ensure_auditor(registry, parent_ctx=parent_ctx, enabled=auditor_enabled())
+    auditor = build_auditor(
+        registry, parent_ctx=parent_ctx, on_change=on_harness_change
+    )
     return waker, revived, auto, auditor
-
-
-class SessionAuditor:
-    """세션 감사자 핸들 (docs/auditor/DESIGN.md 3판) — 살아 있는 감사자는 늘
-    0 또는 1 이고, 하니스가 하는 일은 둘뿐이다: 노브대로 띄우거나 내리기
-    (`ensure_auditor`), 그리고 **main 의 사용자 런이 끝날 때마다** 그 런의
-    history 구간을 `request(expects_reply=True)` 로 보내기(`run_ended`).
-
-    감사 결과는 회신 빚이 되돌린다 — 감사자는 `reply` 하기 전엔 `complete`
-    가 거절되고, 3회 독촉 뒤에도 안 하면 런 요약이 폴백 배달된다. 판정문을
-    하니스가 읽지 않으니 형식 의존이 없고, 회신이 main 을 깨우는 것은 기존
-    MailWaker 다. 고리 상한은 코드다: 깨우기 런(감사 회신으로 깨어난 런)은
-    `run_ended` 가 요청을 보내지 않는다.
-
-    ``outcome`` 은 부팅 알림용 한 단어: ``""``(변화 없음) · ``"spawned"`` ·
-    ``"resumed"``(죽은 툼스톤 부활) · ``"killed"``(노브가 꺼졌는데 되살아났다) ·
-    ``"error: …"``. 감사자가 없으면(노브 off·스폰 실패) ``key`` 가 비고 핸들은
-    아무것도 보내지 않는다 — 조립은 한 모양이다.
-    """
-
-    def __init__(self, registry, ctx, key: str, outcome: str) -> None:
-        self.registry = registry
-        self.ctx = ctx
-        self.key = key
-        self.outcome = outcome
-        # 지금까지의 history 레코드 수 — 이 프로세스 전의 history 는 감사하지
-        # 않는다. 레코드 n 개면 마지막 줄의 `seq`(1 기준 줄 번호)가 n 이다.
-        self._cursor: int = ctx.next_ordinal
-
-    @property
-    def active(self) -> bool:
-        return bool(self.key)
-
-    def run_ended(self, req, *, ok: bool) -> str:
-        """main 의 런이 끝났다. 사용자 런이고 `complete` 로 끝났으면 그 런의
-        구간을 감사 요청으로 보낸다. 커서는 **모든** 런이 앞당긴다 — 실패한
-        런·깨우기 런의 레코드가 다음 감사 구간에 섞이지 않게.
-
-        돌려주는 값: 보낸 요청 본문(빈 문자열 = 안 보냈다)."""
-        a, b = self._cursor + 1, self.ctx.next_ordinal  # seq 는 1 기준 줄 번호
-        self._cursor = b
-        if not self.key or b < a:
-            return ""
-        if not ok or req.wake or not req.author_is_user:
-            return ""
-        tm = self.registry.instance_for(AUDITOR_NAME, AUDITOR_NAME)
-        if tm is None or tm.state == "dead":
-            return ""
-        text = AUDIT_REQUEST.format(
-            a=a,
-            b=b,
-            session=self.ctx.session_dir.name,
-            history=str(self.ctx.history_path),
-        )
-        error = self.registry.request(tm.key, text, author="main", expects_reply=True)
-        return "" if error else text
-
-
-def ensure_auditor(registry, *, parent_ctx, enabled: bool) -> SessionAuditor | None:
-    """세션 감사자를 노브대로 맞춘다 (docs/auditor/DESIGN.md §3.2) — 살아 있는
-    감사자는 늘 0 또는 1 이다. 돌려주는 핸들의 ``outcome`` 이 부팅 알림이고
-    ``active`` 가 거짓이면(노브 off·스폰 실패) 핸들은 비활성이다. 세션이
-    없으면(``parent_ctx`` None) 감사할 history 가 없으니 None.
-    """
-    if parent_ctx is None:
-        return None
-    tm = registry.instance_for(AUDITOR_NAME, AUDITOR_NAME)
-    if not enabled:
-        if tm is not None and tm.state != "dead":
-            registry.kill(tm.key)
-            return SessionAuditor(registry, parent_ctx, "", "killed")
-        return SessionAuditor(registry, parent_ctx, "", "")
-    if tm is None:
-        key, error = registry.spawn(
-            profile=AUDITOR_NAME, name=AUDITOR_NAME, parent_ctx=parent_ctx
-        )
-        if error:
-            return SessionAuditor(registry, parent_ctx, "", f"error: {error}")
-        return SessionAuditor(registry, parent_ctx, key, "spawned")
-    if tm.state == "dead":
-        error = registry.resume_teammate(tm.key, parent_ctx=parent_ctx)
-        if error:
-            return SessionAuditor(registry, parent_ctx, "", f"error: {error}")
-        return SessionAuditor(registry, parent_ctx, tm.key, "resumed")
-    return SessionAuditor(registry, parent_ctx, tm.key, "")
 
 
 def main_run_ended(agent_registry, output: str = "") -> int:
@@ -353,6 +274,7 @@ def teardown_session(
     agent_registry=None,
     mcp_manager=None,
     monitors=None,
+    harness=None,
     warn_stuck: bool = False,
 ) -> None:
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
@@ -382,6 +304,8 @@ def teardown_session(
         # 다음 세션의 "이전 세션 모니터 N건" 통지가 사라진다.
         monitors.stop()
         monitors.closed = True
+    if harness is not None:
+        harness.stop()  # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
     if agent_registry is not None:
         agent_registry.shutdown_all()
     from agent_cli.hooks.runtime import set_hook_runner
@@ -441,8 +365,10 @@ _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
-def session_has_live_work(*, pending_count: int, monitors=None, schedules=None) -> bool:
-    """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약 (v10.32.1).
+def session_has_live_work(
+    *, pending_count: int, monitors=None, schedules=None, harness=None
+) -> bool:
+    """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약·하니스 작업 (v10.32.1).
 
     `run` 의 큐 펌프 정지 판정(`pump.QuietPolicy.should_stop`)과 `web` 의 idle
     self-reap 술어(`web_instance_is_active`)가 **같은 항을 같은 함수로** 본다.
@@ -456,10 +382,16 @@ def session_has_live_work(*, pending_count: int, monitors=None, schedules=None) 
     (미배달 제외, 열린 사람 질문 포함). 한 함수에 넣으면 플래그가 생긴다.
 
     run 의 예약 항은 `QuietPolicy` 가 한 번 알리는 대기 안내와 함께 든다.
+
+    ``harness`` (v10.42.0): 진행 중인 하니스 작업(감사)은 결과를 main 메일함에
+    넣어야 끝나므로 같이 기다린다 — 감사 결과가 배달되기 전에 run 이 꺼지거나
+    web 이 자기를 거두면 그 결과는 사라진다.
     """
     if pending_count:
         return True
     if monitors is not None and monitors.has_active_work():
+        return True
+    if harness is not None and harness.in_flight:
         return True
     return schedules is not None and schedules.has_active_work()
 

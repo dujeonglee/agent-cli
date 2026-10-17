@@ -3,11 +3,18 @@
 Stores session metadata in session.jsonl (single line).
 Conversation history is managed by ContextManager (history.jsonl).
 
-File layout:
+File layout (declared ONCE here — v10.42.0; the makers and the one reader
+import these names instead of spelling them):
   {project}/.agent-cli/sessions/{session_id}/
     session.jsonl          # single-line metadata (id, workspace, updated_at)
-    history.jsonl          # conversation history (managed by ContextManager)
-    skill_*/delegate_*/    # skill/delegate subdirectories
+    history.jsonl          # main conversation (managed by ContextManager)
+    agents/<key>/          # resident teammates (AGENTS_DIR)
+    run_*/  skill_*/       # one-shot delegates / skill runs, nestable
+                           #   (RUN_PREFIX, SKILL_PREFIX)
+    harness/<job>/<label>/ # harness jobs (HARNESS_DIR) — NOT the session's
+                           #   conversation: the harness ran them, the model
+                           #   did not, so ``conversation_history_files``
+                           #   leaves the subtree out
 """
 
 from __future__ import annotations
@@ -23,6 +30,36 @@ from agent_cli.fsio import atomic_write_text
 from agent_cli.paths import sessions_dir
 
 _SESSIONS_DIR = sessions_dir()
+
+# ── 세션 디렉토리 배치 (v10.42.0) ──────────────────────────────────────
+#: 상주 팀원의 자리 ``agents/<key>/`` (subagent/agents_live 가 만든다).
+AGENTS_DIR = "agents"
+#: 일회성 delegate 런 ``run_<name>_<hash>_<ts>/`` (subagent/report 가 이름 짓는다).
+RUN_PREFIX = "run"
+#: 스킬 런 ``skill_<name>_<hash>_<ts>/`` (loop/skill_invoke 가 이름 짓는다).
+SKILL_PREFIX = "skill"
+#: 하니스 작업 ``harness/<job>/<label>/`` (harness/jobs 가 만든다).
+HARNESS_DIR = "harness"
+#: 모든 런이 자기 디렉토리에 남기는 대화 기록 파일 이름.
+HISTORY_NAME = "history.jsonl"
+
+
+def harness_run_dir(session_dir: Path, job: str, label: str) -> Path:
+    """하니스 작업 한 번의 자리 — 세션 안이라 세션과 함께 지워지고 이전되지만,
+    대화 테이블 밖이다(``conversation_history_files``)."""
+    return Path(session_dir) / HARNESS_DIR / job / label
+
+
+def conversation_history_files(session_dir: Path) -> list[Path]:
+    """이 세션의 **모델이 한 대화**의 기록 파일 전부 — main, 팀원, delegate,
+    스킬(중첩 포함). 하니스 작업(``HARNESS_DIR`` 아래)만 뺀다: 하니스가 돌린
+    런이라 "내가 한 일" 질의에 사용자 요청 모양의 잡음으로 섞이기 때문이다.
+    `history` 도구의 테이블이 이것을 읽는다 — 배치를 아는 모듈은 여기뿐이다."""
+    root = Path(session_dir)
+    harness = root / HARNESS_DIR
+    return sorted(
+        hp for hp in root.rglob(HISTORY_NAME) if not hp.is_relative_to(harness)
+    )
 
 
 @dataclass

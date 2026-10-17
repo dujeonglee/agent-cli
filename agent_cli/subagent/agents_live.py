@@ -44,6 +44,7 @@ from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
 from agent_cli.constants import has_words
+from agent_cli.context.session import AGENTS_DIR
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -332,6 +333,24 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
 
     key = reply.get("key", "")
     label = format_agent_label(key, reply.get("profile", ""), reply.get("name", ""))
+
+    if reply.get("kind") == "harness":
+        # 하니스 작업의 결과 (v10.42.0, harness/jobs) — 팀원 회신이 아니다:
+        # 돌려줄 주소도, 빚도 없다. 감사 보고가 여기로 온다. `tool=<job>` 은
+        # monitor 와 같은 이유로 등록이 필요 없다(아래 주석).
+        job = reply.get("job") or "harness"
+        body = reply.get("output") or "(empty result)"
+        return {
+            "role": "user",
+            "tool": job,
+            "success": bool(reply.get("success")),
+            "content": (
+                f"── {job} ──\n{body}\n"
+                "(A harness job's result — nothing to send back. Act on findings "
+                "if there are any; otherwise there is nothing to do.)"
+            ),
+            "source": "harness",
+        }
 
     if reply.get("kind") == "monitor":
         # 종전 `AgentLoop._deliver_monitor_reports` 가 만들던 것과 **같은**
@@ -842,18 +861,6 @@ class AgentRegistry:
         """현재 런의 요청자 목록 갱신 (귀속 승계 — ``_current_run_authors``
         주석 참조). worker(런 시작)와 main 루프(조향 주입)가 호출한다."""
         self._current_run_authors = list(authors)
-
-    def instance_for(self, profile: str, name: str) -> AgentInstance | None:
-        """표시 이름 ``(profile, name)`` 의 개체 — 죽은 툼스톤도 돌려준다
-        (하니스 소유 에이전트의 부활/정리용, v10.42.0). 없으면 None."""
-        return next(
-            (
-                tm
-                for tm in list(self._agents.values())
-                if (tm.profile_name, tm.instance_name) == (profile, name)
-            ),
-            None,
-        )
 
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
@@ -1535,7 +1542,7 @@ class AgentRegistry:
             model=model,
             hooks_config=hooks_config,
             context_mode=context_mode,
-            home_dir=self.session_dir / "agents" / key,
+            home_dir=self.session_dir / AGENTS_DIR / key,
             instance_name=name,
             description=description,
             instructions=instructions,
@@ -2376,7 +2383,7 @@ class AgentRegistry:
                 model=e.get("model", ""),
                 hooks_config=e.get("hooks_config"),
                 context_mode=e.get("context_mode", "none"),
-                home_dir=self.session_dir / "agents" / key,
+                home_dir=self.session_dir / AGENTS_DIR / key,
                 instance_name=e.get("name", ""),
                 description=e.get("description", ""),
                 instructions=e.get("instructions", ""),

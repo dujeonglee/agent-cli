@@ -175,6 +175,9 @@ class WebServer:
         # teammate P4: 대화 창의 인간 개입(input/kill) 대상 — worker 부트가
         # AgentRegistry 를 꽂는다. None(테스트/기동 전)이면 엔드포인트 503.
         self.agent_registry = None
+        # v10.42.0: 🔎 세션 감사자 핸들(`harness.auditor.SessionAuditor`) — worker
+        # 부트가 꽂는다. None(테스트/기동 전·세션 없음)이면 칩이 숨는다.
+        self.auditor = None
         # v9.2.0: 부팅 시 붙인 McpClientManager (없으면 None — mcp.json 부재).
         # 🔌 칩은 읽기 전용: 등록·수정은 `agent-cli mcp` 로만 (docs/mcp-ui §E —
         # 등록은 곧 로컬 프로세스 실행이라 웹 신뢰 수준을 넘는다).
@@ -643,6 +646,8 @@ def create_app(server: WebServer) -> FastAPI:
             # v7.10.0: 상주 에이전트 요약 (없으면 None) — status.json 과
             # 같은 소스(renderer.agents_summary), board 폴백 경로 파리티.
             "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
+            # v10.42.0: 감사 런 진행 중 (status.json 동형)
+            "auditing": server.auditor is not None and server.auditor.in_flight > 0,
         }
 
     @app.get("/api/share-url")
@@ -1045,6 +1050,26 @@ def create_app(server: WebServer) -> FastAPI:
         stored = reg.set_max_agents(value)
         server.renderer.broadcast_max_agents(stored)
         return {"ok": True, "value": stored, "unlimited": stored == 0}
+
+    @app.get("/api/auditor")
+    async def get_auditor():
+        """🔎 세션 감사자 (v10.42.0). ``{enabled, available, in_flight}`` —
+        ``available`` 이 거짓이면(세션 없음) 칩을 숨긴다."""
+        if server.auditor is None:
+            return {"enabled": False, "available": False, "in_flight": 0}
+        return server.auditor.state()
+
+    @app.post("/api/auditor")
+    async def set_auditor(body: dict):
+        """``{enabled: bool}`` → 다음 사용자 런부터 감사 여부. 진행 중인 감사는
+        끝까지 돈다(결과는 배달된다). sticky 로 다른 뷰어 동기화. 세션 한정 —
+        재시작 시 `AGENT_CLI_AUDITOR` 로 돌아간다."""
+        if server.auditor is None:
+            return {"ok": False, "error": "no session to audit"}
+        server.auditor.enabled = bool(body.get("enabled"))
+        state = server.auditor.state()
+        server.renderer.broadcast_auditor(state)
+        return {"ok": True, **state}
 
     @app.post("/api/directives/generate")
     async def directives_generate(body: dict):

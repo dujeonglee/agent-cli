@@ -73,7 +73,7 @@ class QuietPolicy:
     에이전트 항은 ``has_active_work()``(미배달 회신 **포함**) — run 은 회신을
     배달하고 끝나야 한다(web 의 idle self-reap 은 ``any_activity`` 로 다르다,
     ``runtime.session_has_live_work`` 참조). 모니터나 예약만 남아 기다릴 땐
-    ``on_wait("monitors"|"schedules")`` 로 **한 번** 알린다 — 조용히 기다리면
+    ``on_wait("monitors"|"harness"|"schedules")`` 로 **한 번** 알린다 — 조용히 기다리면
     멈춘 것처럼 보인다(예약은 기한이 없어 Ctrl-C 까지, 모니터는 deadline 까지
     — v10.34.0 전엔 모니터 대기는 알리지 않는 비대칭이 있었다).
     """
@@ -85,6 +85,7 @@ class QuietPolicy:
         agent_registry,
         monitors=None,
         schedules=None,
+        harness=None,
         on_wait: Callable[[str], None] | None = None,
         poll_secs: float = 0.5,
     ):
@@ -92,6 +93,7 @@ class QuietPolicy:
         self.agent_registry = agent_registry
         self.monitors = monitors
         self.schedules = schedules
+        self.harness = harness  # v10.42.0: 진행 중 감사는 결과 배달까지 기다린다
         self.on_wait = on_wait
         self.poll_secs: float | None = poll_secs
         self._announced: str | None = None  # 지금 알린 대기의 종류
@@ -103,16 +105,20 @@ class QuietPolicy:
             self._announced = None
             return False
         if not session_has_live_work(
-            pending_count=0, monitors=self.monitors, schedules=self.schedules
+            pending_count=0,
+            monitors=self.monitors,
+            schedules=self.schedules,
+            harness=self.harness,
         ):
             self._announced = None
             return True
-        # 모니터/예약만 남았다 — 종류가 바뀔 때마다 한 번씩 알린다.
-        kind = (
-            "monitors"
-            if self.monitors is not None and self.monitors.has_active_work()
-            else "schedules"
-        )
+        # 모니터/감사/예약만 남았다 — 종류가 바뀔 때마다 한 번씩 알린다.
+        if self.monitors is not None and self.monitors.has_active_work():
+            kind = "monitors"
+        elif self.harness is not None and self.harness.in_flight:
+            kind = "harness"
+        else:
+            kind = "schedules"
         if self._announced != kind:
             self._announced = kind
             if self.on_wait is not None:
