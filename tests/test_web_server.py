@@ -1168,6 +1168,7 @@ class TestStaticUI:
         # 카드에는 "✔ complete" 표식
         assert 'id="info"' not in html and "#info" not in css
         assert '"final-tag"' in js and "✔ complete" in js and ".final-tag" in css
+        assert "REPORT_HEAD" in js  # 🔔/🧵 보고는 첫 줄이 머리줄
         # 칩 CSS 도 id 별 규칙이 아니라 공통 — 묶음 그리드·헤더 토글·설명 줄
         assert ".knob-pop.is-group:not([hidden])" in css
         assert ".knob-toggle.on" in css and ".knob-note" in css

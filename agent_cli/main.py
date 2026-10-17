@@ -297,9 +297,11 @@ class _ConsoleSurface:
     def __init__(self, *, result_file: str, dispatch, jobs=None):
         self._result_file = result_file
         self._jobs = jobs
-        #: argv 질의 런이 자기 백그라운드 작업을 남긴 채 끝났다 (v10.47.0) — 그
-        #: 작업의 통지로 깨어난 런의 답이 질의의 나머지 답이므로 파일에 쓴다.
+        #: argv 질의 런이 백그라운드 작업을 썼다 (v10.47.0/10.47.1) — 그 작업의
+        #: 통지로 깨어난 런들의 답이 질의의 나머지 답이므로 파일에 (덮어)쓴다.
+        #: 사슬은 깨우기 런이 작업을 새로 띄우지도, 돌리고 있지도 않을 때 닫힌다.
         self._continuing = False
+        self._run_started = 0.0
         self._dispatch = dispatch  # (text, stop_event) -> bool
         self._stop: threading.Event | None = None
 
@@ -307,7 +309,7 @@ class _ConsoleSurface:
         pass
 
     def busy(self) -> None:
-        pass
+        self._run_started = time.time()  # 이 런이 띄운 작업을 가르는 기준
 
     def echo(self, item: dict, *, wake: bool) -> None:
         if wake:
@@ -337,12 +339,16 @@ class _ConsoleSurface:
         # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
         if not result.success:
             return
-        if req.is_query:
+        if req.is_query or req.wake and self._continuing:
             _write_result_file(self._result_file, result.output)
-            self._continuing = bool(self._jobs is not None and self._jobs.running())
-        elif req.wake and self._continuing:
-            _write_result_file(self._result_file, result.output)
-            self._continuing = bool(self._jobs.running())
+            self._continuing = self._used_jobs()
+
+    def _used_jobs(self) -> bool:
+        """이 런이 작업을 띄웠거나(끝났어도 — 1초짜리 작업의 통지가 런 종료와
+        겹치는 경합, 재측정 E-fix-2) 아직 돌고 있는 작업이 있는가."""
+        if self._jobs is None:
+            return False
+        return bool(self._jobs.running() or self._jobs.started_since(self._run_started))
 
     def run_failed(self, exc: Exception) -> bool:
         return False
