@@ -328,6 +328,68 @@ class TestLifetime:
         assert rec["content"].startswith("🧵 job #1")
 
 
+class TestResultFileContinuation:
+    """`--result-file` (v10.34.1 규칙의 v10.47.0 예외): 질의 런이 자기 작업을
+    남긴 채 끝나면 그 통지로 깨어난 런의 답이 질의의 나머지 답이다."""
+
+    def _surface(self, tmp_path, reg):
+        from agent_cli.main import _ConsoleSurface
+
+        out = tmp_path / "RESULT.txt"
+        return _ConsoleSurface(
+            result_file=str(out), dispatch=lambda *a: False, jobs=reg
+        ), out
+
+    def _req(self, *, query: bool):
+        from agent_cli.pump import RunRequest
+
+        return RunRequest(
+            text="t",
+            author=None if query else "🤝 agent",
+            author_is_user=query,
+            request_id="",
+            stop_event=__import__("threading").Event(),
+            wake=not query,
+        )
+
+    def _ok(self, text):
+        return SimpleNamespace(success=True, output=text)
+
+    def test_query_without_jobs_keeps_the_old_rule(self, reg, tmp_path):
+        surface, out = self._surface(tmp_path, reg)
+        surface.run_ended(self._ok("answer"), self._req(query=True))
+        surface.run_ended(self._ok("wake chatter"), self._req(query=False))
+        assert out.read_text() == "answer"
+
+    def test_query_that_leaves_a_job_takes_the_wake_answer(self, reg, tmp_path):
+        surface, out = self._surface(tmp_path, reg)
+        job = reg.start("sleep 60", owner="main")
+        surface.run_ended(self._ok("still waiting on job #1"), self._req(query=True))
+        assert out.read_text() == "still waiting on job #1"
+        reg.kill(job)  # 작업이 끝났다(통지 → 깨우기 런)
+        surface.run_ended(self._ok("14 passed in 150s"), self._req(query=False))
+        assert out.read_text() == "14 passed in 150s"
+        surface.run_ended(self._ok("later chatter"), self._req(query=False))
+        assert out.read_text() == "14 passed in 150s"  # 한 번만
+
+    def test_failed_runs_never_write(self, reg, tmp_path):
+        surface, out = self._surface(tmp_path, reg)
+        reg.start("sleep 60", owner="main")
+        surface.run_ended(
+            SimpleNamespace(success=False, output="x"), self._req(query=True)
+        )
+        assert not out.exists()
+
+    def test_plain_command_wording(self):
+        from agent_cli.prompts.system_prompt import TASK_GUIDELINES
+        from agent_cli.tools.shell import ShellTool
+
+        assert "plain command (no `&`, no redirection" in TASK_GUIDELINES
+        assert (
+            "PLAIN" in ShellTool.parameters["properties"]["background"]["description"]
+        )
+
+
 class TestAssembly:
     def test_build_and_wire(self, tmp_path):
         from agent_cli.runtime import build_job_registry, wire_job_delivery

@@ -30,6 +30,9 @@
 
 그냥 `cmd &` 는 종전대로 된다(추적 없음) — 안내가 `background: true` 로 유도한다.
 
+- **명령은 평문으로.** 첫 재측정(D-fix-1)에서 모델이 `background: true` 에 `( … ) > log 2>&1 &` 를 그대로 넣어 작업이 1초 만에 "끝났다"(안쪽 `&` 가 진짜 일을 떼어 냈다). `background` 설명과 Task Guidelines 가 "`&`·리다이렉션·`echo EXIT` 없이 평문" 을 못 박는다.
+- **`--result-file` 의 예외.** 질의 런이 자기 작업이 돌고 있는 채로 끝나면(모델은 "끝나면 알려준다" 에 기대어 답을 미룬다) 그 뒤 첫 깨우기 런의 답을 결과 파일에 **덮어쓴다**(`main._ConsoleSurface.run_ended`, `_continuing`). 작업 없이 끝난 질의는 v10.34.1 규칙 그대로(깨우기 답은 안 쓴다). 실측 D-fix-1: 파일엔 "still waiting on job #2" 만 남고 진짜 요약은 깨우기 런에 있었다.
+
 ## 3. 테스트 (`tests/test_jobs.py`)
 
 띄움은 즉시 반환·PID·로그 머리; 종료는 로그 끝 줄·통지 본문(rc·경과·꼬리 8줄·머리/끝 줄 제외)·성공 여부·주소; kill 은 프로세스 그룹·무통지; `drop_owner` 는 그 소유자만; `stop_all` 은 전부 + closed; 닫힌 뒤 종료는 조용; 꼬리는 자기 작업만·경과·축약; 세션 상태 블록과 루프 조립; `shell` 표면(`background` true/"true"·기본 소유자·포그라운드 불변·레지스트리 없음·가드 적용·스키마); 수명(`session_has_live_work`·`QuietPolicy` 한 번 알림·web 술어·teardown 콘솔); 에이전트 사망 정리; 메일 → 관찰; 조립·문구.
