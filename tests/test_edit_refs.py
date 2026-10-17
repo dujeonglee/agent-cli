@@ -1,68 +1,68 @@
-"""Tests for fuzzy edit matching in tools/edit_file.
+"""edit_file 의 ref 검증과 단건 편집 의미 (tools/edit_file).
 
-edit_file is flat-native (consolidation roadmap Step 3): one op = one edit,
-no `edits` batch array. The former multi-edit ambiguity machinery
-(duplicate-ref / range-overlap pre-validation, bottom-up sort) was removed
-with the array — several edits to one file are now several edit_file ops
-across turns (a ref goes stale once an earlier edit shifts its line).
+edit_file is flat-native (consolidation roadmap Step 3): one op = one edit.
+v10.48.0: a lone op is a batch of one through ``apply_edits_batch_parts`` (the
+same core a same-file run uses), and fuzzy ref matching is gone — a ref is
+either exact or a hash mismatch the model recovers from by re-reading.
 """
 
 import pytest
 
-from agent_cli.tools.edit_file import (
-    _normalize_for_fuzzy,
-    fuzzy_verify_ref,
-    tool_edit_file,
-)
+from agent_cli.tools.edit_file import tool_edit_file
 from agent_cli.tools.read_file import _parse_ref, compute_line_hash
 
 
-class TestNormalize:
-    def test_tabs_to_spaces(self):
-        assert _normalize_for_fuzzy("\thello") == "hello"
-
-    def test_collapse_spaces(self):
-        assert _normalize_for_fuzzy("a   b") == "a b"
-
-    def test_smart_quotes(self):
-        assert _normalize_for_fuzzy("“hello”") == '"hello"'
-
-    def test_em_dash(self):
-        assert _normalize_for_fuzzy("a—b") == "a-b"
+def _file(tmp_path, text):
+    f = tmp_path / "f.py"
+    f.write_text(text)
+    return f
 
 
-class TestFuzzyVerifyRef:
-    def test_exact_match(self):
-        lines = ["def hello():", "    pass"]
-        h = compute_line_hash(1, lines[0])
-        idx, was_fuzzy = fuzzy_verify_ref(lines, f"1#{h}")
-        assert idx == 0
-        assert was_fuzzy is False
+class TestRefVerification:
+    def test_exact_match_applies(self, tmp_path):
+        f = _file(tmp_path, "def hello():\n    pass")
+        h = compute_line_hash(1, "def hello():")
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": f"1#{h}", "lines": ["def hi():"]}
+        )
+        assert r.success and f.read_text() == "def hi():\n    pass"
 
-    def test_fuzzy_match_stale_hash_raises(self):
-        """When hash doesn't match, fuzzy raises with re-read guidance."""
-        lines = ["def hello():"]
-        # Use a wrong hash — should raise with guidance to re-read
-        with pytest.raises(RuntimeError, match="Re-read the file"):
-            fuzzy_verify_ref(lines, "1#ZZ")
+    def test_stale_hash_is_rejected_with_the_reread_recipe(self, tmp_path):
+        f = _file(tmp_path, "def hello():")
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": "1#ZZ", "lines": ["x"]}
+        )
+        assert not r.success and f.read_text() == "def hello():"
+        assert "Hash mismatch at line 1" in r.error
+        assert "Re-read" in r.error and "read_file" in r.error
+        assert r.error.startswith("edit_file apply failed: ")  # 단건 문구 그대로
+        assert "batch" not in r.error
 
-    def test_out_of_range_raises(self):
-        lines = ["only one line"]
-        with pytest.raises(RuntimeError):
-            fuzzy_verify_ref(lines, "5#ZZ")
+    def test_out_of_range_is_rejected(self, tmp_path):
+        f = _file(tmp_path, "only one line")
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": "5#ZZ", "lines": ["x"]}
+        )
+        assert not r.success and "out of range" in r.error
 
+    def test_whitespace_drift_is_not_tolerated_anymore(self, tmp_path):
+        """v10.48.0: 퍼지 매칭 제거 — 공백만 달라진 줄의 옛 ref 도 불일치다
+        (종전엔 '정규화한 현재 줄' 이 옛 해시와 맞으면 통과했다, 실측 0회)."""
+        f = _file(tmp_path, "a  b")  # 읽은 뒤 누가 공백을 늘렸다
+        old_ref = f"1#{compute_line_hash(1, 'a b')}"
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": old_ref, "lines": ["c"]}
+        )
+        assert not r.success and f.read_text() == "a  b"
 
-class TestHashMismatchMessage:
-    """fuzzy_verify_ref's error must point the caller at the recovery
-    recipe (re-read to get fresh hashline tags)."""
-
-    def test_message_mentions_reread(self):
-        with pytest.raises(RuntimeError, match="Re-read"):
-            fuzzy_verify_ref(["hello"], "1#ZZ")
-
-    def test_message_mentions_read_file_recipe(self):
-        with pytest.raises(RuntimeError, match="read_file"):
-            fuzzy_verify_ref(["hello"], "1#ZZ")
+    def test_single_edit_message_has_no_batch_count(self, tmp_path):
+        f = _file(tmp_path, "a\nb")
+        h = compute_line_hash(2, "b")
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": f"2#{h}", "lines": ["B"]}
+        )
+        assert r.output.startswith(f"Edit complete: {f} (2 lines)")
+        assert "edits," not in r.output and "Fuzzy" not in r.output
 
 
 class TestParseRefTypeGuard:

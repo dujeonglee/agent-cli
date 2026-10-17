@@ -37,6 +37,21 @@ def _normalize_input(tool_input) -> str:
     return str(tool_input)
 
 
+def _tool_exception_result(tool_name: str, e: Exception) -> ToolResult:
+    """도구가 던진 예외 → 모델이 읽는 짧은 실패 (단건·같은 파일 묶음 공용, v10.48.0).
+    전체 traceback 은 호출자가 디버그 로그에 남긴다 — 모델은 의도에서 회복하지
+    스택 프레임에서 회복하지 않는다."""
+    return ToolResult(
+        False,
+        error=(
+            f"Tool '{tool_name}' raised {type(e).__name__}: {e}. "
+            "This is likely a malformed input or an internal tool error. Review "
+            "the arguments and retry, or try a different approach if the same "
+            "input keeps failing."
+        ),
+    )
+
+
 class ToolBridge:
     """도구 호출 브리지 — hooks·invoke(delegate/regular)·RunContext·
     결과→관찰 seam 의 소유자 (C1 PR-2 승격 클러스터).
@@ -159,17 +174,7 @@ class ToolBridge:
             _debug_log(
                 f"TOOL EXCEPTION turn={self.state.turn} tool={tool_name}\n{_tb.format_exc()}"
             )
-            result = ToolResult(
-                False,
-                error=(
-                    f"Tool '{tool_name}' raised "
-                    f"{type(e).__name__}: {e}. "
-                    f"This is likely a malformed input or an internal "
-                    f"tool error. Review the arguments and "
-                    f"retry, or try a different approach if the same "
-                    f"input keeps failing."
-                ),
-            )
+            result = _tool_exception_result(tool_name, e)
 
         # 4. PostToolUse hooks
         self._run_post_hooks(tool_name, input_dict, result)
@@ -232,17 +237,7 @@ class ToolBridge:
                 f"TOOL EXCEPTION turn={self.state.turn} tool=edit_file(batch)\n"
                 f"{_tb.format_exc()}"
             )
-            result = ToolResult(
-                False,
-                error=(
-                    f"Tool 'edit_file' raised "
-                    f"{type(e).__name__}: {e}. "
-                    f"This is likely a malformed input or an internal "
-                    f"tool error. Review the arguments and "
-                    f"retry, or try a different approach if the same "
-                    f"input keeps failing."
-                ),
-            )
+            result = _tool_exception_result("edit_file", e)
 
         if parts is None:
             parts = [{"success": False, "content": result.error} for _ in edits]
