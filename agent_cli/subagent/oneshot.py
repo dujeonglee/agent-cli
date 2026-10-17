@@ -212,6 +212,72 @@ def _run_single(
         )
 
 
+def _run_in_scope(
+    spec: dict,
+    *,
+    index: int,
+    task_id: str,
+    label: str,
+    stop_event,
+    common_kwargs: dict,
+    inline: bool,
+    scope_extra: dict | None = None,
+) -> ToolResult:
+    """한 과제의 카드 수명 — 단건·병렬 공용 (v10.48.0 C2).
+
+    카드 열기(`begin_scope`) → `_run_single` → 카드 닫기(성공·소요·오류)를 한
+    곳에서. 종전엔 단건 분기와 병렬 워커가 같은 수명과 `_run_single` 인자 나열을
+    각자 들고 있었다. **실행 자리는 호출자가 정한다**: ``inline`` 이면 호출
+    스레드에서 CLI 들여쓰기(`render_push_depth`)와 함께 실시간으로, 아니면 워커
+    스레드에서(병렬 — CLI 렌더러가 모았다가 끝에 보여 준다). ``scope_extra`` 는
+    병렬 워커만 쓰는 `parent`(워커 스레드엔 바깥 스코프가 안 보인다)·`ts`
+    (한 묶음 = 한 시작 시각)다."""
+    from agent_cli.render import get_renderer, render_pop_depth, render_push_depth
+
+    renderer = get_renderer()
+    agent = spec.get("agent", "")
+    # Dir named HERE so the scope event carries it — resume replays the card's
+    # inner turns from that directory (main history only has the final
+    # observation).
+    run_dir_name = _generate_run_dir_name(agent or "task")
+    renderer.begin_scope(
+        task_id=task_id,
+        kind="run",
+        label=label,
+        agent=agent,
+        index=index,
+        **(scope_extra or {}),
+        ctx_dir=run_dir_name,
+    )
+    if inline:
+        render_push_depth()
+    t0 = time.monotonic()
+    result = None
+    try:
+        result = _run_single(
+            task=spec.get("task", ""),
+            context_mode=spec.get("context", "none"),
+            allowed_tools=spec.get("tools"),
+            agent_name=agent,
+            instructions=spec.get("instructions", ""),
+            stop_event=stop_event,
+            run_dir_name=run_dir_name,
+            **common_kwargs,
+        )
+        return result
+    finally:
+        duration = time.monotonic() - t0
+        if inline:
+            render_pop_depth()
+        renderer.end_scope(
+            task_id=task_id,
+            kind="run",
+            success=bool(result and result.success),
+            duration_s=duration,
+            error=(result.error or "") if result and not result.success else "",
+        )
+
+
 def _run_parallel(
     task_specs: list[dict],
     parent_ctx: ContextManager | None = None,
@@ -240,6 +306,21 @@ def _run_parallel(
     """
     from agent_cli.render import get_renderer
 
+    common_kwargs = {
+        "parent_ctx": parent_ctx,
+        "binding": binding,
+        "depth": depth,
+        "max_depth": max_depth,
+        "max_turns": max_turns,
+        "session": session,
+        "skill_stack": skill_stack,
+        "agent_stack": agent_stack,
+        "hooks_config": hooks_config,
+        "compaction_enabled": compaction_enabled,
+        # 병렬 워커도 부모 주소를 물려받는다 — 여기 빠지면 스레드 안에서 걸린
+        # 감시의 보고가 갈 곳을 잃는다.
+        "owner": owner,
+    }
     results: list[ToolResult | None] = [None] * len(task_specs)
     durations: list[float] = [0.0] * len(task_specs)
     if stop_event is None:
@@ -268,61 +349,22 @@ def _run_parallel(
         # never draws the new cards. uuid4 guarantees cross-call
         # uniqueness regardless of thread lifecycle.
         task_id = f"delegate-{index}-{uuid.uuid4().hex}"
-        agent = spec.get("agent", "")
-        task_text = spec.get("task", "")
-        # Dir named HERE so the scope event carries it — resume replays the
-        # card's inner turns from that directory (main history only has the
-        # final observation).
-        run_dir_name = _generate_run_dir_name(agent or "task")
-        renderer.begin_scope(
-            task_id=task_id,
-            kind="run",
-            label=task_text or agent or f"task #{index + 1}",
-            agent=agent,
-            index=index,
-            parent=parent_scope,
-            ts=batch_ts,
-            ctx_dir=run_dir_name,
-        )
         t0 = time.monotonic()
-        result_for_marker = None
-        error_msg = ""
         try:
-            results[index] = _run_single(
-                # 병렬 워커도 부모 주소를 물려받는다 — 여기 빠지면 스레드
-                # 안에서 걸린 감시의 보고가 갈 곳을 잃는다.
-                owner=owner,
-                task=spec["task"],
-                context_mode=spec.get("context", "none"),
-                allowed_tools=spec.get("tools"),
-                agent_name=spec.get("agent", ""),
-                instructions=spec.get("instructions", ""),
-                parent_ctx=parent_ctx,
-                binding=binding,
-                depth=depth,
-                max_depth=max_depth,
-                max_turns=max_turns,
-                session=session,
-                skill_stack=skill_stack,
-                agent_stack=agent_stack,
+            results[index] = _run_in_scope(
+                spec,
+                index=index,
+                task_id=task_id,
+                label=spec.get("task", "")
+                or spec.get("agent", "")
+                or f"task #{index + 1}",
                 stop_event=stop_event,
-                hooks_config=hooks_config,
-                compaction_enabled=compaction_enabled,
-                run_dir_name=run_dir_name,
+                common_kwargs=common_kwargs,
+                inline=False,
+                scope_extra={"parent": parent_scope, "ts": batch_ts},
             )
-            result_for_marker = results[index]
         finally:
             durations[index] = time.monotonic() - t0
-            success = bool(result_for_marker and result_for_marker.success)
-            if result_for_marker and not result_for_marker.success:
-                error_msg = result_for_marker.error or ""
-            renderer.end_scope(
-                task_id=task_id,
-                kind="run",
-                success=success,
-                duration_s=durations[index],
-                error=error_msg,
-            )
 
     threads = []
     for i, spec in enumerate(task_specs):
@@ -399,68 +441,20 @@ def tool_delegate(
     }
 
     if len(tasks) == 1:
-        # Single run: grouped nested rendering
-        from agent_cli.render import (
-            get_renderer,
-            render_pop_depth,
-            render_push_depth,
-        )
-
-        spec = tasks[0]
-        agent_name = spec.get("agent", "")
-        label = f"agent:{agent_name}" if agent_name else "agent"
-
-        # Pair the CLI's group-block rendering with the same
-        # ``begin_delegate_task`` / ``end_delegate_task`` lifecycle
-        # the parallel path uses, so the web frontend opens a
-        # collapsible card here too. Single-task delegate runs on the
-        # main worker thread; the lifecycle markers register that
-        # thread in ``WebRenderer._thread_to_task`` so every nested
-        # emit gets the same ``task_id`` and is routed into the
-        # card. CLI's renderer treats begin/end as no-ops.
-        renderer = get_renderer()
-        # uuid4 (not thread id) — same rationale as the parallel worker:
-        # recycled thread idents would collide across delegate calls and
-        # suppress the frontend card. See ``worker`` above.
-        task_id = f"delegate-single-{uuid.uuid4().hex}"
-        run_dir_name = _generate_run_dir_name(agent_name or "task")
-        renderer.begin_scope(
-            task_id=task_id,
-            kind="run",
-            label=label,
-            agent=agent_name,
+        # Single run: inline on THIS thread — the CLI streams it live with
+        # nested indentation; the web routes it into one collapsible card
+        # (``begin_scope`` registers this thread). uuid4 task id (not thread id)
+        # for the same reason as the parallel worker: recycled idents collide.
+        agent_name = tasks[0].get("agent", "")
+        return _run_in_scope(
+            tasks[0],
             index=0,
-            ctx_dir=run_dir_name,
+            task_id=f"delegate-single-{uuid.uuid4().hex}",
+            label=f"agent:{agent_name}" if agent_name else "agent",
+            stop_event=stop_event,
+            common_kwargs=common_kwargs,
+            inline=True,
         )
-        render_push_depth()
-        t0 = time.monotonic()
-        result = None
-        try:
-            result = _run_single(
-                task=spec.get("task", ""),
-                context_mode=spec.get("context", "none"),
-                allowed_tools=spec.get("tools"),
-                agent_name=agent_name,
-                instructions=spec.get("instructions", ""),
-                stop_event=stop_event,
-                run_dir_name=run_dir_name,
-                **common_kwargs,
-            )
-            return result
-        finally:
-            duration = time.monotonic() - t0
-            render_pop_depth()
-            success = bool(result and result.success)
-            error_msg = ""
-            if result and not result.success:
-                error_msg = result.error or ""
-            renderer.end_scope(
-                task_id=task_id,
-                kind="run",
-                success=success,
-                duration_s=duration,
-                error=error_msg,
-            )
     else:
         # Parallel: suppress during execution, collect and display after
-        return _run_parallel(task_specs=tasks, stop_event=stop_event, **common_kwargs)
+        return _run_parallel(tasks, stop_event=stop_event, **common_kwargs)
