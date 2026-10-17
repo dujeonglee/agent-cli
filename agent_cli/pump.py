@@ -86,6 +86,7 @@ class QuietPolicy:
         monitors=None,
         schedules=None,
         harness=None,
+        jobs=None,
         on_wait: Callable[[str], None] | None = None,
         poll_secs: float = 0.5,
     ):
@@ -94,6 +95,7 @@ class QuietPolicy:
         self.monitors = monitors
         self.schedules = schedules
         self.harness = harness  # v10.42.0: 진행 중 감사는 결과 배달까지 기다린다
+        self.jobs = jobs  # v10.47.0: 돌고 있는 백그라운드 작업은 종료 통지까지
         self.on_wait = on_wait
         self.poll_secs: float | None = poll_secs
         self._announced: str | None = None  # 지금 알린 대기의 종류
@@ -109,11 +111,14 @@ class QuietPolicy:
             monitors=self.monitors,
             schedules=self.schedules,
             harness=self.harness,
+            jobs=self.jobs,
         ):
             self._announced = None
             return True
         # 모니터/감사/예약만 남았다 — 종류가 바뀔 때마다 한 번씩 알린다.
-        if self.monitors is not None and self.monitors.has_active_work():
+        if self.jobs is not None and self.jobs.has_active_work():
+            kind = "jobs"
+        elif self.monitors is not None and self.monitors.has_active_work():
             kind = "monitors"
         elif self.harness is not None and self.harness.in_flight:
             kind = "harness"

@@ -328,6 +328,9 @@ class MonitorRegistry:
                 continue
             if hit is None:
                 continue
+            if hit.retire:  # 조용함 한도 (v10.47.0) — 발화가 아니라 물러남
+                self._retire(mon, hit.retire, now)
+                continue
             mon.matches += len(hit.lines) or 1
             mon._buf.extend(hit.lines)
             if mon.once:

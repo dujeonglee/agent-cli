@@ -67,7 +67,7 @@ class AgentRuntime:
 
 
 def build_agent_registry(
-    session_dir, runtime: AgentRuntime, max_agents=None, *, monitors=None
+    session_dir, runtime: AgentRuntime, max_agents=None, *, monitors=None, jobs=None
 ):
     """AgentRegistry 생성 + main registry 슬롯 등록 (v7.17.0 배선 통일).
 
@@ -84,6 +84,26 @@ def build_agent_registry(
     set_main_registry(registry)
     if monitors is not None:
         wire_monitor_delivery(registry, monitors)
+    if jobs is not None:
+        wire_job_delivery(registry, jobs)
+    return registry
+
+
+def wire_job_delivery(registry, jobs) -> None:
+    """백그라운드 작업의 종료 통지를 주소 배달에 잇는다 — 모니터와 같은 양방향
+    (v10.47.0): `jobs.deliver` 로 보고가 가고, 워커의 `finally` 가 `drop_owner`
+    로 죽은 소유자의 작업을 죽인다."""
+    jobs.deliver = registry.deliver
+    registry.jobs = jobs
+
+
+def build_job_registry(cwd=None):
+    """백그라운드 작업 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용,
+    `build_monitor_registry` 의 형제). 배달 배선은 `wire_job_delivery`."""
+    from agent_cli.jobs import JobRegistry, set_job_registry
+
+    registry = JobRegistry(cwd)
+    set_job_registry(registry)
     return registry
 
 
@@ -260,6 +280,7 @@ def teardown_session(
     mcp_manager=None,
     monitors=None,
     harness=None,
+    jobs=None,
     warn_stuck: bool = False,
 ) -> None:
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
@@ -291,6 +312,17 @@ def teardown_session(
         monitors.closed = True
     if harness is not None:
         harness.stop()  # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
+    if jobs is not None:
+        # 우리가 띄운 자식이다 — 고아로 남기지 않는다 (v10.47.0). 죽인 것은 적는다.
+        killed = jobs.stop_all()
+        if killed:
+            from agent_cli.render import C, console
+
+            names = ", ".join(f"#{j.id} pid {j.pid}" for j in killed)
+            console.print(
+                f"[{C['muted']}]🧵 세션 종료 — 돌던 백그라운드 작업 {len(killed)}개를 "
+                f"멈췄습니다 ({names})[/]"
+            )
     if agent_registry is not None:
         agent_registry.shutdown_all()
     from agent_cli.hooks.runtime import set_hook_runner
@@ -351,7 +383,7 @@ _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리�
 
 
 def session_has_live_work(
-    *, pending_count: int, monitors=None, schedules=None, harness=None
+    *, pending_count: int, monitors=None, schedules=None, harness=None, jobs=None
 ) -> bool:
     """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약·하니스 작업 (v10.32.1).
 
@@ -378,6 +410,8 @@ def session_has_live_work(
         return True
     if harness is not None and harness.in_flight:
         return True
+    if jobs is not None and jobs.has_active_work():
+        return True  # v10.47.0: 돌고 있는 백그라운드 작업 — 종료 통지까지 기다린다
     return schedules is not None and schedules.has_active_work()
 
 

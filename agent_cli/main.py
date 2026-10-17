@@ -1313,6 +1313,7 @@ def run(
         AgentRuntime,
         build_agent_registry,
         build_hook_runner,
+        build_job_registry,
         build_monitor_registry,
         build_schedule_registry,
         build_snapshot_store,
@@ -1323,6 +1324,7 @@ def run(
     # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
     # 일어난다. board 도 env 도 없이 항상 조립된다.
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     build_snapshot_store()  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
@@ -1344,8 +1346,9 @@ def run(
             session=session,
             hooks_config=_disk_hooks,
         ),
-        # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
+        # 모니터 보고·작업 종료 통지의 주소 배달 — 어떤 루프보다 먼저 서야 한다
         monitors=monitor_registry,
+        jobs=job_registry,
     )
     # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1).
     # 종전엔 조기-반환 경로들이 각자 나열하다 skill 경로는 registry/MCP,
@@ -1455,10 +1458,13 @@ def run(
                     monitors=monitor_registry,
                     schedules=schedule_registry,
                     harness=auditor,
+                    jobs=job_registry,
                     on_wait=lambda kind: console.print(
                         f"[{C['muted']}]"
                         + (
-                            _monitor_wait_notice(monitor_registry)
+                            _jobs_wait_notice(job_registry)
+                            if kind == "jobs"
+                            else _monitor_wait_notice(monitor_registry)
                             if kind == "monitors"
                             else _HARNESS_WAIT_NOTICE
                             if kind == "harness"
@@ -1494,13 +1500,20 @@ def run(
             agent_registry=agent_registry,
             monitors=monitor_registry,
             harness=auditor,
+            jobs=job_registry,
             warn_stuck=warn_stuck,
         )
         schedule_registry.stop()
 
 
 def web_instance_is_active(
-    renderer, server, agent_registry, monitors=None, schedules=None, harness=None
+    renderer,
+    server,
+    agent_registry,
+    monitors=None,
+    schedules=None,
+    harness=None,
+    jobs=None,
 ) -> bool:
     """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
 
@@ -1529,7 +1542,18 @@ def web_instance_is_active(
             monitors=monitors,
             schedules=schedules,
             harness=harness,
+            jobs=jobs,
         )
+    )
+
+
+def _jobs_wait_notice(jobs) -> str:
+    """`run` 이 돌고 있는 백그라운드 작업 때문에 끝나지 않고 기다릴 때의 한 줄 (v10.47.0)."""
+    live = jobs.running()
+    names = ", ".join(f"#{j.id} pid {j.pid}" for j in live)
+    return (
+        f"🧵 백그라운드 작업 {len(live)}개 대기 중 ({names}). 끝나면 통지로 이어서 돌고, "
+        f"Ctrl-C 로 종료합니다."
     )
 
 
@@ -1685,6 +1709,7 @@ def _finalize_run(
     agent_registry=None,
     monitors=None,
     harness=None,
+    jobs=None,
     warn_stuck=False,
 ) -> None:
     """Finalize session after run command — 공용 teardown_session 위임
@@ -1699,6 +1724,7 @@ def _finalize_run(
         mcp_manager=mcp_manager,
         monitors=monitors,
         harness=harness,
+        jobs=jobs,
         warn_stuck=warn_stuck,
     )
     if session is None:
@@ -2269,6 +2295,7 @@ def web(
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
     from agent_cli.runtime import (
         build_hook_runner,
+        build_job_registry,
         build_monitor_registry,
         build_schedule_registry,
         build_snapshot_store,
@@ -2276,6 +2303,7 @@ def web(
     )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
+    job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     build_snapshot_store()  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
@@ -2323,8 +2351,9 @@ def web(
                 session=session,
                 hooks_config=_disk_hooks,
             ),
-            # 모니터 보고의 주소 배달 — 어떤 루프보다 먼저 서야 한다
+            # 모니터 보고·작업 종료 통지의 주소 배달 — 어떤 루프보다 먼저 서야 한다
             monitors=monitor_registry,
+            jobs=job_registry,
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
@@ -2543,6 +2572,7 @@ def web(
                 monitor_registry,
                 schedule_registry,
                 harness=auditor,
+                jobs=job_registry,
             ),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
@@ -2583,6 +2613,7 @@ def web(
                 mcp_manager=mcp_manager,
                 monitors=monitor_registry,
                 harness=auditor,
+                jobs=job_registry,
             )
             schedule_registry.stop()
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

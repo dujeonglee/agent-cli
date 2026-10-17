@@ -265,6 +265,10 @@ class LLMCaller:
         notice, self._compaction_armed = compaction_notice_due(
             used, budget, self._compaction_armed
         )
+        from agent_cli.jobs import get_job_registry
+
+        job_reg = get_job_registry()
+        jobs = job_reg.render_tail(self.cfg.owner) if job_reg is not None else ""
         return build_session_state(
             compaction_notice=notice,
             turn=self.state.turn,
@@ -273,6 +277,7 @@ class LLMCaller:
             memory=memory,
             requests=requests,
             debts=debts,
+            jobs=jobs,
             guidelines=TASK_GUIDELINES,
             reports_to_caller=self.cfg.depth > 0,
         )

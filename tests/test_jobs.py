@@ -1,0 +1,363 @@
+"""백그라운드 작업 — 하니스가 소유하는 긴 명령 (agent_cli/jobs.py, v10.47.0,
+docs/jobs/DESIGN.md).
+
+셸 안내 문구 A/B(2026-10-17)의 결론을 고정한다: 긴 명령은 하니스가 자식으로
+띄워 종료 코드를 알고, 끝나면 소유자에게 통지하며, 돌고 있는 동안 꼬리에 PID·
+로그로 보인다. 그래서 폴링도, 패턴 kill 도, 끝 줄을 영영 기다리는 monitor 도
+필요 없다. 수명(run 대기·web 미회수)·정리(소유자 사망·세션 종료)까지 본다.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from agent_cli.jobs import (
+    JobRegistry,
+    JobsUnavailable,
+    get_job_registry,
+    set_job_registry,
+)
+from tests.monitor_delivery import RecordingDelivery
+
+
+def _wait(cond, timeout=8.0, step=0.05):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        time.sleep(step)
+    return False
+
+
+@pytest.fixture
+def reg(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    r = JobRegistry(tmp_path)
+    r.deliver = RecordingDelivery()
+    set_job_registry(r)
+    yield r
+    r.stop_all()
+    set_job_registry(None)
+
+
+class TestStartAndFinish:
+    def test_start_returns_at_once_with_pid_and_log(self, reg, tmp_path):
+        t0 = time.time()
+        job = reg.start("sleep 2; echo done", owner="main")
+        assert time.time() - t0 < 1.0  # 기다리지 않는다
+        assert job.id == 1 and job.pid > 0 and job.running
+        assert job.log == Path(".agent-cli/tmp/jobs/1.log")
+        assert (tmp_path / job.log).read_text().startswith("$ sleep 2; echo done\n")
+        assert reg.running("main") == [job] and reg.has_active_work()
+
+    def test_exit_is_logged_and_the_owner_is_told(self, reg, tmp_path):
+        job = reg.start("echo hello; echo world; exit 3", owner="main")
+        assert _wait(lambda: not job.running)
+        assert job.rc == 3 and job.ended_at is not None
+        log = (tmp_path / job.log).read_text()
+        assert "hello\nworld\n" in log and "[job #1 exited rc=3 after" in log
+        d = reg.deliver
+        assert d.addrs == ["main"]
+        _addr, kw = d.calls[0]
+        assert kw["mail"]["kind"] == "job" and kw["mail"]["success"] is False
+        assert kw["author"] == "main" and kw["expects_reply"] is False
+        text = kw["text"]
+        assert text.startswith("🧵 job #1 finished rc=3 after")
+        assert "`echo hello; echo world; exit 3`" in text
+        assert "log: .agent-cli/tmp/jobs/1.log (last 2 line(s))" in text
+        assert "  hello" in text and "  world" in text
+        assert (
+            "$ echo" not in text and "[job #1" not in text
+        )  # 머리·꼬리는 보고에 안 싣는다
+        assert not reg.has_active_work()
+
+    def test_success_mail_and_agent_owner(self, reg):
+        job = reg.start("true", owner="agent:x1")
+        assert _wait(lambda: not job.running)
+        assert job.rc == 0
+        assert reg.deliver.addrs == ["agent:x1"]
+        assert reg.deliver.calls[0][1]["mail"]["success"] is True
+
+    def test_tail_is_capped(self, reg):
+        job = reg.start("for i in $(seq 1 20); do echo line$i; done", owner="main")
+        assert _wait(lambda: not job.running)
+        text = reg.deliver.reports[0]
+        assert "line13" in text and "line12" not in text  # 마지막 8줄
+        assert "(last 8 line(s))" in text
+
+    def test_ids_increase_and_running_lists_only_live_ones(self, reg):
+        a = reg.start("true", owner="main")
+        b = reg.start("sleep 5", owner="main")
+        assert (a.id, b.id) == (1, 2)
+        assert _wait(lambda: not a.running)
+        assert reg.running() == [b]
+
+    def test_unwired_or_closed_registry_refuses(self, tmp_path):
+        r = JobRegistry(tmp_path)
+        with pytest.raises(JobsUnavailable, match="not wired"):
+            r.start("true", owner="main")
+        r.deliver = RecordingDelivery()
+        r.closed = True
+        with pytest.raises(JobsUnavailable, match="shutting down"):
+            r.start("true", owner="main")
+
+    def test_elapsed_formats(self, reg):
+        job = reg.start("sleep 30", owner="main")
+        assert job.elapsed(job.started_at + 5) == "5s"
+        assert job.elapsed(job.started_at + 151) == "2m31s"
+        assert job.elapsed(job.started_at + 3725) == "1h02m"
+
+
+class TestKillAndCleanup:
+    def test_kill_stops_the_process_group_without_a_notice(self, reg):
+        job = reg.start("sleep 60 & sleep 60; wait", owner="main")
+        pid = job.pid
+        reg.kill(job)
+        assert not job.running and job.rc != 0
+        assert _wait(lambda: not _alive(pid))
+        assert reg.deliver.calls == []  # 우리가 죽인 것은 통지하지 않는다
+
+    def test_drop_owner_kills_only_that_owners_jobs(self, reg):
+        mine = reg.start("sleep 60", owner="agent:x1")
+        other = reg.start("sleep 60", owner="main")
+        assert reg.drop_owner("agent:x1") == 1
+        assert not mine.running and other.running
+
+    def test_stop_all_kills_everything_and_closes(self, reg):
+        a = reg.start("sleep 60", owner="main")
+        b = reg.start("sleep 60", owner="agent:q")
+        killed = reg.stop_all()
+        assert {j.id for j in killed} == {a.id, b.id}
+        assert reg.closed and not reg.has_active_work()
+        assert _wait(lambda: not _alive(a.pid) and not _alive(b.pid))
+
+    def test_finish_after_close_is_silent(self, reg):
+        job = reg.start("sleep 0.3", owner="main")
+        reg.closed = True
+        assert _wait(lambda: job.proc.poll() is not None)
+        reg.tick()
+        assert not job.running and reg.deliver.calls == []
+
+
+class TestTail:
+    def test_running_jobs_of_this_owner_only(self, reg):
+        reg.start("sleep 60", owner="main")
+        reg.start("sleep 60", owner="agent:z")
+        out = reg.render_tail("main", now=time.time() + 90)
+        assert out.startswith("## Background jobs (running")
+        assert "job #1 · pid " in out and "1m30s" in out and "`sleep 60`" in out
+        assert "→ .agent-cli/tmp/jobs/1.log" in out and "stop it: `kill " in out
+        assert "job #2" not in out
+        assert "do not poll" in out
+
+    def test_nothing_when_nothing_runs(self, reg):
+        job = reg.start("true", owner="main")
+        assert _wait(lambda: not job.running)
+        assert reg.render_tail("main") == ""
+
+    def test_long_commands_are_shortened(self, reg):
+        reg.start("echo " + "x" * 200 + "; sleep 60", owner="main")
+        out = reg.render_tail("main")
+        assert "…" in out and len(out) < 400
+
+    def test_session_state_block_carries_the_jobs_section(self):
+        from agent_cli.prompts.session_state import build_session_state
+
+        out = build_session_state(turn=1, jobs="## Background jobs\n- job #1")
+        assert "## Background jobs" in out and "- job #1" in out
+
+    def test_loop_renders_the_tail_for_its_owner(self, reg, monkeypatch):
+        """`_build_session_state` 가 전역 레지스트리에서 자기 주소의 작업을 싣는다."""
+        from agent_cli.loop import llm as llm_mod
+
+        reg.start("sleep 60", owner="agent:k")
+        captured = {}
+
+        def fake_build(**kw):
+            captured.update(kw)
+            return ""
+
+        monkeypatch.setattr(
+            "agent_cli.prompts.session_state.build_session_state", fake_build
+        )
+        self_ = SimpleNamespace(
+            cfg=SimpleNamespace(
+                agent_registry=None,
+                tools_list=[],
+                peer_roster=None,
+                questions=None,
+                max_turns=0,
+                depth=1,
+                owner="agent:k",
+            ),
+            ctx=None,
+            state=SimpleNamespace(turn=1, run_requests=None),
+            _compaction_armed=set(),
+        )
+        llm_mod.LLMCaller._build_session_state(self_, 1000)
+        assert "job #1" in captured["jobs"]
+
+
+class TestShellToolSurface:
+    def test_background_true_starts_a_job_with_the_loop_owner(self, reg, tmp_path):
+        from agent_cli.tools.base import RunContext
+        from agent_cli.tools.shell import ShellTool
+
+        ctx = RunContext(owner="agent:k")
+        r = ShellTool()._run(
+            {"command": "echo hi; sleep 0.2", "background": True}, ctx=ctx
+        )
+        assert r.success, r.error
+        assert r.output.startswith("job #1 started (pid ")
+        assert ".agent-cli/tmp/jobs/1.log" in r.output and "`kill " in r.output
+        assert reg.running("agent:k")
+        assert _wait(lambda: not reg.has_active_work())
+        assert reg.deliver.addrs == ["agent:k"]
+
+    def test_background_string_true_and_default_owner(self, reg):
+        from agent_cli.tools.shell import ShellTool
+
+        r = ShellTool()._run({"command": "sleep 0.2", "background": "true"})
+        assert r.success and reg.running("main")
+
+    def test_foreground_is_unchanged(self, reg):
+        from agent_cli.tools.shell import ShellTool
+
+        r = ShellTool()._run({"command": "echo fg"})
+        assert r.success and r.output == "fg" and reg.running() == []
+
+    def test_no_registry_is_a_clear_error(self, tmp_path, monkeypatch):
+        from agent_cli.tools.shell import ShellTool
+
+        set_job_registry(None)
+        r = ShellTool()._run({"command": "sleep 1", "background": True})
+        assert not r.success and "not available" in r.error
+
+    def test_guards_apply_to_background_commands(self, reg, monkeypatch):
+        from agent_cli.tools import shell as shell_mod
+        from agent_cli.tools.shell import ShellTool
+
+        monkeypatch.setattr(
+            shell_mod, "confirm_dangerous", lambda cmd: ("Refused: nope", "")
+        )
+        r = ShellTool()._run({"command": "rm -rf x", "background": True})
+        assert not r.success and r.error == "Refused: nope" and reg.running() == []
+
+    def test_schema_advertises_background(self):
+        from agent_cli.tools.shell import ShellTool
+
+        props = ShellTool.parameters["properties"]
+        assert props["background"]["type"] == "boolean"
+        assert "background=true" in props["timeout"]["description"]
+        assert "background=true" in ShellTool.description
+
+
+class TestLifetime:
+    def test_live_work_counts_running_jobs(self, reg):
+        from agent_cli.runtime import session_has_live_work
+
+        assert not session_has_live_work(pending_count=0, jobs=reg)
+        job = reg.start("sleep 60", owner="main")
+        assert session_has_live_work(pending_count=0, jobs=reg)
+        reg.kill(job)
+        assert not session_has_live_work(pending_count=0, jobs=reg)
+
+    def test_quiet_policy_waits_and_announces_jobs(self, reg):
+        from agent_cli.pump import QuietPolicy
+
+        waits = []
+        policy = QuietPolicy(
+            queue=SimpleNamespace(pending_count=lambda: 0),
+            agent_registry=SimpleNamespace(has_active_work=lambda: False),
+            jobs=reg,
+            on_wait=waits.append,
+        )
+        assert policy.should_stop() is True
+        job = reg.start("sleep 60", owner="main")
+        assert policy.should_stop() is False and waits == ["jobs"]
+        assert policy.should_stop() is False and waits == ["jobs"]  # 한 번만
+        reg.kill(job)
+        assert policy.should_stop() is True
+
+    def test_web_active_predicate_sees_jobs(self, reg):
+        from agent_cli.main import web_instance_is_active
+
+        renderer = SimpleNamespace(
+            has_live_connections=lambda: False, worker_is_busy=lambda: False
+        )
+        server = SimpleNamespace(pending_count=lambda: 0)
+        assert not web_instance_is_active(renderer, server, None, jobs=reg)
+        reg.start("sleep 60", owner="main")
+        assert web_instance_is_active(renderer, server, None, jobs=reg)
+
+    def test_teardown_kills_leftovers_and_says_so(self, reg, tmp_path, capsys):
+        from agent_cli.runtime import teardown_session
+
+        job = reg.start("sleep 60", owner="main")
+        session = SimpleNamespace(session_id="s", save=lambda *a, **k: None)
+        try:
+            teardown_session(session, None, jobs=reg)
+        except Exception:
+            pass  # 세션 저장 등 다른 단계는 이 테스트의 관심이 아니다
+        assert not job.running and _wait(lambda: not _alive(job.pid))
+        out = capsys.readouterr().out
+        assert "백그라운드 작업 1개를 멈췄습니다" in out and f"pid {job.pid}" in out
+
+    def test_agent_death_drops_its_jobs(self, reg):
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        registry = AgentRegistry.__new__(AgentRegistry)
+        registry.monitors = None
+        registry.jobs = reg
+        job = reg.start("sleep 60", owner="agent:k")
+        assert registry._drop_monitors("k") == 1
+        assert not job.running
+
+    def test_job_mail_renders_as_an_observation(self):
+        from agent_cli.subagent.agents_live import build_reply_record
+
+        rec = build_reply_record(
+            {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0"}
+        )
+        assert rec["role"] == "user" and rec["tool"] == "job" and rec["success"] is True
+        assert rec["content"].startswith("🧵 job #1")
+
+
+class TestAssembly:
+    def test_build_and_wire(self, tmp_path):
+        from agent_cli.runtime import build_job_registry, wire_job_delivery
+
+        reg = build_job_registry(tmp_path)
+        assert get_job_registry() is reg and reg.deliver is None
+        fake = SimpleNamespace(deliver=lambda *a, **k: "")
+        wire_job_delivery(fake, reg)
+        assert reg.deliver is fake.deliver and fake.jobs is reg
+        set_job_registry(None)
+
+    def test_guideline_and_tool_text_point_at_background(self):
+        from agent_cli.prompts.system_prompt import TASK_GUIDELINES
+
+        assert "`background: true`" in TASK_GUIDELINES
+        assert ".agent-cli/tmp/jobs/" in TASK_GUIDELINES
+        assert "Do not poll the log" in TASK_GUIDELINES
+        assert "`kill <pid>`" in TASK_GUIDELINES
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        # 좀비면 waitpid 로 거둬지고, 살아 있으면 0 이 돌아온다
+        wpid, _ = os.waitpid(pid, os.WNOHANG)
+        return wpid == 0
+    except ChildProcessError:
+        return True
