@@ -620,6 +620,24 @@ class TestEditBatchGrouping:
 
         return f"{n}#{compute_line_hash(n, line)}"
 
+    def test_edits_without_path_are_not_grouped(self, tmp_path):
+        """v10.49.0: 경로 없는 edit_file 끼리(`None == None`) 묶여 스키마 검사를
+        건너뛰고 "cannot read 'None'" 이 op 수만큼 나왔다(편집 A/B base-t4-3).
+        묶지 않으면 op 마다 A5 가 빠진 필드를 짚는다."""
+        ops = [
+            {"action": "edit_file", "op": "replace", "pos": "1#ZZ", "lines": ["x"]},
+            {"action": "edit_file", "op": "replace", "pos": "2#ZZ", "lines": ["y"]},
+        ]
+        result, ctx, _ = _run([_turn(ops=ops), *_finish()], tmp_path)
+        assert result.success
+        body = "\n".join(
+            str(m.get("content"))
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and m.get("tool")
+        )
+        assert "cannot read 'None'" not in body
+        assert body.count("Missing required field(s) for 'edit_file': path") == 2
+
     def test_line_shifting_edits_grouped(self, tmp_path):
         # The case grouping is FOR: edit #1 inserts a line (shifting everything
         # down), so edit #2's ref (line 5) would go stale under sequential apply
