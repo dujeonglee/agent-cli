@@ -678,6 +678,39 @@ class TestStepCard:
         assert card.locator(".step-body .row.act").count() == 1
         assert card.locator(".step-body .row.ok").count() == 1
 
+    def test_observation_in_a_step_keeps_its_box(self, stack, page):
+        """v10.57.1: 스텝에 흡수된 관찰도 관찰 상자다 — 줄바꿈·높이 상한·안쪽 스크롤.
+
+        종전엔 상자 규칙이 `.card-observation` 안에서만 걸려, 스텝 카드의 결과 행은
+        브라우저 기본 <pre> 였다. lore Atom 의 371자 XML 한 줄이 대화 영역 전체를
+        3,012px 로 밀었고 112K 자 결과가 2,340줄 전부 펼쳐졌다(방 x8jkpw 실측)."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        long_line = "<entry><author><name>x</name></author>" + "a" * 360
+        body_text = "\n".join([long_line] + [f"line {i}" for i in range(400)])
+        stack.renderer.thought("lore 피드를 본다", 1)
+        stack.renderer.action(
+            "fetch", json.dumps({"url": "https://lore.kernel.org/x"}), 1
+        )
+        stack.renderer.observation(body_text, turn=1, tool_name="fetch", success=True)
+        assert _wait(lambda: self._step(page).count() == 1)
+
+        card = self._step(page).first
+        card.locator(".step-head").click()
+        card.locator(".step-body .row.ok .s").click()
+        box = card.locator(".step-body .row.ok .obs-body")
+        assert _wait(lambda: box.is_visible())
+
+        spill = page.evaluate(
+            "(() => { const m = document.getElementById('messages');"
+            " return m.scrollWidth - m.clientWidth; })()"
+        )
+        assert spill <= 1, f"타임라인이 가로로 밀림 {spill}px"
+        assert box.evaluate("e => e.scrollWidth - e.clientWidth") <= 1
+        h = box.evaluate("e => e.getBoundingClientRect().height")
+        assert h <= 260, f"관찰 상자 높이 상한이 없다: {h}px"
+        assert box.evaluate("e => e.scrollHeight > e.clientHeight")  # 안에서 스크롤
+
     def test_body_is_folded_until_the_head_is_clicked(self, stack, page):
         stack.emit_ready()
         _open_timeline(page, stack)
