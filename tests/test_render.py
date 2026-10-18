@@ -254,6 +254,32 @@ class TestFinalRendering:
         assert "All done!" in out
 
 
+class TestAnsweredIdsSurvive:
+    """v10.56.0 id 는 `u-1` 형식 — rich 가 `[u-1]` 을 태그로 읽어 지우던 회귀."""
+
+    REQS = (
+        {"id": "u-1", "author": "dj", "text": "README 정리해 줘"},
+        {"id": "n-2", "author": "mail", "text": "AUDIT run seq 1..6: pass"},
+    )
+
+    def test_ids_are_printed(self):
+        import re
+
+        raw = _capture(lambda: render_step("final", "끝", 1, requests=list(self.REQS)))
+        out = re.sub(r"\x1b\[[0-9;]*m", "", raw)
+        assert "↳ answers [u-1] (dj) README 정리해 줘" in out
+        assert "↳ answers [n-2] (mail) AUDIT" in out
+
+    def test_captured_lines_keep_ids_and_brackets(self):
+        r = MinimalRenderer(Console(file=StringIO()))
+        r.start_capture()
+        r.final("끝", 1, requests=list(self.REQS))
+        r._p('  ⚡ edit → {"ids": ["a", "b"]}', markup=False)
+        lines = r.stop_capture()
+        assert "  ↳ answers [u-1] (dj) README 정리해 줘" in lines
+        assert '  ⚡ edit → {"ids": ["a", "b"]}' in lines
+
+
 class TestRendererSwap:
     def test_set_and_get(self):
         old = get_renderer()
