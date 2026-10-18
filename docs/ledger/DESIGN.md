@@ -221,7 +221,7 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 
   나빠진 지표 없음. 산문 종료는 같은 조건 흔들림 범위(5↔13/50) 안이라 같다고 본다.
 
-## 11. P3 구체안 (설계 — 구현 전, 사용자 검토용)
+## 11. P3 구체안 (설계 당시 안 — 채택 모양은 §12)
 
 ### 11.1 꼬리 — `## Open Items` 하나
 
@@ -310,7 +310,7 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
   `r-`(회신 빚: `note_owes` 기본값, 상주 동료 요청은 `r-<seq>`) · `q-`(질문, 그대로). 생기는 곳에서 바로 최종 형식 —
   번역 계층 없음. `closer_of(id)` 가 접두로 닫는 도구를 말한다.
 - **꼬리 하나** `Ledger.block()` — `## Open Items`, 행동 먼저(`1. by action` 빚 줄마다 도구) · `complete` 마지막(`2. by
-  `complete` (last)` + 완성된 호출 줄 `complete_line`, 변형 A). `constants` 의 `outstanding_requests_block`·
+  `complete` (last)` + 문장 줄 `complete_line`, §12.1). `constants` 의 `outstanding_requests_block`·
   `owed_replies_block`·`debt_lines` 삭제, `build_session_state(items=)`.
 - **정책 하나** `dispatch._op_complete` — 결과 먼저 렌더, 열린 것(요청·빚)이 남고 `Ledger.spend()` 가 되면
   `_nag_open_items`(남은 예산 표시), 아니면 `_with_unanswered_notice`. `Ledger.settle(None)`·`settle(set())` 은 아무것도
@@ -318,11 +318,33 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
   `MAX_DEBT_NAGS`·`LoopState.user_run`(갈림이 없어졌다)·`answers_prompted`·`requests_nagged`·`debt_nags`.
 - **`reply(id)` 하나** — `ReplyTool.requires_handler="questions"`(main·상주). `QuestionPort._main_reply`: id 로 그 빚을
   갚고 `expects_reply=False` 로 배달. `AgentRegistry.request(author="main")` 의 "가장 오래된 빚 갚기" 삭제. 회신 기대
-  메일은 빚을 먼저 적어 관찰 꼬리가 `reply(id="r-…")` 를 가리킨다.
+  메일은 빚을 먼저 적어 관찰 꼬리가 `` `reply` with id "r-…" `` 를 가리킨다.
 - **오용 안내** `wrong_closer_hint` — `answer`·`reply` 에 다른 접두 id 가 오면 그 항목을 닫는 법.
 - **예약** `Schedule.effective_nickname` — `Scheduler-<label|id>`.
 - **상주 핀** `run_subagent_message(query_request_id=)` — 시작 항목 레코드에 `u-<seq>`/`r-<seq>`.
 - **서버 파싱 종결 결과** `Closed [u-1] in the open items. Still open: […]`.
+
+### 12.1 닫는 법은 문장 — 호출 모양을 그리지 않는다 (재생 측정, 2026-10-18)
+
+변형 A(호출 모양)는 측정 전에 기각했다(사용자 검토). 네 방언 어디에도 `f(x=…)` 텍스트 문법은 없다 — native_fc 는 서버
+함수 호출이라 텍스트 문법 자체가 없고, xml_fc·json_fc 는 자기 문법이 따로다. 꼬리에 남의 문법을 그리면 그 모양을
+산문으로 베껴 실제 호출 없이 끝낼 길을 연다. 그래서 **닫는 법을 말하는 모든 문구**를 "도구 이름 + id" 문장으로 통일했다:
+꼬리 `complete` 줄(`→ then `complete`, listing in `answers` the ids it covers ("n-1")`)·빚 줄(`→ `reply` with id "r-1"`)·
+되돌림 관찰·`wrong_closer_hint`·흡수 요청 안내·main `reply` 거부·회신 기대 메일·시스템 프롬프트 Reply Discipline.
+
+회귀 재생(문장 판, 11사례 × 10회, Qwen3.6-35B-A3B, native_fc) — 비교는 P2 재생(v10.55 계열):
+
+| 묶음 | P3 문장 판 | P2 재생 |
+|---|---|---|
+| 이어 가야 할 4사례 | 40/40 이어 감 | 40/40 |
+| 끝내야 할 5사례 | 47/50 `complete`, 산문 1 | 38/50, 산문 job_done 6/10·job_done2 4/10 |
+| 끝낼 때 메일 id 를 `answers` 에 | 44/47 | — |
+| 회신 빚(통과 회신) | 10/10 첫 호출이 `reply` + `r-1` | (P2 에 없던 사례) |
+| 회신 빚(미충족 회신) | 4/10 바로 회신, 6/10 고치러 감(정상) | — |
+
+남은 신호: main 이 메일 `n-1` 을 `reply` 로 닫으려 함 1/10 — main 에 `reply` 가 생긴 탓(P2 엔 도구가 없었다).
+`wrong_closer_hint` 가 `complete` 로 돌려보내 한 턴 쓰고 끝난다. 늘면 `reply` 설명에 접두 문장을 더한다.
+
 
 ## 9. 열린 질문
 
