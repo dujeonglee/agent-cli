@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
+from agent_cli.loop.ledger import Ledger
+
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
@@ -109,28 +111,10 @@ class LoopState:
     messages: list = field(default_factory=list)
     turn: int = 0
     task_log: list = field(default_factory=list)
-    #: 이 런이 응답해야 할 **사용자 요청들** — ``{"id", "author", "text"}``.
-    #: 런 스타터 1건 + 턴 경계 drain 으로 들어온 N건. 웹 큐가 이미 id 를
-    #: 발급하는데(`enqueue` → `{id, …}`, `cancel_pending` 이 쓴다) 루프까지
-    #: 오면서 버려지고 있었다. 그래서 drain-all 이 요청 셋을 한 턴에 합쳐도
-    #: **무엇이 답해졌는지**는 아무도 몰랐다 — `run_authors` 는 *누가* 물었는지
-    #: 만 안다. CLI 는 요청이 하나뿐이라 비어 있다.
-    run_requests: list = field(default_factory=list)
-    #: 이 런에서 `answers` 를 이미 한 번 되물었나. 되묻기는 **한 번**이다 —
-    #: 끝내 안 실으면 받아주고 "미신고" 로 적는다. 무한히 되물으면 고집 센
-    #: 모델이 런을 태운다.
-    answers_prompted: bool = False
-    #: 이미 독촉한 요청 id — 한 요청당 **한 번**이다. `complete` 이 미답을
-    #: 남기면 최종답은 내보내되 루프를 닫지 않고 남은 요청을 가리킨다
-    #: (붙잡기가 아니다 — 결과는 이미 나갔다). 상한이 없으면 고집 센 모델과
-    #: 물려 런을 태운다.
-    requests_nagged: set = field(default_factory=set)
-    #: 상주 에이전트: 요청자에게 빚진 `reply`/`message` 없이 `complete` 하려
-    #: 해서 독촉한 횟수 (v9.21.0). 상한은 `dispatch.MAX_REPLY_NAGS`(3) —
-    #: 무제한이면 아무것도 런을 못 멈춘다(개입은 max_turns 미계수, B1 은
-    #: 도구 경로에만 있어 반복 complete 을 안 본다). 상한 뒤엔 레지스트리가
-    #: 런 요약을 라벨 붙여 폴백 배달한다 — 요청자가 침묵을 받진 않는다.
-    debt_nags: int = 0
+    #: 이 런의 열린 항목 장부 — 사용자 요청·되묻기·독촉·빚 카운터 (P1, v10.54.0,
+    #: `loop/ledger.py`). 종전엔 필드 넷(`run_requests`·`answers_prompted`·
+    #: `requests_nagged`·`debt_nags`)이 여기 흩어져 있었다.
+    ledger: Ledger = field(default_factory=Ledger)
     #: 이 런이 사용자 요청을 받았는가 (v9.22.1) — 시작 메시지든 턴 경계
     #: 주입이든 `is_user` 인 것이 하나라도. 빚이 남은 `complete` 의 갈림이
     #: **이것**이다(수신 유형 규칙): 사용자 요청이 있는 런은 결과가 사용자에게

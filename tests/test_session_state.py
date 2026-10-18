@@ -390,6 +390,8 @@ def _caller(tmp_path, **cfg_kw):
     ctx = _ctx(tmp_path)
     config = LoopConfig(binding=make_binding(capabilities=_caps()), **cfg_kw)
     state = LoopState()
+    # AgentLoop 이 하는 배선 그대로 — 장부가 빚을 이 포트로 읽는다 (P1)
+    state.ledger.bind_questions(config.questions)
     return LLMCaller(config, state, ctx, provider=None, prompt=None), ctx
 
 

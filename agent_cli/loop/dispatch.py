@@ -893,14 +893,11 @@ class TurnDispatcher:
             return bounced
 
         claimed = _claimed_ids(op.action_input)
-        # **지우기 전에** 뽑는다 — `_settle_requests` 가 주장분을 회계에서
-        # 제거하므로, 그 뒤엔 "이 답이 무엇에 대한 답인지" 를 알 수 없다.
-        answered = (
-            [r for r in (self.state.run_requests or []) if str(r.get("id")) in claimed]
-            if claimed
-            else []
-        )
-        still_open = self._settle_requests(claimed)
+        # **지우기 전에** 뽑는다 — 정산이 주장분을 장부에서 지우므로, 그 뒤엔
+        # "이 답이 무엇에 대한 답인지" 를 알 수 없다.
+        ledger = self.state.ledger
+        answered = ledger.claimed_requests(claimed)
+        still_open = ledger.settle(claimed)
         nagging = self._should_nag(claimed, still_open)
         if not nagging:
             answer = self._with_unanswered_notice(claimed, still_open, answer)
@@ -915,9 +912,9 @@ class TurnDispatcher:
         #   사용자 요청 있는 런: complete 을 **수락**(결과는 사용자에게 간다)
         #         — 배달·기록한 뒤 빚을 독촉하고 루프를 잇는다.
         # 둘 다 3회까지; 그 뒤엔 런 끝에서 폴백(요약 배달)·닫기(질문).
-        debts = [] if nagging else self._debts()
-        if debts and self.state.debt_nags < MAX_DEBT_NAGS:
-            self.state.debt_nags += 1
+        debts = [] if nagging else ledger.debts()
+        if debts and ledger.debt_nags < MAX_DEBT_NAGS:
+            ledger.debt_nags += 1
             if not self.state.user_run:
                 return self._refuse_for_debts(llm_text, turn, answer, debts, outcome)
             render_step(
@@ -975,14 +972,19 @@ class TurnDispatcher:
         되묻기는 **런당 한 번**. 끝내 생략하면 받아주고 "미신고" 로 적는다 —
         무한 되묻기는 런을 태운다.
         """
-        pending = getattr(self.state, "run_requests", None)
+        ledger = self.state.ledger
+        pending = ledger.requests
         if not pending:
             return None
-        if getattr(self.state, "answers_prompted", False):
+        if ledger.answers_prompted:
             return None
+        # 빈 목록도 되돌린다 — `answers: []` 는 합쳐진 런에서 "빈칸" 이다
+        # (아무것도 안 답하고 complete 할 이유가 없다; 테스트
+        # `test_empty_answers_list_is_bounced`). 정산(`Ledger.settle`)에서는 빈
+        # 집합이 "아무것도 안 닫음" 으로 생략(None, 모름)과 갈린다.
         if _claimed_ids(op.action_input):
             return None
-        self.state.answers_prompted = True
+        ledger.answers_prompted = True
         ids = ", ".join(f'"{r.get("id")}"' for r in pending)
         # 원문을 **인용**한다 — emission 은 저장하지 않으므로(v9.21.1) 모델이
         # 재발행할 결과가 이 관찰 안에 있어야 한다. 성공하면 형식 개입 fold 가
@@ -1006,34 +1008,6 @@ class TurnDispatcher:
             store_emission=False,
         )
 
-    def _settle_requests(self, claimed):
-        """주장된 요청을 회계에서 **지우고**, 아직 열린 것을 돌려준다.
-
-        종전엔 아무것도 지우지 않았다 — 꼬리는 런 내내 같은 목록을 보였고,
-        `complete` 은 무조건 종결이라 남은 요청은 각주 한 줄로 알려지고 런과
-        함께 사라졌다(런 수명 `LoopState.run_requests`, 이월 없음). 이제
-        주장 = 닫힘이다. 남은 것이 곧 outstanding 이고, 그게 있으면 루프는
-        끝나지 않는다.
-
-        ``claimed is None`` (필드 생략)은 **모름**이다 — 무엇이 닫혔는지 알
-        수 없으니 지울 수도, 독촉할 수도 없다. 그 런의 회계는 여기서 닫고
-        (되돌림이 이미 한 턴을 썼다) 합쳐진 런이면 "미신고" 로 적는다.
-        """
-        pending = getattr(self.state, "run_requests", None)
-        if not pending:
-            return []
-        if claimed is None:
-            # 생략은 **모름**이다 — 1건이어도 같다(v9.22.0). "결과가 곧 그 답"
-            # 은 사용자 요청과 에이전트 질문이 한 런에 섞이면 틀리는 추측이다
-            # (에이전트 질문에 답하려던 complete 을 사용자 답으로 배달한다).
-            # 되돌림이 이미 한 번 요구했으니 여기서 회계를 닫고 미신고로 적는다.
-            open_now = list(pending)
-            pending.clear()
-            return open_now
-        remaining = [r for r in pending if str(r.get("id")) not in claimed]
-        pending[:] = remaining
-        return list(remaining)
-
     def _should_nag(self, claimed, still_open) -> bool:
         """미답이 남았는데 런을 끝내려 하는가.
 
@@ -1044,7 +1018,7 @@ class TurnDispatcher:
         """
         if claimed is None or not still_open:
             return False
-        nagged = self.state.requests_nagged
+        nagged = self.state.ledger.requests_nagged
         return any(str(r.get("id")) not in nagged for r in still_open)
 
     def _nag_open_requests(self, llm_text: str, turn, still_open, outcome: dict):
@@ -1057,10 +1031,10 @@ class TurnDispatcher:
         아무도 답하지 않은 요청이 남아 있으니 런을 닫지 않을 뿐이다.
 
         종전엔 각주 한 줄(⏳)을 붙이고 끝냈다. 그 요청은 다음 런으로도 안
-        넘어간다(`run_requests` 는 런 수명) — 다음 런이 온다는 보장도 없어,
+        넘어간다(장부는 런 수명) — 다음 런이 온다는 보장도 없어,
         세션이 그대로 유휴로 들어가면 아무 데도 안 남았다.
         """
-        self.state.requests_nagged.update(str(r.get("id")) for r in still_open)
+        self.state.ledger.requests_nagged.update(str(r.get("id")) for r in still_open)
         ids = ", ".join(f'"{r.get("id")}"' for r in still_open)
         return self._intervene(
             llm_text,
@@ -1079,23 +1053,8 @@ class TurnDispatcher:
             tool_name="complete",
         )
 
-    def _debts(self) -> list[dict]:
-        """이 런이 아직 갚지 않은 message/ask 빚 — 포트가 없으면 빈 목록."""
-        from agent_cli.constants import open_debts
-
-        return open_debts(self.cfg.questions)
-
-    def _debt_lines(self, debts: list[dict]) -> str:
-        """빚 목록을 갚는 수단과 함께 — 턴 꼬리와 같은 공용 렌더링
-        (``constants.debt_lines``). 수단은 이 루프에 있는 도구로 고른다."""
-        from agent_cli.constants import debt_lines
-
-        return debt_lines(
-            debts, resident=bool(getattr(self.cfg.questions, "nonblocking", False))
-        )
-
     def _debt_tail(self) -> str:
-        left = MAX_DEBT_NAGS - self.state.debt_nags
+        left = MAX_DEBT_NAGS - self.state.ledger.debt_nags
         if left > 0:
             return (
                 f"({left} more reminder{'s' if left != 1 else ''} before the harness "
@@ -1118,7 +1077,7 @@ class TurnDispatcher:
             (
                 "Observation: your `complete` was refused — it reports to no one, "
                 "and you still owe:\n"
-                f"{self._debt_lines(debts)}\n"
+                f"{self.state.ledger.debt_lines(debts)}\n"
                 f"You completed with:\n«{answer}»\n"
                 "If that text was your reply, send it with the tool shown; then "
                 "`complete` if nothing else remains. " + self._debt_tail()
@@ -1138,7 +1097,7 @@ class TurnDispatcher:
             llm_text,
             (
                 "Observation: your result was delivered, but you still owe:\n"
-                f"{self._debt_lines(debts)}\n"
+                f"{self.state.ledger.debt_lines(debts)}\n"
                 "Settle them now, then `complete` again. " + self._debt_tail()
             ),
             "debts owed",
@@ -1373,8 +1332,7 @@ class TurnDispatcher:
 
     def _is_open_request_id(self, qid: str) -> bool:
         """``qid`` 가 이 런의 열린 사용자 요청 번호인가 (`_op_answer` 되묻기용)."""
-        pending = getattr(self.state, "run_requests", None) or []
-        return any(str(r.get("id")) == qid for r in pending)
+        return self.state.ledger.has_request(qid)
 
     def _op_run_skill(self, llm_text: str, turn, op):
         """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는
@@ -1921,8 +1879,9 @@ def _claimed_ids(action_input) -> set[str] | None:
     """`complete` 이 주장한 요청 id 집합. **부재는 `None`** (빈 집합과 다르다).
 
     부재 = "어느 것에 답했는지 안 밝힘"(모름), 빈 집합 = "아무것도 안 답함"
-    (모델 자신의 진술). 이 둘을 같게 다루면 하네스가 거짓을 단언하거나
-    (실측 xrnway) 진술을 삼킨다.
+    (모델 자신의 진술). 정산과 최종 통지는 이 둘을 가른다 — 같게 다루면
+    하네스가 거짓을 단언하거나(실측 xrnway) 진술을 삼킨다. 되묻기
+    (`_require_answers`)는 둘 다 되돌린다: 합쳐진 런에서 빈 목록은 빈칸이다.
     """
     if not isinstance(action_input, dict):
         return None

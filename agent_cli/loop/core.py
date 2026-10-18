@@ -141,11 +141,11 @@ class AgentLoop:
         # mirrored to the web renderer via ``set_run_authors`` so the final's
         # ``answers`` field is stamped by whoever owns the fact (this loop).
         self.query_author_is_user = query_author_is_user
-        # 런을 연 요청의 id — 웹 워커가 `dequeue_blocking()` 한 아이템의 것.
-        # CLI 는 빈 문자열(요청이 하나뿐이라 회계할 것이 없다).
+        # 런을 연 요청의 id — 펌프가 `dequeue_blocking()` 한 아이템의 것(run·web
+        # 공통, v10.33.1). 깨우기 런과 하위 루프는 빈 문자열.
         self.query_request_id = query_request_id
         # v9.22.0 — 상주 에이전트 창에 사람이 직접 입력한 요청(단건·배치).
-        # main 의 스타터 id/드레인과 같은 회계(`run_requests`)에 올린다 —
+        # main 의 스타터 id/드레인과 같은 회계(장부 `state.ledger`)에 올린다 —
         # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
         self.user_requests = list(user_requests or [])
         self.run_authors: list[str] = []
@@ -242,6 +242,7 @@ class AgentLoop:
             query_author=query_author,
             stop_event=stop_event if stop_event is not None else threading.Event(),
         )
+        self._state.ledger.bind_questions(ports.questions)
         # Cumulative output tokens across this loop's turns — fed to the
         # renderer's per-turn token-usage line / web top-bar so the user
         # sees a running session total alongside the per-turn numbers.
@@ -285,9 +286,7 @@ class AgentLoop:
                 self.ctx.set_compactor(self._llm_compact_summarize)
             # 미답 요청의 원문은 압축·FIFO 에서 핀 (v10.41.0) — 라이브로 읽는다:
             # 런 도중 흡수된 요청도, 답해서 빠진 요청도 다음 압축에 바로 반영.
-            self.ctx.set_open_requests(
-                lambda: [str(r.get("id")) for r in self._state.run_requests]
-            )
+            self.ctx.set_open_requests(self._state.ledger.request_ids)
 
     # ── C1 PR-1 property 브리지 ──────────────────────────────────
     # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
@@ -620,24 +619,13 @@ class AgentLoop:
         self.task_log = []
         if self.ctx is None:
             self.messages = []
+        ledger = self._state.ledger
         for r in self.user_requests:
             if r.get("id"):
-                self._state.run_requests.append(
-                    {
-                        "id": str(r["id"]),
-                        "author": r.get("author") or "",
-                        "text": r.get("text") or "",
-                    }
-                )
+                ledger.add_request(r["id"], r.get("author") or "", r.get("text") or "")
         starter_rid = self.query_request_id if self.query_author_is_user else ""
         if starter_rid:
-            self._state.run_requests.append(
-                {
-                    "id": starter_rid,
-                    "author": self.query_author or "",
-                    "text": self.query,
-                }
-            )
+            ledger.add_request(starter_rid, self.query_author or "", self.query)
         self._add_user_message(
             self.query,
             self.query_author,
@@ -666,7 +654,7 @@ class AgentLoop:
 
         ``request_id`` (v9.19.0) stamps the queue id this message came in
         with — the **missing link** in the accounting. The id reached
-        ``LoopState.run_requests`` but never the record, so nothing on disk
+        ``LoopState.ledger`` but never the record, so nothing on disk
         could say which user turn an ``answers`` claim referred to. Resume
         replay rebuilds the id → request map from these stamps and hands the
         resolved requests to the final card. Set only for real user requests
@@ -775,9 +763,7 @@ class AgentLoop:
             if item.get("system"):
                 rid = ""  # 합성 wake — 사람 발화가 아니다
             if rid:
-                self._state.run_requests.append(
-                    {"id": rid, "author": author or "", "text": text}
-                )
+                self._state.ledger.add_request(rid, author or "", text)
             self._add_user_message(text, author, request_id=rid)
 
     def _deliver_agent_mail(self) -> None:
@@ -844,7 +830,7 @@ class AgentLoop:
 
         포트가 돌려주는 항목은 둘 중 하나다. ``user_request`` (사람이 이
         에이전트 창에 직접 쓴 것)는 main 의 큐 주입과 같은 회계를 받는다 —
-        ``run_requests`` 에 올라 꼬리의 ``## Open Requests`` 와 `answers`
+        장부(`state.ledger`)에 올라 꼬리의 ``## Open Requests`` 와 `answers`
         강제를 받고, 이 런은 **사람 런**이 된다(사람은 창에서 `complete` 의
         결과를 보므로 그것을 받아들이고 남은 빚만 독촉 — main 과 같은 규칙,
         사용자 결정). ``record`` (main·동료의 요청, 회신, 질문, 독촉)는 관찰로
@@ -858,12 +844,8 @@ class AgentLoop:
         for it in items:
             ur = it.get("user_request")
             if ur:
-                self._state.run_requests.append(
-                    {
-                        "id": ur["id"],
-                        "author": ur.get("author") or "",
-                        "text": ur["text"],
-                    }
+                self._state.ledger.add_request(
+                    ur["id"], ur.get("author") or "", ur["text"]
                 )
                 # ``_add_user_message`` 가 이 런을 사람 런으로 세운다(user_run)
                 self._add_user_message(

@@ -332,7 +332,7 @@ class ContextManager:
         self._dynamic_start_index: int = 0
         # 미답 사용자 요청의 id 를 돌려주는 콜백 (v10.41.0) — 그 요청의 user
         # 레코드는 압축·FIFO 에서 **원문 그대로** 남긴다. 루프가 등록한다
-        # (`LoopState.run_requests`); 없으면 핀도 없다.
+        # (`LoopState.ledger.request_ids`); 없으면 핀도 없다.
         self._open_requests: Callable[[], Iterable[str]] | None = None
 
         # Compaction can be disabled via the constructor flag, which the
