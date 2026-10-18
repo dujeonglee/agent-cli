@@ -299,6 +299,29 @@ def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     return f"{key} ({' · '.join(parts)})" if parts else key
 
 
+def mail_queue_item(reply: dict) -> dict:
+    """미배달 메일 1건 → 입력창 위 대기열의 한 줄 (v10.51.0).
+
+    사용자 요청이 main 이 바쁠 때 서는 그 대기열에 같은 모양으로 선다 —
+    ``{id, conn_id, nickname, text}`` 에 ``mail: True``. 글은 **곧 들어갈
+    관찰의 머리줄**이라 대기열 줄과 타임라인의 관찰 줄이 같은 말을 한다.
+    ``conn_id`` 가 비어 아무도 취소할 수 없다(메일은 취소 대상이 아니다)."""
+    rec = build_reply_record(reply)
+    lines = [ln.strip() for ln in str(rec.get("content") or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    tool = rec.get("tool") or "agent"
+    head = lines[0].strip("─ ").strip() if lines else ""
+    if head == tool and len(lines) > 1:
+        head = lines[1]  # 하니스 작업: 머리줄이 `── auditor ──` 뿐이다
+    return {
+        "id": f"mail-{reply.get('mail_id', 0)}",
+        "conn_id": "",
+        "nickname": tool,
+        "text": head,
+        "mail": True,
+    }
+
+
 def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     """mailbox 아이템 1건(회신 또는 질문) → main ctx 에 넣을 관찰 레코드.
 
@@ -827,8 +850,14 @@ class AgentRegistry:
         self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
-        # 회신 도착 알림 (CLI 📨 라인 / web transient status) — 부트스트랩 주입.
+        self._mail_seq = (
+            0  # 대기열 줄의 id (`mail_id`) — 프로세스 안에서만 유일하면 된다
+        )
+        # 회신 도착 알림 (CLI 대기 줄) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
+        #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
+        #: 다시 그린다(`WebServer.broadcast_queue`). 락 밖에서 부른다.
+        self.on_pending_change: Callable[[], None] | None = None
         #: 모니터 레지스트리 — `wire_monitor_delivery` 가 주입한다. 워커의
         #: `finally` 가 죽은 소유자의 감시를 폐기하려면 참조가 필요하다.
         #: 배선 안 된 레지스트리(테스트 픽스처 다수)는 `None` 이라 모든
@@ -1875,6 +1904,7 @@ class AgentRegistry:
 
     def _push_reply(self, reply: dict) -> None:
         with self._cv:
+            self._stamp_mail(reply)
             self._pending.append(reply)
             self._cv.notify_all()
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
@@ -1884,6 +1914,28 @@ class AgentRegistry:
                 cb(reply)
             except Exception:
                 pass  # 알림은 best-effort — 배달 경로를 막지 않는다
+        self._pending_changed()
+
+    def _stamp_mail(self, reply: dict) -> None:
+        """대기열 줄 id — ``_cv`` 를 쥔 채로 부른다. 복원분도 새로 찍는다(id 는
+        화면용이라 프로세스를 넘어 이어질 필요가 없다)."""
+        self._mail_seq += 1
+        reply["mail_id"] = self._mail_seq
+
+    def _pending_changed(self) -> None:
+        cb = self.on_pending_change
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass  # 화면 갱신은 best-effort
+
+    def pending_mail(self) -> list[dict]:
+        """main 앞 미배달 메일의 대기열 줄 (:func:`mail_queue_item`). 질문은
+        뺀다 — ❓ 질문 트레이가 사람에게 답을 요구하는 그 자리다."""
+        with self._cv:
+            items = [dict(r) for r in self._pending if r.get("kind") != "question"]
+        return [mail_queue_item(r) for r in items]
 
     def _deliver_peer_reply(
         self, requester_key: str, from_key: str, output: str, hop: int
@@ -2098,6 +2150,7 @@ class AgentRegistry:
                         q.delivered_seq = 0
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
+            self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
         return out
 
     # ── status / kill / 종료 ────────────────────
@@ -2356,6 +2409,7 @@ class AgentRegistry:
             for item in data.get("pending", []):
                 if not isinstance(item, dict):
                     continue
+                self._stamp_mail(item)
                 self._pending.append(item)
             if self._pending:
                 self._cv.notify_all()

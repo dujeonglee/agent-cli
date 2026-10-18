@@ -191,7 +191,9 @@ class WebServer:
         # 골격은 공용 InputQueue (teammate P5 — CLI run 의 큐 펌프와 공유);
         # 서버는 닉네임 해석 + 라이브 큐 브로드캐스트(on_change)만 얹는다.
         # Items: ``{id, conn_id, nickname, text}``.
-        self._queue = InputQueue(on_change=self._broadcast_queue)
+        #: 미배달 메일의 대기열 줄 공급자 — web 부트가 꽂는다 (v10.51.0)
+        self.mail_source = None
+        self._queue = InputQueue(on_change=self.broadcast_queue)
         # Stop handle for the in-flight chat turn. The worker registers a
         # fresh ``threading.Event`` per message and passes it to
         # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop
@@ -292,14 +294,21 @@ class WebServer:
         return self._queue.cancel(conn_id, msg_id)
 
     def queue_snapshot(self) -> list[dict]:
-        return self._queue.snapshot()
+        """입력창 위 대기열 — 사용자 요청 뒤에 main 앞 미배달 메일(v10.51.0,
+        ``mail_source`` = ``AgentRegistry.pending_mail``). 메일 줄은
+        ``mail: True`` 이고 ``conn_id`` 가 비어 아무도 취소할 수 없다."""
+        items = self._queue.snapshot()
+        src = self.mail_source
+        if src is not None:
+            items += src()
+        return items
 
     def pending_count(self) -> int:
         """Number of queued-but-undelivered user messages — the idle-reaper's
         'work is waiting' signal."""
         return self._queue.pending_count()
 
-    def _broadcast_queue(self) -> None:
+    def broadcast_queue(self) -> None:
         """Push the live queue state to all clients (released the queue lock
         first — ``queue_state`` takes the renderer lock; InputQueue 도
         on_change 를 락 밖에서 호출한다)."""

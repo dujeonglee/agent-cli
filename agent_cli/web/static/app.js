@@ -1462,34 +1462,6 @@
   }
   window.__ctxFrames = frames; // 브라우저 테스트가 읽는다
 
-  /** 에이전트 메일이 idle 한 main 을 깨워 런이 시작됐다 (v9.7.0).
-   *
-   * 종전엔 이게 `push_user_message` 로 흘러 **오른쪽 파란 말풍선**으로
-   * 그려졌다 — 기계가 만든 깨우기 신호가 사람이 친 말과 구별되지 않았다
-   * (사용자 제보). `card-sys`(압축 마커 같은 **휘발** 표시)로 보내지 않는
-   * 이유는, 이건 그 런이 왜 시작됐는지를 설명하는 **기록**이고 모델
-   * 컨텍스트에도 들어간 실제 턴 입력이라서다. 그래서 다른 내부 작업과 같은
-   * 한 줄 리듬으로 그리고, 펼치면 **모델이 받은 원문**이 나온다 — 사람이 읽을
-   * 요약과 모델을 움직인 지시문을 한 줄 안에서 분리한다.
-   */
-
-  function renderAgentWake(d) {
-    const card = el("div", ["card", "card-assistant"]);
-    if (d.hidx != null) card.dataset.hidx = String(d.hidx);
-    const raw = String((d && d.text) || "");
-    card.appendChild(
-      makeRow(
-        "🤝",
-        "메일",
-        "에이전트 회신 도착 — 이어서 진행합니다",
-        raw ? el("pre", ["args"], raw) : null,
-        ["wake"]
-      )
-    );
-    card._md = function () { return "**🤝 메일**" + (raw ? "\n\n" + fence(raw) : ""); };
-    finishCard(card, d);
-  }
-
   // Inline context-compaction marker. `start` drops a "압축 중…" system line;
   // `done`/`warning` update that same line in place (tracked per scope so a
   // delegate subagent's compaction updates its own line, not main's). The
@@ -1528,12 +1500,6 @@
     scheduleScroll();
   }
 
-  // Agent mail-arrival hint: a live "📨 reply arrived" system line (❓ for a
-  // question). Transient — not replayed on reconnect (mirrors the compaction
-  // marker: it only means something at the instant it arrives). The reply
-  // itself is delivered as main's next observation; this is just the cue.
-  // The web UI phrases its own English label from key/kind (the backend's
-  // `text` is the CLI's Korean status line — not shown here).
   /** `card-sys` 한 줄 — 아이콘 + 텍스트. 타임라인 카드와 달리 4칸 리듬이
    * 아니라 가운데 정렬된 **구분선**에 가깝다(압축·무진전·시스템 고지).
    * 손으로 일곱 번 쓰이던 것을 한 곳으로. 제자리 갱신하는 호출부는 반환된
@@ -1543,26 +1509,6 @@
     line.appendChild(el("span", ["sys-icon"], icon));
     line.appendChild(el("span", ["sys-text"], text || ""));
     return line;
-  }
-
-  function renderAgentMail(d) {
-    // 모니터 보고·작업 종료 통지는 에이전트가 아니다 — key 가 없어 종전엔
-    // "Agent ? replied" 로 그려졌다 (v10.47.1).
-    if (d.kind === "monitor") {
-      finishCard(sysLine("🔔", "Monitor report arrived"), d);
-      return;
-    }
-    if (d.kind === "job") {
-      finishCard(sysLine("🧵", "Background job finished"), d);
-      return;
-    }
-    const who = d.key ? "Agent " + d.key : "Agent";
-    const label =
-      d.kind === "question"
-        ? who + " asked a question (awaiting reply)"
-        : who + " replied";
-    const line = sysLine(d.kind === "question" ? "❓" : "📨", label);
-    finishCard(line, d);
   }
 
   // ── 스트림 무진전(stall) 표시 (v8.60.0) ──────────────────────
@@ -2759,14 +2705,6 @@
     ctxApplyView(key);
   });
 
-  es.addEventListener("agent_mail", function (e) {
-    renderAgentMail(JSON.parse(e.data));
-  });
-
-  es.addEventListener("agent_wake", function (e) {
-    renderAgentWake(JSON.parse(e.data));
-  });
-
   // 턴 사이의 **진행 해설** — 재시도·열화·부팅 고지. 종전엔 이 이벤트에
   // 리스너가 없어 10곳의 호출이 웹에서 통째로 버려졌다(HTTP 재시도 전부가
   // 암전이었다 — `stream_stall` 이 고친 것과 같은 병인데 그쪽은 스트림
@@ -3836,6 +3774,16 @@
   const qLeaving = {}; // id → {item, state:'wait'|'injected'|'cancelled', _timer}
   const qCancelledByMe = {}; // id → true (내가 ✕)
   let qPending = [];
+  // main 앞 미배달 메일도 같은 대기열에 선다 (v10.51.0, `mail: true`) — 사용자
+  // 요청이 바쁠 때 서는 그 자리, 같은 ⏳ → ✓ 주입됨. 다른 점 둘: 아무도 취소할
+  // 수 없고, **유예 뒤에야** 그린다 — main 이 놀면 1초 안에 깨우기 런이 흡수해
+  // 종전처럼 떴다 사라지는 줄(사용자 지적, `InputQueue.snapshot`)이 되기 때문.
+  // 큐에서 빠진 메일은 곧 주입된 것이다(메일박스 drain = 관찰 주입).
+  const Q_MAIL_GRACE_MS = 1500;
+  const qMailSince = {}; // id → 처음 본 시각 (유예 판정)
+  function qVisible(it) {
+    return !it.mail || Date.now() - qMailSince[it.id] >= Q_MAIL_GRACE_MS;
+  }
 
   function qScheduleRemove(id) {
     setTimeout(function () {
@@ -3848,13 +3796,14 @@
     if (!$queueList) return;
     const leaving = Object.keys(qLeaving);
     $queueList.innerHTML = "";
-    $queueList.hidden = qPending.length + leaving.length === 0;
-    qPending.forEach(function (it) {
+    const shown = qPending.filter(qVisible);
+    $queueList.hidden = shown.length + leaving.length === 0;
+    shown.forEach(function (it) {
       const row = el("div", ["queue-item"]);
       const txt = el("span", ["queue-text"]);
       txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
       row.appendChild(txt);
-      if (it.conn_id === myConnId) {
+      if (!it.mail && it.conn_id === myConnId) {
         const x = el("button", ["queue-cancel"]);
         x.type = "button";
         x.textContent = "✕";
@@ -3882,7 +3831,7 @@
       const st = el("span", ["queue-state"]);
       st.textContent = cancelled
         ? "취소됨"
-        : mine
+        : mine && !lv.item.mail
           ? "✓ 내 요청 반영됨"
           : "주입됨 · 다음 답변에 반영";
       row.appendChild(st);
@@ -3916,6 +3865,16 @@
     Object.keys(qPrevById).forEach(function (id) {
       if (newIds[id] || qLeaving[id]) return;
       const item = qPrevById[id];
+      if (item.mail) {
+        // 메일: 빠짐 = 주입. 유예 안에 빠졌으면(main 이 놀았다) 영수증도 없다 —
+        // 타임라인의 관찰 줄이 전부다.
+        const wasShown = qVisible(item);
+        delete qMailSince[id];
+        if (!wasShown) return;
+        qLeaving[id] = { item: item, state: "injected" };
+        qScheduleRemove(id);
+        return;
+      }
       if (qCancelledByMe[id]) {
         qLeaving[id] = { item: item, state: "cancelled" };
         qScheduleRemove(id);
@@ -3932,9 +3891,16 @@
     });
     qPending = pending;
     qPrevById = {};
+    let graceTimer = false;
     pending.forEach(function (it) {
       qPrevById[it.id] = it;
+      if (it.mail && qMailSince[it.id] === undefined) {
+        qMailSince[it.id] = Date.now();
+        graceTimer = true;
+      }
     });
+    // 유예가 끝나도 아직 서 있으면 그때 그린다(새 queue 이벤트가 없어도).
+    if (graceTimer) setTimeout(qRender, Q_MAIL_GRACE_MS + 20);
     qRender();
   });
 })();

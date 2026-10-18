@@ -54,7 +54,7 @@
   "컨텍스트 밖" 은 경계 하나로 표현된다: `gone.hidx` = 캐시에 남은 첫 동적 레코드의 history 서수. 카드는 자기 레코드의
   서수(`hidx`)가 그보다 작으면 빠진 것이다.
 - **턴 번호는 경계가 못 된다** (P1 실측): 턴은 런마다 1 부터 다시 시작해 두 번째 런의 final 도 turn 1 이다. 그래서 카드
-  이벤트(`assistant_turn`·`observation`·`user_message`·`agent_wake`)가 `hidx` 를 싣는다 — 레코드보다 먼저 그리는
+  이벤트(`assistant_turn`·`observation`·`user_message`; v10.51.0 에 `agent_wake` 삭제)가 `hidx` 를 싣는다 — 레코드보다 먼저 그리는
   카드(행동·최종답·사용자 에코)는 `ctx.next_ordinal`, 뒤에 그리는 카드(관찰)는 `ctx.last_ordinal`. `render_step(hidx=)`
   → 렌더러 `note_record(hidx)`(스레드 로컬) → `_emit` 이 다음 카드 이벤트 하나에 붙인다. resume 재생은 캐시 서수
   (`cache_ordinals()`)·서브 스코프는 history 줄 번호.

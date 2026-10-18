@@ -1,7 +1,6 @@
 """``agent-cli web`` 의 펌프 표면 (``pump.PumpSurface``, docs/pump/DESIGN.md).
 
-run 과 다른 것만 여기 있다: 전송 버튼 상태(``worker_idle/busy``), 말풍선·깨우기
-카드 에코, Stop 버튼의 중단 핸들(``server.set_stop_handle``), 웹 전용 슬래시
+run 과 다른 것만 여기 있다: 전송 버튼 상태(``worker_idle/busy``), 말풍선 에코, Stop 버튼의 중단 핸들(``server.set_stop_handle``), 웹 전용 슬래시
 명령(``/help``·``/sh``·``/compact``)이 공용 디스패치보다 먼저, 런 예외는
 화면에 알리고 계속(워커가 죽으면 큐만 쌓인다), 결과 파일은 없다(화면이 결과).
 """
@@ -34,13 +33,13 @@ class WebSurface:
         self._renderer.worker_busy()
 
     def echo(self, item: dict, *, wake: bool) -> None:
+        if wake:
+            # 깨우기 런은 그리지 않는다 (v10.51.0) — 그 런의 관찰 줄이 메일이고,
+            # 바빴다면 메일은 입력창 위 대기열에 서 있다가 주입됐다. 종전의
+            # 🤝 카드는 같은 사건을 세 번째로 알렸다.
+            return
         hidx = getattr(self._ctx, "next_ordinal", None)
         text = item.get("text") or ""
-        if wake:
-            # 기계가 만든 깨우기 — 사람 발화가 아니다. 말풍선으로 그리면
-            # 사용자가 저렇게 타이핑한 것처럼 보인다(사용자 제보).
-            self._renderer.agent_wake(text, hidx=hidx)
-            return
         nickname = item.get("nickname") or ""
         self._renderer.push_user_message(
             f"[{nickname}]: {text}", author=nickname, hidx=hidx

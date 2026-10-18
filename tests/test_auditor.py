@@ -322,8 +322,10 @@ class TestMailRecord:
         hints: list[dict] = []
         r = SimpleNamespace(agent_mail_hint=lambda **kw: hints.append(kw))
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
-        _agent_mail_notice({"kind": "harness", "job": "auditor"})
-        assert hints and "🔎 auditor 결과 도착" in hints[0]["text"]
+        _agent_mail_notice(
+            {"kind": "harness", "job": "auditor", "output": "AUDIT"}, True
+        )
+        assert hints and "[auditor] AUDIT" in hints[0]["text"]
 
 
 class TestPumpWiring:

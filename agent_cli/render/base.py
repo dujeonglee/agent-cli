@@ -373,13 +373,10 @@ class Renderer(ABC):
         replay 버퍼 정리 + 라이브 창 비움, CLI 는 no-op."""
 
     def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
-        """상주 에이전트 mailbox 도착 힌트 (배달과 별개의 라이브 신호 —
-        도착 순간에만 의미). ``kind``: "reply"|"question"|"died" 등,
-        ``text``: 이미 조립된 사람용 한 줄. **기본 구현은 ``status`` 로 위임**
-        해 CLI·커스텀 렌더러의 종전 동작을 보존한다. web 은 이 메서드를
-        전용 transient ``agent_mail`` 이벤트로 override 해 프론트 인라인
-        라인으로 표시 — ``status`` 이벤트엔 프론트 리스너가 없어 웹에선
-        드롭됐기 때문(필수 구현 아님: 기본값 존재)."""
+        """main 앞 메일 도착 한 줄 — CLI 전용 (v10.51.0). ``text`` 는 이미
+        조립된 사람용 한 줄(바쁠 때의 대기 줄, 질문 도착). 기본 구현은
+        ``status`` 로 위임한다. web 은 이 신호를 쓰지 않는다 — 미배달 메일이
+        입력창 위 대기열에 줄을 선다(``WebServer.queue_snapshot``)."""
         self.status("running", text)
 
     def note_next(self, text: str) -> None:
@@ -389,19 +386,6 @@ class Renderer(ABC):
         프롬프트를 인라인으로 찍어 승인 사실이 스크롤백에 남으므로 기본 no-op
         으로 두고, 웹만 override 한다(웹은 트레이가 답하는 순간 사라져 흔적이
         없다). 필수 구현 아님."""
-
-    def agent_wake(self, text: str, hidx: int | None = None) -> None:
-        """에이전트 메일이 idle 한 main 을 깨워 런이 시작됐음 (v9.7.0).
-
-        ``text`` 는 **모델이 실제로 받은 지시문**이다 — 사람용 문장이 아니라
-        모델을 움직이는 장치라 표시용으로 다듬지 않고 그대로 넘긴다. 사람에게
-        보일 요약은 표면이 알아서 짓는다(``agent_mail_hint`` 와 같은 분업).
-
-        기본 구현은 ``push_user_message`` 로 위임해 종전 동작을 보존한다.
-        web 은 override 한다 — 거기서는 이게 **사용자 말풍선**으로 그려져
-        기계가 만든 깨우기 신호가 사람 발화와 구별되지 않았다(사용자 제보).
-        """
-        self.push_user_message(text)
 
     def stream_stall(
         self,
@@ -573,7 +557,7 @@ class Renderer(ABC):
     def note_record(self, hidx: int) -> None:
         """다음 카드 이벤트가 가리킬 history 레코드 서수 (v10.6.0). 기본 no-op —
         web 이 스레드 로컬로 받아 ``assistant_turn``/``observation``/``user_message``
-        /``agent_wake`` 페이로드에 ``hidx`` 로 싣는다."""
+        페이로드에 ``hidx`` 로 싣는다."""
 
     def context_view(self, view: dict) -> None:
         """컨텍스트 캐시의 "모델 시점" 사실 (v10.6.0, docs/inspector-model-view §3.1):

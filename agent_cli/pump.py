@@ -144,7 +144,7 @@ class PumpSurface(Protocol):
         """아이템을 받아 런을 열기 직전."""
 
     def echo(self, item: dict, *, wake: bool) -> None:
-        """꺼낸 아이템을 화면에 — web 은 말풍선/깨우기 카드, run 은 한 줄."""
+        """꺼낸 아이템을 화면에 — web 은 말풍선. 깨우기는 둘 다 그리지 않는다(관찰 줄이 말한다)."""
 
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
