@@ -221,6 +221,89 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 
   나빠진 지표 없음. 산문 종료는 같은 조건 흔들림 범위(5↔13/50) 안이라 같다고 본다.
 
+## 11. P3 구체안 (설계 — 구현 전, 사용자 검토용)
+
+### 11.1 꼬리 — `## Open Items` 하나
+
+`## Open Requests` 와 `## Owed Replies` 를 한 블록으로. 순서가 목록 안에 있다 — 행동으로 닫는 것 먼저, `complete` 가 마지막.
+두 변형을 재생으로 잰다(§11.6).
+
+**변형 A — 마지막 줄이 완성된 호출 모양**
+
+```
+## Open Items — close them in this order; `complete` is always the last step
+  1. by action
+     [r5]     (agt-y) reply owed: "리뷰 결과 보내줘"   → reply(id="r5", text="…")
+     [q-7a3f] (agt-x) question: "할인 상한은?"          → answer(id="q-7a3f", text="…")
+  2. by `complete` (last)
+     [1]  (dj)   "README 정리해 줘"
+     [n3] (mail) "🧵 job #1 finished rc=0"
+     → complete(result="…", answers=["1", "n3"])
+  The run stays open until every item is closed; your result is delivered either way.
+```
+
+**변형 B — 마지막 줄이 문장** (지금 Open Requests 와 같은 결)
+
+```
+  2. by `complete` (last)
+     [1]  (dj)   "README 정리해 줘"
+     [n3] (mail) "🧵 job #1 finished rc=0"
+     Then `complete` with `answers` listing the ids above that your result covers.
+```
+
+항목이 한 쪽에만 있으면 그 쪽 절만 싣는다(번호는 유지 — "1." 이 없으면 "2." 만). 상주 루프도 같은 블록이다(요청자가
+사람이면 `[12] (dj)`, 동료면 `[r12] (agt-y) reply owed`).
+
+### 11.2 정책 — 계속형 붙잡기 + 런 공유 예산 8
+
+| 상황 | 지금 | P3 |
+|---|---|---|
+| `answers` 생략 | 결과 **미배달**, 런당 1회 되묻기 → 2회째 받고 "미신고" | 결과 **배달**, 예산 안에서 "어느 항목을 닫았나" 되묻기 → 소진 시 "미신고" |
+| `answers: []` | 빈칸으로 보고 되묻기 | **진술**로 받는다 — "아무것도 안 닫음". 열린 항목이 있으면 그걸 가리켜 독촉(예산) |
+| 일부만 닫음 | 요청당 1회 독촉 | 예산 안에서 독촉 |
+| 빚 남김, 사용자 런 | 배달 후 독촉(빚 3회 공유) | 같은 모양, **같은 예산** |
+| 빚 남김, 비사용자 런(깨우기·동료 항목) | 결과 **미배달 거부** | 결과 **배달**(화면·기록), 예산 안에서 독촉 |
+| 예산 소진 | 요청: 미답 통지 · 빚: 런 끝 폴백(요약 배달·질문 닫음) | 같다 — 열린 것을 하니스가 닫고 최종 답에 표시 |
+
+예산 `LEDGER_NAG_BUDGET = 8` — 런 전체가 나눠 쓴다(되묻기·독촉·빚 독촉 모두 한 예산). 독촉 관찰 끝에 남은 횟수를 적는다
+(지금 빚 독촉의 `(N more reminders before the harness settles these…)` 를 모든 독촉으로).
+
+### 11.3 빚은 `reply(id)` 하나로 — main 에도 `reply`
+
+| | 지금 | P3 |
+|---|---|---|
+| 상주가 요청자에게 빚을 갚음 | `reply(id, text)` | 같다 |
+| main 이 에이전트에게 빚을 갚음 | `agent(mode="request", key, task)` — id 없음, **가장 오래된 빚**을 갚은 것으로 침 | `reply(id, text)` — 그 빚을 갚는다. 배달은 그 에이전트 inbox(되받을 것 없음) |
+
+`agent` 도구에 `id` 를 끼우는 안보다 낫다: 갚는 도구가 루프와 무관하게 하나이고(메모리 `tool-arg-names-consistent` — 이름이
+갈리면 거절이 쌓인다), `agent request` 는 "일을 시킨다" 는 원래 뜻으로만 남는다. main 의 `reply` 는 빚이 있을 때만 붙는다.
+
+### 11.4 id 공간 하나
+
+| 출처 | id | 비고 |
+|---|---|---|
+| 사람 요청 | `1, 2, …` | 지금 그대로(큐 seq / 상주 inbox seq) |
+| 메일 | `n<k>` | P2 |
+| 회신 빚 | `r<k>` | main 의 `m<n>` → `r<n>`, 상주 빚 `12` → `r12` |
+| 질문 답 빚 | `q-xxxxxx` | 그대로 |
+
+`answer`·`reply` 는 자기 접두가 아닌 id 를 받으면 그 항목의 닫는 법을 알려 준다(지금 `answer(id="1")` 오용 안내의 일반화).
+
+### 11.5 그 밖
+
+- **예약 발화**: 닉네임이 비면 `⏰ Scheduler` 하나 대신 `Scheduler-<label|id>`. 사람이 정한 닉네임은 그대로.
+- **상주 핀**: 시작 항목·흡수 항목 레코드에 그 빚 id 를 찍는다(§3.6-4 의 남은 빈 곳).
+- **사람에게 간 질문**(상주 → ❓ 트레이)은 장부 밖 그대로 — 모델이 닫을 수 없다.
+- **텍스트 방언·서버 파싱 방언** 모두 같은 블록. 서버 파싱의 종결 결과 문구도 장부에서(`removed from the open items`).
+
+### 11.6 측정
+
+- 재생: 깨우기 9사례 + 빚이 있는 사례(상주 동료 요청·main 의 회신 기대 메시지) 3개 이상 + 사람 요청 둘이 합쳐진 사례 2개 이상.
+- 변형: v10.55(지금) · P3-A · P3-B, 회차마다 번갈아. **같은 조건을 두 번** 돌려 흔들림부터 잰다.
+- 지표: 끝내야 할 때 `complete` 로 끝냄 · 산문 종료 · 끝낼 때 딴짓 · 이어 가야 할 때 이어 감 · 닫는 법 정확도(id·도구) ·
+  되묻기/독촉 횟수(예산 사용량).
+- A 가 B 보다 반복(같은 실수 되풀이)을 늘리면 B — 메모리 `rejection-wording-replay` 의 전례.
+
 ## 9. 열린 질문
 
 - 예산 기본값(후보 8)과 소진 뒤 표시 문구 — P3.
