@@ -67,20 +67,20 @@ _TURN = types.SimpleNamespace(
 
 
 def _ids(loop):
-    return [r["id"] for r in loop._state.run_requests]
+    return [r["id"] for r in loop._state.ledger.requests]
 
 
 def _notice(loop, **ai):
     """정산(주장분 제거) → 최후 통지. `_op_complete` 이 하는 두 걸음이다.
 
     통지는 이제 **독촉이 끝난 자리**의 마지막 수단이라, 남은 것을 계산하는
-    `_settle_requests` 를 거치지 않고는 의미가 없다.
+    `Ledger.settle` 을 거치지 않고는 의미가 없다.
     """
     from agent_cli.loop.dispatch import _claimed_ids
 
     op = _op(**ai)
     claimed = _claimed_ids(op.action_input)
-    still_open = loop._dispatch._settle_requests(claimed)
+    still_open = loop._state.ledger.settle(claimed)
     return loop._dispatch._with_unanswered_notice(
         claimed, still_open, ai.get("result", "")
     )
@@ -106,7 +106,7 @@ class TestRequestsReachTheRun:
             ]
         )
         assert _ids(loop) == ["r1", "r2"]
-        assert loop._state.run_requests[0]["author"] == "Bob"
+        assert loop._state.ledger.requests[0]["author"] == "Bob"
 
     def test_run_starter_is_recorded(self):
         loop = _loop(query_request_id="r0", query_author="Bob")
@@ -356,12 +356,16 @@ class TestIdsReachTheModel:
         """렌더러가 아니라 **호출부**가 게이트를 쥔다 — 소스 핀."""
         import inspect
 
+        from agent_cli.loop.ledger import Ledger
         from agent_cli.loop.llm import LLMCaller
 
         src = inspect.getsource(LLMCaller._build_session_state)
-        assert "outstanding_requests_block" in src, "꼬리에 안 실린다"
-        assert "if pending:" in src, "단건 런이 꼬리에서 빠졌다"
+        assert "ledger.requests_block()" in src, "꼬리에 안 실린다"
         assert "requests=requests" in src
+        # 게이트는 장부가 쥔다 (P1, v10.54.0) — 요청이 하나라도 있으면 싣는다
+        block = inspect.getsource(Ledger.requests_block)
+        assert "outstanding_requests_block" in block
+        assert "if not self.requests:" in block, "단건 런이 꼬리에서 빠졌다"
 
     def test_the_block_is_not_persisted(self):
         """꼬리는 feed 시점에만 붙고 history 에 안 남는다 — 한 번 주입하던
@@ -412,7 +416,7 @@ class TestAnswersAreRequired:
         loop = self._merged()
         first = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
         assert first is not None, "생략이 그대로 통과했다"
-        assert loop._state.answers_prompted is True
+        assert loop._state.ledger.answers_prompted is True
 
         # 두 번째는 받아준다 — 무한 되묻기는 런을 태운다.
         second = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
@@ -450,7 +454,7 @@ class TestAnswersAreRequired:
             )
             is None
         )
-        assert loop._state.answers_prompted is False, "필요 없는데 표식을 세웠다"
+        assert loop._state.ledger.answers_prompted is False, "필요 없는데 표식을 세웠다"
 
     def test_single_request_run_is_bounced_too(self):
         """단건 런도 되돌린다 (v9.22.0) — 섞임에서 추측이 틀리므로 건수 특례
@@ -721,7 +725,7 @@ class TestOpenRequestsHoldTheLoop:
     """**outstanding 이 있으면 루프가 끝나면 안 된다** (사용자 지적).
 
     종전엔 부분 주장(`answers: ["1"]` 인데 [2] 가 열려 있음)이 각주 한 줄로
-    끝났다. 그 요청은 다음 런으로도 안 넘어가고(`run_requests` 는 런 수명),
+    끝났다. 그 요청은 다음 런으로도 안 넘어가고(장부는 런 수명),
     다음 런이 온다는 보장도 없다 — 세션이 유휴로 들어가면 사라진다.
 
     붙잡기와 다르다: 최종답은 **먼저 렌더되고 history 에 들어간다**. 기다리는
@@ -835,7 +839,7 @@ class TestOpenRequestsHoldTheLoop:
         from agent_cli.loop.dispatch import _CONTINUE
 
         loop = self._merged()
-        loop._state.answers_prompted = True  # 되돌림은 이미 한 번 썼다
+        loop._state.ledger.answers_prompted = True  # 되돌림은 이미 한 번 썼다
         out = self._complete(loop, result="r")
         assert out is not _CONTINUE
         assert "undeclared" in out.output
@@ -959,7 +963,7 @@ class TestFinalCarriesTheRequests:
         assert [r["id"] for r in reqs] == ["1"], "주장 안 한 요청까지 실렸다"
 
     def test_captured_before_settle_removes_them(self):
-        """`_settle_requests` 가 주장분을 지우므로 **그 전에** 뽑아야 한다."""
+        """`Ledger.settle` 이 주장분을 지우므로 **그 전에** 뽑아야 한다."""
         loop = self._merged()
         (reqs,) = self._final_calls(loop, result="둘 다", answers=["1", "2"])
         assert _ids(loop) == [], "정산이 안 돌았다 — 테스트가 순서를 안 본다"
@@ -968,7 +972,7 @@ class TestFinalCarriesTheRequests:
     def test_undeclared_carries_nothing(self):
         """생략은 모름이다 — 추측해서 칩을 그리면 거짓이 된다."""
         loop = self._merged()
-        loop._state.answers_prompted = True
+        loop._state.ledger.answers_prompted = True
         (reqs,) = self._final_calls(loop, result="r")
         assert not reqs
 
@@ -981,7 +985,7 @@ class TestFinalCarriesTheRequests:
 class TestRequestIdOnUserRecords:
     """user 레코드의 `request_id` — 회계의 빠져 있던 연결고리.
 
-    id 는 `run_requests` 까지만 가고 레코드엔 안 찍혀서, 디스크의 어떤 것도
+    id 는 장부까지만 가고 레코드엔 안 찍혀서, 디스크의 어떤 것도
     "이 `answers` 주장이 어느 user 턴을 가리키는지" 를 말할 수 없었다.
     """
 
@@ -1045,7 +1049,7 @@ class TestRequestIdOnUserRecords:
 class TestAgentLoopsAreUntouched:
     """회계·되돌림·독촉·칩은 **웹 main 루프에만** 걸린다 (사용자 우려).
 
-    `run_requests` 를 채우는 입구는 둘뿐이다 — 스타터의 `query_request_id`
+    장부(`state.ledger`)를 채우는 입구는 둘뿐이다 — 스타터의 `query_request_id`
     와 드레인 포트 `dequeue_user_message`. 둘 다 `main.py` 의 웹 워커만
     넘긴다. 상주·일회성·스킬 루프의 포트 빌더는 전부 `dequeue_user_message=
     None` 이고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
@@ -1148,7 +1152,7 @@ class TestAgentLoopsAreUntouched:
             ports=self._resident(),
         )
         loop._setup()
-        assert loop._state.run_requests == [], "에이전트 루프에 회계가 생겼다"
+        assert loop._state.ledger.requests == [], "에이전트 루프에 회계가 생겼다"
         blob = loop._llm._build_session_state(30000)
         assert "Open Requests" not in blob, "에이전트 꼬리에 요청 목록이 떴다"
 
@@ -1178,15 +1182,15 @@ class TestAgentLoopsAreUntouched:
 
 
 class TestOpenRequestsArePinnedInContext:
-    """루프는 `run_requests` 의 id 를 ctx 에 라이브 콜백으로 등록한다(v10.41.0) —
+    """루프는 장부의 요청 id 를 ctx 에 라이브 콜백으로 등록한다(v10.41.0) —
     압축·FIFO 가 미답 요청의 user 레코드를 원문으로 남기는 근거."""
 
-    def test_callback_reads_run_requests_live(self):
+    def test_callback_reads_ledger_requests_live(self):
         loop = _with_ctx(
             [{"id": "r1", "text": "first"}, {"id": "r2", "text": "second"}]
         )
         assert loop.ctx._open_requests() == ["r1", "r2"]
-        loop._state.run_requests.pop(0)  # 정산으로 빠지면 바로 반영
+        loop._state.ledger.requests.pop(0)  # 정산으로 빠지면 바로 반영
         assert loop.ctx._open_requests() == ["r2"]
         # 그 id 를 단 user 레코드가 핀 대상이다
         pinned = [loop.ctx._cache[i]["request_id"] for i in loop.ctx._pinned_indices()]

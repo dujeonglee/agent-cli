@@ -337,7 +337,7 @@ class WebRenderer(Renderer):
         # 재생용 id → 요청 맵 (v9.19.0). `_add_user_message` 가 user 레코드에
         # 찍어 둔 `request_id` 로 채우고, 터미널 레코드의 `answers` id 를
         # 여기서 풀어 final 카드에 실어 준다 — `_replay_authors` 와 같은 모양
-        # (레코드를 훑으며 모으고 final 에서 소비). 라이브는 `run_requests`
+        # (레코드를 훑으며 모으고 final 에서 소비). 라이브는 장부(`state.ledger`)
         # 에서 바로 풀므로 이 맵을 쓰지 않는다.
         self._replay_requests: dict[str, dict] = {}
 

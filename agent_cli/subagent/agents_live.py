@@ -105,9 +105,6 @@ _NOTICE_TAIL = (
 # 단 ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은
 # ``user:{nickname}`` 이고 뷰어가 여럿이면 닉이 다르다.
 
-# 빚을 진 채 complete 을 시도할 수 있는 횟수 — 초과하면 "(답변 없음)" 으로
-# 닫고 런을 정상 종료시킨다. 사람 주소 질문에는 적용하지 않는다(§3.5).
-
 #: 빚진 `message` 없이 런이 끝났을 때 요청자에게 가는 폴백 요약의 머리말
 #: (v9.21.0). 라벨이 있어야 받는 쪽이 "명시 회신" 과 구분한다.
 _NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
@@ -3007,7 +3004,7 @@ class AgentRegistry:
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.
 
         ``user_requests`` (v9.22.0): 사람이 창에서 직접 시킨 요청들
-        ``{id, author, text}`` — 루프의 회계(`run_requests`)에 오른다.
+        ``{id, author, text}`` — 루프의 장부(`LoopState.ledger`)에 오른다.
         main 과 같은 규칙: `complete` 에 `answers` 가 있어야 하고, 남은 요청은
         독촉된다. 에이전트·main 발신 항목엔 없다(그건 message/ask 빚이다)."""
         runner = self._runner

@@ -22,6 +22,7 @@ from agent_cli.jobs import (
     get_job_registry,
     set_job_registry,
 )
+from agent_cli.loop.ledger import Ledger
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -196,7 +197,7 @@ class TestTail:
                 owner="agent:k",
             ),
             ctx=None,
-            state=SimpleNamespace(turn=1, run_requests=None),
+            state=SimpleNamespace(turn=1, ledger=Ledger()),
             _compaction_armed=set(),
         )
         llm_mod.LLMCaller._build_session_state(self_, 1000)
