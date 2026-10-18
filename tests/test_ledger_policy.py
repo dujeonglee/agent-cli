@@ -240,3 +240,18 @@ class TestLedgerUnit:
         assert [led.spend() for _ in range(NAG_BUDGET + 1)] == [True] * NAG_BUDGET + [
             False
         ]
+
+
+def test_multi_line_bodies_are_folded_to_one_item_line():
+    """여러 줄 본문도 항목은 한 줄 — 닫는 도구가 그 줄 끝에 붙는다."""
+    led = Ledger()
+    led.bind_questions(
+        _Port([{**_REPLY, "text": "AUDIT findings\n[1] unmet\n  — 다시"}])
+    )
+    led.add_request("u-1", "dj", "첫 줄\n둘째 줄")
+    block = led.block()
+    assert (
+        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → reply(id="r-4"'
+        in block
+    )
+    assert '[u-1] (dj) "첫 줄 둘째 줄"' in block
