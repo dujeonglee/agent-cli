@@ -43,6 +43,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
+from agent_cli import item_ids
 from agent_cli.constants import has_words
 from agent_cli.context.session import AGENTS_DIR
 from agent_cli.tools.result import ToolResult
@@ -215,7 +216,7 @@ class ReplyDebt:
 
 
 def _new_question_id() -> str:
-    return f"q-{uuid.uuid4().hex[:6]}"
+    return item_ids.make(item_ids.QUESTION, uuid.uuid4().hex[:6])
 
 
 # agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
@@ -311,7 +312,7 @@ def mail_queue_item(reply: dict) -> dict:
     if head == tool and len(lines) > 1:
         head = lines[1]  # 하니스 작업: 머리줄이 `── auditor ──` 뿐이다
     return {
-        "id": f"mail-{reply.get('mail_id', 0)}",
+        "id": item_ids.make(item_ids.MAIL, reply.get("mail_id", 0)),
         "conn_id": "",
         "nickname": tool,
         "text": head,
@@ -1261,7 +1262,7 @@ class AgentRegistry:
         with self._cv:
             if not id:
                 self._debt_seq += 1
-                id = f"m{self._debt_seq}"
+                id = item_ids.make(item_ids.REPLY, self._debt_seq)
             d = ReplyDebt(
                 to=to, text=text, answers=list(answers or []), hop=hop, id=str(id)
             )
@@ -1783,26 +1784,28 @@ class AgentRegistry:
                 self.mark_question_delivered(item["question_id"], tm.current_seq)
             if _is_human_addr(author):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
-                self.note_owes(me, author, text, id=seq)
+                uid = item_ids.make(item_ids.USER, seq)
+                self.note_owes(me, author, text, id=uid)
                 out.append(
-                    {"user_request": {"id": seq, "author": author, "text": text}}
+                    {"user_request": {"id": uid, "author": author, "text": text}}
                 )
                 continue
             if item.get("expects_reply", True):
+                rid = item_ids.make(item_ids.REPLY, seq)
                 self.note_owes(
                     me,
                     author,
                     text,
                     answers=item.get("answers") or [],
                     hop=item.get("hop", 0),
-                    id=seq,
+                    id=rid,
                 )
                 content = (
-                    f"── request [{seq}] from {author} (arrived while you were "
+                    f"── request [{rid}] from {author} (arrived while you were "
                     f"working) ──\n{text}\n"
-                    f"(You now owe {author} a reply for [{seq}] as well — "
-                    f'reply(id="{seq}", text="...") when you have it. Your current '
-                    "task stays open; see ## Owed Replies.)"
+                    f"(You now owe {author} a reply for [{rid}] as well — "
+                    f'reply(id="{rid}", text="...") when you have it. Your current '
+                    "task stays open; see ## Open Items.)"
                 )
                 out.append(
                     {
@@ -2811,7 +2814,7 @@ class AgentRegistry:
                 text,
                 answers=item.get("answers") or [],
                 hop=item.get("hop", 0),
-                id=str(seq),
+                id=item_ids.make(item_ids.REPLY, seq),
             )
         # 이 항목이 질문이면 **꺼낸 지금** 배달로 친다 — 그 전까지는 큐에서
         # 줄만 서 있었고, 강제·sweep 이 걸리면 상대가 읽지도 않은 질문을
@@ -2837,7 +2840,13 @@ class AgentRegistry:
                 tm,
                 query,
                 user_requests=(
-                    [{"id": str(seq), "author": author, "text": text}]
+                    [
+                        {
+                            "id": item_ids.make(item_ids.USER, seq),
+                            "author": author,
+                            "text": text,
+                        }
+                    ]
                     if human_item
                     else []
                 ),
@@ -2934,7 +2943,12 @@ class AgentRegistry:
         me = f"agent:{tm.key}"
         self.begin_run(me)
         for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
-            self.note_owes(me, it.get("author", ""), it["text"], id=str(it["seq"]))
+            self.note_owes(
+                me,
+                it.get("author", ""),
+                it["text"],
+                id=item_ids.make(item_ids.USER, it["seq"]),
+            )
         self._notify_roster()
 
         labeled = [f"[{it.get('author', 'main')}]: {it['text']}" for it in items]
@@ -2943,7 +2957,11 @@ class AgentRegistry:
         # (main 의 QUEUED_REQUEST_NOTICE 를 걷어낸 것과 같은 이유).
         query = "\n\n".join(labeled)
         user_requests = [
-            {"id": str(it["seq"]), "author": it.get("author", ""), "text": it["text"]}
+            {
+                "id": item_ids.make(item_ids.USER, it["seq"]),
+                "author": it.get("author", ""),
+                "text": it["text"],
+            }
             for it in items
         ]
         preview = "\n".join(labeled)

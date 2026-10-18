@@ -18,6 +18,8 @@ import threading
 from collections import deque
 from collections.abc import Callable
 
+from agent_cli import item_ids
+
 
 class InputQueue:
     """FIFO 입력 큐 + blocking 소비 + shutdown sentinel.
@@ -55,7 +57,9 @@ class InputQueue:
         with self._cv:
             self._seq += 1
             item = {
-                "id": str(self._seq),
+                # 장부 id 형식 그대로 (v10.56.0, `item_ids`) — 이 id 가 꼬리·
+                # `answers`·기록의 `request_id`·웹 취소까지 같은 문자열이다.
+                "id": item_ids.make(item_ids.USER, self._seq),
                 "conn_id": conn_id or "",
                 "nickname": nickname,
                 "text": text,

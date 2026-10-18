@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 
+from agent_cli import item_ids
 from agent_cli import verbose as _verbose
 from agent_cli.constants import (
     CONTEXT_CLAMP_NOTICE,
@@ -71,7 +72,7 @@ def mail_item(reply: dict) -> tuple[str, str] | None:
         return None
     # 작성자 칸은 "mail" 하나 — 무엇에서 왔는지는 머리줄이 말한다
     # (`🧵 job #1 finished …`, `agent agt-x reply (success)`).
-    return f"n{reply.get('mail_id', 0)}", "mail"
+    return item_ids.make(item_ids.MAIL, reply.get("mail_id", 0)), "mail"
 
 
 class AgentLoop:
