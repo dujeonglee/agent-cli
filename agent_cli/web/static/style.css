@@ -691,11 +691,15 @@ body.multi-viewer .card-user .who {
   .card-assistant .final { padding-left: 0; }
 }
 
-.card-observation .obs-body {
+/* 관찰 본문 — 어느 카드 안에 있든 (v10.57.1). 종전엔 `.card-observation` 안에서만
+   적용돼, 스텝 카드에 흡수된 결과 행(⚡ 묶음의 ✓ 행)은 브라우저 기본 <pre> 였다:
+   줄바꿈·높이 상한·안쪽 스크롤이 없어 371자 XML 한 줄(lore Atom)이 대화 영역
+   전체를 3,012px 로 밀고, 112K 자 결과가 2,340줄 전부 펼쳐졌다. */
+.obs-body {
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
-  word-wrap: break-word;
+  overflow-wrap: anywhere;
   max-height: 240px;
   overflow-y: auto;
   margin: 0;
@@ -704,7 +708,7 @@ body.multi-viewer .card-user .who {
 /* delegate result body is markdown-rendered (escapeAndFormat), not raw
    monospace — reset to the normal prose font so headings/lists/paragraphs
    read like an assistant message. Keeps the scroll cap for long results. */
-.card-observation .obs-body.obs-md {
+.obs-body.obs-md {
   font-family: inherit;
   font-size: inherit;
   white-space: normal;
@@ -1134,7 +1138,7 @@ footer {
    ``max-height + overflow-y: auto`` produced a nested scroll that
    trapped the wheel and made the main thread feel stuck. Let the
    observation flow naturally and rely on the page scroll. */
-.card-task-group .card-observation .obs-body {
+.card-task-group .obs-body {
   max-height: none;
   overflow-y: visible;
 }
