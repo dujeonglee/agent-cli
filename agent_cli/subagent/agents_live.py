@@ -471,9 +471,9 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             # v9.22.0: `message` — 회신을 빚진다. 안 갚고 complete 하면 독촉.
             content = (
                 f"── agent {label} message ──\n{msg}\n"
-                f"(This agent expects a reply from you. Send it with "
-                f'{{"mode":"request","key":"{key}","task":"..."}} before you '
-                f"complete — completing without one gets you reminded.)"
+                f"(This agent expects a reply from you — "
+                f'reply(id="{reply.get("debt_id", "")}", text="...") before you '
+                f"complete; completing without one gets you reminded.)"
             )
         else:
             # `reply` — 답이다. 되받아칠 것 없음.
@@ -721,6 +721,40 @@ class QuestionPort:
             out.append({"kind": "reply", "to": d.to, "id": d.id, "text": d.text})
         return out
 
+    def _main_reply(self, text: str, *, id: str, to: str) -> str:
+        """main 이 에이전트에게 빚진 회신을 갚는다 (v10.56.0, 장부 P3 §11.3).
+
+        종전엔 main 의 `agent(mode="request")` 가 그 에이전트 앞 **가장 오래된**
+        빚을 갚은 것으로 쳤다 — id 가 없어 어떤 빚이 닫혔는지 추적되지 않았고,
+        "일을 시킨다" 와 "답한다" 가 한 도구에 섞였다. 이제 갚는 도구는 루프와
+        무관하게 `reply(id)` 하나다. 배달은 그 에이전트의 inbox 로, 되받을 것
+        없이(`expects_reply=False` — 핑퐁 방지)."""
+        owed = self._reg.reply_debts(self.me)
+        if not owed:
+            return (
+                "nothing to reply to — no agent is waiting on a reply from you. "
+                'To give an agent new work, use agent(mode="request", ...).'
+            )
+        listing = "; ".join(f'[{d.id}] {d.to}: "{d.text[:60]}"' for d in owed)
+        id = str(id or "").strip()
+        if not id:
+            return (
+                "reply needs `id` — which message is this the reply to? You owe: "
+                f'{listing}. Send reply(id="…", text="…").'
+            )
+        d = next((x for x in owed if x.id == id), None)
+        if d is None:
+            return f"no unpaid reply with id '{id}' — you owe: {listing}."
+        to = (to or "").strip()
+        if to:
+            resolved = self._reg.resolve_key(to)
+            if f"agent:{resolved or to.split(':', 1)[-1]}" != d.to:
+                return f"[{id}] is owed to {d.to}, not {to} — drop `to` or fix it."
+        self._reg.settle_id(self.me, id)
+        return self._reg.request(
+            d.to.split(":", 1)[1], text, author="main", expects_reply=False
+        )
+
     def reply(self, text: str, *, id: str = "", to: str = "") -> str:
         """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열.
 
@@ -740,7 +774,7 @@ class QuestionPort:
         if not has_words(text):
             return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
         if self.key is None:
-            return "main has no requester to reply to"
+            return self._main_reply(text, id=id, to=to)
         tm = self._reg.get(self.key)
         if tm is None:
             return "unknown agent"
@@ -1648,10 +1682,6 @@ class AgentRegistry:
         # P0-9a: seq 발급 원자화 — main/peer/웹 스레드가 동시에 request() 하면
         # 같은 seq 가 나와 replies/reply-<seq>.md 상호 덮어쓰기 + UI dedup 키
         # 충돌(요청 화살표 드롭)이 가능했다. _cv(RLock 기반) 아래서 증가+캡처.
-        if author == "main":
-            # main 이 이 에이전트에게 보내는 건 그 에이전트의 message 에 대한
-            # 회신이기도 하다 (v9.22.0) — 빚을 갚는다.
-            self.settle("main", f"agent:{key}")
         with self._cv:
             tm.queued += 1
             seq = tm.queued
@@ -2839,6 +2869,12 @@ class AgentRegistry:
             loop_result, duration = self._run_message(
                 tm,
                 query,
+                # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
+                query_request_id=item_ids.make(
+                    item_ids.USER if human_item else item_ids.REPLY, seq
+                )
+                if human_item or item.get("expects_reply", True)
+                else "",
                 user_requests=(
                     [
                         {
@@ -2977,7 +3013,11 @@ class AgentRegistry:
         success, output, duration = False, "", 0.0
         try:
             loop_result, duration = self._run_message(
-                tm, query, user_requests=user_requests
+                tm,
+                query,
+                user_requests=user_requests,
+                # 한 레코드에 여럿이 합쳐진다 — 첫 요청 id 로 찍는다(핀)
+                query_request_id=user_requests[0]["id"] if user_requests else "",
             )
             success = bool(loop_result.success)
             output = (
@@ -3018,7 +3058,9 @@ class AgentRegistry:
         # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
         self._close_run(tm, len(items))
 
-    def _run_message(self, tm: AgentInstance, query: str, *, user_requests=None):
+    def _run_message(
+        self, tm: AgentInstance, query: str, *, user_requests=None, query_request_id=""
+    ):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.
 
         ``user_requests`` (v9.22.0): 사람이 창에서 직접 시킨 요청들
@@ -3066,6 +3108,7 @@ class AgentRegistry:
             ),
             peer_agents_section=peer_section,
             user_requests=list(user_requests or []),
+            query_request_id=query_request_id,
             # 세션 바인딩을 참조한다 — 모델 노브가 바뀌면 팀원의 다음 호출도 따라간다.
             # 프로파일이 모델을 고정한 팀원은 그 모델의 바인딩 복사본.
             binding=(

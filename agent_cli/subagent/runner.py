@@ -179,6 +179,7 @@ def run_subagent_message(
     agent_role: str = "",
     hooks_config: dict | None = None,
     user_requests: list | None = None,
+    query_request_id: str = "",
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
 ) -> tuple[LoopResult, float]:
@@ -213,6 +214,9 @@ def run_subagent_message(
         # 있는가. 에이전트·main 항목(message/ask/회신)으로 시작한 런은 사용자
         # 런이 아니다 — 빚이 남은 `complete` 은 거기서 거부된다(v9.22.1).
         query_author_is_user=bool(user_requests),
+        # 시작 항목의 장부 id (v10.56.0) — 그 레코드에 찍혀 열려 있는 동안 핀된다
+        # (사람 요청 `u-…`, 동료 요청의 회신 빚 `r-…`).
+        query_request_id=query_request_id,
         compaction_enabled=compaction_enabled,
         ports=ports,
         peer_agents_section=peer_agents_section,

@@ -163,8 +163,7 @@ def build_session_state(
     max_turns: int = 0,
     agents: str = "",
     memory: str = "",
-    requests: str = "",
-    debts: str = "",
+    items: str = "",
     jobs: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
@@ -188,17 +187,14 @@ def build_session_state(
     the 35B-class model ignored these principles there but follows them at the
     tail; static text, so the only cost is re-prefilling ~0.4K tokens that the
     un-cacheable tail region would re-process anyway).
-    ``requests`` (v9.16.0) is the outstanding-user-request list, rendered when
-    a drain merged two or more requests into this run. It rides here rather
-    than as a one-shot injection at drain time: a message injected once gets
-    pushed far back as the turn grows, and the model reads it nowhere near the
-    moment it calls ``complete`` (live session cgyx7z — it saw the list and
-    omitted ``answers`` anyway). The tail is re-read every turn and is not
-    persisted to history.
-
-    ``debts`` (v9.24.5) is the run's unpaid message/ask debts
-    (``constants.owed_replies_block``) — right after ``requests``: both are
-    "who this run still has to answer".
+    ``items`` (v10.56.0, ledger P3) is the run's ``## Open Items`` block
+    (``Ledger.block``) — every open item in the order they close: by action
+    (owed replies, questions) first, then ``complete``'s ``answers`` (user
+    requests, mail). It replaced ``## Open Requests`` (v9.16.0) and
+    ``## Owed Replies`` (v9.24.5). It rides here rather than as a one-shot
+    injection: a message injected once gets pushed far back as the turn grows,
+    and the model reads it nowhere near the moment it calls ``complete`` (live
+    session cgyx7z). The tail is re-read every turn and is not persisted.
 
     ``agents`` / ``memory`` are the already-rendered sections
     (``build_live_agents_section(include_state=True)`` / ``memory.render_index``)
@@ -206,15 +202,13 @@ def build_session_state(
     model keeps seeing the SAME headings it saw when these lived in the system
     prompt (nothing to re-learn from the move).
     """
-    # ``requests`` 를 먼저 — 미답 요청은 "지금 무엇을 결정해야 하나" 에
-    # 가장 가깝다. 꼬리 안에서도 앞이 눈에 띈다.
+    # ``items`` 를 먼저 — 열린 항목은 "지금 무엇을 닫아야 하나" 에 가장 가깝다.
     # ``jobs`` (v10.47.0): 이 루프가 띄운 백그라운드 작업(PID·로그) — 끝나면
     # 통지가 오므로 돌고 있는 것만 보인다 (docs/jobs/DESIGN.md).
     blocks = [
         b
         for b in (
-            requests.strip(),
-            debts.strip(),
+            items.strip(),
             jobs.strip(),
             agents.strip(),
             memory.strip(),

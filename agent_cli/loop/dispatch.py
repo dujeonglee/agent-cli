@@ -7,24 +7,23 @@ import os
 import re
 import time
 
-from agent_cli.loop.skill_invoke import _handle_run_skill
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
-from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
-
 #: message/ask 빚을 남긴 채 `complete` 하려는 주체를 독촉하는 상한 (v9.21.0;
 #: v9.22.0 부터 main·상주 공통, 질문(answer)·회신(reply) 공통).
 #: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
 #: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
 #: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
 #: 오케스트레이터만 1회를 넘겼다.
-MAX_DEBT_NAGS = 3
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
+
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
+from agent_cli.loop.ledger import wrong_closer_hint
+from agent_cli.loop.skill_invoke import _handle_run_skill
+from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
@@ -888,58 +887,29 @@ class TurnDispatcher:
             if unwrapped != raw:
                 answer = unwrapped or answer
 
-        bounced = self._require_answers(llm_text, turn, op, answer, outcome)
-        if bounced is not None:
-            return bounced
-
-        claimed = _claimed_ids(op.action_input)
-        # **지우기 전에** 뽑는다 — 정산이 주장분을 장부에서 지우므로, 그 뒤엔
-        # "이 답이 무엇에 대한 답인지" 를 알 수 없다.
+        # ── 장부 정산 (v10.56.0, docs/ledger/DESIGN.md P3) ──
+        # 정책 하나: 결과는 **언제나** 먼저 배달하고, 열린 항목이 남으면 런 공유
+        # 예산 안에서 되돌린다(계속형 붙잡기). 종전엔 되묻기(결과 미배달, 런당 1)·
+        # 요청 독촉(요청당 1)·빚 독촉(런 3, 비사용자 런은 결과 미배달 거부)이 셋으로
+        # 갈렸다.
         ledger = self.state.ledger
+        claimed = _claimed_ids(op.action_input)
+        # **지우기 전에** 뽑는다 — 정산이 주장분을 지우므로 그 뒤엔 이 답이 무엇에
+        # 대한 답인지 알 수 없다.
         answered = ledger.claimed_requests(claimed)
         still_open = ledger.settle(claimed)
-        nagging = self._should_nag(claimed, still_open)
-        if not nagging:
-            answer = self._with_unanswered_notice(claimed, still_open, answer)
-
-        # ── message/ask 빚 (v9.22.0, 유형별 통일) ──
-        # 사용자 요청은 위에서 정산했다(수락·키 제거·남은 요청 독촉). 그 뒤에
-        # message/ask 빚이 남아 있으면 — 갈림은 **이 런이 사용자 요청을
-        # 받았는가**(`state.user_run`)이지 main/상주가 아니다(v9.22.1):
-        #   사용자 요청 없는 런(에이전트 항목·🤝 웨이크): complete 을 **거부**
-        #         — 산출물이 아무 데도 안 가므로. 원문을 인용한 관찰만 남고
-        #         emission 은 저장하지 않는다.
-        #   사용자 요청 있는 런: complete 을 **수락**(결과는 사용자에게 간다)
-        #         — 배달·기록한 뒤 빚을 독촉하고 루프를 잇는다.
-        # 둘 다 3회까지; 그 뒤엔 런 끝에서 폴백(요약 배달)·닫기(질문).
-        debts = [] if nagging else ledger.debts()
-        if debts and ledger.debt_nags < MAX_DEBT_NAGS:
-            ledger.debt_nags += 1
-            if not self.state.user_run:
-                return self._refuse_for_debts(llm_text, turn, answer, debts, outcome)
-            render_step(
-                "final",
-                answer,
-                self.state.turn,
-                requests=answered,
-                hidx=self._next_hidx(),
-            )
-            return self._nag_debts(llm_text, turn, debts, outcome)
-
-        # 결과는 **먼저** 나간다 — 독촉하든 안 하든 (`_nag_open_requests` 참조).
+        debts = ledger.debts()
         render_step(
             "final", answer, self.state.turn, requests=answered, hidx=self._next_hidx()
         )
-        if nagging:
-            # 기록은 여기서 하지 않는다 — `_intervene` 의 `_append_observation`
-            # 이 이 턴의 assistant 레코드(원문 직렬화, `answers` 포함)를 관찰과
-            # 함께 저장한다. 둘 다 넣으면 history 에 같은 final 이 두 번 들어가고
-            # 웹 타임라인에도 같은 카드가 두 장 뜬다(라이브 실측).
-            # 저장되는 emission 이 종결 레코드의 모양(answers·남은 요청)을 갖게 —
-            # 이 턴의 레코드를 종결 레코드로 바꾼다.
+        if (still_open or debts) and ledger.spend():
+            # 기록은 `_intervene` 이 한다 — 이 턴의 assistant 레코드(종결 모양)를
+            # 관찰과 함께 저장한다. 따로 넣으면 같은 final 이 두 번 들어간다.
             turn.record = self._terminal_record(turn, answer, claimed, still_open)
-            return self._nag_open_requests(llm_text, turn, still_open, outcome)
-
+            return self._nag_open_items(
+                llm_text, turn, claimed, still_open, debts, outcome
+            )
+        answer = self._with_unanswered_notice(claimed, still_open, debts, answer)
         if self.ctx:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
         return ToolResult(True, output=answer)
@@ -956,201 +926,63 @@ class TurnDispatcher:
             else [str(r.get("id")) for r in still_open],
         )
 
-    def _require_answers(self, llm_text: str, turn, op, answer: str, outcome: dict):
-        """요청이 합쳐진 런에서 `answers` 없이 완료하려 하면 **한 번 되돌린다**.
+    def _nag_open_items(self, llm_text: str, turn, claimed, requests, debts, outcome):
+        """결과는 이미 나갔다 — 남은 항목을 닫는 순서대로 보여 주고 런을 잇는다.
 
-        꼬리(per-turn tail)가 매 턴 요구하는데도 모델이 생략한다 — 라이브
-        실측(xrnway)에서 모델은 꼬리를 읽고 id 까지 알면서("실제 미완 요청은
-        [2],[3]뿐") 필드를 안 채웠다. 안내만으로는 안 되므로 형식 교정으로
-        되돌린다(`format_no_action_retry` 와 같은 자리).
-
-        **`complete` 을 붙잡는 것과 다르다.** 붙잡기란 "다른 요청이 풀릴
-        때까지 결과를 못 내보내는 것" 이고 그건 안 한다(agent-ask 3판에서
-        틀렸던 자리). 이건 같은 턴의 산출물을 **형식만 고쳐 다시 내라**는
-        것이라 기다리는 상대가 없다.
-
-        되묻기는 **런당 한 번**. 끝내 생략하면 받아주고 "미신고" 로 적는다 —
-        무한 되묻기는 런을 태운다.
-        """
+        **붙잡기가 아니다.** 결과를 인질로 잡지 않는다(agent-ask 3판에서 틀린 자리)
+        — 답은 이미 렌더되고 기록에 들어갔다. 아직 닫히지 않은 항목이 있어 런을
+        닫지 않을 뿐이다. 남은 예산을 적는다: 다 쓰면 하니스가 닫는다."""
         ledger = self.state.ledger
-        pending = ledger.requests
-        if not pending:
-            return None
-        if ledger.answers_prompted:
-            return None
-        # 빈 목록도 되돌린다 — `answers: []` 는 합쳐진 런에서 "빈칸" 이다
-        # (아무것도 안 답하고 complete 할 이유가 없다; 테스트
-        # `test_empty_answers_list_is_bounced`). 정산(`Ledger.settle`)에서는 빈
-        # 집합이 "아무것도 안 닫음" 으로 생략(None, 모름)과 갈린다.
-        if _claimed_ids(op.action_input):
-            return None
-        ledger.answers_prompted = True
-        ids = ", ".join(f'"{r.get("id")}"' for r in pending)
-        # 원문을 **인용**한다 — emission 은 저장하지 않으므로(v9.21.1) 모델이
-        # 재발행할 결과가 이 관찰 안에 있어야 한다. 성공하면 형식 개입 fold 가
-        # 이 관찰을 컨텍스트에서 접는다(재시도는 기록하지 않는다).
-        return self._intervene(
-            llm_text,
-            (
-                f"Observation: your `complete` was refused — {len(pending)} "
-                f"request{'s are' if len(pending) != 1 else ' is'} open in this run "
-                "and `answers` is required, so the harness cannot tell which ones "
-                "your result covers.\n"
-                f"{self._request_lines(pending)}\n"
-                f"You completed with:\n«{answer}»\n"
-                f"Re-emit `complete` with that result plus `answers: [{ids}]`, "
-                "dropping any id you did not actually answer."
-            ),
-            "answers required",
-            outcome,
-            record=turn.record,
-            recovery_kind="format",
-            store_emission=False,
-        )
-
-    def _should_nag(self, claimed, still_open) -> bool:
-        """미답이 남았는데 런을 끝내려 하는가.
-
-        한 요청당 **한 번**만 독촉한다. 무한 독촉은 고집 센 모델과 물려 런을
-        태우고, `max_turns` 가 잡기 전에 토큰을 먼저 태운다. 생략
-        (``claimed is None``)에는 걸지 않는다 — 무엇이 남았는지 모르는
-        상태에서 "남은 걸 해라"는 말은 근거가 없다.
-        """
-        if claimed is None or not still_open:
-            return False
-        nagged = self.state.ledger.requests_nagged
-        return any(str(r.get("id")) not in nagged for r in still_open)
-
-    def _nag_open_requests(self, llm_text: str, turn, still_open, outcome: dict):
-        """최종답은 내보내고 **루프는 계속** 돌린다.
-
-        `complete` 을 **붙잡는 것과 다르다**. 붙잡기란 다른 요청이 풀릴 때까지
-        결과를 못 내보내는 것이고, 그건 일을 시킨 쪽을 자기와 무관한 요청의
-        인질로 만든다(설계 3판에서 한 번 틀렸던 자리). 여기서는 답이 **이미
-        렌더되고 history 에 들어간 뒤**라 기다리는 사람이 없다 — 다만 아직
-        아무도 답하지 않은 요청이 남아 있으니 런을 닫지 않을 뿐이다.
-
-        종전엔 각주 한 줄(⏳)을 붙이고 끝냈다. 그 요청은 다음 런으로도 안
-        넘어간다(장부는 런 수명) — 다음 런이 온다는 보장도 없어,
-        세션이 그대로 유휴로 들어가면 아무 데도 안 남았다.
-        """
-        self.state.ledger.requests_nagged.update(str(r.get("id")) for r in still_open)
-        ids = ", ".join(f'"{r.get("id")}"' for r in still_open)
-        return self._intervene(
-            llm_text,
-            (
-                f"Observation: your result was delivered, but {len(still_open)} "
-                "request(s) in this run are still unanswered — you did not "
-                "list them in `answers`.\n"
-                f"{self._request_lines(still_open)}\n"
-                "Keep working and address them now. When you are done, call "
-                f"`complete` again with `answers: [{ids}]` covering what you "
-                "answered this time."
-            ),
-            "open requests remain",
-            outcome,
-            record=turn.record,
-            tool_name="complete",
-        )
-
-    def _debt_tail(self) -> str:
-        left = MAX_DEBT_NAGS - self.state.ledger.debt_nags
-        if left > 0:
-            return (
-                f"({left} more reminder{'s' if left != 1 else ''} before the harness "
-                "settles these for you: unreplied messages get your run summary, "
-                "unanswered questions are closed.)"
+        n = len(requests) + len(debts)
+        if claimed is None and requests:
+            why = (
+                "your `complete` did not say which items it closes (`answers` is "
+                "missing), so nothing was closed"
             )
-        return (
-            "(Last reminder — if you complete again without settling these, the "
-            "harness sends your run summary for unreplied messages and closes "
-            "unanswered questions.)"
+        else:
+            why = f"{n} item{'s are' if n != 1 else ' is'} still open"
+        left = ledger.budget
+        budget = (
+            f"({left} more reminder{'s' if left != 1 else ''} before the harness "
+            "closes the rest: unanswered requests are reported to the user, unpaid "
+            "replies get your run summary, unanswered questions are closed.)"
+            if left > 0
+            else "(Last reminder — after this the harness closes the rest.)"
         )
-
-    def _refuse_for_debts(
-        self, llm_text: str, turn, answer: str, debts: list[dict], outcome: dict
-    ):
-        """사용자 요청 없는 런: 빚을 남긴 `complete` 을 거부한다 — 원문을
-        인용한 관찰 하나, emission 은 저장하지 않는다(v9.21.1 원칙)."""
         return self._intervene(
             llm_text,
             (
-                "Observation: your `complete` was refused — it reports to no one, "
-                "and you still owe:\n"
-                f"{self.state.ledger.debt_lines(debts)}\n"
-                f"You completed with:\n«{answer}»\n"
-                "If that text was your reply, send it with the tool shown; then "
-                "`complete` if nothing else remains. " + self._debt_tail()
+                f"Observation: your result was delivered, but {why}:\n"
+                f"{ledger.items_lines(requests, debts)}\n"
+                "Close them in that order — by action first, then `complete` again "
+                "with `answers` for the items it covers. " + budget
             ),
-            "debts owed",
-            outcome,
-            record=turn.record,
-            tool_name="complete",
-            render=True,
-            store_emission=False,
-        )
-
-    def _nag_debts(self, llm_text: str, turn, debts: list[dict], outcome: dict):
-        """사용자 요청 있는 런: `complete` 은 수락됐다(결과는 사용자에게
-        갔다) — 남은 빚만 독촉하고 루프를 잇는다."""
-        return self._intervene(
-            llm_text,
-            (
-                "Observation: your result was delivered, but you still owe:\n"
-                f"{self.state.ledger.debt_lines(debts)}\n"
-                "Settle them now, then `complete` again. " + self._debt_tail()
-            ),
-            "debts owed",
+            "open items remain",
             outcome,
             record=turn.record,
             tool_name="complete",
         )
 
-    def _with_unanswered_notice(self, claimed, still_open, answer: str) -> str:
-        """아무도 답을 주장하지 않은 요청을 최종답 말미에 덧붙인다.
+    def _with_unanswered_notice(self, claimed, requests, debts, answer: str) -> str:
+        """예산이 끝난 자리의 **최후 통지** — 닫히지 않은 요청을 최종 답 말미에.
 
-        독촉이 끝난 자리의 **최후 통지**다 — 요청마다 한 번씩 독촉하고도
-        남았거나(고집), 생략이라 독촉할 근거가 없는 경우.
-
-        회계일 뿐 강제가 아니다. `complete` 을 붙잡지 않는다 — 결과는 그대로
-        나가고, 빠진 것이 보이게만 한다.
-
-        **모델의 주장이 정직한지는 검증할 수 없다.** 답했다고 주장하면 믿는다
-        — `ask` 도 같고, 거기서도 asker 가 읽고 판단한다. 검출되는 것은
-        "아무도 주장하지 않은 요청" 뿐이고, 그것만으로 충분히 값이 있다.
-        """
-        if not still_open:
+        회계일 뿐 강제가 아니다. 모델의 주장이 정직한지는 검증할 수 없다 — 검출되는
+        것은 "아무도 닫지 않은 항목" 뿐이고 그것만으로 값이 있다. 빚은 런 끝의
+        폴백(회신 빚은 런 요약 배달, 질문은 닫힘)이 처리한다."""
+        if not requests:
             return answer
-
+        ledger = self.state.ledger
         if claimed is None:
-            # **생략은 "전부 답함" 도 "전부 미답" 도 아니다 — 모르는 것이다.**
-            #
-            # 라이브(xrnway)에서 모델은 꼬리가 매 턴 요구하는데도 `answers`
-            # 를 안 실었고, 실제로는 **둘 다 답했다**. 그때 "미답" 이라고
-            # 쓰면 하네스가 거짓을 단언한다 — 종전의 조용한 관용보다 나쁘다.
-            # 아는 것만 적는다: "어느 것에 답했는지 밝히지 않았다".
-            #
+            # 생략은 "전부 답함" 도 "전부 미답" 도 아니다 — 모르는 것이다(xrnway:
+            # 실제로는 둘 다 답했는데 `answers` 를 안 실었다). 아는 것만 적는다.
             return (
-                f"{answer}\n\n📋 This run merged {len(still_open)} requests, but "
-                "`complete` came without `answers` so which ones were addressed "
-                f"is undeclared. Check each:\n{self._request_lines(still_open)}"
+                f"{answer}\n\n📋 `complete` came without `answers`, so which of "
+                f"these {len(requests)} open item(s) it covers is undeclared. Check "
+                f"each:\n{ledger.lines_for_notice(requests)}"
             )
-
-        # 여기서부터는 모델이 **직접 밝힌** 것이다. 그러니 건수와 무관하게
-        # 그대로 전한다 — 단건 런에서 `answers: []` 를 보냈다면 "이 요청은
-        # 답하지 않았다" 는 모델 자신의 진술이고, 삼키면 안 된다.
         return (
-            f"{answer}\n\n⏳ {len(still_open)} request(s) in this run were not "
-            f"answered:\n{self._request_lines(still_open)}"
-        )
-
-    @staticmethod
-    def _request_lines(requests) -> str:
-        return "\n".join(
-            f"   [{r.get('id')}]"
-            + (f" ({r['author']})" if r.get("author") else "")
-            + f' "{(r.get("text") or "").strip()[:120]}"'
-            for r in requests
+            f"{answer}\n\n⏳ {len(requests)} open item(s) in this run were not "
+            f"closed:\n{ledger.lines_for_notice(requests)}"
         )
 
     def _op_ask(self, llm_text: str, turn, op, accumulate):
@@ -1270,7 +1102,7 @@ class TurnDispatcher:
         ``_op_answer`` 와 동형. 포트가 없거나 상주가 아니면 ``_NOT_HANDLED``.
         """
         port = self.cfg.questions
-        if port is None or not getattr(port, "nonblocking", False):
+        if port is None:
             return _NOT_HANDLED
         args = op.action_input if isinstance(op.action_input, dict) else {}
         text = str(args.get("text", "")).strip()
@@ -1288,8 +1120,10 @@ class TurnDispatcher:
             )
         except Exception as e:
             err = f"reply failed: {type(e).__name__}: {e}"
+        if err:
+            err = wrong_closer_hint(str(args.get("id", "") or ""), "reply") or err
         ok = not err
-        obs = "[reply] " + (err or "delivered to whoever requested this work")
+        obs = "[reply] " + (err or "delivered to whoever was waiting on it")
         return self._emit_obs(turn.record, accumulate, "reply", obs, ok)
 
     def _op_answer(self, llm_text: str, turn, op, accumulate):
@@ -1317,22 +1151,13 @@ class TurnDispatcher:
             err = port.answer(qid, text)
         except Exception as e:
             err = f"answer failed: {type(e).__name__}: {e}"
-        if err and self._is_open_request_id(qid):
-            # v10.30.0: 모델이 사용자 요청 번호를 질문 id 로 썼다 — 포트의
-            # "unknown question" 은 길을 안 알려줘 다음 턴이 메타 문장으로
-            # 끝났다(dj72nx 실측). 어디로 답해야 하는지를 결과 문구로 돌려준다.
-            err = (
-                f"'{qid}' is open request [{qid}], not an agent question — "
-                f"reply to it in `complete`'s `result` and set "
-                f'`answers: ["{qid}"]`'
-            )
+        if err:
+            # v10.30.0 → v10.56.0: 다른 종류의 항목 id 를 질문 id 로 썼다(실측 dj72nx
+            # — 사용자 요청 번호). 접두가 닫는 법을 말하므로 그 길을 돌려준다.
+            err = wrong_closer_hint(qid, "answer") or err
         ok = not err
         obs = f"[answer → {qid or '?'}] " + (err or "delivered to the asker")
         return self._emit_obs(turn.record, accumulate, "answer", obs, ok)
-
-    def _is_open_request_id(self, qid: str) -> bool:
-        """``qid`` 가 이 런의 열린 사용자 요청 번호인가 (`_op_answer` 되묻기용)."""
-        return self.state.ledger.has_request(qid)
 
     def _op_run_skill(self, llm_text: str, turn, op):
         """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는
@@ -1879,9 +1704,9 @@ def _claimed_ids(action_input) -> set[str] | None:
     """`complete` 이 주장한 요청 id 집합. **부재는 `None`** (빈 집합과 다르다).
 
     부재 = "어느 것에 답했는지 안 밝힘"(모름), 빈 집합 = "아무것도 안 답함"
-    (모델 자신의 진술). 정산과 최종 통지는 이 둘을 가른다 — 같게 다루면
-    하네스가 거짓을 단언하거나(실측 xrnway) 진술을 삼킨다. 되묻기
-    (`_require_answers`)는 둘 다 되돌린다: 합쳐진 런에서 빈 목록은 빈칸이다.
+    (모델 자신의 진술). 둘 다 아무것도 닫지 않는다(`Ledger.settle`) — 되돌림
+    문구와 최종 통지가 가른다. 같게 다루면 하네스가 거짓을 단언하거나(실측
+    xrnway) 진술을 삼킨다.
     """
     if not isinstance(action_input, dict):
         return None

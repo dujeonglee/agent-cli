@@ -22,10 +22,10 @@ class CompleteTool(Tool):
     name = "complete"
     terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
     description = (
-        "Call this tool when the task is done. Provide the final result. "
-        "When the tail lists Open Requests, `answers` is REQUIRED: "
-        "list the ids you actually answered. Ids you leave out are reported "
-        "to the user as unanswered."
+        "Call this tool when the task is done — always the LAST call. Provide "
+        "the final result. When `## Open Items` lists items closed by "
+        "`complete`, `answers` is REQUIRED: list the ids your result covers. "
+        "Ids you leave out stay open."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -35,10 +35,8 @@ class CompleteTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Ids of the Open Requests (user messages and mail) this result "
-                    "answers. Required "
-                    "whenever the tail lists Open Requests — omitting "
-                    "it there means you answered none of them."
+                    "Ids from `## Open Items` (`u-…` user requests, `n-…` mail) "
+                    "that this result covers."
                 ),
             },
         },
@@ -205,15 +203,18 @@ class ReplyTool(Tool):
     — "확인했습니다" 류의 ack 가 정확히 거기서 새어 나온다(사용자 결정)."""
 
     name = "reply"
-    requires_handler = "message_handler"  # 상주에만 — main 은 요청자가 없다
+    # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
+    # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent request`
+    # 로 "가장 오래된 빚" 을 갚았다. 질문 포트가 있는 루프(main·상주)에 붙는다.
+    requires_handler = "questions"
     force_mount = True
     description = (
-        "Reply to a request you were given — your result, your answer, your "
-        "report. `id` names the request (see `## Owed Replies`); each request "
-        "gets its own reply. Nothing is expected back, so this ends that "
-        "exchange cleanly. Use `message` instead when you NEED something from "
-        "them (a decision, their next move). `complete` alone reports to no "
-        "one: reply BEFORE you complete. Refused when nothing is owed."
+        "Reply to someone who is waiting on you — an agent's `message` that "
+        "expects an answer, or the request you were given. `id` names the item "
+        "(`r-…` in `## Open Items`); each gets its own reply. Nothing is expected "
+        "back, so this ends that exchange cleanly. Use `message` (or `agent` "
+        "request) instead when you NEED something from them. `complete` alone "
+        "reports to no one: reply BEFORE you complete. Refused when nothing is owed."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -221,7 +222,7 @@ class ReplyTool(Tool):
             "id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The request id from `## Owed Replies`, e.g. '12'.",
+                "description": "The item id from `## Open Items`, e.g. 'r-12'.",
             },
             "text": {"type": "string", "minLength": 1, "description": "Your reply."},
             "to": {
@@ -253,11 +254,10 @@ class AnswerTool(Tool):
     # `answer(id="1")` 을 부른 실측(dj72nx, Qwen3.6-35B). 인사말이 포트에서
     # 거부돼 사용자에게 가지 않았다. 이 도구는 에이전트 질문 봉투 전용이다.
     description = (
-        "Answer a question another AGENT asked you. Its id arrived in the "
-        "question envelope (e.g. `[question q-1a2b from agt-x9]`). NOT for "
-        "user messages: the numbered Open Requests in the tail (`[1] (nick) "
-        '"..."`) are open requests (user messages and mail) — reply to those in `complete`\'s `result` '
-        "and list their numbers in `answers`. The asker is NOT blocked and "
+        "Answer a question another AGENT asked you — its id is a `q-…` in "
+        "`## Open Items` (it also arrived in the question envelope, e.g. "
+        "`[question q-1a2b from agt-x9]`). NOT for user requests (`u-…`) or "
+        "mail (`n-…`): those close in `complete`'s `answers`. The asker is NOT blocked and "
         "kept working, but it cannot finish the part that depends on your "
         "answer. If you genuinely cannot answer, say so with `answer` rather "
         "than ignoring it — silence only stalls them."
@@ -269,8 +269,7 @@ class AnswerTool(Tool):
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "The question id from the envelope, e.g. 'q-1a2b' — never "
-                    "an Open Requests number."
+                    "The question id, e.g. 'q-1a2b' — never a `u-…`/`n-…` item."
                 ),
             },
             "text": {

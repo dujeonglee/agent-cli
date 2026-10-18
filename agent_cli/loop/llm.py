@@ -249,9 +249,7 @@ class LLMCaller:
         # 어휘를 배울 기회가 없다 — 그때 처음 본 필드를 곧바로 채우라는
         # 요구가 된다. 항상 보여주면 습관이 되고, 거부·통지는 여전히
         # 합쳐진 런에서만 걸려 90% 런의 턴·각주는 안 는다.
-        ledger = self.state.ledger
-        requests = ledger.requests_block()
-        debts = ledger.debts_block()
+        items = self.state.ledger.block()
         used = self.ctx.get_estimated_tokens() if self.ctx else 0
         notice, self._compaction_armed = compaction_notice_due(
             used, budget, self._compaction_armed
@@ -266,8 +264,7 @@ class LLMCaller:
             max_turns=self.cfg.max_turns,
             agents=agents,
             memory=memory,
-            requests=requests,
-            debts=debts,
+            items=items,
             jobs=jobs,
             guidelines=TASK_GUIDELINES,
             reports_to_caller=self.cfg.depth > 0,
