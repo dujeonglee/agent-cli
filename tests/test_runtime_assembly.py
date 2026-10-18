@@ -232,17 +232,25 @@ class TestRegistryAssembly:
         waker, revived, auto = wire_agent_mail(
             registry,
             enqueue_wake=enq,
-            on_mail_notice=notices.append,
+            on_mail_notice=lambda r, busy: notices.append((r, busy)),
             parent_ctx=ctx,
         )
         assert (revived, auto) == (2, 1)
         registry.restore.assert_called_once_with(parent_ctx=ctx)
         registry.auto_spawn.assert_called_once_with(parent_ctx=ctx)
-        # on_reply 훅: 알림 먼저, waker.on_mail 다음
+        # on_reply 훅: 알림 먼저(바쁨 = waker 가 유휴 아님), waker.on_mail 다음
         with patch.object(waker, "on_mail") as om:
             registry.on_reply({"kind": "reply"})
-            assert notices == [{"kind": "reply"}]
-            om.assert_called_once()
+            waker.idle.set()
+            registry.on_reply({"kind": "reply"})
+            assert notices == [({"kind": "reply"}, True), ({"kind": "reply"}, False)]
+            assert om.call_count == 2
+        # web 은 알림을 걸지 않는다 — 대기열이 그 자리 (v10.51.0)
+        reg2 = MagicMock()
+        w2, *_ = wire_agent_mail(reg2, enqueue_wake=enq, parent_ctx=ctx)
+        with patch.object(w2, "on_mail") as om2:
+            reg2.on_reply({"kind": "reply"})  # 알림 없이 깨우기만
+            om2.assert_called_once()
 
     def test_monitor_delivery_is_wired_at_registry_build(self):
         """★재발 방지 (사용자 제보: 등록은 됐는데 2분 무반응).

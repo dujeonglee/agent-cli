@@ -223,7 +223,7 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
-def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
+def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
     종전엔 ``monitors`` 인자를 받아 술어에 ``or monitors.has_pending()`` 을
@@ -241,7 +241,11 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice, parent_ctx=None):
     waker = MailWaker(enqueue_wake, registry.has_pending_replies)
 
     def _on_agent_mail(reply: dict) -> None:
-        on_mail_notice(reply)
+        # ``on_mail_notice(reply, busy)`` — CLI 만 건다(v10.51.0): main 이 바쁠
+        # 때만 대기 줄을 찍는다. web 은 None — 미배달 메일이 입력창 위
+        # 대기열에 사용자 요청과 같은 줄로 선다(`registry.on_pending_change`).
+        if on_mail_notice is not None:
+            on_mail_notice(reply, not waker.idle.is_set())
         waker.on_mail()
 
     registry.on_reply = _on_agent_mail

@@ -288,7 +288,7 @@ class _ConsoleSurface:
     """``agent-cli run`` 의 펌프 표면 (``pump.PumpSurface``, v10.33.0).
 
     web 과 다른 것만 여기 있다: 유휴/바쁨 신호는 없고(프런트가 없다), 깨우기는
-    한 줄, 중단은 Ctrl-C(``graceful_interrupt=False``), 런 예외는 전파,
+    따로 찍지 않고(관찰 줄이 말한다), 중단은 Ctrl-C(``graceful_interrupt=False``), 런 예외는 전파,
     런 성공은 ``--result-file``. ``/sh`` 는 run 에 핸들러가 없어 라우팅하지
     않는다(web 은 ``handle_slash_command`` 가 먼저 받는다)."""
 
@@ -312,8 +312,7 @@ class _ConsoleSurface:
         self._run_started = time.time()  # 이 런이 띄운 작업을 가르는 기준
 
     def echo(self, item: dict, *, wake: bool) -> None:
-        if wake:
-            console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
+        pass  # 깨우기 런은 그 런의 관찰 줄이 말한다 (v10.51.0)
 
     def bind_stop(self, event: threading.Event | None) -> None:
         self._stop = event
@@ -1670,39 +1669,30 @@ def _announce_agent_boot(
         renderer.status("running", _auditor_boot_line(auditor))
 
 
-def _agent_mail_notice(reply: dict) -> None:
-    """teammate mailbox 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는
-    상태 라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계.
-    kind:"question"(P2 ask 라우팅)은 teammate 가 답변까지 블록되므로
-    구분해 표시한다."""
-    from agent_cli.render import get_renderer
+def _agent_mail_notice(reply: dict, busy: bool) -> None:
+    """CLI: main 앞으로 메일이 왔다 (v10.51.0).
 
-    key = reply.get("key", "?")
+    web 이 입력창 위 대기열로 하는 일의 CLI 판 — 터미널은 찍은 줄을 지울 수
+    없어서 **main 이 바쁠 때만** 한 줄 찍는다. 유휴면 곧 깨우기 런이 열려
+    관찰 줄이 바로 나오므로 따로 알릴 것이 없다. 줄의 글은 곧 들어갈 관찰의
+    머리줄(``mail_queue_item``)이라, 종류마다 문구를 손으로 짓지 않는다
+    (종전엔 사망 통지가 기본 문구 "회신 도착" 으로 떨어졌다). 질문은 늘
+    알린다 — CLI 에는 ❓ 트레이가 없다."""
+    from agent_cli.render import get_renderer
+    from agent_cli.subagent.agents_live import mail_queue_item
+
     kind = reply.get("kind", "reply")
     if kind == "question":
-        line = f"❓ 에이전트 {key} 질문 도착 (답변 대기 중)"
-    elif kind == "reminder":
-        # 회신이 아니라 **빚 통지**다 — "회신 도착" 으로 적으면 사용자가
-        # 에이전트가 뭔가 끝낸 줄 안다.
-        line = f"❓ 에이전트 {key} 미답 질문 독촉"
-    elif kind == "answer":
-        line = f"💬 {key} 답변 도착"
-    elif kind == "harness":
-        # 하니스 작업(감사)의 결과 — 에이전트 회신이 아니다 (v10.42.0)
-        line = f"🔎 {reply.get('job') or 'harness'} 결과 도착"
-    elif kind == "monitor":
-        # 모니터 보고 — 에이전트가 아니라 key 가 없다 (종전엔 "에이전트 ? 회신")
-        line = "🔔 모니터 보고 도착"
-    elif kind == "job":
-        # 백그라운드 작업 종료 통지 (v10.47.0) — 마찬가지로 에이전트가 아니다
-        line = "🧵 백그라운드 작업 종료 통지"
+        line = f"❓ 에이전트 {reply.get('key', '?')} 질문 도착 (답변 대기 중)"
+    elif not busy:
+        return
     else:
-        line = f"📨 에이전트 {key} 회신 도착"
+        it = mail_queue_item(reply)
+        line = (
+            f"⏳ 대기 · [{it['nickname']}] {it['text']} — 지금 턴이 끝나면 main 에 전달"
+        )
     try:
-        # 전용 ``agent_mail`` 표면 — web 은 전용 이벤트로 프론트에 표시,
-        # CLI·커스텀 렌더러는 기본 구현이 status 로 위임(종전 동작 보존).
-        # 구 status 직접 호출은 web 프론트 리스너가 없어 드롭됐다(v5.18.2).
-        get_renderer().agent_mail_hint(key=key, kind=kind, text=line)
+        get_renderer().agent_mail_hint(key=reply.get("key", ""), kind=kind, text=line)
     except Exception:
         pass  # 알림은 best-effort
 
@@ -2411,9 +2401,12 @@ def web(
         _waker, revived, auto = wire_agent_mail(
             _registry,
             enqueue_wake=server.enqueue_system,
-            on_mail_notice=_agent_mail_notice,
             parent_ctx=ctx,
         )
+        # 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(v10.51.0)
+        server.mail_source = _registry.pending_mail
+        _registry.on_pending_change = server.broadcast_queue
+        server.broadcast_queue()  # resume 이 되살린 미배달 메일도 줄을 선다
         _announce_agent_boot(
             renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
         )

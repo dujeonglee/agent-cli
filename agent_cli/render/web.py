@@ -62,9 +62,7 @@ _EVENT_BUFFER_MAX = 5000
 
 # 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
 # ``hidx`` 가 이들에만 붙는다.
-_CARD_EVENTS = frozenset(
-    {"assistant_turn", "observation", "user_message", "agent_wake"}
-)
+_CARD_EVENTS = frozenset({"assistant_turn", "observation", "user_message"})
 
 
 class _JsonReady(dict):
@@ -1093,7 +1091,6 @@ class WebRenderer(Renderer):
     REPLAY_CONTRACT: ClassVar[dict[str, str]] = {
         # 이벤트 → 이 레코드 모양이 resume 에서 어떻게 복원되는가
         "user_message": "role=user, tool 없음, author_is_user 참",
-        "agent_wake": "role=user, author_is_user 거짓 (사람 아닌 발신자)",
         "observation": "role=user + tool 키",
         "assistant_turn": "role=assistant (thought/ops/action/final)",
         "scope_start": "scopes.jsonl 사이드카 → replay_scopes",
@@ -1202,12 +1199,11 @@ class WebRenderer(Renderer):
                             self._replay_authors.append(author)
                         self.push_user_message(content, author=author)
                     elif author and not is_user:
-                        # 사람이 아닌 발신자 = 에이전트 메일 깨우기. 종전엔 여기서
-                        # `push_user_message` 로 떨어져 **v9.7.0 에서 고친 파란
-                        # 말풍선이 resume 때 되살아났다** — `is_user` 를 계산해
-                        # 놓고 `answers` 귀속에만 쓰고 표시 타입 결정엔 안 썼다.
-                        # 라이브와 같은 표면으로 보낸다.
-                        self.agent_wake(content)
+                        # 사람이 아닌 발신자 = 에이전트 메일 깨우기. 라이브처럼
+                        # 그리지 않는다(v10.51.0) — 그 런의 관찰 줄이 메일이다.
+                        # 종전엔 `push_user_message` 로 떨어져 v9.7.0 에서 고친
+                        # 파란 말풍선이 resume 때 되살아났다(그래서 이 분기).
+                        pass
                     else:
                         self.push_user_message(content)
         elif role == "assistant":
@@ -1642,7 +1638,7 @@ class WebRenderer(Renderer):
         """무진전 대기/재전송 전용 이벤트 (v8.60.0). 종전엔 이 알림이 전부
         ``status`` 로 나갔고 **프론트에 그 리스너가 없어 웹에서 통째로
         드롭**됐다 — 40분을 기다린 뒤 "LLM call failed" 만 보였다.
-        ``agent_mail_hint`` 가 같은 이유로 전용 이벤트를 받은 선례를 따른다.
+        (종전 ``agent_mail_hint`` 웹 이벤트가 같은 이유로 생긴 선례 — v10.51.0 에서 대기열로 대체.)
 
         ``persistent=False``: 대기는 "지금 몇 초째"라는 순간 상태라 replay
         에 실으면 지난 대기가 되살아난다(compaction 마커와 동형). 대신 긴
@@ -1665,18 +1661,6 @@ class WebRenderer(Renderer):
             self.clear_sticky("stream_stall")
             self._emit("stream_stall", payload, persistent=False)
 
-    def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
-        """상주 에이전트 회신/질문/사망 도착 힌트 — 프론트가 듣는 전용
-        이벤트. (기본 구현이 쓰는 ``status`` 이벤트엔 app.js 리스너가 없어
-        웹에선 드롭됐다.) **persistent=False**: 도착 순간에만 의미 있는 라이브
-        신호라 재접속 replay 에 안 실린다(지난 힌트 부활 방지 — compaction
-        마커와 동형). 배달 자체(회신을 main 관찰로 주입)는 별개 경로."""
-        self._emit(
-            "agent_mail",
-            {"key": key, "kind": kind, "text": text},
-            persistent=False,
-        )
-
     def note_next(self, text: str) -> None:
         """다음에 이 스레드가 낼 카드 하나에 **표시 전용 주석**을 붙인다.
 
@@ -1688,22 +1672,6 @@ class WebRenderer(Renderer):
         **다음 카드 하나에만** 붙고 소비되면 사라진다. 스레드 로컬이라 병렬
         스코프끼리 섞이지 않는다."""
         self._pending_notes[threading.get_ident()] = text
-
-    def agent_wake(self, text: str, hidx: int | None = None) -> None:
-        """에이전트 메일이 런을 깨웠다 — **전용 이벤트**로 낸다.
-
-        종전엔 ``push_user_message`` 로 흘러 `.card-user`(오른쪽 파란 말풍선)로
-        그려졌다. 기계가 만든 깨우기 신호가 사람이 친 말과 글자 하나 차이 없이
-        보인 것이다(사용자 제보). 서버는 이미 ``author=""`` 로 "귀속할 사용자가
-        없다"를 표시하고 있었는데, 그 구분을 프론트로 나르는 길이 없었다
-        (스윔레인이 유일한 소비처였고 v9.4.0 ① 에서 사라졌다).
-
-        **persistent=True**: ``agent_mail`` 힌트(도착 순간에만 의미)와 달리
-        이건 **그 런이 왜 시작됐는지**를 설명하는 기록이라 재접속 replay 에도
-        실려야 한다. 모델 컨텍스트 주입은 별개 경로(run_loop)라 무관하다."""
-        if hidx is not None:
-            self.note_record(hidx)
-        self._emit("agent_wake", {"text": text}, persistent=True)
 
     def note_record(self, hidx: int) -> None:
         self._pending_hidx[threading.get_ident()] = hidx

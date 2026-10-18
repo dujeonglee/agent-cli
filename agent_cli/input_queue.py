@@ -24,7 +24,7 @@ class InputQueue:
 
     ``on_change`` (옵션): enqueue/dequeue/cancel 로 내용이 바뀔 때마다
     호출 — web 이 라이브 큐 표시 브로드캐스트를 얹는 자리 (락 밖에서
-    호출된다: renderer 락과의 중첩 회피, 기존 ``_broadcast_queue`` 규율).
+    호출된다: renderer 락과의 중첩 회피, 기존 ``broadcast_queue`` 규율).
     """
 
     SHUTDOWN = object()  # identity 비교 — 큐를 소진한 뒤에만 반환된다

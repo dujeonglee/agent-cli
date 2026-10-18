@@ -9,8 +9,8 @@
 agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/skill``
 디스패치 뒤 ``warn_stuck`` 이 메인 경로와 같이 켜진다(종전 False — 조기
 반환 경로가 사라졌다). 3단계: 깨우기 런의 작성자를 ``WAKE_AUTHOR``("🤝 agent")
-로 두 호스트 공통으로 — web 재생이 ``author_is_user=False`` 로 깨우기 카드를
-고르는데, 작성자가 없으면 플래그가 기록되지 않아 사용자 말풍선이 됐을 것이다.
+로 두 호스트 공통으로 — web 재생이 ``author_is_user=False`` 로 깨우기를
+가려내는데(v10.51.0 부터는 그리지 않는다), 작성자가 없으면 플래그가 기록되지 않아 사용자 말풍선이 됐을 것이다.
 ``WebServer.dequeue_blocking`` 이 ``timeout`` 을 받는다(펌프의 큐가 서버).
 
 ## 1. 왜
@@ -26,7 +26,7 @@ agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/ski
 | 스레드 | 메인 | 워커 (uvicorn 이 메인) |
 | 아이템 라우팅 | 첫 질의만 펌프 **앞에서** `try_dispatch_agent_or_skill` (`/sh` 제외 가드) | 매 아이템 `route_one` = `handle_slash_command` + `try_dispatch_agent_or_skill`, 런 도중 주입분도 같은 함수로 |
 | 아이템 메타 | text 만 | nickname·request_id·author → `run_loop(query_author=…, query_request_id=…)` |
-| 화면 신호 | wake 때 콘솔 한 줄 | `worker_idle/busy`, 에코 카드(`push_user_message`/`agent_wake`), `set_current_run_authors` |
+| 화면 신호 | 없음 (v10.51.0 — 깨우기는 관찰 줄이 말한다; 바쁠 때 메일 대기 줄은 `_agent_mail_notice`) | `worker_idle/busy`, 사용자 말풍선(`push_user_message`), `set_current_run_authors`; 깨우기는 그리지 않는다(메일은 대기열 → 관찰 줄) |
 | 중단 | Ctrl-C (`graceful_interrupt=False`) | 아이템마다 `stop_event` + `server.set_stop_handle` (Stop 버튼), `graceful_interrupt=True` |
 | 런 예외 | 전파 → `_finalize_run` → 비정상 종료 | `renderer.error` 후 다음 아이템 |
 | 런 결과 | `--result-file` 기록 (v10.31.2: 런 성공 즉시) | 없음 (화면이 결과) |
@@ -127,8 +127,8 @@ web 의 `web_instance_is_active = 뷰어 ∨ busy ∨ has_live_work(...)` 로 �
 class PumpSurface(Protocol):
     def idle(self) -> None                       # web: renderer.worker_idle(); run: no-op
     def busy(self) -> None                       # web: renderer.worker_busy(); run: no-op
-    def echo(self, item: dict, *, wake: bool)    # web: agent_wake / push_user_message 카드
-                                                 # run: wake 면 "🤝 에이전트 회신 배달" 한 줄
+    def echo(self, item: dict, *, wake: bool)    # web: push_user_message 말풍선
+                                                 # wake 는 둘 다 그리지 않는다 (v10.51.0)
     def bind_stop(self, ev: Event | None)        # web: server.set_stop_handle; run: no-op
     def route(self, text: str) -> bool           # web: handle_slash_command → try_dispatch…(web_output)
                                                  # run: /sh 제외 가드 + try_dispatch…(console)

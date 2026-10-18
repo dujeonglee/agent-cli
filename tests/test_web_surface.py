@@ -53,11 +53,11 @@ class TestEcho:
             "[dj]: hello", author="dj", hidx=3
         )
 
-    def test_wake_is_a_card_not_a_bubble(self, parts):
+    def test_wake_draws_nothing(self, parts):
+        """그 런의 관찰 줄이 메일이다 (v10.51.0)."""
         surface, renderer, *_ = parts
         surface.echo({"text": "WAKE"}, wake=True)
-        renderer.agent_wake.assert_called_once_with("WAKE", hidx=3)
-        renderer.push_user_message.assert_not_called()
+        assert renderer.method_calls == []
 
 
 class TestRoute:

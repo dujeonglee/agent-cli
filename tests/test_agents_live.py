@@ -2768,46 +2768,46 @@ class TestRendererSignatureRegression:
         r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=False))
         _announce_agent_boot(r, revived=1, auto=1)  # TypeError 면 즉사
 
-    def test_reply_notice_actually_emits_on_web(self):
-        # 도착 힌트는 전용 ``agent_mail`` 이벤트로 나간다(5.18.2) — 구
-        # ``status`` 는 프론트 리스너가 없어 드롭됐다. 실렌더러에서 이벤트가
-        # 실제로 나가는지 + 구조 필드(key/kind/text)를 검사.
-        from unittest.mock import patch
+    def test_web_mail_waits_in_the_input_queue_not_a_hint(self, tmp_path):
+        """web (v10.51.0): 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은
+        줄로 선다 — 도착 힌트 이벤트(``agent_mail``)도 깨우기 카드도 없다.
+        drain 되면 줄이 빠진다(= 주입됐다)."""
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.agents_live import AgentRegistry
 
-        from agent_cli.main import _agent_mail_notice
-        from agent_cli.render.web import WebConnection, WebRenderer
+        reg = AgentRegistry(tmp_path)
+        seen: list[list[dict]] = []
+        q = InputQueue()
+        q.enqueue("c1", "user ask", nickname="dj")
+        reg.on_pending_change = lambda: seen.append(q.snapshot() + reg.pending_mail())
+        reg._push_reply(
+            {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0\nlog"}
+        )
+        reg._push_reply({"kind": "question", "key": "agt-2", "id": "q1", "output": "?"})
+        reg._push_reply({"kind": "harness", "job": "auditor", "output": "AUDIT ok"})
+        last = seen[-1]
+        assert [it.get("mail", False) for it in last] == [False, True, True]
+        job, aud = last[1], last[2]
+        assert job["nickname"] == "job" and job["text"] == "🧵 job #1 finished rc=0"
+        assert aud["nickname"] == "auditor" and aud["text"] == "AUDIT ok"
+        assert job["conn_id"] == "" and job["id"] != aud["id"]  # 아무도 취소 못 함
+        # 질문은 대기열에 안 선다 — ❓ 트레이가 그 자리
+        assert all(it["text"] != "?" for it in last)
+        assert len(reg.drain_replies()) == 3
+        assert reg.pending_mail() == [] and seen[-1] == q.snapshot()
 
-        r = WebRenderer()
-        conn = WebConnection(id="c")
-        r.register_connection(conn)
-        with patch("agent_cli.render.get_renderer", return_value=r):
-            _agent_mail_notice({"kind": "reply", "key": "agt-1"})
-            _agent_mail_notice({"kind": "question", "key": "agt-2"})
-        events = [(e, d) for e, d in _drain(conn)]
-        mail = [d for e, d in events if e == "agent_mail"]
-        # 구 status 경로로는 안 나간다(프론트 미수신 경로 폐기)
-        assert not any(e == "status" for e, _ in events), events
-        assert any(
-            d["kind"] == "reply" and d["key"] == "agt-1" and "📨" in d["text"]
-            for d in mail
-        ), mail
-        assert any(
-            d["kind"] == "question" and d["key"] == "agt-2" and "❓" in d["text"]
-            for d in mail
-        ), mail
+    def test_restored_mail_gets_fresh_queue_ids(self, tmp_path):
+        """resume 이 되살린 미배달분도 대기열 id 를 받는다 — 같은 id 두 줄이면
+        프런트의 빠짐(=주입) 판정이 엉킨다."""
+        from agent_cli.subagent.agents_live import AgentRegistry
 
-    def test_agent_mail_hint_is_transient_on_web(self):
-        # 도착 순간에만 의미 있는 라이브 신호 → persistent 버퍼에 안 쌓인다
-        # (재접속 replay 로 지난 힌트가 되살아나지 않도록, compaction 과 동형).
-        from agent_cli.render.web import WebConnection, WebRenderer
-
-        r = WebRenderer()
-        conn = WebConnection(id="c")
-        r.register_connection(conn)
-        before = r._persistent_count
-        r.agent_mail_hint(key="agt-1", kind="reply", text="📨 도착")
-        assert r._persistent_count == before  # transient — 버퍼 무증가
-        assert any(e == "agent_mail" for e, _ in _drain(conn))
+        a = AgentRegistry(tmp_path)
+        a._push_reply({"kind": "job", "output": "🧵 job #1 finished"})
+        a._push_reply({"kind": "job", "output": "🧵 job #2 finished"})
+        b = AgentRegistry(tmp_path)
+        b.restore()
+        ids = [it["id"] for it in b.pending_mail()]
+        assert len(ids) == 2 and len(set(ids)) == 2
 
     def test_agent_mail_hint_default_delegates_to_status(self):
         # 커스텀·CLI 렌더러는 override 안 함 → 기본 구현이 status 로 위임해

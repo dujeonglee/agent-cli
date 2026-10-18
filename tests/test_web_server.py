@@ -1180,21 +1180,38 @@ class TestStaticUI:
         ):
             assert not re.search(rf"^{re.escape(old)}", css, re.MULTILINE), old
 
-    def test_agent_mail_hint_wired(self, server_and_client):
-        # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``
-        # 이벤트를 내고(WebRenderer.agent_mail_hint) app.js 가 그걸 듣는다.
-        # 구 ``status`` 직접 호출은 프론트 리스너가 없어 웹에서 드롭됐던
-        # 갭의 봉합 — JS 는 엔진 미테스트라 이벤트명 드리프트를 여기서 고정.
-        _, _, client = server_and_client
+    def test_mail_waits_in_the_input_queue(self, server_and_client):
+        """v10.51.0: main 앞 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로
+        선다 — 도착 힌트(`agent_mail`)와 깨우기 카드(`agent_wake`)는 없다. 메일
+        줄은 취소 버튼이 없고, 유예(놀 때 깜빡임 방지) 뒤에야 그리며, 빠지면
+        곧 주입이다."""
+        server, renderer, client = server_and_client
         js = client.get("/static/app.js").text
-        assert 'addEventListener("agent_mail"' in js
-        # 모니터 보고·작업 종료는 에이전트가 아니다 — 종류별 라벨 (v10.47.1)
-        assert "Monitor report arrived" in js and "Background job finished" in js
-        assert "renderAgentMail" in js
-        # 웹은 key/kind 로 자체 영문 라벨을 조립한다 (백엔드 `text` 는 CLI
-        # 한글 status 라인 — 웹 미표시, WebUI 영문화 5.18.3). 한글 누출 방지.
-        assert '" replied"' in js
-        assert '" asked a question (awaiting reply)"' in js
+        for gone in (
+            '"agent_mail"',
+            '"agent_wake"',
+            "renderAgentMail",
+            "renderAgentWake",
+        ):
+            assert gone not in js, gone
+        assert "Q_MAIL_GRACE_MS" in js and "qVisible" in js
+        assert "!it.mail && it.conn_id === myConnId" in js  # 메일은 취소 불가
+
+        server.mail_source = lambda: [
+            {
+                "id": "mail-1",
+                "conn_id": "",
+                "nickname": "job",
+                "text": "🧵 job #1",
+                "mail": True,
+            }
+        ]
+        server.enqueue("c1", "user ask")
+        snap = server.queue_snapshot()
+        assert [it.get("mail", False) for it in snap] == [False, True]
+        server.broadcast_queue()
+        payload = renderer._sticky["queue"]["payload"]
+        assert payload["pending"][-1]["nickname"] == "job"
 
     def test_agent_work_index_is_zero_based_for_the_frontend(self, server_and_client):
         """`begin_agent_work` 의 `index` 는 **0-based** 여야 한다 (v9.7.0).
@@ -1206,29 +1223,10 @@ class TestStaticUI:
         payload = next(d for e, d in renderer._event_buffer if e == "scope_start")
         assert payload["index"] == 0, f"첫 요청이 index={payload['index']}"
 
-    def test_agent_wake_is_not_a_user_bubble(self, server_and_client):
-        """깨우기 런은 전용 이벤트로 나가야 한다 (v9.7.0, 사용자 제보).
-
-        ``push_user_message`` 로 흘리면 프론트가 `.card-user`(파란 말풍선)로
-        그려 **기계가 만든 신호가 사람 발화처럼** 보인다. 호출부가 되돌아가지
-        않도록 서버·프론트 양쪽을 핀으로 박는다."""
-        _, renderer, client = server_and_client
-        js = client.get("/static/app.js").text
-        assert '"agent_wake"' in js and "renderAgentWake(" in js
-        fn = _js_fn_body(js, "renderAgentWake")
-        assert '"row", ["wake"]' not in fn  # makeRow 경유여야 한다
-        assert "makeRow(" in fn and '"메일"' in fn
-        assert "card-user" not in fn  # ★ 말풍선 회귀 가드
-
-        # 렌더러는 persistent 전용 이벤트를 낸다 — agent_mail(휘발 힌트)과
-        # 달리 "이 런이 왜 시작됐는지"는 재접속 replay 에도 남아야 한다.
-        renderer.agent_wake("New agent mail has arrived.")
-        events = [e for e, _ in renderer._event_buffer if e == "agent_wake"]
-        assert events == ["agent_wake"]
-
-    def test_wake_call_site_does_not_use_push_user_message(self, server_and_client):
-        """호출부 자체를 고정 — 렌더러만 고쳐도 호출부가 옛 경로로 남아 있으면
-        아무 소용이 없다. v10.33.1 부터 호출부는 ``WebSurface.echo`` 다."""
+    def test_wake_call_site_draws_nothing(self, server_and_client):
+        """깨우기 런은 화면에 아무것도 내지 않는다 (v10.51.0) — 그 런의 관찰
+        줄이 메일이다. 말풍선(v9.7.0 이전)으로도, 카드(v9.7.0~v10.50)로도
+        돌아가지 않게 호출부를 고정한다. 호출부는 ``WebSurface.echo``."""
         from unittest.mock import MagicMock
 
         from agent_cli.web.surface import WebSurface
@@ -1239,10 +1237,7 @@ class TestStaticUI:
             renderer=renderer, server=MagicMock(), ctx=ctx, dispatch=None
         )
         surface.echo({"text": "New agent mail has arrived."}, wake=True)
-        renderer.agent_wake.assert_called_once_with(
-            "New agent mail has arrived.", hidx=7
-        )
-        renderer.push_user_message.assert_not_called()  # 깨우기는 말풍선이 아니다
+        assert renderer.method_calls == []
         surface.echo({"text": "hi", "nickname": "dj"}, wake=False)
         renderer.push_user_message.assert_called_once_with(
             "[dj]: hi", author="dj", hidx=7

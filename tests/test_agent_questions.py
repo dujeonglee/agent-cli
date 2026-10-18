@@ -1412,25 +1412,36 @@ class TestUncoveredSurfaces:
         assert qid not in reg._questions
         assert main_run_ended(reg, "main 요약") == 0  # 두 번 닫지 않는다
 
-    def test_mail_notice_labels_reminder_and_answer(self, mkreg, renderer):
-        """독촉을 '회신 도착' 으로 적으면 사용자가 뭔가 끝난 줄 안다."""
+    def test_cli_mail_notice_waits_only_when_main_is_busy(self, mkreg, renderer):
+        """CLI 대기 줄 (v10.51.0): main 이 바쁠 때만 — 유휴면 곧 깨우기 런의 관찰
+        줄이 나오므로 따로 알리지 않는다. 글은 곧 들어갈 관찰의 머리줄이라
+        종류마다 맞다(독촉이 '회신 도착' 이 되면 사용자가 뭔가 끝난 줄 안다;
+        종전엔 사망 통지가 그 기본 문구로 떨어졌다)."""
         from agent_cli.main import _agent_mail_notice
 
         seen = []
         renderer.agent_mail_hint = lambda **kw: seen.append(kw["text"])
-        for kind, want in (
-            ("reminder", "독촉"),
-            ("answer", "답변 도착"),
-            ("question", "질문 도착"),
-            ("reply", "회신 도착"),
+        _agent_mail_notice({"kind": "reply", "key": "agt-x", "output": "done"}, False)
+        assert seen == []  # 유휴 — 관찰 줄이 전부다
+        for reply, want in (
+            ({"kind": "reminder", "output": "agt-x 의 질문 q-1 이 미답"}, "미답"),
+            ({"kind": "answer", "key": "agt-x", "output": "B"}, "answer from agt-x"),
+            ({"kind": "reply", "key": "agt-x", "output": "done"}, "agent agt-x reply"),
+            ({"kind": "died", "key": "agt-x", "output": "boom"}, "agent agt-x DIED"),
+            (
+                {"kind": "monitor", "output": "🔔 monitor tests: 3 failed"},
+                "[monitor] 🔔",
+            ),
+            ({"kind": "job", "output": "🧵 job #1 finished rc=0"}, "[job] 🧵 job #1"),
         ):
-            _agent_mail_notice({"kind": kind, "key": "agt-x"})
-            assert want in seen[-1], (kind, seen[-1])
-        # 모니터 보고·백그라운드 작업 통지는 에이전트가 아니다 — key 없이 와도
-        # "에이전트 ? 회신" 이 되면 안 된다 (v10.47.1, 보드 방 실측 "Agent ? replied")
-        for kind, want in (("monitor", "모니터 보고"), ("job", "백그라운드 작업 종료")):
-            _agent_mail_notice({"kind": kind})
-            assert want in seen[-1] and "?" not in seen[-1], (kind, seen[-1])
+            _agent_mail_notice(reply, True)
+            line = seen[-1]
+            assert line.startswith("⏳ 대기 · [") and want in line, (reply, line)
+            assert line.endswith("지금 턴이 끝나면 main 에 전달")
+            assert "?" not in line  # key 없는 모니터·작업 — "에이전트 ?" 금지
+        # 질문은 늘 — CLI 에는 ❓ 트레이가 없다
+        _agent_mail_notice({"kind": "question", "key": "agt-x"}, False)
+        assert "질문 도착" in seen[-1]
 
     def test_async_question_record_points_at_the_answer_tool(self, mkreg, renderer):
         """main 이 새 request 를 보내면 그건 답이 아니라 일감이다 — 질문은
