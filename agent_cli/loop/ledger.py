@@ -34,30 +34,30 @@ _TAIL = (
 
 
 def complete_line(ids: list[str]) -> str:
-    """``complete`` 절의 마지막 줄 — 닫을 id 를 담은 호출 모양 (§11.1 변형 A).
+    """``complete`` 절의 마지막 줄 — **문장**이지 호출 모양이 아니다 (§11.6).
 
-    재생 측정(§11.6)이 변형 B(문장)와 고른다 — 이 함수 하나를 바꾼다."""
+    방언마다 호출이 생긴 모양이 다르다(native_fc 는 서버 함수 호출, 텍스트
+    문법이 없다). 꼬리에 ``complete(result=…)`` 같은 텍스트 호출을 그리면 그
+    모양을 산문으로 베껴 쓰는 길을 연다 — 도구 이름과 id 만 말한다."""
     quoted = ", ".join(f'"{i}"' for i in ids)
-    return f'     → complete(result="...", answers=[{quoted}])'
+    return f"     → then `complete`, listing in `answers` the ids it covers ({quoted})"
 
 
 def _head(text) -> str:
     """항목 머리말 — **한 줄**, 120자. 본문이 여러 줄이면 줄바꿈을 공백으로 접는다:
-    접지 않으면 항목 줄이 중간에서 끊겨 닫는 도구(`→ reply(id=…)`)가 엉뚱한 줄 끝에
+    접지 않으면 항목 줄이 중간에서 끊겨 닫는 안내(`→ reply …`)가 엉뚱한 줄 끝에
     붙는다(P3 재생 덤프로 발견 — 감사 회신처럼 여러 줄인 메시지)."""
     return " ".join(str(text or "").split())[:120]
 
 
 def _debt_line(d: dict) -> str:
-    """빚 한 줄 — 닫는 도구를 같이 적는다."""
+    """빚 한 줄 — 닫는 도구와 id 를 같이 적는다(호출 모양은 그리지 않는다)."""
     who = str(d.get("to") or "").split(":", 1)[-1]
     text = _head(d.get("text"))
     did = d.get("id", "")
     if d.get("kind") == "answer":
-        return (
-            f'     [{did}] ({who}) question: "{text}"  → answer(id="{did}", text="...")'
-        )
-    return f'     [{did}] ({who}) reply owed: "{text}"  → reply(id="{did}", text="...")'
+        return f'     [{did}] ({who}) question: "{text}"  → `answer` with id "{did}"'
+    return f'     [{did}] ({who}) reply owed: "{text}"  → `reply` with id "{did}"'
 
 
 def _request_line(r: dict) -> str:
@@ -176,6 +176,6 @@ def wrong_closer_hint(item_id: str, used: str) -> str:
     if closer == "complete":
         return (
             f"'{item_id}' is an open item closed by `complete` — put your answer in "
-            f'`complete`\'s `result` and list it: answers=["{item_id}"]'
+            f'`complete`\'s `result` and list "{item_id}" in `answers`'
         )
-    return f'\'{item_id}\' is closed with {closer}(id="{item_id}", text="...")'
+    return f"'{item_id}' is closed by `{closer}` with id \"{item_id}\""

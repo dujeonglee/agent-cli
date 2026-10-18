@@ -336,13 +336,18 @@ class TestIdsReachTheModel:
         assert "[u-1]" in blob and "[u-2]" in blob, "모델이 id 를 못 본다"
         assert "## Open Items" in blob
         # 단어가 아니라 **행동**을 고정한다 — 닫는 호출 모양 그대로
-        assert 'complete(result="...", answers=["u-1", "u-2"])' in blob
+        assert (
+            'then `complete`, listing in `answers` the ids it covers ("u-1", "u-2")'
+            in blob
+        )
 
     def test_single_request_run_also_shows_its_id(self):
         """**1건에도 싣는다** (사용자 지적) — 합쳐진 런에서만 보이면 모델이 id
         어휘를 배울 기회가 없다."""
         blob = self._tail([{"id": "u-1", "author": "Bob", "text": "하나뿐"}])
-        assert "[u-1]" in blob and 'answers=["u-1"]' in blob
+        assert (
+            "[u-1]" in blob and 'listing in `answers` the ids it covers ("u-1")' in blob
+        )
 
     def test_llm_caller_feeds_the_ledger_block(self):
         """호출부는 장부의 블록 하나를 싣는다 — 게이트는 장부가 쥔다(소스 핀)."""
@@ -739,7 +744,10 @@ class TestOpenRequestsHoldTheLoop:
         self._complete(loop, result="r", answers=["u-1"])
         (msg,) = msgs
         assert "[u-2] (Ann)" in msg, "무엇이 남았는지 안 보인다"
-        assert "still open" in msg and 'answers=["u-2"]' in msg
+        assert (
+            "still open" in msg
+            and 'listing in `answers` the ids it covers ("u-2")' in msg
+        )
         assert not HANGUL.findall(msg), f"독촉 문구에 한글: {msg!r}"
 
     def test_nags_share_one_run_budget(self):
