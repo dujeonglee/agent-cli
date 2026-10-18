@@ -1667,7 +1667,7 @@ class TestReplyDisciplineSection:
         assert "EVERY request" in body  # 강한 각인 (사용자 요구)
         assert "`complete` reports to NO ONE" in body  # 사실 1 (v9.21.0)
         assert 'reply(id="<request id>"' in body  # 사실 2 (v9.25.0 요청별 번호)
-        assert "WHILE you work" in body and "## Owed Replies" in body  # 사실 3
+        assert "WHILE you work" in body and "## Open Items" in body  # 사실 3
         assert "automatically returns" not in body  # v9.21.0 이전의 거짓
         assert "cannot do" in body or "failed" in body  # 실패도 회신
         assert "expects_reply: false" in body  # v10.1.0 통지

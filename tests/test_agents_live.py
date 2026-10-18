@@ -1045,7 +1045,7 @@ class TestLoopWiring:
         assert added[0]["tool"] == "agent"
         # 장부 항목 (v10.55.0): 회신은 `answers` 로 닫는 열린 항목, 레코드에 id
         (item,) = fake_self._state.ledger.requests
-        assert item["id"].startswith("n") and item["author"] == "mail"
+        assert item["id"].startswith("n-") and item["author"] == "mail"
         assert added[0]["request_id"] == item["id"]
         assert not is_format_intervention(added[0])
         assert not reg.has_pending_replies()  # 소비 완료
@@ -1100,9 +1100,9 @@ class TestFullLoopIntegration:
             wait_until(reg.has_pending_replies)
             if n == 2:
                 return LLMResponse(content=emit("agent", {"mode": "status"}))
-            # 회신은 장부 항목 [n1] — answers 로 닫는다 (v10.55.0)
+            # 회신은 장부 항목 [n-1] — answers 로 닫는다 (v10.55.0)
             return LLMResponse(
-                content=emit("complete", {"result": "finished", "answers": ["n1"]})
+                content=emit("complete", {"result": "finished", "answers": ["n-1"]})
             )
 
         provider.call = MagicMock(side_effect=scripted)

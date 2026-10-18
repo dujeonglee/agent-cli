@@ -780,8 +780,7 @@ class TestServerCallsAreNotReparsed:
         assert [m["role"] for m in msgs] == ["assistant", "tool"]
         assert msgs[1]["tool_call_id"] == "call_4_0"
         assert msgs[1]["content"] == (
-            "completed task. Requests [17][18] removed from the open "
-            "requests. Still pending: [19]."
+            "completed task. Closed [17][18] in the open items. Still open: [19]."
         )
         # 남은 것이 없을 때·하나일 때
         rec = d.serialize_terminal_for_history(
@@ -789,16 +788,13 @@ class TestServerCallsAreNotReparsed:
         )
         assert render_history_message(rec, d, index=1, assistant_index=None)[1][
             "content"
-        ] == (
-            "completed task. Request [17] removed from the open requests. "
-            "No request pending."
-        )
+        ] == ("completed task. Closed [17] in the open items. Nothing else open.")
         # 옛 세션(answers 는 있고 남은 목록은 없음) — 회계 뒷문장 없이
         rec = d.serialize_terminal_for_history("", "x", answers=["17"])
         assert "open_requests" not in rec
         assert render_history_message(rec, d, index=1, assistant_index=None)[1][
             "content"
-        ].endswith("open requests.")
+        ].endswith("in the open items.")
         # answers 없음 → 결과 메시지 없음 (pair_call_results 가 요청 인용으로 채움)
         rec = d.serialize_terminal_for_history("", "x")
         assert len(render_history_message(rec, d, index=1, assistant_index=None)) == 1
@@ -874,7 +870,7 @@ class TestTerminalBookkeepingReachesTheModel:
         )
         replies = [m for m in third[i + 1 :] if m["role"] == "tool"]
         assert len(replies) == 1
-        assert "still unanswered" in replies[0]["content"]
+        assert "still open" in replies[0]["content"]
         assert '[2] (Ann) "REQ-B"' in replies[0]["content"]
         # 최종 complete(남은 것 없음) 뒤에 이어지는 요청: 회계 문구가 답이다.
         resumed = ContextManager(
@@ -894,8 +890,7 @@ class TestTerminalBookkeepingReachesTheModel:
             "role": "tool",
             "tool_call_id": msgs[last_complete]["tool_calls"][0]["id"],
             "content": (
-                "completed task. Request [2] removed from the open requests. "
-                "No request pending."
+                "completed task. Closed [2] in the open items. Nothing else open."
             ),
         }
 
@@ -937,7 +932,9 @@ class TestMailAfterTerminalIsNotItsResult:
         msgs = [m for m in ctx.get_messages() if m.get("role") != "system"]
         roles = [m["role"] for m in msgs]
         assert roles[-3:] == ["assistant", "tool", "user"], roles
-        assert msgs[-2]["content"].startswith("completed task. Request [1] removed")
+        assert msgs[-2]["content"].startswith(
+            "completed task. Closed [1] in the open items"
+        )
         assert msgs[-1]["content"].startswith("🧵 job #1 finished rc=0")
 
     def test_a_nag_after_complete_is_still_its_result(self, tmp_path, wf):

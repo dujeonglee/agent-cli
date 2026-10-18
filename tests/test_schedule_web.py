@@ -57,7 +57,9 @@ class TestScheduleApi:
         assert row["source"] == "user"
         assert row["human"] == "매주 월 09:00"
         assert row["next_fire"] == "2026-10-05T09:00"
-        assert row["effective_nickname"] == "⏰ Scheduler"
+        assert (
+            row["effective_nickname"] == "Scheduler-주간 보고"
+        )  # 예약마다 가상 사용자 (v10.56.0)
         assert reg.list_all()[0].label == "주간 보고"
 
     def test_bad_cron_is_400_with_the_reason(self, stack):

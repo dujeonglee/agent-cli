@@ -127,7 +127,8 @@ class TestMissedCard:
         page.click("#sched-missed button:has-text('지금 실행')")
         assert _wait(lambda: page.locator("#sched-missed").is_hidden())
         (item,) = stack.server._queue.snapshot()
-        assert item["text"] == "아침 점검" and item["nickname"] == "⏰ Scheduler"
+        # 예약마다 가상 사용자 (v10.56.0, 장부 P3)
+        assert item["text"] == "아침 점검" and item["nickname"] == "Scheduler-아침 점검"
 
     def test_skip_clears_the_card_and_runs_nothing(self, stack, page, reg, clock):
         reg.add("0 9 * * *", "x")

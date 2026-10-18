@@ -32,7 +32,6 @@ from agent_cli.subagent.agents_live import (
     QuestionPort,
     build_reply_record,
 )
-from tests.binding_support import make_binding
 from tests.loop_ports import make_ports, split_ports
 from tests.test_agents_live import (
     RecordingRenderer,
@@ -1587,10 +1586,9 @@ class TestFlipDispatch:
     def test_answer_with_a_user_request_number_points_to_complete(
         self, mkreg, tmp_path, renderer
     ):
-        """v10.30.0: 꼬리의 `[1] (nick) "하이"` 를 질문으로 읽고 `answer(id="1")`
+        """v10.30.0 → v10.56.0: 꼬리의 사용자 요청을 질문으로 읽고 `answer(id=…)`
         을 부르면(dj72nx 실측) "unknown question" 대신 **어디로 답해야 하는지**
-        를 돌려준다 — 그 인사말은 사용자에게 안 갔으니 다음 턴이 `complete`
-        로 다시 답하게."""
+        를 돌려준다 — 접두(`u-`)가 닫는 법을 말한다."""
         from agent_cli.context.manager import ContextManager
 
         reg = mkreg()
@@ -1598,17 +1596,19 @@ class TestFlipDispatch:
         result, _ = _run_scripted(
             ctx,
             [
-                json.dumps({"action": "answer", "id": "1", "text": "안녕하세요!"}),
-                json.dumps({"action": "complete", "result": "안녕!", "answers": ["1"]}),
+                json.dumps({"action": "answer", "id": "u-1", "text": "안녕하세요!"}),
+                json.dumps(
+                    {"action": "complete", "result": "안녕!", "answers": ["u-1"]}
+                ),
             ],
             questions=reg.question_port(None),
-            query_request_id="1",
+            query_request_id="u-1",
             query_author="Chill Capybara",
         )
         rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "answer")
         assert rec["success"] is False
-        assert "open request [1], not an agent question" in rec["content"]
-        assert '`answers: ["1"]`' in rec["content"]
+        assert "'u-1' is an open item closed by `complete`" in rec["content"]
+        assert 'answers=["u-1"]' in rec["content"]
         assert "unknown or already-answered" not in rec["content"]
         assert result.success and result.output == "안녕!"
 
@@ -1618,10 +1618,10 @@ class TestFlipDispatch:
         from agent_cli.tools.virtual import AnswerTool
 
         d = AnswerTool.description
-        assert "another AGENT" in d and "NOT for user messages" in d
-        assert "Open Requests" in d and "`answers`" in d
+        assert "another AGENT" in d and "NOT for user requests (`u-…`)" in d
+        assert "## Open Items" in d and "`answers`" in d
         assert (
-            "never an Open Requests number"
+            "never a `u-…`/`n-…` item"
             in (AnswerTool.parameters["properties"]["id"]["description"])
         )
 
@@ -1908,10 +1908,11 @@ class TestTrafficRowsAreRealSendsOnly:
 
 
 class TestReplyNagCap:
-    """빚진 회신 없이 `complete` 하면 독촉하되 **3회까지** (사용자 결정).
+    """빚진 회신 없이 `complete` 하면 결과는 배달하고 독촉하되 **런 공유 예산**
+    안에서 (v10.56.0 장부 P3 — 종전엔 빚 3회, 비사용자 런은 결과 미배달 거부).
 
     무제한이면 아무것도 런을 못 멈춘다 — 개입은 max_turns 를 소모하지 않고,
-    B1 액션-루프 감지는 도구 경로에만 있어 반복 complete 을 안 본다. 상한
+    B1 액션-루프 감지는 도구 경로에만 있어 반복 complete 을 안 본다. 예산
     뒤엔 레지스트리가 런 요약을 라벨 붙여 폴백 배달한다 — 침묵이 아니다.
     """
 
@@ -1924,7 +1925,7 @@ class TestReplyNagCap:
         def debts(self):
             if self.replies:
                 return []
-            return [{"kind": "reply", "to": "agent:agt-a", "id": "1", "text": "일감"}]
+            return [{"kind": "reply", "to": "agent:agt-a", "id": "r-1", "text": "일감"}]
 
         def reply(self, text, *, id="", to=""):
             if not id:  # v9.25.0: the real port refuses without an id
@@ -1962,26 +1963,24 @@ class TestReplyNagCap:
         )
         return p, ctx, res
 
-    def test_three_reminders_then_the_run_ends(self):
+    def test_reminders_within_the_budget_then_the_run_ends(self):
+        from agent_cli.loop.ledger import NAG_BUDGET
+
         port = self._OwedPort()
         done = self._env([{"action": "complete", "result": "끝"}])
-        p, ctx, res = self._loop(port, done, done, done, done)
+        p, ctx, res = self._loop(port, *[done] * (NAG_BUDGET + 1))
         nags = [
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "`complete` was refused" in m.get("content", "")
+            and "your result was delivered, but" in m.get("content", "")
         ]
-        assert len(nags) == 3, f"독촉 {len(nags)}회 — 상한은 3"
-        assert p.call.call_count == 4, "3회 독촉 뒤 네 번째 complete 은 통과해야 한다"
+        assert len(nags) == NAG_BUDGET, f"독촉 {len(nags)}회 — 예산은 {NAG_BUDGET}"
+        assert p.call.call_count == NAG_BUDGET + 1, "예산 뒤 complete 은 통과해야 한다"
         assert res.output == "끝"
-        assert "2 more reminders" in nags[0]["content"]
+        assert f"{NAG_BUDGET - 1} more reminders" in nags[0]["content"]
         assert "Last reminder" in nags[-1]["content"]
-        # 거부 관찰이 원문을 인용한다 — 그래서 emission 을 따로 둘 필요가 없다
-        assert (
-            "«끝»" in nags[0]["content"]
-            and 'reply(id="1", text="...")' in nags[0]["content"]
-        )
+        assert 'reply(id="r-1", text="...")' in nags[0]["content"]
 
     def test_replying_after_a_reminder_stops_them(self):
         port = self._OwedPort()
@@ -1990,7 +1989,7 @@ class TestReplyNagCap:
             self._env([{"action": "complete", "result": "끝"}]),
             self._env(
                 [
-                    {"action": "reply", "id": "1", "text": "답"},
+                    {"action": "reply", "id": "r-1", "text": "답"},
                     {"action": "complete", "result": "끝"},
                 ]
             ),
@@ -1998,9 +1997,10 @@ class TestReplyNagCap:
         assert p.call.call_count == 2 and port.replies == ["답"]
         assert res.output == "끝"
 
-    def test_rejected_complete_is_a_failed_observation_not_a_final(self):
-        """거부된 complete 은 ✅ final 이 아니라 ✗ 관찰로 남는다(실측 a209hq:
-        final 카드로 그려져 통과한 것처럼 보였다)."""
+    def test_complete_with_a_debt_is_delivered_and_the_nag_follows(self):
+        """v10.56.0: 빚이 남은 complete 도 결과는 배달된다(final) — 독촉은 그 뒤의
+        관찰이다. 종전엔 결과 미배달 거부(✗ 관찰)였다(실측 a209hq 의 "통과한 것처럼
+        보임" 은 이제 실제로 배달된 것이고, 남은 빚은 꼬리·독촉이 가리킨다)."""
         import agent_cli.loop.dispatch as D
 
         seen = []
@@ -2015,7 +2015,7 @@ class TestReplyNagCap:
                 self._env([{"action": "complete", "result": "끝"}]),
                 self._env(
                     [
-                        {"action": "reply", "id": "1", "text": "답"},
+                        {"action": "reply", "id": "r-1", "text": "답"},
                         {"action": "complete", "result": "끝"},
                     ]
                 ),
@@ -2023,8 +2023,7 @@ class TestReplyNagCap:
         finally:
             D.render_step = real
         finals = [k for k, _ in seen if k == "final"]
-        assert len(finals) == 1, f"거부된 complete 이 final 로 그려졌다: {seen}"
-        assert ("observation", False) in seen, "거부가 실패 관찰로 안 보인다"
+        assert len(finals) == 2, f"두 complete 모두 배달돼야 한다: {seen}"
 
 
 # ── ⑩ complete 는 국소, 배달은 message/reply 뿐 (v9.21.0) ──
@@ -2069,7 +2068,10 @@ class TestCompleteIsLocal:
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         calls = self._run(
-            reg, b, f"agent:{a}", lambda: reg.question_port(b).reply("답:완료", id="1")
+            reg,
+            b,
+            f"agent:{a}",
+            lambda: reg.question_port(b).reply("답:완료", id="r-1"),
         )
         to_a = [c for c in calls if c["key"] == a]
         assert len(to_a) == 1, f"에코가 섞였다: {to_a}"
@@ -2116,7 +2118,7 @@ class TestCompleteIsLocal:
         reg = mkreg()
         b = spawn_idle(reg)
         reg.set_current_run_authors(["dj"])
-        self._run(reg, b, "main", lambda: reg.question_port(b).reply("보고", id="1"))
+        self._run(reg, b, "main", lambda: reg.question_port(b).reply("보고", id="r-1"))
         mail = reg.drain_replies()
         assert [m["output"] for m in mail] == ["보고"], f"에코가 섞였다: {mail}"
         assert mail[0].get("answers") == ["dj"]
@@ -2146,8 +2148,8 @@ class TestCompleteIsLocal:
 
         def body():
             port = reg.question_port(b)
-            seen.append(port.reply("칙령", id="1"))
-            seen.append(port.reply("칙명", id="1"))
+            seen.append(port.reply("칙령", id="r-1"))
+            seen.append(port.reply("칙명", id="r-1"))
 
         calls = self._run(reg, b, f"agent:{a}", body)
         assert seen[0] == ""
@@ -2170,9 +2172,14 @@ class TestCompleteIsLocal:
         assert "person watching this window" in err and "Just `complete`" in err
         assert "message(to=" not in err
 
-    def test_reply_from_main_is_refused(self, mkreg, renderer):
+    def test_main_with_nothing_owed_is_refused_and_pointed_to_agent_request(
+        self, mkreg, renderer
+    ):
+        """v10.56.0: main 도 `reply` 를 갖는다(빚을 갚는 도구는 하나) — 빚이 없으면
+        거부하고, 일을 시키는 길(`agent request`)을 알려 준다."""
         reg = mkreg()
-        assert "no requester" in reg.question_port(None).reply("x")
+        err = reg.question_port(None).reply("x")
+        assert err.startswith("nothing to reply to") and 'agent(mode="request"' in err
 
     def test_port_reports_the_debt_and_its_repayment(self, mkreg, renderer):
         reg = mkreg()
@@ -2192,79 +2199,6 @@ class TestCompleteIsLocal:
         reg.note_owes(me, "user:dj", "리뷰해줘")  # 사람은 창이 곧 배달
         assert port.debts() == []
         assert reg.reply_debt(me, "user:dj").human
-
-
-class TestRefusedCompleteIsNotStored:
-    """물린 complete 은 컨텍스트에 남지 않는다(사용자 결정) — 거부 관찰이
-    원문을 인용해 자기완결이라 남길 이유가 없고, 남기면 `ops:[complete]`
-    가 history 에서 final 로 읽힌다. (`answers` 되돌림은 형식 재시도라
-    emission 을 저장하되 `rejected` 태그로 가른다 — 성공 뒤 fold 된다.)"""
-
-    def _records(self, port, *contents):
-        import tempfile
-        from pathlib import Path
-
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
-        from agent_cli.providers.base import LLMResponse
-
-        p = MagicMock()
-        p.call.side_effect = [LLMResponse(content=c) for c in contents]
-        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
-        run_loop(
-            query="[agent:agt-a]: 일감",
-            query_author_is_user=False,
-            provider=p,
-            capabilities=_caps(),
-            model="m",
-            ctx=ctx,
-            max_turns=10,
-            dialect="json_fc",
-            ports=make_ports(owner="agent:agt-b", questions=port),
-        )
-        return ctx.get_raw_messages()
-
-    @staticmethod
-    def _env(ops):
-        import json
-
-        return "t\n\n" + json.dumps(ops)
-
-    def test_refused_complete_leaves_only_the_quoting_observation(self):
-        port = TestReplyNagCap._OwedPort()
-        recs = self._records(
-            port,
-            self._env([{"action": "complete", "result": "법칙"}]),
-            self._env(
-                [
-                    {"action": "reply", "id": "1", "text": "법칙"},
-                    {"action": "complete", "result": "끝"},
-                ]
-            ),
-        )
-        completes = [
-            m
-            for m in recs
-            if m.get("role") == "assistant"
-            and any(o.get("action") == "complete" for o in (m.get("ops") or []))
-        ]
-        results = [m["ops"][-1]["action_input"]["result"] for m in completes]
-        assert "법칙" not in results, (
-            "물린 '법칙' complete 이 assistant 레코드로 남았다"
-        )
-        assert "끝" in results  # 통과한 complete 은 남는다
-        refusals = [
-            m
-            for m in recs
-            if m.get("role") == "user"
-            and "`complete` was refused" in m.get("content", "")
-        ]
-        assert len(refusals) == 1
-        assert "«법칙»" in refusals[0]["content"]
-        assert (
-            refusals[0].get("tool") == "complete"
-            and refusals[0].get("success") is False
-        )
 
 
 # ── 런 끝의 빚 정리 (v9.22.0 — 런 뒤 독촉을 흡수) ────────
@@ -2389,12 +2323,18 @@ class TestMainRunEnd:
         assert [d["kind"] for d in port.debts()] == ["reply"]
         assert port.debts()[0]["to"] == f"agent:{a}"
 
-    def test_agent_request_settles_the_debt(self, mkreg, renderer):
+    def test_reply_settles_the_debt_and_agent_request_does_not(self, mkreg, renderer):
+        """v10.56.0 (장부 P3 §11.3): 빚은 `reply(id)` 가 갚는다. 종전엔 main 의 아무
+        `agent request` 가 그 에이전트 앞 가장 오래된 빚을 갚은 것으로 쳤다."""
         reg = mkreg()
         a = spawn_idle(reg)
         reg.begin_run("main")
-        reg.note_owes("main", f"agent:{a}", "결정해 줘")
-        assert reg.request(a, "여기 답") == ""  # main 발신
+        d = reg.note_owes("main", f"agent:{a}", "결정해 줘")
+        assert reg.request(a, "새 일") == ""  # main 발신 — 일을 시킨다
+        assert [x.id for x in reg.reply_debts("main")] == [d.id], (
+            "request 가 빚을 갚았다"
+        )
+        assert reg.question_port(None).reply("여기 답", id=d.id) == ""
         assert reg.reply_debts("main") == []
         assert reg.question_port(None).debts() == []
 
@@ -2548,9 +2488,7 @@ class TestUnifiedDebtRules:
 
     # ── 상주: 질문(ask) 빚도 거부 대상 ─────────────
 
-    def test_resident_completing_with_an_open_question_is_refused(
-        self, mkreg, renderer
-    ):
+    def test_resident_completing_with_an_open_question_is_nagged(self, mkreg, renderer):
         from agent_cli.runtime import ports_for_resident
 
         reg = mkreg()
@@ -2588,13 +2526,15 @@ class TestUnifiedDebtRules:
                 ),
             ],
         )
-        assert p.call.call_count == 2, "질문에 답 안 한 complete 이 통과했다"
-        refusals = [
+        assert p.call.call_count == 2, "질문에 답 안 한 complete 이 그대로 끝났다"
+        nags = [
             m
             for m in ctx.get_raw_messages()
-            if m.get("role") == "user" and "was refused" in m.get("content", "")
+            if m.get("role") == "user"
+            and "your result was delivered, but" in m.get("content", "")
         ]
-        assert refusals and f'answer(id="{qid}"' in refusals[0]["content"]
+        # v10.56.0: 에이전트 항목 런도 결과는 배달되고 독촉된다(종전엔 거부)
+        assert nags and f'answer(id="{qid}"' in nags[0]["content"]
         assert qid not in reg._questions  # 답했다
 
     # ── main: message 빚은 수락 후 독촉 ────────────
@@ -2628,8 +2568,12 @@ class TestUnifiedDebtRules:
                         [{"action": "complete", "result": "답", "answers": ["1"]}]
                     ),
                     self._env([{"action": "complete", "result": "답", "answers": []}]),
-                    self._env([{"action": "complete", "result": "답", "answers": []}]),
-                    self._env([{"action": "complete", "result": "끝", "answers": []}]),
+                    self._env(
+                        [
+                            {"action": "reply", "id": "r-1", "text": "결정했다"},
+                            {"action": "complete", "result": "끝", "answers": []},
+                        ]
+                    ),
                 ],
             )
         finally:
@@ -2641,16 +2585,14 @@ class TestUnifiedDebtRules:
         nags = [
             m
             for m in ctx.get_raw_messages()
-            if m.get("role") == "user" and "you still owe" in m.get("content", "")
+            if m.get("role") == "user" and "still open" in m.get("content", "")
         ]
-        assert nags and 'agent(mode="request"' in nags[0]["content"]
-        # 상한 3회 — 네 번째 complete 은 그대로 끝난다 (폴백은 main.py 의
-        # `main_run_ended` → `end_main_run` 이 배달)
-        assert len(nags) == 3 and p.call.call_count == 4
-        assert finals[-1] == "끝"
-        assert [(d.to, d.text) for d in reg.reply_debts("main")] == [
-            (f"agent:{a}", "결정해 줘")
-        ]
+        # v10.56.0: main 도 `reply(id)` 로 갚는다 — 독촉이 그 도구를 가리킨다
+        assert nags and 'reply(id="r-' in nags[0]["content"]
+        # 결과는 매번 배달됐고(독촉은 예산 8 안), `reply(id)` 로 갚자 런이 끝났다
+        assert p.call.call_count == 3 and finals == ["답", "답", "끝"]
+        assert len(nags) == len(finals) - 1  # 마지막 complete 만 독촉 없이 끝난다
+        assert reg.reply_debts("main") == []
 
     def test_mixed_run_settles_requests_then_nags_debts(self, mkreg, renderer):
         """섞임: 수락 → answers 의 요청 제거 → message/ask 독촉."""
@@ -2683,157 +2625,9 @@ class TestUnifiedDebtRules:
             if m.get("role") == "user"
         ]
         blob = "\\n".join(obs)
-        assert "you still owe" in blob and f'answer(id="{qid}"' in blob
+        assert "still open" in blob and f'answer(id="{qid}"' in blob
         assert qid not in reg._questions
         assert p.call.call_count == 2
-
-
-class TestRuleFollowsInboundTypeNotOwner:
-    """v9.22.1 — 빚이 남은 `complete` 의 갈림은 **이 런이 사용자 요청을
-    받았는가**(`LoopState.user_run`)이지 main/상주가 아니다. 종전의 소유자
-    분기(`port.nonblocking`)는 이 값의 근사였고 두 경우에서 틀렸다."""
-
-    _run = TestUnifiedDebtRules._run
-    _env = staticmethod(TestUnifiedDebtRules._env)
-
-    def test_main_wake_run_with_a_debt_is_refused_like_any_agent_run(
-        self, mkreg, renderer
-    ):
-        """main 의 🤝 웨이크 런(사용자 발화 없음)에 message 빚이 남으면
-        거부 — 종전엔 main 이라는 이유로 '수락 후 독촉' 이었다."""
-        from tests.loop_ports import make_ports
-
-        reg = mkreg()
-        a = spawn_idle(reg)
-        reg.message_to_main(a, "결정해 줘", expects_reply=True)
-        ports = make_ports(
-            owner="main", agent_registry=reg, questions=reg.question_port(None)
-        )
-        finals = []
-        import agent_cli.loop.dispatch as D
-
-        real = D.render_step
-        D.render_step = lambda kind, text, *x, **k: (
-            finals.append(text) if kind == "final" else None
-        )
-        try:
-            _p, ctx, _res = self._run(
-                ports=ports,
-                query="🤝 agent mail",
-                is_user=False,
-                contents=[
-                    self._env([{"action": "complete", "result": "답"}]),
-                    self._env([{"action": "complete", "result": "끝"}]),
-                    self._env([{"action": "complete", "result": "끝"}]),
-                    self._env([{"action": "complete", "result": "끝"}]),
-                ],
-            )
-        finally:
-            D.render_step = real
-        refusals = [
-            m
-            for m in ctx.get_raw_messages()
-            if m.get("role") == "user"
-            and "`complete` was refused" in m.get("content", "")
-        ]
-        assert len(refusals) == 3 and "«답»" in refusals[0]["content"]
-        assert 'agent(mode="request"' in refusals[0]["content"]  # main 의 수단
-        assert finals == ["끝"], "거부된 complete 이 final 로 렌더됐다"
-
-    def test_resident_human_window_run_with_a_debt_is_nagged_not_refused(
-        self, mkreg, renderer
-    ):
-        """상주의 사람 창 런(사용자 요청 있음)에 열린 질문이 남으면 수락 후
-        독촉 — 결과는 창의 사람에게 간다. 수단은 상주의 도구(`answer`)."""
-        from agent_cli.runtime import ports_for_resident
-        from agent_cli.subagent.agents_live import Question
-
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        qid = "q-human"
-        with reg._cv:
-            reg._questions[qid] = Question(
-                id=qid, asker=a, target=f"agent:{b}", text="어느 쪽?", delivered_seq=1
-            )
-        ports = ports_for_resident(
-            key=b,
-            message_handler=lambda to, text, **kw: "",
-            questions=reg.question_port(b),
-            absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
-            peer_roster=None,
-        )
-        tm = reg.get(b)
-        tm.current_author = "user:dj"
-        reg.begin_run(f"agent:{b}")
-        reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")
-        p, ctx, _res = self._run(
-            ports=ports,
-            query="[user:dj]: 리뷰해줘",
-            user_requests=[{"id": "7", "author": "user:dj", "text": "리뷰해줘"}],
-            contents=[
-                self._env(
-                    [{"action": "complete", "result": "리뷰 결과", "answers": ["7"]}]
-                ),
-                self._env(
-                    [
-                        {"action": "answer", "id": qid, "text": "왼쪽"},
-                        {"action": "complete", "result": "끝", "answers": []},
-                    ]
-                ),
-            ],
-        )
-        nags = [
-            m
-            for m in ctx.get_raw_messages()
-            if m.get("role") == "user" and "you still owe" in m.get("content", "")
-        ]
-        assert nags and f'answer(id="{qid}"' in nags[0]["content"]
-        assert "`complete` was refused" not in nags[0]["content"]
-        assert qid not in reg._questions and p.call.call_count == 2
-
-    def test_real_runner_marks_agent_items_as_non_user_runs(self, tmp_path, renderer):
-        """레지스트리 → `run_subagent_message` → run_loop 실배선: peer 의
-        요청으로 시작한 런은 사용자 런이 아니어야 빚 남긴 complete 이
-        **거부**된다(3회) — 러너가 `query_author_is_user` 를 안 넘기면
-        run_loop 기본값(True)이 이 런을 사용자 런으로 만들어 독촉으로 샌다."""
-        from agent_cli.providers.base import LLMResponse
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
-
-        provider = MagicMock()  # 누가 몇 번 부르든 같은 답 — a 의 폴백 런도 부른다
-        done = LLMResponse(content=self._env([{"action": "complete", "result": "끝"}]))
-        provider.call.side_effect = lambda *a, **k: done
-        reg = AgentRegistry(
-            tmp_path,
-            runtime={
-                "binding": make_binding(
-                    provider=provider, capabilities=_caps(), model="m"
-                )
-            },
-            runner=None,  # 진짜 러너
-        )
-        try:
-            a, b = spawn_idle(reg), spawn_idle(reg)
-            assert reg.request(b, "일감", author=f"agent:{a}", expects_reply=True) == ""
-            tb = reg.get(b)
-            assert wait_until(
-                lambda: tb.handled == 1 and tb.state == "idle", timeout=10
-            )
-            refusals = [
-                m
-                for m in tb.ctx.get_raw_messages()
-                if m.get("role") == "user"
-                and "`complete` was refused" in m.get("content", "")
-            ]
-            assert len(refusals) == 3, f"거부 {len(refusals)}회 — 상주 런은 3회 거부"
-            # 상한 뒤 폴백: a 가 라벨 붙은 런 요약을 받는다
-            ta = reg.get(a)
-            assert wait_until(lambda: ta.handled >= 1, timeout=10)
-            assert any(
-                _NO_REPLY_LABEL in (m.get("content") or "")
-                for m in ta.ctx.get_raw_messages()
-            )
-        finally:
-            reg.shutdown_all()
 
 
 class TestAskSuppressionIsPerTarget:
@@ -2983,20 +2777,23 @@ class TestPerRequestDebts:
         assert port.reply("답", id="5", to=a) == ""  # 키만 줘도 agent:<key>
         assert reg.reply_debts(me) == []
 
-    def test_message_and_main_request_settle_the_oldest(self, mkreg, renderer):
+    def test_message_settles_the_oldest_but_main_request_settles_nothing(
+        self, mkreg, renderer
+    ):
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         assert reg.settle(me, f"agent:{a}").id == "3"
         assert reg.settle(me, f"agent:{a}").id == "5"
         assert reg.settle(me, f"agent:{a}") is None
-        # main 쪽: 메일마다 빚, agent request 가 오래된 것부터
+        # main 쪽 (v10.56.0): 메일마다 빚(`r-…`), `agent request` 는 갚지 않는다 —
+        # 갚는 도구는 `reply(id)` 하나다
         reg.begin_run("main")
         d1 = reg.note_owes("main", f"agent:{a}", "결정 1")
         d2 = reg.note_owes("main", f"agent:{a}", "결정 2")
-        assert d1.id != d2.id
-        assert reg.request(a, "답 하나") == ""
-        assert [d.id for d in reg.reply_debts("main")] == [d2.id]
+        assert d1.id != d2.id and d1.id.startswith("r-")
+        assert reg.request(a, "새 일") == ""
+        assert [d.id for d in reg.reply_debts("main")] == [d1.id, d2.id]
 
     def test_run_end_falls_back_once_per_unpaid_request(self, mkreg, renderer):
         from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
@@ -3010,19 +2807,19 @@ class TestPerRequestDebts:
         assert all(c["message"].startswith(_NO_REPLY_LABEL) for c in spy.calls)
         assert reg.reply_debts(me) == []
 
-    def test_tail_and_refusal_show_the_ids(self, mkreg, renderer):
-        from agent_cli.constants import debt_lines, owed_replies_block
+    def test_tail_and_nag_show_the_ids(self, mkreg, renderer):
+        """꼬리와 독촉이 같은 줄 — 빚마다 id 와 갚는 도구(`reply(id)`, main·상주 공통)."""
+        from agent_cli.loop.ledger import Ledger
 
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         self._two(reg, b, f"agent:{a}")
-        debts = reg.question_port(b).debts()
-        lines = debt_lines(debts, resident=True)
-        assert f'[3] reply to agent:{a}: "첫 요청" → reply(id="3", text="...")' in lines
-        assert 'reply(id="5", text="...")' in lines
-        assert "## Owed Replies" in owed_replies_block(debts, resident=True)
-        # main 은 상대만 고른다 — 번호는 보이되 도구는 agent request
-        assert 'agent(mode="request", key=' in debt_lines(debts, resident=False)
+        led = Ledger()
+        led.bind_questions(reg.question_port(b))
+        block = led.block()
+        assert f'[3] ({a}) reply owed: "첫 요청"  → reply(id="3", text="...")' in block
+        assert 'reply(id="5", text="...")' in block and "## Open Items" in block
+        assert "agent(mode=" not in block
 
 
 # ── 런 도중 흡수 (v9.25.0) ───────────────────────────────────
@@ -3065,12 +2862,12 @@ class TestMidRunAbsorption:
         assert [next(iter(i)) for i in items] == ["record", "record"]
         req, mail = items[0]["record"], items[1]["record"]
         assert req["source"] == "agent_request" and req["tool"] == "agent"
-        assert "── request [2] from main" in req["content"]
-        assert 'reply(id="2", text="...")' in req["content"]
+        assert "── request [r-2] from main" in req["content"]
+        assert 'reply(id="r-2", text="...")' in req["content"]
         assert mail["source"] == "agent_mail"
         assert mail["content"] == f"[agent:{a}]: 회신 본문"
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
-        assert [d.id for d in reg.reply_debts(me)] == ["1", "2"]
+        assert [d.id for d in reg.reply_debts(me)] == ["r-1", "r-2"]
         # 영속: 받은편지함 미러는 비고, 처리 중 목록에 셋 다
         assert tm.inbox.qsize() == 0 and tm.inbox_items == []
         assert [i["seq"] for i in tm.in_flight] == [1, 2, 3]
@@ -3126,7 +2923,7 @@ class TestMidRunAbsorption:
         assert reg.request(b, "리뷰해줘", author="user:dj") == ""
         (item,) = reg.absorb_pending(tm)
         assert item == {
-            "user_request": {"id": "2", "author": "user:dj", "text": "리뷰해줘"}
+            "user_request": {"id": "u-2", "author": "user:dj", "text": "리뷰해줘"}
         }
         assert reg.reply_debt(f"agent:{b}", "user:dj").human  # `reply` 거부 사유
         gate.set()
@@ -3234,8 +3031,8 @@ class TestMidRunAbsorption:
             if n == 2:
                 return json.dumps(
                     [
-                        {"action": "reply", "id": "2", "text": "추가 답"},
-                        {"action": "reply", "id": "1", "text": "원래 답"},
+                        {"action": "reply", "id": "r-2", "text": "추가 답"},
+                        {"action": "reply", "id": "r-1", "text": "원래 답"},
                         {"action": "complete", "result": "끝"},
                     ]
                 )
@@ -3246,9 +3043,9 @@ class TestMidRunAbsorption:
         assert res.output == "끝" and len(calls) == 2
         # 2턴의 프롬프트에 흡수된 요청이 관찰로 들어 있고, 꼬리가 둘 다 빚으로 든다
         second = "\n".join(str(m.get("content")) for m in calls[1])
-        assert "── request [2] from main" in second and "추가 지시" in second
-        assert "## Owed Replies" in second
-        assert 'reply(id="1"' in second and 'reply(id="2"' in second
+        assert "── request [r-2] from main" in second and "추가 지시" in second
+        assert "## Open Items" in second
+        assert 'reply(id="r-1"' in second and 'reply(id="r-2"' in second
         # 기록에도 남는다 — 재시작·재생이 같은 것을 본다
         recs = [r for r in _history(ctx) if r.get("source") == "agent_request"]
         assert len(recs) == 1 and recs[0]["tool"] == "agent"
@@ -3270,12 +3067,18 @@ class TestMidRunAbsorption:
                 return json.dumps([{"action": "read_file", "path": str(tmp_path)}])
             if n == 2:
                 return json.dumps(
-                    [{"action": "complete", "result": "사람에게 답", "answers": ["2"]}]
+                    [
+                        {
+                            "action": "complete",
+                            "result": "사람에게 답",
+                            "answers": ["u-2"],
+                        }
+                    ]
                 )
             if n == 3:
                 return json.dumps(
                     [
-                        {"action": "reply", "id": "1", "text": "main 에게 답"},
+                        {"action": "reply", "id": "r-1", "text": "main 에게 답"},
                         {"action": "complete", "result": "끝", "answers": []},
                     ]
                 )
@@ -3284,11 +3087,13 @@ class TestMidRunAbsorption:
         calls, ctx, _res = self._loop(reg, b, turns)
         gate.set()
         second = "\n".join(str(m.get("content")) for m in calls[1])
-        assert "## Open Requests" in second and "[2]" in second  # 사람 요청 회계
+        assert "## Open Items" in second and "[u-2]" in second  # 사람 요청 회계
         third = "\n".join(str(m.get("content")) for m in calls[2])
-        assert "your result was delivered, but you still owe" in third  # 수락 후 독촉
+        assert (
+            "your result was delivered, but 1 item is still open" in third
+        )  # 배달 후 독촉
         assert "was refused" not in third
-        user_recs = [r for r in _history(ctx) if r.get("request_id") == "2"]
+        user_recs = [r for r in _history(ctx) if r.get("request_id") == "u-2"]
         assert user_recs and user_recs[0]["content"].startswith("[user:dj]: 사람 요청")
         assert [m["output"] for m in reg.drain_replies()] == ["main 에게 답"]
 
@@ -3299,7 +3104,7 @@ class TestMidRunAbsorption:
             b,
             lambda n: json.dumps(
                 [
-                    {"action": "reply", "id": "1", "text": "답"},
+                    {"action": "reply", "id": "r-1", "text": "답"},
                     {"action": "complete", "result": "끝"},
                 ]
             ),

@@ -645,46 +645,67 @@ class TestGuidelinesInTail:
 _REPLY = {
     "kind": "reply",
     "to": "agent:agt-orch",
-    "id": "7",
+    "id": "r-7",
     "text": "floorCeil 고쳐줘",
 }
 _ANSWER = {"kind": "answer", "to": "agent:agt-a", "id": "q-1", "text": "포트는?"}
 
 
-class TestOwedRepliesInTail:
-    """v9.24.5: peer 가 보낸 요청·질문(빚)을 매 턴 꼬리에 싣는다. 전엔 사람
-    요청(Open Requests)만 보였고 peer 빚은 ``complete`` 가 거절될 때에야
-    드러났다 — 상주 에이전트의 런은 바로 그 peer 요청 때문에 있는데도."""
+class TestOpenItemsInTail:
+    """v10.56.0 (장부 P3): 열린 항목이 꼬리의 ``## Open Items`` 한 블록에 닫는 순서대로
+    — 행동으로 닫는 빚(회신 `reply`, 질문 `answer`) 먼저, `complete` 의 `answers` 로
+    닫는 요청·메일 마지막. 종전엔 `## Open Requests`·`## Owed Replies` 두 블록이었고
+    main 은 회신 빚을 `agent request` 로(가장 오래된 것을) 갚았다."""
 
-    def test_block_renders_each_debt_with_its_settling_tool(self):
-        from agent_cli.constants import owed_replies_block
+    def _ledger(self, debts, requests=()):
+        from agent_cli.loop.ledger import Ledger
 
-        out = owed_replies_block([_REPLY, _ANSWER], resident=True)
-        assert out.startswith("## Owed Replies")
+        class _Port:
+            nonblocking = True
+
+            def debts(self):
+                return list(debts)
+
+        led = Ledger()
+        led.bind_questions(_Port())
+        for r in requests:
+            led.add_request(*r)
+        return led
+
+    def test_each_debt_with_its_settling_tool_then_complete_last(self):
+        out = self._ledger(
+            [_REPLY, _ANSWER], [("u-3", "dj", "README 정리해 줘")]
+        ).block()
+        assert out.startswith("## Open Items — close them in this order")
+        lines = out.splitlines()
+        assert lines.index("  1. by action") < lines.index("  2. by `complete` (last)")
         assert (
-            '[7] reply to agent:agt-orch: "floorCeil 고쳐줘" → reply(id="7", text="...")'
+            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → reply(id="r-7", text="...")'
             in out
         )
         assert 'answer(id="q-1", text="...")' in out
+        assert '     [u-3] (dj) "README 정리해 줘"' in out
+        assert 'complete(result="...", answers=["u-3"])' in out
+        assert out.rstrip().endswith("your result is delivered either way.")
 
-    def test_main_loop_settles_a_reply_with_agent_request(self):
-        from agent_cli.constants import owed_replies_block
+    def test_main_settles_a_reply_with_reply_too(self):
+        """main 도 `reply(id)` — 갚는 도구는 루프와 무관하게 하나다."""
+        out = self._ledger([_REPLY]).block()
+        assert 'reply(id="r-7"' in out and "agent(mode=" not in out
 
-        out = owed_replies_block([_REPLY], resident=False)
-        assert 'agent(mode="request", key="agt-orch"' in out
-        assert "reply(text=" not in out
+    def test_only_the_sections_that_have_items(self):
+        assert "1. by action" not in self._ledger([], [("u-1", "", "x")]).block()
+        assert "2. by `complete`" not in self._ledger([_REPLY]).block()
 
-    def test_no_debts_no_block(self):
-        from agent_cli.constants import owed_replies_block
+    def test_nothing_open_no_block(self):
+        assert self._ledger([]).block() == ""
 
-        assert owed_replies_block([], resident=True) == ""
-
-    def test_debts_sit_after_requests_in_the_state_block(self):
+    def test_items_sit_first_in_the_state_block(self):
         out = build_session_state(
-            requests="## Open Requests\n- r1", debts="## Owed Replies\n- d"
+            items="## Open Items\n- x", jobs="## Background jobs\n- j"
         )
         assert _after_boundary(out).startswith(SESSION_STATE_HEADER)
-        assert out.index("## Open Requests") < out.index("## Owed Replies")
+        assert out.index("## Open Items") < out.index("## Background jobs")
 
     def test_loop_tail_carries_the_ports_debts(self, tmp_path):
         class _Port:
@@ -695,7 +716,7 @@ class TestOwedRepliesInTail:
 
         caller, _ = _caller(tmp_path, questions=_Port())
         out = caller._build_session_state(10_000)
-        assert "## Owed Replies" in out and 'reply(id="7", text="...")' in out
+        assert "## Open Items" in out and 'reply(id="r-7", text="...")' in out
 
     def test_broken_or_missing_port_is_silent(self, tmp_path):
         class _Broken:
@@ -704,4 +725,4 @@ class TestOwedRepliesInTail:
 
         for port in (None, object(), _Broken()):
             caller, _ = _caller(tmp_path, questions=port)
-            assert "Owed Replies" not in caller._build_session_state(10_000)
+            assert "Open Items" not in caller._build_session_state(10_000)

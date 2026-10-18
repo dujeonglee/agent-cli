@@ -12,7 +12,7 @@ import pytest
 
 from agent_cli.schedule.registry import (
     AGENT_CAP,
-    DEFAULT_NICKNAME,
+    SCHEDULER_PREFIX,
     ScheduleError,
     ScheduleRegistry,
 )
@@ -97,11 +97,17 @@ class TestSettle:
         assert s.last_fired_at == "2026-10-05T09:00:02"
         assert [r["event"] for r in _log(tmp_path)] == ["fired"]
 
-    def test_default_nickname(self, reg, clock, sent):
-        reg.add("0 9 * * *", "x")
+    def test_default_nickname_is_a_virtual_user_per_schedule(self, reg, clock, sent):
+        """닉네임이 없으면 예약마다 다른 가상 사용자 (v10.56.0, 장부 P3) — 종전엔
+        전부 `⏰ Scheduler` 하나라 어느 예약의 발화인지 갈리지 않았다."""
+        a = reg.add("0 9 * * *", "x", label="nightly")
+        b = reg.add("0 9 * * *", "y")
         clock.advance(hours=1)
         reg.settle()
-        assert sent == [("x", DEFAULT_NICKNAME)]
+        assert sorted(sent) == sorted(
+            [("x", f"{SCHEDULER_PREFIX}nightly"), ("y", f"{SCHEDULER_PREFIX}{b.id}")]
+        )
+        assert a.id != b.id
 
     def test_nothing_owed_from_before_creation(self, reg, clock, sent):
         """09:00 발화 예약을 09:30 에 만들면 오늘 09:00 은 놓친 게 아니다."""
@@ -205,7 +211,8 @@ class TestMissedAnswer:
     def test_run_now_fires_and_clears(self, reg, missed, sent, tmp_path):
         assert reg.run_now(missed.id) is True
         s = reg.get(missed.id)
-        assert sent == [("x", DEFAULT_NICKNAME)] and s.missed_at is None
+        assert sent == [("x", s.effective_nickname)] and s.missed_at is None
+        assert s.effective_nickname.startswith(SCHEDULER_PREFIX)
         assert [r["event"] for r in _log(tmp_path)] == ["missed", "fired"]
         reg.settle()
         assert len(sent) == 1  # 답한 뒤 다시 묻지도 다시 돌지도 않는다
