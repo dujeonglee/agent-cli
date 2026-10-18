@@ -14,7 +14,7 @@ the env gate are gone.
 Modes:
 - ``add`` — ``cron`` (5-field, local time) + ``prompt`` + optional ``label`` +
   optional ``nickname`` (display name of the injected prompt; default
-  "⏰ Scheduler").
+  ``Scheduler-<label|id>`` — a virtual user per schedule, v10.56.0).
 - ``delete`` — ``id`` (from ``list``). Named ``id`` like every other tool
   (memory, monitor, reply, answer): as ``schedule_id`` a live main was refused
   nine times in a day and never adapted (v9.25.3).
@@ -67,7 +67,7 @@ class ScheduleTool(Tool):
         "(cron + prompt [+ label, nickname]), delete (id), list. cron is 5 "
         "fields 'min hour day month weekday' in local time (e.g. '0 9 * * 1' = "
         "Mondays 09:00). 'nickname' sets the display name the prompt appears "
-        "under (default '⏰ Scheduler'). Schedules are saved with the session "
+        "under (default 'Scheduler-<label or id>'). Schedules are saved with the session "
         "and this process stays up while one is enabled. A fire that came due "
         "while the process was down is NOT run automatically — the user is "
         "asked whether to run it."
@@ -92,7 +92,7 @@ class ScheduleTool(Tool):
                 "type": "string",
                 "description": (
                     "Display name the injected prompt shows under (optional, "
-                    "add; defaults to '⏰ Scheduler')"
+                    "add; defaults to 'Scheduler-<label or id>')"
                 ),
             },
             "id": {

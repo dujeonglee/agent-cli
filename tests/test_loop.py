@@ -1802,18 +1802,19 @@ class TestToolPolicyDeclarations:
             tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
-        # ``reply`` (v9.21.0) 는 ``message`` 와 같은 선언 — 상주(핸들러 있음)에만.
-        for name in ("message", "reply"):
-            if message_handler is not None:
+        if message_handler is not None:
+            if "message" not in tools_list:
+                tools_list = [*tools_list, "message"]
+        else:
+            tools_list = [t for t in tools_list if t != "message"]
+        # ``reply`` 는 v10.56.0(장부 P3)부터 ``answer`` 와 같은 선언 — 질문 포트가
+        # 있는 루프(main·상주)에 붙는다. 빚을 갚는 도구가 루프와 무관하게 하나다.
+        for name in ("reply", "answer"):
+            if questions is not None:
                 if name not in tools_list:
                     tools_list = [*tools_list, name]
             else:
                 tools_list = [t for t in tools_list if t != name]
-        if questions is not None:
-            if "answer" not in tools_list:
-                tools_list = [*tools_list, "answer"]
-        else:
-            tools_list = [t for t in tools_list if t != "answer"]
         # ``snapshot`` (v10.36.0) 은 세션 저장소가 섰을 때만 — 이 테스트는 저장소를
         # 세우지 않으므로 기준선도 뺀다(세우는 경우는 test_snapshot 의 광고 테스트).
         tools_list = [t for t in tools_list if t != "snapshot"]
@@ -1877,7 +1878,8 @@ class TestToolPolicyDeclarations:
             "ask": {"requires_handler": "ctx"},
             "message": {"requires_handler": "message_handler", "force_mount": True},
             # ``message`` 의 짝 (v9.21.0) — 요청자에게 빚진 회신을 갚는다. 같은 선언.
-            "reply": {"requires_handler": "message_handler", "force_mount": True},
+            # v10.56.0: main 에도 붙는다 — 빚을 갚는 도구는 하나(장부 P3)
+            "reply": {"requires_handler": "questions", "force_mount": True},
             # 비동기 질문의 짝 — ``message`` 와 같은 선언(포트 없는 루프에선
             # 목록에서 제거, 있으면 강제 탑재). docs/agent-ask/DESIGN.md §3.1
             "answer": {"requires_handler": "questions", "force_mount": True},
@@ -5380,18 +5382,20 @@ class TestRejectedAttemptThoughtIsNotDrawn:
         return events
 
     def test_the_live_case_complete_without_answers(self, tmp_path, caps):
-        """The exact board case (hxkkev, 22:22): the first `complete` lacked
-        `answers`, was bounced, and the retry answered with no prose."""
+        """The board case (hxkkev, 22:22): the first `complete` lacked `answers`.
+        v10.56.0 (ledger P3): it is no longer bounced — its result is delivered
+        (thought and final drawn) and the run continues to close the item; the
+        second `complete` closes it."""
         ev = self._run(
             tmp_path,
             caps,
-            'long reasoning of the bounced attempt\n\n[{"action": "complete", "result": "r"}]',
-            '[{"action": "complete", "result": "r", "answers": ["1"]}]',
+            'long reasoning of the first attempt\n\n[{"action": "complete", "result": "r"}]',
+            '[{"action": "complete", "result": "r", "answers": ["u-1"]}]',
             query_author="DJ",
-            query_request_id="1",
+            query_request_id="u-1",
         )
-        assert not [c for k, c in ev if k == "thought"]
-        assert [k for k, _ in ev].count("final") == 1
+        assert ("thought", "long reasoning of the first attempt") in ev
+        assert [k for k, _ in ev].count("final") == 2
 
     def test_rejected_single_call_draws_no_action_card(self, tmp_path, caps):
         ev = self._run(

@@ -82,7 +82,7 @@ def _notice(loop, **ai):
     claimed = _claimed_ids(op.action_input)
     still_open = loop._state.ledger.settle(claimed)
     return loop._dispatch._with_unanswered_notice(
-        claimed, still_open, ai.get("result", "")
+        claimed, still_open, [], ai.get("result", "")
     )
 
 
@@ -157,7 +157,7 @@ class TestClaims:
         """
         loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
         out = _notice(loop, result="결과", answers=[])
-        assert "were not answered" in out and "[1]" in out
+        assert "were not closed" in out and "[1]" in out
 
     def test_omitting_answers_is_reported_as_undeclared_not_unanswered(self):
         """**생략은 "미답" 이 아니라 "미신고" 다.**
@@ -177,7 +177,7 @@ class TestClaims:
         out = _notice(loop, result="결과")
         assert "[1]" in out and "[2]" in out, "무엇이 미신고인지 안 보인다"
         assert "undeclared" in out, "미신고를 미답으로 단언하면 안 된다"
-        assert "were not answered" not in out, (
+        assert "were not closed" not in out, (
             "모델이 실제로 답했을 수 있다 — 단언하면 거짓이 된다"
         )
 
@@ -199,7 +199,7 @@ class TestClaims:
         )
         out = _notice(loop, result="결과", answers=["r1"])
         assert out.startswith("결과")
-        assert "were not answered" in out, (
+        assert "were not closed" in out, (
             "모델이 직접 밝힌 미답이다 — 여기서는 단언해도 된다"
         )
         assert "r2" in out and "Ann" in out and "둘째" in out
@@ -246,7 +246,7 @@ class TestClaims:
         )
         tail = _notice(loop, result="ok", answers=[])[len("ok") :]
         assert not HANGUL.findall(tail), f"통지에 한글: {tail!r}"
-        assert "not" in tail and "answered" in tail
+        assert "not closed" in tail
 
     def test_complete_is_never_held(self):
         """미답이 남아도 결과는 **그대로 나간다**. 붙잡으면 일을 시킨 쪽이
@@ -274,34 +274,31 @@ class TestSchema:
         """설명이 가리키는 이름과 꼬리의 제목이 **같아야** 한다.
 
         라이브 실측: 설명은 "the tail lists Outstanding Requests" 를 보라는데
-        꼬리는 `## Open Requests` 를 그린다 — 모델에게 없는 이름을 찾으라고
-        하고 있었다. 두 문자열이 따로 살아 있으면 조용히 어긋난다.
+        꼬리는 다른 제목을 그렸다 — 모델에게 없는 이름을 찾으라고 했다. 두
+        문자열이 따로 살아 있으면 조용히 어긋난다(v10.56.0: `## Open Items`).
         """
-        from agent_cli.constants import outstanding_requests_block
+        from agent_cli.loop.ledger import Ledger
         from agent_cli.tools import TOOLS
 
-        block = outstanding_requests_block([{"id": "1", "author": "", "text": "a"}])
-        heading = next(
-            ln.lstrip("# ").strip() for ln in block.splitlines() if ln.startswith("#")
+        led = Ledger()
+        led.add_request("u-1", "", "a")
+        heading = led.block().splitlines()[0].lstrip("# ").split(" — ")[0]
+        assert heading == "Open Items"
+        assert f"## {heading}" in TOOLS["complete"].description
+        assert (
+            f"## {heading}"
+            in TOOLS["complete"].parameters["properties"]["answers"]["description"]
         )
-        complete = TOOLS["complete"]
-        surfaces = [complete.description] + [
-            v.get("description", "") for v in complete.parameters["properties"].values()
-        ]
-        for text in surfaces:
-            if "tail lists" in text:
-                assert heading in text, (
-                    f"꼬리 제목은 {heading!r} 인데 설명은 다른 이름을 가리킨다: {text!r}"
-                )
 
-    def test_description_tells_the_model_what_omitting_means(self):
+    def test_description_tells_the_model_what_to_do_and_what_omitting_means(self):
         """단어 `answers` 만 보면 안 된다 — 지시문을 지워도 통과한다
         (사보타주가 실제로 새어나갔다). **행동과 결과**를 고정한다."""
         from agent_cli.tools import TOOLS
 
         desc = TOOLS["complete"].description
-        assert "list the ids you actually answered" in desc, "무엇을 할지 안 말한다"
-        assert "unanswered" in desc, "빠뜨리면 어떻게 되는지 안 말한다"
+        assert "list the ids your result covers" in desc, "무엇을 할지 안 말한다"
+        assert "stay open" in desc, "빠뜨리면 어떻게 되는지 안 말한다"
+        assert "always the LAST call" in desc, "순서를 안 말한다"
 
 
 # ── ④ 모델이 id 를 볼 수 있어야 한다 ──────────────────
@@ -321,51 +318,45 @@ class TestIdsReachTheModel:
     """
 
     def _tail(self, requests):
-        from agent_cli.constants import outstanding_requests_block
+        from agent_cli.loop.ledger import Ledger
         from agent_cli.prompts.session_state import build_session_state
 
-        return build_session_state(
-            requests=outstanding_requests_block(requests) if requests else ""
-        )
+        led = Ledger()
+        for r in requests:
+            led.add_request(r["id"], r.get("author", ""), r["text"])
+        return build_session_state(items=led.block())
 
     def test_ids_ride_the_per_turn_tail(self):
         blob = self._tail(
             [
-                {"id": "1", "author": "Bob", "text": "첫째"},
-                {"id": "2", "author": "Ann", "text": "둘째"},
+                {"id": "u-1", "author": "Bob", "text": "첫째"},
+                {"id": "u-2", "author": "Ann", "text": "둘째"},
             ]
         )
-        assert "[1]" in blob and "[2]" in blob, "모델이 id 를 못 본다"
-        assert "Open Requests" in blob
-        # 단어가 아니라 **행동 지시**를 고정한다 — 뒷문장에도 `answers` 가
-        # 나와서, 지시문을 지워도 단어 검사만으로는 통과한다.
-        assert "Set `answers`" in blob and "reported to" in blob
+        assert "[u-1]" in blob and "[u-2]" in blob, "모델이 id 를 못 본다"
+        assert "## Open Items" in blob
+        # 단어가 아니라 **행동**을 고정한다 — 닫는 호출 모양 그대로
+        assert 'complete(result="...", answers=["u-1", "u-2"])' in blob
 
     def test_single_request_run_also_shows_its_id(self):
-        """**1건에도 싣는다** (사용자 지적).
+        """**1건에도 싣는다** (사용자 지적) — 합쳐진 런에서만 보이면 모델이 id
+        어휘를 배울 기회가 없다."""
+        blob = self._tail([{"id": "u-1", "author": "Bob", "text": "하나뿐"}])
+        assert "[u-1]" in blob and 'answers=["u-1"]' in blob
 
-        합쳐진 런(실측 10%)에서만 보이면 모델이 id 어휘를 배울 기회가 없다 —
-        그때 처음 본 필드를 곧바로 채우라는 요구가 된다. 거부·각주는 여전히
-        합쳐진 런에서만이라 90% 런의 턴·소음은 안 는다.
-        """
-        blob = self._tail([{"id": "1", "author": "Bob", "text": "하나뿐"}])
-        assert "[1]" in blob and "Open Requests" in blob
-        assert 'answers: ["1"]' in blob, "무엇을 채우라는지 예시가 없다"
-
-    def test_llm_caller_feeds_the_block_only_when_merged(self):
-        """렌더러가 아니라 **호출부**가 게이트를 쥔다 — 소스 핀."""
+    def test_llm_caller_feeds_the_ledger_block(self):
+        """호출부는 장부의 블록 하나를 싣는다 — 게이트는 장부가 쥔다(소스 핀)."""
         import inspect
 
         from agent_cli.loop.ledger import Ledger
         from agent_cli.loop.llm import LLMCaller
 
         src = inspect.getsource(LLMCaller._build_session_state)
-        assert "ledger.requests_block()" in src, "꼬리에 안 실린다"
-        assert "requests=requests" in src
-        # 게이트는 장부가 쥔다 (P1, v10.54.0) — 요청이 하나라도 있으면 싣는다
-        block = inspect.getsource(Ledger.requests_block)
-        assert "outstanding_requests_block" in block
-        assert "if not self.requests:" in block, "단건 런이 꼬리에서 빠졌다"
+        assert "self.state.ledger.block()" in src and "items=items" in src
+        block = inspect.getsource(Ledger.block)
+        assert "if not self.requests and not debts:" in block, (
+            "단건 런이 꼬리에서 빠졌다"
+        )
 
     def test_the_block_is_not_persisted(self):
         """꼬리는 feed 시점에만 붙고 history 에 안 남는다 — 한 번 주입하던
@@ -375,106 +366,21 @@ class TestIdsReachTheModel:
         from agent_cli.loop import core
 
         src = inspect.getsource(core.AgentLoop._inject_queued_messages)
-        assert "outstanding_requests_block" not in src, (
+        assert "block()" not in src, (
             "드레인 시점 1회 주입이 되살아났다 — 그러면 history 에 박힌다"
         )
 
     def test_block_is_english(self):
-        from agent_cli.constants import outstanding_requests_block
+        from agent_cli.loop.ledger import Ledger
 
-        out = outstanding_requests_block(
-            [{"id": "1", "author": "Bob", "text": "hello"}, {"id": "2", "text": "hi"}]
-        )
-        harness = out.replace("hello", "").replace("hi", "")
+        led = Ledger()
+        led.add_request("u-1", "Bob", "hello")
+        led.add_request("u-2", "", "hi")
+        harness = led.block().replace("hello", "").replace("hi", "")
         assert not HANGUL.findall(harness), f"꼬리에 한글: {harness!r}"
 
 
 # ── ⑤ 거부 — 안내만으로는 안 됐다 ─────────────────────
-
-
-class TestAnswersAreRequired:
-    """라이브(xrnway): 꼬리가 매 턴 요구하는데도 모델이 `answers` 를 생략했다.
-
-    모델은 꼬리를 **읽었다** — 자기 생각에 "실제 미완 요청은 [2],[3]뿐" 이라고
-    id 까지 적었다. 그런데도 필드를 안 채웠다. 안내로는 안 되므로 형식 교정으로
-    한 번 되돌린다.
-    """
-
-    def _complete(self, loop, **ai):
-        op = _op(**ai)
-        return loop._dispatch._op_complete("raw", object(), op, {})
-
-    def _merged(self):
-        return _drain(
-            [
-                {"id": "1", "nickname": "Bob", "text": "a"},
-                {"id": "2", "nickname": "Ann", "text": "b"},
-            ]
-        )
-
-    def test_missing_answers_is_bounced_once(self):
-        loop = self._merged()
-        first = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
-        assert first is not None, "생략이 그대로 통과했다"
-        assert loop._state.ledger.answers_prompted is True
-
-        # 두 번째는 받아준다 — 무한 되묻기는 런을 태운다.
-        second = loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
-        assert second is None, "되묻기가 한 번으로 안 끝난다"
-
-    def test_bounce_names_the_ids_and_the_field(self):
-        loop = self._merged()
-        msgs = []
-        loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
-        loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
-        (msg,) = msgs
-        assert '"1"' in msg and '"2"' in msg, "어떤 id 를 대라는지 안 보인다"
-        assert "answers" in msg and "Re-emit `complete`" in msg
-        assert not HANGUL.findall(msg), f"개입 문구에 한글: {msg!r}"
-
-    def test_bounce_quotes_the_result_so_nothing_needs_storing(self):
-        """되돌림 관찰이 결과 원문을 인용한다 (v9.21.1) — emission 은 저장하지
-        않는다. 회신 독촉과 같은 원칙: 거부는 자기완결 관찰 하나로."""
-        loop = self._merged()
-        msgs = []
-        loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append((m, k))
-        loop._dispatch._require_answers(
-            "raw", _TURN, _op(result="둘 다 완료"), "둘 다 완료", {}
-        )
-        ((msg, kw),) = msgs
-        assert "«둘 다 완료»" in msg
-        assert kw.get("store_emission") is False, "물린 complete 이 저장된다"
-        assert kw.get("recovery_kind") == "format", "성공 뒤 fold 돼야 한다"
-
-    def test_present_answers_passes_through(self):
-        loop = self._merged()
-        assert (
-            loop._dispatch._require_answers(
-                "raw", _TURN, _op(result="r", answers=["1"]), "r", {}
-            )
-            is None
-        )
-        assert loop._state.ledger.answers_prompted is False, "필요 없는데 표식을 세웠다"
-
-    def test_single_request_run_is_bounced_too(self):
-        """단건 런도 되돌린다 (v9.22.0) — 섞임에서 추측이 틀리므로 건수 특례
-        없음. 꼬리가 매 턴 `answers: ["1"]` 까지 써 주니 비용은 필드 하나다."""
-        loop = _drain([{"id": "1", "nickname": "Bob", "text": "a"}])
-        assert (
-            loop._dispatch._require_answers("raw", _TURN, _op(result="r"), "r", {})
-            is not None
-        )
-
-    def test_empty_answers_list_is_bounced(self):
-        """`answers: []` 는 '아무것도 안 답함' 이 아니라 **빈칸**이다 —
-        합쳐진 런에서 아무것도 안 답하고 complete 할 이유가 없다."""
-        loop = self._merged()
-        assert (
-            loop._dispatch._require_answers(
-                "raw", _TURN, _op(result="r", answers=[]), "r", {}
-            )
-            is not None
-        )
 
 
 class TestThroughRunLoop:
@@ -553,15 +459,21 @@ class TestThroughRunLoop:
         )
         assert result.output.strip() == "A/B done", result.output
 
-    def test_a_bounce_leaves_no_trace_in_the_model_context(self):
-        """재시도는 기록하지 않는다 (v9.21.1): 물린 complete 은 저장되지 않고,
-        되돌림 관찰은 성공 뒤 컨텍스트에서 접힌다. 모델이 보는 것은 성공
-        궤적뿐이다."""
+    def test_an_omission_is_delivered_and_the_run_continues(self):
+        """v10.56.0 (장부 P3): `answers` 를 빠뜨린 complete 도 결과는 배달되고
+        기록에 남는다 — 그 뒤 되돌림이 "어느 항목을 닫았나" 를 묻는다. 종전엔
+        물린 complete 을 저장하지 않고 되돌림을 접었다(결과 미배달)."""
         provider = self._provider(
             self._env([{"action": "shell", "shell_command": "echo A"}]),
             self._env([{"action": "complete", "result": "A/B done"}]),
             self._env(
-                [{"action": "complete", "result": "A/B done", "answers": ["1", "2"]}]
+                [
+                    {
+                        "action": "complete",
+                        "result": "A/B done",
+                        "answers": ["u-1", "u-2"],
+                    }
+                ]
             ),
         )
         import tempfile
@@ -570,12 +482,12 @@ class TestThroughRunLoop:
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
 
-        queue = [None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}]
+        queue = [None, {"id": "u-2", "nickname": "Ann", "text": "REQ-B"}]
         ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
-        run_loop(
+        result = run_loop(
             query="REQ-A",
             query_author="Bob",
-            query_request_id="1",
+            query_request_id="u-1",
             provider=provider,
             capabilities=ModelCapabilities(
                 context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -589,8 +501,8 @@ class TestThroughRunLoop:
                 dequeue_user_message=lambda: queue.pop(0) if queue else None,
             ),
         )
-        assert provider.call.call_count == 3  # 되돌림은 있었다
-        # 물린 complete(answers 없음)은 어디에도 저장되지 않았다
+        assert provider.call.call_count == 3
+        assert result.output == "A/B done"
         bare = [
             m
             for m in ctx.get_raw_messages()
@@ -601,14 +513,9 @@ class TestThroughRunLoop:
                 for o in (m.get("ops") or [])
             )
         ]
-        assert bare == [], "물린 complete 이 저장됐다"
-        # 모델이 보는 컨텍스트에 되돌림 관찰이 남아 있지 않다(성공 뒤 fold)
-        view = "\n".join(
-            str(m.get("content", ""))
-            for m in ctx.get_messages()
-            if m.get("role") == "user"
-        )
-        assert "was refused" not in view, "되돌림이 컨텍스트에 남았다"
+        assert len(bare) == 1, "배달된 complete 은 기록에 남는다"
+        view = "\n".join(str(m.get("content", "")) for m in ctx.get_raw_messages())
+        assert "`answers` is missing" in view and "[u-2]" in view
 
     def test_partial_claim_keeps_the_loop_running(self):
         """부분 주장은 런을 끝내지 않는다 — 전 경로로 확인한다."""
@@ -685,35 +592,47 @@ class TestThroughRunLoop:
         assert [t.get("open_requests") for t in terminals] == [["2"], []]
 
     def test_a_stubborn_model_cannot_burn_the_run(self):
-        """같은 요청을 두 번 독촉하지 않는다 — 각주로 닫는다."""
+        """런 공유 예산(8)이 끝나면 하니스가 닫는다 — 각주로."""
+        from agent_cli.loop.ledger import NAG_BUDGET
+
         provider = self._provider(
             self._env([{"action": "shell", "shell_command": "echo A"}]),
-            self._env([{"action": "complete", "result": "A done", "answers": ["1"]}]),
-            self._env([{"action": "complete", "result": "still A", "answers": ["1"]}]),
+            *[
+                self._env(
+                    [{"action": "complete", "result": "A done", "answers": ["u-1"]}]
+                )
+                for _ in range(NAG_BUDGET + 1)
+            ],
         )
         result = self._run(
             provider,
-            pending=[None, {"id": "2", "nickname": "Ann", "text": "REQ-B"}],
+            request_id="u-1",
+            pending=[None, {"id": "u-2", "nickname": "Ann", "text": "REQ-B"}],
         )
-        assert provider.call.call_count == 3, "독촉이 한 번으로 안 끝났다"
-        assert "were not answered" in result.output
+        assert provider.call.call_count == NAG_BUDGET + 2, "예산이 끝나도 계속 독촉했다"
+        assert "were not closed" in result.output
         assert "REQ-B" in result.output
 
-    def test_starter_alone_is_bounced_once_then_undeclared(self):
-        """단건 런도 `answers` 를 요구한다 (v9.22.0). 끝내 없으면 미신고."""
+    def test_starter_alone_without_answers_is_nagged_then_undeclared(self):
+        """단건 런도 `answers` 를 요구한다 (v9.22.0). 예산 안에서 되돌리고, 끝내
+        없으면 미신고(v10.56.0 — 종전엔 1회 되묻고 미신고)."""
+        from agent_cli.loop.ledger import NAG_BUDGET
+
         provider = self._provider(
-            self._env([{"action": "complete", "result": "done"}]),
-            self._env([{"action": "complete", "result": "done"}]),
+            *[
+                self._env([{"action": "complete", "result": "done"}])
+                for _ in range(NAG_BUDGET + 1)
+            ],
         )
-        result = self._run(provider, pending=[])
-        assert provider.call.call_count == 2
+        result = self._run(provider, request_id="u-1", pending=[])
+        assert provider.call.call_count == NAG_BUDGET + 1
         assert "undeclared" in result.output
 
     def test_starter_alone_with_answers_is_clean(self):
         provider = self._provider(
-            self._env([{"action": "complete", "result": "done", "answers": ["1"]}])
+            self._env([{"action": "complete", "result": "done", "answers": ["u-1"]}])
         )
-        result = self._run(provider, pending=[])
+        result = self._run(provider, request_id="u-1", pending=[])
         assert provider.call.call_count == 1
         assert result.output == "done"
 
@@ -811,35 +730,37 @@ class TestOpenRequestsHoldTheLoop:
         # 보려고 영문 요청을 쓴다.
         loop = _drain(
             [
-                {"id": "1", "nickname": "Bob", "text": "first"},
-                {"id": "2", "nickname": "Ann", "text": "second"},
+                {"id": "u-1", "nickname": "Bob", "text": "first"},
+                {"id": "u-2", "nickname": "Ann", "text": "second"},
             ]
         )
         msgs = []
         loop._dispatch._intervene = lambda _t, m, *a, **k: msgs.append(m)
-        self._complete(loop, result="r", answers=["1"])
+        self._complete(loop, result="r", answers=["u-1"])
         (msg,) = msgs
-        assert '"2"' in msg and "Ann" in msg, "무엇이 남았는지 안 보인다"
-        assert "still unanswered" in msg and "complete" in msg
+        assert "[u-2] (Ann)" in msg, "무엇이 남았는지 안 보인다"
+        assert "still open" in msg and 'answers=["u-2"]' in msg
         assert not HANGUL.findall(msg), f"독촉 문구에 한글: {msg!r}"
 
-    def test_nag_is_once_per_request(self):
-        """고집 센 모델과 물려 런을 태우면 안 된다 — 요청당 한 번."""
+    def test_nags_share_one_run_budget(self):
+        """고집 센 모델과 물려 런을 태우면 안 된다 — 런 공유 예산(v10.56.0, 종전엔
+        요청당 1회)."""
+        from agent_cli.loop.dispatch import _CONTINUE
+        from agent_cli.loop.ledger import NAG_BUDGET
+
+        loop = self._merged()
+        for _ in range(NAG_BUDGET):
+            assert self._complete(loop, result="r", answers=["1"]) is _CONTINUE
+        last = self._complete(loop, result="r", answers=["1"])
+        assert last is not _CONTINUE, "예산이 끝나도 독촉했다"
+        assert "were not closed" in last.output, "포기했으면 각주는 남겨야 한다"
+
+    def test_undeclared_after_the_budget_is_reported_not_nagged(self):
+        """예산이 끝난 뒤의 생략은 미신고로 닫는다 — 모르는 것을 미답이라 단언하지 않는다."""
         from agent_cli.loop.dispatch import _CONTINUE
 
         loop = self._merged()
-        assert self._complete(loop, result="r", answers=["1"]) is _CONTINUE
-        # 두 번째도 명시 주장(이미 닫힌 1) — 빈 answers 는 되돌림 대상이라 여기선 안 쓴다
-        second = self._complete(loop, result="r", answers=["1"])
-        assert second is not _CONTINUE, "같은 요청을 두 번 독촉했다"
-        assert "were not answered" in second.output, "포기했으면 각주는 남겨야 한다"
-
-    def test_undeclared_is_never_nagged(self):
-        """무엇이 남았는지 모르면 '남은 걸 해라'는 말에 근거가 없다."""
-        from agent_cli.loop.dispatch import _CONTINUE
-
-        loop = self._merged()
-        loop._state.ledger.answers_prompted = True  # 되돌림은 이미 한 번 썼다
+        loop._state.ledger.budget = 0
         out = self._complete(loop, result="r")
         assert out is not _CONTINUE
         assert "undeclared" in out.output

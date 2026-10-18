@@ -10,6 +10,9 @@ P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·�
 - P2(v10.55.0): 메일이 장부 항목이 되며 "user request" 가 "request" 로 바뀌었다
   (꼬리 머리말·되묻기·독촉). 다시 만들 때 달라진 문자열 4개가 정확히 그 치환으로
   설명됨을 확인했다(나머지 바이트 동일).
+- P3(v10.56.0): 꼬리(`## Open Items`)·정책(계속형 붙잡기 + 예산 8)·id(`u-`·`r-`)가
+  설계대로 바뀌어 기계적 대조가 불가능하다 — 시나리오마다 새 출력을 사람이 읽고
+  다시 얼렸다(PR 에 대조표). 이후 변경은 다시 바이트 가드를 받는다.
 
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """
@@ -42,7 +45,7 @@ class _Port:
         return list(self._debts)
 
 
-_REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "m1", "text": "리뷰 결과 보내줘"}
+_REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "r-1", "text": "리뷰 결과 보내줘"}
 _QUESTION = {"kind": "answer", "to": "agt-b", "id": "q-7a3f", "text": "할인 상한은?"}
 
 
@@ -90,12 +93,12 @@ def _tail(loop) -> str:
 
 
 def _req(i, text, nick="dj"):
-    return {"id": str(i), "nickname": nick, "text": text}
+    return {"id": f"u-{i}", "nickname": nick, "text": text}
 
 
 def s_single_answered():
     lp = _loop([_req(1, "README 정리해 줘")])
-    return [_tail(lp), *_complete(lp, result="정리했다", answers=["1"])]
+    return [_tail(lp), *_complete(lp, result="정리했다", answers=["u-1"])]
 
 
 def s_single_omitted_twice():
@@ -107,16 +110,16 @@ def s_single_omitted_twice():
 
 def s_two_partial_then_rest():
     lp = _loop([_req(1, "A 해줘"), _req(2, "B 해줘", nick="ann")])
-    a = _complete(lp, result="A 했다", answers=["1"])
+    a = _complete(lp, result="A 했다", answers=["u-1"])
     t = _tail(lp)
-    b = _complete(lp, result="B 했다", answers=["2"])
+    b = _complete(lp, result="B 했다", answers=["u-2"])
     return [*a, t, *b]
 
 
 def s_two_partial_twice():
     lp = _loop([_req(1, "A 해줘"), _req(2, "B 해줘", nick="ann")])
-    a = _complete(lp, result="A 했다", answers=["1"])
-    b = _complete(lp, result="A 했다", answers=["1"])
+    a = _complete(lp, result="A 했다", answers=["u-1"])
+    b = _complete(lp, result="A 했다", answers=["u-1"])
     return [*a, *b]
 
 
@@ -132,22 +135,22 @@ def s_debts_user_run_main():
     lp = _loop([_req(1, "A 해줘")], debts=[_REPLY], resident=False)
     outs = [_tail(lp)]
     for _ in range(4):
-        outs += _complete(lp, result="끝", answers=["1"])
+        outs += _complete(lp, result="끝", answers=["u-1"])
     return outs
 
 
 def s_request_and_debts_mixed():
     lp = _loop([_req(1, "A 해줘"), _req(2, "B 해줘")], debts=[_QUESTION], resident=True)
-    a = _complete(lp, result="A", answers=["1"])
-    b = _complete(lp, result="B", answers=["2"])
+    a = _complete(lp, result="A", answers=["u-1"])
+    b = _complete(lp, result="B", answers=["u-2"])
     return [_tail(lp), *a, *b]
 
 
 def s_answer_tool_on_request_id():
     lp = _loop([_req(1, "A 해줘")])
     return [
-        str(lp._dispatch._is_open_request_id("1")),
-        str(lp._dispatch._is_open_request_id("9")),
+        str(lp._state.ledger.has_request("u-1")),
+        str(lp._state.ledger.has_request("u-9")),
     ]
 
 

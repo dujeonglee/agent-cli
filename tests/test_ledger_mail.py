@@ -45,7 +45,7 @@ def _loop(tmp_path, *, query="", items=(), mail=()):
     ctx = ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000)
     loop = AgentLoop(
         query=query,
-        query_request_id="1" if query else "",
+        query_request_id="u-1" if query else "",
         query_author="dj" if query else None,
         provider=MagicMock(),
         capabilities=ModelCapabilities(
@@ -83,7 +83,7 @@ class TestWhichMailBecomesAnItem:
         ],
     )
     def test_seven_kinds_are_items(self, reply):
-        assert mail_item({**reply, "mail_id": 4}) == ("n4", "mail")
+        assert mail_item({**reply, "mail_id": 4}) == ("n-4", "mail")
 
     @pytest.mark.parametrize(
         "reply",
@@ -130,14 +130,14 @@ class TestWakeRunHasNoStarter:
         assert "New agent mail" not in str(ctx.get_raw_messages())
         (item,) = loop._state.ledger.requests
         assert item == {
-            "id": "n1",
+            "id": "n-1",
             "author": "mail",
             "text": "🧵 job #1 finished rc=0 after 3m00s",
         }
-        assert users[0]["request_id"] == "n1"
+        assert users[0]["request_id"] == "n-1"
         tail = loop._llm._build_session_state(10_000)
-        assert '[n1] (mail) "🧵 job #1 finished rc=0 after 3m00s"' in tail
-        assert 'answers: ["n1"]' in tail
+        assert '[n-1] (mail) "🧵 job #1 finished rc=0 after 3m00s"' in tail
+        assert 'complete(result="...", answers=["n-1"])' in tail
 
     def test_nothing_delivered_means_no_llm_call(self, tmp_path):
         loop, _reg, _ctx = _loop(tmp_path)  # 메일 없음 — 다른 런이 이미 가져갔다
@@ -151,17 +151,23 @@ class TestClosingAMailItem:
         loop, _reg, _ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
         loop._deliver_agent_mail()
-        res = _complete(loop, result="잡 통과", answers=["n1"])
+        res = _complete(loop, result="잡 통과", answers=["n-1"])
         assert res.success and res.output == "잡 통과"
         assert loop._state.ledger.requests == []
 
-    def test_omitting_it_is_bounced_once_then_reported(self, tmp_path):
+    def test_omitting_it_is_nagged_within_the_budget_then_reported(self, tmp_path):
+        """v10.56.0 (P3): 생략은 결과를 배달한 뒤 예산 안에서 되돌린다 — 예산이
+        끝나면 미신고 통지로 닫는다."""
+        from agent_cli.loop.ledger import NAG_BUDGET
+
         loop, _reg, _ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
         loop._deliver_agent_mail()
-        assert not hasattr(_complete(loop, result="끝"), "output")  # 되묻기
+        for _ in range(NAG_BUDGET):
+            assert not hasattr(_complete(loop, result="끝"), "output")  # 되돌림
         res = _complete(loop, result="끝")
-        assert '[n1] (mail) "🧵 job #1 finished' in res.output  # 미신고 통지
+        assert res.output.startswith("끝\n\n📋 `complete` came without `answers`")
+        assert '[n-1] (mail) "🧵 job #1 finished' in res.output
 
     def test_nothing_to_do_is_closed_by_listing_it(self, tmp_path):
         loop, _reg, _ctx = _loop(
@@ -176,7 +182,7 @@ class TestClosingAMailItem:
         )
         loop._setup()
         loop._deliver_agent_mail()
-        res = _complete(loop, result="할 일 없음 — 감사 통과", answers=["n1"])
+        res = _complete(loop, result="할 일 없음 — 감사 통과", answers=["n-1"])
         assert res.output == "할 일 없음 — 감사 통과"
 
 
@@ -186,11 +192,11 @@ class TestBusyRunMixesWithUserRequests:
         loop._setup()
         reg._push_reply(dict(JOB))  # 런 도중 도착
         loop._deliver_agent_mail()
-        assert loop._state.ledger.request_ids() == ["1", "n1"]
+        assert loop._state.ledger.request_ids() == ["u-1", "n-1"]
         tail = loop._llm._build_session_state(10_000)
-        assert "2 requests are open in this run:" in tail
-        assert '[1] (dj) "README 정리해 줘"' in tail and "[n1] (mail)" in tail
-        res = _complete(loop, result="둘 다", answers=["1", "n1"])
+        assert "## Open Items" in tail and 'answers=["u-1", "n-1"]' in tail
+        assert '[u-1] (dj) "README 정리해 줘"' in tail and "[n-1] (mail)" in tail
+        res = _complete(loop, result="둘 다", answers=["u-1", "n-1"])
         assert res.output == "둘 다"
 
 
@@ -199,9 +205,9 @@ class TestOpenMailIsPinned:
         loop, _reg, ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
         loop._deliver_agent_mail()
-        idx = next(i for i, m in enumerate(ctx._cache) if m.get("request_id") == "n1")
+        idx = next(i for i, m in enumerate(ctx._cache) if m.get("request_id") == "n-1")
         assert idx in ctx._pinned_indices()
-        _complete(loop, result="ok", answers=["n1"])
+        _complete(loop, result="ok", answers=["n-1"])
         assert idx not in ctx._pinned_indices()
 
 

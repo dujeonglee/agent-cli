@@ -153,7 +153,7 @@ class OpenItem:
 | P0 | 이 문서 · 조사 | 없음 | 리뷰 |
 | P1 | 장부 데이터 모델 하나 — 꼬리·강제 문구 **바이트 동일**. 주석·문서 표류 정리(§3.6-1·10) | 없음 | 꼬리 golden + 동등성 |
 | P2 | 메일 7종 항목화(`[nK]`), 깨우기 문장 컨텍스트 제거, 열린 항목 전부 압축 핀 — **구현 v10.55.0** (§10) | 있음 | 깨우기·바쁜 런 재생 |
-| P3 | 꼬리 `## Open Items` 하나 + 정책 통일(계속형·상한 N) | 있음 | main+상주 재생, 같은 조건 반복으로 흔들림부터 |
+| P3 | 꼬리 `## Open Items` 하나 + 정책 통일(계속형·상한 N) — **구현 v10.56.0** (§12) | 있음 | main+상주 재생, 같은 조건 반복으로 흔들림부터 |
 | P4 | 사람에게 보이는 장부(화면·status.json·보드) | 없음 | 브라우저 |
 
 측정 규율(2026-10-18 깨우기 재생의 교훈): 같은 조건을 다시 돌려 흔들림부터 잰다 — 같은 조건이
@@ -303,6 +303,26 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 - 지표: 끝내야 할 때 `complete` 로 끝냄 · 산문 종료 · 끝낼 때 딴짓 · 이어 가야 할 때 이어 감 · 닫는 법 정확도(id·도구) ·
   되묻기/독촉 횟수(예산 사용량).
 - A 가 B 보다 반복(같은 실수 되풀이)을 늘리면 B — 메모리 `rejection-wording-replay` 의 전례.
+
+## 12. P3 구현 (v10.56.0)
+
+- **id 하나** `agent_cli/item_ids.py` — `u-`(사람 요청: `InputQueue` 가 발급, 상주는 inbox seq) · `n-`(메일: `_stamp_mail`) ·
+  `r-`(회신 빚: `note_owes` 기본값, 상주 동료 요청은 `r-<seq>`) · `q-`(질문, 그대로). 생기는 곳에서 바로 최종 형식 —
+  번역 계층 없음. `closer_of(id)` 가 접두로 닫는 도구를 말한다.
+- **꼬리 하나** `Ledger.block()` — `## Open Items`, 행동 먼저(`1. by action` 빚 줄마다 도구) · `complete` 마지막(`2. by
+  `complete` (last)` + 완성된 호출 줄 `complete_line`, 변형 A). `constants` 의 `outstanding_requests_block`·
+  `owed_replies_block`·`debt_lines` 삭제, `build_session_state(items=)`.
+- **정책 하나** `dispatch._op_complete` — 결과 먼저 렌더, 열린 것(요청·빚)이 남고 `Ledger.spend()` 가 되면
+  `_nag_open_items`(남은 예산 표시), 아니면 `_with_unanswered_notice`. `Ledger.settle(None)`·`settle(set())` 은 아무것도
+  닫지 않는다. 삭제: `_require_answers`·`_should_nag`·`_nag_open_requests`·`_refuse_for_debts`·`_nag_debts`·`_debt_tail`·
+  `MAX_DEBT_NAGS`·`LoopState.user_run`(갈림이 없어졌다)·`answers_prompted`·`requests_nagged`·`debt_nags`.
+- **`reply(id)` 하나** — `ReplyTool.requires_handler="questions"`(main·상주). `QuestionPort._main_reply`: id 로 그 빚을
+  갚고 `expects_reply=False` 로 배달. `AgentRegistry.request(author="main")` 의 "가장 오래된 빚 갚기" 삭제. 회신 기대
+  메일은 빚을 먼저 적어 관찰 꼬리가 `reply(id="r-…")` 를 가리킨다.
+- **오용 안내** `wrong_closer_hint` — `answer`·`reply` 에 다른 접두 id 가 오면 그 항목을 닫는 법.
+- **예약** `Schedule.effective_nickname` — `Scheduler-<label|id>`.
+- **상주 핀** `run_subagent_message(query_request_id=)` — 시작 항목 레코드에 `u-<seq>`/`r-<seq>`.
+- **서버 파싱 종결 결과** `Closed [u-1] in the open items. Still open: […]`.
 
 ## 9. 열린 질문
 
