@@ -241,7 +241,7 @@ class TestDisguisedBlocks:
         )
         c, _, err = _get(self._html(body, 202))
         assert c == "" and err.startswith("Bot check: https://example.com/x")
-        assert '(HTTP 202, "anomaly-modal")' in err
+        assert '(HTTP 202, "made by a human")' in err  # 보이는 글이 먼저
 
     def test_js_shell_is_a_failure(self):
         body = (
@@ -259,9 +259,104 @@ class TestDisguisedBlocks:
         c, _, err = _get(self._html(body))
         assert err is None and "CAPTCHA" in c
 
+    def test_a_widget_name_alone_marks_the_check(self):
+        body = "<html><div class='cf-chl-widget'>Just a moment...</div></html>"
+        _, _, err = _get(self._html(body, 200))
+        assert '"cf-chl"' in err
+
+    def test_captcha_inside_a_script_is_not_a_check(self):
+        """GitHub blob 페이지 실측 — 기능 플래그 `octocaptcha_origin_optimization`."""
+        body = (
+            '<html><script>{"flags":["octocaptcha_origin_optimization"]}</script>'
+            "<h1>Requests</h1><p>Requests is a simple, yet elegant, HTTP library.</p></html>"
+        )
+        c, _, err = _get(self._html(body))
+        assert err is None and "elegant" in c
+
     def test_a_small_plain_page_is_content(self):
         c, _, err = _get(self._html("<html><h1>Example Domain</h1></html>"))
         assert err is None and "Example Domain" in c
+
+
+class TestTables:
+    """v10.56.4: 표의 행이 한 줄로 붙던 것 — 코드 보기(gitiles·cgit)와 정보상자."""
+
+    def _md(self, html):
+        p = _HTMLToMarkdown()
+        p.feed(html)
+        return p.get_markdown()
+
+    def test_code_view_rows_are_lines_and_empty_number_cells_vanish(self):
+        html = (
+            "<table>"
+            + "".join(
+                f'<tr><td data-line-number="{i}"></td><td><span>{t}</span></td></tr>'
+                for i, t in enumerate(
+                    ["wpa_supplicant", "==============", "Copyright"], 1
+                )
+            )
+            + "</table>"
+        )
+        assert self._md(html) == "wpa_supplicant\n==============\nCopyright"
+
+    def test_cells_with_text_are_joined_by_a_bar(self):
+        html = (
+            "<table><tr><th>Designed by</th><td>Guido van Rossum</td></tr>"
+            "<tr><th>Developer</th><td>PSF</td></tr></table>"
+        )
+        assert self._md(html) == "Designed by | Guido van Rossum\nDeveloper | PSF"
+
+    def test_a_table_inside_a_cell_keeps_its_own_rows(self):
+        html = (
+            "<table><tr><td>outer</td><td><table><tr><td>a</td><td>b</td></tr>"
+            "</table></td></tr></table>"
+        )
+        out = self._md(html)
+        assert "a | b" in out and out.startswith("outer | ")
+
+
+class TestGoogleResponses:
+    """v10.56.4: Gerrit·gitiles — XSSI 접두 JSON 과 base64 파일 원문."""
+
+    def test_xssi_prefixed_json_is_parsed(self):
+        c, _, err = _get(
+            _resp("application/json", ')]}\'\n{"log":[{"commit":"ab49"}]}')
+        )
+        assert err is None and json.loads(c) == {"log": [{"commit": "ab49"}]}
+        assert c.startswith("{\n")
+
+    def test_prefix_with_broken_json_is_handed_over_as_is(self):
+        raw = ")]}'\n{broken"
+        c, _, _ = _get(_resp("application/json", raw))
+        assert c == raw
+
+    def _blob(self, body):
+        r = _resp("text/plain; charset=utf-8", body)
+        r.headers["x-gitiles-object-type"] = "blob"
+        return r
+
+    def test_gitiles_blob_is_decoded(self):
+        import base64
+
+        enc = base64.b64encode("wpa_supplicant\n=====\n한글\n".encode()).decode()
+        c, _, err = _get(self._blob(enc))
+        assert err is None and c == "wpa_supplicant\n=====\n한글\n"
+
+    def test_same_body_without_the_header_is_left_alone(self):
+        c, _, _ = _get(_resp("text/plain; charset=utf-8", "d3BhX3N1cHBsaWNhbnQ="))
+        assert c == "d3BhX3N1cHBsaWNhbnQ="
+
+    def test_binary_blob_is_refused(self):
+        import base64
+
+        c, _, err = _get(
+            self._blob(base64.b64encode(b"\x89PNG\r\n\x1a\n\xff\xfe").decode())
+        )
+        assert c == "" and "binary file (gitiles blob)" in err
+
+    def test_not_base64_is_left_alone(self):
+        c, _, err = _get(self._blob("plain words here!"))
+        assert err is None and c == "plain words here!"
 
 
 class TestCharset:

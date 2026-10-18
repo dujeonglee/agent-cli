@@ -3,6 +3,8 @@ XML, plain text)."""
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from html.parser import HTMLParser
@@ -80,6 +82,10 @@ class _HTMLToMarkdown(HTMLParser):
         self._in_pre = False
         self._in_code = False
         self._links: list[str] = []
+        # 표 (v10.56.4): 행마다 한 줄, 글 있는 칸 사이만 " | ". 칸 시작 위치와
+        # 행마다 채워진 칸 수를 스택으로 — 표 안의 표도 같은 규칙.
+        self._cells: list[int] = []
+        self._rows: list[int] = []
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
@@ -101,6 +107,10 @@ class _HTMLToMarkdown(HTMLParser):
             self.result.append("\n")
         elif tag == "li":
             self.result.append("\n- ")
+        elif tag == "tr":
+            self._rows.append(0)
+        elif tag in ("td", "th"):
+            self._cells.append(len(self.result))
         elif tag == "a":
             href = attrs_dict.get("href", "")
             if href and not href.startswith(("#", "javascript:")):
@@ -116,6 +126,19 @@ class _HTMLToMarkdown(HTMLParser):
         elif tag == "code" and not self._in_pre:
             self._in_code = False
             self.result.append("`")
+        elif tag in ("td", "th") and self._cells:
+            start = self._cells.pop()
+            if not "".join(self.result[start:]).strip():
+                del self.result[
+                    start:
+                ]  # 빈 칸 — 코드 보기의 줄 번호 칸(번호는 속성에만)
+            elif self._rows:
+                if self._rows[-1]:
+                    self.result.insert(start, " | ")
+                self._rows[-1] += 1
+        elif tag == "tr" and self._rows:
+            self._rows.pop()
+            self.result.append("\n")
 
     def handle_data(self, data):
         if self._skip:
@@ -132,17 +155,24 @@ class _HTMLToMarkdown(HTMLParser):
         return self._links
 
 
-#: 봇 확인 페이지의 흔적(소문자, 원본 HTML 에서 찾는다). 본문이 짧을 때만 본다 —
-#: CAPTCHA 를 다루는 긴 글(위키 문서 등)을 막힘으로 오인하지 않게.
-_BOT_CHECK_MARKERS = (
+#: 봇 확인 페이지의 흔적. **보이는 글**에서 찾는 문구와 **HTML** 에서 찾는 확인
+#: 위젯 이름을 나눈다(v10.56.4) — 종전엔 원본 HTML 전체에서 ``captcha`` 를 찾아
+#: GitHub blob 페이지의 기능 플래그 ``octocaptcha_origin_optimization`` 에 걸려
+#: 진짜 README 를 막힘으로 돌려줬다. 둘 다 본문이 짧을 때만 본다 — CAPTCHA 를
+#: 다루는 긴 글(위키 문서 등)을 막힘으로 오인하지 않게.
+_BOT_TEXT_MARKERS = (
     "captcha",
     "unusual traffic",
-    "cf-chl",
-    "challenge-platform",
-    "anomaly-modal",
     "made by a human",
     "verify you are human",
     "are you a robot",
+)
+_BOT_HTML_MARKERS = (
+    "cf-chl",
+    "challenge-platform",
+    "anomaly-modal",
+    "g-recaptcha",
+    "h-captcha",
 )
 _BOT_CHECK_MAX_TEXT = 3000  # 확인 페이지는 짧다(DuckDuckGo 실측 ~1K, 공백 접은 글자)
 _JS_SHELL_MIN_HTML = 10_000  # HTML 은 큰데
@@ -159,8 +189,10 @@ def _disguised_block(status: int, html: str, text: str) -> str | None:
     대안은 적지 않는다 — 어디로 갈지는 정보원 목록의 몫이다."""
     flat = " ".join(text.split())
     if len(flat) <= _BOT_CHECK_MAX_TEXT:
-        low = html.lower()
-        hit = next((m for m in _BOT_CHECK_MARKERS if m in low), None)
+        seen, low = flat.lower(), html.lower()
+        hit = next((m for m in _BOT_TEXT_MARKERS if m in seen), None) or next(
+            (m for m in _BOT_HTML_MARKERS if m in low), None
+        )
         if hit:
             return (
                 f"Bot check: {{url}} returned a bot-check page, not the content "
@@ -172,6 +204,23 @@ def _disguised_block(status: int, html: str, text: str) -> str | None:
             f"({len(html):,} chars) has {len(flat)} chars of text"
         )
     return None
+
+
+def _gitiles_blob(text: str, url: str) -> tuple[str, list[str], str | None]:
+    """gitiles ``?format=TEXT`` — 파일 원문이 base64 로 온다 (v10.56.4).
+
+    gitiles 에는 raw 주소가 없고 이것이 원문을 받는 공식 길이다. 판정은 URL
+    모양이 아니라 서버가 단 ``x-gitiles-object-type: blob`` 헤더(android·
+    chromium·kernel googlesource 공통). base64 가 아니면 원문 그대로, 풀린
+    내용이 텍스트가 아니면(바이너리 파일) 실패 — 깨진 글자를 넘기지 않는다."""
+    try:
+        raw = base64.b64decode("".join(text.split()), validate=True)
+    except (binascii.Error, ValueError):
+        return text, [], None
+    try:
+        return raw.decode("utf-8"), [], None
+    except UnicodeDecodeError:
+        return "", [], f"Unsupported content: {url} is a binary file (gitiles blob)"
 
 
 def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
@@ -205,12 +254,17 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
 
     text = _decode(resp, content_type, kind)
     if kind == "json":
+        body = text
+        if body.startswith(")]}'"):  # XSSI 접두(Gerrit·gitiles) — 첫 줄을 버린다
+            body = body.split("\n", 1)[1] if "\n" in body else ""
         try:  # one value per line, non-ASCII kept — readable and still valid JSON
-            text = json.dumps(json.loads(text), indent=1, ensure_ascii=False)
+            text = json.dumps(json.loads(body), indent=1, ensure_ascii=False)
         except ValueError:
             pass  # not actually JSON — hand it over as text
         return text, [], None
     if kind == "text":
+        if (resp.headers.get("x-gitiles-object-type") or "") == "blob":
+            return _gitiles_blob(text, url)
         return text, [], None
 
     # 본문은 자르지 않는다(v10.56.2). 종전엔 페이지마다 20만 자에서 **표시 없이**
