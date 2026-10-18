@@ -258,12 +258,20 @@ class LLMCaller:
 
         job_reg = get_job_registry()
         jobs = job_reg.render_tail(self.cfg.owner) if job_reg is not None else ""
+        # 정보원 목록 (v10.57.0) — fetch 가 없는 루프(감사자 등)엔 쓸 수 없는 주소다.
+        # 파일은 턴마다 읽는다: 🌐 드로어에서 바꾸면 다음 턴부터.
+        web = ""
+        if "fetch" in self.cfg.tools_list:
+            from agent_cli.web_sources import render as render_web_sources
+
+            web = render_web_sources()
         return build_session_state(
             compaction_notice=notice,
             turn=self.state.turn,
             max_turns=self.cfg.max_turns,
             agents=agents,
             memory=memory,
+            web_sources=web,
             items=items,
             jobs=jobs,
             guidelines=TASK_GUIDELINES,

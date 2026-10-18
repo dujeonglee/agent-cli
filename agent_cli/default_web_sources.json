@@ -1,0 +1,96 @@
+{
+ "_comment": "agent_cli/web_sources.py — 꼬리 ## Web Sources 의 기본 목록 (v10.57.0). 사용자 변경은 .agent-cli/web-sources.json 에 바뀐 것만.",
+ "header": "Web sources that answer fetch directly (JSON or plain text, no key):",
+ "sources": [
+  {
+   "id": "search.engines",
+   "group": "search",
+   "text": "www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n— engines often answer automated requests with a bot check; fetch then fails with \"Bot check:\" or\n\"Needs JavaScript:\", and the browser tool can open the same search (a person can pass the check there)"
+  },
+  {
+   "id": "wiki.summary",
+   "group": "wiki",
+   "text": "{en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}"
+  },
+  {
+   "id": "wiki.search",
+   "group": "wiki",
+   "text": "{en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json"
+  },
+  {
+   "id": "pkgs.pypi-npm",
+   "group": "pkgs",
+   "text": "pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest"
+  },
+  {
+   "id": "pkgs.deps-dev",
+   "group": "pkgs",
+   "text": "api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}"
+  },
+  {
+   "id": "code.raw",
+   "group": "code",
+   "text": "raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+  },
+  {
+   "id": "code.github-api",
+   "group": "code",
+   "text": "api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated"
+  },
+  {
+   "id": "qa.stackexchange-hn",
+   "group": "Q&A",
+   "text": "api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…"
+  },
+  {
+   "id": "vulns.osv",
+   "group": "vulns",
+   "text": "api.osv.dev/v1/vulns/{id}"
+  },
+  {
+   "id": "vulns.nvd",
+   "group": "vulns",
+   "text": "services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)"
+  },
+  {
+   "id": "papers.arxiv-openalex",
+   "group": "papers",
+   "text": "export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…"
+  },
+  {
+   "id": "data.weather",
+   "group": "data",
+   "text": "api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m"
+  },
+  {
+   "id": "data.fx",
+   "group": "data",
+   "text": "api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD"
+  },
+  {
+   "id": "wifi.hostap",
+   "group": "wifi",
+   "text": "w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant"
+  },
+  {
+   "id": "wifi.kernel",
+   "group": "wifi",
+   "text": "git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}"
+  },
+  {
+   "id": "wifi.lore",
+   "group": "wifi",
+   "text": "lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list"
+  },
+  {
+   "id": "wifi.android",
+   "group": "wifi",
+   "text": "android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n  /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT"
+  },
+  {
+   "id": "wifi.gerrit",
+   "group": "wifi",
+   "text": "android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…"
+  }
+ ]
+}

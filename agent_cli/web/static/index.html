@@ -55,6 +55,7 @@
     </span>
     <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
     <button id="schedule-btn" class="btn-icon" type="button" title="예약 — 정해진 시각에 요청을 자동으로 넣습니다">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
+    <button id="websrc-btn" class="btn-icon" type="button" title="정보원 — 매 턴 꼬리에 싣는 웹 정보원 목록 (fetch 가 있는 루프만)">🌐</button>
     <button id="copy-all-btn" class="btn-icon" type="button" title="대화 전체 복사 — 보이는 대화를 마크다운으로 클립보드에">⧉</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <!-- 헤더 자리 노브(ui.placement="header", ⚡ 자동 승인) — 렌더러가 토글 버튼을 넣는다 -->
@@ -143,6 +144,33 @@
       <summary>최근 이력</summary>
       <div id="sched-log" class="sched-log"></div>
     </details>
+  </aside>
+
+  <!-- 🌐 정보원 서랍 (v10.57.0, agent_cli/web_sources.py) — 꼬리 ## Web Sources 의
+       체크박스 목록. 기본은 전부 켜짐, 바꾼 것만 .agent-cli/web-sources.json 에. -->
+  <div id="websrc-backdrop" hidden></div>
+  <aside id="websrc-drawer" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-label="정보원">
+    <div class="de-head">
+      <div class="de-title">🌐 정보원</div>
+      <span id="websrc-total" class="de-path"></span>
+      <button id="websrc-close" type="button" class="btn-icon" title="Close">✕</button>
+    </div>
+    <div class="websrc-note">fetch 가 있는 루프의 매 턴 꼬리에 켜진 항목만 실립니다. 바꾸면 다음 턴부터 — 파일은 <code id="websrc-path"></code> (바꾼 것만 저장).</div>
+    <div id="websrc-list" class="websrc-list"></div>
+    <form id="websrc-form" class="sched-form" autocomplete="off">
+      <div class="sched-form-title">정보원 추가</div>
+      <div class="sched-row">
+        <input id="websrc-group" type="text" maxlength="12" placeholder="그룹 (예: wifi)" list="websrc-groups" style="flex:0 0 9em">
+        <datalist id="websrc-groups"></datalist>
+        <input id="websrc-text" type="text" maxlength="500" placeholder="주소와 짧은 설명 — 예: gerrit.mycorp.com/changes/?q=… — 사내 Gerrit">
+      </div>
+      <div class="sched-row">
+        <button id="websrc-add" type="submit" class="btn-primary">추가</button>
+        <button id="websrc-reset" type="button" class="btn-ghost" title="모든 변경을 지우고 기본 목록으로">기본으로</button>
+        <span id="websrc-status" class="de-status"></span>
+      </div>
+    </form>
   </aside>
 
   <!-- Directive Editor drawer (📝 toolbar) — dedicated directive editing.
