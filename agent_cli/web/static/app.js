@@ -682,7 +682,9 @@
     if (hidx != null) card.dataset.hidx = String(hidx);
     card.dataset.kind = kind || "run";
     card.dataset.depth = String(depth || 0);
-    card.classList.add(kind === "skill" ? "scope-skill" : "scope-inline");
+    card.classList.add(
+      kind === "skill" ? "scope-skill" : kind === "harness" ? "scope-harness" : "scope-inline"
+    );
 
     const header = el("div", ["task-header"]);
     const chevron = el("span", ["task-chevron"], "▶");
@@ -691,6 +693,10 @@
     // delegate/one-shot worker (🦀 [n] agent: task).
     if (kind === "skill") {
       title.textContent = "🪄 " + taskText;
+    } else if (kind === "harness") {
+      // 하니스 작업(감사, v10.53.0) — main 이 한 일이 아니다. 접힌 채로 한 줄,
+      // 펼치면 그 런이 실제로 한 일. 종전엔 스코프가 없어 main 타임라인에 섞였다.
+      title.textContent = "🔎 " + (agent || "harness") + " · seq " + taskText;
     } else {
       const label = agent ? agent + ": " + taskText : taskText;
       title.textContent = "🦀 [" + (index + 1) + "] " + label;

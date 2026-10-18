@@ -198,3 +198,154 @@ class TestIsolationFromTheRegistry:
             runtime={"model": "m"},
         )
         assert not res.success and "not found" in (res.error or "")
+
+
+class TestScopeCard:
+    """v10.53.0: 하니스 런 하나 = 스코프 하나(``kind="harness"``). 종전엔 스코프를
+    열지 않아 렌더러가 감사 스레드의 카드를 전부 main 의 것으로 그렸다 —
+    main 이 쉬는 동안 스스로 history·read_file 을 도는 것처럼 보였다."""
+
+    class _Rec:
+        """scope 사건만 적고 나머지는 실제 CLI 렌더러(StringIO)에 넘긴다 — 런
+        경로가 부르는 다른 표면(``note_scope_ctx`` 등)이 그대로 돈다."""
+
+        def __init__(self):
+            import io
+
+            from rich.console import Console
+
+            from agent_cli.render.minimal import MinimalRenderer
+
+            self.events: list[tuple[str, dict, str]] = []
+            self._inner = MinimalRenderer(Console(file=io.StringIO()))
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def begin_scope(self, **kw):
+            self.events.append(("begin", kw, threading.current_thread().name))
+
+        def end_scope(self, **kw):
+            self.events.append(("end", kw, threading.current_thread().name))
+
+    def _patch(self, monkeypatch, r):
+        from agent_cli import render
+
+        monkeypatch.setattr(render, "get_renderer", lambda: r)
+
+    def test_the_run_is_bracketed_on_its_own_thread(self, tmp_path, monkeypatch):
+        r = self._Rec()
+        self._patch(monkeypatch, r)
+        seen: list[str] = []
+
+        def runner(q, c, **kw):
+            seen.append(threading.current_thread().name)
+            return ToolResult(True, output="AUDIT ok"), 0
+
+        jobs, delivered = _jobs(tmp_path, runner)
+        jobs.run("auditor", "3-9", "t")
+        assert wait_until(lambda: delivered)
+        (b, bkw, bt), (e, ekw, et) = r.events
+        assert (b, e) == ("begin", "end") and bt == et == seen[0]  # 런과 같은 스레드
+        assert bkw == {
+            "task_id": "harness-auditor-3-9",
+            "kind": "harness",
+            "label": "3-9",
+            "agent": "auditor",
+            "parent": "",  # main 의 어떤 스코프 안도 아니다
+            "ctx_dir": "harness/auditor/3-9",  # resume 이 카드 안을 채우는 자리
+        }
+        assert ekw["task_id"] == "harness-auditor-3-9" and ekw["success"] is True
+        assert ekw["error"] == ""
+
+    def test_a_crash_still_closes_the_card_with_the_reason(self, tmp_path, monkeypatch):
+        r = self._Rec()
+        self._patch(monkeypatch, r)
+        jobs, delivered = _jobs(tmp_path, make_runner(exc=RuntimeError("boom")))
+        jobs.run("auditor", "1-2", "t")
+        assert wait_until(lambda: delivered)
+        end = r.events[-1][1]
+        assert end["success"] is False and "boom" in end["error"]
+
+    def test_a_broken_renderer_never_blocks_delivery(self, tmp_path, monkeypatch):
+        class _Broken(self._Rec):
+            def begin_scope(self, **kw):
+                raise RuntimeError("renderer down")
+
+            def end_scope(self, **kw):
+                raise AssertionError("not opened — must not close")
+
+        self._patch(monkeypatch, _Broken())
+        jobs, delivered = _jobs(
+            tmp_path, lambda q, c, **kw: (ToolResult(True, output="ok"), 0)
+        )
+        jobs.run("auditor", "1-2", "t")
+        assert wait_until(lambda: delivered) and delivered[0][1] is True
+
+    def test_web_routes_the_audit_threads_cards_into_the_card(
+        self, tmp_path, monkeypatch
+    ):
+        """보고서의 탐침 그대로: 스코프 없는 스레드의 카드는 task_id=None(main).
+        이제 그 스레드의 카드가 하니스 카드의 task_id 를 단다."""
+        from agent_cli import render
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        monkeypatch.setattr(render, "_renderer", r)
+        monkeypatch.setattr(render, "get_renderer", lambda: r)
+
+        def runner(q, c, **kw):
+            render.render_step("action", "{}", 1, tool_name="history")
+            return ToolResult(True, output="AUDIT ok"), 0
+
+        jobs, delivered = _jobs(tmp_path, runner)
+        jobs.run("auditor", "1-4", "t")
+        assert wait_until(lambda: delivered)
+        events = []
+        while not conn.queue.empty():
+            item = conn.queue.get_nowait()
+            if isinstance(item, tuple):
+                events.append(item)
+        kinds = [(e, (d or {}).get("task_id")) for e, d in events]
+        assert ("scope_start", "harness-auditor-1-4") in kinds
+        cards = [d for e, d in events if e == "assistant_turn"]
+        assert cards and all(d.get("task_id") == "harness-auditor-1-4" for d in cards)
+        assert ("scope_end", "harness-auditor-1-4") in kinds
+
+
+class TestCliHarnessScope:
+    def test_output_is_swallowed_and_one_line_is_printed(self):
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = io.StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False, width=200))
+        out: list[str] = []
+
+        def job():
+            r.begin_scope(
+                task_id="harness-auditor-1-4",
+                kind="harness",
+                label="1-4",
+                agent="auditor",
+            )
+            r._p("⚡ history → {query}")  # 감사 스레드의 단계 — main 에 섞이면 안 된다
+            r.end_scope(
+                task_id="harness-auditor-1-4",
+                kind="harness",
+                success=True,
+                duration_s=3.2,
+            )
+            out.append(buf.getvalue())
+
+        t = threading.Thread(target=job)
+        t.start()
+        t.join()
+        text = out[0]
+        assert "history" not in text
+        assert "🔎 auditor · 1-4 ✓ (3.2s)" in text

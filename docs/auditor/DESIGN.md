@@ -105,6 +105,21 @@ claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq
 
 3판의 `instance_for` 툼스톤 조회, 회신 빚 의존, `memory` 도구, 상주 spawn/resume/kill 분기는 전부 사라졌다. 턴 레코드 수리(native_fc 가상 op 빈 기록, `tests/test_server_parsed_virtual_ops.py`)는 하니스 버그라 남는다.
 
+### 3.9 화면 — 감사 런은 자기 카드 안에 (v10.53.0)
+
+하니스 작업이 렌더러 스코프를 열지 않아 감사 스레드의 카드가 전부 main 의
+것으로 그려졌다(web 은 `_thread_to_task.get(tid) or _MAIN_SCOPE`, CLI 는 그냥
+출력) — "격리는 부재" 를 레지스트리·주소·로스터에는 세웠는데 렌더 경로 한 곳이
+빠졌다. 사용자가 "main 이 감사 동안 기록을 뒤진다" 로 읽었다(런 기록 대조로
+확인: main 기록은 그 시간대에 연산 0, 콘솔 줄은 감사자 기록과 1:1).
+
+`HarnessJobs._run` 이 런 하나를 `begin_scope(kind="harness", parent="",
+ctx_dir="harness/<job>/<label>")` / `end_scope` 로 감싼다(렌더러 오류는 런·배달을
+막지 않는다). web: 접힌 `🔎 <job> · seq <label>` 카드(회색 레일 `scope-harness`),
+resume 은 `ctx_dir` 기록으로 카드 안을 다시 채운다. CLI: 상주 에이전트처럼 그
+스레드 출력을 캡처해 버리고 끝에 `🔎 <job> · <label> ✓ (Ns)` 한 줄. 모델 컨텍스트는
+그대로다(감사 런은 자기 ctx, main 에는 결과 메일 한 장).
+
 ## 4. 시퀀스 (findings)
 
 1. 사용자 런 #7: 요청 [12] "모듈별 함수 이름을 REPORT.md 에" → main 이 7개만 읽고 complete(answers=[12]) → history 99..142 줄.
