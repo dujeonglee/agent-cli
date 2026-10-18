@@ -992,7 +992,7 @@ class TurnDispatcher:
         return self._intervene(
             llm_text,
             (
-                f"Observation: your `complete` was refused — {len(pending)} user "
+                f"Observation: your `complete` was refused — {len(pending)} "
                 f"request{'s are' if len(pending) != 1 else ' is'} open in this run "
                 "and `answers` is required, so the harness cannot tell which ones "
                 "your result covers.\n"
@@ -1040,7 +1040,7 @@ class TurnDispatcher:
             llm_text,
             (
                 f"Observation: your result was delivered, but {len(still_open)} "
-                "user request(s) in this run are still unanswered — you did not "
+                "request(s) in this run are still unanswered — you did not "
                 "list them in `answers`.\n"
                 f"{self._request_lines(still_open)}\n"
                 "Keep working and address them now. When you are done, call "
@@ -1322,7 +1322,7 @@ class TurnDispatcher:
             # "unknown question" 은 길을 안 알려줘 다음 턴이 메타 문장으로
             # 끝났다(dj72nx 실측). 어디로 답해야 하는지를 결과 문구로 돌려준다.
             err = (
-                f"'{qid}' is user request [{qid}], not an agent question — "
+                f"'{qid}' is open request [{qid}], not an agent question — "
                 f"reply to it in `complete`'s `result` and set "
                 f'`answers: ["{qid}"]`'
             )

@@ -1025,7 +1025,7 @@ class Dialect(DialectBase):
             text = (
                 f"{_TERMINAL_CALL_RESULT}. Request{'s' if len(ids) != 1 else ''} "
                 + "".join(f"[{x}]" for x in ids)
-                + " removed from the user request queue."
+                + " removed from the open requests."
             )
             pending = record.get("open_requests")
             if isinstance(pending, list):

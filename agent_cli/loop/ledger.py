@@ -57,6 +57,13 @@ class Ledger:
         """열린 요청 id — 압축 핀(`ContextManager.set_open_requests`)이 라이브로 읽는다."""
         return [str(r.get("id")) for r in self.requests]
 
+    def pin_ids(self) -> list[str]:
+        """압축 핀을 걸 id — 열린 요청(사용자·메일)과 빚(질문 답·회신) 전부
+        (P2, v10.55.0). 그 원문 레코드가 같은 id 를 ``request_id`` 로 싣는다.
+        종전엔 사용자 요청만 핀했다 — 미답 질문·회신 빚의 원문은 압축에 요약될
+        수 있었고 꼬리에는 120자만 남았다(설계 §3.6-4)."""
+        return self.request_ids() + [str(d["id"]) for d in self.debts() if d.get("id")]
+
     def has_request(self, rid: str) -> bool:
         return any(str(r.get("id")) == rid for r in self.requests)
 

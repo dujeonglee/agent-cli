@@ -58,6 +58,22 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 
+def mail_item(reply: dict) -> tuple[str, str] | None:
+    """main 앞 메일 1건 → 장부 항목 ``(id, "mail")``, 또는 None(장부 밖).
+
+    규칙 하나(docs/ledger/DESIGN.md §2): **따로 닫는 행동이 있는 빚이면 그
+    목록(Owed Replies), 없으면 Open Requests.** 질문(`answer(id)`)·회신을
+    기대하는 메시지(`agent request`)는 이미 빚이고, 독촉(`reminder`)은 그 빚을
+    다시 알릴 뿐 새 항목이 아니다. 나머지 일곱 — 회신·답·통지·모니터·작업·
+    감사·사망 — 이 여기 오른다. id 는 메일박스가 찍은 ``mail_id``(``n<k>``)."""
+    kind = reply.get("kind") or "reply"
+    if kind in ("question", "reminder") or reply.get("expects_reply"):
+        return None
+    # 작성자 칸은 "mail" 하나 — 무엇에서 왔는지는 머리줄이 말한다
+    # (`🧵 job #1 finished …`, `agent agt-x reply (success)`).
+    return f"n{reply.get('mail_id', 0)}", "mail"
+
+
 class AgentLoop:
     """Encapsulates the ReAct agent loop state and execution."""
 
@@ -286,7 +302,7 @@ class AgentLoop:
                 self.ctx.set_compactor(self._llm_compact_summarize)
             # 미답 요청의 원문은 압축·FIFO 에서 핀 (v10.41.0) — 라이브로 읽는다:
             # 런 도중 흡수된 요청도, 답해서 빠진 요청도 다음 압축에 바로 반영.
-            self.ctx.set_open_requests(self._state.ledger.request_ids)
+            self.ctx.set_open_requests(self._state.ledger.pin_ids)
 
     # ── C1 PR-1 property 브리지 ──────────────────────────────────
     # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
@@ -489,6 +505,7 @@ class AgentLoop:
             # 반환값을 버려 README 의 `on_session_start → inject_system_section`
             # 예시가 동작하지 않았다(내장 스냅샷 훅의 안내가 모델에 안 닿았다).
             self._apply_system_sections(self._fire_hook("OnSessionStart"))
+            starterless = not self.query
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
@@ -496,9 +513,14 @@ class AgentLoop:
                 # messages + this turn's action/observation) carry it.
                 if self.ctx:
                     self.ctx.set_turn(self.turn + 1)
+                seen = len(self.messages)
                 self._inject_queued_messages()
                 self._deliver_agent_mail()
                 self._absorb_inbox()
+                if starterless and self.turn == 0 and len(self.messages) == seen:
+                    # 깨우기 런인데 배달된 것이 없다(다른 런이 이미 가져갔다) —
+                    # 모델에게 줄 새 입력이 없으니 LLM 을 부르지 않는다.
+                    return ToolResult(True, output="")
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -626,6 +648,10 @@ class AgentLoop:
         starter_rid = self.query_request_id if self.query_author_is_user else ""
         if starter_rid:
             ledger.add_request(starter_rid, self.query_author or "", self.query)
+        if not self.query:
+            # 시작 메시지 없는 런 = 깨우기 런 (v10.55.0, `RunRequest.loop_query`):
+            # 첫 입력은 첫 턴 경계가 배달하는 메일 관찰이다.
+            return
         self._add_user_message(
             self.query,
             self.query_author,
@@ -779,13 +805,23 @@ class AgentLoop:
         replies = registry.drain_replies()
         if not replies:
             return
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agents_live import build_reply_record, mail_queue_item
 
         merged_authors = False
         for reply in replies:
             record = build_reply_record(
                 reply, cap=self._oversized_cap, registry=registry
             )
+            # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로
+            # 없는 메일은 사용자 요청처럼 `complete` 의 `answers` 로 닫는다.
+            # 레코드에 id 를 찍어 열려 있는 동안 원문이 압축 핀에 걸린다.
+            if reply.get("kind") == "question" and reply.get("id"):
+                record["request_id"] = str(reply["id"])  # 답 빚 — 핀은 질문 id 로
+            item = mail_item(reply)
+            if item is not None:
+                nid, who = item
+                self._state.ledger.add_request(nid, who, mail_queue_item(reply)["text"])
+                record["request_id"] = nid
             # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의
             # answers 에 합류 — 🤝 웨이크 런(시작 authors 빈)과 실행 중
             # 배달 양쪽이 이 한 지점으로 커버된다. 요청↔회신 쌍에 묶인
@@ -797,7 +833,12 @@ class AgentLoop:
             if reply.get("expects_reply") and reply.get("key"):
                 note = getattr(registry, "note_owes", None)
                 if callable(note):
-                    note("main", f"agent:{reply['key']}", reply.get("output") or "")
+                    debt = note(
+                        "main", f"agent:{reply['key']}", reply.get("output") or ""
+                    )
+                    # 빚의 원문도 열려 있는 동안 핀 (장부 P2) — 빚 id 로 찍는다
+                    if getattr(debt, "id", ""):
+                        record["request_id"] = str(debt.id)
             inherited = [a for a in (reply.get("answers") or []) if a]
             if inherited:
                 record["answers"] = list(inherited)

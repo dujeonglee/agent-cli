@@ -780,8 +780,8 @@ class TestServerCallsAreNotReparsed:
         assert [m["role"] for m in msgs] == ["assistant", "tool"]
         assert msgs[1]["tool_call_id"] == "call_4_0"
         assert msgs[1]["content"] == (
-            "completed task. Requests [17][18] removed from the user request "
-            "queue. Still pending: [19]."
+            "completed task. Requests [17][18] removed from the open "
+            "requests. Still pending: [19]."
         )
         # 남은 것이 없을 때·하나일 때
         rec = d.serialize_terminal_for_history(
@@ -790,7 +790,7 @@ class TestServerCallsAreNotReparsed:
         assert render_history_message(rec, d, index=1, assistant_index=None)[1][
             "content"
         ] == (
-            "completed task. Request [17] removed from the user request queue. "
+            "completed task. Request [17] removed from the open requests. "
             "No request pending."
         )
         # 옛 세션(answers 는 있고 남은 목록은 없음) — 회계 뒷문장 없이
@@ -798,7 +798,7 @@ class TestServerCallsAreNotReparsed:
         assert "open_requests" not in rec
         assert render_history_message(rec, d, index=1, assistant_index=None)[1][
             "content"
-        ].endswith("queue.")
+        ].endswith("open requests.")
         # answers 없음 → 결과 메시지 없음 (pair_call_results 가 요청 인용으로 채움)
         rec = d.serialize_terminal_for_history("", "x")
         assert len(render_history_message(rec, d, index=1, assistant_index=None)) == 1
@@ -894,7 +894,7 @@ class TestTerminalBookkeepingReachesTheModel:
             "role": "tool",
             "tool_call_id": msgs[last_complete]["tool_calls"][0]["id"],
             "content": (
-                "completed task. Request [2] removed from the user request queue. "
+                "completed task. Request [2] removed from the open requests. "
                 "No request pending."
             ),
         }

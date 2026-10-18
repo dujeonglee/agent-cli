@@ -42,6 +42,18 @@ class RunRequest:
     wake: bool
 
     @property
+    def loop_query(self) -> str:
+        """루프에 넘길 시작 메시지 — 깨우기 런은 **없다** (v10.55.0, 장부 P2).
+
+        ``text`` 의 깨우기 문장(``MailWaker.WAKE_TEXT``)은 큐를 깨우는 신호다.
+        종전엔 그대로 런의 첫 사용자 메시지가 됐다 — 메일 관찰 앞에 user
+        메시지가 하나 더 있었다. 이제 메일은 장부의 열린 항목(``[nK]``)이고
+        그 사실이 "이 런이 처리할 것" 을 말하므로 문장이 필요 없다
+        (docs/ledger/DESIGN.md P2). 깨우기 런의 첫 입력은 첫 턴 경계가
+        배달한 메일 관찰이다."""
+        return "" if self.wake else self.text
+
+    @property
     def is_query(self) -> bool:
         """run 의 argv 질의 런인가 — 깨우기(author=WAKE_AUTHOR)도 예약(author=
         이름)도 아닌 것. ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""

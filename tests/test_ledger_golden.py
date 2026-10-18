@@ -1,11 +1,15 @@
-"""열린 항목 장부 P1 의 회귀 가드 — 모델이 보는 글이 바이트 단위로 같다.
+"""열린 항목 장부의 회귀 가드 — 모델이 보는 글이 바이트 단위로 같다.
 
 P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·되묻기·
 독촉·빚 카운터)를 장부 하나로 모으되 **모델이 보는 글은 바꾸지 않는다**. 그래서
 리팩터 **전** 코드로 시나리오마다 꼬리·되묻기·독촉·거부·최종 통지 문구를 뽑아
-얼려 두었다(`tests/fixtures/ledger_golden_pre_p1.json`). 이 파일의
-`SCENARIOS` 가 그 생성기이기도 하다 — 다시 만들려면 리팩터 전 커밋에서
-``python -m tests.test_ledger_golden <out.json>``.
+얼려 두었다(`tests/fixtures/ledger_golden.json`). 이 파일의 `SCENARIOS` 가 그
+생성기이기도 하다 — ``python -m tests.test_ledger_golden <out.json>``.
+
+- P1(v10.54.0): 리팩터 **전** 코드로 만들었다.
+- P2(v10.55.0): 메일이 장부 항목이 되며 "user request" 가 "request" 로 바뀌었다
+  (꼬리 머리말·되묻기·독촉). 다시 만들 때 달라진 문자열 4개가 정확히 그 치환으로
+  설명됨을 확인했다(나머지 바이트 동일).
 
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """
@@ -24,7 +28,7 @@ from agent_cli.loop import AgentLoop
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import make_ports
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "ledger_golden_pre_p1.json"
+_FIXTURE = Path(__file__).parent / "fixtures" / "ledger_golden.json"
 
 
 class _Port:
@@ -171,7 +175,7 @@ def _no_render(monkeypatch):
 
 
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
-def test_matches_the_pre_p1_accounting(name):
+def test_matches_the_frozen_accounting(name):
     want = json.loads(_FIXTURE.read_text(encoding="utf-8"))[name]
     assert SCENARIOS[name]() == want
 

@@ -35,7 +35,8 @@ class CompleteTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Ids of the user requests this result answers. Required "
+                    "Ids of the Open Requests (user messages and mail) this result "
+                    "answers. Required "
                     "whenever the tail lists Open Requests — omitting "
                     "it there means you answered none of them."
                 ),
@@ -255,7 +256,7 @@ class AnswerTool(Tool):
         "Answer a question another AGENT asked you. Its id arrived in the "
         "question envelope (e.g. `[question q-1a2b from agt-x9]`). NOT for "
         "user messages: the numbered Open Requests in the tail (`[1] (nick) "
-        '"..."`) are user requests — reply to those in `complete`\'s `result` '
+        '"..."`) are open requests (user messages and mail) — reply to those in `complete`\'s `result` '
         "and list their numbers in `answers`. The asker is NOT blocked and "
         "kept working, but it cannot finish the part that depends on your "
         "answer. If you genuinely cannot answer, say so with `answer` rather "

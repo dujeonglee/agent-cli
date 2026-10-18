@@ -1607,7 +1607,7 @@ class TestFlipDispatch:
         )
         rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "answer")
         assert rec["success"] is False
-        assert "user request [1], not an agent question" in rec["content"]
+        assert "open request [1], not an agent question" in rec["content"]
         assert '`answers: ["1"]`' in rec["content"]
         assert "unknown or already-answered" not in rec["content"]
         assert result.success and result.output == "안녕!"

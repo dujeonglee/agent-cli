@@ -165,11 +165,7 @@ def outstanding_requests_block(requests: list) -> str:
         for r in requests
     )
     n = len(requests)
-    head = (
-        f"{n} user requests are open in this run:"
-        if n > 1
-        else "This run is answering:"
-    )
+    head = f"{n} requests are open in this run:" if n > 1 else "This run is answering:"
     ids = ", ".join(f'"{r.get("id")}"' for r in requests)
     return (
         f"## Open Requests\n{head}\n{lines}\n"
