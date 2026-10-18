@@ -225,6 +225,45 @@ class TestNoSilentCut:
         assert len(c) == 300_004 and c.endswith("TAIL")
 
 
+class TestDisguisedBlocks:
+    """v10.56.3: 200·202 로 오는 봇 확인·JS 껍데기는 성공이 아니라 실패다 — 종전엔
+    확인 페이지 글자나 빈 껍데기가 내용으로 넘어갔다(DuckDuckGo 202 · Google 89자)."""
+
+    def _html(self, body, status=200):
+        r = _resp("text/html; charset=utf-8", body)
+        r.status_code = status
+        return r
+
+    def test_bot_check_page_is_a_failure(self):
+        body = (
+            "<html><div class='anomaly-modal'>Unfortunately, bots use DuckDuckGo too. "
+            "Please confirm this search was made by a human.</div></html>"
+        )
+        c, _, err = _get(self._html(body, 202))
+        assert c == "" and err.startswith("Bot check: https://example.com/x")
+        assert '(HTTP 202, "anomaly-modal")' in err
+
+    def test_js_shell_is_a_failure(self):
+        body = (
+            "<html><script>" + "x" * 20_000 + "</script><div>Google Search</div></html>"
+        )
+        c, _, err = _get(self._html(body))
+        assert c == "" and err.startswith("Needs JavaScript: https://example.com/x")
+
+    def test_a_long_article_about_captcha_is_content(self):
+        body = (
+            "<html><p>"
+            + "A CAPTCHA is a challenge-response test. " * 200
+            + "</p></html>"
+        )
+        c, _, err = _get(self._html(body))
+        assert err is None and "CAPTCHA" in c
+
+    def test_a_small_plain_page_is_content(self):
+        c, _, err = _get(self._html("<html><h1>Example Domain</h1></html>"))
+        assert err is None and "Example Domain" in c
+
+
 class TestCharset:
     """v10.52.0: charset 없는 text/* 를 requests 는 ISO-8859-1 로 읽어 UTF-8 이
     깨졌다(docs.python.org 의 '—' → 'â\\x80\\x94')."""
