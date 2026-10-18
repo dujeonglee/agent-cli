@@ -16,7 +16,6 @@ from agent_cli.tools.result import ToolResult
 
 # ── Configuration ──────────────────────────────
 FETCH_TIMEOUT = 15
-MAX_CONTENT_CHARS = 200_000  # Per page raw HTML cap
 MAX_DEPTH = 3
 MAX_PAGES = 10  # Total pages fetched in recursive mode
 USER_AGENT = "agent-cli/2.0 (fetch tool)"
@@ -168,16 +167,20 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
             text = json.dumps(json.loads(text), indent=1, ensure_ascii=False)
         except ValueError:
             pass  # not actually JSON — hand it over as text
-        return text[:MAX_CONTENT_CHARS], [], None
+        return text, [], None
     if kind == "text":
-        return text[:MAX_CONTENT_CHARS], [], None
+        return text, [], None
 
-    html = text[:MAX_CONTENT_CHARS]
+    # 본문은 자르지 않는다(v10.56.2). 종전엔 페이지마다 20만 자에서 **표시 없이**
+    # 잘랐다 — 줄바꿈한 JSON 은 중간에서 끊겨 깨진 채로(PyPI `requests` 193KB),
+    # HTML 은 **변환 전** 원본에서 잘려 본문 뒷부분이 사라졌다(Wikipedia 1MB →
+    # 앞 1/5). 큰 결과는 공용 `Tool.render_oversized` 가 전체를 파일로 남기고
+    # 발췌를 돌려준다 — 잘린 것은 그 파일까지 잘려 있었다.
     parser = _HTMLToMarkdown()
     try:
-        parser.feed(html)
+        parser.feed(text)
     except Exception:
-        return html[:MAX_CONTENT_CHARS], [], None
+        return text, [], None
 
     return parser.get_markdown(), parser.get_links(), None
 
