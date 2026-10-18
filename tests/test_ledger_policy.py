@@ -111,7 +111,7 @@ class TestResultIsAlwaysDelivered:
         lp = _loop(tmp_path, debts=[_REPLY])
         out, obs = _complete(lp, result="끝")
         assert finals == ["끝"] and out is None
-        assert 'reply(id="r-4", text="...")' in obs and "refused" not in obs
+        assert '`reply` with id "r-4"' in obs and "refused" not in obs
 
 
 class TestOneOrderEverywhere:
@@ -125,7 +125,7 @@ class TestOneOrderEverywhere:
         lines = obs.splitlines()
         assert lines.index("  1. by action") < lines.index("  2. by `complete` (last)")
         assert '[u-2] (ann) "B"' in obs and "[u-1]" not in obs  # 닫힌 건 빠진다
-        assert 'complete(result="...", answers=["u-2"])' in obs
+        assert 'then `complete`, listing in `answers` the ids it covers ("u-2")' in obs
 
     def test_tail_and_nag_use_the_same_lines(self, tmp_path, finals):
         lp = _loop(tmp_path, requests=[_req(1, "A")], debts=[_REPLY])
@@ -186,9 +186,9 @@ class TestIdsAreOneFormat:
         assert item_ids.closer_of(item) == closer
 
     def test_wrong_tool_is_pointed_to_the_right_one(self):
-        assert 'answers=["u-1"]' in wrong_closer_hint("u-1", "answer")
-        assert 'reply(id="r-2"' in wrong_closer_hint("r-2", "answer")
-        assert 'answer(id="q-1a"' in wrong_closer_hint("q-1a", "reply")
+        assert 'list "u-1" in `answers`' in wrong_closer_hint("u-1", "answer")
+        assert '`reply` with id "r-2"' in wrong_closer_hint("r-2", "answer")
+        assert '`answer` with id "q-1a"' in wrong_closer_hint("q-1a", "reply")
         assert wrong_closer_hint("r-2", "reply") == ""
 
 
@@ -224,7 +224,10 @@ class TestMainRepliesById:
 
         reg = make_registry(tmp_path)
         err = reg.question_port(None).reply("답", id="r-1")
-        assert err.startswith("nothing to reply to") and 'agent(mode="request"' in err
+        assert (
+            err.startswith("nothing to reply to")
+            and '`agent` with mode "request"' in err
+        )
 
 
 class TestLedgerUnit:
@@ -251,7 +254,7 @@ def test_multi_line_bodies_are_folded_to_one_item_line():
     led.add_request("u-1", "dj", "첫 줄\n둘째 줄")
     block = led.block()
     assert (
-        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → reply(id="r-4"'
+        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → `reply` with id "r-4"'
         in block
     )
     assert '[u-1] (dj) "첫 줄 둘째 줄"' in block

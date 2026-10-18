@@ -680,18 +680,18 @@ class TestOpenItemsInTail:
         lines = out.splitlines()
         assert lines.index("  1. by action") < lines.index("  2. by `complete` (last)")
         assert (
-            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → reply(id="r-7", text="...")'
+            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → `reply` with id "r-7"'
             in out
         )
-        assert 'answer(id="q-1", text="...")' in out
+        assert '`answer` with id "q-1"' in out
         assert '     [u-3] (dj) "README 정리해 줘"' in out
-        assert 'complete(result="...", answers=["u-3"])' in out
+        assert 'then `complete`, listing in `answers` the ids it covers ("u-3")' in out
         assert out.rstrip().endswith("your result is delivered either way.")
 
     def test_main_settles_a_reply_with_reply_too(self):
         """main 도 `reply(id)` — 갚는 도구는 루프와 무관하게 하나다."""
         out = self._ledger([_REPLY]).block()
-        assert 'reply(id="r-7"' in out and "agent(mode=" not in out
+        assert '`reply` with id "r-7"' in out and "agent(mode=" not in out
 
     def test_only_the_sections_that_have_items(self):
         assert "1. by action" not in self._ledger([], [("u-1", "", "x")]).block()
@@ -716,7 +716,7 @@ class TestOpenItemsInTail:
 
         caller, _ = _caller(tmp_path, questions=_Port())
         out = caller._build_session_state(10_000)
-        assert "## Open Items" in out and 'reply(id="r-7", text="...")' in out
+        assert "## Open Items" in out and '`reply` with id "r-7"' in out
 
     def test_broken_or_missing_port_is_silent(self, tmp_path):
         class _Broken:

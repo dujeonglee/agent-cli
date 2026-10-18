@@ -413,7 +413,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # 답을 **지어냈다**(실측 — 사람은 아무것도 못 봤다).
         tail = (
             "(The agent is NOT blocked and kept working. Answer with the "
-            f'`answer` tool — answer(id="{reply.get("id", "")}", text="...") — '
+            f'`answer` tool with id "{reply.get("id", "")}" — '
             "ONLY if you know the answer yourself. If it is the person's call, "
             "ask them with `ask` (it waits for their reply) and pass their words "
             "on with `answer`; never answer on their behalf. A new request is "
@@ -472,7 +472,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             content = (
                 f"── agent {label} message ──\n{msg}\n"
                 f"(This agent expects a reply from you — "
-                f'reply(id="{reply.get("debt_id", "")}", text="...") before you '
+                f'`reply` with id "{reply.get("debt_id", "")}" before you '
                 f"complete; completing without one gets you reminded.)"
             )
         else:
@@ -733,14 +733,14 @@ class QuestionPort:
         if not owed:
             return (
                 "nothing to reply to — no agent is waiting on a reply from you. "
-                'To give an agent new work, use agent(mode="request", ...).'
+                'To give an agent new work, use `agent` with mode "request".'
             )
         listing = "; ".join(f'[{d.id}] {d.to}: "{d.text[:60]}"' for d in owed)
         id = str(id or "").strip()
         if not id:
             return (
                 "reply needs `id` — which message is this the reply to? You owe: "
-                f'{listing}. Send reply(id="…", text="…").'
+                f"{listing}. Send `reply` with that id."
             )
         d = next((x for x in owed if x.id == id), None)
         if d is None:
@@ -811,7 +811,7 @@ class QuestionPort:
         if not id:
             return (
                 "reply needs `id` — which request is this the reply to? You owe: "
-                f'{listing}. Send reply(id="…", text="…").'
+                f"{listing}. Send `reply` with that id."
             )
         d = next((x for x in owed if x.id == id), None)
         if d is None:
@@ -1834,7 +1834,7 @@ class AgentRegistry:
                     f"── request [{rid}] from {author} (arrived while you were "
                     f"working) ──\n{text}\n"
                     f"(You now owe {author} a reply for [{rid}] as well — "
-                    f'reply(id="{rid}", text="...") when you have it. Your current '
+                    f'`reply` with id "{rid}" when you have it. Your current '
                     "task stays open; see ## Open Items.)"
                 )
                 out.append(

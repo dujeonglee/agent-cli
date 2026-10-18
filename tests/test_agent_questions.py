@@ -1608,7 +1608,7 @@ class TestFlipDispatch:
         rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "answer")
         assert rec["success"] is False
         assert "'u-1' is an open item closed by `complete`" in rec["content"]
-        assert 'answers=["u-1"]' in rec["content"]
+        assert 'list "u-1" in `answers`' in rec["content"]
         assert "unknown or already-answered" not in rec["content"]
         assert result.success and result.output == "안녕!"
 
@@ -1980,7 +1980,7 @@ class TestReplyNagCap:
         assert res.output == "끝"
         assert f"{NAG_BUDGET - 1} more reminders" in nags[0]["content"]
         assert "Last reminder" in nags[-1]["content"]
-        assert 'reply(id="r-1", text="...")' in nags[0]["content"]
+        assert '`reply` with id "r-1"' in nags[0]["content"]
 
     def test_replying_after_a_reminder_stops_them(self):
         port = self._OwedPort()
@@ -2179,7 +2179,10 @@ class TestCompleteIsLocal:
         거부하고, 일을 시키는 길(`agent request`)을 알려 준다."""
         reg = mkreg()
         err = reg.question_port(None).reply("x")
-        assert err.startswith("nothing to reply to") and 'agent(mode="request"' in err
+        assert (
+            err.startswith("nothing to reply to")
+            and '`agent` with mode "request"' in err
+        )
 
     def test_port_reports_the_debt_and_its_repayment(self, mkreg, renderer):
         reg = mkreg()
@@ -2534,7 +2537,7 @@ class TestUnifiedDebtRules:
             and "your result was delivered, but" in m.get("content", "")
         ]
         # v10.56.0: 에이전트 항목 런도 결과는 배달되고 독촉된다(종전엔 거부)
-        assert nags and f'answer(id="{qid}"' in nags[0]["content"]
+        assert nags and f'`answer` with id "{qid}"' in nags[0]["content"]
         assert qid not in reg._questions  # 답했다
 
     # ── main: message 빚은 수락 후 독촉 ────────────
@@ -2588,7 +2591,7 @@ class TestUnifiedDebtRules:
             if m.get("role") == "user" and "still open" in m.get("content", "")
         ]
         # v10.56.0: main 도 `reply(id)` 로 갚는다 — 독촉이 그 도구를 가리킨다
-        assert nags and 'reply(id="r-' in nags[0]["content"]
+        assert nags and '`reply` with id "r-' in nags[0]["content"]
         # 결과는 매번 배달됐고(독촉은 예산 8 안), `reply(id)` 로 갚자 런이 끝났다
         assert p.call.call_count == 3 and finals == ["답", "답", "끝"]
         assert len(nags) == len(finals) - 1  # 마지막 complete 만 독촉 없이 끝난다
@@ -2625,7 +2628,7 @@ class TestUnifiedDebtRules:
             if m.get("role") == "user"
         ]
         blob = "\\n".join(obs)
-        assert "still open" in blob and f'answer(id="{qid}"' in blob
+        assert "still open" in blob and f'`answer` with id "{qid}"' in blob
         assert qid not in reg._questions
         assert p.call.call_count == 2
 
@@ -2735,7 +2738,7 @@ class TestPerRequestDebts:
         with SubmitSpy(reg) as spy:
             err = reg.question_port(b).reply("답")
         assert "needs `id`" in err and "[3]" in err and "[5]" in err
-        assert 'reply(id="…"' in err
+        assert "Send `reply` with that id" in err
         assert not spy.calls, "거부됐는데 배달됐다"
         # 빚이 하나뿐이어도 같다 — 원칙이지 모호함의 해소가 아니다
         reg.begin_run(f"agent:{b}")
@@ -2817,8 +2820,8 @@ class TestPerRequestDebts:
         led = Ledger()
         led.bind_questions(reg.question_port(b))
         block = led.block()
-        assert f'[3] ({a}) reply owed: "첫 요청"  → reply(id="3", text="...")' in block
-        assert 'reply(id="5", text="...")' in block and "## Open Items" in block
+        assert f'[3] ({a}) reply owed: "첫 요청"  → `reply` with id "3"' in block
+        assert '`reply` with id "5"' in block and "## Open Items" in block
         assert "agent(mode=" not in block
 
 
@@ -2863,7 +2866,7 @@ class TestMidRunAbsorption:
         req, mail = items[0]["record"], items[1]["record"]
         assert req["source"] == "agent_request" and req["tool"] == "agent"
         assert "── request [r-2] from main" in req["content"]
-        assert 'reply(id="r-2", text="...")' in req["content"]
+        assert '`reply` with id "r-2"' in req["content"]
         assert mail["source"] == "agent_mail"
         assert mail["content"] == f"[agent:{a}]: 회신 본문"
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
@@ -3045,7 +3048,7 @@ class TestMidRunAbsorption:
         second = "\n".join(str(m.get("content")) for m in calls[1])
         assert "── request [r-2] from main" in second and "추가 지시" in second
         assert "## Open Items" in second
-        assert 'reply(id="r-1"' in second and 'reply(id="r-2"' in second
+        assert '`reply` with id "r-1"' in second and '`reply` with id "r-2"' in second
         # 기록에도 남는다 — 재시작·재생이 같은 것을 본다
         recs = [r for r in _history(ctx) if r.get("source") == "agent_request"]
         assert len(recs) == 1 and recs[0]["tool"] == "agent"

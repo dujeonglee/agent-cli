@@ -873,7 +873,7 @@ turn lists every request you have not answered yet. EVERY request must get
 its own answer back; never let one end silently:
 
 1. `complete` reports to NO ONE — it only ends your run. The answer for a
-   requester goes out with `reply(id="<request id>", text="...")`, one reply
+   requester goes out with `reply` (that request's id + your text), one reply
    per request, BEFORE you complete. A request from the user in your chat
    window is answered by `complete` itself (they see it there).
 2. A request that arrives mid-run does not replace the one you are on: finish

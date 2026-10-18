@@ -137,7 +137,7 @@ class TestWakeRunHasNoStarter:
         assert users[0]["request_id"] == "n-1"
         tail = loop._llm._build_session_state(10_000)
         assert '[n-1] (mail) "🧵 job #1 finished rc=0 after 3m00s"' in tail
-        assert 'complete(result="...", answers=["n-1"])' in tail
+        assert 'then `complete`, listing in `answers` the ids it covers ("n-1")' in tail
 
     def test_nothing_delivered_means_no_llm_call(self, tmp_path):
         loop, _reg, _ctx = _loop(tmp_path)  # 메일 없음 — 다른 런이 이미 가져갔다
@@ -194,7 +194,10 @@ class TestBusyRunMixesWithUserRequests:
         loop._deliver_agent_mail()
         assert loop._state.ledger.request_ids() == ["u-1", "n-1"]
         tail = loop._llm._build_session_state(10_000)
-        assert "## Open Items" in tail and 'answers=["u-1", "n-1"]' in tail
+        assert (
+            "## Open Items" in tail
+            and 'listing in `answers` the ids it covers ("u-1", "n-1")' in tail
+        )
         assert '[u-1] (dj) "README 정리해 줘"' in tail and "[n-1] (mail)" in tail
         res = _complete(loop, result="둘 다", answers=["u-1", "n-1"])
         assert res.output == "둘 다"
