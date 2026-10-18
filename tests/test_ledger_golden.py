@@ -175,6 +175,8 @@ def _no_render(monkeypatch):
     import agent_cli.loop.dispatch as d
 
     monkeypatch.setattr(d, "render_step", lambda *a, **k: None)
+    # 정보원 목록(v10.57.0)은 장부와 무관한 꼬리 블록 — 얼린 글은 장부만 본다.
+    monkeypatch.setattr("agent_cli.web_sources.render", lambda *a, **k: "")
 
 
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
@@ -187,6 +189,9 @@ if __name__ == "__main__":
     import agent_cli.loop.dispatch as _d
 
     _d.render_step = lambda *a, **k: None
+    import agent_cli.web_sources as _w
+
+    _w.render = lambda *a, **k: ""
     out = {n: f() for n, f in SCENARIOS.items()}
     Path(sys.argv[1]).write_text(
         json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8"

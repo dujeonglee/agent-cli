@@ -1117,6 +1117,20 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 **읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(run/skill subdir 포함).
 
+### 정보원 목록 (`## Web Sources`, v10.57.0)
+
+`fetch` 가 있는 루프는 매 턴 꼬리에 **브라우저 없이 바로 답하는 웹 정보원** 목록을 싣습니다 — 검색 엔진(막히면 `Bot check:` 로 알리고 browser 로 넘어감), Wikipedia API, PyPI·npm·deps.dev, GitHub raw·API, Stack Exchange·HN, OSV·NVD, arXiv·OpenAlex, Open-Meteo·Frankfurter, Wi-Fi 개발(hostap·kernel wireless-next·lore linux-wireless·Android googlesource·Gerrit). 기본 18항목이 전부 켜져 있습니다(약 460토큰/턴).
+
+- **웹**: 헤더 🌐 서랍에서 그룹별 체크박스로 끄고 켜고, 사내 Gerrit 같은 주소를 추가·삭제합니다. 바꾸면 다음 턴부터 반영됩니다.
+- **CLI**: `.agent-cli/web-sources.json` 을 직접 고칩니다. **바꾼 것만** 적습니다 — 파일이 없으면 기본 전부 켜짐이고, 다음 버전에서 기본 정보원이 늘거나 주소가 바뀌어도 그대로 따라갑니다.
+
+```json
+{"disabled": ["vulns.nvd"],
+ "added": [{"id": "user-1", "group": "wifi", "text": "gerrit.mycorp.com/changes/?q=… — 사내 Gerrit"}]}
+```
+
+`id` 는 기본 항목(`search.engines`·`wiki.summary`·`vulns.nvd`·`wifi.hostap` …, `agent_cli/default_web_sources.json`)이거나 직접 정한 이름, `group` 은 12자·`text` 는 500자까지. 꼬리에 두는 이유는 실측입니다 — 8분야 과제 × 3회 × 4변형 A/B 에서 꼬리판 24/24·첫 호출이 목록 22/24, 같은 목록을 `fetch` 도구 설명에 둔 판은 22/24·8/24(주소의 `/v1` 을 빠뜨린 채 지어내 같은 호출을 51번 되풀이)였습니다.
+
 ### 브라우저 도구 (`browser`)
 
 JavaScript 가 그리는 페이지, 버튼을 눌러야 나오는 내용, 폼 입력이 필요하면 `browser` 를 씁니다 (정적 HTML 은 `fetch` 로 충분). 창 없이(헤드리스) Chrome/Chromium 을 띄우고, 페이지를 **접근성 트리 텍스트**로 돌려줍니다 — 버튼·링크·입력칸·랜드마크마다 `[ref=eN]` 이 붙고, 모델은 그 번호로 조작합니다. 설계와 근거는 `docs/browser/DESIGN.md`.

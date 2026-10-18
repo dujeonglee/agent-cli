@@ -88,6 +88,7 @@ include = ["agent_cli*"]
 [tool.setuptools.package-data]
 agent_cli = [
     "default_models.json",
+    "default_web_sources.json",
     "web/static/*",
     # Recursive so subdirs ship too — notably the bundled Jetendard woff2 fonts
     # under web/static/fonts/ (a plain ``web/static/*`` misses them → the web UI

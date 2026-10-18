@@ -769,6 +769,34 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
+    @app.get("/api/web-sources")
+    async def get_web_sources():
+        """🌐 드로어 (v10.57.0) — 기본 + 추가 항목과 켜짐 여부, 항목별 토큰 수,
+        저장 파일 경로. 파일이 없으면 기본 전부 켜짐."""
+        from agent_cli import web_sources
+
+        return {
+            "entries": web_sources.entries(),
+            "path": str(web_sources.overrides_file()),
+        }
+
+    @app.post("/api/web-sources")
+    async def save_web_sources(body: dict):
+        """저장 — ``{disabled: [id], added: [{id, group, text}]}``. 바꾼 것만
+        파일에 남는다(기본과 같으면 파일을 지운다). 꼬리는 턴마다 파일을 읽으므로
+        다음 턴부터 반영 — 시스템 프롬프트·캐시는 건드리지 않는다."""
+        from agent_cli import web_sources
+
+        disabled = body.get("disabled") or []
+        added = body.get("added") or []
+        if not isinstance(disabled, list) or not isinstance(added, list):
+            raise HTTPException(status_code=400, detail="disabled/added must be lists")
+        try:
+            web_sources.save(disabled, added)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"entries": web_sources.entries()}
+
     @app.get("/api/mcp")
     async def get_mcp_status():
         """🔌 칩용 — 부팅 시 MCP 서버별 연결 상태·도구 수·실패 이유 (v9.2.0).

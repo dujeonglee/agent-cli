@@ -163,6 +163,7 @@ def build_session_state(
     max_turns: int = 0,
     agents: str = "",
     memory: str = "",
+    web_sources: str = "",
     items: str = "",
     jobs: str = "",
     guidelines: str = "",
@@ -187,6 +188,8 @@ def build_session_state(
     the 35B-class model ignored these principles there but follows them at the
     tail; static text, so the only cost is re-prefilling ~0.4K tokens that the
     un-cacheable tail region would re-process anyway).
+    ``web_sources`` (v10.57.0) is the ``## Web Sources`` block
+    (`agent_cli.web_sources.render`) — only for a loop that has ``fetch``.
     ``items`` (v10.56.0, ledger P3) is the run's ``## Open Items`` block
     (``Ledger.block``) — every open item in the order they close: by action
     (owed replies, questions) first, then ``complete``'s ``answers`` (user
@@ -212,6 +215,7 @@ def build_session_state(
             jobs.strip(),
             agents.strip(),
             memory.strip(),
+            web_sources.strip(),
         )
         if b
     ]
