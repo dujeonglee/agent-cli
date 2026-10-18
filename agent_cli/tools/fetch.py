@@ -132,6 +132,48 @@ class _HTMLToMarkdown(HTMLParser):
         return self._links
 
 
+#: 봇 확인 페이지의 흔적(소문자, 원본 HTML 에서 찾는다). 본문이 짧을 때만 본다 —
+#: CAPTCHA 를 다루는 긴 글(위키 문서 등)을 막힘으로 오인하지 않게.
+_BOT_CHECK_MARKERS = (
+    "captcha",
+    "unusual traffic",
+    "cf-chl",
+    "challenge-platform",
+    "anomaly-modal",
+    "made by a human",
+    "verify you are human",
+    "are you a robot",
+)
+_BOT_CHECK_MAX_TEXT = 3000  # 확인 페이지는 짧다(DuckDuckGo 실측 ~1K, 공백 접은 글자)
+_JS_SHELL_MIN_HTML = 10_000  # HTML 은 큰데
+_JS_SHELL_MAX_TEXT = (
+    200  # 글이 거의 없다 — 브라우저가 그리는 페이지(Google 검색 실측 89자)
+)
+
+
+def _disguised_block(status: int, html: str, text: str) -> str | None:
+    """성공 코드인데 내용이 아닌 응답 — 실패 문구, 아니면 None (v10.56.3).
+
+    4xx 는 코드가 말해 주지만(모델이 뜻을 안다) 이 둘은 200·202 로 와서 그동안
+    **성공**으로 넘어갔다: 모델이 확인 페이지 글자나 빈 껍데기를 내용으로 읽었다.
+    대안은 적지 않는다 — 어디로 갈지는 정보원 목록의 몫이다."""
+    flat = " ".join(text.split())
+    if len(flat) <= _BOT_CHECK_MAX_TEXT:
+        low = html.lower()
+        hit = next((m for m in _BOT_CHECK_MARKERS if m in low), None)
+        if hit:
+            return (
+                f"Bot check: {{url}} returned a bot-check page, not the content "
+                f'(HTTP {status}, "{hit}")'
+            )
+    if len(html) >= _JS_SHELL_MIN_HTML and len(flat) <= _JS_SHELL_MAX_TEXT:
+        return (
+            "Needs JavaScript: {url} renders in a browser; the fetched HTML "
+            f"({len(html):,} chars) has {len(flat)} chars of text"
+        )
+    return None
+
+
 def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
     """Fetch a single URL.
 
@@ -182,7 +224,11 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
     except Exception:
         return text, [], None
 
-    return parser.get_markdown(), parser.get_links(), None
+    markdown = parser.get_markdown()
+    blocked = _disguised_block(resp.status_code, text, markdown)
+    if blocked:
+        return "", [], blocked.format(url=url)
+    return markdown, parser.get_links(), None
 
 
 def _resolve_links(base_url: str, links: list[str]) -> list[str]:
