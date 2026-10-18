@@ -1,5 +1,6 @@
 """Tests for the fetch tool."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 from agent_cli.tools.fetch import (
@@ -194,6 +195,34 @@ class TestBodyKinds:
 
     def test_description_names_the_new_kinds(self):
         assert "JSON" in FetchTool.description and "XML" in FetchTool.description
+
+
+class TestNoSilentCut:
+    """v10.56.2: 페이지마다 20만 자에서 표시 없이 자르던 것을 없앴다 — 큰 결과는
+    공용 과대 출력 정책(파일 + 발췌)이 전체를 보존한다."""
+
+    def test_big_json_comes_back_whole_and_valid(self):
+        body = json.dumps(
+            {"releases": {f"1.{i}": [{"url": "x" * 50}] for i in range(4000)}}
+        )
+        c, _, err = _get(_resp("application/json", body))
+        assert err is None and len(c) > 200_000
+        assert len(json.loads(c)["releases"]) == 4000  # 끝까지 — 깨지지 않았다
+
+    def test_big_html_keeps_the_tail(self):
+        body = (
+            "<html><body>"
+            + "<div class='x'>filler</div>" * 20_000
+            + "<p>THE END</p></body></html>"
+        )
+        assert len(body) > 200_000
+        c, _, err = _get(_resp("text/html; charset=utf-8", body))
+        assert err is None and c.endswith("THE END")
+
+    def test_big_text_is_whole(self):
+        body = "a" * 300_000 + "TAIL"
+        c, _, _ = _get(_resp("text/plain; charset=utf-8", body))
+        assert len(c) == 300_004 and c.endswith("TAIL")
 
 
 class TestCharset:
