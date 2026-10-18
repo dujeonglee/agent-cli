@@ -868,7 +868,7 @@ def _load_directives(audience: str = "main") -> str:
 _REPLY_DISCIPLINE_SECTION = """## Reply Discipline (your core duty)
 Requests reach you from DIFFERENT requesters — main, the user in your chat
 window, or peer agents — and they can arrive WHILE you work: a new request is
-delivered between turns with its id, and `## Owed Replies` at the end of each
+delivered between turns with its id, and `## Open Items` at the end of each
 turn lists every request you have not answered yet. EVERY request must get
 its own answer back; never let one end silently:
 

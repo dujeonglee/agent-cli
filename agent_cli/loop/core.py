@@ -646,8 +646,15 @@ class AgentLoop:
         for r in self.user_requests:
             if r.get("id"):
                 ledger.add_request(r["id"], r.get("author") or "", r.get("text") or "")
-        starter_rid = self.query_request_id if self.query_author_is_user else ""
-        if starter_rid:
+        # 시작 항목의 id (v10.56.0) — 사람 요청이면 장부에 오르고(상주는
+        # `user_requests` 가 이미 올렸다), 어느 쪽이든 그 레코드에 찍혀 열려 있는
+        # 동안 핀된다(동료 요청의 회신 빚 `r-…` 포함).
+        starter_rid = self.query_request_id
+        if (
+            starter_rid
+            and self.query_author_is_user
+            and not ledger.has_request(starter_rid)
+        ):
             ledger.add_request(starter_rid, self.query_author or "", self.query)
         if not self.query:
             # 시작 메시지 없는 런 = 깨우기 런 (v10.55.0, `RunRequest.loop_query`):
@@ -707,8 +714,6 @@ class AgentLoop:
             self.messages.append(record)
         if author and is_user and author not in self.run_authors:
             self.run_authors.append(author)
-        if is_user:
-            self._state.user_run = True
         self._mirror_run_authors()
 
     def _mirror_run_authors(self) -> None:
@@ -810,9 +815,22 @@ class AgentLoop:
 
         merged_authors = False
         for reply in replies:
+            # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. 빚을 **먼저**
+            # 적는다: 관찰 꼬리가 그 빚의 id 로 `reply(id=…)` 를 가리키고
+            # (v10.56.0 장부 P3), 그 원문이 열려 있는 동안 핀된다.
+            debt = None
+            if reply.get("expects_reply") and reply.get("key"):
+                note = getattr(registry, "note_owes", None)
+                if callable(note):
+                    debt = note(
+                        "main", f"agent:{reply['key']}", reply.get("output") or ""
+                    )
+                    reply = {**reply, "debt_id": str(getattr(debt, "id", "") or "")}
             record = build_reply_record(
                 reply, cap=self._oversized_cap, registry=registry
             )
+            if debt is not None and getattr(debt, "id", ""):
+                record["request_id"] = str(debt.id)
             # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로
             # 없는 메일은 사용자 요청처럼 `complete` 의 `answers` 로 닫는다.
             # 레코드에 id 를 찍어 열려 있는 동안 원문이 압축 핀에 걸린다.
@@ -829,17 +847,6 @@ class AgentLoop:
             # 값이라 사이에 끼어든 다른 사용자의 런과 교차 오염 없음.
             # 히스토리 관찰 레코드에도 additive 로 실어(``answers``) resume
             # 재생이 같은 집합을 재도출하게 한다 (라이브/재생 규칙 일치).
-            # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. complete
-            # 직전에 dispatch 가 빚 목록을 물어 독촉한다.
-            if reply.get("expects_reply") and reply.get("key"):
-                note = getattr(registry, "note_owes", None)
-                if callable(note):
-                    debt = note(
-                        "main", f"agent:{reply['key']}", reply.get("output") or ""
-                    )
-                    # 빚의 원문도 열려 있는 동안 핀 (장부 P2) — 빚 id 로 찍는다
-                    if getattr(debt, "id", ""):
-                        record["request_id"] = str(debt.id)
             inherited = [a for a in (reply.get("answers") or []) if a]
             if inherited:
                 record["answers"] = list(inherited)

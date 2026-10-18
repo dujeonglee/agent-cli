@@ -1023,16 +1023,16 @@ class Dialect(DialectBase):
             if not ids:
                 return None
             text = (
-                f"{_TERMINAL_CALL_RESULT}. Request{'s' if len(ids) != 1 else ''} "
+                f"{_TERMINAL_CALL_RESULT}. Closed "
                 + "".join(f"[{x}]" for x in ids)
-                + " removed from the open requests."
+                + " in the open items."
             )
             pending = record.get("open_requests")
             if isinstance(pending, list):
                 text += (
-                    " Still pending: " + "".join(f"[{x}]" for x in pending) + "."
+                    " Still open: " + "".join(f"[{x}]" for x in pending) + "."
                     if pending
-                    else " No request pending."
+                    else " Nothing else open."
                 )
             return {
                 "role": "tool",

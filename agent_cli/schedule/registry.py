@@ -32,7 +32,7 @@ from agent_cli.schedule import cron
 MISS_THRESHOLD_S = 120.0  # 이보다 오래 지난 발화 = 놓침 → 질문 (자동 실행 금지)
 MAX_SLEEP_S = 300.0  # 절전·시계 점프 안전망
 AGENT_CAP = 5  # 에이전트가 등록할 수 있는 예약 수 (세션당)
-DEFAULT_NICKNAME = "⏰ Scheduler"
+SCHEDULER_PREFIX = "Scheduler-"
 
 _STATE = "schedules.json"
 _LOG = "schedule-log.jsonl"
@@ -63,7 +63,10 @@ class Schedule:
 
     @property
     def effective_nickname(self) -> str:
-        return self.nickname or DEFAULT_NICKNAME
+        """발화의 작성자 — 닉네임이 없으면 예약마다 다른 가상 사용자
+        ``Scheduler-<label|id>`` (v10.56.0, 장부 P3 §11.5). 종전엔 전부
+        ``⏰ Scheduler`` 하나라 장부·화면에서 어느 예약의 발화인지 갈리지 않았다."""
+        return self.nickname or f"{SCHEDULER_PREFIX}{self.label or self.id}"
 
 
 def _parse(ts: str | None) -> datetime | None:
