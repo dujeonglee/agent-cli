@@ -10,6 +10,7 @@ from io import StringIO
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.text import Text
 
 from agent_cli.render.base import ConfirmOption, Renderer
@@ -279,11 +280,14 @@ class MinimalRenderer(Renderer):
 
     def _p(self, text: str, **kwargs) -> None:
         """Print with depth prefix. Captures to buffer if in capture mode."""
-        import re
-
         line = f"{self._prefix}{text}"
-        # Strip Rich markup for clean captured text
-        clean = re.sub(r"\[/?[^\]]*\]", "", line)
+        # 캡처본은 화면과 같은 글자 — markup=False 줄은 그대로, 마크업 줄은 rich 가
+        # 그리는 평문(이스케이프한 `\[u-1]` 은 `[u-1]` 로 남는다). 종전 정규식은
+        # 대괄호 덩어리를 전부 지워 JSON 목록·항목 id 까지 날렸다.
+        if kwargs.get("markup") is False:
+            clean = line
+        else:
+            clean = Text.from_markup(line).plain
         if self._capture_line(clean):
             return
         self.con.print(line, **kwargs)
@@ -389,7 +393,10 @@ class MinimalRenderer(Renderer):
             text = (r.get("text") or "").strip().replace("\n", " ")
             if len(text) > 72:
                 text = text[:71] + "…"
-            self._p(f"  [{_MUTED}]↳ answers [{r.get('id')}]{who} {text}[/]")
+            # id 는 `u-1`·`n-1` 형식(v10.56.0) — 이스케이프하지 않으면 rich 가
+            # `[u-1]` 을 스타일 태그로 읽어 지운다(옛 `[1]` 은 태그가 아니라 살았다).
+            body = escape(f"[{r.get('id')}]{who} {text}")
+            self._p(f"  [{_MUTED}]↳ answers {body}[/]")
         self._p("")
 
     def error(self, content: str, turn: int) -> None:
