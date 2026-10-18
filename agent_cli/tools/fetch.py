@@ -1,7 +1,9 @@
-"""Fetch tool — retrieve web page content as markdown."""
+"""Fetch tool — retrieve web page content as markdown (HTML) or as text (JSON,
+XML, plain text)."""
 
 from __future__ import annotations
 
+import json
 import re
 from html.parser import HTMLParser
 from typing import ClassVar
@@ -18,6 +20,55 @@ MAX_CONTENT_CHARS = 200_000  # Per page raw HTML cap
 MAX_DEPTH = 3
 MAX_PAGES = 10  # Total pages fetched in recursive mode
 USER_AGENT = "agent-cli/2.0 (fetch tool)"
+
+
+def _body_kind(content_type: str) -> str | None:
+    """How to read a response — ``html`` / ``json`` / ``text``, or None (refuse).
+
+    v10.52.0: until then only ``text/html`` and ``text/plain`` were read, so every
+    machine endpoint that needs no browser — PyPI, npm, Wikipedia REST, OSV,
+    GitHub API, Stack Exchange — came back "Unsupported content type" and the
+    model fell back to ``shell curl``. XML (arXiv Atom, RSS) is readable as text.
+    Binary (PDF, images, archives) stays refused."""
+    ct = content_type.split(";", 1)[0].strip().lower()
+    if ct in ("text/html", "application/xhtml+xml"):
+        return "html"
+    if ct == "application/json" or ct.endswith("+json"):
+        return "json"
+    if ct in ("application/xml", "text/xml") or ct.endswith("+xml"):
+        return "text"
+    if ct.startswith("text/"):
+        return "text"
+    return None
+
+
+def _decode(resp, content_type: str, kind: str) -> str:
+    """Bytes → text, choosing the charset ourselves.
+
+    ``requests`` follows RFC 2616 and picks ISO-8859-1 for a ``text/*`` response
+    without a ``charset`` — a UTF-8 page then reads ``â\x80\x94`` for "—"
+    (docs.python.org, measured 2026-10-18; Korean pages too). Order: header
+    ``charset`` → HTML ``<meta charset>`` → UTF-8 if it decodes cleanly →
+    the detected encoding. JSON is UTF-8 by spec (RFC 8259) and lands on the
+    clean-UTF-8 step."""
+    raw = resp.content or b""
+    m = re.search(r"charset=[\"']?([\w.:-]+)", content_type, re.IGNORECASE)
+    enc = m.group(1) if m else None
+    if enc is None and kind == "html":
+        mm = re.search(
+            rb"<meta[^>]+charset=[\"']?([\w.:-]+)", raw[:4096], re.IGNORECASE
+        )
+        if mm:
+            enc = mm.group(1).decode("ascii", "ignore")
+    if enc is None:
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            enc = getattr(resp, "apparent_encoding", None) or "utf-8"
+    try:
+        return raw.decode(enc, errors="replace")
+    except LookupError:  # an unknown charset name in the header / meta
+        return raw.decode("utf-8", errors="replace")
 
 
 class _HTMLToMarkdown(HTMLParser):
@@ -107,14 +158,21 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
         return "", [], f"HTTP {resp.status_code}: {url}"
 
     content_type = resp.headers.get("content-type", "")
-    if "text/html" not in content_type and "text/plain" not in content_type:
+    kind = _body_kind(content_type)
+    if kind is None:
         return "", [], f"Unsupported content type: {content_type} for {url}"
 
-    html = resp.text[:MAX_CONTENT_CHARS]
+    text = _decode(resp, content_type, kind)
+    if kind == "json":
+        try:  # one value per line, non-ASCII kept — readable and still valid JSON
+            text = json.dumps(json.loads(text), indent=1, ensure_ascii=False)
+        except ValueError:
+            pass  # not actually JSON — hand it over as text
+        return text[:MAX_CONTENT_CHARS], [], None
+    if kind == "text":
+        return text[:MAX_CONTENT_CHARS], [], None
 
-    if "text/plain" in content_type:
-        return html, [], None
-
+    html = text[:MAX_CONTENT_CHARS]
     parser = _HTMLToMarkdown()
     try:
         parser.feed(html)
@@ -237,7 +295,8 @@ def tool_fetch(args: dict) -> ToolResult:
 class FetchTool(Tool):
     name = "fetch"
     description = (
-        "Fetch a web page and return its content as markdown. "
+        "Fetch a URL: an HTML page comes back as markdown, JSON (pretty-printed), "
+        "XML and plain text as text. "
         "Supports recursive fetching of same-domain links via the depth parameter. "
         "Full content returned inline; an over-cap result is saved to a file and "
         "replaced with an excerpt + how to mine it (read it in ranges)."
