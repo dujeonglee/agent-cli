@@ -41,10 +41,17 @@ def complete_line(ids: list[str]) -> str:
     return f'     → complete(result="...", answers=[{quoted}])'
 
 
+def _head(text) -> str:
+    """항목 머리말 — **한 줄**, 120자. 본문이 여러 줄이면 줄바꿈을 공백으로 접는다:
+    접지 않으면 항목 줄이 중간에서 끊겨 닫는 도구(`→ reply(id=…)`)가 엉뚱한 줄 끝에
+    붙는다(P3 재생 덤프로 발견 — 감사 회신처럼 여러 줄인 메시지)."""
+    return " ".join(str(text or "").split())[:120]
+
+
 def _debt_line(d: dict) -> str:
     """빚 한 줄 — 닫는 도구를 같이 적는다."""
     who = str(d.get("to") or "").split(":", 1)[-1]
-    text = str(d.get("text") or "").strip()[:120]
+    text = _head(d.get("text"))
     did = d.get("id", "")
     if d.get("kind") == "answer":
         return (
@@ -55,7 +62,7 @@ def _debt_line(d: dict) -> str:
 
 def _request_line(r: dict) -> str:
     who = f" ({r['author']})" if r.get("author") else ""
-    return f'     [{r.get("id")}]{who} "{(r.get("text") or "").strip()[:120]}"'
+    return f'     [{r.get("id")}]{who} "{_head(r.get("text"))}"'
 
 
 class Ledger:
@@ -154,7 +161,7 @@ class Ledger:
         return "\n".join(
             f"   [{r.get('id')}]"
             + (f" ({r['author']})" if r.get("author") else "")
-            + f' "{(r.get("text") or "").strip()[:120]}"'
+            + f' "{_head(r.get("text"))}"'
             for r in requests
         )
 
