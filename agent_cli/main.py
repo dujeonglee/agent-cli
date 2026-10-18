@@ -1441,7 +1441,7 @@ def run(
 
         def _run_main(req: RunRequest):
             return run_loop(
-                query=req.text,
+                query=req.loop_query,
                 query_author=req.author,
                 query_author_is_user=req.author_is_user,
                 query_request_id=req.request_id,
@@ -2434,7 +2434,7 @@ def web(
 
         def _run_main(req: RunRequest):
             return run_loop(
-                query=req.text,
+                query=req.loop_query,
                 query_author=req.author,
                 query_author_is_user=req.author_is_user,
                 query_request_id=req.request_id,
