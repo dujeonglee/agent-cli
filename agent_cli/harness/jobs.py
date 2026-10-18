@@ -16,15 +16,21 @@
   이중 회신이 통째로 사라진 자리.
 - **수명** `in_flight` 가 세션 수명 술어(`runtime.session_has_live_work`)의 한
   항이다: run 은 진행 중인 작업이 끝나야 꺼지고, `stop()` 이 세우고 join 한다.
+- **화면** (v10.53.0) 런 하나 = 스코프 하나(``kind="harness"``). 종전엔 스코프를
+  열지 않아 렌더러가 이 스레드의 카드를 전부 main 의 것으로 그렸다 — main 이
+  쉬는 동안 스스로 기록을 뒤지는 것처럼 보였다(웹·CLI 둘 다). web 은 접힌
+  ``🔎`` 카드 안에, CLI 는 출력을 모아 버리고 끝에 한 줄. 레지스트리·주소의
+  "부재" 와 같은 원칙이 렌더 경로에도 선다.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
-from agent_cli.context.session import harness_run_dir
+from agent_cli.context.session import HARNESS_DIR, harness_run_dir
 from agent_cli.resource_loader import ResourceLoader
 
 #: 하니스 프로파일의 자리 — `agents/builtin`(사용자 카탈로그)과 형제, 검색 경로는
@@ -123,10 +129,15 @@ class HarnessJobs:
         return ""
 
     def _run(self, job: str, label: str, task: str, body: str, meta: dict) -> None:
+        task_id = f"harness-{job}-{label}"
+        scoped = self._open_scope(task_id, job, label)
+        t0 = time.monotonic()
         try:
             success, output = self._execute(job, label, task, body, meta)
         except Exception as exc:  # 어떤 실패도 main 에게는 결과 한 장으로 간다
             success, output = False, f"{job} crashed: {type(exc).__name__}: {exc}"
+        if scoped:
+            self._close_scope(task_id, success, time.monotonic() - t0, output)
         try:
             self._deliver(job, success, output)
         finally:
@@ -172,6 +183,42 @@ class HarnessJobs:
         if result.success:
             return True, result.output or ""
         return False, f"{job} did not complete: {result.error or 'no result'}"
+
+    @staticmethod
+    def _open_scope(task_id: str, job: str, label: str) -> bool:
+        """이 스레드의 카드를 이 런의 스코프에 가둔다. ``parent=""`` — main 의
+        어떤 스코프 안도 아니다(감사는 main 런이 끝난 뒤 따로 돈다). ``ctx_dir``
+        은 resume 이 카드 안을 다시 채우는 자리다. 렌더러 오류는 런을 막지
+        않는다 — 카드는 표시일 뿐이다."""
+        from agent_cli.render import get_renderer
+
+        try:
+            get_renderer().begin_scope(
+                task_id=task_id,
+                kind="harness",
+                label=label,
+                agent=job,
+                parent="",
+                ctx_dir=f"{HARNESS_DIR}/{job}/{label}",
+            )
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _close_scope(task_id: str, success: bool, secs: float, output: str) -> None:
+        from agent_cli.render import get_renderer
+
+        try:
+            get_renderer().end_scope(
+                task_id=task_id,
+                kind="harness",
+                success=success,
+                duration_s=secs,
+                error="" if success else output[:300],
+            )
+        except Exception:
+            pass
 
     def _notify(self, n: int) -> None:
         cb = self.on_change

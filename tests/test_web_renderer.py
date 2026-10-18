@@ -2616,6 +2616,65 @@ class TestResumeInnerTurnReplay:
         assert ("assistant_turn", "sk1") in inner
         assert ("observation", "sk1") in inner
 
+    def test_harness_audit_card_refills_on_resume(self, tmp_path):
+        """v10.53.0: 감사 런의 카드는 ``ctx_dir=harness/<job>/<label>`` 을 싣는다 —
+        resume 하면 그 디렉터리 기록이 카드 안으로 다시 들어간다(main 타임라인 아님)."""
+        self._write_sidecar(
+            tmp_path,
+            [
+                {
+                    "event": "scope_start",
+                    "task_id": "harness-auditor-1-4",
+                    "kind": "harness",
+                    "label": "1-4",
+                    "agent": "auditor",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 100.0,
+                    "ctx_dir": "harness/auditor/1-4",
+                },
+                {
+                    "event": "scope_end",
+                    "task_id": "harness-auditor-1-4",
+                    "kind": "harness",
+                    "success": True,
+                    "duration_s": 30.0,
+                    "ts": 130.0,
+                },
+            ],
+        )
+        self._write_history(
+            tmp_path / "harness" / "auditor" / "1-4" / "history.jsonl",
+            [
+                {
+                    "role": "assistant",
+                    "thought": "",
+                    "ts": self._iso(110.0),
+                    "ops": [
+                        {"action": "history", "action_input": {"query": "SELECT 1"}}
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": "Observation: 1",
+                    "tool": "history",
+                    "success": True,
+                    "ts": self._iso(111.0),
+                },
+            ],
+        )
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(
+            self._Ctx([{"role": "user", "content": "go", "ts": self._iso(90.0)}])
+        )
+        seq = [(e, dict(d).get("task_id")) for e, d in r._event_buffer]
+        i, j = (
+            seq.index(("scope_start", "harness-auditor-1-4")),
+            seq.index(("scope_end", "harness-auditor-1-4")),
+        )
+        assert ("assistant_turn", "harness-auditor-1-4") in seq[i + 1 : j]
+        assert ("assistant_turn", None) not in seq  # main 에 새지 않는다
+
     def test_record_stamp_is_overridden_by_card_id(self, tmp_path):
         """서브 기록의 자체 task_id 는 인스펙터 프롬프트-스코프 id 라 카드
         id 와 다르다 — 카드 라우팅은 사이드카의 id 로 강제해야 한다."""

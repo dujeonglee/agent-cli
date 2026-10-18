@@ -575,6 +575,12 @@ class MinimalRenderer(Renderer):
         self._scope_labels[task_id] = label
         if kind == "skill":
             self._p(f"┌─ 🪄 {label}", highlight=False)
+        elif kind == "harness":
+            # 하니스 작업(감사, v10.53.0): main 과 따로 도는 스레드라 흘리면 main
+            # 의 출력처럼 섞인다 — 상주 에이전트처럼 모아 버리고 끝에 한 줄.
+            self._scope_labels[task_id] = f"{agent} · {label}" if agent else label
+            self.start_capture()
+            self.set_thread_agent(agent or label)
         else:
             self._begin_delegate_panel(
                 task_id=task_id, index=index, agent=agent, task_text=label
@@ -596,6 +602,12 @@ class MinimalRenderer(Renderer):
             status = "✓" if success else "✗"
             dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
             self._p(f"└─ {status} {label}{dur}", highlight=False)
+        elif kind == "harness":
+            self.stop_capture()  # 전문은 <session>/harness/<job>/<label>/ 에
+            self.set_thread_agent("")
+            status = "✓" if success else "✗"
+            dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
+            self._p(f"🔎 {label} {status}{dur}", highlight=False)
         else:
             self._end_delegate_panel(
                 task_id=task_id, success=success, duration_s=duration_s, error=error

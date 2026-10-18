@@ -626,6 +626,8 @@ body.multi-viewer .card-user .who {
    않는다(주면 중첩처럼 보여 거짓말이 된다). */
 .card-task-group.scope-skill { border-left: 2px solid var(--scope-skill); }
 .card-task-group.scope-inline { border-left: 2px solid var(--scope-inline); }
+/* 하니스 작업(🔎 감사) — main 의 일이 아니라 하니스의 일: 차분한 회색 레일 */
+.card-task-group.scope-harness { border-left: 2px solid var(--muted); }
 
 /* 돌아가기 — 점프 직후에만 뜨는 한 개짜리 버튼. */
 #ch-back {
