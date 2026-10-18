@@ -898,3 +898,69 @@ class TestTerminalBookkeepingReachesTheModel:
                 "No request pending."
             ),
         }
+
+
+class TestMailAfterTerminalIsNotItsResult:
+    """v10.55.0 (장부 P2): 깨우기 런이 시작 메시지 없이 열리면 메일 관찰이 직전 런
+    `complete` 바로 뒤에 온다. 그 메일은 `complete` 의 결과가 아니다 — 하니스의 종결
+    결과가 그대로 짝이고, 메일은 user 메시지다. 종전 짝 판정("바로 앞이 호출 가진
+    assistant 면 결과")은 메일을 `complete` 가 돌려준 것처럼 만들었다."""
+
+    def test_mail_renders_as_user_and_complete_keeps_its_result(self, tmp_path, wf):
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        ctx.add({"role": "user", "content": "[Bob]: REQ-A", "request_id": "1"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "",
+                "ops": [
+                    {
+                        "action": "complete",
+                        "action_input": {"result": "A done", "answers": ["1"]},
+                    }
+                ],
+                "answers": ["1"],
+                "open_requests": [],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "job",
+                "success": True,
+                "content": "🧵 job #1 finished rc=0",
+                "request_id": "n1",
+            }
+        )
+        msgs = [m for m in ctx.get_messages() if m.get("role") != "system"]
+        roles = [m["role"] for m in msgs]
+        assert roles[-3:] == ["assistant", "tool", "user"], roles
+        assert msgs[-2]["content"].startswith("completed task. Request [1] removed")
+        assert msgs[-1]["content"].startswith("🧵 job #1 finished rc=0")
+
+    def test_a_nag_after_complete_is_still_its_result(self, tmp_path, wf):
+        ctx = ContextManager(
+            session_dir=tmp_path, max_context_tokens=30_000, dialect=wf
+        )
+        ctx.add({"role": "user", "content": "REQ"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "",
+                "ops": [{"action": "complete", "action_input": {"result": "x"}}],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "complete",
+                "content": "Observation: your result was delivered, but …",
+            }
+        )
+        msgs = [m for m in ctx.get_messages() if m.get("role") != "system"]
+        a = next(i for i, m in enumerate(msgs) if m["role"] == "assistant")
+        assert msgs[a + 1]["role"] == "tool"  # 독촉이 그 complete 의 결과
+        assert msgs[a + 1]["content"].startswith("your result was delivered")
+        assert len([m for m in msgs if m["role"] == "tool"]) == 1  # 합성 결과 없음

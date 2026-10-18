@@ -627,19 +627,12 @@ class ContextManager:
         없으면 ``assistant_index=None`` 이고 방언이 user 메시지로 낸다."""
         msg = self._cache[i]
         assistant_index = None
-        if msg.get("role") == "user" and msg.get("tool") and i > 0:
-            prev = self._cache[i - 1]
-            if prev.get("role") == "assistant" and prev.get("ops"):
-                assistant_index = i - 1
+        if i > 0 and self._is_call_result(self._cache[i - 1], msg):
+            assistant_index = i - 1
         # 종결 레코드 뒤에 짝 관찰(독촉)이 있으면 그것이 답 — 합성하지 않는다.
-        answered = False
-        if (
-            msg.get("role") == "assistant"
-            and msg.get("ops")
-            and i + 1 < len(self._cache)
-        ):
-            nxt = self._cache[i + 1]
-            answered = nxt.get("role") == "user" and bool(nxt.get("tool"))
+        answered = i + 1 < len(self._cache) and self._is_call_result(
+            msg, self._cache[i + 1]
+        )
         return render_history_message(
             msg,
             self.dialect,
@@ -647,6 +640,29 @@ class ContextManager:
             assistant_index=assistant_index,
             answered=answered,
         )
+
+    def _is_call_result(self, prev: dict, obs: dict) -> bool:
+        """``obs`` 가 바로 앞 assistant 레코드 ``prev`` 의 호출 결과인가.
+
+        관찰은 바로 앞 레코드가 호출을 가진 assistant 일 때만 짝이 된다(v10.14.0).
+        **종결 호출 뒤에는 그 종결에 대한 관찰만** 짝이다(v10.55.0) — `complete`
+        에 붙는 독촉·되묻기(``tool`` = 종결 op 이름). 다음 런의 첫 턴 경계가 배달한
+        메일은 결과가 아니다: 깨우기 런이 시작 메시지 없이 열리면서(장부 P2) 메일
+        관찰이 직전 런의 `complete` 바로 뒤에 오게 됐고, 서버 파싱 방언은 그것을
+        `complete` 의 `tool` 결과로 짝지어 하니스의 종결 결과("Request [1]
+        removed…")를 지우고 메일을 `complete` 가 돌려준 것처럼 보였다."""
+        if not (obs.get("role") == "user" and obs.get("tool")):
+            return False
+        ops = prev.get("ops") if prev.get("role") == "assistant" else None
+        if not ops:
+            return False
+        terminal = getattr(
+            getattr(self.dialect, "spec", None), "terminal_op", "complete"
+        )
+        last = ops[-1] if isinstance(ops, list) else None
+        if isinstance(last, dict) and last.get("action") == terminal:
+            return obs.get("tool") == terminal
+        return True
 
     def set_session_state(self, text: str) -> None:
         """Set the session-state block appended to the last message by
