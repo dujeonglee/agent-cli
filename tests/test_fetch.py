@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 from agent_cli.tools.fetch import (
+    FetchTool,
+    _body_kind,
     _fetch_single,
     _HTMLToMarkdown,
     _resolve_links,
@@ -97,7 +99,7 @@ class TestFetchSingle:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/html"}
-        mock_resp.text = "<h1>Hello</h1><p>World</p>"
+        mock_resp.content = b"<h1>Hello</h1><p>World</p>"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             content, _links, error = _fetch_single("https://example.com")
@@ -136,12 +138,90 @@ class TestFetchSingle:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/plain"}
-        mock_resp.text = "Plain text content"
+        mock_resp.content = b"Plain text content"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             content, _, error = _fetch_single("https://example.com/file.txt")
             assert error is None
             assert "Plain text content" in content
+
+
+def _resp(ct: str, body, *, apparent: str = "utf-8"):
+    r = MagicMock()
+    r.status_code = 200
+    r.headers = {"content-type": ct}
+    r.content = body if isinstance(body, bytes) else body.encode("utf-8")
+    r.apparent_encoding = apparent
+    return r
+
+
+def _get(resp, url="https://example.com/x"):
+    with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
+        return _fetch_single(url)
+
+
+class TestBodyKinds:
+    """v10.52.0: JSON/XML 를 받는다 — 종전엔 html·plain 만 받아 브라우저가 필요 없는
+    기계 엔드포인트(PyPI·Wikipedia REST·OSV·GitHub API)가 전부 거절됐다."""
+
+    def test_kinds(self):
+        assert _body_kind("text/html; charset=utf-8") == "html"
+        assert _body_kind("application/xhtml+xml") == "html"
+        assert _body_kind("application/json") == "json"
+        assert _body_kind("application/vnd.github+json") == "json"
+        assert _body_kind("application/atom+xml; charset=UTF-8") == "text"
+        assert _body_kind("text/xml") == "text"
+        assert _body_kind("text/markdown") == "text"
+        assert _body_kind("application/pdf") is None
+        assert _body_kind("image/png") is None
+
+    def test_json_is_pretty_printed_and_keeps_non_ascii(self):
+        c, links, err = _get(_resp("application/json", '{"title":"서울","n":[1,2]}'))
+        assert err is None and links == []
+        assert c == '{\n "title": "서울",\n "n": [\n  1,\n  2\n ]\n}'
+
+    def test_invalid_json_is_handed_over_as_text(self):
+        c, _, err = _get(_resp("application/json", "not json {"))
+        assert err is None and c == "not json {"
+
+    def test_xml_is_text(self):
+        c, _, err = _get(_resp("application/atom+xml", "<feed><title>t</title></feed>"))
+        assert err is None and c == "<feed><title>t</title></feed>"
+
+    def test_binary_is_still_refused(self):
+        _, _, err = _get(_resp("application/pdf", b"%PDF-1.7"))
+        assert err.startswith("Unsupported content type: application/pdf")
+
+    def test_description_names_the_new_kinds(self):
+        assert "JSON" in FetchTool.description and "XML" in FetchTool.description
+
+
+class TestCharset:
+    """v10.52.0: charset 없는 text/* 를 requests 는 ISO-8859-1 로 읽어 UTF-8 이
+    깨졌다(docs.python.org 의 '—' → 'â\\x80\\x94')."""
+
+    def test_utf8_without_charset_is_not_mojibake(self):
+        c, _, _ = _get(_resp("text/html", "<p>statistics — 통계</p>"))
+        assert "statistics — 통계" in c and "â" not in c
+
+    def test_header_charset_wins(self):
+        c, _, _ = _get(_resp("text/plain; charset=euc-kr", "한글".encode("euc-kr")))
+        assert c == "한글"
+
+    def test_meta_charset_when_header_has_none(self):
+        body = '<meta charset="euc-kr"><p>한글</p>'.encode("euc-kr")
+        c, _, _ = _get(_resp("text/html", body))
+        assert "한글" in c
+
+    def test_not_utf8_falls_back_to_detected_encoding(self):
+        c, _, _ = _get(
+            _resp("text/plain", "café".encode("latin-1"), apparent="latin-1")
+        )
+        assert c == "café"
+
+    def test_unknown_charset_name_does_not_crash(self):
+        c, _, err = _get(_resp("text/plain; charset=bogus-9", "ok"))
+        assert err is None and c == "ok"
 
 
 class TestToolFetch:
@@ -154,7 +234,7 @@ class TestToolFetch:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/html"}
-        mock_resp.text = "<p>content</p>"
+        mock_resp.content = b"<p>content</p>"
 
         with patch(
             "agent_cli.tools.fetch.requests.get", return_value=mock_resp
@@ -168,7 +248,7 @@ class TestToolFetch:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/html"}
-        mock_resp.text = "<p>" + "x" * 10000 + "</p>"
+        mock_resp.content = ("<p>" + "x" * 10000 + "</p>").encode()
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             result = tool_fetch({"url": "https://example.com"})
@@ -190,7 +270,7 @@ class TestToolFetch:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/html"}
-        mock_resp.text = '<p>main</p><a href="/page2">link</a>'
+        mock_resp.content = b'<p>main</p><a href="/page2">link</a>'
 
         with patch(
             "agent_cli.tools.fetch.requests.get", return_value=mock_resp
@@ -202,12 +282,12 @@ class TestToolFetch:
         main_resp = MagicMock()
         main_resp.status_code = 200
         main_resp.headers = {"content-type": "text/html"}
-        main_resp.text = '<p>main</p><a href="/page2">link</a>'
+        main_resp.content = b'<p>main</p><a href="/page2">link</a>'
 
         child_resp = MagicMock()
         child_resp.status_code = 200
         child_resp.headers = {"content-type": "text/html"}
-        child_resp.text = "<p>child page</p>"
+        child_resp.content = b"<p>child page</p>"
 
         with patch(
             "agent_cli.tools.fetch.requests.get",
@@ -221,7 +301,7 @@ class TestToolFetch:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "text/html"}
-        mock_resp.text = "<p>content</p>"
+        mock_resp.content = b"<p>content</p>"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             result = tool_fetch({"url": "https://example.com"})
