@@ -26,6 +26,7 @@ USER_AGENT = "agent-cli/2.0 (fetch tool)"
 #: 바이너리 응답의 자동 저장 자리 (v10.58.0) — 시스템 프롬프트가 내려받기 자리로
 #: 안내하는 ``.agent-cli/tmp/`` 아래.
 DOWNLOAD_DIR = Path(".agent-cli") / "tmp" / "downloads"
+_HEADER_PREFIX = "[Fetched "  # 결과 첫 줄 — oversized 파일에서는 뗀다 (v10.58.1)
 _EXCERPT_LINES = 20
 _EXCERPT_CHARS = 1500
 
@@ -706,7 +707,7 @@ def tool_fetch(args: dict) -> ToolResult:
             parts.append(f"## {p['url']}\n\n{p['content']}")
         full_content = "\n\n---\n\n".join(parts)
 
-    header = f"[Fetched {len(pages)} page(s), {len(full_content)} chars from {url}]\n\n"
+    header = f"{_HEADER_PREFIX}{len(pages)} page(s), {len(full_content)} chars from {url}]\n\n"
     return ToolResult(True, output=header + full_content)
 
 
@@ -726,6 +727,10 @@ class FetchTool(Tool):
     )
     oversized_retry_hint = (
         "re-fetch a more specific URL, or a shallower depth, so less is pulled."
+    )
+    oversized_saved_note = (
+        "The file holds the converted text, not the original response — to keep "
+        "the response itself as a file, fetch again with download_to."
     )
     # Flat-native (consolidation roadmap Step 3 completion): the schema is the
     # plain ``{url, depth?}`` shape — the ``fetch_`` wire-key prefix is gone.
@@ -758,6 +763,11 @@ class FetchTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def oversized_file_body(self, body: str) -> str:
+        if body.startswith(_HEADER_PREFIX) and "]\n\n" in body:
+            return body.split("]\n\n", 1)[1]
+        return body
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("download_to")

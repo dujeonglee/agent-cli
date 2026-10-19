@@ -228,6 +228,36 @@ class TestPersistence:
         assert files[0].read_text() == body
 
 
+class TestFetchSavedFile:
+    """v10.58.1: fetch 의 oversized 파일은 본문만, 안내는 그 파일이 변환본임을 말한다
+    — 모델이 머리줄째 복사한 파일을 "JSON" 으로 넘겼다(깨진 JSON, 성공 보고)."""
+
+    def test_file_has_no_header_and_note_names_download_to(self, tmp_path):
+        content = json.dumps({"k": ["v" * 40] * 2000}, indent=1)
+        body = f"[Fetched 1 page(s), {len(content)} chars from https://e.com/j]\n\n{content}"
+        n = _nudge("fetch", body, tmp_path=tmp_path, args={"url": "https://e.com/j"})
+        (f,) = (tmp_path / OVERSIZED_DIRNAME).iterdir()
+        assert json.loads(f.read_text())["k"]  # 복사하면 그대로 유효한 JSON
+        assert "converted text, not the original response" in n
+        assert "download_to" in n
+        assert f"{content.count(chr(10)) + 1:,} lines" in n  # 줄 수는 파일 기준
+
+    def test_multi_page_keeps_its_sections(self, tmp_path):
+        body = (
+            "[Fetched 2 page(s), 9 chars from https://e.com]\n\n## https://e.com\n\n"
+            + "x\n" * 5000
+        )
+        _nudge("fetch", body, tmp_path=tmp_path, args={"url": "https://e.com"})
+        (f,) = (tmp_path / OVERSIZED_DIRNAME).iterdir()
+        assert f.read_text().startswith("## https://e.com")
+
+    def test_other_tools_keep_body_and_no_note(self, tmp_path):
+        body = "[Fetched 1 page(s)]\n\n" + "out\n" * 4000
+        n = _nudge("shell", body, tmp_path=tmp_path, args={"command": "x"})
+        (f,) = (tmp_path / OVERSIZED_DIRNAME).iterdir()
+        assert f.read_text() == body and "converted text" not in n
+
+
 class TestSourcePathTools:
     """Two tools already wrote the bulk to disk — they point at it instead of
     persisting a byte-identical copy."""
