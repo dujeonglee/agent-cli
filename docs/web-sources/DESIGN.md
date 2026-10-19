@@ -57,6 +57,7 @@ v10.56.3 고정 worktree (scratchpad `webab/`).
 | v10.56.3 | 200·202 로 온 봇 확인·JS 껍데기를 실패로(`Bot check:` / `Needs JavaScript:`) |
 | v10.56.4 | 표 행마다 한 줄·칸 ` \| `, `)]}'` 접두 JSON, gitiles base64 원문, 봇 흔적 오탐(GitHub `octocaptcha_…`) |
 | v10.57.2 | HTML 변환 — 링크 `[글](주소)`·검색 엔진 추적 주소 풀기, 블록 줄바꿈, 숨김 요소 제외, 공백 접기, 표 칸 줄바꿈, 그림 alt (방 x8jkpw 결과 37건 점검) |
+| v10.58.0 | `download_to` — 응답을 변환 없이 파일로(경로·크기·첫 줄만 돌려줌), 바이너리는 거절 대신 `.agent-cli/tmp/downloads/` 자동 저장 |
 
 ## 6. 남은 것
 

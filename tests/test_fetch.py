@@ -189,9 +189,13 @@ class TestBodyKinds:
         c, _, err = _get(_resp("application/atom+xml", "<feed><title>t</title></feed>"))
         assert err is None and c == "<feed><title>t</title></feed>"
 
-    def test_binary_is_still_refused(self):
-        _, _, err = _get(_resp("application/pdf", b"%PDF-1.7"))
-        assert err.startswith("Unsupported content type: application/pdf")
+    def test_binary_is_downloaded_not_refused(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        c, _, err = _get(_resp("application/pdf", b"%PDF-1.7\xff\xfe"))
+        assert err is None
+        assert c.startswith("[Binary content (application/pdf), not shown")
+        saved = tmp_path / ".agent-cli/tmp/downloads/x.pdf"
+        assert saved.read_bytes() == b"%PDF-1.7\xff\xfe"
 
     def test_description_names_the_new_kinds(self):
         assert "JSON" in FetchTool.description and "XML" in FetchTool.description
@@ -495,13 +499,17 @@ class TestGoogleResponses:
         c, _, _ = _get(_resp("text/plain; charset=utf-8", "d3BhX3N1cHBsaWNhbnQ="))
         assert c == "d3BhX3N1cHBsaWNhbnQ="
 
-    def test_binary_blob_is_refused(self):
+    def test_binary_blob_is_downloaded_decoded(self, tmp_path, monkeypatch):
         import base64
 
+        monkeypatch.chdir(tmp_path)
+        png = b"\x89PNG\r\n\x1a\n\xff\xfe"
         c, _, err = _get(
-            self._blob(base64.b64encode(b"\x89PNG\r\n\x1a\n\xff\xfe").decode())
+            self._blob(base64.b64encode(png).decode()),
+            url="https://android.googlesource.com/p/+/main/logo.png?format=TEXT",
         )
-        assert c == "" and "binary file (gitiles blob)" in err
+        assert err is None and "downloaded" in c
+        assert (tmp_path / ".agent-cli/tmp/downloads/logo.png").read_bytes() == png
 
     def test_not_base64_is_left_alone(self):
         c, _, err = _get(self._blob("plain words here!"))
@@ -636,7 +644,7 @@ class TestFetchFlatNative:
     def test_schema_is_flat(self):
         t = self._tool()
         props = t.parameters["properties"]
-        assert set(props) == {"url", "depth"}
+        assert set(props) == {"url", "depth", "download_to"}
         assert t.parameters["required"] == ["url"]
 
     def test_wrap_single_op_is_identity(self):
@@ -671,3 +679,122 @@ class TestFetchFlatNative:
         }
         for name, payload in samples.items():
             assert TOOLS[name].claims(payload) is False, name
+
+
+class TestDownload:
+    """v10.58.0: ``download_to`` 는 응답을 변환 없이 파일로, 바이너리는 묻지 않아도
+    ``.agent-cli/tmp/downloads/`` 로 — 종전엔 바이너리를 거절했다."""
+
+    def _run(self, resp, args):
+        with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
+            return tool_fetch(args)
+
+    def test_html_is_saved_raw_not_converted(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        html = "<html><body><h1>T</h1><p>body</p></body></html>"
+        r = self._run(
+            _resp("text/html", html),
+            {"url": "https://example.com/a", "download_to": "out/a.html"},
+        )
+        assert r.success
+        assert (tmp_path / "out/a.html").read_text() == html
+        assert r.output.startswith("[Downloaded https://example.com/a → out/a.html")
+        assert "unchanged" in r.output and "First lines:\n<html>" in r.output
+
+    def test_json_is_saved_as_sent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        body = '{"a":1,"b":[2,3]}'
+        r = self._run(
+            _resp("application/json", body),
+            {"url": "https://example.com/j", "download_to": "j.json"},
+        )
+        assert r.success and (tmp_path / "j.json").read_text() == body
+
+    def test_binary_to_path_has_no_excerpt(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run(
+            _resp("application/zip", b"PK\x03\x04\x00\xff"),
+            {"url": "https://example.com/z", "download_to": "z.zip"},
+        )
+        assert r.success and "First lines" not in r.output
+        assert "6 bytes, application/zip" in r.output
+
+    def test_gitiles_blob_is_saved_decoded(self, tmp_path, monkeypatch):
+        import base64
+
+        monkeypatch.chdir(tmp_path)
+        resp = _resp("text/plain; charset=utf-8", base64.b64encode(b"src\n").decode())
+        resp.headers["x-gitiles-object-type"] = "blob"
+        r = self._run(resp, {"url": "https://g/x?format=TEXT", "download_to": "x.c"})
+        assert r.success and (tmp_path / "x.c").read_bytes() == b"src\n"
+
+    def test_bot_check_page_is_not_saved(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        page = "<html><body><p>Please verify you are human</p></body></html>"
+        r = self._run(
+            _resp("text/html", page),
+            {"url": "https://example.com/s", "download_to": "s.html"},
+        )
+        assert not r.success and "Bot check" in r.error
+        assert not (tmp_path / "s.html").exists()
+
+    def test_http_error_saves_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        resp = _resp("text/html", "nope")
+        resp.status_code = 404
+        r = self._run(resp, {"url": "https://example.com/n", "download_to": "n"})
+        assert not r.success and "HTTP 404" in r.error
+        assert not (tmp_path / "n").exists()
+
+    def test_depth_with_download_to_is_rejected(self):
+        with patch("agent_cli.tools.fetch.requests.get") as get:
+            r = tool_fetch(
+                {"url": "https://example.com", "depth": 1, "download_to": "a"}
+            )
+        assert not r.success and "depth" in r.error
+        get.assert_not_called()
+
+    def test_empty_download_to_is_rejected(self):
+        r = tool_fetch({"url": "https://example.com", "download_to": " "})
+        assert not r.success and "file path" in r.error
+
+    def test_auto_name_numbers_a_clash_and_guesses_the_extension(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        for _ in range(2):
+            _get(_resp("image/png", b"\x89PNG\xff"), url="https://e.com/img/")
+        names = sorted(
+            p.name for p in (tmp_path / ".agent-cli/tmp/downloads").iterdir()
+        )
+        assert names == ["img-1.png", "img.png"]
+
+    def test_auto_name_without_a_path_segment(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        c, _, _ = _get(
+            _resp("application/octet-stream", b"\xff\x00"), url="https://e.com"
+        )
+        assert "downloads/download" in c
+
+    def test_auto_name_adds_the_type_extension(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        c, _, _ = _get(
+            _resp("application/pdf", b"%PDF\xff"),
+            url="https://arxiv.org/pdf/1706.03762",
+        )
+        assert "downloads/1706.03762.pdf" in c  # .03762 는 확장자가 아니다
+        c, _, _ = _get(
+            _resp("application/octet-stream", b"\x1f\x8b\xff"),
+            url="https://e.com/a.tar.gz",
+        )
+        assert "downloads/a.tar.gz" in c  # octet-stream 은 이름 그대로
+
+    def test_touched_paths_names_the_target(self):
+        t = FetchTool()
+        assert t.touched_paths({"url": "u", "download_to": "a/b.pdf"}) == ["a/b.pdf"]
+        assert t.touched_paths({"url": "u"}) == []
+
+    def test_schema_and_description(self):
+        assert "download_to" in FetchTool.parameters["properties"]
+        assert "download_to" in FetchTool.description
+        assert ".agent-cli/tmp/downloads/" in FetchTool.description
