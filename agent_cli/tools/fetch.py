@@ -9,7 +9,7 @@ import json
 import re
 from html.parser import HTMLParser
 from typing import ClassVar
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 
@@ -72,25 +72,131 @@ def _decode(resp, content_type: str, kind: str) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
-class _HTMLToMarkdown(HTMLParser):
-    """Minimal HTML to markdown converter."""
+#: 내용이 아닌 요소 — 통째로 건너뛴다.
+_SKIP_TAGS = frozenset(
+    ("script", "style", "nav", "footer", "header", "noscript", "template")
+)
+#: 닫는 태그가 없는 요소 — 건너뛰기 깊이를 세지 않는다.
+_VOID_TAGS = frozenset(
+    ("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta")
+    + ("param", "source", "track", "wbr")
+)
+#: 닫는 태그를 생략할 수 있는 요소 — 숨김이어도 건너뛰지 않는다. 닫히지 않은
+#: ``<p hidden>`` 을 건너뛰기 시작하면 페이지 끝까지 사라진다.
+_OPTIONAL_END = frozenset(
+    ("p", "li", "dt", "dd", "tr", "td", "th", "option", "thead", "tbody", "tfoot")
+)
+#: 경계에서 줄을 바꾸는 블록 요소 (v10.57.2). 종전엔 ``p``·``li``·제목·표만
+#: 바꿔 Scholar 의 ``<div>`` 제목과 저자가 ``…networksS Jung`` 으로 붙었다.
+_BLOCK_TAGS = frozenset(
+    ("div", "section", "article", "main", "aside", "ul", "ol", "dl", "dt", "dd")
+    + ("blockquote", "figure", "figcaption", "form", "fieldset", "details")
+    + ("summary", "table", "address", "hr")
+)
+_WS = re.compile(r"[ \t\r\n\f]+")  # HTML 의 공백 — nbsp 는 접지 않는다
+_EMPTY_MARK = re.compile(r"[-*]|#{1,6}")  # 글 없는 목록·제목 표시만 남은 줄
 
-    def __init__(self):
+
+def _hidden(attrs: dict) -> bool:
+    """화면에 그려지지 않는 요소 — ``hidden``·``aria-hidden``·인라인 ``display:none``.
+
+    Scholar 는 정상 결과 위에 ``<div style="display:none">현재 시스템이 작동되지
+    않습니다…</div>`` 를 늘 싣는다 — 읽으면 막힌 페이지로 오해한다."""
+    if "hidden" in attrs:
+        return True
+    if (attrs.get("aria-hidden") or "").strip().lower() == "true":
+        return True
+    style = "".join((attrs.get("style") or "").lower().split())
+    return "display:none" in style or "visibility:hidden" in style
+
+
+def _unwrap_redirect(url: str) -> str:
+    """검색 엔진의 추적 주소 → 실제 주소 (v10.57.2). 모르는 모양은 그대로.
+
+    Bing 결과 링크는 ``/ck/a?…&u=a1<base64>`` 300자 안팎(실측) — 그대로 실으면
+    결과 하나에 100토큰 넘게 들고, 따라가도 JS 리다이렉트 페이지다."""
+    parsed = urlparse(url)
+    host, path = parsed.netloc.lower(), parsed.path
+    q = parse_qs(parsed.query)
+    if host.endswith("bing.com") and path == "/ck/a" and q.get("u"):
+        u = q["u"][0]
+        if u.startswith("a1"):
+            b = u[2:]
+            try:
+                out = base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+            except (binascii.Error, ValueError):
+                return url
+            if out.startswith(("http://", "https://")):
+                return out
+    if "google." in host and path == "/url":
+        for key in ("q", "url"):
+            if q.get(key, [""])[0].startswith(("http://", "https://")):
+                return q[key][0]
+    if "duckduckgo.com" in host and path.startswith("/l/") and q.get("uddg"):
+        return q["uddg"][0]
+    return url
+
+
+def _url_repeats_text(url: str, text: str) -> bool:
+    """주소가 링크 글 이상을 말하지 않는다 — 글이 곧 주소, 또는 **같은 사이트**
+    (``/경로``) 이고 경로의 마지막 조각이 글과 같다(``/wiki/Shor%27s_algorithm`` ↔
+    "Shor's algorithm"). 커밋 로그처럼 주소에만 있는 정보(해시)가 있으면 싣는다."""
+    if text in (url, url.rstrip("/")):
+        return True
+    if not url.startswith("/"):
+        return False
+    path = urlparse(url).path.rstrip("/")
+    last = unquote(path.rsplit("/", 1)[-1]).replace("_", " ").replace("-", " ")
+    return last.casefold() == " ".join(text.replace("-", " ").split()).casefold()
+
+
+class _HTMLToMarkdown(HTMLParser):
+    """Minimal HTML to markdown converter.
+
+    v10.57.2 (x8jkpw 기록 37건 점검): 링크를 ``[글](주소)`` 로 싣고(같은 사이트는
+    ``/경로``), 블록 경계에서 줄을 바꾸고, 숨김 요소를 건너뛰고, 공백을 HTML 처럼
+    접는다. 종전엔 링크가 본문에 없어 검색 결과를 따라갈 수 없었고, 탭만 있는 줄과
+    빈 ``- `` 줄이 HTML 결과의 40~70% 였다(Wikipedia 본문이 266번째 줄부터)."""
+
+    def __init__(self, base_url: str = ""):
         super().__init__()
         self.result: list[str] = []
-        self._skip = False
+        self._base = base_url
+        self._host = urlparse(base_url).netloc
+        #: 건너뛰는 요소와 그 안에 다시 열린 같은 이름의 수 — 종전의 불 값은
+        #: ``<nav>`` 안의 ``<script>`` 가 닫힐 때 건너뛰기를 끝냈다.
+        self._skip_tag: str | None = None
+        self._skip_depth = 0
         self._in_pre = False
         self._in_code = False
         self._links: list[str] = []
-        # 표 (v10.56.4): 행마다 한 줄, 글 있는 칸 사이만 " | ". 칸 시작 위치와
-        # 행마다 채워진 칸 수를 스택으로 — 표 안의 표도 같은 규칙.
-        self._cells: list[int] = []
+        self._anchor: tuple[int, str] | None = None  # (글 시작 위치, 실을 주소)
+        # 표 (v10.56.4): 행마다 한 줄, 글 있는 칸 사이만 " | ". 칸마다 [시작
+        # 위치, 안에서 닫힌 행 수], 행마다 채워진 칸 수를 스택으로 — 표 안의 표도
+        # 같은 규칙.
+        self._cells: list[list[int]] = []
         self._rows: list[int] = []
 
     def handle_starttag(self, tag, attrs):
+        if self._skip_tag:
+            if tag == self._skip_tag and tag not in _VOID_TAGS:
+                self._skip_depth += 1
+            return
         attrs_dict = dict(attrs)
-        if tag in ("script", "style", "nav", "footer", "header", "noscript"):
-            self._skip = True
+        if tag in _SKIP_TAGS or (
+            tag not in _VOID_TAGS and tag not in _OPTIONAL_END and _hidden(attrs_dict)
+        ):
+            if tag not in _VOID_TAGS:
+                self._skip_tag, self._skip_depth = tag, 1
+            return
+        if tag in _BLOCK_TAGS:
+            self._break()
+        if tag == "img":
+            # 그림의 대체 글 — Wikipedia 수식은 보이는 것이 ``<img alt="{\\displaystyle
+            # …}">`` 이고 MathML 은 숨김이다. 숨김을 건너뛰면 alt 가 유일한 수식.
+            alt = " ".join((attrs_dict.get("alt") or "").split())
+            if alt:
+                self.result.append(alt)
             return
         if tag == "pre":
             self._in_pre = True
@@ -110,46 +216,113 @@ class _HTMLToMarkdown(HTMLParser):
         elif tag == "tr":
             self._rows.append(0)
         elif tag in ("td", "th"):
-            self._cells.append(len(self.result))
+            self._cells.append([len(self.result), 0])
         elif tag == "a":
-            href = attrs_dict.get("href", "")
+            href = (attrs_dict.get("href") or "").strip()
             if href and not href.startswith(("#", "javascript:")):
                 self._links.append(href)
+                if not self._in_pre:
+                    self._anchor = (len(self.result), self._shown_url(href))
+
+    def _break(self) -> None:
+        """블록 경계 — 이미 줄 첫머리면 그대로(이웃한 ``div`` 가 빈 줄을 쌓지 않게)."""
+        for chunk in reversed(self.result):
+            text = chunk.rstrip(" ")
+            if text:
+                if not text.endswith("\n"):
+                    self.result.append("\n")
+                return
+
+    def _shown_url(self, href: str) -> str:
+        """본문에 실을 주소 — 추적 주소는 풀고, 같은 사이트는 ``/경로`` 만."""
+        full = _unwrap_redirect(urljoin(self._base, href) if self._base else href)
+        p = urlparse(full)
+        if self._host and p.netloc == self._host and p.scheme in ("http", "https"):
+            return full[len(f"{p.scheme}://{p.netloc}") :] or "/"
+        return full
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style", "nav", "footer", "header", "noscript"):
-            self._skip = False
+        if self._skip_tag:
+            if tag == self._skip_tag:
+                self._skip_depth -= 1
+                if self._skip_depth == 0:
+                    self._skip_tag = None
             return
+        if tag in _BLOCK_TAGS:
+            self._break()
         if tag == "pre":
             self._in_pre = False
             self.result.append("\n```\n")
         elif tag == "code" and not self._in_pre:
             self._in_code = False
             self.result.append("`")
+        elif tag == "a" and self._anchor:
+            start, url = self._anchor
+            self._anchor = None
+            text = " ".join("".join(self.result[start:]).split())
+            # 글이 없는 링크(아이콘)·주소가 글을 되풀이할 뿐인 링크는 주소를
+            # 싣지 않는다 — Wikipedia 본문 링크 960개를 다 실으면 토큰이 1.7배.
+            if (
+                text
+                and "\n" not in "".join(self.result[start:]).strip()
+                and not _url_repeats_text(url, text)
+            ):
+                del self.result[start:]
+                self.result.append(f"[{text}]({url})")
         elif tag in ("td", "th") and self._cells:
-            start = self._cells.pop()
-            if not "".join(self.result[start:]).strip():
-                del self.result[
-                    start:
-                ]  # 빈 칸 — 코드 보기의 줄 번호 칸(번호는 속성에만)
-            elif self._rows:
+            start, inner_rows = self._cells.pop()
+            body = "".join(self.result[start:])
+            del self.result[start:]
+            # 빈 칸은 지운다 — 코드 보기의 줄 번호 칸(번호는 속성에만). 칸 안의
+            # 줄바꿈은 접는다 — 남기면 한 행이 여러 줄로 갈라진다(Wikipedia 표).
+            # 칸 안에 표가 있으면 그 표의 행은 줄로 남긴다.
+            if inner_rows:
+                text = "\n".join(ln.strip() for ln in body.split("\n") if ln.strip())
+            else:
+                text = " ".join(body.split())
+            if text and self._rows:
                 if self._rows[-1]:
-                    self.result.insert(start, " | ")
+                    self.result.append(" | ")
+                self.result.append(text)
                 self._rows[-1] += 1
+            elif text:
+                self.result.append(text)
         elif tag == "tr" and self._rows:
             self._rows.pop()
             self.result.append("\n")
+            if self._cells:  # 열린 칸 안에서 닫힌 행 — 칸 안의 표
+                self._cells[-1][1] += 1
 
     def handle_data(self, data):
-        if self._skip:
+        if self._skip_tag:
             return
+        if self._in_pre:
+            self.result.append(data)
+            return
+        data = _WS.sub(" ", data)
+        if data == " " and len(self._rows) > len(self._cells):
+            return  # 행 안·칸 밖의 공백(태그 사이 줄바꿈) — 칸 사이가 "  | " 가 된다
         self.result.append(data)
 
     def get_markdown(self) -> str:
-        text = "".join(self.result)
-        # Clean up excessive whitespace
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
+        """줄 정리 — 코드 블록 밖에서 줄 앞뒤 공백을 걷고, 글 없는 줄(빈 ``-``·
+        ``#``)을 빈 줄로, 빈 줄은 하나로."""
+        out: list[str] = []
+        fenced = False
+        for line in "".join(self.result).split("\n"):
+            if line.strip() == "```":
+                fenced = not fenced
+                out.append("```")
+                continue
+            if fenced:
+                out.append(line)
+                continue
+            line = line.strip()
+            if _EMPTY_MARK.fullmatch(line):
+                line = ""
+            if line or (out and out[-1]):
+                out.append(line)
+        return "\n".join(out).strip()
 
     def get_links(self) -> list[str]:
         return self._links
@@ -272,7 +445,8 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
     # HTML 은 **변환 전** 원본에서 잘려 본문 뒷부분이 사라졌다(Wikipedia 1MB →
     # 앞 1/5). 큰 결과는 공용 `Tool.render_oversized` 가 전체를 파일로 남기고
     # 발췌를 돌려준다 — 잘린 것은 그 파일까지 잘려 있었다.
-    parser = _HTMLToMarkdown()
+    final = getattr(resp, "url", None)
+    parser = _HTMLToMarkdown(final if isinstance(final, str) and final else url)
     try:
         parser.feed(text)
     except Exception:
@@ -398,7 +572,8 @@ def tool_fetch(args: dict) -> ToolResult:
 class FetchTool(Tool):
     name = "fetch"
     description = (
-        "Fetch a URL: an HTML page comes back as markdown, JSON (pretty-printed), "
+        "Fetch a URL: an HTML page comes back as markdown with links as [text](url) "
+        "(same-site links as /path), JSON (pretty-printed), "
         "XML and plain text as text. "
         "Supports recursive fetching of same-domain links via the depth parameter. "
         "Full content returned inline; an over-cap result is saved to a file and "

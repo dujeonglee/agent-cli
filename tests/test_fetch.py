@@ -306,6 +306,21 @@ class TestTables:
         )
         assert self._md(html) == "Designed by | Guido van Rossum\nDeveloper | PSF"
 
+    def test_line_breaks_inside_a_cell_stay_in_the_row(self):
+        # Wikipedia 키 크기 표 — "ML-DSA[48]\\n | Lattice\\n | …" 로 갈라졌다
+        html = (
+            "<table>\n<tr>\n<td>ML-DSA<sup>[48]</sup>\n</td>\n<td>Lattice\n</td>\n"
+            "<td>1,312<br>B</td>\n</tr>\n</table>"
+        )
+        assert self._md(html) == "ML-DSA[48] | Lattice | 1,312 B"
+
+    def test_a_multi_row_table_inside_a_cell_keeps_its_rows(self):
+        html = (
+            "<table><tr><td>outer</td><td><table><tr><td>a</td><td>b</td></tr>"
+            "<tr><td>c</td><td>d</td></tr></table></td></tr></table>"
+        )
+        assert self._md(html) == "outer | a | b\nc | d"
+
     def test_a_table_inside_a_cell_keeps_its_own_rows(self):
         html = (
             "<table><tr><td>outer</td><td><table><tr><td>a</td><td>b</td></tr>"
@@ -313,6 +328,140 @@ class TestTables:
         )
         out = self._md(html)
         assert "a | b" in out and out.startswith("outer | ")
+
+
+def _md(html, base=""):
+    p = _HTMLToMarkdown(base)
+    p.feed(html)
+    return p.get_markdown()
+
+
+class TestLinks:
+    """v10.57.2: 링크가 본문에 없어 검색 결과를 따라갈 수 없었다(x8jkpw Bing·Scholar)."""
+
+    BASE = "https://git.kernel.org/pub/scm/x.git/log/"
+
+    def test_off_site_link_is_absolute(self):
+        out = _md(
+            '<p>see <a href="https://doi.org/10.1/x">the paper</a></p>', self.BASE
+        )
+        assert out == "see [the paper](https://doi.org/10.1/x)"
+
+    def test_same_site_link_is_a_path(self):
+        out = _md(
+            '<a href="../commit/?id=8070ed57">calipso: keep BIG TCP</a>', self.BASE
+        )
+        assert out == "[calipso: keep BIG TCP](/pub/scm/x.git/commit/?id=8070ed57)"
+
+    def test_same_site_link_that_repeats_its_text_keeps_only_the_text(self):
+        base = "https://en.wikipedia.org/wiki/Post-quantum_cryptography"
+        out = _md(
+            '<p><a href="/wiki/Shor%27s_algorithm">Shor\'s algorithm</a> and '
+            '<a href="/wiki/Quantum_computing">quantum computer</a></p>',
+            base,
+        )
+        assert out == (
+            "Shor's algorithm and [quantum computer](/wiki/Quantum_computing)"
+        )
+
+    def test_icon_link_and_bare_url_text_add_no_brackets(self):
+        out = _md(
+            '<a href="https://x.org/a"><img src="i.png"></a>'
+            '<a href="https://x.org/b">https://x.org/b</a>'
+        )
+        assert out == "https://x.org/b"
+
+    def test_link_inside_pre_is_left_as_code(self):
+        out = _md('<pre>call <a href="/f">f</a>()</pre>', self.BASE)
+        assert "](" not in out and "call f()" in out
+
+    def test_bing_tracking_link_is_unwrapped(self):
+        import base64
+
+        target = "https://support.google.com/business/answer/2853879?hl=th"
+        u = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+        href = f"https://www.bing.com/ck/a?!&amp;&amp;p=1bb3f2&amp;u={u}&amp;ntb=1"
+        out = _md(
+            f'<h2><a href="{href}">Business</a></h2>', "https://www.bing.com/search"
+        )
+        assert out == f"## [Business]({target})"
+
+    def test_google_and_duckduckgo_redirects_are_unwrapped(self):
+        g = _md(
+            '<a href="/url?q=https://a.org/p&amp;sa=U">A</a>',
+            "https://www.google.com/search",
+        )
+        d = _md(
+            '<a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fb.org%2Fq&amp;rut=1">B</a>',
+            "https://html.duckduckgo.com/html/",
+        )
+        assert g == "[A](https://a.org/p)" and d == "[B](https://b.org/q)"
+
+    def test_depth_still_gets_every_href(self):
+        p = _HTMLToMarkdown(self.BASE)
+        p.feed('<a href="/a">a</a><a href="https://y.org/b"></a>')
+        assert p.get_links() == ["/a", "https://y.org/b"]
+
+    def test_fetch_single_uses_the_final_url_after_redirects(self):
+        r = _resp("text/html", '<a href="https://new.example.com/p">next page</a>')
+        r.url = "https://new.example.com/start"
+        c, _, err = _get(r, "https://old.example.com/start")
+        assert err is None and c == "[next page](/p)"
+
+
+class TestLayout:
+    """v10.57.2: 블록 경계·숨김 요소·공백 — HTML 결과의 40~70% 가 빈 줄이었다."""
+
+    def test_block_elements_end_lines(self):
+        # Scholar 결과 한 건의 모양 — 제목과 저자가 "…networksS Jung" 으로 붙었다
+        out = _md(
+            '<div class="gs_ri"><h3><a href="https://ieeexplore.ieee.org/d/1">'
+            "Distributed routing</a></h3><div>S Jung, D Lee - 2009</div>"
+            "<div>Congested hot spots</div></div>"
+        )
+        assert out.split("\n") == [
+            "### [Distributed routing](https://ieeexplore.ieee.org/d/1)",
+            "S Jung, D Lee - 2009",
+            "Congested hot spots",
+        ]
+
+    def test_hidden_elements_are_skipped(self):
+        out = _md(
+            '<div style="display: none">현재 시스템이 작동되지 않습니다</div>'
+            '<span hidden>h</span><i aria-hidden="true">icon</i>'
+            '<span style="visibility:hidden">v</span><p>결과 13개</p>'
+        )
+        assert out == "결과 13개"
+
+    def test_skip_ends_at_its_own_closing_tag(self):
+        # 종전의 불 값 — nav 안의 script 가 닫히면서 nav 의 나머지가 새어 나왔다
+        out = _md(
+            "<nav><script>x()</script>menu<div><nav>inner</nav>still menu</div></nav>"
+            "<p>body</p>"
+        )
+        assert out == "body"
+
+    def test_hidden_on_an_element_with_optional_end_tag_is_ignored(self):
+        # 닫히지 않은 <p hidden> 을 건너뛰기 시작하면 페이지 끝까지 사라진다
+        assert "rest" in _md("<p hidden>x<p>rest")
+
+    def test_whitespace_folds_like_html(self):
+        out = _md(
+            "<ul>\n\t\t<li>\n\t</li>\n<li>one\n   two</li></ul>\n\t\n\n\n<p>end</p>"
+        )
+        assert out == "- one two\n\nend"
+
+    def test_pre_keeps_its_whitespace(self):
+        out = _md("<p>x</p><pre>a\n\n\n    b\t c</pre>")
+        assert "a\n\n\n    b\t c" in out
+
+    def test_image_alt_is_the_text(self):
+        # Wikipedia 수식: MathML 은 숨김, 보이는 것은 alt 의 TeX
+        out = _md(
+            '<p>using <span style="display:none"><math>O(√N)</math></span>'
+            '<img alt="{\\displaystyle O({\\sqrt {N}})}" src="m.svg"> calls</p>'
+        )
+        assert out == "using {\\displaystyle O({\\sqrt {N}})} calls"
 
 
 class TestGoogleResponses:
