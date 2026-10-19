@@ -283,13 +283,16 @@ def oversized_nudge(
     retry_hint: str,
     tools_available: frozenset[str],
     reason: str = "",
+    saved_note: str = "",
 ) -> str:
     """The single over-cap observation, identical in shape for every tool.
 
     ``path`` is where the full body lives (``""`` only if persisting failed).
     ``reason`` overrides the "too large for one context" opening — the turn
     budget guard passes its own so the model is told the truth about WHY its
-    output was replaced (the turn's accumulated total, not this one result)."""
+    output was replaced (the turn's accumulated total, not this one result).
+    ``saved_note`` — one sentence on what the saved file IS, after the "saved
+    to" line (:attr:`Tool.oversized_saved_note`)."""
     nlines = body.count("\n") + 1
     why = reason or (
         f"output is ~{tokens:,} tokens — too large for one context (cap {cap:,})"
@@ -299,6 +302,8 @@ def oversized_nudge(
         head.append(
             f"Full output saved to '{path}' ({nlines:,} lines, {len(body):,} chars)."
         )
+        if saved_note:
+            head.append(saved_note)
     else:
         head.append(
             "The full output could NOT be saved to a file — it is gone; "
@@ -477,6 +482,17 @@ class Tool(ABC):
     #: tool, so a new tool sets this string and inherits correct behaviour.
     #: Phrased to complete "Root cause — …".
     oversized_retry_hint: str = GENERIC_RETRY_HINT
+    #: One sentence on what the persisted file IS, shown right after "Full
+    #: output saved to …" — for a tool whose saved body is not what a user
+    #: would call "the output" (fetch: converted text, not the response bytes;
+    #: v10.58.1, a model copied it as "the JSON" and shipped a broken file).
+    oversized_saved_note: str = ""
+
+    def oversized_file_body(self, body: str) -> str:
+        """What goes in the persisted file — default the observation body.
+        fetch drops its ``[Fetched …]`` header line so the file is the content
+        alone (v10.58.1: a copied file kept the header and was invalid JSON)."""
+        return body
 
     def oversized_source_path(
         self, result: ToolResult, args: dict, ctx: RunContext
@@ -538,6 +554,7 @@ class Tool(ABC):
             except OSError:
                 path = ""
         if not path:
+            body = self.oversized_file_body(body)
             path = persist_oversized(
                 self.name, body, self.oversized_key(args), ctx.session_dir
             )
@@ -552,6 +569,7 @@ class Tool(ABC):
             retry_hint=self.oversized_retry_hint,
             tools_available=ctx.tools_available,
             reason=reason,
+            saved_note=self.oversized_saved_note,
         )
 
     def validate(self, args: dict) -> str | None:
