@@ -1,13 +1,15 @@
 """Fetch tool — retrieve web page content as markdown (HTML) or as text (JSON,
-XML, plain text)."""
+XML, plain text); binary content and ``download_to`` go to a file instead."""
 
 from __future__ import annotations
 
 import base64
 import binascii
 import json
+import mimetypes
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -21,6 +23,11 @@ FETCH_TIMEOUT = 15
 MAX_DEPTH = 3
 MAX_PAGES = 10  # Total pages fetched in recursive mode
 USER_AGENT = "agent-cli/2.0 (fetch tool)"
+#: 바이너리 응답의 자동 저장 자리 (v10.58.0) — 시스템 프롬프트가 내려받기 자리로
+#: 안내하는 ``.agent-cli/tmp/`` 아래.
+DOWNLOAD_DIR = Path(".agent-cli") / "tmp" / "downloads"
+_EXCERPT_LINES = 20
+_EXCERPT_CHARS = 1500
 
 
 def _body_kind(content_type: str) -> str | None:
@@ -30,7 +37,8 @@ def _body_kind(content_type: str) -> str | None:
     machine endpoint that needs no browser — PyPI, npm, Wikipedia REST, OSV,
     GitHub API, Stack Exchange — came back "Unsupported content type" and the
     model fell back to ``shell curl``. XML (arXiv Atom, RSS) is readable as text.
-    Binary (PDF, images, archives) stays refused."""
+    Binary (PDF, images, archives) is not read: it is downloaded to a file
+    (v10.58.0)."""
     ct = content_type.split(";", 1)[0].strip().lower()
     if ct in ("text/html", "application/xhtml+xml"):
         return "html"
@@ -379,28 +387,25 @@ def _disguised_block(status: int, html: str, text: str) -> str | None:
     return None
 
 
-def _gitiles_blob(text: str, url: str) -> tuple[str, list[str], str | None]:
+def _gitiles_bytes(text: str) -> bytes | None:
     """gitiles ``?format=TEXT`` — 파일 원문이 base64 로 온다 (v10.56.4).
 
     gitiles 에는 raw 주소가 없고 이것이 원문을 받는 공식 길이다. 판정은 URL
     모양이 아니라 서버가 단 ``x-gitiles-object-type: blob`` 헤더(android·
-    chromium·kernel googlesource 공통). base64 가 아니면 원문 그대로, 풀린
-    내용이 텍스트가 아니면(바이너리 파일) 실패 — 깨진 글자를 넘기지 않는다."""
+    chromium·kernel googlesource 공통) — 이 함수는 그 헤더가 있을 때만 불린다.
+    base64 가 아니면 None (원문 그대로 쓴다)."""
     try:
-        raw = base64.b64decode("".join(text.split()), validate=True)
+        return base64.b64decode("".join(text.split()), validate=True)
     except (binascii.Error, ValueError):
-        return text, [], None
-    try:
-        return raw.decode("utf-8"), [], None
-    except UnicodeDecodeError:
-        return "", [], f"Unsupported content: {url} is a binary file (gitiles blob)"
+        return None
 
 
-def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
-    """Fetch a single URL.
+def _is_gitiles_blob(resp) -> bool:
+    return (resp.headers.get("x-gitiles-object-type") or "") == "blob"
 
-    Returns (markdown_content, links_found, error_or_none).
-    """
+
+def _request(url: str):
+    """GET ``url`` — (response, None) 또는 (None, 실패 문구)."""
     try:
         resp = requests.get(
             url,
@@ -409,21 +414,129 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
             allow_redirects=True,
         )
     except requests.exceptions.ConnectionError:
-        return "", [], f"Connection failed: {url} (DNS or network error)"
+        return None, f"Connection failed: {url} (DNS or network error)"
     except requests.exceptions.Timeout:
-        return "", [], f"Timeout after {FETCH_TIMEOUT}s: {url}"
+        return None, f"Timeout after {FETCH_TIMEOUT}s: {url}"
     except requests.exceptions.SSLError as e:
-        return "", [], f"SSL error: {url} ({e})"
+        return None, f"SSL error: {url} ({e})"
     except requests.exceptions.RequestException as e:
-        return "", [], f"Request failed: {url} ({e})"
-
+        return None, f"Request failed: {url} ({e})"
     if resp.status_code >= 400:
-        return "", [], f"HTTP {resp.status_code}: {url}"
+        return None, f"HTTP {resp.status_code}: {url}"
+    return resp, None
+
+
+def _final_url(resp, url: str) -> str:
+    final = getattr(resp, "url", None)
+    return final if isinstance(final, str) and final else url
+
+
+def _auto_dest(url: str, content_type: str) -> Path:
+    """바이너리 자동 저장 경로 — URL 경로의 마지막 조각, 없거나 이미 있으면
+    번호를 붙인다. 이름 끝이 content-type 의 확장자가 아니면 붙인다 —
+    arXiv ``/pdf/1706.03762`` 는 ``1706.03762.pdf`` (``.03762`` 는 확장자가
+    아니다). ``application/octet-stream`` 은 아무것도 말하지 않아 이름 그대로."""
+    seg = unquote(urlparse(url).path.rstrip("/").rsplit("/", 1)[-1])
+    name = re.sub(r"[^\w.-]+", "_", seg).lstrip(".") or "download"
+    ct = content_type.split(";", 1)[0].strip().lower()
+    known = (
+        [] if ct == "application/octet-stream" else mimetypes.guess_all_extensions(ct)
+    )
+    if known and not any(name.lower().endswith(e) for e in known):
+        stem, suffix = name, known[0]
+    elif "." in name:
+        stem, _, ext = name.rpartition(".")
+        suffix = f".{ext}"
+    else:
+        stem, suffix = name, ""
+    dest = DOWNLOAD_DIR / f"{stem}{suffix}"
+    n = 1
+    while dest.exists():
+        dest = DOWNLOAD_DIR / f"{stem}-{n}{suffix}"
+        n += 1
+    return dest
+
+
+def _excerpt(data: bytes) -> str | None:
+    """텍스트면 앞 몇 줄, 바이너리면 None."""
+    head = data[: _EXCERPT_CHARS * 4]
+    try:
+        text = head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        if e.start < len(head) - 3:  # 끝에서 잘린 멀티바이트가 아니라 진짜 바이너리
+            return None
+        text = head[: e.start].decode("utf-8")
+    if "\x00" in text:
+        return None
+    lines = text.splitlines()[:_EXCERPT_LINES]
+    return "\n".join(lines)[:_EXCERPT_CHARS]
+
+
+def _save(data: bytes, dest: Path, url: str, content_type: str, *, asked: bool):
+    """``data`` 를 ``dest`` 에 쓰고 결과 문구를 돌려준다 — (문구, 실패 문구)."""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+    except OSError as e:
+        return "", f"Could not save {url} to {dest}: {e}"
+    ct = content_type.split(";", 1)[0].strip() or "unknown type"
+    if asked:
+        note = f"[Downloaded {url} → {dest} ({len(data):,} bytes, {ct}), unchanged]"
+    else:
+        note = (
+            f"[Binary content ({ct}), not shown — downloaded {url} → {dest} "
+            f"({len(data):,} bytes)]"
+        )
+    excerpt = _excerpt(data)
+    if excerpt:
+        note += f"\n\nFirst lines:\n{excerpt}"
+    return note, None
+
+
+def _download(url: str, dest: str) -> tuple[str, str | None]:
+    """``download_to`` — 응답 바이트를 변환 없이 ``dest`` 에 (v10.58.0).
+
+    gitiles blob 은 전송용 base64 를 풀어 파일 원문을 쓴다. 확인 페이지·JS
+    껍데기는 성공 코드로 와도 저장하지 않는다 — 내용이 아니다."""
+    resp, err = _request(url)
+    if err:
+        return "", err
+    content_type = resp.headers.get("content-type", "")
+    kind = _body_kind(content_type)
+    data = resp.content or b""
+    if kind is not None and _is_gitiles_blob(resp):
+        data = _gitiles_bytes(_decode(resp, content_type, kind)) or data
+    elif kind == "html":
+        html = _decode(resp, content_type, kind)
+        parser = _HTMLToMarkdown(_final_url(resp, url))
+        try:
+            parser.feed(html)
+        except Exception:
+            pass
+        else:
+            blocked = _disguised_block(resp.status_code, html, parser.get_markdown())
+            if blocked:
+                return "", blocked.format(url=url)
+    return _save(data, Path(dest), url, content_type, asked=True)
+
+
+def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
+    """Fetch a single URL.
+
+    Returns (markdown_content, links_found, error_or_none). Binary content is
+    downloaded and the content is the note saying where (v10.58.0).
+    """
+    resp, err = _request(url)
+    if err:
+        return "", [], err
 
     content_type = resp.headers.get("content-type", "")
     kind = _body_kind(content_type)
     if kind is None:
-        return "", [], f"Unsupported content type: {content_type} for {url}"
+        data = resp.content or b""
+        dest = _auto_dest(_final_url(resp, url), content_type)
+        note, err = _save(data, dest, url, content_type, asked=False)
+        return note, [], err
 
     text = _decode(resp, content_type, kind)
     if kind == "json":
@@ -436,17 +549,22 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
             pass  # not actually JSON — hand it over as text
         return text, [], None
     if kind == "text":
-        if (resp.headers.get("x-gitiles-object-type") or "") == "blob":
-            return _gitiles_blob(text, url)
-        return text, [], None
+        raw = _gitiles_bytes(text) if _is_gitiles_blob(resp) else None
+        if raw is None:
+            return text, [], None
+        try:
+            return raw.decode("utf-8"), [], None
+        except UnicodeDecodeError:  # 바이너리 파일 — 깨진 글자 대신 내려받는다
+            dest = _auto_dest(_final_url(resp, url), "")
+            note, err = _save(raw, dest, url, "", asked=False)
+            return note, [], err
 
     # 본문은 자르지 않는다(v10.56.2). 종전엔 페이지마다 20만 자에서 **표시 없이**
     # 잘랐다 — 줄바꿈한 JSON 은 중간에서 끊겨 깨진 채로(PyPI `requests` 193KB),
     # HTML 은 **변환 전** 원본에서 잘려 본문 뒷부분이 사라졌다(Wikipedia 1MB →
     # 앞 1/5). 큰 결과는 공용 `Tool.render_oversized` 가 전체를 파일로 남기고
     # 발췌를 돌려준다 — 잘린 것은 그 파일까지 잘려 있었다.
-    final = getattr(resp, "url", None)
-    parser = _HTMLToMarkdown(final if isinstance(final, str) and final else url)
+    parser = _HTMLToMarkdown(_final_url(resp, url))
     try:
         parser.feed(text)
     except Exception:
@@ -486,6 +604,7 @@ def tool_fetch(args: dict) -> ToolResult:
     Args:
         url: URL to fetch
         depth: Recursive depth (0 = current page only, default 0)
+        download_to: save the response unchanged to this path instead
     """
     url = args.get("url", "").strip()
     if not url:
@@ -496,9 +615,28 @@ def tool_fetch(args: dict) -> ToolResult:
         url = f"https://{url}"
 
     depth = min(int(args.get("depth", 0)), MAX_DEPTH)
+    download_to = args.get("download_to")
+    if download_to is not None:
+        if not isinstance(download_to, str) or not download_to.strip():
+            return ToolResult(False, error="download_to must be a file path")
+        if depth > 0:
+            return ToolResult(
+                False,
+                error="download_to saves one response; it cannot be combined "
+                "with depth > 0",
+            )
+        from agent_cli.tools import _confine
+
+        denial = _confine.guard([download_to], "fetch")
+        if denial:
+            return ToolResult(False, error=denial)
 
     # Fetch main page
-    content, links, error = _fetch_single(url)
+    if download_to is not None:
+        note, error = _download(url, download_to)
+        content, links = note, []
+    else:
+        content, links, error = _fetch_single(url)
     if error:
         hints = []
         if "Connection failed" in error:
@@ -518,6 +656,9 @@ def tool_fetch(args: dict) -> ToolResult:
         if hints:
             error_msg += f"\nHint: {hints[0]}"
         return ToolResult(False, error=error_msg)
+
+    if download_to is not None:
+        return ToolResult(True, output=content)
 
     pages = [{"url": url, "content": content}]
 
@@ -577,7 +718,11 @@ class FetchTool(Tool):
         "XML and plain text as text. "
         "Supports recursive fetching of same-domain links via the depth parameter. "
         "Full content returned inline; an over-cap result is saved to a file and "
-        "replaced with an excerpt + how to mine it (read it in ranges)."
+        "replaced with an excerpt + how to mine it (read it in ranges). "
+        "Binary content (PDF, images, archives) is not shown: it is downloaded to "
+        ".agent-cli/tmp/downloads/ and the result says where. "
+        "download_to saves the response unchanged (no conversion) to that path "
+        "instead; the result is the path, size and first lines."
     )
     oversized_retry_hint = (
         "re-fetch a more specific URL, or a shallower depth, so less is pulled."
@@ -602,12 +747,21 @@ class FetchTool(Tool):
                 "type": "integer",
                 "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
             },
+            "download_to": {
+                "type": "string",
+                "description": "Save the response unchanged (raw HTML/JSON/file "
+                "bytes, no conversion) to this file path instead of returning it",
+            },
         },
         "required": ["url"],
     }
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def touched_paths(self, action_input: dict) -> list[str]:
+        p = self.strip_prefix(action_input).get("download_to")
+        return [p] if isinstance(p, str) and p else []
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_fetch(args)
