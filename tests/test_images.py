@@ -580,3 +580,100 @@ class TestWebNoVisionNotice:
 
         assert _vision_ok(_Binding()) is False
         assert "cannot view images" in _WEB_NO_VISION_NOTICE
+
+
+# ── Pillow 선택 의존성 (v10.61.1) — 크기·프로브는 표준 라이브러리, 축소만 Pillow ──
+
+
+class TestImageSizeWithoutPillow:
+    @staticmethod
+    def _bytes(fmt, size=(37, 19), **kw):
+        import io
+
+        buf = io.BytesIO()
+        Image.new("RGB", size, (10, 20, 30)).save(buf, format=fmt, **kw)
+        return buf.getvalue()
+
+    def test_four_formats(self):
+        from agent_cli.images import image_size
+
+        assert image_size(self._bytes("PNG")) == (37, 19)
+        assert image_size(self._bytes("JPEG")) == (37, 19)
+        assert image_size(self._bytes("JPEG", progressive=True)) == (37, 19)
+        assert image_size(self._bytes("GIF")) == (37, 19)
+        try:
+            webp = self._bytes("WEBP")
+        except Exception:
+            pytest.skip("Pillow without libwebp")
+        assert image_size(webp) == (37, 19)
+        assert image_size(self._bytes("WEBP", lossless=True)) == (37, 19)
+        assert image_size(b"not an image") is None
+        assert image_size(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4) is None  # 잘린 헤더
+
+    def test_make_ref_and_probe_need_no_pillow(self, tmp_path, monkeypatch):
+        import base64
+        import sys
+
+        from agent_cli import images as I
+
+        p = make_png(tmp_path / "a.png", size=(50, 40))
+        # PIL 을 import 하면 터지게 — make_ref·probe_image 는 건드리지 않아야 한다
+        monkeypatch.setitem(sys.modules, "PIL", None)
+        monkeypatch.setitem(sys.modules, "PIL.Image", None)
+        ref = I.make_ref(p)
+        assert (ref.width, ref.height, ref.mime) == (50, 40, "image/png")
+        assert ref.sha256 and ref.bytes == p.stat().st_size
+        mime, b64 = I.probe_image()
+        assert mime == "image/png" and I.image_size(base64.b64decode(b64)) == (128, 64)
+
+    def test_probe_constant_is_left_green_right_blue(self):
+        import base64
+        import io
+
+        from agent_cli.images import probe_image
+
+        _, b64 = probe_image()
+        with Image.open(io.BytesIO(base64.b64decode(b64))) as im:
+            im = im.convert("RGB")
+            assert im.size == (128, 64)
+            assert im.getpixel((10, 32)) == (0, 160, 0)  # 왼쪽 green
+            assert im.getpixel((118, 32)) == (0, 0, 255)  # 오른쪽 blue
+
+
+class TestEncodeWithoutPillow:
+    def test_original_is_sent_as_is(self, tmp_path, monkeypatch):
+        from agent_cli import images as I
+
+        monkeypatch.setattr(I, "has_pillow", lambda: False)
+        monkeypatch.setenv("AGENT_CLI_IMAGE_MAX_EDGE", "64")
+        p = make_png(tmp_path / "big.png", size=(300, 200))  # 상한보다 크다
+        ref = I.make_ref(p)
+        I._encode_cache.clear()
+        mime, b64 = I.encode(ref)
+        assert mime == "image/png"
+        import base64
+
+        assert base64.b64decode(b64) == p.read_bytes()  # 축소 없음, 원본 그대로
+
+    def test_over_byte_cap_is_a_reason_not_a_crash(self, tmp_path, monkeypatch):
+        from agent_cli import images as I
+
+        monkeypatch.setattr(I, "has_pillow", lambda: False)
+        monkeypatch.setattr(I, "IMAGE_MAX_BYTES", 100)
+        p = make_png(tmp_path / "big.png", size=(300, 200))
+        ref = I.make_ref(p)
+        I._encode_cache.clear()
+        got = I.encode(ref)
+        assert isinstance(got, str)
+        assert got.startswith("too large (") and "pip install pillow" in got
+
+    def test_with_pillow_still_downscales(self, tmp_path, monkeypatch):
+        from agent_cli import images as I
+
+        monkeypatch.setenv("AGENT_CLI_IMAGE_MAX_EDGE", "64")
+        p = make_png(tmp_path / "big.png", size=(300, 200))
+        I._encode_cache.clear()
+        _mime, b64 = I.encode(I.make_ref(p))
+        import base64
+
+        assert I.image_size(base64.b64decode(b64)) == (64, 43)

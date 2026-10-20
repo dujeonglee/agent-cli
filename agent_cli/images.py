@@ -148,38 +148,92 @@ def is_placeholder_line(line: str) -> bool:
     return line.startswith(_PLACEHOLDER_PREFIX)
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def make_ref(path: str | Path) -> ImageRef:
     """파일 → :class:`ImageRef`. 이미지가 아니면 ``ValueError``.
 
-    크기는 Pillow 가 헤더만 읽어 구한다(``Image.open`` 은 지연 디코딩).
+    크기는 헤더를 직접 읽는다(:func:`image_size`, Pillow 불필요 — v10.61.1).
     ``path`` 는 ``display_path`` 규칙으로 적는다 — 워크스페이스 안이면 상대.
     """
-    from PIL import Image
-
     from agent_cli.tools.base import display_path
 
     p = Path(path)
-    mime = sniff_file(p)
+    data = p.read_bytes()
+    mime = sniff_image(data[:16])
     if mime is None:
         raise ValueError(f"{path}: not a PNG/JPEG/GIF/WebP image")
-    with Image.open(p) as im:
-        width, height = im.size
+    size = image_size(data)
+    if size is None:
+        raise ValueError(f"{path}: image header is damaged (no size)")
     return ImageRef(
         path=display_path(p),
         mime=mime,
-        width=width,
-        height=height,
-        bytes=p.stat().st_size,
-        sha256=_sha256(p),
+        width=size[0],
+        height=size[1],
+        bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
     )
+
+
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """헤더만 읽어 ``(가로, 세로)`` — PNG·GIF·JPEG·WebP, 표준 라이브러리만 (v10.61.1).
+
+    Pillow 를 필수에서 뺀 자리: 사내 미러에 Pillow 가 없는 배포가 있었다. 크기는
+    토큰 추정·자리표시·썸네일 표시의 재료라 **의존성 0** 으로 둔다. 알 수 없으면
+    None(호출자가 손상 파일로 처리).
+    """
+    import struct
+
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        w, h = struct.unpack(">II", data[16:24])
+        return (w, h) if w and h else None
+    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+        w, h = struct.unpack("<HH", data[6:10])
+        return (w, h) if w and h else None
+    if data[:2] == b"\xff\xd8":
+        # SOFn 마커(C0..CF, DHT C4·JPG C8·DAC CC 제외)까지 세그먼트를 건너뛴다.
+        i = 2
+        n = len(data)
+        while i + 4 <= n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xFF, 0x01) or 0xD0 <= marker <= 0xD8:
+                i += 1 if marker == 0xFF else 2
+                continue
+            seg_len = struct.unpack(">H", data[i + 2 : i + 4])[0]
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                if i + 9 <= n:
+                    h, w = struct.unpack(">HH", data[i + 5 : i + 9])
+                    return (w, h) if w and h else None
+                return None
+            if marker == 0xD9 or marker == 0xDA:  # EOI / SOS — SOF 가 없었다
+                return None
+            i += 2 + seg_len
+        return None
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP" and len(data) >= 30:
+        chunk = data[12:16]
+        if chunk == b"VP8 ":
+            w, h = struct.unpack("<HH", data[26:30])
+            return (w & 0x3FFF, h & 0x3FFF)
+        if chunk == b"VP8L" and len(data) >= 25:
+            b = data[21:25]
+            w = ((b[1] & 0x3F) << 8 | b[0]) + 1
+            h = ((b[3] & 0x0F) << 10 | b[2] << 2 | (b[1] & 0xC0) >> 6) + 1
+            return (w, h)
+        if chunk == b"VP8X":
+            w = int.from_bytes(data[24:27], "little") + 1
+            h = int.from_bytes(data[27:30], "little") + 1
+            return (w, h)
+        return None
+    return None
+
+
+def has_pillow() -> bool:
+    """축소·재인코딩에 쓰는 선택 의존성 Pillow 가 있는가 (``agent-cli[image]``)."""
+    import importlib.util
+
+    return importlib.util.find_spec("PIL") is not None
 
 
 def stage_upload(src: str | Path, workspace: Path | None = None) -> ImageRef:
@@ -282,11 +336,33 @@ def strip_images(messages: list[dict]) -> list[dict]:
 _encode_cache: dict[tuple[str, int, int], tuple[str, str, str]] = {}
 
 
+#: Pillow 없이 바이트 상한을 넘었을 때 공급자 경계가 적는 사유 (v10.61.1).
+_TOO_LARGE_NO_PILLOW = (
+    "too large ({size:,} bytes > {cap:,}) — downscale it first; "
+    "`pip install pillow` (agent-cli[image]) enables automatic downscaling"
+)
+
+
+class ImageTooLarge(ValueError):
+    """Pillow 가 없어 축소하지 못한 채 바이트 상한을 넘은 이미지."""
+
+
 def _encode_bytes(data: bytes, mime: str) -> tuple[str, bytes]:
-    """긴 변 상한·바이트 상한에 맞춘 ``(mime, bytes)``. Pillow 가 축소한다."""
+    """긴 변 상한·바이트 상한에 맞춘 ``(mime, bytes)``.
+
+    Pillow 가 있으면 축소·재인코딩한다. 없으면(선택 의존성, v10.61.1) 원본을 그대로
+    돌려준다 — 실측(§8.1)에서 축소는 정확도를 올리지 않고 토큰만 아끼므로 기능은
+    온전하다. 다만 바이트 상한(5MB)은 공급자 한도라 넘으면 :class:`ImageTooLarge`.
+    """
+    max_edge = image_max_edge()
+    if not has_pillow():
+        if len(data) > IMAGE_MAX_BYTES:
+            raise ImageTooLarge(
+                _TOO_LARGE_NO_PILLOW.format(size=len(data), cap=IMAGE_MAX_BYTES)
+            )
+        return mime, data
     from PIL import Image
 
-    max_edge = image_max_edge()
     with Image.open(io.BytesIO(data)) as im:
         w, h = im.size
         if (max_edge and max(w, h) > max_edge) or len(data) > IMAGE_MAX_BYTES:
@@ -325,6 +401,8 @@ def encode(ref: ImageRef) -> tuple[str, str] | str:
         mime = sniff_image(data[:16]) or ref.mime
         try:
             mime, data = _encode_bytes(data, mime)
+        except ImageTooLarge as e:
+            return str(e)
         except Exception as e:  # Pillow 가 못 여는 손상 파일 등
             return f"cannot encode ({e})"
         hit = (sha, mime, base64.b64encode(data).decode("ascii"))
@@ -405,6 +483,15 @@ PROBE_QUESTION = (
 )
 
 
+#: 왼쪽 green(0,160,0)·오른쪽 blue(0,0,255) 128×64 PNG (174 바이트) — Pillow 로 한 번
+#: 만들어 박아 둔 상수 (v10.61.1, 프로브에 의존성이 없도록). 테스트가 색을 검증한다.
+_PROBE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAIAAAABACAIAAABdtOgoAAAAdUlEQVR42u3RAQ0AMAgEsWdKkYZTpoOkp+CS"
+    "Via36z29/yIAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBA"
+    "AAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAADlA5BcAn/CldiJAAAAAElFTkSuQmCC"
+)
+
+
 def probe_image() -> tuple[str, str]:
     """``(mime, base64)`` — 왼쪽 green·오른쪽 blue 128×64 PNG.
 
@@ -412,13 +499,7 @@ def probe_image() -> tuple[str, str]:
     조용히 버리는 서버에서 1×1 프로브는 거짓 양성이다(§9.5). 두 색을 순서대로
     맞혀야 하므로 텍스트 모델의 추측으로는 통과하기 어렵다.
     """
-    from PIL import Image
-
-    im = Image.new("RGB", (128, 64), (0, 0, 255))
-    im.paste((0, 160, 0), (0, 0, 64, 64))
-    buf = io.BytesIO()
-    im.save(buf, format="PNG")
-    return "image/png", base64.b64encode(buf.getvalue()).decode("ascii")
+    return "image/png", _PROBE_PNG_B64
 
 
 def probe_answer_ok(answer: str) -> bool:

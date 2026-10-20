@@ -48,11 +48,10 @@ dependencies = [
     # 상한 <3: 2.2.0 까지 동일 API 로 검증했고, API 표면이 4개 심볼로 좁아
     # 2.x 는 열어 두되 미지의 major 는 막는다.
     "mcp>=1.6,<3",
-    # 이미지 입력 (v10.59.0, docs/vision/DESIGN.md) — 보내기 전 축소·형식 변환·
-    # 크기 읽기·능력 프로브 이미지 생성. **필수** 의존성(사용자 결정): 설치에
-    # 따라 동작이 갈리는 경로를 두지 않는다(mcp 를 필수로 바꾼 v8.62.0 과
-    # 같은 이유). mac/linux/windows 휠이 다 있어 설치 부담이 작다.
-    "pillow>=10",
+    # 이미지 입력(docs/vision/DESIGN.md)의 Pillow 는 v10.61.1 부터 **선택**
+    # (`agent-cli[image]`, 아래) — 사내 pip 미러에 Pillow 가 없는 배포가 있었다.
+    # 크기 읽기·능력 프로브는 표준 라이브러리로 돌고, 없을 때 빠지는 건 보내기
+    # 전 축소뿐(관찰에 사유가 적힌다).
 ]
 
 [project.optional-dependencies]
@@ -67,7 +66,11 @@ dev = [
     # 쓰는 엔진으로 문법이 캐노니컬 출력을 막지 않는지 검사. 없으면 그 파일만 skip.
     "xgrammar>=0.1",
     "jsonschema>=4",  # tests/test_verbose_log.py — verbose.jsonl 스키마 검증
+    "pillow>=10",  # 테스트 이미지 생성 + 축소 경로 검증 (런타임엔 선택, 아래 [image])
 ]
+# 이미지 입력 (v10.59.0): 보내기 전 축소·JPEG 재인코딩에만 쓴다 — 없으면 원본을
+# 그대로 보내고 5MB 를 넘는 것만 거절한다(v10.61.1, docs/vision/DESIGN.md §6).
+image = ["pillow>=10"]
 # macOS: install gnureadline for proper CJK width in chat input
 macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]
 # Optional ``browser`` tool (headless Chrome/Chromium via Playwright, docs/browser/DESIGN.md)
