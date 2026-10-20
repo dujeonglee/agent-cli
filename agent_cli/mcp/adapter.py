@@ -152,7 +152,11 @@ def _save_mcp_image(item: Any, label: str, n: int) -> tuple[str, dict | None]:
 
     from agent_cli import images as _images
 
-    mime = str(getattr(item, "mimeType", "") or "")
+    # SDK 세대마다 필드 이름이 다르다 — 1.x 는 ``mimeType``, 2.x 는 ``mime_type``
+    # (직렬화 별칭만 camelCase). CI(리눅스, 최신 SDK)에서 .bin 으로 떨어진 실측.
+    mime = str(
+        getattr(item, "mimeType", None) or getattr(item, "mime_type", None) or ""
+    )
     try:
         data = base64.b64decode(item.data, validate=True)
     except (binascii.Error, ValueError):
