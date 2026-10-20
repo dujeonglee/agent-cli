@@ -120,3 +120,47 @@ def test_full_read_output_identical_to_format_hashlines(tmp_path):
         r = _read_one({"path": str(f)})
         assert r.success
         assert r.output == format_hashlines(content), repr(content)
+
+
+# ── 이미지 (v10.59.0) ───────────────────────────────────────────────
+
+
+def _png(path, size=(80, 40)):
+    from PIL import Image
+
+    Image.new("RGB", size, (0, 0, 255)).save(path, format="PNG")
+    return path
+
+
+def test_image_file_returns_reference_not_text(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _png(tmp_path / "shot.png")
+    r = _read_one({"path": "shot.png"})
+    assert r.success
+    assert r.output.splitlines()[0] == "[image: shot.png (80×40)]"
+    assert "image/png" in r.output and "attached" in r.output
+    assert r.images[0]["path"] == "shot.png"
+    assert r.images[0]["width"] == 80 and r.images[0]["height"] == 40
+
+
+def test_image_modes_are_ignored_and_said(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _png(tmp_path / "shot.png")
+    r = _read_one({"path": "shot.png", "line_start": 3, "line_end": 9})
+    assert r.success and r.images
+    assert "do not apply to an image" in r.output
+    assert "do not apply" not in _read_one({"path": "shot.png"}).output
+
+
+def test_bmp_is_still_a_decode_error(tmp_path):
+    """공급자가 안 받는 형식은 이미지 분기를 타지 않는다 — 종전 그대로 실패."""
+    from PIL import Image
+
+    p = tmp_path / "x.bmp"
+    Image.new("RGB", (4, 4)).save(p, format="BMP")
+    r = _read_one({"path": str(p)})
+    assert not r.success and r.images == []
+
+
+def test_description_mentions_images():
+    assert "PNG/JPEG/GIF/WebP" in ReadFileTool().description

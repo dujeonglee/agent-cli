@@ -44,9 +44,18 @@ class InputQueue:
             cb()
 
     def enqueue(
-        self, conn_id: str | None, text: str, *, nickname=None, system: bool = False
+        self,
+        conn_id: str | None,
+        text: str,
+        *,
+        nickname=None,
+        system: bool = False,
+        images: list[dict] | None = None,
     ) -> dict:
-        """메시지 추가 — ``{id, conn_id, nickname, text, system}`` 반환.
+        """메시지 추가 — ``{id, conn_id, nickname, text, system, images}`` 반환.
+
+        ``images`` (v10.59.0): 메시지에 딸린 이미지 참조(``ImageRef.to_dict()``
+        목록) — 런의 첫 user 레코드에 그대로 실린다.
 
         ``system=True`` 는 **사람이 보내지 않은** 합성 입력(에이전트 메일
         깨우기)이다. 큐를 타는 건 그게 `dequeue_blocking` 을 푸는 유일한
@@ -64,6 +73,7 @@ class InputQueue:
                 "nickname": nickname,
                 "text": text,
                 "system": system,
+                "images": list(images or []),
             }
             self._items.append(item)
             self._cv.notify()

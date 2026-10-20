@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import requests
 
+from agent_cli import images as _images
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
 )
@@ -14,7 +15,7 @@ from agent_cli.providers.base import (
     resolve_thinking_policy,
     strip_think_blocks,
 )
-from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities, vision_support
 from agent_cli.providers.http import (
     StreamEvent,
     post_with_retry,
@@ -86,6 +87,16 @@ class AnthropicProvider:
         # hits (see system_prompt.py: Date excluded for this reason).
         # Non-Claude endpoints that don't recognize cache_control should
         # ignore the field; behavior on strict proxies is unverified.
+        # 이미지 (v10.59.0): ``images`` 참조를 여기서만 ``image`` 블록으로 펼친다
+        # — openai.py 와 같은 자리·같은 규칙(못 보면 글로 남긴다).
+        enabled = any(
+            isinstance(m.get("images"), list) and m["images"] for m in messages
+        ) and vision_support(
+            capabilities, self.capability_transport, self.base_url, model, self.api_key
+        )
+        messages = _images.expand(
+            messages, enabled=enabled, part=_images.anthropic_part
+        )
         body: dict = {
             "model": model,
             "max_tokens": capabilities.max_output_tokens,

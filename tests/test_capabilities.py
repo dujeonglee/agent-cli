@@ -173,6 +173,7 @@ class TestOpenAIRuntimeDetection:
             self._chat_resp({"content": "Hello!"}),
             self._chat_resp({"content": "<think>reasoning</think>\nHi"}),
             self._chat_resp({"content": "GRAMMAR-OK"}),  # 3차: 문법 프로브 (v9.24.0)
+            self._chat_resp({"content": "Green, blue."}),  # 4차: 비전 프로브 (v10.59.0)
         ]
 
         from agent_cli.providers.capabilities import _detect_openai_capabilities
@@ -181,8 +182,13 @@ class TestOpenAIRuntimeDetection:
         assert caps is not None
         assert caps.supports_thinking is True
         assert caps.supports_grammar is True
-        # 사고 프로브 둘 + 문법 프로브 하나. 사고 2차만 enable_thinking 을 켰다.
-        assert mock_post.call_count == 3
+        assert caps.supports_vision is True
+        # 사고 프로브 둘 + 문법 프로브 + 비전 프로브. 사고 2차만 enable_thinking 을 켰다.
+        assert mock_post.call_count == 4
+        vision_body = mock_post.call_args_list[3].kwargs["json"]
+        parts = vision_body["messages"][0]["content"]
+        assert parts[1]["type"] == "image_url"
+        assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
         second_body = mock_post.call_args_list[1].kwargs["json"]
         assert second_body["chat_template_kwargs"] == {"enable_thinking": True}
         first_body = mock_post.call_args_list[0].kwargs["json"]
@@ -203,10 +209,11 @@ class TestOpenAIRuntimeDetection:
         caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
         assert caps is not None
         assert caps.supports_thinking is True
-        # 1차에서 검출 → 사고 재프로브 없음; 문법 프로브 1회가 더해진다 (v9.24.0).
-        # 그 프로브의 답이 "Hi" 라 문법은 강제되지 않는 것으로 판정된다.
-        assert mock_post.call_count == 2
+        # 1차에서 검출 → 사고 재프로브 없음; 문법 프로브(v9.24.0)와 비전 프로브
+        # (v10.59.0) 가 더해진다. 둘 다 답이 "Hi" 라 미지원으로 판정된다.
+        assert mock_post.call_count == 3
         assert caps.supports_grammar is False
+        assert caps.supports_vision is False
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -350,7 +357,7 @@ class TestPromptModelCapabilities:
 
         # context, supports_thinking(y), dialect(필수, v10.3.0) — budget
         # 프롬프트는 v8.21.0 에서 제거(정적 thinking_budget 필드 삭제).
-        inputs = iter(["131072", "y", "json_fc"])
+        inputs = iter(["131072", "y", "n", "json_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
@@ -371,7 +378,7 @@ class TestPromptModelCapabilities:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["", "", "json_fc"])
+        inputs = iter(["", "", "", "json_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
@@ -407,7 +414,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["131072", "n", "xml_fc"])
+        inputs = iter(["131072", "n", "n", "xml_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
@@ -419,7 +426,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["4096", "n", "", "auto", "xml_fc"])  # 둘 다 답이 아니다
+        inputs = iter(["4096", "n", "n", "", "auto", "xml_fc"])  # 둘 다 답이 아니다
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         assert _prompt_model_capabilities("test-model") is not None
@@ -430,7 +437,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["4096", "n", "xml_fx", "json_fc"])  # 오타 → 재질문
+        inputs = iter(["4096", "n", "n", "xml_fx", "json_fc"])  # 오타 → 재질문
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         assert _prompt_model_capabilities("test-model") is not None
@@ -441,7 +448,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["4096", "n", "XML_FC"])
+        inputs = iter(["4096", "n", "n", "XML_FC"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         assert _prompt_model_capabilities("test-model") is not None
@@ -816,3 +823,87 @@ class TestAnthropicRuntimeDetection:
         # overflow probe hit /messages and parsed the limit
         assert any("/messages" in c.args[0] for c in mock_post.call_args_list)
         assert caps.context_window == 200000
+
+
+# ── 비전 (v10.59.0) ──────────────────────────────────────────────────
+
+
+class TestVisionSupport:
+    def test_entry_round_trip(self):
+        from agent_cli.providers.capabilities import (
+            ModelCapabilities,
+            _build_from_entry,
+            caps_to_entry,
+        )
+
+        caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
+        assert caps_to_entry(caps)["supports_vision"] is True
+        assert _build_from_entry({"supports_vision": False}).supports_vision is False
+        # 키가 없으면 None(미확인) — 파일에도 쓰지 않는다
+        none = _build_from_entry({"context_window": 1})
+        assert none.supports_vision is None
+        assert "supports_vision" not in caps_to_entry(none)
+
+    def test_builtin_models_declare_vision(self):
+        assert get_capabilities("claude-sonnet-4-20250514").supports_vision is True
+        assert get_capabilities("gpt-4o").supports_vision is True
+
+    def test_registered_value_short_circuits_the_probe(self):
+        from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+
+        def boom(*a, **k):
+            raise AssertionError("must not probe")
+
+        caps = ModelCapabilities(1, 1, False, supports_vision=True)
+        assert vision_support(caps, boom, "http://x", "m") is True
+
+    def test_unknown_probes_once_per_model_and_remembers(self, monkeypatch):
+        from agent_cli.providers import capabilities as caps_mod
+        from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+
+        monkeypatch.setattr(caps_mod, "_vision_probed", {})
+        calls = []
+
+        class _T:
+            def __init__(self, base, model, key=""):
+                calls.append((base, model))
+
+            def vision_probe(self):
+                return True
+
+        caps = ModelCapabilities(1, 1, False)
+        assert vision_support(caps, _T, "http://x/", "m") is True
+        assert vision_support(caps, _T, "http://x", "m") is True
+        assert vision_support(caps, _T, "http://x", "other") is True
+        assert calls == [("http://x/", "m"), ("http://x", "other")]
+
+    def test_probe_failure_means_no(self, monkeypatch):
+        from agent_cli.providers import capabilities as caps_mod
+        from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+
+        monkeypatch.setattr(caps_mod, "_vision_probed", {})
+
+        class _T:
+            def __init__(self, *a):
+                pass
+
+            def vision_probe(self):
+                raise RuntimeError("400 images not supported")
+
+        assert (
+            vision_support(ModelCapabilities(1, 1, False), _T, "http://x", "m") is False
+        )
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_anthropic_transport_probe_checks_the_answer(self, mock_post):
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        r = MagicMock(status_code=200)
+        r.raise_for_status.return_value = None
+        r.json.return_value = {"content": [{"type": "text", "text": "Green, blue."}]}
+        mock_post.return_value = r
+        assert _AnthropicTransport("http://x/v1", "m").vision_probe() is True
+        body = mock_post.call_args.kwargs["json"]
+        assert body["messages"][0]["content"][1]["type"] == "image"
+        r.json.return_value = {"content": [{"type": "text", "text": "I see no image"}]}
+        assert _AnthropicTransport("http://x/v1", "m").vision_probe() is False

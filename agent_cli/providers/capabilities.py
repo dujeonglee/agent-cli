@@ -52,6 +52,11 @@ class ModelCapabilities:
     #: None = 아직 모름(등록 엔트리에 키가 없음) — 첫 사용 때 한 번 프로브해
     #: 프로세스 안에서 채운다. 사용자가 적은 엔트리는 파일에 다시 쓰지 않는다.
     supports_grammar: bool | None = None
+    #: 모델이 이미지를 **보는가** (v10.59.0, docs/vision/DESIGN.md). None = 아직
+    #: 모름(등록 엔트리에 키가 없음) — 이미지를 처음 보낼 때 한 번 프로브해
+    #: 프로세스 안에서 채운다(:func:`vision_support`). 사용자가 적은 엔트리는
+    #: 파일에 다시 쓰지 않는다 (supports_grammar 와 같은 정책).
+    supports_vision: bool | None = None
 
 
 # Fallback for a model we could neither look up (models.json) nor probe
@@ -158,6 +163,8 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
     }
     if caps.supports_grammar is not None:
         entry["supports_grammar"] = caps.supports_grammar
+    if caps.supports_vision is not None:
+        entry["supports_vision"] = caps.supports_vision
     if auto_detected:
         entry["_auto_detected"] = True
     return entry
@@ -173,12 +180,45 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
     # older models.json entries; the loop uses ReAct text parsing, not the
     # native tool-calling API on any provider.
     sg = entry.get("supports_grammar")
+    sv = entry.get("supports_vision")
     return ModelCapabilities(
         context_window=entry.get("context_window", DEFAULT_CONTEXT_WINDOW),
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_thinking=entry.get("supports_thinking", False),
         supports_grammar=bool(sg) if sg is not None else None,
+        supports_vision=bool(sv) if sv is not None else None,
     )
+
+
+#: ``(base_url, model) → bool`` — 프로세스 안 비전 프로브 결과 (한 번만 묻는다).
+_vision_probed: dict[tuple[str, str], bool] = {}
+
+
+def vision_support(
+    caps: ModelCapabilities,
+    transport_factory,
+    base_url: str,
+    model: str,
+    api_key: str = "",
+) -> bool:
+    """모델이 이미지를 보는가 — 등록값이 있으면 그것, 없으면(``None``) 한 번
+    프로브해 프로세스 안에 기억한다 (v10.59.0).
+
+    프로브는 이미지를 **보내 보고 답을 검사**한다(두 색을 순서대로): 조각을
+    조용히 버리는 서버(omlx 의 tool 메시지 실측)에서 "200 이면 참" 은 거짓
+    양성이라서다. 어떤 실패도 False — 없는 능력을 약속하지 않는다.
+    """
+    if caps.supports_vision is not None:
+        return caps.supports_vision
+    key = (base_url.rstrip("/"), model)
+    hit = _vision_probed.get(key)
+    if hit is None:
+        try:
+            hit = bool(transport_factory(base_url, model, api_key).vision_probe())
+        except Exception:
+            hit = False
+        _vision_probed[key] = hit
+    return hit
 
 
 #: 문법 프로브의 정답 — 서버가 문법을 강제하면 이것만 나올 수 있다.
@@ -282,12 +322,21 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
         except Exception:
             supports_grammar = False
 
+        # 비전 (v10.59.0): 이미지를 보내 두 색을 맞히는지 본다. 실패는 관용
+        # (→ 미지원) — 텍스트 모델에 이미지를 보내면 400 이 흔하다.
+        _emit_progress(f"Probing image (vision) support ({model})")
+        try:
+            supports_vision = bool(transport.vision_probe())
+        except Exception:
+            supports_vision = False
+
         _emit_progress(f"Detection complete for {model}")
         return ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
             supports_grammar=supports_grammar,
+            supports_vision=supports_vision,
         )
     except UnsupportedModelError:
         # Hard reject — propagate to the CLI instead of degrading to defaults.
@@ -365,6 +414,36 @@ class _OpenAITransport:
         r.raise_for_status()
         msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
         return (msg.get("content") or "").strip() == _GRAMMAR_PROBE_ANSWER
+
+    def vision_probe(self) -> bool:
+        """이미지를 ``image_url`` 조각으로 보내 두 색을 순서대로 맞히면 True."""
+        from agent_cli import images
+
+        mime, b64 = images.probe_image()
+        body: dict = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": images.PROBE_QUESTION},
+                        images.openai_part(mime, b64),
+                    ],
+                }
+            ],
+            "max_tokens": 64,
+            "temperature": 0,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        r = requests.post(
+            f"{self.base}/chat/completions",
+            json=body,
+            headers=self._headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
+        return images.probe_answer_ok(msg.get("content") or "")
 
     def thinking_probe(self) -> bool:
         """2단계 사고 감지: ① 기본 프로브(모델이 기본으로 사고를 뱉으면 감지).
@@ -469,6 +548,33 @@ class _AnthropicTransport:
     def grammar_probe(self) -> bool:
         """Anthropic Messages API 에는 디코딩 문법을 실을 필드가 없다."""
         return False
+
+    def vision_probe(self) -> bool:
+        """이미지를 ``image`` 블록으로 보내 두 색을 순서대로 맞히면 True."""
+        from agent_cli import images
+
+        mime, b64 = images.probe_image()
+        body: dict = {
+            "model": self.model,
+            "max_tokens": 64,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": images.PROBE_QUESTION},
+                        images.anthropic_part(mime, b64),
+                    ],
+                }
+            ],
+        }
+        r = requests.post(
+            f"{self.base}/messages",
+            json=body,
+            headers=self._headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        return images.probe_answer_ok(_anthropic_text(r.json()))
 
     def thinking_probe(self) -> bool:
         """2단계 사고 감지 (transport 공통 계약 — OpenAI 와 동형): ① 기본

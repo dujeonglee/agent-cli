@@ -48,6 +48,11 @@ dependencies = [
     # 상한 <3: 2.2.0 까지 동일 API 로 검증했고, API 표면이 4개 심볼로 좁아
     # 2.x 는 열어 두되 미지의 major 는 막는다.
     "mcp>=1.6,<3",
+    # 이미지 입력 (v10.59.0, docs/vision/DESIGN.md) — 보내기 전 축소·형식 변환·
+    # 크기 읽기·능력 프로브 이미지 생성. **필수** 의존성(사용자 결정): 설치에
+    # 따라 동작이 갈리는 경로를 두지 않는다(mcp 를 필수로 바꾼 v8.62.0 과
+    # 같은 이유). mac/linux/windows 휠이 다 있어 설치 부담이 작다.
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]

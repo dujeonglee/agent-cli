@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 
+from agent_cli import images as _images
 from agent_cli.context.token_estimator import estimate_tokens
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -466,8 +467,19 @@ class ToolBridge:
     def _tool_observation(
         self, tool_name: str, result: ToolResult, args, *, spent_tokens: int = 0
     ) -> str:
+        """:meth:`observe` 의 글 부분만 — 이미지를 싣지 않는 호출자용."""
+        return self.observe(tool_name, result, args, spent_tokens=spent_tokens)[0]
+
+    def observe(
+        self, tool_name: str, result: ToolResult, args, *, spent_tokens: int = 0
+    ) -> tuple[str, list[dict]]:
         """Turn a tool's ToolResult into the observation body that enters
-        context. Two per-tool surfaces meet here: ``render_observation``
+        context, plus the image references that ride with it (v10.59.0 —
+        ``[]`` unless the result carried ``images``). 이미지 토큰은 픽셀 기준
+        추정으로 op 캡·턴 예산에 **들어간다**: 캡을 넘기면 이미지는 붙이지
+        않고 그 사실을 본문에 적는다(글 본문은 그대로 — 자리표시 줄이 있다).
+
+        Two per-tool surfaces meet here: ``render_observation``
         (how this tool formats its result — default output/error) and
         ``apply_oversized_cap`` (whether the cap applies — default True).
 
@@ -492,10 +504,20 @@ class ToolBridge:
         else:
             body = result.output if result.success else result.error
             cap_on = True
+        images = list(result.images or [])
         if not (cap_on and self._oversized_cap):
-            return body
+            return body, images
 
-        tokens = estimate_tokens(body)
+        image_tokens = _images.message_image_tokens({"images": images})
+        if images and image_tokens > self._oversized_cap:
+            # 이미지만으로 캡을 넘는다 — 글은 작으니 그대로 두고 이미지만 뺀다.
+            body = (
+                f"{body}\n[image not attached: ~{image_tokens:,} tokens exceeds the "
+                f"{self._oversized_cap:,}-token per-result cap — downscale it "
+                f"(e.g. with a script) and read the smaller file]"
+            )
+            images, image_tokens = [], 0
+        tokens = estimate_tokens(body) + image_tokens
         if tokens > self._oversized_cap:
             reason = ""  # the standard "too large for one context" opening
         elif spent_tokens and spent_tokens + tokens > self._turn_obs_budget:
@@ -507,29 +529,37 @@ class ToolBridge:
                 f"cap). Emit fewer ops per turn to keep results inline"
             )
         else:
-            return body
+            return body, images
 
+        # 과대 경로: 글은 파일로 가고 발췌가 남는다 — 이미지는 싣지 않는다
+        # (턴 예산을 넘긴 결과다; 자리표시 줄이 발췌에 남아 다시 읽을 수 있다).
         if tool is not None:
-            return tool.render_oversized(
-                result,
-                safe_args,
-                body=body,
-                tokens=tokens,
-                ctx=self._run_ctx(),
-                reason=reason,
+            return (
+                tool.render_oversized(
+                    result,
+                    safe_args,
+                    body=body,
+                    tokens=tokens,
+                    ctx=self._run_ctx(),
+                    reason=reason,
+                ),
+                [],
             )
         path = persist_oversized(
             tool_name, body, "", self.ctx.session_dir if self.ctx else None
         )
-        return oversized_nudge(
-            tool_name=tool_name,
-            path=display_path(path) if path else "",
-            body=body,
-            tokens=tokens,
-            cap=self._oversized_cap,
-            retry_hint=GENERIC_RETRY_HINT,
-            tools_available=frozenset(self.cfg.tools_list),
-            reason=reason,
+        return (
+            oversized_nudge(
+                tool_name=tool_name,
+                path=display_path(path) if path else "",
+                body=body,
+                tokens=tokens,
+                cap=self._oversized_cap,
+                retry_hint=GENERIC_RETRY_HINT,
+                tools_available=frozenset(self.cfg.tools_list),
+                reason=reason,
+            ),
+            [],
         )
 
     def accumulate_observation(
@@ -554,7 +584,7 @@ class ToolBridge:
         ``suffix`` is appended after the render (the truncated-edit warning),
         so it survives an over-cap replacement instead of being dropped with
         the body it was warning about."""
-        observation = self._tool_observation(
+        observation, images = self.observe(
             tool_name,
             result,
             args,
@@ -567,7 +597,9 @@ class ToolBridge:
                 "tool_name": tool_name,
                 "observation": observation,
                 "success": result.success,
-                "tokens": estimate_tokens(observation),
+                "tokens": estimate_tokens(observation)
+                + _images.message_image_tokens({"images": images}),
+                "images": images,
             }
         )
         return observation

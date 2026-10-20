@@ -856,6 +856,43 @@ def _dispatch_skill(
     return answer
 
 
+def _stage_query_images(paths: list[str] | None) -> list[dict]:
+    """`run --image` (v10.59.0): 파일을 확인하고 워크스페이스 밖이면
+    ``.agent-cli/tmp/uploads/`` 로 들여온 참조 목록. 잘못된 경로는 즉시 종료."""
+    if not paths:
+        return []
+    from agent_cli import images as _images
+
+    refs: list[dict] = []
+    for p in paths:
+        try:
+            refs.append(_images.stage_upload(p).to_dict())
+        except ValueError as e:
+            console.print(f"[{C['error']}]--image: {e}[/]")
+            raise typer.Exit(1) from None
+    return refs
+
+
+def _require_vision(binding) -> None:
+    """모델이 이미지를 보는지(등록값 또는 프로브) — 못 보면 즉시 종료.
+    없는 능력을 약속하지 않는다 (docs/vision/DESIGN.md §2.5)."""
+    from agent_cli.providers.capabilities import vision_support
+
+    ok = vision_support(
+        binding.capabilities,
+        binding.provider.capability_transport,
+        binding.base_url,
+        binding.model,
+        binding.api_key,
+    )
+    if not ok:
+        console.print(
+            f"[{C['error']}]--image: model '{binding.model}' cannot view images "
+            f"(supports_vision is false, or the vision probe failed).[/]"
+        )
+        raise typer.Exit(1)
+
+
 def _prompt_model_capabilities(model: str):
     """Interactively ask user for model capabilities when detection fails."""
     from agent_cli.config import save_model_entry
@@ -880,12 +917,18 @@ def _prompt_model_capabilities(model: str):
         ).lower()
         supports_thinking = thinking_input in ("y", "yes")
 
+        vision_input = renderer.prompt_user(
+            "  Can view images (vision)? (y/n) [n]: ", multiline=False
+        ).lower()
+        supports_vision = vision_input in ("y", "yes")
+
         max_output = min(context_window // 4, 4096)
 
         caps = ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
             supports_thinking=supports_thinking,
+            supports_vision=supports_vision,
         )
 
         # Dialect 바인딩: 엔트리가 대화형으로 생성되는 바로 이 지점에서
@@ -1217,6 +1260,17 @@ def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
     )
 
 
+#: `run --image` (v10.59.0) — 모듈 단일체: 가변 타입(list) 인자 기본값의 함수
+#: 호출을 ruff B008 이 막는다(다른 옵션은 불변 타입이라 통과).
+_IMAGE_OPTION = typer.Option(
+    None,
+    "--image",
+    help="QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 "
+    "밖 파일은 .agent-cli/tmp/uploads/ 로 복사된다. 모델이 이미지를 못 보면 "
+    "(models.json supports_vision / 프로브) 즉시 오류 (v10.59.0).",
+)
+
+
 @app.command()
 @knob_options
 def run(
@@ -1287,10 +1341,12 @@ def run(
         "(스크립팅·헤드리스 자동화). 실패/무답 시 "
         "파일을 만들지 않고 exit code 로 판별.",
     ),
+    image: list[str] | None = _IMAGE_OPTION,
     knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
+    query_images = _stage_query_images(image)
     # /sh prefix: Run shell command directly without LLM
     if query.startswith("/sh ") or query == "/sh":
         cmd = query[3:].strip()
@@ -1313,6 +1369,8 @@ def run(
         max_context_tokens,
         explicit_model="model" in (knob_args or {}),
     )
+    if query_images:
+        _require_vision(binding)
 
     # MCP servers
     mcp_manager, mcp_tools = _setup_mcp()
@@ -1442,6 +1500,7 @@ def run(
         def _run_main(req: RunRequest):
             return run_loop(
                 query=req.loop_query,
+                query_images=req.images,
                 query_author=req.author,
                 query_author_is_user=req.author_is_user,
                 query_request_id=req.request_id,
@@ -1507,7 +1566,11 @@ def run(
         if _sched_notice:
             console.print(f"[{C['muted']}]{_sched_notice}[/]")
 
-        input_queue.enqueue(None, query)
+        for ref in query_images:
+            console.print(
+                f"[{C['muted']}]  🖼 {ref['path']} ({ref['width']}×{ref['height']})[/]"
+            )
+        input_queue.enqueue(None, query, images=query_images)
         warn_stuck = True
         try:
             pump.run()
@@ -2435,6 +2498,7 @@ def web(
         def _run_main(req: RunRequest):
             return run_loop(
                 query=req.loop_query,
+                query_images=req.images,
                 query_author=req.author,
                 query_author_is_user=req.author_is_user,
                 query_request_id=req.request_id,

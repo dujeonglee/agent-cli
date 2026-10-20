@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from agent_cli import images as _images
 from agent_cli import verbose as _verbose
 from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
 from agent_cli.context.overflow import classify_overflow
@@ -474,6 +475,7 @@ class LLMCaller:
                     request_bytes=utf8_len(self.prompt.system)
                     + request_bytes(self.state.messages, self._function_schemas()),
                     outside_bytes=utf8_len(outside_text) + self._state_bytes,
+                    image_tokens=_images.messages_image_tokens(self.state.messages),
                 )
                 self.last_input_split = self._input_split(
                     response.usage.total_input_tokens
@@ -574,8 +576,10 @@ class LLMCaller:
             self.cfg.capabilities,
             supports_thinking=False,
         )
+        # 요약기는 이미지를 싣지 않는다 (v10.59.0) — 자리표시 줄이 content 에
+        # 있어 "무엇이 있었는지" 는 요약에 남는다.
         response = self.provider.call(
-            messages=messages,
+            messages=_images.strip_images(messages),
             system=summarisation_prompt,
             model=self.cfg.model,
             capabilities=summary_capabilities,
