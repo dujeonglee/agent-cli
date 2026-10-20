@@ -161,9 +161,14 @@ tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 �
 
 - 보내기 전 상한: 긴 변 `AGENT_CLI_IMAGE_MAX_EDGE`(기본 후보 2048 — Anthropic 권장
   ≤1568, OpenAI 고해상도 2048) · 바이트 상한(기본 후보 5MB, Anthropic 한도).
-- 축소는 Pillow — **필수 의존성**(결정 2026-10-21): 설치에 따라 동작이 갈리는 경로를 두지
-  않는다(mcp 를 필수로 바꾼 v8.62.0 과 같은 이유). 휠이 세 OS 에 다 있어 부담이 작다.
-  크기 읽기도 Pillow(헤더만 지연 디코딩). 바이트 상한(5MB)을 넘으면 JPEG 로 재인코딩.
+- 축소는 Pillow — **선택 의존성 `agent-cli[image]`** (결정 2026-10-21 저녁, v10.61.1; 같은 날
+  아침의 "필수" 결정을 뒤집음 — 사내 pip 미러에 Pillow 가 없는 배포가 실제로 있었다).
+  크기 읽기는 `image_size`(PNG·GIF·JPEG·WebP 헤더, 표준 라이브러리), 프로브 이미지는
+  상수 PNG 라 **이미지 기능 자체는 의존성 0**. Pillow 가 없을 때 빠지는 것은 보내기 전
+  축소·JPEG 재인코딩뿐이고(§8.1 실측: 축소는 정확도를 올리지 않고 토큰만 아낀다), 바이트
+  상한(5MB)을 넘는 이미지만 "too large — downscale it first; pip install pillow …" 사유로
+  빠진다. 자체 축소기(PNG 전용 순수 파이썬, 수백 줄·FHD 수 초)와 라이브러리 동봉(C 확장이라
+  플랫폼별 휠 — 불가)은 검토 뒤 기각.
 - 기본값은 §1 실측(1280×720 에서 60px 오독, FHD 정확)이 축소에 불리한 신호라
   **실측 뒤** 정한다: 같은 화면을 원본·2048·1568·1024 로 보내 글자 판독률을 잰다.
 
@@ -221,7 +226,7 @@ scratchpad `vision/measure/measure.py`.
 > 아래 여덟 항목은 모두 결정됐다. 원안의 선택지는 기록으로 남긴다.
 
 1. **진입 도구** — `read_file` 확장(추천) vs 별도 `view_image`. → **`read_file` 확장**.
-2. **Pillow** — 선택 의존성 vs 필수 vs 축소 없음. → **필수** (설명 뒤 추천을 필수로 바꿨고 사용자가 택함).
+2. **Pillow** — 선택 의존성 vs 필수 vs 축소 없음. → **필수** (설명 뒤 추천을 필수로 바꿨고 사용자가 택함). → **선택으로 되돌림 (같은 날, v10.61.1)**: 사내 미러에 Pillow 가 없어 설치가 막혔다. 크기·프로브를 의존성 0 으로 바꿔 없을 때 빠지는 건 축소 하나.
 3. **살아 있는 이미지 수** 기본값(후보 6) — 실측 뒤 조정. → **6, 0=무제한**.
 4. **긴 변 상한** 기본값(후보 2048) — §6 실측 뒤. → **2048 후보 승인**, 축소값은 실측 뒤(P3).
 5. **`supports_vision` 판정** — 프로브(1×1 PNG 보내 200 이면 참) vs models.json 수기만.
@@ -248,6 +253,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.61.1 | Pillow 선택 의존성(`[image]`): `image_size` 헤더 파싱, 프로브 PNG 상수, `has_pillow`, `ImageTooLarge`(5MB 초과만 거절). 사내 미러에 Pillow 가 없는 배포 실측. |
 | v10.61.0 | P3: browser `screenshot` 모드(`BrowserSession.screenshot`, `SCREENSHOT_DIR`) · MCP 이미지 조각 → 파일 + 참조(`_save_mcp_image`, `MCP_IMAGE_DIR`, `IMAGE_EXT`) · 에이전트 채널 이미지(`/api/agent/{key}/input images` → `request(images=)` → inbox → `run_subagent_message(query_images=)`; `agent_msg`·`conversation.jsonl` 에 `images`, 프런트 ⏳ 줄·런 머리 썸네일) · `fresh_upload_path(subdir=)`. 실측(축소·keep-N)은 P4 로 남긴다. |
 | v10.60.0 | P2 웹: `POST /api/images/upload`(공용 스트리밍 `_stream_body_to`, `images.fresh_upload_path`, 매직 바이트 검사) · `GET /api/images/support`(`vision_known` — 프로브 없음) · `GET /api/workspace/file`(이미지만) · `/api/input` chat `images: [path]` → `WebServer.image_refs` 재검증 · 큐→`RunRequest`→런 시작 에코와 턴 경계 주입(`_inject_queued_messages`) 둘 다 `images` · 렌더러 ABC `observation(images=)`/`push_user_message(images=)` · web 페이로드·재생 · 프런트 📎/붙여넣기/끌어놓기 → 칩 → 보내기, 사용자·관찰 썸네일, 못 보는 모델이면 📎 숨김(+ 웹 런 시작 `status` 한 줄) · minimal 주입 에코 `🖼` 줄. 에이전트 채널 이미지는 P3 로 미룸(메일 경로). |
 | v10.59.0 | P1: `images.py`(참조·축소·공급자 경계 `expand`·프로브 이미지), `supports_vision` + `vision_support` 프로브, OpenAI `image_url`/Anthropic `image` 블록, `read_file` 이미지 분기, `ToolResult.images`, 관찰·질의 레코드 `images`, native_fc 는 `tool` 뒤 user 메시지, 토큰 추정·재조정, keep-N, `run --image`, minimal `🖼` 줄, 마법사 질문, 내장 모델 둘 `supports_vision: true`, Pillow 필수. 실측(§8 측정 계획)은 출시 뒤 과제. |
