@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from agent_cli import images as _images
 from agent_cli.context.token_estimator import estimate_tokens, utf8_len
 
 # ── Defaults / constants ─────────────────────────────────
@@ -98,13 +99,20 @@ def _message_texts(msg: dict):
 def _estimate_message_tokens(msg: dict) -> int:
     """Estimate tokens for a single message dict (chars/4 — used until the
     server has measured a request, see ``ContextManager.reconcile_actual_tokens``)."""
-    # 4 = role + formatting overhead
-    return 4 + sum(estimate_tokens(t) for t in _message_texts(msg))
+    # 4 = role + formatting overhead. 이미지(v10.59.0)는 픽셀 기준 — 글의
+    # chars/4 와 별도로 더한다.
+    return (
+        4
+        + sum(estimate_tokens(t) for t in _message_texts(msg))
+        + _images.message_image_tokens(msg)
+    )
 
 
 def _message_bytes(msg: dict) -> int:
     """UTF-8 size of what a record contributes — the unit the measured
-    tokens-per-byte ratio is applied to (v10.18.0)."""
+    tokens-per-byte ratio is applied to (v10.18.0). 이미지는 글이 아니므로
+    여기 없다 — 바이트×비율 뒤에 :func:`images.message_image_tokens` 를
+    따로 더한다 (``ContextManager._scaled_tokens``)."""
     return sum(utf8_len(t) for t in _message_texts(msg))
 
 
@@ -167,10 +175,10 @@ def render_history_message(
             msg, index=index, assistant_index=assistant_index
         )
         if rendered is not None:
-            return list(rendered)
+            return _with_observation_images(list(rendered), msg)
         return [_convert_observation(msg)]
     if role == "user":
-        return [{"role": "user", "content": msg.get("content", "")}]
+        return [_with_images({"role": "user", "content": msg.get("content", "")}, msg)]
     try:
         rendered = dialect.render_assistant_from_history(
             _context_view(msg), index=index
@@ -183,6 +191,36 @@ def render_history_message(
     terminal = None if answered else getattr(dialect, "render_terminal_result", None)
     extra = terminal(msg, index=index) if terminal is not None else None
     return [rendered, extra] if extra else [rendered]
+
+
+def _with_images(message: dict, record: dict) -> dict:
+    """레코드의 ``images`` 참조를 요청 메시지에 싣는다 (v10.59.0) — 아직
+    참조뿐이고 파일은 안 읽는다(공급자 경계가 읽는다)."""
+    refs = record.get("images")
+    if isinstance(refs, list) and refs:
+        message["images"] = list(refs)
+    return message
+
+
+def _with_observation_images(rendered: list[dict], record: dict) -> list[dict]:
+    """서버 파싱 방언의 관찰(``tool`` 메시지)에 이미지를 붙이는 법 (v10.59.0).
+
+    ``tool`` 메시지에는 이미지를 넣지 않는다 — omlx 가 조용히 버리고(실측)
+    OpenAI 규격도 tool 은 글만이다. 바로 뒤에 자리표시 줄만 담은 user
+    메시지를 두고 거기에 참조를 싣는다 — 꼬리가 이미 같은 길을 간다
+    (``ContextManager.get_messages``, "OpenAI 규격상 허용").
+    """
+    refs = record.get("images")
+    if not (isinstance(refs, list) and refs):
+        return rendered
+    if rendered and rendered[-1].get("role") == "user":
+        rendered[-1] = _with_images(dict(rendered[-1]), record)
+        return rendered
+    lines = [
+        _images.ImageRef.from_dict(r).placeholder for r in refs if isinstance(r, dict)
+    ]
+    rendered.append({"role": "user", "content": "\n".join(lines), "images": list(refs)})
+    return rendered
 
 
 def _to_natural_language(msg: dict, dialect) -> dict:
@@ -297,7 +335,7 @@ def _convert_observation(msg: dict) -> dict:
     if artifact:
         parts.append(f"→ {artifact}")
 
-    return {"role": "user", "content": "\n".join(parts)}
+    return _with_images({"role": "user", "content": "\n".join(parts)}, msg)
 
 
 def message_display_text(msg: dict) -> str:

@@ -1437,3 +1437,138 @@ class TestNativeToolsInBody:
             settings=CallSettings(),
         )
         assert "tools" not in mock_post.call_args.kwargs["json"]
+
+
+# ── 이미지 (v10.59.0) — 공급자 경계에서만 조각으로 ──────────────────────
+
+
+def _png_ref(tmp_path, name="a.png"):
+    from PIL import Image
+
+    from agent_cli import images
+
+    p = tmp_path / name
+    Image.new("RGB", (32, 16), (255, 0, 0)).save(p, format="PNG")
+    return images.make_ref(p)
+
+
+class TestImagesAtProviderBoundary:
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_openai_expands_to_image_url_parts(self, mock_post, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        ref = _png_ref(tmp_path)
+        mock_post.return_value = _mock_response(
+            {"choices": [{"message": {"content": "red"}, "finish_reason": "stop"}]}
+        )
+        caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
+        OpenAIProvider("http://x/v1", "k").call(
+            messages=[
+                {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]},
+                {"role": "assistant", "content": "ok"},
+            ],
+            system="s",
+            model="m",
+            capabilities=caps,
+        )
+        msgs = mock_post.call_args.kwargs["json"]["messages"]
+        assert all("images" not in m for m in msgs)
+        user = msgs[1]
+        assert user["content"][0] == {"type": "text", "text": ref.placeholder}
+        assert user["content"][1]["type"] == "image_url"
+        assert user["content"][1]["image_url"]["url"].startswith(
+            "data:image/png;base64,"
+        )
+        assert msgs[2]["content"] == "ok"
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_expands_to_image_blocks(self, mock_post, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        ref = _png_ref(tmp_path)
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "red"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            }
+        )
+        caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
+        AnthropicProvider("http://x/v1", "k").call(
+            messages=[
+                {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
+            ],
+            system="s",
+            model="m",
+            capabilities=caps,
+        )
+        msgs = mock_post.call_args.kwargs["json"]["messages"]
+        assert "images" not in msgs[0]
+        block = msgs[0]["content"][1]
+        assert block["type"] == "image"
+        assert block["source"]["type"] == "base64"
+        assert block["source"]["media_type"] == "image/png"
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_text_only_model_gets_the_placeholder_and_a_note(
+        self, mock_post, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        ref = _png_ref(tmp_path)
+        mock_post.return_value = _mock_response(
+            {"choices": [{"message": {"content": "?"}, "finish_reason": "stop"}]}
+        )
+        caps = ModelCapabilities(32768, 4096, False, supports_vision=False)
+        OpenAIProvider("http://x/v1", "k").call(
+            messages=[
+                {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
+            ],
+            system="s",
+            model="m",
+            capabilities=caps,
+        )
+        user = mock_post.call_args.kwargs["json"]["messages"][1]
+        assert isinstance(user["content"], str)
+        assert user["content"].startswith(ref.placeholder)
+        assert "cannot view images" in user["content"]
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_unknown_support_probes_once_then_remembers(
+        self, mock_post, tmp_path, monkeypatch
+    ):
+        """등록값이 없으면(None) 첫 이미지에서 한 번 프로브 — 같은 프로세스에선
+        다시 묻지 않는다."""
+        from agent_cli.providers import capabilities as caps_mod
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(caps_mod, "_vision_probed", {})
+        ref = _png_ref(tmp_path)
+        probe = _mock_response(
+            {"choices": [{"message": {"content": "green then blue"}}]}
+        )
+        chat = _mock_response(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+        mock_post.side_effect = [probe, chat, chat]
+        caps = ModelCapabilities(32768, 4096, False)  # supports_vision=None
+        provider = OpenAIProvider("http://x/v1", "k")
+        msgs = [{"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}]
+        provider.call(messages=msgs, system="s", model="m", capabilities=caps)
+        provider.call(messages=msgs, system="s", model="m", capabilities=caps)
+        assert mock_post.call_count == 3  # 프로브 1 + 호출 2
+        sent = mock_post.call_args.kwargs["json"]["messages"][1]["content"]
+        assert sent[1]["type"] == "image_url"
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_no_images_means_no_probe(self, mock_post, monkeypatch):
+        from agent_cli.providers import capabilities as caps_mod
+
+        monkeypatch.setattr(caps_mod, "_vision_probed", {})
+        mock_post.return_value = _mock_response(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+        OpenAIProvider("http://x/v1", "k").call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=ModelCapabilities(32768, 4096, False),
+        )
+        assert mock_post.call_count == 1

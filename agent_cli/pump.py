@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from agent_cli.input_queue import InputQueue
@@ -40,6 +40,8 @@ class RunRequest:
     request_id: str  # 큐가 발급한 id ("" = 없음) — 런이 "무엇에 답하는지"
     stop_event: threading.Event  # 이 런만의 중단 핸들 (web Stop 버튼)
     wake: bool
+    #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`) — 빈 목록이 기본.
+    images: list[dict] = field(default_factory=list)
 
     @property
     def loop_query(self) -> str:
@@ -250,6 +252,7 @@ class SessionPump:
                         request_id=item.get("id") or "",
                         stop_event=stop_event,
                         wake=wake,
+                        images=list(item.get("images") or []),
                     )
                     result = d.run_main(req)
                     from agent_cli.runtime import main_run_ended

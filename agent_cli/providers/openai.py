@@ -9,6 +9,7 @@ import json
 
 import requests
 
+from agent_cli import images as _images
 from agent_cli.constants import (
     LLM_API_TIMEOUT,
     STOP_INCOMPLETE_TOOL_CALL,
@@ -21,7 +22,7 @@ from agent_cli.providers.base import (
     resolve_thinking_policy,
     strip_think_blocks,
 )
-from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities, vision_support
 from agent_cli.providers.http import (
     StreamEvent,
     post_with_retry,
@@ -29,6 +30,10 @@ from agent_cli.providers.http import (
     run_sse_stream,
     stream_with_reconnect,
 )
+
+
+def _has_images(messages: list[dict]) -> bool:
+    return any(isinstance(m.get("images"), list) and m["images"] for m in messages)
 
 
 class OpenAIProvider:
@@ -62,6 +67,13 @@ class OpenAIProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        # 이미지 (v10.59.0): 레코드의 ``images`` 참조를 여기서만 ``image_url``
+        # 조각으로 펼친다 — 방언·컨텍스트는 공급자 모양을 모른다. 모델이 못
+        # 보면(등록값·프로브) 조각 없이 그 사실을 글로 남긴다.
+        enabled = _has_images(messages) and vision_support(
+            capabilities, self.capability_transport, self.base_url, model, self.api_key
+        )
+        messages = _images.expand(messages, enabled=enabled, part=_images.openai_part)
         msgs = [{"role": "system", "content": system}] + messages
 
         body: dict = {

@@ -669,6 +669,9 @@ class TurnDispatcher:
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
             turn=self.state.turn,
+            # 이미지 (v10.59.0): op 순서대로 이어 붙인다 — 글의 자리표시 줄이
+            # 어느 op 의 것인지 말한다.
+            images=[img for r in results for img in (r.get("images") or [])],
             # 기록은 방언 중립(v10.2.2): op 별 조각을 항상 남긴다 — 서버 파싱
             # 방언으로 다시 읽을 때 op 마다 `tool` 메시지가 필요하고, 합친
             # 본문에서는 경계를 되살릴 수 없다(v10.2.0 은 native 에서만 저장해
@@ -1460,7 +1463,7 @@ class TurnDispatcher:
             )
             return None
 
-        observation = self.tools._tool_observation(tool_name, tool_result, tool_input)
+        observation, images = self.tools.observe(tool_name, tool_result, tool_input)
         if truncation_warning:
             observation = f"{observation}\n{truncation_warning}"
 
@@ -1479,6 +1482,7 @@ class TurnDispatcher:
             success=tool_result.success,
             artifact=tool_result.artifact,
             turn=self.state.turn,
+            images=images,
         )
         return _CONTINUE
 
@@ -1790,8 +1794,13 @@ def _append_observation(
     store_emission: bool = True,
     parts: list[dict] | None = None,
     nudge: dict | None = None,
+    images: list[dict] | None = None,
 ) -> None:
     """Append assistant (``record``) + observation + sync ctx.
+
+    ``images`` (v10.59.0): 관찰에 딸린 이미지 참조(``ImageRef.to_dict()``) —
+    레코드의 ``images`` 필드로 저장되고 요청 조립 때 공급자 경계가 조각으로
+    펼친다. 본문(``obs_msg``)에는 자리표시 줄이 이미 들어 있다.
 
     ``record`` (v10.42.0) 는 이 턴의 history 레코드 — ``ParsedTurn.record``,
     ``_handle_text_path`` 가 한 번 만든다. 여기서는 원문을 파싱하지 않는다:
@@ -1840,7 +1849,10 @@ def _append_observation(
         history_record = record
         prior_content = dialect.render_assistant_from_history(history_record)["content"]
         messages.append({"role": "assistant", "content": prior_content})
-    messages.append({"role": "user", "content": obs_msg})
+    live_obs = {"role": "user", "content": obs_msg}
+    if images:
+        live_obs["images"] = list(images)
+    messages.append(live_obs)
     stored_content = obs_msg
     if ctx:
         # 넛지는 마지막 실패 것만 남긴다(v10.2.3, 사용자 결정): 앞선 미해소
@@ -1869,6 +1881,8 @@ def _append_observation(
             obs_entry["recovery"] = recovery_kind
         if parts:
             obs_entry["parts"] = parts
+        if images:
+            obs_entry["images"] = list(images)
         stored = ctx.add(obs_entry)
         # ctx.add returns the stored (possibly spilled) message; tolerate a
         # ctx stub that returns None (some tests) by keeping obs_msg.

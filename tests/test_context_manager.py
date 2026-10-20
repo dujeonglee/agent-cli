@@ -981,3 +981,121 @@ class TestHistoryRecordCarriesScope:
         ctx = ContextManager(tmp_path, max_context_tokens=10000)
         ctx.add({"role": "user", "content": "still written"})
         assert self._records(tmp_path)[-1]["content"] == "still written"
+
+
+# ── 이미지 (v10.59.0) — 레코드 images → 요청 메시지, keep-N, 토큰 ─────────
+
+
+def _ref(name, w=1000, h=1000):
+    from agent_cli.images import ImageRef
+
+    return ImageRef(name, "image/png", w, h, 1, "").to_dict()
+
+
+class TestImagesInContext:
+    def test_user_record_images_reach_get_messages(self, ctx):
+        ctx.add(
+            {
+                "role": "user",
+                "content": "q\n[image: a.png (1000×1000)]",
+                "images": [_ref("a.png")],
+            }
+        )
+        msgs = ctx.get_messages()
+        assert msgs[-1]["images"] == [_ref("a.png")]
+        assert msgs[-1]["content"].startswith(
+            "q\n[image: a.png"
+        )  # 꼬리가 붙어도 글은 앞
+
+    def test_text_dialect_observation_carries_images(self, ctx):
+        ctx.add({"role": "user", "content": "q"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "t",
+                "ops": [{"action": "read_file", "action_input": {"path": "a.png"}}],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "read_file",
+                "success": True,
+                "content": "Observation: [image: a.png (1000×1000)]",
+                "images": [_ref("a.png")],
+            }
+        )
+        last = ctx.get_messages()[-1]
+        assert last["role"] == "user" and last["images"] == [_ref("a.png")]
+
+    def test_native_fc_observation_puts_images_on_a_following_user_message(
+        self, tmp_path
+    ):
+        """tool 메시지엔 이미지를 넣지 않는다(omlx 가 버림) — 바로 뒤 user 메시지."""
+        from agent_cli.dialects import get as get_dialect
+
+        ctx = ContextManager(
+            tmp_path, max_context_tokens=10000, dialect=get_dialect("native_fc")
+        )
+        ctx.add({"role": "user", "content": "q"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "",
+                "ops": [{"action": "read_file", "action_input": {"path": "a.png"}}],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "read_file",
+                "success": True,
+                "content": "Observation: [image: a.png (1000×1000)]\nimage/png",
+                "images": [_ref("a.png")],
+            }
+        )
+        msgs = ctx.get_messages()
+        tool_msgs = [m for m in msgs if m.get("role") == "tool"]
+        assert tool_msgs and all("images" not in m for m in tool_msgs)
+        follow = msgs[msgs.index(tool_msgs[-1]) + 1]
+        assert follow["role"] == "user"
+        assert follow["images"] == [_ref("a.png")]
+        assert follow["content"].startswith("[image: a.png (1000×1000)]")
+
+    def test_keep_n_strips_old_images_but_not_records(self, ctx, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_IMAGE_KEEP", "1")
+        ctx.add(
+            {
+                "role": "user",
+                "content": "[image: a.png (1000×1000)]",
+                "images": [_ref("a.png")],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "content": "[image: b.png (1000×1000)]",
+                "images": [_ref("b.png")],
+            }
+        )
+        msgs = ctx.get_messages()
+        assert "images" not in msgs[0]
+        assert msgs[1]["images"] == [_ref("b.png")]
+        assert ctx.get_raw_messages()[0]["images"] == [_ref("a.png")]
+
+    def test_image_tokens_count_without_a_byte_ratio(self, ctx):
+        before = ctx.get_estimated_tokens()
+        ctx.add({"role": "user", "content": "x", "images": [_ref("a.png", 2000, 2000)]})
+        assert ctx.get_estimated_tokens() - before >= 4000
+
+    def test_image_tokens_count_with_a_byte_ratio(self, tmp_path):
+        ctx = ContextManager(tmp_path, max_context_tokens=100000, token_ratio=0.25)
+        before = ctx.get_estimated_tokens()
+        ctx.add({"role": "user", "content": "x", "images": [_ref("a.png", 2000, 2000)]})
+        assert ctx.get_estimated_tokens() - before >= 4000
+
+    def test_reconcile_subtracts_image_tokens_from_the_ratio(self, ctx):
+        ctx.add({"role": "user", "content": "x" * 4000})
+        ctx.reconcile_actual_tokens(2000, request_bytes=4000, image_tokens=1000)
+        assert ctx.token_ratio == pytest.approx(1000 / 4000)  # 이미지 몫을 뺀 글만
+        assert ctx.get_estimated_tokens() == 2000  # 합계는 서버 숫자 그대로

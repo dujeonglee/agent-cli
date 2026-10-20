@@ -114,6 +114,7 @@ class AgentLoop:
         dialect=None,
         compaction_enabled: bool = True,
         peer_agents_section: str = "",
+        query_images: list[dict] | None = None,
     ):
         # 모델·능력·방언·프로바이더는 ``binding``(providers/binding, v10.43.0) 의
         # 것 — LoopConfig 의 속성이 매 호출 읽는다(I2 불변식: loop 의 방언 ≡ ctx
@@ -158,6 +159,8 @@ class AgentLoop:
         # mirrored to the web renderer via ``set_run_authors`` so the final's
         # ``answers`` field is stamped by whoever owns the fact (this loop).
         self.query_author_is_user = query_author_is_user
+        #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`).
+        self.query_images = list(query_images or [])
         # 런을 연 요청의 id — 펌프가 `dequeue_blocking()` 한 아이템의 것(run·web
         # 공통, v10.33.1). 깨우기 런과 하위 루프는 빈 문자열.
         self.query_request_id = query_request_id
@@ -665,6 +668,7 @@ class AgentLoop:
             self.query_author,
             is_user=self.query_author_is_user,
             request_id=starter_rid,
+            images=self.query_images,
         )
 
     def _add_user_message(
@@ -673,8 +677,13 @@ class AgentLoop:
         author: str | None = None,
         is_user: bool = True,
         request_id: str = "",
+        images: list[dict] | None = None,
     ) -> None:
         """Add a user message to the conversation + task log.
+
+        ``images`` (v10.59.0): 메시지에 딸린 이미지 참조 — 레코드의 ``images``
+        필드로 저장되고 ``content`` 끝에 자리표시 줄이 붙는다(이미지가 못 가는
+        경로에서도 같은 레코드가 읽히도록, docs/vision/DESIGN.md §3.2).
 
         Shared by the run-starter (``_setup``) and the plain-chat branch of
         turn-boundary injection so the ``[author]: text`` labeling, task-log
@@ -697,10 +706,18 @@ class AgentLoop:
         """
         labeled = f"[{author}]: {text}" if author else text
         self.task_log.append(labeled)
+        refs = [r for r in (images or []) if isinstance(r, dict)]
+        if refs:
+            from agent_cli.images import ImageRef
+
+            lines = [ImageRef.from_dict(r).placeholder for r in refs]
+            labeled = "\n".join([labeled, *lines]) if labeled else "\n".join(lines)
         # ``author`` rides along (when present) so the history enrich can
         # attribute the query + strip the label for the search surface. The
         # cache / LLM path ignores the extra key.
         record = {"role": "user", "content": labeled}
+        if refs:
+            record["images"] = refs
         if request_id:
             record["request_id"] = request_id
         if author:

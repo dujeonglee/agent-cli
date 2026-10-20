@@ -206,6 +206,8 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
+| `AGENT_CLI_IMAGE_KEEP` | — | 살아 있는 이미지 수 상한 — 최근 N 장만 모델에 보내고 더 오래된 것은 자리표시 글만 (기본 `6`, `0`=무제한; v10.59.0, 아래 "이미지 입력") |
+| `AGENT_CLI_IMAGE_MAX_EDGE` | — | 보내기 전 긴 변 상한(픽셀) — 넘으면 축소 (기본 `2048`, `0`=축소 없음; v10.59.0) |
 | `AGENT_CLI_GRAMMAR` | — | 디코딩 문법 제약: `off` 로 끔 (미설정/`on` = 기본 켬). web UI 📐 노브의 headless 대응. 켜기는 `models.json` 에 `supports_grammar: true` 로 **기록된** 모델에서만 효력 — 미지원(false)·미확인(키 없음) 모델엔 어떤 값으로도 켜지지 않는다 (v9.24.0) |
 | `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. `--stall` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.55.0) |
 | `AGENT_CLI_STREAM_MAX_ATTEMPTS` | — | 무진전 시 **총** 전송 횟수(첫 전송 포함), 1~10, 기본 4. 최대 대기 = 한도 × 이 값. `--stall-attempts` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.60.0) |
@@ -448,6 +450,7 @@ agent-cli run "task description" [options]
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
 | `--auto-approve` / `--no-auto-approve` | 확인 프롬프트를 묻지 않고 허용 (env `AGENT_CLI_AUTO_APPROVE`, 웹 ⚡ 노브) | 꺼짐 |
 | `--auditor` / `--no-auditor` | 세션 감사 (env `AGENT_CLI_AUDITOR`, 웹 🔎 칩; 아래 "세션 감사자") | 꺼짐 |
+| `--image PATH` | QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 밖 파일은 `.agent-cli/tmp/uploads/` 로 복사. 모델이 이미지를 못 보면 즉시 오류 (v10.59.0, 아래 "이미지 입력") | |
 
 > 위 노브 아홉 축(`--thinking`·`--reasoning-effort`·`--grammar`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
@@ -937,11 +940,14 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
       "max_output_tokens": 4096,
       "supports_structured_output": true,
       "supports_thinking": true,
-      "supports_strict_schema": false
+      "supports_strict_schema": false,
+      "supports_vision": true
     }
   }
 }
 ```
+
+`supports_vision`(v10.59.0) — 모델이 이미지를 보는가. 키가 **없으면** 미확인으로 두고, 이미지를 처음 보낼 때(또는 `run --image` 부팅 때) 두 색 이미지를 보내 답을 검사하는 프로브를 **프로세스당 한 번** 돌린다. 사용자가 적은 엔트리는 그 결과를 파일에 쓰지 않는다 — 매번 프로브가 싫으면 `true`/`false` 를 적어 두면 된다. 첫 실행 감지(자동 등록)는 이 값을 함께 적는다.
 
 ### 파일 위치 및 정책
 
@@ -1017,6 +1023,7 @@ LLM이 사용할 수 있는 도구 목록:
   - `line_start` / `line_end`: 1-based, inclusive. 둘 다 생략하면 full read.
   - `search`: 정규식 패턴. 매칭 줄 + 주변 `context` 줄을 반환 (기본 5).
   - `stat`: 파일 크기/총 줄 수 + 앞 20줄 (메타데이터 조회, read 아님).
+- **이미지 (v10.59.0)**: 파일이 PNG/JPEG/GIF/WebP 이면(확장자가 아니라 매직 바이트) 글 대신 이미지를 모델에게 보여 준다. 결과 글은 `[image: shot.png (1280×720)]` 한 줄과 형식·바이트이고, 이미지는 그 관찰에 딸려 간다. 줄 범위·검색·stat 은 이미지에 뜻이 없어 무시된다. 모델이 이미지를 못 보면 그 사실이 관찰에 적힌다("이 모델은 이미지를 못 본다 — 스크립트로 읽어라").
 
 ### edit_file — Hashline 편집
 
@@ -1642,6 +1649,18 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 **폭주 생성 조기 종료 + 잘린 호출 기록 (v10.10.0)**: 같은 방에서 생성 셋이 셸 명령의 `node -e "` 뒤에서 탭·공백·채움 문자로 무너져 32,768 토큰 출력 상한까지 달렸습니다 — 각 27~40분, 합계 106분, 결과는 전부 폐기. 방언 수준 조기 종료(v8.41.0)는 트리거 문자(`#`/`<`)가 있는 청크에서 헤더 반복만 보므로 공백 폭주를 보지 못했습니다. 이제 스트림이 **내용 무관 감지기**(`providers/runaway.py`)를 청크마다 돌립니다 — 공백만 2,048자 이어지거나(`whitespace_run`) 마지막 4,096자에 영숫자가 2% 미만이면(`no_words`; 한글·CJK 는 낱말로 셈, `0,0,0,…` 맵 격자는 절반이 숫자라 안 걸림) 스트림을 닫고 `stop_reason="runaway"` 로 돌아옵니다. 루프는 출력 상한 절단과 같은 계약으로 처리합니다 — 실행하지 않고, 실제 내용까지만 인용해 "폭주했으니 더 작은 단위로 다시" 라고 알리며(컨텍스트 탓이 아님을 분명히), 모델이 복구하면 접힙니다. 그리고 **잘린 호출도 turns.jsonl 행**이 됩니다(종전엔 디스패치가 안 돌아 기록이 없어 서버 로그가 필요했음): `failure_signal` OUTPUT_TRUNCATED/RUNAWAY, `stop_reason` length/runaway, `stop_detail` — length 는 `model_cap`(모델 출력 상한) / `context_clamp`(하니스가 창에 맞춰 줄인 max_tokens 에 도달 — 컨텍스트가 생성을 끝내는 유일한 경로) / `server_cap`(요청보다 적게 생성하고 멈춤 — omlx 는 스스로 줄임), runaway 는 감지 규칙 이름.
 
 **압축 안내 (v9.26.4)**: 압축은 캐시가 호출별 목표치를 넘는 순간 돕니다. 안내는 **단계를 처음 넘는 턴에 한 번**만 붙고(`COMPACTION_NOTICE_STEPS`), 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장됩니다. **v10.9.1**: 안내가 `memory(mode=add)` 와 함께 **더는 맞지 않는 메모리(해결된 블로커·뒤집힌 결정)는 `memory(mode=delete, id=N)` 로 지우라**고도 말합니다 — 메모리 색인은 매 턴 꼬리에 실리고 압축을 그대로 통과하므로, 어느 항목이 낡았는지 아직 판단할 수 있는 압축 전이 정리할 때입니다. 종전(75% 이상 매 턴, "nearly full … must not lose … NOW")은 같은 경보가 턴마다 쌓여 모델이 지나치게 보수적으로 움직였습니다(사용자 보고). 문구는 결핍이 아니라 사실을 말합니다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 **대체**되고 작업은 그대로 이어진다, `memory` 는 원문 그대로 남기고 싶을 때의 선택지. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있다는 실측(`_OBS_COMPLETE_NUDGE`)은 그대로 유효하므로 "끝내지 마라" 류의 문장도 넣지 않습니다(역설적으로 끝낼 생각을 심음). 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
+
+### 이미지 입력 (vision, v10.59.0)
+
+> 설계: `docs/vision/DESIGN.md`
+
+모델이 이미지를 보는 길은 둘입니다. **사용자가 보여 주기** — `agent-cli run "이 캡처의 오류가 뭐야?" --image shot.png`(반복 가능; 웹 입력창의 붙여넣기·끌어놓기는 P2). **모델이 열기** — `read_file` 로 PNG/JPEG/GIF/WebP 를 읽으면 글 대신 이미지가 갑니다(fetch 가 `.agent-cli/tmp/downloads/` 에 받은 그림, 모델이 `shell` 로 그린 차트도 같은 길).
+
+- **기록은 참조, 파일이 진실** — history.jsonl 에는 경로·크기·sha256 만 적히고(base64 없음) 글에는 자리표시 줄 `[image: path (W×H)]` 이 남습니다. 보낼 때 파일에서 읽고, 파일이 없거나 바뀌었으면 그 사유가 글로 갑니다. 세션 재개도 같은 파일을 봅니다.
+- **두 공급자** — OpenAI 호환은 `image_url` data URL, Anthropic 은 `image` base64 블록. 서버 네이티브 함수 호출(`native_fc`)에서는 `tool` 메시지에 이미지를 넣지 않고 바로 뒤 user 메시지에 붙입니다(omlx 가 tool 안 이미지를 조용히 버리는 것을 실측).
+- **능력 확인** — `models.json` 의 `supports_vision`; 없으면 두 색 이미지를 보내 답을 검사하는 프로브를 프로세스당 한 번. 못 보는 모델에는 이미지를 보내지 않고 모델·사용자 양쪽에 말합니다(`--image` 는 즉시 오류).
+- **크기와 창** — 토큰은 픽셀에 비례합니다(≈ 1K px/token, 1080p ≈ 2K 토큰). 긴 변이 `AGENT_CLI_IMAGE_MAX_EDGE`(2048)를 넘으면 축소, 5MB 를 넘으면 JPEG 재인코딩. 이미지는 요약으로 줄지 않고 매 요청 다시 가므로 최근 `AGENT_CLI_IMAGE_KEEP`(6) 장만 보내고 더 오래된 것은 자리표시 글만 남습니다. 이미지 토큰은 관찰의 과대 출력 캡과 턴 예산에 들어갑니다.
+- **표시** — CLI 는 `🖼 shot.png (1280×720)` 한 줄. 웹 썸네일·붙여넣기·📎 는 P2, browser `screenshot` 모드와 MCP 이미지는 P3.
 
 ### 세션 & 컨텍스트 관리 시스템
 

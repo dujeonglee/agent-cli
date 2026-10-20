@@ -37,6 +37,7 @@ from pathlib import Path
 
 # C5: 관심사 분리 — record 계약은 records, LLM 표현은 render, 디스크
 # I/O primitive 는 store 소유. manager 는 캐시 + 압축 정책만.
+from agent_cli import images as _images
 from agent_cli.context import store
 from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.records import _classify_record
@@ -474,10 +475,13 @@ class ContextManager:
 
     def _scaled_tokens(self, message: dict) -> int:
         """카운터 증감용 레코드 토큰 — 실측 비율이 있으면 바이트 × 비율,
-        없으면 chars/4 추정 그대로."""
+        없으면 chars/4 추정 그대로. 이미지(v10.59.0)는 글이 아니라 바이트
+        비율을 타지 않는다 — 픽셀 기준 추정을 따로 더한다."""
         if self._token_ratio is None:
             return _estimate_message_tokens(message)
-        return max(1, round(_message_bytes(message) * self._token_ratio))
+        return max(
+            1, round(_message_bytes(message) * self._token_ratio)
+        ) + _images.message_image_tokens(message)
 
     def _sum_tokens(self, messages) -> int:
         return sum(self._scaled_tokens(m) for m in messages)
@@ -488,6 +492,7 @@ class ContextManager:
         *,
         request_bytes: int = 0,
         outside_bytes: int = 0,
+        image_tokens: int = 0,
     ) -> None:
         """Re-anchor the cache token count to the server's actual input
         count, and refresh the tokens-per-byte ratio from it.
@@ -496,7 +501,9 @@ class ContextManager:
         call's prompt (``usage.input_tokens`` + cache fields). It covers the
         whole request; ``request_bytes`` is that request's UTF-8 size and
         ``outside_bytes`` the part of it that is not the cache (system prompt,
-        function schemas, per-turn tail).
+        function schemas, per-turn tail). ``image_tokens`` (v10.59.0) is the
+        pixel-based estimate for the images the request carried — subtracted
+        before the ratio so base64 pixels never price the text.
 
         Ratio: the first measurement is taken as is; after that
         ``new = (previous + actual / request_bytes) / 2``. Consecutive requests
@@ -512,7 +519,8 @@ class ContextManager:
         if actual_total_tokens <= 0:
             return
         if request_bytes > 0:
-            measured = _clamp_token_ratio(actual_total_tokens / request_bytes)
+            text_tokens = max(actual_total_tokens - image_tokens, 1)
+            measured = _clamp_token_ratio(text_tokens / request_bytes)
             self._token_ratio = (
                 measured
                 if self._token_ratio is None
@@ -586,6 +594,9 @@ class ContextManager:
             result.extend(group)
         # 서버 파싱 방언: 호출마다 결과가 있게 맞춘다 (v10.20.0).
         result = self.dialect.pair_call_results(result)
+        # 살아 있는 이미지 수 상한 (v10.59.0): 최근 N 장만 참조를 남긴다 —
+        # 기록은 그대로, 자리표시 글은 content 에 남아 있다.
+        result = _images.keep_recent(result, _images.image_keep())
 
         # ── tail annotations (feed time only, never persisted) ──────────
         # Both are appended to the LAST message rather than added as new ones:

@@ -13,6 +13,7 @@ from rich.markdown import Markdown
 from rich.markup import escape
 from rich.text import Text
 
+from agent_cli.images import is_placeholder_line
 from agent_cli.render.base import ConfirmOption, Renderer
 
 _MUTED = "grey46"
@@ -372,6 +373,11 @@ class MinimalRenderer(Renderer):
                     break
 
         self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
+
+        # 이미지 관찰 (v10.59.0): 자리표시 줄 `[image: path (W×H)]` 을 한 줄로.
+        for line in content.split("\n"):
+            if is_placeholder_line(line):
+                self._p(f"  🖼 {line[len('[image: ') : -1]}", highlight=False)
 
         # `write_file` / `edit_file` append a plain unified diff to the
         # observation (see agent_cli.tools._diff.format_diff). The summary
