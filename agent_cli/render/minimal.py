@@ -360,7 +360,9 @@ class MinimalRenderer(Renderer):
         turn: int,
         tool_name: str | None = None,
         success: bool = True,
+        images: list[dict] | None = None,
     ) -> None:
+        # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다.
         status = "success" if success else "error"
         icon = "✓" if success else "✗"
         tool_label = f" {tool_name}" if tool_name else ""
@@ -409,12 +411,23 @@ class MinimalRenderer(Renderer):
         self._p(f"  ✗ {content}", highlight=False)
 
     def push_user_message(
-        self, content: str, author: str = "", hidx: int | None = None
+        self,
+        content: str,
+        author: str = "",
+        hidx: int | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         """런 도중 합류한 요청(예약 발화 등)의 에코 (v10.33.0) — run 도 web
         처럼 턴 경계에서 큐를 주입하므로, 합류한 사실이 콘솔에도 보여야 한다.
-        런 시작 질의는 호출자가 이미 보여 주므로 여기 오지 않는다."""
+        런 시작 질의는 호출자가 이미 보여 주므로 여기 오지 않는다. 딸린
+        이미지는 `🖼` 줄로 (v10.60.0 — 주입 메시지도 이미지를 실을 수 있다)."""
         self._p(f"  📨 {content}", highlight=False, markup=False)
+        for ref in images or []:
+            self._p(
+                f"  🖼 {ref.get('path')} ({ref.get('width')}×{ref.get('height')})",
+                highlight=False,
+                markup=False,
+            )
 
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""

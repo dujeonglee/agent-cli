@@ -104,10 +104,12 @@ def render_step(
     success: bool = True,
     requests: list | None = None,
     hidx: int | None = None,
+    images: list[dict] | None = None,
 ) -> None:
     # ``hidx`` (v10.6.0): 이 카드가 그리는 history 레코드의 서수 — 챗의 모델 시점
     # 경계 판정용. 레코드보다 먼저 그리는 카드는 ``ctx.next_ordinal``, 뒤에 그리는
     # 카드는 ``ctx.last_ordinal`` 을 넘긴다. CLI 는 무시한다.
+    # ``images`` (v10.60.0): 관찰에 딸린 이미지 참조 — web 썸네일.
     if hidx is not None:
         _renderer.note_record(hidx)
     if step_type == "thought":
@@ -119,7 +121,9 @@ def render_step(
         if step_type == "action":
             _renderer.action(tool_name or "", tool_input or "", turn)
         elif step_type == "observation":
-            _renderer.observation(content, turn, tool_name, success=success)
+            _renderer.observation(
+                content, turn, tool_name, success=success, images=images
+            )
         elif step_type == "final":
             _renderer.final(content, turn, requests=requests)
         elif step_type == "error":

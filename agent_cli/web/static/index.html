@@ -217,7 +217,14 @@
     <!-- 점프는 엿보기라 돌아가기는 **한 단계**만 — 새 점프가 이전 것을 덮는다
          (docs/chat-ui §5). 채널 칩이 항상 보이므로 스택일 이유가 없다. -->
     <button id="ch-back" type="button" hidden></button>
+    <!-- 붙일 이미지 (v10.60.0, docs/vision/DESIGN.md §5): 📎·붙여넣기·끌어놓기로
+         올린 파일이 보내기 전까지 여기 선다. 올리는 즉시 .agent-cli/tmp/uploads/ 에
+         들어가고, 보내면 그 경로가 /api/input 의 images 로 간다. -->
+    <div id="attach-strip" hidden></div>
     <div id="input-area">
+      <button id="attach" type="button" class="btn-ghost"
+              title="Attach an image (PNG/JPEG/GIF/WebP) — or paste / drop one here">📎</button>
+      <input id="attach-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="input"
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>

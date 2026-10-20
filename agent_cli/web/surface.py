@@ -42,7 +42,10 @@ class WebSurface:
         text = item.get("text") or ""
         nickname = item.get("nickname") or ""
         self._renderer.push_user_message(
-            f"[{nickname}]: {text}", author=nickname, hidx=hidx
+            f"[{nickname}]: {text}",
+            author=nickname,
+            hidx=hidx,
+            images=item.get("images") or None,  # v10.60.0 말풍선 아래 썸네일
         )
 
     def bind_stop(self, event: threading.Event | None) -> None:

@@ -221,6 +221,15 @@ def vision_support(
     return hit
 
 
+def vision_known(caps: ModelCapabilities, base_url: str, model: str) -> bool | None:
+    """지금 **아는** 값만 — 등록값, 없으면 이 프로세스가 이미 프로브한 결과,
+    둘 다 없으면 ``None``. 프로브하지 않는다 (v10.60.0): 웹 📎 가 부팅마다
+    모델 서버에 요청을 보내지 않기 위해 — 값은 첫 이미지 런이 정한다."""
+    if caps.supports_vision is not None:
+        return caps.supports_vision
+    return _vision_probed.get((base_url.rstrip("/"), model))
+
+
 #: 문법 프로브의 정답 — 서버가 문법을 강제하면 이것만 나올 수 있다.
 _GRAMMAR_PROBE_ANSWER = "GRAMMAR-OK"
 

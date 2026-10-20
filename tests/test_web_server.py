@@ -1240,7 +1240,7 @@ class TestStaticUI:
         assert renderer.method_calls == []
         surface.echo({"text": "hi", "nickname": "dj"}, wake=False)
         renderer.push_user_message.assert_called_once_with(
-            "[dj]: hi", author="dj", hidx=7
+            "[dj]: hi", author="dj", hidx=7, images=None
         )
 
     def test_agent_conversation_clear_wired(self, server_and_client):
@@ -3309,3 +3309,207 @@ class TestMcpStatusEndpoint:
         i = html.index('id="mcp-pop"')
         pop = html[i : html.index("</span>", i)]
         assert "<input" not in pop and "<select" not in pop
+
+
+# ── 이미지 첨부 (v10.60.0, docs/vision/DESIGN.md §5·§7) ──────────────
+
+
+def _png_bytes(size=(40, 20), color=(0, 160, 0)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestImageUpload:
+    """``POST /api/images/upload`` — 📎·붙여넣기·끌어놓기의 공통 입구."""
+
+    def _setup(self, server, tmp_path):
+        server.workspace = tmp_path.resolve()
+
+    def test_stages_under_uploads_and_returns_a_ref(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/images/upload?token=testtoken&name=shot.png", content=_png_bytes()
+        )
+        assert r.status_code == 200, r.text
+        ref = r.json()
+        assert ref["mime"] == "image/png"
+        assert (ref["width"], ref["height"]) == (40, 20)
+        assert ref["sha256"] and ref["bytes"] > 0
+        stored = tmp_path / ".agent-cli" / "tmp" / "uploads"
+        files = list(stored.iterdir())
+        assert len(files) == 1 and files[0].name.endswith("-shot.png")
+        # 돌려준 path 는 그 파일을 가리킨다 — /api/input 과 썸네일이 쓰는 값.
+        assert pathlib.Path(ref["path"]).resolve() == files[0].resolve()
+
+    def test_non_image_is_rejected_and_not_kept(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/images/upload?token=testtoken&name=note.png", content=b"hello"
+        )
+        assert r.status_code == 400
+        assert "not a PNG/JPEG/GIF/WebP" in r.json()["detail"]
+        uploads = tmp_path / ".agent-cli" / "tmp" / "uploads"
+        assert not uploads.exists() or not list(uploads.iterdir())
+
+    def test_name_must_be_one_segment(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        for bad in ("a/b.png", "..", "x\\y.png"):
+            r = client.post(
+                f"/api/images/upload?token=testtoken&name={bad}", content=_png_bytes()
+            )
+            assert r.status_code == 400, bad
+
+    def test_requires_token(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/images/upload?token=wrong&name=a.png", content=_png_bytes()
+        )
+        assert r.status_code == 401
+
+
+class TestWorkspaceFile:
+    """``GET /api/workspace/file`` — 워크스페이스 안 **이미지만** 서빙."""
+
+    def test_serves_an_image_with_its_mime(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "img").mkdir()
+        (tmp_path / "img" / "a.png").write_bytes(_png_bytes())
+        r = client.get("/api/workspace/file?token=testtoken&path=img/a.png")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("image/png")
+        assert r.content == _png_bytes()
+        assert "no-cache" in r.headers.get("cache-control", "")
+
+    def test_text_file_is_not_served(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "secret.txt").write_text("key=1")
+        r = client.get("/api/workspace/file?token=testtoken&path=secret.txt")
+        assert r.status_code == 400
+        assert "key=1" not in r.text
+
+    def test_missing_and_outside(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        server.workspace = ws.resolve()
+        (tmp_path / "out.png").write_bytes(_png_bytes())
+        assert (
+            client.get("/api/workspace/file?token=testtoken&path=nope.png").status_code
+            == 404
+        )
+        assert (
+            client.get(
+                "/api/workspace/file?token=testtoken&path=../out.png"
+            ).status_code
+            == 400
+        )
+
+
+class TestChatWithImages:
+    """``POST /api/input {"kind":"chat","images":[path]}`` → 큐 아이템 ``images``."""
+
+    def test_images_become_refs_on_the_queue_item(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "shot.png").write_bytes(_png_bytes(size=(64, 32)))
+        full = str((tmp_path / "shot.png").resolve())
+        r = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "what is this?", "images": [full]},
+        )
+        assert r.status_code == 200, r.text
+        item = server.dequeue_nowait()
+        assert item["text"] == "what is this?"
+        assert len(item["images"]) == 1
+        ref = item["images"][0]
+        assert (ref["width"], ref["height"], ref["mime"]) == (64, 32, "image/png")
+        assert "sha256" in ref and "data" not in ref  # 참조뿐, base64 없음
+
+    def test_images_only_message_is_accepted(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "a.png").write_bytes(_png_bytes())
+        r = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "", "images": [str(tmp_path / "a.png")]},
+        )
+        assert r.status_code == 200
+        assert server.dequeue_nowait()["images"][0]["mime"] == "image/png"
+
+    def test_bad_images_are_400_and_nothing_is_queued(
+        self, server_and_client, tmp_path
+    ):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "t.txt").write_text("x")
+        cases = [
+            ["missing.png"],  # 없음
+            ["t.txt"],  # 이미지 아님
+            ["../escape.png"],  # 밖
+            "shot.png",  # 목록 아님
+            [1],  # 문자열 아님
+        ]
+        for images in cases:
+            r = client.post(
+                "/api/input?token=testtoken",
+                json={"kind": "chat", "content": "hi", "images": images},
+            )
+            assert r.status_code == 400, images
+        assert server.dequeue_nowait() is None
+
+    def test_no_images_key_is_the_old_shape(self, server_and_client):
+        server, _, client = server_and_client
+        r = client.post(
+            "/api/input?token=testtoken", json={"kind": "chat", "content": "hi"}
+        )
+        assert r.status_code == 200
+        assert server.dequeue_nowait()["images"] == []
+
+
+class TestImageSupportEndpoint:
+    """``GET /api/images/support`` — 아는 값만, 프로브 없음."""
+
+    def test_no_binding_is_unknown(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/images/support?token=testtoken").json() == {
+            "supported": None
+        }
+
+    def test_registered_value_and_memo_without_probing(self, server_and_client):
+        from agent_cli.providers import capabilities as caps_mod
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        server, _, client = server_and_client
+        server.binding = make_binding(
+            capabilities=ModelCapabilities(1, 1, False, supports_vision=False),
+            model="m",
+        )
+        assert client.get("/api/images/support?token=testtoken").json() == {
+            "supported": False
+        }
+        # 등록값이 없으면 프로세스 메모 — 없으면 None 이고, 프로브는 없다.
+        server.binding = make_binding(
+            capabilities=ModelCapabilities(1, 1, False), model="m-unknown"
+        )
+        assert client.get("/api/images/support?token=testtoken").json() == {
+            "supported": None
+        }
+        key = (server.binding.base_url.rstrip("/"), "m-unknown")
+        caps_mod._vision_probed[key] = True
+        try:
+            assert client.get("/api/images/support?token=testtoken").json() == {
+                "supported": True
+            }
+        finally:
+            caps_mod._vision_probed.pop(key, None)

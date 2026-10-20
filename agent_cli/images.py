@@ -188,15 +188,23 @@ def stage_upload(src: str | Path, workspace: Path | None = None) -> ImageRef:
         return make_ref(src_p)
     except ValueError:
         pass
-    dest_dir = root / UPLOAD_DIR
+    dest = fresh_upload_path(root, src_p.name)
+    shutil.copyfile(src_p, dest)
+    return make_ref(dest)
+
+
+def fresh_upload_path(workspace: Path, name: str) -> Path:
+    """``<workspace>/.agent-cli/tmp/uploads/<epoch>-<name>`` — 비어 있는 새
+    자리(디렉토리는 만든다). CLI ``--image`` 복사와 웹 업로드(v10.60.0)가 같은
+    규칙으로 이름을 짓는다; ``name`` 은 호출자가 한 조각(경로 없음)으로 준다."""
+    dest_dir = workspace / UPLOAD_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{int(time.time())}-{src_p.name}"
+    dest = dest_dir / f"{int(time.time())}-{name}"
     n = 1
     while dest.exists():
         n += 1
-        dest = dest_dir / f"{int(time.time())}-{n}-{src_p.name}"
-    shutil.copyfile(src_p, dest)
-    return make_ref(dest)
+        dest = dest_dir / f"{int(time.time())}-{n}-{name}"
+    return dest
 
 
 # ── 토큰 ──────────────────────────────────────────────────────────

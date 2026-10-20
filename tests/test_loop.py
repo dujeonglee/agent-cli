@@ -4706,7 +4706,7 @@ class TestRunAuthors:
             def set_run_authors(self, authors):
                 self.author_sets.append(list(authors))
 
-            def push_user_message(self, content, author="", hidx=None):
+            def push_user_message(self, content, author="", hidx=None, images=None):
                 self.pushed.append((content, author))
 
         stub = _Stub()
@@ -4851,7 +4851,7 @@ class TestMailAnswersInheritance:
             def set_run_authors(self, authors):
                 self.author_sets.append(list(authors))
 
-            def push_user_message(self, content, author="", hidx=None):
+            def push_user_message(self, content, author="", hidx=None, images=None):
                 pass
 
         stub = _Stub()
