@@ -143,3 +143,19 @@ def test_open_recovers_after_the_page_is_closed(session, site):
         and "[browser] the previous window was closed" in out
     )
     assert "[browser]" not in s.snapshot()
+
+
+def test_screenshot_writes_a_real_png(session, site, tmp_path):
+    """v10.61.0 — 실브라우저의 `page.screenshot` 이 우리 경로로 PNG 를 쓴다."""
+    from agent_cli import images as _images
+
+    session.open(f"{site}/item.html")
+    dest = tmp_path / "shot.png"
+    head = session.screenshot(str(dest))
+    assert head.startswith("[screenshot of ")
+    assert _images.sniff_file(dest) == "image/png"
+    ref = _images.make_ref(dest)
+    assert ref.width > 100 and ref.height > 100
+    full = tmp_path / "full.png"
+    assert "(full page)" in session.screenshot(str(full), full_page=True)
+    assert _images.sniff_file(full) == "image/png"

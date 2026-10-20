@@ -182,8 +182,12 @@ def run_subagent_message(
     query_request_id: str = "",
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
+    query_images: list[dict] | None = None,
 ) -> tuple[LoopResult, float]:
     """``ctx`` 위에서 메시지 1건을 처리 — ``(loop_result, 소요초)``.
+
+    ``query_images`` (v10.61.0): 시작 메시지에 딸린 ``ImageRef`` dict — 사람이
+    에이전트 창에서 붙인 이미지(docs/vision/DESIGN.md §5 에이전트 채널).
 
     ``depth`` 는 **호출자의** 깊이다 — 서브루프는 ``depth + 1`` 로 돈다
     (기존 delegate 의미 그대로). ``ask_handler``(teammate P2)가 있으면
@@ -195,6 +199,7 @@ def run_subagent_message(
     t0 = time.monotonic()
     loop_result = run_loop(
         query=query,
+        query_images=query_images,
         binding=binding,
         max_turns=max_turns,
         verbose=False,

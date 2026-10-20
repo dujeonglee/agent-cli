@@ -97,29 +97,92 @@ class McpTool(Tool):
         # dispatch is location-independent and ignores it.
         try:
             result = self._manager.call_tool(self._server, self._tool_name, args)
-            return ToolResult(True, output=_extract_mcp_result(result))
+            text, images = _extract_mcp_result(
+                result, f"{self._server}-{self._tool_name}"
+            )
+            return ToolResult(True, output=text, images=images)
         except Exception as e:
             return ToolResult(False, error=f"MCP {self.name} failed: {e}")
 
 
-def _extract_mcp_result(result: Any) -> str:
-    """Extract text output from MCP tool result."""
+def _extract_mcp_result(result: Any, label: str = "mcp") -> tuple[str, list[dict]]:
+    """MCP 결과 → ``(글, 이미지 참조 목록)``.
+
+    글 조각은 그대로. **이미지 조각**(``type == "image"``, base64 ``data`` +
+    ``mimeType``)은 v10.61.0 부터 파일로 둔다 — ``.agent-cli/tmp/mcp/<epoch>-
+    <label>-<n>.<ext>`` — 그리고 글에는 자리표시 줄 + 저장 위치, ``images`` 에
+    참조(docs/vision/DESIGN.md §5). 종전엔 base64 전체가 글로 들어가 수만
+    토큰을 먹고 모델은 보지도 못했다. 보는 형식(PNG/JPEG/GIF/WebP)이 아니거나
+    base64 가 깨졌으면 저장만 하거나 사유 한 줄. ``label`` 은 파일 이름용
+    (``<server>-<tool>``).
+    """
     if result is None:
-        return "(no output)"
+        return "(no output)", []
 
     # MCP SDK returns CallToolResult with content list
     if hasattr(result, "content"):
-        parts = []
+        parts: list[str] = []
+        images: list[dict] = []
+        n = 0
         for item in result.content:
             if hasattr(item, "text"):
                 parts.append(item.text)
+            elif getattr(item, "type", None) == "image" and isinstance(
+                getattr(item, "data", None), str
+            ):
+                n += 1
+                text, ref = _save_mcp_image(item, label, n)
+                parts.append(text)
+                if ref is not None:
+                    images.append(ref)
             elif hasattr(item, "data"):
                 parts.append(str(item.data))
             else:
                 parts.append(str(item))
-        return "\n".join(parts) if parts else "(no output)"
+        return ("\n".join(parts) if parts else "(no output)"), images
 
-    return str(result)
+    return str(result), []
+
+
+def _save_mcp_image(item: Any, label: str, n: int) -> tuple[str, dict | None]:
+    """이미지 조각 하나를 파일로 — ``(글 한두 줄, ImageRef dict | None)``."""
+    import base64
+    import binascii
+    from pathlib import Path
+
+    from agent_cli import images as _images
+
+    mime = str(getattr(item, "mimeType", "") or "")
+    try:
+        data = base64.b64decode(item.data, validate=True)
+    except (binascii.Error, ValueError):
+        return (
+            f"(image #{n}: {mime or 'unknown type'} — base64 data was invalid, not saved)",
+            None,
+        )
+    ext = _images.IMAGE_EXT.get(mime) or (
+        mime.split("/", 1)[1] if "/" in mime else "bin"
+    )
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label) or "mcp"
+    dest = _images.fresh_upload_path(
+        Path.cwd(), f"{safe}-{n}.{ext}", subdir=_images.MCP_IMAGE_DIR
+    )
+    dest.write_bytes(data)
+    try:
+        ref = _images.make_ref(dest)
+    except ValueError:
+        from agent_cli.tools.base import display_path
+
+        note = (
+            f"(image #{n}: {mime or 'unknown type'}, {len(data):,} bytes — saved to "
+            f"{display_path(dest)}; not a PNG/JPEG/GIF/WebP so it cannot be shown)"
+        )
+        return note, None
+    text = (
+        f"{ref.placeholder}\n{ref.mime}, {ref.bytes:,} bytes — saved to {ref.path}; "
+        "the image is attached to this result."
+    )
+    return text, ref.to_dict()
 
 
 def register_mcp_tools(

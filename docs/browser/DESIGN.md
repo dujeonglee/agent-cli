@@ -32,6 +32,7 @@
 | `snapshot` | `ref?`, `depth?` | 페이지(또는 `ref` 아래)의 접근성 트리 | 트리 텍스트, 요소마다 `[ref=e12]` |
 | `find` | `text` 또는 `regex` | 일치하는 노드만 | 일치 노드 + 조상 경로 (MCP `browser_find` 와 같은 모양) |
 | `text` | `ref?` | 읽을 글만 (본문) | `fetch` 와 같은 마크다운풍 텍스트 |
+| `screenshot` | `full_page?` | 뷰포트(또는 전체 문서)를 PNG 로 저장 (v10.61.0, docs/vision/DESIGN.md) | 자리표시 줄 + 파일 정보, `images=[ref]` — 모델이 보면 이미지로 |
 | `click` | `ref` | 클릭 | 한 줄 결과; 페이지가 바뀌었으면(URL·제목) 새 스냅샷 |
 | `type` | `ref`, `text`, `submit?` | 입력 (+Enter) | 위와 같음 |
 | `select` | `ref`, `value` | 드롭다운 선택 | 한 줄 |

@@ -3747,3 +3747,22 @@ class TestImagesOnCards:
         by_event = {e: d for e, d in r._event_buffer}
         assert by_event["user_message"]["images"] == [self.REF]
         assert by_event["observation"]["images"] == [self.REF]
+
+    def test_agent_message_carries_images(self):
+        """v10.61.0: 에이전트 창의 수신 메시지도 썸네일 — 없으면 키도 없다."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.agent_message(
+            key="agt-1",
+            direction="in",
+            author="user:dj",
+            text="see",
+            seq=1,
+            images=[self.REF],
+        )
+        _, data = conn.queue.get(timeout=0.5)
+        assert data["images"] == [self.REF]
+        r.agent_message(key="agt-1", direction="in", author="user:dj", text="x", seq=2)
+        _, data = conn.queue.get(timeout=0.5)
+        assert "images" not in data

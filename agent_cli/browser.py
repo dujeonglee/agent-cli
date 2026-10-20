@@ -718,6 +718,18 @@ class BrowserSession:
 
         return self._call(go)
 
+    def screenshot(self, path: str, *, full_page: bool = False) -> str:
+        """페이지를 PNG 로 ``path`` 에 저장하고 머리 한 줄을 돌려준다 (v10.61.0,
+        docs/vision/DESIGN.md §5). 보기(이미지 조각)는 도구 층이 붙인다 —
+        여기서는 파일만. 뷰포트가 기본, ``full_page`` 면 문서 전체."""
+
+        def go():
+            page = self._need_page()
+            page.screenshot(path=path, full_page=full_page)
+            return f"[screenshot of {page.url}{' (full page)' if full_page else ''}]"
+
+        return self._call(go)
+
     def text(self, ref: str = "") -> str:
         def go():
             page = self._need_page()

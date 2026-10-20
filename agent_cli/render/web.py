@@ -900,9 +900,14 @@ class WebRenderer(Renderer):
         instance_name: str = "",
         fallback: bool = False,
         absorbed_into: int | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서).
+
+        ``images`` (v10.61.0, additive): 사람이 창에서 붙인 이미지 참조 — ⏳
+        대기 줄·런 머리의 썸네일. ``conversation.jsonl`` 에 그대로 남아 resume
+        재생(`_replay_conversation`)도 같은 값을 싣는다.
 
         ``ts`` (5.13): resume 재생 시 원래 발생 시각을 넘겨 카드가 부활
         순간이 아닌 실제 대화 시각을 보이게 한다 (main 의 ``_replay_ts``
@@ -930,6 +935,8 @@ class WebRenderer(Renderer):
             data["fallback"] = True
         if absorbed_into is not None:
             data["absorbed_into"] = absorbed_into
+        if images:
+            data["images"] = list(images)
         self._emit("agent_msg", data, persistent=True)
 
     def clear_agent_conversation(self, key: str) -> None:

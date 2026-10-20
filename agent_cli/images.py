@@ -38,6 +38,17 @@ IMAGE_MAX_BYTES = 5_000_000
 #: 워크스페이스 밖 파일을 들여오는 자리 (세션 재개 때도 남아야 하므로
 #: 세션 디렉토리가 아니라 tmp — 사용자 결정).
 UPLOAD_DIR = ".agent-cli/tmp/uploads"
+#: browser `screenshot` 모드가 PNG 를 두는 자리 (v10.61.0).
+SCREENSHOT_DIR = ".agent-cli/tmp/screenshots"
+#: MCP 도구가 돌려준 이미지 조각을 파일로 두는 자리 (v10.61.0).
+MCP_IMAGE_DIR = ".agent-cli/tmp/mcp"
+#: mime → 파일 확장자 (저장 이름용).
+IMAGE_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
 #: 두 공급자가 받는 형식 — 매직 바이트로 판정한다 (확장자는 믿지 않는다).
 IMAGE_MIMES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 
@@ -193,11 +204,13 @@ def stage_upload(src: str | Path, workspace: Path | None = None) -> ImageRef:
     return make_ref(dest)
 
 
-def fresh_upload_path(workspace: Path, name: str) -> Path:
-    """``<workspace>/.agent-cli/tmp/uploads/<epoch>-<name>`` — 비어 있는 새
-    자리(디렉토리는 만든다). CLI ``--image`` 복사와 웹 업로드(v10.60.0)가 같은
-    규칙으로 이름을 짓는다; ``name`` 은 호출자가 한 조각(경로 없음)으로 준다."""
-    dest_dir = workspace / UPLOAD_DIR
+def fresh_upload_path(workspace: Path, name: str, *, subdir: str = UPLOAD_DIR) -> Path:
+    """``<workspace>/<subdir>/<epoch>-<name>`` — 비어 있는 새 자리(디렉토리는
+    만든다). CLI ``--image`` 복사와 웹 업로드(v10.60.0)는 ``UPLOAD_DIR``,
+    browser 스크린샷은 ``SCREENSHOT_DIR``, MCP 이미지는 ``MCP_IMAGE_DIR``
+    (v10.61.0) — 전부 같은 규칙으로 이름을 짓는다; ``name`` 은 호출자가 한
+    조각(경로 없음)으로 준다."""
+    dest_dir = workspace / subdir
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{int(time.time())}-{name}"
     n = 1
