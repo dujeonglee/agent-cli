@@ -1,6 +1,6 @@
 # 이미지 입력 (vision) — 설계
 
-> 상태: **P1 출시 (v10.59.0)** · **P2 웹 출시 (v10.60.0, 2026-10-21)** — 두 공급자·`read_file`·CLI `--image`·능력 프로브·토큰·살아 있는 수 상한·재개 + 웹 붙여넣기·끌어놓기·📎·썸네일·재생. P3(screenshot·MCP·축소 실측·에이전트 채널 이미지)는 §8. §9 의 결정은 2026-10-21 에 사용자가 내렸다 — §11.
+> 상태: **P1 출시 (v10.59.0)** · **P2 웹 출시 (v10.60.0)** · **P3 출시 (v10.61.0, 2026-10-21)** — 두 공급자·`read_file`·CLI `--image`·능력 프로브·토큰·살아 있는 수 상한·재개 + 웹 붙여넣기·끌어놓기·📎·썸네일·재생 + browser `screenshot`·MCP 이미지·에이전트 채널 이미지. 남은 것은 §8 의 실측(축소 기본값·keep-N).
 
 ## 1. 왜
 
@@ -141,11 +141,11 @@ tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 �
 |---|---|---|---|
 | **사용자 — CLI** | `agent-cli run "…" --image a.png --image b.png` (`_stage_query_images` → 큐 아이템 `images` → `RunRequest.images` → `run_loop(query_images=)`) | 질의 | P1 ✅ |
 | **사용자 — 웹** | 입력창에 붙여넣기(`paste` 의 `clipboardData.files`) · 끌어다 놓기 · 📎 버튼 → `POST /api/images/upload?name=<name>`(서버가 `.agent-cli/tmp/uploads/<epoch>-<name>` 에 두고 매직 바이트를 검사, `ImageRef` 반환) → 칩 → `POST /api/input {"kind":"chat","content":…,"images":[path]}`(서버가 참조를 다시 만든다). 이미지만 있는 메시지도 된다. 런 시작 에코·턴 경계 주입 둘 다 `images` 를 싣는다 | 질의 | P2 ✅ v10.60.0 |
-| **사용자 — 웹, 에이전트 채널** | `POST /api/agent/{key}/input` 같은 모양. 상주 에이전트의 inbox 항목은 메일 **글**(`agents_live.py` 워커가 관찰로 배달)이지 user 레코드가 아니라 관찰 `images` 경로를 메일에 뚫어야 한다 — P2 에서는 글만 받고 이미지가 붙어 있으면 보내지 않고 한 줄 안내 | 질의 | P3 |
+| **사용자 — 웹, 에이전트 채널** | `POST /api/agent/{key}/input {"content":…,"images":[path]}` — 같은 `image_refs` 검증 → `registry.request(images=)` → inbox 항목 `images` → `_run_message(query_images=)` → `run_subagent_message(query_images=)` → 런의 첫 user 레코드. 🤝 창의 `agent_msg`(in) 와 `conversation.jsonl` 에도 실려 ⏳ 대기 줄·런 머리 썸네일, resume 재생. 답(`answer_id`)에는 안 붙는다(400) | 질의 | P3 ✅ v10.61.0 |
 | **모델 — `read_file`** | 경로의 매직 바이트가 이미지면 글 대신 `images=[ref]`, `output` 첫 줄은 자리표시 `[image: a.png (1280×720)]`, 둘째 줄 `image/png, 184,302 bytes — attached` | 관찰 | P1 ✅ |
-| **모델 — `browser`** | `mode: "screenshot"` → `.agent-cli/tmp/screenshots/<n>.png` 저장 + `images` | 관찰 | P3 |
+| **모델 — `browser`** | `mode: "screenshot"` {`full_page?`} → `BrowserSession.screenshot(path)`(`page.screenshot`) → `.agent-cli/tmp/screenshots/<epoch>-shot.png` + `images=[ref]`; 출력은 `read_file` 과 같은 모양(자리표시 줄 + 파일 정보) | 관찰 | P3 ✅ v10.61.0 |
 | **모델 — fetch** | 이미 `downloads/` 에 저장 — 그다음 `read_file` 로 본다. 변경 없음 | — | — |
-| **MCP 도구** | `adapter.py:116` 이 지금 base64 를 **글로** 넣는다(사실상 결함) → 파일로 쓰고 `images` | 관찰 | P3 |
+| **MCP 도구** | `adapter._extract_mcp_result` 가 `type=="image"` 조각을 base64 디코드해 `.agent-cli/tmp/mcp/<epoch>-<server>-<tool>-<n>.<ext>` 로 두고 자리표시 줄 + `images`; 깨진 base64 는 사유 한 줄, 못 보는 형식(svg 등)은 저장만. 종전엔 base64 가 글로 들어갔다 | 관찰 | P3 ✅ v10.61.0 |
 
 - `read_file` 을 쓰는 이유: 모델이 지금도 PNG 에 `read_file` 을 부른다(실패 관찰이
   남아 있다). 새 도구 이름을 가르치는 것보다 있던 길을 넓히는 게 싸다. 이미지엔
@@ -184,10 +184,37 @@ tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 �
 |---|---|---|
 | **P1 핵심 ✅ v10.59.0** | `ImageRef`·레코드 `images`·`ToolResult.images` / 두 provider `_expand_images` / 토큰 추정·`request_bytes` 분리 / 압축 자리표시 / `read_file` 이미지 분기 / `supports_vision`(models.json 키·프로브·마법사) / CLI `--image` / minimal 한 줄 / 재개(파일 없음·해시) | Qwen(openai)·Claude(anthropic) 양쪽에서 `run --image` 로 캡처 질문 정답, native_fc·json_fc 둘 다, 압축 뒤 재개 정상, 텍스트 모델에서 거절 문구 |
 | **P2 웹 ✅ v10.60.0** | 붙여넣기·끌어놓기·📎, `/api/images/upload`·`/api/images/support`, `/api/input images`, `/api/workspace/file` 서빙, 썸네일(사용자·관찰), 재생, 주입 메시지 이미지, 못 보는 모델 안내 | 헤드리스 크롬 테스트 `tests/browser/test_image_attach.py` 3건 통과(첨부→큐 왕복, 썸네일 실제 로드, 📎 숨김) |
-| **P3 확장** | browser `screenshot`, MCP 이미지, 에이전트 채널 이미지(메일 경로), 살아 있는 수 상한·축소 기본값 실측 | A/B 재생 |
+| **P3 확장 ✅ v10.61.0** | browser `screenshot`, MCP 이미지, 에이전트 채널 이미지 | 유닛(가짜 페이지·mcp.types·가짜 러너) + 실브라우저 `test_screenshot_writes_a_real_png` |
+| **P4 실측** | 살아 있는 수 상한·축소 기본값 실측(아래 측정 계획) | A/B 재생 |
 
 측정(P1 뒤): 과제 4종(캡처 속 오류 읽기 · 표 사진 → 숫자 · 두 화면 비교 · 도면 설명)
 × 3회 × Qwen, 축소 단계별 판독률, 추정 토큰 대 서버 실측 오차.
+
+### 8.1 축소 단계별 판독률 — 실측 (2026-10-21, omlx Qwen3.6-35B-A3B-8bit, thinking off, 3회)
+
+합성 1920×1080 화면 4종(Menlo 12~14px 글자): 터미널 오류(코드 `E4471`·`router.py:218`),
+표(Q3 Revenue), 두 설정 패널 비교(cache enabled/disabled), 상자 도면(화살표 라벨 `retry 3x`).
+공급자 경계와 같은 축소 코드(`images._encode_bytes`)로 긴 변을 바꿔 보냈다. 스크립트
+scratchpad `vision/measure/measure.py`.
+
+| 긴 변 | 크기 | prompt 토큰 | 오류 | 표 | 비교 | 도면 |
+|---|---|---|---|---|---|---|
+| 원본 | 1920×1080 | 2,071 | 3/3 | 3/3 | 3/3 | 3/3 |
+| 1568 | 1568×882 | 1,403 | 3/3 | 3/3 | 3/3 | 3/3 |
+| 1280 | 1280×720 | 911 | 3/3 | 3/3 | 3/3 | 3/3 |
+| 1024 | 1024×576 | 607 | **1/3** | 3/3 | 3/3 | 3/3 |
+| 768 | 768×432 | 367 | **0/3** | 3/3 | 3/3 | 3/3 |
+
+- 토큰은 픽셀에 정확히 비례(≈ 1,000 px/token, §4.3 상수 그대로). 1568 은 원본 대비 −32%,
+  1280 은 −56%.
+- 깨지는 것은 **작은 글자**뿐이다: 1024 부터 `E4471` 을 `4471`·`E4871`·`4041` 로 읽는다.
+  표·비교·도면은 768 에서도 정확하다.
+- 기본값 2048 은 FHD 캡처를 원본 그대로 보낸다. 1568 로 내리면 이 과제들에서는 손실 없이
+  토큰 1/3 을 아낀다. 1280 도 여기서는 손실이 없지만 §1 의 0층 실측(다른 캡처, 60px 글자
+  오독)과 함께 보면 여유가 없다. **결정은 사용자 몫** — 바꾸려면 `IMAGE_MAX_EDGE_DEFAULT`
+  한 상수다.
+- keep-N(6)은 비용만 셈했다: 1280×720 여섯 장 ≈ 5.5K 토큰/요청, FHD 원본 여섯 장 ≈ 12.4K.
+  회상 손실 측정은 다턴 과제가 필요해 하지 않았다.
 
 ## 9. 결정 (2026-10-21, 사용자)
 
@@ -221,5 +248,6 @@ tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 �
 
 | 버전 | 내용 |
 |---|---|
+| v10.61.0 | P3: browser `screenshot` 모드(`BrowserSession.screenshot`, `SCREENSHOT_DIR`) · MCP 이미지 조각 → 파일 + 참조(`_save_mcp_image`, `MCP_IMAGE_DIR`, `IMAGE_EXT`) · 에이전트 채널 이미지(`/api/agent/{key}/input images` → `request(images=)` → inbox → `run_subagent_message(query_images=)`; `agent_msg`·`conversation.jsonl` 에 `images`, 프런트 ⏳ 줄·런 머리 썸네일) · `fresh_upload_path(subdir=)`. 실측(축소·keep-N)은 P4 로 남긴다. |
 | v10.60.0 | P2 웹: `POST /api/images/upload`(공용 스트리밍 `_stream_body_to`, `images.fresh_upload_path`, 매직 바이트 검사) · `GET /api/images/support`(`vision_known` — 프로브 없음) · `GET /api/workspace/file`(이미지만) · `/api/input` chat `images: [path]` → `WebServer.image_refs` 재검증 · 큐→`RunRequest`→런 시작 에코와 턴 경계 주입(`_inject_queued_messages`) 둘 다 `images` · 렌더러 ABC `observation(images=)`/`push_user_message(images=)` · web 페이로드·재생 · 프런트 📎/붙여넣기/끌어놓기 → 칩 → 보내기, 사용자·관찰 썸네일, 못 보는 모델이면 📎 숨김(+ 웹 런 시작 `status` 한 줄) · minimal 주입 에코 `🖼` 줄. 에이전트 채널 이미지는 P3 로 미룸(메일 경로). |
 | v10.59.0 | P1: `images.py`(참조·축소·공급자 경계 `expand`·프로브 이미지), `supports_vision` + `vision_support` 프로브, OpenAI `image_url`/Anthropic `image` 블록, `read_file` 이미지 분기, `ToolResult.images`, 관찰·질의 레코드 `images`, native_fc 는 `tool` 뒤 user 메시지, 토큰 추정·재조정, keep-N, `run --image`, minimal `🖼` 줄, 마법사 질문, 내장 모델 둘 `supports_vision: true`, Pillow 필수. 실측(§8 측정 계획)은 출시 뒤 과제. |

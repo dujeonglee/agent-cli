@@ -21,6 +21,7 @@ MODES = (
     "snapshot",
     "find",
     "text",
+    "screenshot",
     "click",
     "type",
     "select",
@@ -52,7 +53,10 @@ class BrowserTool(Tool):
         "{key}. 'snapshot' {ref?, depth?} re-reads the page or one landmark; "
         "'find' {text | regex} returns only the matching nodes with their path; "
         "'text' {ref?} returns the readable text of the page or an element — use "
-        "it for articles and long content, snapshots cut long text. 'back', "
+        "it for articles and long content, snapshots cut long text. 'screenshot' "
+        "{full_page?} saves a PNG of the viewport (or the whole page) and shows "
+        "it to you if the model can view images — for layout, charts and "
+        "rendered figures the tree cannot describe. 'back', "
         "'close'. Refs stay valid until the next page load; when an action "
         "changes the page the result already includes the new snapshot (cut to "
         "the depth that fits when the page is big — the hidden part is still "
@@ -105,6 +109,10 @@ class BrowserTool(Tool):
                 "type": "integer",
                 "description": "snapshot: keep only nodes up to this depth below the root",
             },
+            "full_page": {
+                "type": "boolean",
+                "description": "screenshot: capture the whole scrollable page instead of the viewport (default false)",
+            },
         },
         "required": ["mode"],
     }
@@ -146,6 +154,8 @@ class BrowserTool(Tool):
         # 있으면(0) 예산도 없다.
         budget = int((ctx.oversized_cap if ctx else 0) * AUTO_SNAPSHOT_SHARE)
         try:
+            if mode == "screenshot":
+                return self._screenshot(session, bool(args.get("full_page", False)))
             out = self._dispatch(session, mode, args, budget)
         except BrowserError as e:
             return ToolResult(False, error=f"browser: {e}")
@@ -153,6 +163,29 @@ class BrowserTool(Tool):
             first = (str(e).strip().splitlines() or [type(e).__name__])[0]
             return ToolResult(False, error=f"browser: {type(e).__name__}: {first}")
         return ToolResult(True, output=out)
+
+    @staticmethod
+    def _screenshot(session, full_page: bool) -> ToolResult:
+        """PNG 를 ``.agent-cli/tmp/screenshots/<epoch>-shot.png`` 에 두고 결과에
+        이미지 참조를 싣는다 (v10.61.0) — `read_file` 의 이미지 분기와 같은 모양:
+        첫 줄 자리표시, 둘째 줄 파일 정보, ``images=[ref]``. 못 보는 모델에는
+        공급자 경계가 사유를 적고, 파일은 그대로 남아 경로로 쓸 수 있다."""
+        from pathlib import Path
+
+        from agent_cli import images as _images
+
+        dest = _images.fresh_upload_path(
+            Path.cwd(), "shot.png", subdir=_images.SCREENSHOT_DIR
+        )
+        header = session.screenshot(str(dest), full_page=full_page)
+        ref = _images.make_ref(dest)
+        info = (
+            f"{header} — {ref.mime}, {ref.bytes:,} bytes, saved to {ref.path}; "
+            "the image is attached to this result."
+        )
+        return ToolResult(
+            True, output=f"{ref.placeholder}\n{info}", images=[ref.to_dict()]
+        )
 
     @staticmethod
     def _dispatch(session, mode: str, args: dict, budget: int = 0) -> str:

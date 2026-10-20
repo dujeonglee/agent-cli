@@ -3140,10 +3140,11 @@ class TestTeammateEndpoints:
             self.requests = []
             self.killed = []
 
-        def request(self, key, message, *, author="main"):
+        def request(self, key, message, *, author="main", images=None):
             if key == "agt-missing":
                 return f"unknown teammate '{key}'"
             self.requests.append((key, message, author))
+            self.images = images
             return ""
 
         def kill(self, key):
@@ -3513,3 +3514,44 @@ class TestImageSupportEndpoint:
             }
         finally:
             caps_mod._vision_probed.pop(key, None)
+
+
+class TestAgentInputImages:
+    """`/api/agent/{key}/input` 의 `images` (v10.61.0) — main 과 같은 검증,
+    새 일감에만."""
+
+    def test_images_reach_the_registry_request(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "a.png").write_bytes(_png_bytes())
+        reg = TestTeammateEndpoints._FakeRegistry()
+        server.agent_registry = reg
+        r = client.post(
+            f"/api/agent/agt-1/input?token={server.token}",
+            json={"content": "", "images": [str(tmp_path / "a.png")]},
+        )
+        assert r.status_code == 200, r.text
+        assert reg.requests[-1][:2] == ("agt-1", "")
+        assert reg.images[0]["mime"] == "image/png"
+
+    def test_bad_image_is_400_and_answers_take_none(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        (tmp_path / "a.png").write_bytes(_png_bytes())
+        reg = TestTeammateEndpoints._FakeRegistry()
+        server.agent_registry = reg
+        r = client.post(
+            f"/api/agent/agt-1/input?token={server.token}",
+            json={"content": "x", "images": ["missing.png"]},
+        )
+        assert r.status_code == 400
+        r = client.post(
+            f"/api/agent/agt-1/input?token={server.token}",
+            json={
+                "content": "x",
+                "answer_id": "q-1",
+                "images": [str(tmp_path / "a.png")],
+            },
+        )
+        assert r.status_code == 400 and "answer" in r.json()["detail"]
+        assert reg.requests == []

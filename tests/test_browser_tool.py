@@ -347,6 +347,13 @@ class FakePage:
     def on(self, event, handler):
         self.handlers[event] = handler
 
+    def screenshot(self, *, path, full_page=False):
+        """v10.61.0 — 진짜 PNG 를 쓴다(도구가 크기를 읽고 참조를 만든다)."""
+        from PIL import Image
+
+        self.actions.append(("screenshot", full_page))
+        Image.new("RGB", (320, 200), (0, 0, 255)).save(path, format="PNG")
+
 
 class FakeContext:
     def __init__(self, browser, storage_state):
@@ -848,6 +855,7 @@ class TestToolSchema:
             "value",
             "key",
             "depth",
+            "full_page",
         }
 
     @pytest.mark.parametrize(
@@ -1065,3 +1073,40 @@ class TestWindowClosed:
             assert len(launches) == 1 and "[browser]" not in s.snapshot()
         finally:
             s.close()
+
+
+class TestScreenshot:
+    """`screenshot` 모드 (v10.61.0, docs/vision/DESIGN.md §5): PNG 를
+    `.agent-cli/tmp/screenshots/` 에 두고 결과에 이미지 참조를 싣는다."""
+
+    def test_schema_and_validation(self):
+        t = TOOLS["browser"]
+        assert "screenshot" in MODES
+        assert t.parameters["properties"]["full_page"]["type"] == "boolean"
+        assert t.validate({"mode": "screenshot"}) is None
+        assert "screenshot" in t.description
+
+    def test_saves_png_and_attaches_ref(self, monkeypatch, fake, tmp_path):
+        session, page = fake
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(B, "get_browser", lambda create=False: session)
+        t = TOOLS["browser"]
+        t.run({"mode": "open", "url": "http://shop.test/"})
+        r = t.run({"mode": "screenshot"})
+        assert r.success, r.error
+        files = list((tmp_path / ".agent-cli" / "tmp" / "screenshots").iterdir())
+        assert len(files) == 1 and files[0].name.endswith("-shot.png")
+        ref = r.images[0]
+        assert (ref["width"], ref["height"], ref["mime"]) == (320, 200, "image/png")
+        assert r.output.splitlines()[0] == f"[image: {ref['path']} (320×200)]"
+        assert "[screenshot of http://shop.test/]" in r.output
+        assert "attached" in r.output
+        assert ("screenshot", False) in page.actions
+        r2 = t.run({"mode": "screenshot", "full_page": True})
+        assert r2.success and "(full page)" in r2.output
+        assert ("screenshot", True) in page.actions
+
+    def test_before_open_is_an_observation(self, monkeypatch):
+        monkeypatch.setattr(B, "_SESSION", None)
+        r = TOOLS["browser"].run({"mode": "screenshot"})
+        assert not r.success and "no page is open" in r.error

@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -4414,3 +4415,59 @@ class TestRosterShowsTheAgentLimit:
         assert build_live_agents_section(_Reg(), include_state=True).startswith(
             "## Live Agents\n"
         )
+
+
+class TestRequestImages:
+    """사람이 창에서 붙인 이미지 (v10.61.0) — inbox 항목·🤝 창 메시지·런의
+    시작 레코드까지 같은 참조가 간다."""
+
+    REF: ClassVar[dict] = {
+        "path": "a.png",
+        "mime": "image/png",
+        "width": 8,
+        "height": 4,
+        "bytes": 1,
+        "sha256": "",
+    }
+
+    def test_images_ride_the_item_the_window_and_the_runner(self, tmp_path, renderer):
+        seen = []
+
+        def runner(query, ctx, **kwargs):
+            seen.append((query, kwargs.get("query_images")))
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn(name="alpha")
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        with renderer.lock:
+            renderer.calls.clear()
+        assert reg.request(key, "see this", author="user:dj", images=[self.REF]) == ""
+        assert wait_until(lambda: len(seen) == 1)
+        assert seen[0] == ("[user:dj]: see this", [self.REF])
+        ins = [
+            c[1] for c in renderer.named("agent_message") if c[1]["direction"] == "in"
+        ]
+        assert ins and ins[0]["images"] == [self.REF]
+        conv = (tmp_path / "agents" / key / "conversation.jsonl").read_text()
+        assert '"images"' in conv  # resume 재생 소스에도 남는다
+        reg.shutdown_all()
+
+    def test_without_images_nothing_changes(self, tmp_path, renderer):
+        seen = []
+
+        def runner(query, ctx, **kwargs):
+            seen.append(kwargs.get("query_images"))
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn(name="alpha")
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "plain")
+        assert wait_until(lambda: len(seen) == 1)
+        assert seen[0] == []
+        ins = [
+            c[1] for c in renderer.named("agent_message") if c[1]["direction"] == "in"
+        ]
+        assert ins and "images" not in ins[-1]
+        reg.shutdown_all()

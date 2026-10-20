@@ -2377,24 +2377,22 @@
     const text = $input.value.trim();
     const images = attachReadyPaths();
     if (!text && !images.length) return;
+    if (attachBusy()) {
+      attachMessage("아직 올리는 중입니다");
+      return;
+    }
     if (ovActiveChannel !== "main") {
-      // 에이전트 채널은 글만 받는다 (v10.60.0 — 이미지는 main 채널, 설계 §5):
-      // 상주 에이전트의 inbox 는 메일 글이지 user 레코드가 아니다.
-      if (images.length) {
-        attachMessage("이미지는 main 채널에만 보낼 수 있습니다");
-        return;
-      }
-      if (!text) return;
+      // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
+      // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
+      const agentBody = { content: text, conn_id: myConnId };
+      if (images.length) agentBody.images = images;
       fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text, conn_id: myConnId }),
+        body: JSON.stringify(agentBody),
       });
       $input.value = "";
-      return;
-    }
-    if (attachBusy()) {
-      attachMessage("아직 올리는 중입니다");
+      attachClear();
       return;
     }
     const body = { kind: "chat", content: text };
@@ -3360,8 +3358,10 @@
     var first = firstLineOf(text);
     it.appendChild(el("span", ["s"], first));
     it.appendChild(el("span", ["who"], peerLabel(d.author)));
-    if (text.trim() !== first) {
+    var imgs = Array.isArray(d.images) ? d.images : [];
+    if (text.trim() !== first || imgs.length) {
       var body = elHtml("div", ["run-item-body", "md"], escapeAndFormat(text));
+      if (imgs.length) body.appendChild(thumbStrip(imgs)); // 창에서 붙인 이미지 (v10.61.0)
       body.hidden = true;
       it.appendChild(body);
       it.classList.add("can");
@@ -3477,8 +3477,9 @@
       }
       var card = el("div", ["card", "card-queued"]);
       card.dataset.seq = String(seq);
+      var qImgs = Array.isArray(d.images) && d.images.length ? thumbStrip(d.images) : null;
       card.appendChild(
-        makeRow("⏳", "대기", firstLineOf(d.text), null, ["queued"],
+        makeRow("⏳", "대기", firstLineOf(d.text), qImgs, ["queued"],
                 el("span", ["peer"], peerLabel(d.author)))
       );
       // `d.task_id` 는 **보낸 쪽**의 런이다(peer 워커 스레드의 `_emit` 이

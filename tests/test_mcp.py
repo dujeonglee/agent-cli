@@ -938,3 +938,88 @@ class TestMcpToolName:
             del TOOLS[tool.name]
         assert "mcp__jira__issues_search" in names
         assert all(self.LEGAL.fullmatch(n) for n in names)
+
+
+class TestMcpImageContent:
+    """이미지 조각은 파일로 두고 참조를 싣는다 (v10.61.0) — 종전엔 base64 가
+    글로 들어가 수만 토큰을 먹고 모델은 보지도 못했다."""
+
+    @staticmethod
+    def _png_b64(size=(48, 24)) -> str:
+        import base64
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", size, (0, 160, 0)).save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    def test_image_part_becomes_a_file_and_a_ref(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from mcp.types import CallToolResult, ImageContent, TextContent
+
+        from agent_cli.mcp.adapter import McpTool
+
+        monkeypatch.chdir(tmp_path)
+        manager = MagicMock()
+        manager.call_tool.return_value = CallToolResult(
+            content=[
+                TextContent(type="text", text="chart below"),
+                ImageContent(type="image", data=self._png_b64(), mimeType="image/png"),
+            ]
+        )
+        tool = McpTool(manager, "plots", "render", "Render", {})
+        r = tool.run({"q": 1})
+        assert r.success
+        files = list((tmp_path / ".agent-cli" / "tmp" / "mcp").iterdir())
+        assert len(files) == 1 and files[0].name.endswith("-plots-render-1.png")
+        ref = r.images[0]
+        assert (ref["width"], ref["height"], ref["mime"]) == (48, 24, "image/png")
+        lines = r.output.splitlines()
+        assert lines[0] == "chart below"
+        assert lines[1] == f"[image: {ref['path']} (48×24)]"
+        assert "saved to" in lines[2] and "attached" in lines[2]
+        assert self._png_b64() not in r.output  # base64 는 글에 없다
+
+    def test_bad_base64_is_a_note_not_a_crash(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from mcp.types import CallToolResult, ImageContent
+
+        from agent_cli.mcp.adapter import McpTool
+
+        monkeypatch.chdir(tmp_path)
+        manager = MagicMock()
+        manager.call_tool.return_value = CallToolResult(
+            content=[
+                ImageContent(type="image", data="%%%not-b64", mimeType="image/png")
+            ]
+        )
+        r = McpTool(manager, "s", "t", "T", {}).run({})
+        assert r.success and r.images == []
+        assert "base64 data was invalid" in r.output
+        assert not (tmp_path / ".agent-cli").exists()
+
+    def test_unviewable_image_type_is_saved_but_not_attached(
+        self, tmp_path, monkeypatch
+    ):
+        import base64
+        from unittest.mock import MagicMock
+
+        from mcp.types import CallToolResult, ImageContent
+
+        from agent_cli.mcp.adapter import McpTool
+
+        monkeypatch.chdir(tmp_path)
+        svg = base64.b64encode(b"<svg xmlns='http://www.w3.org/2000/svg'/>").decode()
+        manager = MagicMock()
+        manager.call_tool.return_value = CallToolResult(
+            content=[ImageContent(type="image", data=svg, mimeType="image/svg+xml")]
+        )
+        r = McpTool(manager, "s", "t", "T", {}).run({})
+        assert r.success and r.images == []
+        assert "cannot be shown" in r.output and "saved to" in r.output
+        files = list((tmp_path / ".agent-cli" / "tmp" / "mcp").iterdir())
+        assert len(files) == 1 and files[0].suffix == ".svg+xml"

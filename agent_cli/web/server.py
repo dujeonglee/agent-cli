@@ -1275,13 +1275,22 @@ def create_app(server: WebServer) -> FastAPI:
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="invalid JSON body")
         content = body.get("content", "")
-        if not isinstance(content, str) or not content.strip():
+        if not isinstance(content, str):
+            raise HTTPException(status_code=400, detail="content must be a string")
+        # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`) — 새 일감에만
+        # 실린다(답은 글). 이미지만 있는 일감도 된다.
+        images = server.image_refs(body.get("images") or [])
+        if not content.strip() and not images:
             raise HTTPException(
                 status_code=400, detail="content must be a non-empty string"
             )
         nickname = server.renderer.nickname_for(body.get("conn_id")) or "user"
         answer_id = body.get("answer_id")
         if answer_id:
+            if images:
+                raise HTTPException(
+                    status_code=400, detail="an answer cannot carry images"
+                )
             # ❓ 트레이의 답 — 새 일감이 아니라 **특정 질문**에 짝짓는다
             # (비동기 ask/answer, docs/agent-ask/DESIGN.md §3.6). 주소가
             # 사람인 질문만 트레이에 뜨고, `user*` 는 하나의 주체라 어느
@@ -1292,7 +1301,9 @@ def create_app(server: WebServer) -> FastAPI:
             if error:
                 raise HTTPException(status_code=409, detail=error)
             return JSONResponse({"accepted": True, "answered": answer_id})
-        error = registry.request(key, content, author=f"user:{nickname}")
+        error = registry.request(
+            key, content, author=f"user:{nickname}", images=images or None
+        )
         if error:
             raise HTTPException(status_code=404, detail=error)
         return JSONResponse({"accepted": True})

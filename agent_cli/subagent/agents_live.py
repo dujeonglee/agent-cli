@@ -1635,8 +1635,13 @@ class AgentRegistry:
         question_id: str = "",
         answers: list | None = None,
         resumed: bool = False,
+        images: list[dict] | None = None,
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
+
+        ``images`` (v10.61.0): 사람이 창에서 붙인 이미지 참조(``ImageRef`` dict,
+        웹 `/api/agent/{key}/input` 의 ``images``) — inbox 항목과 🤝 창 메시지에
+        실리고 그 런의 시작 user 레코드 ``images`` 가 된다(docs/vision/DESIGN.md §5).
 
         ``answers`` (v9.24.5): 귀속 스냅샷을 호출자가 준다 — 재시작 뒤 끊긴
         런을 다시 넣을 때 원래 요청의 스냅샷을 잇기 위해. 없으면 종전대로
@@ -1703,6 +1708,8 @@ class AgentRegistry:
         }
         if resumed:
             item["resumed"] = True  # 재시작 계속하기 — 다시 끊겨도 또 감싸지 않는다
+        if images:
+            item["images"] = [dict(r) for r in images]
         if answers is not None:
             item["answers"] = list(answers)
         elif author == "main":
@@ -1733,6 +1740,8 @@ class AgentRegistry:
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
+        if images:
+            payload["images"] = [dict(r) for r in images]  # 창의 썸네일 (v10.61.0)
         get_renderer().agent_message(**payload)
         self._log_conversation(tm, payload)
         self._notify_roster()
@@ -2869,6 +2878,7 @@ class AgentRegistry:
             loop_result, duration = self._run_message(
                 tm,
                 query,
+                query_images=item.get("images") or None,
                 # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
                 query_request_id=item_ids.make(
                     item_ids.USER if human_item else item_ids.REPLY, seq
@@ -3015,6 +3025,9 @@ class AgentRegistry:
             loop_result, duration = self._run_message(
                 tm,
                 query,
+                # 배치의 이미지는 항목 순서대로 한 레코드에 (v10.61.0)
+                query_images=[r for it in items for r in (it.get("images") or [])]
+                or None,
                 user_requests=user_requests,
                 # 한 레코드에 여럿이 합쳐진다 — 첫 요청 id 로 찍는다(핀)
                 query_request_id=user_requests[0]["id"] if user_requests else "",
@@ -3059,9 +3072,18 @@ class AgentRegistry:
         self._close_run(tm, len(items))
 
     def _run_message(
-        self, tm: AgentInstance, query: str, *, user_requests=None, query_request_id=""
+        self,
+        tm: AgentInstance,
+        query: str,
+        *,
+        user_requests=None,
+        query_request_id="",
+        query_images: list[dict] | None = None,
     ):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.
+
+        ``query_images`` (v10.61.0): 시작 메시지의 이미지 참조 → 런의 첫 user
+        레코드 ``images``.
 
         ``user_requests`` (v9.22.0): 사람이 창에서 직접 시킨 요청들
         ``{id, author, text}`` — 루프의 장부(`LoopState.ledger`)에 오른다.
@@ -3109,6 +3131,7 @@ class AgentRegistry:
             peer_agents_section=peer_section,
             user_requests=list(user_requests or []),
             query_request_id=query_request_id,
+            query_images=list(query_images or []),
             # 세션 바인딩을 참조한다 — 모델 노브가 바뀌면 팀원의 다음 호출도 따라간다.
             # 프로파일이 모델을 고정한 팀원은 그 모델의 바인딩 복사본.
             binding=(
