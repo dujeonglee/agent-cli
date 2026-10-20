@@ -871,6 +871,31 @@ footer {
 /* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
 #send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
 
+/* ── 이미지 첨부 (v10.60.0, docs/vision/DESIGN.md §5·§7) ─────────────
+   입력창 왼쪽 📎, 그 위 대기 칩 줄. 끌어다 놓는 동안 입력줄 테두리가 켜진다. */
+#attach { padding: 8px 10px; font-size: 16px; align-self: flex-end; }
+#input-area.drop-over #input { border-color: var(--focus-ring); outline: 2px solid var(--user-time); }
+#attach-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+#attach-strip .attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 3px; border: 1px solid var(--border-2); border-radius: 6px;
+  background: var(--surface); font-size: 12px; color: var(--text-2);
+}
+#attach-strip .attach-chip img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+#attach-strip .attach-chip.uploading { opacity: .6; }
+#attach-strip .attach-chip .rm { cursor: pointer; padding: 0 4px; color: var(--muted); }
+#attach-strip .attach-chip .rm:hover { color: var(--text); }
+#attach-strip .attach-msg { font-size: 12px; color: var(--fail-soft-fg); }
+
+/* 카드의 썸네일 줄 — 사용자 말풍선 아래·관찰 본문 아래 같은 모양. 최대 높이
+   160px(설계 §7), 클릭하면 원본이 새 탭에. */
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.thumbs a { display: inline-flex; flex-direction: column; gap: 2px; text-decoration: none; color: inherit; }
+.thumbs img { max-height: 160px; max-width: 100%; border-radius: 6px; border: 1px solid var(--border-2); display: block; }
+.thumbs .cap { font-size: 11px; color: var(--muted); font-family: "Jetendard", ui-monospace, monospace; }
+.card-user .thumbs .cap { color: var(--on-accent); opacity: .8; }
+.obs-images > .obs-body { margin-bottom: 0; }
+
 /* Pending message queue (live) */
 #queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 .queue-item {

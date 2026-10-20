@@ -3678,3 +3678,72 @@ class TestRunBlockFields:
             key="agt-a", direction="out", author="agt-a", text="y", fallback=True
         )
         assert self._next(conn, "agent_msg")["fallback"] is True
+
+
+# ── 이미지 (v10.60.0, docs/vision/DESIGN.md §7) ────────────────────────
+
+
+class TestImagesOnCards:
+    """``push_user_message``·``observation`` 의 ``images`` 는 페이로드에 그대로
+    실리고(없으면 키도 없다), resume 재생은 레코드의 ``images`` 를 같은 자리에
+    되싣는다 — 라이브와 재생이 같은 카드를 그린다."""
+
+    REF: ClassVar[dict] = {
+        "path": "shot.png",
+        "mime": "image/png",
+        "width": 800,
+        "height": 400,
+        "bytes": 1234,
+        "sha256": "ab",
+    }
+
+    def test_user_message_carries_images(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.push_user_message("[dj]: look", author="dj", images=[self.REF])
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "user_message"
+        assert data["images"] == [self.REF]
+        r.push_user_message("plain")
+        _, data = conn.queue.get(timeout=0.5)
+        assert "images" not in data
+
+    def test_observation_carries_images(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.observation("[image: shot.png (800×400)]", 1, "read_file", images=[self.REF])
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "observation"
+        assert data["images"] == [self.REF]
+        r.observation("text", 1, "shell")
+        _, data = conn.queue.get(timeout=0.5)
+        assert "images" not in data
+
+    def test_replay_restores_images_on_both_records(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "user",
+                "content": "[dj]: look\n[image: shot.png (800×400)]",
+                "author": "dj",
+                "images": [self.REF],
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "read_file",
+                "success": True,
+                "content": "Observation: [image: shot.png (800×400)]",
+                "images": [self.REF],
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+        by_event = {e: d for e, d in r._event_buffer}
+        assert by_event["user_message"]["images"] == [self.REF]
+        assert by_event["observation"]["images"] == [self.REF]

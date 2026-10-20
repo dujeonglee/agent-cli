@@ -791,6 +791,7 @@ class AgentLoop:
                 break
             text = item.get("text") or ""
             author = item.get("nickname")
+            images = item.get("images") or None  # v10.60.0: 주입도 이미지를 싣는다
             labeled = f"[{author}]: {text}" if author else text
             # Echo the dequeued message as a conversation card BEFORE routing —
             # mirrors the worker's run-starter echo (CLI 기본은 no-op).
@@ -798,6 +799,7 @@ class AgentLoop:
                 labeled,
                 author=author or "",
                 hidx=getattr(self.ctx, "next_ordinal", None),
+                images=images,
             )
             if self.route_message is not None and self.route_message(text):
                 # Routed as a command — record the ask; ctx may have changed.
@@ -813,7 +815,7 @@ class AgentLoop:
                 rid = ""  # 합성 wake — 사람 발화가 아니다
             if rid:
                 self._state.ledger.add_request(rid, author or "", text)
-            self._add_user_message(text, author, request_id=rid)
+            self._add_user_message(text, author, request_id=rid, images=images)
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로

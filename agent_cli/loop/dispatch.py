@@ -1904,4 +1904,5 @@ def _append_observation(
             tool_name=tool_name,
             success=success,
             hidx=getattr(ctx, "last_ordinal", None),  # 더미 ctx(테스트)는 None
+            images=list(images) if images else None,
         )

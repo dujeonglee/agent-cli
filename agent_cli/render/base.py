@@ -472,11 +472,16 @@ class Renderer(ABC):
         turn: int,
         tool_name: str | None = None,
         success: bool = True,
+        images: list[dict] | None = None,
     ) -> None:
         """Tool result (observation).
 
         `success` is the authoritative outcome from `ToolResult.success`
-        and drives the ✓/✗ icon and `success`/`error` label."""
+        and drives the ✓/✗ icon and `success`/`error` label.
+
+        ``images`` (v10.60.0): the observation record's ``ImageRef`` dicts —
+        web draws thumbnails from them; CLI reads the placeholder lines in
+        ``content`` instead and ignores this."""
 
     @abstractmethod
     def final(self, content: str, turn: int, requests: list | None = None) -> None:
@@ -566,13 +571,19 @@ class Renderer(ABC):
         ``ctx_view`` 로 override."""
 
     def push_user_message(
-        self, content: str, author: str = "", hidx: int | None = None
+        self,
+        content: str,
+        author: str = "",
+        hidx: int | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         """Echo a user message into the conversation surface (v8.6.0 ABC
         승격 — 종전 web 전용+hasattr 게이트).
 
         ``hidx`` (v10.6.0): 이 메시지의 history 레코드 서수 — 챗의 모델 시점
         (압축 경계) 판정에 쓴다. 레코드가 없는 UI 전용 에코는 None.
+        ``images`` (v10.60.0): 메시지에 딸린 ``ImageRef`` dict — web 은 말풍선
+        아래 썸네일, CLI 는 무시(런 시작 질의는 `🖼` 줄을 호출자가 찍는다).
 
         Web 은 persistent ``user_message`` 이벤트로 override; CLI 는 no-op
         기본 — 사용자가 방금 타이핑한 내용을 터미널에 다시 찍을 이유가

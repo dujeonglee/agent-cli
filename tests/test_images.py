@@ -487,3 +487,96 @@ class TestCliStaging:
             10_000, 100, False, supports_vision=True
         )
         _require_vision(_Binding())  # 통과
+
+
+# ── P2 웹 (v10.60.0) — 공용 업로드 자리·주입·콘솔 줄 ────────────────────
+
+
+class TestFreshUploadPath:
+    def test_makes_the_dir_and_never_collides(self, tmp_path):
+        from agent_cli.images import UPLOAD_DIR, fresh_upload_path
+
+        a = fresh_upload_path(tmp_path, "shot.png")
+        assert a.parent == tmp_path / UPLOAD_DIR and a.parent.is_dir()
+        assert a.name.endswith("-shot.png")
+        a.write_bytes(b"x")
+        b = fresh_upload_path(tmp_path, "shot.png")
+        assert b != a and not b.exists()
+
+
+class TestInjectedMessageImages:
+    """턴 경계 주입(web 큐)도 런 시작 질의처럼 이미지를 싣는다."""
+
+    def test_injected_item_images_reach_record_and_echo(self):
+        from types import SimpleNamespace
+
+        from agent_cli import render
+
+        loop = _bare_loop()
+        loop.messages = []
+        loop.task_log = []
+        loop.route_message = None
+        loop._config = SimpleNamespace(agent_registry=None)
+        ref = ImageRef("cap.png", "image/png", 640, 480, 1, "").to_dict()
+        items = [{"id": "u-1", "nickname": "dj", "text": "see", "images": [ref]}]
+        loop.dequeue_user_message = lambda: items.pop(0) if items else None
+
+        class _Stub:
+            def __init__(self):
+                self.pushed: list = []
+
+            def push_user_message(self, content, author="", hidx=None, images=None):
+                self.pushed.append((content, author, images))
+
+            def set_run_authors(self, authors):
+                pass
+
+        stub = _Stub()
+        prev = render.get_renderer()
+        render.set_renderer(stub)
+        try:
+            loop._inject_queued_messages()
+        finally:
+            render.set_renderer(prev)
+        assert stub.pushed == [("[dj]: see", "dj", [ref])]
+        rec = loop.messages[-1]
+        assert rec["content"] == "[dj]: see\n[image: cap.png (640×480)]"
+        assert rec["images"] == [ref]
+
+
+class TestMinimalEchoImages:
+    def test_injected_echo_prints_an_image_line(self, capsys):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, width=200))
+        ref = ImageRef("cap.png", "image/png", 640, 480, 1, "").to_dict()
+        r.push_user_message("[dj]: see", author="dj", images=[ref])
+        out = buf.getvalue()
+        assert "📨 [dj]: see" in out
+        assert "🖼 cap.png (640×480)" in out
+
+
+class TestWebNoVisionNotice:
+    def test_vision_ok_uses_registered_value(self):
+        from agent_cli.main import _WEB_NO_VISION_NOTICE, _vision_ok
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        class _Provider:
+            @staticmethod
+            def capability_transport(base_url, model, api_key=""):
+                raise AssertionError("registered value must short-circuit the probe")
+
+        class _Binding:
+            capabilities = ModelCapabilities(10_000, 100, False, supports_vision=False)
+            provider = _Provider()
+            base_url = "http://x"
+            model = "m"
+            api_key = ""
+
+        assert _vision_ok(_Binding()) is False
+        assert "cannot view images" in _WEB_NO_VISION_NOTICE

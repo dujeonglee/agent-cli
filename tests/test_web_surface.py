@@ -50,7 +50,7 @@ class TestEcho:
         surface, renderer, *_ = parts
         surface.echo({"text": "hello", "nickname": "dj"}, wake=False)
         renderer.push_user_message.assert_called_once_with(
-            "[dj]: hello", author="dj", hidx=3
+            "[dj]: hello", author="dj", hidx=3, images=None
         )
 
     def test_wake_draws_nothing(self, parts):
@@ -104,3 +104,14 @@ class TestWebServerQueueContract:
         assert s.dequeue_blocking(timeout=0.01) is None
         s.enqueue("c", "hi")
         assert s.dequeue_blocking(timeout=None)["text"] == "hi"
+
+
+class TestEchoImages:
+    def test_queued_images_ride_on_the_bubble(self, parts):
+        """v10.60.0: 큐 아이템의 ``images`` 가 에코 카드의 썸네일이 된다."""
+        surface, renderer, *_ = parts
+        ref = {"path": "a.png", "width": 1, "height": 1}
+        surface.echo({"text": "look", "nickname": "dj", "images": [ref]}, wake=False)
+        renderer.push_user_message.assert_called_once_with(
+            "[dj]: look", author="dj", hidx=3, images=[ref]
+        )

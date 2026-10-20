@@ -1592,7 +1592,43 @@
    * 분기하면 **스냅샷 재생 순서에 종속**된다(`viewers` 가 늦게 오면 이미 그린
    * 카드들이 영영 안 바뀐다). 클래스 토글이면 나중에 온 뷰어 정보가 과거
    * 카드에도 소급된다. */
-  function renderUserMessage(content, ts, author, hidx) {
+  // ── 이미지 썸네일 (v10.60.0, docs/vision/DESIGN.md §7) ─────────────
+  // 사용자 말풍선·관찰 본문 아래 같은 줄. 원본은 `api/workspace/file?path=` —
+  // 워크스페이스 안 이미지만 서빙된다(서버가 매직 바이트로 거른다).
+  const IMAGE_PLACEHOLDER_RE = /^\[image: .+ \(\d+×\d+\)\]$/;
+  function imageUrl(path) {
+    return "api/workspace/file?path=" + encodeURIComponent(path);
+  }
+  function thumbStrip(images) {
+    const strip = el("div", ["thumbs"]);
+    images.forEach(function (ref) {
+      if (!ref || !ref.path) return;
+      const url = imageUrl(ref.path); // 상대 URL — <base href> 아래로 풀린다
+      const a = el("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      const img = el("img");
+      img.src = url;
+      img.alt = ref.path;
+      img.loading = "lazy";
+      a.appendChild(img);
+      a.appendChild(el("span", ["cap"], ref.path + " (" + ref.width + "×" + ref.height + ")"));
+      strip.appendChild(a);
+    });
+    return strip;
+  }
+  // 레코드의 자리표시 줄(`[image: path (W×H)]`)은 썸네일이 대신 말한다 — 재생
+  // 카드의 본문에서 뗀다(라이브 에코는 애초에 없다).
+  function stripImagePlaceholders(text) {
+    return text
+      .split("\n")
+      .filter(function (line) { return !IMAGE_PLACEHOLDER_RE.test(line); })
+      .join("\n")
+      .replace(/\n+$/, "");
+  }
+
+  function renderUserMessage(content, ts, author, hidx, images) {
     const card = el("div", ["card", "card-user"]);
     if (hidx != null) card.dataset.hidx = String(hidx);
     let body = content;
@@ -1600,10 +1636,16 @@
       const tag = "[" + author + "]: ";
       if (body.startsWith(tag)) body = body.slice(tag.length);
     }
+    const imgs = Array.isArray(images) ? images : [];
+    if (imgs.length) body = stripImagePlaceholders(body);
     const bubble = elHtml("div", ["bubble"], escapeAndFormat(body));
     if (author) bubble.insertBefore(el("span", ["who"], author), bubble.firstChild);
+    if (imgs.length) bubble.appendChild(thumbStrip(imgs));
     card.appendChild(bubble);
-    card._md = function () { return "**👤 " + (author || "사용자") + "**\n\n" + body; };
+    card._md = function () {
+      const lines = imgs.map(function (r) { return "[image: " + r.path + " (" + r.width + "×" + r.height + ")]"; });
+      return "**👤 " + (author || "사용자") + "**\n\n" + [body].concat(lines).filter(Boolean).join("\n");
+    };
     // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
     // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
     finishCard(card, { ts: ts, task_id: MAIN.task_id });
@@ -2124,10 +2166,18 @@
     // render it through the markdown pipeline like an assistant turn. Every
     // other tool's output (read_file hashlines, shell text, write/edit diffs)
     // is monospace/structured → keep the <pre> + diff colouring.
-    const body =
+    let body =
       tool === "agent"
         ? elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(content))
         : elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(content)));
+    // 이미지가 딸린 관찰 (v10.60.0, read_file 의 PNG 등): 본문 아래 썸네일.
+    // `makeRow` 가 접힘 클래스를 바깥 상자에 달므로 본문과 썸네일을 한 상자에.
+    if (Array.isArray(d.images) && d.images.length) {
+      const wrap = el("div", ["obs-images"]);
+      wrap.appendChild(body);
+      wrap.appendChild(thumbStrip(d.images));
+      body = wrap;
+    }
     // 실패도 **접어 둔다**(v10.19.0) — 펼쳐진 실패가 화면을 차지해 바로 옆의
     // 성공한 스텝을 가렸다(실측: 파일을 만든 카드를 못 찾음). 접힌 줄이 원인을
     // 말한다: 요약 칸이 원인 줄이고(`obsSummary`), 스텝 카드는 머리 아래에
@@ -2325,8 +2375,16 @@
   // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
   function submitChatOrPrompt() {
     const text = $input.value.trim();
-    if (!text) return;
+    const images = attachReadyPaths();
+    if (!text && !images.length) return;
     if (ovActiveChannel !== "main") {
+      // 에이전트 채널은 글만 받는다 (v10.60.0 — 이미지는 main 채널, 설계 §5):
+      // 상주 에이전트의 inbox 는 메일 글이지 user 레코드가 아니다.
+      if (images.length) {
+        attachMessage("이미지는 main 채널에만 보낼 수 있습니다");
+        return;
+      }
+      if (!text) return;
       fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2335,8 +2393,15 @@
       $input.value = "";
       return;
     }
-    postInput({ kind: "chat", content: text });
+    if (attachBusy()) {
+      attachMessage("아직 올리는 중입니다");
+      return;
+    }
+    const body = { kind: "chat", content: text };
+    if (images.length) body.images = images;
+    postInput(body);
     $input.value = "";
+    attachClear();
   }
 
   // main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
@@ -2445,6 +2510,149 @@
       submitChatOrPrompt(); // chat (queues if busy). Stop 은 별도 버튼.
     }
   });
+
+  // ── 이미지 첨부 (v10.60.0, docs/vision/DESIGN.md §5) ───────────────
+  // 세 입구(📎 · 붙여넣기 · 끌어놓기)가 한 함수(`attachFiles`)로 모인다. 파일은
+  // 고르는 즉시 `api/images/upload` 로 올라가 `.agent-cli/tmp/uploads/` 에
+  // 들어가고, 칩은 서버가 돌려준 참조(`path`·크기)를 든다. 보내기는 그 경로만
+  // `api/input` 의 `images` 에 싣는다 — 서버가 다시 검증해 참조를 만든다.
+  // 모델이 이미지를 못 보면(`api/images/support` = false) 📎 를 숨기고
+  // 붙여넣기·끌어놓기에 한 줄로 알린다. null(미확인)이면 보통처럼 받는다 —
+  // 첫 이미지 런이 값을 정하고, 런이 끝날 때마다 다시 묻는다.
+  const $attach = document.getElementById("attach");
+  const $attachInput = document.getElementById("attach-input");
+  const $attachStrip = document.getElementById("attach-strip");
+  const attachChips = []; // {chip, path, uploading}
+  let attachVision = null; // true | false | null(미확인)
+  let attachMsgTimer = null;
+
+  function attachRefreshVision() {
+    fetch("api/images/support")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) return;
+        attachVision = d.supported;
+        $attach.hidden = attachVision === false;
+      })
+      .catch(function () {});
+  }
+
+  function attachMessage(text) {
+    let m = $attachStrip.querySelector(".attach-msg");
+    if (!m) {
+      m = el("span", ["attach-msg"]);
+      $attachStrip.appendChild(m);
+    }
+    m.textContent = text;
+    $attachStrip.hidden = false;
+    clearTimeout(attachMsgTimer);
+    attachMsgTimer = setTimeout(function () {
+      m.remove();
+      attachSyncStrip();
+    }, 4000);
+  }
+
+  function attachSyncStrip() {
+    $attachStrip.hidden = !attachChips.length && !$attachStrip.querySelector(".attach-msg");
+  }
+
+  function attachReadyPaths() {
+    return attachChips.filter(function (c) { return !c.uploading && c.path; })
+      .map(function (c) { return c.path; });
+  }
+  function attachBusy() {
+    return attachChips.some(function (c) { return c.uploading; });
+  }
+  function attachClear() {
+    attachChips.splice(0).forEach(function (c) { c.chip.remove(); });
+    attachSyncStrip();
+  }
+
+  function attachFiles(files) {
+    const list = Array.prototype.filter.call(files || [], function (f) {
+      return f && /^image\/(png|jpeg|gif|webp)$/.test(f.type);
+    });
+    if (!list.length) return false;
+    if (attachVision === false) {
+      attachMessage("이 모델은 이미지를 못 봅니다 — 글로 설명해 주세요");
+      return true;
+    }
+    list.forEach(attachOne);
+    return true;
+  }
+
+  function attachOne(file) {
+    const chip = el("span", ["attach-chip", "uploading"]);
+    const img = el("img");
+    img.src = URL.createObjectURL(file);
+    img.alt = file.name;
+    chip.appendChild(img);
+    const label = el("span", [], file.name || "image");
+    chip.appendChild(label);
+    const rm = el("span", ["rm"], "✕");
+    rm.title = "Remove";
+    chip.appendChild(rm);
+    $attachStrip.appendChild(chip);
+    const entry = { chip: chip, path: "", uploading: true };
+    attachChips.push(entry);
+    attachSyncStrip();
+    rm.addEventListener("click", function () {
+      const i = attachChips.indexOf(entry);
+      if (i >= 0) attachChips.splice(i, 1);
+      chip.remove();
+      attachSyncStrip();
+    });
+    const name = (file.name || "image").replace(/[\\/]/g, "_") || "image";
+    fetch("api/images/upload?name=" + encodeURIComponent(name), {
+      method: "POST",
+      body: file,
+    })
+      .then(function (r) {
+        return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.d && res.d.detail) || "upload failed");
+        entry.path = res.d.path;
+        entry.uploading = false;
+        chip.classList.remove("uploading");
+        label.textContent = res.d.path + " (" + res.d.width + "×" + res.d.height + ")";
+      })
+      .catch(function (err) {
+        const i = attachChips.indexOf(entry);
+        if (i >= 0) attachChips.splice(i, 1);
+        chip.remove();
+        attachMessage(String(err.message || err));
+      });
+  }
+
+  $attach.addEventListener("click", function () { $attachInput.click(); });
+  $attachInput.addEventListener("change", function () {
+    attachFiles($attachInput.files);
+    $attachInput.value = "";
+  });
+  // 붙여넣기: 클립보드에 이미지 파일이 있으면 그것만 받고 글 붙여넣기는 막는다
+  // (스크린샷 붙여넣기는 글이 비어 있다). 글만 있으면 기본 동작 그대로.
+  $input.addEventListener("paste", function (e) {
+    const files = e.clipboardData && e.clipboardData.files;
+    if (files && files.length && attachFiles(files)) e.preventDefault();
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    $inputArea.addEventListener(ev, function (e) {
+      if (!e.dataTransfer || !Array.prototype.some.call(e.dataTransfer.types || [], function (t) { return t === "Files"; })) return;
+      e.preventDefault();
+      $inputArea.classList.add("drop-over");
+    });
+  });
+  $inputArea.addEventListener("dragleave", function () {
+    $inputArea.classList.remove("drop-over");
+  });
+  $inputArea.addEventListener("drop", function (e) {
+    $inputArea.classList.remove("drop-over");
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    if (!attachFiles(e.dataTransfer.files)) attachMessage("PNG/JPEG/GIF/WebP 만 붙일 수 있습니다");
+  });
+  attachRefreshVision();
 
   // ── SSE connection ─────────────────────────
   const es = new EventSource(
@@ -2672,7 +2880,7 @@
 
   es.addEventListener("user_message", function (e) {
     const d = JSON.parse(e.data);
-    renderUserMessage(d.content, d.ts, d.author || "", d.hidx);
+    renderUserMessage(d.content, d.ts, d.author || "", d.hidx, d.images);
     // ``author`` (a user's nickname) puts the message on the swimlane's
     // multiplexed user lane; author-less messages (🤝 starter) are card-only.
     qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
@@ -3657,6 +3865,8 @@
     // we were stopping has finished; busy = a fresh turn started.
     stopRequested = false;
     updateSendEnabled();
+    // 런이 끝났다 — 첫 이미지 런이 모델의 vision 여부를 정했을 수 있다 (v10.60.0).
+    if (!workerBusy) attachRefreshVision();
   });
 
   // ── Identity + viewer roster ───────

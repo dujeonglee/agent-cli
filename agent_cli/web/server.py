@@ -4,6 +4,11 @@ Endpoints:
   - ``GET  /api/health`` — liveness probe (no auth)
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
   - ``POST /api/input``  — submit chat message / ask answer / confirm reply
+    (``chat`` may carry ``images: [path]`` — workspace images, v10.60.0)
+  - ``POST /api/images/upload?name=`` — stage one image under
+    ``.agent-cli/tmp/uploads/`` and return its ``ImageRef`` (v10.60.0)
+  - ``GET  /api/images/support`` — ``{supported: true|false|null}`` without probing
+  - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
 
@@ -44,6 +49,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
+from agent_cli import images as _images
 from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebConnection, WebRenderer
 
@@ -54,6 +60,34 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+
+
+async def _stream_body_to(request: Request, dest: Path) -> int:
+    """요청 본문을 ``dest`` 에 스트리밍으로 쓴다 — 바이트 수 반환.
+
+    청크마다 ``dest`` 와 같은 디렉토리의 임시 파일에 쓰고(같은 파일시스템이라
+    마지막 ``os.replace`` 가 원자적) 쓰기는 executor 에서 돈다 — 느린 디스크가
+    SSE 루프를 멈추지 않는다. 메모리엔 청크 하나뿐이라 크기 상한이 없다.
+    끊긴 업로드(클라이언트 소실·디스크 풀)는 아무것도 남기지 않는다.
+    워크스페이스 업로드와 이미지 업로드(v10.60.0)가 함께 쓴다."""
+    loop = asyncio.get_event_loop()
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", dir=dest.parent)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            async for chunk in request.stream():
+                if chunk:
+                    await loop.run_in_executor(None, fh.write, chunk)
+                    size += len(chunk)
+        await loop.run_in_executor(None, os.replace, tmp_name, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return size
+
 
 # workspace upload 에 크기 상한은 **없다** (v9.22.1, 사용자 결정 — 종전 50MB).
 # 상한을 없애면서 본문을 통째로 메모리에 올리던 `request.body()` 도 버렸다:
@@ -253,11 +287,36 @@ class WebServer:
             return True
         return False
 
-    def enqueue(self, conn_id: str | None, text: str) -> dict:
+    def enqueue(
+        self, conn_id: str | None, text: str, *, images: list[dict] | None = None
+    ) -> dict:
         """Add a user message to the pending queue (any connection may).
-        Returns the queued item ``{id, conn_id, nickname, text}``."""
+        Returns the queued item ``{id, conn_id, nickname, text, images}``.
+        ``images`` (v10.60.0) — ``ImageRef`` dicts from :meth:`image_refs`."""
         nickname = self.renderer.nickname_for(conn_id)
-        return self._queue.enqueue(conn_id, text, nickname=nickname)
+        return self._queue.enqueue(conn_id, text, nickname=nickname, images=images)
+
+    def image_refs(self, paths: list) -> list[dict]:
+        """``/api/input`` 의 ``images: [path]`` → ``ImageRef`` dict 목록 (v10.60.0).
+
+        경로는 워크스페이스 안이어야 하고(``_safe_workspace_path``), 있어야 하며,
+        매직 바이트가 이미지여야 한다 — 아니면 400 (docs/vision/DESIGN.md §5).
+        확장자나 클라이언트가 보낸 크기는 믿지 않는다: 참조는 서버가 파일에서
+        다시 만든다."""
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise HTTPException(
+                status_code=400, detail="images must be a list of paths"
+            )
+        refs: list[dict] = []
+        for rel in paths:
+            p = self._safe_workspace_path(rel)
+            if not p.is_file():
+                raise HTTPException(status_code=400, detail=f"{rel}: no such file")
+            try:
+                refs.append(_images.make_ref(p).to_dict())
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from None
+        return refs
 
     def enqueue_scheduled(self, text: str, nickname: str) -> dict:
         """예약 발화 — 사용자 요청처럼 큐에 들어가되 표시 이름은 예약의 것이다
@@ -1134,27 +1193,7 @@ def create_app(server: WebServer) -> FastAPI:
         await loop.run_in_executor(
             None, lambda: dest.parent.mkdir(parents=True, exist_ok=True)
         )
-        # Stream the body: each chunk goes to a temp file in ``dest``'s own
-        # directory (same filesystem → the final ``os.replace`` is atomic), and
-        # the writes run in the executor so a slow disk never stalls the SSE
-        # loop. Nothing is held in memory beyond one chunk, so there is no
-        # size the server cannot take.
-        fd, tmp_name = tempfile.mkstemp(prefix=f".{segments[-1]}.", dir=dest.parent)
-        size = 0
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                async for chunk in request.stream():
-                    if chunk:
-                        await loop.run_in_executor(None, fh.write, chunk)
-                        size += len(chunk)
-            await loop.run_in_executor(None, os.replace, tmp_name, dest)
-        except BaseException:
-            # Partial upload (client vanished, disk full): leave nothing behind.
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        size = await _stream_body_to(request, dest)
         return JSONResponse(
             {
                 "name": segments[-1],
@@ -1163,6 +1202,56 @@ def create_app(server: WebServer) -> FastAPI:
                 "overwritten": overwritten,
             }
         )
+
+    @app.post("/api/images/upload")
+    async def image_upload(request: Request, name: str = Query(..., min_length=1)):
+        """이미지 하나를 ``.agent-cli/tmp/uploads/<epoch>-<name>`` 에 들여온다
+        (v10.60.0, docs/vision/DESIGN.md §5) — 붙여넣기·끌어놓기·📎 가 쓰고,
+        돌려받은 ``path`` 를 ``POST /api/input`` 의 ``images`` 에 싣는다.
+
+        Body = 파일 바이트(``/api/workspace/upload`` 와 같은 스트리밍). ``name``
+        은 한 조각(디렉토리 없음) — 자리는 서버가 정한다. 매직 바이트가
+        PNG/JPEG/GIF/WebP 가 아니면 파일을 지우고 400: 확장자는 믿지 않는다.
+        응답은 ``ImageRef`` dict(경로·mime·크기·바이트·sha256)."""
+        if "/" in name or "\\" in name or name in (".", ".."):
+            raise HTTPException(status_code=400, detail="invalid filename")
+        loop = asyncio.get_event_loop()
+        dest = await loop.run_in_executor(
+            None, _images.fresh_upload_path, server.workspace, name
+        )
+        await _stream_body_to(request, dest)
+        try:
+            ref = await loop.run_in_executor(None, _images.make_ref, dest)
+        except ValueError as e:
+            await loop.run_in_executor(None, dest.unlink)
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        return JSONResponse(ref.to_dict())
+
+    @app.get("/api/images/support")
+    async def image_support():
+        """이 세션의 모델이 이미지를 보는가 — ``{supported: true|false|null}``.
+        ``null`` = 아직 모름(등록값 없음·프로브 전). **프로브하지 않는다**: 값은
+        첫 이미지 런이 정하고(``vision_support``), 프런트는 런이 끝날 때마다
+        다시 묻는다. 📎 는 ``false`` 일 때만 숨는다."""
+        from agent_cli.providers.capabilities import vision_known
+
+        b = server.binding
+        if b is None:
+            return {"supported": None}
+        return {"supported": vision_known(b.capabilities, b.base_url, b.model)}
+
+    @app.get("/api/workspace/file")
+    async def workspace_file(path: str = Query(..., min_length=1)):
+        """워크스페이스 안 **이미지** 하나를 그대로 준다 (v10.60.0) — 사용자·관찰
+        카드의 썸네일과 원본 보기. 범위는 워크스페이스 전부(사용자 결정) 이되
+        이미지만: 매직 바이트가 아니면 400. 밖이면 400, 없으면 404."""
+        p = server._safe_workspace_path(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        mime = _images.sniff_file(p)
+        if mime is None:
+            raise HTTPException(status_code=400, detail="not an image")
+        return FileResponse(p, media_type=mime, headers=_NO_CACHE_HEADERS)
 
     @app.get("/api/stream")
     async def stream():
@@ -1241,11 +1330,15 @@ def create_app(server: WebServer) -> FastAPI:
 
             {"kind": "prompt", "content": "..."}
             {"kind": "confirm", "key": "y", "comment": "..."}
-            {"kind": "chat", "content": "..."}
+            {"kind": "chat", "content": "...", "images": ["path", ...]}
 
         ``chat`` is the only kind that advances the AgentLoop directly;
         ``prompt`` / ``confirm`` answer an in-flight render call. Every
         authenticated connection may send input (no controller gate).
+        ``images`` (v10.60.0, optional): workspace paths — normally the ones
+        ``/api/images/upload`` returned — re-validated and turned into
+        ``ImageRef`` dicts here (:meth:`WebServer.image_refs`); a message may
+        be images only (empty ``content``).
         """
         try:
             body = await request.json()
@@ -1258,11 +1351,12 @@ def create_app(server: WebServer) -> FastAPI:
                 raise HTTPException(
                     status_code=400, detail="chat content must be a string"
                 )
+            images = server.image_refs(body.get("images") or [])
             # Enqueue (no immediate echo): the message shows in the live queue
             # display until it's dequeued — by the worker to START a run, or by
             # the running loop at a turn boundary to INJECT — at which point it
             # is rendered as a conversation card.
-            server.enqueue(body.get("conn_id"), content)
+            server.enqueue(body.get("conn_id"), content, images=images)
             return JSONResponse({"accepted": True})
         if (
             kind in ("prompt", "confirm")

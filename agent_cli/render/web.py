@@ -1165,6 +1165,7 @@ class WebRenderer(Renderer):
                     turn=int(msg.get("turn", 0) or 0),
                     tool_name=msg.get("tool", ""),
                     success=msg.get("success", True),
+                    images=msg.get("images") or None,  # v10.60.0 썸네일 재생
                 )
             else:
                 # Sub-agent histories: the plain user records are the task
@@ -1194,10 +1195,11 @@ class WebRenderer(Renderer):
                             "author": author,
                             "text": raw,
                         }
+                    images = msg.get("images") or None  # v10.60.0 썸네일 재생
                     if author and is_user:
                         if author not in self._replay_authors:
                             self._replay_authors.append(author)
-                        self.push_user_message(content, author=author)
+                        self.push_user_message(content, author=author, images=images)
                     elif author and not is_user:
                         # 사람이 아닌 발신자 = 에이전트 메일 깨우기. 라이브처럼
                         # 그리지 않는다(v10.51.0) — 그 런의 관찰 줄이 메일이다.
@@ -1205,7 +1207,7 @@ class WebRenderer(Renderer):
                         # 파란 말풍선이 resume 때 되살아났다(그래서 이 분기).
                         pass
                     else:
-                        self.push_user_message(content)
+                        self.push_user_message(content, images=images)
         elif role == "assistant":
             thought = msg.get("thought", "") or ""
             ops = msg.get("ops")
@@ -1506,17 +1508,19 @@ class WebRenderer(Renderer):
         turn: int,
         tool_name: str | None = None,
         success: bool = True,
+        images: list[dict] | None = None,
     ) -> None:
-        self._emit(
-            "observation",
-            {
-                "turn": turn,
-                "tool_name": tool_name or "",
-                "content": content,
-                "success": success,
-            },
-            persistent=True,
-        )
+        payload: dict = {
+            "turn": turn,
+            "tool_name": tool_name or "",
+            "content": content,
+            "success": success,
+        }
+        # ``images`` (v10.60.0, additive): 관찰 레코드의 ImageRef dict — 카드가
+        # `api/workspace/file?path=` 썸네일을 그린다. 없으면 키도 없다.
+        if images:
+            payload["images"] = list(images)
+        self._emit("observation", payload, persistent=True)
 
     def final(self, content: str, turn: int, requests: list | None = None) -> None:
         payload = {
@@ -2397,7 +2401,11 @@ class WebRenderer(Renderer):
             self._input_queue.put(payload.get("content", ""))
 
     def push_user_message(
-        self, content: str, author: str = "", hidx: int | None = None
+        self,
+        content: str,
+        author: str = "",
+        hidx: int | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         """Echo a user-typed chat message into the persistent event
         stream so the frontend renders it as a card.
@@ -2405,6 +2413,9 @@ class WebRenderer(Renderer):
         ``hidx`` (v10.6.0, additive): the history record's ordinal — the card
         needs it for the model-view boundary (``ctx_view``). None for UI-only
         echoes that have no record.
+
+        ``images`` (v10.60.0, additive): the message's ``ImageRef`` dicts —
+        thumbnails under the bubble. Omitted from the payload when empty.
 
         Callers: the worker's run-start echo, the loop's turn-boundary
         injection echo, the ask-answer UI echo, and resume replay. Goes
@@ -2420,6 +2431,8 @@ class WebRenderer(Renderer):
         payload: dict = {"content": content}
         if author:
             payload["author"] = author
+        if images:
+            payload["images"] = list(images)
         if hidx is not None:
             self.note_record(hidx)
         self._emit("user_message", payload, persistent=True)
