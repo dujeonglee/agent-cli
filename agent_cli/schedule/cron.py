@@ -25,7 +25,7 @@ _FIELDS = (
     ("weekday", 0, 6),
 )
 
-_WEEKDAY_KO = "일월화수목금토"  # cron 0=일 … 6=토
+_WEEKDAYS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")  # cron 0=Sun … 6=Sat
 
 # next_fire 룩어헤드 상한 — 어떤 유효식도 366일 안에 발화일이 있다
 # (2/29 지정 같은 극단도 4년이 아니라... 2/29는 못 잡으므로 명시 한계로 둠).
@@ -186,17 +186,17 @@ def describe(expr: str) -> str:
 
     if f[1] == f[2] == f[3] == f[4] == "*":
         if every_min:
-            return "매분"
+            return "every minute"
         if step_min:
-            return f"{f[0][2:]}분마다"
+            return f"every {f[0][2:]} min"
         if single_min:
             m = next(iter(spec.minutes))
-            return "매시 정각" if m == 0 else f"매시 {m}분"
+            return "hourly" if m == 0 else f"hourly at :{m:02d}"
     if single_min and single_hour and f[2] == "*" and f[3] == "*":
         if f[4] == "*":
-            return f"매일 {hhmm()}"
-        days = "·".join(_WEEKDAY_KO[d] for d in sorted(spec.weekdays))
-        return f"매주 {days} {hhmm()}"
+            return f"daily {hhmm()}"
+        days = "·".join(_WEEKDAYS[d] for d in sorted(spec.weekdays))
+        return f"weekly {days} {hhmm()}"
     if (
         single_min
         and single_hour
@@ -204,5 +204,5 @@ def describe(expr: str) -> str:
         and f[4] == "*"
         and len(spec.days) == 1
     ):
-        return f"매월 {next(iter(spec.days))}일 {hhmm()}"
+        return f"monthly on day {next(iter(spec.days))} {hhmm()}"
     return expr

@@ -274,7 +274,7 @@ class TestDangerousShellWaitsForViewer:
         res = tool_shell({"command": "echo hi && rm -f ./agentcli-test-nope"})
         # deny 였으면 success False + 'denied'. 허용됐으니 shell 이 실제 실행됨.
         assert res.success is True
-        assert any("자동 승인" in c for c in recorded)
+        assert any("Auto-approved" in c for c in recorded)
 
     def test_auto_approve_defaults_off_and_broadcasts(self):
         r = WebRenderer()

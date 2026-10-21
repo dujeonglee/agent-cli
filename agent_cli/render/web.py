@@ -2335,7 +2335,7 @@ class WebRenderer(Renderer):
             allow = options[0].key if options else default_key
             label = command or prompt.strip().split("\n", 1)[0]
             self.observation(
-                f"⚡ 자동 승인됨 (확인 없이 실행): {label}",
+                f"⚡ Auto-approved (no confirmation): {label}",
                 turn=0,
                 tool_name="confirm",
             )

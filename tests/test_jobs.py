@@ -336,7 +336,7 @@ class TestLifetime:
             pass  # 세션 저장 등 다른 단계는 이 테스트의 관심이 아니다
         assert not job.running and _wait(lambda: not _alive(job.pid))
         out = capsys.readouterr().out
-        assert "백그라운드 작업 1개를 멈췄습니다" in out and f"pid {job.pid}" in out
+        assert "stopped 1 running background job(s)" in out and f"pid {job.pid}" in out
 
     def test_agent_death_drops_its_jobs(self, reg):
         from agent_cli.subagent.agents_live import AgentRegistry

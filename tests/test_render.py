@@ -1217,7 +1217,7 @@ class TestStreamStallCli:
         r.stream_stall(kind="wait", elapsed_s=90, limit_s=600, attempt=2, attempts=4)
         out = buf.getvalue()
         assert "1:30" in out and "10:00" in out
-        assert "시도 2/4" in out
+        assert "attempt 2/4" in out
 
     def test_tty_resend_is_a_kept_record(self):
         """전이는 드물고 되돌릴 수 없으므로 기록으로 남는다."""
@@ -1225,7 +1225,7 @@ class TestStreamStallCli:
         r.stream_stall(kind="wait", elapsed_s=600, limit_s=600, attempts=4)
         r.stream_stall(kind="resend", attempt=2, attempts=4)
         out = buf.getvalue()
-        assert "재전송" in out and "시도 2/4" in out
+        assert "resent" in out and "attempt 2/4" in out
         assert out.rstrip().endswith(")")  # 확정된 줄로 끝난다
 
     def test_tty_clear_leaves_no_stale_wait_line(self):
@@ -1237,7 +1237,7 @@ class TestStreamStallCli:
         buf.seek(0)
         r.stream_stall(kind="clear")
         out = buf.getvalue()
-        assert "응답 대기 중" not in out
+        assert "Waiting for a response" not in out
         assert "\r" in out  # 슬롯을 공백으로 덮고 되감았다
 
     def test_non_tty_keeps_line_output(self):
@@ -1249,7 +1249,7 @@ class TestStreamStallCli:
         out = buf.getvalue()
         assert "\r" not in out
         assert out.count("\n") == 2  # 두 줄 모두 남았다
-        assert "시도 1/4" in out and "시도 2/4" in out
+        assert "attempt 1/4" in out and "attempt 2/4" in out
 
     def test_custom_renderer_needs_no_change(self):
         """``stream_stall`` 은 기본 구현이 있는 훅 — 구현하지 않은 커스텀
@@ -1271,8 +1271,8 @@ class TestStreamStallCli:
         c.stream_stall(kind="wait", elapsed_s=120, limit_s=600, attempt=1, attempts=4)
         c.stream_stall(kind="clear")  # 남긴 게 없으므로 할 일도 없다
         assert seen == [
-            "스트림 무응답 — 재연결 후 재전송 (시도 3/4)",
-            "응답 대기 중 — 토큰 없음 120s (시도 1/4, 480s 후 재연결)",
+            "Stream stalled — reconnected and resent (attempt 3/4)",
+            "Waiting for a response — no tokens for 120s (attempt 1/4, reconnect in 480s)",
         ]
 
 

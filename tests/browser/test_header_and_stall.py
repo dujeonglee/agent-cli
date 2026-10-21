@@ -128,7 +128,7 @@ class TestStallKnobTwoAxes:
         assert page.locator("#knob-stall-pop #knob-stall").is_visible()
         assert page.locator("#knob-stall-pop #knob-stall_attempts").is_visible()
         # 곱을 설정하는 자리에서 바로 보여준다 — "3인데 왜 40분?"의 수리.
-        assert "최대 40분" in page.inner_text("#knob-stall-note")
+        assert "at most 40 min" in page.inner_text("#knob-stall-note")
         # 두 입력 + 파생 줄이 팝업 안에 들어가고 화면 밖으로 안 나간다.
         inview = page.evaluate(
             "() => { var b=document.querySelector('#knob-stall-pop').getBoundingClientRect();"
@@ -147,7 +147,7 @@ class TestStallKnobTwoAxes:
         page.dispatch_event("#knob-stall_attempts", "change")
         assert _wait(lambda: stack.ctx.stream_max_attempts == 6)
         assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "10m×6")
-        assert "최대 60분" in page.inner_text("#knob-stall-note")
+        assert "at most 60 min" in page.inner_text("#knob-stall-note")
 
     def test_changing_limit_keeps_attempts(self, stack, page):
         """한 축을 바꿔도 다른 축은 살아 있어야 한다 — 서로 덮어쓰면
@@ -178,7 +178,7 @@ class TestStallKnobTwoAxes:
         page.dispatch_event("#knob-stall", "change")
         assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "off")
         assert _wait(lambda: page.locator("#knob-stall_attempts").is_disabled())
-        assert "꺼져" in page.inner_text("#knob-stall-note")
+        assert "is off" in page.inner_text("#knob-stall-note")
 
 
 class TestStreamStallDisplay:
@@ -270,7 +270,7 @@ class TestMcpChip:
                     "transport": "sse",
                     "connected": False,
                     "tools": [],
-                    "error": "연결 거부 — http://localhost:3845",
+                    "error": "connection refused — http://localhost:3845",
                 },
             ],
             "connected": 1,
@@ -300,7 +300,7 @@ class TestMcpChip:
         assert page.locator("#mcp-pop").is_visible()
         txt = page.inner_text("#mcp-pop")
         assert "2 tools" in txt and "github" in txt and "list_issues" in txt
-        assert "figma" in txt and "연결 거부" in txt
+        assert "figma" in txt and "connection refused" in txt
         assert "agent-cli mcp" in txt  # 등록은 CLI 로
         # 팝업이 화면 안에 있다 (오른쪽 칩이라 align-right 로 펼침)
         assert page.evaluate(

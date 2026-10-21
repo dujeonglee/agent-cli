@@ -70,7 +70,7 @@ class TestScheduleDrawer:
 
         page.wait_for_selector(".sched-item", timeout=3000)
         text = page.inner_text(".sched-item")
-        assert "👤" in text and "주간 보고" in text and "매주 월 09:00" in text
+        assert "👤" in text and "주간 보고" in text and "weekly Mon 09:00" in text
         assert "next 10-05 09:00" in text
         assert page.inner_text("#schedule-badge") == "1"
         assert page.input_value("#sched-prompt") == ""  # 폼이 비워진다

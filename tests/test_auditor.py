@@ -548,11 +548,11 @@ class TestWebKnob:
         renderer.note_harness(1)
         assert read_status_file(tmp_path)["auditing"] is True
         payload = renderer._sticky["knob:auditor"]["payload"]
-        assert payload["in_flight"] == 1 and payload["badge"] == "감사 중"
+        assert payload["in_flight"] == 1 and payload["badge"] == "auditing"
         auditor.jobs.in_flight = 0
         renderer.note_harness(0)
         assert read_status_file(tmp_path)["auditing"] is False
-        assert renderer._sticky["knob:auditor"]["payload"]["badge"] == "켬"
+        assert renderer._sticky["knob:auditor"]["payload"]["badge"] == "on"
 
     def test_without_the_wiring_status_still_updates(self, tmp_path):
         renderer, _server, _client = self._app(tmp_path, None)
@@ -568,15 +568,17 @@ class TestWebKnob:
 
         k = KNOB_BY_NAME["auditor"]
         assert k.ui.icon == "🔎" and k.ui.placement == "chip"
-        assert k.ui.choice_labels == {"off": "끔 (기본)", "on": "켬"}
+        assert k.ui.choice_labels == {"off": "off (default)", "on": "on"}
         auditor = SessionAuditor(_FakeJobs(), _ctx(tmp_path), enabled=True)
         st = web_state(k, KnobSession(auditor=auditor))
         assert (
-            st["badge"] == "켬" and st["on"] is True and "다음 사용자 런" in st["note"]
+            st["badge"] == "on"
+            and st["on"] is True
+            and "From the next user run" in st["note"]
         )
         auditor.jobs.in_flight = 2
         st = web_state(k, KnobSession(auditor=auditor))
-        assert st["badge"] == "감사 중" and "돌고 있습니다" in st["note"]
+        assert st["badge"] == "auditing" and "in progress" in st["note"]
 
 
 class TestJobsRuntimeContract:

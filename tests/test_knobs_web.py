@@ -208,7 +208,7 @@ class TestChipShapeComesFromTheServer:
         assert st["group"]["name"] == at["group"]["name"] == "stall"
         assert st["group"]["members"] == ["stall", "stall_attempts"]
         assert st["group"]["badge"] == at["group"]["badge"] == "10m×4"
-        assert "최대 40분" in st["group"]["note"]
+        assert "at most 40 min" in st["group"]["note"]
 
     def test_setting_one_member_rebroadcasts_the_other(self, tmp_path):
         """묶음 배지는 두 멤버의 곱 — 한쪽을 바꾸면 다른 쪽 sticky 도 새 배지를 들어야
@@ -258,7 +258,7 @@ class TestChipShapeComesFromTheServer:
         client.post(f"/api/knobs/stall?token={TOKEN}", json={"value": 0})
         at = _get(client, "stall_attempts")
         assert at["locked"] and at["group"]["badge"] == "off"
-        assert "꺼져" in at["group"]["note"]
+        assert "is off" in at["group"]["note"]
 
 
 class TestStatusFileMirrorsTheKnobs:

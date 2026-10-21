@@ -412,7 +412,7 @@ class TestRunBootApplies:
             default_key="n",
         )
         assert (key, comment) == ("y", "")
-        assert "자동 승인" in r.con.file.getvalue()
+        assert "Auto-approved" in r.con.file.getvalue()
 
 
 class TestChipShapeIsDeclaredInTheTable:
@@ -471,10 +471,10 @@ class TestChipShapeIsDeclaredInTheTable:
         assert by["max_agents"]["badge"] == "10"
         s.registry.max_agents = 0
         assert K.web_state(KNOB_BY_NAME["max_agents"], s)["badge"] == "∞"
-        assert by["grammar"]["badge"] == "강제" and by["grammar"]["on"] is True
-        assert by["auditor"]["badge"] == "끔" and by["auditor"]["on"] is False
+        assert by["grammar"]["badge"] == "enforced" and by["grammar"]["on"] is True
+        assert by["auditor"]["badge"] == "off" and by["auditor"]["on"] is False
         assert (
-            by["auto_approve"]["badge"] == "확인 없이 실행"
+            by["auto_approve"]["badge"] == "no confirmations"
             and by["auto_approve"]["ui"]["placement"] == "header"
         )
         assert by["model"]["badge"] == "m" and "json_fc" in by["model"]["note"]
@@ -485,11 +485,11 @@ class TestChipShapeIsDeclaredInTheTable:
     def test_group_badge_is_the_product_of_both_axes(self, tmp_path):
         s = self._session(tmp_path)
         g = K.web_group("stall", s)
-        assert g["badge"] == "10m×4" and "최대 40분" in g["note"]
+        assert g["badge"] == "10m×4" and "at most 40 min" in g["note"]
         assert g["members"] == ["stall", "stall_attempts"] and g["icon"] == "⏳"
         s.ctx.set_stream_idle_timeout(0)
         g = K.web_group("stall", s)
-        assert g["badge"] == "off" and "꺼져" in g["note"]
+        assert g["badge"] == "off" and "is off" in g["note"]
         assert KNOB_BY_NAME["stall_attempts"].locked(s)
         s.ctx.set_stream_idle_timeout(180)
         s.ctx.set_stream_max_attempts(2)
@@ -501,7 +501,7 @@ class TestChipShapeIsDeclaredInTheTable:
         s2.binding.capabilities = s2.binding.capabilities.__class__(
             32768, 4096, False, supports_grammar=True
         )
-        assert K.web_group("thinking", s2)["badge"] == "미지원"
+        assert K.web_group("thinking", s2)["badge"] == "unsupported"
         assert KNOB_BY_NAME["reasoning_effort"].locked(s2)
 
     def test_unavailable_group_member_hides_the_group(self):
@@ -510,14 +510,18 @@ class TestChipShapeIsDeclaredInTheTable:
         assert st["available"] is False and st["group"] is None and st["badge"] is None
 
     def test_grammar_badges_say_the_fact(self, tmp_path):
-        for supported, badge in ((True, "강제"), (False, "미지원"), (None, "미확인")):
+        for supported, badge in (
+            (True, "enforced"),
+            (False, "unsupported"),
+            (None, "unknown"),
+        ):
             s = self._session(tmp_path, supports_grammar=supported)
             st = K.web_state(KNOB_BY_NAME["grammar"], s)
             assert st["badge"] == badge, supported
             assert st["note"]
         s = self._session(tmp_path)
         s.ctx.set_grammar_override(False)
-        assert K.web_state(KNOB_BY_NAME["grammar"], s)["badge"] == "끔"
+        assert K.web_state(KNOB_BY_NAME["grammar"], s)["badge"] == "off"
 
     def test_model_options_are_bound_to_the_session_dialect(
         self, tmp_path, monkeypatch

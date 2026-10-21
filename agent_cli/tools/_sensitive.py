@@ -163,18 +163,18 @@ def sensitive_reason(path: str | Path) -> str | None:
 
     for d in _DIRS:
         if _under(resolved, canonical(d)):
-            return f"자격증명 디렉터리 {d}"
+            return f"credential directory {d}"
     for f in _FILES:
         if _fold(str(resolved)) == _fold(str(canonical(f))):
-            return f"자격증명 파일 {f}"
+            return f"credential file {f}"
 
     name = _fold(resolved.name)
     for pat in _NAMES:
         if fnmatch.fnmatch(name, _fold(pat)):
-            return f"비밀키 파일명 규칙 `{pat}`"
+            return f"secret-key filename pattern `{pat}`"
 
     tail = _fold(str(resolved))
     for rel in _WORKSPACE_FILES:
         if tail.endswith("/" + _fold(rel)):
-            return f"agent-cli 자신의 설정 `{rel}` (api_key)"
+            return f"agent-cli's own config `{rel}` (api_key)"
     return None

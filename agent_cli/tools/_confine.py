@@ -432,7 +432,7 @@ def guard(
         if resolved not in outside:
             outside.append(resolved)
             lit_of.setdefault(str(resolved), path)
-            why[str(resolved)] = secret or "워크스페이스 밖"
+            why[str(resolved)] = secret or "outside the workspace"
     if not outside:
         return None
 
@@ -452,7 +452,7 @@ def guard(
         joined = ", ".join(str(p) for p in outside)
         # 민감 경로가 섞여 있으면 그쪽이 헤드라인이다 — "워크스페이스 밖"보다
         # 구체적이고, 사용자가 판단하는 데 실제로 쓰이는 정보다.
-        secrets = [p for p in outside if why[str(p)] != "워크스페이스 밖"]
+        secrets = [p for p in outside if why[str(p)] != "outside the workspace"]
         if not renderer.can_prompt():
             what = (
                 f"reads/touches sensitive path(s) ({joined})"
@@ -467,7 +467,7 @@ def guard(
             )
         listing = "\n".join(f"  {p}\n    ↳ {why[str(p)]}" for p in outside)
         head = (
-            "⚠ 민감 경로를 건드립니다"
+            "⚠ Touches sensitive path(s)"
             if secrets
             else f"⚠ {action} touches path(s) OUTSIDE the workspace"
         )
@@ -520,6 +520,6 @@ def guard(
                 sorted({str(p if p.is_dir() else p.parent) for p in outside})
             )
             renderer.note_next(
-                f"🔓 사용자가 워크스페이스 밖 경로를 승인 — 이 세션 내내 허용: {dirs}"
+                f"🔓 User approved paths outside the workspace — allowed for the rest of this session: {dirs}"
             )
     return None
