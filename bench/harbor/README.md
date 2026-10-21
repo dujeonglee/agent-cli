@@ -86,6 +86,7 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 | `wheel` | `dist/` 최신(버전 숫자 비교 — 사전순이면 9.24 가 10.27 을 이긴다) | 컨테이너에 설치할 wheel 경로 |
 | `models_json` | `~/.agent-cli/models.json` | 주입할 모델 레지스트리 (`""` 면 미주입 → 런타임 프로빙) |
 | `python` | 3.12 | uv 가 컨테이너에 확보할 파이썬 |
+| `extras` | `image` | wheel 의 extras(쉼표 구분) — `image` 는 Pillow(이미지 축소, v10.61.1 부터 선택 의존성). `""` 면 순정 설치 |
 
 유용한 harbor 플래그: `--agent-timeout-multiplier 2`(느린 로컬 모델), `-i 'glob'`/`-x`/`-l N`
 (태스크 선택), `-k N`(시도 수), `--agent-setup-timeout-multiplier`(설치 360s 한도).
