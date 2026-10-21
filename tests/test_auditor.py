@@ -472,7 +472,7 @@ class TestAssembly:
     def test_boot_line_only_when_enabled(self):
         from agent_cli.main import _auditor_boot_line
 
-        assert "켜짐" in _auditor_boot_line(SimpleNamespace(enabled=True))
+        assert "auditor on" in _auditor_boot_line(SimpleNamespace(enabled=True))
         assert _auditor_boot_line(SimpleNamespace(enabled=False)) == ""
         assert _auditor_boot_line(None) == ""
 
