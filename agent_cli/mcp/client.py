@@ -68,19 +68,17 @@ def humanize_error(msg: str, cfg: McpServerConfig | None = None) -> str:
     cmd = cfg.command if cfg else ""
     url = cfg.url if cfg else ""
     if "no such file" in low or "errno 2" in low:
-        return (
-            f"실행 파일을 찾을 수 없습니다: {cmd}"
-            if cmd
-            else "실행 파일을 찾을 수 없습니다"
-        )
+        return f"executable not found: {cmd}" if cmd else "executable not found"
     if (
         "connection refused" in low
         or "connect call failed" in low
         or "all connection attempts failed" in low  # httpx (sse)
     ):
-        return f"연결 거부 — {url} 에 서버가 없습니다" if url else "연결 거부"
+        return (
+            f"connection refused — no server at {url}" if url else "connection refused"
+        )
     if "no module named 'mcp'" in low:
-        return "mcp SDK 가 없습니다 (pip install mcp)"
+        return "mcp SDK is not installed (pip install mcp)"
     # 전송 세대 불일치 (v9.3.0) — 사용자 제보로 드러난 공백. 구 sse 로 신규
     # Streamable HTTP 서버에 붙으면 서버가 Accept 헤더 부족으로 거절하는데,
     # 원문은 "400 Bad Request" 나 -32600 이라 **원인이 전송 방식이라는 걸
@@ -89,14 +87,14 @@ def humanize_error(msg: str, cfg: McpServerConfig | None = None) -> str:
     # transport 가 대기 중인 initialize 를 걷어낸 것. 원문("Cancelled via
     # cancel scope 0x…")은 사용자에게 아무 정보도 아니다.
     if "cancel scope" in low or low == "cancellederror":
-        return "서버가 이 전송 방식에 응답하지 않습니다"
+        return "the server does not respond to this transport"
     if _looks_like_wrong_transport(low, cfg):
         return (
-            "전송 방식이 다릅니다 — 이 서버는 Streamable HTTP 입니다. "
-            'mcp.json 의 transport 를 "streamable-http" 로 바꾸거나 '
-            "`agent-cli mcp add` 로 다시 등록하세요 (자동 판별)"
+            "transport mismatch — this server speaks Streamable HTTP. "
+            'Set transport to "streamable-http" in mcp.json, or '
+            "re-register it with `agent-cli mcp add` (auto-detects)"
         )
-    return text or "알 수 없는 오류"
+    return text or "unknown error"
 
 
 def _looks_like_wrong_transport(low: str, cfg: McpServerConfig | None) -> bool:

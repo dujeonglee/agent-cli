@@ -285,7 +285,7 @@ class TestBuiltinHook:
         renderer = MagicMock()
         with patch("agent_cli.render.get_renderer", return_value=renderer):
             assert build_snapshot_store() is None
-        assert "스냅샷 꺼짐" in renderer.status.call_args.args[1]
+        assert "Snapshots off" in renderer.status.call_args.args[1]
         ctx = MagicMock()
         self._hook().on_session_start(ctx)
         ctx.inject_system_section.assert_not_called()

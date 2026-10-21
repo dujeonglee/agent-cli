@@ -140,8 +140,8 @@ class TestProbe:
     @pytest.mark.parametrize(
         "status,needle",
         [
-            ("error: [Errno 2] No such file or directory: 'x'", "찾을 수 없습니다"),
-            ("error: Connection refused", "연결 거부"),
+            ("error: [Errno 2] No such file or directory: 'x'", "executable not found"),
+            ("error: Connection refused", "connection refused"),
             ("error: No module named 'mcp'", "pip install mcp"),
             ("error: something odd", "something odd"),
         ],

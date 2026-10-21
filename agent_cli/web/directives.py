@@ -108,9 +108,9 @@ def generate_directive_section(
     if audience not in VALID_AUDIENCES:
         raise ValueError(f"unknown audience: {audience}")
     if not brief.strip():
-        raise ValueError("brief 가 비어 있습니다")
+        raise ValueError("brief is empty")
     if binding is None or binding.provider is None:
-        raise ValueError("LLM 이 배선되지 않았습니다")
+        raise ValueError("no LLM is wired")
 
     task = build_generation_task(audience, brief, current)
     try:
@@ -121,8 +121,8 @@ def generate_directive_section(
             capabilities=binding.capabilities,
         )
     except Exception as e:  # provider/network — 전송 계층이 502 로
-        raise RuntimeError(f"생성 실패: {e}") from e
+        raise RuntimeError(f"generation failed: {e}") from e
     body = sanitize_generated(resp.content or "")
     if not body:
-        raise RuntimeError("생성 결과가 비어 있습니다")
+        raise RuntimeError("generation returned nothing")
     return body

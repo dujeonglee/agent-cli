@@ -414,18 +414,18 @@ class Renderer(ABC):
             left = max(0, int(limit_s) - int(elapsed_s))
             self.status(
                 "running",
-                f"응답 대기 중 — 토큰 없음 {int(elapsed_s)}s "
-                f"(시도 {attempt}/{attempts}, {left}s 후 재연결)",
+                f"Waiting for a response — no tokens for {int(elapsed_s)}s "
+                f"(attempt {attempt}/{attempts}, reconnect in {left}s)",
             )
         elif kind == "resend":
             self.status(
                 "running",
-                f"스트림 무응답 — 재연결 후 재전송 (시도 {attempt}/{attempts})",
+                f"Stream stalled — reconnected and resent (attempt {attempt}/{attempts})",
             )
         elif kind == "broken":
             self.status(
                 "running",
-                f"스트림 연결 끊김 — 재전송 ({attempt}/{attempts})",
+                f"Stream connection broken — resending ({attempt}/{attempts})",
             )
 
     def stream_reset(self) -> None:

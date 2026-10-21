@@ -303,6 +303,10 @@ header {
   align-items: center;
   justify-items: start;
 }
+/* 멤버마다 한 줄 — 단위 칸이 없는 멤버(🧠 의 두 셀렉트) 뒤에서 다음 라벨이 셋째
+   열로 밀려 "off  Reasoning effort" 처럼 이어 붙던 것(v10.62.1). 설명 줄은 전폭. */
+.knob-pop.is-group label { grid-column: 1; }
+.knob-pop.is-group .knob-note { grid-column: 1 / -1; }
 /* 🔌 MCP 상태 팝업 — 읽기 전용 목록. 입력이 없는 유일한 노브라 세로 스택
    (다른 팝업은 한 줄 flex). 상태는 색 점 하나로: 초록=붙음 · 빨강=실패. */
 #mcp-pop:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 300px; white-space: normal; }

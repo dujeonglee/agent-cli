@@ -475,11 +475,11 @@ class MinimalRenderer(Renderer):
             left = max(0, int(limit_s) - int(elapsed_s))
             prefix = f"{self._prefix}  " if self._depth > 0 else "  "
             line = (
-                f"{prefix}⏳ 응답 대기 중 {_fmt_mmss(elapsed_s)}"
-                f" / {_fmt_mmss(limit_s)} · 시도 {attempt}/{attempts}"
+                f"{prefix}⏳ Waiting for a response {_fmt_mmss(elapsed_s)}"
+                f" / {_fmt_mmss(limit_s)} · attempt {attempt}/{attempts}"
             )
             if left <= 0:
-                line += " · 재연결"
+                line += " · reconnecting"
             avail = self.con.width - 1
             if _display_width(line) > avail:
                 line = _truncate_to_width(line, avail)
@@ -499,7 +499,7 @@ class MinimalRenderer(Renderer):
             self._last_painted_w = 0
             if kind == "resend":
                 self._p(
-                    f"  ↻ 스트림 무응답 — 재연결 후 재전송 (시도 {attempt}/{attempts})",
+                    f"  ↻ Stream stalled — reconnected and resent (attempt {attempt}/{attempts})",
                     highlight=False,
                 )
 
@@ -916,7 +916,9 @@ class MinimalRenderer(Renderer):
         """
         if self.auto_approve:  # ⚡ 노브 `auto_approve` — 터미널에도 물을 사람이 없다
             label = command or prompt.strip().split("\n", 1)[0]
-            self.con.print(f"⚡ 자동 승인됨 (확인 없이 실행): {label}", highlight=False)
+            self.con.print(
+                f"⚡ Auto-approved (no confirmation): {label}", highlight=False
+            )
             return (options[0].key if options else default_key, "")
 
         def _read():

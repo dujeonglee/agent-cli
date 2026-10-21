@@ -68,9 +68,9 @@ class TestEveryKnobBecomesAChip:
         assert page.inner_text("#knob-max_agents-badge").strip() == "10"
         assert page.inner_text("#knob-stall-badge").strip() == "10m×4"
         assert page.inner_text("#knob-thinking-badge").strip() == "off"
-        assert page.inner_text("#knob-grammar-badge").strip() == "강제"
-        assert page.inner_text("#knob-auditor-badge").strip() == "끔"
-        assert "확인 없이 실행" in page.inner_text("#knob-auto_approve")
+        assert page.inner_text("#knob-grammar-badge").strip() == "enforced"
+        assert page.inner_text("#knob-auditor-badge").strip() == "off"
+        assert "no confirmations" in page.inner_text("#knob-auto_approve")
 
 
 class TestInputsReachTheOwners:
@@ -91,11 +91,11 @@ class TestInputsReachTheOwners:
         )
         _select(page, "grammar", "off")
         assert _wait(lambda: stack.ctx.grammar_override is False)
-        assert _wait(lambda: page.inner_text("#knob-grammar-badge").strip() == "끔")
+        assert _wait(lambda: page.inner_text("#knob-grammar-badge").strip() == "off")
         assert not page.evaluate(
             "() => document.getElementById('knob-grammar-wrap').classList.contains('is-on')"
         )
-        assert "싣지 않습니다" in page.inner_text("#knob-grammar-note")
+        assert "No grammar is sent" in page.inner_text("#knob-grammar-note")
 
     def test_range_reaches_ctx_in_ratio_not_percent(self, stack, page):
         _open(page, stack, "compaction_ratio")
@@ -126,7 +126,7 @@ class TestInputsReachTheOwners:
         _open(page, stack, "auditor")
         _select(page, "auditor", "on")
         assert _wait(lambda: stack.auditor.enabled is True)
-        assert _wait(lambda: page.inner_text("#knob-auditor-badge").strip() == "켬")
+        assert _wait(lambda: page.inner_text("#knob-auditor-badge").strip() == "on")
         assert page.evaluate(
             "() => document.getElementById('knob-auditor-wrap').classList.contains('is-on')"
         )
@@ -202,7 +202,7 @@ class TestLockedAndGrouped:
         _open(page, stack, "thinking")
         assert page.locator("#knob-thinking").is_disabled()
         assert page.locator("#knob-reasoning_effort").is_disabled()
-        assert page.inner_text("#knob-thinking-badge").strip() == "미지원"
+        assert page.inner_text("#knob-thinking-badge").strip() == "unsupported"
         title = page.get_attribute("#knob-thinking-wrap", "title")
         assert title == "this model does not support thinking"  # 두 멤버, 사유는 한 번
         assert page.evaluate(
@@ -210,7 +210,7 @@ class TestLockedAndGrouped:
         )
         # 📐 미확인(None) — 셀렉트 잠김, 배지 "미확인"
         assert page.locator("#knob-grammar").is_disabled()
-        assert page.inner_text("#knob-grammar-badge").strip() == "미확인"
+        assert page.inner_text("#knob-grammar-badge").strip() == "unknown"
 
     def test_group_badge_and_note_follow_both_members(self, stack, page):
         _open(page, stack, "stall")
@@ -219,12 +219,31 @@ class TestLockedAndGrouped:
         assert _wait(lambda: stack.ctx.stream_idle_timeout_s == 0)
         assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "off")
         assert page.locator("#knob-stall_attempts").is_disabled()
-        assert "꺼져" in page.inner_text("#knob-stall-note")
+        assert "is off" in page.inner_text("#knob-stall-note")
         page.fill("#knob-stall", "3")
         page.dispatch_event("#knob-stall", "change")
         assert _wait(lambda: page.inner_text("#knob-stall-badge").strip() == "3m×4")
         assert page.locator("#knob-stall_attempts").is_enabled()
-        assert "최대 12분" in page.inner_text("#knob-stall-note")
+        assert "at most 12 min" in page.inner_text("#knob-stall-note")
+
+    def test_each_member_starts_its_own_row_and_units_fit(self, stack, page):
+        """묶음 팝업은 멤버마다 한 줄 — 단위 칸이 없는 🧠 의 두 셀렉트 뒤에서
+        다음 라벨이 셋째 열로 밀려 "off  Reasoning effort" 로 이어 붙던 것
+        (사용자 실측, v10.62.1). ⏳ 의 단위 글은 팝업 상자 안에 머문다."""
+        _open(page, stack, "thinking")
+        boxes = page.evaluate(
+            "() => ['knob-thinking', 'knob-reasoning_effort'].map(id => "
+            "document.querySelector('label[for=' + id + ']').getBoundingClientRect().top)"
+        )
+        assert boxes[1] > boxes[0] + 10, boxes  # 둘째 라벨은 아랫줄
+        page.click("#knob-thinking-chip")
+        _open(page, stack, "stall")
+        edges = page.evaluate(
+            "() => { const pop = document.getElementById('knob-stall-pop').getBoundingClientRect();"
+            " const units = Array.from(document.querySelectorAll('#knob-stall-pop .knob-unit'))"
+            ".map(u => u.getBoundingClientRect().right); return [pop.right, Math.max(...units)]; }"
+        )
+        assert edges[1] <= edges[0] + 1, edges
 
     def test_one_popup_at_a_time(self, stack, page):
         _open(page, stack, "grammar")
@@ -245,7 +264,7 @@ class TestViewersStayInSync:
             p.wait_for_selector("#knob-auditor-wrap:not([hidden])", timeout=8000)
         a.click("#knob-auditor-chip")
         a.select_option("#knob-auditor", "on")
-        assert _wait(lambda: b.inner_text("#knob-auditor-badge").strip() == "켬")
+        assert _wait(lambda: b.inner_text("#knob-auditor-badge").strip() == "on")
         assert b.evaluate("() => document.getElementById('knob-auditor').value") == "on"
         a.close()
         b.close()
@@ -257,11 +276,11 @@ class TestViewersStayInSync:
         stack.auditor.in_flight = 1
         stack.renderer.note_harness(1)
         assert _wait(
-            lambda: page.inner_text("#knob-auditor-badge").strip() == "감사 중"
+            lambda: page.inner_text("#knob-auditor-badge").strip() == "auditing"
         )
         stack.auditor.in_flight = 0
         stack.renderer.note_harness(0)
-        assert _wait(lambda: page.inner_text("#knob-auditor-badge").strip() == "끔")
+        assert _wait(lambda: page.inner_text("#knob-auditor-badge").strip() == "off")
 
     def test_rejected_value_reverts_on_screen(self, stack, page):
         """서버가 거부하면(미등록 모델) 화면도 마지막 상태로 돌아간다 — 바뀐 척하지 않는다."""

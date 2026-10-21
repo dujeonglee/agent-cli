@@ -1008,7 +1008,9 @@ def create_app(server: WebServer) -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:  # provider/network — 502 로 표면화
-            raise HTTPException(status_code=502, detail=f"생성 실패: {e}") from e
+            raise HTTPException(
+                status_code=502, detail=f"generation failed: {e}"
+            ) from e
         return {"content": content}
 
     @app.get("/api/workspace/tree")

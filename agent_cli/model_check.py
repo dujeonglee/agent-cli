@@ -125,11 +125,13 @@ def _fetch(base_url: str, api_key: str, provider: str) -> ModelListing:
     try:
         data = r.json().get("data", [])
     except Exception as e:
-        return ModelListing((), False, f"응답을 읽지 못함: {type(e).__name__}")
+        return ModelListing(
+            (), False, f"could not read the response: {type(e).__name__}"
+        )
     ids = tuple(m["id"] for m in data if isinstance(m, dict) and m.get("id"))
     if not ids:
         # 200 인데 빈 목록: 형식이 다른 서버일 수 있어 단정하지 않는다.
-        return ModelListing((), False, "목록이 비어 있음")
+        return ModelListing((), False, "empty model list")
     return ModelListing(ids, True)
 
 
@@ -137,11 +139,11 @@ def _short_reason(exc: Exception) -> str:
     """예외를 한 줄 분류로. 원문은 길고 대부분 urllib3 내부 사정이다."""
     name = type(exc).__name__
     if "Timeout" in name:
-        return "응답 없음(timeout)"
+        return "no response (timeout)"
     if "ConnectionError" in name or "Connection" in name:
-        return "연결할 수 없음"
+        return "cannot connect"
     if "SSL" in name or "Certificate" in name:
-        return "TLS 오류"
+        return "TLS error"
     text = str(exc).splitlines()[0] if str(exc) else ""
     return f"{name}: {text[:60]}" if text else name
 

@@ -615,7 +615,7 @@ class TestManagerSummary:
         assert by["sse-b"]["transport"] == "sse"
         assert by["sse-b"]["tools"] == []
         # 원문이 아니라 번역 — 마법사 list 와 같은 문구 (TestHumanizeError)
-        assert by["sse-b"]["error"] == "연결 거부 — http://h 에 서버가 없습니다"
+        assert by["sse-b"]["error"] == "connection refused — no server at http://h"
 
     def test_empty_manager_summary(self):
         from agent_cli.mcp.client import McpClientManager
@@ -637,17 +637,21 @@ class TestHumanizeError:
             (
                 "error: [Errno 2] No such file or directory: 'x'",
                 ("stdio", "npx"),
-                "찾을 수 없습니다: npx",
+                "executable not found: npx",
             ),
             (
                 "error: Connection refused",
                 ("sse", "http://h:1"),
-                "연결 거부 — http://h:1",
+                "connection refused — no server at http://h:1",
             ),
-            ("All connection attempts failed", ("sse", "http://h:1"), "연결 거부"),
+            (
+                "All connection attempts failed",
+                ("sse", "http://h:1"),
+                "connection refused",
+            ),
             ("error: No module named 'mcp'", ("stdio", "x"), "pip install mcp"),
             ("error: something odd", ("stdio", "x"), "something odd"),
-            ("", ("stdio", "x"), "알 수 없는 오류"),
+            ("", ("stdio", "x"), "unknown error"),
         ],
     )
     def test_messages(self, raw, cfg, needle):
@@ -683,7 +687,7 @@ class TestHumanizeError:
             )
         assert (
             m.summary()["servers"][0]["error"]
-            == "연결 거부 — http://h:1 에 서버가 없습니다"
+            == "connection refused — no server at http://h:1"
         )
 
 
@@ -813,7 +817,7 @@ class TestCancelledErrorIsCaught:
         assert r["s"].startswith("error:")
         assert (
             m.summary()["servers"][0]["error"]
-            == "서버가 이 전송 방식에 응답하지 않습니다"
+            == "the server does not respond to this transport"
         )
 
     def test_keyboard_interrupt_still_propagates(self):
@@ -869,7 +873,7 @@ class TestWrongTransportDiagnosis:
         from agent_cli.mcp.config import McpServerConfig
 
         msg = humanize_error(raw, McpServerConfig(name="s", url="u", transport="sse"))
-        assert "전송 방식이 다릅니다" in msg and "streamable-http" in msg
+        assert "transport mismatch" in msg and "streamable-http" in msg
 
     def test_streamable_config_400_is_not_misdiagnosed(self):
         """이미 streamable 인데 난 400 은 다른 문제(경로 오타 등)다."""
@@ -877,12 +881,12 @@ class TestWrongTransportDiagnosis:
         from agent_cli.mcp.config import McpServerConfig
 
         cfg = McpServerConfig(name="s", url="u", transport="streamable-http")
-        assert "전송 방식" not in humanize_error("400 Bad Request", cfg)
+        assert "transport mismatch" not in humanize_error("400 Bad Request", cfg)
 
     def test_no_config_no_hint(self):
         from agent_cli.mcp.client import humanize_error
 
-        assert "전송 방식" not in humanize_error("400 Bad Request", None)
+        assert "transport mismatch" not in humanize_error("400 Bad Request", None)
 
 
 class TestMcpToolName:

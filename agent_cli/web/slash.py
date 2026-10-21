@@ -109,8 +109,8 @@ class WebDispatchOutput:
             lines.append(live_status)
         lines.append("")
         lines.append(
-            "``@<profile> <task>`` (일회성 run) · ``@<profile>-spawn <task>`` "
-            "(상주) · ``@agt-<key> <메시지>`` (직접 전송 — 회신은 🤝 창으로)"
+            "``@<profile> <task>`` (one-shot run) · ``@<profile>-spawn <task>`` "
+            "(resident) · ``@agt-<key> <message>`` (direct send — replies arrive in the 🤝 panel)"
         )
         self.renderer.observation(
             "\n".join(lines),

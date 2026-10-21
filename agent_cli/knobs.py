@@ -334,39 +334,35 @@ def _model_options(s: KnobSession) -> list[str]:
 def _grammar_badge(s: KnobSession) -> str:
     info = _grammar_info(s)
     if info["supported"] is False:
-        return "미지원"
+        return "unsupported"
     if info["supported"] is None:
-        return "미확인"
-    return "강제" if info["active"] else "끔"
+        return "unknown"
+    return "enforced" if info["active"] else "off"
 
 
 def _grammar_note(s: KnobSession) -> str:
     info = _grammar_info(s)
     if info["supported"] is False:
-        return (
-            "서버가 문법을 강제하지 못합니다 — 텍스트 프로토콜 + 복구 계층(종전대로)."
-        )
+        return "The server cannot enforce a grammar — text protocol plus the recovery layer, as before."
     if info["supported"] is None:
-        return "models.json 에 이 모델의 문법 지원 여부가 없습니다 — 모델 감지(프로브)를 다시 실행하면 채워집니다."
+        return "models.json does not record whether this model supports grammars — re-run model detection (probe) to fill it in."
     if info["active"]:
-        return "다음 요청부터 실립니다. 생성 속도가 느려지는 대신 형식 오류·모르는 도구·본문 폭주가 생성 단계에서 불가능합니다."
-    return "이 세션에서는 문법을 싣지 않습니다."
+        return "Applies from the next request. Generation gets slower, but malformed calls, unknown tools and runaway bodies become impossible at the generation stage."
+    return "No grammar is sent in this session."
 
 
 def _auditor_badge(s: KnobSession) -> str:
     if s.auditor.in_flight > 0:
-        return "감사 중"
-    return "켬" if s.auditor.enabled else "끔"
+        return "auditing"
+    return "on" if s.auditor.enabled else "off"
 
 
 def _auditor_note(s: KnobSession) -> str:
     if s.auditor.in_flight > 0:
-        return "감사 런이 돌고 있습니다 — 결과는 main 채널에 카드로 옵니다."
+        return "An audit run is in progress — the result arrives as a card in the main channel."
     if s.auditor.enabled:
-        return (
-            "다음 사용자 런부터, 런이 끝날 때마다 그 런의 기록만 읽는 감사 런이 돕니다."
-        )
-    return "이 세션에서는 감사하지 않습니다."
+        return "From the next user run, every finished run is audited by a run that reads only that run's records."
+    return "No auditing in this session."
 
 
 def _minutes(seconds: int) -> int:
@@ -382,13 +378,13 @@ def _stall_note(s: KnobSession) -> str:
     m = _minutes(s.ctx.stream_idle_timeout_s)
     n = s.ctx.stream_max_attempts
     if m == 0:
-        return "무진전 감지가 꺼져 있어 재전송하지 않습니다"
-    return f"{m}분 × {n}회 = 최대 {m * n}분 후 실패"
+        return "Stall detection is off — no resend"
+    return f"{m} min × {n} attempts (first send included) = fails after at most {m * n} min"
 
 
 def _thinking_badge(s: KnobSession) -> str:
     if _thinking_locked(s):
-        return "미지원"
+        return "unsupported"
     if _thinking_get(s) == "off":
         return "off"
     eff = _effort_get(s)
@@ -398,7 +394,7 @@ def _thinking_badge(s: KnobSession) -> str:
 def _thinking_note(s: KnobSession) -> str:
     return (
         _thinking_locked(s)
-        or "다음 LLM 요청부터 반영됩니다. 사고 끄기는 토큰 절약, 노력은 백엔드가 존중할 때만."
+        or "Applies from the next LLM request. Thinking off saves tokens; effort only when the backend honours it."
     )
 
 
@@ -406,7 +402,7 @@ def _thinking_note(s: KnobSession) -> str:
 KNOB_GROUPS: dict[str, KnobGroup] = {
     "stall": KnobGroup(
         icon="⏳",
-        label="무진전",
+        label="Stall",
         help=(
             "Server-stall watchdog — reconnect & resend after N minutes with no "
             "generated token (keep-alives don't count). 0 disables. Attempts is the "
@@ -417,11 +413,12 @@ KNOB_GROUPS: dict[str, KnobGroup] = {
     ),
     "thinking": KnobGroup(
         icon="🧠",
-        label="사고",
+        label="Thinking",
         help=(
-            "사고(thinking)·추론 노력 제어 — 다음 LLM 요청부터 반영. 사고 끄기는 토큰 "
-            "절약·속도↑(백엔드가 지원 시), reasoning effort 는 백엔드가 존중할 때만 "
-            "유효합니다. 세션 한정·재시작 시 자동."
+            "Thinking and reasoning-effort control — applies from the next LLM "
+            "request. Thinking off saves tokens and speeds generation up (when the "
+            "backend supports it); reasoning effort counts only when the backend "
+            "honours it. Session-scoped; auto on restart."
         ),
         badge=_thinking_badge,
         note=_thinking_note,
@@ -442,7 +439,7 @@ KNOBS: tuple[Knob, ...] = (
         flag="--model",
         short="-m",
         env="AGENT_CLI_MODEL",
-        label="모델",
+        label="Model",
         help=(
             "Model ID (default: config.json default_model, then the provider's "
             "default). Mid-session switches apply from the next LLM call; the "
@@ -456,7 +453,7 @@ KNOBS: tuple[Knob, ...] = (
         ui=KnobUI(icon="🤖", control="options"),
         badge=lambda s: s.binding.model,
         note=lambda s: (
-            f"방언 {s.binding.dialect.name} · 창 {_caps(s).context_window:,} 토큰 — 같은 방언에 묶인 모델만 바꿀 수 있습니다."
+            f"dialect {s.binding.dialect.name} · window {_caps(s).context_window:,} tokens — only models bound to the same dialect can be selected."
             if _caps(s)
             else ""
         ),
@@ -467,7 +464,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--thinking",
         env="AGENT_CLI_THINKING",
-        label="사고",
+        label="Thinking",
         help=(
             "Model thinking for this session: off (default — a model without a "
             "switch thinks forever), on, or auto (server/model default). Takes "
@@ -478,10 +475,7 @@ KNOBS: tuple[Knob, ...] = (
         default="off",
         get=_thinking_get,
         set=_thinking_set,
-        ui=KnobUI(
-            group="thinking",
-            choice_labels={"off": "끄기", "on": "켜기", "auto": "자동"},
-        ),
+        ui=KnobUI(group="thinking"),
         info=_thinking_info,
         locked=_thinking_locked,
     ),
@@ -490,13 +484,13 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--reasoning-effort",
         env="AGENT_CLI_REASONING_EFFORT",
-        label="추론 노력",
+        label="Reasoning effort",
         help="Reasoning effort when the backend honours it: auto (default), low, medium, high, off.",
         kind=Choice("auto", "low", "medium", "high", "off"),
         default="auto",
         get=_effort_get,
         set=_effort_set,
-        ui=KnobUI(group="thinking", choice_labels={"auto": "자동"}),
+        ui=KnobUI(group="thinking"),
         # 사고 미지원 모델이면 노력도 뜻이 없다 — 🧠 칩의 두 셀렉트가 같이 잠긴다
         locked=_thinking_locked,
     ),
@@ -505,7 +499,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--grammar",
         env="AGENT_CLI_GRAMMAR",
-        label="디코딩 문법",
+        label="Decoding grammar",
         help=(
             "Decoding grammar that forces the tool-call shape at generation: "
             "auto (default — on when models.json records support), on, off."
@@ -517,9 +511,9 @@ KNOBS: tuple[Knob, ...] = (
         ui=KnobUI(
             icon="📐",
             choice_labels={
-                "auto": "켬 (기본 — 지원되면)",
-                "on": "켬 (강제)",
-                "off": "끔",
+                "auto": "on (default — when supported)",
+                "on": "on (forced)",
+                "off": "off",
             },
         ),
         badge=_grammar_badge,
@@ -533,7 +527,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="registry",
         flag="--max-agents",
         env="AGENT_CLI_MAX_AGENTS",
-        label="에이전트 상한",
+        label="Agent cap",
         help="Max concurrently live sub-agents; 0 = unlimited (default 10).",
         kind=Number(int, unit="count"),
         default=10,
@@ -550,7 +544,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--compaction-ratio",
         env="AGENT_CLI_COMPACTION_RATIO",
-        label="압축 비율",
+        label="Compaction ratio",
         help=(
             "Context compaction target as a fraction of the window (0.5-1.0). "
             "1.0 (default) = compact only when a generation is cut by the window; "
@@ -569,7 +563,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--stall",
         env="AGENT_CLI_STREAM_IDLE_TIMEOUT_S",
-        label="스트림 무진전 한도",
+        label="Stream stall limit",
         help=(
             "Stream stall limit before re-sending: 600 (seconds), 10m (minutes), "
             "0 (off). Default 10m."
@@ -586,7 +580,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="ctx",
         flag="--stall-attempts",
         env="AGENT_CLI_STREAM_MAX_ATTEMPTS",
-        label="무진전 시도 횟수",
+        label="Stall attempts",
         help=(
             "TOTAL send attempts on stall, first send included (1-10). "
             "Max wait = --stall x this. Default 4."
@@ -595,10 +589,10 @@ KNOBS: tuple[Knob, ...] = (
         default=4,
         get=lambda s: s.ctx.stream_max_attempts,
         set=lambda s, v: s.ctx.set_stream_max_attempts(v),
-        ui=KnobUI(group="stall", unit="회 · 첫 전송 포함"),
+        ui=KnobUI(group="stall", unit="attempts"),
         # 한도 0 = 감지 끔 → 시도 횟수라는 개념이 성립하지 않는다 (v8.60.0 규칙)
         locked=lambda s: (
-            "무진전 감지가 꺼져 있습니다 (한도 0)"
+            "stall detection is off (limit 0)"
             if s.ctx.stream_idle_timeout_s <= 0
             else None
         ),
@@ -609,7 +603,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="renderer",
         flag="--auto-approve",
         env="AGENT_CLI_AUTO_APPROVE",
-        label="자동 승인",
+        label="Auto-approve",
         help=(
             "Skip every confirmation prompt (dangerous shell commands, path "
             "guards) and allow — on the terminal there is nobody to ask. "
@@ -620,7 +614,7 @@ KNOBS: tuple[Knob, ...] = (
         get=lambda s: bool(s.renderer.auto_approve),
         set=lambda s, v: s.renderer.set_auto_approve(v),
         ui=KnobUI(icon="⚡", placement="header"),
-        badge=lambda s: "확인 없이 실행",
+        badge=lambda s: "no confirmations",
         on=lambda s: bool(s.renderer.auto_approve),
     ),
     Knob(
@@ -628,7 +622,7 @@ KNOBS: tuple[Knob, ...] = (
         owner="auditor",
         flag="--auditor",
         env="AGENT_CLI_AUDITOR",
-        label="세션 감사",
+        label="Session audit",
         help=(
             "Audit every finished user run with a harness job that reads only "
             "that run's records and reports per-request verdicts to main "
@@ -638,7 +632,7 @@ KNOBS: tuple[Knob, ...] = (
         default=False,
         get=lambda s: bool(s.auditor.enabled),
         set=lambda s, v: setattr(s.auditor, "enabled", bool(v)) or bool(v),
-        ui=KnobUI(icon="🔎", choice_labels={"off": "끔 (기본)", "on": "켬"}),
+        ui=KnobUI(icon="🔎", choice_labels={"off": "off (default)", "on": "on"}),
         badge=_auditor_badge,
         note=_auditor_note,
         on=lambda s: bool(s.auditor.enabled),

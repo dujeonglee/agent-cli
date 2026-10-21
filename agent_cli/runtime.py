@@ -161,14 +161,14 @@ def build_snapshot_store():
     store = get_snapshot(Path.cwd(), create=True)
     if store is None or not store.enabled:
         get_renderer().status(
-            "running", f"📸 스냅샷 꺼짐 — {store.reason if store else 'unavailable'}"
+            "running", f"📸 Snapshots off — {store.reason if store else 'unavailable'}"
         )
         reset_snapshot()
         return None
     get_renderer().status(
         "running",
-        f"📸 스냅샷 준비 — {store.git_dir.relative_to(store.workspace)} "
-        f"({store.stats.seconds:.1f}s, 하위 저장소 {len(store.nested)}개)",
+        f"📸 Snapshots ready — {store.git_dir.relative_to(store.workspace)} "
+        f"({store.stats.seconds:.1f}s, {len(store.nested)} nested repos)",
     )
     return store
 
@@ -299,8 +299,8 @@ def teardown_session(
             from agent_cli.render import C, console
 
             console.print(
-                f"[{C['accent']}]❓ 에이전트 {', '.join(stuck)} 의 질문에 답하지 "
-                f"않은 채 종료 — 다음 세션에서 트레이에 다시 뜹니다[/]"
+                f"[{C['accent']}]❓ Exiting with unanswered questions from "
+                f"{', '.join(stuck)} — they reappear in the tray next session[/]"
             )
     if monitors is not None:
         # **에이전트 종료보다 먼저.** 폴링 스레드는 종전에 아무도 안 멈췄고
@@ -324,8 +324,8 @@ def teardown_session(
 
             names = ", ".join(f"#{j.id} pid {j.pid}" for j in killed)
             console.print(
-                f"[{C['muted']}]🧵 세션 종료 — 돌던 백그라운드 작업 {len(killed)}개를 "
-                f"멈췄습니다 ({names})[/]"
+                f"[{C['muted']}]🧵 Session ended — stopped {len(killed)} running "
+                f"background job(s) ({names})[/]"
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()

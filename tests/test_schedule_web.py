@@ -55,7 +55,7 @@ class TestScheduleApi:
         _, reg, client = stack
         (row,) = _add(client, label="주간 보고").json()["schedules"]
         assert row["source"] == "user"
-        assert row["human"] == "매주 월 09:00"
+        assert row["human"] == "weekly Mon 09:00"
         assert row["next_fire"] == "2026-10-05T09:00"
         assert (
             row["effective_nickname"] == "Scheduler-주간 보고"
