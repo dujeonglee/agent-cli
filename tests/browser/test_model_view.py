@@ -477,3 +477,39 @@ def test_budget_shows_only_what_the_server_measured(stack, page):
         ".map(e => parseFloat(e.style.width))"
     )
     assert 27 < sum(widths) < 29
+
+
+def test_tail_follows_the_call_and_marks_items_closed_after_it(stack, page):
+    """v10.63.0: 스냅샷이 찍히는 순간 띠가 바뀌고(``prompt_snapshot``), 런이 끝나면
+    `complete` 로 닫힌 항목 줄에 ✓ 표시가 붙는다 — 꼬리 글은 그대로."""
+    _seed_main(stack)
+    errors = _open(page, stack)
+    items = (
+        "turn 6/30\n\n## Open Items — close them in this order\n"
+        '     [u-1] (dj) "A 해줘"\n     [u-2] (dj) "B 해줘"'
+    )
+    tail = [("Session State (per-turn tail)", items)]
+    stack.renderer.note_system_prompt(
+        _SECTIONS, 6, tail=tail, open_items=["u-1", "u-2"]
+    )
+    page.wait_for_function(
+        "() => /turn 6\\/30/.test(document.querySelector('#ctx-tail .ctx-bar').textContent)",
+        timeout=8000,
+    )  # 호출 직전에 바뀐다 — token_usage 를 기다리지 않는다
+    stack.renderer.note_items_closed_after(["u-2"])
+    page.wait_for_function(
+        "() => /1 closed after/.test(document.querySelector('#ctx-tail .ctx-bar').textContent)",
+        timeout=8000,
+    )
+    page.click("#ctx-tail .ctx-bar")
+    facts = page.evaluate(
+        """() => ({
+            struck: [...document.querySelectorAll('#ctx-tail .ctx-closed')].map(e => e.textContent),
+            tags: [...document.querySelectorAll('#ctx-tail .insp-tail .insp-tag.ok')].length,
+            body: document.querySelector('#ctx-tail .insp-diff, #ctx-tail .insp-body').textContent,
+        })"""
+    )
+    assert len(facts["struck"]) == 1 and "[u-1]" in facts["struck"][0]
+    assert facts["tags"] == 1
+    assert '[u-2] (dj) "B 해줘"' in facts["body"]  # 아직 열린 건 그대로
+    assert errors == []

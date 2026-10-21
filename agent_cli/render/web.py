@@ -1958,6 +1958,7 @@ class WebRenderer(Renderer):
         grammar: tuple[bool, str] | None = None,
         tools: list[dict] | None = None,
         tail: list[tuple[str, str]] | None = None,
+        open_items: list[str] | None = None,
     ) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.
 
@@ -1970,9 +1971,15 @@ class WebRenderer(Renderer):
         agent's prompt is inspectable separately without the loop passing any
         identity down.
 
-        Store-only (no SSE emission — the prompt is ~16KB and the inspector
-        fetches on demand via ``GET /api/debug/prompt``). Token figures are
-        the same chars/4 estimate the context manager budgets with.
+        The prompt itself does not ride SSE (~16KB — the frame fetches on
+        demand via ``GET /api/debug/prompt``); a small transient
+        ``prompt_snapshot`` event (v10.63.0) tells the frame **at call start**
+        that the scope's snapshot changed, so the Tail shows what the model is
+        working from rather than the previous call's. Token figures are the
+        same chars/4 estimate the context manager budgets with.
+
+        ``open_items`` (v10.63.0): ids in this call's Open Items — kept so
+        :meth:`note_items_closed_after` can mark what closed after the call.
         """
         from agent_cli.context.token_estimator import estimate_tokens
 
@@ -2031,8 +2038,28 @@ class WebRenderer(Renderer):
             prev = self._prompt_snapshots.get(scope)
             snapshot["tail_prev"] = list(prev.get("tail") or []) if prev else []
             snapshot["prev_turn"] = prev.get("turn") if prev else None
+            snapshot["open_items"] = list(open_items or [])
             self._prompt_snapshots[scope] = snapshot
         self._persist_prompt_view(scope)
+        self._emit("prompt_snapshot", {"scope": scope}, persistent=False)
+
+    def note_items_closed_after(self, open_now: list[str]) -> None:
+        """런 끝: 마지막 스냅샷의 ``open_items`` 중 이제 닫힌 것을
+        ``closed_after`` 로 단다 (v10.63.0). 꼬리 본문은 손대지 않는다 — Tail 은
+        여전히 그 호출에 실린 그대로이고, 화면은 이 id 들의 줄에 표시만 한다.
+        같은 런의 다음 호출이 오면 새 스냅샷이라 표시는 사라진다."""
+        scope = self._current_prompt_scope(threading.get_ident())
+        still = set(open_now)
+        with self._lock:
+            snap = self._prompt_snapshots.get(scope)
+            if snap is None:
+                return
+            closed = [i for i in snap.get("open_items") or [] if i not in still]
+            if closed == (snap.get("closed_after") or []):
+                return
+            snap["closed_after"] = closed
+        self._persist_prompt_view(scope)
+        self._emit("prompt_snapshot", {"scope": scope}, persistent=False)
 
     # ─── 모델 시점 틀의 on-disk 사본 (resume) ───────────────
 

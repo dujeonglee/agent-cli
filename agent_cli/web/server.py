@@ -787,6 +787,7 @@ def create_app(server: WebServer) -> FastAPI:
             "est_tokens": est_tokens,
             "tail_prev": snapshot.get("tail_prev") or [],
             "prev_turn": snapshot.get("prev_turn"),
+            "closed_after": list(snapshot.get("closed_after") or []),
             "budget": budget,
             "scope": info,
         }

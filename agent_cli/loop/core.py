@@ -47,6 +47,7 @@ from agent_cli.render import (
     notify_directives_applied,
     notify_memory_applied,
     render_header,
+    render_items_closed_after,
     render_run_ended,
     render_status,
     render_step,
@@ -540,6 +541,8 @@ class AgentLoop:
                 return self._on_interrupt()
             return self._on_max_turns()
         finally:
+            # 틀의 Tail 에 "이 호출 뒤에 닫힌 항목" 표시 (v10.63.0) — 어떻게 끝나든.
+            render_items_closed_after(self._state.ledger.pin_ids())
             self._fire_hook("OnSessionEnd")
             if self.graceful_interrupt:
                 self._restore_signal_handler()

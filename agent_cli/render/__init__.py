@@ -285,6 +285,7 @@ def render_system_prompt_snapshot(
     grammar: tuple[bool, str] | None = None,
     tools: list[dict] | None = None,
     tail: list[tuple[str, str]] | None = None,
+    open_items: list[str] | None = None,
 ) -> None:
     """Hand the per-turn system prompt (named sections) to the renderer.
 
@@ -300,11 +301,25 @@ def render_system_prompt_snapshot(
     ``tools`` is the function-schema list a server-parsed dialect (native_fc)
     sends as the request's ``tools[]`` instead of an ``## Available Tools``
     section — the server's chat template renders it into the prompt, so the
-    inspector shows it as prompt content (v10.2.1)."""
+    inspector shows it as prompt content (v10.2.1).
+
+    ``open_items`` (v10.63.0): 이 호출의 꼬리 Open Items 에 실린 id — 런이 끝날 때
+    :func:`render_items_closed_after` 가 이것과 비교해 "이 호출 뒤에 닫힌 것" 을 낸다."""
     _flush_thought()
     _renderer.note_system_prompt(
-        sections, turn, grammar=grammar, tools=tools, tail=tail
+        sections, turn, grammar=grammar, tools=tools, tail=tail, open_items=open_items
     )
+
+
+def render_items_closed_after(open_now: list[str]) -> None:
+    """런이 끝났다 — 아직 열린 항목 id 를 렌더러에 넘긴다 (v10.63.0).
+
+    틀의 Tail 은 마지막 모델 호출에 **실제로 실린** 꼬리다. `complete` 로 닫힌
+    요청은 그 뒤 호출이 없어 Tail 에 열린 채 남는다 — 꼬리를 새로 지어 보이면
+    모델이 본 적 없는 입력이 되므로, 지어내지 않고 "이 호출 뒤에 닫힌 id" 만
+    덧붙인다. 런이 어떻게 끝나든(complete·턴 상한·취소·예외) 같은 자리에서."""
+    _flush_thought()
+    _renderer.note_items_closed_after(open_now)
 
 
 def consume_directives_reload() -> bool:

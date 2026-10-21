@@ -1209,12 +1209,23 @@
       "</details>"
     );
   }
-  function frameTailSecHtml(s, d, prevTurn) {
+  /** Open Items 의 `[u-1] …` 줄 — 그 호출 뒤에 닫혔으면(`closed_after`) 긋고
+   * 표시한다. 꼬리 글은 그대로다: 모델이 받은 것을 고쳐 쓰지 않는다. */
+  function markClosed(raw, html, closed) {
+    const m = /^\s*\[([A-Za-z]+-\d+)\]/.exec(raw);
+    if (!m || !closed[m[1]]) return html;
+    return '<span class="ctx-closed">' + html + '</span> <span class="insp-tag ok">✓ closed after this call</span>';
+  }
+  function frameTailSecHtml(s, d, prevTurn, closed) {
     let tags = "";
-    let body = '<pre class="insp-body">' + escapeHtml(s.text) + "</pre>";
+    const lines = s.text.split("\n");
+    const hasClosed = lines.some(function (l) { return markClosed(l, "", closed) !== ""; });
+    let body = '<pre class="insp-body">' +
+      lines.map(function (l) { return markClosed(l, escapeHtml(l), closed); }).join("\n") + "</pre>";
     let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
     if (d) {
-      open = !!(d.ins || d.del); // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다
+      // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다. 닫힌 항목이 있으면 그 섹션도.
+      open = !!(d.ins || d.del) || hasClosed;
       if (open) {
         if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
         if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
@@ -1223,13 +1234,13 @@
           '<pre class="insp-diff">' +
           d.lines
             .map(function (l) {
-              if (l[0] === "+") return '<span class="ins">+ ' + escapeHtml(l[1]) + "</span>";
+              if (l[0] === "+") return '<span class="ins">+ ' + markClosed(l[1], escapeHtml(l[1]), closed) + "</span>";
               if (l[0] === "-") return '<span class="del">- ' + escapeHtml(l[1]) + "</span>";
-              return escapeHtml(l[1]);
+              return markClosed(l[1], escapeHtml(l[1]), closed);
             })
             .join("\n") +
           "</pre>";
-      } else {
+      } else if (!hasClosed) {
         tags += '<span class="insp-tag">no change</span>';
       }
     }
@@ -1405,6 +1416,10 @@
       del += df.del;
       return df;
     });
+    // 이 호출 뒤에 닫힌 항목 (v10.63.0) — 런이 끝나면 서버가 단다.
+    const closedIds = (ok && d.closed_after) || [];
+    const closed = {};
+    closedIds.forEach(function (id) { closed[id] = true; });
     const tchips = [];
     if (!ok) tchips.push(pending ? "…" : "no model call yet");
     else if (!tail.length) tchips.push(d.turn ? "this call had no tail" : "filled on the first model call");
@@ -1420,6 +1435,7 @@
       });
     }
     let right = "";
+    if (closedIds.length) right += '<span class="insp-tag ok">✓ ' + closedIds.length + " closed after</span>";
     if (ins) right += '<span class="insp-tag ins">+' + ins + "</span>";
     if (del) right += '<span class="insp-tag del">−' + del + "</span>";
     if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs turn ' + escapeHtml(d.prev_turn) + "</span>";
@@ -1429,8 +1445,9 @@
     if (f.open.tail) {
       tl += '<div class="ctx-body">';
       if (tail.length) {
-        tl += '<div class="insp-sub">' + (ended ? "Snapshot at end — no further changes." : "As of the last model call (turn " + escapeHtml(d.turn) + ").") + "</div>";
-        tl += tail.map(function (s, i) { return frameTailSecHtml(s, diffs[i], d.prev_turn); }).join("");
+        tl += '<div class="insp-sub">' + (ended ? "Snapshot at end — no further changes." : "As of the last model call (turn " + escapeHtml(d.turn) + ").") +
+          (closedIds.length ? " Items marked ✓ were closed after this call." : "") + "</div>";
+        tl += tail.map(function (s, i) { return frameTailSecHtml(s, diffs[i], d.prev_turn, closed); }).join("");
       } else {
         tl += '<div class="insp-sub">' + tchips[0] + "</div>";
       }
@@ -2855,6 +2872,12 @@
     Object.keys(frames).forEach(function (k) {
       if (frames[k].channel) frameTouch(frames[k]);
     });
+  });
+
+  es.addEventListener("prompt_snapshot", function (e) {
+    // 모델 호출이 막 나갔다(또는 런이 끝나 닫힌 항목이 붙었다) — 그 스코프의 틀을
+    // 지금 다시 가져온다. 사용량 줄은 호출이 끝난 뒤(token_usage) 채워진다.
+    frameTouch(frameOfScope(JSON.parse(e.data).scope || ""));
   });
 
   es.addEventListener("token_usage", function (e) {
