@@ -29,3 +29,16 @@ def test_prerelease_sorts_before_final():
 def test_no_wheel_is_loud(tmp_path):
     with pytest.raises(FileNotFoundError, match="build --wheel"):
         wheels.newest_wheel(tmp_path)
+
+
+def test_install_requirement_extras():
+    whl = "/installed-agent/agent_cli-10.61.3-py3-none-any.whl"
+    assert wheels.install_requirement(whl) == whl
+    assert wheels.install_requirement(whl, "") == whl
+    assert (
+        wheels.install_requirement(whl, "image")
+        == "agent-cli[image] @ file:///installed-agent/agent_cli-10.61.3-py3-none-any.whl"
+    )
+    assert wheels.install_requirement(whl, " image , dev ").startswith(
+        "agent-cli[image,dev] @"
+    )

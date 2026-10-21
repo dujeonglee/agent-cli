@@ -24,6 +24,16 @@ def wheel_version(name: str) -> tuple[int, ...] | None:
     return nums + ((-1,) if m.group(2) else (0,))
 
 
+def install_requirement(wheel_path: str, extras: str = "") -> str:
+    """``uv tool install`` 에 줄 요구사항 — extras 가 있으면 PEP 508 직접 참조
+    (``agent-cli[image] @ file:///…whl``), 없으면 wheel 경로 그대로. v10.61.1 부터
+    Pillow 가 ``image`` extra 라 벤치 컨테이너도 이걸로 받아야 축소가 켜진다."""
+    names = ",".join(x.strip() for x in extras.split(",") if x.strip())
+    if not names:
+        return wheel_path
+    return f"agent-cli[{names}] @ file://{wheel_path}"
+
+
 def newest_wheel(dist_dir: Path) -> Path:
     wheels = [
         (v, p)

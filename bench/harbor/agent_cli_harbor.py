@@ -62,7 +62,8 @@ class AgentCli(BaseInstalledAgent):
     """``--ak`` kwargs: ``wheel``(기본 dist/ 최신), ``models_json``(기본
     ``~/.agent-cli/models.json`` — 컨테이너 안 런타임 프로빙 생략용; 빈 문자열
     이면 미주입), ``host_config``(기본 ``~/.agent-cli/config.json`` — 접속
-    정보 폴백), ``python``(uv 가 확보할 파이썬, 기본 3.12), 그리고 CLI_FLAGS 의
+    정보 폴백), ``python``(uv 가 확보할 파이썬, 기본 3.12), ``extras``(wheel 의
+    extras, 기본 ``image`` — Pillow 축소; ``""`` 면 순정), 그리고 CLI_FLAGS 의
     ``max_turns``·``response_format``·``max_depth``·``verbose``(``--ak verbose=true`` → ``--verbose``).
 
     접속 정보 우선순위: ``--ae AGENT_CLI_BASE_URL/API_KEY`` (또는 호스트 env)
@@ -88,6 +89,7 @@ class AgentCli(BaseInstalledAgent):
         models_json: str = "~/.agent-cli/models.json",
         host_config: str = "~/.agent-cli/config.json",
         python: str = "3.12",
+        extras: str = "image",
         **kwargs,
     ):
         super().__init__(logs_dir, *args, **kwargs)
@@ -101,6 +103,7 @@ class AgentCli(BaseInstalledAgent):
             _read_json(Path(host_config).expanduser()) if host_config else {}
         )
         self._python = python
+        self._extras = extras
         self._provider, self._model = self._split_model()
 
     # ----- identity -----------------------------------------------------
@@ -162,7 +165,8 @@ class AgentCli(BaseInstalledAgent):
                 "curl -LsSf https://astral.sh/uv/install.sh | sh; "
                 + _PATH_PREFIX
                 + f"uv tool install --python {shlex.quote(self._python)} --force "
-                f"{shlex.quote(remote_wheel)} && agent-cli --version"
+                f"{shlex.quote(wheels.install_requirement(remote_wheel, self._extras))}"
+                " && agent-cli --version"
             ),
             timeout_sec=330,
         )
