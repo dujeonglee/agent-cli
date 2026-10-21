@@ -1618,6 +1618,20 @@
     });
     return strip;
   }
+  // 작은 썸네일 줄 (v10.61.3): 대기 줄·런 머리처럼 **접힌 채로도** 이미지가 있다는
+  // 사실이 보여야 하는 자리. 28px, 캡션 없음(제목에 경로). 펼치면 `thumbStrip`.
+  function miniThumbs(images) {
+    const strip = el("span", ["mini-thumbs"]);
+    (Array.isArray(images) ? images : []).forEach(function (ref) {
+      if (!ref || !ref.path) return;
+      const img = el("img");
+      img.src = imageUrl(ref.path);
+      img.alt = ref.path;
+      img.title = ref.path + " (" + ref.width + "×" + ref.height + ")";
+      strip.appendChild(img);
+    });
+    return strip;
+  }
   // 레코드의 자리표시 줄(`[image: path (W×H)]`)은 썸네일이 대신 말한다 — 재생
   // 카드의 본문에서 뗀다(라이브 에코는 애초에 없다).
   function stripImagePlaceholders(text) {
@@ -3356,9 +3370,11 @@
     it.appendChild(el("span", ["ic"], "←"));
     var text = String(d.text || "");
     var first = firstLineOf(text);
-    it.appendChild(el("span", ["s"], first));
+    var sCell = el("span", ["s"], first);
+    it.appendChild(sCell);
     it.appendChild(el("span", ["who"], peerLabel(d.author)));
     var imgs = Array.isArray(d.images) ? d.images : [];
+    if (imgs.length) sCell.appendChild(miniThumbs(imgs)); // 접힌 채로도 보인다 (v10.61.3)
     if (text.trim() !== first || imgs.length) {
       var body = elHtml("div", ["run-item-body", "md"], escapeAndFormat(text));
       if (imgs.length) body.appendChild(thumbStrip(imgs)); // 창에서 붙인 이미지 (v10.61.0)
@@ -3477,11 +3493,11 @@
       }
       var card = el("div", ["card", "card-queued"]);
       card.dataset.seq = String(seq);
-      var qImgs = Array.isArray(d.images) && d.images.length ? thumbStrip(d.images) : null;
-      card.appendChild(
-        makeRow("⏳", "대기", firstLineOf(d.text), qImgs, ["queued"],
-                el("span", ["peer"], peerLabel(d.author)))
-      );
+      var hasImgs = Array.isArray(d.images) && d.images.length > 0;
+      var qRow = makeRow("⏳", "대기", firstLineOf(d.text), hasImgs ? thumbStrip(d.images) : null,
+                         ["queued"], el("span", ["peer"], peerLabel(d.author)));
+      if (hasImgs) qRow.querySelector(".s").appendChild(miniThumbs(d.images)); // 접힌 채로도 보인다
+      card.appendChild(qRow);
       // `d.task_id` 는 **보낸 쪽**의 런이다(peer 워커 스레드의 `_emit` 이
       // 붙인다) — 그걸로 배치하면 이 줄이 남의 블록 몸통에 들어간다. 수신
       // 줄의 자리는 언제나 자기 채널의 루트.
@@ -4020,6 +4036,7 @@
       const txt = el("span", ["queue-text"]);
       txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
       row.appendChild(txt);
+      if (Array.isArray(it.images) && it.images.length) row.appendChild(miniThumbs(it.images));
       if (!it.mail && it.conn_id === myConnId) {
         const x = el("button", ["queue-cancel"]);
         x.type = "button";
@@ -4045,6 +4062,7 @@
       const txt = el("span", ["queue-text"]);
       txt.textContent = (cancelled ? "✕" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
       row.appendChild(txt);
+      if (Array.isArray(lv.item.images) && lv.item.images.length) row.appendChild(miniThumbs(lv.item.images));
       const st = el("span", ["queue-state"]);
       st.textContent = cancelled
         ? "취소됨"
