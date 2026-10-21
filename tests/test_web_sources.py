@@ -151,3 +151,14 @@ class TestTail:
         assert "nvd.nist.gov" in lp._llm._build_session_state(30_000)
         ws.save(["vulns.nvd"], [])
         assert "nvd.nist.gov" not in lp._llm._build_session_state(30_000)
+
+
+def test_save_replaces_the_file_atomically_and_leaves_no_temp(tmp_path):
+    """v10.61.2: 임시 파일 + os.replace — 쓰는 도중 빈 파일이 보이지 않는다."""
+    from agent_cli.web_sources import save
+
+    f = tmp_path / "web_sources.json"
+    f.write_text("{garbage")  # 종전 내용이 무엇이든 교체 뒤엔 완전한 JSON
+    data = save(["vulns.nvd"], [], path=f)
+    assert json.loads(f.read_text()) == data
+    assert [p.name for p in tmp_path.iterdir()] == ["web_sources.json"]

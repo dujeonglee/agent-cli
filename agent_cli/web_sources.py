@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -145,5 +147,18 @@ def save(disabled: list[str], added: list[dict], path: Path | None = None) -> di
         return {"disabled": [], "added": []}
     f.parent.mkdir(parents=True, exist_ok=True)
     data = {"disabled": off, "added": clean}
-    f.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", "utf-8")
+    # 원자적 교체 (v10.61.2): 같은 디렉토리의 임시 파일에 쓰고 ``os.replace``.
+    # 종전 ``write_text`` 는 truncate 와 write 사이에 빈 파일이 보여, 그 순간 읽은
+    # 쪽(보드·재접속 뷰어·실브라우저 테스트)이 JSON 디코드에 실패했다(main CI 실측).
+    fd, tmp = tempfile.mkstemp(prefix=f".{f.name}.", dir=f.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, ensure_ascii=False, indent=1) + "\n")
+        os.replace(tmp, f)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return data
