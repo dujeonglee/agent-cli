@@ -169,7 +169,7 @@ class TestResumeNotice:
 
         _add(reg, tmp_path)
         msg = _previous_monitors_notice(tmp_path)
-        assert "복원되지 않았습니다" in msg and "match" in msg
+        assert "were not restored" in msg and "match" in msg
 
     def test_no_notice_when_there_were_none(self, tmp_path):
         from agent_cli.main import _previous_monitors_notice

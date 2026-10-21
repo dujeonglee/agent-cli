@@ -2764,7 +2764,7 @@ class TestRendererSignatureRegression:
         events = []
         while not conn.queue.empty():
             events.append(conn.queue.get_nowait())
-        assert any(e == "status" and "재생성" in str(d) for e, d in events), (
+        assert any(e == "status" and "revived" in str(d) for e, d in events), (
             f"status 이벤트 미수신: {events[:5]}"
         )
 
@@ -3263,7 +3263,7 @@ class TestAtCommand:
         wait_until(lambda: reg.get(key).state == "idle")
         handled, calls = self._dispatch(f"@{key} 이전에 뭐 했었지?", reg)
         assert handled and calls[0][2] is True  # success
-        assert "main LLM 대화에는 섞이지 않음" in calls[0][1]
+        assert "not mixed into the main LLM conversation" in calls[0][1]
         # user 발신 → 처리되지만 main pending 비오염 (D8)
         assert wait_until(lambda: reg.get(key).handled == 1)
         assert not reg.has_pending_replies()
@@ -3300,7 +3300,9 @@ class TestAtCommand:
         reg = make_registry(tmp_path)
         handled, calls = self._dispatch("@coder-spawn 초기 작업 하나", reg)
         assert handled and calls[0][2] is True
-        assert "상주 시작" in calls[0][1] and "초기 task 전달됨" in calls[0][1]
+        assert (
+            "is now resident" in calls[0][1] and "initial task delivered" in calls[0][1]
+        )
         tm = next(iter(reg._agents.values()))
         assert tm.profile_name == "coder"
         assert wait_until(lambda: tm.handled == 1)  # 초기 task 처리됨

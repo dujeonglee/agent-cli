@@ -164,7 +164,7 @@ class TestProbe:
         )  # never returns
         with patch("agent_cli.mcp.client.McpClientManager", return_value=m):
             ok, msg, _, secs = W.probe_server("s", {"url": "http://h:1"}, timeout=0.2)
-        assert ok is False and "응답이 없습니다" in msg
+        assert ok is False and "no response within" in msg
         assert 0.15 <= secs < 2.0
 
 
@@ -235,8 +235,8 @@ class TestAddFlow:
         }
         pr.assert_called_once()
         out = buf.getvalue()
-        assert "GH 있음" in out and "ghp_••••••••4f2a" in out
-        assert "도구 2개" in out and "다음 실행부터" in out
+        assert "GH is set" in out and "ghp_••••••••4f2a" in out
+        assert "2 tools" in out and "from the next run" in out
 
     def test_remote_saves_detected_transport_explicitly(self, proj, monkeypatch):
         """v9.3.0: 원격은 세대를 판별해 **명시** 저장한다 — 파일에 추측을
@@ -265,8 +265,8 @@ class TestAddFlow:
         with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)):
             w, buf = _wizard()
             assert w.add()
-        assert "GITHUB_TOKN 가 없습니다" in buf.getvalue()
-        assert "빈 문자열" in buf.getvalue()
+        assert "GITHUB_TOKN is not set" in buf.getvalue()
+        assert "empty string" in buf.getvalue()
 
     def test_probe_failure_then_cancel_writes_nothing(self, proj, monkeypatch):
         """붙지 않는 설정은 파일에 남지 않는다 — 시안 6단계."""
@@ -279,7 +279,7 @@ class TestAddFlow:
             w, buf = _wizard()
             assert w.add() is False
         assert not (proj / ".agent-cli" / "mcp.json").exists()
-        assert "취소" in buf.getvalue()
+        assert "Cancelled" in buf.getvalue()
 
     def test_probe_failure_then_save_anyway(self, proj, monkeypatch):
         _script_prompts(monkeypatch, prompt=["bad", "python3", "", ""], intp=[1, 2])
@@ -307,7 +307,7 @@ class TestAddFlow:
             W.read_servers(proj / ".agent-cli" / "mcp.json")["gh"]["command"]
             == "python3"
         )
-        assert p.asked.count("   서버 이름") == 1  # 이름은 다시 묻지 않는다
+        assert p.asked.count("   Server name") == 1  # 이름은 다시 묻지 않는다
 
     def test_name_with_dot_rejected(self, proj, monkeypatch):
         """도구 이름이 mcp__{서버}__{도구} — 함수 이름 규칙 밖 문자는 받지 않는다."""
@@ -318,7 +318,7 @@ class TestAddFlow:
         with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)):
             w, buf = _wizard()
             assert w.add()
-        assert "영문자·숫자" in buf.getvalue()
+        assert "letters, digits" in buf.getvalue()
         assert "ok" in W.read_servers(proj / ".agent-cli" / "mcp.json")
 
     def test_existing_name_asks_before_overwrite(self, proj, monkeypatch):
@@ -349,7 +349,7 @@ class TestLegacyImport:
             "old": {"command": "x"}
         }
         assert legacy.exists()  # 원본은 지우지 않는다
-        assert "읽지 않습니다" in buf.getvalue()
+        assert "no longer read" in buf.getvalue()
 
     def test_declined_import_leaves_project_untouched(self, proj, monkeypatch):
         legacy = proj / "home" / ".agent-cli" / "mcp.json"
@@ -399,7 +399,7 @@ class TestListTestRemove:
             w, buf = _wizard()
             assert w.list(test=False) == 0
         pr.assert_not_called()
-        assert "미확인" in buf.getvalue()
+        assert "unchecked" in buf.getvalue()
 
     def test_list_empty_points_to_add(self, proj):
         w, buf = _wizard()
@@ -410,7 +410,7 @@ class TestListTestRemove:
         W.save_server("real", {"command": "python3"}, proj / ".agent-cli" / "mcp.json")
         w, buf = _wizard()
         assert w.test("ghost") is False
-        assert "등록됨: real" in buf.getvalue()
+        assert "registered: real" in buf.getvalue()
 
     def test_remove_and_remove_unknown(self, proj):
         W.save_server("a", {"command": "python3"}, proj / ".agent-cli" / "mcp.json")
@@ -502,7 +502,7 @@ class TestRemoteAutodetect:
         assert pr.call_args_list[0].args[1]["transport"] == "streamable-http"
         saved = W.read_servers(proj / ".agent-cli" / "mcp.json")["m"]
         assert saved == {"url": "http://h/mcp", "transport": "streamable-http"}
-        assert "자동 판별" in buf.getvalue()
+        assert "auto-detected" in buf.getvalue()
 
     def test_falls_back_to_sse(self, proj, monkeypatch):
         _script_prompts(monkeypatch, prompt=["l", "http://h/sse", ""], intp=[2])
@@ -523,7 +523,7 @@ class TestRemoteAutodetect:
         assert (
             W.read_servers(proj / ".agent-cli" / "mcp.json")["l"]["transport"] == "sse"
         )
-        assert "전송 방식: sse" in buf.getvalue()
+        assert "transport: sse" in buf.getvalue()
 
     def test_both_fail_shows_each_reason_and_saves_nothing(self, proj, monkeypatch):
         _script_prompts(monkeypatch, prompt=["d", "http://h:1/mcp", ""], intp=[2, 3])
@@ -535,7 +535,7 @@ class TestRemoteAutodetect:
             w, buf = _wizard()
             assert w.add() is False
         out = buf.getvalue()
-        assert "두 전송 방식 모두 실패" in out
+        assert "both transports failed" in out
         assert "streamable-http: 이유A" in out and "sse: 이유B" in out
         assert not (proj / ".agent-cli" / "mcp.json").exists()
 

@@ -121,7 +121,11 @@ class TestNotices:
         reg.add("0 9 * * *", "x")
         reg.add("30 9 * * *", "y")
         text = _schedule_wait_notice(reg)
-        assert "예약 2개" in text and "10-05 09:00" in text and "Ctrl-C" in text
+        assert (
+            "2 schedule(s) pending" in text
+            and "10-05 09:00" in text
+            and "Ctrl-C" in text
+        )
 
     def test_missed_notice_reports_without_running(self, tmp_path, clock):
         """`run` 기동 시: 꺼져 있던 동안 지난 예약은 알리기만 한다."""
@@ -136,7 +140,7 @@ class TestNotices:
         again = ScheduleRegistry(tmp_path, clock=clock)
         again.enqueue = lambda p, n: sent.append(p)
         text = _missed_schedules_notice(again)
-        assert "놓친 예약 1건" in text and "아침 점검" in text
+        assert "1 missed schedule(s)" in text and "아침 점검" in text
         assert sent == []
 
     def test_no_missed_notice_when_nothing_was_missed(self, reg):

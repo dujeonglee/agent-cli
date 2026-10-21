@@ -398,9 +398,7 @@ def _try_dispatch_agent_command(
 
     if name.startswith("agt-"):
         if agent_registry is None:
-            output.agent_dispatch_result(
-                "(에이전트 레지스트리가 없는 모드입니다)", False
-            )
+            output.agent_dispatch_result("(no agent registry in this mode)", False)
             return True
         if len(parts) < 2:
             # 메시지 없음 → 그 인스턴스의 상태
@@ -411,8 +409,8 @@ def _try_dispatch_agent_command(
             output.agent_dispatch_result(f"@{name}: {error}", False)
         else:
             output.agent_dispatch_result(
-                f"@{name} 에 전송됨 — 회신은 🤝 창(웹) / 콘솔 라인(CLI)으로 "
-                f"도착합니다 (main LLM 대화에는 섞이지 않음).",
+                f"Sent to @{name} — the reply arrives in the 🤝 panel (web) / as a console line (CLI) "
+                f"(it is not mixed into the main LLM conversation).",
                 True,
             )
         return True
@@ -421,7 +419,7 @@ def _try_dispatch_agent_command(
     if mode == "spawn":
         if agent_registry is None:
             output.agent_dispatch_result(
-                "(에이전트 레지스트리가 없는 모드입니다 — spawn 불가)", False
+                "(no agent registry in this mode — cannot spawn)", False
             )
             return True
         key, error = agent_registry.spawn(profile=profile)
@@ -435,9 +433,9 @@ def _try_dispatch_agent_command(
                 output.agent_dispatch_result(f"@{key}: {send_error}", False)
                 return True
         output.agent_dispatch_result(
-            f"@{key} ({profile}) 상주 시작"
-            + (" — 초기 task 전달됨" if task else "")
-            + ". 이후 @agt-<key> <메시지> 로 직접 소통.",
+            f"@{key} ({profile}) is now resident"
+            + (" — initial task delivered" if task else "")
+            + ". Talk to it directly with @agt-<key> <message>.",
             True,
         )
         return True
@@ -473,8 +471,8 @@ class _ConsoleDispatchOutput(DispatchOutput):
             console.print(f"\n[{C['accent']}]Live agents:[/]")
             console.print(live_status, markup=False)
         console.print(
-            f"\n[{C['muted']}]Usage: @<profile> <task> (일회성 run) · "
-            f"@<profile>-spawn <task> (상주) · @agt-<key> <메시지> (직접 전송)[/]"
+            f"\n[{C['muted']}]Usage: @<profile> <task> (one-shot run) · "
+            f"@<profile>-spawn <task> (resident) · @agt-<key> <message> (direct send)[/]"
         )
 
     def list_skills(self, skills: dict) -> None:
@@ -1014,8 +1012,8 @@ def _verify_model_or_exit(
         )
     if not quiet and not listing.available:
         console.print(
-            f"[{C['warn']}]⚠ /v1/models 를 읽지 못해 모델 이름을 확인하지 "
-            f"못했습니다 ({listing.reason}) — 설정값으로 진행합니다.[/]"
+            f"[{C['warn']}]⚠ Could not read /v1/models, so the model name was not "
+            f"verified ({listing.reason}) — continuing with the configured value.[/]"
         )
     return resolved_model
 
@@ -1033,42 +1031,40 @@ def _choose_model_or_exit(
     from agent_cli.config import save_config_value
 
     if err is not None:
-        console.print(f"\n[{C['error']}]✗ 설정된 모델을 서버에서 찾을 수 없습니다.[/]")
-        console.print(f"  [{C['muted']}]모델[/]  {err.model}")
+        console.print(
+            f"\n[{C['error']}]✗ The configured model was not found on the server.[/]"
+        )
+        console.print(f"  [{C['muted']}]model[/]  {err.model}")
         near = listing.suggest(err.model)
         if near:
-            console.print(f"  [{C['muted']}]비슷한 이름[/]  {near}")
+            console.print(f"  [{C['muted']}]similar[/]  {near}")
     else:
-        console.print(f"\n[{C['error']}]✗ 사용할 모델이 지정되지 않았습니다.[/]")
-    console.print(f"  [{C['muted']}]서버[/]  {base_url}")
-    console.print(f"  [{C['muted']}]출처[/]  {origin}")
+        console.print(f"\n[{C['error']}]✗ No model is specified.[/]")
+    console.print(f"  [{C['muted']}]server[/]  {base_url}")
+    console.print(f"  [{C['muted']}]source[/]  {origin}")
 
     if not listing.available:
         # 고를 목록조차 없다 — 이름을 대라고만 하면 맹목 타이핑을 유도한다.
         console.print(
-            f"\n  [{C['muted']}]모델 목록도 읽을 수 없습니다 ({listing.reason}). "
-            f"서버 주소와 기동 상태를 확인하세요.[/]"
+            f"\n  [{C['muted']}]The model list could not be read either ({listing.reason}). "
+            f"Check the server address and that it is running.[/]"
         )
-        console.print(
-            f"  [{C['muted']}]고치기: agent-cli setup  또는  --model <id>[/]\n"
-        )
+        console.print(f"  [{C['muted']}]Fix: agent-cli setup  or  --model <id>[/]\n")
         raise typer.Exit(1)
 
-    console.print(f"\n  [{C['muted']}]사용 가능:[/]")
+    console.print(f"\n  [{C['muted']}]Available:[/]")
     for i, m in enumerate(listing.models, 1):
         console.print(f"    [{C['accent']}]{i}[/]) {m}")
 
     if not interactive or quiet:
-        console.print(
-            f"\n  [{C['muted']}]고치기: agent-cli setup  또는  --model <id>[/]\n"
-        )
+        console.print(f"\n  [{C['muted']}]Fix: agent-cli setup  or  --model <id>[/]\n")
         raise typer.Exit(1)
 
     from rich.prompt import IntPrompt
 
     try:
         choice = IntPrompt.ask(
-            "\n  고르기",
+            "\n  Pick one",
             choices=[str(i) for i in range(1, len(listing.models) + 1)],
         )
     except (EOFError, KeyboardInterrupt):
@@ -1076,9 +1072,11 @@ def _choose_model_or_exit(
         raise typer.Exit(1) from None
     picked = listing.models[choice - 1]
     if save_config_value("default_model", picked):
-        console.print(f"  [{C['ok']}]✓ 저장했습니다 — 다음부터 이 모델로[/]\n")
+        console.print(f"  [{C['ok']}]✓ Saved — this model from now on[/]\n")
     else:
-        console.print(f"  [{C['warn']}]⚠ 설정 저장 실패 — 이번 실행에만 적용[/]\n")
+        console.print(
+            f"  [{C['warn']}]⚠ Could not save the config — applies to this run only[/]\n"
+        )
     return picked
 
 
@@ -1277,9 +1275,9 @@ def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
 _IMAGE_OPTION = typer.Option(
     None,
     "--image",
-    help="QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 "
-    "밖 파일은 .agent-cli/tmp/uploads/ 로 복사된다. 모델이 이미지를 못 보면 "
-    "(models.json supports_vision / 프로브) 즉시 오류 (v10.59.0).",
+    help="Attach an image to QUERY (PNG/JPEG/GIF/WebP, repeatable). Files outside the "
+    "workspace are copied to .agent-cli/tmp/uploads/. Fails immediately when the "
+    "model cannot view images (models.json supports_vision / probe).",
 )
 
 
@@ -1343,15 +1341,15 @@ def run(
     resume: str = typer.Option(
         "",
         "--resume",
-        help="이전 세션 ID 를 이어서 실행 — web 과 동일한 on-disk 세션을 로드해 "
-        "복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 주입 (v4.46.0).",
+        help="Continue a previous session by ID — loads the same on-disk session as web "
+        "and injects QUERY as a follow-up request on the restored context.",
     ),
     result_file: str = typer.Option(
         "",
         "--result-file",
-        help="최종 답변(원문)을 이 경로에 기록 — 렌더러 장식 없는 기계 소비용 "
-        "(스크립팅·헤드리스 자동화). 실패/무답 시 "
-        "파일을 만들지 않고 exit code 로 판별.",
+        help="Write the final answer (raw) to this path — machine-readable, without renderer "
+        "decoration (scripting, headless automation). On failure or no answer the "
+        "file is not created; use the exit code.",
     ),
     image: list[str] | None = _IMAGE_OPTION,
     knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
@@ -1475,18 +1473,20 @@ def run(
             parent_ctx=ctx,
         )
         if revived:
-            console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
+            console.print(f"[{C['muted']}]🤝 {revived} resident agent(s) revived[/]")
         if _auditor_boot_line(auditor):
             console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
         if agent_registry.stale_questions:
             # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
             # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
             console.print(
-                f"[{C['muted']}]❓ 미답 질문 {agent_registry.stale_questions}건은 "
-                f"상대가 돌아오지 않아 복원하지 못했습니다[/]"
+                f"[{C['muted']}]❓ {agent_registry.stale_questions} unanswered question(s) "
+                f"not restored — the asking agent did not come back[/]"
             )
         if auto:
-            console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
+            console.print(
+                f"[{C['muted']}]🤝 {auto} auto-spawn specialist(s) now resident[/]"
+            )
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
         if _mon_notice:
             console.print(f"[{C['muted']}]{_mon_notice}[/]")
@@ -1648,8 +1648,8 @@ def _jobs_wait_notice(jobs) -> str:
     live = jobs.running()
     names = ", ".join(f"#{j.id} pid {j.pid}" for j in live)
     return (
-        f"🧵 백그라운드 작업 {len(live)}개 대기 중 ({names}). 끝나면 통지로 이어서 돌고, "
-        f"Ctrl-C 로 종료합니다."
+        f"🧵 Waiting on {len(live)} background job(s) ({names}). The run continues on their notice; "
+        f"Ctrl-C quits."
     )
 
 
@@ -1661,8 +1661,8 @@ def _monitor_wait_notice(monitors) -> str:
     latest = max((m.deadline_at for m in live), default=time.time())
     when = time.strftime("%m-%d %H:%M", time.localtime(latest))
     return (
-        f"🔔 모니터 {len(live)}개 대기 중 — 가장 늦은 만료 {when}. "
-        f"보고가 오면 이어서 돌고, Ctrl-C 로 종료합니다."
+        f"🔔 Waiting on {len(live)} monitor(s) — latest expiry {when}. "
+        f"The run continues when a report arrives; Ctrl-C quits."
     )
 
 
@@ -1671,7 +1671,7 @@ def _schedule_wait_notice(schedules) -> str:
     n = sum(1 for s in schedules.list_all() if s.enabled)
     nxt = schedules.next_wake()
     when = nxt.strftime("%m-%d %H:%M") if nxt else "?"
-    return f"⏰ 예약 {n}개 대기 중 — 다음 발화 {when}. Ctrl-C 로 종료합니다."
+    return f"⏰ {n} schedule(s) pending — next fire {when}. Ctrl-C quits."
 
 
 def _missed_schedules_notice(schedules) -> str:
@@ -1683,8 +1683,8 @@ def _missed_schedules_notice(schedules) -> str:
         return ""
     listing = "\n".join(f"  {s.label or s.cron} — {s.missed_at} ({s.id})" for s in rows)
     return (
-        f"⏰ 놓친 예약 {len(rows)}건은 실행되지 않았습니다 — web 화면에서 "
-        f"지금 실행/건너뛰기를 고르세요:\n{listing}"
+        f"⏰ {len(rows)} missed schedule(s) were not run — choose Run now / Skip "
+        f"in the web UI:\n{listing}"
     )
 
 
@@ -1704,14 +1704,12 @@ def _previous_monitors_notice(session_dir) -> str:
         return ""
     listing = "\n".join(f"  {r}" for r in rows)
     return (
-        f"🔔 이전 세션의 모니터 {len(rows)}건은 복원되지 않았습니다 — "
-        f"필요하면 다시 등록하세요:\n{listing}"
+        f"🔔 {len(rows)} monitor(s) from the previous session were not restored — "
+        f"register them again if needed:\n{listing}"
     )
 
 
-_HARNESS_WAIT_NOTICE = (
-    "🔎 감사가 끝나길 기다립니다 — 결과는 main 에게 전달되고, 그 런이 끝나면 종료합니다"
-)
+_HARNESS_WAIT_NOTICE = "🔎 Waiting for the audit to finish — its result goes to main, and the process exits when that run ends"
 
 
 def _auditor_boot_line(auditor) -> str:
@@ -1719,7 +1717,7 @@ def _auditor_boot_line(auditor) -> str:
     (기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끈다). 빈 문자열 = 알릴 것 없음."""
     if auditor is None or not auditor.enabled:
         return ""
-    return "🔎 세션 감사자 켜짐 (--auditor · AGENT_CLI_AUDITOR · 🔎 칩) — 사용자 런마다 그 런의 기록을 감사합니다"
+    return "🔎 Session auditor on (--auditor · AGENT_CLI_AUDITOR · 🔎 chip) — every user run is audited from its own records"
 
 
 def _announce_agent_boot(
@@ -1732,14 +1730,15 @@ def _announce_agent_boot(
     실렌더러(Web/Minimal)로 단위 테스트되는 헬퍼로 추출.
     """
     if revived:
-        renderer.status("running", f"🤝 상주 에이전트 {revived}명 재생성됨")
+        renderer.status("running", f"🤝 {revived} resident agent(s) revived")
     if stale:
         # §3.9 — 되살리지 **못한** 건수 (묻거나 답할 쪽이 미복귀).
         renderer.status(
-            "running", f"❓ 미답 질문 {stale}건은 상대가 돌아오지 않아 미복원"
+            "running",
+            f"❓ {stale} unanswered question(s) not restored — the asking agent did not come back",
         )
     if auto:
-        renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
+        renderer.status("running", f"🤝 {auto} auto-spawn specialist(s) now resident")
     if _auditor_boot_line(auditor):
         renderer.status("running", _auditor_boot_line(auditor))
 
@@ -1758,14 +1757,12 @@ def _agent_mail_notice(reply: dict, busy: bool) -> None:
 
     kind = reply.get("kind", "reply")
     if kind == "question":
-        line = f"❓ 에이전트 {reply.get('key', '?')} 질문 도착 (답변 대기 중)"
+        line = f"❓ Question from agent {reply.get('key', '?')} (awaiting an answer)"
     elif not busy:
         return
     else:
         it = mail_queue_item(reply)
-        line = (
-            f"⏳ 대기 · [{it['nickname']}] {it['text']} — 지금 턴이 끝나면 main 에 전달"
-        )
+        line = f"⏳ Queued · [{it['nickname']}] {it['text']} — delivered to main when this turn ends"
     try:
         get_renderer().agent_mail_hint(key=reply.get("key", ""), kind=kind, text=line)
     except Exception:
@@ -1791,7 +1788,7 @@ def _write_result_file(path: str, answer) -> None:
             f.write(str(answer))
         os.replace(tmp, target)
     except OSError as e:
-        console.print(f"[{C['error']}]--result-file 기록 실패: {e}[/]")
+        console.print(f"[{C['error']}]--result-file write failed: {e}[/]")
 
 
 def _finalize_run(
@@ -1842,7 +1839,7 @@ def setup():
 # 진입점만. 저장 위치는 .agent-cli/mcp.json 하나 (v9.0.0 스코프 정리).
 mcp_app = typer.Typer(
     name="mcp",
-    help="MCP 서버 등록·진단. 인자 없이 실행하면 등록된 서버를 실제로 연결해 보고 상태를 보여줍니다.",
+    help="Register and diagnose MCP servers. Without arguments, connects to every registered server and shows its status.",
     invoke_without_command=True,
     no_args_is_help=False,
     add_completion=False,
@@ -1856,7 +1853,7 @@ def mcp_root(
     no_test: bool = typer.Option(
         False,
         "--no-test",
-        help="연결 테스트 없이 설정만 나열 (느린 서버가 있을 때)",
+        help="List the config only, without connecting (for slow servers)",
     ),
 ):
     """등록된 MCP 서버 목록 + 연결 진단."""
@@ -1877,7 +1874,7 @@ def mcp_add():
 
 
 @mcp_app.command("test")
-def mcp_test(name: str = typer.Argument(..., help="서버 이름")):
+def mcp_test(name: str = typer.Argument(..., help="server name")):
     """등록된 서버 하나에 실제로 연결해 도구 목록을 받아 봅니다."""
     from agent_cli.mcp.wizard import McpWizard
 
@@ -1885,7 +1882,7 @@ def mcp_test(name: str = typer.Argument(..., help="서버 이름")):
 
 
 @mcp_app.command("remove")
-def mcp_remove(name: str = typer.Argument(..., help="서버 이름")):
+def mcp_remove(name: str = typer.Argument(..., help="server name")):
     """등록을 제거합니다 (.agent-cli/mcp.json 에서)."""
     from agent_cli.mcp.wizard import McpWizard
 
@@ -2568,7 +2565,7 @@ def web(
             try:
                 renderer.error(
                     f"agent worker crashed: {type(exc).__name__}: {exc} — "
-                    f"이 세션은 재시작이 필요합니다 (instance.log 참조)",
+                    f"this session needs a restart (see instance.log)",
                     0,
                 )
             except Exception:
@@ -2638,7 +2635,7 @@ def web(
         # server is useless — the operator browses from elsewhere. Just print
         # the URL (already shown above) and skip the auto-open.
         console.print(
-            f"  [{C['muted']}](원격 bind — 브라우저 자동 실행 생략; 위 URL 로 접속)[/]"
+            f"  [{C['muted']}](remote bind — browser not opened automatically; use the URL above)[/]"
         )
 
     app_obj = create_app(server)

@@ -1435,12 +1435,12 @@ class TestUncoveredSurfaces:
         ):
             _agent_mail_notice(reply, True)
             line = seen[-1]
-            assert line.startswith("⏳ 대기 · [") and want in line, (reply, line)
-            assert line.endswith("지금 턴이 끝나면 main 에 전달")
+            assert line.startswith("⏳ Queued · [") and want in line, (reply, line)
+            assert line.endswith("delivered to main when this turn ends")
             assert "?" not in line  # key 없는 모니터·작업 — "에이전트 ?" 금지
         # 질문은 늘 — CLI 에는 ❓ 트레이가 없다
         _agent_mail_notice({"kind": "question", "key": "agt-x"}, False)
-        assert "질문 도착" in seen[-1]
+        assert "Question from agent" in seen[-1]
 
     def test_async_question_record_points_at_the_answer_tool(self, mkreg, renderer):
         """main 이 새 request 를 보내면 그건 답이 아니라 일감이다 — 질문은

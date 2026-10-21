@@ -52,8 +52,8 @@ PROBE_TIMEOUT_S = 45.0
 # 묻지 않고 **연결해 보며 판별**한다 (v9.3.0) — 마법사는 어차피 저장 전에
 # 붙어 보므로 추가 비용이 사실상 없다. 판별 결과는 파일에 명시 저장한다.
 _TRANSPORTS = (
-    ("stdio", "로컬 프로세스로 실행 (npx, uvx, 실행 파일)"),
-    ("remote", "원격 HTTP 서버 (전송 방식은 자동 판별)"),
+    ("stdio", "local process (npx, uvx, an executable)"),
+    ("remote", "remote HTTP server (transport auto-detected)"),
 )
 
 # 판별 순서: 현재 권장 규격 먼저, 구 규격 폴백.
@@ -157,11 +157,11 @@ def probe_server(
 
     cfg = _parse_server_config(name, entry)
     if not (cfg.is_stdio or cfg.is_remote):
-        return False, "command(stdio) 또는 url(원격) 중 하나가 필요합니다", [], 0.0
+        return False, "either command (stdio) or url (remote) is required", [], 0.0
     if cfg.is_stdio and resolve_command(cfg.command) is None:
         return (
             False,
-            f"실행 파일을 PATH 에서 찾을 수 없습니다: {cfg.command}",
+            f"executable not found on PATH: {cfg.command}",
             [],
             0.0,
         )
@@ -174,13 +174,13 @@ def probe_server(
         if status != "connected":
             return False, humanize_error(status, cfg), [], time.perf_counter() - t0
         tools = [t.name for t in manager.list_tools(name)]
-        return True, "연결됨", tools, time.perf_counter() - t0
+        return True, "connected", tools, time.perf_counter() - t0
     except TimeoutError:
         return (
             False,
             (
-                f"{int(timeout)}s 안에 응답이 없습니다 — 서버가 뜨긴 했지만 초기화에 "
-                "답하지 않습니다 (패키지 이름·인자를 확인하세요)"
+                f"no response within {int(timeout)}s — the server started but does not "
+                "answer initialize (check the package name and arguments)"
             ),
             [],
             time.perf_counter() - t0,
@@ -245,23 +245,23 @@ class McpWizard:
             servers = read_servers(path)  # import 후 재로드
         if not servers:
             self.console.print(
-                f"[dim]등록된 MCP 서버가 없습니다 ({path}).[/]\n"
-                "  [bold]agent-cli mcp add[/] 로 추가하세요."
+                f"[dim]No MCP servers registered ({path}).[/]\n"
+                "  Add one with [bold]agent-cli mcp add[/]."
             )
             return 0
 
         table = Table(box=None, pad_edge=False, show_header=True)
         table.add_column("", width=1)
-        table.add_column("이름", style="bold")
-        table.add_column("전송")
-        table.add_column("상태")
-        table.add_column("도구", justify="right")
+        table.add_column("name", style="bold")
+        table.add_column("transport")
+        table.add_column("status")
+        table.add_column("tools", justify="right")
         failures = 0
         notes: list[str] = []
         for name, entry in servers.items():
             cfg = _parse_server_config(name, entry)
             if not test:
-                table.add_row("·", name, cfg.transport, "[dim]미확인[/]", "–")
+                table.add_row("·", name, cfg.transport, "[dim]unchecked[/]", "–")
                 continue
             ok, msg, tools, secs = probe_server(name, entry)
             if ok:
@@ -274,12 +274,12 @@ class McpWizard:
                 )
             else:
                 failures += 1
-                table.add_row("[red]●[/]", name, cfg.transport, "[red]실패[/]", "–")
+                table.add_row("[red]●[/]", name, cfg.transport, "[red]failed[/]", "–")
                 notes.append(f"  [red]└ {name}: {msg}[/]")
         self.console.print(table)
         for n in notes:
             self.console.print(n)
-        self.console.print(f"\n[dim]설정 파일: {path}[/]")
+        self.console.print(f"\n[dim]config file: {path}[/]")
         return failures
 
     # ── mcp add ──
@@ -289,7 +289,7 @@ class McpWizard:
         self._offer_import(existing, path)
         existing = read_servers(path)
 
-        self.console.print("\n[bold]MCP 서버 추가[/]\n")
+        self.console.print("\n[bold]Add an MCP server[/]\n")
         name = self._ask_name(existing)
         if name is None:
             return False
@@ -303,27 +303,27 @@ class McpWizard:
             if ok:
                 break
             choice = IntPrompt.ask(
-                "   [1] 설정 고치기  [2] 그래도 저장  [3] 취소",
+                "   [1] fix the config  [2] save anyway  [3] cancel",
                 default=1,
                 choices=["1", "2", "3"],
             )
             if choice == 3:
-                self.console.print("   [dim]취소했습니다. 파일은 바뀌지 않았습니다.[/]")
+                self.console.print("   [dim]Cancelled. The file was not changed.[/]")
                 return False
             if choice == 2:
                 break
             # 1 → 처음부터 다시 (이름은 유지)
 
         save_server(name, entry, path)
-        self.console.print(f"\n   [green]✓[/] {path} 에 [bold]{name}[/] 저장")
-        self.console.print("   [dim]다음 실행부터 적용됩니다.[/]")
+        self.console.print(f"\n   [green]✓[/] [bold]{name}[/] saved to {path}")
+        self.console.print("   [dim]Applies from the next run.[/]")
         return True
 
     # ── mcp test <name> ──
     def test(self, name: str) -> bool:
         servers = read_servers(mcp_json_path())
         if name not in servers:
-            self.console.print(f"[red]'{name}' 은 등록돼 있지 않습니다.[/]")
+            self.console.print(f"[red]'{name}' is not registered.[/]")
             self._hint_names(servers)
             return False
         return self._run_probe(name, servers[name])
@@ -332,16 +332,16 @@ class McpWizard:
     def remove(self, name: str) -> bool:
         path = mcp_json_path()
         if not remove_server(name, path):
-            self.console.print(f"[red]'{name}' 은 등록돼 있지 않습니다.[/]")
+            self.console.print(f"[red]'{name}' is not registered.[/]")
             self._hint_names(read_servers(path))
             return False
-        self.console.print(f"[green]✓[/] {name} 제거 ({path})")
+        self.console.print(f"[green]✓[/] {name} removed ({path})")
         return True
 
     # ── 내부 ──
     def _hint_names(self, servers: dict) -> None:
         if servers:
-            self.console.print(f"  [dim]등록됨: {', '.join(servers)}[/]")
+            self.console.print(f"  [dim]registered: {', '.join(servers)}[/]")
 
     def _offer_import(self, existing: dict, path: Path) -> None:
         """v9.0.0 전 ``~/.agent-cli/mcp.json`` 이 남아 있으면 가져올지 묻는다.
@@ -353,102 +353,102 @@ class McpWizard:
         if not new:
             return
         self.console.print(
-            f"[yellow]ⓘ[/] {legacy} 에 서버 {len(new)}개가 있습니다 "
-            f"([bold]{', '.join(new)}[/]). v9.0.0 부터 이 파일은 읽지 않습니다."
+            f"[yellow]ⓘ[/] {legacy} holds {len(new)} server(s) "
+            f"([bold]{', '.join(new)}[/]). Since v9.0.0 this file is no longer read."
         )
-        if Confirm.ask("   이 프로젝트로 가져올까요?", default=True):
+        if Confirm.ask("   Import them into this project?", default=True):
             merged = {**existing, **new}
             write_servers(path, merged)
-            self.console.print(
-                f"   [green]✓[/] {len(new)}개를 {path} 로 복사했습니다.\n"
-            )
+            self.console.print(f"   [green]✓[/] Copied {len(new)} to {path}.\n")
 
     def _ask_name(self, existing: dict) -> str | None:
         while True:
-            name = Prompt.ask("   서버 이름").strip()
+            name = Prompt.ask("   Server name").strip()
             if not name:
-                self.console.print("   [red]이름은 비울 수 없습니다.[/]")
+                self.console.print("   [red]The name cannot be empty.[/]")
                 continue
             if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                 # 도구 이름이 mcp__{서버}__{도구} 이고 함수 이름 규칙을 따른다 —
                 # 다른 문자는 `_` 로 바뀌어 적은 이름과 달라진다
                 self.console.print(
-                    "   [red]이름은 영문자·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다.[/]"
+                    "   [red]Names may only use letters, digits, underscore (_) and hyphen (-).[/]"
                 )
                 continue
             if name in existing and not Confirm.ask(
-                f"   '{name}' 이 이미 있습니다. 덮어쓸까요?", default=False
+                f"   '{name}' already exists. Overwrite?", default=False
             ):
                 return None
             return name
 
     def _ask_transport_and_target(self) -> dict | None:
-        self.console.print("\n   [bold]전송 방식[/]")
+        self.console.print("\n   [bold]Transport[/]")
         for i, (key, desc) in enumerate(_TRANSPORTS, 1):
             self.console.print(f"     [cyan]{i})[/] {key:<5} — {desc}")
-        choice = IntPrompt.ask("   선택", default=1, choices=["1", "2"])
+        choice = IntPrompt.ask("   Choice", default=1, choices=["1", "2"])
         transport = _TRANSPORTS[choice - 1][0]
 
         if transport == "stdio":
-            self.console.print("\n   [bold]stdio 설정[/]")
-            command = Prompt.ask("   실행 명령").strip()
+            self.console.print("\n   [bold]stdio settings[/]")
+            command = Prompt.ask("   Command").strip()
             if not command:
-                self.console.print("   [red]실행 명령은 비울 수 없습니다.[/]")
+                self.console.print("   [red]The command cannot be empty.[/]")
                 return None
             resolved = resolve_command(command)
             if resolved:
                 self.console.print(f"   [dim]{command} → {resolved}[/]")
             else:
                 self.console.print(
-                    f"   [yellow]⚠[/] [dim]{command} 를 PATH 에서 찾지 못했습니다 — "
-                    "연결 테스트가 실패할 수 있습니다.[/]"
+                    f"   [yellow]⚠[/] [dim]{command} was not found on PATH — "
+                    "the connection test may fail.[/]"
                 )
-            args_raw = Prompt.ask("   인자 (공백 구분)", default="").strip()
+            args_raw = Prompt.ask("   Arguments (space-separated)", default="").strip()
             entry: dict = {"command": command}
             if args_raw:
                 entry["args"] = args_raw.split()
             return entry
 
-        self.console.print("\n   [bold]원격 서버[/]")
+        self.console.print("\n   [bold]Remote server[/]")
         url = Prompt.ask("   URL").strip()
         if not url:
-            self.console.print("   [red]URL 은 비울 수 없습니다.[/]")
+            self.console.print("   [red]The URL cannot be empty.[/]")
             return None
         # transport 는 연결 테스트가 판별해 채운다 (_run_probe). 여기서
         # 기본값을 박으면 사용자에게 추측을 떠넘기는 셈이 된다.
         return {"url": url}
 
     def _ask_env(self, entry: dict) -> dict:
-        self.console.print("\n   [bold]환경 변수[/] [dim](없으면 빈 줄로 종료)[/]")
+        self.console.print(
+            "\n   [bold]Environment variables[/] [dim](empty line to finish)[/]"
+        )
         env: dict[str, str] = {}
         while True:
-            var = Prompt.ask("   이름", default="").strip()
+            var = Prompt.ask("   Name", default="").strip()
             if not var:
                 break
-            value = Prompt.ask("   값", default=f"${{{var}}}").strip()
+            value = Prompt.ask("   Value", default=f"${{{var}}}").strip()
             ref, present, masked = env_ref_status(value)
             if ref is not None:
                 if present:
                     self.console.print(
-                        f"     [green]✓[/] [dim]현재 셸에 {ref} 있음 ({masked})[/]"
+                        f"     [green]✓[/] [dim]{ref} is set in the current shell ({masked})[/]"
                     )
                 else:
                     self.console.print(
-                        f"     [yellow]⚠[/] [dim]현재 셸에 {ref} 가 없습니다 — 실행 시 "
-                        "빈 문자열이 됩니다 (연결은 되고 인증만 실패합니다)[/]"
+                        f"     [yellow]⚠[/] [dim]{ref} is not set in the current shell — at run time "
+                        "it becomes an empty string (the connection works, only auth fails)[/]"
                     )
             env[var] = value
         if env:
             entry = {**entry, "env": env}
             self.console.print(
-                "   [dim]값을 ${VAR} 로 두면 파일에 토큰이 남지 않고 실행 시점에 읽습니다.[/]"
+                "   [dim]A ${VAR} value keeps the token out of the file; it is read at run time.[/]"
             )
         return entry
 
     def _run_probe(self, name: str, entry: dict) -> bool:
         """연결 테스트. 원격인데 transport 가 비어 있으면 세대를 **판별**하고
         ``entry`` 에 확정해 넣는다(호출자가 그대로 저장) — v9.3.0."""
-        self.console.print("\n   [bold]연결 테스트[/]")
+        self.console.print("\n   [bold]Connection test[/]")
         if "url" in entry and not entry.get("transport"):
             return self._probe_remote_autodetect(name, entry)
 
@@ -457,8 +457,8 @@ class McpWizard:
             f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg.is_stdio else cfg.url
         )
         self.console.print(
-            f"   [dim]{target} 실행 중… (최대 {int(PROBE_TIMEOUT_S)}s; "
-            "npx 첫 실행은 패키지 설치로 오래 걸릴 수 있습니다)[/]"
+            f"   [dim]Running {target}… (up to {int(PROBE_TIMEOUT_S)}s; "
+            "a first npx run can take a while to install the package)[/]"
         )
         ok, msg, tools, secs = probe_server(name, entry)
         return self._render_probe(name, ok, msg, tools, secs)
@@ -469,22 +469,22 @@ class McpWizard:
         사용자는 문서에서 받은 URL 만 알지 그게 어느 HTTP 세대인지는 대개
         모른다. 틀리게 고르면 서버가 -32600 으로 거절하는데 그 메시지만으론
         원인이 전송 방식이라는 걸 알 수 없다 — 그래서 묻지 않고 판별한다."""
-        self.console.print(f"   [dim]{entry['url']} 연결 중…[/]")
+        self.console.print(f"   [dim]Connecting to {entry['url']}…[/]")
         failures: list[tuple[str, str]] = []
         for transport in _REMOTE_ORDER:
             attempt = {**entry, "transport": transport}
-            self.console.print(f"     [dim]{transport} 로 시도…[/]", end="")
+            self.console.print(f"     [dim]trying {transport}…[/]", end="")
             ok, msg, tools, secs = probe_server(name, attempt)
             if ok:
                 self.console.print(" [green]●[/]")
                 entry["transport"] = transport  # 판별 결과를 명시 저장
                 self.console.print(
-                    f"   [green]●[/] 전송 방식: [bold]{transport}[/] [dim](자동 판별)[/]"
+                    f"   [green]●[/] transport: [bold]{transport}[/] [dim](auto-detected)[/]"
                 )
                 return self._render_probe(name, True, msg, tools, secs)
             self.console.print(" [red]✗[/]")
             failures.append((transport, msg))
-        self.console.print("   [red]✗[/] 두 전송 방식 모두 실패")
+        self.console.print("   [red]✗[/] both transports failed")
         for transport, msg in failures:
             self.console.print(f"       [red]{transport}: {msg}[/]")
         return False
@@ -493,15 +493,13 @@ class McpWizard:
         self, name: str, ok: bool, msg: str, tools: list[str], secs: float
     ) -> bool:
         if ok:
-            self.console.print(f"   [green]●[/] 연결됨 [dim]({secs:.1f}s)[/]")
-            self.console.print(f"   [green]●[/] 도구 [bold]{len(tools)}[/]개")
+            self.console.print(f"   [green]●[/] connected [dim]({secs:.1f}s)[/]")
+            self.console.print(f"   [green]●[/] [bold]{len(tools)}[/] tools")
             if tools:
                 shown = " · ".join(tools[:5]) + (" · …" if len(tools) > 5 else "")
                 self.console.print(f"       [dim]{shown}[/]")
-            self.console.print(
-                f"   [dim]LLM 은 이 도구들을 {name}.<도구> 형식으로 부릅니다.[/]"
-            )
+            self.console.print(f"   [dim]The LLM calls these as {name}.<tool>.[/]")
             return True
-        self.console.print(f"   [red]✗[/] 연결 실패 [dim]({secs:.1f}s)[/]")
+        self.console.print(f"   [red]✗[/] connection failed [dim]({secs:.1f}s)[/]")
         self.console.print(f"       [red]{msg}[/]")
         return False
