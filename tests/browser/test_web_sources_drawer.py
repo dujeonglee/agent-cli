@@ -39,7 +39,13 @@ def _open(stack, page):
 
 
 def _saved(f):
-    return json.loads(f.read_text()) if f.exists() else None
+    """저장 파일의 내용 — 폴링 술어라 쓰는 도중의 모양도 견딘다(None)."""
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except json.JSONDecodeError:
+        return None
 
 
 class TestWebSourcesDrawer:
