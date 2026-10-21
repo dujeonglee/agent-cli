@@ -59,7 +59,7 @@ def _open(stack, page):
 class TestScheduleDrawer:
     def test_add_from_the_form_then_delete(self, stack, page, reg):
         _open(stack, page)
-        assert "예약이 없습니다" in page.inner_text("#sched-list")
+        assert "No schedules" in page.inner_text("#sched-list")
         assert page.locator("#schedule-badge").is_hidden()
 
         page.click("#sched-presets button[data-cron='0 9 * * 1']")
@@ -71,7 +71,7 @@ class TestScheduleDrawer:
         page.wait_for_selector(".sched-item", timeout=3000)
         text = page.inner_text(".sched-item")
         assert "👤" in text and "주간 보고" in text and "매주 월 09:00" in text
-        assert "다음 10-05 09:00" in text
+        assert "next 10-05 09:00" in text
         assert page.inner_text("#schedule-badge") == "1"
         assert page.input_value("#sched-prompt") == ""  # 폼이 비워진다
         (s,) = reg.list_all()
@@ -101,7 +101,7 @@ class TestScheduleDrawer:
         reg.add("0 9 * * *", "x")
         _open(stack, page)
         page.wait_for_selector(".sched-item", timeout=3000)
-        page.click(".sched-item-actions button:has-text('끄기')")
+        page.click(".sched-item-actions button:has-text('Disable')")
         assert _wait(lambda: page.locator(".sched-item.off").count() == 1)
         assert page.inner_text("#schedule-badge") == "0"
         assert reg.has_active_work() is False
@@ -120,11 +120,13 @@ class TestMissedCard:
         page.wait_for_selector(
             "#sched-missed:not([hidden]) .sched-missed-row", timeout=8000
         )
-        assert "놓친 예약: 아침 점검 (10-05 09:00)" in page.inner_text("#sched-missed")
+        assert "Missed schedule: 아침 점검 (10-05 09:00)" in page.inner_text(
+            "#sched-missed"
+        )
         assert page.inner_text("#schedule-badge") == "1!"
         assert stack.server._queue.snapshot() == []  # 자동 실행 없음
 
-        page.click("#sched-missed button:has-text('지금 실행')")
+        page.click("#sched-missed button:has-text('Run now')")
         assert _wait(lambda: page.locator("#sched-missed").is_hidden())
         (item,) = stack.server._queue.snapshot()
         # 예약마다 가상 사용자 (v10.56.0, 장부 P3)
@@ -138,7 +140,7 @@ class TestMissedCard:
         stack.emit_ready()
         page.goto(stack.url)
         page.wait_for_selector("#sched-missed:not([hidden])", timeout=8000)
-        page.click("#sched-missed button:has-text('건너뛰기')")
+        page.click("#sched-missed button:has-text('Skip')")
         assert _wait(lambda: page.locator("#sched-missed").is_hidden())
         assert stack.server._queue.snapshot() == []
         assert reg.list_all()[0].missed_at is None

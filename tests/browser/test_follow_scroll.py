@@ -89,7 +89,7 @@ class TestFollowScroll:
         assert _wait(
             lambda: (
                 page.locator("#jump-new").is_visible()
-                and page.locator("#jump-new").inner_text().endswith("3")
+                and page.locator("#jump-new").inner_text() == "↓ 3 new"
             )
         ), (
             page.locator("#jump-new").inner_text(),

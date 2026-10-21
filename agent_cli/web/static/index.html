@@ -44,23 +44,23 @@
     <span id="mcp-wrap" class="knob" title="MCP servers connected at boot — connected/total, tool count, and why a server failed. Read-only: register or edit with `agent-cli mcp` (registering runs a local process, which is beyond what the web UI is trusted to do)." hidden>
       <button id="mcp-chip" class="knob-btn" type="button" data-pop="mcp-pop" aria-haspopup="true" aria-expanded="false">🔌 <span id="mcp-badge">0/0</span></button>
       <div id="mcp-pop" class="knob-pop" hidden>
-        <div class="mcp-hd"><span>MCP 서버</span><span id="mcp-tools" class="knob-unit">0 tools</span></div>
+        <div class="mcp-hd"><span>MCP servers</span><span id="mcp-tools" class="knob-unit">0 tools</span></div>
         <div id="mcp-list"></div>
-        <div class="mcp-ft">등록·수정은 <code>agent-cli mcp</code> 에서 합니다.</div>
+        <div class="mcp-ft">Add or edit servers with <code>agent-cli mcp</code>.</div>
       </div>
     </span>
     <span id="theme-wrap">
       <button id="theme-btn" class="btn-icon" type="button" title="Choose theme" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>
     </span>
-    <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — 에이전트 지시문 편집">📝</button>
-    <button id="schedule-btn" class="btn-icon" type="button" title="예약 — 정해진 시각에 요청을 자동으로 넣습니다">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
-    <button id="websrc-btn" class="btn-icon" type="button" title="정보원 — 매 턴 꼬리에 싣는 웹 정보원 목록 (fetch 가 있는 루프만)">🌐</button>
-    <button id="copy-all-btn" class="btn-icon" type="button" title="대화 전체 복사 — 보이는 대화를 마크다운으로 클립보드에">⧉</button>
+    <button id="directive-btn" class="btn-icon" type="button" title="Directive Editor — edit the agent directive">📝</button>
+    <button id="schedule-btn" class="btn-icon" type="button" title="Schedules — submit a request automatically at a set time">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
+    <button id="websrc-btn" class="btn-icon" type="button" title="Web sources — the list carried in every turn's tail (loops with fetch only)">🌐</button>
+    <button id="copy-all-btn" class="btn-icon" type="button" title="Copy conversation — the visible conversation as Markdown to the clipboard">⧉</button>
     <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <!-- 헤더 자리 노브(ui.placement="header", ⚡ 자동 승인) — 렌더러가 토글 버튼을 넣는다 -->
     <span id="knobs-header"></span>
-    <button id="share-btn" class="btn-icon" type="button" title="접속 링크 복사 (토큰 포함 — 이 링크를 받은 사람도 접속)">🔗</button>
+    <button id="share-btn" class="btn-icon" type="button" title="Copy access link (includes the token — anyone with this link can connect)">🔗</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" class="btn-icon" type="button" title="Change nickname" hidden>✎</button>
     <span id="conn-status" title="connection status">●</span>
@@ -114,34 +114,34 @@
        목록·추가·최근 이력. 예약은 이 프로세스가 발화한다. -->
   <div id="schedule-backdrop" hidden></div>
   <aside id="schedule-drawer" aria-hidden="true" role="dialog" aria-modal="true"
-    aria-label="예약">
+    aria-label="Schedules">
     <div class="de-head">
-      <div class="de-title">⏰ 예약</div>
-      <span class="de-path">켜진 예약이 있으면 이 세션은 꺼지지 않습니다</span>
+      <div class="de-title">⏰ Schedules</div>
+      <span class="de-path">While a schedule is enabled this session stays up</span>
       <button id="sched-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
     <div id="sched-list" class="sched-list"></div>
     <form id="sched-form" class="sched-form" autocomplete="off">
-      <div class="sched-form-title">예약 추가</div>
+      <div class="sched-form-title">Add schedule</div>
       <div class="sched-presets" id="sched-presets">
-        <button type="button" class="btn-ghost" data-cron="0 9 * * *">매일 09:00</button>
-        <button type="button" class="btn-ghost" data-cron="0 9 * * 1-5">평일 09:00</button>
-        <button type="button" class="btn-ghost" data-cron="0 9 * * 1">매주 월 09:00</button>
-        <button type="button" class="btn-ghost" data-cron="0 * * * *">매시 정각</button>
+        <button type="button" class="btn-ghost" data-cron="0 9 * * *">Daily 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 9 * * 1-5">Weekdays 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 9 * * 1">Mondays 09:00</button>
+        <button type="button" class="btn-ghost" data-cron="0 * * * *">Hourly</button>
       </div>
       <div class="sched-row">
-        <input id="sched-cron" type="text" placeholder="cron — 분 시 일 월 요일 (예: 0 9 * * 1)" aria-label="cron">
-        <input id="sched-label" type="text" placeholder="이름 (선택)" aria-label="이름">
+        <input id="sched-cron" type="text" placeholder="cron — minute hour day month weekday (e.g. 0 9 * * 1)" aria-label="cron">
+        <input id="sched-label" type="text" placeholder="Label (optional)" aria-label="Label">
       </div>
-      <textarea id="sched-prompt" rows="3" placeholder="그 시각에 넣을 요청 (예: 주간 보고를 작성해줘)" aria-label="요청"></textarea>
+      <textarea id="sched-prompt" rows="3" placeholder="Request to submit at that time (e.g. write the weekly report)" aria-label="Request"></textarea>
       <div class="sched-row">
-        <input id="sched-nickname" type="text" placeholder="표시 이름 (선택 — 기본 Scheduler-&lt;이름&gt;)" aria-label="표시 이름">
-        <button id="sched-add" type="submit" class="btn-primary">추가</button>
+        <input id="sched-nickname" type="text" placeholder="Display name (optional — default Scheduler-&lt;label&gt;)" aria-label="Display name">
+        <button id="sched-add" type="submit" class="btn-primary">Add</button>
       </div>
       <div id="sched-status" class="de-status"></div>
     </form>
     <details class="sched-log-wrap">
-      <summary>최근 이력</summary>
+      <summary>Recent history</summary>
       <div id="sched-log" class="sched-log"></div>
     </details>
   </aside>
@@ -150,24 +150,24 @@
        체크박스 목록. 기본은 전부 켜짐, 바꾼 것만 .agent-cli/web-sources.json 에. -->
   <div id="websrc-backdrop" hidden></div>
   <aside id="websrc-drawer" aria-hidden="true" role="dialog" aria-modal="true"
-    aria-label="정보원">
+    aria-label="Web sources">
     <div class="de-head">
-      <div class="de-title">🌐 정보원</div>
+      <div class="de-title">🌐 Web sources</div>
       <span id="websrc-total" class="de-path"></span>
       <button id="websrc-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
-    <div class="websrc-note">fetch 가 있는 루프의 매 턴 꼬리에 켜진 항목만 실립니다. 바꾸면 다음 턴부터 — 파일은 <code id="websrc-path"></code> (바꾼 것만 저장).</div>
+    <div class="websrc-note">Only enabled entries ride in every turn's tail of loops that have fetch. Changes apply from the next turn — file: <code id="websrc-path"></code> (only your changes are saved).</div>
     <div id="websrc-list" class="websrc-list"></div>
     <form id="websrc-form" class="sched-form" autocomplete="off">
-      <div class="sched-form-title">정보원 추가</div>
+      <div class="sched-form-title">Add source</div>
       <div class="sched-row">
-        <input id="websrc-group" type="text" maxlength="12" placeholder="그룹 (예: wifi)" list="websrc-groups" style="flex:0 0 9em">
+        <input id="websrc-group" type="text" maxlength="12" placeholder="Group (e.g. wifi)" list="websrc-groups" style="flex:0 0 9em">
         <datalist id="websrc-groups"></datalist>
-        <input id="websrc-text" type="text" maxlength="500" placeholder="주소와 짧은 설명 — 예: gerrit.mycorp.com/changes/?q=… — 사내 Gerrit">
+        <input id="websrc-text" type="text" maxlength="500" placeholder="URL and a short note — e.g. gerrit.mycorp.com/changes/?q=… — internal Gerrit">
       </div>
       <div class="sched-row">
-        <button id="websrc-add" type="submit" class="btn-primary">추가</button>
-        <button id="websrc-reset" type="button" class="btn-ghost" title="모든 변경을 지우고 기본 목록으로">기본으로</button>
+        <button id="websrc-add" type="submit" class="btn-primary">Add</button>
+        <button id="websrc-reset" type="button" class="btn-ghost" title="Discard all changes and restore the default list">Defaults</button>
         <span id="websrc-status" class="de-status"></span>
       </div>
     </form>
@@ -213,7 +213,7 @@
     <!-- 모델 시점: 매 턴 끝에 붙는 것(꼬리) — 지금 채널의 마지막 모델 호출 기준.
          맨 위 "맨 처음 받는 것" 은 #messages 맨 앞에 선다(app.js frameForChannel). -->
     <div id="ctx-tail"></div>
-    <div id="ov-channels" role="tablist" aria-label="대화 채널"></div>
+    <div id="ov-channels" role="tablist" aria-label="Conversation channels"></div>
     <!-- 점프는 엿보기라 돌아가기는 **한 단계**만 — 새 점프가 이전 것을 덮는다
          (docs/chat-ui §5). 채널 칩이 항상 보이므로 스택일 이유가 없다. -->
     <button id="ch-back" type="button" hidden></button>

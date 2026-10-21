@@ -270,7 +270,7 @@ class TestResumeRebuildsScopeCards:
             '.card-task-group[data-task-id="sk1"] .task-body .task-empty-note'
         )
         assert note.count() == 1
-        assert "히스토리에 없습니다" in (note.inner_text() or "")
+        assert "not in this session's history" in (note.inner_text() or "")
 
 
 class TestResumeInnerTurnsInCard:

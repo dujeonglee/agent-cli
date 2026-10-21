@@ -502,7 +502,7 @@ class TestGeneratingIndicator:
         stack.renderer.stream_chunk("x" * 4000)  # ≈1K tokens
         assert _wait(lambda: self._gen(page).count() == 1)
         txt = self._gen(page).inner_text()
-        assert "생성 중" in txt and "tokens" in txt
+        assert "Generating" in txt and "tokens" in txt
 
     def test_body_text_never_reaches_the_page(self, stack, page):
         """버린 것의 핵심 — 본문은 오지 않는다(트래픽·화면 튐 둘 다 해결)."""
@@ -551,7 +551,7 @@ class TestGeneratingIndicator:
 
         stack.renderer.recovery("{bad json", "형식이 틀렸습니다", "NO_JSON", 1)
         # 카운터가 오를 때까지 기다린 뒤 카드 수가 그대로인지 본다.
-        assert _wait(lambda: "재시도" in self._gen(page).inner_text())
+        assert _wait(lambda: "retries" in self._gen(page).inner_text())
         body = page.locator("#messages").inner_text()
         assert "{bad json" not in body, "거부된 원문이 화면에 있다"
         assert "형식이 틀렸습니다" not in body, "개입 관찰이 카드로 남았다"
@@ -568,7 +568,7 @@ class TestGeneratingIndicator:
 
         for i in range(1, 4):
             stack.renderer.recovery("{bad", "다시", "no action", i)
-            want = f"재시도 {i}"
+            want = f"retries {i}"
             assert _wait(lambda w=want: w in self._gen(page).inner_text())
         # 생성 중 줄은 살아 있어야 한다 — 런이 끝난 게 아니라 이어진다.
         assert self._gen(page).count() == 1
@@ -899,7 +899,7 @@ class TestStepCardMultiOp:
         # 머리는 💭 이고 행동은 본문 행이다.
         assert steps.nth(0).locator(".step-body .row.act").count() == 1
         assert steps.nth(1).locator(".step-body .row.act").count() == 1
-        assert steps.nth(0).locator(".step-head .k").inner_text().strip() == "생각"
+        assert steps.nth(0).locator(".step-head .k").inner_text().strip() == "Thinking"
         # 접힌 본문은 `inner_text()` 에 안 잡힌다 — DOM 으로 본다.
         assert "덮어쓸까요?" in steps.nth(0).text_content()
         assert "덮어쓸까요?" not in steps.nth(1).text_content()

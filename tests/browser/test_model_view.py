@@ -104,7 +104,7 @@ def _open(page, stack):
     page.goto(stack.url)
     page.wait_for_selector("#messages > .ctx-top .ctx-bar", timeout=8000)
     page.wait_for_function(
-        "() => /턴 \\d+\\/30/.test(document.querySelector('#ctx-tail .ctx-bar')"
+        "() => /turn \\d+\\/30/.test(document.querySelector('#ctx-tail .ctx-bar')"
         "?.textContent || '')",
         timeout=8000,
     )
@@ -127,12 +127,12 @@ def test_frame_stands_where_the_drawer_was(stack, page):
     )
     assert facts["drawer"] is False and facts["button"] is False
     assert facts["first"].startswith("ctx-top")
-    assert "시스템 프롬프트 3개 섹션" in facts["top"]
-    assert "훅 섹션 1" in facts["top"] and "디코딩 문법" in facts["top"]
-    assert "압축 요약 턴 1–2" in facts["top"]  # 요약은 맨 위 카드에 산다
+    assert "3 system prompt sections" in facts["top"]
+    assert "1 hook sections" in facts["top"] and "Decoding grammar" in facts["top"]
+    assert "Compaction summary turns 1–2" in facts["top"]  # 요약은 맨 위 카드에 산다
     assert facts["summaryCards"] == 0
-    assert "턴 5/30" in facts["tail"] and "Outstanding user requests" in facts["tail"]
-    assert "+2" in facts["tail"] and "vs 턴 4" in facts["tail"]  # 직전 턴과의 diff
+    assert "turn 5/30" in facts["tail"] and "Outstanding user requests" in facts["tail"]
+    assert "+2" in facts["tail"] and "vs turn 4" in facts["tail"]  # 직전 턴과의 diff
     assert facts["budget"] is False
     assert errors == []
 
@@ -163,7 +163,7 @@ def test_expanding_shows_what_the_model_received(stack, page):
     )
     stack.renderer.token_usage({"in": 10, "out": 1, "context_window": 100}, 6)
     page.wait_for_function(
-        "() => /턴 6\\/30/.test(document.querySelector('#ctx-tail .ctx-bar').textContent)",
+        "() => /turn 6\\/30/.test(document.querySelector('#ctx-tail .ctx-bar').textContent)",
         timeout=8000,
     )
     kept = page.evaluate(
@@ -192,7 +192,7 @@ def test_cards_out_of_context_fold_into_one_group(stack, page):
         })"""
     )
     s = state()
-    assert s["rows"] == 1 and "카드 3개" in s["text"]
+    assert s["rows"] == 1 and "3 cards" in s["text"]
     assert s["gone"] == 3 and s["shown"] == 0  # 기본 접힘
     assert s["live"] == 2 and s["next"] is True  # 묶음은 빠진 카드 바로 앞
     page.click("#messages > .ctx-fold")
@@ -211,7 +211,7 @@ def test_no_group_without_compaction(stack, page):
         )
         == 0
     )
-    assert "압축 요약" not in page.inner_text("#messages > .ctx-top .ctx-bar")
+    assert "Compaction summary" not in page.inner_text("#messages > .ctx-top .ctx-bar")
 
 
 def test_inline_card_has_the_same_three_parts(stack, page):
@@ -234,7 +234,7 @@ def test_inline_card_has_the_same_three_parts(stack, page):
     assert hidden == 0
     page.click(".card-task-group .task-header")
     page.wait_for_function(
-        "() => /턴 2\\/20/.test(document.querySelector('.card-task-group > .ctx-tail')"
+        "() => /turn 2\\/20/.test(document.querySelector('.card-task-group > .ctx-tail')"
         "?.textContent || '')",
         timeout=8000,
     )
@@ -250,7 +250,7 @@ def test_inline_card_has_the_same_three_parts(stack, page):
         }"""
     )
     assert card["order"][:4] == ["task-header", "ctx-top", "task-body", "ctx-tail"]
-    assert "시스템 프롬프트 1개 섹션" in card["top"]
+    assert "1 system prompt sections" in card["top"]
     # 카드 안에 놓인 카드도 마무리 배관(복사 버튼)을 끝까지 탄다 — 종전엔
     # appendToTimeline 이 여기서 ReferenceError 로 끊겼다.
     assert card["inner"] == 1 and card["copy"] == 1
@@ -270,7 +270,7 @@ def test_ended_inline_scope_view_stays_in_its_card(stack, page):
         )
         == 3
     )
-    assert "압축 요약" in page.inner_text("#messages > .ctx-top .ctx-bar")
+    assert "Compaction summary" in page.inner_text("#messages > .ctx-top .ctx-bar")
 
 
 class _CtxAt(_Ctx):
@@ -321,15 +321,15 @@ def test_inline_card_folds_with_the_record_that_opened_it(stack, page):
         }"""
     )
     s = state()
-    assert "카드 4개" in s["text"]  # main 의 빠진 카드 3 + 에이전트 카드 1
+    assert "4 cards" in s["text"]  # main 의 빠진 카드 3 + 에이전트 카드 1
     assert s["t1"] == ["2", True, False]  # 묶음 안, 기본 접힘
     assert s["t2"] == ["6", False, True]
     page.click("#messages > .ctx-fold")
     s = state()
     assert s["t1"] == ["2", True, True]  # 펼치면 흐린 카드로
-    assert "컨텍스트 밖" in s["head1"] and "컨텍스트 밖" not in s["head2"]
+    assert "Out of context" in s["head1"] and "Out of context" not in s["head2"]
     # 속 카드는 그 에이전트 자신의 컨텍스트로 판정한다 — 꼬리표를 물려받지 않는다
-    assert s["inner"] and all("컨텍스트 밖" not in c for c in s["inner"])
+    assert s["inner"] and all("Out of context" not in c for c in s["inner"])
     assert errors == []
 
 
@@ -365,7 +365,7 @@ def test_resident_agent_view_does_not_replace_mains(stack, page):
             agent: document.querySelectorAll('.card-run .card.ctx-gone').length,
         })"""
     )
-    assert sorted(s["rows"]) == ["agt-res1:카드 2개", "main:카드 3개"]
+    assert sorted(s["rows"]) == ["agt-res1:2 cards", "main:3 cards"]
     assert s["main"] == 3 and s["agent"] == 2
 
 
@@ -373,7 +373,7 @@ def test_copy_all_keeps_the_summary_and_folded_cards(stack, page):
     _seed_main(stack)
     _open(page, stack)
     md = page.evaluate("() => window.__timelineMarkdown()")
-    assert md.startswith("> ⊙ **압축 요약** · 턴 1–2")
+    assert md.startswith("> ⊙ **Compaction summary** · turns 1–2")
     assert "gomoku.html 을 리뷰해줘" in md  # 접힌 카드도 대화의 일부다
 
 
@@ -439,7 +439,7 @@ def test_budget_shows_only_what_the_server_measured(stack, page):
     _seed_main(stack, gone=None)
     _open(page, stack)
     text = page.inner_text("#ctx-budget")
-    assert "N/A" in text and "다음 모델 호출 뒤에" in text
+    assert "N/A" in text and "after the next model call" in text
     assert (
         page.evaluate("() => document.querySelectorAll('#ctx-budget .bbar').length")
         == 0
@@ -454,14 +454,14 @@ def test_budget_shows_only_what_the_server_measured(stack, page):
         5,
     )
     page.wait_for_function(
-        "() => /턴 5 실측/.test(document.querySelector('#ctx-budget').textContent)",
+        "() => /turn 5 measured/.test(document.querySelector('#ctx-budget').textContent)",
         timeout=8000,
     )
     text = page.inner_text("#ctx-budget")
     assert "9.1K / 32.8K (28%)" in text
-    assert "시스템 8.0K" in text.replace("\n", " ") and "대화 400" in text.replace(
+    assert "system 8.0K" in text.replace(
         "\n", " "
-    )
+    ) and "conversation 400" in text.replace("\n", " ")
     # 막대는 창 대비 — 네 칸의 폭 합이 28% 근처다
     widths = page.evaluate(
         "() => [...document.querySelectorAll('#ctx-budget .bbar i')]"

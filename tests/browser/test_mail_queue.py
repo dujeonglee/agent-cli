@@ -56,7 +56,8 @@ class TestMailInTheQueue:
         reg.drain_replies()  # 턴 경계 흡수
         assert _wait(
             lambda: (
-                "주입됨 · 다음 답변에 반영" in page.locator("#queue-list").inner_text()
+                "Injected · applies to the next answer"
+                in page.locator("#queue-list").inner_text()
             )
         )
         assert "q-injected" in (_items(page).first.get_attribute("class") or "")
