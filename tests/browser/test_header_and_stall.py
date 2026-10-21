@@ -196,7 +196,7 @@ class TestStreamStallDisplay:
         )
         page.wait_for_selector(".stall-line", timeout=8000)
         assert "1:30" in page.inner_text(".stall-line")
-        assert "시도 1/4" in page.inner_text(".stall-line")
+        assert "attempt 1/4" in page.inner_text(".stall-line")
         # 20틱이 울려도 줄은 하나 — 기록처럼 쌓이면 표면을 덮는다.
         for tick in range(2, 21):
             stack.renderer.stream_stall(
@@ -214,7 +214,7 @@ class TestStreamStallDisplay:
         page.wait_for_selector(".stall-line", timeout=8000)
         stack.renderer.stream_stall(kind="resend", attempt=2, attempts=4)
         page.wait_for_selector(".stall-resend", timeout=8000)
-        assert "시도 2/4" in page.inner_text(".stall-resend")
+        assert "attempt 2/4" in page.inner_text(".stall-resend")
         assert _wait(lambda: page.locator(".stall-line").count() == 0)
 
     def test_no_partial_output_to_discard(self, stack, page):

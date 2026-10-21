@@ -987,7 +987,7 @@ class TestStaticUI:
         aci = _js_fn_body(js, "ovApplyChannelInput")
         assert "ovActiveDead()" in aci
         assert "$input.disabled = dead" in aci
-        assert "종료됨" in aci
+        assert "has exited" in aci
         # kill/resume 컨트롤(I-1) — 칩의 ✕/↻ → /api/agent/<key>/{kill,resume}
         assert '"resume"' in chip and '"kill"' in chip
         assert '"/" +' in js and 'ctl.getAttribute("data-act")' in js

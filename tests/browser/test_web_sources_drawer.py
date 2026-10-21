@@ -55,7 +55,7 @@ class TestWebSourcesDrawer:
         assert page.locator(".websrc-item input:checked").count() == n
         groups = page.locator(".websrc-group-name").all_inner_texts()
         assert groups[0] == "search" and "wifi" in groups
-        assert f"{n}/{n} 켜짐" in page.inner_text("#websrc-total")
+        assert f"{n}/{n} enabled" in page.inner_text("#websrc-total")
         assert not proj.exists()  # 아무것도 안 바꿨다
 
     def test_uncheck_saves_only_that_change(self, stack, page, proj):
@@ -99,5 +99,5 @@ class TestWebSourcesDrawer:
         page.fill("#websrc-group", "x" * 12)
         page.fill("#websrc-text", "")
         page.click("#websrc-add")
-        assert "둘 다" in page.inner_text("#websrc-status")
+        assert "Enter both" in page.inner_text("#websrc-status")
         assert not proj.exists()

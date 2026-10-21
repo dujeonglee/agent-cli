@@ -487,7 +487,7 @@
   $jump.id = "jump-new";
   $jump.type = "button";
   $jump.hidden = true;
-  $jump.title = "맨 아래로";
+  $jump.title = "Jump to bottom";
   document.body.appendChild($jump);
   function placeJump() {
     const r = $messages.getBoundingClientRect();
@@ -497,7 +497,7 @@
   function renderJump() {
     $jump.hidden = pinned || _unseen === 0;
     if (!$jump.hidden) {
-      $jump.textContent = "↓ 새 메시지 " + _unseen;
+      $jump.textContent = "↓ " + _unseen + " new";
       placeJump();
     }
   }
@@ -626,7 +626,7 @@
     const kids = liveKids[taskId] || [];
     const last = kids.length ? kids[kids.length - 1].label : "";
     g.subEl.textContent = kids.length
-      ? "▸ " + last + (kids.length > 1 ? " +" + (kids.length - 1) : "") + " 실행 중"
+      ? "▸ " + last + (kids.length > 1 ? " +" + (kids.length - 1) : "") + " running"
       : "";
   }
 
@@ -907,7 +907,7 @@
     if (typeof card._md !== "function" && !card.classList.contains("card-task-group")) return;
     const btn = el("button", ["card-copy"], "⧉");
     btn.type = "button";
-    btn.title = "이 카드 복사 (마크다운)";
+    btn.title = "Copy this card (Markdown)";
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
       copyToClipboard(cardMarkdown(card)).then(function () { flashCopied(btn); });
@@ -1009,9 +1009,9 @@
     const row = el("button", ["ctx-fold"]);
     row.type = "button";
     row.appendChild(el("span", ["ctx-chev"], "▶"));
-    row.appendChild(el("span", ["ctx-title"], "컨텍스트 밖 대화"));
+    row.appendChild(el("span", ["ctx-title"], "Out of context"));
     row.appendChild(el("span", ["ctx-count"], ""));
-    row.appendChild(el("span", ["ctx-note"], "모델은 이 구간을 보지 못합니다"));
+    row.appendChild(el("span", ["ctx-note"], "The model no longer sees this part"));
     row.addEventListener("click", function () {
       ctxFoldOpen[key] = !ctxFoldOpen[key];
       ctxApplyView(key);
@@ -1063,7 +1063,7 @@
       row.classList.toggle("open", open);
       row.setAttribute("aria-expanded", open ? "true" : "false");
       row.querySelector(".ctx-chev").textContent = open ? "▼" : "▶";
-      row.querySelector(".ctx-count").textContent = "카드 " + n + "개";
+      row.querySelector(".ctx-count").textContent = n + " cards";
     }
     if (frames[key]) frameRender(frames[key]); // 압축 요약은 맨 위 카드에 산다
   }
@@ -1108,8 +1108,8 @@
       const s = v && v.summary;
       if (!s) return "";
       let body = s.text || "";
-      if (s.files && s.files.length) body += "\n파일: " + s.files.join(", ");
-      return "> ⊙ **압축 요약** · " + frameSummaryMeta(v) + "\n>\n> " + body.split("\n").join("\n> ");
+      if (s.files && s.files.length) body += "\nFiles: " + s.files.join(", ");
+      return "> ⊙ **Compaction summary** · " + frameSummaryMeta(v) + "\n>\n> " + body.split("\n").join("\n> ");
     };
     frameRender(f);
     if (!frameSeen) frameLoad(f);
@@ -1203,7 +1203,7 @@
       "<summary>" +
       '<span class="insp-name">' + escapeHtml(s.name) + (extraTag || "") + "</span>" +
       '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
-      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      '<button class="insp-cp" type="button" title="Copy this section">⧉</button>' +
       "</summary>" +
       '<pre class="insp-body">' + escapeHtml(s.text) + "</pre>" +
       "</details>"
@@ -1218,7 +1218,7 @@
       if (open) {
         if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
         if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
-        if (prevTurn != null) tags += '<span class="insp-tag">vs 턴 ' + escapeHtml(prevTurn) + "</span>";
+        if (prevTurn != null) tags += '<span class="insp-tag">vs turn ' + escapeHtml(prevTurn) + "</span>";
         body =
           '<pre class="insp-diff">' +
           d.lines
@@ -1230,7 +1230,7 @@
             .join("\n") +
           "</pre>";
       } else {
-        tags += '<span class="insp-tag">변화 없음</span>';
+        tags += '<span class="insp-tag">no change</span>';
       }
     }
     return (
@@ -1238,7 +1238,7 @@
       "<summary>" +
       '<span class="insp-name">' + escapeHtml(s.name) + tags + "</span>" +
       '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
-      '<button class="insp-cp" type="button" title="이 섹션 복사">⧉</button>' +
+      '<button class="insp-cp" type="button" title="Copy this section">⧉</button>' +
       "</summary>" +
       body +
       "</details>"
@@ -1249,12 +1249,12 @@
    * 호출이 끝나면 채워진다. 칸은 실측 합계를 바이트 비율로 나눈 것이라 합이
    * 합계와 같다. 막대는 창 대비(빈 자리 = 남은 창). */
   function frameBudgetHtml(b, ended) {
-    const label = "모델이 지금 보는 양" + (ended ? " (종료 시)" : "");
+    const label = "What the model sees now" + (ended ? " (at end)" : "");
     if (!b.measured) {
       return (
         '<div class="bl"><span>' + label + '</span><span class="bn">N/A</span></div>' +
         '<div class="bleg"><span>' +
-        (ended ? "서버가 센 기록이 없다." : "서버가 센 값이 아직 없다 — 다음 모델 호출 뒤에 채워진다.") +
+        (ended ? "No server-measured count was recorded." : "No server-measured count yet — filled after the next model call.") +
         "</span></div>"
       );
     }
@@ -1266,16 +1266,16 @@
       (b.window
         ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
         : fmtTok(b.total)) +
-      (b.turn != null ? " · 턴 " + escapeHtml(b.turn) + " 실측" : " · 실측");
+      (b.turn != null ? " · turn " + escapeHtml(b.turn) + " measured" : " · measured");
     return (
       '<div class="bl"><span>' + label + '</span><span class="bn">' + head + "</span></div>" +
       '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
       '<div class="bleg">' +
-      '<span><b style="background:var(--insp-system)"></b>시스템 <span class="n">' + fmtTok(b.system) + "</span></span>" +
-      (b.tools ? '<span><b style="background:var(--insp-tools)"></b>함수 스키마 <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
-      '<span><b style="background:var(--insp-convo)"></b>대화 <span class="n">' + fmtTok(b.convo) + "</span></span>" +
-      '<span><b style="background:var(--insp-tail)"></b>꼬리 <span class="n">' + fmtTok(b.tail) + "</span></span>" +
-      (b.compactions ? '<span class="insp-tag">⊙ 압축 ' + b.compactions + "회</span>" : "") +
+      '<span><b style="background:var(--insp-system)"></b>system <span class="n">' + fmtTok(b.system) + "</span></span>" +
+      (b.tools ? '<span><b style="background:var(--insp-tools)"></b>tool schemas <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
+      '<span><b style="background:var(--insp-convo)"></b>conversation <span class="n">' + fmtTok(b.convo) + "</span></span>" +
+      '<span><b style="background:var(--insp-tail)"></b>tail <span class="n">' + fmtTok(b.tail) + "</span></span>" +
+      (b.compactions ? '<span class="insp-tag">⊙ compactions ' + b.compactions + "</span>" : "") +
       "</div>"
     );
   }
@@ -1288,11 +1288,11 @@
   function frameSummaryMeta(v) {
     const s = v.summary;
     let meta = "";
-    if (s.turns && s.turns.length === 2) meta += "턴 " + s.turns[0] + "–" + s.turns[1];
+    if (s.turns && s.turns.length === 2) meta += "turns " + s.turns[0] + "–" + s.turns[1];
     if (s.before_tokens != null && s.after_tokens != null) {
       meta += (meta ? " · " : "") + fmtTok(s.before_tokens) + " → " + fmtTok(s.after_tokens) + " tok";
     }
-    return meta || "압축 " + (v.compactions || 1) + "회";
+    return meta || "compactions " + (v.compactions || 1);
   }
   function frameBarHtml(title, open, chips, right) {
     return (
@@ -1337,52 +1337,52 @@
     const chips = [];
     if (ok) {
       const hooks = sys.filter(function (s) { return /^Hook: /.test(s.name); }).length;
-      chips.push("시스템 프롬프트 " + sys.length + "개 섹션");
-      if (hooks) chips.push("훅 섹션 " + hooks);
-      if (tools.length) chips.push("함수 스키마 " + tools.length + "개");
-      if (grammar) chips.push("디코딩 문법");
+      chips.push(sys.length + " system prompt sections");
+      if (hooks) chips.push(hooks + " hook sections");
+      if (tools.length) chips.push(tools.length + " tool schemas");
+      if (grammar) chips.push("Decoding grammar");
     } else {
-      chips.push(pending ? "…" : "아직 모델 호출 없음");
+      chips.push(pending ? "…" : "no model call yet");
     }
     if (sum) {
-      const t = sum.turns && sum.turns.length === 2 ? " 턴 " + sum.turns[0] + "–" + sum.turns[1] : "";
-      chips.push('<span class="ctx-sumchip">압축 요약' + t + "</span>");
+      const t = sum.turns && sum.turns.length === 2 ? " turns " + sum.turns[0] + "–" + sum.turns[1] : "";
+      chips.push('<span class="ctx-sumchip">Compaction summary' + t + "</span>");
     }
     const b = ok ? d.budget : null;
     let top = frameBarHtml(
-      "맨 처음 받는 것", f.open.top, chips,
+      "Received first", f.open.top, chips,
       // 섹션 배지와 같은 척도(추정) — 실측 합계는 예산 줄이 보여 준다.
       ok ? "~" + fmtTok(sys.concat(tools).reduce(function (n, x) { return n + (x.est_tokens || 0); }, 0)) + " tok" : ""
     );
     if (f.open.top) {
       top += '<div class="ctx-body">';
       if (ok) {
-        top += '<div class="ctx-actions"><button type="button" class="insp-mini ctx-copyall" title="시스템·함수 스키마 전체 복사">⧉ 전체 복사</button></div>';
+        top += '<div class="ctx-actions"><button type="button" class="insp-mini ctx-copyall" title="Copy all system prompt and tool schema sections">⧉ Copy all</button></div>';
         if (!f.channel && b) top += '<div class="insp-budget">' + frameBudgetHtml(b, ended) + "</div>";
-        top += '<div class="insp-group">시스템 프롬프트</div>';
+        top += '<div class="insp-group">System prompt</div>';
         top += sys.map(function (s) {
-          return frameSecHtml(s, "insp-system", /^Hook: /.test(s.name) ? '<span class="insp-tag">훅 · 턴마다 바뀔 수 있음</span>' : "");
+          return frameSecHtml(s, "insp-system", /^Hook: /.test(s.name) ? '<span class="insp-tag">hook · may change every turn</span>' : "");
         }).join("");
         if (tools.length) {
-          top += '<div class="insp-group">함수 스키마 — 요청 tools[]</div>';
+          top += '<div class="insp-group">Tool schemas — request tools[]</div>';
           top += tools.map(function (s) { return frameSecHtml(s, "insp-tools", ""); }).join("");
         }
-        top += '<div class="insp-group">요청 설정</div>';
+        top += '<div class="insp-group">Request settings</div>';
         top += grammar
           ? frameSecHtml(
-              { name: "디코딩 문법", text: grammar.text, est_tokens: grammar.est_tokens },
+              { name: "Decoding grammar", text: grammar.text, est_tokens: grammar.est_tokens },
               "insp-grammar",
-              '<span class="insp-tag">' + (grammar.thinking_open ? "생각 열림" : "생각 닫힘") + " · 서버가 강제</span>"
+              '<span class="insp-tag">' + (grammar.thinking_open ? "thinking open" : "thinking closed") + " · enforced by the server</span>"
             )
-          : '<div class="insp-sub">디코딩 문법 없음 — 서버가 파싱한다.</div>';
+          : '<div class="insp-sub">No decoding grammar — the server parses.</div>';
       } else {
-        top += '<div class="insp-sub">' + (pending ? "불러오는 중…" : "이 스코프는 아직 모델을 호출하지 않았다.") + "</div>";
+        top += '<div class="insp-sub">' + (pending ? "Loading…" : "This scope has not called the model yet.") + "</div>";
       }
       if (sum) {
         let body = sum.text || "";
-        if (sum.files && sum.files.length) body += "\n파일: " + sum.files.join(", ");
+        if (sum.files && sum.files.length) body += "\nFiles: " + sum.files.join(", ");
         top +=
-          '<div class="insp-group">압축 요약 — 밀려난 대화 대신 모델이 보는 글</div>' +
+          '<div class="insp-group">Compaction summary — what the model sees instead of the evicted conversation</div>' +
           '<div class="ctx-summary"><div class="ctx-summary-meta">' + escapeHtml(frameSummaryMeta(v)) + "</div>" +
           '<div class="ctx-summary-body">' + escapeHtml(body) + "</div></div>";
       }
@@ -1404,14 +1404,14 @@
       return df;
     });
     const tchips = [];
-    if (!ok) tchips.push(pending ? "…" : "아직 모델 호출 없음");
-    else if (!tail.length) tchips.push(d.turn ? "이 호출에는 꼬리가 없었다" : "첫 모델 호출 때 채워진다");
+    if (!ok) tchips.push(pending ? "…" : "no model call yet");
+    else if (!tail.length) tchips.push(d.turn ? "this call had no tail" : "filled on the first model call");
     else {
-      if (ended) tchips.push("종료 시점 상태");
+      if (ended) tchips.push("state at end");
       // 꼬리 본문에서 읽는다: `turn 3/30 …` 한 줄과 `## ` 제목들.
       const text = tail.map(function (s) { return s.text; }).join("\n");
       const tm = /^turn (\d+)\/(\d+)/m.exec(text);
-      tchips.push(tm ? "턴 " + tm[1] + "/" + tm[2] : "턴 " + d.turn);
+      tchips.push(tm ? "turn " + tm[1] + "/" + tm[2] : "turn " + d.turn);
       text.split("\n").forEach(function (line) {
         const hm = /^## (.+)$/.exec(line);
         if (hm) tchips.push(escapeHtml(hm[1]));
@@ -1420,13 +1420,13 @@
     let right = "";
     if (ins) right += '<span class="insp-tag ins">+' + ins + "</span>";
     if (del) right += '<span class="insp-tag del">−' + del + "</span>";
-    if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs 턴 ' + escapeHtml(d.prev_turn) + "</span>";
+    if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs turn ' + escapeHtml(d.prev_turn) + "</span>";
     if (tailTok) right += fmtTok(tailTok) + " tok";
-    let tl = frameBarHtml("매 턴 끝에 붙는 것", f.open.tail, tchips, right);
+    let tl = frameBarHtml("Appended every turn", f.open.tail, tchips, right);
     if (f.open.tail) {
       tl += '<div class="ctx-body">';
       if (tail.length) {
-        tl += '<div class="insp-sub">' + (ended ? "끝날 때 스냅샷 — 더 안 바뀐다." : "마지막 모델 호출(턴 " + escapeHtml(d.turn) + ") 기준.") + "</div>";
+        tl += '<div class="insp-sub">' + (ended ? "Snapshot at end — no further changes." : "As of the last model call (turn " + escapeHtml(d.turn) + ").") + "</div>";
         tl += tail.map(function (s, i) { return frameTailSecHtml(s, diffs[i], d.prev_turn); }).join("");
       } else {
         tl += '<div class="insp-sub">' + tchips[0] + "</div>";
@@ -1547,11 +1547,11 @@
       const txt = stallLine.querySelector(".sys-text");
       const fill = stallLine.querySelector(".stall-bar > i");
       txt.textContent =
-        "응답 대기 중 " +
+        "Waiting for a response " +
         mmss(d.elapsed_s) +
         " / " +
         mmss(d.limit_s) +
-        " · 시도 " +
+        " · attempt " +
         d.attempt +
         "/" +
         d.attempts;
@@ -1571,7 +1571,7 @@
         el(
           "span",
           ["sys-text"],
-          "스트림 무응답 — 재연결 후 재전송 (시도 " +
+          "Stream stalled — reconnected and resent (attempt " +
             d.attempt +
             "/" +
             d.attempts +
@@ -1658,7 +1658,7 @@
     card.appendChild(bubble);
     card._md = function () {
       const lines = imgs.map(function (r) { return "[image: " + r.path + " (" + r.width + "×" + r.height + ")]"; });
-      return "**👤 " + (author || "사용자") + "**\n\n" + [body].concat(lines).filter(Boolean).join("\n");
+      return "**👤 " + (author || "user") + "**\n\n" + [body].concat(lines).filter(Boolean).join("\n");
     };
     // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
     // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
@@ -1716,7 +1716,7 @@
     if (tool === "write_file") return String(p.path || "");
     if (tool === "edit_file") {
       const n = Array.isArray(p.edits) ? p.edits.length : 0;
-      return String(p.path || "") + (n ? " · " + n + "곳" : "");
+      return String(p.path || "") + (n ? " · " + n + " places" : "");
     }
     if (tool === "run_skill") return String(p.name || "");
     if (tool === "agent") {
@@ -1727,7 +1727,7 @@
     if (tool === "ask") {
       if (typeof p.question === "string" && p.question) return p.question;
       const qs = Array.isArray(p.questions) ? p.questions : [];
-      return qs.length ? String(qs[0]) + (qs.length > 1 ? " 외 " + (qs.length - 1) : "") : "";
+      return qs.length ? String(qs[0]) + (qs.length > 1 ? " +" + (qs.length - 1) + " more" : "") : "";
     }
     // 발신 도구 — 본문이 곧 요약. 상대는 꼬리 칩(`sendPeerChip`)이 맡는다.
     if (SEND_TOOLS[tool]) return String(p.text || "");
@@ -1765,7 +1765,7 @@
   const REPORT_HEAD = /^(🔔 monitor |🧵 job #)/;
   function obsSummary(content, failed) {
     const lines = String(content || "").split("\n").filter((l) => l.trim());
-    if (!lines.length) return "(출력 없음)";
+    if (!lines.length) return "(no output)";
     if (REPORT_HEAD.test(lines[0].trim())) return lines[0].trim();
     if (!failed) return absorbedSummary(lines) || lines[lines.length - 1].trim();
     for (let i = 0; i < lines.length - 1; i++) {
@@ -1802,8 +1802,8 @@
     let label = "";
     if (tool === "message") label = peerLabel(String(p.to || ""));
     else if (tool === "answer") label = String(p.id || "");
-    else if (tool === "ask") label = p.to === "user" ? "user (사람)" : "요청자";
-    else if (tool === "reply") label = "요청자";
+    else if (tool === "ask") label = p.to === "user" ? "user (human)" : "requester";
+    else if (tool === "reply") label = "requester";
     return label ? el("span", ["peer"], label) : null;
   }
   /** 주소 → 사람이 읽을 이름. `author` 네임스페이스가 이미 셋을 구분한다
@@ -1812,8 +1812,8 @@
   function peerLabel(who) {
     var w = String(who || "");
     if (!w || w === "main") return "main";
-    if (w === "user") return "user (사람)";
-    if (w.indexOf("user:") === 0) return w.slice(5) + " (사람)";
+    if (w === "user") return "user (human)";
+    if (w.indexOf("user:") === 0) return w.slice(5) + " (human)";
     var k = w.indexOf("agent:") === 0 ? w.slice(6) : w;
     return ovAgentLabel(k);
   }
@@ -1828,7 +1828,7 @@
     const key = p && typeof p.key === "string" ? p.key : "";
     if (!key || !ovRoster.some((t) => t.key === key)) return null;
     const chip = el("span", ["peer", "can-jump"], ovAgentLabel(key));
-    chip.title = ovAgentLabel(key) + " 채널로 이동";
+    chip.title = "Go to " + ovAgentLabel(key);
     chip.addEventListener("click", function (e) {
       e.stopPropagation();
       ovJump(key);
@@ -1900,7 +1900,7 @@
         // 최종답에는 한 단어만 내는 일이 있고(실측 `out`), 접혀 있으면 빈 답을
         // 받은 것으로 보인다. 답보다 흐리게 그려 답이 먼저 읽히게 한다.
         // 한 줄짜리 생각은 머리 줄이 전부다(긴 요약은 줄바꿈된다) — 펼칠 게 없다.
-        const think = makeRow("💭", "생각", first.trim(), thoughtBody, ["think", "final-think"]);
+        const think = makeRow("💭", "Thinking", first.trim(), thoughtBody, ["think", "final-think"]);
         if (thoughtBody) {
           thoughtBody.classList.remove("hide");
           think.classList.add("open");
@@ -1919,7 +1919,7 @@
       // 라이브·resume 양쪽에서 같은 모양으로 온다.
       if (Array.isArray(d.requests) && d.requests.length) {
         const box = el("div", ["final-answers"]);
-        box.appendChild(el("span", ["fa-label"], "답한 요청"));
+        box.appendChild(el("span", ["fa-label"], "Answered request"));
         d.requests.forEach(function (r) {
           const chip = el("span", ["fa-chip"]);
           chip.appendChild(el("span", ["fa-id"], "[" + (r.id || "?") + "]"));
@@ -1939,7 +1939,7 @@
       // 생각만 있는 턴 — 묶을 것이 없다.
       if (t) {
         card.appendChild(
-          makeRow("💭", "생각", first.trim(), thoughtBody, ["think"])
+          makeRow("💭", "Thinking", first.trim(), thoughtBody, ["think"])
         );
       }
       card._md = function () { return t ? "💭 " + t : ""; };
@@ -1982,7 +1982,7 @@
 
     let head;
     if (t) {
-      head = makeStepHead("💭", "생각", first.trim(), badges, ["think"]);
+      head = makeStepHead("💭", "Thinking", first.trim(), badges, ["think"]);
       // 도구 이름은 머리의 `k` 칸에 없으므로 배지로 알린다.
       badges.appendChild(el("span", ["badge", "tool"], "⚡ " + (tool || "?")));
       if (thoughtBody) body.appendChild(thoughtBody);
@@ -2036,7 +2036,7 @@
       parts.push("⚡ `" + (a.tool || "?") + "`" + (input ? "\n" + fence(input, "json") : ""));
     });
     md.obs.forEach(function (o) {
-      parts.push((o.success ? "✓" : "✗") + " `" + (o.tool || "결과") + "`" + (o.content ? "\n" + fence(o.content) : ""));
+      parts.push((o.success ? "✓" : "✗") + " `" + (o.tool || "result") + "`" + (o.content ? "\n" + fence(o.content) : ""));
     });
     return parts.join("\n\n");
   }
@@ -2200,7 +2200,7 @@
     // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
     // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
     const row = makeRow(
-      d.success ? "✓" : "✗", tool || "결과", obsSummary(content, !d.success), body,
+      d.success ? "✓" : "✗", tool || "result", obsSummary(content, !d.success), body,
       [d.success ? "ok" : "bad"]
     );
     // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
@@ -2224,7 +2224,7 @@
         if (mark) mark.textContent = "▾";
         const why = el("div", ["step-why"]);
         why.appendChild(el("span", ["why-ic"], "✗"));
-        why.appendChild(el("span", ["why-tool"], tool || "결과"));
+        why.appendChild(el("span", ["why-tool"], tool || "result"));
         why.appendChild(el("span", ["why-text"], obsSummary(content, true)));
         why.addEventListener("click", function () { step.head.click(); });
         step.card.insertBefore(why, step.body);
@@ -2237,7 +2237,7 @@
     // 종전대로 단독 카드로 떨어뜨린다 — 최악이 "안 묶임" 이지 "유실" 이 아니다.
     card.appendChild(row);
     card._md = function () {
-      return (d.success ? "✓" : "✗") + " `" + (tool || "결과") + "`" + (content ? "\n" + fence(content) : "");
+      return (d.success ? "✓" : "✗") + " `" + (tool || "result") + "`" + (content ? "\n" + fence(content) : "");
     };
     finishCard(card, d);
   }
@@ -2272,7 +2272,7 @@
     if (!g) {
       const node = el("div", ["gen"]);
       node.appendChild(el("span", ["gen-pulse"]));
-      node.appendChild(el("span", ["gen-label"], "생성 중"));
+      node.appendChild(el("span", ["gen-label"], "Generating"));
       node.appendChild(el("span", ["gen-tok"]));
       g = genByCh[channel] = { el: node, body: 0, think: 0, retry: 0 };
     }
@@ -2285,12 +2285,12 @@
     const g = genSlot(channel);
     const parts = [];
     if (g.body) parts.push("· " + fmtTok(g.body) + " tokens");
-    if (g.think) parts.push("· 💭 사고 " + fmtTok(g.think));
+    if (g.think) parts.push("· 💭 thinking " + fmtTok(g.think));
     // 재시도는 **왜 오래 걸리는지**의 유일한 단서다. 거부된 응답 자체는 안
     // 보여주지만(하네스의 재시도 기계는 모델의 작업이 아니다), "그냥 느린 것"과
     // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
     // 실제로 다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다.
-    if (g.retry) parts.push("· ↻ 재시도 " + g.retry);
+    if (g.retry) parts.push("· ↻ retries " + g.retry);
     // 문법 제약 중이면 표시 — 속도가 왜 다른지가 이 줄에 있어야 한다.
     if (GRAMMAR.active) parts.push("· 📐");
     g.el.querySelector(".gen-tok").textContent = parts.join(" ");
@@ -2392,7 +2392,7 @@
     const images = attachReadyPaths();
     if (!text && !images.length) return;
     if (attachBusy()) {
-      attachMessage("아직 올리는 중입니다");
+      attachMessage("Still uploading");
       return;
     }
     if (ovActiveChannel !== "main") {
@@ -2586,7 +2586,7 @@
     });
     if (!list.length) return false;
     if (attachVision === false) {
-      attachMessage("이 모델은 이미지를 못 봅니다 — 글로 설명해 주세요");
+      attachMessage("This model cannot view images — describe it in words");
       return true;
     }
     list.forEach(attachOne);
@@ -2662,7 +2662,7 @@
     $inputArea.classList.remove("drop-over");
     if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
     e.preventDefault();
-    if (!attachFiles(e.dataTransfer.files)) attachMessage("PNG/JPEG/GIF/WebP 만 붙일 수 있습니다");
+    if (!attachFiles(e.dataTransfer.files)) attachMessage("Only PNG, JPEG, GIF or WebP can be attached");
   });
   attachRefreshVision();
 
@@ -2773,10 +2773,10 @@
         const url = baseHref + "?token=" + encodeURIComponent(d.token);
         await copyToClipboard(url);
         $shareBtn.textContent = "✓";
-        $shareBtn.title = "복사됨: " + url;
+        $shareBtn.title = "Copied: " + url;
       } catch (e) {
         $shareBtn.textContent = "✗";
-        $shareBtn.title = "링크 복사 실패: " + e.message;
+        $shareBtn.title = "Copy failed: " + e.message;
       }
       setTimeout(function () {
         $shareBtn.textContent = orig;
@@ -3061,7 +3061,7 @@
           el(
             "span",
             ["sys-text"],
-            "이 실행의 턴 기록이 이 세션 히스토리에 없습니다 — 서브에이전트 컨텍스트이거나 resume 이전 기록입니다.",
+            "This run's turn records are not in this session's history — a subagent context, or a record from before resume.",
           ),
         );
         g.body.appendChild(note);
@@ -3106,13 +3106,13 @@
   // key 를 흐리게 곁에 단다(`ovAgentLabelHtml`). 별명을 주소로 받기 시작하면
   // 유일성·경로·rename 이 따라오는데 key 가 uuid 라 그 셋이 이미 해결돼 있다.
   var OV_AGENT_ANIMALS = [
-    "여우", "문어", "올빼미", "유니콘", "고래", "나비", "거북", "꿀벌",
-    "사자", "펭귄", "홍학", "돌고래", "박쥐", "복어", "공룡", "달팽이",
-    "고슴도치", "수달", "코알라", "판다", "물범", "오소리", "늑대", "개구리",
+    "Fox", "Octopus", "Owl", "Unicorn", "Whale", "Butterfly", "Turtle", "Bee",
+    "Lion", "Penguin", "Flamingo", "Dolphin", "Bat", "Pufferfish", "Dinosaur", "Snail",
+    "Hedgehog", "Otter", "Koala", "Panda", "Seal", "Badger", "Wolf", "Frog",
   ];
   var OV_AGENT_ADJECTIVES = [
-    "날쌘", "느긋한", "꼼꼼한", "용감한", "조용한", "엉뚱한", "성실한", "영리한",
-    "무던한", "재빠른", "신중한", "다정한", "듬직한", "부지런한", "침착한", "씩씩한",
+    "Swift", "Easygoing", "Meticulous", "Brave", "Quiet", "Quirky", "Diligent", "Clever",
+    "Steady", "Nimble", "Careful", "Kind", "Reliable", "Busy", "Calm", "Cheerful",
   ];
   function ovAgentHash(key) {
     var s = 0;
@@ -3173,7 +3173,7 @@
     var item = el("div", ["ask-item", "ask-main"]);
     var head = el("div", ["ask-q"]);
     head.textContent =
-      kind === "confirm" ? "⚠ main — 확인 필요" : "❓ main 이(가) 물었습니다";
+      kind === "confirm" ? "⚠ main — confirmation needed" : "❓ main asked";
     item.appendChild(head);
     var meta = buildPromptMetaEl(data, kind === "confirm");
     if (meta) item.appendChild(meta);
@@ -3195,7 +3195,7 @@
       }
       var cmt = el("input", ["ask-answer"]);
       cmt.type = "text";
-      cmt.placeholder = "선택 코멘트(비우면 없음)";
+      cmt.placeholder = "Optional comment";
       var btns = el("div", ["ask-confirm-btns"]);
       (data.options || []).forEach(function (opt) {
         var b = el("button", ["confirm-btn"]);
@@ -3225,9 +3225,9 @@
       }
       var ans = el("input", ["ask-answer"]);
       ans.type = "text";
-      ans.placeholder = "답변… (Enter 전송)";
+      ans.placeholder = "Answer… (Enter to send)";
       var send = el("button", ["ask-send", "btn-primary"]);
-      send.textContent = "전송";
+      send.textContent = "Send";
       send.addEventListener("click", function () {
         ovSubmitMainPrompt(ans.value);
         ans.value = "";
@@ -3251,16 +3251,16 @@
   function ovAskAddress(q) {
     var to = (q && q.to) || "";
     if (!to || to === "main") {
-      return ' <span class="ask-to">→ main 에게</span>';
+      return ' <span class="ask-to">→ to main</span>';
     }
     if (to.indexOf("agent:") === 0) {
       var k = to.slice(6);
       return (
-        ' <span class="ask-to">→ ' + escapeHtml(ovAgentLabel(k)) +
-        " 에게 (아직 못 받음 — 대신 답해 주세요)</span>"
+        ' <span class="ask-to">→ to ' + escapeHtml(ovAgentLabel(k)) +
+        " (not delivered yet — answer on its behalf)</span>"
       );
     }
-    return ' <span class="ask-to">→ 나에게</span>';
+    return ' <span class="ask-to">→ to me</span>';
   }
 
   function ovRenderAskTray() {
@@ -3289,11 +3289,11 @@
         '<div class="ask-item" data-key="' + escapeHtml(it.key) +
         '" data-qid="' + escapeHtml(it.q.id) + '">' +
         '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
-        "</b> 이(가) 물었습니다" + ovAskAddress(it.q) + "</div>" +
+        "</b> asked" + ovAskAddress(it.q) + "</div>" +
         '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
         '<div class="ask-in"><input class="ask-answer" type="text" ' +
-        'placeholder="답변…" aria-label="답변"><button type="button" ' +
-        'class="ask-send btn-primary">전송</button></div></div>';
+        'placeholder="Answer…" aria-label="Answer"><button type="button" ' +
+        'class="ask-send btn-primary">Send</button></div></div>';
     });
     tray.innerHTML = html;
     // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
@@ -3456,8 +3456,8 @@
     }
     var foot = makeRow(
       ok ? "✓" : "✗",
-      ok ? "완료" : "실패",
-      ok ? "결과 없이 끝남" + dur : (d.error || "런이 끝나기 전에 멈춤") + dur,
+      ok ? "Done" : "Failed",
+      ok ? "ended without a result" + dur : (d.error || "stopped before the run ended") + dur,
       null,
       ["run-foot", ok ? "ok" : "bad"]
     );
@@ -3473,7 +3473,7 @@
     var rest = lines.slice(1).join("\n").trim();
     var body = rest ? elHtml("div", ["md"], escapeAndFormat(text)) : null;
     var tail = el("span", ["peer"], peerLabel(d.to));
-    var row = makeRow("⚠", "폴백", "회신 없이 끝나 하네스가 런 요약을 대신 보냄", body, ["fallback"], tail);
+    var row = makeRow("⚠", "Fallback", "ended without a reply — the harness sent the run summary instead", body, ["fallback"], tail);
     var card = el("div", ["card", "card-fallback"]);
     card.appendChild(row);
     stampCard(card, d.ts);
@@ -3494,7 +3494,7 @@
       var card = el("div", ["card", "card-queued"]);
       card.dataset.seq = String(seq);
       var hasImgs = Array.isArray(d.images) && d.images.length > 0;
-      var qRow = makeRow("⏳", "대기", firstLineOf(d.text), hasImgs ? thumbStrip(d.images) : null,
+      var qRow = makeRow("⏳", "Queued", firstLineOf(d.text), hasImgs ? thumbStrip(d.images) : null,
                          ["queued"], el("span", ["peer"], peerLabel(d.author)));
       if (hasImgs) qRow.querySelector(".s").appendChild(miniThumbs(d.images)); // 접힌 채로도 보인다
       card.appendChild(qRow);
@@ -3528,8 +3528,8 @@
         var row = q.card.querySelector(".row");
         row.classList.add("absorbed");
         row.querySelector(".ic").textContent = "✓";
-        row.querySelector(".k").textContent = "흡수";
-        row.title = "런 " + into + " 에 턴 경계에서 흡수됨";
+        row.querySelector(".k").textContent = "Absorbed";
+        row.title = "absorbed into run " + into + " at a turn boundary";
       }
       return;
     }
@@ -3622,8 +3622,8 @@
     var ctrl = "";
     if (key !== "main") {
       ctrl = dead
-        ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="되살리기">↻</button>'
-        : '<button type="button" class="ov-ch-ctl" data-act="kill" title="종료">✕</button>';
+        ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>'
+        : '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
     }
     return (
       '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
@@ -3644,9 +3644,9 @@
     $input.disabled = dead;
     if ($send) $send.disabled = dead;
     if (dead) {
-      $input.placeholder = "✕ 이 에이전트는 종료됨 — 다른 대상 선택 또는 ↻ 로 되살리기";
+      $input.placeholder = "✕ This agent has exited — pick another channel or revive it with ↻";
     } else if (ovActiveChannel !== "main") {
-      $input.placeholder = ovAgentLabel(ovActiveChannel) + " 에게… (Enter 전송)";
+      $input.placeholder = "To " + ovAgentLabel(ovActiveChannel) + "… (Enter to send)";
     } else {
       $input.placeholder = workerBusy
         ? "Worker is processing… your message will be queued (injected next turn)"
@@ -3697,7 +3697,7 @@
     }
     btn.hidden = false;
     btn.textContent =
-      "↩ " + (ovBack.ch === "main" ? "💬 main" : ovAgentLabel(ovBack.ch)) + " 으로";
+      "↩ Back to " + (ovBack.ch === "main" ? "💬 main" : ovAgentLabel(ovBack.ch));
   }
   /** 채널의 앵커 카드 = 그 채널의 마지막 카드 — 도착은 했음을 보이는 게
    * 아무것도 안 하는 것보다 낫다. (왕래 줄 앵커는 v9.23.0 에서 줄과 함께
@@ -4065,10 +4065,10 @@
       if (Array.isArray(lv.item.images) && lv.item.images.length) row.appendChild(miniThumbs(lv.item.images));
       const st = el("span", ["queue-state"]);
       st.textContent = cancelled
-        ? "취소됨"
+        ? "Cancelled"
         : mine && !lv.item.mail
-          ? "✓ 내 요청 반영됨"
-          : "주입됨 · 다음 답변에 반영";
+          ? "✓ My request applied"
+          : "Injected · applies to the next answer";
       row.appendChild(st);
       $queueList.appendChild(row);
     });
@@ -5158,7 +5158,7 @@ const KNOBS = (function () {
         const names = s.tools.slice(0, 4).join(", ") + (s.tools.length > 4 ? ", …" : "");
         detail = s.tools.length + " tools" + (names ? " · " + names : "");
       } else {
-        detail = s.error || "연결 실패";
+        detail = s.error || "connection failed";
       }
       row.appendChild(el("span", ["detail"], detail));
       $list.appendChild(row);
@@ -5321,28 +5321,28 @@ const KNOBS = (function () {
     item.appendChild(head);
     item.appendChild(el("div", "sched-item-prompt", s.prompt));
     const meta = [];
-    if (s.enabled && s.next_fire) meta.push("다음 " + when(s.next_fire));
-    if (!s.enabled) meta.push("꺼짐");
-    if (s.last_fired_at) meta.push("최근 실행 " + when(s.last_fired_at));
-    meta.push("표시 이름 " + s.effective_nickname);
+    if (s.enabled && s.next_fire) meta.push("next " + when(s.next_fire));
+    if (!s.enabled) meta.push("off");
+    if (s.last_fired_at) meta.push("last run " + when(s.last_fired_at));
+    meta.push("display name " + s.effective_nickname);
     item.appendChild(el("div", "sched-item-meta", meta.join(" · ")));
     if (s.missed_at) {
-      item.appendChild(el("div", "sched-item-missed", "놓친 예약 — " + when(s.missed_at) + " 에 실행되지 않았습니다"));
+      item.appendChild(el("div", "sched-item-missed", "Missed — did not run at " + when(s.missed_at)));
     }
     const actions = el("div", "sched-item-actions");
     const base = "api/schedules/" + encodeURIComponent(s.id);
-    actions.appendChild(button(s.enabled ? "끄기" : "켜기", "btn-ghost", function () {
+    actions.appendChild(button(s.enabled ? "Disable" : "Enable", "btn-ghost", function () {
       act("POST", base + "/toggle", { enabled: !s.enabled });
     }));
-    actions.appendChild(button("지금 실행", "btn-ghost", function () {
+    actions.appendChild(button("Run now", "btn-ghost", function () {
       act("POST", base + "/run-now");
     }));
     if (s.missed_at) {
-      actions.appendChild(button("건너뛰기", "btn-ghost", function () {
+      actions.appendChild(button("Skip", "btn-ghost", function () {
         act("POST", base + "/dismiss");
       }));
     }
-    actions.appendChild(button("삭제", "btn-danger", function () {
+    actions.appendChild(button("Delete", "btn-danger", function () {
       act("DELETE", base);
     }));
     item.appendChild(actions);
@@ -5357,12 +5357,12 @@ const KNOBS = (function () {
       const row = el("div", "sched-missed-row");
       row.dataset.id = s.id;
       row.appendChild(el("span", "sched-missed-text",
-        "⏰ 놓친 예약: " + name(s) + " (" + when(s.missed_at) + ")"));
+        "⏰ Missed schedule: " + name(s) + " (" + when(s.missed_at) + ")"));
       const base = "api/schedules/" + encodeURIComponent(s.id);
-      row.appendChild(button("지금 실행", "btn-primary", function () {
+      row.appendChild(button("Run now", "btn-primary", function () {
         act("POST", base + "/run-now");
       }));
-      row.appendChild(button("건너뛰기", "btn-ghost", function () {
+      row.appendChild(button("Skip", "btn-ghost", function () {
         act("POST", base + "/dismiss");
       }));
       $missed.appendChild(row);
@@ -5374,7 +5374,7 @@ const KNOBS = (function () {
     $list.textContent = "";
     if (!rows.length) {
       $list.appendChild(el("div", "sched-empty",
-        "예약이 없습니다. 아래에서 추가하거나, 에이전트에게 \"매주 월요일 9시에 주간 보고 써줘\" 처럼 말해도 됩니다."));
+        "No schedules. Add one below, or just tell the agent something like \"write the weekly report every Monday at 9\"."));
     }
     rows.forEach(function (s) { $list.appendChild(renderItem(s)); });
 
@@ -5386,13 +5386,13 @@ const KNOBS = (function () {
     renderMissed(rows);
 
     $log.textContent = "";
-    const EVENT = { fired: "실행", missed: "놓침", skipped: "건너뜀", failed: "실패" };
+    const EVENT = { fired: "fired", missed: "missed", skipped: "skipped", failed: "failed" };
     (view.log || []).slice().reverse().forEach(function (r) {
       $log.appendChild(el("div", "",
         when(r.ts) + "  " + (EVENT[r.event] || r.event) + "  " + (r.label || r.id) +
         (r.error ? "  — " + r.error : "")));
     });
-    if (!$log.childNodes.length) $log.appendChild(el("div", "", "(이력 없음)"));
+    if (!$log.childNodes.length) $log.appendChild(el("div", "", "(no history)"));
     return view;
   }
 
@@ -5413,7 +5413,7 @@ const KNOBS = (function () {
     }).then(function (view) {
       render(view);
       $cron.value = $label.value = $prompt.value = $nick.value = "";
-      $status.textContent = "✓ 추가했습니다";
+      $status.textContent = "✓ Added";
     }).catch(function (err) {
       $status.textContent = "✗ " + err.message;
     });
@@ -5493,7 +5493,7 @@ const KNOBS = (function () {
     $list.textContent = "";
     const on = rows.filter(function (r) { return r.enabled; });
     const tok = on.reduce(function (a, r) { return a + (r.tokens || 0); }, 0);
-    $total.textContent = on.length + "/" + rows.length + " 켜짐 · 약 " + tok + " 토큰/턴";
+    $total.textContent = on.length + "/" + rows.length + " enabled · ~" + tok + " tokens/turn";
     const order = [];
     rows.forEach(function (r) { if (order.indexOf(r.group) < 0) order.push(r.group); });
     $groups.textContent = "";
@@ -5516,13 +5516,13 @@ const KNOBS = (function () {
         });
         item.appendChild(cb);
         const t = el("span", "websrc-text", r.text);
-        if (!r.builtin) t.appendChild(el("span", "websrc-user", "추가함"));
+        if (!r.builtin) t.appendChild(el("span", "websrc-user", "added"));
         item.appendChild(t);
         item.appendChild(el("span", "websrc-tok", "~" + r.tokens));
         if (!r.builtin) {
           const del = el("button", "btn-ghost websrc-del", "✕");
           del.type = "button";
-          del.title = "이 항목 삭제";
+          del.title = "Delete this entry";
           del.addEventListener("click", function (e) {
             e.preventDefault();
             rows = rows.filter(function (x) { return x !== r; });
@@ -5559,7 +5559,7 @@ const KNOBS = (function () {
     return call("POST", body || state()).then(function (d) {
       rows = d.entries || [];
       render();
-      $status.textContent = "저장됨 — 다음 턴부터";
+      $status.textContent = "Saved — from the next turn";
     }).catch(function (e) {
       $status.textContent = "✗ " + e.message;
       load();
@@ -5569,7 +5569,7 @@ const KNOBS = (function () {
     e.preventDefault();
     const g = $group.value.trim();
     const t = $text.value.trim();
-    if (!g || !t) { $status.textContent = "그룹과 주소를 둘 다 적어 주세요"; return; }
+    if (!g || !t) { $status.textContent = "Enter both a group and a URL"; return; }
     let n = 1;
     const ids = rows.map(function (r) { return r.id; });
     while (ids.indexOf("user-" + n) >= 0) n += 1;

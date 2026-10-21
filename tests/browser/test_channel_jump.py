@@ -290,7 +290,7 @@ class TestChannelFilter:
             ctx_dir=f"agents/{AGT}",
         )
         stack.renderer.recovery("6입니다.", "형식을 지켜 다시", "no action", 1)
-        assert _wait(lambda: "재시도" in page.locator("#messages .gen").inner_text())
+        assert _wait(lambda: "retries" in page.locator("#messages .gen").inner_text())
         for ch in ("main", AGT):
             _chip(page, ch).click()
             body = page.locator("#messages").inner_text()
@@ -364,7 +364,7 @@ class TestRunBlock:
         queued = page.locator("#messages > .card-queued .row.queued")
         assert _wait(lambda: queued.count() == 1)
         assert queued.locator(".ic").inner_text().strip() == "⏳"
-        assert queued.locator(".k").inner_text().strip() == "대기"
+        assert queued.locator(".k").inner_text().strip() == "Queued"
         assert "main" in queued.locator(".peer").inner_text()
 
         self._begin(stack, seq=1)
@@ -443,7 +443,7 @@ class TestRunBlock:
         )
         row = page.locator("#messages > .card-queued .row")
         assert _wait(lambda: row.locator(".ic").inner_text().strip() == "✓")
-        assert row.locator(".k").inner_text().strip() == "흡수"
+        assert row.locator(".k").inner_text().strip() == "Absorbed"
 
     def test_batch_claims_all_its_items(self, stack, page):
         """사람 창 배치: N건이 런 1개 — `scope_start.seqs` 가 머리를 N줄로."""
@@ -464,8 +464,8 @@ class TestRunBlock:
         items = page.locator(f'.card-run[data-task-id="{AGT}#2"] .run-head .run-item')
         assert _wait(lambda: items.count() == 2)
         assert page.locator("#messages > .card-queued").count() == 0
-        assert items.nth(0).locator(".who").inner_text().strip() == "dj (사람)"
-        assert items.nth(1).locator(".who").inner_text().strip() == "ann (사람)"
+        assert items.nth(0).locator(".who").inner_text().strip() == "dj (human)"
+        assert items.nth(1).locator(".who").inner_text().strip() == "ann (human)"
 
     def test_plain_out_row_draws_nothing_and_fallback_draws_a_row(self, stack, page):
         """`→ 보냄` 은 없다 — 도구 줄이 그 발신이다. 도구 호출 없는 하네스
@@ -488,7 +488,7 @@ class TestRunBlock:
         )
         fb = blk.locator(".run-body .card-fallback .row.fallback")
         assert _wait(lambda: fb.count() == 1)
-        assert fb.locator(".k").inner_text().strip() == "폴백"
+        assert fb.locator(".k").inner_text().strip() == "Fallback"
         assert "main" in fb.locator(".peer").inner_text()
         # 평범한 out 은 아무 줄도 만들지 않았다.
         assert page.locator("#messages").inner_text().count("과일") == 0
@@ -793,7 +793,7 @@ class TestJump:
         )
         who = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-item .who')
         assert _wait(lambda: who.count() == 1)
-        assert who.inner_text().strip() == "두정 (사람)"
+        assert who.inner_text().strip() == "두정 (human)"
         assert page.locator(f'.card-run[data-task-id="{AGT}#1"] .can-jump').count() == 0
 
 
@@ -930,7 +930,7 @@ class TestAgentNameAndKey:
         assert _wait(lambda: _chip(page, "agt-882cc142").count() > 0)
 
         chip = _chip(page, "agt-882cc142")
-        assert "조용한 사자" in chip.inner_text()  # agent_nickname 과 동일
+        assert "Quiet Lion" in chip.inner_text()  # agent_nickname 과 동일
         key_el = chip.locator(".ag-key")
         assert key_el.inner_text().strip() == "agt-882cc142"
 
@@ -952,7 +952,7 @@ class TestAgentNameAndKey:
 
         text = _chip(page, "agt-c83d4f82").inner_text()
         assert "code-writer · ui" in text
-        assert "여우" not in text and "사자" not in text
+        assert "Fox" not in text and "Lion" not in text
 
     def test_the_key_is_dimmed_but_present(self, stack, page):
         """흐리게 — 이름을 가리면 안 되고, 안 보이면 주소로 못 쓴다."""

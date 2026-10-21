@@ -3413,7 +3413,7 @@ class TestMinimalConsoleReception:
         # 프로파일이 없으면 결정적 별명으로 폴백하되 **key 는 늘 곁에 있다**:
         # 별명은 표시 전용이고 `@agt-<key>` 가 유일한 주소이기 때문.
         assert "(agt-1) → user" in out and "답변입니다" in out
-        assert "느긋한 올빼미" in out  # agent_nickname("agt-1") 과 동일
+        assert "Easygoing Owl" in out  # agent_nickname("agt-1") 과 동일
 
     def test_prints_profile_over_nickname(self):
         """프로파일이 있으면 그게 별명보다 많은 것을 말한다 — 별명은 폴백."""
