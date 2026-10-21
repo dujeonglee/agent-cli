@@ -170,6 +170,7 @@ class Renderer(ABC):
         grammar: tuple[bool, str] | None = None,
         tools: list[dict] | None = None,
         tail: list[tuple[str, str]] | None = None,
+        open_items: list[str] | None = None,
     ) -> None:
         """Record the system prompt (as named sections) sent to the LLM this
         turn, plus the decoding grammar the server enforces on the call
@@ -179,6 +180,10 @@ class Renderer(ABC):
         keep the latest snapshot for the Prompt Inspector
         (`GET /api/debug/prompt`). Called once per LLM call, so an override
         must be cheap (store, don't render)."""
+
+    def note_items_closed_after(self, open_now: list[str]) -> None:
+        """런 끝의 아직 열린 항목 id (v10.63.0) — 마지막 스냅샷의 ``open_items``
+        와 비교해 그 호출 뒤에 닫힌 것을 표시하는 데 쓴다. Default no-op."""
 
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:

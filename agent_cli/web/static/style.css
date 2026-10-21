@@ -1659,7 +1659,9 @@ footer {
 .card-task-group:has(> .task-body[hidden]) > .ctx-tail { display: none; }
 .ctx-body .insp-budget { margin: 0; }
 
-.insp-tag.ins { color: var(--ok); background: var(--ok-soft-bg); border-color: var(--ok-soft-border); }
+.insp-tag.ins, .insp-tag.ok { color: var(--ok); background: var(--ok-soft-bg); border-color: var(--ok-soft-border); }
+/* 이 호출 뒤에 닫힌 Open Items 줄 (v10.63.0) — 꼬리 글은 그대로, 긋기만 한다. */
+.ctx-closed { text-decoration: line-through; opacity: .6; }
 .insp-tag.del { color: var(--fail-soft-fg); background: var(--fail-soft-bg); border-color: var(--fail-soft-border); }
 .insp-budget { margin: 10px 16px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-3); flex: 0 0 auto; }
 .insp-budget .bl { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; }

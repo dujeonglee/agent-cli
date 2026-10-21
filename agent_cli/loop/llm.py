@@ -393,6 +393,7 @@ class LLMCaller:
             grammar=decoding,
             tools=self._function_schemas(),
             tail=self._tail_sections(),
+            open_items=self.state.ledger.pin_ids(),
         )
         self._grammar_used = bool(grammar)
 
