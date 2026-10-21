@@ -176,6 +176,7 @@ tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 �
 
 | 표면 | 무엇 |
 |---|---|
+| **대기 줄·런 머리 (v10.61.3)** | main 대기열(`⏳[닉]`)·에이전트 채널 ⏳ 줄·런 머리 `← 본문` 의 요약 칸 끝에 28px 작은 썸네일 — 접힌 채로도 이미지가 있다는 사실이 보인다(사용자 실측: 대기열에 아무것도 안 보였다). 펼치면 160px |
 | **웹 사용자 카드** | 썸네일(최대 높이 160px) + 파일명·크기. 클릭하면 원본(새 탭). `GET /api/workspace/file?path=` 가 워크스페이스 안 **이미지만** 서빙(매직 바이트; 글 파일은 400). 본문의 `[image: …]` 자리표시 줄은 썸네일이 대신하므로 뗀다 ✅ |
 | **웹 관찰 카드** | `read_file`·`screenshot` 결과에 같은 썸네일 — 접힌 행 안이라 펼쳐야 로드된다(lazy). "컨텍스트 밖"(살아 있는 수 상한·압축)이면 지금 규칙대로 흐리게 ✅ |
 | **웹 재생(`_replay_record`)** | `images` 를 `push_user_message`/`observation` 페이로드에 실어 같은 카드 ✅ |
@@ -253,6 +254,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.61.3 | 대기 줄·런 머리의 작은 썸네일(`miniThumbs`) — 사용자 검토 1차. |
 | v10.61.1 | Pillow 선택 의존성(`[image]`): `image_size` 헤더 파싱, 프로브 PNG 상수, `has_pillow`, `ImageTooLarge`(5MB 초과만 거절). 사내 미러에 Pillow 가 없는 배포 실측. |
 | v10.61.0 | P3: browser `screenshot` 모드(`BrowserSession.screenshot`, `SCREENSHOT_DIR`) · MCP 이미지 조각 → 파일 + 참조(`_save_mcp_image`, `MCP_IMAGE_DIR`, `IMAGE_EXT`) · 에이전트 채널 이미지(`/api/agent/{key}/input images` → `request(images=)` → inbox → `run_subagent_message(query_images=)`; `agent_msg`·`conversation.jsonl` 에 `images`, 프런트 ⏳ 줄·런 머리 썸네일) · `fresh_upload_path(subdir=)`. 실측(축소·keep-N)은 P4 로 남긴다. |
 | v10.60.0 | P2 웹: `POST /api/images/upload`(공용 스트리밍 `_stream_body_to`, `images.fresh_upload_path`, 매직 바이트 검사) · `GET /api/images/support`(`vision_known` — 프로브 없음) · `GET /api/workspace/file`(이미지만) · `/api/input` chat `images: [path]` → `WebServer.image_refs` 재검증 · 큐→`RunRequest`→런 시작 에코와 턴 경계 주입(`_inject_queued_messages`) 둘 다 `images` · 렌더러 ABC `observation(images=)`/`push_user_message(images=)` · web 페이로드·재생 · 프런트 📎/붙여넣기/끌어놓기 → 칩 → 보내기, 사용자·관찰 썸네일, 못 보는 모델이면 📎 숨김(+ 웹 런 시작 `status` 한 줄) · minimal 주입 에코 `🖼` 줄. 에이전트 채널 이미지는 P3 로 미룸(메일 경로). |

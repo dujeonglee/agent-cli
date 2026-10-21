@@ -137,3 +137,61 @@ def test_text_only_model_hides_the_clip(stack, page, ws):
     assert _wait(
         lambda: page.evaluate("() => document.getElementById('attach').hidden")
     )
+
+
+def _ref():
+    return {
+        "path": "shot.png",
+        "mime": "image/png",
+        "width": 64,
+        "height": 32,
+        "bytes": 1,
+        "sha256": "",
+    }
+
+
+def test_main_queue_shows_a_mini_thumbnail_while_waiting(stack, page, ws):
+    """v10.61.3 — 사용자 실측: main 대기열(입력창 위 ⏳ 목록)이 이미지를 안 그렸다."""
+    (ws / "shot.png").write_bytes(_png_bytes())
+    stack.emit_ready()
+    page.goto(stack.url)
+    page.wait_for_selector("#input", timeout=8000)
+    stack.server.enqueue(None, "look at this", images=[_ref()])
+    stack.server.broadcast_queue()
+    page.wait_for_selector("#queue-list .queue-item .mini-thumbs img", timeout=8000)
+    assert _wait(
+        lambda: page.evaluate(
+            "() => { const i = document.querySelector('#queue-list .queue-item .mini-thumbs img');"
+            " return !!i && i.complete && i.naturalWidth === 64; }"
+        )
+    ), "대기열의 작은 썸네일이 로드되지 않았다"
+
+
+def test_agent_waiting_line_shows_a_mini_thumbnail_without_expanding(stack, page, ws):
+    """v10.61.3 — 에이전트 채널 ⏳ 줄: 접힌 채로 작은 썸네일, 펼치면 큰 것."""
+    (ws / "shot.png").write_bytes(_png_bytes())
+    stack.emit_ready()
+    page.goto(stack.url)
+    page.wait_for_selector("#input", timeout=8000)
+    stack.renderer.agent_message(
+        key="agt-1",
+        direction="in",
+        author="user:dj",
+        text="what is in it?",
+        seq=3,
+        to="agt-1",
+        images=[_ref()],
+    )
+    page.wait_for_selector(
+        ".card-queued .mini-thumbs img", state="attached", timeout=8000
+    )
+    info = page.evaluate(
+        """() => {
+            const c = document.querySelector('.card-queued');
+            return { mini: c.querySelectorAll('.s .mini-thumbs img').length,
+                     bigHidden: !!c.querySelector('.thumbs.row-body.hide'),
+                     chipHidden: c.hidden };
+        }"""
+    )
+    assert info["mini"] == 1, info
+    assert info["bigHidden"] is True, info  # 큰 썸네일은 펼침 본문에 그대로
