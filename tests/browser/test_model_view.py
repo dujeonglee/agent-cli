@@ -121,12 +121,21 @@ def test_frame_stands_where_the_drawer_was(stack, page):
             first: document.querySelector('#messages').firstElementChild.className,
             top: document.querySelector('#messages > .ctx-top .ctx-bar').textContent,
             tail: document.querySelector('#ctx-tail .ctx-bar').textContent,
+            titles: [...document.querySelectorAll(
+                '#messages > .ctx-top .ctx-title, #ctx-tail .ctx-title')].map(e => e.textContent),
+            tips: [document.querySelector('#messages > .ctx-top .ctx-bar').title,
+                   document.querySelector('#ctx-tail .ctx-bar').title],
+            budgetLabel: document.querySelector('#ctx-budget .bl span').textContent,
             budget: document.querySelector('#ctx-budget').hidden,
             summaryCards: document.querySelectorAll('#messages > .card.ctx-summary').length,
         })"""
     )
     assert facts["drawer"] is False and facts["button"] is False
     assert facts["first"].startswith("ctx-top")
+    assert facts["titles"] == ["Head", "Tail"] and facts["budgetLabel"] == "Context"
+    assert (
+        "system prompt" in facts["tips"][0] and "every model call" in facts["tips"][1]
+    )
     assert "3 system prompt sections" in facts["top"]
     assert "1 hook sections" in facts["top"] and "Decoding grammar" in facts["top"]
     assert "Compaction summary turns 1–2" in facts["top"]  # 요약은 맨 위 카드에 산다
@@ -327,9 +336,9 @@ def test_inline_card_folds_with_the_record_that_opened_it(stack, page):
     page.click("#messages > .ctx-fold")
     s = state()
     assert s["t1"] == ["2", True, True]  # 펼치면 흐린 카드로
-    assert "Out of context" in s["head1"] and "Out of context" not in s["head2"]
+    assert "Evicted" in s["head1"] and "Evicted" not in s["head2"]
     # 속 카드는 그 에이전트 자신의 컨텍스트로 판정한다 — 꼬리표를 물려받지 않는다
-    assert s["inner"] and all("Out of context" not in c for c in s["inner"])
+    assert s["inner"] and all("Evicted" not in c for c in s["inner"])
     assert errors == []
 
 

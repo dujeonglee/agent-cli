@@ -1009,7 +1009,7 @@
     const row = el("button", ["ctx-fold"]);
     row.type = "button";
     row.appendChild(el("span", ["ctx-chev"], "▶"));
-    row.appendChild(el("span", ["ctx-title"], "Out of context"));
+    row.appendChild(el("span", ["ctx-title"], "Evicted"));
     row.appendChild(el("span", ["ctx-count"], ""));
     row.appendChild(el("span", ["ctx-note"], "The model no longer sees this part"));
     row.addEventListener("click", function () {
@@ -1249,7 +1249,7 @@
    * 호출이 끝나면 채워진다. 칸은 실측 합계를 바이트 비율로 나눈 것이라 합이
    * 합계와 같다. 막대는 창 대비(빈 자리 = 남은 창). */
   function frameBudgetHtml(b, ended) {
-    const label = "What the model sees now" + (ended ? " (at end)" : "");
+    const label = "Context" + (ended ? " (at end)" : "");
     if (!b.measured) {
       return (
         '<div class="bl"><span>' + label + '</span><span class="bn">N/A</span></div>' +
@@ -1294,9 +1294,10 @@
     }
     return meta || "compactions " + (v.compactions || 1);
   }
-  function frameBarHtml(title, open, chips, right) {
+  function frameBarHtml(title, open, chips, right, tip) {
     return (
-      '<button type="button" class="ctx-bar" aria-expanded="' + (open ? "true" : "false") + '">' +
+      '<button type="button" class="ctx-bar" aria-expanded="' + (open ? "true" : "false") + '"' +
+      (tip ? ' title="' + escapeHtml(tip) + '"' : "") + ">" +
       '<span class="ctx-chev">' + (open ? "▼" : "▶") + "</span>" +
       '<span class="ctx-title">' + title + "</span>" +
       '<span class="ctx-chips">' + chips.join('<span class="ctx-dot"> · </span>') + "</span>" +
@@ -1350,9 +1351,10 @@
     }
     const b = ok ? d.budget : null;
     let top = frameBarHtml(
-      "Received first", f.open.top, chips,
+      "Head", f.open.top, chips,
       // 섹션 배지와 같은 척도(추정) — 실측 합계는 예산 줄이 보여 준다.
-      ok ? "~" + fmtTok(sys.concat(tools).reduce(function (n, x) { return n + (x.est_tokens || 0); }, 0)) + " tok" : ""
+      ok ? "~" + fmtTok(sys.concat(tools).reduce(function (n, x) { return n + (x.est_tokens || 0); }, 0)) + " tok" : "",
+      "What the model receives first: system prompt · function schemas · decoding grammar · compaction summary"
     );
     if (f.open.top) {
       top += '<div class="ctx-body">';
@@ -1422,7 +1424,8 @@
     if (del) right += '<span class="insp-tag del">−' + del + "</span>";
     if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs turn ' + escapeHtml(d.prev_turn) + "</span>";
     if (tailTok) right += fmtTok(tailTok) + " tok";
-    let tl = frameBarHtml("Appended every turn", f.open.tail, tchips, right);
+    let tl = frameBarHtml("Tail", f.open.tail, tchips, right,
+      "Appended to the last message on every model call · diff vs the previous call");
     if (f.open.tail) {
       tl += '<div class="ctx-body">';
       if (tail.length) {
