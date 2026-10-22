@@ -205,6 +205,8 @@ class AgentLoop:
             "ctx": ctx,
             "snapshot": snapshot_resource(),
             "browser": browser_resource(),
+            # ``wait`` (v10.65.0) — 깨울 길이 있는 루프(main·상주)에만.
+            "wake": True if ports.wakeable() else None,
         }
         for tool_name, tool in TOOLS.items():
             required = tool.requires_handler

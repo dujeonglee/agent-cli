@@ -166,6 +166,7 @@ class TestHandlerResources:
             "ctx",
             "snapshot",
             "browser",
+            "wake",
         }
         required = {t.requires_handler for t in TOOLS.values() if t.requires_handler}
         assert required <= available, f"해결 불가한 요구: {required - available}"

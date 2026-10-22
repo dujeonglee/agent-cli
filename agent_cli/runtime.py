@@ -389,9 +389,9 @@ _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리�
 def wake_sources(owner: str) -> list[str]:
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
-    돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 일하는 중인 상주
-    에이전트·예약은 세션 것(누가 보냈는지 레지스트리가 주소로 가르지 않는다 —
-    느슨해도 "깨울 것이 전혀 없음" 만 막으면 된다). 사람이 읽을 한 줄씩."""
+    돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
+    **요청자별**(`AgentRegistry.pending_for` — 세션 전체 `has_active_work` 로 보면
+    상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩."""
     out: list[str] = []
     from agent_cli.jobs import get_job_registry
 
@@ -409,8 +409,8 @@ def wake_sources(owner: str) -> list[str]:
     from agent_cli.subagent.agents_live import main_registry
 
     agents = main_registry()
-    if agents is not None and agents.has_active_work():
-        out.append("an agent still working")
+    if agents is not None:
+        out.extend(agents.pending_for(owner))
     from agent_cli.schedule.runtime import get_schedule_registry
 
     sched = get_schedule_registry()

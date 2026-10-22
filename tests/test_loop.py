@@ -1818,6 +1818,8 @@ class TestToolPolicyDeclarations:
         # ``snapshot`` (v10.36.0) 은 세션 저장소가 섰을 때만 — 이 테스트는 저장소를
         # 세우지 않으므로 기준선도 뺀다(세우는 경우는 test_snapshot 의 광고 테스트).
         tools_list = [t for t in tools_list if t != "snapshot"]
+        # ``wait`` (v10.65.0) 은 깨울 길(큐·받은편지함)이 있는 루프에만 — 이 포트엔 없다.
+        tools_list = [t for t in tools_list if t != "wait"]
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
@@ -1873,7 +1875,7 @@ class TestToolPolicyDeclarations:
 
         expected = {
             "complete": {"terminal": True},
-            "wait": {"terminal": True},
+            "wait": {"terminal": True, "requires_handler": "wake"},
             "run_skill": {"terminal": True, "depth_gated": True},
             "agent": {"depth_gated": True},
             "ask": {"requires_handler": "ctx"},
