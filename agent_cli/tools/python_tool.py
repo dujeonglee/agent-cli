@@ -1,4 +1,4 @@
-"""``python`` 도구 — 상태가 남는 파이썬 실행 (v10.65.0, docs/python-tool/DESIGN.md).
+"""``python`` 도구 — 상태가 남는 파이썬 실행 (v10.66.0, docs/python-tool/DESIGN.md).
 
 Jupyter 셀 하나처럼: 코드 조각을 소유자의 워커(`agent_cli/pyworker.py`)에서
 실행하고, 변수·함수·읽어 둔 데이터는 다음 호출에도 남는다. 관찰은 출력 + 마지막

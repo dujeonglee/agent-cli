@@ -1778,7 +1778,7 @@
     if (typeof p !== "object" || p === null) p = {};
     if (tool === "shell" || tool === "sh") return String(p.command || "");
     if (tool === "wait") return String(p.reason || "waiting");
-    // python (v10.65.0): 첫 줄이 곧 요약 — 셀의 첫 문장이 무엇을 하는지 말한다.
+    // python (v10.66.0): 첫 줄이 곧 요약 — 셀의 첫 문장이 무엇을 하는지 말한다.
     if (tool === "python") return String(p.code || "").split("\n").find((l) => l.trim()) || "";
     if (tool === "read_file") return String(p.path || "");
     if (tool === "write_file") return String(p.path || "");
