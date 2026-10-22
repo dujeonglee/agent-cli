@@ -11,13 +11,21 @@ import 하지 않는다: 모델이 쓰는 인터프리터(작업 환경의 ``pyt
 ``print`` 와 자식 프로세스의 출력이 **같은 순서로 한 흐름에** 잡히고, 프로토콜
 채널은 더럽혀지지 않는다.
 
-상태(전역 dict)는 호출 사이에 그대로 남는다 — 이 도구의 존재 이유.
+상태(전역 dict)는 호출 사이에 그대로 남는다 — 이 도구의 존재 이유. 타임아웃에
+부모가 보내는 SIGINT 는 실행 중일 때만 ``KeyboardInterrupt`` 로 받고(회신에
+``interrupted``), 쉬는 동안은 무시한다 — 회신 직후에 닿은 시그널이 프로세스를
+죽이지 않게.
+
+상태 요약은 **쓸모 순**: 데이터(컬렉션·긴 문자열·배열) → 함수·클래스 → 그 밖의
+객체 → 스칼라. 파일 핸들은 뺀다. 벤치 실측(2026-10-22)에서 줄의 40~65% 가 루프
+변수·핸들이었고 상한 20 에 데이터가 밀려났다.
 """
 
 import ast
 import io
 import json
 import os
+import signal
 import sys
 import tempfile
 import traceback
@@ -59,15 +67,44 @@ def _desc(v):
     return name
 
 
+#: 상태 요약의 분류 — 앞에 올 것부터. ``None`` 은 뺀다.
+_KIND_ORDER = {"data": 0, "code": 1, "object": 2, "scalar": 3}
+
+
+def _kind(v):
+    if isinstance(v, io.IOBase):
+        return None
+    if isinstance(v, bool) or v is None or isinstance(v, (int, float)):
+        return "scalar"
+    if isinstance(v, str):
+        return "data" if len(v) >= 200 else "scalar"
+    if isinstance(v, (bytes, dict, list, tuple, set, frozenset)):
+        return "data"
+    if isinstance(v, type) or callable(v):
+        return "code"
+    try:
+        if isinstance(getattr(v, "shape", None), tuple) or hasattr(v, "__len__"):
+            return "data"
+    except Exception:
+        pass
+    return "object"
+
+
 def _state(g):
+    """``[name, desc, kind]`` 행들 — 쓸모 순(데이터 → 코드 → 객체 → 스칼라), 같은
+    분류 안에서는 정의 순. 파일 핸들·모듈·``_`` 이름은 뺀다."""
     rows = []
-    for k, v in g.items():
+    for i, (k, v) in enumerate(g.items()):
         if k.startswith("_") or k in ("__builtins__",):
             continue
         if type(v).__name__ == "module":
             continue
-        rows.append([k, _desc(v)])
-    return rows
+        kind = _kind(v)
+        if kind is None:
+            continue
+        rows.append((_KIND_ORDER[kind], i, [k, _desc(v), kind]))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return [r[2] for r in rows]
 
 
 def _figures(figdir):
@@ -108,35 +145,43 @@ def _split_last_expr(code):
 
 
 def _run(code, g):
-    """``(ok, value_repr | None, exc_text | None)``."""
+    """``(ok, value_repr | None, exc_text | None, interrupted)``.
+
+    실행 중에만 SIGINT 를 ``KeyboardInterrupt`` 로 받는다(부모의 타임아웃) — 코드가
+    멈추고 전역 상태는 그대로다. 그 밖의 시간엔 무시."""
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         body, expr = _split_last_expr(code)
         exec(compile(body, FILENAME, "exec"), g)  # noqa: S102 — 이 파일의 존재 이유
         if expr is not None:
             val = eval(compile(expr, FILENAME, "eval"), g)
             if val is None:
-                return True, None, None
+                return True, None, None, False
             r = repr(val)
             if len(r) > VALUE_MAX:
                 r = r[:VALUE_MAX] + f"… ({len(r):,} chars)"
-            return True, r, None
-        return True, None, None
+            return True, r, None, False
+        return True, None, None, False
     except SystemExit:
         return (
             False,
             None,
             "SystemExit — do not call exit()/quit() here; just end the code.",
+            False,
         )
-    except BaseException:
+    except BaseException as e:
         lines = traceback.format_exception(*sys.exc_info())
         # 우리 프레임(이 파일) 은 뺀다 — 모델에겐 자기 코드의 줄만 뜻이 있다.
         kept = [
             ln for ln in lines if __file__ not in ln and "_pyworker_child" not in ln
         ]
-        return False, None, "".join(kept).rstrip()
+        return False, None, "".join(kept).rstrip(), isinstance(e, KeyboardInterrupt)
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def main():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # 실행 중에만 받는다(`_run`)
     proto = os.fdopen(os.dup(1), "w", buffering=1)
     g = {"__name__": "__main__", "__builtins__": __builtins__}
     stdin_fd = os.dup(0)
@@ -163,7 +208,7 @@ def main():
             sys.stderr = sys.stdout
             sys.stdin = io.StringIO()  # input() → EOFError, 블로킹 없음
             try:
-                ok, value, exc = _run(code, g)
+                ok, value, exc, interrupted = _run(code, g)
                 figures = _figures(figdir)
             finally:
                 try:
@@ -182,6 +227,7 @@ def main():
             "out": out,
             "value": value,
             "exc": exc,
+            "interrupted": interrupted,
             "state": _state(g),
             "figures": figures,
         }

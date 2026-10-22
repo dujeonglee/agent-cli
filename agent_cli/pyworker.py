@@ -7,8 +7,12 @@
 파일을 통째로 다시 쓰고 OCR 같은 전처리까지 다시 했다(v10.62.2 벤치 financial:
 OCR 3번·process.py 8번 재작성).
 
-수명: 타임아웃이면 프로세스 그룹째 죽이고 다음 호출 때 새로 띄운다 — 그때 상태가
-사라졌다는 사실을 도구가 관찰에 적는다. 소유자가 죽으면(`drop_owner`) 그 워커를
+수명: 타임아웃이면 먼저 Ctrl-C 처럼 프로세스 그룹에 SIGINT 를 보낸다 — 자식의
+``KeyboardInterrupt`` 가 코드를 멈추고 **상태는 산다**(루프가 dict 에 모으던 결과가
+남는다; 벤치 실측 2026-10-22: 95프레임 OCR 루프가 120s 에 죽어 결과를 통째로 잃고
+다시 돌렸다, 3런 5회). 몇 초 안에 돌아오지 않을 때만(시그널을 무시하는 코드)
+프로세스 그룹째 죽이고 다음 호출 때 새로 띄운다 — 그때 상태가 사라졌다는 사실을
+도구가 관찰에 적는다. 소유자가 죽으면(`drop_owner`) 그 워커를
 죽이고, 세션이 끝나면(`stop_all`) 전부 죽인다. 영속은 없다 — resume 뒤는 빈 워커.
 
 인터프리터는 ``AGENT_CLI_PYTHON`` → PATH 의 ``python3`` → 이 프로세스의 것.
@@ -32,6 +36,8 @@ from pathlib import Path
 CHILD = Path(__file__).parent / "tools" / "_pyworker_child.py"
 FIG_DIR = Path(".agent-cli") / "tmp" / "python"
 KILL_GRACE_S = 2.0
+#: SIGINT 뒤 회신을 기다리는 시간 — 그 안에 안 돌아오면 kill.
+INTERRUPT_GRACE_S = 3.0
 
 
 def interpreter() -> str:
@@ -51,6 +57,8 @@ class PyResult:
     figures: list[str] = field(default_factory=list)
     #: 이 호출이 워커를 새로 띄웠다 — 직전 상태는 사라진 뒤다.
     fresh: bool = False
+    #: 타임아웃에 SIGINT 로 멈췄다 — 인터프리터와 상태는 산다(``state`` 가 지금 것).
+    interrupted: bool = False
     #: 타임아웃으로 죽였다(상태 소실). ``lost`` 는 죽기 전 마지막으로 본 이름들.
     timed_out: bool = False
     lost: list[str] = field(default_factory=list)
@@ -92,7 +100,7 @@ class PyWorker:
         proc = self._proc
         self._proc = None
         if self._last_state:  # 이미 죽은 뒤의 재호출이 보관분을 지우지 않게
-            self._lost = [k for k, _d in self._last_state]
+            self._lost = [r[0] for r in self._last_state]
             self._last_state = []
         if proc is None or proc.poll() is not None:
             return
@@ -148,8 +156,17 @@ class PyWorker:
             t.start()
             t.join(timeout)
             if t.is_alive():
-                self.kill()
-                return PyResult(False, timed_out=True, lost=self._lost, fresh=fresh)
+                # Ctrl-C 처럼 그룹째 SIGINT — 자식은 KeyboardInterrupt 를 보통의
+                # 실패 회신으로 돌려주고(상태는 산다), 띄운 하위 프로세스도 같이
+                # 멈춘다. 시그널을 무시하는 코드만 kill 로 간다.
+                try:
+                    os.killpg(proc.pid, signal.SIGINT)
+                except OSError:
+                    pass
+                t.join(INTERRUPT_GRACE_S)
+                if t.is_alive():
+                    self.kill()
+                    return PyResult(False, timed_out=True, lost=self._lost, fresh=fresh)
             line = box.get("line") or b""
             if not line:
                 self.kill()
@@ -172,6 +189,7 @@ class PyWorker:
                 out=str(rep.get("out") or ""),
                 value=rep.get("value"),
                 exc=rep.get("exc"),
+                interrupted=bool(rep.get("interrupted")),
                 state=self._last_state,
                 figures=[str(p) for p in rep.get("figures") or []],
                 fresh=fresh,
