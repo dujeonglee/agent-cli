@@ -157,8 +157,7 @@ class JobRegistry:
         now = now or time.time()
         head = (
             "## Background jobs (running — you are told when each one ends; do not "
-            "poll. Nothing else to do? Call `complete` and say you are waiting: the "
-            "notice wakes you.)"
+            "poll. Nothing else to do? Call `wait`: the notice wakes you.)"
         )
         lines = [head]
         for j in jobs:

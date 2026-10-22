@@ -825,7 +825,7 @@ class TestWaitAndScope:
 
     def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
         """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
-        working/미처리 inbox 가 있으면 "complete 로 턴을 마쳐라, 회신은
+        working/미처리 inbox 가 있으면 "`wait` 로 턴을 마쳐라, 회신은
         자동 배달·도착 시 깨워진다" 힌트를 관찰 말미에 붙인다. 전부
         idle 인 로스터 확인용 status 엔 안 붙임(노이즈)."""
         reg = make_registry(tmp_path)
@@ -836,7 +836,7 @@ class TestWaitAndScope:
         # working 상태 → 힌트
         reg.get(key).state = "busy"
         s = reg.format_status()
-        assert "Finish this turn" in s and "complete" in s
+        assert "Finish this turn" in s and "`wait`" in s
         assert "delivered to you automatically" in s
         reg.get(key).state = "idle"
         # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)

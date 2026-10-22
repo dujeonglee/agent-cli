@@ -37,6 +37,7 @@ from agent_cli.tools.virtual import (
     MessageTool,
     ReplyTool,
     RunSkillTool,
+    WaitTool,
 )
 from agent_cli.tools.write_file import WriteFileTool
 
@@ -87,6 +88,8 @@ _ALL_TOOLS: list[Tool] = [
     ReplyTool(),
     AgentTool(),
     RunSkillTool(),
+    # ⏸ complete 의 짝 (v10.65.0): 닫지 않고 끝낸다 — 깨울 것이 있을 때만.
+    WaitTool(),
     CompleteTool(),
 ]
 

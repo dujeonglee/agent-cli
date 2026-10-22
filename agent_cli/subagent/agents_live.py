@@ -2230,7 +2230,7 @@ class AgentRegistry:
         # 폴링 차단 넛지: working 이거나 미처리 inbox 가 있으면 모델이
         # status 를 돌려 기다리는 상황일 가능성이 높다 — 회신은 mail 로
         # 자동 배달되고 도착 시 harness 가 깨우므로(폴링 금지 설계),
-        # complete 로 턴을 마치는 게 올바른 대기다. 전부 idle 인 로스터
+        # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 전부 idle 인 로스터
         # 확인용 status 에는 붙이지 않는다(노이즈).
         waiting = any(
             self.state_is_active(tm.state) or tm.inbox.qsize() > 0 for tm in items
@@ -2239,8 +2239,7 @@ class AgentRegistry:
             lines.append(
                 "⏳ Waiting on an agent? Its reply is delivered to you "
                 "automatically as agent mail and you will be woken when it "
-                "arrives — do not poll status. Finish this turn with "
-                "`complete` and wait."
+                "arrives — do not poll status. Finish this turn with `wait`."
             )
         return "\n".join(lines)
 
@@ -3271,8 +3270,8 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
                 "or re-send it (re-sends queue duplicate work and slow it "
                 "down). FIRST finish the rest of your plan — spawn the "
                 "other agents / send the other requests you intended, "
-                "ideally batched with a final `complete` in this SAME "
-                "turn. Only complete-and-wait once nothing else remains."
+                "ideally batched with a final `wait` in this SAME "
+                "turn. Call `wait` only once nothing else remains."
             )
     else:
         lines.append(
@@ -3318,7 +3317,7 @@ def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             f"poll status or "
             f"re-send this request. If your plan still has other work "
             f"(other agents, other requests), do it now; then finish "
-            f"this turn with `complete` and wait.{stacked}"
+            f"this turn with `wait`.{stacked}"
         ),
     )
 
@@ -3342,7 +3341,7 @@ def _agent_resume(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
         else:
             lines.append(
                 "task queued — the agent's `message` back arrives as an "
-                "observation; do not poll, finish with `complete` and wait."
+                "observation; do not poll, finish with `wait`."
             )
     return ToolResult(True, output="\n".join(lines))
 

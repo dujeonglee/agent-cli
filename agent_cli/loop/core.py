@@ -652,6 +652,14 @@ class AgentLoop:
         for r in self.user_requests:
             if r.get("id"):
                 ledger.add_request(r["id"], r.get("author") or "", r.get("text") or "")
+        # 앞선 런이 `wait` 로 넘긴 열린 요청 (v10.65.0) — 깨우기 런이 같은 항목을
+        # 들고 시작한다. 이 ctx 를 쓰는 다음 런이 무엇이든 가져간다.
+        if self.ctx is not None:
+            for r in self.ctx.take_parked_requests():
+                if r.get("id") and not ledger.has_request(str(r["id"])):
+                    ledger.add_request(
+                        r["id"], r.get("author") or "", r.get("text") or ""
+                    )
         # 시작 항목의 id (v10.56.0) — 사람 요청이면 장부에 오르고(상주는
         # `user_requests` 가 이미 올렸다), 어느 쪽이든 그 레코드에 찍혀 열려 있는
         # 동안 핀된다(동료 요청의 회신 빚 `r-…` 포함).

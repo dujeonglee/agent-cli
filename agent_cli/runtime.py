@@ -386,6 +386,39 @@ _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
+def wake_sources(owner: str) -> list[str]:
+    """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
+
+    돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 일하는 중인 상주
+    에이전트·예약은 세션 것(누가 보냈는지 레지스트리가 주소로 가르지 않는다 —
+    느슨해도 "깨울 것이 전혀 없음" 만 막으면 된다). 사람이 읽을 한 줄씩."""
+    out: list[str] = []
+    from agent_cli.jobs import get_job_registry
+
+    jobs = get_job_registry()
+    if jobs is not None:
+        for j in jobs.running(owner):
+            out.append(f"job #{j.id} (`{j.command[:60]}`)")
+    from agent_cli.monitor.runtime import get_monitor_registry
+
+    mons = get_monitor_registry()
+    if mons is not None:
+        for m in mons.list_all():
+            if m.owner == owner:
+                out.append(f"monitor {m.id}")
+    from agent_cli.subagent.agents_live import main_registry
+
+    agents = main_registry()
+    if agents is not None and agents.has_active_work():
+        out.append("an agent still working")
+    from agent_cli.schedule.runtime import get_schedule_registry
+
+    sched = get_schedule_registry()
+    if sched is not None and sched.has_active_work():
+        out.append("a schedule")
+    return out
+
+
 def session_has_live_work(
     *, pending_count: int, monitors=None, schedules=None, harness=None, jobs=None
 ) -> bool:

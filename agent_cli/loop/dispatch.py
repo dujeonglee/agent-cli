@@ -812,6 +812,10 @@ class TurnDispatcher:
         if op.action == "complete":
             return self._op_complete(llm_text, turn, op, outcome)
 
+        # 7b. wait (v10.65.0) — 닫지 않고 끝낸다, 깨울 것이 있을 때만.
+        if op.action == "wait":
+            return self._op_wait(llm_text, turn, op, outcome)
+
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(op.action, op.action_input)
         if echo_answer:
@@ -917,6 +921,59 @@ class TurnDispatcher:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
         return ToolResult(True, output=answer)
 
+    def _op_wait(self, llm_text: str, turn, op, outcome: dict):
+        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md).
+
+        깨울 것(`runtime.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
+        (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
+        보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
+        런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
+        막혔을 때 wait 로 도피하는 길은 없다."""
+        from agent_cli.runtime import wake_sources
+
+        reason = ""
+        if isinstance(op.action_input, dict):
+            reason = str(op.action_input.get("reason") or "").strip()
+        sources = wake_sources(self.cfg.owner)
+        if not sources:
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                "Observation: wait refused — nothing you started is pending (no "
+                "background job, monitor or agent of yours), so nothing would wake "
+                "you. Keep working, or call `complete` if the task is done.",
+                tool_name="wait",
+                success=False,
+                turn=self.state.turn,
+            )
+            return _CONTINUE
+        ledger = self.state.ledger
+        open_ids = ledger.request_ids()
+        if self.ctx is not None:
+            self.ctx.park_requests(list(ledger.requests))
+        kept = (
+            f" Open items stay open for the next run: {', '.join(open_ids)}."
+            if open_ids
+            else ""
+        )
+        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}.{kept}"
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.dialect,
+            turn.record,
+            obs,
+            tool_name="wait",
+            success=True,
+            turn=self.state.turn,
+        )
+        summary = f"⏸ waiting on {'; '.join(sources)}" + (
+            f" — {reason}" if reason else ""
+        )
+        return ToolResult(True, output=summary, waiting=True)
+
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:
         """종결 레코드 — `answers` 가 있으면 정산 뒤 남은 요청 id 도 함께
         (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다)."""
@@ -952,13 +1009,22 @@ class TurnDispatcher:
             if left > 0
             else "(Last reminder — after this the harness closes the rest.)"
         )
+        # 기다리려고 complete 를 썼다면 (v10.65.0) — 옛 습관을 한 번에 교정한다.
+        from agent_cli.runtime import wake_sources
+
+        waiting_hint = (
+            " If you are only waiting for something you started to report back, "
+            "call `wait` instead — it keeps these items open and the report wakes you."
+            if wake_sources(self.cfg.owner)
+            else ""
+        )
         return self._intervene(
             llm_text,
             (
                 f"Observation: your result was delivered, but {why}:\n"
                 f"{ledger.items_lines(requests, debts)}\n"
                 "Close them in that order — by action first, then `complete` again "
-                "with `answers` for the items it covers. " + budget
+                "with `answers` for the items it covers." + waiting_hint + " " + budget
             ),
             "open items remain",
             outcome,

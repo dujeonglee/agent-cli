@@ -346,6 +346,10 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 `wrong_closer_hint` 가 `complete` 로 돌려보내 한 턴 쓰고 끝난다. 늘면 `reply` 설명에 접두 문장을 더한다.
 
 
+## 13. `wait` 와의 관계 (v10.65.0)
+
+`complete` 는 닫는 행위다. 띄운 작업·모니터·에이전트를 기다릴 때는 `wait` — 아무것도 닫지 않고 런을 끝내며, 열린 요청은 `ctx.park_requests` 로 다음 런의 장부에 오른다(장부는 런 수명 그대로). 기다리려고 `answers` 없는 complete 를 보내면 되돌림 관찰이 깨울 것이 있을 때 "call `wait` instead" 를 붙인다. `docs/wait/DESIGN.md`.
+
 ## 9. 열린 질문
 
 - 예산 기본값(후보 8)과 소진 뒤 표시 문구 — P3.

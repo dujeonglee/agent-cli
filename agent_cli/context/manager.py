@@ -147,9 +147,9 @@ def grammar_active(override: bool | None, supports: bool | None) -> bool:
 # only on models that actually mis-terminate) and never persisted, so there is
 # nothing to gate. Observation-side text only → mimicry-safe.
 _OBS_COMPLETE_NUDGE = (
-    "\n\n(If nothing remains to do — or you can only continue after a "
-    "sub-agent's reply arrives — call `complete`; a pending reply will wake "
-    "you when it comes.)"
+    "\n\n(If nothing remains to do, call `complete`. If you can only continue "
+    "after something you started reports back — a sub-agent's reply, a job, a "
+    "monitor — call `wait`: the report wakes you.)"
 )
 
 
@@ -370,6 +370,20 @@ class ContextManager:
         """Register a TurnRecorder instance for compaction event logging
         (NFR-CC-6). May be ``None`` (headless / no session)."""
         self._recorder = recorder
+
+    def park_requests(self, requests: list[dict]) -> None:
+        """``wait`` 가 열린 요청을 다음 런으로 넘긴다 (v10.65.0, docs/wait/DESIGN.md).
+
+        장부는 런 수명이라 이월이 없다 — 그래서 깨우기 런이 같은 요청을 들고
+        시작하려면 세션 수명인 여기에 둔다. 메모리뿐이다: 프로세스가 죽으면
+        resume 런은 빈 장부로 시작한다(그 요청의 원문은 history 에 있다)."""
+        self._parked_requests = [dict(r) for r in requests]
+
+    def take_parked_requests(self) -> list[dict]:
+        """다음 런이 시작하며 가져간다 — 한 번만."""
+        parked = getattr(self, "_parked_requests", [])
+        self._parked_requests = []
+        return parked
 
     def set_open_requests(self, callback: Callable[[], Iterable[str]]) -> None:
         """미답 사용자 요청 id 를 돌려주는 콜백 등록 (v10.41.0). 압축·FIFO 는
