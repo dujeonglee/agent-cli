@@ -107,6 +107,30 @@ def build_job_registry(cwd=None):
     return registry
 
 
+def build_py_registry(cwd=None):
+    """`python` 도구의 워커 레지스트리 생성 + 프로세스 전역 등록 (v10.65.0,
+    `build_job_registry` 의 형제). 워커 자체는 첫 호출 때 뜬다. 끄기:
+    ``AGENT_CLI_PYTHON_TOOL=0`` — 그러면 도구가 프롬프트에서 빠진다."""
+    import os
+
+    from agent_cli.pyworker import PyWorkerRegistry, set_py_registry
+
+    if os.environ.get("AGENT_CLI_PYTHON_TOOL", "1") == "0":
+        set_py_registry(None)
+        return None
+    registry = PyWorkerRegistry(cwd)
+    set_py_registry(registry)
+    return registry
+
+
+def python_resource():
+    """`Tool.requires_handler="python"` 이 보는 세션 자원 — 레지스트리, 아니면 None."""
+    from agent_cli.pyworker import get_py_registry
+
+    reg = get_py_registry()
+    return reg if reg is not None and not reg.closed else None
+
+
 def wire_monitor_delivery(registry, monitors) -> None:
     """모니터 보고를 주소 배달에 잇는다 — 양방향 (docs/wiring §3.3).
 
@@ -329,6 +353,13 @@ def teardown_session(
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()
+    # 🐍 python 워커 (v10.65.0) — 우리가 띄운 자식이다. 훅 러너처럼 전역을 푼다.
+    from agent_cli.pyworker import get_py_registry, set_py_registry
+
+    py = get_py_registry()
+    if py is not None:
+        py.stop_all()
+        set_py_registry(None)
     from agent_cli.hooks.runtime import set_hook_runner
 
     set_hook_runner(None)  # 세션 훅 러너 해제 (v10.35.0)
