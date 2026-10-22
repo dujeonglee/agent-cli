@@ -516,6 +516,9 @@ body.multi-viewer .card-user .who {
 .row.act .ic { color: var(--accent); }
 .row-body { grid-column: 3 / -1; margin-top: 5px; }
 .row-body.hide { display: none; }
+/* 마크다운 본문(생각·폴백) — 줄바꿈은 원문 그대로라 pre-wrap 이 맡는다(최종답과 같이,
+   v10.64.1). 공백 없는 긴 토큰은 끊고, 그리드 칸이 내용 폭으로 늘지 않게 min-width 0. */
+.row-body.md { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 /* 꼬리 칸(왕래 줄의 상대 이름) — 항상 보여야 하므로 펼침 표시(.x, hover 전
    투명)와 별도 칸. 그리드가 5칸이 되고 `.row-body` 는 `3 / -1` 이라 그대로.
    오른쪽 여백은 카드 우상단의 시각 배지(.card-time, absolute)를 **비켜가려고**
