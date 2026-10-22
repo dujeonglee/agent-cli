@@ -211,7 +211,7 @@ class AgentLoop:
             "browser": browser_resource(),
             # ``wait`` (v10.65.0) — 깨울 길이 있는 루프(main·상주)에만.
             "wake": True if ports.wakeable() else None,
-            # ``python`` (v10.65.0) — 워커 레지스트리가 선 세션에서만.
+            # ``python`` (v10.66.0) — 워커 레지스트리가 선 세션에서만.
             "python": python_resource(),
         }
         for tool_name, tool in TOOLS.items():

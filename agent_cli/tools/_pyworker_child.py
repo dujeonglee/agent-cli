@@ -1,4 +1,4 @@
-"""`python` 도구의 자식 프로세스 (v10.65.0, docs/python-tool/DESIGN.md).
+"""`python` 도구의 자식 프로세스 (v10.66.0, docs/python-tool/DESIGN.md).
 
 하니스가 ``python3 <이 파일>`` 로 띄운다 — **표준 라이브러리만** 쓰고 agent_cli 를
 import 하지 않는다: 모델이 쓰는 인터프리터(작업 환경의 ``python3``)는 agent-cli 가

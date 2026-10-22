@@ -1449,7 +1449,7 @@ class AgentRegistry:
         from agent_cli.pyworker import get_py_registry
 
         n = 0
-        # python 워커(v10.65.0)는 주입이 아니라 전역이다 — 배달이 없어 배선할
+        # python 워커(v10.66.0)는 주입이 아니라 전역이다 — 배달이 없어 배선할
         # 양방향이 없고, 죽일 때만 찾는다.
         for reg in (self.monitors, self.jobs, get_py_registry()):
             if reg is None:

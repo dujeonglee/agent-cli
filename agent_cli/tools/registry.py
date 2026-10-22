@@ -65,7 +65,7 @@ _ALL_TOOLS: list[Tool] = [
     WriteFileTool(),
     CodeIndexTool(),
     ShellTool(),
-    # 🐍 shell 의 짝 (v10.65.0): 상태가 남는 파이썬 — ``requires_handler="python"``,
+    # 🐍 shell 의 짝 (v10.66.0): 상태가 남는 파이썬 — ``requires_handler="python"``,
     # 세션 레지스트리(`runtime.build_py_registry`)가 없으면 광고되지 않는다.
     PythonTool(),
     FetchTool(),

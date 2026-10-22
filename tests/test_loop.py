@@ -1820,7 +1820,7 @@ class TestToolPolicyDeclarations:
         tools_list = [t for t in tools_list if t != "snapshot"]
         # ``wait`` (v10.65.0) 은 깨울 길(큐·받은편지함)이 있는 루프에만 — 이 포트엔 없다.
         tools_list = [t for t in tools_list if t != "wait"]
-        # ``python`` (v10.65.0) 도 같다 — 워커 레지스트리를 세우지 않는다.
+        # ``python`` (v10.66.0) 도 같다 — 워커 레지스트리를 세우지 않는다.
         tools_list = [t for t in tools_list if t != "python"]
         return tools_list
 

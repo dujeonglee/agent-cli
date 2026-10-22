@@ -1,4 +1,4 @@
-"""`python` 도구의 워커 — 상태가 남는 파이썬 프로세스 (v10.65.0, docs/python-tool/DESIGN.md).
+"""`python` 도구의 워커 — 상태가 남는 파이썬 프로세스 (v10.66.0, docs/python-tool/DESIGN.md).
 
 `jobs.py` 의 형제다. 소유자(``main`` / ``agent:<key>``)마다 자식 프로세스 하나
 (`tools/_pyworker_child.py` 를 ``python3`` 로 띄운다)가 **첫 호출 때** 서고,

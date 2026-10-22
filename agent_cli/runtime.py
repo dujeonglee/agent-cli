@@ -108,7 +108,7 @@ def build_job_registry(cwd=None):
 
 
 def build_py_registry(cwd=None):
-    """`python` 도구의 워커 레지스트리 생성 + 프로세스 전역 등록 (v10.65.0,
+    """`python` 도구의 워커 레지스트리 생성 + 프로세스 전역 등록 (v10.66.0,
     `build_job_registry` 의 형제). 워커 자체는 첫 호출 때 뜬다. 끄기:
     ``AGENT_CLI_PYTHON_TOOL=0`` — 그러면 도구가 프롬프트에서 빠진다."""
     import os
@@ -353,7 +353,7 @@ def teardown_session(
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()
-    # 🐍 python 워커 (v10.65.0) — 우리가 띄운 자식이다. 훅 러너처럼 전역을 푼다.
+    # 🐍 python 워커 (v10.66.0) — 우리가 띄운 자식이다. 훅 러너처럼 전역을 푼다.
     from agent_cli.pyworker import get_py_registry, set_py_registry
 
     py = get_py_registry()
