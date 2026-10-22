@@ -1,0 +1,193 @@
+"""`python` 도구의 자식 프로세스 (v10.65.0, docs/python-tool/DESIGN.md).
+
+하니스가 ``python3 <이 파일>`` 로 띄운다 — **표준 라이브러리만** 쓰고 agent_cli 를
+import 하지 않는다: 모델이 쓰는 인터프리터(작업 환경의 ``python3``)는 agent-cli 가
+설치된 인터프리터와 다를 수 있고(harbor 컨테이너의 시스템 python), 거기엔 우리
+패키지가 없다. 문법은 3.8 수준으로 둔다.
+
+프로토콜은 JSON 한 줄씩: stdin 으로 ``{"code": …, "figdir": …}`` 를 받고,
+시작 때 복제해 둔 원래 stdout(``_proto``)으로 ``{"ok", "out", "value", "exc",
+"state", "figures"}`` 를 보낸다. 실행 중의 fd 1·2 는 호출마다 임시 파일로 돌려
+``print`` 와 자식 프로세스의 출력이 **같은 순서로 한 흐름에** 잡히고, 프로토콜
+채널은 더럽혀지지 않는다.
+
+상태(전역 dict)는 호출 사이에 그대로 남는다 — 이 도구의 존재 이유.
+"""
+
+import ast
+import io
+import json
+import os
+import sys
+import tempfile
+import traceback
+
+FILENAME = "<python>"
+STATE_MAX = 20
+VALUE_MAX = 4000
+
+
+def _desc(v):
+    """상태 요약 한 칸 — 타입과 크기만, 내용은 적지 않는다."""
+    t = type(v)
+    name = t.__name__
+    try:
+        if isinstance(v, bool) or v is None:
+            return repr(v)
+        if isinstance(v, (int, float)):
+            r = repr(v)
+            return r if len(r) <= 24 else name
+        if isinstance(v, str):
+            return f"str, {len(v):,} chars"
+        if isinstance(v, bytes):
+            return f"bytes, {len(v):,}"
+        if isinstance(v, dict):
+            return f"dict, {len(v):,} keys"
+        if isinstance(v, (list, tuple, set, frozenset)):
+            return f"{name}, {len(v):,} items"
+        shape = getattr(v, "shape", None)
+        if isinstance(shape, tuple) and shape:
+            return "{} {}".format(name, "×".join(str(d) for d in shape))
+        if isinstance(v, type):
+            return "class"
+        if callable(v):
+            return "function"
+        if hasattr(v, "__len__"):
+            return f"{name}, {len(v):,} items"
+    except Exception:
+        pass
+    return name
+
+
+def _state(g):
+    rows = []
+    for k, v in g.items():
+        if k.startswith("_") or k in ("__builtins__",):
+            continue
+        if type(v).__name__ == "module":
+            continue
+        rows.append([k, _desc(v)])
+    return rows
+
+
+def _figures(figdir):
+    """열린 matplotlib figure 를 PNG 로 저장하고 닫는다 — 경로 목록."""
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None or not figdir:
+        return []
+    try:
+        nums = list(plt.get_fignums())
+    except Exception:
+        return []
+    out = []
+    for n in nums:
+        try:
+            os.makedirs(figdir, exist_ok=True)
+            fd, path = tempfile.mkstemp(prefix="fig-", suffix=".png", dir=figdir)
+            os.close(fd)
+            plt.figure(n).savefig(path, dpi=100, bbox_inches="tight")
+            out.append(path)
+        except Exception:
+            pass
+    try:
+        plt.close("all")
+    except Exception:
+        pass
+    return out
+
+
+def _split_last_expr(code):
+    """REPL 처럼: 마지막 문장이 식이면 그 값을 돌려주기 위해 둘로 나눈다."""
+    tree = ast.parse(code, FILENAME, "exec")
+    if tree.body and isinstance(tree.body[-1], ast.Expr):
+        last = tree.body[-1]
+        body = ast.Module(body=tree.body[:-1], type_ignores=[])
+        expr = ast.Expression(body=last.value)
+        return body, expr
+    return tree, None
+
+
+def _run(code, g):
+    """``(ok, value_repr | None, exc_text | None)``."""
+    try:
+        body, expr = _split_last_expr(code)
+        exec(compile(body, FILENAME, "exec"), g)  # noqa: S102 — 이 파일의 존재 이유
+        if expr is not None:
+            val = eval(compile(expr, FILENAME, "eval"), g)
+            if val is None:
+                return True, None, None
+            r = repr(val)
+            if len(r) > VALUE_MAX:
+                r = r[:VALUE_MAX] + f"… ({len(r):,} chars)"
+            return True, r, None
+        return True, None, None
+    except SystemExit:
+        return (
+            False,
+            None,
+            "SystemExit — do not call exit()/quit() here; just end the code.",
+        )
+    except BaseException:
+        lines = traceback.format_exception(*sys.exc_info())
+        # 우리 프레임(이 파일) 은 뺀다 — 모델에겐 자기 코드의 줄만 뜻이 있다.
+        kept = [
+            ln for ln in lines if __file__ not in ln and "_pyworker_child" not in ln
+        ]
+        return False, None, "".join(kept).rstrip()
+
+
+def main():
+    proto = os.fdopen(os.dup(1), "w", buffering=1)
+    g = {"__name__": "__main__", "__builtins__": __builtins__}
+    stdin_fd = os.dup(0)
+    reader = os.fdopen(stdin_fd, "r")
+    while True:
+        line = reader.readline()
+        if not line:
+            break
+        try:
+            req = json.loads(line)
+        except ValueError:
+            continue
+        code = req.get("code") or ""
+        figdir = req.get("figdir") or ""
+        with tempfile.TemporaryFile(mode="w+b") as cap:
+            saved = (os.dup(1), os.dup(2))
+            os.dup2(cap.fileno(), 1)
+            os.dup2(cap.fileno(), 2)
+            old = (sys.stdout, sys.stderr, sys.stdin)
+            # 버퍼 0: print 와 자식 프로세스의 출력이 실제 순서대로 섞인다.
+            sys.stdout = io.TextIOWrapper(
+                os.fdopen(os.dup(1), "wb", 0), write_through=True
+            )
+            sys.stderr = sys.stdout
+            sys.stdin = io.StringIO()  # input() → EOFError, 블로킹 없음
+            try:
+                ok, value, exc = _run(code, g)
+                figures = _figures(figdir)
+            finally:
+                try:
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+                sys.stdout, sys.stderr, sys.stdin = old
+                os.dup2(saved[0], 1)
+                os.dup2(saved[1], 2)
+                os.close(saved[0])
+                os.close(saved[1])
+            cap.seek(0)
+            out = cap.read().decode("utf-8", "replace")
+        reply = {
+            "ok": ok,
+            "out": out,
+            "value": value,
+            "exc": exc,
+            "state": _state(g),
+            "figures": figures,
+        }
+        proto.write(json.dumps(reply, ensure_ascii=False) + "\n")
+        proto.flush()
+
+
+if __name__ == "__main__":
+    main()

@@ -1820,6 +1820,8 @@ class TestToolPolicyDeclarations:
         tools_list = [t for t in tools_list if t != "snapshot"]
         # ``wait`` (v10.65.0) 은 깨울 길(큐·받은편지함)이 있는 루프에만 — 이 포트엔 없다.
         tools_list = [t for t in tools_list if t != "wait"]
+        # ``python`` (v10.65.0) 도 같다 — 워커 레지스트리를 세우지 않는다.
+        tools_list = [t for t in tools_list if t != "python"]
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
@@ -1890,6 +1892,7 @@ class TestToolPolicyDeclarations:
             "snapshot": {"requires_handler": "snapshot"},
             # 🌐 playwright 가 없거나 꺼져 있으면 광고하지 않는다 (v10.39.0).
             "browser": {"requires_handler": "browser"},
+            "python": {"requires_handler": "python"},
         }
         defaults = {
             "terminal": False,

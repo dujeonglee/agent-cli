@@ -1446,8 +1446,12 @@ class AgentRegistry:
 
     def _drop_monitors(self, key: str) -> int:
         """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — 배선 안 됐으면 no-op."""
+        from agent_cli.pyworker import get_py_registry
+
         n = 0
-        for reg in (self.monitors, self.jobs):
+        # python 워커(v10.65.0)는 주입이 아니라 전역이다 — 배달이 없어 배선할
+        # 양방향이 없고, 죽일 때만 찾는다.
+        for reg in (self.monitors, self.jobs, get_py_registry()):
             if reg is None:
                 continue
             try:
