@@ -1,8 +1,9 @@
 """`python` 도구 (v10.65.0, docs/python-tool/DESIGN.md) — 상태가 남는 파이썬 실행.
 
 고정하는 계약: 상태가 호출 사이에 남는다 · 마지막 식의 값 · 출력 순서(print 와
-자식 프로세스가 한 흐름) · 상태 요약 줄 · 예외는 실패 관찰이고 상태는 산다 ·
-타임아웃은 워커를 죽이고 소실을 말한다 · reset · 소유자 분리 · 봉쇄 · 레지스트리
+자식 프로세스가 한 흐름) · 상태 요약 줄(쓸모 순·핸들 제외·재사용 힌트) · 예외는
+실패 관찰이고 상태는 산다 · 타임아웃은 SIGINT 로 멈추고 상태를 지킨다, 시그널을
+무시하는 코드만 kill 되고 소실을 말한다 · reset · 소유자 분리 · 봉쇄 · 레지스트리
 없으면 광고 안 됨 · 자리(shell 바로 뒤) · 스냅샷 훅 · 가이드라인.
 """
 
@@ -17,7 +18,12 @@ from agent_cli.pyworker import (
     set_py_registry,
 )
 from agent_cli.tools.base import RunContext
-from agent_cli.tools.python_tool import PythonTool, literal_paths, state_line
+from agent_cli.tools.python_tool import (
+    STATE_HINT,
+    PythonTool,
+    literal_paths,
+    state_line,
+)
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 
 
@@ -81,10 +87,40 @@ class TestState:
 
 
 class TestTimeout:
-    def test_timeout_kills_and_reports_lost_names(self, reg):
+    def test_timeout_interrupts_and_keeps_state(self, reg):
+        """노트북의 Ctrl-C: 루프가 모으던 결과가 남고 다음 호출이 이어 간다 (벤치
+        실측 2026-10-22: 95프레임 OCR 루프가 120s 에 죽어 결과를 잃고 다시 돌렸다)."""
+        assert _run("1").success
+        pid = reg.get("main").pid
+        r = _run(
+            "import time\nresults = {}\nfor i in range(100):\n"
+            "    results[i] = i\n    time.sleep(0.05)\n",
+            timeout=1,
+        )
+        assert not r.success
+        assert "interrupted after 1s" in r.error and "state is kept" in r.error
+        assert "KeyboardInterrupt" in r.error
+        assert "results (dict," in r.error
+        assert reg.get("main").alive and reg.get("main").pid == pid
+        r2 = _run("len(results) > 5")
+        assert r2.success and "=> True" in r2.output
+
+    def test_interrupt_reaches_subprocesses_too(self, reg):
+        r = _run(
+            "import subprocess\nsubprocess.run(['sleep', '30'])\nprint('REACHED')",
+            timeout=1,
+        )
+        assert not r.success and "interrupted after 1s" in r.error
+        assert "REACHED" not in r.error and reg.get("main").alive
+
+    def test_code_ignoring_the_interrupt_is_killed_and_lost_names_reported(self, reg):
         assert _run("held = [1, 2, 3]").success
         pid = reg.get("main").pid
-        r = _run("import time\ntime.sleep(5)", timeout=1)
+        r = _run(
+            "import signal, time\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+            "time.sleep(10)",
+            timeout=1,
+        )
         assert not r.success
         assert "timed out after 1s" in r.error and "it held: held" in r.error
         assert not reg.get("main").alive
@@ -208,9 +244,26 @@ class TestRegistration:
             assert python_resource() is None
 
     def test_state_line_caps_at_twenty(self):
-        rows = [[f"v{i}", "int"] for i in range(25)]
+        rows = [[f"v{i}", "int", "scalar"] for i in range(25)]
         s = state_line(rows)
         assert s.count("(int)") == 20 and s.endswith("+5 more")
+
+    def test_state_line_hints_reuse_only_when_data_is_held(self):
+        assert STATE_HINT not in state_line([["n", "3", "scalar"]])
+        assert state_line([["texts", "dict, 2 keys", "data"]]).endswith(STATE_HINT)
+
+    def test_state_is_ordered_by_usefulness_and_drops_handles(self, reg, tmp_path):
+        (tmp_path / "t.txt").write_text("x" * 300)
+        r = _run(
+            "i = 3\nf = open('t.txt')\ntxt = f.read()\ndef parse(x): return x\n"
+            "rows = [1, 2]\nname = 'short'\n"
+        )
+        assert r.success
+        line = next(ln for ln in r.output.splitlines() if ln.startswith("state:"))
+        names = [p.split(" (")[0] for p in line[len("state: ") :].split(" · ")]
+        names[-1] = names[-1].split(" — ")[0]
+        assert names == ["txt", "rows", "parse", "i", "name"]  # 데이터→코드→스칼라
+        assert "f (" not in line and line.endswith(STATE_HINT)
 
 
 class TestWorkerUnit:

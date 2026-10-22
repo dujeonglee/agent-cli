@@ -32,16 +32,24 @@ def literal_paths(code: str) -> list[str]:
     return [m.group(1) for m in _PATH_LITERAL.finditer(code)]
 
 
+#: 데이터가 메모리에 있을 때 상태줄 끝에 붙는 말 — 다시 읽기(벤치 실측: 런당
+#: 최대 61번) 를 겨냥한다.
+STATE_HINT = " — still in memory: reuse it, do not reload"
+
+
 def state_line(state: list[list[str]]) -> str:
-    """``state: a (int) · texts (dict, 12 keys)`` — 20개까지, 나머지는 수만."""
+    """``state: texts (dict, 12 keys) · parse (function) — still in memory…`` —
+    20개까지(자식이 쓸모 순으로 보낸다: 데이터 → 코드 → 객체 → 스칼라), 나머지는
+    수만. 데이터 분류가 하나라도 있으면 재사용 힌트."""
     if not state:
         return "state: (empty)"
     shown = state[:20]
-    parts = [f"{k} ({d})" for k, d in shown]
+    parts = [f"{r[0]} ({r[1]})" for r in shown]
     rest = len(state) - len(shown)
     if rest > 0:
         parts.append(f"+{rest} more")
-    return "state: " + " · ".join(parts)
+    hint = STATE_HINT if any(len(r) > 2 and r[2] == "data" for r in state) else ""
+    return "state: " + " · ".join(parts) + hint
 
 
 class PythonTool(Tool):
@@ -57,9 +65,11 @@ class PythonTool(Tool):
         "The result shows the output, the value of the last expression and a "
         "`state:` line listing what is held in memory. Open matplotlib figures "
         "are saved and shown to you as images (plot coordinates or paths "
-        "instead of reading numbers). Print only what you need to see "
-        "(slices, len(), head()). Write final deliverables to files — memory "
-        "is not an output."
+        "instead of reading numbers). Keep each call to one step; a long loop "
+        "should accumulate into a dict or list, so if the call hits the "
+        "timeout it is interrupted and what is done stays in memory. Print "
+        "only what you need to see (slices, len(), head()). Write final "
+        "deliverables to files — memory is not an output."
     )
     oversized_retry_hint = (
         "print less: a slice (`x[:20]`), `len(x)`, `.head()`, or a summary "
@@ -84,8 +94,10 @@ class PythonTool(Tool):
                 "type": "integer",
                 "description": (
                     f"Max seconds for this call (default {DEFAULT_TIMEOUT}). On "
-                    "timeout the interpreter is killed and ALL state is lost — "
-                    "keep calls short rather than raising this."
+                    "timeout the running code is interrupted (KeyboardInterrupt) "
+                    "and the state is kept; only code that ignores the interrupt "
+                    "gets the interpreter killed. Raise this for a step you know "
+                    "is long (a model load, a big OCR batch)."
                 ),
             },
         },
@@ -143,12 +155,20 @@ class PythonTool(Tool):
             return ToolResult(
                 False,
                 error=(
-                    f"python: timed out after {timeout}s — the interpreter was killed "
-                    f"and its state is gone{had}. Re-create what you need in a fresh "
-                    "call and keep each call short."
+                    f"python: timed out after {timeout}s and did not stop on "
+                    f"interrupt — the interpreter was killed and its state is "
+                    f"gone{had}. Re-create what you need in a fresh call and keep "
+                    "each call short."
                 ),
             )
         parts: list[str] = []
+        if res.interrupted:
+            parts.append(
+                f"python: interrupted after {timeout}s (timeout) — the interpreter "
+                "is alive and its state is kept. Continue from what is already "
+                "done (the traceback shows where it stopped), or pass a larger "
+                "`timeout` for this step."
+            )
         if res.fresh and res.lost:
             parts.append(
                 "(fresh interpreter — the previous state was lost: "
