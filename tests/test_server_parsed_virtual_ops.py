@@ -32,6 +32,7 @@ from tests.test_format_nudge_record import _dispatcher
 #: 디스패처가 ``op.action == "<name>"`` 으로 갈라 다루는 op 마다 실행 가능한 입력.
 SPECIAL_OP_INPUTS: dict[str, dict] = {
     "complete": {"result": "done"},
+    "wait": {"reason": "job running"},  # 깨울 것이 없는 테스트 루프 → 거부 관찰
     "ask": {"questions": ["which one?"]},
     "run_skill": {"skill": "no-such-skill"},
     "message": {"to": "main", "text": "hi", "expects_reply": False},

@@ -154,7 +154,7 @@ class TestTail:
         assert "job #1 · pid " in out and "1m30s" in out and "`sleep 60`" in out
         assert "→ .agent-cli/tmp/jobs/1.log" in out and "stop it: `kill " in out
         assert "job #2" not in out
-        assert "do not poll" in out and "Call `complete`" in out
+        assert "do not poll" in out and "Call `wait`" in out
 
     def test_nothing_when_nothing_runs(self, reg):
         job = reg.start("true", owner="main")
@@ -426,6 +426,23 @@ class TestResultFileContinuation:
         surface.run_ended(self._ok("chatter"), self._req(query=False))
         assert out.read_text() == "14 passed"
 
+    def test_a_wait_ended_run_continues_the_chain_without_jobs(self, reg, tmp_path):
+        """v10.65.0: 모니터·에이전트를 `wait` 로 기다린 질의 런 — 작업이 없어도 다음
+        깨우기 런의 답이 결과 파일에 쓰인다."""
+        surface, out = self._surface(tmp_path, reg)
+        surface.busy()
+        waiting = SimpleNamespace(
+            success=True, output="⏸ waiting on monitor m1", waiting=True
+        )
+        surface.run_ended(waiting, self._req(query=True))
+        assert out.read_text() == "⏸ waiting on monitor m1"
+        surface.busy()
+        surface.run_ended(self._ok("the real answer"), self._req(query=False))
+        assert out.read_text() == "the real answer"
+        surface.busy()
+        surface.run_ended(self._ok("chatter"), self._req(query=False))
+        assert out.read_text() == "the real answer"
+
     def test_failed_runs_never_write(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)
         reg.start("sleep 60", owner="main")
@@ -461,7 +478,7 @@ class TestAssembly:
         assert "`background: true`" in TASK_GUIDELINES
         assert ".agent-cli/tmp/jobs/" in TASK_GUIDELINES
         assert "Do not poll the log" in TASK_GUIDELINES
-        assert "call `complete` saying you are waiting" in TASK_GUIDELINES
+        assert "call `wait`" in TASK_GUIDELINES  # v10.65.0: 기다림은 wait
         assert "do not fill turns with unrelated actions" in TASK_GUIDELINES
         assert "`kill <pid>`" in TASK_GUIDELINES
 

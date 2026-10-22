@@ -317,6 +317,7 @@ python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
 
 테스트 스위트·빌드·설치처럼 1분 넘게 도는 명령은 `shell` 에 `background: true` 를 주면 **하니스가 자식으로 띄우고** 즉시 돌아옵니다. 출력은 `.agent-cli/tmp/jobs/<n>.log` 로 가고, 끝나면 종료 코드와 로그 마지막 줄들이 소유자(main 이면 깨우기 런, 에이전트면 inbox)에게 `🧵 job #n finished rc=0 after 2m31s` 로 옵니다. 돌고 있는 동안은 매 턴 꼬리에 `job #n · pid P · 경과 · 명령 → 로그 · stop it: kill P` 로 보입니다. 모델은 로그를 폴링하지도, `pkill` 로 프로세스를 찾지도, 끝 줄을 기다리는 monitor 를 걸지도 않습니다(셸 안내 문구 A/B 실측에서 셋 다 사고를 냈습니다 — `docs/jobs/DESIGN.md` §1).
 
+- 할 일이 없으면 `wait` 로 턴을 끝냅니다(v10.65.0) — 열린 요청은 닫히지 않고 통지 런으로 넘어갑니다. 종전엔 `complete` 로 기다리라고 했는데 장부가 `answers` 를 요구해 되돌렸습니다.
 - 돌고 있는 작업은 세션의 "할 일" 입니다: `run` 은 끝나길 기다리며 `🧵 백그라운드 작업 N개 대기 중` 을 알리고, `web` 은 `--idle-timeout` 으로 자기를 거두지 않습니다.
 - 에이전트가 죽으면 그 에이전트의 작업은 죽이고, 세션이 끝날 때 남은 작업도 죽이며 콘솔에 적습니다(우리가 띄운 것이라 고아를 남기지 않습니다). 재시작을 넘어 살지 않습니다.
 - 그냥 `cmd &` 는 종전대로 됩니다(추적 없음). `background: true` 에는 **평문 명령**을 줍니다(`&`·리다이렉션 없이 — 하니스가 로그와 종료 코드를 맡습니다).
@@ -987,11 +988,12 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | URL 을 가져온다 — HTML 은 마크다운으로, JSON 은 들여쓴 텍스트로, XML·평문은 그대로 (재귀 fetch 지원). v10.52.0 부터 JSON API(PyPI·Wikipedia REST·OSV·GitHub API 등)를 직접 읽고, charset 없는 UTF-8 페이지가 깨지지 않습니다. v10.56.2 부터 본문을 자르지 않습니다 — 종전엔 페이지마다 20만 자에서 표시 없이 잘려 큰 JSON 이 깨진 채로 오고 큰 HTML 은 본문 뒷부분이 사라졌습니다(Wikipedia Python 문서: 8,660 → 93,657자). 큰 결과는 다른 도구와 같이 파일로 저장되고 발췌가 옵니다. v10.56.3 부터 성공 코드(200·202)로 온 봇 확인 페이지와 JavaScript 로만 그려지는 빈 껍데기를 실패(`Bot check:` / `Needs JavaScript:`)로 돌려줍니다 — 종전엔 확인 페이지 글자가 내용으로 넘어갔습니다(DuckDuckGo 202, Google 검색 89자). v10.56.4: HTML 표를 행마다 한 줄로 읽고(코드 보기 페이지·위키 정보상자의 줄과 칸이 붙던 것), Gerrit·gitiles 의 `)]}'` 접두 JSON 과 `?format=TEXT` base64 원문을 바로 읽습니다. v10.57.2: 링크를 `[글](주소)` 로 싣습니다(같은 사이트는 `/경로`, 주소가 글을 되풀이할 뿐이면 글만; Bing·Google·DuckDuckGo 추적 주소는 실제 주소로) — 종전엔 링크가 본문에 없어 검색 결과를 따라갈 수 없었습니다. 블록 경계에서 줄을 바꾸고(Scholar 제목·저자가 붙던 것), 숨김 요소(`hidden`·`aria-hidden`·`display:none`)를 건너뛰고(Scholar 가 늘 싣는 숨은 "작동되지 않습니다" 문구), 공백을 HTML 처럼 접어 탭만 있는 줄·빈 목록 줄을 없앱니다(Wikipedia 본문이 266번째 줄 → 7번째 줄). 그림은 alt 글로(Wikipedia 수식의 TeX). v10.58.0 부터 `download_to` 인자로 응답을 변환 없이(원본 HTML·JSON·파일 바이트) 그 경로에 저장하고 결과로 경로·크기·첫 몇 줄만 받습니다(`depth` 와는 함께 못 씀). 바이너리(PDF·이미지·압축 파일)는 거절하지 않고 `.agent-cli/tmp/downloads/` 에 자동 저장합니다(이름은 URL 마지막 조각, 겹치면 번호; gitiles 바이너리 blob 은 base64 를 풀어 저장). v10.58.1 부터 큰 결과의 저장 파일은 `[Fetched …]` 머리줄 없이 본문만 담고, 안내가 그 파일이 변환본(원본 응답 아님)이며 원본은 `download_to` 로 받으라고 말합니다 — 모델이 머리줄째 복사한 파일을 JSON 으로 넘긴 일이 있었습니다 |
 | `browser` | 헤드리스 브라우저 — JavaScript 가 그리는 페이지를 읽고 클릭·입력 (v10.39.0). 스냅샷의 `[ref=eN]` 로 조작. 선택 설치 `agent-cli[browser]` — playwright 가 없으면 도구 자체가 프롬프트에서 빠짐. [아래 참고](#브라우저-도구-browser) |
-| `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "complete 로 턴을 마치고 기다려라" 힌트가 붙음). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
+| `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "`wait` 로 턴을 마쳐라" 힌트가 붙음 — v10.65.0, 종전 `complete`). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
-| `complete` | 작업 완료 신호 (최종 결과 반환) |
+| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
+| `complete` | 작업 완료 신호 (최종 결과 반환). 기다리는 용도가 아니다 — 그건 `wait` |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
 
@@ -1333,7 +1335,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 {"action": "ask", "action_input": {"question": "legacy 컬럼은 버릴까요, 남길까요?", "to": "user"}}
 ```
 
-사람은 독촉받지 않습니다 — 답을 안 하면 질문은 트레이에 남고 에이전트는 다른 일감을 받습니다. 답은 도는 런에 닿을 수 없으므로 에이전트는 기다리거나 폴링하지 않고 `complete` 합니다.
+사람은 독촉받지 않습니다 — 답을 안 하면 질문은 트레이에 남고 에이전트는 다른 일감을 받습니다. 답은 도는 런에 닿을 수 없으므로 에이전트는 폴링하지 않고 `wait` 로 턴을 끝냅니다(v10.65.0; 종전 `complete`).
 
 ### shell — 셸 명령 실행
 

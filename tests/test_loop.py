@@ -1873,6 +1873,7 @@ class TestToolPolicyDeclarations:
 
         expected = {
             "complete": {"terminal": True},
+            "wait": {"terminal": True},
             "run_skill": {"terminal": True, "depth_gated": True},
             "agent": {"depth_gated": True},
             "ask": {"requires_handler": "ctx"},

@@ -25,7 +25,8 @@ class CompleteTool(Tool):
         "Call this tool when the task is done — always the LAST call. Provide "
         "the final result. When `## Open Items` lists items closed by "
         "`complete`, `answers` is REQUIRED: list the ids your result covers. "
-        "Ids you leave out stay open."
+        "Ids you leave out stay open. Not for waiting — to pause until a job, "
+        "monitor or agent reports back, call `wait`."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -51,6 +52,42 @@ class CompleteTool(Tool):
                 "(Completed without result — model may lack capability for this task)",
             ),
         )
+
+
+class WaitTool(Tool):
+    """``wait`` (v10.65.0, docs/wait/DESIGN.md) — "지금은 더 할 게 없다, 깨워 달라".
+
+    종전엔 작업·모니터·에이전트 회신을 기다릴 때도 ``complete`` 를 쓰라고 했다
+    (v10.47.1·에이전트 status 힌트). 그런데 장부(P3)는 ``complete`` 를 "열린 항목을
+    닫는 행위" 로 보고 ``answers`` 없는 complete 를 8번까지 되돌린다 — 벤치 실측
+    (video, 2026-10-22): 설치 작업을 기다리는 같은 complete 를 9번 보내고 예산이
+    끝나서야 런이 끝났다. 동사 하나에 뜻이 둘이었다. ``wait`` 는 아무것도 닫지
+    않고 런을 끝낸다; 열린 항목은 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면
+    거부한다(막히면 wait 로 도피하는 길을 막는다). 디스패치가 가로챈다
+    (`dispatch._op_wait`) — ``_run`` 은 안 불린다."""
+
+    name = "wait"
+    terminal = True
+    description = (
+        "Nothing more to do until something you started reports back — a "
+        "background job, a monitor, an agent you asked. Ends this turn WITHOUT "
+        "closing any open item; the report wakes you with the items still "
+        "open. Refused when nothing will wake you: then keep working, or call "
+        "`complete`."
+    )
+    parameters: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "One line: what you are waiting for (shown to the user)",
+            },
+        },
+        "required": [],
+    }
+
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        return ToolResult(True, output=str(args.get("reason") or "waiting"))
 
 
 class AskTool(Tool):

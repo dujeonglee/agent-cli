@@ -1777,6 +1777,7 @@
     }
     if (typeof p !== "object" || p === null) p = {};
     if (tool === "shell" || tool === "sh") return String(p.command || "");
+    if (tool === "wait") return String(p.reason || "waiting");
     if (tool === "read_file") return String(p.path || "");
     if (tool === "write_file") return String(p.path || "");
     if (tool === "edit_file") {
