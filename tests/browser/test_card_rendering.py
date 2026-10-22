@@ -293,6 +293,34 @@ class TestRowRhythm:
         h = s.evaluate("e => e.getBoundingClientRect().height")
         assert h > 30, f"공백 없는 긴 문자열이 줄바꿈되지 않음 ({h}px)"
 
+    def test_thinking_body_keeps_line_breaks_and_wraps_long_tokens(self, stack, page):
+        """생각 본문은 **줄바꿈을 지킨다** (v10.64.1 — 사용자 지적).
+
+        마크다운 변환은 ``\\n`` 을 그대로 두고 화면 줄바꿈은 ``pre-wrap`` 이
+        맡는데, 최종답·말풍선과 달리 ``.row-body.md`` 에만 그게 없어 여러 줄
+        생각이 한 문단으로 붙었다. 공백 없는 긴 토큰은 끊겨 카드를 넘지 않는다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thought("plan\nstep one\nstep two\n" + "y" * 400, 1)
+        stack.renderer.final("done", 1)
+        body = page.locator(".card-assistant .row.final-think .row-body.md")
+        assert _wait(lambda: body.count() == 1)
+        info = body.evaluate(
+            """e => {
+                const r = document.createRange();
+                r.selectNodeContents(e);
+                const tops = new Set([...r.getClientRects()].map(x => Math.round(x.top)));
+                const card = e.closest('.card').getBoundingClientRect();
+                const b = e.getBoundingClientRect();
+                return { lines: tops.size, ws: getComputedStyle(e).whiteSpace,
+                         inside: b.right <= card.right + 1,
+                         noScroll: e.scrollWidth <= e.clientWidth + 1 };
+            }"""
+        )
+        assert info["ws"] == "pre-wrap", info
+        assert info["lines"] >= 4, f"줄바꿈이 사라졌다 {info}"
+        assert info["inside"] and info["noScroll"], f"긴 토큰이 카드를 넘는다 {info}"
+
     def test_timestamp_never_overlaps_row_text(self, stack, page):
         """시각과 글자가 **겹치지 않는다** (사용자 지적).
 
