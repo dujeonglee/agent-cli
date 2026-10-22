@@ -38,6 +38,28 @@
 - 터미널(`Tool.terminal`) — 문법이 뒤따르는 호출을 막고, 디스패치가 앞선 op 결과를
   flush 한 뒤 처리한다. 자리는 `complete` 바로 앞.
 
+### 2.1 불완전하게 끝나는 길을 막은 것
+
+- **스킬·일회성 루프엔 광고하지 않는다** — `requires_handler="wake"`,
+  `LoopPorts.wakeable()`(main 은 입력 큐, 상주는 받은편지함). 거기서 wait 로 끝낸
+  결과는 호출자에게 "⏸ waiting" 으로 돌아가 버린다(일회성은 부모의 owner 를
+  물려받아 부모의 작업이 판정에 걸렸을 것이다).
+- **에이전트 활동은 요청자별** — `AgentRegistry.pending_for(addr)`: 그 주소에게
+  빚진 회신, 그 주소의 항목을 들고 있거나 처리 중인 에이전트, 그 주소로 가는 미배달
+  회신. 세션 전체 `has_active_work` 로 보면 상주 에이전트 **자신이 busy** 라 늘
+  참이었다(아무것도 안 기다리는 wait 가 통과했을 것). run 모드에서도 "동료의
+  일로 바쁜 에이전트" 때문에 main 의 wait 가 받아들여져 아무도 깨우지 않는 채
+  펌프가 끝나는 길을 막는다.
+- **상주 런이 wait 로 끝나면 회신 폴백도 질문 닫기도 없다** —
+  `_handle_request`/`_handle_human_batch` 가 `loop_result.waiting` 을 보고
+  `owed`·`end_run` 을 건너뛴다. 종전 흐름이면 요청자가 "(no explicit reply — run
+  summary) ⏸ waiting on job #1" 을 답으로 받고 빚이 갚힌 것으로 처리돼, 깨어난
+  뒤의 진짜 `reply` 가 "no unpaid reply" 로 거부됐을 것이다.
+- **깨우는 쪽은 그대로** — 작업 종료 통지·모니터 보고/만료(2h)·에이전트 회신·
+  예약 발화는 전부 소유자 주소로 배달되고, run 펌프(`QuietPolicy`)와 web 의
+  self-reap 은 같은 항을 "할 일" 로 본다. wait 가 받아 준 것은 그 네 가지뿐이라
+  깨울 것 없이 끝나는 런은 없다.
+
 ## 3. 문구 교체
 
 "기다릴 땐 `complete`" 가 여섯 군데 있었고 전부 `wait` 로 바꿨다:

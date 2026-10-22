@@ -22,7 +22,10 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
-from tests.loop_ports import TEST_PORTS
+from tests.loop_ports import TEST_PORTS, make_ports
+
+#: main 모양의 포트 — 입력 큐가 있어 깨울 수 있다(빈 큐).
+WAKEABLE = make_ports(dequeue_user_message=lambda: None)
 
 
 @pytest.fixture
@@ -37,7 +40,7 @@ def jobs(tmp_path):
 
 def _loop(provider, *, ctx=None, query="Q", rid="u-1"):
     return AgentLoop(
-        ports=TEST_PORTS,
+        ports=WAKEABLE,
         query=query,
         query_request_id=rid,
         provider=provider,
@@ -65,6 +68,31 @@ class TestRegistration:
 
     def test_complete_points_at_wait(self):
         assert "call `wait`" in TOOLS["complete"].description
+
+
+class TestAdvertisedOnlyWhereAWakeExists:
+    """스킬·일회성 루프엔 깨울 길이 없다 — 거기서 wait 로 끝낸 결과는 호출자에게
+    "기다리는 중" 으로 돌아가 버린다."""
+
+    def _tools(self, ports):
+        loop = _loop(MagicMock())
+        loop = AgentLoop(
+            ports=ports,
+            query="Q",
+            provider=MagicMock(),
+            capabilities=loop.capabilities,
+            model="m",
+            dialect=get_dialect("json_fc"),
+        )
+        return list(loop.tools_list)
+
+    def test_unwired_ports_hide_wait(self):
+        assert "wait" not in self._tools(TEST_PORTS)
+        assert not TEST_PORTS.wakeable()
+
+    def test_main_queue_and_resident_inbox_show_wait(self):
+        assert "wait" in self._tools(WAKEABLE)
+        assert "wait" in self._tools(make_ports(absorb_inbox=list))
 
 
 class TestWaitEndsTheRun:
@@ -128,12 +156,50 @@ class TestWaitEndsTheRun:
         ]
         assert obs and "nothing would wake you" in obs[0]
 
+    def test_agent_activity_counts_only_for_its_requester(self, tmp_path):
+        """세션 전체 `has_active_work` 로 보면 상주 에이전트 자신이 busy 라 늘 참이다
+        — 요청자별로 센다: 그 주소에게 빚진 회신, 그 주소의 항목."""
+        from tests.test_agents_live import make_registry
+
+        reg = make_registry(tmp_path)
+        reg.begin_run("agent:a")
+        reg.note_owes("agent:a", "main", "do X")
+        assert reg.pending_for("main") == ["agent:a owes you a reply"]
+        assert reg.pending_for("agent:a") == []  # 자기 빚은 자기를 깨우지 않는다
+        assert reg.pending_for("agent:b") == []
+
     def test_agent_scoped_jobs_do_not_wake_main(self, jobs):
         jobs.start("sleep 30", owner="agent:x")
         from agent_cli.runtime import wake_sources
 
         assert wake_sources("main") == []
         assert wake_sources("agent:x") == ["job #1 (`sleep 30`)"]
+
+
+class TestResidentRunEndingInWait:
+    def test_no_fallback_reply_and_debt_stays_open(self, tmp_path):
+        """상주 런이 wait 로 끝나면 폴백(런 요약) 배달도 질문 닫기도 없다 — 깨운
+        뒤 갚는다. 종전 코드라면 요청자가 "⏸ waiting" 을 답으로 받았다."""
+        from types import SimpleNamespace
+
+        from tests.test_agents_live import make_registry, wait_until
+
+        def runner(query, ctx, **kwargs):
+            return SimpleNamespace(
+                success=True, output="⏸ waiting on job #1", waiting=True
+            ), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.request(key, "do X") == ""
+        assert wait_until(
+            lambda: reg.get(key).state == "idle" and reg.get(key).handled >= 1
+        )
+        assert not reg.has_pending_replies()  # 폴백이 main 으로 가지 않았다
+        debts = reg.reply_debts(f"agent:{key}")
+        assert [d.to for d in debts] == ["main"]  # 빚은 그대로
+        assert reg.pending_for("main") == [f"agent:{key} owes you a reply"]
 
 
 class TestCompleteNag:

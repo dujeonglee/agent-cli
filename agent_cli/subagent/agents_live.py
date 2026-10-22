@@ -1019,6 +1019,34 @@ class AgentRegistry:
         """True when a new spawn/resume would exceed the cap. 0 = unlimited."""
         return bool(self.max_agents) and self.alive_count() >= self.max_agents
 
+    def pending_for(self, addr: str) -> list[str]:
+        """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
+        사람이 읽을 한 줄씩. 세션 전체의 `has_active_work` 가 아니라 **요청자별**:
+        그 주소에게 회신을 빚진 에이전트, 그 주소가 보낸 항목을 받은편지함에
+        들고 있거나 지금 처리 중인 에이전트, 그 주소로 가는 미배달 회신. 자기
+        자신은 빼지 않아도 된다 — 자기에게 빚지거나 자기 항목을 드는 일은 없다."""
+        out: list[str] = []
+        with self._cv:
+            for debtor, debts in self._reply_debts.items():
+                if debtor == addr:
+                    continue
+                if any(not d.settled and not d.human and d.to == addr for d in debts):
+                    out.append(f"{debtor} owes you a reply")
+            if any(str(r.get("to") or "") == addr for r in self._pending):
+                out.append("a reply to you not yet delivered")
+        for tm in list(self._agents.values()):
+            me = f"agent:{tm.key}"
+            if me == addr:
+                continue
+            if self.state_is_active(tm.state) and tm.current_author == addr:
+                out.append(f"{me} working on your request")
+            elif any(
+                str(getattr(i, "get", lambda _k, _d=None: _d)("author") or "") == addr
+                for i in list(getattr(tm.inbox, "queue", []))
+            ):
+                out.append(f"{me} has your request queued")
+        return out
+
     def has_pending_replies(self) -> bool:
         with self._cv:
             return bool(self._pending)
@@ -2872,6 +2900,7 @@ class AgentRegistry:
             req_ts=item.get("ts"),
         )
         success, output, duration = False, "", 0.0
+        waiting = False  # 런이 `wait` 로 끝났다 (v10.65.0) — 빚은 그대로, 폴백 없음
         human_item = author == "user" or author.startswith("user:")
         try:
             loop_result, duration = self._run_message(
@@ -2897,6 +2926,7 @@ class AgentRegistry:
                 ),
             )
             success = bool(loop_result.success)
+            waiting = bool(getattr(loop_result, "waiting", False))
             output = (
                 loop_result.output
                 if loop_result.output is not None
@@ -2932,7 +2962,9 @@ class AgentRegistry:
         # 됐다(실측 257zmx 끝말잇기: 한 턴에 세 번 답함). 질문을 건 런(§3.7)과
         # user:*(창이 곧 배달)는 장부가 빚으로 세지 않는다.
         human = _is_human_addr(author)
-        owed = bool(self.reply_debts(me))
+        # `wait` 로 끝난 런(v10.65.0)은 빚을 갚을 차례가 아니다 — 깨운 뒤 갚는다.
+        # 폴백(런 요약)을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
+        owed = bool(self.reply_debts(me)) and not waiting
         # `complete` 산출물은 **어떤 경우에도** 배달되지 않는다 — 배달은
         # `reply`/`message` 뿐이고, 그것들은 보낼 때 이미 창에 out 으로 남긴다.
         # 그러니 여기서 out 레코드를 내는 경우는 **실제 발신** 둘뿐이다:
@@ -2961,7 +2993,7 @@ class AgentRegistry:
             self._log_conversation(tm, out_payload)
         # 런 끝 정리 — 폴백 배달 + 미답 질문 닫기. kill 중이면 질문은 사망
         # 정리가 "terminated before answering" 으로 닫는 것이 맞으니 건너뛴다.
-        if not tm.stop_event.is_set():
+        if not tm.stop_event.is_set() and not waiting:  # wait 면 질문도 열어 둔다
             self.end_run(
                 me,
                 output,
@@ -3020,6 +3052,7 @@ class AgentRegistry:
             seqs=[it["seq"] for it in items],  # 런 블록이 N개 수신 줄을 머리로
         )
         success, output, duration = False, "", 0.0
+        waiting = False
         try:
             loop_result, duration = self._run_message(
                 tm,
@@ -3032,6 +3065,7 @@ class AgentRegistry:
                 query_request_id=user_requests[0]["id"] if user_requests else "",
             )
             success = bool(loop_result.success)
+            waiting = bool(getattr(loop_result, "waiting", False))
             output = (
                 loop_result.output
                 if loop_result.output is not None
@@ -3065,7 +3099,7 @@ class AgentRegistry:
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
-        if not tm.stop_event.is_set():
+        if not tm.stop_event.is_set() and not waiting:  # wait 면 질문도 열어 둔다
             self.end_run(me, output)  # 빚 없음(전부 user:*) — 미답 질문 닫기만
         # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
         self._close_run(tm, len(items))

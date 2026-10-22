@@ -83,6 +83,13 @@ class LoopPorts:
     #: ``Tool.requires_handler`` 가 보지 **않는** 필드 — 자원이 아니다.
     _NON_RESOURCE = ("owner", "unwired")
 
+    def wakeable(self) -> bool:
+        """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — main 은 입력
+        큐(``dequeue_user_message``), 상주는 받은편지함(``absorb_inbox``). 스킬·
+        일회성 루프는 둘 다 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면
+        그만이고, `wait` 로 끝낸 결과는 호출자에게 "기다리는 중" 으로 돌아가 버린다."""
+        return self.dequeue_user_message is not None or self.absorb_inbox is not None
+
     def handler_resources(self) -> dict[str, Any]:
         """``Tool.requires_handler`` 가 보는 뷰 — 손으로 안 적는다.
 
