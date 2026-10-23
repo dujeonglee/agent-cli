@@ -26,13 +26,13 @@ class MonitorTool(Tool):
     description = (
         "Watch a condition in the background and report back to you when it "
         "fires — for long-running work you started with shell. Modes: "
-        "add (when + optional run/deadline/once), list, delete (id).\n"
-        "Conditions (`when.type`): "
-        "'match' (file + pattern — regex on NEW lines only), "
-        "'silence' (file + seconds — fires when the file STOPS changing; a dead "
-        "script is silent, not successful), "
-        "'command' (command + every — runs it periodically, fires when it exits "
-        "0, its stdout becomes the report).\n"
+        "add (exactly ONE condition + optional run/deadline/once), list, delete (id).\n"
+        "A condition is one of these key pairs — never mix them:\n"
+        "  command + every — runs the command periodically, fires when it exits 0 "
+        "(its stdout becomes the report)\n"
+        "  file + pattern — fires on a NEW line of the file matching the regex\n"
+        "  file + idle — fires when the file STOPS changing for that long (a dead "
+        "script is silent, not successful)\n"
         "Launch background work like this — the 2>&1 is REQUIRED, without it "
         "shell blocks until timeout:\n"
         "  nohup CMD > /tmp/x.log 2>&1 & echo $!\n"
@@ -57,13 +57,25 @@ class MonitorTool(Tool):
                 "enum": list(MODES),
                 "description": "add | list | delete",
             },
-            "when": {
-                "type": "object",
-                "description": (
-                    "add: the condition. {type:'match', file, pattern} | "
-                    "{type:'silence', file, seconds} | "
-                    "{type:'command', command, every}"
-                ),
+            "command": {
+                "type": "string",
+                "description": "condition command+every: the shell command to run",
+            },
+            "every": {
+                "type": "string",
+                "description": "condition command+every: interval — '60s', '5m' (min 60s)",
+            },
+            "file": {
+                "type": "string",
+                "description": "conditions file+pattern / file+idle: the log file (never alone)",
+            },
+            "pattern": {
+                "type": "string",
+                "description": "condition file+pattern: regex matched against NEW lines",
+            },
+            "idle": {
+                "type": "string",
+                "description": "condition file+idle: no change for this long — '30s', '5m'",
             },
             "run": {
                 "type": "string",
@@ -80,7 +92,7 @@ class MonitorTool(Tool):
             "silent": {
                 "type": "string",
                 "description": (
-                    "add, match only: retire with a report when the file has not "
+                    "file+pattern only: give up (with a report) when the file has not "
                     "changed for this long — '10m', '600', '0' = off (default 10m)"
                 ),
             },
@@ -93,8 +105,12 @@ class MonitorTool(Tool):
         mode = str(args.get("mode", "")).strip()
         if mode not in MODES:
             return f"monitor: mode must be one of {', '.join(MODES)}"
-        if mode == "add" and not isinstance(args.get("when"), dict):
-            return "monitor: add requires `when` (an object with a `type`)"
+        if mode == "add" and not any(
+            args.get(k) not in (None, "") for k in ("file", "command")
+        ):
+            from agent_cli.monitor.conditions import SHAPES
+
+            return f"monitor: add requires a condition — one of {SHAPES}"
         if mode == "delete" and not str(args.get("id", "")).strip():
             return "monitor: delete requires `id` (see mode:'list')"
         return None
@@ -136,11 +152,8 @@ class MonitorTool(Tool):
         from agent_cli.constants import MONITOR_DEADLINE_DEFAULT_S, parse_duration
         from agent_cli.monitor import build
 
-        when = dict(args.get("when") or {})
-        if args.get("silent") not in (None, ""):
-            when["silent"] = args.get("silent")  # match 만 읽는다
         try:
-            cond = build(when)
+            cond = build(args)  # 조건 키는 도구 인자에 평평하게 (v10.67.0)
         except ValueError as exc:
             # 문법 오류는 **ToolResult** 로 — 예외는 도구 경계를 못 넘는다
             # (constants.parse_duration 과 같은 분업).

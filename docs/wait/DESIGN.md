@@ -60,8 +60,8 @@
   상주의 받은편지함 미러(`inbox_items`). 기다리던 것이 wait 보다 **먼저 끝난**
   경우다(9과제 벤치의 once 모니터). 그 통지는 어차피 다음 턴 경계
   (`_deliver_agent_mail`/`_absorb_inbox`)에 배달되므로, 받아 줘서 런을 끝내면 펌프가
-  바로 다시 깨울 뿐이다 — 거부하고 "N notice(s) … already arrived and follow in the
-  next observation" 으로 잇는 쪽이 싸고 모델의 맥락도 남는다. 돌고 있는 것이 함께
+  바로 다시 깨울 뿐이다 — 거부하고 "N notice(s) arrived while you were thinking; delivered right
+  below this" 로 잇는 쪽이 싸고 모델의 맥락도 남는다(문구는 §4.2 실측 뒤 v10.67.0). 돌고 있는 것이 함께
   있어도 도착분이 먼저다(읽고 나서 다시 wait). 종전 `pending_for` 의 "a reply to
   you not yet delivered" 는 이 도착분을 **깨울 것** 으로 치려던 가지였는데, 작업·
   모니터 메일엔 `to` 키가 없어 한 건도 안 잡혔다 — 뺐다.
@@ -97,3 +97,21 @@ A/B 가 필요 없는 수정이다(같은 complete 를 9번 보내는 게 옳을
 "already arrived and follow in the next observation" 으로 거부한다(§2.1). 같은
 조사에서 `pending_for` 의 "has your request queued" 가지가 `SimpleQueue` 에 없는
 `queue` 속성을 읽어 늘 비어 있던 것도 받은편지함 미러로 고쳤다.
+
+### 4.2 "먼저 끝난" 창의 실측과 문구 (2026-10-23, v10.66.2 → v10.67.0)
+
+run 모드, Qwen3.6-35B-A3B thinking off. 작업 `sleep N; echo FINISHED` 를
+`background: true` 로 띄우고 `wait` 하는 과제(N = 1·2·3·5·8)와, 이미 있는 파일에
+command 모니터를 걸고 `wait` 하는 과제 × 3, 두 문구로 각각 8런.
+
+- 경로가 갈리는 지점은 **모델 호출 도중** 끝났는가다. N=1 은 wait 를 만드는 호출
+  (ttft ≈ 2.4s) 안에 끝나 메일함에 머물렀고 → 거부-도착; N≥2 는 디스패치 때 아직
+  돌고 있어 접수 → 깨우기 런. 턴 경계 전에 끝난 것은 이미 관찰로 나가 있으므로 이
+  경로를 밟지 않는다. 모니터는 첫 평가가 등록 뒤 1초 안이라 거의 항상 이 창에
+  떨어진다(벤치 사례와 동일). CLI 는 그 순간 "⏳ Queued · 🧵 … — delivered to main
+  when this turn ends" 를 찍는다.
+- 거부 뒤 행동은 두 문구가 같았다: 다음 턴에 통지를 읽고 `complete(answers=[n-1,
+  u-1])` 로 3턴 종료, 재-wait 0. 그래서 문구는 정확성으로 골랐다 — 거부 관찰과
+  통지는 같은 프롬프트에 연달아 들어가므로 "follow in the next observation" 은
+  "다음 턴" 으로 읽힐 수 있어, "arrived while you were thinking; delivered right
+  below this" 로 바꿨다.

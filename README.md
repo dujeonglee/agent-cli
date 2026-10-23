@@ -261,16 +261,24 @@ agent-cli run "task" -m gpt-4o-mini
 
 오래 도는 작업을 백그라운드로 띄워 놓고 **조건이 맞으면 보고받습니다.** (명령의 **끝**만 기다리는 거라면 v10.47.0 의 백그라운드 작업(`shell` `background: true`, 아래 🧵)이 맞습니다 — 종료 코드까지 통지됩니다.)
 
-> **`match` 의 조용함 한도 (v10.47.0)**: 파일이 `silent`(기본 10분, `monitor add` 의 인자, `0` = 끔) 동안 안 바뀌면(등록 뒤 생기지 않은 채로도) 보고를 남기고 물러납니다 — "writer 가 죽은 로그를 2시간 기다리다 run 이 멈춤" 이 깨우기로 바뀝니다. `silence` 타입(그 자체가 조건)과는 별개입니다.
+> **`match` 의 조용함 한도 (v10.47.0)**: 파일이 `silent`(기본 10분, `monitor add` 의 인자, `0` = 끔) 동안 안 바뀌면(등록 뒤 생기지 않은 채로도) 보고를 남기고 물러납니다 — "writer 가 죽은 로그를 2시간 기다리다 run 이 멈춤" 이 깨우기로 바뀝니다. `file + idle`(그 자체가 조건)과는 별개입니다.
 
 ```
-shell("nohup ./build.sh > /tmp/b.log 2>&1 & echo $!")
-monitor(add, when={"type":"match","file":"/tmp/b.log","pattern":"ERROR|FAILED"})
+shell("./build.sh", background=true)                       # 🧵 작업 — 끝나면 통지
+monitor(add, file=".agent-cli/tmp/jobs/1.log", pattern="ERROR|FAILED")
+monitor(add, file="out.log", idle="5m")
+monitor(add, command="test -f out/done", every="60s")
 ```
 
-- **조건 3종**: `match`(파일의 새 줄 + 정규식) · `silence`(파일이 N초간
-  멈추면 — **침묵은 성공이 아닙니다**, 죽은 스크립트를 잡습니다) ·
-  `command`(명령을 주기적으로 돌려 exit 0 이면 발화, stdout 이 보고 본문)
+- **조건 3종 — 키 쌍으로 고릅니다 (v10.67.0)**: `file + pattern`(파일의 새 줄 +
+  정규식) · `file + idle`(파일이 그 시간 동안 멈추면 — **침묵은 성공이
+  아닙니다**, 죽은 스크립트를 잡습니다) · `command + every`(명령을 주기적으로
+  돌려 exit 0 이면 발화, stdout 이 보고 본문). 종전의 `when={"type": …}` 중첩
+  객체는 없어졌습니다 — `type` 라벨은 파서 레지스트리의 키가 와이어에 샌 것이라
+  모델이 서술은 맞게 하고 라벨만 빠뜨린 호출이 15턴 거절된 실측(벤치 B-M1)에서
+  나왔습니다. 키 쌍이 섞이면(`file` + `command`) 세 모양을 보여 주며 거절합니다.
+  실측(세 시나리오 × 10런): 중첩 30/30 · 평평 1판 23/30(6런 영구 대기) · 평평
+  2판 27/30(실패 3건은 거절 뒤 한 턴에 교정), `docs/monitor/DESIGN.md` §4.3.
 - `match` 는 **등록 시점 이후의 줄만** 봅니다(이미 쌓인 로그의 과거는
   건너뜀). 등록 때 아직 없던 파일은 생기는 순간의 내용부터 전부 새 줄로
   봅니다 (v10.31.1 — 종전엔 결과를 한 번에 쓰고 끝나는 `done.txt` 류에
@@ -296,7 +304,7 @@ monitor(add, when={"type":"match","file":"/tmp/b.log","pattern":"ERROR|FAILED"})
   (알림 없는 실행은 만들 수 없습니다 — 새벽에 명령이 돌았는데 아무도 모르는
   상태를 막기 위해서입니다)
 - `command`/`run` 은 **등록할 때** 확인받습니다. 발화할 땐 사람이 없으니까요
-- `command`/`run` 은 **`shell` 도구가 있는 에이전트만** 걸 수 있습니다 (v10.42.0 — 읽기 전용 프로파일에겐 `match`/`silence` 만; monitor 가 셸 권한의 뒷문이 되지 않게)
+- `command`/`run` 은 **`shell` 도구가 있는 에이전트만** 걸 수 있습니다 (v10.42.0 — 읽기 전용 프로파일에겐 `file+pattern`/`file+idle` 만; monitor 가 셸 권한의 뒷문이 되지 않게)
 - 내장 에이전트 프로파일 여섯 개도 monitor 를 씁니다 (v9.14.0). 권한이
   넓어진 것은 아닙니다 — 여섯 다 이미 `shell` 을 가지고 있고, monitor 는
   같은 셸 권한에 **보고가 반드시 따라오는** 형태입니다
@@ -1013,7 +1021,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
-| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "다음 관찰에 온다" 고 알린다(v10.66.2 — 런을 끝내 봐야 바로 다시 깨울 뿐). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
+| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "while you were thinking … delivered right below this" 로 알린다(v10.66.2, 문구 v10.67.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 통지는 같은 프롬프트에 연달아 들어간다). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
 | `complete` | 작업 완료 신호 (최종 결과 반환). 기다리는 용도가 아니다 — 그건 `wait` |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |

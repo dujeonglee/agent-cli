@@ -20,6 +20,7 @@ import pytest
 
 from agent_cli.monitor import MonitorRegistry, build, known_types
 from agent_cli.monitor import registry as reg_mod
+from agent_cli.monitor.conditions import infer_type
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -46,26 +47,42 @@ class TestConditionRegistry:
         """`exit`(구현 불가)와 `interval`(주기 command 가 상위집합)은 없다."""
         assert known_types() == ["command", "match", "silence"]
 
-    @pytest.mark.parametrize("gone", ["exit", "interval"])
-    def test_removed_types_are_rejected_with_a_helpful_error(self, gone):
-        with pytest.raises(ValueError, match="unknown condition type"):
-            build({"type": gone})
+    @pytest.mark.parametrize(
+        ("spec", "kind"),
+        [
+            ({"command": "true"}, "command"),
+            ({"command": "true", "every": "5m"}, "command"),
+            ({"file": "/tmp/x", "pattern": "E"}, "match"),
+            ({"file": "/tmp/x", "idle": "30s"}, "silence"),
+            # 옛 습관의 라벨은 무해하다 — 종류는 키로 정한다
+            ({"type": "command", "command": "true"}, "command"),
+        ],
+    )
+    def test_kind_is_inferred_from_the_keys(self, spec, kind):
+        """`type` 라벨 없이 키 집합이 종류를 정한다 (v10.67.0) — 세 서명은 서로
+        겹치지 않는다. 라벨은 레지스트리 키가 와이어에 샌 것이었다."""
+        assert infer_type(spec) == kind and build(spec).type == kind
 
     @pytest.mark.parametrize(
         ("spec", "msg"),
         [
-            ({"type": "match", "file": "/tmp/x"}, "pattern"),
-            ({"type": "match", "pattern": "E"}, "file"),
-            ({"type": "match", "file": "/tmp/x", "pattern": "([="}, "bad regex"),
-            ({"type": "silence", "file": "/tmp/x"}, "seconds"),
-            ({"type": "silence", "file": "/tmp/x", "seconds": 0}, "positive"),
-            ({"type": "command"}, "command"),
+            ({"file": "/tmp/x"}, "yours has only: file"),
+            ({"file": "/tmp/x", "command": "true"}, "mixes keys: command, file"),
+            ({"file": "/tmp/x", "pattern": ".*", "every": "60s"}, "mixes keys"),
+            ({"file": "/tmp/x", "pattern": "a", "idle": "5s"}, "mixes keys"),
+            ({"pattern": "E"}, "yours has only: pattern"),
+            ({"type": "exit"}, "none of those keys"),
+            ({}, "one of"),
+            ({"file": "/tmp/x", "pattern": "([="}, "bad regex"),
+            ({"file": "/tmp/x", "idle": 0}, "positive"),
+            ({"file": "/tmp/x", "idle": "soon"}, "idle"),
             ("not-a-dict", "object"),
         ],
     )
     def test_bad_specs_raise_valueerror(self, spec, msg):
         """**ValueError 로 통일** — 도구가 ToolResult 로 바꾸는데 예외 종류가
-        갈리면 변환부가 둘이 된다."""
+        갈리면 변환부가 둘이 된다. 서명에 못 미치는 키 집합은 세 모양을 전부
+        보여 주고 받은 키를 적는다."""
         with pytest.raises(ValueError, match=msg):
             build(spec)
 
@@ -182,17 +199,15 @@ class TestSilenceCondition:
         os.utime(old, (time.time() - 9999, time.time() - 9999))
 
         now = time.time()
-        _add(reg, {"type": "silence", "file": str(old), "seconds": 60})
-        _add(
-            reg, {"type": "silence", "file": str(tmp_path / "none.log"), "seconds": 60}
-        )
+        _add(reg, {"type": "silence", "file": str(old), "idle": 60})
+        _add(reg, {"type": "silence", "file": str(tmp_path / "none.log"), "idle": 60})
         reg.tick(now)
         assert not reg.deliver.calls, "등록 직후 즉시 발화했다"
 
     def test_fires_after_the_quiet_window(self, reg, tmp_path):
         log = tmp_path / "q.log"
         log.write_text("x\n")
-        mon = _add(reg, {"type": "silence", "file": str(log), "seconds": 60})
+        mon = _add(reg, {"type": "silence", "file": str(log), "idle": 60})
         reg.tick(time.time())
         assert not reg.deliver.calls
         reg.tick(time.time() + 61)
@@ -206,7 +221,7 @@ class TestSilenceCondition:
         log = tmp_path / "w.log"
         log.write_text("x\n")
         t = time.time()
-        _add(reg, {"type": "silence", "file": str(log), "seconds": 60})
+        _add(reg, {"type": "silence", "file": str(log), "idle": 60})
         reg.tick(t)
         # t+40 에 쓴 것으로 — t+61 시점에서 조용한 지 21s 뿐이다
         log.write_text("x\ny\n")

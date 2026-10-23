@@ -100,7 +100,7 @@ class TestToolSurface:
         [
             ({}, "mode"),
             ({"mode": "nope"}, "mode"),
-            ({"mode": "add"}, "when"),
+            ({"mode": "add"}, "condition"),
             ({"mode": "delete"}, "id"),
         ],
     )
@@ -120,9 +120,7 @@ class TestToolSurface:
         r.stop()
         set_monitor_registry(r)
         try:
-            res = TOOLS["monitor"].run(
-                {"mode": "add", "when": {"type": "match", "file": "/tmp/x"}}
-            )
+            res = TOOLS["monitor"].run({"mode": "add", "file": "/tmp/x"})
             assert not res.success and "pattern" in (res.error or "")
         finally:
             set_monitor_registry(None)
@@ -143,7 +141,8 @@ class TestToolSurface:
             add = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(log), "pattern": "E"},
+                    "file": str(log),
+                    "pattern": "E",
                     "deadline": "30m",
                 }
             )
@@ -177,7 +176,8 @@ class TestToolSurface:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(log), "pattern": "E"},
+                    "file": str(log),
+                    "pattern": "E",
                 }
             )
             assert res.success
@@ -224,11 +224,8 @@ class TestRegistrationTimeGate:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {
-                        "type": "command",
-                        "command": "rm -rf /tmp/x",
-                        "every": "5m",
-                    },
+                    "command": "rm -rf /tmp/x",
+                    "every": "5m",
                 }
             )
             assert res.success, f"headless 우회가 안 먹었다: {res.error}"
@@ -253,11 +250,8 @@ class TestRegistrationTimeGate:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {
-                        "type": "match",
-                        "file": str(tmp_path / "a"),
-                        "pattern": "X",
-                    },
+                    "file": str(tmp_path / "a"),
+                    "pattern": "X",
                     "run": "rm -rf /tmp/whatever",
                 }
             )
@@ -283,7 +277,8 @@ class TestRegistrationTimeGate:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(log), "pattern": "X"},
+                    "file": str(log),
+                    "pattern": "X",
                 }
             )
             assert res.success

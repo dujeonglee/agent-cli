@@ -946,9 +946,9 @@ class TurnDispatcher:
                 self.ctx,
                 self.cfg.dialect,
                 turn.record,
-                f"Observation: wait refused — {n} you were waiting for already "
-                "arrived and follow in the next observation. Read them first; "
-                "call `wait` again only if something is still running.",
+                f"Observation: wait refused — {n} arrived while you were "
+                "thinking; delivered right below this. Read it, then call `wait` "
+                "again only if something is still running.",
                 tool_name="wait",
                 success=False,
                 turn=self.state.turn,

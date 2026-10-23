@@ -155,7 +155,7 @@ ID 로 고정하는 건 필드 하나지 jq 파이프라인이 아니다.)
 
 ```python
 monitor(mode="add",
-        when={"type": "match", "file": "/tmp/out.log", "pattern": "ERROR|FAILED"},
+        file="out.log", pattern="ERROR|FAILED",   # 조건 = 키 쌍 하나 (v10.67.0, §4.3)
         run="kill 4231",       # 선택 — 보고 전에 실행 (§7.3 게이트)
         deadline="2h",         # 선택 (기본 2h, 60s~24h clamp)
         once=True)             # 기본값
@@ -195,11 +195,47 @@ wake 폭주가 실수로 열리는 가장 흔한 경로다. (단 은퇴도 **보
 
 ### 4.2 조건 (v1: **3종**)
 
-| `type` | 파라미터 | 비고 |
+| 조건(내부 이름) | 키 쌍 (v10.67.0 — 와이어엔 라벨 없음) | 비고 |
 |---|---|---|
 | `match` | `file`, `pattern` | 새 줄만. 바이트 오프셋 커서, **등록 시점에 EOF 에서 시작**(등록 때 없던 파일은 0 에서 — 나타난 내용 전부가 새 줄, v10.31.1). **이미 있는 파일**(v10.34.0): 등록 관찰에 mtime·모델의 마지막 도구 결과 이후/이전·마지막 매칭 줄(꼬리 4 KB)을 적고, 이후 수정 + ≤ `MONITOR_REPLAY_MAX_BYTES`(64 KB, env 노브; 0/-1) 면 커서 0 으로 다음 틱 발화 |
-| `silence` | `file`, `seconds` | **침묵은 성공이 아니다** — 죽은 스크립트 탐지 |
+| `silence` | `file`, `idle` (기간 문자열) | **침묵은 성공이 아니다** — 죽은 스크립트 탐지 |
 | `command` | `command`, `every` | **주기 실행**. exit 0 이면 발화, stdout 이 보고 본문 |
+
+### 4.3 라벨 없는 조건 — 키 쌍이 종류다 (v10.67.0)
+
+초판~v10.66 의 와이어는 `when={"type": "match", file, pattern}` 였다. `type` 은
+모델이 아니라 §5 레지스트리(`_REGISTRY[type]`)의 키였고, 그 dict 를 그대로 모델에게
+쓰게 한 것이다. 실측(2026-10-23, Qwen3.6-35B-A3B, thinking off): 모델이
+`{"command": "test -f …", "every": "60s"}` 로 서술은 맞게 하고 `type` 만 빠뜨리자
+"unknown condition type ''" 가 15턴 반복됐다 — 모델은 라벨이 아니라 JSON 인코딩
+문제로 오해했다. 세 서명(`command` / `file`+`pattern` / `file`+`idle`)은 서로
+겹치지 않으므로 종류는 키로 정해진다. 2판이 `then=[{"type":"notify"}]` 를 걷어낸
+것과 같은 논리("35B 가 틀릴 중첩 객체 하나 준다")를 `when` 에도 적용했다.
+
+**세 모양 × 10런 실측** (파일 존재 → command · 로그 줄 매치 · 멈춤 감지; 과제는
+목표만 말하고 인자 모양은 말하지 않음):
+
+| | 중첩 `when{type}` | 평평 1판 | **평평 2판 (채택)** |
+|---|---|---|---|
+| 첫 호출 성공 | 30/30 | 23/30 | 27/30 |
+| 과제 완료 | 30/30 | 24/30 — 6런 영구 대기 | 30/30 |
+| 파일 존재 시나리오 평균 | 8.7s | 184s | 10.1s |
+
+- 1판의 실패는 스키마 결함이었다: 묶음이 산문에만 있고 `Input JSON` 은 열 키가 한
+  줄, `file` 이 맨 앞에 "the file to watch", `idle`·`silent` 가 같은 뜻으로 나란히,
+  그리고 추론기가 `file+pattern+every` 같은 **섞인 키를 조용히 match 로 받아**
+  영원히 안 울리는 모니터를 만들었다.
+- 2판: 설명에 세 키 쌍을 줄바꿈으로 나열하고 "never mix them", 키 순서를
+  `command, every, file, pattern, idle` 로, 설명마다 소속 조건을 앞에 붙이고
+  (`file` 은 "never alone"), `silent` 는 "file+pattern only". 섞인 키는 거절한다
+  ("give exactly ONE condition — … — yours mixes keys: command, file").
+- 2판의 남은 실패 3건은 전부 `command+every` 에 `file` 을 덧붙인 것 — 과제의
+  주제가 파일이라 `file` 키가 끌어당긴다. 중첩에선 `type: command` 를 고른 순간
+  그 묶음에 `file` 자리가 없어 구조가 막아 주던 것을, 평평은 거절 한 턴으로 갚는다.
+  세 건 모두 거절 뒤 한 턴에 교정됐다(완료 30/30).
+- 내부 이름(`match`·`silence`·`command`, `Condition.type`)은 그대로다 — 기록·보고·
+  `describe()` 가 쓴다. `silence` 의 `seconds`(정수) 는 `idle`(기간 문자열, 다른
+  기간 인자와 같은 파서)로 바뀌었다.
 
 `silence` 근거: 로그만 보는 감시는 스크립트가 죽어 조용해지면 영원히 기다린다.
 v8.55.0 ProgressClock 무진전 워치독과 같은 개념이라 내부 일관성도 있다.
