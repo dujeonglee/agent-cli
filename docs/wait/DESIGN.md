@@ -80,6 +80,23 @@ resume 안내(`agents_live` 3곳). `complete` 의 설명에 "Not for waiting —
 "call `wait` instead" 를 붙인다(옛 습관 한 번에 교정). 회귀 가드:
 `tests/test_wait_tool.py::TestWording` 이 패키지 전체에서 그 문장을 찾는다.
 
+### 3.1 꼬리의 안내 (v10.67.1)
+
+도구 설명은 프롬프트 **머리**(Available Tools)에 있다. Task Guidelines 와 `## Open
+Items` 를 꼬리로 옮긴 근거가 "모델은 `complete` 를 부르는 순간 머리의 문장을 읽지
+않는다" 였으므로 wait 도 같은 자리에 둔다 — 종전 꼬리의 wait 언급은 Task
+Guidelines 의 긴-명령 항목 안 한 문장과 `## Background jobs` 블록 머리뿐이라,
+모니터·에이전트를 기다리는 런은 꼬리에서 wait 를 보지 못했다.
+
+`## Open Items` 의 꼬리말에 한 줄을 붙인다(`Ledger.block(can_wait=)`): "Not finished
+because a job, monitor or agent of yours is still working? Call `wait` — the items
+stay open and its report wakes you (never `complete` to wait)." 열린 항목을 보며
+`complete` 를 고민하는 바로 그 자리이고, **wait 가 광고되는 루프에만**
+(`"wait" in cfg.tools_list` — 스킬·일회성 루프는 `requires_handler="wake"` 로
+빠진다) 붙는다. 정적인 Task Guidelines 에는 넣지 않았다 — 거긴 루프 종류를 모른다.
+효과는 다음 벤치의 `complete` 되돌림·`wait` 거부 수로 본다(직전 두 벤치는 둘 다 0
+에 가까워 근거가 약하지만, 사용자 결정으로 넣었다).
+
 ## 4. 측정
 
 A/B 가 필요 없는 수정이다(같은 complete 를 9번 보내는 게 옳을 리 없다). 다음
