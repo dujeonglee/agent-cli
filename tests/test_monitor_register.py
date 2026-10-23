@@ -135,7 +135,7 @@ class TestRegister:
         assert state.get("offset") == 0
 
     def test_other_conditions_register_as_no_op(self, tmp_path):
-        s = build({"type": "silence", "file": str(tmp_path / "a"), "seconds": 5})
+        s = build({"type": "silence", "file": str(tmp_path / "a"), "idle": 5})
         assert s.register(observed_at=time.time()) == ({}, "")
         c = build({"type": "command", "command": "true", "every": 60})
         assert c.register(observed_at=None) == ({}, "")
@@ -183,7 +183,8 @@ class TestToolRegistration:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(f), "pattern": "READY"},
+                    "file": str(f),
+                    "pattern": "READY",
                 },
                 ctx=ctx,
             )
@@ -208,7 +209,8 @@ class TestToolRegistration:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(f), "pattern": "READY"},
+                    "file": str(f),
+                    "pattern": "READY",
                 }
             )
             assert res.success and "before this registration" in res.output

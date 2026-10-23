@@ -72,18 +72,57 @@ def register(cls: type[Condition]) -> type[Condition]:
     return cls
 
 
+#: 조건의 **서명 키** — 이 키들이 있으면 그 조건이다 (v10.67.0). 세 집합은 서로
+#: 겹치지 않아(`command` / `file`+`pattern` / `file`+`idle`) 라벨 없이 결정된다.
+#: 종전 `when.type` 라벨은 레지스트리(`_REGISTRY[type]`)의 키가 와이어에 새어
+#: 나온 것이었다 — 모델이 서술은 맞게 하고 라벨만 빠뜨린 호출이 15턴 거절됐다
+#: (docs/monitor/DESIGN.md §4.2).
+_SIGNATURES: tuple[tuple[str, frozenset[str]], ...] = (
+    ("command", frozenset({"command"})),
+    ("match", frozenset({"file", "pattern"})),
+    ("silence", frozenset({"file", "idle"})),
+)
+
+SHAPES = "{command, every} · {file, pattern} · {file, idle}"
+#: 서명 + 그 조건이 받는 선택 키 — 이 밖의 조건 키가 섞이면 거절.
+_ALLOWED = {
+    "command": frozenset({"command", "every"}),
+    "match": frozenset({"file", "pattern"}),
+    "silence": frozenset({"file", "idle"}),
+}
+_COND_KEYS = frozenset().union(*_ALLOWED.values())
+
+
+def infer_type(spec: dict) -> str:
+    """키 집합 → 조건 이름. 서명 하나에 정확히 맞아야 한다 — 둘 이상에 걸치거나
+    (``file`` + ``command``) 서명 밖 조건 키가 남으면(``file`` + ``pattern`` +
+    ``every``) 섞인 것으로 거절한다: 조용히 하나를 고르면 모델은 제 호출이 맞았다고
+    배운다(실측: 평평 1판이 `file+pattern+every` 를 match 로 받아 영원히 안 울렸다)."""
+    present = {k for k, v in spec.items() if v not in (None, "")}
+    cond = present & _COND_KEYS
+    hits = [kind for kind, keys in _SIGNATURES if keys <= cond]
+    if len(hits) == 1 and cond <= _ALLOWED[hits[0]]:
+        return hits[0]
+    given = ", ".join(sorted(cond))
+    if hits:
+        raise ValueError(
+            f"give exactly ONE condition — {SHAPES} — yours mixes keys: {given}"
+        )
+    raise ValueError(
+        f"the condition must be one of {SHAPES} — "
+        + (f"yours has only: {given}" if given else "none of those keys were given")
+    )
+
+
 def build(spec: dict) -> Condition:
-    """``when`` dict → Condition. 미지의 타입·잘못된 파라미터는 ValueError
-    (도구가 ToolResult 로 변환한다 — `constants.parse_duration` 과 같은 분업)."""
+    """조건 인자(도구 인자 그대로, 평평한 dict) → Condition. 종류는 키 집합으로
+    정한다(`infer_type`). 잘못된 파라미터는 ValueError (도구가 ToolResult 로
+    변환한다 — `constants.parse_duration` 과 같은 분업)."""
     if not isinstance(spec, dict):
         # ValueError 로 통일한다 — 호출자(도구)가 ToolResult 로 변환하는데
         # 예외 종류가 갈리면 변환부가 둘이 된다.
-        raise ValueError("`when` must be an object")  # noqa: TRY004
-    kind = spec.get("type", "")
-    cls = _REGISTRY.get(kind)
-    if cls is None:
-        known = ", ".join(sorted(_REGISTRY))
-        raise ValueError(f"unknown condition type {kind!r} — known: {known}")
+        raise ValueError("condition arguments must be an object")  # noqa: TRY004
+    cls = _REGISTRY[infer_type(spec)]
     return cls.from_spec(spec)  # type: ignore[attr-defined]
 
 
@@ -312,16 +351,17 @@ class SilenceCondition(Condition):
 
     @classmethod
     def from_spec(cls, spec: dict) -> SilenceCondition:
+        from agent_cli.constants import parse_duration
+
         file = str(spec.get("file") or "").strip()
         if not file:
             raise ValueError("silence: `file` is required")
-        raw = spec.get("seconds")
         try:
-            seconds = int(raw)
-        except (TypeError, ValueError):
-            raise ValueError("silence: `seconds` must be an integer") from None
+            seconds = parse_duration(str(spec.get("idle")))
+        except ValueError as exc:
+            raise ValueError(f"silence: `idle` — {exc}") from None
         if seconds <= 0:
-            raise ValueError("silence: `seconds` must be positive")
+            raise ValueError("silence: `idle` must be positive")
         return cls(file, seconds)
 
     def describe(self) -> str:

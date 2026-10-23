@@ -276,7 +276,7 @@ class TestAlreadyArrived:
         assert loop.turn == 2  # 거부 턴 + 닫는 턴 — 런 경계 없이 이어졌다
         users = [str(m.get("content")) for m in loop.messages if m["role"] == "user"]
         i = next(i for i, c in enumerate(users) if "wait refused" in c)
-        assert "1 notice you were waiting for already arrived" in users[i]
+        assert "1 notice arrived while you were thinking" in users[i]
         assert "nothing you started is pending" not in users[i]
         # 그 통지는 거부 **뒤**, 다음 턴 경계에 배달됐다
         assert any("🔔 hit" in c for c in users[i + 1 :])
@@ -290,7 +290,7 @@ class TestAlreadyArrived:
         )
         assert loop.run().success
         assert any(
-            "2 notices you were waiting for already arrived" in str(m.get("content"))
+            "2 notices arrived while you were thinking" in str(m.get("content"))
             for m in loop.messages
             if m["role"] == "user"
         )

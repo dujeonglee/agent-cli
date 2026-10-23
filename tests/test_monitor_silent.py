@@ -60,7 +60,8 @@ class TestSpec:
         r = MonitorTool()._run(
             {
                 "mode": "add",
-                "when": {"type": "match", "file": str(tmp_path / "l"), "pattern": "x"},
+                "file": str(tmp_path / "l"),
+                "pattern": "x",
                 "silent": "2m",
             }
         )
@@ -127,7 +128,7 @@ class TestRetire:
         reg = _reg(tmp_path)
         log = tmp_path / "s.log"
         log.write_text("x\n")
-        cond = build({"type": "silence", "file": str(log), "seconds": 30})
+        cond = build({"type": "silence", "file": str(log), "idle": 30})
         mon = reg.add(cond, owner="main", deadline_s=7200)
         reg.tick(mon.created_at + 31)
         assert not mon.alive and "fired once" in mon.retired

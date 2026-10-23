@@ -91,7 +91,7 @@ class TestMonitorReports:
         # 되돌려야 침묵이 성립한다.
         os.utime(log, (old, old))
         mon = reg.add(
-            build({"type": "silence", "file": str(log), "seconds": 1}),
+            build({"file": str(log), "idle": "1"}),
             owner="main",
             deadline_s=3600,
         )
@@ -127,7 +127,7 @@ class TestMonitorReports:
         "spec",
         [
             {"type": "match", "file": "/tmp/x.log", "pattern": "Y"},
-            {"type": "silence", "file": "/tmp/x.log", "seconds": 30},
+            {"type": "silence", "file": "/tmp/x.log", "idle": "30"},
             {"type": "command", "command": "true", "every": "30s"},
         ],
     )

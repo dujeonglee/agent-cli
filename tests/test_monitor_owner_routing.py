@@ -63,7 +63,8 @@ class TestToolKnowsItsAddress:
         res = MonitorTool().run(
             {
                 "mode": "add",
-                "when": {"type": "match", "file": str(log), "pattern": "X"},
+                "file": str(log),
+                "pattern": "X",
             },
             ctx=RunContext(owner="agent:k9"),
         )
@@ -80,7 +81,8 @@ class TestToolKnowsItsAddress:
         MonitorTool().run(
             {
                 "mode": "add",
-                "when": {"type": "match", "file": str(log), "pattern": "X"},
+                "file": str(log),
+                "pattern": "X",
             },
             ctx=None,
         )
@@ -98,7 +100,8 @@ class TestToolKnowsItsAddress:
         res = MonitorTool().run(
             {
                 "mode": "add",
-                "when": {"type": "match", "file": str(log), "pattern": "X"},
+                "file": str(log),
+                "pattern": "X",
             },
             ctx=RunContext(),
         )
@@ -577,7 +580,8 @@ class TestProfileReach:
             r = tool._run(
                 {
                     "mode": "add",
-                    "when": {"type": "command", "command": "true", "every": 60},
+                    "command": "true",
+                    "every": 60,
                 },
                 ctx=no_shell,
             )
@@ -585,7 +589,8 @@ class TestProfileReach:
             r = tool._run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(log), "pattern": "x"},
+                    "file": str(log),
+                    "pattern": "x",
                     "run": "true",
                 },
                 ctx=no_shell,
@@ -594,7 +599,8 @@ class TestProfileReach:
             r = tool._run(
                 {
                     "mode": "add",
-                    "when": {"type": "match", "file": str(log), "pattern": "x"},
+                    "file": str(log),
+                    "pattern": "x",
                 },
                 ctx=no_shell,
             )
