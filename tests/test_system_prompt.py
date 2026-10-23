@@ -754,17 +754,16 @@ class TestBuildSystemPrompt:
         # (b) leave pre-existing dead code alone unless asked.
         assert "pre-existing" in flat or "without asking" in flat
 
-    def test_task_guidelines_require_addressing_all_pending_requests(self):
-        """When a second request is queued mid-task the model must address every
-        outstanding request, not answer only the latest and drop an earlier
-        unanswered one (v8.14.2). Guidance sits in Task Guidelines next to the
-        multi-user fairness rule."""
+    def test_task_guidelines_do_not_restate_open_items(self):
+        """v8.14.2 의 "address every outstanding request" 조언은 v10.68.0 에서 뺐다 —
+        `## Open Items` 가 항목을 나열하고 런을 열어 두는 **강제**라 같은 말을 꼬리에
+        두 번 두지 않는다(v9.18.0 메모: 강제는 조언에 기대지 않는다). 다중 사용자
+        공정성 규칙은 그대로다."""
         import re
 
-        guidelines = TASK_GUIDELINES
-        flat = re.sub(r"\s+", " ", guidelines).lower()
-        assert "outstanding request" in flat
-        assert "most recent" in flat
+        flat = re.sub(r"\s+", " ", TASK_GUIDELINES).lower()
+        assert "outstanding request" not in flat
+        assert "all users sharing this session are equals" in flat
 
     def test_no_recursive_invocation_in_guidelines(self):
         """Recursive-self-invocation guard moved from Response Format

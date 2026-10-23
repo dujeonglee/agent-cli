@@ -877,6 +877,53 @@ class TestVisionSupport:
         assert vision_support(caps, _T, "http://x", "other") is True
         assert calls == [("http://x/", "m"), ("http://x", "other")]
 
+    @pytest.mark.parametrize(
+        ("outcome", "persisted"),
+        [
+            ("yes", True),  # 답이 왔다 — 맞음
+            ("no", False),  # 답이 왔다 — 틀림(텍스트 모델의 추측)
+            ("http400", False),  # 서버가 이미지를 거부 — 판정
+            ("http503", None),  # 서버 장애 — 판정 아님, 파일에 안 쓴다
+            ("timeout", None),
+        ],
+    )
+    def test_settled_probe_results_are_written_to_models_json(
+        self, monkeypatch, outcome, persisted
+    ):
+        """판정이 난 프로브만 영속 (v10.68.0, `config.fill_model_entry`)."""
+        import requests as _rq
+
+        from agent_cli.providers import capabilities as caps_mod
+        from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+
+        monkeypatch.setattr(caps_mod, "_vision_probed", {})
+        written = {}
+        monkeypatch.setattr(
+            "agent_cli.config.fill_model_entry",
+            lambda model, fields: written.update({model: fields}) or True,
+        )
+
+        class _T:
+            def __init__(self, *a):
+                pass
+
+            def vision_probe(self):
+                if outcome == "yes":
+                    return True
+                if outcome == "no":
+                    return False
+                if outcome.startswith("http"):
+                    r = _rq.Response()
+                    r.status_code = int(outcome[4:])
+                    raise _rq.HTTPError(response=r)
+                raise _rq.ConnectionError("timeout")
+
+        got = vision_support(ModelCapabilities(1, 1, False), _T, "http://x", "m")
+        assert got is (outcome == "yes")
+        assert written.get("m") == (
+            None if persisted is None else {"supports_vision": persisted}
+        )
+
     def test_probe_failure_means_no(self, monkeypatch):
         from agent_cli.providers import capabilities as caps_mod
         from agent_cli.providers.capabilities import ModelCapabilities, vision_support

@@ -73,7 +73,7 @@
 ## 3. 문구 교체
 
 "기다릴 땐 `complete`" 가 여섯 군데 있었고 전부 `wait` 로 바꿨다:
-Task Guidelines(작업 줄) · 꼬리의 작업 블록 머리(`jobs.render_tail`) · 관찰 넛지
+Task Guidelines(작업 줄) · 꼬리의 작업 블록 머리(`jobs.render_tail`; v10.68.0 에서 상태만 남기고 wait 문장은 뺌 — §3.1) · 관찰 넛지
 (`context/manager._OBS_COMPLETE_NUDGE`) · `agent status` 의 ⏳ 힌트 · 요청 접수·
 resume 안내(`agents_live` 3곳). `complete` 의 설명에 "Not for waiting — call `wait`"
 를 더했고, 기다리려고 쓴 `answers` 없는 complete 의 되돌림은 깨울 것이 있으면
@@ -96,6 +96,14 @@ stay open and its report wakes you (never `complete` to wait)." 열린 항목을
 빠진다) 붙는다. 정적인 Task Guidelines 에는 넣지 않았다 — 거긴 루프 종류를 모른다.
 효과는 다음 벤치의 `complete` 되돌림·`wait` 거부 수로 본다(직전 두 벤치는 둘 다 0
 에 가까워 근거가 약하지만, 사용자 결정으로 넣었다).
+
+**중복 정리 (v10.68.0).** 같은 턴에 wait 안내가 세 번 보였다: Guidelines 의 긴-명령
+규칙, `## Background jobs` 머리의 "Nothing else to do? Call `wait`", 그리고 §3.1 의
+Open Items 꼬리말. 원칙은 "규칙은 Guidelines 에, 상태 블록은 상태와 그 순간의 행동
+포인터 하나" — 작업 블록 머리는 상태만 남겼다("running — you are told when each one
+ends; do not poll"). 같은 원칙으로 Guidelines 의 "address every outstanding request"
+문장을 뺐다: `## Open Items` 가 항목을 나열하고 런을 열어 두는 강제이지 조언이
+아니다(v9.18.0 메모가 이미 그렇게 적었다).
 
 ## 4. 측정
 

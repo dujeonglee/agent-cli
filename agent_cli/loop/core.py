@@ -790,7 +790,8 @@ class AgentLoop:
         ("⚡ Another user request arrived … address EVERY outstanding request")
         before the batch's first plain-chat message. It said the same thing as
         two per-turn tail surfaces — the Task Guidelines rule ("when more than
-        one user request is pending … do not answer only the most recent") and
+        one user request is pending … do not answer only the most recent";
+        itself dropped in v10.68.0 — ``## Open Items`` lists and enforces) and
         ``## Open Requests`` (the ids themselves) — while being the only one
         ``ctx.add``-ed, so it stuck in history and had to be filtered out of
         resume previews. It was also positionally dominated: the tail is

@@ -371,8 +371,11 @@ class TestWording:
             tail = r.render_tail("main")
         finally:
             r.stop_all()
-        assert "Call `wait`" in tail and "complete" not in tail
+        # 작업 블록 머리는 상태만 (v10.68.0) — wait 안내는 규칙(Guidelines)과
+        # `## Open Items` 꼬리말 두 곳, 세 번째는 없다
+        assert "do not poll" in tail and "wait" not in tail and "complete" not in tail
         assert "call `wait`" in _OBS_COMPLETE_NUDGE
+        assert "address every outstanding request" not in TASK_GUIDELINES
 
     def test_open_items_tail_points_at_wait_only_where_wait_exists(self, jobs):
         """꼬리의 `## Open Items` 끝에 "못 닫으면 wait" 한 줄 (v10.67.1) — wait 가

@@ -254,6 +254,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.68.0 | 프로브 결과 영속: `vision_support` 가 판정(답 수신 또는 4xx)이면 `config.fill_model_entry` 로 엔트리의 **빠진** `supports_vision` 만 채운다. 연결 실패·5xx 는 프로세스 한정. 동기: v10.59.0 이전 엔트리 셋이 harbor trial·보드 방마다 다시 프로브했다. |
 | v10.61.3 | 대기 줄·런 머리의 작은 썸네일(`miniThumbs`) — 사용자 검토 1차. |
 | v10.61.1 | Pillow 선택 의존성(`[image]`): `image_size` 헤더 파싱, 프로브 PNG 상수, `has_pillow`, `ImageTooLarge`(5MB 초과만 거절). 사내 미러에 Pillow 가 없는 배포 실측. |
 | v10.61.0 | P3: browser `screenshot` 모드(`BrowserSession.screenshot`, `SCREENSHOT_DIR`) · MCP 이미지 조각 → 파일 + 참조(`_save_mcp_image`, `MCP_IMAGE_DIR`, `IMAGE_EXT`) · 에이전트 채널 이미지(`/api/agent/{key}/input images` → `request(images=)` → inbox → `run_subagent_message(query_images=)`; `agent_msg`·`conversation.jsonl` 에 `images`, 프런트 ⏳ 줄·런 머리 썸네일) · `fresh_upload_path(subdir=)`. 실측(축소·keep-N)은 P4 로 남긴다. |

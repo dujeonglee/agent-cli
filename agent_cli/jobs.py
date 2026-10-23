@@ -156,8 +156,10 @@ class JobRegistry:
             return ""
         now = now or time.time()
         head = (
+            # 상태만 적는다 (v10.68.0): "기다릴 땐 wait" 는 Task Guidelines 의 규칙과
+            # `## Open Items` 꼬리말에 있다 — 같은 턴에 세 번 말하지 않는다.
             "## Background jobs (running — you are told when each one ends; do not "
-            "poll. Nothing else to do? Call `wait`: the notice wakes you.)"
+            "poll)"
         )
         lines = [head]
         for j in jobs:
