@@ -374,6 +374,35 @@ class TestWording:
         assert "Call `wait`" in tail and "complete" not in tail
         assert "call `wait`" in _OBS_COMPLETE_NUDGE
 
+    def test_open_items_tail_points_at_wait_only_where_wait_exists(self, jobs):
+        """꼬리의 `## Open Items` 끝에 "못 닫으면 wait" 한 줄 (v10.67.1) — wait 가
+        광고되는 루프(main 큐·상주 받은편지함)에만. 스킬·일회성 루프의 꼬리엔 없다."""
+        from agent_cli.loop.ledger import Ledger
+
+        led = Ledger()
+        led.add_request("u-1", "DJ", "do X")
+        assert "Call `wait`" in led.block(can_wait=True)
+        assert "never `complete` to wait" in led.block(can_wait=True)
+        assert "wait" not in led.block()
+        # 실제 조립: wakeable 포트의 루프 꼬리에는 있고, 미연결 포트의 루프엔 없다
+        for ports, expect in ((WAKEABLE, True), (TEST_PORTS, False)):
+            loop = AgentLoop(
+                ports=ports,
+                query="Q",
+                query_request_id="u-1",
+                provider=MagicMock(),
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                ),
+                model="m",
+                dialect=get_dialect("json_fc"),
+            )
+            loop._state.ledger.add_request("u-1", "DJ", "do X")
+            tail = loop._llm._build_session_state(10000)
+            assert ("Call `wait` — the items stay open" in tail) is expect, tail
+
     def test_no_complete_and_wait_phrase_in_package(self):
         import re
         from pathlib import Path

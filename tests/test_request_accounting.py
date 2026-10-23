@@ -357,7 +357,7 @@ class TestIdsReachTheModel:
         from agent_cli.loop.llm import LLMCaller
 
         src = inspect.getsource(LLMCaller._build_session_state)
-        assert "self.state.ledger.block()" in src and "items=items" in src
+        assert "self.state.ledger.block(can_wait=" in src and "items=items" in src
         block = inspect.getsource(Ledger.block)
         assert "if not self.requests and not debts:" in block, (
             "단건 런이 꼬리에서 빠졌다"

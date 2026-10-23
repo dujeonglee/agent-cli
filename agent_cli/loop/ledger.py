@@ -31,6 +31,15 @@ _TAIL = (
     "  The run stays open until every item is closed; your result is delivered "
     "either way."
 )
+#: wait 가 있는 루프에만 (v10.67.1) — 열린 항목을 보며 `complete` 를 고민하는 바로
+#: 그 자리에 대안을 둔다. 도구 설명은 프롬프트 머리에 있어 그 순간 읽히지 않는다
+#: (Task Guidelines·Open Items 를 꼬리로 옮긴 근거와 같다). 스킬·일회성 루프엔
+#: wait 가 없으므로(`requires_handler="wake"`) 보여 주지 않는다.
+_TAIL_WAIT = (
+    "  Not finished because a job, monitor or agent of yours is still working? "
+    "Call `wait` — the items stay open and its report wakes you (never "
+    "`complete` to wait)."
+)
 
 
 def complete_line(ids: list[str]) -> str:
@@ -147,14 +156,16 @@ class Ledger:
             out.append(complete_line([str(r.get("id")) for r in requests]))
         return "\n".join(out)
 
-    def block(self) -> str:
+    def block(self, *, can_wait: bool = False) -> str:
         """``## Open Items`` — 열린 것이 없으면 빈 문자열. **1건에도 싣는다**(모델이
         id 어휘를 배울 기회 — 합쳐진 런에서만 보이면 처음 본 필드를 곧바로 채우라는
-        요구가 된다)."""
+        요구가 된다). ``can_wait`` (v10.67.1): 이 루프에 `wait` 도구가 있으면 꼬리말에
+        "못 닫는다면 wait" 한 줄."""
         debts = self.debts()
         if not self.requests and not debts:
             return ""
-        return f"{_HEAD}\n{self.items_lines(self.requests, debts)}\n{_TAIL}"
+        tail = f"{_TAIL}\n{_TAIL_WAIT}" if can_wait else _TAIL
+        return f"{_HEAD}\n{self.items_lines(self.requests, debts)}\n{tail}"
 
     def lines_for_notice(self, requests: list[dict]) -> str:
         """최종 답 말미의 미답 목록 — 사람이 읽는 줄."""

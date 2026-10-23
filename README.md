@@ -1021,7 +1021,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
-| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "while you were thinking … delivered right below this" 로 알린다(v10.66.2, 문구 v10.67.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 통지는 같은 프롬프트에 연달아 들어간다). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
+| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "while you were thinking … delivered right below this" 로 알린다(v10.66.2, 문구 v10.67.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 통지는 같은 프롬프트에 연달아 들어간다). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
 | `complete` | 작업 완료 신호 (최종 결과 반환). 기다리는 용도가 아니다 — 그건 `wait` |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
