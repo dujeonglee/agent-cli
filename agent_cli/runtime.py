@@ -450,6 +450,17 @@ def wake_sources(owner: str) -> list[str]:
     return out
 
 
+def arrived_mail(owner: str) -> int:
+    """이 소유자 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2) —
+    `wait` 의 둘째 판정. 깨울 것(`wake_sources`)이 "아직 돌고 있는 것" 이라면 이건
+    "끝나서 통지가 와 있는 것": 모니터가 wait 보다 먼저 발화한 벤치 사례가 그렇다.
+    0 이 아니면 wait 는 거부되고 런이 이어져 그 통지를 바로 받는다."""
+    from agent_cli.subagent.agents_live import main_registry
+
+    agents = main_registry()
+    return agents.arrived_for(owner) if agents is not None else 0
+
+
 def session_has_live_work(
     *, pending_count: int, monitors=None, schedules=None, harness=None, jobs=None
 ) -> bool:

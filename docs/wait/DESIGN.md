@@ -55,6 +55,16 @@
   `owed`·`end_run` 을 건너뛴다. 종전 흐름이면 요청자가 "(no explicit reply — run
   summary) ⏸ waiting on job #1" 을 답으로 받고 빚이 갚힌 것으로 처리돼, 깨어난
   뒤의 진짜 `reply` 가 "no unpaid reply" 로 거부됐을 것이다.
+- **이미 도착한 통지가 있으면 거부한다** (v10.66.2) — `runtime.arrived_mail(owner)`:
+  main 의 메일함(`AgentRegistry._pending` — 작업·모니터 통지, 에이전트 회신·질문),
+  상주의 받은편지함 미러(`inbox_items`). 기다리던 것이 wait 보다 **먼저 끝난**
+  경우다(9과제 벤치의 once 모니터). 그 통지는 어차피 다음 턴 경계
+  (`_deliver_agent_mail`/`_absorb_inbox`)에 배달되므로, 받아 줘서 런을 끝내면 펌프가
+  바로 다시 깨울 뿐이다 — 거부하고 "N notice(s) … already arrived and follow in the
+  next observation" 으로 잇는 쪽이 싸고 모델의 맥락도 남는다. 돌고 있는 것이 함께
+  있어도 도착분이 먼저다(읽고 나서 다시 wait). 종전 `pending_for` 의 "a reply to
+  you not yet delivered" 는 이 도착분을 **깨울 것** 으로 치려던 가지였는데, 작업·
+  모니터 메일엔 `to` 키가 없어 한 건도 안 잡혔다 — 뺐다.
 - **깨우는 쪽은 그대로** — 작업 종료 통지·모니터 보고/만료(2h)·에이전트 회신·
   예약 발화는 전부 소유자 주소로 배달되고, run 펌프(`QuietPolicy`)와 web 의
   self-reap 은 같은 항을 "할 일" 로 본다. wait 가 받아 준 것은 그 네 가지뿐이라
@@ -81,6 +91,9 @@ A/B 가 필요 없는 수정이다(같은 complete 를 9번 보내는 게 옳을
 거부 1회: video 에서 모델이 파일 감시 모니터(`once`)를 걸고 바로 `wait` 했는데
 파일이 이미 있어 모니터가 즉시 발화·은퇴한 뒤였다. 거부 관찰과 그 모니터의
 통지가 같은 관찰에 함께 배달돼 런은 그대로 이어졌다 — 결과는 맞고 낭비도 없다.
-남은 틈: `wake_sources` 는 **대기열에 들어와 있으나 아직 안 읽은 통지** 를 세지
-않는다. 거부 뒤 런이 계속되면 그 통지를 바로 받으므로 실질 영향은 없고, 거부
-문구만 "nothing is pending" 이 사실과 조금 어긋난다. 재현 사례가 더 쌓이면 본다.
+남은 틈이었던 것: `wake_sources` 는 **이미 도착해 아직 배달 안 된 통지** 를 세지
+않았다. 거부 뒤 런이 계속되면 그 통지를 바로 받으므로 결과는 맞았지만 거부 문구
+"nothing is pending" 이 사실과 어긋났다 — v10.66.2 에서 `arrived_mail` 로 갈라
+"already arrived and follow in the next observation" 으로 거부한다(§2.1). 같은
+조사에서 `pending_for` 의 "has your request queued" 가지가 `SimpleQueue` 에 없는
+`queue` 속성을 읽어 늘 비어 있던 것도 받은편지함 미러로 고쳤다.

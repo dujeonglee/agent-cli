@@ -1023,8 +1023,15 @@ class AgentRegistry:
         """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
         사람이 읽을 한 줄씩. 세션 전체의 `has_active_work` 가 아니라 **요청자별**:
         그 주소에게 회신을 빚진 에이전트, 그 주소가 보낸 항목을 받은편지함에
-        들고 있거나 지금 처리 중인 에이전트, 그 주소로 가는 미배달 회신. 자기
-        자신은 빼지 않아도 된다 — 자기에게 빚지거나 자기 항목을 드는 일은 없다."""
+        들고 있거나 지금 처리 중인 에이전트. 자기 자신은 빼지 않아도 된다 —
+        자기에게 빚지거나 자기 항목을 드는 일은 없다.
+
+        **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_for`.
+        종전엔 "그 주소로 가는 미배달 회신" 을 ``to`` 키로 세었는데, main 의
+        메일함(``_pending``)에서 작업·모니터 통지는 ``to`` 가 없어 한 건도
+        안 잡혔고(벤치 실측: 모니터가 먼저 발화한 뒤의 wait 가 "nothing
+        pending" 으로 거부), 잡혔더라도 **곧 배달될 것** 을 깨울 것으로 쳐
+        런을 끝내고 바로 다시 깨우는 낭비였다."""
         out: list[str] = []
         with self._cv:
             for debtor, debts in self._reply_debts.items():
@@ -1032,20 +1039,36 @@ class AgentRegistry:
                     continue
                 if any(not d.settled and not d.human and d.to == addr for d in debts):
                     out.append(f"{debtor} owes you a reply")
-            if any(str(r.get("to") or "") == addr for r in self._pending):
-                out.append("a reply to you not yet delivered")
         for tm in list(self._agents.values()):
             me = f"agent:{tm.key}"
             if me == addr:
                 continue
             if self.state_is_active(tm.state) and tm.current_author == addr:
                 out.append(f"{me} working on your request")
-            elif any(
-                str(getattr(i, "get", lambda _k, _d=None: _d)("author") or "") == addr
-                for i in list(getattr(tm.inbox, "queue", []))
-            ):
+            elif any(str(i.get("author") or "") == addr for i in self._queued(tm)):
+                # 받은편지함 미러(`inbox_items`)로 본다 — `SimpleQueue` 엔 `queue`
+                # 속성이 없어 종전 `getattr(tm.inbox, "queue", [])` 는 늘 비었다.
                 out.append(f"{me} has your request queued")
         return out
+
+    def _queued(self, tm: AgentInstance) -> list[dict]:
+        """``tm`` 의 받은편지함에 들어 있고 아직 런이 집지 않은 항목(미러 스냅샷)."""
+        with self._cv:
+            return list(tm.inbox_items)
+
+    def arrived_for(self, addr: str) -> int:
+        """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2,
+        `wait` 의 둘째 판정 재료). main 은 메일함(``_pending`` — 작업·모니터
+        통지, 에이전트 회신·질문 전부 main 행), 상주 에이전트는 자기 받은편지함.
+        이게 0 이 아니면 `wait` 는 받지 않는다: 런을 끝내 봐야 펌프가 바로 다시
+        깨우므로, 거부하고 다음 관찰에 배달되게 두는 쪽이 싸고 맥락도 남는다."""
+        if addr == "main":
+            with self._cv:
+                return len(self._pending)
+        if addr.startswith("agent:"):
+            tm = self._agents.get(addr.split(":", 1)[1])
+            return 0 if tm is None else len(self._queued(tm))
+        return 0
 
     def has_pending_replies(self) -> bool:
         with self._cv:

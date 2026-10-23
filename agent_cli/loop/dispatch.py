@@ -928,12 +928,32 @@ class TurnDispatcher:
         (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
         보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
         런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
-        막혔을 때 wait 로 도피하는 길은 없다."""
-        from agent_cli.runtime import wake_sources
+        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`runtime.arrived_mail`)
+        가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다."""
+        from agent_cli.runtime import arrived_mail, wake_sources
 
         reason = ""
         if isinstance(op.action_input, dict):
             reason = str(op.action_input.get("reason") or "").strip()
+        arrived = arrived_mail(self.cfg.owner)
+        if arrived:
+            # 기다리던 것이 wait 보다 먼저 끝났다(v10.66.2) — 통지는 다음 턴
+            # 경계(`_deliver_agent_mail`/`_absorb_inbox`)에 배달된다. 런을
+            # 끝내면 펌프가 바로 다시 깨울 뿐이라 거부하고 잇는다.
+            n = f"{arrived} notice" + ("s" if arrived > 1 else "")
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                f"Observation: wait refused — {n} you were waiting for already "
+                "arrived and follow in the next observation. Read them first; "
+                "call `wait` again only if something is still running.",
+                tool_name="wait",
+                success=False,
+                turn=self.state.turn,
+            )
+            return _CONTINUE
         sources = wake_sources(self.cfg.owner)
         if not sources:
             _append_observation(
