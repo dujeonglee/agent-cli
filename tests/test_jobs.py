@@ -154,7 +154,7 @@ class TestTail:
         assert "job #1 · pid " in out and "1m30s" in out and "`sleep 60`" in out
         assert "→ .agent-cli/tmp/jobs/1.log" in out and "stop it: `kill " in out
         assert "job #2" not in out
-        assert "do not poll" in out and "Call `wait`" in out
+        assert "do not poll" in out and "wait" not in out  # v10.68.0: 상태만
 
     def test_nothing_when_nothing_runs(self, reg):
         job = reg.start("true", owner="main")

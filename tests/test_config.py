@@ -104,6 +104,30 @@ class TestSaveModelEntry:
         assert "new-model:7b" in data["models"]
         assert data["models"]["new-model:7b"]["context_window"] == 8192
 
+    def test_fill_adds_only_missing_keys_even_to_manual_entries(
+        self, tmp_path, monkeypatch
+    ):
+        """프로브 결과 영속 (v10.68.0): 손으로 등록한 엔트리라도 **없는 키** 는
+        채운다, 있는 키는 사용자 값이 이긴다, 모르는 모델은 만들지 않는다."""
+        from agent_cli.config import fill_model_entry
+
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {"models": {"m": {"context_window": 4096, "supports_grammar": True}}}
+            )
+        )
+        monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+        assert fill_model_entry("m", {"supports_vision": False}) is True
+        data = json.loads(target.read_text())["models"]["m"]
+        assert data["supports_vision"] is False and data["context_window"] == 4096
+        # 있는 키는 안 건드린다 → 쓸 게 없으면 False
+        assert fill_model_entry("m", {"supports_vision": True}) is False
+        assert json.loads(target.read_text())["models"]["m"]["supports_vision"] is False
+        assert fill_model_entry("unknown", {"supports_vision": True}) is False
+        assert "unknown" not in json.loads(target.read_text())["models"]
+
     def test_no_overwrite_existing(self, tmp_path, monkeypatch):
         """Existing model should NOT be overwritten."""
         target = tmp_path / "models.json"

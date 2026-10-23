@@ -107,6 +107,41 @@ def get_provider_defaults(provider: str) -> ProviderDefaults:
     )
 
 
+def fill_model_entry(model: str, fields: dict) -> bool:
+    """등록된 엔트리에 **빠진 키만** 채운다 (v10.68.0) — 런타임 프로브 결과의 영속.
+
+    `save_model_entry` 의 "손으로 등록한 엔트리는 덮어쓰지 않는다" 는 **값을**
+    지키는 정책이다. 여기는 사용자가 적지 않은 키(예: v10.59.0 이전 엔트리의
+    ``supports_vision``)를 프로브가 한 번 판정한 값으로 채우는 것이라 아무 값도
+    덮어쓰지 않는다 — 이미 있는 키는 사용자 값이 이긴다. 엔트리가 없으면 아무것도
+    하지 않는다(새 엔트리는 모델 감지의 몫). 종전엔 그 키가 없는 모델은 프로세스
+    마다 첫 이미지에서 다시 프로브했다(harbor trial·보드 방마다 한 번).
+    Returns True 면 썼다."""
+    target = _GLOBAL_MODELS_PATH
+    if not target.is_file():
+        return False
+    try:
+        with open(target, encoding="utf-8") as f:
+            existing = json.load(f)
+    except Exception as e:
+        print(f"[warn] Cannot read {target}: {e}", file=sys.stderr)
+        return False
+    entry = existing.get("models", {}).get(model)
+    if entry is None:
+        return False
+    missing = {k: v for k, v in fields.items() if k not in entry}
+    if not missing:
+        return False
+    entry.update(missing)
+    try:
+        atomic_write_json(target, existing, indent=2)
+    except Exception as e:
+        print(f"[warn] Cannot save to {target}: {e}", file=sys.stderr)
+        return False
+    reload_registry()
+    return True
+
+
 def save_model_entry(model: str, entry: dict) -> bool:
     """Save a runtime-detected model to ~/.agent-cli/models.json.
 

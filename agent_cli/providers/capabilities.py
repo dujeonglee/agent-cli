@@ -202,22 +202,37 @@ def vision_support(
     api_key: str = "",
 ) -> bool:
     """모델이 이미지를 보는가 — 등록값이 있으면 그것, 없으면(``None``) 한 번
-    프로브해 프로세스 안에 기억한다 (v10.59.0).
+    프로브해 프로세스 안에 기억하고, **판정이 났으면 models.json 의 빠진 키에
+    적는다** (v10.68.0, `config.fill_model_entry`).
 
     프로브는 이미지를 **보내 보고 답을 검사**한다(두 색을 순서대로): 조각을
     조용히 버리는 서버(omlx 의 tool 메시지 실측)에서 "200 이면 참" 은 거짓
     양성이라서다. 어떤 실패도 False — 없는 능력을 약속하지 않는다.
+
+    영속은 **판정이 난 경우만**: 답이 돌아왔거나(맞든 틀리든) 서버가 4xx 로 이미지를
+    거부한 경우. 연결 실패·타임아웃·5xx 는 이 프로세스에서만 False 다 — 서버가
+    바쁜 순간의 False 를 파일에 박으면 다음부터 영영 못 본다.
     """
     if caps.supports_vision is not None:
         return caps.supports_vision
     key = (base_url.rstrip("/"), model)
     hit = _vision_probed.get(key)
     if hit is None:
+        settled = True
         try:
             hit = bool(transport_factory(base_url, model, api_key).vision_probe())
+        except requests.HTTPError as exc:
+            hit = False
+            status = getattr(getattr(exc, "response", None), "status_code", 0) or 0
+            settled = 400 <= status < 500
         except Exception:
             hit = False
+            settled = False
         _vision_probed[key] = hit
+        if settled:
+            from agent_cli.config import fill_model_entry
+
+            fill_model_entry(model, {"supports_vision": hit})
     return hit
 
 
