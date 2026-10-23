@@ -176,6 +176,126 @@ class TestWaitEndsTheRun:
         assert wake_sources("agent:x") == ["job #1 (`sleep 30`)"]
 
 
+class TestAlreadyArrived:
+    """기다리던 것이 wait 보다 먼저 끝난 경우 (v10.66.2) — 통지가 메일함에 와 있다.
+    벤치 실측: once 모니터가 즉시 발화·은퇴한 뒤의 wait 가 "nothing pending" 으로
+    거부됐다. 거부는 맞지만(런을 끝내면 바로 다시 깨울 뿐) 문구가 사실과 달랐다."""
+
+    def _registry(self, tmp_path):
+        from agent_cli.subagent.agents_live import set_main_registry
+        from tests.test_agents_live import make_registry
+
+        reg = make_registry(tmp_path)
+        set_main_registry(reg)
+        return reg
+
+    def _monitor_mail(self, reg):
+        assert (
+            reg.deliver(
+                "main",
+                mail={"kind": "monitor", "success": True, "output": "🔔 hit"},
+                text="🔔 hit",
+                author="main",
+                expects_reply=False,
+            )
+            == ""
+        )
+
+    def _mid_turn(self, reg, n, first):
+        """모델 호출 **도중** 에 통지 n 건이 도착한다 — 런 시작·턴 경계에 와 있던
+        메일은 모델이 보기 전에 배달되므로(`_deliver_agent_mail`), 틈은 호출
+        중에만 생긴다(벤치: 모니터가 그 사이에 발화). 둘째 호출은 장부의 열린
+        항목(요청 `u-1` + 배달된 통지 `n-…`)을 전부 닫는 complete."""
+        p = MagicMock()
+        holder: dict = {}
+
+        def _call(*_a, **_k):
+            if p.call.call_count == 1:
+                for _ in range(n):
+                    self._monitor_mail(reg)
+                return LLMResponse(content=json.dumps(first))
+            ids = list(holder["loop"]._state.ledger.request_ids())
+            return LLMResponse(
+                content=json.dumps(
+                    {"action": "complete", "result": "ok", "answers": ids}
+                )
+            )
+
+        p.call.side_effect = _call
+        p.holder = holder
+        return p
+
+    def _loop(self, reg, provider):
+        loop = provider.holder["loop"] = AgentLoop(
+            ports=make_ports(dequeue_user_message=lambda: None, agent_registry=reg),
+            query="Q",
+            query_request_id="u-1",
+            provider=provider,
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            dialect=get_dialect("json_fc"),
+        )
+        return loop
+
+    def test_job_and_monitor_mail_count_as_arrived_not_as_wake_sources(self, tmp_path):
+        from agent_cli.runtime import arrived_mail, wake_sources
+
+        reg = self._registry(tmp_path)
+        assert arrived_mail("main") == 0
+        self._monitor_mail(reg)
+        assert reg.arrived_for("main") == 1 and arrived_mail("main") == 1
+        # 종전의 "a reply to you not yet delivered" 는 없다 — 도착분은 깨울 것이 아니다
+        assert wake_sources("main") == []
+        assert reg.arrived_for("agent:nobody") == 0
+
+    def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
+        """받은편지함 미러 `inbox_items` 로 센다 — `SimpleQueue` 엔 `queue` 속성이
+        없어 종전 `pending_for` 의 "has your request queued" 가지는 늘 비었다."""
+        from types import SimpleNamespace
+
+        reg = self._registry(tmp_path)
+        reg._agents["k"] = SimpleNamespace(
+            key="k", state="idle", inbox_items=[{"author": "main", "text": "x"}]
+        )
+        assert reg.arrived_for("agent:k") == 1
+        assert reg.arrived_for("main") == 0
+        assert reg.pending_for("main") == ["agent:k has your request queued"]
+
+    def test_wait_is_refused_and_the_mail_lands_in_the_next_turn(self, jobs, tmp_path):
+        reg = self._registry(tmp_path)
+        # 돌고 있는 작업이 **있어도** 도착분이 먼저다 — 읽고 나서 다시 wait
+        jobs.start("sleep 30", owner="main")
+        loop = self._loop(
+            reg,
+            self._mid_turn(reg, 1, {"action": "wait", "reason": "monitor"}),
+        )
+        res = loop.run()
+        assert res.success and not res.waiting and res.output == "ok"
+        assert loop.turn == 2  # 거부 턴 + 닫는 턴 — 런 경계 없이 이어졌다
+        users = [str(m.get("content")) for m in loop.messages if m["role"] == "user"]
+        i = next(i for i, c in enumerate(users) if "wait refused" in c)
+        assert "1 notice you were waiting for already arrived" in users[i]
+        assert "nothing you started is pending" not in users[i]
+        # 그 통지는 거부 **뒤**, 다음 턴 경계에 배달됐다
+        assert any("🔔 hit" in c for c in users[i + 1 :])
+        assert reg.arrived_for("main") == 0
+
+    def test_two_notices_pluralize(self, tmp_path):
+        reg = self._registry(tmp_path)
+        loop = self._loop(
+            reg,
+            self._mid_turn(reg, 2, {"action": "wait"}),
+        )
+        assert loop.run().success
+        assert any(
+            "2 notices you were waiting for already arrived" in str(m.get("content"))
+            for m in loop.messages
+            if m["role"] == "user"
+        )
+
+
 class TestResidentRunEndingInWait:
     def test_no_fallback_reply_and_debt_stays_open(self, tmp_path):
         """상주 런이 wait 로 끝나면 폴백(런 요약) 배달도 질문 닫기도 없다 — 깨운
