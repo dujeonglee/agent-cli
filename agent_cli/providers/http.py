@@ -655,6 +655,7 @@ def run_sse_stream(
     interrupt_check=None,
     idle_timeout_s: int | None = None,
     on_thinking=None,
+    on_tool_call=None,
     attempt: int = 1,
     attempts: int = 1,
 ) -> StreamAccum:
@@ -673,6 +674,11 @@ def run_sse_stream(
 
     ``map_payload(data: dict) -> StreamEvent | None`` 이 provider 몫 —
     None 은 "이 payload 무시".
+
+    ``on_tool_call(text)`` (v10.70.0): 서버가 구조로 보내는 도구 호출 조각(이름·
+    인자 문자열)을 렌더러의 진행 카운터로 — native_fc 에서 긴 호출을 쓰는 동안
+    content 가 0 이라 무진전처럼 보이던 것을 메운다. transcript 에는 싣지 않는다
+    (누산은 종전대로 ``acc.tool_calls``).
     """
     import time as _time
 
@@ -777,6 +783,10 @@ def run_sse_stream(
                     slot["name"] = d["name"]
                 if d.get("arguments"):
                     slot["arguments"] += d["arguments"]
+                if on_tool_call is not None:
+                    piece = (d.get("name") or "") + (d.get("arguments") or "")
+                    if piece:
+                        on_tool_call(piece)  # 진행 가시화 (v10.70.0)
         if ev.thinking:
             thinking_parts.append(ev.thinking)
             if on_thinking is not None:

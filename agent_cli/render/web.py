@@ -2251,6 +2251,10 @@ class WebRenderer(Renderer):
         """사고 델타 → ``thinking_tick`` (P5, v8.56.0 — 러너웨이 가시화)."""
         self._tick("thinking", text)
 
+    def tool_call_chunk(self, text: str) -> None:
+        """호출 조각(native_fc) → ``tool_tick`` (v10.70.0) — 생성 줄의 🔧."""
+        self._tick("tool", text)
+
     def stream_end(self) -> None:
         """이 스코프의 누적만 버린다 — 옆 에이전트의 카운터를 건드리지 않는다."""
         self._tick_state.pop(self._tick_key(), None)

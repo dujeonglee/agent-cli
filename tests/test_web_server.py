@@ -818,7 +818,11 @@ class TestStaticUI:
             re.findall(r'set_sticky\(\s*f?"[^"]*"[^,]*,\s*"([a-z_]+)"', web_src)
         )
         # f-string / 직접 큐 삽입 경로
-        emitted |= {"stream_tick", "thinking_tick"}  # _emit(f"{kind}_tick", …)
+        emitted |= {
+            "stream_tick",
+            "thinking_tick",
+            "tool_tick",
+        }  # _emit(f"{kind}_tick", …)
         emitted |= {
             "snapshot_end"
         }  # register_connection 이 스냅샷 끝에 넣는다 (v10.8.1)

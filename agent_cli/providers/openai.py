@@ -137,6 +137,7 @@ class OpenAIProvider:
                     degeneration_trigger=kwargs.get("degeneration_trigger", "#"),
                     idle_timeout_s=settings.stream_idle_timeout_s,
                     on_thinking=kwargs.get("on_thinking"),
+                    on_tool_call=kwargs.get("on_tool_call"),
                     attempt=attempt,
                     attempts=attempts,
                 ),
@@ -158,6 +159,7 @@ class OpenAIProvider:
         degeneration_trigger="#",
         idle_timeout_s=None,
         on_thinking=None,
+        on_tool_call=None,
         attempt: int = 1,
         attempts: int = 1,
         thinking_stop=None,
@@ -177,6 +179,7 @@ class OpenAIProvider:
             attempt=attempt,
             attempts=attempts,
             on_thinking=on_thinking,
+            on_tool_call=on_tool_call,
         )
         usage = None
         if acc.usage_fields:

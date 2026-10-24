@@ -28,6 +28,7 @@ from agent_cli.render import (
     render_stream_end,
     render_system_prompt_snapshot,
     render_thinking_chunk,
+    render_tool_call_chunk,
 )
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
@@ -377,6 +378,15 @@ class LLMCaller:
                 spinner_active = False
             render_thinking_chunk(text)
 
+        def on_tool_call(text: str) -> None:
+            # v10.70.0: 서버가 구조로 보내는 호출 조각(native_fc)도 진행 카운터로 —
+            # 긴 python 호출을 쓰는 동안 ~0 tokens 로 멈춘 듯 보이던 것을 메운다.
+            nonlocal spinner_active
+            if spinner_active:
+                render_spinner_stop()
+                spinner_active = False
+            render_tool_call_chunk(text)
+
         if self.cfg.skill_name:
             render_spinner_start(f"skill:{self.cfg.skill_name}")
         else:
@@ -428,6 +438,7 @@ class LLMCaller:
                 capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
                 on_thinking=on_thinking,
+                on_tool_call=on_tool_call,
                 degeneration_check=self.cfg.dialect.is_degenerate,
                 # 게이트 문자는 wire shape 소유(P0-4) — 커스텀 플러그인 폴백 "#".
                 degeneration_trigger=getattr(

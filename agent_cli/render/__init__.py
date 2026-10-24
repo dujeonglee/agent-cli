@@ -420,6 +420,15 @@ def render_thinking_chunk(text: str) -> None:
     _renderer.thinking_chunk(text)
 
 
+def render_tool_call_chunk(text: str) -> None:
+    """서버가 구조로 보내는 도구 호출 조각(native_fc 의 ``delta.tool_calls``) —
+    본문·사고와 분리된 셋째 진행 채널 (v10.70.0). 호출 인자를 쓰는 동안 content 가
+    0 이라 마르퀴·생성 줄이 무진전처럼 보이던 것을 메운다. transcript 에는 싣지
+    않는다. 기본 구현 no-op."""
+    _flush_thought()
+    _renderer.tool_call_chunk(text)
+
+
 def render_stream_end() -> None:
     _flush_thought()
     _renderer.stream_end()

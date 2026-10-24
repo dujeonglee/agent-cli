@@ -678,6 +678,10 @@ class Renderer(ABC):
         선택 구현(필수 9개 계약 불변). 진행 카운터용이며 transcript 에
         싣지 않는 것이 계약이다."""
 
+    def tool_call_chunk(self, text: str) -> None:
+        """Streaming tool-call delta (v10.70.0, native_fc). Default: no-op —
+        진행 카운터용 셋째 채널; transcript 에 싣지 않는다."""
+
     def stream_end(self) -> None:
         """Signal end of streaming. Default: no-op."""
 
