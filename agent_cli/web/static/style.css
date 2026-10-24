@@ -201,6 +201,18 @@ header {
   #theme-wrap { margin-left: 0; }
 }
 
+/* 방 제목 (v10.71.0) — 헤더 첫 자리, 한 줄 말줌임(hover 전체). 보드가 --title 로 준다. */
+.hd-title {
+  display: inline-block;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* ── 헤더 칩 (v7.1.0) — 의미 단위 요약, 상세는 hover/팝오버 ── */
 .hd-chip {
   display: inline-flex;

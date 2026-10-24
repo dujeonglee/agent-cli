@@ -1142,6 +1142,8 @@ class TestStaticUI:
         _, _, client = server_and_client
         html = client.get("/static/index.html").text
         assert 'id="token-usage"' in html and 'id="chip-ws"' in html
+        # 방 제목 자리 (v10.71.0) — ready.title 이 채우고 탭 제목도 바꾼다
+        assert 'id="room-title"' in html
         assert 'id="chip-ctx"' not in html and 'id="ctx-popover"' not in html
         assert 'id="knobs"' in html and 'id="knobs-header"' in html
         for old in (

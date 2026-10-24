@@ -1028,6 +1028,22 @@ class TestHeaderWorkspace:
         assert data["provider"] == "openai"
         assert data["model"] == "gpt-4o"
 
+    def test_title_rides_on_ready_only_when_set(self):
+        """v10.71.0: 방 제목 — 있을 때만 ``ready.title``; 없으면 필드 자체가 없다
+        (프런트가 빈 제목 자리를 그리지 않게)."""
+        r = WebRenderer(title="GLM — bench rerun")
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.header("openai", "gpt-4o", 10)
+        _event, data = conn.queue.get(timeout=1.0)
+        assert data["title"] == "GLM — bench rerun"
+        r2 = WebRenderer()
+        conn2 = WebConnection(id="c2")
+        r2.register_connection(conn2)
+        r2.header("openai", "gpt-4o", 10)
+        _event, data2 = conn2.queue.get(timeout=1.0)
+        assert "title" not in data2
+
     def test_workspace_omitted_when_empty(self):
         """Empty workspace means we don't know — omit the field so the
         frontend's ``if (d.workspace)`` branch is the single source of
