@@ -518,7 +518,7 @@ class TestInfoDedup:
 
 class TestGeneratingIndicator:
     """v9.4.0 ④ (docs/chat-ui §2): 스트리밍을 버리고 **한 줄**만 남긴다 —
-    `● 생성 중 · N tokens · 💭 사고 M`. 숫자가 오르면 살아 있다는 뜻이고,
+    `● Generating · ~N tokens · 🧠 M · 🔧 K`(v10.70.0: 합 + 내역). 숫자가 오르면 살아 있다는 뜻이고,
     본문이 흐르지 않으므로 카드가 자라며 화면이 튀지 않는다."""
 
     def _gen(self, page):
@@ -546,7 +546,19 @@ class TestGeneratingIndicator:
         _open_timeline(page, stack)
         stack.renderer.thinking_chunk("t" * 8000)
         assert _wait(lambda: self._gen(page).count() == 1)
-        assert "💭" in self._gen(page).inner_text()
+        assert (
+            "🧠" in self._gen(page).inner_text()
+        )  # v10.70.0: 💭 → 🧠 (노브 칩과 같은 아이콘)
+
+    def test_tool_call_tokens_shown_and_summed(self, stack, page):
+        """v10.70.0: native_fc 의 호출 조각도 센다 — 앞 숫자는 세 채널의 합, 🔧 내역."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.thinking_chunk("t" * 400)  # 100
+        stack.renderer.tool_call_chunk("a" * 4000)  # 1000
+        assert _wait(lambda: "🔧" in self._gen(page).inner_text())
+        txt = self._gen(page).inner_text()
+        assert "🧠" in txt and "~1.1K tokens" in txt
 
     def test_disappears_on_stream_end(self, stack, page):
         stack.emit_ready()
