@@ -1326,7 +1326,7 @@ class TestStreamResetCli:
         assert "tokens" in buf.getvalue()
         r.stream_end()
         r.thinking_chunk("thought")
-        assert "思" in buf.getvalue()
+        assert "🧠" in buf.getvalue()
 
     def test_capture_mode_is_a_noop_on_screen(self):
         """병렬 delegate 캡처 중엔 화면 페인트가 없다 — 버퍼만 비운다."""

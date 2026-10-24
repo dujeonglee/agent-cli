@@ -2347,7 +2347,7 @@
       node.appendChild(el("span", ["gen-pulse"]));
       node.appendChild(el("span", ["gen-label"], "Generating"));
       node.appendChild(el("span", ["gen-tok"]));
-      g = genByCh[channel] = { el: node, body: 0, think: 0, retry: 0 };
+      g = genByCh[channel] = { el: node, body: 0, think: 0, tool: 0, retry: 0 };
     }
     return g;
   }
@@ -2357,8 +2357,12 @@
     const channel = channelOf(taskId || "");
     const g = genSlot(channel);
     const parts = [];
-    if (g.body) parts.push("· " + fmtTok(g.body) + " tokens");
-    if (g.think) parts.push("· 💭 thinking " + fmtTok(g.think));
+    // v10.70.0: 앞 숫자는 세 채널(본문·🧠 사고·🔧 호출 조각)의 합 — "생성 중" 의
+    // 크기. 내역은 0 이 아닌 사고·호출만. 아이콘은 노브 칩(🧠)과 같다.
+    const total = (g.body || 0) + (g.think || 0) + (g.tool || 0);
+    if (total) parts.push("· ~" + fmtTok(total) + " tokens");
+    if (g.think) parts.push("· 🧠 " + fmtTok(g.think));
+    if (g.tool) parts.push("· 🔧 " + fmtTok(g.tool));
     // 재시도는 **왜 오래 걸리는지**의 유일한 단서다. 거부된 응답 자체는 안
     // 보여주지만(하네스의 재시도 기계는 모델의 작업이 아니다), "그냥 느린 것"과
     // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
@@ -3066,6 +3070,14 @@
   es.addEventListener("stream_tick", function (e) {
     const d = JSON.parse(e.data) || {};
     genSlot(channelOf(d.task_id || "")).body = d.tokens || 0;
+    showGenerating(d.task_id);
+  });
+
+  es.addEventListener("tool_tick", function (e) {
+    // v10.70.0: 서버가 구조로 보내는 호출 조각(native_fc) — 긴 python 호출을 쓰는
+    // 동안 본문·사고가 0 이라 멈춘 듯 보이던 구간을 메운다.
+    const d = JSON.parse(e.data) || {};
+    genSlot(channelOf(d.task_id || "")).tool = d.tokens || 0;
     showGenerating(d.task_id);
   });
 

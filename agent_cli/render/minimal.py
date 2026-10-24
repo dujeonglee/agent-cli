@@ -225,7 +225,7 @@ class MinimalRenderer(Renderer):
         # chunk. Reset to 0 in `stream_end`.
         self._last_term_w: int = 0
         self._last_painted_w: int = 0
-        # Marquee counters (~N tokens · 思 N · talking frame). Eager, not
+        # Marquee counters (~N tokens · 🧠 N · 🔧 N · talking frame). Eager, not
         # lazy: ``stream_end`` resets the buffers even when no chunk ever
         # arrived (a tool-call-only response), and a lazy ``hasattr``
         # guard keyed on ``_stream_buf`` then skipped ``_last_frame_time``
@@ -234,6 +234,7 @@ class MinimalRenderer(Renderer):
         self._stream_buf = ""
         self._stream_chunks = 0
         self._think_buf = ""
+        self._tool_buf = ""  # v10.70.0: 호출 조각(native_fc) 채널
         self._last_frame_time = 0.0
         # Parallel-delegate orchestration. Owned entirely by
         # MinimalRenderer (was previously driven from tool_delegate
@@ -434,11 +435,12 @@ class MinimalRenderer(Renderer):
         self._p(f"  ● {message}{it}", highlight=False)
 
     def stream_reset(self) -> None:
-        """마르퀴 누적(~N tokens · 思 N)을 0 으로 되돌리고 줄을 지운다 —
+        """마르퀴 누적(~N tokens · 🧠 N · 🔧 N)을 0 으로 되돌리고 줄을 지운다 —
         재전송 후 카운터가 옛 시도분을 이어 세면 실제보다 부풀어 보인다."""
         self._stream_buf = ""
         self._stream_chunks = 0
         self._think_buf = ""
+        self._tool_buf = ""
         if self.is_capturing or not self.con.file:
             return
         self._erase_reflowed_marquee()
@@ -673,11 +675,19 @@ class MinimalRenderer(Renderer):
         self._paint_marquee()
 
     def thinking_chunk(self, text: str) -> None:
-        # P5 (v8.56.0): 사고 델타 — 같은 마르퀴 줄의 思 카운터로만 표시.
+        # P5 (v8.56.0): 사고 델타 — 같은 마르퀴 줄의 🧠 카운터로만 표시.
         # content 없이 사고만 이어지는 러너웨이가 무음이 되지 않게 한다.
         if self.is_capturing:
             return
         self._think_buf += text
+        self._paint_marquee()
+
+    def tool_call_chunk(self, text: str) -> None:
+        # v10.70.0: 호출 조각(native_fc) — 같은 줄의 🔧 카운터. 긴 호출을 쓰는
+        # 동안 ~0 tokens 로 멈춘 듯 보이던 것을 메운다.
+        if self.is_capturing:
+            return
+        self._tool_buf += text
         self._paint_marquee()
 
     def _paint_marquee(self) -> None:
@@ -700,10 +710,17 @@ class MinimalRenderer(Renderer):
             # pattern as web.py). Single source of the chars/4 unit.
             from agent_cli.context.token_estimator import estimate_tokens
 
-            tokens = estimate_tokens(self._stream_buf)
+            # v10.70.0: 앞 숫자는 세 채널(본문·사고·호출)의 합 = "생성 중" 의 크기,
+            # 괄호는 0 이 아닌 사고·호출만. 전부 본문이면 괄호가 없다(종전 모양).
+            think = estimate_tokens(self._think_buf) if self._think_buf else 0
+            tool = estimate_tokens(self._tool_buf) if self._tool_buf else 0
+            tokens = estimate_tokens(self._stream_buf) + think + tool
             line = f"{prefix}{frame} ~{tokens} tokens"
-            if self._think_buf:
-                line += f" (思 {estimate_tokens(self._think_buf)})"
+            parts = ([f"🧠 {think}"] if think else []) + (
+                [f"🔧 {tool}"] if tool else []
+            )
+            if parts:
+                line += f" ({' · '.join(parts)})"
             # Narrow-terminal safety net: if frame+counter wouldn't fit,
             # drop the counter; if even the face wouldn't fit, truncate.
             # Keeps the indicator from ever wrapping onto a new line.
@@ -723,6 +740,7 @@ class MinimalRenderer(Renderer):
         self._stream_buf = ""
         self._stream_chunks = 0
         self._think_buf = ""
+        self._tool_buf = ""
         if self.is_capturing:
             return
         if self.con.file:

@@ -2,7 +2,10 @@
 
 러너웨이 진단 근거: 35B 벤치에서 631s/46K 토큰 단일 생성이 화면·로그
 완전 무음이라 서버 hang 으로 오진됐다 — 사고 델타는 on_chunk(본문)를
-타지 않기 때문. 이 채널이 스피너 마르퀴(思 카운터)·웹 상단바로 흐른다.
+타지 않기 때문. 이 채널이 스피너 마르퀴(🧠 카운터)·웹 상단바로 흐른다.
+
+v10.70.0: 셋째 채널 — 서버가 구조로 보내는 도구 호출 조각(native_fc 의
+``delta.tool_calls``)도 ``on_tool_call`` 로 흘러 🔧 카운터가 된다. 앞 숫자는 세 채널의 합.
 """
 
 from __future__ import annotations
@@ -147,3 +150,96 @@ class TestWebRenderer:
         _t.sleep(0.05)
         assert "agt-a#1" not in r._tick_state
         assert r._tick_state["agt-b#1"]["thinking_chars"] == 800
+
+
+class TestToolCallChannel:
+    """v10.70.0: native_fc 에서 긴 호출을 쓰는 동안 content 가 0 이라 마르퀴·생성 줄이
+    무진전처럼 보였다(gcode 2차 런 `~0 tokens`). 호출 조각이 셋째 채널로 흐르고, 앞
+    숫자는 세 채널의 합, 내역은 0 이 아닌 🧠·🔧 만."""
+
+    def _resp(self, lines):
+        class R:
+            def iter_lines(self):
+                yield from lines
+
+            def close(self):
+                pass
+
+        return R()
+
+    def test_on_tool_call_receives_name_and_argument_pieces(self):
+        lines = [
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"python","arguments":""}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"code\\": \\"pri"}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"nt(1)\\"}"}}]}}]}',
+            b"data: [DONE]",
+        ]
+        got_tool, got_text = [], []
+        acc = http_mod.run_sse_stream(
+            self._resp(lines),
+            got_text.append,
+            map_payload=_map_openai_payload,
+            on_tool_call=got_tool.append,
+        )
+        assert got_text == []  # content 는 비었다 — 종전엔 화면이 완전 무음
+        assert "".join(got_tool) == 'python{"code": "print(1)"}'
+        assert acc.tool_calls[0]["arguments"] == '{"code": "print(1)"}'  # 누산 불변
+
+    def test_provider_receives_on_tool_call_callable(self, tmp_path):
+        import json
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content=json.dumps({"action": "complete", "result": "ok"})
+        )
+        run_loop(
+            ports=TEST_PORTS,
+            query="q",
+            provider=provider,
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=1024, supports_thinking=False
+            ),
+            model="m",
+            ctx=ContextManager(session_dir=tmp_path),
+            max_turns=2,
+        )
+        assert callable(provider.call.call_args.kwargs.get("on_tool_call"))
+
+    def test_marquee_sums_three_channels_and_lists_nonzero_parts(self):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=True, width=120))
+        r.tool_call_chunk("x" * 400)  # 100 토큰 — content 0 이어도 숫자가 움직인다
+        out = buf.getvalue()
+        assert "~100 tokens (🔧 100)" in out and "🧠" not in out
+        r.thinking_chunk("y" * 80)  # +20
+        r.stream_chunk("z" * 40)  # +10
+        assert "~130 tokens (🧠 20 · 🔧 100)" in buf.getvalue()
+        r.stream_end()
+        assert r._tool_buf == ""
+        buf.truncate(0)
+        buf.seek(0)
+        r.stream_chunk("w" * 40)
+        out = buf.getvalue()  # 본문만이면 내역 괄호가 없다 (얼굴의 괄호는 제외)
+        assert "~10 tokens" in out and "tokens (" not in out
+
+    def test_web_tool_tick(self):
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        events = []
+        r._emit = lambda ev, d, persistent=False: events.append((ev, d))
+        r.tool_call_chunk("x" * 400)
+        assert events == [("tool_tick", {"tokens": 100})]
+        r.stream_end()
+        assert "" not in r._tick_state
