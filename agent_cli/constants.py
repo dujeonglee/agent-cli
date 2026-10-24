@@ -45,6 +45,15 @@ STREAM_IDLE_MAX_TICKS = 20
 # env AGENT_CLI_STREAM_MAX_ATTEMPTS / CLI --stall-attempts).
 STREAM_MAX_ATTEMPTS = 4
 STREAM_MAX_ATTEMPTS_MAX = 10
+
+# 샘플링 노브의 값 영역 (v10.69.0, docs/knobs/DESIGN.md §7) — ctx.set_sampling 이
+# 이 범위로 clamp 하고 🎲 칩이 min/max 로 그린다. OpenAI·Anthropic 이 받는 범위의
+# 교집합이 아니라 합집합(Anthropic temperature 는 0~1 이지만 서버가 거절할 뿐,
+# 하니스가 미리 좁히지 않는다 — 어느 서버를 대하는지는 세션이 안다).
+SAMPLING_RANGES: dict[str, tuple[float, float]] = {
+    "temperature": (0.0, 2.0),
+    "top_p": (0.0, 1.0),
+}
 # P3 (v8.55.0): 스트림 무진전(no-token) 한도의 기본/상한. 유휴는 "마지막
 # **진전**(실제 토큰/종결 이벤트) 이후"로 잰다 — keep-alive 프레임은 진전이
 # 아니다(omlx hang 실측 2회: keep-alive 가 종전 줄-기준 감지를 무력화).

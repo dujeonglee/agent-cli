@@ -103,13 +103,24 @@ class Bool(Kind):
 
 class Number(Kind):
     """정수/실수. 범위 보정(clamp)은 소유자의 setter 가 한다 — 종전 그대로
-    (`set_compaction_ratio`·`set_max_agents` 등이 clamp 를 소유)."""
+    (`set_compaction_ratio`·`set_max_agents` 등이 clamp 를 소유).
 
-    def __init__(self, cast: Callable[[str], Any], *, unit: str = "") -> None:
+    ``optional=True`` (v10.69.0, 🎲 샘플링): 값이 **없음**이 뜻을 가진다 — ``auto``
+    ·빈 값·None 은 None 으로 파싱되고, 소유자는 None 을 "정하지 않음(키 삭제)" 으로
+    받는다. 표의 기본값도 None 이라 부팅은 손대지 않는다."""
+
+    def __init__(
+        self, cast: Callable[[str], Any], *, unit: str = "", optional: bool = False
+    ) -> None:
         self._cast = cast
         self._unit = unit
+        self.optional = optional
 
     def parse(self, text: Any) -> Any:
+        if self.optional and (
+            text is None or str(text).strip().lower() in ("", "auto", "none", "null")
+        ):
+            return None
         if isinstance(text, (int, float)) and not isinstance(text, bool):
             return self._cast(text)
         try:
@@ -118,7 +129,7 @@ class Number(Kind):
             raise ValueError(f"expected a number; got {text!r}") from None
 
     def describe(self) -> str:
-        return self._unit
+        return f"{self._unit} | auto" if self.optional else self._unit
 
 
 class Duration(Kind):
@@ -382,6 +393,86 @@ def _stall_note(s: KnobSession) -> str:
     return f"{m} min × {n} attempts (first send included) = fails after at most {m * n} min"
 
 
+def _num(v: float) -> str:
+    """0.2 → "0.2", 1.0 → "1", 0.95 → "0.95" — 배지·설명용 짧은 숫자."""
+    return f"{v:g}"
+
+
+#: 🎲 노브 이름 → 배지의 짧은 글자 (`T 0.2 · p 0.95`).
+_SAMPLING_SHORT = {"temperature": "T", "top_p": "p"}
+#: auto 를 풀 때 칩이 먹일 값(실효값이 없을 때) — 둘 다 1.0 = "효과 없음" 이라
+#: 체크를 푸는 순간 동작이 바뀌지 않는다.
+_SAMPLING_PICK = {"temperature": 1.0, "top_p": 1.0}
+
+
+def _sampling_get(name: str) -> Callable[[KnobSession], Any]:
+    return lambda s: s.ctx.sampling.get(name)
+
+
+def _sampling_set(name: str) -> Callable[[KnobSession, Any], Any]:
+    return lambda s, v: s.ctx.set_sampling(name, v)
+
+
+def _sampling_info(name: str) -> Callable[[KnobSession], dict]:
+    """값 영역 + **지금 실제로 가는 값과 그 출처** — 칩은 보여주기만 한다."""
+
+    def info(s: KnobSession) -> dict:
+        from agent_cli.constants import SAMPLING_RANGES
+        from agent_cli.providers.base import resolve_sampling, sampling_source
+
+        lo, hi = SAMPLING_RANGES[name]
+        caps = _caps(s)
+        effective = source = None
+        if caps is not None:
+            effective = resolve_sampling(caps, s.ctx.sampling).get(name)
+            source = sampling_source(caps, s.ctx.sampling, name)
+        return {
+            "min": lo,
+            "max": hi,
+            "step": 0.05 if name == "temperature" else 0.01,
+            "effective": effective,
+            "source": source,
+            "pick": effective if effective is not None else _SAMPLING_PICK[name],
+        }
+
+    return info
+
+
+def _sampling_badge(name: str) -> Callable[[KnobSession], str]:
+    return lambda s: (
+        "auto" if s.ctx.sampling.get(name) is None else _num(s.ctx.sampling[name])
+    )
+
+
+def _sampling_group_badge(s: KnobSession) -> str:
+    parts = [
+        f"{_SAMPLING_SHORT[n]} {_num(s.ctx.sampling[n])}"
+        for n in _SAMPLING_SHORT
+        if s.ctx.sampling.get(n) is not None
+    ]
+    return " · ".join(parts) if parts else "auto"
+
+
+def _sampling_group_note(s: KnobSession) -> str:
+    """지금 보내는 것을 키마다 출처와 함께 — 세션 값 / models.json 값 / 서버 기본."""
+    from agent_cli.providers.base import resolve_sampling, sampling_source
+
+    caps = _caps(s)
+    if caps is None:
+        return "Applies from the next LLM request."
+    sent = resolve_sampling(caps, s.ctx.sampling)
+    bits = []
+    for n in _SAMPLING_SHORT:
+        src = sampling_source(caps, s.ctx.sampling, n)
+        if src == "session":
+            bits.append(f"{n} {_num(sent[n])} (this session)")
+        elif src == "models.json":
+            bits.append(f"{n} {_num(sent[n])} from models.json")
+        else:
+            bits.append(f"{n}: server default")
+    return "Now sent: " + " · ".join(bits) + ". Applies from the next LLM request."
+
+
 def _thinking_badge(s: KnobSession) -> str:
     if _thinking_locked(s):
         return "unsupported"
@@ -422,6 +513,17 @@ KNOB_GROUPS: dict[str, KnobGroup] = {
         ),
         badge=_thinking_badge,
         note=_thinking_note,
+    ),
+    "sampling": KnobGroup(
+        icon="🎲",
+        label="Sampling",
+        help=(
+            "Sampling parameters sent with every LLM request — temperature and "
+            "top_p. auto (default) sends nothing: the model's entry in models.json "
+            "decides, then the server default. Session-scoped; auto on restart."
+        ),
+        badge=_sampling_group_badge,
+        note=_sampling_group_note,
     ),
 }
 
@@ -521,6 +623,46 @@ KNOBS: tuple[Knob, ...] = (
         on=lambda s: bool(_grammar_info(s)["active"]),
         info=_grammar_info,
         locked=_grammar_locked,
+    ),
+    Knob(
+        name="temperature",
+        owner="ctx",
+        flag="--temperature",
+        env="AGENT_CLI_TEMPERATURE",
+        label="Temperature",
+        help=(
+            "Sampling temperature sent with every LLM request (0-2). auto "
+            "(default) sends nothing — the model's models.json entry decides, "
+            "then the server default. Applies from the next LLM call."
+        ),
+        kind=Number(float, unit="0-2", optional=True),
+        default=None,
+        get=_sampling_get("temperature"),
+        set=_sampling_set("temperature"),
+        ui=KnobUI(group="sampling", control="optional", unit="0–2"),
+        badge=_sampling_badge("temperature"),
+        on=lambda s: s.ctx.sampling.get("temperature") is not None,
+        info=_sampling_info("temperature"),
+    ),
+    Knob(
+        name="top_p",
+        owner="ctx",
+        flag="--top-p",
+        env="AGENT_CLI_TOP_P",
+        label="Top-p",
+        help=(
+            "Nucleus sampling top_p sent with every LLM request (0-1). auto "
+            "(default) sends nothing — the model's models.json entry decides, "
+            "then the server default. Applies from the next LLM call."
+        ),
+        kind=Number(float, unit="0-1", optional=True),
+        default=None,
+        get=_sampling_get("top_p"),
+        set=_sampling_set("top_p"),
+        ui=KnobUI(group="sampling", control="optional", unit="0–1"),
+        badge=_sampling_badge("top_p"),
+        on=lambda s: s.ctx.sampling.get("top_p") is not None,
+        info=_sampling_info("top_p"),
     ),
     Knob(
         name="max_agents",

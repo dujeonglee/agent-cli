@@ -84,6 +84,8 @@ class TestTableDriven:
             ("auto_approve", True, True),
             ("auditor", "on", True),
             ("model", "m1", "m1"),  # 같은 이름 = no-op
+            ("temperature", 0.2, 0.2),
+            ("top_p", "0.9", 0.9),
         ],
     )
     def test_post_sets_and_broadcasts_every_knob(self, tmp_path, name, value, expect):
@@ -349,3 +351,25 @@ class TestFrontendIsOneRenderer:
             "감사 중",
         ):
             assert word not in js, word
+
+
+class TestSamplingIsOptional:
+    """🎲 (v10.69.0): `auto` 가 키를 지우고, 상태 한 장이 값 영역·실효값·출처를 싣는다."""
+
+    def test_auto_clears_and_state_carries_effective_and_source(self, tmp_path):
+        server, _r, client = _full(tmp_path)
+        st = _get(client, "temperature")
+        assert st["value"] is None and st["badge"] == "auto"
+        assert (st["min"], st["max"]) == (0.0, 2.0)
+        assert st["effective"] is None and st["source"] == "server"
+        assert st["group"]["badge"] == "auto"
+        assert _post(client, "temperature", 5)["value"] == 2.0  # clamp
+        assert server.ctx.sampling == {"temperature": 2.0}
+        st = _get(client, "temperature")
+        assert st["source"] == "session" and st["group"]["badge"] == "T 2"
+        assert _post(client, "temperature", "auto")["value"] is None
+        assert (
+            server.ctx.sampling == {}
+            and _get(client, "top_p")["group"]["badge"] == "auto"
+        )
+        assert _post(client, "top_p", "warm")["ok"] is False

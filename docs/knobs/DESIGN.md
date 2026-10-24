@@ -1,6 +1,6 @@
 # 세션 노브 — 한 번 선언, 표면 셋이 파생 (`agent_cli/knobs.py`)
 
-> 상태: **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17), 2단계 구현됨 (v10.44.0), 3단계 칩 일반화 구현됨 (v10.45.0)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
+> 상태: **§7 🎲 샘플링 노브 구현됨 (v10.69.0, 2026-10-24)** · **1단계 + 1.5단계 구현됨 (v10.43.0, 2026-10-17), 2단계 구현됨 (v10.44.0), 3단계 칩 일반화 구현됨 (v10.45.0)** — 선언 + env 표면 + CLI 표면(`run`/`web` 공통 데코레이터) + 부팅 적용 + 표에서 파생한 대칭 테스트, 그리고 모델 노브와 **복사본 제거**(§2.4). 2단계(web `/api/knobs` 통일)·3단계(칩 일반화·보드 spawn 인자·문서 생성)는 §5.
 > 결정(사용자): ① `run` 의 제어면은 실행 인자(시작 뒤 입력 프롬프트가 없다 — §1) ② 노브 추상화 + 표면별 적응 인터페이스 ③ 1단계부터, 2·3단계는 별도 PR ④ **모델도 노브**, 노브 값은 **캐시하지 말고 영향을 미치는 코드가 직접 읽어 적용**(모델을 바꾸면 다음 LLM 호출에서 적용) — 그러면서 같은 정보를 두 곳에 들던 복사본과 죽은 코드를 정리.
 
 ## 0. 한 줄 요약
@@ -34,13 +34,15 @@ v10.42.0 까지 같은 노브가 세 표면에 손으로 따로 배선돼 있었
 - **두 방향으로 서로 모른다.** `Knob` 는 typer·FastAPI·sticky 를 모르고, 표면은 어떤 노브가 있는지 모른다. 새 노브는 선언 한 줄이고 어느 표면에도 코드가 늘지 않는다 — 이것이 "구조로 강제" 다. 표에서 파생하는 테스트(§4)는 그 위의 보험이다.
 - **상태 소유자는 흩어져 있다**(ctx·registry·renderer·auditor). `KnobSession` 이 넷을 한 묶음으로 들고, 각 노브의 `set` 은 자기 소유자 하나만 만진다. 소유자가 None 이면(headless 부트·세션 없음) `apply_all` 이 그 노브를 건너뛴다(`Knob.available`).
 
-### 2.1 아홉 축
+### 2.1 열한 축 (v10.69.0: 🎲 둘 추가 — §7)
 
 | name | flag | env | kind | default | owner |
 |---|---|---|---|---|---|
 | `thinking` | `--thinking` | `AGENT_CLI_THINKING` | off / on / auto | `off` (v9.24.8: 끔을 명시) | ctx |
 | `reasoning_effort` | `--reasoning-effort` | `AGENT_CLI_REASONING_EFFORT` | auto / low / medium / high / off | `auto` | ctx |
 | `grammar` | `--grammar` | `AGENT_CLI_GRAMMAR` | auto / on / off | `auto` | ctx |
+| `temperature` | `--temperature` | `AGENT_CLI_TEMPERATURE` | float 0–2 / auto | `auto`(None — 보내지 않음) | ctx |
+| `top_p` | `--top-p` | `AGENT_CLI_TOP_P` | float 0–1 / auto | `auto`(None — 보내지 않음) | ctx |
 | `max_agents` | `--max-agents` | `AGENT_CLI_MAX_AGENTS` | int (0 = 무제한) | 10 | registry |
 | `compaction_ratio` | `--compaction-ratio` | `AGENT_CLI_COMPACTION_RATIO` | float | 1.0 | ctx |
 | `stall` | `--stall` | `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | 600 · 10m · 0 | 600 | ctx |
@@ -137,3 +139,43 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 - typer 합성 시그니처는 `__signature__`·`__annotations__` 두 속성에 의존한다 — typer 를 올릴 때 `tests/test_knobs.py::TestCliSurface` 가 먼저 깨진다.
 - 자동 승인은 UI 의 승인면이지 모델 동작이 아니다. `run` 에서는 tty 확인 프롬프트를 건너뛴다는 뜻이고 README 가 그렇게 적는다. 표의 범위는 "세션 도중 바꿀 수 있고 다음 호출·확인·런에 영향을 주는 값" 으로 좁힌다 — 예약·DIRECTIVE·닉네임은 노브가 아니다.
 - 서브에이전트가 부모의 노브를 물려받게 되면서 web 에서 사고를 켜면 팀원도 켜진다 — 의도한 대칭이지만 종전과 다르다.
+
+## 7. 🎲 샘플링 노브 — temperature · top_p (v10.69.0)
+
+> 동기: GLM-5.3-Flash 를 같은 조건으로 두 번 돌린 Harbor 벤치(2026-10-24)에서 9과제 중 4개가 뒤집혔다. 하니스는 `temperature` 를 보내지 않아 omlx 모델 설정(T 1.0 · top_p 0.95)으로 샘플링됐고, 서버 설정을 0.2 로 바꾼 1차 재측정은 8/9 였다. 샘플링은 **측정 조건**이므로 하니스 쪽에서 명시하고 기록할 자리가 필요했다.
+> 결정(사용자): ① 노브는 `temperature`·`top_p` 둘(`top_k` 는 OpenAI 규격 서버가 거부하고 로컬 서버는 모델 설정으로 가진다 — 선언 한 줄이면 더할 수 있다) ② 모델별 기본값 층은 `models.json` 엔트리의 선택 키 ③ 📐 문법과 **따로** 둔다 — 같은 디코딩 단계지만 서로 독립이고(묶음의 기준은 "의존" 이다: 🧠 노력은 사고 없이, ⏳ 시도는 한도 0 이면 뜻이 없다), 답하는 질문(모양 강제 예/아니오 vs 무작위성 숫자)과 잠김(지원 기록)이 다르며, 📐 는 생성 줄·턴 통계·인스펙터에 자기 정체가 있다.
+
+### 7.1 세 층 — 세션 노브 > models.json 엔트리 > 서버 기본
+
+```
+CLI --temperature / env AGENT_CLI_TEMPERATURE / web 🎲 / 보드 폼→spawn 플래그
+        └─▶ ① ctx.sampling {temperature?, top_p?}      세션 한정 · 서브에이전트 복사
+                 auto ─▶ ② ModelCapabilities.temperature/top_p   models.json 엔트리의 선택 키
+                              없음 ─▶ ③ 필드를 보내지 않음               서버 기본(omlx 모델 설정 → 전역)
+요청 본문: resolve_sampling(caps, ctx.sampling) — 정해진 키만 (OpenAI·Anthropic 같은 이름, 번역 없음)
+```
+
+- **기본은 auto = 보내지 않음.** 노브를 건드리지 않고 엔트리에 키가 없으면 요청 본문이 종전과 같다 — 지금까지의 벤치 조건이 그대로 재현된다.
+- **값이 없음이 뜻을 가지는 첫 숫자 노브**라 `Number(optional=True)` 가 생겼다: `auto`·빈 값·None → None, 소유자(`ctx.set_sampling`)는 None 을 키 삭제로 받고 값은 `constants.SAMPLING_RANGES` 로 clamp. 표의 기본값도 None 이라 `apply_all` 은 손대지 않는다(모델 노브와 같은 규칙).
+- **엔트리 키는 사용자·보드만 적는다.** `_build_from_entry` 가 읽고(`_optional_float` — 오타·불리언은 미기록으로, 부트를 막지 않는다) `caps_to_entry` 는 값이 있을 때만 쓴다. 프로브(`_detect_capabilities`)는 채우지 않으므로 자동 감지 엔트리에 키가 생기지 않는다 — 기본값은 사용자 결정으로만 들어간다. 보드 어드민 모델 편집기(v1.39.0)가 이 두 키의 UI 다.
+- **요약 호출에도 간다.** `_summarize` 가 `CallSettings(sampling=ctx.sampling)` 을 넘긴다 — "다음 LLM 요청부터" 라는 칩의 약속에 요약이 예외가 아니게.
+- **Anthropic 의 범위**(temperature 0~1, 확장 사고 중 temperature 고정, 일부 모델은 temperature 와 top_p 동시 지정 거부)는 서버가 거절로 말한다. 하니스는 두 프로바이더의 합집합(0–2)만 막는다 — 어느 서버를 대하는지는 세션이 안다.
+
+### 7.2 칩 — 상태 한 장이 출처를 말한다
+
+- 묶음 `sampling`(🎲 Sampling) 에 두 노브. 묶음 배지는 **세션이 정한 값만** `T 0.2 · p 0.95` / `auto` — 엔트리 값만으로 가는 경우는 `auto` 로 두고 설명 줄이 말한다: `Now sent: temperature 0.2 from models.json · top_p: server default.` 세션 값은 `(this session)`.
+- 상태 한 장에 `min/max/step` 과 **`effective`(지금 실제로 가는 값)·`source`(session / models.json / server)·`pick`** 이 실린다. `pick` 은 auto 체크를 풀 때 칩이 보내는 값 — 실효값이 있으면 그것, 없으면 1.0(둘 다 1.0 = 효과 없음)이라 체크를 푸는 순간 동작이 바뀌지 않는다.
+- 컨트롤 변형 `optional`(app.js): 숫자 입력 + `auto` 체크박스. auto 면 입력은 비활성이고 실효값(없으면 placeholder `server default`)을 보여 준다. 체크를 켜면 `"auto"` 를 보내 키를 지운다. 프런트에 노브 이름·배지 글자는 없다(기존 규칙).
+
+### 7.3 보드
+
+- 세션 노브 쪽은 **보드 변경 없음**: `agent-cli knobs --json` 표에 두 행이 늘어 새 글 ⚙ Advanced 폼에 숫자 칸 둘이 생기고(빈 칸 = 기본), `status.json knobs` 에 값이 실려 카드 칩 `🎲 0.2`·읽기 전용 패널에 뜨며, 재시작 spawn 인자에 `--temperature 0.2` 가 자동으로 실린다(`spawn_args` 가 표의 `flag` 로 바꾼다; null 값은 건너뛴다).
+- 모델 기본값(②층)은 어드민 모델 편집기(보드 v1.39.0): 표 열 `sampling`(`T 0.2 · p 0.95` / `—`), 편집 창 숫자 칸 둘(빈 칸 = 키 삭제 → 서버 기본), 범위 검사.
+
+### 7.4 벤치에서
+
+Harbor 어댑터는 `--ae AGENT_CLI_TEMPERATURE=0.2`(①층) 또는 바인딩 복사본 `models.json` 의 키(②층)로 조건을 명시한다. 둘 다 omlx 모델 설정을 이기므로 서버 쪽은 기본값으로 되돌려도 된다 — 조건이 하니스 기록(`status.json knobs`·`--ak models_json`)에 남는다.
+
+### 7.5 테스트
+
+`tests/test_knobs.py::TestSamplingKnobs`(optional 파싱, auto=키 삭제, clamp, 묶음 배지·설명·`effective`/`source`/`pick`, 서브에이전트 복사, CLI `--temperature 0.2 --top-p auto`), `tests/test_knobs_web.py::TestSamplingIsOptional`(POST `auto` 가 지운다, 상태의 범위·출처, 잘못된 값 무변경) + 표 파생 파라미터 두 행, `tests/test_providers.py::TestSamplingInTheBody`(`resolve_sampling` 우선순위, OpenAI·Anthropic 본문에 정해진 키만), `tests/test_capabilities.py::TestSamplingDefaultsInTheEntry`(엔트리 왕복, 오타 → 미기록, 프로브는 채우지 않음). README 의 env·CLI 표 두 행은 기존 표 파생 테스트가 강제한다.

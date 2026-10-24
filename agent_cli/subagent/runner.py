@@ -154,6 +154,7 @@ def create_subagent_ctx(
         # 읽어 web 🧠·📐 노브가 팀원·delegate 에는 닿지 않았다.
         ctx.thinking_override = dict(parent_ctx.thinking_override)
         ctx.grammar_override = parent_ctx.grammar_override
+        ctx.sampling = dict(parent_ctx.sampling)  # 🎲 (v10.69.0) — 복사본
 
     from agent_cli.render import get_renderer
 

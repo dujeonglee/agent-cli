@@ -57,6 +57,12 @@ class ModelCapabilities:
     #: 프로세스 안에서 채운다(:func:`vision_support`). 사용자가 적은 엔트리는
     #: 파일에 다시 쓰지 않는다 (supports_grammar 와 같은 정책).
     supports_vision: bool | None = None
+    #: 이 모델의 **기본 샘플링** (v10.69.0, docs/knobs/DESIGN.md §7) — models.json
+    #: 엔트리의 선택 키 ``temperature``·``top_p``. None = 미기록(필드를 보내지 않아
+    #: 서버 기본). 세션 🎲 노브가 정하지 않은 키에만 쓰인다(`providers.base.
+    #: resolve_sampling`). **프로브는 채우지 않는다** — 사용자·보드만 적는 값이다.
+    temperature: float | None = None
+    top_p: float | None = None
 
 
 # Fallback for a model we could neither look up (models.json) nor probe
@@ -165,6 +171,12 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
         entry["supports_grammar"] = caps.supports_grammar
     if caps.supports_vision is not None:
         entry["supports_vision"] = caps.supports_vision
+    # 기본 샘플링은 값이 있을 때만 — 프로브 산출이 아니므로 자동 감지 엔트리에는
+    # 키가 생기지 않는다(v10.69.0).
+    if caps.temperature is not None:
+        entry["temperature"] = caps.temperature
+    if caps.top_p is not None:
+        entry["top_p"] = caps.top_p
     if auto_detected:
         entry["_auto_detected"] = True
     return entry
@@ -187,7 +199,20 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
         supports_thinking=entry.get("supports_thinking", False),
         supports_grammar=bool(sg) if sg is not None else None,
         supports_vision=bool(sv) if sv is not None else None,
+        temperature=_optional_float(entry.get("temperature")),
+        top_p=_optional_float(entry.get("top_p")),
     )
+
+
+def _optional_float(value) -> float | None:
+    """엔트리의 선택 숫자 키 — 없음·숫자 아님은 None(미기록으로 취급, 경고 없음:
+    손으로 적은 파일의 오타가 부트를 막지 않는다)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 #: ``(base_url, model) → bool`` — 프로세스 안 비전 프로브 결과 (한 번만 묻는다).

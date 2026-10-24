@@ -954,3 +954,44 @@ class TestVisionSupport:
         assert body["messages"][0]["content"][1]["type"] == "image"
         r.json.return_value = {"content": [{"type": "text", "text": "I see no image"}]}
         assert _AnthropicTransport("http://x/v1", "m").vision_probe() is False
+
+
+class TestSamplingDefaultsInTheEntry:
+    """🎲 (v10.69.0): models.json 엔트리의 선택 키 ``temperature``·``top_p`` — 로더가
+    읽고, 직렬화는 값이 있을 때만, 프로브는 채우지 않는다(사용자·보드만 적는 값)."""
+
+    def test_entry_round_trip_and_bad_values(self):
+        from agent_cli.providers.capabilities import _build_from_entry, caps_to_entry
+
+        caps = _build_from_entry(
+            {"context_window": 32768, "temperature": 0.2, "top_p": "0.95"}
+        )
+        assert caps.temperature == 0.2 and caps.top_p == 0.95
+        assert caps_to_entry(caps)["temperature"] == 0.2
+        assert caps_to_entry(caps)["top_p"] == 0.95
+        plain = _build_from_entry({"context_window": 32768})
+        assert plain.temperature is None and plain.top_p is None
+        assert "temperature" not in caps_to_entry(plain)
+        assert "top_p" not in caps_to_entry(plain)
+        # 오타·불리언은 미기록으로 — 부트를 막지 않는다
+        odd = _build_from_entry({"temperature": "warm", "top_p": True})
+        assert odd.temperature is None and odd.top_p is None
+
+    def test_detection_never_fills_sampling(self):
+        from agent_cli.providers.capabilities import _detect_capabilities
+
+        class T:
+            def context_window(self):
+                return 65536
+
+            def thinking_probe(self):
+                return False
+
+            def grammar_probe(self):
+                return True
+
+            def vision_probe(self):
+                return False
+
+        caps = _detect_capabilities("m", T())
+        assert caps is not None and caps.temperature is None and caps.top_p is None

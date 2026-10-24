@@ -1572,3 +1572,75 @@ class TestImagesAtProviderBoundary:
             capabilities=ModelCapabilities(32768, 4096, False),
         )
         assert mock_post.call_count == 1
+
+
+class TestSamplingInTheBody:
+    """🎲 (v10.69.0): 세션 노브 > models.json 엔트리 > 미주입 — OpenAI·Anthropic 이
+    같은 이름으로 싣고, 어느 층도 안 정한 키는 본문에 없다(종전과 같은 본문)."""
+
+    def _ok(self, mock_post, kind):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = (
+            {"choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]}
+            if kind == "openai"
+            else {
+                "content": [{"type": "text", "text": "[]"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        )
+        mock_post.return_value = r
+
+    def test_resolve_sampling_precedence(self):
+        from agent_cli.providers.base import resolve_sampling, sampling_source
+
+        plain = ModelCapabilities(32768, 4096, False)
+        entry = ModelCapabilities(32768, 4096, False, temperature=0.3, top_p=0.95)
+        assert resolve_sampling(plain, None) == {}
+        assert resolve_sampling(entry, None) == {"temperature": 0.3, "top_p": 0.95}
+        assert resolve_sampling(entry, {"temperature": 0.2}) == {
+            "temperature": 0.2,
+            "top_p": 0.95,
+        }
+        assert resolve_sampling(plain, {"top_p": 0.5}) == {"top_p": 0.5}
+        assert sampling_source(entry, {"temperature": 0.2}, "temperature") == "session"
+        assert sampling_source(entry, {}, "top_p") == "models.json"
+        assert sampling_source(plain, None, "top_p") == "server"
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_openai_body(self, mock_post):
+        self._ok(mock_post, "openai")
+        provider = OpenAIProvider("http://x/v1", "k")
+        entry = ModelCapabilities(32768, 4096, False, temperature=0.3)
+        plain = ModelCapabilities(32768, 4096, False)
+        call = lambda caps, **kw: provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps,
+            **kw,
+        )
+        call(plain)
+        body = mock_post.call_args.kwargs["json"]
+        assert "temperature" not in body and "top_p" not in body
+        call(entry)
+        assert mock_post.call_args.kwargs["json"]["temperature"] == 0.3
+        call(entry, settings=CallSettings(sampling={"temperature": 0.2, "top_p": 0.9}))
+        body = mock_post.call_args.kwargs["json"]
+        assert body["temperature"] == 0.2 and body["top_p"] == 0.9
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_body(self, mock_post):
+        self._ok(mock_post, "anthropic")
+        provider = AnthropicProvider("http://x/v1", "k")
+        caps = ModelCapabilities(32768, 4096, False, top_p=0.95)
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="s",
+            model="m",
+            capabilities=caps,
+            settings=CallSettings(sampling={"temperature": 0.5}),
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["temperature"] == 0.5 and body["top_p"] == 0.95

@@ -5081,6 +5081,34 @@ const KNOBS = (function () {
         if (!unlimited) $in.value = tidy(st.value * scaleOf(st));
       };
       disable = (b) => ($chk.disabled = b);
+    } else if (control === "optional") {
+      // 🎲 (v10.69.0): 값이 없음(auto)이 뜻을 가지는 숫자 — 숫자 입력 + auto 체크박스.
+      // auto 를 풀면 서버가 준 `pick`(지금 실효값, 없으면 1.0)을 보내 동작이 그 순간
+      // 바뀌지 않는다; 다시 켜면 "auto" 를 보내 키를 지운다. 배지·설명(출처)은 서버 것.
+      const $in = el("input", { id: id, type: "number", "aria-label": d.label });
+      const $chk = el("input", { id: id + "-auto", type: "checkbox" });
+      const $chkLabel = el("label", { className: "knob-check" });
+      $chkLabel.appendChild($chk);
+      $chkLabel.appendChild(document.createTextNode("auto"));
+      let pick = 1;
+      $in.addEventListener("change", () => {
+        if ($in.disabled || $in.value === "") return;
+        post(d, unscale(d, $in.value));
+      });
+      $chk.addEventListener("change", () => post(d, $chk.checked ? "auto" : pick));
+      nodes = [$label, $in, $chkLabel, unit];
+      write = (st, force) => {
+        const auto = st.value === null || st.value === undefined;
+        if (typeof st.pick === "number") pick = st.pick;
+        $chk.checked = auto;
+        $in.disabled = auto || !!st.locked;
+        if (editing($in, force)) return;
+        setNumberBounds($in, st);
+        const shown = auto ? st.effective : st.value;
+        $in.value = typeof shown === "number" ? tidy(shown * scaleOf(st)) : "";
+        $in.placeholder = auto && typeof shown !== "number" ? "server default" : "";
+      };
+      disable = (b) => ($chk.disabled = b);
     } else if (d.kind === "number" || d.kind === "duration") {
       const $in = el("input", { id: id, type: "number", "aria-label": d.label });
       $in.addEventListener("change", () => {

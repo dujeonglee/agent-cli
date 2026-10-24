@@ -456,6 +456,9 @@ class LLMCaller:
                     ),
                     max_output_tokens=clamped_max_tokens,
                     tools=self._function_schemas(),
+                    # 🎲 (v10.69.0) — 세션이 정한 키만; 나머지는 프로바이더가
+                    # 모델 엔트리에서(resolve_sampling).
+                    sampling=self.ctx.sampling if self.ctx else None,
                 ),
                 **extra_call_kwargs,
             )
@@ -581,11 +584,14 @@ class LLMCaller:
         )
         # 요약기는 이미지를 싣지 않는다 (v10.59.0) — 자리표시 줄이 content 에
         # 있어 "무엇이 있었는지" 는 요약에 남는다.
+        # 🎲 세션 샘플링은 요약 호출에도 같이 간다 (v10.69.0) — "다음 LLM 요청부터"
+        # 라는 칩의 약속에 요약이 예외가 아니게.
         response = self.provider.call(
             messages=_images.strip_images(messages),
             system=summarisation_prompt,
             model=self.cfg.model,
             capabilities=summary_capabilities,
+            settings=CallSettings(sampling=self.ctx.sampling if self.ctx else None),
         )
         return response.content if hasattr(response, "content") else str(response)
 

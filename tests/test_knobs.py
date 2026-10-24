@@ -622,3 +622,118 @@ class TestReadmeFollowsTheTable:
             icon = k.ui.icon or K.KNOB_GROUPS[k.ui.group].icon
             assert icon in row, (k.flag, icon)
         assert "agent-cli knobs" in readme
+
+
+class TestSamplingKnobs:
+    """🎲 temperature·top_p (v10.69.0, docs/knobs/DESIGN.md §7): 값이 **없음**(auto)이
+    뜻을 가지는 첫 숫자 노브. 세션 노브 > models.json 엔트리 > 보내지 않음 — 여기서
+    고정하는 것은 "auto 는 키를 지운다", 범위 clamp, 묶음 배지·설명이 출처를 말한다,
+    서브에이전트가 복사로 물려받는다, CLI 가 `auto` 를 받는다."""
+
+    def _session(self, tmp_path, **caps):
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.binding_support import make_binding
+
+        return KnobSession(
+            ctx=ContextManager(tmp_path / "s", max_context_tokens=10_000),
+            registry=_Registry(),
+            renderer=SimpleNamespace(auto_approve=False),
+            auditor=SimpleNamespace(enabled=False, in_flight=0),
+            binding=make_binding(
+                model="m",
+                capabilities=ModelCapabilities(
+                    32768, 4096, False, supports_grammar=True, **caps
+                ),
+            ),
+        )
+
+    def test_optional_number_parses_auto_to_none(self):
+        kind = K.Number(float, unit="0-2", optional=True)
+        for text in ("auto", "", "  AUTO ", None, "none"):
+            assert kind.parse(text) is None, text
+        assert kind.parse("0.2") == 0.2 and kind.parse(1) == 1.0
+        with pytest.raises(ValueError):
+            kind.parse("warm")
+        assert "auto" in kind.describe()
+        # 보통 숫자는 그대로 — None·빈 값은 오류
+        with pytest.raises(ValueError):
+            K.Number(float).parse("")
+
+    def test_default_is_auto_and_sends_nothing(self, tmp_path):
+        s = self._session(tmp_path)
+        for name in ("temperature", "top_p"):
+            k = KNOB_BY_NAME[name]
+            assert k.default is None and k.get(s) is None
+            assert isinstance(k.kind, K.Number) and k.kind.optional
+        assert s.ctx.sampling == {}
+        from agent_cli.providers.base import resolve_sampling
+
+        assert resolve_sampling(s.binding.capabilities, s.ctx.sampling) == {}
+
+    def test_set_clamps_and_auto_removes_the_key(self, tmp_path):
+        s = self._session(tmp_path)
+        t, p = KNOB_BY_NAME["temperature"], KNOB_BY_NAME["top_p"]
+        assert t.set(s, 0.2) == 0.2 and s.ctx.sampling == {"temperature": 0.2}
+        assert t.set(s, 3) == 2.0 and p.set(s, -1) == 0.0  # clamp
+        assert s.ctx.sampling == {"temperature": 2.0, "top_p": 0.0}
+        assert t.set(s, None) is None
+        assert s.ctx.sampling == {"top_p": 0.0}  # 서로를 지우지 않는다
+        assert p.set(s, t.parse("auto")) is None and s.ctx.sampling == {}
+
+    def test_group_badge_and_note_say_the_source(self, tmp_path):
+        s = self._session(tmp_path, temperature=0.3)
+        g = K.web_group("sampling", s)
+        assert g["icon"] == "🎲" and g["members"] == ["temperature", "top_p"]
+        assert (
+            g["badge"] == "auto"
+        )  # 세션이 정한 값이 없다 — 엔트리 값은 설명 줄이 말한다
+        assert "temperature 0.3 from models.json" in g["note"]
+        assert "top_p: server default" in g["note"]
+        st = K.web_state(KNOB_BY_NAME["temperature"], s)
+        assert (st["min"], st["max"], st["step"]) == (0.0, 2.0, 0.05)
+        assert st["effective"] == 0.3 and st["source"] == "models.json"
+        assert st["pick"] == 0.3 and st["on"] is False and st["badge"] == "auto"
+        assert st["ui"]["control"] == "optional" and st["ui"]["group"] == "sampling"
+        # auto 를 풀 때 먹일 값 — 실효값이 없으면 1.0(효과 없음)
+        assert K.web_state(KNOB_BY_NAME["top_p"], s)["pick"] == 1.0
+
+        KNOB_BY_NAME["temperature"].set(s, 0.2)
+        assert K.web_group("sampling", s)["badge"] == "T 0.2"
+        st = K.web_state(KNOB_BY_NAME["temperature"], s)
+        assert st["source"] == "session" and st["on"] is True and st["badge"] == "0.2"
+        KNOB_BY_NAME["top_p"].set(s, 0.9)
+        g = K.web_group("sampling", s)
+        assert g["badge"] == "T 0.2 · p 0.9"
+        assert "temperature 0.2 (this session)" in g["note"]
+        assert "top_p 0.9 (this session)" in g["note"]
+
+    def test_child_ctx_copies_sampling_from_parent(self, tmp_path):
+        from agent_cli.subagent.runner import create_subagent_ctx
+
+        parent = ContextManager(tmp_path / "s", max_context_tokens=10_000)
+        parent.set_sampling("temperature", 0.2)
+        child, err = create_subagent_ctx("none", parent, tmp_path / "s" / "run_x")
+        assert err == "" and child.sampling == {"temperature": 0.2}
+        child.set_sampling("temperature", None)
+        assert parent.sampling == {"temperature": 0.2}  # 복사본
+
+    def test_cli_accepts_numbers_and_auto(self):
+        app = typer.Typer()
+        seen: dict = {}
+
+        @app.command()
+        @K.knob_options
+        def q(knob_args: dict | None = None):
+            seen.update(knob_args or {})
+
+        r = CliRunner().invoke(app, ["--temperature", "0.2", "--top-p", "auto"])
+        assert r.exit_code == 0, r.output
+        assert seen == {"temperature": 0.2, "top_p": None}
+        # auto 는 "주지 않음" 과 같다 — 부팅값은 env → 기본값(None)으로
+        assert resolve_all(seen, environ={})["top_p"] is None
+        assert (
+            resolve_all({}, environ={"AGENT_CLI_TEMPERATURE": "0.6"})["temperature"]
+            == 0.6
+        )
+        r = CliRunner().invoke(app, ["--temperature", "warm"])
+        assert r.exit_code != 0
