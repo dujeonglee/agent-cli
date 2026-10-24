@@ -206,6 +206,8 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
 | `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
+| `AGENT_CLI_TEMPERATURE` | — | 샘플링 temperature (0~2) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = **보내지 않음**: `models.json` 엔트리의 `temperature` → 서버 기본. `--temperature` 또는 웹 🎲 칩으로 세션 중 변경 |
+| `AGENT_CLI_TOP_P` | — | 샘플링 top_p (0~1) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = 보내지 않음: `models.json` 엔트리의 `top_p` → 서버 기본. `--top-p` 또는 웹 🎲 칩 |
 | `AGENT_CLI_IMAGE_KEEP` | — | 살아 있는 이미지 수 상한 — 최근 N 장만 모델에 보내고 더 오래된 것은 자리표시 글만 (기본 `6`, `0`=무제한; v10.59.0, 아래 "이미지 입력") |
 | `AGENT_CLI_IMAGE_MAX_EDGE` | — | 보내기 전 긴 변 상한(픽셀) — 넘으면 축소 (기본 `2048`, `0`=축소 없음; v10.59.0) |
 | `AGENT_CLI_GRAMMAR` | — | 디코딩 문법 제약: `off` 로 끔 (미설정/`on` = 기본 켬). web UI 📐 노브의 headless 대응. 켜기는 `models.json` 에 `supports_grammar: true` 로 **기록된** 모델에서만 효력 — 미지원(false)·미확인(키 없음) 모델엔 어떤 값으로도 켜지지 않는다 (v9.24.0) |
@@ -477,11 +479,13 @@ agent-cli run "task description" [options]
 | `--thinking` | 사고 `off`·`on`·`auto` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브) | `off` |
 | `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`, 웹 🧠 칩의 둘째 셀렉트) | `auto` |
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
+| `--temperature` | 샘플링 temperature 0~2 또는 `auto`(기본 — 보내지 않음: `models.json` 엔트리 → 서버 기본) — 다음 LLM 요청부터 (v10.69.0; env `AGENT_CLI_TEMPERATURE`, 웹 🎲 칩의 첫 입력) | `auto` |
+| `--top-p` | 샘플링 top_p 0~1 또는 `auto`(기본 — 보내지 않음) (env `AGENT_CLI_TOP_P`, 웹 🎲 칩의 둘째 입력) | `auto` |
 | `--auto-approve` / `--no-auto-approve` | 확인 프롬프트를 묻지 않고 허용 (env `AGENT_CLI_AUTO_APPROVE`, 웹 ⚡ 노브) | 꺼짐 |
 | `--auditor` / `--no-auditor` | 세션 감사 (env `AGENT_CLI_AUDITOR`, 웹 🔎 칩; 아래 "세션 감사자") | 꺼짐 |
 | `--image PATH` | QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 밖 파일은 `.agent-cli/tmp/uploads/` 로 복사. 모델이 이미지를 못 보면 즉시 오류 (v10.59.0, 아래 "이미지 입력") | |
 
-> 위 노브 아홉 축(`--thinking`·`--reasoning-effort`·`--grammar`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
+> 위 노브 열한 축(`--thinking`·`--reasoning-effort`·`--grammar`·`--temperature`·`--top-p`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |

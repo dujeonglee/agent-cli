@@ -266,6 +266,10 @@ class ContextManager:
         self.thinking_override: dict = {"enable_thinking": False}
         #: 디코딩 문법 제약 (v9.24.0): None=자동(서버 지원 시 켬) / True / False.
         self.grammar_override: bool | None = None
+        #: 세션 샘플링 노브 (v10.69.0, 🎲): ``{"temperature": float, "top_p": float}``
+        #: 중 세션이 정한 키만. 비어 있으면(기본) 모델 엔트리 → 서버 기본
+        #: (`providers.base.resolve_sampling`). 공유 ctx 라 다음 LLM 콜이 즉시 읽는다.
+        self.sampling: dict = {}
         # P3 (v8.55.0): 스트림 무진전(no-token) 한도(초) — 0=끔. 세션 한정.
         self.stream_idle_timeout_s: int = DEFAULT_STREAM_IDLE_TIMEOUT_S
         # v8.60.0: 한도와 한 쌍인 **총** 시도 횟수(첫 전송 포함).
@@ -758,6 +762,21 @@ class ContextManager:
             ov["reasoning_effort"] = reasoning_effort
         self.thinking_override = ov
         return ov
+
+    def set_sampling(self, name: str, value) -> float | None:
+        """세션 샘플링 노브 하나(🎲 temperature/top_p)를 정하거나 지운다 (v10.69.0).
+        ``None`` = auto(키 삭제 → 모델 엔트리·서버 기본으로). 값은
+        `constants.SAMPLING_RANGES` 로 clamp; 저장된 값을 돌려준다. 다음 LLM
+        콜부터 반영(공유 ctx)."""
+        from agent_cli.constants import SAMPLING_RANGES
+
+        lo, hi = SAMPLING_RANGES[name]
+        if value is None:
+            self.sampling.pop(name, None)
+            return None
+        v = max(lo, min(hi, float(value)))
+        self.sampling[name] = v
+        return v
 
     @property
     def summary(self) -> str:

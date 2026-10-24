@@ -12,6 +12,7 @@ from agent_cli.providers.base import (
     CallSettings,
     LLMResponse,
     TokenUsage,
+    resolve_sampling,
     resolve_thinking_policy,
     strip_think_blocks,
 )
@@ -128,6 +129,10 @@ class AnthropicProvider:
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
             # Anthropic deducts thinking from max_tokens
             body["max_tokens"] = budget + max_out
+        # 🎲 샘플링 (v10.69.0): OpenAI 와 같은 이름·같은 규칙(세션 > 엔트리 > 미주입).
+        # Anthropic 의 범위(temperature 0~1, 확장 사고 중 temperature 고정)는 서버가
+        # 거절로 말한다 — 하니스가 미리 좁히지 않는다.
+        body.update(resolve_sampling(capabilities, settings.sampling))
 
         if on_chunk:
             body["stream"] = True

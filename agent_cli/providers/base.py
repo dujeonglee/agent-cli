@@ -132,6 +132,42 @@ class CallSettings:
     #: v10.2.0 — 서버 네이티브 함수 호출(native_fc): OpenAI 함수 스키마 목록.
     #: None = 보내지 않음. Anthropic 경로는 받지 않는다(부트에서 fail-fast).
     tools: list[dict] | None = None
+    #: v10.69.0 — 세션 샘플링 노브 ``{temperature?, top_p?}`` (ctx.sampling 스냅샷).
+    #: None/빈 dict = 세션이 정한 값 없음 → 모델 엔트리(capabilities) → 보내지 않음.
+    #: 해석은 :func:`resolve_sampling` 한 곳.
+    sampling: dict | None = None
+
+
+#: 샘플링 노브 이름 — 요청 본문 키와 같다 (OpenAI·Anthropic 둘 다 이 이름).
+SAMPLING_KEYS: tuple[str, ...] = ("temperature", "top_p")
+
+
+def resolve_sampling(capabilities: ModelCapabilities, sampling: dict | None) -> dict:
+    """요청에 실을 샘플링 필드 — **세션 노브 > models.json 엔트리 > 없음** (v10.69.0,
+    docs/knobs/DESIGN.md §7). 정해진 키만 돌려주므로 어느 층도 안 정한 키는 요청에
+    없고 서버 기본이 적용된다(종전과 같은 본문). 프로바이더 둘이 같은 이름으로
+    싣는다 — 번역은 없다."""
+    ov = sampling or {}
+    out: dict = {}
+    for name in SAMPLING_KEYS:
+        value = ov.get(name)
+        if value is None:
+            value = getattr(capabilities, name, None)
+        if value is not None:
+            out[name] = float(value)
+    return out
+
+
+def sampling_source(
+    capabilities: ModelCapabilities, sampling: dict | None, name: str
+) -> str:
+    """``name`` 의 실효값이 어느 층에서 왔나 — ``"session"`` · ``"models.json"`` ·
+    ``"server"``(아무 층도 안 정해 필드를 보내지 않는다). 🎲 칩의 설명 줄용."""
+    if (sampling or {}).get(name) is not None:
+        return "session"
+    if getattr(capabilities, name, None) is not None:
+        return "models.json"
+    return "server"
 
 
 def resolve_thinking_policy(

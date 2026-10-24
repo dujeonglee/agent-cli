@@ -19,6 +19,7 @@ from agent_cli.providers.base import (
     CallSettings,
     LLMResponse,
     TokenUsage,
+    resolve_sampling,
     resolve_thinking_policy,
     strip_think_blocks,
 )
@@ -114,6 +115,9 @@ class OpenAIProvider:
         if settings.tools:
             body["tools"] = settings.tools
             body["tool_choice"] = "auto"
+        # 🎲 샘플링 (v10.69.0): 세션 노브 > models.json 엔트리 > 미주입(서버 기본).
+        # 정해진 키만 싣는다 — 같은 이름이라 번역이 없다.
+        body.update(resolve_sampling(capabilities, settings.sampling))
 
         if on_chunk:
             body["stream"] = True
