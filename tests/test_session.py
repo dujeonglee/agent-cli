@@ -400,3 +400,44 @@ class TestQueryFieldRemoved:
 
         fields = {f.name for f in dataclasses.fields(create_session("/tmp/ws"))}
         assert "query" not in fields
+
+
+class TestRoomTitle:
+    """v10.71.0: ``--title`` 이 세션 메타에 남는다 — 있을 때만 키를 적고, 없는 옛 메타는
+    빈 제목으로 읽히며, resume 에 ``--title`` 이 없으면 저장값을 지키고 있으면 바꾼다."""
+
+    def test_meta_round_trip_and_absent_key(self):
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        raw = json.loads(
+            (session_mod._SESSIONS_DIR / meta.session_id / "session.jsonl").read_text()
+        )
+        assert "title" not in raw["_meta"]
+        assert load_session(meta.session_id).title == ""
+        meta.title = "GLM — bench rerun"
+        save_meta(meta)
+        raw = json.loads(
+            (session_mod._SESSIONS_DIR / meta.session_id / "session.jsonl").read_text()
+        )
+        assert raw["_meta"]["title"] == "GLM — bench rerun"
+        assert load_session(meta.session_id).title == "GLM — bench rerun"
+
+    def test_apply_title_keeps_saved_when_empty(self):
+        from agent_cli.main import _apply_title
+
+        meta = create_session("/tmp/ws")
+        meta.title = "kept"
+        _apply_title(meta, "")
+        assert meta.title == "kept"
+        _apply_title(meta, "  new title  ")
+        assert meta.title == "new title"
+
+    def test_run_and_web_expose_the_flag(self):
+        from typer.main import get_command
+
+        from agent_cli.main import app
+
+        cmds = get_command(app).commands
+        for name in ("run", "web"):
+            opts = {o for p in cmds[name].params for o in getattr(p, "opts", [])}
+            assert "--title" in opts, name

@@ -1217,6 +1217,15 @@ def _bootstrap_provider(
     )
 
 
+def _apply_title(session, title: str) -> None:
+    """``--title`` 을 세션에 (v10.71.0). 빈 값은 저장된 제목을 그대로 둔다 — resume 이
+    제목을 잃지 않게. 보드는 spawn 마다 글의 topic 을 넘기므로 고친 제목이 다음
+    재시작에 들어온다."""
+    t = (title or "").strip()
+    if t:
+        session.title = t
+
+
 def _load_resume_session(resume_id: str):
     """``--resume <id>`` 공용 경로: unknown ID 는 provider 핸드셰이크 전에
     fail-fast, 성공 시 SessionMeta 반환 + 배너. run/web 동형."""
@@ -1276,6 +1285,13 @@ def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
 
 #: `run --image` (v10.59.0) — 모듈 단일체: 가변 타입(list) 인자 기본값의 함수
 #: 호출을 ruff B008 이 막는다(다른 옵션은 불변 타입이라 통과).
+_TITLE_OPTION = typer.Option(
+    "",
+    "--title",
+    help="Room title (v10.71.0) — shown in the web header and browser tab, the "
+    "startup banner and web.json; saved in the session so --resume keeps it "
+    "(giving --title again replaces it). agent-board passes the post's topic.",
+)
 _IMAGE_OPTION = typer.Option(
     None,
     "--image",
@@ -1356,6 +1372,7 @@ def run(
         "file is not created; use the exit code.",
     ),
     image: list[str] | None = _IMAGE_OPTION,
+    title: str = _TITLE_OPTION,
     knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
@@ -1396,8 +1413,11 @@ def run(
     from agent_cli.context.session import create_session, save_meta
 
     session = session_resumed if session_resumed is not None else create_session()
+    _apply_title(session, title)
     _claim_session(session)
     save_meta(session)
+    if session.title:
+        console.print(f"  Title:   {session.title}")
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
@@ -2237,6 +2257,7 @@ def web(
         "/<prefix>/* to this instance and strips the prefix (e.g. /s/doom). "
         "The UI's relative URLs resolve under it. Default '' = root.",
     ),
+    title: str = _TITLE_OPTION,
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -2315,6 +2336,7 @@ def web(
         session, is_resume = _maybe_resume_recent(os.getcwd(), prompt_fn)
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
+    _apply_title(session, title)
     _claim_session(session)
     save_meta(session)
     ctx = _build_context(session, binding, resume=is_resume)
@@ -2323,6 +2345,7 @@ def web(
     renderer = WebRenderer(
         workspace=session.workspace,
         session_dir=str(get_session_dir(session)),  # writes status.json here
+        title=session.title,
     )
     set_renderer(renderer)
     # 모델 시점의 첫 뷰 (v10.6.0): resume 로 복원된 캐시(압축 경계·요약)를 첫
@@ -2595,6 +2618,8 @@ def web(
     console.print(
         f"\n[bright_cyan]agent-cli web[/]  ({binding.provider_name} · {binding.model})"
     )
+    if session.title:
+        console.print(f"  Title:   {session.title}")
     console.print(f"  UI:      [yellow]{ui_url}[/]")
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
@@ -2618,6 +2643,7 @@ def web(
         host=host,
         port=resolved_port,
         token=server.token,
+        title=session.title,
     )
     # Seed the live status sidecar so the board can read it immediately (before
     # the first viewer). The renderer rewrites it on each viewer/busy/awaiting

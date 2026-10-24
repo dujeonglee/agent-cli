@@ -6,7 +6,7 @@ Conversation history is managed by ContextManager (history.jsonl).
 File layout (declared ONCE here — v10.42.0; the makers and the one reader
 import these names instead of spelling them):
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # single-line metadata (id, workspace, updated_at)
+    session.jsonl          # single-line metadata (id, workspace, updated_at, title?)
     history.jsonl          # main conversation (managed by ContextManager)
     agents/<key>/          # resident teammates (AGENTS_DIR)
     run_*/  skill_*/       # one-shot delegates / skill runs, nestable
@@ -67,6 +67,10 @@ class SessionMeta:
     session_id: str
     workspace: str
     updated_at: str
+    #: 방 제목 (v10.71.0) — ``--title`` 로 받는다(보드가 글의 topic 을 넘긴다). 빈 문자열
+    #: = 없음(메타에 키를 적지 않는다). 세션 도중 바꾸지 않는 정체 정보라 노브가 아니다;
+    #: ``--resume`` 은 저장값을 되살리고, ``--title`` 이 같이 오면 그 값으로 갱신한다.
+    title: str = ""
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -98,6 +102,8 @@ def save_meta(meta: SessionMeta) -> None:
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
                 "updated_at": meta.updated_at,
+                # title 은 있을 때만 — 옛 리더(보드 sessions 조회)가 모르는 키를 보지 않게
+                **({"title": meta.title} if meta.title else {}),
             }
         },
         ensure_ascii=False,

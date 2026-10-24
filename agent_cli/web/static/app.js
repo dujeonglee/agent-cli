@@ -2800,6 +2800,20 @@
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
+    // 방 제목 (v10.71.0): 보드 글의 topic 이 --title 로 온다. 헤더 첫 자리와 브라우저
+    // 탭 제목이 된다 — 방을 여럿 열어도 탭만 보고 고를 수 있게. 없으면 둘 다 종전대로.
+    const $title = document.getElementById("room-title");
+    if ($title) {
+      if (d.title) {
+        $title.textContent = d.title;
+        $title.title = "Room title — " + d.title;
+        $title.hidden = false;
+        document.title = d.title + " · agent-cli";
+      } else {
+        $title.hidden = true;
+        document.title = "agent-cli";
+      }
+    }
     // ``workspace`` is the agent's working directory at session
     // creation time. Showing it in the top bar disambiguates which
     // checkout you're talking to when several LAN sessions are open

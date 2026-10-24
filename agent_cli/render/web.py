@@ -173,7 +173,9 @@ class WebRenderer(Renderer):
     buffer.
     """
 
-    def __init__(self, *, workspace: str = "", session_dir: str = "") -> None:
+    def __init__(
+        self, *, workspace: str = "", session_dir: str = "", title: str = ""
+    ) -> None:
         super().__init__()
         self._lock = threading.Lock()
         # Session dir for the live ``status.json`` sidecar (busy/awaiting/viewers)
@@ -232,6 +234,9 @@ class WebRenderer(Renderer):
         # without the LLM needing to volunteer the path. Empty string
         # = field omitted from the event entirely.
         self._workspace = workspace
+        #: 방 제목 (v10.71.0) — ``ready`` 에 실려 헤더 첫 자리·브라우저 탭이 된다. 빈
+        #: 문자열 = 필드 생략(헤더에 제목 자리가 생기지 않는다).
+        self._title = title
         # Per-scope system-prompt snapshots for the Prompt Inspector
         # (``GET /api/debug/prompt``). Keyed by scope: ``_MAIN_SCOPE`` ("")
         # is the main loop, a ``task_id`` is a delegate sub-agent — resolved
@@ -1472,6 +1477,8 @@ class WebRenderer(Renderer):
         }
         if self._workspace:
             payload["workspace"] = self._workspace
+        if self._title:
+            payload["title"] = self._title
         # Sticky + ``prepend`` so the top-bar populates before everything on a
         # client that opens the page mid-session (fixes stuck "connecting…").
         self.set_sticky("ready", "ready", payload, position="prepend")

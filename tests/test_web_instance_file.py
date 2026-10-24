@@ -73,6 +73,17 @@ class TestInstanceFile:
         raw = json.loads(instance_file_path(tmp_path).read_text(encoding="utf-8"))
         assert set(raw) == {"session_id", "host", "port", "token", "pid"}
 
+    def test_title_written_only_when_set(self, tmp_path):
+        """v10.71.0: 방 제목은 있을 때만 web.json 에 — 없으면 키 자체가 없다."""
+        write_instance_file(
+            tmp_path, session_id="x", host="h", port=1, token="t", title="GLM — rerun"
+        )
+        raw = json.loads(instance_file_path(tmp_path).read_text(encoding="utf-8"))
+        assert raw["title"] == "GLM — rerun"
+        write_instance_file(tmp_path, session_id="x", host="h", port=1, token="t")
+        raw = json.loads(instance_file_path(tmp_path).read_text(encoding="utf-8"))
+        assert "title" not in raw
+
 
 class TestStatusFile:
     """Live ``status.json`` sidecar the board reads instead of polling health."""
