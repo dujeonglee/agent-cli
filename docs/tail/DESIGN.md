@@ -237,6 +237,47 @@ session and does not survive a restart (`schedule` is and does)."
 지키는지, 그리고 A 묶음에서 보였던 shell→python 이동(shell 136→78)이 이 변형에는 없는지 — 그 이동이 shell
 설명 쪽 변화에 귀속되는지 가리는 대조군이 된다. 35B 2회. 결과는 §12.
 
-## 12. 결과
+## 12. 결과 (2026-10-26 05:07–08:13 KST, 35B · thinking off · 2회, wheel 75ae9c78 sha b07da57b…)
 
-(측정 뒤 기록)
+| 조건 | 런별 통과 | 합 | python 호출 | shell 호출 |
+|---|---|---|---|---|
+| 10.72.0 (tail-base r1·r2) | 5, 6 | 11/18 | 89~137 범위 | 115~152 범위 |
+| 10.73.0 (pyguide r1·r3) | 4, 7 | 11/18 | (같은 범위) | (같은 범위) |
+| PR #174 A 묶음 (tooldesc r1·r2) | 2, 3 | 5/18 | 140, 149 | 127, 78 |
+| **PR #175 monitor 만 (mondesc r1·r2)** | **4, 4** | **8/18** | **146, 177** | 159, 73 |
+
+| task | pyguide-r3 | mondesc-r1 | mondesc-r2 |
+|---|---|---|---|
+| db-wal-recovery | ✅ | ❌ sqlite3 질의 직후 WAL 소실(tooldesc-r2 와 같은 모양) | ✅ |
+| extract-elf | ✅ | ❌ 82개 값 오류(tooldesc 의 "97개 전부 0" 과 다른 모양) | ✅ |
+| financial | ✅ | ✅ | ❌ Net worth 를 total 로(tooldesc-r1 과 같은 모양) |
+| gcode-to-text | ❌ | ❌ | ❌ |
+| large-scale | ✅ | ❌ shell 49회 vim exit code 디버깅, /tmp 39건 | ⏱ python 셀 안 vim 실험 → background+monitor+kill |
+| log-summary | ✅ | ✅ | ❌ 370 대신 74(이전 런 전부 통과) |
+| multi-source · regex-log | ✅ ✅ | ✅ ✅ | ✅ ✅ |
+| video | ⏱ | ⏱ | ⏱ |
+
+턴 297·236, 분 77·108, 출력 토큰 131k·154k(기준 100k), 실패 관찰 35·27(기준 15), 환경 실패 0, 연결 오류 0.
+
+**변형이 직접 닿는 자리 — monitor 1건** (mondesc-r2 large-scale t19). 모델은 요리법 없이도 같은 모양을
+스스로 만들었다: `vim … > .agent-cli/tmp/jobs/vim_transform.log 2>&1; echo "EXIT_CODE=$?" >> …` 를
+`background: true` 로 띄우고 같은 턴에 `monitor file=… pattern="EXIT_CODE=|error|Error"` 를 걸고 `wait` 했다.
+경로는 꼬리 규칙대로 `.agent-cli/tmp/jobs/`, 종료 코드 줄은 설명에 없는데도 썼다 — 즉 `EXIT:$?` 관용구는
+설명이 아니라 모델의 사전 지식에서 온다. vim 이 끝나지 않아 monitor 는 10분 silent 로 은퇴했고, 그 뒤
+`kill 5920` 2회·`&` 붙인 재실행·`pkill -f vim` 로 1200초에 걸렸다(kill 3·`&` 1 은 전부 이 시도). 다른 17개
+시도에서는 monitor·kill·nohup·`&` 모두 0.
+
+**해석.**
+- 통과 4·4 는 10.73.0 의 두 런(4·7)이 그린 범위 안이다. 합 8/18 < 11/18 이지만, 같은 조건의 10.73.0 이
+  4 와 7 을 냈으므로 2회로는 이 차이를 변형에 귀속할 수 없다.
+- python 호출 증가(146·177, 이전 네 런 89~137)는 **shell·python 설명을 건드리지 않은 이 변형에도 있다.**
+  §10.1 에서 A 묶음의 shell→python 이동을 shell 설명 변화에 귀속하려던 가설은 이것으로 기각된다. 두 변형의
+  공통점은 wheel 버전 문자열(10.74.0)과 **측정 시각**(10-25 심야~10-26 새벽; 기준 네 런은 10-25 낮)뿐이다.
+  python 증가가 환경·시각 드리프트인지는 10.73.0 기준을 같은 시각대에 1회 더 돌려야 가려진다.
+- 반복된 실패 모양(vim 고리, sqlite3 CLI 질의 직후 WAL 소실, Net worth 금액)은 세 조건(기준 포함 r1·r2
+  어딘가)에 걸쳐 나오는 35B 의 과제별 취약점이고 도구 설명과 무관하다.
+- monitor 요리법의 효과는 이 벤치로 **잴 수 없다**(여섯 런 0회, 이번 1회). 이 변형의 근거는 측정이 아니라
+  정합성이다: 요리법은 현 하니스(background=true·`.agent-cli/tmp`·종료 코드 통지)와 모순되는 사실 오류다.
+
+판단은 사용자에게: (1) 10.73.0 기준을 같은 시각대에 1회 재측정해 python 증가·4/9 가 드리프트인지 가린 뒤
+결정, (2) 정합성 근거로 머지(측정상 귀속 가능한 퇴행 없음), (3) 접기.
