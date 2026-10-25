@@ -268,6 +268,22 @@ class LLMCaller:
             from agent_cli.web_sources import render as render_web_sources
 
             web = render_web_sources()
+        # python 사용 가이드 (v10.73.0, docs/tail/DESIGN.md §3): 인터프리터에 상태가
+        # 있는 동안 `## Python session` 블록, 지난 턴에 shell 로 파이썬을 돌렸으면
+        # 교정 한 줄. 둘 다 `python` 도구가 광고된 루프에서만.
+        python_block = ""
+        shell_py = False
+        if "python" in self.cfg.tools_list:
+            from agent_cli.pyworker import get_py_registry
+            from agent_cli.tools.python_tool import tail_block
+
+            reg = get_py_registry()
+            if reg is not None and not reg.closed:
+                python_block = tail_block(reg.state_of(self.cfg.owner))
+            shell_py = (
+                self.state.shell_ran_python_turn > 0
+                and self.state.shell_ran_python_turn == self.state.turn - 1
+            )
         return build_session_state(
             compaction_notice=notice,
             turn=self.state.turn,
@@ -277,8 +293,10 @@ class LLMCaller:
             web_sources=web,
             items=items,
             jobs=jobs,
+            python=python_block,
             guidelines=TASK_GUIDELINES,
             reports_to_caller=self.cfg.depth > 0,
+            shell_python_notice=shell_py,
         )
 
     def _interrupt_check(self) -> bool:

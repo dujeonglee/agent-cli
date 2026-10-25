@@ -52,24 +52,79 @@ def state_line(state: list[list[str]]) -> str:
     return "state: " + " · ".join(parts) + hint
 
 
+# ── 꼬리의 사용 가이드 (v10.73.0, docs/tail/DESIGN.md) ─────────────────────────
+#: `shell` 명령 안의 파이썬 실행 — `python3 -c …`, `python3 - <<EOF`, `python3 <<EOF`,
+#: `python3 x.py`(옵션이 끼어도). 뒤에 오는 첫 인자로 가른다.
+_SHELL_PY = re.compile(r"(?:^|[\s;&|(`])python[0-9.]*\s+(?P<rest>\S+(?:\s+\S+)?)")
+#: 데이터 작업이 아닌 파이썬 호출 — 모듈 실행(`-m pip`·`-m pytest`·`-m venv`)과 버전 확인.
+_SHELL_PY_BENIGN = ("-m", "--version", "-V", "-h", "--help")
+
+
+def shell_runs_python(command: str) -> bool:
+    """shell 명령이 **파이썬 코드를 돌리는가** — `python` 도구가 할 일을 shell 로
+    한 경우(`-c` 인라인·heredoc·스크립트 파일). `python3 -m pip install` 같은 모듈
+    실행과 `--version` 은 아니다(그건 shell 의 일)."""
+    for m in _SHELL_PY.finditer(command or ""):
+        rest = m.group("rest")
+        first = rest.split()[0]
+        if first in _SHELL_PY_BENIGN:
+            continue
+        if first == "-c" or first == "-" or first.startswith("<<"):
+            return True
+        # 옵션(-u, -B, -W…) 뒤의 .py 파일, 또는 바로 .py 파일
+        for tok in rest.split():
+            if tok.startswith("-"):
+                continue
+            return tok.endswith(".py")
+    return False
+
+
+PYTHON_SESSION_HEADER = "## Python session"
+#: 쓰는 동안만 뜨는 사용법 — 종전 도구 설명·Task Guidelines 에 있던 문장들이다.
+PYTHON_SESSION_RULES = (
+    "Refine the function, do not reload — the data above is still in memory. "
+    "One call = one step; a long loop accumulates into a dict or list so a "
+    "timeout keeps what is done. Plot coordinates or shapes instead of reading "
+    "numbers. Print only what you need to see (slices, len(), head()). "
+    "Deliverables go to files — memory is not an output."
+)
+
+
+def tail_block(state: list[list[str]]) -> str:
+    """``## Python session — holding: …`` + 사용법 한 단락. 상태가 비었으면 ``""``
+    — 블록은 인터프리터에 **무언가 들어 있는 동안**만 뜬다."""
+    if not state:
+        return ""
+    shown = state[:12]
+    parts = [f"{r[0]} ({r[1]})" for r in shown]
+    rest = len(state) - len(shown)
+    if rest > 0:
+        parts.append(f"+{rest} more")
+    return (
+        f"{PYTHON_SESSION_HEADER} — holding: " + " · ".join(parts) + "\n"
+        f"{PYTHON_SESSION_RULES}"
+    )
+
+
 class PythonTool(Tool):
     name = "python"
     #: 세션 레지스트리(`runtime.build_py_registry`)가 없으면 광고되지 않는다 —
     #: `snapshot`·`browser` 와 같은 규칙(없는 기능을 약속하지 않는다).
     requires_handler = "python"
+    #: 설명은 **도구의 성질**만 (v10.73.0, docs/tail/DESIGN.md §2): 상태가 남는다,
+    #: 결과는 이렇게 생겼다, 그림은 이미지로 온다, 타임아웃이면 어떻게 되나. "언제
+    #: 이 도구를 고르나·어떻게 쓰나" 는 사용 가이드라 꼬리에 있다 — 상시 한 줄
+    #: (`TASK_GUIDELINES`, 경로 선택) + 상태 조건부(`tail_block`, 쓰는 동안).
+    #: 종전엔 둘 다 여기에도 있었고, 꼬리 쪽을 지우자 35B 가 shell 안 `python3 -c`
+    #: 로 갔다(2026-10-25 A/B) — 머리의 설명은 도구를 **고른 뒤에** 읽는 글이다.
     description = (
-        "Run Python code in a session that KEEPS STATE between calls, like a "
-        "notebook cell: variables, imports, functions and data you loaded stay "
-        "available in the next call. Use it for data work — load or OCR once "
-        "into a variable, then iterate on the parsing/transform function only. "
-        "The result shows the output, the value of the last expression and a "
-        "`state:` line listing what is held in memory. Open matplotlib figures "
-        "are saved and shown to you as images (plot coordinates or paths "
-        "instead of reading numbers). Keep each call to one step; a long loop "
-        "should accumulate into a dict or list, so if the call hits the "
-        "timeout it is interrupted and what is done stays in memory. Print "
-        "only what you need to see (slices, len(), head()). Write final "
-        "deliverables to files — memory is not an output."
+        "Run Python code in a session that keeps state between calls, like a "
+        "notebook cell: variables, imports, functions and loaded data stay "
+        "available in the next call. The result shows the output, the value of "
+        "the last expression and a `state:` line listing what is held in "
+        "memory. Open matplotlib figures are saved and shown to you as images. "
+        "A call that hits the timeout is interrupted; what it had already "
+        "stored stays in memory."
     )
     oversized_retry_hint = (
         "print less: a slice (`x[:20]`), `len(x)`, `.head()`, or a summary "

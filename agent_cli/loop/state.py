@@ -115,5 +115,10 @@ class LoopState:
     #: `loop/ledger.py`). 종전엔 필드 넷(`run_requests`·`answers_prompted`·
     #: `requests_nagged`·`debt_nags`)이 여기 흩어져 있었다.
     ledger: Ledger = field(default_factory=Ledger)
+    #: `shell` 이 파이썬 코드를 돌린(`python3 -c`·heredoc·`.py`) 마지막 턴 번호
+    #: (v10.73.0, docs/tail/DESIGN.md §3). ToolBridge 가 찍고 LLMCaller 가 "지난
+    #: 턴" 인지 비교해 꼬리에 교정 한 줄을 띄운다 — 두 클러스터가 읽고 쓰는
+    #: 상태라 여기. 0 = 아직 없음.
+    shell_ran_python_turn: int = 0
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)

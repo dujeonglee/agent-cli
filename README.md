@@ -335,6 +335,7 @@ python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
   state: texts (dict, 12 keys) · parse (function)
 ```
 
+- 가이드의 자리(v10.73.0, `docs/tail/DESIGN.md`): 도구 설명은 성질만, 꼬리의 Task Guidelines 는 "비용 큰 단계 뒤에 다음 단계를 반복 시도하는 일은 `python` 으로, shell 에서 돌린 파이썬 아님" 한 줄(작업 종류나 실행 파일 이름은 쓰지 않습니다). 인터프리터에 무언가 들어 있는 동안은 꼬리에 `## Python session — holding: texts (dict, 12 keys) · parse (function)` 블록과 쓰는 법(한 번 로드·한 호출 = 한 단계·누적·그림·산출물)이 뜨고, 지난 턴에 shell 로 파이썬을 돌렸으면(`-c`·heredoc·`.py`) "`python` 도구를 쓰라" 교정 한 줄이 뜹니다.
 - 관찰 = 출력(stdout·stderr 와 자식 프로세스 출력이 **실제 순서로 한 흐름**) + 마지막 식의 값(`=> …`) + **`state:` 한 줄**(메모리에 든 것의 이름·타입·크기, 20개까지 — 데이터 → 함수 → 객체 → 스칼라 순, 파일 핸들 제외, 데이터가 있으면 "still in memory: reuse it, do not reload"). 상태줄은 관찰에만 — 꼬리엔 없습니다.
 - 예외는 트레이스백이 실패 관찰로 오고 상태는 그대로입니다. `timeout`(기본 120초)을 넘기면 노트북의 Ctrl-C 처럼 **코드만 멈추고 상태는 남습니다** — 루프가 dict 에 모으던 결과가 그대로 있고 다음 호출이 이어 갑니다(띄운 하위 프로세스도 같이 멈춥니다). 인터럽트를 무시하는 코드만 몇 초 뒤 인터프리터를 죽이고 **상태가 사라졌음**을 들고 있던 이름과 함께 알립니다. `reset: true` 면 새 인터프리터부터.
 - 열린 matplotlib figure 는 `.agent-cli/tmp/python/` 에 PNG 로 저장되어 이미지로 첨부됩니다 — 좌표·경로 데이터는 숫자를 읽는 대신 그려서 봅니다.
