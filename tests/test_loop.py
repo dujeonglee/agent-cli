@@ -5121,16 +5121,16 @@ class TestStreamIdleInheritance:
 
 
 class TestHeadlessThinkingControl:
-    """ctx 의 thinking_override(기본 = 끔 명시, v9.24.8; env·CLI 는 노브 `thinking`
-    — tests/test_knobs.py)가 provider.call 의 CallSettings.thinking 으로 흘러 요청
-    body 에 반영된다."""
+    """ctx 의 사고 스위치(기본 = 끔, v9.24.8; env·CLI 는 노브 `thinking` —
+    tests/test_knobs.py)가 provider.call 의 CallSettings.thinking 으로 흘러 요청
+    body 에 반영된다. v10.72.0: 값은 bool 하나."""
 
     def test_env_off_reaches_provider_call(self, monkeypatch, tmp_path):
-        """ctx 기본(끔 명시) → CallSettings.thinking (엔드-투-엔드)."""
+        """ctx 기본(끔) → CallSettings.thinking (엔드-투-엔드)."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
-        assert ctx.thinking_override == {"enable_thinking": False}
+        assert ctx.thinking is False
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=1024, supports_thinking=True
         )
@@ -5145,7 +5145,7 @@ class TestHeadlessThinkingControl:
             max_turns=2,
         )
         settings = provider.call.call_args_list[0].kwargs["settings"]
-        assert settings.thinking == {"enable_thinking": False}
+        assert settings.thinking is False
 
 
 class TestRetriesAreNotRecorded:

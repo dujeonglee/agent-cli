@@ -75,7 +75,6 @@ class TestTableDriven:
         "name,value,expect",
         [
             ("thinking", "on", "on"),
-            ("reasoning_effort", "high", "high"),
             ("grammar", "off", "off"),
             ("max_agents", 3, 3),
             ("compaction_ratio", 0.8, 0.8),
@@ -253,7 +252,7 @@ class TestChipShapeComesFromTheServer:
         r = client.post(f"/api/knobs/model?token={TOKEN}", json={"value": "m2"}).json()
         assert r["ok"] and r["badge"] == "m2"
         assert renderer._sticky["knob:thinking"]["payload"]["locked"]
-        assert renderer._sticky["knob:reasoning_effort"]["payload"]["locked"]
+        assert renderer._sticky["knob:thinking"]["payload"]["badge"] == "unsupported"
 
     def test_stall_zero_locks_attempts(self, tmp_path):
         _s, _r, client = _full(tmp_path)
@@ -346,7 +345,6 @@ class TestFrontendIsOneRenderer:
         for word in (
             "compaction_ratio",
             "max_agents",
-            "reasoning_effort",
             "미지원",
             "감사 중",
         ):

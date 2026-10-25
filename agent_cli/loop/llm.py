@@ -18,7 +18,7 @@ from agent_cli.loop.prompt import SystemPromptSvc
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
 from agent_cli.prompts.session_state import COMPACTION_NOTICE_STEPS
-from agent_cli.providers.base import CallSettings, resolve_thinking_policy
+from agent_cli.providers.base import CallSettings, thinking_switch
 from agent_cli.render import (
     render_spinner_start,
     render_spinner_stop,
@@ -156,7 +156,7 @@ class LLMCaller:
             )
         return self._function_schemas_cache
 
-    def _decoding_grammar(self, thinking_override) -> tuple[bool, str] | None:
+    def _decoding_grammar(self, thinking: bool) -> tuple[bool, str] | None:
         """이 콜의 디코딩 문법 (v9.24.0) — 서버가 강제하고(capabilities
         ``supports_grammar``) 세션이 끄지 않았을 때만. 도구 집합과 스키마는
         **프롬프트와 같은 함수**에서 나온다(`effective_tool_names` ·
@@ -201,8 +201,7 @@ class LLMCaller:
                 open_: self.cfg.dialect.grammar(tools, thinking_open=open_)
                 for open_ in (False, True)
             }
-        policy = resolve_thinking_policy(caps, thinking_override)
-        thinking_open = bool(policy is not None and policy.enabled)
+        thinking_open = bool(thinking_switch(caps, thinking))
         return thinking_open, self._grammar_cache[thinking_open]
 
     def _build_session_state(self, budget: int) -> str:
@@ -391,8 +390,8 @@ class LLMCaller:
             render_spinner_start(f"skill:{self.cfg.skill_name}")
         else:
             render_spinner_start()
-        thinking_override = (self.ctx.thinking_override or None) if self.ctx else None
-        decoding = self._decoding_grammar(thinking_override)
+        thinking = bool(self.ctx.thinking) if self.ctx else False
+        decoding = self._decoding_grammar(thinking)
         grammar = decoding[1] if decoding else None
         # Prompt Inspector snapshot: what THIS call's system prompt looks
         # like, as named sections. No-op for CLI renderers (store-only on
@@ -453,7 +452,7 @@ class LLMCaller:
                 # thinking 오버라이드·스트림 무진전 한도·클램프 max_tokens.
                 # 공유 ctx 라 web 변경이 이 콜부터 즉시 반영.
                 settings=CallSettings(
-                    thinking=thinking_override,
+                    thinking=thinking,
                     grammar=grammar,
                     stream_idle_timeout_s=(
                         self.ctx.stream_idle_timeout_s

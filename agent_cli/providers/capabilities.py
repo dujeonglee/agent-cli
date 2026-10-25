@@ -568,11 +568,12 @@ class _AnthropicTransport:
         }
         # 기본 OFF 모델을 재프로브할 때 Anthropic 방언의 사고 스위치(thinking
         # 블록)를 켠다 — OpenAI transport 의 chat_template_kwargs 와 동형 계약.
-        # budget 은 API 하한 1024, max_tokens 는 budget 만큼 증액(Anthropic 이
-        # 사고를 max_tokens 에서 차감하므로).
+        # 모양은 프로바이더가 실제로 보내는 것과 같다(``anthropic._THINKING_ON``,
+        # v10.72.0: 현행 Claude 는 ``budget_tokens`` 를 거절한다).
         if enable_thinking:
-            body["thinking"] = {"type": "enabled", "budget_tokens": 1024}
-            body["max_tokens"] = max_tokens + 1024
+            from agent_cli.providers.anthropic import _THINKING_ON
+
+            body["thinking"] = dict(_THINKING_ON)
         r = requests.post(
             f"{self.base}/messages",
             json=body,
