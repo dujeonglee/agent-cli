@@ -108,6 +108,8 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
 
 ## 6. 남긴 것
 
+- pyguide r2 financial 에서 드러난 **인터프리터 불일치**(python 도구 = uv 의 agent-cli venv, 모델의 pip = 다른 Python → ModuleNotFoundError → shell 로 회귀)는 꼬리와 무관한 요인이라 같은 브랜치에서 관찰 안내로 고쳤다(`python_tool.missing_module_hint`, docs/python-tool/DESIGN.md §3). 재측정(§4.2 r3)은 이 수정 포함.
+
 - 다른 도구 설명에도 사용 규칙이 섞여 있을 수 있다(shell·edit_file·fetch). 같은 기준으로
   훑어 목록만 만든다 — 이 변형에는 넣지 않았다(효과 귀속).
 - 첫 시도의 다른 삭제(작업 줄 뒷부분 → Background jobs 블록, "diagnose first" 삭제,

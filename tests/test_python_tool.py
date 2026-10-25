@@ -272,3 +272,35 @@ class TestWorkerUnit:
         w = PyWorker(tmp_path)
         w.kill()
         assert not w.alive and w.pid is None
+
+
+class TestMissingModuleHint:
+    """ModuleNotFoundError 관찰은 **이 인터프리터** 경로와 거기에 설치하는 명령을
+    같이 준다 (v10.73.0) — pyguide r2 financial 은 PATH 의 pip·다른 cpython 에 깔고
+    도구에서 import 가 안 되자 shell 로 돌아갔다."""
+
+    def test_hint_names_the_interpreter_and_the_package(self):
+        from agent_cli.tools.python_tool import missing_module_hint
+
+        h = missing_module_hint(
+            "Traceback…\nModuleNotFoundError: No module named 'PIL'", "/v/bin/python"
+        )
+        assert "`/v/bin/python`" in h
+        assert "`/v/bin/python -m pip install Pillow`" in h
+        assert "ensurepip" in h
+        h2 = missing_module_hint(
+            "ModuleNotFoundError: No module named 'pdfminer.high_level'", "/p"
+        )
+        assert "-m pip install pdfminer`" in h2
+        assert missing_module_hint("ZeroDivisionError: division by zero", "/p") == ""
+        assert missing_module_hint(None, "/p") == ""
+
+    def test_live_observation_carries_the_hint(self, reg):
+        from agent_cli.pyworker import interpreter
+
+        r = _run("import no_such_module_4711")
+        assert not r.success
+        assert "ModuleNotFoundError" in r.error
+        assert f"`{interpreter()} -m pip install no_such_module_4711`" in r.error
+        assert "state:" in r.error  # 상태줄은 그대로 맨 끝
+        assert r.error.rstrip().endswith("state: (empty)")

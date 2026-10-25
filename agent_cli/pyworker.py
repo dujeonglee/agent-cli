@@ -75,6 +75,9 @@ class PyWorker:
         #: 마지막으로 죽을 때 들고 있던 이름들 — 다음 호출이 "새 인터프리터" 를 알린다.
         self._lost: list[str] = []
         self.started_at: float | None = None
+        #: 이 워커를 띄운 인터프리터 경로 — ModuleNotFoundError 관찰이 "여기에
+        #: 설치하라" 고 가리키는 대상 (v10.73.0, docs/python-tool/DESIGN.md §3).
+        self.interpreter: str | None = None
 
     @property
     def alive(self) -> bool:
@@ -85,8 +88,9 @@ class PyWorker:
         return self._proc.pid if self._proc is not None else None
 
     def _start(self) -> None:
+        self.interpreter = interpreter()
         self._proc = subprocess.Popen(
-            [interpreter(), "-u", str(CHILD)],
+            [self.interpreter, "-u", str(CHILD)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
