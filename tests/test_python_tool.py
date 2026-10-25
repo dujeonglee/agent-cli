@@ -223,10 +223,13 @@ class TestRegistration:
         spec.loader.exec_module(mod)
         assert "python" in mod.MUTATING_TOOLS
 
-    def test_guideline_mentions_python(self):
+    def test_guideline_no_longer_duplicates_the_description(self):
+        """v10.73.0: 도구 설명(KEEPS STATE·한 호출 한 단계·결과물은 파일)이 유일한
+        자리 — 꼬리 Task Guidelines 의 같은 문장은 지웠다(docs/tail/DESIGN.md)."""
         from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
-        assert "`python`" in TASK_GUIDELINES and "keeps state" in TASK_GUIDELINES
+        assert "`python`" not in TASK_GUIDELINES
+        assert "KEEPS STATE" in PythonTool.description
 
     def test_resource_follows_env(self, monkeypatch, tmp_path):
         from agent_cli.runtime import build_py_registry, python_resource

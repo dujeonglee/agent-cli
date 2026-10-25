@@ -112,7 +112,9 @@ class TestNoThoughtFieldInPrompts:
             assert not hits, hits[:3]
 
     def test_context_discipline_uses_the_format_rules_word(self):
-        assert "Keep your reasoning brief" in sp.CONTEXT_DISCIPLINE
+        # v10.73.0: "Keep your reasoning brief" 불릿은 꼬리 Task Guidelines 의 한 줄로
+        # 합쳐졌다(docs/tail/DESIGN.md) — 머리엔 자원 설명만 남는다
+        assert "Keep your reasoning brief" not in sp.CONTEXT_DISCIPLINE
         assert (
             "Every line of\nreasoning, tool call, and observation"
             in sp.CONTEXT_DISCIPLINE

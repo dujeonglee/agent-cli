@@ -111,6 +111,10 @@ class LoopState:
     messages: list = field(default_factory=list)
     turn: int = 0
     task_log: list = field(default_factory=list)
+    #: 지난 턴에 실행·거부된 호출 중 실패가 있었나 (v10.73.0) — 디스패치가 턴
+    #: 시작에 False 로 놓고 실패마다 True; 다음 턴 꼬리의 상태별 권고 한 줄
+    #: (`session_state.FAILED_LAST_TURN_NOTICE`) 이 이것을 읽는다.
+    last_turn_failed: bool = False
     #: 이 런의 열린 항목 장부 — 사용자 요청·되묻기·독촉·빚 카운터 (P1, v10.54.0,
     #: `loop/ledger.py`). 종전엔 필드 넷(`run_requests`·`answers_prompted`·
     #: `requests_nagged`·`debt_nags`)이 여기 흩어져 있었다.

@@ -91,6 +91,16 @@ SESSION_STATE_HEADER = (
 #: 헤더("always in effect")를 갖고 상태 블록 앞에 선다.
 RULES_HEADER = "── standing rules (always in effect) ──"
 
+#: 상태별 권고 (v10.73.0, docs/tail/DESIGN.md §3): 지난 턴에 실행된 호출(또는
+#: 거부된 호출)이 하나라도 실패했을 때만 상태 블록 첫 줄로 뜬다. 종전엔 Task
+#: Guidelines 에 "실패하면 원인부터 진단" 이 상시 줄로 있었다 — 실패가 없는 턴에도
+#: 매번 실렸고, 실패 직후엔 열다섯 줄 가운데 한 줄이었다. 조건부 한 줄은 실패한
+#: 그 턴에만, 상태 블록 맨 위에 선다.
+FAILED_LAST_TURN_NOTICE = (
+    "⚠ A call failed last turn. Read its error, fix the cause, then retry — do "
+    "not switch tactics before you know why it failed."
+)
+
 #: 꼬리 전체의 첫 줄 (v9.25.2). 꼬리는 마지막 사용자 메시지 **본문에 이어**
 #: 붙으므로, 모델이 받는 메시지는 "이건 왜 필요한거야?\n\n── standing rules ──
 #: ## Task Guidelines …" 이다 — "이건" 의 가장 가까운 후보가 가이드라인이고,
@@ -169,6 +179,7 @@ def build_session_state(
     guidelines: str = "",
     reports_to_caller: bool = False,
     compaction_notice: bool = False,
+    failed_last_turn: bool = False,
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
 
@@ -221,19 +232,23 @@ def build_session_state(
     ]
     ctx_line = _context_line(turn, max_turns)
     rules = guidelines.strip()
-    if not ctx_line and not blocks and not rules:
+    if not ctx_line and not blocks and not rules and not failed_last_turn:
         return ""
 
     lines: list[str] = []
     if rules:
         lines.append(RULES_HEADER)
         lines.append(rules)
-    if ctx_line or blocks:
+    if ctx_line or blocks or failed_last_turn:
         if lines:
             lines.append("")
         lines.append(SESSION_STATE_HEADER)
         if ctx_line:
             lines.append(ctx_line)
+        # 상태별 권고 (v10.73.0): 턴 줄 바로 아래, 열린 항목보다 앞 — "지금 무엇을
+        # 해야 하나" 의 가장 가까운 사실이다.
+        if failed_last_turn:
+            lines.append(FAILED_LAST_TURN_NOTICE)
         for b in blocks:
             lines.append("")
             lines.append(b)

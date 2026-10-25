@@ -270,6 +270,7 @@ class LLMCaller:
             web = render_web_sources()
         return build_session_state(
             compaction_notice=notice,
+            failed_last_turn=self.state.last_turn_failed,
             turn=self.state.turn,
             max_turns=self.cfg.max_turns,
             agents=agents,

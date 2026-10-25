@@ -406,6 +406,9 @@ class TurnDispatcher:
         else:
             turn.record = self.cfg.dialect.serialize_assistant_for_history(llm_text)
 
+        # 상태별 권고 (v10.73.0): 이 턴의 실패 여부를 새로 센다 — 실행·거부
+        # 경로가 True 로 올리고, 다음 턴 꼬리가 읽는다.
+        self.state.last_turn_failed = False
         try:
             return self._dispatch_turn(llm_text, turn, outcome)
         finally:
@@ -626,6 +629,7 @@ class TurnDispatcher:
         이 차이는 의도다 — 홀로 망가진 호출은 되묻는 게 싸고, 묶음의 나머지는
         이미 실행됐을 수 있다. A4(모르는 도구)·A5(스키마)·인자 JSON 오류가 쓴다."""
         outcome["failure_signal"] = signal
+        self.state.last_turn_failed = True
         if accumulate is not None:
             self.tools.accumulate_raw(
                 accumulate, tool_name, f"{batch_note}\n{BATCH_OP_SKIPPED_NOTE}", False
@@ -1288,6 +1292,8 @@ class TurnDispatcher:
         # returns its sub-loop's whole output, so it is the single largest
         # observation the loop can produce — it used to be the ONE path that
         # skipped the cap entirely and went into context unbounded.
+        if not skill_tool_result.success:
+            self.state.last_turn_failed = True
         obs = self.tools._tool_observation("run_skill", skill_tool_result, skill_input)
         obs_msg = f"Observation: {obs}"
         _append_observation(
@@ -1531,6 +1537,8 @@ class TurnDispatcher:
         # Execute tool (method tracks self.tools.recent_tool_history,
         # uses self.* for provider/ctx/hooks/etc.)
         tool_result = self.tools._dispatch_tool_with_hooks(tool_name, tool_input)
+        if not tool_result.success:
+            self.state.last_turn_failed = True
 
         # N-op accumulate mode: record the execution for the caller's
         # combined observation instead of appending one here. The render

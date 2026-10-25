@@ -362,8 +362,10 @@ class TestWording:
     def test_guideline_jobs_tail_and_nudge(self, tmp_path):
         from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
-        assert "call `wait`" in TASK_GUIDELINES
-        assert "do not use `complete` to wait" in TASK_GUIDELINES
+        # v10.73.0: 상시 규칙에는 띄우는 법만 — wait 안내는 `## Open Items` 꼬리말
+        # (`ledger._TAIL_WAIT`)과 complete 넛지, 두 곳 (docs/tail/DESIGN.md)
+        assert "`background: true`" in TASK_GUIDELINES
+        assert "wait" not in TASK_GUIDELINES and "poll" not in TASK_GUIDELINES
         r = JobRegistry(tmp_path)
         r.deliver = lambda *a, **k: None
         try:
@@ -371,8 +373,8 @@ class TestWording:
             tail = r.render_tail("main")
         finally:
             r.stop_all()
-        # 작업 블록 머리는 상태만 (v10.68.0) — wait 안내는 규칙(Guidelines)과
-        # `## Open Items` 꼬리말 두 곳, 세 번째는 없다
+        # 작업 블록 머리는 상태만 (v10.68.0) — wait 안내는 `## Open Items` 꼬리말과
+        # complete 넛지 두 곳, 세 번째는 없다
         assert "do not poll" in tail and "wait" not in tail and "complete" not in tail
         assert "call `wait`" in _OBS_COMPLETE_NUDGE
         assert "address every outstanding request" not in TASK_GUIDELINES

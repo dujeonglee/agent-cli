@@ -197,7 +197,7 @@ class TestTail:
                 owner="agent:k",
             ),
             ctx=None,
-            state=SimpleNamespace(turn=1, ledger=Ledger()),
+            state=SimpleNamespace(turn=1, ledger=Ledger(), last_turn_failed=False),
             _compaction_armed=set(),
         )
         llm_mod.LLMCaller._build_session_state(self_, 1000)
@@ -475,12 +475,13 @@ class TestAssembly:
     def test_guideline_and_tool_text_point_at_background(self):
         from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
+        # v10.73.0 (docs/tail/DESIGN.md): 상시 규칙은 **띄우는 법**만. 로그 자리·
+        # 폴링 금지·kill 은 돌고 있을 때만 뜨는 `## Background jobs` 블록이, 기다림은
+        # `## Open Items` 의 wait 줄이 말한다 — 같은 말을 세 곳에 두지 않는다.
         assert "`background: true`" in TASK_GUIDELINES
-        assert ".agent-cli/tmp/jobs/" in TASK_GUIDELINES
-        assert "Do not poll the log" in TASK_GUIDELINES
-        assert "call `wait`" in TASK_GUIDELINES  # v10.65.0: 기다림은 wait
-        assert "do not fill turns with unrelated actions" in TASK_GUIDELINES
-        assert "`kill <pid>`" in TASK_GUIDELINES
+        assert "You are told when it ends" in TASK_GUIDELINES
+        for dup in (".agent-cli/tmp/jobs/", "poll", "`wait`", "`kill"):
+            assert dup not in TASK_GUIDELINES, dup
 
 
 def _alive(pid: int) -> bool:

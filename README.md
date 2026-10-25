@@ -1623,6 +1623,7 @@ worm_game.html                                                          14자
 
 ── session state (context only — not part of the conversation) ──
 turn 23/40 (17 left after this one)
+⚠ A call failed last turn. Read its error, fix the cause, then retry — do not switch tactics before you know why it failed.
 
 ## Open Requests
    [2] (Ann) "REQ-B: 이건 REQ-A 와 별개다"
@@ -1653,6 +1654,8 @@ keeps it verbatim. Pace and scope stay the same.
 - **꼬리에 두면 공짜입니다** — 턴 N 이 `… obs_{N-1} + STATE_N` 로 끝나고 턴 N+1 은 `… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}`. 접두사 일치는 `obs_{N-1}` 에서 끝나는데, 이건 `assistant_N`·`obs_N` 이 새 토큰이라 **어차피 거기서 끝났을 자리**입니다. 잃는 건 이전 블록 자신의 토큰 몇십 개뿐이고, 손실이 **대화 길이와 무관하게 상수**입니다. 그리고 꼬리는 recency attention 이 가장 강한 위치라, "지금 이걸 보고 판단하라"는 내용에 맞습니다.
 
 **경계선 (v9.25.2)**: 꼬리는 사용자 메시지 **본문에 이어** 붙으므로, 모델이 받는 메시지는 `이건 왜 필요한거야?` 바로 뒤에 `## Task Guidelines` 가 오는 모양입니다. 실제로 한 모델이 그 질문에 가이드라인을 설명했습니다 — "이건" 의 가장 가까운 후보가 가이드라인이고, 사용자가 이 블록을 쓰지도 보지도 않는다는 것을 모델은 알 수 없기 때문입니다. 그래서 꼬리의 첫 줄이 그 사실을 말합니다(`the user neither writes nor sees it`). 규칙이 아니라 사실이며, "무시해도 된다" 로 읽힐 말은 넣지 않습니다 — 규칙 헤더의 `always in effect` 는 그대로입니다.
+
+**상시 규칙은 다른 곳에 없는 원칙만, 상태에 따른 권고는 조건부 한 줄 (v10.73.0, docs/tail/DESIGN.md)**: Task Guidelines 에서 다른 자리와 겹치던 줄을 지웠습니다 — `python` 줄(도구 설명과 같은 문장), 작업 줄의 폴링·`wait`·`kill` 안내(돌고 있을 때만 뜨는 `## Background jobs` 블록과 `## Open Items` 의 wait 줄이 말합니다), "실패하면 원인부터" 줄. 머리 Context Discipline 의 "추론 간결" 불릿도 꼬리 한 줄로 합쳤습니다(16줄 3,197자 → 13줄 2,335자). 대신 **지난 턴에 실패한 호출**(도구 오류·스킬 실패·모르는 도구/스키마 거부)이 있으면 위 예시의 `⚠ A call failed last turn …` 한 줄이 상태 블록 머리 바로 아래에 그 턴에만 뜹니다.
 
 **전달 방식**: 새 메시지를 추가하지 않고 **마지막 메시지 본문에 덧붙입니다** — 프로바이더가 `messages` 를 그대로 전송하므로(`providers/anthropic.py`) 끝에 `role=user` 를 하나 더 붙이면 연속 동일-롤 턴이 되고 처리 방식이 프로바이더마다 갈립니다. `_OBS_COMPLETE_NUDGE` 와 같은 기구로 **feed 시점에만**(복사본에) 적용되며 **`history.jsonl` 에 절대 저장되지 않습니다**(저장하면 낡은 숫자가 매 턴 재공급되고 resume 프리뷰가 오염됩니다).
 
