@@ -54,8 +54,12 @@ def state_line(state: list[list[str]]) -> str:
 
 # ── 꼬리의 사용 가이드 (v10.73.0, docs/tail/DESIGN.md) ─────────────────────────
 #: `shell` 명령 안의 파이썬 실행 — `python3 -c …`, `python3 - <<EOF`, `python3 <<EOF`,
-#: `python3 x.py`(옵션이 끼어도). 뒤에 오는 첫 인자로 가른다.
-_SHELL_PY = re.compile(r"(?:^|[\s;&|(`])python[0-9.]*\s+(?P<rest>\S+(?:\s+\S+)?)")
+#: `python3 x.py`(옵션이 끼어도), 경로가 붙은 인터프리터(`/usr/bin/python3`,
+#: `.venv/bin/python` — pyguide r2 financial 은 10건 전부 이 모양이었다). 뒤에 오는
+#: 첫 인자로 가른다.
+_SHELL_PY = re.compile(
+    r"(?:^|[\s;&|(`])(?:[\w.~-]*/)*python[0-9.]*\s+(?P<rest>\S+(?:\s+\S+)?)"
+)
 #: 데이터 작업이 아닌 파이썬 호출 — 모듈 실행(`-m pip`·`-m pytest`·`-m venv`)과 버전 확인.
 _SHELL_PY_BENIGN = ("-m", "--version", "-V", "-h", "--help")
 

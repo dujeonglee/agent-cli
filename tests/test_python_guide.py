@@ -87,6 +87,11 @@ class TestShellRunsPython:
             "python3 -u /app/scripts/run.py --fast",
             "python3.11 extract.py",
             "ls; python3 a.py | head",
+            # 경로가 붙은 인터프리터 — pyguide r2 financial 의 10건 전부 (판정 빈틈이었다)
+            '/usr/bin/python3 -c "print(1)"',
+            "/root/.local/share/uv/python/cpython-3.12/bin/python -c 'import pdfminer'",
+            ".venv/bin/python extract.py",
+            "~/py/bin/python3.12 - <<EOF\nprint(1)\nEOF",
         ],
     )
     def test_python_work_through_shell(self, cmd):
@@ -104,6 +109,8 @@ class TestShellRunsPython:
             "ls -la",
             "which python3",
             "python3 -m json.tool data.json",
+            "/usr/bin/python3 -m pip install x",
+            "ls /usr/bin/python* /usr/local/bin/python*",
             "",
         ],
     )
