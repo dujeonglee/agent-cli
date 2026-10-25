@@ -67,25 +67,22 @@ class TestToolSurface:
 
         assert "monitor" in TOOLS
 
-    def test_description_carries_the_launch_idioms(self):
-        """35B 대상에서 도구 설명은 산문이 아니라 **제품**이다 (§4.4).
-
-        `2>&1` 을 빠뜨리면 `shell` 이 120s 막히고(실측), 생산자 버퍼링을
-        안 풀면 건강한 스크립트가 침묵으로 보인다."""
+    def test_description_no_longer_carries_the_launch_recipe(self):
+        """v10.74.0 (docs/tail/DESIGN.md §11): 종전엔 §4.4 의 실측(`2>&1` 없으면 shell 이
+        120s 막힘, 버퍼링을 안 풀면 침묵)으로 `nohup … > /tmp/x.log 2>&1 &`·`python -u`·
+        `EXIT:$?` 요리법을 설명에 실었다. v10.47.0 부터 백그라운드는 `shell background=true`
+        가 로그·종료 코드·통지를 맡으므로 그 요리법은 낡았고, `/tmp/x.log` 는 꼬리의
+        스크래치 규칙과 충돌했다. 남는 것은 조건의 뜻(세 쌍·deadline·silent·once)과,
+        로그를 보는 조건에 지금도 해당하는 성질 하나 — 버퍼링된 생산자는 침묵으로
+        보인다 — 실행 파일 이름 없이."""
         from agent_cli.tools.registry import TOOLS
 
         d = TOOLS["monitor"].description
-        # `2>&1` 이 문서 어딘가에 있는지가 아니라 **nohup 줄 자체에** 있는지를
-        # 본다 — 처음엔 전자로 썼다가, 첫 줄에서 빼도 `EXIT:$?` 관용구의
-        # `2>&1` 때문에 통과하는 걸 사보타주로 발견했다.
-        nohup = [ln for ln in d.splitlines() if "nohup" in ln]
-        assert nohup, "백그라운드 실행 관용구가 없다"
-        assert all("2>&1" in ln for ln in nohup), (
-            f"nohup 줄에 2>&1 가 없다 — shell 이 120s 막힌다: {nohup}"
-        )
-        assert "-u" in d or "PYTHONUNBUFFERED" in d, "버퍼링 해제 안내가 없다"
-        assert "EXIT:$?" in d, "종료 코드 관용구가 없다 (exit 조건을 뺀 대체재)"
-        assert "schedule" in d, "board 세션 유도 문구가 없다"
+        assert "nohup" not in d and "/tmp/" not in d and "EXIT:" not in d
+        assert "PYTHONUNBUFFERED" not in d and "python -u" not in d
+        assert "buffers its output" in d and "run it unbuffered" in d
+        assert "command + every" in d and "file + pattern" in d and "file + idle" in d
+        assert "schedule" in d  # 세션과 함께 저장되는 쪽은 schedule — 성질로 말한다
 
     def test_removed_condition_types_are_not_advertised(self):
         """`exit`(구현 불가)·`interval`(주기 command 가 상위집합)을 설명이

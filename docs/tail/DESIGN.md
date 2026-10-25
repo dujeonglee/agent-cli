@@ -140,3 +140,103 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
   "기대·실패시 행동" 산문)에 함께 실을지는 사용자 결정.
 - 머리 **Reply Discipline** 1·2번과 방언 **Response Format** 7번의 겹침은 상주·방언
   소유라 이번 범위 밖.
+
+## 9. 다른 도구 설명도 같은 기준으로 — A 묶음 (PR #174, **불채택**)
+
+§2 의 기준으로 열아홉 도구의 설명을 훑었다(2026-10-25). 성질과 섞여 있던 사용 규칙·작업 나열:
+
+| 도구 | 섞여 있던 것 | 처리 |
+|---|---|---|
+| shell | 꼬리 작업 줄과 같은 문장("1분 넘으면 background=true … 로그 … 통지") + "a test suite, a build, an install, a large clone" | 성질만: background=true 가 어떤 모양으로 도는가. 경로 선택은 꼬리 작업 줄 하나. `timeout` 의 "올리지 말고 background" 도 삭제(같은 줄에 있다) |
+| monitor | 셸 요리법 7줄(`nohup … > /tmp/x.log 2>&1 &`, `python -u`/PYTHONUNBUFFERED, `EXIT:$?`), "prefer `schedule`" | 요리법 삭제 — v10.47.0 의 background=true 이후 낡았고 꼬리의 `/tmp` 금지와 충돌. schedule 비교는 성질로("monitor 는 세션과 함께 저장되지 않는다") |
+| write_file | "NEW 파일이나 SMALL 파일 재작성에 써라, 부분 수정은 edit_file" + 비용 논증 | 성질만(내용이 컨텍스트를 두 번 통과). 경로 선택은 edit_file 설명("the default way to modify")과 재작성 관찰 교정("Use edit_file next time")이 이미 맡는다. "편집이 계속 실패하면 재작성해도 된다" 는 남김(v10.13.0 실측 탈출구) |
+| python (`timeout`) | "a model load, a big OCR batch" | "a step you know takes long" |
+| browser · memory · history · snapshot · schedule | 가벼운 경로 선택·사용 문장 | **다음 PR**(벤치 과제가 안 쓰므로 라이브로 확인) |
+| agent | 위임 비용 안내 | **손대지 않음** — v10.26.0 에 64모듈급 과제로 잰 문구 |
+| read_file · edit_file · fetch · code_index · wait · complete · ask · answer · message · reply | 성질·프로토콜 의미 | 그대로 |
+
+측정: 기준 pyguide-r3(10.73.0), 후보 이 브랜치 1회. 지표: `background: true` 사용 수와 폴링·`kill`·
+timeout 올리기 사고, `/tmp` 경로 사용 수, 기존 파일 `write_file` 재작성 수(관찰 교정 발동 수),
+통과 세트·총 턴. 결과는 §10.
+
+## 10. 결과 (2026-10-25, 35B · thinking off · 1회)
+
+| job | wheel | 통과 | 턴 | 분 | 실패 관찰 | 형식 오류 | 출력 토큰 | python |
+|---|---|---|---|---|---|---|---|---|
+| pyguide-r3 (기준) | 10.73.0 | **7/9** | 242 | 75 | 15 | 2 | 100k | 99 |
+| tooldesc-r1 | PR #174 (79248f5f) | **2/9** | 280 | 93 | 25 | 1 | 153k | 140 |
+
+과제별: db-wal ✅→✅, regex ✅→✅, video ⏱→⏱, gcode ❌→❌; **extract-elf·financial·large-scale·multi-source 가
+✅→❌**, log-summary 는 에이전트 설치 360초 초과(환경 실패, 세부 로그 없음).
+
+§9 가 노린 지표는 **판정 불가**: `background: true` 는 0→1(기준도 0 이라 꼬리 줄만으로 유지되는지
+가릴 수 없다), 폴링 2→0, `kill`·`nohup`·끝 `&` 0→0, timeout 올리기 0→0, 기존 파일 `write_file` 재작성 1→1,
+monitor 0→0. 포그라운드 긴 명령 10→15(apt/pip 설치), 절대 경로 `/tmp` 0→45(43건이 large-scale 한 시도의
+vim 실험 파일).
+
+떨어진 넷의 실패 모양은 지운 문장과 닿지 않는다 — extract-elf 는 주소 97개 값 오류(기준은 python 없이
+통과, 이번은 python 24회), financial 은 total 에 Net worth 를 씀(pyguide-r2 와 같은 금액 오류),
+large-scale 은 `/app/apply_macros.vim` 을 끝내 안 쓰고 60턴 vim 디버깅, multi-source 는 'John D.'/'John Doe'
+정합 오류(이전 4런 전부 통과). ModuleNotFoundError 안내는 1/1 따름(financial t18→t19, 제시한 명령 그대로).
+
+1회 판단: 35B 는 같은 조건에서도 3~5/9 를 흔들지만 7→2 는 그 폭을 넘는다. 지운 문장이 어떤 경로로
+이 실패들을 만들었는지 설명이 없는 채로는 머지하지 않고, 같은 wheel 로 1회 더 돌려 분산인지 효과인지 가린다
+(사용자 결정, 2026-10-26).
+
+### 10.1 r2 (2026-10-26 02:15–03:42 KST, 같은 wheel · sha256 동일)
+
+| task | pyguide-r3 | r1 | r2 |
+|---|---|---|---|
+| db-wal-recovery | ✅ | ✅ | ❌ WAL 갱신 미반영(이전 5런 전부 통과) |
+| extract-elf | ✅ | ❌ | ❌ r1 과 **같은 97개 값** 으로 실패, 11턴에 대조 없이 종료 |
+| extract-moves-from-video | ⏱ | ⏱ | ⏱ |
+| financial | ✅ | ❌ Net worth | ❌ 다른 모양(jpg 에서 "$4382 due" 를 잡음) |
+| gcode-to-text | ❌ | ❌ | ⏱ 900초 |
+| large-scale-text-editing | ✅ | ❌ shell·/tmp 60턴 | ❌ 같은 vim 실험 고리, python 셀 안에서 |
+| log-summary | ✅ | ⏱ 환경 | ✅ |
+| multi-source | ✅ | ❌ | ✅ |
+| regex-log | ✅ | ✅ | ✅ |
+
+| job | 통과 | 턴 | 분 | 실패 관찰 | 형식 오류 | 출력 토큰 | shell | python |
+|---|---|---|---|---|---|---|---|---|
+| pyguide-r3 | 7/9 | 242 | 75 | 15 | 2 | 100k | 136 | 99 |
+| tooldesc-r1 | 2/9 | 280 | 93 | 25 | 1 | 153k | 127 | 140 |
+| tooldesc-r2 | 3/9 | 226 | 87 | 10 | 0 | 140k | 78 | 149 |
+
+조건별 합: 10.72.0 (5·6) 11/18 · 10.73.0 (4·7) 11/18 · **10.74.0 tooldesc (2·3) 5/18**. 두 런 모두 이전 네 런의
+범위(4~7) 아래다. §9 가 노린 지표는 r2 도 무변(background:true 0, timeout 올림 0, 기존 파일 재작성 0,
+monitor 0, /tmp 3). ModuleNotFoundError 안내는 2/2 따름(gcode 는 38턴 우회 뒤).
+
+유일하게 두 런에 걸쳐 보이는 행동 변화는 **shell→python 이동**이다: shell 136→127→78, python 99→140→149.
+extract-elf 는 기준이 python 없이 통과했는데 두 런 모두 python 으로 풀어 같은 틀린 값에 닿았다. 지운 문장
+(shell 의 작업 나열 "a test suite, a build, an install, a large clone" 과 "1분 넘으면 background")이 shell 의
+쓸모를 좁혀 읽히게 했다는 가설은 세울 수 있으나 기록으로 확인되지 않는다.
+
+**결론: 일관된 퇴행으로 보고 이 변형은 채택하지 않는다.** v10.73.0 의 "설명에서 사용 규칙을 지워도 꼬리가
+맡는다" 는 python 한 사례였고, shell·write_file·monitor 로 일반화되지 않았다. 설명을 성질로 줄이는 일은 도구
+하나씩, 그 도구를 실제로 부르는 과제로만 잰다.
+
+## 11. monitor 설명만 (v10.74.0 후보, 브랜치 `monitor-description-cleanup`)
+
+§10.1 의 결론대로 도구 하나만 바꾼다. 사용자가 고른 것은 monitor 의 셸 요리법이다 — §9 표의 monitor 행과
+같되, 지운 요리법 중 **버퍼링 문장은 성질로 남긴다**(로그 파일을 보는 조건 `file+pattern`·`file+idle` 에 지금도
+해당: 버퍼링하는 생산자는 끝날 때까지 파일에 아무것도 안 써 건강한 작업이 침묵으로 보인다). A 묶음에서는
+요리법과 함께 지웠는데 되돌아보면 남겼어야 할 문장이다.
+
+요리법이 틀린 이유 넷: ① 실행 방식 — 모델이 `nohup … &` 로 직접 띄우라 하나 꼬리 작업 줄은 `background: true`
+로 하니스가 소유(v10.47.0 A/B: 직접 띄운 작업은 tail 폴링·pkill 자살·끝 줄 없는 monitor 사고), ② 경로 —
+`/tmp/x.log` 는 꼬리의 "never in /tmp" 와 충돌, ③ `EXIT:$?` 를 직접 쓰고 `^EXIT:` 를 match 하라는 것은 종료
+코드 통지가 없던 때의 방법, ④ "`2>&1` 없으면 shell 이 timeout 까지 막힌다" 는 모델이 직접 리다이렉션할 때만의
+사정. shell·write_file·python 설명은 main 그대로.
+
+바뀐 문장(모델이 읽는 것): 요리법 7줄 → "A producer that buffers its output writes nothing to the file until it
+exits, so a healthy job looks silent — run it unbuffered." / "prefer `schedule`" → "A monitor is not saved with the
+session and does not survive a restart (`schedule` is and does)."
+
+측정: 벤치 여섯 런 모두 monitor 호출 0 이라 직접 지표는 없다. 보는 것은 통과 세트가 10.73.0 범위(4~7/9)를
+지키는지, 그리고 A 묶음에서 보였던 shell→python 이동(shell 136→78)이 이 변형에는 없는지 — 그 이동이 shell
+설명 쪽 변화에 귀속되는지 가리는 대조군이 된다. 35B 2회. 결과는 §12.
+
+## 12. 결과
+
+(측정 뒤 기록)
