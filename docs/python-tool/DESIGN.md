@@ -70,6 +70,7 @@ Jupyter 셀 하나처럼 코드 조각을 실행하고 **상태를 남기는** �
   holding: …` 블록(`tail_block`, 입력은 `PyWorkerRegistry.state_of`). 지난 턴에 shell
   로 파이썬을 돌렸으면(`shell_runs_python`) 교정 한 줄 `SHELL_PYTHON_NOTICE`.
   종전(v10.66.0~10.72.0)엔 설명과 꼬리 줄에 같은 네 문장이 있었다 — §5.4.
+- ModuleNotFoundError 관찰(v10.73.0): `missing_module_hint` 가 워커의 인터프리터 경로(`PyWorker.interpreter`)와 `<exe> -m pip install <pkg>`(import 이름≠배포 이름은 `_PKG_FOR_MODULE`; pip 없으면 `ensurepip`)를 붙인다. 벤치 컨테이너는 PATH 에 python3 가 없어 도구가 uv 의 agent-cli venv 를 쓰는데 모델은 PATH 의 pip·uv 기본 cpython 에 깔았다(pyguide r2 financial t3~t22, 그 뒤 shell 로 회귀). 어느 인터프리터인지 모델이 알 길이 없으니 빠진 순간 알린다.
 - 웹: 카드 요약은 첫 줄, 펼치면 `>>> ` 셀.
 
 ## 4. 측정

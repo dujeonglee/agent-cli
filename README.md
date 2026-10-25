@@ -340,7 +340,7 @@ python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
 - 예외는 트레이스백이 실패 관찰로 오고 상태는 그대로입니다. `timeout`(기본 120초)을 넘기면 노트북의 Ctrl-C 처럼 **코드만 멈추고 상태는 남습니다** — 루프가 dict 에 모으던 결과가 그대로 있고 다음 호출이 이어 갑니다(띄운 하위 프로세스도 같이 멈춥니다). 인터럽트를 무시하는 코드만 몇 초 뒤 인터프리터를 죽이고 **상태가 사라졌음**을 들고 있던 이름과 함께 알립니다. `reset: true` 면 새 인터프리터부터.
 - 열린 matplotlib figure 는 `.agent-cli/tmp/python/` 에 PNG 로 저장되어 이미지로 첨부됩니다 — 좌표·경로 데이터는 숫자를 읽는 대신 그려서 봅니다.
 - 소유자(main·에이전트)마다 인터프리터 하나. 에이전트가 끝나면 그 인터프리터도 끝나고, 세션이 끝나면 전부 끝납니다. resume 뒤는 빈 인터프리터입니다.
-- 인터프리터는 `AGENT_CLI_PYTHON` → PATH 의 `python3` → agent-cli 자신의 것. 모델이 `shell` 에서 쓰는 `python3` 와 같은 것이라 그 환경의 패키지를 그대로 씁니다.
+- 인터프리터는 `AGENT_CLI_PYTHON` → PATH 의 `python3` → agent-cli 자신의 것. 모델이 `shell` 에서 쓰는 `python3` 와 같은 것이라 그 환경의 패키지를 그대로 씁니다. PATH 에 `python3` 가 없는 환경(예: uv 로 설치된 컨테이너)에서는 agent-cli 의 venv 가 되어 `shell` 의 `pip` 과 갈라집니다 — 그래서 ModuleNotFoundError 관찰에는 이 인터프리터 경로와 거기에 설치하는 명령(`<exe> -m pip install <pkg>`, pip 이 없으면 `ensurepip` 먼저)이 붙습니다(v10.73.0).
 - 끄기: `AGENT_CLI_PYTHON_TOOL=0` — 도구가 프롬프트에서 빠집니다. 워크스페이스 봉쇄는 `shell` 과 같은 best-effort(코드 안의 절대경로 문자열만 봅니다).
 
 ### 🧵 background jobs — 긴 명령은 하니스가 든다 (v10.47.0)

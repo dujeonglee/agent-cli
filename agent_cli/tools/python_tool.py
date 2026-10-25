@@ -83,6 +83,40 @@ def shell_runs_python(command: str) -> bool:
     return False
 
 
+#: ModuleNotFoundError 관찰에 붙는 안내 (v10.73.0). 벤치 컨테이너에서 python 도구의
+#: 인터프리터는 uv 가 만든 agent-cli 전용 venv 인데 모델은 PATH 의 `pip`·uv 기본
+#: cpython 에 설치해 패키지가 안 보였고(pyguide r2 financial t3~t22), 그 뒤 shell 로
+#: 돌아갔다. 어느 인터프리터인지는 모델이 알 길이 없으니 **빠진 순간** 경로와 명령을
+#: 준다 — 상태 조건부 안내의 원칙 그대로(docs/tail/DESIGN.md §2).
+MISSING_MODULE_HINT = (
+    "This interpreter is `{exe}`; packages installed into another Python are not "
+    "visible here. Install into it from `shell`: `{exe} -m pip install {pkg}` (if it "
+    "has no pip: `{exe} -m ensurepip --upgrade` first)."
+)
+_MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'")
+#: import 이름 ≠ 배포 이름인 흔한 것들 — 안내의 pip 인자용.
+_PKG_FOR_MODULE = {
+    "PIL": "Pillow",
+    "cv2": "opencv-python",
+    "yaml": "PyYAML",
+    "sklearn": "scikit-learn",
+    "fitz": "PyMuPDF",
+    "bs4": "beautifulsoup4",
+    "docx": "python-docx",
+    "pptx": "python-pptx",
+    "dateutil": "python-dateutil",
+}
+
+
+def missing_module_hint(exc: str | None, exe: str) -> str:
+    """``exc`` 가 ModuleNotFoundError 면 안내 한 줄, 아니면 ``""``."""
+    m = _MISSING_MODULE.search(exc or "")
+    if not m:
+        return ""
+    top = m.group(1).split(".")[0]
+    return MISSING_MODULE_HINT.format(exe=exe, pkg=_PKG_FOR_MODULE.get(top, top))
+
+
 PYTHON_SESSION_HEADER = "## Python session"
 #: 쓰는 동안만 뜨는 사용법 — 종전 도구 설명·Task Guidelines 에 있던 문장들이다.
 PYTHON_SESSION_RULES = (
@@ -203,10 +237,10 @@ class PythonTool(Tool):
             return ToolResult(
                 False, error=f"python: could not start the interpreter: {e}"
             )
-        return self._format(res, timeout)
+        return self._format(res, timeout, worker.interpreter or "python3")
 
     @staticmethod
-    def _format(res, timeout: int) -> ToolResult:
+    def _format(res, timeout: int, exe: str = "python3") -> ToolResult:
         from agent_cli import images as _images
 
         if res.timed_out:
@@ -249,6 +283,9 @@ class PythonTool(Tool):
             parts.append(ref.placeholder)
         if not res.ok:
             parts.append(res.exc or "python: failed")
+            hint = missing_module_hint(res.exc, exe)
+            if hint:
+                parts.append(hint)
             parts.append(state_line(res.state))
             return ToolResult(False, error="\n".join(parts), images=refs)
         if not out and res.value is None and not refs:
