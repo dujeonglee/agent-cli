@@ -136,15 +136,16 @@ class WriteFileTool(Tool):
     # creating new files" at the guide's end). A full rewrite is allowed for a
     # small file, and named as the way out when an edit keeps failing: a model
     # that kept failing edit_file had been told rewriting was off limits.
+    # v10.74.0 (docs/tail/DESIGN.md §9): 설명은 성질만 — "부분 수정은 edit_file" 과 그 비용
+    # 논증(경로 선택)은 edit_file 의 설명("the default way to modify an existing file")과
+    # 관찰 교정(재작성인데 바뀐 줄이 적으면 "Use edit_file next time")이 맡는다. 편집이
+    # 계속 실패할 때의 탈출구 문장은 남긴다 — 위 주석의 실측.
     description = (
-        "Create a file, or overwrite one, with raw content. Use it for a NEW "
-        "file, or to rewrite a SMALL file in full. To change part of an "
-        "existing file use edit_file: rewriting sends the whole file through "
-        "your context twice (your content + its echo) and it stays there, "
-        "while edit_file costs only the changed lines. If the same edit keeps "
-        "failing on a small file, rewriting it is fine. Returns hashline "
-        "format (LINE#HASH:content), so you can edit_file right after — no "
-        "read_file needed."
+        "Create a file, or overwrite one, with raw content; the whole content "
+        "passes through your context twice (what you send and its echo). If the "
+        "same edit keeps failing on a small file, rewriting it is fine. Returns "
+        "hashline format (LINE#HASH:content), so you can edit_file right after — "
+        "no read_file needed."
     )
     #: For a loop that has no ``edit_file`` — nothing to point at.
     DESCRIPTION_WITHOUT_EDIT = (

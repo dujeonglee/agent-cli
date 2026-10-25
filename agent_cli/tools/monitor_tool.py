@@ -23,6 +23,9 @@ def _registry():
 
 class MonitorTool(Tool):
     name = "monitor"
+    #: 설명은 성질만 (v10.74.0, docs/tail/DESIGN.md §9). 종전의 셸 요리법(`nohup … >
+    #: /tmp/x.log 2>&1 &`, `python -u`/PYTHONUNBUFFERED, `EXIT:$?`)은 v10.47.0 의
+    #: shell background=true 가 맡은 뒤로 낡았고 꼬리의 `/tmp` 금지와 충돌했다.
     description = (
         "Watch a condition in the background and report back to you when it "
         "fires — for long-running work you started with shell. Modes: "
@@ -33,21 +36,14 @@ class MonitorTool(Tool):
         "  file + pattern — fires on a NEW line of the file matching the regex\n"
         "  file + idle — fires when the file STOPS changing for that long (a dead "
         "script is silent, not successful)\n"
-        "Launch background work like this — the 2>&1 is REQUIRED, without it "
-        "shell blocks until timeout:\n"
-        "  nohup CMD > /tmp/x.log 2>&1 & echo $!\n"
-        "Unbuffer the producer or a healthy script looks silent: python -u, "
-        "PYTHONUNBUFFERED=1, or stdbuf -oL.\n"
-        "For an exit code, make the script write one: "
-        "( CMD; echo \"EXIT:$?\" ) > /tmp/x.log 2>&1 &  then match '^EXIT:'.\n"
         "deadline defaults to 2h (60s-24h). A `match` also retires (with a "
         "report) when the file stays unchanged for `silent` (default 10m, 0 = "
         "off) — a dead writer wakes you instead of hanging. once defaults to "
         "true — the monitor retires after one report. Optional run='<cmd>' executes before the "
         "report and its exit code is included. You are always notified; there "
         "is no silent action.\n"
-        "For periodic work on a clock prefer `schedule` — it is saved with the "
-        "session and survives a restart, while a monitor does not."
+        "A monitor is not saved with the session and does not survive a restart "
+        "(`schedule` is and does)."
     )
     parameters: ClassVar[dict] = {
         "type": "object",

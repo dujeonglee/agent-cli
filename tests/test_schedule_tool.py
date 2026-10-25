@@ -149,4 +149,5 @@ class TestMonitorPointsAtSchedule:
         보드 밖에서는 없는 도구를 권했다. 이제 schedule 은 항상 있다."""
         d = TOOLS["monitor"].description
         assert "board" not in d
-        assert "prefer `schedule`" in d and "survives a restart" in d
+        # v10.74.0: 성질로 말한다 — "monitor 는 세션과 함께 저장되지 않는다(schedule 은 된다)"
+        assert "`schedule`" in d and "survive a restart" in d and "prefer" not in d

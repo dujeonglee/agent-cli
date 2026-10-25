@@ -283,7 +283,8 @@ class TestShellToolSurface:
 
         props = ShellTool.parameters["properties"]
         assert props["background"]["type"] == "boolean"
-        assert "background=true" in props["timeout"]["description"]
+        # v10.74.0: 설명은 성질만 — "올리지 말고 background" 는 꼬리 작업 줄이 맡는다
+        assert "background job has no timeout" in props["timeout"]["description"]
         assert "background=true" in ShellTool.description
 
 

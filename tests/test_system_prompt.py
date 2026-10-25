@@ -1720,10 +1720,12 @@ class TestEditVsWriteRule:
             "write_file", TOOLS["write_file"].description
         )
 
-    def test_full_rewrite_of_a_small_file_is_allowed(self):
+    def test_description_states_the_cost_not_the_rule(self):
+        """v10.74.0 (docs/tail/DESIGN.md §9): 설명은 성질만 — "부분 수정은 edit_file" 은
+        edit_file 의 설명("the default way…")과 재작성 관찰 교정이 맡는다."""
         d = self._desc(["write_file", "edit_file"])
-        assert "a NEW file, or to rewrite a SMALL file in full" in d
-        assert "To change part of an existing file use edit_file" in d
+        assert "passes through your context twice" in d
+        assert "Use it for" not in d and "To change part of" not in d
 
     def test_names_the_way_out_when_an_edit_keeps_failing(self):
         """A model that kept failing edit_file had been told rewriting was off

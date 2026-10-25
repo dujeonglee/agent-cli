@@ -324,12 +324,15 @@ def tool_shell(args: dict) -> ToolResult:
 
 class ShellTool(Tool):
     name = "shell"
+    #: 설명은 **도구의 성질**만 (v10.74.0, docs/tail/DESIGN.md §9): 무엇을 돌리고 무엇이
+    #: 돌아오나, background=true 가 어떤 모양으로 도는가. "언제 background 로 띄우나"
+    #: (경로 선택)는 꼬리 Task Guidelines 의 작업 줄이 맡는다 — 종전엔 같은 문장이 여기와
+    #: 꼬리에 둘 다 있었고 작업 종류("a test suite, a build…")를 나열했다.
     description = (
-        "Run a shell command and return stdout/stderr. For anything that may "
-        "run longer than about a minute (a test suite, a build, an install, a "
-        "large clone) pass background=true: the harness starts it for you, "
-        "sends its output to a log under .agent-cli/tmp/jobs/ and tells you "
-        "when it ends (exit code + last lines) — keep working meanwhile."
+        "Run a shell command and return stdout/stderr. With background=true the "
+        "harness runs it as a job it owns: the call returns at once with the job "
+        "id, pid and log path (under .agent-cli/tmp/jobs/), and you are told when "
+        "it ends, with its exit code and last lines."
     )
     oversized_retry_hint = (
         "narrow the command itself: add `grep`/`head`/`tail`, target fewer "
@@ -356,20 +359,17 @@ class ShellTool(Tool):
                 "type": "integer",
                 "description": (
                     "Max seconds before a FOREGROUND command is killed (default "
-                    "120). Do not raise it to sit through a long command — use "
-                    "background=true for that. Raise it only for a short wait "
-                    "you must block on."
+                    "120). A background job has no timeout."
                 ),
             },
             "background": {
                 "type": "boolean",
                 "description": (
-                    "true = start the command as a background job owned by the "
+                    "true = run the command as a background job owned by the "
                     "harness (returns at once with the job id, pid and log path; "
-                    "you are notified when it ends). Use for test suites, builds, "
-                    "installs — anything over about a minute. Give the PLAIN "
-                    "command: no trailing `&`, no redirection, no `echo EXIT` — "
-                    "the harness logs it and reports the exit code."
+                    "you are notified when it ends). Give the PLAIN command: no "
+                    "trailing `&`, no redirection, no `echo EXIT` — the harness "
+                    "logs it and reports the exit code."
                 ),
             },
         },

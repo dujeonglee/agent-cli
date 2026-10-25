@@ -140,3 +140,26 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
   "기대·실패시 행동" 산문)에 함께 실을지는 사용자 결정.
 - 머리 **Reply Discipline** 1·2번과 방언 **Response Format** 7번의 겹침은 상주·방언
   소유라 이번 범위 밖.
+
+## 9. 다른 도구 설명도 같은 기준으로 (v10.74.0)
+
+§2 의 기준으로 열아홉 도구의 설명을 훑었다(2026-10-25). 성질과 섞여 있던 사용 규칙·작업 나열:
+
+| 도구 | 섞여 있던 것 | 처리 |
+|---|---|---|
+| shell | 꼬리 작업 줄과 같은 문장("1분 넘으면 background=true … 로그 … 통지") + "a test suite, a build, an install, a large clone" | 성질만: background=true 가 어떤 모양으로 도는가. 경로 선택은 꼬리 작업 줄 하나. `timeout` 의 "올리지 말고 background" 도 삭제(같은 줄에 있다) |
+| monitor | 셸 요리법 7줄(`nohup … > /tmp/x.log 2>&1 &`, `python -u`/PYTHONUNBUFFERED, `EXIT:$?`), "prefer `schedule`" | 요리법 삭제 — v10.47.0 의 background=true 이후 낡았고 꼬리의 `/tmp` 금지와 충돌. schedule 비교는 성질로("monitor 는 세션과 함께 저장되지 않는다") |
+| write_file | "NEW 파일이나 SMALL 파일 재작성에 써라, 부분 수정은 edit_file" + 비용 논증 | 성질만(내용이 컨텍스트를 두 번 통과). 경로 선택은 edit_file 설명("the default way to modify")과 재작성 관찰 교정("Use edit_file next time")이 이미 맡는다. "편집이 계속 실패하면 재작성해도 된다" 는 남김(v10.13.0 실측 탈출구) |
+| python (`timeout`) | "a model load, a big OCR batch" | "a step you know takes long" |
+| browser · memory · history · snapshot · schedule | 가벼운 경로 선택·사용 문장 | **다음 PR**(벤치 과제가 안 쓰므로 라이브로 확인) |
+| agent | 위임 비용 안내 | **손대지 않음** — v10.26.0 에 64모듈급 과제로 잰 문구 |
+| read_file · edit_file · fetch · code_index · wait · complete · ask · answer · message · reply | 성질·프로토콜 의미 | 그대로 |
+
+측정: 기준 pyguide-r3(10.73.0), 후보 이 브랜치 1회. 지표: `background: true` 사용 수와 폴링·`kill`·
+timeout 올리기 사고, `/tmp` 경로 사용 수, 기존 파일 `write_file` 재작성 수(관찰 교정 발동 수),
+통과 세트·총 턴. 결과는 §10.
+
+## 10. 결과
+
+(측정 뒤 기록)
+

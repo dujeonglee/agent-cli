@@ -189,8 +189,8 @@ class PythonTool(Tool):
                     f"Max seconds for this call (default {DEFAULT_TIMEOUT}). On "
                     "timeout the running code is interrupted (KeyboardInterrupt) "
                     "and the state is kept; only code that ignores the interrupt "
-                    "gets the interpreter killed. Raise this for a step you know "
-                    "is long (a model load, a big OCR batch)."
+                    "gets the interpreter killed. Raise it for a step you know "
+                    "takes long."
                 ),
             },
         },

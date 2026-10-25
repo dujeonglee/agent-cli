@@ -313,14 +313,10 @@ monitor(add, command="test -f out/done", every="60s")
   알립니다 — 세션보다 오래 가는 주기 작업이 필요하면 `schedule` 이 맞는
   도구입니다 (아래)
 
-**백그라운드 실행 관용구** — `2>&1` 을 빠뜨리면 `shell` 이 타임아웃까지
-막힙니다. 출력 버퍼링도 풀어야 건강한 스크립트가 침묵으로 보이지 않습니다:
-
-```bash
-nohup CMD > /tmp/x.log 2>&1 & echo $!     # 양쪽 스트림 모두 리다이렉션
-python -u / PYTHONUNBUFFERED=1 / stdbuf -oL
-( CMD; echo "EXIT:$?" ) > /tmp/x.log 2>&1 &   # 종료 코드가 필요하면
-```
+**백그라운드 실행은 `shell` 의 `background: true`** 로 띄웁니다(v10.47.0, 아래 🧵). 종전 monitor 설명에
+있던 셸 관용구(`nohup … > /tmp/x.log 2>&1 &`, 언버퍼링, `EXIT:$?`)는 v10.74.0 에서 지웠습니다 — 하니스가
+로그·종료 코드·통지를 맡은 뒤로 낡았고, `/tmp` 는 꼬리 규칙(스크래치는 `.agent-cli/tmp/`)과 충돌했습니다.
+monitor 의 `file+pattern` 은 그 작업의 로그 파일(`.agent-cli/tmp/jobs/…`)을 그대로 가리키면 됩니다.
 
 ### 🐍 `python` 도구 — 상태가 남는 파이썬 (v10.66.0)
 
