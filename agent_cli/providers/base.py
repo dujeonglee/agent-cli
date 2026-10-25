@@ -81,31 +81,6 @@ class LLMProvider(Protocol):
 
 
 @dataclass(frozen=True)
-class ThinkingPolicy:
-    """``request_overrides`` 의 **공용 해석 결과** (T1 잔여 — 리뷰 §4.2).
-
-    종전엔 OpenAI/Anthropic 이 각자 오버라이드를 해석해 조합별 의미가
-    갈렸다(예: OpenAI 는 enable_thinking=False 여도 reasoning_effort 잔존,
-    eff="off"+enable=True 가 프로바이더별 on/off 상이). 해석은 여기 한 곳,
-    프로바이더는 이 결과를 자기 wire 방언(reasoning_effort+
-    chat_template_kwargs / thinking 블록)으로 번역만 한다.
-
-    - ``enabled``: 사고 on/off. off 판정은 ``enable_thinking is False`` 또는
-      ``reasoning_effort == "off"`` — "off" 가 명시 enable=True 보다 이긴다
-      (Anthropic 의 종전 의미를 공용 규칙으로 채택).
-    - ``effort``: enabled 일 때의 노력 수준 — 오버라이드가 low/medium/high 면
-      그 값, 없으면 "medium" (양 프로바이더 공통 기본).
-    - ``enable_override``: 원본 enable_thinking 오버라이드 (None=미설정).
-      OpenAI 방언이 chat_template_kwargs 스위치를 **명시 오버라이드가 있을
-      때만** 방출하기 위한 원본 보존 — 값 자체는 ``enabled`` 를 쓴다.
-    """
-
-    enabled: bool
-    effort: str
-    enable_override: bool | None
-
-
-@dataclass(frozen=True)
 class CallSettings:
     """루프 → provider → 스트림으로 **여행하는** 세션-런타임 노브의 단일
     컨테이너 (v8.55.0). ctx 가 세션 상태로 들고, llm.py 가 매 콜 스냅샷을
@@ -115,8 +90,13 @@ class CallSettings:
     담는 기준: provider 경계를 실제로 건너는 것만. ctx-로컬 노브
     (compaction_ratio 등)는 제외 — 담으면 진실 원천이 둘이 된다."""
 
-    #: 세션 thinking 오버라이드 (구 ``request_overrides`` — 의미 동일).
-    thinking: dict | None = None
+    #: 세션 사고 스위치 (v10.72.0: on/off 둘뿐, 기본 끔 — ``ctx.thinking`` 스냅샷).
+    #: 프로바이더는 ``capabilities.supports_thinking`` 일 때만 자기 방언의 스위치로
+    #: 싣는다(OpenAI ``chat_template_kwargs.enable_thinking`` · Anthropic ``thinking``
+    #: 블록). 정도(effort·budget)는 보내지 않는다 — 모델마다 키·어휘·접는 방향이
+    #: 달라 하니스가 번역하면 조용히 틀린다(GLM 템플릿은 ``medium`` 을 ``Max`` 로
+    #: 읽었다). 정도는 서버·모델 기본값의 몫.
+    thinking: bool = False
     #: 스트림 무진전(no-token) 한도(초). 0 = 감지 끔.
     stream_idle_timeout_s: int = DEFAULT_STREAM_IDLE_TIMEOUT_S
     #: 무진전 시 **총** 시도 횟수(첫 전송 포함). 한도와 한 쌍 —
@@ -170,19 +150,11 @@ def sampling_source(
     return "server"
 
 
-def resolve_thinking_policy(
-    capabilities: ModelCapabilities, overrides: dict | None
-) -> ThinkingPolicy | None:
-    """thinking 오버라이드 해석 — 프로바이더 공용 정책 함수.
-
-    ``supports_thinking=False`` 면 **None**: 기본값도 오버라이드도 일절
-    주입하지 않는다는 v8.21.1 게이트 그대로 (호출측은 None 이면 사고 관련
-    필드를 아무것도 만들지 않는다)."""
+def thinking_switch(capabilities: ModelCapabilities, thinking: bool) -> bool | None:
+    """이 요청에 실을 사고 스위치 — ``None`` 이면 **아무것도 싣지 않는다**
+    (``supports_thinking=False``: 사고 관련 필드를 모르는 서버에 보내 400 나는 것을
+    막는 v8.21.1 게이트). 지원 모델이면 세션 값 그대로 — 끔도 명시한다(Qwen 계열
+    템플릿은 스위치가 없으면 사고를 켠다, v9.24.8)."""
     if not capabilities.supports_thinking:
         return None
-    ov = overrides or {}
-    eff = ov.get("reasoning_effort")
-    enable = ov.get("enable_thinking")
-    enabled = not (enable is False or eff == "off")
-    effort = eff if eff in ("low", "medium", "high") else "medium"
-    return ThinkingPolicy(enabled=enabled, effort=effort, enable_override=enable)
+    return bool(thinking)

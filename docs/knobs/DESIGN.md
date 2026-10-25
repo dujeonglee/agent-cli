@@ -13,7 +13,7 @@ v10.42.0 까지 같은 노브가 세 표면에 손으로 따로 배선돼 있었
 
 | 노브 | 상태 소유자 | web API | `run` 인자 | env |
 |---|---|---|---|---|
-| 🧠 사고 · 추론 노력 | ctx | `/api/thinking` | **없음** | `AGENT_CLI_THINKING`, `…_REASONING_EFFORT` |
+| 🧠 사고 · 추론 노력(당시) | ctx | `/api/thinking` | **없음** | `AGENT_CLI_THINKING`, `…_REASONING_EFFORT` |
 | 📐 디코딩 문법 | ctx | `/api/grammar` | **없음** | `AGENT_CLI_GRAMMAR` |
 | 👥 에이전트 상한 | registry | `/api/max-agents` | `--max-agents` | `AGENT_CLI_MAX_AGENTS` |
 | 🗜 압축 비율 | ctx | `/api/compaction` | `--compaction-ratio` | `AGENT_CLI_COMPACTION_RATIO` |
@@ -34,12 +34,11 @@ v10.42.0 까지 같은 노브가 세 표면에 손으로 따로 배선돼 있었
 - **두 방향으로 서로 모른다.** `Knob` 는 typer·FastAPI·sticky 를 모르고, 표면은 어떤 노브가 있는지 모른다. 새 노브는 선언 한 줄이고 어느 표면에도 코드가 늘지 않는다 — 이것이 "구조로 강제" 다. 표에서 파생하는 테스트(§4)는 그 위의 보험이다.
 - **상태 소유자는 흩어져 있다**(ctx·registry·renderer·auditor). `KnobSession` 이 넷을 한 묶음으로 들고, 각 노브의 `set` 은 자기 소유자 하나만 만진다. 소유자가 None 이면(headless 부트·세션 없음) `apply_all` 이 그 노브를 건너뛴다(`Knob.available`).
 
-### 2.1 열한 축 (v10.69.0: 🎲 둘 추가 — §7)
+### 2.1 열 축 (v10.69.0: 🎲 둘 추가 — §7 · v10.72.0: `reasoning_effort` 제거 — §8)
 
 | name | flag | env | kind | default | owner |
 |---|---|---|---|---|---|
-| `thinking` | `--thinking` | `AGENT_CLI_THINKING` | off / on / auto | `off` (v9.24.8: 끔을 명시) | ctx |
-| `reasoning_effort` | `--reasoning-effort` | `AGENT_CLI_REASONING_EFFORT` | auto / low / medium / high / off | `auto` | ctx |
+| `thinking` | `--thinking` | `AGENT_CLI_THINKING` | off / on | `off` (v9.24.8: 끔을 명시) | ctx |
 | `grammar` | `--grammar` | `AGENT_CLI_GRAMMAR` | auto / on / off | `auto` | ctx |
 | `temperature` | `--temperature` | `AGENT_CLI_TEMPERATURE` | float 0–2 / auto | `auto`(None — 보내지 않음) | ctx |
 | `top_p` | `--top-p` | `AGENT_CLI_TOP_P` | float 0–1 / auto | `auto`(None — 보내지 않음) | ctx |
@@ -102,7 +101,7 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 - 소스 어디에도 표 밖의 노브 env 읽기가 없다(`environ.get("AGENT_CLI_…")` 를 `knobs.py` 밖에서 찾으면 실패).
 - README 의 env 표와 CLI 표가 표의 env·플래그를 전부 싣는다.
 - 표의 기본값 = 소유자가 아무 노브 없이 시작한 값(기본값이 둘이 되지 않게).
-- 각 노브의 `set` 이 자기 소유자를 실제로 바꾸고 `get` 으로 되돌아온다; 사고와 추론 노력은 서로를 지우지 않는다.
+- 각 노브의 `set` 이 자기 소유자를 실제로 바꾸고 `get` 으로 되돌아온다.
 - 우선순위 CLI > env > 기본값; 잘못된 CLI 값은 `BadParameter`, 잘못된 env 는 기본값.
 - 서브에이전트 ctx 는 부모의 사고·문법 값을 **복사**로 물려받는다.
 
@@ -113,7 +112,7 @@ typer 는 함수 시그니처에서 옵션을 만든다. `knob_options` 는 `ins
 - `GET /api/knobs` 가 `KNOBS` 를 돌며 노브마다 상태 한 장(`knobs.web_state`): `{name, label, help, flag, env, kind, choices, default, available, value, locked, …info}`. `info` 는 노브가 선언한 파생 사실(범위 min/max/step, `supported`/`active`, `supports_thinking`, `in_flight`, 모델의 `dialect`/`context_window`), `locked` 는 잠김 사유(사고 미지원 모델, 문법 지원 미확인/미지원). 소유자가 없으면 `available: false` 에 값 없음.
 - `POST /api/knobs/{name}` `{value}` → `Knob.parse` → `Knob.set` → sticky `knob:<name>`(이벤트 `knob`) 하나. 미지名 404, 잘못된 값·거부(모델 미등록 등)·소유자 없음은 `{ok:false, error}` 로 아무것도 바꾸지 않는다. 다음 LLM 호출(또는 다음 확인·런)부터 실린다.
 - **지운 것(별칭 없이)**: 개별 엔드포인트 열네 핸들러(`/api/thinking`·`/api/grammar`·`/api/max-agents`·`/api/compaction`·`/api/stream-idle`·`/api/confirm-mode`·`/api/auditor` 의 GET/POST), 렌더러의 `broadcast_compaction_ratio`·`broadcast_stream_idle`·`broadcast_grammar`·`broadcast_auditor`·`broadcast_thinking`·`broadcast_max_agents` 와 `set_auto_approve` 오버라이드(sticky), 프런트의 노브별 fetch 열넷·SSE 리스너 일곱·`agentcli:*` 이벤트 일곱. status.json 의 `grammar`·`auditing` 은 노브가 아니라 상태라 남고, `knob:grammar`·`knob:auditor` sticky 에서 읽는다. 보드는 이 엔드포인트를 쓰지 않았다.
-- 칩은 그대로(디자인 결정)되 `KNOBS` 클라이언트 하나(`all/get/set/on`)를 쓴다 — 한 칩이 두 노브를 들 때(⏳ 한도·시도, 🧠 사고·노력)는 각 노브를 따로 저장하고 다른 축의 마지막 값을 들고 있다. 📐 셀렉트는 노브 값 그대로 `auto`(기본, 지원되면 켬)/`off`.
+- 칩은 그대로(디자인 결정)되 `KNOBS` 클라이언트 하나(`all/get/set/on`)를 쓴다 — 한 칩이 두 노브를 들 때(⏳ 한도·시도, 🎲 temperature·top_p)는 각 노브를 따로 저장하고 다른 축의 마지막 값을 들고 있다. 📐 셀렉트는 노브 값 그대로 `auto`(기본, 지원되면 켬)/`off`.
 - 테스트 `tests/test_knobs_web.py`: 표의 모든 노브가 GET 에 표 순서로 나오고 POST 로 바뀌며 sticky 와 재접속 snapshot 에 실린다(표에서 돈다); 404·잘못된 값·소유자 없음은 무변경; 소유자 의미(clamp·무제한 0·무진전 0=끔·두 축 독립) 유지; 잠김 사유는 서버가; status.json `grammar` 는 같은 sticky; 프런트는 `fetch("api/<old>")` 없이 `KNOBS` 만.
 
 ### 5.2 3단계 — 칩 일반화·보드·문서 (칩·문서 구현됨 v10.45.0, 보드는 짝 릴리스)
@@ -179,3 +178,33 @@ Harbor 어댑터는 `--ae AGENT_CLI_TEMPERATURE=0.2`(①층) 또는 바인딩 �
 ### 7.5 테스트
 
 `tests/test_knobs.py::TestSamplingKnobs`(optional 파싱, auto=키 삭제, clamp, 묶음 배지·설명·`effective`/`source`/`pick`, 서브에이전트 복사, CLI `--temperature 0.2 --top-p auto`), `tests/test_knobs_web.py::TestSamplingIsOptional`(POST `auto` 가 지운다, 상태의 범위·출처, 잘못된 값 무변경) + 표 파생 파라미터 두 행, `tests/test_providers.py::TestSamplingInTheBody`(`resolve_sampling` 우선순위, OpenAI·Anthropic 본문에 정해진 키만), `tests/test_capabilities.py::TestSamplingDefaultsInTheEntry`(엔트리 왕복, 오타 → 미기록, 프로브는 채우지 않음). README 의 env·CLI 표 두 행은 기존 표 파생 테스트가 강제한다.
+
+## 8. 사고는 스위치 하나 — `reasoning_effort` 제거 (v10.72.0)
+
+> 결정(사용자, 2026-10-25): 🧠 는 `on`/`off` 둘만, 기본 `off`. `auto`(서버 기본에 맡김)와 정도 노브 `reasoning_effort` 는 **삭제**하고 정도는 서버·모델 기본값에 맡긴다. "어설픈 auto" 는 만들지 않는다.
+
+### 8.1 왜
+
+- 정도의 wire 는 모델마다 다르다 — OpenAI `reasoning_effort`(none·low·medium·high·xhigh), Anthropic `output_config.effort`(low~xhigh·max; `budget_tokens` 는 현행 모델이 400), Gemini 3 `thinking_level`(low·high), GLM 템플릿 `reasoning_effort`(low·high 만, 그 외는 **Max**), Qwen3 템플릿은 `reasoning_effort` 를 읽지 않고 `enable_thinking`+`thinking_budget`(토큰 수).
+- 하니스가 한 어휘로 번역하면 조용히 틀린다. 종전 정책은 사고가 켜지면 `reasoning_effort: medium` 을 **항상** 실었고, GLM 템플릿은 그것을 `Max` 로 읽었다(`/v1/tokenize` 렌더링 실측). 엄격한 API 는 400 으로 말해 주지만 템플릿 서버는 200 으로 접거나 무시하므로 응답으로는 알 수 없다.
+- 모델별 어휘 표(`thinking_wire`)로 접는 안도 검토했으나, 서버가 별칭으로 서빙하면 이름 추천이 무력하고, 렌더링 프로브(`/v1/tokenize`)는 omlx·vLLM 에서만 된다. 그 복잡도 대신 "하니스는 켬/끔만 말한다" 를 택했다.
+
+### 8.2 무엇이 바뀌었나
+
+| 자리 | 전 | 후 |
+|---|---|---|
+| 노브 | `thinking` off/on/auto + `reasoning_effort` auto/low/medium/high/off (묶음 🧠) | `thinking` off/on **하나**(묶음 아님, 아이콘 🧠, `choice_labels`) |
+| ctx | `thinking_override: dict` · `set_thinking_override(enable_thinking, reasoning_effort)` | `thinking: bool`(기본 False) · `set_thinking(bool)` |
+| 정책 | `providers.base.ThinkingPolicy` · `resolve_thinking_policy` | `thinking_switch(caps, flag) -> bool | None`(미지원 모델 None = 아무것도 싣지 않음) |
+| OpenAI | 켬이면 `reasoning_effort`(기본 medium) + 오버라이드 있을 때만 `chat_template_kwargs.enable_thinking` | 지원 모델이면 `chat_template_kwargs.enable_thinking` 을 **항상** 명시, `reasoning_effort` 없음 |
+| Anthropic | `thinking: {enabled, budget_tokens: 4096/16384/32768}` + `max_tokens += budget` | 켬이면 `thinking: {type: adaptive}`(`_THINKING_ON`), 끔이면 블록 없음, `max_tokens` 불변 |
+| 탐지 재프로브(Anthropic) | `budget_tokens: 1024` | 프로바이더와 같은 `_THINKING_ON` |
+| `CallSettings.thinking` | `dict | None` | `bool = False` |
+
+- 문법 제약(📐)의 `thinking_open` 은 같은 `thinking_switch` 에서 읽는다 — 스위치가 늘 명시되므로 "제약 중에만 스위치를 명시" 하던 특례가 사라졌다.
+- 보드는 표를 읽어 그리므로 코드 변경 없음(`agent-cli knobs --json` 의 행이 하나 줄고 선택지가 둘). 저장된 글의 `thinking: auto` 는 다음 spawn 에서 agent-cli 가 거절해 방이 뜨지 않는다 — 글의 노브를 `on`/`off` 로 고쳐 저장하면 된다(보드 CHANGELOG 1.41.0).
+- 벤치 조건: `--ae AGENT_CLI_THINKING=off` 그대로. GLM 의 `reasoning_effort=low` 는 omlx 모델 설정에 남는다(하니스는 정도를 말하지 않으므로 벤치 메모에 서버 설정을 함께 적는다).
+
+### 8.3 테스트
+
+`tests/test_knobs.py::TestApplyReachesTheOwners::test_thinking_is_a_plain_switch`(선택지 둘·`auto` 거절·`reasoning_effort` 부재), `TestChipShapeIsDeclaredInTheTable`(배지 off/on/unsupported, 묶음 아님, `KNOB_GROUPS` 에 thinking 없음), `tests/test_providers.py::TestOpenAIProvider::test_thinking_switch_is_always_explicit_and_effort_never_sent` · `TestThinkingSwitch`(Anthropic adaptive·예산 없음·끔은 블록 없음) · `TestThinkingSwitchGate`(정책 객체·budget 표가 되살아나면 실패), `tests/test_decoding_grammar.py::TestProviderBody`(문법 변형과 스위치가 같이 간다), `tests/test_capabilities.py`(재프로브 모양), `tests/browser/test_knob_chips.py`(🧠 셀렉트 하나·옵션 둘).

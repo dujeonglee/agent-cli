@@ -248,27 +248,11 @@ class Knob:
 
 
 def _thinking_get(s: KnobSession) -> str:
-    et = s.ctx.thinking_override.get("enable_thinking")
-    return "auto" if et is None else ("on" if et else "off")
+    return "on" if s.ctx.thinking else "off"
 
 
 def _thinking_set(s: KnobSession, v: str) -> str:
-    s.ctx.set_thinking_override(
-        enable_thinking=None if v == "auto" else (v == "on"),
-        reasoning_effort=s.ctx.thinking_override.get("reasoning_effort"),
-    )
-    return v
-
-
-def _effort_get(s: KnobSession) -> str:
-    return s.ctx.thinking_override.get("reasoning_effort") or "auto"
-
-
-def _effort_set(s: KnobSession, v: str) -> str:
-    s.ctx.set_thinking_override(
-        enable_thinking=s.ctx.thinking_override.get("enable_thinking"),
-        reasoning_effort=None if v == "auto" else v,
-    )
+    s.ctx.set_thinking(v == "on")
     return v
 
 
@@ -474,18 +458,14 @@ def _sampling_group_note(s: KnobSession) -> str:
 
 
 def _thinking_badge(s: KnobSession) -> str:
-    if _thinking_locked(s):
-        return "unsupported"
-    if _thinking_get(s) == "off":
-        return "off"
-    eff = _effort_get(s)
-    return eff if eff != "auto" else "auto"
+    return _thinking_locked(s) and "unsupported" or _thinking_get(s)
 
 
 def _thinking_note(s: KnobSession) -> str:
     return (
         _thinking_locked(s)
-        or "Applies from the next LLM request. Thinking off saves tokens; effort only when the backend honours it."
+        or "Applies from the next LLM request. Off saves tokens; how much the model "
+        "thinks when on is the server's default."
     )
 
 
@@ -501,18 +481,6 @@ KNOB_GROUPS: dict[str, KnobGroup] = {
         ),
         badge=_stall_badge,
         note=_stall_note,
-    ),
-    "thinking": KnobGroup(
-        icon="🧠",
-        label="Thinking",
-        help=(
-            "Thinking and reasoning-effort control — applies from the next LLM "
-            "request. Thinking off saves tokens and speeds generation up (when the "
-            "backend supports it); reasoning effort counts only when the backend "
-            "honours it. Session-scoped; auto on restart."
-        ),
-        badge=_thinking_badge,
-        note=_thinking_note,
     ),
     "sampling": KnobGroup(
         icon="🎲",
@@ -568,32 +536,19 @@ KNOBS: tuple[Knob, ...] = (
         env="AGENT_CLI_THINKING",
         label="Thinking",
         help=(
-            "Model thinking for this session: off (default — a model without a "
-            "switch thinks forever), on, or auto (server/model default). Takes "
-            "effect from the next LLM call; a model without thinking support "
-            "ignores it."
+            "Model thinking for this session: off (default) or on. How much the "
+            "model thinks when on is the server's default — the harness sends no "
+            "effort level. Takes effect from the next LLM call; a model without "
+            "thinking support ignores it."
         ),
-        kind=Choice("off", "on", "auto"),
+        kind=Choice("off", "on"),
         default="off",
         get=_thinking_get,
         set=_thinking_set,
-        ui=KnobUI(group="thinking"),
+        ui=KnobUI(icon="🧠", choice_labels={"off": "off (default)", "on": "on"}),
+        badge=_thinking_badge,
+        note=_thinking_note,
         info=_thinking_info,
-        locked=_thinking_locked,
-    ),
-    Knob(
-        name="reasoning_effort",
-        owner="ctx",
-        flag="--reasoning-effort",
-        env="AGENT_CLI_REASONING_EFFORT",
-        label="Reasoning effort",
-        help="Reasoning effort when the backend honours it: auto (default), low, medium, high, off.",
-        kind=Choice("auto", "low", "medium", "high", "off"),
-        default="auto",
-        get=_effort_get,
-        set=_effort_set,
-        ui=KnobUI(group="thinking"),
-        # 사고 미지원 모델이면 노력도 뜻이 없다 — 🧠 칩의 두 셀렉트가 같이 잠긴다
         locked=_thinking_locked,
     ),
     Knob(

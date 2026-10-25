@@ -152,7 +152,7 @@ def create_subagent_ctx(
         ctx.stream_max_attempts = parent_ctx.stream_max_attempts
         # 사고·문법도 세션의 현재 값 (v10.43.0) — 종전엔 ctx 마다 env 를 다시
         # 읽어 web 🧠·📐 노브가 팀원·delegate 에는 닿지 않았다.
-        ctx.thinking_override = dict(parent_ctx.thinking_override)
+        ctx.thinking = parent_ctx.thinking
         ctx.grammar_override = parent_ctx.grammar_override
         ctx.sampling = dict(parent_ctx.sampling)  # 🎲 (v10.69.0) — 복사본
 

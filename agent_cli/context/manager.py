@@ -258,12 +258,13 @@ class ContextManager:
             if compaction_ratio is None
             else clamp_compaction_ratio(compaction_ratio)
         )
-        # Per-session thinking/reasoning override. 공유 ctx 라 다음 LLM 콜이 즉시
-        # 읽는다. enable_thinking: None|bool · reasoning_effort: None|"low"|…|"off".
-        # 기본은 **끔을 명시** (v9.24.8, 사용자 결정): Qwen 계열 템플릿은 스위치가
-        # 없으면 사고를 켜고, 라이브 보드(2026-09-27)에서 상주 에이전트가 `</think>`
-        # 없이 사고 구간 안에서 같은 도구 호출을 22분 반복했다.
-        self.thinking_override: dict = {"enable_thinking": False}
+        #: 세션 사고 스위치 (🧠 노브). 공유 ctx 라 다음 LLM 콜이 즉시 읽는다.
+        #: 기본은 **끔** (v9.24.8, 사용자 결정): Qwen 계열 템플릿은 스위치가 없으면
+        #: 사고를 켜고, 라이브 보드(2026-09-27)에서 상주 에이전트가 `</think>` 없이
+        #: 사고 구간 안에서 같은 도구 호출을 22분 반복했다. v10.72.0: on/off 둘뿐 —
+        #: "auto"(서버 기본)와 정도(reasoning_effort)는 제거(사용자 결정; 모델마다
+        #: 어휘가 달라 하니스의 기본값이 조용히 다른 뜻으로 읽혔다).
+        self.thinking: bool = False
         #: 디코딩 문법 제약 (v9.24.0): None=자동(서버 지원 시 켬) / True / False.
         self.grammar_override: bool | None = None
         #: 세션 샘플링 노브 (v10.69.0, 🎲): ``{"temperature": float, "top_p": float}``
@@ -749,19 +750,10 @@ class ContextManager:
         self.grammar_override = None if enabled is None else bool(enabled)
         return self.grammar_override
 
-    def set_thinking_override(
-        self, enable_thinking=None, reasoning_effort=None
-    ) -> dict:
-        """세션 thinking 오버라이드 설정(web UI). None=미설정(모델 기본), 값이 있으면
-        provider 요청 body 에 반영(다음 LLM 콜 즉시). enable_thinking: bool|None,
-        reasoning_effort: "auto"/None|"low"|"medium"|"high"|"off". 저장된 dict 반환."""
-        ov: dict = {}
-        if enable_thinking is not None:
-            ov["enable_thinking"] = bool(enable_thinking)
-        if reasoning_effort in ("low", "medium", "high", "off"):
-            ov["reasoning_effort"] = reasoning_effort
-        self.thinking_override = ov
-        return ov
+    def set_thinking(self, enabled: bool) -> bool:
+        """세션 사고 스위치(🧠 노브) — 다음 LLM 콜부터 반영(공유 ctx). 저장된 값 반환."""
+        self.thinking = bool(enabled)
+        return self.thinking
 
     def set_sampling(self, name: str, value) -> float | None:
         """세션 샘플링 노브 하나(🎲 temperature/top_p)를 정하거나 지운다 (v10.69.0).

@@ -732,8 +732,9 @@ class TestAnthropicRuntimeDetection:
     def test_thinking_reprobe_with_thinking_block(self, mock_post, mock_get):
         """2단계 재프로브 (transport 공통 계약 — 리뷰 §4.2 수리): ① 기본
         프로브 미검출 → ② thinking 블록을 켠 재프로브에서 사고가 나오면
-        supports_thinking=True. 재프로브 요청은 Anthropic 방언의 스위치
-        (thinking 블록, budget 하한 1024 + max_tokens 증액)를 실어야 한다."""
+        supports_thinking=True. 재프로브 요청은 Anthropic 방언의 스위치(thinking
+        블록)를 프로바이더와 같은 모양(``_THINKING_ON``, v10.72.0: adaptive —
+        현행 Claude 는 budget_tokens 를 거절한다)으로 실어야 한다."""
         mg = MagicMock(status_code=200)
         mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
         mg.raise_for_status.return_value = None
@@ -756,10 +757,13 @@ class TestAnthropicRuntimeDetection:
 
         caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
         assert caps.supports_thinking is True
-        # 재프로브 body 에 thinking 스위치 + budget 만큼 증액된 max_tokens
+        # 재프로브 body 에 thinking 스위치 — 프로바이더가 보내는 것과 같은 모양,
+        # max_tokens 는 그대로(예산을 더하지 않는다)
+        from agent_cli.providers.anthropic import _THINKING_ON
+
         reprobe_body = mock_post.call_args_list[1].kwargs["json"]
-        assert reprobe_body["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-        assert reprobe_body["max_tokens"] == 512 + 1024
+        assert reprobe_body["thinking"] == _THINKING_ON == {"type": "adaptive"}
+        assert reprobe_body["max_tokens"] == 512
         # 1차 프로브는 스위치 없음
         assert "thinking" not in mock_post.call_args_list[0].kwargs["json"]
 

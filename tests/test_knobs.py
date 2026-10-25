@@ -113,11 +113,9 @@ class TestResolution:
         "name,env,expected",
         [
             ("thinking", None, "off"),  # v9.24.8: 미설정은 끔
-            ("thinking", "on", "on"),
-            ("thinking", "AUTO", "auto"),
-            ("thinking", "bogus", "off"),  # 모르는 값도 끔
-            ("reasoning_effort", None, "auto"),
-            ("reasoning_effort", "high", "high"),
+            ("thinking", "ON", "on"),
+            ("thinking", "auto", "off"),  # v10.72.0: auto 는 없다 — 모르는 값은 끔
+            ("thinking", "bogus", "off"),
             ("grammar", None, "auto"),
             ("grammar", "off", "off"),
             ("max_agents", None, 10),
@@ -187,7 +185,6 @@ class TestApplyReachesTheOwners:
         s = self._session(tmp_path)
         values = {
             "thinking": "on",
-            "reasoning_effort": "high",
             "grammar": "off",
             "max_agents": 3,
             "compaction_ratio": 0.8,
@@ -201,23 +198,24 @@ class TestApplyReachesTheOwners:
             if k.name in values:
                 assert k.get(s) == values[k.name], k.name
         assert KNOB_BY_NAME["model"].get(s) == "m"  # 값 없음 → 손대지 않는다
-        assert s.ctx.thinking_override == {
-            "enable_thinking": True,
-            "reasoning_effort": "high",
-        }
+        assert s.ctx.thinking is True
         assert s.ctx.grammar_override is False
         assert s.ctx.stream_idle_timeout_s == 300 and s.ctx.stream_max_attempts == 6
         assert s.renderer.auto_approve is True and s.auditor.enabled is True
 
-    def test_thinking_and_effort_do_not_clobber_each_other(self, tmp_path):
+    def test_thinking_is_a_plain_switch(self, tmp_path):
+        """v10.72.0: 🧠 는 on/off 둘뿐 — `auto` 도, 정도(reasoning_effort) 노브도
+        없다(사용자 결정: 모델마다 정도의 키·어휘·접는 방향이 달라 하니스가 번역하면
+        조용히 틀린다 — 정도는 서버 기본값의 몫)."""
         s = self._session(tmp_path)
-        KNOB_BY_NAME["reasoning_effort"].set(s, "low")
-        KNOB_BY_NAME["thinking"].set(s, "auto")
-        assert s.ctx.thinking_override == {"reasoning_effort": "low"}
-        KNOB_BY_NAME["reasoning_effort"].set(s, "auto")
-        assert s.ctx.thinking_override == {}
+        assert KNOB_BY_NAME["thinking"].kind.choices() == ("off", "on")
+        assert "reasoning_effort" not in KNOB_BY_NAME
+        KNOB_BY_NAME["thinking"].set(s, "on")
+        assert s.ctx.thinking is True
         KNOB_BY_NAME["thinking"].set(s, "off")
-        assert s.ctx.thinking_override == {"enable_thinking": False}
+        assert s.ctx.thinking is False
+        with pytest.raises(ValueError):
+            KNOB_BY_NAME["thinking"].parse("auto")
 
     def test_defaults_match_the_owners_fresh_state(self, tmp_path, monkeypatch):
         """표의 기본값 = 소유자가 아무 노브 없이 시작한 값 — 둘이 어긋나면 "기본값"
@@ -368,17 +366,14 @@ class TestSubagentsInheritTheSessionValues:
         from agent_cli.subagent.runner import create_subagent_ctx
 
         parent = ContextManager(tmp_path / "s", max_context_tokens=10_000)
-        parent.set_thinking_override(enable_thinking=True, reasoning_effort="low")
+        parent.set_thinking(True)
         parent.set_grammar_override(False)
         child, err = create_subagent_ctx("none", parent, tmp_path / "s" / "run_x")
         assert err == "" and child is not None
-        assert child.thinking_override == {
-            "enable_thinking": True,
-            "reasoning_effort": "low",
-        }
+        assert child.thinking is True
         assert child.grammar_override is False
-        child.set_thinking_override(enable_thinking=False)
-        assert parent.thinking_override["enable_thinking"] is True  # 복사본
+        child.set_thinking(False)
+        assert parent.thinking is True  # 복사본
 
 
 class TestRunBootApplies:
@@ -398,7 +393,7 @@ class TestRunBootApplies:
             auditor=auditor,
         )
         assert reg.max_agents == 7  # CLI
-        assert ctx.thinking_override == {"enable_thinking": True}  # env
+        assert ctx.thinking is True  # env
         assert auditor.enabled is False  # 기본값
 
     def test_minimal_renderer_auto_approve_answers_without_asking(self):
@@ -478,7 +473,7 @@ class TestChipShapeIsDeclaredInTheTable:
             and by["auto_approve"]["ui"]["placement"] == "header"
         )
         assert by["model"]["badge"] == "m" and "json_fc" in by["model"]["note"]
-        assert by["thinking"]["group"]["badge"] == "off"
+        assert by["thinking"]["badge"] == "off" and by["thinking"]["group"] is None
         for st in by.values():
             assert st["group"] is None or st["group"]["name"] == st["ui"]["group"]
 
@@ -494,15 +489,18 @@ class TestChipShapeIsDeclaredInTheTable:
         s.ctx.set_stream_idle_timeout(180)
         s.ctx.set_stream_max_attempts(2)
         assert K.web_group("stall", s)["badge"] == "3m×2"
-        # 🧠 — 끄면 "off", 켜고 노력을 주면 그 노력, 미지원 모델이면 "미지원"
-        s.ctx.set_thinking_override(enable_thinking=True, reasoning_effort="high")
-        assert K.web_group("thinking", s)["badge"] == "high"
+        # 🧠 (v10.72.0: 묶음 아님, 노브 하나) — off / on / 미지원 모델이면 "unsupported"
+        s.ctx.set_thinking(True)
+        st = K.web_state(KNOB_BY_NAME["thinking"], s)
+        assert st["badge"] == "on" and st["group"] is None and st["ui"]["icon"] == "🧠"
+        assert "server's default" in st["note"]
         s2 = self._session(tmp_path)
         s2.binding.capabilities = s2.binding.capabilities.__class__(
             32768, 4096, False, supports_grammar=True
         )
-        assert K.web_group("thinking", s2)["badge"] == "unsupported"
-        assert KNOB_BY_NAME["reasoning_effort"].locked(s2)
+        st2 = K.web_state(KNOB_BY_NAME["thinking"], s2)
+        assert st2["badge"] == "unsupported" and st2["locked"]
+        assert "thinking" not in K.KNOB_GROUPS
 
     def test_unavailable_group_member_hides_the_group(self):
         s = KnobSession()  # 소유자 없음
@@ -586,15 +584,13 @@ class TestKnobsCommand:
             by["model"]["short"] == "-m" and by["model"]["ui"]["control"] == "options"
         )
         # 묶음 노브도 아이콘을 든다 — 보드 칩이 ⚙ 로 떨어지지 않게 (v10.46.1)
-        assert (
-            by["thinking"]["ui"]["icon"] == "🧠" == by["reasoning_effort"]["ui"]["icon"]
-        )
-        assert by["stall"]["ui"]["icon"] == "⏳" and by["grammar"]["ui"]["icon"] == "📐"
+        assert by["thinking"]["ui"]["icon"] == "🧠"
+        assert by["stall"]["ui"]["icon"] == "⏳" == by["stall_attempts"]["ui"]["icon"]
+        assert by["grammar"]["ui"]["icon"] == "📐"
         assert all(k["ui"]["icon"] for k in spec)
-        assert (
-            by["thinking"]["choices"] == ["off", "on", "auto"]
-            and by["thinking"]["ui"]["group"] == "thinking"
-        )
+        # v10.72.0: 🧠 는 on/off 둘뿐이고 묶음이 아니다; reasoning_effort 는 표에 없다
+        assert by["thinking"]["choices"] == ["off", "on"]
+        assert by["thinking"]["ui"]["group"] == "" and "reasoning_effort" not in by
         assert by["stall"]["kind"] == "duration" and by["stall"]["default"] == 600
 
     def test_plain_lists_every_knob(self):

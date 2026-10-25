@@ -20,8 +20,8 @@ from agent_cli.providers.base import (
     LLMResponse,
     TokenUsage,
     resolve_sampling,
-    resolve_thinking_policy,
     strip_think_blocks,
+    thinking_switch,
 )
 from agent_cli.providers.capabilities import ModelCapabilities, vision_support
 from agent_cli.providers.http import (
@@ -83,33 +83,20 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # Thinking/reasoning effort — 해석은 공용 ``resolve_thinking_policy``
-        # (supports_thinking=False 면 None → 일절 미주입, v8.21.1 게이트).
-        # 여기는 정책을 OpenAI 방언으로 번역만 한다:
-        #  · enabled → reasoning_effort (기본 medium, 오버라이드 low/medium/high).
-        #  · disabled → reasoning_effort **미주입** — 종전엔 enable_thinking=False
-        #    여도 effort 가 잔존해 엄격 백엔드에 상충 신호를 보냈다(리뷰 §4.2).
-        #  · chat_template_kwargs.enable_thinking (Qwen/MLX 스위치)은 명시
-        #    enable_thinking 오버라이드가 있을 때만 방출 — 방출 표면 불변,
-        #    값은 정책의 enabled (eff="off"+enable=True 조합도 프로바이더 간 동형).
-        # 세션-런타임 노브 (v8.55.0, base.CallSettings): thinking 오버라이드·
-        # 스트림 무진전 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
+        # 사고 스위치 (v10.72.0): 지원 모델이면 세션 값(on/off)을 OpenAI-호환 서버의
+        # 스위치 ``chat_template_kwargs.enable_thinking`` 으로 **항상 명시**한다 —
+        # Qwen 계열 템플릿은 스위치가 없으면 사고를 켜고(v9.24.8), 문법 제약(v9.24.0)은
+        # `<think>` 가 열려 있는지를 가정하므로 서버 기본값에 맡기면 출력이 사고
+        # 채널에 갇힌다(실측). ``reasoning_effort`` 는 보내지 않는다 — 모델마다
+        # 어휘가 달라 하니스의 기본값이 조용히 다른 뜻으로 읽혔다(GLM: medium→Max).
+        # 세션-런타임 노브 (v8.55.0, base.CallSettings): 사고 스위치·스트림 무진전
+        # 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
         settings = kwargs.get("settings") or CallSettings()
         if settings.max_output_tokens is not None:
             body["max_tokens"] = settings.max_output_tokens
-        policy = resolve_thinking_policy(capabilities, settings.thinking)
-        if policy is not None:
-            if policy.enabled:
-                body["reasoning_effort"] = policy.effort
-            # 문법 제약(v9.24.0) 중에는 사고 스위치를 **항상 명시**한다: 문법이
-            # `<think>` 블록이 열려 있는지(닫는 태그를 먼저 내야 하는지)를
-            # 가정하므로, 서버 기본값에 맡기면 가정과 실제가 어긋나 출력 전체가
-            # 사고 채널에 갇힌다(실측). 제약이 없을 땐 종전대로 오버라이드가
-            # 있을 때만 방출 — 방출 표면 불변.
-            if policy.enable_override is not None or settings.grammar:
-                ctk = dict(body.get("chat_template_kwargs") or {})
-                ctk["enable_thinking"] = policy.enabled
-                body["chat_template_kwargs"] = ctk
+        switch = thinking_switch(capabilities, settings.thinking)
+        if switch is not None:
+            body["chat_template_kwargs"] = {"enable_thinking": switch}
         if settings.grammar:
             body["guided_grammar"] = settings.grammar
         if settings.tools:

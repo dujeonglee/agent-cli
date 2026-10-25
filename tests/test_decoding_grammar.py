@@ -255,21 +255,24 @@ class TestProviderBody:
     def test_no_grammar_no_field(self, mock_post, caps_thinking):
         body = self._call(mock_post, caps_thinking, CallSettings())
         assert "guided_grammar" not in body
-        assert "chat_template_kwargs" not in body  # 오버라이드 없음 → 종전대로
 
     @patch("agent_cli.providers.openai.requests.post")
-    def test_constrained_call_pins_the_thinking_switch(self, mock_post, caps_thinking):
+    def test_constrained_call_carries_the_matching_switch(
+        self, mock_post, caps_thinking
+    ):
         """문법은 `<think>` 가 열려 있는지를 가정한다 — 서버 기본값에 맡기면
-        가정과 실제가 어긋나 출력이 사고 채널에 갇힌다(실측). 제약 중엔
-        오버라이드가 없어도 스위치를 명시한다."""
+        가정과 실제가 어긋나 출력이 사고 채널에 갇힌다(실측). 스위치는 늘
+        명시되므로(v10.72.0) 문법이 열린 변형이면 켬, 닫힌 변형이면 끔이 같이 간다."""
         body = self._call(
-            mock_post, caps_thinking, CallSettings(grammar='root ::= "x"')
+            mock_post,
+            caps_thinking,
+            CallSettings(grammar='root ::= "x"', thinking=True),
         )
         assert body["chat_template_kwargs"] == {"enable_thinking": True}
         body = self._call(
             mock_post,
             caps_thinking,
-            CallSettings(grammar='root ::= "x"', thinking={"enable_thinking": False}),
+            CallSettings(grammar='root ::= "x"', thinking=False),
         )
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
 
@@ -278,12 +281,12 @@ class TestProviderBody:
         self, mock_post, caps_thinking, monkeypatch
     ):
         """v9.24.8: 기본 끔이 스위치로 **명시**된다 — Qwen 템플릿은 스위치가
-        없으면 사고를 켠다. effort 는 싣지 않는다(끔에 상충 신호 없음)."""
+        없으면 사고를 켠다. effort 는 싣지 않는다(v10.72.0: 어느 경우에도)."""
         from agent_cli.knobs import KNOB_BY_NAME
 
         assert KNOB_BY_NAME["thinking"].default == "off"  # 노브 기본 = ctx 기본
-        ov = {"enable_thinking": False}  # ContextManager 의 초기값 (v9.24.8)
-        body = self._call(mock_post, caps_thinking, CallSettings(thinking=ov))
+        assert CallSettings().thinking is False  # 설정 컨테이너의 기본도 끔
+        body = self._call(mock_post, caps_thinking, CallSettings(thinking=False))
         assert body["chat_template_kwargs"] == {"enable_thinking": False}
         assert "reasoning_effort" not in body
 
@@ -294,9 +297,7 @@ class TestProviderBody:
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=1024, supports_thinking=False
         )
-        body = self._call(
-            mock_post, caps, CallSettings(thinking={"enable_thinking": False})
-        )
+        body = self._call(mock_post, caps, CallSettings(thinking=False))
         assert "chat_template_kwargs" not in body and "reasoning_effort" not in body
 
 
@@ -413,7 +414,7 @@ class TestLoopWiring:
         ]
         ctx = ContextManager(session_dir=tmp_path)
         if thinking:  # v9.24.8: 기본은 끔 — 열린 think 경로를 보려면 켠다
-            ctx.set_thinking_override(enable_thinking=True)
+            ctx.set_thinking(True)
         if env_off:
             ctx.set_grammar_override(False)
         with patch(
@@ -489,7 +490,7 @@ class TestLoopWiring:
             LLMResponse(content=json.dumps([{"action": "complete", "result": "ok"}]))
         ]
         ctx = ContextManager(session_dir=tmp_path)
-        ctx.set_thinking_override(enable_thinking=False)
+        ctx.set_thinking(False)
         run_loop(
             ports=TEST_PORTS,
             query="q",

@@ -77,12 +77,11 @@ class TestInputsReachTheOwners:
     def test_choice_select_reaches_ctx(self, stack, page):
         _open(page, stack, "thinking")
         _select(page, "thinking", "on")
-        assert _wait(lambda: stack.ctx.thinking_override.get("enable_thinking") is True)
-        _select(page, "reasoning_effort", "high")
-        assert _wait(
-            lambda: stack.ctx.thinking_override.get("reasoning_effort") == "high"
-        )
-        assert _wait(lambda: page.inner_text("#knob-thinking-badge").strip() == "high")
+        assert _wait(lambda: stack.ctx.thinking is True)
+        assert _wait(lambda: page.inner_text("#knob-thinking-badge").strip() == "on")
+        # v10.72.0: 🧠 는 셀렉트 하나 — 정도(reasoning_effort) 입력은 없다
+        assert page.locator("#knob-reasoning_effort").count() == 0
+        assert page.locator("#knob-thinking option").count() == 2
 
     def test_grammar_off_reaches_ctx_and_drops_the_on_colour(self, stack, page):
         _open(page, stack, "grammar")
@@ -201,10 +200,9 @@ class TestLockedAndGrouped:
         )
         _open(page, stack, "thinking")
         assert page.locator("#knob-thinking").is_disabled()
-        assert page.locator("#knob-reasoning_effort").is_disabled()
         assert page.inner_text("#knob-thinking-badge").strip() == "unsupported"
         title = page.get_attribute("#knob-thinking-wrap", "title")
-        assert title == "this model does not support thinking"  # 두 멤버, 사유는 한 번
+        assert title == "this model does not support thinking"
         assert page.evaluate(
             "() => document.getElementById('knob-thinking-wrap').classList.contains('is-disabled')"
         )
@@ -227,17 +225,15 @@ class TestLockedAndGrouped:
         assert "at most 12 min" in page.inner_text("#knob-stall-note")
 
     def test_each_member_starts_its_own_row_and_units_fit(self, stack, page):
-        """묶음 팝업은 멤버마다 한 줄 — 단위 칸이 없는 🧠 의 두 셀렉트 뒤에서
-        다음 라벨이 셋째 열로 밀려 "off  Reasoning effort" 로 이어 붙던 것
-        (사용자 실측, v10.62.1). ⏳ 의 단위 글은 팝업 상자 안에 머문다."""
-        _open(page, stack, "thinking")
+        """묶음 팝업은 멤버마다 한 줄 — 종전 🧠 의 두 셀렉트 뒤에서 다음 라벨이
+        셋째 열로 밀려 이어 붙던 것(사용자 실측, v10.62.1). 🧠 는 v10.72.0 부터
+        노브 하나라 ⏳ 의 두 멤버로 본다. ⏳ 의 단위 글은 팝업 상자 안에 머문다."""
+        _open(page, stack, "stall")
         boxes = page.evaluate(
-            "() => ['knob-thinking', 'knob-reasoning_effort'].map(id => "
+            "() => ['knob-stall', 'knob-stall_attempts'].map(id => "
             "document.querySelector('label[for=' + id + ']').getBoundingClientRect().top)"
         )
         assert boxes[1] > boxes[0] + 10, boxes  # 둘째 라벨은 아랫줄
-        page.click("#knob-thinking-chip")
-        _open(page, stack, "stall")
         edges = page.evaluate(
             "() => { const pop = document.getElementById('knob-stall-pop').getBoundingClientRect();"
             " const units = Array.from(document.querySelectorAll('#knob-stall-pop .knob-unit'))"

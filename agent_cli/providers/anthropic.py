@@ -13,8 +13,8 @@ from agent_cli.providers.base import (
     LLMResponse,
     TokenUsage,
     resolve_sampling,
-    resolve_thinking_policy,
     strip_think_blocks,
+    thinking_switch,
 )
 from agent_cli.providers.capabilities import ModelCapabilities, vision_support
 from agent_cli.providers.http import (
@@ -25,16 +25,10 @@ from agent_cli.providers.http import (
     stream_with_reconnect,
 )
 
-# reasoning_effort → Anthropic thinking budget_tokens 번역표. Anthropic 은
-# OpenAI 식 low/medium/high enum 이 없어 budget_tokens 가 유일한 사고 레버라,
-# web UI 런타임 effort 를 budget 으로 옮긴다. high=32768 은 Anthropic 이 "이
-# 이상은 배치 처리 권장" 하는 자연 상한 — 256K 컨텍스트에서 budget+max_output
-# 여유 충분. v8.21.0: 정적 thinking_budget 필드 제거 후 medium 이 **기본값** —
-# supports_thinking 모델이 effort 오버라이드 없이 사고할 때 이 budget 을 쓴다.
-_EFFORT_TO_BUDGET = {"low": 4096, "medium": 16384, "high": 32768}
-
-# Anthropic thinking budget_tokens 하한 (API 제약).
-_MIN_THINKING_BUDGET = 1024
+# 사고 켬의 Anthropic 모양 (v10.72.0). 현행 Claude 모델(4.6 이후)은 ``budget_tokens``
+# 를 거절(400)하고 정도는 서버 기본값(``output_config.effort``)이 정한다 — 하니스는
+# 켬/끔만 말한다. Anthropic-호환 로컬 서버(omlx)도 같은 ``type`` 어휘를 받는다.
+_THINKING_ON = {"type": "adaptive"}
 
 # P0-1: stop_reason 정규화 — LLMResponse.stop_reason 은 **루프 어휘**(OpenAI
 # finish_reason 계열: "length"=출력 절단, "stop"=정상 종료)로 통일한다. 루프의
@@ -111,24 +105,16 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Thinking budget — 해석은 공용 ``resolve_thinking_policy``
-        # (supports_thinking=False 면 None → 기본값도 오버라이드도 일절 미적용,
-        # v8.21.1 게이트). 여기는 정책을 Anthropic 방언으로 번역만 한다:
-        # effort → budget_tokens (Anthropic 은 effort enum 이 없어 budget 이
-        # 유일 레버), disabled → thinking 블록 미주입.
-        # 세션-런타임 노브 (v8.55.0, base.CallSettings): thinking 오버라이드·
-        # 스트림 무진전 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
+        # 사고 스위치 (v10.72.0): 지원 모델이고 세션이 켰을 때만 ``thinking`` 블록
+        # (``_THINKING_ON``), 끔이면 블록 없음(모델 기본 — 끔을 말하는 ``disabled`` 는
+        # 현행 모델 일부가 거절한다). 정도는 보내지 않는다(위 ``_THINKING_ON`` 주석).
+        # 세션-런타임 노브 (v8.55.0, base.CallSettings): 사고 스위치·스트림 무진전
+        # 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
         settings = kwargs.get("settings") or CallSettings()
         if settings.max_output_tokens is not None:
             body["max_tokens"] = settings.max_output_tokens
-        max_out = body["max_tokens"]
-        policy = resolve_thinking_policy(capabilities, settings.thinking)
-        if policy is not None and policy.enabled:
-            budget = _EFFORT_TO_BUDGET[policy.effort]
-            budget = max(budget, _MIN_THINKING_BUDGET)
-            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            # Anthropic deducts thinking from max_tokens
-            body["max_tokens"] = budget + max_out
+        if thinking_switch(capabilities, settings.thinking):
+            body["thinking"] = dict(_THINKING_ON)
         # 🎲 샘플링 (v10.69.0): OpenAI 와 같은 이름·같은 규칙(세션 > 엔트리 > 미주입).
         # Anthropic 의 범위(temperature 0~1, 확장 사고 중 temperature 고정)는 서버가
         # 거절로 말한다 — 하니스가 미리 좁히지 않는다.

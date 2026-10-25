@@ -204,8 +204,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_BROWSER_HEADLESS` | — | `auto`(기본): 헤드리스로 시작, 사이트가 사람 확인을 요구하면 보이는 창으로 전환 · `1`: 항상 헤드리스 · `0`: 처음부터 보이는 창 |
 | `AGENT_CLI_AUDITOR` | — | `1` 이면 세션 감사 켬 (v10.42.0, 기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끔): main 의 사용자 런이 `complete` 할 때마다 하니스가 그 런의 기록만 읽는 감사 런을 돌리고 요청별 충족 판정을 main 에게 전한다 — main 이 한 번 더 깨어나 미충족을 손본다 (아래 "세션 감사자") |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
-| `AGENT_CLI_THINKING` | `off` | 사고 제어: `off`/`on`/`auto` (미설정=**끔**, v9.24.8; `auto`=서버·모델 기본). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어. web UI 🧠 노브의 headless 대응 — `supports_thinking:true` 모델에서만 유효 (v8.58.0) |
-| `AGENT_CLI_REASONING_EFFORT` | — | reasoning effort: `low`/`medium`/`high`/`off` (백엔드가 존중할 때만). `AGENT_CLI_THINKING` 과 함께 ctx 오버라이드 초기값을 구성 (v8.58.0) |
+| `AGENT_CLI_THINKING` | `off` | 사고 스위치: `off`/`on` (미설정=**끔**, v9.24.8). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어 — `supports_thinking:true` 모델에서만 요청에 실린다. v10.72.0: `auto` 와 정도(`AGENT_CLI_REASONING_EFFORT`)는 제거 — 켰을 때 얼마나 사고하는지는 서버·모델 기본값이 정한다(모델마다 정도의 키·어휘가 달라 하니스가 번역하면 조용히 틀린다) |
 | `AGENT_CLI_TEMPERATURE` | — | 샘플링 temperature (0~2) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = **보내지 않음**: `models.json` 엔트리의 `temperature` → 서버 기본. `--temperature` 또는 웹 🎲 칩으로 세션 중 변경 |
 | `AGENT_CLI_TOP_P` | — | 샘플링 top_p (0~1) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = 보내지 않음: `models.json` 엔트리의 `top_p` → 서버 기본. `--top-p` 또는 웹 🎲 칩 |
 | `AGENT_CLI_IMAGE_KEEP` | — | 살아 있는 이미지 수 상한 — 최근 N 장만 모델에 보내고 더 오래된 것은 자리표시 글만 (기본 `6`, `0`=무제한; v10.59.0, 아래 "이미지 입력") |
@@ -476,8 +475,7 @@ agent-cli run "task description" [options]
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 (env `AGENT_CLI_COMPACTION_RATIO`, 웹 🗜️ 슬라이더) | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) (env `AGENT_CLI_MAX_AGENTS`, 웹 👥 칩) | `10` |
 | `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (models.json 에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`, 웹 🤖 칩 — 같은 방언의 모델 목록에서 고른다, v10.45.0) | config `default_model` |
-| `--thinking` | 사고 `off`·`on`·`auto` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브) | `off` |
-| `--reasoning-effort` | 추론 노력 `auto`·`low`·`medium`·`high`·`off` (백엔드가 존중할 때만; env `AGENT_CLI_REASONING_EFFORT`, 웹 🧠 칩의 둘째 셀렉트) | `auto` |
+| `--thinking` | 사고 `off`·`on` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브). 정도는 서버 기본값(v10.72.0: `auto`·`--reasoning-effort` 제거) | `off` |
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
 | `--temperature` | 샘플링 temperature 0~2 또는 `auto`(기본 — 보내지 않음: `models.json` 엔트리 → 서버 기본) — 다음 LLM 요청부터 (v10.69.0; env `AGENT_CLI_TEMPERATURE`, 웹 🎲 칩의 첫 입력) | `auto` |
 | `--top-p` | 샘플링 top_p 0~1 또는 `auto`(기본 — 보내지 않음) (env `AGENT_CLI_TOP_P`, 웹 🎲 칩의 둘째 입력) | `auto` |
@@ -486,7 +484,7 @@ agent-cli run "task description" [options]
 | `--image PATH` | QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 밖 파일은 `.agent-cli/tmp/uploads/` 로 복사. 모델이 이미지를 못 보면 즉시 오류 (v10.59.0, 아래 "이미지 입력") | |
 | `--title TEXT` | **방 제목** (v10.71.0) — 배너 `Title:` 줄에 보이고 세션 메타(`session.jsonl`)에 남아 `--resume` 이 지킨다(다시 주면 교체). `web` 도 같은 옵션 — 헤더 첫 자리·브라우저 탭·`web.json` 에. 보드는 글의 topic 을 넘긴다 | (없음) |
 
-> 위 노브 열한 축(`--thinking`·`--reasoning-effort`·`--grammar`·`--temperature`·`--top-p`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
+> 위 노브 열 축(`--thinking`·`--grammar`·`--temperature`·`--top-p`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
@@ -700,7 +698,7 @@ LLM은 `history` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 �
 
 ### `knobs` — 노브 표
 
-세션 노브(모델·사고·추론 노력·문법·에이전트 상한·압축 비율·무진전 한도/시도·자동 승인·감사)는 `agent_cli/knobs.py` 의 표 하나에 선언돼 있고, `run`/`web` 의 플래그·env·웹 헤더의 칩이 전부 그 표에서 파생된다 (docs/knobs/DESIGN.md). 이 명령은 그 표를 보여준다 — `--json` 은 보드처럼 밖에서 노브를 다루는 도구를 위한 것(이름·플래그·env·종류·선택지·기본값·칩 모양 힌트, 값은 없음).
+세션 노브(모델·사고·문법·샘플링·에이전트 상한·압축 비율·무진전 한도/시도·자동 승인·감사)는 `agent_cli/knobs.py` 의 표 하나에 선언돼 있고, `run`/`web` 의 플래그·env·웹 헤더의 칩이 전부 그 표에서 파생된다 (docs/knobs/DESIGN.md). 이 명령은 그 표를 보여준다 — `--json` 은 보드처럼 밖에서 노브를 다루는 도구를 위한 것(이름·플래그·env·종류·선택지·기본값·칩 모양 힌트, 값은 없음).
 
 ```bash
 agent-cli knobs          # 표 — 노브 · 플래그 · env · 종류 · 기본값 · 라벨
@@ -1005,7 +1003,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 |------|------|
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
-| `supports_thinking` | Thinking/reasoning 지원 (단독 게이트 — 사고 예산은 런타임 사고/노력 컨트롤이 결정, v8.21.0) |
+| `supports_thinking` | Thinking/reasoning 지원 (단독 게이트, v8.21.0 — 이 키가 true 인 모델에만 🧠 스위치가 요청에 실린다; 정도는 서버 기본값, v10.72.0) |
 | `dialect` | **필수 (v10.3.0)** — 이 모델의 방언 바인딩 (`json_fc`, `xml_fc`, `hermes_json`, `glm_argkey`; v10.4.0 부터 옛 키 `wire_format` 은 읽지 않음). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--dialect` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Dialect [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
 **설정 우선순위**: `~/.agent-cli/models.json` (유저) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
