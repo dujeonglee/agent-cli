@@ -159,7 +159,27 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
 timeout 올리기 사고, `/tmp` 경로 사용 수, 기존 파일 `write_file` 재작성 수(관찰 교정 발동 수),
 통과 세트·총 턴. 결과는 §10.
 
-## 10. 결과
+## 10. 결과 (2026-10-25, 35B · thinking off · 1회)
 
-(측정 뒤 기록)
+| job | wheel | 통과 | 턴 | 분 | 실패 관찰 | 형식 오류 | 출력 토큰 | python |
+|---|---|---|---|---|---|---|---|---|
+| pyguide-r3 (기준) | 10.73.0 | **7/9** | 242 | 75 | 15 | 2 | 100k | 99 |
+| tooldesc-r1 | 10.74.0 (79248f5f) | **2/9** | 280 | 93 | 25 | 1 | 153k | 140 |
+
+과제별: db-wal ✅→✅, regex ✅→✅, video ⏱→⏱, gcode ❌→❌; **extract-elf·financial·large-scale·multi-source 가
+✅→❌**, log-summary 는 에이전트 설치 360초 초과(환경 실패, 세부 로그 없음).
+
+§9 가 노린 지표는 **판정 불가**: `background: true` 는 0→1(기준도 0 이라 꼬리 줄만으로 유지되는지
+가릴 수 없다), 폴링 2→0, `kill`·`nohup`·끝 `&` 0→0, timeout 올리기 0→0, 기존 파일 `write_file` 재작성 1→1,
+monitor 0→0. 포그라운드 긴 명령 10→15(apt/pip 설치), 절대 경로 `/tmp` 0→45(43건이 large-scale 한 시도의
+vim 실험 파일).
+
+떨어진 넷의 실패 모양은 지운 문장과 닿지 않는다 — extract-elf 는 주소 97개 값 오류(기준은 python 없이
+통과, 이번은 python 24회), financial 은 total 에 Net worth 를 씀(pyguide-r2 와 같은 금액 오류),
+large-scale 은 `/app/apply_macros.vim` 을 끝내 안 쓰고 60턴 vim 디버깅, multi-source 는 'John D.'/'John Doe'
+정합 오류(이전 4런 전부 통과). ModuleNotFoundError 안내는 1/1 따름(financial t18→t19, 제시한 명령 그대로).
+
+판단: 1회 측정이고 35B 는 같은 조건에서도 3~5/9 를 흔든다([[bench-temperature-t02]]), 그러나 7→2 는
+그 폭을 넘는다. 지운 문장이 어떤 경로로 이 실패들을 만들었는지 설명이 없는 채로는 **머지하지 않는다**.
+분산인지 효과인지는 같은 wheel 로 1회 더 돌려 가린다(사용자 결정 대기).
 
