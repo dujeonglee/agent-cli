@@ -102,9 +102,31 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
   python 을 안 쓰는 과제에서만 짧아진다 — 블록이 쓰는 동안 매 턴 뜨므로).
 - 결과: §5 에 기록.
 
-## 5. 결과
+## 5. 결과 (2026-10-25, Qwen3.6-35B-A3B-8bit · thinking off · tb21 9과제)
 
-(측정 뒤 기록)
+| | pass | turns | min | failed obs | python 호출 | shell 안 python (Traceback) | format err | out tokens |
+|---|---|---|---|---|---|---|---|---|
+| base r1 (10.72.0) | 5/9 | 283 | 86 | 28 | 137 | 30 (2) | 12 | 155k |
+| base r2 (10.72.0) | 6/9 | 279 | 85 | 20 | 129 | 16 (0) | 4 | 148k |
+| pyguide r1 (49b0629c) | 4/9 | 227 | 79 | 25 | 89 | 6 (0) | 6 | 103k |
+| pyguide r2 (4과제만) | 2/4 | 113 | — | — | 46 | 13 (1) | — | — |
+| **pyguide r3 (e5855c5b)** | **7/9** | 242 | 75 | 15 | 99 | 16 (2) | 2 | 100k |
+
+- **r1·r2**: shell 안 python 은 설계대로 줄었는데(elf 16/1 → 0·4 였던 cand 와 달리 base 범위로
+  복귀) financial·regex-log 가 둘 다 두 번 떨어졌다(0/4; base 4/4). 턴 단위로 열어 보니 regex r2 는
+  도구 순서가 base 와 같고 패턴 경계가 틀린 것, financial 은 두 런 모두 같은 문서를 오분류 — 경로
+  선택과 이어지는 선은 없었다. 대신 둘이 드러났다. ① `shell_runs_python` 이 경로 붙은 인터프리터
+  (`/usr/bin/python3 -c`)를 못 잡아 financial r2 의 10건에 교정 줄이 한 번도 안 떴다(4562af78). ②
+  컨테이너 PATH 에 python3 가 없어 도구는 uv 의 agent-cli venv, 모델의 pip 은 다른 Python →
+  ModuleNotFoundError → shell 회귀. 빠진 순간 인터프리터 경로와 설치 명령을 관찰에 붙였다
+  (`missing_module_hint`, e5855c5b).
+- **r3 (두 수정 포함)**: base 가 두 번 다 통과한 5과제 전부 통과, financial·regex 복귀,
+  large-scale-text-editing 은 이 모델의 어느 런에서도 처음 통과. 출력 토큰 base 의 2/3, 실패 관찰
+  15, 형식 오류 2. 안내 줄은 gcode 에서 두 번 떴고 모델은 설치 대신 메모리의 데이터로 우회해 python
+  셀을 이어 갔다(shell 로 떨어지지 않음). 1회 런이라 7/9 자체는 상한일 수 있으나 "퇴행 없음 +
+  비용 감소" 는 같은 방향이다. 채택.
+- 꼬리 첫 호출 입력 토큰은 base 보다 약 115 적다(블록은 python 을 쓰는 동안 매 턴 뜨므로 절감은
+  python 을 안 쓰는 과제에서만).
 
 ## 6. 남긴 것
 
