@@ -226,7 +226,8 @@ class TestRegistration:
     def test_guideline_mentions_python(self):
         from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
-        assert "`python`" in TASK_GUIDELINES and "keeps state" in TASK_GUIDELINES
+        # v10.73.0: 경로 선택 한 문장 — 상태가 남는다는 전제는 그대로 (tests/test_python_guide.py)
+        assert "`python`" in TASK_GUIDELINES and "state persists" in TASK_GUIDELINES
 
     def test_resource_follows_env(self, monkeypatch, tmp_path):
         from agent_cli.runtime import build_py_registry, python_resource

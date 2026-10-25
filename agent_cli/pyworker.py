@@ -223,6 +223,16 @@ class PyWorkerRegistry:
         with self._lock:
             return [(o, w) for o, w in self._workers.items() if w.alive]
 
+    def state_of(self, owner: str) -> list[list[str]]:
+        """소유자의 인터프리터가 살아 있으면 마지막 호출 뒤의 상태 목록, 아니면
+        ``[]``. 워커를 만들지 않는다 — 꼬리(`python_tool.tail_block`)가 턴마다
+        읽는 조회다."""
+        with self._lock:
+            w = self._workers.get(owner)
+        if w is None or not w.alive:
+            return []
+        return [list(r) for r in w._last_state]
+
     def drop_owner(self, addr: str) -> int:
         """소유자가 죽었다 — 그 워커를 죽인다. 죽인 수."""
         with self._lock:

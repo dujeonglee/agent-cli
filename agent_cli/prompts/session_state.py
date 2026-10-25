@@ -62,6 +62,17 @@ COMPACTION_NOTICE = (
 )
 
 
+#: 상태별 권고 (v10.73.0, docs/tail/DESIGN.md §3): 지난 턴에 `shell` 로 파이썬
+#: 코드를 돌렸다(`python3 -c`·heredoc·`.py`). 2026-10-25 A/B 에서 35B 가 간 길
+#: 그대로다 — financial 은 .py 를 다시 돌려 결과를 0 으로 덮었다. 조건은 명령
+#: 문자열(`python_tool.shell_runs_python`)이라 기록으로 검증된다.
+SHELL_PYTHON_NOTICE = (
+    "⚠ Last turn ran Python through `shell`. Use the `python` tool instead: state "
+    "persists between calls, so the costly step runs once and only the next "
+    "attempt changes."
+)
+
+
 def compaction_notice_due(
     used_tokens: int, budget_tokens: int, armed: set[float]
 ) -> tuple[bool, set[float]]:
@@ -166,11 +177,18 @@ def build_session_state(
     web_sources: str = "",
     items: str = "",
     jobs: str = "",
+    python: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
     compaction_notice: bool = False,
+    shell_python_notice: bool = False,
 ) -> str:
     """Render the block, or ``""`` when there is nothing worth saying.
+
+    ``python`` (v10.73.0) 은 ``## Python session`` 블록(`python_tool.tail_block`) —
+    인터프리터에 상태가 있는 동안만 비어 있지 않다. ``shell_python_notice`` 는
+    지난 턴에 shell 로 파이썬을 돌렸을 때의 교정 한 줄(``SHELL_PYTHON_NOTICE``) —
+    턴 줄 바로 아래, 열린 항목보다 앞. 둘 다 docs/tail/DESIGN.md §3.
 
     ``compaction_notice`` (v9.26.4): 이번 턴에 압축 안내 한 줄을 붙일지 — 호출자가
     :func:`compaction_notice_due` 로 단계(v10.9.0: 80% 하나)를 처음 넘는 턴에만
@@ -213,6 +231,7 @@ def build_session_state(
         for b in (
             items.strip(),
             jobs.strip(),
+            python.strip(),
             agents.strip(),
             memory.strip(),
             web_sources.strip(),
@@ -221,19 +240,23 @@ def build_session_state(
     ]
     ctx_line = _context_line(turn, max_turns)
     rules = guidelines.strip()
-    if not ctx_line and not blocks and not rules:
+    if not ctx_line and not blocks and not rules and not shell_python_notice:
         return ""
 
     lines: list[str] = []
     if rules:
         lines.append(RULES_HEADER)
         lines.append(rules)
-    if ctx_line or blocks:
+    if ctx_line or blocks or shell_python_notice:
         if lines:
             lines.append("")
         lines.append(SESSION_STATE_HEADER)
         if ctx_line:
             lines.append(ctx_line)
+        # 상태별 권고 (v10.73.0): 턴 줄 바로 아래 — "지금 무엇을 해야 하나" 의
+        # 가장 가까운 사실이다.
+        if shell_python_notice:
+            lines.append(SHELL_PYTHON_NOTICE)
         for b in blocks:
             lines.append("")
             lines.append(b)

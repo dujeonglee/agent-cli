@@ -638,6 +638,13 @@ class ToolBridge:
         from agent_cli.recovery.primitives import bounded_excerpt
 
         obs = result.output if result.success else result.error
+        # 꼬리의 교정 줄 (v10.73.0): shell 로 파이썬을 돌린 턴을 찍어 둔다 —
+        # LLMCaller 가 다음 턴 꼬리에 "`python` 도구를 쓰라" 를 띄운다.
+        if tool_name == "shell" and isinstance(tool_input, dict):
+            from agent_cli.tools.python_tool import shell_runs_python
+
+            if shell_runs_python(str(tool_input.get("command") or "")):
+                self.state.shell_ran_python_turn = self.state.turn
         self.recent_tool_history.append(
             {
                 "tool": tool_name,
