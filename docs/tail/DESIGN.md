@@ -122,8 +122,10 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
   (`missing_module_hint`, e5855c5b).
 - **r3 (두 수정 포함)**: base 가 두 번 다 통과한 5과제 전부 통과, financial·regex 복귀,
   large-scale-text-editing 은 이 모델의 어느 런에서도 처음 통과. 출력 토큰 base 의 2/3, 실패 관찰
-  15, 형식 오류 2. 안내 줄은 gcode 에서 두 번 떴고 모델은 설치 대신 메모리의 데이터로 우회해 python
-  셀을 이어 갔다(shell 로 떨어지지 않음). 1회 런이라 7/9 자체는 상한일 수 있으나 "퇴행 없음 +
+  15, 형식 오류 2. 안내 줄은 gcode 에서 두 번 떴다 — matplotlib 는 안내대로 python 셀 안에서
+  `subprocess.run([sys.executable, '-m', 'pip', 'install', …])` 로 같은 인터프리터에 깔아 다음 셀
+  import 성공(shell 이 아니라 python 안에서였다), scipy 는 설치 대신 numpy 로 우회. 둘 다 shell 로
+  떨어지지 않았다. 1회 런이라 7/9 자체는 상한일 수 있으나 "퇴행 없음 +
   비용 감소" 는 같은 방향이다. 채택.
 - 꼬리 첫 호출 입력 토큰은 base 보다 약 115 적다(블록은 python 을 쓰는 동안 매 턴 뜨므로 절감은
   python 을 안 쓰는 과제에서만).
@@ -140,3 +142,25 @@ shell 경로로 갔다. §2 의 원칙은 여기서 나왔다.
   "기대·실패시 행동" 산문)에 함께 실을지는 사용자 결정.
 - 머리 **Reply Discipline** 1·2번과 방언 **Response Format** 7번의 겹침은 상주·방언
   소유라 이번 범위 밖.
+
+## 7. 2단계 — 기대 결과·실패 시 행동을 산문으로 (v10.74.0)
+
+추론 줄의 끝 "State the plan, then act." 를
+
+> Before the calls, say in one line each what result you expect and what you will do if it
+> fails; then act.
+
+로 바꿨다. 사용자 결정 둘: ① op 필드(`expect`/`on_fail`)가 아니라 **산문** — 방언 네 가지와
+문법, native_fc 어느 쪽에도 스키마 변경이 없다. ② 하니스가 기대값을 되비추는 자리는 두지 않는다
+(2026-10-14 재생에서 문구 되비춤은 약했다). 노리는 것은 되돌리기 고리(같은 호출 반복)와 "검증
+없이 저장" 이 줄어드는 것 — 모델이 결과를 미리 적으면 관찰과 어긋난 순간을 스스로 보게 된다.
+
+측정: 기준 wheel 10.73.0(r3 1회 + 1회 더), 후보 이 브랜치 2회, 교차. 지표는 ① 통과 세트 퇴행
+없음·총 턴, ② `ACTION_LOOP` 거부 수·같은 호출 반복, ③ 지시 준수율 — assistant 산문/thought 에
+기대·실패 문장이 있는 턴 비율(패턴: expect/if … fails/otherwise), ④ 출력 토큰(한 줄씩 늘어나는
+비용). 결과는 §8.
+
+## 8. 결과
+
+(측정 뒤 기록)
+

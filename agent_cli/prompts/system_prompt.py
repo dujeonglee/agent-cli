@@ -97,6 +97,10 @@ sub-agents. The same applies when ONE turn's results add up to too much, so
 prefer a few targeted ops over many broad ones."""
 
 # ── Section 3: Task Guidelines ───────────────────
+# v10.74.0 (docs/tail/DESIGN.md §7, 꼬리 재설계 2단계): 추론 줄의 끝 "State the plan, then
+# act." → "Before the calls, say in one line each what result you expect and what you will
+# do if it fails; then act." — op 필드가 아니라 **산문** 지시(문법·native_fc 무해, 사용자
+# 결정). 하니스가 되비추는 자리는 두지 않는다(10-14 재생에서 문구 되비춤은 약했다).
 # v10.73.0 (docs/tail/DESIGN.md): python 줄은 **경로 선택** 한 문장만 — 이득이 나는
 # 일의 **성질**로 말한다("비용 큰 단계 뒤에 다음 단계를 반복 시도하는 일" — 상태가
 # 남아 비용 큰 단계는 한 번만). 작업 종류(OCR·파싱…)나 실행 파일 이름(`python3`)은
@@ -116,7 +120,7 @@ TASK_GUIDELINES = """\
 - Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.
 - A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background: true`, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with `kill <pid>` from the background-jobs list.
 - Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one — goes through `python`, not Python run from `shell` (an inline `-c`, a heredoc or a script file): state persists between calls, so the costly step runs once and only the attempt changes.
-- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.
+- Reason in short, plain sentences — one point per sentence, active voice, no repetition. Before the calls, say in one line each what result you expect and what you will do if it fails; then act.
 - Do not introduce new security vulnerabilities.
 - All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.
 - Do not invoke agent-cli recursively via shell — that re-enters this same loop.
