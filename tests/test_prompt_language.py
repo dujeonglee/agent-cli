@@ -112,7 +112,9 @@ class TestNoThoughtFieldInPrompts:
             assert not hits, hits[:3]
 
     def test_context_discipline_uses_the_format_rules_word(self):
-        assert "Keep your reasoning brief" in sp.CONTEXT_DISCIPLINE
+        # v10.76.0: 추론 간결은 꼬리 Task Guidelines 한 곳 (35B 가 따르는 자리)
+        assert "Keep your reasoning brief" not in sp.CONTEXT_DISCIPLINE
+        assert "Reason in short, plain sentences" in sp.TASK_GUIDELINES
         assert (
             "Every line of\nreasoning, tool call, and observation"
             in sp.CONTEXT_DISCIPLINE
