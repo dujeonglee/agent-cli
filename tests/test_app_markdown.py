@@ -509,8 +509,16 @@ class TestObsSummaryAbsorbedRequest:
         )
         assert self._sum(text) == "[22] main: [ORCH DIRECTIVE — pixel byte-order fix]"
 
-    def test_other_observations_keep_the_last_line_rule(self):
-        assert self._sum("Observation: first\nlast line") == "last line"
+    def test_other_observations_fold_to_their_first_line(self):
+        # v10.74.1: 성공도 첫 줄 — 접힌 줄은 사람이 보는 것(마지막 줄은 read_file 의 `}`,
+        # `/sh ls` 의 마지막 항목 같은 임의의 줄이었다). `Observation:` 접두는 뗀다.
+        assert self._sum("Observation: first\nlast line") == "first"
+        assert (
+            self._sum("Wrote 3 lines to a.py\n1#ab:x = 1\n3#cd:}")
+            == "Wrote 3 lines to a.py"
+        )
+        assert self._sum("🔔 monitor m-1 fired\n  ↳ retired") == "🔔 monitor m-1 fired"
+        assert self._sum("\n\n") == "(no output)"
 
     def test_failed_path_is_untouched(self):
         assert self._sum("Observation: boom", failed=True) == "boom"

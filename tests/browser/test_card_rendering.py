@@ -175,10 +175,10 @@ class TestRowRhythm:
             heads[0].startswith("🔔 monitor mon-543e0a") and "retired" not in heads[0]
         )
         assert heads[1].startswith("🧵 job #1 finished rc=0")
-        # 셸 출력은 종전대로 마지막 줄
+        # v10.74.1: 셸 출력도 첫 줄 — 보고문만의 예외가 아니라 모든 관찰의 규칙
         stack.renderer.observation("a\nb\nc", turn=1, tool_name="shell", success=True)
         assert _wait(lambda: self._rows(page).count() >= 3)
-        assert self._rows(page).nth(2).locator(".s").inner_text().strip() == "c"
+        assert self._rows(page).nth(2).locator(".s").inner_text().strip() == "a"
 
     def test_body_collapsed_by_default_and_toggles(self, stack, page):
         stack.emit_ready()
@@ -211,19 +211,20 @@ class TestRowRhythm:
         row.locator(".s").click()
         assert _wait(lambda: row.locator(".row-body").is_visible())
 
-    def test_summary_is_the_last_meaningful_line(self, stack, page):
-        """셸·테스트·린트의 결론은 대개 **끝**에 있다(3826 passed / All checks
-        passed). 첫 줄은 명령 에코나 헤더라 정보가 적다."""
+    def test_summary_is_the_first_meaningful_line(self, stack, page):
+        """v10.74.1: 접힌 줄은 **첫** 유의미한 줄 — 사람은 "펼치기 전엔 첫 줄" 에
+        익숙하고, 파일 도구는 머리가 요약이다. 종전(v9.4.0)의 마지막 줄 규칙은
+        read_file·`/sh ls` 에서 임의의 끝 줄(`}`, 목록 마지막 항목)을 보였다."""
         stack.emit_ready()
         _open_timeline(page, stack)
         stack.renderer.observation(
-            "$ pytest\n....\n\n3826 passed, 27 skipped in 41.23s\n",
+            "\nfile_a.py\nfile_b.py\nzzz_last.py\n",
             turn=1,
-            tool_name="shell",
+            tool_name="sh",
             success=True,
         )
         assert _wait(lambda: self._rows(page).count() > 0)
-        assert "3826 passed" in self._rows(page).first.locator(".s").inner_text()
+        assert self._rows(page).first.locator(".s").inner_text().strip() == "file_a.py"
 
     def test_failed_summary_is_the_cause_not_the_tail(self, stack, page):
         """v9.24.2: 실패의 한 줄 요약은 **원인** 줄이다 — 끝 줄은 안내 문구나

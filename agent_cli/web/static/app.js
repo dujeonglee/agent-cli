@@ -1807,18 +1807,21 @@
     return "";
   }
 
-  /** 관찰 출력 → 한 줄 요약. **마지막** 유의미한 줄을 쓴다 — 셸·테스트·린트
-   *  출력의 결론이 대개 끝에 있고(3826 passed / All checks passed), 실패도
-   *  끝에서 드러난다. 첫 줄은 명령 에코나 헤더라 정보가 적다. */
-  // 한 줄 요약. 성공은 **마지막** 줄(셸·테스트의 결론은 끝에 있다), 실패는
-  // **원인** 줄 (v9.24.2): 오류 원인은 앞에 오고, 끝은 안내 문구거나 긴 덤프의
-  // 꼬리다 — 실측 `✗ memory×2  } This op did NOT run…` (스키마 JSON 의 닫는
+  /** 관찰 출력 → 한 줄 요약. **첫** 유의미한 줄 (v10.74.1). 접힌 줄은 사람이
+   *  보는 것이고, 사람은 "펼치기 전엔 첫 줄" 에 익숙하다. 종전(v9.4.0)엔 성공이면
+   *  **마지막** 줄이었다 — 테스트·린트의 결론(3826 passed)이 끝에 있어서. 그러나
+   *  하니스의 파일 도구는 머리가 요약이고(write_file "Wrote …", 그 뒤 해시라인 에코),
+   *  read_file·fetch·`/sh ls` 의 끝 줄은 임의의 한 줄이라 접힌 줄이 파일의 `}` 나
+   *  목록의 마지막 항목을 보였다(사용자 보고). 결론이 끝에 있는 출력은 펼쳐 본다. */
+  // 실패는 **원인** 줄 (v9.24.2): 오류 원인은 앞에 오고, 끝은 안내 문구거나 긴
+  // 덤프의 꼬리다 — 실측 `✗ memory×2  } This op did NOT run…` (스키마 JSON 의 닫는
   // 괄호). 배치면 첫 FAILED op 의 다음 줄이 그 op 의 원인이다.
   const BATCH_HEAD = /^\[\d+\/\d+\]\s/;
   // 런 도중 흡수된 요청(v9.25.0 `absorb_pending`) — 머리 `── request [n]
   // from X (arrived while you were working) ──`, 본문, 꼬리 `(You now owe …)`.
-  // "성공은 마지막 줄" 규칙이 꼬리 상용구만 보여줘 33건이 전부 같은 한 줄로
-  // 보였다(2an3cv). 요청 자체의 첫 줄을 낸다(v9.26.1).
+  // 종전 "성공은 마지막 줄" 규칙이 꼬리 상용구만 보여줘 33건이 전부 같은 한 줄로
+  // 보였다(2an3cv). 첫 줄 규칙에서도 머리 `── request … ──` 는 장식이라 요청 본문의
+  // 첫 줄과 보낸 이를 낸다(v9.26.1).
   const ABSORBED_HEAD = /^── request \[(\d+)\] from (.+?) \(arrived while you were working\) ──$/;
   function absorbedSummary(lines) {
     const m = ABSORBED_HEAD.exec(lines[0].replace(/^Observation:\s*/, "").trim());
@@ -1827,15 +1830,10 @@
     return "[" + m[1] + "] " + m[2] + ": " + (body ? body.trim() : "");
   }
 
-  // 보고문(🔔 모니터 보고·🧵 작업 종료 통지)은 **첫 줄이 요약**이다 — 마지막 줄은
-  // 부작용 명령의 결과나 "fired once — monitor retired" 같은 꼬리라 접힌 머리줄에
-  // 쓰면 무슨 보고인지 안 보인다 (v10.47.1, 보드 방 실측).
-  const REPORT_HEAD = /^(🔔 monitor |🧵 job #)/;
   function obsSummary(content, failed) {
     const lines = String(content || "").split("\n").filter((l) => l.trim());
     if (!lines.length) return "(no output)";
-    if (REPORT_HEAD.test(lines[0].trim())) return lines[0].trim();
-    if (!failed) return absorbedSummary(lines) || lines[lines.length - 1].trim();
+    if (!failed) return absorbedSummary(lines) || lines[0].replace(/^Observation:\s*/, "").trim();
     for (let i = 0; i < lines.length - 1; i++) {
       if (BATCH_HEAD.test(lines[i]) && /FAILED\s*$/.test(lines[i])) {
         return lines[i + 1].trim();
