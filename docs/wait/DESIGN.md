@@ -140,3 +140,12 @@ command 모니터를 걸고 `wait` 하는 과제 × 3, 두 문구로 각각 8런
   통지는 같은 프롬프트에 연달아 들어가므로 "follow in the next observation" 은
   "다음 턴" 으로 읽힐 수 있어, "arrived while you were thinking; delivered right
   below this" 로 바꿨다.
+
+### 4.3 첫 실전 (2026-10-23, Qwen3.8-27B 9과제 풀런, v10.67.0)
+
+video 과제에서 `wait` 5회: 접수 4(apt 설치 2분, 프레임 OCR 작업 셋 — 통지가 깨워
+이어 감), **도착-거부 1**(ffmpeg 프레임 추출이 1초에 끝나 호출 도중 도착 → "arrived
+while you were thinking; delivered right below this" → 모델이 통지를 읽고 바로 다음
+작업을 띄움). 거부-없음 0, `complete` 되돌림 0(9과제). §1 의 사고 자리(apt 설치 대기)가
+한 턴으로 끝났다.
+
