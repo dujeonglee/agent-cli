@@ -1351,7 +1351,7 @@ static void foo(int x)
 
 값은 `(주<<16) + (부<<8) + 수` (셸: `echo $(( (6<<16) + (1<<8) + 0 ))`), 16진수 `0x060100`, `KERNEL_VERSION(6, 1, 0)` 모두 됩니다. 빌드한 커널 트리의 `include/generated/uapi/linux/version.h` 를 그대로 붙여 넣어도 됩니다(`KERNEL_VERSION` 매크로 정의 줄은 무시). `#undef LINUX_VERSION_CODE` 는 종전처럼 두 분기를 모두 남깁니다. 기본값은 조건 지시문에 `LINUX_VERSION_CODE` 가 있는 파일에만 unifdef 를 돌리므로 커널과 무관한 C 프로젝트의 색인 결과·속도는 그대로입니다(실측: 커널 `drivers/net` 5.8천 파일에서 기호·참조 동일, 시간 차 1% 이내). `mode='build'` 출력에 가정한 값이 표시됩니다.
 
-파일은 사용자가 직접 작성합니다 (LLM이 추측하면 잘못된 분기를 인덱싱할 위험). `code_index` tool은 첫 query 시 이 파일이 있으면 자동으로 unifdef 에 전달합니다 — 별도 옵션 불필요. `mode='build'` 출력에 `defconfig:` 라인으로 적용 여부가 보입니다.
+파일은 사용자가 쓰거나, 모델이 씁니다(v10.13.0 결정 — 모델에게 "사용자에게 요청하라" 가 아니라 "써라" 라고 안내). **안내가 나오는 자리 (v10.76.1)**: 종전엔 이 사용법이 `code_index` 도구 가이드의 문단(~180 토큰)으로 매 요청 실렸습니다 — C 를 안 다루는 요청에도. 이제 `lookup`/`fetch` 결과가 **C/C++ 선언뿐이고 defconfig 가 없을 때만** 그 관찰 끝에 한 줄(`[Only declarations matched. … Writing .agent-cli/defconfig …]`)로 붙습니다. 같은 정리에서 모드별 두 번째 예시(C++ `list`·Markdown `fetch`·`symbol_kind` `lookup`)도 뺐습니다 — code_index 스키마 2,083 → 1,715 토큰. `code_index` tool은 첫 query 시 이 파일이 있으면 자동으로 unifdef 에 전달합니다 — 별도 옵션 불필요. `mode='build'` 출력에 `defconfig:` 라인으로 적용 여부가 보입니다.
 
 C/C++ 사용자도 시스템 `unifdef` 설치 선택 사항 — 번들된 pure-Python 으로 동일 동작. Python/JS/TS/Go/Rust/Java/Markdown 만 쓰는 사용자는 전처리 단계 자체가 no-op.
 

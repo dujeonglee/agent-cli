@@ -416,14 +416,11 @@ def _build_code_index_inline(dialect) -> str:
         return _rai_prefixed(dialect, "code_index", item)
 
     list_py = rai({"mode": "list", "path": "auth.py"})
-    list_cpp = rai({"mode": "list", "path": "src/foo.cpp"})
     list_search = rai({"mode": "list", "path": "auth.py", "search": "login"})
 
     fetch_py = rai({"mode": "fetch", "path": "auth.py", "name": "User.login"})
-    fetch_md = rai({"mode": "fetch", "path": "README.md", "name": "## Setup"})
 
     lookup = rai({"mode": "lookup", "name": "AgentLoop"})
-    lookup_kind = rai({"mode": "lookup", "name": "Setup", "symbol_kind": "section"})
     kind_all = rai({"mode": "kind", "symbol_kind": "function"})
     file_q = rai({"mode": "file", "path": "agent_cli/loop.py"})
     refs_q = rai({"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"})
@@ -466,7 +463,6 @@ def _build_code_index_inline(dialect) -> str:
      ``parent.name (kind) file:start-end``). Replaces read_file:stat
      for any supported-extension file.
        {list_py}
-       {list_cpp}
      ``search='<regex>'`` filters the outline by symbol name (re.search):
        {list_search}
   2. mode='fetch' — single-symbol body in hashline format
@@ -480,12 +476,10 @@ def _build_code_index_inline(dialect) -> str:
      return the same lines as plain text and lose the edit_file
      shortcut.
        {fetch_py}
-       {fetch_md}
   3. mode='lookup' — find a symbol by name ACROSS the whole index.
      Optional ``symbol_kind`` (function / type / variable / constant /
      section) filter.
        {lookup}
-       {lookup_kind}
   4. mode='kind' — list every symbol of a given kind in the index.
      Useful for "show me every section/function/type".
        {kind_all}
@@ -521,21 +515,7 @@ def _build_code_index_inline(dialect) -> str:
   - Markdown: heading text (``Setup``) or with marker (``## Setup``)
 
   Supported extensions: {exts}.
-  For non-code/non-markdown files, use read_file.
-
-  Defconfig (C/C++ kernel-style only): if
-  ``<project_root>/.agent-cli/defconfig`` exists it is fed to ``unifdef``
-  to prune ``#if`` / ``#ifdef CONFIG_*`` branches before tree-sitter parses.
-  ``LINUX_VERSION_CODE`` is assumed newest (0xffffff) unless the file sets
-  it, so every ``>= KERNEL_VERSION(...)`` branch is taken. For a specific
-  kernel or CONFIG_* set, write that file — lines like
-  ``#define LINUX_VERSION_CODE 393472`` (6.1.0 = (6<<16)+(1<<8)+0;
-  ``KERNEL_VERSION(6, 1, 0)`` also works), ``#define CONFIG_FOO 1``,
-  ``#undef CONFIG_BAR``. The index rebuilds when it changes. Without it,
-  functions whose signature is split by ``#ifdef`` (common in kernel
-  drivers) may parse as ERROR nodes and disappear from the index — if
-  ``mode='lookup'`` returns only a declaration when you expected a
-  definition, write a defconfig."""
+  For non-code/non-markdown files, use read_file."""
 
 
 _ASK_INLINE = """\

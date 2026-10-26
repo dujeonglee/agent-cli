@@ -84,6 +84,36 @@ def _resolve_db_path() -> Path:
     return db
 
 
+#: C 계열 확장자 — defconfig(unifdef) 가 의미 있는 파일.
+_C_FAMILY = frozenset(
+    {".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".h++"}
+)
+
+#: 선언만 잡혔을 때 관찰 끝에 붙는 한 줄 (v10.76.1). 종전엔 같은 내용이 도구 가이드의
+#: 문단(~180 tok)으로 매 요청 실렸다 — C 를 안 다루는 요청에도. 트리거가 생긴 그
+#: 관찰에서 말한다(교정은 트리거 직후 — 프롬프트 자리 원칙).
+DEFCONFIG_HINT = (
+    "[Only declarations matched. In C/C++ a function signature split by "
+    "`#ifdef` can parse as an error and drop the definition from the index. "
+    "Writing `.agent-cli/defconfig` — lines like `#define CONFIG_FOO 1`, "
+    "`#undef CONFIG_BAR`, `#define LINUX_VERSION_CODE 393472` (= 6.1.0; "
+    "`KERNEL_VERSION(6, 1, 0)` also works) — makes the index take one branch; "
+    "it rebuilds when that file changes. Without it every "
+    "`>= KERNEL_VERSION(...)` branch is taken.]"
+)
+
+
+def _defconfig_hint(syms: list[dict], root: Path) -> str:
+    """선언만 맞았고, 전부 C 계열이고, defconfig 가 없을 때만 ``DEFCONFIG_HINT``."""
+    if not syms or any(s.get("is_definition") for s in syms):
+        return ""
+    if not all(Path(str(s.get("file", ""))).suffix in _C_FAMILY for s in syms):
+        return ""
+    if _resolve_defs_path(root) is not None:
+        return ""
+    return "\n" + DEFCONFIG_HINT
+
+
 def _resolve_defs_path(root: Path) -> Path | None:
     """Conventional defconfig location: ``<root>/.agent-cli/defconfig``.
 
@@ -393,7 +423,8 @@ def _do_fetch(action_input: dict) -> ToolResult:
     header = (
         f"# {display} ({chosen['kind']}) :{chosen['line']}-{chosen['end_line']}{decl}"
     )
-    return ToolResult(True, output=header + "\n" + body)
+    hint = _defconfig_hint([{**chosen, "file": str(path_abs)}], root)
+    return ToolResult(True, output=header + "\n" + body + hint)
 
 
 def _do_lookup(action_input: dict) -> ToolResult:
@@ -411,8 +442,9 @@ def _do_lookup(action_input: dict) -> ToolResult:
     if not syms:
         return ToolResult(True, output=f"(no symbols match name={name!r})")
     syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
+    hint = _defconfig_hint(syms_sorted, _resolve_index_root())
     return ToolResult(
-        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
+        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted) + hint
     )
 
 

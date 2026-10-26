@@ -238,25 +238,48 @@ class TestTheToolSurfacesIt:
         assert "of_device_id" in out and "probe_common(pdev)" in out
 
     def test_the_model_is_told_how_to_set_it(self):
-        """The note lives in the code_index GUIDE (v10.13.0 — it used to be in
-        the description, which repeated the guide in a second wording). Every
-        dialect gets it: the text formats in ``## Available Tools``, native_fc
-        appended to the function description."""
+        """v10.76.1: 안내는 도구 가이드(매 요청)가 아니라 **선언만 잡힌 그 관찰**에
+        붙는다 — C 를 안 다루는 요청에 ~180 tok 을 싣지 않는다. 가이드엔 없다."""
         from agent_cli import dialects
-        from agent_cli.prompts.system_prompt import (
-            _build_tools_section,
-            function_schemas_for,
-        )
+        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.tools.code_index import DEFCONFIG_HINT
 
-        text = _build_tools_section(["code_index"], dialects.get("json_fc"))
-        (fn,) = [
-            f["function"]
-            for f in function_schemas_for(["code_index"], dialects.get("native_fc"))
-            if f["function"]["name"] == "code_index"
-        ]
-        for d in (text, fn["description"]):
-            flat = " ".join(d.split())
-            assert ".agent-cli/defconfig" in flat
-            assert "#define LINUX_VERSION_CODE" in flat
-            assert "KERNEL_VERSION(6, 1, 0)" in flat
-            assert "assumed newest" in flat
+        guide = _build_tools_section(["code_index"], dialects.get("json_fc"))
+        assert "defconfig" not in guide
+        flat = " ".join(DEFCONFIG_HINT.split())
+        assert ".agent-cli/defconfig" in flat
+        assert "#define LINUX_VERSION_CODE" in flat
+        assert "KERNEL_VERSION(6, 1, 0)" in flat
+        assert ">= KERNEL_VERSION(...)" in flat and "ask the user" not in flat
+
+    def test_hint_only_for_c_declarations_without_a_defconfig(self, tmp_path):
+        from agent_cli.tools.code_index import DEFCONFIG_HINT, _defconfig_hint
+
+        decl_c = [{"file": "drv.h", "is_definition": False}]
+        assert _defconfig_hint(decl_c, tmp_path).strip() == DEFCONFIG_HINT
+        # 정의가 하나라도 있으면 · C 가 아니면 · defconfig 가 이미 있으면 → 없음
+        assert (
+            _defconfig_hint(
+                decl_c + [{"file": "drv.c", "is_definition": True}], tmp_path
+            )
+            == ""
+        )
+        assert (
+            _defconfig_hint([{"file": "a.py", "is_definition": False}], tmp_path) == ""
+        )
+        assert _defconfig_hint([], tmp_path) == ""
+        (tmp_path / ".agent-cli").mkdir()
+        (tmp_path / ".agent-cli" / "defconfig").write_text("#define CONFIG_X 1\n")
+        assert _defconfig_hint(decl_c, tmp_path) == ""
+
+
+def test_lookup_of_a_declaration_only_c_symbol_carries_the_hint(tmp_path, monkeypatch):
+    """끝에서 끝: 헤더 선언만 있는 C 심볼의 lookup 관찰 끝에 안내가 붙는다."""
+    from agent_cli.tools.code_index import DEFCONFIG_HINT, _dispatch_one
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "drv.h").write_text("int drv_probe(struct device *dev);\n")
+    monkeypatch.chdir(root)
+    out = _dispatch_one({"mode": "lookup", "name": "drv_probe"}).output
+    assert "drv_probe" in out and out.endswith(DEFCONFIG_HINT)

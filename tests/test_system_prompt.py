@@ -1788,18 +1788,15 @@ class TestCodeIndexToldOnce:
             ".agent-cli/code_index.db",
             "OUTSIDE the indexed root",
             "Supported extensions:",
-            "is assumed newest",
         ],
     )
     def test_every_fact_survives_exactly_once(self, fact):
         assert self._block().count(fact) == 1, fact
 
-    def test_defconfig_is_written_by_the_model_not_requested(self):
-        """The decision was "write `.agent-cli/defconfig`"; the guide still
-        said "ask the user to add a defconfig"."""
-        flat = " ".join(self._block().split())
-        assert "write a defconfig" in flat
-        assert "ask the user" not in flat
+    def test_defconfig_lives_in_the_trigger_observation_not_the_guide(self):
+        """v10.76.1: defconfig 안내는 선언만 잡힌 관찰에 붙는다
+        (``code_index.DEFCONFIG_HINT``) — 가이드에선 뺐다."""
+        assert "defconfig" not in self._block()
 
 
 class TestServerParsedPromptHasNoTextCalls:
