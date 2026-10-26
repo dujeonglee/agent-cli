@@ -42,6 +42,15 @@ _TAIL_WAIT = (
 )
 
 
+#: ``complete`` 절의 끝, 닫는 줄 바로 아래 (v10.75.0) — result 의 모양. 도구 설명의
+#: 같은 틀은 GLM 8/8 · 35B 0/8 이었다: 35B 는 머리의 형식을 고른 뒤에야 읽고,
+#: 꼬리는 complete 를 고르는 그 순간에 읽는다(python 가이드 줄과 같은 근거).
+RESULT_SHAPE_LINE = (
+    "     `result` is your whole answer: the answer first; when it rests on work "
+    "you did, end with a `Checked:` line and a `Not checked:` line"
+)
+
+
 def complete_line(ids: list[str]) -> str:
     """``complete`` 절의 마지막 줄 — **문장**이지 호출 모양이 아니다 (§11.6).
 
@@ -154,6 +163,7 @@ class Ledger:
             out.append("  2. by `complete` (last)")
             out += [_request_line(r) for r in requests]
             out.append(complete_line([str(r.get("id")) for r in requests]))
+            out.append(RESULT_SHAPE_LINE)
         return "\n".join(out)
 
     def block(self, *, can_wait: bool = False) -> str:
