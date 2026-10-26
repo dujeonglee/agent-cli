@@ -201,10 +201,15 @@ header {
   #theme-wrap { margin-left: 0; }
 }
 
-/* 방 제목 (v10.71.0) — 헤더 첫 자리, 한 줄 말줌임(hover 전체). 보드가 --title 로 준다. */
+/* 방 제목 (v10.71.0) — 헤더 첫 자리, 한 줄 말줌임(hover 전체). 보드가 --title 로 준다.
+   v10.74.1: 제목은 **자기 줄**. flex-wrap 헤더에서 basis 100% 가 뒤의 칩·노브·아이콘을
+   다음 줄로 내려, 제목 있는 방도 그 줄은 제목 없는 헤더와 같은 모양으로 그려진다
+   (종전엔 제목이 토큰·워크스페이스·노브 칩과 한 줄에 섞여 좁은 창에서 아무 데서나 접혔다).
+   제목이 없으면 hidden 이라 헤더는 한 줄 그대로. */
 .hd-title {
-  display: inline-block;
-  max-width: 36ch;
+  display: block;
+  flex: 0 0 100%;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
