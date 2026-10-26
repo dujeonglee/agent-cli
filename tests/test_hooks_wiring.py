@@ -201,7 +201,9 @@ class TestSessionStartSectionsReachThePrompt:
         loop._apply_system_sections(again)
         assert "## Memory\nv2" in loop.system and "v1" not in loop.system
         assert loop.system.count("## Workspace snapshot") == 1
-        assert loop.system.count("<!-- HOOK_SECTIONS -->") == 1
+        assert (
+            "<!--" not in loop.system
+        )  # 조립 표식은 모델에게 나가지 않는다 (v10.75.1)
 
     def test_run_applies_the_session_start_context(self):
         """구조 핀: `run()` 이 OnSessionStart 의 반환값을 적용한다."""

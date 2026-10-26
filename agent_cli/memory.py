@@ -200,12 +200,12 @@ def render_index(session_dir) -> str:
     lines = [
         (
             f"## Session Memory ({len(entries)}) — pull full detail with "
-            f"memory(mode=get, id=N)"
+            f"`memory` mode `get` and the entry's id"
         )
     ]
     hidden = len(entries) - len(shown)
     if hidden > 0:
-        lines.append(f"({hidden} older entries hidden — see memory(mode=list))")
+        lines.append(f"({hidden} older entries hidden — see `memory` mode `list`)")
     for e in shown:
         icon = _TYPE_ICONS.get(e.get("type"), "•")
         lines.append(f"{icon} #{e.get('id')} [{e.get('type')}] {e.get('summary', '')}")

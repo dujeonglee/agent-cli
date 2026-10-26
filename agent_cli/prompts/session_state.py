@@ -55,9 +55,9 @@ COMPACTION_NOTICE = (
     "ℹ Context compaction is coming up: older turns will be replaced by a "
     "structured summary (task, state, decisions, failures, key facts) and work "
     "continues as usual. If a detail is worth more than its summary — an exact "
-    "identifier, a failed approach — memory(mode=add) keeps it verbatim, and a "
-    "memory that no longer applies — a resolved blocker, a superseded decision "
-    "— goes with memory(mode=delete, id=N) so the index stays current. Pace "
+    "identifier, a failed approach — `memory` mode `add` keeps it verbatim, and "
+    "a memory that no longer applies — a resolved blocker, a superseded decision "
+    "— goes with `memory` mode `delete` and its id so the index stays current. Pace "
     "and scope stay the same."
 )
 

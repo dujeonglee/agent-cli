@@ -75,7 +75,7 @@ for n in ('json_fc',)]"
 class _MultiOpFormat:
     """Minimal stand-in for a multi-op dialect (json_fc-style): flat
     ``{action, plain params}`` ops, no per-tool batch. Duck-typed — the
-    prompt layer only reads ``multi_op`` and calls ``render_action_input``."""
+    prompt layer only reads ``multi_op`` and calls ``prompt_example``."""
 
     multi_op = True
 
@@ -90,6 +90,11 @@ class _MultiOpFormat:
                 flat = {k[len(pfx) :]: v for k, v in action_input.items()}
                 return _json.dumps({"action": n, **flat}, ensure_ascii=False)
         return _json.dumps(action_input, ensure_ascii=False)
+
+    def prompt_example(self, tool: str, args: dict) -> str:
+        from agent_cli.tools.registry import TOOLS
+
+        return self.render_action_input(TOOLS[tool].add_prefix(args))
 
 
 class TestMultiOpPromptBranches:
@@ -1185,7 +1190,8 @@ class TestContextRecoveryGuide:
         plain ``query`` key (the wire strips the tool prefix), not the
         stale ``read_context_query=`` spelling."""
         result = _build_context_recovery()
-        assert 'history(query="SELECT' in result
+        assert "`history` tool with a `query`" in result and "SELECT loc" in result
+        assert "history(" not in result  # 호출 모양 대신 문장 (v10.75.1)
         assert "_query=" not in result
         assert "read_file" not in result
         assert "history.jsonl" not in result
@@ -1283,7 +1289,7 @@ class TestSystemSectionsSingleSource:
         assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
         assert next(n for n, _ in loop._system_sections) == "Role"
 
-    def test_hook_sections_keep_invariant_and_marker(self):
+    def test_hook_sections_keep_invariant_without_marker(self):
         loop = self._loop()
 
         class Ctx:
@@ -1291,7 +1297,7 @@ class TestSystemSectionsSingleSource:
 
         loop._apply_system_sections(Ctx())
         assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
-        assert "<!-- HOOK_SECTIONS -->" in loop.system
+        assert "<!--" not in loop.system  # v10.75.1: 표식 없이 섹션 이름이 경계
         assert "## Sprint Goals\nShip the inspector." in loop.system
         names = [n for n, _ in loop._system_sections]
         assert "Hook: Sprint Goals" in names
@@ -1317,7 +1323,7 @@ class TestSystemSectionsSingleSource:
         assert "Hook: One" in names and "Hook: Two" in names
         loop._apply_system_sections(A2())
         assert loop.system.count("## One") == 1 and "## One\n1b" in loop.system
-        assert loop.system.count("<!-- HOOK_SECTIONS -->") == 1
+        assert "<!--" not in loop.system
 
     def test_snapshot_sent_to_renderer_each_call(self):
         from unittest.mock import MagicMock, patch
@@ -1794,3 +1800,45 @@ class TestCodeIndexToldOnce:
         flat = " ".join(self._block().split())
         assert "write a defconfig" in flat
         assert "ask the user" not in flat
+
+
+class TestServerParsedPromptHasNoTextCalls:
+    """v10.75.1: native_fc 는 호출을 글로 쓰지 말라고 가르친다 — 같은 프롬프트(시스템 글
+    + 함수 스키마 설명)에 json_fc 의 ``{"action": …}`` 배열·추론 자리 예시나
+    ``tool(key=…)`` 모양이 있으면 서로 모순이다 (프롬프트 지도 리뷰, 2026-10-26)."""
+
+    def _texts(self):
+        from agent_cli import dialects as w
+        from agent_cli.prompts.system_prompt import (
+            _build_context_recovery,
+            build_agent_profiles_section,
+            build_skill_descriptions,
+            function_schemas_for,
+        )
+        from agent_cli.tools.registry import TOOLS
+
+        d = w.get("native_fc")
+        tools = list(TOOLS)
+        texts = [f["function"]["description"] for f in function_schemas_for(tools, d)]
+        texts.append(build_skill_descriptions({}, dialect=d) or "")
+        texts.append(build_agent_profiles_section(dialect=d))
+        texts.append(_build_context_recovery())
+        return d, texts
+
+    def test_no_json_fc_examples_or_call_shapes(self):
+        import re
+
+        _, texts = self._texts()
+        joined = "\n".join(texts)
+        assert '{"action"' not in joined
+        assert "your reasoning" not in joined
+        assert not re.search(r"\b(history|memory|agent)\([a-z_]+=", joined)
+
+    def test_examples_name_the_tool_and_its_arguments(self):
+        d, _ = self._texts()
+        assert d.prompt_example("read_file", {"path": "app.py"}) == (
+            '`read_file` {"path": "app.py"}'
+        )
+        assert d.prompt_call_example("run_skill", {"name": "x"}) == (
+            '`run_skill` {"name": "x"}'
+        )
