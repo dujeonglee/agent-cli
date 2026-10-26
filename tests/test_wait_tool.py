@@ -69,6 +69,20 @@ class TestRegistration:
     def test_complete_points_at_wait(self):
         assert "call `wait`" in TOOLS["complete"].description
 
+    def test_complete_says_result_is_the_delivered_answer(self):
+        # v10.75.0: result 가 답으로 전달되는 유일한 글 — 결과와 근거를 함께.
+        # 추론 과정 전체를 요구하지 않는다(사용자 결정).
+        d = TOOLS["complete"].description
+        assert "`result` is the only text delivered as your answer" in d
+        assert "the agent that called you" in d
+        assert "what you checked and how" in d
+        assert "what you did not verify" in d
+        assert "reasoning" not in d
+        assert (
+            "evidence"
+            in TOOLS["complete"].parameters["properties"]["result"]["description"]
+        )
+
 
 class TestAdvertisedOnlyWhereAWakeExists:
     """스킬·일회성 루프엔 깨울 길이 없다 — 거기서 wait 로 끝낸 결과는 호출자에게

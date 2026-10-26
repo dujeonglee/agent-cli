@@ -21,9 +21,16 @@ from agent_cli.tools.result import ToolResult
 class CompleteTool(Tool):
     name = "complete"
     terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
+    # result 가 답으로 전달되는 유일한 글이다 — 호출 밖에 쓴 산문은 화면에 접혀
+    # 보일 뿐 답이 아니고, 서브에이전트의 호출자는 result 만 받는다. 그래서 결과와
+    # 그것이 기대는 근거(무엇을 어떻게 확인했나, 무엇은 확인하지 않았나)를 함께
+    # 쓰게 한다 — 추론 과정 전체는 아니다(사용자 결정 2026-10-26).
     description = (
-        "Call this tool when the task is done — always the LAST call. Provide "
-        "the final result. When `## Open Items` lists items closed by "
+        "Call this tool when the task is done — always the LAST call. `result` "
+        "is the only text delivered as your answer — to the user, or to the "
+        "agent that called you; what you wrote outside it is not. Make it "
+        "stand on its own: the result first, then what it rests on — what you "
+        "checked and how, and what you did not verify. When `## Open Items` lists items closed by "
         "`complete`, `answers` is REQUIRED: list the ids your result covers. "
         "Ids you leave out stay open. Not for waiting — to pause until a job, "
         "monitor or agent reports back, call `wait`."
@@ -31,7 +38,10 @@ class CompleteTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "result": {"type": "string", "description": "The final result or answer"},
+            "result": {
+                "type": "string",
+                "description": "The result, followed by the evidence it rests on",
+            },
             "answers": {
                 "type": "array",
                 "items": {"type": "string"},
