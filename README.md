@@ -481,7 +481,7 @@ agent-cli run "task description" [options]
 | `--auto-approve` / `--no-auto-approve` | 확인 프롬프트를 묻지 않고 허용 (env `AGENT_CLI_AUTO_APPROVE`, 웹 ⚡ 노브) | 꺼짐 |
 | `--auditor` / `--no-auditor` | 세션 감사 (env `AGENT_CLI_AUDITOR`, 웹 🔎 칩; 아래 "세션 감사자") | 꺼짐 |
 | `--image PATH` | QUERY 에 이미지를 붙인다 (PNG/JPEG/GIF/WebP, 반복 가능). 워크스페이스 밖 파일은 `.agent-cli/tmp/uploads/` 로 복사. 모델이 이미지를 못 보면 즉시 오류 (v10.59.0, 아래 "이미지 입력") | |
-| `--title TEXT` | **방 제목** (v10.71.0) — 배너 `Title:` 줄에 보이고 세션 메타(`session.jsonl`)에 남아 `--resume` 이 지킨다(다시 주면 교체). `web` 도 같은 옵션 — 헤더 첫 자리·브라우저 탭·`web.json` 에. 보드는 글의 topic 을 넘긴다 | (없음) |
+| `--title TEXT` | **방 제목** (v10.71.0) — 배너 `Title:` 줄에 보이고 세션 메타(`session.jsonl`)에 남아 `--resume` 이 지킨다(다시 주면 교체). `web` 도 같은 옵션 — 헤더 첫 줄(자기 줄, v10.74.1)·브라우저 탭·`web.json` 에. 보드는 글의 topic 을 넘긴다 | (없음) |
 
 > 위 노브 열 축(`--thinking`·`--grammar`·`--temperature`·`--top-p`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
 | `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
@@ -573,7 +573,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 브라우저 UI 에 노출.
 | `--idle-timeout` | N초 동안 **접속자 0 + 진행 중 작업 없음**이면 스스로 종료 (0 = 끄기). 온디맨드로 인스턴스를 띄우는 오케스트레이터용 — 다음 접속에 `--resume` 으로 재기동. **워커가 작업 중(LLM 턴·도구·질문 대기)이면 안 죽음**(긴 작업 끊김 방지). | `0` (끄기) |
 | `--trust-local` | **loopback(127.0.0.1/::1) 요청은 토큰 인증 생략.** 앞단에 인증을 직접 하는 신뢰된 로컬 게이트웨이/프록시를 둘 때 — 게이트웨이가 토큰을 매 요청 주입할 필요 없음. **localhost 바인드(`--host 127.0.0.1`)일 때만 안전.** 비-loopback 요청과 끈 상태에선 토큰 그대로 요구. | `false` |
 | `--base-path` | **리버스 프록시가 `/<prefix>/*` 를 이 인스턴스로 라우팅(+prefix strip)할 때의 URL 경로 prefix** (예 `/s/doom`). UI 의 모든 URL 은 상대경로이고 serve 되는 index.html 에 `<base href="<prefix>/">` 가 주입돼 prefix 하위로 resolve 됩니다. 기본 `''` = 루트(`<base href="/">`, 기존과 동일). | `''` (루트) |
-| `--title` | **방 제목** (v10.71.0) — 헤더 첫 자리와 브라우저 탭(`<제목> · agent-cli`), 배너 `Title:` 줄, `web.json` 의 `title`. 세션 메타에 남아 `--resume` 이 지킨다. agent-board 는 글의 topic 을 spawn 마다 넘기므로 보드에서 고친 제목은 다음 재시작에 들어온다. 없으면 종전 모양(탭 `agent-cli`) | (없음) |
+| `--title` | **방 제목** (v10.71.0) — 헤더 첫 줄(제목만의 줄 — 칩·노브·아이콘은 그 아래 줄에 종전 모양대로, v10.74.1)과 브라우저 탭(`<제목> · agent-cli`), 배너 `Title:` 줄, `web.json` 의 `title`. 세션 메타에 남아 `--resume` 이 지킨다. agent-board 는 글의 topic 을 spawn 마다 넘기므로 보드에서 고친 제목은 다음 재시작에 들어온다. 없으면 종전 모양(탭 `agent-cli`) | (없음) |
 
 > 브라우저 자동 오픈은 **로컬 bind 일 때만** 일어납니다 — 기본 `127.0.0.1`(과 `0.0.0.0`/`localhost`/`::`/`::1`)처럼 *이 머신에서 localhost 로 접속 가능한* 경우. `--host <원격IP>` 처럼 특정 IP 에 바인드하면(원격 서버) 자동 오픈을 생략하고 접속 URL 만 출력합니다(서버에서 브라우저를 띄워봐야 소용없으므로). `--no-browser` 는 로컬에서도 끄고 싶을 때.
 
