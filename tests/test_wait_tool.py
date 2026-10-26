@@ -80,6 +80,10 @@ class TestRegistration:
         assert "reasoning" not in d
         r = TOOLS["complete"].parameters["properties"]["result"]["description"]
         assert "Checked / Not checked" in r
+        # v10.76.0: 정직성 규칙은 이 틀이 complete 순간에 맡는다 — Task Guidelines 엔 없다
+        from agent_cli.prompts.system_prompt import TASK_GUIDELINES
+
+        assert "Report outcomes honestly" not in TASK_GUIDELINES
 
 
 class TestAdvertisedOnlyWhereAWakeExists:
@@ -386,7 +390,8 @@ class TestWording:
         # 작업 블록 머리는 상태만 (v10.68.0) — wait 안내는 규칙(Guidelines)과
         # `## Open Items` 꼬리말 두 곳, 세 번째는 없다
         assert "do not poll" in tail and "wait" not in tail and "complete" not in tail
-        assert "call `wait`" in _OBS_COMPLETE_NUDGE
+        # v10.76.0: 관찰 넛지는 complete 만 — wait 안내는 Open Items 꼬리말과 규칙 두 곳
+        assert "wait" not in _OBS_COMPLETE_NUDGE
         assert "address every outstanding request" not in TASK_GUIDELINES
 
     def test_open_items_tail_points_at_wait_only_where_wait_exists(self, jobs):

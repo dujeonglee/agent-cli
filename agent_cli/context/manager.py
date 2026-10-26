@@ -146,11 +146,10 @@ def grammar_active(override: bool | None, supports: bool | None) -> bool:
 # completion — that model completes cleanly regardless, so the benefit shows
 # only on models that actually mis-terminate) and never persisted, so there is
 # nothing to gate. Observation-side text only → mimicry-safe.
-_OBS_COMPLETE_NUDGE = (
-    "\n\n(If nothing remains to do, call `complete`. If you can only continue "
-    "after something you started reports back — a sub-agent's reply, a job, a "
-    "monitor — call `wait`: the report wakes you.)"
-)
+# v10.76.0: `wait` 문장을 뺐다 — 같은 user 메시지의 꼬리 `## Open Items` 꼬리말이
+# 같은 말을 결정 자리에서 하고(wait 가 있는 루프에만), 넛지는 무조건이라 wait 가
+# 없는 서브·스킬 루프에도 없는 도구를 가리켰다 (프롬프트 지도 리뷰 2026-10-26).
+_OBS_COMPLETE_NUDGE = "\n\n(If nothing remains to do, call `complete`.)"
 
 
 #: 실측 토큰/바이트 비율의 허용 범위. 토큰 하나는 대개 1바이트 이상이라 1 을

@@ -86,7 +86,6 @@ Treat every token you add as a cost:
 
 - Read only what you need. Prefer search or targeted reads over full reads;
   narrow shell commands at the source rather than dumping output.
-- Keep your reasoning brief. Do not restate what the observation already shows.
 - Large irrelevant context (off-topic content, huge dumps, verbose logs)
   crowds out what you actually need. Filter at the source.
 
@@ -119,8 +118,7 @@ TASK_GUIDELINES = """\
 - Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.
 - Do not introduce new security vulnerabilities.
 - All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.
-- Do not invoke agent-cli recursively via shell — that re-enters this same loop.
-- Report outcomes honestly — if verification failed or was not run, say so explicitly."""
+- Do not invoke agent-cli recursively via shell — that re-enters this same loop."""
 
 # ── Section 4: Format Rules ──────────────────────
 # Lives on the dialect plugin: ``ReActFormat.format_rules()``.
