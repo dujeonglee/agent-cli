@@ -23,14 +23,20 @@ class CompleteTool(Tool):
     terminal = True  # 턴 종결 (T3 선언화 — dispatch 가 이 속성으로 flush/종료)
     # result 가 답으로 전달되는 유일한 글이다 — 호출 밖에 쓴 산문은 화면에 접혀
     # 보일 뿐 답이 아니고, 서브에이전트의 호출자는 result 만 받는다. 그래서 결과와
-    # 그것이 기대는 근거(무엇을 어떻게 확인했나, 무엇은 확인하지 않았나)를 함께
-    # 쓰게 한다 — 추론 과정 전체는 아니다(사용자 결정 2026-10-26).
+    # 그것이 기대는 근거를 함께 쓰게 한다 — 추론 과정 전체는 아니다(사용자 결정
+    # 2026-10-26). 근거는 고정 틀 두 줄(Checked / Not checked): 원칙 문장 판은
+    # GLM·35B 40런에서 "확인 안 한 것" 을 한 번도 쓰지 않았다(35B 는 원칙보다
+    # 형식을 따른다 — monitor 평평한 인자 A/B 와 같은 교훈).
     description = (
         "Call this tool when the task is done — always the LAST call. `result` "
         "is the only text delivered as your answer — to the user, or to the "
-        "agent that called you; what you wrote outside it is not. Make it "
-        "stand on its own: the result first, then what it rests on — what you "
-        "checked and how, and what you did not verify. When `## Open Items` lists items closed by "
+        "agent that called you; what you wrote outside it is not. Put the "
+        "answer first. When it rests on work you did, end with two lines:\n"
+        "Checked: <what you ran or inspected, and what it showed>\n"
+        "Not checked: <what you inferred from reading rather than running, or "
+        "did not test — 'nothing' if so>\n"
+        "A reply with nothing to check has neither line. "
+        "When `## Open Items` lists items closed by "
         "`complete`, `answers` is REQUIRED: list the ids your result covers. "
         "Ids you leave out stay open. Not for waiting — to pause until a job, "
         "monitor or agent reports back, call `wait`."
@@ -40,7 +46,7 @@ class CompleteTool(Tool):
         "properties": {
             "result": {
                 "type": "string",
-                "description": "The result, followed by the evidence it rests on",
+                "description": "The answer, then the Checked / Not checked lines",
             },
             "answers": {
                 "type": "array",
