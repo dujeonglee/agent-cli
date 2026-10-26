@@ -92,7 +92,7 @@ class AgentTool(Tool):
         "rounds of questions — an agent that has studied one area answers "
         "follow-ups from full detail. One agent per area (disjoint "
         "files/subsystems). Once you have handed work to an agent, do not "
-        "also do it yourself: finish what is yours, then complete — you are "
+        "also do it yourself: finish what is yours, then call `wait` — you are "
         "woken when its reply arrives; never predict a pending reply. Queue "
         "only requests that do not depend on a reply still pending; send the "
         "dependent one after you have read it."

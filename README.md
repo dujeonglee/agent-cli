@@ -613,6 +613,9 @@ UI 기능:
 | 위치 | 이름 | 내용 |
 |---|---|---|
 | 맨 위 (접힘) | Head | 시스템 프롬프트 섹션(훅 섹션 포함) · 함수 스키마(native_fc) · 디코딩 문법 · 압축 요약 |
+
+> **프롬프트의 호출 예시 (v10.75.1):** 도구 가이드·Skills·Agent Profiles 의 예시는 방언이 그린다 — 텍스트 방언(json_fc·xml_fc 등)은 자기 호출 모양 그대로(예시가 곧 형식 교육), native_fc 는 `` `read_file` {"path": "app.py"} `` 처럼 도구 이름과 인자 객체만. 종전엔 native_fc 에도 json_fc 의 `[{"action": …}]` 배열이 나가 "호출을 글로 쓰지 말라" 는 같은 프롬프트의 규칙과 모순이었다. 훅 섹션의 `<!-- HOOK_SECTIONS -->` 표식도 이제 모델에게 나가지 않는다.
+
 | 그 아래 (접힘) | Evicted | 압축으로 컨텍스트에서 빠진 카드를 한 묶음으로. 펼치면 흐린 카드 |
 | 가운데 | 대화 | 지금 모델이 보는 카드 |
 | 맨 아래 (접힘) | Tail | 매턴 꼬리(턴·요청·회신 빚·에이전트 로스터·메모리 인덱스·작업 지침)와 직전 턴과의 diff |
@@ -715,7 +718,7 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
   (`<session_dir>/memory.jsonl`)에 저장돼 압축 대상이 아니고, **`--resume` 로 복원**됩니다.
 - **상시 인덱스**: 기록된 메모리의 요약(id·타입·한 줄)이 **세션 상태 블록**(아래)의
   `## Session Memory` 섹션에 **항상 노출**되어, LLM 이 "무엇을 기록했는지" 잊지 않습니다.
-  전체 내용은 `memory(mode=get, id=N)` 으로 필요할 때만 꺼냅니다(토큰 절약 + recall 보장).
+  전체 내용은 `memory` 도구의 `get` 모드(id 지정)로 필요할 때만 꺼냅니다(토큰 절약 + recall 보장).
   (v8.46.0 이전에는 시스템 프롬프트 섹션이었는데, `memory add` 마다 시스템 프롬프트가
   재조립되면서 **그 뒤 대화 전체의 KV 프리픽스 캐시가 무효화**됐습니다.)
 - **타입 4종**: `failure` ⚠(반복 회피) · `discovery` 💡(재사용) · `decision` 🔀(근거) ·
@@ -1635,14 +1638,14 @@ Settle these before you `complete` — the harness holds the run open while they
 - `agt-ui` (code-writer · ui) [busy · 2 queued] — Writes UI code.
 - `agt-dt` (explorer · dts) [idle] — Explores device trees.
 
-## Session Memory (2) — pull full detail with memory(mode=get, id=N)
+## Session Memory (2) — pull full detail with `memory` mode `get` and the entry's id
 ⚠ #1 [failure] uart0 클럭 미설정 시 부팅 로그 없음
 🔀 #2 [decision] dts 대신 defconfig 로 수정하기로
 
 ℹ Context compaction is coming up: older turns will be replaced by a structured summary
 (task, state, decisions, failures, key facts) and work continues as usual. If a detail is
-worth more than its summary — an exact identifier, a failed approach — memory(mode=add)
-keeps it verbatim. Pace and scope stay the same.
+worth more than its summary — an exact identifier, a failed approach — `memory` mode `add`
+keeps it verbatim, … Pace and scope stay the same.
 ```
 
 **왜 꼬리인가 (KV 프리픽스)**: 프로바이더는 프롬프트의 **접두사**를 캐시하고, 이전 호출과 처음 달라지는 토큰에서 재사용이 끊깁니다.
@@ -1684,7 +1687,7 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 
 **폭주 생성 조기 종료 + 잘린 호출 기록 (v10.10.0)**: 같은 방에서 생성 셋이 셸 명령의 `node -e "` 뒤에서 탭·공백·채움 문자로 무너져 32,768 토큰 출력 상한까지 달렸습니다 — 각 27~40분, 합계 106분, 결과는 전부 폐기. 방언 수준 조기 종료(v8.41.0)는 트리거 문자(`#`/`<`)가 있는 청크에서 헤더 반복만 보므로 공백 폭주를 보지 못했습니다. 이제 스트림이 **내용 무관 감지기**(`providers/runaway.py`)를 청크마다 돌립니다 — 공백만 2,048자 이어지거나(`whitespace_run`) 마지막 4,096자에 영숫자가 2% 미만이면(`no_words`; 한글·CJK 는 낱말로 셈, `0,0,0,…` 맵 격자는 절반이 숫자라 안 걸림) 스트림을 닫고 `stop_reason="runaway"` 로 돌아옵니다. 루프는 출력 상한 절단과 같은 계약으로 처리합니다 — 실행하지 않고, 실제 내용까지만 인용해 "폭주했으니 더 작은 단위로 다시" 라고 알리며(컨텍스트 탓이 아님을 분명히), 모델이 복구하면 접힙니다. 그리고 **잘린 호출도 turns.jsonl 행**이 됩니다(종전엔 디스패치가 안 돌아 기록이 없어 서버 로그가 필요했음): `failure_signal` OUTPUT_TRUNCATED/RUNAWAY, `stop_reason` length/runaway, `stop_detail` — length 는 `model_cap`(모델 출력 상한) / `context_clamp`(하니스가 창에 맞춰 줄인 max_tokens 에 도달 — 컨텍스트가 생성을 끝내는 유일한 경로) / `server_cap`(요청보다 적게 생성하고 멈춤 — omlx 는 스스로 줄임), runaway 는 감지 규칙 이름.
 
-**압축 안내 (v9.26.4)**: 압축은 캐시가 호출별 목표치를 넘는 순간 돕니다. 안내는 **단계를 처음 넘는 턴에 한 번**만 붙고(`COMPACTION_NOTICE_STEPS`), 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장됩니다. **v10.9.1**: 안내가 `memory(mode=add)` 와 함께 **더는 맞지 않는 메모리(해결된 블로커·뒤집힌 결정)는 `memory(mode=delete, id=N)` 로 지우라**고도 말합니다 — 메모리 색인은 매 턴 꼬리에 실리고 압축을 그대로 통과하므로, 어느 항목이 낡았는지 아직 판단할 수 있는 압축 전이 정리할 때입니다. 종전(75% 이상 매 턴, "nearly full … must not lose … NOW")은 같은 경보가 턴마다 쌓여 모델이 지나치게 보수적으로 움직였습니다(사용자 보고). 문구는 결핍이 아니라 사실을 말합니다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 **대체**되고 작업은 그대로 이어진다, `memory` 는 원문 그대로 남기고 싶을 때의 선택지. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있다는 실측(`_OBS_COMPLETE_NUDGE`)은 그대로 유효하므로 "끝내지 마라" 류의 문장도 넣지 않습니다(역설적으로 끝낼 생각을 심음). 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
+**압축 안내 (v9.26.4)**: 압축은 캐시가 호출별 목표치를 넘는 순간 돕니다. 안내는 **단계를 처음 넘는 턴에 한 번**만 붙고(`COMPACTION_NOTICE_STEPS`), 압축이 돌아 사용량이 내려가면 그 단계는 다시 무장됩니다. **v10.9.1**: 안내가 `memory` 의 `add` 와 함께 **더는 맞지 않는 메모리(해결된 블로커·뒤집힌 결정)는 `delete`(id 지정)로 지우라**고도 말합니다(v10.75.1 부터 모델에게 가는 문장은 `memory(mode=…)` 같은 호출 모양 대신 "`memory` mode `add`" 처럼 도구 이름과 인자를 말한다 — native_fc 에는 텍스트 호출 문법이 없다) — 메모리 색인은 매 턴 꼬리에 실리고 압축을 그대로 통과하므로, 어느 항목이 낡았는지 아직 판단할 수 있는 압축 전이 정리할 때입니다. 종전(75% 이상 매 턴, "nearly full … must not lose … NOW")은 같은 경보가 턴마다 쌓여 모델이 지나치게 보수적으로 움직였습니다(사용자 보고). 문구는 결핍이 아니라 사실을 말합니다 — 오래된 턴은 사라지는 게 아니라 구조화 요약으로 **대체**되고 작업은 그대로 이어진다, `memory` 는 원문 그대로 남기고 싶을 때의 선택지. 컨텍스트 압박을 알리면 모델이 조기 `complete` 로 도망갈 수 있다는 실측(`_OBS_COMPLETE_NUDGE`)은 그대로 유효하므로 "끝내지 마라" 류의 문장도 넣지 않습니다(역설적으로 끝낼 생각을 심음). 이 블록은 요청에는 들어가지만 `system` 이 아니라, 압축 예산에서 크기를 별도로 예약합니다.
 
 ### 이미지 입력 (vision, v10.59.0)
 

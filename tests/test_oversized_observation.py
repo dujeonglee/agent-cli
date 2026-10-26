@@ -126,7 +126,8 @@ class TestUnifiedNudge:
             assert "--- first" in n and "--- last" in n  # excerpt
             assert "search='<regex>'" in n  # regex route
             assert "line_start=<N>" in n  # range route
-            assert 'agent(mode="run"' in n  # fan-out route
+            assert "`agent`" in n and 'mode "run"' in n  # fan-out route
+            assert "agent(" not in n  # 호출 모양이 아니라 문장 (v10.75.1)
             assert "Root cause —" in n  # per-tool hint
             assert n.endswith("]")
 

@@ -58,9 +58,9 @@ class SystemPromptSvc:
         section injected once at ``OnSessionStart`` stays for the session.
         Before, every apply dropped all earlier ``Hook: `` sections, so a
         session-start section would have vanished at the first LLM call even
-        once the loop started applying it. The ``<!-- HOOK_SECTIONS -->``
-        marker keeps the joined string byte-identical to the historical
-        format."""
+        once the loop started applying it. 섹션 이름(``Hook: …``)이 경계를
+        들고 있으므로 본문에 표식을 넣지 않는다 — 종전의 ``<!-- HOOK_SECTIONS -->``
+        는 옛 문자열과 바이트를 맞추려던 것인데 모델에게 그대로 나갔다(v10.75.1)."""
         if not hook_ctx or not hook_ctx.system_sections:
             return
         # Callers that set ``system`` directly (tests, embedders) without
@@ -70,18 +70,13 @@ class SystemPromptSvc:
             self.sections = [("Base", self.system)]
         static = [s for s in self.sections if not s[0].startswith("Hook: ")]
         merged: dict[str, str] = {
-            name[len("Hook: ") :]: text.removeprefix("<!-- HOOK_SECTIONS -->\n")
+            name[len("Hook: ") :]: text
             for name, text in self.sections
             if name.startswith("Hook: ")
         }
         for title, content in hook_ctx.system_sections.items():
             merged[title] = f"## {title}\n{content}"
         hook_sections = [(f"Hook: {title}", text) for title, text in merged.items()]
-        first_name, first_text = hook_sections[0]
-        hook_sections[0] = (
-            first_name,
-            f"<!-- HOOK_SECTIONS -->\n{first_text}",
-        )
         self.sections = static + hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)
 

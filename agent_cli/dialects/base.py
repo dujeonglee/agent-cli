@@ -640,6 +640,30 @@ class DialectBase(ABC):
     #: v10.2.0 — 서버가 호출을 파싱하는 방언인가 (요청 `tools`, 응답 `tool_calls`).
     server_parsed: bool = False
 
+    def prompt_example(self, tool: str, args: dict) -> str:
+        """프롬프트(도구 가이드·섹션)에 싣는 호출 예시 하나 (v10.75.1).
+
+        텍스트 방언은 자기 호출 모양 그대로 — 예시가 곧 형식 교육이다. 서버 파싱
+        방언은 도구 이름 + 인자 객체만: 호출을 글로 쓰지 말라는 방언이 json_fc 의
+        ``{"action": …}`` 를 보여 주면 서로 모순이다(프롬프트 지도 리뷰, 2026-10-26).
+        ``render_action_input`` 은 기록 재렌더에도 쓰여(native_fc 의 내부 표현은
+        json_fc) 여기서만 갈라진다."""
+        if self.server_parsed:
+            return f"`{tool}` {json.dumps(args, ensure_ascii=False)}"
+        from agent_cli.tools.registry import TOOLS
+
+        return self.render_action_input(TOOLS[tool].add_prefix(args))
+
+    def prompt_call_example(self, tool: str, args: dict) -> str:
+        """섹션 머리의 완성된 호출 예시 (Skills·Agent Profiles). 텍스트 방언은
+        ``render_full_example`` (추론 자리 + 호출), 서버 파싱 방언은
+        :meth:`prompt_example` 과 같다."""
+        if self.server_parsed:
+            return self.prompt_example(tool, args)
+        return self.render_full_example(
+            thought=None, action=tool, action_input=self.render_action_input(args)
+        )
+
     def render_observation_from_history(
         self, record: dict, *, index: int, assistant_index: int | None
     ) -> list[dict] | None:

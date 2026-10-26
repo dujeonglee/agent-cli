@@ -143,11 +143,12 @@ class TestCompactionNotice:
         for bad in ("nearly full", "lose", "NOW", "finish early", "⚠"):
             assert bad not in COMPACTION_NOTICE, bad
         assert "structured summary" in COMPACTION_NOTICE
-        assert "memory(mode=add)" in COMPACTION_NOTICE
+        assert "`memory` mode `add`" in COMPACTION_NOTICE
+        assert "memory(" not in COMPACTION_NOTICE  # 호출 모양 대신 문장 (v10.75.1)
         # v10.9.1: prune too — the index rides every tail and survives
         # compaction, and only BEFORE compaction can the model still tell
         # which entry is stale.
-        assert "memory(mode=delete, id=N)" in COMPACTION_NOTICE
+        assert "`memory` mode `delete` and its id" in COMPACTION_NOTICE
         assert "no longer applies" in COMPACTION_NOTICE
         assert COMPACTION_NOTICE.startswith("ℹ")
 

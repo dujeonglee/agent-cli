@@ -249,8 +249,8 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
     if nlines <= 1:
         return (
             f"Analyse the WHOLE thing? Divide and conquer: split '{path}' into "
-            f"~{k} contiguous line-range sections and emit one "
-            'agent(mode="run") op per section in the SAME turn (they run '
+            f"~{k} contiguous line-range sections and make one `agent` call "
+            'with mode "run" per section in the SAME turn (they run '
             "concurrently), each returning a short summary; then merge them."
         )
     step = max(1, -(-nlines // k))
@@ -264,10 +264,10 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
         f"Analyse the WHOLE thing? Divide and conquer — '{path}' is "
         f"{nlines:,} lines; split it into {k} sections and emit {k} "
         "agent run ops in ONE turn (same-turn run ops execute concurrently):\n"
-        f'    agent(mode="run", task="read_file \'{path}\' lines 1-{min(step, nlines)} '
-        'and report a 3-line summary + anything about <your question>")\n'
-        f'    agent(mode="run", task="… lines {min(step, nlines) + 1}-'
-        f'{min(2 * step, nlines)} …")   … (through line {nlines:,})\n'
+        f'    `agent` mode "run", task "read_file \'{path}\' lines 1-{min(step, nlines)} '
+        'and report a 3-line summary + anything about <your question>"\n'
+        f'    `agent` mode "run", task "… lines {min(step, nlines) + 1}-'
+        f'{min(2 * step, nlines)} …"   … (through line {nlines:,})\n'
         f"  Merge the {k} summaries — no context ever holds the whole thing."
         f"{tail}"
     )

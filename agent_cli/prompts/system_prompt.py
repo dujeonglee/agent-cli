@@ -24,7 +24,7 @@ from pathlib import Path
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.tools.registry import TOOLS, get_tool_descriptions
+from agent_cli.tools.registry import get_tool_descriptions
 
 
 def _rai_prefixed(dialect, tool_name: str, action_input: dict) -> str:
@@ -37,7 +37,7 @@ def _rai_prefixed(dialect, tool_name: str, action_input: dict) -> str:
     assume JSON — both the ``{name}_`` prefix and the JSON (or non-JSON)
     serialization are applied here from their single sources.
     """
-    return dialect.render_action_input(TOOLS[tool_name].add_prefix(action_input))
+    return dialect.prompt_example(tool_name, action_input)
 
 
 # ── DIRECTIVE.md search paths ────────────────────
@@ -237,7 +237,7 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
     # 병렬(_run_parallel) — mode-aware 배칭이 run 만 묶는다 (5.0.0). 문구는
     # 동시성이 아니라 분리된 컨텍스트를 이유로 든다 (v9.24.1, RUN_DESCRIPTION).
     examples = [
-        ("One-shot", {"mode": "run", "task": "Read /tmp/data.csv and count rows"}),
+        ("One-shot", {"mode": "run", "task": "Read data.csv and count rows"}),
         (
             "With context",
             {"mode": "run", "task": "Fix the bug we found", "context": "fork"},
@@ -1159,10 +1159,10 @@ def _build_context_recovery() -> str:
     return (
         "## Context Recovery\n"
         "Older turns may have been replaced by a summary. If you need something "
-        "that is no longer in the current messages, query it with the history "
-        "tool — e.g.\n"
-        '  history(query="SELECT loc, substr(text,1,200) FROM history '
-        "WHERE text LIKE '%keyword%' LIMIT 20\")"
+        "that is no longer in the current messages, call the `history` tool "
+        "with a `query` such as\n"
+        "  SELECT loc, substr(text,1,200) FROM history "
+        "WHERE text LIKE '%keyword%' LIMIT 20"
     )
 
 
@@ -1190,19 +1190,11 @@ def build_agent_profiles_section(
     if not profiles:
         return ""
 
-    run_example = dialect.render_full_example(
-        thought=None,
-        action="agent",
-        action_input=dialect.render_action_input(
-            {"mode": "run", "profile": "profile-name", "task": "..."}
-        ),
+    run_example = dialect.prompt_call_example(
+        "agent", {"mode": "run", "profile": "profile-name", "task": "..."}
     )
-    spawn_example = dialect.render_full_example(
-        thought=None,
-        action="agent",
-        action_input=dialect.render_action_input(
-            {"mode": "spawn", "profile": "profile-name", "task": "..."}
-        ),
+    spawn_example = dialect.prompt_call_example(
+        "agent", {"mode": "spawn", "profile": "profile-name", "task": "..."}
     )
     indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())
     if has_agent_registry:
@@ -1375,12 +1367,8 @@ def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
     # render_full_example with thought=None — skill docs need the
     # action name visible (matches the sibling ``build_agent_descriptions``
     # form). See its docstring for the thought=None rationale.
-    example = dialect.render_full_example(
-        thought=None,
-        action="run_skill",
-        action_input=dialect.render_action_input(
-            {"name": "skill-name", "arguments": "..."}
-        ),
+    example = dialect.prompt_call_example(
+        "run_skill", {"name": "skill-name", "arguments": "..."}
     )
     indented = "\n".join(f"  {line}" for line in example.splitlines())
     lines = [
