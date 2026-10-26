@@ -21,7 +21,12 @@ from agent_cli import item_ids
 from agent_cli.context.manager import ContextManager
 from agent_cli.input_queue import InputQueue
 from agent_cli.loop import AgentLoop
-from agent_cli.loop.ledger import NAG_BUDGET, Ledger, wrong_closer_hint
+from agent_cli.loop.ledger import (
+    NAG_BUDGET,
+    RESULT_SHAPE_LINE,
+    Ledger,
+    wrong_closer_hint,
+)
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports
@@ -258,3 +263,17 @@ def test_multi_line_bodies_are_folded_to_one_item_line():
         in block
     )
     assert '[u-1] (dj) "첫 줄 둘째 줄"' in block
+
+
+def test_result_shape_line_sits_under_the_complete_clause_only():
+    """v10.75.0: result 의 모양(답 먼저 + Checked/Not checked)은 `complete` 절의
+    닫는 줄 바로 아래 — 도구 설명의 같은 틀을 35B 가 0/8 로 안 따랐다."""
+    led = Ledger()
+    led.add_request("u-1", "dj", "테스트 통과해?")
+    lines = led.block().splitlines()
+    i = next(n for n, l in enumerate(lines) if "→ then `complete`" in l)
+    assert lines[i + 1] == RESULT_SHAPE_LINE
+    assert "`Checked:`" in RESULT_SHAPE_LINE and "`Not checked:`" in RESULT_SHAPE_LINE
+    led2 = Ledger()
+    led2.bind_questions(_Port([_REPLY]))
+    assert RESULT_SHAPE_LINE not in led2.block()  # 행동으로 닫는 빚뿐이면 없음
