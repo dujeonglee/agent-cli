@@ -1498,7 +1498,7 @@ class TurnDispatcher:
             avail = ", ".join(
                 effective_tool_names(self.cfg.tools_list, self.cfg.dialect)
             )
-            err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
+            err_msg = f"Unknown tool `{tool_name}`. Available: {avail}"
             # 거부된 호출의 한 줄 요약 (v10.37.0): 저장되지 않는 호출을 모델이
             # 볼 수 있는 유일한 자리. native_fc 는 산문 인용이 비어 이것만 남는다.
             sent = summarize_call(

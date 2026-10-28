@@ -413,7 +413,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # 답을 **지어냈다**(실측 — 사람은 아무것도 못 봤다).
         tail = (
             "(The agent is NOT blocked and kept working. Answer with the "
-            f'`answer` tool with id "{reply.get("id", "")}" — '
+            f'`answer` tool with `id` "{reply.get("id", "")}" — '
             "ONLY if you know the answer yourself. If it is the person's call, "
             "ask them with `ask` (it waits for their reply) and pass their words "
             "on with `answer`; never answer on their behalf. A new request is "
@@ -740,7 +740,7 @@ class QuestionPort:
         if not id:
             return (
                 "reply needs `id` — which message is this the reply to? You owe: "
-                f"{listing}. Send `reply` with that id."
+                f"{listing}. Send `reply` with that `id`."
             )
         d = next((x for x in owed if x.id == id), None)
         if d is None:
@@ -798,20 +798,20 @@ class QuestionPort:
                 return (
                     f"already replied to {a} in this run — a second reply is not "
                     "delivered. If you must correct it, send the correction with "
-                    f'message(to="{a.split(":", 1)[-1]}", text="...").'
+                    f'`message` (`to` "{a.split(":", 1)[-1]}", `text` your correction).'
                 )
             return (
                 "nothing to reply to — this run was not started by a request "
                 "that expects one (it was a delivered reply, a question, or a "
                 "reminder). Do not acknowledge those. If you need something from "
-                'someone, use message(to="...", text="...").'
+                "someone, use `message` (`to` the recipient, `text` your message)."
             )
         listing = "; ".join(f'[{d.id}] {d.to}: "{d.text[:60]}"' for d in owed)
         id = str(id or "").strip()
         if not id:
             return (
                 "reply needs `id` — which request is this the reply to? You owe: "
-                f"{listing}. Send `reply` with that id."
+                f"{listing}. Send `reply` with that `id`."
             )
         d = next((x for x in owed if x.id == id), None)
         if d is None:
@@ -820,8 +820,8 @@ class QuestionPort:
                 return (
                     f"already replied to [{id}] ({prior.to}) in this run — a second "
                     "reply is not delivered. If you must correct it, send the "
-                    f'correction with message(to="{prior.to.split(":", 1)[-1]}", '
-                    'text="...").'
+                    f'correction with `message` (`to` "{prior.to.split(":", 1)[-1]}", '
+                    "`text` your correction)."
                 )
             return f"no unpaid reply with id '{id}' — you owe: {listing}."
         to = (to or "").strip()
@@ -1587,7 +1587,7 @@ class AgentRegistry:
         if self._at_agent_limit():
             return "", (
                 f"agent limit reached ({self.max_agents} alive). "
-                f'Kill one first (mode:"kill") or raise the limit in the web UI.'
+                f'Kill one first (`mode` "kill") or raise the limit in the web UI.'
             )
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
@@ -1718,7 +1718,7 @@ class AgentRegistry:
         if tm is None:
             return (
                 f"unknown agent '{key}' — use a key or name from `## Live Agents` "
-                "(or 'main')"
+                '(or "main")'
             )
         key = resolved
         # `state` 만 보면 창이 뚫린다: `kill`/`shutdown_all` 은
@@ -2145,7 +2145,7 @@ class AgentRegistry:
             to = (to or "").strip()
             text = (text or "").strip()
             if not to:
-                return "message needs a 'to' agent key or name (or 'main')"
+                return 'message needs a `to` agent key or name (or "main")'
             if not text:
                 return "empty message — nothing sent"
             if not has_words(text):
@@ -2161,7 +2161,7 @@ class AgentRegistry:
                 if resolved is None:
                     return (
                         f"unknown agent '{to}' — use a key or name from "
-                        "`## Live Agents` (or 'main')"
+                        '`## Live Agents` (or "main")'
                     )
                 to = resolved
             if to == tm.key:
@@ -2258,7 +2258,7 @@ class AgentRegistry:
         else:
             items = list(self._agents.values())
         if not items:
-            return 'no live agents. Spawn one with mode:"spawn".'
+            return 'no live agents. Spawn one with `mode` "spawn".'
         cap = self.max_agents or "∞"
         lines = [f"agents ({self.alive_count()}/{cap} alive):"]
         for tm in items:
@@ -2355,7 +2355,7 @@ class AgentRegistry:
         if self._at_agent_limit():
             return (
                 f"agent limit reached ({self.max_agents} alive). "
-                f'Kill one first (mode:"kill").'
+                f'Kill one first (`mode` "kill").'
             )
 
         fresh = AgentInstance(
@@ -3459,8 +3459,8 @@ def tool_agent(
 
     if registry is None:
         hint = (
-            " To reach a peer agent or main, use `message` (to = its key or "
-            "name, or 'main')."
+            " To reach a peer agent or main, use `message` (`to` = its key or "
+            'name, or "main").'
             if resident
             else ""
         )
@@ -3483,6 +3483,6 @@ def tool_agent(
     if handler is None:
         return ToolResult(
             False,
-            error=(f"unknown mode '{mode}' — use " + " / ".join(_MODE_HANDLERS)),
+            error=(f'unknown `mode` "{mode}" — use ' + " / ".join(_MODE_HANDLERS)),
         )
     return handler(registry, args, parent_ctx=parent_ctx, runtime=runtime)

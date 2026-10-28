@@ -81,7 +81,8 @@ class TestToolSurface:
         assert "nohup" not in d and "/tmp/" not in d and "EXIT:" not in d
         assert "PYTHONUNBUFFERED" not in d and "python -u" not in d
         assert "buffers its output" in d and "run it unbuffered" in d
-        assert "command + every" in d and "file + pattern" in d and "file + idle" in d
+        assert "`command` + `every`" in d and "`file` + `pattern`" in d
+        assert "`file` + `idle`" in d
         assert "schedule" in d  # 세션과 함께 저장되는 쪽은 schedule — 성질로 말한다
 
     def test_removed_condition_types_are_not_advertised(self):

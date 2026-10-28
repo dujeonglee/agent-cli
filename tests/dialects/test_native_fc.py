@@ -397,7 +397,7 @@ class TestRejectedCallKeepsTheMessageOrderValid:
         assert second[-1]["role"] == "user"
         # the list is the one the model was given — `complete` included
         assert (
-            "Unknown tool 'shell'. Available: read_file, complete"
+            "Unknown tool `shell`. Available: read_file, complete"
             in second[-1]["content"]
         )
 
@@ -431,7 +431,7 @@ class TestRejectedCallKeepsTheMessageOrderValid:
         third = calls[2]
         assert _unpaired(third) == []
         assert [m["role"] for m in third[-3:]] == ["assistant", "tool", "user"]
-        assert "Unknown tool 'shell'" in third[-1]["content"]
+        assert "Unknown tool `shell`" in third[-1]["content"]
 
     def test_a_paired_observation_is_still_a_tool_message(self, tmp_path, caps, wf):
         calls = self._run(

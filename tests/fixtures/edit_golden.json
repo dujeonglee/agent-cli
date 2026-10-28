@@ -31,7 +31,7 @@
 ],
 "ok": true,
 "after": "x = 1\n\tz\n\n",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n+x = 1\n+\tz\n \n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#ZV:",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n+x = 1\n+\tz\n \n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#ZV:",
 "parts": null
 },
 {
@@ -45,7 +45,7 @@
 ],
 "ok": true,
 "after": "# c\ndef f():\n\n# c\nx = 1\n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,2 @@\n # c\n x = 1\n-a — b\n\nUpdated region (edit_file refs below):\n3#ZQ:\n4#YX:# c\n5#SW:x = 1\n6#ZW:",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,2 @@\n # c\n x = 1\n-a — b\n\nUpdated region (`edit_file` refs below):\n3#ZQ:\n4#YX:# c\n5#SW:x = 1\n6#ZW:",
 "parts": null
 },
 {
@@ -61,7 +61,7 @@
 ],
 "ok": true,
 "after": "def f():\n    return y\n    return y\n“q”",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,6 +2,3 @@\n     return y\n     return y\n-\tz\n-\tz\n-“q”\n “q”\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#HQ:    return y\n3#HQ:    return y\n4#ZJ:“q”",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,6 +2,3 @@\n     return y\n     return y\n-\tz\n-\tz\n-“q”\n “q”\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#HQ:    return y\n3#HQ:    return y\n4#ZJ:“q”",
 "parts": null
 },
 {
@@ -151,10 +151,10 @@
 ],
 "ok": true,
 "after": "multi\nline\n“q”\n\tz\n\n“q”\n    return y\n  \ndef f():\na — b\n",
-"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n “q”\n \tz\n@@ -4,5 +6,4 @@\n “q”\n     return y\n-    return y\n   \n def f():\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#ZJ:“q”\n4#KV:\tz\n5#ZR:\n6#ZJ:“q”\n7#HQ:    return y\n8#ZN:  \n9#HS:def f():\n10#WS:a — b\n11#ZX:",
+"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n “q”\n \tz\n@@ -4,5 +6,4 @@\n “q”\n     return y\n-    return y\n   \n def f():\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#ZJ:“q”\n4#KV:\tz\n5#ZR:\n6#ZJ:“q”\n7#HQ:    return y\n8#ZN:  \n9#HS:def f():\n10#WS:a — b\n11#ZX:",
 "parts": [
 "prepend: inserted 2 line(s) after original line 0\n+ multi\n+ line",
-"delete 5#HQ: deleted original lines 5–5 (1 line(s))\n-     return y\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n “q”\n \tz\n@@ -4,5 +6,4 @@\n “q”\n     return y\n-    return y\n   \n def f():\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#ZJ:“q”\n4#KV:\tz\n5#ZR:\n6#ZJ:“q”\n7#HQ:    return y\n8#ZN:  \n9#HS:def f():\n10#WS:a — b\n11#ZX:"
+"delete 5#HQ: deleted original lines 5–5 (1 line(s))\n-     return y\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n “q”\n \tz\n@@ -4,5 +6,4 @@\n “q”\n     return y\n-    return y\n   \n def f():\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#ZJ:“q”\n4#KV:\tz\n5#ZR:\n6#ZJ:“q”\n7#HQ:    return y\n8#ZN:  \n9#HS:def f():\n10#WS:a — b\n11#ZX:"
 ]
 },
 {
@@ -178,10 +178,10 @@
 ],
 "ok": true,
 "after": "\ndef f():\nx = 1\n# c\n",
-"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n+def f():\n+x = 1\n # c\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:",
+"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n+def f():\n+x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:",
 "parts": [
 "append 1#ZP: inserted 2 line(s) after original line 1\n+ def f():\n+ x = 1",
-"append 1#ZP: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n+def f():\n+x = 1\n # c\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:"
+"append 1#ZP: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n+def f():\n+x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:"
 ]
 },
 {
@@ -223,10 +223,10 @@
 ],
 "ok": true,
 "after": "a — b\ndef f():\n  \nx = 1\nx = 1\na — b\nx = 1\n“q”\n",
-"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,8 @@\n+a — b\n+def f():\n+  \n+x = 1\n+x = 1\n a — b\n x = 1\n-x = 1\n “q”\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#HS:def f():\n3#ZQ:  \n4#SW:x = 1\n5#SW:x = 1\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:",
+"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,8 @@\n+a — b\n+def f():\n+  \n+x = 1\n+x = 1\n a — b\n x = 1\n-x = 1\n “q”\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#HS:def f():\n3#ZQ:  \n4#SW:x = 1\n5#SW:x = 1\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:",
 "parts": [
 "append 3#SW: inserted 2 line(s) after original line 3\n+ a — b\n+ x = 1",
-"append 1#WS:a — b: inserted 2 line(s) after original line 1\n+ def f():\n+   \n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,8 @@\n+a — b\n+def f():\n+  \n+x = 1\n+x = 1\n a — b\n x = 1\n-x = 1\n “q”\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#HS:def f():\n3#ZQ:  \n4#SW:x = 1\n5#SW:x = 1\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:"
+"append 1#WS:a — b: inserted 2 line(s) after original line 1\n+ def f():\n+   \n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,8 @@\n+a — b\n+def f():\n+  \n+x = 1\n+x = 1\n a — b\n x = 1\n-x = 1\n “q”\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#HS:def f():\n3#ZQ:  \n4#SW:x = 1\n5#SW:x = 1\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:"
 ]
 },
 {
@@ -282,12 +282,12 @@
 ],
 "ok": true,
 "after": "  \n# c\n“q”\n\tz\ndef f():",
-"msg": "Edit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,5 @@\n-\n+  \n+# c\n+“q”\n+\tz\n+def f():\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#YX:# c\n3#ZJ:“q”\n4#KV:\tz\n5#HS:def f():",
+"msg": "Edit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,5 @@\n-\n+  \n+# c\n+“q”\n+\tz\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#YX:# c\n3#ZJ:“q”\n4#KV:\tz\n5#HS:def f():",
 "parts": [
 "delete 2#ZM..1#ZP: inserted 0 line(s) after original line 1",
 "replace 2#ZM: replaced original lines 2–2 (1 → 1 line(s))\n- \n+ “q”",
 "append: inserted 2 line(s) after original line 2\n+ \tz\n+ def f():",
-"replace 1#ZP: replaced original lines 1–1 (1 → 2 line(s))\n- \n+   \n+ # c\n\nEdit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,5 @@\n-\n+  \n+# c\n+“q”\n+\tz\n+def f():\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#YX:# c\n3#ZJ:“q”\n4#KV:\tz\n5#HS:def f():"
+"replace 1#ZP: replaced original lines 1–1 (1 → 2 line(s))\n- \n+   \n+ # c\n\nEdit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,5 @@\n-\n+  \n+# c\n+“q”\n+\tz\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#YX:# c\n3#ZJ:“q”\n4#KV:\tz\n5#HS:def f():"
 ]
 },
 {
@@ -306,7 +306,7 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1\ndef f():\n  \n\n    return y\n“q”\n    return y\n",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,2 +4,5 @@\n   \n \n+    return y\n+“q”\n+    return y\n\nUpdated region (edit_file refs below):\n3#HS:def f():\n4#ZV:  \n5#ZR:\n6#HQ:    return y\n7#ZJ:“q”\n8#HQ:    return y\n9#ZK:",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,2 +4,5 @@\n   \n \n+    return y\n+“q”\n+    return y\n\nUpdated region (`edit_file` refs below):\n3#HS:def f():\n4#ZV:  \n5#ZR:\n6#HQ:    return y\n7#ZJ:“q”\n8#HQ:    return y\n9#ZK:",
 "parts": null
 },
 {
@@ -337,7 +337,7 @@
 ],
 "ok": true,
 "after": "def f():\n\tz\n“q”\n    return y",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n def f():\n \tz\n-  \n “q”\n     return y\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#KV:\tz\n3#ZJ:“q”\n4#HQ:    return y",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n def f():\n \tz\n-  \n “q”\n     return y\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#KV:\tz\n3#ZJ:“q”\n4#HQ:    return y",
 "parts": null
 },
 {
@@ -382,11 +382,11 @@
 ],
 "ok": true,
 "after": "“q”\n  \nx = 1\n“q”\nmulti\nline\ndef f():\n\tz\n“q”\n    return y\nx = 1\n    return y\ndef f():\n",
-"msg": "Edit complete: <FILE> (3 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,6 @@\n x = 1\n “q”\n+multi\n+line\n def f():\n \tz\n@@ -10,3 +12,2 @@\n     return y\n def f():\n-x = 1\n\nUpdated region (edit_file refs below):\n2#ZM:  \n3#SW:x = 1\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”\n\n11#SW:x = 1\n12#HQ:    return y\n13#HS:def f():\n14#ZY:",
+"msg": "Edit complete: <FILE> (3 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,6 @@\n x = 1\n “q”\n+multi\n+line\n def f():\n \tz\n@@ -10,3 +12,2 @@\n     return y\n def f():\n-x = 1\n\nUpdated region (`edit_file` refs below):\n2#ZM:  \n3#SW:x = 1\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”\n\n11#SW:x = 1\n12#HQ:    return y\n13#HS:def f():\n14#ZY:",
 "parts": [
 "prepend 5#HS: inserted 2 line(s) after original line 4\n+ multi\n+ line",
 "delete 12#SW: deleted original lines 12–12 (1 line(s))\n- x = 1",
-"delete 6#KV..1#ZJ: deleted original lines 6–1 (-4 line(s))\n\nEdit complete: <FILE> (3 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,6 @@\n x = 1\n “q”\n+multi\n+line\n def f():\n \tz\n@@ -10,3 +12,2 @@\n     return y\n def f():\n-x = 1\n\nUpdated region (edit_file refs below):\n2#ZM:  \n3#SW:x = 1\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”\n\n11#SW:x = 1\n12#HQ:    return y\n13#HS:def f():\n14#ZY:"
+"delete 6#KV..1#ZJ: deleted original lines 6–1 (-4 line(s))\n\nEdit complete: <FILE> (3 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,6 @@\n x = 1\n “q”\n+multi\n+line\n def f():\n \tz\n@@ -10,3 +12,2 @@\n     return y\n def f():\n-x = 1\n\nUpdated region (`edit_file` refs below):\n2#ZM:  \n3#SW:x = 1\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”\n\n11#SW:x = 1\n12#HQ:    return y\n13#HS:def f():\n14#ZY:"
 ]
 },
 {
@@ -409,10 +409,10 @@
 ],
 "ok": true,
 "after": "“q”\n  \na — b\n\na — b\n\tz",
-"msg": "Edit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,5 @@\n   \n a — b\n+\n+a — b\n \tz\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#ZM:  \n3#WS:a — b\n4#ZV:\n5#WS:a — b\n6#KV:\tz",
+"msg": "Edit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,5 @@\n   \n a — b\n+\n+a — b\n \tz\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#ZM:  \n3#WS:a — b\n4#ZV:\n5#WS:a — b\n6#KV:\tz",
 "parts": [
 "append 3#WS: inserted 2 line(s) after original line 3\n+ \n+ a — b",
-"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,5 @@\n   \n a — b\n+\n+a — b\n \tz\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#ZM:  \n3#WS:a — b\n4#ZV:\n5#WS:a — b\n6#KV:\tz"
+"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,5 @@\n   \n a — b\n+\n+a — b\n \tz\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#ZM:  \n3#WS:a — b\n4#ZV:\n5#WS:a — b\n6#KV:\tz"
 ]
 },
 {
@@ -449,7 +449,7 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n“q”\nmulti\nline\na — b\n# c\ndef f():",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n x = 1\n “q”\n+multi\n+line\n a — b\n # c\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#ZR:multi\n5#HW:line\n6#WS:a — b\n7#YX:# c\n8#HS:def f():",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n x = 1\n “q”\n+multi\n+line\n a — b\n # c\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#ZR:multi\n5#HW:line\n6#WS:a — b\n7#YX:# c\n8#HS:def f():",
 "parts": null
 },
 {
@@ -464,7 +464,7 @@
 ],
 "ok": true,
 "after": "x = 1\na — b\nx = 1\n    return y",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n x = 1\n-x = 1\n     return y\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#WS:a — b\n3#SW:x = 1\n4#HQ:    return y",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n x = 1\n-x = 1\n     return y\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#WS:a — b\n3#SW:x = 1\n4#HQ:    return y",
 "parts": null
 },
 {
@@ -492,10 +492,10 @@
 ],
 "ok": true,
 "after": "\tz\n# c\n\tz\nx = 1\nx = 1\n\ndef f():\na — b\n  \n# c\n",
-"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,8 @@\n \tz\n x = 1\n+x = 1\n+\n+def f():\n a — b\n   \n-# c\n+# c\n\nUpdated region (edit_file refs below):\n2#YX:# c\n3#KV:\tz\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:\n7#HS:def f():\n8#WS:a — b\n9#ZK:  \n10#YX:# c\n11#ZX:",
+"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,8 @@\n \tz\n x = 1\n+x = 1\n+\n+def f():\n a — b\n   \n-# c\n+# c\n\nUpdated region (`edit_file` refs below):\n2#YX:# c\n3#KV:\tz\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:\n7#HS:def f():\n8#WS:a — b\n9#ZK:  \n10#YX:# c\n11#ZX:",
 "parts": [
 "append 7#YX: inserted 1 line(s) after original line 7\n+ ",
-"replace 5#WS:a — b..2#YX: replaced original lines 5–2 (-2 → 3 line(s))\n+ x = 1\n+ \n+ def f():\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,8 @@\n \tz\n x = 1\n+x = 1\n+\n+def f():\n a — b\n   \n-# c\n+# c\n\nUpdated region (edit_file refs below):\n2#YX:# c\n3#KV:\tz\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:\n7#HS:def f():\n8#WS:a — b\n9#ZK:  \n10#YX:# c\n11#ZX:"
+"replace 5#WS:a — b..2#YX: replaced original lines 5–2 (-2 → 3 line(s))\n+ x = 1\n+ \n+ def f():\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,8 @@\n \tz\n x = 1\n+x = 1\n+\n+def f():\n a — b\n   \n-# c\n+# c\n\nUpdated region (`edit_file` refs below):\n2#YX:# c\n3#KV:\tz\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:\n7#HS:def f():\n8#WS:a — b\n9#ZK:  \n10#YX:# c\n11#ZX:"
 ]
 },
 {
@@ -643,7 +643,7 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\nx = 1",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n     return y\n+x = 1\n+x = 1\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#SW:x = 1",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n     return y\n+x = 1\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#SW:x = 1",
 "parts": null
 },
 {
@@ -738,11 +738,11 @@
 ],
 "ok": true,
 "after": "x = 1\n  \ndef f():\n# c\n\n\tz\n# c\n# c\na — b\n  \n    return y\n",
-"msg": "Edit complete: <FILE> (3 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n+x = 1\n+  \n def f():\n # c\n \n \tz\n+# c\n+# c\n a — b\n   \n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZM:  \n3#HS:def f():\n4#YX:# c\n5#ZR:\n6#KV:\tz\n7#YX:# c\n8#YX:# c\n9#WS:a — b\n10#ZT:  \n11#HQ:    return y",
+"msg": "Edit complete: <FILE> (3 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n+x = 1\n+  \n def f():\n # c\n \n \tz\n+# c\n+# c\n a — b\n   \n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZM:  \n3#HS:def f():\n4#YX:# c\n5#ZR:\n6#KV:\tz\n7#YX:# c\n8#YX:# c\n9#WS:a — b\n10#ZT:  \n11#HQ:    return y",
 "parts": [
 "append 4#KV: inserted 2 line(s) after original line 4\n+ # c\n+ # c",
 "append: inserted 0 line(s) after original line 8",
-"prepend: inserted 2 line(s) after original line 0\n+ x = 1\n+   \n\nEdit complete: <FILE> (3 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n+x = 1\n+  \n def f():\n # c\n \n \tz\n+# c\n+# c\n a — b\n   \n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZM:  \n3#HS:def f():\n4#YX:# c\n5#ZR:\n6#KV:\tz\n7#YX:# c\n8#YX:# c\n9#WS:a — b\n10#ZT:  \n11#HQ:    return y"
+"prepend: inserted 2 line(s) after original line 0\n+ x = 1\n+   \n\nEdit complete: <FILE> (3 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n+x = 1\n+  \n def f():\n # c\n \n \tz\n+# c\n+# c\n a — b\n   \n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZM:  \n3#HS:def f():\n4#YX:# c\n5#ZR:\n6#KV:\tz\n7#YX:# c\n8#YX:# c\n9#WS:a — b\n10#ZT:  \n11#HQ:    return y"
 ]
 },
 {
@@ -837,7 +837,7 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n“q”",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,8 +1,3 @@\n     return y\n x = 1\n-    return y\n-\n-  \n-\tz\n-x = 1\n “q”\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,8 +1,3 @@\n     return y\n x = 1\n-    return y\n-\n-  \n-\tz\n-x = 1\n “q”\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”",
 "parts": null
 },
 {
@@ -875,10 +875,10 @@
 ],
 "ok": true,
 "after": "    return y\n\tz\n# c\n    return y\n    return y\na — b\nx = 1\n“q”\n\n",
-"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,7 @@\n     return y\n \tz\n-x = 1\n # c\n     return y\n     return y\n-def f():\n a — b\n x = 1\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#KV:\tz\n3#YX:# c\n4#HQ:    return y\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:",
+"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,7 @@\n     return y\n \tz\n-x = 1\n # c\n     return y\n     return y\n-def f():\n a — b\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#KV:\tz\n3#YX:# c\n4#HQ:    return y\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:",
 "parts": [
 "replace 3#SW..3#SW: deleted original lines 3–3 (1 line(s))\n- x = 1",
-"delete 7#HS: deleted original lines 7–7 (1 line(s))\n- def f():\n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,7 @@\n     return y\n \tz\n-x = 1\n # c\n     return y\n     return y\n-def f():\n a — b\n x = 1\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#KV:\tz\n3#YX:# c\n4#HQ:    return y\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:"
+"delete 7#HS: deleted original lines 7–7 (1 line(s))\n- def f():\n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,7 @@\n     return y\n \tz\n-x = 1\n # c\n     return y\n     return y\n-def f():\n a — b\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#KV:\tz\n3#YX:# c\n4#HQ:    return y\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1\n8#ZJ:“q”\n9#ZK:"
 ]
 },
 {
@@ -910,7 +910,7 @@
 ],
 "ok": true,
 "after": "  \n\tz\n\n\tz\n“q”\nx = 1\n  \n    return y\n    return y\na — b\n",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,2 +8,3 @@\n     return y\n     return y\n+a — b\n\nUpdated region (edit_file refs below):\n7#ZS:  \n8#HQ:    return y\n9#HQ:    return y\n10#WS:a — b\n11#ZX:",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,2 +8,3 @@\n     return y\n     return y\n+a — b\n\nUpdated region (`edit_file` refs below):\n7#ZS:  \n8#HQ:    return y\n9#HQ:    return y\n10#WS:a — b\n11#ZX:",
 "parts": null
 },
 {
@@ -934,10 +934,10 @@
 ],
 "ok": true,
 "after": "x = 1\na — b\n“q”\n  \n",
-"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n “q”\n-\tz\n   \n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#WS:a — b\n3#ZJ:“q”\n4#ZV:  \n5#ZR:",
+"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n “q”\n-\tz\n   \n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#WS:a — b\n3#ZJ:“q”\n4#ZV:  \n5#ZR:",
 "parts": [
 "append 4#KV: inserted 0 line(s) after original line 4",
-"delete 4#KV: deleted original lines 4–4 (1 line(s))\n- \tz\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n “q”\n-\tz\n   \n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#WS:a — b\n3#ZJ:“q”\n4#ZV:  \n5#ZR:"
+"delete 4#KV: deleted original lines 4–4 (1 line(s))\n- \tz\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,3 @@\n a — b\n “q”\n-\tz\n   \n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#WS:a — b\n3#ZJ:“q”\n4#ZV:  \n5#ZR:"
 ]
 },
 {
@@ -992,10 +992,10 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1\n# c\n\nx = 1\n    return y\na — b\n\tz\nx = 1\n\tz\n  \nx = 1",
-"msg": "Edit complete: <FILE> (2 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,3 @@\n \tz\n   \n-“q”\n+x = 1\n\nUpdated region (edit_file refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZX:  \n12#SW:x = 1",
+"msg": "Edit complete: <FILE> (2 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,3 @@\n \tz\n   \n-“q”\n+x = 1\n\nUpdated region (`edit_file` refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZX:  \n12#SW:x = 1",
 "parts": [
 "append: inserted 1 line(s) after original line 12\n+ x = 1",
-"delete 12#ZJ: deleted original lines 12–12 (1 line(s))\n- “q”\n\nEdit complete: <FILE> (2 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,3 @@\n \tz\n   \n-“q”\n+x = 1\n\nUpdated region (edit_file refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZX:  \n12#SW:x = 1"
+"delete 12#ZJ: deleted original lines 12–12 (1 line(s))\n- “q”\n\nEdit complete: <FILE> (2 edits, 12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,3 @@\n \tz\n   \n-“q”\n+x = 1\n\nUpdated region (`edit_file` refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZX:  \n12#SW:x = 1"
 ]
 },
 {
@@ -1140,7 +1140,7 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n\tz\n\nmulti\nline\nx = 1\nx = 1\na — b\nx = 1\ndef f():",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,6 @@\n \tz\n \n-“q”\n+multi\n+line\n x = 1\n x = 1\n\nUpdated region (edit_file refs below):\n2#SW:x = 1\n3#KV:\tz\n4#ZV:\n5#ZR:multi\n6#HW:line\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,6 @@\n \tz\n \n-“q”\n+multi\n+line\n x = 1\n x = 1\n\nUpdated region (`edit_file` refs below):\n2#SW:x = 1\n3#KV:\tz\n4#ZV:\n5#ZR:multi\n6#HW:line\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b",
 "parts": null
 },
 {
@@ -1196,7 +1196,7 @@
 ],
 "ok": true,
 "after": "\n    return y\nmulti\nline\n  \n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,5 @@\n \n     return y\n+multi\n+line\n   \n-  \n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HQ:    return y\n3#ZR:multi\n4#HW:line\n5#ZR:  \n6#ZW:",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,5 @@\n \n     return y\n+multi\n+line\n   \n-  \n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HQ:    return y\n3#ZR:multi\n4#HW:line\n5#ZR:  \n6#ZW:",
 "parts": null
 },
 {
@@ -1264,7 +1264,7 @@
 ],
 "ok": true,
 "after": "    return y\ndef f():\ndef f():\n    return y",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n     return y\n-def f():\n+def f():\n+def f():\n+    return y\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#HS:def f():\n3#HS:def f():\n4#HQ:    return y",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n     return y\n-def f():\n+def f():\n+def f():\n+    return y\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#HS:def f():\n3#HS:def f():\n4#HQ:    return y",
 "parts": null
 },
 {
@@ -1340,10 +1340,10 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\ndef f():\n# c\nx = 1\ndef f():\n",
-"msg": "Edit complete: <FILE> (2 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n # c\n-# c\n x = 1\n def f():\n\nUpdated region (edit_file refs below):\n2#SW:x = 1\n3#HS:def f():\n4#YX:# c\n5#SW:x = 1\n6#HS:def f():\n7#ZS:",
+"msg": "Edit complete: <FILE> (2 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n # c\n-# c\n x = 1\n def f():\n\nUpdated region (`edit_file` refs below):\n2#SW:x = 1\n3#HS:def f():\n4#YX:# c\n5#SW:x = 1\n6#HS:def f():\n7#ZS:",
 "parts": [
 "prepend 3#HS:def f():: inserted 0 line(s) after original line 2",
-"delete 4#YX:# c: deleted original lines 4–4 (1 line(s))\n- # c\n\nEdit complete: <FILE> (2 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n # c\n-# c\n x = 1\n def f():\n\nUpdated region (edit_file refs below):\n2#SW:x = 1\n3#HS:def f():\n4#YX:# c\n5#SW:x = 1\n6#HS:def f():\n7#ZS:"
+"delete 4#YX:# c: deleted original lines 4–4 (1 line(s))\n- # c\n\nEdit complete: <FILE> (2 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n # c\n-# c\n x = 1\n def f():\n\nUpdated region (`edit_file` refs below):\n2#SW:x = 1\n3#HS:def f():\n4#YX:# c\n5#SW:x = 1\n6#HS:def f():\n7#ZS:"
 ]
 },
 {
@@ -1598,11 +1598,11 @@
 ],
 "ok": true,
 "after": "\tz\n    return y\ndef f():",
-"msg": "Edit complete: <FILE> (3 edits, 3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n     return y\n-def f():\n-x = 1\n+def f():\n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#HQ:    return y\n3#HS:def f():",
+"msg": "Edit complete: <FILE> (3 edits, 3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n     return y\n-def f():\n-x = 1\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#HQ:    return y\n3#HS:def f():",
 "parts": [
 "prepend 2#HQ: inserted 0 line(s) after original line 1",
 "replace 4#SW..4#SW: deleted original lines 4–4 (1 line(s))\n- x = 1",
-"append 2#HQ:    return y: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n     return y\n-def f():\n-x = 1\n+def f():\n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#HQ:    return y\n3#HS:def f():"
+"append 2#HQ:    return y: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n     return y\n-def f():\n-x = 1\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#HQ:    return y\n3#HS:def f():"
 ]
 },
 {
@@ -1692,7 +1692,7 @@
 ],
 "ok": true,
 "after": "\nx = 1\n# c\ndef f():\n  \n“q”\nx = 1\nx = 1\n",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n \n x = 1\n+# c\n+def f():\n+  \n “q”\n x = 1\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZR:  \n6#ZJ:“q”\n7#SW:x = 1\n8#SW:x = 1",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n \n x = 1\n+# c\n+def f():\n+  \n “q”\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZR:  \n6#ZJ:“q”\n7#SW:x = 1\n8#SW:x = 1",
 "parts": null
 },
 {
@@ -1740,11 +1740,11 @@
 ],
 "ok": true,
 "after": "def f():\n  \ndef f():\n  \ndef f():\n    return y\nx = 1\n  \ndef f():\n",
-"msg": "Edit complete: <FILE> (3 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+def f():\n+  \n+def f():\n+  \n+def f():\n+    return y\n x = 1\n   \n def f():\n-  \n-x = 1\n-  \n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#ZM:  \n3#HS:def f():\n4#ZV:  \n5#HS:def f():\n6#HQ:    return y\n7#SW:x = 1\n8#ZN:  \n9#HS:def f():\n10#ZT:",
+"msg": "Edit complete: <FILE> (3 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+def f():\n+  \n+def f():\n+  \n+def f():\n+    return y\n x = 1\n   \n def f():\n-  \n-x = 1\n-  \n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#ZM:  \n3#HS:def f():\n4#ZV:  \n5#HS:def f():\n6#HQ:    return y\n7#SW:x = 1\n8#ZN:  \n9#HS:def f():\n10#ZT:",
 "parts": [
 "prepend 5#SW: inserted 2 line(s) after original line 4\n+ def f():\n+     return y",
 "replace 1#SW: replaced original lines 1–1 (1 → 1 line(s))\n- x = 1\n+ def f():",
-"prepend 7#ZS: inserted 1 line(s) after original line 6\n+ def f():\n\nEdit complete: <FILE> (3 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+def f():\n+  \n+def f():\n+  \n+def f():\n+    return y\n x = 1\n   \n def f():\n-  \n-x = 1\n-  \n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#ZM:  \n3#HS:def f():\n4#ZV:  \n5#HS:def f():\n6#HQ:    return y\n7#SW:x = 1\n8#ZN:  \n9#HS:def f():\n10#ZT:"
+"prepend 7#ZS: inserted 1 line(s) after original line 6\n+ def f():\n\nEdit complete: <FILE> (3 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+def f():\n+  \n+def f():\n+  \n+def f():\n+    return y\n x = 1\n   \n def f():\n-  \n-x = 1\n-  \n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#ZM:  \n3#HS:def f():\n4#ZV:  \n5#HS:def f():\n6#HQ:    return y\n7#SW:x = 1\n8#ZN:  \n9#HS:def f():\n10#ZT:"
 ]
 },
 {
@@ -1871,7 +1871,7 @@
 ],
 "ok": true,
 "after": "  \n\nx = 1\ndef f():\n\n# c\n# c\n“q”\n“q”\n# c\nx = 1\n\ndef f():\n“q”",
-"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n   \n+\n+x = 1\n+def f():\n \n # c\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#ZM:\n3#SW:x = 1\n4#HS:def f():\n5#ZR:\n6#YX:# c\n7#YX:# c",
+"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n   \n+\n+x = 1\n+def f():\n \n # c\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#ZM:\n3#SW:x = 1\n4#HS:def f():\n5#ZR:\n6#YX:# c\n7#YX:# c",
 "parts": null
 },
 {
@@ -2005,7 +2005,7 @@
 ],
 "ok": true,
 "after": "def f():\n\tz\n\tz\na — b\n“q”\nx = 1\nx = 1\nx = 1",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n def f():\n+\tz\n+\tz\n+a — b\n “q”\n x = 1\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#KV:\tz\n3#KV:\tz\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n def f():\n+\tz\n+\tz\n+a — b\n “q”\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#KV:\tz\n3#KV:\tz\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1",
 "parts": null
 },
 {
@@ -2023,7 +2023,7 @@
 ],
 "ok": true,
 "after": "“q”\na — b\n# c\n    return y\ndef f():\n\n\tz\na — b\n",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,6 @@\n a — b\n # c\n-# c\n+    return y\n+def f():\n \n \tz\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#WS:a — b\n3#YX:# c\n4#HQ:    return y\n5#HS:def f():\n6#ZW:\n7#KV:\tz\n8#WS:a — b",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,6 @@\n a — b\n # c\n-# c\n+    return y\n+def f():\n \n \tz\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#WS:a — b\n3#YX:# c\n4#HQ:    return y\n5#HS:def f():\n6#ZW:\n7#KV:\tz\n8#WS:a — b",
 "parts": null
 },
 {
@@ -2047,10 +2047,10 @@
 ],
 "ok": true,
 "after": "multi\nline\n    return y\na — b\nx = 1\na — b\na — b\ndef f():\nx = 1\ndef f():\nx = 1\n# c\n  \nx = 1\nx = 1",
-"msg": "Edit complete: <FILE> (2 edits, 15 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+    return y\n+a — b\n x = 1\n a — b\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#HQ:    return y\n4#WS:a — b\n5#SW:x = 1\n6#WS:a — b\n7#WS:a — b",
+"msg": "Edit complete: <FILE> (2 edits, 15 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+    return y\n+a — b\n x = 1\n a — b\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#HQ:    return y\n4#WS:a — b\n5#SW:x = 1\n6#WS:a — b\n7#WS:a — b",
 "parts": [
 "replace 1#SW: replaced original lines 1–1 (1 → 2 line(s))\n- x = 1\n+ multi\n+ line",
-"prepend: inserted 3 line(s) after original line 0\n+     return y\n+     return y\n+ a — b\n\nEdit complete: <FILE> (2 edits, 15 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+    return y\n+a — b\n x = 1\n a — b\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#HQ:    return y\n4#WS:a — b\n5#SW:x = 1\n6#WS:a — b\n7#WS:a — b"
+"prepend: inserted 3 line(s) after original line 0\n+     return y\n+     return y\n+ a — b\n\nEdit complete: <FILE> (2 edits, 15 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+    return y\n+a — b\n x = 1\n a — b\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#HQ:    return y\n4#WS:a — b\n5#SW:x = 1\n6#WS:a — b\n7#WS:a — b"
 ]
 },
 {
@@ -2100,7 +2100,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -2176,7 +2176,7 @@
 ],
 "ok": true,
 "after": "x = 1\n",
-"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-def f():\n x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZM:",
+"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZM:",
 "parts": null
 },
 {
@@ -2234,7 +2234,7 @@
 ],
 "ok": true,
 "after": "# c\n\tz\n“q”\nx = 1\nx = 1\n“q”\n  \n  \nx = 1",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n x = 1\n x = 1\n+“q”\n+  \n+  \n x = 1\n\nUpdated region (edit_file refs below):\n3#ZJ:“q”\n4#SW:x = 1\n5#SW:x = 1\n6#ZJ:“q”\n7#ZS:  \n8#ZN:  \n9#SW:x = 1",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n x = 1\n x = 1\n+“q”\n+  \n+  \n x = 1\n\nUpdated region (`edit_file` refs below):\n3#ZJ:“q”\n4#SW:x = 1\n5#SW:x = 1\n6#ZJ:“q”\n7#ZS:  \n8#ZN:  \n9#SW:x = 1",
 "parts": null
 },
 {
@@ -2409,7 +2409,7 @@
 ],
 "ok": true,
 "after": "x = 1",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1 @@\n-x = 1\n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1 @@\n-x = 1\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1",
 "parts": null
 },
 {
@@ -2466,11 +2466,11 @@
 ],
 "ok": true,
 "after": "# c\n",
-"msg": "Edit complete: <FILE> (3 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-a — b\n # c\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:",
+"msg": "Edit complete: <FILE> (3 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-a — b\n # c\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:",
 "parts": [
 "delete 1#WS: deleted original lines 1–1 (1 line(s))\n- a — b",
 "prepend 3#ZQ: inserted 0 line(s) after original line 2",
-"append 2#YX: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-a — b\n # c\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:"
+"append 2#YX: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-a — b\n # c\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:"
 ]
 },
 {
@@ -2510,7 +2510,7 @@
 ],
 "ok": true,
 "after": "x = 1\n“q”\nx = 1\n\n\n# c\nx = 1\n# c\nmulti\nline\n  \n    return y\n\n\tz",
-"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,6 @@\n x = 1\n # c\n+multi\n+line\n   \n     return y\n\nUpdated region (edit_file refs below):\n6#YX:# c\n7#SW:x = 1\n8#YX:# c\n9#ZR:multi\n10#HW:line\n11#ZX:  \n12#HQ:    return y\n13#ZB:",
+"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,6 @@\n x = 1\n # c\n+multi\n+line\n   \n     return y\n\nUpdated region (`edit_file` refs below):\n6#YX:# c\n7#SW:x = 1\n8#YX:# c\n9#ZR:multi\n10#HW:line\n11#ZX:  \n12#HQ:    return y\n13#ZB:",
 "parts": null
 },
 {
@@ -2529,7 +2529,7 @@
 ],
 "ok": true,
 "after": "# c\n  \n\tz\nx = 1",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+# c\n+  \n+\tz\n x = 1\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:  \n3#KV:\tz\n4#SW:x = 1",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+# c\n+  \n+\tz\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:  \n3#KV:\tz\n4#SW:x = 1",
 "parts": null
 },
 {
@@ -2631,7 +2631,7 @@
 ],
 "ok": true,
 "after": "\n# c\n    return y\nx = 1",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -0,0 +1,4 @@\n+\n+# c\n+    return y\n+x = 1\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#YX:# c\n3#HQ:    return y\n4#SW:x = 1",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -0,0 +1,4 @@\n+\n+# c\n+    return y\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#YX:# c\n3#HQ:    return y\n4#SW:x = 1",
 "parts": null
 },
 {
@@ -2706,7 +2706,7 @@
 ],
 "ok": true,
 "after": "# c\nx = 1\n\tz\n\n“q”\n“q”\na — b\n\n# c\n# c\n“q”\ndef f():\n\tz\n“q”",
-"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n # c\n x = 1\n+\tz\n+\n+“q”\n “q”\n a — b\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#SW:x = 1\n3#KV:\tz\n4#ZV:\n5#ZJ:“q”\n6#ZJ:“q”\n7#WS:a — b\n8#ZN:",
+"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n # c\n x = 1\n+\tz\n+\n+“q”\n “q”\n a — b\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#SW:x = 1\n3#KV:\tz\n4#ZV:\n5#ZJ:“q”\n6#ZJ:“q”\n7#WS:a — b\n8#ZN:",
 "parts": null
 },
 {
@@ -2765,7 +2765,7 @@
 ],
 "ok": true,
 "after": "x = 1\n\tz\n\n“q”\n“q”\ndef f():\n# c\nx = 1\n    return y\n\tz\n# c",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n x = 1\n \tz\n+\n+“q”\n+“q”\n def f():\n # c\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#ZJ:“q”\n5#ZJ:“q”\n6#HS:def f():\n7#YX:# c\n8#SW:x = 1",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,7 @@\n x = 1\n \tz\n+\n+“q”\n+“q”\n def f():\n # c\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#ZJ:“q”\n5#ZJ:“q”\n6#HS:def f():\n7#YX:# c\n8#SW:x = 1",
 "parts": null
 },
 {
@@ -2779,7 +2779,7 @@
 ],
 "ok": true,
 "after": "\ndef f():\n\tz\n“q”\n\tz\n# c\n",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n def f():\n-\tz\n \tz\n “q”\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#KV:\tz\n4#ZJ:“q”\n5#KV:\tz\n6#YX:# c",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n def f():\n-\tz\n \tz\n “q”\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#KV:\tz\n4#ZJ:“q”\n5#KV:\tz\n6#YX:# c",
 "parts": null
 },
 {
@@ -3151,7 +3151,7 @@
 ],
 "ok": true,
 "after": "multi\nline\n# c\n  \n",
-"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n # c\n   \n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#YX:# c\n4#ZV:  \n5#ZR:",
+"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n # c\n   \n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#YX:# c\n4#ZV:  \n5#ZR:",
 "parts": null
 },
 {
@@ -3400,7 +3400,7 @@
 ],
 "ok": true,
 "after": "\n    return y\n  ",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \n-# c\n     return y\n   \n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HQ:    return y\n3#ZQ:  ",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \n-# c\n     return y\n   \n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HQ:    return y\n3#ZQ:  ",
 "parts": null
 },
 {
@@ -3467,10 +3467,10 @@
 ],
 "ok": true,
 "after": "x = 1\n\tz\n\n    return y\n\tz\nx = 1\nx = 1\nx = 1\na — b\nx = 1\n\tz\ndef f():\n“q”\n",
-"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-x = 1\n x = 1\n \tz\n@@ -7,5 +6,7 @@\n x = 1\n x = 1\n-  \n+x = 1\n+a — b\n+x = 1\n \tz\n def f():\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#HQ:    return y\n5#KV:\tz\n6#SW:x = 1\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b\n10#SW:x = 1\n11#KV:\tz\n12#HS:def f():\n13#ZJ:“q”",
+"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-x = 1\n x = 1\n \tz\n@@ -7,5 +6,7 @@\n x = 1\n x = 1\n-  \n+x = 1\n+a — b\n+x = 1\n \tz\n def f():\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#HQ:    return y\n5#KV:\tz\n6#SW:x = 1\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b\n10#SW:x = 1\n11#KV:\tz\n12#HS:def f():\n13#ZJ:“q”",
 "parts": [
 "replace 9#ZK: replaced original lines 9–9 (1 → 3 line(s))\n-   \n+ x = 1\n+ a — b\n+ x = 1",
-"delete 2#SW: deleted original lines 2–2 (1 line(s))\n- x = 1\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-x = 1\n x = 1\n \tz\n@@ -7,5 +6,7 @@\n x = 1\n x = 1\n-  \n+x = 1\n+a — b\n+x = 1\n \tz\n def f():\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#HQ:    return y\n5#KV:\tz\n6#SW:x = 1\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b\n10#SW:x = 1\n11#KV:\tz\n12#HS:def f():\n13#ZJ:“q”"
+"delete 2#SW: deleted original lines 2–2 (1 line(s))\n- x = 1\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-x = 1\n x = 1\n \tz\n@@ -7,5 +6,7 @@\n x = 1\n x = 1\n-  \n+x = 1\n+a — b\n+x = 1\n \tz\n def f():\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#KV:\tz\n3#ZQ:\n4#HQ:    return y\n5#KV:\tz\n6#SW:x = 1\n7#SW:x = 1\n8#SW:x = 1\n9#WS:a — b\n10#SW:x = 1\n11#KV:\tz\n12#HS:def f():\n13#ZJ:“q”"
 ]
 },
 {
@@ -3485,7 +3485,7 @@
 ],
 "ok": true,
 "after": "def f():\n\ndef f():\n“q”\n# c",
-"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,4 @@\n \n def f():\n-x = 1\n “q”\n # c\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#ZM:\n3#HS:def f():\n4#ZJ:“q”\n5#YX:# c",
+"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,4 @@\n \n def f():\n-x = 1\n “q”\n # c\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#ZM:\n3#HS:def f():\n4#ZJ:“q”\n5#YX:# c",
 "parts": null
 },
 {
@@ -3516,7 +3516,7 @@
 ],
 "ok": true,
 "after": "x = 1\n“q”\n\tz\n",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n+x = 1\n+“q”\n \tz\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#KV:\tz\n4#ZV:",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,3 @@\n+x = 1\n+“q”\n \tz\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#KV:\tz\n4#ZV:",
 "parts": null
 },
 {
@@ -3545,7 +3545,7 @@
 ],
 "ok": true,
 "after": "# c\n",
-"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n # c\n-x = 1\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:",
+"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n # c\n-x = 1\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:",
 "parts": null
 },
 {
@@ -3805,7 +3805,7 @@
 ],
 "ok": true,
 "after": "def f():\n\tz\n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,2 @@\n def f():\n \tz\n-a — b\n-\tz\n-“q”\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#KV:\tz\n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,2 @@\n def f():\n \tz\n-a — b\n-\tz\n-“q”\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#KV:\tz\n3#ZQ:",
 "parts": null
 },
 {
@@ -3848,10 +3848,10 @@
 ],
 "ok": true,
 "after": "\tz\nx = 1\n# c\ndef f():\n“q”\na — b\n    return y\n“q”\n    return y\na — b\n",
-"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,7 +2,9 @@\n x = 1\n # c\n+def f():\n+“q”\n+a — b\n     return y\n “q”\n     return y\n a — b\n-\tz\n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZJ:“q”\n6#WS:a — b\n7#HQ:    return y\n8#ZJ:“q”\n9#HQ:    return y\n10#WS:a — b\n11#ZX:",
+"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,7 +2,9 @@\n x = 1\n # c\n+def f():\n+“q”\n+a — b\n     return y\n “q”\n     return y\n a — b\n-\tz\n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZJ:“q”\n6#WS:a — b\n7#HQ:    return y\n8#ZJ:“q”\n9#HQ:    return y\n10#WS:a — b\n11#ZX:",
 "parts": [
 "delete 8#KV: deleted original lines 8–8 (1 line(s))\n- \tz",
-"append 3#YX: inserted 3 line(s) after original line 3\n+ def f():\n+ “q”\n+ a — b\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,7 +2,9 @@\n x = 1\n # c\n+def f():\n+“q”\n+a — b\n     return y\n “q”\n     return y\n a — b\n-\tz\n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZJ:“q”\n6#WS:a — b\n7#HQ:    return y\n8#ZJ:“q”\n9#HQ:    return y\n10#WS:a — b\n11#ZX:"
+"append 3#YX: inserted 3 line(s) after original line 3\n+ def f():\n+ “q”\n+ a — b\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,7 +2,9 @@\n x = 1\n # c\n+def f():\n+“q”\n+a — b\n     return y\n “q”\n     return y\n a — b\n-\tz\n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#SW:x = 1\n3#YX:# c\n4#HS:def f():\n5#ZJ:“q”\n6#WS:a — b\n7#HQ:    return y\n8#ZJ:“q”\n9#HQ:    return y\n10#WS:a — b\n11#ZX:"
 ]
 },
 {
@@ -3867,7 +3867,7 @@
 ],
 "ok": true,
 "after": "x = 1",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,10 +1 @@\n-x = 1\n-x = 1\n-\n-def f():\n-    return y\n-x = 1\n-    return y\n-    return y\n-def f():\n x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,10 +1 @@\n-x = 1\n-x = 1\n-\n-def f():\n-    return y\n-x = 1\n-    return y\n-    return y\n-def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1",
 "parts": null
 },
 {
@@ -3935,10 +3935,10 @@
 ],
 "ok": true,
 "after": "x = 1\n“q”",
-"msg": "Edit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,2 @@\n-\tz\n-  \n+x = 1\n+“q”\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZJ:“q”",
+"msg": "Edit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,2 @@\n-\tz\n-  \n+x = 1\n+“q”\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZJ:“q”",
 "parts": [
 "replace 3#ZQ: replaced original lines 3–3 (1 → 2 line(s))\n- \n+ x = 1\n+ “q”",
-"delete 1#KV..2#ZM: deleted original lines 1–2 (2 line(s))\n- \tz\n-   \n\nEdit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,2 @@\n-\tz\n-  \n+x = 1\n+“q”\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZJ:“q”"
+"delete 1#KV..2#ZM: deleted original lines 1–2 (2 line(s))\n- \tz\n-   \n\nEdit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,2 @@\n-\tz\n-  \n+x = 1\n+“q”\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZJ:“q”"
 ]
 },
 {
@@ -4117,7 +4117,7 @@
 ],
 "ok": true,
 "after": "a — b\n  \n# c\n  \nx = 1\ndef f():\n",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-# c\n a — b\n   \n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#ZM:  \n3#YX:# c\n4#ZV:  ",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-# c\n a — b\n   \n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#ZM:  \n3#YX:# c\n4#ZV:  ",
 "parts": null
 },
 {
@@ -4210,7 +4210,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -4260,12 +4260,12 @@
 ],
 "ok": true,
 "after": "\nx = 1\ndef f():\nmulti\nline\nx = 1\ndef f():\n    return y\nmulti\nline",
-"msg": "Edit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n-a — b\n \n-\tz\n+x = 1\n+def f():\n+multi\n+line\n x = 1\n def f():\n     return y\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#SW:x = 1\n3#HS:def f():\n4#ZR:multi\n5#HW:line\n6#SW:x = 1\n7#HS:def f():\n8#HQ:    return y\n9#ZR:multi\n10#HW:line",
+"msg": "Edit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n-a — b\n \n-\tz\n+x = 1\n+def f():\n+multi\n+line\n x = 1\n def f():\n     return y\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#SW:x = 1\n3#HS:def f():\n4#ZR:multi\n5#HW:line\n6#SW:x = 1\n7#HS:def f():\n8#HQ:    return y\n9#ZR:multi\n10#HW:line",
 "parts": [
 "append 2#ZM: inserted 2 line(s) after original line 2\n+ x = 1\n+ def f():",
 "replace 3#KV: replaced original lines 3–3 (1 → 2 line(s))\n- \tz\n+ multi\n+ line",
 "delete 1#WS: deleted original lines 1–1 (1 line(s))\n- a — b",
-"replace 7#ZS: replaced original lines 7–7 (1 → 2 line(s))\n- \n+ multi\n+ line\n\nEdit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n-a — b\n \n-\tz\n+x = 1\n+def f():\n+multi\n+line\n x = 1\n def f():\n     return y\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#SW:x = 1\n3#HS:def f():\n4#ZR:multi\n5#HW:line\n6#SW:x = 1\n7#HS:def f():\n8#HQ:    return y\n9#ZR:multi\n10#HW:line"
+"replace 7#ZS: replaced original lines 7–7 (1 → 2 line(s))\n- \n+ multi\n+ line\n\nEdit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,10 @@\n-a — b\n \n-\tz\n+x = 1\n+def f():\n+multi\n+line\n x = 1\n def f():\n     return y\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#SW:x = 1\n3#HS:def f():\n4#ZR:multi\n5#HW:line\n6#SW:x = 1\n7#HS:def f():\n8#HQ:    return y\n9#ZR:multi\n10#HW:line"
 ]
 },
 {
@@ -4283,7 +4283,7 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1\n\tz\ndef f():\n\ndef f():\n\n# c",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,5 @@\n def f():\n \n+def f():\n+\n # c\n\nUpdated region (edit_file refs below):\n3#KV:\tz\n4#HS:def f():\n5#ZR:\n6#HS:def f():\n7#ZS:\n8#YX:# c",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,5 @@\n def f():\n \n+def f():\n+\n # c\n\nUpdated region (`edit_file` refs below):\n3#KV:\tz\n4#HS:def f():\n5#ZR:\n6#HS:def f():\n7#ZS:\n8#YX:# c",
 "parts": null
 },
 {
@@ -4329,7 +4329,7 @@
 ],
 "ok": true,
 "after": "\n\n    return y\n“q”\n",
-"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,3 +3,2 @@\n     return y\n “q”\n-x = 1\n\nUpdated region (edit_file refs below):\n2#ZM:\n3#HQ:    return y\n4#ZJ:“q”\n5#ZR:",
+"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,3 +3,2 @@\n     return y\n “q”\n-x = 1\n\nUpdated region (`edit_file` refs below):\n2#ZM:\n3#HQ:    return y\n4#ZJ:“q”\n5#ZR:",
 "parts": null
 },
 {
@@ -4381,7 +4381,7 @@
 ],
 "ok": true,
 "after": "x = 1\n\tz\n\na — b\n“q”\n\tz\na — b\na — b\n\tz\n\n",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,4 +6,5 @@\n \tz\n a — b\n+a — b\n \tz\n \n\nUpdated region (edit_file refs below):\n5#ZJ:“q”\n6#KV:\tz\n7#WS:a — b\n8#WS:a — b\n9#KV:\tz\n10#ZT:\n11#ZX:",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,4 +6,5 @@\n \tz\n a — b\n+a — b\n \tz\n \n\nUpdated region (`edit_file` refs below):\n5#ZJ:“q”\n6#KV:\tz\n7#WS:a — b\n8#WS:a — b\n9#KV:\tz\n10#ZT:\n11#ZX:",
 "parts": null
 },
 {
@@ -4424,7 +4424,7 @@
 ],
 "ok": true,
 "after": "\tz\nx = 1\ndef f():\n\tz\ndef f():\n  \n  \n  \n\nx = 1\n",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n \tz\n-a — b\n def f():\n   \n\nUpdated region (edit_file refs below):\n2#SW:x = 1\n3#HS:def f():\n4#KV:\tz\n5#HS:def f():\n6#ZW:  \n7#ZS:  \n8#ZN:  ",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n def f():\n \tz\n-a — b\n def f():\n   \n\nUpdated region (`edit_file` refs below):\n2#SW:x = 1\n3#HS:def f():\n4#KV:\tz\n5#HS:def f():\n6#ZW:  \n7#ZS:  \n8#ZN:  ",
 "parts": null
 },
 {
@@ -4509,10 +4509,10 @@
 ],
 "ok": true,
 "after": "    return y\n“q”\n“q”\na — b\na — b\n\tz\ndef f():\n\n  ",
-"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n a — b\n a — b\n+\tz\n def f():\n+\n+  \n\nUpdated region (edit_file refs below):\n3#ZJ:“q”\n4#WS:a — b\n5#WS:a — b\n6#KV:\tz\n7#HS:def f():\n8#ZN:\n9#ZK:  ",
+"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n a — b\n a — b\n+\tz\n def f():\n+\n+  \n\nUpdated region (`edit_file` refs below):\n3#ZJ:“q”\n4#WS:a — b\n5#WS:a — b\n6#KV:\tz\n7#HS:def f():\n8#ZN:\n9#ZK:  ",
 "parts": [
 "append: inserted 1 line(s) after original line 7\n+   ",
-"append 5#WS: inserted 1 line(s) after original line 5\n+ \tz\n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n a — b\n a — b\n+\tz\n def f():\n+\n+  \n\nUpdated region (edit_file refs below):\n3#ZJ:“q”\n4#WS:a — b\n5#WS:a — b\n6#KV:\tz\n7#HS:def f():\n8#ZN:\n9#ZK:  "
+"append 5#WS: inserted 1 line(s) after original line 5\n+ \tz\n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,6 @@\n a — b\n a — b\n+\tz\n def f():\n+\n+  \n\nUpdated region (`edit_file` refs below):\n3#ZJ:“q”\n4#WS:a — b\n5#WS:a — b\n6#KV:\tz\n7#HS:def f():\n8#ZN:\n9#ZK:  "
 ]
 },
 {
@@ -4568,10 +4568,10 @@
 ],
 "ok": true,
 "after": "\tz\n    return y\n# c\nx = 1\n\n  \n\tz\n    return y\n  \n# c",
-"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,7 +5,6 @@\n \n   \n-# c\n \tz\n     return y\n   \n-# c\n+# c\n\nUpdated region (edit_file refs below):\n4#SW:x = 1\n5#ZR:\n6#ZW:  \n7#KV:\tz\n8#HQ:    return y\n9#ZK:  \n10#YX:# c",
+"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,7 +5,6 @@\n \n   \n-# c\n \tz\n     return y\n   \n-# c\n+# c\n\nUpdated region (`edit_file` refs below):\n4#SW:x = 1\n5#ZR:\n6#ZW:  \n7#KV:\tz\n8#HQ:    return y\n9#ZK:  \n10#YX:# c",
 "parts": [
 "delete 7#YX: deleted original lines 7–7 (1 line(s))\n- # c",
-"delete 12#ZJ: deleted original lines 12–12 (1 line(s))\n- \n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,7 +5,6 @@\n \n   \n-# c\n \tz\n     return y\n   \n-# c\n+# c\n\nUpdated region (edit_file refs below):\n4#SW:x = 1\n5#ZR:\n6#ZW:  \n7#KV:\tz\n8#HQ:    return y\n9#ZK:  \n10#YX:# c"
+"delete 12#ZJ: deleted original lines 12–12 (1 line(s))\n- \n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,7 +5,6 @@\n \n   \n-# c\n \tz\n     return y\n   \n-# c\n+# c\n\nUpdated region (`edit_file` refs below):\n4#SW:x = 1\n5#ZR:\n6#ZW:  \n7#KV:\tz\n8#HQ:    return y\n9#ZK:  \n10#YX:# c"
 ]
 },
 {
@@ -4612,7 +4612,7 @@
 ],
 "ok": true,
 "after": "a — b\n    return y\n“q”\nx = 1\n“q”\n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,2 @@\n-    return y\n-x = 1\n-x = 1\n-x = 1\n-x = 1\n-\n-    return y\n a — b\n     return y\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#HQ:    return y\n3#ZJ:“q”\n4#SW:x = 1",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,9 +1,2 @@\n-    return y\n-x = 1\n-x = 1\n-x = 1\n-x = 1\n-\n-    return y\n a — b\n     return y\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#HQ:    return y\n3#ZJ:“q”\n4#SW:x = 1",
 "parts": null
 },
 {
@@ -4690,10 +4690,10 @@
 ],
 "ok": true,
 "after": "# c\n  \nx = 1\n\n    return y",
-"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n # c\n+  \n x = 1\n \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:  \n3#SW:x = 1\n4#ZV:\n5#HQ:    return y",
+"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n # c\n+  \n x = 1\n \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:  \n3#SW:x = 1\n4#ZV:\n5#HQ:    return y",
 "parts": [
 "prepend 2#SW: inserted 1 line(s) after original line 1\n+   ",
-"prepend 2#SW: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n # c\n+  \n x = 1\n \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:  \n3#SW:x = 1\n4#ZV:\n5#HQ:    return y"
+"prepend 2#SW: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n # c\n+  \n x = 1\n \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:  \n3#SW:x = 1\n4#ZV:\n5#HQ:    return y"
 ]
 },
 {
@@ -4748,7 +4748,7 @@
 ],
 "ok": true,
 "after": "\tz\n    return y\n\tz\n    return y\ndef f():\n\tz\n# c\n\nx = 1\n\tz\n“q”\n    return y\nx = 1\n# c",
-"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,5 @@\n \tz\n “q”\n+    return y\n+x = 1\n # c\n\nUpdated region (edit_file refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZJ:“q”\n12#HQ:    return y\n13#SW:x = 1\n14#YX:# c",
+"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,5 @@\n \tz\n “q”\n+    return y\n+x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n9#SW:x = 1\n10#KV:\tz\n11#ZJ:“q”\n12#HQ:    return y\n13#SW:x = 1\n14#YX:# c",
 "parts": null
 },
 {
@@ -4782,11 +4782,11 @@
 ],
 "ok": true,
 "after": "a — b\nx = 1\ndef f():\n\n\n\na — b\nx = 1\n“q”\n\n\n# c\nx = 1",
-"msg": "Edit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,6 @@\n x = 1\n “q”\n-\tz\n+\n+\n+# c\n+x = 1\n\nUpdated region (edit_file refs below):\n7#WS:a — b\n8#SW:x = 1\n9#ZJ:“q”\n10#ZT:\n11#ZX:\n12#YX:# c\n13#SW:x = 1",
+"msg": "Edit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,6 @@\n x = 1\n “q”\n-\tz\n+\n+\n+# c\n+x = 1\n\nUpdated region (`edit_file` refs below):\n7#WS:a — b\n8#SW:x = 1\n9#ZJ:“q”\n10#ZT:\n11#ZX:\n12#YX:# c\n13#SW:x = 1",
 "parts": [
 "append 11#ZX: inserted 3 line(s) after original line 11\n+ \n+ # c\n+ x = 1",
 "delete 10#KV: deleted original lines 10–10 (1 line(s))\n- \tz",
-"append 10#KV: inserted 0 line(s) after original line 10\n\nEdit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,6 @@\n x = 1\n “q”\n-\tz\n+\n+\n+# c\n+x = 1\n\nUpdated region (edit_file refs below):\n7#WS:a — b\n8#SW:x = 1\n9#ZJ:“q”\n10#ZT:\n11#ZX:\n12#YX:# c\n13#SW:x = 1"
+"append 10#KV: inserted 0 line(s) after original line 10\n\nEdit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,6 @@\n x = 1\n “q”\n-\tz\n+\n+\n+# c\n+x = 1\n\nUpdated region (`edit_file` refs below):\n7#WS:a — b\n8#SW:x = 1\n9#ZJ:“q”\n10#ZT:\n11#ZX:\n12#YX:# c\n13#SW:x = 1"
 ]
 },
 {
@@ -4829,7 +4829,7 @@
 ],
 "ok": true,
 "after": "# c\nx = 1\nmulti\nline\nx = 1\n“q”\n",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,6 @@\n # c\n x = 1\n-def f():\n+multi\n+line\n x = 1\n “q”\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#SW:x = 1\n3#ZR:multi\n4#HW:line\n5#SW:x = 1\n6#ZJ:“q”\n7#ZS:",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,6 @@\n # c\n x = 1\n-def f():\n+multi\n+line\n x = 1\n “q”\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#SW:x = 1\n3#ZR:multi\n4#HW:line\n5#SW:x = 1\n6#ZJ:“q”\n7#ZS:",
 "parts": null
 },
 {
@@ -4907,7 +4907,7 @@
 ],
 "ok": true,
 "after": "x = 1\na — b\n\n“q”\na — b\n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,2 @@\n “q”\n a — b\n-“q”\n\nUpdated region (edit_file refs below):\n3#ZQ:\n4#ZJ:“q”\n5#WS:a — b\n6#ZW:",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,2 @@\n “q”\n a — b\n-“q”\n\nUpdated region (`edit_file` refs below):\n3#ZQ:\n4#ZJ:“q”\n5#WS:a — b\n6#ZW:",
 "parts": null
 },
 {
@@ -5169,10 +5169,10 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\nx = 1\ndef f():\n“q”\nx = 1\na — b\nx = 1\n# c\n\tz\n  \n# c\n  \n  ",
-"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,7 @@\n “q”\n x = 1\n+a — b\n+x = 1\n+# c\n \tz\n   \n\nUpdated region (edit_file refs below):\n4#HS:def f():\n5#ZJ:“q”\n6#SW:x = 1\n7#WS:a — b\n8#SW:x = 1\n9#YX:# c\n10#KV:\tz\n11#ZX:  \n12#YX:# c",
+"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,7 @@\n “q”\n x = 1\n+a — b\n+x = 1\n+# c\n \tz\n   \n\nUpdated region (`edit_file` refs below):\n4#HS:def f():\n5#ZJ:“q”\n6#SW:x = 1\n7#WS:a — b\n8#SW:x = 1\n9#YX:# c\n10#KV:\tz\n11#ZX:  \n12#YX:# c",
 "parts": [
 "prepend: inserted 0 line(s) after original line 0",
-"append 6#SW: inserted 3 line(s) after original line 6\n+ a — b\n+ x = 1\n+ # c\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,7 @@\n “q”\n x = 1\n+a — b\n+x = 1\n+# c\n \tz\n   \n\nUpdated region (edit_file refs below):\n4#HS:def f():\n5#ZJ:“q”\n6#SW:x = 1\n7#WS:a — b\n8#SW:x = 1\n9#YX:# c\n10#KV:\tz\n11#ZX:  \n12#YX:# c"
+"append 6#SW: inserted 3 line(s) after original line 6\n+ a — b\n+ x = 1\n+ # c\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,7 @@\n “q”\n x = 1\n+a — b\n+x = 1\n+# c\n \tz\n   \n\nUpdated region (`edit_file` refs below):\n4#HS:def f():\n5#ZJ:“q”\n6#SW:x = 1\n7#WS:a — b\n8#SW:x = 1\n9#YX:# c\n10#KV:\tz\n11#ZX:  \n12#YX:# c"
 ]
 },
 {
@@ -5290,7 +5290,7 @@
 ],
 "ok": true,
 "after": "\tz\na — b\n“q”\ndef f():\n# c\nx = 1\nx = 1\n\tz\n    return y\n",
-"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n “q”\n def f():\n-    return y\n # c\n x = 1\n\nUpdated region (edit_file refs below):\n2#WS:a — b\n3#ZJ:“q”\n4#HS:def f():\n5#YX:# c\n6#SW:x = 1\n7#SW:x = 1\n8#KV:\tz",
+"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,4 @@\n “q”\n def f():\n-    return y\n # c\n x = 1\n\nUpdated region (`edit_file` refs below):\n2#WS:a — b\n3#ZJ:“q”\n4#HS:def f():\n5#YX:# c\n6#SW:x = 1\n7#SW:x = 1\n8#KV:\tz",
 "parts": null
 },
 {
@@ -5307,7 +5307,7 @@
 ],
 "ok": true,
 "after": "  \nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\ndef f():\n",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,4 @@\n x = 1\n x = 1\n+x = 1\n def f():\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#SW:x = 1\n3#SW:x = 1\n4#SW:x = 1\n5#SW:x = 1",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -4,3 +4,4 @@\n x = 1\n x = 1\n+x = 1\n def f():\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#SW:x = 1\n3#SW:x = 1\n4#SW:x = 1\n5#SW:x = 1",
 "parts": null
 },
 {
@@ -5420,7 +5420,7 @@
 ],
 "ok": true,
 "after": "def f():\n\tz\n  \ndef f():\n\n\nx = 1",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,6 @@\n \tz\n   \n-def f():\n+def f():\n+\n+\n+x = 1\n\nUpdated region (edit_file refs below):\n2#KV:\tz\n3#ZQ:  \n4#HS:def f():\n5#ZR:\n6#ZW:\n7#SW:x = 1",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,6 @@\n \tz\n   \n-def f():\n+def f():\n+\n+\n+x = 1\n\nUpdated region (`edit_file` refs below):\n2#KV:\tz\n3#ZQ:  \n4#HS:def f():\n5#ZR:\n6#ZW:\n7#SW:x = 1",
 "parts": null
 },
 {
@@ -5522,7 +5522,7 @@
 ],
 "ok": true,
 "after": "# c\n",
-"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-def f():\n # c\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#ZM:",
+"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1 @@\n-def f():\n # c\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#ZM:",
 "parts": null
 },
 {
@@ -5542,10 +5542,10 @@
 ],
 "ok": true,
 "after": "x = 1\n“q”\ndef f():\na — b",
-"msg": "Edit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n-a — b\n x = 1\n “q”\n def f():\n-a — b\n+a — b\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#HS:def f():\n4#WS:a — b",
+"msg": "Edit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n-a — b\n x = 1\n “q”\n def f():\n-a — b\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#HS:def f():\n4#WS:a — b",
 "parts": [
 "replace 1#WS: deleted original lines 1–1 (1 line(s))\n- a — b",
-"replace 6#ZW: deleted original lines 6–6 (1 line(s))\n- \n\nEdit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n-a — b\n x = 1\n “q”\n def f():\n-a — b\n+a — b\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#HS:def f():\n4#WS:a — b"
+"replace 6#ZW: deleted original lines 6–6 (1 line(s))\n- \n\nEdit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n-a — b\n x = 1\n “q”\n def f():\n-a — b\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZJ:“q”\n3#HS:def f():\n4#WS:a — b"
 ]
 },
 {
@@ -5583,7 +5583,7 @@
 ],
 "ok": true,
 "after": "“q”\n“q”\n“q”\ndef f():\na — b\n\nmulti\nline\nx = 1\n",
-"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,3 +5,5 @@\n a — b\n \n+multi\n+line\n x = 1\n\nUpdated region (edit_file refs below):\n4#HS:def f():\n5#WS:a — b\n6#ZW:\n7#ZR:multi\n8#HW:line\n9#SW:x = 1\n10#ZT:",
+"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,3 +5,5 @@\n a — b\n \n+multi\n+line\n x = 1\n\nUpdated region (`edit_file` refs below):\n4#HS:def f():\n5#WS:a — b\n6#ZW:\n7#ZR:multi\n8#HW:line\n9#SW:x = 1\n10#ZT:",
 "parts": null
 },
 {
@@ -5658,10 +5658,10 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1\n“q”\na — b\n“q”\nx = 1\n\n\n\tz\n\n“q”\n\ndef f():\ndef f():",
-"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n x = 1\n x = 1\n+“q”\n+a — b\n “q”\n x = 1\n@@ -8,2 +10,5 @@\n \n “q”\n+\n+def f():\n+def f():\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#SW:x = 1\n3#ZJ:“q”\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:\n\n10#ZT:\n11#ZJ:“q”\n12#ZJ:\n13#HS:def f():\n14#HS:def f():",
+"msg": "Edit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n x = 1\n x = 1\n+“q”\n+a — b\n “q”\n x = 1\n@@ -8,2 +10,5 @@\n \n “q”\n+\n+def f():\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#SW:x = 1\n3#ZJ:“q”\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:\n\n10#ZT:\n11#ZJ:“q”\n12#ZJ:\n13#HS:def f():\n14#HS:def f():",
 "parts": [
 "append: inserted 2 line(s) after original line 10\n+ def f():\n+ def f():",
-"prepend 4#SW: inserted 2 line(s) after original line 3\n+ a — b\n+ “q”\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n x = 1\n x = 1\n+“q”\n+a — b\n “q”\n x = 1\n@@ -8,2 +10,5 @@\n \n “q”\n+\n+def f():\n+def f():\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#SW:x = 1\n3#ZJ:“q”\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:\n\n10#ZT:\n11#ZJ:“q”\n12#ZJ:\n13#HS:def f():\n14#HS:def f():"
+"prepend 4#SW: inserted 2 line(s) after original line 3\n+ a — b\n+ “q”\n\nEdit complete: <FILE> (2 edits, 14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n x = 1\n x = 1\n+“q”\n+a — b\n “q”\n x = 1\n@@ -8,2 +10,5 @@\n \n “q”\n+\n+def f():\n+def f():\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#SW:x = 1\n3#ZJ:“q”\n4#WS:a — b\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:\n\n10#ZT:\n11#ZJ:“q”\n12#ZJ:\n13#HS:def f():\n14#HS:def f():"
 ]
 },
 {
@@ -5678,7 +5678,7 @@
 ],
 "ok": true,
 "after": "  \n# c\na — b\ndef f():\n\nx = 1",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,5 @@\n # c\n a — b\n+def f():\n \n x = 1\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#YX:# c\n3#WS:a — b\n4#HS:def f():\n5#ZR:\n6#SW:x = 1",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,5 @@\n # c\n a — b\n+def f():\n \n x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#YX:# c\n3#WS:a — b\n4#HS:def f():\n5#ZR:\n6#SW:x = 1",
 "parts": null
 },
 {
@@ -5722,11 +5722,11 @@
 ],
 "ok": true,
 "after": "multi\nline\nmulti\nline\n“q”\nx = 1\nx = 1\n  \na — b\n\ndef f():\n  \na — b\nx = 1\n\tz\n# c\n\tz\nx = 1\n",
-"msg": "Edit complete: <FILE> (3 edits, 19 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+multi\n+line\n “q”\n x = 1\n@@ -10,2 +14,5 @@\n x = 1\n \tz\n+# c\n+\tz\n+x = 1\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#ZR:multi\n4#HW:line\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1\n\n13#WS:a — b\n14#SW:x = 1\n15#KV:\tz\n16#YX:# c\n17#KV:\tz\n18#SW:x = 1\n19#PQ:",
+"msg": "Edit complete: <FILE> (3 edits, 19 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+multi\n+line\n “q”\n x = 1\n@@ -10,2 +14,5 @@\n x = 1\n \tz\n+# c\n+\tz\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#ZR:multi\n4#HW:line\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1\n\n13#WS:a — b\n14#SW:x = 1\n15#KV:\tz\n16#YX:# c\n17#KV:\tz\n18#SW:x = 1\n19#PQ:",
 "parts": [
 "append 11#KV: inserted 3 line(s) after original line 11\n+ # c\n+ \tz\n+ x = 1",
 "prepend 1#ZJ: inserted 2 line(s) after original line 0\n+ multi\n+ line",
-"prepend: inserted 2 line(s) after original line 0\n+ multi\n+ line\n\nEdit complete: <FILE> (3 edits, 19 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+multi\n+line\n “q”\n x = 1\n@@ -10,2 +14,5 @@\n x = 1\n \tz\n+# c\n+\tz\n+x = 1\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#ZR:multi\n4#HW:line\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1\n\n13#WS:a — b\n14#SW:x = 1\n15#KV:\tz\n16#YX:# c\n17#KV:\tz\n18#SW:x = 1\n19#PQ:"
+"prepend: inserted 2 line(s) after original line 0\n+ multi\n+ line\n\nEdit complete: <FILE> (3 edits, 19 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,6 @@\n+multi\n+line\n+multi\n+line\n “q”\n x = 1\n@@ -10,2 +14,5 @@\n x = 1\n \tz\n+# c\n+\tz\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#ZR:multi\n4#HW:line\n5#ZJ:“q”\n6#SW:x = 1\n7#SW:x = 1\n\n13#WS:a — b\n14#SW:x = 1\n15#KV:\tz\n16#YX:# c\n17#KV:\tz\n18#SW:x = 1\n19#PQ:"
 ]
 },
 {
@@ -5752,10 +5752,10 @@
 ],
 "ok": true,
 "after": "# c\na — b\nx = 1\nx = 1\na — b\n  \ndef f():\n\n  \n",
-"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,9 @@\n # c\n a — b\n+x = 1\n x = 1\n a — b\n   \n def f():\n+\n   \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#WS:a — b\n3#SW:x = 1\n4#SW:x = 1\n5#WS:a — b\n6#ZW:  \n7#HS:def f():\n8#ZN:\n9#ZK:  \n10#ZT:",
+"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,9 @@\n # c\n a — b\n+x = 1\n x = 1\n a — b\n   \n def f():\n+\n   \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#WS:a — b\n3#SW:x = 1\n4#SW:x = 1\n5#WS:a — b\n6#ZW:  \n7#HS:def f():\n8#ZN:\n9#ZK:  \n10#ZT:",
 "parts": [
 "prepend 3#SW: inserted 1 line(s) after original line 2\n+ x = 1",
-"replace 6#HS:def f():: replaced original lines 6–6 (1 → 2 line(s))\n- def f():\n+ def f():\n+ \n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,9 @@\n # c\n a — b\n+x = 1\n x = 1\n a — b\n   \n def f():\n+\n   \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#WS:a — b\n3#SW:x = 1\n4#SW:x = 1\n5#WS:a — b\n6#ZW:  \n7#HS:def f():\n8#ZN:\n9#ZK:  \n10#ZT:"
+"replace 6#HS:def f():: replaced original lines 6–6 (1 → 2 line(s))\n- def f():\n+ def f():\n+ \n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,9 @@\n # c\n a — b\n+x = 1\n x = 1\n a — b\n   \n def f():\n+\n   \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#WS:a — b\n3#SW:x = 1\n4#SW:x = 1\n5#WS:a — b\n6#ZW:  \n7#HS:def f():\n8#ZN:\n9#ZK:  \n10#ZT:"
 ]
 },
 {
@@ -5872,11 +5872,11 @@
 ],
 "ok": true,
 "after": "    return y\n  \n    return y\nx = 1\nx = 1\ndef f():",
-"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,3 @@\n-“q”\n     return y\n-\n   \n     return y\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#ZM:  \n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1",
+"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,3 @@\n-“q”\n     return y\n-\n   \n     return y\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#ZM:  \n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1",
 "parts": [
 "append 5#HQ: inserted 0 line(s) after original line 5",
 "delete 1#ZJ: deleted original lines 1–1 (1 line(s))\n- “q”",
-"replace 3#ZQ: deleted original lines 3–3 (1 line(s))\n- \n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,3 @@\n-“q”\n     return y\n-\n   \n     return y\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#ZM:  \n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1"
+"replace 3#ZQ: deleted original lines 3–3 (1 line(s))\n- \n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,3 @@\n-“q”\n     return y\n-\n   \n     return y\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#ZM:  \n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1"
 ]
 },
 {
@@ -5895,7 +5895,7 @@
 ],
 "ok": true,
 "after": "def f():\n# c",
-"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-def f():\n def f():\n # c\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#YX:# c",
+"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-def f():\n def f():\n # c\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#YX:# c",
 "parts": null
 },
 {
@@ -5914,7 +5914,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -5932,7 +5932,7 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\n  \n\n\n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n def f():\n x = 1\n+  \n \n+\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#SW:x = 1\n3#ZQ:  \n4#ZV:\n5#ZR:\n6#ZW:",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n def f():\n x = 1\n+  \n \n+\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#SW:x = 1\n3#ZQ:  \n4#ZV:\n5#ZR:\n6#ZW:",
 "parts": null
 },
 {
@@ -5961,7 +5961,7 @@
 ],
 "ok": true,
 "after": "def f():\n  \n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n def f():\n   \n-# c\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#ZM:  \n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n def f():\n   \n-# c\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#ZM:  \n3#ZQ:",
 "parts": null
 },
 {
@@ -6012,10 +6012,10 @@
 ],
 "ok": true,
 "after": "“q”\n\n    return y\nx = 1\n“q”\na — b",
-"msg": "Edit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n “q”\n \n-    return y\n+    return y\n+x = 1\n+“q”\n+a — b\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#ZM:\n3#HQ:    return y\n4#SW:x = 1\n5#ZJ:“q”\n6#WS:a — b",
+"msg": "Edit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n “q”\n \n-    return y\n+    return y\n+x = 1\n+“q”\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#ZM:\n3#HQ:    return y\n4#SW:x = 1\n5#ZJ:“q”\n6#WS:a — b",
 "parts": [
 "prepend 1#ZJ: inserted 0 line(s) after original line 0",
-"append: inserted 3 line(s) after original line 3\n+ x = 1\n+ “q”\n+ a — b\n\nEdit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n “q”\n \n-    return y\n+    return y\n+x = 1\n+“q”\n+a — b\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#ZM:\n3#HQ:    return y\n4#SW:x = 1\n5#ZJ:“q”\n6#WS:a — b"
+"append: inserted 3 line(s) after original line 3\n+ x = 1\n+ “q”\n+ a — b\n\nEdit complete: <FILE> (2 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,6 @@\n “q”\n \n-    return y\n+    return y\n+x = 1\n+“q”\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#ZM:\n3#HQ:    return y\n4#SW:x = 1\n5#ZJ:“q”\n6#WS:a — b"
 ]
 },
 {
@@ -6091,7 +6091,7 @@
 ],
 "ok": true,
 "after": "a — b\n“q”\n“q”\nx = 1\n    return y\na — b\nx = 1\n\tz\na — b",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,4 @@\n “q”\n “q”\n-    return y\n x = 1\n     return y\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#ZJ:“q”\n3#ZJ:“q”\n4#SW:x = 1\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,4 @@\n “q”\n “q”\n-    return y\n x = 1\n     return y\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#ZJ:“q”\n3#ZJ:“q”\n4#SW:x = 1\n5#HQ:    return y\n6#WS:a — b\n7#SW:x = 1",
 "parts": null
 },
 {
@@ -6179,7 +6179,7 @@
 ],
 "ok": true,
 "after": "“q”\n“q”\n  \n“q”\n  \n  \n“q”\n",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,5 @@\n   \n “q”\n+  \n+  \n+“q”\n\nUpdated region (edit_file refs below):\n2#ZJ:“q”\n3#ZQ:  \n4#ZJ:“q”\n5#ZR:  \n6#ZW:  \n7#ZJ:“q”\n8#ZN:",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,5 @@\n   \n “q”\n+  \n+  \n+“q”\n\nUpdated region (`edit_file` refs below):\n2#ZJ:“q”\n3#ZQ:  \n4#ZJ:“q”\n5#ZR:  \n6#ZW:  \n7#ZJ:“q”\n8#ZN:",
 "parts": null
 },
 {
@@ -6209,11 +6209,11 @@
 ],
 "ok": true,
 "after": "x = 1\nmulti\nline\n\na — b\n\nx = 1",
-"msg": "Edit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n x = 1\n+multi\n+line\n+\n a — b\n+\n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZV:\n5#WS:a — b\n6#ZW:\n7#SW:x = 1",
+"msg": "Edit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n x = 1\n+multi\n+line\n+\n a — b\n+\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZV:\n5#WS:a — b\n6#ZW:\n7#SW:x = 1",
 "parts": [
 "append 3#ZQ: inserted 3 line(s) after original line 3\n+ a — b\n+ \n+ x = 1",
 "replace 2#WS:a — b: replaced original lines 2–2 (1 → 2 line(s))\n- a — b\n+ multi\n+ line",
-"append 1#SW: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n x = 1\n+multi\n+line\n+\n a — b\n+\n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZV:\n5#WS:a — b\n6#ZW:\n7#SW:x = 1"
+"append 1#SW: inserted 0 line(s) after original line 1\n\nEdit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n x = 1\n+multi\n+line\n+\n a — b\n+\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZV:\n5#WS:a — b\n6#ZW:\n7#SW:x = 1"
 ]
 },
 {
@@ -6228,7 +6228,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (0 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-  \n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (0 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-  \n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -6245,7 +6245,7 @@
 ],
 "ok": true,
 "after": "x = 1\n“q”\nx = 1\n# c\n# c\n\n    return y\n    return y\nx = 1\n\tz",
-"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,5 @@\n \n     return y\n-\tz\n+    return y\n x = 1\n \tz\n\nUpdated region (edit_file refs below):\n5#YX:# c\n6#ZW:\n7#HQ:    return y\n8#HQ:    return y\n9#SW:x = 1\n10#KV:\tz",
+"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,5 @@\n \n     return y\n-\tz\n+    return y\n x = 1\n \tz\n\nUpdated region (`edit_file` refs below):\n5#YX:# c\n6#ZW:\n7#HQ:    return y\n8#HQ:    return y\n9#SW:x = 1\n10#KV:\tz",
 "parts": null
 },
 {
@@ -6507,11 +6507,11 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n  \n  \n  \nx = 1\n\tz\n\n\tz\ndef f():\na — b",
-"msg": "Edit complete: <FILE> (3 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n     return y\n x = 1\n+  \n+  \n   \n x = 1\n@@ -6,3 +8,4 @@\n \n \tz\n-def f():\n+def f():\n+a — b\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZQ:  \n4#ZV:  \n5#ZR:  \n6#SW:x = 1\n7#KV:\tz\n8#ZN:\n9#KV:\tz\n10#HS:def f():\n11#WS:a — b",
+"msg": "Edit complete: <FILE> (3 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n     return y\n x = 1\n+  \n+  \n   \n x = 1\n@@ -6,3 +8,4 @@\n \n \tz\n-def f():\n+def f():\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZQ:  \n4#ZV:  \n5#ZR:  \n6#SW:x = 1\n7#KV:\tz\n8#ZN:\n9#KV:\tz\n10#HS:def f():\n11#WS:a — b",
 "parts": [
 "prepend 4#SW: inserted 2 line(s) after original line 3\n+   \n+   ",
 "append: inserted 1 line(s) after original line 8\n+ a — b",
-"prepend 3#ZQ:  : inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n     return y\n x = 1\n+  \n+  \n   \n x = 1\n@@ -6,3 +8,4 @@\n \n \tz\n-def f():\n+def f():\n+a — b\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZQ:  \n4#ZV:  \n5#ZR:  \n6#SW:x = 1\n7#KV:\tz\n8#ZN:\n9#KV:\tz\n10#HS:def f():\n11#WS:a — b"
+"prepend 3#ZQ:  : inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (3 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,6 @@\n     return y\n x = 1\n+  \n+  \n   \n x = 1\n@@ -6,3 +8,4 @@\n \n \tz\n-def f():\n+def f():\n+a — b\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZQ:  \n4#ZV:  \n5#ZR:  \n6#SW:x = 1\n7#KV:\tz\n8#ZN:\n9#KV:\tz\n10#HS:def f():\n11#WS:a — b"
 ]
 },
 {
@@ -6535,10 +6535,10 @@
 ],
 "ok": true,
 "after": "\ndef f():\n# c\n  \n    return y\n  \na — b\n\n“q”\na — b",
-"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n def f():\n # c\n+  \n+    return y\n   \n a — b\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#YX:# c\n4#ZV:  \n5#HQ:    return y\n6#ZW:  \n7#WS:a — b\n8#ZN:",
+"msg": "Edit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n def f():\n # c\n+  \n+    return y\n   \n a — b\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#YX:# c\n4#ZV:  \n5#HQ:    return y\n6#ZW:  \n7#WS:a — b\n8#ZN:",
 "parts": [
 "prepend 4#ZV: inserted 2 line(s) after original line 3\n+   \n+     return y",
-"prepend 1#ZP: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n def f():\n # c\n+  \n+    return y\n   \n a — b\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#YX:# c\n4#ZV:  \n5#HQ:    return y\n6#ZW:  \n7#WS:a — b\n8#ZN:"
+"prepend 1#ZP: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (2 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,4 +2,6 @@\n def f():\n # c\n+  \n+    return y\n   \n a — b\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#YX:# c\n4#ZV:  \n5#HQ:    return y\n6#ZW:  \n7#WS:a — b\n8#ZN:"
 ]
 },
 {
@@ -6585,7 +6585,7 @@
 ],
 "ok": true,
 "after": "a — b\na — b\n\nmulti\nline\ndef f():\na — b\ndef f():\n  \n    return y",
-"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,6 @@\n a — b\n \n-# c\n+multi\n+line\n def f():\n a — b\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#WS:a — b\n3#ZQ:\n4#ZR:multi\n5#HW:line\n6#HS:def f():\n7#WS:a — b\n8#HS:def f():",
+"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,6 @@\n a — b\n \n-# c\n+multi\n+line\n def f():\n a — b\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#WS:a — b\n3#ZQ:\n4#ZR:multi\n5#HW:line\n6#HS:def f():\n7#WS:a — b\n8#HS:def f():",
 "parts": null
 },
 {
@@ -6701,7 +6701,7 @@
 ],
 "ok": true,
 "after": "\n# c\nmulti\nline",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n-# c\n+# c\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#YX:# c\n3#ZR:multi\n4#HW:line",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n \n-# c\n+# c\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#YX:# c\n3#ZR:multi\n4#HW:line",
 "parts": null
 },
 {
@@ -6737,7 +6737,7 @@
 ],
 "ok": true,
 "after": "“q”\nx = 1\n# c",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,3 @@\n “q”\n+x = 1\n # c\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#SW:x = 1\n3#YX:# c",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,3 @@\n “q”\n+x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#SW:x = 1\n3#YX:# c",
 "parts": null
 },
 {
@@ -6888,11 +6888,11 @@
 ],
 "ok": true,
 "after": "# c\ndef f():\nx = 1\n# c\n  \n",
-"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,4 @@\n def f():\n x = 1\n-a — b\n+# c\n+  \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:  \n6#ZW:",
+"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,4 @@\n def f():\n x = 1\n-a — b\n+# c\n+  \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:  \n6#ZW:",
 "parts": [
 "prepend 3#SW: inserted 0 line(s) after original line 2",
 "replace 4#WS: deleted original lines 4–4 (1 line(s))\n- a — b",
-"prepend 5#ZR:: inserted 2 line(s) after original line 4\n+ # c\n+   \n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,4 @@\n def f():\n x = 1\n-a — b\n+# c\n+  \n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:  \n6#ZW:"
+"prepend 5#ZR:: inserted 2 line(s) after original line 4\n+ # c\n+   \n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,3 +2,4 @@\n def f():\n x = 1\n-a — b\n+# c\n+  \n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#HS:def f():\n3#SW:x = 1\n4#YX:# c\n5#ZR:  \n6#ZW:"
 ]
 },
 {
@@ -6961,7 +6961,7 @@
 ],
 "ok": true,
 "after": "a — b\n    return y\n    return y\n\tz\nmulti\nline\n\n",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,5 @@\n     return y\n \tz\n-\tz\n+multi\n+line\n \n\nUpdated region (edit_file refs below):\n2#HQ:    return y\n3#HQ:    return y\n4#KV:\tz\n5#ZR:multi\n6#HW:line\n7#ZS:\n8#ZN:",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,5 @@\n     return y\n \tz\n-\tz\n+multi\n+line\n \n\nUpdated region (`edit_file` refs below):\n2#HQ:    return y\n3#HQ:    return y\n4#KV:\tz\n5#ZR:multi\n6#HW:line\n7#ZS:\n8#ZN:",
 "parts": null
 },
 {
@@ -6978,7 +6978,7 @@
 ],
 "ok": true,
 "after": "\tz\n# c\n# c\n    return y\n# c\nx = 1\na — b\ndef f():\nx = 1\n  ",
-"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,5 @@\n # c\n     return y\n+# c\n x = 1\n a — b\n\nUpdated region (edit_file refs below):\n2#YX:# c\n3#YX:# c\n4#HQ:    return y\n5#YX:# c\n6#SW:x = 1\n7#WS:a — b\n8#HS:def f():",
+"msg": "Edit complete: <FILE> (10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,5 @@\n # c\n     return y\n+# c\n x = 1\n a — b\n\nUpdated region (`edit_file` refs below):\n2#YX:# c\n3#YX:# c\n4#HQ:    return y\n5#YX:# c\n6#SW:x = 1\n7#WS:a — b\n8#HS:def f():",
 "parts": null
 },
 {
@@ -7224,7 +7224,7 @@
 ],
 "ok": true,
 "after": "“q”\n\nx = 1\n\tz\n\tz\nx = 1\n\n# c",
-"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n “q”\n+\n+x = 1\n \tz\n \tz\n\nUpdated region (edit_file refs below):\n1#ZJ:“q”\n2#ZM:\n3#SW:x = 1\n4#KV:\tz\n5#KV:\tz\n6#SW:x = 1",
+"msg": "Edit complete: <FILE> (8 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n “q”\n+\n+x = 1\n \tz\n \tz\n\nUpdated region (`edit_file` refs below):\n1#ZJ:“q”\n2#ZM:\n3#SW:x = 1\n4#KV:\tz\n5#KV:\tz\n6#SW:x = 1",
 "parts": null
 },
 {
@@ -7372,10 +7372,10 @@
 ],
 "ok": true,
 "after": "  \ndef f():\ndef f():\nx = 1\na — b\ndef f():\n“q”\na — b\ndef f():",
-"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,6 +3,7 @@\n def f():\n x = 1\n-# c\n+a — b\n def f():\n “q”\n-a — b\n+a — b\n+def f():\n\nUpdated region (edit_file refs below):\n2#HS:def f():\n3#HS:def f():\n4#SW:x = 1\n5#WS:a — b\n6#HS:def f():\n7#ZJ:“q”\n8#WS:a — b\n9#HS:def f():",
+"msg": "Edit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,6 +3,7 @@\n def f():\n x = 1\n-# c\n+a — b\n def f():\n “q”\n-a — b\n+a — b\n+def f():\n\nUpdated region (`edit_file` refs below):\n2#HS:def f():\n3#HS:def f():\n4#SW:x = 1\n5#WS:a — b\n6#HS:def f():\n7#ZJ:“q”\n8#WS:a — b\n9#HS:def f():",
 "parts": [
 "append: inserted 1 line(s) after original line 8\n+ def f():",
-"replace 5#YX:# c: replaced original lines 5–5 (1 → 1 line(s))\n- # c\n+ a — b\n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,6 +3,7 @@\n def f():\n x = 1\n-# c\n+a — b\n def f():\n “q”\n-a — b\n+a — b\n+def f():\n\nUpdated region (edit_file refs below):\n2#HS:def f():\n3#HS:def f():\n4#SW:x = 1\n5#WS:a — b\n6#HS:def f():\n7#ZJ:“q”\n8#WS:a — b\n9#HS:def f():"
+"replace 5#YX:# c: replaced original lines 5–5 (1 → 1 line(s))\n- # c\n+ a — b\n\nEdit complete: <FILE> (2 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,6 +3,7 @@\n def f():\n x = 1\n-# c\n+a — b\n def f():\n “q”\n-a — b\n+a — b\n+def f():\n\nUpdated region (`edit_file` refs below):\n2#HS:def f():\n3#HS:def f():\n4#SW:x = 1\n5#WS:a — b\n6#HS:def f():\n7#ZJ:“q”\n8#WS:a — b\n9#HS:def f():"
 ]
 },
 {
@@ -7487,7 +7487,7 @@
 ],
 "ok": true,
 "after": "    return y\n\na — b\n  \n  \n“q”\nx = 1\na — b\n\ndef f():\nx = 1\n\n",
-"msg": "Edit complete: <FILE> (13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,7 @@\n a — b\n   \n+  \n “q”\n+x = 1\n a — b\n \n\nUpdated region (edit_file refs below):\n2#ZM:\n3#WS:a — b\n4#ZV:  \n5#ZR:  \n6#ZJ:“q”\n7#SW:x = 1\n8#WS:a — b\n9#ZK:\n10#HS:def f():",
+"msg": "Edit complete: <FILE> (13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,5 +3,7 @@\n a — b\n   \n+  \n “q”\n+x = 1\n a — b\n \n\nUpdated region (`edit_file` refs below):\n2#ZM:\n3#WS:a — b\n4#ZV:  \n5#ZR:  \n6#ZJ:“q”\n7#SW:x = 1\n8#WS:a — b\n9#ZK:\n10#HS:def f():",
 "parts": null
 },
 {
@@ -7502,7 +7502,7 @@
 ],
 "ok": true,
 "after": "multi\nline\n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -0,0 +1,2 @@\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -0,0 +1,2 @@\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#ZQ:",
 "parts": null
 },
 {
@@ -7546,7 +7546,7 @@
 ],
 "ok": true,
 "after": "\n\tz\n# c\n    return y\n\n  \n  \n\n\tz\n# c\n# c\nx = 1\n  ",
-"msg": "Edit complete: <FILE> (13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,4 @@\n # c\n # c\n+x = 1\n   \n\nUpdated region (edit_file refs below):\n9#KV:\tz\n10#YX:# c\n11#YX:# c\n12#SW:x = 1\n13#ZB:  ",
+"msg": "Edit complete: <FILE> (13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -10,3 +10,4 @@\n # c\n # c\n+x = 1\n   \n\nUpdated region (`edit_file` refs below):\n9#KV:\tz\n10#YX:# c\n11#YX:# c\n12#SW:x = 1\n13#ZB:  ",
 "parts": null
 },
 {
@@ -7561,7 +7561,7 @@
 ],
 "ok": true,
 "after": "\tz\n# c\n\n",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n # c\n-a — b\n \n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#YX:# c\n3#ZQ:\n4#ZV:",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n \tz\n # c\n-a — b\n \n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#YX:# c\n3#ZQ:\n4#ZV:",
 "parts": null
 },
 {
@@ -7578,7 +7578,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -7618,7 +7618,7 @@
 ],
 "ok": true,
 "after": "# c\n\tz\n\n    return y\n  \na — b\n\tz\n    return y\n“q”\n    return y\nx = 1",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,5 @@\n \tz\n     return y\n+“q”\n     return y\n x = 1\n\nUpdated region (edit_file refs below):\n6#WS:a — b\n7#KV:\tz\n8#HQ:    return y\n9#ZJ:“q”\n10#HQ:    return y\n11#SW:x = 1",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,5 @@\n \tz\n     return y\n+“q”\n     return y\n x = 1\n\nUpdated region (`edit_file` refs below):\n6#WS:a — b\n7#KV:\tz\n8#HQ:    return y\n9#ZJ:“q”\n10#HQ:    return y\n11#SW:x = 1",
 "parts": null
 },
 {
@@ -7720,7 +7720,7 @@
 ],
 "ok": true,
 "after": "  \n“q”\n\tz\n",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n   \n-x = 1\n “q”\n \tz\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#ZJ:“q”\n3#KV:\tz\n4#ZV:",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,4 +1,3 @@\n   \n-x = 1\n “q”\n \tz\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#ZJ:“q”\n3#KV:\tz\n4#ZV:",
 "parts": null
 },
 {
@@ -7818,7 +7818,7 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\ndef f():\na — b",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,2 @@\n-x = 1\n-x = 1\n-def f():\n-\tz\n-x = 1\n def f():\n x = 1\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#SW:x = 1\n3#HS:def f():\n4#WS:a — b",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,7 +1,2 @@\n-x = 1\n-x = 1\n-def f():\n-\tz\n-x = 1\n def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#SW:x = 1\n3#HS:def f():\n4#WS:a — b",
 "parts": null
 },
 {
@@ -8001,7 +8001,7 @@
 ],
 "ok": true,
 "after": "x = 1\n",
-"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1 @@\n-  \n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZM:",
+"msg": "Edit complete: <FILE> (2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1 @@\n-  \n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZM:",
 "parts": null
 },
 {
@@ -8053,7 +8053,7 @@
 ],
 "ok": true,
 "after": "\n  \n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,2 @@\n \n+  \n\nUpdated region (edit_file refs below):\n1#ZP:\n2#ZM:  \n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,2 @@\n \n+  \n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#ZM:  \n3#ZQ:",
 "parts": null
 },
 {
@@ -8125,12 +8125,12 @@
 ],
 "ok": true,
 "after": "    return y\n# c\n“q”\nx = 1\ndef f():\n\ndef f():\nx = 1\n# c\n“q”",
-"msg": "Edit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n \n def f():\n-def f():\n x = 1\n # c\n\nUpdated region (edit_file refs below):\n5#HS:def f():\n6#ZW:\n7#HS:def f():\n8#SW:x = 1\n9#YX:# c\n10#ZJ:“q”",
+"msg": "Edit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n \n def f():\n-def f():\n x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n5#HS:def f():\n6#ZW:\n7#HS:def f():\n8#SW:x = 1\n9#YX:# c\n10#ZJ:“q”",
 "parts": [
 "prepend 10#YX: inserted 0 line(s) after original line 9",
 "prepend 7#HS: inserted 0 line(s) after original line 6",
 "delete 7#HS: deleted original lines 7–7 (1 line(s))\n- def f():",
-"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n \n def f():\n-def f():\n x = 1\n # c\n\nUpdated region (edit_file refs below):\n5#HS:def f():\n6#ZW:\n7#HS:def f():\n8#SW:x = 1\n9#YX:# c\n10#ZJ:“q”"
+"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (4 edits, 10 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n \n def f():\n-def f():\n x = 1\n # c\n\nUpdated region (`edit_file` refs below):\n5#HS:def f():\n6#ZW:\n7#HS:def f():\n8#SW:x = 1\n9#YX:# c\n10#ZJ:“q”"
 ]
 },
 {
@@ -8154,10 +8154,10 @@
 ],
 "ok": true,
 "after": "x = 1\n# c\na — b\n\nx = 1\n“q”\n\tz\nx = 1\na — b\n  \n",
-"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,6 @@\n x = 1\n “q”\n+\tz\n+x = 1\n a — b\n   \n\nUpdated region (edit_file refs below):\n4#ZV:\n5#SW:x = 1\n6#ZJ:“q”\n7#KV:\tz\n8#SW:x = 1\n9#WS:a — b\n10#ZT:  \n11#ZX:",
+"msg": "Edit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,6 @@\n x = 1\n “q”\n+\tz\n+x = 1\n a — b\n   \n\nUpdated region (`edit_file` refs below):\n4#ZV:\n5#SW:x = 1\n6#ZJ:“q”\n7#KV:\tz\n8#SW:x = 1\n9#WS:a — b\n10#ZT:  \n11#ZX:",
 "parts": [
 "append 6#ZJ: inserted 2 line(s) after original line 6\n+ \tz\n+ x = 1",
-"prepend 3#WS: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,6 @@\n x = 1\n “q”\n+\tz\n+x = 1\n a — b\n   \n\nUpdated region (edit_file refs below):\n4#ZV:\n5#SW:x = 1\n6#ZJ:“q”\n7#KV:\tz\n8#SW:x = 1\n9#WS:a — b\n10#ZT:  \n11#ZX:"
+"prepend 3#WS: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (2 edits, 11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,4 +5,6 @@\n x = 1\n “q”\n+\tz\n+x = 1\n a — b\n   \n\nUpdated region (`edit_file` refs below):\n4#ZV:\n5#SW:x = 1\n6#ZJ:“q”\n7#KV:\tz\n8#SW:x = 1\n9#WS:a — b\n10#ZT:  \n11#ZX:"
 ]
 },
 {
@@ -8219,12 +8219,12 @@
 ],
 "ok": true,
 "after": "line\na — b\nmulti\nline\n",
-"msg": "Edit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+line\n a — b\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#HW:line\n2#WS:a — b\n3#ZR:multi\n4#HW:line\n5#ZR:",
+"msg": "Edit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+line\n a — b\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#HW:line\n2#WS:a — b\n3#ZR:multi\n4#HW:line\n5#ZR:",
 "parts": [
 "append 1#WS: inserted 2 line(s) after original line 1\n+ multi\n+ line",
 "delete 1#WS:a — b: deleted original lines 1–1 (1 line(s))\n- a — b",
 "prepend: inserted 2 line(s) after original line 0\n+ multi\n+ line",
-"prepend 1#WS: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+line\n a — b\n+multi\n+line\n\nUpdated region (edit_file refs below):\n1#HW:line\n2#WS:a — b\n3#ZR:multi\n4#HW:line\n5#ZR:"
+"prepend 1#WS: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (4 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,4 @@\n+line\n a — b\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n1#HW:line\n2#WS:a — b\n3#ZR:multi\n4#HW:line\n5#ZR:"
 ]
 },
 {
@@ -8284,7 +8284,7 @@
 ],
 "ok": true,
 "after": "x = 1\nmulti\nline\n“q”",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n x = 1\n-x = 1\n+multi\n+line\n “q”\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZJ:“q”",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n x = 1\n-x = 1\n+multi\n+line\n “q”\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#ZR:multi\n3#HW:line\n4#ZJ:“q”",
 "parts": null
 },
 {
@@ -8302,7 +8302,7 @@
 ],
 "ok": true,
 "after": "a — b\n# c\n    return y\na — b\n“q”\n",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n # c\n+    return y\n+a — b\n “q”\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#YX:# c\n3#HQ:    return y\n4#WS:a — b\n5#ZJ:“q”\n6#ZW:",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n # c\n+    return y\n+a — b\n “q”\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#YX:# c\n3#HQ:    return y\n4#WS:a — b\n5#ZJ:“q”\n6#ZW:",
 "parts": null
 },
 {
@@ -8335,11 +8335,11 @@
 ],
 "ok": true,
 "after": "# c\n  \ndef f():\nx = 1\n“q”\n  \na — b\nx = 1\n\tz\nx = 1\n\tz\n\tz\n",
-"msg": "Edit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,5 +5,8 @@\n “q”\n   \n-# c\n+a — b\n+x = 1\n+\tz\n+x = 1\n \tz\n \tz\n\nUpdated region (edit_file refs below):\n4#SW:x = 1\n5#ZJ:“q”\n6#ZW:  \n7#WS:a — b\n8#SW:x = 1\n9#KV:\tz\n10#SW:x = 1\n11#KV:\tz\n12#KV:\tz\n13#ZB:",
+"msg": "Edit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,5 +5,8 @@\n “q”\n   \n-# c\n+a — b\n+x = 1\n+\tz\n+x = 1\n \tz\n \tz\n\nUpdated region (`edit_file` refs below):\n4#SW:x = 1\n5#ZJ:“q”\n6#ZW:  \n7#WS:a — b\n8#SW:x = 1\n9#KV:\tz\n10#SW:x = 1\n11#KV:\tz\n12#KV:\tz\n13#ZB:",
 "parts": [
 "append 7#YX: inserted 0 line(s) after original line 7",
 "prepend 9#KV: inserted 2 line(s) after original line 8\n+ x = 1\n+ \tz",
-"replace 7#YX: replaced original lines 7–7 (1 → 2 line(s))\n- # c\n+ a — b\n+ x = 1\n\nEdit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,5 +5,8 @@\n “q”\n   \n-# c\n+a — b\n+x = 1\n+\tz\n+x = 1\n \tz\n \tz\n\nUpdated region (edit_file refs below):\n4#SW:x = 1\n5#ZJ:“q”\n6#ZW:  \n7#WS:a — b\n8#SW:x = 1\n9#KV:\tz\n10#SW:x = 1\n11#KV:\tz\n12#KV:\tz\n13#ZB:"
+"replace 7#YX: replaced original lines 7–7 (1 → 2 line(s))\n- # c\n+ a — b\n+ x = 1\n\nEdit complete: <FILE> (3 edits, 13 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -5,5 +5,8 @@\n “q”\n   \n-# c\n+a — b\n+x = 1\n+\tz\n+x = 1\n \tz\n \tz\n\nUpdated region (`edit_file` refs below):\n4#SW:x = 1\n5#ZJ:“q”\n6#ZW:  \n7#WS:a — b\n8#SW:x = 1\n9#KV:\tz\n10#SW:x = 1\n11#KV:\tz\n12#KV:\tz\n13#ZB:"
 ]
 },
 {
@@ -8373,10 +8373,10 @@
 ],
 "ok": true,
 "after": "\n    return y\n“q”\n# c\nx = 1",
-"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n     return y\n-a — b\n “q”\n # c\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HQ:    return y\n3#ZJ:“q”\n4#YX:# c\n5#SW:x = 1",
+"msg": "Edit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n     return y\n-a — b\n “q”\n # c\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HQ:    return y\n3#ZJ:“q”\n4#YX:# c\n5#SW:x = 1",
 "parts": [
 "append 6#SW: inserted 0 line(s) after original line 6",
-"delete 3#WS: deleted original lines 3–3 (1 line(s))\n- a — b\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n     return y\n-a — b\n “q”\n # c\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HQ:    return y\n3#ZJ:“q”\n4#YX:# c\n5#SW:x = 1"
+"delete 3#WS: deleted original lines 3–3 (1 line(s))\n- a — b\n\nEdit complete: <FILE> (2 edits, 5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,5 +1,4 @@\n \n     return y\n-a — b\n “q”\n # c\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HQ:    return y\n3#ZJ:“q”\n4#YX:# c\n5#SW:x = 1"
 ]
 },
 {
@@ -8473,7 +8473,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-  \n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-  \n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -8497,10 +8497,10 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n“q”\nx = 1",
-"msg": "Edit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n     return y\n x = 1\n+“q”\n x = 1\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#SW:x = 1",
+"msg": "Edit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n     return y\n x = 1\n+“q”\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#SW:x = 1",
 "parts": [
 "append 2#SW: inserted 2 line(s) after original line 2\n+ “q”\n+ x = 1",
-"delete 3#SW:x = 1..3#SW: deleted original lines 3–3 (1 line(s))\n- x = 1\n\nEdit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n     return y\n x = 1\n+“q”\n x = 1\n\nUpdated region (edit_file refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#SW:x = 1"
+"delete 3#SW:x = 1..3#SW: deleted original lines 3–3 (1 line(s))\n- x = 1\n\nEdit complete: <FILE> (2 edits, 4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,4 @@\n     return y\n x = 1\n+“q”\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HQ:    return y\n2#SW:x = 1\n3#ZJ:“q”\n4#SW:x = 1"
 ]
 },
 {
@@ -8516,7 +8516,7 @@
 ],
 "ok": true,
 "after": "\tz\nx = 1\ndef f():",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,10 +1,3 @@\n \tz\n x = 1\n-a — b\n-x = 1\n-\tz\n-    return y\n-    return y\n-def f():\n-    return y\n def f():\n\nUpdated region (edit_file refs below):\n1#KV:\tz\n2#SW:x = 1\n3#HS:def f():",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,10 +1,3 @@\n \tz\n x = 1\n-a — b\n-x = 1\n-\tz\n-    return y\n-    return y\n-def f():\n-    return y\n def f():\n\nUpdated region (`edit_file` refs below):\n1#KV:\tz\n2#SW:x = 1\n3#HS:def f():",
 "parts": null
 },
 {
@@ -8565,7 +8565,7 @@
 ],
 "ok": true,
 "after": "a — b\nmulti\nline\nx = 1\nx = 1\n  \n# c",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+multi\n+line\n x = 1\n x = 1\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#ZR:multi\n3#HW:line\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:  ",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+multi\n+line\n x = 1\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#ZR:multi\n3#HW:line\n4#SW:x = 1\n5#SW:x = 1\n6#ZW:  ",
 "parts": null
 },
 {
@@ -8698,12 +8698,12 @@
 ],
 "ok": true,
 "after": "\n\tz\nx = 1\n\tz\na — b\nx = 1\n",
-"msg": "Edit complete: <FILE> (4 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n x = 1\n \tz\n+a — b\n+x = 1\n\nUpdated region (edit_file refs below):\n2#KV:\tz\n3#SW:x = 1\n4#KV:\tz\n5#WS:a — b\n6#SW:x = 1\n7#ZS:",
+"msg": "Edit complete: <FILE> (4 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n x = 1\n \tz\n+a — b\n+x = 1\n\nUpdated region (`edit_file` refs below):\n2#KV:\tz\n3#SW:x = 1\n4#KV:\tz\n5#WS:a — b\n6#SW:x = 1\n7#ZS:",
 "parts": [
 "delete 3#SW..3#SW: deleted original lines 3–3 (1 line(s))\n- x = 1",
 "append 5#ZR: inserted 0 line(s) after original line 5",
 "append 2#KV: inserted 1 line(s) after original line 2\n+ x = 1",
-"replace 5#ZR..1#ZP: replaced original lines 5–1 (-3 → 2 line(s))\n+ a — b\n+ x = 1\n\nEdit complete: <FILE> (4 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n x = 1\n \tz\n+a — b\n+x = 1\n\nUpdated region (edit_file refs below):\n2#KV:\tz\n3#SW:x = 1\n4#KV:\tz\n5#WS:a — b\n6#SW:x = 1\n7#ZS:"
+"replace 5#ZR..1#ZP: replaced original lines 5–1 (-3 → 2 line(s))\n+ a — b\n+ x = 1\n\nEdit complete: <FILE> (4 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n x = 1\n \tz\n+a — b\n+x = 1\n\nUpdated region (`edit_file` refs below):\n2#KV:\tz\n3#SW:x = 1\n4#KV:\tz\n5#WS:a — b\n6#SW:x = 1\n7#ZS:"
 ]
 },
 {
@@ -8768,7 +8768,7 @@
 ],
 "ok": true,
 "after": "# c\ndef f():\n    return y\nx = 1\nx = 1\nx = 1\ndef f():\n\tz\n“q”\n    return y\n  ",
-"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,7 @@\n def f():\n     return y\n-# c\n+x = 1\n+x = 1\n+x = 1\n def f():\n \tz\n\nUpdated region (edit_file refs below):\n1#YX:# c\n2#HS:def f():\n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1\n6#SW:x = 1\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”",
+"msg": "Edit complete: <FILE> (11 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -2,5 +2,7 @@\n def f():\n     return y\n-# c\n+x = 1\n+x = 1\n+x = 1\n def f():\n \tz\n\nUpdated region (`edit_file` refs below):\n1#YX:# c\n2#HS:def f():\n3#HQ:    return y\n4#SW:x = 1\n5#SW:x = 1\n6#SW:x = 1\n7#HS:def f():\n8#KV:\tz\n9#ZJ:“q”",
 "parts": null
 },
 {
@@ -8879,11 +8879,11 @@
 ],
 "ok": true,
 "after": "  \n“q”\n    return y\nx = 1\na — b\n“q”\n    return y",
-"msg": "Edit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n   \n-x = 1\n+“q”\n+    return y\n+x = 1\n+a — b\n+“q”\n+    return y\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#ZJ:“q”\n3#HQ:    return y\n4#SW:x = 1\n5#WS:a — b\n6#ZJ:“q”\n7#HQ:    return y",
+"msg": "Edit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n   \n-x = 1\n+“q”\n+    return y\n+x = 1\n+a — b\n+“q”\n+    return y\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#ZJ:“q”\n3#HQ:    return y\n4#SW:x = 1\n5#WS:a — b\n6#ZJ:“q”\n7#HQ:    return y",
 "parts": [
 "append 1#ZP: inserted 0 line(s) after original line 1",
 "prepend 2#SW:x = 1: inserted 2 line(s) after original line 1\n+ “q”\n+     return y",
-"append 2#SW: inserted 3 line(s) after original line 2\n+ a — b\n+ “q”\n+     return y\n\nEdit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n   \n-x = 1\n+“q”\n+    return y\n+x = 1\n+a — b\n+“q”\n+    return y\n\nUpdated region (edit_file refs below):\n1#ZP:  \n2#ZJ:“q”\n3#HQ:    return y\n4#SW:x = 1\n5#WS:a — b\n6#ZJ:“q”\n7#HQ:    return y"
+"append 2#SW: inserted 3 line(s) after original line 2\n+ a — b\n+ “q”\n+     return y\n\nEdit complete: <FILE> (3 edits, 7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,7 @@\n   \n-x = 1\n+“q”\n+    return y\n+x = 1\n+a — b\n+“q”\n+    return y\n\nUpdated region (`edit_file` refs below):\n1#ZP:  \n2#ZJ:“q”\n3#HQ:    return y\n4#SW:x = 1\n5#WS:a — b\n6#ZJ:“q”\n7#HQ:    return y"
 ]
 },
 {
@@ -8901,7 +8901,7 @@
 ],
 "ok": true,
 "after": "x = 1\n  \n# c\n    return y\na — b\nx = 1\nx = 1\n\tz\n  \n    return y\n\nx = 1",
-"msg": "Edit complete: <FILE> (12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,5 @@\n \tz\n   \n-    return y\n+    return y\n+\n+x = 1\n\nUpdated region (edit_file refs below):\n8#KV:\tz\n9#ZK:  \n10#HQ:    return y\n11#ZX:\n12#SW:x = 1",
+"msg": "Edit complete: <FILE> (12 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -8,3 +8,5 @@\n \tz\n   \n-    return y\n+    return y\n+\n+x = 1\n\nUpdated region (`edit_file` refs below):\n8#KV:\tz\n9#ZK:  \n10#HQ:    return y\n11#ZX:\n12#SW:x = 1",
 "parts": null
 },
 {
@@ -9027,7 +9027,7 @@
 ],
 "ok": true,
 "after": "  \n# c\n# c\n\tz\n  \n  \na — b\n\tz\nx = 1",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n   \n a — b\n-a — b\n \tz\n x = 1\n\nUpdated region (edit_file refs below):\n5#ZR:  \n6#ZW:  \n7#WS:a — b\n8#KV:\tz\n9#SW:x = 1",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,5 +6,4 @@\n   \n a — b\n-a — b\n \tz\n x = 1\n\nUpdated region (`edit_file` refs below):\n5#ZR:  \n6#ZW:  \n7#WS:a — b\n8#KV:\tz\n9#SW:x = 1",
 "parts": null
 },
 {
@@ -9045,7 +9045,7 @@
 ],
 "ok": true,
 "after": "def f():\n\n“q”\n# c",
-"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n def f():\n \n+“q”\n+# c\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#ZM:\n3#ZJ:“q”\n4#YX:# c",
+"msg": "Edit complete: <FILE> (4 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n def f():\n \n+“q”\n+# c\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#ZM:\n3#ZJ:“q”\n4#YX:# c",
 "parts": null
 },
 {
@@ -9204,7 +9204,7 @@
 ],
 "ok": true,
 "after": "\ndef f():\nx = 1\n    return y\ndef f():\nx = 1",
-"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,3 @@\n+\n def f():\n x = 1\n\nUpdated region (edit_file refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#HQ:    return y",
+"msg": "Edit complete: <FILE> (6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,3 @@\n+\n def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#ZP:\n2#HS:def f():\n3#SW:x = 1\n4#HQ:    return y",
 "parts": null
 },
 {
@@ -9255,7 +9255,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (edit_file refs below):\n1#ZP:",
+"msg": "Edit complete: <FILE> (1 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +0,0 @@\n-\n\nUpdated region (`edit_file` refs below):\n1#ZP:",
 "parts": null
 },
 {
@@ -9284,7 +9284,7 @@
 ],
 "ok": true,
 "after": "    return y\n  \nx = 1\n  \n\tz\na — b\nx = 1\n\tz\nx = 1",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,3 @@\n x = 1\n \tz\n-a — b\n x = 1\n\nUpdated region (edit_file refs below):\n6#WS:a — b\n7#SW:x = 1\n8#KV:\tz\n9#SW:x = 1",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -7,4 +7,3 @@\n x = 1\n \tz\n-a — b\n x = 1\n\nUpdated region (`edit_file` refs below):\n6#WS:a — b\n7#SW:x = 1\n8#KV:\tz\n9#SW:x = 1",
 "parts": null
 },
 {
@@ -9347,11 +9347,11 @@
 ],
 "ok": true,
 "after": "a — b\n# c\n# c\n# c\n“q”\nx = 1",
-"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+# c\n+# c\n # c\n “q”\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#YX:# c\n3#YX:# c\n4#YX:# c\n5#ZJ:“q”\n6#SW:x = 1",
+"msg": "Edit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+# c\n+# c\n # c\n “q”\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#YX:# c\n3#YX:# c\n4#YX:# c\n5#ZJ:“q”\n6#SW:x = 1",
 "parts": [
 "prepend 2#YX: inserted 0 line(s) after original line 1",
 "prepend 3#ZJ: inserted 2 line(s) after original line 2\n+ # c\n+ # c",
-"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+# c\n+# c\n # c\n “q”\n\nUpdated region (edit_file refs below):\n1#WS:a — b\n2#YX:# c\n3#YX:# c\n4#YX:# c\n5#ZJ:“q”\n6#SW:x = 1"
+"prepend: inserted 0 line(s) after original line 0\n\nEdit complete: <FILE> (3 edits, 6 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,5 @@\n a — b\n+# c\n+# c\n # c\n “q”\n\nUpdated region (`edit_file` refs below):\n1#WS:a — b\n2#YX:# c\n3#YX:# c\n4#YX:# c\n5#ZJ:“q”\n6#SW:x = 1"
 ]
 },
 {
@@ -9371,7 +9371,7 @@
 ],
 "ok": true,
 "after": "def f():\na — b\ndef f():\ndef f():\na — b",
-"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,3 @@\n def f():\n def f():\n-a — b\n-    return y\n+a — b\n\nUpdated region (edit_file refs below):\n3#HS:def f():\n4#HS:def f():\n5#WS:a — b",
+"msg": "Edit complete: <FILE> (5 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,4 +3,3 @@\n def f():\n def f():\n-a — b\n-    return y\n+a — b\n\nUpdated region (`edit_file` refs below):\n3#HS:def f():\n4#HS:def f():\n5#WS:a — b",
 "parts": null
 },
 {
@@ -9429,7 +9429,7 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-\tz\n def f():\n x = 1\n\nUpdated region (edit_file refs below):\n1#HS:def f():\n2#SW:x = 1\n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n-\tz\n def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n1#HS:def f():\n2#SW:x = 1\n3#ZQ:",
 "parts": null
 },
 {
@@ -9508,7 +9508,7 @@
 ],
 "ok": true,
 "after": "a — b\n\tz\nx = 1\n\tz\n“q”\nx = 1\n  \nx = 1\n",
-"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,4 +6,3 @@\n x = 1\n   \n-def f():\n x = 1\n\nUpdated region (edit_file refs below):\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:  \n8#SW:x = 1\n9#ZK:",
+"msg": "Edit complete: <FILE> (9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -6,4 +6,3 @@\n x = 1\n   \n-def f():\n x = 1\n\nUpdated region (`edit_file` refs below):\n5#ZJ:“q”\n6#SW:x = 1\n7#ZS:  \n8#SW:x = 1\n9#ZK:",
 "parts": null
 },
 {
@@ -9586,10 +9586,10 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1",
-"msg": "Edit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n x = 1\n-x = 1\n-# c\n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#SW:x = 1",
+"msg": "Edit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n x = 1\n-x = 1\n-# c\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#SW:x = 1",
 "parts": [
 "delete 3#YX: deleted original lines 3–3 (1 line(s))\n- # c",
-"append 3#YX: inserted 0 line(s) after original line 3\n\nEdit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n x = 1\n-x = 1\n-# c\n+x = 1\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#SW:x = 1"
+"append 3#YX: inserted 0 line(s) after original line 3\n\nEdit complete: <FILE> (2 edits, 2 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,3 +1,2 @@\n x = 1\n-x = 1\n-# c\n+x = 1\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#SW:x = 1"
 ]
 },
 {
@@ -9604,7 +9604,7 @@
 ],
 "ok": true,
 "after": "x = 1\n  \na — b\n“q”\nmulti\nline\n",
-"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n a — b\n “q”\n+multi\n+line\n\nUpdated region (edit_file refs below):\n2#ZM:  \n3#WS:a — b\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#ZS:",
+"msg": "Edit complete: <FILE> (7 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -3,2 +3,4 @@\n a — b\n “q”\n+multi\n+line\n\nUpdated region (`edit_file` refs below):\n2#ZM:  \n3#WS:a — b\n4#ZJ:“q”\n5#ZR:multi\n6#HW:line\n7#ZS:",
 "parts": null
 },
 {
@@ -9719,11 +9719,11 @@
 ],
 "ok": true,
 "after": "x = 1\ndef f():\n\n  \n    return y\nmulti\nline\n  \n# c",
-"msg": "Edit complete: <FILE> (3 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+x = 1\n+def f():\n \n   \n     return y\n-a — b\n+multi\n+line\n   \n # c\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#HS:def f():\n3#ZQ:\n4#ZV:  \n5#HQ:    return y\n6#ZR:multi\n7#HW:line\n8#ZN:  \n9#YX:# c",
+"msg": "Edit complete: <FILE> (3 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+x = 1\n+def f():\n \n   \n     return y\n-a — b\n+multi\n+line\n   \n # c\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#HS:def f():\n3#ZQ:\n4#ZV:  \n5#HQ:    return y\n6#ZR:multi\n7#HW:line\n8#ZN:  \n9#YX:# c",
 "parts": [
 "delete 4#WS:a — b: deleted original lines 4–4 (1 line(s))\n- a — b",
 "prepend 1#ZP: inserted 2 line(s) after original line 0\n+ x = 1\n+ def f():",
-"prepend 5#ZR:  : inserted 2 line(s) after original line 4\n+ multi\n+ line\n\nEdit complete: <FILE> (3 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+x = 1\n+def f():\n \n   \n     return y\n-a — b\n+multi\n+line\n   \n # c\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#HS:def f():\n3#ZQ:\n4#ZV:  \n5#HQ:    return y\n6#ZR:multi\n7#HW:line\n8#ZN:  \n9#YX:# c"
+"prepend 5#ZR:  : inserted 2 line(s) after original line 4\n+ multi\n+ line\n\nEdit complete: <FILE> (3 edits, 9 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,6 +1,9 @@\n+x = 1\n+def f():\n \n   \n     return y\n-a — b\n+multi\n+line\n   \n # c\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#HS:def f():\n3#ZQ:\n4#ZV:  \n5#HQ:    return y\n6#ZR:multi\n7#HW:line\n8#ZN:  \n9#YX:# c"
 ]
 },
 {
@@ -9756,7 +9756,7 @@
 ],
 "ok": true,
 "after": "multi\nline\nx = 1\ndef f():\n# c\n  \nx = 1\n# c\na — b\nx = 1\n# c\nx = 1\n    return y\nx = 1",
-"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n x = 1\n def f():\n\nUpdated region (edit_file refs below):\n1#ZR:multi\n2#HW:line\n3#SW:x = 1\n4#HS:def f():\n5#YX:# c",
+"msg": "Edit complete: <FILE> (14 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1,2 +1,4 @@\n+multi\n+line\n x = 1\n def f():\n\nUpdated region (`edit_file` refs below):\n1#ZR:multi\n2#HW:line\n3#SW:x = 1\n4#HS:def f():\n5#YX:# c",
 "parts": null
 },
 {
@@ -9858,7 +9858,7 @@
 ],
 "ok": true,
 "after": "x = 1\n# c\n",
-"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,2 @@\n x = 1\n+# c\n\nUpdated region (edit_file refs below):\n1#SW:x = 1\n2#YX:# c\n3#ZQ:",
+"msg": "Edit complete: <FILE> (3 lines)\n\n--- a/<FILE>\n+++ b/<FILE>\n@@ -1 +1,2 @@\n x = 1\n+# c\n\nUpdated region (`edit_file` refs below):\n1#SW:x = 1\n2#YX:# c\n3#ZQ:",
 "parts": null
 },
 {

@@ -67,13 +67,13 @@ class AgentTool(Tool):
     # 멈췄다 (Harbor v4 extract-elf). context 는 none(기본)·fork 둘 다 가능 —
     # "empty" 로 단정하지 않는다.
     RUN_DESCRIPTION = (
-        'mode:"run" gives ONE task to a sub-agent and you get back only its '
+        '`mode` "run" gives ONE task to a sub-agent and you get back only its '
         "summary: whatever it read stays in its window, both handoffs drop "
         "detail, and its mistakes return in the same confident tone as its "
         "findings. Delegate when answering would mean reading across many "
         "files and you want the conclusion, not the file dumps. Do it "
         "yourself when it is a handful of calls or a lookup whose target you "
-        "already know; when in doubt, do it yourself. Several run ops in one "
+        'already know; when in doubt, do it yourself. Several "run" calls in one '
         "turn are for independent parts that would each flood your context — "
         "not for speed: on a single local model server they share throughput, "
         "and you are blocked until all of them finish."
@@ -81,14 +81,14 @@ class AgentTool(Tool):
     # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
     # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
     SUBLOOP_DESCRIPTION = (
-        'Work with a one-shot sub-agent (mode:"run" only here). '
+        'Work with a one-shot sub-agent (`mode` "run" only here). '
         + RUN_DESCRIPTION
-        + " Optional profile/instructions give the sub-agent a role."
+        + " Optional `profile`/`instructions` give the sub-agent a role."
     )
     description = (
         "Work with sub-agents, one-shot or persistent. "
         + RUN_DESCRIPTION
-        + ' Spawn (mode:"spawn") only when the same area will take several '
+        + ' Spawn (`mode` "spawn") only when the same area will take several '
         "rounds of questions — an agent that has studied one area answers "
         "follow-ups from full detail. One agent per area (disjoint "
         "files/subsystems). Once you have handed work to an agent, do not "
@@ -104,20 +104,20 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    "run: ONE task, blocking — the result returns in this "
-                    "turn. spawn: create a PERSISTENT agent that keeps its "
-                    "context between requests (returns its key). request: "
+                    '"run": ONE task, blocking — the result returns in this '
+                    'turn. "spawn": create a PERSISTENT agent that keeps its '
+                    'context between requests (returns its key). "request": '
                     "send it a message — returns immediately; the reply is "
-                    "DELIVERED to you as an observation when ready. status: "
-                    "list live agents and their state. resume: bring a DEAD "
-                    "agent back with its full prior context. kill: terminate "
+                    'DELIVERED to you as an observation when ready. "status": '
+                    'list live agents and their state. "resume": bring a DEAD '
+                    'agent back with its full prior context. "kill": terminate '
                     "one."
                 ),
             },
             "profile": {
                 "type": "string",
                 "description": (
-                    "run/spawn: profile from .agent-cli/agents/{profile}.md "
+                    '"run"/"spawn": profile from .agent-cli/agents/{profile}.md '
                     "(loaded into the sub-agent's system prompt; omit for a "
                     "generalist). The same profile may be spawned more than "
                     "once — give each instance a distinct `name`."
@@ -126,16 +126,16 @@ class AgentTool(Tool):
             "name": {
                 "type": "string",
                 "description": (
-                    "spawn: optional instance label to tell same-profile agents "
-                    "apart (e.g. two coders as 'ui' and 'api'). Display only — "
-                    "always address agents by their key."
+                    '"spawn": optional instance label to tell same-profile agents '
+                    'apart (e.g. two coders as "ui" and "api"). Display only — '
+                    "always address agents by their `key`."
                 ),
             },
             "task": {
                 "type": "string",
                 "description": (
-                    "run: the task (required); request: the message "
-                    "(required); spawn/resume: optional first request. Brief "
+                    '"run": the task (required); "request": the message '
+                    '(required); "spawn"/"resume": optional first request. Brief '
                     "it like a peer: the goal, what you already ruled out, and "
                     "which files to read — point at them, do not retype them. "
                     "Give it the code, not your conclusion: an agent handed "
@@ -145,7 +145,7 @@ class AgentTool(Tool):
             "instructions": {
                 "type": "string",
                 "description": (
-                    "run/spawn: inline role text (instant-agent) — becomes part "
+                    '"run"/"spawn": inline role text (instant-agent) — becomes part '
                     "of the sub-agent's system prompt (for a spawned agent: "
                     "its WHOLE life, survives resume). Use alone for an "
                     "ad-hoc specialist, or with `profile` to append "
@@ -155,15 +155,15 @@ class AgentTool(Tool):
             "key": {
                 "type": "string",
                 "description": (
-                    "agent key returned by spawn (required for request/"
-                    "resume/kill; optional filter for status)"
+                    'agent key returned by "spawn" (required for "request"/'
+                    '"resume"/"kill"; optional filter for "status")'
                 ),
             },
             "tools": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "run/spawn: tools the sub-agent may use. Omit for the "
+                    '"run"/"spawn": tools the sub-agent may use. Omit for the '
                     "profile's set (all tools without a profile). With a "
                     "profile it can only narrow that set."
                 ),
@@ -172,8 +172,8 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["none", "fork"],
                 "description": (
-                    "run/spawn: none (default) — the agent starts fresh and "
-                    "knows only the task text; fork — it gets a copy of your "
+                    '"run"/"spawn": "none" (default) — the agent starts fresh and '
+                    'knows only the task text; "fork" — it gets a copy of your '
                     "conversation so far."
                 ),
             },
@@ -192,7 +192,7 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["run"],
                 "description": (
-                    "run: ONE task, blocking — the result returns in this turn."
+                    '"run": ONE task, blocking — the result returns in this turn.'
                 ),
             },
             "profile": {
@@ -234,8 +234,8 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["none", "fork"],
                 "description": (
-                    "none (default) — the agent starts fresh and knows only "
-                    "the task text; fork — it gets a copy of your conversation "
+                    '"none" (default) — the agent starts fresh and knows only '
+                    'the task text; "fork" — it gets a copy of your conversation '
                     "so far."
                 ),
             },
@@ -251,7 +251,7 @@ class AgentTool(Tool):
         # 검증 훅 — shape 는 중앙 1~5단계).
         mode = args.get("mode")
         if mode not in AGENT_MODES:
-            return f"unknown mode '{mode}' — must be one of {', '.join(AGENT_MODES)}"
+            return f'unknown `mode` "{mode}" — must be one of {", ".join(AGENT_MODES)}'
         if "message" in args:
             # 통일 어휘 (v8.0.0): 지시는 모든 모드에서 ``task`` 하나다. 과거
             # request 만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
@@ -265,7 +265,7 @@ class AgentTool(Tool):
         for field in AGENT_MODES[mode].required:
             value = args.get(field)
             if not isinstance(value, str) or not value.strip():
-                return f"mode '{mode}' requires a non-empty '{field}'"
+                return f'`mode` "{mode}" requires a non-empty `{field}`'
         # v10.1.2: 구두점뿐인 지시(실측 `>`)는 빈 지시다 — 받는 에이전트는 내
         # 컨텍스트를 못 보므로 뜻을 찾아 헤맨다. 어느 모드든 task 가 있으면 검사.
         task = args.get("task")

@@ -30,23 +30,23 @@ class MonitorTool(Tool):
     #: 규칙(`.agent-cli/tmp/`)과 충돌했다. 버퍼링은 로그 파일을 보는 조건(file+pattern·
     #: file+idle)에 지금도 해당하는 성질이라 실행 파일 이름 없이 한 문장으로 남긴다.
     description = (
-        "Watch a condition in the background and report back to you when it "
-        "fires — for long-running work you started with shell. Modes: "
-        "add (exactly ONE condition + optional run/deadline/once), list, delete (id).\n"
-        "A condition is one of these key pairs — never mix them:\n"
-        "  command + every — runs the command periodically, fires when it exits 0 "
+        "Watch a condition in the background and report back to you when it fires — for"
+        ' long-running work you started with `shell`. `mode`: "add" (exactly ONE '
+        'condition + optional `run`/`deadline`/`once`), "list", "delete" (`id`).\n'
+        "A condition is one of these argument pairs — never mix them:\n"
+        "  `command` + `every` — runs the command periodically, fires when it exits 0 "
         "(its stdout becomes the report)\n"
-        "  file + pattern — fires on a NEW line of the file matching the regex\n"
-        "  file + idle — fires when the file STOPS changing for that long (a dead "
+        "  `file` + `pattern` — fires on a NEW line of the file matching the regex\n"
+        "  `file` + `idle` — fires when the file STOPS changing for that long (a dead "
         "script is silent, not successful)\n"
-        "A producer that buffers its output writes nothing to the file until it "
-        "exits, so a healthy job looks silent — run it unbuffered.\n"
-        "deadline defaults to 2h (60s-24h). A `match` also retires (with a "
-        "report) when the file stays unchanged for `silent` (default 10m, 0 = "
-        "off) — a dead writer wakes you instead of hanging. once defaults to "
-        "true — the monitor retires after one report. Optional run='<cmd>' executes before the "
-        "report and its exit code is included. You are always notified; there "
-        "is no silent action.\n"
+        "A producer that buffers its output writes nothing to the file until it exits, "
+        "so a healthy job looks silent — run it unbuffered.\n"
+        "`deadline` defaults to 2h (60s-24h). A `file` + `pattern` condition also "
+        "retires (with a report) when the file stays unchanged for `silent` (default "
+        "10m, 0 = off) — a dead writer wakes you instead of hanging. `once` defaults to"
+        " true — the monitor retires after one report. Optional `run` is a command "
+        "executed before the report; its exit code is included. You are always "
+        "notified; there is no silent action.\n"
         "A monitor is not saved with the session and does not survive a restart "
         "(`schedule` is and does)."
     )
@@ -56,48 +56,54 @@ class MonitorTool(Tool):
             "mode": {
                 "type": "string",
                 "enum": list(MODES),
-                "description": "add | list | delete",
+                "description": '"add" | "list" | "delete"',
             },
             "command": {
                 "type": "string",
-                "description": "condition command+every: the shell command to run",
+                "description": "condition `command` + `every`: the shell command to run",
             },
             "every": {
                 "type": "string",
-                "description": "condition command+every: interval — '60s', '5m' (min 60s)",
+                "description": 'condition `command` + `every`: interval — "60s", "5m" (min 60s)',
             },
             "file": {
                 "type": "string",
-                "description": "conditions file+pattern / file+idle: the log file (never alone)",
+                "description": (
+                    "conditions `file` + `pattern` / `file` + `idle`: the log file "
+                    "(never alone)"
+                ),
             },
             "pattern": {
                 "type": "string",
-                "description": "condition file+pattern: regex matched against NEW lines",
+                "description": "condition `file` + `pattern`: regex matched against NEW lines",
             },
             "idle": {
                 "type": "string",
-                "description": "condition file+idle: no change for this long — '30s', '5m'",
+                "description": 'condition `file` + `idle`: no change for this long — "30s", "5m"',
             },
             "run": {
                 "type": "string",
-                "description": "add: optional command to run when it fires",
+                "description": '"add": optional command to run when it fires',
             },
             "deadline": {
                 "type": "string",
-                "description": "add: how long to watch — '2h', '30m', '600' (default 2h)",
+                "description": '"add": how long to watch — "2h", "30m", "600" (default 2h)',
             },
             "once": {
                 "type": "boolean",
-                "description": "add: retire after the first report (default true)",
+                "description": '"add": retire after the first report (default true)',
             },
             "silent": {
                 "type": "string",
                 "description": (
-                    "file+pattern only: give up (with a report) when the file has not "
-                    "changed for this long — '10m', '600', '0' = off (default 10m)"
+                    "`file` + `pattern` only: give up (with a report) when the file has"
+                    ' not changed for this long — "10m", "600", "0" = off (default 10m)'
                 ),
             },
-            "id": {"type": "string", "description": "delete: monitor id from list"},
+            "id": {
+                "type": "string",
+                "description": '"delete": monitor id from "list"',
+            },
         },
         "required": ["mode"],
     }
@@ -113,7 +119,7 @@ class MonitorTool(Tool):
 
             return f"monitor: add requires a condition — one of {SHAPES}"
         if mode == "delete" and not str(args.get("id", "")).strip():
-            return "monitor: delete requires `id` (see mode:'list')"
+            return 'monitor: "delete" requires `id` (see `mode` "list")'
         return None
 
     def summary_arg(self, action_input: dict) -> str:
@@ -145,7 +151,7 @@ class MonitorTool(Tool):
                 ToolResult(ok, output=f"deleted {mon_id}")
                 if ok
                 else ToolResult(
-                    False, error=f"monitor: unknown id {mon_id!r} (see mode:'list')"
+                    False, error=f'monitor: unknown id {mon_id!r} (see `mode` "list")'
                 )
             )
 
@@ -184,8 +190,9 @@ class MonitorTool(Tool):
         ):
             return ToolResult(
                 False,
-                error="monitor: `command` conditions and `run` need the shell tool, "
-                "which this agent does not have — use `match` or `silence`",
+                error="monitor: `command` conditions and `run` need the `shell` tool, "
+                "which this agent does not have — use a `file` + `pattern` or "
+                "`file` + `idle` condition",
             )
 
         once = args.get("once")

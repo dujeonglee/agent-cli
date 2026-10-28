@@ -13,6 +13,8 @@ P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·�
 - P3(v10.56.0): 꼬리(`## Open Items`)·정책(계속형 붙잡기 + 예산 8)·id(`u-`·`r-`)가
   설계대로 바뀌어 기계적 대조가 불가능하다 — 시나리오마다 새 출력을 사람이 읽고
   다시 얼렸다(PR 에 대조표). 이후 변경은 다시 바이트 가드를 받는다.
+- v10.77.0: 표기 규칙(인자 백틱·값 따옴표) — 6개 시나리오가 꼬리 Task Guidelines 의
+  "`background: true`" → "`background` true" 하나로만 달라졌다(나머지 바이트 동일).
 
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """

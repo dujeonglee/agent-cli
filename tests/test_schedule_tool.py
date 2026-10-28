@@ -65,11 +65,11 @@ class TestRegistration:
 class TestValidate:
     def test_mode_and_required_fields(self, tool):
         assert "invalid mode" in tool.validate({"mode": "nope"})
-        assert "'prompt' is required" in tool.validate(
+        assert "`prompt` is required" in tool.validate(
             {"mode": "add", "cron": "* * * * *"}
         )
-        assert "'cron' is required" in tool.validate({"mode": "add", "prompt": "x"})
-        assert "'id' is required" in tool.validate({"mode": "delete"})
+        assert "`cron` is required" in tool.validate({"mode": "add", "prompt": "x"})
+        assert "`id` is required" in tool.validate({"mode": "delete"})
         assert tool.validate({"mode": "list"}) is None
 
 

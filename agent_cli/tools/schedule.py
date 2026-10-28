@@ -61,43 +61,42 @@ def _sched_id(args: dict) -> str:
 class ScheduleTool(Tool):
     name = "schedule"
     description = (
-        "Schedule a recurring request for THIS session: at each cron time the "
-        "prompt arrives as if the user had sent it. Use for standing/periodic "
-        "work the user asked to automate (e.g. a weekly report). Modes: add "
-        "(cron + prompt [+ label, nickname]), delete (id), list. cron is 5 "
-        "fields 'min hour day month weekday' in local time (e.g. '0 9 * * 1' = "
-        "Mondays 09:00). 'nickname' sets the display name the prompt appears "
-        "under (default 'Scheduler-<label or id>'). Schedules are saved with the session "
-        "and this process stays up while one is enabled. A fire that came due "
-        "while the process was down is NOT run automatically — the user is "
-        "asked whether to run it."
+        "Schedule a recurring request for THIS session: at each cron time the prompt "
+        "arrives as if the user had sent it. Use for standing/periodic work the user "
+        'asked to automate (e.g. a weekly report). `mode`: "add" (`cron` + `prompt`, '
+        'optional `label`, `nickname`), "delete" (`id`), "list". `cron` is 5 fields '
+        '"min hour day month weekday" in local time (e.g. "0 9 * * 1" = Mondays 09:00).'
+        " `nickname` sets the display name the prompt appears under (default "
+        '"Scheduler-<label or id>"). Schedules are saved with the session and this '
+        "process stays up while one is enabled. A fire that came due while the process "
+        "was down is NOT run automatically — the user is asked whether to run it."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "mode": {"type": "string", "description": "add | delete | list"},
+            "mode": {"type": "string", "description": '"add" | "delete" | "list"'},
             "cron": {
                 "type": "string",
-                "description": "5-field cron (add), e.g. '0 9 * * 1' = weekly Mon 09:00",
+                "description": '5-field cron ("add"), e.g. "0 9 * * 1" = weekly Mon 09:00',
             },
             "prompt": {
                 "type": "string",
-                "description": "The request to inject on each fire (required for add)",
+                "description": 'The request to inject on each fire (required for "add")',
             },
             "label": {
                 "type": "string",
-                "description": "Short name for the schedule (optional, add)",
+                "description": 'Short name for the schedule (optional, "add")',
             },
             "nickname": {
                 "type": "string",
                 "description": (
-                    "Display name the injected prompt shows under (optional, "
-                    "add; defaults to 'Scheduler-<label or id>')"
+                    'Display name the injected prompt shows under (optional, "add"; '
+                    'defaults to "Scheduler-<label or id>")'
                 ),
             },
             "id": {
                 "type": "string",
-                "description": "Which schedule to delete (delete; from list)",
+                "description": 'Which schedule to delete ("delete"; from "list")',
             },
         },
         "required": ["mode"],
@@ -115,13 +114,11 @@ class ScheduleTool(Tool):
         if mode not in ("add", "delete", "list"):
             return f"invalid mode: {mode!r}. Valid: ['add', 'delete', 'list']"
         if mode == "add" and not (args.get("prompt") or "").strip():
-            return "'prompt' is required for mode='add'"
+            return '`prompt` is required for `mode` "add"'
         if mode == "add" and not (args.get("cron") or "").strip():
-            return "'cron' is required for mode='add'"
+            return '`cron` is required for `mode` "add"'
         if mode == "delete" and not _sched_id(args):
-            return (
-                "'id' is required for mode='delete' — the schedule id from mode='list'"
-            )
+            return '`id` is required for `mode` "delete" — the schedule id from `mode` "list"'
         return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:

@@ -154,7 +154,7 @@ class TestOwnersAndLifecycle:
         set_py_registry(None)
         assert get_py_registry() is None
         r = _run("1")
-        assert not r.success and "use shell instead" in r.error
+        assert not r.success and "use `shell` instead" in r.error
 
     def test_worker_death_is_reported_and_recovered(self, reg):
         _run("v = 1")

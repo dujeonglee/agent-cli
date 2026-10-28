@@ -256,7 +256,7 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
     step = max(1, -(-nlines // k))
     tail = (
         "\n  Each section is still large — tell each sub-agent to narrow "
-        "further (read_file with search) rather than read its whole range."
+        "further (`read_file` with `search`) rather than read its whole range."
         if capped
         else ""
     )
@@ -326,12 +326,12 @@ def oversized_nudge(
     if path and can_read:
         routes.append(
             "Match by string/regex (cheapest — start here):\n"
-            f"    read_file on '{path}' with search set to a regex "
+            f"    `read_file` on '{path}' with `search` set to a regex "
             "(5 lines of context by default)"
         )
         routes.append(
             "Know roughly where it is? Read that range:\n"
-            f"    read_file on '{path}' with line_start and line_end"
+            f"    `read_file` on '{path}' with `line_start` and `line_end`"
         )
     if path and "agent" in tools_available:
         routes.append(_fanout_route(path, nlines, tokens, cap))

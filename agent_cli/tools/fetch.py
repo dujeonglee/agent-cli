@@ -715,15 +715,13 @@ class FetchTool(Tool):
     name = "fetch"
     description = (
         "Fetch a URL: an HTML page comes back as markdown with links as [text](url) "
-        "(same-site links as /path), JSON (pretty-printed), "
-        "XML and plain text as text. "
-        "Supports recursive fetching of same-domain links via the depth parameter. "
-        "Full content returned inline; an over-cap result is saved to a file and "
-        "replaced with an excerpt + how to mine it (read it in ranges). "
-        "Binary content (PDF, images, archives) is not shown: it is downloaded to "
-        ".agent-cli/tmp/downloads/ and the result says where. "
-        "download_to saves the response unchanged (no conversion) to that path "
-        "instead; the result is the path, size and first lines."
+        "(same-site links as /path), JSON (pretty-printed), XML and plain text as text."
+        " `depth` follows same-domain links recursively. Full content returned inline; "
+        "an over-cap result is saved to a file and replaced with an excerpt + how to "
+        "mine it (read it in ranges). Binary content (PDF, images, archives) is not "
+        "shown: it is downloaded to .agent-cli/tmp/downloads/ and the result says "
+        "where. `download_to` saves the response unchanged (no conversion) to that path"
+        " instead; the result is the path, size and first lines."
     )
     oversized_retry_hint = (
         "re-fetch a more specific URL, or a shallower depth, so less is pulled."

@@ -358,7 +358,7 @@ class BrowserSession:
     # ── 스레드 ──
     def _call(self, fn):
         if self.closed:
-            raise BrowserError("browser is closed — call mode 'open' to start again")
+            raise BrowserError('browser is closed — call `mode` "open" to start again')
         if self._thread is None or not self._thread.is_alive():
             self._thread = threading.Thread(
                 target=self._loop, name="agent-cli-browser", daemon=True
@@ -503,7 +503,7 @@ class BrowserSession:
                 f"this page is a human-verification challenge ({self._challenge}) "
                 "— automation must not answer it. "
                 + (
-                    "The user must complete it in the visible browser window; then call snapshot."
+                    'The user must complete it in the visible browser window; then call `browser` with `mode` "snapshot".'
                     if self.visible
                     else "Ask the user, use the site's official API or another source."
                 )
@@ -525,7 +525,8 @@ class BrowserSession:
         if self.visible:
             return (
                 f"{lead} The browser window is visible on this machine; ask the "
-                "user to complete the verification there, then call snapshot to continue."
+                "user to complete the verification there, then call `browser` with `mode` "
+                '"snapshot" to continue.'
             )
         failed = (
             self._show_window(url)
@@ -536,7 +537,8 @@ class BrowserSession:
             return (
                 f"{lead} A visible browser window was opened on this machine with "
                 "the same session; ask the user to complete the verification there, "
-                "then call snapshot to continue. The browser stays visible for the "
+                'then call `browser` with `mode` "snapshot" to continue. The browser stays '
+                "visible for the "
                 "rest of this session."
             )
         return (
@@ -656,7 +658,8 @@ class BrowserSession:
         return (
             f"{body}\n[snapshot cut to depth {depth}: {shown} of {len(nodes)} nodes "
             f"(whole tree ~{estimate_tokens(render_nodes(nodes)):,} tokens) — use "
-            "find(text=…), text(ref=…) or snapshot(ref=<landmark>) for the part you need]"
+            '"find" with `text`, "text" with `ref`, or "snapshot" with a landmark `ref` '
+            "for the part you need]"
         )
 
     def _after_action(self, page, before: PageState, what: str, budget: int) -> str:
@@ -822,11 +825,13 @@ class BrowserSession:
     # ── 보조 ──
     def _need_page(self):
         if self._page is None:
-            raise BrowserError("no page is open — call mode 'open' with a url first")
+            raise BrowserError(
+                'no page is open — call `mode` "open" with a `url` first'
+            )
         if not self._alive():
             raise BrowserError(
                 "the browser window was closed (by the user or a crash) — call "
-                "mode 'open' with a url to start a new one; cookies and logins "
+                '`mode` "open" with a `url` to start a new one; cookies and logins '
                 "from the old window are gone"
             )
         return self._page

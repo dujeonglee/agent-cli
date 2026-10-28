@@ -118,10 +118,10 @@ class AskTool(Tool):
     # this description — keeping the prose in one place avoids the two
     # surfaces teaching the same distinction back to back.
     description = (
-        "Ask the user ONE question and WAIT for their reply. One question per "
-        "op — to ask several, emit several `ask` ops in the array (each is "
-        "answered in turn), the same way you batch read_file. Use only when you "
-        "cannot proceed without specific input; otherwise end with `complete`."
+        "Ask the user ONE question and WAIT for their reply. One question per call — to"
+        " ask several, make several `ask` calls in one turn (each is answered in turn),"
+        " the same way you batch `read_file`. Use only when you cannot proceed without "
+        "specific input; otherwise end with `complete`."
     )
     # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
     # **막지 않는다** — 질문을 등록하고 즉시 돌아온다. 마지막 문장이
@@ -129,8 +129,8 @@ class AskTool(Tool):
     # 모델이 추측으로 메우고 끝낸다. complete 해도 이어진다는 걸 알린다.
     RESIDENT_DESCRIPTION = (
         "Ask a question and KEEP WORKING — you are NOT blocked. By default the "
-        "question goes to whoever gave you this task (main or a person); set "
-        '`to: "user"` to ask the person directly. The answer arrives later as '
+        'question goes to whoever gave you this task ("main" or a person); set '
+        '`to` to "user" to ask the person directly. The answer arrives later as '
         "a NEW message and you continue from there. Carry on with anything that "
         "does not depend on it. If nothing else can proceed, `complete`."
     )
@@ -206,16 +206,15 @@ class MessageTool(Tool):
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        "Message another running agent (a peer, or `main`). By default it is a "
-        "REQUEST: you NEED something from them — a decision, an answer, their "
-        "next move — and they owe you a reply, which comes back to YOU as a NEW "
-        "message; you are NOT blocked. With `expects_reply: false` it is a "
-        "NOTICE: a status update, a hand-off note, a goodbye — nothing is owed "
-        "back and the receiver must not acknowledge it. Sent to whoever "
-        "requested your current work, either form also counts as your reply to "
-        "them. To answer a request you received, use `reply`. `complete` alone "
-        "reports to no one. See `## Live Agents` for who is running. Never send "
-        "thanks or acknowledgements."
+        'Message another running agent (a peer, or "main"). By default it is a REQUEST:'
+        " you NEED something from them — a decision, an answer, their next move — and "
+        "they owe you a reply, which comes back to YOU as a NEW message; you are NOT "
+        "blocked. With `expects_reply` false it is a NOTICE: a status update, a "
+        "hand-off note, a goodbye — nothing is owed back and the receiver must not "
+        "acknowledge it. Sent to whoever requested your current work, either form also "
+        "counts as your reply to them. To answer a request you received, use `reply`. "
+        "`complete` alone reports to no one. See `## Live Agents` for who is running. "
+        "Never send thanks or acknowledgements."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -223,9 +222,7 @@ class MessageTool(Tool):
             "to": {
                 "type": "string",
                 "minLength": 1,
-                "description": (
-                    "Target agent: its key or name (from `## Live Agents`), or 'main'."
-                ),
+                "description": 'Target agent: its key or name (from `## Live Agents`), or "main".',
             },
             "text": {
                 "type": "string",
@@ -265,12 +262,12 @@ class ReplyTool(Tool):
     requires_handler = "questions"
     force_mount = True
     description = (
-        "Reply to someone who is waiting on you — an agent's `message` that "
-        "expects an answer, or the request you were given. `id` names the item "
-        "(`r-…` in `## Open Items`); each gets its own reply. Nothing is expected "
-        "back, so this ends that exchange cleanly. Use `message` (or `agent` "
-        "request) instead when you NEED something from them. `complete` alone "
-        "reports to no one: reply BEFORE you complete. Refused when nothing is owed."
+        "Reply to someone who is waiting on you — an agent's `message` that expects an "
+        "answer, or the request you were given. `id` names the item (`r-…` in `## Open "
+        "Items`); each gets its own reply. Nothing is expected back, so this ends that "
+        'exchange cleanly. Use `message` (or `agent` with `mode` "request") instead '
+        "when you NEED something from them. `complete` alone reports to no one: reply "
+        "BEFORE you complete. Refused when nothing is owed."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -278,15 +275,15 @@ class ReplyTool(Tool):
             "id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The item id from `## Open Items`, e.g. 'r-12'.",
+                "description": 'The item id from `## Open Items`, e.g. "r-12".',
             },
             "text": {"type": "string", "minLength": 1, "description": "Your reply."},
             "to": {
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "Optional: the requester ('main' or an agent key) — must match "
-                    "the request `id` refers to."
+                    'Optional: the requester ("main" or an agent key) — must match the '
+                    "request `id` refers to."
                 ),
             },
         },
@@ -324,9 +321,7 @@ class AnswerTool(Tool):
             "id": {
                 "type": "string",
                 "minLength": 1,
-                "description": (
-                    "The question id, e.g. 'q-1a2b' — never a `u-…`/`n-…` item."
-                ),
+                "description": 'The question id, e.g. "q-1a2b" — never a `u-…`/`n-…` item.',
             },
             "text": {
                 "type": "string",
@@ -367,7 +362,7 @@ class RunSkillTool(Tool):
             },
             "arguments": {
                 "type": "string",
-                "description": "Arguments to pass to the skill (e.g. file path)",
+                "description": "Arguments to pass to the skill (e.g. a file path)",
             },
         },
         "required": ["name"],

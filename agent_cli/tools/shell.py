@@ -325,11 +325,11 @@ def tool_shell(args: dict) -> ToolResult:
 class ShellTool(Tool):
     name = "shell"
     description = (
-        "Run a shell command and return stdout/stderr. For anything that may "
-        "run longer than about a minute (a test suite, a build, an install, a "
-        "large clone) pass background=true: the harness starts it for you, "
-        "sends its output to a log under .agent-cli/tmp/jobs/ and tells you "
-        "when it ends (exit code + last lines) — keep working meanwhile."
+        "Run a shell command and return stdout/stderr. For anything that may run longer"
+        " than about a minute (a test suite, a build, an install, a large clone) set "
+        "`background` to true: the harness starts it for you, sends its output to a log"
+        " under .agent-cli/tmp/jobs/ and tells you when it ends (exit code + last "
+        "lines) — keep working meanwhile."
     )
     oversized_retry_hint = (
         "narrow the command itself: add `grep`/`head`/`tail`, target fewer "
@@ -355,10 +355,10 @@ class ShellTool(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Max seconds before a FOREGROUND command is killed (default "
-                    "120). Do not raise it to sit through a long command — use "
-                    "background=true for that. Raise it only for a short wait "
-                    "you must block on."
+                    "Max seconds before a FOREGROUND command is killed (default 120). "
+                    "Do not raise it to sit through a long command — set `background` "
+                    "to true for that. Raise it only for a short wait you must block "
+                    "on."
                 ),
             },
             "background": {

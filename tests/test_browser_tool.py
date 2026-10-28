@@ -490,7 +490,8 @@ class TestSessionWithFakePage:
         assert out.endswith(
             f"[snapshot cut to depth 1: {out.count(chr(10)) - 1} of {len(nodes)} nodes "
             f"(whole tree ~{B.estimate_tokens(B.render_nodes(nodes)):,} tokens) — use "
-            "find(text=…), text(ref=…) or snapshot(ref=<landmark>) for the part you need]"
+            '"find" with `text`, "text" with `ref`, or "snapshot" with a landmark `ref` '
+            "for the part you need]"
         )
         link = next(
             k
@@ -891,7 +892,8 @@ class TestToolSchema:
 
     def test_retry_hint_names_the_narrowing_modes(self):
         hint = TOOLS["browser"].oversized_retry_hint
-        assert "ref=" in hint and "find(" in hint and "text(" in hint
+        assert '"snapshot"' in hint and '"find"' in hint and '"text" with `ref`' in hint
+        assert "find(" not in hint and "ref=" not in hint  # 호출 모양 대신 문장
 
 
 class TestToolDispatch:
@@ -1044,7 +1046,7 @@ class TestWindowClosed:
             for call in (s.snapshot, lambda: s.find(text="x"), s.text, s.back):
                 with pytest.raises(
                     B.BrowserError,
-                    match="browser window was closed .*call mode 'open'",
+                    match='browser window was closed .*`mode` "open"',
                 ):
                     call()
             with pytest.raises(B.BrowserError, match="window was closed"):

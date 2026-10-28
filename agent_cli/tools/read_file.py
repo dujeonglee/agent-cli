@@ -55,7 +55,7 @@ def _parse_ref(ref: str) -> tuple[int, str]:
         raise RuntimeError(  # noqa: TRY004
             f"Invalid hashline ref: {ref!r} (expected string, got "
             f"{type(ref).__name__}). Expected format: LINE#HASH "
-            f"(e.g. 5#VR). Re-read the file with read_file to get "
+            f'(e.g. "5#VR"). Re-read the file with `read_file` to get '
             f"fresh hashline tags."
         )
     # ``LINE#HASH:text`` is a whole read_file line pasted as the ref
@@ -70,7 +70,7 @@ def _parse_ref(ref: str) -> tuple[int, str]:
     if not m:
         raise RuntimeError(
             f"Invalid hashline ref: '{ref}'. Expected format: LINE#HASH "
-            f"(e.g. 5#VR) — the tag at the start of a read_file line."
+            f'(e.g. "5#VR") — the tag at the start of a `read_file` line.'
         )
     return int(m.group(1)), m.group(2)
 
@@ -341,13 +341,13 @@ class ReadFileTool(Tool):
     # 사용 안내 블록(번호 목록·호출 예시·방언 문단·code_index Flow)은 16런에서
     # stat 1회만 따랐다 — 지웠다. 이미지는 view_image 의 일.
     description = (
-        "Read a text file. Each line comes back tagged LINE#HASH:content; edits "
-        "address lines by these tags. With no mode you get the whole file. "
-        "line_start and line_end return that range of lines (1-based, inclusive). "
-        "search returns the lines matching a regex, each with `context` lines "
-        "around it. stat returns only the line count, size and first 20 lines — "
-        "the file is not read yet. A whole-file read too large for one context "
-        "is not delivered: you get an excerpt and how to read the rest in parts."
+        "Read a text file. Each line comes back tagged LINE#HASH:content; edits address"
+        " lines by these tags. With no mode you get the whole file. `line_start` and "
+        "`line_end` return that range of lines (1-based, inclusive). `search` returns "
+        "the lines matching a regex, each with `context` lines around it. `stat` "
+        "returns only the line count, size and first 20 lines — the file is not read "
+        "yet. A whole-file read too large for one context is not delivered: you get an "
+        "excerpt and how to read the rest in parts."
     )
     oversized_retry_hint = (
         "read less up front: search for a targeted lookup, or line_start and "
@@ -383,7 +383,7 @@ class ReadFileTool(Tool):
             },
             "context": {
                 "type": "integer",
-                "description": "Lines shown before and after each search match (default 5).",
+                "description": "Lines shown before and after each `search` match (default 5).",
             },
             "stat": {
                 "type": "boolean",

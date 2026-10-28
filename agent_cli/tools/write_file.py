@@ -67,7 +67,7 @@ def _small_overwrite_analysis(path: str, new_content: str):
     # 명령("Use edit_file next time.")이 아니라 사실 — 넛지 뒤 edit_file 로 간
     # 경우는 GLM 3/6·35B 0/2 였다 (v10.77.0).
     nudge = (
-        f"[note] Only ~{pct}% of lines changed ({changed}/{total}). edit_file "
+        f"[note] Only ~{pct}% of lines changed ({changed}/{total}). `edit_file` "
         f"would have sent just those lines; this rewrite sent the whole file, "
         f"and it stays in your context."
     )
@@ -124,8 +124,8 @@ def tool_write_file(args: dict) -> ToolResult:
             # ref source.
             msg = (
                 f"{header}\n"
-                f"To modify, call edit_file with the hashline refs below "
-                f"(no need to read_file first):\n"
+                f"To modify, call `edit_file` with the hashline refs below "
+                f"(no need to `read_file` first):\n"
                 f"{format_hashlines(content)}"
             )
         else:
@@ -134,7 +134,7 @@ def tool_write_file(args: dict) -> ToolResult:
             msg = (
                 f"{header}\n"
                 f"Lines 1–{_ECHO_EDGE} and {tail_start + 1}–{total} are tagged below "
-                f"for edit_file; read_file shows the rest tagged.\n"
+                f"for `edit_file`; `read_file` shows the rest tagged.\n"
                 f"{format_hashlines_range(all_lines, 0, _ECHO_EDGE)}\n"
                 f"…\n"
                 f"{format_hashlines_range(all_lines, tail_start, total)}"
@@ -161,13 +161,13 @@ class WriteFileTool(Tool):
     # that kept failing edit_file had been told rewriting was off limits.
     description = (
         "Create a file, or overwrite one, with exactly the content you give. The "
-        "content is its own field, so it needs no shell quoting. Use it for a new "
-        "file or to rewrite a small file in full; to change part of an existing "
-        "file, edit_file sends only the changed lines, while a rewrite sends the "
-        "whole file again and keeps it in your context. If the same edit keeps "
-        "failing on a small file, rewriting it is fine. Returns the written file "
-        "tagged LINE#HASH:content — the whole file when it is short, otherwise "
-        "its first and last lines; read_file shows the rest tagged."
+        "content is its own field, so it needs no shell quoting. Use it for a new file "
+        "or to rewrite a small file in full; to change part of an existing file, "
+        "`edit_file` sends only the changed lines, while a rewrite sends the whole file"
+        " again and keeps it in your context. If the same edit keeps failing on a small"
+        " file, rewriting it is fine. Returns the written file tagged LINE#HASH:content"
+        " — the whole file when it is short, otherwise its first and last lines; "
+        "`read_file` shows the rest tagged."
     )
     # edit_file 이 없는 루프용 설명(``DESCRIPTION_WITHOUT_EDIT``)은 v10.77.0 에서
     # 지웠다 — write_file 이 있으면 edit_file 도 붙는다(``EditFileTool.mounted_with``).

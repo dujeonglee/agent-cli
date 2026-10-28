@@ -330,7 +330,7 @@ def _validate_semantics(args: dict) -> str | None:
         return f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"
     for key in _MODE_REQUIRED.get(mode, ()):
         if not args.get(key):
-            return f"'{key}' is required for mode='{mode}'"
+            return f'`{key}` is required for `mode` "{mode}"'
     symbol_kind = args.get("symbol_kind")
     if (
         mode in ("lookup", "kind")
@@ -355,7 +355,7 @@ def _do_list(action_input: dict) -> ToolResult:
             False,
             error=(
                 f"unsupported file extension: {path_abs.suffix}. "
-                f"Use read_file for non-code/non-markdown files."
+                f"Use `read_file` for non-code/non-markdown files."
             ),
         )
 
@@ -479,8 +479,8 @@ def _do_file(action_input: dict) -> ToolResult:
         return ToolResult(
             False,
             error=(
-                f"mode='file' is index-scoped — path {path_str!r} is outside "
-                f"the indexed root ({root}). Use mode='list' for one-off "
+                f'`mode` "file" is index-scoped — path {path_str!r} is outside '
+                f'the indexed root ({root}). Use `mode` "list" for one-off '
                 f"out-of-root files."
             ),
         )
@@ -680,18 +680,21 @@ class CodeIndexTool(Tool):
                     "slice",
                     "build",
                 ],
-                "description": "Which query to run — the modes are described in the code_index guide.",
+                "description": (
+                    "Which query to run — the modes are described in the `code_index` "
+                    "guide."
+                ),
             },
             "path": {
                 "type": "string",
-                "description": "File path. Required for list/fetch/file.",
+                "description": 'File path. Required for "list"/"fetch"/"file".',
             },
             "name": {
                 "type": "string",
                 "description": (
-                    "Symbol name (exact, as shown by 'list'). Required for "
-                    "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
-                    "also accepts the heading with marker (e.g. '## Setup')."
+                    'Symbol name (exact, as shown by "list"). Required for '
+                    '"fetch"/"lookup"/"refs"/"callers"/"callees"/"slice". Markdown '
+                    '"fetch" also accepts the heading with marker (e.g. "## Setup").'
                 ),
             },
             "symbol_kind": {
@@ -704,61 +707,67 @@ class CodeIndexTool(Tool):
                     "section",
                 ],
                 "description": (
-                    "Symbol category filter. Optional for lookup. Required for "
-                    "kind. 'section' = markdown heading."
+                    'Symbol category filter. Optional for "lookup". Required for '
+                    '"kind". "section" = markdown heading.'
                 ),
             },
             "ref_kind": {
                 "type": "string",
                 "enum": ["call", "name", "type"],
                 "description": (
-                    "Reference site category. Optional for refs. "
-                    "call = invocation; name = bare identifier mention "
-                    "(callback, pointer); type = identifier in type position."
+                    'Reference site category. Optional for "refs". "call" = invocation;'
+                    ' "name" = bare identifier mention (callback, pointer); "type" = '
+                    "identifier in type position."
                 ),
             },
             "search": {
                 "type": "string",
                 "description": (
-                    "Optional regex (re.search) to filter symbol names. "
-                    "Applies to list and kind modes."
+                    "Optional regex (re.search) to filter symbol names. Applies to "
+                    '"list" and "kind".'
                 ),
             },
             "with_callees": {
                 "type": "boolean",
-                "description": "slice mode: include callee bodies (transitive up to depth).",
+                "description": '"slice" only: include callee bodies (transitive up to `depth`).',
             },
             "with_callers": {
                 "type": "boolean",
-                "description": "slice mode: include caller bodies (transitive up to depth).",
+                "description": '"slice" only: include caller bodies (transitive up to `depth`).',
             },
             "with_types": {
                 "type": "boolean",
-                "description": "slice mode: include types/structs referenced inside target body.",
+                "description": (
+                    '"slice" only: include types/structs referenced inside the target '
+                    "body."
+                ),
             },
             "with_macros": {
                 "type": "boolean",
-                "description": "slice mode: include function-like macros invoked inside target body.",
+                "description": (
+                    '"slice" only: include function-like macros invoked inside the '
+                    "target body."
+                ),
             },
             "depth": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 5,
-                "description": "slice mode: transitive depth for callees/callers (default 1).",
+                "description": '"slice" only: transitive depth for callees/callers (default 1).',
             },
             "max_bytes": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "slice mode: cap output bytes (default unlimited).",
+                "description": '"slice" only: cap output bytes (default unlimited).',
             },
         },
         "required": ["mode"],
     }
 
     oversized_retry_hint = (
-        "narrow the query itself: mode='fetch' for ONE symbol (path + name), "
-        "search='regex' to filter a list/kind, a specific path instead of a "
-        "broad dump, or a lower max_bytes for slice."
+        'narrow the query itself: `mode` "fetch" for ONE symbol (`path` + `name`), '
+        '`search` (a regex) to filter "list"/"kind", a specific `path` instead of a '
+        'broad dump, or a lower `max_bytes` for "slice".'
     )
 
     def wrap_single_op(self, flat: dict) -> dict:

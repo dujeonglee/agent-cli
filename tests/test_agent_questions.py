@@ -1793,7 +1793,7 @@ class TestAskToUser:
         assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
         assert "nobody chases them" in g
         assert "cannot reach a run that is still going" in g
-        assert 'to: "user"' in g
+        assert '`to` to "user"' in g
         assert not HANGUL.findall(g)
 
     def test_main_question_notice_forbids_answering_for_the_person(
@@ -2136,7 +2136,7 @@ class TestCompleteIsLocal:
             expects_reply=False,  # 배달 항목으로 시작한 런
         )
         (err,) = seen
-        assert "nothing to reply to" in err and "message(to=" in err
+        assert "nothing to reply to" in err and "use `message` (`to`" in err
         assert not [x for x in calls if x["key"] == a], "거부됐는데 배달됐다"
 
     def test_second_reply_is_refused_with_the_true_reason(self, mkreg, renderer):
@@ -2153,7 +2153,7 @@ class TestCompleteIsLocal:
 
         calls = self._run(reg, b, f"agent:{a}", body)
         assert seen[0] == ""
-        assert "already replied" in seen[1] and "message(to=" in seen[1]
+        assert "already replied" in seen[1] and "`message` (`to`" in seen[1]
         assert "not started by a request" not in seen[1]
         assert next(c["message"] for c in calls if c["key"] == a).startswith("칙령")
         assert len([c for c in calls if c["key"] == a]) == 1, "두 번째가 배달됐다"
@@ -2738,7 +2738,7 @@ class TestPerRequestDebts:
         with SubmitSpy(reg) as spy:
             err = reg.question_port(b).reply("답")
         assert "needs `id`" in err and "[3]" in err and "[5]" in err
-        assert "Send `reply` with that id" in err
+        assert "Send `reply` with that `id`" in err
         assert not spy.calls, "거부됐는데 배달됐다"
         # 빚이 하나뿐이어도 같다 — 원칙이지 모호함의 해소가 아니다
         reg.begin_run(f"agent:{b}")
@@ -2764,7 +2764,7 @@ class TestPerRequestDebts:
         assert "no unpaid reply with id '8'" in err and "[3]" in err
         assert port.reply("답", id="3") == ""
         err = port.reply("정정", id="3")
-        assert "already replied to [3]" in err and "message(to=" in err
+        assert "already replied to [3]" in err and "`message` (`to`" in err
 
     def test_to_must_match_the_request(self, mkreg, renderer):
         reg = mkreg()

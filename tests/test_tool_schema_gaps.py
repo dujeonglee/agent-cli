@@ -91,9 +91,9 @@ class TestEveryRegisteredTool:
         ok, err, _ = validate_tool_input(name, {})
         if missing:
             assert not ok
-            assert err.startswith(f"Missing required field(s) for '{name}': ")
+            assert err.startswith(f"Missing required field(s) for `{name}`: ")
             for field in missing:
-                assert f"{field} (" in err
+                assert f"`{field}` (" in err
         else:
             assert err is None or "Missing required field" not in err
 
@@ -128,7 +128,7 @@ class TestValidationReadsTheMethod:
             lambda self, action_input: (["command"], []),
         )
         ok, err, _ = validate_tool_input("shell", {"command": "ls"})
-        assert not ok and "Missing required field(s) for 'shell': command" in err
+        assert not ok and "Missing required field(s) for `shell`: `command`" in err
 
     def test_unknown_keys_alone_do_not_fail_validation(self):
         ok, err, _ = validate_tool_input("shell", {"command": "ls", "zzz": 1})

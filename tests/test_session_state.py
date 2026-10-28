@@ -91,7 +91,7 @@ class TestBuildSessionState:
         마지막 턴에 complete 로 무엇을 보고할지 알려 준다."""
         out = build_session_state(turn=60, max_turns=60, reports_to_caller=True)
         assert "turn 60/60 (0 left after this one)" in out
-        assert "LAST turn" in out and "Call complete now" in out
+        assert "LAST turn" in out and "Call `complete` now" in out
         assert "The agent that called you receives ONLY" in out
         assert "damaged" in out  # 파일 손상도 보고 대상
 
@@ -144,12 +144,12 @@ class TestCompactionNotice:
         for bad in ("nearly full", "lose", "NOW", "finish early", "⚠"):
             assert bad not in COMPACTION_NOTICE, bad
         assert "structured summary" in COMPACTION_NOTICE
-        assert "`memory` mode `add`" in COMPACTION_NOTICE
+        assert '`memory` with `mode` "add"' in COMPACTION_NOTICE
         assert "memory(" not in COMPACTION_NOTICE  # 호출 모양 대신 문장 (v10.75.1)
         # v10.9.1: prune too — the index rides every tail and survives
         # compaction, and only BEFORE compaction can the model still tell
         # which entry is stale.
-        assert "`memory` mode `delete` and its id" in COMPACTION_NOTICE
+        assert '`memory` `mode` "delete" and its `id`' in COMPACTION_NOTICE
         # v10.77.0: 기준은 "앞으로의 일이 쓰지 않을 것" — "지금 작업에 필요 없는
         # 것" 은 세션을 넘어 쌓는 지식까지 지운다(사용자 결정 B).
         assert "the work ahead will not use" in COMPACTION_NOTICE

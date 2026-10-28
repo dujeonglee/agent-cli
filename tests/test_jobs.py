@@ -283,8 +283,8 @@ class TestShellToolSurface:
 
         props = ShellTool.parameters["properties"]
         assert props["background"]["type"] == "boolean"
-        assert "background=true" in props["timeout"]["description"]
-        assert "background=true" in ShellTool.description
+        assert "set `background` to true" in props["timeout"]["description"]
+        assert "set `background` to true" in ShellTool.description
 
 
 class TestLifetime:
@@ -475,7 +475,7 @@ class TestAssembly:
     def test_guideline_and_tool_text_point_at_background(self):
         from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
-        assert "`background: true`" in TASK_GUIDELINES
+        assert "`background` true" in TASK_GUIDELINES
         assert ".agent-cli/tmp/jobs/" in TASK_GUIDELINES
         assert "Do not poll the log" in TASK_GUIDELINES
         assert "call `wait`" in TASK_GUIDELINES  # v10.65.0: 기다림은 wait

@@ -613,6 +613,8 @@ UI 기능:
 |---|---|---|
 | 맨 위 (접힘) | Head | 시스템 프롬프트 섹션(훅 섹션 포함) · 함수 스키마(native_fc) · 디코딩 문법 · 압축 요약 |
 
+> **모델이 보는 글의 표기 (v10.77.0):** 도구 이름·인자 이름은 백틱(`` `read_file` ``, `` `line_start` ``), 값은 큰따옴표(`"replace"`), 호출 모양(`mode=get`, `read_file(path=…)`)은 쓰지 않고 문장으로 씁니다 — 도구 설명·안내·꼬리·넛지·오류 문구 모두. 형식 오류의 되묻기도 `` You sent: `edit_file` with `op` "replace", … — missing: `path`. `` 처럼 문장입니다. 설계 `docs/prompt-notation/DESIGN.md`.
+
 > **프롬프트의 호출 예시 (v10.75.1):** 도구 가이드·Skills·Agent Profiles 의 예시는 방언이 그린다 — 텍스트 방언(json_fc·xml_fc 등)은 자기 호출 모양 그대로(예시가 곧 형식 교육), native_fc 는 `` `read_file` {"path": "app.py"} `` 처럼 도구 이름과 인자 객체만. 종전엔 native_fc 에도 json_fc 의 `[{"action": …}]` 배열이 나가 "호출을 글로 쓰지 말라" 는 같은 프롬프트의 규칙과 모순이었다. 훅 섹션의 `<!-- HOOK_SECTIONS -->` 표식도 이제 모델에게 나가지 않는다.
 
 | 그 아래 (접힘) | Evicted | 압축으로 컨텍스트에서 빠진 카드를 한 묶음으로. 펼치면 흐린 카드 |

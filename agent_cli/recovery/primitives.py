@@ -55,8 +55,8 @@ def summarize_call(
 ) -> str:
     """One line that shows the model the call it just sent (v10.37.0).
 
-    ``You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) —
-    missing: path. Re-emit the whole call with every required field.``
+    ``You sent: `edit_file` with `op` "replace", `pos` "12#AB", `lines` [1 item]
+    — missing: `path`. Re-emit the whole call with every required field.``
 
     Why it exists: a call rejected before dispatch (A4/A5) is not stored, so
     the rejection text is the model's only copy. Text dialects also get
@@ -70,18 +70,22 @@ def summarize_call(
     what is wrong (missing fields → re-emit whole call; otherwise fix the
     named argument).
     """
-    if isinstance(tool_input, dict):
-        args = ", ".join(f"{k}={summarize_value(v)}" for k, v in tool_input.items())
-    elif tool_input is None:
-        args = ""
+    # v10.77.0 표기 규칙: 호출 모양(`tool(k=v)`)이 아니라 문장 — 도구·인자는
+    # 백틱, 값은 ``summarize_value`` 그대로(문자열은 따옴표).
+    if isinstance(tool_input, dict) and tool_input:
+        args = " with " + ", ".join(
+            f"`{k}` {summarize_value(v)}" for k, v in tool_input.items()
+        )
+    elif isinstance(tool_input, dict) or tool_input is None:
+        args = " with no arguments"
     else:
-        args = summarize_value(tool_input)
-    line = f"You sent: {tool_name}({args})"
+        args = f" with {summarize_value(tool_input)}"
+    line = f"You sent: `{tool_name}`{args}"
     gaps = []
     if missing:
-        gaps.append("missing: " + ", ".join(missing))
+        gaps.append("missing: " + ", ".join(f"`{m}`" for m in missing))
     if unknown:
-        gaps.append("unknown: " + ", ".join(unknown))
+        gaps.append("unknown: " + ", ".join(f"`{u}`" for u in unknown))
     if gaps:
         line += " — " + "; ".join(gaps)
     if hint is None:
@@ -154,7 +158,9 @@ def _loop_observed(action: str, args_repr: str, repeat_count: int) -> str:
     across escalation levels. The body that follows is
     primitive-specific.
     """
-    return f"You have called {action}({args_repr}) {repeat_count} times in a row"
+    # v10.77.0: 호출 모양 대신 도구 이름 + 인자 객체 (예시 규칙 v10.75.1 과 같음).
+    # 접두 "You have called" 는 fold 판정이 쓰므로 그대로.
+    return f"You have called `{action}` with {args_repr} {repeat_count} times in a row"
 
 
 def probe_progress(
@@ -187,7 +193,7 @@ def probe_progress(
         "The previous call already returned:\n---\n"
         f"{bounded_excerpt(prior_result)}\n---\n"
         "Take a different action based on that result. "
-        "Call complete only if the task itself is finished, "
+        "Call `complete` only if the task itself is finished, "
         "not to end the repetition."
     )
 
