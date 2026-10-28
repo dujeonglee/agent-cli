@@ -1,6 +1,6 @@
 ## Available Tools
-- read_file: Read a file. Lines are tagged as LINE#HASH:content for editing. Modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
-  Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
+- read_file: Read a text file. Each line comes back tagged LINE#HASH:content; edits address lines by these tags. With no mode you get the whole file. line_start and line_end return that range of lines (1-based, inclusive). search returns the lines matching a regex, each with `context` lines around it. stat returns only the line count, size and first 20 lines — the file is not read yet. A whole-file read too large for one context is not delivered: you get an excerpt and how to read the rest in parts.
+  Input JSON: {"path": "string, required — File path to read", "line_start": "integer — First line to return (1-based). Omit to start at line 1.", "line_end": "integer — Last line to return (1-based, inclusive). Omit to read to the end.", "search": "string — Regex; returns only the matching lines, each with `context` lines around it.", "context": "integer — Lines shown before and after each search match (default 5).", "stat": "boolean — Return only the line count, size and first 20 lines — the file is not read."}
 - edit_file: Change part of a file — the default way to modify an existing file. Addresses lines by the hashline refs that read_file returns. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
   Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
 - code_index: Query a persistent tree-sitter index of the project's code and markdown (read-only): file outlines, symbol bodies, definitions, references, callers and callees. One op runs one query, chosen by `mode`.
@@ -16,32 +16,6 @@ Checked: <what you ran or inspected, and what it showed>
 Not checked: <what you inferred from reading rather than running, or did not test — 'nothing' if so>
 A reply with nothing to check has neither line. When `## Open Items` lists items closed by `complete`, `answers` is REQUIRED: list the ids your result covers. Ids you leave out stay open. Not for waiting — to pause until a job, monitor or agent reports back, call `wait`.
   Input JSON: {"result": "string, required — The answer, then the Checked / Not checked lines", "answers": "array<string> — Ids from `## Open Items` (`u-…` user requests, `n-…` mail) that this result covers."}
-  Each read_file op targets ONE file. To read several files, emit one
-  read_file op per file in the SAME turn (separate array elements — never
-  a list inside one op); independent files belong together in one turn and
-  save turns. Pick the right mode per op — a full file read burns context
-  budget, but reading too little costs turns:
-
-  1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
-     count + size + the first 20 lines so you can pick a real read mode.
-       {"action": "read_file", "path": "app.py", "stat": true}
-  2. search — grep-style targeted lookup. Returns only matching regions
-     with surrounding context. Prefer this when the user names a
-     specific function, class, or symbol — even if the file looks small.
-       {"action": "read_file", "path": "app.py", "search": "login", "context": 5}
-  3. Partial — you know the exact region. Aim for ~500 lines at a time
-     so you capture surrounding context. Reading 30-50 lines just to
-     peek at one function usually costs more turns when you have to
-     come back for context.
-       {"action": "read_file", "path": "app.py", "line_start": 100, "line_end": 600}
-  4. Full — the file is known-small or central to the task.
-       {"action": "read_file", "path": "app.py"}
-
-  Flow: for an unknown file, if its extension is supported by
-  code_index (.c, .cc, .cjs, .cpp, .cxx, .go, .h, .h++, .hh, .hpp, .hxx, .java, .js, .jsx, .markdown, .md, .mjs, .py, .pyi, .rs, .ts, .tsx), call code_index mode='list' first.
-  Otherwise stat first to get its size, then pick one of modes 2–4.
-  stat alone is never enough — if you stop after stat, you have only
-  seen the first 20 lines.
 
   To write file CONTENT, use write_file (or edit_file) — NEVER a shell heredoc
   (`cat <<EOF > file`). Code in a shell command string is escaped TWICE (shell

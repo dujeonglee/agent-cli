@@ -95,7 +95,9 @@ class TestToolSurfaces:
 # ── the unified nudge ────────────────────────────────────────────────
 
 
-def _nudge(tool_name, body, *, cap=1000, tools=("agent",), tmp_path=None, args=None):
+def _nudge(
+    tool_name, body, *, cap=1000, tools=("read_file", "agent"), tmp_path=None, args=None
+):
     """Render one tool's over-cap observation through the real seam."""
     tool = TOOLS[tool_name]
     ctx = RunContext(
@@ -124,11 +126,12 @@ class TestUnifiedNudge:
             assert "NOT added to context" in n
             assert "Full output saved to" in n
             assert "--- first" in n and "--- last" in n  # excerpt
-            assert "search='<regex>'" in n  # regex route
-            assert "line_start=<N>" in n  # range route
+            assert "with search set to a regex" in n  # regex route
+            assert "with line_start and line_end" in n  # range route
+            assert "read_file(" not in n  # 호출 모양이 아니라 문장 (v10.77.0)
             assert "`agent`" in n and 'mode "run"' in n  # fan-out route
             assert "agent(" not in n  # 호출 모양이 아니라 문장 (v10.75.1)
-            assert "Root cause —" in n  # per-tool hint
+            assert "Next time —" in n  # per-tool hint
             assert n.endswith("]")
 
     def test_root_cause_line_is_the_tools_own_hint(self, tmp_path):
@@ -147,7 +150,21 @@ class TestUnifiedNudge:
         n = _nudge("shell", self._body(), tools=("read_file",), tmp_path=tmp_path)
         assert 'agent(mode="run"' not in n
         # the other routes survive
-        assert "search='<regex>'" in n and "Root cause —" in n
+        assert "with search set to a regex" in n and "Next time —" in n
+
+    def test_read_routes_omitted_when_read_file_not_callable(self, tmp_path):
+        """read_file 이 없는 루프엔 없는 도구를 가리키지 않는다 (v10.77.0)."""
+        n = _nudge("shell", self._body(), tools=("shell",), tmp_path=tmp_path)
+        assert "read_file" not in n
+        assert "Full output saved to" in n and "Next time —" in n
+
+    def test_read_file_names_the_file_itself_not_a_saved_copy(self, tmp_path):
+        f = tmp_path / "big.log"
+        body = self._body()
+        f.write_text(body)
+        n = _nudge("read_file", body, tmp_path=tmp_path, args={"path": str(f)})
+        assert f"The file is '{f}' (4,000 lines) — read it in parts." in n
+        assert "saved to" not in n
 
     def _sections(self, nudge):
         import re as _re
@@ -173,7 +190,7 @@ class TestUnifiedNudge:
         body = self._body(40_000)  # ~ 100 caps
         n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
         assert self._sections(n) == 16
-        assert "still large" in n and "read_file search=" in n
+        assert "still large" in n and "read_file with search" in n
 
     def test_persist_failure_degrades_without_claiming_a_file(self, monkeypatch):
         monkeypatch.setattr(
@@ -182,7 +199,7 @@ class TestUnifiedNudge:
         n = _nudge("shell", self._body(), tmp_path=None)
         assert "could NOT be saved" in n
         assert "Full output saved to" not in n
-        assert "Root cause —" in n  # still tells it how to avoid the bulk
+        assert "Next time —" in n  # still tells it how to avoid the bulk
 
 
 # ── where the full body lands ────────────────────────────────────────
@@ -302,7 +319,7 @@ class TestSourcePathTools:
         body = "\n".join(f"line {i}" for i in range(4000))
         n = _nudge("agent", body, tmp_path=tmp_path, args={"mode": "run"})
         assert (tmp_path / OVERSIZED_DIRNAME).exists()
-        assert "Root cause —" in n
+        assert "Next time —" in n
 
 
 # ── excerpt ──────────────────────────────────────────────────────────
@@ -698,14 +715,14 @@ class TestStatHintCapAwareThreading:
             .output
         )
         assert "would exceed the context cap" in out
-        assert "for a full read" not in out
-        assert "Fan out" in out  # delegate available
+        assert "Read it whole" not in out
+        assert "To analyse the whole file" in out  # delegate available
 
     def test_run_without_ctx_keeps_plain_hint(self, tmp_path):
         # A direct/test caller that omits ctx (ctx=None) → plain hint, no crash.
         f = self._bigfile(tmp_path)
         out = TOOLS["read_file"].run({"path": str(f), "stat": True}).output
-        assert "for a full read" in out
+        assert "Read it whole" in out
         assert "would exceed" not in out
 
     def test_est_tokens_is_upper_bound_of_real_body(self, tmp_path):

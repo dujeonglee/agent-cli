@@ -165,30 +165,24 @@ def _stat(
         fan = ""
         if "agent" in tools_available:
             fan = (
-                "\n  - analyse the WHOLE file? Fan out: split the line range "
-                "into several contiguous sections and make one `agent` call with "
-                'mode "run" per section in the SAME turn (they run concurrently), each '
-                "returning a short summary; then merge them — no single context "
-                "holds the whole file."
+                "\n  To analyse the whole file, split its lines into contiguous "
+                'sections and make one `agent` call with mode "run" per section in '
+                "the same turn (they run concurrently), each returning a short "
+                "summary; then merge them."
             )
         hint = (
-            f"\n\n[File has {total:,} total lines (~{est_tokens:,} tokens). stat "
-            f"returned metadata + the first {head_end} lines only — you have NOT "
-            f"read the file yet. A FULL read would exceed the context cap "
-            f"({oversized_cap:,} tokens) and be DROPPED, so do not full-read. "
-            f"Read a slice instead:\n"
-            f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
-            f'  - read_file(path, search="keyword") to hunt for specific content'
-            f"{fan}]"
+            f"\n\n[File has {total:,} lines (~{est_tokens:,} tokens). This is "
+            f"metadata and the first {head_end} lines only — the file is not read "
+            f"yet. A whole-file read would exceed the context cap "
+            f"({oversized_cap:,} tokens) and not be delivered, so read a range with "
+            f"line_start and line_end, or find content with search.{fan}]"
         )
     else:
         hint = (
-            f"\n\n[File has {total} total lines. stat returned metadata + the "
-            f"first {head_end} lines only — you have NOT read the file yet. "
-            f"Pick a follow-up read mode:\n"
-            f"  - read_file(path) for a full read (if the file is small or central to the task)\n"
-            f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
-            f'  - read_file(path, search="keyword") to hunt for specific content]'
+            f"\n\n[File has {total} lines. This is metadata and the first "
+            f"{head_end} lines only — the file is not read yet. Read it whole, "
+            f"read a range with line_start and line_end, or find content with "
+            f"search.]"
         )
     return ToolResult(
         True,
@@ -303,35 +297,63 @@ def _read_one(
         if search:
             return _search(path, all_lines, search, context)
 
+        # 머리줄 (v10.77.0): search·stat 처럼 무엇을 받았는지 — 범위가 끝을
+        # 넘었는지, 전체 몇 줄 중 어디까지인지 모델이 알 수 있게.
+        if not text:
+            return ToolResult(True, output=f"[read] {path}: empty file")
         if line_start > 0:
-            start = max(0, line_start - 1)
+            if line_start > total:
+                return ToolResult(
+                    True,
+                    output=(
+                        f"[read] {path}: no lines — line_start {line_start} is past "
+                        f"the end ({total} lines)"
+                    ),
+                )
+            if 0 < line_end < line_start:
+                return ToolResult(
+                    True,
+                    output=(
+                        f"[read] {path}: no lines — line_end {line_end} is before "
+                        f"line_start {line_start}"
+                    ),
+                )
+            start = line_start - 1
             end = min(total, line_end) if line_end > 0 else total
+            body = format_hashlines_range(all_lines, start, end)
             return ToolResult(
-                True, output=format_hashlines_range(all_lines, start, end)
+                True,
+                output=f"[read] {path}: lines {start + 1}–{end} of {total}\n{body}",
             )
 
         # Bare full read — return the whole file. Reuse the split done above
         # for ``total`` instead of ``format_hashlines(text)`` re-splitting the
         # same text (same output: format_hashlines splits on "\n" identically).
-        return ToolResult(True, output=format_hashlines_range(all_lines, 0, total))
+        body = format_hashlines_range(all_lines, 0, total)
+        return ToolResult(True, output=f"[read] {path}: all {total} lines\n{body}")
     except Exception as e:
         return ToolResult(False, error=f"read_file failed: {e}")
 
 
 class ReadFileTool(Tool):
     name = "read_file"
+    # v10.77.0 (docs/vision/DESIGN.md §12 · 개정안 E): 모드는 한 번만 말한다.
+    # 사용 안내 블록(번호 목록·호출 예시·방언 문단·code_index Flow)은 16런에서
+    # stat 1회만 따랐다 — 지웠다. 이미지는 view_image 의 일.
     description = (
-        "Read a file. Lines are tagged as LINE#HASH:content for editing. "
-        "Modes: stat=true (metadata + first 20 lines, NOT a read — follow up "
-        "with a real read), search='regex' (matching regions with context, "
-        "efficient for targeted lookups), line_start/line_end (partial read, "
-        "1-based inclusive), or none (full file)."
+        "Read a text file. Each line comes back tagged LINE#HASH:content; edits "
+        "address lines by these tags. With no mode you get the whole file. "
+        "line_start and line_end return that range of lines (1-based, inclusive). "
+        "search returns the lines matching a regex, each with `context` lines "
+        "around it. stat returns only the line count, size and first 20 lines — "
+        "the file is not read yet. A whole-file read too large for one context "
+        "is not delivered: you get an excerpt and how to read the rest in parts."
     )
     oversized_retry_hint = (
-        "read a narrower slice up front — search='regex' for a targeted lookup, "
-        "line_start/line_end for a known region, or code_index mode='fetch' for "
-        "one symbol."
+        "read less up front: search for a targeted lookup, or line_start and "
+        "line_end for a known region."
     )
+    oversized_path_is_source = True
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-file shape — no `read_file_reads` batch array and no
     # `read_file_` wire-key prefix. One op reads one file; to read several
@@ -349,23 +371,23 @@ class ReadFileTool(Tool):
             },
             "line_start": {
                 "type": "integer",
-                "description": "Start line (1-based). Omit to read from beginning.",
+                "description": "First line to return (1-based). Omit to start at line 1.",
             },
             "line_end": {
                 "type": "integer",
-                "description": "End line (1-based, inclusive). Omit to read to end.",
+                "description": "Last line to return (1-based, inclusive). Omit to read to the end.",
             },
             "search": {
                 "type": "string",
-                "description": "Regex pattern. Returns only matching lines with surrounding context.",
+                "description": "Regex; returns only the matching lines, each with `context` lines around it.",
             },
             "context": {
                 "type": "integer",
-                "description": "Lines of context before/after each search match (default 5).",
+                "description": "Lines shown before and after each search match (default 5).",
             },
             "stat": {
                 "type": "boolean",
-                "description": "Metadata query only — line count, size, first 20 lines. Not a read.",
+                "description": "Return only the line count, size and first 20 lines — the file is not read.",
             },
         },
         "required": ["path"],

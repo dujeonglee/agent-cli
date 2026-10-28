@@ -288,103 +288,6 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
 {rendered}"""
 
 
-def _build_read_file_inline(active_tools: list[str], dialect) -> str:
-    """Build the read_file inline guide.
-
-    When ``code_index`` is active, the Flow paragraph routes
-    supported-language files to ``code_index`` mode='list' as the entry
-    point — its symbol outline beats stat's 20-line head. The extension
-    list is pulled from
-    :func:`agent_cli.code_index.languages.get_supported_extensions` so
-    adding a walker module automatically updates the prompt (single
-    source of truth).
-
-    When ``code_index`` is not active (e.g., subagent with restricted
-    tools), the steering is omitted to avoid pointing the model at a
-    tool it cannot call.
-
-    Each mode's example shows only the action_input dict — wire-shape
-    learning is carried by the Format Rules section
-    (``dialect.format_rules()``) and the Skills / Agents
-    invocation examples (``render_full_example``). Repeating the
-    wire-shape envelope at every example anchored small models toward
-    placeholder reasoning emissions in the first probe.
-
-    The action_input fragment passes through
-    ``dialect.render_action_input`` so plugins whose action_input
-    shape is not a JSON dict can transform here without changing the
-    builder. Both current plugins return identity.
-    """
-
-    def rai(j):
-        return _rai_prefixed(dialect, "read_file", j)
-
-    # read_file is flat-native (consolidation roadmap Step 3): one op reads ONE
-    # file — there is no per-tool batch array in any wire shape, so the examples
-    # are always the flat single-file form (rendered through the wire's
-    # render_action_input). Only the framing differs by format: a multi-op
-    # format reads several files by emitting several read_file ops in one turn;
-    # a single-op format reads one file per turn.
-    # Wording note (DESIGN Exp 8): avoid the plural noun "reads" next to the
-    # tool name "read_file" — the 27B composed `read_file` + `reads` into the
-    # invented wire key `read_file_reads`. "op", "file(s)" and the verb "read"
-    # carry the same meaning without seeding that token.
-    ex_stat = rai({"path": "app.py", "stat": True})
-    ex_search = rai({"path": "app.py", "search": "login", "context": 5})
-    ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
-    ex_full = rai({"path": "app.py"})
-    if getattr(dialect, "multi_op", False):
-        intro = """\
-
-  Each read_file op targets ONE file. To read several files, emit one
-  read_file op per file in the SAME turn (separate array elements — never
-  a list inside one op); independent files belong together in one turn and
-  save turns. Pick the right mode per op — a full file read burns context
-  budget, but reading too little costs turns:
-"""
-    else:
-        intro = """\
-
-  Each read_file call reads ONE file. Pick the right mode — a full file
-  read burns context budget, but reading too little costs turns:
-"""
-    base_modes = f"""\
-{intro}
-  1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
-     count + size + the first 20 lines so you can pick a real read mode.
-       {ex_stat}
-  2. search — grep-style targeted lookup. Returns only matching regions
-     with surrounding context. Prefer this when the user names a
-     specific function, class, or symbol — even if the file looks small.
-       {ex_search}
-  3. Partial — you know the exact region. Aim for ~500 lines at a time
-     so you capture surrounding context. Reading 30-50 lines just to
-     peek at one function usually costs more turns when you have to
-     come back for context.
-       {ex_partial}
-  4. Full — the file is known-small or central to the task.
-       {ex_full}
-"""
-    if "code_index" in active_tools:
-        from agent_cli.code_index.languages import get_supported_extensions
-
-        exts = ", ".join(get_supported_extensions())
-        flow = f"""
-  Flow: for an unknown file, if its extension is supported by
-  code_index ({exts}), call code_index mode='list' first.
-  Otherwise stat first to get its size, then pick one of modes 2–4.
-  stat alone is never enough — if you stop after stat, you have only
-  seen the first 20 lines."""
-    else:
-        flow = """
-  Flow: for an unknown file, stat first to get its size, then pick one
-  of modes 2–4. stat alone is never enough — if you stop after stat,
-  you have only seen the first 20 lines. A full read whose result is too
-  big for one context is not delivered: you get an excerpt plus
-  instructions for pulling out the part you need — follow them."""
-    return base_modes + flow
-
-
 def _build_code_index_inline(dialect) -> str:
     """Build the code_index inline guide.
 
@@ -395,8 +298,7 @@ def _build_code_index_inline(dialect) -> str:
 
     Examples show only the action_input dict — the wire-shape envelope
     is taught by the Format Rules section, not by repeating a wrapper
-    at every inline example. See ``_build_read_file_inline`` docstring
-    for the rationale (small-model placeholder anchoring).
+    at every inline example (small-model placeholder anchoring).
 
     The action_input fragment passes through
     ``dialect.render_action_input`` so a future plugin can swap the
@@ -598,7 +500,6 @@ def _build_tool_inline_guides(
     else:
         ask = _ASK_INLINE
     return {
-        "read_file": _build_read_file_inline(active_tools, dialect),
         "edit_file": _build_edit_file_inline(dialect),
         "agent": _build_agent_inline(dialect, has_agent_registry=has_agent_registry),
         "ask": ask,

@@ -1042,7 +1042,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### read_file — 파일 읽기
 
-한 번에 **파일 하나**를 읽습니다 (flat-native). 모드(부분 범위 / 검색 / stat)를 고를 수 있고, 각 줄에 `LINE#HASH:content` hashline 태그가 붙습니다. 여러 파일은 멀티-op 포맷에서 read_file op 을 여러 개 emit 해 한 턴에 읽습니다 (op 배열이 곧 배치 — 중첩 배열 없음).
+한 번에 **텍스트 파일 하나**를 읽습니다 (flat-native). 모드(부분 범위 / 검색 / stat)를 고를 수 있고, 각 줄에 `LINE#HASH:content` hashline 태그가 붙습니다. 전체·범위 읽기 결과는 `[read] path: all N lines` / `lines a–b of N` 머리줄로 시작합니다(v10.77.0 — 범위가 끝을 넘거나 빈 파일이면 그렇다고 말함). 도구 설명은 모드를 한 문단에 한 번만 말합니다(v10.77.0 에 사용 안내 블록·호출 예시·code_index 안내 삭제). 여러 파일은 멀티-op 포맷에서 read_file op 을 여러 개 emit 해 한 턴에 읽습니다 (op 배열이 곧 배치 — 중첩 배열 없음).
 
 ```json
 {"action": "read_file", "action_input": {"path": "src/main.py"}}
@@ -1211,8 +1211,8 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 
 1. **전문은 항상 파일로** — 도구가 이미 파일에 썼으면 그 파일(`read_file` 의 원본 경로, `agent` run 의 `<run_dir>/result.md`), 아니면 `<session_dir>/oversized/<tool>-<hash>.txt` 에 **lazy 저장**(캡에 걸릴 때만 — 일반 호출엔 디스크 쓰기 0). 세션 디렉터리가 없는 headless 실행은 임시 디렉터리로 폴백하므로 "넘치면 파일에 남는다"가 예외 없이 성립합니다.
 2. **head/tail 발췌 동봉** — 앞뒤 일부(캡의 15% 이내로 클램프)를 그대로 보여줍니다. 빌드/테스트 로그처럼 **답이 꼬리에 있는** 경우가 많아, 상당수는 추가 왕복 없이 그 자리에서 끝납니다.
-3. **회수 경로 3종** — ① `read_file(path, search='regex')` 문자열/정규식 매칭, ② `read_file(path, line_start, line_end)` 범위 읽기, ③ **분할 정복**: 파일을 캡에 맞는 `k` 섹션으로 쪼개 **한 턴에 `agent(mode="run")` op 를 k 개**(agent-cli 가 동시 실행) 내고 각자 요약만 반환 → 부모는 distilled 만 병합. ③ 은 `agent` 가 실제 호출 가능할 때만 표시됩니다(depth 한계 서브에이전트에선 자동 생략).
-4. **근본 원인 한 줄** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위/`code_index mode='fetch'`, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `history` → `LIMIT`/projection/`substr`.
+3. **회수 경로 3종** — ① read_file 에 `search`(정규식) 매칭, ② read_file 에 `line_start`·`line_end` 범위 읽기(v10.77.0 부터 넛지는 호출 모양 대신 문장으로 말하고, read_file 이 없는 루프엔 ①②를 싣지 않습니다; read_file 자신의 과대 결과는 저장본이 아니라 원본 파일을 "The file is …" 로 가리킵니다), ③ **분할 정복**: 파일을 캡에 맞는 `k` 섹션으로 쪼개 **한 턴에 `agent(mode="run")` op 를 k 개**(agent-cli 가 동시 실행) 내고 각자 요약만 반환 → 부모는 distilled 만 병합. ③ 은 `agent` 가 실제 호출 가능할 때만 표시됩니다(depth 한계 서브에이전트에선 자동 생략).
+4. **다음 번 한 줄 (`Next time —`, v10.77.0 전엔 `Root cause —`)** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `history` → `LIMIT`/projection/`substr`.
 
 - **도구별 제어 (`Tool` 표면)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 끔; **`Tool.oversized_retry_hint`**(위 4번 한 줄)와 **`Tool.oversized_source_path()`**(이미 디스크에 있는 전문의 경로)만 도구가 정의합니다. `Tool.render_oversized()` 는 **어떤 도구도 오버라이드하지 않습니다** — 정책이 한 곳에 있으므로 MCP 서버 도구를 포함해 새 도구가 아무 것도 안 해도 올바르게 동작합니다. per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더 두 표면에 동일하게 전달됩니다.
 - **경로는 작업 디렉토리 상대로 표시**: 넛지가 돌려주는 파일 경로는 모델이 다음 호출에 그대로 받아쓰는 인자가 되고, `action_input` 은 그 뒤 매 턴 재공급됩니다. 그래서 `display_path()` 가 작업 디렉토리 아래에 있는 경로를 상대경로로 줄입니다 — `/Users/…/ws/b5rztq/.agent-cli/sessions/…/oversized/shell-3f9ac2.txt` → `.agent-cli/sessions/…/oversized/shell-3f9ac2.txt`. 한 넛지 안에 경로가 3~4번 등장하므로 절약이 배가됩니다. headless 임시 디렉토리는 작업 디렉토리 밖이라 절대경로를 유지합니다.
