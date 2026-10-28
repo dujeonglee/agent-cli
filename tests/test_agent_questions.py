@@ -1548,7 +1548,6 @@ class TestCompleteIsLocal:
         b = spawn_idle(reg)
         tm = reg.get(b)
         tm.current_author = "user:dj"
-        reg.begin_run(f"agent:{b}")
         reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")  # 사람 창 요청 — 빚 아님
         err = reg.question_port(b).reply("리뷰 결과")
         assert "person watching this window" in err and "Just `complete`" in err
@@ -1573,13 +1572,11 @@ class TestCompleteIsLocal:
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"
         port = reg.question_port(b)
-        reg.begin_run(me)
         reg.note_owes(me, f"agent:{a}", "일감")
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
         reg.settle(me, f"agent:{a}")
         assert port.debts() == []
         assert reg.reply_debt(me, f"agent:{a}").settled  # "이미 갚았다" 의 근거
-        reg.begin_run(me)  # 배달 항목(expects_reply=False)으로 시작한 런 — 적지 않는다
         assert port.debts() == []
         reg.note_owes(me, "user:dj", "리뷰해줘")  # 사람은 창이 곧 배달
         assert port.debts() == []
@@ -1597,7 +1594,6 @@ class TestMainRunEnd:
     def test_message_to_main_creates_a_debt_and_reply_does_not(self, mkreg, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_run("main")
         reg.message_to_main(a, "결정해 줘", expects_reply=True)
         reg.message_to_main(a, "보고", expects_reply=False)
         recs = reg.drain_replies()
@@ -1615,7 +1611,6 @@ class TestMainRunEnd:
         `agent request` 가 그 에이전트 앞 가장 오래된 빚을 갚은 것으로 쳤다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_run("main")
         d = reg.note_owes("main", f"agent:{a}", "결정해 줘")
         assert reg.request(a, "새 일") == ""  # main 발신 — 일을 시킨다
         assert [x.id for x in reg.reply_debts("main")] == [d.id], (
@@ -1630,7 +1625,6 @@ class TestMainRunEnd:
 
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.begin_run("main")
         reg.note_owes("main", f"agent:{a}", "결정해 줘")
         with SubmitSpy(reg) as spy:
             assert reg.end_run("main", "main 은 이렇게 끝냈다") == 1
@@ -1735,7 +1729,6 @@ class TestUnifiedDebtRules:
         )
         tm = reg.get(b)
         tm.current_author = "user:dj"
-        reg.begin_run(f"agent:{b}")
         reg.note_owes(f"agent:{b}", "user:dj", "리뷰해줘")
         p, _ctx, res = self._run(
             ports=ports,
@@ -1802,7 +1795,6 @@ class TestUnifiedDebtRules:
         )
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"
-        reg.begin_run(f"agent:{b}")
         reg.note_owes(f"agent:{b}", f"agent:{a}", "어느 쪽?", id="r-1")
         p, ctx, _res = self._run(
             ports=ports,
@@ -1932,7 +1924,6 @@ class TestAskKeepsTheRequesterDebt:
         me = f"agent:{b}"
         tm = reg.get(b)
         tm.current_author = "main"
-        reg.begin_run(me)
         reg.note_owes(me, "main", "일감", id="r-1")
         qid, err = reg.question_port(b).ask("결정해 주세요")
         assert not err and qid
@@ -1949,7 +1940,7 @@ class TestAskKeepsTheRequesterDebt:
     ):
         """`message` 로 묻고 `wait` 로 기다린 런의 빚은 다음 런(상대의 회신이
         연 런)으로 넘어가 거기서 `reply` 로 갚는다 (v10.77.0). 종전엔
-        `begin_run` 이 장부를 비워 요청자가 회신도 런 요약도 못 받았다."""
+        런 시작(`begin_run`)이 장부를 비워 요청자가 회신도 런 요약도 못 받았다."""
         from types import SimpleNamespace
 
         reg = mkreg()
@@ -2024,7 +2015,6 @@ class TestPerRequestDebts:
 
     def _two(self, reg, b, to):
         me = f"agent:{b}"
-        reg.begin_run(me)
         reg.note_owes(me, to, "첫 요청", id="3")
         reg.note_owes(me, to, "둘째 요청", id="5")
         return me
@@ -2049,7 +2039,6 @@ class TestPerRequestDebts:
         assert "Send `reply` with that `id`" in err
         assert not spy.calls, "거부됐는데 배달됐다"
         # 빚이 하나뿐이어도 같다 — 원칙이지 모호함의 해소가 아니다
-        reg.begin_run(f"agent:{b}")
         reg.note_owes(f"agent:{b}", f"agent:{a}", "하나", id="9")
         assert "needs `id`" in reg.question_port(b).reply("답")
 
@@ -2080,7 +2069,6 @@ class TestPerRequestDebts:
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = f"agent:{b}"
-        reg.begin_run(me)
         reg.note_owes(me, "main", "main 의 요청", id="3")
         reg.note_owes(me, f"agent:{a}", "동료의 요청", id="5")
         port = reg.question_port(b)
@@ -2103,7 +2091,6 @@ class TestPerRequestDebts:
         assert reg.settle(me, f"agent:{a}") is None
         # main 쪽 (v10.56.0): 메일마다 빚(`r-…`), `agent request` 는 갚지 않는다 —
         # 갚는 도구는 `reply(id)` 하나다
-        reg.begin_run("main")
         d1 = reg.note_owes("main", f"agent:{a}", "결정 1")
         d2 = reg.note_owes("main", f"agent:{a}", "결정 2")
         assert d1.id != d2.id and d1.id.startswith("r-")

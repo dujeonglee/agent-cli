@@ -1710,7 +1710,7 @@ class TestRunMessagePump:
         def set_current_run_authors(self, authors):
             pass
 
-        def end_run(self, owner, output=""):
+        def run_ended(self, owner, output="", *, waiting=False, **kw):
             return 0
 
     def _pump(self, queue, waker, reg, run_one):
@@ -2284,7 +2284,6 @@ class TestPeerMessaging:
         assert "no words" in out and "nothing sent" in out
         assert not wait_until(lambda: reg.get(b).handled >= 1, timeout=0.4)
         me = f"agent:{a}"
-        reg.begin_run(me)
         reg.note_owes(me, f"agent:{b}", "do it", id="1")
         port = reg.question_port(a)
         err = port.reply("...", id="1")
@@ -2334,7 +2333,6 @@ class TestPeerMessaging:
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
         me = f"agent:{a}"
-        reg.begin_run(me)
         reg.note_owes(me, f"agent:{b}", "do it", id="1")
         assert reg.reply_debts(me)
         handler = reg._make_message_handler(reg.get(a))
