@@ -109,17 +109,34 @@ def test_claims_false_on_flat_keys():
 
 
 def test_full_read_output_identical_to_format_hashlines(tmp_path):
-    """The bare full read now formats from the already-split line list —
-    output must stay byte-identical to ``format_hashlines(text)`` (incl.
-    trailing-newline and empty-line hash behaviour)."""
+    """The bare full read formats from the already-split line list — the body
+    under the ``[read]`` header (v10.77.0) must stay byte-identical to
+    ``format_hashlines(text)`` (incl. trailing-newline and empty-line hashes)."""
     from agent_cli.tools.read_file import _read_one, format_hashlines
 
-    for content in ("a\nb\nc", "a\nb\n", "", "single", "x\n\n\ny\n"):
+    for content in ("a\nb\nc", "a\nb\n", "single", "x\n\n\ny\n"):
         f = tmp_path / "f.txt"
         f.write_text(content)
         r = _read_one({"path": str(f)})
         assert r.success
-        assert r.output == format_hashlines(content), repr(content)
+        head, body = r.output.split("\n", 1)
+        assert head == f"[read] {f}: all {content.count(chr(10)) + 1} lines"
+        assert body == format_hashlines(content), repr(content)
+
+
+def test_read_headers_say_what_came_back(tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("\n".join(f"l{i}" for i in range(1, 11)))
+    out = _read_one({"path": str(f), "line_start": 4, "line_end": 99}).output
+    assert out.split("\n")[0] == f"[read] {f}: lines 4–10 of 10"
+    out = _read_one({"path": str(f), "line_start": 30}).output
+    assert out == f"[read] {f}: no lines — line_start 30 is past the end (10 lines)"
+    out = _read_one({"path": str(f), "line_start": 5, "line_end": 2}).output
+    assert out == f"[read] {f}: no lines — line_end 2 is before line_start 5"
+    (tmp_path / "e.txt").write_text("")
+    assert _read_one({"path": str(tmp_path / "e.txt")}).output == (
+        f"[read] {tmp_path / 'e.txt'}: empty file"
+    )
 
 
 # ── 이미지는 view_image 의 일 (v10.77.0) ─────────────────────────────

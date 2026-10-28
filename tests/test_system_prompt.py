@@ -129,20 +129,14 @@ class TestMultiOpPromptBranches:
         assert "code_index_queries" not in section
         assert "delegate_tasks" not in section
 
-    def test_read_file_single_target_no_batch(self, section):
-        assert "Each read_file op targets ONE file" in section
+    def test_read_file_has_no_guide_block(self, section):
+        """v10.77.0 — 사용 안내 블록(번호 목록·호출 예시·방언 문단·code_index
+        Flow)은 지웠다(16런에서 stat 1회만 따름). 모드는 설명 한 문단이 한 번
+        말하고, 여러 파일은 시스템 규칙 2 가 말한다."""
+        assert "Each read_file op targets ONE file" not in section
+        assert '{"action": "read_file", "path": "app.py", "stat": true}' not in section
+        assert "Flow: for an unknown file" not in section
         assert "5. Batch" not in section
-        assert "takes a LIST of reads" not in section
-        assert '{"action": "read_file", "path": "app.py", "stat": true}' in section
-
-    def test_read_file_guide_nudges_same_turn_batch(self, section):
-        # B (DESIGN §6): read_file is the dominant missed-batch tool, so its
-        # multi-op guide must steer several files into ONE turn — with the
-        # no-nesting guardrail right where batching is suggested.
-        assert "SAME turn" in section
-        assert "never\n  a list inside one op" in section or (
-            "never a list inside one op" in " ".join(section.split())
-        )
 
     def test_read_file_guide_avoids_reads_plural_seed(self, section):
         # DESIGN Exp 8: the 27B composed `read_file` + the plural noun "reads"
@@ -363,10 +357,6 @@ class TestBuildSystemPrompt:
         flat = re.sub(r"\s+", " ", prompt)
         # Multi-op batching nudge: independent ops belong in one turn.
         assert "Batch independent" in flat or "batching saves turns" in flat
-        # Narrow read guidance (search / targeted / narrow).
-        assert "narrow" in flat.lower() or "targeted" in flat.lower()
-        # No peek-then-redo anti-pattern.
-        assert "peek" in flat.lower() or "commit to" in flat.lower()
 
     def test_ask_description_bars_conversational_use(self):
         """The `ask` guidance must steer conversational closures to
@@ -854,19 +844,6 @@ class TestBuildSystemPrompt:
         # Cross-file modes are explicitly index-scoped.
         assert "index-scoped" in flat
 
-    def test_read_file_flow_drops_comparative_tone(self):
-        """Earlier wording leaned on a comparison ("stronger entry point
-        than stat's 20-line head") to justify routing supported files at
-        code_index. Imperative wording is more turn-efficient: just say
-        what to call. Regression guard against re-introducing the
-        comparative phrasing."""
-        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
-        # Old comparative phrasing must not return.
-        assert "stronger entry point" not in prompt
-        # The imperative form remains (covered by the existing steering
-        # test, but pinned here too for clarity).
-        assert "code_index mode='list' first" in prompt
-
     def test_code_index_guide_advertises_hashline_output(self):
         """The fetch mode returns hashline-formatted bodies so the model
         can pipe straight into edit_file. The guide must surface that
@@ -875,62 +852,11 @@ class TestBuildSystemPrompt:
         assert "hashline" in prompt.lower()
         assert "edit_file" in prompt
 
-    def test_partial_read_recommends_substantial_range(self):
-        """Models tend to over-narrow partial reads (line_start=100,
-        line_end=150 to peek at one function), then come back two more
-        turns later for surrounding context. The Partial-mode guidance
-        names a target size and an explicit anti-pattern so the model
-        reads enough on the first pass."""
-        prompt = build_system_prompt(_make_caps(), ["read_file"])
-        # Names a substantial target size for partial reads (5xx lines).
-        assert "500 lines" in prompt or "~500" in prompt
-        # Explicit anti-pattern callout — peeking at one function in a
-        # 30-50 line slice usually wastes turns.
-        assert "30-50 lines" in prompt or "more turns" in prompt
-
-    def test_read_file_header_warns_both_sides(self):
-        """The mode-selection header must warn against BOTH over-reading
-        (full reads burn budget) AND under-reading (small reads cost
-        turns). Earlier wording — 'Pick the smallest mode' — only warned
-        one side and reinforced the over-narrow tendency."""
-        prompt = build_system_prompt(_make_caps(), ["read_file"])
-        # Multi-op wording: "a full file read burns context budget, but
-        # reading too little costs turns". Match the both-sides concept
-        # tolerant of burn/burns.
-        assert "context budget" in prompt
-        assert "costs turns" in prompt or "more turns" in prompt
-
-    def test_read_file_steers_to_code_index_when_active(self):
-        """When both tools are active, the read_file Flow paragraph must
-        steer supported-language files at code_index mode='list' as the
-        entry point — that's how we counteract read_file:stat being the
-        cheaper-feeling default and getting code_index out of its
-        low-baseline trap."""
-        from agent_cli.code_index.languages import get_supported_extensions
-
-        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
-        # The Flow line names code_index as the entry point.
-        assert "code_index mode='list' first" in prompt
-        # Every supported extension must appear in the Flow paragraph
-        # itself (the code_index guide already lists them — this checks
-        # the read_file→code_index steering also stays in sync).
-        flow_start = prompt.index(
-            "Flow: for an unknown file, if its extension is supported by"
-        )
-        flow_end = prompt.index("seen the first 20 lines.", flow_start)
-        flow_text = prompt[flow_start:flow_end]
-        for ext in get_supported_extensions():
-            assert ext in flow_text, f"{ext} missing from read_file Flow steering"
-
-    def test_read_file_omits_steering_when_code_index_inactive(self):
-        """If code_index is not in active_tools (e.g., subagent with a
-        restricted tool list), the read_file guide must NOT mention it
-        — pointing the model at a tool it cannot call wastes a retry on
-        UNKNOWN_TOOL."""
+    def test_read_file_never_points_at_code_index(self):
+        """read_file 설명은 code_index 를 부르지 않는다 — 그 경로 안내는
+        code_index 설명 쪽에 있다 (v10.77.0)."""
         prompt = build_system_prompt(_make_caps(), ["read_file"])
         assert "code_index" not in prompt
-        # Original Flow wording survives.
-        assert "Flow: for an unknown file, stat first" in prompt
 
     def test_no_redundant_read_file_preview_rule(self):
         """The stat=true reminder moved into Context Discipline, so the

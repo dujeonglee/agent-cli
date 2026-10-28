@@ -256,7 +256,7 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
     step = max(1, -(-nlines // k))
     tail = (
         "\n  Each section is still large — tell each sub-agent to narrow "
-        "further (read_file search=) rather than read its whole range."
+        "further (read_file with search) rather than read its whole range."
         if capped
         else ""
     )
@@ -284,6 +284,7 @@ def oversized_nudge(
     tools_available: frozenset[str],
     reason: str = "",
     saved_note: str = "",
+    path_is_source: bool = False,
 ) -> str:
     """The single over-cap observation, identical in shape for every tool.
 
@@ -298,7 +299,10 @@ def oversized_nudge(
         f"output is ~{tokens:,} tokens — too large for one context (cap {cap:,})"
     )
     head = [f"[{tool_name}: {why}. NOT added to context; the call itself succeeded."]
-    if path:
+    if path and path_is_source:
+        # 도구가 읽은 원본 파일 그 자체(read_file) — 따로 저장한 것이 아니다.
+        head.append(f"The file is '{path}' ({nlines:,} lines) — read it in parts.")
+    elif path:
         head.append(
             f"Full output saved to '{path}' ({nlines:,} lines, {len(body):,} chars)."
         )
@@ -316,18 +320,22 @@ def oversized_nudge(
         head.append(excerpt)
 
     routes: list[str] = []
-    if path:
+    # read_file 이 없는 루프엔 없는 도구를 가리키지 않는다 (v10.77.0). 빈 집합은
+    # "모름"(headless·루프 밖 호출) — 그때는 종전대로 싣는다.
+    can_read = not tools_available or "read_file" in tools_available
+    if path and can_read:
         routes.append(
             "Match by string/regex (cheapest — start here):\n"
-            f"    read_file(path='{path}', search='<regex>', context=5)"
+            f"    read_file on '{path}' with search set to a regex "
+            "(5 lines of context by default)"
         )
         routes.append(
             "Know roughly where it is? Read that range:\n"
-            f"    read_file(path='{path}', line_start=<N>, line_end=<M>)"
+            f"    read_file on '{path}' with line_start and line_end"
         )
-        if "agent" in tools_available:
-            routes.append(_fanout_route(path, nlines, tokens, cap))
-    routes.append(f"Root cause — {retry_hint or GENERIC_RETRY_HINT}")
+    if path and "agent" in tools_available:
+        routes.append(_fanout_route(path, nlines, tokens, cap))
+    routes.append(f"Next time — {retry_hint or GENERIC_RETRY_HINT}")
 
     body_lines = ["", "Get what you need from it:"] if path else ["", "What to do:"]
     for i, route in enumerate(routes, 1):
@@ -480,13 +488,16 @@ class Tool(ABC):
     #: per-tool variation left in the oversized policy — everything else
     #: (persist, excerpt, regex/range/fan-out routes) is identical for every
     #: tool, so a new tool sets this string and inherits correct behaviour.
-    #: Phrased to complete "Root cause — …".
+    #: Phrased to complete "Next time — …".
     oversized_retry_hint: str = GENERIC_RETRY_HINT
     #: One sentence on what the persisted file IS, shown right after "Full
     #: output saved to …" — for a tool whose saved body is not what a user
     #: would call "the output" (fetch: converted text, not the response bytes;
     #: v10.58.1, a model copied it as "the JSON" and shipped a broken file).
     oversized_saved_note: str = ""
+    #: :meth:`oversized_source_path` 가 도구가 읽은 **원본 파일** 을 가리킨다
+    #: (read_file) — 넛지가 "saved to" 대신 "The file is …" 라고 쓴다.
+    oversized_path_is_source: bool = False
 
     def oversized_file_body(self, body: str) -> str:
         """What goes in the persisted file — default the observation body.
@@ -570,6 +581,7 @@ class Tool(ABC):
             tools_available=ctx.tools_available,
             reason=reason,
             saved_note=self.oversized_saved_note,
+            path_is_source=self.oversized_path_is_source,
         )
 
     def validate(self, args: dict) -> str | None:

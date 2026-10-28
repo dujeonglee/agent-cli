@@ -981,7 +981,9 @@ class TestReadFilePartial:
         result = _read_one({"path": str(f), "line_start": 3})
         assert result.success
         # First line in result should be line 3, not line 1
-        assert result.output.startswith("3#")
+        # 머리줄 다음 첫 줄이 3번 줄 (v10.77.0 머리줄)
+        head, first = result.output.split("\n")[:2]
+        assert head.endswith("lines 3–5 of 5") and first.startswith("3#")
 
     def test_string_line_start_coerced(self, tmp_path):
         """LLMs sometimes send line_start as string."""
@@ -1049,7 +1051,7 @@ class TestReadFileStat:
         'full read' option byte-for-byte (unchanged behaviour)."""
         f = self._bigfile(tmp_path)
         result = _read_one({"path": str(f), "stat": True})  # oversized_cap defaults 0
-        assert "for a full read" in result.output
+        assert "Read it whole" in result.output
         assert "would exceed the context cap" not in result.output
 
     def test_stat_small_file_keeps_full_read_hint_even_with_cap(self, tmp_path):
@@ -1057,7 +1059,7 @@ class TestReadFileStat:
         f = tmp_path / "small.py"
         f.write_text("a\nb\nc")
         result = _read_one({"path": str(f), "stat": True}, oversized_cap=25_000)
-        assert "for a full read" in result.output
+        assert "Read it whole" in result.output
         assert "would exceed" not in result.output
 
     def test_stat_large_file_over_cap_drops_full_read_bait(self, tmp_path):
@@ -1066,11 +1068,12 @@ class TestReadFileStat:
         / search instead."""
         f = self._bigfile(tmp_path)
         result = _read_one({"path": str(f), "stat": True}, oversized_cap=4_096)
-        assert "for a full read" not in result.output  # bait removed
+        assert "Read it whole" not in result.output  # bait removed
         assert "would exceed the context cap" in result.output
-        assert "do not full-read" in result.output
-        assert "line_start=N" in result.output  # range still offered
-        assert 'search="keyword"' in result.output
+        assert "not be delivered" in result.output
+        assert "with line_start and line_end" in result.output  # range offered
+        assert "find content with search" in result.output
+        assert "read_file(" not in result.output  # 호출 모양 대신 문장
 
     def test_stat_over_cap_offers_fanout_when_delegate_available(self, tmp_path):
         f = self._bigfile(tmp_path)
@@ -1079,7 +1082,7 @@ class TestReadFileStat:
             oversized_cap=4_096,
             tools_available=frozenset({"read_file", "agent"}),
         )
-        assert "Fan out" in result.output
+        assert "To analyse the whole file" in result.output
         assert "concurrently" in result.output
 
     def test_stat_over_cap_no_fanout_without_delegate(self, tmp_path):
@@ -1089,8 +1092,8 @@ class TestReadFileStat:
             oversized_cap=4_096,
             tools_available=frozenset({"read_file"}),  # delegate depth-stripped
         )
-        assert "Fan out" not in result.output
-        assert "line_start=N" in result.output  # still steers to a ranged read
+        assert "To analyse the whole file" not in result.output
+        assert "with line_start and line_end" in result.output  # ranged read
         assert "search" in result.output
 
 
