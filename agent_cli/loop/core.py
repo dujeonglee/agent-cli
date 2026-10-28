@@ -322,6 +322,11 @@ class AgentLoop:
             # 미답 요청의 원문은 압축·FIFO 에서 핀 (v10.41.0) — 라이브로 읽는다:
             # 런 도중 흡수된 요청도, 답해서 빠진 요청도 다음 압축에 바로 반영.
             self.ctx.set_open_requests(self._state.ledger.pin_ids)
+            # 압축 뒤 이미지 목록이 다시 보는 도구를 이름으로 대게 (v10.77.0) —
+            # 그 도구가 이 루프에 있을 때만.
+            self.ctx.set_image_viewer(
+                "view_image" if "view_image" in self._config.tools_list else None
+            )
 
     # ── C1 PR-1 property 브리지 ──────────────────────────────────
     # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로

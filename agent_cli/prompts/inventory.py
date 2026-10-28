@@ -158,6 +158,7 @@ def _runtime_texts(dialect) -> list[dict]:
     from agent_cli.loop.dispatch import BATCH_OP_SKIPPED_NOTE
     from agent_cli.prompts.session_state import (
         COMPACTION_NOTICE,
+        COMPACTION_NOTICE_WITHOUT_MEMORY,
         RULES_HEADER,
         SESSION_STATE_HEADER,
         TAIL_BOUNDARY,
@@ -188,6 +189,11 @@ def _runtime_texts(dialect) -> list[dict]:
         ("rules_header", "Opens the standing-rules part of that block", RULES_HEADER),
         ("tail_boundary", "Separates the tail block from the message", TAIL_BOUNDARY),
         ("compaction_notice", "First turn after a compaction", COMPACTION_NOTICE),
+        (
+            "compaction_notice_without_memory",
+            "Same, in a loop without the memory tool",
+            COMPACTION_NOTICE_WITHOUT_MEMORY,
+        ),
         (
             "format_nudge_no_call",
             "The turn had no parseable call",

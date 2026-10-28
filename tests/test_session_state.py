@@ -16,6 +16,7 @@ from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.prompts.session_state import (
     COMPACTION_NOTICE,
     COMPACTION_NOTICE_STEPS,
+    COMPACTION_NOTICE_WITHOUT_MEMORY,
     RULES_HEADER,
     SESSION_STATE_HEADER,
     build_session_state,
@@ -149,8 +150,20 @@ class TestCompactionNotice:
         # compaction, and only BEFORE compaction can the model still tell
         # which entry is stale.
         assert "`memory` mode `delete` and its id" in COMPACTION_NOTICE
-        assert "no longer applies" in COMPACTION_NOTICE
+        # v10.77.0: 기준은 "앞으로의 일이 쓰지 않을 것" — "지금 작업에 필요 없는
+        # 것" 은 세션을 넘어 쌓는 지식까지 지운다(사용자 결정 B).
+        assert "the work ahead will not use" in COMPACTION_NOTICE
+        assert "a note on a step already finished" in COMPACTION_NOTICE
+        assert "current task" not in COMPACTION_NOTICE
         assert COMPACTION_NOTICE.startswith("ℹ")
+
+    def test_loop_without_memory_is_not_pointed_at_it(self):
+        out = build_session_state(turn=3, compaction_notice=True, notice_memory=False)
+        assert COMPACTION_NOTICE_WITHOUT_MEMORY in out
+        assert "memory" not in out
+        assert COMPACTION_NOTICE_WITHOUT_MEMORY.endswith(
+            "Pace and scope stay the same."
+        )
 
     def test_due_once_per_step(self):
         armed = set(COMPACTION_NOTICE_STEPS)
