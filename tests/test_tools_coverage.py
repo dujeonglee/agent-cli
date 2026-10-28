@@ -111,7 +111,7 @@ class TestWriteFile:
         target.write_text("hello\nworld\n")
         result = tool_write_file({"path": str(target), "content": "hello\nworld\n"})
         assert result.success
-        assert "rewrote" in result.output.lower()  # nudge fired (0% changed)
+        assert "[note] Only ~0% of lines changed" in result.output  # nudge fired
         assert "1#" not in result.output  # no full hashline echo
 
     def test_hashline_on_new_file(self, tmp_path):

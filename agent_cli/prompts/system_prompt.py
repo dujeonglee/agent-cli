@@ -188,12 +188,6 @@ def _build_edit_file_inline(dialect) -> str:
 
     return f"""
 
-  To write file CONTENT, use write_file (or edit_file) — NEVER a shell heredoc
-  (`cat <<EOF > file`). Code in a shell command string is escaped TWICE (shell
-  quoting, then JSON), so quotes / newlines / `$` routinely break your emission
-  (a NO_JSON parse failure and a wasted turn). write_file puts the body in its
-  own field — one escaping layer, far more reliable for large code.
-
   Hashline editing guide:
   read_file returns lines tagged as LINE#HASH:content, e.g.:
     1#VR:def hello():
@@ -516,8 +510,6 @@ def description_overrides_for(
     - 서브루프(레지스트리 없음)의 ``agent`` 는 run 전용 축소판 (설계 §3.2).
     - 상주 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their reply"
       라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
-    - ``edit_file`` 이 없는 루프의 ``write_file`` 은 없는 도구를 가리키지
-      않는다 (v10.13.0).
     """
     overrides: dict[str, str] = {}
     if not has_agent_registry and "agent" in active_tools:
@@ -528,10 +520,6 @@ def description_overrides_for(
         from agent_cli.tools.virtual import AskTool
 
         overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
-    if "write_file" in active_tools and "edit_file" not in active_tools:
-        from agent_cli.tools.write_file import WriteFileTool
-
-        overrides["write_file"] = WriteFileTool.DESCRIPTION_WITHOUT_EDIT
     return overrides
 
 

@@ -786,7 +786,7 @@ ${SESSION_ID} for the current session ID.
 |-----------------|------|------|
 | `name` | 슬래시 명령어 이름 (미지정 시 파일명) | |
 | `description` | 스킬 설명 | ✓ |
-| `allowed-tools` | 허용 도구 리스트 (미지정 시 전체) | |
+| `allowed-tools` | 허용 도구 리스트 (미지정 시 전체). `write_file` 이 있으면 `edit_file` 도 붙는다 (v10.77.0) | |
 | `max-turns` | 최대 턴 (미지정 시 글로벌 설정 사용) | |
 | `model` | 스킬 실행 시 모델 오버라이드 (미지정 시 현재 모델 사용) | |
 | `context` | `fork`이면 독립 컨텍스트에서 실행 (부모 대화 히스토리 없음) | |
@@ -1405,7 +1405,7 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 
 ### write_file — 파일 생성
 
-새 파일을 생성하거나 기존 파일을 덮어씁니다. 작성한 content 는 hashline 포맷으로 반환되어 `read_file` 없이 바로 `edit_file` 수정이 가능합니다 — 기존 파일의 작은 변경은 전체 재작성 대신 `edit_file` 권장.
+새 파일을 생성하거나 기존 파일을 덮어씁니다. 작성한 content 는 hashline 포맷으로 반환되어 `read_file` 없이 바로 `edit_file` 수정이 가능합니다 — 기존 파일의 작은 변경은 전체 재작성 대신 `edit_file` 권장. v10.77.0: 40줄 이하는 파일 전체, 넘으면 처음·끝 10줄만 태그를 붙여 돌려줍니다(나머지는 `read_file`). 결과 머리줄에 줄 수가 붙고, 30% 미만 덮어쓰기 넛지는 명령 대신 사실만 말합니다. `edit_file` 안내의 "NEVER a shell heredoc" 금지는 지웠습니다(native_fc 64회 heredoc 쓰기가 모두 실패 0). **write_file 이 허용된 루프에는 edit_file 도 붙습니다** — 덮어쓸 수 있으면 일부도 고칠 수 있으니(더 작은 권한), `allowed-tools` 에 write_file 만 적은 프로파일·스킬도 edit_file 을 씁니다.
 
 ```json
 {"action": "write_file", "action_input": {"path": "output.txt", "content": "hello world"}}

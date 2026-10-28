@@ -469,16 +469,18 @@ class TestBuildSystemPrompt:
         # … and overlaps are rejected.
         assert "OVERLAPPING" in flat
 
-    def test_write_guide_steers_off_shell_heredoc(self):
-        """NO_JSON failures were dominated by large code emitted as a shell
-        heredoc (`cat <<EOF`) — double-escaped (shell + JSON) and prone to
-        breaking the emission. The write guide must steer file CONTENT to
-        write_file/edit_file instead."""
+    def test_no_heredoc_ban(self):
+        """v10.77.0 — "NEVER a shell heredoc" 를 지웠다: native_fc 64회가 모두
+        따옴표 구분자·바로 실행·실패 0 이었다. 남길 사실(본문은 자기 필드라
+        따옴표가 필요 없다)은 write_file 설명에 있다."""
         import re
 
         flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["edit_file"]))
-        assert "NEVER a shell heredoc" in flat
-        assert "escaped TWICE" in flat
+        assert "NEVER a shell heredoc" not in flat
+        assert "escaped TWICE" not in flat
+        from agent_cli.tools import TOOLS
+
+        assert "needs no shell quoting" in TOOLS["write_file"].description
 
     def test_every_tool_intro_precedes_all_reference_examples(self):
         """Available Tools is a two-tier layout: every tool's basic intro
@@ -1654,8 +1656,8 @@ class TestEditVsWriteRule:
 
     def test_full_rewrite_of_a_small_file_is_allowed(self):
         d = self._desc(["write_file", "edit_file"])
-        assert "a NEW file, or to rewrite a SMALL file in full" in d
-        assert "To change part of an existing file use edit_file" in d
+        assert "Use it for a new file or to rewrite a small file in full" in d
+        assert "to change part of an existing file, edit_file sends only" in d
 
     def test_names_the_way_out_when_an_edit_keeps_failing(self):
         """A model that kept failing edit_file had been told rewriting was off
@@ -1672,11 +1674,17 @@ class TestEditVsWriteRule:
             TOOLS["edit_file"].description
         )
 
-    def test_without_edit_file_the_description_points_at_nothing(self):
-        d = self._desc(["write_file", "read_file"])
-        assert "edit_file" not in d
-        prompt = build_system_prompt(_make_caps(), ["write_file", "read_file"])
-        assert "edit_file" not in prompt
+    def test_write_file_never_comes_without_edit_file(self):
+        """v10.77.0 — write_file 이 있으면 edit_file 도 붙는다(더 작은 권한):
+        edit 없는 루프용 설명은 지웠다."""
+        from agent_cli.tools import TOOLS
+        from agent_cli.tools.write_file import WriteFileTool
+
+        assert not hasattr(WriteFileTool, "DESCRIPTION_WITHOUT_EDIT")
+        assert TOOLS["edit_file"].mounted_with == "write_file"
+        assert (
+            self._desc(["write_file", "read_file"]) == TOOLS["write_file"].description
+        )
 
     def test_native_schema_and_prompt_carry_the_same_description(self):
         from agent_cli.prompts.system_prompt import function_schemas_for

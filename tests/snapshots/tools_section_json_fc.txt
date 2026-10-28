@@ -17,12 +17,6 @@ Not checked: <what you inferred from reading rather than running, or did not tes
 A reply with nothing to check has neither line. When `## Open Items` lists items closed by `complete`, `answers` is REQUIRED: list the ids your result covers. Ids you leave out stay open. Not for waiting — to pause until a job, monitor or agent reports back, call `wait`.
   Input JSON: {"result": "string, required — The answer, then the Checked / Not checked lines", "answers": "array<string> — Ids from `## Open Items` (`u-…` user requests, `n-…` mail) that this result covers."}
 
-  To write file CONTENT, use write_file (or edit_file) — NEVER a shell heredoc
-  (`cat <<EOF > file`). Code in a shell command string is escaped TWICE (shell
-  quoting, then JSON), so quotes / newlines / `$` routinely break your emission
-  (a NO_JSON parse failure and a wasted turn). write_file puts the body in its
-  own field — one escaping layer, far more reliable for large code.
-
   Hashline editing guide:
   read_file returns lines tagged as LINE#HASH:content, e.g.:
     1#VR:def hello():

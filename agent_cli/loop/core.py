@@ -228,6 +228,15 @@ class AgentLoop:
                 tools_list = [t for t in tools_list if t != tool_name]
             elif tool.force_mount and tool_name not in tools_list:
                 tools_list = [*tools_list, tool_name]
+        # 더 큰 권한의 짝이 있으면 붙는다 (``Tool.mounted_with``, v10.77.0) —
+        # write_file 만 허용한 스킬·프로파일도 edit_file 을 갖는다.
+        for tool_name, tool in TOOLS.items():
+            if (
+                tool.mounted_with
+                and tool.mounted_with in tools_list
+                and tool_name not in tools_list
+            ):
+                tools_list = [*tools_list, tool_name]
         # agent 도구는 모든 루프에 존재 (5.0.0 모드 축소 노출, 설계 §3.2):
         # 서브루프(레지스트리 없음)는 run 만 문서화된 축소 설명을 받고,
         # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라

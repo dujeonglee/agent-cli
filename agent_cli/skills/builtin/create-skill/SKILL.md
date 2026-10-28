@@ -2,7 +2,7 @@
 name: create-skill
 description: Create a new skill file interactively. Generates SKILL.md with frontmatter, prompt template, and optional scripts. Use when asked to create, make, or add a new skill.
 argument-hint: "<skill-name> [description]"
-allowed-tools: [read_file, write_file, shell, ask]
+allowed-tools: [read_file, edit_file, write_file, shell, ask]
 disable-model-invocation: true
 ---
 

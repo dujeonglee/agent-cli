@@ -8,7 +8,7 @@ from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
-from agent_cli.tools.read_file import format_hashlines
+from agent_cli.tools.read_file import format_hashlines, format_hashlines_range
 from agent_cli.tools.result import ToolResult
 
 # A write_file that OVERWRITES an existing file but changes only a small
@@ -23,6 +23,12 @@ from agent_cli.tools.result import ToolResult
 # mimicry); the write itself is unchanged. Tuned from a real session: small
 # edits sat at 2-3% changed, full rewrites at 100%+.
 _REWRITE_NUDGE_RATIO = 0.30
+# 새 파일·큰 변경의 echo (v10.77.0): 이 줄 수 이하면 파일 전체를 해시라인으로,
+# 넘으면 처음·끝 ``_ECHO_EDGE`` 줄만 — 9과제 16런에서 쓰자마자 edit_file 로 고친
+# 경우는 적었고(GLM 8·35B 5), 35B 는 15K자 파일을 쓰고 그대로 돌려받았다. 40줄은
+# GLM 중앙값(181자)은 통째로, 35B 중앙값(2,256자)은 머리·꼬리만 되는 경계.
+_ECHO_FULL_LINES = 40
+_ECHO_EDGE = 10
 
 
 def _small_overwrite_analysis(path: str, new_content: str):
@@ -58,11 +64,12 @@ def _small_overwrite_analysis(path: str, new_content: str):
     if changed / total >= _REWRITE_NUDGE_RATIO:
         return (False, "", "")
     pct = round(changed / total * 100)
+    # 명령("Use edit_file next time.")이 아니라 사실 — 넛지 뒤 edit_file 로 간
+    # 경우는 GLM 3/6·35B 0/2 였다 (v10.77.0).
     nudge = (
-        f"[note] You rewrote an existing file but only ~{pct}% of lines changed "
-        f"({changed}/{total}). For a change this small, edit_file costs only the "
-        f"changed lines — re-writing the whole file re-sends every line into your "
-        f"context each turn. Use edit_file next time."
+        f"[note] Only ~{pct}% of lines changed ({changed}/{total}). edit_file "
+        f"would have sent just those lines; this rewrite sent the whole file, "
+        f"and it stays in your context."
     )
     return (True, old, nudge)
 
@@ -80,7 +87,9 @@ def tool_write_file(args: dict) -> ToolResult:
     full hashline echo it shows a diff plus fresh hashline refs for the changed
     region (``render_change_echo``, shared with edit_file), paired with the
     steering nudge — the churn-case echo shrinks to ~diff+region size while
-    still handing the model the refs to edit_file next.
+    still handing the model the refs to edit_file next. A file longer than
+    ``_ECHO_FULL_LINES`` echoes only its first and last ``_ECHO_EDGE`` lines
+    (v10.77.0) — the rest is a read_file away.
     """
 
     path = args.get("path", "")
@@ -96,7 +105,9 @@ def tool_write_file(args: dict) -> ToolResult:
         is_small, old_content, nudge = _small_overwrite_analysis(path, content)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        header = f"File saved: {path} ({len(content)} bytes)"
+        all_lines = content.split("\n")
+        total = len(all_lines)
+        header = f"File saved: {path} ({total} lines, {len(content):,} bytes)"
         if nudge:
             header += f"\n{nudge}"
         if is_small:
@@ -107,14 +118,26 @@ def tool_write_file(args: dict) -> ToolResult:
             # read_file. Far cheaper than dumping every line as a hashline.
             body = render_change_echo(old_content, content, path)
             msg = f"{header}\n{body}" if body else header
-        else:
-            # New file or genuine rewrite: full hashline echo — the same format
-            # read_file emits, so it doubles as the edit_file ref source.
+        elif total <= _ECHO_FULL_LINES:
+            # New file or genuine rewrite of a short file: full hashline echo —
+            # the same format read_file emits, so it doubles as the edit_file
+            # ref source.
             msg = (
                 f"{header}\n"
                 f"To modify, call edit_file with the hashline refs below "
                 f"(no need to read_file first):\n"
                 f"{format_hashlines(content)}"
+            )
+        else:
+            # 긴 파일: 처음·끝만 — 나머지는 read_file 이 태그를 붙여 보여 준다.
+            tail_start = total - _ECHO_EDGE
+            msg = (
+                f"{header}\n"
+                f"Lines 1–{_ECHO_EDGE} and {tail_start + 1}–{total} are tagged below "
+                f"for edit_file; read_file shows the rest tagged.\n"
+                f"{format_hashlines_range(all_lines, 0, _ECHO_EDGE)}\n"
+                f"…\n"
+                f"{format_hashlines_range(all_lines, tail_start, total)}"
             )
         # Refresh code_index after a successful write. Best-effort —
         # post_hook swallows its own exceptions so an indexing hiccup
@@ -137,20 +160,17 @@ class WriteFileTool(Tool):
     # small file, and named as the way out when an edit keeps failing: a model
     # that kept failing edit_file had been told rewriting was off limits.
     description = (
-        "Create a file, or overwrite one, with raw content. Use it for a NEW "
-        "file, or to rewrite a SMALL file in full. To change part of an "
-        "existing file use edit_file: rewriting sends the whole file through "
-        "your context twice (your content + its echo) and it stays there, "
-        "while edit_file costs only the changed lines. If the same edit keeps "
-        "failing on a small file, rewriting it is fine. Returns hashline "
-        "format (LINE#HASH:content), so you can edit_file right after — no "
-        "read_file needed."
+        "Create a file, or overwrite one, with exactly the content you give. The "
+        "content is its own field, so it needs no shell quoting. Use it for a new "
+        "file or to rewrite a small file in full; to change part of an existing "
+        "file, edit_file sends only the changed lines, while a rewrite sends the "
+        "whole file again and keeps it in your context. If the same edit keeps "
+        "failing on a small file, rewriting it is fine. Returns the written file "
+        "tagged LINE#HASH:content — the whole file when it is short, otherwise "
+        "its first and last lines; read_file shows the rest tagged."
     )
-    #: For a loop that has no ``edit_file`` — nothing to point at.
-    DESCRIPTION_WITHOUT_EDIT = (
-        "Create a file, or overwrite one, with raw content. Returns hashline "
-        "format (LINE#HASH:content)."
-    )
+    # edit_file 이 없는 루프용 설명(``DESCRIPTION_WITHOUT_EDIT``)은 v10.77.0 에서
+    # 지웠다 — write_file 이 있으면 edit_file 도 붙는다(``EditFileTool.mounted_with``).
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-target shape — no `write_file_` wire-key prefix. `wrap_single_op`
     # is identity (no canonical re-wrap), so the flat op dispatches straight
@@ -163,9 +183,12 @@ class WriteFileTool(Tool):
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "File path to save",
+                "description": "File path to write; missing parent directories are created.",
             },
-            "content": {"type": "string", "description": "File content"},
+            "content": {
+                "type": "string",
+                "description": "The whole file, exactly as it should be saved.",
+            },
         },
         "required": ["path", "content"],
     }
