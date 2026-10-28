@@ -19,12 +19,14 @@
 | `edit_file` | 구현 | 줄 번호만 온 ref 에 그 줄의 지금 ref 를 보여 줌(35B 편집의 18%), 설명은 `op` 값과 인자를 이름으로, legacy 광고 삭제, 안내 축소 | ebccc656 |
 | (전체) 표기 | 구현 | 도구 22개·안내·시스템 절·꼬리·넛지·오류 문구 표기 통일, "You sent:" 줄·반복 호출 넛지를 문장으로, monitor 오류의 모르는 이름(match/silence) 수정 | 1a75cb0a |
 | (압축) | 구현 | 압축 예고 메모리 문장: 기준 "앞으로의 일이 쓰지 않을 것" + 끝난 단계의 메모, memory 없는 루프엔 문장 생략 | 08f090e6 |
+| `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 검토 완료, 설계 결정 대기 | 아래 §소통·종결 묶음 | — |
 | `shell` | 구현 | 시간 초과 때 프로세스 그룹째 끝내기(버그 — apt-get 이 dpkg 잠금을 쥔 채 남음), 시간 초과 결과(끝냈다·출력 끝 8줄·`background` 교정), 설명에 결과 모양(`[stderr]`·`[exit code: N]`), 작업 종류 나열 삭제, 거부 문구 표기 | 6ec4b40c |
 
 ## TODO
 
 - [x] `shell` 검토·구현
-- [ ] 남은 도구 검토 (다음: `python`): `code_index`, `python`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `ask`, `answer`, `message`, `reply`, `agent`, `run_skill`, `wait`, `complete`
+- [ ] 소통·종결 묶음 설계 결정(A·B·C·D·E) → 개정안 → 구현
+- [ ] 남은 도구 검토: `code_index`, `python`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `agent`, `run_skill`
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)
 - [ ] 전체 벤치 측정 — 사용자 지시 시 한 번에 (9과제, GLM; 35B 는 그때 결정). 볼 지표: 층이 바꾼 수·같은 이미지 다시 보기·압축 뒤 다시 보기, read_file 모드별·셸 파일 보기 수, heredoc 실패, 같은 파일 다시 쓰기, 줄 번호 ref 수, "You sent:" 뒤 재시도 성공
@@ -52,3 +54,20 @@
 - **호출 모양 잔재**: background 거부 문구 "background=true takes the PLAIN command" (표기 통일에서 빠짐).
 - 그대로: 작업 시작·종료 통지, `## Background jobs` 꼬리, 넛지 `SHELL_PYTHON_NOTICE`, 과대 결과 retry 힌트, 위험 명령 확인.
 - 참고: 매 호출은 작업 디렉터리에서 시작(cd 는 이어지지 않음) — 모델은 `cd X && …` 로 잘 쓴다(맨 `cd` 0회), 문구 불필요.
+
+## 소통·종결 묶음 (`ask`·`answer`·`message`·`reply`·`wait`·`complete`) — 검토 (2026-10-28)
+
+근거: 실제 세션 기록 312개(보드 방, 읽기만) — `complete` 363, `answer` 11(**전부 실패**: 사용자 요청에 쓰거나 id 를
+지어냄), `ask` 6, `wait` 4, `reply` 2(전부 실패), `message` 0. 벤치 72런 — `complete` 58, `wait` 10(GLM 8, 거부 2),
+`answers` 누락 0, `Checked:` GLM 32/32·35B 9/26.
+
+- 항목 넷(`u-`·`n-`·`r-`·`q-`)에 닫는 법 셋(`complete`·`reply`·`answer`) + "요청자에게 보낸 `message` 도 reply" 예외.
+- `answer` 와 `reply` 는 모양(`id`, `text`)도 뜻도 같다 — 상대가 `ask` 로 물었나 `message` 로 물었나만 다르다.
+- 상주 판 `ask` 의 `to` "main"/에이전트 key 가 `message` 와 겹친다(질문 경로 둘: `q-`/`answer` 와 `r-`/`reply`).
+- `reply` 의 `to` 는 `id` 가 이미 정하는 것을 다시 묻는다.
+- 봉투 넷: `[question q-… from …]:`, `── answer from … ──`, `[answer to your question: …]`, `── request [r-…] from … ──`.
+- 표기 잔재: 상주 `ask` 의 `to` 설명 값이 백틱, 일반 `ask` 의 "the same way you batch `read_file`".
+- 그대로(측정으로 정함): `complete` 의 Checked/Not checked 와 꼬리 `RESULT_SHAPE_LINE`(v10.75.0), wait/complete 꼬리말(v10.67.1).
+
+제안: **A** `answer` 를 `reply` 에 합침(닫는 법 둘: `complete`·`reply`) · **B** `ask` 는 사람에게만(에이전트에겐
+`message`) — 결정 필요 · **C** `reply` 의 `to` 삭제 · **D** 들어오는 봉투 한 모양 · **E** 문구 정리. 권장: A+C+D+E 먼저, B 는 실사용 뒤.
