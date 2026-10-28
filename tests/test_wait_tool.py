@@ -178,7 +178,6 @@ class TestWaitEndsTheRun:
         from tests.test_agents_live import make_registry
 
         reg = make_registry(tmp_path)
-        reg.begin_run("agent:a")
         reg.note_owes("agent:a", "main", "do X")
         assert reg.pending_for("main") == ["agent:a owes you a reply"]
         assert reg.pending_for("agent:a") == []  # 자기 빚은 자기를 깨우지 않는다
@@ -488,3 +487,47 @@ class TestCircularWait:
         tc.state, tc.current_author = "busy", f"agent:{a}"
         got = wake_sources(f"agent:{b}")
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
+
+
+class TestRunEnded:
+    """v10.77.0 — 런 끝의 유일한 정리 `AgentRegistry.run_ended`. 남아 있는 빚은
+    언제나 `wait` 가 남긴 것이어야 판정들(다음 런의 장부·순환 대기)이 정직하다."""
+
+    @pytest.fixture
+    def reg(self, tmp_path):
+        from tests.test_agents_live import make_registry
+
+        r = make_registry(tmp_path)
+        yield r
+        r.shutdown_all()
+
+    def test_waiting_keeps_the_debt_and_sends_nothing(self, reg):
+        reg.note_owes("agent:a", "main", "일감", id="r-1")
+        assert reg.run_ended("agent:a", "⏸ waiting", waiting=True) == 0
+        assert [d.id for d in reg.reply_debts("agent:a")] == ["r-1"]
+        assert not reg.has_pending_replies()
+
+    def test_stopped_drops_the_debt_without_a_summary(self, reg):
+        """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
+        채무자의 빚이 요청자의 `wait` 를 붙잡는다."""
+        reg.note_owes("agent:a", "main", "일감", id="r-1")
+        assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
+        assert reg.reply_debts("agent:a") == []
+        assert not reg.has_pending_replies()
+        assert reg.pending_for("main") == []
+
+    def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg.note_owes("agent:a", "main", "일감", id="r-1")
+        assert reg.run_ended("agent:a", "요약", run="r-1", success=True) == 1
+        assert reg.reply_debts("agent:a") == []
+        (mail,) = reg.drain_replies()
+        assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"
+
+    def test_main_run_ended_routes_through_the_same_place(self, reg):
+        from agent_cli.runtime import main_run_ended
+
+        reg.note_owes("main", "agent:a", "결정해 줘", id="r-5")
+        assert main_run_ended(reg, "⏸ waiting", waiting=True) == 0
+        assert [d.id for d in reg.reply_debts("main")] == ["r-5"]

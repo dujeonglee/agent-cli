@@ -1093,25 +1093,13 @@ class AgentRegistry:
     # ── 회신 빚 장부 (v9.22.1 — main·상주 공통) ──────
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
     # 갚는 길: 상주는 `reply`·요청자에게 `message`, main 은 `agent request`.
-    # 런 단위 — `begin_run` 이 비우고 `end_run` 이 남은 빚을 폴백(라벨 붙은
-    # 런 요약)으로 배달하고 미답 질문을 닫는다. 종전엔 상주의 장부가
+    # 런의 끝은 `run_ended` 하나로 온다(v10.77.0) — 보통의 끝은 남은 빚을 폴백
+    # (라벨 붙은 런 요약)으로 배달하고 비우며, `wait` 면 그대로 두고(다음 런이
+    # 갚는다), 중단이면 버린다. 그래서 남아 있는 빚은 언제나 `wait` 가 남긴
+    # 것이고, 런 시작이 따로 할 일이 없다(`begin_run` 삭제). 종전엔 상주의 장부가
     # `AgentInstance` 필드 넷(current_expects_reply/current_text/
     # current_answers/replied_this_run)이고 main 의 것이 dict 둘이라 같은
     # 규칙을 두 벌 코드가 들었다.
-
-    def begin_run(self, debtor: str) -> None:
-        """새 런 — 앞 런이 `wait` 로 끝나 남긴 미납 빚만 잇는다 (v10.77.0).
-
-        보통의 런 끝은 `end_run` 이 빚을 비운다(폴백 배달). 남아 있다면 앞 런이
-        `wait` 로 끝난 것이다 — 그 빚을 여기서 지우면 요청자는 아무것도 못
-        받는다(회신도, 런 요약도). `message` 로 묻고 `wait` 로 기다린 뒤 회신을
-        받아 갚는 흐름이 이 경로다."""
-        with self._cv:
-            self._reply_debts[debtor] = [
-                d
-                for d in self._reply_debts.get(debtor, [])
-                if not d.settled and not d.human
-            ]
 
     def note_owes(
         self,
@@ -1182,6 +1170,37 @@ class AgentRegistry:
                 for d in self._reply_debts.get(debtor, [])
                 if not d.settled and not d.human
             ]
+
+    def run_ended(
+        self,
+        debtor: str,
+        output: str,
+        *,
+        waiting: bool = False,
+        stopped: bool = False,
+        **meta,
+    ) -> int:
+        """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
+        모두 여기로 온다. 처리한 빚 수를 돌려준다.
+
+        - ``waiting`` (`wait` 로 끝남): 아무것도 하지 않는다 — 갚을 차례가 아니다.
+          빚은 열린 채 다음 런으로 가고 깨어난 런이 `reply` 로 갚는다. 폴백을
+          지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
+        - ``stopped`` (kill·종료로 끊김): 빚을 버린다. 끊긴 요청은 재시작이 새
+          id 로 다시 넣으며 다시 적는다 — 남기면 같은 요청에 빚이 둘이 되고, 죽은
+          채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
+        - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
+
+        종전엔 이 판정(``not waiting``·``not stop_event``)이 호출부 셋에 흩어져
+        있었고, v10.65.0 의 상주 판정이 런 시작(`begin_run` 의 비우기)을 빠뜨려
+        wait 뒤의 빚이 사라졌다."""
+        if waiting:
+            return 0
+        if stopped:
+            with self._cv:
+                self._reply_debts.pop(debtor, None)
+            return 0
+        return self.end_run(debtor, output, **meta)
 
     def end_run(self, debtor: str, output: str, **meta) -> int:
         """``debtor`` 의 런이 끝났다 — 남은 회신 빚은 라벨 붙은 런 요약을
@@ -2661,7 +2680,6 @@ class AgentRegistry:
         tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
         tm.current_item = iid  # 이 런의 이름 — 거는 질문의 asked_in (§3.2)
         me = f"agent:{tm.key}"
-        self.begin_run(me)
         if item.get("expects_reply", True):
             # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/
             # `message` 뿐). main 이 배달된 `message` 를 적는 것과 같은 장부.
@@ -2748,7 +2766,8 @@ class AgentRegistry:
         human = _is_human_addr(author)
         # `wait` 로 끝난 런(v10.65.0)은 빚을 갚을 차례가 아니다 — 깨운 뒤 갚는다.
         # 폴백(런 요약)을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
-        owed = bool(self.reply_debts(me)) and not waiting
+        stopped = tm.stop_event.is_set()
+        owed = bool(self.reply_debts(me)) and not waiting and not stopped
         # `complete` 산출물은 **어떤 경우에도** 배달되지 않는다 — 배달은
         # `reply`/`message` 뿐이고, 그것들은 보낼 때 이미 창에 out 으로 남긴다.
         # 그러니 여기서 out 레코드를 내는 경우는 **실제 발신** 둘뿐이다:
@@ -2775,17 +2794,17 @@ class AgentRegistry:
             }
             renderer.agent_message(**out_payload)
             self._log_conversation(tm, out_payload)
-        # 런 끝 정리 — 폴백 배달 + 미답 질문 닫기. kill 중이면 질문은 사망
-        # 정리가 "terminated before answering" 으로 닫는 것이 맞으니 건너뛴다.
-        if not tm.stop_event.is_set() and not waiting:  # wait 면 질문도 열어 둔다
-            self.end_run(
-                me,
-                output,
-                run=iid,
-                success=success,
-                duration_s=duration,
-                reply_path=reply_path,
-            )
+        # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
+        self.run_ended(
+            me,
+            output,
+            waiting=waiting,
+            stopped=stopped,
+            run=iid,
+            success=success,
+            duration_s=duration,
+            reply_path=reply_path,
+        )
         self._close_run(tm, 1)
 
     def _handle_human_batch(
@@ -2802,7 +2821,6 @@ class AgentRegistry:
         tm.current_author = author0  # 배치 중 ask 는 첫 발신자에게
         tm.current_item = iid
         me = f"agent:{tm.key}"
-        self.begin_run(me)
         for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
             self.note_owes(
                 me,
@@ -2883,8 +2901,8 @@ class AgentRegistry:
         }
         renderer.agent_message(**out_payload)
         self._log_conversation(tm, out_payload)
-        if not tm.stop_event.is_set() and not waiting:  # wait 면 질문도 열어 둔다
-            self.end_run(me, output)  # 빚 없음(전부 user:*) — 미답 질문 닫기만
+        # 빚은 전부 사람(창이 곧 배달) — 판정은 단건 런과 같은 한 곳에서
+        self.run_ended(me, output, waiting=waiting, stopped=tm.stop_event.is_set())
         # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
         self._close_run(tm, len(items))
 

@@ -42,6 +42,20 @@ class _WakeWaker(FakeWaker):
 
 
 class TestOneItem:
+    def test_the_run_end_reaches_the_registry_with_its_waiting_flag(self):
+        """v10.77.0: main 런의 끝도 레지스트리의 `run_ended` 한 곳으로 — `wait` 로
+        끝났는지는 펌프가 판정하지 않고 넘긴다(상주와 같은 판정 자리)."""
+        q = InputQueue()
+        q.enqueue(None, "a", nickname="dj")
+        q.enqueue(None, "b", nickname="dj")
+        reg = FakeRegistry()
+        outs = iter(
+            [ToolResult(True, output="x", waiting=True), ToolResult(True, output="y")]
+        )
+
+        make_pump(queue=q, run_main=lambda req: next(outs), registry=reg).run()
+        assert reg.ended == [("main", "x", True), ("main", "y", False)]
+
     def test_order_of_surface_calls_around_a_run(self):
         q = InputQueue()
         q.enqueue(None, "hi", nickname="dj")
