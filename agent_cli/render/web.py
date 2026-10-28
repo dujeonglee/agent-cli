@@ -788,14 +788,14 @@ class WebRenderer(Renderer):
         self,
         *,
         key: str,
-        seq: int,
+        item: str,
         profile: str,
         message: str,
         req_ts: float | str | None = None,
-        seqs: list[int] | None = None,
+        items: list[str] | None = None,
     ) -> None:
         tid = threading.get_ident()
-        task_id = f"{key}#{seq}"
+        task_id = f"{key}#{item}"
         with self._lock:
             self._thread_to_task[tid] = task_id
         from agent_cli.agent_icon import agent_display_name, agent_icon
@@ -809,14 +809,12 @@ class WebRenderer(Renderer):
             "task_id": task_id,
             "kind": "run",
             "label": message,
-            # 프론트는 **0-based** index 를 받아 `index + 1` 로 표시한다
-            # (위임 배치의 0-based 와 공유). `seq` 는 1-based 라 그대로 넘기면
-            # 첫 요청이 "[2]" 로 찍혔다 (v9.7.0 오프바이원 수리).
-            "index": max(0, seq - 1),
+            # 런의 이름표 = 배달 id (v10.77.0) — 프론트가 `[u-3]` 로 찍는다.
+            "item": item,
             "agent": f"{agent_icon(key)} {label}",
             # A resident teammate's request is NOT a nested scope of the
             # caller: the swimlane routes it to that agent's OWN lane by the
-            # ``{key}#{seq}`` task_id. Emitted anyway so every scope_start
+            # ``{key}#{item}`` task_id. Emitted anyway so every scope_start
             # has one shape, and so the timeline keeps its card at the root.
             "parent": "",
             "depth": 0,
@@ -828,7 +826,7 @@ class WebRenderer(Renderer):
             # 이 런이 처리하는 inbox 항목들 (v9.23.0). 프론트의 런 블록이 큐에서
             # 먼저 도착한 수신 줄을 이걸로 머리로 끌어온다. scopes.jsonl 에
             # 박혀 resume 재생에서도 같은 블록이 선다.
-            "seqs": [int(s) for s in (seqs or [seq])],
+            "items": [str(i) for i in (items or [item])],
         }
         # nav_ts = the originating request's timestamp (the same value the
         # swimlane user-mark/request arrow carries, via ``agent_message(ts=…)``).
@@ -844,7 +842,7 @@ class WebRenderer(Renderer):
         self,
         *,
         key: str,
-        seq: int,
+        item: str,
         success: bool,
         duration_s: float,
         error: str = "",
@@ -854,7 +852,7 @@ class WebRenderer(Renderer):
             self._thread_to_task.pop(tid, None)
         self.set_thread_agent("")
         payload = {
-            "task_id": f"{key}#{seq}",
+            "task_id": f"{key}#{item}",
             "kind": "run",
             "success": success,
             "duration_s": duration_s,
@@ -897,14 +895,14 @@ class WebRenderer(Renderer):
         direction: str,
         author: str,
         text: str,
-        seq: int = 0,
+        item: str = "",
         success: bool = True,
         to: str = "main",
         ts: float | str | None = None,
         profile: str = "",
         instance_name: str = "",
         fallback: bool = False,
-        absorbed_into: int | None = None,
+        absorbed_into: str | None = None,
         images: list[dict] | None = None,
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
@@ -930,7 +928,7 @@ class WebRenderer(Renderer):
             "direction": direction,
             "author": author,
             "text": text,
-            "seq": seq,
+            "item": item,
             "success": success,
             "to": to,
         }
@@ -1701,7 +1699,7 @@ class WebRenderer(Renderer):
         뷰어도 그것으로 카드를 흐려야 한다(압축 마커처럼 휘발이 아니다).
         ``task_id`` 는 이 스레드의 스코프 — 인라인 카드 안의 컨텍스트와 상주
         에이전트 채널이 각자 자기 뷰를 받는다. 프런트는 task_id 를 채널/카드로
-        해석한다. 상주 에이전트의 task_id 는 런 스코프(``key#seq``)가 아니라 그
+        해석한다. 상주 에이전트의 task_id 는 런 스코프(``key#<item id>``)가 아니라 그
         에이전트의 프롬프트 스코프 = **채널 key** 다(런을 넘어 이어지는 컨텍스트).
         """
         scope = self.current_scope()

@@ -1226,15 +1226,14 @@ class TestStaticUI:
         payload = renderer._sticky["queue"]["payload"]
         assert payload["pending"][-1]["nickname"] == "job"
 
-    def test_agent_work_index_is_zero_based_for_the_frontend(self, server_and_client):
-        """`begin_agent_work` 의 `index` 는 **0-based** 여야 한다 (v9.7.0).
-
-        프론트는 위임 배치(0-based)와 같은 `index + 1` 표시를 쓰는데, 서버가
-        1-based `seq` 를 그대로 넘겨 **첫 요청이 "[2]"** 로 찍혔다."""
+    def test_agent_work_carries_the_item_id(self, server_and_client):
+        """런의 이름표는 그 런을 연 배달의 id 다 (v10.77.0) — 종전 0-based
+        ``index`` (v9.7.0 오프바이원 수리)는 순번과 함께 사라졌다."""
         _, renderer, _client = server_and_client
-        renderer.begin_agent_work(key="agt-x", seq=1, profile="p", message="m")
+        renderer.begin_agent_work(key="agt-x", item="u-1", profile="p", message="m")
         payload = next(d for e, d in renderer._event_buffer if e == "scope_start")
-        assert payload["index"] == 0, f"첫 요청이 index={payload['index']}"
+        assert payload["item"] == "u-1" and payload["task_id"] == "agt-x#u-1"
+        assert "index" not in payload
 
     def test_wake_call_site_draws_nothing(self, server_and_client):
         """깨우기 런은 화면에 아무것도 내지 않는다 (v10.51.0) — 그 런의 관찰

@@ -167,7 +167,7 @@ class TestDeliverAnswer:
 
 class TestKickOwed:
     def _owe(self, reg, asker: str, target: str) -> None:
-        q = _q(asker=asker, target=target, delivered_seq=1)
+        q = _q(asker=asker, target=target, delivered_in="r-1")
         reg._questions[q.id] = q
 
     def test_to_main_mailbox_is_keyed_by_the_waiting_asker(self, reg, calls):

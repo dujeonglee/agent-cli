@@ -518,15 +518,15 @@ class TestAbsorbedAgentMessage:
             direction="absorbed",
             author="main",
             text="t",
-            seq=2,
+            item="u-2",
             to="agt-1",
-            absorbed_into=1,
+            absorbed_into="u-1",
         )
         ev, data = c.queue.get_nowait()
         assert ev == "agent_msg"
-        assert data["direction"] == "absorbed" and data["absorbed_into"] == 1
+        assert data["direction"] == "absorbed" and data["absorbed_into"] == "u-1"
         r.agent_message(
-            key="agt-1", direction="in", author="main", text="t", seq=3, to="agt-1"
+            key="agt-1", direction="in", author="main", text="t", item="u-3", to="agt-1"
         )
         assert "absorbed_into" not in c.queue.get_nowait()[1]
 

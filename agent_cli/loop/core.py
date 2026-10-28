@@ -67,13 +67,17 @@ def mail_item(reply: dict) -> tuple[str, str] | None:
     목록(Owed Replies), 없으면 Open Requests.** 질문(`answer(id)`)·회신을
     기대하는 메시지(`agent request`)는 이미 빚이고, 독촉(`reminder`)은 그 빚을
     다시 알릴 뿐 새 항목이 아니다. 나머지 일곱 — 회신·답·통지·모니터·작업·
-    감사·사망 — 이 여기 오른다. id 는 메일박스가 찍은 ``mail_id``(``n<k>``)."""
+    감사·사망 — 이 여기 오른다. id 는 메일박스가 찍은 ``item_id``(``n-<k>``)."""
     kind = reply.get("kind") or "reply"
     if kind in ("question", "reminder") or reply.get("expects_reply"):
         return None
     # 작성자 칸은 "mail" 하나 — 무엇에서 왔는지는 머리줄이 말한다
     # (`🧵 job #1 finished …`, `agent agt-x reply (success)`).
-    return item_ids.make(item_ids.MAIL, reply.get("mail_id", 0)), "mail"
+    # 메일박스가 찍지 않은 것(직접 만든 배달)은 처음 보는 여기서 받는다 —
+    # 그 뒤로는 이 id 가 그 메일의 키다.
+    if not reply.get("item_id"):
+        reply["item_id"] = item_ids.next_id(item_ids.MAIL)
+    return reply["item_id"], "mail"
 
 
 class AgentLoop:
@@ -881,8 +885,13 @@ class AgentLoop:
             if reply.get("expects_reply") and reply.get("key"):
                 note = getattr(registry, "note_owes", None)
                 if callable(note):
+                    # 빚의 id = 그 배달의 id (v10.77.0 — id 가 곧 키)
+                    kw = {"id": reply["item_id"]} if reply.get("item_id") else {}
                     debt = note(
-                        "main", f"agent:{reply['key']}", reply.get("output") or ""
+                        "main",
+                        f"agent:{reply['key']}",
+                        reply.get("output") or "",
+                        **kw,
                     )
                     reply = {**reply, "debt_id": str(getattr(debt, "id", "") or "")}
             record = build_reply_record(

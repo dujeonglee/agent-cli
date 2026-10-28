@@ -5,9 +5,9 @@
 
 1. **채널 = 필터** — `#messages` 직계 자식의 `data-ch` 로 걸러진다. `data-ch`
    가 없는 노드(생성 중 한 줄)는 어느 채널에서나 보인다.
-2. **런 블록** — 상주 에이전트의 런(`scope_start`, `key#seq`)마다 블록 하나:
+2. **런 블록** — 상주 에이전트의 런(`scope_start`, `key#<item id>`)마다 블록 하나:
    받은 항목이 머리, 단계가 몸통, 결과가 꼬리. 수신 줄은 큐에 넣을 때 나와
-   런보다 앞서므로 블록이 없으면 `⏳ 대기` 로 두었다가 `seqs` 로 끌어온다.
+   런보다 앞서므로 블록이 없으면 `⏳ 대기` 로 두었다가 `items` 로 끌어온다.
    보냄 줄은 없다 — `message`/`reply`/`answer` **도구 줄**이 그 발신이고,
    도구 호출 없는 하네스 폴백만 ⚠ 줄로 남는다.
 3. **점프는 main → agent 만** — `⚡ agent` 도구 줄의 칩. 왕래 줄의 상대 칩은
@@ -69,7 +69,7 @@ class TestChannelFilter:
         assert _wait(lambda: _chip(page, AGT).count() > 0)
 
         stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
+            task_id=f"{AGT}#u-1",
             kind="run",
             label="리뷰해줘",
             agent=AGT,
@@ -79,10 +79,10 @@ class TestChannelFilter:
         stack.renderer.thought("먼저 확인한다", 1)
         stack.renderer.final("검토 끝", turn=1)  # thought 는 다음 턴 이벤트에 실린다
 
-        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#1"]')
+        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#u-1"]')
         assert _wait(lambda: blk.count() == 1)
         # 접히는 스코프 카드가 아니다.
-        assert page.locator(f'.card-task-group[data-task-id="{AGT}#1"]').count() == 0
+        assert page.locator(f'.card-task-group[data-task-id="{AGT}#u-1"]').count() == 0
         # 내부 턴은 블록 **몸통** 안에 있고, 블록이 채널 귀속을 진다.
         card = blk.locator(".run-body > .card-assistant").first
         assert _wait(lambda: card.count() == 1)
@@ -101,7 +101,7 @@ class TestChannelFilter:
         _chip(page, AGT).click()
 
         stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
+            task_id=f"{AGT}#u-1",
             kind="run",
             label="리뷰",
             agent=AGT,
@@ -109,10 +109,10 @@ class TestChannelFilter:
             ctx_dir=f"agents/{AGT}",
         )
         stack.renderer.begin_scope(
-            task_id="sk-in", kind="skill", label="plan", parent=f"{AGT}#1"
+            task_id="sk-in", kind="skill", label="plan", parent=f"{AGT}#u-1"
         )
         sk = page.locator(
-            f'.card-run[data-task-id="{AGT}#1"] .run-body [data-task-id="sk-in"]'
+            f'.card-run[data-task-id="{AGT}#u-1"] .run-body [data-task-id="sk-in"]'
         )
         assert _wait(lambda: sk.count() == 1)
         assert "scope-skill" in (sk.get_attribute("class") or "")
@@ -177,7 +177,7 @@ class TestChannelFilter:
             """에이전트 워커처럼 **자기 스레드**에서 자기 스코프를 연다."""
             r = stack.renderer
             r.begin_scope(
-                task_id=f"{key}#1",
+                task_id=f"{key}#u-1",
                 kind="run",
                 label="작업",
                 agent=key,
@@ -221,7 +221,7 @@ class TestChannelFilter:
         def run(key, fn):
             r = stack.renderer
             r.begin_scope(
-                task_id=f"{key}#1",
+                task_id=f"{key}#u-1",
                 kind="run",
                 label="작업",
                 agent=key,
@@ -282,7 +282,7 @@ class TestChannelFilter:
         assert _wait(lambda: _chip(page, AGT).count() > 0)
 
         stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
+            task_id=f"{AGT}#u-1",
             kind="run",
             label="3+3",
             agent=AGT,
@@ -344,9 +344,9 @@ class TestRunBlock:
         assert _wait(lambda: _chip(page, AGT).count() > 0)
         _chip(page, AGT).click()
 
-    def _begin(self, stack, seq=1, seqs=None, key=AGT):
+    def _begin(self, stack, item="u-1", items=None, key=AGT):
         stack.renderer.begin_agent_work(
-            key=key, seq=seq, profile="reviewer", message="일감", seqs=seqs
+            key=key, item=item, profile="reviewer", message="일감", items=items
         )
 
     def test_incoming_row_waits_then_becomes_the_block_head(self, stack, page):
@@ -359,7 +359,7 @@ class TestRunBlock:
             author="main",
             text="방금 커밋 리뷰해줘",
             to=AGT,
-            seq=1,
+            item="u-1",
         )
         queued = page.locator("#messages > .card-queued .row.queued")
         assert _wait(lambda: queued.count() == 1)
@@ -367,8 +367,8 @@ class TestRunBlock:
         assert queued.locator(".k").inner_text().strip() == "Queued"
         assert "main" in queued.locator(".peer").inner_text()
 
-        self._begin(stack, seq=1)
-        item = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        self._begin(stack, item="u-1")
+        item = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .run-head .run-item')
         assert _wait(lambda: item.count() == 1)
         assert page.locator("#messages > .card-queued").count() == 0
         assert item.locator(".ic").inner_text().strip() == "←"
@@ -379,14 +379,19 @@ class TestRunBlock:
         """resume 재생은 순서를 보장하지 않는다(스코프 재생과 대화 재생이 다른
         경로) — 블록이 먼저 있으면 수신 줄이 곧장 머리로 간다."""
         self._open(stack, page)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         assert _wait(
-            lambda: page.locator(f'.card-run[data-task-id="{AGT}#1"]').count() == 1
+            lambda: page.locator(f'.card-run[data-task-id="{AGT}#u-1"]').count() == 1
         )
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="늦게 온 수신", to=AGT, seq=1
+            key=AGT,
+            direction="in",
+            author="main",
+            text="늦게 온 수신",
+            to=AGT,
+            item="u-1",
         )
-        item = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        item = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .run-head .run-item')
         assert _wait(lambda: item.count() == 1)
         assert page.locator("#messages > .card-queued").count() == 0
 
@@ -394,12 +399,12 @@ class TestRunBlock:
         self, stack, page
     ):
         """v10.8.2: 런 1 이 도는 동안 도착한 seq 2 는 ⏳ 대기로 섰다가, 서버가
-        턴 경계에서 흡수했다고 알리면(direction=absorbed, absorbed_into=1) 런 1
+        턴 경계에서 흡수했다고 알리면(direction=absorbed, absorbed_into="u-1") 런 1
         블록의 머리로 옮겨 간다 — 새 런이 열리지 않아도. 종전엔 영원히 대기였다."""
         self._open(stack, page)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         assert _wait(
-            lambda: page.locator(f'.card-run[data-task-id="{AGT}#1"]').count() == 1
+            lambda: page.locator(f'.card-run[data-task-id="{AGT}#u-1"]').count() == 1
         )
         stack.renderer.agent_message(
             key=AGT,
@@ -407,7 +412,7 @@ class TestRunBlock:
             author="main",
             text="런 중에 온 지시",
             to=AGT,
-            seq=2,
+            item="u-2",
         )
         assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
         stack.renderer.agent_message(
@@ -416,20 +421,20 @@ class TestRunBlock:
             author="main",
             text="런 중에 온 지시",
             to=AGT,
-            seq=2,
-            absorbed_into=1,
+            item="u-2",
+            absorbed_into="u-1",
         )
-        items = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-head .run-item')
+        items = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .run-head .run-item')
         assert _wait(lambda: items.count() == 1)
         assert page.locator("#messages > .card-queued").count() == 0
         assert "런 중에 온 지시" in items.first.locator(".s").inner_text()
-        assert items.first.get_attribute("data-seq") == "2"
+        assert items.first.get_attribute("data-item") == "u-2"
 
     def test_absorption_without_a_visible_block_marks_the_row(self, stack, page):
         """블록이 없으면(버퍼 창 밖·구 세션) 줄만 ✓ 흡수 로 바뀐다 — 대기로 남지 않는다."""
         self._open(stack, page)
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="지시", to=AGT, seq=5
+            key=AGT, direction="in", author="main", text="지시", to=AGT, item="u-5"
         )
         assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
         stack.renderer.agent_message(
@@ -438,18 +443,23 @@ class TestRunBlock:
             author="main",
             text="지시",
             to=AGT,
-            seq=5,
-            absorbed_into=4,
+            item="u-5",
+            absorbed_into="u-4",
         )
         row = page.locator("#messages > .card-queued .row")
         assert _wait(lambda: row.locator(".ic").inner_text().strip() == "✓")
         assert row.locator(".k").inner_text().strip() == "Absorbed"
 
     def test_batch_claims_all_its_items(self, stack, page):
-        """사람 창 배치: N건이 런 1개 — `scope_start.seqs` 가 머리를 N줄로."""
+        """사람 창 배치: N건이 런 1개 — `scope_start.items` 가 머리를 N줄로."""
         self._open(stack, page)
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="user:dj", text="요약해 줘", to=AGT, seq=2
+            key=AGT,
+            direction="in",
+            author="user:dj",
+            text="요약해 줘",
+            to=AGT,
+            item="u-2",
         )
         stack.renderer.agent_message(
             key=AGT,
@@ -457,11 +467,11 @@ class TestRunBlock:
             author="user:ann",
             text="끝나면 알려줘",
             to=AGT,
-            seq=3,
+            item="u-3",
         )
         assert _wait(lambda: page.locator("#messages > .card-queued").count() == 2)
-        self._begin(stack, seq=2, seqs=[2, 3])
-        items = page.locator(f'.card-run[data-task-id="{AGT}#2"] .run-head .run-item')
+        self._begin(stack, item="u-2", items=["u-2", "u-3"])
+        items = page.locator(f'.card-run[data-task-id="{AGT}#u-2"] .run-head .run-item')
         assert _wait(lambda: items.count() == 2)
         assert page.locator("#messages > .card-queued").count() == 0
         assert items.nth(0).locator(".who").inner_text().strip() == "dj (human)"
@@ -471,11 +481,11 @@ class TestRunBlock:
         """`→ 보냄` 은 없다 — 도구 줄이 그 발신이다. 도구 호출 없는 하네스
         폴백만 ⚠ 줄로 블록 몸통에 남는다."""
         self._open(stack, page)
-        self._begin(stack, seq=1)
-        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        self._begin(stack, item="u-1")
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#u-1"]')
         assert _wait(lambda: blk.count() == 1)
         stack.renderer.agent_message(
-            key=AGT, direction="out", author=AGT, text="과일", to="main", seq=1
+            key=AGT, direction="out", author=AGT, text="과일", to="main", item="u-1"
         )
         stack.renderer.agent_message(
             key=AGT,
@@ -483,7 +493,7 @@ class TestRunBlock:
             author=AGT,
             text="(no explicit reply — this is the agent's run summary)\n리뷰 결과 요약",
             to="main",
-            seq=1,
+            item="u-1",
             fallback=True,
         )
         fb = blk.locator(".run-body .card-fallback .row.fallback")
@@ -496,10 +506,10 @@ class TestRunBlock:
     def test_final_becomes_the_foot_with_duration(self, stack, page):
         """최종답이 있으면 **그 카드가 꼬리**다 — 같은 말을 두 번 하지 않는다."""
         self._open(stack, page)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.final("검토 끝", turn=1)
-        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=2.1)
-        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        stack.renderer.end_agent_work(key=AGT, item="u-1", success=True, duration_s=2.1)
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#u-1"]')
         assert _wait(lambda: "run-ok" in (blk.get_attribute("class") or ""))
         meta = blk.locator(".run-final .run-meta")
         assert meta.count() == 1 and meta.inner_text().strip() == "✓ (2.1s)"
@@ -508,11 +518,11 @@ class TestRunBlock:
 
     def test_failed_run_gets_a_status_foot(self, stack, page):
         self._open(stack, page)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.end_agent_work(
-            key=AGT, seq=1, success=False, duration_s=0.8, error="killed"
+            key=AGT, item="u-1", success=False, duration_s=0.8, error="killed"
         )
-        blk = page.locator(f'.card-run[data-task-id="{AGT}#1"]')
+        blk = page.locator(f'.card-run[data-task-id="{AGT}#u-1"]')
         assert _wait(lambda: "run-fail" in (blk.get_attribute("class") or ""))
         foot = blk.locator(".row.run-foot.bad")
         assert foot.count() == 1
@@ -522,12 +532,12 @@ class TestRunBlock:
         """`message` 도구 줄이 발신이다: 아이콘 →, 본문이 요약, 꼬리에 상대.
         상대는 글자다 — 눌리지 않는다."""
         self._open(stack, page, AGT, PEER)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.action("message", f'{{"to":"{PEER}","text":"과일"}}', turn=1)
         stack.renderer.observation(
             f"[message → {PEER}] delivered", turn=1, tool_name="message", success=True
         )
-        row = page.locator(f'.card-run[data-task-id="{AGT}#1"] .row.act.send')
+        row = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .row.act.send')
         assert _wait(lambda: row.count() == 1)
         assert row.locator(".ic").inner_text().strip() == "→"
         assert row.locator(".k").inner_text().strip() == "message"
@@ -538,7 +548,7 @@ class TestRunBlock:
         # 배달 결과는 스텝 배지가 말한다.
         assert _wait(
             lambda: (
-                page.locator(f'.card-run[data-task-id="{AGT}#1"] .badge.ok').count()
+                page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .badge.ok').count()
                 == 1
             )
         )
@@ -547,9 +557,9 @@ class TestRunBlock:
         """시각과 상대 이름이 **겹쳐 그려지지 않는다** — 꼬리 칸이 있는 줄은
         시각을 같은 그리드 안에 넣는다(코너 배지가 칩을 덮던 사고)."""
         self._open(stack, page, AGT, PEER)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.action("message", f'{{"to":"{PEER}","text":"과일"}}', turn=1)
-        row = page.locator(f'.card-run[data-task-id="{AGT}#1"] .row.act.send')
+        row = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .row.act.send')
         assert _wait(lambda: row.count() == 1)
         peer = row.locator(".peer").bounding_box()
         tm = row.locator(".row-time").bounding_box()
@@ -613,17 +623,26 @@ class TestRunBlock:
         몸통에 들어간다(패치 중 실제로 났던 버그). 자리는 언제나 자기 채널 루트."""
         self._open(stack, page, AGT, PEER)
         # PEER 의 런이 이 스레드에 열려 있다 → 이후 emit 은 PEER#1 을 단다.
-        stack.renderer.begin_agent_work(key=PEER, seq=1, profile="doc", message="x")
+        stack.renderer.begin_agent_work(
+            key=PEER, item="u-1", profile="doc", message="x"
+        )
         stack.renderer.agent_message(
-            key=AGT, direction="in", author=f"agent:{PEER}", text="부탁", to=AGT, seq=5
+            key=AGT,
+            direction="in",
+            author=f"agent:{PEER}",
+            text="부탁",
+            to=AGT,
+            item="u-5",
         )
         queued = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
         assert _wait(lambda: queued.count() == 1)
         assert (
-            page.locator(f'.card-run[data-task-id="{PEER}#1"] .card-queued').count()
+            page.locator(f'.card-run[data-task-id="{PEER}#u-1"] .card-queued').count()
             == 0
         )
-        stack.renderer.end_agent_work(key=PEER, seq=1, success=True, duration_s=0.1)
+        stack.renderer.end_agent_work(
+            key=PEER, item="u-1", success=True, duration_s=0.1
+        )
 
     def test_kill_then_resume_puts_heads_back_into_their_blocks(self, stack, page):
         """kill=정리 / resume=재생 — 정리는 **`agent_msg` 에서 나온 것만**.
@@ -634,15 +653,15 @@ class TestRunBlock:
         떨어졌다(사용자 보고 — 새로고침해야 나왔다)."""
         self._open(stack, page)
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, seq=1
+            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, item="u-1"
         )
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.final("검토 끝", turn=1)
-        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=1.0)
+        stack.renderer.end_agent_work(key=AGT, item="u-1", success=True, duration_s=1.0)
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="다음 것", to=AGT, seq=2
+            key=AGT, direction="in", author="main", text="다음 것", to=AGT, item="u-2"
         )
-        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#1"]')
+        blk = page.locator(f'#messages > .card-run[data-task-id="{AGT}#u-1"]')
         queued = page.locator(f'#messages > .card-queued[data-ch="{AGT}"]')
         assert _wait(lambda: blk.count() == 1 and queued.count() == 1)
 
@@ -655,14 +674,14 @@ class TestRunBlock:
 
         # resume: conversation.jsonl 재생 — 같은 seq 가 제 블록 머리로 돌아온다.
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, seq=1
+            key=AGT, direction="in", author="main", text="리뷰해줘", to=AGT, item="u-1"
         )
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="다음 것", to=AGT, seq=2
+            key=AGT, direction="in", author="main", text="다음 것", to=AGT, item="u-2"
         )
         assert _wait(lambda: blk.locator(".run-item").count() == 1)
         assert "리뷰해줘" in blk.locator(".run-item").inner_text()
-        # 런이 안 열린 seq=2 만 대기 — 이미 돈 seq=1 은 대기로 떨어지지 않는다.
+        # 런이 안 열린 item="u-2" 만 대기 — 이미 돈 item="u-1" 은 대기로 떨어지지 않는다.
         assert _wait(lambda: queued.count() == 1)
         assert "다음 것" in queued.inner_text()
 
@@ -671,11 +690,13 @@ class TestRunBlock:
         덮지 않는다(사용자 보고: 초판은 여백을 줄여 겹쳤다). 생각 줄이 위에
         있어도 마찬가지."""
         self._open(stack, page)
-        self._begin(stack, seq=1)
+        self._begin(stack, item="u-1")
         stack.renderer.thought("짧게 확인하고 답한다", 1)
         stack.renderer.final("B입니다. 준비 완료. 끝말잇기 시작 대기 중.", turn=1)
-        stack.renderer.end_agent_work(key=AGT, seq=1, success=True, duration_s=58.8)
-        fin = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-final .final')
+        stack.renderer.end_agent_work(
+            key=AGT, item="u-1", success=True, duration_s=58.8
+        )
+        fin = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .run-final .final')
         meta = fin.locator(".run-meta")
         assert _wait(lambda: meta.count() == 1)
         assert meta.inner_text().strip() == "✓ (58.8s)"
@@ -694,7 +715,9 @@ class TestRunBlock:
             f"✓ 표시가 본문을 덮는다: meta={mb}, text_left={text_left}"
         )
         # 생각 줄과도 겹치지 않는다(.final 기준 배치).
-        think = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-final .row.think')
+        think = page.locator(
+            f'.card-run[data-task-id="{AGT}#u-1"] .run-final .row.think'
+        )
         tb = think.bounding_box()
         assert tb and mb["y"] >= tb["y"] + tb["height"] - 0.5
 
@@ -748,7 +771,7 @@ class TestJump:
         assert _wait(lambda: _chip(page, AGT).count() > 0)
         # 도착 채널에 카드 하나 — 앵커.
         stack.renderer.agent_message(
-            key=AGT, direction="in", author="main", text="요청", to=AGT, seq=1
+            key=AGT, direction="in", author="main", text="요청", to=AGT, item="u-1"
         )
         assert _wait(lambda: page.locator("#messages > .card-queued").count() == 1)
 
@@ -782,19 +805,21 @@ class TestJump:
         assert _wait(lambda: _chip(page, AGT).count() > 0)
         _chip(page, AGT).click()
 
-        stack.renderer.begin_agent_work(key=AGT, seq=1, profile="rev", message="x")
+        stack.renderer.begin_agent_work(key=AGT, item="u-1", profile="rev", message="x")
         stack.renderer.agent_message(
             key=AGT,
             direction="in",
             author="user:두정",
             text="README 갱신해줘",
             to=AGT,
-            seq=1,
+            item="u-1",
         )
-        who = page.locator(f'.card-run[data-task-id="{AGT}#1"] .run-item .who')
+        who = page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .run-item .who')
         assert _wait(lambda: who.count() == 1)
         assert who.inner_text().strip() == "두정 (human)"
-        assert page.locator(f'.card-run[data-task-id="{AGT}#1"] .can-jump').count() == 0
+        assert (
+            page.locator(f'.card-run[data-task-id="{AGT}#u-1"] .can-jump').count() == 0
+        )
 
 
 class TestBackIsSingleLevel:
@@ -863,7 +888,7 @@ class TestNestedBlocks:
         stack.renderer.begin_scope(task_id="sk1", kind="skill", label="plan", parent="")
         stack.renderer.begin_scope(task_id="in1", kind="run", label="조사", parent="")
         stack.renderer.begin_scope(
-            task_id=f"{AGT}#1",
+            task_id=f"{AGT}#u-1",
             kind="run",
             label="리뷰",
             agent=AGT,
@@ -879,7 +904,7 @@ class TestNestedBlocks:
         assert "scope-inline" in cls("in1")
         # 상주 에이전트의 런은 접히는 스코프 카드가 아니라 **런 블록**이다
         # (v9.23.0) — 레일은 있되 카드 종류가 다르다.
-        run = page.locator(f'[data-task-id="{AGT}#1"]')
+        run = page.locator(f'[data-task-id="{AGT}#u-1"]')
         assert run.count() == 1
         assert "card-run" in (run.get_attribute("class") or "")
         assert "card-task-group" not in (run.get_attribute("class") or "")

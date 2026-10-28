@@ -312,15 +312,16 @@ class Renderer(ABC):
         self,
         *,
         key: str,
-        seq: int,
+        item: str,
         profile: str,
         message: str,
         req_ts: float | str | None = None,
-        seqs: list[int] | None = None,
+        items: list[str] | None = None,
     ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
 
-        ``seqs`` (v9.23.0) — 이 런이 처리하는 inbox 항목들의 seq. 보통 ``[seq]``
+        ``item`` (v10.77.0) — 이 런을 연 배달의 id(``u-3``·``r-7``…), 곧 런의
+        이름. ``items`` — 이 런이 처리하는 inbox 항목들의 id. 보통 ``[item]``
         이고 사람-직접 배치는 N개. 웹의 런 블록이 이걸로 큐에서 먼저 도착한
         수신 줄(``agent_message(in)``)을 자기 머리로 끌어온다 — 수신 줄은
         큐에 넣을 때 나가 런보다 앞서므로, 이 목록 없이는 어느 항목이 이
@@ -335,7 +336,7 @@ class Renderer(ABC):
         self,
         *,
         key: str,
-        seq: int,
+        item: str,
         success: bool,
         duration_s: float,
         error: str = "",
@@ -354,23 +355,24 @@ class Renderer(ABC):
         direction: str,
         author: str,
         text: str,
-        seq: int = 0,
+        item: str = "",
         success: bool = True,
         to: str = "main",
         ts: float | str | None = None,
         profile: str = "",
         instance_name: str = "",
         fallback: bool = False,
-        absorbed_into: int | None = None,
+        absorbed_into: str | None = None,
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
         수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는
         "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). ``ts``
         (5.13) = resume 재생 시 원래 발생 시각. ``fallback`` (v9.23.0) =
         하네스가 대신 보낸 런 요약(회신 없이 끝난 런) — 도구 호출이 없는
-        유일한 발신이라 웹이 이것만 따로 그린다. ``direction="absorbed"`` +
-        ``absorbed_into`` (v10.8.2) = 받은편지함의 이 항목(seq)이 **도는 런**
-        (``absorbed_into`` = 그 런의 seq)에 턴 경계에서 흡수됐다 — 웹이 ⏳ 대기
+        유일한 발신이라 웹이 이것만 따로 그린다. ``item`` (v10.77.0) = 그 배달의
+        id(수신 줄) 또는 그 발신을 낸 런의 id(회신·폴백). ``direction="absorbed"`` +
+        ``absorbed_into`` (v10.8.2) = 받은편지함의 이 항목(``item``)이 **도는 런**
+        (``absorbed_into`` = 그 런의 id)에 턴 경계에서 흡수됐다 — 웹이 ⏳ 대기
         줄을 그 런 블록 머리로 옮긴다. 기본 no-op."""
 
     def clear_agent_conversation(self, key: str) -> None:

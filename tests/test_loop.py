@@ -4828,7 +4828,7 @@ class TestMailAnswersInheritance:
             "kind": "reply",
             "key": key,
             "profile": "code-writer",
-            "seq": 1,
+            "run": "r-1",
             "success": True,
             "output": output,
             "duration_s": 0.1,

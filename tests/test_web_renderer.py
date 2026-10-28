@@ -454,9 +454,15 @@ class TestAgentConversationSurface:
 
     def test_clear_removes_only_that_key_and_adjusts_count(self):
         r = WebRenderer()
-        r.agent_message(key="agt-1", direction="in", author="main", text="a", seq=1)
-        r.agent_message(key="agt-1", direction="out", author="agt-1", text="b", seq=1)
-        r.agent_message(key="agt-2", direction="in", author="main", text="c", seq=1)
+        r.agent_message(
+            key="agt-1", direction="in", author="main", text="a", item="u-1"
+        )
+        r.agent_message(
+            key="agt-1", direction="out", author="agt-1", text="b", item="u-1"
+        )
+        r.agent_message(
+            key="agt-2", direction="in", author="main", text="c", item="u-1"
+        )
         assert r.persistent_count == 3
 
         r.clear_agent_conversation("agt-1")
@@ -474,7 +480,9 @@ class TestAgentConversationSurface:
         r = WebRenderer()
         conn = WebConnection(id="c1")
         r.register_connection(conn)
-        r.agent_message(key="agt-1", direction="in", author="main", text="a", seq=1)
+        r.agent_message(
+            key="agt-1", direction="in", author="main", text="a", item="u-1"
+        )
 
         r.clear_agent_conversation("agt-1")
 
@@ -2231,15 +2239,15 @@ class TestTeammateWork:
 
     def test_work_emits_delegate_card_events(self):
         r = WebRenderer()
-        r.begin_agent_work(key="agt-1", seq=2, profile="researcher", message="dig")
-        r.end_agent_work(key="agt-1", seq=2, success=True, duration_s=0.3)
+        r.begin_agent_work(key="agt-1", item="u-2", profile="researcher", message="dig")
+        r.end_agent_work(key="agt-1", item="u-2", success=True, duration_s=0.3)
         names = [e for e, _ in r._event_buffer]
         assert "scope_start" in names and "scope_end" in names
         start = next(d for e, d in r._event_buffer if e == "scope_start")
-        assert start["task_id"] == "agt-1#2"
+        assert start["task_id"] == "agt-1#u-2"
         assert "researcher" in start["agent"]
         end = next(d for e, d in r._event_buffer if e == "scope_end")
-        assert end["task_id"] == "agt-1#2" and end["success"] is True
+        assert end["task_id"] == "agt-1#u-2" and end["success"] is True
 
     def test_work_routes_thread_without_touching_prompt_scope(self, tmp_path):
         import threading
@@ -2248,14 +2256,14 @@ class TestTeammateWork:
         tid = threading.get_ident()
         # worker 가 상시 스코프를 이미 보유한 상태를 재현
         r.begin_prompt_scope("agt-9", label="teammate:anon")
-        r.begin_agent_work(key="agt-9", seq=1, profile="", message="m")
-        assert r._thread_to_task[tid] == "agt-9#1"  # SSE 는 요청 카드로
+        r.begin_agent_work(key="agt-9", item="u-1", profile="", message="m")
+        assert r._thread_to_task[tid] == "agt-9#u-1"  # SSE 는 요청 카드로
         r.note_system_prompt([("Base", "TM PROMPT")], turn=1)
-        r.end_agent_work(key="agt-9", seq=1, success=True, duration_s=0.1)
+        r.end_agent_work(key="agt-9", item="u-1", success=True, duration_s=0.1)
         assert tid not in r._thread_to_task
         # 시스템 스냅샷은 요청 카드가 아니라 상시 teammate 스코프에 쌓였다
         assert "TM PROMPT" in r.prompt_snapshot("agt-9")["sections"][0]["text"]
-        assert r.prompt_snapshot("agt-9#1") is None
+        assert r.prompt_snapshot("agt-9#u-1") is None
         # 스코프는 end_agent_work 이후에도 살아 있다 (kill 때만 고정)
         info = r.prompt_scope_info("agt-9")
         assert info["label"] == "teammate:anon" and info["ended"] is False
@@ -2277,7 +2285,9 @@ class TestTeammateWindowEvents:
 
     def test_message_is_persistent(self):
         r = WebRenderer()
-        r.agent_message(key="agt-1", direction="out", author="agt-1", text="hi", seq=1)
+        r.agent_message(
+            key="agt-1", direction="out", author="agt-1", text="hi", item="u-1"
+        )
         names = [e for e, _ in r._event_buffer]
         assert "agent_msg" in names
         data = next(d for e, d in r._event_buffer if e == "agent_msg")
@@ -2303,15 +2313,15 @@ class TestScopePersistenceAndReplay:
 
     def test_agent_work_scopes_logged(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
-        r.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
-        r.end_agent_work(key="w1", seq=0, success=True, duration_s=0.5)
+        r.begin_agent_work(key="w1", item="u-0", profile="code-writer", message="do")
+        r.end_agent_work(key="w1", item="u-0", success=True, duration_s=0.5)
         recs = [
             json.loads(x)
             for x in (tmp_path / "scopes.jsonl").read_text().splitlines()
             if x.strip()
         ]
         assert [x["event"] for x in recs] == ["scope_start", "scope_end"]
-        assert recs[0]["task_id"] == "w1#0"
+        assert recs[0]["task_id"] == "w1#u-0"
 
     def test_no_sidecar_without_session_dir(self):
         r = WebRenderer()  # no session_dir → logging off, no crash
@@ -2320,8 +2330,8 @@ class TestScopePersistenceAndReplay:
 
     def test_replay_reemits_with_original_ts_and_flag(self, tmp_path):
         r1 = WebRenderer(session_dir=str(tmp_path))
-        r1.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
-        r1.end_agent_work(key="w1", seq=0, success=True, duration_s=0.5)
+        r1.begin_agent_work(key="w1", item="u-0", profile="code-writer", message="do")
+        r1.end_agent_work(key="w1", item="u-0", success=True, duration_s=0.5)
         original_ts = next(
             json.loads(x)
             for x in (tmp_path / "scopes.jsonl").read_text().splitlines()
@@ -2332,7 +2342,7 @@ class TestScopePersistenceAndReplay:
         r2 = WebRenderer(session_dir=str(tmp_path))
         r2.replay_scopes()
         starts = [d for e, d in r2._event_buffer if e == "scope_start"]
-        assert starts and starts[0]["task_id"] == "w1#0"
+        assert starts and starts[0]["task_id"] == "w1#u-0"
         assert starts[0]["replay"] is True  # frontend skips timeline card
         assert starts[0]["ts"] == original_ts  # original time, not resume moment
 
@@ -2491,9 +2501,9 @@ class TestScopeNesting:
         scope — but it still carries the fields for one event shape."""
         r = WebRenderer()
         r.begin_scope(task_id="sk", kind="skill", label="skill:plan")
-        r.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
+        r.begin_agent_work(key="w1", item="u-0", profile="code-writer", message="do")
         work = self._starts(r)[-1]
-        assert work["task_id"] == "w1#0"
+        assert work["task_id"] == "w1#u-0"
         assert (work["parent"], work["depth"]) == ("", 0)
 
     def test_explicit_ts_survives_to_event_and_sidecar(self, tmp_path):
@@ -2811,7 +2821,7 @@ class TestResumeInnerTurnReplay:
             [
                 {
                     "event": "scope_start",
-                    "task_id": "agt-x#1",
+                    "task_id": "agt-x#u-1",
                     "kind": "run",
                     "label": "req1",
                     "parent": "",
@@ -2821,7 +2831,7 @@ class TestResumeInnerTurnReplay:
                 },
                 {
                     "event": "scope_end",
-                    "task_id": "agt-x#1",
+                    "task_id": "agt-x#u-1",
                     "kind": "run",
                     "success": True,
                     "duration_s": 20.0,
@@ -2829,7 +2839,7 @@ class TestResumeInnerTurnReplay:
                 },
                 {
                     "event": "scope_start",
-                    "task_id": "agt-x#2",
+                    "task_id": "agt-x#u-2",
                     "kind": "run",
                     "label": "req2",
                     "parent": "",
@@ -2839,7 +2849,7 @@ class TestResumeInnerTurnReplay:
                 },
                 {
                     "event": "scope_end",
-                    "task_id": "agt-x#2",
+                    "task_id": "agt-x#u-2",
                     "kind": "run",
                     "success": True,
                     "duration_s": 20.0,
@@ -2854,8 +2864,8 @@ class TestResumeInnerTurnReplay:
             if e in ("assistant_turn", "observation"):
                 by_scope.setdefault(dict(d).get("task_id"), []).append(e)
         assert by_scope == {
-            "agt-x#1": ["assistant_turn", "observation"],
-            "agt-x#2": ["assistant_turn", "observation"],
+            "agt-x#u-1": ["assistant_turn", "observation"],
+            "agt-x#u-2": ["assistant_turn", "observation"],
         }
 
     def test_scope_start_payload_carries_ctx_dir(self):
@@ -2866,7 +2876,7 @@ class TestResumeInnerTurnReplay:
 
     def test_agent_work_scope_carries_home_dir(self):
         r = WebRenderer()
-        r.begin_agent_work(key="agt-z", seq=3, profile="code-writer", message="do")
+        r.begin_agent_work(key="agt-z", item="u-3", profile="code-writer", message="do")
         start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
         assert start["ctx_dir"] == "agents/agt-z"
 
@@ -3305,18 +3315,18 @@ class TestAgentWorkNavTs:
         r = WebRenderer()
         r.begin_agent_work(
             key="agt-x",
-            seq=3,
+            item="u-3",
             profile="reviewer",
             message="안녕?",
             req_ts=1786888869.935647,
         )
         ss = self._scope_starts(r)
-        assert ss and ss[0]["task_id"] == "agt-x#3"
+        assert ss and ss[0]["task_id"] == "agt-x#u-3"
         assert ss[0]["nav_ts"] == 1786888869.935647
 
     def test_nav_ts_omitted_without_req_ts(self):
         r = WebRenderer()
-        r.begin_agent_work(key="agt-x", seq=1, profile="p", message="hi")
+        r.begin_agent_work(key="agt-x", item="u-1", profile="p", message="hi")
         ss = self._scope_starts(r)
         assert ss and "nav_ts" not in ss[0]
 
@@ -3654,7 +3664,7 @@ class TestNoteNext:
 class TestRunBlockFields:
     """런 블록 (v9.23.0, docs/chat-ui §12) 이 서버에서 받는 두 필드.
 
-    `scope_start.seqs` — 이 런이 처리하는 inbox 항목들. 수신 줄은 큐에 넣을
+    `scope_start.items` — 이 런이 처리하는 inbox 항목들의 id. 수신 줄은 큐에 넣을
     때 나가 런보다 앞서므로, 프론트는 이 목록으로 그 줄들을 블록 머리로
     끌어온다(배치는 N개). `agent_msg.fallback` — 하네스가 대신 보낸 런 요약,
     도구 호출이 없는 유일한 발신이라 out 줄 중 이것만 그린다."""
@@ -3665,24 +3675,28 @@ class TestRunBlockFields:
             if e == event:
                 return d
 
-    def test_scope_start_carries_seqs_defaulting_to_the_run_seq(self):
+    def test_scope_start_carries_items_defaulting_to_the_run_item(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
         r.register_connection(conn)
-        r.begin_agent_work(key="agt-a", seq=3, profile="p", message="일감")
+        r.begin_agent_work(key="agt-a", item="u-3", profile="p", message="일감")
         d = self._next(conn, "scope_start")
-        assert d["task_id"] == "agt-a#3" and d["seqs"] == [3]
-        r.end_agent_work(key="agt-a", seq=3, success=True, duration_s=0.1)
+        assert d["task_id"] == "agt-a#u-3" and d["items"] == ["u-3"]
+        r.end_agent_work(key="agt-a", item="u-3", success=True, duration_s=0.1)
 
-    def test_scope_start_carries_the_batch_seqs(self):
+    def test_scope_start_carries_the_batch_items(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
         r.register_connection(conn)
         r.begin_agent_work(
-            key="agt-a", seq=7, profile="p", message="셋", seqs=[7, 8, 9]
+            key="agt-a",
+            item="u-7",
+            profile="p",
+            message="셋",
+            items=["u-7", "u-8", "u-9"],
         )
-        assert self._next(conn, "scope_start")["seqs"] == [7, 8, 9]
-        r.end_agent_work(key="agt-a", seq=7, success=True, duration_s=0.1)
+        assert self._next(conn, "scope_start")["items"] == ["u-7", "u-8", "u-9"]
+        r.end_agent_work(key="agt-a", item="u-7", success=True, duration_s=0.1)
 
     def test_agent_msg_marks_a_fallback_send_only_when_told(self):
         r = WebRenderer()
@@ -3774,11 +3788,13 @@ class TestImagesOnCards:
             direction="in",
             author="user:dj",
             text="see",
-            seq=1,
+            item="u-1",
             images=[self.REF],
         )
         _, data = conn.queue.get(timeout=0.5)
         assert data["images"] == [self.REF]
-        r.agent_message(key="agt-1", direction="in", author="user:dj", text="x", seq=2)
+        r.agent_message(
+            key="agt-1", direction="in", author="user:dj", text="x", item="u-2"
+        )
         _, data = conn.queue.get(timeout=0.5)
         assert "images" not in data

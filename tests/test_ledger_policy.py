@@ -173,9 +173,10 @@ class TestIdsAreOneFormat:
     def test_sources_make_the_final_form(self, tmp_path):
         assert InputQueue().enqueue("c", "hi")["id"] == "u-1"
         reg = AgentRegistry(tmp_path)
-        assert reg.note_owes("main", "agent:agt-a", "t").id == "r-1"
+        # 번호 공간 하나를 모든 접두가 함께 쓴다 (v10.77.0)
+        assert reg.note_owes("main", "agent:agt-a", "t").id == "r-2"
         reg._push_reply({"kind": "job", "output": "🧵 job #1 finished"})
-        assert reg.pending_mail()[0]["id"] == "n-1"
+        assert reg.pending_mail()[0]["id"] == "n-3"
 
     @pytest.mark.parametrize(
         "item,closer",

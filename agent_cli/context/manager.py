@@ -38,6 +38,7 @@ from pathlib import Path
 # C5: 관심사 분리 — record 계약은 records, LLM 표현은 render, 디스크
 # I/O primitive 는 store 소유. manager 는 캐시 + 압축 정책만.
 from agent_cli import images as _images
+from agent_cli import item_ids
 from agent_cli.context import store
 from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.records import _classify_record
@@ -1439,6 +1440,9 @@ class ContextManager:
         """
         self._nl_cache = None  # cache rebuilt from disk → re-render on next get
         messages = store.load_records(self._history_path)
+        # 새 id 가 지난 생의 id 와 겹치지 않게 (v10.77.0) — 겹치면 새 요청이
+        # 같은 id 를 단 옛 user 레코드를 핀으로 붙잡는다(§pin).
+        item_ids.observe(*(m.get("request_id") for m in messages))
 
         use_offset = self._dynamic_start_index > 0 and self._dynamic_start_index <= len(
             messages

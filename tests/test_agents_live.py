@@ -196,11 +196,11 @@ class TestBuildReplyRecord:
         return {
             "key": "agt-abc",
             "profile": "researcher",
-            "seq": 1,
+            "run": "r-1",
             "success": True,
             "output": "findings",
             "duration_s": 0.5,
-            "reply_path": "/tmp/x/reply-1.md",
+            "reply_path": "/tmp/x/reply-r-1.md",
             **kw,
         }
 
@@ -228,7 +228,7 @@ class TestBuildReplyRecord:
     def test_over_cap_replaced_with_pointer(self):
         big = "x" * 40_000  # ~10k tokens
         rec = build_reply_record(self._reply(output=big), cap=100)
-        assert "reply-1.md" in rec["content"]
+        assert "reply-r-1.md" in rec["content"]
         assert len(rec["content"]) < len(big)
         assert "head excerpt" in rec["content"]
 
@@ -277,7 +277,7 @@ class TestBuildReplyRecord:
         reg = self._FakeReg(self._FakeTm("busy", 1))
         big = "x" * 40_000
         rec = build_reply_record(self._reply(output=big), cap=100, registry=reg)
-        assert "reply-1.md" in rec["content"]  # 포인터 치환 유지
+        assert "reply-r-1.md" in rec["content"]  # 포인터 치환 유지
         assert "agent status: busy" in rec["content"]
         assert "1 queued" in rec["content"]
 
@@ -709,7 +709,9 @@ class TestWaitAndScope:
         assert wait_until(lambda: bool(renderer.named("end_agent_work")))
         begin = renderer.named("begin_agent_work")[0][1]
         end = renderer.named("end_agent_work")[0][1]
-        assert begin["key"] == key and begin["seq"] == 1 and begin["message"] == "job"
+        assert (
+            begin["key"] == key and begin["item"] == "r-1" and begin["message"] == "job"
+        )
         assert end["key"] == key and end["success"] is True
         reg.shutdown_all()
 
@@ -1101,9 +1103,10 @@ class TestFullLoopIntegration:
             wait_until(reg.has_pending_replies)
             if n == 2:
                 return LLMResponse(content=emit("agent", {"mode": "status"}))
-            # 회신은 장부 항목 [n-1] — answers 로 닫는다 (v10.55.0)
+            # 회신은 장부 항목 [n-2] — answers 로 닫는다 (v10.55.0). 번호 공간을
+            # 모든 접두가 함께 써 위임 요청이 r-1 을 먼저 받았다 (v10.77.0).
             return LLMResponse(
-                content=emit("complete", {"result": "finished", "answers": ["n-1"]})
+                content=emit("complete", {"result": "finished", "answers": ["n-2"]})
             )
 
         provider.call = MagicMock(side_effect=scripted)
@@ -1306,7 +1309,7 @@ class TestResumeRestore:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         data = self._state(tmp_path)
-        assert data["version"] == 1
+        assert data["version"] == 2
         entry = next(e for e in data["agents"] if e["key"] == key)
         assert entry["state"] == "idle"
         reg.shutdown_all()
@@ -1362,12 +1365,12 @@ class TestResumeRestore:
         # 미배달 회신은 첫 턴 경계 배달 대상으로 복원
         restored = reg2.drain_replies()
         assert [_unlabel(r["output"]) for r in restored] == ["done:hello"]
-        # seq 이어가기 — 새 요청은 reply-2 (기존 reply-1 안 덮음)
-        assert tm.queued == tm.handled == 1
+        assert tm.handled == 1
         reg2.request(key, "again")
         assert wait_until(reg2.has_pending_replies)
         again = reg2.drain_replies()[0]
-        assert _unlabel(again["output"]) == "done:again" and again["seq"] == 2
+        # 새 런의 이름은 새 id — 앞 생의 회신 파일(reply-r-1.md)을 덮지 않는다
+        assert _unlabel(again["output"]) == "done:again" and again["run"] != "r-1"
         reg2.shutdown_all()
 
     def test_killed_teammate_not_revived(self, tmp_path, renderer):
@@ -1483,12 +1486,12 @@ class TestHumanInterventionRouting:
         assert "arrived together" not in batched
         assert not reg.has_pending_replies()  # 전부 user:* → 창만
         assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
-        # v9.23.0: 배치 런의 scope_start 가 항목 seq 전부를 싣는다 — 웹의 런
+        # v9.23.0: 배치 런의 scope_start 가 항목 id 전부를 싣는다 — 웹의 런
         # 블록이 큐에서 먼저 도착한 수신 줄 둘을 자기 머리로 끌어오는 근거.
         begins = [
             c[1] for c in renderer.named("begin_agent_work") if c[1]["key"] == key
         ]
-        assert begins[-1]["seqs"] == [2, 3] and begins[-1]["seq"] == 2
+        assert begins[-1]["items"] == ["u-2", "u-3"] and begins[-1]["item"] == "u-2"
         reg.shutdown_all()
 
     def test_main_delegations_processed_individually(self, tmp_path, renderer):
@@ -2861,12 +2864,13 @@ class TestResumeMode:
         # 이전 생의 기억을 그대로 갖고 살아났다
         assert any("landmark-before-death" in str(m) for m in tm.ctx.get_raw_messages())
         assert tm.instance_name == "ui"  # 라벨 보존
-        # seq 이어가기 — 부활 후 첫 회신은 reply-2 (reply-1 안 덮음)
+        # 부활 후 첫 회신은 새 id 의 파일 — 앞 생의 reply-r-1.md 를 덮지 않는다
         reg.request(key, "second job")
         assert wait_until(reg.has_pending_replies)
         again = reg.drain_replies()[0]
-        assert again["seq"] == 2
-        assert (tm.home_dir / "replies" / "reply-1.md").is_file()
+        assert again["run"] != "r-1"
+        assert (tm.home_dir / "replies" / "reply-r-1.md").is_file()
+        assert (tm.home_dir / "replies" / f"reply-{again['run']}.md").is_file()
         reg.shutdown_all()
 
     def test_resume_guards(self, tmp_path, renderer):
@@ -3004,7 +3008,7 @@ class TestConversationReplay:
         assert ("out", _NO_REPLY_LABEL + "\ndone:first job") in dirs
         # 각 레코드는 대화창 페이로드 그대로 — 재생이 파싱 없이 재발행 가능.
         out = next(r for r in recs if r["direction"] == "out")
-        assert out["key"] == key and out["to"] == "main" and out["seq"] == 1
+        assert out["key"] == key and out["to"] == "main" and out["item"] == "r-1"
         assert "ts" in out  # resume 재생 시 원래 시각 보존
         # v9.23.0: 폴백 표시가 레코드에 실려 재생도 같은 줄(⚠ 폴백)을 그린다
         assert out["fallback"] is True
@@ -4062,9 +4066,11 @@ class TestRequestInEventAddressing:
         ]
         assert ins and ins[0]["to"] == key
 
-    def test_two_agents_same_seq_have_distinct_addressing(self, tmp_path, renderer):
-        # 서로 다른 에이전트의 첫 요청(seq=1 씩)이 (author,to,seq,direction)
-        # 4-튜플에서 구분돼야 프런트 dedup 이 두 번째를 못 삼킨다.
+    def test_two_agents_first_requests_have_distinct_addressing(
+        self, tmp_path, renderer
+    ):
+        # 서로 다른 에이전트의 첫 요청이 (author,to,item,direction) 4-튜플에서
+        # 구분돼야 프런트 dedup 이 두 번째를 못 삼킨다.
         reg = make_registry(tmp_path)
         k1, _ = reg.spawn()
         k2, _ = reg.spawn()
@@ -4073,7 +4079,7 @@ class TestRequestInEventAddressing:
         reg.request(k1, "job a")
         reg.request(k2, "job b")
         ins = [
-            (kw["author"], kw["to"], kw["seq"], kw["direction"])
+            (kw["author"], kw["to"], kw["item"], kw["direction"])
             for name, kw in renderer.calls
             if name == "agent_message" and kw.get("direction") == "in"
         ]
@@ -4117,12 +4123,12 @@ def test_roster_snapshot_snapshots_agents_before_iterating(tmp_path):
     assert len(out) == 5
 
 
-class TestSeqAtomicity:
-    """P0-9a: seq 발급은 _cv 락 아래 — 무락 ``tm.queued += 1`` 은 동시 request()
-    에서 같은 seq 를 발급해 reply-<seq>.md 상호 덮어쓰기 + UI dedup 키 충돌
-    (요청 화살표 드롭)을 일으킬 수 있었다."""
+class TestIdAtomicity:
+    """P0-9a: 동시 request() 가 같은 번호를 받으면 reply-<id>.md 상호 덮어쓰기 +
+    UI dedup 키 충돌(요청 화살표 드롭)이 난다. v10.77.0 부터 번호는 전역
+    할당기(`item_ids.next_id`, 락 아래) 하나가 매긴다."""
 
-    def test_concurrent_requests_get_unique_seqs(self, tmp_path, renderer):
+    def test_concurrent_requests_get_unique_ids(self, tmp_path, renderer):
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
@@ -4144,14 +4150,14 @@ class TestSeqAtomicity:
             t.join(timeout=5)
         gate.set()
 
-        seqs = [
-            c[1]["seq"]
+        ids = [
+            c[1]["item"]
             for c in renderer.named("agent_message")
             if c[1]["direction"] == "in"
         ]
-        assert len(seqs) == n
-        assert len(set(seqs)) == n, f"duplicate seqs: {sorted(seqs)}"
-        assert sorted(seqs) == list(range(1, n + 1))
+        assert len(ids) == n
+        assert len(set(ids)) == n, f"duplicate ids: {sorted(ids)}"
+        assert sorted(ids) == sorted(f"u-{i}" for i in range(1, n + 1))
         reg.shutdown_all()
 
 
@@ -4201,17 +4207,20 @@ class TestRestartRequeue:
     def test_restart_mid_run_resumes_first_then_the_queue(self, tmp_path, renderer):
         from agent_cli.constants import RESUMED_RUN_NOTICE
 
-        reg1, key, gate = self._busy_with_queue(tmp_path)
+        reg1, _key, gate = self._busy_with_queue(tmp_path)
         # 프로세스가 죽은 것과 같다 — reg1 을 정리하지 않고 같은 폴더로 복원
         rec = _RecordingRunner()
         reg2 = make_registry(tmp_path, runner=rec)
+        from agent_cli import item_ids
+
+        item_ids._last = 0  # 새 프로세스와 같다 — 할당기는 저장되지 않는다
         assert reg2.restore() == 1
         assert wait_until(lambda: len(rec.queries()) == 3)
         first, second, third = rec.queries()
         assert first == RESUMED_RUN_NOTICE + "task-1"  # 끊긴 런이 맨 앞, 안내와 함께
         assert (second, third) == ("task-2", "task-3")  # 줄 선 순서 그대로
-        # 새 요청은 복원분과 seq 가 겹치지 않는다
-        assert reg2.get(key).queued >= 4
+        # 새 id 는 복원분과 겹치지 않는다 (observe 가 번호를 잇는다)
+        assert item_ids.number_of(item_ids.next_id(item_ids.USER)) >= 4
         gate.set()
         reg1.shutdown_all()
         reg2.shutdown_all()
