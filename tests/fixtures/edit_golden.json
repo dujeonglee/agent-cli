@@ -14,7 +14,7 @@
 ],
 "ok": true,
 "after": "\nx = 1\nx = 1\n\tz\n\tz\n# c\n",
-"msg": "Edit complete: <FILE> (7 lines)",
+"msg": "No change: '<FILE>' is unchanged — `end` comes before `pos`, so the range is empty. Nothing was written.",
 "parts": null
 },
 {
@@ -707,7 +707,7 @@
 ],
 "ok": true,
 "after": "a — b\n\n\nx = 1\nx = 1\n\nx = 1\nx = 1\n\tz",
-"msg": "Edit complete: <FILE> (9 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -851,7 +851,7 @@
 ],
 "ok": true,
 "after": "x = 1",
-"msg": "Edit complete: <FILE> (1 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -892,7 +892,7 @@
 ],
 "ok": true,
 "after": "a — b\n\tz\n\tz\n    return y\nx = 1\nx = 1\n",
-"msg": "Edit complete: <FILE> (7 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -1072,7 +1072,7 @@
 ],
 "ok": true,
 "after": "# c\ndef f():\n\tz\n“q”\nx = 1",
-"msg": "Edit complete: <FILE> (5 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -1283,7 +1283,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (0 lines)",
+"msg": "No change: '<FILE>' is unchanged — the result is the same text as before. Nothing was written.",
 "parts": null
 },
 {
@@ -1362,7 +1362,7 @@
 ],
 "ok": true,
 "after": "“q”\nx = 1\nx = 1\n“q”\n",
-"msg": "Edit complete: <FILE> (5 lines)",
+"msg": "No change: '<FILE>' is unchanged — `end` comes before `pos`, so the range is empty. Nothing was written.",
 "parts": null
 },
 {
@@ -2927,7 +2927,7 @@
 ],
 "ok": true,
 "after": "“q”\n    return y\nx = 1\ndef f():\n\tz\n\ndef f():\n    return y\ndef f():\n\na — b\n  ",
-"msg": "Edit complete: <FILE> (12 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -3499,7 +3499,7 @@
 ],
 "ok": true,
 "after": "a — b\n    return y\n# c\n# c",
-"msg": "Edit complete: <FILE> (4 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -3786,7 +3786,7 @@
 ],
 "ok": true,
 "after": "a — b\n    return y\n“q”\n  \ndef f():\n\n# c\nx = 1\n# c",
-"msg": "Edit complete: <FILE> (9 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -3911,7 +3911,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -4099,7 +4099,7 @@
 ],
 "ok": true,
 "after": "def f():\nx = 1\n“q”\n    return y\n“q”\n\n“q”\n\tz\n    return y\n\tz",
-"msg": "Edit complete: <FILE> (10 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -4146,7 +4146,7 @@
 ],
 "ok": true,
 "after": "\tz\na — b\nx = 1\n\tz\nx = 1\n  ",
-"msg": "Edit complete: <FILE> (6 lines)",
+"msg": "No change: '<FILE>' is unchanged — `end` comes before `pos`, so the range is empty. Nothing was written.",
 "parts": null
 },
 {
@@ -4196,7 +4196,7 @@
 ],
 "ok": true,
 "after": "x = 1\ndef f():",
-"msg": "Edit complete: <FILE> (2 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -4343,7 +4343,7 @@
 ],
 "ok": true,
 "after": "def f():",
-"msg": "Edit complete: <FILE> (1 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -4626,7 +4626,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (1 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -4874,7 +4874,7 @@
 ],
 "ok": true,
 "after": "x = 1\n# c\n\n  \n# c\n\n\tz\ndef f():\ndef f():\nx = 1\n  ",
-"msg": "Edit complete: <FILE> (11 lines)",
+"msg": "No change: '<FILE>' is unchanged — `end` comes before `pos`, so the range is empty. Nothing was written.",
 "parts": null
 },
 {
@@ -5087,7 +5087,7 @@
 ],
 "ok": true,
 "after": "x = 1\n\n\tz\n  \nx = 1\ndef f():",
-"msg": "Edit complete: <FILE> (6 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -5145,7 +5145,7 @@
 ],
 "ok": true,
 "after": "x = 1\nx = 1\n    return y\ndef f():\n# c\n\ndef f():\na — b\n“q”\n“q”\na — b\na — b",
-"msg": "Edit complete: <FILE> (12 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -5388,7 +5388,7 @@
 ],
 "ok": true,
 "after": "def f():\n“q”\n\tz\n    return y\n\tz",
-"msg": "Edit complete: <FILE> (5 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -5433,7 +5433,7 @@
 ],
 "ok": true,
 "after": "# c\n    return y\n# c\n# c\n\tz\n\n“q”\n# c\n",
-"msg": "Edit complete: <FILE> (9 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -5825,7 +5825,7 @@
 ],
 "ok": true,
 "after": "    return y\n\tz\n    return y\n",
-"msg": "Edit complete: <FILE> (4 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -5947,7 +5947,7 @@
 ],
 "ok": true,
 "after": "“q”\na — b\n    return y\n    return y\ndef f():\n# c\n    return y\n\tz\n  \nx = 1\n\tz\n",
-"msg": "Edit complete: <FILE> (12 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -6029,7 +6029,7 @@
 ],
 "ok": true,
 "after": "x = 1\n\tz\n# c\n\tz\n    return y\ndef f():\nx = 1\nx = 1\ndef f():\n“q”\n",
-"msg": "Edit complete: <FILE> (11 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -6077,7 +6077,7 @@
 ],
 "ok": true,
 "after": "x = 1\n",
-"msg": "Edit complete: <FILE> (2 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -6296,7 +6296,7 @@
 ],
 "ok": true,
 "after": "    return y\nx = 1\n# c\nx = 1\n“q”\nx = 1\n",
-"msg": "Edit complete: <FILE> (7 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -6752,7 +6752,7 @@
 ],
 "ok": true,
 "after": "",
-"msg": "Edit complete: <FILE> (0 lines)",
+"msg": "No change: '<FILE>' is unchanged — the result is the same text as before. Nothing was written.",
 "parts": null
 },
 {
@@ -7071,7 +7071,7 @@
 ],
 "ok": true,
 "after": "    return y\n    return y\nx = 1\nx = 1\ndef f():\n\tz\nx = 1\n  \ndef f():\n# c\n    return y\n\tz\n",
-"msg": "Edit complete: <FILE> (13 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -7877,7 +7877,7 @@
 ],
 "ok": true,
 "after": "\n",
-"msg": "Edit complete: <FILE> (2 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -7934,7 +7934,7 @@
 ],
 "ok": true,
 "after": "    return y\n“q”\na — b\n    return y\nx = 1\n",
-"msg": "Edit complete: <FILE> (6 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -8353,7 +8353,7 @@
 ],
 "ok": true,
 "after": "a — b\ndef f():\nx = 1\n\tz\nx = 1\n    return y\n“q”\n“q”\n\tz\n\tz",
-"msg": "Edit complete: <FILE> (10 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -8917,7 +8917,7 @@
 ],
 "ok": true,
 "after": "    return y\na — b",
-"msg": "Edit complete: <FILE> (2 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -9269,7 +9269,7 @@
 ],
 "ok": true,
 "after": "  \nx = 1\ndef f():\n    return y\nx = 1\n“q”",
-"msg": "Edit complete: <FILE> (6 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
@@ -9412,10 +9412,10 @@
 ],
 "ok": true,
 "after": "a — b\n# c\n\n\n\n",
-"msg": "Edit complete: <FILE> (2 edits, 6 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": [
-"prepend 2#YX: inserted 0 line(s) after original line 1",
-"append 2#YX:# c: inserted 0 line(s) after original line 2\n\nEdit complete: <FILE> (2 edits, 6 lines)"
+"prepend 2#YX: inserted 0 line(s) after original line 1\n\nNo change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
+"append 2#YX:# c: inserted 0 line(s) after original line 2\n\nNo change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written."
 ]
 },
 {
@@ -9960,7 +9960,7 @@
 ],
 "ok": true,
 "after": "\n\tz\na — b\n  \n“q”\n    return y\n“q”\n    return y\n“q”\n\tz\ndef f():",
-"msg": "Edit complete: <FILE> (11 lines)",
+"msg": "No change: '<FILE>' is unchanged — there were no `lines` to insert. Nothing was written.",
 "parts": null
 },
 {
