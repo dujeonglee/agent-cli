@@ -62,6 +62,44 @@ def _resolve_ref(lines: list[str], ref: str) -> int:
         ) from None
 
 
+def _is_bare_line(v) -> bool:
+    """줄 번호만 온 ref — ``27``·``"27"`` (35B 최근 런 편집의 18%)."""
+    if isinstance(v, bool):
+        return False
+    return isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit())
+
+
+def _bare_ref_error(ed: dict, file_lines: list[str], path: str) -> str | None:
+    """줄 번호만 온 ``pos``/``end`` 에 그 줄의 지금 ref 를 보여 준다 (v10.77.0).
+
+    구제가 아니다 — 줄 번호만으로는 편집하지 않는다(해시가 "읽었을 때와 같은
+    줄인가" 를 지킨다). 해시 불일치 창(v10.50.0, 다시 읽기 50→5/50)과 같은
+    방식으로, 다시 보낼 ref 를 그 자리에서 준다."""
+    bare = [(f, str(ed[f]).strip()) for f in ("pos", "end") if _is_bare_line(ed.get(f))]
+    if not bare:
+        return None
+    names = " and ".join(f"{f} '{v}'" for f, v in bare)
+    verb = "is a bare line number" if len(bare) == 1 else "are bare line numbers"
+    shown, past = [], []
+    for _, v in bare:
+        n = int(v)
+        if 1 <= n <= len(file_lines):
+            shown.append(format_hashlines_range(file_lines, n - 1, n))
+        else:
+            past.append(n)
+    total = len(file_lines)
+    if not shown:
+        return f"{names} {verb} — a ref is LINE#HASH, and {path} has {total} lines."
+    msg = f"{names} {verb} — a ref is LINE#HASH. " + (
+        "That line is now:" if len(shown) == 1 else "Those lines are now:"
+    )
+    refs = " and ".join(f"'{ln.split(':', 1)[0]}'" for ln in shown)
+    msg += "\n" + "\n".join(shown) + f"\nUse {refs}."
+    if past:
+        msg += f"\nLine {', '.join(map(str, past))} is past the end — {path} has {total} lines."
+    return msg
+
+
 def _op_label(ed: dict) -> str:
     """``op 3 (replace 8#ZZ..9#QQ)`` — what the model sent, so it can find the op."""
     parts = [str(ed.get("op", "?"))]
@@ -70,7 +108,9 @@ def _op_label(ed: dict) -> str:
     return " ".join(parts)
 
 
-def _op_to_span(ed: dict, file_lines: list[str]) -> tuple[int, int, list]:
+def _op_to_span(
+    ed: dict, file_lines: list[str], path: str = ""
+) -> tuple[int, int, list]:
     """Map one edit op to the half-open ORIGINAL-line span it replaces:
     ``(lo, hi, repl)`` where ``file_lines[lo:hi] = repl``. ``lo == hi`` is a pure
     insertion. Refs are resolved against ``file_lines`` (the single original
@@ -84,6 +124,11 @@ def _op_to_span(ed: dict, file_lines: list[str]) -> tuple[int, int, list]:
         lines = lines.split("\n")
     if lines is None:
         lines = []
+
+    # 모르는 op 이 먼저다 — 그 op 에선 ref 를 고쳐도 소용없다.
+    bare = _bare_ref_error(ed, file_lines, path) if op in EDIT_OPS else None
+    if bare:
+        raise RuntimeError(bare)
 
     def resolve(ref):
         return _resolve_ref(file_lines, ref)
@@ -215,7 +260,7 @@ def apply_edits_batch_parts(
     raw: dict[int, str] = {}
     for i, ed in enumerate(edits):
         try:
-            lo, hi, repl = _op_to_span(ed, file_lines)
+            lo, hi, repl = _op_to_span(ed, file_lines, path)
             spans.append((lo, hi, repl, i))
         except RuntimeError as e:
             raw[i] = str(e)
@@ -337,7 +382,9 @@ def _validate_semantics(args: dict) -> str | None:
         return f"Unknown edit op: '{op}'. Use {'|'.join(EDIT_OPS)}."
     for field in ("pos", "end"):
         v = args.get(field)
-        if v is not None and not isinstance(v, str):
+        # 줄 번호만(정수)은 통과시켜 적용 단계가 그 줄의 지금 ref 를 보여 준다
+        # (`_bare_ref_error`, v10.77.0) — 파일 없이는 그 줄을 알 수 없다.
+        if v is not None and not isinstance(v, str) and not _is_bare_line(v):
             return (
                 f"'{field}' must be a hashline string like '5#VR', got "
                 f"{type(v).__name__} ({v!r}). Re-read the file with "
@@ -362,12 +409,17 @@ def tool_edit_file(args: dict) -> ToolResult:
 
 class EditFileTool(Tool):
     name = "edit_file"
+    # v10.77.0: op 이 `op` 인자의 값이라는 것과 인자 이름을 백틱으로 밝힌다,
+    # ref 출처는 여기 한 곳, legacy(lines=[] 로 삭제) 광고는 지움.
     description = (
-        "Change part of a file — the default way to modify an existing file. "
-        "Addresses lines by the hashline refs that read_file returns. "
-        "Ops: replace, append, prepend, delete. "
-        "delete removes the pos..end range and takes no lines; "
-        "replace with lines=[] also deletes (legacy form)."
+        "Change part of an existing file — the default way to modify one. Lines "
+        "are addressed by their LINE#HASH refs, taken from the latest output that "
+        "showed them: `read_file`, `code_index` fetch, `write_file`, or an earlier "
+        '`edit_file`. `op` says what to do at `pos`: "replace" swaps the lines '
+        "from `pos` through `end` (inclusive; just `pos` without `end`) for "
+        '`lines`; "append" inserts `lines` after `pos`; "prepend" inserts '
+        '`lines` before `pos`; "delete" removes `pos` through `end` and takes '
+        "no `lines`."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-edit shape — no `edit_file_` wire-key prefix and no `edits` batch
@@ -380,26 +432,26 @@ class EditFileTool(Tool):
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "minLength": 1, "description": "File path"},
+            "path": {"type": "string", "minLength": 1, "description": "File to change"},
             "op": {
                 "type": "string",
                 "enum": list(EDIT_OPS),
-                "description": "replace | append | prepend | delete",
+                "description": "replace | append | prepend | delete — what to do at pos (see the description)",
             },
             # pos 에는 minLength 를 두지 않는다 — append/prepend 가 빈 pos 를
             # 파일 끝/처음으로 받는 분기가 실제로 돈다(문서화되진 않았지만).
             "pos": {
                 "type": "string",
-                "description": "Hashline ref (e.g. '5#VR') of the target line",
+                "description": "Ref of the target line, LINE#HASH like '5#VR' — not a bare number",
             },
             "end": {
                 "type": "string",
-                "description": "Hashline ref ending an inclusive range (replace/delete)",
+                "description": "Ref of the last line of an inclusive range (replace/delete), like '9#KT'",
             },
             "lines": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Replacement / inserted lines",
+                "description": "The new lines, as they should appear in the file — without LINE#HASH: tags",
             },
         },
         "required": ["path", "op", "pos"],

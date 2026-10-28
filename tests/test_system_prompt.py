@@ -148,7 +148,7 @@ class TestMultiOpPromptBranches:
         assert "read_file op reads" not in section
 
     def test_edit_file_one_edit_per_op(self, section):
-        assert "one edit per op" in section
+        assert "one edit per call" in section
         assert "batch in one call" not in section
         # the batch-array constraint bullet is dropped
         assert "the array is NOT a" not in section
@@ -417,10 +417,14 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["edit_file", "code_index"])
         flat = re.sub(r"\s+", " ", prompt)
         assert "current turn" not in flat.lower()
-        assert "the most recent output that showed those lines" in flat
-        assert "Refs from before the file last changed no longer match" in flat
-        assert "code_index mode='fetch'" in flat
-        assert "what write_file / edit_file returned" in flat
+        # v10.77.0: 출처는 도구 설명 한 곳, 안내는 "바뀌기 전 ref 는 안 맞는다" 만
+        from agent_cli.tools import TOOLS
+
+        d = TOOLS["edit_file"].description
+        assert "taken from the latest output that showed them" in d
+        assert "`code_index` fetch, `write_file`, or an earlier `edit_file`" in d
+        assert "A ref from before the file last changed no longer matches" in flat
+        assert "never a bare line number" in flat
 
     def test_edit_guide_does_not_restate_the_edit_vs_write_rule(self):
         """The rule is told once, in write_file's description (the point of
@@ -447,7 +451,7 @@ class TestBuildSystemPrompt:
         # the model doesn't take it as their own error.
         assert "not a failure" in flat.lower()
         # Recovery action is still spelled out.
-        assert "re-read" in flat.lower() or "re-fetch" in flat.lower()
+        assert "retry from those" in flat
 
     def test_hashline_guide_allows_same_file_batched_edits(self):
         """Multi-op + flat-native edit_file: consecutive same-path edit_file ops
@@ -462,12 +466,12 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
         # Invites same-file edits batched in one turn …
-        assert "SAME file" in flat
-        assert "consecutive edit_file ops in ONE turn" in flat
+        assert "Several edits to one file can go in one turn" in flat
+        assert "adjacent `edit_file` calls" in flat
         # … refs from the read, applied together (not pre-adjusted) …
-        assert "does NOT go stale" in flat
+        assert "do not shift line numbers for each other" in flat
         # … and overlaps are rejected.
-        assert "OVERLAPPING" in flat
+        assert "Overlapping ranges are rejected" in flat
 
     def test_no_heredoc_ban(self):
         """v10.77.0 — "NEVER a shell heredoc" 를 지웠다: native_fc 64회가 모두
@@ -1670,9 +1674,7 @@ class TestEditVsWriteRule:
     def test_edit_file_says_it_is_the_default(self):
         from agent_cli.tools import TOOLS
 
-        assert "the default way to modify an existing file" in (
-            TOOLS["edit_file"].description
-        )
+        assert "the default way to modify one" in (TOOLS["edit_file"].description)
 
     def test_write_file_never_comes_without_edit_file(self):
         """v10.77.0 — write_file 이 있으면 edit_file 도 붙는다(더 작은 권한):

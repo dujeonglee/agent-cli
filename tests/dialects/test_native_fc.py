@@ -198,7 +198,7 @@ class TestSystemPromptAndSchemas:
         assert "complete" in by and "edit_file" in by  # 항상 포함되는 종결 함수
         assert by["edit_file"]["type"] == "function"
         assert (
-            "hashline" in by["edit_file"]["function"]["description"]
+            "Hashline refs:" in by["edit_file"]["function"]["description"]
         )  # 가이드 전문 (N1)
         assert by["read_file"]["function"]["parameters"]["type"] == "object"
 
