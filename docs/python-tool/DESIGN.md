@@ -156,3 +156,13 @@ python 이 9 → 32건, .py 작성 후 실행 4건. shell 안 python 의 Traceba
 결론: **머리의 설명은 사용 가이드를 대신하지 못한다.** 설명은 성질만, 경로 선택은
 꼬리 상시 한 줄, 쓰는 법은 상태가 있는 동안의 블록, 잘못된 경로 직후엔 교정 한 줄.
 이 판의 측정은 docs/tail/DESIGN.md §5 — r3 7/9(base 5·6/9), 출력 토큰 2/3, 인터프리터 안내는 gcode 에서 2회(모델은 설치 대신 우회).
+
+
+## 6. import 경로 (v10.77.1)
+
+워커는 `python3 -u _pyworker_child.py` 로 뜬다. 스크립트로 뜨면 `sys.path[0]` 은 **스크립트의
+폴더**(agent_cli/tools/)라, 작업 폴더의 모듈은 import 되지 않고 `import shell`·`import history`
+같은 이름은 하니스의 도구 모듈을 집었다. 라이브 GLM(v10.77.0 S4): writer 가 방금 쓴 `fib.py` 를
+`import fib` 하자 ModuleNotFoundError 와 함께 "`pip install fib`" 안내가 나갔고, 모델은 `shell` 로
+돌아갔다. 대화형 python3 와 같게 `sys.path[0] = ""`(지금 폴더, 셀의 `os.chdir` 를 따라감)로 둔다.
+테스트: `tests/test_python_tool.py::TestImportPath` (고치기 전 코드에서 셋 다 실패 확인).
