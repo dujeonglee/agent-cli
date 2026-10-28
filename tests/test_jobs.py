@@ -265,7 +265,8 @@ class TestShellToolSurface:
         from agent_cli.tools.shell import ShellTool
 
         r = ShellTool()._run({"command": cmd, "background": True})
-        assert not r.success and f"`{token}`" in r.error and "PLAIN" in r.error
+        assert not r.success and f"`{token}`" in r.error
+        assert r.error.startswith("`background` true takes the plain command")
         assert reg.running() == []
 
     @pytest.mark.parametrize(
@@ -457,7 +458,8 @@ class TestResultFileContinuation:
 
         assert "plain command (no `&`, no redirection" in TASK_GUIDELINES
         assert (
-            "PLAIN" in ShellTool.parameters["properties"]["background"]["description"]
+            "Give the plain command"
+            in ShellTool.parameters["properties"]["background"]["description"]
         )
 
 

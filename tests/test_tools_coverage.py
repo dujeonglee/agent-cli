@@ -1558,17 +1558,18 @@ class TestShellTimeout:
 
         captured = {}
 
-        def fake_run(cmd, **kw):
-            captured.update(kw)
+        class _P:
+            pid = 0
+            returncode = 0
 
-            class _R:
-                stdout = b""
-                stderr = b""
-                returncode = 0
+            def __init__(self, cmd, **kw):
+                pass
 
-            return _R()
+            def communicate(self, timeout=None):
+                captured["timeout"] = timeout
+                return b"", b""
 
-        monkeypatch.setattr(sh.subprocess, "run", fake_run)
+        monkeypatch.setattr(sh.subprocess, "Popen", _P)
         sh.tool_shell(args)
         return captured.get("timeout")
 
