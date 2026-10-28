@@ -411,6 +411,12 @@ class Tool(ABC):
     #: requires_handler 와 함께일 때만 의미가 있다.
     force_mount: bool = False
 
+    #: 이 도구가 있으면 나도 붙는다 (v10.77.0) — 더 큰 권한의 도구가 이미
+    #: 허용됐다면 더 작은 짝을 막을 이유가 없다: edit_file 은 ``"write_file"``
+    #: (통째로 덮어쓸 수 있으면 일부도 고칠 수 있다; 막으면 작은 수정도 전체를
+    #: 다시 쓰는 비용만 남는다).
+    mounted_with: str | None = None
+
     @property
     def key_prefix(self) -> str:
         """Wire-key namespace for this tool: ``{name}_``."""

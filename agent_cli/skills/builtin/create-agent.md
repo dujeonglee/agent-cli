@@ -2,7 +2,7 @@
 name: create-agent
 description: Create a new agent profile interactively. Generates a profile .md file with role, principles, and tool restrictions, usable both for one-shot runs (mode:"run") and persistent agents (mode:"spawn"). Use when asked to create, make, or add an agent/profile/expert.
 argument-hint: "<profile-name> [description]"
-allowed-tools: [read_file, write_file, shell, ask]
+allowed-tools: [read_file, edit_file, write_file, shell, ask]
 disable-model-invocation: true
 ---
 

@@ -2,7 +2,7 @@
 name: plan
 description: Break down a feature request into an implementation plan with tasks, dependencies, and scope estimate. Creates a structured checklist in plan/ directory. Use when asked to plan, break down, or design implementation steps for a feature or task.
 argument-hint: "<feature description>"
-allowed-tools: [read_file, write_file, shell]
+allowed-tools: [read_file, edit_file, write_file, shell]
 ---
 
 You are an implementation planner for software projects. Break down a feature request into concrete, actionable tasks.

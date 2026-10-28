@@ -2,7 +2,7 @@
 name: orchestrate
 description: Bootstrap an autonomous agent team for a multi-step task — plan it, spawn an orchestrator agent plus the workers it needs (code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst), hand the roster to the orchestrator, and return. The orchestrator then drives the whole job over peer messages without waking main; main gets the final report (or escalations) automatically. Use when a task needs more than one specialist or more than a few steps.
 argument-hint: "<task or feature description>"
-allowed-tools: [read_file, write_file, shell, agent]
+allowed-tools: [read_file, edit_file, write_file, shell, agent]
 ---
 
 You are bootstrapping an autonomous team for the task in $ARGUMENTS. Your job is

@@ -376,6 +376,7 @@ class EditFileTool(Tool):
     # survive line shifts from earlier ops). `wrap_single_op` is identity;
     # `key_prefix` is left at its default so strip_prefix is a no-op on these
     # flat keys and `claims` returns False for a flat `{path}`.
+    mounted_with = "write_file"
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
