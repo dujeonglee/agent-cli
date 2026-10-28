@@ -1477,15 +1477,17 @@ class ContextManager:
 
 
 #: 요약 뒤 이미지 목록 블록의 머리 (v10.77.0, docs/vision/DESIGN.md §12.3).
-#: "다시 볼 수 있다" 는 사실만 — 다시 보라고 시키지 않는다. 도구 이름은 루프가
-#: ``set_image_viewer`` 로 알려 줄 때만 넣는다.
+#: 다시 보라고 시키지 않는다. "다시 볼 수 있다" 는 루프가 ``set_image_viewer``
+#: 로 그 도구를 알려 줄 때만 말한다.
 def images_block_head(viewer: str | None = None) -> str:
-    """``## Images viewed in earlier turns`` 블록의 머리줄."""
-    how = f" with {viewer}" if viewer else ""
-    return (
+    """``## Images viewed in earlier turns`` 블록의 머리줄. 다시 보는 길은 그
+    도구가 있을 때만 말한다 — 없는 루프에선 read_file 이 이미지를 못 열고,
+    screenshot·MCP 를 다시 부르면 새 그림이라 거짓 약속이 된다."""
+    head = (
         "## Images viewed in earlier turns — their pictures left with the "
-        f"summarized turns; viewing one again{how} shows it"
+        "summarized turns"
     )
+    return f"{head}; viewing one again with {viewer} shows it" if viewer else head
 
 
 def _evicted_images(records: list[dict]) -> list[str]:

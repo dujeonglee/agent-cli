@@ -260,14 +260,18 @@ class TestCompaction:
     def test_head_names_the_viewer_only_when_the_loop_has_it(self, tmp_path):
         ctx = _ctx(tmp_path)
         ctx.compact_now()
-        assert "view_image" not in _block(ctx)[0]  # 루프가 알려 주기 전(기본)
+        # 루프가 알려 주기 전(기본): 다시 보는 길을 말하지 않는다
+        assert _block(ctx)[0].split("\n")[0] == (
+            "## Images viewed in earlier turns — their pictures left with the "
+            "summarized turns"
+        )
         ctx.set_image_viewer("view_image")
         assert _block(ctx)[0].startswith(
             "## Images viewed in earlier turns — their pictures left with the "
             "summarized turns; viewing one again with view_image shows it\n"
         )
         ctx.set_image_viewer(None)
-        assert "view_image" not in _block(ctx)[0]
+        assert "again" not in _block(ctx)[0]
 
     def test_loop_tells_the_context_its_viewer(self, tmp_path):
         from unittest.mock import MagicMock
