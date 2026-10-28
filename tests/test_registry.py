@@ -330,8 +330,13 @@ class TestSemanticValidationHook:
         from agent_cli.tools import TOOLS
 
         assert TOOLS["edit_file"].validate({"path": "a", "op": "bogus"}) is not None
+        # 정수 줄 번호는 통과 — 적용 단계가 그 줄의 지금 ref 를 보여 준다 (v10.77.0)
+        assert (
+            TOOLS["edit_file"].validate({"path": "a", "op": "replace", "pos": 5})
+            is None
+        )
         assert "hashline string" in TOOLS["edit_file"].validate(
-            {"path": "a", "op": "replace", "pos": 5}
+            {"path": "a", "op": "replace", "pos": [5]}
         )
         assert (
             TOOLS["memory"].validate({"mode": "get"})

@@ -1065,7 +1065,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### edit_file — Hashline 편집
 
-`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native):
+`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native). v10.77.0: `pos`/`end` 에 줄 번호만(`"20"`·`20`) 보내면 편집하지 않고, 그 줄의 지금 ref 를 오류에 보여 줍니다(`end '20' is a bare line number — … That line is now: 20#KT:… Use '20#KT'.` — 35B 최근 런 편집의 18% 가 이 모양이었습니다). 설명은 `op` 의 네 값과 인자를 이름으로 말하고, 안내는 짧아졌습니다:
 
 ```
 1#VR:def hello():

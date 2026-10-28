@@ -236,8 +236,9 @@ class TestEditFileFieldTypeValidation:
             {"path": str(f), "op": "replace", "pos": 5, "lines": ["new"]}
         )
         assert result.success is False
-        assert "pos" in result.error
-        assert "read_file" in result.error
+        # v10.77.0: 정수 줄 번호는 적용 단계까지 가서 "줄 번호만" 오류가 된다
+        assert "pos '5' is a bare line number" in result.error
+        assert "has 3 lines" in result.error  # 끝을 넘은 줄
 
     def test_end_as_int_also_caught(self, tmp_path):
         f = tmp_path / "x.py"
@@ -252,8 +253,7 @@ class TestEditFileFieldTypeValidation:
             }
         )
         assert result.success is False
-        assert "end" in result.error
-        assert "read_file" in result.error
+        assert "end '7' is a bare line number" in result.error
 
     def test_pos_as_list_caught(self, tmp_path):
         # ``[None]`` is truthy so it slips past the ``if pos:`` guard.
@@ -308,10 +308,9 @@ class TestEditFileFieldTypeValidation:
         )
         assert result.success is False
         msg = result.error
-        # The fix-recipe ("re-read with read_file") must be there.
-        assert "read_file" in msg
-        # And the expected shape, so a careful model can self-correct.
-        assert "5#VR" in msg or "LINE#HASH" in msg or "hashline" in msg
+        # v10.77.0: the fix is in the message itself — the line's current ref.
+        assert "LINE#HASH" in msg
+        assert "That line is now:\n1#" in msg and "Use '1#" in msg
 
 
 class TestEditOps:
@@ -450,3 +449,45 @@ class TestDeleteOp:
         assert not result.success
         assert "destroy" in result.error
         assert "delete" in result.error
+
+
+class TestBareLineNumberRefs:
+    """v10.77.0 — 줄 번호만 온 ref(35B 최근 런 편집의 18%)는 구제하지 않고, 그 줄의
+    지금 ref 를 보여 준다. 해시 검증은 그대로다."""
+
+    def _file(self, tmp_path):
+        f = tmp_path / "app.py"
+        f.write_text("a\nb\nc\nd\n")
+        return f
+
+    def test_end_bare_shows_that_lines_ref(self, tmp_path):
+        from agent_cli.tools.read_file import format_hashlines
+
+        f = self._file(tmp_path)
+        tags = format_hashlines(f.read_text()).split("\n")
+        r = tool_edit_file(
+            {
+                "path": str(f),
+                "op": "replace",
+                "pos": tags[0].split(":")[0],
+                "end": "3",
+                "lines": ["x"],
+            }
+        )
+        assert r.error == (
+            "edit_file apply failed: end '3' is a bare line number — a ref is "
+            f"LINE#HASH. That line is now:\n{tags[2]}\nUse '{tags[2].split(':')[0]}'."
+        )
+        assert f.read_text() == "a\nb\nc\nd\n"  # 아무것도 쓰지 않았다
+
+    def test_both_bare_and_past_the_end(self, tmp_path):
+        f = self._file(tmp_path)
+        r = tool_edit_file({"path": str(f), "op": "delete", "pos": "2", "end": "30"})
+        assert "pos '2' and end '30' are bare line numbers" in r.error
+        assert "That line is now:\n2#" in r.error
+        assert f"Line 30 is past the end — {f} has 5 lines." in r.error
+
+    def test_unknown_op_comes_first(self, tmp_path):
+        f = self._file(tmp_path)
+        r = tool_edit_file({"path": str(f), "op": "bogus", "pos": "2", "lines": []})
+        assert "Unknown edit op" in r.error

@@ -559,10 +559,10 @@
 ],
 "ok": false,
 "after": "",
-"msg": "edit_file batch: 1 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (prepend 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 1 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (prepend 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 1 lines.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "append 1#ZP: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 2 (prepend 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 2 (prepend 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 1 lines. — nothing written, '<FILE>' is unchanged.",
 "prepend 1#ZP: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -606,12 +606,12 @@
 ],
 "ok": false,
 "after": "\tz\n\tz\n# c\nx = 1\ndef f():\n    return y\nx = 1\nx = 1\n    return y",
-"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content.\n    Current lines 1–5 (fresh refs — retry from these, no re-read needed):\n    1#KV:\tz\n    2#KV:\tz\n    3#YX:# c\n    4#SW:x = 1\n    5#HS:def f():\n  op 3 (bogus 9#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (delete 5..3#YX): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content.\n    Current lines 1–5 (fresh refs — retry from these, no re-read needed):\n    1#KV:\tz\n    2#KV:\tz\n    3#YX:# c\n    4#SW:x = 1\n    5#HS:def f():\n  op 3 (bogus 9#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (delete 5..3#YX): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#HS:def f():\n    Use '5#HS'.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (replace 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 1–5 (fresh refs — retry from these, no re-read needed):\n1#KV:\tz\n2#KV:\tz\n3#YX:# c\n4#SW:x = 1\n5#HS:def f():",
 "replace 5#HS:def f():: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
 "op 3 (bogus 9#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
-"op 4 (delete 5..3#YX): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 4 (delete 5..3#YX): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#HS:def f():\nUse '5#HS'.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -1982,11 +1982,11 @@
 ],
 "ok": false,
 "after": "\tz\n    return y\ndef f():\n# c\na — b\ndef f():\na — b\n# c\nx = 1\n# c\n",
-"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (bogus 4#YX): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (delete 5..10#YX): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (bogus 4#YX): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (delete 5..10#YX): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#WS:a — b\n    Use '5#WS'.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "prepend 8#YX: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
 "op 2 (bogus 4#YX): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
-"op 3 (delete 5..10#YX): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 3 (delete 5..10#YX): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#WS:a — b\nUse '5#WS'.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -2156,10 +2156,10 @@
 ],
 "ok": false,
 "after": "\n\n\tz\n“q”\n  \n\n\tz\n  \n# c\n",
-"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\n  op 3 (bogus 1#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (bogus 2#ZM): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (append 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#ZR:  \n    Use '5#ZR'.\n  op 3 (bogus 1#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (bogus 2#ZM): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "prepend 7#KV: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 2 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 2 (append 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#ZR:  \nUse '5#ZR'.",
 "op 3 (bogus 1#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
 "op 4 (bogus 2#ZM): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
@@ -3232,10 +3232,10 @@
 ],
 "ok": false,
 "after": "def f():\n\tz\ndef f():",
-"msg": "edit_file batch: 1 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (delete 5..1#HS): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 1 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (delete 5..1#HS): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 3 lines.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "append 2#KV: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 2 (delete 5..1#HS): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 2 (delete 5..1#HS): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 3 lines. — nothing written, '<FILE>' is unchanged.",
 "prepend 3#HS: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -3608,11 +3608,11 @@
 ],
 "ok": false,
 "after": "x = 1\na — b\nx = 1\n“q”\n# c\n\tz\n",
-"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (bogus 7#ZS): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (bogus 7#ZS): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (append 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#YX:# c\n    Use '5#YX'.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (bogus 7#ZS): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
 "prepend 1#SW:x = 1: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 3 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 3 (append 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#YX:# c\nUse '5#YX'.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -3995,7 +3995,7 @@
 ],
 "ok": false,
 "after": "    return y\n  \n“q”\n# c\n    return y\n",
-"msg": "'pos' must be a hashline string like '5#VR', got int (5). Re-read the file with read_file to get fresh hashline tags, then retry.",
+"msg": "edit_file apply failed: pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n5#HQ:    return y\nUse '5#HQ'.",
 "parts": null
 },
 {
@@ -4033,12 +4033,12 @@
 ],
 "ok": false,
 "after": "“q”\ndef f():\nx = 1\n    return y\ndef f():\ndef f():\n“q”\n  \n",
-"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 7#ZZ..6#ZZ): Hash mismatch at line 7: ref '7#ZZ' does not match current content.\n    Current lines 4–9 (fresh refs — retry from these, no re-read needed):\n    4#HQ:    return y\n    5#HS:def f():\n    6#HS:def f():\n    7#ZJ:“q”\n    8#ZN:  \n    9#ZK:\n  op 3 (delete 5..6#HS:def f():): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 7#ZZ..6#ZZ): Hash mismatch at line 7: ref '7#ZZ' does not match current content.\n    Current lines 4–9 (fresh refs — retry from these, no re-read needed):\n    4#HQ:    return y\n    5#HS:def f():\n    6#HS:def f():\n    7#ZJ:“q”\n    8#ZN:  \n    9#ZK:\n  op 3 (delete 5..6#HS:def f():): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#HS:def f():\n    Use '5#HS'.\nThe other 2 refs are valid as sent. Correct the rejected refs from the current lines shown (no re-read needed), then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (replace 7#ZZ..6#ZZ): Hash mismatch at line 7: ref '7#ZZ' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 4–9 (fresh refs — retry from these, no re-read needed):\n4#HQ:    return y\n5#HS:def f():\n6#HS:def f():\n7#ZJ:“q”\n8#ZN:  \n9#ZK:",
 "append 8#ZN: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 3 (delete 5..6#HS:def f():): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
-"prepend 1#ZJ: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 3 (delete 5..6#HS:def f():): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#HS:def f():\nUse '5#HS'.",
+"prepend 1#ZJ: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nCorrect the rejected refs from the current lines shown (no re-read needed), then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -4310,10 +4310,10 @@
 ],
 "ok": false,
 "after": "  \n# c\nx = 1\n",
-"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 3#ZZ:x = 1): Hash mismatch at line 3: ref '3#ZZ:x = 1' does not match current content.\n    Current lines 1–4 (fresh refs — retry from these, no re-read needed):\n    1#ZP:  \n    2#YX:# c\n    3#SW:x = 1\n    4#ZV:\n  op 2 (prepend 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace 3#ZZ:x = 1): Hash mismatch at line 3: ref '3#ZZ:x = 1' does not match current content.\n    Current lines 1–4 (fresh refs — retry from these, no re-read needed):\n    1#ZP:  \n    2#YX:# c\n    3#SW:x = 1\n    4#ZV:\n  op 2 (prepend 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (replace 3#ZZ:x = 1): Hash mismatch at line 3: ref '3#ZZ:x = 1' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 1–4 (fresh refs — retry from these, no re-read needed):\n1#ZP:  \n2#YX:# c\n3#SW:x = 1\n4#ZV:",
-"op 2 (prepend 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 2 (prepend 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines. — nothing written, '<FILE>' is unchanged.",
 "append 4#ZV: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -5844,9 +5844,9 @@
 ],
 "ok": false,
 "after": "x = 1\nx = 1\n\tz\n\tz\nx = 1\ndef f():\n\tz\ndef f():\n  \n",
-"msg": "edit_file batch: 2 of 2 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (delete 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\n  op 2 (bogus 5#SW): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 2 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (delete 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#SW:x = 1\n    Use '5#SW'.\n  op 2 (bogus 5#SW): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
-"op 1 (delete 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 1 (delete 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#SW:x = 1\nUse '5#SW'.",
 "op 2 (bogus 5#SW): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -6160,7 +6160,7 @@
 ],
 "ok": false,
 "after": "\n",
-"msg": "'pos' must be a hashline string like '5#VR', got int (5). Re-read the file with read_file to get fresh hashline tags, then retry.",
+"msg": "edit_file apply failed: pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 2 lines.",
 "parts": null
 },
 {
@@ -7173,10 +7173,10 @@
 ],
 "ok": false,
 "after": "\tz\nx = 1\n    return y",
-"msg": "edit_file batch: 1 of 2 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 1 of 2 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (append 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 3 lines.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "append 2#SW: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 2 (append 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 2 (append 5): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 3 lines. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -7255,7 +7255,7 @@
 ],
 "ok": false,
 "after": "x = 1\n  \na — b\ndef f():\n# c\n\nx = 1\na — b\n\n# c",
-"msg": "'pos' must be a hashline string like '5#VR', got int (5). Re-read the file with read_file to get fresh hashline tags, then retry.",
+"msg": "edit_file apply failed: pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n5#YX:# c\nUse '5#YX'.",
 "parts": null
 },
 {
@@ -8081,7 +8081,7 @@
 ],
 "ok": false,
 "after": "x = 1\n  \n\na — b\ndef f():\n  ",
-"msg": "'pos' must be a hashline string like '5#VR', got int (5). Re-read the file with read_file to get fresh hashline tags, then retry.",
+"msg": "edit_file apply failed: pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n5#HS:def f():\nUse '5#HS'.",
 "parts": null
 },
 {
@@ -8449,12 +8449,12 @@
 ],
 "ok": false,
 "after": "    return y\nx = 1\na — b\n",
-"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (append 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content.\n    Current lines 1–4 (fresh refs — retry from these, no re-read needed):\n    1#HQ:    return y\n    2#SW:x = 1\n    3#WS:a — b\n    4#ZV:\n  op 2 (bogus 1#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (replace 5..4#ZZ:): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 3 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (append 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content.\n    Current lines 1–4 (fresh refs — retry from these, no re-read needed):\n    1#HQ:    return y\n    2#SW:x = 1\n    3#WS:a — b\n    4#ZV:\n  op 2 (bogus 1#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 4 (replace 5..4#ZZ:): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (append 2#ZZ): Hash mismatch at line 2: ref '2#ZZ' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 1–4 (fresh refs — retry from these, no re-read needed):\n1#HQ:    return y\n2#SW:x = 1\n3#WS:a — b\n4#ZV:",
 "op 2 (bogus 1#HQ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
 "delete 1#HQ..4#ZV: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 4 (replace 5..4#ZZ:): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 4 (replace 5..4#ZZ:): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -8803,12 +8803,12 @@
 ],
 "ok": false,
 "after": "# c\n# c\nx = 1\ndef f():\na — b\n# c\n    return y\nx = 1\n\tz\n“q”\n“q”\n",
-"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 3 (delete 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\n  op 4 (replace 11#ZZ): Hash mismatch at line 11: ref '11#ZZ' does not match current content.\n    Current lines 8–12 (fresh refs — retry from these, no re-read needed):\n    8#SW:x = 1\n    9#KV:\tz\n    10#ZJ:“q”\n    11#ZJ:“q”\n    12#ZJ:\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 3 (delete 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#WS:a — b\n    Use '5#WS'.\n  op 4 (replace 11#ZZ): Hash mismatch at line 11: ref '11#ZZ' does not match current content.\n    Current lines 8–12 (fresh refs — retry from these, no re-read needed):\n    8#SW:x = 1\n    9#KV:\tz\n    10#ZJ:“q”\n    11#ZJ:“q”\n    12#ZJ:\nThe other 2 refs are valid as sent. Correct the rejected refs from the current lines shown (no re-read needed), then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "delete 1#YX: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
 "delete 4#HS..7#HQ: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 3 (delete 5): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
-"op 4 (replace 11#ZZ): Hash mismatch at line 11: ref '11#ZZ' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 8–12 (fresh refs — retry from these, no re-read needed):\n8#SW:x = 1\n9#KV:\tz\n10#ZJ:“q”\n11#ZJ:“q”\n12#ZJ:\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 3 (delete 5): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#WS:a — b\nUse '5#WS'.",
+"op 4 (replace 11#ZZ): Hash mismatch at line 11: ref '11#ZZ' does not match current content. — nothing written, '<FILE>' is unchanged.\nCurrent lines 8–12 (fresh refs — retry from these, no re-read needed):\n8#SW:x = 1\n9#KV:\tz\n10#ZJ:“q”\n11#ZJ:“q”\n12#ZJ:\nCorrect the rejected refs from the current lines shown (no re-read needed), then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {
@@ -8931,7 +8931,7 @@
 ],
 "ok": false,
 "after": "x = 1\n“q”\n\tz\na — b\nx = 1\na — b\n",
-"msg": "'pos' must be a hashline string like '5#VR', got int (5). Re-read the file with read_file to get fresh hashline tags, then retry.",
+"msg": "edit_file apply failed: pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n5#SW:x = 1\nUse '5#SW'.",
 "parts": null
 },
 {
@@ -8973,11 +8973,11 @@
 ],
 "ok": false,
 "after": "\tz\nx = 1\na — b\nx = 1",
-"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (bogus): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (replace 5..1#KV): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 4 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (bogus): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\n  op 3 (replace 5..1#KV): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines.\nThe other 2 refs are valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (bogus): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.",
 "replace 1#KV..3#WS: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 3 (replace 5..1#KV): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 3 (replace 5..1#KV): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines. — nothing written, '<FILE>' is unchanged.",
 "prepend: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -9315,10 +9315,10 @@
 ],
 "ok": false,
 "after": "    return y\nx = 1\n# c\n  \ndef f():\na — b\nx = 1\nx = 1\na — b\n# c\n\tz\nx = 1",
-"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (delete 5..7#SW): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\n  op 3 (bogus 8#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 2 (delete 5..7#SW): pos '5' is a bare line number — a ref is LINE#HASH. That line is now:\n    5#HS:def f():\n    Use '5#HS'.\n  op 3 (bogus 8#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "prepend 2#SW:x = 1: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 2 (delete 5..7#SW): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.",
+"op 2 (delete 5..7#SW): pos '5' is a bare line number — a ref is LINE#HASH. That line is now: — nothing written, '<FILE>' is unchanged.\n5#HS:def f():\nUse '5#HS'.",
 "op 3 (bogus 8#ZZ): Unknown edit op: 'bogus'. Use replace|append|prepend|delete. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
@@ -9461,11 +9461,11 @@
 ],
 "ok": false,
 "after": "\tz\n\n“q”\n\tz",
-"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace): replace requires 'pos'.\n  op 3 (replace 5..3#ZZ): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
+"msg": "edit_file batch: 2 of 3 edits rejected — nothing written, '<FILE>' is unchanged.\n  op 1 (replace): replace requires 'pos'.\n  op 3 (replace 5..3#ZZ): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines.\nThe other 1 ref is valid as sent. Re-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs.",
 "parts": [
 "op 1 (replace): replace requires 'pos'. — nothing written, '<FILE>' is unchanged.",
 "delete 2#ZM: ref valid as sent — not applied, the batch is all-or-nothing and '<FILE>' is unchanged.",
-"op 3 (replace 5..3#ZZ): Invalid hashline ref: 5 (expected string, got int). Expected format: LINE#HASH (e.g. 5#VR). Re-read the file with read_file to get fresh hashline tags. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
+"op 3 (replace 5..3#ZZ): pos '5' is a bare line number — a ref is LINE#HASH, and <FILE> has 4 lines. — nothing written, '<FILE>' is unchanged.\nRe-read the file for fresh tags of the rejected lines only, then resend ALL the ops in one turn — the valid ones unchanged, the rejected ones with corrected refs."
 ]
 },
 {

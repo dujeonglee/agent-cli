@@ -157,55 +157,39 @@ def _build_edit_file_inline(dialect) -> str:
             "lines": ['    return "hello"'],
         }
     )
+    # v10.77.0: op 목록·"copied EXACTLY from read_file" 삭제(출처는 설명 한 곳),
+    # "never a bare line number" 한 줄(35B 편집의 18%), 같은 파일 여러 편집 문단은
+    # 뜻만(45런 0회 사용). single-op 쪽 "re-read between calls" 는 사실이 아니었다 —
+    # 편집 결과의 Updated region 이 새 ref 를 준다.
     if getattr(dialect, "multi_op", False):
-        examples = f"""\
-  - one edit per op:
-{_indent(ex_single)}"""
         # Same-file batching: consecutive same-path edit_file ops in one turn
         # are applied together against ONE original read (all refs resolved
         # before any write, bottom-up, all-or-nothing), so a later op's ref does
-        # NOT go stale from an earlier op's line shift. Refs come from the read;
-        # the model must NOT pre-adjust line numbers for its sibling edits.
+        # NOT go stale from an earlier op's line shift.
         same_file = """
-  - SEVERAL edits to the SAME file → emit them as consecutive edit_file ops in
-    ONE turn, each ref taken from your LAST read of the file. Do NOT pre-adjust
-    line numbers for your other edits: same-file ops in a turn are applied
-    together against that one read (bottom-up), so a later edit's ref does NOT
-    go stale from an earlier edit's line shift. Keep the same-file ops ADJACENT
-    — another tool between them breaks the group. OVERLAPPING ranges are
-    rejected as a batch (nothing is written); split those across turns. If a
-    ref is rejected, nothing is written and the result names every bad op —
-    the other refs stay valid: resend all the ops, fixing only those named.
-    Editing DIFFERENT files in separate ops is fine — they don't interact."""
+  - Several edits to one file can go in one turn as adjacent `edit_file`
+    calls, every ref from the same read: they are applied together, so do
+    not shift line numbers for each other. If any is rejected, nothing is
+    written and the result names the bad ones — resend all, fixing only
+    those. Overlapping ranges are rejected; split them across turns."""
     else:
-        examples = f"""\
-  - one edit per call:
-{_indent(ex_single)}"""
         same_file = """
-  - For SEVERAL edits to one file, call edit_file repeatedly and re-read the
-    region between calls — a ref goes stale once an earlier edit shifts the
-    lines it points at."""
+  - Several edits to one file: one call each, taking each ref from the
+    latest output — an earlier edit's result shows the fresh refs of the
+    region it changed."""
 
     return f"""
 
-  Hashline editing guide:
-  read_file returns lines tagged as LINE#HASH:content, e.g.:
+  Hashline refs:
+  `read_file` returns lines tagged as LINE#HASH:content, e.g.:
     1#VR:def hello():
     2#KT:    return "world"
-  Use edit_file with hashline refs copied EXACTLY from read_file output.
-  Ops: replace (pos[..end] → lines) | append / prepend (insert at pos) |
-       delete (remove pos[..end] range, no lines).
-{examples}
-  Constraints:
-  - Take refs from the most recent output that showed those lines: a
-    read_file, a code_index mode='fetch', or what write_file / edit_file
-    returned (all hashline-formatted — no extra read_file needed). Refs
-    from before the file last changed no longer match: read the region
-    again first.
-  - A hash mismatch is not a failure — it is a guardrail signaling the
-    ref does not match the file. The error shows the current lines around
-    it with fresh tags: retry from those. Re-read only if the line you
-    meant is not shown.\
+  A ref is the LINE#HASH part ("2#KT"), never a bare line number.
+  - one edit per call:
+{_indent(ex_single)}
+  - A ref from before the file last changed no longer matches. A hash
+    mismatch is a guardrail, not a failure: the error shows the current
+    lines around it with fresh refs — retry from those.\
 {same_file}"""
 
 
