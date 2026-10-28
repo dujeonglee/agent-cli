@@ -1376,7 +1376,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 ### shell — 셸 명령 실행
 
-셸 명령을 실행하고 stdout/stderr를 반환합니다. 타임아웃 기본 30초.
+셸 명령을 실행하고 stdout/stderr를 반환합니다(stderr 는 `[stderr]` 아래, 0 이 아닌 종료 코드는 `[exit code: N]`). 타임아웃 기본 120초 — 시간이 초과되면 그 명령이 띄운 프로세스까지 끝내고(v10.77.0, 종전엔 `/bin/sh` 만 죽어 `apt-get` 같은 자식이 남았습니다), 그때까지의 출력 끝 8줄과 함께 "`background` true 로 다시 보내라"고 알려 줍니다.
 
 ```json
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}

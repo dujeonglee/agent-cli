@@ -43,3 +43,12 @@
 ## 4. 짝: monitor `match` 의 조용함 한도 (docs/monitor/DESIGN.md §12)
 
 작업을 하니스가 들어도 모델이 로그에 `match` 를 거는 경우는 남는다(중간 진행 줄). 파일이 `silent`(기본 10분, 도구 인자, 0 = 끔) 동안 안 바뀌면 보고를 남기고 물러난다 — A·C 의 멈춤이 깨우기로 바뀐다.
+
+## 5. foreground 시간 초과 (v10.77.0)
+
+foreground 명령도 자기 프로세스 그룹으로 띄운다(`start_new_session=True`). 시간이 초과되면 그룹에 TERM, `KILL_GRACE_S`
+뒤 남았으면 KILL — background 작업을 끝내는 `kill` 과 같은 순서. 계기: 9과제 벤치(GLM video)에서 `subprocess.run(shell=True,
+timeout=)` 이 `/bin/sh` 만 죽였고, 그 아래 `apt-get` 이 dpkg 잠금을 쥔 채 남아 다음 `apt-get` 이 "Could not get lock …"
+로 실패했다. 결과 문구는 끝냈다는 사실, 그때까지의 출력 끝 `TAIL_LINES`(8)줄, "이만큼 걸리는 명령은 `background` true" 교정 —
+시간 초과 8건 중 5건이 foreground `apt-get install` 이었다(설명의 작업 종류 나열 "an install" 이 있는데도). 나열은 지우고
+교정은 이 자리(트리거 직후)가 맡는다.

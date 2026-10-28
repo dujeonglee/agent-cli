@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import signal
 import subprocess
 from typing import ClassVar
 
@@ -239,7 +240,7 @@ def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
         return ToolResult(
             False,
             error=(
-                f"background=true takes the PLAIN command — yours contains `{detached}`, "
+                f"`background` true takes the plain command — yours contains `{detached}`, "
                 "which would detach the real work from the job (the job would end at "
                 "once and nothing would be tracked or reported). Re-send the same "
                 "command without `&`, `nohup`, `setsid`, `disown` or output "
@@ -255,7 +256,7 @@ def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
         return ToolResult(
             False,
             error="background jobs are not available in this run — run it in the "
-            "foreground with a timeout instead",
+            "foreground with a `timeout` instead",
         )
     try:
         job = reg.start(cmd, owner=owner)
@@ -294,42 +295,96 @@ def tool_shell(args: dict) -> ToolResult:
         # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and
         # raises UnicodeDecodeError mid-run on non-UTF-8 output (git show /
         # binary diffs / latin-1 messages) — uncatchable by the timeout guard.
-        result = subprocess.run(
+        # 자기 프로세스 그룹으로 띄운다 (v10.77.0): 시간 초과 때 `/bin/sh` 만
+        # 죽이면 그 아래 `apt-get` 이 살아남아 dpkg 잠금을 쥐었다(GLM video —
+        # 다음 apt 가 "Could not get lock … held by process (apt-get)").
+        proc = subprocess.Popen(
             cmd,
             shell=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
         )
-        out = result.stdout.decode("utf-8", errors="replace").strip()
-        err = result.stderr.decode("utf-8", errors="replace").strip()
+        try:
+            raw_out, raw_err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raw_out, raw_err = _stop_group(proc)
+            return ToolResult(False, error=_timeout_message(timeout, raw_out, raw_err))
+        out = raw_out.decode("utf-8", errors="replace").strip()
+        err = raw_err.decode("utf-8", errors="replace").strip()
         parts = []
         if out:
             parts.append(out)
         if err:
             parts.append(f"[stderr]\n{err}")
-        if result.returncode != 0:
-            parts.append(f"[exit code: {result.returncode}]")
+        if proc.returncode != 0:
+            parts.append(f"[exit code: {proc.returncode}]")
         # When the user approved with a comment, surface it after the
         # command output so the LLM sees the additional instruction
         # alongside the result.
         if user_comment:
             parts.append(f"[User note when approving: {user_comment}]")
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
-    except subprocess.TimeoutExpired:
-        return ToolResult(False, error=f"Command timed out ({timeout}s)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")
+
+
+def _stop_group(proc: subprocess.Popen) -> tuple[bytes, bytes]:
+    """명령의 프로세스 그룹을 끝내고 그때까지의 출력을 돌려준다 — TERM, 잠시
+    뒤 남았으면 KILL (``jobs.JobRegistry.kill`` 과 같은 순서)."""
+    from agent_cli.jobs import KILL_GRACE_S
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            return proc.communicate(timeout=KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            continue
+    # 그룹 밖으로 빠져나간 자식이 파이프를 쥐고 있다 — 출력 없이 돌아간다.
+    return b"", b""
+
+
+def _timeout_message(timeout: int, raw_out: bytes, raw_err: bytes) -> str:
+    """시간 초과 결과 (v10.77.0) — 끝냈다는 사실, 그때까지의 출력 끝부분,
+    background 로 다시 보내라는 교정(교정은 트리거 직후 — 설명의 작업 종류
+    나열 대신)."""
+    from agent_cli.jobs import TAIL_LINE_CHARS, TAIL_LINES
+
+    text = "\n".join(
+        t
+        for t in (
+            raw_out.decode("utf-8", errors="replace").strip(),
+            raw_err.decode("utf-8", errors="replace").strip(),
+        )
+        if t
+    )
+    lines = [ln[:TAIL_LINE_CHARS] for ln in text.splitlines()][-TAIL_LINES:]
+    head = (
+        f"Command timed out after {timeout}s and was stopped, together with "
+        "everything it started."
+    )
+    if lines:
+        head += f"\nOutput so far (last {len(lines)} lines):\n" + "\n".join(lines)
+    else:
+        head += " It printed nothing before that."
+    return (
+        f"{head}\nA command that runs this long belongs in the background: send it "
+        "again with `background` true and you will be told when it ends."
+    )
 
 
 class ShellTool(Tool):
     name = "shell"
     description = (
-        "Run a shell command and return stdout/stderr. For anything that may run longer"
-        " than about a minute (a test suite, a build, an install, a large clone) set "
-        "`background` to true: the harness starts it for you, sends its output to a log"
-        " under .agent-cli/tmp/jobs/ and tells you when it ends (exit code + last "
-        "lines) — keep working meanwhile."
+        "Run a shell command in the working directory. The result is its stdout, then "
+        "its stderr under `[stderr]`, then `[exit code: N]` when the exit code is not 0"
+        " — the command needs no `echo $?` or `2>&1` for that. For a command that may "
+        "run longer than about a minute, set `background` to true: the harness starts "
+        "it for you, sends its output to a log under .agent-cli/tmp/jobs/ and tells "
+        "you when it ends (exit code + last lines) — keep working meanwhile."
     )
     oversized_retry_hint = (
         "narrow the command itself: add `grep`/`head`/`tail`, target fewer "
@@ -355,7 +410,8 @@ class ShellTool(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Max seconds before a FOREGROUND command is killed (default 120). "
+                    "Max seconds before a foreground command is stopped, together "
+                    "with everything it started (default 120). "
                     "Do not raise it to sit through a long command — set `background` "
                     "to true for that. Raise it only for a short wait you must block "
                     "on."
@@ -366,8 +422,8 @@ class ShellTool(Tool):
                 "description": (
                     "true = start the command as a background job owned by the "
                     "harness (returns at once with the job id, pid and log path; "
-                    "you are notified when it ends). Use for test suites, builds, "
-                    "installs — anything over about a minute. Give the PLAIN "
+                    "you are notified when it ends). Use it for anything that may run "
+                    "longer than about a minute. Give the plain "
                     "command: no trailing `&`, no redirection, no `echo EXIT` — "
                     "the harness logs it and reports the exit code."
                 ),
