@@ -240,3 +240,11 @@ if _EQUIV_RECORD:
 
             cls.parse_turn = _wrapped
             cls._equiv_wrapped = True
+
+
+@pytest.fixture(autouse=True)
+def _fresh_item_ids(monkeypatch):
+    """배달 id 번호를 테스트마다 1 부터 (v10.77.0 — 할당기는 프로세스 전역)."""
+    from agent_cli import item_ids
+
+    monkeypatch.setattr(item_ids, "_last", 0)

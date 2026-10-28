@@ -178,7 +178,7 @@ def test_agent_waiting_line_shows_a_mini_thumbnail_without_expanding(stack, page
         direction="in",
         author="user:dj",
         text="what is in it?",
-        seq=3,
+        item="u-3",
         to="agt-1",
         images=[_ref()],
     )

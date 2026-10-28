@@ -183,9 +183,9 @@ class TestInjectedNotices:
         try:
             key, _ = reg.spawn()
             q = Question(
-                id="q1", asker=key, target="user", text="which?", delivered_seq=1
+                id="q1", asker=key, target="user", text="which?", delivered_in="r-1"
             )
-            q.asked_seq = 0
+            q.asked_in = 0
             reg._questions[q.id] = q
             tm = reg.get(key)
             out = reg._with_human_notice(tm, 0, "done")

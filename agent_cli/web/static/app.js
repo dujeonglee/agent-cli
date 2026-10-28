@@ -995,7 +995,7 @@
     // 풀린다) — 재접속 스냅샷이 끝난 스코프의 뷰를 채널에 잘못 덮지 않게 한다.
     if (!taskId) return "main";
     if (frames[taskId] && !frames[taskId].channel) return taskId;
-    // 상주 에이전트의 뷰는 런 스코프(`key#seq`)가 아니라 그 에이전트의 프롬프트
+    // 상주 에이전트의 뷰는 런 스코프(`key#<item id>`)가 아니라 그 에이전트의 프롬프트
     // 스코프 = **채널 key 그대로** 온다. 모르는 id 를 main 으로 돌리면 그 뷰가
     // main 의 뷰를 덮어 "컨텍스트 밖 대화" 가 통째로 사라진다(v10.18.1) — 모르는
     // id 는 자기 열쇠로 둔다.
@@ -3442,25 +3442,22 @@
   })();
   // ── 런 블록 (v9.23.0, docs/chat-ui §12) ─────────────────────
   // 에이전트 채널의 단위는 **런**이다: 런이 시작될 때 블록이 열리고
-  // (`scope_start`, 앵커 = `key#seq`), 그 런이 받은 항목(들)이 머리, 단계가
+  // (`scope_start`, 앵커 = `key#<item id>`), 그 런이 받은 항목(들)이 머리, 단계가
   // 몸통, 결과가 꼬리. 왕래 줄 셋(← 받음 / → 보냄 / ❓ 질문)은 사라졌다:
   //   · 받음 → 블록 머리. 수신 줄은 **큐에 넣을 때** 나가 런보다 앞서므로
-  //     블록이 없으면 `⏳ 대기` 로 두었다가 그 seq 를 품은 런이 열리면 끌어온다
-  //     (`scope_start.seqs` — 배치는 N개). 앵커를 수신 줄로 잡으면 바쁠 때
+  //     블록이 없으면 `⏳ 대기` 로 두었다가 그 id 를 품은 런이 열리면 끌어온다
+  //     (`scope_start.items` — 배치는 N개; v10.77.0 부터 배달 id 가 키). 앵커를 수신 줄로 잡으면 바쁠 때
   //     쌓인 3건이 블록 3개를 먼저 연다.
   //   · 보냄 → 그리지 않는다. `message`/`reply`/`answer` **도구 줄**이 그 발신
   //     이고(라이브·resume 재생 둘 다 history 에서 온다), 유일한 예외는 도구
   //     호출 없는 하네스 폴백(`fallback`) — 그것만 ⚠ 줄로 몸통에.
   //   · 질문 → `→ ask` 도구 줄. 트레이 갱신만 남는다.
   // resume: `scopes.jsonl` 이 같은 scope_start/end 를 재생하고 에이전트
-  // history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**. 구 세션
-  // (seqs 없음)은 `[index+1]` 하나로 잡고, 그보다 앞 seq 의 미귀속 수신 줄은
-  // 직전 블록의 것으로 본다(배치만 살짝 어긋난다).
-  const runBlocks = {}; // task_id → {card, head, body, key, seqs, closed}
-  const runBySeq = {}; // key → {seq → task_id}
-  const lastRunByKey = {}; // key → task_id (구 세션 폴백)
-  const queuedIn = {}; // key → {seq → {d, card}}  블록이 아직 없는 수신 줄
-  const pendingFallback = {}; // key → {seq → [d]}  블록이 아직 없는 폴백 줄
+  // history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**.
+  const runBlocks = {}; // task_id → {card, head, body, key, items, closed}
+  const runByItem = {}; // key → {item id → task_id}
+  const queuedIn = {}; // key → {item id → {d, card}}  블록이 아직 없는 수신 줄
+  const pendingFallback = {}; // key → {item id → [d]}  블록이 아직 없는 폴백 줄
 
   function firstLineOf(text) {
     var t = String(text || "");
@@ -3495,43 +3492,35 @@
   function claimIn(blk, q) {
     if (q.card) q.card.remove();
     var it = runItem(q.d);
-    it.dataset.seq = String(q.d.seq || 0);
+    it.dataset.item = String(q.d.item || "");
     blk.head.appendChild(it);
   }
 
   function ensureRunBlock(d) {
     if (runBlocks[d.task_id]) return runBlocks[d.task_id];
     var key = scopeChannel[d.task_id] || "";
-    var seqs =
-      Array.isArray(d.seqs) && d.seqs.length
-        ? d.seqs.map(Number)
-        : [Number(d.index || 0) + 1];
+    var items = Array.isArray(d.items) ? d.items.map(String) : [];
     var card = el("div", ["card", "card-run"]);
     card.dataset.taskId = d.task_id;
     var head = el("div", ["run-head"]);
     var body = el("div", ["run-body"]);
     card.appendChild(head);
     card.appendChild(body);
-    var blk = { card: card, head: head, body: body, key: key, seqs: seqs, closed: false };
+    var blk = { card: card, head: head, body: body, key: key, items: items, closed: false };
     runBlocks[d.task_id] = blk;
-    var bySeq = runBySeq[key] || (runBySeq[key] = {});
-    seqs.forEach(function (sq) { bySeq[sq] = d.task_id; });
-    // 큐에서 먼저 도착한 수신 줄 → 머리. 구 세션 폴백: 이 런보다 앞 seq 의
-    // 미귀속 줄은 직전 런의 것이다(배치를 seqs 없이 기록한 세션).
+    var byItem = runByItem[key] || (runByItem[key] = {});
+    // 큐에서 먼저 도착한 수신 줄 → 머리 (배치는 받은 순서대로).
     var q = queuedIn[key] || {};
-    var prev = lastRunByKey[key] ? runBlocks[lastRunByKey[key]] : null;
-    Object.keys(q).map(Number).sort(function (x, y) { return x - y; }).forEach(function (sq) {
-      if (seqs.indexOf(sq) >= 0) claimIn(blk, q[sq]);
-      else if (sq < seqs[0]) claimIn(prev || blk, q[sq]);
-      else return;
-      delete q[sq];
-    });
     var pf = pendingFallback[key] || {};
-    seqs.forEach(function (sq) {
-      (pf[sq] || []).forEach(function (fd) { renderFallbackRow(blk, fd); });
-      delete pf[sq];
+    items.forEach(function (id) {
+      byItem[id] = d.task_id;
+      if (q[id]) {
+        claimIn(blk, q[id]);
+        delete q[id];
+      }
+      (pf[id] || []).forEach(function (fd) { renderFallbackRow(blk, fd); });
+      delete pf[id];
     });
-    lastRunByKey[key] = d.task_id;
     // 루트에, 자기 채널로. 시각은 첫 수신 줄이 아니라 런 시작이다.
     finishCard(card, { task_id: "", ts: d.ts }, key);
     return blk;
@@ -3587,15 +3576,15 @@
   function ovOnAgentMsg(d) {
     if (!d || !d.key) return;
     var key = d.key;
-    var seq = Number(d.seq || 0);
+    var item = String(d.item || "");
     if (d.direction === "in") {
-      var tid = runBySeq[key] && runBySeq[key][seq];
+      var tid = runByItem[key] && runByItem[key][item];
       if (tid && runBlocks[tid]) {
         claimIn(runBlocks[tid], { d: d });
         return;
       }
       var card = el("div", ["card", "card-queued"]);
-      card.dataset.seq = String(seq);
+      card.dataset.item = item;
       var hasImgs = Array.isArray(d.images) && d.images.length > 0;
       var qRow = makeRow("⏳", "Queued", firstLineOf(d.text), hasImgs ? thumbStrip(d.images) : null,
                          ["queued"], el("span", ["peer"], peerLabel(d.author)));
@@ -3605,26 +3594,26 @@
       // 붙인다) — 그걸로 배치하면 이 줄이 남의 블록 몸통에 들어간다. 수신
       // 줄의 자리는 언제나 자기 채널의 루트.
       finishCard(card, { ts: d.ts, note: d.note }, key);
-      (queuedIn[key] || (queuedIn[key] = {}))[seq] = { d: d, card: card };
+      (queuedIn[key] || (queuedIn[key] = {}))[item] = { d: d, card: card };
       return;
     }
     if (d.direction === "absorbed") {
-      // 런 도중 턴 경계에서 흡수됨 (v10.8.2): 그 seq 의 ⏳ 대기 줄을 **도는 런**
+      // 런 도중 턴 경계에서 흡수됨 (v10.8.2): 그 id 의 ⏳ 대기 줄을 **도는 런**
       // (absorbed_into) 블록 머리로 옮긴다 — 새 런이 열리지 않으니 종전엔 배달
-      // 뒤에도 "대기" 로 남았다. 블록이 없으면(재생 순서·구 세션) 줄만 ✓ 로.
-      var into = Number(d.absorbed_into || 0);
-      var q = queuedIn[key] && queuedIn[key][seq];
-      var tidInto = runBySeq[key] && runBySeq[key][into];
+      // 뒤에도 "대기" 로 남았다. 블록이 없으면(재생 순서) 줄만 ✓ 로.
+      var into = String(d.absorbed_into || "");
+      var q = queuedIn[key] && queuedIn[key][item];
+      var tidInto = runByItem[key] && runByItem[key][into];
       if (tidInto && runBlocks[tidInto]) {
         var blkInto = runBlocks[tidInto];
         if (q) {
           claimIn(blkInto, q);
-          delete queuedIn[key][seq];
-        } else if (!blkInto.head.querySelector('.run-item[data-seq="' + seq + '"]')) {
+          delete queuedIn[key][item];
+        } else if (!blkInto.head.querySelector('.run-item[data-item="' + item + '"]')) {
           claimIn(blkInto, { d: d }); // 대기 줄이 안 왔다(버퍼 창 밖) — 머리에 직접
         }
-        if (blkInto.seqs.indexOf(seq) < 0) blkInto.seqs.push(seq);
-        (runBySeq[key] || (runBySeq[key] = {}))[seq] = tidInto;
+        if (blkInto.items.indexOf(item) < 0) blkInto.items.push(item);
+        (runByItem[key] || (runByItem[key] = {}))[item] = tidInto;
         return;
       }
       if (q) {
@@ -3638,11 +3627,11 @@
     }
     if (d.direction === "out") {
       if (!d.fallback) return; // 도구 줄이 이미 그 발신이다
-      var t2 = runBySeq[key] && runBySeq[key][seq];
+      var t2 = runByItem[key] && runByItem[key][item];
       if (t2 && runBlocks[t2]) renderFallbackRow(runBlocks[t2], d);
       else {
         var pf = pendingFallback[key] || (pendingFallback[key] = {});
-        (pf[seq] || (pf[seq] = [])).push(d);
+        (pf[item] || (pf[item] = [])).push(d);
       }
       return;
     }
@@ -3657,7 +3646,7 @@
   // 자체와 그 안의 턴 카드는 스코프·턴 이벤트에서 왔고 서버 버퍼에 그대로
   // 남는다. 블록까지 지우면(v9.23.0 초판) resume 의 `conversation.jsonl` 재생이
   // 수신 줄만 다시 보내 붙을 블록이 없어 전부 `⏳ 대기` 로 떨어졌다(사용자 보고
-  // — 새로고침해야 버퍼의 스코프가 블록을 다시 세웠다). 블록과 `runBySeq` 를
+  // — 새로고침해야 버퍼의 스코프가 블록을 다시 세웠다). 블록과 `runByItem` 을
   // 남겨 두면 재생된 수신 줄이 제자리 머리로 돌아온다.
   function ovOnAgentCleared(key) {
     var ch = cssEsc(key);

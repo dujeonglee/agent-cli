@@ -83,7 +83,7 @@ class TestWhichMailBecomesAnItem:
         ],
     )
     def test_seven_kinds_are_items(self, reply):
-        assert mail_item({**reply, "mail_id": 4}) == ("n-4", "mail")
+        assert mail_item({**reply, "item_id": "n-4"}) == ("n-4", "mail")
 
     @pytest.mark.parametrize(
         "reply",
@@ -94,7 +94,7 @@ class TestWhichMailBecomesAnItem:
         ],
     )
     def test_debts_and_reminders_stay_out(self, reply):
-        assert mail_item({**reply, "mail_id": 4}) is None
+        assert mail_item({**reply, "item_id": "n-4"}) is None
 
 
 class TestWakeRunHasNoStarter:

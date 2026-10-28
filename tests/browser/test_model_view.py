@@ -343,7 +343,7 @@ def test_inline_card_folds_with_the_record_that_opened_it(stack, page):
 
 
 def test_resident_agent_view_does_not_replace_mains(stack, page):
-    """상주 에이전트의 뷰는 런 스코프(`key#seq`)가 아니라 그 에이전트의 프롬프트
+    """상주 에이전트의 뷰는 런 스코프(`key#<item id>`)가 아니라 그 에이전트의 프롬프트
     스코프 = 채널 key 로 온다. 프런트가 모르는 id 를 main 으로 돌려, 에이전트가
     하나라도 있는 방에서는 main 의 "컨텍스트 밖 대화" 가 통째로 사라졌다
     (j8hrge 실측, v10.18.1). 에이전트의 뷰는 자기 채널에 묶음을 만든다."""
@@ -354,12 +354,12 @@ def test_resident_agent_view_does_not_replace_mains(stack, page):
 
     def body():
         r.begin_prompt_scope(key, label="agent:sprites")
-        r.begin_agent_work(key=key, seq=1, profile="p", message="일해줘")
+        r.begin_agent_work(key=key, item="u-1", profile="p", message="일해줘")
         for hidx in (1, 2, 3):
             r.note_record(hidx)
             r.observation(f"out {hidx}", turn=hidx, tool_name="shell", success=True)
         r.context_view({"gone": {"hidx": 3}, "summary": None, "compactions": 1})
-        r.end_agent_work(key=key, seq=1, success=True, duration_s=1.0)
+        r.end_agent_work(key=key, item="u-1", success=True, duration_s=1.0)
 
     t = threading.Thread(target=body)
     t.start()

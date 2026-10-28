@@ -133,12 +133,13 @@ def _is_human_addr(addr: str) -> bool:
 class Question:
     """열린 질문 하나 — ``AgentRegistry._questions`` 의 값.
 
-    **두 seq 가 런 스코프를 만든다.** 워커는 inbox 항목 1개 = 런 1개이고,
+    **두 런 이름이 런 스코프를 만든다.** 워커는 inbox 항목 1개 = 런 1개이고,
     질문은 등록 즉시 목록에 오르지만 상대 inbox 에서는 **줄을 선다**. 이
     비대칭을 안 보면 (a) 상대가 아직 꺼내지도 않은 질문에 강제·sweep 이
     걸리고 (b) 다른 런에서 걸어 둔(영영 열릴 수 있는) 사람 질문이 이후 모든
-    회신을 막는다. 그래서 강제·sweep 은 ``delivered_seq``, 회신 억제는
-    ``asked_seq`` 를 본다 (DESIGN.md §3.2).
+    회신을 막는다. 그래서 강제·sweep 은 ``delivered_in``, 회신 억제는
+    ``asked_in`` 을 본다 (DESIGN.md §3.2). 런 이름은 그 런을 연 배달의 id
+    (v10.77.0 — 종전 받은편지함 순번은 에이전트마다 1부터라 키가 될 수 없었다).
     """
 
     id: str
@@ -146,8 +147,8 @@ class Question:
     target: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
     text: str
     asked_at: float = field(default_factory=time.time)
-    asked_seq: int = 0  # asker 가 이 질문을 건 런의 inbox seq (main 은 0)
-    delivered_seq: int | None = None  # target 이 꺼낸 런의 seq (미배달 None)
+    asked_in: str = ""  # asker 가 이 질문을 건 런(을 연 배달의 id). main 은 ""
+    delivered_in: str | None = None  # target 이 꺼낸 런의 id (main ""), 미배달 None
 
     @property
     def to_human(self) -> bool:
@@ -163,14 +164,14 @@ class Question:
                 target=str(d["target"]),
                 text=str(d["text"]),
                 asked_at=float(d.get("asked_at") or time.time()),
-                # 물어본 런은 사라졌다 — 0 은 어떤 런과도 안 겹친다(seq 는
-                # 1부터). §3.7 억제는 이 세션의 런에만 적용된다.
-                asked_seq=0,
+                # 물어본 런은 사라졌다 — "" 는 상주 런 이름과 안 겹친다.
+                # §3.7 억제는 이 세션의 런에만 적용된다.
+                asked_in="",
                 # 배달 여부는 **유지**한다 — 상대의 ctx 에 질문이 남아 있고
                 # (배달 = 런 1회 = 그 텍스트가 history 에 있다), 그 빚이
                 # 이어져야 독촉도 상한도 계속 돈다.
-                delivered_seq=(
-                    None if d.get("delivered_seq") is None else int(d["delivered_seq"])
+                delivered_in=(
+                    None if d.get("delivered_in") is None else str(d["delivered_in"])
                 ),
             )
         except (KeyError, TypeError, ValueError):
@@ -183,8 +184,8 @@ class Question:
             "target": self.target,
             "text": self.text,
             "asked_at": self.asked_at,
-            "asked_seq": self.asked_seq,
-            "delivered_seq": self.delivered_seq,
+            "asked_in": self.asked_in,
+            "delivered_in": self.delivered_in,
         }
 
 
@@ -195,8 +196,8 @@ class ReplyDebt:
     런이 받은 **요청**(``expects_reply=True`` 항목·main 에 배달된 `message`)
     마다 하나(v9.25.0 — 종전엔 상대별 하나라 같은 상대의 새 요청이 앞 것을
     덮었다; 런 도중 흡수된 요청이 여럿이면 각각 회신을 받아야 한다는 사용자
-    결정). ``id`` 가 그 요청을 가리킨다 — 상주는 받은편지함 seq, main 은
-    메일 번호. 갚으면(`reply(id)`·요청자에게 `message`·main 의 `agent request`)
+    결정). ``id`` 가 그 요청을 가리킨다 — 그 요청 배달의 id(`item_ids`,
+    전역에서 유일). 갚으면(`reply(id)`·요청자에게 `message`·main 의 `agent request`)
     ``settled`` — 지우지 않는다: "이미 갚았다" 는 거부 사유가 사실이어야
     한다. 사람 주소(``user:*``)의 빚은 창이 곧 배달이라 갚을 것이 없지만
     **적어는 둔다** — 그 런의 `reply` 를 거부할 때 사유가 "요청이 없었다" 가
@@ -216,11 +217,12 @@ class ReplyDebt:
 
 
 def _new_question_id() -> str:
-    return item_ids.make(item_ids.QUESTION, uuid.uuid4().hex[:6])
+    return item_ids.next_id(item_ids.QUESTION)
 
 
 # agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
-AGENTS_STATE_VERSION = 1
+#: v2 (v10.77.0): 순번(`seq`) 대신 id 가 키 — 옛 파일은 무시한다(호환층 없음).
+AGENTS_STATE_VERSION = 2
 
 # ── Live Teammates 시스템 프롬프트 리로드 플래그 ──
 # 멤버십(spawn/kill/died/restore/auto_spawn) 변화 시 set — 루프의
@@ -312,7 +314,7 @@ def mail_queue_item(reply: dict) -> dict:
     if head == tool and len(lines) > 1:
         head = lines[1]  # 하니스 작업: 머리줄이 `── auditor ──` 뿐이다
     return {
-        "id": item_ids.make(item_ids.MAIL, reply.get("mail_id", 0)),
+        "id": str(reply.get("item_id") or ""),
         "conn_id": "",
         "nickname": tool,
         "text": head,
@@ -329,7 +331,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
 
     ``cap``(loop 의 ``_oversized_cap``, 0=무제한) 초과 회신은 전문 대신
     디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
-    ``teammates/<key>/replies/reply-<seq>.md`` 에 영속했다(배달과 무관하게
+    ``teammates/<key>/replies/reply-<id>.md`` 에 영속했다(배달과 무관하게
     항상 저장 — P3 resume 미배달 보존의 토대).
 
     ``registry`` (v7.11.0, 배달 시점에만 전달): 회신 레코드 말미에 그
@@ -584,11 +586,10 @@ class AgentInstance:
         # 그 회신/질문을 main mailbox 에 넣지 않는다 (D8: 컨텍스트 비오염).
         self.current_author = "main"
         self.created_at = time.time()
-        self.handled = 0  # 처리 완료한 request 수
-        self.queued = 0  # inbox 에 넣은 request 수 (seq 발급)
-        # 지금 처리 중인 항목의 seq — 질문의 런 스코프(Question.asked_seq)가
-        # 이 값을 찍는다. 유휴/main 은 0.
-        self.current_seq = 0
+        self.handled = 0  # 처리 완료한 request 수 (화면용 숫자)
+        # 지금 도는 런의 이름 = 그 런을 연 배달의 id — 질문의 런 스코프
+        # (Question.asked_in)가 이 값을 찍는다. 유휴/main 은 "".
+        self.current_item = ""
         # 이 런이 질문을 건 **주소들** (§3.7). 걸었다면 그 질문은 반드시 답
         # 런을 하나 만들고(답·상한·상대 사망 셋 다 `_deliver_answer` 를
         # 지난다) 그 런이 **그 주소**에게 같은 빚을 지므로, 이 런의 그 주소
@@ -882,9 +883,6 @@ class AgentRegistry:
         self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
-        self._mail_seq = (
-            0  # 대기열 줄의 id (`mail_id`) — 프로세스 안에서만 유일하면 된다
-        )
         # 회신 도착 알림 (CLI 대기 줄) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
         #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
@@ -912,7 +910,6 @@ class AgentRegistry:
         # {상대 주소 → ReplyDebt}. main 과 상주가 **같은 장부**를 쓴다: 적는
         # 자리(main = 메일 배달, 상주 = 항목 시작)와 폴백 배관만 다르다.
         self._reply_debts: dict[str, list[ReplyDebt]] = {}
-        self._debt_seq = 0  # id 를 안 준 빚(main 의 메일 등)의 번호표
         # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
         self.stale_questions = 0
 
@@ -1102,12 +1099,12 @@ class AgentRegistry:
         text = (text or "").strip()
         if not text:
             return "", "empty question"
-        asked_seq = 0
+        asked_in = ""
         if asker != "main":
             tm = self._agents.get(asker)
             if tm is None:
                 return "", f"unknown asker '{asker}'"
-            asked_seq = tm.current_seq
+            asked_in = tm.current_item
         with self._cv:
             # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
             # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
@@ -1120,7 +1117,7 @@ class AgentRegistry:
                     q.asker == asker
                     and q.target == target
                     and q.text == text
-                    and q.asked_seq == asked_seq
+                    and q.asked_in == asked_in
                 ):
                     self._mark_asked(asker, target)
                     return q.id, ""
@@ -1129,7 +1126,7 @@ class AgentRegistry:
                 asker=asker,
                 target=target,
                 text=text,
-                asked_seq=asked_seq,
+                asked_in=asked_in,
             )
             self._questions[q.id] = q
         err = self._deliver_question(q)
@@ -1210,12 +1207,12 @@ class AgentRegistry:
             pass
         self._log_conversation(tm, payload)
 
-    def mark_question_delivered(self, qid: str, seq: int) -> None:
+    def mark_question_delivered(self, qid: str, run_item: str) -> None:
         """상대가 이 질문을 **꺼냈다** — 강제·sweep 은 여기부터 유효하다."""
         with self._cv:
             q = self._questions.get(qid)
-            if q is not None and q.delivered_seq is None:
-                q.delivered_seq = seq
+            if q is not None and q.delivered_in is None:
+                q.delivered_in = run_item
 
     def questions_owed_by(self, addr: str) -> list[Question]:
         """``addr`` 이 답해야 하는 질문 — **배달된 것만** (§3.2 런 스코프)."""
@@ -1223,16 +1220,16 @@ class AgentRegistry:
             return [
                 q
                 for q in self._questions.values()
-                if q.target == addr and q.delivered_seq is not None
+                if q.target == addr and q.delivered_in is not None
             ]
 
-    def questions_asked_in(self, asker: str, seq: int) -> list[Question]:
-        """``asker`` 가 ``seq`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
+    def questions_asked_in(self, asker: str, run_item: str) -> list[Question]:
+        """``asker`` 가 ``run_item`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
         with self._cv:
             return [
                 q
                 for q in self._questions.values()
-                if q.asker == asker and q.asked_seq == seq
+                if q.asker == asker and q.asked_in == run_item
             ]
 
     def open_human_questions(self) -> list[Question]:
@@ -1342,12 +1339,11 @@ class AgentRegistry:
         id: str = "",
     ) -> ReplyDebt:
         """``debtor`` 가 ``to`` 에게 회신을 빚진다 — 요청마다 새 빚(v9.25.0).
-        같은 상대의 요청이 여럿이면 각각 갚아야 한다. ``id`` 를 안 주면
-        번호표를 붙인다(main 에 배달된 `message` — 갚는 도구가 상대만 고른다)."""
+        같은 상대의 요청이 여럿이면 각각 갚아야 한다. ``id`` 를 안 주면 새
+        `r-` id 를 받는다(main 에 배달된 `message` — 갚는 도구가 상대만 고른다)."""
         with self._cv:
             if not id:
-                self._debt_seq += 1
-                id = item_ids.make(item_ids.REPLY, self._debt_seq)
+                id = item_ids.next_id(item_ids.REPLY)
             d = ReplyDebt(
                 to=to, text=text, answers=list(answers or []), hop=hop, id=str(id)
             )
@@ -1409,7 +1405,7 @@ class AgentRegistry:
         독촉은 런 **안**에서 3회 있었다(dispatch 의 빚 목록). 배관만 갈린다:
         main → peer 는 `request`(inbox), 상주 → peer 는 `_deliver_peer_reply`
         (terminal 재주입), 상주 → main 은 mailbox `kind:"reply"`(``meta`` 가
-        seq/success/duration/reply_path 를 싣는다).
+        run(그 런을 연 배달 id)/success/duration/reply_path 를 싣는다).
         """
         n = 0
         summary = f"{_NO_REPLY_LABEL}\n{output}"
@@ -1691,8 +1687,14 @@ class AgentRegistry:
         answers: list | None = None,
         resumed: bool = False,
         images: list[dict] | None = None,
+        item_id: str = "",
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
+
+        ``item_id`` (v10.77.0): 이 배달의 id — 보낸 쪽이 미리 받아 두면(그
+        id 를 결과에 실어 회신과 짝짓는다) 그대로 쓴다. 없으면 종류대로 새로
+        받는다: 질문은 그 질문 id, 사람 발신은 ``u-``, 회신을 기다리는 요청은
+        ``r-``, 그 밖(통지·회신 도착)은 ``n-``. 이 id 가 배달의 유일한 키다.
 
         ``images`` (v10.61.0): 사람이 창에서 붙인 이미지 참조(``ImageRef`` dict,
         웹 `/api/agent/{key}/input` 의 ``images``) — inbox 항목과 🤝 창 메시지에
@@ -1739,14 +1741,19 @@ class AgentRegistry:
         # timestamp precedes any work it triggers, so the team view shows the
         # request ABOVE (before) the work bar, not after it.
         send_ts = time.time()
-        # P0-9a: seq 발급 원자화 — main/peer/웹 스레드가 동시에 request() 하면
-        # 같은 seq 가 나와 replies/reply-<seq>.md 상호 덮어쓰기 + UI dedup 키
-        # 충돌(요청 화살표 드롭)이 가능했다. _cv(RLock 기반) 아래서 증가+캡처.
-        with self._cv:
-            tm.queued += 1
-            seq = tm.queued
+        # id 가 키다 (v10.77.0) — 전역 할당기라 동시 request() 에도 겹치지 않는다
+        # (종전 에이전트별 순번은 P0-9a 의 락과 v8.5.1 의 키 덧붙이기가 필요했다).
+        if not item_id:
+            if question_id:
+                item_id = question_id
+            elif _is_human_addr(author):
+                item_id = item_ids.next_id(item_ids.USER)
+            elif expects_reply:
+                item_id = item_ids.next_id(item_ids.REPLY)
+            else:
+                item_id = item_ids.next_id(item_ids.MAIL)
         item = {
-            "seq": seq,
+            "id": item_id,
             "text": message,
             "author": author,
             "hop": hop,
@@ -1783,11 +1790,9 @@ class AgentRegistry:
             "direction": "in",
             "author": author,
             "text": message,
-            "seq": seq,  # P0-9a: 락 하에서 캡처한 값 — tm.queued 재독은 레이스
+            "item": item_id,
             # 수신자 = 이 에이전트. 누락 시 렌더러 기본값 "main" 이 실려
-            # 의미가 뒤집히고, TeamView ingest 중복제거 키(author:to:seq:
-            # direction)가 **다른 에이전트의 같은 seq 요청**과 충돌해 두
-            # 번째 spawn+task 의 요청 화살표가 드롭됐다 (v8.5.1).
+            # 의미가 뒤집힌다.
             "to": key,
             "ts": send_ts,
             # 표시용 신원 — CLI 는 로스터를 못 보므로 발신자가 실어 보낸다
@@ -1812,9 +1817,9 @@ class AgentRegistry:
     def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
         """이 항목들로 런을 시작한다 — 미러에서 빼고 처리 중으로 적는다.
         꺼냈지만 아직 시작 안 한 항목(배치 수집의 stash)은 미러에 남는다."""
-        seqs = {i.get("seq") for i in items}
+        ids = {i.get("id") for i in items}
         with self._cv:
-            tm.inbox_items = [i for i in tm.inbox_items if i.get("seq") not in seqs]
+            tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight = [dict(i) for i in items]
         self._save_state()
 
@@ -1847,8 +1852,8 @@ class AgentRegistry:
             return []
         me = f"agent:{tm.key}"
         with self._cv:
-            seqs = {i.get("seq") for i in items}
-            tm.inbox_items = [i for i in tm.inbox_items if i.get("seq") not in seqs]
+            ids = {i.get("id") for i in items}
+            tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight.extend(dict(i) for i in items)
         out: list[dict] = []
         from agent_cli.render import get_renderer
@@ -1857,8 +1862,8 @@ class AgentRegistry:
         for item in items:
             author = item.get("author", "main")
             text = item["text"]
-            seq = str(item["seq"])
-            # 웹의 ⏳ 대기 줄은 그 seq 로 **새 런**이 열릴 때만 블록 머리로 옮겨졌다
+            iid = str(item["id"])
+            # 웹의 ⏳ 대기 줄은 그 id 로 **새 런**이 열릴 때만 블록 머리로 옮겨졌다
             # — 런 도중 흡수는 새 런을 열지 않아 배달 뒤에도 "대기" 로 남았다
             # (실측 67qcmb/qa: 7분 생성 중 도착 → 다음 경계에 배달, 카드는 그대로).
             # 흡수를 알리고 conversation.jsonl 에도 남겨 resume 재생이 같게 한다.
@@ -1867,25 +1872,25 @@ class AgentRegistry:
                 "direction": "absorbed",
                 "author": author,
                 "text": text,
-                "seq": item["seq"],
+                "item": iid,
                 "to": tm.key,
                 "ts": time.time(),
-                "absorbed_into": tm.current_seq,
+                "absorbed_into": tm.current_item,
             }
             renderer.agent_message(**absorbed)
             self._log_conversation(tm, absorbed)
             if item.get("question_id"):
-                self.mark_question_delivered(item["question_id"], tm.current_seq)
+                self.mark_question_delivered(item["question_id"], tm.current_item)
             if _is_human_addr(author):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
-                uid = item_ids.make(item_ids.USER, seq)
+                uid = iid
                 self.note_owes(me, author, text, id=uid)
                 out.append(
                     {"user_request": {"id": uid, "author": author, "text": text}}
                 )
                 continue
             if item.get("expects_reply", True):
-                rid = item_ids.make(item_ids.REPLY, seq)
+                rid = iid
                 self.note_owes(
                     me,
                     author,
@@ -1943,7 +1948,7 @@ class AgentRegistry:
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
         tm.state = "idle"
         tm.current_author = "main"
-        tm.current_seq = 0
+        tm.current_item = ""
         self._notify_roster()
 
     def deliver(
@@ -2011,10 +2016,18 @@ class AgentRegistry:
         self._pending_changed()
 
     def _stamp_mail(self, reply: dict) -> None:
-        """대기열 줄 id — ``_cv`` 를 쥔 채로 부른다. 복원분도 새로 찍는다(id 는
-        화면용이라 프로세스를 넘어 이어질 필요가 없다)."""
-        self._mail_seq += 1
-        reply["mail_id"] = self._mail_seq
+        """메일 한 통의 id — ``_cv`` 를 쥔 채로 부른다. 접두는 종류대로(질문은
+        그 ``q-``, 회신을 기대하면 ``r-``, 그 밖은 ``n-``). 이미 있으면(복원분)
+        그대로 둔다 — id 가 그 메일의 키다(v10.77.0)."""
+        if reply.get("item_id"):
+            return
+        if reply.get("kind") == "question" and reply.get("id"):
+            reply["item_id"] = str(reply["id"])  # 질문은 그 질문 id 가 키
+        elif reply.get("expects_reply"):
+            # 회신을 기대하는 message — main 이 이 id 로 빚진다(`reply`)
+            reply["item_id"] = item_ids.next_id(item_ids.REPLY)
+        else:
+            reply["item_id"] = item_ids.next_id(item_ids.MAIL)
 
     def _pending_changed(self) -> None:
         cb = self.on_pending_change
@@ -2121,7 +2134,8 @@ class AgentRegistry:
             "direction": "out",
             "author": from_key,
             "text": text,
-            "seq": tm.handled,
+            # 이 발신을 낸 런 — 웹이 폴백 줄을 그 런 블록에 단다
+            "item": tm.current_item,
             "success": True,
             "to": to,
             "ts": ts if ts is not None else time.time(),
@@ -2232,7 +2246,7 @@ class AgentRegistry:
         ``_handle_request`` 가 inbox 항목을 꺼낼 때 하는 일과 같은 자리.
         안 찍으면 ``questions_owed_by("main")`` 이 영영 비어 main 은 독촉도
         상한도 못 받고, §3.7 로 보류된 회신이 영구 정지한다. main 은 런
-        seq 가 없으므로 0 으로 찍는다 (판정 축은 None 여부).
+        이름이 없으므로 "" 로 찍는다 (판정 축은 None 여부).
         """
         with self._cv:
             out = list(self._pending)
@@ -2240,8 +2254,8 @@ class AgentRegistry:
             for r in out:
                 if r.get("kind") == "question" and r.get("id"):
                     q = self._questions.get(r["id"])
-                    if q is not None and q.delivered_seq is None:
-                        q.delivered_seq = 0
+                    if q is not None and q.delivered_in is None:
+                        q.delivered_in = ""
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
             self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
@@ -2371,9 +2385,7 @@ class AgentRegistry:
             description=tm.description,
             instructions=tm.instructions,
         )
-        # seq 이어가기 — 이전 생의 replies/reply-N.md 를 덮지 않는다.
         fresh.handled = tm.handled
-        fresh.queued = max(tm.queued, tm.handled)
         fresh.created_at = tm.created_at
         fresh.revive = True  # worker 가 ctx 를 resume 모드로 (이력 이어받기)
         self._agents[key] = fresh
@@ -2517,6 +2529,11 @@ class AgentRegistry:
                 )
                 if q is not None
             ]
+            # 번호 잇기 (v10.77.0) — 할당기는 저장하지 않고 남은 id 를 본다
+            item_ids.observe(
+                *(i.get("item_id") for i in self._pending),
+                *(q.id for q in restored),
+            )
 
         revived = 0
         requeued_qids: set[str] = set()
@@ -2538,7 +2555,6 @@ class AgentRegistry:
                 instructions=e.get("instructions", ""),
             )
             tm.handled = int(e.get("handled", 0) or 0)
-            tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
             if isinstance(e.get("created_at"), (int, float)):
                 tm.created_at = e["created_at"]
             self._agents[key] = tm
@@ -2550,8 +2566,8 @@ class AgentRegistry:
             tm.revive = True
             in_flight = [i for i in (e.get("in_flight") or []) if isinstance(i, dict)]
             queued = [i for i in (e.get("inbox") or []) if isinstance(i, dict)]
-            seqs = [int(i.get("seq") or 0) for i in in_flight + queued]
-            tm.queued = max([tm.queued, *seqs])  # 새 seq 가 복원분과 겹치지 않게
+            # 새 id 가 복원분과 겹치지 않게 (v10.77.0 — 할당기는 저장하지 않는다)
+            item_ids.observe(*(i.get("id") for i in in_flight + queued))
             requeued_qids.update(
                 str(i["question_id"])
                 for i in in_flight + queued
@@ -2581,7 +2597,7 @@ class AgentRegistry:
         """재시작이 남긴 항목을 되돌린다 (v9.24.5) — 끊긴 런이 맨 앞.
 
         끊긴 런(처리 중이던 첫 항목)은 계속하기 안내를 붙여 ``request`` 로
-        다시 넣는다: 새 seq·대화창 한 줄·같은 발신자(빚 장부가 같은 상대에게
+        다시 넣는다: 새 id·대화창 한 줄·같은 발신자(빚 장부가 같은 상대에게
         답을 강제). 이미 한 번 이어 하던 항목(``resumed``)이면 감싸지 않고
         그대로 — 재시작이 거듭돼도 안내가 쌓이지 않는다. 나머지(배치의 다른
         항목, 줄 서 있던 요청)는 이미 대화창·장부에 있으니 조용히 되넣는다."""
@@ -2649,9 +2665,9 @@ class AgentRegistry:
                     dropped += 1
                     continue
                 self._questions[q.id] = q
-                if q.delivered_seq is not None:
+                if q.delivered_in is not None:
                     # kick 대상은 **재배달 전에** 확정한다. ②가 큐에 넣은
-                    # 질문을 상대 워커가 곧바로 꺼내 `delivered_seq` 를 찍으면
+                    # 질문을 상대 워커가 곧바로 꺼내 `delivered_in` 을 찍으면
                     # (LLM 호출 **전에** 찍힌다) ③의 집합에 섞여, 방금 배달한
                     # 질문에 독촉까지 날아간다 — 런 하나 낭비 + 상한 조기 소모.
                     kick.add(q.target)
@@ -2659,11 +2675,10 @@ class AgentRegistry:
 
         for q in list(self._questions.values()):
             undelivered_peer = (
-                q.delivered_seq is None
+                q.delivered_in is None
                 and q.target.startswith("agent:")
                 # v9.24.5: 저장된 받은편지함에서 이미 되넣은 질문은 건너뛴다
-                # (재배달하면 두 번 온다). 옛 형식 파일엔 받은편지함이 없어
-                # 종전대로 여기서 재배달한다.
+                # (재배달하면 두 번 온다).
                 and q.id not in requeued_qids
             )
             # ``render=False``: 이 질문은 이미 첫 세션에서 창에 그려졌고
@@ -2677,12 +2692,13 @@ class AgentRegistry:
 
     # ── worker ──────────────────────────────────
 
-    def _persist_reply(self, tm: AgentInstance, seq: int, body: str) -> str:
-        """회신 전문을 항상 디스크에 (over-cap 포인터 + P3 보존 토대)."""
+    def _persist_reply(self, tm: AgentInstance, run_item: str, body: str) -> str:
+        """회신 전문을 항상 디스크에 (over-cap 포인터 + P3 보존 토대). 파일
+        이름은 그 런을 연 배달의 id — 전역에서 유일해 덮어쓸 일이 없다."""
         try:
             replies_dir = tm.home_dir / "replies"
             replies_dir.mkdir(parents=True, exist_ok=True)
-            path = replies_dir / f"reply-{seq}.md"
+            path = replies_dir / f"reply-{run_item}.md"
             path.write_text(body, encoding="utf-8")
             return str(path)
         except OSError:
@@ -2867,7 +2883,7 @@ class AgentRegistry:
             and item.get("expects_reply", True)
         )
 
-    def _with_human_notice(self, tm: AgentInstance, seq: int, output: str) -> str:
+    def _with_human_notice(self, tm: AgentInstance, run_item: str, output: str) -> str:
         """이 런이 **사람에게** 물어 둔 미답 질문을 결과에 실어 알린다.
 
         사람에게는 강제를 못 건다 — 우리 루프가 아니다. 대신 결과에 실어
@@ -2876,7 +2892,9 @@ class AgentRegistry:
         자신이 쓴 최종답으로 ctx 에 남아, 다음 런에서 모델이 하네스 문구를
         모방한다.
         """
-        human_open = [q for q in self.questions_asked_in(tm.key, seq) if q.to_human]
+        human_open = [
+            q for q in self.questions_asked_in(tm.key, run_item) if q.to_human
+        ]
         if not human_open:
             return output
         lines = "\n".join(f'   [{q.id}] "{q.text}"' for q in human_open)
@@ -2889,13 +2907,13 @@ class AgentRegistry:
         """단일 request 처리 — main 위임/peer/배달회신/사람-직접(단건) 공통 경로.
         회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창)."""
         tm.state = "busy"
-        seq = item["seq"]
+        iid = item["id"]
         text = item["text"]
         # 화자 attribution — teammate ctx 에 누가 말했는지 남긴다
         # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
         author = item.get("author", "main")
         tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
-        tm.current_seq = seq  # 이 런에서 거는 질문의 asked_seq (§3.2)
+        tm.current_item = iid  # 이 런의 이름 — 거는 질문의 asked_in (§3.2)
         me = f"agent:{tm.key}"
         self.begin_run(me)
         if item.get("expects_reply", True):
@@ -2907,19 +2925,19 @@ class AgentRegistry:
                 text,
                 answers=item.get("answers") or [],
                 hop=item.get("hop", 0),
-                id=item_ids.make(item_ids.REPLY, seq),
+                id=iid,
             )
         # 이 항목이 질문이면 **꺼낸 지금** 배달로 친다 — 그 전까지는 큐에서
         # 줄만 서 있었고, 강제·sweep 이 걸리면 상대가 읽지도 않은 질문을
         # "(답변 없음)" 으로 닫아 버린다 (§3.2 런 스코프).
         if item.get("question_id"):
-            self.mark_question_delivered(item["question_id"], seq)
+            self.mark_question_delivered(item["question_id"], iid)
         self._notify_roster()
         query = f"[{author}]: {text}" if author != "main" else text
 
         renderer.begin_agent_work(
             key=tm.key,
-            seq=seq,
+            item=iid,
             profile=disp,
             message=text,
             # 요청 발신 시각을 scope_start(nav_ts)로 실어, 스윔레인
@@ -2935,15 +2953,13 @@ class AgentRegistry:
                 query,
                 query_images=item.get("images") or None,
                 # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
-                query_request_id=item_ids.make(
-                    item_ids.USER if human_item else item_ids.REPLY, seq
-                )
+                query_request_id=iid
                 if human_item or item.get("expects_reply", True)
                 else "",
                 user_requests=(
                     [
                         {
-                            "id": item_ids.make(item_ids.USER, seq),
+                            "id": iid,
                             "author": author,
                             "text": text,
                         }
@@ -2964,7 +2980,7 @@ class AgentRegistry:
         finally:
             renderer.end_agent_work(
                 key=tm.key,
-                seq=seq,
+                item=iid,
                 success=success,
                 duration_s=duration,
                 error="" if success else output[:200],
@@ -2972,10 +2988,10 @@ class AgentRegistry:
         # ── 비동기 질문 마무리 (DESIGN.md §3.6·§3.7) ──
         # 독촉은 여기가 아니라 **워커 루프**에 있다 — 런이 끝났다는 사실에
         # 붙는 것이라 핸들러마다 두면 빠진다(실제로 배치 경로에서 빠졌다).
-        # 이 런에서 **건** 질문 중 아직 열린 것 (asked_seq 로 좁힌다 —
+        # 이 런에서 **건** 질문 중 아직 열린 것 (asked_in 으로 좁힌다 —
         # 다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
-        output = self._with_human_notice(tm, seq, output)
-        reply_path = self._persist_reply(tm, seq, output)
+        output = self._with_human_notice(tm, iid, output)
+        reply_path = self._persist_reply(tm, iid, output)
         # ``handled``/``state`` 는 **정리 뒤**에 세운다 (v9.22.4) — 종전엔 여기서
         # idle 로 바꿔, "idle 을 기다렸다가 out 줄·폴백을 읽는" 관찰자(테스트
         # 79곳, 웹의 로스터 갱신)가 아직 안 그려진 순간을 볼 수 있었다(Linux
@@ -3006,7 +3022,7 @@ class AgentRegistry:
                 "direction": "out",
                 "author": tm.key,
                 "text": f"{_NO_REPLY_LABEL}\n{output}" if owed else output,
-                "seq": seq,
+                "item": iid,
                 "success": success,
                 "to": author,
                 "ts": time.time(),
@@ -3024,7 +3040,7 @@ class AgentRegistry:
             self.end_run(
                 me,
                 output,
-                seq=seq,
+                run=iid,
                 success=success,
                 duration_s=duration,
                 reply_path=reply_path,
@@ -3036,14 +3052,14 @@ class AgentRegistry:
     ) -> None:
         """사람-직접 요청 2건+ 를 한 턴에 배치 처리(C-1) — 모두 ``user:*`` 발신
         이라 회신은 대화창 전용(⑥), main mailbox 미배달. main 과 동일하게 대기분
-        전부를 한 응답으로 처리(항목마다 회계 id — 꼬리·answers 가 강제). 첫 항목의 seq/ts 로
+        전부를 한 응답으로 처리(항목마다 회계 id — 꼬리·answers 가 강제). 첫 항목의 id/ts 로
         작업 카드 1개(스윔레인은 각 메시지의 in 화살표가 이 카드로 수렴)."""
         first = items[0]
-        seq = first["seq"]
+        iid = first["id"]
         author0 = first.get("author", "main")
         tm.state = "busy"
         tm.current_author = author0  # 배치 중 ask 는 첫 발신자에게
-        tm.current_seq = seq
+        tm.current_item = iid
         me = f"agent:{tm.key}"
         self.begin_run(me)
         for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
@@ -3051,7 +3067,7 @@ class AgentRegistry:
                 me,
                 it.get("author", ""),
                 it["text"],
-                id=item_ids.make(item_ids.USER, it["seq"]),
+                id=it["id"],
             )
         self._notify_roster()
 
@@ -3062,7 +3078,7 @@ class AgentRegistry:
         query = "\n\n".join(labeled)
         user_requests = [
             {
-                "id": item_ids.make(item_ids.USER, it["seq"]),
+                "id": it["id"],
                 "author": it.get("author", ""),
                 "text": it["text"],
             }
@@ -3072,11 +3088,11 @@ class AgentRegistry:
 
         renderer.begin_agent_work(
             key=tm.key,
-            seq=seq,
+            item=iid,
             profile=disp,
             message=preview,
             req_ts=first.get("ts"),
-            seqs=[it["seq"] for it in items],  # 런 블록이 N개 수신 줄을 머리로
+            items=[it["id"] for it in items],  # 런 블록이 N개 수신 줄을 머리로
         )
         success, output, duration = False, "", 0.0
         waiting = False
@@ -3103,21 +3119,21 @@ class AgentRegistry:
         finally:
             renderer.end_agent_work(
                 key=tm.key,
-                seq=seq,
+                item=iid,
                 success=success,
                 duration_s=duration,
                 error="" if success else output[:200],
             )
         # 사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
         # current_author) — 여기 빠뜨리면 알림이 가장 필요한 곳에 없다.
-        output = self._with_human_notice(tm, seq, output)
-        self._persist_reply(tm, seq, output)
+        output = self._with_human_notice(tm, iid, output)
+        self._persist_reply(tm, iid, output)
         out_payload = {
             "key": tm.key,
             "direction": "out",
             "author": tm.key,
             "text": output,
-            "seq": seq,
+            "item": iid,
             "success": success,
             "to": author0,
             "ts": time.time(),

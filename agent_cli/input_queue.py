@@ -35,7 +35,6 @@ class InputQueue:
         self._items: deque = deque()
         self._cv = threading.Condition()
         self._shutdown = False
-        self._seq = 0
         self.on_change = on_change
 
     def _changed(self) -> None:
@@ -64,11 +63,11 @@ class InputQueue:
         idle 리퍼가 "할 일이 있나"를 묻는 신호라 실제로 할 일이 맞다.
         """
         with self._cv:
-            self._seq += 1
             item = {
                 # 장부 id 형식 그대로 (v10.56.0, `item_ids`) — 이 id 가 꼬리·
                 # `answers`·기록의 `request_id`·웹 취소까지 같은 문자열이다.
-                "id": item_ids.make(item_ids.USER, self._seq),
+                # v10.77.0: 번호는 세션 할당기 하나(`item_ids.next_id`).
+                "id": item_ids.next_id(item_ids.USER),
                 "conn_id": conn_id or "",
                 "nickname": nickname,
                 "text": text,
