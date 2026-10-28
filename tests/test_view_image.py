@@ -297,6 +297,25 @@ class TestCompaction:
             )
             assert ctx._image_viewer == expect
 
+    def test_summariser_sees_the_evicted_pictures_once_each(self, tmp_path):
+        seen: list = []
+        ctx = _ctx(tmp_path, seen=seen)
+        ctx.compact_now()
+        (msg,) = seen[-1]
+        # a.jpg 를 두 번 봤어도 같은 그림은 한 번
+        assert [r["path"] for r in msg["images"]] == ["a.jpg", "b.jpg"]
+        assert msg["content"].endswith(
+            "The images from this transcript are attached below, in this order:"
+            "\n1. a.jpg\n2. b.jpg"
+        )
+
+    def test_blind_model_summariser_gets_no_pictures(self, tmp_path):
+        seen: list = []
+        ctx = _ctx(tmp_path, vision=False, seen=seen)
+        ctx.compact_now()
+        (msg,) = seen[-1]
+        assert "images" not in msg and "attached below" not in msg["content"]
+
     def test_list_survives_resume(self, tmp_path):
         ctx = _ctx(tmp_path)
         ctx.compact_now()
@@ -332,6 +351,11 @@ class TestCompaction:
         ]
         loop._llm._llm_compact_summarize(with_image)
         assert _SUMMARY_IMAGES_LINE in provider.call.call_args.kwargs["system"]
+        assert "what it shows" in _SUMMARY_IMAGES_LINE
+        # 요약기에 그림이 그대로 간다 (공급자 경계가 펼친다)
+        refs = [{"path": "a.png", "width": 2, "height": 2}]
+        loop._llm._llm_compact_summarize([{**with_image[0], "images": refs}])
+        assert provider.call.call_args.kwargs["messages"][0]["images"] == refs
         loop._llm._llm_compact_summarize([{"role": "user", "content": "plain"}])
         system = provider.call.call_args.kwargs["system"]
         assert "IMAGES" not in system

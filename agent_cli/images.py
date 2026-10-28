@@ -291,21 +291,14 @@ def messages_image_tokens(messages: list[dict]) -> int:
     return sum(message_image_tokens(m) for m in messages)
 
 
-# ── 요약기 경계 ──────────────────────────────────────────────────
+# ── 살아 있는 수 상한 — 삭제 ─────────────────────────────────────
 #
 # 살아 있는 이미지 수 상한(v10.59.0 ``keep_recent``·``AGENT_CLI_IMAGE_KEEP``)은
 # v10.77.0 에서 지웠다 — 대화 중간의 참조를 떼면 그 뒤 전체를 다시 prefill
 # 하고(KV 캐시), 말없이 빠진 그림을 모델이 다시 읽는 고리를 만들었다(GLM
 # financial: 11장 → 같은 그림 다시 읽기 25회). 이미지는 붙은 레코드와 함께
-# 압축이 내보낼 때만 사라진다(docs/vision/DESIGN.md §12).
-
-
-def strip_images(messages: list[dict]) -> list[dict]:
-    """``images`` 를 전부 뗀 사본 — 요약기 호출처럼 이미지를 싣지 않는 길."""
-    return [
-        ({k: v for k, v in m.items() if k != "images"} if "images" in m else m)
-        for m in messages
-    ]
+# 압축이 내보낼 때만 사라지고, 그때 요약기도 그 그림을 본다
+# (``strip_images`` 도 v10.77.0 에서 삭제; docs/vision/DESIGN.md §12).
 
 
 # ── 공급자 경계 — 파일에서 읽어 조각으로 ─────────────────────────────
