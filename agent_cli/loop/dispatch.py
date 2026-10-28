@@ -22,6 +22,7 @@ from agent_cli.dialects.recovery.json import describe_json_error
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.ledger import wrong_closer_hint
+from agent_cli.loop.reroute import reroute
 from agent_cli.loop.skill_invoke import _handle_run_skill
 from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
@@ -79,6 +80,22 @@ BATCH_OP_SKIPPED_NOTE = (
     "This op did NOT run. The other ops in this batch were still attempted — "
     "see their own results. Fix this op and re-send only it."
 )
+
+
+def _ops_shape(ops, *, broken_as_empty: bool = False) -> list[dict]:
+    """op 들의 ops shape 레코드 — 층이 바꾼 op 는 ``rewritten_from`` 을 함께
+    (모델에게는 그리지 않는다, `loop/reroute.py`). ``broken_as_empty`` 는 서버
+    파싱 방언의 규칙: 깨진 인자(str)는 실행되지 않으므로 빈 인자로 적는다."""
+    out = []
+    for op in ops:
+        ai = op.action_input
+        if broken_as_empty:
+            ai = ai if isinstance(ai, dict) else {}
+        entry = {"action": op.action, "action_input": ai or {}}
+        if op.rewritten_from is not None:
+            entry["rewritten_from"] = op.rewritten_from
+        out.append(entry)
+    return out
 
 
 def _flag(value, *, default: bool) -> bool:
@@ -342,6 +359,10 @@ class TurnDispatcher:
                         op.action = inferred
                         action_inferred = True
 
+        # 도구를 바꾸는 층 (v10.77.0, loop/reroute.py): 결과가 똑같은 다른 도구로
+        # 바꾼다 — 기록·컨텍스트에는 바뀐 호출이 남는다(아래 ops shape 레코드).
+        rerouted = reroute(turn.ops, self.cfg.tools_list)
+
         # Classify outcome early; the dispatch body may mutate this
         # dict to reflect a B1 (action loop) detection that is only
         # known after we see the chosen action.
@@ -386,22 +407,22 @@ class TurnDispatcher:
         }
         if foreign_source is not None:
             outcome["primitives"].append(f"foreign_parse:{foreign_source}")
+        outcome["primitives"].extend(rerouted)
         # 이 턴의 history 레코드 — **여기서 한 번** 만든다(v10.42.0). 종전엔
         # 관찰을 기록하는 쪽이 원문을 다시 파싱했고, 서버 파싱·구제·이름 복원은
         # 선택 인자 ``corrected_record`` 로 덮어쓰는 구조라 그 인자를 안 넘긴
         # 가상 op 경로(reply·message·answer·ask)가 `{"content": ""}` 를 남겼다.
         # 서버 호출·구제·복원은 ops shape(방언 중립, 바인딩 포맷의 render 가
         # 캐노니컬로 재방출 — 누출 raw 재공급 없음); 텍스트 파싱은 방언의 직렬화.
+        if server_record is not None and rerouted:
+            server_record["ops"] = _ops_shape(turn.ops, broken_as_empty=True)
         if server_record is not None:
             turn.record = server_record
-        elif foreign_source is not None or action_inferred:
+        elif foreign_source is not None or action_inferred or rerouted:
             turn.record = {
                 "role": "assistant",
                 "thought": turn.thought or "",
-                "ops": [
-                    {"action": op.action, "action_input": op.action_input or {}}
-                    for op in turn.ops
-                ],
+                "ops": _ops_shape(turn.ops),
             }
         else:
             turn.record = self.cfg.dialect.serialize_assistant_for_history(llm_text)

@@ -109,36 +109,24 @@ def _msg(n_images: int, text="t") -> dict:
     }
 
 
-class TestKeepRecent:
-    def test_keeps_newest_n_strips_older(self):
-        msgs = [
-            _msg(1, "a"),
-            {"role": "assistant", "content": "x"},
-            _msg(1, "b"),
-            _msg(1, "c"),
-        ]
-        out = images.keep_recent(msgs, 2)
-        assert "images" not in out[0]
-        assert out[0]["content"] == "a"  # 자리표시 글은 그대로
-        assert out[2]["images"] and out[3]["images"]
-        assert msgs[0]["images"]  # 원본은 안 건드린다
-
-    def test_partial_message_keeps_its_last_images(self):
-        out = images.keep_recent([_msg(3, "a"), _msg(1, "b")], 2)
-        assert [r["path"] for r in out[0]["images"]] == ["a2.png"]
-        assert len(out[1]["images"]) == 1
-
-    def test_zero_is_unlimited(self):
-        msgs = [_msg(2, "a"), _msg(2, "b")]
-        assert images.keep_recent(msgs, 0) is msgs
+class TestSummariserBoundary:
+    def test_no_live_image_cap_any_more(self):
+        """v10.77.0 — 살아 있는 수 상한은 지웠다: 대화 중간의 참조를 떼면 KV
+        캐시가 그 뒤 전체로 깨지고 모델이 빠진 그림을 다시 읽었다."""
+        assert not hasattr(images, "keep_recent")
+        assert not hasattr(images, "image_keep")
+        assert not hasattr(images, "IMAGE_KEEP_DEFAULT")
 
     def test_env_knobs(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_IMAGE_KEEP", "3")
         monkeypatch.setenv("AGENT_CLI_IMAGE_MAX_EDGE", "oops")
-        assert images.image_keep() == 3
         assert images.image_max_edge() == images.IMAGE_MAX_EDGE_DEFAULT
-        monkeypatch.delenv("AGENT_CLI_IMAGE_KEEP")
-        assert images.image_keep() == images.IMAGE_KEEP_DEFAULT
+
+    def test_mentions_image_finds_a_placeholder_mid_line(self):
+        assert images.mentions_image(
+            [{"role": "user", "content": "[view_image] → [image: a.png (2×2)]"}]
+        )
+        assert not images.mentions_image([{"role": "user", "content": "plain"}])
+        assert not images.mentions_image([{"role": "user", "content": ["x"]}])
 
     def test_strip_images_removes_all(self):
         out = images.strip_images([_msg(1, "a"), {"role": "user", "content": "b"}])

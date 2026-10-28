@@ -121,6 +121,9 @@ class Op:
     action: str | None = None
     action_input: dict | str | None = None
     truncated: bool = False
+    #: 도구를 바꾸는 층(`loop/reroute.py`)이 바꾸기 전의 호출 ``{action,
+    #: action_input}`` — 레코드에만 남고 모델에게는 그리지 않는다.
+    rewritten_from: dict | None = None
 
 
 @dataclass

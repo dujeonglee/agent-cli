@@ -213,6 +213,12 @@ class AgentLoop:
             "wake": True if ports.wakeable() else None,
             # ``python`` (v10.66.0) — 워커 레지스트리가 선 세션에서만.
             "python": python_resource(),
+            # ``view_image`` (v10.77.0) — 못 본다고 알려진 모델(`supports_vision:
+            # false`)만 뺀다. 모르면(프로브 전) 광고하고 공급자 경계가 판정한다.
+            "vision": None
+            if binding.capabilities is not None
+            and binding.capabilities.supports_vision is False
+            else True,
         }
         for tool_name, tool in TOOLS.items():
             required = tool.requires_handler

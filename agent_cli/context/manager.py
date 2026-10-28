@@ -332,6 +332,9 @@ class ContextManager:
         # [index:]`` to avoid replaying the summarised prefix.
         self._summary: str = ""
         self._file_list: list[str] = []
+        # 압축이 내보낸 레코드의 이미지 (v10.77.0) — 요약 뒤 목록 블록. 요약기는
+        # 그림을 못 받으므로 무엇을 봤는지는 하니스가 결정적으로 적는다.
+        self._image_list: list[str] = []
         self._compaction_count: int = 0
         self._last_compacted_at: str = ""
         self._dynamic_start_index: int = 0
@@ -599,6 +602,16 @@ class ContextManager:
                     "content": (f"## Files touched in earlier turns\n\n{listing}"),
                 }
             )
+        if self._image_list and self._shows_images():
+            # 압축 때만 바뀐다 — 다시 본 그림도 목록에서 빼지 않는다(빼면 이
+            # 앞자리 블록이 바뀌어 대화 전체를 다시 prefill 한다).
+            listing = "\n".join(f"- {p}" for p in self._image_list)
+            result.append(
+                {
+                    "role": "user",
+                    "content": f"{IMAGES_BLOCK_HEAD}\n\n{listing}",
+                }
+            )
 
         # Dynamic slice: served from the incremental render mirror. ``None``
         # (bulk mutation) or a length mismatch (backstop for any missed
@@ -612,9 +625,6 @@ class ContextManager:
             result.extend(group)
         # 서버 파싱 방언: 호출마다 결과가 있게 맞춘다 (v10.20.0).
         result = self.dialect.pair_call_results(result)
-        # 살아 있는 이미지 수 상한 (v10.59.0): 최근 N 장만 참조를 남긴다 —
-        # 기록은 그대로, 자리표시 글은 content 에 남아 있다.
-        result = _images.keep_recent(result, _images.image_keep())
 
         # ── tail annotations (feed time only, never persisted) ──────────
         # Both are appended to the LAST message rather than added as new ones:
@@ -777,6 +787,15 @@ class ContextManager:
     def file_list(self) -> list[str]:
         return list(self._file_list)
 
+    @property
+    def image_list(self) -> list[str]:
+        return list(self._image_list)
+
+    def _shows_images(self) -> bool:
+        """못 본다고 알려진 모델이면 그림이 보인 적이 없다 — 목록을 싣지 않는다."""
+        caps = self.binding.capabilities if self.binding is not None else None
+        return not (caps is not None and caps.supports_vision is False)
+
     # ── Compaction / eviction ────────────────────────
 
     def ensure_within(self, target_tokens: int) -> None:
@@ -901,6 +920,9 @@ class ContextManager:
             # Cap and store.
             self._summary = new_summary[:_SUMMARY_CHAR_CAP]
             self._file_list = self._merge_file_lists(self._file_list, new_paths)
+            self._image_list = self._merge_file_lists(
+                self._image_list, _evicted_images(evict_set)
+            )
             # P0-8a: hidx 재조립 — 레코드 동일성으로 따라간다. 핀된 요청은
             # evict 구간 **안**에서 retained 로 옮겨지므로 슬라이스로는 안 된다.
             hidx_of = {id(m): h for m, h in zip(self._cache, self._cache_hidx)}
@@ -1364,6 +1386,7 @@ class ContextManager:
             {
                 "summary": self._summary,
                 "file_list": list(self._file_list),
+                "image_list": list(self._image_list),
                 "compaction_count": self._compaction_count,
                 "last_compacted_at": self._last_compacted_at,
                 "dynamic_start_index": self._dynamic_start_index,
@@ -1378,6 +1401,7 @@ class ContextManager:
             return
         self._summary = data.get("summary", "") or ""
         self._file_list = list(data.get("file_list", []) or [])
+        self._image_list = list(data.get("image_list", []) or [])
         self._compaction_count = int(data.get("compaction_count", 0) or 0)
         self._last_compacted_at = data.get("last_compacted_at", "") or ""
         self._dynamic_start_index = int(data.get("dynamic_start_index", 0) or 0)
@@ -1444,6 +1468,27 @@ class ContextManager:
     def fork_history_to(self, target_dir: Path) -> Path:
         """Copy this context's history.jsonl to target_dir for fork mode."""
         return store.fork_history(self._history_path, target_dir)
+
+
+#: 요약 뒤 이미지 목록 블록의 머리 (v10.77.0, docs/vision/DESIGN.md §12.3).
+#: "다시 볼 수 있다" 는 사실만 — 다시 보라고 시키지 않는다. 도구 이름을 쓰지
+#: 않는 것은 이 ctx 를 쓰는 루프가 view_image 를 가졌는지 여기서 모르기 때문.
+IMAGES_BLOCK_HEAD = (
+    "## Images viewed in earlier turns — their pictures left with the "
+    "summarized turns; viewing one again shows it"
+)
+
+
+def _evicted_images(records: list[dict]) -> list[str]:
+    """내보낸 레코드들의 이미지 — ``경로 (W×H)``, 처음 본 순서."""
+    out: list[str] = []
+    for rec in records:
+        for r in rec.get("images") or []:
+            if not isinstance(r, dict) or not r.get("path"):
+                continue
+            ref = _images.ImageRef.from_dict(r)
+            out.append(f"{ref.path} ({ref.width}×{ref.height})")
+    return out
 
 
 def _now_iso() -> str:

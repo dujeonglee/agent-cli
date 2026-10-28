@@ -514,7 +514,7 @@ class ToolBridge:
             body = (
                 f"{body}\n[image not attached: ~{image_tokens:,} tokens exceeds the "
                 f"{self._oversized_cap:,}-token per-result cap — downscale it "
-                f"(e.g. with a script) and read the smaller file]"
+                f"(e.g. with a script) and view the smaller file]"
             )
             images, image_tokens = [], 0
         tokens = estimate_tokens(body) + image_tokens
