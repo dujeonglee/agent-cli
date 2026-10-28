@@ -1070,6 +1070,8 @@ LLM이 사용할 수 있는 도구 목록:
 
 `read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native). v10.77.0: `pos`/`end` 에 줄 번호만(`"20"`·`20`) 보내면 편집하지 않고, 그 줄의 지금 ref 를 오류에 보여 줍니다(`end '20' is a bare line number — … That line is now: 20#KT:… Use '20#KT'.` — 35B 최근 런 편집의 18% 가 이 모양이었습니다). 설명은 `op` 의 네 값과 인자를 이름으로 말하고, 안내는 짧아졌습니다:
 
+**바뀐 것이 없으면 그렇게 말합니다 (v10.77.1)**: 새 `lines` 가 그 자리의 줄과 같거나, 넣을 줄이 없거나, `end` 가 `pos` 보다 앞이라 파일이 그대로면, 쓰지 않고 `No change: … — <까닭>. Nothing was written.` 을 돌려줍니다. 종전엔 diff 없는 "Edit complete" 라, 모델이 바뀐 줄 알고 다시 읽고 같은 편집을 되보냈습니다(라이브 GLM: 중복된 두 줄 중 하나를 같은 내용으로 두 번 replace). 같은 내용의 줄은 해시 태그도 같다는 것도 함께 알립니다(ref 의 번호가 그중 하나를 고릅니다).
+
 ```
 1#VR:def hello():
 2#KT:    return "world"

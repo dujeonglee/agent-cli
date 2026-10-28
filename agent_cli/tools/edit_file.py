@@ -340,6 +340,16 @@ def apply_edits_batch_parts(
         for lo, hi, repl, i in sorted(spans, key=lambda s: s[3])
     ]
 
+    # 바뀌지 않는 편집 (v10.77.1) — 새 `lines` 가 그 자리의 줄과 같다. 적용 전에 센다.
+    unchanged = [
+        (lo, hi)
+        for lo, hi, repl, _ in sorted(spans)
+        if hi > lo and repl == file_lines[lo:hi]
+    ]
+    # 아무것도 하지 않는 편집의 까닭 — 넣을 줄 없음 / `end` 가 `pos` 보다 앞
+    empty_insert = any(hi == lo and not repl for lo, hi, repl, _ in spans)
+    reversed_range = any(hi < lo for lo, hi, _r, _ in spans)
+
     # 3. Bottom-up apply: highest line first so lower indices don't shift.
     #    Tie-break by emit index (descending) so same-position inserts keep
     #    their emitted order in the result.
@@ -348,6 +358,20 @@ def apply_edits_batch_parts(
 
     # 4. One write.
     result_text = "\n".join(file_lines)
+    if result_text == original_text:
+        # 아무것도 바뀌지 않았다 — 쓰지 않고 그렇다고 말한다. 종전엔 diff 없는
+        # "Edit complete" 라 모델이 바뀐 줄 알고 다시 읽고 같은 편집을 되보냈다
+        # (라이브 GLM v10.77.0 S4: 편집 2번 + 읽기 2번).
+        msg = _no_change_message(
+            path,
+            unchanged,
+            original_text.split("\n"),
+            empty_insert=empty_insert,
+            reversed_range=reversed_range,
+        )
+        for part in parts:
+            part["content"] += "\n\n" + msg
+        return ToolResult(True, output=msg), parts
     try:
         Path(path).write_text(result_text, encoding="utf-8")
     except Exception as e:
@@ -367,6 +391,50 @@ def apply_edits_batch_parts(
     post_hook(path)
     parts[-1]["content"] += "\n\n" + msg
     return ToolResult(True, output=msg), parts
+
+
+def _no_change_message(
+    path: str,
+    unchanged: list[tuple[int, int]],
+    lines: list[str],
+    *,
+    empty_insert: bool = False,
+    reversed_range: bool = False,
+) -> str:
+    """변화 없는 편집의 관찰 (v10.77.1) — 파일은 그대로이고, 왜 그런지(이미 같은 줄 /
+    넣을 줄 없음 / `end` 가 `pos` 보다 앞), 같은 줄 옆에 같은 내용의 줄이 있으면 그것도.
+    줄 해시는 내용만으로 정해져 같은 내용의 줄은 태그도 같다 — ref 의 줄 번호가
+    그중 하나를 고른다."""
+
+    def span(lo, hi):
+        return f"line {lo + 1}" if hi - lo == 1 else f"lines {lo + 1}–{hi}"
+
+    why = []
+    if unchanged:
+        where = ", ".join(span(lo, hi) for lo, hi in unchanged)
+        why.append(f"the new `lines` are the same as {where} already there")
+    if empty_insert:
+        why.append("there were no `lines` to insert")
+    if reversed_range:
+        why.append("`end` comes before `pos`, so the range is empty")
+    if not why:  # 빈 파일의 유일한 빈 줄을 지운 것처럼 — 결과 글이 그대로다
+        why.append("the result is the same text as before")
+    out = f"No change: '{path}' is unchanged — {'; '.join(why)}. Nothing was written."
+    twins = []
+    for lo, hi in unchanged:
+        for i in range(lo, hi):
+            for j in (i - 1, i + 1):
+                if 0 <= j < len(lines) and not (lo <= j < hi) and lines[j] == lines[i]:
+                    twins.append((i + 1, j + 1))
+    if twins:
+        a, b = twins[0]
+        out += (
+            f" Lines {min(a, b)} and {max(a, b)} have the same content, so they share "
+            f"a tag; the number in the ref picks one of them."
+        )
+    if unchanged:
+        out += ' To remove a line, use `op` "delete"; to replace several lines, give `end`.'
+    return out
 
 
 def _validate_semantics(args: dict) -> str | None:
