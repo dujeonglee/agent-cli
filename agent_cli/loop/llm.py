@@ -34,6 +34,12 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 _MAX_OVERFLOW_RETRIES = 5
+#: 요약 프롬프트의 IMAGES 항목 — 내보내는 구간에 이미지가 있을 때만 FACTS 뒤에.
+_SUMMARY_IMAGES_LINE = (
+    'IMAGES — for each image in the transcript (marked "[image: …]"): its '
+    "path, and what was read from it that this summary does not already "
+    "record.\n"
+)
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
 # session state`` (default 0.8 = leave a 20% margin) and compaction runs the
 # moment the cache EXCEEDS that target — there is no separate trigger
@@ -599,7 +605,12 @@ class LLMCaller:
             "they are not retried.\n"
             "FACTS — keep verbatim: paths, identifiers, commands, config "
             "values, signatures, error strings, and any user "
-            "correction/preference.\n\n"
+            "correction/preference.\n"
+            # 이미지 (v10.77.0, docs/vision/DESIGN.md §12.3): 요약기는 그림을 못
+            # 받는다 — 그림에서 읽은 것 중 아직 글로 남지 않은 것을 모델의 글에서
+            # 끌어내게 한다. 이미지가 없는 압축의 프롬프트는 종전과 바이트 같다.
+            + (_SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
+            + "\n"
             "Rules: use ONLY information present in the transcript — do not "
             "invent or assume. Keep exact identifiers verbatim (paths, "
             "names, numbers, commands). Be concise; stay under 2000 tokens. "

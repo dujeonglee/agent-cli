@@ -10,7 +10,6 @@ import zlib
 from pathlib import Path
 from typing import ClassVar
 
-from agent_cli import images as _images
 from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.result import ToolResult
 
@@ -228,29 +227,6 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
     return ToolResult(True, output="\n".join(parts))
 
 
-def _read_image(path: str, *, modes: bool) -> ToolResult:
-    """이미지 파일의 결과 — 자리표시 줄 + 형식·크기, 참조는 ``images`` 로.
-
-    첫 줄은 :attr:`ImageRef.placeholder` 그대로다: 레코드 ``content`` 의
-    자리표시와 같은 줄이라 공급자 경계가 이미지를 못 싣는 경우에도 모델은
-    "무엇이 있었는지" 를 안다.
-    """
-    try:
-        ref = _images.make_ref(path)
-    except (ValueError, OSError) as e:
-        return ToolResult(False, error=f"read_file failed: {e}")
-    lines = [
-        ref.placeholder,
-        f"{ref.mime}, {ref.bytes:,} bytes — the image is attached to this result.",
-    ]
-    if modes:
-        lines.append(
-            "(line_start/line_end, search and stat do not apply to an image; "
-            "the whole image is shown.)"
-        )
-    return ToolResult(True, output="\n".join(lines), images=[ref.to_dict()])
-
-
 def _read_one(
     spec: dict,
     *,
@@ -301,15 +277,17 @@ def _read_one(
     if denied:
         return ToolResult(False, error=denied)
 
-    # 이미지 (v10.59.0, docs/vision/DESIGN.md): 매직 바이트가 PNG/JPEG/GIF/WebP
-    # 면 글 대신 ``images`` 참조를 돌려준다 — 모델은 이미 PNG 에 read_file 을
-    # 부르고 있었다(UnicodeDecodeError 로 실패). 줄 범위·검색·stat 은 이미지에
-    # 뜻이 없으므로 무시하고 결과에 적는다.
-    if _images.sniff_file(Path(path)) is not None:
-        return _read_image(path, modes=bool(stat or search or line_start))
-
+    # 이미지는 ``view_image`` 의 일이다 (v10.77.0) — 모델이 read_file 로 열면
+    # 도구를 바꾸는 층(`loop/reroute.py`)이 여기 오기 전에 바꾼다. 그 도구가
+    # 없는 루프(못 보는 모델 등)의 이미지는 다른 바이너리와 같은 한 줄이다.
     try:
         text = Path(path).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ToolResult(False, error=f"read_file: {path} is not a text file")
+    except Exception as e:
+        return ToolResult(False, error=f"read_file failed: {e}")
+
+    try:
         all_lines = text.split("\n")
         total = len(all_lines)
 
@@ -347,8 +325,7 @@ class ReadFileTool(Tool):
         "Modes: stat=true (metadata + first 20 lines, NOT a read — follow up "
         "with a real read), search='regex' (matching regions with context, "
         "efficient for targeted lookups), line_start/line_end (partial read, "
-        "1-based inclusive), or none (full file). A PNG/JPEG/GIF/WebP file is "
-        "shown to you as an image (if the model can view images)."
+        "1-based inclusive), or none (full file)."
     )
     oversized_retry_hint = (
         "read a narrower slice up front — search='regex' for a targeted lookup, "

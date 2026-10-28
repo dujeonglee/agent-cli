@@ -1893,6 +1893,7 @@ class TestToolPolicyDeclarations:
             # 🌐 playwright 가 없거나 꺼져 있으면 광고하지 않는다 (v10.39.0).
             "browser": {"requires_handler": "browser"},
             "python": {"requires_handler": "python"},
+            "view_image": {"requires_handler": "vision"},
         }
         defaults = {
             "terminal": False,

@@ -20,7 +20,13 @@ class TestBuiltinOrder:
     def test_file_tools_read_edit_write(self):
         """edit_file's guide builds on read_file's hashline output, and edit is
         the default way to change a file — so it comes before write_file."""
-        assert ORDER[:4] == ["read_file", "edit_file", "write_file", "code_index"]
+        assert ORDER[:5] == [
+            "read_file",
+            "edit_file",
+            "write_file",
+            "code_index",
+            "view_image",  # 파일 묶음의 끝 — 이미지 (v10.77.0)
+        ]
 
     def test_pairs_are_adjacent(self):
         assert _adjacent("ask", "answer")

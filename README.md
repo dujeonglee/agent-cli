@@ -207,7 +207,6 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_THINKING` | `off` | 사고 스위치: `off`/`on` (미설정=**끔**, v9.24.8). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어 — `supports_thinking:true` 모델에서만 요청에 실린다. v10.72.0: `auto` 와 정도(`AGENT_CLI_REASONING_EFFORT`)는 제거 — 켰을 때 얼마나 사고하는지는 서버·모델 기본값이 정한다(모델마다 정도의 키·어휘가 달라 하니스가 번역하면 조용히 틀린다) |
 | `AGENT_CLI_TEMPERATURE` | — | 샘플링 temperature (0~2) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = **보내지 않음**: `models.json` 엔트리의 `temperature` → 서버 기본. `--temperature` 또는 웹 🎲 칩으로 세션 중 변경 |
 | `AGENT_CLI_TOP_P` | — | 샘플링 top_p (0~1) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = 보내지 않음: `models.json` 엔트리의 `top_p` → 서버 기본. `--top-p` 또는 웹 🎲 칩 |
-| `AGENT_CLI_IMAGE_KEEP` | — | 살아 있는 이미지 수 상한 — 최근 N 장만 모델에 보내고 더 오래된 것은 자리표시 글만 (기본 `6`, `0`=무제한; v10.59.0, 아래 "이미지 입력") |
 | `AGENT_CLI_IMAGE_MAX_EDGE` | — | 보내기 전 긴 변 상한(픽셀) — 넘으면 축소 (기본 `2048`, `0`=축소 없음; v10.59.0) |
 | `AGENT_CLI_GRAMMAR` | — | 디코딩 문법 제약: `off` 로 끔 (미설정/`on` = 기본 켬). web UI 📐 노브의 headless 대응. 켜기는 `models.json` 에 `supports_grammar: true` 로 **기록된** 모델에서만 효력 — 미지원(false)·미확인(키 없음) 모델엔 어떤 값으로도 켜지지 않는다 (v9.24.0) |
 | `AGENT_CLI_STREAM_IDLE_TIMEOUT_S` | — | 스트림 무진전(no-token) 한도 초 — 마지막 토큰 이후 N초 무진전이면 재접속·재전송 (keep-alive 는 진전 아님). 0=끔, 기본 600. `--stall` 또는 웹 ⏳ 노브로 세션 중 변경 (v8.55.0) |
@@ -590,7 +589,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 브라우저 UI 에 노출.
 UI 기능:
 - 좌측 어시스턴트 카드 (markdown 렌더링: 헤더 `#`/`##`/`###`, GFM 파이프 표, 순서/비순서 리스트, **bold**/*italic*, 인라인 코드, 펜스 코드 블록) + 우측 사용자 bubble (같은 렌더러). 강조는 CommonMark flanking 규칙을 따릅니다(v9.22.3) — 공백을 사이에 둔 별표(`0 9 * * 1-5`, `2 * 3`)는 글자 그대로 남습니다. **그림 `![alt](src)` (v10.64.0):** 작업 폴더 경로(`![chart](out/chart.png)` — 원본은 클릭)와 래스터 `data:image/png|jpeg|gif|webp;base64,…` 만 그림으로 그립니다. 외부 `http(s)` 그림은 불러오지 않고 `🖼 alt` 링크로만 둡니다 — 그림 태그는 보는 순간 요청이 나가므로, 인젝션된 페이지가 모델에게 `![](https://…?d=<비밀>)` 을 쓰게 하면 클릭 없이 새어 나가기 때문입니다. SVG `data:`·그 밖의 스킴은 글 그대로입니다.
 - 도구 호출(action) / 결과(observation) 인라인 카드, ✓/✗ 상태 표시
-- 이미지 첨부 (v10.60.0): 입력창에 붙여넣기·끌어놓기·📎 → 칩 → 보내기; 사용자 말풍선·`read_file`·`browser screenshot`·MCP 결과에 썸네일. 에이전트 채널도 받음(v10.61.0). 상세는 아래 "이미지 입력" 절.
+- 이미지 첨부 (v10.60.0): 입력창에 붙여넣기·끌어놓기·📎 → 칩 → 보내기; 사용자 말풍선·`view_image`·`browser screenshot`·MCP 결과에 썸네일. 에이전트 채널도 받음(v10.61.0). 상세는 아래 "이미지 입력" 절.
 - 각 카드 모서리에 시각 표시 (`YYMMDD HH:MM:SS`, 마우스 hover 시 전체 날짜+밀리초). agent/skill 내부 카드도 동일. `--resume` 로 이어서 보면 카드들은 **실제 발생 시각**(history 기록 기준)으로 표시되어 재접속 시점과 혼동되지 않음
 - 실시간 스트리밍 (점선 카드로 토큰 누적 → 최종 카드로 교체)
 - 서브에이전트(delegate) 작업은 접히는 그룹 카드로 격리 — 헤더 아무 곳이나 클릭해 접기/펼치기, **긴 카드를 펼쳐 스크롤해도 헤더가 상단에 고정(sticky)돼 어느 위치에서든 접을 수 있고**, 본문 여백 클릭으로도 접힘 (중첩 카드·텍스트 선택은 방해 안 함)
@@ -1016,7 +1015,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 | 도구 | 설명 |
 |------|------|
-| `read_file` | 파일 읽기 (hashline 태그, flat-native — 한 op=한 파일). 여러 파일은 멀티-op 으로 read_file op 을 여러 개 emit |
+| `read_file` | 텍스트 파일 읽기 (hashline 태그, flat-native — 한 op=한 파일). 여러 파일은 멀티-op 으로 read_file op 을 여러 개 emit. 이미지는 `view_image` (v10.77.0) |
 | `write_file` | 파일 생성/덮어쓰기. 작성 content 를 hashline 으로 반환 (read_file 없이 edit_file 직결) |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
@@ -1027,6 +1026,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
+| `view_image` | 이미지 파일(PNG/JPEG/GIF/WebP)을 모델에게 보인다 — 결과에 이미지가 붙어 압축이 요약할 때까지 남는다. 못 본다고 알려진 모델엔 없다 (v10.77.0) |
 | `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "while you were thinking … delivered right below this" 로 알린다(v10.66.2, 문구 v10.67.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 통지는 같은 프롬프트에 연달아 들어간다). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
 | `complete` | 작업 완료 신호 (최종 결과 반환). `result` 는 답으로 전달되는 유일한 글이라(사용자 또는 부른 에이전트) 답을 먼저 쓰고, 한 일에 기대는 답이면 끝에 `Checked:`(무엇을 돌리거나 봤고 무엇이 나왔나)·`Not checked:`(실행 대신 읽어서 추론한 것·안 돌린 것) 두 줄을 붙이라고 설명에 적는다 — 확인할 것이 없는 답엔 두 줄 없음. 같은 틀을 꼬리 `## Open Items` 의 `complete` 줄 바로 아래에도 한 줄로 싣는다 — 35B 는 도구 설명만으로는 따르지 않았다(v10.75.0). 기다리는 용도가 아니다 — 그건 `wait` |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
@@ -1695,13 +1695,13 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 
 > 설계: `docs/vision/DESIGN.md`
 
-모델이 이미지를 보는 길은 둘입니다. **사용자가 보여 주기** — `agent-cli run "이 캡처의 오류가 뭐야?" --image shot.png`(반복 가능), 웹은 입력창에 **붙여넣기·끌어놓기·📎**(v10.60.0). **모델이 열기** — `read_file` 로 PNG/JPEG/GIF/WebP 를 읽으면 글 대신 이미지가 갑니다(fetch 가 `.agent-cli/tmp/downloads/` 에 받은 그림, 모델이 `shell` 로 그린 차트도 같은 길).
+모델이 이미지를 보는 길은 둘입니다. **사용자가 보여 주기** — `agent-cli run "이 캡처의 오류가 뭐야?" --image shot.png`(반복 가능), 웹은 입력창에 **붙여넣기·끌어놓기·📎**(v10.60.0). **모델이 열기** — `view_image` 로 PNG/JPEG/GIF/WebP 를 엽니다(v10.77.0, fetch 가 `.agent-cli/tmp/downloads/` 에 받은 그림, 모델이 `shell` 로 그린 차트도 같은 길). 모델이 습관대로 `read_file` 로 이미지를 열면 하니스가 그 호출을 `view_image` 호출로 바꿉니다 — 기록·컨텍스트에도 바뀐 호출이 남고(원래 호출은 레코드의 `rewritten_from`), 결과에 따로 알리지 않습니다. 이미지를 못 본다고 알려진 모델(`supports_vision: false`)에는 `view_image` 가 없고, `read_file` 은 이미지를 `is not a text file` 한 줄로 돌려줍니다.
 
 - **기록은 참조, 파일이 진실** — history.jsonl 에는 경로·크기·sha256 만 적히고(base64 없음) 글에는 자리표시 줄 `[image: path (W×H)]` 이 남습니다. 보낼 때 파일에서 읽고, 파일이 없거나 바뀌었으면 그 사유가 글로 갑니다. 세션 재개도 같은 파일을 봅니다.
 - **두 공급자** — OpenAI 호환은 `image_url` data URL, Anthropic 은 `image` base64 블록. 서버 네이티브 함수 호출(`native_fc`)에서는 `tool` 메시지에 이미지를 넣지 않고 바로 뒤 user 메시지에 붙입니다(omlx 가 tool 안 이미지를 조용히 버리는 것을 실측).
 - **능력 확인** — `models.json` 의 `supports_vision`; 없으면 두 색 이미지를 보내 답을 검사하는 프로브를 한 번 돌리고 판정을 엔트리에 적는다(v10.68.0). 못 보는 모델에는 이미지를 보내지 않고 모델·사용자 양쪽에 말합니다(`--image` 는 즉시 오류).
-- **크기와 창** — 토큰은 픽셀에 비례합니다(≈ 1K px/token, 1080p ≈ 2K 토큰). 긴 변이 `AGENT_CLI_IMAGE_MAX_EDGE`(2048)를 넘으면 축소, 5MB 를 넘으면 JPEG 재인코딩. **축소는 Pillow 가 있을 때만** 합니다(v10.61.1, `pip install 'agent-cli[image]'`) — 없으면 원본을 그대로 보내고(토큰만 더 듦, 정확도는 같음) 5MB 를 넘는 것만 사유를 적고 거절합니다. 크기 읽기·능력 프로브는 Pillow 없이 됩니다. 이미지는 요약으로 줄지 않고 매 요청 다시 가므로 최근 `AGENT_CLI_IMAGE_KEEP`(6) 장만 보내고 더 오래된 것은 자리표시 글만 남습니다. 이미지 토큰은 관찰의 과대 출력 캡과 턴 예산에 들어갑니다.
-- **웹 (v10.60.0)** — 입력창에 스크린샷을 붙여넣거나(클립보드 파일) 파일을 끌어다 놓거나 📎 로 고르면 즉시 `.agent-cli/tmp/uploads/<epoch>-<이름>` 에 올라가 입력창 위에 칩으로 섭니다(✕ 로 뺌). 보내면 그 경로가 메시지와 함께 가고(글 없이 이미지만도 됨), 에이전트가 바쁘면 다른 메시지처럼 대기열에 섰다가 턴 경계에 주입됩니다. 사용자 말풍선과 `read_file` 결과 행에 썸네일(최대 160px, 클릭하면 원본)이 붙고 `--resume` 재생에도 남습니다. 썸네일은 `GET /api/workspace/file?path=` 가 워크스페이스 안 **이미지만** 서빙합니다. 모델이 못 보는 것으로 확인되면(`supports_vision: false` 또는 첫 이미지 런의 프로브) 📎 가 숨고 붙여넣기에 한 줄로 알립니다 — 미확인이면 받되 그 런 시작에 `●` 한 줄로 알립니다. 에이전트 채널(상주 에이전트와의 대화)은 글만 받습니다.
+- **크기와 창** — 토큰은 픽셀에 비례합니다(≈ 1K px/token, 1080p ≈ 2K 토큰). 긴 변이 `AGENT_CLI_IMAGE_MAX_EDGE`(2048)를 넘으면 축소, 5MB 를 넘으면 JPEG 재인코딩. **축소는 Pillow 가 있을 때만** 합니다(v10.61.1, `pip install 'agent-cli[image]'`) — 없으면 원본을 그대로 보내고(토큰만 더 듦, 정확도는 같음) 5MB 를 넘는 것만 사유를 적고 거절합니다. 크기 읽기·능력 프로브는 Pillow 없이 됩니다. 이미지는 붙은 결과와 함께 컨텍스트에 남고 **압축이 그 결과를 요약할 때만** 빠집니다(v10.77.0 — 종전 `AGENT_CLI_IMAGE_KEEP` 6장 상한은 대화 중간을 바꿔 KV 캐시를 깨고, 말없이 빠진 그림을 모델이 다시 읽는 고리를 만들어 삭제). 압축 때 요약에는 그림에서 읽은 것을 적는 IMAGES 항목이 붙고, 요약 뒤 `## Images viewed in earlier turns` 목록이 무엇을 봤는지 남깁니다. 이미지 토큰은 관찰의 과대 출력 캡과 턴 예산에 들어갑니다.
+- **웹 (v10.60.0)** — 입력창에 스크린샷을 붙여넣거나(클립보드 파일) 파일을 끌어다 놓거나 📎 로 고르면 즉시 `.agent-cli/tmp/uploads/<epoch>-<이름>` 에 올라가 입력창 위에 칩으로 섭니다(✕ 로 뺌). 보내면 그 경로가 메시지와 함께 가고(글 없이 이미지만도 됨), 에이전트가 바쁘면 다른 메시지처럼 대기열에 섰다가 턴 경계에 주입됩니다. 사용자 말풍선과 `view_image` 결과 행에 썸네일(최대 160px, 클릭하면 원본)이 붙고 `--resume` 재생에도 남습니다. 썸네일은 `GET /api/workspace/file?path=` 가 워크스페이스 안 **이미지만** 서빙합니다. 모델이 못 보는 것으로 확인되면(`supports_vision: false` 또는 첫 이미지 런의 프로브) 📎 가 숨고 붙여넣기에 한 줄로 알립니다 — 미확인이면 받되 그 런 시작에 `●` 한 줄로 알립니다. 에이전트 채널(상주 에이전트와의 대화)은 글만 받습니다.
 - **모델이 찍기 (v10.61.0)** — `browser` 의 `screenshot` 모드가 PNG 를 `.agent-cli/tmp/screenshots/` 에 두고 `read_file` 과 같은 모양(자리표시 줄 + 참조)으로 보여 줍니다. **MCP 도구가 돌려준 이미지 조각**도 `.agent-cli/tmp/mcp/` 에 파일로 두고 같은 길로 갑니다(종전엔 base64 전체가 글로 들어가 수만 토큰을 먹고 모델은 보지도 못했습니다). PNG/JPEG/GIF/WebP 가 아니면 저장만 하고 사유를 적습니다.
 - **에이전트 채널 (v10.61.0)** — 상주 에이전트와의 대화창에서도 같은 📎·붙여넣기·끌어놓기로 보냅니다. 그 에이전트 런의 시작 메시지에 이미지가 실리고, ⏳ 대기 줄과 런 머리에 썸네일이 붙으며 `--resume` 재생에도 남습니다(답(`answer_id`)에는 못 붙입니다).
 - **표시** — CLI 는 `🖼 shot.png (1280×720)` 한 줄(주입된 메시지의 이미지도 같은 줄).

@@ -122,7 +122,7 @@ def test_full_read_output_identical_to_format_hashlines(tmp_path):
         assert r.output == format_hashlines(content), repr(content)
 
 
-# ── 이미지 (v10.59.0) ───────────────────────────────────────────────
+# ── 이미지는 view_image 의 일 (v10.77.0) ─────────────────────────────
 
 
 def _png(path, size=(80, 40)):
@@ -132,35 +132,23 @@ def _png(path, size=(80, 40)):
     return path
 
 
-def test_image_file_returns_reference_not_text(tmp_path, monkeypatch):
+def test_image_file_is_not_a_text_file(tmp_path, monkeypatch):
+    """도구를 바꾸는 층이 없거나 view_image 가 없는 루프에서 read_file 에 닿은
+    이미지는 다른 바이너리와 같은 한 줄 — 이미지 분기는 없다."""
     monkeypatch.chdir(tmp_path)
     _png(tmp_path / "shot.png")
     r = _read_one({"path": "shot.png"})
-    assert r.success
-    assert r.output.splitlines()[0] == "[image: shot.png (80×40)]"
-    assert "image/png" in r.output and "attached" in r.output
-    assert r.images[0]["path"] == "shot.png"
-    assert r.images[0]["width"] == 80 and r.images[0]["height"] == 40
-
-
-def test_image_modes_are_ignored_and_said(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _png(tmp_path / "shot.png")
-    r = _read_one({"path": "shot.png", "line_start": 3, "line_end": 9})
-    assert r.success and r.images
-    assert "do not apply to an image" in r.output
-    assert "do not apply" not in _read_one({"path": "shot.png"}).output
-
-
-def test_bmp_is_still_a_decode_error(tmp_path):
-    """공급자가 안 받는 형식은 이미지 분기를 타지 않는다 — 종전 그대로 실패."""
-    from PIL import Image
-
-    p = tmp_path / "x.bmp"
-    Image.new("RGB", (4, 4)).save(p, format="BMP")
-    r = _read_one({"path": str(p)})
     assert not r.success and r.images == []
+    assert r.error == "read_file: shot.png is not a text file"
 
 
-def test_description_mentions_images():
-    assert "PNG/JPEG/GIF/WebP" in ReadFileTool().description
+def test_binary_file_is_not_a_text_file(tmp_path):
+    p = tmp_path / "x.bin"
+    p.write_bytes(b"\x00\xff\xfe\x80")
+    r = _read_one({"path": str(p)})
+    assert r.error == f"read_file: {p} is not a text file"
+
+
+def test_description_leaves_images_to_view_image():
+    d = ReadFileTool().description
+    assert "image" not in d.lower() and "PNG" not in d

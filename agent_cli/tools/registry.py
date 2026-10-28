@@ -31,6 +31,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
 from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.snapshot_tool import SnapshotTool
+from agent_cli.tools.view_image import ViewImageTool
 from agent_cli.tools.virtual import (
     AnswerTool,
     AskTool,
@@ -52,7 +53,7 @@ from agent_cli.tools.write_file import WriteFileTool
 #
 #   files      read → edit → write (edit is the default way to change a file;
 #              its guide builds on read_file's hashline output) → code_index
-#              (``fetch`` feeds edit_file)
+#              (``fetch`` feeds edit_file) → view_image (images, v10.77.0)
 #   execution  shell, fetch, browser (fetch's pair for JavaScript pages),
 #              the two that act later: monitor, schedule — and
 #              snapshot, the way back after shell damaged an input (v10.36.0)
@@ -64,6 +65,9 @@ _ALL_TOOLS: list[Tool] = [
     EditFileTool(),
     WriteFileTool(),
     CodeIndexTool(),
+    # 🖼 read_file 의 짝 (v10.77.0): 이미지는 이 도구로 본다. ``requires_handler
+    # ="vision"`` — 못 보는 모델이면 광고되지 않는다.
+    ViewImageTool(),
     ShellTool(),
     # 🐍 shell 의 짝 (v10.66.0): 상태가 남는 파이썬 — ``requires_handler="python"``,
     # 세션 레지스트리(`runtime.build_py_registry`)가 없으면 광고되지 않는다.

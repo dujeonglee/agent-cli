@@ -1062,26 +1062,21 @@ class TestImagesInContext:
         assert follow["images"] == [_ref("a.png")]
         assert follow["content"].startswith("[image: a.png (1000×1000)]")
 
-    def test_keep_n_strips_old_images_but_not_records(self, ctx, monkeypatch):
+    def test_every_live_image_rides_until_compaction(self, ctx, monkeypatch):
+        """v10.77.0 — 이미지는 붙은 레코드와 함께 압축이 내보낼 때만 빠진다.
+        장수 상한 env 는 더 이상 아무것도 하지 않는다."""
         monkeypatch.setenv("AGENT_CLI_IMAGE_KEEP", "1")
-        ctx.add(
-            {
-                "role": "user",
-                "content": "[image: a.png (1000×1000)]",
-                "images": [_ref("a.png")],
-            }
-        )
-        ctx.add(
-            {
-                "role": "user",
-                "content": "[image: b.png (1000×1000)]",
-                "images": [_ref("b.png")],
-            }
-        )
+        for name in ("a.png", "b.png"):
+            ctx.add(
+                {
+                    "role": "user",
+                    "content": f"[image: {name} (1000×1000)]",
+                    "images": [_ref(name)],
+                }
+            )
         msgs = ctx.get_messages()
-        assert "images" not in msgs[0]
+        assert msgs[0]["images"] == [_ref("a.png")]
         assert msgs[1]["images"] == [_ref("b.png")]
-        assert ctx.get_raw_messages()[0]["images"] == [_ref("a.png")]
 
     def test_image_tokens_count_without_a_byte_ratio(self, ctx):
         before = ctx.get_estimated_tokens()

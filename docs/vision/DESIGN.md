@@ -93,10 +93,8 @@ history.jsonl 의 user 레코드(질의·관찰)에 `images: [ImageRef]` 를 더
 tool 답을 채우는 자리)는 이 user 메시지를 "답 없는 호출"로 오인하면 안 된다 — 꼬리
 메시지와 같은 취급.
 
-**살아 있는 이미지 수 상한(`AGENT_CLI_IMAGE_KEEP`, 기본 6 — 결정, 0=무제한; `images.keep_recent`).** 오래된 레코드의
-이미지는 `get_messages` 에서 참조를 떼고 자리표시 글만 남긴다 — 기록은 그대로.
-한 장 ≈ 0.3~0.8% 창(FHD 2K 토큰/262K)이라 몇 장은 괜찮지만 영상 프레임 수십 장이면
-창이 찬다. 압축이 레코드를 내보내면 자연히 사라진다.
+~~**살아 있는 이미지 수 상한(`AGENT_CLI_IMAGE_KEEP`, 기본 6; `images.keep_recent`).**~~ —
+**v10.77.0 에서 삭제(§12.1).** 이미지는 붙은 레코드와 함께 압축이 내보낼 때만 사라진다.
 
 ### 4.2 provider — 조각으로 펼치기
 
@@ -245,8 +243,8 @@ scratchpad `vision/measure/measure.py`.
 ## 10. 안 하는 것
 
 - 모델 **출력** 이미지(생성) — 범위 밖.
-- 영상 — 프레임 추출은 모델이 `shell ffmpeg` 로 하고 `read_file` 로 본다. 살아 있는 수
-  상한(§4.1)이 그 때 창을 지킨다. 벤치 video 과제가 이걸로 풀리는지는 P3 뒤 확인.
+- 영상 — 프레임 추출은 모델이 `shell ffmpeg` 로 하고 `view_image` 로 본다(v10.77.0 전엔
+  `read_file`). 창은 압축과 턴 예산 가드(§12.1)가 지킨다.
 - PDF 렌더 — 같은 길(`shell` 로 페이지를 PNG 로).
 - 이미지 안의 글을 지시로 삼는 문제(prompt injection) — 글 관찰과 같은 규칙, 별도 방어 없음.
 
@@ -254,9 +252,73 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.77.0 | §12: `view_image` 도구(read_file 이미지 분기 이전), 도구를 바꾸는 층 `loop/reroute.py`(read_file 이미지 → view_image, 레코드에 바뀐 호출 + `rewritten_from`), 장수 상한 `keep_recent`·`AGENT_CLI_IMAGE_KEEP` 삭제(압축만), 요약 IMAGES 항목·`## Images viewed in earlier turns` 블록(`image_list`), read_file 의 텍스트 아님 한 줄. |
 | v10.68.0 | 프로브 결과 영속: `vision_support` 가 판정(답 수신 또는 4xx)이면 `config.fill_model_entry` 로 엔트리의 **빠진** `supports_vision` 만 채운다. 연결 실패·5xx 는 프로세스 한정. 동기: v10.59.0 이전 엔트리 셋이 harbor trial·보드 방마다 다시 프로브했다. |
 | v10.61.3 | 대기 줄·런 머리의 작은 썸네일(`miniThumbs`) — 사용자 검토 1차. |
 | v10.61.1 | Pillow 선택 의존성(`[image]`): `image_size` 헤더 파싱, 프로브 PNG 상수, `has_pillow`, `ImageTooLarge`(5MB 초과만 거절). 사내 미러에 Pillow 가 없는 배포 실측. |
 | v10.61.0 | P3: browser `screenshot` 모드(`BrowserSession.screenshot`, `SCREENSHOT_DIR`) · MCP 이미지 조각 → 파일 + 참조(`_save_mcp_image`, `MCP_IMAGE_DIR`, `IMAGE_EXT`) · 에이전트 채널 이미지(`/api/agent/{key}/input images` → `request(images=)` → inbox → `run_subagent_message(query_images=)`; `agent_msg`·`conversation.jsonl` 에 `images`, 프런트 ⏳ 줄·런 머리 썸네일) · `fresh_upload_path(subdir=)`. 실측(축소·keep-N)은 P4 로 남긴다. |
 | v10.60.0 | P2 웹: `POST /api/images/upload`(공용 스트리밍 `_stream_body_to`, `images.fresh_upload_path`, 매직 바이트 검사) · `GET /api/images/support`(`vision_known` — 프로브 없음) · `GET /api/workspace/file`(이미지만) · `/api/input` chat `images: [path]` → `WebServer.image_refs` 재검증 · 큐→`RunRequest`→런 시작 에코와 턴 경계 주입(`_inject_queued_messages`) 둘 다 `images` · 렌더러 ABC `observation(images=)`/`push_user_message(images=)` · web 페이로드·재생 · 프런트 📎/붙여넣기/끌어놓기 → 칩 → 보내기, 사용자·관찰 썸네일, 못 보는 모델이면 📎 숨김(+ 웹 런 시작 `status` 한 줄) · minimal 주입 에코 `🖼` 줄. 에이전트 채널 이미지는 P3 로 미룸(메일 경로). |
 | v10.59.0 | P1: `images.py`(참조·축소·공급자 경계 `expand`·프로브 이미지), `supports_vision` + `vision_support` 프로브, OpenAI `image_url`/Anthropic `image` 블록, `read_file` 이미지 분기, `ToolResult.images`, 관찰·질의 레코드 `images`, native_fc 는 `tool` 뒤 user 메시지, 토큰 추정·재조정, keep-N, `run --image`, minimal `🖼` 줄, 마법사 질문, 내장 모델 둘 `supports_vision: true`, Pillow 필수. 실측(§8 측정 계획)은 출시 뒤 과제. |
+
+## 12. view_image · 도구를 바꾸는 층 · 압축 (v10.77.0, 2026-10-28)
+
+동기: 9과제 짝 벤치(2026-10-27) GLM financial r2 — JPG 11장을 차례로 읽자 6장 상한이 앞의
+5장을 말없이 뗐고, 모델은 빠진 그림을 다시 읽었다. 다시 읽을 때마다 다른 그림이 밀려나 15턴을
+돌다 시간 초과(같은 그림 다시 읽기 25회). 11장 × 2.2K = 24K 토큰, 262K 창의 9% 라 창에는 여유가
+있었다. 검토(사용자와, 개정안 1~5판)에서 모델이 직접 내리는 hide·20% 예산 방어·꼬리 `## Images`
+목록까지 갔다가, **숨기기도 대화 중간을 바꿔 KV 캐시를 깨므로** 압축에 맡기기로 정했다.
+
+### 12.1 이미지가 빠지는 길은 압축 하나
+
+- `keep_recent`·`image_keep`·`IMAGE_KEEP_DEFAULT`·`AGENT_CLI_IMAGE_KEEP` 삭제(호환층 없음). 대화
+  중간의 참조를 떼면 그 지점부터 끝까지 다시 prefill 한다(GLM 1.3K tok/s 면 뒤 50K 에 40초).
+  압축은 원래 앞부분 전체를 바꾸므로 추가 비용이 없다.
+- 한 턴에 창을 넘는 이미지는 압축이 못 막는다(지금 턴은 못 내보냄) — 기존 `ToolBridge.observe`
+  가 이미 이미지 토큰을 op 캡·턴 예산에 넣는다(v10.59.0). 새 장치 없음.
+- 같은 그림을 다시 보면 새 결과에도 붙고 앞의 것도 그대로다 — 앞의 것을 떼면 캐시가 깨진다.
+
+### 12.2 `view_image` 와 도구를 바꾸는 층
+
+- `view_image(path)` — read_file 의 이미지 분기(`_read_image`)를 옮긴 도구. 결과는 같은 두 줄
+  (자리표시 + `mime, bytes — the image is attached to this result.`). `requires_handler="vision"`:
+  바인딩이 `supports_vision: false` 면 광고하지 않고, 모르면(프로브 전) 광고한다.
+- **구제하지 않는다**(사용자 결정): 목록 `path` 는 `PATH_NOT_ONE` 오류("call view_image once per
+  image"). 관측되면 그때 구제한다.
+- read_file 은 텍스트만 — 설명의 이미지 문장 삭제, 텍스트가 아닌 파일은 `read_file: X is not a
+  text file`(종전 `'utf-8' codec can't decode …`).
+- **층** `agent_cli/loop/reroute.py`: 결과가 똑같다고 보장될 때만 도구를 바꾼다. 규칙 하나 —
+  read_file(매직 바이트가 이미지) → view_image, 루프에 view_image 가 있을 때만(지난 벤치에서
+  read_file 로 이미지 53회 — 관측된 경우). 이미지에 뜻이 없는 `line_start`·`search`·`stat` 은
+  버린다(바뀐 호출이 스키마에 맞게). `_handle_text_path` 가 파싱 직후 부르고, 바꾼 턴의 레코드는
+  ops shape 로 만든다 — **컨텍스트·history 에 바뀐 호출이 남는다**(사용자 결정: 모델의 자기
+  기록이 곧 예시). 원래 호출은 `Op.rewritten_from` → 레코드의 `rewritten_from`(렌더러는
+  `action`·`action_input` 만 읽어 모델에게 안 그린다). 결과에 알림 줄은 없다. turns.jsonl
+  primitives 에 `reroute:read_file>view_image`.
+- 범위: 도구에서 도구로만. 인자 모양 구제는 각 도구 안. `shell cat` → read_file 은 조건부 후보,
+  `shell python` → python 은 뜻이 달라(REPL·인터프리터) 넣지 않는다.
+
+### 12.3 압축할 때 이미지
+
+요약기는 같은 모델이고 이미지를 떼고 받는다(`strip_images`) — 사라지는 것은 아직 글로 옮기지 않은
+그림의 내용과 "무엇을 봤나" 의 기억.
+
+- (a) 요약 프롬프트 FACTS 뒤 `IMAGES — for each image in the transcript (marked "[image: …]"): its
+  path, and what was read from it that this summary does not already record.` — 입력에 자리표시가
+  있을 때만(`images.mentions_image`). 없으면 프롬프트가 종전과 바이트 같다. 개정안의 "a line
+  starting" 은 요약 입력이 `[view_image] → [image: …]` 한 줄로 풀려 사실이 아니라 "marked" 로.
+- (b) 하니스가 내보낸 레코드의 `images` 를 모아(`_evicted_images`, `경로 (W×H)`, 경로 중복 없음)
+  요약·`## Files touched` 뒤에 `## Images viewed in earlier turns — their pictures left with the
+  summarized turns; viewing one again shows it` 블록. `compaction.json` 의 `image_list` 로 resume
+  에도 남는다. 압축 때만 바뀐다 — 다시 본 그림도 빼지 않는다(빼면 앞자리 블록이 바뀌어 대화 전체를
+  다시 prefill). 도구 이름을 쓰지 않는 것은 이 ctx 의 루프가 view_image 를 가졌는지 ctx 가 모르기
+  때문(개정안의 "view_image shows one again" 에서 바꿈). 못 본다고 알려진 모델이면 싣지 않는다.
+- (c) 요약기에 그림 자체를 싣는 안은 a·b 의 측정 뒤 변형으로.
+
+### 12.4 측정과 회귀 판정
+
+10.76.1 기준과 짝, GLM·35B, financial·video 교차 반복. 먼저 셀 것: 층이 바꾼 수와 view_image 를
+직접 부른 수, 같은 이미지 다시 보기 수, view_image 인자 오류 종류별 수, 압축 횟수·첫 압축 턴·압축
+뒤 다시 보기 수·요약의 IMAGES 항목, 그림에서 읽을 값을 틀린 수, 이미지 턴의 TTFT·`cached_tokens`,
+그다음 통과 수·턴 수. **회귀**(어느 한 모델이라도 두 짝 모두에서 두 과제 통과 수가 기준보다 적거나
+다시 보기·압축이 눈에 띄게 늘면)면 이미지를 read_file 로 되돌리고 층은 규칙만 비운 채 남긴다.
+

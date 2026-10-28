@@ -27,9 +27,6 @@ from pathlib import Path
 #: (480×240 ≈ 130, 1280×720 ≈ 890, 1920×1080 ≈ 2,050). Anthropic 공식은
 #: ≈ 750 — 차이는 서버 실측 재조정(``reconcile_actual_tokens``)이 흡수한다.
 IMAGE_PX_PER_TOKEN = 1000
-#: 살아 있는 이미지 수 상한 기본값 — 최근 N 장만 픽셀을 보내고, 더 오래된
-#: 레코드는 자리표시 글만 남긴다 (사용자 결정, 실측 뒤 조정). 0 = 무제한.
-IMAGE_KEEP_DEFAULT = 6
 #: 보내기 전 긴 변 상한 기본값 — 넘으면 Pillow 로 축소 (Anthropic 권장 ≤1568,
 #: OpenAI 고해상도 2048). 실측(§1: 1280×720 에서 60px 글자 오독) 뒤 조정.
 IMAGE_MAX_EDGE_DEFAULT = 2048
@@ -57,11 +54,6 @@ _NOT_SHOWN_TEXT_MODEL = (
     "(image not shown: this model cannot view images — describe it another way, "
     "e.g. run a script that reads the file)"
 )
-
-
-def image_keep() -> int:
-    """``AGENT_CLI_IMAGE_KEEP`` — 살아 있는 이미지 수 상한 (0 = 무제한)."""
-    return _env_int("AGENT_CLI_IMAGE_KEEP", IMAGE_KEEP_DEFAULT)
 
 
 def image_max_edge() -> int:
@@ -146,6 +138,16 @@ class ImageRef:
 
 def is_placeholder_line(line: str) -> bool:
     return line.startswith(_PLACEHOLDER_PREFIX)
+
+
+def mentions_image(messages: list[dict]) -> bool:
+    """메시지 글 어딘가에 자리표시가 있나 — 요약기 입력처럼 레코드가 한 줄
+    글(``[view_image] → [image: …]``)로 풀린 뒤에도 판정한다."""
+    return any(
+        _PLACEHOLDER_PREFIX in m.get("content", "")
+        for m in messages
+        if isinstance(m.get("content"), str)
+    )
 
 
 def make_ref(path: str | Path) -> ImageRef:
@@ -289,36 +291,13 @@ def messages_image_tokens(messages: list[dict]) -> int:
     return sum(message_image_tokens(m) for m in messages)
 
 
-# ── 살아 있는 수 상한 ──────────────────────────────────────────────
-
-
-def keep_recent(messages: list[dict], keep: int) -> list[dict]:
-    """최근 ``keep`` 장만 ``images`` 를 남기고, 더 오래된 메시지의 참조는 뗀다.
-
-    기록은 그대로다 — 요청을 조립할 때만 적용한다. 자리표시 글은 ``content``
-    에 이미 있으므로 모델은 "여기 이미지가 있었다" 를 계속 안다. ``keep=0``
-    은 무제한. 메시지 dict 는 복사해 돌려준다(캐시된 렌더를 건드리지 않는다).
-    """
-    if keep <= 0:
-        return messages
-    out = list(messages)
-    seen = 0
-    for i in range(len(out) - 1, -1, -1):
-        refs = out[i].get("images")
-        if not isinstance(refs, list) or not refs:
-            continue
-        if seen >= keep:
-            m = dict(out[i])
-            del m["images"]
-            out[i] = m
-            continue
-        room = keep - seen
-        if len(refs) > room:
-            m = dict(out[i])
-            m["images"] = list(refs[-room:])
-            out[i] = m
-        seen += min(len(refs), room)
-    return out
+# ── 요약기 경계 ──────────────────────────────────────────────────
+#
+# 살아 있는 이미지 수 상한(v10.59.0 ``keep_recent``·``AGENT_CLI_IMAGE_KEEP``)은
+# v10.77.0 에서 지웠다 — 대화 중간의 참조를 떼면 그 뒤 전체를 다시 prefill
+# 하고(KV 캐시), 말없이 빠진 그림을 모델이 다시 읽는 고리를 만들었다(GLM
+# financial: 11장 → 같은 그림 다시 읽기 25회). 이미지는 붙은 레코드와 함께
+# 압축이 내보낼 때만 사라진다(docs/vision/DESIGN.md §12).
 
 
 def strip_images(messages: list[dict]) -> list[dict]:
