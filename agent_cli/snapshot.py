@@ -350,14 +350,14 @@ class GitSnapshot:
             "`.agent-cli/snapshot.git` (a bare repository; this directory is its work "
             "tree — nothing is added to the directory itself). A snapshot was taken "
             "when this session started and one is taken again just before each "
-            "shell / edit_file / write_file call, so the state before your last "
+            "`shell` / `edit_file` / `write_file` call, so the state before your last "
             "command is always on record."
         )
         howto = (
             "If an input file gets damaged or disappears, call the `snapshot` tool "
-            "with mode `restore` and the file's path — it brings back the most "
+            '`mode` "restore" and the file\'s `path` — it brings back the most '
             "recent snapshot whose content differs from what is on disk now. "
-            "Mode `list` shows the snapshots; `at` picks a specific one."
+            '`mode` "list" shows the snapshots; `at` picks a specific one.'
         )
         lines = [intro, howto]
         if self.nested:

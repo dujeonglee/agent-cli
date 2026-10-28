@@ -1544,7 +1544,7 @@ class TestRunLoopUnknownTool:
         assert "bogus" in observation
         assert "Available:" in observation
         # v10.37.0: 보낸 호출의 한 줄 요약이 원문 인용 앞에 선다.
-        assert "You sent: bogus(" in observation
+        assert "You sent: `bogus`" in observation
         assert "Re-emit it under one of the available names." in observation
         assert observation.index("You sent:") < observation.index("Your prior output:")
 
@@ -1571,7 +1571,7 @@ class TestRunLoopUnknownTool:
             active_tools=["shell", "read_file"],
         )
         observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
-        assert "Unknown tool 'bogus'. Available: read_file, shell, complete" in (
+        assert "Unknown tool `bogus`. Available: read_file, shell, complete" in (
             observation
         )
 
@@ -1676,7 +1676,7 @@ class TestRunLoopSchemaMismatch:
         assert "Missing required field" in observation
         # v10.37.0: 보낸 호출의 한 줄 요약 — 무엇을 보냈고 무엇이 빠졌는지.
         assert (
-            "You sent: write_file() — missing: path, content. "
+            "You sent: `write_file` with no arguments — missing: `path`, `content`. "
             "Re-emit the whole call with every required field." in observation
         )
 
@@ -1711,8 +1711,8 @@ class TestRunLoopSchemaMismatch:
         )
         observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
         assert (
-            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item], '
-            'cmd="unused") — missing: path; unknown: cmd.' in observation
+            'You sent: `edit_file` with `op` "replace", `pos` "12#AB", `lines` [1 item], '
+            '`cmd` "unused" — missing: `path`; unknown: `cmd`.' in observation
         )
         assert "x" * 100 not in observation.split("Your prior output:")[0]
 
@@ -1750,10 +1750,10 @@ class TestRunLoopSchemaMismatch:
             max_turns=5,
         )
         observation = provider.call.call_args_list[1].kwargs["messages"][-1]["content"]
-        assert "Missing required field(s) for 'edit_file': path" in observation
+        assert "Missing required field(s) for `edit_file`: `path`" in observation
         assert (
-            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) '
-            "— missing: path. Re-emit the whole call with every required field."
+            'You sent: `edit_file` with `op` "replace", `pos` "12#AB", `lines` [1 item] '
+            "— missing: `path`. Re-emit the whole call with every required field."
             in observation
         )
 
@@ -5310,7 +5310,7 @@ class TestActionLoopRetriesAreNotRecorded:
         ]
         assert len(nudges) == 1
         assert "MARKER-7731" in nudges[0]
-        assert "Call complete only if the task itself is finished" in nudges[0]
+        assert "Call `complete` only if the task itself is finished" in nudges[0]
         # 다른 행동(pwd)이 통과한 뒤의 호출: 넛지는 접히고 원래 관찰은 남는다
         msgs = self._msgs(provider, 3)
         blob = "\n".join(str(m.get("content", "")) for m in msgs)

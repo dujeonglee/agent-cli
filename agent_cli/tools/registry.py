@@ -402,14 +402,15 @@ def missing_fields_message(
         prop = props.get(name) or {}
         bits = [str(prop.get("type", "any"))]
         if prop.get("enum"):
-            bits.append(" | ".join(str(v) for v in prop["enum"]))
+            bits.append(" | ".join(f'"{v}"' for v in prop["enum"]))
         elif prop.get("description"):
             bits.append(str(prop["description"]).split("\n", 1)[0])
-        return f"{name} ({' — '.join(bits)})"
+        return f"`{name}` ({' — '.join(bits)})"
 
-    accepted = ", ".join(f"{n}*" if n in required else n for n in props)
+    # v10.77.0 표기: 도구·인자는 백틱, enum 값은 큰따옴표.
+    accepted = ", ".join(f"`{n}`*" if n in required else f"`{n}`" for n in props)
     msg = (
-        f"Missing required field(s) for '{tool_name}': "
+        f"Missing required field(s) for `{tool_name}`: "
         + "; ".join(describe(n) for n in missing)
         + "."
     )
@@ -431,7 +432,7 @@ def validate_tool_input(
     if schema is None:
         return (
             False,
-            f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOL_SCHEMAS)}",
+            f"Unknown tool: `{tool_name}`. Available: {', '.join(TOOL_SCHEMAS)}",
             action_input,
         )
 
@@ -448,7 +449,7 @@ def validate_tool_input(
                 return (
                     False,
                     (
-                        f"arguments for '{tool_name}' must be a JSON object, "
+                        f"arguments for `{tool_name}` must be a JSON object, "
                         f"got string: {action_input!r}"
                     ),
                     action_input,
@@ -458,7 +459,7 @@ def validate_tool_input(
         return (
             False,
             (
-                f"arguments for '{tool_name}' must be a JSON object, "
+                f"arguments for `{tool_name}` must be a JSON object, "
                 f"got {type(action_input).__name__}"
             ),
             action_input,
@@ -499,7 +500,7 @@ def validate_tool_input(
                 return (
                     False,
                     (
-                        f"Field '{key}' for '{tool_name}' expected {expected_type}, "
+                        f"Field `{key}` for `{tool_name}` expected {expected_type}, "
                         f"got {type(value).__name__}: {value!r}"
                     ),
                     action_input,
@@ -513,17 +514,17 @@ def validate_tool_input(
             continue
         enum = prop.get("enum")
         if enum and value not in enum:
-            allowed = " | ".join(str(v) for v in enum)
+            allowed = " | ".join(f'"{v}"' for v in enum)
             return (
                 False,
-                f"Field '{key}' for '{tool_name}' must be one of: {allowed} — got {value!r}.",
+                f"Field `{key}` for `{tool_name}` must be one of: {allowed} — got {json.dumps(value, ensure_ascii=False)}.",
                 action_input,
             )
         min_len = prop.get("minLength") or 0
         if min_len and isinstance(value, str) and len(value.strip()) < min_len:
             return (
                 False,
-                f"Field '{key}' for '{tool_name}' must not be empty.",
+                f"Field `{key}` for `{tool_name}` must not be empty.",
                 action_input,
             )
 

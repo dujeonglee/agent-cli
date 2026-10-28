@@ -915,10 +915,10 @@ class TestToolTeammate:
         # 스키마 밖 모드 — 의미론 검증과 디스패치 양쪽에서 거부.
         from agent_cli.tools.registry import TOOLS
 
-        assert "unknown mode" in TOOLS["agent"].validate({"mode": "wait"})
+        assert "unknown `mode`" in TOOLS["agent"].validate({"mode": "wait"})
         reg = make_registry(tmp_path)
         r = tool_agent({"mode": "wait", "key": "agt-x"}, registry=reg)
-        assert not r.success and "unknown mode" in r.error
+        assert not r.success and "unknown `mode`" in r.error
 
     def test_status_and_kill_modes(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -933,7 +933,7 @@ class TestToolTeammate:
     def test_unknown_mode(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         r = tool_agent({"mode": "dance"}, registry=reg)
-        assert not r.success and "unknown mode" in r.error
+        assert not r.success and "unknown `mode`" in r.error
 
 
 # ── 스키마 의미론 검증 (C7) ─────────────────────
@@ -949,7 +949,7 @@ class TestAgentToolValidate:
         assert self._tool().name == "agent"
 
     def test_mode_enum(self):
-        assert "unknown mode" in self._tool().validate({"mode": "fly"})
+        assert "unknown `mode`" in self._tool().validate({"mode": "fly"})
         assert self._tool().validate({"mode": "spawn"}) is None
         assert self._tool().validate({"mode": "status"}) is None
 
@@ -1142,7 +1142,7 @@ class TestFullLoopIntegration:
         wf = get_wf("json_fc")
         sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
         main = _build_tools_section(["agent"], wf, has_agent_registry=True)
-        assert 'mode:"run" only here' in sub
+        assert '`mode` "run" only here' in sub
         assert "PERSISTENT" not in sub.split("Input JSON")[0]
         assert "spawn" in main and "PERSISTENT" in main
 
@@ -3626,7 +3626,7 @@ class TestRunMode:
         registry = MagicMock()
         r = tool_agent({"mode": "bogus"}, registry=registry)
         assert r.success is False
-        assert "unknown mode 'bogus'" in r.error
+        assert 'unknown `mode` "bogus"' in r.error
         assert "spawn / request / status / resume / kill" in r.error
 
     def test_registry_none_error_derives_from_table(self):

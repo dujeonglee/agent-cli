@@ -21,16 +21,16 @@ from agent_cli.tools.result import ToolResult
 #: (관측되면 그때 구제, 2026-10-28 사용자 결정).
 PATH_NOT_ONE = (
     "view_image: path must be one file path; to view several images, "
-    "call view_image once per image"
+    "call `view_image` once per image"
 )
 
 
 class ViewImageTool(Tool):
     name = "view_image"
     description = (
-        "Show an image file to you. A PNG, JPEG, GIF or WebP file is attached to "
-        "this result as an image and stays in your context like any other result; "
-        "read text files with read_file."
+        "Show an image file to you. A PNG, JPEG, GIF or WebP file is attached to this "
+        "result as an image and stays in your context like any other result; read text "
+        "files with `read_file`."
     )
     # 못 보는 모델(`supports_vision: false`)이면 광고하지 않는다 — 판정은
     # 루프가 바인딩의 능력에서 한다(`loop/core.py` 의 ``vision`` 자원).
@@ -79,7 +79,7 @@ class ViewImageTool(Tool):
         if _images.sniff_image(head) is None:
             hint = ""
             if ctx is None or "read_file" in ctx.tools_available:
-                hint = " — read text files with read_file"
+                hint = " — read text files with `read_file`"
             return ToolResult(
                 False,
                 error=f"view_image: {path} is not a PNG, JPEG, GIF or WebP image{hint}",

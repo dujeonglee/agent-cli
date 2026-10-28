@@ -177,7 +177,7 @@ class TestNoStaleTermsReachTheModel:
 
         ok, err, _ = validate_tool_input("read_file", 42)
         assert not ok
-        assert "arguments for 'read_file'" in err
+        assert "arguments for `read_file`" in err
         assert "action_input" not in err
 
     @pytest.mark.parametrize("rel", ["loop/dispatch.py", "loop/tool_bridge.py"])

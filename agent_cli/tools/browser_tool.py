@@ -45,30 +45,29 @@ class BrowserTool(Tool):
     #: tools_list 에서 벗겨져 프롬프트에 나오지 않는다.
     requires_handler = "browser"
     description = (
-        "Headless browser for pages that need JavaScript or interaction (for "
-        "plain HTML use fetch). mode 'open' {url} loads a page and returns its "
-        "snapshot: an accessibility tree where buttons, links, inputs and "
-        "landmarks carry [ref=eN]. Act with a ref: 'click' {ref}; 'type' {ref, "
-        "text, submit?} (submit presses Enter); 'select' {ref, value}; 'press' "
-        "{key}. 'snapshot' {ref?, depth?} re-reads the page or one landmark; "
-        "'find' {text | regex} returns only the matching nodes with their path; "
-        "'text' {ref?} returns the readable text of the page or an element — use "
-        "it for articles and long content, snapshots cut long text. 'screenshot' "
-        "{full_page?} saves a PNG of the viewport (or the whole page) and shows "
-        "it to you if the model can view images — for layout, charts and "
-        "rendered figures the tree cannot describe. 'back', "
-        "'close'. Refs stay valid until the next page load; when an action "
-        "changes the page the result already includes the new snapshot (cut to "
-        "the depth that fits when the page is big — the hidden part is still "
-        "reachable by find/text/snapshot). If a site demands human verification "
-        "(bot challenge) the result says so: never try to answer it — ask the "
-        "user, who can complete it in the browser window when one was opened, or "
-        "use another source. Search engines block automation often; go to a "
-        "site you know directly, or use fetch for plain pages."
+        "Headless browser for pages that need JavaScript or interaction (for plain HTML"
+        ' use `fetch`). `mode` "open" with `url` loads a page and returns its snapshot:'
+        " an accessibility tree where buttons, links, inputs and landmarks carry "
+        '[ref=eN]. Act with a `ref`: "click" with `ref`; "type" with `ref`, `text` and '
+        'optional `submit` (presses Enter); "select" with `ref` and `value`; "press" '
+        'with `key`. "snapshot" (optional `ref`, `depth`) re-reads the page or one '
+        'landmark; "find" with `text` or `regex` returns only the matching nodes with '
+        'their path; "text" (optional `ref`) returns the readable text of the page or '
+        "an element — use it for articles and long content, snapshots cut long text. "
+        '"screenshot" (optional `full_page`) saves a PNG of the viewport (or the whole '
+        "page) and shows it to you if the model can view images — for layout, charts "
+        'and rendered figures the tree cannot describe. "back", "close". Refs stay '
+        "valid until the next page load; when an action changes the page the result "
+        "already includes the new snapshot (cut to the depth that fits when the page is"
+        ' big — the hidden part is still reachable by "find"/"text"/"snapshot"). If a '
+        "site demands human verification (bot challenge) the result says so: never try "
+        "to answer it — ask the user, who can complete it in the browser window when "
+        "one was opened, or use another source. Search engines block automation often; "
+        "go to a site you know directly, or use `fetch` for plain pages."
     )
     oversized_retry_hint = (
-        "snapshot one landmark (snapshot with ref=<its ref>) or a shallower depth, "
-        "find(text=…) the element you need, or text(ref=…) for the article body "
+        '"snapshot" one landmark (its `ref`) or a shallower `depth`, "find" the '
+        'element you need with `text`, or "text" with `ref` for the article body '
         "— not the whole page."
     )
     parameters: ClassVar[dict] = {
@@ -77,41 +76,56 @@ class BrowserTool(Tool):
             "mode": {
                 "type": "string",
                 "enum": list(MODES),
-                "description": " | ".join(MODES),
+                "description": (
+                    '"open" | "snapshot" | "find" | "text" | "screenshot" | "click" | '
+                    '"type" | "select" | "press" | "back" | "close"'
+                ),
             },
             "url": {
                 "type": "string",
                 "minLength": 1,
-                "description": "open: http(s) URL",
+                "description": '"open": http(s) URL',
             },
             "ref": {
                 "type": "string",
-                "description": "click/type/select: the element's [ref=eN]; snapshot/text: optional landmark ref to scope to",
+                "description": (
+                    '"click"/"type"/"select": the element\'s [ref=eN]; '
+                    '"snapshot"/"text": optional landmark ref to scope to'
+                ),
             },
             "text": {
                 "type": "string",
-                "description": "type: the text to enter; find: substring to look for (case-insensitive)",
+                "description": (
+                    '"type": the text to enter; "find": substring to look for '
+                    "(case-insensitive)"
+                ),
             },
             "regex": {
                 "type": "string",
-                "description": "find: regular expression instead of text",
+                "description": '"find": regular expression instead of `text`',
             },
             "submit": {
                 "type": "boolean",
-                "description": "type: press Enter after typing (default false)",
+                "description": '"type": press Enter after typing (default false)',
             },
-            "value": {"type": "string", "description": "select: option value or label"},
+            "value": {
+                "type": "string",
+                "description": '"select": option value or label',
+            },
             "key": {
                 "type": "string",
-                "description": "press: key name, e.g. Enter, Escape, Tab",
+                "description": '"press": key name, e.g. "Enter", "Escape", "Tab"',
             },
             "depth": {
                 "type": "integer",
-                "description": "snapshot: keep only nodes up to this depth below the root",
+                "description": '"snapshot": keep only nodes up to this depth below the root',
             },
             "full_page": {
                 "type": "boolean",
-                "description": "screenshot: capture the whole scrollable page instead of the viewport (default false)",
+                "description": (
+                    '"screenshot": capture the whole scrollable page instead of the '
+                    "viewport (default false)"
+                ),
             },
         },
         "required": ["mode"],
@@ -148,7 +162,7 @@ class BrowserTool(Tool):
         if session is None:
             return ToolResult(
                 False,
-                error="browser: no page is open — call mode 'open' with a url first",
+                error='browser: no page is open — call `mode` "open" with a `url` first',
             )
         # 이동 뒤 자동 스냅샷 예산 — 과대 출력 캡(창/10)의 일부. 캡이 꺼져
         # 있으면(0) 예산도 없다.

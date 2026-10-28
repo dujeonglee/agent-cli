@@ -126,8 +126,8 @@ class TestUnifiedNudge:
             assert "NOT added to context" in n
             assert "Full output saved to" in n
             assert "--- first" in n and "--- last" in n  # excerpt
-            assert "with search set to a regex" in n  # regex route
-            assert "with line_start and line_end" in n  # range route
+            assert "with `search` set to a regex" in n  # regex route
+            assert "with `line_start` and `line_end`" in n  # range route
             assert "read_file(" not in n  # 호출 모양이 아니라 문장 (v10.77.0)
             assert "`agent`" in n and 'mode "run"' in n  # fan-out route
             assert "agent(" not in n  # 호출 모양이 아니라 문장 (v10.75.1)
@@ -150,7 +150,7 @@ class TestUnifiedNudge:
         n = _nudge("shell", self._body(), tools=("read_file",), tmp_path=tmp_path)
         assert 'agent(mode="run"' not in n
         # the other routes survive
-        assert "with search set to a regex" in n and "Next time —" in n
+        assert "with `search` set to a regex" in n and "Next time —" in n
 
     def test_read_routes_omitted_when_read_file_not_callable(self, tmp_path):
         """read_file 이 없는 루프엔 없는 도구를 가리키지 않는다 (v10.77.0)."""
@@ -190,7 +190,7 @@ class TestUnifiedNudge:
         body = self._body(40_000)  # ~ 100 caps
         n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
         assert self._sections(n) == 16
-        assert "still large" in n and "read_file with search" in n
+        assert "still large" in n and "`read_file` with `search`" in n
 
     def test_persist_failure_degrades_without_claiming_a_file(self, monkeypatch):
         monkeypatch.setattr(

@@ -63,7 +63,7 @@ class TestTool:
         )
         assert r.error == (
             f"view_image: {p} is not a PNG, JPEG, GIF or WebP image"
-            " — read text files with read_file"
+            " — read text files with `read_file`"
         )
         r = TOOLS["view_image"].run(
             {"path": str(p)}, ctx=RunContext(tools_available=frozenset())

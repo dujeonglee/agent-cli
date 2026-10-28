@@ -585,7 +585,7 @@ class TestProfileReach:
                 },
                 ctx=no_shell,
             )
-            assert not r.success and "need the shell tool" in r.error
+            assert not r.success and "need the `shell` tool" in r.error
             r = tool._run(
                 {
                     "mode": "add",
@@ -595,7 +595,7 @@ class TestProfileReach:
                 },
                 ctx=no_shell,
             )
-            assert not r.success and "need the shell tool" in r.error
+            assert not r.success and "need the `shell` tool" in r.error
             r = tool._run(
                 {
                     "mode": "add",

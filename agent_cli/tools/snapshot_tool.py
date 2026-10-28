@@ -34,12 +34,12 @@ class SnapshotTool(Tool):
     #: init 실패 — tools_list 에서 벗겨져 프롬프트에 나오지 않는다 (없는 기능을 약속하지 않는다).
     requires_handler = "snapshot"
     description = (
-        "Restore a file from the workspace snapshots the harness takes "
-        "automatically (at session start and before each shell / edit_file / "
-        "write_file call). Use it when an input file got damaged or disappeared: "
-        "mode 'restore' with the file path brings back the most recent snapshot "
-        "whose content differs from what is on disk now (optional 'at' picks a "
-        "specific snapshot). mode 'list' shows the snapshots, newest first."
+        "Restore a file from the workspace snapshots the harness takes automatically "
+        "(at session start and before each `shell` / `edit_file` / `write_file` call). "
+        'Use it when an input file got damaged or disappeared: `mode` "restore" with '
+        "the file `path` brings back the most recent snapshot whose content differs "
+        "from what is on disk now (optional `at` picks a specific snapshot). `mode` "
+        '"list" shows the snapshots, newest first.'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -47,16 +47,22 @@ class SnapshotTool(Tool):
             "mode": {
                 "type": "string",
                 "enum": list(MODES),
-                "description": "restore | list",
+                "description": '"restore" | "list"',
             },
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "restore: file or directory to bring back (relative to the working directory)",
+                "description": (
+                    '"restore": file or directory to bring back (relative to the '
+                    "working directory)"
+                ),
             },
             "at": {
                 "type": "string",
-                "description": "restore: a snapshot id from mode 'list' (default: most recent differing one)",
+                "description": (
+                    '"restore": a snapshot id from "list" (default: most recent '
+                    "differing one)"
+                ),
             },
         },
         "required": ["mode"],

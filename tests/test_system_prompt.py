@@ -154,7 +154,7 @@ class TestMultiOpPromptBranches:
         assert "the array is NOT a" not in section
 
     def test_code_index_one_query_per_op(self, section):
-        assert "Each code_index op runs ONE query" in section
+        assert "Each `code_index` call runs ONE query" in section
         assert "takes a LIST of queries" not in section
 
     def test_code_index_guide_nudges_same_turn_batch(self, section):
@@ -167,7 +167,7 @@ class TestMultiOpPromptBranches:
     def test_delegate_one_task_per_op(self, section):
         # v10.26.0: "ONE task" 는 RUN_DESCRIPTION 한 곳에만 — 인라인 가이드의
         # 머리말("Each run op gives ONE task …")은 그 중복이라 제거됐다.
-        assert 'mode:"run" gives ONE task to a sub-agent' in section
+        assert '`mode` "run" gives ONE task to a sub-agent' in section
         assert "Each run op gives ONE task" not in section
         assert 'Always use the "tasks" array format' not in section
 
@@ -422,7 +422,7 @@ class TestBuildSystemPrompt:
 
         d = TOOLS["edit_file"].description
         assert "taken from the latest output that showed them" in d
-        assert "`code_index` fetch, `write_file`, or an earlier `edit_file`" in d
+        assert '`code_index` "fetch", `write_file`, or an earlier `edit_file`' in d
         assert "A ref from before the file last changed no longer matches" in flat
         assert "never a bare line number" in flat
 
@@ -814,11 +814,11 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["code_index"])
         assert "- code_index:" in prompt
         # The principal modes are documented (representative subset).
-        assert "mode='list'" in prompt
-        assert "mode='fetch'" in prompt
-        assert "mode='lookup'" in prompt
-        assert "mode='callers'" in prompt
-        assert "mode='slice'" in prompt
+        assert '1. "list"' in prompt
+        assert '2. "fetch"' in prompt
+        assert '3. "lookup"' in prompt
+        assert '7. "callers"' in prompt
+        assert '9. "slice"' in prompt
         # Naming convention covers code (.) and C++ (::) and markdown headings.
         assert "Class.method" in prompt
         assert "::" in prompt  # namespace::Class::method
@@ -855,8 +855,8 @@ class TestBuildSystemPrompt:
         can pipe straight into edit_file. The guide must surface that
         invariant — otherwise the model may waste a turn re-reading."""
         prompt = build_system_prompt(_make_caps(), ["code_index"])
-        assert "hashline" in prompt.lower()
-        assert "edit_file" in prompt
+        assert "tagged LINE#HASH:content" in prompt
+        assert "`edit_file`" in prompt
 
     def test_read_file_never_points_at_code_index(self):
         """read_file 설명은 code_index 를 부르지 않는다 — 그 경로 안내는
@@ -1661,7 +1661,7 @@ class TestEditVsWriteRule:
     def test_full_rewrite_of_a_small_file_is_allowed(self):
         d = self._desc(["write_file", "edit_file"])
         assert "Use it for a new file or to rewrite a small file in full" in d
-        assert "to change part of an existing file, edit_file sends only" in d
+        assert "to change part of an existing file, `edit_file` sends only" in d
 
     def test_names_the_way_out_when_an_edit_keeps_failing(self):
         """A model that kept failing edit_file had been told rewriting was off
@@ -1718,9 +1718,9 @@ class TestCodeIndexToldOnce:
     @pytest.mark.parametrize(
         "fact",
         [
-            "mode='list'",
-            "mode='slice'",
-            "mode='build'",
+            '1. "list"',
+            '9. "slice"',
+            '10. "build"',
             ".agent-cli/code_index.db",
             "OUTSIDE the indexed root",
             "Supported extensions:",

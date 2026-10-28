@@ -113,8 +113,8 @@ def tool_history(args: dict, *, session_dir: Path | None = None) -> ToolResult:
         return ToolResult(
             True,
             output=(
-                "No current session resolved; pass sessions='all' or specific "
-                "session_id(s)."
+                'No current session resolved; set `sessions` to "all" or specific '
+                "session id(s)."
             ),
         )
 
@@ -150,7 +150,7 @@ def _resolve_session_dirs(
 
     if "all" in sessions:
         if len(sessions) > 1:
-            return None, "sessions='all' cannot be combined with specific session ids"
+            return None, '`sessions` "all" cannot be combined with specific session ids'
         if not _SESSIONS_DIR.is_dir():
             return [], None
         return [d for d in sorted(_SESSIONS_DIR.iterdir()) if d.is_dir()], None
@@ -362,7 +362,9 @@ def _help(session_dir: Path | None) -> ToolResult:
             "  kind: query=user ask · action=tool-call turn · observation=tool result"
             " · final=complete answer · raw=unparsed"
         ),
-        ("  Default scope = current session; pass sessions='all' or id(s) for others."),
+        (
+            '  Default scope = current session; set `sessions` to "all" or id(s) for others.'
+        ),
         "",
         "Examples:",
         examples,
@@ -379,17 +381,17 @@ def _help(session_dir: Path | None) -> ToolResult:
 class HistoryTool(Tool):
     name = "history"
     description = (
-        "Query past/current session history with SQL. query='SELECT "
-        "… FROM history WHERE …' (read-only). Columns: session, loc, seq, kind"
-        "(query/action/observation/final/raw/system), turn, ts, tools, files, "
-        "author, text. Search by kind/tools/files/author/turn; the text column "
-        "holds the full content of each record. Rows are returned VERBATIM (no "
-        "truncation) — keep a result small by projecting/limiting: e.g. "
-        "SELECT loc, substr(text,1,200) FROM history WHERE … LIMIT 30 to scan, "
-        "then SELECT text … for the one row you want. An oversized result is "
-        "rejected with a narrow-it nudge rather than dumped. Omit the query to "
-        "see the schema + examples + session list. Default scope = current "
-        "session; sessions='all'/id(s) for others."
+        "Query past/current session history with SQL: `query` is a read-only SELECT … "
+        "FROM history WHERE …. Columns: session, loc, seq, "
+        "kind(query/action/observation/final/raw/system), turn, ts, tools, files, "
+        "author, text. Search by kind/tools/files/author/turn; the text column holds "
+        "the full content of each record. Rows are returned VERBATIM (no truncation) — "
+        "keep a result small by projecting/limiting: e.g. SELECT loc, "
+        "substr(text,1,200) FROM history WHERE … LIMIT 30 to scan, then SELECT text … "
+        "for the one row you want. An oversized result is rejected with a narrow-it "
+        "nudge rather than dumped. Omit `query` to see the schema + examples + session "
+        'list. Default scope = current session; `sessions` "all" or session id(s) for '
+        "others."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -406,9 +408,9 @@ class HistoryTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Which sessions populate the table. Default: current session. "
-                    "'all' = every session, or specific session_id(s). Single "
-                    "string accepted (auto-promoted)."
+                    'Which sessions populate the table. Default: current session. "all"'
+                    " = every session, or specific session id(s). A single string is "
+                    "accepted."
                 ),
             },
         },

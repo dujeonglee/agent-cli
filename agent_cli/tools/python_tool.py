@@ -221,7 +221,8 @@ class PythonTool(Tool):
         reg = get_py_registry()
         if reg is None or reg.closed:
             return ToolResult(
-                False, error="python is not available in this run — use shell instead"
+                False,
+                error="`python` is not available in this run — use `shell` instead",
             )
         owner = getattr(ctx, "owner", None) or "main"
         if args.get("reset") is True:

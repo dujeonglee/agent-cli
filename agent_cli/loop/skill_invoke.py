@@ -57,7 +57,7 @@ def _handle_run_skill(
         arguments = str(arguments) if arguments else ""
 
     if not name:
-        return ToolResult(False, error="run_skill: 'name' is required.")
+        return ToolResult(False, error="run_skill: `name` is required.")
 
     # Cycle check (A → B → A). Stack lookup is O(N) but the stack
     # is bounded by ``max_depth`` so this is effectively constant.

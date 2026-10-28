@@ -72,7 +72,7 @@ def _dispatch(args: dict, session_dir) -> ToolResult:
             return ToolResult(True, output=body)
         return ToolResult(
             False,
-            error=(f"unknown mode '{mode}'. Use {' | '.join(MODES)}."),
+            error=(f'unknown `mode` "{mode}". Use {" | ".join(MODES)}.'),
         )
     except memory.MemoryError as ex:
         return ToolResult(False, error=str(ex))
@@ -93,16 +93,16 @@ def _as_id(v):
 class MemoryTool(Tool):
     name = "memory"
     description = (
-        "Record and recall salient session notes that must survive context "
-        "compaction — critical FAILURES (so you don't repeat them), important "
-        "DISCOVERIES (to reuse), DECISIONS (why you chose X), and NOTES. The "
-        "compact index (id, type, summary) is always shown to you under "
-        "'## Session Memory' in the session-state block at the END of your "
-        "context; use mode=get to pull an entry's full detail. "
+        "Record and recall salient session notes that must survive context compaction —"
+        " critical FAILURES (so you don't repeat them), important DISCOVERIES (to "
+        "reuse), DECISIONS (why you chose X), and NOTES. The compact index (id, type, "
+        "summary) is always shown to you under '## Session Memory' in the session-state"
+        ' block at the END of your context; `mode` "get" pulls an entry\'s full detail. '
         "Record proactively when you hit a real dead-end or learn something "
-        "non-obvious. Modes: add (type+summary, optional detail/tags → id), "
-        "get (id), update (id + fields to change), delete (id), list "
-        "(optional type/tag filter). type ∈ failure|discovery|decision|note."
+        'non-obvious. `mode`: "add" (`type` + `summary`, optional `detail`/`tags` → '
+        'id), "get" (`id`), "update" (`id` + the fields to change), "delete" (`id`), '
+        '"list" (optional `type`/`tag` filter). `type` is one of "failure", '
+        '"discovery", "decision", "note".'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -110,34 +110,37 @@ class MemoryTool(Tool):
             "mode": {
                 "type": "string",
                 "enum": list(MODES),
-                "description": "add | get | update | delete | list",
+                "description": '"add" | "get" | "update" | "delete" | "list"',
             },
             "type": {
                 "type": "string",
                 "enum": list(memory.VALID_TYPES),
-                "description": "failure | discovery | decision | note (add/update/list filter)",
+                "description": (
+                    '"failure" | "discovery" | "decision" | "note" ("add"/"update"; '
+                    '"list" filter)'
+                ),
             },
             "summary": {
                 "type": "string",
                 "minLength": 1,
-                "description": "One-line index label (required for add)",
+                "description": 'One-line index label (required for "add")',
             },
             "detail": {
                 "type": "string",
-                "description": "Full content, pulled on demand via get (optional)",
+                "description": 'Full content, pulled on demand by "get" (optional)',
             },
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional keywords for list filtering",
+                "description": 'Optional keywords for "list" filtering',
             },
             "id": {
                 "type": "integer",
-                "description": "Memory id (get/update/delete)",
+                "description": 'Memory id ("get"/"update"/"delete")',
             },
             "tag": {
                 "type": "string",
-                "description": "list mode: filter by a single tag",
+                "description": '"list": filter by a single tag',
             },
         },
         "required": ["mode"],
@@ -158,7 +161,7 @@ class MemoryTool(Tool):
         if mode not in valid:
             return f"invalid mode: {mode!r}. Valid: {list(valid)}"
         if mode in ("get", "update", "delete") and args.get("id") in (None, ""):
-            return f"'id' is required for mode='{mode}'"
+            return f'`id` is required for `mode` "{mode}"'
         return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:

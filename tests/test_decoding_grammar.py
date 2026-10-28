@@ -649,15 +649,15 @@ class TestValidatorAgreesWithTheGrammar:
         ok, err, _ = validate_tool_input("memory", {"mode": "ad"})
         assert not ok
         assert err == (
-            "Field 'mode' for 'memory' must be one of: "
-            "add | get | update | delete | list — got 'ad'."
+            "Field `mode` for `memory` must be one of: "
+            '"add" | "get" | "update" | "delete" | "list" — got "ad".'
         )
 
     def test_min_length_rejected(self):
         from agent_cli.tools.registry import validate_tool_input
 
         ok, err, _ = validate_tool_input("read_file", {"path": " "})
-        assert not ok and err == "Field 'path' for 'read_file' must not be empty."
+        assert not ok and err == "Field `path` for `read_file` must not be empty."
 
     def test_blank_fetch_url_rejected(self):
         """fetch 는 가로채지 않는 일반 도구 — 문법이 꺼진 서버에서는 검증기가
@@ -665,7 +665,7 @@ class TestValidatorAgreesWithTheGrammar:
         from agent_cli.tools.registry import validate_tool_input
 
         ok, err, _ = validate_tool_input("fetch", {"url": "  "})
-        assert not ok and err == "Field 'url' for 'fetch' must not be empty."
+        assert not ok and err == "Field `url` for `fetch` must not be empty."
 
     def test_optional_empty_string_is_still_dropped_not_rejected(self):
         """선택 인자의 "" 는 종전대로 '안 보냄' 으로 벗겨진다 — enum 위반이

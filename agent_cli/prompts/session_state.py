@@ -60,9 +60,9 @@ _COMPACTION_HEAD = (
 )
 _COMPACTION_MEMORY = (
     "If a detail is worth more than its summary — an exact identifier, a failed "
-    "approach — `memory` mode `add` keeps it verbatim, and a memory that the work "
+    'approach — `memory` with `mode` "add" keeps it verbatim, and a memory that the work '
     "ahead will not use — a resolved blocker, a superseded decision, a note on a "
-    "step already finished — goes with `memory` mode `delete` and its id so the "
+    'step already finished — goes with `memory` `mode` "delete" and its `id` so the '
     "index holds only what is still useful. "
 )
 _COMPACTION_TAIL = "Pace and scope stay the same."
@@ -170,7 +170,7 @@ def final_turn_notice(*, reports_to_caller: bool) -> str:
     )
     return (
         "⚠ This is your LAST turn — the run ends after it, whatever you emit. "
-        "Call complete now instead of starting new work. In the result, report "
+        "Call `complete` now instead of starting new work. In the result, report "
         "what you found: what you verified (and how), what you believe but did "
         "not verify, what is still open, and every file you created, changed or "
         f"damaged. {who}"

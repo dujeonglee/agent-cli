@@ -66,55 +66,58 @@ class TestSummarizeCall:
             missing=["path"],
         )
         assert out == (
-            'You sent: edit_file(op="replace", pos="12#AB", lines=[1 item]) '
-            "— missing: path. Re-emit the whole call with every required field."
+            'You sent: `edit_file` with `op` "replace", `pos` "12#AB", `lines` [1 item] '
+            "— missing: `path`. Re-emit the whole call with every required field."
         )
 
     def test_missing_and_unknown_are_both_named(self):
         out = summarize_call(
             "shell", {"cmd": "ls"}, missing=["command"], unknown=["cmd"]
         )
-        assert 'shell(cmd="ls") — missing: command; unknown: cmd.' in out
+        assert '`shell` with `cmd` "ls" — missing: `command`; unknown: `cmd`.' in out
         assert out.endswith("Re-emit the whole call with every required field.")
 
     def test_several_missing_fields_are_comma_joined(self):
         out = summarize_call("write_file", {}, missing=["path", "content"])
-        assert "You sent: write_file() — missing: path, content." in out
+        assert (
+            "You sent: `write_file` with no arguments — missing: `path`, `content`."
+            in out
+        )
 
     def test_no_gaps_asks_to_fix_the_named_argument(self):
         """타입·enum·의미 검증 실패: 빠진 건 없고 앞 문장이 어느 인자인지 말했다."""
         out = summarize_call("memory", {"mode": "nope", "summary": "s"})
         assert out == (
-            'You sent: memory(mode="nope", summary="s"). '
+            'You sent: `memory` with `mode` "nope", `summary` "s". '
             "Fix the argument named above and re-emit the whole call."
         )
 
     def test_hint_override(self):
         out = summarize_call("bogus", {"path": "a"}, hint="Use a listed name.")
-        assert out == 'You sent: bogus(path="a"). Use a listed name.'
+        assert out == 'You sent: `bogus` with `path` "a". Use a listed name.'
 
     def test_argument_order_is_as_sent(self):
         out = summarize_call("t", {"z": 1, "a": 2})
-        assert "t(z=1, a=2)" in out
+        assert "`t` with `z` 1, `a` 2" in out
 
     def test_long_values_do_not_bloat_the_line(self):
         out = summarize_call("write_file", {"content": "x" * 5000}, missing=["path"])
         assert "x" * 50 not in out
-        assert "write_file(content=<5,000 chars>) — missing: path." in out
+        assert "`write_file` with `content` <5,000 chars> — missing: `path`." in out
         assert len(out) < 160
 
     @pytest.mark.parametrize(
         ("tool_input", "args"),
         [
-            (None, ""),
-            ("", '""'),
-            ("not json at all", '"not json at all"'),
-            ("z" * 100, "<100 chars>"),
-            ([{"a": 1}], "[1 item]"),
+            (None, " with no arguments"),
+            ("", ' with ""'),
+            ("not json at all", ' with "not json at all"'),
+            ("z" * 100, " with <100 chars>"),
+            ([{"a": 1}], " with [1 item]"),
         ],
     )
     def test_non_object_input_is_summarized_as_one_value(self, tool_input, args):
-        assert summarize_call("t", tool_input).startswith(f"You sent: t({args})")
+        assert summarize_call("t", tool_input).startswith(f"You sent: `t`{args}")
 
     def test_never_names_a_provider_or_model(self):
         out = summarize_call("edit_file", {"op": "x"}, missing=["path"])
@@ -259,7 +262,7 @@ class TestProbeProgress:
         # 종전 "summarize what you have learned and call complete" 는 complete 을
         # 첫 번째 출구로 제시했다 — 이제 과제가 끝났을 때만, 반복을 끝내려고는 아님
         out = _probe()
-        assert "Call complete only if the task itself is finished" in out
+        assert "Call `complete` only if the task itself is finished" in out
         assert "not to end the repetition" in out
         assert "summarize" not in out
 

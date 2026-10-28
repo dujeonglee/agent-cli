@@ -113,7 +113,7 @@ TASK_GUIDELINES = """\
 - Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.
 - If an approach fails, diagnose the cause before switching tactics.
 - Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.
-- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background: true`, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with `kill <pid>` from the background-jobs list.
+- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with `kill <pid>` from the background-jobs list.
 - Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one — goes through `python`, not Python run from `shell` (an inline `-c`, a heredoc or a script file): state persists between calls, so the costly step runs once and only the attempt changes.
 - Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.
 - Do not introduce new security vulnerabilities.
@@ -247,7 +247,7 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
         )
     else:
         dependency = (
-            "  - If task B depends on task A's result, call run twice: "
+            '  - If task B depends on task A\'s result, call "run" twice: '
             "first A,\n    then use A's result to call B."
         )
     # Inline tool-guide examples show only the action_input dict —
@@ -319,19 +319,20 @@ def _build_code_index_inline(dialect) -> str:
 
     if multi_op:
         batch_para = """\
-  Each code_index op runs ONE query. Read-only (no file writes). To run
-  several queries (modes may be mixed), emit several code_index ops in
+  Each `code_index` call runs ONE query. Read-only (no file writes). To run
+  several queries (modes may be mixed), make several `code_index` calls in
   the same turn."""
     else:
         batch_para = """\
-  Each code_index call runs ONE query. Read-only (no file writes). Run
+  Each `code_index` call runs ONE query. Read-only (no file writes). Run
   several queries with successive calls (modes may differ)."""
-    modes_header = "Ten modes (each op is one query):"
+    modes_header = "Ten values of `mode` (each call is one query):"
 
+    # v10.77.0 표기: 도구·인자는 백틱, 값은 큰따옴표, 호출 모양(mode='list')은 문장으로.
     return f"""\
 
   Persistent code/markdown index backed by a SQLite store at
-  ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
+  `<project_root>/.agent-cli/code_index.db`. Lazy-built on first
   query; sha1-incremental on every call after that, so it stays fresh
   with no manual invalidation.
 
@@ -339,63 +340,61 @@ def _build_code_index_inline(dialect) -> str:
 
   {modes_header}
 
-  1. mode='list' — per-file outline (one symbol per line:
-     ``parent.name (kind) file:start-end``). Replaces read_file:stat
+  1. "list" — per-file outline (one symbol per line:
+     `parent.name (kind) file:start-end`). Replaces `read_file` with `stat`
      for any supported-extension file.
        {list_py}
-     ``search='<regex>'`` filters the outline by symbol name (re.search):
+     `search` (a regex) filters the outline by symbol name (re.search):
        {list_search}
-  2. mode='fetch' — single-symbol body in hashline format
-     (``LINE#HASH:content``) so it pipes straight into edit_file
-     without a separate read_file. Definition wins when a name has
-     both a declaration and a definition. Markdown accepts the heading
-     with or without the marker (``## Setup`` ≡ ``Setup``).
-     After a ``list`` (or ``lookup`` / ``file``) hit, prefer ``fetch``
-     over ``read_file`` with the line range — fetch gives the body
-     hashline-formatted in one call, ready to edit; read_file would
-     return the same lines as plain text and lose the edit_file
-     shortcut.
+  2. "fetch" — single-symbol body tagged LINE#HASH:content, so it pipes
+     straight into `edit_file` without a separate `read_file`. Definition
+     wins when a name has both a declaration and a definition. Markdown
+     accepts the heading with or without the marker ("## Setup" ≡ "Setup").
+     After a "list" (or "lookup" / "file") hit, prefer "fetch" over
+     `read_file` with the line range — "fetch" gives the body tagged in one
+     call, ready to edit; `read_file` would return the same lines without
+     the shortcut.
        {fetch_py}
-  3. mode='lookup' — find a symbol by name ACROSS the whole index.
-     Optional ``symbol_kind`` (function / type / variable / constant /
-     section) filter.
+  3. "lookup" — find a symbol by name ACROSS the whole index.
+     Optional `symbol_kind` ("function" / "type" / "variable" / "constant" /
+     "section") filter.
        {lookup}
-  4. mode='kind' — list every symbol of a given kind in the index.
+  4. "kind" — list every symbol of a given kind in the index.
      Useful for "show me every section/function/type".
        {kind_all}
-  5. mode='file' — every symbol in one file from the index (no re-parse).
+  5. "file" — every symbol in one file from the index (no re-parse).
        {file_q}
-  6. mode='refs' — every reference site for a name. Optional
-     ``ref_kind`` (call / name / type) — ``call`` for invocation sites,
-     ``name`` for bare-identifier mentions (callbacks), ``type`` for
-     identifiers in type position.
+  6. "refs" — every reference site for a name. Optional `ref_kind`
+     ("call" / "name" / "type") — "call" for invocation sites, "name" for
+     bare-identifier mentions (callbacks), "type" for identifiers in type
+     position.
        {refs_q}
-  7. mode='callers' — functions that call this one (from the callgraph).
+  7. "callers" — functions that call this one (from the callgraph).
        {callers_q}
-  8. mode='callees' — functions called by this one.
+  8. "callees" — functions called by this one.
        {callees_q}
-  9. mode='slice' — LLM-context markdown blob: the symbol's
-     definition body plus optional callees / callers / types / macros
-     up to ``depth`` (default 1, max 5). Use this when you need to
-     understand a function in the company of its neighbours.
+  9. "slice" — LLM-context markdown blob: the symbol's definition body
+     plus optional callees / callers / types / macros up to `depth`
+     (default 1, max 5). Use this when you need to understand a function
+     in the company of its neighbours.
        {slice_q}
-  10. mode='build' — force a full rebuild. Rare — the per-query
-      incremental refresh handles normal cases.
+  10. "build" — force a full rebuild. Rare — the per-query incremental
+      refresh handles normal cases.
        {build_q}
 
-  Path scope: ``list`` and ``fetch`` on a path OUTSIDE the indexed root
+  Path scope: "list" and "fetch" on a path OUTSIDE the indexed root
   fall through to an on-demand parse (single file, no DB write).
-  ``lookup``, ``kind``, ``file``, ``refs``, ``callers``, ``callees``,
-  ``slice`` are index-scoped — they only see files under the indexed
-  root. ``build`` always operates on the indexed root.
+  "lookup", "kind", "file", "refs", "callers", "callees" and "slice"
+  are index-scoped — they only see files under the indexed root.
+  "build" always operates on the indexed root.
 
   Naming follows each language's convention:
-  - Python / JavaScript / TypeScript: ``Class.method``
-  - C / C++ / Rust: ``namespace::Class::method`` (or ``Type::method``)
-  - Markdown: heading text (``Setup``) or with marker (``## Setup``)
+  - Python / JavaScript / TypeScript: "Class.method"
+  - C / C++ / Rust: "namespace::Class::method" (or "Type::method")
+  - Markdown: heading text ("Setup") or with marker ("## Setup")
 
   Supported extensions: {exts}.
-  For non-code/non-markdown files, use read_file."""
+  For non-code/non-markdown files, use `read_file`."""
 
 
 _ASK_INLINE = """\
@@ -440,11 +439,11 @@ _ASK_INLINE_RESIDENT = """\
     NOT guess and paper over it with a TODO; guessing is the expensive
     mistake here, not asking.
   - Address it right: by default it goes to whoever gave you this task.
-    If a human must decide, send it to them with `to: "user"` — it lands
-    in their question tray. Do not route a person's decision through an
+    If a human must decide, set `to` to "user" — it lands in their
+    question tray. Do not route a person's decision through an
     intermediary; they may answer on the person's behalf. To ask main or
     another agent — e.g. the sender of a request that arrived while you
-    were working — name them: `to: "main"` or `to: "<agent key>"`.
+    were working — name them: `to` "main" or `to` "<agent key>".
   - Then keep going on everything that does not depend on the answer.
   - When nothing else can proceed, `complete` and report what you did.
     That is not giving up — if an answer comes, it arrives as a new
@@ -1058,7 +1057,7 @@ def build_agent_profiles_section(
     else:
         lines = [
             "## Agent Profiles",
-            'Profiles give a sub-agent a specialist role (mode:"run"):',
+            'Profiles give a sub-agent a specialist role (`agent` with `mode` "run"):',
             indent(run_example),
         ]
     for name, desc in profiles:
@@ -1225,7 +1224,7 @@ def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
     lines = [
         "## Available Skills",
         "Consider using skills for multi-step or specialized workflows.",
-        "Use the run_skill tool to invoke:",
+        "Use the `run_skill` tool to invoke:",
         indented,
     ]
     for skill in skills.values():

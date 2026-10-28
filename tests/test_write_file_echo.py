@@ -18,7 +18,7 @@ def test_short_file_echoes_every_line(tmp_path):
     out = tool_write_file({"path": str(p), "content": "a\nb\nc"}).output
     head, rest = out.split("\n", 1)
     assert head == f"File saved: {p} (3 lines, 5 bytes)"
-    assert rest.startswith("To modify, call edit_file with the hashline refs below")
+    assert rest.startswith("To modify, call `edit_file` with the hashline refs below")
     assert "\n1#" in out and "\n3#" in out
 
 
@@ -29,7 +29,7 @@ def test_long_file_echoes_head_and_tail_only(tmp_path):
     lines = out.split("\n")
     assert lines[0] == f"File saved: {p} (100 lines, {len(content):,} bytes)"
     assert lines[1] == (
-        "Lines 1–10 and 91–100 are tagged below for edit_file; read_file shows "
+        "Lines 1–10 and 91–100 are tagged below for `edit_file`; `read_file` shows "
         "the rest tagged."
     )
     tagged = [ln.split("#", 1)[0] for ln in lines[2:] if "#" in ln]

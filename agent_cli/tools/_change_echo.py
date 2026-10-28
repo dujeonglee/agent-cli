@@ -35,7 +35,7 @@ _REGION_CONTEXT = 3
 _MAX_REGION_LINES = 100
 # Header for the fresh-hashline block; prefix kept as one string so renderers
 # and tests can match it.
-_REGION_HEADER = "Updated region (edit_file refs below):"
+_REGION_HEADER = "Updated region (`edit_file` refs below):"
 _REGION_TRUNCATION_PREFIX = "… region truncated,"
 
 
@@ -83,7 +83,7 @@ def _updated_region_echo(original_text: str, result_text: str) -> str:
     echo = "\n\n".join(blocks)
     if emitted < total:
         echo += (
-            f"\n{_REGION_TRUNCATION_PREFIX} read_file for the rest "
+            f"\n{_REGION_TRUNCATION_PREFIX} `read_file` for the rest "
             f"({total - emitted} more line(s))"
         )
     return echo

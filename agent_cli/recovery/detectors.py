@@ -119,7 +119,7 @@ def detect_unknown_tool(action: str, tools_list: list[str]) -> bool:
     Returns ``True`` when the action references a tool not in
     ``tools_list``. The recovery layer uses this to label the failure
     and skip dispatch — the model sees the resulting observation
-    (currently the same "Unknown tool 'X'. Available: [...]" message
+    (currently the same "Unknown tool `X`. Available: [...]" message
     produced by the leaf-level dispatch).
     """
     return bool(action) and action not in tools_list

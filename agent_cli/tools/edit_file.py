@@ -386,9 +386,9 @@ def _validate_semantics(args: dict) -> str | None:
         # (`_bare_ref_error`, v10.77.0) — 파일 없이는 그 줄을 알 수 없다.
         if v is not None and not isinstance(v, str) and not _is_bare_line(v):
             return (
-                f"'{field}' must be a hashline string like '5#VR', got "
+                f'`{field}` must be a hashline string like "5#VR", got '
                 f"{type(v).__name__} ({v!r}). Re-read the file with "
-                f"read_file to get fresh hashline tags, then retry."
+                f"`read_file` to get fresh hashline tags, then retry."
             )
     return None
 
@@ -414,7 +414,7 @@ class EditFileTool(Tool):
     description = (
         "Change part of an existing file — the default way to modify one. Lines "
         "are addressed by their LINE#HASH refs, taken from the latest output that "
-        "showed them: `read_file`, `code_index` fetch, `write_file`, or an earlier "
+        'showed them: `read_file`, `code_index` "fetch", `write_file`, or an earlier '
         '`edit_file`. `op` says what to do at `pos`: "replace" swaps the lines '
         "from `pos` through `end` (inclusive; just `pos` without `end`) for "
         '`lines`; "append" inserts `lines` after `pos`; "prepend" inserts '
@@ -436,17 +436,23 @@ class EditFileTool(Tool):
             "op": {
                 "type": "string",
                 "enum": list(EDIT_OPS),
-                "description": "replace | append | prepend | delete — what to do at pos (see the description)",
+                "description": (
+                    '"replace" | "append" | "prepend" | "delete" — what to do at `pos` '
+                    "(see the description)"
+                ),
             },
             # pos 에는 minLength 를 두지 않는다 — append/prepend 가 빈 pos 를
             # 파일 끝/처음으로 받는 분기가 실제로 돈다(문서화되진 않았지만).
             "pos": {
                 "type": "string",
-                "description": "Ref of the target line, LINE#HASH like '5#VR' — not a bare number",
+                "description": 'Ref of the target line, LINE#HASH like "5#VR" — not a bare number',
             },
             "end": {
                 "type": "string",
-                "description": "Ref of the last line of an inclusive range (replace/delete), like '9#KT'",
+                "description": (
+                    'Ref of the last line of an inclusive range ("replace"/"delete"), '
+                    'like "9#KT"'
+                ),
             },
             "lines": {
                 "type": "array",

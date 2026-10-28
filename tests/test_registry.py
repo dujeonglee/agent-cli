@@ -143,7 +143,7 @@ class TestEmptyStringStripping:
         "missing") — it reaches the minLength check (v9.24.4) and is rejected
         with the field named, the same rule the decoding grammar enforces."""
         ok, err, _ = validate_tool_input("shell", {"command": ""})
-        assert ok is False and err == "Field 'command' for 'shell' must not be empty."
+        assert ok is False and err == "Field `command` for `shell` must not be empty."
         ok, err, _ = validate_tool_input("shell", {"command": "  \n "})
         assert ok is False and "must not be empty" in err
 
@@ -301,7 +301,7 @@ class TestSemanticValidationHook:
         assert not ok
         # 정밀화 계약 ②: 관찰 문구는 도구의 짧은 오류 그대로 —
         # 전체 스키마 전문("Expected: {")은 shape 실패에만 동봉
-        assert err == "'path' is required for mode='fetch'"
+        assert err == '`path` is required for `mode` "fetch"'
         assert "Expected: {" not in err
 
     def test_missing_field_message_is_one_line(self):
@@ -313,18 +313,18 @@ class TestSemanticValidationHook:
         ok, err, _ = validate_tool_input("memory", {"type": "decision", "summary": "x"})
         assert not ok and "\n" not in err and "Expected: {" not in err
         assert err.startswith(
-            "Missing required field(s) for 'memory': mode (string — add | get"
+            'Missing required field(s) for `memory`: `mode` (string — "add" | "get"'
         )
-        assert "Parameters: mode*, type, summary" in err
+        assert "Parameters: `mode`*, `type`, `summary`" in err
         ok, err, _ = validate_tool_input("read_file", {})
-        assert not ok and "path (string" in err and "\n" not in err
+        assert not ok and "`path` (string" in err and "\n" not in err
 
     def test_run_defends_direct_callers(self):
         # 로직 1곳(validate)·실행 2곳 — 직접 호출자도 같은 문구로 거절
         from agent_cli.tools import TOOLS
 
         r = TOOLS["code_index"].run({"mode": "fetch"})
-        assert not r.success and r.error == "'path' is required for mode='fetch'"
+        assert not r.success and r.error == '`path` is required for `mode` "fetch"'
 
     def test_per_tool_validate_semantics(self):
         from agent_cli.tools import TOOLS
@@ -340,7 +340,7 @@ class TestSemanticValidationHook:
         )
         assert (
             TOOLS["memory"].validate({"mode": "get"})
-            == "'id' is required for mode='get'"
+            == '`id` is required for `mode` "get"'
         )
         assert TOOLS["memory"].validate({"mode": "list"}) is None
         assert (
@@ -374,5 +374,6 @@ class TestSemanticValidationHook:
         assert outcome.get("failure_signal") == "SCHEMA_MISMATCH"  # 이전엔 {}
         # 모델이 받는 관찰은 여전히 짧은 도구 문구
         obs = [m for m in st.messages if m["role"] == "user"][-1]
-        assert "'path' is required for mode='fetch'" in obs["content"]
+        assert '`path` is required for `mode` "fetch"' in obs["content"]
+        assert "code_index(" not in obs["content"]  # 받은 호출도 문장으로 (v10.77.0)
         assert "Expected: {" not in obs["content"]

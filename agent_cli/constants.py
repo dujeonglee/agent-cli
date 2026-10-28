@@ -115,8 +115,8 @@ def open_debts(port) -> list[dict]:
 OUTPUT_TRUNCATED_NOTICE = (
     "⚠️ Your previous response was cut off at the output-token limit, so "
     "its action was incomplete and was NOT executed. Retry with a smaller "
-    "unit — e.g. build a large file incrementally with edit_file instead "
-    "of one big write_file."
+    "unit — e.g. build a large file incrementally with `edit_file` instead "
+    "of one big `write_file`."
 )
 
 # v10.11.0: the cut was the loop's window-fit clamp (the context was full),
@@ -137,7 +137,7 @@ RUNAWAY_NOTICE = (
     "degenerated into {what}, so the stream was stopped. Its action was "
     "incomplete and was NOT executed. Re-emit the action from the start as "
     "a smaller unit — a shorter command, or build a large file incrementally "
-    "with edit_file."
+    "with `edit_file`."
 )
 
 # v10.19.1: the response ended in the middle of a native tool call. omlx sends
@@ -150,8 +150,8 @@ INCOMPLETE_TOOL_CALL_NOTICE = (
     "⚠️ Your previous response ended in the middle of a tool call, so the "
     "call was incomplete and was NOT executed. One call was too large for a "
     "single response. Retry with a smaller unit — e.g. write the first part "
-    "of a large file with write_file, then add the rest in further calls "
-    "with edit_file."
+    "of a large file with `write_file`, then add the rest in further calls "
+    "with `edit_file`."
 )
 
 # v10.20.0: the server sent an error inside the stream (anything but the

@@ -1,16 +1,16 @@
 ## Available Tools
-- read_file: Read a text file. Each line comes back tagged LINE#HASH:content; edits address lines by these tags. With no mode you get the whole file. line_start and line_end return that range of lines (1-based, inclusive). search returns the lines matching a regex, each with `context` lines around it. stat returns only the line count, size and first 20 lines — the file is not read yet. A whole-file read too large for one context is not delivered: you get an excerpt and how to read the rest in parts.
-  Input JSON: {"path": "string, required — File path to read", "line_start": "integer — First line to return (1-based). Omit to start at line 1.", "line_end": "integer — Last line to return (1-based, inclusive). Omit to read to the end.", "search": "string — Regex; returns only the matching lines, each with `context` lines around it.", "context": "integer — Lines shown before and after each search match (default 5).", "stat": "boolean — Return only the line count, size and first 20 lines — the file is not read."}
-- edit_file: Change part of an existing file — the default way to modify one. Lines are addressed by their LINE#HASH refs, taken from the latest output that showed them: `read_file`, `code_index` fetch, `write_file`, or an earlier `edit_file`. `op` says what to do at `pos`: "replace" swaps the lines from `pos` through `end` (inclusive; just `pos` without `end`) for `lines`; "append" inserts `lines` after `pos`; "prepend" inserts `lines` before `pos`; "delete" removes `pos` through `end` and takes no `lines`.
-  Input JSON: {"path": "string, required — File to change", "op": "string, required — replace | append | prepend | delete — what to do at pos (see the description)", "pos": "string, required — Ref of the target line, LINE#HASH like '5#VR' — not a bare number", "end": "string — Ref of the last line of an inclusive range (replace/delete), like '9#KT'", "lines": "array<string> — The new lines, as they should appear in the file — without LINE#HASH: tags"}
+- read_file: Read a text file. Each line comes back tagged LINE#HASH:content; edits address lines by these tags. With no mode you get the whole file. `line_start` and `line_end` return that range of lines (1-based, inclusive). `search` returns the lines matching a regex, each with `context` lines around it. `stat` returns only the line count, size and first 20 lines — the file is not read yet. A whole-file read too large for one context is not delivered: you get an excerpt and how to read the rest in parts.
+  Input JSON: {"path": "string, required — File path to read", "line_start": "integer — First line to return (1-based). Omit to start at line 1.", "line_end": "integer — Last line to return (1-based, inclusive). Omit to read to the end.", "search": "string — Regex; returns only the matching lines, each with `context` lines around it.", "context": "integer — Lines shown before and after each `search` match (default 5).", "stat": "boolean — Return only the line count, size and first 20 lines — the file is not read."}
+- edit_file: Change part of an existing file — the default way to modify one. Lines are addressed by their LINE#HASH refs, taken from the latest output that showed them: `read_file`, `code_index` "fetch", `write_file`, or an earlier `edit_file`. `op` says what to do at `pos`: "replace" swaps the lines from `pos` through `end` (inclusive; just `pos` without `end`) for `lines`; "append" inserts `lines` after `pos`; "prepend" inserts `lines` before `pos`; "delete" removes `pos` through `end` and takes no `lines`.
+  Input JSON: {"path": "string, required — File to change", "op": "string, required — \"replace\" | \"append\" | \"prepend\" | \"delete\" — what to do at `pos` (see the description)", "pos": "string, required — Ref of the target line, LINE#HASH like \"5#VR\" — not a bare number", "end": "string — Ref of the last line of an inclusive range (\"replace\"/\"delete\"), like \"9#KT\"", "lines": "array<string> — The new lines, as they should appear in the file — without LINE#HASH: tags"}
 - code_index: Query a persistent tree-sitter index of the project's code and markdown (read-only): file outlines, symbol bodies, definitions, references, callers and callees. One op runs one query, chosen by `mode`.
-  Input JSON: {"mode": "string, required — Which query to run — the modes are described in the code_index guide.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
-- shell: Run a shell command and return stdout/stderr. For anything that may run longer than about a minute (a test suite, a build, an install, a large clone) pass background=true: the harness starts it for you, sends its output to a log under .agent-cli/tmp/jobs/ and tells you when it ends (exit code + last lines) — keep working meanwhile.
-  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Max seconds before a FOREGROUND command is killed (default 120). Do not raise it to sit through a long command — use background=true for that. Raise it only for a short wait you must block on.", "background": "boolean — true = start the command as a background job owned by the harness (returns at once with the job id, pid and log path; you are notified when it ends). Use for test suites, builds, installs — anything over about a minute. Give the PLAIN command: no trailing `&`, no redirection, no `echo EXIT` — the harness logs it and reports the exit code."}
-- ask: Ask the user ONE question and WAIT for their reply. One question per op — to ask several, emit several `ask` ops in the array (each is answered in turn), the same way you batch read_file. Use only when you cannot proceed without specific input; otherwise end with `complete`.
+  Input JSON: {"mode": "string, required — Which query to run — the modes are described in the `code_index` guide.", "path": "string — File path. Required for \"list\"/\"fetch\"/\"file\".", "name": "string — Symbol name (exact, as shown by \"list\"). Required for \"fetch\"/\"lookup\"/\"refs\"/\"callers\"/\"callees\"/\"slice\". Markdown \"fetch\" also accepts the heading with marker (e.g. \"## Setup\").", "symbol_kind": "string — Symbol category filter. Optional for \"lookup\". Required for \"kind\". \"section\" = markdown heading.", "ref_kind": "string — Reference site category. Optional for \"refs\". \"call\" = invocation; \"name\" = bare identifier mention (callback, pointer); \"type\" = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to \"list\" and \"kind\".", "with_callees": "boolean — \"slice\" only: include callee bodies (transitive up to `depth`).", "with_callers": "boolean — \"slice\" only: include caller bodies (transitive up to `depth`).", "with_types": "boolean — \"slice\" only: include types/structs referenced inside the target body.", "with_macros": "boolean — \"slice\" only: include function-like macros invoked inside the target body.", "depth": "integer — \"slice\" only: transitive depth for callees/callers (default 1).", "max_bytes": "integer — \"slice\" only: cap output bytes (default unlimited)."}
+- shell: Run a shell command and return stdout/stderr. For anything that may run longer than about a minute (a test suite, a build, an install, a large clone) set `background` to true: the harness starts it for you, sends its output to a log under .agent-cli/tmp/jobs/ and tells you when it ends (exit code + last lines) — keep working meanwhile.
+  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Max seconds before a FOREGROUND command is killed (default 120). Do not raise it to sit through a long command — set `background` to true for that. Raise it only for a short wait you must block on.", "background": "boolean — true = start the command as a background job owned by the harness (returns at once with the job id, pid and log path; you are notified when it ends). Use for test suites, builds, installs — anything over about a minute. Give the PLAIN command: no trailing `&`, no redirection, no `echo EXIT` — the harness logs it and reports the exit code."}
+- ask: Ask the user ONE question and WAIT for their reply. One question per call — to ask several, make several `ask` calls in one turn (each is answered in turn), the same way you batch `read_file`. Use only when you cannot proceed without specific input; otherwise end with `complete`.
   Input JSON: {"question": "string, required — The question to ask the user."}
-- agent: Work with sub-agents, one-shot or persistent. mode:"run" gives ONE task to a sub-agent and you get back only its summary: whatever it read stays in its window, both handoffs drop detail, and its mistakes return in the same confident tone as its findings. Delegate when answering would mean reading across many files and you want the conclusion, not the file dumps. Do it yourself when it is a handful of calls or a lookup whose target you already know; when in doubt, do it yourself. Several run ops in one turn are for independent parts that would each flood your context — not for speed: on a single local model server they share throughput, and you are blocked until all of them finish. Spawn (mode:"spawn") only when the same area will take several rounds of questions — an agent that has studied one area answers follow-ups from full detail. One agent per area (disjoint files/subsystems). Once you have handed work to an agent, do not also do it yourself: finish what is yours, then call `wait` — you are woken when its reply arrives; never predict a pending reply. Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.
-  Input JSON: {"mode": "string, required — run: ONE task, blocking — the result returns in this turn. spawn: create a PERSISTENT agent that keeps its context between requests (returns its key). request: send it a message — returns immediately; the reply is DELIVERED to you as an observation when ready. status: list live agents and their state. resume: bring a DEAD agent back with its full prior context. kill: terminate one.", "profile": "string — run/spawn: profile from .agent-cli/agents/{profile}.md (loaded into the sub-agent's system prompt; omit for a generalist). The same profile may be spawned more than once — give each instance a distinct `name`.", "name": "string — spawn: optional instance label to tell same-profile agents apart (e.g. two coders as 'ui' and 'api'). Display only — always address agents by their key.", "task": "string — run: the task (required); request: the message (required); spawn/resume: optional first request. Brief it like a peer: the goal, what you already ruled out, and which files to read — point at them, do not retype them. Give it the code, not your conclusion: an agent handed your hypothesis tends to return it confirmed.", "instructions": "string — run/spawn: inline role text (instant-agent) — becomes part of the sub-agent's system prompt (for a spawned agent: its WHOLE life, survives resume). Use alone for an ad-hoc specialist, or with `profile` to append session-specific directions.", "key": "string — agent key returned by spawn (required for request/resume/kill; optional filter for status)", "tools": "array<string> — run/spawn: tools the sub-agent may use. Omit for the profile's set (all tools without a profile). With a profile it can only narrow that set.", "context": "string — run/spawn: none (default) — the agent starts fresh and knows only the task text; fork — it gets a copy of your conversation so far."}
+- agent: Work with sub-agents, one-shot or persistent. `mode` "run" gives ONE task to a sub-agent and you get back only its summary: whatever it read stays in its window, both handoffs drop detail, and its mistakes return in the same confident tone as its findings. Delegate when answering would mean reading across many files and you want the conclusion, not the file dumps. Do it yourself when it is a handful of calls or a lookup whose target you already know; when in doubt, do it yourself. Several "run" calls in one turn are for independent parts that would each flood your context — not for speed: on a single local model server they share throughput, and you are blocked until all of them finish. Spawn (`mode` "spawn") only when the same area will take several rounds of questions — an agent that has studied one area answers follow-ups from full detail. One agent per area (disjoint files/subsystems). Once you have handed work to an agent, do not also do it yourself: finish what is yours, then call `wait` — you are woken when its reply arrives; never predict a pending reply. Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.
+  Input JSON: {"mode": "string, required — \"run\": ONE task, blocking — the result returns in this turn. \"spawn\": create a PERSISTENT agent that keeps its context between requests (returns its key). \"request\": send it a message — returns immediately; the reply is DELIVERED to you as an observation when ready. \"status\": list live agents and their state. \"resume\": bring a DEAD agent back with its full prior context. \"kill\": terminate one.", "profile": "string — \"run\"/\"spawn\": profile from .agent-cli/agents/{profile}.md (loaded into the sub-agent's system prompt; omit for a generalist). The same profile may be spawned more than once — give each instance a distinct `name`.", "name": "string — \"spawn\": optional instance label to tell same-profile agents apart (e.g. two coders as \"ui\" and \"api\"). Display only — always address agents by their `key`.", "task": "string — \"run\": the task (required); \"request\": the message (required); \"spawn\"/\"resume\": optional first request. Brief it like a peer: the goal, what you already ruled out, and which files to read — point at them, do not retype them. Give it the code, not your conclusion: an agent handed your hypothesis tends to return it confirmed.", "instructions": "string — \"run\"/\"spawn\": inline role text (instant-agent) — becomes part of the sub-agent's system prompt (for a spawned agent: its WHOLE life, survives resume). Use alone for an ad-hoc specialist, or with `profile` to append session-specific directions.", "key": "string — agent key returned by \"spawn\" (required for \"request\"/\"resume\"/\"kill\"; optional filter for \"status\")", "tools": "array<string> — \"run\"/\"spawn\": tools the sub-agent may use. Omit for the profile's set (all tools without a profile). With a profile it can only narrow that set.", "context": "string — \"run\"/\"spawn\": \"none\" (default) — the agent starts fresh and knows only the task text; \"fork\" — it gets a copy of your conversation so far."}
 - complete: Call this tool when the task is done — always the LAST call. `result` is the only text delivered as your answer — to the user, or to the agent that called you; what you wrote outside it is not. Put the answer first. When it rests on work you did, end with two lines:
 Checked: <what you ran or inspected, and what it showed>
 Not checked: <what you inferred from reading rather than running, or did not test — 'nothing' if so>
@@ -33,73 +33,71 @@ A reply with nothing to check has neither line. When `## Open Items` lists items
     written and the result names the bad ones — resend all, fixing only
     those. Overlapping ranges are rejected; split them across turns.
   Persistent code/markdown index backed by a SQLite store at
-  ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
+  `<project_root>/.agent-cli/code_index.db`. Lazy-built on first
   query; sha1-incremental on every call after that, so it stays fresh
   with no manual invalidation.
 
-  Each code_index op runs ONE query. Read-only (no file writes). To run
-  several queries (modes may be mixed), emit several code_index ops in
+  Each `code_index` call runs ONE query. Read-only (no file writes). To run
+  several queries (modes may be mixed), make several `code_index` calls in
   the same turn.
 
-  Ten modes (each op is one query):
+  Ten values of `mode` (each call is one query):
 
-  1. mode='list' — per-file outline (one symbol per line:
-     ``parent.name (kind) file:start-end``). Replaces read_file:stat
+  1. "list" — per-file outline (one symbol per line:
+     `parent.name (kind) file:start-end`). Replaces `read_file` with `stat`
      for any supported-extension file.
        {"action": "code_index", "mode": "list", "path": "auth.py"}
-     ``search='<regex>'`` filters the outline by symbol name (re.search):
+     `search` (a regex) filters the outline by symbol name (re.search):
        {"action": "code_index", "mode": "list", "path": "auth.py", "search": "login"}
-  2. mode='fetch' — single-symbol body in hashline format
-     (``LINE#HASH:content``) so it pipes straight into edit_file
-     without a separate read_file. Definition wins when a name has
-     both a declaration and a definition. Markdown accepts the heading
-     with or without the marker (``## Setup`` ≡ ``Setup``).
-     After a ``list`` (or ``lookup`` / ``file``) hit, prefer ``fetch``
-     over ``read_file`` with the line range — fetch gives the body
-     hashline-formatted in one call, ready to edit; read_file would
-     return the same lines as plain text and lose the edit_file
-     shortcut.
+  2. "fetch" — single-symbol body tagged LINE#HASH:content, so it pipes
+     straight into `edit_file` without a separate `read_file`. Definition
+     wins when a name has both a declaration and a definition. Markdown
+     accepts the heading with or without the marker ("## Setup" ≡ "Setup").
+     After a "list" (or "lookup" / "file") hit, prefer "fetch" over
+     `read_file` with the line range — "fetch" gives the body tagged in one
+     call, ready to edit; `read_file` would return the same lines without
+     the shortcut.
        {"action": "code_index", "mode": "fetch", "path": "auth.py", "name": "User.login"}
-  3. mode='lookup' — find a symbol by name ACROSS the whole index.
-     Optional ``symbol_kind`` (function / type / variable / constant /
-     section) filter.
+  3. "lookup" — find a symbol by name ACROSS the whole index.
+     Optional `symbol_kind` ("function" / "type" / "variable" / "constant" /
+     "section") filter.
        {"action": "code_index", "mode": "lookup", "name": "AgentLoop"}
-  4. mode='kind' — list every symbol of a given kind in the index.
+  4. "kind" — list every symbol of a given kind in the index.
      Useful for "show me every section/function/type".
        {"action": "code_index", "mode": "kind", "symbol_kind": "function"}
-  5. mode='file' — every symbol in one file from the index (no re-parse).
+  5. "file" — every symbol in one file from the index (no re-parse).
        {"action": "code_index", "mode": "file", "path": "agent_cli/loop.py"}
-  6. mode='refs' — every reference site for a name. Optional
-     ``ref_kind`` (call / name / type) — ``call`` for invocation sites,
-     ``name`` for bare-identifier mentions (callbacks), ``type`` for
-     identifiers in type position.
+  6. "refs" — every reference site for a name. Optional `ref_kind`
+     ("call" / "name" / "type") — "call" for invocation sites, "name" for
+     bare-identifier mentions (callbacks), "type" for identifiers in type
+     position.
        {"action": "code_index", "mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}
-  7. mode='callers' — functions that call this one (from the callgraph).
+  7. "callers" — functions that call this one (from the callgraph).
        {"action": "code_index", "mode": "callers", "name": "process"}
-  8. mode='callees' — functions called by this one.
+  8. "callees" — functions called by this one.
        {"action": "code_index", "mode": "callees", "name": "process"}
-  9. mode='slice' — LLM-context markdown blob: the symbol's
-     definition body plus optional callees / callers / types / macros
-     up to ``depth`` (default 1, max 5). Use this when you need to
-     understand a function in the company of its neighbours.
+  9. "slice" — LLM-context markdown blob: the symbol's definition body
+     plus optional callees / callers / types / macros up to `depth`
+     (default 1, max 5). Use this when you need to understand a function
+     in the company of its neighbours.
        {"action": "code_index", "mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}
-  10. mode='build' — force a full rebuild. Rare — the per-query
-      incremental refresh handles normal cases.
+  10. "build" — force a full rebuild. Rare — the per-query incremental
+      refresh handles normal cases.
        {"action": "code_index", "mode": "build"}
 
-  Path scope: ``list`` and ``fetch`` on a path OUTSIDE the indexed root
+  Path scope: "list" and "fetch" on a path OUTSIDE the indexed root
   fall through to an on-demand parse (single file, no DB write).
-  ``lookup``, ``kind``, ``file``, ``refs``, ``callers``, ``callees``,
-  ``slice`` are index-scoped — they only see files under the indexed
-  root. ``build`` always operates on the indexed root.
+  "lookup", "kind", "file", "refs", "callers", "callees" and "slice"
+  are index-scoped — they only see files under the indexed root.
+  "build" always operates on the indexed root.
 
   Naming follows each language's convention:
-  - Python / JavaScript / TypeScript: ``Class.method``
-  - C / C++ / Rust: ``namespace::Class::method`` (or ``Type::method``)
-  - Markdown: heading text (``Setup``) or with marker (``## Setup``)
+  - Python / JavaScript / TypeScript: "Class.method"
+  - C / C++ / Rust: "namespace::Class::method" (or "Type::method")
+  - Markdown: heading text ("Setup") or with marker ("## Setup")
 
   Supported extensions: .c, .cc, .cjs, .cpp, .cxx, .go, .h, .h++, .hh, .hpp, .hxx, .java, .js, .jsx, .markdown, .md, .mjs, .py, .pyi, .rs, .ts, .tsx.
-  For non-code/non-markdown files, use read_file.
+  For non-code/non-markdown files, use `read_file`.
   `ask` vs `complete` — pick by intent, not tone:
   - `ask`: you GENUINELY cannot proceed without information from the
     user. A real question with real alternatives where you don't know

@@ -1190,7 +1190,7 @@ class TestHistoryTool:
         tool = TOOLS["history"]
         assert "read_context" not in TOOLS
         assert set(tool.parameters["properties"]) == {"query", "sessions"}
-        assert "query='SELECT" in tool.description
+        assert "`query` is a read-only SELECT" in tool.description
         assert "read_context" not in tool.description
 
     # ── No-query help ──────────────────────────────────────────
