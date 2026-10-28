@@ -328,3 +328,15 @@ video·gcode 가 떨어졐고, 변형 런에서 반복된 세 모양이 **기준
 python 호출(20·46·50·22)은 버전과 무관하게 흔들린다. **귀속 가능한 퇴행 없음 → v10.74.0 유지.** 다만 financial 이
 두 짝 모두 같은 쪽으로 뒤집힌 것은 우연으로 단정하지 않고, 다음 GLM 측정에서 같은 PDF 오분류가 기준 판에서도
 나오는지 본다.
+
+## 13. 압축 예고의 메모리 문장 (v10.77.0, 2026-10-28 사용자 결정)
+
+- 정리 기준을 "더는 맞지 않는 것(no longer applies)" 에서 "앞으로의 일이 쓰지 않을 것(the work ahead
+  will not use)" 으로 넓히고, 예시에 "끝난 단계의 메모(a note on a step already finished)" 를 더했다.
+  끝은 "so the index holds only what is still useful". 사용자 원안 "지금 작업에 필요 없는 것" 은 메모리가
+  세션 단위(`memory.jsonl`, 요청을 넘어 남음)라 상주 에이전트가 요청을 넘어 쌓는 지식(code-analyst 의
+  하위 시스템 지도)까지 지울 수 있어 B 안으로.
+- 메모리 문장은 루프에 `memory` 가 있을 때만(`notice_memory`) — 감사자(history·read_file·code_index)는
+  `COMPACTION_NOTICE_WITHOUT_MEMORY`(머리 + "Pace and scope stay the same.").
+- 측정: 압축 예고는 압축 직전 한 번이라 9과제 벤치에선 드물다 — memory add·delete 수와 압축 뒤 색인 크기를
+  함께 센다. 따로 재려면 압축이 일어나는 긴 세션 재생이 필요하다.

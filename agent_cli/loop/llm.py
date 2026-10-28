@@ -292,6 +292,7 @@ class LLMCaller:
             )
         return build_session_state(
             compaction_notice=notice,
+            notice_memory="memory" in self.cfg.tools_list,
             turn=self.state.turn,
             max_turns=self.cfg.max_turns,
             agents=agents,

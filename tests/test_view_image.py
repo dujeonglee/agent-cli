@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from agent_cli.context.manager import IMAGES_BLOCK_HEAD, ContextManager
+from agent_cli.context.manager import ContextManager, images_block_head
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.base import Op
 from agent_cli.loop.reroute import reroute
@@ -250,12 +250,48 @@ class TestCompaction:
         ctx.compact_now()
         assert ctx.image_list == ["a.jpg (1240×1754)", "b.jpg (1240×1754)"]
         assert _block(ctx) == [
-            f"{IMAGES_BLOCK_HEAD}\n\n- a.jpg (1240×1754)\n- b.jpg (1240×1754)"
+            f"{images_block_head()}\n\n- a.jpg (1240×1754)\n- b.jpg (1240×1754)"
         ]
         heads = [str(m.get("content", "")) for m in ctx.get_messages()]
         summary = next(i for i, c in enumerate(heads) if c.startswith("## Summary"))
         images = next(i for i, c in enumerate(heads) if c.startswith("## Images"))
         assert summary < images
+
+    def test_head_names_the_viewer_only_when_the_loop_has_it(self, tmp_path):
+        ctx = _ctx(tmp_path)
+        ctx.compact_now()
+        assert "view_image" not in _block(ctx)[0]  # 루프가 알려 주기 전(기본)
+        ctx.set_image_viewer("view_image")
+        assert _block(ctx)[0].startswith(
+            "## Images viewed in earlier turns — their pictures left with the "
+            "summarized turns; viewing one again with view_image shows it\n"
+        )
+        ctx.set_image_viewer(None)
+        assert "view_image" not in _block(ctx)[0]
+
+    def test_loop_tells_the_context_its_viewer(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+        from tests.loop_ports import TEST_PORTS
+
+        for vision, expect in ((True, "view_image"), (False, None)):
+            ctx = ContextManager(tmp_path / f"s{vision}", max_context_tokens=100_000)
+            AgentLoop(
+                ports=TEST_PORTS,
+                query="Q",
+                provider=MagicMock(),
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                    supports_vision=vision,
+                ),
+                model="m",
+                dialect=get_dialect("json_fc"),
+                ctx=ctx,
+            )
+            assert ctx._image_viewer == expect
 
     def test_list_survives_resume(self, tmp_path):
         ctx = _ctx(tmp_path)

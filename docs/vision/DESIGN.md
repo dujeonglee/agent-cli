@@ -308,10 +308,11 @@ scratchpad `vision/measure/measure.py`.
   starting" 은 요약 입력이 `[view_image] → [image: …]` 한 줄로 풀려 사실이 아니라 "marked" 로.
 - (b) 하니스가 내보낸 레코드의 `images` 를 모아(`_evicted_images`, `경로 (W×H)`, 경로 중복 없음)
   요약·`## Files touched` 뒤에 `## Images viewed in earlier turns — their pictures left with the
-  summarized turns; viewing one again shows it` 블록. `compaction.json` 의 `image_list` 로 resume
+  summarized turns; viewing one again with view_image shows it` 블록(" with view_image" 는 루프가
+  `ctx.set_image_viewer` 로 알려 줄 때만 — 도구를 좁힌 에이전트도 채널·screenshot 으로 그림을 본다). `compaction.json` 의 `image_list` 로 resume
   에도 남는다. 압축 때만 바뀐다 — 다시 본 그림도 빼지 않는다(빼면 앞자리 블록이 바뀌어 대화 전체를
-  다시 prefill). 도구 이름을 쓰지 않는 것은 이 ctx 의 루프가 view_image 를 가졌는지 ctx 가 모르기
-  때문(개정안의 "view_image shows one again" 에서 바꿈). 못 본다고 알려진 모델이면 싣지 않는다.
+  다시 prefill). 컨텍스트는 루프의 도구를 모르기
+  때문 — 그래서 루프가 시작할 때 이름을 넘긴다(기존 `set_compactor`·`set_open_requests` 와 같은 방향의 setter, 새 import 없음). 못 본다고 알려진 모델이면 싣지 않는다.
 - (c) 요약기에 그림 자체를 싣는 안은 a·b 의 측정 뒤 변형으로.
 
 ### 12.4 측정과 회귀 판정

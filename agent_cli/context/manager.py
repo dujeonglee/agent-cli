@@ -335,6 +335,9 @@ class ContextManager:
         # 압축이 내보낸 레코드의 이미지 (v10.77.0) — 요약 뒤 목록 블록. 요약기는
         # 그림을 못 받으므로 무엇을 봤는지는 하니스가 결정적으로 적는다.
         self._image_list: list[str] = []
+        # 이미지를 다시 보는 도구 이름 (v10.77.0) — 루프가 시작할 때 알려 준다
+        # (`set_image_viewer`). 없으면 목록 머리줄은 도구 이름 없이.
+        self._image_viewer: str | None = None
         self._compaction_count: int = 0
         self._last_compacted_at: str = ""
         self._dynamic_start_index: int = 0
@@ -372,6 +375,13 @@ class ContextManager:
         """Register the LLM summariser callback. AgentLoop wires its
         ``_llm_compact_summarize`` here at setup."""
         self._compactor_callback = callback
+
+    def set_image_viewer(self, tool: str | None) -> None:
+        """이미지를 다시 보는 도구 이름 — 루프가 시작할 때 알려 준다 (v10.77.0).
+
+        컨텍스트는 루프의 도구 목록을 모른다. 도구를 좁힌 에이전트도 채널·
+        screenshot 으로 그림을 보므로, 이름은 그 도구가 있는 루프만 싣는다."""
+        self._image_viewer = tool
 
     def set_recorder(self, recorder) -> None:
         """Register a TurnRecorder instance for compaction event logging
@@ -606,12 +616,8 @@ class ContextManager:
             # 압축 때만 바뀐다 — 다시 본 그림도 목록에서 빼지 않는다(빼면 이
             # 앞자리 블록이 바뀌어 대화 전체를 다시 prefill 한다).
             listing = "\n".join(f"- {p}" for p in self._image_list)
-            result.append(
-                {
-                    "role": "user",
-                    "content": f"{IMAGES_BLOCK_HEAD}\n\n{listing}",
-                }
-            )
+            head = images_block_head(self._image_viewer)
+            result.append({"role": "user", "content": f"{head}\n\n{listing}"})
 
         # Dynamic slice: served from the incremental render mirror. ``None``
         # (bulk mutation) or a length mismatch (backstop for any missed
@@ -1471,12 +1477,15 @@ class ContextManager:
 
 
 #: 요약 뒤 이미지 목록 블록의 머리 (v10.77.0, docs/vision/DESIGN.md §12.3).
-#: "다시 볼 수 있다" 는 사실만 — 다시 보라고 시키지 않는다. 도구 이름을 쓰지
-#: 않는 것은 이 ctx 를 쓰는 루프가 view_image 를 가졌는지 여기서 모르기 때문.
-IMAGES_BLOCK_HEAD = (
-    "## Images viewed in earlier turns — their pictures left with the "
-    "summarized turns; viewing one again shows it"
-)
+#: "다시 볼 수 있다" 는 사실만 — 다시 보라고 시키지 않는다. 도구 이름은 루프가
+#: ``set_image_viewer`` 로 알려 줄 때만 넣는다.
+def images_block_head(viewer: str | None = None) -> str:
+    """``## Images viewed in earlier turns`` 블록의 머리줄."""
+    how = f" with {viewer}" if viewer else ""
+    return (
+        "## Images viewed in earlier turns — their pictures left with the "
+        f"summarized turns; viewing one again{how} shows it"
+    )
 
 
 def _evicted_images(records: list[dict]) -> list[str]:
