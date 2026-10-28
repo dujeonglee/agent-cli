@@ -116,6 +116,7 @@ class TestSummariserBoundary:
         assert not hasattr(images, "keep_recent")
         assert not hasattr(images, "image_keep")
         assert not hasattr(images, "IMAGE_KEEP_DEFAULT")
+        assert not hasattr(images, "strip_images")  # 요약기도 그림을 본다
 
     def test_env_knobs(self, monkeypatch):
         monkeypatch.setenv("AGENT_CLI_IMAGE_MAX_EDGE", "oops")
@@ -127,11 +128,6 @@ class TestSummariserBoundary:
         )
         assert not images.mentions_image([{"role": "user", "content": "plain"}])
         assert not images.mentions_image([{"role": "user", "content": ["x"]}])
-
-    def test_strip_images_removes_all(self):
-        out = images.strip_images([_msg(1, "a"), {"role": "user", "content": "b"}])
-        assert all("images" not in m for m in out)
-        assert out[0]["content"] == "a"
 
 
 # ── 공급자 경계 — expand / encode ────────────────────────────────────

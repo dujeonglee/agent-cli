@@ -299,8 +299,8 @@ scratchpad `vision/measure/measure.py`.
 
 ### 12.3 압축할 때 이미지
 
-요약기는 같은 모델이고 이미지를 떼고 받는다(`strip_images`) — 사라지는 것은 아직 글로 옮기지 않은
-그림의 내용과 "무엇을 봤나" 의 기억.
+요약기는 같은 모델이다. v10.77.0 전에는 이미지를 떼고 받아(`strip_images`) 아직 글로 옮기지 않은
+그림의 내용과 "무엇을 봤나" 의 기억이 사라졌다.
 
 - (a) 요약 프롬프트 FACTS 뒤 `IMAGES — for each image in the transcript (marked "[image: …]"): its
   path, and what was read from it that this summary does not already record.` — 입력에 자리표시가
@@ -315,7 +315,12 @@ scratchpad `vision/measure/measure.py`.
   에도 남는다. 압축 때만 바뀐다 — 다시 본 그림도 빼지 않는다(빼면 앞자리 블록이 바뀌어 대화 전체를
   다시 prefill). 컨텍스트는 루프의 도구를 모르기
   때문 — 그래서 루프가 시작할 때 이름을 넘긴다(기존 `set_compactor`·`set_open_requests` 와 같은 방향의 setter, 새 import 없음). 못 본다고 알려진 모델이면 싣지 않는다.
-- (c) 요약기에 그림 자체를 싣는 안은 a·b 의 측정 뒤 변형으로.
+- (c) **요약기에 그림을 싣는다(사용자 결정, 2026-10-28).** 내보내는 구간의 그림(같은 경로·내용은 한 번)을
+  요약 입력 메시지에 붙이고 순서를 글로 적는다("attached below, in this order: 1. … 2. …" — 조각엔 이름이 없다).
+  IMAGES 항목은 그림마다 한 줄: 경로·무엇이 있는 그림인지·아직 요약에 없는 읽은 값, 같은 종류(영상 프레임)는
+  한 줄로 묶어도 됨. **상한을 따로 두지 않는다** — 그림은 이미 내보내는 절반의 토큰 안에 있었으므로 요약 호출은
+  그 절반을 넘지 않는다(처음 안의 "20% 상한" 은 이 점을 놓친 것, 사용자 지적). 못 본다고 알려진 모델은 안 붙인다.
+  `images.strip_images` 삭제.
 
 ### 12.4 측정과 회귀 판정
 

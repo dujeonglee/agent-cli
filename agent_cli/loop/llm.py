@@ -36,9 +36,10 @@ from agent_cli.verbose import debug_log as _debug_log
 _MAX_OVERFLOW_RETRIES = 5
 #: 요약 프롬프트의 IMAGES 항목 — 내보내는 구간에 이미지가 있을 때만 FACTS 뒤에.
 _SUMMARY_IMAGES_LINE = (
-    'IMAGES — for each image in the transcript (marked "[image: …]"): its '
-    "path, and what was read from it that this summary does not already "
-    "record.\n"
+    'IMAGES — one line per image in the transcript (marked "[image: …]"): its '
+    "path, what it shows, and anything read from it that this summary does not "
+    "already record. Many images of one kind (e.g. video frames) may share one "
+    "line.\n"
 )
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
 # session state`` (default 0.8 = leave a 20% margin) and compaction runs the
@@ -622,12 +623,13 @@ class LLMCaller:
             self.cfg.capabilities,
             supports_thinking=False,
         )
-        # 요약기는 이미지를 싣지 않는다 (v10.59.0) — 자리표시 줄이 content 에
-        # 있어 "무엇이 있었는지" 는 요약에 남는다.
+        # 요약기도 그림을 본다 (v10.77.0) — 압축이 내보내는 구간의 그림을
+        # ContextManager 가 요약 입력에 붙인다(못 본다고 알려진 모델은 안 붙임).
+        # 공급자 경계 ``images.expand`` 가 다른 요청처럼 조각으로 펼친다.
         # 🎲 세션 샘플링은 요약 호출에도 같이 간다 (v10.69.0) — "다음 LLM 요청부터"
         # 라는 칩의 약속에 요약이 예외가 아니게.
         response = self.provider.call(
-            messages=_images.strip_images(messages),
+            messages=messages,
             system=summarisation_prompt,
             model=self.cfg.model,
             capabilities=summary_capabilities,

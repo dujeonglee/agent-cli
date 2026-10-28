@@ -918,7 +918,20 @@ class ContextManager:
                 )
             else:
                 content = "Transcript to summarise:\n\n" + transcript
-            summarize_input = [{"role": "user", "content": content}]
+            summary_msg: dict = {"role": "user", "content": content}
+            # 그림도 요약기에 (v10.77.0, docs/vision/DESIGN.md §12.3 c): 내보내는
+            # 구간의 그림은 이미 그 구간의 토큰 안에 있었으므로 요약 호출은
+            # 내보내는 절반을 넘지 않는다 — 상한을 따로 두지 않는다. 조각에는
+            # 이름이 없어 순서를 글로 적는다.
+            refs = _evicted_image_refs(evict_set) if self._shows_images() else []
+            if refs:
+                order = "\n".join(f"{i}. {r['path']}" for i, r in enumerate(refs, 1))
+                summary_msg["content"] = (
+                    f"{content}\n\nThe images from this transcript are attached "
+                    f"below, in this order:\n{order}"
+                )
+                summary_msg["images"] = refs
+            summarize_input = [summary_msg]
 
             new_summary = self._summarize_messages(summarize_input)
             new_paths = extract_file_paths(evict_set)
@@ -1488,6 +1501,22 @@ def images_block_head(viewer: str | None = None) -> str:
         "summarized turns"
     )
     return f"{head}; viewing one again with {viewer} shows it" if viewer else head
+
+
+def _evicted_image_refs(records: list[dict]) -> list[dict]:
+    """내보낸 레코드들의 이미지 참조 — 같은 경로·내용은 한 번만, 처음 본 순서."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for rec in records:
+        for r in rec.get("images") or []:
+            if not isinstance(r, dict) or not r.get("path"):
+                continue
+            key = (str(r.get("path")), str(r.get("sha256") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(r))
+    return out
 
 
 def _evicted_images(records: list[dict]) -> list[str]:
