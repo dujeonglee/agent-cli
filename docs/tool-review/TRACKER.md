@@ -19,13 +19,15 @@
 | `edit_file` | 구현 | 줄 번호만 온 ref 에 그 줄의 지금 ref 를 보여 줌(35B 편집의 18%), 설명은 `op` 값과 인자를 이름으로, legacy 광고 삭제, 안내 축소 | ebccc656 |
 | (전체) 표기 | 구현 | 도구 22개·안내·시스템 절·꼬리·넛지·오류 문구 표기 통일, "You sent:" 줄·반복 호출 넛지를 문장으로, monitor 오류의 모르는 이름(match/silence) 수정 | 1a75cb0a |
 | (압축) | 구현 | 압축 예고 메모리 문장: 기준 "앞으로의 일이 쓰지 않을 것" + 끝난 단계의 메모, memory 없는 루프엔 문장 생략 | 08f090e6 |
-| `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 검토 완료, 설계 결정 대기 | 아래 §소통·종결 묶음 | — |
+| `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 승인, 구현 중 | B+C+D+E+id 통일 (아래 §결정) | — |
 | `shell` | 구현 | 시간 초과 때 프로세스 그룹째 끝내기(버그 — apt-get 이 dpkg 잠금을 쥔 채 남음), 시간 초과 결과(끝냈다·출력 끝 8줄·`background` 교정), 설명에 결과 모양(`[stderr]`·`[exit code: N]`), 작업 종류 나열 삭제, 거부 문구 표기 | 6ec4b40c |
 
 ## TODO
 
 - [x] `shell` 검토·구현
-- [ ] 소통·종결 묶음 설계 결정(A·B·C·D·E) → 개정안 → 구현
+- [ ] 소통·종결 묶음 구현: ① id 통일(내부, 모델 문구 그대로) ② B·C·D·E(모델 문구) — 개정안 https://claude.ai/artifact/3iJsAjeva3YB4wwWNcPdYF
+- [ ] 상주 에이전트 둘로 실제 모델 시나리오 확인(요청·회신·알림·사람에게 묻기·wait)
+- [ ] 후보(보류): 층 규칙 `complete` → `wait` — 넷이 모두 맞을 때만: 상주 루프(complete 가 아무에게도 보고 안 함), 이 런에 갚지 않은 `r-` 남음, 깨울 원인 있음(회신 대기·작업·monitor), `complete` 가 닫을 `u-`·`n-` 없음. `result` 는 `rewritten_from` 에. 원칙을 "결과 같음"→"이 루프에서 효과 같음"으로 넓히는 일이라, ② 뒤 실제 `complete` 오용을 보고 결정
 - [ ] 남은 도구 검토: `code_index`, `python`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `agent`, `run_skill`
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)
@@ -71,3 +73,13 @@
 
 제안: **A** `answer` 를 `reply` 에 합침(닫는 법 둘: `complete`·`reply`) · **B** `ask` 는 사람에게만(에이전트에겐
 `message`) — 결정 필요 · **C** `reply` 의 `to` 삭제 · **D** 들어오는 봉투 한 모양 · **E** 문구 정리. 권장: A+C+D+E 먼저, B 는 실사용 뒤.
+
+### 결정 (2026-10-28, 사용자)
+
+- **B+C+D+E + id 통일**로 간다(A 는 B 에 포함 — 에이전트가 `q-` 를 받지 않으니 `answer` 삭제).
+- **엄밀함 불변** — 열고 닫는 규칙은 느슨해지면 안 된다. 기존 장부·요청 회계 테스트를 그대로 통과시켜 증명(바뀌는 기대값은 id 문자열과 봉투 모양뿐).
+- ① 끝내 답하지 않은 에이전트 질문(이제 `r-` 요청)은 미납 회신으로 닫히고, 묻는 쪽은 런 요약을 받는다 — 승인.
+- ② §3.7 빚 억제(`asked_targets`)를 없앤다. 묻는 쪽은 자기 빚을 연 채 `wait` 로 멈췄다가 회신을 받고 갚는다 — 승인(규칙 하나, 장부가 늘 사실).
+  `wait` 의 깨움 조건에 "보낸 `message` 요청의 회신 대기" 를 넣는다.
+- 예전 세션 resume 호환층 없음.
+- id: 세션 할당기 하나, 번호 공간 공유, 모든 배달이 id(키). 순번(`seq`·`queued`·`_debt_seq`·입력 큐 `_seq`) 삭제.
