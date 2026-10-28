@@ -662,7 +662,8 @@ _REPLY = {
     "id": "r-7",
     "text": "floorCeil 고쳐줘",
 }
-_ANSWER = {"kind": "answer", "to": "agent:agt-a", "id": "q-1", "text": "포트는?"}
+# v10.77.0: 질문 빚(q-)은 없다 — 둘째 행동 항목도 회신 빚
+_REPLY_B = {"kind": "reply", "to": "agent:agt-a", "id": "r-8", "text": "포트는?"}
 
 
 class TestOpenItemsInTail:
@@ -688,16 +689,16 @@ class TestOpenItemsInTail:
 
     def test_each_debt_with_its_settling_tool_then_complete_last(self):
         out = self._ledger(
-            [_REPLY, _ANSWER], [("u-3", "dj", "README 정리해 줘")]
+            [_REPLY, _REPLY_B], [("u-3", "dj", "README 정리해 줘")]
         ).block()
         assert out.startswith("## Open Items — close them in this order")
         lines = out.splitlines()
         assert lines.index("  1. by action") < lines.index("  2. by `complete` (last)")
         assert (
-            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → `reply` with id "r-7"'
+            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → `reply` with `id` "r-7"'
             in out
         )
-        assert '`answer` with id "q-1"' in out
+        assert '[r-8] (agt-a) reply owed: "포트는?"  → `reply` with `id` "r-8"' in out
         assert '     [u-3] (dj) "README 정리해 줘"' in out
         assert 'then `complete`, listing in `answers` the ids it covers ("u-3")' in out
         assert out.rstrip().endswith("your result is delivered either way.")
@@ -705,7 +706,7 @@ class TestOpenItemsInTail:
     def test_main_settles_a_reply_with_reply_too(self):
         """main 도 `reply(id)` — 갚는 도구는 루프와 무관하게 하나다."""
         out = self._ledger([_REPLY]).block()
-        assert '`reply` with id "r-7"' in out and "agent(mode=" not in out
+        assert '`reply` with `id` "r-7"' in out and "agent(mode=" not in out
 
     def test_only_the_sections_that_have_items(self):
         assert "1. by action" not in self._ledger([], [("u-1", "", "x")]).block()
@@ -730,7 +731,7 @@ class TestOpenItemsInTail:
 
         caller, _ = _caller(tmp_path, questions=_Port())
         out = caller._build_session_state(10_000)
-        assert "## Open Items" in out and '`reply` with id "r-7"' in out
+        assert "## Open Items" in out and '`reply` with `id` "r-7"' in out
 
     def test_broken_or_missing_port_is_silent(self, tmp_path):
         class _Broken:

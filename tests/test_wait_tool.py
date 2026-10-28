@@ -335,7 +335,10 @@ class TestResidentRunEndingInWait:
         assert not reg.has_pending_replies()  # 폴백이 main 으로 가지 않았다
         debts = reg.reply_debts(f"agent:{key}")
         assert [d.to for d in debts] == ["main"]  # 빚은 그대로
-        assert reg.pending_for("main") == [f"agent:{key} owes you a reply"]
+        # 잠든 채무자는 직접 깨울 근거가 아니다 — 그를 깨울 것이 있는지 거슬러
+        # 본다(v10.77.0 순환 대기 가드). 여기선 가짜 러너라 아무것도 없다.
+        assert reg.pending_for("main") == []
+        assert reg.parked_debtors_for("main") == [f"agent:{key}"]
 
 
 class TestCompleteNag:
@@ -436,3 +439,52 @@ class TestWording:
                 if bad.search(line) and not line.lstrip().startswith("#"):
                     hits.append(f"{p}:{i}")
         assert not hits, hits
+
+
+class TestCircularWait:
+    """v10.77.0 — 서로 `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는다.
+    잠든 채무자는 그를 깨울 것이 있을 때만 깨울 근거로 센다(거슬러 보기)."""
+
+    @pytest.fixture
+    def reg(self, tmp_path, monkeypatch):
+        import agent_cli.schedule.runtime as sched
+        from agent_cli.subagent.agents_live import set_main_registry
+        from tests.test_agents_live import make_registry, wait_until
+
+        monkeypatch.setattr(sched, "get_schedule_registry", lambda: None)
+        r = make_registry(tmp_path)
+        keys = [r.spawn()[0] for _ in range(3)]
+        assert wait_until(lambda: all(r.get(k).state == "idle" for k in keys))
+        set_main_registry(r)
+        yield r, keys
+        set_main_registry(None)
+        r.shutdown_all()
+
+    @staticmethod
+    def _owes(r, debtor, to, rid):
+        from agent_cli.subagent.agents_live import ReplyDebt
+
+        r._reply_debts.setdefault(f"agent:{debtor}", []).append(
+            ReplyDebt(to=f"agent:{to}", text="t", id=rid)
+        )
+
+    def test_two_agents_waiting_on_each_other_refuse_the_second_wait(self, reg):
+        from agent_cli.runtime import wake_sources
+
+        r, (a, b, _c) = reg
+        self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었다(wait)
+        self._owes(r, b, a, "r-2")  # b 는 a 의 요청으로 깨어 지금 wait 를 부른다
+        tb = r.get(b)
+        tb.state, tb.current_author = "busy", f"agent:{a}"
+        assert wake_sources(f"agent:{b}") == []
+        assert r.parked_debtors_for(f"agent:{b}") == [f"agent:{a}"]
+
+    def test_a_chain_to_a_working_agent_still_wakes(self, reg):
+        from agent_cli.runtime import wake_sources
+
+        r, (a, b, c) = reg
+        self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고
+        tc = r.get(c)  # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다
+        tc.state, tc.current_author = "busy", f"agent:{a}"
+        got = wake_sources(f"agent:{b}")
+        assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]

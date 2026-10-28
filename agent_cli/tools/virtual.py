@@ -119,20 +119,21 @@ class AskTool(Tool):
     # surfaces teaching the same distinction back to back.
     description = (
         "Ask the user ONE question and WAIT for their reply. One question per call — to"
-        " ask several, make several `ask` calls in one turn (each is answered in turn),"
-        " the same way you batch `read_file`. Use only when you cannot proceed without "
-        "specific input; otherwise end with `complete`."
+        " ask several, make several `ask` calls in one turn (each is answered in turn)."
+        " Use only when you cannot proceed without specific input; otherwise end with "
+        "`complete`."
     )
     # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
-    # **막지 않는다** — 질문을 등록하고 즉시 돌아온다. 마지막 문장이
-    # 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
-    # 모델이 추측으로 메우고 끝낸다. complete 해도 이어진다는 걸 알린다.
+    # **막지 않는다** — 질문을 사람의 트레이에 올리고 즉시 돌아온다. 마지막
+    # 문장이 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
+    # 모델이 추측으로 메우고 끝낸다. v10.77.0 (B): 주소는 언제나 사람 — 에이전트·
+    # main 에게서 무언가 필요하면 `message` 다(요청 → 상대가 `reply` 를 빚진다).
     RESIDENT_DESCRIPTION = (
-        "Ask a question and KEEP WORKING — you are NOT blocked. By default the "
-        'question goes to whoever gave you this task ("main" or a person); set '
-        '`to` to "user" to ask the person directly. The answer arrives later as '
-        "a NEW message and you continue from there. Carry on with anything that "
-        "does not depend on it. If nothing else can proceed, `complete`."
+        "Ask the person ONE question and KEEP WORKING — you are NOT blocked. It "
+        "goes to their question tray; the answer arrives later as a NEW message "
+        "and you continue from there. Carry on with anything that does not depend "
+        "on it. If nothing else can proceed, `complete`. To get something from "
+        "main or another agent, send it a `message` — its `reply` comes back to you."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -145,46 +146,6 @@ class AskTool(Tool):
         },
         "required": ["question"],
     }
-    # 상주 에이전트용 스키마 (v9.20.0). ``to`` 는 상주에게만 뜻이 있다 —
-    # main 의 ``ask`` 는 언제나 사람에게 가므로 공용 스키마에 실으면 main
-    # 이 무의미한 필드를 본다. 프롬프트 렌더가 ``parameter_overrides`` 로
-    # 이 스키마를 고른다(``description_overrides`` 와 같은 자리).
-    #
-    # 왜 필요한가 — 실측(프로브 1790070684): main 이 "사용자한테 질문해 봐"
-    # 라고 시킨 에이전트의 ``ask`` 가 **main 에게** 갔다(주소 = 원 요청자 =
-    # main). 트레이는 사람 주소 질문만 보이므로 사람은 아무것도 못 봤고,
-    # main 은 그 질문에 사용자 대신 답을 **지어냈다**. 종전 파라미터 설명
-    # "The question to ask the user." 는 그 상황에서 거짓말이었다.
-    RESIDENT_PARAMETERS: ClassVar[dict] = {
-        "type": "object",
-        "properties": {
-            "question": {
-                "type": "string",
-                "minLength": 1,
-                "description": "The question.",
-            },
-            "to": {
-                "type": "string",
-                "minLength": 1,
-                "description": (
-                    "Who receives it. `requester` (default): whoever gave you "
-                    "this task — main or a person. `user`: the person directly; "
-                    "it appears in their question tray and their reply comes "
-                    "back to you. Use `user` whenever a human must decide. "
-                    "`main` or an agent key: that agent — e.g. one whose request "
-                    "arrived while you were working."
-                ),
-            },
-        },
-        "required": ["question"],
-    }
-
-    def _known_keys(self) -> frozenset[str]:
-        """상주 스키마의 키(``to``)도 아는 키다 — 검증은 공용 스키마로 하지만
-        상주 에이전트는 ``to`` 를 정당하게 보낸다(`parameter_overrides`)."""
-        return super()._known_keys() | frozenset(
-            self.RESIDENT_PARAMETERS.get("properties", {})
-        )
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # Placeholder for direct/test callers — the loop intercepts `ask`
@@ -207,14 +168,14 @@ class MessageTool(Tool):
     force_mount = True
     description = (
         'Message another running agent (a peer, or "main"). By default it is a REQUEST:'
-        " you NEED something from them — a decision, an answer, their next move — and "
-        "they owe you a reply, which comes back to YOU as a NEW message; you are NOT "
-        "blocked. With `expects_reply` false it is a NOTICE: a status update, a "
-        "hand-off note, a goodbye — nothing is owed back and the receiver must not "
-        "acknowledge it. Sent to whoever requested your current work, either form also "
-        "counts as your reply to them. To answer a request you received, use `reply`. "
-        "`complete` alone reports to no one. See `## Live Agents` for who is running. "
-        "Never send thanks or acknowledgements."
+        " you NEED something from them — a decision, an answer, their next move. The "
+        "result names its id (e.g. r-17); they owe you a `reply` for it, which comes "
+        "back to YOU as a NEW message marked with that id, and you are NOT blocked. "
+        "With `expects_reply` false it is a NOTICE: a status update, a hand-off note, "
+        "a goodbye — nothing is owed back and the receiver must not acknowledge it. "
+        "To answer a request you received, use `reply`. `complete` alone reports to "
+        "no one. See `## Live Agents` for who is running. Never send thanks or "
+        "acknowledgements."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -249,11 +210,11 @@ class MessageTool(Tool):
 
 
 class ReplyTool(Tool):
-    """상주 에이전트 전용 (v9.21.0). 이 런을 시킨 쪽에게 답한다 — `message`
-    와 짝이다(`ask` ↔ `answer` 처럼). `message` 는 상대에게 회신을 **빚지우고**,
-    `reply` 는 내 빚을 **갚는다**(돌려받을 것 없음). 요청자는 하네스가 아니까
-    `to` 가 없다. 빚진 게 없는 런(회신·질문·독촉으로 시작)에서 부르면 거부
-    — "확인했습니다" 류의 ack 가 정확히 거기서 새어 나온다(사용자 결정)."""
+    """빚진 회신을 갚는다 (v9.21.0) — `message` 와 짝이다. `message` 는 상대에게
+    회신을 **빚지우고**, `reply` 는 내 빚을 **갚는다**(돌려받을 것 없음). id 가
+    전역에서 유일해 그것만으로 상대가 정해진다 — v10.77.0 에서 `to` 를 지웠다.
+    빚진 게 없는 런(회신·통지·답으로 시작)에서 부르면 거부 — "확인했습니다"
+    류의 ack 가 정확히 거기서 새어 나온다(사용자 결정)."""
 
     name = "reply"
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
@@ -262,12 +223,13 @@ class ReplyTool(Tool):
     requires_handler = "questions"
     force_mount = True
     description = (
-        "Reply to someone who is waiting on you — an agent's `message` that expects an "
-        "answer, or the request you were given. `id` names the item (`r-…` in `## Open "
-        "Items`); each gets its own reply. Nothing is expected back, so this ends that "
-        'exchange cleanly. Use `message` (or `agent` with `mode` "request") instead '
-        "when you NEED something from them. `complete` alone reports to no one: reply "
-        "BEFORE you complete. Refused when nothing is owed."
+        "Reply to a request someone is waiting on — an agent's `message` that expects "
+        "an answer, or the request you were given. `id` is the request's `r-…` from "
+        "`## Open Items`; it alone says where the reply goes, and each request gets "
+        "its own reply. Nothing is expected back, so this ends that exchange cleanly. "
+        'Use `message` (or `agent` with `mode` "request") instead when you NEED '
+        "something from them. `complete` alone reports to no one: reply BEFORE you "
+        "complete. Refused when nothing is owed."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -275,17 +237,9 @@ class ReplyTool(Tool):
             "id": {
                 "type": "string",
                 "minLength": 1,
-                "description": 'The item id from `## Open Items`, e.g. "r-12".',
+                "description": 'The request id from `## Open Items`, e.g. "r-12".',
             },
             "text": {"type": "string", "minLength": 1, "description": "Your reply."},
-            "to": {
-                "type": "string",
-                "minLength": 1,
-                "description": (
-                    'Optional: the requester ("main" or an agent key) — must match the '
-                    "request `id` refers to."
-                ),
-            },
         },
         "required": ["id", "text"],
     }
@@ -293,51 +247,6 @@ class ReplyTool(Tool):
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # Placeholder — the loop intercepts `reply` before dispatch.
         return ToolResult(True, output=str(args.get("text", "")) or "(reply)")
-
-
-class AnswerTool(Tool):
-    name = "answer"
-    # ``MessageTool`` 과 같은 선언 (T3): 질문 포트가 주입된 루프에만 붙고
-    # 그 외에서는 목록에서 제거된다. 포트는 상주 에이전트와 main 이 받는다
-    # — main 도 자기 앞으로 온 질문에 답해야 한다.
-    requires_handler = "questions"
-    force_mount = True
-    # v10.30.0: 사용자 요청과의 혼동을 설명에서 막는다 — 꼬리 Open Requests
-    # 의 `[1] (nick) "하이"` 를 "나한테 온 질문, id 1" 로 읽고
-    # `answer(id="1")` 을 부른 실측(dj72nx, Qwen3.6-35B). 인사말이 포트에서
-    # 거부돼 사용자에게 가지 않았다. 이 도구는 에이전트 질문 봉투 전용이다.
-    description = (
-        "Answer a question another AGENT asked you — its id is a `q-…` in "
-        "`## Open Items` (it also arrived in the question envelope, e.g. "
-        "`[question q-1a2b from agt-x9]`). NOT for user requests (`u-…`) or "
-        "mail (`n-…`): those close in `complete`'s `answers`. The asker is NOT blocked and "
-        "kept working, but it cannot finish the part that depends on your "
-        "answer. If you genuinely cannot answer, say so with `answer` rather "
-        "than ignoring it — silence only stalls them."
-    )
-    parameters: ClassVar[dict] = {
-        "type": "object",
-        "properties": {
-            "id": {
-                "type": "string",
-                "minLength": 1,
-                "description": 'The question id, e.g. "q-1a2b" — never a `u-…`/`n-…` item.',
-            },
-            "text": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Your answer.",
-            },
-        },
-        "required": ["id", "text"],
-    }
-
-    def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        # Placeholder — the loop intercepts `answer` before dispatch and
-        # routes it through the injected question port.
-        return ToolResult(
-            True, output=f"(answer to {args.get('id', '?')}: intercepted by loop)"
-        )
 
 
 class RunSkillTool(Tool):

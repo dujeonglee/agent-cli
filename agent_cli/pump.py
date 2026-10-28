@@ -257,9 +257,13 @@ class SessionPump:
                     result = d.run_main(req)
                     from agent_cli.runtime import main_run_ended
 
-                    main_run_ended(
-                        d.agent_registry, getattr(result, "output", "") or ""
-                    )
+                    # `wait` 로 끝난 런은 빚을 그대로 둔다 — 상주 워커와 같은 규칙
+                    # (v10.77.0). 폴백을 지금 보내면 요청자가 "⏸ waiting" 을
+                    # 답으로 받는다.
+                    if not getattr(result, "waiting", False):
+                        main_run_ended(
+                            d.agent_registry, getattr(result, "output", "") or ""
+                        )
                     if d.auditor is not None:
                         d.auditor.run_ended(
                             req, ok=bool(getattr(result, "success", False))

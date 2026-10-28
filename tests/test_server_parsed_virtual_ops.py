@@ -36,7 +36,6 @@ SPECIAL_OP_INPUTS: dict[str, dict] = {
     "ask": {"questions": ["which one?"]},
     "run_skill": {"skill": "no-such-skill"},
     "message": {"to": "main", "text": "hi", "expects_reply": False},
-    "answer": {"id": "q9", "text": "yes"},
     "reply": {"id": "r1", "text": "AUDIT run seq 1..8: pass"},
 }
 
@@ -50,7 +49,6 @@ def _ports():
     port = MagicMock()
     port.nonblocking = True
     port.reply.return_value = ""
-    port.answer.return_value = ""
     port.ask.return_value = ("q1", "")
     return {"questions": port, "message_handler": lambda to, text, **kw: ""}
 

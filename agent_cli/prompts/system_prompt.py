@@ -431,28 +431,23 @@ _ASK_INLINE = """\
 # 것**이다(막히지 않으니 물어도 비용이 거의 없다).
 _ASK_INLINE_RESIDENT = """\
 
-  `ask` does NOT block you. It registers the question with whoever
-  requested your current task and returns immediately; their answer
-  arrives later as a new message and you pick up where you left off.
+  `ask` does NOT block you. It puts the question in the person's
+  question tray and returns immediately; their answer arrives later as
+  a new message and you pick up where you left off.
   - Ask as soon as a decision is genuinely not yours to make — a
     policy call, an ambiguous requirement, a destructive choice. Do
     NOT guess and paper over it with a TODO; guessing is the expensive
     mistake here, not asking.
-  - Address it right: by default it goes to whoever gave you this task.
-    If a human must decide, set `to` to "user" — it lands in their
-    question tray. Do not route a person's decision through an
-    intermediary; they may answer on the person's behalf. To ask main or
-    another agent — e.g. the sender of a request that arrived while you
-    were working — name them: `to` "main" or `to` "<agent key>".
+  - `ask` reaches only the person. For main or another agent, send a
+    `message` — it becomes a request they owe you a `reply` for.
   - Then keep going on everything that does not depend on the answer.
   - When nothing else can proceed, `complete` and report what you did.
     That is not giving up — if an answer comes, it arrives as a new
     message and you continue from there. It may never come: a person is
     free not to answer, and nobody chases them. Do not wait for it and do
     not poll — an answer cannot reach a run that is still going.
-  - Do not re-ask the same question while it is open (a repeat is folded
-    into the original). If the addressee is another agent and stops
-    answering, you are told so in the same envelope an answer would use."""
+  - Do not re-ask the same question while it is open (a repeat in the
+    same run is folded into the original)."""
 
 
 def _build_tool_inline_guides(
@@ -507,19 +502,15 @@ def description_overrides_for(
 
 
 def parameter_overrides_for(
-    active_tools, nonblocking_ask: bool, has_agent_registry: bool = True
+    active_tools, has_agent_registry: bool = True
 ) -> dict[str, dict]:
     """루프별 도구 스키마 교체 — 프롬프트와 디코딩 문법(v9.24.0)이 **같은**
     스키마를 봐야 한다. 한쪽만 알면 문법이 프롬프트가 가르친 키를 막는다.
 
-    - 상주 에이전트의 ``ask`` 는 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
     - 서브루프(레지스트리 없음)의 ``agent`` 는 ``run`` 만 갖는다 (v10.13.0).
+      (상주 에이전트 ``ask`` 의 ``to`` 는 v10.77.0 에서 지웠다 — 질문은 사람에게만.)
     """
     overrides: dict[str, dict] = {}
-    if nonblocking_ask and "ask" in active_tools:
-        from agent_cli.tools.virtual import AskTool
-
-        overrides["ask"] = AskTool.RESIDENT_PARAMETERS
     if not has_agent_registry and "agent" in active_tools:
         from agent_cli.tools.agent_tool import AgentTool
 
@@ -545,9 +536,7 @@ def function_schemas_for(
         has_agent_registry=has_agent_registry,
         nonblocking_ask=nonblocking_ask,
     )
-    param_overrides = parameter_overrides_for(
-        active_tools, nonblocking_ask, has_agent_registry
-    )
+    param_overrides = parameter_overrides_for(active_tools, has_agent_registry)
     guides = _build_tool_inline_guides(
         active_tools,
         dialect,
@@ -596,9 +585,7 @@ def _build_tools_section(
         has_agent_registry=has_agent_registry,
         nonblocking_ask=nonblocking_ask,
     )
-    param_overrides = parameter_overrides_for(
-        active_tools, nonblocking_ask, has_agent_registry
-    )
+    param_overrides = parameter_overrides_for(active_tools, has_agent_registry)
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
@@ -735,12 +722,12 @@ its own answer back; never let one end silently:
    window is answered by `complete` itself (they see it there).
 2. A request that arrives mid-run does not replace the one you are on: finish
    or explicitly decline both, each with its own reply.
-3. When you NEED something from a requester or a peer, use `message` (it
-   expects a reply); to ask a question, use `ask` — both name their target.
+3. When you NEED something from a requester or a peer, use `message` — it
+   becomes a request they owe you a `reply` for. To ask the person, use `ask`.
 4. If you cannot do what was asked, still reply: say what failed and why.
    No requester should ever have to ask twice or poll you.
 5. To TELL someone something that needs no answer — a status note, a
-   hand-off, a goodbye — use `message` with `expects_reply: false`. A
+   hand-off, a goodbye — use `message` with `expects_reply` false. A
    delivered reply or notice is not a request: never answer it with thanks or
    an acknowledgement; use it, and `complete` when nothing else remains."""
 

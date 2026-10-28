@@ -1776,19 +1776,16 @@ def _agent_mail_notice(reply: dict, busy: bool) -> None:
     없어서 **main 이 바쁠 때만** 한 줄 찍는다. 유휴면 곧 깨우기 런이 열려
     관찰 줄이 바로 나오므로 따로 알릴 것이 없다. 줄의 글은 곧 들어갈 관찰의
     머리줄(``mail_queue_item``)이라, 종류마다 문구를 손으로 짓지 않는다
-    (종전엔 사망 통지가 기본 문구 "회신 도착" 으로 떨어졌다). 질문은 늘
-    알린다 — CLI 에는 ❓ 트레이가 없다."""
+    (종전엔 사망 통지가 기본 문구 "회신 도착" 으로 떨어졌다). v10.77.0: 에이전트가
+    main 에게 묻는 질문 메일은 없어졌다(질문은 사람에게만)."""
     from agent_cli.render import get_renderer
     from agent_cli.subagent.agents_live import mail_queue_item
 
-    kind = reply.get("kind", "reply")
-    if kind == "question":
-        line = f"❓ Question from agent {reply.get('key', '?')} (awaiting an answer)"
-    elif not busy:
+    if not busy:
         return
-    else:
-        it = mail_queue_item(reply)
-        line = f"⏳ Queued · [{it['nickname']}] {it['text']} — delivered to main when this turn ends"
+    kind = reply.get("kind", "reply")
+    it = mail_queue_item(reply)
+    line = f"⏳ Queued · [{it['nickname']}] {it['text']} — delivered to main when this turn ends"
     try:
         get_renderer().agent_mail_hint(key=reply.get("key", ""), kind=kind, text=line)
     except Exception:

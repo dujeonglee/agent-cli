@@ -1013,10 +1013,9 @@ class TestStaticUI:
         assert "var ovAskTray" not in js
         assert "open_questions" in js
         assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
-        # roster 의 open_questions 가 표시 진실원이고, **사람 주소만** 뜬다
+        # roster 의 open_questions 가 표시 진실원 — 주소는 언제나 사람(v10.77.0)
         rt = _js_fn_body(js, "ovRenderAskTray")
         assert "t.open_questions" in rt
-        assert 'indexOf("user") === 0' in rt
         assert "waiting_ask" not in rt
         # roster 갱신마다 재렌더
         onr = _js_fn_body(js, "ovOnRoster")

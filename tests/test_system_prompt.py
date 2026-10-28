@@ -552,13 +552,11 @@ class TestBuildSystemPrompt:
         spawn 을 배우지도, 낼 수도 없다."""
         from agent_cli.prompts.system_prompt import parameter_overrides_for
 
-        params = parameter_overrides_for(["agent"], False, has_agent_registry=False)[
-            "agent"
-        ]
+        params = parameter_overrides_for(["agent"], has_agent_registry=False)["agent"]
         assert params["properties"]["mode"]["enum"] == ["run"]
         assert "key" not in params["properties"]
         assert "name" not in params["properties"]
-        assert parameter_overrides_for(["agent"], False, has_agent_registry=True) == {}
+        assert parameter_overrides_for(["agent"], has_agent_registry=True) == {}
 
     def test_agent_guide_does_not_restate_the_parameters(self):
         """ "Context modes" used to list ``tools`` and ``agent`` beside
@@ -1609,7 +1607,7 @@ class TestReplyDisciplineSection:
         assert "WHILE you work" in body and "## Open Items" in body  # 사실 3
         assert "automatically returns" not in body  # v9.21.0 이전의 거짓
         assert "cannot do" in body or "failed" in body  # 실패도 회신
-        assert "expects_reply: false" in body  # v10.1.0 통지
+        assert "`expects_reply` false" in body  # v10.1.0 통지 (v10.77.0 표기)
         assert "never answer it with thanks" in body
 
 

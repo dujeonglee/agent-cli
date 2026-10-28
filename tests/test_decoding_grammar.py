@@ -624,17 +624,13 @@ class TestSchemaDeclarationsAreSingleSource:
             # 한도까지 반복됐다 — 문법이 그 값을 애초에 못 내게 한다.
             ("message", "to"),
             ("message", "text"),
+            ("reply", "id"),
             ("reply", "text"),
-            ("answer", "id"),
-            ("answer", "text"),
             ("ask", "question"),
             ("run_skill", "name"),
             ("fetch", "url"),
         ):
             assert ml(tool, key) == 1, (tool, key)
-        from agent_cli.tools.virtual import AskTool
-
-        assert AskTool.RESIDENT_PARAMETERS["properties"]["question"]["minLength"] == 1
         # 빈 값이 정당한 인자 — 빈 파일, 빈 pos 의 append
         assert ml("write_file", "content") is None
         assert ml("edit_file", "pos") is None

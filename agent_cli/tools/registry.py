@@ -33,7 +33,6 @@ from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.snapshot_tool import SnapshotTool
 from agent_cli.tools.view_image import ViewImageTool
 from agent_cli.tools.virtual import (
-    AnswerTool,
     AskTool,
     CompleteTool,
     MessageTool,
@@ -47,8 +46,8 @@ from agent_cli.tools.write_file import WriteFileTool
 # (v10.13.0). Until then the order was the order tools happened to be added —
 # new ones were appended "to keep the existing order" — with ``edit_file`` and
 # ``agent`` moved to the very end, so the model read ``write_file`` near the top
-# and ``edit_file`` a dozen tools later, and the pairs ``ask``/``answer`` and
-# ``message``/``reply`` were split. A loop's system prompt is fixed for the
+# and ``edit_file`` a dozen tools later, and the pair ``message``/``reply`` was
+# split. A loop's system prompt is fixed for the
 # life of the loop, so the order has no per-turn cache cost.
 #
 #   files      read → edit → write (edit is the default way to change a file;
@@ -58,7 +57,7 @@ from agent_cli.tools.write_file import WriteFileTool
 #              the two that act later: monitor, schedule — and
 #              snapshot, the way back after shell damaged an input (v10.36.0)
 #   memory     history, memory
-#   people     ask/answer, message/reply, agent, run_skill
+#   people     ask, message/reply, agent, run_skill (``answer`` removed v10.77.0)
 #   finish     complete
 _ALL_TOOLS: list[Tool] = [
     ReadFileTool(),
@@ -89,7 +88,6 @@ _ALL_TOOLS: list[Tool] = [
     AskTool(),
     # 💬 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1). ``requires_handler``
     # 가 포트 없는 루프에서 알아서 뗀다.
-    AnswerTool(),
     MessageTool(),
     # ↩ `message` 의 짝 (v9.21.0): 요청자에게 빚진 회신을 갚는다.
     # ``requires_handler="message_handler"`` 라 상주 에이전트에만 붙는다.

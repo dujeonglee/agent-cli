@@ -164,11 +164,6 @@ class TestToolErrors:
 class TestInjectedNotices:
     """프롬프트에 직접 주입되는 안내문."""
 
-    def test_owed_reminder(self):
-        from agent_cli.subagent.agents_live import _OWED_REMINDER
-
-        _assert_ascii_ish(_OWED_REMINDER, "독촉 안내")
-
     def test_wake_text(self):
         from agent_cli.subagent.agents_live import MailWaker
 
@@ -182,13 +177,10 @@ class TestInjectedNotices:
         reg = make_registry(tmp_path)
         try:
             key, _ = reg.spawn()
-            q = Question(
-                id="q1", asker=key, target="user", text="which?", delivered_in="r-1"
-            )
-            q.asked_in = 0
+            q = Question(id="q1", asker=key, target="user", text="which?")
             reg._questions[q.id] = q
             tm = reg.get(key)
-            out = reg._with_human_notice(tm, 0, "done")
+            out = reg._with_human_notice(tm, "", "done")
             assert "q1" in out, "사전 조건: 안내가 실제로 붙어야 한다"
             _assert_ascii_ish(out, "미답 질문 안내")
         finally:

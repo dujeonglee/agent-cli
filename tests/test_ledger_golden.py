@@ -15,6 +15,9 @@ P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·�
   다시 얼렸다(PR 에 대조표). 이후 변경은 다시 바이트 가드를 받는다.
 - v10.77.0: 표기 규칙(인자 백틱·값 따옴표) — 6개 시나리오가 꼬리 Task Guidelines 의
   "`background: true`" → "`background` true" 하나로만 달라졌다(나머지 바이트 동일).
+- v10.77.0 (소통 개정): 빚 줄 "`reply` with id" → "`reply` with `id`", 예산 문구에서
+  ", unanswered questions are closed" 삭제, 질문 빚 시나리오(q-7a3f `answer`)는 회신 빚
+  (r-2 `reply`)으로 — 그 셋으로만 달라졌다(나머지 바이트 동일, 다시 만들며 대조).
 
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """
@@ -48,7 +51,8 @@ class _Port:
 
 
 _REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "r-1", "text": "리뷰 결과 보내줘"}
-_QUESTION = {"kind": "answer", "to": "agt-b", "id": "q-7a3f", "text": "할인 상한은?"}
+# v10.77.0: 에이전트는 질문(q-)을 빚지지 않는다 — 행동으로 닫는 둘째 항목은 회신 빚
+_REPLY_B = {"kind": "reply", "to": "agt-b", "id": "r-2", "text": "할인 상한은?"}
 
 
 def _loop(items=(), *, debts=(), resident=False, user_run=None):
@@ -126,7 +130,7 @@ def s_two_partial_twice():
 
 
 def s_debts_not_user_run():
-    lp = _loop(debts=[_REPLY, _QUESTION], resident=True, user_run=False)
+    lp = _loop(debts=[_REPLY, _REPLY_B], resident=True, user_run=False)
     outs = [_tail(lp)]
     for _ in range(4):
         outs += _complete(lp, result="끝")
@@ -142,7 +146,7 @@ def s_debts_user_run_main():
 
 
 def s_request_and_debts_mixed():
-    lp = _loop([_req(1, "A 해줘"), _req(2, "B 해줘")], debts=[_QUESTION], resident=True)
+    lp = _loop([_req(1, "A 해줘"), _req(2, "B 해줘")], debts=[_REPLY_B], resident=True)
     a = _complete(lp, result="A", answers=["u-1"])
     b = _complete(lp, result="B", answers=["u-2"])
     return [_tail(lp), *a, *b]

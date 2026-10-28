@@ -583,13 +583,7 @@ class TestRunBlock:
                         {
                             "id": "q-ab12",
                             "text": "제가 추가할까요, 지적만 할까요?",
-                            "to": "user:bob",
-                            "ts": 0,
-                        },
-                        {
-                            "id": "q-cd34",
-                            "text": "main 에게 묻는 것",
-                            "to": "main",
+                            "to": "user",
                             "ts": 0,
                         },
                     ],
@@ -604,13 +598,12 @@ class TestRunBlock:
             direction="question",
             author=AGT,
             text="제가 추가할까요, 지적만 할까요?",
-            to="main",
+            to="user",
         )
         tray = page.locator("#ask-tray .ask-item")
         assert _wait(lambda: tray.count() > 0 and tray.first.is_visible())
         assert "제가 추가할까요" in tray.first.inner_text()
-        assert tray.count() == 1  # 사람 주소인 것만
-        assert "main 에게 묻는 것" not in page.locator("#ask-tray").inner_text()
+        assert tray.count() == 1  # 질문은 언제나 사람에게 (v10.77.0)
         # 채널에는 아무 줄도 생기지 않았다.
         _chip(page, AGT).click()
         assert (

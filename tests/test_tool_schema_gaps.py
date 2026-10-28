@@ -147,13 +147,13 @@ class TestValidationReadsTheMethod:
 
 
 class TestOverrides:
-    def test_ask_knows_the_resident_only_key(self):
-        """상주 에이전트는 `to` 를 정당하게 보낸다(프롬프트의 스키마 교체) — 공용
-        스키마엔 없지만 '모르는 키' 가 아니다."""
+    def test_ask_has_no_to_any_more(self):
+        """v10.77.0: 질문은 사람에게만 — 상주 에이전트 전용 `to` 가 없어져 이제
+        모르는 키다(알려 주고, 구제는 관측되면)."""
         ask = TOOLS["ask"]
         assert "to" not in ask.parameters["properties"]
-        assert ask.schema_gaps({"question": "q", "to": "user"}) == ([], [])
-        assert ask.schema_gaps({"to": "user"}) == (["question"], [])
+        assert ask.schema_gaps({"question": "q", "to": "user"}) == ([], ["to"])
+        assert ask.schema_gaps({"to": "user"}) == (["question"], ["to"])
         assert ask.schema_gaps({"question": "q", "whom": "user"}) == ([], ["whom"])
 
     def test_a_batch_shaped_tool_can_answer_in_flat_terms(self):

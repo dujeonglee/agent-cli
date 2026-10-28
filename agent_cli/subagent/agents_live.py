@@ -77,51 +77,44 @@ def clamp_max_agents(value) -> int:
 # 비동기라 구조적으로 불가.
 _MAX_PEER_HOPS = 6
 
+
 #: 배달된 peer 회신의 꼬리표 (v10.1.0 문구). 종전 "`complete` alone reports to no
 #: one" 은 받은 쪽이 작별 인사를 `message` 로 되보내게 만들었고(빚 생성 → 핑퐁),
 #: 실측(cnr60g) 게임 종료 뒤 작별 인사만 다섯 왕복이 돌았다. 되받아칠 것이
 #: 없고 ack 도 원치 않는다는 사실을 말한다.
-_REPLY_TAIL = (
-    "(This is their reply — nothing is owed back and no acknowledgement is "
-    "wanted. Use it to continue your task; when nothing else remains, "
-    "`complete`. Anything you owe someone ELSE still goes out via "
-    "`reply`/`message`.)"
-)
-#: 빚 없는 통지(`message` with expects_reply=false, v10.1.0)의 꼬리표.
-_NOTICE_TAIL = (
-    "(This is a notice — no reply is expected or owed, and no acknowledgement "
-    "is wanted. Use it if it changes your plan; otherwise `complete`.)"
-)
+def envelope(
+    kind: str, item_id: str, who: str, body: str, *, re: str = "", todo: str = ""
+) -> str:
+    """들어오는 배달의 봉투 — 모양 하나 (v10.77.0, D).
+
+    ``── <kind> [<id>] from <who>[ re [<id>]] ──`` 다음 줄부터 본문, 할 일이
+    있을 때만 끝에 괄호 한 줄. 종전엔 배달마다 머리줄이 제각각이었다(`agent X
+    message`·`agent X reply (success)`·`[question q- from …]`·`[answer to your
+    question: …]`). 회신·답은 무엇에 대한 것인지(``re``) 적는다 — 보낸 쪽과
+    받은 쪽이 같은 id 를 본다. ``who`` 가 비면 ``from`` 을 뺀다(죽음 통지)."""
+    src = f" from {who}" if who else ""
+    ref = f" re [{re}]" if re else ""
+    out = f"── {kind} [{item_id}]{src}{ref} ──\n{body}"
+    return f"{out}\n({todo})" if todo else out
 
 
-# ── 비동기 ask/answer (docs/agent-ask/DESIGN.md 3판) ──────────────
+def owe_line(who: str, rid: str) -> str:
+    """요청 봉투의 괄호 줄 — 누구에게 무엇으로 갚는가."""
+    return f'You owe {who} a `reply` with `id` "{rid}".'
+
+
+# ── 비동기 ask (docs/agent-ask/DESIGN.md) ──────────────
 #
 # 질문은 **아무것도 블록하지 않는다**: ``ask`` 가 여기에 등록하고 즉시
-# 반환하며, ``answer(id, text)`` 가 id 로 짝지어 배달한다. 강제는 "빚이
-# 남으면 런이 안 끝난다"로 하되 루프를 도는 주체에게만 건다.
-#
-# 불변식(§0): 질문의 주소 = ask 시점의 current_author = 원 요청자.
-# 답할 수 있는 주체는 그 주소, 오직 그것. ∴ 답한 주체는 항상 원 요청자라
-# 답 배달에 ``author=q.target`` 만 쓰면 기존 회신 라우팅이 제자리로 보낸다.
-# 단 ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은
-# ``user:{nickname}`` 이고 뷰어가 여럿이면 닉이 다르다.
+# 반환한다. v10.77.0 (B): 질문은 **사람에게만** 간다 — ❓ 트레이가 표면이고
+# 사람이 답하면 asker 에게 새 배달로 온다. 에이전트·main 에게 묻는 길은
+# `message`(요청 → 상대가 `reply` 를 빚진다) 하나다. 그래서 `answer` 도구도,
+# 에이전트가 빚지는 질문(q-)도 없다. ``user*`` 는 하나의 주체로 본다 — CLI 는
+# ``user``, 웹은 ``user:{nickname}`` 이고 뷰어가 여럿이면 닉이 다르다.
 
 #: 빚진 `message` 없이 런이 끝났을 때 요청자에게 가는 폴백 요약의 머리말
 #: (v9.21.0). 라벨이 있어야 받는 쪽이 "명시 회신" 과 구분한다.
 _NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
-
-# 런이 끝났는데 답 안 한 질문이 있을 때 다시 거는 항목의 머리말.
-_OWED_REMINDER = (
-    "(reminder) These question(s) are still waiting for your answer. Answer "
-    "each with the `answer` tool (id, text). Nothing is blocked on you — the "
-    "asker kept working — but they cannot finish the part that depends on it. "
-    "If you genuinely cannot answer, say so with `answer` rather than ignoring."
-)
-
-#: 런이 끝났는데 답하지 않은 질문을 닫을 때 asker 가 받는 사유 (v9.22.0).
-#: 독촉은 이제 **런 안에서** 3회(dispatch, 빚 목록 공통) — 그래도 남으면
-#: 런 끝에 닫는다. 종전의 런 뒤 독촉(`remind_owed`, 6회)은 흡수됐다.
-_UNANSWERED_CLOSE = "no answer — the addressee finished its run without answering"
 
 
 def _is_human_addr(addr: str) -> bool:
@@ -131,24 +124,21 @@ def _is_human_addr(addr: str) -> bool:
 
 @dataclass
 class Question:
-    """열린 질문 하나 — ``AgentRegistry._questions`` 의 값.
+    """열린 질문 하나 — ``AgentRegistry._questions`` 의 값. 주소는 언제나 사람
+    (v10.77.0, B) — ❓ 트레이가 보여 주고 사람이 답한다.
 
-    **두 런 이름이 런 스코프를 만든다.** 워커는 inbox 항목 1개 = 런 1개이고,
-    질문은 등록 즉시 목록에 오르지만 상대 inbox 에서는 **줄을 선다**. 이
-    비대칭을 안 보면 (a) 상대가 아직 꺼내지도 않은 질문에 강제·sweep 이
-    걸리고 (b) 다른 런에서 걸어 둔(영영 열릴 수 있는) 사람 질문이 이후 모든
-    회신을 막는다. 그래서 강제·sweep 은 ``delivered_in``, 회신 억제는
-    ``asked_in`` 을 본다 (DESIGN.md §3.2). 런 이름은 그 런을 연 배달의 id
-    (v10.77.0 — 종전 받은편지함 순번은 에이전트마다 1부터라 키가 될 수 없었다).
+    ``asked_in`` = asker 가 이 질문을 건 런(을 연 배달의 id) — 그 런의 결과에
+    "사람에게 물은 것이 열려 있다" 알림을 붙이고(`_with_human_notice`), 같은 런
+    안의 같은 질문을 접는다. 다른 런에서 걸어 둔(영영 열릴 수 있는) 질문이
+    섞이면 안 되므로 런으로 좁힌다.
     """
 
     id: str
-    asker: str  # "main" | "<agent key>"  — 답이 돌아갈 곳
-    target: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
+    asker: str  # "<agent key>" — 답이 돌아갈 곳
+    target: str  # "user" — 사람(트레이)
     text: str
     asked_at: float = field(default_factory=time.time)
-    asked_in: str = ""  # asker 가 이 질문을 건 런(을 연 배달의 id). main 은 ""
-    delivered_in: str | None = None  # target 이 꺼낸 런의 id (main ""), 미배달 None
+    asked_in: str = ""  # asker 가 이 질문을 건 런(을 연 배달의 id)
 
     @property
     def to_human(self) -> bool:
@@ -165,14 +155,7 @@ class Question:
                 text=str(d["text"]),
                 asked_at=float(d.get("asked_at") or time.time()),
                 # 물어본 런은 사라졌다 — "" 는 상주 런 이름과 안 겹친다.
-                # §3.7 억제는 이 세션의 런에만 적용된다.
                 asked_in="",
-                # 배달 여부는 **유지**한다 — 상대의 ctx 에 질문이 남아 있고
-                # (배달 = 런 1회 = 그 텍스트가 history 에 있다), 그 빚이
-                # 이어져야 독촉도 상한도 계속 돈다.
-                delivered_in=(
-                    None if d.get("delivered_in") is None else str(d["delivered_in"])
-                ),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -185,7 +168,6 @@ class Question:
             "text": self.text,
             "asked_at": self.asked_at,
             "asked_in": self.asked_in,
-            "delivered_in": self.delivered_in,
         }
 
 
@@ -323,11 +305,11 @@ def mail_queue_item(reply: dict) -> dict:
 
 
 def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
-    """mailbox 아이템 1건(회신 또는 질문) → main ctx 에 넣을 관찰 레코드.
+    """mailbox 아이템 1건 → main ctx 에 넣을 관찰 레코드.
 
-    ``kind:"question"`` (P2, ask→main 라우팅): teammate 가 ask 로 물은
-    질문 — teammate 는 답변까지 블록되므로 request 로 답하라는 안내를
-    붙인다. 그 외(kind:"reply"/부재)는 회신.
+    에이전트에게서 온 것은 봉투 하나(:func:`envelope`, v10.77.0 D) — 요청·통지·
+    회신·죽음. 머리의 id 는 그 메일의 id(`item_id`)이고, 요청이면 main 이 그
+    id 로 빚진다. 작업·모니터·하니스 보고는 도구가 만든 보고라 봉투 밖이다.
 
     ``cap``(loop 의 ``_oversized_cap``, 0=무제한) 초과 회신은 전문 대신
     디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
@@ -338,12 +320,13 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     에이전트의 **배달-시점** 잔여 상태 한 줄을 동봉 — main 이 "얼마나
     밀렸는지" 보고 다음 요청/대기를 판단한다. 잔여가 있으면 남은 회신도
     자동 배달됨을 같이 안내(status 폴링 넛지와 정합 — 이 줄이 폴링을
-    유발하면 안 됨). question/died/peer 레코드에는 붙이지 않는다.
+    유발하면 안 됨). died/peer 레코드에는 붙이지 않는다.
     """
     from agent_cli.context.token_estimator import estimate_tokens
 
     key = reply.get("key", "")
     label = format_agent_label(key, reply.get("profile", ""), reply.get("name", ""))
+    mid = str(reply.get("item_id") or "")
 
     if reply.get("kind") == "harness":
         # 하니스 작업의 결과 (v10.42.0, harness/jobs) — 팀원 회신이 아니다:
@@ -390,12 +373,17 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
         # status 를 조회하기 전에 능동적으로 알린다.
         reason = reply.get("output") or "worker terminated unexpectedly"
-        content = (
-            f"── agent {label} DIED ──\n{reason}\n"
-            f"(Its queued requests were lost, but its context is kept — bring "
-            f'it back with {{"mode":"resume","key":"{key}"}} to continue with '
-            f"full memory, or spawn a new one. If it died from a crash, the "
-            f"same cause may recur.)"
+        content = envelope(
+            "died",
+            mid,
+            "",
+            f"{label}: {reason}",
+            todo=(
+                "Its queued requests were lost, but its context is kept — bring "
+                f'it back with `agent` `mode` "resume" and `key` "{key}" to '
+                "continue with full memory, or spawn a new one. If it died from "
+                "a crash, the same cause may recur."
+            ),
         )
         return {
             "role": "user",
@@ -405,85 +393,20 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "source": "agent_died",
         }
 
-    if reply.get("kind") == "question":
-        # 비동기 질문(§3): 상대는 **막혀 있지 않다**. 새 request 를 보내면
-        # 그건 답이 아니라 일감이라 질문은 열린 채 남고, 독촉이 상한까지
-        # 돌다 닫힌다 — 런만 태운다.
-        question = reply.get("output") or "(empty question)"
-        # v9.20.0: "사람 대신 답하지 말라" 를 명시한다. 종전 문구는 답하는
-        # 법만 알려줘서, 사용자에게 가야 할 질문을 받은 main 이 사용자의
-        # 답을 **지어냈다**(실측 — 사람은 아무것도 못 봤다).
-        tail = (
-            "(The agent is NOT blocked and kept working. Answer with the "
-            f'`answer` tool with `id` "{reply.get("id", "")}" — '
-            "ONLY if you know the answer yourself. If it is the person's call, "
-            "ask them with `ask` (it waits for their reply) and pass their words "
-            "on with `answer`; never answer on their behalf. A new request is "
-            "not an answer.)"
-        )
-        content = f"── agent {label} QUESTION ──\n{question}\n{tail}"
-        return {
-            "role": "user",
-            "tool": "agent",
-            "success": True,
-            "content": content,
-            "source": "agent_question",
-        }
-
-    if reply.get("kind") == "reminder":
-        # 미답 질문 독촉 (§3.4) — 상주 에이전트가 inbox 항목으로 받는 것을
-        # main 은 메일박스로 받는다. 새 일감이 아니라 빚 통지다.
-        return {
-            "role": "user",
-            "tool": "agent",
-            "success": True,
-            "content": reply.get("output") or "(empty reminder)",
-            "source": "agent_reminder",
-        }
-
-    if reply.get("kind") == "answer":
-        # main 이 건 질문의 답 — main 에는 inbox 가 없어 메일박스가 유일한
-        # 흡수 지점이다(``submit`` 의 대상은 상주 에이전트뿐).
-        body = reply.get("output") or "(empty answer)"
-        content = (
-            f"── answer from {label} ──\n{body}\n"
-            "(This answers a question you asked. Continue the work it was "
-            "blocking.)"
-        )
-        return {
-            "role": "user",
-            "tool": "agent",
-            "success": True,
-            "content": content,
-            "source": "agent_answer",
-        }
-
     if reply.get("kind") == "peer_message":
         # 상주 에이전트가 main 에게 먼저 보낸 메시지 (v5.11) — 회신 대기
         # 아님. main 은 필요하면 agent request 로 답한다.
         msg = reply.get("output") or "(empty message)"
         if reply.get("notice"):
-            # v10.1.0: 통지 — 빚도 회신도 아니다. 되받아칠 것 없음.
-            content = (
-                f"── agent {label} notice ──\n{msg}\n"
-                "(No reply is expected or owed. Use it if it changes your plan; "
-                "otherwise there is nothing to do about it.)"
-            )
+            # v10.1.0: 통지 — 빚도 회신도 아니다. 할 일이 없으니 괄호 줄도 없다.
+            content = envelope("notice", mid, label, msg)
         elif reply.get("expects_reply"):
-            # v9.22.0: `message` — 회신을 빚진다. 안 갚고 complete 하면 독촉.
-            content = (
-                f"── agent {label} message ──\n{msg}\n"
-                f"(This agent expects a reply from you — "
-                f'`reply` with id "{reply.get("debt_id", "")}" before you '
-                f"complete; completing without one gets you reminded.)"
-            )
+            # v9.22.0: `message` — 회신을 빚진다(빚 id = 이 메일의 id).
+            rid = str(reply.get("debt_id") or mid)
+            content = envelope("request", rid, label, msg, todo=owe_line("it", rid))
         else:
-            # `reply` — 답이다. 되받아칠 것 없음.
-            content = (
-                f"── agent {label} reply ──\n{msg}\n"
-                f"(This is its reply to your request — nothing to send back. "
-                f"Use it and continue.)"
-            )
+            # `reply` — main 이 보낸 요청의 답. 되받아칠 것 없음.
+            content = envelope("reply", mid, label, msg, re=str(reply.get("re") or ""))
         return {
             "role": "user",
             "tool": "agent",
@@ -505,8 +428,10 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             f"--- head excerpt ---\n{head}"
         )
 
-    status = "success" if reply.get("success") else "error"
-    content = f"── agent {label} reply ({status}) ──\n{body}"
+    if not reply.get("success"):
+        body = f"(the run ended with an error)\n{body}"
+    # 런의 회신(라벨 붙은 런 요약 폴백 포함) — 그 런을 연 요청이 ``run``
+    content = envelope("reply", mid, label, body, re=str(reply.get("run") or ""))
     tm = registry.get(key) if registry is not None else None
     if tm is not None and getattr(tm, "state", "dead") != "dead":
         queued = tm.inbox.qsize()
@@ -588,16 +513,8 @@ class AgentInstance:
         self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수 (화면용 숫자)
         # 지금 도는 런의 이름 = 그 런을 연 배달의 id — 질문의 런 스코프
-        # (Question.asked_in)가 이 값을 찍는다. 유휴/main 은 "".
+        # (Question.asked_in)가 이 값을 찍는다. 유휴는 "".
         self.current_item = ""
-        # 이 런이 질문을 건 **주소들** (§3.7). 걸었다면 그 질문은 반드시 답
-        # 런을 하나 만들고(답·상한·상대 사망 셋 다 `_deliver_answer` 를
-        # 지난다) 그 런이 **그 주소**에게 같은 빚을 지므로, 이 런의 그 주소
-        # 빚은 억제한다. 주소별인 이유(v9.22.2): 종전 bool 은 사람에게 물은
-        # 런(`ask(to="user")`)의 main 빚까지 억제했는데, 그 답 런의 요청자는
-        # 사람이라 빚이 없어 main 은 결과를 영영 못 받았다. 워커가 런
-        # 경계마다 비운다.
-        self.asked_targets: set[str] = set()
         # 이 런의 회신 빚은 여기 없다 — 레지스트리의 주소별 장부
         # (`AgentRegistry._reply_debts`, v9.22.1) 가 main 과 같은 자리에서 든다.
 
@@ -630,12 +547,9 @@ class QuestionPort:
     ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
     가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
 
-    표면은 ``ask``/``answer`` **둘뿐**이다. 독촉은 하네스가 런 경계에서
-    걸므로(§3.4) 루프가 미답 목록을 조회할 일이 없다 — 조회 메서드를 두면
-    호출자 없는 표면이 된다.
-
-    main 도 같은 포트를 받는다(``key=None``) — 안 그러면 main 에 답변
-    수단이 없다. 단 ``ask`` 는 거부한다(아래).
+    표면은 ``ask``·``reply``·``debts`` 다. main 도 같은 포트를 받는다
+    (``key=None``) — 빚을 갚는 `reply` 가 루프와 무관하게 하나이기 때문이다.
+    단 ``ask`` 는 거부한다(아래).
     """
 
     def __init__(self, registry: AgentRegistry, key: str | None = None):
@@ -654,75 +568,46 @@ class QuestionPort:
         """
         return self.key is not None
 
-    def ask(self, text: str, *, to: str | None = None) -> tuple[str, str]:
-        """질문 등록 + 배달. ``(id, err)`` — err 가 비면 성공.
+    def ask(self, text: str) -> tuple[str, str]:
+        """사람에게 질문 등록 — ``(id, err)``, err 가 비면 성공 (v10.77.0, B).
+
+        주소는 언제나 사람(❓ 트레이)이다. 에이전트·main 에게 무언가 필요하면
+        `message` 다 — 그건 요청이고 상대가 `reply` 를 빚진다. 종전의 ``to``
+        (원 요청자 기본·에이전트 주소)는 에이전트가 빚지는 질문(q-)과 `answer`
+        도구를 만들었는데, 실제 기록에서 `answer` 11회가 전부 실패했다.
 
         **main 은 거부한다.** main 의 ``ask`` 는 사람에게 묻는 기존 블로킹
-        경로(`renderer.prompt_user`) 그대로다. 여기로 오면 주소가 `user` 인
-        질문이 생기는데, 그것은 로스터에도 창에도 안 뜨고(둘 다 asker 를
-        에이전트 키로 찾는다) `open_human_questions()` 에만 남아
-        ``any_activity()`` 를 영구 True 로 만든다 — **보이지도, 답할 수도,
-        사라지지도 않는 질문**이다. resume 이 질문을 되살리면 asker(main)도
-        target(user)도 '항상 살아있음' 이라 매 세션 부활한다.
+        경로(`renderer.prompt_user`) 그대로다. 여기로 오면 로스터에도 창에도 안
+        뜨는(둘 다 asker 를 에이전트 키로 찾는다) 질문이 생겨 ``any_activity()``
+        를 영구 True 로 만든다.
         """
         if self.key is None:
             return "", (
                 "main asks the operator through the blocking `ask` prompt, "
                 "not through the question list"
             )
-        tm = self._reg.get(self.key)
-        # ask 시점의 ``current_author`` = 원 요청자 = 질문의 주소 (§0).
-        target = tm.current_author if tm is not None else "main"
-        # ``to="user"`` (v9.20.0): 원 요청자 대신 사람에게. 주소가 ``user``
-        # 면 ``to_human`` 이라 트레이에 오르고 ``user*`` 누구나 답한다 —
-        # §0 의 "답할 주체 = 주소" 는 그대로다. 답은 asker 에게 간다.
-        if to not in (None, "", "requester"):
-            if to == "user":
-                target = "user"
-            elif to == "main":
-                # v9.25.0: 런 도중 흡수된 요청의 발신자에게도 물을 수 있다
-                target = "main"
-            else:
-                key = to.split(":", 1)[1] if to.startswith("agent:") else to
-                peer = self._reg.get(key)
-                if key == self.key:
-                    return "", "cannot ask yourself"
-                if peer is None or peer.state == "dead":
-                    return "", (
-                        f'unknown `to` \'{to}\' — use "requester", "user", '
-                        '"main", or a live agent key from ## Live Agents'
-                    )
-                target = f"agent:{key}"
-        return self._reg.register_question(self.asker, target, text)
-
-    def answer(self, qid: str, text: str) -> str:
-        """``qid`` 에 답한다. 에러 메시지 또는 빈 문자열."""
-        return self._reg.answer_question(qid, text, by=self.me)
+        return self._reg.register_question(self.asker, text)
 
     def debts(self) -> list[dict]:
-        """이 런이 아직 갚지 않은 빚 (v9.22.0) — main·상주 **같은 코드**.
+        """이 런이 아직 갚지 않은 회신 빚 (v9.22.0) — main·상주 **같은 코드**.
 
-        ``{"kind": "answer"|"reply", "to": addr, "id": qid|"", "text": …}``.
-        answer 빚 = 나에게 배달된 열린 질문(`_questions`). reply 빚 = 이 런이
-        받은 요청 중 안 갚은 것(`_reply_debts[me]`) — 상주는 시작 항목, main 은
+        ``{"kind": "reply", "to": addr, "id": rid, "text": …}`` — 이 런이 받은
+        요청 중 안 갚은 것(`_reply_debts[me]`). 상주는 시작·흡수 항목, main 은
         런에 배달된 `message`; 적는 쪽만 다르고 장부는 하나다. `complete`
-        직전에 루프가 물어 독촉(3회)한다.
+        직전에 루프가 물어 독촉한다.
         """
-        out: list[dict] = []
-        for q in self._reg.questions_owed_by(self.me):
-            out.append(
-                {
-                    "kind": "answer",
-                    "to": "main" if q.asker == "main" else f"agent:{q.asker}",
-                    "id": q.id,
-                    "text": q.text,
-                }
-            )
-        for d in self._reg.reply_debts(self.me):
-            out.append({"kind": "reply", "to": d.to, "id": d.id, "text": d.text})
-        return out
+        return [
+            {"kind": "reply", "to": d.to, "id": d.id, "text": d.text}
+            for d in self._reg.reply_debts(self.me)
+        ]
 
-    def _main_reply(self, text: str, *, id: str, to: str) -> str:
+    @staticmethod
+    def _owed_listing(owed) -> str:
+        return "; ".join(
+            f'[{d.id}] {d.to.split(":", 1)[-1]}: "{d.text[:60]}"' for d in owed
+        )
+
+    def _main_reply(self, text: str, *, id: str) -> str:
         """main 이 에이전트에게 빚진 회신을 갚는다 (v10.56.0, 장부 P3 §11.3).
 
         종전엔 main 의 `agent(mode="request")` 가 그 에이전트 앞 **가장 오래된**
@@ -736,34 +621,29 @@ class QuestionPort:
                 "nothing to reply to — no agent is waiting on a reply from you. "
                 'To give an agent new work, use `agent` with mode "request".'
             )
-        listing = "; ".join(f'[{d.id}] {d.to}: "{d.text[:60]}"' for d in owed)
+        listing = self._owed_listing(owed)
         id = str(id or "").strip()
         if not id:
             return (
-                "reply needs `id` — which message is this the reply to? You owe: "
+                "reply needs `id` — which request is this the reply to? You owe: "
                 f"{listing}. Send `reply` with that `id`."
             )
         d = next((x for x in owed if x.id == id), None)
         if d is None:
-            return f"no unpaid reply with id '{id}' — you owe: {listing}."
-        to = (to or "").strip()
-        if to:
-            resolved = self._reg.resolve_key(to)
-            if f"agent:{resolved or to.split(':', 1)[-1]}" != d.to:
-                return f"[{id}] is owed to {d.to}, not {to} — drop `to` or fix it."
+            return f'no unpaid request "{id}" — you owe: {listing}.'
         self._reg.settle_id(self.me, id)
-        return self._reg.request(
-            d.to.split(":", 1)[1], text, author="main", expects_reply=False
+        return self._reg._deliver_peer_reply(
+            d.to.split(":", 1)[1], "main", text, 0, re=id
         )
 
-    def reply(self, text: str, *, id: str = "", to: str = "") -> str:
+    def reply(self, text: str, *, id: str = "") -> str:
         """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열.
 
         ``id`` (v9.25.0) 는 **필수** — 어느 요청에 대한 답인지 하네스가 알아야
         한다. 런 도중 요청이 흡수되면 빚이 여럿이고, 그때 "요청자" 는 하나가
         아니다. 없으면 항상 거부하고 번호 목록을 보여 준다(`complete` 의
-        `answers`·`answer` 의 `id` 와 같은 원칙, 사용자 결정). ``to`` 는
-        선택 — 번호가 이미 상대를 정하고, 적었는데 어긋나면 거부한다.
+        `answers` 와 같은 원칙, 사용자 결정). id 가 전역에서 유일하므로 그것만으로
+        상대가 정해진다 — v10.77.0 에서 ``to`` 를 지웠다(C).
         돌려받을 것이 없으므로 `expects_reply=False` 로 간다.
         **빚진 게 없으면 거부한다**(사용자 결정): 회신·질문·독촉으로 시작한
         런엔 답할 상대가 없고, "확인했습니다" 류의 ack 가 정확히 여기서
@@ -775,7 +655,7 @@ class QuestionPort:
         if not has_words(text):
             return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
         if self.key is None:
-            return self._main_reply(text, id=id, to=to)
+            return self._main_reply(text, id=id)
         tm = self._reg.get(self.key)
         if tm is None:
             return "unknown agent"
@@ -803,11 +683,11 @@ class QuestionPort:
                 )
             return (
                 "nothing to reply to — this run was not started by a request "
-                "that expects one (it was a delivered reply, a question, or a "
-                "reminder). Do not acknowledge those. If you need something from "
+                "that expects one (it was a delivered reply, a notice, or an "
+                "answer). Do not acknowledge those. If you need something from "
                 "someone, use `message` (`to` the recipient, `text` your message)."
             )
-        listing = "; ".join(f'[{d.id}] {d.to}: "{d.text[:60]}"' for d in owed)
+        listing = self._owed_listing(owed)
         id = str(id or "").strip()
         if not id:
             return (
@@ -824,19 +704,7 @@ class QuestionPort:
                     f'correction with `message` (`to` "{prior.to.split(":", 1)[-1]}", '
                     "`text` your correction)."
                 )
-            return f"no unpaid reply with id '{id}' — you owe: {listing}."
-        to = (to or "").strip()
-        if to:
-            # v10.1.0: 키·`agent:` 접두·이름 전부 같은 주소로 (resolve_key)
-            resolved = None if to == "main" else self._reg.resolve_key(to)
-            addr = (
-                "main" if to == "main" else f"agent:{resolved or to.split(':', 1)[-1]}"
-            )
-            if addr != d.to:
-                return (
-                    f"[{id}] is a request from {d.to}, not {addr} — drop `to` or "
-                    "fix it."
-                )
+            return f'no unpaid request "{id}" — you owe: {listing}.'
         self._reg.settle_id(self.me, id)
         if d.to == "main":
             self._reg.message_to_main(
@@ -845,10 +713,11 @@ class QuestionPort:
                 profile=tm.profile_name,
                 name=tm.instance_name,
                 answers=d.answers,
+                re=id,
             )
             return ""
         requester = d.to.split(":", 1)[1]
-        self._reg._deliver_peer_reply(requester, self.key, text, 0)
+        self._reg._deliver_peer_reply(requester, self.key, text, 0, re=id)
         self._reg._log_outbound(self.key, text, to=requester)
         return ""
 
@@ -1016,12 +885,15 @@ class AgentRegistry:
         """True when a new spawn/resume would exceed the cap. 0 = unlimited."""
         return bool(self.max_agents) and self.alive_count() >= self.max_agents
 
-    def pending_for(self, addr: str) -> list[str]:
+    def pending_for(self, addr: str, exclude: frozenset = frozenset()) -> list[str]:
         """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
         사람이 읽을 한 줄씩. 세션 전체의 `has_active_work` 가 아니라 **요청자별**:
         그 주소에게 회신을 빚진 에이전트, 그 주소가 보낸 항목을 받은편지함에
         들고 있거나 지금 처리 중인 에이전트. 자기 자신은 빼지 않아도 된다 —
         자기에게 빚지거나 자기 항목을 드는 일은 없다.
+
+        ``exclude`` (v10.77.0): 순환 대기 판정에서 거슬러 온 주소들 — 지금 `wait`
+        를 부르는 쪽은 바쁨 상태라 그대로 두면 상대의 깨울 근거로 잡힌다.
 
         **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_for`.
         종전엔 "그 주소로 가는 미배달 회신" 을 ``to`` 키로 세었는데, main 의
@@ -1032,13 +904,16 @@ class AgentRegistry:
         out: list[str] = []
         with self._cv:
             for debtor, debts in self._reply_debts.items():
-                if debtor == addr:
+                if debtor == addr or debtor in exclude:
                     continue
-                if any(not d.settled and not d.human and d.to == addr for d in debts):
+                owes = any(
+                    not d.settled and not d.human and d.to == addr for d in debts
+                )
+                if owes and not self._debtor_is_parked(debtor):
                     out.append(f"{debtor} owes you a reply")
         for tm in list(self._agents.values()):
             me = f"agent:{tm.key}"
-            if me == addr:
+            if me == addr or me in exclude:
                 continue
             if self.state_is_active(tm.state) and tm.current_author == addr:
                 out.append(f"{me} working on your request")
@@ -1046,6 +921,34 @@ class AgentRegistry:
                 # 받은편지함 미러(`inbox_items`)로 본다 — `SimpleQueue` 엔 `queue`
                 # 속성이 없어 종전 `getattr(tm.inbox, "queue", [])` 는 늘 비었다.
                 out.append(f"{me} has your request queued")
+        return out
+
+    def _debtor_is_parked(self, debtor: str) -> bool:
+        """빚진 쪽이 **스스로 잠들어 있다** — 런이 `wait` 로 끝나 빚만 남은
+        유휴 에이전트(보통의 런 끝은 빚을 비운다). 그런 채무자는 그 자체로는
+        아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다
+        (:meth:`parked_debtors_for` 와 `runtime.wake_sources` 가 거슬러 본다)."""
+        if debtor == "main" or not debtor.startswith("agent:"):
+            return False
+        tm = self._agents.get(debtor.split(":", 1)[1])
+        if tm is None or tm.state == "dead":
+            return False
+        return not self.state_is_active(tm.state) and not tm.inbox_items
+
+    def parked_debtors_for(self, addr: str) -> list[str]:
+        """``addr`` 에게 회신을 빚진 채 잠든 에이전트 주소들 (v10.77.0) — 그들을
+        깨울 것이 있는지는 호출자(`runtime.wake_sources`)가 거슬러 본다. 서로
+        `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는 교착을 여기서 끊는다."""
+        out: list[str] = []
+        with self._cv:
+            for debtor, debts in self._reply_debts.items():
+                if debtor == addr:
+                    continue
+                owes = any(
+                    not d.settled and not d.human and d.to == addr for d in debts
+                )
+                if owes and self._debtor_is_parked(debtor):
+                    out.append(debtor)
         return out
 
     def _queued(self, tm: AgentInstance) -> list[dict]:
@@ -1094,95 +997,40 @@ class AgentRegistry:
         """루프에 넘길 seam. ``key=None`` 이면 main 용."""
         return QuestionPort(self, key)
 
-    def register_question(self, asker: str, target: str, text: str) -> tuple[str, str]:
-        """질문 등록 + 배달 — ``(id, err)``. 아무것도 블록하지 않는다."""
+    def register_question(self, asker: str, text: str) -> tuple[str, str]:
+        """사람에게 질문 등록 — ``(id, err)``. 아무것도 블록하지 않는다.
+
+        표면은 ❓ 트레이(로스터의 ``open_questions``)와 asker 의 대화 창이다 —
+        배달할 inbox 가 없다. 사람이 답하면 :meth:`answer_question` 이 asker 에게
+        새 배달로 보낸다."""
         text = (text or "").strip()
         if not text:
             return "", "empty question"
-        asked_in = ""
-        if asker != "main":
-            tm = self._agents.get(asker)
-            if tm is None:
-                return "", f"unknown asker '{asker}'"
-            asked_in = tm.current_item
+        tm = self._agents.get(asker)
+        if tm is None:
+            return "", f"unknown asker '{asker}'"
+        asked_in = tm.current_item
         with self._cv:
             # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
             # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
-            # 구조적으로 안 잡힌다. 그게 이 장치가 있는 이유고, 런 경계를
-            # 넘으면 접으면 안 된다: 억제된 런마다 자기 답 런이 하나씩
-            # 있어야 회신이 안 사라진다(§3.7). 접어 버리면 요청 둘에
-            # 답 런 하나 → 회신 하나 — 낡은 회신보다 나쁜 **누락**이다.
+            # 구조적으로 안 잡힌다. 런 경계를 넘으면 접지 않는다.
             for q in self._questions.values():
-                if (
-                    q.asker == asker
-                    and q.target == target
-                    and q.text == text
-                    and q.asked_in == asked_in
-                ):
-                    self._mark_asked(asker, target)
+                if q.asker == asker and q.text == text and q.asked_in == asked_in:
                     return q.id, ""
             q = Question(
                 id=_new_question_id(),
                 asker=asker,
-                target=target,
+                target="user",
                 text=text,
                 asked_in=asked_in,
             )
             self._questions[q.id] = q
-        err = self._deliver_question(q)
-        if err:
-            # 배달 실패(상대 dead/unknown)면 **등록도 취소**한다 — 남기면
-            # 아무도 답할 수 없는 빚이 asker 를 영원히 붙잡는다.
-            with self._cv:
-                self._questions.pop(q.id, None)
-            return "", err
-        # 배달까지 성공한 **뒤에** 세운다 — 실패한 질문에 억제를 걸면
-        # 답 런이 안 생기므로 그 런의 회신이 영영 사라진다.
-        self._mark_asked(asker, target)
+        self._render_question(q)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
-        # 사람 주소 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
+        # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
         self._notify_roster()
         return q.id, ""
-
-    def _mark_asked(self, asker: str, target: str) -> None:
-        """이 런이 ``target`` 에게 질문을 걸었다고 표시 (§3.7 회신 억제의 판정값)."""
-        tm = self._agents.get(asker)
-        if tm is not None:
-            tm.asked_targets.add(target)
-
-    def _deliver_question(self, q: Question, *, render: bool = True) -> str:
-        """질문을 **기존 배관**으로 상대에게. 에러 또는 빈 문자열.
-
-        상대가 idle 이어도 깨어난다 — inbox 항목 1개 = 런 1개이므로.
-        그래서 ``complete`` 강제(§3.4)는 배달 수단이 아니라 "꺼내 읽고도
-        안 답함" 백스톱이다.
-        """
-        if render:
-            self._render_question(q)
-        if q.to_human:
-            return ""  # ❓ 트레이가 표면 — 배달할 inbox 가 없다 (§3.6)
-        if q.target != "main" and not q.target.startswith("agent:"):
-            return f"unroutable question target '{q.target}'"
-        asker_tm = self._agents.get(q.asker)
-        # ``expects_reply=False`` — 상대가 이 항목을 처리한 **산출물**이
-        # asker 에게 되돌아가면 안 된다. 답은 ``answer`` 도구로만.
-        return self.deliver(
-            q.target,
-            mail={
-                "kind": "question",
-                "id": q.id,  # main 이 answer(id) 하려면 실려야 한다
-                "key": q.asker,
-                "profile": asker_tm.profile_name if asker_tm else "",
-                "name": asker_tm.instance_name if asker_tm else "",
-                "success": True,
-                "output": q.text,
-            },
-            text=f"[question {q.id} from {q.asker}]: {q.text}",
-            author="main" if q.asker == "main" else f"agent:{q.asker}",
-            expects_reply=False,
-            question_id=q.id,
-        )
 
     def _render_question(self, q: Question) -> None:
         """대화 창 표면 — 사람이 먼저 보는 자리 (표시 전용, best-effort)."""
@@ -1207,24 +1055,8 @@ class AgentRegistry:
             pass
         self._log_conversation(tm, payload)
 
-    def mark_question_delivered(self, qid: str, run_item: str) -> None:
-        """상대가 이 질문을 **꺼냈다** — 강제·sweep 은 여기부터 유효하다."""
-        with self._cv:
-            q = self._questions.get(qid)
-            if q is not None and q.delivered_in is None:
-                q.delivered_in = run_item
-
-    def questions_owed_by(self, addr: str) -> list[Question]:
-        """``addr`` 이 답해야 하는 질문 — **배달된 것만** (§3.2 런 스코프)."""
-        with self._cv:
-            return [
-                q
-                for q in self._questions.values()
-                if q.target == addr and q.delivered_in is not None
-            ]
-
     def questions_asked_in(self, asker: str, run_item: str) -> list[Question]:
-        """``asker`` 가 ``run_item`` 런에서 건 열린 질문 (§3.7 회신 억제)."""
+        """``asker`` 가 ``run_item`` 런에서 건 열린 질문 (런 결과의 알림)."""
         with self._cv:
             return [
                 q
@@ -1233,16 +1065,15 @@ class AgentRegistry:
             ]
 
     def open_human_questions(self) -> list[Question]:
-        """주소가 사람인 열린 질문 — ❓ 트레이와 idle-reap 가드가 읽는다."""
+        """열린 질문 — ❓ 트레이와 idle-reap 가드가 읽는다(주소는 전부 사람)."""
         with self._cv:
-            return [q for q in self._questions.values() if q.to_human]
+            return list(self._questions.values())
 
     def answer_question(self, qid: str, text: str, *, by: str) -> str:
-        """``qid`` 에 답한다 — 에러 또는 빈 문자열.
+        """사람이 트레이에서 ``qid`` 에 답한다 — 에러 또는 빈 문자열.
 
-        **답할 수 있는 주체는 질문의 주소, 오직 그것**(§0). 단 ``user*`` 는
-        하나의 주체로 본다 — CLI 는 ``user``, 웹은 ``user:{nick}`` 이고
-        뷰어마다 닉이 달라, 문자열 동치로 검사하면 두 번째 뷰어의 트레이
+        ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은 ``user:{nick}``
+        이고 뷰어마다 닉이 달라, 문자열 동치로 검사하면 두 번째 뷰어의 트레이
         답이 거부된다.
         """
         text = (text or "").strip()
@@ -1252,68 +1083,12 @@ class AgentRegistry:
             q = self._questions.get(qid)
             if q is None:
                 return f"unknown or already-answered question '{qid}'"
-            if q.to_human:
-                if not _is_human_addr(by):
-                    return f"question '{qid}' is addressed to the operator, not {by}"
-            elif by != q.target:
-                return f"question '{qid}' is addressed to {q.target}, not {by}"
+            if not _is_human_addr(by):
+                return f"question '{qid}' is addressed to the person, not {by}"
             del self._questions[qid]  # 원자적 claim — 동시 답변자 중 하나만
         self._deliver_answer(q, text)
         self._save_state()
         return ""
-
-    def close_question(self, qid: str, reason: str) -> Question | None:
-        """답 없이 닫는다 (sweep·사망·상한) — asker 에게 사유를 배달."""
-        with self._cv:
-            q = self._questions.pop(qid, None)
-        if q is None:
-            return None
-        self._deliver_answer(q, f"({reason})")
-        self._save_state()
-        return q
-
-    def close_unanswered(self, addr: str) -> int:
-        """런이 끝났다 — ``addr`` 이 아직 답하지 않은(배달된) 질문을 사유와 함께
-        닫는다 (v9.22.0). asker 는 답 봉투로 사유를 받아 영원히 기다리지 않는다.
-
-        독촉은 이 앞에서 런 안에 3회 있었다(dispatch 의 빚 목록). 그러고도
-        런이 끝났으면 닫는 것이 정직하다. 종전의 런 뒤 독촉(6회, 새 런마다
-        재주입)은 흡수됐다 — 한 기계로 충분하다.
-        """
-        n = 0
-        for q in self.questions_owed_by(addr):
-            if self.close_question(q.id, _UNANSWERED_CLOSE) is not None:
-                n += 1
-        return n
-
-    def kick_owed(self, addr: str) -> int:
-        """resume 뒤 — ``addr`` 에게 배달됐던 미답 질문이 있으면 **한 번** 깨운다.
-
-        런 안 독촉은 그 주체가 런을 돌 때만 걸린다. 복원된 세션에서 아무 일도
-        안 오면 영원히 열린다(main 은 메일이 와야 깨어난다). 상한·닫기는 없다
-        — 깨어난 런의 독촉과 런 끝 닫기가 그 뒤를 맡는다.
-        """
-        owed = self.questions_owed_by(addr)
-        if not owed:
-            return 0
-        body = (
-            _OWED_REMINDER
-            + "\n"
-            + "\n".join(f"  [{q.id}] (from {q.asker}) {q.text}" for q in owed)
-        )
-        self.deliver(
-            addr,
-            mail={
-                "kind": "reminder",
-                "key": owed[0].asker,
-                "success": True,
-                "output": body,
-            },
-            text=body,
-            author="main" if owed[0].asker == "main" else f"agent:{owed[0].asker}",
-            expects_reply=False,  # 독촉의 산출물은 어디로도 가지 않는다
-        )
-        return len(owed)
 
     # ── 회신 빚 장부 (v9.22.1 — main·상주 공통) ──────
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
@@ -1325,8 +1100,18 @@ class AgentRegistry:
     # 규칙을 두 벌 코드가 들었다.
 
     def begin_run(self, debtor: str) -> None:
+        """새 런 — 앞 런이 `wait` 로 끝나 남긴 미납 빚만 잇는다 (v10.77.0).
+
+        보통의 런 끝은 `end_run` 이 빚을 비운다(폴백 배달). 남아 있다면 앞 런이
+        `wait` 로 끝난 것이다 — 그 빚을 여기서 지우면 요청자는 아무것도 못
+        받는다(회신도, 런 요약도). `message` 로 묻고 `wait` 로 기다린 뒤 회신을
+        받아 갚는 흐름이 이 경로다."""
         with self._cv:
-            self._reply_debts[debtor] = []
+            self._reply_debts[debtor] = [
+                d
+                for d in self._reply_debts.get(debtor, [])
+                if not d.settled and not d.human
+            ]
 
     def note_owes(
         self,
@@ -1385,22 +1170,22 @@ class AgentRegistry:
             return None
 
     def reply_debts(self, debtor: str) -> list[ReplyDebt]:
-        """아직 안 갚은 빚 — 사람 주소 제외(창이 곧 배달). 이 런이 질문을
-        건 주소의 빚은 제외(§3.7 — 그 답 런이 같은 빚을 진다; 다른 주소, 예컨대
-        사람에게 물었을 때의 main 빚은 남는다. main 의 ask 는 사람에게 가는
-        블로킹 프롬프트라 해당 없음)."""
-        tm = self._agents.get(debtor.split(":", 1)[1]) if debtor != "main" else None
-        asked = tm.asked_targets if tm is not None else set()
+        """아직 안 갚은 빚 — 사람 주소 제외(창이 곧 배달).
+
+        v10.77.0: 종전 §3.7 억제(이 런이 질문을 건 주소의 빚을 감춤)는 지웠다
+        — 에이전트는 이제 질문 대신 `message` 요청을 보내고, 그 회신을 `wait`
+        로 기다린 뒤 자기 빚을 `reply` 로 갚는다. 감추던 빚이 열린 채 남으니
+        오히려 더 엄밀하다."""
         with self._cv:
             return [
                 d
                 for d in self._reply_debts.get(debtor, [])
-                if not d.settled and not d.human and d.to not in asked
+                if not d.settled and not d.human
             ]
 
     def end_run(self, debtor: str, output: str, **meta) -> int:
         """``debtor`` 의 런이 끝났다 — 남은 회신 빚은 라벨 붙은 런 요약을
-        폴백 배달하고, 답 안 한 질문은 닫는다. 건수를 돌려준다.
+        폴백 배달한다. 건수를 돌려준다.
 
         독촉은 런 **안**에서 3회 있었다(dispatch 의 빚 목록). 배관만 갈린다:
         main → peer 는 `request`(inbox), 상주 → peer 는 `_deliver_peer_reply`
@@ -1411,10 +1196,9 @@ class AgentRegistry:
         summary = f"{_NO_REPLY_LABEL}\n{output}"
         for d in self.reply_debts(debtor):
             if debtor == "main":
-                err = self.request(
-                    d.to.split(":", 1)[1], summary, author="main", expects_reply=False
-                )
-                if not err:
+                if not self._deliver_peer_reply(
+                    d.to.split(":", 1)[1], "main", summary, 0, re=d.id
+                ):
                     n += 1
                 continue
             key = debtor.split(":", 1)[1]
@@ -1428,39 +1212,32 @@ class AgentRegistry:
                         "output": summary,
                         "answers": list(d.answers),
                         **meta,
+                        "re": d.id,  # 이 요약이 대신하는 회신의 요청
                     }
                 )
             else:
-                self._deliver_peer_reply(d.to.split(":", 1)[1], key, summary, d.hop)
+                self._deliver_peer_reply(
+                    d.to.split(":", 1)[1], key, summary, d.hop, re=d.id
+                )
             n += 1
         with self._cv:
             self._reply_debts.pop(debtor, None)
-        n += self.close_unanswered(debtor)
         return n
 
     def _deliver_answer(self, q: Question, text: str) -> None:
-        """답을 **원 요청자**에게. 주소가 곧 원 요청자라 분기가 필요 없다.
+        """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로.
 
-        ``author=q.target`` + ``expects_reply=True`` 면 기존 회신 라우팅
-        (``_handle_request``)이 답 런의 결과를 제자리로 보낸다 — peer 면
-        ``_deliver_peer_reply``, main 이면 메일박스.
-        """
-        body = f"[answer to your question: {q.text}]\n{text}"
-        # main 에는 inbox 가 없다 — 메일박스로. (설계 3판 §3.3 은 이
-        # 경우를 빠뜨렸다: ``submit`` 의 대상은 상주 에이전트뿐이다.)
-        label = q.target.split(":", 1)[1] if q.target.startswith("agent:") else q.target
-        self.deliver(
-            q.asker if q.asker == "main" else f"agent:{q.asker}",
-            mail={
-                "kind": "answer",
-                "id": q.id,
-                "key": label,
-                "success": True,
-                "output": body,
-            },
-            text=body,
+        사람이 보낸 것이므로 그 런은 사람 런이다: 결과는 창이 곧 배달이고, 닫는
+        법은 사람 요청과 같다(`complete` 의 `answers`). 봉투가 무엇에 대한
+        답인지(``re``) 적는다."""
+        self.request(
+            q.asker,
+            f"Your question: {q.text}\nAnswer: {text}",
             author=q.target,
             expects_reply=True,
+            kind="answer",
+            re=q.id,
+            todo="Continue the work it was blocking.",
         )
 
     def _drop_monitors(self, key: str) -> int:
@@ -1480,24 +1257,18 @@ class AgentRegistry:
         return n
 
     def _purge_questions_for(self, key: str) -> None:
-        """에이전트 사망 정리 — **양방향** (§3.8).
-
-        앞으로 온 질문은 "(종료됨)" 으로 닫아 asker 를 풀어주고, 그가 건
-        질문은 폐기한다(남기면 답하려는 쪽이 dead 에러를 받고 재시도하며
-        상한만 태운다). 호출자가 ``not revivable`` 아래에서만 부른다 —
-        세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
-        빈 목록을 저장해 resume 알림이 항상 0건이 된다.
+        """에이전트 사망 정리 — 그가 건 질문은 폐기한다(답할 사람이 트레이에서
+        답해도 받을 곳이 없다). 호출자가 ``not revivable`` 아래에서만 부른다 —
+        세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가 빈 목록을
+        저장해 resume 이 질문을 되살리지 못한다.
         """
-        addr = f"agent:{key}"
         with self._cv:
-            incoming = [q.id for q in self._questions.values() if q.target == addr]
             outgoing = [q.id for q in self._questions.values() if q.asker == key]
             for qid in outgoing:
                 self._questions.pop(qid, None)
-        for qid in incoming:
-            self.close_question(qid, f"agent {key} terminated before answering")
         if outgoing:
             self._save_state()
+            self._notify_roster()
 
     # ── spawn ───────────────────────────────────
 
@@ -1683,18 +1454,24 @@ class AgentRegistry:
         author: str = "main",
         hop: int = 0,
         expects_reply: bool = True,
-        question_id: str = "",
         answers: list | None = None,
         resumed: bool = False,
         images: list[dict] | None = None,
         item_id: str = "",
+        kind: str = "",
+        re: str = "",
+        todo: str = "",
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
 
         ``item_id`` (v10.77.0): 이 배달의 id — 보낸 쪽이 미리 받아 두면(그
         id 를 결과에 실어 회신과 짝짓는다) 그대로 쓴다. 없으면 종류대로 새로
-        받는다: 질문은 그 질문 id, 사람 발신은 ``u-``, 회신을 기다리는 요청은
-        ``r-``, 그 밖(통지·회신 도착)은 ``n-``. 이 id 가 배달의 유일한 키다.
+        받는다: 사람 발신은 ``u-``, 회신을 기다리는 요청은 ``r-``, 그 밖(통지·
+        회신 도착)은 ``n-``. 이 id 가 배달의 유일한 키다.
+
+        ``kind``·``re``·``todo`` (v10.77.0, D): 봉투의 재료 — ``"notice"``·
+        ``"reply"``·``"answer"``. 봉투는 받는 런이 항목을 읽을 때 그린다
+        (:meth:`_model_text`) — 창과 대화 로그에는 본문만 남는다.
 
         ``images`` (v10.61.0): 사람이 창에서 붙인 이미지 참조(``ImageRef`` dict,
         웹 `/api/agent/{key}/input` 의 ``images``) — inbox 항목과 🤝 창 메시지에
@@ -1706,9 +1483,7 @@ class AgentRegistry:
 
         v9.12 의 ``submit() -> (error, verdict)`` 은 ask 답변 슬롯 배달을
         구분하려던 것인데, 비동기 전환으로 슬롯이 사라져 판정할 것이 없다 —
-        이름과 반환형을 원래대로 되돌렸다(답은 ``answer`` 도구로만 온다).
-
-        ``question_id``: 이 아이템이 질문이면 그 id — 런 스코프 마킹용.
+        이름과 반환형을 원래대로 되돌렸다.
 
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
@@ -1744,9 +1519,7 @@ class AgentRegistry:
         # id 가 키다 (v10.77.0) — 전역 할당기라 동시 request() 에도 겹치지 않는다
         # (종전 에이전트별 순번은 P0-9a 의 락과 v8.5.1 의 키 덧붙이기가 필요했다).
         if not item_id:
-            if question_id:
-                item_id = question_id
-            elif _is_human_addr(author):
+            if _is_human_addr(author):
                 item_id = item_ids.next_id(item_ids.USER)
             elif expects_reply:
                 item_id = item_ids.next_id(item_ids.REPLY)
@@ -1758,16 +1531,17 @@ class AgentRegistry:
             "author": author,
             "hop": hop,
             "expects_reply": expects_reply,
-            # 이 항목이 **질문**이면 그 id (DESIGN.md §3.3). 상대가 항목을
-            # 꺼낼 때 ``mark_question_delivered`` 가 이걸로 런 스코프를
-            # 찍는다 — 표시 문자열 ``[question q-xxx …]`` 를 파싱하지
-            # 않는다(문구가 계약이 되면 못 고친다).
-            "question_id": question_id,
             # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
             # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
             # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
             "ts": send_ts,
         }
+        if kind:
+            item["kind"] = kind
+            if re:
+                item["re"] = re
+            if todo:
+                item["todo"] = todo
         if resumed:
             item["resumed"] = True  # 재시작 계속하기 — 다시 끊겨도 또 감싸지 않는다
         if images:
@@ -1822,6 +1596,55 @@ class AgentRegistry:
             tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight = [dict(i) for i in items]
         self._save_state()
+
+    def _who(self, author: str) -> str:
+        """봉투의 ``from`` — 에이전트는 이름표(`format_agent_label`), 사람은
+        "the user", main 은 "main"."""
+        if author == "main":
+            return "main"
+        if _is_human_addr(author):
+            return "the user"
+        key = author.split(":", 1)[1] if author.startswith("agent:") else author
+        tm = self._agents.get(key)
+        if tm is None:
+            return key
+        return format_agent_label(key, tm.profile_name, tm.instance_name)
+
+    def _model_text(
+        self, item: dict, *, mid_run: bool = False, bare: bool = False
+    ) -> str:
+        """받은편지함 항목 하나 → 모델이 읽는 글 (v10.77.0, D — 봉투 한 모양).
+
+        - 봉투 재료(``kind``)가 있으면 그 봉투: 통지·회신·사람의 답.
+        - 에이전트(또는 런 도중의 main)가 보낸 요청은 ``request`` 봉투 — 괄호 줄이
+          그 id 로 갚으라고 말한다. 런 도중이면 "지금 일도 열려 있다" 를 덧붙인다.
+        - 런을 여는 main 의 요청은 일감 그 자체라 본문 그대로, 사람의 창 입력은
+          ``[user:<nick>]: `` 라벨(사람 런 회계가 따로 있다).
+
+        ``bare``: 사람 항목을 장부(`user_requests`)로 넘길 때 — 라벨 없이 본문만.
+        """
+        author = item.get("author", "main")
+        text = item["text"]
+        iid = str(item["id"])
+        kind = item.get("kind") or ""
+        if kind:
+            return envelope(
+                kind,
+                iid,
+                self._who(author),
+                text,
+                re=str(item.get("re") or ""),
+                todo=str(item.get("todo") or ""),
+            )
+        if _is_human_addr(author):
+            return text if bare else f"[{author}]: {text}"
+        if item.get("expects_reply", True) and (mid_run or author != "main"):
+            short = "main" if author == "main" else author.split(":", 1)[-1]
+            todo = owe_line(short, iid)
+            if mid_run:
+                todo += " Your current task stays open; see ## Open Items."
+            return envelope("request", iid, self._who(author), text, todo=todo)
+        return text if author == "main" else f"[{author}]: {text}"
 
     def absorb_pending(self, tm: AgentInstance) -> list[dict]:
         """턴 경계 흡수 (v9.25.0) — 받은편지함의 대기분을 **지금 도는 런**으로.
@@ -1879,14 +1702,18 @@ class AgentRegistry:
             }
             renderer.agent_message(**absorbed)
             self._log_conversation(tm, absorbed)
-            if item.get("question_id"):
-                self.mark_question_delivered(item["question_id"], tm.current_item)
             if _is_human_addr(author):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
                 uid = iid
                 self.note_owes(me, author, text, id=uid)
                 out.append(
-                    {"user_request": {"id": uid, "author": author, "text": text}}
+                    {
+                        "user_request": {
+                            "id": uid,
+                            "author": author,
+                            "text": self._model_text(item, bare=True),
+                        }
+                    }
                 )
                 continue
             if item.get("expects_reply", True):
@@ -1899,13 +1726,7 @@ class AgentRegistry:
                     hop=item.get("hop", 0),
                     id=rid,
                 )
-                content = (
-                    f"── request [{rid}] from {author} (arrived while you were "
-                    f"working) ──\n{text}\n"
-                    f"(You now owe {author} a reply for [{rid}] as well — "
-                    f'`reply` with id "{rid}" when you have it. Your current '
-                    "task stays open; see ## Open Items.)"
-                )
+                content = self._model_text(item, mid_run=True)
                 out.append(
                     {
                         "record": {
@@ -1918,15 +1739,14 @@ class AgentRegistry:
                     }
                 )
             else:
-                # 회신·답·독촉·질문 — 본문이 이미 안내를 품고 있다(배달 경로가
-                # 붙인다). 런 시작 항목과 같은 ``[author]: `` 라벨.
+                # 회신·통지 — 런 시작 항목과 같은 봉투.
                 out.append(
                     {
                         "record": {
                             "role": "user",
                             "tool": "agent",
                             "success": True,
-                            "content": f"[{author}]: {text}",
+                            "content": self._model_text(item),
                             "source": "agent_mail",
                         }
                     }
@@ -1959,14 +1779,12 @@ class AgentRegistry:
         text: str,
         author: str,
         expects_reply: bool,
-        question_id: str = "",
         hop: int = 0,
     ) -> str:
         """주소 하나로 배달 — 백엔드 둘. 에러 문자열 또는 "".
 
-        ``addr`` 은 질문·답·독촉이 이미 쓰던 어휘 그대로: ``"main"`` 또는
-        ``"agent:<key>"``. 종전엔 이 분기가 세 곳에 손으로 복제돼 있었다
-        (``_deliver_question``/``_deliver_answer``/``remind_owed``).
+        ``addr`` 은 ``"main"`` 또는 ``"agent:<key>"``. 모니터·작업 통지가 이
+        한 곳으로 배달된다.
 
         **두 백엔드는 나르는 것이 다르다** — 그래서 인자가 둘이다:
 
@@ -1990,7 +1808,6 @@ class AgentRegistry:
                     text,
                     author=author,
                     expects_reply=expects_reply,
-                    question_id=question_id,
                     hop=hop,
                 )
         except Exception as exc:  # 배달은 감시 폴링 스레드에서도 불린다
@@ -2016,14 +1833,12 @@ class AgentRegistry:
         self._pending_changed()
 
     def _stamp_mail(self, reply: dict) -> None:
-        """메일 한 통의 id — ``_cv`` 를 쥔 채로 부른다. 접두는 종류대로(질문은
-        그 ``q-``, 회신을 기대하면 ``r-``, 그 밖은 ``n-``). 이미 있으면(복원분)
+        """메일 한 통의 id — ``_cv`` 를 쥔 채로 부른다. 접두는 종류대로(회신을
+        기대하면 ``r-``, 그 밖은 ``n-``). 이미 있으면(복원분)
         그대로 둔다 — id 가 그 메일의 키다(v10.77.0)."""
         if reply.get("item_id"):
             return
-        if reply.get("kind") == "question" and reply.get("id"):
-            reply["item_id"] = str(reply["id"])  # 질문은 그 질문 id 가 키
-        elif reply.get("expects_reply"):
+        if reply.get("expects_reply"):
             # 회신을 기대하는 message — main 이 이 id 로 빚진다(`reply`)
             reply["item_id"] = item_ids.next_id(item_ids.REPLY)
         else:
@@ -2038,36 +1853,35 @@ class AgentRegistry:
                 pass  # 화면 갱신은 best-effort
 
     def pending_mail(self) -> list[dict]:
-        """main 앞 미배달 메일의 대기열 줄 (:func:`mail_queue_item`). 질문은
-        뺀다 — ❓ 질문 트레이가 사람에게 답을 요구하는 그 자리다."""
+        """main 앞 미배달 메일의 대기열 줄 (:func:`mail_queue_item`)."""
         with self._cv:
-            items = [dict(r) for r in self._pending if r.get("kind") != "question"]
+            items = [dict(r) for r in self._pending]
         return [mail_queue_item(r) for r in items]
 
     def _deliver_peer_reply(
-        self, requester_key: str, from_key: str, output: str, hop: int
-    ) -> None:
-        """peer 요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11).
+        self, requester_key: str, from_key: str, output: str, hop: int, *, re: str = ""
+    ) -> str:
+        """요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11) — 에러 또는 "".
 
-        ``expects_reply=False`` 로 넣어 요청자가 소비만 하고 되받아치지
-        않게 한다(핑퐁 방지). 상한(_MAX_PEER_HOPS) 초과나 요청자 부재/사망
-        시 조용히 드롭 — best-effort 배관(데드락은 비동기라 불가).
+        ``from_key`` 는 에이전트 키 또는 ``"main"``(main 이 `reply` 로 갚을 때).
+        ``expects_reply=False`` 로 넣어 요청자가 소비만 하고 되받아치지 않게
+        한다(핑퐁 방지). 봉투(``reply``)가 무엇에 대한 회신인지(``re``) 적는다
+        (v10.77.0). 상한(_MAX_PEER_HOPS) 초과나 요청자 부재/사망 시 드롭 —
+        best-effort 배관(데드락은 비동기라 불가).
         """
         if hop >= _MAX_PEER_HOPS:
-            return
+            return f"reply dropped — peer hop limit ({_MAX_PEER_HOPS}) reached"
         tgt = self._agents.get(requester_key)
         if tgt is None or tgt.state == "dead":
-            return
-        # 가이던스 꼬리표: 이 회신으로 작업을 이어가고, 마무리되면 요청자
-        # (예: main)에 보고할 게 있으면 message, 없으면 complete 하도록 유도
-        # (비동기라 "보고 단계"를 명시 안내 — build_reply_record 꼬리표와 동형).
-        text = f"{output}\n\n{_REPLY_TAIL}"
-        self.request(
+            return f"agent '{requester_key}' is gone — the reply was not delivered"
+        return self.request(
             requester_key,
-            text,
-            author=f"agent:{from_key}",
+            output,
+            author="main" if from_key == "main" else f"agent:{from_key}",
             hop=hop + 1,
             expects_reply=False,
+            kind="reply",
+            re=re,
         )
 
     def message_to_main(
@@ -2080,7 +1894,8 @@ class AgentRegistry:
         answers: list | None = None,
         expects_reply: bool = False,
         notice: bool = False,
-    ) -> None:
+        re: str = "",
+    ) -> str:
         """상주 에이전트 → main 메시지 (v5.11). main 은 inbox 대신 mailbox
         (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭).
 
@@ -2093,7 +1908,9 @@ class AgentRegistry:
         ``answers`` (v9.21.0): main 의 요청에 대한 **회신**이면 그 요청의
         귀속 스냅샷을 그대로 싣는다 — 종전엔 자동 회신(`kind:"reply"`)이
         실어 나르던 것. 자동 회신이 없어졌으니 명시 message 가 실어야
-        main 의 run_authors 합류(v8.5.0 승계)가 유지된다."""
+        main 의 run_authors 합류(v8.5.0 승계)가 유지된다.
+
+        그 메일의 id 를 돌려준다(v10.77.0 — `message` 의 결과가 말한다)."""
         rec = {
             "kind": "peer_message",
             "key": from_key,
@@ -2107,11 +1924,14 @@ class AgentRegistry:
         rec["expects_reply"] = bool(expects_reply)
         if notice:
             rec["notice"] = True
+        if re:
+            rec["re"] = re  # `reply` — main 의 어느 요청에 대한 답인가
         self._push_reply(rec)
         # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
         # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
         # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
         self._log_outbound(from_key, text, to="main")
+        return str(rec.get("item_id") or "")
 
     def _log_outbound(
         self, from_key: str, text: str, *, to: str, ts: float | None = None
@@ -2190,8 +2010,10 @@ class AgentRegistry:
             # 되어 답이 답을 부르는 핑퐁을 만들었다(실측 cnr60g).
             addr = "main" if to == "main" else f"agent:{to}"
             settled = self.settle(f"agent:{tm.key}", addr)
+            # 결과가 그 배달의 id 를 말한다 (v10.77.0) — 회신이 같은 id 를 달고
+            # 돌아오므로(`re [r-17]`) 보낸 쪽이 무엇에 대한 회신인지 안다.
             if to == "main":
-                self.message_to_main(
+                rec_id = self.message_to_main(
                     tm.key,
                     text,
                     profile=tm.profile_name,
@@ -2200,62 +2022,39 @@ class AgentRegistry:
                     expects_reply=bool(expects_reply),
                     notice=not expects_reply,
                 )
-                if not expects_reply:
-                    return (
-                        "delivered to main as a notice — no reply is expected or "
-                        "owed. Keep working or complete."
-                    )
-                return (
-                    "delivered to main — it owes you a reply, which arrives as a new "
-                    "message. Keep working or complete; you'll be woken when it comes."
-                )
-            # Capture the send time BEFORE request() enqueues — the target's
-            # worker can start (scope_start) the instant it's queued, so a later
-            # timestamp on this arrow would render the request AFTER the work.
-            send_ts = time.time()
-            if expects_reply:
-                err = self.request(
-                    to, text, author=f"agent:{tm.key}", expects_reply=True
-                )
             else:
+                # Capture the send time BEFORE request() enqueues — the target's
+                # worker can start (scope_start) the instant it's queued, so a
+                # later timestamp on this arrow would render the request AFTER
+                # the work.
+                send_ts = time.time()
+                rec_id = item_ids.next_id(
+                    item_ids.REPLY if expects_reply else item_ids.MAIL
+                )
                 err = self.request(
                     to,
-                    f"{text}\n\n{_NOTICE_TAIL}",
+                    text,
                     author=f"agent:{tm.key}",
-                    expects_reply=False,
+                    expects_reply=bool(expects_reply),
+                    item_id=rec_id,
+                    kind="" if expects_reply else "notice",
                 )
-            if err:
-                return err
-            self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
+                if err:
+                    return err
+                self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
             if not expects_reply:
-                return (
-                    f"delivered to {to} as a notice — no reply is expected or owed. "
-                    "Keep working or complete."
-                )
+                return f"delivered as notice {rec_id} — nothing is owed back"
             return (
-                f"delivered to {to} — it owes you a reply, which arrives as a new "
-                f"message. Keep working or complete; you'll be woken when it comes."
+                f"delivered as request {rec_id} — its reply will come marked [{rec_id}]"
             )
 
         return handler
 
     def drain_replies(self) -> list[dict]:
-        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지.
-
-        main 에게는 여기가 **질문의 배달 시점**이다 — 상주 에이전트의
-        ``_handle_request`` 가 inbox 항목을 꺼낼 때 하는 일과 같은 자리.
-        안 찍으면 ``questions_owed_by("main")`` 이 영영 비어 main 은 독촉도
-        상한도 못 받고, §3.7 로 보류된 회신이 영구 정지한다. main 은 런
-        이름이 없으므로 "" 로 찍는다 (판정 축은 None 여부).
-        """
+        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
         with self._cv:
             out = list(self._pending)
             self._pending.clear()
-            for r in out:
-                if r.get("kind") == "question" and r.get("id"):
-                    q = self._questions.get(r["id"])
-                    if q is not None and q.delivered_in is None:
-                        q.delivered_in = ""
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
             self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
@@ -2536,7 +2335,6 @@ class AgentRegistry:
             )
 
         revived = 0
-        requeued_qids: set[str] = set()
         for e in data.get("agents", []):
             key = e.get("key")
             if not key or key in self._agents or self.session_dir is None:
@@ -2568,11 +2366,6 @@ class AgentRegistry:
             queued = [i for i in (e.get("inbox") or []) if isinstance(i, dict)]
             # 새 id 가 복원분과 겹치지 않게 (v10.77.0 — 할당기는 저장하지 않는다)
             item_ids.observe(*(i.get("id") for i in in_flight + queued))
-            requeued_qids.update(
-                str(i["question_id"])
-                for i in in_flight + queued
-                if i.get("question_id")
-            )
             tm.worker = threading.Thread(
                 target=self._worker,
                 args=(tm, parent_ctx),
@@ -2588,7 +2381,7 @@ class AgentRegistry:
             self._replay_conversation(tm)
             self._requeue(tm, in_flight, queued)
             revived += 1
-        self._adopt_questions(restored, requeued_qids)
+        self._adopt_questions(restored)
         self._save_state()
         self._notify_roster()
         return revived
@@ -2615,80 +2408,34 @@ class AgentRegistry:
                     author=str(first.get("author") or "main"),
                     hop=int(first.get("hop") or 0),
                     expects_reply=bool(first.get("expects_reply", True)),
-                    question_id=str(first.get("question_id") or ""),
                     answers=first.get("answers"),
                     resumed=True,
+                    kind=str(first.get("kind") or ""),
+                    re=str(first.get("re") or ""),
+                    todo=str(first.get("todo") or ""),
                 )
         for item in rest:
             self._enqueue(tm, item)
 
-    def _adopt_questions(
-        self,
-        restored: list[Question],
-        requeued_qids: set[str] | frozenset = frozenset(),
-    ) -> None:
+    def _adopt_questions(self, restored: list[Question]) -> None:
         """resume 이 복원한 질문을 받아들인다 — 에이전트 복원 **뒤에**.
 
-        세 가지를 한다.
-
-        **① 살릴 수 없는 것은 버린다.** asker 나 target 이 돌아오지 않았으면
-        (kill 툼스톤·매니페스트 부재) 아무도 답할 수 없거나 답을 받을 데가
-        없다. 버린 수는 ``stale_questions`` 로 사람에게 알린다.
-
-        **② 미배달 peer 질문은 다시 배달한다.** inbox 는 ``SimpleQueue`` 라
-        영속 대상이 아니다 — 아직 안 꺼낸 질문은 항목으로만 존재했으므로
-        통째로 증발했고, 되살려 놓기만 하면 영영 안 꺼내지고 독촉도 안 간다.
-        배달된 것은 상대 ctx 에 남아 있으니 재배달하지 않는다. main 앞
-        질문은 ``pending`` 미러로 살아 있어 역시 그대로 둔다.
-
-        **③ 배달됐던 빚은 한 번 깨운다(kick).** 독촉은 *런이 끝나는 자리*에
-        걸리는데, resume 직후 그 에이전트에게 새 일감이 안 오면 **끝나는 런이
-        없어** 독촉도 상한도 영영 안 돈다 — 연쇄 차단이 만들었던 정지가
-        resume 경로로 다시 들어온다. 여기서 한 번 걸어 주면 그 독촉 항목이
-        런을 만들고, 이후는 평소 흐름이다.
+        주소는 사람이라 언제나 살아 있다 — asker 가 돌아오지 않았으면(kill
+        툼스톤·매니페스트 부재) 답을 받을 데가 없으니 버린다. 버린 수는
+        ``stale_questions`` 로 사람에게 알린다. 되살린 질문은 트레이에 다시 뜨고,
+        사람이 답하면 평소처럼 새 배달로 간다.
         """
         if not restored:
             return
-
-        def alive(addr: str) -> bool:
-            if addr == "main" or _is_human_addr(addr):
-                return True
-            key = addr.split(":", 1)[1] if addr.startswith("agent:") else addr
-            tm = self._agents.get(key)
-            return tm is not None and tm.state != "dead"
-
         dropped = 0
-        kick: set[str] = set()
         with self._cv:
             for q in restored:
-                if not (alive(q.asker) and alive(q.target)):
+                tm = self._agents.get(q.asker)
+                if tm is None or tm.state == "dead":
                     dropped += 1
                     continue
                 self._questions[q.id] = q
-                if q.delivered_in is not None:
-                    # kick 대상은 **재배달 전에** 확정한다. ②가 큐에 넣은
-                    # 질문을 상대 워커가 곧바로 꺼내 `delivered_in` 을 찍으면
-                    # (LLM 호출 **전에** 찍힌다) ③의 집합에 섞여, 방금 배달한
-                    # 질문에 독촉까지 날아간다 — 런 하나 낭비 + 상한 조기 소모.
-                    kick.add(q.target)
         self.stale_questions = dropped
-
-        for q in list(self._questions.values()):
-            undelivered_peer = (
-                q.delivered_in is None
-                and q.target.startswith("agent:")
-                # v9.24.5: 저장된 받은편지함에서 이미 되넣은 질문은 건너뛴다
-                # (재배달하면 두 번 온다).
-                and q.id not in requeued_qids
-            )
-            # ``render=False``: 이 질문은 이미 첫 세션에서 창에 그려졌고
-            # ``conversation.jsonl`` 에 남아 `_replay_conversation` 이 방금
-            # 재생했다 — 다시 그리면 창에 두 번, 로그에 두 줄이 된다.
-            if undelivered_peer and self._deliver_question(q, render=False):  # ②
-                with self._cv:  # 재배달 실패 — 답할 데가 없다
-                    self._questions.pop(q.id, None)
-        for addr in kick:  # ③ — 한 번 깨운다(상한 없음; 이후는 런 안 독촉·런 끝 닫기)
-            self.kick_owed(addr)
 
     # ── worker ──────────────────────────────────
 
@@ -2811,7 +2558,6 @@ class AgentRegistry:
                 # any_activity()(state 검사 + inbox.qsize — 방금 비움)가 "활동
                 # 없음"으로 오판해 작업 중 세션을 거둘 수 있었다.
                 tm.state = "busy"
-                tm.asked_targets = set()  # 런 경계 (§3.7 회신 억제)
                 # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
                 # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
                 # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과
@@ -2927,13 +2673,8 @@ class AgentRegistry:
                 hop=item.get("hop", 0),
                 id=iid,
             )
-        # 이 항목이 질문이면 **꺼낸 지금** 배달로 친다 — 그 전까지는 큐에서
-        # 줄만 서 있었고, 강제·sweep 이 걸리면 상대가 읽지도 않은 질문을
-        # "(답변 없음)" 으로 닫아 버린다 (§3.2 런 스코프).
-        if item.get("question_id"):
-            self.mark_question_delivered(item["question_id"], iid)
         self._notify_roster()
-        query = f"[{author}]: {text}" if author != "main" else text
+        query = self._model_text(item)
 
         renderer.begin_agent_work(
             key=tm.key,
@@ -2961,7 +2702,7 @@ class AgentRegistry:
                         {
                             "id": iid,
                             "author": author,
-                            "text": text,
+                            "text": self._model_text(item, bare=True),
                         }
                     ]
                     if human_item
@@ -3071,7 +2812,7 @@ class AgentRegistry:
             )
         self._notify_roster()
 
-        labeled = [f"[{it.get('author', 'main')}]: {it['text']}" for it in items]
+        labeled = [self._model_text(it) for it in items]
         # v9.22.0: 배치 안내문(`_AGENT_BATCH_NOTICE`)은 뺀다 — 항목마다 id 가
         # 회계에 올라 꼬리의 `## Open Requests` 와 `answers` 강제가 그 일을 한다
         # (main 의 QUEUED_REQUEST_NOTICE 를 걷어낸 것과 같은 이유).
@@ -3080,7 +2821,7 @@ class AgentRegistry:
             {
                 "id": it["id"],
                 "author": it.get("author", ""),
-                "text": it["text"],
+                "text": self._model_text(it, bare=True),
             }
             for it in items
         ]
@@ -3336,14 +3077,15 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             )
     task = args.get("task", "")
     if task:
-        err = registry.request(key, task)
+        rid = item_ids.next_id(item_ids.REPLY)
+        err = registry.request(key, task, item_id=rid)
         if err:
             lines.append(f"initial task NOT queued: {err}")
         else:
             lines.append(
-                "initial task queued — the agent reports back with `message`, "
-                "which arrives as an observation and wakes you (if it completes "
-                "without one you get its run summary instead). Do NOT poll status "
+                f"initial task queued as request {rid} — its `reply` comes back "
+                f"marked [{rid}] and wakes you (if it completes without one you "
+                "get its run summary instead). Do NOT poll status "
                 "or re-send it (re-sends queue duplicate work and slow it "
                 "down). FIRST finish the rest of your plan — spawn the "
                 "other agents / send the other requests you intended, "
@@ -3369,9 +3111,10 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
 def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     key = args.get("key", "")
     tm = registry.get(key)
-    # request 는 언제나 **일감**이다 — 열린 질문의 답은 ``answer`` 도구로만
-    # 들어온다(비동기 전환 전에는 여기서 슬롯 배달 여부를 구분했다).
-    err = registry.request(key, args.get("task", ""))
+    # request 는 언제나 **일감**이다. id 를 먼저 받아 결과에 싣는다(v10.77.0) —
+    # 회신이 같은 id 를 달고 온다(`re [r-7]`).
+    rid = item_ids.next_id(item_ids.REPLY)
+    err = registry.request(key, args.get("task", ""), item_id=rid)
     if err:
         return ToolResult(False, error=f"request rejected: {err}")
     backlog = tm.inbox.qsize() if tm is not None else 0
@@ -3388,9 +3131,9 @@ def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     return ToolResult(
         True,
         output=(
-            f"queued to {key} — the agent reports back with `message`, which "
-            f"reaches you at a later turn (even while you are idle) and wakes "
-            f"you; if it completes without one you get its run summary. Do NOT "
+            f"queued to {key} as request {rid} — its `reply` comes back marked "
+            f"[{rid}] at a later turn (even while you are idle) and wakes you; if "
+            f"it completes without one you get its run summary. Do NOT "
             f"poll status or "
             f"re-send this request. If your plan still has other work "
             f"(other agents, other requests), do it now; then finish "

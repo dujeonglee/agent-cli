@@ -863,11 +863,6 @@ class TurnDispatcher:
             if handled is not _NOT_HANDLED:
                 return handled
 
-        if op.action == "answer":
-            handled = self._op_answer(llm_text, turn, op, accumulate)
-            if handled is not _NOT_HANDLED:
-                return handled
-
         if op.action == "reply":
             handled = self._op_reply(llm_text, turn, op, accumulate)
             if handled is not _NOT_HANDLED:
@@ -977,14 +972,26 @@ class TurnDispatcher:
             return _CONTINUE
         sources = wake_sources(self.cfg.owner)
         if not sources:
+            from agent_cli.subagent.agents_live import main_registry
+
+            reg = main_registry()
+            parked = reg.parked_debtors_for(self.cfg.owner) if reg is not None else []
+            why = (
+                # 순환 대기 (v10.77.0) — 나에게 빚진 쪽이 나를 기다리며 잠들었다
+                f"{', '.join(parked)} owes you a reply but is itself waiting — on "
+                "you, so if you wait too, nobody wakes. Reply to what you owe, or "
+                "keep working; call `complete` if the task is done."
+                if parked
+                else "nothing you started is pending (no background job, monitor "
+                "or agent of yours), so nothing would wake you. Keep working, or "
+                "call `complete` if the task is done."
+            )
             _append_observation(
                 self.state.messages,
                 self.ctx,
                 self.cfg.dialect,
                 turn.record,
-                "Observation: wait refused — nothing you started is pending (no "
-                "background job, monitor or agent of yours), so nothing would wake "
-                "you. Keep working, or call `complete` if the task is done.",
+                f"Observation: wait refused — {why}",
                 tool_name="wait",
                 success=False,
                 turn=self.state.turn,
@@ -1046,7 +1053,7 @@ class TurnDispatcher:
         budget = (
             f"({left} more reminder{'s' if left != 1 else ''} before the harness "
             "closes the rest: unanswered requests are reported to the user, unpaid "
-            "replies get your run summary, unanswered questions are closed.)"
+            "replies get your run summary.)"
             if left > 0
             else "(Last reminder — after this the harness closes the rest.)"
         )
@@ -1119,14 +1126,7 @@ class TurnDispatcher:
             )
             port = self.cfg.questions
             if port is not None and port.nonblocking:
-                to = (
-                    op.action_input.get("to")
-                    if isinstance(op.action_input, dict)
-                    else None
-                )
-                return self._op_ask_async(
-                    turn.record, questions, port, accumulate, to=to
-                )
+                return self._op_ask_async(turn.record, questions, port, accumulate)
             # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
             # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
             # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
@@ -1179,21 +1179,16 @@ class TurnDispatcher:
         obs = f"[message → {to or '?'}] {result}"
         return self._emit_obs(turn.record, accumulate, "message", obs, True)
 
-    def _op_ask_async(self, record: dict, questions, port, accumulate, *, to=None):
+    def _op_ask_async(self, record: dict, questions, port, accumulate):
         """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
 
-        질문을 등록하고 즉시 관찰을 돌려준다. 답은 나중에 새 메시지(= 새
-        런)로 오고, 그때 이 에이전트의 ctx 는 그대로라 하던 일을 잇는다.
-
-        ``to`` (v9.20.0): ``"user"`` 면 원 요청자 대신 **사람**에게 — ❓
-        트레이에 뜬다. 종전엔 주소가 원 요청자로 고정이라 main 이 시킨
-        일에서 사람에게 물을 방법이 없었고, 그 질문을 받은 main 이 사람
-        대신 답을 지어냈다(실측). 값 검증은 포트가 한다 — 모르는 값은
-        보내지 않고 관찰로 되돌린다(조용한 폴백 금지).
+        질문을 사람의 트레이에 올리고 즉시 관찰을 돌려준다. 답은 나중에 새
+        메시지(= 새 런)로 오고, 그때 이 에이전트의 ctx 는 그대로라 하던 일을
+        잇는다. 주소는 언제나 사람이다(v10.77.0, B) — 종전의 ``to`` 는 지웠다.
         """
         lines = []
         for q in questions:
-            qid, err = port.ask(q, to=to)
+            qid, err = port.ask(q)
             if err:
                 lines.append(f"could not ask: {err}")
             else:
@@ -1209,7 +1204,7 @@ class TurnDispatcher:
     def _op_reply(self, llm_text: str, turn, op, accumulate):
         """``reply`` op (v9.21.0) — 이 런을 시킨 쪽에게 빚진 회신을 갚는다.
 
-        ``_op_answer`` 와 동형. 포트가 없거나 상주가 아니면 ``_NOT_HANDLED``.
+        ``_op_message`` 와 동형. 포트가 없으면 ``_NOT_HANDLED``.
         """
         port = self.cfg.questions
         if port is None:
@@ -1225,9 +1220,7 @@ class TurnDispatcher:
             tool_input=json.dumps(args, ensure_ascii=False),
         )
         try:
-            err = port.reply(
-                text, id=str(args.get("id", "") or ""), to=str(args.get("to", "") or "")
-            )
+            err = port.reply(text, id=str(args.get("id", "") or ""))
         except Exception as e:
             err = f"reply failed: {type(e).__name__}: {e}"
         if err:
@@ -1235,39 +1228,6 @@ class TurnDispatcher:
         ok = not err
         obs = "[reply] " + (err or "delivered to whoever was waiting on it")
         return self._emit_obs(turn.record, accumulate, "reply", obs, ok)
-
-    def _op_answer(self, llm_text: str, turn, op, accumulate):
-        """``answer`` op — 열린 질문에 id 로 짝지어 답한다 (§3.1).
-
-        ``_op_message`` 와 동형: 포트로 라우팅하고 즉시 관찰을 돌려준다.
-        포트가 없으면(일회성 루프) ``_NOT_HANDLED`` 로 폴스루 — 일반 도구
-        경로의 플레이스홀더가 무해하게 끝낸다.
-        """
-        port = self.cfg.questions
-        if port is None:
-            return _NOT_HANDLED
-        args = op.action_input if isinstance(op.action_input, dict) else {}
-        qid = str(args.get("id", "")).strip()
-        text = str(args.get("text", "")).strip()
-        render_step(
-            "action",
-            "",
-            self.state.turn,
-            hidx=self._next_hidx(),
-            tool_name="answer",
-            tool_input=json.dumps(args, ensure_ascii=False),
-        )
-        try:
-            err = port.answer(qid, text)
-        except Exception as e:
-            err = f"answer failed: {type(e).__name__}: {e}"
-        if err:
-            # v10.30.0 → v10.56.0: 다른 종류의 항목 id 를 질문 id 로 썼다(실측 dj72nx
-            # — 사용자 요청 번호). 접두가 닫는 법을 말하므로 그 길을 돌려준다.
-            err = wrong_closer_hint(qid, "answer") or err
-        ok = not err
-        obs = f"[answer → {qid or '?'}] " + (err or "delivered to the asker")
-        return self._emit_obs(turn.record, accumulate, "answer", obs, ok)
 
     def _op_run_skill(self, llm_text: str, turn, op):
         """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는

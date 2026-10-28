@@ -1,18 +1,19 @@
-"""비동기 ask/answer — 질문 목록 코어 (docs/agent-ask/DESIGN.md §3, 1단계).
+"""비동기 ask · 회신 빚 — 질문 목록과 요청·회신 회계 (docs/agent-ask/DESIGN.md §3).
 
-이 단계는 **호출자가 없다**: 도구도 강제도 아직 안 붙었고, 여기 있는 것은
-레지스트리가 소유하는 질문 목록과 그 배달/짝짓기/정리뿐이다. 그래서 동작
-변화가 0이고, 검증도 전부 레지스트리 표면에서 한다.
+v10.77.0 (B): 질문은 **사람에게만** 간다 — ❓ 트레이가 표면이고, 사람이 답하면
+asker 에게 새 배달(``── answer [u-N] from the user re [q-M] ──``)로 온다. 에이전트·
+main 에게 묻는 길은 `message`(요청 → 상대가 `reply` 를 빚진다) 하나라 `answer`
+도구도, 에이전트가 빚지는 질문도 없다. 그래서 종전의 런 스코프(delivered_in)·
+독촉(kick)·런 끝 닫기·§3.7 억제 테스트는 지웠다.
 
-설계 리뷰가 지목한 결함이 전부 이 층에 있다:
+남은 결함 지점:
 
-- **B1 런 스코프** — 질문은 등록 즉시 목록에 오르지만 상대 inbox 에서는
-  줄을 선다. 그 비대칭을 안 보면 상대가 꺼내지도 않은 질문에 강제·sweep 이
-  걸린다 (:class:`TestRunScope`).
 - **G1 사망 정리** — 세션 종료에서 지우면 resume 이 알릴 게 항상 0건이 된다
   (:class:`TestDeath`).
-- **G3 회신 억제 범위** — ``asked_in`` 없이는 다른 런의 질문까지 센다.
+- **G3 런 스코프** — ``asked_in`` 없이는 다른 런의 질문까지 센다.
 - **G5 사람 주소** — CLI ``user`` / 웹 ``user:{nick}`` / 뷰어마다 다른 닉.
+- **회신 엄밀함** — 요청(r-)은 그 id 의 `reply` 로만 한 번, 갚을 것이 없으면 거부,
+  끝내 안 갚으면 라벨 붙은 런 요약이 요청자에게 간다.
 """
 
 from __future__ import annotations
@@ -113,34 +114,14 @@ class SubmitSpy:
 
 
 class TestRegisterAndDeliver:
-    def test_peer_question_lands_in_inbox_with_id(self, mkreg, tmp_path, renderer):
-        gate = threading.Event()  # B 를 붙잡아 inbox 를 들여다본다
-        reg = mkreg(runner=make_runner(block=gate))
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        with SubmitSpy(reg) as spy:
-            qid, err = reg.register_question(a, f"agent:{b}", "빌드 깨졌나요?")
-        assert not err
-        assert qid.startswith("q-")
-        (call,) = spy.calls
-        assert call["key"] == b
-        assert call["question_id"] == qid
-        # 산출물이 asker 에게 되돌아가면 안 된다 — 답은 answer 도구로만.
-        assert call["expects_reply"] is False
-        assert call["author"] == f"agent:{a}"
-        assert qid in call["message"]
-        gate.set()
-
     def test_duplicate_question_reuses_id(self, mkreg, tmp_path, renderer):
-        gate = threading.Event()
-        reg = mkreg(runner=make_runner(block=gate))
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        first, _ = reg.register_question(a, f"agent:{b}", "같은 질문")
-        with SubmitSpy(reg) as spy:
-            second, err = reg.register_question(a, f"agent:{b}", "같은 질문")
+        reg = mkreg()
+        a = spawn_idle(reg)
+        first, _ = reg.register_question(a, "같은 질문")
+        second, err = reg.register_question(a, "같은 질문")
         assert not err
         assert second == first
-        assert spy.calls == []  # 두 번째는 배달하지 않는다
-        gate.set()
+        assert len(reg._questions) == 1  # 두 번째는 새로 올리지 않는다
 
     def test_request_returns_a_plain_error_string(self, mkreg, tmp_path, renderer):
         """``submit() -> (error, verdict)`` 는 ask 답변 슬롯을 구분하려던
@@ -156,94 +137,36 @@ class TestRegisterAndDeliver:
     def test_empty_question_rejected(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, err = reg.register_question(a, "main", "   ")
+        qid, err = reg.register_question(a, "   ")
         assert not qid
         assert "empty" in err
 
-    def test_dead_target_is_not_registered(self, mkreg, tmp_path, renderer):
-        """배달 실패면 등록도 취소 — 남기면 아무도 못 답할 빚이 된다."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.kill(b)
-        qid, err = reg.register_question(a, f"agent:{b}", "살아있나요?")
-        assert not qid
-        assert "dead" in err
-        assert reg.questions_owed_by(f"agent:{b}") == []
-        assert reg.questions_asked_in(a, "r-0") == []
-
-    def test_main_question_lands_in_mailbox_carrying_id(
-        self, mkreg, tmp_path, renderer
-    ):
-        """main 에는 inbox 가 없다 — 메일박스가 유일한 흡수 지점이고,
-        ``answer(id)`` 를 하려면 레코드에 id 가 실려야 한다."""
+    def test_question_is_not_delivered_only_listed(self, mkreg, tmp_path, renderer):
+        """사람에겐 배달할 inbox 가 없다 — ❓ 트레이가 표면이다(§3.6). 주소는
+        언제나 사람이다(v10.77.0) — 누가 시킨 일이든."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, err = reg.register_question(a, "main", "이 파일 덮어쓸까요?")
-        assert not err
-        (reply,) = reg.drain_replies()
-        assert reply["kind"] == "question"
-        assert reply["id"] == qid
-        assert reply["output"] == "이 파일 덮어쓸까요?"
-
-    @pytest.mark.parametrize("addr", ["user", "user:bob"])
-    def test_human_question_is_not_delivered_only_listed(
-        self, mkreg, tmp_path, renderer, addr
-    ):
-        """사람에겐 배달할 inbox 가 없다 — ❓ 트레이가 표면이다(§3.6)."""
-        reg = mkreg()
-        a = spawn_idle(reg)
+        reg.get(a).current_author = "main"  # main 이 시킨 일이어도
         with SubmitSpy(reg) as spy:
-            qid, err = reg.register_question(a, addr, "배포해도 되나요?")
-        assert not err
+            qid, err = reg.register_question(a, "배포해도 되나요?")
+        assert not err and qid.startswith("q-")
         assert spy.calls == []
-        assert reg.drain_replies() == []
+        assert reg.drain_replies() == []  # main 의 메일박스로도 안 간다
         assert [q.id for q in reg.open_human_questions()] == [qid]
-        # 강제 대상이 아니다 — 배달이 없으니 owed 에 영영 안 뜬다.
-        assert reg.questions_owed_by(addr) == []
+        assert reg._questions[qid].target == "user"
 
 
-# ── B1: 런 스코프 ───────────────────────────────
+# ── G3: 런 스코프 ───────────────────────────────
 
 
 class TestRunScope:
-    def test_queued_question_is_not_owed_until_dequeued(
-        self, mkreg, tmp_path, renderer
-    ):
-        """**바쁜 peer 에게 묻기.** 질문이 B 의 큐 뒤에 서 있는 동안은
-        B 가 진 빚이 아니다 — 여기서 owed 로 세면 B 의 *앞* 런이 읽지도
-        않은 질문으로 독촉을 받고, 상한이 그걸로 타 asker 에게 거짓
-        무응답이 간다."""
-        job, qg = threading.Event(), threading.Event()
-
-        def runner(query, ctx, **kw):
-            (qg if "question q-" in query else job).wait(5)
-            return _FakeLoopResult(output="ok"), 0.01
-
-        reg = mkreg()
-        reg._runner = runner
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.request(b, "앞선 일감")  # B 를 붙잡는다
-        assert wait_until(lambda: reg.get(b).state == "busy")
-
-        qid, err = reg.register_question(a, f"agent:{b}", "이거 맞나요?")
-        assert not err
-        assert reg.get(b).inbox.qsize() == 1  # 큐에 들어는 갔다
-        assert reg.questions_owed_by(f"agent:{b}") == []  # 그러나 빚은 아니다
-
-        job.set()  # B 가 앞 일감을 끝내고 질문 항목을 꺼내 **그 런 안에서** 멈춘다
-        assert wait_until(lambda: reg.questions_owed_by(f"agent:{b}") != [])
-        (owed,) = reg.questions_owed_by(f"agent:{b}")
-        assert owed.id == qid
-        assert owed.delivered_in is not None
-        qg.set()
-
     def test_asked_in_is_scoped_to_the_run(self, mkreg, tmp_path, renderer):
         """G3: 다른 런에서 걸어 둔(영영 열릴 수 있는) 사람 질문이 이후
-        모든 런의 회신을 막으면 안 된다."""
+        모든 런의 결과 알림에 섞이면 안 된다."""
         reg = mkreg()
         a = spawn_idle(reg)
         reg.get(a).current_item = "r-3"
-        reg.register_question(a, "user:bob", "run 3 의 질문")
+        reg.register_question(a, "run 3 의 질문")
         reg.get(a).current_item = "r-5"
         assert len(reg.questions_asked_in(a, "r-3")) == 1
         assert reg.questions_asked_in(a, "r-5") == []
@@ -253,137 +176,102 @@ class TestRunScope:
 
 
 class TestAnswer:
-    def test_only_the_addressee_may_answer(self, mkreg, tmp_path, renderer):
+    def test_only_a_person_may_answer(self, mkreg, tmp_path, renderer):
+        """주소는 사람이다 — main 도 에이전트도 대신 답할 수 없다(v9.20.0 실측:
+        main 이 사용자의 답을 지어냈다)."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "질문")
-        assert "addressed to main" in reg.answer_question(qid, "답", by="agent:zz")
-        assert "addressed to main" in reg.answer_question(qid, "답", by="user:bob")
-        assert reg.answer_question(qid, "답", by="main") == ""
+        qid, _ = reg.register_question(a, "질문")
+        assert "addressed to the person" in reg.answer_question(qid, "답", by="main")
+        assert "addressed to the person" in reg.answer_question(
+            qid, "답", by="agent:zz"
+        )
+        assert reg.answer_question(qid, "답", by="user") == ""
 
     @pytest.mark.parametrize("answerer", ["user", "user:bob", "user:carol"])
-    def test_any_human_may_answer_a_human_question(
-        self, mkreg, tmp_path, renderer, answerer
-    ):
+    def test_any_human_may_answer(self, mkreg, tmp_path, renderer, answerer):
         """G5: CLI 는 ``user``, 웹은 ``user:{nick}``, 뷰어마다 닉이 다르다.
         문자열 동치로 검사하면 두 번째 뷰어의 트레이 답이 거부된다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "배포할까요?")
+        qid, _ = reg.register_question(a, "배포할까요?")
         assert reg.answer_question(qid, "네", by=answerer) == ""
         assert reg.open_human_questions() == []
-
-    def test_agent_cannot_answer_a_human_question(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "배포할까요?")
-        assert "operator" in reg.answer_question(qid, "네", by="agent:x")
 
     def test_claim_is_atomic(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "질문")
-        assert reg.answer_question(qid, "첫 답", by="main") == ""
-        err = reg.answer_question(qid, "둘째 답", by="main")
+        qid, _ = reg.register_question(a, "질문")
+        assert reg.answer_question(qid, "첫 답", by="user:bob") == ""
+        err = reg.answer_question(qid, "둘째 답", by="user:carol")
         assert "already-answered" in err
 
     def test_empty_answer_rejected(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "질문")
-        assert "empty" in reg.answer_question(qid, "  ", by="main")
-        assert reg.questions_owed_by("main") == []  # 미배달이라 owed 는 아님
-        assert len(reg.questions_asked_in(a, "")) == 1  # 그러나 열려 있다(런 밖)
+        qid, _ = reg.register_question(a, "질문")
+        assert "empty" in reg.answer_question(qid, "  ", by="user")
+        assert len(reg.questions_asked_in(a, "")) == 1  # 열려 있다(런 밖)
 
-    def test_answer_routes_back_to_the_original_requester(
-        self, mkreg, tmp_path, renderer
-    ):
-        """불변식(§0): 질문의 주소가 곧 원 요청자다. ``author=q.target`` +
-        ``expects_reply=True`` 면 기존 회신 라우팅이 제자리로 보낸다."""
+    def test_answer_is_a_new_delivery_to_the_asker(self, mkreg, tmp_path, renderer):
+        """답은 asker 에게 **새 배달**로 — 사람이 보낸 것이므로 사람 런이고(``u-``),
+        봉투가 무엇에 대한 답인지(``re [q-…]``) 적는다 (v10.77.0, D)."""
         gate = threading.Event()
         reg = mkreg(runner=make_runner(block=gate))
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.get(a).current_author = f"agent:{b}"  # B 가 시킨 일을 하는 중
-        qid, err = reg.register_question(a, f"agent:{b}", "어느 쪽인가요?")
+        a = spawn_idle(reg)
+        qid, err = reg.register_question(a, "어느 쪽인가요?")
         assert not err
         with SubmitSpy(reg) as spy:
-            assert reg.answer_question(qid, "왼쪽", by=f"agent:{b}") == ""
+            assert reg.answer_question(qid, "왼쪽", by="user:bob") == ""
         (call,) = spy.calls
         assert call["key"] == a  # 답은 물어본 쪽으로
-        assert call["author"] == f"agent:{b}"  # 주소 = 원 요청자
-        assert call["expects_reply"] is True  # 답 런의 결과가 되돌아간다
+        assert call["author"] == "user"  # 주소 = 사람
+        assert call["expects_reply"] is True
+        assert call["kind"] == "answer" and call["re"] == qid
         assert "왼쪽" in call["message"]
         assert "어느 쪽인가요?" in call["message"]  # 원 질문이 딸려간다
         gate.set()
 
-    def test_answer_to_main_asker_uses_the_mailbox(self, mkreg, tmp_path, renderer):
-        """설계 3판 §3.3 이 빠뜨린 경우 — ``submit`` 의 대상은 상주
-        에이전트뿐이라 main 이 asker 면 메일박스로 가야 한다."""
-        gate = threading.Event()  # b 의 런을 붙잡는다 — 끝나면 미답 질문이 닫힌다
-        reg = mkreg(runner=make_runner(block=gate))
-        b = spawn_idle(reg)
-        qid, err = reg.register_question("main", f"agent:{b}", "상태 어때요?")
-        assert not err
-        reg.drain_replies()
-        assert reg.answer_question(qid, "초록", by=f"agent:{b}") == ""
-        gate.set()
-        (reply,) = reg.drain_replies()
-        assert reply["kind"] == "answer"
-        assert reply["id"] == qid
-        assert "초록" in reply["output"]
-        rec = build_reply_record(reply, registry=reg)
-        assert rec["source"] == "agent_answer"
-        assert "초록" in rec["content"]
+    def test_answer_run_reads_the_answer_envelope(self, mkreg, tmp_path, renderer):
+        """런을 여는 글은 봉투 한 모양 — 창·로그에는 본문만, 모델은 봉투를 본다.
+        사람 런이라 그 id 는 ``u-`` 이고 `complete` 의 `answers` 로 닫는다."""
+        seen = []
 
+        def runner(query, ctx, **kw):
+            seen.append((query, kw.get("user_requests")))
+            return _FakeLoopResult(output="ok"), 0.01
 
-class TestClose:
-    def test_close_delivers_the_reason_to_the_asker(self, mkreg, tmp_path, renderer):
-        gate = threading.Event()
-        reg = mkreg(runner=make_runner(block=gate))
-        b = spawn_idle(reg)
-        qid, _ = reg.register_question("main", f"agent:{b}", "질문")
-        reg.drain_replies()
-        assert reg.close_question(qid, "상한 초과") is not None
-        gate.set()
-        (reply,) = reg.drain_replies()
-        assert "상한 초과" in reply["output"]
-        assert reg.close_question(qid, "다시") is None  # 멱등
+        reg = mkreg()
+        reg._runner = runner
+        a = spawn_idle(reg)
+        qid, _ = reg.register_question(a, "어느 쪽?")
+        assert reg.answer_question(qid, "왼쪽", by="user:bob") == ""
+        assert wait_until(lambda: seen)
+        query, user_requests = seen[0]
+        head = query.split("\n")[0]
+        assert head.startswith("── answer [u-") and head.endswith(f"re [{qid}] ──")
+        assert "from the user" in head
+        assert "Continue the work it was blocking." in query
+        (req,) = user_requests
+        assert req["id"].startswith("u-") and "왼쪽" in req["text"]
+        assert wait_run_done(reg, a)
+        assert reg.drain_replies() == []  # 사람 런 — main 에게 가는 것은 없다
 
 
 # ── G1: 사망 정리 ───────────────────────────────
 
 
 class TestDeath:
-    def test_kill_purges_both_directions(self, mkreg, tmp_path, renderer):
-        # B 를 **런 중**에 죽인다(러너를 게이트로 막는다). 런이 끝나 버리면
-        # 런 끝 닫기(v9.22.0)가 먼저 "finished its run without answering" 으로
-        # 닫아, 여기서 보려는 사망 사유가 안 나온다.
-        gate = threading.Event()
-        reg = mkreg(runner=make_runner(block=gate))
+    def test_kill_purges_its_questions(self, mkreg, tmp_path, renderer):
+        """그가 건 질문은 폐기 — 남기면 사람이 답해도 받을 곳이 없다."""
+        reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
-        # B 앞으로 온 질문 하나, B 가 건 질문 하나.
-        incoming, _ = reg.register_question(a, f"agent:{b}", "B 에게 묻는다")
-        reg.get(b).current_author = "main"
-        outgoing, _ = reg.register_question(b, "main", "B 가 묻는다")
-        reg.drain_replies()
-
+        mine, _ = reg.register_question(b, "B 가 묻는다")
+        other, _ = reg.register_question(a, "A 가 묻는다")
         reg.kill(b)
-        # 앞으로 온 것: asker 가 풀려야 한다 — **사유가 실제로 배달**된다.
-        # 질문만 지우면 A 는 아무것도 못 받고 영원히 기다린다.
-        assert wait_until(lambda: reg.questions_asked_in(a, "r-0") == [])
-        assert wait_until(
-            lambda: any(
-                "terminated before answering" in str(c[1].get("text"))
-                and c[1].get("key") == a
-                for c in renderer.named("agent_message")
-            )
-        )
-        # 그가 건 것: 폐기 — 남기면 답하려는 쪽이 dead 에러를 받고 재시도한다.
-        assert reg.answer_question(outgoing, "답", by="main").startswith("unknown")
-        assert reg.answer_question(incoming, "답", by=f"agent:{b}").startswith(
-            "unknown"
-        )
-        gate.set()
+        assert wait_until(lambda: mine not in reg._questions)
+        assert reg.answer_question(mine, "답", by="user").startswith("unknown")
+        assert other in reg._questions  # 남의 질문은 그대로
 
     def test_shutdown_all_keeps_questions(self, mkreg, tmp_path, renderer):
         """G1: ``_worker`` finally 는 세션 종료에서도 돈다. 거기서 지우면
@@ -391,7 +279,7 @@ class TestDeath:
         질문이 **항상 0건**이 된다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "살아남아야 한다")
+        qid, _ = reg.register_question(a, "살아남아야 한다")
         reg.shutdown_all()
         assert [q.id for q in reg.open_human_questions()] == [qid]
         saved = json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
@@ -404,12 +292,12 @@ class TestDeath:
 class TestPersistence:
     """§3.9 — resume 은 질문을 **되살린다**. ctx 가 통째로 복원되므로
     나중에 도착한 답도 평소처럼 새 런으로 처리된다. 되살리지 못하는 것은
-    asker 나 target 이 돌아오지 않은 것뿐이다."""
+    asker 가 돌아오지 않은 것뿐이다(주소는 사람이라 언제나 있다)."""
 
     def test_human_question_comes_back_to_the_tray(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "열린 채 종료")
+        qid, _ = reg.register_question(a, "열린 채 종료")
         reg.shutdown_all()
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
@@ -422,137 +310,30 @@ class TestPersistence:
         assert fresh.answer_question(qid, "네", by="user:carol") == ""
         fresh.shutdown_all()
 
-    def test_asked_in_is_reset_so_it_cannot_gag_a_new_run(
-        self, mkreg, tmp_path, renderer
-    ):
-        """``asked_in`` 는 세션마다 의미가 다르다. 그대로 두면 새 세션의
-        어떤 런과 우연히 같아져 §3.7 억제가 엉뚱하게 걸릴 수 있다."""
+    def test_asked_in_is_reset_on_resume(self, mkreg, tmp_path, renderer):
+        """``asked_in`` 는 그 생의 런 이름이다 — 물어본 런은 사라졌으므로 ""
+        로 되살린다(새 생의 런 결과 알림에 섞이지 않게)."""
         reg = mkreg()
         a = spawn_idle(reg)
         reg.get(a).current_item = "r-4"
-        qid, _ = reg.register_question(a, "user:bob", "질문")
+        qid, _ = reg.register_question(a, "질문")
         assert reg._questions[qid].asked_in == "r-4"
         reg.shutdown_all()
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert fresh._questions[qid].asked_in == ""  # seq 는 1부터 — 안 겹친다
+        assert fresh._questions[qid].asked_in == ""
         fresh.shutdown_all()
 
-    def test_delivered_debt_survives_and_is_kicked(self, mkreg, tmp_path, renderer):
-        """**kick.** 독촉은 런이 끝나는 자리에 걸린다 — resume 직후 새
-        일감이 안 오면 끝나는 런이 없어 빚이 영원히 잠든다. 한 번 깨워
-        주면 그 독촉 항목이 런을 만들고 이후는 평소 흐름이다."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        q = Question(
-            id="q-debt1",
-            asker=a,
-            target=f"agent:{b}",
-            text="배달됐던 빚",
-            delivered_in="r-2",
-        )
-        reg._questions[q.id] = q
-        reg._save_state()
-        reg.shutdown_all()
-
-        seen = []
-        hold = threading.Event()
-
-        def runner(query, ctx, **kw):
-            seen.append(query)
-            # 독촉 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 **자기도**
-            # 런 끝에 `close_unanswered` 가 닫으므로,
-            # "두 번 깨우지 않는다" 단언이 CI 에서 깨진다.
-            if "(reminder)" in query:
-                hold.wait(5)
-            return _FakeLoopResult(output="ok"), 0.01
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
-        fresh.restore()
-        assert q.id in fresh._questions
-        assert fresh._questions[q.id].delivered_in is not None  # 빚이 유지된다
-        assert wait_until(
-            lambda: fresh.get(b).handled >= 0 and any("(reminder)" in x for x in seen)
-        )  # 깨웠다 — 독촉 항목이 런을 만들었다
-        assert sum(1 for x in seen if "(reminder)" in x) == 1  # 한 번만 깨운다
-        # 이미 읽은 질문을 **다시 배달하지는 않는다** — 상대 ctx 에 남아
-        # 있고, 재배달하면 같은 질문을 두 번 묻는 꼴이다.
-        assert not [x for x in seen if "[question q-" in x]
-        assert [x for x in seen if "(reminder)" in x]
-        hold.set()
-        fresh.shutdown_all()
-
-    def test_main_targeted_debt_is_kicked_too(self, mkreg, tmp_path, renderer):
-        """kick 을 ``agent:`` 로만 한정하면 main 의 빚은 resume 후 영영
-        잠든다 — main 의 독촉은 런 끝에서만 걸리는데, main 이 그 질문을
-        모르고 있으면 끝날 런도 없다."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        q = Question(
-            id="q-main1",
-            asker=a,
-            target="main",
-            text="main 앞 배달된 빚",
-            delivered_in="",
-        )
-        reg._questions[q.id] = q
-        reg._save_state()
-        reg.shutdown_all()
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        fresh.restore()
-        rec = next(r for r in fresh.drain_replies() if r.get("kind") == "reminder")
-        assert q.id in rec["output"]
-        fresh.shutdown_all()
-
-    def test_undelivered_peer_question_is_redelivered(self, mkreg, tmp_path, renderer):
-        """inbox 는 ``SimpleQueue`` 라 영속 대상이 아니다 — 아직 안 꺼낸
-        질문은 항목으로만 존재했으므로 통째로 증발한다. 되살려 놓기만
-        하면 영영 안 꺼내지고 독촉도 안 가 영구 미결이 된다."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        q = Question(id="q-undel", asker=a, target=f"agent:{b}", text="못 꺼낸 질문")
-        reg._questions[q.id] = q
-        reg._save_state()
-        reg.shutdown_all()
-
-        seen = []
-        hold = threading.Event()
-
-        def runner(query, ctx, **kw):
-            seen.append(query)
-            # 질문 런을 붙잡아 둔다. 놓아 두면 그 런이 끝나면서 워커가
-            # 런 끝에 닫히거나 독촉 항목이 생긴다
-            # (설계대로의 동작) — 아래 두 단언과 경합한다. CI(Linux/3.12)
-            # 에서 실제로 깨졌다.
-            if "[question q-undel" in query:
-                hold.wait(5)
-            return _FakeLoopResult(output="ok"), 0.01
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=runner)
-        fresh.restore()
-        # **질문 항목**으로 다시 배달돼야 한다 — id 만 찾으면 독촉 문구에도
-        # 들어 있어, 재배달을 지우고 kick 만 남겨도 통과한다(실제로 그랬다).
-        assert wait_until(
-            lambda: any("[question q-undel" in x for x in seen), timeout=5.0
-        )
-        assert wait_until(lambda: fresh._questions["q-undel"].delivered_in is not None)
-        # 미배달이었으므로 kick 대상이 아니다 — 배달과 독촉을 겹쳐 받으면
-        # 런 하나가 낭비되고 상한이 일찍 닳는다.
-        assert not [x for x in seen if "(reminder)" in x]
-        hold.set()
-        fresh.shutdown_all()
-
-    def test_question_is_dropped_when_its_target_did_not_come_back(
+    def test_question_is_dropped_when_its_asker_did_not_come_back(
         self, mkreg, tmp_path, renderer
     ):
-        """asker 나 target 이 안 돌아오면 아무도 답할 수 없거나 답을 받을
-        데가 없다 — 되살리면 영구 미결로 남는다.
+        """asker 가 안 돌아오면 답을 받을 데가 없다 — 되살리면 영구 미결로
+        남는다.
 
-        정상 경로에서는 ``kill``/crash 가 **즉시** 양방향 정리를 하므로
-        (§3.8) 이 상태가 잘 안 만들어진다. 그래서 파일을 직접 손봐
-        안전망 자체를 잰다 — 손상·수동 편집·버전 엇갈림에서 나올 수 있다.
+        정상 경로에서는 ``kill``/crash 가 **즉시** 정리하므로(§3.8) 이 상태가
+        잘 안 만들어진다. 그래서 파일을 직접 손봐 안전망 자체를 잰다 — 손상·
+        수동 편집·버전 엇갈림에서 나올 수 있다.
         """
         reg = mkreg()
         a = spawn_idle(reg)
@@ -562,50 +343,30 @@ class TestPersistence:
         path = tmp_path / "agents.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["questions"] = [
-            {  # target 이 매니페스트에 없다
-                "id": "q-orphan",
-                "asker": a,
-                "target": "agent:agt-gone",
-                "text": "돌아오지 않은 상대에게",
-                "asked_at": 1.0,
-                "asked_in": "r-1",
-                "delivered_in": None,
-                "nags": 0,
-            },
             {  # asker 가 매니페스트에 없다
-                "id": "q-orphan2",
-                "asker": "agt-gone2",
-                "target": "main",
+                "id": "q-orphan",
+                "asker": "agt-gone",
+                "target": "user",
                 "text": "돌아오지 않은 쪽이 물었다",
                 "asked_at": 1.0,
                 "asked_in": "r-1",
-                "delivered_in": "r-3",
-                "nags": 0,
+            },
+            {  # 살아 돌아온 asker — 되살린다
+                "id": "q-kept",
+                "asker": a,
+                "target": "user",
+                "text": "남는다",
+                "asked_at": 1.0,
+                "asked_in": "r-1",
             },
         ]
         path.write_text(json.dumps(data), encoding="utf-8")
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert fresh._questions == {}
-        assert fresh.stale_questions == 2
+        assert list(fresh._questions) == ["q-kept"]
+        assert fresh.stale_questions == 1
         fresh.shutdown_all()
-
-    def test_delivered_in_zero_survives_round_trip(self, mkreg, tmp_path, renderer):
-        """main 의 배달 마킹은 ``0`` 이다(런 seq 가 없다). ``or``/truthy 로
-        읽으면 0 이 None 이 되어 **main 의 빚이 resume 마다 사라진다** —
-        ``is None`` 관용구가 그걸 막는 유일한 장치다."""
-        q = Question.from_dict(
-            {
-                "id": "q-zero",
-                "asker": "agt-a",
-                "target": "main",
-                "text": "t",
-                "delivered_in": "",
-            }
-        )
-        assert q is not None
-        assert q.delivered_in == ""  # None 이 아니다 → 여전히 빚이다
 
     def test_malformed_question_entry_is_skipped(self, mkreg, tmp_path, renderer):
         reg = mkreg()
@@ -633,24 +394,6 @@ class TestPersistence:
         assert fresh._questions == {}
         fresh.shutdown_all()
 
-    def test_async_question_record_is_not_marked_stale(self, mkreg, tmp_path, renderer):
-        """``stale`` 은 블로킹 경로 전용이다 — 거기선 재시작으로 대기
-        슬롯이 사라져 "BLOCKED" 가 거짓이 된다. 비동기 질문은 목록째
-        되살아나 답이 정상 처리되므로, 마킹하면 그게 거짓말이 된다."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "main 에게")  # pending 에 실린다
-        reg.shutdown_all()
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        fresh.restore()
-        rec = next(r for r in fresh.drain_replies() if r.get("kind") == "question")
-        assert rec["id"] == qid
-        assert rec.get("stale") is not True
-        assert "STALE" not in build_reply_record(rec)["content"]
-        assert qid in fresh._questions  # 되살아났다 — 답할 수 있다
-        fresh.shutdown_all()
-
     def test_fresh_registry_reports_zero(self, mkreg, tmp_path, renderer):
         reg = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         reg.restore()
@@ -658,10 +401,7 @@ class TestPersistence:
         assert reg._questions == {}
 
 
-# ── 독촉 런 (§3.4) ──────────────────────────────
-
-
-# ── 사람 알림 · 회신 억제 · 표면 ────────────────
+# ── 사람 알림 · 표면 ────────────────────────────
 
 
 class TestSurfaces:
@@ -675,7 +415,7 @@ class TestSurfaces:
         ran = []
 
         def runner(query, ctx, **kw):
-            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            reg.register_question(b, "덮어쓸까요?")
             ran.append(query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
@@ -694,52 +434,40 @@ class TestSurfaces:
         assert "1 question(s) still unanswered" in out
         assert "덮어쓸까요?" in out
 
-    def test_reply_is_withheld_while_this_runs_question_is_open(
+    def test_asking_the_person_does_not_withhold_the_reply(
         self, mkreg, tmp_path, renderer
     ):
-        """§3.7: 부분 결과로 회신하면 나중 답 런이 같은 요청에 두 번째
-        회신을 만든다. 요청자는 질문을 이미 받았으므로 깜깜하지 않다."""
-        reg = mkreg()
+        """v10.77.0: §3.7 억제는 없다 — 사람에게 물은 런도 요청자(main)에게
+        결과가 간다(회신이 없으면 라벨 붙은 런 요약). 사람의 답은 사람 런으로
+        따로 오고 main 에게 두 번째 회신을 만들지 않는다."""
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
 
+        reg = mkreg()
         ran = []
 
         def runner(query, ctx, **kw):
             if "일감" in query:
-                reg.register_question(b, "main", "어느 쪽인가요?")
+                reg.register_question(b, "어느 쪽인가요?")
             ran.append(query)
             return _FakeLoopResult(output="부분 결과"), 0.01
 
         reg._runner = runner
         b = spawn_idle(reg)
         reg.request(b, "일감")
-        # 러너가 **돌았는지**를 먼저 기다린다 — `state == "idle"` 만 보면
-        # 워커가 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다(CI 부하
-        # 시 실제로 깨졌다). 이 파일의 공통 함정.
         assert wait_until(lambda: ran)
         assert wait_run_done(reg, b)
-        kinds = [r["kind"] for r in reg.drain_replies()]
-        assert "question" in kinds
-        assert "reply" not in kinds  # 답 런의 회신이 진짜 회신이다
-        # 억제는 **재주입만** 막는다 — 창·로그·persist 는 그대로 돌아야
-        # 사용자가 이 에이전트가 한 일을 본다.
-        # v9.21.0: 배달 없는 산출물은 왕래 줄이 아니다 — out 레코드가 없다.
-        # (에이전트 채널의 final 카드가 그 산출물이다.) persist 는 그대로.
-        outs = [
-            c[1]
-            for c in renderer.named("agent_message")
-            if c[1].get("direction") == "out" and c[1].get("key") == b
-        ]
-        assert outs == []
-        # 회신 파일 이름 = 그 런을 연 배달의 id (v10.77.0)
+        (rep,) = reg.drain_replies()
+        assert rep["kind"] == "reply" and rep["output"].startswith(_NO_REPLY_LABEL)
+        assert rep["re"] == "r-1"
         assert (tmp_path / "agents" / b / "replies" / "reply-r-1.md").is_file()
 
     def test_roster_carries_open_questions(self, mkreg, tmp_path, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "배포?")
+        qid, _ = reg.register_question(a, "배포?")
         row = next(r for r in reg.roster_snapshot() if r["key"] == a)
         assert [q["id"] for q in row["open_questions"]] == [qid]
-        assert row["open_questions"][0]["to"] == "user:bob"
+        assert row["open_questions"][0]["to"] == "user"
 
     def test_registering_notifies_the_roster(self, mkreg, tmp_path, renderer):
         """트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
@@ -747,7 +475,7 @@ class TestSurfaces:
         reg = mkreg()
         a = spawn_idle(reg)
         before = len(renderer.named("agent_roster"))
-        qid, _ = reg.register_question(a, "user:bob", "배포?")
+        qid, _ = reg.register_question(a, "배포?")
         rosters = renderer.named("agent_roster")
         assert len(rosters) > before
         (row,) = [r for r in rosters[-1][1]["roster"] if r["key"] == a]
@@ -759,7 +487,7 @@ class TestSurfaces:
         reg = mkreg()
         a = spawn_idle(reg)
         assert reg.any_activity() is False
-        reg.register_question(a, "user:bob", "배포?")
+        reg.register_question(a, "배포?")
         assert reg.any_activity() is True
 
 
@@ -782,7 +510,7 @@ class TestWebAnswerEndpoint:
         ``answer_id`` 없이 보내면 종전대로 inbox 로 들어간다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "덮어쓸까요?")
+        qid, _ = reg.register_question(a, "덮어쓸까요?")
         server, client = self._client()
         server.agent_registry = reg
 
@@ -808,21 +536,6 @@ class TestWebAnswerEndpoint:
         assert reg.get(a).inbox.qsize() == 0
 
 
-# ── main 독촉 (§3.4 — 에이전트와 같은 정책, 다른 배달) ──
-
-
-# ── §3.7 회신 신선도 ────────────────────────────
-
-
-def _body(output: str) -> str:
-    """폴백 요약의 라벨(v9.21.0)을 벗긴다 — 가짜 러너는 `message` 를 안
-    보내므로 main 이 받는 회신은 전부 라벨 붙은 런 요약이다."""
-    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
-
-    prefix = _NO_REPLY_LABEL + "\n"
-    return output.removeprefix(prefix)
-
-
 class Replies:
     """``drain_replies`` 는 비우므로 누적해서 본다."""
 
@@ -839,112 +552,12 @@ class Replies:
 
 
 class TestReplyFreshness:
-    """질문을 건 런은 요청자 채널로 **재주입하지 않는다**.
-
-    보장하는 성질은 "회신이 정확히 한 번" 이 아니라 **"회신이 낡지
-    않는다"** 다. 부분 회신은 *답이 존재하기 전에* 만들어졌는데 *답을 보낸
-    뒤에* 도착해서, 요청자가 자기 답이 반영된 상태로 오독한다 — peer 면
-    inbox 항목 1개 = 런 1개라 잘못된 하위 작업이 실제로 돌아간다.
+    """질문과 회신 (v10.77.0). 종전엔 질문을 건 런의 회신을 억제했다(§3.7 —
+    답 런이 같은 요청에 회신하므로). 질문이 사람에게만 가면서 답 런은 사람
+    런이 되었고 요청자에게 회신하지 않는다 — 억제할 이유가 없어 지웠다.
+    남는 성질: 질문이 없는 런은 평소대로 회신하고, 같은 질문은 같은 런
+    안에서만 접고, 사람 런은 창에 결과를 남긴다.
     """
-
-    def test_answer_arriving_before_run_end_still_yields_one_reply(
-        self, mkreg, renderer
-    ):
-        """**이 판정이 바뀐 이유.** 비동기라 답은 보통 묻던 런이 끝나기
-        *전에* 온다. "아직 열려 있나" 로 판정하면 그때 질문이 이미 닫혀
-        있어 억제가 안 걸리고 낡은 부분 회신이 나간다 — 막으려던 상황이
-        정상 경로다."""
-        hold = threading.Event()
-        reg = mkreg()
-        box = {}
-
-        def runner(query, ctx, **kw):
-            if "일감" in query:
-                box["qid"], err = reg.register_question(b, "main", "어느 쪽?")
-                assert not err
-                hold.wait(5)  # 이 런이 끝나기 전에 답이 들어온다
-                return _FakeLoopResult(output="부분 결과"), 0.01
-            return _FakeLoopResult(output="완성"), 0.01
-
-        reg._runner = runner
-        b = spawn_idle(reg)
-        rep = Replies(reg)
-        reg.request(b, "일감")  # seq 1
-        assert wait_until(lambda: "qid" in box)
-        assert wait_until(lambda: any(r.get("kind") == "question" for r in rep.all()))
-
-        assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
-        hold.set()  # 이제 런 1 이 끝난다 — 질문은 이미 닫혀 있다
-
-        assert wait_until(lambda: len(rep.kinds()) == 1, timeout=5.0)
-        (only,) = rep.kinds()
-        assert _body(only["output"]) == "완성"  # 낡은 "부분 결과" 가 아니다
-        assert only["run"] != "r-1"  # 답 런(새 배달)의 회신 — 런 1 의 것이 아니다
-        time.sleep(0.15)
-        assert len(rep.kinds()) == 1  # 뒤늦게 하나 더 오지 않는다
-
-    def test_answer_arriving_after_run_end_still_yields_one_reply(
-        self, mkreg, renderer
-    ):
-        """반대 순서(종전 조건이 잡던 경우)도 그대로여야 한다."""
-        reg = mkreg()
-        box = {}
-
-        def runner(query, ctx, **kw):
-            if "일감" in query:
-                box["qid"], _ = reg.register_question(b, "main", "어느 쪽?")
-                return _FakeLoopResult(output="부분 결과"), 0.01
-            return _FakeLoopResult(output="완성"), 0.01
-
-        reg._runner = runner
-        b = spawn_idle(reg)
-        rep = Replies(reg)
-        reg.request(b, "일감")
-        # **런이 실제로 돌았는지를 먼저 기다린다.** `state == "idle"` 만 보면
-        # 워커가 아직 요청을 집어 들기 전의 idle 을 보고 즉시 통과한다 —
-        # 그 경합으로 `box["qid"]` 가 비어 CI(3.12)가 KeyError 로 깨졌다.
-        # 시블링 테스트가 이미 쓰는 패턴이다.
-        assert wait_until(lambda: "qid" in box)
-        assert wait_run_done(reg, b)
-        assert rep.kinds() == []  # 런 1 은 회신을 안 밀었다
-
-        assert reg.answer_question(box["qid"], "왼쪽", by="main") == ""
-        assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert _body(rep.kinds()[0]["output"]) == "완성"
-
-    def test_answer_run_reply_reaches_a_peer_requester(self, mkreg, renderer):
-        """억제의 대가는 **답 런이 원 요청자에게 도달한다**는 것이다 —
-        여기가 무너지면 요청자는 아무것도 못 받는다.
-
-        A 가 자기 질문 런 안에서 바로 답한다. 늦게 답하면 가짜 러너가
-        즉시 반환해 독촉 상한이 밀리초에 타 버린다(실제 모델은 런 하나가
-        초 단위라 생기지 않는 경합).
-        """
-        reg = mkreg()
-        from_b, asked = [], []
-
-        def runner(query, ctx, **kw):
-            if "[question q-" in query:  # A 가 질문을 받았다 → 즉답
-                qid = query.split("[question ")[1].split(" ")[0]
-                assert reg.answer_question(qid, "v2", by=f"agent:{a}") == ""
-                return _FakeLoopResult(output="A 가 답함"), 0.01
-            if "[answer to your question" in query:  # B 의 답 런
-                return _FakeLoopResult(output="B 완성"), 0.01
-            if query.startswith(f"[agent:{b}]"):  # A 가 받은 B 의 최종 회신
-                from_b.append(query)
-                return _FakeLoopResult(output="A 수신"), 0.01
-            asked.append(reg.register_question(b, f"agent:{a}", "정책?"))
-            return _FakeLoopResult(output="부분"), 0.01
-
-        reg._runner = runner
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.request(b, "리팩터", author=f"agent:{a}", expects_reply=True)
-
-        assert wait_until(lambda: len(from_b) == 1, timeout=5.0)
-        assert "B 완성" in from_b[0]
-        assert "부분" not in from_b[0]  # 낡은 부분 결과는 A 를 깨우지 않았다
-        time.sleep(0.15)
-        assert len(from_b) == 1  # 두 번 깨우지도 않는다
 
     def test_run_without_a_question_replies_normally(self, mkreg, renderer):
         reg = mkreg()
@@ -953,135 +566,27 @@ class TestReplyFreshness:
         reg.request(b, "평범한 일감")
         assert wait_until(lambda: len(rep.kinds()) == 1)
 
-    def test_failed_registration_does_not_withhold(self, mkreg, renderer):
-        """등록이 실패하면 답 런이 안 생긴다 — 거기에 억제를 걸면 그 런의
-        회신이 **영영 사라진다**. 그래서 플래그는 배달 성공 뒤에 세운다."""
-        reg = mkreg()
-
-        def runner(query, ctx, **kw):
-            qid, err = reg.register_question(b, f"agent:{dead}", "죽은 상대에게")
-            assert not qid and "dead" in err
-            return _FakeLoopResult(output="그래도 끝냈다"), 0.01
-
-        reg._runner = runner
-        b, dead = spawn_idle(reg), spawn_idle(reg)
-        reg.kill(dead)
-        rep = Replies(reg)
-        reg.request(b, "일감")
-        assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert _body(rep.kinds()[0]["output"]) == "그래도 끝냈다"
-
-    def test_flag_is_per_run(self, mkreg, renderer):
-        """플래그가 런 경계에서 안 지워지면 이후 모든 회신이 사라진다."""
-        reg = mkreg()
-        calls = []
-
-        def runner(query, ctx, **kw):
-            calls.append(query)
-            if len(calls) == 1:
-                reg.register_question(b, "main", "첫 런의 질문")
-            return _FakeLoopResult(output=f"out{len(calls)}"), 0.01
-
-        reg._runner = runner
-        b = spawn_idle(reg)
-        rep = Replies(reg)
-        reg.request(b, "일감 1")
-        assert wait_until(lambda: len(calls) == 1)
-        reg.request(b, "일감 2")
-        assert wait_until(lambda: len(calls) == 2)
-        assert wait_until(lambda: len(rep.kinds()) == 1)
-        assert _body(rep.kinds()[0]["output"]) == "out2"  # 두 번째 런은 밀었다
-
-    def test_capped_question_still_produces_a_reply(self, mkreg, renderer):
-        """아무도 답하지 않아도 상한이 질문을 닫고, 그 닫힘이 답 런을
-        만들어 회신을 보낸다 — 억제가 **영구 보류**가 되지 않는다.
-
-        주소를 peer 로 둔다: 주소가 main 이면 독촉을 거는 주체가 main 펌프
-        뿐이라 테스트에는 없고, 상한이 구조적으로 안 걸린다.
-        """
-        reg = mkreg()
-        from_b, asked = [], []
-
-        def runner(query, ctx, **kw):
-            if "[question q-" in query:
-                return _FakeLoopResult(output="A 는 답하지 않는다"), 0.01
-            if "(reminder)" in query:
-                return _FakeLoopResult(output="A 는 여전히 답하지 않는다"), 0.01
-            if "[answer to your question" in query:
-                return _FakeLoopResult(output="B 마무리"), 0.01
-            if query.startswith(f"[agent:{b}]"):
-                from_b.append(query)
-                return _FakeLoopResult(output="A 수신"), 0.01
-            asked.append(reg.register_question(b, f"agent:{a}", "영영 무응답"))
-            return _FakeLoopResult(output="부분"), 0.01
-
-        reg._runner = runner
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        reg.request(b, "리팩터", author=f"agent:{a}", expects_reply=True)
-
-        assert wait_until(lambda: reg._questions == {}, timeout=10.0)  # 상한이 닫음
-        assert wait_until(lambda: len(from_b) == 1, timeout=10.0)
-        # A 가 받는 것은 닫힘 사유가 아니라 **그 사유를 보고 B 가 마무리한
-        # 결과**다 — 사유는 B 에게 답으로 들어가고, B 의 답 런이 회신한다.
-        assert "B 마무리" in from_b[0]
-        assert "부분" not in from_b[0]
-        time.sleep(0.15)
-        assert len(from_b) == 1
-
-    def test_two_questions_in_one_run_give_two_fresh_replies(self, mkreg, renderer):
-        """한 런이 둘을 물으면 답 런도 둘, 회신도 둘 — 보장하는 것은
-        "정확히 한 번" 이 아니라 **"낡지 않음"** 이다. 둘 다 각자의 답이
-        반영된 상태다."""
-        reg = mkreg()
-        ids, n = [], []
-
-        def runner(query, ctx, **kw):
-            n.append(query)
-            if len(n) == 1:
-                for t in ("질문 A", "질문 B"):
-                    qid, err = reg.register_question(b, "main", t)
-                    assert not err
-                    ids.append(qid)
-            return _FakeLoopResult(output=f"out{len(n)}"), 0.01
-
-        reg._runner = runner
-        b = spawn_idle(reg)
-        rep = Replies(reg)
-        reg.request(b, "일감")
-        assert wait_until(lambda: len(ids) == 2)
-        assert wait_run_done(reg, b)
-        assert rep.kinds() == []
-
-        for qid in ids:
-            assert reg.answer_question(qid, "답", by="main") == ""
-        assert wait_until(lambda: len(rep.kinds()) == 2, timeout=5.0)
-
     def test_same_question_across_runs_is_not_folded(self, mkreg, renderer):
-        """중복 접기는 **런 안에서만**. 런 경계를 넘어 접으면 요청 둘에
-        답 런 하나 → 회신 하나가 되어, 낡은 회신보다 나쁜 **누락**이 된다."""
+        """중복 접기는 **런 안에서만**. 런마다 자기 질문이 있어야 그 런의 결과
+        알림(`_with_human_notice`)이 맞는다."""
         reg = mkreg()
         ids, n = [], []
 
         def runner(query, ctx, **kw):
             n.append(query)
-            if "일감" in query:  # 답 런에서는 다시 묻지 않는다
-                qid, err = reg.register_question(b, "main", "똑같은 질문")
+            if "일감" in query:
+                qid, err = reg.register_question(b, "똑같은 질문")
                 assert not err
                 ids.append(qid)
             return _FakeLoopResult(output=f"out{len(n)}"), 0.01
 
         reg._runner = runner
         b = spawn_idle(reg)
-        rep = Replies(reg)
         reg.request(b, "일감 1")
         assert wait_until(lambda: len(ids) == 1)
         reg.request(b, "일감 2")
         assert wait_until(lambda: len(ids) == 2)
         assert ids[0] != ids[1]  # 런이 다르면 별개의 질문
-
-        for qid in dict.fromkeys(ids):
-            assert reg.answer_question(qid, "답", by="main") == ""
-        assert wait_until(lambda: len(rep.kinds()) == 2, timeout=5.0)
 
     def test_same_question_within_one_run_is_folded(self, mkreg, renderer):
         """런 안에서는 접는다 — ``_op_ask`` 가 루프 탐지기 앞에서 반환해
@@ -1091,7 +596,7 @@ class TestReplyFreshness:
 
         def runner(query, ctx, **kw):
             for _ in range(3):
-                qid, err = reg.register_question(b, "main", "반복 질문")
+                qid, err = reg.register_question(b, "반복 질문")
                 assert not err
                 ids.append(qid)
             return _FakeLoopResult(output="ok"), 0.01
@@ -1104,14 +609,14 @@ class TestReplyFreshness:
         assert len(reg._questions) == 1
 
     def test_human_run_still_renders_the_window(self, mkreg, renderer):
-        """사람 발신 런은 애초에 밀 회신이 없다(창만) — 억제가 창까지
-        막으면 사용자가 에이전트가 한 일을 못 본다."""
+        """사람 발신 런은 애초에 밀 회신이 없다(창만) — 질문을 걸었어도 창에
+        결과가 남아야 사용자가 에이전트가 한 일을 본다."""
         reg = mkreg()
 
         ran = []
 
         def runner(query, ctx, **kw):
-            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            reg.register_question(b, "덮어쓸까요?")
             ran.append(query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
@@ -1155,18 +660,17 @@ class TestQuestionPort:
         assert main.me == "main"
         assert main.asker == "main"
 
-    def test_ask_addresses_the_current_requester(self, mkreg, renderer):
-        """주소 = ask 시점의 ``current_author`` (§0). 그게 원 요청자다."""
+    def test_ask_always_addresses_the_person(self, mkreg, renderer):
+        """주소는 누가 시켰든 사람이다 (v10.77.0, B) — 종전엔 원 요청자가
+        기본이라 main 이 시킨 일의 질문이 main 에게 갔고 main 이 사람의 답을
+        지어냈다(v9.20.0 실측)."""
         reg = mkreg()
         a = spawn_idle(reg)
-        reg.get(a).current_author = "user:bob"
-        qid, err = port_ask(reg, a, "사람에게")
-        assert not err
-        assert reg._questions[qid].target == "user:bob"
-
-        reg.get(a).current_author = "main"
-        qid2, _ = port_ask(reg, a, "main 에게")
-        assert reg._questions[qid2].target == "main"
+        for author in ("user:bob", "main", "agent:agt-x"):
+            reg.get(a).current_author = author
+            qid, err = port_ask(reg, a, f"{author} 의 일에서")
+            assert not err
+            assert reg._questions[qid].target == "user"
 
     def test_main_ask_is_refused(self, mkreg, renderer):
         """main 이 포트로 물으면 **보이지도 답할 수도 사라지지도 않는**
@@ -1181,34 +685,21 @@ class TestQuestionPort:
         assert reg.open_human_questions() == []
         assert reg.any_activity() is False
 
-    def test_answer_goes_through_as_this_address(self, mkreg, renderer):
-        """포트의 ``answer`` 는 자기 ``me`` 로 답한다 — 남의 질문에 답할 수
-        없어야 한다(§0)."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "누가 답하나")
-        assert "addressed to main" in reg.question_port(b).answer(qid, "내가")
-        assert reg.question_port(None).answer(qid, "main 이") == ""
-
     def test_port_never_exposes_the_registry(self, mkreg, renderer):
         """레지스트리가 서브루프에 닿으면 '팀원 안 팀원 금지' 의 단일
-        가드(loop/state.py)가 깨진다 — 포트의 공개 표면은 둘뿐이다."""
+        가드(loop/state.py)가 깨진다 — 포트의 공개 표면은 이것뿐이다."""
         reg = mkreg()
         port = reg.question_port(spawn_idle(reg))
         public = {n for n in dir(port) if not n.startswith("_")}
-        assert (
-            public
-            == {
-                "ask",
-                "answer",
-                "key",
-                "me",
-                "asker",
-                "nonblocking",
-                "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
-                "debts",  # v9.22.0 — main·상주 공통 빚 목록 (answer/reply); v9.22.1 에서 `reply_owed` 흡수
-            }
-        )
+        assert public == {
+            "ask",
+            "key",
+            "me",
+            "asker",
+            "nonblocking",
+            "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
+            "debts",  # v9.22.0 — main·상주 공통 회신 빚 목록 (v10.77.0: answer 빚 없음)
+        }
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
         assert reg.question_port(None).nonblocking is False
@@ -1231,56 +722,42 @@ class TestPersistShape:
         q = Question(
             id="q-shape",
             asker="agt-x",
-            target="agent:agt-y",
+            target="user",
             text="본문",
             asked_in="r-4",
-            delivered_in="r-9",
         )
         d = q.as_dict()
         assert d == {
             "id": "q-shape",
             "asker": "agt-x",
-            "target": "agent:agt-y",
+            "target": "user",
             "text": "본문",
             "asked_at": q.asked_at,
             "asked_in": "r-4",
-            "delivered_in": "r-9",
         }
-
-    def test_mark_delivered_records_the_first_read_only(self, mkreg, renderer):
-        """'언제 처음 읽었나' 다 — 뒤 런이 덮어쓰면 그 의미가 사라진다."""
-        reg = mkreg()
-        q = Question(id="q-mk", asker="main", target="agent:zz", text="t")
-        reg._questions[q.id] = q
-        reg.mark_question_delivered(q.id, "r-3")
-        reg.mark_question_delivered(q.id, "r-7")
-        assert q.delivered_in == "r-3"
-        reg.mark_question_delivered("q-nope", "r-1")  # 없는 id 는 조용히 무시
+        back = Question.from_dict(d)
+        assert back is not None and (back.id, back.asker, back.text) == (
+            "q-shape",
+            "agt-x",
+            "본문",
+        )
 
     def test_unknown_asker_is_rejected(self, mkreg, renderer):
         reg = mkreg()
-        qid, err = reg.register_question("agt-ghost", "main", "질문")
+        qid, err = reg.register_question("agt-ghost", "질문")
         assert not qid
         assert "unknown asker" in err
-
-    def test_unroutable_target_is_rejected(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, err = reg.register_question(a, "nobody", "질문")
-        assert not qid
-        assert "unroutable" in err
-        assert reg._questions == {}  # 등록도 취소된다
 
     def test_roster_row_carries_text_and_time(self, mkreg, renderer):
         """트레이가 이 세 필드로 그려진다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "user:bob", "덮어쓸까요?")
+        qid, _ = reg.register_question(a, "덮어쓸까요?")
         (row,) = [r for r in reg.roster_snapshot() if r["key"] == a]
         (item,) = row["open_questions"]
         assert item["id"] == qid
         assert item["text"] == "덮어쓸까요?"
-        assert item["to"] == "user:bob"
+        assert item["to"] == "user"
         assert isinstance(item["ts"], float)
 
 
@@ -1309,31 +786,6 @@ class TestUncoveredSurfaces:
             )
         gate.set()
 
-    def test_batch_run_end_also_closes(self, mkreg, renderer):
-        """런 끝 정리는 '런이 끝났다' 는 사실에 붙는다. 핸들러마다 두면 배치
-        경로에서 빠진다 — 실제로 빠졌었고, 그래서 워커 루프로 옮겼다.
-        v9.22.0 부터 그 정리는 독촉이 아니라 **닫기**다."""
-        gate = threading.Event()
-        reg = mkreg(runner=make_runner(block=gate))
-        b = spawn_idle(reg)
-        q = Question(
-            id="q-batch",
-            asker="main",
-            target=f"agent:{b}",
-            text="배치 전에 배달된 질문",
-            delivered_in="r-99",
-        )
-        reg._questions[q.id] = q
-        self._human_batch(reg, b, gate, ("하나", "둘"))
-        assert wait_until(lambda: "q-batch" not in reg._questions, timeout=5.0)
-        assert wait_until(
-            lambda: any(
-                r.get("kind") == "answer" and "without answering" in r.get("output", "")
-                for r in reg.drain_replies()
-            ),
-            timeout=5.0,
-        )
-
     def test_batch_run_reports_open_human_questions(self, mkreg, renderer):
         """사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
         current_author) — 알림이 가장 필요한 곳이 비어 있었다."""
@@ -1344,7 +796,7 @@ class TestUncoveredSurfaces:
             if "선행" in query:
                 gate.wait(5)
                 return _FakeLoopResult(output="선행 끝"), 0.01
-            reg.register_question(b, "user:bob", "덮어쓸까요?")
+            reg.register_question(b, "덮어쓸까요?")
             return _FakeLoopResult(output="둘 다 처리"), 0.01
 
         reg._runner = runner
@@ -1366,37 +818,6 @@ class TestUncoveredSurfaces:
         assert "1 question(s) still unanswered" in out["text"]
         assert "덮어쓸까요?" in out["text"]
 
-    def test_redelivery_does_not_duplicate_the_window_entry(
-        self, mkreg, tmp_path, renderer
-    ):
-        """재배달은 배관만 다시 태운다 — 질문은 첫 세션에서 이미 창에
-        그려졌고 `_replay_conversation` 이 방금 재생했다. 다시 그리면
-        사용자 창에 같은 질문이 두 번, 로그에 두 줄이 된다."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        q = Question(id="q-nodup", asker=a, target=f"agent:{b}", text="못 꺼낸 질문")
-        reg._questions[q.id] = q
-        reg._save_state()
-        reg.shutdown_all()
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        fresh.restore()
-
-        # 재배달의 증거: 워커가 꺼내 `delivered_in` 를 찍었거나, 그 런이
-        # 이미 끝나 `close_unanswered` 가 닫았거나(Linux 에선 폴링보다 빠르다).
-        def redelivered():
-            q2 = fresh._questions.get("q-nodup")
-            return q2 is None or q2.delivered_in is not None
-
-        assert wait_until(redelivered, timeout=5.0)
-        drawn = [
-            c
-            for c in renderer.named("agent_message")
-            if c[1].get("direction") == "question" and c[1].get("key") == a
-        ]
-        assert drawn == []  # 재배달이 새로 그리지 않았다
-        fresh.shutdown_all()
-
     def test_main_run_ended_is_a_single_definition(self, mkreg, renderer):
         """main 은 펌프가 둘(run/web)이라 호출부가 둘이다 — 정의가 하나여야
         한쪽만 고치는 사고가 안 난다(`runtime.py` 가 있는 이유)."""
@@ -1405,18 +826,16 @@ class TestUncoveredSurfaces:
         assert main_run_ended(None) == 0  # 레지스트리 없는 부팅에서 안전
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()  # 배달 마킹
-        # v9.22.0: 런 끝은 독촉이 아니라 정리 — 답 안 한 질문을 닫고 asker 에게 알린다
+        reg.note_owes("main", f"agent:{a}", "결정해 줘")  # main 이 받은 message 요청
+        # 런 끝: 안 갚은 빚은 라벨 붙은 런 요약으로 정리된다
         assert main_run_ended(reg, "main 요약") == 1
-        assert qid not in reg._questions
-        assert main_run_ended(reg, "main 요약") == 0  # 두 번 닫지 않는다
+        assert reg.reply_debts("main") == []
+        assert main_run_ended(reg, "main 요약") == 0  # 두 번 보내지 않는다
 
     def test_cli_mail_notice_waits_only_when_main_is_busy(self, mkreg, renderer):
         """CLI 대기 줄 (v10.51.0): main 이 바쁠 때만 — 유휴면 곧 깨우기 런의 관찰
-        줄이 나오므로 따로 알리지 않는다. 글은 곧 들어갈 관찰의 머리줄이라
-        종류마다 맞다(독촉이 '회신 도착' 이 되면 사용자가 뭔가 끝난 줄 안다;
-        종전엔 사망 통지가 그 기본 문구로 떨어졌다)."""
+        줄이 나오므로 따로 알리지 않는다. 글은 곧 들어갈 관찰의 머리줄(봉투,
+        v10.77.0)이라 종류마다 맞다(종전엔 사망 통지가 기본 문구로 떨어졌다)."""
         from agent_cli.main import _agent_mail_notice
 
         seen = []
@@ -1424,10 +843,24 @@ class TestUncoveredSurfaces:
         _agent_mail_notice({"kind": "reply", "key": "agt-x", "output": "done"}, False)
         assert seen == []  # 유휴 — 관찰 줄이 전부다
         for reply, want in (
-            ({"kind": "reminder", "output": "agt-x 의 질문 q-1 이 미답"}, "미답"),
-            ({"kind": "answer", "key": "agt-x", "output": "B"}, "answer from agt-x"),
-            ({"kind": "reply", "key": "agt-x", "output": "done"}, "agent agt-x reply"),
-            ({"kind": "died", "key": "agt-x", "output": "boom"}, "agent agt-x DIED"),
+            (
+                {"kind": "reply", "key": "agt-x", "output": "done", "item_id": "n-4"},
+                "reply [n-4] from agt-x",
+            ),
+            (
+                {"kind": "died", "key": "agt-x", "output": "boom", "item_id": "n-5"},
+                "died [n-5]",
+            ),
+            (
+                {
+                    "kind": "peer_message",
+                    "key": "agt-x",
+                    "output": "결정해 줘",
+                    "expects_reply": True,
+                    "item_id": "r-6",
+                },
+                "request [r-6] from agt-x",
+            ),
             (
                 {"kind": "monitor", "output": "🔔 monitor tests: 3 failed"},
                 "[monitor] 🔔",
@@ -1439,21 +872,6 @@ class TestUncoveredSurfaces:
             assert line.startswith("⏳ Queued · [") and want in line, (reply, line)
             assert line.endswith("delivered to main when this turn ends")
             assert "?" not in line  # key 없는 모니터·작업 — "에이전트 ?" 금지
-        # 질문은 늘 — CLI 에는 ❓ 트레이가 없다
-        _agent_mail_notice({"kind": "question", "key": "agt-x"}, False)
-        assert "Question from agent" in seen[-1]
-
-    def test_async_question_record_points_at_the_answer_tool(self, mkreg, renderer):
-        """main 이 새 request 를 보내면 그건 답이 아니라 일감이다 — 질문은
-        열린 채 남고 독촉이 상한까지 돌다 닫힌다. 런만 태운다."""
-        rec = build_reply_record(
-            {"kind": "question", "id": "q-abc", "key": "agt-x", "output": "어느 쪽?"}
-        )
-        assert "`answer` tool" in rec["content"]
-        assert "q-abc" in rec["content"]
-        assert "BLOCKED" not in rec["content"]
-        # 블로킹 경로는 ④에서 사라졌다 — 이제 질문 레코드는 하나뿐이다.
-        assert "mode" not in rec["content"]
 
 
 # ── ③ flip: 도구·디스패치·프롬프트 ─────────────
@@ -1494,11 +912,12 @@ def _run_scripted(ctx, emissions, **kw):
 
 
 class TestFlipToolMount:
-    def test_answer_mounts_only_with_a_port_and_is_forced(self, mkreg, renderer):
-        """``MessageTool`` 과 같은 선언이라 정책이 파생된다 — 포트 없는
-        루프에서는 목록에서 빠지고, 있으면 프로파일 allowed-tools 와 무관
-        하게 커널이 강제 탑재한다."""
+    def test_answer_is_not_a_tool_anywhere(self, mkreg, renderer):
+        """v10.77.0 (B): 에이전트는 질문을 받지 않으므로 `answer` 도 없다 —
+        실제 기록에서 11번 불려 11번 다 실패했다(사용자 요청에 쓰거나 id 를
+        지어냄). 갚는 도구는 `reply` 하나다."""
         from agent_cli.loop import AgentLoop
+        from agent_cli.tools.registry import _BUILTIN_ORDER
 
         reg = mkreg()
         a = spawn_idle(reg)
@@ -1516,17 +935,17 @@ class TestFlipToolMount:
             )
             return list(loop.tools_list)
 
-        assert "answer" not in tools_for(None)
-        assert "answer" in tools_for(reg.question_port(a))  # force_mount
-        assert "answer" in tools_for(reg.question_port(None))  # main 도
+        assert "answer" not in _BUILTIN_ORDER
+        for port in (None, reg.question_port(a), reg.question_port(None)):
+            assert "answer" not in tools_for(port)
+        assert "reply" in tools_for(reg.question_port(a))  # force_mount
 
 
 class TestFlipDispatch:
-    def test_resident_ask_returns_immediately_and_answer_pairs(
-        self, mkreg, tmp_path, renderer
-    ):
+    def test_resident_ask_returns_immediately(self, mkreg, tmp_path, renderer):
         """실제 루프 관통: ``ask`` 가 막지 않고, 관찰이 '막히지 않았다' 를
-        말하며, ``answer`` 가 id 로 짝지어 배달한다."""
+        말하며, 질문은 사람의 트레이에 오른다. 모델이 옛 ``to`` 를 보내도
+        주소는 사람이다(v10.77.0)."""
         from agent_cli.context.manager import ContextManager
 
         reg = mkreg()
@@ -1538,7 +957,7 @@ class TestFlipDispatch:
         result, provider = _run_scripted(
             ctx,
             [
-                json.dumps({"action": "ask", "question": "v1 or v2?"}),
+                json.dumps({"action": "ask", "question": "v1 or v2?", "to": "main"}),
                 json.dumps({"action": "complete", "result": "부분 결과"}),
             ],
             questions=port,
@@ -1547,49 +966,20 @@ class TestFlipDispatch:
         # 막지 않았다 — 두 번째 턴이 실제로 돌았다.
         assert provider.call.call_count == 2
         (q,) = list(reg._questions.values())
-        assert q.text == "v1 or v2?" and q.target == "main"
+        assert q.text == "v1 or v2?" and q.target == "user"
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
         assert "NOT blocked" in obs
-        assert q.id in obs  # 모델이 id 를 본다 → 되물을 때 지목 가능
-
-        # main 이 answer 도구로 답한다
-        ctx2 = ContextManager(tmp_path / "s2", max_context_tokens=30_000)
-        result2, _ = _run_scripted(
-            ctx2,
-            [json.dumps({"action": "answer", "id": q.id, "text": "v2"})],
-            questions=reg.question_port(None),
-        )
-        assert result2.success
+        assert q.id in obs  # 모델이 id 를 본다 → 같은 것을 되묻지 않는다
+        # 사람이 트레이에서 답한다
+        assert reg.answer_question(q.id, "v2", by="user:dj") == ""
         assert reg._questions == {}
-        assert "delivered to the asker" in "\n".join(
-            str(m) for m in ctx2.get_raw_messages()
-        )
 
-    def test_answer_with_unknown_id_is_a_failed_observation(
+    def test_reply_with_a_user_request_id_points_to_complete(
         self, mkreg, tmp_path, renderer
     ):
-        """모델이 틀린 id 로 답하면 **조용히 성공하면 안 된다** — 질문은
-        열린 채 남고 독촉이 계속되는데 모델은 답했다고 믿는다."""
-        from agent_cli.context.manager import ContextManager
-
-        reg = mkreg()
-        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
-        _run_scripted(
-            ctx,
-            [json.dumps({"action": "answer", "id": "q-nope", "text": "x"})],
-            questions=reg.question_port(None),
-        )
-        raw = ctx.get_raw_messages()
-        rec = next(m for m in raw if m.get("tool") == "answer")
-        assert rec["success"] is False
-        assert "unknown or already-answered" in rec["content"]
-
-    def test_answer_with_a_user_request_number_points_to_complete(
-        self, mkreg, tmp_path, renderer
-    ):
-        """v10.30.0 → v10.56.0: 꼬리의 사용자 요청을 질문으로 읽고 `answer(id=…)`
-        을 부르면(dj72nx 실측) "unknown question" 대신 **어디로 답해야 하는지**
-        를 돌려준다 — 접두(`u-`)가 닫는 법을 말한다."""
+        """v10.30.0 → v10.77.0: 꼬리의 사용자 요청을 갚을 빚으로 읽고 `reply`
+        를 부르면 "unpaid" 대신 **그 id 가 무엇인지** 돌려준다 — 번호 공간이
+        하나라 접두(`u-`)가 종류를 정확히 말한다. 구제는 하지 않는다."""
         from agent_cli.context.manager import ContextManager
 
         reg = mkreg()
@@ -1597,7 +987,7 @@ class TestFlipDispatch:
         result, _ = _run_scripted(
             ctx,
             [
-                json.dumps({"action": "answer", "id": "u-1", "text": "안녕하세요!"}),
+                json.dumps({"action": "reply", "id": "u-1", "text": "안녕하세요!"}),
                 json.dumps(
                     {"action": "complete", "result": "안녕!", "answers": ["u-1"]}
                 ),
@@ -1606,25 +996,12 @@ class TestFlipDispatch:
             query_request_id="u-1",
             query_author="Chill Capybara",
         )
-        rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "answer")
+        rec = next(m for m in ctx.get_raw_messages() if m.get("tool") == "reply")
         assert rec["success"] is False
-        assert "'u-1' is an open item closed by `complete`" in rec["content"]
-        assert 'list "u-1" in `answers`' in rec["content"]
-        assert "unknown or already-answered" not in rec["content"]
+        assert '"u-1" is a user request' in rec["content"]
+        assert "`complete`'s `answers`" in rec["content"]
+        assert "no unpaid request" not in rec["content"]
         assert result.success and result.output == "안녕!"
-
-    def test_answer_description_separates_user_requests(self):
-        """설명 자체가 혼동의 출발점이었다 — 'a question addressed to you' 는
-        사용자 메시지에도 맞는 말이다."""
-        from agent_cli.tools.virtual import AnswerTool
-
-        d = AnswerTool.description
-        assert "another AGENT" in d and "NOT for user requests (`u-…`)" in d
-        assert "## Open Items" in d and "`answers`" in d
-        assert (
-            "never a `u-…`/`n-…` item"
-            in (AnswerTool.parameters["properties"]["id"]["description"])
-        )
 
     def test_main_ask_still_blocks(self, mkreg, tmp_path, renderer):
         """main·delegate 의 ``ask``(사람에게 묻기)는 무변경이다 — 포트를
@@ -1675,7 +1052,7 @@ class TestFlipPrompt:
 
         resident = system_for(reg.question_port(a), "r")
         main = system_for(reg.question_port(None), "m")
-        # 도구 설명 — "NOT blocked" 만 보면 AnswerTool 설명으로도 통과한다
+        # 도구 설명 — 상주 ask 만 "KEEP WORKING" 을 말한다
         assert "KEEP WORKING" in resident and "KEEP WORKING" not in main
         assert "WAIT for their reply" in main and "WAIT for their reply" not in resident
         # 인라인 가이드도 함께 — 둘이 엇갈리면 모델이 헷갈린다
@@ -1701,48 +1078,37 @@ class TestFlipPrompt:
         assert "pick by intent" in blocking
 
 
-# ── ⑧ 사람에게 직접 묻기 (`to="user"`, v9.20.0) ────────
+# ── ⑧ 질문은 사람에게만 (v9.20.0 `to="user"` → v10.77.0 B) ────────
 
 
 class TestAskToUser:
     """실측(프로브 1790070684): main 이 "사용자한테 질문해 봐" 라고 시킨
     에이전트의 ``ask`` 가 **main 에게** 갔다 — 주소 = 원 요청자 = main.
     트레이는 사람 주소 질문만 보이므로 사람은 아무것도 못 봤고, 그 질문을
-    받은 main 은 사용자의 답을 **지어냈다**. ``to="user"`` 는 주소 문자열
-    하나를 바꿔 §0 을 지키면서(주소 = user, 답할 주체 = user*) 사람에게
-    직접 닿게 한다. 새 배달 경로는 없다 — 답은 지금처럼 asker 에게 간다.
+    받은 main 은 사용자의 답을 **지어냈다**. v9.20.0 의 ``to="user"`` 를
+    거쳐 v10.77.0 에서 주소를 사람 하나로 고정했다 — `ask` 는 사람에게만,
+    에이전트·main 에게는 `message`.
     """
 
-    def test_default_still_goes_to_the_requester(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        reg.get(a).current_author = "main"
-        qid, err = reg.question_port(a).ask("기본값")
-        assert not err and reg._questions[qid].target == "main"
-        qid2, err = reg.question_port(a).ask("명시", to="requester")
-        assert not err and reg._questions[qid2].target == "main"
-
-    def test_to_user_lands_in_the_tray_even_when_main_asked(self, mkreg, renderer):
+    def test_lands_in_the_tray_even_when_main_asked(self, mkreg, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
         reg.get(a).current_author = "main"  # main 이 시킨 일
-        qid, err = reg.question_port(a).ask("사람이 정할 일", to="user")
+        qid, err = reg.question_port(a).ask("사람이 정할 일")
         assert not err
         q = reg._questions[qid]
         assert q.target == "user" and q.to_human
         assert [x.id for x in reg.open_human_questions()] == [qid], "트레이에 없다"
         # main 의 메일박스로는 **안 간다** — 그랬다면 main 이 또 대신 답한다.
-        assert not any(r.get("kind") == "question" for r in reg.drain_replies())
+        assert reg.drain_replies() == []
 
     def test_any_human_answers_and_the_reply_reaches_the_asker(self, mkreg, renderer):
         reg = mkreg()
         a = spawn_idle(reg)
         reg.get(a).current_author = "main"
-        qid, _ = reg.question_port(a).ask("버릴까 남길까?", to="user")
+        qid, _ = reg.question_port(a).ask("버릴까 남길까?")
         # main 은 답할 수 없다 — 사람에게 간 질문이다 (§0).
-        assert "addressed to the operator" in reg.answer_question(
-            qid, "버려", by="main"
-        )
+        assert "addressed to the person" in reg.answer_question(qid, "버려", by="main")
         # 아무 뷰어나 답한다 — 답은 asker(에이전트)에게, 주소는 user.
         with SubmitSpy(reg) as spy:
             assert reg.answer_question(qid, "남겨", by="user:dj") == ""
@@ -1751,15 +1117,9 @@ class TestAskToUser:
         assert call["key"] == a and "남겨" in call["message"], "답이 asker 에게 안 갔다"
         assert call["author"] == "user"  # 주소 = user (§0 그대로)
 
-    def test_unknown_to_is_refused_loudly(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, err = reg.question_port(a).ask("어디로?", to="boss")
-        assert not qid and "unknown `to`" in err
-        assert reg._questions == {}, "조용히 기본 주소로 떨어졌다"
-
-    def test_resident_schema_offers_to_and_main_schema_does_not(self, tmp_path):
-        """스키마 오버라이드 배선 — 상주 프롬프트에만 `to` 가 렌더된다."""
+    def test_neither_schema_offers_to(self, tmp_path):
+        """스키마 배선 — `ask` 에 `to` 가 없다(v10.77.0). 상주 설명은 트레이를
+        말하고 `message` 로 안내한다."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import AgentLoop
         from tests.loop_ports import make_ports
@@ -1782,11 +1142,8 @@ class TestAskToUser:
 
         resident = system_for(_Port(), "r")
         main = system_for(None, "m")
-        assert '"to"' in resident and "question tray" in resident
-        assert '"to"' not in main, "main 의 ask 에 무의미한 to 가 떴다"
-        assert "The question to ask the user." not in resident, (
-            "상주 설명이 여전히 '사용자에게' 라고 거짓말한다"
-        )
+        assert "question tray" in resident and "send it a `message`" in resident
+        assert '"to"' not in resident and '"to"' not in main
 
     def test_guide_no_longer_promises_the_asker_a_reminder(self, tmp_path):
         from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT as g
@@ -1794,22 +1151,13 @@ class TestAskToUser:
         assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
         assert "nobody chases them" in g
         assert "cannot reach a run that is still going" in g
-        assert '`to` to "user"' in g
+        assert "`ask` reaches only the person" in g and "`message`" in g
+        assert "`to`" not in g
         assert not HANGUL.findall(g)
 
-    def test_main_question_notice_forbids_answering_for_the_person(
-        self, mkreg, renderer
-    ):
-        rec = build_reply_record(
-            {"kind": "question", "id": "q-1", "output": "drop it?", "key": "agt-x"}
-        )
-        text = rec["content"]
-        assert "never answer on their behalf" in text
-        assert "ask them with `ask`" in text
-        assert not HANGUL.findall(text)
-
-    def test_dispatch_passes_to_through_to_the_port(self):
-        """`_op_ask_async` 가 `to` 를 떨어뜨리면 위 전부가 도달 불가다."""
+    def test_dispatch_ignores_a_stale_to(self):
+        """모델이 옛 ``to`` 를 보내도 포트는 질문만 받는다 — 주소는 포트가
+        정한다(사람). 구제가 아니라 무시다: 스키마에 없는 키다."""
         import types
 
         from agent_cli.loop import AgentLoop
@@ -1820,8 +1168,8 @@ class TestAskToUser:
         class _Port:
             nonblocking = True
 
-            def ask(self, text, *, to=None):
-                seen.append((text, to))
+            def ask(self, text):
+                seen.append(text)
                 return "q-1", ""
 
         loop = AgentLoop(
@@ -1832,13 +1180,13 @@ class TestAskToUser:
             ports=make_ports(questions=_Port()),
         )
         op = types.SimpleNamespace(
-            action="ask", action_input={"question": "정할까요?", "to": "user"}
+            action="ask", action_input={"question": "정할까요?", "to": "main"}
         )
         turn = types.SimpleNamespace(
             thought="", record={"role": "assistant", "content": ""}
         )
         loop._dispatch._op_ask("raw", turn, op, None)
-        assert seen == [("정할까요?", "user")]
+        assert seen == ["정할까요?"]
 
 
 # ── ⑨ 창의 "→ 보냄" 은 실제 배달만 (v9.20.1) ────────
@@ -1928,7 +1276,7 @@ class TestReplyNagCap:
                 return []
             return [{"kind": "reply", "to": "agent:agt-a", "id": "r-1", "text": "일감"}]
 
-        def reply(self, text, *, id="", to=""):
+        def reply(self, text, *, id=""):
             if not id:  # v9.25.0: the real port refuses without an id
                 return "reply needs `id`"
             self.replies.append(text)
@@ -1981,7 +1329,7 @@ class TestReplyNagCap:
         assert res.output == "끝"
         assert f"{NAG_BUDGET - 1} more reminders" in nags[0]["content"]
         assert "Last reminder" in nags[-1]["content"]
-        assert '`reply` with id "r-1"' in nags[0]["content"]
+        assert '`reply` with `id` "r-1"' in nags[0]["content"]
 
     def test_replying_after_a_reminder_stops_them(self):
         port = self._OwedPort()
@@ -2037,7 +1385,7 @@ class TestCompleteIsLocal:
     거기에 또 반응해 한 턴에 세 번 답했다.
 
     사용자 결정: `complete` 는 국소. 요청 항목(`expects_reply=True`)은 빚이고,
-    `reply` 가 갚는다(돌려받을 것 없음, `to` 불필요). `message` 는 언제나 요청
+    `reply` 가 그 id 로 갚는다(돌려받을 것 없음, v10.77.0 부터 `to` 없음). `message` 는 언제나 요청
     (상대에게 빚을 지움)이되 내 요청자에게 보내면 내 빚도 갚는다 — "내 수,
     이제 네 차례". 빚진 게 없는 런의 `reply` 는 거부한다.
     """
@@ -2114,6 +1462,39 @@ class TestCompleteIsLocal:
         assert to_a["message"].startswith(_NO_REPLY_LABEL)
         assert "런 요약" in to_a["message"]
         assert to_a["expects_reply"] is False
+        assert to_a["kind"] == "reply" and to_a["re"] == "r-1"  # 무엇에 대한 것인가
+
+    def test_unanswered_message_request_reaches_the_asker_as_a_reply_envelope(
+        self, mkreg, renderer
+    ):
+        """묻는 쪽은 반드시 무언가를 받는다 (v10.77.0 ①) — 종전엔 답 없는
+        에이전트 질문을 런 끝에 사유와 함께 닫았다. 이제 에이전트에게 묻는
+        길은 `message` 요청이고, 상대가 끝내 `reply` 하지 않으면 그 r- 빚이
+        라벨 붙은 런 요약으로 묻는 쪽에 돌아온다 — 봉투가 그 요청을 가리킨다."""
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg = mkreg()
+        got, box = [], {}
+
+        def runner(query, ctx, **kw):
+            if query == "원 일감":  # a 의 런 — b 에게 묻는다
+                box["res"] = reg._make_message_handler(reg.get(a))(b, "정책?")
+            elif query.startswith("── request ["):  # b 의 런 — 답하지 않는다
+                pass
+            elif query.startswith("── reply ["):  # a 가 받은 것
+                got.append(query)
+            return _FakeLoopResult(output="b 의 런 요약"), 0.01
+
+        reg._runner = runner
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        reg.request(a, "원 일감")
+        assert wait_until(lambda: got, timeout=5.0)
+        rid = box["res"].split("delivered as request ")[1].split(" ")[0]
+        assert rid.startswith("r-")
+        head, _, body = got[0].partition("\n")
+        assert head.startswith("── reply [n-") and head.endswith(f"re [{rid}] ──")
+        assert f"from {b}" in head
+        assert body.startswith(_NO_REPLY_LABEL) and "b 의 런 요약" in body
 
     def test_reply_to_main_carries_attribution(self, mkreg, renderer):
         reg = mkreg()
@@ -2125,7 +1506,7 @@ class TestCompleteIsLocal:
         assert mail[0].get("answers") == ["dj"]
 
     def test_reply_is_refused_when_nothing_is_owed(self, mkreg, renderer):
-        """회신·질문·독촉으로 시작한 런 — ack 가 새는 자리. 거부하고 message 로 안내."""
+        """회신·통지·답으로 시작한 런 — ack 가 새는 자리. 거부하고 message 로 안내."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         seen = []
@@ -2205,111 +1586,13 @@ class TestCompleteIsLocal:
         assert reg.reply_debt(me, "user:dj").human
 
 
-# ── 런 끝의 빚 정리 (v9.22.0 — 런 뒤 독촉을 흡수) ────────
-
-
-class TestRunEndClosure:
-    """독촉은 런 **안**에서 3회(dispatch 빚 목록, main·상주 공통). 그러고도
-    런이 끝나면 답 안 한 질문은 사유와 함께 닫고 asker 에게 알린다. 종전의
-    런 뒤 독촉(`remind_owed`, 6회, 새 런마다 재주입)은 흡수됐다.
-    """
-
-    def test_delivered_unanswered_question_is_closed_and_the_asker_told(
-        self, mkreg, renderer
-    ):
-        reg = mkreg()
-        ghost = "agent:agt-noworker"
-        q = Question(
-            id="q-c01", asker="main", target=ghost, text="질문", delivered_in="r-7"
-        )
-        reg._questions[q.id] = q
-        assert reg.close_unanswered(ghost) == 1
-        assert q.id not in reg._questions
-        (rec,) = reg.drain_replies()  # asker=main 의 메일박스
-        assert (
-            rec["kind"] == "answer"
-            and "finished its run without answering" in rec["output"]
-        )
-
-    def test_undelivered_question_is_not_closed(self, mkreg, renderer):
-        """줄만 서 있는 질문(아직 안 꺼냄)은 빚이 아니다 — 닫으면 안 된다."""
-        reg = mkreg()
-        ghost = "agent:agt-noworker"
-        q = Question(
-            id="q-c02", asker="main", target=ghost, text="질문"
-        )  # delivered_in None
-        reg._questions[q.id] = q
-        assert reg.close_unanswered(ghost) == 0
-        assert q.id in reg._questions
-
-    def test_answered_question_is_untouched(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()  # 배달 마킹
-        assert reg.answer_question(qid, "v2", by="main") == ""
-        assert reg.close_unanswered("main") == 0
-
-    def test_closing_is_idempotent(self, mkreg, renderer):
-        reg = mkreg()
-        ghost = "agent:agt-noworker"
-        q = Question(
-            id="q-c03", asker="main", target=ghost, text="질문", delivered_in="r-1"
-        )
-        reg._questions[q.id] = q
-        assert reg.close_unanswered(ghost) == 1
-        assert reg.close_unanswered(ghost) == 0
-
-    def test_worker_run_end_closes_what_the_agent_left(self, mkreg, renderer):
-        """워커 루프의 수렴점 — 런이 끝나면 그 에이전트가 빚진 질문이 닫힌다."""
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        ran = []
-
-        def runner(query, ctx, **kw):
-            ran.append(query)
-            return _FakeLoopResult(output="답 없이 끝"), 0.01
-
-        reg._runner = runner
-        qid, err = reg.register_question(a, f"agent:{b}", "어느 쪽?")
-        assert not err
-        assert wait_until(lambda: ran)  # b 가 질문 항목을 처리했다
-        assert wait_until(lambda: qid not in reg._questions)  # 런 끝에 닫혔다
+# ── 런 끝의 빚 정리 (v9.22.0) ────────────────────────
 
 
 class TestMainRunEnd:
     """main 의 런 끝 — `end_run("main", output)`: 남은 회신 빚은 라벨 붙은 런
-    요약을 그 에이전트 inbox 로, 답 안 한 질문은 닫는다. main 의 회신 빚은
-    에이전트의 `message(to=main)`(expects_reply=True)만 만든다 — `reply` 는
-    답이라 빚이 아니다."""
-
-    def test_drain_marks_delivered(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "API v1/v2 중 어느 쪽?")
-        assert reg.questions_owed_by("main") == []  # 아직 메일박스에 있다
-        (rec,) = reg.drain_replies()
-        assert rec["kind"] == "question" and rec["id"] == qid
-        assert [q.id for q in reg.questions_owed_by("main")] == [qid]
-
-    def test_run_end_closes_an_unanswered_question(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()
-        with SubmitSpy(reg) as spy:
-            assert reg.end_run("main", "main 의 요약") == 1
-        assert qid not in reg._questions
-        (call,) = [c for c in spy.calls if c["key"] == a]
-        assert "finished its run without answering" in call["message"]
-
-    def test_answering_before_run_end_leaves_nothing_to_close(self, mkreg, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()
-        assert reg.answer_question(qid, "v2", by="main") == ""
-        assert reg.end_run("main", "요약") == 0
+    요약을 그 에이전트 inbox 로. main 의 회신 빚은 에이전트가 main 에게 보낸
+    `message`(expects_reply=True)만 만든다 — `reply` 는 답이라 빚이 아니다."""
 
     def test_message_to_main_creates_a_debt_and_reply_does_not(self, mkreg, renderer):
         reg = mkreg()
@@ -2355,18 +1638,27 @@ class TestMainRunEnd:
         assert call["message"].startswith(_NO_REPLY_LABEL)
         assert "main 은 이렇게 끝냈다" in call["message"]
         assert call["expects_reply"] is False
+        assert call["author"] == "main" and call["kind"] == "reply"
         assert reg.reply_debts("main") == []
 
-    def test_mail_notice_distinguishes_message_from_reply(self, mkreg, renderer):
+    def test_mail_envelope_distinguishes_request_from_reply(self, mkreg, renderer):
+        """봉투 한 모양 (v10.77.0, D) — 요청은 그 id 로 갚으라고 말하고(빚 id =
+        메일 id), 회신은 무엇에 대한 것인지(``re``)만 적는다(할 일이 없다)."""
         reg = mkreg()
         a = spawn_idle(reg)
         reg.message_to_main(a, "결정해 줘", expects_reply=True)
-        reg.message_to_main(a, "보고", expects_reply=False)
-        m, r = reg.drain_replies()
-        assert (
-            "expects a reply from you" in build_reply_record(m, registry=reg)["content"]
-        )
-        assert "nothing to send back" in build_reply_record(r, registry=reg)["content"]
+        reg.message_to_main(a, "보고", expects_reply=False, re="r-9")
+        reg.message_to_main(a, "알림", notice=True)
+        m, r, n = reg.drain_replies()
+        mc = build_reply_record(m, registry=reg)["content"]
+        rid = m["item_id"]
+        assert rid.startswith("r-")
+        assert mc.startswith(f"── request [{rid}] from {a} ──\n결정해 줘")
+        assert mc.endswith(f'(You owe it a `reply` with `id` "{rid}".)')
+        rc = build_reply_record(r, registry=reg)["content"]
+        assert rc == f"── reply [{r['item_id']}] from {a} re [r-9] ──\n보고"
+        nc = build_reply_record(n, registry=reg)["content"]
+        assert nc == f"── notice [{n['item_id']}] from {a} ──\n알림"
 
 
 # ── 유형별 통일 규칙 (v9.22.0) ────────────────────────
@@ -2378,8 +1670,8 @@ class TestUnifiedDebtRules:
     | 유형 | complete 이 오면 |
     |---|---|
     | 사용자 요청 | 수락 · answers 의 키 제거 · 남은 요청 독촉 |
-    | message / ask | 미회신이면 거부(상주) / 수락 후 독촉(main) · 3회 · 런 끝 정리 |
-    | 섞임 | 수락 → 요청 정산 → message/ask 독촉 |
+    | message 요청 | 수락 후 독촉(main·상주 공통) · 예산 8 · 런 끝 폴백 |
+    | 섞임 | 수락 → 요청 정산 → message 빚 독촉 |
     """
 
     @staticmethod
@@ -2492,24 +1784,15 @@ class TestUnifiedDebtRules:
 
     # ── 상주: 질문(ask) 빚도 거부 대상 ─────────────
 
-    def test_resident_completing_with_an_open_question_is_nagged(self, mkreg, renderer):
+    def test_resident_completing_with_an_unpaid_request_is_nagged(
+        self, mkreg, renderer
+    ):
+        """상주가 받은 `message` 요청(r-)을 안 갚고 `complete` 하면 결과는 배달되고
+        독촉이 그 id 로 `reply` 를 가리킨다. 갚으면 런이 끝나고 빚이 없다."""
         from agent_cli.runtime import ports_for_resident
 
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
-        # 워커를 거치지 않고 "배달된 열린 질문" 상태를 만든다 — 워커가
-        # 꺼내면 가짜 러너가 즉시 끝나 `close_unanswered` 가 닫아 버린다.
-        from agent_cli.subagent.agents_live import Question
-
-        qid = "q-test"
-        with reg._cv:
-            reg._questions[qid] = Question(
-                id=qid,
-                asker=a,
-                target=f"agent:{b}",
-                text="어느 쪽?",
-                delivered_in="r-1",
-            )
         ports = ports_for_resident(
             key=b,
             message_handler=lambda to, text, **kw: "",
@@ -2518,34 +1801,32 @@ class TestUnifiedDebtRules:
             peer_roster=None,
         )
         tm = reg.get(b)
-        tm.current_author = f"agent:{a}"  # 질문 항목 — 회신 빚은 없다
+        tm.current_author = f"agent:{a}"
         reg.begin_run(f"agent:{b}")
+        reg.note_owes(f"agent:{b}", f"agent:{a}", "어느 쪽?", id="r-1")
         p, ctx, _res = self._run(
             ports=ports,
-            query=f"[question {qid} from {a}]: 어느 쪽?",
+            query=f"── request [r-1] from {a} ──\n어느 쪽?",
             is_user=False,  # 에이전트 항목으로 시작한 런
             contents=[
                 self._env([{"action": "complete", "result": "끝"}]),
                 self._env(
                     [
-                        {"action": "answer", "id": qid, "text": "왼쪽"},
+                        {"action": "reply", "id": "r-1", "text": "왼쪽"},
                         {"action": "complete", "result": "끝"},
                     ]
                 ),
             ],
         )
-        assert p.call.call_count == 2, "질문에 답 안 한 complete 이 그대로 끝났다"
+        assert p.call.call_count == 2, "요청을 안 갚은 complete 이 그대로 끝났다"
         nags = [
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
             and "your result was delivered, but" in m.get("content", "")
         ]
-        # v10.56.0: 에이전트 항목 런도 결과는 배달되고 독촉된다(종전엔 거부)
-        assert nags and f'`answer` with id "{qid}"' in nags[0]["content"]
-        assert qid not in reg._questions  # 답했다
-
-    # ── main: message 빚은 수락 후 독촉 ────────────
+        assert nags and '`reply` with `id` "r-1"' in nags[0]["content"]
+        assert reg.reply_debts(f"agent:{b}") == []  # 갚았다
 
     def test_main_completing_with_an_unreplied_message_is_nagged_not_refused(
         self, mkreg, renderer
@@ -2596,20 +1877,19 @@ class TestUnifiedDebtRules:
             if m.get("role") == "user" and "still open" in m.get("content", "")
         ]
         # v10.56.0: main 도 `reply(id)` 로 갚는다 — 독촉이 그 도구를 가리킨다
-        assert nags and '`reply` with id "r-' in nags[0]["content"]
+        assert nags and '`reply` with `id` "r-' in nags[0]["content"]
         # 결과는 매번 배달됐고(독촉은 예산 8 안), `reply(id)` 로 갚자 런이 끝났다
         assert p.call.call_count == 3 and finals == ["답", "답", "끝"]
         assert len(nags) == len(finals) - 1  # 마지막 complete 만 독촉 없이 끝난다
         assert reg.reply_debts("main") == []
 
     def test_mixed_run_settles_requests_then_nags_debts(self, mkreg, renderer):
-        """섞임: 수락 → answers 의 요청 제거 → message/ask 독촉."""
+        """섞임: 수락 → answers 의 요청 제거 → message 빚 독촉."""
         from tests.loop_ports import make_ports
 
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "main", "어느 쪽?")
-        reg.drain_replies()  # main 에 배달 마킹
+        d = reg.note_owes("main", f"agent:{a}", "어느 쪽?")  # main 에 배달된 요청
         ports = make_ports(
             owner="main", agent_registry=reg, questions=reg.question_port(None)
         )
@@ -2621,7 +1901,7 @@ class TestUnifiedDebtRules:
                 self._env([{"action": "complete", "result": "답", "answers": ["1"]}]),
                 self._env(
                     [
-                        {"action": "answer", "id": qid, "text": "v2"},
+                        {"action": "reply", "id": d.id, "text": "v2"},
                         {"action": "complete", "result": "끝", "answers": []},
                     ]
                 ),
@@ -2632,32 +1912,19 @@ class TestUnifiedDebtRules:
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
         ]
-        blob = "\\n".join(obs)
-        assert "still open" in blob and f'`answer` with id "{qid}"' in blob
-        assert qid not in reg._questions
+        blob = "\n".join(obs)
+        assert "still open" in blob and f'`reply` with `id` "{d.id}"' in blob
+        assert reg.reply_debts("main") == []
         assert p.call.call_count == 2
 
 
-class TestAskSuppressionIsPerTarget:
-    """§3.7 의 회신 억제는 **질문을 건 주소**의 빚에만 (v9.22.2). 근거가
-    "그 답 런이 같은 빚을 진다" 이므로 요청자에게 물었을 때만 성립한다 —
-    사람에게 물은 런(`ask(to="user")`)의 답 런은 요청자가 사람이라 빚이
-    없고, 종전 bool 억제로는 main 이 결과를 영영 못 받았다."""
+class TestAskKeepsTheRequesterDebt:
+    """v10.77.0: §3.7 의 회신 억제는 없다 — 사람에게 물어도 요청자에게 진 빚은
+    열린 채 남고, 런 끝에 갚지 않았으면 라벨 붙은 런 요약이 간다. 종전엔
+    요청자에게 물으면 그 빚을 감췄다(답 런이 같은 빚을 진다는 근거) — 질문이
+    사람에게만 가면서 그 근거가 사라졌다."""
 
-    def test_asking_the_requester_suppresses_that_debt(self, mkreg, renderer):
-        reg = mkreg()
-        b = spawn_idle(reg)
-        me = f"agent:{b}"
-        tm = reg.get(b)
-        tm.current_author = "main"
-        reg.begin_run(me)
-        reg.note_owes(me, "main", "일감")
-        assert [d.to for d in reg.reply_debts(me)] == ["main"]
-        qid, err = reg.question_port(b).ask("어느 쪽?")  # 기본: 요청자(main)
-        assert not err and qid
-        assert reg.reply_debts(me) == []  # 답 런이 같은 빚을 진다
-
-    def test_asking_the_user_keeps_the_requester_debt(self, mkreg, renderer):
+    def test_asking_the_person_keeps_the_requester_debt(self, mkreg, renderer):
         from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
 
         reg = mkreg()
@@ -2666,17 +1933,53 @@ class TestAskSuppressionIsPerTarget:
         tm = reg.get(b)
         tm.current_author = "main"
         reg.begin_run(me)
-        reg.note_owes(me, "main", "일감")
-        qid, err = reg.question_port(b).ask("결정해 주세요", to="user")
+        reg.note_owes(me, "main", "일감", id="r-1")
+        qid, err = reg.question_port(b).ask("결정해 주세요")
         assert not err and qid
         assert [d.to for d in reg.reply_debts(me)] == ["main"], (
             "사람에게 물었다고 main 빚이 사라졌다"
         )
         # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
-        reg.drain_replies()  # 트레이 질문 알림 비우기
-        assert reg.end_run(me, "사용자 답을 기다립니다", run="r-1", success=True) >= 1
-        recs = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
-        assert recs and recs[0]["output"].startswith(_NO_REPLY_LABEL)
+        assert reg.end_run(me, "사용자 답을 기다립니다", run="r-1", success=True) == 1
+        (rec,) = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
+        assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
+
+    def test_debt_left_by_a_waiting_run_carries_into_the_next_run(
+        self, mkreg, renderer
+    ):
+        """`message` 로 묻고 `wait` 로 기다린 런의 빚은 다음 런(상대의 회신이
+        연 런)으로 넘어가 거기서 `reply` 로 갚는다 (v10.77.0). 종전엔
+        `begin_run` 이 장부를 비워 요청자가 회신도 런 요약도 못 받았다."""
+        from types import SimpleNamespace
+
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        me = f"agent:{b}"
+        seen = []
+
+        def runner(query, ctx, **kw):
+            seen.append(query)
+            if query == "일감":  # 첫 런 — 다른 데 묻고 기다린다
+                return SimpleNamespace(
+                    success=True, output="⏸ waiting", waiting=True
+                ), 0.01
+            # 회신이 연 런 — 넘어온 빚을 갚는다
+            assert [d.id for d in reg.reply_debts(me)] == ["r-1"]
+            assert reg.question_port(b).reply("최종 답", id="r-1") == ""
+            return _FakeLoopResult(output="끝"), 0.01
+
+        reg._runner = runner
+        assert reg.request(b, "일감", author="main") == ""
+        assert wait_until(lambda: seen == ["일감"])
+        assert wait_run_done(reg, b)
+        assert [d.id for d in reg.reply_debts(me)] == ["r-1"]  # wait — 빚은 그대로
+        assert reg.drain_replies() == []  # 폴백도 없다
+        reg._deliver_peer_reply(b, a, "정책은 A", 0, re="r-9")
+        assert wait_until(lambda: len(seen) == 2)
+        assert wait_run_done(reg, b)
+        (mail,) = reg.drain_replies()
+        assert mail["output"] == "최종 답" and mail["re"] == "r-1"
+        assert reg.reply_debts(me) == []
 
 
 class TestIdleMeansTheRunIsFullyDone:
@@ -2716,8 +2019,8 @@ class TestIdleMeansTheRunIsFullyDone:
 class TestPerRequestDebts:
     """빚은 상대별 하나가 아니라 **요청별 하나**다(사용자 결정). 런 도중 요청이
     흡수되면 같은 상대의 빚이 여럿이고 각각 회신을 받아야 한다. `reply` 는
-    `id` 로 어느 요청인지 밝힌다 — `complete` 의 `answers`, `answer` 의 `id`
-    와 같은 원칙: 없으면 항상 거부."""
+    `id` 로 어느 요청인지 밝힌다 — `complete` 의 `answers` 와 같은 원칙: 없으면
+    항상 거부. id 가 전역에서 유일하므로 그것만으로 상대가 정해진다(`to` 없음)."""
 
     def _two(self, reg, b, to):
         me = f"agent:{b}"
@@ -2766,12 +2069,14 @@ class TestPerRequestDebts:
         self._two(reg, b, f"agent:{a}")
         port = reg.question_port(b)
         err = port.reply("답", id="8")
-        assert "no unpaid reply with id '8'" in err and "[3]" in err
+        assert 'no unpaid request "8"' in err and f'[3] {a}: "첫 요청"' in err
         assert port.reply("답", id="3") == ""
         err = port.reply("정정", id="3")
         assert "already replied to [3]" in err and "`message` (`to`" in err
 
-    def test_to_must_match_the_request(self, mkreg, renderer):
+    def test_id_alone_routes_the_reply(self, mkreg, renderer):
+        """main 과 동료에게 진 빚이 섞여 있어도 id 하나로 제자리에 간다
+        (v10.77.0, C — `to` 를 지웠다)."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = f"agent:{b}"
@@ -2779,10 +2084,12 @@ class TestPerRequestDebts:
         reg.note_owes(me, "main", "main 의 요청", id="3")
         reg.note_owes(me, f"agent:{a}", "동료의 요청", id="5")
         port = reg.question_port(b)
-        err = port.reply("답", id="3", to=a)
-        assert "[3] is a request from main" in err
-        assert port.reply("답", id="3", to="main") == ""
-        assert port.reply("답", id="5", to=a) == ""  # 키만 줘도 agent:<key>
+        with SubmitSpy(reg) as spy:
+            assert port.reply("동료에게", id="5") == ""
+        assert [c["key"] for c in spy.calls] == [a]
+        assert port.reply("main 에게", id="3") == ""
+        (mail,) = reg.drain_replies()
+        assert mail["output"] == "main 에게" and mail["re"] == "3"
         assert reg.reply_debts(me) == []
 
     def test_message_settles_the_oldest_but_main_request_settles_nothing(
@@ -2825,8 +2132,8 @@ class TestPerRequestDebts:
         led = Ledger()
         led.bind_questions(reg.question_port(b))
         block = led.block()
-        assert f'[3] ({a}) reply owed: "첫 요청"  → `reply` with id "3"' in block
-        assert '`reply` with id "5"' in block and "## Open Items" in block
+        assert f'[3] ({a}) reply owed: "첫 요청"  → `reply` with `id` "3"' in block
+        assert '`reply` with `id` "5"' in block and "## Open Items" in block
         assert "agent(mode=" not in block
 
 
@@ -2841,7 +2148,7 @@ def _history(ctx) -> list[dict]:
 class TestMidRunAbsorption:
     """상주 런은 턴 경계마다 받은편지함을 비운다 — 종전엔 런이 끝나야 꺼내
     11시간 런(1zfgc2) 동안 8건이, 50분 런(2an3cv) 동안 main 의 지시 2건이
-    안 읽혔다. 레지스트리 쪽(``absorb_pending``)이 장부·질문·영속을 맡고
+    안 읽혔다. 레지스트리 쪽(``absorb_pending``)이 장부·영속을 맡고
     루프 쪽(``_absorb_inbox``)이 기록·회계를 맡는다."""
 
     def _busy(self, mkreg):
@@ -2870,8 +2177,9 @@ class TestMidRunAbsorption:
         assert [next(iter(i)) for i in items] == ["record", "record"]
         req, mail = items[0]["record"], items[1]["record"]
         assert req["source"] == "agent_request" and req["tool"] == "agent"
-        assert "── request [r-2] from main" in req["content"]
-        assert '`reply` with id "r-2"' in req["content"]
+        assert req["content"].startswith("── request [r-2] from main ──\n추가 지시")
+        assert '(You owe main a `reply` with `id` "r-2".' in req["content"]
+        assert "Your current task stays open" in req["content"]
         assert mail["source"] == "agent_mail"
         assert mail["content"] == f"[agent:{a}]: 회신 본문"
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
@@ -2934,17 +2242,6 @@ class TestMidRunAbsorption:
             "user_request": {"id": "u-2", "author": "user:dj", "text": "리뷰해줘"}
         }
         assert reg.reply_debt(f"agent:{b}", "user:dj").human  # `reply` 거부 사유
-        gate.set()
-
-    def test_question_item_is_marked_delivered(self, mkreg, renderer):
-        reg, a, b, gate = self._busy(mkreg)
-        tm = reg.get(b)
-        qid, err = reg.register_question(a, f"agent:{b}", "어느 쪽?")
-        assert not err
-        (item,) = reg.absorb_pending(tm)
-        assert item["record"]["source"] == "agent_mail"
-        assert f"[question {qid} from {a}]" in item["record"]["content"]
-        assert reg._questions[qid].delivered_in == tm.current_item == "r-1"
         gate.set()
 
     def test_shutdown_sentinel_is_left_in_place(self, mkreg, renderer):
@@ -3053,7 +2350,8 @@ class TestMidRunAbsorption:
         second = "\n".join(str(m.get("content")) for m in calls[1])
         assert "── request [r-2] from main" in second and "추가 지시" in second
         assert "## Open Items" in second
-        assert '`reply` with id "r-1"' in second and '`reply` with id "r-2"' in second
+        assert '`reply` with `id` "r-1"' in second
+        assert '`reply` with `id` "r-2"' in second
         # 기록에도 남는다 — 재시작·재생이 같은 것을 본다
         recs = [r for r in _history(ctx) if r.get("source") == "agent_request"]
         assert len(recs) == 1 and recs[0]["tool"] == "agent"
@@ -3120,20 +2418,3 @@ class TestMidRunAbsorption:
         gate.set()
         assert len(calls) == 1
         assert not [r for r in _history(ctx) if r.get("source") == "agent_request"]
-
-
-class TestAskCanNameMainOrAPeer:
-    def test_targets(self, mkreg, renderer):
-        gate = threading.Event()  # 상대가 질문 런을 즉시 끝내 닫아 버리지 않게
-        reg = mkreg(runner=make_runner(block=gate))
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        port = reg.question_port(b)
-        qid, err = port.ask("main 에게", to="main")
-        assert not err and reg._questions[qid].target == "main"
-        qid, err = port.ask("동료에게", to=a)
-        assert not err and reg._questions[qid].target == f"agent:{a}"
-        qid, err = port.ask("접두 포함", to=f"agent:{a}")
-        assert not err and reg._questions[qid].target == f"agent:{a}"
-        assert "cannot ask yourself" in port.ask("나에게", to=b)[1]
-        assert "unknown `to`" in port.ask("없는 상대", to="agt-nope")[1]
-        gate.set()
