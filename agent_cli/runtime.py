@@ -417,12 +417,17 @@ _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
-def wake_sources(owner: str) -> list[str]:
+def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
     돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
     **요청자별**(`AgentRegistry.pending_for` — 세션 전체 `has_active_work` 로 보면
-    상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩."""
+    상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩.
+
+    v10.77.0 — 순환 대기: 나에게 회신을 빚진 채 **스스로 잠든**(`wait`) 에이전트는
+    그를 깨울 것이 있을 때만 센다. 거슬러 올라가며(``_seen`` 으로 순환을 자른다)
+    A→B→A 처럼 서로를 기다리는 고리면 두 번째로 잠들려는 쪽의 `wait` 가 거부되고,
+    A→B→(일하는 C) 사슬이면 그대로 받아들여진다."""
     out: list[str] = []
     from agent_cli.jobs import get_job_registry
 
@@ -441,7 +446,13 @@ def wake_sources(owner: str) -> list[str]:
 
     agents = main_registry()
     if agents is not None:
-        out.extend(agents.pending_for(owner))
+        out.extend(agents.pending_for(owner, exclude=_seen))
+        seen = _seen | {owner}
+        for debtor in agents.parked_debtors_for(owner):
+            if debtor in seen:
+                continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
+            if wake_sources(debtor, seen):
+                out.append(f"{debtor} owes you a reply (it is waiting on others)")
     from agent_cli.schedule.runtime import get_schedule_registry
 
     sched = get_schedule_registry()

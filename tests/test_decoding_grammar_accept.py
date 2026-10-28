@@ -27,7 +27,6 @@ from agent_cli.tools.registry import (
     effective_tool_names,
     flat_param_schemas,
 )
-from agent_cli.tools.virtual import AskTool
 
 _STOP = 256
 
@@ -93,25 +92,22 @@ def _sample(prop: dict, rich: bool):
     return (_RICH if rich else _PLAIN).get(t or "", "x")
 
 
-def _tools(fmt: str, resident: bool):
+def _tools(fmt: str):
+    # 상주 에이전트의 ask 전용 스키마(`to`)는 v10.77.0 에서 없어졌다 — 루프마다
+    # 같은 스키마다.
     wf = get(fmt)
     out = []
     for n in effective_tool_names(None, wf):
-        params = (
-            AskTool.RESIDENT_PARAMETERS
-            if (resident and n == "ask")
-            else TOOL_SCHEMAS[n].parameters
-        )
+        params = TOOL_SCHEMAS[n].parameters
         out.append((n, flat_param_schemas(n, params), allows_extra_keys(params)))
     return out
 
 
 @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc", "hermes_json", "glm_argkey"])
-@pytest.mark.parametrize("resident", [False, True], ids=["main", "resident"])
 @pytest.mark.parametrize("thinking_open", [False, True], ids=["think-off", "think-on"])
-def test_every_tools_canonical_turn_is_accepted(compiler, fmt, resident, thinking_open):
+def test_every_tools_canonical_turn_is_accepted(compiler, fmt, thinking_open):
     wf = get(fmt)
-    tools = _tools(fmt, resident)
+    tools = _tools(fmt)
     compiled = compiler.compile_grammar(wf.grammar(tools, thinking_open=thinking_open))
     pre = "let me think about <x> and </y> [a]\n</think>\n\n" if thinking_open else ""
     blocked = []
@@ -137,7 +133,7 @@ def test_every_tools_canonical_turn_is_accepted(compiler, fmt, resident, thinkin
 @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc", "hermes_json", "glm_argkey"])
 def test_two_ops_in_one_turn(compiler, fmt):
     wf = get(fmt)
-    compiled = compiler.compile_grammar(wf.grammar(_tools(fmt, False)))
+    compiled = compiler.compile_grammar(wf.grammar(_tools(fmt)))
     a = wf.render_action_input({"command": "ls"})
     b = wf.render_action_input({"path": "f.txt"})
     if fmt == "json_fc":
@@ -173,7 +169,7 @@ class TestWhatTheGrammarForbids:
 
     def test_unknown_tool_and_unknown_key(self, compiler):
         wf = get("json_fc")
-        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc", False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc")))
         assert not _accepts(compiled, 'x\n\n[{"action": "no_such_tool", "arg": 1}]')
         assert not _accepts(compiled, 'x\n\n[{"action": "shell", "cmd": "ls"}]')
 
@@ -183,13 +179,13 @@ class TestWhatTheGrammarForbids:
         마스킹되어 32K 상한까지 산문이 이어진다(18〜24K 토큰 진행 중 타임아웃).
         문법은 호출의 *모양*만 강제하고, 호출 없는 턴은 복구 계층이 맡는다."""
         wf = get(fmt)
-        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt, False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt)))
         assert _accepts(compiled, "I think I am done.")
         assert _accepts(compiled, "Done.\n\nReally done, with a [bracket] and <tag>.")
 
     def test_long_prose_is_fine(self, compiler):
         wf = get("json_fc")
-        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc", False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc")))
         assert _accepts(
             compiled, "a" * 20000 + '\n\n[{"action": "complete", "result": "r"}]'
         )
@@ -206,9 +202,7 @@ class TestWhatTheGrammarForbids:
 
         info, vocab_size = big_vocab
         wf = get(fmt)
-        compiled = xgr.GrammarCompiler(info).compile_grammar(
-            wf.grammar(_tools(fmt, False))
-        )
+        compiled = xgr.GrammarCompiler(info).compile_grammar(wf.grammar(_tools(fmt)))
         # 산문 → 호출 구조 → 본문(이스케이프·유니코드 포함) → 닫기까지 한 바퀴.
         # 두 번째 함정(`j_hex` 하위 규칙을 star 안에서 참조 → 문자열 구간이
         # 실제 토크나이저에서 65ms/토큰, 합성 어휘에서 11ms)도 이 구간이 잡는다.
@@ -242,7 +236,7 @@ class TestWhatTheGrammarForbids:
         """A/B 2026-09-25: 산문에서 `<`/`[` 를 통째로 막았더니 `(?<!`·`<<`·`a[0]`
         가 마스킹돼 생각이 뜻을 바꾸거나 폭주했다. 금지는 여는 시퀀스만."""
         wf = get(fmt)
-        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt, False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt)))
         thought = "lookbehind (?<![A-Za-z]) and b3 << 24 | a[0] < b[1], list[str]"
         call = (
             '[{"action": "complete", "result": "r"}]'
@@ -267,7 +261,7 @@ class TestWhatTheGrammarForbids:
         로 제어 문자를 읽으므로, 파일 본문의 raw 개행을 줄마다 마스킹해 `\\n`
         으로 유도할 이유가 없다. 이스케이프 문법은 여전히 엄격."""
         wf = get("json_fc")
-        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc", False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools("json_fc")))
         assert _accepts(compiled, 'x\n\n[{"action": "complete", "result": "a\nb\tc"}]')
         assert _accepts(compiled, 'x\n\n[{"action": "complete", "result": "a\\nb"}]')
         assert not _accepts(
@@ -279,7 +273,7 @@ class TestWhatTheGrammarForbids:
         """구제 가능한 모양은 허용: 산문 없이 바로 호출, 빈 배열 `[]`(NO_ACTION
         넛지가 구제), 태그 사이 빈 줄·공백(파서는 `\\s*`), 호출 뒤 공백."""
         wf = get(fmt)
-        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt, False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools(fmt)))
         if fmt == "json_fc":
             assert _accepts(compiled, '[{"action": "complete", "result": "r"}]')
             assert _accepts(compiled, "thought\n\n[]")
@@ -298,7 +292,7 @@ class TestWhatTheGrammarForbids:
         만 오프너라 `\\n<tool_call>` 뒤가 산문으로 흡수돼 그 턴의 제약이 조용히
         꺼졌다. 이제 그 자리의 모르는 도구는 문법이 막는다."""
         wf = get("xml_fc")
-        compiled = compiler.compile_grammar(wf.grammar(_tools("xml_fc", False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools("xml_fc")))
         bad = "t\n<tool_call>\n<function=no_such>\n</function>\n</tool_call>"
         assert not _accepts(compiled, bad)
         assert not _accepts(compiled, "t\n\n" + bad[2:])
@@ -307,7 +301,7 @@ class TestWhatTheGrammarForbids:
 
     def test_xml_body_may_hold_anything_but_its_closer(self, compiler):
         wf = get("xml_fc")
-        compiled = compiler.compile_grammar(wf.grammar(_tools("xml_fc", False)))
+        compiled = compiler.compile_grammar(wf.grammar(_tools("xml_fc")))
         ok = (
             "x\n\n<tool_call>\n<function=write_file>\n<parameter=path>a.html</parameter>\n"
             "<parameter=content>\n<div>hi</div>\n```py\nprint(1)\n```\n</parameter>\n"
@@ -320,7 +314,7 @@ class TestWhatTheGrammarForbids:
     def test_thinking_open_requires_the_close_tag_first(self, compiler):
         wf = get("json_fc")
         compiled = compiler.compile_grammar(
-            wf.grammar(_tools("json_fc", False), thinking_open=True)
+            wf.grammar(_tools("json_fc"), thinking_open=True)
         )
         assert not _accepts(compiled, 'x\n\n[{"action": "complete", "result": "r"}]')
         assert _accepts(
@@ -337,7 +331,7 @@ class TestNoCallInsideTheThinking:
     def compiled(self, compiler):
         wf = get("xml_fc")
         return compiler.compile_grammar(
-            wf.grammar(_tools("xml_fc", True), thinking_open=True)
+            wf.grammar(_tools("xml_fc"), thinking_open=True)
         )
 
     CALL = (
@@ -364,9 +358,7 @@ class TestNoCallInsideTheThinking:
 
     def test_json_think_region_is_unchanged(self, compiler):
         wf = get("json_fc")
-        c = compiler.compile_grammar(
-            wf.grammar(_tools("json_fc", False), thinking_open=True)
-        )
+        c = compiler.compile_grammar(wf.grammar(_tools("json_fc"), thinking_open=True))
         assert _accepts(
             c,
             'see <tool_call> here\n</think>\n\nx\n\n[{"action": "complete", "result": "r"}]',
@@ -441,7 +433,7 @@ class TestSchemaEnforcement:
 
     @pytest.fixture
     def compiled(self, compiler, fmt):
-        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt, False)))
+        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt)))
 
     # ── 열거값 ──
     def test_enum_values_only(self, compiled, fmt):
@@ -549,7 +541,7 @@ class TestTerminalCallIsLast:
 
     @pytest.fixture
     def compiled(self, compiler, fmt):
-        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt, True)))
+        return compiler.compile_grammar(get(fmt).grammar(_tools(fmt)))
 
     def test_calls_before_the_terminal_one_are_fine(self, compiled, fmt):
         for seq in (
@@ -600,17 +592,15 @@ class TestTerminalCallIsLast:
 
 
 @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
-@pytest.mark.parametrize("resident", [False, True], ids=["main", "resident"])
-def test_blank_communication_values_are_blocked(compiler, fmt, resident):
+def test_blank_communication_values_are_blocked(compiler, fmt):
     """v9.24.6: 빈 값이 무의미한 소통 인자 — 실측에서 빈 ``message`` 가
     한도까지 반복됐다. 핸들러가 어차피 거부하는 값을 애초에 못 낸다."""
-    compiled = compiler.compile_grammar(get(fmt).grammar(_tools(fmt, resident)))
+    compiled = compiler.compile_grammar(get(fmt).grammar(_tools(fmt)))
     cases = [
         ("message", [("to", "main"), ("text", "{}")]),
         ("message", [("to", "{}"), ("text", "hi")]),
         ("reply", [("text", "{}")]),
-        ("answer", [("id", "q-1"), ("text", "{}")]),
-        ("answer", [("id", "{}"), ("text", "yes")]),
+        ("reply", [("id", "{}"), ("text", "yes")]),
         ("ask", [("question", "{}")]),
         ("run_skill", [("name", "{}")]),
         ("fetch", [("url", "{}")]),

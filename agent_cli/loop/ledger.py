@@ -4,9 +4,9 @@
 - P2 (v10.55.0): main 앞 메일 7종이 요청으로 오르고, 열린 항목 전부가 압축 핀.
 - P3 (v10.56.0): **장부 하나 · 정책 하나 · 순서 하나.**
 
-  - 꼬리 블록 하나 ``## Open Items`` — 행동으로 닫는 것(회신 빚 ``reply``, 질문
-    답 빚 ``answer``) 먼저, ``complete`` 의 ``answers`` 로 닫는 것(사람 요청·메일)
-    마지막. 종전의 ``## Open Requests``·``## Owed Replies`` 두 블록을 합쳤다.
+  - 꼬리 블록 하나 ``## Open Items`` — 행동으로 닫는 것(회신 빚 ``reply``) 먼저,
+    ``complete`` 의 ``answers`` 로 닫는 것(사람 요청·메일) 마지막. (v10.77.0:
+    질문 답 빚 ``answer`` 는 없어졌다 — 에이전트는 질문을 받지 않는다.) 종전의 ``## Open Requests``·``## Owed Replies`` 두 블록을 합쳤다.
   - 정책은 **계속형 붙잡기 + 런 공유 예산** — ``complete`` 결과는 언제나 배달하고,
     열린 항목이 남으면 예산(:data:`NAG_BUDGET`) 안에서 되돌린다. 종전엔 되묻기
     런당 1회(결과 미배달)·요청 독촉 요청당 1회·빚 독촉 런 공유 3회(비사용자 런은
@@ -23,7 +23,7 @@ from agent_cli import item_ids
 
 #: 한 런이 쓰는 되돌림 예산 — 되묻기·독촉이 전부 나눠 쓴다(사용자 결정 8, 2026-10-18).
 #: 다 쓰면 남은 항목을 하니스가 닫는다: 요청은 최종 답에 미답으로, 빚은 런 끝의
-#: 폴백(회신 빚은 런 요약 배달, 질문은 닫힘).
+#: 폴백(회신 빚은 런 요약 배달).
 NAG_BUDGET = 8
 
 _HEAD = "## Open Items — close them in this order; `complete` is always the last step"
@@ -73,9 +73,7 @@ def _debt_line(d: dict) -> str:
     who = str(d.get("to") or "").split(":", 1)[-1]
     text = _head(d.get("text"))
     did = d.get("id", "")
-    if d.get("kind") == "answer":
-        return f'     [{did}] ({who}) question: "{text}"  → `answer` with id "{did}"'
-    return f'     [{did}] ({who}) reply owed: "{text}"  → `reply` with id "{did}"'
+    return f'     [{did}] ({who}) reply owed: "{text}"  → `reply` with `id` "{did}"'
 
 
 def _request_line(r: dict) -> str:
@@ -188,15 +186,24 @@ class Ledger:
 
 
 def wrong_closer_hint(item_id: str, used: str) -> str:
-    """``used`` 도구로 닫을 수 없는 id 에 — 그 항목을 닫는 법 (§11.4).
+    """``used`` 도구로 닫을 수 없는 id 에 — 그 id 가 무엇이고 어떻게 닫는지 (§11.4).
 
-    접두가 닫는 법을 말하므로 판정은 첫 글자 하나다. 모르는 형식이면 ``""``."""
+    번호 공간이 하나라(v10.77.0) 접두가 그 id 의 종류를 정확히 말한다. 구제는
+    하지 않는다 — 고쳐서 다시 보내게 한다. 모르는 형식이면 ``""``."""
+    prefix = item_ids.prefix_of(item_id)
     closer = item_ids.closer_of(item_id)
-    if not closer or closer == used:
+    if not prefix or closer == used:
         return ""
-    if closer == "complete":
+    if prefix == item_ids.QUESTION:
         return (
-            f"'{item_id}' is an open item closed by `complete` — put your answer in "
-            f'`complete`\'s `result` and list "{item_id}" in `answers`'
+            f'"{item_id}" is your question to the person, not a request — '
+            "nothing to reply to."
         )
-    return f"'{item_id}' is closed by `{closer}` with id \"{item_id}\""
+    if prefix == item_ids.USER:
+        return f'"{item_id}" is a user request — it closes in `complete`\'s `answers`.'
+    if prefix == item_ids.MAIL:
+        return (
+            f'"{item_id}" is a delivery, not a request — nothing to reply to. If it '
+            "is listed in `## Open Items`, it closes in `complete`'s `answers`."
+        )
+    return f'"{item_id}" is closed by `{closer}` with `id` "{item_id}".'

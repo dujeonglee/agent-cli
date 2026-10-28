@@ -96,8 +96,7 @@ class TestMailIdsByKind:
                 "expects_reply": True,
             }
         )
-        reg._push_reply({"kind": "question", "id": "q-40", "output": "z"})
-        assert [m["item_id"] for m in reg._pending] == ["n-1", "r-2", "q-40"]
+        assert [m["item_id"] for m in reg._pending] == ["n-1", "r-2"]
 
     def test_mail_item_stamps_an_unstamped_delivery_once(self):
         reply = {"kind": "job", "output": "x"}

@@ -2,12 +2,9 @@
 
 종전엔 `if addr == "main": _push_reply(...) else: request(...)` 가 **세 곳에
 손으로 복제**돼 있었다(`_deliver_question`/`_deliver_answer`/`kick_owed`).
-C1 은 그 분기를 하나로 접는다 — **행동 불변**이어야 한다.
-
-"같은 두 호출을 같은 인자로 한다" 는 **추론이지 증거가 아니다**: 세 호출부는
-`author` 파생도, `expects_reply` 도, `question_id` 도, 주소 표기(`_deliver_answer`
-는 맨 키를 썼다)도 전부 달랐다. 그래서 여기서는 **호출부 × 백엔드 6조합의 인자를
-통째로 고정**한다. 접는 과정에서 인자가 하나라도 바뀌면 걸린다.
+C1 은 그 분기를 하나로 접었다. v10.77.0 (B): 에이전트·main 에게 가는 질문과
+독촉이 없어져 그 둘은 사라졌고, 사람의 답(`_deliver_answer`)은 asker 에게 가는
+요청 하나다 — 그 인자를 통째로 고정한다.
 """
 
 from __future__ import annotations
@@ -59,142 +56,33 @@ def calls(reg):
 
 
 def _q(**kw) -> Question:
-    base = {"id": "q1", "asker": "main", "target": "agent:k1", "text": "T?"}
+    base = {"id": "q1", "asker": "a1", "target": "user", "text": "T?"}
     base.update(kw)
     return Question(**base)
 
 
-# ── ① 질문 배달 ────────────────────────────────────────
-
-
-class TestDeliverQuestion:
-    def test_to_main_goes_to_mailbox_with_full_structure(self, reg, calls):
-        """main 은 메일박스 — **구조**를 싣는다(`answer(id)` 와 UI 가 읽는다)."""
-        reg._deliver_question(_q(asker="a1", target="main"), render=False)
-        assert calls.requests == []
-        assert calls.mail == [
-            {
-                "kind": "question",
-                "id": "q1",
-                "key": "a1",
-                "profile": "",
-                "name": "",
-                "success": True,
-                "output": "T?",
-            }
-        ]
-
-    def test_to_agent_goes_to_inbox_with_sourced_one_liner(self, reg, calls):
-        """에이전트는 inbox — 평문 한 줄에 출처를 머리로 단다."""
-        reg._deliver_question(_q(asker="main", target="agent:k1"), render=False)
-        assert calls.mail == []
-        assert calls.requests == [
-            (
-                "k1",
-                "[question q1 from main]: T?",
-                {
-                    "author": "main",
-                    # 산출물이 asker 에게 되돌아가면 안 된다 — 답은 answer 로만
-                    "expects_reply": False,
-                    "question_id": "q1",
-                    "hop": 0,
-                },
-            )
-        ]
-
-    def test_backend_error_reaches_the_caller(self, reg, calls):
-        """배달 실패가 `_deliver_question` 의 반환으로 올라와야 한다 —
-        `register_question` 이 그 값을 보고 질문을 취소한다. `return` 이
-        빠지면 죽은 대상에 건 질문이 영영 열린 채 남는다.
-        """
-        calls.fail_with = "boom"
-        assert reg._deliver_question(_q(target="agent:k1"), render=False) == "boom"
-
-    def test_peer_asker_author_is_namespaced(self, reg, calls):
-        """asker 가 에이전트면 author 는 `agent:<key>` — 맨 키가 아니다."""
-        reg._deliver_question(_q(asker="a1", target="agent:k1"), render=False)
-        assert calls.requests[0][2]["author"] == "agent:a1"
-
-    def test_human_target_delivers_nothing(self, reg, calls):
-        """사람 주소는 ❓ 트레이가 표면 — 배달할 inbox 가 없다."""
-        assert reg._deliver_question(_q(target="user"), render=False) == ""
-        assert (calls.mail, calls.requests) == ([], [])
-
-    def test_unroutable_target_keeps_its_own_message(self, reg, calls):
-        """접기 전 문구 그대로 — 일반 주소 오류로 갈아끼우지 않았다."""
-        err = reg._deliver_question(_q(target="nowhere"), render=False)
-        assert err == "unroutable question target 'nowhere'"
-        assert (calls.mail, calls.requests) == ([], [])
-
-
-# ── ② 답 배달 ──────────────────────────────────────────
+# ── 사람의 답 배달 ──────────────────────────────────────
 
 
 class TestDeliverAnswer:
-    def test_to_main_mailbox_labels_the_answering_agent(self, reg, calls):
-        reg._deliver_answer(_q(asker="main", target="agent:k1"), "42")
-        assert calls.requests == []
-        assert calls.mail == [
-            {
-                "kind": "answer",
-                "id": "q1",
-                "key": "k1",  # 맨 키 — 라벨이므로 `agent:` 접두사 없이
-                "success": True,
-                "output": "[answer to your question: T?]\n42",
-            }
-        ]
-
-    def test_to_agent_keeps_expects_reply_true(self, reg, calls):
-        """답만 `expects_reply=True` — 답 런의 산출물이 제자리로 가야 한다."""
-        reg._deliver_answer(_q(asker="a1", target="main"), "42")
+    def test_human_answer_goes_to_the_asker_as_an_answer_envelope(self, reg, calls):
+        """사람 발신이라 답 런은 사람 런이다(`expects_reply=True` — 닫는 법이 사람
+        요청과 같다). 봉투가 무엇에 대한 답인지(``re``) 적는다."""
+        reg._deliver_answer(_q(asker="a1", target="user"), "42")
         assert calls.mail == []
         assert calls.requests == [
             (
                 "a1",
-                "[answer to your question: T?]\n42",
+                "Your question: T?\nAnswer: 42",
                 {
-                    "author": "main",
+                    "author": "user",
                     "expects_reply": True,
-                    "question_id": "",
-                    "hop": 0,
+                    "kind": "answer",
+                    "re": "q1",
+                    "todo": "Continue the work it was blocking.",
                 },
             )
         ]
-
-
-# ── ③ 독촉 배달 ────────────────────────────────────────
-
-
-class TestKickOwed:
-    def _owe(self, reg, asker: str, target: str) -> None:
-        q = _q(asker=asker, target=target, delivered_in="r-1")
-        reg._questions[q.id] = q
-
-    def test_to_main_mailbox_is_keyed_by_the_waiting_asker(self, reg, calls):
-        self._owe(reg, asker="a1", target="main")
-        assert reg.kick_owed("main") == 1
-        assert calls.requests == []
-        (item,) = calls.mail
-        assert item["kind"] == "reminder"
-        assert item["key"] == "a1"  # 기다리는 쪽
-        assert item["success"] is True
-        assert "[q1] (from a1)" in item["output"]
-
-    def test_to_agent_author_is_the_waiting_asker_not_the_owner(self, reg, calls):
-        """발신자는 빚진 쪽이 아니라 **기다리는 쪽** — 안 그러면 창에서
-        '자기가 자기에게' 로 읽힌다."""
-        self._owe(reg, asker="main", target="agent:k1")
-        assert reg.kick_owed("agent:k1") == 1
-        assert calls.mail == []
-        key, body, kw = calls.requests[0]
-        assert key == "k1"
-        assert "[q1] (from main)" in body
-        assert kw == {
-            "author": "main",
-            "expects_reply": False,  # 독촉의 산출물은 어디로도 가지 않는다
-            "question_id": "",
-            "hop": 0,
-        }
 
 
 # ── seam 자체 ──────────────────────────────────────────

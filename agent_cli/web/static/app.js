@@ -1847,15 +1847,15 @@
    * 일회성 위임(`run`)은 대상이 채널이 아니라 이 카드 안의 중첩 블록이라
    * 갈 곳이 없다(docs/chat-ui §3). 없으면 null → 꼬리 칸 자체가 안 생긴다. */
   // ── 발신 도구 (v9.23.0) ──────────────────────────────────
-  // `message`/`reply`/`answer`/`ask` 는 왕래다 — 아이콘 `→`, 꼬리에 상대.
+  // `message`/`reply`/`ask` 는 왕래다 — 아이콘 `→`, 꼬리에 상대.
   // 종전엔 같은 발신이 `⚡ message {…}` 도구 줄 **과** `→ 보냄` 왕래 줄로
   // 두 번 그려졌다. 도구 줄 하나가 그 자리를 맡고, 배달 결과는 스텝 배지
   // (✓/✗) 가 이미 말한다 — 거부만 펼쳐서 사유가 보인다.
-  const SEND_TOOLS = { message: 1, reply: 1, answer: 1, ask: 1 };
+  const SEND_TOOLS = { message: 1, reply: 1, ask: 1 };
   function actIcon(tool) {
     return SEND_TOOLS[tool] ? "→" : "⚡";
   }
-  /** 상대(또는 질문 id)를 글자로만 — 점프 없음. 반쪽만 눌리는 버튼(peer 만
+  /** 상대(또는 요청 id)를 글자로만 — 점프 없음. 반쪽만 눌리는 버튼(peer 만
    * 되고 main·사람은 안 되던)은 고장으로 읽혀 걷어냈다. */
   function sendPeerChip(tool, inputStr) {
     if (!SEND_TOOLS[tool]) return null;
@@ -1867,9 +1867,8 @@
     }
     let label = "";
     if (tool === "message") label = peerLabel(String(p.to || ""));
-    else if (tool === "answer") label = String(p.id || "");
-    else if (tool === "ask") label = p.to === "user" ? "user (human)" : "requester";
-    else if (tool === "reply") label = "requester";
+    else if (tool === "ask") label = "user (human)"; // 질문은 사람에게만 (v10.77.0)
+    else if (tool === "reply") label = String(p.id || "") || "requester";
     return label ? el("span", ["peer"], label) : null;
   }
   /** 주소 → 사람이 읽을 이름. `author` 네임스페이스가 이미 셋을 구분한다
@@ -3349,36 +3348,17 @@
     }
     return item;
   }
-  /** 질문의 주소 라벨 — 누구에게 물은 것인지. 사람이 대신 답하는 경우가
-   *  많으므로(peer 에게는 아직 배달되지 않는다) 그 사실을 밝힌다. */
-  function ovAskAddress(q) {
-    var to = (q && q.to) || "";
-    if (!to || to === "main") {
-      return ' <span class="ask-to">→ to main</span>';
-    }
-    if (to.indexOf("agent:") === 0) {
-      var k = to.slice(6);
-      return (
-        ' <span class="ask-to">→ to ' + escapeHtml(ovAgentLabel(k)) +
-        " (not delivered yet — answer on its behalf)</span>"
-      );
-    }
-    return ' <span class="ask-to">→ to me</span>';
-  }
-
   function ovRenderAskTray() {
     var tray = document.getElementById("ask-tray");
     if (!tray) return;
-    // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 주소가 **사람**인 열린
-    // 질문만 뜬다. 상대가 막혀 있지 않으므로 state 로는 알 수 없고 질문
-    // 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
-    // 질문 단위 — 한 에이전트가 동시에 여럿 물을 수 있다.
+    // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 열린 질문이 뜬다 — 주소는
+    // 언제나 사람이다(v10.77.0). 상대가 막혀 있지 않으므로 state 로는 알 수
+    // 없고 질문 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
+    // 질문 단위.
     var open = [];
     ovRoster.forEach(function (t) {
       (t.open_questions || []).forEach(function (q) {
-        if (String(q.to || "").indexOf("user") === 0) {
-          open.push({ key: t.key, q: q });
-        }
+        open.push({ key: t.key, q: q });
       });
     });
     if (!ovMainAsk && !open.length) {
@@ -3392,7 +3372,7 @@
         '<div class="ask-item" data-key="' + escapeHtml(it.key) +
         '" data-qid="' + escapeHtml(it.q.id) + '">' +
         '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
-        "</b> asked" + ovAskAddress(it.q) + "</div>" +
+        "</b> asked</div>" +
         '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
         '<div class="ask-in"><input class="ask-answer" type="text" ' +
         'placeholder="Answer…" aria-label="Answer"><button type="button" ' +

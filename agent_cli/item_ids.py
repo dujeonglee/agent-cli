@@ -10,8 +10,8 @@
 ``u-``      사람 요청(예약 포함)  ``complete`` 의 ``answers``
 ``n-``      그 밖의 배달(main 앞  ``complete`` 의 ``answers`` (main)
             메일·알림·회신 도착)
-``r-``      회신을 기다리는 요청  ``reply(id, text)``
-``q-``      질문                  ``answer(id, text)``
+``r-``      회신을 기다리는 요청  ``reply`` 의 ``id``
+``q-``      사람에게 건 질문      (모델이 닫지 않는다 — 사람이 트레이에서 답한다)
 ==========  ====================  =================================
 
 v10.77.0: 번호는 :func:`next_id` 하나가 매긴다 — 번호 공간을 모든 접두가 함께
@@ -28,12 +28,14 @@ MAIL = "n"
 REPLY = "r"
 QUESTION = "q"
 
-#: 접두 → 그 항목을 닫는 도구
-CLOSER = {USER: "complete", MAIL: "complete", REPLY: "reply", QUESTION: "answer"}
+#: 접두 전부 (v10.77.0)
+PREFIXES = frozenset({USER, MAIL, REPLY, QUESTION})
+
+#: 접두 → 그 항목을 닫는 도구. ``q-`` 는 없다 — 질문은 사람에게만 가고(v10.77.0)
+#: 모델이 닫을 항목이 아니다.
+CLOSER = {USER: "complete", MAIL: "complete", REPLY: "reply"}
 
 
-#: 접두 → 배달의 종류 (v10.77.0). ``CLOSER`` 에 없는 접두는 없다 — ``n-`` 은
-#: main 에서는 메일(``complete`` 로 닫음), 상주 에이전트에서는 닫을 것 없는 배달.
 _ALLOC_LOCK = threading.Lock()
 _last = 0
 
@@ -44,7 +46,7 @@ def next_id(prefix: str) -> str:
     id 가 곧 키다: 번호만으로도 프로세스 안에서 유일하고 단조 증가라 순서도
     말한다. 세션을 다시 열면 :func:`observe` 가 저장된 id 를 넘겨 번호를
     잇는다(할당기를 따로 저장하지 않는다)."""
-    if prefix not in CLOSER:
+    if prefix not in PREFIXES:
         raise ValueError(f"unknown item prefix {prefix!r}")
     global _last
     with _ALLOC_LOCK:
@@ -69,7 +71,7 @@ def observe(*item_ids) -> None:
 def prefix_of(item_id) -> str:
     """``"r-12"`` → ``"r"``. 형식이 아니면 ``""``."""
     head, sep, _ = str(item_id or "").partition("-")
-    return head if sep and head in CLOSER else ""
+    return head if sep and head in PREFIXES else ""
 
 
 def closer_of(item_id) -> str:

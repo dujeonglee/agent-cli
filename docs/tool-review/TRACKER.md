@@ -19,13 +19,13 @@
 | `edit_file` | 구현 | 줄 번호만 온 ref 에 그 줄의 지금 ref 를 보여 줌(35B 편집의 18%), 설명은 `op` 값과 인자를 이름으로, legacy 광고 삭제, 안내 축소 | ebccc656 |
 | (전체) 표기 | 구현 | 도구 22개·안내·시스템 절·꼬리·넛지·오류 문구 표기 통일, "You sent:" 줄·반복 호출 넛지를 문장으로, monitor 오류의 모르는 이름(match/silence) 수정 | 1a75cb0a |
 | (압축) | 구현 | 압축 예고 메모리 문장: 기준 "앞으로의 일이 쓰지 않을 것" + 끝난 단계의 메모, memory 없는 루프엔 문장 생략 | 08f090e6 |
-| `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 승인, 구현 중 | B+C+D+E+id 통일 (아래 §결정) | — |
+| `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 구현 | ① id 할당기 하나(id 가 곧 키, 순번 삭제) ② `ask` 는 사람에게만·`answer` 삭제, `reply` 의 `to` 삭제, `message`·`agent` 결과가 id 를 말함, 봉투 한 모양, 거부 문구가 접두로 종류를 말함; wait 를 건너가는 빚·main wait 정산 비대칭 수정·순환 대기 가드 | 1a7dc454, (②) |
 | `shell` | 구현 | 시간 초과 때 프로세스 그룹째 끝내기(버그 — apt-get 이 dpkg 잠금을 쥔 채 남음), 시간 초과 결과(끝냈다·출력 끝 8줄·`background` 교정), 설명에 결과 모양(`[stderr]`·`[exit code: N]`), 작업 종류 나열 삭제, 거부 문구 표기 | 6ec4b40c |
 
 ## TODO
 
 - [x] `shell` 검토·구현
-- [ ] 소통·종결 묶음 구현: ① id 통일(내부, 모델 문구 그대로) ② B·C·D·E(모델 문구) — 개정안 https://claude.ai/artifact/3iJsAjeva3YB4wwWNcPdYF
+- [x] 소통·종결 묶음 구현: ① id 통일(내부, 모델 문구 그대로) ② B·C·D·E(모델 문구) — 개정안 https://claude.ai/artifact/3iJsAjeva3YB4wwWNcPdYF
 - [ ] 상주 에이전트 둘로 실제 모델 시나리오 확인(요청·회신·알림·사람에게 묻기·wait)
 - [ ] 후보(보류): 층 규칙 `complete` → `wait` — 넷이 모두 맞을 때만: 상주 루프(complete 가 아무에게도 보고 안 함), 이 런에 갚지 않은 `r-` 남음, 깨울 원인 있음(회신 대기·작업·monitor), `complete` 가 닫을 `u-`·`n-` 없음. `result` 는 `rewritten_from` 에. 원칙을 "결과 같음"→"이 루프에서 효과 같음"으로 넓히는 일이라, ② 뒤 실제 `complete` 오용을 보고 결정
 - [ ] 남은 도구 검토: `code_index`, `python`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `agent`, `run_skill`
@@ -35,6 +35,11 @@
 - [ ] 측정 뒤 회귀면 이미지를 read_file 로 되돌리기(층은 규칙만 비우고 남김)
 
 ## 미룬 것·안 하기로 한 것
+
+- 소통 개정에서 개정안과 달리 한 것: 사람의 답 봉투 id 는 `n-` 이 아니라 `u-` — 그 런은 사람 런이라
+  `complete` 의 `answers` 로 닫혀 왔다(종전과 같은 엄밀함). 상주 `ask` 의 질문 인자 설명은 main 과 같은
+  "The question to ask the user." 하나(전용 스키마를 없앴다). 회신·통지 봉투의 꼬리 안내(`_REPLY_TAIL`·
+  `_NOTICE_TAIL`, ack 억제)는 개정안대로 지웠다 — ack 핑퐁 재발은 라이브에서 본다.
 
 - 화면의 "(from read_file)" 표시 — 하지 않음. 기록의 `rewritten_from` 에만 둔다(사용자 결정).
 - 모델이 직접 이미지를 내리는 hide·20% 예산·꼬리 `## Images` — 하지 않음(대화 중간을 바꿔 KV 캐시를 깸 → 압축에 맡김).

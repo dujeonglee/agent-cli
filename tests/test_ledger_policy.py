@@ -116,7 +116,7 @@ class TestResultIsAlwaysDelivered:
         lp = _loop(tmp_path, debts=[_REPLY])
         out, obs = _complete(lp, result="끝")
         assert finals == ["끝"] and out is None
-        assert '`reply` with id "r-4"' in obs and "refused" not in obs
+        assert '`reply` with `id` "r-4"' in obs and "refused" not in obs
 
 
 class TestOneOrderEverywhere:
@@ -184,7 +184,7 @@ class TestIdsAreOneFormat:
             ("u-1", "complete"),
             ("n-3", "complete"),
             ("r-12", "reply"),
-            ("q-7a3f", "answer"),
+            ("q-7a3f", ""),  # 질문은 모델이 닫지 않는다 (v10.77.0)
             ("7", ""),
         ],
     )
@@ -192,9 +192,16 @@ class TestIdsAreOneFormat:
         assert item_ids.closer_of(item) == closer
 
     def test_wrong_tool_is_pointed_to_the_right_one(self):
-        assert 'list "u-1" in `answers`' in wrong_closer_hint("u-1", "answer")
-        assert '`reply` with id "r-2"' in wrong_closer_hint("r-2", "answer")
-        assert '`answer` with id "q-1a"' in wrong_closer_hint("q-1a", "reply")
+        # 번호 공간이 하나라 접두가 그 id 의 종류를 정확히 말한다 (v10.77.0)
+        assert wrong_closer_hint("u-1", "reply") == (
+            '"u-1" is a user request — it closes in `complete`\'s `answers`.'
+        )
+        assert '`reply` with `id` "r-2"' in wrong_closer_hint("r-2", "complete")
+        assert wrong_closer_hint("q-15", "reply") == (
+            '"q-15" is your question to the person, not a request — nothing to '
+            "reply to."
+        )
+        assert "a delivery, not a request" in wrong_closer_hint("n-4", "reply")
         assert wrong_closer_hint("r-2", "reply") == ""
 
 
@@ -215,7 +222,20 @@ class TestMainRepliesById:
         port = reg.question_port(None)
         assert port.reply("둘째 답", id=d2.id) == ""
         assert [d.id for d in reg.reply_debts("main")] == [d1.id]  # 그 빚만
-        assert sent == [(key, "둘째 답", {"author": "main", "expects_reply": False})]
+        # main 의 회신도 봉투(reply re [r-…])로 간다 (v10.77.0)
+        assert sent == [
+            (
+                key,
+                "둘째 답",
+                {
+                    "author": "main",
+                    "hop": 1,
+                    "expects_reply": False,
+                    "kind": "reply",
+                    "re": d2.id,
+                },
+            )
+        ]
 
     def test_reply_needs_an_id(self, tmp_path):
         from tests.test_agents_live import make_registry
@@ -260,7 +280,7 @@ def test_multi_line_bodies_are_folded_to_one_item_line():
     led.add_request("u-1", "dj", "첫 줄\n둘째 줄")
     block = led.block()
     assert (
-        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → `reply` with id "r-4"'
+        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → `reply` with `id` "r-4"'
         in block
     )
     assert '[u-1] (dj) "첫 줄 둘째 줄"' in block

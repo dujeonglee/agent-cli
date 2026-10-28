@@ -94,17 +94,6 @@ class TestMailInTheQueue:
         ]
         assert texts[0].endswith("user ask") and texts[1].startswith("⏳ [job]")
 
-    def test_questions_stay_in_the_tray_not_the_queue(self, stack, page):
-        reg = _wire(stack)
-        stack.emit_ready()
-        page.goto(stack.url)
-        reg._push_reply(
-            {"kind": "question", "key": "agt-x", "id": "q1", "output": "A or B?"}
-        )
-        reg._push_reply(dict(JOB))
-        assert _wait(lambda: _items(page).count() == 1)
-        assert "[job]" in _items(page).first.inner_text()
-
     def test_no_hint_line_or_wake_card_in_the_timeline(self, stack, page):
         reg = _wire(stack)
         stack.emit_ready()

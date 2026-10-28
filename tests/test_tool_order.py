@@ -29,7 +29,6 @@ class TestBuiltinOrder:
         ]
 
     def test_pairs_are_adjacent(self):
-        assert _adjacent("ask", "answer")
         assert _adjacent("message", "reply")
         assert _adjacent("monitor", "schedule")
         assert _adjacent("schedule", "snapshot")  # 실행 그룹의 마지막: 망친 뒤의 되돌림
