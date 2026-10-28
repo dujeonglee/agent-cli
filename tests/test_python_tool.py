@@ -274,6 +274,31 @@ class TestWorkerUnit:
         assert not w.alive and w.pid is None
 
 
+class TestImportPath:
+    """v10.77.1 — 워커의 import 경로는 대화형 python3 와 같다: 지금 폴더가 맨 앞이고,
+    하니스의 도구 폴더는 경로에 없다(라이브 GLM S4: 방금 쓴 fib.py 를 못 불렀다)."""
+
+    def test_a_module_in_the_working_folder_imports(self, reg, tmp_path):
+        (tmp_path / "fibmod_4711.py").write_text("def fib(n):\n    return n\n")
+        r = _run("import fibmod_4711\nfibmod_4711.fib(7)")
+        assert r.success, r.error
+        assert "7" in r.output
+
+    def test_harness_tool_modules_are_not_importable_by_bare_name(self, reg):
+        r = _run("import sys\nany(p.endswith('tools') for p in sys.path)")
+        assert r.success and "False" in r.output
+        r = _run("import shell")
+        assert not r.success and "ModuleNotFoundError" in r.error
+
+    def test_the_path_follows_chdir_like_the_repl(self, reg, tmp_path):
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "inner_4711.py").write_text("X = 3\n")
+        r = _run("import os\nos.chdir('sub')\nimport inner_4711\ninner_4711.X")
+        assert r.success, r.error
+        assert "3" in r.output
+
+
 class TestMissingModuleHint:
     """ModuleNotFoundError 관찰은 **이 인터프리터** 경로와 거기에 설치하는 명령을
     같이 준다 (v10.73.0) — pyguide r2 financial 은 PATH 의 pip·다른 cpython 에 깔고

@@ -181,6 +181,12 @@ def _run(code, g):
 
 
 def main():
+    # 대화형 python3 처럼 지금 폴더가 import 경로의 맨 앞 (v10.77.1). 스크립트로 떠서
+    # ``sys.path[0]`` 이 이 파일의 폴더(agent_cli/tools/)였다 — 작업 폴더의 모듈은
+    # import 되지 않고(라이브 GLM: 방금 쓴 fib.py → "pip install fib" 안내),
+    # ``import shell``·``import history`` 는 하니스의 도구 모듈을 집었다. "" 는
+    # 셀이 ``os.chdir`` 해도 따라간다(REPL 과 같다).
+    sys.path[0] = ""
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # 실행 중에만 받는다(`_run`)
     proto = os.fdopen(os.dup(1), "w", buffering=1)
     g = {"__name__": "__main__", "__builtins__": __builtins__}
