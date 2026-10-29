@@ -91,3 +91,24 @@
   `wait` 의 깨움 조건에 "보낸 `message` 요청의 회신 대기" 를 넣는다.
 - 예전 세션 resume 호환층 없음.
 - id: 세션 할당기 하나, 번호 공간 공유, 모든 배달이 id(키). 순번(`seq`·`queued`·`_debt_seq`·입력 큐 `_seq`) 삭제.
+
+## `monitor`·`wait` 묶음 — 검토 (2026-10-29~30)
+
+근거: 벤치 483 trial — 받아들여진 `wait` 50, 깨지 못하고 과제 시간 끝 13(GLM 7·35B 5·27B 1), 깨어난 기다림 중앙값 130~175s;
+`monitor` `add` 는 v10.67.0 뒤 9번(다섯은 작업 종료 감시 — 종료 통지가 이미 함), `run` 1번(값 `"true"`). 설명 길이 monitor 2,545자·wait 279자.
+리포트(3판, Fable 리뷰 2회): https://claude.ai/artifact/ApquJovjcvDuKgSCafKRZs
+
+### 결정 (2026-10-30, 사용자)
+
+- **W1** 중간 깨우기: 받아들여진 `wait` 가 5분 안에 깨지 않으면 하니스가 깨운다. 같은 대상(깨울 것 id 집합)을 다시 기다리면
+  10·20·40·60분. 알림은 사실 진술("Check-in after 5m — still running: …")이라 진짜 보고와 겹쳐도 거짓이 아니다 — 경합 가드 없음.
+  장부 밖(`ledger: "none"`), 영속 안 함, 타이머는 `run_ended(waiting=True)` 에서 걸고 `AgentLoop.run()` 의 `run_started` 로 푼다.
+- **P** 진행 신호는 (a) 로그 변화만("+37 lines since your wait" / "unchanged since your wait"). 프로세스 신호(CPU·pid 교체)는 채택 안 함.
+- 에이전트를 기다릴 때의 줄: 새 필드 없이 레지스트리가 아는 것(처리 중·대기열·스스로 잠듦·사람 질문에 막힘, wait 이후 걸음 수)으로.
+- **`kill -- -<pid>`** 네 자리 통일(꼬리·`shell` 결과·시스템 프롬프트·알림) — pid 는 `sh -c` 리더라 `kill <pid>` 는 셸만 죽인다.
+- **M1~M3** `monitor` 문구: 첫머리에 "작업 종료는 이미 통지된다", 대문자 강조 제거, 내부 이름(`match`·`silence`·`command`·중괄호) 전부 인자 짝으로, 초 → "2h".
+- **R** `monitor` 의 `run` 삭제. 알 수 없는 인자는 조용히 버려지므로 한 릴리스 동안 `validate` 가 명시 거절.
+- **L 선행 PR** (v10.78.1): 메일의 장부 위치를 만드는 쪽이 `ledger` 필드로 선언 — `mail_item` 의 죽은 kind 목록 제거, `"none"` 은 영속 제외. 행동 불변.
+
+순서: L → (W1·P(a)·W2·M1~M3·R·kill 통일) 한 PR → 측정은 지시가 있을 때.
+
