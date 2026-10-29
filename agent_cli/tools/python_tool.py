@@ -83,11 +83,11 @@ def shell_runs_python(command: str) -> bool:
     return False
 
 
-#: ModuleNotFoundError 관찰에 붙는 안내 (v10.73.0). 벤치 컨테이너에서 python 도구의
-#: 인터프리터는 uv 가 만든 agent-cli 전용 venv 인데 모델은 PATH 의 `pip`·uv 기본
-#: cpython 에 설치해 패키지가 안 보였고(pyguide r2 financial t3~t22), 그 뒤 shell 로
-#: 돌아갔다. 어느 인터프리터인지는 모델이 알 길이 없으니 **빠진 순간** 경로와 명령을
-#: 준다 — 상태 조건부 안내의 원칙 그대로(docs/tail/DESIGN.md §2).
+#: ModuleNotFoundError 관찰에 붙는 안내 (v10.73.0). 모델은 패키지를 shell 의 `pip`
+#: 으로 깔고(pyguide r2 financial t3~t22: 다른 인터프리터에 깔고 shell 로 돌아갔다)
+#: 어느 인터프리터인지 알 길이 없으니 **빠진 순간** 경로와 명령을 준다 — 상태 조건부
+#: 안내의 원칙 그대로(docs/tail/DESIGN.md §2). v10.78.0 부터 인터프리터는 늘 PATH 의
+#: `python3`/`python` 이라 shell 과 같은 파이썬을 가리킨다.
 MISSING_MODULE_HINT = (
     "This interpreter is `{exe}`; packages installed into another Python are not "
     "visible here. Install into it from `shell`: `{exe} -m pip install {pkg}` (if it "
@@ -101,6 +101,9 @@ _PKG_FOR_MODULE = {
     "yaml": "PyYAML",
     "sklearn": "scikit-learn",
     "fitz": "PyMuPDF",
+    "pdfminer": "pdfminer.six",
+    "whisper": "openai-whisper",
+    "skimage": "scikit-image",
     "bs4": "beautifulsoup4",
     "docx": "python-docx",
     "pptx": "python-pptx",
@@ -116,6 +119,20 @@ def missing_module_hint(exc: str | None, exe: str) -> str:
     top = m.group(1).split(".")[0]
     return MISSING_MODULE_HINT.format(exe=exe, pkg=_PKG_FOR_MODULE.get(top, top))
 
+
+#: PATH 에 파이썬이 없을 때 (v10.78.0) — agent-cli 자신의 인터프리터로 떨어지지
+#: 않는다(그 venv 는 shell 의 pip 과 갈라진다). 워커는 뜰 때마다 다시 고른다.
+NO_INTERPRETER = (
+    "python: neither `python3` nor `python` is on PATH, so there is no interpreter "
+    "to run this in. Install Python from `shell` so that `python3` is on PATH; the "
+    "next `python` call starts on it."
+)
+#: 띄운 인터프리터가 시작 인사 전에 죽었다 (v10.78.0) — 3.8 미만·Python 2·버전 없는
+#: pyenv shim·스텁. 코드가 프로세스를 끝낸 것(인사 뒤 죽음)과는 갈라 말한다.
+STARTUP_FAILED = (
+    "python: `{exe}` exited before answering — this tool needs Python 3.8 or newer. "
+    "Put a working one on PATH as `python3`."
+)
 
 PYTHON_SESSION_HEADER = "## Python session"
 #: 쓰는 동안만 뜨는 사용법 — 종전 도구 설명·Task Guidelines 에 있던 문장들이다.
@@ -179,8 +196,9 @@ class PythonTool(Tool):
             "reset": {
                 "type": "boolean",
                 "description": (
-                    "true = start a fresh interpreter first (all state is dropped) "
-                    "— only when the state itself is the problem."
+                    "true starts a fresh interpreter before running `code`; all "
+                    "state is dropped. Use it only when the state itself is the "
+                    "problem."
                 ),
             },
             "timeout": {
@@ -189,8 +207,8 @@ class PythonTool(Tool):
                     f"Max seconds for this call (default {DEFAULT_TIMEOUT}). On "
                     "timeout the running code is interrupted (KeyboardInterrupt) "
                     "and the state is kept; only code that ignores the interrupt "
-                    "gets the interpreter killed. Raise this for a step you know "
-                    "is long (a model load, a big OCR batch)."
+                    "gets the interpreter killed. Raise it for a step you expect "
+                    "to take longer than that."
                 ),
             },
         },
@@ -238,12 +256,16 @@ class PythonTool(Tool):
             return ToolResult(
                 False, error=f"python: could not start the interpreter: {e}"
             )
-        return self._format(res, timeout, worker.interpreter or "python3")
+        return self._format(res, timeout, worker.interpreter)
 
     @staticmethod
-    def _format(res, timeout: int, exe: str = "python3") -> ToolResult:
+    def _format(res, timeout: int, exe: str | None) -> ToolResult:
         from agent_cli import images as _images
 
+        if res.no_interpreter:
+            return ToolResult(False, error=NO_INTERPRETER)
+        if res.startup_failed:
+            return ToolResult(False, error=STARTUP_FAILED.format(exe=exe))
         if res.timed_out:
             had = f" (it held: {', '.join(res.lost)})" if res.lost else ""
             return ToolResult(

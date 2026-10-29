@@ -43,8 +43,8 @@ Jupyter 셀 하나처럼 코드 조각을 실행하고 **상태를 남기는** �
 - 열린 matplotlib figure 는 `.agent-cli/tmp/python/fig-*.png` 로 저장해 이미지로
   첨부(read_file 의 이미지 경로 재사용). 좌표·경로 데이터는 그려서 본다.
 - `reset: true` 면 새 인터프리터부터.
-- 인터프리터: `AGENT_CLI_PYTHON` → PATH `python3` → 이 프로세스. **agent-cli 가
-  설치된 인터프리터가 아니라 모델이 shell 에서 쓰는 python3** 와 같은 것 — 그
+- 인터프리터: PATH 의 `python3`, 없으면 `python` — 그것뿐(v10.78.0, §7). **agent-cli
+  가 설치된 인터프리터가 아니라 모델이 shell 에서 쓰는 파이썬**과 같은 것 — 그
   환경의 패키지가 거기 있다. 자식 스크립트는 그래서 stdlib 만 쓰고 3.8 문법.
 
 ## 3. 어디에
@@ -70,7 +70,7 @@ Jupyter 셀 하나처럼 코드 조각을 실행하고 **상태를 남기는** �
   holding: …` 블록(`tail_block`, 입력은 `PyWorkerRegistry.state_of`). 지난 턴에 shell
   로 파이썬을 돌렸으면(`shell_runs_python`) 교정 한 줄 `SHELL_PYTHON_NOTICE`.
   종전(v10.66.0~10.72.0)엔 설명과 꼬리 줄에 같은 네 문장이 있었다 — §5.4.
-- ModuleNotFoundError 관찰(v10.73.0): `missing_module_hint` 가 워커의 인터프리터 경로(`PyWorker.interpreter`)와 `<exe> -m pip install <pkg>`(import 이름≠배포 이름은 `_PKG_FOR_MODULE`; pip 없으면 `ensurepip`)를 붙인다. 벤치 컨테이너는 PATH 에 python3 가 없어 도구가 uv 의 agent-cli venv 를 쓰는데 모델은 PATH 의 pip·uv 기본 cpython 에 깔았다(pyguide r2 financial t3~t22, 그 뒤 shell 로 회귀). 어느 인터프리터인지 모델이 알 길이 없으니 빠진 순간 알린다.
+- ModuleNotFoundError 관찰(v10.73.0): `missing_module_hint` 가 워커의 인터프리터 경로(`PyWorker.interpreter`)와 `<exe> -m pip install <pkg>`(import 이름≠배포 이름은 `_PKG_FOR_MODULE`; pip 없으면 `ensurepip`)를 붙인다. 벤치 컨테이너는 PATH 에 python3 가 없어 도구가 uv 의 agent-cli venv 를 쓰는데 모델은 PATH 의 pip·uv 기본 cpython 에 깔았다(pyguide r2 financial t3~t22, 그 뒤 shell 로 회귀). 어느 인터프리터인지 모델이 알 길이 없으니 빠진 순간 알린다. 그 venv 로 떨어지는 길 자체는 v10.78.0 에서 없앴다(§7).
 - 웹: 카드 요약은 첫 줄, 펼치면 `>>> ` 셀.
 
 ## 4. 측정
@@ -166,3 +166,45 @@ python 이 9 → 32건, .py 작성 후 실행 4건. shell 안 python 의 Traceba
 `import fib` 하자 ModuleNotFoundError 와 함께 "`pip install fib`" 안내가 나갔고, 모델은 `shell` 로
 돌아갔다. 대화형 python3 와 같게 `sys.path[0] = ""`(지금 폴더, 셀의 `os.chdir` 를 따라감)로 둔다.
 테스트: `tests/test_python_tool.py::TestImportPath` (고치기 전 코드에서 셋 다 실패 확인).
+
+## 7. 도구 검토 (v10.78.0, docs/tool-review/TRACKER.md)
+
+근거: 보관된 harbor 벤치의 `python` 호출 전부(GLM 568·35B 2,469). 개정안과 Fable 리뷰 세 번을 거쳤다.
+
+- **셀은 진짜 `__main__` 모듈에서.** dict 이름 공간이라 셀 함수의 `__module__` 은 `"__main__"`
+  인데 `sys.modules["__main__"]` 은 자식 스크립트였다 — pickle(fork `Pool`)·`unittest.main()`
+  ("Ran 0 tests")·`doctest`·dataclass 의 문자열 `ClassVar`·`namedtuple` pickle 이 셀의 이름을
+  못 찾았다(GLM v10.77.1 r2b video: 남은 OCR 을 `Pool` 로 나누다 PicklingError → shell 로 이탈).
+  `types.ModuleType("__main__")` 을 `sys.modules` 에 두고 그 `__dict__` 에서 돈다(Jupyter 와 같다).
+  **한계**: spawn·forkserver(macOS 기본, Linux 3.14+ 기본)의 `Pool` 은 자식이 셀의 `__main__` 을
+  다시 import 하지 못해 멈춘다(예전엔 즉시 PicklingError) — 타임아웃이 끊고 상태는 산다. start
+  method 를 fork 로 강제하지 않는다(macOS 의 cv2·BLAS 스레드와 fork 의 궁합).
+- **실행 전 SyntaxError 는 셀의 줄만.** `_split_last_expr` 의 `ast.parse` 에서 난 SyntaxError 는
+  하니스의 `ast.py` 프레임으로 시작했다(벤치 27건 중 26건) → `format_exception_only`. 실행 중의
+  SyntaxError(방금 쓴 `.py` 의 import)는 그대로 traceback 전체(`<python>` 줄이 필요하다).
+- **인터프리터는 PATH 의 `python3`, 없으면 `python`.** `AGENT_CLI_PYTHON`(아무도 설정하지 않았고,
+  다른 파이썬을 가리키면 shell 과 다시 갈라진다)과 agent-cli 자신의 인터프리터로 떨어지는 단계를
+  지웠다. 벤치 video·financial 이미지에는 처음에 `python3` 가 없어, 모델이 `apt-get` 보다 `python`
+  을 먼저 부르면 워커가 pip 없는 uv venv 로 떠 고정됐다(GLM 4·35B 2 trial) — 나중에 깔린
+  `/usr/bin/python3` 의 cv2 를 못 봤고, 안내대로 venv 에 pip 을 부르다 실패해 shell 로 갔다. 이제
+  둘 다 없으면 띄우지 않고 "없다 — 설치하면 다음 호출부터"(`NO_INTERPRETER`) 를 돌려준다. 워커는
+  뜰 때마다 다시 고르니 그대로 된다. PATH 는 하니스 프로세스의 것이라 셸의 `export PATH=` 로는
+  안 바뀐다(apt 처럼 `/usr/bin` 에 놓이는 설치는 보인다). 워커가 이미 POSIX 전용이라 Windows 의
+  이름은 찾지 않는다. 특정 venv 는 활성화한 채 agent-cli 를 띄우면 PATH 로 같아진다.
+- **시작 인사.** 자식이 루프 전에 `{"ready": true}` 를 보낸다. 인사 전에 죽으면 이 자식을 돌릴 수
+  없는 파이썬(3.8 미만·Python 2 인 `python`·버전 없는 pyenv shim·Xcode 스텁) → `STARTUP_FAILED`
+  (경로와 "3.8 이상"). 인사 뒤에 죽으면 코드가 프로세스를 끝낸 것(`os._exit`, 네이티브 segfault)
+  → "exited while running this code", 들고 있던 상태가 있을 때만 "its state is gone". 예전엔 둘
+  다 "exited unexpectedly — its state is gone" 이라 새 워커에서 잃지 않은 상태를 잃었다고 했다.
+- 문구: `timeout` 인자의 작업 종류 나열("a model load, a big OCR batch") 삭제, `reset` 을 문장으로,
+  SystemExit 는 사실만(`SystemExit(2)`·정수만 괄호, unittest 의 bool 은 정수로, 문자열은 이미 출력에).
+  패키지 짝 `pdfminer`→`pdfminer.six`(테스트가 오답을 고정하고 있었다)·`whisper`→`openai-whisper`·
+  `skimage`→`scikit-image`. 쓰이지 않던 `STATE_MAX` 삭제.
+- 그대로: 도구 설명, 상태 줄과 재사용 힌트(94~98% 에 붙어 신호는 약하지만 빼서 나아지는지는 측정이
+  정한다), 꼬리 블록.
+- 측정 지표(전체 벤치 때): pickle 계열 오류, 모듈 없음 안내 뒤 다음 호출 성공률·shell `python3 -c`
+  이탈, `NO_INTERPRETER` 수와 설치까지의 호출 수, 안내 뒤 pip 실패 사유(PEP 668
+  `externally-managed-environment` — 모델이 스스로 `--break-system-packages` 를 붙인다, 95건),
+  `timeout` 인자 사용 수.
+- 테스트: `tests/test_python_tool.py` 의 `TestMainModule`·`TestSyntaxError`·`TestSystemExit`·
+  `TestInterpreterChoice` 와 죽음 문구 둘 — 고치기 전 코드에서 15건 실패 확인.
