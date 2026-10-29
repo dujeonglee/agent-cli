@@ -15,9 +15,16 @@ OCR 3번·process.py 8번 재작성).
 도구가 관찰에 적는다. 소유자가 죽으면(`drop_owner`) 그 워커를
 죽이고, 세션이 끝나면(`stop_all`) 전부 죽인다. 영속은 없다 — resume 뒤는 빈 워커.
 
-인터프리터는 ``AGENT_CLI_PYTHON`` → PATH 의 ``python3`` → 이 프로세스의 것.
-agent-cli 가 설치된 인터프리터가 아니라 **모델이 shell 에서 쓰는 python3** 와
-같은 것이어야 한다(그 환경의 패키지가 거기 있다).
+인터프리터는 PATH 의 ``python3``, 없으면 ``python`` — 그것뿐이다 (v10.78.0).
+**모델이 shell 에서 쓰는 파이썬**과 같아야 shell 에서 깐 패키지가 보인다. 둘 다
+없으면 띄우지 않고 그 사실을 돌려준다(``PyResult.no_interpreter``) — 예전엔
+agent-cli 자신의 인터프리터로 떨어졌는데, 벤치 컨테이너에선 그게 pip 없는 uv
+venv 였고 워커가 거기에 고정돼 나중에 깔린 시스템 python3 의 패키지를 못 봤다.
+워커는 뜰 때마다 다시 고르므로, 설치한 다음 호출부터 그 파이썬으로 뜬다.
+
+자식은 셀을 받기 전에 시작 인사(``{"ready": true}``)를 보낸다. 인사 전에 죽으면
+인터프리터가 이 자식을 돌릴 수 없는 것(3.8 미만·Python 2·버전 없는 pyenv shim)
+이고(``PyResult.startup_failed``), 인사 뒤에 죽으면 코드가 프로세스를 끝낸 것이다.
 """
 
 from __future__ import annotations
@@ -27,7 +34,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -38,13 +44,32 @@ FIG_DIR = Path(".agent-cli") / "tmp" / "python"
 KILL_GRACE_S = 2.0
 #: SIGINT 뒤 회신을 기다리는 시간 — 그 안에 안 돌아오면 kill.
 INTERRUPT_GRACE_S = 3.0
+#: 시작 인사를 기다리는 시간 — pyenv shim 처럼 느린 실행 파일도 넉넉히.
+READY_TIMEOUT_S = 15.0
 
 
-def interpreter() -> str:
-    env = os.environ.get("AGENT_CLI_PYTHON")
-    if env:
-        return env
-    return shutil.which("python3") or sys.executable
+def interpreter() -> str | None:
+    """모델의 shell 이 보는 PATH 의 ``python3``, 없으면 ``python``. 둘 다 없으면 ``None``."""
+    return shutil.which("python3") or shutil.which("python")
+
+
+class _LineRead:
+    """한 줄 읽기를 스레드로 — 시간 안에 안 오면 같은 읽기를 더 기다릴 수 있다
+    (타임아웃 뒤 SIGINT 를 보내고 **같은** 회신을 기다린다; 읽기를 새로 띄우면
+    두 스레드가 한 파이프를 다툰다)."""
+
+    def __init__(self, stream) -> None:
+        self._box: dict = {}
+        self._t = threading.Thread(target=self._read, args=(stream,), daemon=True)
+        self._t.start()
+
+    def _read(self, stream) -> None:
+        self._box["line"] = stream.readline()
+
+    def wait(self, timeout: float) -> bytes | None:
+        """한 줄(끝이면 ``b""``), 시간이 지나면 ``None``."""
+        self._t.join(timeout)
+        return None if self._t.is_alive() else self._box.get("line", b"")
 
 
 @dataclass
@@ -62,6 +87,10 @@ class PyResult:
     #: 타임아웃으로 죽였다(상태 소실). ``lost`` 는 죽기 전 마지막으로 본 이름들.
     timed_out: bool = False
     lost: list[str] = field(default_factory=list)
+    #: PATH 에 ``python3`` 도 ``python`` 도 없어 띄우지 못했다.
+    no_interpreter: bool = False
+    #: 띄운 인터프리터가 시작 인사 전에 죽었다 — 이 자식을 돌릴 수 없는 파이썬.
+    startup_failed: bool = False
 
 
 class PyWorker:
@@ -87,8 +116,13 @@ class PyWorker:
     def pid(self) -> int | None:
         return self._proc.pid if self._proc is not None else None
 
-    def _start(self) -> None:
+    def _start(self) -> str | None:
+        """띄우고 시작 인사를 받는다. 실패면 까닭(``"none"`` = 인터프리터 없음,
+        ``"dead"`` = 인사 전에 죽음), 성공이면 ``None``. 실패면 ``_proc`` 는 비어
+        다음 호출이 다시 시도한다."""
         self.interpreter = interpreter()
+        if self.interpreter is None:
+            return "none"
         self._proc = subprocess.Popen(
             [self.interpreter, "-u", str(CHILD)],
             stdin=subprocess.PIPE,
@@ -99,6 +133,15 @@ class PyWorker:
         )
         self.started_at = time.time()
         self._last_state = []
+        line = _LineRead(self._proc.stdout).wait(READY_TIMEOUT_S)
+        try:
+            ready = bool(line) and json.loads(line).get("ready") is True
+        except (ValueError, AttributeError):
+            ready = False
+        if not ready:
+            self.kill()
+            return "dead"
+        return None
 
     def kill(self) -> None:
         proc = self._proc
@@ -135,8 +178,12 @@ class PyWorker:
             lost: list[str] = []
             if not self.alive:
                 self.kill()  # 죽은 채 남은 핸들 정리(죽을 때의 상태 이름을 보관)
+                failed = self._start()
+                if failed == "none":
+                    return PyResult(False, no_interpreter=True)
+                if failed == "dead":
+                    return PyResult(False, startup_failed=True)
                 lost, self._lost = self._lost, []
-                self._start()
                 fresh = True
             proc = self._proc
             assert proc is not None and proc.stdin and proc.stdout
@@ -151,15 +198,9 @@ class PyWorker:
                     exc="python worker died before the call could be sent",
                     fresh=fresh,
                 )
-            box: dict = {}
-
-            def _read():
-                box["line"] = proc.stdout.readline()
-
-            t = threading.Thread(target=_read, daemon=True)
-            t.start()
-            t.join(timeout)
-            if t.is_alive():
+            reading = _LineRead(proc.stdout)
+            line = reading.wait(timeout)
+            if line is None:
                 # Ctrl-C 처럼 그룹째 SIGINT — 자식은 KeyboardInterrupt 를 보통의
                 # 실패 회신으로 돌려주고(상태는 산다), 띄운 하위 프로세스도 같이
                 # 멈춘다. 시그널을 무시하는 코드만 kill 로 간다.
@@ -167,16 +208,17 @@ class PyWorker:
                     os.killpg(proc.pid, signal.SIGINT)
                 except OSError:
                     pass
-                t.join(INTERRUPT_GRACE_S)
-                if t.is_alive():
+                line = reading.wait(INTERRUPT_GRACE_S)
+                if line is None:
                     self.kill()
                     return PyResult(False, timed_out=True, lost=self._lost, fresh=fresh)
-            line = box.get("line") or b""
             if not line:
+                had = bool(self._last_state)
                 self.kill()
+                gone = " — its state is gone" if had else ""
                 return PyResult(
                     False,
-                    exc="python worker exited unexpectedly — its state is gone",
+                    exc=f"python: the interpreter exited while running this code{gone}",
                     lost=self._lost,
                     fresh=fresh,
                 )

@@ -5,13 +5,20 @@ import 하지 않는다: 모델이 쓰는 인터프리터(작업 환경의 ``pyt
 설치된 인터프리터와 다를 수 있고(harbor 컨테이너의 시스템 python), 거기엔 우리
 패키지가 없다. 문법은 3.8 수준으로 둔다.
 
-프로토콜은 JSON 한 줄씩: stdin 으로 ``{"code": …, "figdir": …}`` 를 받고,
+프로토콜은 JSON 한 줄씩: 시작하면 먼저 ``{"ready": true}`` 를 보내고(부모는 이
+인사 전에 죽은 것을 "이 인터프리터로는 안 된다" 로 가른다, v10.78.0), stdin 으로 ``{"code": …, "figdir": …}`` 를 받고,
 시작 때 복제해 둔 원래 stdout(``_proto``)으로 ``{"ok", "out", "value", "exc",
 "state", "figures"}`` 를 보낸다. 실행 중의 fd 1·2 는 호출마다 임시 파일로 돌려
 ``print`` 와 자식 프로세스의 출력이 **같은 순서로 한 흐름에** 잡히고, 프로토콜
 채널은 더럽혀지지 않는다.
 
-상태(전역 dict)는 호출 사이에 그대로 남는다 — 이 도구의 존재 이유. 타임아웃에
+상태는 호출 사이에 그대로 남는다 — 이 도구의 존재 이유. 셀은 진짜 ``__main__``
+모듈(``sys.modules["__main__"]``)의 이름 공간에서 돈다(v10.78.0, Jupyter 와 같다):
+dict 만 쓰면 셀의 함수는 ``__module__ == "__main__"`` 인데 ``__main__`` 은 이
+스크립트라, pickle(multiprocessing fork Pool)·``unittest.main()``·``doctest``·
+dataclass 의 문자열 ``ClassVar`` 가 셀의 이름을 찾지 못했다. spawn 방식의 Pool
+은 자식이 ``__main__`` 을 다시 import 할 수 없어 여전히 안 된다(멈추면 타임아웃이
+끊는다 — 대화형 python 과 같은 한계). 타임아웃에
 부모가 보내는 SIGINT 는 실행 중일 때만 ``KeyboardInterrupt`` 로 받고(회신에
 ``interrupted``), 쉬는 동안은 무시한다 — 회신 직후에 닿은 시그널이 프로세스를
 죽이지 않게.
@@ -29,9 +36,9 @@ import signal
 import sys
 import tempfile
 import traceback
+import types
 
 FILENAME = "<python>"
-STATE_MAX = 20
 VALUE_MAX = 4000
 
 
@@ -151,7 +158,12 @@ def _run(code, g):
     멈추고 전역 상태는 그대로다. 그 밖의 시간엔 무시."""
     signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        body, expr = _split_last_expr(code)
+        try:
+            body, expr = _split_last_expr(code)
+        except SyntaxError as e:
+            # 실행 전의 오류 — 모델의 코드 줄만 뜻이 있다(ast.py 프레임 없이).
+            text = "".join(traceback.format_exception_only(type(e), e)).rstrip()
+            return False, None, text, False
         exec(compile(body, FILENAME, "exec"), g)  # noqa: S102 — 이 파일의 존재 이유
         if expr is not None:
             val = eval(compile(expr, FILENAME, "eval"), g)
@@ -162,13 +174,15 @@ def _run(code, g):
                 r = r[:VALUE_MAX] + f"… ({len(r):,} chars)"
             return True, r, None, False
         return True, None, None, False
-    except SystemExit:
-        return (
-            False,
-            None,
-            "SystemExit — do not call exit()/quit() here; just end the code.",
-            False,
+    except SystemExit as e:
+        # 문자열 코드는 이미 출력에 찍혔다 — 정수만 괄호로(unittest 는 bool 을 준다).
+        code_ = int(e.code) if isinstance(e.code, int) else None
+        head = "SystemExit" if code_ is None else f"SystemExit({code_})"
+        text = (
+            f"{head} — the interpreter is still running and its state is kept. "
+            "Code here should end by finishing, not by `exit`, `quit` or `sys.exit`."
         )
+        return False, None, text, False
     except BaseException as e:
         lines = traceback.format_exception(*sys.exc_info())
         # 우리 프레임(이 파일) 은 뺀다 — 모델에겐 자기 코드의 줄만 뜻이 있다.
@@ -189,7 +203,14 @@ def main():
     sys.path[0] = ""
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # 실행 중에만 받는다(`_run`)
     proto = os.fdopen(os.dup(1), "w", buffering=1)
-    g = {"__name__": "__main__", "__builtins__": __builtins__}
+    # 이 스크립트의 모듈은 루프가 끝날 때까지 쥐어 둔다 — 함수들의 globals 가 거기 있다.
+    script = sys.modules["__main__"]  # noqa: F841
+    main_mod = types.ModuleType("__main__")
+    main_mod.__builtins__ = __builtins__
+    sys.modules["__main__"] = main_mod
+    g = main_mod.__dict__
+    proto.write(json.dumps({"ready": True}) + "\n")
+    proto.flush()
     stdin_fd = os.dup(0)
     reader = os.fdopen(stdin_fd, "r")
     while True:

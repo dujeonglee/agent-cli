@@ -20,6 +20,7 @@
 | (전체) 표기 | 구현 | 도구 22개·안내·시스템 절·꼬리·넛지·오류 문구 표기 통일, "You sent:" 줄·반복 호출 넛지를 문장으로, monitor 오류의 모르는 이름(match/silence) 수정 | 1a75cb0a |
 | (압축) | 구현 | 압축 예고 메모리 문장: 기준 "앞으로의 일이 쓰지 않을 것" + 끝난 단계의 메모, memory 없는 루프엔 문장 생략 | 08f090e6 |
 | `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 구현 | ① id 할당기 하나(id 가 곧 키, 순번 삭제) ② `ask` 는 사람에게만·`answer` 삭제, `reply` 의 `to` 삭제, `message`·`agent` 결과가 id 를 말함, 봉투 한 모양, 거부 문구가 접두로 종류를 말함; wait 를 건너가는 빚·main wait 정산 비대칭 수정·순환 대기 가드 | 1a7dc454, (②) |
+| `python` | 구현 (v10.78.0) | 셀은 진짜 `__main__` 모듈에서(pickle·fork Pool·unittest), 파싱 SyntaxError 에 하니스 프레임 없음, 인터프리터는 PATH `python3`→`python` 뿐(`AGENT_CLI_PYTHON`·agent-cli 자기 인터프리터 폴백 삭제, 없으면 "없다 — 설치하면 다음 호출부터"), 시작 인사로 인터프리터 불량과 코드의 프로세스 종료를 가름, `timeout`·`reset`·SystemExit 문구, 패키지 짝 3개 — 개정안 https://claude.ai/artifact/UNSJtA7HTs5SyvE72Zts4W, Fable 리뷰 3회 | (이 커밋) |
 | `shell` | 구현 | 시간 초과 때 프로세스 그룹째 끝내기(버그 — apt-get 이 dpkg 잠금을 쥔 채 남음), 시간 초과 결과(끝냈다·출력 끝 8줄·`background` 교정), 설명에 결과 모양(`[stderr]`·`[exit code: N]`), 작업 종류 나열 삭제, 거부 문구 표기 | 6ec4b40c |
 
 ## TODO
@@ -28,7 +29,9 @@
 - [x] 소통·종결 묶음 구현: ① id 통일(내부, 모델 문구 그대로) ② B·C·D·E(모델 문구) — 개정안 https://claude.ai/artifact/3iJsAjeva3YB4wwWNcPdYF
 - [ ] 상주 에이전트 둘로 실제 모델 시나리오 확인(요청·회신·알림·사람에게 묻기·wait)
 - [ ] 후보(보류): 층 규칙 `complete` → `wait` — 넷이 모두 맞을 때만: 상주 루프(complete 가 아무에게도 보고 안 함), 이 런에 갚지 않은 `r-` 남음, 깨울 원인 있음(회신 대기·작업·monitor), `complete` 가 닫을 `u-`·`n-` 없음. `result` 는 `rewritten_from` 에. 원칙을 "결과 같음"→"이 루프에서 효과 같음"으로 넓히는 일이라, ② 뒤 실제 `complete` 오용을 보고 결정
-- [ ] 남은 도구 검토: `code_index`, `python`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `agent`, `run_skill`
+- [x] `python` 검토·구현 (docs/python-tool/DESIGN.md §7)
+- [ ] 후보: `wait` 의 기다림 상한 — v10.77.1 r1 의 시간 초과 둘(large-scale vim 18분·video OCR)이 상한 없는 `wait` 로 끝났다
+- [ ] 남은 도구 검토: `code_index`, `fetch`, `browser`, `monitor`, `schedule`, `snapshot`, `history`, `memory`, `agent`, `run_skill`
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)
 - [ ] 전체 벤치 측정 — 사용자 지시 시 한 번에 (9과제, GLM; 35B 는 그때 결정). 볼 지표: 층이 바꾼 수·같은 이미지 다시 보기·압축 뒤 다시 보기, read_file 모드별·셸 파일 보기 수, heredoc 실패, 같은 파일 다시 쓰기, 줄 번호 ref 수, "You sent:" 뒤 재시도 성공
