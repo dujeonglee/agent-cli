@@ -1,8 +1,9 @@
 """장부 P2 (v10.55.0, docs/ledger/DESIGN.md) — main 앞 메일이 열린 항목이 된다.
 
 규칙 하나: **따로 닫는 행동이 있는 빚이면 그 목록(Owed Replies), 없으면 Open
-Requests.** 질문·회신 기대 메시지는 이미 빚이고 독촉은 새 항목이 아니다 — 나머지
-일곱(회신·답·통지·모니터·작업·감사·사망)이 `[nK] (mail)` 로 올라 `complete` 의
+Requests, 이미 열린 것의 재알림이면 장부 밖.** 어느 갈래인지는 만드는 쪽이 말한다
+(v10.78.1, §14): 회신 기대는 `expects_reply`, 장부 밖은 `ledger: "none"`. 나머지
+(회신·답·통지·모니터·작업·감사·사망)가 `[nK] (mail)` 로 올라 `complete` 의
 `answers` 로 닫힌다. 깨우기 런은 시작 메시지 없이 열린다 — 그 런이 처리할 것은
 장부가 말한다.
 """
@@ -88,13 +89,52 @@ class TestWhichMailBecomesAnItem:
     @pytest.mark.parametrize(
         "reply",
         [
-            {"kind": "question", "key": "agt-a", "id": "q-1"},  # answer(id) 로 닫는 빚
-            {"kind": "reminder"},  # 기존 빚을 다시 알릴 뿐
             {"kind": "peer_message", "key": "agt-a", "expects_reply": True},  # 회신 빚
+            {"kind": "monitor", "ledger": "none"},  # 만드는 쪽이 장부 밖이라 했다
+            {"kind": "reply", "key": "agt-a", "ledger": "none"},
         ],
     )
-    def test_debts_and_reminders_stay_out(self, reply):
+    def test_debts_and_declared_out_of_ledger_mail_stay_out(self, reply):
         assert mail_item({**reply, "item_id": "n-4"}) is None
+
+    @pytest.mark.parametrize("kind", ["question", "reminder"])
+    def test_the_kind_name_alone_no_longer_decides(self, kind):
+        """v10.78.1: 장부 밖은 ``ledger: "none"`` 로 선언한다 — 종전의 kind 문자열
+        목록(``question``·``reminder``)은 만드는 곳이 없는 죽은 분기였다."""
+        assert mail_item({"kind": kind, "item_id": "n-4"}) == ("n-4", "mail")
+
+    def test_ledger_item_is_the_default_and_may_be_explicit(self):
+        assert mail_item({"kind": "job", "item_id": "n-4"}) == ("n-4", "mail")
+        assert mail_item({"kind": "job", "ledger": "item", "item_id": "n-4"}) == (
+            "n-4",
+            "mail",
+        )
+
+
+class TestOutOfLedgerMailIsNotPersisted:
+    """장부 밖 메일은 "지금" 에만 참이다 — agents.json 미러에 남기지 않는다
+    (v10.78.1, §14). 다음 세션의 첫 턴에 낡은 채 배달되면 존재하지 않는 것에 대해
+    말하게 된다. 열린 항목이 되는 메일은 종전처럼 남는다."""
+
+    def _mirror(self, reg):
+        import json
+
+        return json.loads(reg._state_path().read_text(encoding="utf-8"))
+
+    def test_pending_mirror_drops_declared_none_and_keeps_items(self, tmp_path):
+        reg = AgentRegistry(tmp_path / "reg")
+        reg._push_reply(dict(JOB))
+        reg._push_reply({"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
+        assert reg.arrived_for("main") == 2  # 배달은 둘 다 된다
+        assert [r["kind"] for r in self._mirror(reg)["pending"]] == ["job"]
+
+    def test_restore_sees_only_the_items(self, tmp_path):
+        reg = AgentRegistry(tmp_path / "reg")
+        reg._push_reply(dict(JOB))
+        reg._push_reply({"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
+        reg2 = AgentRegistry(tmp_path / "reg")
+        reg2.restore()
+        assert [r["kind"] for r in reg2.drain_replies()] == ["job"]
 
 
 class TestWakeRunHasNoStarter:

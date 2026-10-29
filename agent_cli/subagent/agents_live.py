@@ -78,10 +78,19 @@ def clamp_max_agents(value) -> int:
 _MAX_PEER_HOPS = 6
 
 
+def _persists(mail: dict) -> bool:
+    """이 메일이 agents.json 미러에 남을 것인가 — 장부 밖(``ledger: "none"``) 메일은
+    "지금" 에만 참인 재알림이라 남기지 않는다. 다음 세션의 첫 턴에 낡은 채 배달되면
+    존재하지 않는 것에 대해 말하게 된다 (docs/ledger/DESIGN.md §14)."""
+    return mail.get("ledger") != "none"
+
+
 #: 배달된 peer 회신의 꼬리표 (v10.1.0 문구). 종전 "`complete` alone reports to no
 #: one" 은 받은 쪽이 작별 인사를 `message` 로 되보내게 만들었고(빚 생성 → 핑퐁),
 #: 실측(cnr60g) 게임 종료 뒤 작별 인사만 다섯 왕복이 돌았다. 되받아칠 것이
 #: 없고 ack 도 원치 않는다는 사실을 말한다.
+
+
 def envelope(
     kind: str, item_id: str, who: str, body: str, *, re: str = "", todo: str = ""
 ) -> str:
@@ -2282,12 +2291,14 @@ class AgentRegistry:
                     "state": "dead" if (not tm.revivable or tm.error) else "idle",
                     "error": tm.error,
                     # v9.24.5: 줄 선 요청과 처리 중이던 요청 — 재시작이 되살린다.
-                    "inbox": [dict(i) for i in list(tm.inbox_items)],
+                    # 장부 밖 메일(``ledger: "none"``)은 "지금" 에만 참이라 남기지
+                    # 않는다 (docs/ledger/DESIGN.md §14).
+                    "inbox": [dict(i) for i in list(tm.inbox_items) if _persists(i)],
                     "in_flight": [dict(i) for i in list(tm.in_flight)],
                 }
             )
         with self._cv:
-            pending = [dict(r) for r in self._pending]
+            pending = [dict(r) for r in self._pending if _persists(r)]
             # 열린 질문은 resume 이 **되살린다**(§3.9) — 그러려면 남아야
             # 한다. 되살리지 못한 것만 `stale_questions` 로 알린다.
             questions = [q.as_dict() for q in self._questions.values()]

@@ -82,9 +82,9 @@
 
 | kind | 회계 |
 |---|---|
-| `question` | 질문 답 빚(3.3) |
+| `question` | 질문 답 빚(3.3) — *조사 당시 표. 이 kind 의 메일을 만드는 곳은 없었다(§14)* |
 | `peer_message` + `expects_reply` | 회신 빚(3.2) |
-| `reminder` | 새 빚 아님 — 기존 질문 빚 상기 |
+| `reminder` | 새 빚 아님 — 기존 질문 빚 상기 — *같음, 만드는 곳 없음(§14)* |
 | `reply`·`answer`·`peer_message`(notice/회신)·`monitor`·`job`·`harness`·`died` | **없음** (회신은 `answers` 닉네임만 `run_authors` 로 승계) |
 
 ### 3.5 표시·영속 표면
@@ -194,8 +194,8 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 
 ## 10. P2 구현 (v10.55.0)
 
-- **메일 → 항목**: `core.mail_item(reply)` 이 규칙 하나로 가른다 — 질문·회신 기대 메시지·독촉은 장부 밖(빚 목록이 이미 쥔다),
-  나머지 일곱은 `[n<mail_id>] (mail) "<곧 들어갈 관찰의 머리줄>"`. `_deliver_agent_mail` 이 `ledger.add_request` 하고
+- **메일 → 항목**: `core.mail_item(reply)` 이 규칙 하나로 가른다 — 회신 기대 메시지는 장부 밖(빚 목록이 이미 쥔다),
+  나머지는 `[n<mail_id>] (mail) "<곧 들어갈 관찰의 머리줄>"`. (당시엔 `question`·`reminder` kind 도 장부 밖 목록에 있었다 — §14 가 필드로 바꿨다.) `_deliver_agent_mail` 이 `ledger.add_request` 하고
   관찰 레코드에 `request_id` 를 찍는다. 작성자 칸은 `mail` 하나 — 무엇에서 왔는지는 머리줄이 말한다.
 - **깨우기 문장 제거**: `RunRequest.loop_query` — 깨우기 런은 `""`. `_setup` 은 시작 메시지 없이 끝나고 첫 입력은 첫 턴 경계가
   배달한 메일 관찰이다. 배달된 것이 없으면(다른 런이 이미 가져감) LLM 을 부르지 않고 빈 결과로 끝낸다. `WAKE_TEXT` 는 큐를
@@ -358,6 +358,29 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 ## 13. `wait` 와의 관계 (v10.65.0)
 
 `complete` 는 닫는 행위다. 띄운 작업·모니터·에이전트를 기다릴 때는 `wait` — 아무것도 닫지 않고 런을 끝내며, 열린 요청은 `ctx.park_requests` 로 다음 런의 장부에 오른다(장부는 런 수명 그대로). 기다리려고 `answers` 없는 complete 를 보내면 되돌림 관찰이 깨울 것이 있을 때 "call `wait` instead" 를 붙인다. `docs/wait/DESIGN.md`.
+
+## 14. 메일의 장부 위치는 만드는 쪽이 선언한다 (v10.78.1)
+
+main 앞 메일의 세 갈래(§2) 중 회신 빚은 처음부터 필드(`expects_reply` → `r-`)였지만, 나머지 둘은 소비자가
+`kind` 문자열을 다시 읽어 갈랐다 — `mail_item` 의 `kind in ("question", "reminder")` 목록. 2026-10-30 조사:
+**그 kind 로 메일을 만드는 곳은 저장소에 없다.** 질문은 메일이 아니라 질문 목록(`_questions`)·❓ 트레이로 가고,
+독촉은 `_adopt_questions` 의 주석에만 남은 이름이다. 죽은 목록이 §3.4 표와 테스트에 "일곱 종류 + 장부 밖 둘" 로
+굳어 있었다. 종류를 하나 더하려면(`wait` 중간 깨우기, docs/wait/DESIGN.md) 이 목록·`build_reply_record` 의
+머리줄 분기·`_save_state` 영속 세 곳에 문자열을 덧붙여야 했고, 하나를 빠뜨리면 빈 라벨 카드가 된다.
+
+**규칙:** 메일을 만드는 쪽이 적는다.
+
+- `expects_reply: true` — 회신 빚(`r-`). 종전과 같다.
+- `ledger: "none"` — 장부 밖. 이미 열린 것의 재알림처럼 "지금" 에만 참인 메일. `mail_item` 이 None 을 돌려주고,
+  `_save_state` 가 agents.json 미러(main `pending`·상주 `inbox`)에서 뺀다 — 다음 세션 첫 턴에 낡은 채 배달되면
+  존재하지 않는 것에 대해 말하게 된다.
+- 둘 다 없으면 열린 항목(`n-`). 종전의 기본과 같다 — 작업·모니터·회신·사망·하니스 보고는 아무것도 적지 않는다.
+
+`build_reply_record` 의 머리줄 분기는 그대로다 — 종류마다 머리줄이 다른 것은 정당한 분기다.
+
+**행동 불변:** 이 판에서 `ledger: "none"` 을 적는 생산자는 아직 없다. 기존 메일 전 종류의 장부 결과는 그대로이고,
+`tests/test_ledger_mail.py` 가 그것(기본 → 항목, `expects_reply` → 밖, kind 이름만으로는 아무것도 정해지지 않음,
+`"none"` 은 영속되지 않음)을 고정한다. 첫 사용자는 `wait` 의 중간 깨우기다.
 
 ## 9. 열린 질문
 

@@ -64,12 +64,16 @@ def mail_item(reply: dict) -> tuple[str, str] | None:
     """main 앞 메일 1건 → 장부 항목 ``(id, "mail")``, 또는 None(장부 밖).
 
     규칙 하나(docs/ledger/DESIGN.md §2): **따로 닫는 행동이 있는 빚이면 그
-    목록(Owed Replies), 없으면 Open Requests.** 질문(`answer(id)`)·회신을
-    기대하는 메시지(`agent request`)는 이미 빚이고, 독촉(`reminder`)은 그 빚을
-    다시 알릴 뿐 새 항목이 아니다. 나머지 일곱 — 회신·답·통지·모니터·작업·
-    감사·사망 — 이 여기 오른다. id 는 메일박스가 찍은 ``item_id``(``n-<k>``)."""
-    kind = reply.get("kind") or "reply"
-    if kind in ("question", "reminder") or reply.get("expects_reply"):
+    목록(Owed Replies), 없으면 Open Requests, 이미 열린 것의 재알림이면 장부 밖.**
+    어느 갈래인지는 메일을 **만드는 쪽**이 말한다(§14, v10.78.1): 회신을 기대하면
+    ``expects_reply``(빚 — `_stamp_mail` 이 ``r-`` 를 찍는다), 장부 밖이면
+    ``ledger: "none"``. 둘 다 아니면 열린 항목이다 — 회신·답·통지·모니터·작업·
+    감사·사망이 여기 오른다. id 는 메일박스가 찍은 ``item_id``(``n-<k>``).
+
+    종전엔 여기서 ``kind`` 문자열 목록(``question``·``reminder``)으로 장부 밖을
+    가렸다 — 그 kind 로 메일을 만드는 곳은 없었고(질문은 질문 목록·트레이로 간다),
+    종류를 더할 때마다 이 목록·렌더·영속 세 곳에 문자열을 덧붙여야 했다."""
+    if reply.get("expects_reply") or reply.get("ledger") == "none":
         return None
     # 작성자 칸은 "mail" 하나 — 무엇에서 왔는지는 머리줄이 말한다
     # (`🧵 job #1 finished …`, `agent agt-x reply (success)`).
