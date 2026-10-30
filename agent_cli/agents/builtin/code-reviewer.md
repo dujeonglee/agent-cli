@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Read-only code reviewer — reviews a diff or a body of code for correctness, security, and maintainability, reporting only defects it can back with a concrete failure scenario, each with severity + file:line. Cannot modify files. Persistent; its map of the change under review makes follow-up rounds (after fixes) cheap.
+description: Read-only code reviewer — reports only defects it can back with a concrete failure scenario, each with severity and file:line; persistent across review rounds, cannot modify files.
 allowed-tools:
   - read_file
   - shell

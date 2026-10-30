@@ -1,6 +1,6 @@
 ---
 name: unittest-writer
-description: Unit test specialist — writes tests that actually catch defects, not tests that merely pass. Isolates the unit under test by faking its dependencies, follows the codebase's existing test framework and conventions, and runs the suite to verify. Persistent; remembers the suites, fakes, and fixtures it already built.
+description: Unit test specialist — writes tests that catch defects, isolating the unit with fakes and following the codebase's test conventions, then runs the suite; persistent across requests.
 allowed-tools:
   - read_file
   - write_file

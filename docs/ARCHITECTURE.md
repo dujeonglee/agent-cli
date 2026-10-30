@@ -238,7 +238,7 @@ agent_cli/
 │
 ├── agents/                         에이전트 정의 패키지
 │   ├── __init__.py          (1)
-│   └── builtin/                    패키지 내장 에이전트
+│   └── builtin/                    패키지 내장 에이전트 — **v10.86.0** description 7개가 짧은 한 문장(역할·읽기/쓰기·상주; 첫 문장 22–35 단어, `general` 만 둘째 문장에 전문가 라우팅; 역할과 설명은 `" — "` — `": "` 는 YAML 매핑): `## Agent Profiles` 절 620→427 토큰(GLM), 꼬리 로스터의 첫 문장 = 설명; 가드 tests/test_builtin_profile_descriptions.py
 │       ├── code-writer.md          구현 (파일 스코프·검증·에러 경로)
 │       ├── code-reviewer.md        읽기 전용 리뷰 (실패 시나리오·severity)
 │       ├── code-analyst.md         읽기 전용 분석 (콜패스·수명 추적)

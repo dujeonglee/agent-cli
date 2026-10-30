@@ -1,6 +1,6 @@
 ---
 name: code-analyst
-description: Read-only code analyst — explains how code works by reading the source, tracing call paths and data flow, execution/concurrency context, and object lifetimes, citing file:line for every claim. Persistent; its accumulated map of a subsystem makes follow-up questions cheap. It analyzes and explains — it does not judge defects (that is the reviewer's job) and cannot modify files.
+description: Read-only code analyst — explains how code works by tracing call paths, data flow and lifetimes, citing file:line; it does not judge defects or modify files; persistent, so follow-ups on the same subsystem are cheap.
 allowed-tools:
   - read_file
   - shell
