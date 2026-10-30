@@ -127,3 +127,28 @@ def on_session_end(ctx):     # 마지막 checkpoint (세션 끝 상태도 복원
 5. **`shutil` 만** — 외부 `cp` 는 OS 의존이라 쓰지 않는다.
 6. 상한: **장치만, 기본 무제한**. 최소 간격 10초. 시작 스냅샷은 전체 복사(shell 이 뭘
    만질지 모르므로 첫 shell 전에 전체 상태가 있어야 한다; 모델의 첫 shell 은 보통 1턴).
+
+## 6. 수리 — 벤치 실측 뒤 (v10.80.0, 2026-10-30)
+
+보관된 harbor 런 전부(96 잡·716 trial)에서 `snapshot` 호출 166건을 셌다: restore 110(복구 48 ·
+"다른 판 없음" 59 · pathspec 오류 3), list 56(그중 18건이 `path` 를 함께 보냈으나 버려짐).
+검토 리포트: snapshot·history·memory 묶음(2026-10-30). 결함 여섯 중 다섯을 여기서 고치고
+S5 는 사용자 결정으로 "유지 + 라벨" 이다.
+
+| | 결함 | 수리 |
+|---|---|---|
+| S1 | **절대 경로가 늘 실패.** 모델은 과제문의 `/app/main.db-wal` 을 그대로 넣는다. `restore()` 가 후보를 고르는 `cat-file -e <commit>:<path>` 의 path 는 트리 기준 상대 경로라 절대 경로는 없는 객체 → 후보 전부 탈락 → "no snapshot holds a different version". 실패 59건의 88%(52건). `at` 을 준 호출만 `checkout at -- <abs>` 로 가서 통했고, 모델은 list→at 복사로 2~4턴을 우회했다(financial 한 trial 33회 호출). | `GitSnapshot.relative(path)` — 절대면 `resolve().relative_to(workspace)`(밖이면 분명한 오류), `./`·`..` 은 `normpath` 로 접음. restore·list 둘 다 이 경로를 쓴다. |
+| S2 | `list` 가 `path` 를 버린다(18건). 모델은 "이 파일의 판들" 을 기대한다. | `log(path=)` = `git log -- <path>`; 머리줄 "Snapshots that changed <path>", 없으면 "No snapshot contains …". |
+| S3 | 훅의 `MUTATING_TOOLS` 는 v10.66.0 부터 `python` 을 포함하지만 시스템 섹션·도구 설명은 셋만 말했다. | 상수를 `snapshot.py` 로 올리고(`MUTATING_TOOLS`·`MUTATING_TOOLS_PHRASE`) 훅과 두 문구가 같은 것을 본다. |
+| S4 | 라벨 "before shell (turn 18)" 만으로는 어느 명령 직전인지 history 를 열어야 안다. | `checkpoint_label(tool, turn, summary)` — PreToolUse 의 `ctx.tool_input` 을 그 도구의 `summary_arg`(shell·python 전문, edit·write 경로)로 요약해 한 줄·60자로 접어 붙인다: `before shell (turn 7): sqlite3 main.db`. |
+| S5 | 저장소가 세션을 넘는다 — `init()` 은 HEAD 가 있으면 재사용. list 에 이전 세션의 "turn 7" 이 섞인다. | **유지**(사용자 결정). 시작 커밋을 `--allow-empty` 로 **항상** 찍어 경계로 삼고 라벨에 세션 id: `session start (1761804554)`. 종전엔 워크스페이스가 그대로면 시작 커밋이 없어 경계도 없었다. 턴 체크포인트는 여전히 변경 없으면 커밋 없음. |
+| S6 | 복구 결과 "restored main.db-wal from 610f3ac" 뿐 — 모델이 같은 명령을 또 돌려 또 지운다(financial 33회·db-wal 반복). | 결과에 원인의 자리: `— intact at "<멀쩡했던 마지막 스냅샷 라벨>", changed by "<달라진 채 찍힌 첫 스냅샷 라벨>".` 달라진 상태가 아직 어느 스냅샷에도 없으면 `— intact at "<가장 최근 스냅샷>", changed after that snapshot.` 라벨이 S4 의 명령 요약을 담으므로 이 한 줄이 "turn 7 의 sqlite3 가 지웠다" 를 말한다. `at` 을 준 복구는 그 라벨만. |
+
+실패 문구 둘로 갈랐다: 어느 스냅샷에도 없는 경로는 `no snapshot contains 'app/main.db-wal' (paths are
+relative to the working directory)`, 전부 지금과 같은 내용이면 `every snapshot of 'main.db' matches what is on
+disk now — nothing to restore`. 종전 한 문구("no snapshot holds a different version")는 두 경우를 구별하지 못해
+모델이 경로 오타를 "판이 없다" 로 읽었다.
+
+**지표**(다음 벤치, GLM 2회): restore 의 "다른 판 없음" 비율(59/110 → 0 근방), 복구 뒤 같은 파괴 반복 수,
+list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스트 `tests/test_snapshot.py`
+(`TestSessionBoundary`·`TestLabel`·원인 줄·경로 정규화), `tests/test_snapshot_tool.py`.

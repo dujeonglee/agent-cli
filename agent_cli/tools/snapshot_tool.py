@@ -2,9 +2,10 @@
 
 The snapshots themselves are taken by the built-in hook
 (``hooks/builtin/10_snapshot.py``) — at session start and just before every
-shell / edit_file / write_file call. This tool is the model's way back: one
-call, no PATH or git knowledge needed. It is native like ``monitor`` and
-``schedule`` (the store lives in this process — ``snapshot.get_snapshot``).
+call of ``snapshot.MUTATING_TOOLS`` (shell / python / edit_file / write_file).
+This tool is the model's way back: one call, no PATH or git knowledge needed.
+It is native like ``monitor`` and ``schedule`` (the store lives in this
+process — ``snapshot.get_snapshot``).
 
 A CLI (``agent-cli snapshot …``) existed briefly in the same release and was
 removed before shipping: telling the model to shell out to our own binary
@@ -14,7 +15,14 @@ Modes:
 - ``restore`` — ``path`` (+ optional ``at`` commit). Without ``at`` the most
   recent snapshot whose content differs from what is on disk now — so a damaged
   state that got committed at the next checkpoint does not shadow the good one.
-- ``list`` — the snapshots (newest first).
+  The result names the last snapshot where the path was still intact and the
+  first where it had changed (v10.80.0, docs/snapshot/DESIGN.md §6).
+- ``list`` — the snapshots (newest first); with ``path`` only those that
+  changed that path (v10.80.0 — the argument used to be accepted and ignored).
+
+Paths may be absolute when inside the working directory (the model copies
+``/app/…`` from task text; v10.80.0 — before that every absolute path failed
+with "no snapshot holds a different version", 52 of 59 failures in the bench).
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+from agent_cli.snapshot import MUTATING_TOOLS_PHRASE
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -35,11 +44,12 @@ class SnapshotTool(Tool):
     requires_handler = "snapshot"
     description = (
         "Restore a file from the workspace snapshots the harness takes automatically "
-        "(at session start and before each `shell` / `edit_file` / `write_file` call). "
+        f"(at session start and before each {MUTATING_TOOLS_PHRASE} call). "
         'Use it when an input file got damaged or disappeared: `mode` "restore" with '
         "the file `path` brings back the most recent snapshot whose content differs "
-        "from what is on disk now (optional `at` picks a specific snapshot). `mode` "
-        '"list" shows the snapshots, newest first.'
+        "from what is on disk now and tells you which call changed it (optional `at` "
+        'picks a specific snapshot). `mode` "list" shows the snapshots, newest first; '
+        "with `path`, only the snapshots that changed that path."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -53,8 +63,9 @@ class SnapshotTool(Tool):
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    '"restore": file or directory to bring back (relative to the '
-                    "working directory)"
+                    '"restore": file or directory to bring back; "list": show only '
+                    "the snapshots that changed it. Relative to the working "
+                    "directory, or absolute inside it."
                 ),
             },
             "at": {
@@ -93,16 +104,23 @@ class SnapshotTool(Tool):
             )
             return ToolResult(False, error=f"snapshot: not available — {why}")
         mode = str(args.get("mode", "")).strip()
+        path = str(args.get("path", "")).strip()
         if mode == "list":
-            rows = store.log()
-            if not rows:
-                return ToolResult(True, output="No snapshots yet.")
+            if path:
+                rel, err = store.relative(path)
+                if rel is None:
+                    return ToolResult(False, error=f"snapshot: {err}")
+                rows = store.log(path=rel)
+                if not rows:
+                    return ToolResult(True, output=f"No snapshot contains {rel!r}.")
+                head = f"Snapshots that changed {rel} (newest first):"
+            else:
+                rows = store.log()  # 시작 커밋은 항상 있다 — 빈 목록은 없다
+                head = "Snapshots (newest first):"
             return ToolResult(
                 True,
-                output="Snapshots (newest first):\n"
-                + "\n".join(f"- {sha}  {msg}" for sha, msg in rows),
+                output=head + "\n" + "\n".join(f"- {sha}  {msg}" for sha, msg in rows),
             )
-        path = str(args.get("path", "")).strip()
         at = (str(args.get("at", "")).strip() or None) if args.get("at") else None
         ok, msg = store.restore(path, at=at)
         return (

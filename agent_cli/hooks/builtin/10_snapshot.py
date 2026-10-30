@@ -6,7 +6,11 @@
   실패했다). 저장소를 부트스트랩에서 세우는 이유: `snapshot` 도구의 광고 여부
   (`requires_handler="snapshot"`)가 LoopConfig 조립 때 정해지기 때문. 끔·git 없음·
   실패의 사람용 한 줄도 거기서 난다.
-- ``PreToolUse``: shell·python·edit_file·write_file 직전 체크포인트(최소 간격 안이면 건너뜀).
+- ``PreToolUse``: `snapshot.MUTATING_TOOLS`(shell·python·edit_file·write_file) 직전
+  체크포인트(최소 간격 안이면 건너뜀). 라벨은 `checkpoint_label` — 도구·턴에 그 호출의
+  요약(`Tool.summary_arg`: 명령·경로)을 붙여 `list` 만 보고 "망치기 직전" 을 고를 수
+  있게(v10.80.0; 종전 "before shell (turn 18)" 만으로는 어느 명령인지 history 를
+  열어야 했다).
 - ``OnSessionEnd``: 마지막 체크포인트 — 세션 끝 상태도 복원 가능하게.
 
 여러 루프(main·상주·스킬·일회성)가 같은 세션 러너를 쓰므로 이 훅은 루프마다 불린다
@@ -19,9 +23,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_cli.snapshot import MUTATING_TOOLS, checkpoint_label
+
 EVENTS = ["OnSessionStart", "PreToolUse", "OnSessionEnd"]
 
-MUTATING_TOOLS = ("shell", "python", "edit_file", "write_file")
 _SECTION = "Workspace snapshot"
 
 
@@ -44,6 +49,22 @@ def on_session_start(ctx):
     ctx.inject_system_section(_SECTION, store.notice())
 
 
+def _call_summary(tool_name: str, tool_input) -> str:
+    """호출의 요약 — 도구 자신의 `summary_arg`(shell·python 은 전문, edit·write 는 경로).
+    접는 것은 `checkpoint_label` 의 일."""
+    if not isinstance(tool_input, dict):
+        return ""
+    from agent_cli.tools.registry import TOOLS
+
+    tool = TOOLS.get(tool_name)
+    if tool is None:
+        return ""
+    try:
+        return str(tool.summary_arg(tool_input) or "")
+    except Exception:  # 라벨은 덤 — 요약이 실패해도 체크포인트는 찍는다
+        return ""
+
+
 def pre_tool_use(ctx):
     if ctx.tool_name not in MUTATING_TOOLS or not _enabled():
         return
@@ -51,7 +72,8 @@ def pre_tool_use(ctx):
 
     store = get_snapshot(Path.cwd())
     if store is not None and store.enabled:
-        store.checkpoint(f"before {ctx.tool_name} (turn {ctx.turn})")
+        summary = _call_summary(ctx.tool_name, ctx.tool_input)
+        store.checkpoint(checkpoint_label(ctx.tool_name, ctx.turn, summary))
 
 
 def on_session_end(ctx):

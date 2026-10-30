@@ -1440,7 +1440,9 @@ def run(
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
     build_py_registry()  # 🐍 python 워커 — 레지스트리가 서야 도구가 광고된다 (v10.66.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
-    build_snapshot_store()  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
+    build_snapshot_store(
+        session.session_id
+    )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
 
     _disk_hooks = _load_hooks() or None
@@ -2423,7 +2425,9 @@ def web(
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
     build_py_registry()  # 🐍 python 워커 — 레지스트리가 서야 도구가 광고된다 (v10.66.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
-    build_snapshot_store()  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
+    build_snapshot_store(
+        session.session_id
+    )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
     # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)

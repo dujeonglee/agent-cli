@@ -354,19 +354,27 @@ python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
 
 하니스가 작업 디렉터리를 **git 그림자 저장소**(`.agent-cli/snapshot.git`, bare — 작업
 디렉터리엔 `.git` 이 생기지 않고, 이미 git 저장소여도 그 히스토리를 건드리지 않음)에
-자동으로 커밋해 둡니다: 세션 시작 때 한 번, 그 뒤 `shell`·`edit_file`·`write_file`
-호출 **직전**마다(최소 10초 간격, 변경 없으면 커밋 없음). 모델에겐 시스템 프롬프트로
-"망쳤으면 `snapshot` 도구(mode restore)" 만 알립니다.
+자동으로 커밋해 둡니다: 세션 시작 때 한 번(변경이 없어도 — 세션의 경계, 라벨에 세션 id),
+그 뒤 `shell`·`python`·`edit_file`·`write_file` 호출 **직전**마다(최소 10초 간격, 변경 없으면
+커밋 없음). 라벨은 `before shell (turn 7): sqlite3 main.db` 처럼 그 호출의 요약(명령·경로 앞
+60자)을 담아 목록만 보고 "망치기 직전" 을 고를 수 있습니다(v10.80.0). 모델에겐 시스템
+프롬프트로 "망쳤으면 `snapshot` 도구(mode restore)" 만 알립니다.
 
 - 왜 지시가 아니라 구조인가: "손대기 전에 백업하라" 는 지시는 로컬 35B 급이 무시합니다
   (실측 0/5). 반면 "망치면 여기서 복구하라" 는 구조는 따릅니다 — 벤치 `db-wal-recovery`
   (백업 없이 DB 를 열어 WAL 이 소멸하는 과제)가 0/5 → 2/3, 세 trial 모두 안내대로 복구.
 - 복구는 **네이티브 도구 `snapshot`** 입니다 — `{"mode":"restore","path":"main.db-wal"}` 한
   호출(기본은 **지금 디스크와 다른 가장 최근 판** — 망가진 상태가 다음 체크포인트에 커밋돼
-  있어도 그 전 판을 고름; `at` 로 특정 스냅샷), `{"mode":"list"}` 는 스냅샷 목록. `monitor`·
-  `schedule` 처럼 프로세스 안의 저장소를 직접 씁니다 — 쉘로 CLI 를 치게 하는 안은 PATH 에
-  기대고 도구와 중복이라 출시 전에 뺐습니다. 사람은 `git --git-dir=.agent-cli/snapshot.git
-  --work-tree=. log/checkout` 으로 같은 저장소를 봅니다.
+  있어도 그 전 판을 고름; `at` 로 특정 스냅샷), `{"mode":"list"}` 는 스냅샷 목록(`path` 를
+  주면 그 경로가 바뀐 스냅샷만). 경로는 작업 디렉터리 기준 상대 또는 그 안의 절대 경로
+  (v10.80.0 — 종전엔 과제문의 `/app/…` 를 그대로 넣은 절대 경로가 늘 "다른 판 없음" 으로
+  실패했습니다, 벤치 restore 실패 59건 중 52건). 복구 결과는 원인의 자리를 함께 말합니다:
+  `restored main.db-wal from 610f3ac — intact at "before shell (turn 7): sqlite3 main.db",
+  changed by "before shell (turn 9): ls"` — 같은 명령을 또 돌려 또 망치는 반복을 끊는 재료.
+  `monitor`·`schedule` 처럼 프로세스 안의 저장소를 직접 씁니다 — 쉘로 CLI 를 치게 하는 안은
+  PATH 에 기대고 도구와 중복이라 출시 전에 뺐습니다. 사람은 `git --git-dir=.agent-cli/snapshot.git
+  --work-tree=. log/checkout` 으로 같은 저장소를 봅니다. 저장소는 세션을 넘어 이어지며
+  `session start (<세션 id>)` 커밋이 경계입니다(docs/snapshot/DESIGN.md §6).
 - 범위: 작업 디렉터리 전체. 워크스페이스의 `.gitignore` 는 **무시**합니다(보호해야 할
   `*.db`·`data/` 가 거기 적혀 있기 일쑤). 제외: `.agent-cli`·`node_modules`·`__pycache__`·`.venv`.
   하위 git 저장소는 참조(gitlink)로만 기록되고 그 안의 커밋 안 된 변경은 담기지 않습니다 —

@@ -1,9 +1,14 @@
 """워크스페이스 git 스냅샷 (v10.36.0, docs/snapshot/DESIGN.md) — 실제 git 으로.
 
 고정하는 계약: 워크스페이스에 흔적 없음 · `.gitignore` 무시 · 우리 제외 목록은 pathspec
-(`--force` 가 info/exclude 를 무시하는 git 의 성질) · 변경 없으면 커밋 없음 · 삭제·훼손
-뒤 복원(`restore` 는 "지금과 다른 가장 최근 판") · 하위 저장소는 gitlink + 기록 ·
-사용자 전역 설정 차단 · git 없음 처리 · 노브 · 내장 훅의 안내는 성공 시에만.
+(`--force` 가 info/exclude 를 무시하는 git 의 성질) · 변경 없으면 커밋 없음(시작 커밋만
+예외 — 세션 경계) · 삭제·훼손 뒤 복원(`restore` 는 "지금과 다른 가장 최근 판") · 하위
+저장소는 gitlink + 기록 · 사용자 전역 설정 차단 · git 없음 처리 · 노브 · 내장 훅의
+안내는 성공 시에만.
+
+v10.80.0 (docs/snapshot/DESIGN.md §6): 절대 경로·`./`·`..` 정규화(`relative`) · 복구
+결과의 원인 줄(멀쩡했던 마지막 스냅샷 / 달라진 첫 스냅샷) · `log(path)` · 라벨에 호출
+요약(`checkpoint_label`) · 시작 커밋은 비어도 찍고 세션 id 를 단다.
 """
 
 from __future__ import annotations
@@ -16,7 +21,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.snapshot import GitSnapshot, get_snapshot, git_available, reset_snapshot
+from agent_cli.snapshot import (
+    LABEL_SUMMARY_CHARS,
+    MUTATING_TOOLS,
+    GitSnapshot,
+    checkpoint_label,
+    get_snapshot,
+    git_available,
+    reset_snapshot,
+)
 
 pytestmark = pytest.mark.skipif(not git_available()[0], reason="git not installed")
 
@@ -117,6 +130,9 @@ class TestRestore:
         ok, msg = s.restore("main.db-wal")
         assert ok, msg
         assert (ws / "main.db-wal").read_bytes() == b"wal-bytes"
+        assert msg.endswith(
+            '— intact at "session start", changed by "after damage".'
+        ), msg
 
     def test_damaged_in_place_file_gets_the_previous_version(self, ws):
         """HEAD 가 망가진 판이면 그 전 판 — "지금 디스크와 다른 가장 최근 스냅샷"."""
@@ -140,7 +156,61 @@ class TestRestore:
     def test_unknown_path_is_a_clean_failure(self, ws):
         s = _store(ws)
         ok, msg = s.restore("never-existed.txt")
-        assert not ok and "no snapshot" in msg
+        assert not ok and msg.startswith("no snapshot contains 'never-existed.txt'")
+        ok, msg = s.restore("main.db")
+        assert not ok and msg.startswith("every snapshot of 'main.db' matches")
+
+    def test_absolute_and_dotted_paths_are_normalised(self, ws):
+        """벤치 restore 실패 59건 중 52건은 과제문의 절대 경로(`/app/main.db-wal`)였다 —
+        `cat-file -e <commit>:<path>` 가 트리 기준 상대 경로만 받아 후보가 전부 걸러졌다.
+        `at` 을 준 호출(`checkout at -- <abs>`)만 통해 모델이 list→at 로 2~4턴을 우회했다."""
+        s = _store(ws)
+        assert s.relative(str(ws.resolve() / "src" / "a.py")) == ("src/a.py", "")
+        assert s.relative("./src/../src/a.py") == ("src/a.py", "")
+        assert s.relative("src/a.py/") == ("src/a.py", "")
+        rel, err = s.relative("/etc/passwd")
+        assert rel is None and "outside the working directory" in err
+        rel, err = s.relative("../x")
+        assert rel is None and "not a path inside the working directory" in err
+        rel, err = s.relative("  ")
+        assert rel is None and err == "`path` is empty"
+        (ws / "main.db-wal").unlink()
+        ok, msg = s.restore(str(ws.resolve() / "main.db-wal"))
+        assert ok, msg
+        assert msg.startswith("restored main.db-wal from ")
+        assert (ws / "main.db-wal").read_bytes() == b"wal-bytes"
+
+    def test_restore_names_where_the_file_was_last_intact(self, ws):
+        """원인의 자리: 멀쩡했던 마지막 스냅샷의 라벨(호출 요약 포함)과 달라진 채 찍힌
+        첫 스냅샷 — 모델이 같은 명령을 또 돌려 또 망치는 반복(financial 33회)을 끊는 재료."""
+        s = _store(ws)
+        (ws / "src" / "a.py").write_text("v2\n")  # 다른 파일만 바뀜 — wal 은 안 건드림
+        s.checkpoint("before shell (turn 5): ls", force=True)
+        s.checkpoint("before shell (turn 7): sqlite3 main.db", force=True)  # 변화 없음
+        (ws / "src" / "a.py").write_text("v3\n")
+        s.checkpoint("before shell (turn 7): sqlite3 main.db", force=True)
+        (ws / "main.db-wal").unlink()  # turn 7 의 sqlite3 가 지웠다
+        s.checkpoint("before shell (turn 9): ls -la", force=True)
+        ok, msg = s.restore("main.db-wal")
+        assert ok
+        assert msg.endswith(
+            '— intact at "before shell (turn 7): sqlite3 main.db", '
+            'changed by "before shell (turn 9): ls -la".'
+        ), msg
+        # 달라진 상태가 아직 어느 스냅샷에도 없을 때 — 가장 최근 스냅샷까지 멀쩡했다
+        s.checkpoint(
+            "before shell (turn 11): cat main.db-wal", force=True
+        )  # 복구본 기록
+        (ws / "main.db-wal").write_bytes(b"corrupted")
+        ok, msg = s.restore("main.db-wal")
+        assert ok
+        assert msg.endswith(
+            '— intact at "before shell (turn 11): cat main.db-wal", '
+            "changed after that snapshot."
+        ), msg
+        # `at` 을 주면 그 라벨만
+        ok, msg = s.restore("main.db-wal", at=s.head())
+        assert ok and msg.endswith('("before shell (turn 11): cat main.db-wal")')
 
     def test_changed_files_and_log(self, ws):
         s = _store(ws)
@@ -151,6 +221,53 @@ class TestRestore:
         s.checkpoint("delete", force=True)
         assert ("D", "gone.txt") in s.changed_files()
         assert [m for _, m in s.log()][:2] == ["delete", "edit"]
+        assert [m for _, m in s.log(path="gone.txt")] == ["delete", "edit"]
+        assert [m for _, m in s.log(path="src/a.py")] == ["edit", "session start"]
+        assert s.log(path="never.txt") == []
+        assert s.label(s.head()) == "delete"
+
+
+class TestSessionBoundary:
+    """저장소는 세션을 넘어 이어진다(사용자 결정, 2026-10-30) — 시작 커밋이 경계다."""
+
+    def test_session_start_is_committed_even_without_changes(self, ws):
+        s = GitSnapshot(ws, min_interval_s=0)
+        assert s.init("sess-1")
+        first = s.head()
+        assert s.label(first) == "session start (sess-1)"
+        reset_snapshot()
+        again = GitSnapshot(ws, min_interval_s=0)
+        assert again.init("sess-2")  # 워크스페이스는 그대로 — 그래도 경계 커밋
+        assert again.head() != first
+        assert [m for _, m in again.log()][:2] == [
+            "session start (sess-2)",
+            "session start (sess-1)",
+        ]
+
+    def test_empty_workspace_still_gets_a_start_commit(self, tmp_path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        s = GitSnapshot(empty, min_interval_s=0)
+        assert s.init()
+        assert s.head() is not None and s.label(s.head()) == "session start"
+
+    def test_turn_checkpoints_still_skip_when_nothing_changed(self, ws):
+        s = _store(ws)
+        assert s.checkpoint("before shell (turn 2)") is None
+
+
+class TestLabel:
+    def test_label_folds_the_call_summary_to_one_line(self):
+        assert checkpoint_label("shell", 7, "sqlite3 main.db") == (
+            "before shell (turn 7): sqlite3 main.db"
+        )
+        assert checkpoint_label("shell", 7, "") == "before shell (turn 7)"
+        assert checkpoint_label("python", 3, "import os\n\nprint(  1 )") == (
+            "before python (turn 3): import os print( 1 )"
+        )
+        long = "x" * 200
+        lab = checkpoint_label("shell", 1, long)
+        assert lab == "before shell (turn 1): " + "x" * (LABEL_SUMMARY_CHARS - 1) + "…"
 
 
 class TestNestedRepos:
@@ -300,9 +417,9 @@ class TestBuiltinHook:
         hook = self._hook()
         h0 = store.head()
         (ws / "src" / "a.py").write_text("v2\n")
-        hook.pre_tool_use(MagicMock(tool_name="read_file", turn=3))
+        hook.pre_tool_use(MagicMock(tool_name="read_file", turn=3, tool_input={}))
         assert store.head() == h0, "읽기 도구는 체크포인트를 안 찍는다"
-        hook.pre_tool_use(MagicMock(tool_name="shell", turn=3))
+        hook.pre_tool_use(MagicMock(tool_name="shell", turn=3, tool_input={}))
         assert store.head() != h0
         (ws / "src" / "a.py").write_text("v3\n")
         hook.on_session_end(MagicMock(turn=9))
@@ -318,9 +435,62 @@ class TestBuiltinHook:
         store = build_snapshot_store()
         h0 = store.head()
         (ws / "src" / "a.py").write_text("changed\n")
-        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2))
+        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2, tool_input={}))
         assert store.head() != h0, f"{tool} 직전에 체크포인트가 없다"
         assert next(m for _, m in store.log()) == f"before {tool} (turn 2)"
+
+    def test_mutating_tools_come_from_the_store_module(self):
+        """훅과 모델 문구가 같은 상수를 본다(S3)."""
+        assert self._hook().MUTATING_TOOLS is MUTATING_TOOLS
+        assert "python" in MUTATING_TOOLS
+
+    @pytest.mark.parametrize(
+        ("tool", "tool_input", "want"),
+        [
+            (
+                "shell",
+                {"command": "sqlite3 main.db  'PRAGMA x'"},
+                "sqlite3 main.db 'PRAGMA x'",
+            ),
+            (
+                "python",
+                {"code": "import os\nos.remove('a')"},
+                "import os os.remove('a')",
+            ),
+            ("edit_file", {"path": "src/a.py", "edits": []}, "src/a.py"),
+            ("write_file", {"path": "out.txt", "content": "zzz"}, "out.txt"),
+        ],
+    )
+    def test_label_carries_the_call_summary(
+        self, ws, monkeypatch, tool, tool_input, want
+    ):
+        """라벨만으로 "망치기 직전" 을 고를 수 있게 — 종전 "before shell (turn 18)" 은
+        history 를 열어야 어느 명령인지 알았다(S4)."""
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0")
+        store = build_snapshot_store("s1")
+        (ws / "src" / "a.py").write_text("changed\n")
+        self._hook().pre_tool_use(
+            MagicMock(tool_name=tool, turn=6, tool_input=tool_input)
+        )
+        assert next(m for _, m in store.log()) == f"before {tool} (turn 6): {want}"
+        assert [m for _, m in store.log()][-1] == "session start (s1)"
+
+    def test_label_survives_a_non_dict_input(self, ws, monkeypatch):
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0")
+        store = build_snapshot_store()
+        (ws / "src" / "a.py").write_text("changed\n")
+        self._hook().pre_tool_use(
+            MagicMock(tool_name="shell", turn=6, tool_input="raw")
+        )
+        assert next(m for _, m in store.log()) == "before shell (turn 6)"
 
     @pytest.mark.parametrize(
         "tool", ["read_file", "code_index", "monitor", "agent", "fetch"]
@@ -334,7 +504,7 @@ class TestBuiltinHook:
         store = build_snapshot_store()
         h0 = store.head()
         (ws / "src" / "a.py").write_text("changed\n")
-        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2))
+        self._hook().pre_tool_use(MagicMock(tool_name=tool, turn=2, tool_input={}))
         assert store.head() == h0
 
     def test_a_batch_of_three_ops_within_the_interval_commits_once(
@@ -355,7 +525,7 @@ class TestBuiltinHook:
         hook = self._hook()
         for tool in ("shell", "edit_file", "write_file"):
             (ws / "src" / "a.py").write_text(f"by {tool}\n")
-            hook.pre_tool_use(MagicMock(tool_name=tool, turn=4))
+            hook.pre_tool_use(MagicMock(tool_name=tool, turn=4, tool_input={}))
         assert store.stats.commits == n0 + 1
         assert next(m for _, m in store.log()) == "before shell (turn 4)"
 
@@ -374,12 +544,16 @@ class TestBuiltinHook:
         n0 = store.stats.commits
         hook = self._hook()
         (ws / "src" / "a.py").write_text("v2\n")
-        hook.pre_tool_use(MagicMock(tool_name="shell", turn=4))
+        hook.pre_tool_use(MagicMock(tool_name="shell", turn=4, tool_input={}))
         (ws / "src" / "a.py").write_text("v3\n")
-        hook.pre_tool_use(MagicMock(tool_name="edit_file", turn=4))  # 간격 안 — 건너뜀
+        hook.pre_tool_use(
+            MagicMock(tool_name="edit_file", turn=4, tool_input={})
+        )  # 간격 안 — 건너뜀
         assert store.stats.commits == n0 + 1
         time.sleep(0.25)
-        hook.pre_tool_use(MagicMock(tool_name="write_file", turn=4))  # 간격 지남
+        hook.pre_tool_use(
+            MagicMock(tool_name="write_file", turn=4, tool_input={})
+        )  # 간격 지남
         assert store.stats.commits == n0 + 2
         assert [m for _, m in store.log()][:2] == [
             "before write_file (turn 4)",
