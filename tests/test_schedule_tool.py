@@ -58,7 +58,7 @@ class TestRegistration:
     def test_description_states_the_lifetime(self, tool):
         d = tool.description
         assert "saved with the session" in d
-        assert "NOT run automatically" in d
+        assert "not run automatically" in d
         assert "board" not in d  # 보드는 더 이상 이 기능의 일부가 아니다
 
 

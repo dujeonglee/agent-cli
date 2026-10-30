@@ -28,7 +28,7 @@ class CompleteTool(Tool):
     # GLM·35B 40런에서 "확인 안 한 것" 을 한 번도 쓰지 않았다(35B 는 원칙보다
     # 형식을 따른다 — monitor 평평한 인자 A/B 와 같은 교훈).
     description = (
-        "Call this tool when the task is done — always the LAST call. `result` "
+        "Call this tool when the task is done — always the last call. `result` "
         "is the only text delivered as your answer — to the user, or to the "
         "agent that called you; what you wrote outside it is not. Put the "
         "answer first. When it rests on work you did, end with two lines:\n"
@@ -37,7 +37,7 @@ class CompleteTool(Tool):
         "did not test — 'nothing' if so>\n"
         "A reply with nothing to check has neither line. "
         "When `## Open Items` lists items closed by "
-        "`complete`, `answers` is REQUIRED: list the ids your result covers. "
+        "`complete`, `answers` is required: list the ids your result covers. "
         "Ids you leave out stay open. Not for waiting — to pause until a job, "
         "monitor or agent reports back, call `wait`."
     )
@@ -121,7 +121,7 @@ class AskTool(Tool):
     # this description — keeping the prose in one place avoids the two
     # surfaces teaching the same distinction back to back.
     description = (
-        "Ask the user ONE question and WAIT for their reply. One question per call — to"
+        "Ask the user one question and wait for their reply. One question per call — to"
         " ask several, make several `ask` calls in one turn (each is answered in turn)."
         " Use only when you cannot proceed without specific input; otherwise end with "
         "`complete`."
@@ -132,8 +132,8 @@ class AskTool(Tool):
     # 모델이 추측으로 메우고 끝낸다. v10.77.0 (B): 주소는 언제나 사람 — 에이전트·
     # main 에게서 무언가 필요하면 `message` 다(요청 → 상대가 `reply` 를 빚진다).
     RESIDENT_DESCRIPTION = (
-        "Ask the person ONE question and KEEP WORKING — you are NOT blocked. It "
-        "goes to their question tray; the answer arrives later as a NEW message "
+        "Ask the person one question and keep working — you are not blocked. It "
+        "goes to their question tray; the answer arrives later as a new message "
         "and you continue from there. Carry on with anything that does not depend "
         "on it. If nothing else can proceed, `complete`. To get something from "
         "main or another agent, send it a `message` — its `reply` comes back to you."
@@ -170,11 +170,11 @@ class MessageTool(Tool):
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        'Message another running agent (a peer, or "main"). By default it is a REQUEST:'
-        " you NEED something from them — a decision, an answer, their next move. The "
+        'Message another running agent (a peer, or "main"). By default it is a request:'
+        " you need something from them — a decision, an answer, their next move. The "
         "result names its id (e.g. r-17); they owe you a `reply` for it, which comes "
-        "back to YOU as a NEW message marked with that id, and you are NOT blocked. "
-        "With `expects_reply` false it is a NOTICE: a status update, a hand-off note, "
+        "back to you as a new message marked with that id, and you are not blocked. "
+        "With `expects_reply` false it is a notice: a status update, a hand-off note, "
         "a goodbye — nothing is owed back and the receiver must not acknowledge it. "
         "To answer a request you received, use `reply`. `complete` alone reports to "
         "no one. See `## Live Agents` for who is running. Never send thanks or "
@@ -230,8 +230,8 @@ class ReplyTool(Tool):
         "an answer, or the request you were given. `id` is the request's `r-…` from "
         "`## Open Items`; it alone says where the reply goes, and each request gets "
         "its own reply. Nothing is expected back, so this ends that exchange cleanly. "
-        'Use `message` (or `agent` with `mode` "request") instead when you NEED '
-        "something from them. `complete` alone reports to no one: reply BEFORE you "
+        'Use `message` (or `agent` with `mode` "request") instead when you need '
+        "something from them. `complete` alone reports to no one: reply before you "
         "complete. Refused when nothing is owed."
     )
     parameters: ClassVar[dict] = {

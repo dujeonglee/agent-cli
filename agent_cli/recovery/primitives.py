@@ -225,7 +225,7 @@ def restate_task(*, task: str, action: str, args_repr: str, repeat_count: int) -
                 "information from it does the task actually need?"
             ),
             (
-                "- What information are you NOT getting from the responses? "
+                "- What information are you not getting from the responses? "
                 "Is what you need actually here, or somewhere else?"
             ),
             "",

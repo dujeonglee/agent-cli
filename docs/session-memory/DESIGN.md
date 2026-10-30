@@ -71,11 +71,11 @@ flat-native `memory` 도구 (`code_index` 처럼 `{mode, ...}` 단일 op). 한 o
 | `get` | `id` | 전체 항목(detail 포함) |
 | `update` | `id, summary?, detail?, type?, tags?` | ok (준 필드만 교체) |
 | `delete` | `id` | ok |
-| `list` | `type?, tag?` | 필터된 요약 목록 |
+| ~~`list`~~ | ~~`type?, tag?`~~ | v10.81.0 삭제 — §11 |
 
 - `add`/`update` 는 `type` 이 enum 4종 아니면 친절 에러(recover 가능한 observation).
 - `get`/`update`/`delete` 는 없는 id 면 친절 에러.
-- `list` 는 상시 인덱스와 중복이지만 필터(타입/태그)·대량 세션에서 유용.
+- ~~`list` 는 상시 인덱스와 중복이지만 필터(타입/태그)·대량 세션에서 유용.~~ → 벤치 716 trial 에서 0회, v10.81.0 에 삭제(§11).
 
 ## 5. 상시 인덱스 주입
 
@@ -144,9 +144,25 @@ flat-native `memory` 도구 (`code_index` 처럼 `{mode, ...}` 단일 op). 한 o
 
 ## 9. 미해결 / 결정 필요
 - N(인덱스 표시 캡) 초기값: **30** 제안.
-- `list` 를 상시 인덱스와 별도로 둘지(중복) vs 인덱스로 충분한지 — 필터 가치로 유지 제안.
+- ~~`list` 를 상시 인덱스와 별도로 둘지(중복) vs 인덱스로 충분한지~~ — **삭제로 결정**(2026-10-30, §11).
 - 도구 이름 `memory` 확정? (대안 `note`) — `memory` 제안.
 
 ## 10. 버전
 - 새 도구 + 새 시스템 프롬프트 섹션 = 사용자 대면 기능 추가 → **MINOR**.
 - resume/스키마 무변경(옛 세션은 memory.jsonl 없음 → 섹션 생략, 완전 하위호환).
+
+## 11. 벤치 실측 뒤 정리 (v10.81.0, 2026-10-30)
+
+보관된 harbor 런 전부(96 잡·716 trial)에서 `memory` 호출은 16회 — add 13·`mode` 누락 3(거절)·get/list/update/delete 0,
+압축은 0회. 같은 날의 snapshot·history·memory 묶음 검토(사용자 결정)로 다음을 바꿨다.
+
+| | 관찰 | 변경 |
+|---|---|---|
+| M2 | `type`·`summary`·`detail` 만 온 호출 3건이 `invalid mode: ''` 로 거절 | `mode` 없이 `summary` 가 있으면 **"add"** (`effective_mode`). 다른 모드는 `summary` 를 요구하지 않으니 모호하지 않다. 스키마 `required` 는 `["mode"]` 그대로 — 디코딩 문법은 계속 `mode` 를 강제하고, `MemoryTool.schema_gaps` 가 그 모양에서만 `mode` 를 빠진 것으로 세지 않아 중앙 검증을 통과한다(구제 원칙: 구제할 수 있는 모양은 막지 않는다). |
+| M3 | 설명의 FAILURES·DISCOVERIES·DECISIONS·NOTES·END 대문자 강조, 색인 자리 안내("under '## Session Memory' … at the END of your context") | 설명 재작성 — 종류는 보통 글로, 자리 안내는 색인 머리줄이 이미 말하므로 삭제. 표기 가드(`tests/test_prompt_notation.py::test_no_caps_emphasis`)가 모델 문구 전체의 대문자 강조를 막는다(사용자 결정, 머리글자·SQL 예시·`LINE#HASH`·밑줄 자리표시만 예외). |
+| M4 | `list` 0회. 색인이 최근 30개를 늘 보이므로 31개째부터와 type/tag 필터에서만 뜻이 있었다 | **`list` 삭제**(사용자 결정). `tag` 인자(list 전용)도 삭제; `tags` 는 항목에 남아 `get` 에 보인다. 숨김 줄은 `(N older entries not shown — ids below K; \`memory\` with \`mode\` "get" still reaches them)`. |
+| M5 | 항목에 턴 정보가 없어 `history` 와 연결이 없었다 | `add` 가 `turn` 을 적는다(`RunContext.turn_now` 콜러블 — 캐시된 컨텍스트를 깨지 않음). 색인 줄과 `get` 에 `(turn N)`; 머리줄이 `"(turn N)" is the turn it was noted on, which \`history\` can look up` 이라고 말한다 — 관찰 전문을 `detail` 에 복사하는 대신 가리키는 길. 루프 밖 호출(테스트·직접)은 `turn` 없음. |
+
+history 쪽(H1): 설명은 열 이름과 "작게 뽑는 법" 한 문장으로 줄이고 SELECT 예시는 `query` 생략 help 와 시스템 프롬프트 Context Recovery 절에만 둔다(종전 세 곳). SQL 표면은 그대로(H3 — 5회 전부 문법 오류 없음, v10.29.0 이름 측정 완료). H2(압축 요약 레코드 꼬리에 history 범위 한 줄)는 압축 재현 런처로 효과를 재 뒤에만 넣는다(PR C).
+
+측정 없음 — 문구·구제 변경은 벤치 지표가 없다(add 거절 3건이 0이 되는지는 다음 벤치의 `invalid mode` 수로 본다).

@@ -81,13 +81,14 @@ class TestStore:
         with pytest.raises(memory.MemoryError):
             memory.delete(tmp_path, 5)
 
-    def test_list_filters_by_type_and_tag(self, tmp_path):
-        memory.add(tmp_path, type="failure", summary="f", tags=["build"])
-        memory.add(tmp_path, type="discovery", summary="d", tags=["build", "probe"])
-        memory.add(tmp_path, type="discovery", summary="d2", tags=["other"])
-        assert len(memory.list_entries(tmp_path, type="discovery")) == 2
-        assert len(memory.list_entries(tmp_path, tag="build")) == 2
-        assert len(memory.list_entries(tmp_path, type="failure", tag="build")) == 1
+    def test_add_records_the_turn_when_given(self, tmp_path):
+        """v10.81.0: 항목의 `turn` 은 `history` 의 `turn = N` 으로 원문에 닿는 손잡이."""
+        memory.add(tmp_path, type="failure", summary="f", turn=12)
+        memory.add(tmp_path, type="note", summary="n")  # 루프 밖 — turn 없음
+        memory.add(tmp_path, type="note", summary="b", turn=True)  # bool 은 turn 아님
+        a, b, c = memory.load(tmp_path)
+        assert a["turn"] == 12 and "turn" not in b and "turn" not in c
+        assert not hasattr(memory, "list_entries"), "`list` 는 v10.81.0 에 삭제됐다"
 
     def test_load_skips_corrupt_line(self, tmp_path):
         memory.add(tmp_path, type="note", summary="ok")
@@ -116,8 +117,23 @@ class TestIndexRender:
         for i in range(memory._INDEX_CAP + 5):
             memory.add(tmp_path, type="note", summary=f"s{i}")
         idx = memory.render_index(tmp_path)
-        assert "5 older entries hidden" in idx
+        assert (
+            '(5 older entries not shown — ids below 6; `memory` with `mode` "get" '
+            "still reaches them)" in idx
+        )
+        assert "list" not in idx
         assert idx.count("[note]") == memory._INDEX_CAP  # only the cap shown
+
+    def test_index_line_shows_the_turn(self, tmp_path):
+        memory.add(tmp_path, type="failure", summary="빌드 깨짐", turn=7)
+        memory.add(tmp_path, type="note", summary="no turn")
+        idx = memory.render_index(tmp_path)
+        assert "⚠ #1 [failure] 빌드 깨짐 (turn 7)" in idx
+        assert "📝 #2 [note] no turn\n" in idx + "\n"
+        assert (
+            '"(turn N)" is the turn it was noted on, which `history` can look up' in idx
+        )
+        assert "(turn 7)" in memory.format_entry(memory.get(tmp_path, 1))
 
     def test_format_entry_includes_detail(self, tmp_path):
         memory.add(tmp_path, type="decision", summary="http 사설만", detail="근거 …")
@@ -154,11 +170,47 @@ class TestTool:
         g = self._run({"mode": "get", "id": 1}, tmp_path)
         assert g.success and "why" in g.output
 
-    def test_list(self, tmp_path):
-        self._run({"mode": "add", "type": "note", "summary": "a"}, tmp_path)
-        self._run({"mode": "add", "type": "failure", "summary": "b"}, tmp_path)
-        r = self._run({"mode": "list", "type": "failure"}, tmp_path)
-        assert r.success and "#2" in r.output and "#1" not in r.output
+    def test_list_is_gone(self, tmp_path):
+        """사용자 결정(2026-10-30): 벤치 716 trial 에서 0회, 상시 색인과 중복."""
+        from agent_cli.tools.memory_tool import MODES
+
+        assert "list" not in MODES
+        r = self._run({"mode": "list"}, tmp_path)
+        assert not r.success and 'unknown `mode` "list"' in r.error
+        assert MemoryTool().validate({"mode": "list"}) == (
+            'unknown `mode` "list"; use "add" | "get" | "update" | "delete"'
+        )
+        assert "tag" not in MemoryTool.parameters["properties"]
+
+    def test_mode_less_call_with_a_summary_is_an_add(self, tmp_path):
+        """벤치의 add 16회 중 3회가 `type`·`summary`·`detail` 만 보내 "invalid mode: ''"
+        로 거절됐다 — 모호함이 없는 모양은 구제한다(구제 원칙). 스키마의 `required` 는
+        그대로라 문법은 여전히 `mode` 를 강제한다."""
+        from agent_cli.tools.registry import validate_tool_input
+
+        tool = MemoryTool()
+        args = {"type": "failure", "summary": "no mode", "detail": "d"}
+        assert tool.validate(args) is None
+        assert tool.schema_gaps(args) == ([], [])
+        ok, err, _ = validate_tool_input("memory", args)
+        assert ok, err
+        r = tool.run(args, ctx=RunContext(session_dir=tmp_path))
+        assert r.success and r.output.startswith("Saved memory #1 [failure]: no mode")
+        assert tool.validate({"type": "failure"}) == (
+            '`mode` is required unless a `summary` is given; use "add" | "get" | '
+            '"update" | "delete"'
+        )
+        assert tool.schema_gaps({"type": "failure"}) == (["mode"], [])
+        assert MemoryTool.parameters["required"] == ["mode"]
+
+    def test_add_takes_the_turn_from_the_run_context(self, tmp_path):
+        tool = MemoryTool()
+        ctx = RunContext(session_dir=tmp_path, turn_now=lambda: 9)
+        assert tool.run(
+            {"mode": "add", "type": "note", "summary": "s"}, ctx=ctx
+        ).success
+        assert memory.get(tmp_path, 1)["turn"] == 9
+        assert "(turn 9)" in tool.run({"mode": "get", "id": 1}, ctx=ctx).output
 
     def test_update_and_delete(self, tmp_path):
         self._run({"mode": "add", "type": "note", "summary": "old"}, tmp_path)
@@ -172,6 +224,13 @@ class TestTool:
     def test_bad_mode(self, tmp_path):
         r = self._run({"mode": "frobnicate"}, tmp_path)
         assert not r.success and "mode" in (r.error or "")
+
+    def test_description_has_no_caps_emphasis_or_placement_note(self):
+        d = MemoryTool.description
+        for bad in ("FAILURES", "DISCOVERIES", "DECISIONS", "NOTES", "END", "list"):
+            assert bad not in d, bad
+        assert "session-state" not in d and "at the end of your context" not in d
+        assert '"## Session Memory"' in d
 
     def test_bad_type_is_clean_failure(self, tmp_path):
         r = self._run({"mode": "add", "type": "x", "summary": "s"}, tmp_path)

@@ -178,11 +178,11 @@ FORMAT_NUDGE_REASONS = ("no_json", "no_action", "split_calls")
 #: 진짜만 19/20(나머지 1 은 호출 없음). 방향으로 고르면 한쪽씩 틀린다.
 SPLIT_CALLS_FRAMING = (
     "Your response contained tool calls in more than one place, separated by "
-    "prose, so the harness cannot tell which of them you meant to run — NOTHING "
+    "prose, so the harness cannot tell which of them you meant to run — nothing "
     "was executed."
 )
 SPLIT_CALLS_INSTRUCTION = (
-    "Re-send ONLY the calls you want executed now, together at the very end of "
+    "Re-send only the calls you want executed now, together at the very end of "
     "your response. Do not write example or hypothetical calls in your prose."
 )
 

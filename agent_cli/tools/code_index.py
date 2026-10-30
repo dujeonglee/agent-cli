@@ -765,7 +765,7 @@ class CodeIndexTool(Tool):
     }
 
     oversized_retry_hint = (
-        'narrow the query itself: `mode` "fetch" for ONE symbol (`path` + `name`), '
+        'narrow the query itself: `mode` "fetch" for one symbol (`path` + `name`), '
         '`search` (a regex) to filter "list"/"kind", a specific `path` instead of a '
         'broad dump, or a lower `max_bytes` for "slice".'
     )

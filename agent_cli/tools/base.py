@@ -78,6 +78,10 @@ class RunContext:
     #: 브리지의 현재 값을 본다. `monitor` 가 "등록 때 이미 있던 파일이 모델이
     #: 못 본 내용인지" 를 이것과 mtime 으로 가른다.
     observed_at: Callable[[], float | None] | None = None
+    #: 지금 턴 번호를 돌려주는 콜러블 (v10.81.0, None = 모름). 같은 이유로 콜러블.
+    #: `memory` 가 항목에 `turn` 을 적어 색인 줄 "(turn 12)" 가 `history` 의
+    #: `turn = 12` 로 원문에 닿는 손잡이가 되게 한다(docs/session-memory/DESIGN.md §11).
+    turn_now: Callable[[], int] | None = None
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────
@@ -248,9 +252,9 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
     k = min(k, _FANOUT_MAX_SECTIONS)
     if nlines <= 1:
         return (
-            f"Analyse the WHOLE thing? Divide and conquer: split '{path}' into "
+            f"Analyse the whole thing? Divide and conquer: split '{path}' into "
             f"~{k} contiguous line-range sections and make one `agent` call "
-            'with mode "run" per section in the SAME turn (they run '
+            'with mode "run" per section in the same turn (they run '
             "concurrently), each returning a short summary; then merge them."
         )
     step = max(1, -(-nlines // k))
@@ -261,9 +265,9 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
         else ""
     )
     return (
-        f"Analyse the WHOLE thing? Divide and conquer — '{path}' is "
+        f"Analyse the whole thing? Divide and conquer — '{path}' is "
         f"{nlines:,} lines; split it into {k} sections and emit {k} "
-        "agent run ops in ONE turn (same-turn run ops execute concurrently):\n"
+        "agent run ops in one turn (same-turn run ops execute concurrently):\n"
         f'    `agent` mode "run", task "read_file \'{path}\' lines 1-{min(step, nlines)} '
         'and report a 3-line summary + anything about <your question>"\n'
         f'    `agent` mode "run", task "… lines {min(step, nlines) + 1}-'
@@ -298,7 +302,7 @@ def oversized_nudge(
     why = reason or (
         f"output is ~{tokens:,} tokens — too large for one context (cap {cap:,})"
     )
-    head = [f"[{tool_name}: {why}. NOT added to context; the call itself succeeded."]
+    head = [f"[{tool_name}: {why}. Not added to context; the call itself succeeded."]
     if path and path_is_source:
         # 도구가 읽은 원본 파일 그 자체(read_file) — 따로 저장한 것이 아니다.
         head.append(f"The file is '{path}' ({nlines:,} lines) — read it in parts.")
@@ -310,7 +314,7 @@ def oversized_nudge(
             head.append(saved_note)
     else:
         head.append(
-            "The full output could NOT be saved to a file — it is gone; "
+            "The full output could not be saved to a file — it is gone; "
             "re-run with a narrower scope to get it back."
         )
 

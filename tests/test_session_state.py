@@ -83,7 +83,7 @@ class TestBuildSessionState:
     def test_turn_with_max_turns(self):
         out = build_session_state(turn=7, max_turns=40)
         assert "turn 7/40 (33 left after this one)" in out
-        assert "LAST turn" not in out
+        assert "last turn" not in out
 
     def test_final_turn_tells_a_subagent_to_report_to_its_caller(self):
         """v9.24.1: 턴 한도에서 루프는 마무리 없이 멈춘다 — 실측(v5 large-scale)
@@ -91,18 +91,18 @@ class TestBuildSessionState:
         마지막 턴에 complete 로 무엇을 보고할지 알려 준다."""
         out = build_session_state(turn=60, max_turns=60, reports_to_caller=True)
         assert "turn 60/60 (0 left after this one)" in out
-        assert "LAST turn" in out and "Call `complete` now" in out
-        assert "The agent that called you receives ONLY" in out
+        assert "last turn" in out and "Call `complete` now" in out
+        assert "The agent that called you receives only" in out
         assert "damaged" in out  # 파일 손상도 보고 대상
 
     def test_final_turn_for_the_main_loop_reports_to_the_user(self):
         out = build_session_state(turn=40, max_turns=40)
-        assert "LAST turn" in out and "The user receives" in out
+        assert "last turn" in out and "The user receives" in out
         assert "agent that called you" not in out
 
     def test_no_final_notice_without_a_turn_cap(self):
-        assert "LAST turn" not in build_session_state(turn=500)
-        assert "LAST turn" not in build_session_state(turn=59, max_turns=60)
+        assert "last turn" not in build_session_state(turn=500)
+        assert "last turn" not in build_session_state(turn=59, max_turns=60)
 
     def test_agents_and_memory_keep_their_original_headings(self):
         """The sections moved verbatim out of the system prompt — the model
@@ -615,13 +615,13 @@ class TestFinalTurnInTheLoop:
         tails = self._tails(tmp_path, depth=1)
         assert len(tails) == 3
         assert "turn 1/3 (2 left after this one)" in tails[0]
-        assert all("LAST turn" not in t for t in tails[:2])
-        assert "LAST turn" in tails[2]
-        assert "The agent that called you receives ONLY" in tails[2]
+        assert all("last turn" not in t for t in tails[:2])
+        assert "last turn" in tails[2]
+        assert "The agent that called you receives only" in tails[2]
 
     def test_main_loop_last_turn_addresses_the_user(self, tmp_path):
         tails = self._tails(tmp_path, depth=0)
-        assert "LAST turn" in tails[-1] and "The user receives" in tails[-1]
+        assert "last turn" in tails[-1] and "The user receives" in tails[-1]
 
 
 # ── 4. Task Guidelines in the tail (v8.52.0) ─────────────────────────

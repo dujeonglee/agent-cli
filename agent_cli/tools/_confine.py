@@ -469,7 +469,7 @@ def guard(
         head = (
             "⚠ Touches sensitive path(s)"
             if secrets
-            else f"⚠ {action} touches path(s) OUTSIDE the workspace"
+            else f"⚠ {action} touches path(s) outside the workspace"
         )
         prompt = (
             f"\n{head}\n"

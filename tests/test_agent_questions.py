@@ -968,7 +968,7 @@ class TestFlipDispatch:
         (q,) = list(reg._questions.values())
         assert q.text == "v1 or v2?" and q.target == "user"
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
-        assert "NOT blocked" in obs
+        assert "not blocked" in obs
         assert q.id in obs  # 모델이 id 를 본다 → 같은 것을 되묻지 않는다
         # 사람이 트레이에서 답한다
         assert reg.answer_question(q.id, "v2", by="user:dj") == ""
@@ -1052,12 +1052,13 @@ class TestFlipPrompt:
 
         resident = system_for(reg.question_port(a), "r")
         main = system_for(reg.question_port(None), "m")
-        # 도구 설명 — 상주 ask 만 "KEEP WORKING" 을 말한다
-        assert "KEEP WORKING" in resident and "KEEP WORKING" not in main
-        assert "WAIT for their reply" in main and "WAIT for their reply" not in resident
+        # 도구 설명 — 상주 ask 만 "keep working" 을 말한다
+        assert "one question and keep working" in resident
+        assert "one question and keep working" not in main
+        assert "wait for their reply" in main and "wait for their reply" not in resident
         # 인라인 가이드도 함께 — 둘이 엇갈리면 모델이 헷갈린다
-        assert "does NOT block you" in resident
-        assert "does NOT block you" not in main
+        assert "does not block you" in resident
+        assert "does not block you" not in main
         assert "pick by intent" in main and "pick by intent" not in resident
 
     def test_resident_ask_description_says_it_does_not_block(self):
@@ -1069,12 +1070,12 @@ class TestFlipPrompt:
         wf = get_wf("json_fc")
         blocking = _build_tools_section(["ask"], wf)
         resident = _build_tools_section(["ask"], wf, nonblocking_ask=True)
-        assert "WAIT for their reply" in blocking
-        assert "WAIT for their reply" not in resident
-        assert "NOT blocked" in resident
+        assert "wait for their reply" in blocking
+        assert "wait for their reply" not in resident
+        assert "not blocked" in resident
         # 인라인 가이드도 함께 바뀐다 — 둘이 엇갈리면 모델이 헷갈린다
-        assert "does NOT block you" in resident
-        assert "does NOT block you" not in blocking
+        assert "does not block you" in resident
+        assert "does not block you" not in blocking
         assert "pick by intent" in blocking
 
 

@@ -646,7 +646,7 @@ class TestValidatorAgreesWithTheGrammar:
         assert not ok
         assert err == (
             "Field `mode` for `memory` must be one of: "
-            '"add" | "get" | "update" | "delete" | "list" — got "ad".'
+            '"add" | "get" | "update" | "delete" — got "ad".'
         )
 
     def test_min_length_rejected(self):
@@ -668,7 +668,7 @@ class TestValidatorAgreesWithTheGrammar:
         아니다(모델이 선택 인자를 비워 보내는 습관을 형식 오류로 만들지 않음)."""
         from agent_cli.tools.registry import validate_tool_input
 
-        ok, _err, norm = validate_tool_input("memory", {"mode": "list", "type": ""})
+        ok, _err, norm = validate_tool_input("memory", {"mode": "add", "type": ""})
         assert ok and "type" not in norm
 
 

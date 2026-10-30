@@ -1,6 +1,6 @@
 ---
 name: general
-description: General-purpose worker for tasks no specialist covers — research and fact-gathering (files, shell, web), collecting and organizing information, and writing reports or other documents as files. NOT for code — implementing or editing code goes to code-writer, code review to code-reviewer, "how does this code work" to code-analyst, tests to unittest-writer, logs and crashes to log-analyst. Persistent; remembers what it already found.
+description: General-purpose worker for tasks no specialist covers — research and fact-gathering (files, shell, web), collecting and organizing information, and writing reports or other documents as files. Not for code — implementing or editing code goes to code-writer, code review to code-reviewer, "how does this code work" to code-analyst, tests to unittest-writer, logs and crashes to log-analyst. Persistent; remembers what it already found.
 allowed-tools:
   - read_file
   - write_file

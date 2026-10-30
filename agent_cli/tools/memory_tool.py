@@ -1,9 +1,14 @@
 """Session memory tool — the LLM's interface to agent_cli.memory.
 
 flat-native (one op = one memory operation, ``{mode, ...}``): ``add`` a salient
-note, ``get`` its full detail, ``update``/``delete`` to correct or drop, ``list``
-to filter. The compact index is always shown in the system prompt (``## Session
-Memory``); this tool is how the model writes it and pulls full detail on demand.
+note, ``get`` its full detail, ``update``/``delete`` to correct or drop. The
+compact index is always shown in the tail block (``## Session Memory``); this
+tool is how the model writes it and pulls full detail on demand.
+
+v10.81.0 (docs/session-memory/DESIGN.md §11): ``list`` 삭제(벤치 0회, 색인과 중복 —
+사용자 결정) · ``mode`` 없이 ``summary`` 가 오면 ``add`` 로 받는다(벤치 add 16회
+중 3회가 "invalid mode: ''" 로 거절됐다 — 모호함이 없는 모양은 구제한다) · 설명의
+대문자 강조·자리 안내 삭제 · 항목에 ``turn``.
 """
 
 from __future__ import annotations
@@ -16,16 +21,25 @@ from agent_cli.tools.result import ToolResult
 
 #: The modes ``tool_memory`` dispatches on — single source for the schema
 #: ``enum`` (v9.24.4: the decoding grammar and the validator both read it).
-MODES = ("add", "get", "update", "delete", "list")
+MODES = ("add", "get", "update", "delete")
 
 
-def _dispatch(args: dict, session_dir) -> ToolResult:
+def effective_mode(args: dict) -> str:
+    """``mode`` 가 없고 ``summary`` 가 있으면 "add" — 다른 모드는 ``summary`` 를 필수로
+    하지 않으니 모호하지 않다. 검증과 실행이 같은 판정을 본다."""
+    mode = str(args.get("mode") or "").strip()
+    if not mode and str(args.get("summary") or "").strip():
+        return "add"
+    return mode
+
+
+def _dispatch(args: dict, session_dir, turn: int | None = None) -> ToolResult:
     if session_dir is None:
         return ToolResult(
             False,
             error="memory unavailable: no active session (memory is session-scoped).",
         )
-    mode = (args.get("mode") or "").strip()
+    mode = effective_mode(args)
     try:
         if mode == "add":
             e = memory.add(
@@ -34,6 +48,7 @@ def _dispatch(args: dict, session_dir) -> ToolResult:
                 summary=args.get("summary") or "",
                 detail=args.get("detail"),
                 tags=args.get("tags"),
+                turn=turn,
             )
             return ToolResult(
                 True, output=f"Saved memory #{e['id']} [{e['type']}]: {e['summary']}"
@@ -56,20 +71,6 @@ def _dispatch(args: dict, session_dir) -> ToolResult:
         if mode == "delete":
             memory.delete(session_dir, _as_id(args.get("id")))
             return ToolResult(True, output=f"Deleted memory #{args.get('id')}.")
-        if mode == "list":
-            entries = memory.list_entries(
-                session_dir,
-                type=(args.get("type") or None),
-                tag=(args.get("tag") or None),
-            )
-            if not entries:
-                return ToolResult(True, output="(no matching memories)")
-            body = "\n".join(
-                f"{memory._TYPE_ICONS.get(e.get('type'), '•')} #{e['id']} "
-                f"[{e['type']}] {e['summary']}"
-                for e in entries
-            )
-            return ToolResult(True, output=body)
         return ToolResult(
             False,
             error=(f'unknown `mode` "{mode}". Use {" | ".join(MODES)}.'),
@@ -93,16 +94,13 @@ def _as_id(v):
 class MemoryTool(Tool):
     name = "memory"
     description = (
-        "Record and recall salient session notes that must survive context compaction —"
-        " critical FAILURES (so you don't repeat them), important DISCOVERIES (to "
-        "reuse), DECISIONS (why you chose X), and NOTES. The compact index (id, type, "
-        "summary) is always shown to you under '## Session Memory' in the session-state"
-        ' block at the END of your context; `mode` "get" pulls an entry\'s full detail. '
-        "Record proactively when you hit a real dead-end or learn something "
-        'non-obvious. `mode`: "add" (`type` + `summary`, optional `detail`/`tags` → '
-        'id), "get" (`id`), "update" (`id` + the fields to change), "delete" (`id`), '
-        '"list" (optional `type`/`tag` filter). `type` is one of "failure", '
-        '"discovery", "decision", "note".'
+        "Record a session note that must survive context compaction: a failure (so "
+        "you do not repeat it), a discovery (to reuse), a decision (why you chose X), "
+        "or a note. The index of what you recorded is always shown to you under "
+        '"## Session Memory". `mode` "add" takes `type` + `summary` (optional `detail`, '
+        '`tags`) and returns an id; "get" (`id`) pulls the full detail; "update" (`id` '
+        '+ the fields to change) and "delete" (`id`) correct or drop a note. `type` is '
+        'one of "failure", "discovery", "decision", "note".'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -110,15 +108,15 @@ class MemoryTool(Tool):
             "mode": {
                 "type": "string",
                 "enum": list(MODES),
-                "description": '"add" | "get" | "update" | "delete" | "list"',
+                "description": (
+                    '"add" | "get" | "update" | "delete" (omitted with a `summary` '
+                    'means "add")'
+                ),
             },
             "type": {
                 "type": "string",
                 "enum": list(memory.VALID_TYPES),
-                "description": (
-                    '"failure" | "discovery" | "decision" | "note" ("add"/"update"; '
-                    '"list" filter)'
-                ),
+                "description": '"failure" | "discovery" | "decision" | "note" ("add"/"update")',
             },
             "summary": {
                 "type": "string",
@@ -132,19 +130,24 @@ class MemoryTool(Tool):
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": 'Optional keywords for "list" filtering',
+                "description": "Optional keywords, shown with the entry",
             },
             "id": {
                 "type": "integer",
                 "description": 'Memory id ("get"/"update"/"delete")',
             },
-            "tag": {
-                "type": "string",
-                "description": '"list": filter by a single tag',
-            },
         },
         "required": ["mode"],
     }
+
+    def schema_gaps(self, action_input: object) -> tuple[list[str], list[str]]:
+        """`mode` 없이 `summary` 가 온 호출은 빠진 것이 없다 — "add" 다 (`effective_mode`).
+        스키마의 `required` 는 그대로 두어 디코딩 문법은 여전히 `mode` 를 강제한다
+        (문법을 쓰는 서버에선 이 모양이 나올 수 없고, 못 쓰는 서버의 구제만 남는다)."""
+        missing, unknown = super().schema_gaps(action_input)
+        if isinstance(action_input, dict) and effective_mode(action_input) == "add":
+            missing = [m for m in missing if m != "mode"]
+        return missing, unknown
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
@@ -155,14 +158,23 @@ class MemoryTool(Tool):
 
     def validate(self, args: dict) -> str | None:
         """C7: mode enum + get/update/delete 의 id 필수 — 실행 없이 판정
-        가능한 의미론. id 값 형식 coercion(_as_id)은 실행 소관 유지."""
-        mode = (args.get("mode") or "").strip()
-        valid = ("add", "get", "update", "delete", "list")
-        if mode not in valid:
-            return f"invalid mode: {mode!r}. Valid: {list(valid)}"
+        가능한 의미론. id 값 형식 coercion(_as_id)은 실행 소관 유지. ``mode`` 가 없고
+        ``summary`` 가 있으면 "add" 로 읽는다(`schema_gaps` 가 같은 판정)."""
+        mode = effective_mode(args)
+        if mode not in MODES:
+            allowed = " | ".join(f'"{m}"' for m in MODES)
+            if not mode:
+                return f"`mode` is required unless a `summary` is given; use {allowed}"
+            return f'unknown `mode` "{mode}"; use {allowed}'
         if mode in ("get", "update", "delete") and args.get("id") in (None, ""):
             return f'`id` is required for `mode` "{mode}"'
         return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return _dispatch(args, ctx.session_dir if ctx else None)
+        turn = None
+        if ctx is not None and ctx.turn_now is not None:
+            try:
+                turn = int(ctx.turn_now())
+            except (TypeError, ValueError):
+                turn = None
+        return _dispatch(args, ctx.session_dir if ctx else None, turn)

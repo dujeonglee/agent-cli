@@ -310,7 +310,7 @@ class TestSemanticValidationHook:
         괄호에 붙었고 웹 요약이 `} This op did NOT run` 이 됐다."""
         from agent_cli.tools.registry import validate_tool_input
 
-        ok, err, _ = validate_tool_input("memory", {"type": "decision", "summary": "x"})
+        ok, err, _ = validate_tool_input("memory", {"type": "decision", "detail": "x"})
         assert not ok and "\n" not in err and "Expected: {" not in err
         assert err.startswith(
             'Missing required field(s) for `memory`: `mode` (string — "add" | "get"'
@@ -342,7 +342,7 @@ class TestSemanticValidationHook:
             TOOLS["memory"].validate({"mode": "get"})
             == '`id` is required for `mode` "get"'
         )
-        assert TOOLS["memory"].validate({"mode": "list"}) is None
+        assert TOOLS["memory"].validate({"mode": "delete", "id": 3}) is None
         assert (
             TOOLS["code_index"].validate(
                 {"mode": "lookup", "name": "f", "symbol_kind": "nope"}

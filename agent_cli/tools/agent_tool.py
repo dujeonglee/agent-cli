@@ -67,7 +67,7 @@ class AgentTool(Tool):
     # 멈췄다 (Harbor v4 extract-elf). context 는 none(기본)·fork 둘 다 가능 —
     # "empty" 로 단정하지 않는다.
     RUN_DESCRIPTION = (
-        '`mode` "run" gives ONE task to a sub-agent and you get back only its '
+        '`mode` "run" gives one task to a sub-agent and you get back only its '
         "summary: whatever it read stays in its window, both handoffs drop "
         "detail, and its mistakes return in the same confident tone as its "
         "findings. Delegate when answering would mean reading across many "
@@ -104,12 +104,12 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    '"run": ONE task, blocking — the result returns in this '
-                    'turn. "spawn": create a PERSISTENT agent that keeps its '
+                    '"run": one task, blocking — the result returns in this '
+                    'turn. "spawn": create a persistent agent that keeps its '
                     'context between requests (returns its key). "request": '
                     "send it a message — returns immediately; the reply is "
-                    'DELIVERED to you as an observation when ready. "status": '
-                    'list live agents and their state. "resume": bring a DEAD '
+                    'delivered to you as an observation when ready. "status": '
+                    'list live agents and their state. "resume": bring a dead '
                     'agent back with its full prior context. "kill": terminate '
                     "one."
                 ),
@@ -147,7 +147,7 @@ class AgentTool(Tool):
                 "description": (
                     '"run"/"spawn": inline role text (instant-agent) — becomes part '
                     "of the sub-agent's system prompt (for a spawned agent: "
-                    "its WHOLE life, survives resume). Use alone for an "
+                    "its whole life, survives resume). Use alone for an "
                     "ad-hoc specialist, or with `profile` to append "
                     "session-specific directions."
                 ),
@@ -192,7 +192,7 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": ["run"],
                 "description": (
-                    '"run": ONE task, blocking — the result returns in this turn.'
+                    '"run": one task, blocking — the result returns in this turn.'
                 ),
             },
             "profile": {
@@ -295,7 +295,7 @@ class AgentTool(Tool):
         return f"{mode} {target}".strip()
 
     oversized_retry_hint = (
-        "re-run a NARROWER task — the sub-agent's scope was too broad, so it "
+        "re-run a narrower task — the sub-agent's scope was too broad, so it "
         "returned everything instead of an answer."
     )
 

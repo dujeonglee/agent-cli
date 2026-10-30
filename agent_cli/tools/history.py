@@ -289,7 +289,7 @@ def _run_sql(conn, query: str) -> ToolResult:
 
 
 def _cell(value: Any) -> str:
-    """Render one cell value VERBATIM (no truncation, no whitespace collapse).
+    """Render one cell value verbatim (no truncation, no whitespace collapse).
     history returns faithful content; an oversized result is caught by the
     loop's oversized-observation cap (a narrow-it nudge), not silently mangled
     here. The model is expected to project/limit large queries (e.g.
@@ -381,17 +381,14 @@ def _help(session_dir: Path | None) -> ToolResult:
 class HistoryTool(Tool):
     name = "history"
     description = (
-        "Query past/current session history with SQL: `query` is a read-only SELECT … "
-        "FROM history WHERE …. Columns: session, loc, seq, "
-        "kind(query/action/observation/final/raw/system), turn, ts, tools, files, "
-        "author, text. Search by kind/tools/files/author/turn; the text column holds "
-        "the full content of each record. Rows are returned VERBATIM (no truncation) — "
-        "keep a result small by projecting/limiting: e.g. SELECT loc, "
-        "substr(text,1,200) FROM history WHERE … LIMIT 30 to scan, then SELECT text … "
-        "for the one row you want. An oversized result is rejected with a narrow-it "
-        "nudge rather than dumped. Omit `query` to see the schema + examples + session "
-        'list. Default scope = current session; `sessions` "all" or session id(s) for '
-        "others."
+        "Query the session record with SQL — what has left your context is still "
+        "here. `query` is a read-only SELECT over the table `history` (one row per "
+        "record): session, loc, seq, kind (query/action/observation/final/raw/"
+        "system), turn, ts, tools, files, author, text — `text` is the full content. "
+        "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
+        "fetch the one row you need afterwards; an oversized result is refused. Omit "
+        "`query` for the schema, examples and the session list. Default scope is the "
+        'current session; `sessions` "all" or session id(s) reaches others.'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -418,7 +415,7 @@ class HistoryTool(Tool):
     }
 
     oversized_retry_hint = (
-        "re-run a NARROWER SQL query: add or lower LIMIT, project fewer columns, "
+        "re-run a narrower SQL query: add or lower LIMIT, project fewer columns, "
         "or scan with substr(text,1,200) first and then SELECT the full text of "
         "the one row you need."
     )

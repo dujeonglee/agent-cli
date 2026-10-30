@@ -299,7 +299,7 @@ class TestRestateTask:
     def test_asks_information_gap_question(self):
         # "What information are you NOT getting?" — gap diagnosis
         out = restate_task(task="t", action="x", args_repr="{}", repeat_count=3)
-        assert "NOT getting" in out
+        assert "not getting" in out
 
     def test_forbids_another_retry_explicitly(self):
         # Explicit "do not retry" cue — necessary because we're at the

@@ -61,7 +61,7 @@ def _sched_id(args: dict) -> str:
 class ScheduleTool(Tool):
     name = "schedule"
     description = (
-        "Schedule a recurring request for THIS session: at each cron time the prompt "
+        "Schedule a recurring request for this session: at each cron time the prompt "
         "arrives as if the user had sent it. Use for standing/periodic work the user "
         'asked to automate (e.g. a weekly report). `mode`: "add" (`cron` + `prompt`, '
         'optional `label`, `nickname`), "delete" (`id`), "list". `cron` is 5 fields '
@@ -69,7 +69,7 @@ class ScheduleTool(Tool):
         " `nickname` sets the display name the prompt appears under (default "
         '"Scheduler-<label or id>"). Schedules are saved with the session and this '
         "process stays up while one is enabled. A fire that came due while the process "
-        "was down is NOT run automatically — the user is asked whether to run it."
+        "was down is not run automatically — the user is asked whether to run it."
     )
     parameters: ClassVar[dict] = {
         "type": "object",

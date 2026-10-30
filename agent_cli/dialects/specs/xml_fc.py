@@ -12,7 +12,7 @@ from agent_cli.dialects.base import NO_ACTION_FRAMING
 from agent_cli.dialects.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
 
 _REMINDER_CALL = "Respond with one or more <tool_call> blocks, each containing <function=TOOL> with <parameter=NAME>value</parameter> lines. To finish, call <function=complete> with a result parameter."
-_REMINDER_ACTION_REQUIRED = "Each <function=...> must name one tool from Available Tools. If the task is DONE, finish with <function=complete> and a <parameter=result>your final answer</parameter>. If your last message already was the final answer in plain prose, re-emit that answer as the result parameter. If you were about to do something, emit that tool call now. Never stop without an explicit complete."
+_REMINDER_ACTION_REQUIRED = "Each <function=...> must name one tool from Available Tools. If the task is done, finish with <function=complete> and a <parameter=result>your final answer</parameter>. If your last message already was the final answer in plain prose, re-emit that answer as the result parameter. If you were about to do something, emit that tool call now. Never stop without an explicit complete."
 _FRAMING_PARSE_FAIL = "Your response contained no parseable <tool_call> block — tool calls must use <function=...> / <parameter=...> tags."
 _NO_ACTION_DETAIL = "no <function=TOOL> naming a tool from Available Tools"
 
@@ -29,8 +29,8 @@ Your reasoning goes here, as plain prose. No tags around it.
 </function>
 </tool_call>
 
-Parameter values are RAW text: write file contents, code, and multi-line
-text directly between the tags with NO escaping — no \\n, no quote
+Parameter values are raw text: write file contents, code, and multi-line
+text directly between the tags with no escaping — no \\n, no quote
 escaping, no JSON. For a multi-line value put it on its own lines:
 <parameter=content>
 line one
@@ -39,11 +39,11 @@ line two
 Use the parameter names shown in each tool's guide above (plain, no
 prefix).
 
-Batch independent work into ONE turn. Before you emit, look at everything
-you intend to do: every operation that does NOT need another's output goes
-in THIS turn as a separate <tool_call> block. Reading three files, or a
-read plus an unrelated search, is ONE turn — not three; batching saves
-turns and context budget. Split into separate turns ONLY when a later step
+Batch independent work into one turn. Before you emit, look at everything
+you intend to do: every operation that does not need another's output goes
+in this turn as a separate <tool_call> block. Reading three files, or a
+read plus an unrelated search, is one turn — not three; batching saves
+turns and context budget. Split into separate turns only when a later step
 needs an earlier step's result (then emit just the first now — its
 observation arrives next turn).
 
@@ -51,10 +51,10 @@ Rules:
 1. Every turn must contain at least one <tool_call> block (work, or
    `complete` to finish).
 2. Each <function=...> names exactly one tool from Available Tools.
-3. Each call acts on ONE target. To read N files, emit N separate
-   <tool_call> blocks in the SAME turn — never a list inside one call.
+3. Each call acts on one target. To read N files, emit N separate
+   <tool_call> blocks in the same turn — never a list inside one call.
 4. Close every tag: </parameter>, </function>, </tool_call>.
-5. When the task is DONE, end with a `complete` call carrying your final
+5. When the task is done, end with a `complete` call carrying your final
    answer:
 <tool_call>
 <function=complete>
@@ -63,7 +63,7 @@ your final answer
 </parameter>
 </function>
 </tool_call>
-   Always finish this way — do NOT just stop.
+   Always finish this way — do not just stop.
 6. If an observation shows an error, fix parameters and retry.
 7. Respond in the user's language.
 

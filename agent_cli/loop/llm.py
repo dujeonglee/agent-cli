@@ -608,7 +608,7 @@ class LLMCaller:
             # 끌어내게 한다. 이미지가 없는 압축의 프롬프트는 종전과 바이트 같다.
             + (_SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
             + "\n"
-            "Rules: use ONLY information present in the transcript — do not "
+            "Rules: use only information present in the transcript — do not "
             "invent or assume. Keep exact identifiers verbatim (paths, "
             "names, numbers, commands). Be concise; stay under 2000 tokens. "
             "Plain text only — no JSON, no code fences except to quote a "

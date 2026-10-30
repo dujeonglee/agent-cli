@@ -733,7 +733,10 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
 - **타입 4종**: `failure` ⚠(반복 회피) · `discovery` 💡(재사용) · `decision` 🔀(근거) ·
   `note` 📝(일반).
 - **모드**: `add`(type+summary, 선택 detail/tags → id) · `get`(id) · `update`(id + 바꿀 필드)
-  · `delete`(id) · `list`(type/tag 필터). 발견이 나중에 틀리면 `update`/`delete` 로 정정.
+  · `delete`(id). 발견이 나중에 틀리면 `update`/`delete` 로 정정. `mode` 없이 `summary` 만 와도
+  `add` 로 받습니다(v10.81.0 — 벤치에서 그 모양이 3번 거절됐음). `list` 는 v10.81.0 에 삭제
+  (벤치 0회, 상시 인덱스와 중복). 항목은 기록한 **턴**을 함께 담아 인덱스 줄에 `(turn N)` 으로
+  보이고, `history` 의 `turn = N` 으로 그때의 원문에 닿습니다(docs/session-memory/DESIGN.md §11).
 
 ## 스킬 (Prompt Skills)
 
@@ -1651,9 +1654,9 @@ Settle these before you `complete` — the harness holds the run open while they
 - `agt-ui` (code-writer · ui) [busy · 2 queued] — Writes UI code.
 - `agt-dt` (explorer · dts) [idle] — Explores device trees.
 
-## Session Memory (2) — pull full detail with `memory` mode `get` and the entry's id
-⚠ #1 [failure] uart0 클럭 미설정 시 부팅 로그 없음
-🔀 #2 [decision] dts 대신 defconfig 로 수정하기로
+## Session Memory (2) — pull full detail with `memory` with `mode` "get" and the entry's `id`; "(turn N)" is the turn it was noted on, which `history` can look up
+⚠ #1 [failure] uart0 클럭 미설정 시 부팅 로그 없음 (turn 7)
+🔀 #2 [decision] dts 대신 defconfig 로 수정하기로 (turn 12)
 
 ℹ Context compaction is coming up: older turns will be replaced by a structured summary
 (task, state, decisions, failures, key facts) and work continues as usual. If a detail is
