@@ -22,6 +22,14 @@ git 의 두 가지 성질이 설계를 정한다(실측):
 모든 git 호출은 사용자 설정을 보지 않는다(``GIT_CONFIG_GLOBAL=/dev/null``,
 ``GIT_CONFIG_NOSYSTEM=1``) — gpgsign·hooksPath·autocrlf·safe.directory 가
 한꺼번에 무력화되고, 작성자는 고정(하니스 내부 커밋이다).
+
+**v10.80.0 수리 (docs/snapshot/DESIGN.md §6, 벤치 716 trial 실측)**: 모델은 과제문의
+절대 경로(``/app/main.db-wal``)를 그대로 넣는데 ``<commit>:<path>`` 문법은 트리 기준
+상대 경로만 받아 후보가 전부 걸러졌다(restore 실패 59건 중 52건). 경로는 ``_relative``
+가 워크스페이스 기준으로 정규화한다. 저장소는 세션을 넘어 이어지므로(의도된 성질 —
+사용자 결정) 세션 시작 커밋은 비어도 찍어 경계로 삼고 라벨에 세션 id 를 둔다. 복구
+결과에는 "어느 스냅샷까지 멀쩡했고 어느 스냅샷에서 달라졌나" 를 붙여, 같은 명령을
+다시 돌려 다시 망치는 반복(financial 33회 호출)을 끊는다.
 """
 
 from __future__ import annotations
@@ -38,6 +46,25 @@ from pathlib import Path
 EXCLUDE_DIRS: tuple[str, ...] = (".agent-cli", "node_modules", "__pycache__", ".venv")
 SNAPSHOT_DIR_NAME = "snapshot.git"
 _AUTHOR = ("agent-cli snapshot", "snapshot@agent-cli")
+#: 직전에 체크포인트를 찍는 도구 — 내장 훅(``hooks/builtin/10_snapshot.py``)이 보고,
+#: 모델에게 가는 문구(시스템 섹션·도구 설명)도 여기서 나온다(한 곳 — v10.66.0 에
+#: ``python`` 이 훅에만 더해져 문구가 셋만 말하던 어긋남을 닫는다).
+MUTATING_TOOLS: tuple[str, ...] = ("shell", "python", "edit_file", "write_file")
+MUTATING_TOOLS_PHRASE = " / ".join(f"`{t}`" for t in MUTATING_TOOLS)
+#: 체크포인트 라벨에 붙는 호출 요약의 상한(문자) — "before shell (turn 7): sqlite3 main.db"
+LABEL_SUMMARY_CHARS = 60
+
+
+def checkpoint_label(tool: str, turn: int, summary: str = "") -> str:
+    """변경 도구 직전 체크포인트의 라벨. ``summary`` 는 그 호출의 요약(명령·경로)이며
+    한 줄·상한 안으로 접는다 — 모델이 `list` 만 보고 "망치기 직전" 을 고를 수 있게."""
+    head = f"before {tool} (turn {turn})"
+    text = " ".join(summary.split())
+    if not text:
+        return head
+    if len(text) > LABEL_SUMMARY_CHARS:
+        text = text[: LABEL_SUMMARY_CHARS - 1] + "…"
+    return f"{head}: {text}"
 
 
 @dataclass
@@ -141,8 +168,11 @@ class GitSnapshot:
 
     # ── lifecycle ────────────────────────────────────────────
 
-    def init(self) -> bool:
-        """저장소 준비 + 하위 저장소 스캔 + 시작 커밋. 실패는 ``reason`` 에."""
+    def init(self, session_id: str | None = None) -> bool:
+        """저장소 준비 + 하위 저장소 스캔 + 시작 커밋. 실패는 ``reason`` 에.
+
+        시작 커밋은 변경이 없어도(빈 워크스페이스여도) 찍는다 — 저장소가 세션을 넘어
+        이어지므로 `list` 에서 세션의 경계가 되고, 라벨이 세션 id 를 말한다."""
         ok, why = git_available()
         if not ok:
             self.enabled, self.reason = False, why
@@ -175,11 +205,9 @@ class GitSnapshot:
             self.nested = self._scan_nested()
             self.enabled = True
             self._apply_caps()
-            sha = self.checkpoint("session start", force=True)
+            label = "session start" + (f" ({session_id})" if session_id else "")
+            self.checkpoint(label, force=True, allow_empty=True)
             self.stats.seconds = time.monotonic() - t0
-            if sha is None and self.head() is None:
-                # 빈 워크스페이스 — 담을 게 없다. 저장소는 준비됐다.
-                pass
             self.reason = "ok"
             return True
         except (OSError, subprocess.SubprocessError) as exc:
@@ -243,8 +271,11 @@ class GitSnapshot:
         dirty = [ln[3:].strip() for ln in st.splitlines() if ln.strip()]
         return NestedRepo(path=rel, head=head, dirty=dirty)
 
-    def checkpoint(self, label: str, *, force: bool = False) -> str | None:
-        """변경 도구 직전 커밋. 변경이 없으면 None(커밋 없음). 최소 간격 안이면 건너뜀."""
+    def checkpoint(
+        self, label: str, *, force: bool = False, allow_empty: bool = False
+    ) -> str | None:
+        """변경 도구 직전 커밋. 변경이 없으면 None(커밋 없음) — ``allow_empty`` 면 변경이
+        없어도 찍는다(세션 시작 경계). 최소 간격 안이면 건너뜀."""
         if not self.enabled:
             return None
         if not force and not self.per_turn:
@@ -257,15 +288,16 @@ class GitSnapshot:
             r = self._git("add", "-A", "--force", *self._pathspec())
             if r.returncode != 0:
                 return None
-            if self.head() is None:
-                staged = self._git("ls-files", "--cached").stdout.strip()
-                if not staged:
-                    return None
-            else:
-                q = self._git("diff", "--cached", "--quiet")
-                if q.returncode == 0:
-                    return None  # 변화 없음
-            c = self._git("commit", "-q", "-m", label)
+            if not allow_empty:
+                if self.head() is None:
+                    staged = self._git("ls-files", "--cached").stdout.strip()
+                    if not staged:
+                        return None
+                else:
+                    q = self._git("diff", "--cached", "--quiet")
+                    if q.returncode == 0:
+                        return None  # 변화 없음
+            c = self._git("commit", "-q", "--allow-empty", "-m", label)
             if c.returncode != 0:
                 return None
             self.stats.commits += 1
@@ -277,13 +309,43 @@ class GitSnapshot:
         r = self._git("rev-parse", "--verify", "-q", "HEAD")
         return r.stdout.strip() or None
 
-    def log(self, limit: int = 20) -> list[tuple[str, str]]:
-        r = self._git("log", f"-{limit}", "--format=%h%x09%s")
+    def log(self, limit: int = 20, path: str | None = None) -> list[tuple[str, str]]:
+        """최근 스냅샷 (짧은 sha, 라벨). ``path`` 를 주면 그 경로가 바뀐 스냅샷만 —
+        모델은 `list` 에 `path` 를 넣어 "이 파일의 판들" 을 기대한다(벤치 18회)."""
+        args = ["log", f"-{limit}", "--format=%h%x09%s"]
+        if path:
+            args += ["--", path]
+        r = self._git(*args)
         return [
             tuple(ln.split("\t", 1))  # type: ignore[misc]
             for ln in r.stdout.splitlines()
             if "\t" in ln
         ]
+
+    def label(self, commit: str) -> str:
+        return self._git("log", "-1", "--format=%s", commit).stdout.strip()
+
+    def relative(self, path: str) -> tuple[str | None, str]:
+        """모델이 준 경로를 워크스페이스 기준 상대 경로로 — git 의 ``<commit>:<path>``
+        는 트리 기준 상대 경로만 받는다. 절대 경로는 워크스페이스 안이면 받고 밖이면
+        분명한 오류, ``./``·``..`` 은 접는다. 반환 ``(경로, 오류)`` 중 하나만 채워진다."""
+        raw = path.strip().rstrip("/")
+        if not raw:
+            return None, "`path` is empty"
+        p = Path(raw)
+        if p.is_absolute():
+            try:
+                rel = p.resolve().relative_to(self.workspace)
+            except ValueError:
+                return (
+                    None,
+                    f"{raw!r} is outside the working directory {self.workspace}",
+                )
+            raw = str(rel)
+        norm = os.path.normpath(raw)
+        if norm == "." or norm == "" or norm.startswith(".."):
+            return None, f"{path.strip()!r} is not a path inside the working directory"
+        return norm, ""
 
     def changed_files(
         self, since: str = "HEAD~1", to: str = "HEAD"
@@ -317,29 +379,60 @@ class GitSnapshot:
     def restore(self, path: str, *, at: str | None = None) -> tuple[bool, str]:
         """``path`` 를 되돌린다 (``snapshot`` 도구가 부른다). ``at`` 이 없으면 **지금
         디스크와 다른 가장 최근 스냅샷**(파일이 없으면 가장 최근에 있던 스냅샷) —
-        망가진 상태가 다음 체크포인트에서 HEAD 로 커밋돼 있어도 그 전 판을 고른다."""
+        망가진 상태가 다음 체크포인트에서 HEAD 로 커밋돼 있어도 그 전 판을 고른다.
+
+        결과 문장에 원인의 자리를 붙인다: 그 경로가 아직 멀쩡했던 마지막 스냅샷의
+        라벨("before shell (turn 7): sqlite3 main.db")과 달라진 채 찍힌 첫 스냅샷의
+        라벨. 라벨이 호출 요약을 담으므로(``checkpoint_label``) 모델은 history 를 열지
+        않고도 어느 명령이 망쳤는지 안다 — 복구 뒤 같은 명령을 또 돌려 또 망치는 반복을
+        끊는 재료."""
         if not self.enabled:
             return False, self.reason
-        path = path.rstrip("/")
-        if at is None:
-            current = self._disk_blob(path)
-            candidates = self.commits_touching(path) or (
-                [self.head()] if self.head() else []
+        rel, err = self.relative(path)
+        if rel is None:
+            return False, err
+        if at is not None:
+            r = self._git("checkout", at, "--", rel)
+            if r.returncode != 0:
+                return False, r.stderr.strip() or "checkout failed"
+            return True, f'restored {rel} from {at[:8]} ("{self.label(at)}")'
+        candidates = self.commits_touching(rel)
+        if not candidates:
+            return False, (
+                f"no snapshot contains {rel!r} (paths are relative to the working "
+                "directory)"
             )
-            at = None
-            for c in candidates:
-                if not c or not self._has(c, path):
-                    continue
-                if current is not None and self._blob(c, path) == current:
-                    continue  # 지금과 같은 내용 — 더 전으로
-                at = c
-                break
-            if at is None:
-                return False, f"no snapshot holds a different version of {path!r}"
-        r = self._git("checkout", at, "--", path)
+        current = self._disk_blob(rel)
+        pick = -1
+        for i, c in enumerate(candidates):
+            if not self._has(c, rel):
+                continue
+            if current is not None and self._blob(c, rel) == current:
+                continue  # 지금과 같은 내용 — 더 전으로
+            pick = i
+            break
+        if pick < 0:
+            return False, (
+                f"every snapshot of {rel!r} matches what is on disk now — nothing to "
+                "restore"
+            )
+        at = candidates[pick]
+        r = self._git("checkout", at, "--", rel)
         if r.returncode != 0:
             return False, r.stderr.strip() or "checkout failed"
-        return True, f"restored {path} from {at[:8]}"
+        if pick == 0:
+            # 달라진 상태가 아직 어느 스냅샷에도 없다 — 가장 최근 스냅샷까지는 멀쩡했다.
+            head = self.head() or at
+            return True, (
+                f'restored {rel} from {at[:8]} — intact at "{self.label(head)}", '
+                "changed after that snapshot."
+            )
+        first_bad = candidates[pick - 1]
+        last_good = self._git("rev-parse", f"{first_bad}^").stdout.strip() or at
+        return True, (
+            f'restored {rel} from {at[:8]} — intact at "{self.label(last_good)}", '
+            f'changed by "{self.label(first_bad)}".'
+        )
 
     # ── model-facing ─────────────────────────────────────────
 
@@ -350,14 +443,16 @@ class GitSnapshot:
             "`.agent-cli/snapshot.git` (a bare repository; this directory is its work "
             "tree — nothing is added to the directory itself). A snapshot was taken "
             "when this session started and one is taken again just before each "
-            "`shell` / `edit_file` / `write_file` call, so the state before your last "
+            f"{MUTATING_TOOLS_PHRASE} call, so the state before your last "
             "command is always on record."
         )
         howto = (
             "If an input file gets damaged or disappears, call the `snapshot` tool "
             '`mode` "restore" and the file\'s `path` — it brings back the most '
-            "recent snapshot whose content differs from what is on disk now. "
-            '`mode` "list" shows the snapshots; `at` picks a specific one.'
+            "recent snapshot whose content differs from what is on disk now and "
+            "tells you which call changed it. "
+            '`mode` "list" shows the snapshots (with `path`, only those that '
+            "changed that file); `at` picks a specific one."
         )
         lines = [intro, howto]
         if self.nested:
@@ -377,9 +472,13 @@ _STORE_LOCK = threading.Lock()
 
 
 def get_snapshot(
-    workspace: Path | None = None, *, create: bool = False
+    workspace: Path | None = None,
+    *,
+    create: bool = False,
+    session_id: str | None = None,
 ) -> GitSnapshot | None:
-    """워크스페이스당 하나. ``create`` 면 없을 때 만들어 ``init`` 까지 한다."""
+    """워크스페이스당 하나. ``create`` 면 없을 때 만들어 ``init`` 까지 한다(시작 커밋
+    라벨에 ``session_id``)."""
     global _STORE
     ws = Path(workspace or Path.cwd()).resolve()
     with _STORE_LOCK:
@@ -396,7 +495,7 @@ def get_snapshot(
             file_max_bytes=k["file_max_bytes"],
             file_count_max=k["file_count_max"],
         )
-        store.init()
+        store.init(session_id)
         _STORE = store
         return store
 

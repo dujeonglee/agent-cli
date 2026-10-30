@@ -90,6 +90,19 @@ class TestSchemaAndValidation:
         assert "damaged" in d and "restore" in d and "list" in d
         assert not any("가" <= ch <= "힣" for ch in d), "모델 문구는 영어"
 
+    def test_description_names_every_mutating_tool(self):
+        """훅의 MUTATING_TOOLS 와 모델 문구는 한 상수 — v10.66.0 에 `python` 이 훅에만
+        더해져 설명이 셋만 말하던 어긋남(S3)."""
+        from agent_cli.snapshot import MUTATING_TOOLS
+
+        d = TOOLS["snapshot"].description
+        assert "`shell` / `python` / `edit_file` / `write_file`" in d
+        for t in MUTATING_TOOLS:
+            assert f"`{t}`" in d
+        assert "with `path`, only the snapshots that changed that path" in d
+        p = TOOLS["snapshot"].parameters["properties"]["path"]["description"]
+        assert "absolute inside it" in p and '"list"' in p
+
 
 class TestWithoutStore:
     def test_no_store_is_a_clear_error(self, ws):
@@ -115,13 +128,40 @@ class TestListAndRestore:
         assert lines[0] == "Snapshots (newest first):"
         assert "before shell (turn 3)" in lines[1] and "session start" in lines[2]
 
-    def test_list_on_an_empty_store(self, tmp_path, monkeypatch):
+    def test_list_on_an_empty_workspace_shows_the_session_start(
+        self, tmp_path, monkeypatch
+    ):
+        """빈 워크스페이스여도 시작 커밋은 찍힌다(세션 경계, v10.80.0) — 빈 목록은 없다."""
         empty = tmp_path / "empty"
         empty.mkdir()
         monkeypatch.chdir(empty)
-        _store(empty)  # 담을 파일이 없어 커밋 없음
+        _store(empty)
         r = TOOLS["snapshot"].run({"mode": "list"})
-        assert r.success and r.output == "No snapshots yet."
+        assert r.success
+        assert r.output.splitlines()[0] == "Snapshots (newest first):"
+        assert len(r.output.splitlines()) == 2 and "session start" in r.output
+
+    def test_list_with_path_shows_only_snapshots_that_changed_it(self, ws):
+        """`path` 는 벤치에서 18번 전달됐지만 버려졌다(v10.80.0 전)."""
+        s = _store(ws)
+        (ws / "docs" / "a.txt").write_text("a2\n")
+        s.checkpoint("before shell (turn 3): sed -i a.txt", force=True)
+        (ws / "docs" / "b.txt").write_text("b2\n")
+        s.checkpoint("before shell (turn 5): sed -i b.txt", force=True)
+        r = TOOLS["snapshot"].run({"mode": "list", "path": "docs/a.txt"})
+        assert r.success
+        lines = r.output.splitlines()
+        assert lines[0] == "Snapshots that changed docs/a.txt (newest first):"
+        assert [ln.split("  ", 1)[1] for ln in lines[1:]] == [
+            "before shell (turn 3): sed -i a.txt",
+            "session start",
+        ]
+        r = TOOLS["snapshot"].run({"mode": "list", "path": str(ws / "docs" / "b.txt")})
+        assert r.success and "turn 5" in r.output and "turn 3" not in r.output
+        r = TOOLS["snapshot"].run({"mode": "list", "path": "nope.txt"})
+        assert r.success and r.output == "No snapshot contains 'nope.txt'."
+        r = TOOLS["snapshot"].run({"mode": "list", "path": "/etc/passwd"})
+        assert not r.success and "outside the working directory" in r.error
 
     def test_restore_a_deleted_file(self, ws):
         s = _store(ws)
@@ -130,6 +170,24 @@ class TestListAndRestore:
         r = TOOLS["snapshot"].run({"mode": "restore", "path": "main.db-wal"})
         assert r.success and r.output.startswith("restored main.db-wal from ")
         assert (ws / "main.db-wal").read_bytes() == b"wal-bytes"
+        assert 'intact at "session start", changed by "after damage".' in r.output
+
+    def test_restore_accepts_an_absolute_path_inside_the_workspace(self, ws):
+        """벤치 restore 실패 59건 중 52건 — 모델은 과제문의 `/app/…` 를 그대로 넣는다.
+        `<commit>:<path>` 문법이 상대 경로만 받아 후보가 전부 걸러졌다(v10.80.0 수리)."""
+        s = _store(ws)
+        (ws / "main.db-wal").unlink()
+        s.checkpoint("before shell (turn 4): sqlite3 main.db", force=True)
+        r = TOOLS["snapshot"].run(
+            {"mode": "restore", "path": str(ws.resolve() / "main.db-wal")}
+        )
+        assert r.success, r.error
+        assert r.output.startswith("restored main.db-wal from ")
+        assert (ws / "main.db-wal").read_bytes() == b"wal-bytes"
+        r = TOOLS["snapshot"].run({"mode": "restore", "path": "/etc/hosts"})
+        assert not r.success and "outside the working directory" in r.error
+        r = TOOLS["snapshot"].run({"mode": "restore", "path": "./docs/../main.db"})
+        assert not r.success and "every snapshot of 'main.db' matches" in r.error
 
     def test_restore_prefers_the_version_that_differs_from_disk(self, ws):
         """망가진 판이 HEAD 로 커밋돼 있어도 그 전 판을 돌려준다."""
@@ -165,7 +223,8 @@ class TestListAndRestore:
     def test_unknown_path_and_unknown_commit_are_errors(self, ws):
         _store(ws)
         r = TOOLS["snapshot"].run({"mode": "restore", "path": "nope.txt"})
-        assert not r.success and "no snapshot" in r.error
+        assert not r.success and "no snapshot contains 'nope.txt'" in r.error
+        assert "relative to the working directory" in r.error
         r = TOOLS["snapshot"].run(
             {"mode": "restore", "path": "main.db", "at": "deadbeef"}
         )
@@ -174,7 +233,11 @@ class TestListAndRestore:
     def test_unchanged_file_has_nothing_to_restore(self, ws):
         _store(ws)
         r = TOOLS["snapshot"].run({"mode": "restore", "path": "main.db"})
-        assert not r.success and "no snapshot holds a different version" in r.error
+        assert not r.success
+        assert r.error == (
+            "snapshot: every snapshot of 'main.db' matches what is on disk now — "
+            "nothing to restore"
+        )
 
 
 class TestWireAndPrompt:

@@ -165,12 +165,13 @@ def build_hook_runner():
     return runner
 
 
-def build_snapshot_store():
+def build_snapshot_store(session_id: str | None = None):
     """세션 스냅샷 저장소 (v10.36.0, docs/snapshot/DESIGN.md) — run/web 부트스트랩이
     `build_hook_runner` 옆에서 부른다. 여기서 만드는 이유: 루프의 tools_list 는
     LoopConfig 조립 때 정해지므로 `snapshot` 도구를 "저장소가 있을 때만" 광고하려면
     훅(OnSessionStart — 그보다 늦다)이 아니라 부트스트랩에서 저장소가 서야 한다.
-    내장 훅은 이 저장소에 체크포인트·안내만 얹는다.
+    내장 훅은 이 저장소에 체크포인트·안내만 얹는다. ``session_id`` 는 시작 커밋의
+    라벨에 — 저장소가 세션을 넘어 이어지므로 `list` 의 경계가 된다(v10.80.0).
 
     끔(`AGENT_CLI_SNAPSHOT=0`)·git 없음·init 실패 → None 을 두고 사람에게 한 줄.
     모델에겐 도구도 안내도 가지 않는다(없는 기능을 약속하지 않는다)."""
@@ -183,7 +184,7 @@ def build_snapshot_store():
     reset_snapshot()
     if not snapshot_knobs()["enabled"]:
         return None
-    store = get_snapshot(Path.cwd(), create=True)
+    store = get_snapshot(Path.cwd(), create=True, session_id=session_id)
     if store is None or not store.enabled:
         get_renderer().status(
             "running", f"📸 Snapshots off — {store.reason if store else 'unavailable'}"
