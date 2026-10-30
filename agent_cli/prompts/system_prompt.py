@@ -1119,24 +1119,31 @@ def build_live_agents_section(
     if via_message_tool:
         intro = (
             "These peer agents are running alongside you, each with the role "
-            "below. Ask any of them directly with the `message` tool "
-            '(`{"to":"<key>","text":"..."}`, or `"to":"main"` to reach '
-            "the main agent). Their reply arrives to you as a new message — "
-            "you are not blocked; keep working or complete, and you'll be "
-            "woken when it comes."
+            "below. Ask any of them directly with the `message` tool (`to` a "
+            'key or name, or "main" to reach the main agent). Their reply '
+            "arrives to you as a new message — you are not blocked; keep "
+            "working or complete, and you'll be woken when it comes."
         )
     else:
+        # v10.85.0 (agent 검토 PR B, T2): "기다리는 법" 네 문장이 `agent` 설명에서
+        # 여기로 왔다 — 에이전트가 있을 때만 보이는 상태 블록의 말이다. spawn·
+        # request 결과는 사실만 말하고 지시는 이 머리글 한 곳에 있다.
         intro = (
-            "These agents are ALREADY running and remember all previous "
-            "exchanges — send follow-up work with "
-            '`{"mode":"request","key":"<key>","task":"..."}` instead of '
-            "spawning a new one for the same thread of work."
+            "These agents are already running and remember all previous "
+            'exchanges — send follow-up work with `mode` "request" and the '
+            "agent's `key` instead of spawning a new one for the same thread "
+            "of work. Once you have handed work to an agent, finish what is "
+            "yours, then call `wait`: you are woken when its reply arrives, so "
+            "never predict a pending reply, and do not poll `status` or re-send "
+            "a request (each re-send queues more work). Queue only requests that "
+            "do not depend on a reply still pending; send the dependent one "
+            "after you have read it."
         )
         if dead:
             intro += (
-                " Agents marked [dead] are STOPPED but their memory is intact — "
-                'bring one back with `{"mode":"resume","key":"<key>"}` rather '
-                "than spawning a fresh one under the same name."
+                " Agents marked [dead] are stopped but their memory is intact — "
+                'bring one back with `mode` "resume" rather than spawning a '
+                "fresh one under the same name."
             )
     heading = "## Live Agents"
     if show_cap:
@@ -1144,7 +1151,7 @@ def build_live_agents_section(
         if cap and len(alive) >= cap:
             intro += (
                 f" The limit of {cap} alive agents is reached: a new spawn or "
-                'resume is refused until you `{"mode":"kill","key":"<key>"}` one.'
+                'resume is refused until you kill one (`mode` "kill").'
             )
     lines = [heading, intro]
     for s in alive + dead:

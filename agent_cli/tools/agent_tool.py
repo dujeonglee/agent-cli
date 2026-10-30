@@ -92,11 +92,14 @@ class AgentTool(Tool):
         "rounds of questions — an agent that has studied one area answers "
         "follow-ups from full detail. One agent per area (disjoint "
         "files/subsystems). Once you have handed work to an agent, do not "
-        "also do it yourself: finish what is yours, then call `wait` — you are "
-        "woken when its reply arrives; never predict a pending reply. Queue "
-        "only requests that do not depend on a reply still pending; send the "
-        "dependent one after you have read it."
+        "also do it yourself; how to wait for its reply is in the `## Live "
+        "Agents` section at the end of the prompt."
     )
+    # v10.85.0 (agent 검토 PR B, T2): "기다리는 법" 네 문장(finish what is yours, then
+    # `wait` · 깨어난다 · 회신을 예측하지 않는다 · 의존 요청은 읽은 뒤에)은 설명이
+    # 아니라 상태 블록의 말이라 꼬리 `## Live Agents` 머리글로 옮겼다(사용자 결정,
+    # 삭제가 아니라 이동 — v10.73.0 자리 원칙). 에이전트가 하나도 없을 때까지 모든
+    # 프롬프트에 실리던 것이, 에이전트가 있을 때만 보인다.
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
@@ -145,7 +148,7 @@ class AgentTool(Tool):
             "instructions": {
                 "type": "string",
                 "description": (
-                    '"run"/"spawn": inline role text (instant-agent) — becomes part '
+                    '"run"/"spawn": inline role text that becomes part '
                     "of the sub-agent's system prompt (for a spawned agent: "
                     "its whole life, survives resume). Use alone for an "
                     "ad-hoc specialist, or with `profile` to append "
@@ -164,8 +167,8 @@ class AgentTool(Tool):
                 "items": {"type": "string"},
                 "description": (
                     '"run"/"spawn": tools the sub-agent may use. Omit for the '
-                    "profile's set (all tools without a profile). With a "
-                    "profile it can only narrow that set."
+                    "profile's set; without a profile the sub-agent has every "
+                    "tool. With a profile it can only narrow that set."
                 ),
             },
             "context": {
@@ -215,7 +218,7 @@ class AgentTool(Tool):
             "instructions": {
                 "type": "string",
                 "description": (
-                    "inline role text (instant-agent) — becomes part of the "
+                    "inline role text that becomes part of the "
                     "sub-agent's system prompt. Use alone for an ad-hoc "
                     "specialist, or with `profile` to append task-specific "
                     "directions."
@@ -225,9 +228,9 @@ class AgentTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "tools the sub-agent may use. Omit for the profile's set "
-                    "(all tools without a profile). With a profile it can "
-                    "only narrow that set."
+                    "tools the sub-agent may use. Omit for the profile's set; "
+                    "without a profile the sub-agent has every tool. With a "
+                    "profile it can only narrow that set."
                 ),
             },
             "context": {

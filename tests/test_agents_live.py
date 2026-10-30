@@ -836,17 +836,17 @@ class TestWaitAndScope:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         # 대기 상황 아님 → 힌트 없음
-        assert "Finish this turn" not in reg.format_status()
-        # working 상태 → 힌트
+        assert "finish this turn" not in reg.format_status()
+        # working 상태 → 힌트 (v10.85.0: 한 줄 — 기다리는 법은 꼬리가 말한다)
         reg.get(key).state = "busy"
         s = reg.format_status()
-        assert "Finish this turn" in s and "`wait`" in s
-        assert "delivered to you automatically" in s
+        assert "finish this turn with `wait`" in s
+        assert "wake you" in s and "polling `status`" in s
         reg.get(key).state = "idle"
         # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)
         reg.get(key).inbox.put(("req", "x", None))
         try:
-            assert "Finish this turn" in reg.format_status()
+            assert "finish this turn" in reg.format_status()
         finally:
             reg.get(key).inbox.get_nowait()
         reg.shutdown_all()
@@ -860,7 +860,7 @@ class TestToolTeammate:
         # 5.0.0 모드 축소: 상주 모드는 main 전용 — run 안내와 함께 거부.
         r = tool_agent({"mode": "spawn"}, registry=None)
         assert not r.success and "main-session only" in r.error
-        assert '"mode":"run"' in r.error
+        assert '`mode` "run"' in r.error
         assert "`message`" not in r.error  # 일회성 루프엔 peer 채널이 없다
 
     def test_no_registry_rejected_in_resident_loop_points_to_message(self):
@@ -905,11 +905,9 @@ class TestToolTeammate:
         r = tool_agent({"mode": "request", "key": key, "task": "go"}, registry=reg)
         assert r.success and "queued" in r.output
         assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
-        # ★U-A("wait 유도 문구 소멸") 의도적 뒤집기 (2026-07-18 사용자
-        # 지시): U-A 시절엔 MailWaker 가 없어 wait 유도가 위험했지만,
-        # 지금은 회신 도착=자동 기상이라 "complete 로 대기"가 정답이고
-        # 오히려 폴링/재전송이 실사고(에이전트 방해)를 냈다.
-        assert "complete" in r.output and "wait" in r.output
+        # v10.85.0: 결과는 사실만("회신이 깨운다") — "기다리는 법"은 꼬리
+        # `## Live Agents` 머리글 한 곳이 상시로 말한다(agent 검토 PR B, T2).
+        assert "wakes you" in r.output and "`wait`" not in r.output
         assert wait_until(reg.has_pending_replies)
         reply = reg.drain_replies()[0]
         assert "done:go" in reply["output"]
@@ -2060,9 +2058,13 @@ class TestLiveTeammatesSection:
         # (실사고: 같은 이름 칩 둘). resume 을 가리켜 그 선택을 살려 준다.
         assert f"`{k2}`" in desc
         assert "[dead · resumable]" in desc
-        assert '"mode":"resume"' in desc
+        assert '`mode` "resume"' in desc
         assert "..." in desc and "x" * 198 not in desc  # 197자 + "..." 캡 폴백
-        assert '"mode":"request"' in desc  # 재사용 유도
+        assert '`mode` "request"' in desc  # 재사용 유도
+        # v10.85.0: "기다리는 법" 네 문장은 설명이 아니라 이 머리글의 말(PR B, T2)
+        assert "finish what is yours, then call `wait`" in desc
+        assert "never predict a pending reply" in desc
+        assert "do not depend on a reply still pending" in desc
         # v10.26.0: 다중 인스턴스 안내는 `profile` 파라미터 한 곳에만 — 이
         # 섹션은 "이미 있는 것을 다시 쓰라" 만 말한다.
         assert "Spawn ADDITIONAL" not in desc and "distinct `name`" not in desc
@@ -2142,7 +2144,8 @@ class TestLiveTeammatesSection:
         desc = build_live_agents_section(reg, exclude_key=k1, via_message_tool=True)
         assert f"`{k2}`" in desc and f"`{k1}`" not in desc  # 자기 제외
         assert "message" in desc  # message 도구 안내
-        assert '"mode":"request"' not in desc  # main 전용 JSON 아님
+        assert '`mode` "request"' not in desc  # main 전용 안내 아님
+        assert "finish what is yours" not in desc  # main 의 기다리는 법도 아님
         reg.shutdown_all()
 
     def test_peer_section_injected_for_subloop(self):
@@ -2246,7 +2249,8 @@ class TestLiveTeammatesSection:
         # not the system prompt — and it must genuinely arrive (the whole point
         # of the move is zero KV cost, not losing the information).
         _, kwargs = provider.call.call_args_list[1]
-        assert "## Live Agents" not in kwargs["system"]
+        # (v10.85.0: `agent` 설명이 꼬리의 절을 가리키므로 머리글 줄로 본다)
+        assert "\n## Live Agents" not in kwargs["system"]
         tail = kwargs["messages"][-1]["content"]
         assert key in tail and "(ui)" in tail
         # and it rides in the appended state block (after the real message
@@ -2537,21 +2541,24 @@ class TestPeerMessaging:
         assert "b야 이것 좀 확인해줘" in conv
         reg.shutdown_all()
 
-    def test_spawn_ack_instructs_complete_and_wait(self, tmp_path, renderer):
-        """★실사고 (2026-07-18, 사용자 보고): spawn 직후 main 이 complete
-        없이 status 폴링·동일 요청 재전송으로 에이전트를 방해. ACK 자체가
-        "폴링/재요청 금지 + complete 로 대기"를 지시해야 한다."""
+    def test_spawn_ack_states_facts_and_the_tail_teaches_waiting(
+        self, tmp_path, renderer
+    ):
+        """★실사고 (2026-07-18, 사용자 보고): spawn 직후 main 이 status 폴링·동일
+        요청 재전송으로 에이전트를 방해. 종전엔 ACK 가 "폴링 금지 + 대기" 를 지시했다;
+        v10.85.0 부터 ACK 는 사실(요청 id·회신이 깨운다)만 말하고, 그 지시는
+        에이전트가 있는 동안 매 턴 꼬리 `## Live Agents` 머리글이 맡는다."""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
         reg = make_registry(tmp_path)
         res = tool_agent({"mode": "spawn", "task": "build the game"}, registry=reg)
         out = res.output
-        assert "Do NOT" in out and "status" in out
-        assert "complete" in out
-        assert "wakes you" in out
-        # v7.11.3: "complete 먼저" 과보정 방지 — 남은 계획(다른 에이전트
-        # 스폰 등) 먼저, complete 는 마지막·배칭 가능임을 명시 (실사고:
-        # thought 는 "reviewer 도 스폰" 인데 op 는 complete 만 내고 종료)
-        assert "FIRST" in out and "rest of your plan" in out
-        assert "SAME" in out  # complete 를 같은 턴에 배칭해도 됨
+        assert "initial task queued as request r-" in out and "wakes you" in out
+        assert "Do NOT" not in out and "`wait`" not in out
+        tail = build_live_agents_section(reg, include_state=True)
+        assert "finish what is yours, then call `wait`" in tail
+        assert "do not poll `status` or re-send a request" in tail
+        assert "never predict a pending reply" in tail
         reg.shutdown_all()
 
     def test_request_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
@@ -2931,8 +2938,10 @@ class TestResumeMode:
             registry=reg,
         )
         assert r.success
-        assert "remembers ALL previous exchanges" in r.output
-        assert "task queued" in r.output
+        assert "remembers all previous exchanges" in r.output
+        # v10.85.0: resume 의 과제도 요청 id 를 달고 간다(spawn·request 와 같게)
+        assert "task queued as request r-" in r.output
+        assert "`wait`" not in r.output  # 결과는 사실만 — 기다리는 법은 꼬리
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
 
@@ -3130,14 +3139,71 @@ class TestRosterFreshnessWithoutSignals:
 # ── resume 유도 (v4.61.1 — 모델이 spawn 으로 새 키를 만들던 실사용 이슈) ──
 
 
+class TestResultsAreFactsOnly:
+    """v10.85.0 (agent 검토 PR B, T2): spawn·request·resume 결과는 키·요청 id·"회신이
+    깨운다"만 말한다. "기다리는 법"(finish what is yours, then `wait` …)은 꼬리
+    `## Live Agents` 머리글 한 곳에, 폴링 금지는 `status` 넛지에 — 세 겹이 한 겹으로."""
+
+    def test_spawn_and_request_results_carry_no_wait_instruction(
+        self, tmp_path, renderer
+    ):
+        reg = make_registry(tmp_path)
+        r = tool_agent(
+            {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
+        )
+        key = r.output.split("'")[1]
+        assert "initial task queued as request r-" in r.output
+        assert "wakes you" in r.output
+        for banned in ("`wait`", "poll", "finish the rest", "re-send"):
+            assert banned not in r.output, banned
+        r2 = tool_agent(
+            {"mode": "request", "key": key, "task": "more"},
+            registry=reg,
+            runtime=reg.runtime,
+        )
+        assert r2.success and "queued to" in r2.output and "wakes you" in r2.output
+        for banned in ("`wait`", "poll", "If your plan"):
+            assert banned not in r2.output, banned
+        reg.shutdown_all()
+
+    def test_no_call_shapes_or_caps_in_results(self, tmp_path, renderer):
+        """표기 규칙(v10.77/10.81)이 결과 문구에도 — 가드는 inventory 표본으로 보고,
+        여기서는 실제 결과가 그 표본과 같은 상수에서 나오는지 본다."""
+        import re
+
+        reg = make_registry(tmp_path)
+        r = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
+        key = r.output.split("'")[1]
+        wait_until(lambda: reg.get(key).state == "idle")
+        outs = [r.output, reg.format_status(key)]
+        outs.append(tool_agent({"mode": "kill", "key": key}, registry=reg).output)
+        wait_until(lambda: reg.get(key).state == "dead")
+        outs.append(reg.format_status(key))
+        outs.append(tool_agent({"mode": "resume", "key": key}, registry=reg).output)
+        for out in outs:
+            assert '"mode":' not in out, out
+            assert not re.search(r"(?<![`\w])[A-Z]{3,}(?![`\w])", out), out
+        reg.shutdown_all()
+
+    def test_description_points_at_the_tail(self):
+        from agent_cli.tools.agent_tool import AgentTool
+
+        desc = AgentTool.description
+        assert "never predict a pending reply" not in desc
+        assert "do not also do it yourself" in desc
+        assert "`## Live Agents` section" in desc
+        assert "instant-agent" not in str(AgentTool.parameters)
+        assert "instant-agent" not in str(AgentTool.SUBLOOP_PARAMETERS)
+
+
 class TestResumeGuidance:
     def test_kill_output_teaches_resume(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         r = tool_agent({"mode": "kill", "key": key}, registry=reg)
-        assert '"mode":"resume"' in r.output and key in r.output
-        assert "PRESERVED" in r.output
+        assert '`mode` "resume"' in r.output and key in r.output
+        assert "context is kept" in r.output
 
     def test_second_kill_says_already_terminated(self, tmp_path, renderer):
         """v10.84.0: 멱등은 그대로, 문장이 반복을 알린다 — 벤치에서 35B 가 같은 키에
@@ -3157,7 +3223,7 @@ class TestResumeGuidance:
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)
         s = reg.format_status(key)
-        assert "resumable" in s and '"mode":"resume"' in s
+        assert "resumable" in s and '`mode` "resume"' in s
 
     def test_spawn_hints_when_same_role_dead_exists(
         self, tmp_path, renderer, monkeypatch
@@ -3183,7 +3249,7 @@ class TestResumeGuidance:
         # 없었다. 거절 메시지가 두 갈래(resume / distinct name)를 다 가리킨다.
         r = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
         assert not r.success
-        assert k1 in r.error and '"mode":"resume"' in r.error
+        assert k1 in r.error and '`mode` "resume"' in r.error
         assert "distinct `name`" in r.error
         # 이름을 달리하면 통과 — 병렬 독립 작업용 다중 인스턴스는 정당하다.
         r2 = tool_agent(
@@ -3191,7 +3257,7 @@ class TestResumeGuidance:
         )
         assert r2.success
         # 그 경우엔 종전의 사후 안내가 그대로 산다(같은 역할의 dead 존재 고지).
-        assert "NO memory" in r2.output and k1 in r2.output
+        assert "no memory" in r2.output and k1 in r2.output
         reg.shutdown_all()
 
     def test_duplicate_alive_label_rejected_pointing_at_request(
@@ -3203,7 +3269,7 @@ class TestResumeGuidance:
         wait_until(lambda: reg.get(k1).state == "idle")
         k2, err = reg.spawn(name="ui")
         assert k2 == ""
-        assert k1 in err and '"mode":"request"' in err
+        assert k1 in err and '`mode` "request"' in err
         reg.shutdown_all()
 
     def test_anonymous_spawns_never_collide(self, tmp_path, renderer):
@@ -3218,7 +3284,7 @@ class TestResumeGuidance:
     def test_spawn_without_dead_role_has_no_hint(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         r = tool_agent({"mode": "spawn"}, registry=reg)
-        assert "NO memory" not in r.output
+        assert "no memory" not in r.output
         reg.shutdown_all()
 
 
@@ -3638,7 +3704,7 @@ class TestRunMode:
         r = tool_agent({"mode": "spawn"}, registry=None)
         assert r.success is False
         assert "spawn/request/status/resume/kill" in r.error
-        assert '"mode":"run"' in r.error  # run 대안 안내 유지
+        assert '`mode` "run"' in r.error  # run 대안 안내 유지
 
     def test_run_validate_requires_task(self):
         from agent_cli.tools.registry import TOOLS
@@ -3905,7 +3971,7 @@ class TestAgentTaskFieldUnification:
 
         reg, _sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent({"mode": "spawn", "profile": ""}, registry=reg)
-        assert '"task"' in res.output
+        assert "`task`" in res.output
         assert '"message"' not in res.output
 
 
@@ -3935,7 +4001,8 @@ class TestDelegationGuidanceIsCostFirst:
 
         d = TOOLS["agent"].description
         assert "do not also do it yourself" in d
-        assert "you are woken when its reply arrives" in d
+        # v10.85.0: 기다리는 법은 꼬리 — 설명은 그 자리를 가리킨다
+        assert "how to wait for its reply is in the `## Live Agents` section" in d
         assert "several rounds of questions" in d  # spawn 의 유일한 사유
         assert "One agent per area" in d and "disjoint" in d
         assert "Prefer spawn" not in d
@@ -4353,7 +4420,7 @@ class TestRosterShowsTheAgentLimit:
         out = self._section(reg)
         assert out.startswith("## Live Agents (1/1 alive)\n")
         assert "limit of 1 alive agents is reached" in out
-        assert '"mode":"kill"' in out
+        assert '`mode` "kill"' in out
         # 실제 거부와 같은 판정
         _key, err = reg.spawn()
         assert err.startswith("agent limit reached (1 alive)")
