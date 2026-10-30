@@ -18,7 +18,7 @@ from agent_cli.monitor.conditions import SHAPES
 from agent_cli.monitor.registry import describe_previous
 from agent_cli.monitor.runtime import set_monitor_registry
 from agent_cli.tools.base import RunContext
-from agent_cli.tools.monitor_tool import RUN_REMOVED, MonitorTool
+from agent_cli.tools.monitor_tool import MonitorTool
 from tests.monitor_delivery import RecordingDelivery
 
 _INTERNAL = re.compile(r"\bmatch ·|\bsilence ·|\bcommand ·|\{command, every\}|\{file, ")
@@ -66,21 +66,18 @@ class TestDescription:
         assert SHAPES == "`command` + `every`, `file` + `pattern`, or `file` + `idle`"
 
 
-class TestRunRefusal:
-    def test_run_is_refused_explicitly(self):
+class TestRunIsJustUnknown:
+    def test_run_is_an_unknown_key_like_any_other(self):
+        """v10.79.0 의 한 릴리스용 명시 거절은 v10.79.1 에 뺐다(사용자 결정) — `run` 은
+        다른 모르는 인자와 같이 검증이 조용히 버린다(`Tool.schema_gaps`). 거절 문구가
+        돌아오면 호환층이 되살아난 것이다."""
         tool = MonitorTool()
-        err = tool.validate({"mode": "add", "file": "x", "pattern": "y", "run": "true"})
-        assert err == RUN_REMOVED
-        assert err == (
-            "monitor: `run` is no longer an argument — act on the report with "
-            "`shell` instead."
-        )
-        # list/delete 에 붙여도 거절 — 어디서든 실행되지 않는다는 것을 알려야 한다
-        assert tool.validate({"mode": "list", "run": "kill 1"}) == RUN_REMOVED
-        assert (
-            tool.validate({"mode": "add", "file": "x", "pattern": "y", "run": ""})
-            is None
-        )
+        for args in (
+            {"mode": "add", "file": "x", "pattern": "y", "run": "true"},
+            {"mode": "list", "run": "kill 1"},
+        ):
+            err = tool.validate(args)
+            assert err is None or "`run`" not in err, err
 
     def test_old_monitors_json_run_key_is_ignored(self, tmp_path):
         (tmp_path / "monitors.json").write_text(

@@ -22,13 +22,6 @@ from agent_cli.tools.result import ToolResult
 
 MODES = ("add", "list", "delete")
 
-#: ``run`` 을 주면 한 릴리스 동안 명시 거절한다 (v10.79.0). 알 수 없는 인자는 검증이
-#: 조용히 버리므로(`Tool.schema_gaps` — "Unknown keys are not a validation failure")
-#: 그대로 두면 옛 습관으로 ``run: "kill 123"`` 을 보낸 모델이 kill 이 실행됐다고 믿는다.
-RUN_REMOVED = (
-    "monitor: `run` is no longer an argument — act on the report with `shell` instead."
-)
-
 
 def _registry():
     from agent_cli.monitor.runtime import get_monitor_registry
@@ -128,8 +121,6 @@ class MonitorTool(Tool):
         mode = str(args.get("mode", "")).strip()
         if mode not in MODES:
             return f"monitor: mode must be one of {', '.join(MODES)}"
-        if args.get("run") not in (None, ""):
-            return RUN_REMOVED
         if mode == "add" and not any(
             args.get(k) not in (None, "") for k in ("file", "command")
         ):

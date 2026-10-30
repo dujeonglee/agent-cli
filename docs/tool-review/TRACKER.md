@@ -107,7 +107,7 @@
 - 에이전트를 기다릴 때의 줄: 새 필드 없이 레지스트리가 아는 것(처리 중·대기열·스스로 잠듦·사람 질문에 막힘, wait 이후 걸음 수)으로.
 - **`kill -- -<pid>`** 네 자리 통일(꼬리·`shell` 결과·시스템 프롬프트·알림) — pid 는 `sh -c` 리더라 `kill <pid>` 는 셸만 죽인다.
 - **M1~M3** `monitor` 문구: 첫머리에 "작업 종료는 이미 통지된다", 대문자 강조 제거, 내부 이름(`match`·`silence`·`command`·중괄호) 전부 인자 짝으로, 초 → "2h".
-- **R** `monitor` 의 `run` 삭제. 알 수 없는 인자는 조용히 버려지므로 한 릴리스 동안 `validate` 가 명시 거절.
+- **R** `monitor` 의 `run` 삭제. 알 수 없는 인자는 조용히 버려지므로 v10.79.0 한 판은 `validate` 가 명시 거절(v10.79.1 에 뺌).
 - **L 선행 PR** (v10.78.1): 메일의 장부 위치를 만드는 쪽이 `ledger` 필드로 선언 — `mail_item` 의 죽은 kind 목록 제거, `"none"` 은 영속 제외. 행동 불변.
 
 순서: L → (W1·P(a)·W2·M1~M3·R·kill 통일) 한 PR → 측정은 지시가 있을 때.
@@ -116,6 +116,7 @@
 
 - v10.78.1 (PR #188): L.
 - v10.79.0: W1·P(a)·W2·M1~M3·R·`kill -- -<pid>` 통일 — docs/wait/DESIGN.md §6, docs/monitor/DESIGN.md §13. 테스트
-  `tests/test_wait_checkin.py`·`tests/test_monitor_wording.py`. `run` 의 명시 거절은 한 릴리스 뒤 뺀다(TODO).
+  `tests/test_wait_checkin.py`·`tests/test_monitor_wording.py`.
+- v10.79.1: `run` 명시 거절(`RUN_REMOVED`) 제거 — 사용자 결정(안 쓰는 것), 해 분석은 docs/monitor/DESIGN.md §13.
 - 측정: 지시가 있을 때 전체 벤치(GLM 2회 이상)에서 — 지표는 docs/wait/DESIGN.md §6.6.
 
