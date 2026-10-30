@@ -925,8 +925,6 @@ class AgentLoop:
             # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로
             # 없는 메일은 사용자 요청처럼 `complete` 의 `answers` 로 닫는다.
             # 레코드에 id 를 찍어 열려 있는 동안 원문이 압축 핀에 걸린다.
-            if reply.get("kind") == "question" and reply.get("id"):
-                record["request_id"] = str(reply["id"])  # 답 빚 — 핀은 질문 id 로
             item = mail_item(reply)
             if item is not None:
                 nid, who = item
