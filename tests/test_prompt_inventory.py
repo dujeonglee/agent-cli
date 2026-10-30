@@ -166,3 +166,33 @@ class TestHtml:
         assert Path(mod.__file__).with_name("inventory.html").is_file()
         pyproject = Path(mod.__file__).parents[2] / "pyproject.toml"
         assert '"prompts/inventory.html"' in pyproject.read_text(encoding="utf-8")
+
+
+class TestAgentSamples:
+    """v10.85.0: `agent` 결과·거절 문구와 꼬리 `## Live Agents` 블록이 inventory 에
+    표본으로 실린다 — 표기 가드(test_prompt_notation)가 거기까지 보게 하려고."""
+
+    def test_agent_texts_are_registered(self, inv):
+        ids = {r["id"] for r in inv["dialects"]["json_fc"]["runtime"]}
+        assert {
+            "live_agents_tail",
+            "live_agents_peer_roster",
+            "agent_spawn_result",
+            "agent_request_result",
+            "agent_resume_result",
+            "agent_kill_result",
+            "agent_status_extras",
+            "agent_spawn_refused_duplicate",
+            "agent_modes_refused_in_subloop",
+        } <= ids
+
+    def test_tail_sample_carries_every_sentence(self, inv):
+        tail = next(
+            r["text"]
+            for r in inv["dialects"]["json_fc"]["runtime"]
+            if r["id"] == "live_agents_tail"
+        )
+        assert tail.startswith("## Live Agents (1/1 alive)")
+        assert "finish what is yours, then call `wait`" in tail
+        assert "[dead] are stopped" in tail and "limit of 1 alive agents" in tail
+        assert "[busy · 1 queued]" in tail and "[dead · resumable]" in tail

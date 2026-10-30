@@ -1643,16 +1643,8 @@ class AgentRegistry:
                 continue
             label = " · ".join(p for p in (profile, name) if p)
             if tm.state == "dead":
-                return (
-                    f"'{label}' already exists (dead) as {tm.key} — resume it with "
-                    f'{{"mode":"resume","key":"{tm.key}"}} instead of spawning a '
-                    f"duplicate, or spawn with a distinct `name`."
-                )
-            return (
-                f"'{label}' is already running as {tm.key} — send it work with "
-                f'{{"mode":"request","key":"{tm.key}","task":"..."}}, or spawn with '
-                f"a distinct `name` if you really need a second instance."
-            )
+                return DUPLICATE_DEAD.format(label=label, key=tm.key)
+            return DUPLICATE_ALIVE.format(label=label, key=tm.key)
         return ""
 
     def spawn(
@@ -2472,9 +2464,7 @@ class AgentRegistry:
             if s["error"]:
                 line += f" | error: {s['error']}"
             if s["state"] == "dead":
-                line += ' | resumable via {{"mode":"resume","key":"{}"}}'.format(
-                    s["key"]
-                )
+                line += STATUS_DEAD_SUFFIX
             lines.append(line)
         with self._cv:
             if self._pending:
@@ -2488,11 +2478,7 @@ class AgentRegistry:
             self.state_is_active(tm.state) or tm.inbox.qsize() > 0 for tm in items
         )
         if waiting:
-            lines.append(
-                "⏳ Waiting on an agent? Its reply is delivered to you "
-                "automatically as agent mail and you will be woken when it "
-                "arrives — do not poll status. Finish this turn with `wait`."
-            )
+            lines.append(STATUS_WAIT_NUDGE)
         return "\n".join(lines)
 
     def kill(self, key: str) -> str:
@@ -3433,6 +3419,75 @@ class MailWaker:
 # (커버리지는 tests 의 테이블↔핸들러 정합 테스트가 고정).
 
 
+# ── `agent` 결과·거절 문구 (v10.85.0, agent 검토 PR B) ──────────────────────────
+# 모듈 상수인 이유: ``prompts.inventory`` 가 표본으로 읽어 표기 가드(도구·인자 백틱,
+# 값 큰따옴표, 호출 모양 없음, 대문자 강조 없음)가 여기까지 본다 — v10.77/10.81 규칙
+# 위반 7곳·11낱말이 가드 밖이라 남아 있었다. 결과는 **사실만** 말한다(키·요청 id·
+# "회신이 깨운다"); "기다리는 법"은 꼬리 `## Live Agents` 머리글이 상시로 맡고,
+# 폴링 금지는 `status` 의 넛지가 맡는다(세 겹 → 한 겹, v10.73.0 자리 원칙).
+SPAWN_DEAD_SAME_PROFILE = (
+    "note: dead agent(s) with the same profile exist ({keys}) — this new spawn "
+    "starts with no memory of them; to continue one of them instead, kill this "
+    'and bring that one back with `mode` "resume".'
+)
+SPAWN_TASK_QUEUED = (
+    "initial task queued as request {rid} — its `reply` comes back marked [{rid}] "
+    "and wakes you (if it completes without one you get its run summary instead)."
+)
+SPAWN_NO_TASK = 'send work with `mode` "request", `key` "{key}" and the `task` text.'
+SPAWN_PEERS = (
+    "Peers reach it with their `message` tool as {who}; they see the live roster "
+    "in their own per-turn tail, so you need not relay keys."
+)
+REQUEST_QUEUED = (
+    "queued to {key} as request {rid} — its `reply` comes back marked [{rid}] at a "
+    "later turn (even while you are idle) and wakes you; if it completes without "
+    "one you get its run summary."
+)
+REQUEST_STACKED = (
+    "\n⚠ it now has {n} queued requests — if these are progress checks or re-sends "
+    "of the same ask, that is interference: each one queues more work and delays "
+    "the answer. Its `reply` reaches you on its own; stop re-sending."
+)
+RESUME_DONE = (
+    "agent '{key}' resumed — it remembers all previous exchanges (its context was "
+    "kept across death)."
+)
+RESUME_TASK_QUEUED = (
+    "task queued as request {rid} — its `reply` comes back marked [{rid}] and "
+    "wakes you."
+)
+KILL_DONE = (
+    "agent '{key}' terminated. Its context is kept — `mode` \"resume\" brings it "
+    "back with full memory; a new spawn would start without it."
+)
+KILL_ALREADY = (
+    "agent '{key}' was already terminated — nothing to do. Its context is kept; "
+    '`mode` "resume" brings it back with full memory.'
+)
+STATUS_DEAD_SUFFIX = ' | resumable with `mode` "resume"'
+STATUS_WAIT_NUDGE = (
+    "⏳ Replies arrive as agent mail and wake you — finish this turn with `wait` "
+    "instead of polling `status`."
+)
+DUPLICATE_DEAD = (
+    "'{label}' already exists (dead) as {key} — bring it back with `mode` "
+    '"resume" instead of spawning a duplicate, or spawn with a distinct `name`.'
+)
+DUPLICATE_ALIVE = (
+    "'{label}' is already running as {key} — send it work with `mode` "
+    '"request", or spawn with a distinct `name` if you really need a second '
+    "instance."
+)
+NO_REGISTRY = (
+    "persistent agent modes ({modes}) are main-session only — in this loop use "
+    '`mode` "run" for a one-shot sub-agent instead.{hint}'
+)
+NO_REGISTRY_PEER_HINT = (
+    ' To reach a peer agent or main, use `message` (`to` = its key or name, or "main").'
+)
+
+
 def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     key, error = registry.spawn(
         profile=args.get("profile", ""),
@@ -3457,42 +3512,23 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             if tm.profile_name == profile_arg and tm.state == "dead" and tm.key != key
         ]
         if dead_same_role:
-            lines.append(
-                f"note: dead agent(s) with the same profile exist "
-                f"({', '.join(dead_same_role)}) — this NEW spawn starts "
-                f"with NO memory of them. If you meant to CONTINUE one, "
-                f'kill this and use {{"mode":"resume","key":"..."}} instead.'
-            )
+            lines.append(SPAWN_DEAD_SAME_PROFILE.format(keys=", ".join(dead_same_role)))
     task = args.get("task", "")
     if task:
         rid = item_ids.next_id(item_ids.REPLY)
         err = registry.request(key, task, item_id=rid)
         if err:
-            lines.append(f"initial task NOT queued: {err}")
+            lines.append(f"initial task not queued: {err}")
         else:
-            lines.append(
-                f"initial task queued as request {rid} — its `reply` comes back "
-                f"marked [{rid}] and wakes you (if it completes without one you "
-                "get its run summary instead). Do NOT poll status "
-                "or re-send it (re-sends queue duplicate work and slow it "
-                "down). FIRST finish the rest of your plan — spawn the "
-                "other agents / send the other requests you intended, "
-                "ideally batched with a final `wait` in this SAME "
-                "turn. Call `wait` only once nothing else remains."
-            )
+            lines.append(SPAWN_TASK_QUEUED.format(rid=rid))
     else:
-        lines.append(
-            'send work with {"mode":"request","key":"' + key + '","task":"..."}.'
-        )
+        lines.append(SPAWN_NO_TASK.format(key=key))
     # v10.1.0: peer 채널 안내 — 상주 에이전트끼리는 `message` 로 부르고(키나
     # 이름), 명단은 그들의 매 턴 꼬리에 있다. 실측(mgv4en): main 이 모르면
     # 플레이어들에게 `agent(mode="request")` 를 가르쳐 한 턴씩 낭비됐다.
     _name = str(args.get("name", "") or "")
     who = f"'{_name}' or key {key}" if _name else f"key {key}"
-    lines.append(
-        f"Peers reach it with their `message` tool as {who}; they see the live "
-        "roster in their own per-turn tail, so you need not relay keys."
-    )
+    lines.append(SPAWN_PEERS.format(who=who))
     return ToolResult(True, output="\n".join(lines))
 
 
@@ -3506,28 +3542,8 @@ def _agent_request(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     if err:
         return ToolResult(False, error=f"request rejected: {err}")
     backlog = tm.inbox.qsize() if tm is not None else 0
-    stacked = (
-        (
-            f"\n⚠ it now has {backlog} queued requests — if these are "
-            f"progress checks or re-sends of the same ask, that is "
-            f"interference: each one queues MORE work and delays the "
-            f"answer. Its `message` back reaches you on its own; stop re-sending."
-        )
-        if backlog >= 2
-        else ""
-    )
-    return ToolResult(
-        True,
-        output=(
-            f"queued to {key} as request {rid} — its `reply` comes back marked "
-            f"[{rid}] at a later turn (even while you are idle) and wakes you; if "
-            f"it completes without one you get its run summary. Do NOT "
-            f"poll status or "
-            f"re-send this request. If your plan still has other work "
-            f"(other agents, other requests), do it now; then finish "
-            f"this turn with `wait`.{stacked}"
-        ),
-    )
+    stacked = REQUEST_STACKED.format(n=backlog) if backlog >= 2 else ""
+    return ToolResult(True, output=REQUEST_QUEUED.format(key=key, rid=rid) + stacked)
 
 
 def _agent_resume(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
@@ -3535,22 +3551,16 @@ def _agent_resume(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     err = registry.resume_teammate(key, parent_ctx=parent_ctx)
     if err:
         return ToolResult(False, error=f"resume rejected: {err}")
-    lines = [
-        (
-            f"agent '{key}' resumed — it remembers ALL previous exchanges "
-            f"(its context was preserved across death)."
-        )
-    ]
+    lines = [RESUME_DONE.format(key=key)]
     task = args.get("task", "")
     if task:
-        qerr = registry.request(key, task)
+        # spawn·request 처럼 요청 id 를 먼저 받아 결과에 싣는다 — 회신이 같은 id 로 온다.
+        rid = item_ids.next_id(item_ids.REPLY)
+        qerr = registry.request(key, task, item_id=rid)
         if qerr:
-            lines.append(f"task NOT queued: {qerr}")
+            lines.append(f"task not queued: {qerr}")
         else:
-            lines.append(
-                "task queued — the agent's `message` back arrives as an "
-                "observation; do not poll, finish with `wait`."
-            )
+            lines.append(RESUME_TASK_QUEUED.format(rid=rid))
     return ToolResult(True, output="\n".join(lines))
 
 
@@ -3565,25 +3575,11 @@ def _agent_kill(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
         # 멱등은 그대로(v10.84.0) — 다만 문장이 반복을 알려 준다: 벤치에서 35B 가
         # 같은 키에 kill 을 일곱 번 보내며 매번 같은 "terminated" 를 받았다.
         registry.kill(key)
-        return ToolResult(
-            True,
-            output=(
-                f"agent '{key}' was already terminated — nothing to do. Its context "
-                'is kept; `mode` "resume" brings it back with full memory.'
-            ),
-        )
+        return ToolResult(True, output=KILL_ALREADY.format(key=key))
     err = registry.kill(key)
     if err:
         return ToolResult(False, error=f"kill rejected: {err}")
-    return ToolResult(
-        True,
-        output=(
-            f"agent '{key}' terminated. Its context is PRESERVED — to "
-            f"bring it back later with full memory, use "
-            f'{{"mode":"resume","key":"{key}"}} (do NOT spawn a new one '
-            f"if you want it to remember)."
-        ),
-    )
+    return ToolResult(True, output=KILL_DONE.format(key=key))
 
 
 # 상주 모드 → 핸들러. agent_tool.AGENT_MODES 의 engine="registry" 모드와
@@ -3617,19 +3613,10 @@ def tool_agent(
     from agent_cli.tools.agent_tool import REGISTRY_MODES
 
     if registry is None:
-        hint = (
-            " To reach a peer agent or main, use `message` (`to` = its key or "
-            'name, or "main").'
-            if resident
-            else ""
-        )
+        hint = NO_REGISTRY_PEER_HINT if resident else ""
         return ToolResult(
             False,
-            error=(
-                f"persistent agent modes ({'/'.join(REGISTRY_MODES)}) are "
-                'main-session only — in this loop use {"mode":"run","task":...} '
-                f"for a one-shot sub-agent instead.{hint}"
-            ),
+            error=NO_REGISTRY.format(modes="/".join(REGISTRY_MODES), hint=hint),
         )
 
     # P3: 매 호출 runtime 갱신 — restore 로 되살아난 teammate(스폰 없음)도

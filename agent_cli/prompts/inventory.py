@@ -181,6 +181,124 @@ def _wait_checkin_sample() -> str:
     )
 
 
+class _TwoAgents:
+    """What the tail's ``## Live Agents`` block reads off the registry: one agent
+    working with a queued request and one dead, at the cap — so the block carries
+    every sentence it can (follow-up, how to wait, dead·resume, limit)."""
+
+    max_agents = 1
+
+    class _Instance:
+        description = "Read-only code analyst — explains how code works."
+
+    def roster_snapshot(self) -> list:
+        return [
+            {
+                "key": "agt-1",
+                "profile": "code-analyst",
+                "name": "auth",
+                "state": "busy",
+                "pending_requests": 1,
+            },
+            {
+                "key": "agt-2",
+                "profile": "code-writer",
+                "name": "",
+                "state": "dead",
+                "pending_requests": 0,
+            },
+        ]
+
+    def get(self, key):
+        return self._Instance() if key == "agt-1" else None
+
+
+def _agent_result_samples() -> list[tuple[str, str, str]]:
+    """`agent` 결과·거절 문구 표본 (v10.85.0) — 상수를 자리 표시자로 채운 것.
+    도구 결과는 inventory 의 다른 경로(설명·절)를 거치지 않아 여기서 등록한다;
+    표기 가드가 이 표본을 본다."""
+    from agent_cli.prompts.system_prompt import build_live_agents_section
+    from agent_cli.subagent import agents_live as al
+    from agent_cli.tools.agent_tool import REGISTRY_MODES
+
+    return [
+        (
+            "live_agents_tail",
+            "The tail's `## Live Agents` block while agents exist (main loop)",
+            build_live_agents_section(_TwoAgents(), include_state=True),
+        ),
+        (
+            "live_agents_peer_roster",
+            "The same block as a resident agent sees it (peers, `message`)",
+            build_live_agents_section(
+                _TwoAgents(), exclude_key="agt-2", via_message_tool=True
+            ),
+        ),
+        (
+            "agent_spawn_result",
+            "`agent` spawn accepted with a first task while a dead agent of the same profile exists",
+            "\n".join(
+                [
+                    "spawned agent 'agt-3' (code-writer · api)",
+                    al.SPAWN_DEAD_SAME_PROFILE.format(keys="agt-2"),
+                    al.SPAWN_TASK_QUEUED.format(rid="r-4"),
+                    al.SPAWN_PEERS.format(who="'api' or key agt-3"),
+                ]
+            ),
+        ),
+        (
+            "agent_spawn_without_task",
+            "`agent` spawn accepted without a task — the last line instead",
+            al.SPAWN_NO_TASK.format(key="agt-3"),
+        ),
+        (
+            "agent_request_result",
+            "`agent` request queued (second line only when two or more are queued)",
+            al.REQUEST_QUEUED.format(key="agt-1", rid="r-5")
+            + al.REQUEST_STACKED.format(n=2),
+        ),
+        (
+            "agent_resume_result",
+            "`agent` resume accepted, with a task",
+            "\n".join(
+                [
+                    al.RESUME_DONE.format(key="agt-2"),
+                    al.RESUME_TASK_QUEUED.format(rid="r-6"),
+                ]
+            ),
+        ),
+        (
+            "agent_kill_result",
+            "`agent` kill — first time, then again on the same key",
+            "\n".join(
+                [al.KILL_DONE.format(key="agt-1"), al.KILL_ALREADY.format(key="agt-1")]
+            ),
+        ),
+        (
+            "agent_status_extras",
+            "`agent` status: a dead agent's line suffix, and the nudge while one is working",
+            al.STATUS_DEAD_SUFFIX.strip() + "\n" + al.STATUS_WAIT_NUDGE,
+        ),
+        (
+            "agent_spawn_refused_duplicate",
+            "`agent` spawn refused: the same profile·name exists dead / alive",
+            "\n".join(
+                [
+                    al.DUPLICATE_DEAD.format(label="code-writer · api", key="agt-2"),
+                    al.DUPLICATE_ALIVE.format(label="code-writer · api", key="agt-3"),
+                ]
+            ),
+        ),
+        (
+            "agent_modes_refused_in_subloop",
+            "A loop without a registry (sub-agent) asked for a persistent mode",
+            al.NO_REGISTRY.format(
+                modes="/".join(REGISTRY_MODES), hint=al.NO_REGISTRY_PEER_HINT
+            ),
+        ),
+    ]
+
+
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
@@ -270,6 +388,7 @@ def _runtime_texts(dialect) -> list[dict]:
             "An accepted `wait` has not been woken for 5m (then 10·20·40·60m)",
             _wait_checkin_sample(),
         ),
+        *_agent_result_samples(),
     ]
     for level in (1, 2):
         intervention = format_action_loop_intervention(
