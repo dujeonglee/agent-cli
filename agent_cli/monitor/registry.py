@@ -65,7 +65,9 @@ class Monitor:
     #: 기본값을 두지 않는다: 주소 없는 모니터는 보고를 잃는다.
     owner: str
     once: bool = True
-    run: str = ""  # 선택 — 보고 **전에** 실행 (§4)
+    #: 종전의 ``run``(보고 전에 하니스가 돌리는 셸 명령)은 v10.79.0 에 지웠다 —
+    #: 모니터는 보고만 하고, 반응은 모델이 보고를 읽고 `shell` 로 한다
+    #: (docs/monitor/DESIGN.md §13).
     state: dict = field(default_factory=dict)
     wakes: int = 0
     matches: int = 0
@@ -145,8 +147,8 @@ class MonitorRegistry:
         #: `monitors.json` 을 비워 다음 세션의 "이전 세션 모니터" 통지가
         #: 사라진다.
         self.closed = False
-        #: 배달 중(부작용 실행 포함) 건수 — 생존 판정이 이걸 센다. 안 세면
-        #: `run` 펌프가 보고를 날리며 종료할 수 있다.
+        #: 배달 중 건수 — 생존 판정이 이걸 센다. 안 세면 `run` 펌프가 보고를
+        #: 날리며 종료할 수 있다.
         self._inflight = 0
 
     # ── 등록/조회 ──────────────────────────────
@@ -158,7 +160,6 @@ class MonitorRegistry:
         owner: str,
         deadline_s: int,
         once: bool = True,
-        run: str = "",
         state: dict | None = None,
     ) -> Monitor:
         """감시 등록. ``owner`` 로 보고가 간다. ``state`` 는 조건의
@@ -179,7 +180,6 @@ class MonitorRegistry:
             deadline_at=time.time() + _clamp_deadline(deadline_s),
             owner=owner,
             once=once,
-            run=run,
         )
         # `silence` 가 등록 직후 즉시 발화하지 않도록 기준 시각을 심는다.
         mon.state["registered_at"] = mon.created_at
@@ -340,36 +340,9 @@ class MonitorRegistry:
 
     # ── 발화 ───────────────────────────────────
 
-    def _run_side_effect(self, mon: Monitor) -> str:
-        """`run` 필드 — 보고 **전에** 실행하고 결과를 보고문에 싣는다.
-
-        notify 없는 shell 을 표현할 수 없게 만든 것이 설계 의도다(§4): 새벽
-        3시에 명령이 돌았는데 사람도 모델도 영영 모르는 상태를 막는다.
-        """
-        if not mon.run:
-            return ""
-        import subprocess
-
-        from agent_cli.monitor.conditions import COMMAND_TIMEOUT_S
-
-        try:
-            proc = subprocess.run(
-                mon.run,
-                shell=True,
-                capture_output=True,
-                timeout=COMMAND_TIMEOUT_S,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return f"↳ run {mon.run!r}: timed out"
-        tail = proc.stdout.decode("utf-8", errors="replace").strip().splitlines()
-        tail_s = f" · {tail[-1][:200]}" if tail else ""
-        return f"↳ run {mon.run!r}: exit {proc.returncode}{tail_s}"
-
     def _flush(self, mon: Monitor, now: float, *, note: str = "") -> None:
-        # 카운터는 **부작용 전에** 올린다 — `run` 서브프로세스가
-        # `COMMAND_TIMEOUT_S` 까지 걸리는데, 그 사이 생존 판정이 거짓이 되면
-        # 펌프가 보고를 날리며 종료한다. 내리는 것은 반드시 `finally` 에서:
+        # 카운터는 보고를 만들기 **전에** 올린다 — 그 사이 생존 판정이 거짓이
+        # 되면 펌프가 보고를 날리며 종료한다. 내리는 것은 반드시 `finally` 에서:
         # `_loop` 가 `tick` 의 예외를 삼키므로 한 번만 새면 카운터가 영원히
         # 0 이 아니고, 그러면 세션이 **영영 안 끝난다**.
         with self._lock:
@@ -378,9 +351,7 @@ class MonitorRegistry:
             self._inflight += 1
         try:
             lines, mon._buf = mon._buf, []
-            side = self._run_side_effect(mon)
-            extra = " · ".join(x for x in (side, note) if x)
-            report = _format_report(mon, lines, note=extra)
+            report = _format_report(mon, lines, note=note)
             mon.wakes += 1
             mon._last_report = now
             err = self._send(mon, report)
@@ -414,10 +385,7 @@ class MonitorRegistry:
         try:
             if flush or mon._buf:
                 lines, mon._buf = mon._buf, []
-                side = self._run_side_effect(mon)
-                report = _format_report(
-                    mon, lines, note=" · ".join(x for x in (side, why) if x)
-                )
+                report = _format_report(mon, lines, note=why)
             else:
                 report = _format_report(mon, [f"({why}) {mon.matches} match(es) total"])
             mon.wakes += 1
@@ -437,7 +405,7 @@ class MonitorRegistry:
             return
         with self._lock:
             rows = [
-                {"id": m.id, "desc": m.cond.describe(), "once": m.once, "run": m.run}
+                {"id": m.id, "desc": m.cond.describe(), "once": m.once}
                 for m in self._monitors.values()
                 if m.alive
             ]
@@ -463,21 +431,22 @@ def describe_previous(session_dir) -> list[str]:
        **둘 다 틀렸고 어느 쪽이 맞는지 알 방법이 없다.**
     3. **권한 구멍.** 세션 디렉터리 기본값이 워크스페이스 안(`paths.py`)이라
        에이전트가 `write_file` 로 이 파일을 고칠 수 있다. 되살리면 **아무도
-       승인하지 않은 `command`/`run` 이 실행된다** — 파일 안의 플래그는
+       승인하지 않은 `command` 가 실행된다** — 파일 안의 플래그는
        "이 프로세스에서 사람이 답했다"를 증명하지 못한다.
     4. 재검증 매트릭스(PID×파일×deadline×확인)가 통째로 사라진다.
 
     사용자가 다시 걸면 **확인도 다시 받는다** — 그게 정직한 상태다.
+
+    옛 세션 파일의 ``run`` 키(v10.79.0 에 지운 필드)는 읽지 않는다 — 설명 줄만
+    보이므로 호환층이 없다.
     """
     path = Path(session_dir) / "monitors.json"
     try:
         rows = json.loads(path.read_text(encoding="utf-8")).get("monitors", [])
     except (OSError, json.JSONDecodeError, AttributeError):
         return []
-    out = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        extra = f" · run={r['run']!r}" if r.get("run") else ""
-        out.append(f"[{r.get('id', '?')}] {r.get('desc', '?')}{extra}")
-    return out
+    return [
+        f"[{r.get('id', '?')}] {r.get('desc', '?')}"
+        for r in rows
+        if isinstance(r, dict)
+    ]

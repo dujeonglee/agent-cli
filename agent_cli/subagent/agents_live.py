@@ -44,7 +44,7 @@ from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
 from agent_cli import item_ids
-from agent_cli.constants import has_words
+from agent_cli.constants import CHECKIN_STEPS_S, has_words
 from agent_cli.context.session import AGENTS_DIR
 from agent_cli.tools.result import ToolResult
 
@@ -378,6 +378,17 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "content": reply.get("output") or "",
         }
 
+    if reply.get("kind") == "checkin":
+        # `wait` 의 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) — 모니터 보고와
+        # 같은 모양, 도구 이름은 그 기다림을 연 `wait`. 장부 밖(`ledger: "none"`)이라
+        # 열린 항목이 되지 않고 영속되지 않는다 — 생산자(`fire_checkin`)가 선언한다.
+        return {
+            "role": "user",
+            "tool": "wait",
+            "success": True,
+            "content": reply.get("output") or "",
+        }
+
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
         # status 를 조회하기 전에 능동적으로 알린다.
@@ -460,6 +471,19 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # additive 마킹 — tool="" (형식-개입 레거시) 오인 금지 계약과 짝.
         "source": "agent_reply",
     }
+
+
+@dataclass
+class _Checkin:
+    """소유자 하나에 걸린 `wait` 중간 깨우기 (v10.79.0) — 대상 id 집합, 배증 단계,
+    이번 간격, `wait` 때의 기준(작업별 로그 크기·에이전트별 `last_ordinal`), 타이머."""
+
+    ids: frozenset[str]
+    step: int
+    interval_s: int
+    log_marks: dict[int, int] = field(default_factory=dict)
+    step_marks: dict[str, int] = field(default_factory=dict)
+    timer: threading.Timer | None = None
 
 
 class AgentInstance:
@@ -790,6 +814,15 @@ class AgentRegistry:
         self._reply_debts: dict[str, list[ReplyDebt]] = {}
         # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
         self.stale_questions = 0
+        # `wait` 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) — 소유자별 걸린
+        # 타이머와, 직전에 **발화한** 깨우기의 (대상 id 집합, 단계). 둘 다 ``_cv``
+        # 아래. 배증이 치르는 유일한 상태다. 영속하지 않는다 — 프로세스가 죽으면
+        # 기다리던 것도 함께 죽는다.
+        self._checkin_armed: dict[str, _Checkin] = {}
+        self._checkin_last: dict[str, tuple[frozenset[str], int]] = {}
+        #: 타이머 팩토리 — 테스트가 가짜(즉시 발화하지 않는)로 바꾼다.
+        #: `threading.Timer` 는 가짜 시계로 돌릴 수 없어 `fire_checkin` 을 직접 부른다.
+        self.checkin_timer_factory: Callable[..., threading.Timer] = threading.Timer
 
     # ── 조회 ────────────────────────────────────
 
@@ -910,7 +943,30 @@ class AgentRegistry:
         안 잡혔고(벤치 실측: 모니터가 먼저 발화한 뒤의 wait 가 "nothing
         pending" 으로 거부), 잡혔더라도 **곧 배달될 것** 을 깨울 것으로 쳐
         런을 끝내고 바로 다시 깨우는 낭비였다."""
-        out: list[str] = []
+        return [text for _, text in self.pending_agents_for(addr, exclude)]
+
+    def pending_agents_for(
+        self, addr: str, exclude: frozenset = frozenset()
+    ) -> list[tuple[str, str]]:
+        """`pending_for` 의 재료 — ``(에이전트 주소, 사람이 읽을 줄)`` 쌍 (v10.79.0).
+        주소는 `wait` 중간 깨우기의 대상 id(`runtime.wake_source_ids`)가 된다."""
+        out: list[tuple[str, str]] = []
+        for kind, me in self._agent_relations(addr, exclude):
+            if kind == "owes":
+                out.append((me, f"{me} owes you a reply"))
+            elif kind == "working":
+                out.append((me, f"{me} working on your request"))
+            else:
+                out.append((me, f"{me} has your request queued"))
+        return out
+
+    def _agent_relations(
+        self, addr: str, exclude: frozenset = frozenset()
+    ) -> list[tuple[str, str]]:
+        """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued",
+        주소)``. 빚진 채 **스스로 잠든** 쪽(`_debtor_is_parked`)은 여기 없다 —
+        `parked_debtors_for` 가 따로 들고 호출자가 거슬러 본다."""
+        out: list[tuple[str, str]] = []
         with self._cv:
             for debtor, debts in self._reply_debts.items():
                 if debtor == addr or debtor in exclude:
@@ -919,18 +975,113 @@ class AgentRegistry:
                     not d.settled and not d.human and d.to == addr for d in debts
                 )
                 if owes and not self._debtor_is_parked(debtor):
-                    out.append(f"{debtor} owes you a reply")
+                    out.append(("owes", debtor))
         for tm in list(self._agents.values()):
             me = f"agent:{tm.key}"
             if me == addr or me in exclude:
                 continue
             if self.state_is_active(tm.state) and tm.current_author == addr:
-                out.append(f"{me} working on your request")
+                out.append(("working", me))
             elif any(str(i.get("author") or "") == addr for i in self._queued(tm)):
                 # 받은편지함 미러(`inbox_items`)로 본다 — `SimpleQueue` 엔 `queue`
                 # 속성이 없어 종전 `getattr(tm.inbox, "queue", [])` 는 늘 비었다.
-                out.append(f"{me} has your request queued")
+                out.append(("queued", me))
         return out
+
+    def checkin_agent_lines(
+        self, addr: str, step_marks: dict[str, int]
+    ) -> tuple[list[str], bool]:
+        """`wait` 중간 깨우기 알림의 에이전트 줄 (v10.79.0, docs/wait/DESIGN.md §6.3)
+        — ``(줄 목록, 사람 질문에 막힌 줄이 있는가)``.
+
+        작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
+        것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
+        스스로 잠듦·그 에이전트가 기다리는 것(`runtime.wake_sources`)·열린 사람
+        질문·컨텍스트 기록의 서수와 시각. 새 필드는 없다. "step" 은 컨텍스트 기록
+        하나(모델 턴 또는 관찰) — 모델에게 하니스 용어(턴·관찰)를 쓰지 않는다.
+        ``step_marks`` 는 `wait` 때 적어 둔 에이전트별 `last_ordinal`.
+
+        걸음 수·시각은 락 없는 근사값이다(`snapshot()` 의 `est_tokens` 와 같은 수준).
+        "일하고 있다" 와 "쓸모 있는 일을 하고 있다" 는 구별하지 못한다."""
+        from agent_cli.constants import format_duration
+
+        now = time.time()
+
+        def _label(key: str) -> str:
+            tm = self._agents.get(key)
+            if tm is None:
+                return f"agent:{key}"
+            return f"agent:{format_agent_label(key, tm.profile_name, tm.instance_name)}"
+
+        def _steps(tm, me: str) -> str:
+            ctx = tm.ctx
+            ordinal = (ctx.last_ordinal or 0) if ctx is not None else 0
+            n = max(0, ordinal - step_marks.get(me, ordinal))
+            at = float(getattr(ctx, "last_added_at", 0.0) or 0.0) if ctx else 0.0
+            ago = f", last one {format_duration(now - at)} ago" if at else ""
+            steps = f"{n} step{'s' if n != 1 else ''}" if n else "no step"
+            return f"{steps} since your wait{ago}"
+
+        def _last_step(tm) -> str:
+            ctx = tm.ctx
+            at = float(getattr(ctx, "last_added_at", 0.0) or 0.0) if ctx else 0.0
+            return f", last step {format_duration(now - at)} ago" if at else ""
+
+        lines: list[str] = []
+        question = False
+        for kind, me in self._agent_relations(addr):
+            key = me.split(":", 1)[1]
+            tm = self._agents.get(key)
+            if tm is None:
+                continue
+            if kind == "working":
+                lines.append(
+                    f"{_label(key)} · working on your request · {_steps(tm, me)}"
+                )
+            elif kind == "queued":
+                queued = self._queued(tm)
+                ahead = next(
+                    (i for i, it in enumerate(queued) if it.get("author") == addr),
+                    len(queued),
+                )
+                where = (
+                    f"has your request queued behind {ahead} other"
+                    f"{'s' if ahead != 1 else ''}"
+                    if ahead
+                    else "has your request queued, next in line"
+                )
+                busy = (
+                    f"busy on another request{_last_step(tm)}"
+                    if self.state_is_active(tm.state)
+                    else "picking it up"
+                )
+                lines.append(f"{_label(key)} · {where} · {busy}")
+            else:
+                lines.append(
+                    f"{_label(key)} · owes you a reply · busy on another request"
+                    f"{_last_step(tm)}"
+                )
+        from agent_cli.runtime import wake_sources
+
+        for debtor in self.parked_debtors_for(addr):
+            key = debtor.split(":", 1)[1]
+            on = wake_sources(debtor, frozenset({addr}))
+            if not on:
+                continue  # 깨울 것이 없는 채무자는 깨울 근거가 아니다 (v10.77.0)
+            line = (
+                f"{_label(key)} · owes you a reply · itself waiting on {', '.join(on)}"
+            )
+            with self._cv:
+                open_qs = [q for q in self._questions.values() if q.asker == key]
+            if open_qs:
+                q = min(open_qs, key=lambda q: q.asked_at)
+                line += (
+                    f" · blocked on question {q.id} to the user, unanswered for "
+                    f"{format_duration(now - q.asked_at)}"
+                )
+                question = True
+            lines.append(line)
+        return lines, question
 
     def _debtor_is_parked(self, debtor: str) -> bool:
         """빚진 쪽이 **스스로 잠들어 있다** — 런이 `wait` 로 끝나 빚만 남은
@@ -1202,14 +1353,156 @@ class AgentRegistry:
 
         종전엔 이 판정(``not waiting``·``not stop_event``)이 호출부 셋에 흩어져
         있었고, v10.65.0 의 상주 판정이 런 시작(`begin_run` 의 비우기)을 빠뜨려
-        wait 뒤의 빚이 사라졌다."""
+        wait 뒤의 빚이 사라졌다.
+
+        ``waiting`` 이면 중간 깨우기 타이머를 건다 (v10.79.0, :meth:`arm_checkin`) —
+        런 끝의 유일한 자리라 main·상주·run·web 이 한 곳이다. ``meta`` 의 ``run``
+        키는 그 런을 연 배달 id 이고 `run_started`(런 **시작**)와는 무관하다."""
         if waiting:
+            self.arm_checkin(debtor)
             return 0
+        self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
         if stopped:
             with self._cv:
                 self._reply_debts.pop(debtor, None)
             return 0
         return self.end_run(debtor, output, **meta)
+
+    # ── `wait` 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) ──────────────
+    #
+    # 받아들여진 `wait` 가 한참 깨지 않으면 하니스가 깨운다 — 벤치 50번의 wait 중
+    # 13번이 깨지 못한 채 과제 시간으로 끝났고, 헤드리스(run·예약) 세션은 작업에
+    # 시간 제한이 없어 끝없이 잠들 수 있었다. 알림은 기존 셋째 갈래(장부 밖 메일,
+    # `ledger: "none"`)의 첫 사용자다 — 새 층이 아니다.
+
+    def next_checkin_s(self, owner: str) -> int | None:
+        """이 소유자가 지금 `wait` 하면 걸릴 간격(초) — 없으면(예약만 기다림) None.
+        `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
+        from agent_cli.runtime import wake_source_ids
+
+        ids = wake_source_ids(owner)
+        if not ids:
+            return None
+        return CHECKIN_STEPS_S[
+            min(self._checkin_step(owner, ids), len(CHECKIN_STEPS_S) - 1)
+        ]
+
+    def _checkin_step(self, owner: str, ids: frozenset[str]) -> int:
+        """같은 대상 집합을 직전 깨우기 때도 기다렸으면 다음 단계, 아니면 0.
+        진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산) 별도
+        초기화가 없다. 바뀌지 않는 드문 경우(`once` false 모니터의 재발화)에
+        배증이 이어지는 것은 해롭지 않다."""
+        with self._cv:
+            last = self._checkin_last.get(owner)
+        return last[1] + 1 if last is not None and last[0] == ids else 0
+
+    def arm_checkin(self, owner: str) -> int | None:
+        """`wait` 로 끝난 런 — 타이머를 건다. 걸린 간격(초) 또는 None.
+
+        기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
+        에이전트별 `last_ordinal`("N steps since your wait")."""
+        from agent_cli.jobs import get_job_registry
+        from agent_cli.runtime import wake_source_ids
+
+        self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
+        ids = wake_source_ids(owner)
+        if not ids:
+            return None
+        step = self._checkin_step(owner, ids)
+        interval = CHECKIN_STEPS_S[min(step, len(CHECKIN_STEPS_S) - 1)]
+        jobs = get_job_registry()
+        log_marks = (
+            {j.id: jobs.log_size(j) for j in jobs.running(owner)}
+            if jobs is not None
+            else {}
+        )
+        step_marks: dict[str, int] = {}
+        for addr in ids:
+            if not addr.startswith("agent:"):
+                continue
+            tm = self._agents.get(addr.split(":", 1)[1])
+            ctx = tm.ctx if tm is not None else None
+            step_marks[addr] = (ctx.last_ordinal or 0) if ctx is not None else 0
+        ck = _Checkin(
+            ids=ids,
+            step=step,
+            interval_s=interval,
+            log_marks=log_marks,
+            step_marks=step_marks,
+        )
+        timer = self.checkin_timer_factory(interval, self.fire_checkin, args=(owner,))
+        timer.daemon = True
+        ck.timer = timer
+        with self._cv:
+            self._checkin_armed[owner] = ck
+        timer.start()
+        return interval
+
+    def run_started(self, owner: str) -> None:
+        """이 소유자의 런이 시작됐다(어떤 이유로든 — 보고·메일·사람 입력) —
+        걸린 타이머를 푼다. `AgentLoop.run()` 이 배달 뒤 한 번 부른다; 네 경로
+        (main·상주·run·web)가 그 한 지점을 지난다. 걸린 것이 없으면 no-op."""
+        with self._cv:
+            ck = self._checkin_armed.pop(owner, None)
+        if ck is not None and ck.timer is not None:
+            ck.timer.cancel()
+
+    def _cancel_checkins(self, *owners: str) -> None:
+        """정리 — 소유자가 죽거나 세션이 끝난다. 빈 인자는 전부."""
+        with self._cv:
+            targets = list(owners) if owners else list(self._checkin_armed)
+        for o in targets:
+            self.run_started(o)
+
+    def fire_checkin(self, owner: str) -> str:
+        """타이머가 부른다(테스트는 직접) — 알림을 만들어 배달하고 본문을 돌려준다.
+        걸린 것이 없거나(런이 먼저 시작해 풀렸다) 아무것도 안 돌고 있으면 "".
+
+        알림은 사실 진술("still running: …")이라 진짜 보고와 같은 순간에 와도
+        거짓이 아니다 — 그래서 "런 진행 중" 상태도, 락 안의 확인+추가도 없다.
+        main 이면 메일함(`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함
+        (`request`, 봉투 ``checkin``). 둘 다 ``ledger: "none"`` — 장부 항목이 되지
+        않고 영속되지 않는다(`_persists`)."""
+        from agent_cli.runtime import wait_checkin
+
+        with self._cv:
+            ck = self._checkin_armed.pop(owner, None)
+        if ck is None:
+            return ""
+        next_s = CHECKIN_STEPS_S[min(ck.step + 1, len(CHECKIN_STEPS_S) - 1)]
+        text = wait_checkin(
+            owner,
+            interval_s=ck.interval_s,
+            next_s=next_s,
+            log_marks=ck.log_marks,
+            step_marks=ck.step_marks,
+            registry=self,
+        )
+        if not text:
+            return ""
+        with self._cv:
+            self._checkin_last[owner] = (ck.ids, ck.step)
+        if owner == "main":
+            self._push_reply(
+                {
+                    "kind": "checkin",
+                    "ledger": "none",
+                    "success": True,
+                    "output": text,
+                    "author": "main",
+                    "expects_reply": False,
+                }
+            )
+        elif owner.startswith("agent:"):
+            self.request(
+                owner.split(":", 1)[1],
+                text,
+                author="main",
+                expects_reply=False,
+                kind="checkin",
+                ledger="none",
+            )
+        return text
 
     def end_run(self, debtor: str, output: str, **meta) -> int:
         """``debtor`` 의 런이 끝났다 — 남은 회신 빚은 라벨 붙은 런 요약을
@@ -1489,8 +1782,13 @@ class AgentRegistry:
         kind: str = "",
         re: str = "",
         todo: str = "",
+        ledger: str = "",
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
+
+        ``ledger`` (v10.79.0): ``"none"`` 이면 장부 밖 메일 — agents.json 미러에
+        남지 않는다(`_persists`). 첫 사용자는 `wait` 의 중간 깨우기(``checkin``):
+        "지금" 에만 참인 알림이 다음 세션 첫 턴에 낡은 채 배달되면 안 된다.
 
         ``item_id`` (v10.77.0): 이 배달의 id — 보낸 쪽이 미리 받아 두면(그
         id 를 결과에 실어 회신과 짝짓는다) 그대로 쓴다. 없으면 종류대로 새로
@@ -1570,6 +1868,8 @@ class AgentRegistry:
                 item["re"] = re
             if todo:
                 item["todo"] = todo
+        if ledger:
+            item["ledger"] = ledger
         if resumed:
             item["resumed"] = True  # 재시작 계속하기 — 다시 끊겨도 또 감싸지 않는다
         if images:
@@ -2145,6 +2445,7 @@ class AgentRegistry:
         if tm is None:
             return f"unknown agent '{key}'"
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
+        self._cancel_checkins(f"agent:{key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
         # `_SHUTDOWN` 뒤에 줄 서서 영영 안 읽힌다. 그 턴에서 새로 건 감시는
@@ -2167,6 +2468,7 @@ class AgentRegistry:
 
     def shutdown_all(self) -> None:
         """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출."""
+        self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
             tm.stop_event.set()
@@ -2644,6 +2946,7 @@ class AgentRegistry:
             # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
             # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
             self._drop_monitors(tm.key)
+            self._cancel_checkins(f"agent:{tm.key}")
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()

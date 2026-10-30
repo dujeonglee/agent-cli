@@ -64,6 +64,23 @@ class Job:
             return f"{h}h{m:02d}m"
         return f"{m}m{sec:02d}s" if m else f"{sec}s"
 
+    @property
+    def header_bytes(self) -> int:
+        """로그 첫 줄(하니스가 쓴 ``$ cmd``)의 바이트 수 — 로그가 이 크기면
+        명령은 아직 아무것도 쓰지 않았다 (v10.79.0 중간 깨우기의 기준)."""
+        return len(f"$ {self.command}\n".encode())
+
+    @property
+    def stop_hint(self) -> str:
+        """모델이 이 작업을 멈추는 명령 — **프로세스 묶음** 전체 (v10.79.0).
+
+        작업은 자기 세션(`start_new_session=True`)이고 ``pid`` 는 `sh -c` 리더다.
+        `kill <pid>` 는 셸만 죽이고 `xargs`·`tesseract` 같은 자식은 살아남는다 —
+        하니스의 :meth:`JobRegistry.kill` 이 `killpg` 인 것과 같은 이유로 네 자리
+        (꼬리·`shell` 결과·시스템 프롬프트·중간 깨우기 알림)가 이 한 모양을 쓴다.
+        ``--`` 는 음수를 신호 번호로 읽지 않게 하는 표기다."""
+        return f"`kill -- -{self.pid}`"
+
 
 class JobsUnavailable(RuntimeError):
     """배달 배선이 없거나 세션이 닫혔다 — 띄워 봐야 끝났다는 통지가 갈 곳이 없다."""
@@ -165,9 +182,51 @@ class JobRegistry:
         for j in jobs:
             lines.append(
                 f"- job #{j.id} · pid {j.pid} · {j.elapsed(now)} · `{_short(j.command)}` "
-                f"→ {j.log.as_posix()} · stop it: `kill {j.pid}`"
+                f"→ {j.log.as_posix()} · stop it: {j.stop_hint}"
             )
         return "\n".join(lines)
+
+    # ── 로그 변화 (v10.79.0, `wait` 중간 깨우기의 진행 신호) ──────────
+
+    def log_size(self, job: Job) -> int:
+        """로그의 현재 바이트 수 — `wait` 때 적어 두는 기준."""
+        try:
+            return (self._cwd / job.log).stat().st_size
+        except OSError:
+            return 0
+
+    def log_growth(self, job: Job, since: int) -> str:
+        """``since`` 바이트 이후 로그가 얼마나 늘었는지 — 알림의 ``log:`` 줄.
+
+        늘었으면 "+N lines since your wait (last 2 lines)" 와 그 두 줄, 안 늘었으면
+        "unchanged since your wait" — 명령이 아직 한 줄도 안 썼으면(크기가 머리줄
+        그대로) "nothing after the command line" 을 앞에 붙인다. 새로 쓰인 부분만
+        읽으므로 로그가 커도 비용은 새 바이트만큼이다."""
+        path = self._cwd / job.log
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                f.seek(min(since, size))
+                chunk = f.read()
+        except OSError:
+            return f"log: {job.log.as_posix()} · unreadable"
+        text = chunk.decode("utf-8", errors="replace")
+        new = [ln for ln in text.splitlines() if ln.strip()]
+        if not new:
+            empty = size <= job.header_bytes
+            state = (
+                "nothing after the command line, unchanged since your wait"
+                if empty
+                else "unchanged since your wait"
+            )
+            return f"log: {job.log.as_posix()} · {state}"
+        tail = [ln[:TAIL_LINE_CHARS] for ln in new[-2:]]
+        head = (
+            f"log: {job.log.as_posix()} · +{len(new)} line"
+            f"{'s' if len(new) != 1 else ''} since your wait "
+            f"(last {len(tail)} line{'s' if len(tail) != 1 else ''})"
+        )
+        return "\n".join([head, *tail])
 
     # ── 종료/정리 ─────────────────────────────
 

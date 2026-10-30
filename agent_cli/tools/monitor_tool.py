@@ -3,6 +3,14 @@
 도구 **설명은 이 파일의 산출물**이다. 대상이 로컬 35B 급이라 추상 지시를 구체
 행동으로 잘 못 바꾸므로(§3.2), 실행 관용구를 설명에 박고 테스트로 고정한다 —
 특히 `2>&1` 은 빠뜨리면 `shell` 도구가 120초 막힌다(실측).
+
+v10.79.0 (docs/monitor/DESIGN.md §13, docs/tool-review/TRACKER.md): 첫 문장이
+"작업 종료는 이미 통지된다" 를 말한다 — 평평한 인자 모양이 된 뒤의 벤치 `add` 9번
+중 다섯이 작업 로그의 끝 줄이나 `ps -p` 를 지켜봤는데, 그건 `shell` `background`
+의 종료 통지가 이미 하는 일이다. 보고 전에 하니스가 돌리던 ``run`` 은 지웠다(보고만
+한다; 반응은 모델이 `shell` 로). 모델이 보는 문구는 전부 인자 짝(`file` + `pattern`)
+으로 — 내부 조건 이름(`match`·`silence`·`command`)과 중괄호 모양은 모델이 쓰는
+어휘가 아니었다.
 """
 
 from __future__ import annotations
@@ -13,6 +21,13 @@ from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 MODES = ("add", "list", "delete")
+
+#: ``run`` 을 주면 한 릴리스 동안 명시 거절한다 (v10.79.0). 알 수 없는 인자는 검증이
+#: 조용히 버리므로(`Tool.schema_gaps` — "Unknown keys are not a validation failure")
+#: 그대로 두면 옛 습관으로 ``run: "kill 123"`` 을 보낸 모델이 kill 이 실행됐다고 믿는다.
+RUN_REMOVED = (
+    "monitor: `run` is no longer an argument — act on the report with `shell` instead."
+)
 
 
 def _registry():
@@ -30,25 +45,26 @@ class MonitorTool(Tool):
     #: 규칙(`.agent-cli/tmp/`)과 충돌했다. 버퍼링은 로그 파일을 보는 조건(file+pattern·
     #: file+idle)에 지금도 해당하는 성질이라 실행 파일 이름 없이 한 문장으로 남긴다.
     description = (
-        "Watch a condition in the background and report back to you when it fires — for"
-        ' long-running work you started with `shell`. `mode`: "add" (exactly ONE '
-        'condition + optional `run`/`deadline`/`once`), "list", "delete" (`id`).\n'
-        "A condition is one of these argument pairs — never mix them:\n"
-        "  `command` + `every` — runs the command periodically, fires when it exits 0 "
-        "(its stdout becomes the report)\n"
-        "  `file` + `pattern` — fires on a NEW line of the file matching the regex\n"
-        "  `file` + `idle` — fires when the file STOPS changing for that long (a dead "
-        "script is silent, not successful)\n"
-        "A producer that buffers its output writes nothing to the file until it exits, "
+        "Watch a condition in the background and report to you when it fires. A "
+        "`shell` job started with `background` true already reports when it ends; a "
+        "monitor is for other conditions — a line appearing in a file, a file going "
+        'quiet, a command starting to succeed. `mode` is "add" (one condition, plus '
+        'optional `deadline` and `once`), "list" or "delete" (with `id`).\n'
+        "A condition is exactly one of these argument pairs:\n"
+        "  `command` + `every` — runs the command at that interval; fires when it "
+        "exits 0, and its stdout is the report.\n"
+        "  `file` + `pattern` — fires on a new line of the file that matches the "
+        'regex. If the file stays unchanged for `silent` (default "10m", "0" turns it '
+        "off), the monitor retires with a report instead, so a dead writer does not "
+        "leave you waiting.\n"
+        "  `file` + `idle` — fires when the file has not changed for that long; a "
+        "writer that died looks the same as one that finished.\n"
+        "A program that buffers its output writes nothing to the file until it exits, "
         "so a healthy job looks silent — run it unbuffered.\n"
-        "`deadline` defaults to 2h (60s-24h). A `file` + `pattern` condition also "
-        "retires (with a report) when the file stays unchanged for `silent` (default "
-        "10m, 0 = off) — a dead writer wakes you instead of hanging. `once` defaults to"
-        " true — the monitor retires after one report. Optional `run` is a command "
-        "executed before the report; its exit code is included. You are always "
-        "notified; there is no silent action.\n"
-        "A monitor is not saved with the session and does not survive a restart "
-        "(`schedule` is and does)."
+        '`deadline` defaults to "2h" (from "60s" to "24h"). `once` defaults to true: '
+        "the monitor retires after one report.\n"
+        "A monitor is not saved with the session and does not survive a restart; a "
+        "`schedule` is and does."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -60,49 +76,49 @@ class MonitorTool(Tool):
             },
             "command": {
                 "type": "string",
-                "description": "condition `command` + `every`: the shell command to run",
+                "description": "The shell command to run, with `every`.",
             },
             "every": {
                 "type": "string",
-                "description": 'condition `command` + `every`: interval — "60s", "5m" (min 60s)',
+                "description": (
+                    'Interval for `command`, such as "60s" or "5m" (at least "60s").'
+                ),
             },
             "file": {
                 "type": "string",
-                "description": (
-                    "conditions `file` + `pattern` / `file` + `idle`: the log file "
-                    "(never alone)"
-                ),
+                "description": "The file to watch, with `pattern` or `idle`.",
             },
             "pattern": {
                 "type": "string",
-                "description": "condition `file` + `pattern`: regex matched against NEW lines",
+                "description": "Regex matched against new lines of `file`.",
             },
             "idle": {
                 "type": "string",
-                "description": 'condition `file` + `idle`: no change for this long — "30s", "5m"',
-            },
-            "run": {
-                "type": "string",
-                "description": '"add": optional command to run when it fires',
+                "description": (
+                    'Fire when `file` has not changed for this long, such as "30s" '
+                    'or "5m".'
+                ),
             },
             "deadline": {
                 "type": "string",
-                "description": '"add": how long to watch — "2h", "30m", "600" (default 2h)',
+                "description": 'How long to watch, such as "30m" or "2h" (default "2h").',
             },
             "once": {
                 "type": "boolean",
-                "description": '"add": retire after the first report (default true)',
+                "description": (
+                    "true retires the monitor after its first report (default true)."
+                ),
             },
             "silent": {
                 "type": "string",
                 "description": (
-                    "`file` + `pattern` only: give up (with a report) when the file has"
-                    ' not changed for this long — "10m", "600", "0" = off (default 10m)'
+                    "With `pattern`: retire with a report when `file` has not changed "
+                    'for this long (default "10m", "0" turns it off).'
                 ),
             },
             "id": {
                 "type": "string",
-                "description": '"delete": monitor id from "list"',
+                "description": 'The monitor to delete, as shown by "list".',
             },
         },
         "required": ["mode"],
@@ -112,6 +128,8 @@ class MonitorTool(Tool):
         mode = str(args.get("mode", "")).strip()
         if mode not in MODES:
             return f"monitor: mode must be one of {', '.join(MODES)}"
+        if args.get("run") not in (None, ""):
+            return RUN_REMOVED
         if mode == "add" and not any(
             args.get(k) not in (None, "") for k in ("file", "command")
         ):
@@ -126,6 +144,10 @@ class MonitorTool(Tool):
         return str(action_input.get("mode", ""))
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        import time as _t
+
+        from agent_cli.constants import format_duration
+
         mode = str(args.get("mode", "")).strip()
         reg = _registry()
         if reg is None:
@@ -136,11 +158,11 @@ class MonitorTool(Tool):
             live = reg.list_all()
             if not live:
                 return ToolResult(True, output="No active monitors.")
+            now = _t.time()
             lines = [
                 f"- [{m.id}] {m.cond.describe()}"
-                f" · {int(m.deadline_at - __import__('time').time())}s left"
+                f" · {format_duration(m.deadline_at - now)} left"
                 f"{'' if m.once else ' · repeating'}"
-                f"{f' · run={m.run!r}' if m.run else ''}"
                 for m in live
             ]
             return ToolResult(True, output="Active monitors:\n" + "\n".join(lines))
@@ -173,25 +195,24 @@ class MonitorTool(Tool):
             try:
                 deadline_s = parse_duration(str(raw_deadline))
             except ValueError as exc:
-                return ToolResult(False, error=f"monitor: deadline — {exc}")
+                return ToolResult(False, error=f"monitor: `deadline` — {exc}")
 
-        run_cmd = str(args.get("run") or "").strip()
-        gate = _gate_commands(cond, run_cmd)
+        gate = _gate_command(cond)
         if gate:
             return ToolResult(False, error=gate)
-        # `command`/`run` 은 셸 권한이다 — `shell` 이 없는 루프(감사자처럼
-        # 읽기 전용 프로파일)에선 `match`/`silence` 만 된다 (v10.42.0). 종전엔
-        # monitor 를 가진 프로파일이 전부 shell 도 가져 가정으로만 지켜졌다.
+        # `command` 는 셸 권한이다 — `shell` 이 없는 루프(감사자처럼 읽기 전용
+        # 프로파일)에선 파일 조건만 된다 (v10.42.0). 종전엔 monitor 를 가진
+        # 프로파일이 전부 shell 도 가져 가정으로만 지켜졌다.
         if (
-            (run_cmd or cond.type == "command")
+            cond.type == "command"
             and ctx is not None
             and ctx.tools_available
             and "shell" not in ctx.tools_available
         ):
             return ToolResult(
                 False,
-                error="monitor: `command` conditions and `run` need the `shell` tool, "
-                "which this agent does not have — use a `file` + `pattern` or "
+                error="monitor: `command` conditions need the `shell` tool, which "
+                "this agent does not have — use a `file` + `pattern` or "
                 "`file` + `idle` condition",
             )
 
@@ -211,27 +232,25 @@ class MonitorTool(Tool):
                 owner=ctx.owner if ctx is not None else "main",
                 deadline_s=deadline_s,
                 once=True if once is None else bool(once),
-                run=run_cmd,
                 state=state,
             )
         except MonitorUnavailable as exc:
             return ToolResult(False, error=str(exc))
-        import time as _t
 
-        left = int(mon.deadline_at - _t.time())
+        left = format_duration(mon.deadline_at - _t.time())
         return ToolResult(
             True,
             output=(
-                f"monitor {mon.id} watching {mon.cond.describe()} for {left}s"
+                f"monitor {mon.id} watching {mon.cond.describe()} for {left}"
                 f"{'' if mon.once else ' (repeating)'}. "
-                f"You will be notified automatically — do NOT poll."
-                f"{' ' + note if note else ''}"
+                f"It reports to you when it fires; there is nothing to check in the "
+                f"meantime.{' ' + note if note else ''}"
             ),
         )
 
 
-def _gate_commands(cond, run_cmd: str) -> str | None:
-    """`command` 조건과 `run` 은 임의 명령을 돈다 — **등록 시점에** 게이트한다.
+def _gate_command(cond) -> str | None:
+    """`command` 조건은 임의 명령을 돈다 — **등록 시점에** 게이트한다.
 
     발화 시점이 아닌 이유 둘:
 
@@ -246,23 +265,22 @@ def _gate_commands(cond, run_cmd: str) -> str | None:
     게이트이고 env 로 우회된다. 모든 명령에 확인을 요구하면 harbor/CI 에서
     `command` 가 아예 못 쓰이는데, **그 headless 환경이 monitor 를 만드는
     근거였다**(§3.1). 시점만 다르고 정책은 동일하게 둔다.
+
+    종전엔 ``run`` 도 같은 게이트를 지났다 — v10.79.0 에 지웠으니 명령은 하나다.
     """
     from agent_cli.monitor.conditions import CommandCondition
 
-    cmds = [c for c in (getattr(cond, "command", ""), run_cmd) if c]
-    if not cmds and not isinstance(cond, CommandCondition):
+    if not isinstance(cond, CommandCondition):
         return None
     from agent_cli.tools import _confine
     from agent_cli.tools.shell import confirm_dangerous
 
-    for cmd in cmds:
-        denied, _ = confirm_dangerous(cmd)
-        if denied:
-            return denied
-        if _confine.enabled():
-            err = _confine.guard(
-                _confine.extract_shell_paths(cmd), "monitor", command=cmd
-            )
-            if err:
-                return err
+    cmd = cond.command
+    denied, _ = confirm_dangerous(cmd)
+    if denied:
+        return denied
+    if _confine.enabled():
+        err = _confine.guard(_confine.extract_shell_paths(cmd), "monitor", command=cmd)
+        if err:
+            return err
     return None

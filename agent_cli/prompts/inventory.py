@@ -151,6 +151,36 @@ def _tools(dialect) -> list[dict]:
     return out
 
 
+def _wait_checkin_sample() -> str:
+    """`wait` 중간 깨우기 알림의 고정 문장들 (v10.79.0, `runtime.wait_checkin`) —
+    머리줄·선택지 문장을 자리 표시자로 채운 표본. 상태 줄(작업·monitor·에이전트)은
+    사실 그대로라 표기 규칙의 대상이 아니다."""
+    from agent_cli.runtime import (
+        CHECKIN_AGAIN,
+        CHECKIN_AGENT_STUCK,
+        CHECKIN_HEAD,
+        CHECKIN_QUESTION,
+        CHECKIN_STOP,
+        CHECKIN_STOP_MONITOR,
+    )
+
+    return "\n".join(
+        [
+            CHECKIN_HEAD.format(span="5m"),
+            "<one line per running job, monitor or agent>",
+            " ".join(
+                [
+                    CHECKIN_AGAIN.format(subj="it is", span="10m"),
+                    CHECKIN_STOP.format(stops="`kill -- -<pid>`"),
+                    CHECKIN_STOP_MONITOR,
+                    CHECKIN_AGENT_STUCK,
+                    CHECKIN_QUESTION,
+                ]
+            ),
+        ]
+    )
+
+
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
@@ -223,6 +253,11 @@ def _runtime_texts(dialect) -> list[dict]:
             "depth_limit_error",
             "Nesting reached the depth ceiling",
             format_depth_limit_error("agent", "worker", _MAX_DEPTH, _MAX_DEPTH),
+        ),
+        (
+            "wait_checkin",
+            "An accepted `wait` has not been woken for 5m (then 10·20·40·60m)",
+            _wait_checkin_sample(),
         ),
     ]
     for level in (1, 2):

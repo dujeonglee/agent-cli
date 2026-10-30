@@ -380,7 +380,7 @@ main 앞 메일의 세 갈래(§2) 중 회신 빚은 처음부터 필드(`expect
 
 **행동 불변:** 이 판에서 `ledger: "none"` 을 적는 생산자는 아직 없다. 기존 메일 전 종류의 장부 결과는 그대로이고,
 `tests/test_ledger_mail.py` 가 그것(기본 → 항목, `expects_reply` → 밖, kind 이름만으로는 아무것도 정해지지 않음,
-`"none"` 은 영속되지 않음)을 고정한다. 첫 사용자는 `wait` 의 중간 깨우기다.
+`"none"` 은 영속되지 않음)을 고정한다. 첫 사용자는 `wait` 의 중간 깨우기(v10.79.0, `kind: "checkin"`, docs/wait/DESIGN.md §6)다.
 
 ## 9. 열린 질문
 

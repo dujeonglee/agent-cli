@@ -87,11 +87,14 @@ class WaitTool(Tool):
     #: 깨울 길이 있는 루프에만 (`LoopPorts.wakeable`) — 스킬·일회성 런은 결과가
     #: 호출자에게 돌아가므로 "기다린다" 가 성립하지 않는다.
     requires_handler = "wake"
+    #: 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6)는 한 문장 — 간격(5분부터 두
+    #: 배씩)은 받아들일 때의 결과에 적는다(`dispatch._op_wait`), 설명엔 숫자가 없다.
     description = (
         "Nothing more to do until something you started reports back — a "
-        "background job, a monitor, an agent you asked. Ends this turn WITHOUT "
+        "background job, a monitor, an agent you asked. Ends this turn without "
         "closing any open item; the report wakes you with the items still "
-        "open. Refused when nothing will wake you: then keep working, or call "
+        "open. If nothing reports for a while, you are woken with what is still "
+        "running. Refused when nothing will wake you: then keep working, or call "
         "`complete`."
     )
     parameters: ClassVar[dict] = {

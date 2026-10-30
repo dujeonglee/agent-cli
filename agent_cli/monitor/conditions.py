@@ -83,7 +83,9 @@ _SIGNATURES: tuple[tuple[str, frozenset[str]], ...] = (
     ("silence", frozenset({"file", "idle"})),
 )
 
-SHAPES = "{command, every} · {file, pattern} · {file, idle}"
+#: 모델이 보는 세 모양 — 인자 짝으로 (v10.79.0). 종전 ``{command, every}`` 중괄호와
+#: 내부 조건 이름(`match`·`silence`)은 모델이 쓰는 어휘가 아니었다.
+SHAPES = "`command` + `every`, `file` + `pattern`, or `file` + `idle`"
 #: 서명 + 그 조건이 받는 선택 키 — 이 밖의 조건 키가 섞이면 거절.
 _ALLOWED = {
     "command": frozenset({"command", "every"}),
@@ -103,14 +105,12 @@ def infer_type(spec: dict) -> str:
     hits = [kind for kind, keys in _SIGNATURES if keys <= cond]
     if len(hits) == 1 and cond <= _ALLOWED[hits[0]]:
         return hits[0]
-    given = ", ".join(sorted(cond))
+    given = ", ".join(f"`{k}`" for k in sorted(cond))
     if hits:
-        raise ValueError(
-            f"give exactly ONE condition — {SHAPES} — yours mixes keys: {given}"
-        )
+        raise ValueError(f"give one condition — {SHAPES}; yours mixes {given}")
     raise ValueError(
         f"the condition must be one of {SHAPES} — "
-        + (f"yours has only: {given}" if given else "none of those keys were given")
+        + (f"yours has only {given}" if given else "none of those arguments were given")
     )
 
 
@@ -196,13 +196,15 @@ class MatchCondition(Condition):
         file = str(spec.get("file") or "").strip()
         pattern = str(spec.get("pattern") or "")
         if not file:
-            raise ValueError("match: `file` is required")
+            raise ValueError("`file` + `pattern` needs `file`")
         if not pattern:
-            raise ValueError("match: `pattern` is required")
+            raise ValueError("`file` + `pattern` needs `pattern`")
         try:
             re.compile(pattern)
         except re.error as exc:
-            raise ValueError(f"match: bad regex {pattern!r} — {exc}") from None
+            raise ValueError(
+                f"`pattern` {pattern!r} is not a valid regex — {exc}"
+            ) from None
         from agent_cli.constants import MONITOR_SILENT_DEFAULT_S, parse_duration
 
         raw = spec.get("silent")
@@ -212,11 +214,12 @@ class MatchCondition(Condition):
             try:
                 silent_s = parse_duration(str(raw))
             except ValueError as exc:
-                raise ValueError(f"match: silent — {exc}") from None
+                raise ValueError(f"`silent` — {exc}") from None
         return cls(file, pattern, silent_s)
 
     def describe(self) -> str:
-        return f"match · {self.file}"
+        # 모델이 쓰는 말은 인자 짝뿐이다 (v10.79.0) — 종전 "match · <file>"
+        return f"`file` + `pattern` on {self.file}"
 
     def register(self, *, observed_at: float | None) -> tuple[dict, str]:
         from agent_cli.constants import (
@@ -355,17 +358,19 @@ class SilenceCondition(Condition):
 
         file = str(spec.get("file") or "").strip()
         if not file:
-            raise ValueError("silence: `file` is required")
+            raise ValueError("`file` + `idle` needs `file`")
         try:
             seconds = parse_duration(str(spec.get("idle")))
         except ValueError as exc:
-            raise ValueError(f"silence: `idle` — {exc}") from None
+            raise ValueError(f"`idle` — {exc}") from None
         if seconds <= 0:
-            raise ValueError("silence: `idle` must be positive")
+            raise ValueError("`idle` must be longer than zero")
         return cls(file, seconds)
 
     def describe(self) -> str:
-        return f"silence · {self.file} · {self.seconds}s"
+        from agent_cli.constants import format_duration
+
+        return f"`file` + `idle` on {self.file} for {format_duration(self.seconds)}"
 
     def check(self, st: dict, *, now: float) -> Match | None:
         path = Path(self.file).expanduser()
@@ -402,18 +407,23 @@ class CommandCondition(Condition):
 
         command = str(spec.get("command") or "").strip()
         if not command:
-            raise ValueError("command: `command` is required")
+            raise ValueError("`command` + `every` needs `command`")
         raw = spec.get("every", MONITOR_INTERVAL_MIN_S)
         try:
             every = parse_duration(str(raw))
         except ValueError as exc:
-            raise ValueError(f"command: `every` — {exc}") from None
+            raise ValueError(f"`every` — {exc}") from None
         # clamp (거부 아님) — §10.2
         every = max(MONITOR_INTERVAL_MIN_S, every)
         return cls(command, every)
 
     def describe(self) -> str:
-        return f"command · {self.command[:60]} · {self.every}s"
+        from agent_cli.constants import format_duration
+
+        return (
+            f"`command` + `every` running `{self.command[:60]}` every "
+            f"{format_duration(self.every)}"
+        )
 
     def check(self, st: dict, *, now: float) -> Match | None:
         last = st.get("last_run")

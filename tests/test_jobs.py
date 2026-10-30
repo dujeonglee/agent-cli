@@ -482,7 +482,7 @@ class TestAssembly:
         assert "Do not poll the log" in TASK_GUIDELINES
         assert "call `wait`" in TASK_GUIDELINES  # v10.65.0: 기다림은 wait
         assert "do not fill turns with unrelated actions" in TASK_GUIDELINES
-        assert "`kill <pid>`" in TASK_GUIDELINES
+        assert "`kill -- -<pid>`" in TASK_GUIDELINES  # v10.79.0: 프로세스 묶음
 
 
 def _alive(pid: int) -> bool:

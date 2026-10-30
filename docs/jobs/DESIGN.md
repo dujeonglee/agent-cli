@@ -23,7 +23,7 @@
 - **도구**: `shell(command, background: true)` → 즉시 `job #n started (pid P) — output goes to .agent-cli/tmp/jobs/n.log. You will be told when it ends …`. 위험 키워드 확인·워크스페이스 봉쇄는 포그라운드와 같은 문(`_guard`)을 지난다.
 - **로그**: `.agent-cli/tmp/jobs/<n>.log` (작업 디렉터리 기준; 모델 임시 파일의 자리와 같다). 첫 줄 `$ <command>`, 끝 줄 `[job #n exited rc=R after T]`.
 - **통지**: 종료 시 소유자에게 `kind="job"` 메일 — main 이면 깨우기 런, 에이전트면 inbox. 관찰 레코드 `tool="job"`. 본문: `🧵 job #n finished rc=R after T — \`cmd\`` + 로그 마지막 8줄(줄당 300자). 우리가 죽인 작업(소유자 사망·세션 종료)은 통지하지 않는다.
-- **꼬리**: `## Background jobs (running — you are told when each one ends; do not poll)` 아래 `- job #n · pid P · 경과 · \`cmd\` → 로그 · stop it: \`kill P\``. 자기 주소(`LoopConfig.owner`)의 작업만. 끝난 작업은 통지가 갔으므로 꼬리에서 빠진다(중복 금지 — 사용자 결정).
+- **꼬리**: `## Background jobs (running — you are told when each one ends; do not poll)` 아래 `- job #n · pid P · 경과 · \`cmd\` → 로그 · stop it: \`kill -- -P\`` (v10.79.0 — 프로세스 묶음째, `Job.stop_hint`; pid 는 `sh -c` 리더라 `kill P` 는 셸만 죽이고 자식이 살아남는다. `shell` 결과·Task Guidelines·`wait` 중간 깨우기 알림도 같은 모양, docs/wait/DESIGN.md §6.5). 자기 주소(`LoopConfig.owner`)의 작업만. 끝난 작업은 통지가 갔으므로 꼬리에서 빠진다(중복 금지 — 사용자 결정).
 - **수명**: `runtime.session_has_live_work(jobs=)` 의 한 항. run 은 `QuietPolicy` 가 `on_wait("jobs")` 로 한 번 알리고 기다린다(`🧵 백그라운드 작업 N개 대기 중`), web 은 `web_instance_is_active` 가 거두지 않는다.
 - **정리**: 소유자(에이전트) 사망 → `JobRegistry.drop_owner` 가 그 작업을 죽인다(`AgentRegistry._drop_monitors` 와 같은 자리). 세션 종료(`teardown_session`) → `stop_all` 이 남은 작업을 전부 죽이고 콘솔에 적는다. 프로세스 그룹에 TERM, 3초 뒤 KILL. 영속 없음(PID 는 프로세스와 함께 죽는다).
 - **배선**: `build_job_registry()` → 프로세스 전역(`jobs.get_job_registry`, 도구가 닿는 길) + `wire_job_delivery(agent_registry, jobs)`(`deliver` seam, 역방향 `registry.jobs`). `build_agent_registry(jobs=)` 가 monitor 와 같은 자리에서 건다.

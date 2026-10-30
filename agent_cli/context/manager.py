@@ -450,6 +450,7 @@ class ContextManager:
         self._cache.append(message)
         self._cache_hidx.append(self._history_ordinal)  # P0-8a: history 정렬
         self._history_ordinal += 1
+        self.last_added_at = time.time()
         # Incremental render: keep the natural-language mirror in step so
         # ``get_messages`` never re-renders old records. A leading system
         # message is excluded (``get_messages`` passes it through verbatim).
@@ -479,6 +480,11 @@ class ContextManager:
         """마지막으로 ``add`` 된 레코드의 history 서수 (없으면 None) — 레코드
         뒤에 그려지는 카드(관찰)용."""
         return self._history_ordinal - 1 if self._history_ordinal else None
+
+    #: 마지막 ``add`` 의 시각 (0.0 = 아직 없음, v10.79.0) — `wait` 중간 깨우기가
+    #: 에이전트 줄의 "last one 40s ago" 에 쓴다. 락 없는 근사값(`snapshot()` 의
+    #: `est_tokens` 와 같은 수준) — 워커 스레드가 쓰고 타이머 스레드가 읽는다.
+    last_added_at: float = 0.0
 
     def set_turn(self, turn: int) -> None:
         """Set the current LLM turn index. The loop calls this at each turn

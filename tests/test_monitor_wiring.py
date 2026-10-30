@@ -144,7 +144,8 @@ class TestToolSurface:
                     "deadline": "30m",
                 }
             )
-            assert add.success and "do NOT poll" in add.output
+            assert add.success and "nothing to check in the meantime" in add.output
+            assert "for 30m." in add.output  # v10.79.0: 초가 아니라 "30m"
             mon_id = add.output.split()[1]
 
             lst = TOOLS["monitor"].run({"mode": "list"})
@@ -248,9 +249,8 @@ class TestRegistrationTimeGate:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "file": str(tmp_path / "a"),
-                    "pattern": "X",
-                    "run": "rm -rf /tmp/whatever",
+                    "command": "rm -rf /tmp/whatever",
+                    "every": "60s",
                 }
             )
             assert not res.success and "Refused" in (res.error or "")
