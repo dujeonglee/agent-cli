@@ -201,6 +201,28 @@ def parse_duration(raw: str) -> int:
     return value * mult
 
 
+def format_duration(seconds: float) -> str:
+    """초 → 모델이 읽는 기간 — ``"2h"`` · ``"1h49m"`` · ``"5m"`` · ``"45s"`` (v10.79.0).
+
+    `parse_duration` 의 역방향이되 사람이 쓰는 모양으로: 한 시간 이상이면 초를, 자투리
+    없는 분이면 "00s" 를 버린다(모니터의 남은 시간 "6540s left" 는 모델이 환산해야
+    했다). `Job.elapsed` 와 같은 감각이되 반올림한다 — 남은 시간 1799.9s 는 "30m" 이다."""
+    s = max(0, int(seconds + 0.5))
+    if s < 60:
+        return f"{s}s"
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    return f"{m}m{sec:02d}s" if sec else f"{m}m"
+
+
+#: `wait` 중간 깨우기 간격 (v10.79.0, docs/wait/DESIGN.md §6) — 같은 대상을 다시
+#: 기다린 횟수마다 5·10·20·40·60분, 그 뒤로는 60분. 하니스가 고정한다 — 모델이
+#: 정하는 인자는 없다.
+CHECKIN_STEPS_S: tuple[int, ...] = (300, 600, 1200, 2400, 3600)
+
+
 # monitor clamp 상수 (docs/monitor/DESIGN.md §10.1·10.2)
 # `context/manager.py` 의 STREAM_IDLE_TIMEOUT_{MIN,MAX}_S 와 같은 모양 —
 # 거부가 아니라 clamp 다. 값이 크다고 실패시키면 모델이 "얼마가 맞는지"를

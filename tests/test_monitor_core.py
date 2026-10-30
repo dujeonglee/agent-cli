@@ -66,15 +66,15 @@ class TestConditionRegistry:
     @pytest.mark.parametrize(
         ("spec", "msg"),
         [
-            ({"file": "/tmp/x"}, "yours has only: file"),
-            ({"file": "/tmp/x", "command": "true"}, "mixes keys: command, file"),
-            ({"file": "/tmp/x", "pattern": ".*", "every": "60s"}, "mixes keys"),
-            ({"file": "/tmp/x", "pattern": "a", "idle": "5s"}, "mixes keys"),
-            ({"pattern": "E"}, "yours has only: pattern"),
-            ({"type": "exit"}, "none of those keys"),
+            ({"file": "/tmp/x"}, "yours has only `file`"),
+            ({"file": "/tmp/x", "command": "true"}, "mixes `command`, `file`"),
+            ({"file": "/tmp/x", "pattern": ".*", "every": "60s"}, "mixes"),
+            ({"file": "/tmp/x", "pattern": "a", "idle": "5s"}, "mixes"),
+            ({"pattern": "E"}, "yours has only `pattern`"),
+            ({"type": "exit"}, "none of those arguments"),
             ({}, "one of"),
-            ({"file": "/tmp/x", "pattern": "([="}, "bad regex"),
-            ({"file": "/tmp/x", "idle": 0}, "positive"),
+            ({"file": "/tmp/x", "pattern": "([="}, "not a valid regex"),
+            ({"file": "/tmp/x", "idle": 0}, "longer than zero"),
             ({"file": "/tmp/x", "idle": "soon"}, "idle"),
             ("not-a-dict", "object"),
         ],
@@ -464,7 +464,9 @@ class TestReportFormat:
     def test_header_carries_id_type_and_elapsed(self, reg, tmp_path):
         rep = self._report(reg, tmp_path, ["X hit"])
         head = rep.splitlines()[0]
-        assert "mon-" in head and "match" in head and "ago" in head
+        # 머리줄의 조건은 인자 짝으로 (v10.79.0) — 내부 이름 `match` 는 모델 어휘가 아니다
+        assert "mon-" in head and "`file` + `pattern`" in head and "ago" in head
+        assert "match" not in head
 
     def test_report_stays_far_under_the_oversized_cap(self, reg, tmp_path):
         """5줄 × 500자 ≈ 2.5KB — 과대 출력 캡에 **닿는다면 상한이 고장난 것**."""
@@ -472,23 +474,28 @@ class TestReportFormat:
         assert len(rep) < 4000
 
 
-class TestRunSideEffect:
-    def test_run_executes_before_the_report_and_its_result_is_included(
-        self, reg, tmp_path
-    ):
-        """notify 없는 shell 을 표현할 수 없게 만든 것이 설계 의도다 — 새벽
-        3시에 명령이 돌았는데 아무도 모르는 상태를 막는다."""
-        marker = tmp_path / "ran.txt"
+class TestRunIsGone:
+    """v10.79.0 (docs/monitor/DESIGN.md §13): 보고 전에 하니스가 돌리던 ``run`` 은
+    없다 — 모니터는 보고만 하고, 반응은 모델이 보고를 읽고 `shell` 로 한다. 벤치
+    쓰임은 8번 중 1번(값 "true")이었다."""
+
+    def test_registry_has_no_run_field_or_side_effect(self, reg, tmp_path):
+        import inspect
+
         log = tmp_path / "s.log"
         log.write_text("")
-        _add(
-            reg,
-            {"type": "match", "file": str(log), "pattern": "X"},
-            run=f"touch {marker}",
-        )
+        with pytest.raises(TypeError):
+            _add(reg, {"file": str(log), "pattern": "X"}, run="touch x")
+        mon = _add(reg, {"file": str(log), "pattern": "X"})
+        assert not hasattr(mon, "run")
+        assert "_run_side_effect" not in inspect.getsource(reg_mod)
+
+    def test_report_carries_no_run_line(self, reg, tmp_path):
+        log = tmp_path / "s.log"
+        log.write_text("")
+        _add(reg, {"file": str(log), "pattern": "X"})
         reg.tick(time.time())
         log.write_text("X\n")
         reg.tick(time.time())
         rep = reg.deliver.take()[0]
-        assert marker.exists(), "run 이 실행되지 않았다"
-        assert "run" in rep and "exit 0" in rep, f"보고에 실행 흔적이 없다: {rep!r}"
+        assert "↳ run" not in rep and "fired once" in rep

@@ -176,3 +176,170 @@ while you were thinking; delivered right below this" → 모델이 통지를 읽
    (방문 집합으로 순환을 자르고, 지금 wait 를 부르는 쪽은 바쁨 상태라 `pending_for` 의
    `exclude` 로 뺀다). A→B→A 면 두 번째 `wait` 가 "그쪽도 당신을 기다린다" 로 거부되고,
    A→B→(일하는 C) 사슬이면 받아들여진다. 단위 테스트: `tests/test_wait_tool.py::TestCircularWait`.
+
+## 6. 중간 깨우기 (v10.79.0)
+
+### 6.1 왜
+
+받아들여진 `wait` 는 기다리는 것이 끝나거나 발화할 때까지 런을 멈췄다. 상한이 없었다. 보관된
+harbor 벤치 전부(trial 483)에서 받아들여진 `wait` 50번 중 **13번(26%)이 깨지 못한 채 과제
+시간으로 끝났다**(GLM 7·35B 5·27B 1; 깨어난 기다림의 중앙값은 130~175초, 5분을 넘게 기다린
+것이 9번). 깨지 못한 13번 중 10분 시점에 아직 쓸 만한 과제 시간이 남아 있던 것은 5번이고, 오래
+기다렸다 결국 깨어난 7번 중 6번도 과제를 끝내지 못했다 — 실패의 원인은 "못 깼다" 보다 처음부터
+느린 방식(프레임 3,793장 OCR, 100만 줄 vim)이다. 그래서 이 변경의 목적은 벤치 점수(기대 0~1
+과제)가 아니라 **헤드리스(run·예약) 세션이 끝없이 잠들지 않게 하는 안전성**이다: 백그라운드
+작업에는 시간 제한이 없고(jobs.py), monitor 만 deadline 이 있다.
+
+### 6.2 동작과 간격
+
+`wait` 가 받아들여져 런이 끝날 때 하니스가 타이머를 하나 건다. 그 전에 어떤 이유로든 런이
+시작되면(작업 종료·monitor 발화·메일·사람 입력) 타이머를 푼다. 아무것도 오지 않으면 알림으로
+런을 깨운다. 열린 항목은 보통의 깨우기처럼 그대로 넘어간다.
+
+| 같은 대상을 기다린 횟수 | 1 | 2 | 3 | 4 | 5 이후 |
+|---|---|---|---|---|---|
+| 이번 간격 | 5분 | 10분 | 20분 | 40분 | 60분 |
+| 처음 wait 부터 누적 | 5분 | 15분 | 35분 | 75분 | +60분씩 |
+
+"같은 대상" 은 깨울 것의 **id 집합**(`runtime.wake_source_ids`: `job:1`·`mon-…`·`agent:k`)이다 —
+사람이 읽는 줄(`wake_sources`)로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어
+헛되이 5분으로 돌아간다. 집합이 **직전에 발화한** 깨우기 때와 같으면 다음 단계, 다르면 5분
+(`AgentRegistry._checkin_step`). 진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산)
+별도 초기화가 없고, 바뀌지 않는 드문 경우(`once` false 모니터의 재발화)에 배증이 이어지는 것은
+해롭지 않다. 숫자는 하니스가 고정한다(`constants.CHECKIN_STEPS_S`) — 모델이 정하는 인자는 없다.
+예약(schedule)만 기다리는 `wait` 에는 걸지 않는다; 예약과 작업을 함께 기다리면 걸되 알림에는
+작업·monitor·에이전트만 적힌다.
+
+왜 5분·배증·60분 상한: 5분이면 13번 중 5번을 더 일찍 한 번 본다; 깨어난 기다림의 중앙값이
+130~175초라 대부분은 걸리지도 않는다; 배증은 정말 오래 걸리는 정상 작업이 5분마다 턴을 쓰지
+않게 하고, 상한은 하루짜리 작업에서 다시 "끝없이 잠듦" 으로 가지 않게 한다.
+
+### 6.3 알림은 사실 진술이다 — 경합이 사라지는 이유
+
+2판 설계는 알림이 "nothing has reported yet" 이라고 말했다. 그 문장의 참·거짓은 메일함 상태에
+달려 있어서, 타이머가 확인하고 추가하는 사이에 진짜 보고가 끼면 거짓이 됐다. 기존 메일(작업
+종료·모니터 보고·회신)은 모두 시점과 무관한 사실이라 여러 스레드가 메일함에 써도 순서가 뜻을
+바꾸지 않았다 — 중간 깨우기만 부재 진술이었다. 그래서 문장을 사실로 바꿨다: **"Check-in after
+5m — still running: …"**. 진짜 보고와 같은 순간에 와도 거짓이 아니고 군더더기 한 줄일 뿐이다.
+모델은 둘 다 보고 판단한다. 그러면 "런 진행 중" 상태도, 락 안의 확인+추가도 필요 없다. 남는 것은
+"런이 시작되면 타이머를 푼다" 하나이고, 이건 어차피 필요하다.
+
+알림은 **기존 셋째 갈래의 첫 사용자**다 — 회신 빚(`expects_reply`)도 열린 항목도 아닌 장부 밖
+메일(`ledger: "none"`, docs/ledger/DESIGN.md §14, v10.78.1 선행 PR). 새 층이 아니다. 장부 항목이
+되지 않고(예산 불변) 영속되지 않는다("지금" 에만 참인 메일이 다음 세션 첫 턴에 낡은 채 배달되면
+안 된다). main 레코드의 도구 이름은 그 기다림을 연 `wait`, 상주에게는 `── checkin [n-12] from
+main ──` 봉투다.
+
+작업 하나, 로그 없음:
+
+```
+⏰ Check-in after 5m — still running:
+job #1 · 9m42s · `cd /app/.agent-cli/tmp && mkdir -p ocr && ls frames/*.png | xargs -P 4 …`
+  log: .agent-cli/tmp/jobs/1.log · nothing after the command line, unchanged since your wait
+If it is making progress, call `wait` again; if nothing reports, you are woken again in 10m. If it is not, check its output files, or stop it (`kill -- -9176`) and change the approach.
+```
+
+로그가 있는 작업과 monitor:
+
+```
+⏰ Check-in after 10m — still running:
+job #1 · 15m05s · `cd /app && vim -Nu NONE -n -Es .agent-cli/tmp/in.csv -S apply_macros.vim; echo exit=$?`
+  log: .agent-cli/tmp/jobs/1.log · +37 lines since your wait (last 2 lines)
+  …
+monitor mon-504d33 · `file` + `pattern` on .agent-cli/tmp/ocr.log · 1h44m left
+If it is making progress, call `wait` again; if nothing reports, you are woken again in 20m. If it is not, check its output files, or stop it (`kill -- -5788`; `monitor` with `mode` "delete" for a monitor) and change the approach.
+```
+
+에이전트를 기다릴 때:
+
+```
+⏰ Check-in after 5m — still running:
+agent:k (explorer) · working on your request · 12 steps since your wait, last one 40s ago
+agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)
+If they are making progress, call `wait` again; if nothing reports, you are woken again in 10m. An agent whose steps have stopped may be stuck: `agent` with `mode` "kill" ends it.
+```
+
+과제 시간은 하니스도 모른다. 알림은 경과 시간·로그라는 사실만 주고 판단은 모델이 한다. "the
+next check is in 10m" 은 약한 모델이 "내가 확인해야 한다" 로 읽을 수 있어 주체를 하니스로 썼다.
+
+**진행 신호 — (a) 로그 변화만.** `wait` 때 작업별 로그 크기를 적어 두고(`_Checkin.log_marks`),
+알림 때 그 뒤에 쓰인 부분만 읽어 "+N lines since your wait (last 2 lines)" 또는 "unchanged
+since your wait" — 명령이 아직 한 줄도 안 썼으면(크기가 하니스의 머리줄 `$ cmd` 그대로) "nothing
+after the command line" 을 앞에 붙인다(`JobRegistry.log_growth`, 비용은 새 바이트만큼).
+프로세스 신호 둘은 기록만 하고 채택하지 않았다: CPU 시간 합계는 `xargs -P 4 tesseract` 처럼
+짧게 살다 죽는 자식의 연속에서 지금 살아 있는 것만 잡혀 늘어난 양이 작거나 음수가 되고(바로 그
+신호가 필요했던 OCR 사례에서 안 나온다), 프로세스 교체(pid 집합 비교)는 단일 프로세스가 묵묵히
+일하는 vim 매크로에서 "the same" 으로 나와 결국 (a) 와 같이 읽어야 한다.
+
+**에이전트 줄 — 새 필드 없이.** 작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가
+이미 아는 것만으로 그린다(`AgentRegistry.checkin_agent_lines`): 상태·지금 처리 중인 요청자·
+받은편지함 미러·회신 빚과 스스로 잠듦(`parked_debtors_for`)·그 에이전트가 기다리는 것
+(`wake_sources(debtor)` 재귀)·열린 사람 질문과 `asked_at`·컨텍스트 기록의 서수(`ctx.last_ordinal`,
+`wait` 때 적어 둔 `step_marks` 와 비교)와 마지막 기록 시각(`ctx.last_added_at`, v10.79.0 에 더한
+float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(모델 턴 또는 관찰) — 모델에게 턴·관찰
+이라는 하니스 용어를 쓰지 않는다.
+
+| 상태 | 보이는 줄 |
+|---|---|
+| 내 요청을 처리 중, 진행함 | `agent:k (explorer) · working on your request · 12 steps since your wait, last one 40s ago` |
+| 내 요청을 처리 중, 멈춘 듯 | `agent:k (explorer) · working on your request · no step since your wait, last one 9m ago` |
+| 내 요청이 대기열 | `agent:j (writer) · has your request queued behind 2 others · busy on another request, last step 1m ago` |
+| 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)` |
+| 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 (`…`) · blocked on question q-3 to the user, unanswered for 9m` |
+
+선택지는 다시 기다리기 / kill 둘뿐이다. "메시지로 물어보라" 는 넣지 않는다 — `agent` 요청 결과에
+이미 "progress checks or re-sends … queue MORE work" 경고가 있고, 중간 깨우기가 재촉을 유발하면
+역효과다. 사람 질문 줄이 있을 때만 "A question to the user is answered by the user, not by you."
+한 줄을 더한다. 한계: 걸음 수·시각은 근사값이고 "일하고 있다" 와 "쓸모 있는 일을 하고 있다" 는
+구별하지 못한다. 벤치에는 에이전트를 기다린 사례가 거의 없어 실측 근거가 없다 — 상주 에이전트를
+쓰는 라이브 세션용이다.
+
+### 6.4 구현 자리
+
+- **거는 곳**: `AgentRegistry.run_ended(waiting=True)` → `arm_checkin(owner)` — 런 끝의 유일한
+  정리(§5)라 main·상주·run·web 이 한 곳이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기,
+  에이전트별 `last_ordinal`)을 `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는
+  `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에 발화한 것) 둘 — 배증이 치르는
+  유일한 값이다.
+- **푸는 곳**: `AgentLoop.run()` 이 첫 턴 경계의 배달 **뒤**, 빈 깨우기 런의 조기 반환 뒤에
+  `_note_run_started()` → 전역 `main_registry().run_started(owner)` 를 한 번 부른다. 상주 포트는
+  `agent_registry=None` 이라 전역으로 가야 하고(`dispatch._op_wait` 와 같은 방식), 네 경로가
+  한 지점이다. 배달 뒤인 이유: 다른 런이 메일을 먼저 가져가 입력 없이 끝나는 런(`output=""`)이
+  타이머를 풀면 잠든 모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면
+  그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다 — 사실 진술이라
+  어느 쪽도 거짓이 아니다. `run_ended` 의 `**meta` 에 있는 `run` 키는 그 런을 연 배달 id 이고 이
+  "런 시작" 과 무관하다.
+- **발화**: `fire_checkin(owner)` 가 `runtime.wait_checkin` 으로 본문을 만들어 main 이면 메일함
+  (`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함(`request(..., kind="checkin",
+  ledger="none")`)으로. 걸린 것이 없거나(런이 먼저 시작해 풀렸다) 아무것도 안 돌고 있으면 보내지
+  않는다. 상주 런을 여는 항목은 도구 레코드가 아니라 시작 user 레코드이므로 "도구 이름 `wait`"
+  는 main 메일함 경로에만 해당한다.
+- **정리**: `kill`·워커 `finally`·`shutdown_all` 이 그 소유자(세션 종료는 main 포함)의 타이머를
+  푼다 — 죽은 에이전트에게 알림이 가지 않게.
+- **결과 문장**: `dispatch._op_wait` 가 같은 계산(`next_checkin_s`)으로 이번 간격을 적는다 —
+  "waiting — will wake on: job #1 (`…`), or in 5m if nothing has reported." 설명에는 숫자가 없다
+  (간격이 바뀐다); 예약만 기다려 타이머가 없으면 종전 문장 그대로. 결과의 "if nothing has
+  reported" 는 미래에 대한 조건문이라 사실 진술 규칙과 충돌하지 않는다.
+- **테스트 끼움점**: `threading.Timer` 는 가짜 시계로 돌릴 수 없다. 주입 가능한
+  `checkin_timer_factory` 와 테스트가 직접 부르는 `fire_checkin(owner)`. `tests/test_wait_checkin.py`.
+- **알고 둘 것**: `pending_for("main")` 은 상주 inbox 의 `author=="main"` 항목을 "has your request
+  queued" 로 센다. 체크인도 `author="main"` 이라 그 사이 main 의 wait 판정 근거가 된다 — 모니터·
+  작업 보고가 이미 같은 방식이라 새 문제는 아니다.
+
+### 6.5 함께 바꾼 것
+
+- `kill -- -<pid>` 네 자리 통일(`Job.stop_hint`): 꼬리 `## Background jobs`, `shell` `background`
+  결과, Task Guidelines, 이 알림. 작업은 자기 프로세스 묶음(`start_new_session=True`)이고 pid 는
+  `sh -c` 리더라 `kill <pid>` 는 셸만 죽이고 `xargs`·`tesseract` 는 살아남는다 — 하니스의 `kill()`
+  은 이미 `killpg` 다. `--` 는 음수를 신호 번호로 읽지 않게 하는 표기이고 macOS·Linux 의 sh 내장
+  `kill` 과 `/bin/kill` 모두에서 동작한다. 사람 독자를 위해 꼬리의 `pid 9176` 표기는 그대로 둔다.
+- `wait` 설명에 한 문장: "If nothing reports for a while, you are woken with what is still
+  running." (279자 → 숫자 없음). "WITHOUT" 대문자 강조는 문장으로.
+- monitor 문구·`run` 삭제는 docs/monitor/DESIGN.md §13.
+
+### 6.6 측정 (지시가 있을 때 전체 벤치에서)
+
+깨지 못하고 끝난 wait 수(지금 50번 중 13번) · 중간 깨우기 뒤 모델의 행동(다시 wait / 진행 확인 /
+kill 하고 방식 바꿈 / `complete` — run 모드의 결과 파일을 덮어쓰므로 비율을 따로 봄)과 다시 wait
+할 때까지의 턴 수 · 깨어난 시점의 남은 과제 시간 · video·large-scale 통과율(기대 0~1과제) ·
+작업 종료를 지켜보는 monitor 수 · 도구 설명 길이 변화는 실제 토크나이저(omlx /v1/tokenize)로.

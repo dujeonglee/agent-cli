@@ -270,7 +270,7 @@ def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
             f"job #{job.id} started (pid {job.pid}) — output goes to "
             f"{job.log.as_posix()}. You will be told when it ends, with its exit "
             f"code and the log's last lines; keep working meanwhile. To stop it: "
-            f"`kill {job.pid}`."
+            f"{job.stop_hint}."
         ),
     )
 

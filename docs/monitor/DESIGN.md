@@ -156,7 +156,6 @@ ID 로 고정하는 건 필드 하나지 jq 파이프라인이 아니다.)
 ```python
 monitor(mode="add",
         file="out.log", pattern="ERROR|FAILED",   # 조건 = 키 쌍 하나 (v10.67.0, §4.3)
-        run="kill 4231",       # 선택 — 보고 전에 실행 (§7.3 게이트)
         deadline="2h",         # 선택 (기본 2h, 60s~24h clamp)
         once=True)             # 기본값
 monitor(mode="list")
@@ -174,11 +173,13 @@ monitor(mode="delete", id="mon-3")
 모델도 영영 모른다. 그래서 알림은 암묵으로 두고 `shell` 은 선택 필드
 `run="<cmd>"` 로 낮춘다(보고 **전에** 실행하고 종료 코드와 출력 꼬리를 보고문에
 싣는다). Action ABC 와 레지스트리 하나가 통째로 사라지고, 35B 가 틀릴 중첩
-객체도 하나 준다.
+객체도 하나 준다. → **v10.79.0: `run` 필드도 지웠다** — 모니터는 보고만 하고, 반응은
+모델이 보고를 읽고 `shell` 로 한다(§13).
 
 **`stop` 은 액션이 아니다.** 셋을 구분해야 한다: ①모니터 자신 ②감시 대상
 프로세스 ③에이전트 런. ①이 압도적으로 흔하고 그건 **액션이 아니라 수명
-속성**(`once`)이다. ②는 `run` 필드의 `kill <pid>` 로 흡수. ③은 필요 없다.
+속성**(`once`)이다. ②는 보고를 받은 모델이 `shell` 로 `kill -- -<pid>` 한다(v10.79.0 —
+종전엔 `run` 필드의 `kill <pid>` 였다, §13). ③은 필요 없다.
 명시적 취소는 `mode="delete"`.
 
 `once=True` 가 **기본값**이어야 한다. 반대로 하면 깜빡 잊은 모니터가 계속 깨운다 —
@@ -298,14 +299,14 @@ class Condition(ABC):
     def check(self, st: dict) -> Match | None: ...   # st = 모니터별 상태(오프셋 등)
 ```
 
-액션 레지스트리는 없다 (§4 — 알림은 암묵, `run` 은 필드 하나).
+액션 레지스트리는 없다 (§4 — 알림은 암묵; 종전의 `run` 필드는 v10.79.0 에 삭제, §13).
 
 ## 6. 핵심 흐름
 
 ```
 ① 등록   monitor(add, ...) → MonitorRegistry.add() → monitors.json (기록만)
 ② 평가   폴링 스레드(1s)가 조건 check() — 턴이 도는 중에도 계속 (§2-④)
-③ 발화   매치 → (run 이 있으면 실행) → MonitorRegistry._pending 에 보고 적재
+③ 발화   매치 → 보고문 조립 → 소유자 주소로 배달 (v10.79.0 까지는 `run` 실행이 그 사이에 있었다)
 ④ 깨우기 main 이 idle 이면 MailWaker 가 큐에 WAKE_TEXT — **합치기 무료**
 ⑤ 배달   턴 경계에서 drain() → tool="monitor" **관찰 레코드**로 주입
 ⑥ 해제   once / deadline / max_wakes — **어느 경로든 마지막 보고를 남긴다**
@@ -400,8 +401,8 @@ web_instance_is_active(renderer, server, agent_registry, monitors)
 
 ### 7.3 보안 — `shell.py` 와 **같은 정책**을, 다른 시점에
 
-`command` 조건과 `run` 필드는 임의 명령을 돌린다. **발화 시점이 아니라 등록
-시점에 확인받는다** — 사람은 에이전트가 monitor 를 거는 순간엔 있지만 새벽
+`command` 조건은 임의 명령을 돌린다(`run` 필드는 v10.79.0 에 삭제, §13). **발화 시점이
+아니라 등록 시점에 확인받는다** — 사람은 에이전트가 monitor 를 거는 순간엔 있지만 새벽
 3시 발화 때는 없다.
 
 이 시점 선택에는 초판이 못 본 더 강한 근거가 있다: **폴링 스레드에서
@@ -418,7 +419,7 @@ web_instance_is_active(renderer, server, agent_registry, monitors)
 monitor 를 만드는 근거였다.** 자기모순이다.
 
 → 등록 시점에 **같은 함수들을 재사용**한다: `_detect_dangerous` + `_confine.guard`
-+ 같은 env 우회. 정책은 동일, 시점만 다르다. `command`/`run` 없는 모니터는
++ 같은 env 우회. 정책은 동일, 시점만 다르다. `command` 없는 모니터는
 무확인 통과 — 새 권한이 아니다.
 
 ## 8. 영속 — 기록하되 **부활시키지 않는다** (2판)
@@ -433,7 +434,7 @@ monitor 를 만드는 근거였다.** 자기모순이다.
    **둘 다 틀렸고 어느 쪽이 맞는지 알 방법이 없다.**
 3. **권한 구멍.** `sessions_dir()` 기본이 `./.agent-cli/sessions`(`paths.py:55`)
    — **워크스페이스 안**이라 에이전트가 `write_file` 로 `monitors.json` 을 고칠
-   수 있다. 되살리면 **아무도 승인하지 않은 `command`/`run` 이 실행된다.**
+   수 있다. 되살리면 **아무도 승인하지 않은 `command` 가 실행된다.**
    파일 안의 `confirmed: true` 플래그는 아무것도 증명하지 못한다(§7.3 의 확인이
    "이 프로세스에서 사람이 답했다"를 뜻하는데, 디스크는 그걸 못 나른다).
 4. 재검증 매트릭스(PID×파일×deadline×확인)가 통째로 사라진다.
@@ -494,7 +495,7 @@ monitor 를 만드는 근거였다.** 자기모순이다.
 | 주기 command | exit 0 발화 / 비-0 무시, stdout 이 보고 본문, 유계 타임아웃, `every` clamp |
 | 수명 | deadline 기본 2h·clamp, 만료 자동 해제, `once` 기본값, **해제 3경로가 전부 마지막 보고를 남기는가** |
 | 폭주 | min_interval 합치기, max_wakes 소진 시 마지막 알림 후 해제 |
-| 보안 | `command`/`run` 등록 시 `_detect_dangerous`+`_confine.guard` 경유, **env 우회가 shell 과 같은가**, `notify` 만이면 무확인, **폴링 스레드가 confirm 을 부르지 않는가** |
+| 보안 | `command` 등록 시 `_detect_dangerous`+`_confine.guard` 경유, **env 우회가 shell 과 같은가**, `notify` 만이면 무확인, **폴링 스레드가 confirm 을 부르지 않는가** |
 | 배달 | `tool="monitor"` 관찰 레코드 형태, run·web **양쪽에서 턴 경계 배달**, 여러 모니터 → wake 하나 |
 | 펌프 | 모니터 살아 있으면 run 이 안 끝남 / 해제되면 끝남 ← **회귀 위험 1순위** |
 | web 수명 | 모니터 살아 있으면 `--idle-timeout` 이 자기수확하지 않음 ← **§2-⑤ 정정분** |
@@ -652,3 +653,64 @@ def parse_duration(raw: str) -> int:
 - 도구: `monitor add … silent: "10m"` (문자열 기간, `0` = 끔). 기본 `MONITOR_SILENT_DEFAULT_S = 600`. `silence` 타입은 그대로다 — 그건 조건 자체이고 이건 `match` 의 안전장치다.
 - 테스트 `tests/test_monitor_silent.py`: 기본·사용자값·0·잘못된 값, 생기지 않는 파일, 변하면 시계 리셋, 한도 전 매치 우선, `silence` 불변, 영속 설명 불변.
 
+## 13. 문구 정리와 `run` 삭제 (v10.79.0)
+
+`monitor`·`wait` 묶음 검토(docs/tool-review/TRACKER.md, 2026-10-29~30)의 monitor 쪽. 근거는
+보관된 harbor 벤치 전부(trial 483): 평평한 인자 모양이 된 v10.67.0 뒤로 `add` 가 9번뿐이고,
+그중 다섯은 작업 로그의 `EXIT:`·`Done` 이나 `ps -p` 를 지켜봤다 — `shell` `background` 의
+종료 통지가 이미 하는 일이다. `run` 은 8번 중 1번, 값 `"true"`. 설명 길이는 1,210 + 인자
+1,335 = 2,545자였다.
+
+### 13.1 설명 (M1)
+
+첫 문장이 "작업 종료는 이미 통지된다" 를 말한다 — 종전의 "for long-running work you started
+with `shell`" 은 오히려 작업 종료 감시로 이끄는 문장이었다. ONE·NEW·STOPS·"never mix" 같은
+대문자 강조는 문장으로, 기간 값은 큰따옴표로(표기 규칙 v10.77.0). `silent` 설명은 그것이 속한
+`file` + `pattern` 줄로 옮겼다. `run` 때문에 필요했던 두 문장("Optional `run` is …", "You are
+always notified; there is no silent action.")은 빠졌다.
+
+### 13.2 인자 설명 (M2)
+
+조건 짝 반복("condition `file` + `pattern`: …")을 지우고 한 문장씩 — `file` 은 "The file to
+watch, with `pattern` or `idle`.". `"600"` 같은 맨 숫자 표기는 아직 받지만 광고하지 않는다.
+`pattern` 은 "new lines" 로 둔다 — `register()` 가 마지막 관찰 이후분을 되감아 보는 경로
+(`monitor_replay_max_bytes`)가 있어 "lines added after the monitor starts" 는 엄밀히 틀리다.
+
+### 13.3 보고·목록·오류 (M3)
+
+모델이 쓰는 말은 인자 짝뿐인데 문구 곳곳에 내부 조건 이름(`match`·`silence`·`command`)과
+중괄호 모양(`{command, every}`)이 남아 있었다. 전부 바꿨다:
+
+| 자리 | 종전 | 지금 |
+|---|---|---|
+| `describe()` (add 결과·발화 보고·list·resume 목록) | `match · out.log` | `` `file` + `pattern` on out.log `` |
+| `SHAPES` | `{command, every} · {file, pattern} · {file, idle}` | `` `command` + `every`, `file` + `pattern`, or `file` + `idle` `` |
+| 섞인 조건 | `give exactly ONE condition — … — yours mixes keys: every, file, pattern` | `` give one condition — …; yours mixes `every`, `file`, `pattern` `` |
+| 조건별 검증 | `monitor: silence: `idle` must be positive` | `` monitor: `idle` must be longer than zero `` |
+| add 결과 | `… for 7200s. You will be notified automatically — do NOT poll.` | `… for 2h. It reports to you when it fires; there is nothing to check in the meantime.` |
+| list | `… · 6540s left` | `… · 1h49m left` |
+
+초 → 기간은 `constants.format_duration` (`parse_duration` 의 역방향, 반올림).
+
+### 13.4 `run` 삭제 (R)
+
+`run` 은 발화 때 보고 **전에** 하니스가 실행하던 셸 명령이었다(30초 제한, 결과 한 줄이 보고에
+붙음). §4 의 근거("notify 없는 shell 을 표현할 수 없게")는 유효하지만, 모델은 보고를 받은 뒤
+`shell` 로 같은 일을 할 수 있고 실제 쓰임이 1번이었다. 지운 것: 인자 스키마, `Monitor.run`,
+`_run_side_effect` 와 `_flush`/`_retire` 의 호출, `monitors.json` 의 `run` 키, resume 목록의
+`run=`, 게이트의 `run` 갈래(`_gate_command` 는 `CommandCondition` 전용), 셸 없는 루프 거부의
+`run` 문구. 남는 것: `command` 조건의 게이트(위험 명령 확인·경로 봉쇄)와 셸 없는 루프 거부.
+
+**한 릴리스 명시 거절.** 알 수 없는 인자는 거부되지 않고 조용히 버려진다(`Tool.schema_gaps`:
+"Unknown keys are not a validation failure"). 그대로 두면 옛 습관으로 `run: "kill 123"` 을 보낸
+모델이 kill 이 실행됐다고 믿는다. 그래서 `MonitorTool.validate` 가 `run` 이 있으면 거절한다:
+"monitor: `run` is no longer an argument — act on the report with `shell` instead." 다음
+릴리스에서 뺀다.
+
+옛 세션: 옛 `monitors.json` 의 `run` 키는 읽지 않는다 — resume 은 모니터를 되살리지 않고 설명
+줄만 보이므로 호환층이 없다. agent-board 는 `monitors.json` 을 읽지 않는다.
+
+테스트: `tests/test_monitor_wording.py`(설명·인자·`SHAPES`·거절·오류·목록·보고 머리줄·옛 파일),
+`test_monitor_core.py::TestRunIsGone`, `test_monitor_owner_routing.py` 의 경합 재현 끼움점은
+`_run_side_effect` 에서 `_format_report` 로 옮겼다(창은 같은 자리). 측정은 전체 벤치에서 지시가
+있을 때 — 지표는 작업 종료를 지켜보는 monitor 수, 설명 길이는 실제 토크나이저로.

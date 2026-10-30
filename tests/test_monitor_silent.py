@@ -137,5 +137,5 @@ class TestRetire:
         reg = _reg(tmp_path)
         cond = MatchCondition(str(tmp_path / "a.log"), "x", silent_s=600)
         reg.add(cond, owner="main", deadline_s=7200)
-        assert cond.describe() == f"match · {tmp_path / 'a.log'}"
+        assert cond.describe() == f"`file` + `pattern` on {tmp_path / 'a.log'}"
         assert (tmp_path / "monitors.json").exists()

@@ -261,7 +261,7 @@ class TestOwnerDeath:
         assert reg.deliver.calls == []
         assert not mon.alive
 
-    def test_drop_during_delivery_stops_the_send(self, reg, tmp_path):
+    def test_drop_during_delivery_stops_the_send(self, reg, tmp_path, monkeypatch):
         """배달 **직전**의 재확인이 지키는 것 — 소유자가 부작용 실행 중에
         죽는 창이다. `tick` 은 live 를 스냅샷한 뒤 락 밖에서 돌고, `run`
         서브프로세스는 몇 초가 걸린다. 스냅샷만 믿으면 이미 죽은
@@ -269,16 +269,19 @@ class TestOwnerDeath:
         """
         import time
 
+        from agent_cli.monitor import registry as reg_mod
+
         _mon, log = _add(reg, tmp_path, "agent:k1")
 
-        real_side_effect = reg._run_side_effect
+        real_format = reg_mod._format_report
 
-        def drop_midway(m):
-            # 부작용이 도는 사이에 소유자가 죽었다.
+        def drop_midway(m, lines, **kw):
+            # 보고문을 만드는 사이에 소유자가 죽었다 (v10.79.0: `run` 부작용이
+            # 사라져 끼움점은 보고문 조립으로 옮겼다 — 창은 같은 자리다).
             reg.drop_owner("agent:k1")
-            return real_side_effect(m)
+            return real_format(m, lines, **kw)
 
-        reg._run_side_effect = drop_midway
+        monkeypatch.setattr(reg_mod, "_format_report", drop_midway)
         reg.deliver.take()
         log.write_text("X\n")
         reg.tick(time.time())
@@ -560,9 +563,10 @@ class TestProfileReach:
             assert "shell" in allowed, f"{f.stem}: monitor 만 있고 shell 이 없다"
         assert missing == [], f"monitor 를 못 쓰는 내장 프로파일: {missing}"
 
-    def test_command_and_run_need_shell(self, tmp_path):
-        """shell 이 없는 루프는 `command` 조건·`run` 을 걸 수 없다 — monitor 가
-        셸 권한의 뒷문이 되지 않게 (v10.42.0, 감사자 프로파일의 전제)."""
+    def test_command_needs_shell_and_run_is_refused(self, tmp_path):
+        """shell 이 없는 루프는 `command` 조건을 걸 수 없다 — monitor 가 셸 권한의
+        뒷문이 되지 않게 (v10.42.0, 감사자 프로파일의 전제). ``run`` 은 v10.79.0 에
+        지웠고, 주면 어느 루프에서든 명시 거절이다(알 수 없는 인자는 조용히 버려지므로)."""
         from agent_cli.monitor.registry import MonitorRegistry
         from agent_cli.monitor.runtime import set_monitor_registry
         from agent_cli.tools.base import RunContext
@@ -586,7 +590,8 @@ class TestProfileReach:
                 ctx=no_shell,
             )
             assert not r.success and "need the `shell` tool" in r.error
-            r = tool._run(
+            assert "`run`" not in r.error
+            r = tool.run(
                 {
                     "mode": "add",
                     "file": str(log),
@@ -595,7 +600,8 @@ class TestProfileReach:
                 },
                 ctx=no_shell,
             )
-            assert not r.success and "need the `shell` tool" in r.error
+            assert not r.success and "`run` is no longer an argument" in r.error
+            assert "`shell` instead" in r.error
             r = tool._run(
                 {
                     "mode": "add",

@@ -188,7 +188,7 @@ class TestToolRegistration:
                 },
                 ctx=ctx,
             )
-            assert res.success and "do NOT poll" in res.output
+            assert res.success and "nothing to check in the meantime" in res.output
             assert "count as new" in res.output
             mon = r.list_all()[0]
             assert mon.state["offset"] == 0, "초기 커서가 공개 전에 심기지 않았다"

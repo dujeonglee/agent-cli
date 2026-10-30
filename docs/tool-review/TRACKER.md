@@ -112,3 +112,10 @@
 
 순서: L → (W1·P(a)·W2·M1~M3·R·kill 통일) 한 PR → 측정은 지시가 있을 때.
 
+### 구현 (v10.78.1 · v10.79.0)
+
+- v10.78.1 (PR #188): L.
+- v10.79.0: W1·P(a)·W2·M1~M3·R·`kill -- -<pid>` 통일 — docs/wait/DESIGN.md §6, docs/monitor/DESIGN.md §13. 테스트
+  `tests/test_wait_checkin.py`·`tests/test_monitor_wording.py`. `run` 의 명시 거절은 한 릴리스 뒤 뺀다(TODO).
+- 측정: 지시가 있을 때 전체 벤치(GLM 2회 이상)에서 — 지표는 docs/wait/DESIGN.md §6.6.
+

@@ -1006,7 +1006,21 @@ class TurnDispatcher:
             if open_ids
             else ""
         )
-        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}.{kept}"
+        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 런이 끝날 때
+        # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
+        # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
+        # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
+        from agent_cli.constants import format_duration
+        from agent_cli.subagent.agents_live import main_registry
+
+        reg = main_registry()
+        checkin_s = reg.next_checkin_s(self.cfg.owner) if reg is not None else None
+        timer = (
+            f", or in {format_duration(checkin_s)} if nothing has reported"
+            if checkin_s
+            else ""
+        )
+        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}{timer}.{kept}"
         _append_observation(
             self.state.messages,
             self.ctx,

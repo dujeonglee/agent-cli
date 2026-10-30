@@ -43,7 +43,8 @@ class TestWriteOnlyPersistence:
         _add(reg, tmp_path)
         data = json.loads((tmp_path / "monitors.json").read_text())
         assert len(data["monitors"]) == 1
-        assert data["monitors"][0]["desc"].startswith("match")
+        assert data["monitors"][0]["desc"].startswith("`file` + `pattern`")
+        assert "run" not in data["monitors"][0]  # v10.79.0: 필드가 없다
 
     def test_delete_rewrites_it(self, reg, tmp_path):
         mon = _add(reg, tmp_path)
@@ -113,7 +114,7 @@ class TestResumeDoesNotRevive:
     def test_describe_previous_lists_without_reviving(self, reg, tmp_path):
         _add(reg, tmp_path)
         rows = describe_previous(tmp_path)
-        assert len(rows) == 1 and "match" in rows[0]
+        assert len(rows) == 1 and "`file` + `pattern`" in rows[0]
 
         # 새 프로세스를 흉내 — 목록은 읽히지만 **아무것도 살아나지 않는다**
         fresh = MonitorRegistry(session_dir=tmp_path)
@@ -132,14 +133,11 @@ class TestResumeDoesNotRevive:
         assert "def _load" not in src and "def restore" not in src
         assert "def revive" not in src
 
-    def test_run_command_monitors_are_listed_but_not_restored(self, reg, tmp_path):
+    def test_command_monitors_are_listed_but_not_restored(self, reg, tmp_path):
         """가장 중요한 경우 — 승인이 필요한 모니터야말로 되살아나면 안 된다."""
-        log = tmp_path / "r.log"
-        log.write_text("")
         reg.add(
-            build({"type": "match", "file": str(log), "pattern": "X"}),
+            build({"command": "rm -rf /tmp/whatever", "every": "60s"}),
             deadline_s=60,
-            run="rm -rf /tmp/whatever",
             owner="main",
         )
         rows = describe_previous(tmp_path)
@@ -169,7 +167,7 @@ class TestResumeNotice:
 
         _add(reg, tmp_path)
         msg = _previous_monitors_notice(tmp_path)
-        assert "were not restored" in msg and "match" in msg
+        assert "were not restored" in msg and "`file` + `pattern`" in msg
 
     def test_no_notice_when_there_were_none(self, tmp_path):
         from agent_cli.main import _previous_monitors_notice

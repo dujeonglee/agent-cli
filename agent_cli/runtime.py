@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -418,6 +419,52 @@ _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
+#: 예약의 깨울 것 id — 중간 깨우기의 대상 집합에서는 뺀다 (`wake_source_ids`).
+_SCHEDULE_ID = "schedule"
+
+
+def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, str]]:
+    """`wake_sources` 의 재료 — ``(id, 사람이 읽을 줄)`` 쌍 (v10.79.0).
+
+    id 는 ``"job:1"``·``"mon:mon-504d33"``·``"agent:k"``·``"schedule"`` — 중간
+    깨우기가 "같은 대상을 다시 기다리는가" 를 이 집합으로 비교한다. 사람이 읽는
+    줄로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어 헛되이
+    5분으로 돌아간다."""
+    out: list[tuple[str, str]] = []
+    from agent_cli.jobs import get_job_registry
+
+    jobs = get_job_registry()
+    if jobs is not None:
+        for j in jobs.running(owner):
+            out.append((f"job:{j.id}", f"job #{j.id} (`{j.command[:60]}`)"))
+    from agent_cli.monitor.runtime import get_monitor_registry
+
+    mons = get_monitor_registry()
+    if mons is not None:
+        for m in mons.list_all():
+            if m.owner == owner:
+                out.append((f"mon:{m.id}", f"monitor {m.id}"))
+    from agent_cli.subagent.agents_live import main_registry
+
+    agents = main_registry()
+    if agents is not None:
+        out.extend(agents.pending_agents_for(owner, exclude=_seen))
+        seen = _seen | {owner}
+        for debtor in agents.parked_debtors_for(owner):
+            if debtor in seen:
+                continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
+            if _wake_items(debtor, seen):
+                out.append(
+                    (debtor, f"{debtor} owes you a reply (it is waiting on others)")
+                )
+    from agent_cli.schedule.runtime import get_schedule_registry
+
+    sched = get_schedule_registry()
+    if sched is not None and sched.has_active_work():
+        out.append((_SCHEDULE_ID, "a schedule"))
+    return out
+
+
 def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
@@ -429,37 +476,113 @@ def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
     그를 깨울 것이 있을 때만 센다. 거슬러 올라가며(``_seen`` 으로 순환을 자른다)
     A→B→A 처럼 서로를 기다리는 고리면 두 번째로 잠들려는 쪽의 `wait` 가 거부되고,
     A→B→(일하는 C) 사슬이면 그대로 받아들여진다."""
-    out: list[str] = []
-    from agent_cli.jobs import get_job_registry
+    return [text for _, text in _wake_items(owner, _seen)]
 
-    jobs = get_job_registry()
-    if jobs is not None:
-        for j in jobs.running(owner):
-            out.append(f"job #{j.id} (`{j.command[:60]}`)")
+
+def wake_source_ids(owner: str) -> frozenset[str]:
+    """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_sources`
+    와 같은 것들의 id, 예약만 뺀다. 예약만 기다리는 `wait` 는 빈 집합이라 타이머를
+    걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만
+    적힌다."""
+    return frozenset(i for i, _ in _wake_items(owner) if i != _SCHEDULE_ID)
+
+
+# ── `wait` 중간 깨우기 알림 (v10.79.0, docs/wait/DESIGN.md §6) ─────────────
+#
+# 알림은 **사실 진술**이다 — "아직 돌고 있는 것" 을 적는다. 2판의 "nothing has
+# reported yet" 은 메일함 상태에 달린 부재 진술이라 진짜 보고와 같은 순간에 오면
+# 거짓이 됐고 경합 가드가 필요했다. 사실 진술은 겹쳐도 군더더기 한 줄일 뿐이다.
+# 모델에게 "다음 확인" 의 주체는 하니스다("you are woken again") — "the next check
+# is in 10m" 은 약한 모델이 "내가 확인해야 한다" 로 읽는다.
+
+CHECKIN_HEAD = "⏰ Check-in after {span} — still running:"
+CHECKIN_AGAIN = (
+    "If {subj} making progress, call `wait` again; if nothing reports, you are "
+    "woken again in {span}."
+)
+CHECKIN_STOP = (
+    "If it is not, check its output files, or stop it ({stops}) and change the "
+    "approach."
+)
+CHECKIN_STOP_MONITOR = (
+    "If it is not, check the files it should have written, or delete the monitor "
+    '(`monitor` with `mode` "delete") and change the approach.'
+)
+CHECKIN_AGENT_STUCK = (
+    'An agent whose steps have stopped may be stuck: `agent` with `mode` "kill" '
+    "ends it."
+)
+CHECKIN_QUESTION = "A question to the user is answered by the user, not by you."
+MONITOR_DELETE_HINT = '`monitor` with `mode` "delete" for a monitor'
+
+
+def wait_checkin(
+    owner: str,
+    *,
+    interval_s: int,
+    next_s: int,
+    log_marks: dict[int, int],
+    step_marks: dict[str, int],
+    registry,
+) -> str:
+    """중간 깨우기 알림 본문 — 비어 있으면(아무것도 안 돌고 있음) 보내지 않는다.
+
+    작업 줄은 경과 시간·명령·로그 변화(P(a): `JobRegistry.log_growth`), monitor 줄은
+    조건과 남은 시간, 에이전트 줄은 레지스트리가 이미 아는 것(`checkin_agent_lines`).
+    과제 시간은 하니스도 모른다 — 사실만 주고 판단은 모델이 한다."""
+    from agent_cli.constants import format_duration
+    from agent_cli.jobs import _short, get_job_registry
     from agent_cli.monitor.runtime import get_monitor_registry
 
+    lines: list[str] = []
+    stops: list[str] = []
+    jobs = get_job_registry()
+    running = jobs.running(owner) if jobs is not None else []
+    for j in running:
+        lines.append(f"job #{j.id} · {j.elapsed()} · `{_short(j.command)}`")
+        growth = jobs.log_growth(j, log_marks.get(j.id, jobs.log_size(j)))
+        lines.extend(f"  {ln}" for ln in growth.splitlines())
+    if len(running) == 1:
+        stops.append(running[0].stop_hint)
+    else:
+        stops.extend(f"{j.stop_hint} for job #{j.id}" for j in running)
     mons = get_monitor_registry()
+    now = time.time()
+    had_monitor = False
     if mons is not None:
         for m in mons.list_all():
-            if m.owner == owner:
-                out.append(f"monitor {m.id}")
-    from agent_cli.subagent.agents_live import main_registry
-
-    agents = main_registry()
-    if agents is not None:
-        out.extend(agents.pending_for(owner, exclude=_seen))
-        seen = _seen | {owner}
-        for debtor in agents.parked_debtors_for(owner):
-            if debtor in seen:
-                continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
-            if wake_sources(debtor, seen):
-                out.append(f"{debtor} owes you a reply (it is waiting on others)")
-    from agent_cli.schedule.runtime import get_schedule_registry
-
-    sched = get_schedule_registry()
-    if sched is not None and sched.has_active_work():
-        out.append("a schedule")
-    return out
+            if m.owner != owner:
+                continue
+            had_monitor = True
+            left = format_duration(m.deadline_at - now)
+            lines.append(f"monitor {m.id} · {m.cond.describe()} · {left} left")
+    if had_monitor and running:
+        stops.append(MONITOR_DELETE_HINT)
+    agent_lines, question = (
+        registry.checkin_agent_lines(owner, step_marks)
+        if registry is not None
+        else ([], False)
+    )
+    lines.extend(agent_lines)
+    if not lines:
+        return ""
+    agents_only = not running and not had_monitor
+    closing = [
+        CHECKIN_AGAIN.format(
+            subj="they are" if agents_only else "it is",
+            span=format_duration(next_s),
+        )
+    ]
+    if running:
+        closing.append(CHECKIN_STOP.format(stops="; ".join(stops)))
+    elif had_monitor:
+        closing.append(CHECKIN_STOP_MONITOR)
+    if agent_lines:
+        closing.append(CHECKIN_AGENT_STUCK)
+    if question:
+        closing.append(CHECKIN_QUESTION)
+    head = CHECKIN_HEAD.format(span=format_duration(interval_s))
+    return "\n".join([head, *lines, " ".join(closing)])
 
 
 def arrived_mail(owner: str) -> int:
