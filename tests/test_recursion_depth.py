@@ -295,7 +295,6 @@ class TestDelegateDispatchDepthCheck:
             binding=make_binding(
                 provider=self._make_provider(), capabilities=_caps(), model="m"
             ),
-            owner="main",
         )
         assert result.success is False
         assert "depth" in result.error.lower()
@@ -316,7 +315,6 @@ class TestDelegateDispatchDepthCheck:
             binding=make_binding(
                 provider=self._make_provider(), capabilities=_caps(), model="m"
             ),
-            owner="main",
         )
         assert result.success is False
         assert "depth" in result.error.lower()
@@ -335,7 +333,6 @@ class TestDelegateDispatchDepthCheck:
             binding=make_binding(
                 provider=self._make_provider(), capabilities=_caps(), model="m"
             ),
-            owner="main",
         )
         assert result.success is False
         assert "Recursive" in result.error
@@ -551,7 +548,6 @@ class TestExistingRecursionPathsUnchanged:
             depth=0,
             max_depth=4,
             binding=make_binding(provider=MagicMock(), capabilities=_caps(), model="m"),
-            owner="main",
         )
         assert result.success is False
         assert "reviewer" in result.error

@@ -149,7 +149,8 @@ class HarnessJobs:
     def _execute(
         self, job: str, label: str, task: str, body: str, meta: dict
     ) -> tuple[bool, str]:
-        from agent_cli.runtime import ports_for_oneshot
+        from agent_cli.constants import HARNESS_OWNER_PREFIX
+        from agent_cli.runtime import ports_for_oneshot, release_private_owner
         from agent_cli.subagent.runner import (
             apply_role_overrides,
             create_subagent_ctx,
@@ -170,16 +171,20 @@ class HarnessJobs:
         if ctx is None:
             return False, f"{job} could not start: {err}"
         runner = self._runner or run_subagent_message
-        result, _secs = runner(
-            task,
-            ctx,
-            ports=ports_for_oneshot(owner=f"harness:{job}"),
-            active_tools=allowed_tools,
-            agent_name=job,
-            agent_role=body,
-            stop_event=self._stop,
-            **{**self.runtime, "binding": binding, "hooks_config": None},
-        )
+        owner = f"{HARNESS_OWNER_PREFIX}{job}"
+        try:
+            result, _secs = runner(
+                task,
+                ctx,
+                ports=ports_for_oneshot(owner=owner),
+                active_tools=allowed_tools,
+                agent_name=job,
+                agent_role=body,
+                stop_event=self._stop,
+                **{**self.runtime, "binding": binding, "hooks_config": None},
+            )
+        finally:
+            release_private_owner(owner)  # v10.84.0: 자기 주소의 메일함·체크인 정리
         if result.success:
             return True, result.output or ""
         return False, f"{job} did not complete: {result.error or 'no result'}"

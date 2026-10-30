@@ -357,7 +357,6 @@ class ToolBridge:
                     mcp_manager=self.cfg.mcp_manager,
                 )
             result = tool_delegate(
-                owner=self.cfg.owner,
                 args=raw,
                 parent_ctx=self.ctx,
                 binding=self.cfg.binding,

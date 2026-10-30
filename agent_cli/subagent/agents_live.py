@@ -44,7 +44,12 @@ from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
 from agent_cli import item_ids
-from agent_cli.constants import CHECKIN_STEPS_S, has_words
+from agent_cli.constants import (
+    CHECKIN_STEPS_S,
+    harness_mail_tool,
+    has_words,
+    is_private_owner,
+)
 from agent_cli.context.session import AGENTS_DIR
 from agent_cli.tools.result import ToolResult
 
@@ -355,37 +360,16 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "source": "harness",
         }
 
-    if reply.get("kind") == "job":
-        # 백그라운드 작업 종료 통지 (v10.47.0) — 모니터 보고와 같은 모양의 관찰
+    harness_tool = harness_mail_tool(str(reply.get("kind") or ""))
+    if harness_tool is not None:
+        # 잡·모니터·체크인 — 도구가 만든 보고라 봉투 밖. `tool` 은 `HARNESS_MAIL_TOOL`
+        # 한 표(v10.84.0) — 상주의 흡수·one-shot 의 메일함과 같은 계약. 모니터의
+        # `tool="monitor"` 는 빈 문자열이 아니어야 한다: `is_format_intervention` 이
+        # `tool == ""` 를 형식 개입으로 읽고, 프런트는 `tool === "agent"` 만 산문으로.
         return {
             "role": "user",
-            "tool": "job",
-            "success": bool(reply.get("success")),
-            "content": reply.get("output") or "",
-        }
-
-    if reply.get("kind") == "monitor":
-        # 종전 `AgentLoop._deliver_monitor_reports` 가 만들던 것과 **같은**
-        # 레코드다 — 배달 경로만 두 번째 drain 지점에서 메일박스로 옮겼다.
-        # `tool="monitor"` 는 아무 데도 등록이 필요 없다: 재생은 `tool` 키가
-        # 있는 레코드를 관찰로 취급하고, `is_format_intervention` 은
-        # `tool == ""` 일 때만 걸리며(그래서 빈 문자열 금지), 프런트는
-        # `tool === "agent"` 만 특수 처리한다.
-        return {
-            "role": "user",
-            "tool": "monitor",
-            "success": bool(reply.get("success")),
-            "content": reply.get("output") or "",
-        }
-
-    if reply.get("kind") == "checkin":
-        # `wait` 의 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) — 모니터 보고와
-        # 같은 모양, 도구 이름은 그 기다림을 연 `wait`. 장부 밖(`ledger: "none"`)이라
-        # 열린 항목이 되지 않고 영속되지 않는다 — 생산자(`fire_checkin`)가 선언한다.
-        return {
-            "role": "user",
-            "tool": "wait",
-            "success": True,
+            "tool": harness_tool,
+            "success": bool(reply.get("success", True)),
             "content": reply.get("output") or "",
         }
 
@@ -785,6 +769,9 @@ class AgentRegistry:
         self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
+        #: private 주소(run:·harness:)의 메일함 (v10.84.0) — 그 루프가 턴 경계와
+        #: `wait` 에서 읽는다. UI·영속 밖(프로세스 수명). 같은 `_cv` 로 깨운다.
+        self._mailboxes: dict[str, list[dict]] = {}
         # 회신 도착 알림 (CLI 대기 줄) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
         #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
@@ -1128,6 +1115,9 @@ class AgentRegistry:
         if addr.startswith("agent:"):
             tm = self._agents.get(addr.split(":", 1)[1])
             return 0 if tm is None else len(self._queued(tm))
+        if is_private_owner(addr):
+            with self._cv:
+                return len(self._mailboxes.get(addr, ()))
         return 0
 
     def has_pending_replies(self) -> bool:
@@ -1501,6 +1491,18 @@ class AgentRegistry:
                 expects_reply=False,
                 kind="checkin",
                 ledger="none",
+            )
+        elif is_private_owner(owner):
+            self._push_private(
+                owner,
+                {
+                    "kind": "checkin",
+                    "ledger": "none",
+                    "success": True,
+                    "output": text,
+                    "author": "main",
+                    "expects_reply": False,
+                },
             )
         return text
 
@@ -1955,6 +1957,8 @@ class AgentRegistry:
         text = item["text"]
         iid = str(item["id"])
         kind = item.get("kind") or ""
+        if harness_mail_tool(kind) is not None:
+            return text  # 하니스 통지 — 봉투 밖 (main 의 `build_reply_record` 와 같다)
         if kind:
             return envelope(
                 kind,
@@ -2067,15 +2071,17 @@ class AgentRegistry:
                     }
                 )
             else:
-                # 회신·통지 — 런 시작 항목과 같은 봉투.
+                # 회신·통지 — 런 시작 항목과 같은 봉투. 하니스 통지(잡·모니터·체크인)는
+                # 봉투 없이 그 보고, tool 은 `HARNESS_MAIL_TOOL` (v10.84.0 — main·one-shot 과 같다).
+                hk = harness_mail_tool(str(item.get("kind") or ""))
                 out.append(
                     {
                         "record": {
                             "role": "user",
-                            "tool": "agent",
+                            "tool": hk or "agent",
                             "success": True,
                             "content": self._model_text(item),
-                            "source": "agent_mail",
+                            "source": "harness_mail" if hk else "agent_mail",
                         }
                     }
                 )
@@ -2131,13 +2137,20 @@ class AgentRegistry:
                 self._push_reply(mail)
                 return ""
             if addr.startswith("agent:"):
+                # 종류·장부 표지를 봉투 재료로 넘긴다 (v10.84.0) — 종전엔 떨어뜨려
+                # 잡·모니터 통지가 체크인과 달리 봉투 없이 갔다.
                 return self.request(
                     addr.split(":", 1)[1],
                     text,
                     author=author,
                     expects_reply=expects_reply,
                     hop=hop,
+                    kind=str(mail.get("kind") or ""),
+                    ledger=str(mail.get("ledger") or ""),
                 )
+            if is_private_owner(addr):
+                self._push_private(addr, mail)
+                return ""
         except Exception as exc:  # 배달은 감시 폴링 스레드에서도 불린다
             # **던지지 않는다.** `MonitorRegistry._flush` 가 in-flight
             # 카운터를 `finally` 로 내리긴 하지만, 여기서 새면 `_loop` 의
@@ -2387,6 +2400,49 @@ class AgentRegistry:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
             self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
         return out
+
+    # ── private 메일함 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────
+
+    def _push_private(self, addr: str, mail: dict) -> None:
+        """``run:``·``harness:`` 주소로 온 메일 — 그 루프가 읽는 목록에 넣고 깨운다.
+        main 메일함과 달리 디스크·UI·대기열 콜백이 없다(프로세스 수명)."""
+        with self._cv:
+            self._stamp_mail(mail)
+            self._mailboxes.setdefault(addr, []).append(mail)
+            self._cv.notify_all()
+
+    def take_mail(self, addr: str) -> list[dict]:
+        """private 메일함을 비우며 전부 돌려준다 — 루프의 ``absorb_inbox`` 포트가 턴
+        경계마다 부른다. 도착 순서."""
+        with self._cv:
+            return list(self._mailboxes.pop(addr, []))
+
+    def wait_mail(
+        self, addr: str, *, stop_event, still_waiting, poll_s: float = 0.5
+    ) -> str:
+        """메일이 올 때까지 막는다 — one-shot 의 `wait` (`dispatch._op_wait`). 돌려주는
+        값은 깬 이유: ``"mail"``(도착), ``"stopped"``(``stop_event``), ``"nothing"``
+        (``still_waiting()`` 이 거짓 — 기다리던 것이 메일 없이 사라졌다: 잡을 밖에서
+        죽임, 모니터 삭제). 상한은 없다 — 중간 깨우기가 메일로 와서 모델이 판단한다."""
+        while True:
+            with self._cv:
+                if self._mailboxes.get(addr):
+                    return "mail"
+                self._cv.wait(timeout=poll_s)
+                if self._mailboxes.get(addr):
+                    return "mail"
+            if stop_event is not None and stop_event.is_set():
+                return "stopped"
+            if not still_waiting():
+                return "nothing"
+
+    def drop_mailbox(self, addr: str) -> int:
+        """private 주소의 루프가 끝났다 — 체크인을 풀고 메일함을 버린다(읽을 사람이
+        없다). 버린 메일 수를 돌려준다."""
+        self._cancel_checkins(addr)
+        with self._cv:
+            self._checkin_last.pop(addr, None)
+            return len(self._mailboxes.pop(addr, []))
 
     # ── status / kill / 종료 ────────────────────
 
@@ -3504,6 +3560,18 @@ def _agent_status(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
 
 def _agent_kill(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     key = args.get("key", "")
+    tm = registry.get(key)
+    if tm is not None and tm.state == "dead":
+        # 멱등은 그대로(v10.84.0) — 다만 문장이 반복을 알려 준다: 벤치에서 35B 가
+        # 같은 키에 kill 을 일곱 번 보내며 매번 같은 "terminated" 를 받았다.
+        registry.kill(key)
+        return ToolResult(
+            True,
+            output=(
+                f"agent '{key}' was already terminated — nothing to do. Its context "
+                'is kept; `mode` "resume" brings it back with full memory.'
+            ),
+        )
     err = registry.kill(key)
     if err:
         return ToolResult(False, error=f"kill rejected: {err}")

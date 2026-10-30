@@ -87,7 +87,8 @@ class TestRun:
         assert isinstance(ports, LoopPorts)
         assert ports.owner == "harness:auditor"
         assert ports.questions is None and ports.agent_registry is None
-        assert ports.message_handler is None and ports.absorb_inbox is None
+        assert ports.message_handler is None
+        assert ports.absorb_inbox is not None  # v10.84.0: 자기 메일함을 읽는 포트
         # 프로파일이 도구 상한·역할이고, 세션 셸 훅은 싣지 않는다
         assert seen["active_tools"] == ["history", "read_file", "code_index"]
         assert seen["agent_name"] == "auditor" and "Auditor" in seen["agent_role"]

@@ -72,6 +72,9 @@ class LoopConfig:
     # 문자열(자기 제외) — registry 자체는 안 넘기고(상주 모드 차단 유지)
     # 프롬프트 가시성만 준다.
     peer_agents_section: str = ""
+    #: 이 루프를 깨울 길이 있는가 (`ports.wakeable()`, v10.84.0) — 없으면 `wait` 는
+    #: 거부된다(스킬 루프: 인라인이라 아무도 깨우지 않는다).
+    wakeable: bool = False
 
     # ── 바인딩을 읽는 속성 — 저장하지 않는다 ──
     @property

@@ -343,3 +343,48 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 kill 하고 방식 바꿈 / `complete` — run 모드의 결과 파일을 덮어쓰므로 비율을 따로 봄)과 다시 wait
 할 때까지의 턴 수 · 깨어난 시점의 남은 과제 시간 · video·large-scale 통과율(기대 0~1과제) ·
 작업 종료를 지켜보는 monitor 수 · 도구 설명 길이 변화는 실제 토크나이저(omlx /v1/tokenize)로.
+
+## 7. one-shot 의 `wait` 는 자기 메일함을 기다린다 (v10.84.0)
+
+**사실.** 일회성(one-shot) 루프에서 `wait` 는 v10.65.0 부터 광고되지 않았지만(`ports.wakeable()` 거짓) 디스패치는
+`action == "wait"` 를 받아 런을 ``waiting`` 결과로 끝냈다. 부모(`run` 호출자)는 그걸 `STATUS: success / RESULT: ⏸
+waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자기 주소가 없었던 것 — 부모 주소를 빌려 써서 자기
+잡의 종료 통지가 부모 메일함으로 갔고, 꼬리엔 부모의 잡이 보였고, 깨울 주체(펌프)도 없었다.
+
+**설계 (사용자 결정, 2026-10-30).** 루프는 `complete` 로만 반환하고, `wait` 는 메시지 큐를 기다린다.
+
+- **소유자 주소 넷** (`constants.RUN_OWNER_PREFIX`·`HARNESS_OWNER_PREFIX`·`is_private_owner`): `main`(메일함, 펌프가 읽음) ·
+  `agent:<key>`(상주 받은편지함, 워커가 읽음) · **private** `run:<run_dir>`(one-shot)·`harness:<job>`(하니스 작업) — 프로세스
+  수명의 메일함을 그 루프 자신이 턴 경계(`absorb_inbox`)와 `wait` 에서 읽는다. 하니스 작업은 종전에도 자기 주소를 썼으나
+  `deliver` 가 "unroutable" 로 떨궜다 — 같은 메일함으로 라우팅된다.
+- **메일함** (`AgentRegistry._mailboxes`, `deliver` 의 셋째 가지): `arrived_for`·`take_mail`·`wait_mail(stop_event, still_waiting)`·
+  `drop_mailbox`. 같은 `_cv` 로 깨운다. UI(`_pending`)·디스크 밖. 체크인(`fire_checkin`)도 여기로.
+- **포트**: `ports_for_oneshot` 이 `absorb_inbox = take_mail(owner)` 를 꽂는다 → `wakeable()` 참 → `wait` 가 광고되고 문법에도
+  든다(종전의 "숨김인데 디스패치는 받음" 불일치 해소). 흡수 레코드는 `runtime.mail_record` — **main 이 받는 모양과 같다**(사용자 결정 C, `constants.HARNESS_MAIL_TOOL`
+  한 표): 봉투 없이 보고 그대로, ``tool`` 은 `job`·`monitor`·체크인→`wait`. "도구가 만든 보고는 봉투 밖"
+  (`build_reply_record`) — 보낸이가 하니스 하나라 `from` 이 정보가 아니고, 봉투는 에이전트끼리의 요청·회신·죽음
+  통지의 것. 상주도 같다: `deliver` 의 `agent:` 가지가 종류를 `request(kind=)` 로 넘기고 `_model_text` 는 하니스
+  종류면 봉투를 씌우지 않으며 `absorb_pending` 의 레코드가 `tool` = 표·`source` = `harness_mail` (종전엔 kind 가
+  떨어져 잡·모니터는 `agent` 레코드, 체크인만 봉투 — 세 루프가 세 모양).
+- **`_op_wait`** (`dispatch`): 거부 둘(도착 메일·깨울 것 없음)은 그대로. 수락 뒤 소유자가 private 이면 `_wait_in_place` —
+  `arm_checkin` → `wait_mail` 로 **막음** → `run_started`(체크인 해제) → `_CONTINUE`. 장부는 넘기지 않고("stay open for the
+  next run" 문구 없음) 같은 런이 이어진다. 기다리던 것이 메일 없이 사라지면(잡을 밖에서 죽임) "nothing you were waiting
+  on is running any more" 관찰로 잇는다. 깨울 길이 없는 루프(`cfg.wakeable` 거짓 = 스킬 — 호출자 턴 안의 인라인, 주소를
+  **일부러** 물려받아 그 모니터가 호출자에게 보고)는 첫 판정에서 **거부**: "this loop runs inline inside its caller and
+  nothing wakes it … finish with `complete` and the caller waits"(사용자 결정 D2).
+- **예약은 private 소유자를 깨우지 않는다** (`_wake_items`): 세션 예약은 main 에게 발화한다 — 빼지 않으면 one-shot 이 잡
+  없이도 `wait` 를 수락받아 영원히 막힌다.
+- **끝날 때** (`runtime.release_private_owner`, 사용자 결정 D1): 돌고 있는 잡은 죽이고(`jobs.drop_owner`), 모니터는 폐기
+  (`monitors.drop_owner` — 재부모화하지 않는다, 상주와 같은 규칙), 체크인·메일함을 버린다. 거둔 것이 있으면 결과 끝에 한 줄
+  `[1 background job still running was stopped when this agent finished: `…`]` — 호출자가 "끝났다" 를 "다 됐다" 로 읽지 않게.
+  종전엔 one-shot 이 남긴 잡·모니터가 부모 소유로 돌아 부모가 우연히 보고를 받았다(행동 변화).
+
+**바뀌지 않는 것.** one-shot 의 수명(함수 호출)·호출자 블록·같은 턴의 결과·중첩 위임(`run` 만)·UI. "wait 는 런을 끝낸다"
+(§2)는 main·상주의 말이고, one-shot 은 런 안에서 기다린다 — 뜻("깨어날 때까지 LLM 을 부르지 않는다")은 같다. one-shot 의
+메일함에는 하니스만 쓴다(잡·모니터·체크인); 사람·동료의 메시지는 상주의 것.
+
+**검토 기록.** 대안 셋을 재고 (a) 를 택했다: 문구만 바꾸기(부모가 서브에이전트의 후처리를 대신하게 됨), 깨울 수 없는 루프에
+`background` 금지(후처리는 남지만 서브에이전트가 긴 명령을 전경으로만), `run` 모드 삭제(중첩 위임 5/735·상주 잔류·한 턴
+결과를 잃음 — 변형 측정 뒤 재고). 설계 2판 https://claude.ai/artifact/75VC1MJfqkM2ivFQtZwBBF, 예외 17건·원칙 점검 포함.
+테스트 `tests/test_oneshot_wait.py`.
+

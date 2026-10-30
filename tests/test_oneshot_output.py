@@ -536,7 +536,6 @@ class TestIterationsAreTurnsRun:
                 parent_ctx=None,
                 session=None,
                 run_dir_name="run_x",
-                owner="main",
             )
         text = r.error or r.output
         assert "... and 40 more" in text  # 로그는 여전히 20줄로 잘린다

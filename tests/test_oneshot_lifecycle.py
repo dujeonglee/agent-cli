@@ -684,7 +684,6 @@ class TestParallelBatchScopeIdentity:
                     supports_thinking=False,
                 )
             ),
-            owner="main",
         )
         return [
             d
@@ -739,7 +738,6 @@ class TestParallelBatchScopeIdentity:
                     supports_thinking=False,
                 )
             ),
-            owner="main",
         )
         ends = [d for e, d in r._event_buffer if e == "scope_end"]
         starts = [d for e, d in r._event_buffer if e == "scope_start"]

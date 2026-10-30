@@ -350,6 +350,35 @@ def browser_knobs() -> dict:
 #: 하나다.
 AUDITOR_NAME = "auditor"
 
+# ── 소유자 주소 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────────────
+# 잡·모니터·체크인·깨우기 판정은 전부 소유자 주소로 돈다. "main" 은 메일함(펌프가
+# 읽음), "agent:<key>" 는 상주의 받은편지함(워커가 읽음). 그 밖의 둘은 **private
+# 주소** — 프로세스 수명의 메일함을 그 루프 자신이 턴 경계와 `wait` 에서 읽는다:
+# one-shot 서브에이전트(종전엔 부모 주소를 빌려 써서 자기 잡의 통지가 부모에게
+# 갔다)와 하니스 작업(주소만 있고 메일함이 없어 통지가 버려졌다).
+RUN_OWNER_PREFIX = "run:"
+HARNESS_OWNER_PREFIX = "harness:"
+_PRIVATE_OWNER_PREFIXES = (RUN_OWNER_PREFIX, HARNESS_OWNER_PREFIX)
+
+
+#: 하니스 통지(잡·모니터·체크인)의 레코드 계약 — 한 표 (v10.84.0, 사용자 결정 C):
+#: 어느 루프(main·상주·one-shot)에 가든 봉투 없이 보고 그대로, ``tool`` 은 이 표.
+#: "도구가 만든 보고는 봉투 밖" (`build_reply_record`) — 보낸이가 하니스 하나라 ``from``
+#: 이 정보가 아니다. 봉투는 에이전트끼리의 요청·회신·죽음 통지의 것. 체크인은 `wait`
+#: 의 뒤따름이라 그 도구 이름.
+HARNESS_MAIL_TOOL = {"job": "job", "monitor": "monitor", "checkin": "wait"}
+
+
+def harness_mail_tool(kind: str) -> str | None:
+    """하니스 통지면 레코드의 ``tool``, 아니면 None."""
+    return HARNESS_MAIL_TOOL.get(kind or "")
+
+
+def is_private_owner(addr: str) -> bool:
+    """main 도 상주도 아닌 소유자 — 메일함을 루프 자신이 읽는 주소."""
+    return addr.startswith(_PRIVATE_OWNER_PREFIXES)
+
+
 #: main 의 사용자 런이 끝날 때마다 하니스가 감사 작업에 주는 과제
 #: (`harness.auditor.SessionAuditor.run_ended`) — 감사자가 알아야 할 하니스 사실은
 #: 셋뿐이다: 세션 id(history 도구의 범위·파일 필터), 감사할 서수 구간, 그리고

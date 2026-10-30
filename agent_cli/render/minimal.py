@@ -1157,15 +1157,15 @@ class MinimalRenderer(Renderer):
             # group_start/group_end before the scope unification — inlined here
             # since this per-task dump framing is internal to the panel, not a
             # scope boundary).
-            self._p(f"┌─ 🦀 {label}", highlight=False)
+            self._p(f"┌─ 🦀 {label}", highlight=False, markup=False)
             self.push_depth()
             prefix = self._prefix
             for line in t["captured"]:
-                self.con.print(f"{prefix}{line}", highlight=False)
+                self.con.print(f"{prefix}{line}", highlight=False, markup=False)
             self.pop_depth()
             _status = "✓" if t["success"] else "✗"
             _dur = f" ({t['duration_s']:.1f}s)" if t["duration_s"] > 0 else ""
-            self._p(f"└─ {_status} {label}{_dur}", highlight=False)
+            self._p(f"└─ {_status} {label}{_dur}", highlight=False, markup=False)
         # Reset registration state for the next parallel set.
         with self._parallel_lock:
             for tid in order_snapshot:

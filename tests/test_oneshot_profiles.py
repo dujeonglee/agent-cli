@@ -231,7 +231,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert result.success
@@ -267,7 +266,6 @@ class TestRunSingleWithAgent:
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
             compaction_enabled=False,
-            owner="main",
         )
         assert captured_kwargs["compaction_enabled"] is False
 
@@ -299,7 +297,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
         assert captured_kwargs["compaction_enabled"] is True
 
@@ -327,7 +324,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert not result.success
@@ -370,7 +366,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert result.success
@@ -416,7 +411,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert not result.success
@@ -461,7 +455,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="default-model", capabilities=caps
             ),
-            owner="main",
         )
 
         assert result.success
@@ -496,7 +489,6 @@ class TestRunSingleWithAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert result.success
@@ -532,7 +524,6 @@ class TestToolDelegatePassesAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert captured_kwargs["agent_name"] == "reviewer"
@@ -568,7 +559,6 @@ class TestToolDelegatePassesAgent:
             binding=make_binding(
                 provider=FakeProvider(), model="test", capabilities=caps
             ),
-            owner="main",
         )
 
         assert sorted(captured_agents) == ["reviewer", "security"]
@@ -638,7 +628,6 @@ class TestToolDelegatePassesAgent:
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 ),
-                owner="main",
             )
 
         # 5 calls x 2 workers = 10 ids, all distinct.

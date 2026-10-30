@@ -450,9 +450,8 @@ class TestResident:
             tm = r.get(key)
             (item,) = [i for i in tm.inbox_items if i.get("kind") == "checkin"]
             assert item["ledger"] == "none" and item["expects_reply"] is False
-            assert r._model_text(item).startswith(
-                f"── checkin [{item['id']}] from main ──\n⏰"
-            )
+            # 하니스 통지는 봉투 밖 (v10.84.0, 사용자 결정 C) — main 이 받는 모양과 같다
+            assert r._model_text(item).startswith("⏰ Check-in after 5m")
             saved = json.loads((tmp_path / "agents.json").read_text())
             (entry,) = [e for e in saved["agents"] if e["key"] == key]
             assert [i["text"] for i in entry["inbox"]] == ["do Y"]  # 알림은 빠졌다

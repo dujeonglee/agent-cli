@@ -3139,6 +3139,18 @@ class TestResumeGuidance:
         assert '"mode":"resume"' in r.output and key in r.output
         assert "PRESERVED" in r.output
 
+    def test_second_kill_says_already_terminated(self, tmp_path, renderer):
+        """v10.84.0: 멱등은 그대로, 문장이 반복을 알린다 — 벤치에서 35B 가 같은 키에
+        kill 을 일곱 번 보내며 매번 같은 "terminated" 를 받았다."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        tool_agent({"mode": "kill", "key": key}, registry=reg)
+        wait_until(lambda: reg.get(key).state == "dead")
+        r = tool_agent({"mode": "kill", "key": key}, registry=reg)
+        assert r.success and "was already terminated" in r.output
+        assert "nothing to do" in r.output and '`mode` "resume"' in r.output
+
     def test_status_marks_dead_as_resumable(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()

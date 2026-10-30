@@ -78,7 +78,6 @@ def _delegate(tasks, **kw):
         agent_stack=["ag"],
         hooks_config={"h": 1},
         compaction_enabled=False,
-        owner="agent:x",
         **kw,
     )
 
@@ -94,7 +93,6 @@ _COMMON = {
     "agent_stack": ["ag"],
     "hooks_config": {"h": 1},
     "compaction_enabled": False,
-    "owner": "agent:x",
 }
 
 

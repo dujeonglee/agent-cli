@@ -11,6 +11,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
+from agent_cli.constants import RUN_OWNER_PREFIX
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -52,8 +53,6 @@ def _run_single(
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
     run_dir_name: str = "",
-    *,
-    owner: str,
 ) -> ToolResult:
     """Execute a single delegate task.
 
@@ -138,6 +137,9 @@ def _run_single(
     if not run_dir_name:
         run_dir_name = _generate_run_dir_name(agent_name or "task")
     run_dir = parent_session_dir / run_dir_name
+    # 자기 주소 (v10.84.0, docs/wait/DESIGN.md §7) — 잡·모니터·체크인의 통지가 이 런의
+    # 메일함으로 온다. 종전엔 부모 주소를 빌려 써서 통지가 부모에게 갔다.
+    owner = f"{RUN_OWNER_PREFIX}{run_dir_name}"
 
     # Context + run_loop — 공용 러너 (subagent/runner.py). dialect
     # 해석(effective model 바인딩 > 부모 상속)·예산 상속, fork 히스토리
@@ -154,26 +156,31 @@ def _run_single(
     if ctx is None:
         return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 
-    from agent_cli.runtime import ports_for_oneshot
+    from agent_cli.runtime import ports_for_oneshot, release_private_owner
 
-    loop_result, duration = run_subagent_message(
-        task,
-        ctx,
-        ports=ports_for_oneshot(owner=owner),
-        binding=binding,
-        max_turns=max_turns,
-        depth=depth,
-        max_depth=max_depth,
-        active_tools=allowed_tools,
-        session=session,
-        skill_stack=skill_stack,
-        agent_stack=agent_stack,
-        agent_name=agent_name,
-        stop_event=stop_event,
-        agent_role=agent_role,
-        hooks_config=hooks_config,
-        compaction_enabled=compaction_enabled,
-    )
+    try:
+        loop_result, duration = run_subagent_message(
+            task,
+            ctx,
+            ports=ports_for_oneshot(owner=owner),
+            binding=binding,
+            max_turns=max_turns,
+            depth=depth,
+            max_depth=max_depth,
+            active_tools=allowed_tools,
+            session=session,
+            skill_stack=skill_stack,
+            agent_stack=agent_stack,
+            agent_name=agent_name,
+            stop_event=stop_event,
+            agent_role=agent_role,
+            hooks_config=hooks_config,
+            compaction_enabled=compaction_enabled,
+        )
+    finally:
+        # D1 (v10.84.0): 이 런이 가진 것(잡·모니터·메일함·체크인)을 전부 거둔다 —
+        # 남긴 것은 결과 끝에 한 줄로 알린다.
+        released = release_private_owner(owner)
 
     result_str = loop_result.output if loop_result.success else None
     delegate_result = DelegateResult(output=result_str, duration_secs=duration)
@@ -192,6 +199,8 @@ def _run_single(
         delegate_result.last_actions = _extract_last_actions(ctx.get_raw_messages())
 
     formatted = _format_delegate_output(delegate_result)
+    if released:
+        formatted = f"{formatted}\n\n{released}"
 
     # Persist result.md to delegate directory
     _persist_run_result(formatted, run_dir)
@@ -291,8 +300,6 @@ def _run_parallel(
     stop_event=None,
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
-    *,
-    owner: str,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading.
 
@@ -317,9 +324,6 @@ def _run_parallel(
         "agent_stack": agent_stack,
         "hooks_config": hooks_config,
         "compaction_enabled": compaction_enabled,
-        # 병렬 워커도 부모 주소를 물려받는다 — 여기 빠지면 스레드 안에서 걸린
-        # 감시의 보고가 갈 곳을 잃는다.
-        "owner": owner,
     }
     results: list[ToolResult | None] = [None] * len(task_specs)
     durations: list[float] = [0.0] * len(task_specs)
@@ -409,8 +413,6 @@ def tool_delegate(
     stop_event=None,
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
-    *,
-    owner: str,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -435,9 +437,6 @@ def tool_delegate(
         "agent_stack": agent_stack,
         "hooks_config": hooks_config,
         "compaction_enabled": compaction_enabled,
-        # 중첩 루프가 자기 주소를 물려받는 유일한 길 — 기본값이 없으므로
-        # 여기서 빠뜨리면 `_run_single`/`_run_parallel` 이 TypeError 다.
-        "owner": owner,
     }
 
     if len(tasks) == 1:

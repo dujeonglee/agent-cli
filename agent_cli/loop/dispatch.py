@@ -945,17 +945,37 @@ class TurnDispatcher:
         보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
         런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
         막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`runtime.arrived_mail`)
-        가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다."""
+        가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
+
+        v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
+        인라인)는 첫 판정에서 거부한다 — 종전엔 광고만 안 하고 받아서 스킬 런을
+        "⏸ waiting" 결과로 끝냈다. private 주소(one-shot·하니스 작업)는 런이 곧 함수
+        호출이라 끝내지 않는다: 자기 메일함에 통지가 올 때까지 **여기서 막고**
+        런을 잇는다 — 다음 턴 경계의 ``_absorb_inbox`` 가 통지를 넣는다. 장부는
+        넘기지 않는다(같은 런)."""
+        from agent_cli.constants import is_private_owner
         from agent_cli.runtime import arrived_mail, wake_sources
 
         reason = ""
         if isinstance(op.action_input, dict):
             reason = str(op.action_input.get("reason") or "").strip()
+        if not self.cfg.wakeable:
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                "Observation: wait refused — this loop runs inline inside its caller "
+                "and nothing wakes it. What you started (a job or a monitor) belongs "
+                "to the caller and reports to it; finish with `complete` and the "
+                "caller waits.",
+                tool_name="wait",
+                success=False,
+                turn=self.state.turn,
+            )
+            return _CONTINUE
         arrived = arrived_mail(self.cfg.owner)
         if arrived:
-            # 기다리던 것이 wait 보다 먼저 끝났다(v10.66.2) — 통지는 다음 턴
-            # 경계(`_deliver_agent_mail`/`_absorb_inbox`)에 배달된다. 런을
-            # 끝내면 펌프가 바로 다시 깨울 뿐이라 거부하고 잇는다.
             n = f"{arrived} notice" + ("s" if arrived > 1 else "")
             _append_observation(
                 self.state.messages,
@@ -977,7 +997,6 @@ class TurnDispatcher:
             reg = main_registry()
             parked = reg.parked_debtors_for(self.cfg.owner) if reg is not None else []
             why = (
-                # 순환 대기 (v10.77.0) — 나에게 빚진 쪽이 나를 기다리며 잠들었다
                 f"{', '.join(parked)} owes you a reply but is itself waiting — on "
                 "you, so if you wait too, nobody wakes. Reply to what you owe, or "
                 "keep working; call `complete` if the task is done."
@@ -997,23 +1016,23 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        ledger = self.state.ledger
-        open_ids = ledger.request_ids()
-        if self.ctx is not None:
-            self.ctx.park_requests(list(ledger.requests))
-        kept = (
-            f" Open items stay open for the next run: {', '.join(open_ids)}."
-            if open_ids
-            else ""
-        )
-        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 런이 끝날 때
-        # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
-        # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
-        # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
         from agent_cli.constants import format_duration
         from agent_cli.subagent.agents_live import main_registry
 
         reg = main_registry()
+        private = is_private_owner(self.cfg.owner)
+        kept = ""
+        if not private:
+            ledger = self.state.ledger
+            open_ids = ledger.request_ids()
+            if self.ctx is not None:
+                self.ctx.park_requests(list(ledger.requests))
+            if open_ids:
+                kept = f" Open items stay open for the next run: {', '.join(open_ids)}."
+        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 런이 끝날 때
+        # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
+        # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
+        # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
         checkin_s = reg.next_checkin_s(self.cfg.owner) if reg is not None else None
         timer = (
             f", or in {format_duration(checkin_s)} if nothing has reported"
@@ -1031,10 +1050,43 @@ class TurnDispatcher:
             success=True,
             turn=self.state.turn,
         )
+        if private:
+            return self._wait_in_place(turn, reg)
         summary = f"⏸ waiting on {'; '.join(sources)}" + (
             f" — {reason}" if reason else ""
         )
         return ToolResult(True, output=summary, waiting=True)
+
+    def _wait_in_place(self, turn, reg):
+        """private 주소의 `wait` (v10.84.0): 런을 끝내지 않고 자기 메일함에 통지가
+        올 때까지 막는다 — one-shot 의 부모는 이미 결과를 기다리며 블록돼 있으니
+        여기서 기다려도 아무도 손해가 없다. 체크인 타이머는 상주·main 처럼 걸고(메일로
+        온다), 깨면 푼다. 레지스트리가 없으면 기다릴 메일함이 없다 — 깨울 것이
+        사라진 것과 같이 다룬다."""
+        from agent_cli.runtime import wake_sources
+
+        owner = self.cfg.owner
+        why = "nothing"
+        if reg is not None:
+            reg.arm_checkin(owner)
+            why = reg.wait_mail(
+                owner,
+                stop_event=self.state.stop_event,
+                still_waiting=lambda: bool(wake_sources(owner)),
+            )
+            reg.run_started(owner)  # 체크인 해제 — 다음 wait 가 다시 건다
+        if why == "nothing":
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                "Observation: nothing you were waiting on is running any more.",
+                tool_name="wait",
+                success=True,
+                turn=self.state.turn,
+            )
+        return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:
         """종결 레코드 — `answers` 가 있으면 정산 뒤 남은 요청 id 도 함께
