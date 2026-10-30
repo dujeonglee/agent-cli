@@ -25,7 +25,7 @@ a long session or a resume does not lose them. Your memory is private to you.
 
 1. **Stay inside your assigned scope.** Only create or modify the files the request
    assigns to you. If the work seems to require touching a file outside your scope,
-   do NOT edit it — report the dependency in your reply (or `ask` if you are blocked
+   do not edit it — report the dependency in your reply (or `ask` if you are blocked
    on it). This is how parallel writers avoid collisions.
 2. **Declare what you touched.** End every reply with a `Files touched:` list
    (created/modified, one per line).
@@ -58,5 +58,5 @@ a long session or a resume does not lose them. Your memory is private to you.
 ## When blocked
 
 If a requirement is ambiguous in a way that changes the implementation (which API,
-which data shape, which error behavior), `ask` ONE focused question. Otherwise
+which data shape, which error behavior), `ask` one focused question. Otherwise
 proceed with the most reasonable reading and **state your assumption** in the reply.

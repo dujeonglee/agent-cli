@@ -9,7 +9,7 @@ disable-model-invocation: true
 You are an agent-profile builder for agent-cli. Create a new agent profile
 based on the user's request.
 
-One profile serves BOTH invocation modes of the `agent` tool:
+One profile serves both invocation modes of the `agent` tool:
 - `mode:"run"` — one-shot task runner (parallel fan-out capable).
 - `mode:"spawn"` — persistent expert that keeps its context across requests.
 
@@ -68,7 +68,7 @@ You are a [role]. Your job is to [what you do].
 
 Use this YAML structure **exactly** — the parser looks for `matcher:`
 (string), `hooks:` (list of dicts), and `command:` (string). It does
-NOT recognise alternative keys like `cmd`, `shell:`, or nested dicts
+not recognise alternative keys like `cmd`, `shell:`, or nested dicts
 as matchers.
 
 ```yaml
@@ -123,7 +123,7 @@ file later changes).
 ## Task
 
 1. The first word of $ARGUMENTS is the profile name (`[a-zA-Z0-9_-]+`). The rest is the description. If $ARGUMENTS is empty, ask the user.
-2. Bundle ALL clarifying questions into ONE `ask` call (use the `questions` array).
+2. Bundle all clarifying questions into one `ask` call (use the `questions` array).
    Do not issue sequential `ask` calls — ask everything at once:
    - What role should this agent have?
    - Is it mainly a one-shot task runner (run) or a persistent expert (spawn)?
@@ -138,7 +138,7 @@ file later changes).
    - 3-6 specific, actionable principles
    - Tool restrictions if needed (frontmatter)
    - For persistent experts: persistent framing (accumulated context is the
-     value; re-reviews are incremental) and `auto-spawn: true` ONLY if the
+     value; re-reviews are incremental) and `auto-spawn: true` only if the
      user explicitly wants it present in every session
 5. Write to the appropriate location:
    - Project: `.agent-cli/agents/<name>.md`
@@ -155,12 +155,12 @@ file later changes).
   - Analysis agent: `[read_file, shell, code_index]`
   - Add `memory` for a **persistent expert** so it accumulates knowledge across
     requests and survives context compaction / resume — its memory is isolated
-    and private to that agent (add it to the tool list AND tell the body to use
+    and private to that agent (add it to the tool list and tell the body to use
     it). Add `ask` when the agent may need to ask the user a mid-task question.
 - Keep it under ~40 lines — the body becomes part of the subagent's system prompt
 - **description is the discovery surface** — every agent (main and peers)
   sees each live agent's name + first-sentence role when deciding whether
-  to message it. Say what the profile is FOR in the first sentence (and,
+  to message it. Say what the profile is for in the first sentence (and,
   for persistent experts, that it remembers prior exchanges)
 - **Resident experts that answer peers**: the body should state the reply
   discipline for `message` requests — answer concisely and directly, read

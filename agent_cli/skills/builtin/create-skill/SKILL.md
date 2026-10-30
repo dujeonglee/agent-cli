@@ -26,7 +26,7 @@ absolute paths instead of the portable placeholder.
 
 1. The first word of $ARGUMENTS is the skill name. The rest is the
    description. If $ARGUMENTS is empty, ask for the name.
-2. Bundle ALL clarifying questions into ONE `ask` call (use the
+2. Bundle all clarifying questions into one `ask` call (use the
    `questions` array). Do not issue sequential `ask` calls — ask
    everything at once:
    - What should the skill do? (unless already clear from $ARGUMENTS)
@@ -61,7 +61,7 @@ absolute paths instead of the portable placeholder.
 
 ## Writing good descriptions
 
-The description is the ONLY trigger mechanism for auto-invocation. Be
+The description is the only trigger mechanism for auto-invocation. Be
 specific:
 
 - Bad: "Processes files"

@@ -163,6 +163,6 @@ flat-native `memory` 도구 (`code_index` 처럼 `{mode, ...}` 단일 op). 한 o
 | M4 | `list` 0회. 색인이 최근 30개를 늘 보이므로 31개째부터와 type/tag 필터에서만 뜻이 있었다 | **`list` 삭제**(사용자 결정). `tag` 인자(list 전용)도 삭제; `tags` 는 항목에 남아 `get` 에 보인다. 숨김 줄은 `(N older entries not shown — ids below K; \`memory\` with \`mode\` "get" still reaches them)`. |
 | M5 | 항목에 턴 정보가 없어 `history` 와 연결이 없었다 | `add` 가 `turn` 을 적는다(`RunContext.turn_now` 콜러블 — 캐시된 컨텍스트를 깨지 않음). 색인 줄과 `get` 에 `(turn N)`; 머리줄이 `"(turn N)" is the turn it was noted on, which \`history\` can look up` 이라고 말한다 — 관찰 전문을 `detail` 에 복사하는 대신 가리키는 길. 루프 밖 호출(테스트·직접)은 `turn` 없음. |
 
-history 쪽(H1): 설명은 열 이름과 "작게 뽑는 법" 한 문장으로 줄이고 SELECT 예시는 `query` 생략 help 와 시스템 프롬프트 Context Recovery 절에만 둔다(종전 세 곳). SQL 표면은 그대로(H3 — 5회 전부 문법 오류 없음, v10.29.0 이름 측정 완료). H2(압축 요약 레코드 꼬리에 history 범위 한 줄)는 압축 재현 런처로 효과를 재 뒤에만 넣는다(PR C).
+history 쪽(H1): 설명은 열 이름과 "작게 뽑는 법" 한 문장으로 줄이고 SELECT 예시는 `query` 생략 help 와 시스템 프롬프트 Context Recovery 절에만 둔다(종전 세 곳). SQL 표면은 그대로(H3 — 5회 전부 문법 오류 없음, v10.29.0 이름 측정 완료). H2(압축 요약 레코드 꼬리에 history 범위 한 줄)는 압축 재현 A/B(2026-10-30, 기준·후보 6런씩)에서 `history` 호출 6/6 vs 6/6·정답 0/6 vs 0/6 으로 행동 차이가 없어 **넣지 않았다** — 기준도 읽기 실패 뒤 Context Recovery 절로 `history` 에 간다. 남은 문제는 큰 관찰의 중간을 SQL 로 뽑는 길(docs/tool-review/TRACKER.md).
 
 측정 없음 — 문구·구제 변경은 벤치 지표가 없다(add 거절 3건이 0이 되는지는 다음 벤치의 `invalid mode` 수로 본다).

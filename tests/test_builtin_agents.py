@@ -283,4 +283,4 @@ class TestGeneralProfile:
         assert "Files written:" in role
         assert "Do not modify files you did not create" in role
         assert "Say where each fact came from" in role
-        assert "ask" in role and "ONE focused question" in role
+        assert "ask" in role and "one focused question" in role

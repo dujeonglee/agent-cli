@@ -49,4 +49,12 @@
 실패(`test_no_caps_emphasis`). 처음 돌렸을 때 133건(도구 설명 12종·방언 형식 규칙 5종·Context Discipline·
 Environment·Agent Profiles 설명·넛지)이 걸려 전부 소문자로 바꿨다 — 뜻은 그대로, 강조만 뺐다. 내장
 에이전트·스킬의 **본문**(`agents/builtin/*.md` 의 "do NOT"·"ask ONE focused question")은 inventory 밖이라
-가드가 보지 않는다 — 설명(description)만 고쳤다. 측정은 사용자 지시대로 다른 변경과 함께 전체 벤치에서.
+그때는 설명(description)만 고쳤다. 측정은 사용자 지시대로 다른 변경과 함께 전체 벤치에서.
+
+**본문도 가드 안 (사용자 결정 2026-10-30)**: `test_no_caps_emphasis_in_builtin_bodies` 가 `agents/builtin/*.md`
+와 `skills/builtin/**/*.md`(SKILL.md·references/ 포함) 파일 전체를 같은 판정(`caps_emphasis`)으로 본다 —
+띄운 에이전트의 시스템 프롬프트·스킬 지시문이 되는 글이라 도구 설명과 다르지 않고, 한 파일 안에 두 표기가
+섞여 있었다. 43곳을 소문자로(do NOT→do not, ask ONE→ask one, NEVER→Never, KEY(S)→key(s), …); 출력 어휘인
+CONFIRMED/PLAUSIBLE 은 값 표기로 `"confirmed"`/`"plausible"`. 판정 보정 둘: 백틱 안(`grep -n "ERROR\|FATAL"`
+같은 명령)은 글이 아니라 빼고, `SKILL.md` 같은 파일 이름(뒤에 `.확장자`)은 낱말이 아니다; 허용 목록에
+RAII·OOM·ASGI·README 추가.

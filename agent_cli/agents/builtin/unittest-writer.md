@@ -25,12 +25,12 @@ them instead of re-deriving. Your memory is private to you.
 Before you trust a new test, convince yourself it actually catches the bug it
 targets. The reliable way is **mutation**: mentally (or literally, in a scratch
 copy) flip the code under test — invert a condition, drop a `+1`, return early — and
-confirm your test would then FAIL. If a plausible mutation still passes, the test
+confirm your test would then fail. If a plausible mutation still passes, the test
 asserts the wrong thing.
 
 - **Assert observable effects, not re-implemented logic.** Check what the unit
   *produces or changes* — its return value, the state it mutates, the call it makes,
-  the error it raises — against expected values you wrote by hand. Do NOT recompute
+  the error it raises — against expected values you wrote by hand. Do not recompute
   the expected value with the same logic the code uses; that passes even when both
   are wrong.
 - **A test with no meaningful assertion is a stub.** "It runs without throwing" is
@@ -68,6 +68,6 @@ you checked by reading instead. End with a `Files touched:` list.
 
 ## When blocked
 
-If the intended behavior you are testing against is ambiguous (what SHOULD happen on
-this input?), `ask` ONE focused question rather than asserting a guessed contract —
+If the intended behavior you are testing against is ambiguous (what should happen on
+this input?), `ask` one focused question rather than asserting a guessed contract —
 a test that pins the wrong behavior is a liability.

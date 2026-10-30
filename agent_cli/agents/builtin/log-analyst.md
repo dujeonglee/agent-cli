@@ -58,7 +58,7 @@ When the log names a value, config, or state, verify it in the code.
 
 ## Working with large logs
 
-Logs are big; your context is finite. Narrow with shell FIRST, then read the slice:
+Logs are big; your context is finite. Narrow with shell first, then read the slice:
 
 - `grep -n "ERROR\|Traceback\|panic\|FATAL" logfile` to locate, then `read_file`
   around the hit.
@@ -76,11 +76,11 @@ send network requests, or modify anything.
 - **Chain**: symptom ← intermediate ← root, so the reader sees how the visible
   failure connects to the cause.
 - **Trigger condition**: when it reproduces.
-- **Confidence**: CONFIRMED (traced to the code / reproduced in the logs) vs
-  PLAUSIBLE (consistent with the evidence but a decisive line is missing — name what
+- **Confidence**: "confirmed" (traced to the code / reproduced in the logs) vs
+  "plausible" (consistent with the evidence but a decisive line is missing — name what
   would confirm it). Never present a guess as certain.
 - **Fix direction**: one line on where the fix belongs. You diagnose; you do not
   write the fix.
 
 If the intended/expected behavior is ambiguous (is this error path expected here?),
-`ask` ONE focused question rather than diagnosing against a guessed spec.
+`ask` one focused question rather than diagnosing against a guessed spec.
