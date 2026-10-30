@@ -98,10 +98,15 @@ class TestProfile:
             "loc LIKE '<session id>/history.jsonl:%'",  # 다른 에이전트 파일을 뺀다
             "unverifiable",  # 근거 없는 주장
             "A `met` without a seq is not a `met`",  # 예스맨 방지
-            "Your `complete` result IS the report",  # 4판: 보고 = complete 결과
+            "Your `complete` result is the report",  # 4판: 보고 = complete 결과
             "A deliverable file is judged by the file",  # 전사 인용이 아니라 파일
             "A cut column is not evidence",  # substr 잘림을 부재로 읽지 않는다
             "Do not keep probing",  # 없는 파일을 40턴 찾던 B-3
+            "They are main's claims, not evidence",  # Checked 줄은 검증 목록(v10.83.0)
+            "Every item under `Checked:` needs an observation record",
+            "Every item under `Not checked:` is a gap main admitted",
+            "account is missing",  # 두 줄이 없는 결과
+            "account: <k> of <n> Checked items backed",  # 보고 형식
         ):
             assert phrase in body, phrase
         # 3판까지의 reply·message·구독 경로는 사라졌다 — 모델이 고를 길이 없다
@@ -113,10 +118,11 @@ class TestRequestText:
     def test_request_names_range_session_filter_and_complete(self):
         text = AUDIT_REQUEST.format(a=12, b=40, session="1791", history="/w/h.jsonl")
         assert "seq 12..40" in text and "seq BETWEEN 12 AND 40" in text
-        assert 'sessions:"1791"' in text
+        assert "`Checked:` / `Not checked:` lines" in text  # 검증 목록 (v10.83.0)
+        assert '`sessions` "1791"' in text
         assert "loc LIKE '1791/history.jsonl:%'" in text
         assert "/w/h.jsonl" in text
-        assert "`complete`" in text and "IS the report" in text
+        assert "`complete`" in text and "is the report" in text
         assert "reply" not in text
 
     def test_history_seq_is_the_one_based_line_number(self, tmp_path):
@@ -158,7 +164,7 @@ class TestRunEnded:
         _complete(ctx)  # seq 3
         text = h.run_ended(_req(), ok=True)
         assert "seq 2..3" in text and "seq BETWEEN 2 AND 3" in text
-        assert f'sessions:"{ctx.session_dir.name}"' in text
+        assert f'`sessions` "{ctx.session_dir.name}"' in text
         assert str(ctx.history_path) in text
         assert jobs.runs == [(AUDITOR_NAME, "2-3", text)]
 

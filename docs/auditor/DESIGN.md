@@ -59,14 +59,35 @@ main 세션                                          하니스 작업 auditor (�
 ### 3.4 판정 본문 — 문법 강제 없음
 
 ```
-AUDIT run seq 99..142: findings
+Audit run seq 99..142: findings
 [12] unmet — asked per-module function names; 7 of 14 modules read (seq 103..137), REPORT.md never written
 [13] met — seq 150 write_file REPORT.md; seq 151 final line is the checksum
 claims: 1 verified, 1 unverifiable ("tests pass" — no shell observation in seq 99..142)
+account: 2 of 3 Checked items backed by a record; Not checked gaps the request needed: "sorted by date" (seq 142 Not checked line)
 ```
 
 - 읽는 쪽은 사람과 main 뿐이다 — 하니스는 결과를 배달만 하고 파싱하지 않으므로 EBNF 문법을 걸 이유가 없다. 구조가 꼭 필요해지면 길은 문법이 아니라 **도구 호출**(`verdict {…}` 스키마). v1 범위 밖.
 - 증거 규칙 둘(§6.1·§6.2 에서): 파일은 `read_file` 로 직접 판정하고, 잘린 열(`substr`)은 부재의 증거가 아니다. 두 번 직접 확인해 없으면 그게 결론이다.
+
+### 3.4a main 의 자기 보고를 검증 목록으로 — `Checked:` / `Not checked:` (v10.83.0, 사용자 제안)
+
+main 의 `complete` 결과는 v10.77 부터 `Checked:`(돌려 보고 본 것)·`Not checked:`(읽고 추론한 것, 안 돌린 것)
+두 줄로 끝난다. 종전 감사자는 이 두 줄을 쓰지 않고 요청 글에서 검증 항목을 스스로 끌어냈다 — 그래서 넓게
+더듬고(§6 의 턴 16 상한), "주장인데 기록이 없다"(`unverifiable`) 가 가장 비싼 판정이었다. 프로파일 §3a:
+
+- **Checked 줄 = 검증 목록.** 항목마다 구간 안에 그것을 보여 주는 관찰 레코드(shell 출력·read·테스트 결과)가 있어야
+  한다 — 있으면 `met` 의 근거 seq, 한 번 직접 확인해 없으면 `unverifiable` 로 항목 이름을 적는다. 가짜 Checked
+  (테스트 돌렸다는데 기록 없음)가 가장 해로운 경우이고 여기서 잡힌다.
+- **Not checked 줄 = 인정한 공백.** 찾아다니지 않는다. 요청이 바로 그것을 요구했으면(테스트 실행·파일 산출·전 행 처리)
+  `unmet` 이고 finding 이 main 의 문장을 인용한다; 아니면 finding 이 아니다.
+- **두 줄이 없거나 `Not checked: nothing`** 인데 도구를 쓴 런: 자기 보고가 없는 것 — 답의 모든 주장은 기록이 뒷받침할
+  때까지 미검증이고 `claims:` 에 그렇게 적는다. main 이 "nothing" 을 습관처럼 쓰면 여기서 finding 이 돼 두 줄의 질이
+  올라가는 되먹임.
+
+두 줄은 **주장이지 증거가 아니다** — 프로파일이 그렇게 못 박는다(감사자가 자기 보고를 베끼는 쉬운 길을 막기 위해).
+보고에 `account:` 줄 하나(뒷받침된 Checked 항목 수, 요청에 중요한 Not checked 공백). `AUDIT_REQUEST` 도 한 문장으로
+같은 것을 말하고, 이제 `prompts.inventory` 의 실행 중 문구(`audit_request`)로 등록돼 표기 가드 대상이다(SQL 조각은
+백틱, 보고 머리줄은 `Audit run seq`). 측정: §6.7.
 
 ### 3.5 전달 — 하니스가 한다 (4판)
 
@@ -264,6 +285,31 @@ B 는 뺐다 — 이 모델·32K 창에서 main 이 2/3 턴을 소진해 감사 
 - **판정은 4판 누적 5/6** (오탐 1 = 5차 A-3). 6차 둘 다 머리·본문이 일치하고 두 findings 모두 main 기록으로 확인했다(13/20 검색 읽기, billing.py 는 code_index 뿐).
 - **되먹임 비용**은 pass·확인만 1턴, findings 4턴.
 - **결론.** 회귀로 보지 않는다. 4판 그대로 릴리스하고 기본값 off 를 유지한다.
+
+### 6.7 7차 — Checked/Not checked 검증 목록 (v10.83.0, 2026-10-31 예정)
+
+사용자 지시: 감사를 켜고 harbor 벤치의 **오답 실패 대표 과제**(타임아웃 아닌 것 — financial-document-processor·
+multi-source-data-merger·regex-log·gcode-to-text)만 돈다. 지표: ① 감사가 Checked 항목을 기록과 대조했는가(보고의
+`account:` 줄), ② 거짓 Checked 적발, ③ 감사 한 번의 `history` 호출 수·턴 수(검증 목록이 생기면 줄어야 정상), ④ main 이
+깨우기 런에서 finding 을 손봐 통과로 바뀌는 과제 수. 감사+깨우기 런이 과제 시간에 더해지므로 agent 타임아웃 배수를
+밝힌다.
+
+결과(`tb21-glm53flash-oq4-off-audit-r1`, 2026-10-30 21:09–22:05, 에이전트 타임아웃 ×1.5; `-x` 제외가 데이터셋 이름
+`terminal-bench/<task>` 와 안 맞아 9과제 전부 돌았다): 보상 6/9 — db-wal·extract-elf·financial·large-scale·log-summary·
+multi-source ✓, video·gcode 오답, regex-log 타임아웃(1350초, 감사 전에 끝남). ×1.0 이었으면 large-scale(1271초)은
+타임아웃 — 대략 5/9, v10.79.1~10.81.0 의 5~6/9 안.
+
+| 지표 | 결과 |
+|---|---|
+| ① `account:` 줄 | 감사 8건 전부(regex-log 은 감사 없음). Checked 항목을 seq 로 짝지어 "k of n backed" 를 냈다 |
+| ② 거짓 Checked 적발 | 1건 — extract-elf: main 의 "1948 address keys, values match raw section bytes" 에 기록이 없어 `unverifiable`·`account: 1 of 2`; 깨우기 런에서 main 이 `node` 로 확인해 691개로 **정정**(산출물은 이미 맞았음) |
+| ③ 감사 비용 | 3~5턴 · `history` 1~4회 · 런당 1~3분(db-wal 289→390초, multi-source 137→352초) |
+| ④ finding → 통과로 바뀐 과제 | 0 — 오답 둘(video 699 commands, gcode "flag")은 감사가 `pass`: 기록이 있는 주장이라 "shown done" 이고, 그림(view_image)·OCR 의 **내용**이 맞는지는 감사자(텍스트만 봄)가 판정할 수 없다. financial 통과는 main 자력(감사 pass, 깨우기 런은 `complete` 만) |
+
+읽기: 두 줄은 검증 목록으로 작동한다(①·②·③ — 싸고 정확). 벤치 과제의 오답은 "기록 없는 주장" 이 아니라 "기록 있는
+오판" 이라 이 감사의 범위 밖 — 그걸 잡으려면 감사자가 산출물을 **독립적으로 다시 만들어** 비교해야 하고(비용 = 과제 한 번),
+그것은 감사가 아니라 재실행이다. 다음 후보: 그림에서 읽은 주장은 감사자가 같은 그림을 `view_image` 로 보게 할지(감사자
+도구 셋 확장, 결정 필요).
 
 ## 7. 열린 질문
 

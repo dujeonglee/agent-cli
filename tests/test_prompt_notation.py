@@ -123,6 +123,7 @@ _PKG = Path(agent_cli.__file__).parent
 _BODIES = sorted(
     [
         *(_PKG / "agents" / "builtin").glob("*.md"),
+        *(_PKG / "agents" / "harness").glob("*.md"),
         *(_PKG / "skills" / "builtin").rglob("*.md"),
     ]
 )

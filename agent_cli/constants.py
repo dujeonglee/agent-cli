@@ -358,10 +358,11 @@ AUDITOR_NAME = "auditor"
 AUDIT_REQUEST = (
     "Audit main's run that just ended: history seq {a}..{b} of session {session} "
     "(main's history file: {history}).\n"
-    'EVERY history call must pass sessions:"{session}" and the filter '
-    "loc LIKE '{session}/history.jsonl:%' (that table also holds the session's "
-    "other agents' files), and read only rows with seq BETWEEN {a} AND {b}.\n"
-    "Judge every request in that range as your profile says. Your `complete` "
-    "result IS the report — the harness delivers it to main; there is nobody "
-    "else to tell."
+    'Every history call must pass `sessions` "{session}" and the filter '
+    "`loc LIKE '{session}/history.jsonl:%'` (that table also holds the session's "
+    "other agents' files), and read only rows with `seq BETWEEN {a} AND {b}`.\n"
+    "Judge every request in that range as your profile says. Main's final answer "
+    "ends with `Checked:` / `Not checked:` lines — your checklist, not evidence: "
+    "each Checked item needs a record in the range. Your `complete` result is the "
+    "report — the harness delivers it to main; there is nobody else to tell."
 )
