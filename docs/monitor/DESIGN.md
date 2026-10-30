@@ -701,11 +701,14 @@ watch, with `pattern` or `idle`.". `"600"` 같은 맨 숫자 표기는 아직 �
 `run=`, 게이트의 `run` 갈래(`_gate_command` 는 `CommandCondition` 전용), 셸 없는 루프 거부의
 `run` 문구. 남는 것: `command` 조건의 게이트(위험 명령 확인·경로 봉쇄)와 셸 없는 루프 거부.
 
-**한 릴리스 명시 거절.** 알 수 없는 인자는 거부되지 않고 조용히 버려진다(`Tool.schema_gaps`:
-"Unknown keys are not a validation failure"). 그대로 두면 옛 습관으로 `run: "kill 123"` 을 보낸
-모델이 kill 이 실행됐다고 믿는다. 그래서 `MonitorTool.validate` 가 `run` 이 있으면 거절한다:
-"monitor: `run` is no longer an argument — act on the report with `shell` instead." 다음
-릴리스에서 뺀다.
+**명시 거절은 v10.79.0 한 판만.** 알 수 없는 인자는 거부되지 않고 조용히 버려진다(`Tool.schema_gaps`:
+"Unknown keys are not a validation failure"). v10.79.0 은 옛 습관으로 `run: "kill 123"` 을 보낸
+모델이 kill 이 실행됐다고 믿지 않도록 `MonitorTool.validate` 가 `run` 을 명시 거절했고, v10.79.1 에
+뺐다(사용자 결정, 2026-10-30). 지운 뒤의 해는 하나 — `run` 을 보낸 호출이 거절 없이 등록되고 값은
+버려진다. 벤치 483 trial 에서 `run` 은 1번(값 "true")이었고, 지금 설명·꼬리 어디에도 `run` 이
+없어 새 세션이 그 이름을 쓸 근거가 없다; 남는 경로는 옛 세션의 `--resume` 뿐이다. 거절 분기는
+monitor 의 지워진 인자 하나만 보는 것이라 "모르는 인자는 조용히 버린다" 는 규칙의 범위에 비해
+막는 것이 좁았다.
 
 옛 세션: 옛 `monitors.json` 의 `run` 키는 읽지 않는다 — resume 은 모니터를 되살리지 않고 설명
 줄만 보이므로 호환층이 없다. agent-board 는 `monitors.json` 을 읽지 않는다.

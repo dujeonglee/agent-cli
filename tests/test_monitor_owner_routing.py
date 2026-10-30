@@ -563,10 +563,10 @@ class TestProfileReach:
             assert "shell" in allowed, f"{f.stem}: monitor 만 있고 shell 이 없다"
         assert missing == [], f"monitor 를 못 쓰는 내장 프로파일: {missing}"
 
-    def test_command_needs_shell_and_run_is_refused(self, tmp_path):
+    def test_command_needs_shell(self, tmp_path):
         """shell 이 없는 루프는 `command` 조건을 걸 수 없다 — monitor 가 셸 권한의
         뒷문이 되지 않게 (v10.42.0, 감사자 프로파일의 전제). ``run`` 은 v10.79.0 에
-        지웠고, 주면 어느 루프에서든 명시 거절이다(알 수 없는 인자는 조용히 버려지므로)."""
+        지웠다 — 거부 문구가 그 이름을 다시 말하지 않는다."""
         from agent_cli.monitor.registry import MonitorRegistry
         from agent_cli.monitor.runtime import set_monitor_registry
         from agent_cli.tools.base import RunContext
@@ -591,17 +591,6 @@ class TestProfileReach:
             )
             assert not r.success and "need the `shell` tool" in r.error
             assert "`run`" not in r.error
-            r = tool.run(
-                {
-                    "mode": "add",
-                    "file": str(log),
-                    "pattern": "x",
-                    "run": "true",
-                },
-                ctx=no_shell,
-            )
-            assert not r.success and "`run` is no longer an argument" in r.error
-            assert "`shell` instead" in r.error
             r = tool._run(
                 {
                     "mode": "add",
