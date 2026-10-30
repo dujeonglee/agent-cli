@@ -1148,8 +1148,8 @@ class TestFullLoopIntegration:
         sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
         main = _build_tools_section(["agent"], wf, has_agent_registry=True)
         assert '`mode` "run" only here' in sub
-        assert "PERSISTENT" not in sub.split("Input JSON")[0]
-        assert "spawn" in main and "PERSISTENT" in main
+        assert "a persistent agent that keeps" not in sub.split("Input JSON")[0]
+        assert "spawn" in main and "a persistent agent that keeps" in main
 
 
 # ── P2: ask→main 양방향 라우팅 ──────────────────
@@ -2442,7 +2442,7 @@ class TestPeerMessaging:
         assert props["expects_reply"]["type"] == "boolean"
         assert "expects_reply" not in MessageTool.parameters["required"]
         assert "name" in props["to"]["description"]
-        assert "NOTICE" in MessageTool.description
+        assert "it is a notice:" in MessageTool.description
 
     def test_peer_request_reply_is_terminal(self, tmp_path, renderer):
         runner = _RecordingRunner()

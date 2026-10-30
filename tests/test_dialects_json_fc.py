@@ -203,7 +203,7 @@ class TestLoopE2E:
         # 시스템 프롬프트가 신 규칙으로 조립됐는지 (헤더 없는 캐노니컬)
         args, kwargs = provider.call.call_args_list[0]
         sys_prompt = kwargs.get("system") or (args[1] if len(args) > 1 else "")
-        assert "ONE JSON" in sys_prompt
+        assert "one JSON\narray of tool calls" in sys_prompt
 
 
 class TestTruncatedPropagation:

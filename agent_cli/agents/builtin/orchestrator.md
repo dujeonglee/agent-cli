@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Persistent coordination agent — receives a goal, a plan, and a roster of already-spawned worker agents, then drives the whole job over peer messages (assign → collect → review → fix) WITHOUT waking main. Reports to main only at completion or when blocked. Spawn-only (meant to be set up by /orchestrate); it cannot spawn agents itself.
+description: Persistent coordination agent — receives a goal, a plan, and a roster of already-spawned worker agents, then drives the whole job over peer messages (assign → collect → review → fix) without waking main. Reports to main only at completion or when blocked. Spawn-only (meant to be set up by /orchestrate); it cannot spawn agents itself.
 allowed-tools:
   - read_file
   - shell

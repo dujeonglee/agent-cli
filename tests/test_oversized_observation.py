@@ -123,7 +123,7 @@ class TestUnifiedNudge:
         for name in ("shell", "fetch", "code_index", "history"):
             n = _nudge(name, self._body(), tmp_path=tmp_path)
             assert n.startswith(f"[{name}:")
-            assert "NOT added to context" in n
+            assert "Not added to context" in n
             assert "Full output saved to" in n
             assert "--- first" in n and "--- last" in n  # excerpt
             assert "with `search` set to a regex" in n  # regex route
@@ -197,7 +197,7 @@ class TestUnifiedNudge:
             "agent_cli.tools.base.persist_oversized", lambda *a, **k: ""
         )
         n = _nudge("shell", self._body(), tmp_path=None)
-        assert "could NOT be saved" in n
+        assert "could not be saved" in n
         assert "Full output saved to" not in n
         assert "Next time —" in n  # still tells it how to avoid the bulk
 
@@ -873,7 +873,7 @@ class TestLoopPracticesWhatThePromptPreaches:
         from agent_cli.prompts.system_prompt import _build_environment_section
 
         monkeypatch.chdir(tmp_path)
-        assert "RELATIVE" in _build_environment_section()
+        assert "paths relative to the working directory" in _build_environment_section()
         sess = tmp_path / ".agent-cli" / "sessions" / "s1"
         sess.mkdir(parents=True)
         n = _nudge("shell", "\n".join(f"l{i}" for i in range(4000)), tmp_path=sess)

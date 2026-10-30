@@ -13,13 +13,13 @@ from agent_cli.dialects.base import NO_ACTION_FRAMING
 from agent_cli.dialects.spec import ArgStyle, DialectSpec, Lenient, NameSlot, Prose
 
 _REMINDER_CALL = (
-    "Respond with one or more <tool_call> blocks, each containing ONE JSON "
+    "Respond with one or more <tool_call> blocks, each containing one JSON "
     'object {"name": "<tool>", "arguments": {...}}. To finish, call '
     '{"name": "complete", "arguments": {"result": "<final answer>"}}.'
 )
 _REMINDER_ACTION_REQUIRED = (
     'Each <tool_call> object must have a "name" naming one tool from '
-    "Available Tools. If the task is DONE, finish with "
+    "Available Tools. If the task is done, finish with "
     '{"name": "complete", "arguments": {"result": "<final answer>"}}. If your '
     "last message already was the final answer in plain prose, re-emit that "
     "answer as the result argument. If you were about to do something, emit "
@@ -42,17 +42,17 @@ Your reasoning goes here, as plain prose. No tags around it.
 {"name": "TOOL_NAME", "arguments": {"PARAM_NAME": "value"}}
 </tool_call>
 
-Each <tool_call> block holds exactly ONE JSON object with "name" (the tool)
+Each <tool_call> block holds exactly one JSON object with "name" (the tool)
 and "arguments" (an object of its parameters). Use the parameter names shown
 in each tool's guide above (plain, no prefix). Values are JSON: strings are
 quoted and escaped (\\n for newlines, \\" for quotes), numbers and booleans
 are bare.
 
-Batch independent work into ONE turn. Before you emit, look at everything
-you intend to do: every operation that does NOT need another's output goes
-in THIS turn as a separate <tool_call> block. Reading three files, or a
-read plus an unrelated search, is ONE turn — not three; batching saves
-turns and context budget. Split into separate turns ONLY when a later step
+Batch independent work into one turn. Before you emit, look at everything
+you intend to do: every operation that does not need another's output goes
+in this turn as a separate <tool_call> block. Reading three files, or a
+read plus an unrelated search, is one turn — not three; batching saves
+turns and context budget. Split into separate turns only when a later step
 needs an earlier step's result (then emit just the first now — its
 observation arrives next turn).
 
@@ -60,16 +60,16 @@ Rules:
 1. Every turn must contain at least one <tool_call> block (work, or
    `complete` to finish).
 2. Each "name" is exactly one tool from Available Tools.
-3. Each call acts on ONE target. To read N files, emit N separate
-   <tool_call> blocks in the SAME turn — never a list inside one call.
+3. Each call acts on one target. To read N files, emit N separate
+   <tool_call> blocks in the same turn — never a list inside one call.
 4. Close every block: </tool_call>. One JSON object per block, nothing else
    inside the tags.
-5. When the task is DONE, end with a `complete` call carrying your final
+5. When the task is done, end with a `complete` call carrying your final
    answer:
 <tool_call>
 {"name": "complete", "arguments": {"result": "your final answer"}}
 </tool_call>
-   Always finish this way — do NOT just stop.
+   Always finish this way — do not just stop.
 6. If an observation shows an error, fix arguments and retry.
 7. Respond in the user's language.
 

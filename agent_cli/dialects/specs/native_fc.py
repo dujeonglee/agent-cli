@@ -23,7 +23,7 @@ _REMINDER_CALL = (
     "final answer as `result`."
 )
 _REMINDER_ACTION_REQUIRED = (
-    "Every turn must call at least one function. If the task is DONE, call "
+    "Every turn must call at least one function. If the task is done, call "
     "`complete` with the final answer as `result`. If your last message was the "
     "final answer in plain prose, call `complete` with that answer. Never stop "
     "without an explicit `complete` call."
@@ -37,20 +37,20 @@ _NO_ACTION_DETAIL = "no function call reached the harness"
 _FORMAT_RULES = """\
 
 Tools are called through the API's native function calling — the `tools` list
-attached to every request. Write brief reasoning as plain prose, then CALL the
+attached to every request. Write brief reasoning as plain prose, then call the
 functions you need; never write a tool call as text (no JSON arrays, no
 <tool_call> tags — the server will not deliver them).
 
-Batch independent work into ONE turn: every call that does NOT need another's
-result goes in THIS turn as a separate function call (reading three files is
-ONE turn with three calls). Split into separate turns only when a later step
+Batch independent work into one turn: every call that does not need another's
+result goes in this turn as a separate function call (reading three files is
+one turn with three calls). Split into separate turns only when a later step
 needs an earlier step's result.
 
 Rules:
-1. Every turn must END with at least one function call (work, or `complete`
-   to finish). Do NOT just stop after prose.
-2. Each call acts on ONE target — to read N files, make N `read_file` calls.
-3. When the task is DONE, call `complete` with your final answer as `result`.
+1. Every turn must end with at least one function call (work, or `complete`
+   to finish). Do not just stop after prose.
+2. Each call acts on one target — to read N files, make N `read_file` calls.
+3. When the task is done, call `complete` with your final answer as `result`.
 4. If a result shows an error, fix the arguments and call again.
 5. Respond in the user's language."""
 

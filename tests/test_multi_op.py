@@ -911,7 +911,7 @@ class TestMidBatchValidationFailure:
         assert len(obs) == 1, "배치가 중단됐다 — 세 op 가 한 관찰로 안 나왔다"
         body = obs[0]["content"]
         assert "[1/3] read_file — OK" in body
-        assert "[2/3] memory — FAILED" in body and "did NOT run" in body
+        assert "[2/3] memory — FAILED" in body and "did not run" in body
         assert "[3/3] read_file — OK" in body and "charlie" in body, (
             "잘못된 op 뒤의 op 가 실행되지 않았다"
         )
@@ -921,13 +921,15 @@ class TestMidBatchValidationFailure:
     def test_all_failed_batch_does_not_claim_others_ran(self, tmp_path):
         """v9.24.2 실측(1zfgc2 gameplay): memory 두 개가 둘 다 mode 를 빠뜨렸는데
         안내는 "the other ops in this batch already ran" 이었다. 공용 문구는
-        실행 여부를 단정하지 않고, 원인 문장과 **다른 줄**에 선다."""
+        실행 여부를 단정하지 않고, 원인 문장과 **다른 줄**에 선다.
+        (v10.81.0: `summary` 가 있으면 mode 없는 호출은 "add" 로 구제되므로, 여기선
+        `summary` 도 뺀 모양으로 빠진 필드를 만든다.)"""
         _result, ctx, _provider = _run(
             [
                 _turn(
                     ops=[
-                        {"action": "memory", "type": "decision", "summary": "a"},
-                        {"action": "memory", "type": "decision", "summary": "b"},
+                        {"action": "memory", "type": "decision", "detail": "a"},
+                        {"action": "memory", "type": "decision", "detail": "b"},
                     ]
                 ),
                 *_finish(),
@@ -944,12 +946,12 @@ class TestMidBatchValidationFailure:
         assert 'Missing required field(s) for `memory`: `mode` (string — "add"' in body
         # v10.37.0: 배치 안의 거부 op 도 같은 한 줄 요약 — 원인 문장과 메모 사이.
         assert (
-            '\nYou sent: `memory` with `type` "decision", `summary` "a" — missing: `mode`. '
+            '\nYou sent: `memory` with `type` "decision", `detail` "a" — missing: `mode`. '
             "Re-emit the whole call with every required field.\n"
-            "This op did NOT run. The other ops in this batch were still attempted"
+            "This op did not run. The other ops in this batch were still attempted"
             in body
         )
-        assert '`summary` "b" — missing: `mode`.' in body
+        assert '`detail` "b" — missing: `mode`.' in body
         assert "Expected: {" not in body and len(body) < 1500
 
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
@@ -1022,6 +1024,6 @@ class TestMidBatchValidationFailure:
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
         )
-        assert "NOT executed" in blob, "버려진 op 에 대해 침묵했다"
+        assert "Not executed" in blob, "버려진 op 에 대해 침묵했다"
         assert "[3/4] shell" in blob and "[4/4] read_file" in blob
         assert "never" not in blob.replace("echo never", ""), "버려졌다던 op 가 돌았다"

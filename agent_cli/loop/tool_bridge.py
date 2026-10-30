@@ -416,6 +416,7 @@ class ToolBridge:
                 tools_available=frozenset(self.cfg.tools_list),
                 owner=self.cfg.owner,
                 observed_at=lambda: self.last_observation_at,
+                turn_now=lambda: self.state.turn,
             )
             self._run_ctx_cache = cached
         return cached

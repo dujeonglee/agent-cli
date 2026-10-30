@@ -190,7 +190,7 @@ class TestFormatActionLoopIntervention:
         assert "Refactor the parser" in intv.message
         # Diagnostic questions present
         assert "Why does" in intv.message
-        assert "NOT getting" in intv.message
+        assert "not getting" in intv.message
 
     def test_level_three_returns_none(self):
         # Caller is responsible for hard-failing

@@ -5337,7 +5337,7 @@ class TestActionLoopRetriesAreNotRecorded:
         )
         provider, result = self._run(caps, tmp_path, [first, batch, _complete("ok")])
         obs = str(self._msgs(provider, 2)[-1].get("content", ""))
-        assert "[1/3] shell — FAILED" in obs and "This op did NOT run" in obs
+        assert "[1/3] shell — FAILED" in obs and "This op did not run" in obs
         assert "[2/3] shell — OK" in obs and "[3/3] shell — OK" in obs
         assert "aborted" not in obs, "뒤의 새 op 들이 취소됐다"
         assert result.output == "ok"

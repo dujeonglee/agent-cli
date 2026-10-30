@@ -77,7 +77,7 @@ _PARALLEL_BATCH_ENGINES = frozenset({"agent"})
 #: ops in this batch already ran" even when every op had failed, and differed
 #: per path. On its own line so it never glues onto the error text.
 BATCH_OP_SKIPPED_NOTE = (
-    "This op did NOT run. The other ops in this batch were still attempted — "
+    "This op did not run. The other ops in this batch were still attempted — "
     "see their own results. Fix this op and re-send only it."
 )
 
@@ -592,8 +592,8 @@ class TurnDispatcher:
                     self.tools.accumulate_raw(
                         results,
                         "batch",
-                        f"NOT executed — aborted after op {i + 1} failed: {names}. "
-                        "Re-send these; do NOT re-send the ops that already ran.",
+                        f"Not executed — aborted after op {i + 1} failed: {names}. "
+                        "Re-send these; do not re-send the ops that already ran.",
                         False,
                     )
                 self._flush_op_results(turn.record, results)
@@ -1209,7 +1209,7 @@ class TurnDispatcher:
                 lines.append(f'question {qid} sent — "{q}"')
         obs = (
             "\n".join(lines)
-            + "\nYou are NOT blocked. Continue with whatever does not depend "
+            + "\nYou are not blocked. Continue with whatever does not depend "
             "on the answer; it will arrive as a new message. If nothing else "
             "can proceed, `complete` — you will be resumed when it arrives."
         )
@@ -1576,7 +1576,7 @@ class TurnDispatcher:
         where = describe_json_error(raw) or "not a JSON object"
         err_msg = (
             f"The arguments of your `{tool_name}` call were not valid JSON "
-            f"({where}), so the call was NOT executed. Re-send it with the "
+            f"({where}), so the call was not executed. Re-send it with the "
             "arguments as one JSON object."
         )
         return self._reject_op(

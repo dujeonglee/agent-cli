@@ -298,7 +298,7 @@ class TestSchema:
         desc = TOOLS["complete"].description
         assert "list the ids your result covers" in desc, "무엇을 할지 안 말한다"
         assert "stay open" in desc, "빠뜨리면 어떻게 되는지 안 말한다"
-        assert "always the LAST call" in desc, "순서를 안 말한다"
+        assert "always the last call" in desc, "순서를 안 말한다"
 
 
 # ── ④ 모델이 id 를 볼 수 있어야 한다 ──────────────────

@@ -855,8 +855,8 @@ class TestSplitCalls:
         assert msg.startswith(
             "Your response contained tool calls in more than one place"
         )
-        assert "NOTHING was executed" in msg
-        assert "Re-send ONLY the calls you want executed now" in msg
+        assert "nothing was executed" in msg
+        assert "Re-send only the calls you want executed now" in msg
         assert "Your prior output:" in msg and '"path": "b"' in msg
 
     def test_brace_bracket_inside_content_string_not_merged(self):

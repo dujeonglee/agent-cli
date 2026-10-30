@@ -6,9 +6,14 @@ plain notes via the ``memory`` tool. Entries persist in
 surface as a compact **always-on** ``## Session Memory`` index in the
 session-state block appended to the LAST message each turn
 (``prompts/session_state.py``), with full ``detail`` pulled on demand
-(``memory(mode=get, id=N)``). It lived in the system prompt until v8.46.0; it
+(``memory`` with ``mode`` "get"). It lived in the system prompt until v8.46.0; it
 moved because it changes on every ``memory add`` and a system-prompt edit
 invalidates the provider KV prefix for the entire conversation after it.
+
+v10.81.0 (docs/session-memory/DESIGN.md §11): ``list`` 모드 삭제(사용자 결정 —
+벤치 716 trial 에서 0회, 상시 색인과 중복), 항목에 ``turn`` 을 적고 색인 줄에
+``(turn N)`` 을 보여 ``history`` 의 ``turn = N`` 으로 원문에 닿게 한다 —
+관찰 전문을 ``detail`` 에 복사하는 대신 가리키는 길.
 
 Why a separate store (not the rolling context): memory's whole job is to
 survive compaction — the index is re-rendered from the JSONL every turn and
@@ -45,9 +50,9 @@ _TYPE_ICONS = {
 }
 VALID_TYPES = tuple(_TYPE_ICONS)
 
-# How many summaries the always-on index shows before capping (rest via
-# ``memory(mode=list)``). Summaries are one line each; this bounds the section
-# so a long-running session's memory can't bloat every system prompt.
+# How many summaries the always-on index shows before capping (older ones stay
+# reachable by id through ``get``). Summaries are one line each; this bounds the
+# section so a long-running session's memory can't bloat every system prompt.
 _INDEX_CAP = 30
 
 # Read-modify-write on the shared JSONL is serialized: main-loop tool dispatch
@@ -112,8 +117,11 @@ def _clean_tags(tags) -> list[str]:
     return [t.strip() for t in tags if isinstance(t, str) and t.strip()]
 
 
-def add(session_dir, *, type: str, summary: str, detail=None, tags=None) -> dict:
-    """Append a new memory entry; returns it (with the assigned id)."""
+def add(
+    session_dir, *, type: str, summary: str, detail=None, tags=None, turn=None
+) -> dict:
+    """Append a new memory entry; returns it (with the assigned id). ``turn`` is the
+    loop turn the note was taken on (``None`` when the caller has no loop)."""
     if session_dir is None:
         raise MemoryError("no active session — memory is session-scoped.")
     if type not in VALID_TYPES:
@@ -132,6 +140,8 @@ def add(session_dir, *, type: str, summary: str, detail=None, tags=None) -> dict
             "tags": _clean_tags(tags),
             "ts": _now_iso(),
         }
+        if isinstance(turn, int) and not isinstance(turn, bool):
+            entry["turn"] = turn
         entries.append(entry)
         _write_all(session_dir, entries)
     mark_memory_dirty()
@@ -180,15 +190,6 @@ def delete(session_dir, mem_id: int) -> bool:
     return True
 
 
-def list_entries(session_dir, *, type=None, tag=None) -> list[dict]:
-    out = load(session_dir)
-    if type is not None:
-        out = [e for e in out if e.get("type") == type]
-    if tag is not None:
-        out = [e for e in out if tag in (e.get("tags") or [])]
-    return out
-
-
 def render_index(session_dir) -> str:
     """The always-on ``## Session Memory`` section (summaries only — detail is
     pulled on demand). ``""`` when empty (the section is then omitted, like an
@@ -200,26 +201,31 @@ def render_index(session_dir) -> str:
     lines = [
         (
             f"## Session Memory ({len(entries)}) — pull full detail with "
-            f'`memory` with `mode` "get" and the entry\'s `id`'
+            f'`memory` with `mode` "get" and the entry\'s `id`; "(turn N)" is the '
+            "turn it was noted on, which `history` can look up"
         )
     ]
     hidden = len(entries) - len(shown)
     if hidden > 0:
         lines.append(
-            f'({hidden} older entries hidden — see `memory` with `mode` "list")'
+            f"({hidden} older entries not shown — ids below {shown[0].get('id')}; "
+            '`memory` with `mode` "get" still reaches them)'
         )
     for e in shown:
-        icon = _TYPE_ICONS.get(e.get("type"), "•")
-        lines.append(f"{icon} #{e.get('id')} [{e.get('type')}] {e.get('summary', '')}")
+        lines.append(_index_line(e))
     return "\n".join(lines)
 
 
+def _index_line(e: dict) -> str:
+    icon = _TYPE_ICONS.get(e.get("type"), "•")
+    turn = e.get("turn")
+    where = f" (turn {turn})" if isinstance(turn, int) else ""
+    return f"{icon} #{e.get('id')} [{e.get('type')}] {e.get('summary', '')}{where}"
+
+
 def format_entry(entry: dict) -> str:
-    """Full-detail rendering for ``memory(mode=get)``."""
-    icon = _TYPE_ICONS.get(entry.get("type"), "•")
-    parts = [
-        f"{icon} #{entry.get('id')} [{entry.get('type')}] {entry.get('summary', '')}"
-    ]
+    """Full-detail rendering for ``memory`` with ``mode`` "get"."""
+    parts = [_index_line(entry)]
     if entry.get("tags"):
         parts.append("tags: " + ", ".join(entry["tags"]))
     if entry.get("ts"):

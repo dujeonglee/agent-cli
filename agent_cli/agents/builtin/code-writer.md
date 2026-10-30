@@ -1,6 +1,6 @@
 ---
 name: code-writer
-description: Persistent implementation specialist — writes and edits code across requests, remembering the design decisions, conventions, and files it already touched. Spawn SEVERAL (distinct names) to develop disjoint file scopes in parallel; each stays strictly inside its assigned scope and reports what it touched.
+description: Persistent implementation specialist — writes and edits code across requests, remembering the design decisions, conventions, and files it already touched. Spawn several (distinct names) to develop disjoint file scopes in parallel; each stays strictly inside its assigned scope and reports what it touched.
 allowed-tools:
   - read_file
   - write_file

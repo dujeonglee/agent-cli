@@ -140,9 +140,15 @@ class TestValidationReadsTheMethod:
             {"op": "replace", "pos": "1#TV", "end": "1#TV", "lines": ["x"]}
         )
         assert missing == ["path"] and unknown == []
+        # v10.81.0: `summary` 가 있으면 mode 없는 호출은 "add" — 빠진 것이 없다;
+        # `tag` 는 `list` 와 함께 사라져 모르는 키.
         assert TOOLS["memory"].schema_gaps({"summary": "s", "tag": "t"}) == (
-            ["mode"],
             [],
+            ["tag"],
+        )
+        assert TOOLS["memory"].schema_gaps({"type": "note", "tag": "t"}) == (
+            ["mode"],
+            ["tag"],
         )
 
 

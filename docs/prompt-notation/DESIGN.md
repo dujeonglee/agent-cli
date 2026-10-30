@@ -8,6 +8,7 @@
 | 인자 이름 | 백틱 | `` `line_start` ``, `` `pos` `` |
 | enum 값·문자 그대로의 값 | 큰따옴표 | `"replace"`, `"run"`, `"add"` |
 | 호출 모양 (`mode=get`, `read_file(path=…)`, `mode:"run"`) | 쓰지 않음 | "`memory` with `mode` "get"" 처럼 문장으로 |
+| 대문자 강조 (`ONE`, `NOT`, `VERBATIM`, `FAILURES`) | 쓰지 않음 (v10.81.0, 사용자 결정 2026-10-30) | 강조는 문장 구조로; 머리글자(`JSON`·`URL`)·SQL 예시 줄·`LINE#HASH`·밑줄 자리표시(`TOOL_NAME`)만 예외 |
 
 적용 범위는 모델이 보는 글 전체 — 도구 설명·인자 설명·사용 안내, 시스템 프롬프트 절, 꼬리
 문구(압축 예고·Session Memory 등), 넛지·오류 문구(중앙 검증 `Missing required field(s) for
@@ -44,4 +45,8 @@
 ## 가드
 
 `tests/test_prompt_notation.py` — inventory 의 글 전부에서 밑줄 있는 도구 이름이 백틱 밖에 있거나
-호출 모양이 있으면 실패. 측정은 사용자 지시대로 다른 변경과 함께 전체 벤치에서.
+호출 모양이 있으면 실패. **v10.81.0**: 세 글자 이상의 대문자 낱말이 머리글자 허용 목록(`_ACRONYMS`) 밖이면
+실패(`test_no_caps_emphasis`). 처음 돌렸을 때 133건(도구 설명 12종·방언 형식 규칙 5종·Context Discipline·
+Environment·Agent Profiles 설명·넛지)이 걸려 전부 소문자로 바꿨다 — 뜻은 그대로, 강조만 뺐다. 내장
+에이전트·스킬의 **본문**(`agents/builtin/*.md` 의 "do NOT"·"ask ONE focused question")은 inventory 밖이라
+가드가 보지 않는다 — 설명(description)만 고쳤다. 측정은 사용자 지시대로 다른 변경과 함께 전체 벤치에서.

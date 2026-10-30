@@ -12,20 +12,20 @@ from __future__ import annotations
 from agent_cli.dialects.base import NO_ACTION_FRAMING
 from agent_cli.dialects.spec import ArgStyle, DialectSpec, NameSlot, Prose
 
-_REMINDER_CALL = 'Respond with plain-prose reasoning followed by ONE JSON array of {"action": ..., params} ops. To finish, use a `complete` op: {"action": "complete", "result": "<final answer>"}.'
-_REMINDER_ACTION_REQUIRED = 'Each array element must include an "action" field naming one tool from Available Tools. If the task is DONE, emit a `complete` op: {"action": "complete", "result": "<final answer>"}. If your last message already was the final answer in plain prose, re-emit that answer as the `result`. If you were about to do something, emit that tool call now. Never stop without an explicit `complete`.'
+_REMINDER_CALL = 'Respond with plain-prose reasoning followed by one JSON array of {"action": ..., params} ops. To finish, use a `complete` op: {"action": "complete", "result": "<final answer>"}.'
+_REMINDER_ACTION_REQUIRED = 'Each array element must include an "action" field naming one tool from Available Tools. If the task is done, emit a `complete` op: {"action": "complete", "result": "<final answer>"}. If your last message already was the final answer in plain prose, re-emit that answer as the `result`. If you were about to do something, emit that tool call now. Never stop without an explicit `complete`.'
 _FRAMING_PARSE_FAIL = "Your response did not match the expected format — it must end with a valid JSON array of tool calls."
 _NO_ACTION_DETAIL = (
     'no JSON array, or no op whose "action" names a tool from Available Tools'
 )
 _RETRY_NO_JSON_TAIL = (
-    "Plain prose then ONE JSON array — no markdown headers (## ...), no HTML/XML tags."
+    "Plain prose then one JSON array — no markdown headers (## ...), no HTML/XML tags."
 )
 
 _FORMAT_RULES = """\
 ## Response Format
 
-Write brief reasoning as plain prose, then end your turn with ONE JSON
+Write brief reasoning as plain prose, then end your turn with one JSON
 array of tool calls:
 
 Your reasoning goes here, as plain prose.
@@ -35,30 +35,30 @@ Your reasoning goes here, as plain prose.
 Each array element is one tool call: {"action": ..., params}. Use the
 parameter names shown in each tool's guide above (plain, no prefix).
 
-Batch independent work into ONE turn. Before you emit, look at everything
-you intend to do: every operation that does NOT need another's output goes
-in THIS turn as a separate array element. Reading three files, or a read
-plus an unrelated search, is ONE turn — not three; batching saves turns and
-context budget. Split into separate turns ONLY when a later step needs an
+Batch independent work into one turn. Before you emit, look at everything
+you intend to do: every operation that does not need another's output goes
+in this turn as a separate array element. Reading three files, or a read
+plus an unrelated search, is one turn — not three; batching saves turns and
+context budget. Split into separate turns only when a later step needs an
 earlier step's result (then emit just the first now — its observation
 arrives next turn).
 
 Rules:
-1. Reasoning (optional) is plain prose BEFORE the array — never after it.
-2. Every turn must END with one JSON array containing at least one op
-   (work, or `complete` to finish). Do NOT just stop after prose.
+1. Reasoning (optional) is plain prose before the array — never after it.
+2. Every turn must end with one JSON array containing at least one op
+   (work, or `complete` to finish). Do not just stop after prose.
 3. Each op must have an "action" naming one tool.
-4. Each op acts on ONE target. To read N files, emit N separate
-   {"action": "read_file", "path": ...} ops in the SAME array. NEVER put a
+4. Each op acts on one target. To read N files, emit N separate
+   {"action": "read_file", "path": ...} ops in the same array. Never put a
    list of items inside a single op (no nested arrays).
-5. When the task is DONE, end with a `complete` op carrying your final
+5. When the task is done, end with a `complete` op carrying your final
    answer: {"action": "complete", "result": "<your final answer>"}.
-6. NEVER use HTML/XML tags of ANY kind — no <tool_call>, <function_call>,
-   <div>, <answer>, or anything tag-shaped — and NO markdown headers
-   (## ...). This protocol is plain prose + ONE JSON array, NOTHING else.
-   A turn containing tags or headers is UNPARSEABLE and completely wasted —
+6. Never use HTML/XML tags of any kind — no <tool_call>, <function_call>,
+   <div>, <answer>, or anything tag-shaped — and no markdown headers
+   (## ...). This protocol is plain prose + one JSON array, nothing else.
+   A turn containing tags or headers is unparseable and completely wasted —
    if you feel the urge to open a tag, write the JSON array instead.
-   (This is about how YOU write the turn. Text you pass as a value — file
+   (This is about how you write the turn. Text you pass as a value — file
    content, `result`, a message body — may contain any tags or markdown.)
 7. If an observation shows an error, fix parameters and retry.
 8. Respond in the user's language.

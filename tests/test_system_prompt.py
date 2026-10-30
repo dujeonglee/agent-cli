@@ -154,7 +154,7 @@ class TestMultiOpPromptBranches:
         assert "the array is NOT a" not in section
 
     def test_code_index_one_query_per_op(self, section):
-        assert "Each `code_index` call runs ONE query" in section
+        assert "Each `code_index` call runs one query" in section
         assert "takes a LIST of queries" not in section
 
     def test_code_index_guide_nudges_same_turn_batch(self, section):
@@ -167,7 +167,7 @@ class TestMultiOpPromptBranches:
     def test_delegate_one_task_per_op(self, section):
         # v10.26.0: "ONE task" 는 RUN_DESCRIPTION 한 곳에만 — 인라인 가이드의
         # 머리말("Each run op gives ONE task …")은 그 중복이라 제거됐다.
-        assert '`mode` "run" gives ONE task to a sub-agent' in section
+        assert '`mode` "run" gives one task to a sub-agent' in section
         assert "Each run op gives ONE task" not in section
         assert 'Always use the "tasks" array format' not in section
 
@@ -793,7 +793,7 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
         # 기본 포맷(json_fc)의 캐노니컬 계약 — 산문 + ONE JSON array.
-        assert "ONE JSON" in prompt
+        assert "one JSON\narray of tool calls" in prompt
 
     def test_section_order_primacy_before_tools(self):
         """Context Discipline → Response Format in the primacy zone ahead
@@ -1469,17 +1469,17 @@ class TestAntiHtmlEmphasis:
     def test_format_rules_forbid_html_both_formats(self):
         for name in ("json_fc",):
             rules = self._fmt(name).format_rules()
-            assert "NEVER use HTML/XML tags" in rules, name
+            assert "Never use HTML/XML tags" in rules, name
             # 대표 태그 예시로 앵커링 (HTML-편향 prior 억제)
             assert "<tool_call>" in rules and "<div>" in rules, name
-            assert "UNPARSEABLE" in rules, name
+            assert "unparseable" in rules, name
 
     def test_format_rules_scope_the_ban_to_the_turn_shape(self):
         """금지는 턴을 쓰는 방식에만 — 값(파일 내용·result) 안의 태그·마크다운은
         허용이라고 명시한다 (v10.11.2). 금지 문구 자체는 그대로 둔다: 약하게
         고쳐 쓴 판은 실측에서 나아진 것이 없었다."""
         rules = self._fmt("json_fc").format_rules()
-        assert "This is about how YOU write the turn" in rules
+        assert "This is about how you write the turn" in rules
         assert "may contain any tags or markdown" in rules
 
     def test_retry_hint_reminds_no_html(self):
@@ -1506,7 +1506,7 @@ class TestPathRule:
 
     def test_asks_for_relative_paths(self):
         env = self._env()
-        assert "RELATIVE" in env
+        assert "paths relative to the working directory" in env
         assert "not absolute" in env
 
     def test_names_the_reason_the_model_can_act_on(self):
@@ -1519,7 +1519,7 @@ class TestPathRule:
         need absolute paths, and the user wants a real location in the answer."""
         env = self._env()
         assert "outside the working directory" in env
-        assert "USER" in env
+        assert "telling the user where something is" in env
 
     def test_rule_ships_in_the_built_prompt(
         self,
@@ -1531,7 +1531,7 @@ class TestPathRule:
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
         sections = dict(build_system_prompt_sections(caps, ["read_file"]))
-        assert "RELATIVE" in sections["Environment"]
+        assert "paths relative to the working directory" in sections["Environment"]
 
 
 class TestPeerRosterIntro:
@@ -1542,7 +1542,7 @@ class TestPeerRosterIntro:
 
         intro = build_peer_roster_intro()
         assert intro.startswith("## Live Agents")
-        assert "LAST `## Live Agents` section" in intro
+        assert "last `## Live Agents` section" in intro
         assert "END of every turn" not in intro  # 턴은 모델이 못 보는 하니스 용어
         assert "key or name" in intro
         assert "agt-" not in intro
@@ -1600,7 +1600,7 @@ class TestReplyDisciplineSection:
         )
         body = secs["Reply Discipline"]
         assert "EVERY request" in body  # 강한 각인 (사용자 요구)
-        assert "`complete` reports to NO ONE" in body  # 사실 1 (v9.21.0)
+        assert "`complete` reports to no one" in body  # 사실 1 (v9.21.0)
         assert (
             "`reply` (that request's id + your text)" in body
         )  # 사실 2 (v9.25.0 요청별 번호)
@@ -1720,7 +1720,7 @@ class TestCodeIndexToldOnce:
             '9. "slice"',
             '10. "build"',
             ".agent-cli/code_index.db",
-            "OUTSIDE the indexed root",
+            "outside the indexed root",
             "Supported extensions:",
         ],
     )

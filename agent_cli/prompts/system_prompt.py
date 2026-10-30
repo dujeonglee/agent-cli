@@ -89,10 +89,10 @@ Treat every token you add as a cost:
 - Large irrelevant context (off-topic content, huge dumps, verbose logs)
   crowds out what you actually need. Filter at the source.
 
-A tool result too large for one context is NOT delivered. Its full output is
+A tool result too large for one context is not delivered. Its full output is
 written to a file; you get a head/tail excerpt, the file's path, and the ways
 to mine it — regex match, a line range, or splitting it across parallel
-sub-agents. The same applies when ONE turn's results add up to too much, so
+sub-agents. The same applies when one turn's results add up to too much, so
 prefer a few targeted ops over many broad ones."""
 
 # ── Section 3: Task Guidelines ───────────────────
@@ -319,12 +319,12 @@ def _build_code_index_inline(dialect) -> str:
 
     if multi_op:
         batch_para = """\
-  Each `code_index` call runs ONE query. Read-only (no file writes). To run
+  Each `code_index` call runs one query. Read-only (no file writes). To run
   several queries (modes may be mixed), make several `code_index` calls in
   the same turn."""
     else:
         batch_para = """\
-  Each `code_index` call runs ONE query. Read-only (no file writes). Run
+  Each `code_index` call runs one query. Read-only (no file writes). Run
   several queries with successive calls (modes may differ)."""
     modes_header = "Ten values of `mode` (each call is one query):"
 
@@ -355,7 +355,7 @@ def _build_code_index_inline(dialect) -> str:
      call, ready to edit; `read_file` would return the same lines without
      the shortcut.
        {fetch_py}
-  3. "lookup" — find a symbol by name ACROSS the whole index.
+  3. "lookup" — find a symbol by name across the whole index.
      Optional `symbol_kind` ("function" / "type" / "variable" / "constant" /
      "section") filter.
        {lookup}
@@ -382,7 +382,7 @@ def _build_code_index_inline(dialect) -> str:
       refresh handles normal cases.
        {build_q}
 
-  Path scope: "list" and "fetch" on a path OUTSIDE the indexed root
+  Path scope: "list" and "fetch" on a path outside the indexed root
   fall through to an on-demand parse (single file, no DB write).
   "lookup", "kind", "file", "refs", "callers", "callees" and "slice"
   are index-scoped — they only see files under the indexed root.
@@ -400,14 +400,14 @@ def _build_code_index_inline(dialect) -> str:
 _ASK_INLINE = """\
 
   `ask` vs `complete` — pick by intent, not tone:
-  - `ask`: you GENUINELY cannot proceed without information from the
+  - `ask`: you genuinely cannot proceed without information from the
     user. A real question with real alternatives where you don't know
     the right answer. "Which of these two paths should I take?",
     "What's the production database name?", "Should I overwrite this
     file or keep both?".
   - `complete`: every other ending. Task done, user said goodbye, user
     said thanks, user gave a casual reply, you finished your answer
-    and have nothing else to do. The conversation does NOT need a
+    and have nothing else to do. The conversation does not need a
     question to continue — the user can simply reply at the next
     prompt if they want more.
 
@@ -431,12 +431,12 @@ _ASK_INLINE = """\
 # 것**이다(막히지 않으니 물어도 비용이 거의 없다).
 _ASK_INLINE_RESIDENT = """\
 
-  `ask` does NOT block you. It puts the question in the person's
+  `ask` does not block you. It puts the question in the person's
   question tray and returns immediately; their answer arrives later as
   a new message and you pick up where you left off.
   - Ask as soon as a decision is genuinely not yours to make — a
     policy call, an ambiguous requirement, a destructive choice. Do
-    NOT guess and paper over it with a TODO; guessing is the expensive
+    not guess and paper over it with a TODO; guessing is the expensive
     mistake here, not asking.
   - `ask` reaches only the person. For main or another agent, send a
     `message` — it becomes a request they owe you a `reply` for.
@@ -624,12 +624,12 @@ def _build_environment_section() -> str:
     lines.append(f"- Working directory: {Path.cwd()}")
     lines.append(f"- Platform: {platform.system().lower()} ({platform.release()})")
     lines.append(
-        "- Paths: give tools paths RELATIVE to the working directory "
+        "- Paths: give tools paths relative to the working directory "
         "(`src/main.c`), not absolute. They name the same file and cost far "
         "less context — an action's arguments are re-fed to you every turn "
         "after it, so a long path is paid for again and again. Use an absolute "
         "path only for a file genuinely outside the working directory, or when "
-        "telling the USER where something is in your final answer."
+        "telling the user where something is in your final answer."
     )
     return "\n".join(lines)
 
@@ -716,7 +716,7 @@ delivered between turns with its id, and `## Open Items` at the end of each
 turn lists every request you have not answered yet. EVERY request must get
 its own answer back; never let one end silently:
 
-1. `complete` reports to NO ONE — it only ends your run. The answer for a
+1. `complete` reports to no one — it only ends your run. The answer for a
    requester goes out with `reply` (that request's id + your text), one reply
    per request, BEFORE you complete. A request from the user in your chat
    window is answered by `complete` itself (they see it there).
@@ -741,11 +741,11 @@ def build_peer_roster_intro() -> str:
     """
     return (
         "## Live Agents\n"
-        "Peer agents run alongside you. WHO is running right now — keys, names, "
-        "state — is the LAST `## Live Agents` section in this prompt; it is "
+        "Peer agents run alongside you. Who is running right now — keys, names, "
+        "state — is the last `## Live Agents` section in this prompt; it is "
         "refreshed on every call, so always read the last one. Address a peer "
         "with `message` by its key or name, or `main` for the main agent. Their "
-        "reply arrives to you as a NEW message — you are not blocked."
+        "reply arrives to you as a new message — you are not blocked."
     )
 
 
@@ -1121,7 +1121,7 @@ def build_live_agents_section(
             "These peer agents are running alongside you, each with the role "
             "below. Ask any of them directly with the `message` tool "
             '(`{"to":"<key>","text":"..."}`, or `"to":"main"` to reach '
-            "the main agent). Their reply arrives to you as a NEW message — "
+            "the main agent). Their reply arrives to you as a new message — "
             "you are not blocked; keep working or complete, and you'll be "
             "woken when it comes."
         )

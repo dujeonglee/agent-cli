@@ -163,13 +163,13 @@ def final_turn_notice(*, reports_to_caller: bool) -> str:
     ``complete``. It asks for a status report, never for writing unfinished
     work into the task's deliverables."""
     who = (
-        "The agent that called you receives ONLY what you put in complete — "
+        "The agent that called you receives only what you put in complete — "
         "anything you do not write there is lost."
         if reports_to_caller
         else "The user receives what you put in complete."
     )
     return (
-        "⚠ This is your LAST turn — the run ends after it, whatever you emit. "
+        "⚠ This is your last turn — the run ends after it, whatever you emit. "
         "Call `complete` now instead of starting new work. In the result, report "
         "what you found: what you verified (and how), what you believe but did "
         "not verify, what is still open, and every file you created, changed or "

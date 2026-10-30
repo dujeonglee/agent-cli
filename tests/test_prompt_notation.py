@@ -2,6 +2,9 @@
 
 - 도구 이름·인자 이름은 백틱(`read_file`, `line_start`), 값은 큰따옴표("replace").
 - 호출 모양(`read_file(path=…)`, `mode='list'`, `mode:"run"`)은 쓰지 않는다 — 문장으로.
+- 대문자 강조(``ONE``, ``NOT``, ``VERBATIM``)는 쓰지 않는다 (v10.81.0, 사용자 결정) —
+  머리글자(``JSON``·``URL``), SQL 예시 줄, ``LINE#HASH`` 같은 자리표시, 밑줄 있는
+  자리표시(``TOOL_NAME``)만 예외.
 
 검사 대상은 ``prompts.inventory`` 가 모으는 글 전부(도구 설명·인자·안내, 시스템
 프롬프트 절, 실행 중 문구)와 형식 오류 넛지의 "You sent:" 줄이다. 형식이
@@ -35,6 +38,17 @@ _EXAMPLE = re.compile(
     r'"action"|"name":|<function=|<tool_call>|<arg_key>|^\s*`\w+` \{|^\s*[a-z_]+\s*$'
 )
 _LABEL = re.compile(r"^\s*(?:\[)?(?:" + "|".join(_UNDERSCORED) + r")[ :\]]")
+# 머리글자·형식 이름 — 뜻이 대문자 그 자체인 것만. 강조로 쓴 보통 단어는 여기 없다.
+_ACRONYMS = frozenset(
+    [
+        *("JSON", "HTML", "XML", "URL", "URLS", "HTTP", "HTTPS", "PDF", "PNG"),
+        *("JPEG", "GIF", "SVG", "CSV", "LLM", "SQL", "API", "CLI", "MCP", "SSE"),
+        *("EOS", "PID", "CPU", "GPU", "RAM", "UTF", "ASCII", "OCR", "ISO", "UUID"),
+        *("ZIP", "YAML", "TOML", "WAL", "TTY", "SIGINT", "SIGTERM", "SIGKILL"),
+    ]
+)
+# 세 글자 이상의 대문자 낱말 — 백틱·따옴표·경로·`#`(LINE#HASH)·`$`(변수) 옆은 뺀다
+_CAPS = re.compile(r"(?<![`\w/.\-\$#])([A-Z][A-Z]{2,})(?![`\w#])")
 
 
 def _texts():
@@ -75,6 +89,24 @@ def test_tool_names_are_backticked(where, text):
 def test_no_call_shapes(where, text):
     bad = [ln.strip() for ln in _lines(text) if _CALL.search(ln)]
     assert not bad, f"{where}: {bad[:3]}"
+
+
+def caps_emphasis(text) -> list[str]:
+    """대문자 강조로 쓰인 낱말들 (머리글자·자리표시 제외) — 가드와 범위 조사가 같은 판정."""
+    out = []
+    for ln in _lines(text):
+        for w in _CAPS.findall(ln):
+            if w not in _ACRONYMS:
+                out.append(w)
+    return out
+
+
+@pytest.mark.parametrize(("where", "text"), _ALL, ids=[w for w, _ in _ALL])
+def test_no_caps_emphasis(where, text):
+    """v10.81.0: monitor(v10.79.0)·memory·history 에서 지운 대문자 강조가 다른 글에
+    남아 있거나 돌아오면 실패. 모델 문구의 강조는 문장 구조로 — 사용자 결정(2026-10-30)."""
+    bad = caps_emphasis(text)
+    assert not bad, f"{where}: {sorted(set(bad))}"
 
 
 def test_you_sent_line_is_a_sentence():

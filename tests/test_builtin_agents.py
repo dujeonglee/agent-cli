@@ -269,7 +269,7 @@ class TestGeneralProfile:
             "log-analyst",
         ):
             assert name in desc, name
-        assert "NOT for code" in desc
+        assert "Not for code" in desc
 
     def test_can_write_files_but_not_spawn_agents(self):
         _, config, _ = load_profile("general")
