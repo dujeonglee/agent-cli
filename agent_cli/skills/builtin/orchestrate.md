@@ -6,15 +6,15 @@ allowed-tools: [read_file, edit_file, write_file, shell, agent]
 ---
 
 You are bootstrapping an autonomous team for the task in $ARGUMENTS. Your job is
-ONLY setup: plan → spawn → hand off → report back. You do NOT assign work to any
-worker, and you do NOT coordinate — the orchestrator agent does that, over peer
+only setup: plan → spawn → hand off → report back. You do not assign work to any
+worker, and you do not coordinate — the orchestrator agent does that, over peer
 messages, after you finish.
 
 ## Why this shape
 
-Worker replies are routed to whoever requested the work. If YOU (main's skill)
+Worker replies are routed to whoever requested the work. If you (main's skill)
 assigned tasks, every completion would wake main. By spawning the workers idle and
-letting the ORCHESTRATOR assign everything, all coordination traffic (assign →
+letting the orchestrator assign everything, all coordination traffic (assign →
 reply → review → fix) stays between the agents; main is woken only by the
 orchestrator's final report or a genuine escalation.
 
@@ -29,14 +29,14 @@ orchestrator's final report or a genuine escalation.
    sit idle until the orchestrator assigns work. Typical team: one or more
    `code-writer`s (disjoint file scopes), a `code-reviewer`, a `unittest-writer`;
    add a `code-analyst` when unfamiliar code must be mapped first, a `log-analyst`
-   when failures will need diagnosing. Note each returned agent KEY.
+   when failures will need diagnosing. Note each returned agent key.
 
-3. **Spawn the orchestrator LAST, with the full briefing as its initial task.**
+3. **Spawn the orchestrator last, with the full briefing as its initial task.**
    `spawn` the `orchestrator` profile; its `task` must contain everything it needs
    to run autonomously:
    - the goal ($ARGUMENTS, restated concretely),
    - the plan file path (or the inline step list),
-   - the worker roster: each worker's KEY, profile, name, and assigned scope,
+   - the worker roster: each worker's key, profile, name, and assigned scope,
    - the standing instruction: "Coordinate these workers over `message` to
      complete the goal. Work autonomously; do not contact main except for your
      final report or a blocking problem. If you need another worker spawned,

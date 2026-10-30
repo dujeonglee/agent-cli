@@ -21,7 +21,7 @@
 | (압축) | 구현 | 압축 예고 메모리 문장: 기준 "앞으로의 일이 쓰지 않을 것" + 끝난 단계의 메모, memory 없는 루프엔 문장 생략 | 08f090e6 |
 | `ask`·`answer`·`message`·`reply`·`wait`·`complete` (묶음) | 구현 | ① id 할당기 하나(id 가 곧 키, 순번 삭제) ② `ask` 는 사람에게만·`answer` 삭제, `reply` 의 `to` 삭제, `message`·`agent` 결과가 id 를 말함, 봉투 한 모양, 거부 문구가 접두로 종류를 말함; wait 를 건너가는 빚·main wait 정산 비대칭 수정·순환 대기 가드 | 1a7dc454, (②) |
 | `python` | 구현 (v10.78.0) | 셀은 진짜 `__main__` 모듈에서(pickle·fork Pool·unittest), 파싱 SyntaxError 에 하니스 프레임 없음, 인터프리터는 PATH `python3`→`python` 뿐(`AGENT_CLI_PYTHON`·agent-cli 자기 인터프리터 폴백 삭제, 없으면 "없다 — 설치하면 다음 호출부터"), 시작 인사로 인터프리터 불량과 코드의 프로세스 종료를 가름, `timeout`·`reset`·SystemExit 문구, 패키지 짝 3개 — 개정안 https://claude.ai/artifact/UNSJtA7HTs5SyvE72Zts4W, Fable 리뷰 3회 | (이 커밋) |
-| `snapshot`·`history`·`memory` (묶음) | snapshot v10.80.0 · memory·history v10.81.0 | 검토 리포트(2026-10-30, 96 잡·716 trial: snapshot 166 · memory 16 · history 5 · 압축 0): 세 도구는 쓰는 주체·축·범위가 달라 통합 안 함. **PR A snapshot 수리**(docs/snapshot/DESIGN.md §6): 절대 경로 정규화(restore 실패 59건 중 52건), `list` 의 `path`, `python` 문구, 라벨에 호출 요약, 복구 결과의 원인 줄, 세션 시작 커밋 항상(경계, 사용자 결정 "저장소는 세션을 넘긴다 — 유지"). **PR B**(v10.81.0, docs/session-memory/DESIGN.md §11): memory `mode` 없는 add 구제 · `memory list` 삭제(사용자 결정) · 항목에 turn(색인 `(turn N)`) · memory·history 설명 재작성 · 표기 가드에 대문자 강조 검사(사용자 결정) — 처음 133건을 모델 문구 전체에서 소문자로. **PR C**(측정 뒤): 압축 요약 꼬리에 history 범위 한 줄 — 압축 재현 런처로 효과가 있을 때만. | |
+| `snapshot`·`history`·`memory` (묶음) | snapshot v10.80.0 · memory·history v10.81.0 | 검토 리포트(2026-10-30, 96 잡·716 trial: snapshot 166 · memory 16 · history 5 · 압축 0): 세 도구는 쓰는 주체·축·범위가 달라 통합 안 함. **PR A snapshot 수리**(docs/snapshot/DESIGN.md §6): 절대 경로 정규화(restore 실패 59건 중 52건), `list` 의 `path`, `python` 문구, 라벨에 호출 요약, 복구 결과의 원인 줄, 세션 시작 커밋 항상(경계, 사용자 결정 "저장소는 세션을 넘긴다 — 유지"). **PR B**(v10.81.0, docs/session-memory/DESIGN.md §11): memory `mode` 없는 add 구제 · `memory list` 삭제(사용자 결정) · 항목에 turn(색인 `(turn N)`) · memory·history 설명 재작성 · 표기 가드에 대문자 강조 검사(사용자 결정) — 처음 133건을 모델 문구 전체에서 소문자로. **PR C 미채택**(2026-10-30 측정): 압축 요약 꼬리에 history 범위 한 줄(`seq` a~b) — 압축 재현 A/B(창 26,000 models.json, 10 파일 읽기 → `data/` 제거 → `--resume` 되묻기, GLM 사고 off T0.2, 스냅샷 끔) 기준·후보 6런씩: `history` 호출 6/6 vs 6/6(기준도 읽기 실패 뒤 Context Recovery 로 간다), 정답 0/6 vs 0/6 — 줄은 행동을 바꾸지 않아 넣지 않음(브랜치 `compaction-history-range` 로컬 보관). 부수 발견: 12런 전부 seq 3(42k자 관찰)을 찾고도 `substr(text,1,N)` 만 써 137번째 줄에 닿지 못함 — `instr` 앵커 substr 을 쓴 런 0. | |
 | `shell` | 구현 | 시간 초과 때 프로세스 그룹째 끝내기(버그 — apt-get 이 dpkg 잠금을 쥔 채 남음), 시간 초과 결과(끝냈다·출력 끝 8줄·`background` 교정), 설명에 결과 모양(`[stderr]`·`[exit code: N]`), 작업 종류 나열 삭제, 거부 문구 표기 | 6ec4b40c |
 
 ## TODO
@@ -33,7 +33,8 @@
 - [x] `python` 검토·구현 (docs/python-tool/DESIGN.md §7)
 - [ ] 후보: `wait` 의 기다림 상한 — v10.77.1 r1 의 시간 초과 둘(large-scale vim 18분·video OCR)이 상한 없는 `wait` 로 끝났다
 - [x] `snapshot`·`history`·`memory` 검토 — snapshot 수리 v10.80.0, memory·history v10.81.0; 압축 요약 꼬리(PR C, 측정 뒤) 남음
-- [ ] 내장 에이전트·스킬 **본문**의 대문자 강조("do NOT"·"ask ONE focused question") — inventory 밖이라 가드 밖; 손볼지 결정 필요
+- [ ] `history` 로 큰 관찰의 **중간**을 뽑는 길 — PR C 측정의 부수 발견(12/12 런이 `substr(text,1,N)` 만 씀). 후보: help 예시에 `substr(text, instr(text,'…'), 200)` 한 줄, 또는 `loc` + 오프셋 인자. 측정은 같은 런처로.
+- [x] 내장 에이전트·스킬 **본문**의 대문자 강조 — 사용자 결정(2026-10-30)으로 본문 43곳 소문자화 + 가드가 파일도 읽음(`test_no_caps_emphasis_in_builtin_bodies`, docs/prompt-notation/DESIGN.md 가드 절)
 - [ ] 남은 도구 검토: `code_index`, `fetch`, `browser`, `schedule`, `agent`, `run_skill`
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)

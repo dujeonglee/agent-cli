@@ -84,7 +84,7 @@ bash ${SKILL_DIR}/scripts/run.sh
 bash ${SKILL_DIR}/scripts/helper.py arg1 arg2
 ```
 
-DON'T (every one of these is wrong — they are not portable):
+Don't (every one of these is wrong — they are not portable):
 
 ```
 bash /Users/alice/workspace/proj/.agent-cli/skills/<name>/scripts/run.sh

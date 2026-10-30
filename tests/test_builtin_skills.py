@@ -197,7 +197,7 @@ class TestBuiltinSkillContent:
         # Reference carries the full DO/DON'T evidence.
         ref = _CREATE_SKILL_FORMAT_REF.read_text()
         ref_lower = ref.lower()
-        assert "DO" in ref and "DON'T" in ref
+        assert "DO" in ref and "Don't" in ref
         assert "never hardcode" in ref_lower or "not portable" in ref_lower
         assert "/users/" in ref_lower  # anti-example path
         assert "agent_cli/skills/builtin" in ref  # wrong-tree anti-example
@@ -257,9 +257,9 @@ class TestBuiltinSkillContent:
         # 핵심 계약 1: 워커는 idle 소환 — task 없이, 일 시키지 말 것
         assert "NO `task`" in body
         assert "Never send a worker a task" in body
-        # 핵심 계약 2: 로스터(KEY) 인계 + orchestrator 를 마지막에 스폰
-        assert "KEY" in body
-        assert "orchestrator LAST" in body
+        # 핵심 계약 2: 로스터(key) 인계 + orchestrator 를 마지막에 스폰
+        assert "agent key" in body
+        assert "orchestrator last" in body
         # 핵심 계약 3: 대기/폴링 금지 — 즉시 complete, 보고는 자동 배달
         assert "Do not wait, poll" in body
         # 왜 이 모양인지(회신 라우팅 근거)를 스킬 자신이 설명

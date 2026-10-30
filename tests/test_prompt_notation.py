@@ -7,7 +7,9 @@
   자리표시(``TOOL_NAME``)만 예외.
 
 검사 대상은 ``prompts.inventory`` 가 모으는 글 전부(도구 설명·인자·안내, 시스템
-프롬프트 절, 실행 중 문구)와 형식 오류 넛지의 "You sent:" 줄이다. 형식이
+프롬프트 절, 실행 중 문구)와 형식 오류 넛지의 "You sent:" 줄, 그리고 내장 에이전트·스킬
+파일(``agents/builtin/*.md``·``skills/builtin/**/*.md`` — 띄운 에이전트의 시스템 프롬프트와
+스킬 지시문이 되지만 inventory 를 거치지 않는다; 대문자 강조만 본다, 사용자 결정 2026-10-30). 형식이
 보여 주는 호출 예시(JSON 배열, ``<tool_call>`` 블록, `` `tool` {...} ``)와 줄 머리
 이름표(``read_file failed:`` 같은 오류 머리)는 규칙 밖이다.
 """
@@ -15,9 +17,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
+import agent_cli
 from agent_cli.prompts.inventory import build_inventory
 from agent_cli.recovery.primitives import summarize_call
 from agent_cli.tools.registry import _BUILTIN_ORDER
@@ -45,10 +49,13 @@ _ACRONYMS = frozenset(
         *("JPEG", "GIF", "SVG", "CSV", "LLM", "SQL", "API", "CLI", "MCP", "SSE"),
         *("EOS", "PID", "CPU", "GPU", "RAM", "UTF", "ASCII", "OCR", "ISO", "UUID"),
         *("ZIP", "YAML", "TOML", "WAL", "TTY", "SIGINT", "SIGTERM", "SIGKILL"),
+        *("RAII", "OOM", "ASGI", "README"),
     ]
 )
-# 세 글자 이상의 대문자 낱말 — 백틱·따옴표·경로·`#`(LINE#HASH)·`$`(변수) 옆은 뺀다
-_CAPS = re.compile(r"(?<![`\w/.\-\$#])([A-Z][A-Z]{2,})(?![`\w#])")
+# 세 글자 이상의 대문자 낱말 — 백틱·따옴표·경로·`#`(LINE#HASH)·`$`(변수) 옆과
+# 파일 이름(`SKILL.md`)은 뺀다
+_CAPS = re.compile(r"(?<![`\w/.\-\$#])([A-Z][A-Z]{2,})(?![`\w#]|\.\w)")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
 
 
 def _texts():
@@ -95,6 +102,9 @@ def caps_emphasis(text) -> list[str]:
     """대문자 강조로 쓰인 낱말들 (머리글자·자리표시 제외) — 가드와 범위 조사가 같은 판정."""
     out = []
     for ln in _lines(text):
+        ln = _CODE_SPAN.sub(
+            "", ln
+        )  # 명령 안의 grep 패턴(`"ERROR\|FATAL"`)은 글이 아니다
         for w in _CAPS.findall(ln):
             if w not in _ACRONYMS:
                 out.append(w)
@@ -107,6 +117,27 @@ def test_no_caps_emphasis(where, text):
     남아 있거나 돌아오면 실패. 모델 문구의 강조는 문장 구조로 — 사용자 결정(2026-10-30)."""
     bad = caps_emphasis(text)
     assert not bad, f"{where}: {sorted(set(bad))}"
+
+
+_PKG = Path(agent_cli.__file__).parent
+_BODIES = sorted(
+    [
+        *(_PKG / "agents" / "builtin").glob("*.md"),
+        *(_PKG / "skills" / "builtin").rglob("*.md"),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    "path", _BODIES, ids=[str(p.relative_to(_PKG)) for p in _BODIES]
+)
+def test_no_caps_emphasis_in_builtin_bodies(path):
+    """내장 에이전트·스킬 파일은 inventory 밖이지만 모델이 읽는 글이다(에이전트 본문은
+    띄운 에이전트의 시스템 프롬프트, 스킬은 호출 시 지시문, references/ 는 스킬이 읽게
+    한다). v10.81.0 이 설명(머리)만 고쳐 한 파일 안에 두 표기가 섞였다 — 본문도 같은
+    규칙(사용자 결정)."""
+    bad = caps_emphasis(path.read_text(encoding="utf-8"))
+    assert not bad, f"{path.name}: {sorted(set(bad))}"
 
 
 def test_you_sent_line_is_a_sentence():

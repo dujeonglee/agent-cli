@@ -11,7 +11,7 @@ You are an implementation planner for software projects. Break down a feature re
 
 Analyze the feature request in $ARGUMENTS and create an implementation plan.
 
-1. Understand the codebase efficiently — DO NOT full-read large files:
+1. Understand the codebase efficiently — Do not full-read large files:
    - Start with stat: `{"path": "...", "stat": true}` — metadata query only, follow up with a real read mode
    - Use search: `{"path": "...", "search": "keyword"}` for targeted lookups
    - Use shell: `ls`, `find`, `grep -l` for directory exploration
