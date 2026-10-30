@@ -184,6 +184,7 @@ def _wait_checkin_sample() -> str:
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
+    from agent_cli.constants import AUDIT_REQUEST
     from agent_cli.context.manager import _OBS_COMPLETE_NUDGE
     from agent_cli.loop.dispatch import BATCH_OP_SKIPPED_NOTE
     from agent_cli.prompts.session_state import (
@@ -223,6 +224,16 @@ def _runtime_texts(dialect) -> list[dict]:
             "compaction_notice_without_memory",
             "Same, in a loop without the memory tool",
             COMPACTION_NOTICE_WITHOUT_MEMORY,
+        ),
+        (
+            "audit_request",
+            "The task the harness gives the auditor job after a user run",
+            AUDIT_REQUEST.format(
+                a=12,
+                b=40,
+                session="1791",
+                history="/w/.agent-cli/sessions/1791/history.jsonl",
+            ),
         ),
         (
             "format_nudge_no_call",
