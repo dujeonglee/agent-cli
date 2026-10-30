@@ -3008,7 +3008,6 @@ class TestCtxDirWiring:
             parent_ctx=parent,
             binding=make_binding(provider=object(), capabilities=self._caps()),
             run_dir_name="run_task_PINNED_9",
-            owner="main",
         )
         assert (tmp_path / "run_task_PINNED_9").is_dir()
         assert (tmp_path / "run_task_PINNED_9" / "result.md").exists()
@@ -3029,7 +3028,6 @@ class TestCtxDirWiring:
         tool_delegate(
             args={"tasks": [{"task": "t", "agent": "explorer"}]},
             binding=make_binding(capabilities=self._caps()),
-            owner="main",
         )
         start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
         assert captured["run_dir_name"]
@@ -3052,7 +3050,6 @@ class TestCtxDirWiring:
         _run_parallel(
             [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
             binding=make_binding(capabilities=self._caps()),
-            owner="main",
         )
         starts = {
             dict(d)["ctx_dir"]

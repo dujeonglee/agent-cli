@@ -624,7 +624,6 @@ class TestDelegateHooksWiring:
                     provider=object(), capabilities=caps, model="m"
                 ),  # non-None, not actually used by fake run_loop
                 hooks_config=parent_hooks,
-                owner="main",
             )
 
         assert captured.get("hooks_config") is parent_hooks, (
@@ -661,7 +660,6 @@ class TestDelegateHooksWiring:
             tool_delegate(
                 args={"tasks": [{"task": "trivial"}]},
                 binding=make_binding(provider=object(), capabilities=caps, model="m"),
-                owner="main",
             )
 
         assert captured.get("hooks_config") is None
@@ -730,7 +728,6 @@ class TestAgentFrontmatterHooks:
                     provider=object(), capabilities=self._caps(), model="m"
                 ),
                 hooks_config=parent_hooks,
-                owner="main",
             )
 
         forwarded = captured.get("hooks_config")
@@ -775,7 +772,6 @@ class TestAgentFrontmatterHooks:
                 binding=make_binding(
                     provider=object(), capabilities=self._caps(), model="m"
                 ),
-                owner="main",
             )
 
         forwarded = captured.get("hooks_config")
@@ -811,7 +807,6 @@ class TestAgentFrontmatterHooks:
                     provider=object(), capabilities=self._caps(), model="m"
                 ),
                 hooks_config=parent_hooks,
-                owner="main",
             )
 
         assert captured.get("hooks_config") is parent_hooks
@@ -874,7 +869,6 @@ class TestAgentFrontmatterHooks:
                 binding=make_binding(
                     provider=provider, capabilities=self._caps(), model="test"
                 ),
-                owner="main",
             )
 
             assert log_file.exists(), (

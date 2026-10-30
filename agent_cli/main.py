@@ -717,7 +717,6 @@ def _dispatch_agent(
     render_status("running", f"Running agent: {agent_name}...")
     result = tool_delegate(
         # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 이다.
-        owner="main",
         args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
         parent_ctx=ctx,
         binding=binding,

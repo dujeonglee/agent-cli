@@ -458,10 +458,13 @@ def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, s
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
+    from agent_cli.constants import is_private_owner
     from agent_cli.schedule.runtime import get_schedule_registry
 
+    # 예약은 세션 것 — main 에게 발화한다. private 주소(one-shot·하니스 작업)의
+    # 깨울 것으로 세면 잡 없이도 `wait` 가 받아들여져 영원히 막힌다 (v10.84.0).
     sched = get_schedule_registry()
-    if sched is not None and sched.has_active_work():
+    if sched is not None and sched.has_active_work() and not is_private_owner(owner):
         out.append((_SCHEDULE_ID, "a schedule"))
     return out
 
@@ -700,8 +703,78 @@ def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
     )
 
 
+def mail_record(mail: dict) -> dict:
+    """메일 한 통 → 루프가 그대로 넣는 관찰 (`core._absorb_inbox` 의 ``record`` 모양,
+    v10.84.0). main 의 `build_reply_record`·상주의 `absorb_pending` 과 **같은 계약**
+    (사용자 결정 C): 하니스 통지는 봉투 없이 보고 그대로, ``tool`` 은
+    `constants.HARNESS_MAIL_TOOL`(job·monitor·checkin→wait)."""
+    from agent_cli.constants import harness_mail_tool
+
+    kind = str(mail.get("kind") or "")
+    return {
+        "record": {
+            "role": "user",
+            "tool": harness_mail_tool(kind) or (kind or "mail"),
+            "success": bool(mail.get("success", True)),
+            "content": str(mail.get("output") or mail.get("text") or ""),
+            "source": "harness_mail",
+        }
+    }
+
+
+def _private_inbox(owner: str):
+    """private 주소의 메일함을 턴 경계에 흡수하는 ``absorb_inbox`` 포트 (v10.84.0)."""
+
+    def absorb() -> list[dict]:
+        from agent_cli.subagent.agents_live import main_registry
+
+        reg = main_registry()
+        if reg is None:
+            return []
+        return [mail_record(m) for m in reg.take_mail(owner)]
+
+    return absorb
+
+
+def release_private_owner(owner: str) -> str:
+    """private 주소의 루프가 끝났다 — 그 주소가 가진 것을 전부 거둔다 (v10.84.0,
+    사용자 결정 D1): 돌고 있는 잡은 죽이고, 모니터는 폐기하고(재부모화하지 않는다 —
+    상주와 같은 규칙), 체크인·메일함을 버린다. 돌려주는 글은 결과에 붙이는 한
+    줄(거둔 것이 없으면 빈 문자열) — 호출자가 "끝났다" 를 "다 됐다" 로 읽지 않게."""
+    from agent_cli.jobs import get_job_registry
+    from agent_cli.monitor.runtime import get_monitor_registry
+    from agent_cli.subagent.agents_live import main_registry
+
+    parts: list[str] = []
+    jobs = get_job_registry()
+    if jobs is not None:
+        running = jobs.running(owner)
+        if running:
+            cmds = "; ".join(f"`{j.command[:60]}`" for j in running)
+            n = jobs.drop_owner(owner)
+            parts.append(
+                f"{n} background job{'s' if n != 1 else ''} still running "
+                f"{'were' if n != 1 else 'was'} stopped when this agent finished: {cmds}"
+            )
+    mons = get_monitor_registry()
+    if mons is not None:
+        n = mons.drop_owner(owner)
+        if n:
+            parts.append(
+                f"{n} monitor{'s' if n != 1 else ''} it set {'were' if n != 1 else 'was'} dropped"
+            )
+    reg = main_registry()
+    if reg is not None:
+        reg.drop_mailbox(owner)
+    return f"[{'; '.join(parts)}]" if parts else ""
+
+
 def ports_for_oneshot(*, owner: str) -> LoopPorts:
-    """one-shot delegate — 포트 없음. ``owner`` 는 부모에게서 물려받는다."""
+    """one-shot delegate 와 하니스 작업의 런. ``owner`` 는 그 런의 **자기** private
+    주소(``run:<run_dir>``·``harness:<job>``, v10.84.0) — 종전엔 부모 주소를 물려받아
+    자기 잡의 통지가 부모에게 갔다. ``absorb_inbox`` 가 그 메일함을 턴 경계에 읽으므로
+    루프는 깨울 수 있고(`wakeable`) `wait` 가 광고된다; `wait` 는 런을 끝내는 대신
+    메일 도착까지 막는다(`dispatch._op_wait`)."""
     return LoopPorts(
         owner=owner,
         questions=None,
@@ -711,7 +784,7 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
         hook_runner=_hook_runner_port(),
         route_message=None,
         dequeue_user_message=None,
-        absorb_inbox=None,
+        absorb_inbox=_private_inbox(owner),
         peer_roster=None,
         unwired={
             "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
@@ -721,7 +794,6 @@ def ports_for_oneshot(*, owner: str) -> LoopPorts:
             **_hook_unwired(),
             "route_message": _WEB_ONLY,
             "dequeue_user_message": _WEB_ONLY,
-            "absorb_inbox": _NO_INBOX,
             "peer_roster": _RESIDENT_ROSTER,
         },
     )

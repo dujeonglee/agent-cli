@@ -116,10 +116,18 @@ NESTED_SEAMS = {
     "run_loop",
     "_handle_run_skill",
     "execute_skill",
+    "run_subagent_message",
+}
+
+#: one-shot 의 세 seam(`tool_delegate`·`_run_single`·`_run_parallel`)은 v10.84.0 부터
+#: 주소를 **상속하지 않는다** — `_execute_single_task` 가 자기 주소 `run:<run_dir>` 를
+#: 만든다(docs/wait/DESIGN.md §7). 스킬은 여전히 상속한다(상주 안의 스킬이 건 모니터는
+#: 그 에이전트에게 보고해야 한다).
+ONESHOT_SEAMS = {
     "tool_delegate",
     "_run_single",
     "_run_parallel",
-    "run_subagent_message",
+    "_execute_single_task",
 }
 
 #: 이 둘은 주소를 **`ports` 안에** 담아 나른다 — 루프를 직접 만드는
@@ -182,7 +190,20 @@ class TestOwnerIsInherited:
         from agent_cli.runtime import ports_for_oneshot, ports_for_skill
 
         assert ports_for_skill(agent_registry=None, owner="agent:p").owner == "agent:p"
-        assert ports_for_oneshot(owner="agent:p").owner == "agent:p"
+        assert ports_for_oneshot(owner="run:task_1").owner == "run:task_1"
+
+    def test_oneshot_seams_do_not_take_an_owner(self):
+        """v10.84.0: one-shot 은 부모 주소를 빌리지 않는다 — `owner` 매개변수가 남아 있으면
+        누군가 다시 상속을 꽂을 수 있으니 소스에서 고정한다."""
+        leftovers = []
+        for f in pathlib.Path("agent_cli").rglob("*.py"):
+            tree = ast.parse(f.read_text())
+            for n in ast.walk(tree):
+                if isinstance(n, ast.FunctionDef) and n.name in ONESHOT_SEAMS:
+                    named = [a.arg for a in n.args.args + n.args.kwonlyargs]
+                    if "owner" in named:
+                        leftovers.append(f"{f}:{n.lineno} {n.name}")
+        assert leftovers == [], leftovers
 
     def test_the_chain_survives_a_real_loop(self):
         """`ports.owner` → `LoopConfig.owner` → `RunContext.owner` 를

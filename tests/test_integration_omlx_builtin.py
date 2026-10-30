@@ -55,7 +55,6 @@ class TestCodeAnalystAgent:
                 api_key="",
             ),
             max_turns=5,
-            owner="main",
         )
         assert result.success
         assert "add" in result.output.lower() or "calculator" in result.output.lower()
@@ -88,7 +87,6 @@ class TestCodeAnalystAgent:
                 api_key="",
             ),
             max_turns=5,
-            owner="main",
         )
         assert result.success
         output = result.output

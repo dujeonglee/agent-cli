@@ -288,6 +288,7 @@ class AgentLoop:
             questions=ports.questions,
             peer_roster=ports.peer_roster,
             peer_agents_section=peer_agents_section,
+            wakeable=ports.wakeable(),
         )
         self._state = LoopState(
             query=query,
