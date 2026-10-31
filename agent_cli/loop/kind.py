@@ -449,9 +449,10 @@ class PrivateLoop(LoopKind):
         )
 
     def release(self) -> str:
-        from agent_cli.runtime import release_private_owner
+        from agent_cli.runtime import release_owner
+        from agent_cli.subagent.agents_live import main_registry
 
-        return release_private_owner(self.owner)
+        return release_owner(self.owner, registry=main_registry()).note
 
     # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──
     def wait_policy(self) -> str:

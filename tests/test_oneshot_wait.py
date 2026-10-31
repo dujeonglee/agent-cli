@@ -27,7 +27,7 @@ from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.runtime import (
     mail_record,
-    release_private_owner,
+    release_owner,
     wake_sources,
 )
 from agent_cli.subagent.agents_live import set_main_registry
@@ -354,7 +354,7 @@ class TestInlineLoopsRefuseWait:
         assert "finish with `complete` and the caller waits" in texts[0]
 
 
-class TestReleasePrivateOwner:
+class TestReleaseOwner:
     def test_leftover_job_is_stopped_and_named(self, jobs, reg):
         jobs.start("sleep 30", owner="run:z")
         reg.deliver(
@@ -364,7 +364,7 @@ class TestReleasePrivateOwner:
             author="main",
             expects_reply=False,
         )
-        note = release_private_owner("run:z")
+        note = release_owner("run:z", registry=reg).note
         assert (
             note
             == "[1 background job still running was stopped when this agent finished: `sleep 30`]"
@@ -372,7 +372,7 @@ class TestReleasePrivateOwner:
         assert jobs.running("run:z") == [] and reg.arrived_for("run:z") == 0
 
     def test_nothing_left_is_silent(self, jobs, reg):
-        assert release_private_owner("run:empty") == ""
+        assert release_owner("run:empty", registry=reg).note == ""
 
 
 class TestOneShotHasItsOwnAddress:
