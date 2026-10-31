@@ -1228,7 +1228,11 @@ def _build_context(session, binding, *, resume: bool = False):
     여기서 받지 않는다 — 소유자들이 전부 선 뒤 `knobs.apply_all` 이 CLI > env >
     기본값으로 적용한다 (v10.43.0)."""
     from agent_cli.context.session import get_session_dir
+    from agent_cli.paths import scratch_dir
 
+    # 모델이 쓰는 임시 디렉토리는 세션과 함께 생긴다 (v10.90.0) — 프롬프트가 가리키는
+    # 곳이 실제로 있어야 첫 쓰기가 실패하지 않는다.
+    scratch_dir().mkdir(parents=True, exist_ok=True)
     return ContextManager(get_session_dir(session), binding=binding, resume=resume)
 
 

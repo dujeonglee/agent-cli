@@ -53,3 +53,14 @@ def sessions_dir() -> Path:
     컨테이너·CI 에서 트리 밖으로 뺄 수 있게 한다."""
     raw = os.environ.get(_SESSIONS_ENV, "")
     return Path(raw).expanduser() if raw else Path(_DIR_NAME) / "sessions"
+
+
+def scratch_dir() -> Path:
+    """``.agent-cli/tmp`` — 모델의 임시 파일(중간 결과·보조 스크립트·백업본)과
+    하니스 하위 디렉토리(``jobs/``·``python/``·``downloads/``·``uploads/``)의
+    집. 세션을 조립할 때(main ``_build_context``) 만들어 둔다 (v10.90.0) —
+    종전엔 프롬프트가 "없으면 만들라" 고만 했고, 벤치 27 트라이얼 중 5 에서
+    모델이 잊은 채 거기에 쓰다 "Directory nonexistent" 로 한 턴씩 잃었다
+    (`savefig` 두 건 포함). cwd 상대 — 세션 경로와 같은 이유로 표시 형태를
+    바꾸지 않는다."""
+    return Path(_DIR_NAME) / "tmp"

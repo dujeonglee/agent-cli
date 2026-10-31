@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.paths import project_dir, sessions_dir, user_dir
+from agent_cli.paths import project_dir, scratch_dir, sessions_dir, user_dir
 
 _A = ".agent-cli"
 
@@ -22,6 +22,10 @@ _A = ".agent-cli"
 class TestScopeDirs:
     def test_project_dir_is_cwd(self):
         assert project_dir() == Path.cwd() / _A
+
+    def test_scratch_dir_is_project_tmp(self):
+        """모델의 임시 파일 자리 (v10.90.0) — 세션 경로처럼 cwd 상대로 둔다."""
+        assert scratch_dir() == Path(_A) / "tmp"
 
     def test_user_dir_is_home(self):
         assert user_dir() == Path.home() / _A

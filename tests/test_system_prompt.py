@@ -957,6 +957,36 @@ class TestEnvironmentSection:
         section = _build_environment_section()
         assert "Date:" not in section
 
+    # ── v10.90.0: `python` 이 로스터에 있는데 인터프리터가 없으면 한 줄 ──
+    # 벤치 세 트라이얼이 `python` 을 헛호출(`no_interpreter`)한 뒤에야 설치했다.
+
+    def test_python_line_when_no_interpreter(self, monkeypatch):
+        monkeypatch.setattr("agent_cli.pyworker.interpreter", lambda: None)
+        section = _build_environment_section(["shell", "python"])
+        assert (
+            "- Python: no `python3` was on `PATH` when this session started" in section
+        )
+        assert "install one with `shell`" in section
+
+    def test_no_python_line_when_interpreter_present(self, monkeypatch):
+        monkeypatch.setattr(
+            "agent_cli.pyworker.interpreter", lambda: "/usr/bin/python3"
+        )
+        assert "- Python:" not in _build_environment_section(["shell", "python"])
+
+    def test_no_python_line_when_python_not_on_roster(self, monkeypatch):
+        monkeypatch.setattr("agent_cli.pyworker.interpreter", lambda: None)
+        assert "- Python:" not in _build_environment_section(["shell"])
+        assert "- Python:" not in _build_environment_section()
+
+    def test_scratch_dir_rule_says_it_exists(self):
+        """디렉토리는 하니스가 만든다 (v10.90.0) — 모델에게 만들라고 하지 않는다."""
+        assert "create it if missing" not in TASK_GUIDELINES
+        assert (
+            "`.agent-cli/tmp/` under the working directory (it exists)"
+            in TASK_GUIDELINES
+        )
+
 
 class TestLoadDirectives:
     def test_empty_when_no_files(self, tmp_path, monkeypatch):
