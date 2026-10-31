@@ -81,3 +81,7 @@ GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 —
 - 테스트: `tests/test_jobs.py` `TestShellToolSurface`(지움 6종·인용부/논리 `&` 불변·빈 명령·상한 전환·상한 이하 전경·
   레지스트리 없음 깎기), `TestAdoptedHandles`, `TestBashExecutable`; `tests/test_system_prompt.py` 셸 줄 둘.
 - 다음 벤치 지표: 전경 timeout kill 0, `Removed` 안내 수(= 종전 거부 수), python 연속 인터럽트 0, dash 문법 오류 0.
+- **라이브 확인 (v10.91.2, 웹 방 g312ma)**: `background` 로 `nohup sh -c '…' > b.log 2>&1 &` → "Removed `nohup`, the trailing `&`"
+  안내와 함께 job 으로 떴고 `b.log` 에 출력, 20초 뒤 rc=0 통지. 고친 것 하나: 작업 로그를 덧붙이기로 열었다 — 번호는 프로세스마다
+  1 부터라 지난 세션의 `2.log` 가 남아 있었고, 출력을 다른 파일로 보낸 이 명령의 통지 꼬리에 지난 세션의 `4242`·`5151` 이 실렸다.
+  `start` 는 로그를 비우고 연다.
