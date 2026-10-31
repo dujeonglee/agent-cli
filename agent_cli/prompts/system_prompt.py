@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import platform
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
+from agent_cli import pyworker
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -109,7 +111,7 @@ TASK_GUIDELINES = """\
 - Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.
 - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
 - Do not create new files unless the task requires it.
-- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (create it if missing), never in /tmp or another system temp dir: they are cleaned up with the project and need no confirmation. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.
+- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), never in /tmp or another system temp dir: they are cleaned up with the project and need no confirmation. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.
 - Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.
 - If an approach fails, diagnose the cause before switching tactics.
 - Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.
@@ -601,9 +603,14 @@ def _build_tools_section(
     return f"## Available Tools\n{tool_block}"
 
 
-def _build_environment_section() -> str:
+def _build_environment_section(active_tools: Sequence[str] = ()) -> str:
     """Build environment context section with CWD, platform, and the
-    relative-path rule.
+    relative-path rule — plus, when ``python`` is on the roster and no
+    interpreter was on PATH at session start, one line saying so (v10.90.0):
+    three bench trials spent a turn calling ``python`` into
+    ``PyResult.no_interpreter`` before installing one. The line is phrased
+    about session start so it stays true after the model installs Python
+    (the section is built once).
 
     Date is intentionally omitted: it has no programmatic consumer and
     its daily rollover invalidates provider-side prefix caches across
@@ -631,6 +638,12 @@ def _build_environment_section() -> str:
         "path only for a file genuinely outside the working directory, or when "
         "telling the user where something is in your final answer."
     )
+    if "python" in active_tools and pyworker.interpreter() is None:
+        lines.append(
+            "- Python: no `python3` was on `PATH` when this session started, so "
+            "`python` has no interpreter yet — install one with `shell` (for "
+            "example through the system package manager) before calling it."
+        )
     return "\n".join(lines)
 
 
@@ -854,7 +867,7 @@ def build_system_prompt_sections(
         sections.append(("Reply Discipline", _REPLY_DISCIPLINE_SECTION))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
-    sections.append(("Environment", _build_environment_section()))
+    sections.append(("Environment", _build_environment_section(active_tools)))
 
     # Context Recovery Guide (replaces session_id + git context)
     # Only where the tool it names is callable — a profile with a narrowed
