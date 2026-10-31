@@ -9,7 +9,7 @@ main 루프가 턴 경계에서 :meth:`AgentRegistry.drain_replies` 를 비워
 스레딩 모델
 -----------
 teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 블록해
-메시지당 :func:`~agent_cli.subagent.runner.run_subagent_message` 1회를
+메시지당 `ResidentLoop.run` (엔진 `run_loop`) 1회를
 돌리고 회신을 registry 의 공용 pending 리스트에 push 한다. 상태 전이
 (idle→busy→idle→…→dead)는 worker 루프 한 곳에만 있다.
 
@@ -51,6 +51,7 @@ from agent_cli.constants import (
     is_private_owner,
 )
 from agent_cli.context.session import AGENTS_DIR
+from agent_cli.loop.kind import LoopKindError
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -229,7 +230,7 @@ AGENTS_STATE_VERSION = 2
 # ── main registry 프로세스 슬롯 (v7.17.0 배선 통일) ──
 # agent-cli 프로세스 = 세션 1개(web 인스턴스는 post 당 1 프로세스, run 은
 # 단명) 전제의 "이 세션의 main AgentRegistry" 슬롯. run/web 이 생성 직후
-# 등록하고, skill 실행(execute_skill)이 registry 를 명시받지 못한 경로
+# 등록하고, skill 실행(`SkillLoop`)이 registry 를 명시받지 못한 경로
 # (사용자 /skill dispatch 등 — main 의 워크플로우)에서 자동 상속한다.
 # 종전엔 registry 가 호출자 파라미터로 손에서 손으로 릴레이돼, 경로가
 # 늘 때마다 배선이 누락됐다(loop 내부 run_skill op 만 배선되고 사용자
@@ -559,7 +560,7 @@ class QuestionPort:
     """루프가 질문 목록에 닿는 **유일한 seam** (DESIGN.md §4).
 
     콜러블 셋을 ``LoopConfig``·``AgentLoop.__init__``·``run_loop``·
-    ``run_subagent_message``·``_run_message`` 에 각각 꿰면 15군데가 된다 —
+    ``ResidentLoop``·`_handle_request` 에 각각 꿰면 15군데가 된다 —
     객체 하나로 묶는다. **레지스트리 자체는 절대 넘기지 않는다**:
     ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
     가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
@@ -742,7 +743,7 @@ class QuestionPort:
 class AgentRegistry:
     """main 루프 수명의 teammate 소유자 + 회신 mailbox.
 
-    ``runner`` 는 :func:`run_subagent_message` 기본값 — 테스트가 가짜
+    ``runner`` 는 종류(`ResidentLoop`)의 엔진 — 기본 `run_loop`; 테스트가 가짜
     러너를 주입하는 DI seam (스레딩·상태 전이를 LLM 없이 검증).
     """
 
@@ -2878,7 +2879,7 @@ class AgentRegistry:
         상태 전이는 전부 이 함수 안이다.
         """
         from agent_cli.render import get_renderer
-        from agent_cli.subagent.runner import create_subagent_ctx
+        from agent_cli.subagent.resident_loop import ResidentLoop
 
         renderer = get_renderer()
         _disp = (
@@ -2892,27 +2893,14 @@ class AgentRegistry:
             # 등록되게 하기 위함 (spawn 스레드면 main 스코프를 오염).
             # P3 revive: 자기 history 를 그대로 이어받는 resume 모드 —
             # teammate 는 이전 세션의 문답을 전부 기억한 채 살아난다.
-            mode = "resume" if tm.revive else tm.context_mode
-            # model=tm.model (role 오버라이드 적용 후) — models.json 바인딩이
-            # 있으면 그 dialect, 없으면 부모 상속 (dialects P1).
-            # 세션 바인딩(또는 프로파일이 고정한 모델의 바인딩 복사본) — ctx 의
-            # 방언·예산이 거기서 온다 (v10.43.0).
-            binding = self.runtime.get("binding")
-            if binding is not None and tm.model and tm.model != binding.model:
-                try:
-                    binding = binding.pinned(tm.model)
-                except KeyError as exc:
-                    tm.error = str(exc.args[0] if exc.args else exc)
-                    crash = f"context creation failed: {tm.error}"
-                    return
-            ctx, err = create_subagent_ctx(
-                mode, parent_ctx, tm.home_dir, binding=binding
-            )
-            if ctx is None:
-                tm.error = err
-                crash = f"context creation failed: {err}"
+            # 종류 객체 (v10.87.0): 주소·포트·바인딩(프로파일 고정)·ctx 를 한 번 세운다.
+            kind = ResidentLoop(tm, self, disp=_disp)
+            try:
+                kind.open(parent_ctx)
+            except LoopKindError as exc:
+                tm.error = str(exc)
+                crash = f"context creation failed: {tm.error}"
                 return
-            tm.ctx = ctx
             tm.state = "idle"
             # starting→idle 전환도 roster 에 반영 — 초기 task 없는
             # spawn/재생성분이 UI 에 "starting" 으로 영구 표시되던 버그
@@ -2953,12 +2941,12 @@ class AgentRegistry:
                             break
                     self._begin_items(tm, batch)
                     if len(batch) == 1:
-                        self._handle_request(tm, item, renderer, _disp)
+                        self._handle_request(tm, item, renderer, kind)
                     else:
-                        self._handle_human_batch(tm, batch, renderer, _disp)
+                        self._handle_human_batch(tm, batch, renderer, kind)
                 else:
                     self._begin_items(tm, [item])
-                    self._handle_request(tm, item, renderer, _disp)
+                    self._handle_request(tm, item, renderer, kind)
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -3024,9 +3012,11 @@ class AgentRegistry:
             f"answering lets this continue:\n{lines}"
         )
 
-    def _handle_request(self, tm: AgentInstance, item: dict, renderer, disp) -> None:
+    def _handle_request(self, tm: AgentInstance, item: dict, renderer, kind) -> None:
         """단일 request 처리 — main 위임/peer/배달회신/사람-직접(단건) 공통 경로.
-        회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창)."""
+        회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창).
+        런 자체(시작 메시지·작업 카드·엔진)는 ``kind``(`ResidentLoop`)의 것이고, 여기는
+        빚·회신·`run_ended` 후처리다 (v10.87.0)."""
         tm.state = "busy"
         iid = item["id"]
         text = item["text"]
@@ -3048,58 +3038,15 @@ class AgentRegistry:
                 id=iid,
             )
         self._notify_roster()
-        query = self._model_text(item)
-
-        renderer.begin_agent_work(
-            key=tm.key,
-            item=iid,
-            profile=disp,
-            message=text,
-            # 요청 발신 시각을 scope_start(nav_ts)로 실어, 스윔레인
-            # 요청 화살표가 이 작업 카드로 이동하게 한다.
-            req_ts=item.get("ts"),
+        loop_result, duration = kind.run(kind.start([item]))
+        success = bool(loop_result.success)
+        # 런이 `wait` 로 끝났다 (v10.65.0) — 빚은 그대로, 폴백 없음
+        waiting = bool(getattr(loop_result, "waiting", False))
+        output = (
+            loop_result.output
+            if loop_result.output is not None
+            else "(agent did not complete the request)"
         )
-        success, output, duration = False, "", 0.0
-        waiting = False  # 런이 `wait` 로 끝났다 (v10.65.0) — 빚은 그대로, 폴백 없음
-        human_item = author == "user" or author.startswith("user:")
-        try:
-            loop_result, duration = self._run_message(
-                tm,
-                query,
-                query_images=item.get("images") or None,
-                # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
-                query_request_id=iid
-                if human_item or item.get("expects_reply", True)
-                else "",
-                user_requests=(
-                    [
-                        {
-                            "id": iid,
-                            "author": author,
-                            "text": self._model_text(item, bare=True),
-                        }
-                    ]
-                    if human_item
-                    else []
-                ),
-            )
-            success = bool(loop_result.success)
-            waiting = bool(getattr(loop_result, "waiting", False))
-            output = (
-                loop_result.output
-                if loop_result.output is not None
-                else "(agent did not complete the request)"
-            )
-        except Exception as e:  # worker 는 죽지 않는다 — 회신으로 보고
-            output = f"agent internal error: {type(e).__name__}: {e}"
-        finally:
-            renderer.end_agent_work(
-                key=tm.key,
-                item=iid,
-                success=success,
-                duration_s=duration,
-                error="" if success else output[:200],
-            )
         # ── 비동기 질문 마무리 (DESIGN.md §3.6·§3.7) ──
         # 독촉은 여기가 아니라 **워커 루프**에 있다 — 런이 끝났다는 사실에
         # 붙는 것이라 핸들러마다 두면 빠진다(실제로 배치 경로에서 빠졌다).
@@ -3164,7 +3111,7 @@ class AgentRegistry:
         self._close_run(tm, 1)
 
     def _handle_human_batch(
-        self, tm: AgentInstance, items: list[dict], renderer, disp
+        self, tm: AgentInstance, items: list[dict], renderer, kind
     ) -> None:
         """사람-직접 요청 2건+ 를 한 턴에 배치 처리(C-1) — 모두 ``user:*`` 발신
         이라 회신은 대화창 전용(⑥), main mailbox 미배달. main 과 동일하게 대기분
@@ -3185,60 +3132,16 @@ class AgentRegistry:
                 id=it["id"],
             )
         self._notify_roster()
-
-        labeled = [self._model_text(it) for it in items]
-        # v9.22.0: 배치 안내문(`_AGENT_BATCH_NOTICE`)은 뺀다 — 항목마다 id 가
-        # 회계에 올라 꼬리의 `## Open Requests` 와 `answers` 강제가 그 일을 한다
-        # (main 의 QUEUED_REQUEST_NOTICE 를 걷어낸 것과 같은 이유).
-        query = "\n\n".join(labeled)
-        user_requests = [
-            {
-                "id": it["id"],
-                "author": it.get("author", ""),
-                "text": self._model_text(it, bare=True),
-            }
-            for it in items
-        ]
-        preview = "\n".join(labeled)
-
-        renderer.begin_agent_work(
-            key=tm.key,
-            item=iid,
-            profile=disp,
-            message=preview,
-            req_ts=first.get("ts"),
-            items=[it["id"] for it in items],  # 런 블록이 N개 수신 줄을 머리로
+        # v9.22.0: 배치 안내문은 뺀다 — 항목마다 id 가 회계에 올라 꼬리의 `## Open Requests`
+        # 와 `answers` 강제가 그 일을 한다. 질의 합성·회계·작업 카드는 종류(`ResidentLoop`)의 것.
+        loop_result, _duration = kind.run(kind.start(items))
+        success = bool(loop_result.success)
+        waiting = bool(getattr(loop_result, "waiting", False))
+        output = (
+            loop_result.output
+            if loop_result.output is not None
+            else "(agent did not complete the request)"
         )
-        success, output, duration = False, "", 0.0
-        waiting = False
-        try:
-            loop_result, duration = self._run_message(
-                tm,
-                query,
-                # 배치의 이미지는 항목 순서대로 한 레코드에 (v10.61.0)
-                query_images=[r for it in items for r in (it.get("images") or [])]
-                or None,
-                user_requests=user_requests,
-                # 한 레코드에 여럿이 합쳐진다 — 첫 요청 id 로 찍는다(핀)
-                query_request_id=user_requests[0]["id"] if user_requests else "",
-            )
-            success = bool(loop_result.success)
-            waiting = bool(getattr(loop_result, "waiting", False))
-            output = (
-                loop_result.output
-                if loop_result.output is not None
-                else "(agent did not complete the request)"
-            )
-        except Exception as e:
-            output = f"agent internal error: {type(e).__name__}: {e}"
-        finally:
-            renderer.end_agent_work(
-                key=tm.key,
-                item=iid,
-                success=success,
-                duration_s=duration,
-                error="" if success else output[:200],
-            )
         # 사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
         # current_author) — 여기 빠뜨리면 알림이 가장 필요한 곳에 없다.
         output = self._with_human_notice(tm, iid, output)
@@ -3261,86 +3164,6 @@ class AgentRegistry:
         self.run_ended(me, output, waiting=waiting, stopped=tm.stop_event.is_set())
         # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
         self._close_run(tm, len(items))
-
-    def _run_message(
-        self,
-        tm: AgentInstance,
-        query: str,
-        *,
-        user_requests=None,
-        query_request_id="",
-        query_images: list[dict] | None = None,
-    ):
-        """request 1건 실행 — 실제 러너 또는 테스트 주입 러너.
-
-        ``query_images`` (v10.61.0): 시작 메시지의 이미지 참조 → 런의 첫 user
-        레코드 ``images``.
-
-        ``user_requests`` (v9.22.0): 사람이 창에서 직접 시킨 요청들
-        ``{id, author, text}`` — 루프의 장부(`LoopState.ledger`)에 오른다.
-        main 과 같은 규칙: `complete` 에 `answers` 가 있어야 하고, 남은 요청은
-        독촉된다. 에이전트·main 발신 항목엔 없다(그건 message/ask 빚이다)."""
-        runner = self._runner
-        if runner is None:
-            from agent_cli.subagent.runner import run_subagent_message
-
-            runner = run_subagent_message
-        rt = self.runtime
-        # v5.11: 상주 에이전트끼리 서로를 알고(로스터) 부를 수 있게(message)
-        # — registry 자체는 서브루프에 넘기지 않는다(agent 상주 모드 차단
-        # 유지). 로스터 문자열은 자기 자신 제외.
-        # v10.1.0: 시스템 프롬프트에는 **안내만**(정적, 캐시 친화) 싣고, 실제
-        # 로스터는 매 턴 꼬리(`peer_roster` 포트)로 간다 — 런 도중 spawn 된
-        # 동료가 그 런에서 안 보이던 문제(실측 cnr60g) 의 해소. main 의
-        # v8.46.0 이동과 같은 구조.
-        from agent_cli.prompts.system_prompt import (
-            build_live_agents_section,
-            build_peer_roster_intro,
-        )
-
-        peer_section = build_peer_roster_intro()
-
-        def peer_roster() -> str:
-            return build_live_agents_section(
-                self, exclude_key=tm.key, via_message_tool=True, include_state=True
-            )
-
-        from agent_cli.runtime import ports_for_resident
-
-        return runner(
-            query,
-            tm.ctx,
-            # ``ask_handler`` 없음 — 상주 에이전트의 ask 는 질문 포트로
-            # 간다(비블로킹). 죽은 블로킹 슬롯 경로는 C3 에서 제거했다.
-            ports=ports_for_resident(
-                key=tm.key,
-                message_handler=self._make_message_handler(tm),
-                questions=self.question_port(tm.key),
-                absorb_inbox=lambda: self.absorb_pending(tm),
-                peer_roster=peer_roster,
-            ),
-            peer_agents_section=peer_section,
-            user_requests=list(user_requests or []),
-            query_request_id=query_request_id,
-            query_images=list(query_images or []),
-            # 세션 바인딩을 참조한다 — 모델 노브가 바뀌면 팀원의 다음 호출도 따라간다.
-            # 프로파일이 모델을 고정한 팀원은 그 모델의 바인딩 복사본.
-            binding=(
-                rt["binding"].pinned(tm.model)
-                if rt.get("binding") is not None and tm.model
-                else rt.get("binding")
-            ),
-            max_turns=rt.get("max_turns", 0),
-            depth=rt.get("depth", 0),
-            max_depth=rt.get("max_depth", 2),
-            active_tools=tm.allowed_tools,
-            session=rt.get("session"),
-            agent_name=tm.profile_name,
-            stop_event=tm.stop_event,
-            agent_role=tm.role_prompt,
-            hooks_config=tm.hooks_config,
-            compaction_enabled=rt.get("compaction_enabled", True),
-        )
 
 
 class MailWaker:

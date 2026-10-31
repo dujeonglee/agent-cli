@@ -1,82 +1,48 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`run_skill` op 의 루프 레벨 처리 — 이름·인자 검사 뒤 `SkillLoop` 를 인스턴스화한다."""
 
 from __future__ import annotations
 
-import time
-
-from agent_cli.constants import (
-    OBS_SUCCESS,
-)
-from agent_cli.render import (
-    render_begin_scope,
-    render_end_scope,
-    render_pop_depth,
-    render_push_depth,
-)
+from agent_cli.constants import OBS_SUCCESS
+from agent_cli.loop.kind import Caller
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 
-
-def _handle_run_skill(
-    skill_input: dict,
-    binding,
-    ctx,
-    session,
-    parent_skill_name: str = "",
-    skill_stack: list[str] | None = None,
-    graceful_interrupt: bool = False,
-    stop_event=None,
-    hook_runner=None,
-    mcp_manager=None,
-    parent_hooks_config: dict | None = None,
-    parent_depth: int = 0,
-    max_depth: int = 2,
-    compaction_enabled: bool = True,
-    agent_registry=None,
-    *,
-    owner: str,
-):
-    """Handle run_skill at loop level with full ctx access."""
-    # Inline import: circular dependency — executor.py imports run_loop from this module
+def _handle_run_skill(skill_input: dict, caller: Caller) -> ToolResult:
+    """``run_skill`` — 스킬을 찾아 `SkillLoop(skill, arguments, caller).run()` 하고 관찰로
+    포장한다. 순환·깊이 가드는 여기(호출자 스택·깊이로 판정); 스코프·훅·ctx·result.md 는
+    종류의 것이다(v10.87.0 — 종전엔 이 함수와 `main._dispatch_skill` 이 같은 래퍼를 두 벌
+    들고 있었다)."""
     from agent_cli.recovery.recursion import (
         format_depth_limit_error,
         format_recursion_error,
     )
     from agent_cli.skills import load_skills
-    from agent_cli.skills.executor import execute_skill
+    from agent_cli.skills.executor import SkillLoop
 
     name = skill_input.get("name", "")
     arguments = skill_input.get("arguments", "")
-    # LLM might send arguments as dict instead of string
+    # LLM 이 인자를 dict 로 보내기도 한다
     if not isinstance(arguments, str):
         arguments = str(arguments) if arguments else ""
 
     if not name:
         return ToolResult(False, error="run_skill: `name` is required.")
 
-    # Cycle check (A → B → A). Stack lookup is O(N) but the stack
-    # is bounded by ``max_depth`` so this is effectively constant.
-    if skill_stack and name in skill_stack:
+    # 순환(A → B → A) — 스택은 max_depth 로 유계라 사실상 상수 시간
+    if caller.skill_stack and name in caller.skill_stack:
         return ToolResult(
             False,
-            error=format_recursion_error("skill", name, list(skill_stack)),
+            error=format_recursion_error("skill", name, list(caller.skill_stack)),
         )
-
-    # Depth ceiling — belt-and-suspenders. The AgentLoop init has
-    # already removed ``run_skill`` from the tools_list when we hit
-    # the limit, so a model going through the normal dispatch path
-    # never reaches this branch. Direct callers (tests, custom
-    # active_tools, future integrations) hit it here with the same
-    # message the LLM would otherwise see.
-    if parent_depth >= max_depth:
+    # 깊이 상한 — 엔진 필터가 상한에서 `run_skill` 을 뺐으므로 보통 디스패치는 여기 오지
+    # 않는다; 직접 호출(테스트·custom tools)이 같은 문구를 받게 남긴다.
+    if caller.depth >= caller.max_depth:
         return ToolResult(
             False,
-            error=format_depth_limit_error("skill", name, parent_depth, max_depth),
+            error=format_depth_limit_error(
+                "skill", name, caller.depth, caller.max_depth
+            ),
         )
 
     skills = load_skills()
@@ -85,78 +51,13 @@ def _handle_run_skill(
         return ToolResult(
             False, error=f"Skill '{name}' not found. Available: {available}"
         )
-
     skill = skills[name]
     if skill.disable_model_invocation:
         return ToolResult(
             False, error=f"Skill '{name}' is user-only (disable-model-invocation)."
         )
 
-    # OnSkillStart hook
-    if hook_runner:
-        hook_runner.fire(
-            "OnSkillStart",
-            tool_name="run_skill",
-            tool_input=skill_input,
-            mcp_manager=mcp_manager,
-        )
-
-    import uuid as _uuid
-
-    _scope_id = f"skill-{name}-{_uuid.uuid4().hex[:8]}"
-    # Name the skill's ctx dir HERE (not in execute_skill) so the scope event
-    # can carry it — the resume replay reads that dir to put the skill's inner
-    # turns back inside its card.
-    from agent_cli.context.session import SKILL_PREFIX
-    from agent_cli.subagent.report import generate_subdir_name
-
-    _skill_dir = generate_subdir_name(SKILL_PREFIX, name)
-    render_begin_scope(_scope_id, "skill", f"skill:{name}", ctx_dir=_skill_dir)
-    render_push_depth()
-    t0 = time.monotonic()
-
-    try:
-        skill_result = execute_skill(
-            owner=owner,
-            skill=skill,
-            arguments=arguments,
-            binding=binding,  # 세션의 모델 바인딩 — 스킬마다 프로바이더를 새로 만들지 않는다
-            max_depth=max_depth,
-            ctx=ctx,
-            session=session,
-            skill_stack=skill_stack,
-            graceful_interrupt=graceful_interrupt,
-            stop_event=stop_event,
-            parent_hooks_config=parent_hooks_config,
-            parent_depth=parent_depth,
-            compaction_enabled=compaction_enabled,
-            agent_registry=agent_registry,
-            session_subdir=_skill_dir,
-            # 카드/스냅샷 scope_id 통일 — execute_skill 이 별도 스코프를 또
-            # 열지 않고 이 스코프에 귀속(카드 data-task-id 로 인스펙션됨).
-            scope_id=_scope_id,
-        )
-    except Exception as e:
-        _debug_log(f"run_skill({name}) exception: {e}")
-        skill_result = ToolResult(False, error=f"run_skill({name}) failed: {e}")
-    finally:
-        render_pop_depth()
-        render_end_scope(
-            _scope_id,
-            "skill",
-            success=skill_result.success if skill_result else False,
-            duration_s=time.monotonic() - t0,
-        )
-
-    # OnSkillEnd hook
-    if hook_runner:
-        hook_runner.fire(
-            "OnSkillEnd",
-            tool_name="run_skill",
-            tool_input=skill_input,
-            skill_result=skill_result,
-            mcp_manager=mcp_manager,
-        )
+    skill_result = SkillLoop(skill, arguments, caller, tool_input=skill_input).run()
 
     if isinstance(skill_result, ToolResult) and not skill_result.success:
         if skill_result.error and skill_result.error.startswith("run_skill("):
@@ -166,8 +67,4 @@ def _handle_run_skill(
     skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
     body = skill_result.output or skill_result.error or "(skill returned no result)"
     obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
-
     return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
-
-
-# Regex: simple echo with no pipes, redirects, subshells, or chaining

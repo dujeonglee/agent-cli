@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, fields
 from typing import Any
 
+from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.ports import LoopPorts
 
 
@@ -153,7 +154,7 @@ def wire_monitor_delivery(registry, monitors) -> None:
 
 def build_hook_runner():
     """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
-    빌더(`ports_for_main/resident/skill/oneshot`)가 `hooks.runtime.get_hook_runner`
+    종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `hooks.runtime.get_hook_runner`
     로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 `LoopConfig.hooks_config`
     경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
     푼다."""
@@ -381,13 +382,14 @@ def teardown_session(
         finalize_session(session, ctx)
 
 
-# ── 루프 포트 빌더 — 조립 지점 다섯의 단일 정의 (DESIGN.md §4.4) ──────
+# ── 루프 포트 — 종류마다 `make_ports` (v10.87.0 LoopKind; 종전 `ports_for_*` 넷) ──
 #
 # 종전엔 다섯 곳이 각자 부분집합을 손으로 나열했고, 포트 여덟 중 일곱이
 # 어딘가에선 빠져 있었다 — 그게 의도인지 사고인지 코드 어디에도 없었다.
-# 여기 모아 두면 §2.2 의 표가 **코드가 되고**, 나란히 비교된다.
+# 지금은 종류 객체(`MainLoop`·`PrivateLoop`·`ResidentLoop`·`SkillLoop`)의
+# `make_ports` 가 그 자리다; 사유 상수·훅 포트 헬퍼는 여기 남아 종류들이 쓴다.
 #
-# ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **아래 다섯이 전부
+# ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **네 `make_ports` 가 전부
 # 즉시 안 만들어진다** — 호스트마다 "연결" 또는 "이래서 미연결" 중 하나를
 # 쓸 수밖에 없다. 사유 문자열은 **문서**지 검증물이 아니다(진위는 아무도
 # 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
@@ -401,7 +403,7 @@ _NO_HOOK_RUNNER = (
 
 
 def _hook_runner_port():
-    """네 포트 빌더가 같은 세션 러너를 받는다 (v10.35.0)."""
+    """모든 종류의 `make_ports` 가 같은 세션 러너를 받는다 (v10.35.0)."""
     from agent_cli.hooks.runtime import get_hook_runner
 
     return get_hook_runner()
@@ -638,69 +640,82 @@ def _main_questions(agent_registry):
     return agent_registry.question_port(None) if agent_registry else None
 
 
-def ports_for_main(
-    *,
-    agent_registry,
-    mcp_manager,
-    dequeue_user_message,
-    route_message,
-) -> LoopPorts:
-    """main 루프의 턴 — run 과 web 이 같다 (v10.33.0, docs/pump/DESIGN.md).
+class MainLoop(LoopKind):
+    """main 루프의 종류 — 세션에 하나, ``run(start)`` 은 요청(`RunRequest`)마다 (v10.87.0).
 
-    종전엔 ``ports_for_run``(주입 없음)과 ``ports_for_web``(주입 있음)이
-    갈렸다. 세션 펌프가 하나가 되면서 run 도 런 도중 주입을 받는다 — 예약
-    발화가 다음 턴 경계에 요청으로 합류하고, 합성 깨우기는 ``SessionPump.
-    route`` 가 소비한다. ``route_message`` 는 펌프의 메서드라 세션 수명이다.
+    run 과 web 이 같다(v10.33.0, docs/pump/DESIGN.md): 펌프가 요청을 꺼내 `start(req)` 로
+    넘기고, 결과·`run_ended`·표면 알림은 펌프가 한다(호스트의 것). 깊이 0, 도구 전부(MCP 포함),
+    세션 ctx 그대로, 런마다 거둘 것 없음(세션 teardown 이 전부). ``route_message`` 는 펌프의
+    메서드라 세션 수명이고 펌프보다 먼저 만들어지므로 호출 시점에 푸는 콜러블로 받는다.
     """
-    return LoopPorts(
-        owner="main",
-        questions=_main_questions(agent_registry),
-        agent_registry=agent_registry,
-        mcp_manager=mcp_manager,
-        dequeue_user_message=dequeue_user_message,
-        route_message=route_message,
-        message_handler=None,
-        hook_runner=_hook_runner_port(),
-        absorb_inbox=None,
-        peer_roster=None,
-        unwired={
-            "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
-            **_hook_unwired(),
-            "absorb_inbox": _NO_INBOX,
-            "peer_roster": _RESIDENT_ROSTER,
-        },
-    )
 
+    def __init__(
+        self,
+        *,
+        binding,
+        ctx,
+        session,
+        agent_registry,
+        mcp_manager,
+        dequeue_user_message,
+        route_message,
+        max_turns: int,
+        max_depth: int,
+        verbose: bool,
+        record_turns: bool,
+        hooks_config: dict | None,
+        graceful_interrupt: bool,
+    ) -> None:
+        self.owner = "main"
+        self.binding = binding
+        self.ctx = ctx
+        self.session = session
+        self.max_turns = max_turns
+        self.max_depth = max_depth
+        self.verbose = verbose
+        self.record_turns = record_turns
+        self.hooks_config = hooks_config
+        self.graceful_interrupt = graceful_interrupt
+        self.ports = self.make_ports(
+            agent_registry=agent_registry,
+            mcp_manager=mcp_manager,
+            dequeue_user_message=dequeue_user_message,
+            route_message=route_message,
+        )
 
-def ports_for_skill(*, agent_registry, owner: str) -> LoopPorts:
-    """스킬 실행 루프.
+    @staticmethod
+    def make_ports(
+        *, agent_registry, mcp_manager, dequeue_user_message, route_message
+    ) -> LoopPorts:
+        return LoopPorts(
+            owner="main",
+            questions=_main_questions(agent_registry),
+            agent_registry=agent_registry,
+            mcp_manager=mcp_manager,
+            dequeue_user_message=dequeue_user_message,
+            route_message=route_message,
+            message_handler=None,
+            hook_runner=_hook_runner_port(),
+            absorb_inbox=None,
+            peer_roster=None,
+            unwired={
+                "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
+                **_hook_unwired(),
+                "absorb_inbox": _NO_INBOX,
+                "peer_roster": _RESIDENT_ROSTER,
+            },
+        )
 
-    ``owner`` 는 **부모에게서 물려받는다** — 상주 에이전트 안에서 돈 스킬이
-    건 모니터는 그 에이전트에게 보고해야 한다. 기본값을 두지 않는 이유는
-    그 상속이 빠지면 조용히 main 으로 가기 때문이다.
-    """
-    return LoopPorts(
-        owner=owner,
-        agent_registry=agent_registry,
-        questions=None,
-        mcp_manager=None,
-        message_handler=None,
-        hook_runner=_hook_runner_port(),
-        route_message=None,
-        dequeue_user_message=None,
-        absorb_inbox=None,
-        peer_roster=None,
-        unwired={
-            "questions": _AS_BEFORE,
-            "mcp_manager": _AS_BEFORE,
-            "message_handler": _AS_BEFORE,
-            **_hook_unwired(),
-            "route_message": _WEB_ONLY,
-            "dequeue_user_message": _WEB_ONLY,
-            "absorb_inbox": _NO_INBOX,
-            "peer_roster": _RESIDENT_ROSTER,
-        },
-    )
+    def start(self, req) -> Start:
+        """펌프의 `RunRequest` → 시작. 깨우기 런은 빈 질의(`loop_query`), 작성자는 깨우기 라벨."""
+        return Start(
+            query=req.loop_query,
+            images=list(req.images or []),
+            author=req.author,
+            author_is_user=req.author_is_user,
+            request_id=req.request_id,
+            stop_event=req.stop_event,
+        )
 
 
 def mail_record(mail: dict) -> dict:
@@ -767,60 +782,3 @@ def release_private_owner(owner: str) -> str:
     if reg is not None:
         reg.drop_mailbox(owner)
     return f"[{'; '.join(parts)}]" if parts else ""
-
-
-def ports_for_oneshot(*, owner: str) -> LoopPorts:
-    """one-shot delegate 와 하니스 작업의 런. ``owner`` 는 그 런의 **자기** private
-    주소(``run:<run_dir>``·``harness:<job>``, v10.84.0) — 종전엔 부모 주소를 물려받아
-    자기 잡의 통지가 부모에게 갔다. ``absorb_inbox`` 가 그 메일함을 턴 경계에 읽으므로
-    루프는 깨울 수 있고(`wakeable`) `wait` 가 광고된다; `wait` 는 런을 끝내는 대신
-    메일 도착까지 막는다(`dispatch._op_wait`)."""
-    return LoopPorts(
-        owner=owner,
-        questions=None,
-        agent_registry=None,
-        mcp_manager=None,
-        message_handler=None,
-        hook_runner=_hook_runner_port(),
-        route_message=None,
-        dequeue_user_message=None,
-        absorb_inbox=_private_inbox(owner),
-        peer_roster=None,
-        unwired={
-            "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
-            "questions": _AS_BEFORE,
-            "mcp_manager": _AS_BEFORE,
-            "message_handler": "one-shot 은 상주가 아니다 — 받을 상대가 없다",
-            **_hook_unwired(),
-            "route_message": _WEB_ONLY,
-            "dequeue_user_message": _WEB_ONLY,
-            "peer_roster": _RESIDENT_ROSTER,
-        },
-    )
-
-
-def ports_for_resident(
-    *, key: str, message_handler, questions, absorb_inbox, peer_roster
-) -> LoopPorts:
-    """상주 서브에이전트의 런. ``absorb_inbox`` (v9.25.0) 가 턴 경계마다
-    받은편지함을 이 런으로 흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에
-    실을 동료 로스터를 돌려준다."""
-    return LoopPorts(
-        owner=f"agent:{key}",
-        message_handler=message_handler,
-        questions=questions,
-        absorb_inbox=absorb_inbox,
-        peer_roster=peer_roster,
-        agent_registry=None,
-        mcp_manager=None,
-        hook_runner=_hook_runner_port(),
-        route_message=None,
-        dequeue_user_message=None,
-        unwired={
-            "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
-            "mcp_manager": _AS_BEFORE,
-            **_hook_unwired(),
-            "route_message": _WEB_ONLY,
-            "dequeue_user_message": _WEB_ONLY,
-        },
-    )

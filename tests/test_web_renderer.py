@@ -25,6 +25,7 @@ from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebConnection, WebRenderer
 from agent_cli.web.instance_file import read_status_file
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 
 
 def _qget(conn, timeout=0.5):
@@ -2900,18 +2901,34 @@ class TestCtxDirWiring:
             captured = {}
 
             class FakeSkill:
-                disable_model_invocation = False
+                def __init__(self):
+                    self.name = "plan"
+                    self.disable_model_invocation = False
+                    self.prompt_template = "do it"
+                    self.allowed_tools = []
+                    self.max_turns = 0
+                    self.model = ""
+                    self.hooks = {}
+                    self.source_path = ""
 
-            def fake_execute(**kw):
-                captured["session_subdir"] = kw.get("session_subdir")
+            from agent_cli.skills.executor import SkillLoop
+
+            def fake_run_loop(**kw):
                 from agent_cli.tools.result import ToolResult
 
                 return ToolResult(True, output="done")
 
+            _orig_init = SkillLoop.__init__
+
+            def spy_init(self, *a, **kw):
+                _orig_init(self, *a, **kw)
+                captured["session_subdir"] = self.dir_name
+
             monkeypatch.setattr(
                 "agent_cli.skills.load_skills", lambda: {"plan": FakeSkill()}
             )
-            monkeypatch.setattr("agent_cli.skills.executor.execute_skill", fake_execute)
+            monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
+            monkeypatch.setattr(SkillLoop, "__init__", spy_init)
             from agent_cli.providers.capabilities import ModelCapabilities
 
             caps = ModelCapabilities(
@@ -2921,19 +2938,20 @@ class TestCtxDirWiring:
             )
             skill_invoke._handle_run_skill(
                 {"name": "plan", "arguments": ""},
-                binding=make_binding(
-                    provider_name="openai",
-                    base_url="",
-                    api_key="",
-                    capabilities=caps,
-                    model="m",
+                make_caller(
+                    binding=make_binding(
+                        provider_name="openai",
+                        base_url="",
+                        api_key="",
+                        capabilities=caps,
+                        model="m",
+                    ),
+                    ctx=None,
+                    session=None,
                 ),
-                ctx=None,
-                session=None,
-                owner="main",
             )
             start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
-            assert captured["session_subdir"], "execute_skill 에 dir 미전달"
+            assert captured["session_subdir"], "SkillLoop 에 dir 미전달"
             assert start.get("ctx_dir") == captured["session_subdir"]
             assert start["ctx_dir"].startswith("skill_plan_")
         finally:
@@ -2950,28 +2968,29 @@ class TestCtxDirWiring:
         무시되면 등식이 조용히 깨진다."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         class R:
             success = True
             output = "ok"
 
-        monkeypatch.setattr("agent_cli.skills.executor.run_loop", lambda **kw: R())
+        monkeypatch.setattr("agent_cli.loop.run_loop", lambda **kw: R())
         ctx = ContextManager(tmp_path, max_context_tokens=10000)
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
             supports_thinking=False,
         )
-        execute_skill(
-            skill=Skill(name="plan", description="", prompt_template="do it"),
-            arguments="",
-            binding=make_binding(provider=object(), capabilities=caps, model="m"),
-            ctx=ctx,
+        SkillLoop(
+            Skill(name="plan", description="", prompt_template="do it"),
+            "",
+            make_caller(
+                binding=make_binding(provider=object(), capabilities=caps, model="m"),
+                ctx=ctx,
+            ),
             session_subdir="skill_plan_PINNED_1",
-            owner="main",
-        )
+        ).run()
         # history.jsonl 은 첫 메시지에서 lazy 생성이라(스텁 루프는 무기록)
         # 디렉토리 자체 + 결과 산출물로 이름 준수를 확인한다.
         assert (tmp_path / "skill_plan_PINNED_1").is_dir()
@@ -2988,27 +3007,26 @@ class TestCtxDirWiring:
         )
 
     def test_run_single_honours_the_prenamed_dir(self, tmp_path, monkeypatch):
-        """_run_single 이 받은 이름 그대로 디렉토리를 만든다 — 전달돼도
+        """OneShotLoop 이 받은 이름 그대로 디렉토리를 만든다 — 전달돼도
         내부에서 재생성하면 사이드카와 어긋난다 (뮤테이션이 잡은 갭)."""
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
 
         class LR:
             success = True
             output = "ok"
 
-        monkeypatch.setattr(
-            "agent_cli.subagent.runner.run_subagent_message",
-            lambda *a, **kw: (LR(), 0.1),
-        )
+        monkeypatch.setattr("agent_cli.loop.run_loop", lambda **kw: LR())
         from agent_cli.context.manager import ContextManager
 
         parent = ContextManager(tmp_path, max_context_tokens=10000)
-        _run_single(
-            task="do",
-            parent_ctx=parent,
-            binding=make_binding(provider=object(), capabilities=self._caps()),
+        OneShotLoop(
+            {"task": "do"},
+            make_caller(
+                ctx=parent,
+                binding=make_binding(provider=object(), capabilities=self._caps()),
+            ),
             run_dir_name="run_task_PINNED_9",
-        )
+        ).run()
         assert (tmp_path / "run_task_PINNED_9").is_dir()
         assert (tmp_path / "run_task_PINNED_9" / "result.md").exists()
 
@@ -3020,14 +3038,17 @@ class TestCtxDirWiring:
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
         captured = {}
 
-        def fake_run_single(**kw):
-            captured["run_dir_name"] = kw.get("run_dir_name")
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
+        def fake_run(kind):
+            captured["run_dir_name"] = kind.run_dir_name
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
+        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(fake_run))
         tool_delegate(
-            args={"tasks": [{"task": "t", "agent": "explorer"}]},
-            binding=make_binding(capabilities=self._caps()),
+            {"tasks": [{"task": "t", "agent": "explorer"}]},
+            make_caller(binding=make_binding(capabilities=self._caps())),
         )
         start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
         assert captured["run_dir_name"]
@@ -3042,14 +3063,17 @@ class TestCtxDirWiring:
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
         captured = []
 
-        def fake_run_single(**kw):
-            captured.append(kw.get("run_dir_name"))
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
+        def fake_run(kind):
+            captured.append(kind.run_dir_name)
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
+        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(fake_run))
         _run_parallel(
             [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
-            binding=make_binding(capabilities=self._caps()),
+            make_caller(binding=make_binding(capabilities=self._caps())),
         )
         starts = {
             dict(d)["ctx_dir"]

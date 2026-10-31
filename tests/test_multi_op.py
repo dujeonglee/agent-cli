@@ -526,7 +526,7 @@ class TestMultiOpDelegateParallel:
 
         calls = []
 
-        def fake_tool_delegate(args, **kw):
+        def fake_tool_delegate(args, caller):
             calls.append(args.get("tasks"))
             return ToolResult(True, output="STATUS: success\nRESULT:\nok")
 

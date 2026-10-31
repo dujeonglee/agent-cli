@@ -16,6 +16,7 @@ from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
 from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
 
 # All tests in this file require a live omlx server.
@@ -180,7 +181,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """Run a review skill with a real file → result contains analysis."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         test_file = tmp_path / "sample.py"
@@ -196,16 +197,17 @@ class TestSkillExecution:
             max_turns=5,
         )
 
-        result = execute_skill(
-            skill=skill,
-            arguments=str(test_file),
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            str(test_file),
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert len(result.output) > 10
 
@@ -213,7 +215,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """Run a summarize skill → result contains summary."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         test_file = tmp_path / "readme.txt"
@@ -229,16 +231,17 @@ class TestSkillExecution:
             max_turns=8,
         )
 
-        result = execute_skill(
-            skill=skill,
-            arguments=str(test_file),
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            str(test_file),
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert len(result.output) > 10
 
@@ -247,7 +250,7 @@ class TestSkillExecution:
     ):
         """context: fork → skill runs in independent context and returns result."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         test_file = tmp_path / "fork_test.txt"
@@ -269,17 +272,18 @@ class TestSkillExecution:
             session_dir=tmp_path,
             max_context_tokens=model_capabilities.context_window,
         )
-        result = execute_skill(
-            skill=skill,
-            arguments=str(test_file),
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            str(test_file),
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                ),
+                ctx=ctx,
             ),
-            ctx=ctx,
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert "FORK_CONTENT_ABC" in result.output
 
@@ -289,7 +293,7 @@ class TestSkillExecution:
         """!`command` in skill template → shell output injected before LLM sees it."""
         import datetime
 
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         skill = Skill(
@@ -302,16 +306,17 @@ class TestSkillExecution:
             max_turns=3,
         )
 
-        result = execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert (
             str(datetime.datetime.now(tz=datetime.timezone.utc).year) in result.output
@@ -321,7 +326,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities
     ):
         """allowed-tools: [shell] → LLM uses shell tool to complete task."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         skill = Skill(
@@ -335,16 +340,17 @@ class TestSkillExecution:
             max_turns=5,
         )
 
-        result = execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert "SHELL_ONLY_MARKER_99" in result.output
 
@@ -352,7 +358,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """skills/<name>/SKILL.md directory structure loads and executes."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.loader import _parse_skill_file
 
         skill_dir = tmp_path / "greet"
@@ -369,16 +375,17 @@ class TestSkillExecution:
         skill = _parse_skill_file(skill_dir / "SKILL.md")
         assert skill is not None
 
-        result = execute_skill(
-            skill=skill,
-            arguments="Alice",
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            "Alice",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert len(result.output) > 0
 
@@ -386,7 +393,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities
     ):
         """$ARGUMENTS[N] bracket notation substitutes correctly."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
 
         skill = Skill(
@@ -399,16 +406,17 @@ class TestSkillExecution:
             max_turns=3,
         )
 
-        result = execute_skill(
-            skill=skill,
-            arguments="elephant mouse",
-            binding=make_binding(
-                provider=omlx_provider,
-                capabilities=model_capabilities,
-                model=integration_model,
+        result = SkillLoop(
+            skill,
+            "elephant mouse",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    capabilities=model_capabilities,
+                    model=integration_model,
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result.success
         assert len(result.output) > 5
 

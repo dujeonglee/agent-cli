@@ -1,4 +1,4 @@
-"""`LoopPorts` 와 조립 지점 다섯 (docs/wiring/DESIGN.md §4, C3).
+"""`LoopPorts` 와 종류별 `make_ports` (docs/wiring/DESIGN.md §4, C3; v10.87.0 LoopKind).
 
 배선 누락은 이 저장소에서 세 번 났고 셋 다 유닛 테스트가 초록이었다 —
 테스트가 협력자를 **직접 만들어** 검사하니 조립 지점이 그걸 넘기는지는
@@ -20,27 +20,26 @@ from dataclasses import MISSING, fields
 
 import pytest
 
+from agent_cli.loop.kind import PrivateLoop
 from agent_cli.loop.ports import LoopPorts
-from agent_cli.runtime import (
-    ports_for_main,
-    ports_for_oneshot,
-    ports_for_resident,
-    ports_for_skill,
-)
+from agent_cli.runtime import MainLoop
+from agent_cli.skills.executor import SkillLoop
+from agent_cli.subagent.resident_loop import ResidentLoop
 
-#: 조립 지점 다섯 — 각 입력은 **None 이 아닌 센티넬**이다. 빌더가 자기
-#: 입력을 흘리는지를 봐야지, 호출자가 None 을 준 결과를 보면 안 된다.
+#: 조립 지점 — 종류마다 `make_ports` (v10.87.0; 종전 `runtime.ports_for_*`). 각 입력은
+#: **None 이 아닌 센티넬**이다. 빌더가 자기 입력을 흘리는지를 봐야지, 호출자가 None 을
+#: 준 결과를 보면 안 된다. 하니스 작업은 one-shot 과 같은 `PrivateLoop.make_ports`.
 _S = object()
 BUILDERS = {
-    "main": lambda: ports_for_main(
+    "main": lambda: MainLoop.make_ports(
         agent_registry=_Reg(),
         mcp_manager=_S,
         dequeue_user_message=_S,
         route_message=_S,
     ),
-    "skill": lambda: ports_for_skill(agent_registry=_Reg(), owner="agent:parent"),
-    "oneshot": lambda: ports_for_oneshot(owner="agent:parent"),
-    "resident": lambda: ports_for_resident(
+    "skill": lambda: SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
+    "oneshot": lambda: PrivateLoop.make_ports("run:task_1"),
+    "resident": lambda: ResidentLoop.make_ports(
         key="k1", message_handler=_S, questions=_S, absorb_inbox=_S, peer_roster=_S
     ),
 }
@@ -125,22 +124,23 @@ class TestOwner:
     def test_main_host_is_main(self):
         assert BUILDERS["main"]().owner == "main"
 
-    @pytest.mark.parametrize("host", ["skill", "oneshot"])
-    def test_nested_hosts_inherit_the_parent(self, host):
-        """상주 에이전트 안에서 돈 스킬·delegate 가 건 모니터는 **그
-        에이전트**에게 보고해야 한다. 기본값을 두면 조용히 main 으로 간다."""
-        assert BUILDERS[host]().owner == "agent:parent"
+    def test_skill_inherits_the_parent(self):
+        """상주 에이전트 안에서 돈 스킬이 건 모니터는 **그 에이전트**에게 보고해야 한다.
+        기본값을 두면 조용히 main 으로 간다."""
+        assert BUILDERS["skill"]().owner == "agent:parent"
+
+    def test_oneshot_has_its_own_address(self):
+        """one-shot 은 부모 주소를 빌리지 않는다 (v10.84.0) — `run:<run_dir>`."""
+        assert BUILDERS["oneshot"]().owner == "run:task_1"
 
     @pytest.mark.parametrize("builder", ["skill", "oneshot"])
     def test_nested_builders_require_an_owner(self, builder):
         """기본값이 없어야 상속 누락이 TypeError 가 된다."""
-        from agent_cli.runtime import ports_for_oneshot, ports_for_skill
-
         with pytest.raises(TypeError):
             (
-                ports_for_skill(agent_registry=None)
+                SkillLoop.make_ports(agent_registry=None)
                 if builder == "skill"
-                else ports_for_oneshot()
+                else PrivateLoop.make_ports()
             )
 
 

@@ -7,8 +7,8 @@ output format, persistence, iterations, and integration.
 from __future__ import annotations
 
 from agent_cli.subagent.oneshot import (  # noqa: F401
+    OneShotLoop,
     _run_parallel,
-    _run_single,
     tool_delegate,
 )
 from agent_cli.subagent.report import (
@@ -19,6 +19,7 @@ from agent_cli.subagent.report import (
     _summarize_action,
 )
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 
 # ── Test helpers ─────────────────────────────────────────────
 # Fixtures produce the REAL on-disk assistant record shapes the extractors
@@ -512,31 +513,32 @@ class TestIterationsAreTurnsRun:
 
         from agent_cli.tools.result import ToolResult
 
-        def fake_run(task, ctx, **kw):
+        def fake_run(**kw):
+            ctx = kw["ctx"]
             for t in range(1, 61):  # 루프가 매 턴 찍는 것과 같이
                 ctx.set_turn(t)
                 ctx.add(_make_action_msg("shell", {"command": f"echo {t}"}))
                 ctx.add(_make_obs_msg("ok"))
-            return ToolResult(False, error="Max turns (60) reached"), 1.0
+            return ToolResult(False, error="Max turns (60) reached")
 
-        with patch(
-            "agent_cli.subagent.runner.run_subagent_message", side_effect=fake_run
-        ):
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run):
             from unittest.mock import MagicMock
 
             from agent_cli.providers.capabilities import ModelCapabilities
 
-            r = _run_single(
-                task="t",
-                binding=make_binding(
-                    provider=MagicMock(),
-                    capabilities=ModelCapabilities(8192, 2048, False),
-                    model="m",
+            r = OneShotLoop(
+                {"task": "t"},
+                make_caller(
+                    binding=make_binding(
+                        provider=MagicMock(),
+                        capabilities=ModelCapabilities(8192, 2048, False),
+                        model="m",
+                    ),
+                    ctx=None,
+                    session=None,
                 ),
-                parent_ctx=None,
-                session=None,
                 run_dir_name="run_x",
-            )
+            ).run()
         text = r.error or r.output
         assert "... and 40 more" in text  # 로그는 여전히 20줄로 잘린다
         assert "[Subagent used 60 iterations]" in text

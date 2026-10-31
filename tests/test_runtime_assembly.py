@@ -478,7 +478,7 @@ class TestRunCommandTeardownIntegration:
                     return_value=dispatch_result,
                 )
             )
-            st.enter_context(patch("agent_cli.main.run_loop", run_loop))
+            st.enter_context(patch("agent_cli.loop.run_loop", run_loop))
             st.enter_context(patch("agent_cli.pump.SessionPump", pump))
             td = st.enter_context(patch("agent_cli.runtime.teardown_session"))
             result = self._invoke_cli(query, *args)

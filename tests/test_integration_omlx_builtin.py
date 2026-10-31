@@ -16,6 +16,7 @@ import pytest
 
 from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
+from tests.loop_kinds import make_caller
 
 pytestmark = pytest.mark.omlx_integration
 
@@ -36,7 +37,7 @@ class TestCodeAnalystAgent:
         )
 
         result = tool_delegate(
-            args={
+            {
                 "tasks": [
                     {
                         "task": f"Read {test_file} and explain what it does. "
@@ -46,15 +47,17 @@ class TestCodeAnalystAgent:
                     }
                 ]
             },
-            binding=make_binding(
-                provider=omlx_provider,
-                model=integration_model,
-                capabilities=model_capabilities,
-                provider_name="openai",
-                base_url=OMLX_BASE_URL,
-                api_key="",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    model=integration_model,
+                    capabilities=model_capabilities,
+                    provider_name="openai",
+                    base_url=OMLX_BASE_URL,
+                    api_key="",
+                ),
+                max_turns=5,
             ),
-            max_turns=5,
         )
         assert result.success
         assert "add" in result.output.lower() or "calculator" in result.output.lower()
@@ -69,7 +72,7 @@ class TestCodeAnalystAgent:
         test_file.write_text("Hello World")
 
         result = tool_delegate(
-            args={
+            {
                 "tasks": [
                     {
                         "task": f"Read {test_file} and tell me its content.",
@@ -78,15 +81,17 @@ class TestCodeAnalystAgent:
                     }
                 ]
             },
-            binding=make_binding(
-                provider=omlx_provider,
-                model=integration_model,
-                capabilities=model_capabilities,
-                provider_name="openai",
-                base_url=OMLX_BASE_URL,
-                api_key="",
+            make_caller(
+                binding=make_binding(
+                    provider=omlx_provider,
+                    model=integration_model,
+                    capabilities=model_capabilities,
+                    provider_name="openai",
+                    base_url=OMLX_BASE_URL,
+                    api_key="",
+                ),
+                max_turns=5,
             ),
-            max_turns=5,
         )
         assert result.success
         output = result.output
@@ -108,7 +113,7 @@ class TestPlanSkill:
         """Plan skill creates a markdown file in the plan/ directory."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.skills import load_skills
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
 
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -122,17 +127,18 @@ class TestPlanSkill:
                 max_context_tokens=model_capabilities.context_window,
             )
 
-            result = execute_skill(
-                skill=skill,
-                arguments="add a hello command that prints hello world",
-                binding=make_binding(
-                    provider=omlx_provider,
-                    capabilities=model_capabilities,
-                    model=integration_model,
+            result = SkillLoop(
+                skill,
+                "add a hello command that prints hello world",
+                make_caller(
+                    binding=make_binding(
+                        provider=omlx_provider,
+                        capabilities=model_capabilities,
+                        model=integration_model,
+                    ),
+                    ctx=ctx,
                 ),
-                ctx=ctx,
-                owner="main",
-            )
+            ).run()
             assert result.success
 
             plan_dir = tmp_path / "plan"
@@ -149,7 +155,7 @@ class TestPlanSkill:
         """Plan skill returns a meaningful summary via complete."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.skills import load_skills
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
 
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -162,17 +168,18 @@ class TestPlanSkill:
                 max_context_tokens=model_capabilities.context_window,
             )
 
-            result = execute_skill(
-                skill=skill,
-                arguments="add a version command that shows the current version",
-                binding=make_binding(
-                    provider=omlx_provider,
-                    capabilities=model_capabilities,
-                    model=integration_model,
+            result = SkillLoop(
+                skill,
+                "add a version command that shows the current version",
+                make_caller(
+                    binding=make_binding(
+                        provider=omlx_provider,
+                        capabilities=model_capabilities,
+                        model=integration_model,
+                    ),
+                    ctx=ctx,
                 ),
-                ctx=ctx,
-                owner="main",
-            )
+            ).run()
             assert result.success
             assert len(result.output) > 20
         finally:

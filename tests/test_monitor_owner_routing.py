@@ -6,7 +6,7 @@
 프로세스 전역으로 가서 서브에이전트에서도 됐는데, 배달은 main 의 턴 경계가
 `drain()` 으로 **전부** 가져갔다. 주소라는 개념이 아예 없었다.
 
-여기 있는 것은 그 주소가 (a) 도구까지 **닿고** (b) 중첩 루프로 **상속되고**
+여기 있는 것은 그 주소가 (a) 도구까지 **닿고** (b) 종류(`LoopKind`)만이 **정하고**
 (c) 소유자가 죽으면 **정리되는지** 를 고정한다.
 """
 
@@ -108,102 +108,76 @@ class TestToolKnowsItsAddress:
         assert not res.success and "delivery is not wired" in res.error
 
 
-# ── ② 주소가 중첩 루프로 상속된다 ──────────────────────
+# ── ② 주소는 종류가 정한다 ─────────────────────────────
 
-#: 중첩 seam 전수 (docs/wiring §3.4). 여기 없는 경로로 루프가 열리면
-#: 그 안에서 건 감시가 조용히 main 으로 간다.
-NESTED_SEAMS = {
-    "run_loop",
-    "_handle_run_skill",
-    "execute_skill",
-    "run_subagent_message",
-}
-
-#: one-shot 의 세 seam(`tool_delegate`·`_run_single`·`_run_parallel`)은 v10.84.0 부터
-#: 주소를 **상속하지 않는다** — `_execute_single_task` 가 자기 주소 `run:<run_dir>` 를
-#: 만든다(docs/wait/DESIGN.md §7). 스킬은 여전히 상속한다(상주 안의 스킬이 건 모니터는
-#: 그 에이전트에게 보고해야 한다).
-ONESHOT_SEAMS = {
-    "tool_delegate",
-    "_run_single",
-    "_run_parallel",
-    "_execute_single_task",
-}
-
-#: 이 둘은 주소를 **`ports` 안에** 담아 나른다 — 루프를 직접 만드는
-#: 지점이라 포트 묶음 전체를 받는 쪽이 자연스럽다. 나머지 다섯은 아직
-#: 자기 포트를 짓기 전이라 `owner` 스칼라를 받는다.
-CARRIES_VIA_PORTS = {"run_loop", "run_subagent_message"}
+#: `LoopPorts` 를 만드는 자리는 종류의 `make_ports` 뿐이다 (v10.87.0 LoopKind). 다른
+#: 곳에서 포트를 조립하면 주소가 손으로 적히고, 그 손이 빠뜨린 상속은 조용히 main 으로
+#: 간다 — 이 저장소의 배선 사고 모양 그대로.
+PORT_FACTORY = "make_ports"
 
 
-class TestOwnerIsInherited:
-    def test_every_nested_seam_requires_an_owner(self):
-        """기본값이 있으면 상속 누락이 **조용하다** — 상주 에이전트 안의
-        스킬이 main 으로 등록되고 아무 에러도 안 난다. 이 저장소의 배선
-        사고와 정확히 같은 모양이라, 빠뜨리면 TypeError 가 나야 한다.
-
-        (`run_loop` 은 `ports.owner` 로 받으므로 `ports` 가 그 자리다.)
-        """
-        missing = []
-        for f in pathlib.Path("agent_cli").rglob("*.py"):
-            tree = ast.parse(f.read_text())
-            for n in ast.walk(tree):
-                if not isinstance(n, ast.FunctionDef) or n.name not in NESTED_SEAMS:
-                    continue
-                want = "ports" if n.name in CARRIES_VIA_PORTS else "owner"
-                args = n.args
-                named = [a.arg for a in args.args + args.kwonlyargs]
-                if want not in named:
-                    missing.append(f"{f}:{n.lineno} {n.name} — {want} 없음")
-                    continue
-                # 기본값이 붙어 있으면 누락이 조용해진다.
-                if want in [a.arg for a in args.kwonlyargs]:
-                    i = [a.arg for a in args.kwonlyargs].index(want)
-                    if args.kw_defaults[i] is not None:
-                        missing.append(f"{f}:{n.lineno} {n.name} — {want} 에 기본값")
-        assert missing == [], missing
-
-    def test_every_nested_call_passes_an_owner(self):
-        """선언만 무기본값이면 호출부가 빠뜨릴 때 TypeError 가 나지만,
-        그건 **런타임**이다. 소스에서도 고정해 둔다 — 드물게 도는 경로가
-        릴리스 뒤에야 터지는 것이 이 클래스의 사고 방식이었다."""
+class TestOwnerIsDecidedByTheKind:
+    def test_ports_are_built_only_inside_make_ports(self):
         bad = []
         for f in pathlib.Path("agent_cli").rglob("*.py"):
             tree = ast.parse(f.read_text())
             for n in ast.walk(tree):
-                if not isinstance(n, ast.Call):
+                if not isinstance(n, ast.FunctionDef):
                     continue
-                fn = (
-                    n.func.id
-                    if isinstance(n.func, ast.Name)
-                    else getattr(n.func, "attr", None)
-                )
-                if fn not in NESTED_SEAMS:
-                    continue
-                names = {k.arg for k in n.keywords}
-                want = "ports" if fn in CARRIES_VIA_PORTS else "owner"
-                if want not in names and None not in names:
-                    bad.append(f"{f}:{n.lineno} {fn} — {want} 없음")
+                for c in ast.walk(n):
+                    if (
+                        isinstance(c, ast.Call)
+                        and isinstance(c.func, ast.Name)
+                        and c.func.id == "LoopPorts"
+                        and n.name != PORT_FACTORY
+                    ):
+                        bad.append(f"{f}:{c.lineno} in {n.name}")
         assert bad == [], bad
 
-    def test_builders_carry_the_parent_owner(self):
-        from agent_cli.runtime import ports_for_oneshot, ports_for_skill
+    def test_caller_has_no_defaults(self):
+        """`Caller` 는 기본값이 없다 — 중첩 루프가 호출자 정보를 빠뜨리면 생성 시
+        TypeError. 기본값이 있으면 상속 누락이 **조용하다**."""
+        from dataclasses import MISSING, fields
 
-        assert ports_for_skill(agent_registry=None, owner="agent:p").owner == "agent:p"
-        assert ports_for_oneshot(owner="run:task_1").owner == "run:task_1"
+        from agent_cli.loop.kind import Caller
 
-    def test_oneshot_seams_do_not_take_an_owner(self):
-        """v10.84.0: one-shot 은 부모 주소를 빌리지 않는다 — `owner` 매개변수가 남아 있으면
-        누군가 다시 상속을 꽂을 수 있으니 소스에서 고정한다."""
-        leftovers = []
-        for f in pathlib.Path("agent_cli").rglob("*.py"):
-            tree = ast.parse(f.read_text())
-            for n in ast.walk(tree):
-                if isinstance(n, ast.FunctionDef) and n.name in ONESHOT_SEAMS:
-                    named = [a.arg for a in n.args.args + n.args.kwonlyargs]
-                    if "owner" in named:
-                        leftovers.append(f"{f}:{n.lineno} {n.name}")
-        assert leftovers == [], leftovers
+        optional = [
+            f.name
+            for f in fields(Caller)
+            if not (f.default is MISSING and f.default_factory is MISSING)
+        ]
+        assert optional == [], f"기본값이 붙은 필드: {optional}"
+        with pytest.raises(TypeError):
+            Caller(owner="agent:p")  # type: ignore[call-arg]
+
+    def test_skill_inherits_and_oneshot_owns_and_harness_is_labelled(self, tmp_path):
+        from agent_cli.harness.jobs import HarnessLoop
+        from agent_cli.skills.executor import SkillLoop
+        from agent_cli.skills.models import Skill
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.binding_support import make_binding
+        from tests.loop_kinds import make_caller
+
+        caller = make_caller(owner="agent:p", binding=make_binding(model="m"))
+        skill = Skill(name="s", description="", prompt_template="x")
+        assert SkillLoop(skill, "", caller).owner == "agent:p"
+        one = OneShotLoop({"task": "t", "agent": "w"}, caller)
+        assert one.owner == f"run:{one.run_dir_name}" and one.depth == 1
+        from agent_cli.context.manager import ContextManager
+
+        harness = HarnessLoop(
+            "auditor",
+            "12-40",
+            "task",
+            "body",
+            {},
+            runtime={"binding": make_binding(model="m")},
+            session_ctx=ContextManager(tmp_path / "s", max_context_tokens=1000),
+            stop_event=None,
+        )
+        assert (
+            harness.owner == "harness:auditor:12-40"
+        )  # D2: 라벨까지 — 겹치는 감사 둘이 한 주소였다
 
     def test_the_chain_survives_a_real_loop(self):
         """`ports.owner` → `LoopConfig.owner` → `RunContext.owner` 를

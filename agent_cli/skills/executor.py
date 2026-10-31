@@ -1,20 +1,19 @@
-"""Skill executor — substitute arguments and call run_loop."""
+"""Skill executor — 인자 치환(`substitute_arguments`)과 `SkillLoop` (`LoopKind`, v10.87.0)."""
 
 from __future__ import annotations
 
 import re
 import subprocess
-
-# execute_skill 의 agent_registry 기본값 sentinel — "미지정"(main 슬롯 자동
-# 상속)과 "명시 None"(registry 없음 = 서브에이전트 run-only 경계)을 구분한다.
-_INHERIT = object()
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
-from agent_cli.context.manager import ContextManager
-from agent_cli.loop import run_loop
-from agent_cli.runtime import ports_for_skill
+from agent_cli.loop.kind import Caller, LoopKind, LoopKindError, Start
 from agent_cli.skills.models import Skill
 from agent_cli.tools.result import ToolResult
+
+if TYPE_CHECKING:
+    from agent_cli.loop.ports import LoopPorts
 
 # Pattern for !`command` dynamic context injection
 _SHELL_INJECT_PATTERN = re.compile(r"!`([^`]+)`")
@@ -119,173 +118,223 @@ def substitute_arguments(
     return result
 
 
-def execute_skill(
-    skill: Skill,
-    arguments: str,
-    binding,
-    max_turns: int = 0,
-    verbose: bool = False,
-    max_depth: int = 2,
-    ctx: ContextManager | None = None,
-    session=None,
-    skill_stack: list[str] | None = None,
-    graceful_interrupt: bool = False,
-    stop_event=None,
-    parent_tools: list[str] | None = None,
-    parent_role: str = "",
-    parent_hooks_config: dict | None = None,
-    parent_depth: int = 0,
-    compaction_enabled: bool = True,
-    agent_registry=_INHERIT,
-    session_subdir: str = "",
-    scope_id: str = "",
-    *,
-    owner: str,
-):
-    """Execute a skill by substituting arguments and calling run_loop.
+class SkillLoop(LoopKind):
+    """스킬 실행 — 호출마다 하나, ``SkillLoop(skill, arguments, caller).run()``.
 
-    Tool intersection: skill's allowed_tools ∩ parent_tools.
-    If intersection is empty, execution is rejected.
-    Parent role is inherited for system prompt.
+    스킬은 **호출자의 일**이다(독립 one-shot 과 달리): 주소·레지스트리·역할·도구 범위·
+    바인딩·스택을 호출자(`Caller`)에게서 받는다. main 아래면 main 레지스트리를 상속해
+    spawn 할 수 있고(orchestrate 류의 존재 이유), 서브에이전트 아래면 run-only 다. 깊이는
+    호출자 +1 — 스킬→스킬 재귀도 깊이가 막는다.
 
-    Hooks: parent_hooks_config is merged with the skill's own frontmatter
-    hooks (skill.hooks) so skill-local matchers layer on top of the
-    caller's hooks for the duration of this skill's execution.
+    - ⑤ 도구: ``skill.allowed_tools ∩ caller.tools`` (공통 없음이면 거절; 스킬에 제한이
+      없으면 호출자 범위). v10.87.0 D3: 종전엔 ``parent_tools`` 를 아무도 넘기지 않아 교집합이
+      죽어 있었다.
+    - ⑨ 역할: ``caller.agent_role`` (D3 — 상주 안의 스킬도 그 에이전트의 역할로 돈다).
+    - ⑬ ctx: 호출자 세션 아래 ``skill_<name>_…`` 서브디렉터리에 `create_subagent_ctx("none")`
+      — 종전엔 `ContextManager` 를 직접 만들어 사고·문법·샘플링·타임아웃·압축 비율을 빠뜨렸다.
+      호출자에 ctx 가 없으면(헤드리스) ctx 없이 돈다.
+    - ⑭ 스코프: 카드 하나(``kind="skill"``) + CLI 들여쓰기 + OnSkillStart/OnSkillEnd 훅 — 도구
+      길(`run_skill`)과 명령 길(`/skill`)이 같다(종전엔 `/skill` 에 훅이 없었다).
+    - ⑰ 결과: ``result.md`` 저장 → `ToolResult(True, output, artifact)` 또는
+      ``"Skill returned no result"``; 예외는 ``run_skill(<name>) failed: …``.
+    - ⑱ 정리: 없음 — 주소가 호출자 것이라 거둘 것이 없다.
     """
-    from pathlib import Path
 
-    from agent_cli.hooks import merge_hooks_configs
+    def __init__(
+        self,
+        skill: Skill,
+        arguments: str,
+        caller: Caller,
+        *,
+        scope_id: str = "",
+        session_subdir: str = "",
+        tool_input: dict | None = None,
+    ) -> None:
+        import uuid as _uuid
 
-    # registry 해석 (배선 통일, v7.17.0): 미지정(_INHERIT)이면 main 슬롯을
-    # 자동 상속 — 사용자 /skill dispatch 등 main 의 모든 skill 실행 경로가
-    # 별도 배선 없이 spawn 가능해진다. 명시 전달(None 포함)은 그대로 존중
-    # — 서브에이전트 루프의 dispatch 가 명시 None 을 넘겨 run-only 경계 유지.
-    if agent_registry is _INHERIT:
-        from agent_cli.subagent.agents_live import main_registry
+        from agent_cli.context.session import SKILL_PREFIX
+        from agent_cli.hooks import merge_hooks_configs
+        from agent_cli.subagent.report import generate_subdir_name
 
-        agent_registry = main_registry()
+        self.skill = skill
+        self.arguments = arguments
+        self.caller = caller
+        name = skill.name or "skill"
+        self.owner = caller.owner
+        self.depth = caller.depth + 1
+        self.max_depth = caller.max_depth
+        self.max_turns = skill.max_turns if skill.max_turns > 0 else caller.max_turns
+        # 스킬이 모델을 고정했으면 그 모델의 바인딩(능력·방언) — 세션 바인딩은 그대로.
+        self.binding = (
+            caller.binding.pinned(skill.model) if skill.model else caller.binding
+        )
+        self.hooks_config = merge_hooks_configs(caller.hooks_config, skill.hooks)
+        self.session = caller.session
+        self.compaction_enabled = caller.compaction_enabled
+        self.graceful_interrupt = caller.graceful_interrupt
+        self.verbose = caller.verbose
+        self.stop_event = caller.stop_event
+        self.skill_name = skill.name
+        self.skill_args = arguments
+        self.skill_stack = list(caller.skill_stack)
+        self.agent_stack = list(caller.agent_stack)
+        self.agent_role = caller.agent_role
+        self.ports = self.make_ports(
+            agent_registry=caller.agent_registry, owner=self.owner
+        )
+        self.scope_id = scope_id or f"skill-{name}-{_uuid.uuid4().hex[:8]}"
+        # 디렉토리 이름은 스코프를 열 때 정해져 사이드카의 ``ctx_dir`` 과 같아야 한다 —
+        # resume 이 카드 안의 턴을 거기서 다시 그린다.
+        self.dir_name = session_subdir or generate_subdir_name(SKILL_PREFIX, name)
+        self.tool_input = (
+            tool_input
+            if tool_input is not None
+            else {
+                "name": skill.name,
+                "arguments": arguments,
+            }
+        )
+        self.skill_ctx = None
 
-    # Tool intersection: skill tools ∩ parent tools
-    effective_tools = skill.allowed_tools
-    if effective_tools and parent_tools:
-        effective_tools = [t for t in effective_tools if t in parent_tools]
-        if not effective_tools:
-            skill_tools = ", ".join(skill.allowed_tools)
-            parent_str = ", ".join(parent_tools)
-            return ToolResult(
-                False,
-                error=f"Skill '{skill.name}' cannot run: "
-                f"no tools in common between skill ({skill_tools}) "
-                f"and parent ({parent_str})",
+    @staticmethod
+    def make_ports(*, agent_registry, owner: str) -> LoopPorts:
+        """스킬 루프의 포트. ``owner`` 는 호출자 것 — 상주 안에서 돈 스킬이 건 모니터는 그
+        에이전트에게 보고해야 한다(기본값 없음: 상속이 빠지면 조용히 main 으로 가므로)."""
+        from agent_cli.loop.ports import LoopPorts
+        from agent_cli.runtime import (
+            _AS_BEFORE,
+            _NO_INBOX,
+            _RESIDENT_ROSTER,
+            _WEB_ONLY,
+            _hook_runner_port,
+            _hook_unwired,
+        )
+
+        return LoopPorts(
+            owner=owner,
+            agent_registry=agent_registry,
+            questions=None,
+            mcp_manager=None,
+            message_handler=None,
+            hook_runner=_hook_runner_port(),
+            route_message=None,
+            dequeue_user_message=None,
+            absorb_inbox=None,
+            peer_roster=None,
+            unwired={
+                "questions": _AS_BEFORE,
+                "mcp_manager": _AS_BEFORE,
+                "message_handler": _AS_BEFORE,
+                **_hook_unwired(),
+                "route_message": _WEB_ONLY,
+                "dequeue_user_message": _WEB_ONLY,
+                "absorb_inbox": _NO_INBOX,
+                "peer_roster": _RESIDENT_ROSTER,
+            },
+        )
+
+    # ── ⑫ 시작 — 템플릿 치환 ──
+    def start(self) -> Start:
+        skill = self.skill
+        skill_dir = str(Path(skill.source_path).parent) if skill.source_path else ""
+        return Start(
+            query=substitute_arguments(
+                skill.prompt_template,
+                self.arguments,
+                skill_dir=skill_dir,
+                session_id="",
             )
-    elif not effective_tools and parent_tools:
-        # Skill has no tool restriction → use parent's tools
-        effective_tools = parent_tools
-
-    skill_dir = str(Path(skill.source_path).parent) if skill.source_path else ""
-    session_id = ""
-    prompt = substitute_arguments(
-        skill.prompt_template, arguments, skill_dir=skill_dir, session_id=session_id
-    )
-
-    effective_max_turns = skill.max_turns if skill.max_turns > 0 else max_turns
-    # 스킬이 모델을 고정했으면 그 모델의 바인딩(능력·방언) — 세션 바인딩은 그대로.
-    effective_binding = binding.pinned(skill.model) if skill.model else binding
-
-    # Skill creates its own subdir with history.jsonl
-    skill_ctx = None
-    skill_dir_name = ""
-    if ctx:
-        # ``session_subdir`` — pre-named by the scope-opening caller so the
-        # resume sidecar's ``ctx_dir`` and this ctx's actual directory agree
-        # (the card's inner turns replay from it). Self-naming stays as the
-        # fallback for direct callers/tests that never open a scope.
-        if session_subdir:
-            skill_dir_name = session_subdir
-        else:
-            from agent_cli.context.session import SKILL_PREFIX
-            from agent_cli.subagent.report import generate_subdir_name
-
-            skill_dir_name = generate_subdir_name(SKILL_PREFIX, skill.name or "skill")
-        skill_session_dir = ctx.session_dir / skill_dir_name
-        skill_ctx = ContextManager(
-            session_dir=skill_session_dir,
-            max_context_tokens=ctx._budget_override,
-            dialect=ctx.dialect,
-            binding=effective_binding,
         )
 
-    effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)
+    # ── ⑤·⑬ 도구 범위와 ctx ──
+    def make_ctx(self, start: Start):
+        from agent_cli.subagent.runner import create_subagent_ctx
 
-    # 프롬프트 인스펙터 스코프. skill 은 호출자 스레드에서 중첩 실행이라
-    # 시스템 스냅샷/동적 ctx 를 이 스코프에 귀속시킨다.
-    #
-    # ★ scope_id 통일 (인스펙터 재설계): 스코프를 여는 호출자(main.py /
-    # loop.skill_invoke)는 `render_begin_scope(scope_id, "skill", …)` 로 이미
-    # 이 스레드의 prompt-scope 스택에 scope_id 를 push 하고, 종료 시 end_scope 가
-    # pop + 동적 ctx 고정까지 한다. 그 scope_id 가 곧 타임라인 카드의
-    # data-task-id 이자 `GET /api/debug/prompt?task_id=` 의 키다. 따라서 여기서
-    # 별도 id 로 begin_prompt_scope 를 또 push 하면 스냅샷이 카드 id 와 다른
-    # id 에 저장돼 카드 🔍 인스펙션이 ok:false 가 됐다. 호출자가 scope_id 를
-    # 넘겨주면(=스코프를 이미 열었으면) 그 스코프에 note_scope_ctx 로만 등록하고
-    # push/pop 은 호출자에게 맡긴다. 직접 호출/테스트(scope_id 없음)만 자체
-    # 스코프를 열어 폴백한다. CLI(minimal 렌더러)는 전부 no-op.
-    import uuid as _uuid
-
-    from agent_cli.render import get_renderer as _get_renderer
-
-    _renderer = _get_renderer()
-    _owns_scope = not scope_id  # 호출자가 스코프를 안 열었을 때만 자체 관리
-    if _owns_scope:
-        _scope_id = f"skill-{skill.name or 'skill'}-{_uuid.uuid4().hex[:8]}"
-        _renderer.begin_prompt_scope(_scope_id, label=f"skill:{skill.name or 'skill'}")
-    if skill_ctx is not None:
-        # 현재 스택 top 스코프에 등록 — scope_id 전달 시 카드 id, 아니면 위 폴백 id.
-        _renderer.note_scope_ctx(skill_ctx)
-    try:
-        loop_result = run_loop(
-            query=prompt,
-            binding=effective_binding,
-            max_turns=effective_max_turns,
-            verbose=verbose,
-            depth=parent_depth + 1,
-            max_depth=max_depth,
-            # A skill is the MAIN agent's own workflow (unlike a sub-agent, which
-            # is an independent one-shot), so it inherits the main registry and
-            # can spawn/manage persistent workers. depth still bounds skill→skill
-            # recursion; spawn permission rides on the registry, not depth — so a
-            # skill (registry present) gets the full agent tool while an ordinary
-            # sub-agent (no registry) stays run-only. Workers it spawns register
-            # on the main registry and outlive the skill (main takes them over).
-            ports=ports_for_skill(agent_registry=agent_registry, owner=owner),
-            active_tools=effective_tools,
-            ctx=skill_ctx or ctx,
-            session=session,
-            hooks_config=effective_hooks_config,
-            skill_name=skill.name,
-            skill_stack=skill_stack,
-            skill_args=arguments,
-            graceful_interrupt=graceful_interrupt,
-            stop_event=stop_event,
-            agent_role=parent_role,
-            compaction_enabled=compaction_enabled,
+        skill, caller = self.skill, self.caller
+        effective = skill.allowed_tools
+        parent = caller.tools
+        if effective and parent:
+            effective = [t for t in effective if t in parent]
+            if not effective:
+                raise LoopKindError(
+                    f"Skill '{skill.name}' cannot run: no tools in common between "
+                    f"skill ({', '.join(skill.allowed_tools)}) and parent "
+                    f"({', '.join(parent)})"
+                )
+        elif not effective and parent:
+            effective = parent  # 스킬에 제한이 없으면 호출자 범위
+        self.tools = effective or None
+        if caller.ctx is None:
+            return None
+        ctx, err = create_subagent_ctx(
+            "none",
+            caller.ctx,
+            caller.ctx.session_dir / self.dir_name,
+            binding=self.binding,
         )
-    finally:
-        if _owns_scope:
-            _renderer.end_prompt_scope(_scope_id)
+        if ctx is None:
+            raise LoopKindError(f"Skill '{skill.name}' cannot run: {err}")
+        self.skill_ctx = ctx
+        return ctx
 
-    result = loop_result.output if loop_result.success else None
+    def rejected(self, reason: str) -> ToolResult:
+        return ToolResult(False, error=reason)
 
-    # Save result.md in skill subdir
-    if skill_ctx and skill_dir_name and result:
-        try:
-            result_path = skill_ctx.session_dir / "result.md"
-            result_path.write_text(result, encoding="utf-8")
-        except Exception:
-            pass
+    # ── ⑭ 스코프 — 카드 하나 + 들여쓰기 + 훅 ──
+    def open_scope(self, start: Start):
+        from agent_cli.render import render_begin_scope, render_push_depth
 
-    artifact = f"{skill_dir_name}/" if skill_dir_name else ""
-    if result:
-        return ToolResult(True, output=result, artifact=artifact)
-    else:
+        hooks = self.caller.hook_runner
+        if hooks:
+            hooks.fire(
+                "OnSkillStart",
+                tool_name="run_skill",
+                tool_input=self.tool_input,
+                mcp_manager=self.caller.mcp_manager,
+            )
+        render_begin_scope(
+            self.scope_id, "skill", f"skill:{self.skill.name}", ctx_dir=self.dir_name
+        )
+        render_push_depth()
+        return self.scope_id
+
+    def close_scope(self, scope_id, finished, secs: float) -> None:
+        from agent_cli.render import render_end_scope, render_pop_depth
+
+        render_pop_depth()
+        render_end_scope(
+            scope_id,
+            "skill",
+            success=bool(finished is not None and finished.success),
+            duration_s=secs,
+        )
+        hooks = self.caller.hook_runner
+        if hooks:
+            hooks.fire(
+                "OnSkillEnd",
+                tool_name="run_skill",
+                tool_input=self.tool_input,
+                skill_result=finished,
+                mcp_manager=self.caller.mcp_manager,
+            )
+
+    # ── ⑰ 결과 ──
+    def finish(self, result, secs: float, released: str) -> ToolResult:
+        output = result.output if result.success else None
+        if self.skill_ctx is not None and output:
+            try:
+                (self.skill_ctx.session_dir / "result.md").write_text(
+                    output, encoding="utf-8"
+                )
+            except Exception:
+                pass
+        artifact = f"{self.dir_name}/" if self.skill_ctx is not None else ""
+        if output:
+            return ToolResult(True, output=output, artifact=artifact)
         return ToolResult(False, error="Skill returned no result", artifact=artifact)
+
+    def crashed(self, exc: BaseException, secs: float) -> ToolResult:
+        from agent_cli.verbose import debug_log
+
+        debug_log(f"run_skill({self.skill.name}) exception: {exc}")
+        return ToolResult(False, error=f"run_skill({self.skill.name}) failed: {exc}")

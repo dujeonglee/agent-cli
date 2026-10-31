@@ -14,6 +14,7 @@ from agent_cli.hooks import (
     run_hooks,
 )
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
 
 
@@ -334,7 +335,7 @@ class TestSkillHooksWiring:
         from unittest.mock import MagicMock
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
         from agent_cli.tools.result import ToolResult
 
@@ -367,16 +368,17 @@ class TestSkillHooksWiring:
             captured.update(kwargs)
             return ToolResult(True, output="done")
 
-        with patch("agent_cli.skills.executor.run_loop", side_effect=fake_run_loop):
-            execute_skill(
-                skill=skill,
-                arguments="",
-                binding=make_binding(
-                    provider=MagicMock(), capabilities=caps, model="m"
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+            SkillLoop(
+                skill,
+                "",
+                make_caller(
+                    binding=make_binding(
+                        provider=MagicMock(), capabilities=caps, model="m"
+                    ),
+                    hooks_config=parent_hooks,
                 ),
-                parent_hooks_config=parent_hooks,
-                owner="main",
-            )
+            ).run()
 
         forwarded = captured.get("hooks_config")
         assert forwarded is not None, "hooks_config must be forwarded"
@@ -390,7 +392,7 @@ class TestSkillHooksWiring:
         from unittest.mock import MagicMock
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
         from agent_cli.tools.result import ToolResult
 
@@ -412,15 +414,16 @@ class TestSkillHooksWiring:
             captured.update(kwargs)
             return ToolResult(True, output="done")
 
-        with patch("agent_cli.skills.executor.run_loop", side_effect=fake_run_loop):
-            execute_skill(
-                skill=skill,
-                arguments="",
-                binding=make_binding(
-                    provider=MagicMock(), capabilities=caps, model="m"
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+            SkillLoop(
+                skill,
+                "",
+                make_caller(
+                    binding=make_binding(
+                        provider=MagicMock(), capabilities=caps, model="m"
+                    )
                 ),
-                owner="main",
-            )
+            ).run()
 
         assert captured.get("hooks_config") is None
 
@@ -490,7 +493,7 @@ class TestSkillHooksEndToEnd:
         """SKILL.md's frontmatter PreToolUse hook must actually spawn a
         subprocess that writes to the log file when the skill's shell
         tool is invoked."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.loader import _parse_skill_file
 
         log_file = tmp_path / "hook.log"
@@ -506,14 +509,15 @@ class TestSkillHooksEndToEnd:
             json.dumps({"action": "complete", "result": "ok"}),
         )
 
-        execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(
-                provider=provider, capabilities=self._caps(), model="test"
+        SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(
+                    provider=provider, capabilities=self._caps(), model="test"
+                )
             ),
-            owner="main",
-        )
+        ).run()
 
         assert log_file.exists(), (
             "PreToolUse hook subprocess did not run — "
@@ -529,7 +533,7 @@ class TestSkillHooksEndToEnd:
         and the skill's PreToolUse matchers must fire, parent first —
         per the merge_hooks_configs contract that skill-local hooks
         layer on top of the caller's."""
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.loader import _parse_skill_file
 
         log_file = tmp_path / "hook.log"
@@ -557,15 +561,16 @@ class TestSkillHooksEndToEnd:
             json.dumps({"action": "complete", "result": "ok"}),
         )
 
-        execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(
-                provider=provider, capabilities=self._caps(), model="test"
+        SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(
+                    provider=provider, capabilities=self._caps(), model="test"
+                ),
+                hooks_config=parent_hooks,
             ),
-            parent_hooks_config=parent_hooks,
-            owner="main",
-        )
+        ).run()
 
         contents = log_file.read_text()
         parent_pos = contents.find("=== PARENT ===")
@@ -619,11 +624,13 @@ class TestDelegateHooksWiring:
         # source module — the inline import picks up the patched value.
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
             tool_delegate(
-                args={"tasks": [{"task": "trivial"}]},
-                binding=make_binding(
-                    provider=object(), capabilities=caps, model="m"
-                ),  # non-None, not actually used by fake run_loop
-                hooks_config=parent_hooks,
+                {"tasks": [{"task": "trivial"}]},
+                make_caller(
+                    binding=make_binding(
+                        provider=object(), capabilities=caps, model="m"
+                    ),
+                    hooks_config=parent_hooks,
+                ),
             )
 
         assert captured.get("hooks_config") is parent_hooks, (
@@ -658,8 +665,12 @@ class TestDelegateHooksWiring:
         # source module — the inline import picks up the patched value.
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
             tool_delegate(
-                args={"tasks": [{"task": "trivial"}]},
-                binding=make_binding(provider=object(), capabilities=caps, model="m"),
+                {"tasks": [{"task": "trivial"}]},
+                make_caller(
+                    binding=make_binding(
+                        provider=object(), capabilities=caps, model="m"
+                    )
+                ),
             )
 
         assert captured.get("hooks_config") is None
@@ -723,11 +734,13 @@ class TestAgentFrontmatterHooks:
             patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
-                args={"tasks": [{"task": "t", "agent": "probe"}]},
-                binding=make_binding(
-                    provider=object(), capabilities=self._caps(), model="m"
+                {"tasks": [{"task": "t", "agent": "probe"}]},
+                make_caller(
+                    binding=make_binding(
+                        provider=object(), capabilities=self._caps(), model="m"
+                    ),
+                    hooks_config=parent_hooks,
                 ),
-                hooks_config=parent_hooks,
             )
 
         forwarded = captured.get("hooks_config")
@@ -768,9 +781,11 @@ class TestAgentFrontmatterHooks:
             patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
-                args={"tasks": [{"task": "t", "agent": "probe"}]},
-                binding=make_binding(
-                    provider=object(), capabilities=self._caps(), model="m"
+                {"tasks": [{"task": "t", "agent": "probe"}]},
+                make_caller(
+                    binding=make_binding(
+                        provider=object(), capabilities=self._caps(), model="m"
+                    )
                 ),
             )
 
@@ -802,11 +817,13 @@ class TestAgentFrontmatterHooks:
             patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
-                args={"tasks": [{"task": "t", "agent": "probe"}]},
-                binding=make_binding(
-                    provider=object(), capabilities=self._caps(), model="m"
+                {"tasks": [{"task": "t", "agent": "probe"}]},
+                make_caller(
+                    binding=make_binding(
+                        provider=object(), capabilities=self._caps(), model="m"
+                    ),
+                    hooks_config=parent_hooks,
                 ),
-                hooks_config=parent_hooks,
             )
 
         assert captured.get("hooks_config") is parent_hooks
@@ -864,10 +881,12 @@ class TestAgentFrontmatterHooks:
 
         try:
             tool_delegate(
-                args={"tasks": [{"task": "Go.", "agent": "probe"}]},
-                parent_ctx=parent_ctx,
-                binding=make_binding(
-                    provider=provider, capabilities=self._caps(), model="test"
+                {"tasks": [{"task": "Go.", "agent": "probe"}]},
+                make_caller(
+                    ctx=parent_ctx,
+                    binding=make_binding(
+                        provider=provider, capabilities=self._caps(), model="test"
+                    ),
                 ),
             )
 

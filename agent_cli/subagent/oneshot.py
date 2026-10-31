@@ -1,27 +1,21 @@
-"""In-process subagent delegation tool.
+"""One-shot sub-agent — `OneShotLoop` (`LoopKind`, v10.87.0) 와 그 호스트 `tool_delegate`.
 
-Supports context modes: none (independent), fork (copy conversation history).
-Uses tasks array API: single item = sync, multiple items = parallel (threading).
+컨텍스트 모드 none(독립)·fork(대화 복사). ``tasks`` 배열: 하나면 호출 스레드에서 인라인,
+여럿이면 과제별 스레드(병렬) — 실행 자리는 호스트(`tool_delegate`·`_run_parallel`)가 정하고,
+한 런의 전부(가드·프로파일·자기 주소 ``run:<run_dir>``·ctx·스코프·결과 포장·정리)는
+`OneShotLoop` 하나가 안다. 종전 `_run_single`·`_run_in_scope`·`runner.run_subagent_message`
+세 함수가 이 클래스다.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING
 
 from agent_cli.constants import RUN_OWNER_PREFIX
-from agent_cli.tools.result import ToolResult
-
-if TYPE_CHECKING:
-    # Runtime-imported inside the dispatch path to avoid a
-    # registry → delegate → context.manager → tools.registry →
-    # tools import cycle (registry now imports DelegateTool at module load).
-    from agent_cli.context.manager import ContextManager
-
-# ── Agent file loading ──────────────────────────
-
+from agent_cli.loop.kind import Caller, LoopKindError, PrivateLoop, Start
 from agent_cli.subagent.profiles import load_profile
 from agent_cli.subagent.report import (
     DelegateResult,
@@ -33,187 +27,201 @@ from agent_cli.subagent.report import (
     _persist_run_result,
     _resolve_session_dir,
 )
+from agent_cli.tools.result import ToolResult
 
 
-def _run_single(
-    task: str,
-    context_mode: str = "none",
-    allowed_tools: list[str] | None = None,
-    agent_name: str = "",
-    instructions: str = "",
-    parent_ctx: ContextManager | None = None,
-    binding=None,
-    depth: int = 0,
-    max_depth: int = 2,
-    max_turns: int = 0,
-    session=None,
-    skill_stack: list[str] | None = None,
-    agent_stack: list[str] | None = None,
-    stop_event=None,
-    hooks_config: dict | None = None,
-    compaction_enabled: bool = True,
-    run_dir_name: str = "",
-) -> ToolResult:
-    """Execute a single delegate task.
+class OneShotLoop(PrivateLoop):
+    """`agent` ``mode`` "run" 한 번 — 호출마다 하나.
 
-    P0(teammate, v4.53.0): 실행 몸통(역할 config 오버레이·ctx 생성·
-    run_loop 1회)은 :mod:`agent_cli.subagent.runner` 로 추출 — teammate
-    와 공유. 이 함수는 delegate 고유분(가드·디렉토리 명명·리포트 조립)
-    만 남긴 thin wrapper 다. 관찰 문구·result.md 는 바이트 불변.
+    ``spec`` 은 과제 사전(``task``·``agent``·``instructions``·``tools``·``context``), ``caller``
+    는 호출자(`Caller`). 깊이는 호출자 +1, 스택은 호출자 것에 프로파일을 더하고(엔진이
+    push), 바인딩은 프로파일이 모델을 고정하면 그 복사본, 도구는 요청 ∩ 프로파일(프로파일이
+    상한). 주소는 ``run:<run_dir>`` — 스코프를 여는 쪽이 디렉토리 이름을 먼저 지어 resume
+    사이드카의 ``ctx_dir`` 과 맞춘다(없으면 여기서 짓는다).
+
+    ``inline`` 이면 호출 스레드에서 CLI 들여쓰기와 함께 실시간으로, 아니면 워커 스레드에서
+    (병렬 — CLI 렌더러가 모았다가 끝에 보여 준다). ``scope_extra`` 는 병렬 워커만 쓰는
+    ``parent``(워커 스레드엔 바깥 스코프가 안 보인다)·``ts``(한 묶음 = 한 시작 시각).
     """
-    from agent_cli.subagent.agents_live import compose_role_prompt
-    from agent_cli.subagent.runner import (
-        ProfileToolsError,
-        apply_role_overrides,
-        create_subagent_ctx,
-        run_subagent_message,
-    )
 
-    if not task.strip():
-        return ToolResult(False, error="Delegation rejected: empty task")
+    verbose = False
+    graceful_interrupt = False
 
-    if binding is None or binding.provider is None or binding.capabilities is None:
-        return ToolResult(
-            False, error="Delegation rejected: missing provider/capabilities"
+    def __init__(
+        self,
+        spec: dict,
+        caller: Caller,
+        *,
+        run_dir_name: str = "",
+        index: int = 0,
+        task_id: str = "",
+        label: str = "",
+        inline: bool = True,
+        scope_extra: dict | None = None,
+    ) -> None:
+        self.spec = spec
+        self.caller = caller
+        self.task = str(spec.get("task", "") or "")
+        self.agent_name = str(spec.get("agent", "") or "")
+        self.instructions = str(spec.get("instructions", "") or "")
+        self.context_mode = str(spec.get("context", "none") or "none")
+        self.requested_tools = spec.get("tools")
+        self.run_dir_name = run_dir_name or _generate_run_dir_name(
+            self.agent_name or "task"
+        )
+        super().__init__(owner=f"{RUN_OWNER_PREFIX}{self.run_dir_name}")
+        self.depth = caller.depth + 1
+        self.max_depth = caller.max_depth
+        self.max_turns = caller.max_turns
+        self.binding = caller.binding
+        self.tools = self.requested_tools
+        self.hooks_config = caller.hooks_config
+        self.session = caller.session
+        self.compaction_enabled = caller.compaction_enabled
+        self.stop_event = caller.stop_event
+        self.skill_stack = list(caller.skill_stack)
+        self.agent_stack = list(caller.agent_stack)
+        self.run_dir = None
+        self._index = index
+        self._task_id = task_id or f"delegate-single-{uuid.uuid4().hex}"
+        self._label = label or (
+            f"agent:{self.agent_name}" if self.agent_name else "agent"
+        )
+        self._inline = inline
+        self._scope_extra = dict(scope_extra or {})
+
+    # ── ⑫ 시작 ──
+    def start(self) -> Start:
+        return Start(query=self.task)
+
+    # ── ⑬ ctx — 가드 → 프로파일 → 바인딩 고정 → 디렉토리 → ctx ──
+    def make_ctx(self, start: Start):
+        from agent_cli.subagent.agents_live import compose_role_prompt
+        from agent_cli.subagent.runner import (
+            ProfileToolsError,
+            apply_role_overrides,
+            create_subagent_ctx,
         )
 
-    # Agent cycle check (A → B → A). Named delegates only — anonymous
-    # ones aren't pushed onto ``agent_stack`` so they can't loop on
-    # name, only on depth (handled below).
-    if agent_name and agent_stack and agent_name in agent_stack:
-        from agent_cli.recovery.recursion import format_recursion_error
+        caller = self.caller
+        if not self.task.strip():
+            raise LoopKindError("Delegation rejected: empty task")
+        binding = caller.binding
+        if binding is None or binding.provider is None or binding.capabilities is None:
+            raise LoopKindError("Delegation rejected: missing provider/capabilities")
+        # 순환(A → B → A) — 이름 있는 위임만 스택에 오르니 익명은 깊이로만 막힌다.
+        if self.agent_name and self.agent_name in caller.agent_stack:
+            from agent_cli.recovery.recursion import format_recursion_error
 
-        return ToolResult(
-            False,
-            error=format_recursion_error("agent", agent_name, list(agent_stack)),
-        )
-
-    # Depth ceiling — belt-and-suspenders. Mirrors the run_skill
-    # path: AgentLoop init strips ``delegate`` from tools_list when
-    # we hit the limit, so the live loop never reaches here through
-    # normal dispatch. Direct callers (tests, the parallel-tasks
-    # path with a custom ``active_tools``) hit it here so the
-    # caller gets the same actionable message instead of a silent
-    # bounce.
-    if depth >= max_depth:
-        from agent_cli.recovery.recursion import format_depth_limit_error
-
-        label = agent_name or "(anonymous)"
-        return ToolResult(
-            False,
-            error=format_depth_limit_error("agent", label, depth, max_depth),
-        )
-
-    # ── Agent loading ──
-    agent_role = ""
-    model = ""  # 프로파일 `model` 오버라이드만 — 세션 모델은 바인딩에 있다
-    if agent_name:
-        role_prompt, agent_config, error = load_profile(agent_name)
-        if error:
-            return ToolResult(False, error=f"Delegation rejected: {error}")
-
-        agent_role = role_prompt
-
-        # Agent config overrides — the profile's tools are an upper bound
-        try:
-            allowed_tools, model, hooks_config = apply_role_overrides(
-                agent_config,
-                allowed_tools=allowed_tools,
-                model=binding.model if binding is not None else "",
-                hooks_config=hooks_config,
+            raise LoopKindError(
+                format_recursion_error(
+                    "agent", self.agent_name, list(caller.agent_stack)
+                )
             )
-        except ProfileToolsError as e:
-            return ToolResult(False, error=f"Delegation rejected: {e}")
+        # 깊이 상한 — 엔진 필터가 상한에서 `agent` 도구를 뺐으므로 보통 디스패치는 여기
+        # 오지 않는다; 직접 호출(테스트·custom tools)이 같은 문구를 받게 남긴다.
+        if caller.depth >= caller.max_depth:
+            from agent_cli.recovery.recursion import format_depth_limit_error
 
-    # instant (5.0.0 run 모드): 인라인 지시를 프로파일 본문 뒤에 합성 —
-    # 상주 spawn 과 동일 규칙 (파일=일반, 인라인=세션 특정).
-    agent_role = compose_role_prompt(agent_role, instructions)
-
-    # Resolve parent session dir and create delegate subdir
-    parent_session_dir = _resolve_session_dir(session, parent_ctx)
-    # Pre-named by the scope-opening caller (so the resume sidecar's ctx_dir
-    # matches this ctx's actual directory); self-naming stays for direct
-    # callers that never open a scope.
-    if not run_dir_name:
-        run_dir_name = _generate_run_dir_name(agent_name or "task")
-    run_dir = parent_session_dir / run_dir_name
-    # 자기 주소 (v10.84.0, docs/wait/DESIGN.md §7) — 잡·모니터·체크인의 통지가 이 런의
-    # 메일함으로 온다. 종전엔 부모 주소를 빌려 써서 통지가 부모에게 갔다.
-    owner = f"{RUN_OWNER_PREFIX}{run_dir_name}"
-
-    # Context + run_loop — 공용 러너 (subagent/runner.py). dialect
-    # 해석(effective model 바인딩 > 부모 상속)·예산 상속, fork 히스토리
-    # 복사, 인스펙터 스코프 등록(v4.52.0)이 전부 러너 안이다.
-    # 프로파일이 모델을 고정했으면 그 모델의 바인딩(능력·방언) — 세션 바인딩은 그대로.
-    if binding is not None and model and model != binding.model:
-        try:
-            binding = binding.pinned(model)
-        except KeyError as exc:
-            return ToolResult(False, error=f"Delegation rejected: {exc.args[0]}")
-    ctx, ctx_error = create_subagent_ctx(
-        context_mode, parent_ctx, run_dir, binding=binding
-    )
-    if ctx is None:
-        return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
-
-    from agent_cli.runtime import ports_for_oneshot, release_private_owner
-
-    try:
-        loop_result, duration = run_subagent_message(
-            task,
-            ctx,
-            ports=ports_for_oneshot(owner=owner),
-            binding=binding,
-            max_turns=max_turns,
-            depth=depth,
-            max_depth=max_depth,
-            active_tools=allowed_tools,
-            session=session,
-            skill_stack=skill_stack,
-            agent_stack=agent_stack,
-            agent_name=agent_name,
-            stop_event=stop_event,
-            agent_role=agent_role,
-            hooks_config=hooks_config,
-            compaction_enabled=compaction_enabled,
+            raise LoopKindError(
+                format_depth_limit_error(
+                    "agent",
+                    self.agent_name or "(anonymous)",
+                    caller.depth,
+                    caller.max_depth,
+                )
+            )
+        agent_role = ""
+        model = ""  # 프로파일 `model` 오버라이드만 — 세션 모델은 바인딩에 있다
+        allowed_tools = self.requested_tools
+        hooks_config = caller.hooks_config
+        if self.agent_name:
+            role_prompt, agent_config, error = load_profile(self.agent_name)
+            if error:
+                raise LoopKindError(f"Delegation rejected: {error}")
+            agent_role = role_prompt
+            try:
+                allowed_tools, model, hooks_config = apply_role_overrides(
+                    agent_config,
+                    allowed_tools=allowed_tools,
+                    model=binding.model,
+                    hooks_config=hooks_config,
+                )
+            except ProfileToolsError as e:
+                raise LoopKindError(f"Delegation rejected: {e}") from e
+        # 인라인 지시는 프로파일 본문 뒤에 합성 — 상주 spawn 과 같은 규칙.
+        self.agent_role = compose_role_prompt(agent_role, self.instructions)
+        self.tools = allowed_tools
+        self.hooks_config = hooks_config
+        if model and model != binding.model:
+            try:
+                binding = binding.pinned(model)
+            except KeyError as exc:
+                raise LoopKindError(f"Delegation rejected: {exc.args[0]}") from exc
+        self.binding = binding
+        parent_session_dir = _resolve_session_dir(caller.session, caller.ctx)
+        self.run_dir = parent_session_dir / self.run_dir_name
+        ctx, ctx_error = create_subagent_ctx(
+            self.context_mode, caller.ctx, self.run_dir, binding=binding
         )
-    finally:
-        # D1 (v10.84.0): 이 런이 가진 것(잡·모니터·메일함·체크인)을 전부 거둔다 —
-        # 남긴 것은 결과 끝에 한 줄로 알린다.
-        released = release_private_owner(owner)
+        if ctx is None:
+            raise LoopKindError(f"Delegation rejected: {ctx_error}")
+        return ctx
 
-    result_str = loop_result.output if loop_result.success else None
-    delegate_result = DelegateResult(output=result_str, duration_secs=duration)
+    def rejected(self, reason: str) -> ToolResult:
+        return ToolResult(False, error=reason)
 
-    # Activity log extraction
-    delegate_result.activity_log = _extract_activity_log(ctx.get_raw_messages())
+    # ── ⑭ 스코프 (카드 수명 — 단건·병렬 공용) ──
+    def open_scope(self, start: Start):
+        from agent_cli.render import get_renderer, render_push_depth
 
-    # Iterations = turns the loop actually ran (v9.24.1). Counting the
-    # activity log was wrong: it is capped at _ACTIVITY_LOG_MAX_ENTRIES, so a
-    # 60-turn sub-agent reported "[Subagent used 20 iterations]" (Harbor v5
-    # large-scale) — and history records also lose turns to compaction.
-    delegate_result.iterations = ctx.current_turn
-
-    # Last actions on failure
-    if result_str is None:
-        delegate_result.last_actions = _extract_last_actions(ctx.get_raw_messages())
-
-    formatted = _format_delegate_output(delegate_result)
-    if released:
-        formatted = f"{formatted}\n\n{released}"
-
-    # Persist result.md to delegate directory
-    _persist_run_result(formatted, run_dir)
-
-    artifact = f"{run_dir_name}/"
-
-    if result_str is not None:
-        return ToolResult(
-            True,
-            output=f"STATUS: success\nRESULT:\n{formatted}",
-            artifact=artifact,
+        renderer = get_renderer()
+        renderer.begin_scope(
+            task_id=self._task_id,
+            kind="run",
+            label=self._label,
+            agent=self.agent_name,
+            index=self._index,
+            **self._scope_extra,
+            ctx_dir=self.run_dir_name,
         )
-    else:
+        if self._inline:
+            render_push_depth()
+        return renderer
+
+    def close_scope(self, renderer, finished, secs: float) -> None:
+        from agent_cli.render import render_pop_depth
+
+        if self._inline:
+            render_pop_depth()
+        ok = bool(finished is not None and finished.success)
+        renderer.end_scope(
+            task_id=self._task_id,
+            kind="run",
+            success=ok,
+            duration_s=secs,
+            error=(finished.error or "") if finished is not None and not ok else "",
+        )
+
+    # ── ⑰ 결과 — STATUS/RESULT 관찰 + result.md ──
+    def finish(self, result, secs: float, released: str) -> ToolResult:
+        ctx = self.ctx
+        result_str = result.output if result.success else None
+        delegate_result = DelegateResult(output=result_str, duration_secs=secs)
+        delegate_result.activity_log = _extract_activity_log(ctx.get_raw_messages())
+        # 턴 수 = 루프가 실제 돈 턴 (활동 로그는 상한이 있어 세면 틀린다, v9.24.1)
+        delegate_result.iterations = ctx.current_turn
+        if result_str is None:
+            delegate_result.last_actions = _extract_last_actions(ctx.get_raw_messages())
+        formatted = _format_delegate_output(delegate_result)
+        if released:
+            formatted = f"{formatted}\n\n{released}"
+        _persist_run_result(formatted, self.run_dir)
+        artifact = f"{self.run_dir_name}/"
+        if result_str is not None:
+            return ToolResult(
+                True, output=f"STATUS: success\nRESULT:\n{formatted}", artifact=artifact
+            )
         return ToolResult(
             False,
             error=f"STATUS: error\nERROR: Subagent did not complete\n{formatted}",
@@ -221,154 +229,34 @@ def _run_single(
         )
 
 
-def _run_in_scope(
-    spec: dict,
-    *,
-    index: int,
-    task_id: str,
-    label: str,
-    stop_event,
-    common_kwargs: dict,
-    inline: bool,
-    scope_extra: dict | None = None,
-) -> ToolResult:
-    """한 과제의 카드 수명 — 단건·병렬 공용 (v10.48.0 C2).
-
-    카드 열기(`begin_scope`) → `_run_single` → 카드 닫기(성공·소요·오류)를 한
-    곳에서. 종전엔 단건 분기와 병렬 워커가 같은 수명과 `_run_single` 인자 나열을
-    각자 들고 있었다. **실행 자리는 호출자가 정한다**: ``inline`` 이면 호출
-    스레드에서 CLI 들여쓰기(`render_push_depth`)와 함께 실시간으로, 아니면 워커
-    스레드에서(병렬 — CLI 렌더러가 모았다가 끝에 보여 준다). ``scope_extra`` 는
-    병렬 워커만 쓰는 `parent`(워커 스레드엔 바깥 스코프가 안 보인다)·`ts`
-    (한 묶음 = 한 시작 시각)다."""
-    from agent_cli.render import get_renderer, render_pop_depth, render_push_depth
-
-    renderer = get_renderer()
-    agent = spec.get("agent", "")
-    # Dir named HERE so the scope event carries it — resume replays the card's
-    # inner turns from that directory (main history only has the final
-    # observation).
-    run_dir_name = _generate_run_dir_name(agent or "task")
-    renderer.begin_scope(
-        task_id=task_id,
-        kind="run",
-        label=label,
-        agent=agent,
-        index=index,
-        **(scope_extra or {}),
-        ctx_dir=run_dir_name,
-    )
-    if inline:
-        render_push_depth()
-    t0 = time.monotonic()
-    result = None
-    try:
-        result = _run_single(
-            task=spec.get("task", ""),
-            context_mode=spec.get("context", "none"),
-            allowed_tools=spec.get("tools"),
-            agent_name=agent,
-            instructions=spec.get("instructions", ""),
-            stop_event=stop_event,
-            run_dir_name=run_dir_name,
-            **common_kwargs,
-        )
-        return result
-    finally:
-        duration = time.monotonic() - t0
-        if inline:
-            render_pop_depth()
-        renderer.end_scope(
-            task_id=task_id,
-            kind="run",
-            success=bool(result and result.success),
-            duration_s=duration,
-            error=(result.error or "") if result and not result.success else "",
-        )
-
-
-def _run_parallel(
-    task_specs: list[dict],
-    parent_ctx: ContextManager | None = None,
-    binding=None,
-    depth: int = 0,
-    max_depth: int = 2,
-    max_turns: int = 0,
-    session=None,
-    skill_stack: list[str] | None = None,
-    agent_stack: list[str] | None = None,
-    stop_event=None,
-    hooks_config: dict | None = None,
-    compaction_enabled: bool = True,
-) -> ToolResult:
-    """Execute multiple delegate tasks in parallel using threading.
-
-    UI orchestration (Live panel, per-task capture, group framing on
-    completion) lives entirely in the renderer now — this function
-    only signals the begin/end lifecycle markers. MinimalRenderer
-    starts a Live region on the first ``begin_delegate_task`` and
-    tears it down + dumps captured per-task output on the last
-    ``end_delegate_task``. WebRenderer routes per-task events via
-    the same markers into SSE collapsible cards.
-    """
+def _run_parallel(task_specs: list[dict], caller: Caller) -> ToolResult:
+    """과제 여럿을 과제별 스레드로 — 호스트. UI(Live 패널·과제별 캡처·묶음 틀)는 렌더러의
+    것이고 여기는 `OneShotLoop` 를 스레드마다 하나씩 만들어 돌릴 뿐이다."""
     from agent_cli.render import get_renderer
 
-    common_kwargs = {
-        "parent_ctx": parent_ctx,
-        "binding": binding,
-        "depth": depth,
-        "max_depth": max_depth,
-        "max_turns": max_turns,
-        "session": session,
-        "skill_stack": skill_stack,
-        "agent_stack": agent_stack,
-        "hooks_config": hooks_config,
-        "compaction_enabled": compaction_enabled,
-    }
     results: list[ToolResult | None] = [None] * len(task_specs)
-    durations: list[float] = [0.0] * len(task_specs)
-    if stop_event is None:
-        stop_event = threading.Event()
+    if caller.stop_event is None:
+        caller = dataclasses.replace(caller, stop_event=threading.Event())
 
     renderer = get_renderer()
-    # Captured HERE, on the spawning thread, for every worker below:
-    #   parent — a worker's own scope stack is empty, so it cannot see that it
-    #     was started from inside a skill; this thread can.
-    #   batch_ts — one start time for the whole fan-out. Letting each worker
-    #     stamp its own scattered a simultaneous batch across several rows of
-    #     the swimlane's event-ordinal axis (~ms apart, one row each), which
-    #     reads as "ran one after another". One shared value → one row → the
-    #     view draws a fork. End times stay per-worker: which one took longest
-    #     is real information.
+    # 여기(띄우는 스레드)서 잡아 모든 워커에 준다: 워커의 스코프 스택은 비어 있어 자기가
+    # 스킬 안에서 시작됐는지 못 보고(`parent`), 묶음은 시작 시각 하나를 나눠 쓴다(`ts` —
+    # 워커마다 찍으면 ms 차이로 스윔레인이 순차 실행처럼 그린다). 끝 시각은 워커별.
     parent_scope = renderer.current_scope()
     batch_ts = time.time()
 
     def worker(index: int, spec: dict) -> None:
-        # Per-task identity for renderer routing (CLI Live panel slot,
-        # Web SSE collapsible card). A fresh uuid4 per worker — NOT the
-        # thread id: ``threading.get_ident()`` is recycled once a worker
-        # thread exits, so a later parallel delegate's workers could be
-        # handed the same id as an earlier call's. The web frontend's
-        # ``ensureTaskGroup`` then short-circuits on the stale entry and
-        # never draws the new cards. uuid4 guarantees cross-call
-        # uniqueness regardless of thread lifecycle.
+        # uuid4 — 스레드 id 는 재사용되어 이전 호출의 카드와 겹친다.
         task_id = f"delegate-{index}-{uuid.uuid4().hex}"
-        t0 = time.monotonic()
-        try:
-            results[index] = _run_in_scope(
-                spec,
-                index=index,
-                task_id=task_id,
-                label=spec.get("task", "")
-                or spec.get("agent", "")
-                or f"task #{index + 1}",
-                stop_event=stop_event,
-                common_kwargs=common_kwargs,
-                inline=False,
-                scope_extra={"parent": parent_scope, "ts": batch_ts},
-            )
-        finally:
-            durations[index] = time.monotonic() - t0
+        results[index] = OneShotLoop(
+            spec,
+            caller,
+            index=index,
+            task_id=task_id,
+            label=spec.get("task", "") or spec.get("agent", "") or f"task #{index + 1}",
+            inline=False,
+            scope_extra={"parent": parent_scope, "ts": batch_ts},
+        ).run()
 
     threads = []
     for i, spec in enumerate(task_specs):
@@ -379,13 +267,8 @@ def _run_parallel(
         for t in threads:
             t.join()
     finally:
-        # Restore terminal state after the renderer's Live region (if
-        # any) — prevents readline cursor confusion with CJK input on
-        # subsequent prompts. Only meaningful when stdin is an actual
-        # TTY; ``agent-cli web`` run in the background detaches stdin
-        # and ``termios.tcflush`` on a non-TTY raises OSError(ENODEV)
-        # on macOS, which has surfaced as a worker error in the SSE
-        # stream.
+        # Live 영역 뒤 터미널 상태 복구(CJK 입력의 readline 혼선 방지) — 실제 TTY 일 때만.
+        # web 백그라운드는 stdin 이 분리돼 non-TTY 에서 tcflush 가 OSError(ENODEV).
         try:
             import sys
             import termios
@@ -393,67 +276,19 @@ def _run_parallel(
             if sys.stdin is not None and sys.stdin.isatty():
                 termios.tcflush(sys.stdin, termios.TCIFLUSH)
         except (ImportError, OSError, ValueError):
-            # ValueError catches "I/O operation on closed file" from
-            # ``isatty()`` when the stream was already disposed.
             pass
 
     return _format_parallel_results(task_specs, results)
 
 
-def tool_delegate(
-    args: dict,
-    parent_ctx: ContextManager | None = None,
-    binding=None,
-    depth: int = 0,
-    max_depth: int = 2,
-    max_turns: int = 0,
-    session=None,
-    skill_stack: list[str] | None = None,
-    agent_stack: list[str] | None = None,
-    stop_event=None,
-    hooks_config: dict | None = None,
-    compaction_enabled: bool = True,
-) -> ToolResult:
-    """Delegate tasks to in-process subagents.
-
-    Args:
-        args: Dict with "tasks" array. Each item has "task", optional "context", "tools".
-              Single item = sync execution. Multiple items = parallel (threading).
-    """
+def tool_delegate(args: dict, caller: Caller) -> ToolResult:
+    """`agent` ``mode`` "run" 의 호스트 — ``tasks`` 하나면 이 스레드에서 인라인(CLI 가 중첩
+    들여쓰기로 실시간 스트리밍, web 은 접히는 카드 하나), 여럿이면 병렬."""
     tasks = args.get("tasks", [])
     if not tasks:
         return ToolResult(False, error="Delegation rejected: empty tasks array")
-    # Normalize: LLM may send ["task text"] instead of [{"task": "task text"}]
+    # LLM 이 ["task text"] 로 보내기도 한다
     tasks = [{"task": t} if isinstance(t, str) else t for t in tasks]
-
-    common_kwargs = {
-        "parent_ctx": parent_ctx,
-        "binding": binding,
-        "depth": depth,
-        "max_depth": max_depth,
-        "max_turns": max_turns,
-        "session": session,
-        "skill_stack": skill_stack,
-        "agent_stack": agent_stack,
-        "hooks_config": hooks_config,
-        "compaction_enabled": compaction_enabled,
-    }
-
     if len(tasks) == 1:
-        # Single run: inline on THIS thread — the CLI streams it live with
-        # nested indentation; the web routes it into one collapsible card
-        # (``begin_scope`` registers this thread). uuid4 task id (not thread id)
-        # for the same reason as the parallel worker: recycled idents collide.
-        agent_name = tasks[0].get("agent", "")
-        return _run_in_scope(
-            tasks[0],
-            index=0,
-            task_id=f"delegate-single-{uuid.uuid4().hex}",
-            label=f"agent:{agent_name}" if agent_name else "agent",
-            stop_event=stop_event,
-            common_kwargs=common_kwargs,
-            inline=True,
-        )
-    else:
-        # Parallel: suppress during execution, collect and display after
-        return _run_parallel(tasks, stop_event=stop_event, **common_kwargs)
+        return OneShotLoop(tasks[0], caller, inline=True).run()
+    return _run_parallel(tasks, caller)

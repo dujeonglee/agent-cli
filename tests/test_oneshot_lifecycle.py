@@ -36,6 +36,7 @@ from rich.console import Console
 
 from agent_cli.render.minimal import MinimalRenderer
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 
 
 def _make_renderer(*, force_terminal: bool = False) -> MinimalRenderer:
@@ -669,19 +670,25 @@ class TestParallelBatchScopeIdentity:
 
         r = WebRenderer()
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
         monkeypatch.setattr(
-            "agent_cli.subagent.oneshot._run_single",
-            lambda **kw: ToolResult(True, output="done"),
+            OneShotLoop,
+            "run",
+            fake_oneshot_run(lambda self: ToolResult(True, output="done")),
         )
         if wrap_scope:
             r.begin_scope(task_id=wrap_scope, kind="skill", label="skill:plan")
         _run_parallel(
             [{"task": f"t{i}", "agent": f"a{i}"} for i in range(n)],
-            binding=make_binding(
-                capabilities=ModelCapabilities(
-                    context_window=32768,
-                    max_output_tokens=4096,
-                    supports_thinking=False,
+            make_caller(
+                binding=make_binding(
+                    capabilities=ModelCapabilities(
+                        context_window=32768,
+                        max_output_tokens=4096,
+                        supports_thinking=False,
+                    )
                 )
             ),
         )
@@ -722,20 +729,25 @@ class TestParallelBatchScopeIdentity:
         r = WebRenderer()
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
 
-        def slow(**kw):
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
+        def slow(kind):
             import time as _t
 
-            _t.sleep(0.02 * (kw.get("task", "t0")[-1] == "1"))
+            _t.sleep(0.02 * (kind.task[-1] == "1"))
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", slow)
+        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(slow))
         _run_parallel(
             [{"task": f"t{i}"} for i in range(2)],
-            binding=make_binding(
-                capabilities=ModelCapabilities(
-                    context_window=32768,
-                    max_output_tokens=4096,
-                    supports_thinking=False,
+            make_caller(
+                binding=make_binding(
+                    capabilities=ModelCapabilities(
+                        context_window=32768,
+                        max_output_tokens=4096,
+                        supports_thinking=False,
+                    )
                 )
             ),
         )

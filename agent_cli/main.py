@@ -21,7 +21,6 @@ from agent_cli.dialects import (
     set_dialect_override as _set_dialect_override,
 )
 from agent_cli.knobs import knob_options
-from agent_cli.loop import run_loop
 from agent_cli.paths import user_dir
 from agent_cli.providers import (
     UnsupportedModelError,
@@ -595,7 +594,7 @@ def try_dispatch_agent_or_skill(
 
     ``stop_event`` is threaded into BOTH paths so the web Stop button can
     halt either at a turn boundary, same as a plain conversation turn:
-      - ``/skill`` → ``_dispatch_skill`` → ``execute_skill`` → ``run_loop``
+      - ``/skill`` → ``_dispatch_skill`` → ``SkillLoop.run`` → ``run_loop``
       - ``@agent`` → ``_dispatch_agent`` → ``tool_delegate`` → the delegate
         worker's ``run_loop`` (shared Event across parallel workers).
 
@@ -711,21 +710,23 @@ def _dispatch_agent(
         ctx.add({"role": "user", "content": f"Delegate to @{agent_name}: {task}"})
 
     from agent_cli.hooks import load_hooks as _load_hooks
+    from agent_cli.loop.kind import Caller
     from agent_cli.render import render_status
 
     _parent_hooks = _load_hooks() or None
     render_status("running", f"Running agent: {agent_name}...")
     result = tool_delegate(
-        # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 이다.
-        args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
-        parent_ctx=ctx,
-        binding=binding,
-        depth=0,
-        max_depth=max_depth,
-        max_turns=max_turns,
-        session=session,
-        hooks_config=_parent_hooks,
-        stop_event=stop_event,
+        {"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
+        # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 세션이 호출자다.
+        Caller.main_session(
+            binding=binding,
+            ctx=ctx,
+            session=session,
+            max_turns=max_turns,
+            max_depth=max_depth,
+            hooks_config=_parent_hooks,
+            stop_event=stop_event,
+        ),
     )
 
     if not result.success and "not found" in (result.error or ""):
@@ -760,7 +761,7 @@ def _dispatch_skill(
     stop_event=None,
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
-    from agent_cli.skills import execute_skill, load_skills
+    from agent_cli.skills import SkillLoop, load_skills
 
     skills = load_skills()
     parts = query.split(maxsplit=1)
@@ -781,64 +782,32 @@ def _dispatch_skill(
             }
         )
 
-    import time as _time
-    import uuid as _uuid
-
-    from agent_cli.render import (
-        render_begin_scope,
-        render_end_scope,
-        render_pop_depth,
-        render_push_depth,
-    )
-
-    # One scope for the whole skill: begin_scope registers this thread so the
-    # skill's inner turns route into ONE card (web), fixing the old bug where a
-    # user's ``/orchestrate`` ran but drew no card (it emitted an un-handled
-    # group_start instead of a routed scope). execute_skill runs synchronously
-    # in this thread, so the routing covers its subloop.
-    _scope_id = f"skill-{cmd_name}-{_uuid.uuid4().hex[:8]}"
-    # Dir named at scope-open so the sidecar's ctx_dir matches the ctx the
-    # skill actually writes — resume replays the card's inner turns from it.
-    from agent_cli.subagent.report import generate_subdir_name as _gen_subdir
-
-    _skill_dir = _gen_subdir("skill", cmd_name)
-    render_begin_scope(_scope_id, "skill", f"skill:{cmd_name}", ctx_dir=_skill_dir)
-    render_push_depth()
-    _t0 = _time.monotonic()
-    skill_result = None
-    # Pull disk-loaded shell hooks (~/.agent-cli/hooks.json /
-    # .agent-cli/hooks.json) so the skill sees them merged with its own
-    # frontmatter hooks. load_hooks() caches, so repeat calls are cheap.
     from agent_cli.hooks import load_hooks as _load_hooks
+    from agent_cli.loop.kind import Caller
+    from agent_cli.subagent.agents_live import main_registry
 
-    _parent_hooks = _load_hooks() or None
-    try:
-        skill_result = execute_skill(
-            owner="main",  # 루프 밖 디스패치
-            skill=skill,
-            arguments=arguments,
+    # 디스크 훅(~/.agent-cli/hooks.json / .agent-cli/hooks.json)을 스킬 자신의 훅과 병합해
+    # 보이게 한다. load_hooks() 는 캐시라 반복 호출이 싸다. 스코프(카드 하나)·들여쓰기·
+    # OnSkillStart/End·ctx·result.md 는 종류(`SkillLoop`)의 것 (v10.87.0) — 종전엔 이 함수와
+    # 루프의 `_handle_run_skill` 이 같은 래퍼를 두 벌 들고 있었다.
+    skill_result = SkillLoop(
+        skill,
+        arguments,
+        # 루프 **밖**의 디스패치 — main 세션이 호출자. 스킬은 main 의 일이라 main 레지스트리를
+        # 상속해 spawn 할 수 있다(v7.17.0 배선 통일).
+        Caller.main_session(
             binding=binding,
-            max_turns=max_turns,
-            verbose=verbose,
-            max_depth=max_depth,
             ctx=ctx,
             session=session,
-            graceful_interrupt=graceful_interrupt,
+            max_turns=max_turns,
+            max_depth=max_depth,
+            hooks_config=_load_hooks() or None,
             stop_event=stop_event,
-            parent_hooks_config=_parent_hooks,
-            session_subdir=_skill_dir,
-            # 카드/스냅샷 scope_id 통일 (인스펙터 재설계) — 카드 data-task-id 로
-            # skill 프롬프트가 인스펙션되도록 이미 연 스코프를 재사용.
-            scope_id=_scope_id,
-        )
-    finally:
-        render_pop_depth()
-        render_end_scope(
-            _scope_id,
-            "skill",
-            success=bool(skill_result and skill_result.success),
-            duration_s=_time.monotonic() - _t0,
-        )
+            graceful_interrupt=graceful_interrupt,
+            verbose=verbose,
+            agent_registry=main_registry(),
+        ),
+    ).run()
 
     answer = skill_result.output if skill_result.success else skill_result.error
 
@@ -1422,6 +1391,7 @@ def run(
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.runtime import (
         AgentRuntime,
+        MainLoop,
         build_agent_registry,
         build_hook_runner,
         build_job_registry,
@@ -1429,7 +1399,6 @@ def run(
         build_py_registry,
         build_schedule_registry,
         build_snapshot_store,
-        ports_for_main,
         wire_agent_mail,
     )
 
@@ -1448,7 +1417,7 @@ def run(
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
     # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
     # 회신의 세션-넘김 보존은 P3(manifest/outbox). 생성은 skill dispatch
-    # 앞 (v7.17.0 배선 통일 — execute_skill 이 main 슬롯에서 자동 상속),
+    # 앞 (v7.17.0 배선 통일 — `/skill` 의 `SkillLoop` 가 main 레지스트리를 상속),
     # restore/auto_spawn/waker 배선은 종전 위치 그대로 dispatch 뒤.
     auditor = None  # 🔎 아래서 만든다 — finally 가 먼저 닿아도 안전
     agent_registry = build_agent_registry(
@@ -1536,32 +1505,27 @@ def run(
             ),
         )
 
+        # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입도 web 과 같다: 예약
+        # 발화가 다음 턴 경계에 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다
+        # (펌프는 아래서 만들어지므로 호출 시점에 푸는 콜러블).
+        main_kind = MainLoop(
+            binding=binding,
+            ctx=ctx,
+            session=session,
+            agent_registry=agent_registry,
+            mcp_manager=mcp_manager,
+            dequeue_user_message=input_queue.dequeue_nowait,
+            route_message=lambda text: pump.route(text),
+            max_turns=max_turns,
+            max_depth=max_depth,
+            verbose=verbose,
+            record_turns=record_turns,
+            hooks_config=_disk_hooks,
+            graceful_interrupt=surface.graceful_interrupt,
+        )
+
         def _run_main(req: RunRequest):
-            return run_loop(
-                query=req.loop_query,
-                query_images=req.images,
-                query_author=req.author,
-                query_author_is_user=req.author_is_user,
-                query_request_id=req.request_id,
-                stop_event=req.stop_event,
-                graceful_interrupt=surface.graceful_interrupt,
-                binding=binding,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                ctx=ctx,
-                session=session,
-                hooks_config=_disk_hooks,
-                record_turns=record_turns,
-                # 런 도중 주입도 web 과 같다 — 예약 발화가 다음 턴 경계에
-                # 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다.
-                ports=ports_for_main(
-                    agent_registry=agent_registry,
-                    mcp_manager=mcp_manager,
-                    dequeue_user_message=input_queue.dequeue_nowait,
-                    route_message=pump.route,
-                ),
-            )
+            return main_kind.run(main_kind.start(req))
 
         pump = SessionPump(
             PumpDeps(
@@ -2411,13 +2375,13 @@ def web(
     # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
     # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
     from agent_cli.runtime import (
+        MainLoop,
         build_hook_runner,
         build_job_registry,
         build_monitor_registry,
         build_py_registry,
         build_schedule_registry,
         build_snapshot_store,
-        ports_for_main,
     )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
@@ -2541,31 +2505,25 @@ def web(
             # 결과는 기억되므로 다음 `/api/images/support` 부터 📎 가 숨는다.
             if req.images and not _vision_ok(binding):
                 renderer.status("error", _WEB_NO_VISION_NOTICE)
-            return run_loop(
-                query=req.loop_query,
-                query_images=req.images,
-                query_author=req.author,
-                query_author_is_user=req.author_is_user,
-                query_request_id=req.request_id,
-                stop_event=req.stop_event,
-                graceful_interrupt=surface.graceful_interrupt,
-                binding=binding,
-                max_turns=max_turns,
-                verbose=verbose,
-                ctx=ctx,
-                max_depth=max_depth,
-                session=session,
-                record_turns=record_turns,
-                # v8.39.0 수리: run 과 동형 — 종전 web 은 hooks_config
-                # 미전달로 채팅 턴에서 디스크 훅이 미발화했다.
-                hooks_config=_disk_hooks,
-                ports=ports_for_main(
-                    agent_registry=agent_registry,
-                    mcp_manager=mcp_manager,
-                    dequeue_user_message=server.dequeue_nowait,
-                    route_message=pump.route,
-                ),
-            )
+            return main_kind.run(main_kind.start(req))
+
+        # run 과 동형 (v8.39.0 수리: 종전 web 은 hooks_config 미전달로 채팅 턴에서 디스크
+        # 훅이 미발화했다) — 종류 하나가 그 동형을 보장한다 (v10.87.0).
+        main_kind = MainLoop(
+            binding=binding,
+            ctx=ctx,
+            session=session,
+            agent_registry=agent_registry,
+            mcp_manager=mcp_manager,
+            dequeue_user_message=server.dequeue_nowait,
+            route_message=lambda text: pump.route(text),
+            max_turns=max_turns,
+            max_depth=max_depth,
+            verbose=verbose,
+            record_turns=record_turns,
+            hooks_config=_disk_hooks,
+            graceful_interrupt=surface.graceful_interrupt,
+        )
 
         # 세션 펌프 (v10.33.1, docs/pump/DESIGN.md): run 과 같은 루프 —
         # 수명은 ForeverPolicy(서버 종료의 SHUTDOWN 까지), 표면은 WebSurface.

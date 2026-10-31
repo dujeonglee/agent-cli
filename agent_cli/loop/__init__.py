@@ -19,6 +19,7 @@ from agent_cli.loop.dispatch import (
     _sanitize_truncated_edit,
     _try_echo_as_final,
 )
+from agent_cli.loop.kind import Caller, LoopKind, LoopKindError, PrivateLoop, Start
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
 from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.run import run_loop
@@ -37,9 +38,14 @@ __all__ = [
     "_NOT_HANDLED",
     "_RETRY",
     "AgentLoop",
+    "Caller",
     "LLMCaller",
     "LoopConfig",
+    "LoopKind",
+    "LoopKindError",
     "LoopState",
+    "PrivateLoop",
+    "Start",
     "SystemPromptSvc",
     "ToolBridge",
     "TurnDispatcher",

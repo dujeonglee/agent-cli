@@ -332,10 +332,10 @@ class ToolBridge:
         (루프 경로에서는 validate 가 A5 로 먼저 거른다 — 여기 도달은
         직접 호출자/테스트뿐).
         """
-        from agent_cli.subagent.agents_live import tool_agent
-
         # 함수-로컬 import — 호출 시점에 oneshot 모듈 attr 을 읽는 테스트
         # DI seam (모듈-레벨 바인딩이면 monkeypatch 가 안 닿는다).
+        from agent_cli.loop.kind import Caller
+        from agent_cli.subagent.agents_live import tool_agent
         from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.agent_tool import AGENT_MODES
 
@@ -356,19 +356,9 @@ class ToolBridge:
                     turn=self.state.turn,
                     mcp_manager=self.cfg.mcp_manager,
                 )
+            # 돌고 있는 이 루프가 호출자다 (v10.87.0 `Caller`) — 깊이·스택·훅·중단·ctx 전부
             result = tool_delegate(
-                args=raw,
-                parent_ctx=self.ctx,
-                binding=self.cfg.binding,
-                depth=self.cfg.depth,
-                max_depth=self.cfg.max_depth,
-                max_turns=self.cfg.max_turns,
-                session=self.cfg.session,
-                skill_stack=self.cfg.skill_stack,
-                agent_stack=self.cfg.agent_stack,
-                stop_event=self.state.stop_event,
-                hooks_config=self.cfg.hooks_config,
-                compaction_enabled=self.cfg.compaction_enabled,
+                raw, Caller.from_loop(self.cfg, self.state, self.ctx)
             )
             if self.cfg.hook_runner:
                 self.cfg.hook_runner.fire(

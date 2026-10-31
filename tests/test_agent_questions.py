@@ -1717,11 +1717,11 @@ class TestUnifiedDebtRules:
         self, mkreg, renderer
     ):
         """에이전트 창의 사용자 요청도 main 과 같다 — answers 필수, 없으면 되돌림."""
-        from agent_cli.runtime import ports_for_resident
+        from agent_cli.subagent.resident_loop import ResidentLoop
 
         reg = mkreg()
         b = spawn_idle(reg)
-        ports = ports_for_resident(
+        ports = ResidentLoop.make_ports(
             key=b,
             message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
@@ -1783,11 +1783,11 @@ class TestUnifiedDebtRules:
     ):
         """상주가 받은 `message` 요청(r-)을 안 갚고 `complete` 하면 결과는 배달되고
         독촉이 그 id 로 `reply` 를 가리킨다. 갚으면 런이 끝나고 빚이 없다."""
-        from agent_cli.runtime import ports_for_resident
+        from agent_cli.subagent.resident_loop import ResidentLoop
 
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
-        ports = ports_for_resident(
+        ports = ResidentLoop.make_ports(
             key=b,
             message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
@@ -2278,7 +2278,7 @@ class TestMidRunAbsorption:
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.runtime import ports_for_resident
+        from agent_cli.subagent.resident_loop import ResidentLoop
 
         tm = reg.get(b)
         assert tm.state == "busy" and tm.current_item == "r-1"  # `_busy` 가 세운 런
@@ -2300,7 +2300,7 @@ class TestMidRunAbsorption:
             ctx=ctx,
             max_turns=10,
             dialect="json_fc",
-            ports=ports_for_resident(
+            ports=ResidentLoop.make_ports(
                 key=b,
                 message_handler=reg._make_message_handler(tm),
                 questions=reg.question_port(b),

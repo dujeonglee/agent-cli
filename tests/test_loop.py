@@ -9,6 +9,7 @@ from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS, make_ports, split_ports
 
 
@@ -1934,25 +1935,22 @@ class TestRunLoopForwarding:
     def test_accepts_what_main_actually_passes(self):
         """시그니처 일치만으로는 부족하다 — 실제 호출부가 쓰는 이름이
         그 집합 안에 있는지까지 본다(오타·개명 회귀)."""
-        import ast
         import inspect
-        from pathlib import Path
 
         from agent_cli.loop import run_loop
 
-        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
-        used: set[str] = set()
-        for node in ast.walk(ast.parse(src)):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "run_loop"
-            ):
-                used |= {kw.arg for kw in node.keywords if kw.arg}
-        assert used, "main.py 에서 run_loop 호출을 못 찾았다 (테스트가 낡았다)"
+        # v10.87.0: main 은 run_loop 을 직접 부르지 않는다 — 종류(`LoopKind.loop_kwargs`)가
+        # 한 벌을 적고 엔진에 넘긴다. 그 한 벌이 서명 안에 있는지 본다.
+        from agent_cli.loop.kind import LoopKind, Start
+        from tests.loop_ports import make_ports
+
+        kind = LoopKind()
+        kind.owner, kind.ports = "main", make_ports()
+        used = set(kind.loop_kwargs(Start(query="q"))) | {"query", "ctx"}
+        assert used
         unknown = used - set(inspect.signature(run_loop).parameters)
         assert not unknown, (
-            f"main.py 가 넘기는데 run_loop 이 모르는 인자: {sorted(unknown)}"
+            f"종류가 넘기는데 run_loop 이 모르는 인자: {sorted(unknown)}"
         )
 
 
@@ -3565,19 +3563,19 @@ class TestSkillStack:
         from agent_cli.loop import _handle_run_skill
 
         obs = _handle_run_skill(
-            skill_input={"name": "optimize", "arguments": "./"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="http://localhost:11434",
-                api_key="",
-                capabilities=caps,
-                model="test",
+            {"name": "optimize", "arguments": "./"},
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="http://localhost:11434",
+                    api_key="",
+                    capabilities=caps,
+                    model="test",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=["optimize"],
             ),
-            ctx=None,
-            session=None,
-            parent_skill_name="",
-            skill_stack=["optimize"],
-            owner="main",  # already in stack
         )
         error = obs.error if hasattr(obs, "error") else str(obs)
         assert "recursive" in error.lower() or "already" in error.lower()
@@ -3589,19 +3587,19 @@ class TestSkillStack:
         # This will fail because we can't actually execute, but it should
         # NOT be blocked by the stack check
         obs = _handle_run_skill(
-            skill_input={"name": "summarize", "arguments": "./"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="http://localhost:11434",
-                api_key="",
-                capabilities=caps,
-                model="test",
+            {"name": "summarize", "arguments": "./"},
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="http://localhost:11434",
+                    api_key="",
+                    capabilities=caps,
+                    model="test",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=["optimize"],
             ),
-            ctx=None,
-            session=None,
-            parent_skill_name="",
-            skill_stack=["optimize"],
-            owner="main",  # different skill
         )
         # Should NOT contain "recursive" error
         output = obs.output if obs.success else obs.error

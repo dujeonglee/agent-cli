@@ -36,6 +36,7 @@ from agent_cli.recovery.recursion import (
     format_recursion_error,
 )
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
 
 # ─── Error-message vocabulary (A) ─────────────────────────────
@@ -193,19 +194,20 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="",
-                api_key="",
-                capabilities=_caps(),
-                model="m",
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="",
+                    api_key="",
+                    capabilities=_caps(),
+                    model="m",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=[],
+                depth=2,
+                max_depth=2,
             ),
-            ctx=None,
-            session=None,
-            skill_stack=[],
-            parent_depth=2,
-            max_depth=2,
-            owner="main",
         )
         assert result.success is False
         # Depth-limit message vocabulary.
@@ -222,19 +224,20 @@ class TestRunSkillDispatchDepthCheck:
         # found", proving we got past the depth check.
         result = _handle_run_skill(
             {"name": "does_not_exist"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="",
-                api_key="",
-                capabilities=_caps(),
-                model="m",
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="",
+                    api_key="",
+                    capabilities=_caps(),
+                    model="m",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=[],
+                depth=0,
+                max_depth=2,
             ),
-            ctx=None,
-            session=None,
-            skill_stack=[],
-            parent_depth=0,
-            max_depth=2,
-            owner="main",
         )
         assert result.success is False
         # Not a depth message — the call got past the depth check.
@@ -246,19 +249,20 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="",
-                api_key="",
-                capabilities=_caps(),
-                model="m",
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="",
+                    api_key="",
+                    capabilities=_caps(),
+                    model="m",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=["plan", "summarize"],
+                depth=2,
+                max_depth=4,
             ),
-            ctx=None,
-            session=None,
-            skill_stack=["plan", "summarize"],
-            parent_depth=2,
-            max_depth=4,
-            owner="main",
         )
         assert result.success is False
         # Cycle, not depth — different recovery path.
@@ -284,56 +288,59 @@ class TestDelegateDispatchDepthCheck:
         return MagicMock()
 
     def test_depth_at_limit_returns_depth_limit_error(self):
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
 
-        result = _run_single(
-            task="do x",
-            agent_name="reviewer",
-            agent_stack=["main_agent"],  # reviewer not in stack
-            depth=2,
-            max_depth=2,
-            binding=make_binding(
-                provider=self._make_provider(), capabilities=_caps(), model="m"
+        result = OneShotLoop(
+            {"task": "do x", "agent": "reviewer"},
+            make_caller(
+                agent_stack=["main_agent"],
+                depth=2,
+                max_depth=2,
+                binding=make_binding(
+                    provider=self._make_provider(), capabilities=_caps(), model="m"
+                ),
             ),
-        )
+        ).run()
         assert result.success is False
         assert "depth" in result.error.lower()
         assert "--max-depth" in result.error
 
     def test_anonymous_delegate_at_limit_also_blocked(self):
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
 
         # Anonymous delegates aren't on ``agent_stack`` so the cycle
         # check can't help. The depth check is the only thing
         # standing between an anonymous delegate and a runaway nest.
-        result = _run_single(
-            task="do x",
-            agent_name="",  # anonymous
-            agent_stack=[],
-            depth=2,
-            max_depth=2,
-            binding=make_binding(
-                provider=self._make_provider(), capabilities=_caps(), model="m"
+        result = OneShotLoop(
+            {"task": "do x", "agent": ""},
+            make_caller(
+                agent_stack=[],
+                depth=2,
+                max_depth=2,
+                binding=make_binding(
+                    provider=self._make_provider(), capabilities=_caps(), model="m"
+                ),
             ),
-        )
+        ).run()
         assert result.success is False
         assert "depth" in result.error.lower()
 
     def test_cycle_check_still_fires_independently(self):
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
 
         # Within depth limit but the named agent is already on the
         # stack — cycle, not depth.
-        result = _run_single(
-            task="do x",
-            agent_name="reviewer",
-            agent_stack=["main", "reviewer"],
-            depth=1,
-            max_depth=4,
-            binding=make_binding(
-                provider=self._make_provider(), capabilities=_caps(), model="m"
+        result = OneShotLoop(
+            {"task": "do x", "agent": "reviewer"},
+            make_caller(
+                agent_stack=["main", "reviewer"],
+                depth=1,
+                max_depth=4,
+                binding=make_binding(
+                    provider=self._make_provider(), capabilities=_caps(), model="m"
+                ),
             ),
-        )
+        ).run()
         assert result.success is False
         assert "Recursive" in result.error
         assert "reviewer" in result.error
@@ -431,7 +438,7 @@ class TestSkillBumpsDepth:
     """
 
     def test_skill_passes_parent_depth_plus_one_to_run_loop(self, monkeypatch):
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.loader import Skill
         from agent_cli.tools.result import ToolResult
 
@@ -441,7 +448,7 @@ class TestSkillBumpsDepth:
             captured.update(kwargs)
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.skills.executor.run_loop", fake_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
 
         skill = Skill(
             name="example",
@@ -455,14 +462,17 @@ class TestSkillBumpsDepth:
             max_turns=0,
             hooks={},
         )
-        execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(provider=object(), capabilities=_caps(), model="m"),
-            parent_depth=3,
-            max_depth=5,
-            owner="main",
-        )
+        SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(
+                    provider=object(), capabilities=_caps(), model="m"
+                ),
+                depth=3,
+                max_depth=5,
+            ),
+        ).run()
         # depth=3+1=4 (one hop above the parent), max_depth passed through.
         assert captured["depth"] == 4
         assert captured["max_depth"] == 5
@@ -473,7 +483,7 @@ class TestSkillBumpsDepth:
         # subsequent strip-at-ceiling logic accounts for the skill
         # hop. Without this, a top-level skill behaved as depth 0
         # — equivalent to a no-op for the depth counter.
-        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.loader import Skill
         from agent_cli.tools.result import ToolResult
 
@@ -483,7 +493,7 @@ class TestSkillBumpsDepth:
             captured.update(kwargs)
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.skills.executor.run_loop", fake_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
 
         skill = Skill(
             name="example",
@@ -497,13 +507,13 @@ class TestSkillBumpsDepth:
             max_turns=0,
             hooks={},
         )
-        execute_skill(
-            skill=skill,
-            arguments="",
-            binding=make_binding(provider=object(), capabilities=_caps(), model="m"),
-            owner="main",
-            # parent_depth omitted → 0 default
-        )
+        SkillLoop(
+            skill,
+            "",
+            make_caller(
+                binding=make_binding(provider=object(), capabilities=_caps(), model="m")
+            ),
+        ).run()
         assert captured["depth"] == 1
 
 
@@ -520,17 +530,18 @@ class TestExistingRecursionPathsUnchanged:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            binding=make_binding(
-                provider_name="openai",
-                base_url="",
-                api_key="",
-                capabilities=_caps(),
-                model="m",
+            make_caller(
+                binding=make_binding(
+                    provider_name="openai",
+                    base_url="",
+                    api_key="",
+                    capabilities=_caps(),
+                    model="m",
+                ),
+                ctx=None,
+                session=None,
+                skill_stack=["plan", "summarize"],
             ),
-            ctx=None,
-            session=None,
-            skill_stack=["plan", "summarize"],
-            owner="main",
         )
         assert result.success is False
         assert "summarize" in result.error
@@ -539,16 +550,19 @@ class TestExistingRecursionPathsUnchanged:
     def test_named_agent_cycle_still_blocked(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
 
-        result = _run_single(
-            task="x",
-            agent_name="reviewer",
-            agent_stack=["main", "reviewer"],
-            depth=0,
-            max_depth=4,
-            binding=make_binding(provider=MagicMock(), capabilities=_caps(), model="m"),
-        )
+        result = OneShotLoop(
+            {"task": "x", "agent": "reviewer"},
+            make_caller(
+                agent_stack=["main", "reviewer"],
+                depth=0,
+                max_depth=4,
+                binding=make_binding(
+                    provider=MagicMock(), capabilities=_caps(), model="m"
+                ),
+            ),
+        ).run()
         assert result.success is False
         assert "reviewer" in result.error
 
