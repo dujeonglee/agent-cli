@@ -60,6 +60,21 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 
+def _bare_kind(*, ports, tools, **attrs):
+    """`run_loop` 를 종류 없이 부른 쪽(테스트·임베더)을 위한 맨 종류 (v10.88.0) — `LoopKind`
+    기본 구현이 포트·깊이·이름에서 답을 유도한다. 프로덕션 다섯 종류는 자기 정책을 명시한다."""
+    from agent_cli.loop.kind import LoopKind
+
+    k = LoopKind()
+    k.owner = ports.owner
+    k.ports = ports
+    k.tools = tools
+    for name, value in attrs.items():
+        if value is not None:
+            setattr(k, name, value)
+    return k
+
+
 def mail_item(reply: dict) -> tuple[str, str] | None:
     """main 앞 메일 1건 → 장부 항목 ``(id, "mail")``, 또는 None(장부 밖).
 
@@ -124,6 +139,7 @@ class AgentLoop:
         compaction_enabled: bool = True,
         peer_agents_section: str = "",
         query_images: list[dict] | None = None,
+        kind=None,
     ):
         # 모델·능력·방언·프로바이더는 ``binding``(providers/binding, v10.43.0) 의
         # 것 — LoopConfig 의 속성이 매 호출 읽는다(I2 불변식: loop 의 방언 ≡ ctx
@@ -157,10 +173,8 @@ class AgentLoop:
         # message (route_message returns False / None) is injected as a steering
         # user turn. ``task_log`` accumulates EVERY user request (starter +
         # injected) so recovery / review reference the full set of asks.
-        self.dequeue_user_message = ports.dequeue_user_message
+        # 어디서 받을지는 종류가 정한다(`kind.intake`, v10.88.0); 라우팅은 엔진의 것.
         self.route_message = ports.route_message
-        # 상주 에이전트 (v9.25.0): 턴 경계마다 받은편지함을 이 런으로 흡수한다.
-        self.absorb_inbox = ports.absorb_inbox
         # ``query_author_is_user`` — False for a 🤝 agent-report wake-up: its
         # "author" is a display label, not a user, so it must not enter the
         # run's ``answers`` attribution. ``run_authors`` = the users whose asks
@@ -286,9 +300,29 @@ class AgentLoop:
             agent_registry=ports.agent_registry,
             message_handler=ports.message_handler,
             questions=ports.questions,
-            peer_roster=ports.peer_roster,
-            peer_agents_section=peer_agents_section,
-            wakeable=ports.wakeable(),
+            kind=kind
+            if kind is not None
+            else _bare_kind(
+                ports=ports,
+                depth=depth,
+                max_depth=max_depth,
+                max_turns=max_turns,
+                tools=active_tools,
+                hooks_config=hooks_config,
+                stop_event=stop_event,
+                agent_name=agent_name,
+                skill_name=skill_name,
+                skill_args=skill_args,
+                skill_stack=skill_stack,
+                agent_stack=agent_stack,
+                agent_role=agent_role,
+                peer_agents_section=peer_agents_section,
+                session=session,
+                compaction_enabled=compaction_enabled,
+                graceful_interrupt=graceful_interrupt,
+                verbose=verbose,
+                record_turns=record_turns,
+            ),
         )
         self._state = LoopState(
             query=query,
@@ -556,9 +590,7 @@ class AgentLoop:
                 if self.ctx:
                     self.ctx.set_turn(self.turn + 1)
                 seen = len(self.messages)
-                self._inject_queued_messages()
-                self._deliver_agent_mail()
-                self._absorb_inbox()
+                self._intake()
                 if starterless and self.turn == 0 and len(self.messages) == seen:
                     # 깨우기 런인데 배달된 것이 없다(다른 런이 이미 가져갔다) —
                     # 모델에게 줄 새 입력이 없으니 LLM 을 부르지 않는다.
@@ -648,7 +680,7 @@ class AgentLoop:
         # server's terminal. Mirror the run_skill path: only the
         # top level renders, so a nested skill interrupt doesn't double-
         # print under its parent.
-        if not self.skill_name:
+        if self._config.kind.renders():
             render_step(
                 "observation",
                 INTERRUPT_NOTICE,
@@ -788,7 +820,7 @@ class AgentLoop:
         attribution AND the registry's request-snapshot source current, so
         (a) the final this run renders carries ``answers`` and (b) an agent
         request made anywhere inside this run inherits the same set."""
-        if self.dequeue_user_message is None:
+        if not self._config.kind.tracks_run_authors:
             return
         from agent_cli.render import get_renderer
 
@@ -804,69 +836,56 @@ class AgentLoop:
             return False
         return self.max_turns <= 0 or self.turn < self.max_turns
 
-    def _inject_queued_messages(self) -> None:
-        """Turn boundary (web): **drain the ENTIRE queue** and process each item
-        the SAME way a run-starter is processed, so all requests pending at this
-        boundary reach the LLM together in the next turn (v8.16.1 — Claude Code
-        식 묶음 반영; 종전엔 턴당 1건만 빼는 스티어링이었다). No-op when no callback
-        (CLI) or the queue is empty.
+    def _intake(self) -> None:
+        """턴 경계 흡수 (v10.88.0): **어디서 받을지**는 종류가 정하고(`kind.intake` — main 은
+        입력 큐와 레지스트리 메일, 상주는 받은편지함, private 은 자기 메일함, 스킬은 없음),
+        **어떻게 넣을지**는 여기다 — 큐 항목은 명령 라우팅 또는 조종 메시지(`_inject_message`),
+        레지스트리 회신은 빚·장부·레코드(`_inject_mail`), 받은편지함 항목은 사람 요청 또는
+        관찰(`_inject_item`). 종전엔 포트 유무로 세 메서드가 각자 판정했다."""
+        merged_authors = False
+        for it in self._config.kind.intake():
+            if "message" in it:
+                self._inject_message(it["message"])
+            elif "mail" in it:
+                merged_authors = self._inject_mail(it["mail"]) or merged_authors
+            else:
+                self._inject_item(it)
+        if merged_authors:
+            self._mirror_run_authors()
 
-        A command (``/sh``, ``/compact``, ``@agent``, ``/skill``) is routed via
-        ``route_message`` exactly as at run-start — so it executes instead of
-        leaking in as literal chat; its effect lands in the shared ctx, so we
-        refresh ``messages`` and record the ask. A plain chat message falls
-        through to ``_add_user_message`` as a steering injection.
-
-        **No steering notice (v9.18.0).** v8.14.2 put a ``role=user`` notice
-        ("⚡ Another user request arrived … address EVERY outstanding request")
-        before the batch's first plain-chat message. It said the same thing as
-        two per-turn tail surfaces — the Task Guidelines rule ("when more than
-        one user request is pending … do not answer only the most recent";
-        itself dropped in v10.68.0 — ``## Open Items`` lists and enforces) and
-        ``## Open Requests`` (the ids themselves) — while being the only one
-        ``ctx.add``-ed, so it stuck in history and had to be filtered out of
-        resume previews. It was also positionally dominated: the tail is
-        appended AFTER the freshly injected request, the notice before it.
-        And the enforcement no longer rests on advice — an unanswered request
-        keeps the run open (``dispatch._nag_open_requests``, v9.17.0). Three
-        copies of one instruction is how "Outstanding Requests" and "Open
-        Requests" drifted apart in the first place."""
-        if self.dequeue_user_message is None:
-            return
+    def _inject_message(self, item: dict) -> None:
+        """입력 큐 항목 하나 — 런 시작 메시지와 **같은 길**로 (v8.16.1: 경계마다 큐를 전부
+        비워 함께 넣는다). 명령(``/sh``·``/compact``·``@agent``·``/skill``)은 ``route_message``
+        로 실행되고(글자로 새지 않는다; 효과는 공유 ctx 에 남아 ``messages`` 를 새로 읽는다),
+        보통 채팅은 `_add_user_message` 로 조종 주입. 조종 안내문은 없다(v9.18.0 — 꼬리의
+        `## Open Items` 가 열린 요청을 들고 강제한다)."""
         from agent_cli.render import get_renderer
 
-        renderer = get_renderer()
-        while True:
-            item = self.dequeue_user_message()
-            if not item:
-                break
-            text = item.get("text") or ""
-            author = item.get("nickname")
-            images = item.get("images") or None  # v10.60.0: 주입도 이미지를 싣는다
-            labeled = f"[{author}]: {text}" if author else text
-            # Echo the dequeued message as a conversation card BEFORE routing —
-            # mirrors the worker's run-starter echo (CLI 기본은 no-op).
-            renderer.push_user_message(
-                labeled,
-                author=author or "",
-                hidx=getattr(self.ctx, "next_ordinal", None),
-                images=images,
-            )
-            if self.route_message is not None and self.route_message(text):
-                # Routed as a command — record the ask; ctx may have changed.
-                self.task_log.append(labeled)
-                if self.ctx:
-                    self.messages = self.ctx.get_messages()
-                continue
-            # 회계 등록은 라우팅 판정 **뒤**다 — 라우팅 명령은 이미 처리된
-            # 것이라 미답으로 남으면 안 된다. 합성 wake 아이템도 제외
-            # (사람 발화가 아니다).
-            rid = item.get("id") or ""
-            if item.get("system"):
-                rid = ""  # 합성 wake — 사람 발화가 아니다
-            if rid:
-                self._state.ledger.add_request(rid, author or "", text)
-            self._add_user_message(text, author, request_id=rid, images=images)
+        text = item.get("text") or ""
+        author = item.get("nickname")
+        images = item.get("images") or None  # v10.60.0: 주입도 이미지를 싣는다
+        labeled = f"[{author}]: {text}" if author else text
+        # 라우팅 **앞**에 대화 카드로 에코 — 워커의 런 시작 에코와 같다(CLI 기본은 no-op).
+        get_renderer().push_user_message(
+            labeled,
+            author=author or "",
+            hidx=getattr(self.ctx, "next_ordinal", None),
+            images=images,
+        )
+        if self.route_message is not None and self.route_message(text):
+            # 명령으로 라우팅됐다 — 요청을 적고, ctx 가 바뀌었을 수 있다.
+            self.task_log.append(labeled)
+            if self.ctx:
+                self.messages = self.ctx.get_messages()
+            return
+        # 회계 등록은 라우팅 판정 **뒤** — 라우팅 명령은 이미 처리된 것이라 미답으로
+        # 남으면 안 된다. 합성 wake 아이템도 제외(사람 발화가 아니다).
+        rid = item.get("id") or ""
+        if item.get("system"):
+            rid = ""
+        if rid:
+            self._state.ledger.add_request(rid, author or "", text)
+        self._add_user_message(text, author, request_id=rid, images=images)
 
     def _note_run_started(self) -> None:
         """이 소유자의 런이 **입력을 받아** 시작됐다 — `wait` 중간 깨우기 타이머를
@@ -885,124 +904,88 @@ class AgentLoop:
         if registry is not None:
             registry.run_started(self._config.owner)
 
-    def _deliver_agent_mail(self) -> None:
-        """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
-        주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="agent"
-        + source="agent_reply" (tool="" 는 형식-개입 마커라 금지 —
-        records.is_format_intervention 오인 방지). over-cap 회신은
-        build_reply_record 가 디스크 포인터로 치환(전문은 worker 가 이미
-        teammates/<key>/replies/ 에 영속)."""
+    def _inject_mail(self, reply: dict) -> bool:
+        """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가
+        배달. 레코드는 tool="agent" + source="agent_reply"(tool="" 는 형식-개입 마커라 금지).
+        over-cap 회신은 `build_reply_record` 가 디스크 포인터로 치환. 돌려주는 값: 귀속
+        승계로 ``run_authors`` 가 바뀌었는가."""
         registry = self._config.agent_registry
-        if registry is None:
-            return
-        replies = registry.drain_replies()
-        if not replies:
-            return
         from agent_cli.subagent.agents_live import build_reply_record, mail_queue_item
 
-        merged_authors = False
-        for reply in replies:
-            # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. 빚을 **먼저**
-            # 적는다: 관찰 꼬리가 그 빚의 id 로 `reply(id=…)` 를 가리키고
-            # (v10.56.0 장부 P3), 그 원문이 열려 있는 동안 핀된다.
-            debt = None
-            if reply.get("expects_reply") and reply.get("key"):
-                note = getattr(registry, "note_owes", None)
-                if callable(note):
-                    # 빚의 id = 그 배달의 id (v10.77.0 — id 가 곧 키)
-                    kw = {"id": reply["item_id"]} if reply.get("item_id") else {}
-                    debt = note(
-                        "main",
-                        f"agent:{reply['key']}",
-                        reply.get("output") or "",
-                        **kw,
-                    )
-                    reply = {**reply, "debt_id": str(getattr(debt, "id", "") or "")}
-            record = build_reply_record(
-                reply, cap=self._oversized_cap, registry=registry
-            )
-            if debt is not None and getattr(debt, "id", ""):
-                record["request_id"] = str(debt.id)
-            # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로
-            # 없는 메일은 사용자 요청처럼 `complete` 의 `answers` 로 닫는다.
-            # 레코드에 id 를 찍어 열려 있는 동안 원문이 압축 핀에 걸린다.
-            item = mail_item(reply)
-            if item is not None:
-                nid, who = item
-                self._state.ledger.add_request(nid, who, mail_queue_item(reply)["text"])
-                record["request_id"] = nid
-            # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의
-            # answers 에 합류 — 🤝 웨이크 런(시작 authors 빈)과 실행 중
-            # 배달 양쪽이 이 한 지점으로 커버된다. 요청↔회신 쌍에 묶인
-            # 값이라 사이에 끼어든 다른 사용자의 런과 교차 오염 없음.
-            # 히스토리 관찰 레코드에도 additive 로 실어(``answers``) resume
-            # 재생이 같은 집합을 재도출하게 한다 (라이브/재생 규칙 일치).
-            inherited = [a for a in (reply.get("answers") or []) if a]
-            if inherited:
-                record["answers"] = list(inherited)
-            self.messages.append({"role": "user", "content": record["content"]})
-            if self.ctx:
-                self.ctx.add(dict(record))
-            render_step(
-                "observation",
-                record["content"],
-                self.turn,
-                hidx=getattr(self.ctx, "last_ordinal", None),
-                # 레코드가 실은 도구명으로 그린다 — 하드코딩하면 모니터
-                # 보고가 **빈 칩을 단 에이전트 회신 카드**로 그려진다
-                # (프런트가 `tool === "agent"` 를 특수 처리한다).
-                tool_name=record["tool"],
-                success=bool(reply.get("success")),
-            )
-            for a in inherited:
-                if a not in self.run_authors:
-                    self.run_authors.append(a)
-                    merged_authors = True
-        if merged_authors:
-            self._mirror_run_authors()
-
-    def _absorb_inbox(self) -> None:
-        """턴 경계 (상주 에이전트, v9.25.0): 이 런이 도는 동안 받은편지함에
-        도착한 항목을 지금 흡수한다 — main 이 웹 큐와 메일박스로 하는 일의
-        상주판. 종전엔 런이 끝나야 꺼냈다: 11시간 런(1zfgc2) 동안 오케스트레이터
-        메시지 8건이, 50분 런(2an3cv) 동안 main 의 지시 2건이 안 읽혔다.
-
-        포트가 돌려주는 항목은 둘 중 하나다. ``user_request`` (사람이 이
-        에이전트 창에 직접 쓴 것)는 main 의 큐 주입과 같은 회계를 받는다 —
-        장부(`state.ledger`)에 올라 꼬리의 ``## Open Requests`` 와 `answers`
-        강제를 받고, 이 런은 **사람 런**이 된다(사람은 창에서 `complete` 의
-        결과를 보므로 그것을 받아들이고 남은 빚만 독촉 — main 과 같은 규칙,
-        사용자 결정). ``record`` (main·동료의 요청, 회신, 질문, 독촉)는 관찰로
-        들어간다 — 요청이면 레지스트리가 이미 빚으로 적어 꼬리의 ``## Owed
-        Replies`` 에 번호와 함께 보인다."""
-        if self.absorb_inbox is None:
-            return
-        items = self.absorb_inbox()
-        if not items:
-            return
-        for it in items:
-            ur = it.get("user_request")
-            if ur:
-                self._state.ledger.add_request(
-                    ur["id"], ur.get("author") or "", ur["text"]
+        # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. 빚을 **먼저** 적는다:
+        # 관찰 꼬리가 그 빚의 id 로 `reply(id=…)` 를 가리키고(v10.56.0 장부 P3), 그 원문이
+        # 열려 있는 동안 핀된다.
+        debt = None
+        if reply.get("expects_reply") and reply.get("key"):
+            note = getattr(registry, "note_owes", None)
+            if callable(note):
+                # 빚의 id = 그 배달의 id (v10.77.0 — id 가 곧 키)
+                kw = {"id": reply["item_id"]} if reply.get("item_id") else {}
+                debt = note(
+                    "main",
+                    f"agent:{reply['key']}",
+                    reply.get("output") or "",
+                    **kw,
                 )
-                # ``_add_user_message`` 가 이 런을 사람 런으로 세운다(user_run)
-                self._add_user_message(
-                    ur["text"], ur.get("author"), request_id=ur["id"]
-                )
-                continue
-            rec = it["record"]
-            self.messages.append({"role": "user", "content": rec["content"]})
-            if self.ctx:
-                self.ctx.add(dict(rec))
-            render_step(
-                "observation",
-                rec["content"],
-                self.turn,
-                hidx=getattr(self.ctx, "last_ordinal", None),
-                tool_name=rec["tool"],
-                success=bool(rec.get("success", True)),
-            )
+                reply = {**reply, "debt_id": str(getattr(debt, "id", "") or "")}
+        record = build_reply_record(reply, cap=self._oversized_cap, registry=registry)
+        if debt is not None and getattr(debt, "id", ""):
+            record["request_id"] = str(debt.id)
+        # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로 없는 메일은
+        # 사용자 요청처럼 `complete` 의 `answers` 로 닫는다. 레코드에 id 를 찍어 열려 있는
+        # 동안 원문이 압축 핀에 걸린다.
+        item = mail_item(reply)
+        if item is not None:
+            nid, who = item
+            self._state.ledger.add_request(nid, who, mail_queue_item(reply)["text"])
+            record["request_id"] = nid
+        # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의 answers 에 합류 — 🤝
+        # 웨이크 런(시작 authors 빈)과 실행 중 배달 양쪽이 이 한 지점으로 커버된다.
+        inherited = [a for a in (reply.get("answers") or []) if a]
+        if inherited:
+            record["answers"] = list(inherited)
+        self.messages.append({"role": "user", "content": record["content"]})
+        if self.ctx:
+            self.ctx.add(dict(record))
+        render_step(
+            "observation",
+            record["content"],
+            self.turn,
+            hidx=getattr(self.ctx, "last_ordinal", None),
+            # 레코드가 실은 도구명으로 그린다 — 하드코딩하면 모니터 보고가 빈 칩을 단
+            # 에이전트 회신 카드로 그려진다(프런트가 `tool === "agent"` 를 특수 처리한다).
+            tool_name=record["tool"],
+            success=bool(reply.get("success")),
+        )
+        merged = False
+        for a in inherited:
+            if a not in self.run_authors:
+                self.run_authors.append(a)
+                merged = True
+        return merged
+
+    def _inject_item(self, it: dict) -> None:
+        """받은편지함·메일함 항목 하나 (상주 v9.25.0, private v10.84.0). ``user_request``
+        (사람이 이 에이전트 창에 직접 쓴 것)는 main 의 큐 주입과 같은 회계 — 장부에 올라
+        꼬리의 ``## Open Requests`` 와 `answers` 강제를 받고 이 런은 **사람 런**이 된다.
+        ``record`` (main·동료의 요청, 회신, 질문, 독촉, 잡·모니터·체크인 통지)는 관찰로."""
+        ur = it.get("user_request")
+        if ur:
+            self._state.ledger.add_request(ur["id"], ur.get("author") or "", ur["text"])
+            self._add_user_message(ur["text"], ur.get("author"), request_id=ur["id"])
+            return
+        rec = it["record"]
+        self.messages.append({"role": "user", "content": rec["content"]})
+        if self.ctx:
+            self.ctx.add(dict(rec))
+        render_step(
+            "observation",
+            rec["content"],
+            self.turn,
+            hidx=getattr(self.ctx, "last_ordinal", None),
+            tool_name=rec["tool"],
+            success=bool(rec.get("success", True)),
+        )
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -1321,7 +1304,7 @@ class AgentLoop:
             tool_name="output_truncated",
             success=False,
             turn=self.turn,
-            render=not self.skill_name,
+            render=self._config.kind.renders(),
             recovery_kind="format",
             store_emission=False,
         )
@@ -1354,7 +1337,7 @@ class AgentLoop:
             tool_name="server_error",
             success=False,
             turn=self.turn,
-            render=not self.skill_name,
+            render=self._config.kind.renders(),
             recovery_kind="format",
             store_emission=False,
         )
@@ -1390,7 +1373,7 @@ class AgentLoop:
             tool_name="runaway",
             success=False,
             turn=self.turn,
-            render=not self.skill_name,
+            render=self._config.kind.renders(),
             recovery_kind="format",
             store_emission=False,
         )

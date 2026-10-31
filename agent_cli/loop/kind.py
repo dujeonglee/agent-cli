@@ -38,6 +38,31 @@ class LoopKindError(Exception):
     """종류가 런을 열 수 없다 — 모델(또는 호스트)에게 보낼 사유 한 줄이 메시지다."""
 
 
+#: ⑯ `wait` 정책 — 런을 끝내고 깨우기를 기다린다 / 제자리에서 막는다 / 거부한다.
+WAIT_END_RUN = "end_run"
+WAIT_BLOCK = "block"
+WAIT_REFUSE = "refuse"
+
+
+@dataclass(frozen=True)
+class PromptProfile:
+    """⑨ 프롬프트 윤곽 — 시스템 프롬프트·꼬리·거절 문구가 종류에 따라 달라지는 입력 전부.
+    글은 바뀌지 않는다: 같은 입력이 같은 절을 만든다(`build_system_prompt_sections`)."""
+
+    #: `## Role` 본문 — 빈 문자열이면 기본 ROLE_PROMPT
+    role: str
+    #: 상주의 `## Live Agents` 안내 + Reply Discipline (빈 문자열이면 없음)
+    peer_section: str
+    #: `agent` 도구를 전부 광고할 레지스트리 — None 이면 run-only 축소 스키마
+    agent_registry: Any
+    #: `ask` 가 사람 답을 기다리며 막는가 (상주는 질문 포트로 비차단)
+    ask_blocking: bool
+    #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
+    reports_to_caller: bool
+    #: 상주 모드 거절 문구가 `message` 동료 채널을 가리키는가
+    peer_channel: bool
+
+
 @dataclass(frozen=True)
 class Caller:
     """중첩 루프(one-shot·스킬)가 **호출자**에게서 읽는 것.
@@ -181,6 +206,26 @@ class LoopKind:
     engine: Callable | None = None
     ctx: Any = None
 
+    @staticmethod
+    def make_ports(owner: str, **wired) -> LoopPorts:
+        """맨 종류의 포트 — 준 것만 연결, 나머지는 미연결 (`LoopConfig` 를 종류 없이 만든 쪽).
+        `LoopPorts` 를 만드는 자리는 종류의 `make_ports` 뿐이다(테스트가 AST 로 고정)."""
+        from agent_cli.loop.ports import LoopPorts
+
+        base = {
+            "questions": None,
+            "message_handler": None,
+            "agent_registry": None,
+            "mcp_manager": None,
+            "hook_runner": None,
+            "route_message": None,
+            "dequeue_user_message": None,
+            "absorb_inbox": None,
+            "peer_roster": None,
+        }
+        base.update(wired)
+        return LoopPorts(owner=owner, **base)
+
     # ── 템플릿 ──
     def start(self, *args, **kwargs) -> Start:
         """종류가 스스로 시작을 만든다(스킬·one-shot·하니스·상주). main 은 호스트가 넘긴다."""
@@ -245,9 +290,77 @@ class LoopKind:
             "agent_role": self.agent_role,
             "record_turns": self.record_turns,
             "compaction_enabled": self.compaction_enabled,
-            "peer_agents_section": self.peer_agents_section,
             "ports": self.ports,
+            "kind": self,
         }
+
+    # ── B·C 엔진이 묻는 것 (PR 2, v10.88.0) — 기본 구현은 정체(포트·깊이·이름)에서 유도한다.
+    # 다섯 종류는 자기 정책을 **명시**해 덮어쓴다; 기본은 `run_loop` 를 직접 부르는 쪽(테스트·
+    # 임베더)의 맨 종류(`AgentLoop` 가 만든다)를 위한 것이다.
+    def wait_policy(self) -> str:
+        """⑯ `wait` 가 런을 끝내나(main·상주), 제자리에서 막나(private), 거부하나(인라인)."""
+        from agent_cli.constants import is_private_owner
+
+        if not self.ports.wakeable():
+            return WAIT_REFUSE
+        return WAIT_BLOCK if is_private_owner(self.owner) else WAIT_END_RUN
+
+    def intake(self) -> list[dict]:
+        """⑮ 턴 경계에 흡수할 항목 — 종류가 **어디서 받을지** 정하고 엔진이 넣는다.
+        모양: ``{"message": 큐 항목}`` · ``{"mail": 레지스트리 회신}`` · ``{"record": 레코드}`` ·
+        ``{"user_request": {id, author, text}}``."""
+        items: list[dict] = []
+        dequeue = self.ports.dequeue_user_message
+        if dequeue is not None:
+            while True:
+                item = dequeue()
+                if not item:
+                    break
+                items.append({"message": item})
+        registry = self.ports.agent_registry
+        if registry is not None:
+            items.extend({"mail": r} for r in registry.drain_replies())
+        absorb = self.ports.absorb_inbox
+        if absorb is not None:
+            items.extend(absorb() or [])
+        return items
+
+    def prompt_profile(self) -> PromptProfile:
+        """⑨ 프롬프트 윤곽."""
+        q = self.ports.questions
+        return PromptProfile(
+            role=self.agent_role,
+            peer_section=self.peer_agents_section,
+            agent_registry=self.ports.agent_registry,
+            ask_blocking=not (q is not None and getattr(q, "nonblocking", False)),
+            reports_to_caller=self.depth > 0,
+            peer_channel=self.ports.message_handler is not None,
+        )
+
+    def tail_roster(self, tools: list[str]) -> str:
+        """⑩ 꼬리 `## Live Agents` 본문 — ``tools`` 는 엔진 필터 뒤의 도구 목록(`agent` 가
+        없는 루프엔 로스터를 광고하지 않는다)."""
+        registry = self.ports.agent_registry
+        if registry is not None and "agent" in tools:
+            from agent_cli.prompts.system_prompt import build_live_agents_section
+
+            return build_live_agents_section(registry, include_state=True)
+        roster = self.ports.peer_roster
+        if roster is not None:
+            try:
+                return roster() or ""
+            except Exception:
+                return ""
+        return ""
+
+    def renders(self) -> bool:
+        """⑪ 턴·관찰을 렌더러에 그리나 — 스킬만 안 그린다(카드만)."""
+        return not self.skill_name
+
+    @property
+    def tracks_run_authors(self) -> bool:
+        """사용자 귀속(`run_authors`)을 렌더러·레지스트리에 비추나 — 입력 큐가 있는 main 만."""
+        return self.ports.dequeue_user_message is not None
 
     def _engine(self) -> Callable:
         return self.engine if self.engine is not None else self._run_loop
@@ -339,3 +452,30 @@ class PrivateLoop(LoopKind):
         from agent_cli.runtime import release_private_owner
 
         return release_private_owner(self.owner)
+
+    # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──
+    def wait_policy(self) -> str:
+        return WAIT_BLOCK  # 런이 곧 함수 호출 — 메일함에 통지가 올 때까지 여기서 막는다
+
+    def intake(self) -> list[dict]:
+        return list(self.ports.absorb_inbox() or [])  # 자기 메일함 → `mail_record`
+
+    def prompt_profile(self) -> PromptProfile:
+        return PromptProfile(
+            role=self.agent_role,
+            peer_section="",
+            agent_registry=None,  # run-only 축소 스키마
+            ask_blocking=True,
+            reports_to_caller=True,
+            peer_channel=False,
+        )
+
+    def tail_roster(self, tools: list[str]) -> str:
+        return ""
+
+    def renders(self) -> bool:
+        return True
+
+    @property
+    def tracks_run_authors(self) -> bool:
+        return False

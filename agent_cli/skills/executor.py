@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
-from agent_cli.loop.kind import Caller, LoopKind, LoopKindError, Start
+from agent_cli.loop.kind import (
+    WAIT_REFUSE,
+    Caller,
+    LoopKind,
+    LoopKindError,
+    PromptProfile,
+    Start,
+)
 from agent_cli.skills.models import Skill
 from agent_cli.tools.result import ToolResult
 
@@ -232,6 +239,42 @@ class SkillLoop(LoopKind):
                 "peer_roster": _RESIDENT_ROSTER,
             },
         )
+
+    # ── 엔진이 묻는 것 (v10.88.0) ──
+    def wait_policy(self) -> str:
+        return WAIT_REFUSE  # 호출자의 턴 안 인라인 — 아무도 깨우지 않는다
+
+    def intake(self) -> list[dict]:
+        # D1: 스킬은 호출자(main)의 레지스트리 메일을 흡수하지 않는다 — 스킬엔 `reply` 가
+        # 없고 빚이 main 이름으로 적혔다. 그 메일은 스킬이 끝난 뒤 main 의 다음 턴이 받는다.
+        return []
+
+    def prompt_profile(self) -> PromptProfile:
+        return PromptProfile(
+            role=self.agent_role,  # 호출자의 역할 (D3)
+            peer_section="",
+            # 스킬은 main 의 일 — main 아래면 레지스트리를 상속해 `agent` 전부(spawn 가능),
+            # 서브에이전트 아래면 None(run-only).
+            agent_registry=self.caller.agent_registry,
+            ask_blocking=True,
+            reports_to_caller=True,
+            peer_channel=False,
+        )
+
+    def tail_roster(self, tools: list[str]) -> str:
+        registry = self.caller.agent_registry
+        if registry is None or "agent" not in tools:
+            return ""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        return build_live_agents_section(registry, include_state=True)
+
+    def renders(self) -> bool:
+        return False  # 스킬 턴은 그리지 않는다 — 카드만
+
+    @property
+    def tracks_run_authors(self) -> bool:
+        return False
 
     # ── ⑫ 시작 — 템플릿 치환 ──
     def start(self) -> Start:

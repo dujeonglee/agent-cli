@@ -18,7 +18,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_cli.loop.kind import LoopKind, LoopKindError, Start
+from agent_cli.loop.kind import (
+    WAIT_END_RUN,
+    LoopKind,
+    LoopKindError,
+    PromptProfile,
+    Start,
+)
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -105,6 +111,35 @@ class ResidentLoop(LoopKind):
         # 끼우는 테스트가 있고, None 이면 `run_loop`.
         runner = self.registry._runner
         return runner if runner is not None else self._run_loop
+
+    # ── 엔진이 묻는 것 (v10.88.0) ──
+    def wait_policy(self) -> str:
+        return WAIT_END_RUN  # 런을 끝내고 받은편지함(회신·통지)이 다음 런을 연다
+
+    def intake(self) -> list[dict]:
+        """런 도중 받은편지함에 도착한 항목을 지금 흡수한다 (v9.25.0) — 11시간 런 동안
+        오케스트레이터 메시지 8건이 안 읽히던 것."""
+        return list(self.registry.absorb_pending(self.tm) or [])
+
+    def prompt_profile(self) -> PromptProfile:
+        return PromptProfile(
+            role=self.tm.role_prompt,
+            peer_section=self.peer_agents_section,
+            agent_registry=None,  # 상주 안 상주 금지 — run-only 축소 스키마
+            ask_blocking=False,  # 질문 포트로 비차단
+            reports_to_caller=True,
+            peer_channel=True,  # 상주 모드 거절은 `message` 동료 채널을 가리킨다
+        )
+
+    def tail_roster(self, tools: list[str]) -> str:
+        return self.peer_roster()
+
+    def renders(self) -> bool:
+        return True
+
+    @property
+    def tracks_run_authors(self) -> bool:
+        return False
 
     def peer_roster(self) -> str:
         from agent_cli.prompts.system_prompt import build_live_agents_section

@@ -952,15 +952,16 @@ class TurnDispatcher:
         인라인)는 첫 판정에서 거부한다 — 종전엔 광고만 안 하고 받아서 스킬 런을
         "⏸ waiting" 결과로 끝냈다. private 주소(one-shot·하니스 작업)는 런이 곧 함수
         호출이라 끝내지 않는다: 자기 메일함에 통지가 올 때까지 **여기서 막고**
-        런을 잇는다 — 다음 턴 경계의 ``_absorb_inbox`` 가 통지를 넣는다. 장부는
+        런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 통지를 넣는다. 장부는
         넘기지 않는다(같은 런)."""
-        from agent_cli.constants import is_private_owner
+        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_REFUSE
         from agent_cli.runtime import arrived_mail, wake_sources
 
         reason = ""
         if isinstance(op.action_input, dict):
             reason = str(op.action_input.get("reason") or "").strip()
-        if not self.cfg.wakeable:
+        policy = self.cfg.kind.wait_policy()  # v10.88.0: 종류가 정한다
+        if policy == WAIT_REFUSE:
             _append_observation(
                 self.state.messages,
                 self.ctx,
@@ -1021,7 +1022,7 @@ class TurnDispatcher:
         from agent_cli.subagent.agents_live import main_registry
 
         reg = main_registry()
-        private = is_private_owner(self.cfg.owner)
+        private = policy == WAIT_BLOCK
         kept = ""
         if not private:
             ledger = self.state.ledger
@@ -1192,7 +1193,7 @@ class TurnDispatcher:
                 else str(op.action_input),
             )
             port = self.cfg.questions
-            if port is not None and port.nonblocking:
+            if port is not None and not self.cfg.kind.prompt_profile().ask_blocking:
                 return self._op_ask_async(turn.record, questions, port, accumulate)
             # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
             # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값

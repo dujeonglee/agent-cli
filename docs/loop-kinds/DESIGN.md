@@ -55,7 +55,7 @@ one-shot 과 하니스는 공통 기반 `PrivateLoop`(private 주소·메일함 
 | PR | 내용 | 상태 |
 |---|---|---|
 | 1 · 조립을 객체로 | 다섯 구현이 ①–⑧과 ⑫⑬⑭⑰⑱을 소유. `ports_for_*`·`run_subagent_message`·`_run_single`·`_run_in_scope`·`execute_skill`·`_handle_run_skill` 의 래퍼·`main._dispatch_*` 의 스코프 래퍼·`HarnessJobs._execute/_open_scope/_close_scope` 삭제. B(D3)·C(D2)·D 수정. | **v10.87.0** |
-| 2 · 엔진이 묻는다 | ⑨⑩⑪(프롬프트 윤곽·꼬리 로스터·렌더)·⑮(흡수)·⑯(wait 정책)을 엔진이 `cfg.kind` 에 묻고 플래그 여덟 자리를 지운다. A(D1) 수정. | 다음 |
+| 2 · 엔진이 묻는다 | ⑨⑩⑪(프롬프트 윤곽·꼬리 로스터·렌더)·⑮(흡수)·⑯(wait 정책)을 엔진이 `cfg.kind` 에 묻고 플래그 여덟 자리를 지운다. A(D1) 수정. | **v10.88.0** |
 | 3 · 결과·마감 하나 | `ResidentLoop.finish` 가 `_handle_request`/`_handle_human_batch` 후처리를 한 벌로; 메일→레코드 세 함수 → 하나; `release` 가 python 워커까지(상주·private 통일). | 다음 |
 
 ### 3.1 PR 1 구현 기록 (v10.87.0)
@@ -100,9 +100,40 @@ one-shot 과 하니스는 공통 기반 `PrivateLoop`(private 주소·메일함 
 history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness/auditor/21-28/` 7턴, main 에
 `[auditor] source=harness` 로 `pass` 배달(주소 라벨 `21-28`).
 
+### 3.2 PR 2 구현 기록 (v10.88.0)
+
+엔진이 묻는 자리(`kind.py` 기본 틀의 B·C 묶음):
+
+| 물음 | 엔진의 자리 | 종전 추측 |
+|---|---|---|
+| `wait_policy()` → `end_run`·`block`·`refuse` | `dispatch._op_wait` | `cfg.wakeable` + `is_private_owner(owner)` |
+| `intake()` → `{"message"}`·`{"mail"}`·`{"record"}`·`{"user_request"}` | `core._intake` (넣는 법은 엔진: `_inject_message`·`_inject_mail`·`_inject_item`) | `dequeue_user_message`·`agent_registry`·`absorb_inbox` 포트 유무로 세 메서드 |
+| `prompt_profile()` → role·peer_section·agent_registry·ask_blocking·reports_to_caller·peer_channel | `prompt.SystemPromptSvc.rebuild`, `llm`(함수 스키마·종결 어투), `dispatch`(ask 비차단), `tool_bridge`(거절 문구) | `agent_registry is None`·`depth > 0`·`questions.nonblocking`·`message_handler is not None` |
+| `tail_roster(tools)` | `llm._build_session_state` | 레지스트리+`agent` 도구 / `peer_roster` 포트 |
+| `renders()` | `core` 렌더 게이트 넷 | `not self.skill_name` |
+| `tracks_run_authors` | `core._mirror_run_authors` | `dequeue_user_message is None` |
+
+- `LoopConfig.kind` 가 들어왔고 `wakeable`·`peer_roster`·`peer_agents_section` 필드는 나갔다.
+  `run_loop(kind=None)` — 종류 없이 부르면(테스트·임베더) `AgentLoop` 가 **맨 종류**를 만든다:
+  `LoopKind` 기본 구현이 포트·깊이·이름에서 답을 유도한다(종전 추측 규칙이 한 곳에). 다섯
+  종류는 자기 정책을 명시해 덮어쓴다. 종류 없이 만든 `LoopConfig` 도 `__post_init__` 이
+  맨 종류를 세운다(`LoopKind.make_ports` — `LoopPorts` 를 만드는 자리는 여전히 `make_ports` 뿐).
+- 설계와 다른 점: 흡수를 "어디서"(종류)와 "어떻게"(엔진)로 갈랐다 — 큐 항목의 명령 라우팅·
+  조종 주입, 회신의 빚·장부·레코드 변환, 받은편지함 항목의 사람 요청 회계는 엔진 상태를
+  만지므로 엔진에 남긴다. 종류가 돌려주는 것은 원천의 항목이다.
+- **D1 적용**: `SkillLoop.intake() == []` — main 아래 스킬이 main 레지스트리의 회신을 흡수하지
+  않는다. 그 메일은 스킬이 끝난 뒤 main 의 다음 턴이 받는다.
+- 가드: `tests/test_loop_kinds.py::TestEngineAsksTheKind::test_no_kind_sniffing_left_in_the_engine`
+  이 `loop/*.py`(kind·ports 제외)에서 종전 추측 표현 열 개를 금지한다.
+- 검증: 전체 테스트 8951 통과, inventory 바이트 동일(Environment 제외 — 글 불변), **라이브 5종
+  통과**(웹 방 g312ma 를 PR 2 코드로 재시작, 같은 세션 resume — pong 복원): ① main 잡 → `wait` →
+  통지로 깨어나 `done-8` ② one-shot 잡 → 제자리 `wait` → `5151` 37초 ③ spawn pong2 → `wait` →
+  `reply [n-21] re [r-20]` → `pong-77` ④ `/plan` → `skill_plan_e09469_…/` 6턴 ⑤ 감사 on →
+  `harness/auditor/49-56/` 7턴 → main 에 `[auditor] source=harness` pass.
+
 ## 4. 결정 (2026-10-31, 사용자 승인 "D1~D5 추천대로")
 
-- D1 스킬의 main 메일 흡수를 끊는다 → PR 2 (`SkillLoop.intake() == []`).
+- D1 스킬의 main 메일 흡수를 끊는다 → PR 2 (`SkillLoop.intake() == []`, 완료).
 - D2 하니스 주소에 라벨 → PR 1 (완료).
 - D3 스킬의 역할·도구 상속 — 죽은 인자를 살린다 → PR 1 (완료).
 - D4 PR 1 → 검증·릴리스 → PR 2 → PR 3.

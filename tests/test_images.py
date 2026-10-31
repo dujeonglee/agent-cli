@@ -346,14 +346,17 @@ class TestBridgeObserve:
 
 def _bare_loop():
     """``_add_user_message`` 만 부를 수 있는 최소 AgentLoop (생성자 없이)."""
+    from types import SimpleNamespace
+
     from agent_cli.loop.core import AgentLoop
     from agent_cli.loop.state import LoopState
+    from tests.loop_kinds import make_kind
 
     loop = AgentLoop.__new__(AgentLoop)
     loop._state = LoopState()
+    loop._config = SimpleNamespace(agent_registry=None, kind=make_kind())
     loop.ctx = None
     loop.run_authors = []
-    loop.dequeue_user_message = None
     return loop
 
 
@@ -500,10 +503,20 @@ class TestInjectedMessageImages:
         loop.messages = []
         loop.task_log = []
         loop.route_message = None
-        loop._config = SimpleNamespace(agent_registry=None)
+        from tests.loop_kinds import make_kind
+        from tests.loop_ports import make_ports
+
         ref = ImageRef("cap.png", "image/png", 640, 480, 1, "").to_dict()
         items = [{"id": "u-1", "nickname": "dj", "text": "see", "images": [ref]}]
-        loop.dequeue_user_message = lambda: items.pop(0) if items else None
+        # v10.88.0: 어디서 받을지는 종류 — 입력 큐 포트가 있는 맨 종류
+        loop._config = SimpleNamespace(
+            agent_registry=None,
+            kind=make_kind(
+                ports=make_ports(
+                    dequeue_user_message=lambda: items.pop(0) if items else None
+                )
+            ),
+        )
 
         class _Stub:
             def __init__(self):
@@ -519,7 +532,7 @@ class TestInjectedMessageImages:
         prev = render.get_renderer()
         render.set_renderer(stub)
         try:
-            loop._inject_queued_messages()
+            loop._intake()
         finally:
             render.set_renderer(prev)
         assert stub.pushed == [("[dj]: see", "dj", [ref])]

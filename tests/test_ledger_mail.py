@@ -164,7 +164,7 @@ class TestWakeRunHasNoStarter:
         loop, _reg, ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
         assert [m for m in ctx.get_raw_messages() if m.get("role") == "user"] == []
-        loop._deliver_agent_mail()
+        loop._intake()
         users = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
         assert len(users) == 1 and users[0]["tool"] == "job"
         assert "New agent mail" not in str(ctx.get_raw_messages())
@@ -190,7 +190,7 @@ class TestClosingAMailItem:
     def test_answers_close_it(self, tmp_path):
         loop, _reg, _ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
-        loop._deliver_agent_mail()
+        loop._intake()
         res = _complete(loop, result="잡 통과", answers=["n-1"])
         assert res.success and res.output == "잡 통과"
         assert loop._state.ledger.requests == []
@@ -202,7 +202,7 @@ class TestClosingAMailItem:
 
         loop, _reg, _ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
-        loop._deliver_agent_mail()
+        loop._intake()
         for _ in range(NAG_BUDGET):
             assert not hasattr(_complete(loop, result="끝"), "output")  # 되돌림
         res = _complete(loop, result="끝")
@@ -221,7 +221,7 @@ class TestClosingAMailItem:
             ],
         )
         loop._setup()
-        loop._deliver_agent_mail()
+        loop._intake()
         res = _complete(loop, result="할 일 없음 — 감사 통과", answers=["n-1"])
         assert res.output == "할 일 없음 — 감사 통과"
 
@@ -231,7 +231,7 @@ class TestBusyRunMixesWithUserRequests:
         loop, reg, _ctx = _loop(tmp_path, query="README 정리해 줘")
         loop._setup()
         reg._push_reply(dict(JOB))  # 런 도중 도착
-        loop._deliver_agent_mail()
+        loop._intake()
         assert loop._state.ledger.request_ids() == ["u-1", "n-1"]
         tail = loop._llm._build_session_state(10_000)
         assert (
@@ -247,7 +247,7 @@ class TestOpenMailIsPinned:
     def test_record_is_pinned_while_open_and_released_when_closed(self, tmp_path):
         loop, _reg, ctx = _loop(tmp_path, mail=[JOB])
         loop._setup()
-        loop._deliver_agent_mail()
+        loop._intake()
         idx = next(i for i, m in enumerate(ctx._cache) if m.get("request_id") == "n-1")
         assert idx in ctx._pinned_indices()
         _complete(loop, result="ok", answers=["n-1"])
@@ -275,7 +275,7 @@ class TestOpenDebtsArePinnedToo:
             ports=make_ports(agent_registry=reg, questions=_main_questions(reg)),
         )
         loop._setup()
-        loop._deliver_agent_mail()
+        loop._intake()
         return loop, reg, ctx
 
     def test_a_message_that_expects_a_reply(self, tmp_path):

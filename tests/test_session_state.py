@@ -23,7 +23,8 @@ from agent_cli.prompts.session_state import (
     compaction_notice_due,
 )
 from tests.binding_support import make_binding
-from tests.loop_ports import TEST_PORTS
+from tests.loop_kinds import make_kind
+from tests.loop_ports import TEST_PORTS, make_ports
 
 
 def _after_boundary(out: str) -> str:
@@ -453,7 +454,11 @@ class TestLoopAssembly:
         """v10.1.0: 상주 런은 레지스트리 없이 `peer_roster` 포트가 준 로스터를
         매 턴 꼬리에 싣는다 — 런 도중 spawn 된 동료가 다음 턴에 보인다."""
         seen = ["## Live Agents\n- `agt-2` (player2) [idle]"]
-        caller, _ = _caller(tmp_path, peer_roster=lambda: seen[0], depth=1)
+        caller, _ = _caller(
+            tmp_path,
+            kind=make_kind(ports=make_ports(peer_roster=lambda: seen[0]), depth=1),
+            depth=1,
+        )
         assert "`agt-2` (player2) [idle]" in caller._build_session_state(10_000)
         seen[0] = (
             "## Live Agents\n- `agt-2` (player2) [idle]\n- `agt-3` (player3) [busy]"
@@ -464,7 +469,11 @@ class TestLoopAssembly:
         def boom():
             raise RuntimeError("x")
 
-        caller, _ = _caller(tmp_path, peer_roster=boom, depth=1)
+        caller, _ = _caller(
+            tmp_path,
+            kind=make_kind(ports=make_ports(peer_roster=boom), depth=1),
+            depth=1,
+        )
         assert "Live Agents" not in caller._build_session_state(10_000)
 
     def test_no_registry_is_safe(self, tmp_path):

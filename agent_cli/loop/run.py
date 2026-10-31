@@ -50,6 +50,7 @@ def run_loop(
     compaction_enabled: bool = True,
     peer_agents_section: str = "",
     query_images: list[dict] | None = None,
+    kind=None,
 ):
     """Run the agent loop. Returns ToolResult — `AgentLoop(...).run()` 의 함수 꼴.
 
@@ -92,4 +93,5 @@ def run_loop(
         compaction_enabled=compaction_enabled,
         peer_agents_section=peer_agents_section,
         query_images=query_images,
+        kind=kind,
     ).run()
