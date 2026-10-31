@@ -208,3 +208,32 @@ python 이 9 → 32건, .py 작성 후 실행 4건. shell 안 python 의 Traceba
   `timeout` 인자 사용 수.
 - 테스트: `tests/test_python_tool.py` 의 `TestMainModule`·`TestSyntaxError`·`TestSystemExit`·
   `TestInterpreterChoice` 와 죽음 문구 둘 — 고치기 전 코드에서 15건 실패 확인.
+
+## 8. 한도를 넘긴 셀은 작업이 된다 (v10.91.0)
+
+계기: GLM 벤치 base-r2 extract-moves — 479장 OCR 셀이 120초 인터럽트로 끊기자 모델이 `timeout: 110`(기본값보다 작다)을
+일곱 번 넣고 90장씩 돌리며 매번 끊겼다. 8턴 16분. 힌트("pass a larger `timeout`")는 첫 번째와 여덟 번째가 같은 문장이었고,
+사용법 규칙 "긴 루프는 dict 에 누적해 타임아웃에도 보존" 이 잘게 재시도하는 쪽으로 밀었다. 사용자 결정(2026-10-31):
+shell 과 같은 식으로 — 한도 뒤에는 기다리지 않고 작업이 된다.
+
+- **`timeout` 의 기본값이 상한이다** (`DEFAULT_TIMEOUT` = 120; 더 큰 값은 상한으로 깎고 결과에 적는다). 한도 안에
+  회신이 없으면 `PyWorker.run(pend=True)` 이 SIGINT 대신 `PendingCell` 을 돌려주고, `PythonTool._run` 이 그것을
+  `JobRegistry.adopt` 로 작업으로 만든다. 결과는 즉시: "python: the step is still running after 120s and continues as
+  job #3 (pid P) — the interpreter is busy until it ends. You will be told when it ends, with its output and the `state:`
+  line; its log is .agent-cli/tmp/python/main.log. … To stop it: `kill -INT -- -P` (the state is kept)."
+- **몸** (`pyworker.PendingCell`, `jobs.JobHandle` 구현): 워커의 회신 읽기(`_LineRead`)를 그대로 쥐고, 레지스트리의
+  `poll` 때 회신이 와 있으면 결과를 만들고(`PyWorker._parse` — 상태 줄 갱신) 워커를 풀어 준다. `stop` 은 그룹에 **INT**
+  (자식의 `KeyboardInterrupt` 가 셀만 끊고 상태는 남는다 — 모델의 `kill -INT -- -P` 도 같은 길), `force` 는 인터프리터째.
+  `report_lines` 가 통지의 로그 꼬리 뒤에 `=> 값`·예외(인터럽트면 "stopped on interrupt — … state is kept")·그림 경로·
+  `state:` 줄을 덧붙인다.
+- **바쁨**: 작업이 도는 동안 같은 소유자의 `python` 은 받지 않는다 — "python: the interpreter is busy with job #3 (2m10s
+  so far) — `wait` for its notice, or stop it with `kill -INT -- -P` (the state is kept)." 인터프리터가 하나라 직렬이다.
+- **로그** (`.agent-cli/tmp/python/<owner>.log`, 소유자당 하나, 호출마다 비우고 머리줄 `$ python: <첫 줄>`): 자식은
+  요청의 `capture` 경로를 fd 1·2 로 두고(종전 임시 파일 자리) 이 호출이 쓴 구간만 `out` 으로 돌려준다. 셀이 작업이 되면
+  이 파일이 그 작업의 로그라 `wait` 의 중간 깨우기 진행 신호(`log_growth`)와 종료 통지의 꼬리 8줄이 여기서 나온다.
+  작업 레지스트리가 없는 런은 캡처 없이 종전대로(한도에 SIGINT, 상태 보존).
+- 그대로: 인터럽트 경로(레지스트리 없음·모델이 멈출 때), `timed_out`(시그널 무시 → kill → 소실 안내), 그림 자동 캡처,
+  `reset`, 상태 줄.
+- 테스트: `tests/test_python_tool.py` `TestPendingJob`(작업화·로그 진행·바쁨·통지 본문·INT 멈춤과 상태·상한 초과 안내·
+  도중 사망·빠른 셀은 작업 아님과 로그 교체·레지스트리 없음은 인터럽트).
+- 다음 벤치 지표: python 연속 인터럽트 0, `continues as job` 수와 그 뒤 `wait` 사용, busy 거부 수.

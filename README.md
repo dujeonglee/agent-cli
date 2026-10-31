@@ -335,13 +335,14 @@ python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
 - 관찰 = 출력(stdout·stderr 와 자식 프로세스 출력이 **실제 순서로 한 흐름**) + 마지막 식의 값(`=> …`) + **`state:` 한 줄**(메모리에 든 것의 이름·타입·크기, 20개까지 — 데이터 → 함수 → 객체 → 스칼라 순, 파일 핸들 제외, 데이터가 있으면 "still in memory: reuse it, do not reload"). 상태줄은 관찰에만 — 꼬리엔 없습니다.
 - 예외는 트레이스백이 실패 관찰로 오고 상태는 그대로입니다. `timeout`(기본 120초)을 넘기면 노트북의 Ctrl-C 처럼 **코드만 멈추고 상태는 남습니다** — 루프가 dict 에 모으던 결과가 그대로 있고 다음 호출이 이어 갑니다(띄운 하위 프로세스도 같이 멈춥니다). 인터럽트를 무시하는 코드만 몇 초 뒤 인터프리터를 죽이고 **상태가 사라졌음**을 들고 있던 이름과 함께 알립니다. `reset: true` 면 새 인터프리터부터.
 - 열린 matplotlib figure 는 `.agent-cli/tmp/python/` 에 PNG 로 저장되어 이미지로 첨부됩니다 — 좌표·경로 데이터는 숫자를 읽는 대신 그려서 봅니다.
+- **한도를 넘긴 셀은 백그라운드 작업이 됩니다** (v10.91.0). `timeout` 의 기본값 120초가 상한이고, 그 안에 끝나지 않은 셀은 끊지 않고 `job #n` 으로 넘어갑니다 — 결과는 즉시 돌아오고("the step is still running after 120s and continues as job #3 … the interpreter is busy until it ends"), 끝나면 셸 작업과 같은 통지에 출력 꼬리·마지막 값·예외·`state:` 줄이 실립니다. 그동안 같은 인터프리터로의 `python` 호출은 바쁨으로 거절되고(`wait` 안내), 멈추는 법은 `kill -INT -- -<pid>`(셀만 끊기고 상태는 남음). 셀의 출력은 소유자당 로그 `.agent-cli/tmp/python/<owner>.log` 에 쌓여 `wait` 의 중간 깨우기가 진행을 읽습니다. 계기: GLM 벤치에서 같은 OCR 셀이 인터럽트로 여덟 번 연속 끊기며 16분을 썼습니다 — docs/python-tool/DESIGN.md §8.
 - 소유자(main·에이전트)마다 인터프리터 하나. 에이전트가 끝나면 그 인터프리터도 끝나고, 세션이 끝나면 전부 끝납니다. resume 뒤는 빈 인터프리터입니다.
 - 인터프리터는 PATH 의 `python3`, 없으면 `python` — 모델이 `shell` 에서 쓰는 파이썬과 같은 것이라 그 환경의 패키지를 그대로 씁니다(v10.78.0). 둘 다 없으면 agent-cli 자신의 파이썬으로 떨어지지 않고 "없다 — shell 에서 설치하면 다음 호출부터" 를 돌려줍니다. 특정 venv 를 쓰려면 그 venv 를 활성화한 채 agent-cli 를 띄우세요. ModuleNotFoundError 관찰에는 이 인터프리터 경로와 거기에 설치하는 명령(`<exe> -m pip install <pkg>`, pip 이 없으면 `ensurepip` 먼저)이 붙습니다(v10.73.0). 셀은 진짜 `__main__` 모듈에서 돌아 셀에서 정의한 함수를 pickle·fork `Pool`·`unittest.main()` 이 찾습니다(spawn 방식 `Pool` 은 대화형 python 처럼 안 되며 타임아웃이 끊습니다).
 - 끄기: `AGENT_CLI_PYTHON_TOOL=0` — 도구가 프롬프트에서 빠집니다. 워크스페이스 봉쇄는 `shell` 과 같은 best-effort(코드 안의 절대경로 문자열만 봅니다).
 
 ### 🧵 background jobs — 긴 명령은 하니스가 든다 (v10.47.0)
 
-테스트 스위트·빌드·설치처럼 1분 넘게 도는 명령은 `shell` 에 `background: true` 를 주면 **하니스가 자식으로 띄우고** 즉시 돌아옵니다. 출력은 `.agent-cli/tmp/jobs/<n>.log` 로 가고, 끝나면 종료 코드와 로그 마지막 줄들이 소유자(main 이면 깨우기 런, 에이전트면 inbox)에게 `🧵 job #n finished rc=0 after 2m31s` 로 옵니다. 돌고 있는 동안은 매 턴 꼬리에 `job #n · pid P · 경과 · 명령 → 로그 · stop it: kill -- -P` 로 보입니다(v10.79.0 — 프로세스 묶음째; pid 는 `sh -c` 리더라 `kill P` 는 셸만 죽입니다). 모델은 로그를 폴링하지도, `pkill` 로 프로세스를 찾지도, 끝 줄을 기다리는 monitor 를 걸지도 않습니다(셸 안내 문구 A/B 실측에서 셋 다 사고를 냈습니다 — `docs/jobs/DESIGN.md` §1).
+테스트 스위트·빌드·설치처럼 1분 넘게 도는 명령은 `shell` 에 `background: true` 를 주면 **하니스가 자식으로 띄우고** 즉시 돌아옵니다. v10.91.0 부터 전경 `timeout` 의 기본값 120초가 상한이기도 해서, 그 위의 값(모델이 600 을 넣고 10분을 막혀 있던 벤치 사례)은 자동으로 백그라운드 작업이 되고 결과 첫 줄이 그 사실을 말합니다. 명령에 `nohup`·`setsid`·`disown`·끝의 `&` 가 있으면 종전처럼 거부하지 않고 **지우고 결과에 적습니다**("Removed `nohup`, the trailing `&` — a background job is already detached, logged and reported by the harness") — 하니스가 이미 데몬화를 맡으므로 그 조각은 작업을 1초 만에 끝난 것으로 보이게 할 뿐입니다. 명령은 bash 가 있으면 bash 로 돕니다(전경·작업 같은 실행기; Environment 절에 `- Shell: bash` 한 줄) — 벤치에서 `[[ ]]`·`<(…)` 가 dash 에서 깨져 턴을 잃었습니다. docs/jobs/DESIGN.md §6. 출력은 `.agent-cli/tmp/jobs/<n>.log` 로 가고, 끝나면 종료 코드와 로그 마지막 줄들이 소유자(main 이면 깨우기 런, 에이전트면 inbox)에게 `🧵 job #n finished rc=0 after 2m31s` 로 옵니다. 돌고 있는 동안은 매 턴 꼬리에 `job #n · pid P · 경과 · 명령 → 로그 · stop it: kill -- -P` 로 보입니다(v10.79.0 — 프로세스 묶음째; pid 는 `sh -c` 리더라 `kill P` 는 셸만 죽입니다). 모델은 로그를 폴링하지도, `pkill` 로 프로세스를 찾지도, 끝 줄을 기다리는 monitor 를 걸지도 않습니다(셸 안내 문구 A/B 실측에서 셋 다 사고를 냈습니다 — `docs/jobs/DESIGN.md` §1).
 
 > **one-shot 서브에이전트(`agent` `mode` \"run\")도 자기 잡을 기다립니다 (v10.84.0)**: 서브에이전트는 자기 주소(`run:<run_dir>`)를 가져 잡·모니터·체크인의 통지가 자기 메일함으로 오고, `wait` 는 런을 끝내는 대신 통지가 올 때까지 그 자리에서 기다린 뒤 이어갑니다(호출자는 어차피 결과를 기다리며 블록). 서브에이전트가 잡·모니터를 남기고 끝나면 하니스가 거두고 결과 끝에 한 줄로 알립니다. 스킬 루프는 호출자 턴 안의 인라인이라 `wait` 가 거부됩니다(호출자가 기다립니다). 설계 `docs/wait/DESIGN.md` §7.
 
@@ -1391,7 +1392,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 ### shell — 셸 명령 실행
 
-셸 명령을 실행하고 stdout/stderr를 반환합니다(stderr 는 `[stderr]` 아래, 0 이 아닌 종료 코드는 `[exit code: N]`). 타임아웃 기본 120초 — 시간이 초과되면 그 명령이 띄운 프로세스까지 끝내고(v10.77.0, 종전엔 `/bin/sh` 만 죽어 `apt-get` 같은 자식이 남았습니다), 그때까지의 출력 끝 8줄과 함께 "`background` true 로 다시 보내라"고 알려 줍니다.
+셸 명령을 실행하고 stdout/stderr를 반환합니다(stderr 는 `[stderr]` 아래, 0 이 아닌 종료 코드는 `[exit code: N]`). 타임아웃 기본 120초가 상한이기도 합니다(v10.91.0) — 더 큰 `timeout` 은 명령을 백그라운드 작업으로 띄우고 결과에 그 사실을 적습니다. 상한에 닿으면 그 명령이 띄운 프로세스까지 끝내고(v10.77.0, 종전엔 `/bin/sh` 만 죽어 `apt-get` 같은 자식이 남았습니다), 그때까지의 출력 끝 8줄과 함께 "`background` true 로 다시 보내라"고 알려 줍니다. 실행기는 bash 가 있으면 bash(v10.91.0).
 
 ```json
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}

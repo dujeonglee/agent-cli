@@ -979,6 +979,21 @@ class TestEnvironmentSection:
         assert "- Python:" not in _build_environment_section(["shell"])
         assert "- Python:" not in _build_environment_section()
 
+    # ── v10.91.0: 명령을 돌리는 셸 — 실행기(`jobs.SHELL`)와 한 소스 ──
+
+    def test_shell_line_names_bash_when_it_runs_commands(self, monkeypatch):
+        monkeypatch.setattr("agent_cli.jobs.SHELL", "/bin/bash")
+        assert (
+            "- Shell: bash (`shell` runs commands through it)"
+            in _build_environment_section()
+        )
+
+    def test_shell_line_warns_about_sh_when_there_is_no_bash(self, monkeypatch):
+        monkeypatch.setattr("agent_cli.jobs.SHELL", None)
+        section = _build_environment_section()
+        assert "- Shell: sh — there is no bash on this system" in section
+        assert "no `[[ ]]`, no `<(…)` and no arrays" in section
+
     def test_scratch_dir_rule_says_it_exists(self):
         """디렉토리는 하니스가 만든다 (v10.90.0) — 모델에게 만들라고 하지 않는다."""
         assert "create it if missing" not in TASK_GUIDELINES

@@ -22,7 +22,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent_cli import pyworker
+from agent_cli import jobs, pyworker
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -630,6 +630,16 @@ def _build_environment_section(active_tools: Sequence[str] = ()) -> str:
     lines = ["## Environment"]
     lines.append(f"- Working directory: {Path.cwd()}")
     lines.append(f"- Platform: {platform.system().lower()} ({platform.release()})")
+    # 명령을 돌리는 셸 (v10.91.0): bash 가 있으면 bash 로 띄우므로 bash 문법이 그대로
+    # 된다고 말하고, 없으면 dash 에서 깨지는 세 가지를 짚는다 — 벤치에서 `[[ ]]`·
+    # `<(…)` 로 턴을 잃었다. 이름은 `jobs.SHELL` 이 정한다(실행기와 한 소스).
+    if jobs.SHELL:
+        lines.append("- Shell: bash (`shell` runs commands through it)")
+    else:
+        lines.append(
+            "- Shell: sh — there is no bash on this system, so no `[[ ]]`, no "
+            "`<(…)` and no arrays"
+        )
     lines.append(
         "- Paths: give tools paths relative to the working directory "
         "(`src/main.c`), not absolute. They name the same file and cost far "

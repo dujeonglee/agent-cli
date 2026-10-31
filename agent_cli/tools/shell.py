@@ -9,6 +9,7 @@ import signal
 import subprocess
 from typing import ClassVar
 
+from agent_cli import jobs
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -210,44 +211,91 @@ def _guard(cmd: str) -> tuple[str | None, str]:
     return (denial or None), user_comment
 
 
-_DETACH_TOKENS = re.compile(r"(?:^|[\s;|(&])(nohup|setsid|disown)\b")
-_TRAILING_AMP = re.compile(r"&\s*(?:\)|;|$)|&\s+(?:echo|sleep|true|wait)\b")
+#: 전경 명령이 기다리는 시간의 기본값이자 상한 (v10.91.0). 종전엔 기본 120 에 상한이
+#: 없어 모델이 600 을 넣고 10분을 막혀 있다가 죽는 것을 봤다(GLM 벤치, 380장 중
+#: 352장이 끝난 OCR 루프) — "올리지 말라" 는 문구는 있었다. 이제 그 위의 값은
+#: 백그라운드 작업으로 바꾸고 결과에 말한다(`ShellTool._run`).
+FOREGROUND_LIMIT = 120
+
+#: 모델이 제 손으로 떼어 내는 조각 — `nohup`·`setsid`·`disown` 단어(토큰 경계), 명령
+#: 끝(혹은 `)`·`;` 앞)의 `&`, 그리고 `& echo $!` 처럼 뒤에 짧은 꼬리를 단 `&`.
+#: 인용부 안은 보지 않는다(`_unquoted_mask`). `&&` 는 아니다.
+_DETACH_WORD = re.compile(r"(?:(?<=^)|(?<=[\s;|(&]))(nohup|setsid|disown)\b[ \t]*")
+_TRAILING_AMP = re.compile(r"[ \t]*(?<!&)&(?!&)(?=\s*(?:\)|;|$))")
+_AMP_THEN_TAIL = re.compile(r"(?<!&)&(?!&)(?=\s+(?:echo|sleep|true|wait)\b)")
 
 
-def _detaches_itself(cmd: str) -> str:
-    """``background=true`` 에 모델이 제 손으로 떼어 내는 조각이 있으면 그 조각 —
-    `nohup`/`setsid`/`disown`, 또는 명령 끝(혹은 `) ;` 앞)의 `&`. `&&` 는 아니다."""
-    stripped = re.sub(r"&&", " ", cmd)
-    m = _DETACH_TOKENS.search(stripped)
-    if m:
-        return m.group(1)
-    if _TRAILING_AMP.search(stripped):
-        return "&"
-    return ""
+def _unquoted_mask(cmd: str) -> str:
+    """같은 길이의 문자열 — 홑·쌍따옴표 안(과 이스케이프된 문자)은 ``x`` 로 가려
+    정규식이 인용부 밖만 보게 한다. 끼워 넣은 글(heredoc 본문)은 가리지 못한다 —
+    종전 거부 판별도 같은 한계였고, 지운 것은 결과에 적으므로 모델이 본다."""
+    out: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+                out.append(ch)
+            elif ch == "\\" and quote == '"' and i + 1 < len(cmd):
+                out.append("xx")
+                i += 1
+            else:
+                out.append("x" if ch != "\n" else "\n")
+        elif ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+        elif ch == "\\" and i + 1 < len(cmd):
+            out.append("xx")
+            i += 1
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
-def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
+def strip_detachers(cmd: str) -> tuple[str, list[str]]:
+    """백그라운드 명령에서 모델의 데몬화 조각을 지운다 (v10.91.0) — ``(새 명령,
+    지운 것들)``. 하니스가 이미 자식으로 띄우고 로그로 받고 끝을 통지하므로
+    `nohup`·`setsid`·`disown`·끝의 `&` 는 뜻이 없고, 있으면 `sh` 가 1초 만에 끝나
+    진짜 일이 추적 밖으로 떨어진다(v10.47.1 재측정 — 그땐 거부했다; 지우고 말하는
+    쪽이 다시 보내는 턴을 아낀다, 사용자 결정 2026-10-31). `& echo $!` 는 `; echo $!`
+    로 — `$!` 는 비지만 결과가 pid 를 준다."""
+    removed: list[str] = []
+    mask = _unquoted_mask(cmd)
+
+    def _edit(pattern: re.Pattern, label, replacement: str = "") -> None:
+        """패턴의 모든 자리를 ``replacement`` 로 — 뒤에서부터 바꿔 앞 자리의 위치를
+        지킨다. 지운 것은 패턴 순서(단어 → 끝의 `&` → 꼬리 앞 `&`), 같은 패턴 안에서는
+        왼쪽부터 적는다."""
+        nonlocal cmd, mask
+        hits = list(pattern.finditer(mask))
+        for m in reversed(hits):
+            cmd = cmd[: m.start()] + replacement + cmd[m.end() :]
+            mask = mask[: m.start()] + replacement + mask[m.end() :]
+        removed.extend(label(m) for m in hits)
+
+    _edit(_DETACH_WORD, lambda m: f"`{m.group(1)}`")
+    _edit(_TRAILING_AMP, lambda m: "the trailing `&`")
+    _edit(_AMP_THEN_TAIL, lambda m: "`&` before the tail (now `;`)", ";")
+    return cmd.strip(), removed
+
+
+def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResult:
     """``background: true`` (v10.47.0, docs/jobs/DESIGN.md) — 하니스가 자식으로
-    띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다."""
+    띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다. ``note``
+    는 결과 앞에 붙는 사정(전경 한도 초과로 여기 왔다)."""
     from agent_cli.jobs import JobsUnavailable, get_job_registry
 
-    cmd = args.get("command", "")
-    detached = _detaches_itself(cmd)
-    if detached:
-        # 재측정(E-fix-1): 안내에도 모델이 `nohup … & echo $!` 를 그대로 넣어
-        # 작업이 1초 만에 "끝나고" 진짜 일은 추적 밖으로 떨어졌다. 문구 대신
-        # 거부한다 — 모델이 평문으로 다시 보낸다.
-        return ToolResult(
-            False,
-            error=(
-                f"`background` true takes the plain command — yours contains `{detached}`, "
-                "which would detach the real work from the job (the job would end at "
-                "once and nothing would be tracked or reported). Re-send the same "
-                "command without `&`, `nohup`, `setsid`, `disown` or output "
-                "redirection: the harness runs it in the background, logs it and "
-                "tells you when it ends."
-            ),
+    cmd, removed = strip_detachers(args.get("command", ""))
+    if removed:
+        note += (
+            f"Removed {', '.join(removed)} — a background job is already detached, "
+            "logged and reported by the harness; use the pid below instead of `$!`. "
         )
+    if not cmd:
+        return ToolResult(False, error=f"{note}Nothing is left to run.")
     denied, _comment = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
@@ -267,7 +315,7 @@ def tool_shell_background(args: dict, *, owner: str) -> ToolResult:
     return ToolResult(
         True,
         output=(
-            f"job #{job.id} started (pid {job.pid}) — output goes to "
+            f"{note}job #{job.id} started (pid {job.pid}) — output goes to "
             f"{job.log.as_posix()}. You will be told when it ends, with its exit "
             f"code and the log's last lines; keep working meanwhile. To stop it: "
             f"{job.stop_hint}."
@@ -290,7 +338,7 @@ def tool_shell(args: dict) -> ToolResult:
 
     # (Workspace confinement rides in ``_guard`` — best-effort literal path
     # tokens, blind to $(...) / python -c / variables; documented in _confine.)
-    timeout = int(args.get("timeout", 120))
+    timeout = min(int(args.get("timeout", FOREGROUND_LIMIT)), FOREGROUND_LIMIT)
     try:
         # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and
         # raises UnicodeDecodeError mid-run on non-UTF-8 output (git show /
@@ -301,6 +349,7 @@ def tool_shell(args: dict) -> ToolResult:
         proc = subprocess.Popen(
             cmd,
             shell=True,
+            executable=jobs.SHELL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
@@ -410,11 +459,10 @@ class ShellTool(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Max seconds before a foreground command is stopped, together "
-                    "with everything it started (default 120). "
-                    "Do not raise it to sit through a long command — set `background` "
-                    "to true for that. Raise it only for a short wait you must block "
-                    "on."
+                    f"Seconds a foreground command may run (default and maximum "
+                    f"{FOREGROUND_LIMIT}); at the limit it is stopped, together with "
+                    "everything it started. A larger value starts the command as a "
+                    "background job instead."
                 ),
             },
             "background": {
@@ -445,13 +493,29 @@ class ShellTool(Tool):
         return self.strip_prefix(action_input).get("command") or ""
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        if args.get("background") is True or str(
+        background = args.get("background") is True or str(
             args.get("background", "")
-        ).lower() in (
-            "true",
-            "1",
-            "yes",
-        ):
+        ).lower() in ("true", "1", "yes")
+        note = ""
+        try:
+            asked = int(args.get("timeout", FOREGROUND_LIMIT))
+        except (TypeError, ValueError):
+            asked = FOREGROUND_LIMIT
+        if asked > FOREGROUND_LIMIT and not background:
+            # 상한 위의 값은 "이 명령은 길다" 는 뜻이다 — 전경에서 막혀 있다가 죽는 대신
+            # 작업으로 띄우고 결과에 말한다 (v10.91.0, 사용자 결정 2026-10-31). 작업
+            # 레지스트리가 없는 런만 상한으로 깎아 전경에서 돈다(`tool_shell`).
+            from agent_cli.jobs import get_job_registry
+
+            reg = get_job_registry()
+            if reg is not None and reg.available:
+                background = True
+                note = (
+                    f"`timeout` {asked} is above the foreground limit of "
+                    f"{FOREGROUND_LIMIT} seconds, so the command was started as a "
+                    "background job instead. "
+                )
+        if background:
             owner = getattr(ctx, "owner", None) or "main"
-            return tool_shell_background(args, owner=owner)
+            return tool_shell_background(args, owner=owner, note=note)
         return tool_shell(args)

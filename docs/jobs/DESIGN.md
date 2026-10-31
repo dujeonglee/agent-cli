@@ -52,3 +52,32 @@ timeout=)` 이 `/bin/sh` 만 죽였고, 그 아래 `apt-get` 이 dpkg 잠금을 
 로 실패했다. 결과 문구는 끝냈다는 사실, 그때까지의 출력 끝 `TAIL_LINES`(8)줄, "이만큼 걸리는 명령은 `background` true" 교정 —
 시간 초과 8건 중 5건이 foreground `apt-get install` 이었다(설명의 작업 종류 나열 "an install" 이 있는데도). 나열은 지우고
 교정은 이 자리(트리거 직후)가 맡는다.
+
+## 6. 기본 = 상한, 데몬화 조각은 지운다, 몸은 핸들 (v10.91.0)
+
+GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 — 사용자 결정은 "timeout 최대값을 줄이고 넘으면
+도구 층에서 background 로 강제 바꾸고 observation 에 말한다", "`&`·`nohup` 은 거부 대신 지우고 알린다".
+
+- **전경 `timeout` 의 기본값이 상한이다** (`shell.FOREGROUND_LIMIT` = 120). 종전엔 기본 120 에 상한이 없어 모델이
+  `timeout: 600` 을 넣고(설명의 "올리지 말라" 는 있었다) 10분을 막혀 있다가 죽는 것을 봤다 — 380장 OCR 중 352장이
+  끝난 루프였다. 이제 상한 위의 값은 `ShellTool._run` 이 백그라운드 작업으로 바꾸고 결과 첫 줄에 적는다:
+  "`timeout` 600 is above the foreground limit of 120 seconds, so the command was started as a background job
+  instead. job #1 started …". 작업 레지스트리가 없는 런(통지가 갈 곳이 없다)만 상한으로 깎아 전경에서 돈다.
+- **데몬화 조각은 거부 대신 지우고 말한다** (`shell.strip_detachers`). v10.47.1 의 거부는 다시 보내는 턴을 들였다.
+  하니스가 이미 자식으로 띄우고 로그로 받고 끝을 통지하므로 `nohup`·`setsid`·`disown` 단어와 명령 끝(`)`·`;` 앞)의
+  `&` 는 뜻이 없고, `& echo $!` 같은 짧은 꼬리 앞의 `&` 는 `;` 로 바꾼다. 인용부 안은 보지 않는다(`_unquoted_mask` —
+  `echo "a & b"`, URL 의 `&b=2`, `&&` 는 그대로). heredoc 본문은 가리지 못하는데 종전 거부 판별도 같은 한계였고,
+  지운 것은 결과에 적으므로 모델이 본다: "Removed `nohup`, the trailing `&` — a background job is already detached,
+  logged and reported by the harness; use the pid below instead of `$!`." `setsid` 는 새 세션으로 그룹을 빠져나가
+  `kill -- -<pid>` 가 닿지 않으니 반드시 지운다. 다 지우고 남는 게 없으면 "Nothing is left to run."
+- **작업의 몸은 핸들** (`JobHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`·`report_lines`). 셸 명령은 `ProcHandle`
+  (TERM → KILL, `kill -- -P`), 한도를 넘긴 `python` 셀은 `pyworker.PendingCell`(INT → 인터프리터째, `kill -INT -- -P`,
+  통지에 값·예외·그림·상태 줄을 덧붙임). `JobRegistry.adopt(handle, command, log, owner)` 가 이미 도는 몸을 받는다 —
+  번호·로그·꼬리·통지·수명(`has_active_work`·`drop_owner`·`stop_all`)은 둘이 같다. docs/python-tool/DESIGN.md §8.
+- **셸은 bash** (`jobs.SHELL` = `shutil.which("bash")`, 없으면 `/bin/sh`). 벤치에서 모델은 bash 문법을 썼고 컨테이너의
+  sh 는 dash 였다: `diff <(…)` 두 턴 연속 실패, `[[ $f == *.pdf ]]` 가 분류 루프 결과를 전부 비웠다. 전경(`tool_shell`)과
+  작업(`JobRegistry.start`)이 같은 실행기를 쓰고, Environment 절이 그 이름을 한 줄로 적는다("- Shell: bash (`shell` runs
+  commands through it)", bash 가 없으면 "- Shell: sh — … no `[[ ]]`, no `<(…)` and no arrays").
+- 테스트: `tests/test_jobs.py` `TestShellToolSurface`(지움 6종·인용부/논리 `&` 불변·빈 명령·상한 전환·상한 이하 전경·
+  레지스트리 없음 깎기), `TestAdoptedHandles`, `TestBashExecutable`; `tests/test_system_prompt.py` 셸 줄 둘.
+- 다음 벤치 지표: 전경 timeout kill 0, `Removed` 안내 수(= 종전 거부 수), python 연속 인터럽트 0, dash 문법 오류 0.
