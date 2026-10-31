@@ -609,7 +609,9 @@ class TestAdoptedHandles:
         (tmp_path / log).parent.mkdir(parents=True)
         (tmp_path / log).write_text("$ python: step\nline1\n")
         h = _FakeHandle()
-        job = reg.adopt(h, command="python: step", log=log, owner="main")
+        job = reg.adopt(
+            h, command="python: step", log=log, owner="main", started_at=time.time()
+        )
         assert job.id == 1 and job.pid == 4242 and job.running
         assert reg.running("main") == [job] and reg.has_active_work()
         tail = reg.render_tail("main")
@@ -627,7 +629,9 @@ class TestAdoptedHandles:
         (tmp_path / log).parent.mkdir(parents=True)
         (tmp_path / log).write_text("$ python: step\n")
         h = _FakeHandle()
-        job = reg.adopt(h, command="python: step", log=log, owner="main")
+        job = reg.adopt(
+            h, command="python: step", log=log, owner="main", started_at=time.time()
+        )
         reg.kill(job)
         assert h.stopped == 1 and h.forced == 1 and job.rc == -9
         assert reg.deliver.calls == []
@@ -635,7 +639,13 @@ class TestAdoptedHandles:
     def test_adopt_needs_delivery_like_start(self, tmp_path):
         r = JobRegistry(tmp_path)
         with pytest.raises(JobsUnavailable):
-            r.adopt(_FakeHandle(), command="x", log=Path("x.log"), owner="main")
+            r.adopt(
+                _FakeHandle(),
+                command="x",
+                log=Path("x.log"),
+                owner="main",
+                started_at=time.time(),
+            )
         assert not r.available
 
 

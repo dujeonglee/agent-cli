@@ -566,6 +566,16 @@ class TestPendingJob:
         )
         assert "`kill -INT -- -" in jobs.render_tail("main")
 
+    def test_elapsed_counts_from_when_the_step_was_sent(self, reg, jobs):
+        """v10.91.1 — 라이브: 160초 셀의 통지가 "after 40s", 바쁨 안내가 "10s so far"
+        였다. 경과는 작업으로 넘어간 때가 아니라 셀을 보낸 때부터 센다."""
+        _run(self.SLOW, timeout=1)
+        (job,) = jobs.running("main")
+        assert job.started_at == job.handle.started_at
+        assert time.time() - job.started_at >= 1.0
+        r = _run("1 + 1")
+        assert "(1s so far)" in r.error or "(2s so far)" in r.error
+
     def test_the_interpreter_is_busy_until_the_job_ends(self, reg, jobs):
         _run(self.SLOW, timeout=1)
         r = _run("1 + 1")
