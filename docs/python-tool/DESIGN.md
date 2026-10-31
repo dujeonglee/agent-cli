@@ -237,3 +237,4 @@ shell 과 같은 식으로 — 한도 뒤에는 기다리지 않고 작업이 �
 - 테스트: `tests/test_python_tool.py` `TestPendingJob`(작업화·로그 진행·바쁨·통지 본문·INT 멈춤과 상태·상한 초과 안내·
   도중 사망·빠른 셀은 작업 아님과 로그 교체·레지스트리 없음은 인터럽트).
 - 다음 벤치 지표: python 연속 인터럽트 0, `continues as job` 수와 그 뒤 `wait` 사용, busy 거부 수.
+- **라이브 확인 (v10.91.1, 웹 방 g312ma)**: 160초 셀 → 120초에 job #1, 모델이 바로 `wait`, 통지에 출력 꼬리 8줄·`=> 120`·`state: total (120)`, 그 통지로 답. 끝나지 않는 셀 → job #2, 도는 동안 `len(acc)` 는 바쁨 거절(`wait`·`kill -INT -- -P` 안내), 모델이 `shell` 로 `kill -INT` → 셀만 끊기고 다음 `len(acc)` 가 `=> 279`(상태 생존), 끝 통지 rc=1 "stopped on interrupt — … state is kept". 고친 것 하나: 경과 시간을 작업으로 넘어간 때부터 셌다(160초 셀이 "after 40s", 바쁨 "10s so far") — `PendingCell.started_at` 은 셀을 보낸 시각, `JobRegistry.adopt(started_at=)` 가 그것을 작업의 시작으로 쓴다.

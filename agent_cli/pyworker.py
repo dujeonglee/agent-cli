@@ -106,13 +106,21 @@ class PendingCell:
     남긴다(모델의 `kill -INT -- -<pid>` 도 같은 길). 듣지 않으면 인터프리터째."""
 
     def __init__(
-        self, worker: PyWorker, reading: _LineRead, *, fresh: bool, lost: list[str]
+        self,
+        worker: PyWorker,
+        reading: _LineRead,
+        *,
+        fresh: bool,
+        lost: list[str],
+        started_at: float,
     ) -> None:
         self.worker = worker
         self._reading = reading
         self._fresh = fresh
         self._lost = lost
-        self.started_at = time.time()
+        #: 셀을 **보낸** 시각 — 작업으로 넘어간 시각이 아니다 (v10.91.1). 라이브에서
+        #: 160초 셀의 통지가 "after 40s", 바쁨 안내가 "10s so far" 였다.
+        self.started_at = started_at
         self.result: PyResult | None = None
         #: 레지스트리가 준 번호 — `python` 이 "busy with job #n" 에 쓴다.
         self.job_id: int | None = None
@@ -299,6 +307,7 @@ class PyWorker:
                 "figdir": str(figdir or ""),
                 "capture": str(capture or ""),
             }
+            sent_at = time.time()
             try:
                 proc.stdin.write((json.dumps(req) + "\n").encode("utf-8"))
                 proc.stdin.flush()
@@ -312,7 +321,9 @@ class PyWorker:
             reading = _LineRead(proc.stdout)
             line = reading.wait(timeout)
             if line is None and pend:
-                cell = PendingCell(self, reading, fresh=fresh, lost=lost)
+                cell = PendingCell(
+                    self, reading, fresh=fresh, lost=lost, started_at=sent_at
+                )
                 self._pending = cell
                 return PyResult(False, pending=cell)
             if line is None:

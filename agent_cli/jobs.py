@@ -235,17 +235,39 @@ class JobRegistry:
             job_id, ProcHandle(proc), command=command, log=rel, owner=owner
         )
 
-    def adopt(self, handle: JobHandle, *, command: str, log: Path, owner: str) -> Job:
+    def adopt(
+        self,
+        handle: JobHandle,
+        *,
+        command: str,
+        log: Path,
+        owner: str,
+        started_at: float,
+    ) -> Job:
         """이미 돌고 있는 몸을 작업으로 받는다 (v10.91.0) — 한도를 넘긴 `python` 셀.
         ``log`` 는 작업 디렉터리 기준 상대 경로이고 그 첫 줄은 ``$ {command}`` 여야
-        한다(`header_bytes`·꼬리 필터가 셸 작업과 같은 모양을 기대한다)."""
+        한다(`header_bytes`·꼬리 필터가 셸 작업과 같은 모양을 기대한다).
+        ``started_at`` 은 몸이 **실제로 시작한** 시각 — 경과 시간(꼬리·통지)은
+        거기서 센다 (v10.91.1)."""
         self._ensure_available()
         return self._register(
-            self._next_id(), handle, command=command, log=log, owner=owner
+            self._next_id(),
+            handle,
+            command=command,
+            log=log,
+            owner=owner,
+            started_at=started_at,
         )
 
     def _register(
-        self, job_id: int, handle: JobHandle, *, command: str, log: Path, owner: str
+        self,
+        job_id: int,
+        handle: JobHandle,
+        *,
+        command: str,
+        log: Path,
+        owner: str,
+        started_at: float | None = None,
     ) -> Job:
         job = Job(
             id=job_id,
@@ -254,6 +276,7 @@ class JobRegistry:
             log=log,
             owner=owner,
             handle=handle,
+            started_at=started_at if started_at is not None else time.time(),
         )
         with self._lock:
             self._jobs[job_id] = job

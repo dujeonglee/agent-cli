@@ -326,7 +326,11 @@ class PythonTool(Tool):
         if res.pending is not None:
             assert jobs is not None and capture is not None
             job = jobs.adopt(
-                res.pending, command=_cell_title(code), log=capture, owner=owner
+                res.pending,
+                command=_cell_title(code),
+                log=capture,
+                owner=owner,
+                started_at=res.pending.started_at,
             )
             res.pending.job_id = job.id
             return ToolResult(True, output=pending_message(job, timeout, asked))
