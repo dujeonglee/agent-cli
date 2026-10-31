@@ -1022,7 +1022,7 @@ class MinimalRenderer(Renderer):
         region; subsequent calls just register their card.
 
         Called from inside the worker thread (i.e. the thread that
-        will run ``_run_single`` next), so ``start_capture()`` here
+        will run ``OneShotLoop.run`` next), so ``start_capture()`` here
         attaches the capture buffer to the correct thread without
         the caller needing a separate ``render_start_capture()``.
         """

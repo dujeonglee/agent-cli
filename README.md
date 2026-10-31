@@ -873,7 +873,7 @@ def on_session_end(ctx):
 | `OnTurnEnd` | ��� 종료 후 | ✓ | |
 | `OnAgentStart` | agent run 실행 직전 | ✓ | |
 | `OnAgentEnd` | agent run 완료 후 | ✓ | |
-| `OnSkillStart` | skill 실행 직전 | ✓ | |
+| `OnSkillStart` | skill 실행 직전 (`run_skill` 도구·`/skill` 명령 모두, v10.87.0) | ✓ | |
 | `OnSkillEnd` | skill 완료 후 | ✓ | |
 | `OnSessionEnd` | 세션 종료 | ✓ | |
 
@@ -1595,6 +1595,8 @@ The agent-cli directory contains a ReAct pattern-based agent CLI...
 - Execution Context: 시스템 프롬프트에 call stack 표시 + 재귀 호출 억제 지시
 
 ## 핵심 기능
+
+- **루프 종류 객체 (v10.87.0, docs/loop-kinds/DESIGN.md)**: main·상주·one-shot·스킬·하니스 작업 다섯 루프가 한 엔진(`AgentLoop`) 앞뒤의 가변부(주소·포트·ctx·스코프·결과·정리)를 `LoopKind` 다섯 구현으로 가집니다. 겉으로 보이는 변화: `/skill` 명령도 `OnSkillStart`/`OnSkillEnd` 훅을 받고, 스킬 ctx 가 사고·샘플링·압축 비율 노브를 부모에서 물려받으며(종전엔 빠뜨림), 상주 에이전트 안에서 돈 스킬이 그 에이전트의 역할과 도구 범위로 돌고, 하니스 작업 주소가 `harness:<job>:<label>` 로 라벨까지 가집니다. 모델이 보는 프롬프트는 그대로입니다.
 
 ### 도구 호출 방식
 

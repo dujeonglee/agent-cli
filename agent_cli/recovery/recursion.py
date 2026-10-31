@@ -8,7 +8,7 @@ guessing; without an explicit recovery menu it often retries the
 same call or stalls.
 
 Two formatters here, both wired into the two block sites
-(``_handle_run_skill`` and ``_run_single``):
+(``_handle_run_skill`` and ``OneShotLoop.make_ctx``):
 
   * :func:`format_recursion_error` — cycle detection (target already
     in stack). Recovery is task-shaped: don't re-enter, complete

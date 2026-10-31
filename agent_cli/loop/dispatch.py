@@ -16,6 +16,7 @@ import time
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
+from agent_cli.loop.kind import Caller
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -1310,26 +1311,11 @@ class TurnDispatcher:
             tool_name="run_skill",
             tool_input=json.dumps(skill_input, ensure_ascii=False),
         )
+        # 돌고 있는 이 루프가 호출자다 (v10.87.0 `Caller`): 스킬은 이 루프의 레지스트리를
+        # 상속해 spawn 할 수 있고(orchestrate 류의 존재 이유), 서브에이전트 루프엔
+        # 레지스트리가 없어 run-only 로 남는다 — `SkillLoop` 참조.
         skill_tool_result = _handle_run_skill(
-            skill_input,
-            self.cfg.binding,
-            self.ctx,
-            self.cfg.session,
-            self.cfg.skill_name,
-            skill_stack=self.cfg.skill_stack,
-            graceful_interrupt=self.cfg.graceful_interrupt,
-            stop_event=self.state.stop_event,
-            hook_runner=self.cfg.hook_runner,
-            mcp_manager=self.cfg.mcp_manager,
-            parent_hooks_config=self.cfg.hooks_config,
-            parent_depth=self.cfg.depth,
-            max_depth=self.cfg.max_depth,
-            compaction_enabled=self.cfg.compaction_enabled,
-            # A skill inherits the running loop's registry so it can spawn/manage
-            # workers (an orchestrate skill's whole point); a sub-agent loop has
-            # no registry, so its skills stay run-only. See executor.execute_skill.
-            agent_registry=self.cfg.agent_registry,
-            owner=self.cfg.owner,
+            skill_input, Caller.from_loop(self.cfg, self.state, self.ctx)
         )
         # Through the same result→observation seam as every other tool: a skill
         # returns its sub-loop's whole output, so it is the single largest

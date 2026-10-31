@@ -984,7 +984,7 @@ class TestAgentLoopsAreUntouched:
     None` 이고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
     목록이 항상 비고, 새 기계가 전부 조용하다.
 
-    여기서 **프로덕션 빌더**(`runtime.ports_for_resident` / `ports_for_oneshot`)
+    여기서 **프로덕션 빌더**(`ResidentLoop.make_ports` / `PrivateLoop.make_ports`)
     로 직접 돌린다 — 나중에 누가 에이전트 러너에 id 를 넘기면 독촉이
     상주 에이전트에 조용히 켜지는 부류라, 테스트 스텁이 아니라 실제
     조립 지점을 못 박는다.
@@ -1026,9 +1026,9 @@ class TestAgentLoopsAreUntouched:
 
     @staticmethod
     def _resident():
-        from agent_cli.runtime import ports_for_resident
+        from agent_cli.subagent.resident_loop import ResidentLoop
 
-        return ports_for_resident(
+        return ResidentLoop.make_ports(
             key="agt-x",
             message_handler=None,
             questions=None,
@@ -1038,9 +1038,9 @@ class TestAgentLoopsAreUntouched:
 
     @staticmethod
     def _oneshot():
-        from agent_cli.runtime import ports_for_oneshot
+        from agent_cli.loop.kind import PrivateLoop
 
-        return ports_for_oneshot(owner="agent:agt-x")
+        return PrivateLoop.make_ports("run:agt-x")
 
     def test_resident_complete_without_answers_is_not_bounced_or_nagged(self):
         p, _ctx, res = self._run_agent(

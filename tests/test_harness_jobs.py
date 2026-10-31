@@ -85,7 +85,7 @@ class TestRun:
         # 일회성 포트: 질문·레지스트리·메시지 없음 → ask/message/reply 가 없다
         ports = seen["ports"]
         assert isinstance(ports, LoopPorts)
-        assert ports.owner == "harness:auditor"
+        assert ports.owner == "harness:auditor:1-9"  # v10.87.0 D2: 라벨까지
         assert ports.questions is None and ports.agent_registry is None
         assert ports.message_handler is None
         assert ports.absorb_inbox is not None  # v10.84.0: 자기 메일함을 읽는 포트

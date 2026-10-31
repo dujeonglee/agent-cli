@@ -2,9 +2,9 @@
 
 단건은 호출 스레드에서 인라인으로 돌고(CLI 가 실시간·들여쓰기로 보여 준다),
 병렬은 워커 스레드에서 돈다(CLI 가 모았다가 끝에 보여 준다) — **실행 자리**는
-의도된 차이라 그대로 둔다. 같아야 하는 것은 카드 수명(열기 → `_run_single` →
-닫기·소요·오류)과 `_run_single` 에 넘기는 인자다. 이 테스트는 두 경로가 렌더러에
-내는 사건과 `_run_single` 인자를 기록해 고정한다 — C2 이전 구현에서 먼저 통과시킨
+의도된 차이라 그대로 둔다. 같아야 하는 것은 카드 수명(열기 → 런 →
+닫기·소요·오류)과 `OneShotLoop` 가 받는 과제·호출자다. 이 테스트는 두 경로가 렌더러에
+내는 사건과 그 인자를 기록해 고정한다 — C2 이전 구현에서 먼저 통과시킨
 특성 테스트다.
 """
 
@@ -16,6 +16,7 @@ import pytest
 
 from agent_cli.subagent import oneshot
 from agent_cli.tools.result import ToolResult
+from tests.loop_kinds import make_caller
 
 
 class _Renderer:
@@ -54,31 +55,56 @@ def rig(monkeypatch):
     calls: list[dict] = []
     threads: list[str] = []
 
-    def fake_run_single(**kw):
-        calls.append(kw)
-        threads.append(threading.current_thread().name)
-        if "boom" in kw["task"]:
-            return ToolResult(False, error="it broke")
-        return ToolResult(True, output=f"STATUS: success\nRESULT:\ndid {kw['task']}")
+    from agent_cli.subagent.oneshot import OneShotLoop
+    from tests.loop_kinds import fake_oneshot_run
 
-    monkeypatch.setattr(oneshot, "_run_single", fake_run_single)
+    def fake_run(kind):
+        c = kind.caller
+        calls.append(
+            {
+                "task": kind.task,
+                "context_mode": kind.context_mode,
+                "allowed_tools": kind.requested_tools,
+                "agent_name": kind.agent_name,
+                "instructions": kind.instructions,
+                "run_dir_name": kind.run_dir_name,
+                "stop_event": kind.stop_event,
+                "parent_ctx": c.ctx,
+                "binding": c.binding,
+                "depth": c.depth,
+                "max_depth": c.max_depth,
+                "max_turns": c.max_turns,
+                "session": c.session,
+                "skill_stack": c.skill_stack,
+                "agent_stack": c.agent_stack,
+                "hooks_config": c.hooks_config,
+                "compaction_enabled": c.compaction_enabled,
+            }
+        )
+        threads.append(threading.current_thread().name)
+        if "boom" in kind.task:
+            return ToolResult(False, error="it broke")
+        return ToolResult(True, output=f"STATUS: success\nRESULT:\ndid {kind.task}")
+
+    monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(fake_run))
     return r, calls, threads
 
 
 def _delegate(tasks, **kw):
     return oneshot.tool_delegate(
         {"tasks": tasks},
-        parent_ctx=None,
-        binding="B",
-        depth=1,
-        max_depth=3,
-        max_turns=7,
-        session="S",
-        skill_stack=["sk"],
-        agent_stack=["ag"],
-        hooks_config={"h": 1},
-        compaction_enabled=False,
-        **kw,
+        make_caller(
+            ctx=None,
+            binding="B",
+            depth=1,
+            max_depth=3,
+            max_turns=7,
+            session="S",
+            skill_stack=["sk"],
+            agent_stack=["ag"],
+            hooks_config={"h": 1},
+            compaction_enabled=False,
+        ),
     )
 
 

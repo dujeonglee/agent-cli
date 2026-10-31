@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from agent_cli.subagent.oneshot import _run_single
+from agent_cli.subagent.oneshot import OneShotLoop
 from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 
 
 def _validate_agent_name(name: str) -> bool:
@@ -225,13 +226,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Write tests",
-            agent_name="tester",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Write tests", "agent": "tester"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert result.success
         assert captured_kwargs["agent_role"] == "You are a test engineer."
@@ -260,13 +262,15 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        _run_single(
-            task="Do work",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        OneShotLoop(
+            {"task": "Do work"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                ),
+                compaction_enabled=False,
             ),
-            compaction_enabled=False,
-        )
+        ).run()
         assert captured_kwargs["compaction_enabled"] is False
 
     def test_compaction_defaults_enabled(self, monkeypatch):
@@ -292,12 +296,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        _run_single(
-            task="Do work",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        OneShotLoop(
+            {"task": "Do work"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
         assert captured_kwargs["compaction_enabled"] is True
 
     def test_agent_not_found_returns_error(self, tmp_path, monkeypatch):
@@ -318,13 +324,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Review code",
-            agent_name="nonexistent",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Review code", "agent": "nonexistent"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert not result.success
         assert "not found" in result.error
@@ -360,13 +367,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Read files",
-            agent_name="reader",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Read files", "agent": "reader"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert result.success
         assert captured_kwargs["active_tools"] == ["read_file"]
@@ -404,14 +412,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Run shell",
-            agent_name="reader",
-            allowed_tools=["shell"],
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Run shell", "agent": "reader", "tools": ["shell"]},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert not result.success
         assert "Delegation rejected" in result.error
@@ -449,13 +457,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Think hard",
-            agent_name="smart",
-            binding=make_binding(
-                provider=FakeProvider(), model="default-model", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Think hard", "agent": "smart"},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="default-model", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert result.success
         assert captured_kwargs["binding"].model == "special-model"
@@ -483,13 +492,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = _run_single(
-            task="Do something",
-            agent_name="",
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+        result = OneShotLoop(
+            {"task": "Do something", "agent": ""},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
-        )
+        ).run()
 
         assert result.success
         assert captured_kwargs["agent_role"] == ""
@@ -497,16 +507,19 @@ class TestRunSingleWithAgent:
 
 class TestToolDelegatePassesAgent:
     def test_passes_agent_name(self, monkeypatch):
-        """AG-21: tool_delegate passes spec['agent'] to _run_single."""
+        """AG-21: tool_delegate passes spec['agent'] to the OneShotLoop."""
         from agent_cli.subagent.oneshot import tool_delegate
 
         captured_kwargs = {}
 
-        def mock_run_single(**kwargs):
-            captured_kwargs.update(kwargs)
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
+        def mock_run(kind):
+            captured_kwargs["agent_name"] = kind.agent_name
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
+        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(mock_run))
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -520,9 +533,11 @@ class TestToolDelegatePassesAgent:
             pass
 
         tool_delegate(
-            args={"tasks": [{"task": "Review", "agent": "reviewer"}]},
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+            {"tasks": [{"task": "Review", "agent": "reviewer"}]},
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
         )
 
@@ -534,11 +549,14 @@ class TestToolDelegatePassesAgent:
 
         captured_agents = []
 
-        def mock_run_single(**kwargs):
-            captured_agents.append(kwargs.get("agent_name", ""))
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
+
+        def mock_run(kind):
+            captured_agents.append(kind.agent_name)
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
+        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(mock_run))
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -552,12 +570,14 @@ class TestToolDelegatePassesAgent:
             pass
 
         _run_parallel(
-            task_specs=[
+            [
                 {"task": "Review code", "agent": "reviewer"},
                 {"task": "Check security", "agent": "security"},
             ],
-            binding=make_binding(
-                provider=FakeProvider(), model="test", capabilities=caps
+            make_caller(
+                binding=make_binding(
+                    provider=FakeProvider(), model="test", capabilities=caps
+                )
             ),
         )
 
@@ -604,10 +624,14 @@ class TestToolDelegatePassesAgent:
             "agent_cli.render.get_renderer", lambda: CapturingRenderer()
         )
 
-        def mock_run_single(**kwargs):
-            return ToolResult(True, output="done")
+        from agent_cli.subagent.oneshot import OneShotLoop
+        from tests.loop_kinds import fake_oneshot_run
 
-        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
+        monkeypatch.setattr(
+            OneShotLoop,
+            "run",
+            fake_oneshot_run(lambda kind: ToolResult(True, output="done")),
+        )
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -624,9 +648,11 @@ class TestToolDelegatePassesAgent:
         # the exact condition that produced colliding ids before.
         for _ in range(5):
             _run_parallel(
-                task_specs=specs,
-                binding=make_binding(
-                    provider=FakeProvider(), model="test", capabilities=caps
+                specs,
+                make_caller(
+                    binding=make_binding(
+                        provider=FakeProvider(), model="test", capabilities=caps
+                    )
                 ),
             )
 

@@ -12,13 +12,14 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.skills.executor import (
     _INJECT_MAX_CHARS,
+    SkillLoop,
     _clamp_injected,
-    execute_skill,
     substitute_arguments,
 )
 from agent_cli.skills.loader import _parse_skill_file, load_skills
 from agent_cli.skills.models import Skill
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 
 
 @pytest.fixture
@@ -526,14 +527,15 @@ class TestSkillExecution:
             allowed_tools=["read_file"],
             max_turns=3,
         )
-        result = execute_skill(
-            skill=skill,
-            arguments="test.py",
-            binding=make_binding(
-                provider=provider, capabilities=caps, model="test-model"
+        result = SkillLoop(
+            skill,
+            "test.py",
+            make_caller(
+                binding=make_binding(
+                    provider=provider, capabilities=caps, model="test-model"
+                )
             ),
-            owner="main",
-        )
+        ).run()
         assert result is not None
 
     def test_execute_uses_skill_max_turns(self, caps):
@@ -548,12 +550,13 @@ class TestSkillExecution:
             prompt_template="Do $ARGUMENTS",
             max_turns=7,
         )
-        execute_skill(
-            skill=skill,
-            arguments="task",
-            binding=make_binding(provider=provider, capabilities=caps, model="m"),
-            owner="main",
-        )
+        SkillLoop(
+            skill,
+            "task",
+            make_caller(
+                binding=make_binding(provider=provider, capabilities=caps, model="m")
+            ),
+        ).run()
         # Skill's max_turns should be used (verified by run_loop not exceeding it)
         assert provider.call.called
 
@@ -563,17 +566,20 @@ class TestSkillExecution:
         fake_session = MagicMock()
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                binding=make_binding(provider=provider, capabilities=caps, model="m"),
-                session=fake_session,
-                owner="main",
-            )
+            SkillLoop(
+                skill,
+                "task",
+                make_caller(
+                    binding=make_binding(
+                        provider=provider, capabilities=caps, model="m"
+                    ),
+                    session=fake_session,
+                ),
+            ).run()
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is fake_session
 
@@ -582,16 +588,19 @@ class TestSkillExecution:
         provider = MagicMock()
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                binding=make_binding(provider=provider, capabilities=caps, model="m"),
-                owner="main",
-            )
+            SkillLoop(
+                skill,
+                "task",
+                make_caller(
+                    binding=make_binding(
+                        provider=provider, capabilities=caps, model="m"
+                    )
+                ),
+            ).run()
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is None
 
@@ -600,17 +609,20 @@ class TestSkillExecution:
         provider = MagicMock()
 
         skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
-            execute_skill(
-                skill=skill,
-                arguments="./",
-                binding=make_binding(provider=provider, capabilities=caps, model="m"),
-                skill_stack=["summarize"],
-                owner="main",
-            )
+            SkillLoop(
+                skill,
+                "./",
+                make_caller(
+                    binding=make_binding(
+                        provider=provider, capabilities=caps, model="m"
+                    ),
+                    skill_stack=["summarize"],
+                ),
+            ).run()
             _, kwargs = mock_run_loop.call_args
             assert kwargs["skill_stack"] == ["summarize"]
             assert kwargs["skill_name"] == "optimize"
@@ -625,18 +637,19 @@ class TestSkillExecution:
         skill = Skill(
             name="s", description="d", prompt_template="Do $ARGUMENTS", model=None
         )
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                binding=make_binding(
-                    provider=provider, capabilities=caps, model="original-model"
+            SkillLoop(
+                skill,
+                "task",
+                make_caller(
+                    binding=make_binding(
+                        provider=provider, capabilities=caps, model="original-model"
+                    )
                 ),
-                owner="main",
-            )
+            ).run()
             _, kwargs = mock_run_loop.call_args
             assert kwargs["binding"].model == "original-model"
 
@@ -653,18 +666,19 @@ class TestSkillExecution:
             prompt_template="Do $ARGUMENTS",
             model="gpt-4o",
         )
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                binding=make_binding(
-                    provider=provider, capabilities=caps, model="original-model"
+            SkillLoop(
+                skill,
+                "task",
+                make_caller(
+                    binding=make_binding(
+                        provider=provider, capabilities=caps, model="original-model"
+                    )
                 ),
-                owner="main",
-            )
+            ).run()
             _, kwargs = mock_run_loop.call_args
             assert kwargs["binding"].model == "gpt-4o"
 

@@ -4,6 +4,11 @@
 > fable 리뷰를 반영. **6판 판정: 구현 안전.** 7판은 그 마지막 한 줄을 넣은 것.
 > **목표는 고정**(§0) — 축소하지 않는다.
 
+> **v10.87.0 (docs/loop-kinds/DESIGN.md)**: §2.2 의 조립 지점 다섯과 §3.4 의 owner 전달은 이제 루프 종류
+> 객체(`LoopKind` — `MainLoop`·`ResidentLoop`·`OneShotLoop`·`SkillLoop`·`HarnessLoop`)가 맡는다. `LoopPorts`
+> 는 종류의 `make_ports` 만 만들고, 중첩 루프는 호출자를 기본값 없는 `Caller` 로 받는다 — 여기 적힌 "seam 마다
+> owner 인자" 는 그 전신이다.
+
 ## 0. 목표 (고정)
 
 - **G1** — 모니터 알림은 **설치한 주소로** 배달된다. main 이 걸면 main 에게,

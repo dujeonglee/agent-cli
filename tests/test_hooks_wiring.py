@@ -1,6 +1,6 @@
 """Python 훅 배선 (v10.35.0) — 세션당 `HookRunner` 하나를 네 루프가 같이 본다.
 
-종전엔 `ports_for_*` 전부 `hook_runner=None`(사유 "배선만 준비 — 응용이 생기면
+종전엔 포트 빌더 전부 `hook_runner=None`(사유 "배선만 준비 — 응용이 생기면
 연결")이라 README 가 문서화한 Python 훅이 어느 루프에서도 돌지 않았다. 첫 응용이
 워크스페이스 스냅샷이고, 서브에이전트의 shell 도 입력을 망치므로 네 루프 전부다.
 """
@@ -14,10 +14,6 @@ import pytest
 from agent_cli.hooks.runtime import get_hook_runner, set_hook_runner
 from agent_cli.runtime import (
     build_hook_runner,
-    ports_for_main,
-    ports_for_oneshot,
-    ports_for_resident,
-    ports_for_skill,
 )
 
 
@@ -37,18 +33,23 @@ _S = object()
 
 
 def _all_ports():
+    from agent_cli.loop.kind import PrivateLoop
+    from agent_cli.runtime import MainLoop
+    from agent_cli.skills.executor import SkillLoop
+    from agent_cli.subagent.resident_loop import ResidentLoop
+
     return {
-        "main": ports_for_main(
+        "main": MainLoop.make_ports(
             agent_registry=_Reg(),
             mcp_manager=_S,
             dequeue_user_message=_S,
             route_message=_S,
         ),
-        "resident": ports_for_resident(
+        "resident": ResidentLoop.make_ports(
             key="k1", message_handler=_S, questions=_S, absorb_inbox=_S, peer_roster=_S
         ),
-        "skill": ports_for_skill(agent_registry=_Reg(), owner="agent:parent"),
-        "oneshot": ports_for_oneshot(owner="agent:parent"),
+        "skill": SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
+        "oneshot": PrivateLoop.make_ports("run:parent"),
     }
 
 
@@ -124,7 +125,7 @@ class TestBuiltinHooksDir:
         assert [p.name for p in _scan_hook_files([tmp_path])] == ["10_real.py"]
 
     def test_a_project_hook_fires_through_the_wired_bridge(self, tmp_path, monkeypatch):
-        """끝에서 끝까지: 프로젝트 훅 파일 → 세션 러너 → `ports_for_main` → ToolBridge
+        """끝에서 끝까지: 프로젝트 훅 파일 → 세션 러너 → `MainLoop.make_ports` → ToolBridge
         의 PreToolUse. 종전엔 이 사슬의 가운데가 끊겨 있었다."""
         hooks = tmp_path / ".agent-cli" / "hooks"
         hooks.mkdir(parents=True)
@@ -138,9 +139,10 @@ class TestBuiltinHooksDir:
             "agent_cli.paths.project_dir", lambda: tmp_path / ".agent-cli"
         )
         from agent_cli.loop import LoopConfig, LoopState, ToolBridge
+        from agent_cli.runtime import MainLoop
 
         build_hook_runner()
-        ports = ports_for_main(
+        ports = MainLoop.make_ports(
             agent_registry=None,
             mcp_manager=None,
             dequeue_user_message=None,

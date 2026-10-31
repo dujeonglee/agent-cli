@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-import agent_cli.loop as loop_mod
 import agent_cli.subagent.runner as runner_mod
 from agent_cli.context.manager import ContextManager
 from agent_cli.subagent.runner import (
     apply_role_overrides,
     create_subagent_ctx,
-    run_subagent_message,
 )
-from tests.binding_support import make_binding
-from tests.loop_ports import TEST_PORTS
 
 # ── apply_role_overrides ────────────────────────
 
@@ -225,58 +221,10 @@ class TestCreateSubagentCtx:
         assert seen == [ctx]
 
 
-# ── run_subagent_message ────────────────────────
+# ── 모듈 계약 ──────────────────────────────────────
 
 
-class TestRunSubagentMessage:
-    def _capture_run_loop(self, monkeypatch, result="done"):
-        captured = {}
-
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
-
-            class _R:
-                success = True
-                output = result
-
-            return _R()
-
-        monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
-        return captured
-
-    def test_threads_args_and_increments_depth(self, tmp_path, monkeypatch):
-        captured = self._capture_run_loop(monkeypatch)
-        ctx = ContextManager(tmp_path / "sub", max_context_tokens=100)
-        stop = object()
-
-        loop_result, duration = run_subagent_message(
-            "do the thing",
-            ctx,
-            ports=TEST_PORTS,
-            binding=make_binding(provider="P", capabilities="C", model="m"),
-            depth=1,
-            max_depth=3,
-            active_tools=["shell"],
-            agent_name="explorer",
-            stop_event=stop,
-            agent_role="ROLE",
-            compaction_enabled=False,
-        )
-
-        assert loop_result.output == "done"
-        assert duration >= 0.0
-        assert captured["query"] == "do the thing"
-        assert captured["ctx"] is ctx
-        # 서브루프는 호출자 깊이 + 1 로 돈다 (기존 delegate 의미).
-        assert captured["depth"] == 2
-        assert captured["max_depth"] == 3
-        assert captured["verbose"] is False
-        assert captured["active_tools"] == ["shell"]
-        assert captured["agent_name"] == "explorer"
-        assert captured["stop_event"] is stop
-        assert captured["agent_role"] == "ROLE"
-        assert captured["compaction_enabled"] is False
-
+class TestRunnerModule:
     def test_lazy_imports_stay_function_local(self):
         # 순환 회피 계약: 모듈 로드 시점에 context.manager/loop/render 를
         # 끌어오지 않는다 (registry → delegate → … 순환의 재발 방지).

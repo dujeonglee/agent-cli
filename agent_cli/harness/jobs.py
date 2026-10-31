@@ -3,7 +3,7 @@
 하니스 작업은 **팀원이 아니다**. `AgentRegistry` 에 들지 않으므로 로스터·주소
 해석(`message`·`agent` request/kill)·`agents.json`·생존 상한·보드 칩 어디에도
 없다 — 격리는 필터가 아니라 부재다. 팀원과 공유하는 것은 런 기계뿐이다:
-`create_subagent_ctx` + `run_subagent_message` + `ports_for_oneshot`(질문
+`HarnessLoop` 는 one-shot 과 같은 private 종류(`loop.kind.PrivateLoop` — 질문
 포트·레지스트리·메시지 없음 — `ask`·`message`·`reply` 가 도구 목록에 없다).
 
 - **프로파일** `agent_cli/agents/harness/<job>.md` — 사용자 카탈로그
@@ -26,11 +26,11 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 from agent_cli.context.session import HARNESS_DIR, harness_run_dir
+from agent_cli.loop.kind import LoopKindError, PrivateLoop, Start
 from agent_cli.resource_loader import ResourceLoader
 
 #: 하니스 프로파일의 자리 — `agents/builtin`(사용자 카탈로그)과 형제, 검색 경로는
@@ -38,8 +38,7 @@ from agent_cli.resource_loader import ResourceLoader
 HARNESS_PROFILES_DIR = Path(__file__).parent.parent / "agents" / "harness"
 _profile_loader = ResourceLoader([HARNESS_PROFILES_DIR])
 
-#: `run_subagent_message` 의 kwargs 와 같은 키 — `AgentRuntime.as_dict()` 가 이
-#: 모양이다 (`runtime` 인자의 계약).
+#: `AgentRuntime.as_dict()` 의 키 — `HarnessLoop` 가 읽는 것만 (`runtime` 인자의 계약).
 RUNTIME_KEYS = frozenset(
     {
         "binding",
@@ -74,7 +73,7 @@ class HarnessJobs:
 
     ``runtime`` 은 `AgentRuntime.as_dict()` 모양(``RUNTIME_KEYS``); 세션 셸 훅은
     싣지 않는다(하니스 런에 사용자 훅을 돌리지 않는다). ``runner`` 는 테스트
-    주입(기본 `run_subagent_message`). ``on_change(n)`` 은 진행 중 수가 바뀔 때마다
+    주입(종류의 엔진 — 기본 `run_loop`). ``on_change(n)`` 은 진행 중 수가 바뀔 때마다
     — web 이 status.json 의 ``auditing`` 을 이것으로 쓴다.
     """
 
@@ -129,15 +128,17 @@ class HarnessJobs:
         return ""
 
     def _run(self, job: str, label: str, task: str, body: str, meta: dict) -> None:
-        task_id = f"harness-{job}-{label}"
-        scoped = self._open_scope(task_id, job, label)
-        t0 = time.monotonic()
-        try:
-            success, output = self._execute(job, label, task, body, meta)
-        except Exception as exc:  # 어떤 실패도 main 에게는 결과 한 장으로 간다
-            success, output = False, f"{job} crashed: {type(exc).__name__}: {exc}"
-        if scoped:
-            self._close_scope(task_id, success, time.monotonic() - t0, output)
+        success, output = HarnessLoop(
+            job,
+            label,
+            task,
+            body,
+            meta,
+            runtime=self.runtime,
+            session_ctx=self.ctx,
+            stop_event=self._stop,
+            engine=self._runner,
+        ).run()
         try:
             self._deliver(job, success, output)
         finally:
@@ -145,85 +146,6 @@ class HarnessJobs:
                 self._in_flight -= 1
                 n = self._in_flight
             self._notify(n)
-
-    def _execute(
-        self, job: str, label: str, task: str, body: str, meta: dict
-    ) -> tuple[bool, str]:
-        from agent_cli.constants import HARNESS_OWNER_PREFIX
-        from agent_cli.runtime import ports_for_oneshot, release_private_owner
-        from agent_cli.subagent.runner import (
-            apply_role_overrides,
-            create_subagent_ctx,
-            run_subagent_message,
-        )
-
-        binding = self.runtime.get("binding")
-        allowed_tools, model, _hooks = apply_role_overrides(
-            meta,
-            allowed_tools=None,
-            model=binding.model if binding is not None else "",
-            hooks_config=None,
-        )
-        if binding is not None and model and model != binding.model:
-            binding = binding.pinned(model)  # 프로파일이 고정한 모델
-        run_dir = harness_run_dir(self.ctx.session_dir, job, label)
-        ctx, err = create_subagent_ctx("none", self.ctx, run_dir, binding=binding)
-        if ctx is None:
-            return False, f"{job} could not start: {err}"
-        runner = self._runner or run_subagent_message
-        owner = f"{HARNESS_OWNER_PREFIX}{job}"
-        try:
-            result, _secs = runner(
-                task,
-                ctx,
-                ports=ports_for_oneshot(owner=owner),
-                active_tools=allowed_tools,
-                agent_name=job,
-                agent_role=body,
-                stop_event=self._stop,
-                **{**self.runtime, "binding": binding, "hooks_config": None},
-            )
-        finally:
-            release_private_owner(owner)  # v10.84.0: 자기 주소의 메일함·체크인 정리
-        if result.success:
-            return True, result.output or ""
-        return False, f"{job} did not complete: {result.error or 'no result'}"
-
-    @staticmethod
-    def _open_scope(task_id: str, job: str, label: str) -> bool:
-        """이 스레드의 카드를 이 런의 스코프에 가둔다. ``parent=""`` — main 의
-        어떤 스코프 안도 아니다(감사는 main 런이 끝난 뒤 따로 돈다). ``ctx_dir``
-        은 resume 이 카드 안을 다시 채우는 자리다. 렌더러 오류는 런을 막지
-        않는다 — 카드는 표시일 뿐이다."""
-        from agent_cli.render import get_renderer
-
-        try:
-            get_renderer().begin_scope(
-                task_id=task_id,
-                kind="harness",
-                label=label,
-                agent=job,
-                parent="",
-                ctx_dir=f"{HARNESS_DIR}/{job}/{label}",
-            )
-        except Exception:
-            return False
-        return True
-
-    @staticmethod
-    def _close_scope(task_id: str, success: bool, secs: float, output: str) -> None:
-        from agent_cli.render import get_renderer
-
-        try:
-            get_renderer().end_scope(
-                task_id=task_id,
-                kind="harness",
-                success=success,
-                duration_s=secs,
-                error="" if success else output[:300],
-            )
-        except Exception:
-            pass
 
     def _notify(self, n: int) -> None:
         cb = self.on_change
@@ -241,3 +163,118 @@ class HarnessJobs:
             threads = list(self._threads)
         for t in threads:
             t.join(timeout)
+
+
+class HarnessLoop(PrivateLoop):
+    """하니스 작업 한 런 — 작업마다 하나 (`LoopKind`, v10.87.0). one-shot 과 같은 private
+    종류(메일함·제자리 `wait`·끝나면 전부 거둠)이고 다른 것만 여기 있다: 주소
+    ``harness:<job>:<label>`` (v10.87.0 D2 — 종전엔 라벨이 없어 겹치는 감사 둘이 한 주소였다),
+    도구·역할·모델은 `agents/harness/<job>.md` 프로파일, 훅 없음, 깊이 1, 중단은 모든 하니스
+    런이 공유하는 `HarnessJobs._stop`. 결과 ``(ok, output)`` 은 호스트(`HarnessJobs._run`)가
+    main 메일함에 넣는다 — 전달은 모델의 선택이 아니다."""
+
+    verbose = False
+    graceful_interrupt = False
+
+    def __init__(
+        self,
+        job: str,
+        label: str,
+        task: str,
+        body: str,
+        meta: dict,
+        *,
+        runtime: dict,
+        session_ctx,
+        stop_event,
+        engine=None,
+    ) -> None:
+        from agent_cli.constants import HARNESS_OWNER_PREFIX
+        from agent_cli.subagent.runner import apply_role_overrides
+
+        super().__init__(owner=f"{HARNESS_OWNER_PREFIX}{job}:{label}")
+        self.job, self.label, self.task = job, label, task
+        self.session_ctx = session_ctx
+        binding = runtime.get("binding")
+        allowed_tools, model, _hooks = apply_role_overrides(
+            meta,
+            allowed_tools=None,
+            model=binding.model if binding is not None else "",
+            hooks_config=None,
+        )
+        if binding is not None and model and model != binding.model:
+            binding = binding.pinned(model)  # 프로파일이 고정한 모델
+        self.binding = binding
+        self.tools = allowed_tools
+        self.depth = runtime.get("depth", 0) + 1
+        self.max_depth = runtime.get("max_depth", 2)
+        self.max_turns = runtime.get("max_turns", 0)
+        self.session = runtime.get("session")
+        self.compaction_enabled = runtime.get("compaction_enabled", True)
+        self.hooks_config = None  # 하니스 런에 사용자 훅을 돌리지 않는다
+        self.agent_name = job
+        self.agent_role = body
+        self.stop_event = stop_event
+        self.engine = engine
+        self._task_id = f"harness-{job}-{label}"
+
+    def start(self) -> Start:
+        return Start(query=self.task)
+
+    def make_ctx(self, start: Start):
+        from agent_cli.subagent.runner import create_subagent_ctx
+
+        run_dir = harness_run_dir(self.session_ctx.session_dir, self.job, self.label)
+        ctx, err = create_subagent_ctx(
+            "none", self.session_ctx, run_dir, binding=self.binding
+        )
+        if ctx is None:
+            raise LoopKindError(f"{self.job} could not start: {err}")
+        return ctx
+
+    def rejected(self, reason: str) -> tuple[bool, str]:
+        return False, reason
+
+    def open_scope(self, start: Start):
+        """이 스레드의 카드를 이 런의 스코프에 가둔다. ``parent=""`` — main 의 어떤 스코프
+        안도 아니다(감사는 main 런이 끝난 뒤 따로 돈다). 렌더러 오류는 런을 막지 않는다."""
+        from agent_cli.render import get_renderer
+
+        try:
+            get_renderer().begin_scope(
+                task_id=self._task_id,
+                kind="harness",
+                label=self.label,
+                agent=self.job,
+                parent="",
+                ctx_dir=f"{HARNESS_DIR}/{self.job}/{self.label}",
+            )
+        except Exception:
+            return False
+        return True
+
+    def close_scope(self, scoped, finished, secs: float) -> None:
+        if not scoped:
+            return
+        from agent_cli.render import get_renderer
+
+        ok, output = finished if finished is not None else (False, "")
+        try:
+            get_renderer().end_scope(
+                task_id=self._task_id,
+                kind="harness",
+                success=ok,
+                duration_s=secs,
+                error="" if ok else output[:300],
+            )
+        except Exception:
+            pass
+
+    def finish(self, result, secs: float, released: str) -> tuple[bool, str]:
+        if result.success:
+            return True, result.output or ""
+        return False, f"{self.job} did not complete: {result.error or 'no result'}"
+
+    def crashed(self, exc: BaseException, secs: float) -> tuple[bool, str]:
+        # 어떤 실패도 main 에게는 결과 한 장으로 간다
+        return False, f"{self.job} crashed: {type(exc).__name__}: {exc}"

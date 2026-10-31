@@ -1,6 +1,7 @@
 """서브에이전트 공용 러너 (teammate P0, v4.53.0).
 
-delegate 와 teammate 가 공유하는 실행 3단계를 소유한다:
+종류들(`OneShotLoop`·`ResidentLoop`·`SkillLoop`·`HarnessLoop`)이 공유하는 두 단계를 소유한다
+(셋째 단계였던 ``run_subagent_message`` 는 v10.87.0 에 `LoopKind.run` 으로 들어갔다):
 
 1. :func:`apply_role_overrides` — 역할 md 의 config(frontmatter)를 명시
    파라미터보다 낮은 우선순위로 오버레이. **로더-불가지론적** — 역할 md
@@ -9,9 +10,6 @@ delegate 와 teammate 가 공유하는 실행 3단계를 소유한다:
    dict 만 받으므로 두 로더의 결과를 동일 의미로 소화한다.
 2. :func:`create_subagent_ctx` — none(독립)/fork(히스토리 복사) ctx 생성
    + 현재 스레드의 인스펙터 스코프에 live ctx 등록 (v4.52.0).
-3. :func:`run_subagent_message` — ctx 위에서 ``run_loop`` 1회 (메시지
-   1건 처리). delegate 는 이걸 한 번 부르고 ctx 를 버리고, teammate 는
-   같은 ctx 로 반복해서 부른다 — 이 차이가 두 도구의 전부다.
 
 무거운 의존(context.manager, loop, render)은 함수-내부 import — exec.py
 가 지던 registry → delegate → context.manager → tools.registry 순환을
@@ -20,15 +18,12 @@ delegate 와 teammate 가 공유하는 실행 3단계를 소유한다:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from agent_cli.context.manager import ContextManager
-    from agent_cli.loop import LoopResult
-    from agent_cli.loop.ports import LoopPorts
 
 
 class ProfileToolsError(ValueError):
@@ -160,71 +155,3 @@ def create_subagent_ctx(
 
     get_renderer().note_scope_ctx(ctx)
     return ctx, ""
-
-
-def run_subagent_message(
-    query: str,
-    ctx: ContextManager,
-    *,
-    ports: LoopPorts,
-    binding,
-    max_turns: int = 0,
-    depth: int = 0,
-    max_depth: int = 2,
-    active_tools: list[str] | None = None,
-    session=None,
-    skill_stack: list[str] | None = None,
-    agent_stack: list[str] | None = None,
-    agent_name: str = "",
-    stop_event=None,
-    agent_role: str = "",
-    hooks_config: dict | None = None,
-    user_requests: list | None = None,
-    query_request_id: str = "",
-    compaction_enabled: bool = True,
-    peer_agents_section: str = "",
-    query_images: list[dict] | None = None,
-) -> tuple[LoopResult, float]:
-    """``ctx`` 위에서 메시지 1건을 처리 — ``(loop_result, 소요초)``.
-
-    ``query_images`` (v10.61.0): 시작 메시지에 딸린 ``ImageRef`` dict — 사람이
-    에이전트 창에서 붙인 이미지(docs/vision/DESIGN.md §5 에이전트 채널).
-
-    ``depth`` 는 **호출자의** 깊이다 — 서브루프는 ``depth + 1`` 로 돈다
-    (기존 delegate 의미 그대로). ``ask_handler``(teammate P2)가 있으면
-    서브루프의 ask 가 사용자 대신 이 훅으로 라우팅된다 — delegate 는
-    안 넘겨서 종전대로 사용자에게 간다.
-    """
-    from agent_cli.loop import run_loop
-
-    t0 = time.monotonic()
-    loop_result = run_loop(
-        query=query,
-        query_images=query_images,
-        binding=binding,
-        max_turns=max_turns,
-        verbose=False,
-        depth=depth + 1,
-        max_depth=max_depth,
-        active_tools=active_tools,
-        ctx=ctx,
-        session=session,
-        skill_stack=skill_stack,
-        agent_stack=agent_stack,
-        agent_name=agent_name,
-        stop_event=stop_event,
-        agent_role=agent_role,
-        hooks_config=hooks_config,
-        user_requests=user_requests,
-        # 상주 런의 시작 메시지가 **사람의 요청**인가 = 회계에 오른 요청이
-        # 있는가. 에이전트·main 항목(message/ask/회신)으로 시작한 런은 사용자
-        # 런이 아니다 — 빚이 남은 `complete` 은 거기서 거부된다(v9.22.1).
-        query_author_is_user=bool(user_requests),
-        # 시작 항목의 장부 id (v10.56.0) — 그 레코드에 찍혀 열려 있는 동안 핀된다
-        # (사람 요청 `u-…`, 동료 요청의 회신 빚 `r-…`).
-        query_request_id=query_request_id,
-        compaction_enabled=compaction_enabled,
-        ports=ports,
-        peer_agents_section=peer_agents_section,
-    )
-    return loop_result, time.monotonic() - t0

@@ -21,17 +21,18 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry, set_job_registry
 from agent_cli.loop import AgentLoop
+from agent_cli.loop.kind import PrivateLoop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.runtime import (
     mail_record,
-    ports_for_oneshot,
     release_private_owner,
     wake_sources,
 )
 from agent_cli.subagent.agents_live import set_main_registry
 from agent_cli.tools.result import ToolResult
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
 from tests.test_agents_live import make_registry
 
@@ -304,7 +305,7 @@ class TestWaitInPlace:
                 {"action": "wait", "reason": "job"},
                 {"action": "complete", "result": "done"},
             ),
-            ports_for_oneshot(owner="run:t1"),
+            PrivateLoop.make_ports("run:t1"),
             ctx=ctx,
         )
         assert "wait" in loop.tools_list  # 깨울 길이 있으니 광고된다
@@ -324,7 +325,7 @@ class TestWaitInPlace:
         ctx = ContextManager(tmp_path / "s", max_context_tokens=10000)
         loop = _loop(
             _provider({"action": "wait"}, {"action": "complete", "result": "done"}),
-            ports_for_oneshot(owner="run:t2"),
+            PrivateLoop.make_ports("run:t2"),
             ctx=ctx,
         )
         threading.Timer(0.4, lambda: jobs.kill(job)).start()
@@ -376,7 +377,7 @@ class TestReleasePrivateOwner:
 
 class TestOneShotHasItsOwnAddress:
     def test_run_single_uses_a_run_address_and_cleans_up(self, monkeypatch, jobs, reg):
-        from agent_cli.subagent.oneshot import _run_single
+        from agent_cli.subagent.oneshot import OneShotLoop
         from tests.binding_support import make_binding
 
         seen = {}
@@ -392,10 +393,12 @@ class TestOneShotHasItsOwnAddress:
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
-        result = _run_single(
-            task="go",
-            binding=make_binding(provider=object(), model="m", capabilities=caps),
-        )
+        result = OneShotLoop(
+            {"task": "go"},
+            make_caller(
+                binding=make_binding(provider=object(), model="m", capabilities=caps)
+            ),
+        ).run()
         assert result.success
         assert seen["owner"].startswith(RUN_OWNER_PREFIX) and seen["absorb"] is not None
         assert jobs.running(seen["owner"]) == []

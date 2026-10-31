@@ -57,12 +57,14 @@ def _session(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
 class TestLayoutIsDeclaredOnce:
     def test_makers_use_the_declared_names(self, tmp_path):
         """팀원 자리·delegate/스킬 접두·하니스 자리 — 만드는 쪽 넷이 같은 상수를 쓴다."""
-        from agent_cli.loop import skill_invoke
+        from agent_cli.skills import executor as skill_executor
         from agent_cli.subagent import agents_live, report
 
         assert agents_live.AGENTS_DIR is AGENTS_DIR
         assert report._generate_run_dir_name("x").startswith(f"{RUN_PREFIX}_x_")
-        assert "SKILL_PREFIX" in Path(skill_invoke.__file__).read_text(encoding="utf-8")
+        assert "SKILL_PREFIX" in Path(skill_executor.__file__).read_text(
+            encoding="utf-8"
+        )
         assert harness_run_dir(tmp_path, "auditor", "3-7") == (
             tmp_path / HARNESS_DIR / "auditor" / "3-7"
         )

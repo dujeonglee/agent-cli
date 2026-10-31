@@ -190,7 +190,7 @@ class AgentLoop:
         #  · ``depth_gated`` (run_skill/agent): 결합 호출 깊이가 상한이면
         #    제거 — 스킬도 depth 를 계수(위임과 parity)하므로 두 중첩을
         #    동일 취급하고, LLM 이 거부될 도구를 광고받지 않는다.
-        #    디스패치-시점 ``_handle_run_skill``/``_run_single`` 체크는
+        #    디스패치-시점 ``_handle_run_skill``/``OneShotLoop.make_ctx`` 체크는
         #    custom active_tools 직접 호출자용 belt-and-suspenders 로 잔존.
         #  · ``requires_handler`` (ask→ctx, message→message_handler): 명명된
         #    루프 자원이 없으면 제거해 비기능 도구를 광고하지 않고,
