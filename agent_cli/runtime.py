@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import Any, NamedTuple
 
 from agent_cli.loop.kind import WAIT_END_RUN, LoopKind, PromptProfile, Start
 from agent_cli.loop.ports import LoopPorts
@@ -764,23 +764,41 @@ class MainLoop(LoopKind):
         )
 
 
-def mail_record(mail: dict) -> dict:
-    """메일 한 통 → 루프가 그대로 넣는 관찰 (`core._absorb_inbox` 의 ``record`` 모양,
-    v10.84.0). main 의 `build_reply_record`·상주의 `absorb_pending` 과 **같은 계약**
-    (사용자 결정 C): 하니스 통지는 봉투 없이 보고 그대로, ``tool`` 은
-    `constants.HARNESS_MAIL_TOOL`(job·monitor·checkin→wait)."""
+def harness_record(mail: dict) -> dict | None:
+    """하니스 통지(잡·모니터·체크인) 한 통 → 관찰 레코드 — **한 계약** (v10.84.0 사용자 결정 C,
+    v10.89.0 한 함수): 봉투 없이 보고 그대로, ``tool`` 은 `constants.HARNESS_MAIL_TOOL`
+    (job·monitor·checkin→wait), ``source`` "harness_mail". main 의 `build_reply_record`·상주의
+    `absorb_pending`·private 의 `mail_record` 가 모두 이것을 부른다 — 종전엔 같은 모양을
+    세 곳이 각자 적었다. 하니스 통지가 아니면 None."""
     from agent_cli.constants import harness_mail_tool
 
-    kind = str(mail.get("kind") or "")
+    tool = harness_mail_tool(str(mail.get("kind") or ""))
+    if tool is None:
+        return None
     return {
-        "record": {
+        "role": "user",
+        "tool": tool,
+        "success": bool(mail.get("success", True)),
+        "content": str(mail.get("output") or mail.get("text") or ""),
+        "source": "harness_mail",
+    }
+
+
+def mail_record(mail: dict) -> dict:
+    """private 메일함의 메일 한 통 → 루프가 그대로 넣는 흡수 항목(``{"record": …}``,
+    `core._inject_item` 의 모양). 하니스 통지는 `harness_record`; 그 밖(지금은 없다)은 kind 를
+    tool 로 — 빈 tool 은 형식 개입 표식이라 쓰지 않는다."""
+    rec = harness_record(mail)
+    if rec is None:
+        kind = str(mail.get("kind") or "")
+        rec = {
             "role": "user",
-            "tool": harness_mail_tool(kind) or (kind or "mail"),
+            "tool": kind or "mail",
             "success": bool(mail.get("success", True)),
             "content": str(mail.get("output") or mail.get("text") or ""),
             "source": "harness_mail",
         }
-    }
+    return {"record": rec}
 
 
 def _private_inbox(owner: str):
@@ -797,34 +815,58 @@ def _private_inbox(owner: str):
     return absorb
 
 
-def release_private_owner(owner: str) -> str:
-    """private 주소의 루프가 끝났다 — 그 주소가 가진 것을 전부 거둔다 (v10.84.0,
-    사용자 결정 D1): 돌고 있는 잡은 죽이고, 모니터는 폐기하고(재부모화하지 않는다 —
-    상주와 같은 규칙), 체크인·메일함을 버린다. 돌려주는 글은 결과에 붙이는 한
-    줄(거둔 것이 없으면 빈 문자열) — 호출자가 "끝났다" 를 "다 됐다" 로 읽지 않게."""
+class Released(NamedTuple):
+    """`release_owner` 의 결과 — 거둔 자원 수와 결과에 붙일 한 줄(없으면 "")."""
+
+    count: int
+    note: str
+
+
+def release_owner(owner: str, *, jobs=None, monitors=None, registry=None) -> Released:
+    """한 주소가 소유한 것을 전부 거둔다 — **한 함수** (v10.89.0; 종전 private 의
+    `release_private_owner` 와 상주의 `_drop_monitors`+`_cancel_checkins` 두 구현).
+    돌고 있는 잡은 죽이고(결과에 알린다), 모니터는 폐기하고(재부모화하지 않는다), python
+    워커를 죽이고, ``registry`` 가 있으면 메일함·체크인을 버린다(읽을 사람이 없다).
+    ``jobs``·``monitors`` 는 레지스트리가 주입받은 것을 넘길 수 있고(테스트 DI) 없으면 전역."""
     from agent_cli.jobs import get_job_registry
     from agent_cli.monitor.runtime import get_monitor_registry
-    from agent_cli.subagent.agents_live import main_registry
+    from agent_cli.pyworker import get_py_registry
 
+    count = 0
     parts: list[str] = []
-    jobs = get_job_registry()
+    jobs = jobs if jobs is not None else get_job_registry()
     if jobs is not None:
         running = jobs.running(owner)
+        try:
+            n = jobs.drop_owner(owner)  # 돌던 것은 죽이고, 끝난 기록도 거둔다
+        except Exception:
+            n = 0
+        count += n
         if running:
             cmds = "; ".join(f"`{j.command[:60]}`" for j in running)
-            n = jobs.drop_owner(owner)
+            k = len(running)
             parts.append(
-                f"{n} background job{'s' if n != 1 else ''} still running "
-                f"{'were' if n != 1 else 'was'} stopped when this agent finished: {cmds}"
+                f"{k} background job{'s' if k != 1 else ''} still running "
+                f"{'were' if k != 1 else 'was'} stopped when this agent finished: {cmds}"
             )
-    mons = get_monitor_registry()
-    if mons is not None:
-        n = mons.drop_owner(owner)
+    monitors = monitors if monitors is not None else get_monitor_registry()
+    if monitors is not None:
+        try:
+            n = monitors.drop_owner(owner)
+        except Exception:
+            n = 0
+        count += n
         if n:
             parts.append(
                 f"{n} monitor{'s' if n != 1 else ''} it set {'were' if n != 1 else 'was'} dropped"
             )
-    reg = main_registry()
-    if reg is not None:
-        reg.drop_mailbox(owner)
-    return f"[{'; '.join(parts)}]" if parts else ""
+    # python 워커(v10.66.0)는 주입이 아니라 전역 — 배달이 없어 배선할 양방향이 없고 죽일 때만 찾는다.
+    py = get_py_registry()
+    if py is not None:
+        try:
+            count += py.drop_owner(owner)
+        except Exception:
+            pass
+    if registry is not None:
+        registry.drop_mailbox(owner)  # 체크인 취소 포함
+    return Released(count, f"[{'; '.join(parts)}]" if parts else "")

@@ -390,3 +390,87 @@ class TestEngineAsksTheKind:
             cfg.kind.ports.owner == "agent:q" and cfg.kind.wait_policy() == WAIT_REFUSE
         )
         assert cfg.kind.prompt_profile().reports_to_caller
+
+
+# ── PR 3 (v10.89.0): 결과·마감 하나 ─────────────────────────────────────────
+
+
+class TestOneHarnessRecord:
+    def test_main_resident_and_private_share_the_function(self):
+        """하니스 통지의 레코드는 `runtime.harness_record` 하나 — main 의 `build_reply_record`,
+        private 의 `mail_record` 가 같은 사전을 돌려준다(상주의 `absorb_pending` 도 같은 함수)."""
+        from agent_cli.runtime import harness_record, mail_record
+        from agent_cli.subagent.agents_live import build_reply_record
+
+        mail = {"kind": "monitor", "success": True, "output": "👁 monitor m-1 fired"}
+        rec = harness_record(mail)
+        assert rec == {
+            "role": "user",
+            "tool": "monitor",
+            "success": True,
+            "content": "👁 monitor m-1 fired",
+            "source": "harness_mail",
+        }
+        assert build_reply_record(dict(mail, item_id="n-3")) == rec
+        assert mail_record(dict(mail))["record"] == rec
+        assert harness_record({"kind": "reply", "output": "x"}) is None  # 봉투 몫
+
+
+class TestReleaseOwnerIsOneFunction:
+    def test_private_and_resident_release_the_same_resources(self, monkeypatch):
+        """잡·모니터·python 워커·메일함(체크인) — 한 함수가 거둔다. 상주의 `_drop_monitors` 는
+        같은 함수의 자원 몫(메일함은 죽음의 정본 자리인 워커 finally 가 레지스트리를 넘긴다)."""
+        from agent_cli.runtime import release_owner
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        dropped: list[tuple[str, str]] = []
+
+        class _Reg:
+            def __init__(self, name):
+                self.name = name
+
+            def running(self, owner):
+                return []
+
+            def drop_owner(self, owner):
+                dropped.append((self.name, owner))
+                return 1
+
+        monkeypatch.setattr("agent_cli.pyworker.get_py_registry", lambda: _Reg("py"))
+        out = release_owner("run:q", jobs=_Reg("jobs"), monitors=_Reg("mon"))
+        assert out.count == 3 and "monitor" in out.note and "job" not in out.note
+        assert sorted(dropped) == [("jobs", "run:q"), ("mon", "run:q"), ("py", "run:q")]
+        dropped.clear()
+        registry = AgentRegistry.__new__(AgentRegistry)
+        registry.jobs, registry.monitors = _Reg("jobs"), _Reg("mon")
+        assert registry._drop_monitors("k") == 3
+        assert {o for _, o in dropped} == {"agent:k"}
+
+
+class TestResidentFinishIsOnePath:
+    def test_crash_still_goes_through_the_post_processing(self, tmp_path):
+        """엔진이 죽어도 회신 계약은 돈다 — 단건·묶음·크래시가 `ResidentLoop.finish` 한 벌:
+        요청자(main)는 라벨 붙은 런 요약을 받고, 에이전트는 idle 로 돌아온다."""
+        from tests.test_agents_live import make_registry, make_runner, wait_until
+
+        reg = make_registry(tmp_path, runner=make_runner(exc=RuntimeError("boom")))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.request(key, "do it", author="main") == ""
+        assert wait_until(reg.has_pending_replies)
+        (reply,) = reg.drain_replies()
+        assert "agent internal error: RuntimeError: boom" in reply["output"]
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.get(key).handled == 1
+        reg.shutdown_all()
+
+    def test_human_batch_and_single_end_the_same_way(self, tmp_path):
+        """사람 묶음(전부 user:*)과 단건이 같은 `finish` — out 줄 하나, `handled` 는 항목 수."""
+        from tests.test_agents_live import make_registry, wait_until
+
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.request(key, "one", author="user:dj") == ""
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        reg.shutdown_all()

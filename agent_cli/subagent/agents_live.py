@@ -361,18 +361,14 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "source": "harness",
         }
 
-    harness_tool = harness_mail_tool(str(reply.get("kind") or ""))
-    if harness_tool is not None:
-        # 잡·모니터·체크인 — 도구가 만든 보고라 봉투 밖. `tool` 은 `HARNESS_MAIL_TOOL`
-        # 한 표(v10.84.0) — 상주의 흡수·one-shot 의 메일함과 같은 계약. 모니터의
-        # `tool="monitor"` 는 빈 문자열이 아니어야 한다: `is_format_intervention` 이
-        # `tool == ""` 를 형식 개입으로 읽고, 프런트는 `tool === "agent"` 만 산문으로.
-        return {
-            "role": "user",
-            "tool": harness_tool,
-            "success": bool(reply.get("success", True)),
-            "content": reply.get("output") or "",
-        }
+    from agent_cli.runtime import harness_record
+
+    harness = harness_record(reply)
+    if harness is not None:
+        # 잡·모니터·체크인 — 도구가 만든 보고라 봉투 밖. 상주의 흡수·one-shot 의 메일함과
+        # **같은 함수**(v10.89.0). 모니터의 `tool="monitor"` 는 빈 문자열이 아니어야 한다:
+        # `is_format_intervention` 이 `tool == ""` 를 형식 개입으로 읽는다.
+        return harness
 
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
@@ -560,7 +556,7 @@ class QuestionPort:
     """루프가 질문 목록에 닿는 **유일한 seam** (DESIGN.md §4).
 
     콜러블 셋을 ``LoopConfig``·``AgentLoop.__init__``·``run_loop``·
-    ``ResidentLoop``·`_handle_request` 에 각각 꿰면 15군데가 된다 —
+    ``ResidentLoop`` 에 꿰면 15군데가 된다 —
     객체 하나로 묶는다. **레지스트리 자체는 절대 넘기지 않는다**:
     ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
     가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
@@ -1565,20 +1561,14 @@ class AgentRegistry:
         )
 
     def _drop_monitors(self, key: str) -> int:
-        """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — 배선 안 됐으면 no-op."""
-        from agent_cli.pyworker import get_py_registry
+        """이 에이전트가 건 감시·띄운 백그라운드 작업·python 워커를 폐기 — private 종류와 같은
+        함수(`runtime.release_owner`, v10.89.0). 메일함·체크인은 부르는 쪽이 따로(kill·종료는
+        자기 순서로 취소하고, 죽음의 정본 자리는 레지스트리까지 넘긴다)."""
+        from agent_cli.runtime import release_owner
 
-        n = 0
-        # python 워커(v10.66.0)는 주입이 아니라 전역이다 — 배달이 없어 배선할
-        # 양방향이 없고, 죽일 때만 찾는다.
-        for reg in (self.monitors, self.jobs, get_py_registry()):
-            if reg is None:
-                continue
-            try:
-                n += reg.drop_owner(f"agent:{key}")
-            except Exception:
-                pass
-        return n
+        return release_owner(
+            f"agent:{key}", jobs=self.jobs, monitors=self.monitors
+        ).count
 
     def _purge_questions_for(self, key: str) -> None:
         """에이전트 사망 정리 — 그가 건 질문은 폐기한다(답할 사람이 트레이에서
@@ -1975,7 +1965,7 @@ class AgentRegistry:
         """턴 경계 흡수 (v9.25.0) — 받은편지함의 대기분을 **지금 도는 런**으로.
 
         루프의 ``absorb_inbox`` 포트가 이걸 부른다. 여기서 하는 일은 런 시작
-        (``_handle_request``)이 항목 하나에 하는 것과 같다 — 처리 중 목록으로
+        (`ResidentLoop.start`)이 항목 하나에 하는 것과 같다 — 처리 중 목록으로
         옮기고(재시작 복원 대상), 요청이면 빚을 적고, 질문이면 배달로 찍는다.
         돌려주는 것은 루프가 그대로 넣을 수 있는 모양이다:
         ``{"user_request": {id, author, text}}`` (사람 창 입력 — main 의 큐
@@ -2065,19 +2055,17 @@ class AgentRegistry:
                 )
             else:
                 # 회신·통지 — 런 시작 항목과 같은 봉투. 하니스 통지(잡·모니터·체크인)는
-                # 봉투 없이 그 보고, tool 은 `HARNESS_MAIL_TOOL` (v10.84.0 — main·one-shot 과 같다).
-                hk = harness_mail_tool(str(item.get("kind") or ""))
-                out.append(
-                    {
-                        "record": {
-                            "role": "user",
-                            "tool": hk or "agent",
-                            "success": True,
-                            "content": self._model_text(item),
-                            "source": "harness_mail" if hk else "agent_mail",
-                        }
-                    }
-                )
+                # main·one-shot 과 같은 함수(`runtime.harness_record`, v10.89.0).
+                from agent_cli.runtime import harness_record
+
+                rec = harness_record(item) or {
+                    "role": "user",
+                    "tool": "agent",
+                    "success": True,
+                    "content": self._model_text(item),
+                    "source": "agent_mail",
+                }
+                out.append({"record": rec})
         self._save_state()
         self._notify_roster()
         return out
@@ -2940,13 +2928,10 @@ class AgentRegistry:
                             stash = nxt  # 비-사람 항목은 다음 이터레이션으로 이월
                             break
                     self._begin_items(tm, batch)
-                    if len(batch) == 1:
-                        self._handle_request(tm, item, renderer, kind)
-                    else:
-                        self._handle_human_batch(tm, batch, renderer, kind)
+                    kind.run(kind.start(batch))
                 else:
                     self._begin_items(tm, [item])
-                    self._handle_request(tm, item, renderer, kind)
+                    kind.run(kind.start([item]))
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -2975,8 +2960,11 @@ class AgentRegistry:
             # 감시 폐기의 **정본 위치** — kill·크래시·세션 종료가 모두
             # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
             # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
-            self._drop_monitors(tm.key)
-            self._cancel_checkins(f"agent:{tm.key}")
+            from agent_cli.runtime import release_owner
+
+            release_owner(
+                f"agent:{tm.key}", jobs=self.jobs, monitors=self.monitors, registry=self
+            )
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
@@ -3011,159 +2999,6 @@ class AgentRegistry:
             f"{output}\n\n⏳ {len(human_open)} question(s) still unanswered — "
             f"answering lets this continue:\n{lines}"
         )
-
-    def _handle_request(self, tm: AgentInstance, item: dict, renderer, kind) -> None:
-        """단일 request 처리 — main 위임/peer/배달회신/사람-직접(단건) 공통 경로.
-        회신 라우팅은 author 기준(main→mailbox, agent:*→requester, user:*→창).
-        런 자체(시작 메시지·작업 카드·엔진)는 ``kind``(`ResidentLoop`)의 것이고, 여기는
-        빚·회신·`run_ended` 후처리다 (v10.87.0)."""
-        tm.state = "busy"
-        iid = item["id"]
-        text = item["text"]
-        # 화자 attribution — teammate ctx 에 누가 말했는지 남긴다
-        # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
-        author = item.get("author", "main")
-        tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
-        tm.current_item = iid  # 이 런의 이름 — 거는 질문의 asked_in (§3.2)
-        me = f"agent:{tm.key}"
-        if item.get("expects_reply", True):
-            # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/
-            # `message` 뿐). main 이 배달된 `message` 를 적는 것과 같은 장부.
-            self.note_owes(
-                me,
-                author,
-                text,
-                answers=item.get("answers") or [],
-                hop=item.get("hop", 0),
-                id=iid,
-            )
-        self._notify_roster()
-        loop_result, duration = kind.run(kind.start([item]))
-        success = bool(loop_result.success)
-        # 런이 `wait` 로 끝났다 (v10.65.0) — 빚은 그대로, 폴백 없음
-        waiting = bool(getattr(loop_result, "waiting", False))
-        output = (
-            loop_result.output
-            if loop_result.output is not None
-            else "(agent did not complete the request)"
-        )
-        # ── 비동기 질문 마무리 (DESIGN.md §3.6·§3.7) ──
-        # 독촉은 여기가 아니라 **워커 루프**에 있다 — 런이 끝났다는 사실에
-        # 붙는 것이라 핸들러마다 두면 빠진다(실제로 배치 경로에서 빠졌다).
-        # 이 런에서 **건** 질문 중 아직 열린 것 (asked_in 으로 좁힌다 —
-        # 다른 런의 사람 질문은 영영 열려 있을 수 있어 여기 섞이면 안 된다).
-        output = self._with_human_notice(tm, iid, output)
-        reply_path = self._persist_reply(tm, iid, output)
-        # ``handled``/``state`` 는 **정리 뒤**에 세운다 (v9.22.4) — 종전엔 여기서
-        # idle 로 바꿔, "idle 을 기다렸다가 out 줄·폴백을 읽는" 관찰자(테스트
-        # 79곳, 웹의 로스터 갱신)가 아직 안 그려진 순간을 볼 수 있었다(Linux
-        # CI 에서 실제로 졌다). idle 은 '이 런의 일이 다 끝났다' 여야 한다.
-        # ── 회신 계약 (v9.21.0) ──
-        # `complete` 는 국소다 — 산출물은 자동으로 아무에게도 가지 않는다.
-        # 요청 항목이면 이 런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝.
-        # 안 갚았으면 `end_run` 이 런 요약을 라벨 붙여 폴백으로 배달한다 —
-        # 루프의 독촉(dispatch, 3회)을 지나고도 안 보낸 경우다. 종전엔 산출물이
-        # 무조건 회신으로 갔고, 명시 `message` 와 겹쳐 같은 턴의 항목이 둘이
-        # 됐다(실측 257zmx 끝말잇기: 한 턴에 세 번 답함). 질문을 건 런(§3.7)과
-        # user:*(창이 곧 배달)는 장부가 빚으로 세지 않는다.
-        human = _is_human_addr(author)
-        # `wait` 로 끝난 런(v10.65.0)은 빚을 갚을 차례가 아니다 — 깨운 뒤 갚는다.
-        # 폴백(런 요약)을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
-        stopped = tm.stop_event.is_set()
-        owed = bool(self.reply_debts(me)) and not waiting and not stopped
-        # `complete` 산출물은 **어떤 경우에도** 배달되지 않는다 — 배달은
-        # `reply`/`message` 뿐이고, 그것들은 보낼 때 이미 창에 out 으로 남긴다.
-        # 그러니 여기서 out 레코드를 내는 경우는 **실제 발신** 둘뿐이다:
-        # 하네스 폴백(독촉 뒤에도 안 갚아 런 요약을 대신 보냄 — 본문 첫 줄의
-        # 라벨이 사정을 말한다)과 user:* (창이 곧 배달). 종전엔 산출물마다
-        # out 을 찍어 "→ 보냄 · 회신했습니다" 가 final 을 반복했고(영수증 접기가
-        # 그래서 생겼다), 배달 없는 산출물엔 "완료 · 배달 없음" 을 그려야 했다
-        # (사용자 지적: 셋으로 가를 이유가 없다 — 왕래 줄은 발신만).
-        if owed or human:
-            out_payload = {
-                "key": tm.key,
-                "direction": "out",
-                "author": tm.key,
-                "text": f"{_NO_REPLY_LABEL}\n{output}" if owed else output,
-                "item": iid,
-                "success": success,
-                "to": author,
-                "ts": time.time(),
-                "profile": tm.profile_name,
-                "instance_name": tm.instance_name,
-                # 하네스 폴백 = 도구 호출 없는 유일한 발신 (v9.23.0). 웹은 out 줄을
-                # 그리지 않고(도구 줄이 이미 있다) 이것만 ⚠ 폴백 줄로 그린다.
-                "fallback": owed,
-            }
-            renderer.agent_message(**out_payload)
-            self._log_conversation(tm, out_payload)
-        # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
-        self.run_ended(
-            me,
-            output,
-            waiting=waiting,
-            stopped=stopped,
-            run=iid,
-            success=success,
-            duration_s=duration,
-            reply_path=reply_path,
-        )
-        self._close_run(tm, 1)
-
-    def _handle_human_batch(
-        self, tm: AgentInstance, items: list[dict], renderer, kind
-    ) -> None:
-        """사람-직접 요청 2건+ 를 한 턴에 배치 처리(C-1) — 모두 ``user:*`` 발신
-        이라 회신은 대화창 전용(⑥), main mailbox 미배달. main 과 동일하게 대기분
-        전부를 한 응답으로 처리(항목마다 회계 id — 꼬리·answers 가 강제). 첫 항목의 id/ts 로
-        작업 카드 1개(스윔레인은 각 메시지의 in 화살표가 이 카드로 수렴)."""
-        first = items[0]
-        iid = first["id"]
-        author0 = first.get("author", "main")
-        tm.state = "busy"
-        tm.current_author = author0  # 배치 중 ask 는 첫 발신자에게
-        tm.current_item = iid
-        me = f"agent:{tm.key}"
-        for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
-            self.note_owes(
-                me,
-                it.get("author", ""),
-                it["text"],
-                id=it["id"],
-            )
-        self._notify_roster()
-        # v9.22.0: 배치 안내문은 뺀다 — 항목마다 id 가 회계에 올라 꼬리의 `## Open Requests`
-        # 와 `answers` 강제가 그 일을 한다. 질의 합성·회계·작업 카드는 종류(`ResidentLoop`)의 것.
-        loop_result, _duration = kind.run(kind.start(items))
-        success = bool(loop_result.success)
-        waiting = bool(getattr(loop_result, "waiting", False))
-        output = (
-            loop_result.output
-            if loop_result.output is not None
-            else "(agent did not complete the request)"
-        )
-        # 사람 발신 배치야말로 사람 주소 질문이 나오는 경로다(주소 =
-        # current_author) — 여기 빠뜨리면 알림이 가장 필요한 곳에 없다.
-        output = self._with_human_notice(tm, iid, output)
-        self._persist_reply(tm, iid, output)
-        out_payload = {
-            "key": tm.key,
-            "direction": "out",
-            "author": tm.key,
-            "text": output,
-            "item": iid,
-            "success": success,
-            "to": author0,
-            "ts": time.time(),
-            "profile": tm.profile_name,
-            "instance_name": tm.instance_name,
-        }
-        renderer.agent_message(**out_payload)
-        self._log_conversation(tm, out_payload)
-        # 빚은 전부 사람(창이 곧 배달) — 판정은 단건 런과 같은 한 곳에서
-        self.run_ended(me, output, waiting=waiting, stopped=tm.stop_event.is_set())
-        # N 요청을 한 턴에 처리 — 정리 뒤 (v9.22.4). 창만(⑥), mailbox push 없음
-        self._close_run(tm, len(items))
 
 
 class MailWaker:

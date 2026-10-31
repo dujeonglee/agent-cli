@@ -56,7 +56,7 @@ one-shot 과 하니스는 공통 기반 `PrivateLoop`(private 주소·메일함 
 |---|---|---|
 | 1 · 조립을 객체로 | 다섯 구현이 ①–⑧과 ⑫⑬⑭⑰⑱을 소유. `ports_for_*`·`run_subagent_message`·`_run_single`·`_run_in_scope`·`execute_skill`·`_handle_run_skill` 의 래퍼·`main._dispatch_*` 의 스코프 래퍼·`HarnessJobs._execute/_open_scope/_close_scope` 삭제. B(D3)·C(D2)·D 수정. | **v10.87.0** |
 | 2 · 엔진이 묻는다 | ⑨⑩⑪(프롬프트 윤곽·꼬리 로스터·렌더)·⑮(흡수)·⑯(wait 정책)을 엔진이 `cfg.kind` 에 묻고 플래그 여덟 자리를 지운다. A(D1) 수정. | **v10.88.0** |
-| 3 · 결과·마감 하나 | `ResidentLoop.finish` 가 `_handle_request`/`_handle_human_batch` 후처리를 한 벌로; 메일→레코드 세 함수 → 하나; `release` 가 python 워커까지(상주·private 통일). | 다음 |
+| 3 · 결과·마감 하나 | `ResidentLoop.finish` 가 `_handle_request`/`_handle_human_batch` 후처리를 한 벌로; 메일→레코드 세 함수 → 하나; `release` 가 python 워커까지(상주·private 통일). | **v10.89.0** |
 
 ### 3.1 PR 1 구현 기록 (v10.87.0)
 
@@ -130,6 +130,27 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
   통지로 깨어나 `done-8` ② one-shot 잡 → 제자리 `wait` → `5151` 37초 ③ spawn pong2 → `wait` →
   `reply [n-21] re [r-20]` → `pong-77` ④ `/plan` → `skill_plan_e09469_…/` 6턴 ⑤ 감사 on →
   `harness/auditor/49-56/` 7턴 → main 에 `[auditor] source=harness` pass.
+
+### 3.3 PR 3 구현 기록 (v10.89.0)
+
+- **상주 후처리 한 벌**: `ResidentLoop.start(items)` 가 런의 시작 쪽 회계(`busy`·`current_author`·
+  `current_item`·`note_owes`·로스터 통지)를, `finish()` 가 끝 쪽(사람 질문 알림·회신 영속·out
+  레코드·`run_ended`·`_close_run`)을 한다 — 종전 `_handle_request`(단건)·`_handle_human_batch`
+  (사람 묶음) 두 벌 삭제, 워커는 `kind.run(kind.start(batch))` 한 줄. 묶음은 전부 사람이고
+  `reply_debts` 가 사람 주소를 빼므로 단건과 같은 판정(`owed=False`, `human=True`)으로 떨어진다.
+  `crashed()` 도 같은 `finish` 를 거친다(종전 except 가 하던 "agent internal error" 회신).
+- **메일→레코드 하나**: `runtime.harness_record(mail)` — 하니스 통지(잡·모니터·체크인)의 봉투
+  없는 레코드(`HARNESS_MAIL_TOOL`, `source` "harness_mail"). main 의 `build_reply_record`·상주의
+  `absorb_pending`·private 의 `mail_record` 가 모두 이것을 부른다. main 의 하니스 레코드에
+  `source` 가 새로 붙는다(종전엔 없었다 — 세 곳 중 유일하게).
+- **소유자 정리 하나**: `runtime.release_owner(owner, *, jobs=, monitors=, registry=) → Released
+  (count, note)` — 잡(돌던 것은 결과에 알림) · 모니터 · **python 워커** · (registry 가 있으면)
+  메일함과 체크인. `PrivateLoop.release` 와 상주 워커의 죽음 정본 자리가 같은 함수; 상주의
+  `_drop_monitors`(kill·종료의 조기 드롭)는 자원 몫만. `release_private_owner` 삭제.
+- 검증: 전체 테스트 8955 통과, inventory 무관(프롬프트 안 건드림), **라이브 통과**(웹 방 g312ma 를
+  PR 3 코드로 재시작, 같은 세션 resume — 상주 둘 복원): main → 복원된 상주 request → `reply [n-28]
+  re [r-27]` → `pong-55` · 사람 창 단건(`sleep 12`) 도중 도착한 사람 메시지 둘이 런 도중 흡수되어 한
+  out 레코드로 답(`handled` 4) · one-shot 잡 → 제자리 `wait` → `6161`.
 
 ## 4. 결정 (2026-10-31, 사용자 승인 "D1~D5 추천대로")
 

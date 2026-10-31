@@ -9,8 +9,7 @@
 
 런의 단계: ⑫ `start(items)` 가 받은편지함 항목(단건 또는 사람-직접 묶음)을 시작 메시지·
 회계(`user_requests`·`request_id`)로 바꾸고, ⑭ 스코프는 작업 카드(`begin_agent_work`/
-`end_agent_work`), ⑰ 결과는 ``(ToolResult, secs)`` — 회신·빚·`run_ended` 후처리는 아직
-레지스트리(`_handle_request`·`_handle_human_batch`)에 있다(PR 3). 런마다 거둘 것은 없다
+`end_agent_work`), ⑰ `finish` 가 회신 계약·빚·`run_ended`·`_close_run` 후처리까지 한 벌로 한다(v10.89.0). 런마다 거둘 것은 없다
 (상주는 잡·모니터를 런 너머로 가진다) — 에이전트가 죽을 때 워커가 `_drop_monitors` 로 거둔다.
 """
 
@@ -176,13 +175,31 @@ class ResidentLoop(LoopKind):
     def start(self, items: list[dict]) -> Start:
         """단건이면 그 항목, 사람-직접 묶음(2건+)이면 전부 ``user:*`` 라 한 질의로 합친다 —
         항목마다 회계 id 가 올라 꼬리의 `## Open Requests` 와 `answers` 강제가 그 일을 한다."""
-        reg = self.registry
+        reg, tm = self.registry, self.tm
         self._items = list(items)
+        me = self.owner
+        first = items[0]
+        tm.state = "busy"
+        # 화자 attribution — 회신/질문 라우팅 기준(D8); 묶음은 첫 발신자. 이 런의 이름은
+        # 첫 항목의 id — 거는 질문의 asked_in (§3.2).
+        tm.current_author = first.get("author", "main")
+        tm.current_item = first["id"]
         if len(items) == 1:
-            item = items[0]
+            item = first
             author = item.get("author", "main")
             human = _is_human_addr(author)
             expects = item.get("expects_reply", True)
+            if expects:
+                # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/`message` 뿐).
+                reg.note_owes(
+                    me,
+                    author,
+                    item["text"],
+                    answers=item.get("answers") or [],
+                    hop=item.get("hop", 0),
+                    id=item["id"],
+                )
+            reg._notify_roster()
             return Start(
                 query=reg._model_text(item),
                 images=list(item.get("images") or []),
@@ -201,6 +218,9 @@ class ResidentLoop(LoopKind):
                     else []
                 ),
             )
+        for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
+            reg.note_owes(me, it.get("author", ""), it["text"], id=it["id"])
+        reg._notify_roster()
         user_requests = [
             {
                 "id": it["id"],
@@ -257,15 +277,80 @@ class ResidentLoop(LoopKind):
             error="" if success else output[:200],
         )
 
-    # ── ⑰ 결과 — (ToolResult, secs); 회신·빚·run_ended 는 레지스트리 (PR 3) ──
+    # ── ⑰ 결과 — 회신 계약·빚·run_ended (v10.89.0: 단건·사람 묶음 한 벌) ──
     def finish(self, result, secs: float, released: str) -> tuple[Any, float]:
+        """런 끝의 후처리 — 종전 `_handle_request`·`_handle_human_batch` 두 벌.
+
+        - `complete` 는 국소다: 산출물은 자동으로 아무에게도 가지 않는다. 요청 항목이면 이
+          런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝; 안 갚았으면 `run_ended` →
+          `end_run` 이 런 요약을 라벨 붙여 폴백 배달한다(독촉 3회를 지나고도 안 보낸 경우).
+          `wait` 로 끝난 런은 갚을 차례가 아니고(깨운 뒤 갚는다), 중단된 런은 빚을 버린다.
+        - out 레코드(대화창의 발신 줄)는 **실제 발신** 둘뿐: 하니스 폴백(라벨 붙음)과 사람
+          발신(창이 곧 배달 — 묶음은 전부 사람이고 `reply_debts` 가 사람 주소를 빼므로
+          단건과 같은 판정으로 떨어진다).
+        - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
+          끝났다' 여야 한다(v9.22.4, Linux CI 레이스).
+        """
+        import time as _time
+
+        from agent_cli.render import get_renderer
+        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+
+        reg, tm, items = self.registry, self.tm, self._items
+        me = self.owner
+        iid = items[0]["id"]
+        author = items[0].get("author", "main")
+        success = bool(result.success)
+        # 런이 `wait` 로 끝났다 (v10.65.0) — 빚은 그대로, 폴백 없음
+        waiting = bool(getattr(result, "waiting", False))
+        output = (
+            result.output
+            if result.output is not None
+            else "(agent did not complete the request)"
+        )
+        # 이 런에서 **건** 사람 질문 중 아직 열린 것을 결과에 실어 알린다 (§3.6·§3.7)
+        output = reg._with_human_notice(tm, iid, output)
+        reply_path = reg._persist_reply(tm, iid, output)
+        human = _is_human_addr(author)
+        stopped = tm.stop_event.is_set()
+        owed = bool(reg.reply_debts(me)) and not waiting and not stopped
+        if owed or human:
+            out_payload = {
+                "key": tm.key,
+                "direction": "out",
+                "author": tm.key,
+                "text": f"{_NO_REPLY_LABEL}\n{output}" if owed else output,
+                "item": iid,
+                "success": success,
+                "to": author,
+                "ts": _time.time(),
+                "profile": tm.profile_name,
+                "instance_name": tm.instance_name,
+                # 하니스 폴백 = 도구 호출 없는 유일한 발신 (v9.23.0) — 웹은 ⚠ 폴백 줄로
+                "fallback": owed,
+            }
+            get_renderer().agent_message(**out_payload)
+            reg._log_conversation(tm, out_payload)
+        # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
+        reg.run_ended(
+            me,
+            output,
+            waiting=waiting,
+            stopped=stopped,
+            run=iid,
+            success=success,
+            duration_s=secs,
+            reply_path=reply_path,
+        )
+        reg._close_run(tm, len(items))
         return result, secs
 
     def crashed(self, exc: BaseException, secs: float) -> tuple[Any, float]:
-        # worker 는 죽지 않는다 — 회신으로 보고 (종전 `_handle_request` 의 except)
-        return (
+        # worker 는 죽지 않는다 — 회신으로 보고하고 같은 후처리를 거친다
+        return self.finish(
             ToolResult(
                 False, output=f"agent internal error: {type(exc).__name__}: {exc}"
             ),
             0.0,
+            "",
         )
