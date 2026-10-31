@@ -306,6 +306,11 @@ class PythonTool(Tool):
         # 넘긴다 — shell 의 전경 한도와 같은 규칙. 작업 레지스트리가 없는 런(통지가 갈
         # 곳이 없다)만 종전대로 한도에 SIGINT.
         timeout = min(asked, DEFAULT_TIMEOUT)
+        # 바쁨은 캡처 로그를 비우기 전에 거절한다 (v10.91.2): 그 로그가 돌고 있는 셀의
+        # 작업 로그다 — 라이브에서 거절된 `1+1` 이 머리줄을 바꾸고 앞 출력을 지웠다.
+        busy = worker.pending
+        if busy is not None:
+            return ToolResult(False, error=busy_message(busy))
         jobs = get_job_registry()
         pend = jobs is not None and jobs.available
         capture = _capture_log(worker, owner, code) if pend else None

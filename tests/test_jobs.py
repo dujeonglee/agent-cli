@@ -58,6 +58,17 @@ class TestStartAndFinish:
         assert (tmp_path / job.log).read_text().startswith("$ sleep 2; echo done\n")
         assert reg.running("main") == [job] and reg.has_active_work()
 
+    def test_a_log_left_by_an_earlier_process_is_replaced(self, reg, tmp_path):
+        """v10.91.2 — 번호는 프로세스마다 1 부터: 지난 세션의 ``1.log`` 가 남아 있으면
+        통지 꼬리가 그 옛 출력을 실었다(라이브 `4242`)."""
+        stale = tmp_path / ".agent-cli/tmp/jobs/1.log"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("$ echo 4242\n4242\n\n[job #1 exited rc=0 after 1s]\n")
+        job = reg.start("true", owner="main")
+        assert _wait(lambda: reg.deliver.calls)
+        assert "4242" not in (tmp_path / job.log).read_text()
+        assert "(last 0 line(s))" in reg.deliver.calls[0][1]["text"]
+
     def test_exit_is_logged_and_the_owner_is_told(self, reg, tmp_path):
         job = reg.start("echo hello; echo world; exit 3", owner="main")
         assert _wait(lambda: reg.deliver.calls)  # 통지 배달까지(rc 는 그보다 먼저 선다)

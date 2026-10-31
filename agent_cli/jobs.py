@@ -218,7 +218,10 @@ class JobRegistry:
         job_id = self._next_id()
         rel = LOG_DIR / f"{job_id}.log"
         path = self._cwd / rel
-        with path.open("ab") as logf:
+        # 비우고 연다 (v10.91.2): 번호는 프로세스마다 1 부터라 같은 이름의 로그가 이전
+        # 세션 것으로 남아 있다 — 덧붙이면 종료 통지의 꼬리가 옛 출력을 실었다(라이브:
+        # 출력을 다른 파일로 보낸 명령의 통지에 지난 세션의 `4242`).
+        with path.open("wb") as logf:
             logf.write(f"$ {command}\n".encode())
             logf.flush()
             proc = subprocess.Popen(

@@ -583,6 +583,19 @@ class TestPendingJob:
         assert r.error.startswith("python: the interpreter is busy with job #1 (")
         assert "`wait` for its notice, or stop it with `kill -INT -- -" in r.error
 
+    def test_a_refused_step_leaves_the_running_jobs_log_alone(
+        self, reg, jobs, tmp_path
+    ):
+        """v10.91.2 — 라이브: 거절된 `1+1` 이 캡처 로그를 비우고 머리줄을 바꿨다."""
+        _run(self.SLOW, timeout=1)
+        (job,) = jobs.running("main")
+        log = tmp_path / job.log
+        assert _wait_for(lambda: "\n0\n" in log.read_text())
+        _run("1 + 1")
+        text = log.read_text()
+        assert text.startswith("$ python: import time\n0\n")
+        assert "1 + 1" not in text
+
     def test_the_notice_carries_output_value_and_state(self, reg, jobs):
         _run(self.SLOW + "\nn * 6", timeout=1)
         assert _wait_for(lambda: jobs.deliver.calls, timeout=10)
