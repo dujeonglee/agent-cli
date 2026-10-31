@@ -74,7 +74,7 @@ def _loop(tmp_path, *, requests=(), debts=(), ctx=False):
             questions=_Port(debts) if debts else None,
         ),
     )
-    loop._inject_queued_messages()
+    loop._intake()
     return loop
 
 

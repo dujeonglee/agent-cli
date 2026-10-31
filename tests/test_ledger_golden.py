@@ -69,7 +69,7 @@ def _loop(items=(), *, debts=(), resident=False, user_run=None):
             questions=_Port(debts, resident=resident) if debts else None,
         ),
     )
-    loop._inject_queued_messages()
+    loop._intake()
     if user_run is not None:
         loop._state.user_run = user_run
     return loop

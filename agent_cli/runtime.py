@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.loop.kind import LoopKind, Start
+from agent_cli.loop.kind import WAIT_END_RUN, LoopKind, PromptProfile, Start
 from agent_cli.loop.ports import LoopPorts
 
 
@@ -704,6 +704,52 @@ class MainLoop(LoopKind):
                 "absorb_inbox": _NO_INBOX,
                 "peer_roster": _RESIDENT_ROSTER,
             },
+        )
+
+    # ── 엔진이 묻는 것 (v10.88.0) ──
+    def wait_policy(self) -> str:
+        return WAIT_END_RUN  # 런을 끝내고 펌프가 깨우기를 기다린다 (체크인 타이머는 레지스트리)
+
+    def intake(self) -> list[dict]:
+        """입력 큐를 전부 비우고(라우팅은 엔진), 레지스트리의 미배달 회신을 받는다."""
+        items: list[dict] = []
+        dequeue = self.ports.dequeue_user_message
+        if dequeue is not None:
+            while True:
+                item = dequeue()
+                if not item:
+                    break
+                items.append({"message": item})
+        registry = self.ports.agent_registry
+        if registry is not None:
+            items.extend({"mail": r} for r in registry.drain_replies())
+        return items
+
+    def prompt_profile(self) -> PromptProfile:
+        return PromptProfile(
+            role="",  # 기본 ROLE_PROMPT
+            peer_section="",
+            agent_registry=self.ports.agent_registry,  # `agent` 전부
+            ask_blocking=True,
+            reports_to_caller=False,
+            peer_channel=False,
+        )
+
+    def tail_roster(self, tools: list[str]) -> str:
+        registry = self.ports.agent_registry
+        if registry is None or "agent" not in tools:
+            return ""
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        return build_live_agents_section(registry, include_state=True)
+
+    def renders(self) -> bool:
+        return True
+
+    @property
+    def tracks_run_authors(self) -> bool:
+        return (
+            True  # 웹 다중 사용자 귀속 — 렌더러와 레지스트리의 요청자 스냅샷을 비춘다
         )
 
     def start(self, req) -> Start:

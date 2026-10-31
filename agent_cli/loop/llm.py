@@ -152,13 +152,12 @@ class LLMCaller:
         if getattr(self, "_function_schemas_cache", None) is None:
             from agent_cli.prompts.system_prompt import function_schemas_for
 
-            nonblocking_ask = bool(
-                self.cfg.questions is not None and self.cfg.questions.nonblocking
-            )
+            profile = self.cfg.kind.prompt_profile()
+            nonblocking_ask = not profile.ask_blocking
             self._function_schemas_cache = function_schemas_for(
                 self.cfg.tools_list,
                 self.cfg.dialect,
-                has_agent_registry=self.cfg.agent_registry is not None,
+                has_agent_registry=profile.agent_registry is not None,
                 nonblocking_ask=nonblocking_ask,
             )
         return self._function_schemas_cache
@@ -188,7 +187,8 @@ class LLMCaller:
             )
 
             overrides = parameter_overrides_for(
-                self.cfg.tools_list, self.cfg.agent_registry is not None
+                self.cfg.tools_list,
+                self.cfg.kind.prompt_profile().agent_registry is not None,
             )
             tools = []
             for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
@@ -226,25 +226,12 @@ class LLMCaller:
             build_session_state,
             compaction_notice_due,
         )
-        from agent_cli.prompts.system_prompt import (
-            TASK_GUIDELINES,
-            build_live_agents_section,
-        )
+        from agent_cli.prompts.system_prompt import TASK_GUIDELINES
 
-        agents = ""
-        # Same gate the system-prompt section used: no ``agent`` tool, no
-        # roster to advertise.
-        if self.cfg.agent_registry is not None and "agent" in self.cfg.tools_list:
-            agents = build_live_agents_section(
-                self.cfg.agent_registry, include_state=True
-            )
-        elif self.cfg.peer_roster is not None:
-            # 상주 에이전트 (v10.1.0): 레지스트리 없이 포트가 준 로스터 — 매 턴
-            # 새로 만들어지므로 런 도중 spawn 된 동료도 다음 턴에 보인다.
-            try:
-                agents = self.cfg.peer_roster() or ""
-            except Exception:
-                agents = ""
+        # 꼬리 로스터는 종류가 정한다 (v10.88.0): main 은 레지스트리 로스터(`agent` 도구가
+        # 있을 때), 상주는 동료 로스터(매 턴 새로 — 런 도중 spawn 된 동료도 다음 턴에 보인다),
+        # private·스킬은 각자의 답.
+        agents = self.cfg.kind.tail_roster(self.cfg.tools_list)
         memory = ""
         if self.ctx is not None and self.ctx.session_dir:
             memory = render_index(self.ctx.session_dir)
@@ -298,7 +285,7 @@ class LLMCaller:
             jobs=jobs,
             python=python_block,
             guidelines=TASK_GUIDELINES,
-            reports_to_caller=self.cfg.depth > 0,
+            reports_to_caller=self.cfg.kind.prompt_profile().reports_to_caller,
             shell_python_notice=shell_py,
         )
 

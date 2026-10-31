@@ -41,7 +41,7 @@ def _drain(items, route=None, **kw):
     """큐 아이템들을 턴 경계 주입에 흘려보내고 루프를 돌려준다."""
     q = list(items)
     loop = _loop(dequeue=lambda: q.pop(0) if q else None, route=route, **kw)
-    loop._inject_queued_messages()
+    loop._intake()
     return loop
 
 
@@ -129,7 +129,7 @@ class TestRequestsReachTheRun:
     def test_cli_has_no_requests(self):
         """CLI 는 요청이 하나뿐이라 회계할 것이 없다 — 큐 자체가 없다."""
         loop = _loop()
-        loop._inject_queued_messages()
+        loop._intake()
         assert _ids(loop) == []
 
 
@@ -370,7 +370,7 @@ class TestIdsReachTheModel:
 
         from agent_cli.loop import core
 
-        src = inspect.getsource(core.AgentLoop._inject_queued_messages)
+        src = inspect.getsource(core.AgentLoop._inject_message)
         assert "block()" not in src, (
             "드레인 시점 1회 주입이 되살아났다 — 그러면 history 에 박힌다"
         )

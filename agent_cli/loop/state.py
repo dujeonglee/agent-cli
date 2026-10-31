@@ -62,19 +62,44 @@ class LoopConfig:
     # 있으면 ``message`` 도구가 이 callable(to, text)->confirmation 으로
     # 라우팅되고, __init__ 이 message 도구를 tools_list 에 강제 탑재한다.
     message_handler: object = None
-    #: 상주 전용 (v10.1.0) — 꼬리 로스터 콜러블 (`LoopPorts.peer_roster`)
-    peer_roster: object = None
     # 비동기 ask/answer 의 단일 seam (docs/agent-ask/DESIGN.md §4) —
     # ``QuestionPort``. 레지스트리가 아니라 포트라 위의 "teammate 안
     # teammate 금지" 가드는 그대로다. main 도 받는다(답할 수단이 필요).
     questions: object = None
-    # v5.11: 상주 에이전트에 주입되는 미리 만든 ``## Live Agents`` 로스터
-    # 문자열(자기 제외) — registry 자체는 안 넘기고(상주 모드 차단 유지)
-    # 프롬프트 가시성만 준다.
-    peer_agents_section: str = ""
-    #: 이 루프를 깨울 길이 있는가 (`ports.wakeable()`, v10.84.0) — 없으면 `wait` 는
-    #: 거부된다(스킬 루프: 인라인이라 아무도 깨우지 않는다).
-    wakeable: bool = False
+    #: 이 루프의 종류 (`loop.kind.LoopKind`, v10.88.0) — 엔진이 묻는다: `wait` 정책,
+    #: 턴 경계 흡수, 프롬프트 윤곽, 꼬리 로스터, 렌더 여부. `run_loop` 를 종류 없이
+    #: 부르면(테스트·임베더) `AgentLoop` 가 포트·깊이에서 답을 유도하는 맨 종류를 만든다.
+    kind: object = None
+
+    def __post_init__(self) -> None:
+        # 종류 없이 직접 만든 설정(테스트·임베더의 협력자 단독 생성)에는 맨 종류를 세운다 —
+        # 포트는 이 설정이 든 것으로 합성한다. frozen 이라 object.__setattr__.
+        if self.kind is None:
+            from agent_cli.loop.kind import LoopKind
+
+            k = LoopKind()
+            k.owner = self.owner
+            k.ports = LoopKind.make_ports(
+                self.owner,
+                questions=self.questions,
+                message_handler=self.message_handler,
+                agent_registry=self.agent_registry,
+                mcp_manager=self.mcp_manager,
+                hook_runner=self.hook_runner,
+            )
+            k.depth, k.max_depth, k.max_turns = (
+                self.depth,
+                self.max_depth,
+                self.max_turns,
+            )
+            k.tools = list(self.tools_list) or None
+            k.skill_name, k.skill_args = self.skill_name, self.skill_args
+            k.skill_stack, k.agent_stack = (
+                list(self.skill_stack),
+                list(self.agent_stack),
+            )
+            k.agent_role, k.session = self.agent_role, self.session
+            object.__setattr__(self, "kind", k)
 
     # ── 바인딩을 읽는 속성 — 저장하지 않는다 ──
     @property

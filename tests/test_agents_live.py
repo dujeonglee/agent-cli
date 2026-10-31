@@ -1039,8 +1039,12 @@ class TestLoopWiring:
             ctx=fake_ctx,
             turn=3,
             _oversized_cap=10_000,
+            run_authors=[],
         )
-        AgentLoop._deliver_agent_mail(fake_self)
+        # v10.88.0: 어디서 받을지는 종류(`MainLoop.intake` — 레지스트리 `drain_replies`),
+        # 어떻게 넣을지는 엔진(`_inject_mail`)
+        for reply in reg.drain_replies():
+            AgentLoop._inject_mail(fake_self, reply)
 
         assert len(fake_self.messages) == 1
         assert "done:job" in fake_self.messages[0]["content"]
@@ -1052,12 +1056,10 @@ class TestLoopWiring:
         assert added[0]["request_id"] == item["id"]
         assert not is_format_intervention(added[0])
         assert not reg.has_pending_replies()  # 소비 완료
-        # 레지스트리 없으면 no-op
-        fake_self2 = SimpleNamespace(
-            _config=SimpleNamespace(agent_registry=None), messages=[]
-        )
-        AgentLoop._deliver_agent_mail(fake_self2)
-        assert fake_self2.messages == []
+        # 레지스트리 없는 종류는 받을 메일이 없다
+        from tests.loop_kinds import make_kind
+
+        assert make_kind().intake() == []
         reg.shutdown_all()
 
 

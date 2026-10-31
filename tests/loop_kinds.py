@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_cli.loop.kind import Caller
+from agent_cli.loop.kind import Caller, LoopKind
+from tests.loop_ports import make_ports
 
 
 def make_caller(**overrides: Any) -> Caller:
@@ -38,6 +39,17 @@ def make_caller(**overrides: Any) -> Caller:
     }
     base.update(overrides)
     return Caller(**base)
+
+
+def make_kind(*, ports=None, **attrs) -> LoopKind:
+    """맨 종류 — 기본 구현이 포트·깊이에서 답을 유도한다 (`AgentLoop` 가 종류 없는
+    `run_loop` 호출에 만드는 것과 같은 모양). 테스트가 포트·깊이만 주고 엔진을 돌릴 때."""
+    k = LoopKind()
+    k.ports = ports if ports is not None else make_ports()
+    k.owner = k.ports.owner
+    for name, value in attrs.items():
+        setattr(k, name, value)
+    return k
 
 
 def fake_oneshot_run(body):

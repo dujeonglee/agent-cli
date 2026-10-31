@@ -378,7 +378,7 @@ class ToolBridge:
             registry=self.cfg.agent_registry,
             parent_ctx=self.ctx,
             # 상주 루프 = message 핸들러가 꽂힌 루프 (v10.1.0 거절 문구용)
-            resident=self.cfg.message_handler is not None,
+            resident=self.cfg.kind.prompt_profile().peer_channel,
             # 단일 정의 (v8.39.0 조립기) — 종전 13키 dict 리터럴 3벌 중 하나.
             runtime=AgentRuntime.from_loop_config(self.cfg).as_dict(),
         )

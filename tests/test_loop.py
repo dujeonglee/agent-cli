@@ -4754,7 +4754,7 @@ class TestRunAuthors:
                 caps, dequeue_user_message=lambda: items.pop() if items else None
             )
             loop.run_authors.append("Bob")  # as the starter would have
-            loop._inject_queued_messages()
+            loop._intake()
             assert loop.run_authors == ["Bob", "두정"]
             assert stub.pushed == [("[두정]: steer it", "두정")]
             assert stub.author_sets[-1] == ["Bob", "두정"]
@@ -4788,7 +4788,7 @@ class TestRunAuthors:
                 dequeue_user_message=lambda: items.pop() if items else None,
                 route_message=lambda text: True,
             )
-            loop._inject_queued_messages()
+            loop._intake()
             assert loop.run_authors == []
             # …but the echo still shows who sent it (user lane mark).
             assert stub.pushed == [("[두정]: /compact", "두정")]
@@ -4865,7 +4865,7 @@ class TestMailAnswersInheritance:
         try:
             reg = self._StubRegistry([self._reply(["Bob"])])
             loop = self._loop(caps, reg, dequeue_user_message=lambda: None)
-            loop._deliver_agent_mail()
+            loop._intake()
             assert loop.run_authors == ["Bob"]
             assert stub.author_sets[-1] == ["Bob"]
             assert reg.author_sets[-1] == ["Bob"]
@@ -4878,7 +4878,7 @@ class TestMailAnswersInheritance:
         reg = self._StubRegistry([self._reply(["Bob"])])
         loop = self._loop(caps, reg)
         loop.run_authors.append("두정")
-        loop._deliver_agent_mail()
+        loop._intake()
         assert loop.run_authors == ["두정", "Bob"]
 
     def test_multiple_replies_union_dedup(self, caps):
@@ -4886,7 +4886,7 @@ class TestMailAnswersInheritance:
             [self._reply(["Bob"]), self._reply(["Bob", "Ann"], key="w2")]
         )
         loop = self._loop(caps, reg)
-        loop._deliver_agent_mail()
+        loop._intake()
         assert loop.run_authors == ["Bob", "Ann"]
 
     def test_delivery_persists_answers_on_ctx_record(self, caps, tmp_path):
@@ -4897,7 +4897,7 @@ class TestMailAnswersInheritance:
         ctx = ContextManager(session_dir=tmp_path)
         reg = self._StubRegistry([self._reply(["Bob"])])
         loop = self._loop(caps, reg, ctx=ctx)
-        loop._deliver_agent_mail()
+        loop._intake()
         recs = ctx.get_raw_messages()
         obs = [r for r in recs if r.get("tool") == "agent"]
         assert obs and obs[-1]["answers"] == ["Bob"]
@@ -4908,7 +4908,7 @@ class TestMailAnswersInheritance:
         del r["answers"]
         reg = self._StubRegistry([r])
         loop = self._loop(caps, reg)
-        loop._deliver_agent_mail()
+        loop._intake()
         assert loop.run_authors == []
 
 
@@ -4951,7 +4951,7 @@ class TestRendererAbcPromotion:
                     dequeue_user_message=lambda: items.pop() if items else None
                 ),
             )
-            loop._inject_queued_messages()  # push_user_message → no-op
+            loop._intake()  # push_user_message → no-op
             assert loop.run_authors == ["Bob"]
         finally:
             render.set_renderer(prev)

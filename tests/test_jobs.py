@@ -23,6 +23,8 @@ from agent_cli.jobs import (
     set_job_registry,
 )
 from agent_cli.loop.ledger import Ledger
+from tests.loop_kinds import make_kind
+from tests.loop_ports import make_ports
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -190,11 +192,11 @@ class TestTail:
             cfg=SimpleNamespace(
                 agent_registry=None,
                 tools_list=[],
-                peer_roster=None,
                 questions=None,
                 max_turns=0,
                 depth=1,
                 owner="agent:k",
+                kind=make_kind(ports=make_ports(owner="agent:k"), depth=1),
             ),
             ctx=None,
             state=SimpleNamespace(turn=1, ledger=Ledger()),

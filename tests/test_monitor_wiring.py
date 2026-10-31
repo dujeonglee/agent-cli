@@ -448,14 +448,14 @@ class TestDeliveryToTheInstallingAddress:
         )
 
     def test_mail_delivery_renders_the_records_own_tool(self):
-        """소스 핀 — `_deliver_agent_mail` 이 `tool_name` 을 하드코딩하면
+        """소스 핀 — `_inject_mail` 이 `tool_name` 을 하드코딩하면
         모니터 보고가 **빈 칩을 단 에이전트 회신 카드**로 그려진다
         (프런트가 `tool === "agent"` 를 특수 처리한다)."""
         import inspect
 
         from agent_cli.loop.core import AgentLoop
 
-        src = inspect.getsource(AgentLoop._deliver_agent_mail)
+        src = inspect.getsource(AgentLoop._inject_mail)
         assert 'tool_name=record["tool"]' in src
         assert 'tool_name="agent"' not in src
 
