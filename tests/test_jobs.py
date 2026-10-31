@@ -142,7 +142,7 @@ class TestKillAndCleanup:
     def test_finish_after_close_is_silent(self, reg):
         job = reg.start("sleep 0.3", owner="main")
         reg.closed = True
-        assert _wait(lambda: job.proc.poll() is not None)
+        assert _wait(lambda: job.handle.poll() is not None)
         reg.tick()
         assert not job.running and reg.deliver.calls == []
 
@@ -252,24 +252,97 @@ class TestShellToolSurface:
         assert not r.success and r.error == "Refused: nope" and reg.running() == []
 
     @pytest.mark.parametrize(
-        "cmd, token",
+        "cmd, plain, removed",
         [
-            ("nohup python3 -m pytest -q > x.log 2>&1 & echo $!", "nohup"),
-            ("(python3 -m pytest -q > x.log 2>&1; echo EXIT:$?) &", "&"),
-            ("python3 -m pytest -q &", "&"),
-            ("setsid python3 -u -m pytest -q", "setsid"),
-            ("python3 -m pytest -q & sleep 2; echo started", "&"),
+            (
+                "nohup sleep 0.3 > x.log 2>&1 & echo $!",
+                "sleep 0.3 > x.log 2>&1 ; echo $!",
+                ["`nohup`", "`&` before the tail (now `;`)"],
+            ),
+            (
+                "(sleep 0.3; echo EXIT:$?) &",
+                "(sleep 0.3; echo EXIT:$?)",
+                ["the trailing `&`"],
+            ),
+            ("sleep 0.3 &", "sleep 0.3", ["the trailing `&`"]),
+            ("setsid sleep 0.3", "sleep 0.3", ["`setsid`"]),
+            (
+                "sleep 0.3 & sleep 0.1; echo started",
+                "sleep 0.3 ; sleep 0.1; echo started",
+                ["`&` before the tail (now `;`)"],
+            ),
+            ("sleep 0.3 & disown", "sleep 0.3", ["`disown`", "the trailing `&`"]),
         ],
     )
-    def test_self_detaching_commands_are_refused(self, reg, cmd, token):
-        """재측정 E-fix-1: `background:true` 에 `nohup … &` 를 넣어 작업이 1초 만에
-        끝나고 진짜 일은 추적 밖으로 — 문구 대신 거부한다."""
+    def test_self_detaching_pieces_are_removed_and_said(self, reg, cmd, plain, removed):
+        """v10.47.1 재측정에서는 `nohup … &` 를 거부했다(모델이 다시 보냈다). v10.91.0:
+        하니스가 이미 데몬화를 맡으므로 그 조각을 지우고 결과에 적는다 — 다시 보내는
+        턴이 사라진다 (사용자 결정 2026-10-31). `setsid` 는 그룹을 빠져나가 kill 이
+        닿지 않으니 반드시 지운다."""
+        from agent_cli.tools.shell import ShellTool, strip_detachers
+
+        assert strip_detachers(cmd) == (plain, removed)
+        r = ShellTool()._run({"command": cmd, "background": True})
+        assert r.success, r.error
+        assert r.output.startswith(
+            "Removed " + ", ".join(removed) + " — a background job"
+        )
+        assert "use the pid below instead of `$!`" in r.output
+        assert "job #1 started" in r.output
+        assert reg.running()[0].command == plain
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            'echo "a & b" && echo ok',
+            "grep -c 'x &' f.txt; true",
+            "curl 'http://h/?a=1&b=2'",
+            "a && b || c",
+            'printf "%s\\n" "end &"',
+        ],
+    )
+    def test_quoted_or_logical_ampersands_are_left_alone(self, cmd):
+        from agent_cli.tools.shell import strip_detachers
+
+        assert strip_detachers(cmd) == (cmd, [])
+
+    def test_only_a_detacher_leaves_nothing_to_run(self, reg):
         from agent_cli.tools.shell import ShellTool
 
-        r = ShellTool()._run({"command": cmd, "background": True})
-        assert not r.success and f"`{token}`" in r.error
-        assert r.error.startswith("`background` true takes the plain command")
+        r = ShellTool()._run({"command": "nohup &", "background": True})
+        assert not r.success and r.error.endswith("Nothing is left to run.")
         assert reg.running() == []
+
+    def test_timeout_above_the_limit_becomes_a_background_job(self, reg):
+        """기본 = 상한 (v10.91.0). 모델이 600 을 넣고 10분을 막혀 있다가 죽는 대신
+        작업으로 띄우고 결과 첫 줄에 말한다."""
+        from agent_cli.tools.shell import FOREGROUND_LIMIT, ShellTool
+
+        assert FOREGROUND_LIMIT == 120
+        r = ShellTool()._run({"command": "sleep 0.3; echo late", "timeout": 600})
+        assert r.success, r.error
+        assert r.output.startswith(
+            "`timeout` 600 is above the foreground limit of 120 seconds, so the "
+            "command was started as a background job instead. job #1 started"
+        )
+        assert reg.running()[0].command == "sleep 0.3; echo late"
+
+    def test_timeout_at_or_below_the_limit_stays_in_the_foreground(self, reg):
+        from agent_cli.tools.shell import ShellTool
+
+        r = ShellTool()._run({"command": "echo now", "timeout": 120})
+        assert r.success and r.output.strip() == "now" and reg.running() == []
+
+    def test_without_a_registry_the_timeout_is_capped_instead(
+        self, tmp_path, monkeypatch
+    ):
+        """통지가 갈 곳이 없는 런(레지스트리 없음)은 전경에서 상한으로 깎여 돈다."""
+        from agent_cli.tools.shell import ShellTool
+
+        set_job_registry(None)
+        monkeypatch.chdir(tmp_path)
+        r = ShellTool()._run({"command": "echo capped", "timeout": 600})
+        assert r.success and r.output.strip() == "capped"
 
     @pytest.mark.parametrize(
         "cmd",
@@ -286,7 +359,8 @@ class TestShellToolSurface:
 
         props = ShellTool.parameters["properties"]
         assert props["background"]["type"] == "boolean"
-        assert "set `background` to true" in props["timeout"]["description"]
+        assert "default and maximum 120" in props["timeout"]["description"]
+        assert "background job instead" in props["timeout"]["description"]
         assert "set `background` to true" in ShellTool.description
 
 
@@ -500,3 +574,98 @@ def _alive(pid: int) -> bool:
         return wpid == 0
     except ChildProcessError:
         return True
+
+
+class _FakeHandle:
+    """레지스트리가 핸들에 묻는 것만 구현한 몸 — `adopt` 계약 (v10.91.0)."""
+
+    def __init__(self) -> None:
+        self.pid = 4242
+        self.rc = None
+        self.stopped = 0
+        self.forced = 0
+        self.stop_hint = "`stop me`"
+
+    def poll(self):
+        return self.rc
+
+    def stop(self):
+        self.stopped += 1
+
+    def force(self):
+        self.forced += 1
+        self.rc = -9
+
+    def report_lines(self):
+        return ["=> 42", "state: n (7)"]
+
+
+class TestAdoptedHandles:
+    """작업의 몸은 핸들이다 — 셸 명령(`ProcHandle`)과 `python` 셀(`PendingCell`)이
+    같은 번호·로그·꼬리·통지·수명을 쓴다."""
+
+    def test_adopt_numbers_lists_and_renders_like_a_shell_job(self, reg, tmp_path):
+        log = Path(".agent-cli/tmp/python/main.log")
+        (tmp_path / log).parent.mkdir(parents=True)
+        (tmp_path / log).write_text("$ python: step\nline1\n")
+        h = _FakeHandle()
+        job = reg.adopt(h, command="python: step", log=log, owner="main")
+        assert job.id == 1 and job.pid == 4242 and job.running
+        assert reg.running("main") == [job] and reg.has_active_work()
+        tail = reg.render_tail("main")
+        assert "job #1 · pid 4242" in tail and "stop it: `stop me`" in tail
+        assert job.stop_hint == "`stop me`"
+        h.rc = 0
+        reg.tick()
+        assert job.rc == 0 and not job.running
+        text = reg.deliver.reports[0]
+        assert text.startswith("🧵 job #1 finished rc=0 after")
+        assert "  line1\n  => 42\n  state: n (7)" in text
+
+    def test_kill_asks_the_handle_to_stop_then_forces(self, reg, tmp_path):
+        log = Path(".agent-cli/tmp/python/main.log")
+        (tmp_path / log).parent.mkdir(parents=True)
+        (tmp_path / log).write_text("$ python: step\n")
+        h = _FakeHandle()
+        job = reg.adopt(h, command="python: step", log=log, owner="main")
+        reg.kill(job)
+        assert h.stopped == 1 and h.forced == 1 and job.rc == -9
+        assert reg.deliver.calls == []
+
+    def test_adopt_needs_delivery_like_start(self, tmp_path):
+        r = JobRegistry(tmp_path)
+        with pytest.raises(JobsUnavailable):
+            r.adopt(_FakeHandle(), command="x", log=Path("x.log"), owner="main")
+        assert not r.available
+
+
+class TestBashExecutable:
+    """bash 가 있으면 bash 로 띄운다 (v10.91.0) — 벤치에서 `[[ ]]`·`<(…)` 가 dash 에서
+    깨져 턴을 잃었다. 실행기를 맞추면 그 실패 종류가 모델과 무관하게 사라진다."""
+
+    def test_background_jobs_run_bash_syntax(self, reg, tmp_path):
+        from agent_cli import jobs as jobs_mod
+
+        if not jobs_mod.SHELL:
+            pytest.skip("no bash on this machine")
+        job = reg.start("[[ 1 == 1 ]] && echo bashok", owner="main")
+        assert _wait(lambda: reg.deliver.calls)
+        assert job.rc == 0 and "bashok" in (tmp_path / job.log).read_text()
+
+    def test_foreground_runs_bash_syntax(self, tmp_path, monkeypatch):
+        from agent_cli import jobs as jobs_mod
+        from agent_cli.tools.shell import tool_shell
+
+        if not jobs_mod.SHELL:
+            pytest.skip("no bash on this machine")
+        monkeypatch.chdir(tmp_path)
+        r = tool_shell({"command": "diff <(echo a) <(echo a) && echo psub"})
+        assert r.success and r.output.strip() == "psub"
+
+    def test_shell_name_follows_the_executable(self, monkeypatch):
+        from agent_cli import jobs as jobs_mod
+
+        monkeypatch.setattr(jobs_mod, "SHELL", "/bin/bash")
+        assert jobs_mod.shell_name() == "bash"
+        monkeypatch.setattr(jobs_mod, "SHELL", None)
+        assert jobs_mod.shell_name() == "sh"

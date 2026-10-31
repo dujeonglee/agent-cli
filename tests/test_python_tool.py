@@ -9,6 +9,9 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
 import pytest
 
 from agent_cli.pyworker import (
@@ -510,3 +513,133 @@ class TestInterpreterChoice:
         assert f"`{d / 'python3'}` exited before answering" in r.error
         assert "Python 3.8 or newer" in r.error
         assert "state is gone" not in r.error
+
+
+# ── v10.91.0: 한도를 넘긴 셀은 작업이 된다 ──────────────────────────────────
+# GLM 벤치(base-r2 extract-moves): 같은 OCR 셀이 110~120초 인터럽트로 여덟 번 연속
+# 끊기며 16분을 썼다. 이제 한도(기본=상한 120)에 끊지 않고 셀을 백그라운드 작업으로
+# 넘긴다 — 결과는 즉시, 끝나면 통지, 그동안 같은 인터프리터는 바쁨.
+
+
+def _wait_for(cond, timeout=8.0, step=0.05):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        time.sleep(step)
+    return False
+
+
+@pytest.fixture
+def jobs(tmp_path):
+    from agent_cli.jobs import JobRegistry, set_job_registry
+    from tests.monitor_delivery import RecordingDelivery
+
+    r = JobRegistry(tmp_path)
+    r.deliver = RecordingDelivery()
+    set_job_registry(r)
+    yield r
+    r.stop_all()
+    set_job_registry(None)
+
+
+class TestPendingJob:
+    SLOW = "import time\nfor i in range(12):\n    print(i)\n    time.sleep(0.2)\nn = 7"
+
+    def test_a_step_past_the_limit_continues_as_a_job(self, reg, jobs, tmp_path):
+        r = _run(self.SLOW, timeout=1)
+        assert r.success, r.error
+        assert r.output.startswith(
+            "python: the step is still running after 1s and continues as job #1 (pid "
+        )
+        assert "the interpreter is busy until it ends" in r.output
+        assert "its log is .agent-cli/tmp/python/main.log" in r.output
+        (job,) = jobs.running("main")
+        assert job.command == "python: import time" and job.log == Path(
+            ".agent-cli/tmp/python/main.log"
+        )
+        assert job.stop_hint == f"`kill -INT -- -{job.pid}`"
+        assert f"`kill -INT -- -{job.pid}`" in r.output
+        # 진행이 로그에 보인다 — `wait` 의 중간 깨우기가 읽는 신호
+        assert _wait_for(
+            lambda: "$ python: import time\n0\n1\n" in (tmp_path / job.log).read_text()
+        )
+        assert "`kill -INT -- -" in jobs.render_tail("main")
+
+    def test_the_interpreter_is_busy_until_the_job_ends(self, reg, jobs):
+        _run(self.SLOW, timeout=1)
+        r = _run("1 + 1")
+        assert not r.success
+        assert r.error.startswith("python: the interpreter is busy with job #1 (")
+        assert "`wait` for its notice, or stop it with `kill -INT -- -" in r.error
+
+    def test_the_notice_carries_output_value_and_state(self, reg, jobs):
+        _run(self.SLOW + "\nn * 6", timeout=1)
+        assert _wait_for(lambda: jobs.deliver.calls, timeout=10)
+        (job,) = [j for j in jobs._jobs.values()]
+        assert job.rc == 0 and not jobs.running("main")
+        text = jobs.deliver.reports[0]
+        assert text.startswith("🧵 job #1 finished rc=0 after")
+        assert "`python: import time`" in text
+        assert "  log: .agent-cli/tmp/python/main.log (last 8 line(s))" in text
+        assert "  11\n" in text and "  => 42" in text
+        assert "state:" in text and "n (7)" in text
+        assert reg.state_of("main") and reg.state_of("main")[0][0] in ("i", "n")
+        # 끝났으니 다음 셀은 받고, 상태는 그 셀의 것이다
+        r = _run("n * 2")
+        assert r.success and "=> 14" in r.output
+
+    def test_stopping_the_job_interrupts_the_step_and_keeps_state(self, reg, jobs):
+        _run(
+            "acc = []\nimport time\nwhile True:\n    acc.append(1)\n    time.sleep(0.02)",
+            timeout=1,
+        )
+        (job,) = jobs.running("main")
+        jobs.kill(job)  # 소유자 사망·세션 종료와 같은 길: INT → 셀만 끊긴다
+        assert job.rc == 1 and jobs.deliver.calls == []  # 우리가 멈춘 것은 통지 없음
+        assert job.handle.result.interrupted
+        assert "stopped on interrupt — the interpreter is alive" in "\n".join(
+            job.handle.report_lines()
+        )
+        r = _run("len(acc) > 10")
+        assert r.success and "=> True" in r.output
+
+    def test_a_timeout_above_the_limit_is_said_in_the_result(
+        self, reg, jobs, monkeypatch
+    ):
+        monkeypatch.setattr("agent_cli.tools.python_tool.DEFAULT_TIMEOUT", 1)
+        r = _run("import time; time.sleep(2)", timeout=5)
+        assert r.success, r.error
+        assert (
+            "after 1s (`timeout` 5 was not waited for in the foreground: 1 is the limit)"
+            in r.output
+        )
+
+    def test_an_interpreter_that_dies_mid_job_is_reported(self, reg, jobs):
+        _run("import os, time\ntime.sleep(1.5)\nos._exit(0)", timeout=1)
+        assert _wait_for(lambda: jobs.deliver.calls, timeout=10)
+        text = jobs.deliver.reports[0]
+        assert text.startswith("🧵 job #1 finished rc=1 after")
+        assert "the interpreter exited while running this code" in text
+
+    def test_a_fast_step_is_not_a_job_and_its_log_is_per_owner(
+        self, reg, jobs, tmp_path
+    ):
+        r = _run("print('quick')\n3")
+        assert r.success and "quick" in r.output and "=> 3" in r.output
+        assert jobs.running() == [] and jobs._jobs == {}
+        log = tmp_path / ".agent-cli" / "tmp" / "python" / "main.log"
+        assert log.read_text() == "$ python: print('quick')\nquick\n"
+        _run("print('again')")  # 호출마다 비운다 — 로그는 지금 셀의 것
+        assert log.read_text() == "$ python: print('again')\nagain\n"
+
+    def test_without_a_job_registry_the_limit_still_interrupts(self, reg):
+        from agent_cli.jobs import set_job_registry
+
+        set_job_registry(None)
+        r = _run(
+            "import time\nacc = []\nwhile True:\n    acc.append(1)\n    time.sleep(0.02)",
+            timeout=1,
+        )
+        assert not r.success and "interrupted after 1s (timeout)" in r.error
+        assert _run("len(acc) > 5").success

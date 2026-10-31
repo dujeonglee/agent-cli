@@ -1576,6 +1576,12 @@ class TestShellTimeout:
     def test_default_timeout_is_120(self, monkeypatch):
         assert self._capture_timeout(monkeypatch, {"command": "echo hi"}) == 120
 
-    def test_respects_explicit_timeout(self, monkeypatch):
+    def test_respects_an_explicit_timeout_up_to_the_limit(self, monkeypatch):
+        got = self._capture_timeout(monkeypatch, {"command": "make", "timeout": 30})
+        assert got == 30
+
+    def test_a_timeout_above_the_limit_is_capped_in_the_foreground(self, monkeypatch):
+        """기본 = 상한 (v10.91.0). `ShellTool._run` 은 그 위의 값을 작업으로 바꾸고, 전경
+        함수 자체(레지스트리 없는 런)는 상한으로 깎는다."""
         got = self._capture_timeout(monkeypatch, {"command": "make", "timeout": 600})
-        assert got == 600
+        assert got == 120

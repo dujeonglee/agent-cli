@@ -17,15 +17,67 @@ Jupyter 셀 하나처럼: 코드 조각을 소유자의 워커(`agent_cli/pywork
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import ClassVar
 
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
+#: 전경에서 기다리는 시간의 기본값이자 상한 (v10.91.0) — 그 뒤 셀은 작업이 된다.
 DEFAULT_TIMEOUT = 120
 #: 문자열 리터럴 안의 절대경로·상위 탈출 — 봉쇄 검사 대상.
 _PATH_LITERAL = re.compile(r"""['"]((?:/|\.\./)[^'"\n]*)['"]""")
+
+
+def _cell_title(code: str) -> str:
+    """작업 목록·로그 머리줄에 쓰는 셀의 이름 — 첫 줄 하나."""
+    first = next((ln.strip() for ln in code.splitlines() if ln.strip()), "")
+    return f"python: {first[:70]}" if first else "python"
+
+
+def _capture_log(worker, owner: str, code: str) -> Path:
+    """이 호출의 출력이 쌓일 로그 — 소유자당 하나(`.agent-cli/tmp/python/<owner>.log`),
+    호출마다 비우고 머리줄 ``$ python: <첫 줄>`` 을 적는다(셸 작업 로그와 같은 모양 —
+    `jobs.Job.header_bytes`·꼬리 필터가 그걸 기대한다). 한도를 넘긴 셀이 작업이 되면
+    이 파일이 그 작업의 로그라 `wait` 의 진행 신호와 종료 통지의 꼬리가 여기서 나온다.
+    작업 디렉터리 기준 상대 경로를 돌려준다."""
+    from agent_cli.pyworker import FIG_DIR
+
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", owner) or "main"
+    rel = Path(FIG_DIR) / f"{safe}.log"
+    path = Path.cwd() / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"$ {_cell_title(code)}\n", encoding="utf-8")
+    return rel
+
+
+def pending_message(job, timeout: int, asked: int) -> str:
+    """한도를 넘긴 셀이 작업이 됐다 — 도구 결과. 멈추는 법은 작업 꼬리와 같은 모양."""
+    over = (
+        f" (`timeout` {asked} was not waited for in the foreground: {timeout} is the limit)"
+        if asked > timeout
+        else ""
+    )
+    return (
+        f"python: the step is still running after {timeout}s{over} and continues as "
+        f"job #{job.id} (pid {job.pid}) — the interpreter is busy until it ends. You "
+        f"will be told when it ends, with its output and the `state:` line; its log is "
+        f"{job.log.as_posix()}. Keep working meanwhile, or `wait` if nothing else is "
+        f"left. To stop it: {job.stop_hint} (the state is kept)."
+    )
+
+
+def busy_message(cell) -> str:
+    """앞선 셀이 아직 돈다 — 이 호출은 받지 않는다."""
+    from agent_cli.jobs import elapsed_text
+
+    which = f"job #{cell.job_id}" if cell.job_id is not None else "a previous step"
+    ago = elapsed_text(int(time.time() - cell.started_at))
+    return (
+        f"python: the interpreter is busy with {which} ({ago} so far) — `wait` for "
+        f"its notice, or stop it with {cell.stop_hint} (the state is kept)."
+    )
 
 
 def literal_paths(code: str) -> list[str]:
@@ -139,7 +191,7 @@ PYTHON_SESSION_HEADER = "## Python session"
 PYTHON_SESSION_RULES = (
     "Refine the function, do not reload — the data above is still in memory. "
     "One call = one step; a long loop accumulates into a dict or list so a "
-    "timeout keeps what is done. Plot coordinates or shapes instead of reading "
+    "stopped step keeps what is done. Plot coordinates or shapes instead of reading "
     "numbers. Print only what you need to see (slices, len(), head()). "
     "Deliverables go to files — memory is not an output."
 )
@@ -178,8 +230,8 @@ class PythonTool(Tool):
         "available in the next call. The result shows the output, the value of "
         "the last expression and a `state:` line listing what is held in "
         "memory. Open matplotlib figures are saved and shown to you as images. "
-        "A call that hits the timeout is interrupted; what it had already "
-        "stored stays in memory."
+        "A step still running after the timeout continues as a background job: "
+        "you are told when it ends, and the interpreter is busy until then."
     )
     oversized_retry_hint = (
         "print less: a slice (`x[:20]`), `len(x)`, `.head()`, or a summary "
@@ -204,11 +256,10 @@ class PythonTool(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    f"Max seconds for this call (default {DEFAULT_TIMEOUT}). On "
-                    "timeout the running code is interrupted (KeyboardInterrupt) "
-                    "and the state is kept; only code that ignores the interrupt "
-                    "gets the interpreter killed. Raise it for a step you expect "
-                    "to take longer than that."
+                    f"Seconds to wait for this step (default and maximum "
+                    f"{DEFAULT_TIMEOUT}). A step still running after that continues "
+                    "as a background job and you are told when it ends; lower it "
+                    "only for a step you want handed off sooner."
                 ),
             },
         },
@@ -229,6 +280,7 @@ class PythonTool(Tool):
         return str(action_input.get("code") or "")
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        from agent_cli.jobs import get_job_registry
         from agent_cli.pyworker import FIG_DIR, get_py_registry
         from agent_cli.tools import _confine
 
@@ -247,15 +299,37 @@ class PythonTool(Tool):
             reg.reset(owner)
         worker = reg.get(owner)
         try:
-            timeout = int(args.get("timeout") or DEFAULT_TIMEOUT)
+            asked = int(args.get("timeout") or DEFAULT_TIMEOUT)
         except (TypeError, ValueError):
-            timeout = DEFAULT_TIMEOUT
+            asked = DEFAULT_TIMEOUT
+        # 기본값이 상한이다 (v10.91.0): 그 위로는 전경에서 기다리지 않고 셀을 작업으로
+        # 넘긴다 — shell 의 전경 한도와 같은 규칙. 작업 레지스트리가 없는 런(통지가 갈
+        # 곳이 없다)만 종전대로 한도에 SIGINT.
+        timeout = min(asked, DEFAULT_TIMEOUT)
+        jobs = get_job_registry()
+        pend = jobs is not None and jobs.available
+        capture = _capture_log(worker, owner, code) if pend else None
         try:
-            res = worker.run(code, timeout=timeout, figdir=Path(FIG_DIR))
+            res = worker.run(
+                code,
+                timeout=timeout,
+                figdir=Path(FIG_DIR),
+                capture=Path.cwd() / capture if capture else None,
+                pend=pend,
+            )
         except OSError as e:
             return ToolResult(
                 False, error=f"python: could not start the interpreter: {e}"
             )
+        if res.busy is not None:
+            return ToolResult(False, error=busy_message(res.busy))
+        if res.pending is not None:
+            assert jobs is not None and capture is not None
+            job = jobs.adopt(
+                res.pending, command=_cell_title(code), log=capture, owner=owner
+            )
+            res.pending.job_id = job.id
+            return ToolResult(True, output=pending_message(job, timeout, asked))
         return self._format(res, timeout, worker.interpreter)
 
     @staticmethod

@@ -223,7 +223,16 @@ def main():
             continue
         code = req.get("code") or ""
         figdir = req.get("figdir") or ""
-        with tempfile.TemporaryFile(mode="w+b") as cap:
+        # 출력은 호출마다 파일 하나로: 부모가 ``capture`` 를 주면 그 파일에 덧붙인다
+        # (v10.91.0 — 한도를 넘긴 셀이 작업이 되면 그 파일이 작업 로그라 진행이
+        # 보인다). 없으면 임시 파일. 어느 쪽이든 이 호출이 쓴 구간만 돌려준다.
+        capture = req.get("capture") or ""
+        if capture:
+            cap = open(capture, "ab")  # noqa: SIM115 — 아래 finally 가 닫는다
+        else:
+            cap = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115
+        try:
+            start = cap.seek(0, os.SEEK_END)
             saved = (os.dup(1), os.dup(2))
             os.dup2(cap.fileno(), 1)
             os.dup2(cap.fileno(), 2)
@@ -247,8 +256,15 @@ def main():
                 os.dup2(saved[1], 2)
                 os.close(saved[0])
                 os.close(saved[1])
-            cap.seek(0)
-            out = cap.read().decode("utf-8", "replace")
+            if capture:
+                with open(capture, "rb") as back:
+                    back.seek(start)
+                    out = back.read().decode("utf-8", "replace")
+            else:
+                cap.seek(0)
+                out = cap.read().decode("utf-8", "replace")
+        finally:
+            cap.close()
         reply = {
             "ok": ok,
             "out": out,

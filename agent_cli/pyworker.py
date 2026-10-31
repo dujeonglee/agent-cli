@@ -91,6 +91,81 @@ class PyResult:
     no_interpreter: bool = False
     #: 띄운 인터프리터가 시작 인사 전에 죽었다 — 이 자식을 돌릴 수 없는 파이썬.
     startup_failed: bool = False
+    #: 한도 안에 끝나지 않아 셀이 계속 돈다 (v10.91.0) — 호출자가 작업으로 넘긴다.
+    pending: PendingCell | None = None
+    #: 앞선 셀이 아직 돌고 있어 이 호출을 받지 못했다 — 그 셀.
+    busy: PendingCell | None = None
+
+
+class PendingCell:
+    """한도를 넘겨 계속 도는 셀 (v10.91.0) — `jobs.JobHandle` 의 python 쪽 구현.
+
+    워커의 회신 읽기(`_LineRead`)를 그대로 쥔다. 레지스트리가 `poll` 로 물을 때
+    회신이 와 있으면 그때 결과를 만들고(상태 줄 갱신) 워커를 풀어 준다. 멈춤은
+    셸 작업과 달리 **INT** — 자식의 ``KeyboardInterrupt`` 가 셀만 끊고 상태는
+    남긴다(모델의 `kill -INT -- -<pid>` 도 같은 길). 듣지 않으면 인터프리터째."""
+
+    def __init__(
+        self, worker: PyWorker, reading: _LineRead, *, fresh: bool, lost: list[str]
+    ) -> None:
+        self.worker = worker
+        self._reading = reading
+        self._fresh = fresh
+        self._lost = lost
+        self.started_at = time.time()
+        self.result: PyResult | None = None
+        #: 레지스트리가 준 번호 — `python` 이 "busy with job #n" 에 쓴다.
+        self.job_id: int | None = None
+
+    @property
+    def pid(self) -> int:
+        return self.worker.pid or 0
+
+    def poll(self) -> int | None:
+        if self.result is None:
+            line = self._reading.wait(0)
+            if line is None:
+                return None
+            self.result = self.worker._parse(line, fresh=self._fresh, lost=self._lost)
+            self.worker._release(self)
+        return 0 if self.result.ok else 1
+
+    def stop(self) -> None:
+        pid = self.worker.pid
+        if pid is None:
+            return
+        try:
+            os.killpg(pid, signal.SIGINT)
+        except OSError:
+            pass
+
+    def force(self) -> None:
+        self.worker.kill()
+
+    @property
+    def stop_hint(self) -> str:
+        return f"`kill -INT -- -{self.pid}`"
+
+    def report_lines(self) -> list[str]:
+        """통지의 로그 꼬리 뒤: 마지막 식의 값, 예외(인터럽트 포함), 그림, 상태 줄."""
+        from agent_cli.tools.python_tool import state_line
+
+        res = self.result
+        if res is None:
+            return []
+        lines: list[str] = []
+        if res.value is not None:
+            lines.append(f"=> {res.value}")
+        if res.interrupted:
+            lines.append(
+                "stopped on interrupt — the interpreter is alive and its state is kept"
+            )
+        elif not res.ok and res.exc:
+            lines.extend(res.exc.rstrip().splitlines()[-3:])
+        for p in res.figures:
+            lines.append(f"figure saved: {p} (`view_image` shows it)")
+        lines.append(state_line(res.state))
+        return lines
 
 
 class PyWorker:
@@ -107,6 +182,22 @@ class PyWorker:
         #: 이 워커를 띄운 인터프리터 경로 — ModuleNotFoundError 관찰이 "여기에
         #: 설치하라" 고 가리키는 대상 (v10.73.0, docs/python-tool/DESIGN.md §3).
         self.interpreter: str | None = None
+        #: 한도를 넘겨 계속 도는 셀 — 있는 동안 새 셀은 받지 않는다 (v10.91.0).
+        self._pending: PendingCell | None = None
+        #: 호출 수 — 캡처 로그의 머리줄 번호.
+        self.calls = 0
+
+    @property
+    def pending(self) -> PendingCell | None:
+        """돌고 있는 셀, 없으면 ``None`` (끝난 것은 `poll` 때 풀린다)."""
+        cell = self._pending
+        if cell is not None and cell.poll() is not None:
+            return None  # `poll` 이 끝난 셀을 풀었다
+        return cell
+
+    def _release(self, cell: PendingCell) -> None:
+        if self._pending is cell:
+            self._pending = None
 
     @property
     def alive(self) -> bool:
@@ -172,8 +263,23 @@ class PyWorker:
             except Exception:
                 pass
 
-    def run(self, code: str, *, timeout: float, figdir: str | Path | None) -> PyResult:
+    def run(
+        self,
+        code: str,
+        *,
+        timeout: float,
+        figdir: str | Path | None,
+        capture: str | Path | None = None,
+        pend: bool = False,
+    ) -> PyResult:
+        """셀 하나. ``capture`` 가 있으면 자식이 출력을 그 파일에 덧붙여 쓴다(작업
+        로그·진행 신호). ``pend`` 가 참이면 한도 안에 회신이 없을 때 끊지 않고
+        `PendingCell` 로 돌려준다 — 호출자가 작업 레지스트리에 넘긴다; 거짓이면
+        종전대로 SIGINT 로 멈춘다(상태 보존, 듣지 않으면 kill)."""
         with self._lock:
+            busy = self.pending
+            if busy is not None:
+                return PyResult(False, busy=busy)
             fresh = False
             lost: list[str] = []
             if not self.alive:
@@ -187,9 +293,14 @@ class PyWorker:
                 fresh = True
             proc = self._proc
             assert proc is not None and proc.stdin and proc.stdout
-            req = json.dumps({"code": code, "figdir": str(figdir or "")}) + "\n"
+            self.calls += 1
+            req = {
+                "code": code,
+                "figdir": str(figdir or ""),
+                "capture": str(capture or ""),
+            }
             try:
-                proc.stdin.write(req.encode("utf-8"))
+                proc.stdin.write((json.dumps(req) + "\n").encode("utf-8"))
                 proc.stdin.flush()
             except (BrokenPipeError, OSError):
                 self.kill()
@@ -200,6 +311,10 @@ class PyWorker:
                 )
             reading = _LineRead(proc.stdout)
             line = reading.wait(timeout)
+            if line is None and pend:
+                cell = PendingCell(self, reading, fresh=fresh, lost=lost)
+                self._pending = cell
+                return PyResult(False, pending=cell)
             if line is None:
                 # Ctrl-C 처럼 그룹째 SIGINT — 자식은 KeyboardInterrupt 를 보통의
                 # 실패 회신으로 돌려주고(상태는 산다), 띄운 하위 프로세스도 같이
@@ -212,35 +327,39 @@ class PyWorker:
                 if line is None:
                     self.kill()
                     return PyResult(False, timed_out=True, lost=self._lost, fresh=fresh)
-            if not line:
-                had = bool(self._last_state)
-                self.kill()
-                gone = " — its state is gone" if had else ""
-                return PyResult(
-                    False,
-                    exc=f"python: the interpreter exited while running this code{gone}",
-                    lost=self._lost,
-                    fresh=fresh,
-                )
-            try:
-                rep = json.loads(line.decode("utf-8", "replace"))
-            except ValueError:
-                self.kill()
-                return PyResult(
-                    False, exc="python worker sent an unreadable reply", fresh=fresh
-                )
-            self._last_state = [list(r) for r in rep.get("state") or []]
+            return self._parse(line, fresh=fresh, lost=lost)
+
+    def _parse(self, line: bytes, *, fresh: bool, lost: list[str]) -> PyResult:
+        """자식의 회신 한 줄 → 결과. 빈 줄은 자식이 죽은 것, 못 읽는 줄은 프로토콜 파손."""
+        if not line:
+            had = bool(self._last_state)
+            self.kill()
+            gone = " — its state is gone" if had else ""
             return PyResult(
-                bool(rep.get("ok")),
-                out=str(rep.get("out") or ""),
-                value=rep.get("value"),
-                exc=rep.get("exc"),
-                interrupted=bool(rep.get("interrupted")),
-                state=self._last_state,
-                figures=[str(p) for p in rep.get("figures") or []],
+                False,
+                exc=f"python: the interpreter exited while running this code{gone}",
+                lost=self._lost,
                 fresh=fresh,
-                lost=lost,
             )
+        try:
+            rep = json.loads(line.decode("utf-8", "replace"))
+        except ValueError:
+            self.kill()
+            return PyResult(
+                False, exc="python worker sent an unreadable reply", fresh=fresh
+            )
+        self._last_state = [list(r) for r in rep.get("state") or []]
+        return PyResult(
+            bool(rep.get("ok")),
+            out=str(rep.get("out") or ""),
+            value=rep.get("value"),
+            exc=rep.get("exc"),
+            interrupted=bool(rep.get("interrupted")),
+            state=self._last_state,
+            figures=[str(p) for p in rep.get("figures") or []],
+            fresh=fresh,
+            lost=lost,
+        )
 
 
 class PyWorkerRegistry:

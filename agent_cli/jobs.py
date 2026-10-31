@@ -18,11 +18,18 @@
 끝나길 기다리고 web 은 자기를 거두지 않는다. 소유자가 죽으면(`drop_owner`) 그
 작업은 죽이고, 세션이 끝날 때 남은 작업도 죽인다(우리가 띄운 것이므로 고아를
 남기지 않는다). 영속은 없다 — PID 는 프로세스와 함께 죽는다.
+
+작업의 몸은 **핸들**(v10.91.0, `JobHandle`): 셸 명령은 ``Popen`` 을 감싼
+`ProcHandle`, 한도를 넘겨 계속 도는 `python` 셀은 `pyworker.PendingCell`. 레지스트리는
+핸들에게 끝났는지(`poll`)·멈춤(`stop`/`force`)·멈추는 법 문구(`stop_hint`)·통지에 덧붙일
+줄(`report_lines`)만 묻는다 — 번호·로그·꼬리·통지·수명은 둘이 같다. 셸 명령은 bash 가
+있으면 bash 로 띄운다(`SHELL`): 벤치에서 `[[ ]]`·`<(…)` 가 dash 에서 깨져 턴을 잃었다.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import threading
@@ -30,6 +37,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 POLL_SECS = 1.0
 #: 종료 통지에 싣는 로그 꼬리 줄 수 — 모니터 보고(5줄)와 같은 크기 감각
@@ -37,6 +45,83 @@ TAIL_LINES = 8
 TAIL_LINE_CHARS = 300
 KILL_GRACE_S = 3.0
 LOG_DIR = Path(".agent-cli") / "tmp" / "jobs"
+#: `shell` 과 백그라운드 작업이 명령을 돌리는 셸 (v10.91.0) — bash 가 있으면 bash,
+#: 없으면 ``None`` 으로 두어 ``Popen(shell=True)`` 의 기본 ``/bin/sh``. GLM 벤치에서
+#: 모델은 bash 문법을 쓰고 컨테이너의 sh 는 dash 였다: `diff <(…)` 두 턴 연속 실패,
+#: `[[ $f == *.pdf ]]` 가 분류 루프 전체를 비웠다. 실행기를 맞추면 그 실패 종류가
+#: 모델과 무관하게 사라진다. import 시점에 고정(테스트 monkeypatch seam).
+SHELL: str | None = shutil.which("bash")
+
+
+def shell_name() -> str:
+    """Environment 절이 적는 이름 — ``"bash"`` 또는 ``"sh"``."""
+    return "bash" if SHELL else "sh"
+
+
+class JobHandle(Protocol):
+    """레지스트리가 작업의 몸에 묻는 전부."""
+
+    @property
+    def pid(self) -> int: ...
+
+    def poll(self) -> int | None:
+        """끝났으면 종료 코드, 아직이면 ``None``. 끝난 뒤의 재호출은 같은 값."""
+        ...
+
+    def stop(self) -> None:
+        """부드럽게 멈추라고 한다 (셸: 그룹에 TERM, 셀: 그룹에 INT)."""
+        ...
+
+    def force(self) -> None:
+        """듣지 않으면 죽인다 (셸: 그룹에 KILL, 셀: 인터프리터째)."""
+        ...
+
+    @property
+    def stop_hint(self) -> str:
+        """모델이 이 작업을 멈추는 명령 — 꼬리·결과·중간 깨우기가 같은 모양."""
+        ...
+
+    def report_lines(self) -> list[str]:
+        """종료 통지의 로그 꼬리 뒤에 덧붙일 줄 (셀: 값·예외·상태 줄)."""
+        ...
+
+
+class ProcHandle:
+    """셸 명령 하나 — 자기 세션(`start_new_session`)의 ``Popen``."""
+
+    def __init__(self, proc: subprocess.Popen) -> None:
+        self.proc = proc
+
+    @property
+    def pid(self) -> int:
+        return self.proc.pid
+
+    def poll(self) -> int | None:
+        return self.proc.poll()
+
+    def stop(self) -> None:
+        self._signal(signal.SIGTERM)
+
+    def force(self) -> None:
+        self._signal(signal.SIGKILL)
+
+    def _signal(self, sig) -> None:
+        try:
+            os.killpg(self.proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    @property
+    def stop_hint(self) -> str:
+        """**프로세스 묶음** 전체 (v10.79.0). 작업은 자기 세션이고 ``pid`` 는 `sh -c`
+        리더다. `kill <pid>` 는 셸만 죽이고 `xargs`·`tesseract` 같은 자식은
+        살아남는다 — :meth:`JobRegistry.kill` 이 `killpg` 인 것과 같은 이유로 네 자리
+        (꼬리·`shell` 결과·시스템 프롬프트·중간 깨우기 알림)가 이 한 모양을 쓴다.
+        ``--`` 는 음수를 신호 번호로 읽지 않게 하는 표기다."""
+        return f"`kill -- -{self.proc.pid}`"
+
+    def report_lines(self) -> list[str]:
+        return []
 
 
 @dataclass
@@ -46,7 +131,7 @@ class Job:
     command: str
     log: Path  # 작업 디렉터리 기준 상대 경로 (꼬리·통지에 그대로 보인다)
     owner: str  # "main" | "agent:<key>"
-    proc: subprocess.Popen = field(repr=False)
+    handle: JobHandle = field(repr=False)
     started_at: float = field(default_factory=time.time)
     rc: int | None = None
     ended_at: float | None = None
@@ -57,12 +142,7 @@ class Job:
 
     def elapsed(self, now: float | None = None) -> str:
         end = self.ended_at if self.ended_at is not None else (now or time.time())
-        s = max(0, int(end - self.started_at))
-        h, rem = divmod(s, 3600)
-        m, sec = divmod(rem, 60)
-        if h:
-            return f"{h}h{m:02d}m"
-        return f"{m}m{sec:02d}s" if m else f"{sec}s"
+        return elapsed_text(int(end - self.started_at))
 
     @property
     def header_bytes(self) -> int:
@@ -72,14 +152,18 @@ class Job:
 
     @property
     def stop_hint(self) -> str:
-        """모델이 이 작업을 멈추는 명령 — **프로세스 묶음** 전체 (v10.79.0).
+        """모델이 이 작업을 멈추는 명령 — 핸들이 정한다 (셸 `kill -- -P`, 셀 `kill -INT -- -P`)."""
+        return self.handle.stop_hint
 
-        작업은 자기 세션(`start_new_session=True`)이고 ``pid`` 는 `sh -c` 리더다.
-        `kill <pid>` 는 셸만 죽이고 `xargs`·`tesseract` 같은 자식은 살아남는다 —
-        하니스의 :meth:`JobRegistry.kill` 이 `killpg` 인 것과 같은 이유로 네 자리
-        (꼬리·`shell` 결과·시스템 프롬프트·중간 깨우기 알림)가 이 한 모양을 쓴다.
-        ``--`` 는 음수를 신호 번호로 읽지 않게 하는 표기다."""
-        return f"`kill -- -{self.pid}`"
+
+def elapsed_text(seconds: int) -> str:
+    """``5s`` · ``2m31s`` · ``1h05m`` — 작업 꼬리·통지·`python` 의 바쁨 안내가 같은 모양."""
+    s = max(0, seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    return f"{m}m{sec:02d}s" if m else f"{sec}s"
 
 
 class JobsUnavailable(RuntimeError):
@@ -108,18 +192,30 @@ class JobRegistry:
 
     # ── 띄우기 ────────────────────────────────
 
-    def start(self, command: str, *, owner: str) -> Job:
+    @property
+    def available(self) -> bool:
+        """띄워도 통지가 갈 곳이 있다 — `python` 이 한도 뒤 셀을 작업으로 넘길지 정할 때 본다."""
+        return self.deliver is not None and not self.closed
+
+    def _ensure_available(self) -> None:
         if self.deliver is None:
             raise JobsUnavailable(
                 "background jobs: delivery is not wired (internal error)"
             )
         if self.closed:
             raise JobsUnavailable("background jobs: the session is shutting down")
-        log_dir = self._cwd / LOG_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _next_id(self) -> int:
         with self._lock:
             job_id = self._next
             self._next += 1
+        return job_id
+
+    def start(self, command: str, *, owner: str) -> Job:
+        self._ensure_available()
+        log_dir = self._cwd / LOG_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        job_id = self._next_id()
         rel = LOG_DIR / f"{job_id}.log"
         path = self._cwd / rel
         with path.open("ab") as logf:
@@ -128,14 +224,36 @@ class JobRegistry:
             proc = subprocess.Popen(
                 command,
                 shell=True,
+                executable=SHELL,
                 cwd=str(self._cwd),
                 start_new_session=True,
                 stdin=subprocess.DEVNULL,
                 stdout=logf,
                 stderr=subprocess.STDOUT,
             )
+        return self._register(
+            job_id, ProcHandle(proc), command=command, log=rel, owner=owner
+        )
+
+    def adopt(self, handle: JobHandle, *, command: str, log: Path, owner: str) -> Job:
+        """이미 돌고 있는 몸을 작업으로 받는다 (v10.91.0) — 한도를 넘긴 `python` 셀.
+        ``log`` 는 작업 디렉터리 기준 상대 경로이고 그 첫 줄은 ``$ {command}`` 여야
+        한다(`header_bytes`·꼬리 필터가 셸 작업과 같은 모양을 기대한다)."""
+        self._ensure_available()
+        return self._register(
+            self._next_id(), handle, command=command, log=log, owner=owner
+        )
+
+    def _register(
+        self, job_id: int, handle: JobHandle, *, command: str, log: Path, owner: str
+    ) -> Job:
         job = Job(
-            id=job_id, pid=proc.pid, command=command, log=rel, owner=owner, proc=proc
+            id=job_id,
+            pid=handle.pid,
+            command=command,
+            log=log,
+            owner=owner,
+            handle=handle,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -231,25 +349,25 @@ class JobRegistry:
     # ── 종료/정리 ─────────────────────────────
 
     def kill(self, job: Job) -> None:
-        """프로세스 그룹에 TERM, 잠시 뒤 KILL. 이미 끝났으면 no-op."""
+        """부드럽게 멈추라 하고(`stop`), 잠시 뒤 남았으면 죽인다(`force`). 이미
+        끝났으면 no-op."""
         if not job.running:
             return
-        try:
-            os.killpg(job.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            job.proc.wait(timeout=KILL_GRACE_S)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(job.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            try:
-                job.proc.wait(timeout=KILL_GRACE_S)
-            except subprocess.TimeoutExpired:
-                pass
-        self._finish(job, notify=False)
+        job.handle.stop()
+        rc = self._await(job.handle)
+        if rc is None:
+            job.handle.force()
+            rc = self._await(job.handle)
+        self._finish(job, rc if rc is not None else -1, notify=False)
+
+    @staticmethod
+    def _await(handle: JobHandle) -> int | None:
+        deadline = time.time() + KILL_GRACE_S
+        while True:
+            rc = handle.poll()
+            if rc is not None or time.time() >= deadline:
+                return rc
+            time.sleep(0.05)
 
     def drop_owner(self, addr: str) -> int:
         """소유자가 죽었다 — 그 작업들을 죽인다. 죽인 건수 반환."""
@@ -291,14 +409,15 @@ class JobRegistry:
     def tick(self) -> None:
         """한 틱 — 테스트가 직접 부를 수 있도록 스레드와 분리."""
         for job in self.running():
-            if job.proc.poll() is not None:
-                self._finish(job, notify=True)
+            rc = job.handle.poll()
+            if rc is not None:
+                self._finish(job, rc, notify=True)
 
-    def _finish(self, job: Job, *, notify: bool) -> None:
+    def _finish(self, job: Job, rc: int, *, notify: bool) -> None:
         with self._lock:
             if not job.running:
                 return
-            job.rc = job.proc.returncode if job.proc.returncode is not None else -1
+            job.rc = rc
             job.ended_at = time.time()
             if self.closed or not notify:
                 return
@@ -332,6 +451,7 @@ class JobRegistry:
         )
         body = [f"log: {job.log.as_posix()} (last {len(tail)} line(s))"]
         body += [ln[:TAIL_LINE_CHARS] for ln in tail]
+        body += job.handle.report_lines()
         return "\n".join([head, *(f"  {ln}" for ln in body)])
 
     def _tail(self, job: Job) -> list[str]:
