@@ -37,7 +37,9 @@
 - [x] `snapshot`·`history`·`memory` 검토 — snapshot 수리 v10.80.0, memory·history v10.81.0; 압축 요약 꼬리(PR C, 측정 뒤) 남음
 - [ ] `history` 로 큰 관찰의 **중간**을 뽑는 길 — PR C 측정의 부수 발견(12/12 런이 `substr(text,1,N)` 만 씀). 후보: help 예시에 `substr(text, instr(text,'…'), 200)` 한 줄, 또는 `loc` + 오프셋 인자. 측정은 같은 런처로.
 - [x] 내장 에이전트·스킬 **본문**의 대문자 강조 — 사용자 결정(2026-10-30)으로 본문 43곳 소문자화 + 가드가 파일도 읽음(`test_no_caps_emphasis_in_builtin_bodies`, docs/prompt-notation/DESIGN.md 가드 절)
-- [ ] 남은 도구 검토: `code_index`, `fetch`, `browser`, `schedule`, `run_skill` (`agent` 는 PR A·B·C 구현 완료)
+- [ ] 남은 도구 검토: `code_index` → `fetch` → `run_skill` → `browser`·`schedule` 순 (`agent` 는 PR A·B·C 구현 완료; 2026-10-31 순서 확정)
+- [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`
+- [ ] v10.91.2 GLM 벤치 ×2 — v10.91.0 이 8/9·8/9, 그 뒤는 버그 수정(경과·로그 재사용·바쁨 거절 순서)뿐이라 급하지 않음. 볼 지표: 전경 timeout kill·`Removed` 안내·python 작업화·dash 오류
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)
 - [ ] 전체 벤치 측정 — 사용자 지시 시 한 번에 (9과제, GLM; 35B 는 그때 결정). 볼 지표: 층이 바꾼 수·같은 이미지 다시 보기·압축 뒤 다시 보기, read_file 모드별·셸 파일 보기 수, heredoc 실패, 같은 파일 다시 쓰기, 줄 번호 ref 수, "You sent:" 뒤 재시도 성공
