@@ -38,13 +38,19 @@ def cmd_slice(
     with_macros: bool,
     depth: int,
     max_bytes: int,
+    *,
+    target: dict | None = None,
+    n_definitions: int = 1,
 ):
     """Return a markdown blob with NAME's definition body plus optional context
     (callees, callers, types, macros). Intended as LLM context.
 
     Source is read from the ORIGINAL files (line numbers preserved by the
     preprocessor), so any kernel-style `#if/#else` and other macros appear
-    as the author wrote them."""
+    as the author wrote them.
+
+    v10.97.0: ``target`` 은 부르는 쪽이 고른 정의(한정 이름·``path``) — 없으면 맨 이름으로
+    고른다. ``n_definitions`` 가 둘 이상이면 다른 정의를 고르는 법을 한 줄로 알린다."""
     root = Path(idx["root"])
     kind_priority = {"function": 0, "constant": 1, "type": 2, "variable": 3}
 
@@ -65,7 +71,8 @@ def cmd_slice(
         )
         return cands[0]
 
-    target = pick(name)
+    if target is None:
+        target = pick(name)
     if target is None:
         return f"(no symbol {name!r} in index)"
 
@@ -89,18 +96,27 @@ def cmd_slice(
     out: list[str] = []
     out.append(f"# Slice: {name}\n")
     out.append("## Definition\n\n" + section(target, header_prefix="###"))
+    if n_definitions > 1:
+        out.append(
+            f"_{n_definitions - 1} more definitions share this name — `path` or the "
+            "qualified name picks another._"
+        )
 
     def follow(sym, query):
         """그 정의의 이웃 정의들 — 해석된 이웃은 그 정의, 이름으로만 맞추는 언어는
         이름으로 고른 정의. 타입 모를 객체에서 부른 것(``?``)은 따라가지 않는다."""
         edges = query(idx, sym)
         out = []
+        # 같은 자리를 두 번 세지 않는다 — callers 의 `?` 자리는 "그 이름의 것 전부" 라
+        # 같은 이름의 함수가 둘 보이면 겹친다
+        skipped.update((f, ln) for f, ln, _k in edges.unknown_sites)
         for n in edges.neighbors:
             if n.symbol_id is not None:
                 nxt = idx.symbol(n.symbol_id)
             elif edges.by_name_only:
                 nxt = pick(n.name)
             else:
+                skipped.update((f, ln) for f, ln, _k in n.sites)
                 continue
             if nxt is not None:
                 out.append(nxt)
@@ -113,6 +129,7 @@ def cmd_slice(
     ):
         if not flag or target["kind"] != "function" or "id" not in target:
             continue
+        skipped: set = set()
         seen: set[int] = {target["id"]}
         frontier = follow(target, query)
         for d in range(1, depth + 1):
@@ -131,6 +148,11 @@ def cmd_slice(
             frontier = next_frontier
             if not frontier:
                 break
+        if skipped:
+            out.append(
+                f"_? {len(skipped)} {title.lower()[:-1]} sites on objects of unknown "
+                "type not followed._"
+            )
 
     # Types referenced inside the target's body
     if with_types and target.get("is_definition"):

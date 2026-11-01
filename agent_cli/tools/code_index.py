@@ -41,7 +41,6 @@ from agent_cli.code_index import (
     callees_of,
     callers_of,
     cmd_slice,
-    definitions_named,
     load_index,
 )
 from agent_cli.code_index.builder import get_parser
@@ -540,22 +539,135 @@ def _do_file(action_input: dict) -> ToolResult:
     )
 
 
+def _definitions_for(
+    store, name: str, path: str | None, *, functions: bool = True
+) -> tuple[list[dict], str | None]:
+    """``(정의들, 오류)`` — ``name``(맨·한정·모듈로 한정) 의 정의, ``path`` 가 있으면 그
+    파일의 것만 (v10.97.0). 그 파일에 없으면 어디에 있는지를 오류로."""
+    target = _normalize_markdown_name(name)
+    rel = None
+    if path:
+        rel = store.normalize_file_path(path)
+        if rel is None:
+            tail = path.lstrip("./")
+            several = sorted(
+                f["path"] for f in store.files if f["path"].endswith("/" + tail)
+            )
+            if len(several) > 1:
+                shown = ", ".join(several[:5])
+                more = f", … ({len(several)} total)" if len(several) > 5 else ""
+                return [], f'`path` "{path}" matches several files: {shown}{more}'
+            return [], f'`path` "{path}" is not a file in the index'
+    # `path` 와 함께면 그 파일의 맨 이름으로 넓히지 않는다 — 없는 한정 이름이 그 파일의
+    # 다른 정의로 조용히 가지 않게
+    defs = store.definitions(
+        target, file=rel, functions=functions, fallback=rel is None
+    )
+    if rel is not None and not defs:
+        elsewhere = sorted(
+            {
+                d["file"]
+                for d in store.definitions(target, functions=functions, fallback=False)
+            }
+        )
+        where = f" — it is defined in {', '.join(elsewhere[:5])}" if elsewhere else ""
+        return [], f'"{name}" is not defined in {rel}{where}'
+    return defs, None
+
+
+def _ref_tag(r: dict, labels: dict) -> str:
+    """참조 한 줄 끝의 ``→ …`` — 무엇으로 해석됐나. 타입 모를 객체(``?``)의 정의 수는
+    줄마다 되풀이하지 않고 끝에 한 번(django ``get``: 3,768 줄 중 대부분이 ``?``)."""
+    res = r["resolution"]
+    if res == "resolved" and r["target_id"] in labels:
+        return labels[r["target_id"]]
+    if res == "candidates":
+        return "?"
+    return res
+
+
 def _do_refs(action_input: dict) -> ToolResult:
+    from agent_cli.code_index.schema import SCOPE_RESOLVED_LANGUAGES
+
     name = action_input.get("name")
     ref_kind = action_input.get("ref_kind")
-
+    path = action_input.get("path")
     store, root = _ensure_index()
-    # Refs table stores bare names (because they come from raw source
-    # identifiers). If the model passed a qualified form, resolve it
-    # via the symbols table to a bare leaf first.
-    syms = _resolve_symbol(store, name)
-    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
-    refs = store.find_refs(name=bare, kind=ref_kind)
+    target = _normalize_markdown_name(name)
+    picked = bool(path) or "." in target or "::" in target
+    note = ""
+    if picked:
+        defs, err = _definitions_for(store, name, path, functions=False)
+        if err:
+            return ToolResult(False, error=err)
+        if not path:
+            defs = store.definitions(target, functions=False, fallback=False)
+        scoped = [d for d in defs if d["language"] in SCOPE_RESOLVED_LANGUAGES]
+        if scoped:
+            refs = store.refs_resolved_to([d["id"] for d in scoped], ref_kind)
+            leaf = scoped[0]["name"]
+            # 맨 이름의 `refs` 가 `?` 로 보여 줄 줄과 같은 것을 센다(모듈 최상위 포함)
+            langs = {d["language"] for d in scoped}
+            n_unknown = sum(
+                1
+                for r in store.find_refs(name=leaf, kind=ref_kind)
+                if r["resolution"] == "candidates" and r["language"] in langs
+            )
+            if n_unknown:
+                note = (
+                    f'? {n_unknown} more uses of "{leaf}" on objects of unknown '
+                    'type may reach it — "refs" with the bare name lists them.'
+                )
+        else:
+            leaf = (
+                defs[0]["name"]
+                if defs
+                else target.replace("::", ".").rsplit(".", 1)[-1]
+            )
+            # 규칙 없는 언어 — 그 이름의 참조 전부, 다만 고른 정의의 언어 안에서
+            langs = {d["language"] for d in defs}
+            refs = [
+                r
+                for r in store.find_refs(name=leaf, kind=ref_kind)
+                if not langs or r["language"] in langs
+            ]
+    else:
+        refs = store.find_refs(name=target, kind=ref_kind)
     if not refs:
         what = f'No "{ref_kind}" use of "{name}"' if ref_kind else f'No use of "{name}"'
-        return ToolResult(True, output=_no_match(store, root, what))
+        out = _no_match(store, root, what)
+        return ToolResult(True, output=out + ("\n" + note if note else ""))
     refs_sorted = sorted(refs, key=lambda r: (r["file"], r["line"], r["col"]))
-    return ToolResult(True, output="\n".join(_format_ref_line(r) for r in refs_sorted))
+    info = store.symbols_by_id(
+        {r["target_id"] for r in refs_sorted if r["resolution"] == "resolved"}
+    )
+    dup = store.qualified_name_counts(qn for qn, _n, _f in info.values())
+    labels = {
+        i: (f"{qn}  @{f}" if dup.get(qn, 1) > 1 else qn)
+        for i, (qn, _n, f) in info.items()
+    }
+    lines = [f"{_format_ref_line(r)} → {_ref_tag(r, labels)}" for r in refs_sorted]
+    for nm, lang in sorted(
+        {
+            (r["name"], r["language"])
+            for r in refs_sorted
+            if r["resolution"] == "candidates"
+        }
+    ):
+        n = store.definition_count(nm, lang)
+        if lang not in SCOPE_RESOLVED_LANGUAGES:
+            lines.append(
+                f'? = "{nm}" matched by name only ({lang} is not scope-resolved) — '
+                f"any of {n} definitions"
+            )
+            continue
+        lines.append(
+            f'? = "{nm}" on an object of unknown type — any of '
+            f"{store.definition_count(nm, lang)} definitions"
+        )
+    if note:
+        lines.append(note)
+    return ToolResult(True, output="\n".join(lines))
 
 
 #: 정의가 여럿인 이름에서 보여 주는 정의 수.
@@ -646,7 +758,9 @@ def _edges_text(store, defs: list[dict], query) -> tuple[str, bool]:
 def _do_callers(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     store, root = _ensure_index()
-    defs = definitions_named(store, _normalize_markdown_name(name))
+    defs, err = _definitions_for(store, name, action_input.get("path"))
+    if err:
+        return ToolResult(False, error=err)
     text, any_edge = _edges_text(store, defs, callers_of) if defs else ("", False)
     if not any_edge:
         return ToolResult(
@@ -658,7 +772,9 @@ def _do_callers(action_input: dict) -> ToolResult:
 def _do_callees(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     store, root = _ensure_index()
-    defs = definitions_named(store, _normalize_markdown_name(name))
+    defs, err = _definitions_for(store, name, action_input.get("path"))
+    if err:
+        return ToolResult(False, error=err)
     text, any_edge = _edges_text(store, defs, callees_of) if defs else ("", False)
     if not any_edge:
         return ToolResult(
@@ -670,13 +786,20 @@ def _do_callees(action_input: dict) -> ToolResult:
 def _do_slice(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     store, _ = _ensure_index()
-    # cmd_slice picks a symbol by bare ``name``; resolve qualified
-    # input through the symbols table first.
-    syms = _resolve_symbol(store, name)
-    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
+    # v10.97.0: 정의를 여기서 고른다 — 한정·모듈로 한정한 이름, `path`. 함수 정의가
+    # 먼저, 없으면 다른 정의(타입·상수)
+    path = action_input.get("path")
+    defs, err = _definitions_for(store, name, path)
+    if not defs:
+        # 함수가 없으면 다른 정의(클래스·상수) — 오류도 그쪽의 것(둘 다 없을 때만)
+        defs, err = _definitions_for(store, name, path, functions=False)
+    if err:
+        return ToolResult(False, error=err)
     text = cmd_slice(
         store,
-        bare,
+        _normalize_markdown_name(name),
+        target=defs[0] if defs else None,
+        n_definitions=len(defs),
         with_callees=bool(action_input.get("with_callees", False)),
         with_callers=bool(action_input.get("with_callers", False)),
         with_types=bool(action_input.get("with_types", False)),
@@ -766,8 +889,9 @@ class CodeIndexTool(Tool):
                     '"lookup": where `name` is defined anywhere in the project; '
                     '`symbol_kind` narrows. "kind": every symbol of one `symbol_kind` '
                     'in the project; `search` narrows. "file": every symbol defined in '
-                    'one file (`path`). "refs": every place `name` is used; `ref_kind` '
-                    'narrows. "callers" and "callees": the functions that call `name`, '
+                    'one file (`path`). "refs": every place `name` is used, each '
+                    "tagged with what it resolves to; `ref_kind` narrows. "
+                    '"callers" and "callees": the functions that call `name`, '
                     "or that `name` calls, under a heading per definition of `name`; a "
                     'line starting with "?" is a call on an object of unknown type, '
                     "which may reach any of the definitions it counts. "
@@ -779,14 +903,19 @@ class CodeIndexTool(Tool):
             },
             "path": {
                 "type": "string",
-                "description": 'File path, for "list", "fetch" and "file".',
+                "description": (
+                    'File path, for "list", "fetch" and "file"; with "callers", '
+                    '"callees", "refs" and "slice" it picks the definition of `name` '
+                    "in that file."
+                ),
             },
             "name": {
                 "type": "string",
                 "description": (
                     'Symbol name as "list" or "lookup" shows it, for "fetch", "lookup", '
-                    '"refs", "callers", "callees" and "slice". A qualified name picks '
-                    "one definition when several share the name."
+                    '"refs", "callers", "callees" and "slice". A qualified name, or '
+                    'one led by its module ("module.function"), picks one definition '
+                    "when several share the name."
                 ),
             },
             "symbol_kind": {

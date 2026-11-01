@@ -280,6 +280,186 @@ class TestCallgraphOutput:
         )
 
 
+class TestPickingADefinition:
+    """v10.97.0 (DESIGN §21) — `refs` 태그, `path`·모듈로 한정한 이름으로 정의 고르기."""
+
+    @pytest.fixture
+    def tree(self, tmp_path, monkeypatch):
+        _write(tmp_path / "pkg/__init__.py", "")
+        _write(
+            tmp_path / "pkg/fsio.py",
+            "def _write(p):\n    return p\n\n\ndef save(p):\n    return _write(p)\n",
+        )
+        _write(
+            tmp_path / "pkg/other.py",
+            "def _write(q):\n    return q\n\n\ndef dump(q):\n    return _write(q)\n",
+        )
+        _write(
+            tmp_path / "user.py",
+            "from pkg.fsio import _write\n\n\ndef go(obj, cb):\n"
+            "    _write(1)\n    obj._write(2)\n    cb()\n    return len(obj)\n",
+        )
+        monkeypatch.chdir(tmp_path)
+        return tmp_path
+
+    def test_refs_are_tagged_with_what_they_resolve_to(self, tree):
+        out = _dispatch_one({"mode": "refs", "name": "_write"}).output
+        assert out.splitlines() == [
+            "pkg/fsio.py:6:11 call _write → _write  @pkg/fsio.py",
+            "pkg/other.py:6:11 call _write → _write  @pkg/other.py",
+            "user.py:5:4 call _write → _write  @pkg/fsio.py",
+            "user.py:6:8 call _write → ?",
+            '? = "_write" on an object of unknown type — any of 2 definitions',
+        ]
+
+    def test_local_and_external_tags(self, tree):
+        out = _dispatch_one({"mode": "refs", "name": "cb"}).output
+        assert out == "user.py:7:4 call cb → local"
+        out = _dispatch_one({"mode": "refs", "name": "len"}).output
+        assert out == "user.py:8:11 call len → external"
+
+    def test_module_qualified_name_picks_one(self, tree):
+        out = _dispatch_one({"mode": "refs", "name": "fsio._write"}).output
+        assert out.splitlines() == [
+            "pkg/fsio.py:6:11 call _write → _write  @pkg/fsio.py",
+            "user.py:5:4 call _write → _write  @pkg/fsio.py",
+            (
+                '? 1 more uses of "_write" on objects of unknown type may reach it — '
+                '"refs" with the bare name lists them.'
+            ),
+        ]
+        out = _dispatch_one({"mode": "callers", "name": "pkg.other._write"}).output
+        assert out == (
+            "_write — pkg/other.py:1-2\ndump  (1×)  pkg/other.py:6\n\n"
+            '? "_write" on an object of unknown type — any of 2 definitions:  '
+            "user.py:6"
+        )
+
+    def test_path_picks_the_definition_in_that_file(self, tree):
+        out = _dispatch_one(
+            {"mode": "callers", "name": "_write", "path": "pkg/fsio.py"}
+        ).output
+        assert out.startswith("_write — pkg/fsio.py:1-2\n")
+        assert "pkg/other.py" not in out.split("\n\n")[0]
+        out = _dispatch_one(
+            {"mode": "refs", "name": "_write", "path": "pkg/other.py"}
+        ).output
+        assert out.splitlines()[0] == (
+            "pkg/other.py:6:11 call _write → _write  @pkg/other.py"
+        )
+
+    def test_path_without_that_definition_says_where_it_is(self, tree):
+        r = _dispatch_one({"mode": "callees", "name": "_write", "path": "user.py"})
+        assert not r.success
+        assert r.error == (
+            '"_write" is not defined in user.py — it is defined in pkg/fsio.py, '
+            "pkg/other.py"
+        )
+        r = _dispatch_one({"mode": "refs", "name": "_write", "path": "nowhere.py"})
+        assert not r.success and "is not a file in the index" in r.error
+
+    def test_slice_takes_the_picked_definition(self, tree):
+        out = _dispatch_one(
+            {"mode": "slice", "name": "_write", "path": "pkg/other.py"}
+        ).output
+        assert "pkg/other.py:1-2" in out and "pkg/fsio.py" not in out
+        out = _dispatch_one({"mode": "slice", "name": "_write"}).output
+        assert "1 more definitions share this name" in out
+
+    def test_slice_says_what_it_did_not_follow(self, tree):
+        out = _dispatch_one(
+            {"mode": "slice", "name": "go", "with_callees": True}
+        ).output
+        assert "_? 1 callee sites on objects of unknown type not followed._" in out
+
+
+class TestPickingReviewCases:
+    """v10.97.0 리뷰 — 규칙 없는 언어의 꼬리 줄·언어로 좁히기, C++ ``::``, `path` 와
+    없는 한정 이름, 모호한 `path`, note 의 수, slice 의 겹친 자리."""
+
+    @pytest.fixture
+    def tree(self, tmp_path, monkeypatch):
+        _write(
+            tmp_path / "c/a.c",
+            "int foo(void) { return 1; }\nint bar(void) { return foo(); }\n",
+        )
+        _write(tmp_path / "web/utils.js", "function foo() { return 1; }\n")
+        _write(tmp_path / "web/main.js", "function run() { return foo(); }\n")
+        _write(
+            tmp_path / "cpp/x.cpp",
+            "namespace outer { namespace ns { int f() { return 1; } } }\n"
+            "int g() { return outer::ns::f(); }\n",
+        )
+        _write(tmp_path / "pkg/__init__.py", "")
+        _write(tmp_path / "app/__init__.py", "")
+        _write(
+            tmp_path / "pkg/core.py",
+            "def helper():\n    return 1\n\n\nclass Box:\n    def get(self):\n"
+            "        return helper()\n\n    def save(self):\n        return helper()\n"
+            "\n\nclass Other:\n    def save(self):\n        return helper()\n",
+        )
+        _write(
+            tmp_path / "app/use.py",
+            "def go(o):\n    o.get()\n    o.save()\n    return o.save()\n\n\nx.get()\n",
+        )
+        monkeypatch.chdir(tmp_path)
+        return tmp_path
+
+    def test_name_only_languages_say_so_once_per_language(self, tree):
+        lines = _dispatch_one({"mode": "refs", "name": "foo"}).output.splitlines()
+        tail = '? = "foo" matched by name only ({} is not scope-resolved) — any of 1'
+        assert lines[-2:] == [
+            tail.format("c") + " definitions",
+            tail.format("javascript") + " definitions",
+        ]
+
+    def test_a_picked_definition_keeps_its_language(self, tree):
+        out = _dispatch_one({"mode": "refs", "name": "utils.foo"}).output
+        assert "c/a.c" not in out and "web/main.js" in out
+        out = _dispatch_one({"mode": "refs", "name": "a.foo"}).output
+        assert "web/" not in out and "c/a.c" in out
+
+    def test_cpp_qualified_suffix(self, tree):
+        from agent_cli.tools.code_index import _ensure_index
+
+        store, _ = _ensure_index()
+        picked = store.definitions("ns::f", fallback=False)
+        assert [d["qualified_name"] for d in picked] == ["outer::ns::f"]
+
+    def test_path_with_a_missing_qualified_name_is_an_error(self, tree):
+        r = _dispatch_one({"mode": "refs", "name": "Nope.get", "path": "pkg/core.py"})
+        assert not r.success and r.error == '"Nope.get" is not defined in pkg/core.py'
+
+    def test_an_ambiguous_path_lists_the_files(self, tree):
+        r = _dispatch_one({"mode": "callers", "name": "helper", "path": "__init__.py"})
+        assert not r.success and r.error == (
+            '`path` "__init__.py" matches several files: app/__init__.py, '
+            "pkg/__init__.py"
+        )
+
+    def test_the_note_counts_what_bare_refs_marks(self, tree):
+        out = _dispatch_one({"mode": "refs", "name": "Box.get"}).output
+        bare = _dispatch_one({"mode": "refs", "name": "get"}).output
+        n = sum(1 for ln in bare.splitlines() if ln.endswith("→ ?"))
+        assert n == 2
+        assert f'? {n} more uses of "get"' in out
+
+    def test_slice_with_path_takes_a_class(self, tree):
+        out = _dispatch_one({"mode": "slice", "name": "Box", "path": "pkg/core.py"})
+        assert out.success and "### Box  (type)  — pkg/core.py:5-" in out.output
+        r = _dispatch_one({"mode": "slice", "name": "Box", "path": "app/use.py"})
+        assert not r.success and r.error == (
+            '"Box" is not defined in app/use.py — it is defined in pkg/core.py'
+        )
+
+    def test_slice_counts_each_unfollowed_site_once(self, tree):
+        out = _dispatch_one(
+            {"mode": "slice", "name": "helper", "with_callers": True, "depth": 2}
+        ).output
+        # o.get() 하나 + o.save() 둘 — save 의 정의가 둘이라 겹쳐 세면 5
+        assert "_? 3 caller sites on objects of unknown type not followed._" in out
+
+
 class TestSlice:
     def test_slice_returns_markdown_blob(self, project):
         r = _dispatch_one({"mode": "slice", "name": "helper"})

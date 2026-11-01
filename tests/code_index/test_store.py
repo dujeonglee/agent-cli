@@ -121,6 +121,45 @@ class TestResolutionQueries:
         assert len(store.function_definitions("process")) == 2  # 맨 이름은 둘 다
         assert store.function_definitions("no_such_name") == []
 
+    def test_module_qualified_names(self, tmp_path):
+        """v10.97.0 — 파일 경로를 모듈 이름으로 읽어 ``모듈.한정 이름`` 의 끝이 맞는 것."""
+        from agent_cli.code_index import build, load_index
+        from agent_cli.code_index.store import _module_of
+
+        for rel, body in {
+            "pkg/__init__.py": "def init_fn():\n    pass\n",
+            "pkg/fsio.py": "def _write():\n    pass\n\n\nclass Box:\n"
+            "    def get(self):\n        pass\n\n\nclass Other:\n"
+            "    def get(self):\n        pass\n",
+            "pkg/other.py": "def _write():\n    pass\n\n\ndef deep():\n    pass\n",
+            "pkg/nested.py": "def outer():\n    def deep():\n        pass\n",
+        }.items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(body)
+        build(tmp_path, tmp_path / "x.db", defs_path=None, verbose=False)
+        store = load_index(tmp_path / "x.db")
+
+        def files(name, **kw):
+            return [d["file"] for d in store.definitions(name, **kw)]
+
+        assert files("_write") == ["pkg/fsio.py", "pkg/other.py"]
+        assert files("fsio._write") == ["pkg/fsio.py"]
+        assert files("pkg.other._write") == ["pkg/other.py"]
+        # 한 모듈에 같은 이름 메서드가 둘 — 모듈 + 한정 이름이 하나를 고른다
+        assert [d["qualified_name"] for d in store.definitions("fsio.Box.get")] == [
+            "Box.get"
+        ]
+        assert files("pkg.init_fn") == ["pkg/__init__.py"]
+        # 모듈만 쓰고 감싼 함수는 건너뛴 이름
+        assert files("nested.deep") == ["pkg/nested.py"]
+        assert files("pkg.fsio.get") == ["pkg/fsio.py", "pkg/fsio.py"]
+        assert files("_write", file="pkg/other.py") == ["pkg/other.py"]
+        # 맞는 모듈이 없으면 마지막 조각으로 넓힌다 — 넓히지 말라면 빈 목록
+        assert len(files("nowhere._write")) == 2
+        assert files("nowhere._write", fallback=False) == []
+        assert files("sio._write") == ["pkg/fsio.py", "pkg/other.py"]  # 점 경계만
+        assert _module_of("a/b/c.py") == "a.b.c" and _module_of("a/__init__.py") == "a"
+
     def test_refs_to_and_refs_in_functions(self, python_index):
         store, _, _ = python_index
         (helper,) = store.function_definitions("helper")
