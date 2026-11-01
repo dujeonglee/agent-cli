@@ -25,6 +25,21 @@ Kinds
     call       invocation site (`X(...)` form)
     name       bare identifier mention (callback, function pointer, macro arg)
     type       identifier in type position (var/param type, generic arg)
+    registration  a function stored into a table of function pointers
+               (C `.probe = foo_probe`) — reserved in v4, emitted by the C
+               scope rules (docs/code-index/DESIGN.md §21)
+
+Name resolution (v10.96.0, schema v4, docs/code-index/DESIGN.md §21)
+--------------------------------------------------------------------
+
+Every ref is resolved once at build time and the result is stored:
+`RESOLUTIONS` — `resolved` (one indexed definition, `refs.target_id`),
+`local` (a parameter, local variable, class attribute … — not an edge),
+`candidates` (matched by name only; the count is taken at query time),
+`external` (builtins, modules outside the index, no indexed definition of
+that name), `unresolved` (no binding found — usually a parse error). The
+scope tree (`scopes`) and what each scope binds (`bindings`) are stored so
+the resolution of one file can be redone from the tables alone.
 
 The split exists because the same defined symbol can appear at multiple
 ref sites with different roles, and queries like "who *calls* this"
@@ -47,7 +62,11 @@ from dataclasses import dataclass, field
 #     '::', C is flat → equals name). Tool handlers query this column
 #     first and fall back to `name` for bare-leaf inputs. See
 #     docs/code-index/DESIGN.md for the rationale.
-SCHEMA_VERSION = 3  # v10.93.0: files.mtime_ns
+# v3: files.mtime_ns (v10.93.0).
+# v4: scopes · bindings · resolve_deps tables, refs.scope_id/fn_symbol_id/object/target_id/
+#     resolution, symbols.bases; symbols.params dropped (parameters are
+#     bindings now). Symbol ids survive incremental builds (v10.96.0).
+SCHEMA_VERSION = 4
 
 # Closed set of values for `symbols.kind`. Adding to this set is an
 # intentional design decision (e.g. adding 'section' for markdown) and
@@ -69,7 +88,16 @@ CODE_NAME_KINDS: frozenset[str] = NAME_KINDS - {"section"}
 # Closed set of values for `refs.kind`. See module docstring for
 # semantics. Unlike NAME_KINDS this has not changed from the upstream
 # tsindex schema.
-REF_KINDS: frozenset[str] = frozenset({"call", "name", "type"})
+REF_KINDS: frozenset[str] = frozenset({"call", "name", "type", "registration"})
+
+#: `refs.resolution` 의 값 (v10.96.0, DESIGN §21).
+RESOLUTIONS: frozenset[str] = frozenset(
+    {"resolved", "local", "candidates", "external", "unresolved"}
+)
+
+#: 범위 규칙이 있는 언어 — 나머지는 함수 범위·인자만 알고 참조는 이름으로만 맞춘다
+#: (`candidates`). 언어가 규칙을 얻으면 여기에 더한다.
+SCOPE_RESOLVED_LANGUAGES: frozenset[str] = frozenset({"python"})
 
 
 @dataclass
@@ -102,7 +130,11 @@ class Symbol:
     signature: str | None = None
     return_type: str | None = None
     enum_values: list[str] | None = None
+    # Parameter names — not stored as a column since v4; the builder turns them
+    # into `param` bindings of the function's scope.
     params: list[str] | None = field(default=None)
+    # Base-class expressions as written (Python `class K(a.B, C)` → ["a.B", "C"]).
+    bases: list[str] | None = None
 
     # Full display form — what `list` output shows and what the model
     # most naturally passes back. For symbols WITHOUT a parent this
@@ -134,3 +166,38 @@ class Ref:
     line: int
     col: int
     language: str
+    # v4: the innermost scope the ref sits in (an index into the walker's scope
+    # list for that file), and for `obj.m()` the object chain text ("a.b",
+    # "<expr>" when it is not a plain name/attribute chain).
+    scope: int | None = None
+    object: str | None = None
+
+
+@dataclass
+class Scope:
+    """A lexical scope found by a walker (v4). ``parent`` and the ids are
+    indexes into the walker's list for one file; the builder turns them into
+    table ids. ``def_line``/``def_name`` name the definition that owns the
+    scope (a function or class), so the builder can link ``scopes.symbol_id``
+    to the symbol Pass-1 emitted on that line."""
+
+    kind: str  # module | class | function | comprehension | block
+    start_line: int
+    end_line: int
+    parent: int | None = None
+    def_line: int | None = None
+    def_name: str | None = None
+
+
+@dataclass
+class Binding:
+    """A name bound in a scope (v4). ``kind`` ∈ param | local | import | def |
+    class | global | nonlocal. Imports keep the module text and, for
+    ``from m import x``, the imported name (``"*"`` for a star import)."""
+
+    scope: int
+    name: str
+    kind: str
+    line: int
+    import_module: str | None = None
+    import_name: str | None = None

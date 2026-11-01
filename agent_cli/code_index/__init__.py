@@ -6,8 +6,9 @@ Public API (re-exported here):
 
     build(root, out_path, ...)        # incremental SQLite index builder
     load_index(path) -> IndexStore    # open an existing index for queries
-    callers_of(store, name) -> Edges  # one node's callers (SQL, v10.94.0)
-    callees_of(store, name) -> Edges  # one node's callees
+    definitions_named(store, name)    # function definitions of a name
+    callers_of(store, definition)     # Edges from the stored resolution (v10.96.0)
+    callees_of(store, definition)
     cmd_slice(idx, name, ...)         # LLM-context markdown blob renderer
 
 Lower-level modules:
@@ -17,7 +18,8 @@ Lower-level modules:
     preproc     — C/C++ unifdef driver + rewrite chain (PR-1.c)
     store       — IndexStore (SQLite reader + query methods) (PR-1.c)
     builder     — build() implementation (Pass-1 / Pass-2 / incremental) (PR-1.c)
-    callgraph   — callers_of()/callees_of() + helpers (v10.94.0: per name)
+    callgraph   — callers_of()/callees_of() on the stored resolution (v10.96.0)
+    resolve     — scopes/bindings → refs.resolution at build time (v10.96.0)
     slice       — cmd_slice() (PR-1.c)
 
 The `code_index` *tool* (agent_cli/tools/code_index.py) wraps this package
@@ -30,7 +32,13 @@ contract.
 """
 
 from agent_cli.code_index.builder import build
-from agent_cli.code_index.callgraph import Edges, callees_of, callers_of
+from agent_cli.code_index.callgraph import (
+    Edges,
+    Neighbor,
+    callees_of,
+    callers_of,
+    definitions_named,
+)
 from agent_cli.code_index.schema import (
     CODE_NAME_KINDS,
     NAME_KINDS,
@@ -49,11 +57,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "Edges",
     "IndexStore",
+    "Neighbor",
     "Ref",
     "Symbol",
     "build",
     "callees_of",
     "callers_of",
     "cmd_slice",
+    "definitions_named",
     "load_index",
 ]

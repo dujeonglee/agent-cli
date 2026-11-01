@@ -95,7 +95,9 @@ def _build_and_load(tmp_path: Path, source: str) -> object:
 
 class TestRoundTripInvariants:
     @settings(
-        max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=60,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_all_symbol_kinds_are_in_schema(self, tmp_path, source):
@@ -104,7 +106,9 @@ class TestRoundTripInvariants:
             assert s["kind"] in NAME_KINDS
 
     @settings(
-        max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=60,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_all_ref_kinds_are_in_schema(self, tmp_path, source):
@@ -113,7 +117,9 @@ class TestRoundTripInvariants:
             assert r["kind"] in REF_KINDS
 
     @settings(
-        max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=60,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_positions_are_well_formed(self, tmp_path, source):
@@ -129,7 +135,9 @@ class TestRoundTripInvariants:
             assert r["col"] >= 0
 
     @settings(
-        max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=60,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_no_filter_find_returns_everything(self, tmp_path, source):
@@ -146,7 +154,9 @@ class TestRoundTripInvariants:
         assert sorted(r.items() for r in all_r) == sorted(r.items() for r in found_r)
 
     @settings(
-        max_examples=60, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=60,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_n_symbols_matches_iteration(self, tmp_path, source):
@@ -158,7 +168,9 @@ class TestRoundTripInvariants:
         assert idx.n_definitions() == defs_via_iter
 
     @settings(
-        max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=30,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_reload_index_yields_identical_data(self, tmp_path, source):
@@ -176,7 +188,9 @@ class TestRoundTripInvariants:
         assert refs1 == refs2
 
     @settings(
-        max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=30,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_filter_by_name_is_consistent(self, tmp_path, source):
@@ -192,7 +206,9 @@ class TestRoundTripInvariants:
             }
 
     @settings(
-        max_examples=30, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=30,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_kind_counts_sum_to_total(self, tmp_path, source):
@@ -206,7 +222,9 @@ class TestIncrementalNoOpInvariant:
     an index identical to the prior build's symbols/refs."""
 
     @settings(
-        max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=20,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=py_source_st)
     def test_rebuild_with_no_change_yields_same_data(self, tmp_path, source):

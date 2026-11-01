@@ -59,7 +59,7 @@ class TestFullBuild:
         _write(tmp_path / "a.py", "x = 1\n")
         idx = _build(tmp_path, tmp_path / ".db")
         assert idx.meta["root"] == str(tmp_path.resolve())
-        assert idx.meta["schema_version"] == 3
+        assert idx.meta["schema_version"] == 4
 
     def test_unsupported_extension_is_ignored(self, tmp_path):
         _write(tmp_path / "data.txt", "not a source file\n")
@@ -210,10 +210,11 @@ class TestStatFirstRefresh:
         def rows(rs):
             return sorted((r["file"], r["line"], r["kind"]) for r in rs)
 
-        # 정의되기 전엔 call 하나, 정의된 뒤엔 name 참조가 더해진다 — 영향 파일의
-        # Pass 2 가 다시 돌았고, 복사 + 재생성으로 겹친 행은 없다
-        assert rows(before) == [("a.py", 2, "call")]
-        assert rows(refs) == [("a.py", 2, "call"), ("a.py", 2, "name")]
+        # 영향 파일의 Pass 2 가 다시 돌았고, 복사 + 재생성으로 겹친 행은 없다.
+        # v10.96.0: 호출 자리는 call 하나(이름 참조를 겹쳐 내지 않는다), 그리고 a.py
+        # 에서 `later` 는 import 되지 않았으니 여전히 묶이지 않은 이름이다.
+        assert rows(before) == rows(refs) == [("a.py", 2, "call")]
+        assert [r["resolution"] for r in refs] == ["unresolved"]
 
     def test_removed_file_is_counted_and_gone(self, tmp_path):
         _write(tmp_path / "a.py", "def alpha():\n    pass\n")
@@ -248,7 +249,7 @@ class TestInvalidation:
         # symbol names — proves the symbols are re-extracted, not reused.
         _write(tmp_path / "a.py", "def alpha2():\n    pass\n")
         idx = _build(tmp_path, tmp_path / ".db")
-        assert idx.meta["schema_version"] == 3
+        assert idx.meta["schema_version"] == 4
         assert {s["name"] for s in idx.all_symbols()} == {"alpha2"}
 
     def test_root_mismatch_forces_full_rebuild(self, tmp_path):

@@ -227,6 +227,59 @@ class TestCallgraph:
         assert r.output.startswith('No indexed function calls "run" among the ')
 
 
+class TestCallgraphOutput:
+    """v10.96.0 — 정의마다 머리, 해석된 이웃 줄, 타입 모를 객체는 ``?`` 줄."""
+
+    @pytest.fixture
+    def tree(self, tmp_path, monkeypatch):
+        _write(
+            tmp_path / "a.py",
+            "def get():\n    return 1\n\n\nclass Box:\n    def get(self):\n"
+            "        return 2\n\n    def use(self):\n        return self.get()\n",
+        )
+        _write(
+            tmp_path / "b.py",
+            "from a import get\n\n\ndef caller(obj):\n    get()\n"
+            "    return obj.get()\n",
+        )
+        _write(
+            tmp_path / "c.js",
+            "function shared() { return 1; }\nfunction usesIt() { return shared(); }\n",
+        )
+        monkeypatch.chdir(tmp_path)
+        return tmp_path
+
+    def test_each_definition_is_a_section_and_unknown_calls_are_marked(self, tree):
+        out = _dispatch_one({"mode": "callers", "name": "get"}).output
+        assert out == (
+            "get — a.py:1-2\n"
+            "caller  (1×)  b.py:5\n\n"
+            "Box.get — a.py:6-7\n"
+            "Box.use  (1×)  a.py:10\n\n"
+            '? "get" on an object of unknown type — any of 2 definitions:  b.py:6'
+        )
+
+    def test_a_qualified_name_picks_one_definition(self, tree):
+        out = _dispatch_one({"mode": "callers", "name": "Box.get"}).output
+        assert out.startswith("Box.get — a.py:6-7\nBox.use  (1×)  a.py:10")
+        assert "\ncaller " not in out
+
+    def test_callees_mark_unknown_type_calls(self, tree):
+        out = _dispatch_one({"mode": "callees", "name": "caller"}).output
+        assert out == (
+            "caller — b.py:4-6\n"
+            "get  (1×)  b.py:5\n"
+            "? get  (1×, any of 2 definitions)  b.py:6"
+        )
+
+    def test_languages_without_scope_rules_say_so(self, tree):
+        out = _dispatch_one({"mode": "callers", "name": "shared"}).output
+        assert out == (
+            "shared — c.js:1-1, matched by name only (javascript is not "
+            "scope-resolved)\nusesIt  (1×)  c.js:2"
+        )
+
+
 class TestSlice:
     def test_slice_returns_markdown_blob(self, project):
         r = _dispatch_one({"mode": "slice", "name": "helper"})

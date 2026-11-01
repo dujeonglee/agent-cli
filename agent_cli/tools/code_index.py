@@ -41,6 +41,7 @@ from agent_cli.code_index import (
     callees_of,
     callers_of,
     cmd_slice,
+    definitions_named,
     load_index,
 )
 from agent_cli.code_index.builder import get_parser
@@ -557,45 +558,113 @@ def _do_refs(action_input: dict) -> ToolResult:
     return ToolResult(True, output="\n".join(_format_ref_line(r) for r in refs_sorted))
 
 
-def _format_edges(edges) -> str:
-    """이웃마다 한 줄 ``name  (N×)  file:line, …`` — 횟수 많은 순, 같으면 이름 순,
-    사이트는 앞 5개."""
+#: 정의가 여럿인 이름에서 보여 주는 정의 수.
+_MAX_DEFINITIONS = 5
+
+
+def _sites(sites: list) -> str:
+    out = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
+    if len(sites) > 5:
+        out += f", … ({len(sites)} total)"
+    return out
+
+
+def _header(edges) -> str:
+    d = edges.definitions[0]
+    if edges.by_name_only:
+        where = (
+            f"{d['file']}:{d['line']}-{d['end_line']}"
+            if len(edges.definitions) == 1
+            else f"any of {len(edges.definitions)} definitions"
+        )
+        return (
+            f"{d['name']} — {where}, matched by name only "
+            f"({edges.language} is not scope-resolved)"
+        )
+    return f"{d['qualified_name']} — {d['file']}:{d['line']}-{d['end_line']}"
+
+
+def _neighbor_lines(edges) -> list[str]:
+    """이웃마다 한 줄 ``name  (N×)  file:line, …`` — 해석된 것 먼저(횟수 많은 순, 같으면
+    이름 순), 이름으로만 맞춘 것은 ``?`` 와 정의 수를 단다."""
     lines = []
-    for other, count in sorted(edges.counts.items(), key=lambda kv: (-kv[1], kv[0])):
-        sites = edges.sites[other]
-        site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
-        if len(sites) > 5:
-            site_str += f", … ({len(sites)} total)"
-        lines.append(f"{other}  ({count}×)  {site_str}")
-    return "\n".join(lines)
+    known = [
+        n for n in edges.neighbors if n.symbol_id is not None or edges.by_name_only
+    ]
+    guessed = [
+        n for n in edges.neighbors if n.symbol_id is None and not edges.by_name_only
+    ]
+    for n in sorted(known, key=lambda n: (-n.count, n.label)):
+        lines.append(f"{n.label}  ({n.count}×)  {_sites(n.sites)}")
+    for n in sorted(guessed, key=lambda n: (-n.count, n.label)):
+        lines.append(
+            f"? {n.label}  ({n.count}×, any of {n.n_definitions} definitions)  "
+            f"{_sites(n.sites)}"
+        )
+    return lines
+
+
+def _edges_text(store, defs: list[dict], query) -> tuple[str, bool]:
+    """``(text, any_edge)`` — 정의마다 머리 + 이웃 줄. 이름으로만 맞추는 언어는 그
+    언어의 정의들을 한 덩어리로."""
+    from agent_cli.code_index.schema import SCOPE_RESOLVED_LANGUAGES
+
+    groups: list[dict] = []
+    seen_langs: set[str] = set()
+    for d in defs:
+        if d["language"] in SCOPE_RESOLVED_LANGUAGES:
+            groups.append(d)
+        elif d["language"] not in seen_langs:
+            seen_langs.add(d["language"])
+            groups.append(d)
+    blocks: list[str] = []
+    any_edge = False
+    unknown_line = None
+    for d in groups[:_MAX_DEFINITIONS]:
+        edges = query(store, d)
+        lines = _neighbor_lines(edges)
+        any_edge = any_edge or bool(lines)
+        block = [_header(edges), *(lines or ["(none)"])]
+        blocks.append("\n".join(block))
+        if edges.unknown_sites and unknown_line is None:
+            any_edge = True
+            unknown_line = (
+                f'? "{d["name"]}" on an object of unknown type — any of '
+                f"{edges.unknown_definitions} definitions:  {_sites(edges.unknown_sites)}"
+            )
+    text = "\n\n".join(blocks)
+    if len(groups) > _MAX_DEFINITIONS:
+        text += (
+            f"\n\n… {len(groups) - _MAX_DEFINITIONS} more definitions share this name"
+            ' — "lookup" lists them; the qualified name picks one.'
+        )
+    if unknown_line:
+        text += "\n\n" + unknown_line
+    return text, any_edge
 
 
 def _do_callers(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     store, root = _ensure_index()
-    # Callgraph nodes are bare names (refs are bare-name). Resolve
-    # qualified → bare via the symbols table.
-    syms = _resolve_symbol(store, name)
-    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
-    edges = callers_of(store, bare)
-    if not edges.counts:
+    defs = definitions_named(store, _normalize_markdown_name(name))
+    text, any_edge = _edges_text(store, defs, callers_of) if defs else ("", False)
+    if not any_edge:
         return ToolResult(
             True, output=_no_match(store, root, f'No indexed function calls "{name}"')
         )
-    return ToolResult(True, output=_format_edges(edges))
+    return ToolResult(True, output=text)
 
 
 def _do_callees(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     store, root = _ensure_index()
-    syms = _resolve_symbol(store, name)
-    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
-    edges = callees_of(store, bare)
-    if not edges.counts:
+    defs = definitions_named(store, _normalize_markdown_name(name))
+    text, any_edge = _edges_text(store, defs, callees_of) if defs else ("", False)
+    if not any_edge:
         return ToolResult(
             True, output=_no_match(store, root, f'"{name}" calls no indexed function')
         )
-    return ToolResult(True, output=_format_edges(edges))
+    return ToolResult(True, output=text)
 
 
 def _do_slice(action_input: dict) -> ToolResult:
@@ -699,7 +768,10 @@ class CodeIndexTool(Tool):
                     'in the project; `search` narrows. "file": every symbol defined in '
                     'one file (`path`). "refs": every place `name` is used; `ref_kind` '
                     'narrows. "callers" and "callees": the functions that call `name`, '
-                    'or that `name` calls. "slice": the body of `name` together with '
+                    "or that `name` calls, under a heading per definition of `name`; a "
+                    'line starting with "?" is a call on an object of unknown type, '
+                    "which may reach any of the definitions it counts. "
+                    '"slice": the body of `name` together with '
                     "its neighbours — `with_callees`, `with_callers`, `with_types`, "
                     '`with_macros` — to `depth`. "list" and "fetch" read any file; the '
                     "other modes see only files under the project root."
@@ -713,7 +785,8 @@ class CodeIndexTool(Tool):
                 "type": "string",
                 "description": (
                     'Symbol name as "list" or "lookup" shows it, for "fetch", "lookup", '
-                    '"refs", "callers", "callees" and "slice".'
+                    '"refs", "callers", "callees" and "slice". A qualified name picks '
+                    "one definition when several share the name."
                 ),
             },
             "symbol_kind": {

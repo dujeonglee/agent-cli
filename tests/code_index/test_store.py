@@ -1,7 +1,7 @@
 """Tests for IndexStore query API correctness (DESIGN §12.3).
 
 Covers the filter combinations on ``find_symbols`` / ``find_refs``,
-the per-name call-graph queries (v10.94.0), ``normalize_file_path``
+the call-graph queries on the stored resolution (v10.96.0), ``normalize_file_path``
 across exact / absolute / bare-basename / suffix / ambiguous shapes
 (using the ``nested/`` multi-file fixture), and the aggregate accessors
 ``kind_counts`` / ``ref_kind_counts`` / ``top_ref_names`` /
@@ -109,64 +109,62 @@ class TestFindRefs:
         assert len(all_refs) == store.n_refs()
 
 
-class TestPerNameCallGraphQueries:
-    """v10.94.0 — callers_of/callees_of 가 쓰는 좁은 질의들."""
+class TestResolutionQueries:
+    """v10.96.0 — callers_of/callees_of 가 쓰는 질의(저장된 이름 해석 위에서)."""
 
-    def test_call_sites_in_range_stays_in_the_window(self, python_index):
-        store, by_name, _ = python_index
-        process = next(s for s in by_name["process"] if s.get("modifiers") == ["async"])
-        sites = store.call_sites_in_range(
-            process["file"], process["line"], process["end_line"]
-        )
-        assert sites
-        assert all(
-            process["line"] <= line <= process["end_line"] for _i, _n, line, _k in sites
-        )
-        assert {k for *_rest, k in sites} <= {"call", "name"}
-        assert [i for i, *_ in sites] == sorted(i for i, *_ in sites)
-        assert store.call_sites_in_range("app.py", 10_000, 20_000) == []
-
-    def test_call_sites_by_name_is_in_id_order(self, python_index):
+    def test_function_definitions_bare_is_all_qualified_is_one(self, python_index):
         store, _, _ = python_index
-        sites = store.call_sites_by_name("helper")
-        assert sites and [i for i, *_ in sites] == sorted(i for i, *_ in sites)
-        assert store.call_sites_by_name("no_such_name") == []
+        defs = store.function_definitions("helper")
+        assert defs and all(d["kind"] == "function" and "id" in d for d in defs)
+        method = store.function_definitions("DerivedService.process")
+        assert [d["qualified_name"] for d in method] == ["DerivedService.process"]
+        assert len(store.function_definitions("process")) == 2  # 맨 이름은 둘 다
+        assert store.function_definitions("no_such_name") == []
 
-    def test_function_lookups(self, python_index):
+    def test_refs_to_and_refs_in_functions(self, python_index):
         store, _, _ = python_index
-        assert store.is_function_name("helper")
-        assert not store.is_function_name("no_such_name")
-        assert store.function_defs("helper")
-        assert store.function_defs("no_such_name") == []
-        file = store.function_defs("helper")[0][0]
-        ranges = store.function_ranges_in_file(file)
-        assert ranges and all(r["kind"] == "function" for r in ranges)
-        assert {"helper"} <= {r["name"] for r in ranges}
+        (helper,) = store.function_definitions("helper")
+        sites = store.refs_to(helper["id"])
+        assert sites and all(fn is not None for fn, *_ in sites)
+        callers = store.symbols_by_id({fn for fn, *_ in sites})
+        assert {name for _qn, name, _f in callers.values()} == {"process"}
+        inside = store.refs_in_functions({fn for fn, *_ in sites})
+        assert any(r[4] == "resolved" and r[5] == helper["id"] for r in inside)
 
-    def test_function_names_among_crosses_the_chunk_boundary(self, python_index):
+    def test_definition_count_is_per_language(self, python_index):
         store, _, _ = python_index
-        names = [f"zz{i}" for i in range(1200)] + ["helper", "process"]
-        assert store.function_names_among(names) == {"helper", "process"}
-        assert store.function_names_among([]) == set()
+        assert store.definition_count("helper", "python") == 1
+        assert store.definition_count("helper", "rust") == 0
 
-    def test_order_survives_an_incremental_build(self, tmp_path):
-        """증분 빌드는 옛 행을 복사한 뒤 새 행을 붙인다 — id 순은 파일 순이 아니다."""
+    def test_ids_survive_an_incremental_build(self, tmp_path):
+        """기호 id 가 빌드를 넘어 같아야 다른 파일의 해석 결과가 맞다."""
         from agent_cli.code_index import build, load_index
 
-        (tmp_path / "a.py").write_text("def a():\n    t()\n")
-        (tmp_path / "b.py").write_text("def t():\n    pass\n\n\ndef b():\n    t()\n")
+        (tmp_path / "a.py").write_text("def t():\n    pass\n")
+        (tmp_path / "b.py").write_text("from a import t\n\n\ndef b():\n    t()\n")
         db = tmp_path / ".db"
         build(tmp_path, db, defs_path=None, verbose=False)
-        (tmp_path / "a.py").write_text("def a():\n    t()\n    t()\n")
+        (before,) = load_index(db).function_definitions("t")
+        (tmp_path / "a.py").write_text("# moved down\n\n\ndef t():\n    pass\n")
         build(tmp_path, db, defs_path=None, verbose=False)
-        files = [f for _i, f, _l, _k in load_index(db).call_sites_by_name("t")]
-        assert files[0] == "b.py" and files[-1] == "a.py"
+        store = load_index(db)
+        (after,) = store.function_definitions("t")
+        assert after["id"] == before["id"] and after["line"] == 4
+        assert [fn for fn, *_ in store.refs_to(after["id"])] == [
+            store.function_definitions("b")[0]["id"]
+        ]
 
     @pytest.mark.parametrize(
         "query",
         [
-            "SELECT 1 FROM symbols WHERE name = 'x' AND +kind = 'function' LIMIT 1",
-            "SELECT * FROM symbols WHERE name = 'x' AND +kind = 'function'",
+            (
+                "SELECT * FROM symbols WHERE name = 'x' AND +kind = 'function' "
+                "AND is_definition = 1"
+            ),
+            (
+                "SELECT COUNT(*) FROM symbols WHERE name = 'x' AND +kind = 'function' "
+                "AND is_definition = 1 AND +language = 'python'"
+            ),
         ],
     )
     def test_name_queries_use_the_name_index(self, python_index, query):

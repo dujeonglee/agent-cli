@@ -39,10 +39,14 @@
 - [x] `snapshot`·`history`·`memory` 검토 — snapshot 수리 v10.80.0, memory·history v10.81.0; 압축 요약 꼬리(PR C, 측정 뒤) 남음
 - [ ] `history` 로 큰 관찰의 **중간**을 뽑는 길 — PR C 측정의 부수 발견(12/12 런이 `substr(text,1,N)` 만 씀). 후보: help 예시에 `substr(text, instr(text,'…'), 200)` 한 줄, 또는 `loc` + 오프셋 인자. 측정은 같은 런처로.
 - [x] 내장 에이전트·스킬 **본문**의 대문자 강조 — 사용자 결정(2026-10-30)으로 본문 43곳 소문자화 + 가드가 파일도 읽음(`test_no_caps_emphasis_in_builtin_bodies`, docs/prompt-notation/DESIGN.md 가드 절)
+- [x] `code_index` 이름 해석을 색인에(B안 PR-1, v10.96.0) — Python 범위 규칙·import 따라가기·정의 단위 callers/callees·`?` 줄, jedi 대조 1,000 자리 resolved 457/457 일치. DESIGN §21
+- [ ] `code_index` B안 PR-2(v10.97.0) — `refs` 해석 태그, `path` 로 정의 고르기 / PR-3(v10.98.0) C 범위 규칙 / 이후 JS/TS·Go·Rust(언어마다 공개 저장소 + 언어 서버로 대조), Java·C++ 는 언어 서버 백엔드
+- [ ] `complete` 의 `result` 가 사용자에게 마크다운으로 렌더링돼 보인다는 것을 모델에게 알리는 문장 한 줄(사용자 요청 2026-11-01) — 자리(도구 설명 vs `result` 인자 설명)와 표기 규칙 확인 후 별도 PR
+- [ ] `browser` 가 `file://` 주소를 열게 — 지금은 "browser: refused: only http(s) URLs can be opened (got file scheme)" 로 거절(사용자 요청 2026-11-01). 로컬 HTML·보고서를 보는 길; 작업 디렉터리 안 경로만 허용할지(`_confine` 과 같은 규칙) 검토와 함께
 - [ ] 남은 도구 검토: `run_skill` → `browser`·`schedule` 순 (`code_index`·`fetch` 는 v10.92.0 구현 완료)
 - [x] `code_index` callers·callees 이름 단위 질의(v10.94.0) — 전체 콜그래프 구성 제거, 출력 동일, 1.4~1.6 s → 이름당 0.3 ms·최악 ~90 ms. docs/code-index/DESIGN.md §19
 - [x] `code_index` `containing_fn` 결함(§19 D4, v10.95.0) — 가장 안쪽 함수 규칙·부모 포인터, Python 만, 잃는 간선 0, django callers 답 6.0%·callees 4.0% 이름에서 호출이 늘어남. docs/code-index/DESIGN.md §20
-- [ ] `code_index` 인자 가림을 감싼 함수 체인의 합집합으로 — 클로저가 잡은 바깥 인자가 같은 이름 함수로의 거짓 간선(django 61 쌍·agent-cli 81 쌍; 측정 스크립트 스크래치 `d4/measure.py` B 열)
+- [x] (v10.96.0 B안으로 닫음 — 범위·바인딩 저장, DESIGN §21) `code_index` 인자 가림을 감싼 함수 체인의 합집합으로 — 클로저가 잡은 바깥 인자가 같은 이름 함수로의 거짓 간선(django 61 쌍·agent-cli 81 쌍; 측정 스크립트 스크래치 `d4/measure.py` B 열)
 - [x] `code_index` slice 의 나머지 전체 로드(§19 D6, v10.94.1) — 이름·범위 질의, 이름당 8~9 ms, 출력 동일. docs/code-index/DESIGN.md §19.1
 - [x] `code_index` 색인 갱신 조기 종료(D3, v10.93.0) — stat 선행·변경 없으면 무쓰기·바뀐 파일만 파싱하고 나머지 행은 SQL 복사: 4.0 s → 0.35 s(변경 없음)·1.25 s(한 파일, django). docs/code-index/DESIGN.md §18
 - [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`

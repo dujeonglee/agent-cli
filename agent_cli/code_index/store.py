@@ -6,9 +6,9 @@
 `agent_cli.code_index.builder.build`) and exposes both dict-style
 access (`idx['symbols']`, `idx['root']`) and indexed-lookup methods
 (`find_symbols(name=...)`, `find_refs(...)`) that exploit the SQL secondary
-indexes, plus the per-name call-graph queries (`call_sites_by_name`,
-`call_sites_in_range`, `function_ranges_in_file`, … — v10.94.0) that
-`callgraph.callers_of`/`callees_of` use instead of loading every row.
+indexes, plus the call-graph queries on the stored name resolution
+(`refs_to`, `refs_in_functions`, `candidate_refs`, … — v10.96.0) that
+`callgraph.callers_of`/`callees_of` use.
 
 `load_index(path)` is the convenience constructor used by callers that
 don't need to think about the class name.
@@ -56,7 +56,7 @@ class IndexStore:
         d["enum_values"] = (
             json.loads(d["enum_values"]) if d.get("enum_values") else None
         )
-        d["params"] = json.loads(d["params"]) if d.get("params") else None
+        d["bases"] = json.loads(d["bases"]) if d.get("bases") else None
         return d
 
     @staticmethod
@@ -212,61 +212,109 @@ class IndexStore:
             q += " WHERE " + " AND ".join(clauses)
         return [self._ref_row(r) for r in self._conn.execute(q, params)]
 
-    # ----- per-name call graph (v10.94.0, docs/code-index/DESIGN.md §19) -----
-    # 가벼운 튜플·좁은 열 — `_sym_row`/`_ref_row` 의 dict 변환을 피한다. 순서는
-    # 전부 ``ORDER BY id``: 콜그래프의 사이트·이웃 순서는 참조 id 순이고, 증분 빌드는
-    # 옛 행을 복사한 뒤 새 행을 붙이므로 파일 순이 아니다. ``+kind`` 는 find_symbols
-    # 와 같은 planner 함정 때문.
+    # ----- call graph on the stored resolution (v10.96.0, DESIGN §21) -----
+    # 가벼운 튜플·좁은 열. 순서는 전부 ``ORDER BY id`` — 사이트·이웃 순서는 참조 id
+    # 순이다. ``+kind`` 는 find_symbols 와 같은 planner 함정(통계 없이 kind 인덱스를
+    # 고른다) 때문.
 
-    def function_defs(self, name: str) -> list[tuple[str, int, int]]:
-        """이름이 ``name`` 인 함수 **정의**의 ``(file, line, end_line)``."""
-        return list(
-            self._conn.execute(
-                "SELECT file, line, end_line FROM symbols WHERE name = ? "
-                "AND +kind = 'function' AND is_definition = 1 ORDER BY id",
-                (name,),
+    def _defs(self, where: str, params: tuple) -> list[dict]:
+        out = []
+        for r in self._conn.execute(
+            f"SELECT * FROM symbols WHERE {where} AND +kind = 'function' "
+            "AND is_definition = 1 ORDER BY id",
+            params,
+        ):
+            d = self._sym_row(r)
+            d["id"] = r["id"]
+            out.append(d)
+        return out
+
+    def function_definitions(self, name: str) -> list[dict]:
+        """맨 이름이면 그 이름의 함수 정의 전부, 한정 이름(``Box.get``·``ns::f``)이면
+        그것 — 없으면 마지막 조각의 맨 이름으로."""
+        if "." in name or "::" in name:
+            return self._defs("qualified_name = ?", (name,)) or self._defs(
+                "name = ?", (name.replace("::", ".").rsplit(".", 1)[-1],)
             )
-        )
+        return self._defs("name = ?", (name,))
 
-    def function_ranges_in_file(self, file: str) -> list[dict]:
-        """그 파일의 함수 정의 — `callgraph.build_fn_ranges` 가 읽는 키만 든 dict."""
-        return [
-            {
-                "kind": "function",
-                "is_definition": True,
-                "file": file,
-                "name": r[0],
-                "line": r[1],
-                "end_line": r[2],
-                "params": json.loads(r[3]) if r[3] else None,
-            }
+    def function_definitions_exact(self, name: str, language: str) -> list[dict]:
+        """맨 이름·언어가 같은 함수 정의 전부 — 이름으로만 맞추는 언어의 한 노드."""
+        return self._defs("name = ? AND +language = ?", (name, language))
+
+    def definition_count(self, name: str, language: str) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM symbols WHERE name = ? AND +kind = 'function' "
+            "AND is_definition = 1 AND +language = ?",
+            (name, language),
+        ).fetchone()[0]
+
+    def symbols_by_id(self, ids) -> dict[int, tuple[str, str, str]]:
+        """``{id: (qualified_name, name, file)}``."""
+        ids = list(dict.fromkeys(ids))
+        out: dict[int, tuple[str, str, str]] = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            marks = ",".join("?" for _ in chunk)
             for r in self._conn.execute(
-                "SELECT name, line, end_line, params FROM symbols WHERE file = ? "
-                "AND +kind = 'function' AND is_definition = 1 ORDER BY id",
-                (file,),
-            )
-        ]
+                f"SELECT id, qualified_name, name, file FROM symbols WHERE id IN ({marks})",
+                chunk,
+            ):
+                out[r[0]] = (r[1], r[2], r[3])
+        return out
 
-    def is_function_name(self, name: str) -> bool:
-        """``name`` 이 함수(정의·선언)로 색인돼 있다."""
-        row = self._conn.execute(
-            "SELECT 1 FROM symbols WHERE name = ? AND +kind = 'function' LIMIT 1",
-            (name,),
-        ).fetchone()
-        return row is not None
-
-    def function_names_among(self, names) -> set[str]:
-        """``names`` 중 함수(정의·선언)로 색인된 것 — 500개씩 끊어 묻는다."""
-        names = list(dict.fromkeys(names))
-        out: set[str] = set()
-        for i in range(0, len(names), 500):
-            chunk = names[i : i + 500]
+    def function_ids(self, ids) -> set[int]:
+        """``ids`` 중 함수 정의인 것."""
+        ids = list(dict.fromkeys(ids))
+        out: set[int] = set()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
             marks = ",".join("?" for _ in chunk)
             out.update(
                 r[0]
                 for r in self._conn.execute(
-                    f"SELECT DISTINCT name FROM symbols WHERE +kind = 'function' "
-                    f"AND name IN ({marks})",
+                    f"SELECT id FROM symbols WHERE id IN ({marks}) "
+                    "AND +kind = 'function' AND is_definition = 1",
+                    chunk,
+                )
+            )
+        return out
+
+    def refs_to(self, target_id: int) -> list[tuple[int, str, int, str]]:
+        """``target_id`` 로 해석된 call·name 참조 중 함수 안의 것 ``(fn, file, line, kind)``."""
+        return list(
+            self._conn.execute(
+                "SELECT fn_symbol_id, file, line, kind FROM refs WHERE target_id = ? "
+                "AND kind IN ('call', 'name') AND fn_symbol_id IS NOT NULL ORDER BY id",
+                (target_id,),
+            )
+        )
+
+    def candidate_refs(self, name: str, language: str, with_fn: bool = False):
+        """이름으로만 맞춘(``candidates``) call·name 참조 중 함수 안의 것 —
+        ``(file, line, kind)``, ``with_fn`` 이면 ``(fn, file, line, kind)``."""
+        cols = "fn_symbol_id, file, line, kind" if with_fn else "file, line, kind"
+        return list(
+            self._conn.execute(
+                f"SELECT {cols} FROM refs WHERE name = ? AND +language = ? "
+                "AND resolution = 'candidates' AND kind IN ('call', 'name') "
+                "AND fn_symbol_id IS NOT NULL ORDER BY id",
+                (name, language),
+            )
+        )
+
+    def refs_in_functions(self, fn_ids) -> list[tuple]:
+        """함수들 안의 call·name 참조 ``(name, file, line, kind, resolution, target_id)``."""
+        fn_ids = list(fn_ids)
+        out: list[tuple] = []
+        for i in range(0, len(fn_ids), 500):
+            chunk = fn_ids[i : i + 500]
+            marks = ",".join("?" for _ in chunk)
+            out.extend(
+                self._conn.execute(
+                    f"SELECT name, file, line, kind, resolution, target_id FROM refs "
+                    f"WHERE fn_symbol_id IN ({marks}) AND kind IN ('call', 'name') "
+                    "ORDER BY id",
                     chunk,
                 )
             )
@@ -275,12 +323,25 @@ class IndexStore:
     def symbols_named(self, name: str) -> list[dict]:
         """이름이 ``name`` 인 기호 전부, 행 순(``ORDER BY id``) — slice 의 ``pick()``
         가 고른다 (v10.94.1; 종전엔 기호 전부를 올려 이름별로 묶었다)."""
-        return [
-            self._sym_row(r)
-            for r in self._conn.execute(
-                "SELECT * FROM symbols WHERE name = ? ORDER BY id", (name,)
-            )
-        ]
+        out = []
+        for r in self._conn.execute(
+            "SELECT * FROM symbols WHERE name = ? ORDER BY id", (name,)
+        ):
+            d = self._sym_row(r)
+            d["id"] = r["id"]
+            out.append(d)
+        return out
+
+    def symbol(self, symbol_id: int) -> dict | None:
+        """기호 하나(``id`` 포함) — slice 가 해석된 이웃 정의를 펼칠 때."""
+        r = self._conn.execute(
+            "SELECT * FROM symbols WHERE id = ?", (symbol_id,)
+        ).fetchone()
+        if r is None:
+            return None
+        d = self._sym_row(r)
+        d["id"] = r["id"]
+        return d
 
     def ref_names_in_range(
         self, file: str, start_line: int, end_line: int, kind: str
@@ -295,28 +356,6 @@ class IndexStore:
                 (file, start_line, end_line, kind),
             )
         }
-
-    def call_sites_by_name(self, name: str) -> list[tuple[int, str, int, str]]:
-        """``name`` 을 부르거나 가리키는 참조의 ``(id, file, line, kind)``."""
-        return list(
-            self._conn.execute(
-                "SELECT id, file, line, kind FROM refs WHERE name = ? "
-                "AND kind IN ('call', 'name') ORDER BY id",
-                (name,),
-            )
-        )
-
-    def call_sites_in_range(
-        self, file: str, start_line: int, end_line: int
-    ) -> list[tuple[int, str, int, str]]:
-        """그 파일 ``start_line..end_line`` 의 call·name 참조 ``(id, name, line, kind)``."""
-        return list(
-            self._conn.execute(
-                "SELECT id, name, line, kind FROM refs WHERE file = ? "
-                "AND line BETWEEN ? AND ? AND kind IN ('call', 'name') ORDER BY id",
-                (file, start_line, end_line),
-            )
-        )
 
     def kind_counts(self) -> Counter:
         return Counter(

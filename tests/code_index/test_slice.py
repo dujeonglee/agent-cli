@@ -314,7 +314,13 @@ class _BruteForceStore:
         return getattr(self._s, name)
 
     def symbols_named(self, name):
-        return [s for s in self._s.all_symbols() if s["name"] == name]
+        out = []
+        for r in self._s._conn.execute("SELECT * FROM symbols"):
+            if r["name"] == name:
+                d = self._s._sym_row(r)
+                d["id"] = r["id"]
+                out.append(d)
+        return out
 
     def ref_names_in_range(self, file, start, end, kind):
         return {
