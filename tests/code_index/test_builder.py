@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_cli.code_index import build, load_index
 from agent_cli.code_index._sqlite import sqlite3
 
@@ -57,7 +59,7 @@ class TestFullBuild:
         _write(tmp_path / "a.py", "x = 1\n")
         idx = _build(tmp_path, tmp_path / ".db")
         assert idx.meta["root"] == str(tmp_path.resolve())
-        assert idx.meta["schema_version"] == 2
+        assert idx.meta["schema_version"] == 3
 
     def test_unsupported_extension_is_ignored(self, tmp_path):
         _write(tmp_path / "data.txt", "not a source file\n")
@@ -115,6 +117,115 @@ class TestIncremental:
         assert hit[0]["file"] == "new.py"
 
 
+class TestStatFirstRefresh:
+    """v10.93.0 — 파일을 읽기 전에 stat 으로 가른다 (docs/code-index/DESIGN.md §18)."""
+
+    def test_unchanged_tree_writes_nothing(self, tmp_path, monkeypatch):
+        _write(tmp_path / "a.py", "def alpha():\n    pass\n")
+        db = tmp_path / ".db"
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["unchanged"] is False and stats["changed"] == 1
+        before = db.stat()
+        import agent_cli.code_index.builder as b
+
+        monkeypatch.setattr(
+            b, "write_sqlite_index", lambda *a, **k: pytest.fail("wrote the DB")
+        )
+        monkeypatch.setattr(
+            Path, "read_bytes", lambda self: pytest.fail(f"read {self}")
+        )
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats == {
+            "unchanged": True,
+            "reused": 1,
+            "changed": 0,
+            "affected": 0,
+            "removed": 0,
+        }
+        assert db.stat().st_mtime_ns == before.st_mtime_ns
+
+    def test_touched_file_with_same_content_is_reused(self, tmp_path):
+        _write(tmp_path / "a.py", "def alpha():\n    pass\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        # mtime 만 바꾼다 — 내용은 그대로: sha1 이 가르고, 새 mtime 이 저장된다
+        import os
+
+        os.utime(tmp_path / "a.py", ns=(10**18, 10**18))
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["unchanged"] is False and stats["reused"] == 1
+        idx = load_index(db)
+        assert idx.files[0]["mtime_ns"] == 10**18
+        assert _names_in_file(idx, "a.py") == {"alpha"}
+        assert build(tmp_path, db, defs_path=None, verbose=False)["unchanged"] is True
+
+    def test_a_file_with_no_symbols_is_reused_too(self, tmp_path):
+        """종전엔 기호가 없는 파일(설정만 든 JS 등)은 재사용 조건(`rel in
+        old_syms_by_file`)에 걸려 쿼리마다 다시 파싱됐다 — 프로파일의 JS 95회."""
+        _write(tmp_path / "empty.js", "// nothing to index\n")
+        _write(tmp_path / "a.py", "def alpha():\n    pass\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["unchanged"] is True and stats["reused"] == 2
+
+    def test_changed_file_rows_replaced_and_the_rest_copied(self, tmp_path):
+        _write(tmp_path / "a.py", "def alpha():\n    helper()\n")
+        _write(tmp_path / "b.py", "def beta():\n    pass\n")
+        _write(tmp_path / "c.py", "def helper():\n    pass\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        full = load_index(db)
+        full_refs = sorted(r.items() for r in full.all_refs())
+        _write(tmp_path / "b.py", "def beta2():\n    pass\n")
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["changed"] == 1 and stats["reused"] == 2 and stats["removed"] == 0
+        idx = load_index(db)
+        assert {s["name"] for s in idx.all_symbols()} == {"alpha", "beta2", "helper"}
+        # 바뀌지 않은 파일의 참조 행은 그대로 복사됐다
+        assert sorted(r.items() for r in idx.all_refs()) == full_refs
+        # 처음부터 다시 만든 것과 같다
+        build(tmp_path, tmp_path / ".full", defs_path=None, verbose=False)
+        again = load_index(tmp_path / ".full")
+
+        def strip(rows):
+            rows = sorted(rows, key=lambda s: (s["file"], s["line"], s["name"]))
+            return [{k: v for k, v in r.items() if k != "id"} for r in rows]
+
+        assert strip(idx.all_symbols()) == strip(again.all_symbols())
+        assert strip(idx.all_refs()) == strip(again.all_refs())
+
+    def test_new_name_re_refs_the_files_that_mention_it_once(self, tmp_path):
+        """새 이름이 생기면 그 이름을 쓰는 재사용 파일은 Pass 2 를 다시 돈다 — 그
+        파일의 참조 행은 복사하지 않고 새로 쓴 것만 남는다(중복 0)."""
+        _write(tmp_path / "a.py", "def alpha():\n    later()\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        before = load_index(db).find_refs(name="later")
+        _write(tmp_path / "b.py", "def later():\n    pass\n")
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["changed"] == 1 and stats["affected"] == 1
+        refs = load_index(db).find_refs(name="later")
+
+        def rows(rs):
+            return sorted((r["file"], r["line"], r["kind"]) for r in rs)
+
+        # 정의되기 전엔 call 하나, 정의된 뒤엔 name 참조가 더해진다 — 영향 파일의
+        # Pass 2 가 다시 돌았고, 복사 + 재생성으로 겹친 행은 없다
+        assert rows(before) == [("a.py", 2, "call")]
+        assert rows(refs) == [("a.py", 2, "call"), ("a.py", 2, "name")]
+
+    def test_removed_file_is_counted_and_gone(self, tmp_path):
+        _write(tmp_path / "a.py", "def alpha():\n    pass\n")
+        _write(tmp_path / "b.py", "def beta():\n    pass\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        (tmp_path / "b.py").unlink()
+        stats = build(tmp_path, db, defs_path=None, verbose=False)
+        assert stats["removed"] == 1 and stats["reused"] == 1
+        assert _files_in(load_index(db)) == {"a.py"}
+
+
 # ----- invalidation paths ----------------------------------------------------
 
 
@@ -137,7 +248,7 @@ class TestInvalidation:
         # symbol names — proves the symbols are re-extracted, not reused.
         _write(tmp_path / "a.py", "def alpha2():\n    pass\n")
         idx = _build(tmp_path, tmp_path / ".db")
-        assert idx.meta["schema_version"] == 2
+        assert idx.meta["schema_version"] == 3
         assert {s["name"] for s in idx.all_symbols()} == {"alpha2"}
 
     def test_root_mismatch_forces_full_rebuild(self, tmp_path):

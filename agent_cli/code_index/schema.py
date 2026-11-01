@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 #     '::', C is flat → equals name). Tool handlers query this column
 #     first and fall back to `name` for bare-leaf inputs. See
 #     docs/code-index/DESIGN.md for the rationale.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # v10.93.0: files.mtime_ns
 
 # Closed set of values for `symbols.kind`. Adding to this set is an
 # intentional design decision (e.g. adding 'section' for markdown) and

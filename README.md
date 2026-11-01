@@ -1242,7 +1242,7 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 
 ### code_index — SQLite 코드 인덱스
 
-tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_index.db`에 영구 SQLite 인덱스를 만듭니다. 첫 query 시 lazy build, 이후 query마다 sha1 비교로 변경 파일만 incremental rebuild. `edit_file` / `write_file` 성공 시 자동 post-hook이 인덱스 갱신 — 그래서 수동 재구축 모드(`build`)는 v10.92.0 에 지웠습니다.
+tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_index.db`에 영구 SQLite 인덱스를 만듭니다. 첫 query 시 lazy build, 이후 query마다 변경 파일만 incremental rebuild — v10.93.0 부터 파일을 읽기 전에 크기·mtime 으로 먼저 가르고, 바뀐 것이 없으면 아무것도 쓰지 않습니다(agent-cli 저장소 3,212 파일: 쿼리·편집 훅 4.0 s → 0.35 s; 한 파일 변경 때는 그 파일만 파싱하고 나머지 행은 옛 DB 에서 SQL 로 복사, django 2,633 파일 3.05 → 1.25 s). 종전엔 쿼리마다 저장소 전체를 읽어 sha1 을 재고 DB 를 통째로 다시 썼습니다. `edit_file` / `write_file` 성공 시 자동 post-hook이 인덱스 갱신 — 그래서 수동 재구축 모드(`build`)는 v10.92.0 에 지웠습니다.
 
 **모델이 보는 글 (v10.92.0, docs/tool-review/TRACKER.md)**: 안내 블록 없이 도구 설명(이름 규칙·확장자)과 `mode` 인자 설명(모드마다 한 문장)만 — 1,689 → 683 토큰(GLM). 종전 안내의 호출 예시 11개 속 가짜 경로(`agent_cli/loop.py`)를 벤치의 모델이 실제 경로로 오인해 찔러본 기록이 있었습니다. 빈 결과는 색인의 범위를 말합니다("No symbol named \"X\" among the 1,732 indexed symbols (412 files under /repo)", 색인에 파일이 없으면 "The index has no files: nothing under /app has a supported extension.") — 벤치에서 lookup·refs 가 전부 빈 결과였는데 색인이 비어 있다는 사실은 어디에도 없었습니다. 오류 문구는 표기 규칙대로(`` `mode` "x" is not one of "list", … ``).
 

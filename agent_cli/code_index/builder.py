@@ -24,7 +24,6 @@ import secrets
 import sys
 import threading
 import time
-from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -113,7 +112,18 @@ def build(
     undef_unknown_configs: bool = True,
     force_full: bool = False,
     verbose: bool = True,
-):
+) -> dict:
+    """색인을 ``root`` 의 지금 상태로 맞춘다 — 돌려주는 값은 통계
+    ``{"unchanged", "reused", "changed", "affected", "removed"}``.
+
+    v10.93.0 (docs/code-index/DESIGN.md §18): 파일을 읽기 전에 ``stat`` 만으로
+    먼저 가른다. 크기·mtime 이 저장된 것과 같으면 그 파일은 읽지도 sha1 을 재지도
+    않고, **모든** 파일이 그대로면 아무것도 쓰지 않고 돌아온다(``unchanged``). 바뀐
+    파일이 있을 때만 그 파일(과 새 이름에 영향받는 파일)을 파싱하고, 나머지 행은
+    옛 DB 에서 SQL 로 복사해 새 파일에 쓴다(원자 교체는 그대로). 종전엔 쿼리마다
+    파일 전체를 읽어 sha1 을 재고 기호·참조 전부를 파이썬 dict 로 올린 뒤 DB 를
+    통째로 다시 썼다 — 바뀐 것이 없어도 agent-cli 저장소에서 4.0 s, 그리고
+    `edit_file`·`write_file` 의 사후 훅이 같은 길이라 편집마다 그 값이 붙었다."""
     t0 = time.time()
 
     # C-specific preprocessing context. Other languages ignore unifdef_flags
@@ -146,36 +156,68 @@ def build(
     elif force_full:
         invalidation_reason = "--full requested"
 
-    # Group old per-file data
     old_files_meta = {f["path"]: f for f in (old_store.files if old_store else [])}
-    old_syms_by_file: dict[str, list] = defaultdict(list)
-    old_refs_by_file: dict[str, list] = defaultdict(list)
-    if old_store:
-        for s in old_store.all_symbols():
-            old_syms_by_file[s["file"]].append(s)
-        for r in old_store.all_refs():
-            old_refs_by_file[r["file"]].append(r)
 
-    # Walk files, classify as reused vs changed. Skip files whose extension
-    # doesn't match any registered language.
-    file_records = []  # list of (rel, raw_bytes, sha1, reused: bool, lang: str)
-    n_bytes = 0
+    # stat 선행: (rel, path, size, mtime_ns, lang) — 아직 아무 파일도 읽지 않았다.
+    stats: list[tuple[str, Path, int, int, str]] = []
     for p in iter_source_files(root):
         lang = language_of(p)
         if lang is None:
             continue
-        rel = str(p.relative_to(root))
-        raw = p.read_bytes()
+        st = p.stat()
+        stats.append((str(p.relative_to(root)), p, st.st_size, st.st_mtime_ns, lang))
+
+    def _same_stat(old: dict | None, size: int, mtime_ns: int) -> bool:
+        return (
+            old is not None
+            and old.get("size") == size
+            and old.get("mtime_ns") == mtime_ns
+            and old.get("identifiers") is not None
+        )
+
+    if (
+        old_store is not None
+        and len(stats) == len(old_files_meta)
+        and all(
+            _same_stat(old_files_meta.get(rel), size, mtime)
+            for rel, _, size, mtime, _ in stats
+        )
+    ):
+        if verbose:
+            print(f"  [unchanged: {len(stats)} files]", file=sys.stderr)
+        return {
+            "unchanged": True,
+            "reused": len(stats),
+            "changed": 0,
+            "affected": 0,
+            "removed": 0,
+        }
+
+    # Walk files, classify as reused vs changed. A file whose size·mtime match
+    # is reused without being read; otherwise its sha1 decides.
+    raws: dict[str, bytes] = {}
+
+    def raw_of(rel: str, path: Path) -> bytes:
+        if rel not in raws:
+            raws[rel] = path.read_bytes()
+        return raws[rel]
+
+    file_records: list[tuple[str, Path, str, bool, str, int, int]] = []
+    n_bytes = 0
+    for rel, path, size, mtime, lang in stats:
+        old = old_files_meta.get(rel)
+        if _same_stat(old, size, mtime):
+            file_records.append((rel, path, old["sha1"], True, lang, size, mtime))
+            continue
+        raw = raw_of(rel, path)
         n_bytes += len(raw)
         h = hashlib.sha1(raw).hexdigest()
-        old = old_files_meta.get(rel)
         reused = bool(
-            old
+            old is not None
             and old.get("sha1") == h
             and old.get("identifiers") is not None
-            and rel in old_syms_by_file
         )
-        file_records.append((rel, raw, h, reused, lang))
+        file_records.append((rel, path, h, reused, lang, size, mtime))
 
     # Per-file data (everything as plain dicts for uniformity)
     syms_by_file: dict[str, list] = {}
@@ -184,18 +226,19 @@ def build(
     meta_by_file: dict[str, dict] = {}
     parsed_cleaned: dict[str, bytes] = {}  # cache cleaned bytes for Pass 2
 
-    # Pre-populate reused files
-    for rel, _, _, reused, _ in file_records:
+    # Pre-populate reused files — meta only (their rows are copied by SQL);
+    # a touched-but-identical file takes the new size·mtime.
+    for rel, _, _, reused, _, size, mtime in file_records:
         if reused:
-            syms_by_file[rel] = old_syms_by_file[rel]
-            refs_by_file[rel] = old_refs_by_file[rel]
-            idents_by_file[rel] = old_files_meta[rel].get("identifiers") or []
-            meta_by_file[rel] = old_files_meta[rel]
+            old = old_files_meta[rel]
+            idents_by_file[rel] = old.get("identifiers") or []
+            meta_by_file[rel] = {**old, "size": size, "mtime_ns": mtime}
 
     # Pass 1 (defs) for changed files
-    for rel, raw, h, reused, lang in file_records:
+    for rel, path, h, reused, lang, size, mtime in file_records:
         if reused:
             continue
+        raw = raw_of(rel, path)
         spec = LANGUAGES[lang]
         cleaned = spec.preprocess(raw, unifdef_flags) if spec.preprocess else raw
         parsed_cleaned[rel] = cleaned
@@ -206,7 +249,8 @@ def build(
         syms_by_file[rel] = [asdict(s) for s in syms]
         meta_by_file[rel] = {
             "path": rel,
-            "size": len(raw),
+            "size": size,
+            "mtime_ns": mtime,
             "lines": raw.count(b"\n") + 1,
             "sha1": h,
             "has_error": tree.root_node.has_error,
@@ -214,18 +258,15 @@ def build(
             "language": lang,
         }
 
-    # Compute new and old defined-name sets
+    # Names newly defined since the prior index — only the changed files can
+    # add one; the old names come from the DB (no full symbol load).
     new_defined = {
         s["name"]
         for syms in syms_by_file.values()
         for s in syms
         if s["kind"] in CODE_NAME_KINDS
     }
-    old_defined: set[str] = set()
-    if old_store:
-        for s in old_store.all_symbols():
-            if s["kind"] in CODE_NAME_KINDS:
-                old_defined.add(s["name"])
+    old_defined: set[str] = old_store.code_names() if old_store else set()
     added_names = new_defined - old_defined
 
     # Find unchanged files whose ref set could be affected by newly-added names
@@ -233,7 +274,7 @@ def build(
     # new identifier somewhere in their source.)
     affected: set[str] = set()
     if added_names and old_store is not None:
-        for rel, _, _, reused, _ in file_records:
+        for rel, _, _, reused, _, _, _ in file_records:
             if not reused:
                 continue
             ids = idents_by_file.get(rel)
@@ -241,14 +282,17 @@ def build(
                 affected.add(rel)
 
     # Pass 2 (refs) for changed + affected files
-    pass2_set: set[str] = {rel for rel, _, _, reused, _ in file_records if not reused}
+    pass2_set: set[str] = {
+        rel for rel, _, _, reused, _, _, _ in file_records if not reused
+    }
     pass2_set |= affected
-    for rel, raw, _, _, lang in file_records:
+    for rel, path, _, _, lang, _, _ in file_records:
         if rel not in pass2_set:
             continue
         spec = LANGUAGES[lang]
         cleaned = parsed_cleaned.get(rel)
         if cleaned is None:
+            raw = raw_of(rel, path)
             cleaned = spec.preprocess(raw, unifdef_flags) if spec.preprocess else raw
         parser = get_parser(lang)
         tree = parser.parse(cleaned)
@@ -259,13 +303,17 @@ def build(
         idents_by_file[rel] = sorted(idents)
         meta_by_file[rel]["identifiers"] = idents_by_file[rel]
 
-    # Assemble final ordered lists (deterministic, sorted by file path)
+    # Assemble final ordered lists (deterministic, sorted by file path). Only
+    # parsed rows are here; reused files' rows come from the old DB.
     files_meta_list = [meta_by_file[r[0]] for r in file_records]
-    all_symbols = [s for r in file_records for s in syms_by_file[r[0]]]
-    all_refs = [x for r in file_records for x in refs_by_file[r[0]]]
+    all_symbols = [s for r in file_records for s in syms_by_file.get(r[0], [])]
+    all_refs = [x for r in file_records for x in refs_by_file.get(r[0], [])]
+    reused_files = [rel for rel, _, _, reused, _, _, _ in file_records if reused]
+    present = {r[0] for r in file_records}
+    n_removed = len(set(old_files_meta) - present)
 
     n_files = len(file_records)
-    n_reused = sum(1 for _, _, _, reused, _ in file_records if reused)
+    n_reused = len(reused_files)
     n_changed = n_files - n_reused
     elapsed = time.time() - t0
 
@@ -279,7 +327,7 @@ def build(
         else:
             mode = (
                 f"incremental: reused {n_reused}, changed {n_changed}, "
-                f"affected {len(affected)}"
+                f"affected {len(affected)}, removed {n_removed}"
             )
         print(f"  [{mode}]", file=sys.stderr)
 
@@ -294,17 +342,34 @@ def build(
         "symbols": all_symbols,
         "refs": all_refs,
     }
-    write_sqlite_index(out_path, out)
+    write_sqlite_index(
+        out_path,
+        out,
+        copy_from=out_path if old_store is not None else None,
+        copy_symbols=reused_files,
+        copy_refs=[r for r in reused_files if r not in affected],
+    )
     if verbose:
         print(
-            f"\nIndexed {n_files} files ({n_bytes / 1024:.1f} KiB) in {elapsed:.2f}s",
+            f"\nIndexed {n_files} files ({n_bytes / 1024:.1f} KiB read) in {elapsed:.2f}s",
             file=sys.stderr,
         )
-        print(f"  {len(all_symbols)} symbols, {len(all_refs)} refs", file=sys.stderr)
+        print(
+            f"  {len(all_symbols)} symbols, {len(all_refs)} refs parsed; "
+            f"{n_reused} files copied",
+            file=sys.stderr,
+        )
         print(
             f"  wrote {out_path}  ({out_path.stat().st_size / 1024:.1f} KiB)",
             file=sys.stderr,
         )
+    return {
+        "unchanged": False,
+        "reused": n_reused,
+        "changed": n_changed,
+        "affected": len(affected),
+        "removed": n_removed,
+    }
 
 
 # ---------- storage backend (SQLite) ----------
@@ -317,6 +382,7 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS files (
     path        TEXT PRIMARY KEY,
     size        INTEGER NOT NULL,
+    mtime_ns    INTEGER NOT NULL DEFAULT 0,  -- v10.93.0: stat 선행 비교의 근거
     lines       INTEGER NOT NULL,
     sha1        TEXT NOT NULL,
     has_error   INTEGER NOT NULL,
@@ -377,8 +443,20 @@ def _new_tmp_path(path: Path) -> Path:
     return path.with_name(path.name + suffix)
 
 
-def write_sqlite_index(path: Path, top: dict):
+def write_sqlite_index(
+    path: Path,
+    top: dict,
+    *,
+    copy_from: Path | None = None,
+    copy_symbols: list[str] | None = None,
+    copy_refs: list[str] | None = None,
+):
     """Replace the SQLite file with a fresh build from `top`.
+
+    v10.93.0: ``copy_from`` 이 있으면 그 DB 를 ATTACH 해 ``copy_symbols`` 파일들의
+    기호 행과 ``copy_refs`` 파일들의 참조 행을 SQL 로 그대로 복사한다 — 파이썬으로
+    올려 다시 넣지 않는다(agent-cli 저장소의 참조 65만 행: executemany 1.9 s →
+    복사 0.2 s). ``top["symbols"]``·``top["refs"]`` 는 파싱한 파일의 행만 든다.
 
     Atomic write contract: the active ``path`` is never opened,
     truncated, or unlinked. We build the full DB at a unique tmp file
@@ -413,12 +491,13 @@ def write_sqlite_index(path: Path, top: dict):
                 "INSERT INTO meta(key, value) VALUES (?, ?)", (k, json.dumps(v))
             )
         cur.executemany(
-            "INSERT INTO files(path, size, lines, sha1, has_error, n_symbols, identifiers, language) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO files(path, size, mtime_ns, lines, sha1, has_error, n_symbols, "
+            "identifiers, language) VALUES (?,?,?,?,?,?,?,?,?)",
             [
                 (
                     f["path"],
                     f.get("size", 0),
+                    f.get("mtime_ns", 0),
                     f.get("lines", 0),
                     f.get("sha1", ""),
                     int(bool(f.get("has_error"))),
@@ -429,6 +508,34 @@ def write_sqlite_index(path: Path, top: dict):
                 for f in top["files"]
             ],
         )
+        if copy_from is not None and (copy_symbols or copy_refs):
+            cur.execute("ATTACH DATABASE ? AS old", (str(copy_from),))
+            cur.execute("CREATE TEMP TABLE keep_syms(path TEXT PRIMARY KEY)")
+            cur.execute("CREATE TEMP TABLE keep_refs(path TEXT PRIMARY KEY)")
+            cur.executemany(
+                "INSERT INTO keep_syms(path) VALUES (?)",
+                [(r,) for r in copy_symbols or []],
+            )
+            cur.executemany(
+                "INSERT INTO keep_refs(path) VALUES (?)",
+                [(r,) for r in copy_refs or []],
+            )
+            cur.execute(
+                "INSERT INTO symbols(name, qualified_name, kind, file, line, col, "
+                "end_line, is_definition, language, kind_raw, modifiers, parent, "
+                "signature, return_type, enum_values, params) "
+                "SELECT name, qualified_name, kind, file, line, col, end_line, "
+                "is_definition, language, kind_raw, modifiers, parent, signature, "
+                "return_type, enum_values, params FROM old.symbols "
+                "WHERE file IN (SELECT path FROM keep_syms) ORDER BY id"
+            )
+            cur.execute(
+                "INSERT INTO refs(name, kind, file, line, col, language) "
+                "SELECT name, kind, file, line, col, language FROM old.refs "
+                "WHERE file IN (SELECT path FROM keep_refs) ORDER BY id"
+            )
+            cur.execute("DROP TABLE keep_syms")
+            cur.execute("DROP TABLE keep_refs")
         cur.executemany(
             "INSERT INTO symbols(name, qualified_name, kind, file, line, col, end_line, "
             "is_definition, language, kind_raw, modifiers, parent, signature, "
@@ -471,6 +578,8 @@ def write_sqlite_index(path: Path, top: dict):
             ],
         )
         conn.commit()
+        if copy_from is not None and (copy_symbols or copy_refs):
+            cur.execute("DETACH DATABASE old")
     except Exception:
         # Build failed somewhere in the inserts. The active ``path``
         # is untouched (we wrote to ``tmp`` only), so the operator
