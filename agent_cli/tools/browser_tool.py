@@ -84,7 +84,7 @@ class BrowserTool(Tool):
             "url": {
                 "type": "string",
                 "minLength": 1,
-                "description": '"open": http(s) URL',
+                "description": '"open": http(s) or file URL, or a local file path',
             },
             "ref": {
                 "type": "string",
@@ -170,6 +170,11 @@ class BrowserTool(Tool):
         try:
             if mode == "screenshot":
                 return self._screenshot(session, bool(args.get("full_page", False)))
+            if mode == "open":
+                url, denied = self._local_target(str(args["url"]).strip())
+                if denied:
+                    return ToolResult(False, error=denied)
+                args = {**args, "url": url}
             out = self._dispatch(session, mode, args, budget)
         except BrowserError as e:
             return ToolResult(False, error=f"browser: {e}")
@@ -177,6 +182,17 @@ class BrowserTool(Tool):
             first = (str(e).strip().splitlines() or [type(e).__name__])[0]
             return ToolResult(False, error=f"browser: {type(e).__name__}: {first}")
         return ToolResult(True, output=out)
+
+    @staticmethod
+    def _local_target(url: str) -> tuple[str, str | None]:
+        """``(연 주소, 거절 문구)`` — 로컬 파일이면 ``file://`` URI 로 바꾸고
+        ``read_file`` 과 같은 게이트를 건다(v10.99.0): 워크스페이스 밖은 열고,
+        자격증명 사전에 걸리면 묻는다. 거절 문구는 ``read_file`` 과 같은 모양."""
+        from agent_cli.browser import resolve_target
+        from agent_cli.tools._confine import guard
+
+        url, path = resolve_target(url)
+        return url, (guard([path], "browser", check_workspace=False) if path else None)
 
     @staticmethod
     def _screenshot(session, full_page: bool) -> ToolResult:

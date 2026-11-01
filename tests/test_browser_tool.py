@@ -48,11 +48,24 @@ ITEM = """\
 
 
 class TestHostAllowed:
-    def test_http_only(self):
-        assert B.host_allowed("file:///etc/passwd", ()) is not None
+    def test_http_and_file_only(self):
         assert B.host_allowed("javascript:alert(1)", ()) is not None
-        assert B.host_allowed("ftp://x/", ()) is not None
+        assert "http(s) and file" in B.host_allowed("ftp://x/", ())
         assert B.host_allowed("https://example.com/x", ()) is None
+        assert B.host_allowed("file:///etc/passwd", ()) is None
+        assert B.host_allowed("file://localhost/tmp/x.html", ()) is None
+
+    def test_file_ignores_the_host_list_but_not_a_host(self):
+        """로컬 파일은 허용 목록과 무관; ``file://name/x`` 는 경로가 아니다."""
+        assert B.host_allowed("file:///r/report.html", ("example.com",)) is None
+        why = B.host_allowed("file://report.html", ())
+        assert "file:///path" in why and "report.html" in why
+
+    def test_no_scheme_and_failed_load_say_what_happened(self):
+        why = B.host_allowed("nope.html", ())
+        assert "'nope.html' is neither a URL" in why and "file:///path" in why
+        why = B.host_allowed("chrome-error://chromewebdata/", ())
+        assert "failed to load" in why
 
     def test_no_host(self):
         assert "no host" in B.host_allowed("http:///x", ())
@@ -72,6 +85,35 @@ class TestHostAllowed:
         monkeypatch.setenv("AGENT_CLI_BROWSER_TOOL", "off")
         k = browser_knobs()
         assert k["hosts"] == ("example.com", "b.org") and k["enabled"] is False
+
+
+class TestResolveTarget:
+    def test_web_urls_pass_through(self, tmp_path):
+        assert B.resolve_target("https://x.test/a", tmp_path) == (
+            "https://x.test/a",
+            None,
+        )
+        assert B.resolve_target("example.com", tmp_path) == ("example.com", None)
+
+    def test_bare_and_file_paths_become_absolute_file_uris(self, tmp_path):
+        f = tmp_path / "out dir" / "r.html"
+        f.parent.mkdir()
+        f.write_text("<h1>x</h1>")
+        want = (f.resolve().as_uri(), str(f.resolve()))
+        assert B.resolve_target("out dir/r.html", tmp_path) == want
+        assert B.resolve_target("./out dir/r.html", tmp_path) == want
+        assert B.resolve_target(str(f), tmp_path) == want
+        assert B.resolve_target(f.as_uri(), tmp_path) == want
+        assert "%20" in want[0]
+
+    def test_missing_file_is_one_line(self, tmp_path):
+        with pytest.raises(B.BrowserError, match="no such file: .*nope.html"):
+            B.resolve_target("./nope.html", tmp_path)
+        with pytest.raises(B.BrowserError, match="no such file"):
+            B.resolve_target("file:///definitely/not/here.html", tmp_path)
+
+    def test_file_url_with_a_host_is_left_to_host_allowed(self, tmp_path):
+        assert B.resolve_target("file://r.html", tmp_path) == ("file://r.html", None)
 
 
 class TestParseAria:
@@ -432,9 +474,24 @@ class TestSessionWithFakePage:
         s, page = fake
         with pytest.raises(B.BrowserError, match="AGENT_CLI_BROWSER_HOSTS"):
             s.open("http://other.test/")
-        with pytest.raises(B.BrowserError, match="http\\(s\\)"):
-            s.open("file:///x")
+        with pytest.raises(B.BrowserError, match="http\\(s\\) and file"):
+            s.open("ftp://x/")
         assert page.gotos == []
+
+    def test_file_page_opens_and_a_link_to_a_secret_is_refused(self, fake):
+        """로컬 파일은 허용 목록 밖이어도 열린다; 링크로 도착한 자격증명 경로는
+        물을 수 없으니 빈 페이지로 돌리고 거절한다."""
+        s, page = fake
+        page.pages["file:///r/report.html"] = ("Report", ITEM)
+        page.navigates[("button", "Show specifications", 0)] = (
+            "file:///Users/u/.ssh/id_rsa",
+        )
+        out = s.open("file:///r/report.html")
+        assert out.startswith("[page] file:///r/report.html — Report")
+        btn = next(k for k, r in s._refs.items() if r.role == "button")
+        with pytest.raises(B.BrowserError, match="sensitive path"):
+            s.click(btn)
+        assert page.url == "about:blank"
 
     def test_refs_are_monotonic_across_snapshots(self, fake):
         s, _ = fake
@@ -929,6 +986,45 @@ class TestToolDispatch:
         box = next(k for k, r in session._refs.items() if r.role == "textbox")
         r = t.run({"mode": "type", "ref": box, "text": "x", "submit": True})
         assert r.success and r.output.startswith("typed 'x' into")
+
+    def test_open_local_file_resolves_and_gates_secrets(
+        self, monkeypatch, fake, tmp_path
+    ):
+        """맨 경로 → 절대 file URI; 자격증명 사전에 걸리면 ``read_file`` 과 같은
+        게이트(여기선 물을 수 없어 거절)가 페이지에 닿기 전에 막는다."""
+        from agent_cli.tools import _confine
+
+        session, page = fake
+        monkeypatch.setattr(B, "get_browser", lambda create=False: session)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "r.html").write_text("<p>x</p>")
+        uri = (tmp_path / "r.html").resolve().as_uri()
+        page.pages[uri] = ("R", ITEM)
+        t = TOOLS["browser"]
+        r = t.run({"mode": "open", "url": "r.html"})
+        assert r.success and r.output.startswith(f"[page] {uri} — R")
+        r = t.run({"mode": "open", "url": "./missing.html"})
+        assert not r.success and r.error.startswith("browser: no such file:")
+        seen = []
+
+        def gate(paths, action, **kw):
+            seen.append((paths, action, kw))
+            return "User denied browser — sensitive path: x"
+
+        monkeypatch.setattr(_confine, "guard", gate)
+        n = len(page.gotos)
+        r = t.run({"mode": "open", "url": "r.html"})
+        assert not r.success and r.error.startswith("User denied browser")
+        assert seen == [
+            (
+                [str((tmp_path / "r.html").resolve())],
+                "browser",
+                {"check_workspace": False},
+            )
+        ]
+        assert len(page.gotos) == n
+        r = t.run({"mode": "open", "url": "http://shop.test/"})
+        assert r.success and len(seen) == 1  # 웹 주소는 경로 게이트를 안 지난다
 
     def test_budget_comes_from_the_loop_cap(self, monkeypatch, fake):
         """예산 = 과대 출력 캡 × AUTO_SNAPSHOT_SHARE; ctx 가 없으면(캡 0) 전체."""

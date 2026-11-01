@@ -42,7 +42,7 @@
 - [x] `code_index` 이름 해석을 색인에(B안 PR-1, v10.96.0) — Python 범위 규칙·import 따라가기·정의 단위 callers/callees·`?` 줄, jedi 대조 1,000 자리 resolved 457/457 일치. DESIGN §21
 - [ ] `code_index` B안 PR-2(v10.97.0) — `refs` 해석 태그, `path` 로 정의 고르기 / PR-3(v10.98.0) C 범위 규칙 / 이후 JS/TS·Go·Rust(언어마다 공개 저장소 + 언어 서버로 대조), Java·C++ 는 언어 서버 백엔드
 - [x] `complete` 의 `result` 가 사용자에게 마크다운으로 렌더링돼 보인다는 것을 모델에게 알리는 문장 한 줄(사용자 요청 2026-11-01) — v10.96.1: 도구 설명의 "`result` is the only text delivered…" 다음 문장("The user sees it rendered as Markdown."), 인자 설명은 그대로. 호출한 에이전트는 원문을 받으니 "사용자" 로 한정
-- [ ] `browser` 가 `file://` 주소를 열게 — 지금은 "browser: refused: only http(s) URLs can be opened (got file scheme)" 로 거절(사용자 요청 2026-11-01). 로컬 HTML·보고서를 보는 길; 작업 디렉터리 안 경로만 허용할지(`_confine` 과 같은 규칙) 검토와 함께
+- [x] (v10.99.0, docs/browser/DESIGN.md §4.2 — `read_file` 과 같은 경계: 밖 허용·자격증명 사전만 확인) `browser` 가 `file://` 주소를 열게 — 지금은 "browser: refused: only http(s) URLs can be opened (got file scheme)" 로 거절(사용자 요청 2026-11-01). 로컬 HTML·보고서를 보는 길; 작업 디렉터리 안 경로만 허용할지(`_confine` 과 같은 규칙) 검토와 함께
 - [ ] 남은 도구 검토: `run_skill` → `browser`·`schedule` 순 (`code_index`·`fetch` 는 v10.92.0 구현 완료)
 - [x] `code_index` callers·callees 이름 단위 질의(v10.94.0) — 전체 콜그래프 구성 제거, 출력 동일, 1.4~1.6 s → 이름당 0.3 ms·최악 ~90 ms. docs/code-index/DESIGN.md §19
 - [x] `code_index` `containing_fn` 결함(§19 D4, v10.95.0) — 가장 안쪽 함수 규칙·부모 포인터, Python 만, 잃는 간선 0, django callers 답 6.0%·callees 4.0% 이름에서 호출이 늘어남. docs/code-index/DESIGN.md §20

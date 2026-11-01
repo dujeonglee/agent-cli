@@ -16,7 +16,7 @@
   ``open``·``back``·이동을 일으킨 조작 뒤엔 ``generation`` 이 올라 옛 ref 는
   "stale" 로 거부된다. 같은 문서 안에서는 DOM 이 바뀌어도 그 요소가 남아
   있는 한 role/name 로케이터가 계속 맞는다.
-- 코드 실행 모드 없음, ``http(s)`` 만, 허용 호스트 목록(비면 전부),
+- 코드 실행 모드 없음, ``http(s)``·로컬 ``file:`` 만, 허용 호스트 목록(비면 전부),
   대화상자 자동 닫기, 다운로드 거부, 프로필은 메모리 전용.
 
 순수 함수(``parse_aria``·``assign_refs``·``render_nodes``·``host_allowed``)는
@@ -32,7 +32,9 @@ import re
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from agent_cli.constants import browser_knobs
 from agent_cli.context.token_estimator import estimate_tokens
@@ -129,11 +131,63 @@ class _RefTarget:
 # ── 순수 함수 (Playwright 불필요) ──────────────────────────────────────
 
 
-def host_allowed(url: str, hosts: tuple[str, ...]) -> str | None:
-    """``url`` 을 열 수 있으면 None, 아니면 거절 사유."""
+def local_path(url: str) -> str | None:
+    """``file:`` URL 이면 그 절대 경로, 아니면 None (v10.99.0). 호스트가 붙은
+    ``file://name/x`` 는 경로가 아니다 — ``host_allowed`` 가 거절한다."""
     parsed = urlparse(url)
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+        return None
+    return url2pathname(parsed.path)
+
+
+def resolve_target(target: str, cwd: Path | None = None) -> tuple[str, str | None]:
+    """``open`` 의 ``url`` → ``(연 주소, 로컬 경로 또는 None)`` (v10.99.0).
+
+    로컬 파일은 두 모양으로 온다: ``file:`` URL, 그리고 맨 경로(``/abs``·``~/x``·
+    ``./x``·``../x``, 또는 ``cwd`` 에 실제로 있는 상대 경로). 둘 다 절대
+    ``file://`` URI 로 바꾼다 — 구제할 수 있는 모양은 받는다. 없는 파일은
+    Chromium 오류 페이지 대신 한 줄로 거절한다. 그 밖의 주소는 그대로."""
+    base = cwd or Path.cwd()
+    parsed = urlparse(target)
+    if parsed.scheme == "file":
+        path = local_path(target)
+        if path is None:
+            return target, None  # 호스트가 붙은 file URL — host_allowed 가 사유를 단다
+        p = Path(path)
+    elif not parsed.scheme and (
+        target.startswith(("/", "~", "./", "../")) or (base / target).exists()
+    ):
+        p = Path(target).expanduser()
+        p = p if p.is_absolute() else base / p
+    else:
+        return target, None
+    p = p.resolve()
+    if not p.exists():
+        raise BrowserError(f"no such file: {p}")
+    return p.as_uri(), str(p)
+
+
+def host_allowed(url: str, hosts: tuple[str, ...]) -> str | None:
+    """``url`` 을 열 수 있으면 None, 아니면 거절 사유. 로컬 ``file:`` 은 호스트가
+    없어 허용 목록과 무관하다(v10.99.0) — 읽기 규칙은 ``read_file`` 과 같고
+    (워크스페이스 밖 허용, 자격증명 사전만 확인) 도구 층이 건다."""
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        if local_path(url) is None:
+            return (
+                f"a file URL takes an absolute path (file:///path), not a host "
+                f"('{parsed.netloc}')"
+            )
+        return None
+    if not parsed.scheme:
+        return (
+            f"'{url}' is neither a URL (no scheme) nor an existing file — give "
+            "http(s)://…, file:///path or the path of a file that exists"
+        )
+    if parsed.scheme == "chrome-error":
+        return "the page failed to load (a missing file or an unreachable address)"
     if parsed.scheme not in ("http", "https"):
-        return f"only http(s) URLs can be opened (got {parsed.scheme or 'no'} scheme)"
+        return f"only http(s) and file URLs can be opened (got {parsed.scheme} scheme)"
     host = (parsed.hostname or "").lower()
     if not host:
         return "the URL has no host"
@@ -579,6 +633,18 @@ class BrowserSession:
     def _enforce_host_after(self, page):
         """이동·클릭이 허용 밖 호스트로 끝났으면 빈 페이지로 돌리고 거절."""
         why = host_allowed(page.url, self.knobs.get("hosts", ()))
+        path = local_path(page.url)
+        if path and not why:
+            # 링크로 도착한 로컬 파일 — 이 스레드에서는 물을 수 없으니 사전에
+            # 걸리면 거절한다; ``open`` 으로 직접 열면 도구 층이 사용자에게 묻는다.
+            from agent_cli.tools._sensitive import sensitive_reason
+
+            secret = sensitive_reason(path)
+            if secret:
+                why = (
+                    f"{path} is a sensitive path ({secret}) — open it with "
+                    '`mode` "open" so the user is asked'
+                )
         if why and page.url != "about:blank":
             page.goto("about:blank")
             self._new_document()
