@@ -21,11 +21,6 @@ from pathlib import Path
 from agent_cli.code_index import IndexStore, build, load_index
 from agent_cli.code_index import callees_of as _callees_of
 from agent_cli.code_index import callers_of as _callers_of
-from agent_cli.code_index.callgraph import (
-    FUNCTION_KINDS,
-    build_fn_ranges,
-    containing_fn,
-)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -94,23 +89,43 @@ def callees_of(idx, name: str) -> set[str]:
     return set(_callees_of(idx, name).counts)
 
 
+def _brute_containing(file, line, defs_by_file):
+    """담는 함수 정의 중 가장 작은 범위; 동률은 (시작, 끝, 이름) 순 마지막.
+    `callgraph.containing_fn` 과 독립인 정의 그대로의 구현 (v10.95.0)."""
+    cands = [
+        d for d in defs_by_file.get(file, ()) if d["line"] <= line <= d["end_line"]
+    ]
+    if not cands:
+        return None
+    size = min(d["end_line"] - d["line"] for d in cands)
+    best = max(
+        (d for d in cands if d["end_line"] - d["line"] == size),
+        key=lambda d: (d["line"], d["end_line"], d["name"]),
+    )
+    return best["name"], set(best.get("params") or [])
+
+
 def reference_callgraph(idx):
-    """v10.93.0 까지의 `build_callgraph` — 전체 그래프를 한 번에 만든다. 이름 단위
-    `callers_of`/`callees_of` (v10.94.0) 의 동치 오라클로만 남긴다(구현과 함께
-    "실수로 같이" 바뀌지 않게 테스트 쪽에 둔다).
+    """옛 `build_callgraph` 의 모양 — 전체 그래프를 한 번에 만든다. 이름 단위
+    `callers_of`/`callees_of` (v10.94.0) 의 동치 오라클. v10.95.0 부터 감싼 함수는
+    구현을 import 하지 않는 브루트포스(`_brute_containing`)로 찾는다 — 종전엔 같은
+    `containing_fn` 을 써서 결함까지 공유했다.
 
     Returns (calls_of, callers_of, sites_of)."""
     from collections import Counter
 
-    fn_ranges = build_fn_ranges(idx["symbols"])
-    fn_names = {s["name"] for s in idx["symbols"] if s["kind"] in FUNCTION_KINDS}
+    defs_by_file: dict = defaultdict(list)
+    for s in idx["symbols"]:
+        if s["kind"] == "function" and s["is_definition"]:
+            defs_by_file[s["file"]].append(s)
+    fn_names = {s["name"] for s in idx["symbols"] if s["kind"] == "function"}
     site_kinds: dict = defaultdict(set)
     for r in idx["refs"]:
         if r["kind"] not in ("call", "name"):
             continue
         if r["name"] not in fn_names:
             continue
-        ctx = containing_fn(r["file"], r["line"], fn_ranges)
+        ctx = _brute_containing(r["file"], r["line"], defs_by_file)
         if ctx is None:
             continue
         cf, params = ctx

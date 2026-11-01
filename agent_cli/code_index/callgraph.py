@@ -10,6 +10,10 @@ query — 1.4–1.6 s and a 556 MB peak to read one entry. The old algorithm
 lives on as the test oracle (`tests/code_index/helpers.reference_callgraph`)
 and the output is byte-identical.
 
+The enclosing function of a line is the innermost function definition that
+contains it (v10.95.0, DESIGN §20). Until then a call that came after a
+nested function ended — Python closures — was attributed to nobody.
+
 Edges only exist when both endpoints are functions defined or declared
 in the index (so calls to externs, libc, and macros that aren't indexed
 are excluded). Param shadowing is filtered to suppress local-variable
@@ -27,7 +31,11 @@ FUNCTION_KINDS = {"function"}
 
 
 def build_fn_ranges(symbols):
-    """file -> (sorted_start_lines, records[(start, end, name, params_set)])."""
+    """file -> (starts, records[(start, end, name, params_set)], parents).
+
+    정렬 키는 (시작, 끝의 역순, 이름) — 같은 시작이면 큰 범위가 먼저라 안쪽이 뒤에
+    온다. ``parents[i]`` 는 레코드 i 를 담는 가장 가까운 레코드의 인덱스(없으면 -1),
+    스택 한 번으로 만든다 (v10.95.0, DESIGN §20)."""
     by_file = defaultdict(list)
     for s in symbols:
         if s["kind"] == "function" and s["is_definition"]:
@@ -35,22 +43,34 @@ def build_fn_ranges(symbols):
             by_file[s["file"]].append((s["line"], s["end_line"], s["name"], params))
     out = {}
     for f, recs in by_file.items():
-        recs.sort()
-        out[f] = ([r[0] for r in recs], recs)
+        recs.sort(key=lambda r: (r[0], -r[1], r[2]))
+        parents: list[int] = []
+        stack: list[int] = []  # 아직 열려 있는 조상
+        for i, (s, _e, _n, _p) in enumerate(recs):
+            while stack and recs[stack[-1]][1] < s:
+                stack.pop()
+            parents.append(stack[-1] if stack else -1)
+            stack.append(i)
+        out[f] = ([r[0] for r in recs], recs, parents)
     return out
 
 
 def containing_fn(file, line, fn_ranges):
-    """Return (name, params_set) of the function containing file:line, or None."""
+    """Return (name, params_set) of the innermost function containing file:line,
+    or None. 시작 줄이 line 이하인 마지막 레코드에서 출발해, 이미 끝난 함수면
+    부모로 올라간다 — 종전엔 그 하나만 보고 끝났으면 None 이었다(안쪽 함수 뒤의
+    바깥 본문 호출이 어디에도 붙지 않았다)."""
     info = fn_ranges.get(file)
     if not info:
         return None
-    starts, recs = info
+    starts, recs, parents = info
     i = bisect.bisect_right(starts, line) - 1
-    if i < 0:
+    while i != -1 and recs[i][1] < line:
+        i = parents[i]
+    if i == -1:
         return None
-    s, e, name, params = recs[i]
-    return (name, params) if s <= line <= e else None
+    _s, _e, name, params = recs[i]
+    return (name, params)
 
 
 @dataclass
