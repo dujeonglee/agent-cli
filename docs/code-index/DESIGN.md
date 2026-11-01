@@ -93,9 +93,10 @@ Single native tool: **`code_index`**. Mode dispatch:
 Two-layer freshness:
 
 1. **Per-query incremental** (default tsindex behavior). On every query
-   that touches the index, recompute sha1 of all source files under the
-   root and incrementally rebuild only the changed ones. Cost on 265 files
-   ≈ 50ms.
+   that touches the index, refresh the index for the changed files only.
+   ~~recompute sha1 of all source files under the root~~ v10.93.0: 파일을
+   읽기 전에 크기·mtime 으로 가른다 — 전부 그대로면 아무것도 쓰지 않는다 (§18).
+   Cost on 265 files ≈ 50ms (sha1 of every file) → 3,212 files 0.35 s (stat only).
 2. **Edit/write post-hook**. After `edit_file` or `write_file` succeeds
    on a path inside the indexed root, schedule an incremental update for
    *that one file* immediately. Next query is already fresh; the per-query
@@ -593,3 +594,35 @@ the new core, and the surface is big.
 - 측정은 토큰(1,689 → 683)과 다음 벤치의 "없는 경로" 호출 수(예시 경로 오인 0 기대).
 - 남은 구조 항목(별도 PR): 쿼리마다 저장소 전체를 다시 읽고 DB 를 통째로 다시 쓴다 — 이
   저장소(3,212 파일, 23 MB)에서 쿼리 4.0 s, `edit_file`·`write_file` 사후 훅도 4.0 s.
+
+---
+
+## 18. 갱신은 stat 으로 먼저 가른다 (v10.93.0)
+
+§17 의 구조 항목. 종전 `build()` 는 쿼리마다 ① 저장소의 모든 소스 파일을 읽어 sha1 을 재고
+② 기존 기호·참조 전부를 파이썬 dict 로 올린 뒤 ③ 바뀐 것이 없어도 SQLite 를 통째로 다시
+썼다 — agent-cli 저장소(3,212 파일, 23 MB)에서 쿼리 4.0 s(쓰기 2.2, 로드 1.0, 읽기·sha1
+0.6), `edit_file`·`write_file` 의 사후 훅(`post_hook`)도 같은 함수라 편집마다 4.0 s. 기호가
+0개인 파일은 재사용 조건(`rel in old_syms_by_file`)에 걸려 매번 다시 파싱됐다(JS 95회).
+
+바꾼 것:
+
+- **stat 선행.** 걷기에서 `(rel, size, mtime_ns)` 만 모은다. 파일 집합이 같고 모든
+  크기·mtime 이 저장된 것과 같으면 **읽지도 쓰지도 않고** `{"unchanged": True}` 로 돌아온다.
+  `files` 테이블에 `mtime_ns` 컬럼(SCHEMA_VERSION 3 — 옛 DB 는 한 번 전체 재구축).
+- **sha1 은 mtime 이 다른 파일만.** 내용이 같으면 재사용하고 새 mtime 만 메타에 적는다
+  (`touch` 한 파일은 다음 호출부터 stat 만으로 걸러진다).
+- **바뀐 파일만 파싱, 나머지 행은 SQL 복사.** `write_sqlite_index(copy_from=, copy_symbols=,
+  copy_refs=)` 가 옛 DB 를 ATTACH 해 재사용 파일의 기호·참조 행을 `INSERT … SELECT` 로 새
+  파일에 옮긴다(원자 교체 계약 그대로). 새 이름에 영향받는 파일(Option B)은 참조만 다시
+  쓰고 기호는 복사한다. '옛 이름 집합' 은 `IndexStore.code_names()`(DISTINCT 질의)로.
+- `build()` 가 통계 `{"unchanged", "reused", "changed", "affected", "removed"}` 를 돌려준다
+  — 테스트와 verbose 출력의 근거.
+
+측정(바뀐 파일 없음 → 한 파일 변경): agent-cli 4.0 s → 0.35 s · (측정 안 함), django 2,633
+파일 3.0 s → 0.11 s · 3.05 s → 1.25 s. `callers`·`callees` 의 콜그래프 구성(참조 전부 로드)은
+그대로 1.2~1.8 s — 다음 후보.
+
+테스트 `tests/code_index/test_builder.py::TestStatFirstRefresh`: 변경 없음 → 읽기·쓰기 0,
+touch 만 → 재사용·mtime 갱신·다음은 unchanged, 기호 0개 파일 재사용, 한 파일 변경 → 그
+파일만 새 행·나머지 복사·전체 재구축과 동일, 새 이름 → 영향 파일 참조 한 번만, 삭제.

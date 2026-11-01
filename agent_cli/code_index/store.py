@@ -100,6 +100,20 @@ class IndexStore:
             ]
         return self._all_syms
 
+    def code_names(self) -> set[str]:
+        """코드 기호(함수·타입·변수·상수)의 이름 집합 — 증분 빌드가 "새로 생긴 이름" 을
+        가를 때 쓴다 (v10.93.0; 종전엔 기호 전부를 dict 로 올려 걸렀다)."""
+        from agent_cli.code_index.schema import CODE_NAME_KINDS
+
+        marks = ",".join("?" for _ in CODE_NAME_KINDS)
+        return {
+            row[0]
+            for row in self._conn.execute(
+                f"SELECT DISTINCT name FROM symbols WHERE kind IN ({marks})",
+                tuple(sorted(CODE_NAME_KINDS)),
+            )
+        }
+
     def all_refs(self) -> list:
         if self._all_refs is None:
             self._all_refs = [

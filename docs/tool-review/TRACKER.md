@@ -40,7 +40,7 @@
 - [ ] `history` 로 큰 관찰의 **중간**을 뽑는 길 — PR C 측정의 부수 발견(12/12 런이 `substr(text,1,N)` 만 씀). 후보: help 예시에 `substr(text, instr(text,'…'), 200)` 한 줄, 또는 `loc` + 오프셋 인자. 측정은 같은 런처로.
 - [x] 내장 에이전트·스킬 **본문**의 대문자 강조 — 사용자 결정(2026-10-30)으로 본문 43곳 소문자화 + 가드가 파일도 읽음(`test_no_caps_emphasis_in_builtin_bodies`, docs/prompt-notation/DESIGN.md 가드 절)
 - [ ] 남은 도구 검토: `run_skill` → `browser`·`schedule` 순 (`code_index`·`fetch` 는 v10.92.0 구현 완료)
-- [ ] `code_index` 색인 갱신 조기 종료(D3) — 크기·mtime 이 그대로면 읽지도 쓰지도 않음; 저장 스키마에 size·mtime 추가. 지금은 이 저장소에서 쿼리·편집마다 4.0 s
+- [x] `code_index` 색인 갱신 조기 종료(D3, v10.93.0) — stat 선행·변경 없으면 무쓰기·바뀐 파일만 파싱하고 나머지 행은 SQL 복사: 4.0 s → 0.35 s(변경 없음)·1.25 s(한 파일, django). docs/code-index/DESIGN.md §18
 - [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`
 - [ ] v10.91.2 GLM 벤치 ×2 — v10.91.0 이 8/9·8/9, 그 뒤는 버그 수정(경과·로그 재사용·바쁨 거절 순서)뿐이라 급하지 않음. 볼 지표: 전경 timeout kill·`Removed` 안내·python 작업화·dash 오류
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
