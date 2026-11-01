@@ -268,137 +268,6 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
 {rendered}"""
 
 
-def _build_code_index_inline(dialect) -> str:
-    """Build the code_index inline guide.
-
-    Pulls the supported extension list from
-    :func:`agent_cli.code_index.languages.get_supported_extensions` so
-    adding a walker module automatically updates the prompt (single
-    source of truth).
-
-    Examples show only the action_input dict — the wire-shape envelope
-    is taught by the Format Rules section, not by repeating a wrapper
-    at every inline example (small-model placeholder anchoring).
-
-    The action_input fragment passes through
-    ``dialect.render_action_input`` so a future plugin can swap the
-    inner shape without changing this builder. Both current plugins
-    return identity.
-    """
-    from agent_cli.code_index.languages import get_supported_extensions
-
-    exts = ", ".join(get_supported_extensions())
-
-    multi_op = getattr(dialect, "multi_op", False)
-
-    def rai(item):
-        # code_index is flat-native (Step 3): one op = one query, no
-        # `queries` wrapper in any wire shape. The op array (multi-op) or
-        # successive turns (single-op) replace the old per-tool batch.
-        return _rai_prefixed(dialect, "code_index", item)
-
-    list_py = rai({"mode": "list", "path": "auth.py"})
-    list_search = rai({"mode": "list", "path": "auth.py", "search": "login"})
-
-    fetch_py = rai({"mode": "fetch", "path": "auth.py", "name": "User.login"})
-
-    lookup = rai({"mode": "lookup", "name": "AgentLoop"})
-    kind_all = rai({"mode": "kind", "symbol_kind": "function"})
-    file_q = rai({"mode": "file", "path": "agent_cli/loop.py"})
-    refs_q = rai({"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"})
-    callers_q = rai({"mode": "callers", "name": "process"})
-    callees_q = rai({"mode": "callees", "name": "process"})
-    slice_q = rai(
-        {
-            "mode": "slice",
-            "name": "process",
-            "with_callees": True,
-            "with_types": True,
-            "depth": 2,
-        }
-    )
-    build_q = rai({"mode": "build"})
-
-    if multi_op:
-        batch_para = """\
-  Each `code_index` call runs one query. Read-only (no file writes). To run
-  several queries (modes may be mixed), make several `code_index` calls in
-  the same turn."""
-    else:
-        batch_para = """\
-  Each `code_index` call runs one query. Read-only (no file writes). Run
-  several queries with successive calls (modes may differ)."""
-    modes_header = "Ten values of `mode` (each call is one query):"
-
-    # v10.77.0 표기: 도구·인자는 백틱, 값은 큰따옴표, 호출 모양(mode='list')은 문장으로.
-    return f"""\
-
-  Persistent code/markdown index backed by a SQLite store at
-  `<project_root>/.agent-cli/code_index.db`. Lazy-built on first
-  query; sha1-incremental on every call after that, so it stays fresh
-  with no manual invalidation.
-
-{batch_para}
-
-  {modes_header}
-
-  1. "list" — per-file outline (one symbol per line:
-     `parent.name (kind) file:start-end`). Replaces `read_file` with `stat`
-     for any supported-extension file.
-       {list_py}
-     `search` (a regex) filters the outline by symbol name (re.search):
-       {list_search}
-  2. "fetch" — single-symbol body tagged LINE#HASH:content, so it pipes
-     straight into `edit_file` without a separate `read_file`. Definition
-     wins when a name has both a declaration and a definition. Markdown
-     accepts the heading with or without the marker ("## Setup" ≡ "Setup").
-     After a "list" (or "lookup" / "file") hit, prefer "fetch" over
-     `read_file` with the line range — "fetch" gives the body tagged in one
-     call, ready to edit; `read_file` would return the same lines without
-     the shortcut.
-       {fetch_py}
-  3. "lookup" — find a symbol by name across the whole index.
-     Optional `symbol_kind` ("function" / "type" / "variable" / "constant" /
-     "section") filter.
-       {lookup}
-  4. "kind" — list every symbol of a given kind in the index.
-     Useful for "show me every section/function/type".
-       {kind_all}
-  5. "file" — every symbol in one file from the index (no re-parse).
-       {file_q}
-  6. "refs" — every reference site for a name. Optional `ref_kind`
-     ("call" / "name" / "type") — "call" for invocation sites, "name" for
-     bare-identifier mentions (callbacks), "type" for identifiers in type
-     position.
-       {refs_q}
-  7. "callers" — functions that call this one (from the callgraph).
-       {callers_q}
-  8. "callees" — functions called by this one.
-       {callees_q}
-  9. "slice" — LLM-context markdown blob: the symbol's definition body
-     plus optional callees / callers / types / macros up to `depth`
-     (default 1, max 5). Use this when you need to understand a function
-     in the company of its neighbours.
-       {slice_q}
-  10. "build" — force a full rebuild. Rare — the per-query incremental
-      refresh handles normal cases.
-       {build_q}
-
-  Path scope: "list" and "fetch" on a path outside the indexed root
-  fall through to an on-demand parse (single file, no DB write).
-  "lookup", "kind", "file", "refs", "callers", "callees" and "slice"
-  are index-scoped — they only see files under the indexed root.
-  "build" always operates on the indexed root.
-
-  Naming follows each language's convention:
-  - Python / JavaScript / TypeScript: "Class.method"
-  - C / C++ / Rust: "namespace::Class::method" (or "Type::method")
-  - Markdown: heading text ("Setup") or with marker ("## Setup")
-
-  Supported extensions: {exts}.
-  For non-code/non-markdown files, use `read_file`."""
-
-
 _ASK_INLINE = """\
 
   `ask` vs `complete` — pick by intent, not tone:
@@ -461,13 +330,9 @@ def _build_tool_inline_guides(
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
-    ``read_file``'s guide depends on whether ``code_index`` is also
-    active (steering line gets added in that case), so the map cannot
-    be a static module-level dict — it's rebuilt per call.
-
-    ``edit_file``'s guide has no top-level call examples — its dict
-    literals are inner ``edits[i]`` items (not full calls). ``ask``'s
-    guide carries no examples either.
+    ``ask`` 의 안내는 루프 종류(상주면 막지 않는 ask)에 따라 다르므로 호출마다
+    다시 만든다. ``code_index`` 의 안내는 v10.92.0 에 지웠다 — 모드 설명은 도구의
+    `mode` 인자에 있다 (docs/tool-review/TRACKER.md).
     """
     if nonblocking_ask:
         ask = _ASK_INLINE_RESIDENT
@@ -477,7 +342,6 @@ def _build_tool_inline_guides(
         "edit_file": _build_edit_file_inline(dialect),
         "agent": _build_agent_inline(dialect, has_agent_registry=has_agent_registry),
         "ask": ask,
-        "code_index": _build_code_index_inline(dialect),
     }
 
 

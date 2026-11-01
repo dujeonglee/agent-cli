@@ -154,15 +154,8 @@ class TestMultiOpPromptBranches:
         assert "the array is NOT a" not in section
 
     def test_code_index_one_query_per_op(self, section):
-        assert "Each `code_index` call runs one query" in section
+        assert "one call runs one query, chosen by `mode`" in section
         assert "takes a LIST of queries" not in section
-
-    def test_code_index_guide_nudges_same_turn_batch(self, section):
-        # Regression guard: code_index's multi-op guide already nudges
-        # same-turn batching — keep it (B leaves it as-is).
-        assert "in\n  the same turn" in section or (
-            "in the same turn" in " ".join(section.split())
-        )
 
     def test_delegate_one_task_per_op(self, section):
         # v10.26.0: "ONE task" 는 RUN_DESCRIPTION 한 곳에만 — 인라인 가이드의
@@ -199,7 +192,7 @@ class TestMultiOpPromptBranches:
         assert '"mode": "string, required' in flat
         assert '"queries":' not in flat
         assert '"code_index_queries":' not in flat
-        assert "One op runs one query" in flat
+        assert "one call runs one query" in flat
         assert "Provide queries as a LIST" not in flat
 
     def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):
@@ -490,10 +483,9 @@ class TestBuildSystemPrompt:
         """Available Tools is a two-tier layout: every tool's basic intro
         (``- name:`` + Input JSON) comes first, THEN the detailed guides with
         their ``{"action": ...}`` examples. This guarantees a tool is
-        introduced before any guide REFERENCES it across tools (e.g. the
-        code_index fetch guide points at edit_file, which used to be introduced
-        only afterward). Attention: establish the full tool roster before any
-        usage example."""
+        introduced before any guide REFERENCES it across tools (the edit_file
+        guide names read_file and code_index). Attention: establish the full
+        tool roster before any usage example."""
         from agent_cli.dialects import get as get_wf
         from agent_cli.prompts.system_prompt import _build_tools_section
 
@@ -804,57 +796,47 @@ class TestBuildSystemPrompt:
         tools_pos = prompt.index("## Available Tools")
         assert ctx_pos < format_pos < tools_pos
 
-    def test_code_index_inline_guide_present(self):
-        """When code_index is in active_tools, the inline guide should
-        appear in the prompt — covering the principal modes, the
-        language list, and the naming convention so the model can use
-        the tool without a separate doc lookup."""
-        prompt = build_system_prompt(_make_caps(), ["code_index"])
+    def test_code_index_has_no_guide_block(self):
+        """v10.92.0 — 안내 블록(번호 목록·호출 예시 11개·SQLite 경로·"index-scoped")을
+        지웠다. 모드는 `mode` 인자 설명이, 이름 규칙·확장자는 도구 설명이 말한다."""
+        prompt = build_system_prompt(_make_caps(), ["code_index"]).replace('\\"', '"')
         assert "- code_index:" in prompt
-        # The principal modes are documented (representative subset).
-        assert '1. "list"' in prompt
-        assert '2. "fetch"' in prompt
-        assert '3. "lookup"' in prompt
-        assert '7. "callers"' in prompt
-        assert '9. "slice"' in prompt
+        assert '{"action": "code_index"' not in prompt
+        assert "Ten values of `mode`" not in prompt
+        assert ".agent-cli/code_index.db" not in prompt
+        assert "index-scoped" not in prompt and "on-demand parse" not in prompt
+        assert '"build"' not in prompt
+        for mode in ("list", "fetch", "lookup", "kind", "file", "refs", "slice"):
+            assert f'"{mode}":' in prompt, mode
+        assert '"callers" and "callees"' in prompt
         # Naming convention covers code (.) and C++ (::) and markdown headings.
         assert "Class.method" in prompt
-        assert "::" in prompt  # namespace::Class::method
+        assert "ns::Type::method" in prompt
         assert "## Setup" in prompt
 
     def test_code_index_lists_supported_languages(self):
-        """Every extension registered by a walker module must appear in
-        the inline guide. This is a single-source-of-truth regression
-        guard: the guide is built from get_supported_extensions(), so
-        adding a walker should automatically propagate. If anyone
-        reverts to a hardcoded list, this test catches it."""
+        """Every extension registered by a walker module must appear in the
+        description. Single-source-of-truth guard: the description is built
+        from get_supported_extensions()."""
         from agent_cli.code_index.languages import get_supported_extensions
 
         prompt = build_system_prompt(_make_caps(), ["code_index"])
         for ext in get_supported_extensions():
-            assert ext in prompt, f"{ext} missing from code_index inline guide"
+            assert ext in prompt, f"{ext} missing from the code_index description"
 
-    def test_code_index_guide_distinguishes_per_file_from_index_wide(self):
-        """The 10-mode surface splits into per-file (list/fetch) and
-        index-wide (lookup/kind/refs/callers/callees/slice). The guide
-        must make that scope distinction explicit so the model doesn't
-        try to use mode='file' for an arbitrary out-of-root file."""
-        import re
-
+    def test_code_index_says_which_modes_read_any_file(self):
+        """ "list"·"fetch" 는 어떤 파일이든, 나머지는 프로젝트 루트 아래만 — 모델이
+        루트 밖 파일에 "file" 을 쓰지 않게 하는 한 문장."""
         prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
-        flat = re.sub(r"\s+", " ", prompt).lower()
-        # Per-file out-of-root falls back to on-demand parse.
-        assert "on-demand parse" in flat
-        # Cross-file modes are explicitly index-scoped.
-        assert "index-scoped" in flat
+        flat = " ".join(prompt.split()).replace('\\"', '"')
+        assert (
+            '"list" and "fetch" read any file; the other modes see only files '
+            "under the project root" in flat
+        )
 
-    def test_code_index_guide_advertises_hashline_output(self):
-        """The fetch mode returns hashline-formatted bodies so the model
-        can pipe straight into edit_file. The guide must surface that
-        invariant — otherwise the model may waste a turn re-reading."""
+    def test_code_index_fetch_says_it_feeds_edit_file(self):
         prompt = build_system_prompt(_make_caps(), ["code_index"])
-        assert "tagged LINE#HASH:content" in prompt
-        assert "`edit_file`" in prompt
+        assert "LINE#HASH" in prompt and "ready for `edit_file`" in prompt
 
     def test_read_file_never_points_at_code_index(self):
         """read_file 설명은 code_index 를 부르지 않는다 — 그 경로 안내는
@@ -1744,37 +1726,44 @@ class TestEditVsWriteRule:
 
 
 class TestCodeIndexToldOnce:
-    """v10.13.0 — the code_index description is one sentence; the modes, the
-    index location, the path-scope rule and the defconfig notes are in the
-    guide only. The description used to repeat all four (about 1.5 KB)."""
+    """v10.13.0 — 사실은 한 번만. v10.92.0 — 안내 블록이 없어졌으니 그 한 번은 설명
+    (이름 규칙·확장자)과 `mode` 인자 설명(모드)이다. 모델이 보는 글은 1,689 → 683
+    토큰(GLM 토크나이저); 글자 수로 상한을 건다."""
 
     def _block(self):
-        return _build_tools_section(["code_index"], _get_dialect("json_fc"))
+        # Input JSON 렌더는 설명 속 큰따옴표를 이스케이프한다 — 셀 때는 되돌린다.
+        return _build_tools_section(["code_index"], _get_dialect("json_fc")).replace(
+            '\\"', '"'
+        )
 
-    def test_description_is_one_short_sentence_pair(self):
+    def test_description_has_no_mode_list_and_no_defconfig(self):
         from agent_cli.tools import TOOLS
 
         d = TOOLS["code_index"].description
-        assert len(d) < 260
         assert "Modes:" not in d and "defconfig" not in d and "Languages:" not in d
+        assert '"list"' not in d  # 모드는 `mode` 인자 설명에만
 
     @pytest.mark.parametrize(
         "fact",
         [
-            '1. "list"',
-            '9. "slice"',
-            '10. "build"',
-            ".agent-cli/code_index.db",
-            "outside the indexed root",
-            "Supported extensions:",
+            '"list": the outline',
+            '"slice": the body',
+            "Class.method",
+            "ns::Type::method",
+            ".markdown, .md",
+            "read any file; the other modes",
         ],
     )
     def test_every_fact_survives_exactly_once(self, fact):
         assert self._block().count(fact) == 1, fact
 
+    def test_whole_block_stays_small(self):
+        """설명 + 인자 전체 — 안내 블록이 되살아나면 여기서 걸린다."""
+        assert len(self._block()) < 3800, len(self._block())
+
     def test_defconfig_lives_in_the_trigger_observation_not_the_guide(self):
         """v10.76.1: defconfig 안내는 선언만 잡힌 관찰에 붙는다
-        (``code_index.DEFCONFIG_HINT``) — 가이드에선 뺐다."""
+        (``code_index.DEFCONFIG_HINT``) — 프롬프트엔 없다."""
         assert "defconfig" not in self._block()
 
 

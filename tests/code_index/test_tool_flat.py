@@ -60,7 +60,7 @@ def test_dispatch_one_missing_mode(project):
 def test_dispatch_one_unknown_mode(project):
     r = _dispatch_one({"mode": "explode"})
     assert not r.success
-    assert "unknown mode" in r.error
+    assert r.error.startswith('`mode` "explode" is not one of ')
 
 
 # ── 스키마: flat single-query (batch 배열·prefix 제거) ────────

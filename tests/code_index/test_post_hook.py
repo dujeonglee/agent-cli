@@ -3,7 +3,7 @@
 After a successful edit_file or write_file, the post-hook calls
 ``code_index.post_hook(path)`` which runs ``build()`` on the existing
 index DB so the next query sees the change without the model having to
-trigger ``mode='build'`` itself.
+trigger a rebuild itself.
 
 Key contracts:
 
@@ -42,7 +42,7 @@ def project(tmp_path, monkeypatch):
     _write(tmp_path / "mod.py", "def alpha():\n    pass\n")
     monkeypatch.chdir(tmp_path)
     # Trigger lazy build so the DB exists for subsequent hooks to find.
-    _dispatch_one({"mode": "build"})
+    _dispatch_one({"mode": "lookup", "name": "alpha"})
     return tmp_path
 
 
@@ -72,14 +72,14 @@ class TestEditFileTriggersRefresh:
         assert "beta" in r_new.output
         r_old = _dispatch_one({"mode": "lookup", "name": "alpha"})
         assert r_old.success
-        assert "no symbols match" in r_old.output
+        assert r_old.output.startswith("No symbol named ")
 
 
 class TestWriteFileTriggersRefresh:
     def test_write_new_file_picked_up_immediately(self, project):
         # The new file is not yet in the index.
         r_before = _dispatch_one({"mode": "lookup", "name": "gamma"})
-        assert r_before.success and "no symbols match" in r_before.output
+        assert r_before.success and r_before.output.startswith("No symbol named ")
 
         # Create a new file with a new symbol via write_file.
         r_write = tool_write_file(
@@ -103,7 +103,7 @@ class TestWriteFileTriggersRefresh:
         assert "delta" in r_lookup.output
         # alpha should be gone after the overwrite.
         r_alpha = _dispatch_one({"mode": "lookup", "name": "alpha"})
-        assert "no symbols match" in r_alpha.output
+        assert r_alpha.output.startswith("No symbol named ")
 
 
 class TestPostHookContracts:

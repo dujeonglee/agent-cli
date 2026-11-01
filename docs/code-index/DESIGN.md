@@ -51,10 +51,10 @@ Single native tool: **`code_index`**. Mode dispatch:
 | `callers` | `name` | Functions that call this one. |
 | `callees` | `name` | Functions called by this one. |
 | `slice` | `name`, `with_callees?`, `with_callers?`, `with_types?`, `with_macros?`, `depth?`, `max_bytes?` | Markdown blob: def body + optional context. Hashline-wrapped. |
-| `build` | (none) | Force a full rebuild. Normally not needed — lazy build covers it. |
+| ~~`build`~~ | — | v10.92.0 에 삭제 — 매 쿼리가 증분 갱신하므로 할 일이 없었다 (§17). |
 
-Each mode gets its own short paragraph in the inline guide. The schema
-keeps unused params optional per-mode.
+~~Each mode gets its own short paragraph in the inline guide.~~ v10.92.0: 안내 블록은 없고
+모드마다 한 문장이 `mode` 인자 설명에 있다 (§17). The schema keeps unused params optional per-mode.
 
 ### 3.1 Rationale for single tool
 
@@ -569,3 +569,27 @@ the new core, and the surface is big.
   requires module-system semantics.
 - `agent-cli code-index` CLI subcommand (mirrors tsindex CLI for human
   use outside the agent loop). Not required for the model surface.
+
+---
+
+## 17. 도구 검토 (v10.92.0, docs/tool-review/TRACKER.md)
+
+근거: 벤치 810 세션(약 2만 액션)에서 34회, 실사용 22 세션(229 액션)에서 2회 — 벤치 과제의
+`/app` 에는 색인할 코드가 없어(`build` 6회 모두 "0 symbols") 행동은 잴 수 없고, 비용으로 봤다.
+
+- **안내 블록 삭제.** 매 요청 1,689 토큰(설명 44 + 인자 541 + 안내 1,104; GLM 토크나이저) →
+  683. 안내의 호출 모양 예시 11개는 v10.77.0 표기 규칙(호출 모양 금지)을 가드가 예시 줄을
+  건너뛰어 비껴갔고, 예시의 가짜 경로(`agent_cli/loop.py`·`src/main.c`)를 벤치의 모델이 실제
+  경로로 오인해 찔러본 기록이 4건. SQLite 경로·sha1 증분·"no DB write"·"index-scoped" 같은
+  내부 사실은 모델의 선택을 바꾸지 않는다. 남긴 사실: 이름 규칙·확장자(설명), 모드마다 한
+  문장과 ""list"·"fetch" 는 어떤 파일이든, 나머지는 프로젝트 루트 아래만"(`mode` 인자).
+- **`build` 삭제.** 매 쿼리가 갱신하므로 할 일이 없다. `force_full` 은 테스트 헬퍼가 쓰므로
+  `build()` 인자로 남는다.
+- **빈 결과는 색인의 범위를 말한다** (`_index_scope`·`_no_match`): 색인에 파일이 없으면 "The
+  index has no files: nothing under /app has a supported extension.", 있으면 "No symbol named
+  "X" among the N indexed symbols (M files under /root)." refs·callers·callees·kind 도 같은 꼴.
+  벤치에서 lookup 5·refs 3 이 전부 빈 결과였는데 색인이 비어 있다는 사실은 어디에도 없었다.
+- **오류 문구는 표기 규칙대로** — Python repr(`'mode'`, `['build', …]`)을 문장으로.
+- 측정은 토큰(1,689 → 683)과 다음 벤치의 "없는 경로" 호출 수(예시 경로 오인 0 기대).
+- 남은 구조 항목(별도 PR): 쿼리마다 저장소 전체를 다시 읽고 DB 를 통째로 다시 쓴다 — 이
+  저장소(3,212 파일, 23 MB)에서 쿼리 4.0 s, `edit_file`·`write_file` 사후 훅도 4.0 s.

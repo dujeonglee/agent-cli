@@ -108,4 +108,4 @@ class TestOnDemandNoDbWrite:
         # Now look it up through the index — should NOT be found.
         r = _dispatch_one({"mode": "lookup", "name": "outside_fn"})
         assert r.success
-        assert "no symbols" in r.output
+        assert r.output.startswith('No symbol named "outside_fn"')
