@@ -13,6 +13,15 @@ file via `write_sqlite_index`.
 `defs_path=None` (the new default) means no C/C++ preprocessor flags —
 upstream defaulted to `Path('tsindex.defs')` relative to cwd. The tool
 layer resolves a project-local defs file before calling.
+
+v10.96.0 (docs/code-index/DESIGN.md §21): Pass-2 also yields each file's
+scopes and bindings; every row gets an explicit id, and a symbol keeps its
+id across builds (copied rows keep theirs, a re-parsed file's symbols take
+the old ids by `(qualified_name, kind, kind_raw)` in order), so a resolved
+ref elsewhere keeps pointing at it. After the rows are written a third pass
+resolves the refs of the re-parsed files and of the files whose recorded
+inputs (`resolve_deps`: files read, module names, relative paths, function
+names) changed (`_resolve_targets`) — from the tables, without a syntax tree.
 """
 
 from __future__ import annotations
@@ -24,6 +33,7 @@ import secrets
 import sys
 import threading
 import time
+from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -34,6 +44,7 @@ from agent_cli.code_index.languages import (
     language_of,
 )
 from agent_cli.code_index.preproc import compute_preproc
+from agent_cli.code_index.resolve import function_scopes, resolve_files
 from agent_cli.code_index.schema import CODE_NAME_KINDS, SCHEMA_VERSION
 from agent_cli.code_index.store import IndexStore, load_index
 
@@ -221,10 +232,9 @@ def build(
 
     # Per-file data (everything as plain dicts for uniformity)
     syms_by_file: dict[str, list] = {}
-    refs_by_file: dict[str, list] = {}
     idents_by_file: dict[str, list] = {}
     meta_by_file: dict[str, dict] = {}
-    parsed_cleaned: dict[str, bytes] = {}  # cache cleaned bytes for Pass 2
+    trees: dict[str, tuple] = {}  # rel → (cleaned bytes, tree)
 
     # Pre-populate reused files — meta only (their rows are copied by SQL);
     # a touched-but-identical file takes the new size·mtime.
@@ -234,26 +244,34 @@ def build(
             idents_by_file[rel] = old.get("identifiers") or []
             meta_by_file[rel] = {**old, "size": size, "mtime_ns": mtime}
 
+    def parse(rel: str, path: Path, lang: str):
+        if rel not in trees:
+            raw = raw_of(rel, path)
+            spec = LANGUAGES[lang]
+            cleaned = spec.preprocess(raw, unifdef_flags) if spec.preprocess else raw
+            trees[rel] = (cleaned, get_parser(lang).parse(cleaned))
+        return trees[rel]
+
+    def pass1(rel: str, path: Path, lang: str) -> list:
+        cleaned, tree = parse(rel, path, lang)
+        syms: list = []
+        LANGUAGES[lang].walk_definitions(tree.root_node, cleaned, rel, syms)
+        syms_by_file[rel] = [asdict(s) for s in syms]
+        return syms
+
     # Pass 1 (defs) for changed files
     for rel, path, h, reused, lang, size, mtime in file_records:
         if reused:
             continue
         raw = raw_of(rel, path)
-        spec = LANGUAGES[lang]
-        cleaned = spec.preprocess(raw, unifdef_flags) if spec.preprocess else raw
-        parsed_cleaned[rel] = cleaned
-        parser = get_parser(lang)
-        tree = parser.parse(cleaned)
-        syms: list = []
-        spec.walk_definitions(tree.root_node, cleaned, rel, syms)
-        syms_by_file[rel] = [asdict(s) for s in syms]
+        syms = pass1(rel, path, lang)
         meta_by_file[rel] = {
             "path": rel,
             "size": size,
             "mtime_ns": mtime,
             "lines": raw.count(b"\n") + 1,
             "sha1": h,
-            "has_error": tree.root_node.has_error,
+            "has_error": trees[rel][1].root_node.has_error,
             "n_symbols": len(syms),
             "language": lang,
         }
@@ -281,39 +299,52 @@ def build(
             if ids and added_names.intersection(ids):
                 affected.add(rel)
 
-    # Pass 2 (refs) for changed + affected files
-    pass2_set: set[str] = {
-        rel for rel, _, _, reused, _, _, _ in file_records if not reused
-    }
-    pass2_set |= affected
+    # Affected files are re-walked whole (their symbols keep their ids — see
+    # `_assign_symbol_ids`); the rest of the reused files are copied by SQL.
     for rel, path, _, _, lang, _, _ in file_records:
-        if rel not in pass2_set:
-            continue
+        if rel in affected:
+            pass1(rel, path, lang)
+    parsed = [r for r in file_records if not r[3] or r[0] in affected]
+    parsed_set = {r[0] for r in parsed}
+    if old_store is not None:
+        defined_all = new_defined | old_defined
+    else:
+        defined_all = new_defined
+
+    ids = _IdAllocator(old_store._conn if old_store is not None else None)
+    rows = {"symbols": [], "refs": [], "scopes": [], "bindings": []}
+    for rel, path, _, _, lang, _, _ in parsed:
+        cleaned, tree = trees[rel]
         spec = LANGUAGES[lang]
-        cleaned = parsed_cleaned.get(rel)
-        if cleaned is None:
-            raw = raw_of(rel, path)
-            cleaned = spec.preprocess(raw, unifdef_flags) if spec.preprocess else raw
-        parser = get_parser(lang)
-        tree = parser.parse(cleaned)
-        new_refs: list = []
+        syms = syms_by_file[rel]
+        ids.assign_symbols(rel, syms)
         idents: set[str] = set()
-        spec.walk_refs(tree.root_node, cleaned, rel, new_refs, new_defined, idents)
-        refs_by_file[rel] = [asdict(r) for r in new_refs]
+        if spec.walk_scopes is not None:
+            scopes, binds, new_refs = spec.walk_scopes(
+                tree.root_node, cleaned, rel, defined_all, idents
+            )
+            ref_dicts = [asdict(r) for r in new_refs]
+        else:
+            new_refs = []
+            spec.walk_refs(tree.root_node, cleaned, rel, new_refs, defined_all, idents)
+            ref_dicts = [asdict(r) for r in new_refs]
+            scopes, binds = function_scopes(
+                syms, ref_dicts, tree.root_node.end_point[0] + 1
+            )
+        _link_rows(rel, syms, scopes, binds, ref_dicts, ids, rows)
         idents_by_file[rel] = sorted(idents)
         meta_by_file[rel]["identifiers"] = idents_by_file[rel]
 
     # Assemble final ordered lists (deterministic, sorted by file path). Only
     # parsed rows are here; reused files' rows come from the old DB.
     files_meta_list = [meta_by_file[r[0]] for r in file_records]
-    all_symbols = [s for r in file_records for s in syms_by_file.get(r[0], [])]
-    all_refs = [x for r in file_records for x in refs_by_file.get(r[0], [])]
-    reused_files = [rel for rel, _, _, reused, _, _, _ in file_records if reused]
+    copied = [r[0] for r in file_records if r[0] not in parsed_set]
     present = {r[0] for r in file_records}
-    n_removed = len(set(old_files_meta) - present)
+    removed = sorted(set(old_files_meta) - present)
+    n_removed = len(removed)
 
     n_files = len(file_records)
-    n_reused = len(reused_files)
+    n_reused = sum(1 for r in file_records if r[3])
     n_changed = n_files - n_reused
     elapsed = time.time() - t0
 
@@ -339,15 +370,30 @@ def build(
         "preprocessing": preproc_info,
         "preproc_fingerprint": fp,
         "files": files_meta_list,
-        "symbols": all_symbols,
-        "refs": all_refs,
+        "next_ids": ids.next,
+        **rows,
     }
+    resolved_counts: dict[str, int] = {}
+
+    def resolve(conn) -> None:
+        if old_store is None:
+            targets = [r[0] for r in file_records]
+        else:
+            targets = _resolve_targets(
+                conn,
+                sorted(parsed_set),
+                removed,
+                _python_files(file_records, old_files_meta),
+            )
+        resolve_files(conn, targets)
+        resolved_counts["files"] = len(targets)
+
     write_sqlite_index(
         out_path,
         out,
         copy_from=out_path if old_store is not None else None,
-        copy_symbols=reused_files,
-        copy_refs=[r for r in reused_files if r not in affected],
+        copy_files=copied,
+        resolve=resolve,
     )
     if verbose:
         print(
@@ -355,8 +401,8 @@ def build(
             file=sys.stderr,
         )
         print(
-            f"  {len(all_symbols)} symbols, {len(all_refs)} refs parsed; "
-            f"{n_reused} files copied",
+            f"  {len(rows['symbols'])} symbols, {len(rows['refs'])} refs parsed; "
+            f"{len(copied)} files copied, {resolved_counts.get('files', 0)} resolved",
             file=sys.stderr,
         )
         print(
@@ -369,7 +415,270 @@ def build(
         "changed": n_changed,
         "affected": len(affected),
         "removed": n_removed,
+        "resolved": resolved_counts.get("files", 0),
     }
+
+
+def _python_files(file_records, old_files_meta) -> tuple[set[str], set[str]]:
+    """``(옛 파이썬 파일들, 새 파이썬 파일들)``."""
+    new = {r[0] for r in file_records if r[4] == "python"}
+    old = {p for p, m in old_files_meta.items() if m.get("language") == "python"}
+    return old, new
+
+
+class _IdAllocator:
+    """행 id 를 명시로 정한다 — 새 행은 옛 DB 의 최댓값 뒤부터, 다시 파싱한 파일의
+    기호는 옛 id 를 ``(qualified_name, kind, kind_raw)`` 짝으로 물려받는다. 그래야
+    다른 파일의 ``refs.target_id`` 가 본문만 고친 편집 뒤에도 그대로 맞다."""
+
+    def __init__(self, old_conn):
+        self.old = old_conn
+        self.next: dict[str, int] = {}
+        # 지운 행의 id 도 다시 내주지 않는다 — 최고 수위를 meta 에 남긴다
+        saved: dict = {}
+        if old_conn is not None:
+            row = old_conn.execute(
+                "SELECT value FROM meta WHERE key = 'next_ids'"
+            ).fetchone()
+            saved = json.loads(row[0]) if row else {}
+        for table in ("symbols", "refs", "scopes", "bindings"):
+            top = 0
+            if old_conn is not None:
+                row = old_conn.execute(f"SELECT MAX(id) FROM {table}").fetchone()
+                top = row[0] or 0
+            self.next[table] = max(top + 1, saved.get(table, 0))
+
+    def take(self, table: str) -> int:
+        i = self.next[table]
+        self.next[table] = i + 1
+        return i
+
+    def assign_symbols(self, rel: str, syms: list[dict]) -> None:
+        pool: dict[tuple, list[int]] = defaultdict(list)
+        if self.old is not None:
+            for sid, qn, kind, kraw in self.old.execute(
+                "SELECT id, qualified_name, kind, kind_raw FROM symbols "
+                "WHERE file = ? ORDER BY id",
+                (rel,),
+            ):
+                pool[(qn, kind, kraw)].append(sid)
+        for s in syms:
+            key = (s.get("qualified_name") or s["name"], s["kind"], s.get("kind_raw"))
+            if pool.get(key):
+                s["id"] = pool[key].pop(0)
+            else:
+                s["id"] = self.take("symbols")
+
+
+def _link_rows(rel, syms, scopes, binds, refs, ids: _IdAllocator, rows) -> None:
+    """한 파일의 범위·바인딩·참조에 id 를 붙이고 정의 기호와 잇는다."""
+    by_def: dict[tuple[int, str], int] = {}
+    for s in syms:
+        if s.get("is_definition") and s["kind"] in ("function", "type"):
+            by_def.setdefault((s["line"], s["name"]), s["id"])
+        rows["symbols"].append(s)
+    scope_ids: list[int] = []
+    for sc in scopes:
+        sid = ids.take("scopes")
+        scope_ids.append(sid)
+    fn_of: list[int | None] = []
+    for i, sc in enumerate(scopes):
+        sym = (
+            by_def.get((sc.def_line, sc.def_name)) if sc.def_line is not None else None
+        )
+        parent = scope_ids[sc.parent] if sc.parent is not None else None
+        rows["scopes"].append(
+            {
+                "id": scope_ids[i],
+                "file": rel,
+                "kind": sc.kind,
+                "start_line": sc.start_line,
+                "end_line": sc.end_line,
+                "parent_id": parent,
+                "symbol_id": sym,
+            }
+        )
+        # 감싼 함수 기호 — 람다·컴프리헨션·클래스 본문은 바깥으로
+        if sc.kind == "function" and sym is not None:
+            fn_of.append(sym)
+        elif sc.parent is not None:
+            fn_of.append(fn_of[sc.parent])
+        else:
+            fn_of.append(None)
+    for b in binds:
+        tgt = None
+        if b.kind in ("def", "class"):
+            tgt = by_def.get((b.line, b.name))
+        rows["bindings"].append(
+            {
+                "id": ids.take("bindings"),
+                "scope_id": scope_ids[b.scope],
+                "name": b.name,
+                "kind": b.kind,
+                "line": b.line,
+                "import_module": b.import_module,
+                "import_name": b.import_name,
+                "symbol_id": tgt,
+            }
+        )
+    for r in refs:
+        sc = r.get("scope") or 0
+        r["id"] = ids.take("refs")
+        r["scope_id"] = scope_ids[sc]
+        r["fn_symbol_id"] = fn_of[sc]
+        rows["refs"].append(r)
+
+
+def _surface(conn, schema: str, path: str) -> tuple:
+    """다른 파일의 해석이 이 파일에서 읽을 수 있는 것 — 모듈 범위, 클래스 범위와 그 바깥
+    범위들(베이스 식을 그 자리에서 찾는다)의 바인딩, 클래스 베이스, def·class 기호 id.
+    줄은 순서만 남긴다(위에서 줄을 더해도 같다); 범위·바인딩 id 는 파일 안 순번으로.
+    함수 몸 안의 지역은 넣지 않는다 — 클래스를 품지 않은 함수는 바깥에서 안 보인다."""
+    scopes = conn.execute(
+        f"SELECT id, kind, parent_id, symbol_id, start_line FROM {schema}.scopes "
+        f"WHERE file = ? ORDER BY id",
+        (path,),
+    ).fetchall()
+    if not scopes:
+        return ()
+    parent = {sid: pid for sid, _k, pid, _s, _l in scopes}
+    keep: set[int] = set()
+    for sid, kind, _pid, _sym, _line in scopes:
+        if kind in ("module", "class"):
+            cur = sid
+            while cur is not None and cur not in keep:
+                keep.add(cur)
+                cur = parent.get(cur)
+    kept = [row for row in scopes if row[0] in keep]
+    order = {row[0]: i for i, row in enumerate(kept)}
+    binds = []
+    for i in range(0, len(kept), 500):
+        chunk = [row[0] for row in kept[i : i + 500]]
+        marks = ",".join("?" for _ in chunk)
+        binds += conn.execute(
+            f"SELECT scope_id, name, kind, line, import_module, import_name, "
+            f"symbol_id FROM {schema}.bindings WHERE scope_id IN ({marks}) "
+            f"ORDER BY id",
+            chunk,
+        ).fetchall()
+    lines = sorted({row[4] for row in kept} | {b[3] for b in binds})
+    rank = {ln: i for i, ln in enumerate(lines)}
+    class_ids = [row[3] for row in kept if row[1] == "class" and row[3] is not None]
+    bases = {}
+    for i in range(0, len(class_ids), 500):
+        chunk = class_ids[i : i + 500]
+        marks = ",".join("?" for _ in chunk)
+        bases.update(
+            conn.execute(
+                f"SELECT id, bases FROM {schema}.symbols WHERE id IN ({marks})", chunk
+            ).fetchall()
+        )
+    return (
+        tuple(
+            (order[sid], kind, order.get(pid), sym, rank[line], bases.get(sym))
+            for sid, kind, pid, sym, line in kept
+        ),
+        tuple(
+            (order[sc], name, kind, rank[line], imod, iname, sym)
+            for sc, name, kind, line, imod, iname, sym in binds
+        ),
+    )
+
+
+def _module_names(conn, schema: str, path: str) -> dict:
+    """모듈 최상위의 이름마다 바인딩 ``[(종류, 모듈, import 이름, 기호)]`` 순서대로 —
+    다른 파일이 이 모듈에서 한 이름을 찾을 때 읽는 것(줄은 안 본다)."""
+    out: dict = defaultdict(list)
+    for name, kind, imod, iname, sym in conn.execute(
+        f"SELECT b.name, b.kind, b.import_module, b.import_name, b.symbol_id FROM "
+        f"{schema}.bindings b JOIN {schema}.scopes s ON s.id = b.scope_id "
+        f"WHERE s.file = ? AND s.kind = 'module' ORDER BY b.id",
+        (path,),
+    ):
+        out[name].append((kind, imod, iname, sym))
+    return out
+
+
+def _function_names(conn, schema: str, files: list[str]) -> set[tuple[str, str]]:
+    """그 파일들의 함수 이름 ``(언어, 이름)``."""
+    out: set[tuple[str, str]] = set()
+    for i in range(0, len(files), 500):
+        chunk = files[i : i + 500]
+        marks = ",".join("?" for _ in chunk)
+        out.update(
+            conn.execute(
+                f"SELECT DISTINCT language, name FROM {schema}.symbols "
+                f"WHERE kind = 'function' AND file IN ({marks})",
+                chunk,
+            ).fetchall()
+        )
+    return out
+
+
+def _has_function(conn, schema: str, lang: str, name: str) -> bool:
+    return (
+        conn.execute(
+            f"SELECT 1 FROM {schema}.symbols WHERE name = ? AND +kind = 'function' "
+            f"AND +language = ? LIMIT 1",
+            (name, lang),
+        ).fetchone()
+        is not None
+    )
+
+
+def _resolve_targets(
+    conn, parsed: list[str], removed: list[str], py_files: tuple[set, set]
+) -> list[str]:
+    """다시 해석할 파일 — 다시 파싱한 파일, 그리고 지난 해석이 읽은 것(``resolve_deps``)
+    가운데 바뀐 것이 있는 파일: 바깥에 보이는 것(`_surface`)이 달라졌거나 지운 파일,
+    대응이 달라진 모듈 이름, 생기거나 사라진 경로, 있고 없음이 바뀐 함수 이름. 해석은
+    파서가 쓴 행만 읽으니(다른 파일의 해석 결과는 안 읽는다) 이것으로 전체 재구축과 같다
+    — 재노출 사슬·베이스 사슬을 따로 따라갈 필요가 없다(읽은 것이 이미 전이적이다)."""
+    # 지운 파일 — 다른 파일에 닿는 길은 모두 모듈 대응(`module_files`)을 거치니
+    # 그 파일을 찾던 파일은 아래 `m:`·`p:` 로도 잡힌다
+    keys = [f"f:{p}" for p in removed]
+    for p in parsed:
+        if _surface(conn, "old", p) != _surface(conn, "main", p):
+            keys.append(f"f:{p}")
+            old_m, new_m = _module_names(conn, "old", p), _module_names(conn, "main", p)
+            keys += [
+                f"e:{n}:{p}"
+                for n in old_m.keys() | new_m.keys()
+                if old_m.get(n) != new_m.get(n)
+            ]
+    old_py, new_py = py_files
+    if old_py != new_py:
+        from agent_cli.code_index.resolve.python import module_map
+
+        old_map, _ = module_map(old_py)
+        new_map, _ = module_map(new_py)
+        keys += [
+            f"m:{m}"
+            for m in old_map.keys() | new_map.keys()
+            if old_map.get(m) != new_map.get(m)
+        ]
+        keys += [f"p:{p}" for p in old_py ^ new_py]
+    # 있고 없음이 바뀐 함수 이름 — 바뀔 수 있는 것은 다시 파싱하거나 지운 파일의 이름뿐
+    touched = parsed + removed
+    for lang, name in sorted(
+        _function_names(conn, "old", touched) | _function_names(conn, "main", touched)
+    ):
+        if _has_function(conn, "old", lang, name) != _has_function(
+            conn, "main", lang, name
+        ):
+            keys.append(f"n:{lang}:{name}")
+    out = set(parsed)
+    for i in range(0, len(keys), 500):
+        chunk = keys[i : i + 500]
+        marks = ",".join("?" for _ in chunk)
+        out.update(
+            r[0]
+            for r in conn.execute(
+                f"SELECT DISTINCT file FROM resolve_deps WHERE dep IN ({marks})", chunk
+            )
+        )
+    present = {r[0] for r in conn.execute("SELECT path FROM files")}
+    return sorted(out & present)
 
 
 # ---------- storage backend (SQLite) ----------
@@ -391,7 +700,7 @@ CREATE TABLE IF NOT EXISTS files (
     language    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS symbols (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    id             INTEGER PRIMARY KEY,  -- v4: 증분 빌드를 넘어 유지된다
     name           TEXT NOT NULL,
     qualified_name TEXT NOT NULL,    -- display form (parent + sep + name)
     kind           TEXT NOT NULL,    -- function|type|variable|constant|section
@@ -407,7 +716,7 @@ CREATE TABLE IF NOT EXISTS symbols (
     signature      TEXT,
     return_type    TEXT,
     enum_values    TEXT,             -- JSON array
-    params         TEXT              -- JSON array
+    bases          TEXT              -- v4: JSON array of base-class expressions
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_name           ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_qualified_name ON symbols(qualified_name);
@@ -415,19 +724,67 @@ CREATE INDEX IF NOT EXISTS idx_symbols_kind           ON symbols(kind);
 CREATE INDEX IF NOT EXISTS idx_symbols_file           ON symbols(file);
 CREATE INDEX IF NOT EXISTS idx_symbols_language       ON symbols(language);
 CREATE TABLE IF NOT EXISTS refs (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    name     TEXT NOT NULL,
-    kind     TEXT NOT NULL,          -- call|type|name
-    file     TEXT NOT NULL,
-    line     INTEGER NOT NULL,
-    col      INTEGER NOT NULL,
-    language TEXT NOT NULL
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL,      -- call|type|name|registration
+    file         TEXT NOT NULL,
+    line         INTEGER NOT NULL,
+    col          INTEGER NOT NULL,
+    language     TEXT NOT NULL,
+    scope_id     INTEGER NOT NULL,   -- v4: innermost scope of the ref
+    fn_symbol_id INTEGER,            -- v4: enclosing function definition
+    object       TEXT,               -- v4: `a.b` of `a.b.m()`
+    target_id    INTEGER,            -- v4: definition when resolved
+    resolution   TEXT NOT NULL       -- v4: resolved|local|candidates|external|unresolved
 );
 CREATE INDEX IF NOT EXISTS idx_refs_name     ON refs(name);
 CREATE INDEX IF NOT EXISTS idx_refs_file     ON refs(file);
 CREATE INDEX IF NOT EXISTS idx_refs_kind     ON refs(kind);
 CREATE INDEX IF NOT EXISTS idx_refs_language ON refs(language);
+CREATE INDEX IF NOT EXISTS idx_refs_target   ON refs(target_id);
+CREATE INDEX IF NOT EXISTS idx_refs_fn       ON refs(fn_symbol_id);
+CREATE TABLE IF NOT EXISTS scopes (
+    id         INTEGER PRIMARY KEY,
+    file       TEXT NOT NULL,
+    kind       TEXT NOT NULL,        -- module|class|function|comprehension|block
+    start_line INTEGER NOT NULL,
+    end_line   INTEGER NOT NULL,
+    parent_id  INTEGER,
+    symbol_id  INTEGER               -- the function/class definition owning it
+);
+CREATE INDEX IF NOT EXISTS idx_scopes_file   ON scopes(file);
+CREATE INDEX IF NOT EXISTS idx_scopes_symbol ON scopes(symbol_id);
+CREATE TABLE IF NOT EXISTS bindings (
+    id               INTEGER PRIMARY KEY,
+    scope_id         INTEGER NOT NULL,
+    name             TEXT NOT NULL,
+    kind             TEXT NOT NULL,  -- param|local|import|def|class|global|nonlocal
+    line             INTEGER NOT NULL,
+    import_module    TEXT,
+    import_name      TEXT,
+    symbol_id        INTEGER         -- the definition a def/class binding names
+);
+CREATE INDEX IF NOT EXISTS idx_bindings_scope  ON bindings(scope_id);
+-- v4: what each file's resolution read — "f:<file>" (its scopes/bindings/bases),
+-- "m:<module>", "p:<relative-import path>", "n:<language>:<function name>"
+CREATE TABLE IF NOT EXISTS resolve_deps (
+    dep  TEXT NOT NULL,
+    file TEXT NOT NULL,
+    PRIMARY KEY (dep, file)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_resolve_deps_file ON resolve_deps(file);
 """
+
+_SYMBOL_COLS = (
+    "id, name, qualified_name, kind, file, line, col, end_line, is_definition, "
+    "language, kind_raw, modifiers, parent, signature, return_type, enum_values, bases"
+)
+_REF_COLS = (
+    "id, name, kind, file, line, col, language, scope_id, fn_symbol_id, object, "
+    "target_id, resolution"
+)
+_SCOPE_COLS = "id, file, kind, start_line, end_line, parent_id, symbol_id"
+_BINDING_COLS = "id, scope_id, name, kind, line, import_module, import_name, symbol_id"
 
 
 def _new_tmp_path(path: Path) -> Path:
@@ -448,15 +805,17 @@ def write_sqlite_index(
     top: dict,
     *,
     copy_from: Path | None = None,
-    copy_symbols: list[str] | None = None,
-    copy_refs: list[str] | None = None,
+    copy_files: list[str] | None = None,
+    resolve=None,
 ):
     """Replace the SQLite file with a fresh build from `top`.
 
-    v10.93.0: ``copy_from`` 이 있으면 그 DB 를 ATTACH 해 ``copy_symbols`` 파일들의
-    기호 행과 ``copy_refs`` 파일들의 참조 행을 SQL 로 그대로 복사한다 — 파이썬으로
-    올려 다시 넣지 않는다(agent-cli 저장소의 참조 65만 행: executemany 1.9 s →
-    복사 0.2 s). ``top["symbols"]``·``top["refs"]`` 는 파싱한 파일의 행만 든다.
+    v10.93.0: ``copy_from`` 이 있으면 그 DB 를 ATTACH 해 ``copy_files`` 의 행을 SQL 로
+    그대로 복사한다 — 파이썬으로 올려 다시 넣지 않는다(agent-cli 저장소의 참조 65만
+    행: executemany 1.9 s → 복사 0.2 s). ``top`` 의 ``symbols``·``refs``·``scopes``·
+    ``bindings`` 는 다시 파싱한 파일의 행만 든다. v10.96.0: 복사도 새 행도 id 를
+    명시한다 — 기호 id 가 빌드를 넘어 유지돼야 해석 결과(``refs.target_id``)가 맞다.
+    ``resolve(conn)`` 은 커밋 전에 불린다(옛 DB 는 ``old`` 로 붙어 있다).
 
     Atomic write contract: the active ``path`` is never opened,
     truncated, or unlinked. We build the full DB at a unique tmp file
@@ -481,11 +840,12 @@ def write_sqlite_index(
     # freshly-created directory.
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(tmp))
+    attached = False
     try:
         conn.executescript(SQLITE_SCHEMA)
         cur = conn.cursor()
         for k, v in top.items():
-            if k in ("files", "symbols", "refs"):
+            if k in ("files", "symbols", "refs", "scopes", "bindings"):
                 continue
             cur.execute(
                 "INSERT INTO meta(key, value) VALUES (?, ?)", (k, json.dumps(v))
@@ -508,41 +868,39 @@ def write_sqlite_index(
                 for f in top["files"]
             ],
         )
-        if copy_from is not None and (copy_symbols or copy_refs):
+        if copy_from is not None:
             cur.execute("ATTACH DATABASE ? AS old", (str(copy_from),))
-            cur.execute("CREATE TEMP TABLE keep_syms(path TEXT PRIMARY KEY)")
-            cur.execute("CREATE TEMP TABLE keep_refs(path TEXT PRIMARY KEY)")
+            attached = True
+        if attached and copy_files:
+            cur.execute("CREATE TEMP TABLE keep(path TEXT PRIMARY KEY)")
             cur.executemany(
-                "INSERT INTO keep_syms(path) VALUES (?)",
-                [(r,) for r in copy_symbols or []],
+                "INSERT INTO keep(path) VALUES (?)", [(r,) for r in copy_files]
             )
-            cur.executemany(
-                "INSERT INTO keep_refs(path) VALUES (?)",
-                [(r,) for r in copy_refs or []],
-            )
-            cur.execute(
-                "INSERT INTO symbols(name, qualified_name, kind, file, line, col, "
-                "end_line, is_definition, language, kind_raw, modifiers, parent, "
-                "signature, return_type, enum_values, params) "
-                "SELECT name, qualified_name, kind, file, line, col, end_line, "
-                "is_definition, language, kind_raw, modifiers, parent, signature, "
-                "return_type, enum_values, params FROM old.symbols "
-                "WHERE file IN (SELECT path FROM keep_syms) ORDER BY id"
-            )
-            cur.execute(
-                "INSERT INTO refs(name, kind, file, line, col, language) "
-                "SELECT name, kind, file, line, col, language FROM old.refs "
-                "WHERE file IN (SELECT path FROM keep_refs) ORDER BY id"
-            )
-            cur.execute("DROP TABLE keep_syms")
-            cur.execute("DROP TABLE keep_refs")
+            for table, cols, where in (
+                ("symbols", _SYMBOL_COLS, "file IN (SELECT path FROM keep)"),
+                ("refs", _REF_COLS, "file IN (SELECT path FROM keep)"),
+                ("scopes", _SCOPE_COLS, "file IN (SELECT path FROM keep)"),
+                (
+                    "bindings",
+                    _BINDING_COLS,
+                    (
+                        "scope_id IN (SELECT id FROM old.scopes WHERE file IN "
+                        "(SELECT path FROM keep))"
+                    ),
+                ),
+                ("resolve_deps", "dep, file", "file IN (SELECT path FROM keep)"),
+            ):
+                cur.execute(
+                    f"INSERT INTO {table}({cols}) SELECT {cols} FROM old.{table} "
+                    f"WHERE {where}"
+                )
+            cur.execute("DROP TABLE keep")
         cur.executemany(
-            "INSERT INTO symbols(name, qualified_name, kind, file, line, col, end_line, "
-            "is_definition, language, kind_raw, modifiers, parent, signature, "
-            "return_type, enum_values, params) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            f"INSERT INTO symbols({_SYMBOL_COLS}) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
+                    s["id"],
                     s["name"],
                     s.get("qualified_name") or s["name"],
                     s["kind"],
@@ -558,27 +916,66 @@ def write_sqlite_index(
                     s.get("signature"),
                     s.get("return_type"),
                     json.dumps(s["enum_values"]) if s.get("enum_values") else None,
-                    json.dumps(s["params"]) if s.get("params") else None,
+                    json.dumps(s["bases"]) if s.get("bases") else None,
                 )
-                for s in top["symbols"]
+                for s in top.get("symbols", [])
             ],
         )
         cur.executemany(
-            "INSERT INTO refs(name, kind, file, line, col, language) VALUES (?,?,?,?,?,?)",
+            f"INSERT INTO refs({_REF_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
+                    r["id"],
                     r["name"],
                     r["kind"],
                     r["file"],
                     r["line"],
                     r["col"],
                     r.get("language", "c"),
+                    r["scope_id"],
+                    r.get("fn_symbol_id"),
+                    r.get("object"),
+                    None,
+                    "unresolved",
                 )
-                for r in top["refs"]
+                for r in top.get("refs", [])
             ],
         )
+        cur.executemany(
+            f"INSERT INTO scopes({_SCOPE_COLS}) VALUES (?,?,?,?,?,?,?)",
+            [
+                (
+                    sc["id"],
+                    sc["file"],
+                    sc["kind"],
+                    sc["start_line"],
+                    sc["end_line"],
+                    sc["parent_id"],
+                    sc["symbol_id"],
+                )
+                for sc in top.get("scopes", [])
+            ],
+        )
+        cur.executemany(
+            f"INSERT INTO bindings({_BINDING_COLS}) VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (
+                    b["id"],
+                    b["scope_id"],
+                    b["name"],
+                    b["kind"],
+                    b["line"],
+                    b["import_module"],
+                    b["import_name"],
+                    b["symbol_id"],
+                )
+                for b in top.get("bindings", [])
+            ],
+        )
+        if resolve is not None:
+            resolve(conn)
         conn.commit()
-        if copy_from is not None and (copy_symbols or copy_refs):
+        if attached:
             cur.execute("DETACH DATABASE old")
     except Exception:
         # Build failed somewhere in the inserts. The active ``path``

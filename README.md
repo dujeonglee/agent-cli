@@ -1248,6 +1248,30 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 `read_file`이 텍스트(line range)에 답한다면 `code_index`는 의미 단위(symbol)와 cross-file 관계(refs/callers/callees)에 답합니다.
 
+#### 이름 해석은 색인에 (v10.96.0, 스키마 4)
+
+색인을 만들 때 참조마다 그 이름이 무엇을 가리키는지 한 번 풀어 저장합니다(docs/code-index/DESIGN.md §21). 그래서 `callers`·`callees` 는 이름이 아니라 **정의** 단위입니다 — 두 클래스의 `get` 은 서로 다른 노드이고, 테스트의 `_write` 헬퍼가 `fsio._write` 의 호출자로 섞이지 않습니다.
+
+- 해석 결과는 다섯 가지입니다: `resolved`(색인된 정의 하나), `local`(인자·지역 변수·클래스 속성 — 호출 관계가 아님), `candidates`(이름으로만 맞춤 — 타입을 모르는 객체의 메서드 호출 등), `external`(내장 함수·색인 밖 모듈), `unresolved`.
+- **Python** 은 범위 규칙을 그대로 따릅니다: 함수 안 어디서든 대입된 이름은 그 함수 전체에서 지역, 클래스 본문은 메서드에서 보이지 않음, `global`/`nonlocal`, 모듈 본문은 위에서 아래로, `import` 는 파일까지 따라감(상대 import, `import *`, 패키지 재노출, `src/`·`tests/` 같은 소스 루트 자동 인식), `self.m()`·`cls.m()` 은 그 클래스와 부모 클래스에서, `mod.f()`·`Cls.m()` 은 체인으로.
+- **다른 언어**(C·C++·Go·Rust·Java·JS·TS)는 아직 범위 규칙이 없어 함수 범위와 인자만 압니다 — 결과 머리에 "matched by name only" 가 붙습니다. C 는 다음 단계(v10.98.0 예정)입니다.
+- 출력 예:
+
+```
+get — a.py:1-2
+caller  (1×)  b.py:5
+
+Box.get — a.py:6-7
+Box.use  (1×)  a.py:10
+
+? "get" on an object of unknown type — any of 2 definitions:  b.py:6
+```
+
+  맨 이름은 그 이름의 정의마다 한 덩어리(최대 5), 한정 이름(`Box.get`)은 하나만. `?` 줄은 타입을 모르는 객체에서 부른 자리입니다(그 이름의 정의 수와 함께).
+- 정확도: django 에서 1,000 자리를 jedi 와 대조 — `resolved` 454 자리 중 jedi 가 확인한 것 전부 일치, `candidates` 64 자리 전부 jedi 의 답을 포함. 종전(이름만)은 한 호출에 평균 3.4개(`f()`)·20.4개(`obj.m()`)의 정의를 붙였습니다.
+- 증분: 파일마다 해석하면서 읽은 것(다른 파일·모듈 이름·함수 이름)을 색인에 적어 두고, 다음 빌드는 그 가운데 바뀐 것이 있는 파일만 다시 해석합니다 — 전체를 다시 만든 것과 같은 답.
+- 비용: django(2,633 파일) 전체 빌드 7.4 s·색인 99 MB(종전 98.8 MB), 본문만 고친 편집 1.1 s(종전 1.25 s), 새 파이썬 파일 1.1 s, 많이 import 되는 모듈에 함수 추가 1.1~1.2 s(1 파일 다시 해석), 가장 많이 import 되는 이름을 다시 묶는 편집 1.7 s(325 파일), `Model` 에 메서드를 더하는 편집 1.8 s(299 파일). 스키마 4 라 기존 색인은 처음 한 번 전체를 다시 만듭니다.
+
 #### 한 op = 한 query (flat-native)
 
 code_index 는 읽기 전용(파일 안 씀)이고, **한 op 가 한 query**를 돌립니다 (flat). 여러 query 는 멀티-op 으로 code_index op 을 여러 개 보냅니다(읽기전용이라 순서/상태 의존 없음 — 모드 섞기 OK).

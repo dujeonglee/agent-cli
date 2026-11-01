@@ -8,7 +8,8 @@ types, and called macros — intended for use as LLM context.
 
 v10.94.1 (docs/code-index/DESIGN.md §19.1): nothing loads the whole index —
 `pick()` asks the symbols of one name, types/macros ask the refs inside the
-target's range, callers/callees ask one name per BFS step (v10.94.0).
+target's range. v10.96.0: callers/callees walk definitions (the stored name
+resolution), one definition per BFS step.
 Until then a slice loaded every symbol (0.2 s) and scanned every ref once
 per option (0.9–1.5 s on agent-cli).
 
@@ -89,55 +90,44 @@ def cmd_slice(
     out.append(f"# Slice: {name}\n")
     out.append("## Definition\n\n" + section(target, header_prefix="###"))
 
-    # Callee bodies (transitive up to `depth`)
-    if with_callees and target["kind"] == "function":
-        # v10.94.0: 단계마다 프런티어 이름만 묻는다 — 전체 그래프를 만들지 않는다
-        seen: set[str] = {name}
-        frontier = list(callees_of(idx, name).counts)
-        for d in range(1, depth + 1):
-            next_frontier: list[str] = []
-            level_secs: list[str] = []
-            for callee in frontier:
-                if callee in seen:
-                    continue
-                seen.add(callee)
-                sym = pick(callee)
-                if (
-                    sym is None
-                    or sym["kind"] != "function"
-                    or not sym.get("is_definition")
-                ):
-                    continue
-                level_secs.append(section(sym, header_prefix="###"))
-                next_frontier.extend(callees_of(idx, callee).counts)
-            if level_secs:
-                out.append(f"## Callees (depth {d})\n\n" + "\n\n".join(level_secs))
-            frontier = next_frontier
-            if not frontier:
-                break
+    def follow(sym, query):
+        """그 정의의 이웃 정의들 — 해석된 이웃은 그 정의, 이름으로만 맞추는 언어는
+        이름으로 고른 정의. 타입 모를 객체에서 부른 것(``?``)은 따라가지 않는다."""
+        edges = query(idx, sym)
+        out = []
+        for n in edges.neighbors:
+            if n.symbol_id is not None:
+                nxt = idx.symbol(n.symbol_id)
+            elif edges.by_name_only:
+                nxt = pick(n.name)
+            else:
+                continue
+            if nxt is not None:
+                out.append(nxt)
+        return out
 
-    # Caller bodies (transitive up to `depth`)
-    if with_callers and target["kind"] == "function":
-        seen: set[str] = {name}
-        frontier = list(callers_of(idx, name).counts)
+    # Callee / caller bodies (transitive up to `depth`) — v10.96.0: 정의 단위로 걷는다
+    for flag, query, title in (
+        (with_callees, callees_of, "Callees"),
+        (with_callers, callers_of, "Callers"),
+    ):
+        if not flag or target["kind"] != "function" or "id" not in target:
+            continue
+        seen: set[int] = {target["id"]}
+        frontier = follow(target, query)
         for d in range(1, depth + 1):
-            next_frontier: list[str] = []
+            next_frontier: list = []
             level_secs: list[str] = []
-            for caller in frontier:
-                if caller in seen:
+            for sym in frontier:
+                if sym["id"] in seen:
                     continue
-                seen.add(caller)
-                sym = pick(caller)
-                if (
-                    sym is None
-                    or sym["kind"] != "function"
-                    or not sym.get("is_definition")
-                ):
+                seen.add(sym["id"])
+                if sym["kind"] != "function" or not sym.get("is_definition"):
                     continue
                 level_secs.append(section(sym, header_prefix="###"))
-                next_frontier.extend(callers_of(idx, caller).counts)
+                next_frontier.extend(follow(sym, query))
             if level_secs:
-                out.append(f"## Callers (depth {d})\n\n" + "\n\n".join(level_secs))
+                out.append(f"## {title} (depth {d})\n\n" + "\n\n".join(level_secs))
             frontier = next_frontier
             if not frontier:
                 break

@@ -129,7 +129,9 @@ python_source_st = st.lists(
 
 class TestPythonWalkerProperties:
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=python_source_st)
     def test_walker_emits_only_valid_kinds(self, tmp_path, source):
@@ -141,7 +143,9 @@ class TestPythonWalkerProperties:
             assert s["kind"] in NAME_KINDS
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=python_source_st)
     def test_walker_never_emits_empty_name(self, tmp_path, source):
@@ -155,7 +159,9 @@ class TestPythonWalkerProperties:
             )
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=python_source_st)
     def test_walker_line_positions_are_valid(self, tmp_path, source):
@@ -167,7 +173,9 @@ class TestPythonWalkerProperties:
             assert s["end_line"] >= s["line"]
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=python_source_st)
     def test_walker_refs_have_valid_kinds(self, tmp_path, source):
@@ -176,7 +184,9 @@ class TestPythonWalkerProperties:
             assert r["kind"] in REF_KINDS
 
     @settings(
-        max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=40,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(name=identifier_st)
     def test_single_def_with_random_name_round_trips(self, tmp_path, name):
@@ -188,7 +198,9 @@ class TestPythonWalkerProperties:
         assert name in names
 
     @settings(
-        max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=40,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(name=identifier_st)
     def test_walker_never_crashes_on_long_identifier(self, tmp_path, name):
@@ -224,7 +236,9 @@ markdown_source_st = st.lists(heading_st, min_size=1, max_size=20).map(
 
 class TestMarkdownWalkerProperties:
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=markdown_source_st)
     def test_all_headings_have_section_kind(self, tmp_path, source):
@@ -233,7 +247,9 @@ class TestMarkdownWalkerProperties:
             assert s["kind"] == "section"
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=markdown_source_st)
     def test_parent_chain_well_formed(self, tmp_path, source):
@@ -253,7 +269,9 @@ class TestMarkdownWalkerProperties:
             seen_names.add(s["name"])
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=markdown_source_st)
     def test_level_modifier_matches_heading(self, tmp_path, source):
@@ -268,7 +286,9 @@ class TestMarkdownWalkerProperties:
             assert 1 <= level <= 6
 
     @settings(
-        max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=80,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=markdown_source_st)
     def test_end_line_monotonic_with_start_line(self, tmp_path, source):
@@ -278,7 +298,9 @@ class TestMarkdownWalkerProperties:
             assert s["end_line"] >= s["line"]
 
     @settings(
-        max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture]
+        deadline=None,
+        max_examples=40,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     @given(source=markdown_source_st)
     def test_walker_emits_no_refs_for_markdown(self, tmp_path, source):

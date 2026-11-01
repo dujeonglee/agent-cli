@@ -55,14 +55,22 @@ class LangSpec:
                      Returns possibly-rewritten source bytes for
                      tree-sitter to parse. Use `noop_preprocess` for
                      languages that do not need preprocessing.
+    walk_scopes      v10.96.0 (docs/code-index/DESIGN.md §21): a language with
+                     scope rules replaces `walk_refs` with
+                       (root_node, src_bytes, rel_path, defined_names,
+                        idents_out, language=...) -> (scopes, bindings, refs)
+                     and is listed in `schema.SCOPE_RESOLVED_LANGUAGES`. The
+                     other languages keep `walk_refs`; the builder gives them
+                     function scopes and parameter bindings from Pass-1.
     """
 
     name: str
     exts: tuple[str, ...]
     grammar_factory: Callable[[], object]
     walk_definitions: Callable[..., None]
-    walk_refs: Callable[..., None]
+    walk_refs: Callable[..., None] | None
     preprocess: Callable[[bytes, list[str]], bytes]
+    walk_scopes: Callable[..., tuple] | None = None
 
 
 # Filled by each agent_cli.code_index.languages.<name> module at import.
