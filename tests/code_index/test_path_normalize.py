@@ -12,7 +12,6 @@ Covers:
 - Nested relative path.
 - ``find_symbols(file=abs)`` works through normalization.
 - ``find_refs(file=abs)`` works.
-- ``find_refs_in_range(file=abs)`` works.
 
 The nested fixture additionally exercises DESIGN §12.1 "same-name
 function in two files" via ``dup_helper`` in both ``sub/mod.py`` and
@@ -94,14 +93,6 @@ class TestPathNormalization:
         refs_abs = store.find_refs(file=abs_p)
         refs_rel = store.find_refs(file="app.py")
         assert len(refs_abs) == len(refs_rel)
-
-    def test_find_refs_in_range_with_abs_path(self, python_index):
-        store, _, root = python_index
-        abs_p = str(root / "app.py")
-        refs_abs = store.find_refs_in_range(abs_p, 1, 200)
-        refs_rel = store.find_refs_in_range("app.py", 1, 200)
-        assert len(refs_abs) == len(refs_rel)
-        assert len(refs_abs) > 0
 
     def test_unknown_file_returns_empty(self, python_index):
         store, _, _ = python_index

@@ -38,7 +38,8 @@ from typing import ClassVar
 from agent_cli.code_index import (
     IndexStore,
     build,
-    build_callgraph,
+    callees_of,
+    callers_of,
     cmd_slice,
     load_index,
 )
@@ -556,27 +557,32 @@ def _do_refs(action_input: dict) -> ToolResult:
     return ToolResult(True, output="\n".join(_format_ref_line(r) for r in refs_sorted))
 
 
-def _do_callers(action_input: dict) -> ToolResult:
-    name = action_input.get("name")
-    store, root = _ensure_index()
-    # Callgraph indexes by bare name (refs are bare-name). Resolve
-    # qualified → bare via the symbols table.
-    syms = _resolve_symbol(store, name)
-    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
-    _, callers_of, sites_of = build_callgraph(store)
-    callers = callers_of.get(bare)
-    if not callers:
-        return ToolResult(
-            True, output=_no_match(store, root, f'No indexed function calls "{name}"')
-        )
+def _format_edges(edges) -> str:
+    """이웃마다 한 줄 ``name  (N×)  file:line, …`` — 횟수 많은 순, 같으면 이름 순,
+    사이트는 앞 5개."""
     lines = []
-    for caller, count in sorted(callers.items(), key=lambda kv: (-kv[1], kv[0])):
-        sites = sites_of.get((caller, bare), [])
+    for other, count in sorted(edges.counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        sites = edges.sites[other]
         site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
         if len(sites) > 5:
             site_str += f", … ({len(sites)} total)"
-        lines.append(f"{caller}  ({count}×)  {site_str}")
-    return ToolResult(True, output="\n".join(lines))
+        lines.append(f"{other}  ({count}×)  {site_str}")
+    return "\n".join(lines)
+
+
+def _do_callers(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    store, root = _ensure_index()
+    # Callgraph nodes are bare names (refs are bare-name). Resolve
+    # qualified → bare via the symbols table.
+    syms = _resolve_symbol(store, name)
+    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
+    edges = callers_of(store, bare)
+    if not edges.counts:
+        return ToolResult(
+            True, output=_no_match(store, root, f'No indexed function calls "{name}"')
+        )
+    return ToolResult(True, output=_format_edges(edges))
 
 
 def _do_callees(action_input: dict) -> ToolResult:
@@ -584,20 +590,12 @@ def _do_callees(action_input: dict) -> ToolResult:
     store, root = _ensure_index()
     syms = _resolve_symbol(store, name)
     bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
-    calls_of, _, sites_of = build_callgraph(store)
-    callees = calls_of.get(bare)
-    if not callees:
+    edges = callees_of(store, bare)
+    if not edges.counts:
         return ToolResult(
             True, output=_no_match(store, root, f'"{name}" calls no indexed function')
         )
-    lines = []
-    for callee, count in sorted(callees.items(), key=lambda kv: (-kv[1], kv[0])):
-        sites = sites_of.get((bare, callee), [])
-        site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
-        if len(sites) > 5:
-            site_str += f", … ({len(sites)} total)"
-        lines.append(f"{callee}  ({count}×)  {site_str}")
-    return ToolResult(True, output="\n".join(lines))
+    return ToolResult(True, output=_format_edges(edges))
 
 
 def _do_slice(action_input: dict) -> ToolResult:

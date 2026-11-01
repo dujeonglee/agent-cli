@@ -437,7 +437,7 @@ Markdown additionally covers:
 
 ### 12.4 Callgraph & slice
 
-- `build_callgraph`: callees/callers/sites map shapes.
+- ~~`build_callgraph`~~ v10.94.0: `callers_of`/`callees_of` 의 `Edges` + 옛 알고리즘(오라클 `reference_callgraph`)과의 동치 — fixture 전 이름·생성 트리(§19).
 - BFS depth traversal.
 - Cycle handling.
 - `cmd_slice` with each combination of with_callees/callers/types/macros.
@@ -621,8 +621,52 @@ the new core, and the surface is big.
 
 측정(바뀐 파일 없음 → 한 파일 변경): agent-cli 4.0 s → 0.35 s · (측정 안 함), django 2,633
 파일 3.0 s → 0.11 s · 3.05 s → 1.25 s. `callers`·`callees` 의 콜그래프 구성(참조 전부 로드)은
-그대로 1.2~1.8 s — 다음 후보.
+그대로 1.2~1.8 s — 다음 후보 → §19 에서 닫음.
 
 테스트 `tests/code_index/test_builder.py::TestStatFirstRefresh`: 변경 없음 → 읽기·쓰기 0,
 touch 만 → 재사용·mtime 갱신·다음은 unchanged, 기호 0개 파일 재사용, 한 파일 변경 → 그
 파일만 새 행·나머지 복사·전체 재구축과 동일, 새 이름 → 영향 파일 참조 한 번만, 삭제.
+
+---
+
+## 19. callers·callees 는 물어본 이름만 (v10.94.0)
+
+§18 의 "다음 후보". `callers`/`callees` 는 질의마다 `build_callgraph(store)` 로 참조 65만 행·기호
+5.9만 행 전부를 파이썬으로 올려 함수-함수 그래프를 만든 뒤 항목 하나를 읽었다 — agent-cli
+1.4~1.6 s(피크 메모리 556 MB), django 1.0 s. 다른 모드는 v10.93.0 이후 0.1~0.35 s.
+설계는 Fable 서브에이전트, 리뷰 뒤 D1~D7 승인(2026-11-01).
+
+- **이름 단위 질의.** `callers_of(store, X)`: X 가 함수로 색인돼 있으면 X 를 가리키는 call·name
+  참조(`call_sites_by_name`)마다 그 파일의 함수 정의 범위로 감싼 함수를 찾는다.
+  `callees_of(store, X)`: X 의 정의마다 그 범위 안 참조(`call_sites_in_range`) 중 감싼 함수가 X
+  인 것, 이름이 함수인 것(`function_names_among`)만. 둘 다 `Edges(counts, sites)`.
+- **의미는 구성상 같다.** 감싼 함수 판정은 그 파일의 함수 정의(`function_ranges_in_file`)에
+  `build_fn_ranges`/`containing_fn` 을 그대로 쓴다 — 중첩·자기 호출·인자 가림·같은 자리
+  call+name 하나(`call` 우선)·같은 이름 한 노드. 순서는 **참조 id 순**(옛 dict 삽입 순 = 참조 행
+  순) — 증분 빌드가 옛 행을 복사한 뒤 새 행을 붙이므로 질의마다 `ORDER BY id`.
+- **스키마 그대로**(SCHEMA_VERSION 3): `idx_refs_name`·`idx_refs_file` 이 이미 있다.
+- **planner 함정**: `sqlite_stat1` 이 없어 `name = ? AND kind = 'function'` 에 planner 가
+  `idx_symbols_kind`(3.3만 행)를 고른다 — 6.4 ms. `+kind` 로 막아 0.26 ms. `find_symbols` 의
+  `kind` 절도 다른 등호 절과 함께면 `+kind`. EXPLAIN 가드 테스트.
+- **slice** 는 BFS 단계마다 프런티어 이름만 묻는다.
+- `build_callgraph` 는 패키지에서 지우고 테스트 오라클 `tests/code_index/helpers.reference_callgraph`
+  로 옮겼다(D1). `find_refs_in_range` 삭제(소비자 0, D5). 두 핸들러 출력은 `_format_edges` 하나(D7).
+
+측정(구현, 함수 이름 전부): django 15,217개 — 이름당 평균 callers 0.2 ms·callees 0.3 ms, 최악
+`__init__` 96 ms; agent-cli 23,136개 — 0.2/0.3 ms, 최악 `name` 89 ms. **불일치 0**(counts 키
+순서·sites 순서·kind·도구 텍스트). 도구 경로 전체(`_ensure_index` 포함): django `callers get`
+145 ms·`callees __init__` 197 ms, agent-cli 514·491 ms(갱신 0.35 s 포함; 종전 1.8 s).
+
+테스트: `test_callgraph.py` 의 `TestEdgesSemantics`(자기 호출·인자 가림·콜백 name 사이트·한 줄 두
+호출·중첩 함수·**D4 결함 고정**·비함수 이름·같은 이름 병합), `TestEquivalentToReference`(fixture
+10개 × 이름 전부), `TestEquivalentOnGeneratedTree`(hypothesis, 이름 알파벳 5개로 충돌 강제);
+`test_store.py::TestPerNameCallGraphQueries`(창·id 순·500 경계·증분 빌드 뒤 순서·planner).
+사보타주 5종(정렬·call 우선·인자 가림 둘·ORDER BY) 모두 걸림.
+
+남은 것(TRACKER):
+- **D4** `containing_fn` 은 "시작 줄이 이하인 마지막 함수" 하나만 본다 — 안쪽 함수가 끝난 뒤
+  바깥 본문의 호출은 어느 함수에도 붙지 않는다(Python 클로저·JS/Go 중첩 함수). 고치면 출력이
+  바뀌므로 별도 PR, 지금은 테스트로 고정.
+- **D6** slice 의 나머지 전체 로드 — `pick()` 의 기호 전부, `with_types`/`with_macros` 의 참조 전부
+  스캔(0.9~1.5 s). 같은 방식(이름·범위 질의)으로 0.05 s 급.
+- D3 파일 범위 묶음 질의(`file IN (…)`) — 최악 ~90 ms 를 더 낮출 여지, 보류.

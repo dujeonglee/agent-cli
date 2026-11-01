@@ -1,25 +1,27 @@
 # Originally ported from minish.ai/Agent-tools tsindex.py (Apache 2.0).
 # See NOTICE for the list of modifications.
-"""Function-to-function call graph derived from the index.
+"""Function-to-function call graph, asked one name at a time.
 
-`build_callgraph(idx)` walks every `kind in ('call', 'name')` ref,
-resolves the enclosing function via a per-file bisect over function
-ranges, and produces three views:
+`callers_of(store, name)` / `callees_of(store, name)` answer one node's
+neighbours with SQL against the index (v10.94.0, docs/code-index/DESIGN.md
+§19). Until then `build_callgraph(idx)` loaded every symbol and every ref
+(≈650k rows on agent-cli) into Python and built the whole graph for each
+query — 1.4–1.6 s and a 556 MB peak to read one entry. The old algorithm
+lives on as the test oracle (`tests/code_index/helpers.reference_callgraph`)
+and the output is byte-identical.
 
-    calls_of[fn]    -> Counter[callee_fn]
-    callers_of[fn]  -> Counter[caller_fn]
-    sites_of[(caller, callee)] -> list of (file, line, ref_kind)
-
-Edges only exist when both endpoints are functions defined or
-declared in the index (so calls to externs, libc, and macros that
-aren't indexed are excluded). Param shadowing is filtered to suppress
-local-variable accesses that happen to share a function's name.
+Edges only exist when both endpoints are functions defined or declared
+in the index (so calls to externs, libc, and macros that aren't indexed
+are excluded). Param shadowing is filtered to suppress local-variable
+accesses that happen to share a function's name. Nodes are bare names —
+same-named functions in different files are one node.
 """
 
 from __future__ import annotations
 
 import bisect
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 
 FUNCTION_KINDS = {"function"}
 
@@ -51,65 +53,75 @@ def containing_fn(file, line, fn_ranges):
     return (name, params) if s <= line <= e else None
 
 
-def build_callgraph(idx):
-    """Build a strict function-to-function call graph.
+@dataclass
+class Edges:
+    """한 함수의 한쪽 이웃. ``counts`` 의 키 순서 = 그 이웃의 첫 사이트의 참조 id 순
+    (slice 섹션 순서), ``sites`` 의 목록도 id 순."""
 
-    Edges only when BOTH endpoints are functions we have in the index
-    (definitions or prototypes — both stored as kind='function' with
-    is_definition true/false). Calls to macros, externs (kfree etc.)
-    and reads of variables are excluded — those live in the broader
-    `refs` query, not the call graph.
+    counts: Counter = field(default_factory=Counter)
+    sites: dict = field(default_factory=dict)  # 이웃 → [(file, line, ref_kind)]
 
-    Param shadowing is filtered (a ref whose name matches the enclosing
-    function's parameter is a local var access, not a real call).
 
-    Refs of kind='call' and kind='name' BOTH count toward the graph
-    (the latter captures callback-style references — `register(helper)`
-    — which are real edges in the function dependency graph). However,
-    walkers like Python's emit BOTH a 'call' and a 'name' ref at the
-    same call site (the call_expression and its function-identifier
-    child are visited independently). To avoid double-counting that
-    case while still picking up callback-only refs, we deduplicate by
-    (caller, callee, file, line): each unique site contributes one
-    edge instance. ``sites_of`` records one entry per unique site,
-    with the 'call' kind taking precedence over 'name' when both
-    appear at the same coordinates.
+def _collect(edges: Edges, site_kinds: dict) -> Edges:
+    """``{(이웃, file, line): {kind…}}`` (첫 등장 순) → Edges. 같은 자리의
+    call+name 이중 방출은 사이트 하나, 둘 다면 ``call`` (옛 build_callgraph 와 같다)."""
+    for (other, file, line), kinds in site_kinds.items():
+        edges.counts[other] += 1
+        edges.sites.setdefault(other, []).append(
+            (file, line, "call" if "call" in kinds else "name")
+        )
+    return edges
 
-    Returns (calls_of, callers_of, sites_of).
-      calls_of[fn]   -> Counter[callee_fn]
-      callers_of[fn] -> Counter[caller_fn]
-      sites_of[(caller, callee)] -> list of (file, line, ref_kind)"""
-    fn_ranges = build_fn_ranges(idx["symbols"])
-    # Names defined as functions/prototypes in our index
-    fn_names: set[str] = {
-        s["name"] for s in idx["symbols"] if s["kind"] in FUNCTION_KINDS
-    }
 
-    # First pass: collect per-(caller, callee, file, line) the set of
-    # ref kinds observed there. This dedupes the call+name double-emit
-    # while preserving callback-only sites.
-    site_kinds: dict[tuple[str, str, str, int], set[str]] = defaultdict(set)
-    for r in idx["refs"]:
-        if r["kind"] not in ("call", "name"):
-            continue
-        if r["name"] not in fn_names:
-            continue
-        ctx = containing_fn(r["file"], r["line"], fn_ranges)
+def callers_of(store, name: str) -> Edges:
+    """``name`` 을 부르는(또는 콜백으로 가리키는) 색인된 함수들."""
+    edges = Edges()
+    if not store.is_function_name(name):
+        return edges
+    ranges: dict = {}  # 이 호출 안에서만 — 파일마다 함수 범위 한 번
+    loaded: set[str] = set()
+    site_kinds: dict = {}
+    for _id, file, line, kind in store.call_sites_by_name(name):
+        if file not in loaded:
+            loaded.add(file)
+            ranges.update(build_fn_ranges(store.function_ranges_in_file(file)))
+        ctx = containing_fn(file, line, ranges)
         if ctx is None:
             continue
         cf, params = ctx
-        if cf == r["name"] or r["name"] in params:
+        if cf == name or name in params:
             continue
-        site_kinds[(cf, r["name"], r["file"], r["line"])].add(r["kind"])
+        site_kinds.setdefault((cf, file, line), set()).add(kind)
+    return _collect(edges, site_kinds)
 
-    # Second pass: emit one edge per unique site.
-    calls_of = defaultdict(Counter)
-    callers_of = defaultdict(Counter)
-    sites_of = defaultdict(list)
-    for (cf, callee, file, line), kinds in site_kinds.items():
-        # Prefer 'call' kind when both are observed at the same site.
-        primary_kind = "call" if "call" in kinds else "name"
-        calls_of[cf][callee] += 1
-        callers_of[callee][cf] += 1
-        sites_of[(cf, callee)].append((file, line, primary_kind))
-    return calls_of, callers_of, sites_of
+
+def callees_of(store, name: str) -> Edges:
+    """``name`` 이 부르는(또는 가리키는) 색인된 함수들 — 이름이 ``name`` 인 모든
+    정의의 합. 중첩 함수 안의 호출은 그 함수 몫이다(`containing_fn`)."""
+    edges = Edges()
+    defs = store.function_defs(name)
+    if not defs:
+        return edges
+    ranges: dict = {}
+    loaded: set[str] = set()
+    hits: dict = {}  # ref id → (callee, file, line, kind) — 겹친 정의의 같은 참조는 한 번
+    for file, start, end in defs:
+        if file not in loaded:
+            loaded.add(file)
+            ranges.update(build_fn_ranges(store.function_ranges_in_file(file)))
+        for rid, rname, line, kind in store.call_sites_in_range(file, start, end):
+            if rid in hits:
+                continue
+            ctx = containing_fn(file, line, ranges)
+            if ctx is None or ctx[0] != name:
+                continue
+            if rname == name or rname in ctx[1]:
+                continue
+            hits[rid] = (rname, file, line, kind)
+    callees = store.function_names_among(h[0] for h in hits.values())
+    site_kinds: dict = {}
+    for rid in sorted(hits):
+        rname, file, line, kind = hits[rid]
+        if rname in callees:
+            site_kinds.setdefault((rname, file, line), set()).add(kind)
+    return _collect(edges, site_kinds)

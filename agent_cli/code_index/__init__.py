@@ -6,7 +6,8 @@ Public API (re-exported here):
 
     build(root, out_path, ...)        # incremental SQLite index builder
     load_index(path) -> IndexStore    # open an existing index for queries
-    build_callgraph(idx)              # (calls_of, callers_of, sites_of)
+    callers_of(store, name) -> Edges  # one node's callers (SQL, v10.94.0)
+    callees_of(store, name) -> Edges  # one node's callees
     cmd_slice(idx, name, ...)         # LLM-context markdown blob renderer
 
 Lower-level modules:
@@ -16,7 +17,7 @@ Lower-level modules:
     preproc     — C/C++ unifdef driver + rewrite chain (PR-1.c)
     store       — IndexStore (SQLite reader + query methods) (PR-1.c)
     builder     — build() implementation (Pass-1 / Pass-2 / incremental) (PR-1.c)
-    callgraph   — build_callgraph() + helpers (PR-1.c)
+    callgraph   — callers_of()/callees_of() + helpers (v10.94.0: per name)
     slice       — cmd_slice() (PR-1.c)
 
 The `code_index` *tool* (agent_cli/tools/code_index.py) wraps this package
@@ -29,7 +30,7 @@ contract.
 """
 
 from agent_cli.code_index.builder import build
-from agent_cli.code_index.callgraph import build_callgraph
+from agent_cli.code_index.callgraph import Edges, callees_of, callers_of
 from agent_cli.code_index.schema import (
     CODE_NAME_KINDS,
     NAME_KINDS,
@@ -46,11 +47,13 @@ __all__ = [
     "NAME_KINDS",
     "REF_KINDS",
     "SCHEMA_VERSION",
+    "Edges",
     "IndexStore",
     "Ref",
     "Symbol",
     "build",
-    "build_callgraph",
+    "callees_of",
+    "callers_of",
     "cmd_slice",
     "load_index",
 ]
