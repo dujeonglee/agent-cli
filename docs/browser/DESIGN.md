@@ -74,7 +74,7 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 | 항목 | 결정 |
 |---|---|
 | 코드 실행 | 없다. `evaluate`/`run_code` 에 해당하는 모드를 두지 않는다. |
-| URL | `http`/`https` 만. `file://`·`javascript:` 거부. |
+| URL | `http`/`https` 와 로컬 `file:` (v10.99.0, §4.2). `javascript:` 등 그 밖은 거부. |
 | 허용 호스트 | `AGENT_CLI_BROWSER_HOSTS` (쉼표 목록, 하위 도메인 포함). **비어 있으면 전부 허용**. 온프레미스에선 설정으로 잠근다. 차단 목록은 두지 않는다(허용 목록이 단순하다). |
 | 대화상자 | `alert`/`confirm`/`prompt` 는 자동으로 닫고 결과에 한 줄 남긴다 (막힘 방지). |
 | 다운로드 | 거부(이벤트 취소). 업로드 모드 없음. |
@@ -94,6 +94,17 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 - **하지 않는 것**: User-Agent 위장, 스텔스 플러그인, 챌린지 자동 풀이. 구글의 IP 차단은 창을 띄워도 다시 걸릴 수 있다 — 도구가 푸는 게 아니라 사람이 푼다. 관찰 문구에 "다른 도구로 우회하지 말 것(브라우저 UA 를 단 curl·재시도·프록시)" 을 명시한다 — 1차 측정에서 DDG 고정 모드 5회 중 2회가 `[blocked]` 를 받고 셸에서 `curl -A "Mozilla/5.0 …"` 를 시도했다(통과는 못 함).
 - 되묻기는 새 UI 가 아니라 기존 `ask` 도구(블로킹: web 은 `awaiting_input`, run 은 프롬프트). 하니스가 더한 건 관찰 문구 두 개와 스냅샷 머리 한 줄뿐.
 - **창이 닫히면** (v10.41.1): 사용자가 보이는 창을 닫거나 브라우저가 죽으면 페이지 핸들은 남아 있어도 모든 호출이 `TargetClosedError` 로 끝난다 — 실측(다나와 세션)에서 `close` 할 때까지 다섯 턴이 그렇게 날아갔다. 이제 `_alive()`(`page.is_closed()`·`browser.is_connected()`)로 묻는다: `open` 은 같은 가시성(보였으면 보이게)으로 새 브라우저를 띄우고 머리에 `[browser] the previous window was closed (by the user or a crash); this is a new one — cookies and logins from the old window are gone` 을 한 번 붙인다(옮길 컨텍스트가 없으니 쿠키는 못 가져간다). 다른 동작은 "the browser window was closed — call mode 'open' …" 으로 거부한다.
+
+### 4.2 로컬 파일 `file:` (v10.99.0, 2026-11-02)
+
+사용자 요청(2026-11-01): `browser: refused: only http(s) URLs can be opened (got file scheme)` — 모델이 만든 HTML 보고서를 브라우저로 볼 길이 없었다.
+
+- **받는 모양** (`resolve_target`): `file:///abs` 와 맨 경로 — `/abs`·`~/x`·`./x`·`../x`, 또는 작업 폴더에 실제로 있는 상대 경로. 전부 절대 `file://` URI 로 바꾼다(구제할 수 있는 모양은 받는다). 없는 파일은 Chromium 오류 페이지 대신 `no such file: <경로>`. 호스트가 붙은 `file://report.html` 은 경로가 아니라 거절하고 `file:///path` 를 안내한다. 없는 맨 이름(`nope.html`)은 "URL 도 아니고 있는 파일도 아니다".
+- **경계는 `read_file` 과 같다**: 작업 폴더 봉쇄 없음(밖 읽기는 `read_file` 도 허용 — 브라우저만 막으면 일관성이 아니라 우연), 자격증명 사전(`_sensitive`)만 `_confine.guard(check_workspace=False)` 로 묻는다. 게이트는 도구 층(`BrowserTool._local_target`)에서 페이지에 닿기 전에.
+- **링크로 도착한 로컬 파일**: 브라우저 스레드에서는 물을 수 없으므로 `_enforce_host_after` 가 사전에 걸린 경로면 `about:blank` 로 되돌리고 거절, 직접 `open` 하라고 안내한다(그러면 묻는다). 이동 실패로 `chrome-error:` 에 떨어지면 "the page failed to load".
+- **허용 목록**(`AGENT_CLI_BROWSER_HOSTS`)은 로컬 파일과 무관하다 — 호스트가 없고, 같은 파일은 `read_file` 로 읽힌다. 로컬 페이지에서 웹으로 나가는 링크는 여전히 목록을 거친다.
+- **한계**: 로컬 페이지가 `<iframe src=file:///…>` 로 다른 파일을 끼우면 스냅샷·`text`·`find` 에는 안 실리지만(실측: aria 스냅샷은 `- iframe` 한 줄) `screenshot` 에는 그려진다. Playwright 라우팅은 `file:` 요청을 가로채지 못해 하위 자원은 막지 않는다. Chromium 기본값으로 `file:` 페이지의 `fetch` 는 다른 파일을 못 읽는다.
+- 실측(실 Chromium, 2026-11-02): 맨 경로 열기·인라인 JS 실행·상대 링크 클릭·`back`·디렉터리 목록 열기, 가짜 HOME 의 `~/.ssh/config` 링크 거절·직접 열기 확인 게이트(비대화형 거절) — 전부 기대대로.
 
 ## 5. 동시성 · 수명 · 시간 제한
 
