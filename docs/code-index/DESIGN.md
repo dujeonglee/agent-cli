@@ -667,6 +667,21 @@ touch 만 → 재사용·mtime 갱신·다음은 unchanged, 기호 0개 파일 �
 - **D4** `containing_fn` 은 "시작 줄이 이하인 마지막 함수" 하나만 본다 — 안쪽 함수가 끝난 뒤
   바깥 본문의 호출은 어느 함수에도 붙지 않는다(Python 클로저·JS/Go 중첩 함수). 고치면 출력이
   바뀌므로 별도 PR, 지금은 테스트로 고정.
-- **D6** slice 의 나머지 전체 로드 — `pick()` 의 기호 전부, `with_types`/`with_macros` 의 참조 전부
-  스캔(0.9~1.5 s). 같은 방식(이름·범위 질의)으로 0.05 s 급.
+- ~~**D6** slice 의 나머지 전체 로드~~ → §19.1 (v10.94.1).
 - D3 파일 범위 묶음 질의(`file IN (…)`) — 최악 ~90 ms 를 더 낮출 여지, 보류.
+
+### 19.1 slice 도 색인 전체를 올리지 않는다 (v10.94.1)
+
+§19 의 D6. `cmd_slice` 는 v10.94.0 뒤에도 `pick()` 을 위해 기호 전부(`idx["symbols"]`, 0.2 s)를
+이름별로 묶었고, `with_types`·`with_macros` 는 참조 전부(65만 행)를 옵션마다 한 번씩 훑었다
+— `as_sql`: 기본 0.22 s, types+macros 0.90 s, with_callees 1.51 s(그래프 포함).
+
+- `pick(name)` → `IndexStore.symbols_named(name)` (`ORDER BY id` — 옛 묶음의 행 순과 같다;
+  정렬 키 (정의 여부, 종류, 파일, 줄) 가 같은 동점은 사실상 없어 순서가 결과를 가르진 않는다).
+- types·macros → `IndexStore.ref_names_in_range(file, start, end, kind)` (대상 범위 안 `kind` 참조의
+  이름 집합; 쓰는 쪽이 정렬한다).
+- 결과: 이름당 평균 8~9 ms(django·agent-cli 표본 606 × 옵션 3), 도구 경로 전체 `as_sql`
+  with_callees django 213 ms·agent-cli 460 ms(갱신 포함). 출력 불일치 0.
+- 테스트 `test_slice.py::TestSliceEquivalentToFullScan` — 기호·참조를 전부 훑는 store 대역
+  (`_BruteForceStore`, 옛 방식)과 fixture 10개 × 이름 전부 × 옵션 4종이 같다. 범위 질의의 종류
+  거르기를 지우면 7개 실패.
