@@ -200,22 +200,27 @@ class TestTheToolSurfacesIt:
         monkeypatch.chdir(root)
         return root
 
-    def test_build_output_names_the_assumption(self, proj):
-        from agent_cli.tools.code_index import _dispatch_one
+    def test_index_meta_records_the_assumption(self, proj):
+        """v10.92.0: `build` 모드가 없어져 가정은 색인 메타에만 남는다 — 모델에겐
+        선언만 잡힌 관찰의 defconfig 힌트가 같은 사실을 말한다."""
+        from agent_cli.tools.code_index import _ensure_index
 
-        out = _dispatch_one({"mode": "build"}).output
-        assert "LINUX_VERSION_CODE assumed 0xffffff" in out
-        assert ".agent-cli/defconfig" in out
+        store, _ = _ensure_index()
+        pp = store.meta["preprocessing"]
+        assert pp["linux_version_code_source"] == "default"
+        assert pp["linux_version_code"] == "0xffffff"
 
-    def test_build_output_with_a_defconfig_version(self, proj):
-        from agent_cli.tools.code_index import _dispatch_one
+    def test_index_meta_with_a_defconfig_version(self, proj):
+        from agent_cli.tools.code_index import _ensure_index
 
         (proj / ".agent-cli").mkdir(exist_ok=True)
         (proj / ".agent-cli" / "defconfig").write_text(
             "#define LINUX_VERSION_CODE KERNEL_VERSION(6, 1, 0)\n"
         )
-        out = _dispatch_one({"mode": "build"}).output
-        assert "LINUX_VERSION_CODE=393472." in out and "assumed" not in out
+        store, _ = _ensure_index()
+        pp = store.meta["preprocessing"]
+        assert str(pp["linux_version_code"]) == "393472"
+        assert pp["linux_version_code_source"] != "default"
 
     def test_on_demand_parse_outside_the_root_uses_the_same_default(
         self, tmp_path, monkeypatch

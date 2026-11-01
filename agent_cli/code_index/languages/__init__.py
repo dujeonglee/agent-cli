@@ -143,7 +143,7 @@ def get_supported_extensions() -> list[str]:
 
     Single source of truth for:
       - the `code_index` tool's "unsupported extension" error message,
-      - the system prompt's `code_index` inline guide,
+      - the `code_index` tool description (v10.92.0; 종전엔 안내 블록),
       - the `read_file` flow-steering branch that routes supported files
         to `code_index mode='list'` rather than line-based read.
 

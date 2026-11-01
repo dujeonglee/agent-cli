@@ -1,5 +1,9 @@
 """Fetch tool — retrieve web page content as markdown (HTML) or as text (JSON,
-XML, plain text); binary content and ``download_to`` go to a file instead."""
+XML, plain text); binary content and ``download_to`` go to a file instead.
+
+v10.92.0 (docs/tool-review/TRACKER.md): ``depth`` (같은 도메인 링크를 따라 최대 10
+페이지 재귀)를 지웠다 — 벤치 810 세션·실사용 22 세션에서 0회, 쓰이면 관찰 하나에
+페이지 10개. 오류 결과는 사실만 말한다(종전 "Try again later." 힌트는 되풀이를 부른다)."""
 
 from __future__ import annotations
 
@@ -20,13 +24,11 @@ from agent_cli.tools.result import ToolResult
 
 # ── Configuration ──────────────────────────────
 FETCH_TIMEOUT = 15
-MAX_DEPTH = 3
-MAX_PAGES = 10  # Total pages fetched in recursive mode
 USER_AGENT = "agent-cli/2.0 (fetch tool)"
 #: 바이너리 응답의 자동 저장 자리 (v10.58.0) — 시스템 프롬프트가 내려받기 자리로
 #: 안내하는 ``.agent-cli/tmp/`` 아래.
 DOWNLOAD_DIR = Path(".agent-cli") / "tmp" / "downloads"
-_HEADER_PREFIX = "[Fetched "  # 결과 첫 줄 — oversized 파일에서는 뗀다 (v10.58.1)
+_HEADER_PREFIX = "[Fetched "  # 결과 첫 줄 `[Fetched N chars from url]` — oversized 파일에서는 뗀다 (v10.58.1)
 _EXCERPT_LINES = 20
 _EXCERPT_CHARS = 1500
 
@@ -178,7 +180,6 @@ class _HTMLToMarkdown(HTMLParser):
         self._skip_depth = 0
         self._in_pre = False
         self._in_code = False
-        self._links: list[str] = []
         self._anchor: tuple[int, str] | None = None  # (글 시작 위치, 실을 주소)
         # 표 (v10.56.4): 행마다 한 줄, 글 있는 칸 사이만 " | ". 칸마다 [시작
         # 위치, 안에서 닫힌 행 수], 행마다 채워진 칸 수를 스택으로 — 표 안의 표도
@@ -228,10 +229,8 @@ class _HTMLToMarkdown(HTMLParser):
             self._cells.append([len(self.result), 0])
         elif tag == "a":
             href = (attrs_dict.get("href") or "").strip()
-            if href and not href.startswith(("#", "javascript:")):
-                self._links.append(href)
-                if not self._in_pre:
-                    self._anchor = (len(self.result), self._shown_url(href))
+            if href and not href.startswith(("#", "javascript:")) and not self._in_pre:
+                self._anchor = (len(self.result), self._shown_url(href))
 
     def _break(self) -> None:
         """블록 경계 — 이미 줄 첫머리면 그대로(이웃한 ``div`` 가 빈 줄을 쌓지 않게)."""
@@ -332,9 +331,6 @@ class _HTMLToMarkdown(HTMLParser):
             if line or (out and out[-1]):
                 out.append(line)
         return "\n".join(out).strip()
-
-    def get_links(self) -> list[str]:
-        return self._links
 
 
 #: 봇 확인 페이지의 흔적. **보이는 글**에서 찾는 문구와 **HTML** 에서 찾는 확인
@@ -521,15 +517,15 @@ def _download(url: str, dest: str) -> tuple[str, str | None]:
     return _save(data, Path(dest), url, content_type, asked=True)
 
 
-def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
+def _fetch_single(url: str) -> tuple[str, str | None]:
     """Fetch a single URL.
 
-    Returns (markdown_content, links_found, error_or_none). Binary content is
-    downloaded and the content is the note saying where (v10.58.0).
+    Returns (markdown_content, error_or_none). Binary content is downloaded and
+    the content is the note saying where (v10.58.0).
     """
     resp, err = _request(url)
     if err:
-        return "", [], err
+        return "", err
 
     content_type = resp.headers.get("content-type", "")
     kind = _body_kind(content_type)
@@ -537,7 +533,7 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
         data = resp.content or b""
         dest = _auto_dest(_final_url(resp, url), content_type)
         note, err = _save(data, dest, url, content_type, asked=False)
-        return note, [], err
+        return note, err
 
     text = _decode(resp, content_type, kind)
     if kind == "json":
@@ -548,17 +544,17 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
             text = json.dumps(json.loads(body), indent=1, ensure_ascii=False)
         except ValueError:
             pass  # not actually JSON — hand it over as text
-        return text, [], None
+        return text, None
     if kind == "text":
         raw = _gitiles_bytes(text) if _is_gitiles_blob(resp) else None
         if raw is None:
-            return text, [], None
+            return text, None
         try:
-            return raw.decode("utf-8"), [], None
+            return raw.decode("utf-8"), None
         except UnicodeDecodeError:  # 바이너리 파일 — 깨진 글자 대신 내려받는다
             dest = _auto_dest(_final_url(resp, url), "")
             note, err = _save(raw, dest, url, "", asked=False)
-            return note, [], err
+            return note, err
 
     # 본문은 자르지 않는다(v10.56.2). 종전엔 페이지마다 20만 자에서 **표시 없이**
     # 잘랐다 — 줄바꿈한 JSON 은 중간에서 끊겨 깨진 채로(PyPI `requests` 193KB),
@@ -569,34 +565,21 @@ def _fetch_single(url: str) -> tuple[str, list[str], str | None]:
     try:
         parser.feed(text)
     except Exception:
-        return text, [], None
+        return text, None
 
     markdown = parser.get_markdown()
     blocked = _disguised_block(resp.status_code, text, markdown)
     if blocked:
-        return "", [], blocked.format(url=url)
-    return markdown, parser.get_links(), None
+        return "", blocked.format(url=url)
+    return markdown, None
 
 
-def _resolve_links(base_url: str, links: list[str]) -> list[str]:
-    """Resolve relative links and filter to same domain only."""
-    base_domain = urlparse(base_url).netloc
-    resolved = []
-    seen = set()
-    for href in links:
-        full = urljoin(base_url, href)
-        parsed = urlparse(full)
-        # Same domain only
-        if parsed.netloc != base_domain:
-            continue
-        # Remove fragments
-        clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        if parsed.query:
-            clean += f"?{parsed.query}"
-        if clean not in seen:
-            seen.add(clean)
-            resolved.append(clean)
-    return resolved
+#: 상태 코드만으로 모르는 사실 한 조각 — 그 밖의 실패는 문구가 이미 사실이다
+#: (`Connection failed … (DNS or network error)`, `Timeout after 15s`, `SSL error`).
+_HTTP_FACTS = {
+    403: "the site refused an automated request",
+    404: "there is no page at that address",
+}
 
 
 def tool_fetch(args: dict) -> ToolResult:
@@ -604,7 +587,6 @@ def tool_fetch(args: dict) -> ToolResult:
 
     Args:
         url: URL to fetch
-        depth: Recursive depth (0 = current page only, default 0)
         download_to: save the response unchanged to this path instead
     """
     url = args.get("url", "").strip()
@@ -615,126 +597,51 @@ def tool_fetch(args: dict) -> ToolResult:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
-    depth = min(int(args.get("depth", 0)), MAX_DEPTH)
     download_to = args.get("download_to")
     if download_to is not None:
         if not isinstance(download_to, str) or not download_to.strip():
             return ToolResult(False, error="download_to must be a file path")
-        if depth > 0:
-            return ToolResult(
-                False,
-                error="download_to saves one response; it cannot be combined "
-                "with depth > 0",
-            )
         from agent_cli.tools import _confine
 
         denial = _confine.guard([download_to], "fetch")
         if denial:
             return ToolResult(False, error=denial)
-
-    # Fetch main page
-    if download_to is not None:
-        note, error = _download(url, download_to)
-        content, links = note, []
+        content, error = _download(url, download_to)
     else:
-        content, links, error = _fetch_single(url)
+        content, error = _fetch_single(url)
     if error:
-        hints = []
-        if "Connection failed" in error:
-            hints.append("Check the URL spelling or your network connection.")
-        elif "Timeout" in error:
-            hints.append("The server may be slow. Try again later.")
-        elif "SSL error" in error:
-            hints.append("The site may have an invalid certificate.")
-        elif "HTTP 403" in error:
-            hints.append("Access denied. The site may block automated requests.")
-        elif "HTTP 404" in error:
-            hints.append("Page not found. Check the URL.")
-        elif "HTTP" in error:
-            hints.append("Server error. Try again later.")
-
-        error_msg = error
-        if hints:
-            error_msg += f"\nHint: {hints[0]}"
-        return ToolResult(False, error=error_msg)
-
+        m = re.match(r"HTTP (\d+): ", error)
+        fact = _HTTP_FACTS.get(int(m.group(1))) if m else None
+        return ToolResult(False, error=f"{error} — {fact}" if fact else error)
     if download_to is not None:
         return ToolResult(True, output=content)
 
-    pages = [{"url": url, "content": content}]
-
-    # Recursive fetch (depth > 0)
-    if depth > 0 and links:
-        child_urls = _resolve_links(url, links)
-        fetched = {url}
-        for child_url in child_urls:
-            if len(pages) >= MAX_PAGES:
-                break
-            if child_url in fetched:
-                continue
-            fetched.add(child_url)
-
-            child_content, child_links, child_error = _fetch_single(child_url)
-            if child_error:
-                pages.append({"url": child_url, "content": f"[Error: {child_error}]"})
-                continue
-            pages.append({"url": child_url, "content": child_content})
-
-            # Deeper recursion
-            if depth > 1:
-                grandchild_urls = _resolve_links(child_url, child_links)
-                for gc_url in grandchild_urls:
-                    if len(pages) >= MAX_PAGES:
-                        break
-                    if gc_url in fetched:
-                        continue
-                    fetched.add(gc_url)
-                    gc_content, _, gc_error = _fetch_single(gc_url)
-                    if gc_error:
-                        pages.append({"url": gc_url, "content": f"[Error: {gc_error}]"})
-                    else:
-                        pages.append({"url": gc_url, "content": gc_content})
-
-    # Build full content — no truncation here. If the result is over the
-    # oversized cap, the shared ``Tool.render_oversized`` policy persists it to
-    # a file and returns an excerpt + how to mine it (identical for every tool);
-    # otherwise it enters context verbatim.
-    if len(pages) == 1:
-        full_content = pages[0]["content"]
-    else:
-        parts = []
-        for p in pages:
-            parts.append(f"## {p['url']}\n\n{p['content']}")
-        full_content = "\n\n---\n\n".join(parts)
-
-    header = f"{_HEADER_PREFIX}{len(pages)} page(s), {len(full_content)} chars from {url}]\n\n"
-    return ToolResult(True, output=header + full_content)
+    # No truncation here. If the result is over the oversized cap, the shared
+    # ``Tool.render_oversized`` policy persists it to a file and returns an
+    # excerpt + how to mine it (identical for every tool); otherwise it enters
+    # context verbatim.
+    header = f"{_HEADER_PREFIX}{len(content)} chars from {url}]\n\n"
+    return ToolResult(True, output=header + content)
 
 
 class FetchTool(Tool):
     name = "fetch"
+    # v10.92.0: 공용 과대 출력 규칙(시스템 절에 있다)의 되풀이와 `depth` 를 지웠다 —
+    # 136+112 → 89+43 토큰. 설명은 결과의 모양만 말한다.
     description = (
-        "Fetch a URL: an HTML page comes back as markdown with links as [text](url) "
-        "(same-site links as /path), JSON (pretty-printed), XML and plain text as text."
-        " `depth` follows same-domain links recursively. Full content returned inline; "
-        "an over-cap result is saved to a file and replaced with an excerpt + how to "
-        "mine it (read it in ranges). Binary content (PDF, images, archives) is not "
-        "shown: it is downloaded to .agent-cli/tmp/downloads/ and the result says "
-        "where. `download_to` saves the response unchanged (no conversion) to that path"
-        " instead; the result is the path, size and first lines."
+        "Fetch a URL. An HTML page comes back as markdown with its links as "
+        "[text](url) — a same-site link as /path; JSON comes pretty-printed, XML and "
+        "plain text as they are. Binary content (PDF, images, archives) is saved "
+        "under .agent-cli/tmp/downloads/ and the result says where. `download_to` "
+        "saves the response unchanged to that path instead and returns its path, "
+        "size and first lines."
     )
-    oversized_retry_hint = (
-        "re-fetch a more specific URL, or a shallower depth, so less is pulled."
-    )
+    oversized_retry_hint = "re-fetch a more specific URL, so less is pulled."
     oversized_saved_note = (
         "The file holds the converted text, not the original response — to keep "
         "the response itself as a file, fetch again with download_to."
     )
-    # Flat-native (consolidation roadmap Step 3 completion): the schema is the
-    # plain ``{url, depth?}`` shape — the ``fetch_`` wire-key prefix is gone.
-    # fetch was the LAST builtin still advertising prefixed keys, which kept
-    # ``claims``/``infer_action`` live for it alone and contradicted the
-    # "every builtin is flat-native" invariant documented in base/registry.
+    # Flat-native: the schema is the plain ``{url, download_to?}`` shape.
     # ``wrap_single_op`` is identity; ``key_prefix`` stays at its default so
     # ``strip_prefix`` still tolerates a legacy ``fetch_url`` emission (old
     # sessions' re-fed priors) and ``claims`` is False for a flat ``{url}``.
@@ -744,16 +651,14 @@ class FetchTool(Tool):
             "url": {
                 "type": "string",
                 "minLength": 1,
-                "description": "URL to fetch",
-            },
-            "depth": {
-                "type": "integer",
-                "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
+                "description": "The URL; `https://` is assumed when the scheme is missing.",
             },
             "download_to": {
                 "type": "string",
-                "description": "Save the response unchanged (raw HTML/JSON/file "
-                "bytes, no conversion) to this file path instead of returning it",
+                "description": (
+                    "A file path: save the response there unchanged (no conversion) "
+                    "instead of returning it."
+                ),
             },
         },
         "required": ["url"],

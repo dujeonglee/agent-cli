@@ -450,7 +450,7 @@ class TestSchemaEnforcement:
     def test_enum_on_every_declared_tool(self, compiled, fmt):
         # 원래 enum 이 있던 도구(code_index·agent)도, 새로 선언한 도구도
         assert not _accepts(compiled, _call(fmt, "code_index", [("mode", "fetchh")]))
-        assert _accepts(compiled, _call(fmt, "code_index", [("mode", "build")]))
+        assert _accepts(compiled, _call(fmt, "code_index", [("mode", "slice")]))
         assert not _accepts(
             compiled,
             _call(fmt, "edit_file", [("path", "/a"), ("op", "swap"), ("pos", "1#AA")]),

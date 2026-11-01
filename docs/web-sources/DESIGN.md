@@ -59,6 +59,7 @@ v10.56.3 고정 worktree (scratchpad `webab/`).
 | v10.57.2 | HTML 변환 — 링크 `[글](주소)`·검색 엔진 추적 주소 풀기, 블록 줄바꿈, 숨김 요소 제외, 공백 접기, 표 칸 줄바꿈, 그림 alt (방 x8jkpw 결과 37건 점검) |
 | v10.58.0 | `download_to` — 응답을 변환 없이 파일로(경로·크기·첫 줄만 돌려줌), 바이너리는 거절 대신 `.agent-cli/tmp/downloads/` 자동 저장 |
 | v10.58.1 | oversized 파일은 본문만(머리줄 없음), 안내에 "변환본 — 원본은 download_to" |
+| v10.92.0 | 도구 검토(docs/tool-review/TRACKER.md): `depth`(같은 도메인 재귀, 최대 10 페이지) 삭제 — 벤치 810·실사용 22 세션에서 0회; 설명에서 공용 과대 출력 규칙의 되풀이 삭제(248 → 132 토큰); 오류 결과는 사실만("Try again later." 힌트 삭제, 403·404 는 코드만으로 모르는 사실 한 조각); 결과 머리줄 `[Fetched N chars from url]` |
 
 ## 6. 남은 것
 

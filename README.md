@@ -1036,12 +1036,12 @@ LLM이 사용할 수 있는 도구 목록:
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `python` | **상태가 남는** 파이썬 실행 (v10.66.0) — 노트북 셀처럼 변수·import·읽어 둔 데이터가 호출 사이에 남는다. 관찰은 출력 + 마지막 식의 값 + `state:` 한 줄(메모리에 든 것의 이름·타입·크기). 열린 matplotlib figure 는 이미지로 첨부. [아래 참고](#-python-도구--상태가-남는-파이썬-v10660) |
-| `fetch` | URL 을 가져온다 — HTML 은 마크다운으로, JSON 은 들여쓴 텍스트로, XML·평문은 그대로 (재귀 fetch 지원). v10.52.0 부터 JSON API(PyPI·Wikipedia REST·OSV·GitHub API 등)를 직접 읽고, charset 없는 UTF-8 페이지가 깨지지 않습니다. v10.56.2 부터 본문을 자르지 않습니다 — 종전엔 페이지마다 20만 자에서 표시 없이 잘려 큰 JSON 이 깨진 채로 오고 큰 HTML 은 본문 뒷부분이 사라졌습니다(Wikipedia Python 문서: 8,660 → 93,657자). 큰 결과는 다른 도구와 같이 파일로 저장되고 발췌가 옵니다. v10.56.3 부터 성공 코드(200·202)로 온 봇 확인 페이지와 JavaScript 로만 그려지는 빈 껍데기를 실패(`Bot check:` / `Needs JavaScript:`)로 돌려줍니다 — 종전엔 확인 페이지 글자가 내용으로 넘어갔습니다(DuckDuckGo 202, Google 검색 89자). v10.56.4: HTML 표를 행마다 한 줄로 읽고(코드 보기 페이지·위키 정보상자의 줄과 칸이 붙던 것), Gerrit·gitiles 의 `)]}'` 접두 JSON 과 `?format=TEXT` base64 원문을 바로 읽습니다. v10.57.2: 링크를 `[글](주소)` 로 싣습니다(같은 사이트는 `/경로`, 주소가 글을 되풀이할 뿐이면 글만; Bing·Google·DuckDuckGo 추적 주소는 실제 주소로) — 종전엔 링크가 본문에 없어 검색 결과를 따라갈 수 없었습니다. 블록 경계에서 줄을 바꾸고(Scholar 제목·저자가 붙던 것), 숨김 요소(`hidden`·`aria-hidden`·`display:none`)를 건너뛰고(Scholar 가 늘 싣는 숨은 "작동되지 않습니다" 문구), 공백을 HTML 처럼 접어 탭만 있는 줄·빈 목록 줄을 없앱니다(Wikipedia 본문이 266번째 줄 → 7번째 줄). 그림은 alt 글로(Wikipedia 수식의 TeX). v10.58.0 부터 `download_to` 인자로 응답을 변환 없이(원본 HTML·JSON·파일 바이트) 그 경로에 저장하고 결과로 경로·크기·첫 몇 줄만 받습니다(`depth` 와는 함께 못 씀). 바이너리(PDF·이미지·압축 파일)는 거절하지 않고 `.agent-cli/tmp/downloads/` 에 자동 저장합니다(이름은 URL 마지막 조각, 겹치면 번호; gitiles 바이너리 blob 은 base64 를 풀어 저장). v10.58.1 부터 큰 결과의 저장 파일은 `[Fetched …]` 머리줄 없이 본문만 담고, 안내가 그 파일이 변환본(원본 응답 아님)이며 원본은 `download_to` 로 받으라고 말합니다 — 모델이 머리줄째 복사한 파일을 JSON 으로 넘긴 일이 있었습니다 |
+| `fetch` | URL 을 가져온다 — HTML 은 마크다운으로, JSON 은 들여쓴 텍스트로, XML·평문은 그대로. v10.92.0: 같은 도메인 링크를 따라가던 `depth` 를 지웠고(벤치·실사용 0회) 오류 결과는 사실만 말합니다(종전 "Try again later." 힌트 삭제) — docs/tool-review/TRACKER.md. v10.52.0 부터 JSON API(PyPI·Wikipedia REST·OSV·GitHub API 등)를 직접 읽고, charset 없는 UTF-8 페이지가 깨지지 않습니다. v10.56.2 부터 본문을 자르지 않습니다 — 종전엔 페이지마다 20만 자에서 표시 없이 잘려 큰 JSON 이 깨진 채로 오고 큰 HTML 은 본문 뒷부분이 사라졌습니다(Wikipedia Python 문서: 8,660 → 93,657자). 큰 결과는 다른 도구와 같이 파일로 저장되고 발췌가 옵니다. v10.56.3 부터 성공 코드(200·202)로 온 봇 확인 페이지와 JavaScript 로만 그려지는 빈 껍데기를 실패(`Bot check:` / `Needs JavaScript:`)로 돌려줍니다 — 종전엔 확인 페이지 글자가 내용으로 넘어갔습니다(DuckDuckGo 202, Google 검색 89자). v10.56.4: HTML 표를 행마다 한 줄로 읽고(코드 보기 페이지·위키 정보상자의 줄과 칸이 붙던 것), Gerrit·gitiles 의 `)]}'` 접두 JSON 과 `?format=TEXT` base64 원문을 바로 읽습니다. v10.57.2: 링크를 `[글](주소)` 로 싣습니다(같은 사이트는 `/경로`, 주소가 글을 되풀이할 뿐이면 글만; Bing·Google·DuckDuckGo 추적 주소는 실제 주소로) — 종전엔 링크가 본문에 없어 검색 결과를 따라갈 수 없었습니다. 블록 경계에서 줄을 바꾸고(Scholar 제목·저자가 붙던 것), 숨김 요소(`hidden`·`aria-hidden`·`display:none`)를 건너뛰고(Scholar 가 늘 싣는 숨은 "작동되지 않습니다" 문구), 공백을 HTML 처럼 접어 탭만 있는 줄·빈 목록 줄을 없앱니다(Wikipedia 본문이 266번째 줄 → 7번째 줄). 그림은 alt 글로(Wikipedia 수식의 TeX). v10.58.0 부터 `download_to` 인자로 응답을 변환 없이(원본 HTML·JSON·파일 바이트) 그 경로에 저장하고 결과로 경로·크기·첫 몇 줄만 받습니다(`depth` 와는 함께 못 씀). 바이너리(PDF·이미지·압축 파일)는 거절하지 않고 `.agent-cli/tmp/downloads/` 에 자동 저장합니다(이름은 URL 마지막 조각, 겹치면 번호; gitiles 바이너리 blob 은 base64 를 풀어 저장). v10.58.1 부터 큰 결과의 저장 파일은 `[Fetched …]` 머리줄 없이 본문만 담고, 안내가 그 파일이 변환본(원본 응답 아님)이며 원본은 `download_to` 로 받으라고 말합니다 — 모델이 머리줄째 복사한 파일을 JSON 으로 넘긴 일이 있었습니다 |
 | `browser` | 헤드리스 브라우저 — JavaScript 가 그리는 페이지를 읽고 클릭·입력 (v10.39.0). 스냅샷의 `[ref=eN]` 로 조작. 선택 설치 `agent-cli[browser]` — playwright 가 없으면 도구 자체가 프롬프트에서 빠짐. [아래 참고](#브라우저-도구-browser) |
 | `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "`wait` 로 턴을 마쳐라" 힌트가 붙음 — v10.65.0, 종전 `complete`). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
 | `history` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
-| `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
+| `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 9 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice` (`build` 는 v10.92.0 에 삭제 — 매 쿼리가 갱신하므로 할 일이 없었다). Python/JS/TS/C/C++/Go/Rust/Java/Markdown. v10.92.0: 모델이 보는 안내 블록(1,104 토큰, 호출 예시 11개)을 지우고 모드 설명을 `mode` 인자에 — 1,689 → 683 토큰 |
 | `view_image` | 이미지 파일(PNG/JPEG/GIF/WebP)을 모델에게 보인다 — 결과에 이미지가 붙어 압축이 요약할 때까지 남는다. 못 본다고 알려진 모델엔 없다 (v10.77.0) |
 | `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 기다리던 통지가 **이미 와 있으면** 역시 거부하되 "while you were thinking … delivered right below this" 로 알린다(v10.66.2, 문구 v10.67.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 통지는 같은 프롬프트에 연달아 들어간다). 종전의 "기다릴 땐 `complete`" 는 장부의 `answers` 요구와 충돌해 같은 complete 를 9번 보내는 일이 있었다(`docs/wait/DESIGN.md`) |
 | `complete` | 작업 완료 신호 (최종 결과 반환). `result` 는 답으로 전달되는 유일한 글이라(사용자 또는 부른 에이전트) 답을 먼저 쓰고, 한 일에 기대는 답이면 끝에 `Checked:`(무엇을 돌리거나 봤고 무엇이 나왔나)·`Not checked:`(실행 대신 읽어서 추론한 것·안 돌린 것) 두 줄을 붙이라고 설명에 적는다 — 확인할 것이 없는 답엔 두 줄 없음. 같은 틀을 꼬리 `## Open Items` 의 `complete` 줄 바로 아래에도 한 줄로 싣는다 — 35B 는 도구 설명만으로는 따르지 않았다(v10.75.0). 기다리는 용도가 아니다 — 그건 `wait` |
@@ -1242,7 +1242,9 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 
 ### code_index — SQLite 코드 인덱스
 
-tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_index.db`에 영구 SQLite 인덱스를 만듭니다. 첫 query 시 lazy build, 이후 query마다 sha1 비교로 변경 파일만 incremental rebuild. `edit_file` / `write_file` 성공 시 자동 post-hook이 인덱스 갱신 → 모델이 직접 `mode='build'` 호출할 필요 거의 없음.
+tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_index.db`에 영구 SQLite 인덱스를 만듭니다. 첫 query 시 lazy build, 이후 query마다 sha1 비교로 변경 파일만 incremental rebuild. `edit_file` / `write_file` 성공 시 자동 post-hook이 인덱스 갱신 — 그래서 수동 재구축 모드(`build`)는 v10.92.0 에 지웠습니다.
+
+**모델이 보는 글 (v10.92.0, docs/tool-review/TRACKER.md)**: 안내 블록 없이 도구 설명(이름 규칙·확장자)과 `mode` 인자 설명(모드마다 한 문장)만 — 1,689 → 683 토큰(GLM). 종전 안내의 호출 예시 11개 속 가짜 경로(`agent_cli/loop.py`)를 벤치의 모델이 실제 경로로 오인해 찔러본 기록이 있었습니다. 빈 결과는 색인의 범위를 말합니다("No symbol named \"X\" among the 1,732 indexed symbols (412 files under /repo)", 색인에 파일이 없으면 "The index has no files: nothing under /app has a supported extension.") — 벤치에서 lookup·refs 가 전부 빈 결과였는데 색인이 비어 있다는 사실은 어디에도 없었습니다. 오류 문구는 표기 규칙대로(`` `mode` "x" is not one of "list", … ``).
 
 `read_file`이 텍스트(line range)에 답한다면 `code_index`는 의미 단위(symbol)와 cross-file 관계(refs/callers/callees)에 답합니다.
 
@@ -1255,7 +1257,7 @@ code_index 는 읽기 전용(파일 안 씀)이고, **한 op 가 한 query**를 
 {"action": "code_index", "action_input": {"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}}
 ```
 
-#### 10 mode (각 op 의 action_input)
+#### 9 mode (각 op 의 action_input)
 
 아래는 각 op 의 action_input 형태입니다 — 한 op 가 하나의 query:
 
@@ -1288,9 +1290,6 @@ code_index 는 읽기 전용(파일 안 씀)이고, **한 op 가 한 query**를 
 
 // 9. LLM 컨텍스트용 markdown blob (정의 + 선택적 callees/callers/types/macros)
 {"mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}
-
-// 10. 전체 rebuild 강제 (드묾 — 보통 lazy build + post-hook으로 충분)
-{"mode": "build"}
 ```
 
 #### 인덱스 root 결정 + 가지치기

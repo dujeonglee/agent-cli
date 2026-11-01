@@ -12,7 +12,9 @@ Mode dispatch:
   callers    callers of a function (from callgraph)
   callees    callees of a function (from callgraph)
   slice      LLM-context markdown blob (def + optional context)
-  build      force a full rebuild of the SQLite index
+
+``build`` 모드는 v10.92.0 에 지웠다 — 매 쿼리가 증분 갱신하므로 할 일이 없었고, 벤치 6회
+호출은 전부 색인할 것이 없는 곳에서 "0 symbols" 를 되풀이했다 (docs/tool-review/TRACKER.md).
 
 Indexed root resolution: walk up from cwd looking for an existing
 ``.agent-cli/`` directory; fall back to cwd. DB lives at
@@ -21,8 +23,8 @@ plus per-query incrementally refreshed by ``build()``'s sha1 path.
 
 Paths outside the indexed root fall through to an on-demand parse for
 ``list`` / ``fetch`` only; index-scoped modes (``lookup``, ``kind``,
-``refs``, ``callers``, ``callees``, ``slice``, ``build``) return a
-clear error if the supplied path is out-of-root.
+``refs``, ``callers``, ``callees``, ``slice``) return a clear error if
+the supplied path is out-of-root.
 """
 
 from __future__ import annotations
@@ -41,7 +43,11 @@ from agent_cli.code_index import (
     load_index,
 )
 from agent_cli.code_index.builder import get_parser
-from agent_cli.code_index.languages import LANGUAGES, language_of
+from agent_cli.code_index.languages import (
+    LANGUAGES,
+    get_supported_extensions,
+    language_of,
+)
 from agent_cli.code_index.preproc import with_default_version
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
 from agent_cli.tools.base import Tool
@@ -160,8 +166,8 @@ def post_hook(path: str | Path) -> None:
     """Refresh the index after a successful edit_file / write_file.
 
     Called from ``tool_edit_file`` and ``tool_write_file`` so that the
-    next ``code_index`` query sees the change without the model having
-    to manually trigger ``mode='build'``. Semantics:
+    next ``code_index`` query sees the change without any action from the
+    model. Semantics:
 
       - If no index DB exists yet, no-op — lazy build will pick the file
         up on the model's first index query.
@@ -320,14 +326,20 @@ _MODE_REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 
+def _quoted(values) -> str:
+    """``"a", "b", "c"`` — 값은 큰따옴표 (표기 규칙, docs/prompt-notation)."""
+    return ", ".join(f'"{v}"' for v in values)
+
+
 def _validate_semantics(args: dict) -> str | None:
     """mode 존재/enum + mode별 필수 키 + kind enum — None=통과, str=오류.
-    오류 문구는 기존 핸들러 문구와 바이트 동일(모델-대면 텍스트 보존)."""
+    v10.92.0: 문구는 표기 규칙대로(인자 백틱·값 큰따옴표) — 종전엔 Python repr
+    (``'mode'``·``['build', …]``)였다."""
     mode = args.get("mode")
     if not mode:
-        return f"'mode' is required. Valid: {sorted(_MODES.keys())}"
+        return f"`mode` is required — one of {_quoted(_MODES)}"
     if mode not in _MODES:
-        return f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"
+        return f'`mode` "{mode}" is not one of {_quoted(_MODES)}'
     for key in _MODE_REQUIRED.get(mode, ()):
         if not args.get(key):
             return f'`{key}` is required for `mode` "{mode}"'
@@ -337,12 +349,37 @@ def _validate_semantics(args: dict) -> str | None:
         and symbol_kind is not None
         and symbol_kind not in NAME_KINDS
     ):
-        return f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
+        return (
+            f'`symbol_kind` "{symbol_kind}" is not one of {_quoted(sorted(NAME_KINDS))}'
+        )
     if mode == "refs":
         ref_kind = args.get("ref_kind")
         if ref_kind is not None and ref_kind not in REF_KINDS:
-            return f"invalid ref_kind: {ref_kind!r}. Valid: {sorted(REF_KINDS)}"
+            return f'`ref_kind` "{ref_kind}" is not one of {_quoted(sorted(REF_KINDS))}'
     return None
+
+
+def _index_scope(store, root: Path) -> str:
+    """빈 결과에 붙는 범위 한 문장 (v10.92.0). 벤치에서 lookup 5·refs 3 이 전부 빈
+    결과였는데 색인에 파일이 하나도 없다는 사실은 어디에도 없었다 — 모델은 이름을
+    바꿔 다시 찾거나 셸로 갔다."""
+    n_files = len(store.files)
+    if n_files == 0:
+        return (
+            f"The index has no files: nothing under {root} has a supported extension."
+        )
+    return (
+        f"among the {store.n_symbols():,} indexed symbols "
+        f"({n_files:,} files under {root})"
+    )
+
+
+def _no_match(store, root: Path, what: str) -> str:
+    """``what`` 를 찾지 못했다 — 색인이 비었으면 그 사실만, 아니면 범위와 함께."""
+    scope = _index_scope(store, root)
+    if scope.startswith("The index has no files"):
+        return scope
+    return f"{what} {scope}."
 
 
 def _do_list(action_input: dict) -> ToolResult:
@@ -440,7 +477,12 @@ def _do_lookup(action_input: dict) -> ToolResult:
     if symbol_kind is not None:
         syms = [s for s in syms if s["kind"] == symbol_kind]
     if not syms:
-        return ToolResult(True, output=f"(no symbols match name={name!r})")
+        what = (
+            f'No "{symbol_kind}" named "{name}"'
+            if symbol_kind
+            else f'No symbol named "{name}"'
+        )
+        return ToolResult(True, output=_no_match(store, _resolve_index_root(), what))
     syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
     hint = _defconfig_hint(syms_sorted, _resolve_index_root())
     return ToolResult(
@@ -451,7 +493,7 @@ def _do_lookup(action_input: dict) -> ToolResult:
 def _do_kind(action_input: dict) -> ToolResult:
     symbol_kind = action_input.get("symbol_kind")
 
-    store, _ = _ensure_index()
+    store, root = _ensure_index()
     syms = store.find_symbols(kind=symbol_kind)
 
     search = action_input.get("search")
@@ -463,7 +505,10 @@ def _do_kind(action_input: dict) -> ToolResult:
         syms = [s for s in syms if regex.search(s["name"])]
 
     if not syms:
-        return ToolResult(True, output=f"(no symbols of kind={symbol_kind!r})")
+        what = f'No "{symbol_kind}" symbol'
+        if search:
+            what += f' whose name matches "{search}"'
+        return ToolResult(True, output=_no_match(store, root, what))
     syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
     return ToolResult(
         True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
@@ -479,15 +524,14 @@ def _do_file(action_input: dict) -> ToolResult:
         return ToolResult(
             False,
             error=(
-                f'`mode` "file" is index-scoped — path {path_str!r} is outside '
-                f'the indexed root ({root}). Use `mode` "list" for one-off '
-                f"out-of-root files."
+                f'"file" sees only files under {root}; {path_str} is outside it '
+                '— "list" reads a file anywhere.'
             ),
         )
     rel = str(path_abs.resolve().relative_to(root.resolve()))
     syms = store.find_symbols(file=rel)
     if not syms:
-        return ToolResult(True, output=f"(no symbols in {rel})")
+        return ToolResult(True, output=f"No symbols in {rel}.")
     syms_sorted = sorted(syms, key=lambda s: (s["line"], s["name"]))
     return ToolResult(
         True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
@@ -498,7 +542,7 @@ def _do_refs(action_input: dict) -> ToolResult:
     name = action_input.get("name")
     ref_kind = action_input.get("ref_kind")
 
-    store, _ = _ensure_index()
+    store, root = _ensure_index()
     # Refs table stores bare names (because they come from raw source
     # identifiers). If the model passed a qualified form, resolve it
     # via the symbols table to a bare leaf first.
@@ -506,15 +550,15 @@ def _do_refs(action_input: dict) -> ToolResult:
     bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
     refs = store.find_refs(name=bare, kind=ref_kind)
     if not refs:
-        filt = f" {ref_kind=}" if ref_kind else ""
-        return ToolResult(True, output=f"(no refs to {name!r}{filt})")
+        what = f'No "{ref_kind}" use of "{name}"' if ref_kind else f'No use of "{name}"'
+        return ToolResult(True, output=_no_match(store, root, what))
     refs_sorted = sorted(refs, key=lambda r: (r["file"], r["line"], r["col"]))
     return ToolResult(True, output="\n".join(_format_ref_line(r) for r in refs_sorted))
 
 
 def _do_callers(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    store, _ = _ensure_index()
+    store, root = _ensure_index()
     # Callgraph indexes by bare name (refs are bare-name). Resolve
     # qualified → bare via the symbols table.
     syms = _resolve_symbol(store, name)
@@ -523,8 +567,7 @@ def _do_callers(action_input: dict) -> ToolResult:
     callers = callers_of.get(bare)
     if not callers:
         return ToolResult(
-            True,
-            output=f"(no callers of {name!r} in index — function may not be called)",
+            True, output=_no_match(store, root, f'No indexed function calls "{name}"')
         )
     lines = []
     for caller, count in sorted(callers.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -538,15 +581,14 @@ def _do_callers(action_input: dict) -> ToolResult:
 
 def _do_callees(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    store, _ = _ensure_index()
+    store, root = _ensure_index()
     syms = _resolve_symbol(store, name)
     bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
     calls_of, _, sites_of = build_callgraph(store)
     callees = calls_of.get(bare)
     if not callees:
         return ToolResult(
-            True,
-            output=f"(no callees of {name!r} in index — function may not call anything indexed)",
+            True, output=_no_match(store, root, f'"{name}" calls no indexed function')
         )
     lines = []
     for callee, count in sorted(callees.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -578,33 +620,6 @@ def _do_slice(action_input: dict) -> ToolResult:
     return ToolResult(True, output=text)
 
 
-def _do_build(_action_input: dict) -> ToolResult:
-    root = _resolve_index_root()
-    db = _resolve_db_path()
-    defs = _resolve_defs_path(root)
-    with _BUILD_LOCK:
-        build(root, db, defs_path=defs, verbose=False, force_full=True)
-    store = load_index(db)
-    defs_note = f" defconfig: {defs}" if defs else " defconfig: (none)"
-    pp = store.meta.get("preprocessing") or {}
-    if pp.get("linux_version_code_source") == "default":
-        defs_note += (
-            f" LINUX_VERSION_CODE assumed {pp.get('linux_version_code')} (newest"
-            " branch of every kernel-version #if); set the real one in"
-            " .agent-cli/defconfig."
-        )
-    elif pp.get("linux_version_code"):
-        defs_note += f" LINUX_VERSION_CODE={pp.get('linux_version_code')}."
-    return ToolResult(
-        True,
-        output=(
-            f"Rebuilt index: {store.n_symbols()} symbols, "
-            f"{store.n_refs()} refs across {len(store.files)} files. "
-            f"Root: {root}.{defs_note}"
-        ),
-    )
-
-
 _MODES = {
     "list": _do_list,
     "fetch": _do_fetch,
@@ -615,7 +630,6 @@ _MODES = {
     "callers": _do_callers,
     "callees": _do_callees,
     "slice": _do_slice,
-    "build": _do_build,
 }
 
 
@@ -642,27 +656,25 @@ def _dispatch_one(query: dict) -> ToolResult:
     return _MODES[query["mode"]](query)
 
 
+#: 색인하는 확장자 — 설명 한 곳에만 (v10.92.0; 종전엔 안내 블록 끝에).
+_EXTENSIONS = ", ".join(get_supported_extensions())
+
+
 class CodeIndexTool(Tool):
     name = "code_index"
-    # One sentence — what the tool is for. The modes, the index location, the
-    # path-scope rule and the defconfig notes are told ONCE, in the guide
-    # (``_build_code_index_inline``), which every dialect renders with this
-    # description. Until v10.13.0 the description repeated all four (1.5 KB of
-    # the same facts in a second wording; its defconfig note said "write the
-    # file" while the guide's said "ask the user").
+    # v10.92.0 (docs/tool-review/TRACKER.md): 안내 블록(1,104 토큰, 호출 모양 예시
+    # 11개)을 지우고 모드 설명을 `mode` 인자 한 곳에 — 모델이 보는 글이 1,689 → 683
+    # 토큰. 예시의 가짜 경로(`agent_cli/loop.py`)를 벤치의 모델이 실제 경로로 오인해
+    # 찔러본 기록이 4건. SQLite 경로·sha1 증분·"no DB write" 같은 내부 사실은 모델의
+    # 선택을 바꾸지 않아 뺐다. 이름 규칙과 확장자는 설명에.
     description = (
-        "Query a persistent tree-sitter index of the project's code and "
-        "markdown (read-only): file outlines, symbol bodies, definitions, "
-        "references, callers and callees. One op runs one query, chosen by "
-        "`mode`."
+        "Query a read-only index of the project's code and markdown; one call runs "
+        "one query, chosen by `mode`. Symbol names are written as the language "
+        'writes them: "Class.method" in Python, JavaScript and TypeScript, '
+        '"ns::Type::method" in C, C++ and Rust, a heading\'s text for markdown '
+        '("Setup" or "## Setup"). Indexed files have one of these extensions: '
+        f"{_EXTENSIONS}; other files are for `read_file`."
     )
-    # Flat-native (consolidation roadmap Step 3): the schema is the plain
-    # single-query shape — no `code_index_queries` batch array and no
-    # `code_index_` wire-key prefix. One op runs one query; to run several
-    # queries in a turn, a multi-op format emits one code_index op per query.
-    # `wrap_single_op` is identity; `key_prefix` is left at its default so
-    # strip_prefix is a no-op on these flat keys and `claims` returns False for
-    # a flat `{mode}` (no `code_index_` key).
     parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
@@ -678,23 +690,32 @@ class CodeIndexTool(Tool):
                     "callers",
                     "callees",
                     "slice",
-                    "build",
                 ],
                 "description": (
-                    "Which query to run — the modes are described in the `code_index` "
-                    "guide."
+                    '"list": the outline of one file (`path`), one symbol per line as '
+                    "`name (kind) file:start-end`; `search` keeps the names it matches. "
+                    '"fetch": the body of one symbol (`path`, `name`) with LINE#HASH '
+                    "refs, ready for `edit_file`; a definition wins over a declaration. "
+                    '"lookup": where `name` is defined anywhere in the project; '
+                    '`symbol_kind` narrows. "kind": every symbol of one `symbol_kind` '
+                    'in the project; `search` narrows. "file": every symbol defined in '
+                    'one file (`path`). "refs": every place `name` is used; `ref_kind` '
+                    'narrows. "callers" and "callees": the functions that call `name`, '
+                    'or that `name` calls. "slice": the body of `name` together with '
+                    "its neighbours — `with_callees`, `with_callers`, `with_types`, "
+                    '`with_macros` — to `depth`. "list" and "fetch" read any file; the '
+                    "other modes see only files under the project root."
                 ),
             },
             "path": {
                 "type": "string",
-                "description": 'File path. Required for "list"/"fetch"/"file".',
+                "description": 'File path, for "list", "fetch" and "file".',
             },
             "name": {
                 "type": "string",
                 "description": (
-                    'Symbol name (exact, as shown by "list"). Required for '
-                    '"fetch"/"lookup"/"refs"/"callers"/"callees"/"slice". Markdown '
-                    '"fetch" also accepts the heading with marker (e.g. "## Setup").'
+                    'Symbol name as "list" or "lookup" shows it, for "fetch", "lookup", '
+                    '"refs", "callers", "callees" and "slice".'
                 ),
             },
             "symbol_kind": {
@@ -707,58 +728,61 @@ class CodeIndexTool(Tool):
                     "section",
                 ],
                 "description": (
-                    'Symbol category filter. Optional for "lookup". Required for '
-                    '"kind". "section" = markdown heading.'
+                    'Symbol category: "function", "type", "variable", "constant" or '
+                    '"section" (a markdown heading). Required for "kind", optional for '
+                    '"lookup".'
                 ),
             },
             "ref_kind": {
                 "type": "string",
                 "enum": ["call", "name", "type"],
                 "description": (
-                    'Reference site category. Optional for "refs". "call" = invocation;'
-                    ' "name" = bare identifier mention (callback, pointer); "type" = '
-                    "identifier in type position."
+                    'Kind of use, for "refs": "call" (an invocation), "name" (the bare '
+                    'identifier — a callback, a pointer) or "type" (in a type position).'
                 ),
             },
             "search": {
                 "type": "string",
                 "description": (
-                    "Optional regex (re.search) to filter symbol names. Applies to "
-                    '"list" and "kind".'
+                    'A regex; "list" and "kind" keep only the symbols whose name matches.'
                 ),
             },
             "with_callees": {
                 "type": "boolean",
-                "description": '"slice" only: include callee bodies (transitive up to `depth`).',
+                "description": (
+                    '"slice": include the bodies of the functions it calls, to `depth`.'
+                ),
             },
             "with_callers": {
                 "type": "boolean",
-                "description": '"slice" only: include caller bodies (transitive up to `depth`).',
+                "description": (
+                    '"slice": include the bodies of the functions that call it, to '
+                    "`depth`."
+                ),
             },
             "with_types": {
                 "type": "boolean",
-                "description": (
-                    '"slice" only: include types/structs referenced inside the target '
-                    "body."
-                ),
+                "description": '"slice": include the types it uses.',
             },
             "with_macros": {
                 "type": "boolean",
-                "description": (
-                    '"slice" only: include function-like macros invoked inside the '
-                    "target body."
-                ),
+                "description": '"slice": include the function-like macros it invokes.',
             },
             "depth": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 5,
-                "description": '"slice" only: transitive depth for callees/callers (default 1).',
+                "description": (
+                    '"slice": how many calls away callees and callers are followed '
+                    "(default 1, at most 5)."
+                ),
             },
             "max_bytes": {
                 "type": "integer",
                 "minimum": 0,
-                "description": '"slice" only: cap output bytes (default unlimited).',
+                "description": (
+                    '"slice": cap on the output size in bytes (default none).'
+                ),
             },
         },
         "required": ["mode"],

@@ -49,12 +49,14 @@ class TestDispatchValidation:
     def test_mode_required(self):
         r = _dispatch_one({})
         assert r.success is False
-        assert "mode" in r.error
+        assert r.error.startswith('`mode` is required — one of "list", "fetch"')
+        assert '"build"' not in r.error  # v10.92.0: 모드 삭제
 
     def test_unknown_mode_rejected(self):
         r = _dispatch_one({"mode": "explode"})
         assert r.success is False
-        assert "unknown mode" in r.error
+        assert r.error.startswith('`mode` "explode" is not one of "list", "fetch"')
+        assert "'" not in r.error  # 표기 규칙 — Python repr 아님
 
 
 class TestList:
@@ -145,13 +147,16 @@ class TestLookup:
             {"mode": "lookup", "name": "Beta", "symbol_kind": "function"}
         )
         r_ty = _dispatch_one({"mode": "lookup", "name": "Beta", "symbol_kind": "type"})
-        assert r_fn.success and "(no symbols match" in r_fn.output
+        assert r_fn.success and r_fn.output.startswith(
+            'No "function" named "Beta" among the '
+        )
+        assert "indexed symbols (" in r_fn.output and "files under " in r_fn.output
         assert r_ty.success and "Beta" in r_ty.output
 
     def test_lookup_rejects_unknown_symbol_kind(self, project):
         r = _dispatch_one({"mode": "lookup", "name": "helper", "symbol_kind": "bogus"})
         assert r.success is False
-        assert "invalid symbol_kind" in r.error
+        assert r.error.startswith('`symbol_kind` "bogus" is not one of ')
 
 
 class TestKind:
@@ -201,7 +206,7 @@ class TestRefs:
     def test_refs_rejects_unknown_ref_kind(self, project):
         r = _dispatch_one({"mode": "refs", "name": "helper", "ref_kind": "bogus"})
         assert r.success is False
-        assert "invalid ref_kind" in r.error
+        assert r.error.startswith('`ref_kind` "bogus" is not one of ')
 
 
 class TestCallgraph:
@@ -219,7 +224,7 @@ class TestCallgraph:
         # `run` is a method but isn't called from anywhere in the fixture.
         r = _dispatch_one({"mode": "callers", "name": "run"})
         assert r.success
-        assert "no callers" in r.output
+        assert r.output.startswith('No indexed function calls "run" among the ')
 
 
 class TestSlice:
@@ -237,15 +242,42 @@ class TestSlice:
         assert "no symbol" in r.output
 
 
-class TestBuild:
-    def test_build_forces_full_rebuild(self, project):
+class TestEmptyIndexSaysSo:
+    """v10.92.0 — 빈 결과는 색인의 범위를 말한다. 벤치에서 lookup 5·refs 3 이 전부
+    빈 결과였는데 색인에 파일이 하나도 없다는 사실은 어디에도 없었다."""
+
+    def test_no_files_at_all(self, tmp_path, monkeypatch):
+        (tmp_path / "notes.txt").write_text("plain text only\n")
+        monkeypatch.chdir(tmp_path)
+        for q in (
+            {"mode": "lookup", "name": "alpha"},
+            {"mode": "refs", "name": "alpha", "ref_kind": "call"},
+            {"mode": "callers", "name": "alpha"},
+            {"mode": "callees", "name": "alpha"},
+            {"mode": "kind", "symbol_kind": "function"},
+        ):
+            r = _dispatch_one(q)
+            assert r.success, q
+            assert r.output == (
+                f"The index has no files: nothing under {tmp_path} has a "
+                "supported extension."
+            ), q
+
+    def test_refs_and_callees_name_the_scope(self, project):
+        r = _dispatch_one({"mode": "refs", "name": "ghost", "ref_kind": "call"})
+        assert r.output.startswith('No "call" use of "ghost" among the ')
+        r = _dispatch_one({"mode": "refs", "name": "ghost"})
+        assert r.output.startswith('No use of "ghost" among the ')
+        r = _dispatch_one({"mode": "callees", "name": "ghost"})
+        assert r.output.startswith('"ghost" calls no indexed function among the ')
+        r = _dispatch_one({"mode": "kind", "symbol_kind": "constant", "search": "zz"})
+        assert r.output.startswith(
+            'No "constant" symbol whose name matches "zz" among the '
+        )
+
+    def test_build_mode_is_gone(self, project):
         r = _dispatch_one({"mode": "build"})
-        assert r.success
-        assert "Rebuilt index" in r.output
-        # Symbol count from the fixture (3 funcs + 1 class + 1 method + 3
-        # markdown headings = 8). Exact value is fixture-dependent; just
-        # confirm a non-zero count was reported.
-        assert "symbols" in r.output
+        assert not r.success and r.error.startswith('`mode` "build" is not one of ')
 
 
 class TestDefconfigWiring:
@@ -257,20 +289,6 @@ class TestDefconfigWiring:
     around function signatures parsed as ERROR runs and silently dropped
     the definition from the index.
     """
-
-    def test_build_reports_no_defconfig_when_absent(self, project):
-        r = _dispatch_one({"mode": "build"})
-        assert r.success
-        assert "defconfig: (none)" in r.output
-
-    def test_build_reports_defconfig_path_when_present(self, project):
-        defs = project / ".agent-cli" / "defconfig"
-        defs.parent.mkdir(parents=True, exist_ok=True)
-        defs.write_text("#define CONFIG_EXAMPLE\n")
-        r = _dispatch_one({"mode": "build"})
-        assert r.success
-        assert "defconfig:" in r.output
-        assert str(defs) in r.output
 
     def test_resolve_defs_path_returns_none_when_missing(self, project):
         from agent_cli.tools.code_index import _resolve_defs_path
