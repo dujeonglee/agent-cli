@@ -664,7 +664,7 @@ touch 만 → 재사용·mtime 갱신·다음은 unchanged, 기호 0개 파일 �
 사보타주 5종(정렬·call 우선·인자 가림 둘·ORDER BY) 모두 걸림.
 
 남은 것(TRACKER):
-- **D4** `containing_fn` 은 "시작 줄이 이하인 마지막 함수" 하나만 본다 — 안쪽 함수가 끝난 뒤
+- ~~**D4**~~ → §20 에서 닫음 (v10.95.0). `containing_fn` 은 "시작 줄이 이하인 마지막 함수" 하나만 봤다 — 안쪽 함수가 끝난 뒤
   바깥 본문의 호출은 어느 함수에도 붙지 않는다(Python 클로저·JS/Go 중첩 함수). 고치면 출력이
   바뀌므로 별도 PR, 지금은 테스트로 고정.
 - ~~**D6** slice 의 나머지 전체 로드~~ → §19.1 (v10.94.1).
@@ -685,3 +685,54 @@ touch 만 → 재사용·mtime 갱신·다음은 unchanged, 기호 0개 파일 �
 - 테스트 `test_slice.py::TestSliceEquivalentToFullScan` — 기호·참조를 전부 훑는 store 대역
   (`_BruteForceStore`, 옛 방식)과 fixture 10개 × 이름 전부 × 옵션 4종이 같다. 범위 질의의 종류
   거르기를 지우면 7개 실패.
+
+---
+
+## 20. 감싼 함수는 가장 안쪽 (v10.95.0)
+
+§19 의 D4. 설계는 Fable 서브에이전트(스크래치 `d4/DESIGN.md`), 리뷰 뒤 D1~D7 승인(2026-11-01).
+
+**결함.** `containing_fn` 은 시작 줄이 line 이하인 **마지막** 함수 하나만 보고 그 함수가 끝났으면
+`None` 이었다. 바깥 함수 본문에서 안쪽 함수 정의가 끝난 **뒤** 의 호출은 어느 함수에도 붙지 않았다
+— 예 `agent_cli/fsio.py:57,60` 의 `_write()` 두 호출은 `atomic_write_text`(33–60) 의 것인데 bisect 가
+안쪽 `_write`(41–54) 에 내려앉아 버려졌다.
+
+**규칙.** line 을 담는 함수 정의 중 **범위가 가장 작은 것**. 범위가 같으면 (시작, 끝, 이름) 순 마지막
+(종전 정렬의 동점 규칙과 같다).
+
+**알고리즘.** `build_fn_ranges` 가 (시작, 끝의 역순, 이름) 으로 정렬하고 스택 한 번으로 부모 인덱스를
+만들어 `(starts, recs, parents)` 를 돌려준다. `containing_fn` 은 bisect 뒤 그 함수가 끝났으면 부모로
+올라간다 — O(log n + 깊이), 깊이 실측 최대 3. 인자 가림은 그 가장 안쪽 함수의 인자만(D3, 종전과 같은
+모양).
+
+**언어.** Python walker 만 함수 본문 안으로 내려가 함수 안의 함수를 색인한다. JS/TS(최상위·export 만),
+Go(`func_literal` 미방출), Rust(함수 본문의 `fn`·클로저 미방출), Java(지역·익명 클래스·람다 미방출),
+C(함수 본문을 건너뜀), C++(람다·지역 클래스 미방출) 는 중첩 레코드가 없어 안쪽 함수 본문의 호출이
+지금도 바깥 함수 몫이다 — 결함이 아니라 색인 범위(D5, `TestNestedFunctionsOutsidePython` 이 JS 로 고정).
+
+**영향(구현으로 잰 값, 함수 이름 전부).** 바뀌는 것은 "어느 함수에도 안 붙던 참조가 바깥 함수에
+붙는다" 하나 — 다른 함수로 옮겨 가거나 사라지는 간선 **0**.
+
+| | django 사본 | agent-cli(bench/.cache 의 django 사본 포함) |
+|---|---|---|
+| callers 답이 바뀌는 이름 | 914 / 15,217 (6.0%) | 1,193 / 23,161 (5.2%) |
+| callees 답이 바뀌는 이름 | 611 (4.0%) | 949 (4.1%) |
+| 잃거나 줄어든 간선 | 0 | 0 |
+| 이름당 시간 callers / callees | 0.2 / 0.3 ms (최악 101 ms) | 0.2 / 0.3 ms (최악 109 ms) |
+
+설계 측정(참조 단위): None → 함수 django 8,383 참조(함수 이름 참조의 3.3%), agent-cli 10,943; 함수 →
+다른 함수 0, 함수 → None 0; 알고리즘 vs 브루트포스 57만 참조 불일치 0.
+
+**오라클(D4).** `tests/code_index/helpers.reference_callgraph` 는 이제 `containing_fn` 을 import 하지 않고
+담는 범위 중 가장 작은 것을 직접 찾는 `_brute_containing` 을 쓴다 — 종전엔 같은 함수를 공유해 결함까지
+같았고, 동치 테스트가 이 결함을 원리상 잡지 못했다. 이제 생성 트리 테스트(`_py_tree` 가 "중첩 def 뒤의
+호출" 을 섞는다)가 새 규칙을 검사한다.
+
+테스트: `TestContainingFn` 합성 범위(안쪽 뒤·깊이 2·형제 사이·같은 줄에 끝남·같은 시작·동일 범위),
+`TestBuildFnRanges` 부모가 자식을 담는지, 반전된 `test_a_call_after_the_nested_function_belongs_to_the_outer`,
+`TestClosureFixture`(새 fixture `python/closures.py` — 클로저·깊이 3·데코레이터·클래스 본문·메서드 안
+지역 함수의 손으로 쓴 정답), `TestNestedFunctionsOutsidePython`(새 `javascript/nested.js`), slice 한 단언.
+사보타주: 부모를 전부 -1(옛 동작) → 11개 실패, 정렬 키를 (시작, 끝) 으로 → 1개 실패.
+
+남은 것(TRACKER): 인자 가림을 체인 합집합으로 — 클로저가 잡은 바깥 함수 인자(`def wrap(view):
+def wrapper(): view()`) 가 지금은 같은 이름의 색인된 함수로의 거짓 간선이 된다(django 61 쌍, agent-cli 81 쌍).

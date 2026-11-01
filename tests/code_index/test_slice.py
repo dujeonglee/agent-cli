@@ -348,3 +348,12 @@ class TestSliceEquivalentToFullScan:
                     **opts,
                 }
                 assert cmd_slice(store, n, **kw) == cmd_slice(ref, n, **kw), (n, opts)
+
+
+def test_slice_callers_follow_the_innermost_rule():
+    """v10.95.0 — slice 는 callers_of 를 따라온다: 안쪽 함수 뒤의 twig() 는
+    make_adder 의 호출이다(fixtures/python/closures.py)."""
+    store, _ = build_fixture("python")
+    text = cmd_slice(store, "twig", False, True, False, False, 1, 0)
+    callers = text.split("## Callers (depth 1)", 1)[1]
+    assert "### make_adder  (function)" in callers

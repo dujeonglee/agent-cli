@@ -41,7 +41,8 @@
 - [x] 내장 에이전트·스킬 **본문**의 대문자 강조 — 사용자 결정(2026-10-30)으로 본문 43곳 소문자화 + 가드가 파일도 읽음(`test_no_caps_emphasis_in_builtin_bodies`, docs/prompt-notation/DESIGN.md 가드 절)
 - [ ] 남은 도구 검토: `run_skill` → `browser`·`schedule` 순 (`code_index`·`fetch` 는 v10.92.0 구현 완료)
 - [x] `code_index` callers·callees 이름 단위 질의(v10.94.0) — 전체 콜그래프 구성 제거, 출력 동일, 1.4~1.6 s → 이름당 0.3 ms·최악 ~90 ms. docs/code-index/DESIGN.md §19
-- [ ] `code_index` `containing_fn` 결함(§19 D4) — 안쪽 함수 뒤 바깥 본문의 호출이 어디에도 안 붙음; 고치면 callers·callees·slice 출력이 바뀜
+- [x] `code_index` `containing_fn` 결함(§19 D4, v10.95.0) — 가장 안쪽 함수 규칙·부모 포인터, Python 만, 잃는 간선 0, django callers 답 6.0%·callees 4.0% 이름에서 호출이 늘어남. docs/code-index/DESIGN.md §20
+- [ ] `code_index` 인자 가림을 감싼 함수 체인의 합집합으로 — 클로저가 잡은 바깥 인자가 같은 이름 함수로의 거짓 간선(django 61 쌍·agent-cli 81 쌍; 측정 스크립트 스크래치 `d4/measure.py` B 열)
 - [x] `code_index` slice 의 나머지 전체 로드(§19 D6, v10.94.1) — 이름·범위 질의, 이름당 8~9 ms, 출력 동일. docs/code-index/DESIGN.md §19.1
 - [x] `code_index` 색인 갱신 조기 종료(D3, v10.93.0) — stat 선행·변경 없으면 무쓰기·바뀐 파일만 파싱하고 나머지 행은 SQL 복사: 4.0 s → 0.35 s(변경 없음)·1.25 s(한 파일, django). docs/code-index/DESIGN.md §18
 - [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`

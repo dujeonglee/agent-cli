@@ -144,14 +144,20 @@ class TestBuildFnRanges:
     def test_records_sorted_by_start_line(self, python_index):
         store, _ = python_index
         ranges = build_fn_ranges(store.all_symbols())
-        for starts, _recs in ranges.values():
+        for starts, recs, parents in ranges.values():
             assert starts == sorted(starts)
+            assert len(parents) == len(recs)
+            for i, pi in enumerate(parents):
+                if pi == -1:
+                    continue
+                ps, pe = recs[pi][0], recs[pi][1]
+                assert ps <= recs[i][0] and recs[i][1] <= pe  # 부모는 자식을 담는다
 
     def test_only_functions_with_definitions(self, python_index):
         store, _ = python_index
         ranges = build_fn_ranges(store.all_symbols())
         # No non-function symbols (types/variables/constants) appear
-        for _starts, recs in ranges.values():
+        for _starts, recs, _parents in ranges.values():
             for _s, _e, name, _params in recs:
                 hits = store.find_symbols(name=name)
                 assert any(
@@ -190,6 +196,51 @@ class TestContainingFn:
         result = containing_fn(inner["file"], inner["line"] + 1, fn_ranges)
         assert result is not None
         assert result[0] == "inner"
+
+    @staticmethod
+    def _ranges(*defs):
+        """손으로 만든 함수 정의 ``(name, start, end)`` → ``build_fn_ranges``."""
+        return build_fn_ranges(
+            [
+                {
+                    "kind": "function",
+                    "is_definition": True,
+                    "file": "f.py",
+                    "name": n,
+                    "line": a,
+                    "end_line": b,
+                    "params": None,
+                }
+                for n, a, b in defs
+            ]
+        )
+
+    def test_after_the_inner_function_the_outer_one_holds_the_line(self):
+        """v10.95.0 (DESIGN §20) — 종전엔 bisect 가 안쪽에 내려앉아 None."""
+        r = self._ranges(("outer", 1, 10), ("inner", 2, 4))
+        assert containing_fn("f.py", 3, r)[0] == "inner"
+        assert containing_fn("f.py", 6, r)[0] == "outer"
+        assert containing_fn("f.py", 11, r) is None
+
+    def test_depth_two_climbs_one_level_at_a_time(self):
+        r = self._ranges(("a", 1, 20), ("b", 2, 10), ("c", 3, 5))
+        assert containing_fn("f.py", 4, r)[0] == "c"
+        assert containing_fn("f.py", 8, r)[0] == "b"  # c 뒤, b 본문
+        assert containing_fn("f.py", 15, r)[0] == "a"  # b 뒤, a 본문
+
+    def test_siblings_and_shared_last_line(self):
+        r = self._ranges(("outer", 1, 12), ("x", 2, 4), ("y", 6, 12))
+        assert containing_fn("f.py", 5, r)[0] == "outer"  # 두 안쪽 사이
+        assert containing_fn("f.py", 12, r)[0] == "y"  # 같은 줄에 끝나면 안쪽
+
+    def test_same_start_and_identical_ranges(self):
+        """Python 엔 없지만(실측 0) 다른 walker 를 위해 — 같은 시작은 작은 범위가,
+        완전히 같은 범위는 이름 순 마지막이 이긴다(종전 정렬과 같은 동점 규칙)."""
+        r = self._ranges(("big", 5, 20), ("small", 5, 8))
+        assert containing_fn("f.py", 6, r)[0] == "small"
+        assert containing_fn("f.py", 12, r)[0] == "big"
+        r = self._ranges(("f", 3, 3), ("h", 3, 3))
+        assert containing_fn("f.py", 3, r)[0] == "h"
 
 
 class TestBfsDepthTraversal:
@@ -296,12 +347,14 @@ class TestEdgesSemantics:
         assert callers_of(idx, "helper").counts["inner"] == 1
         assert "helper" in callees_of(idx, "inner").counts
 
-    def test_a_call_after_the_nested_function_is_dropped(self, idx):
-        """알려진 결함(D4, docs/code-index/DESIGN.md §19) — 안쪽 함수가 끝난 뒤 바깥
-        본문의 호출은 어느 함수에도 붙지 않는다. 고칠 땐 출력이 바뀐다는 뜻이라
-        여기서 고정해 둔다."""
-        assert "outer" not in callers_of(idx, "helper").counts
-        assert "helper" not in callees_of(idx, "outer").counts
+    def test_a_call_after_the_nested_function_belongs_to_the_outer(self, idx):
+        """v10.95.0 (D4, DESIGN §20): 안쪽 함수가 끝난 뒤 바깥 본문의 호출은 바깥
+        함수 몫 — v10.94.0 까진 어느 함수에도 붙지 않았다."""
+        edges = callers_of(idx, "helper")
+        assert edges.counts["outer"] == 1
+        assert [k for _f, _l, k in edges.sites["outer"]] == ["call"]
+        assert "helper" in callees_of(idx, "outer").counts
+        assert "inner" not in callees_of(idx, "outer").counts  # 정의일 뿐 호출 아님
 
     def test_a_non_function_name_has_no_edges(self, idx):
         assert callers_of(idx, "Service").counts == Counter()
@@ -371,3 +424,48 @@ class TestEquivalentOnGeneratedTree:
             (root / name).write_text(text)
         store = build_tree(root)
         _assert_same_as_reference(store, [*_SMALL_NAMES, "keep", "x"])
+
+
+class TestClosureFixture:
+    """v10.95.0 — fixtures/python/closures.py 의 손으로 쓴 정답 (DESIGN §20)."""
+
+    @pytest.fixture(scope="class")
+    def store(self):
+        return build_fixture("python")[0]
+
+    def test_callers(self, store):
+        assert callers_of(store, "twig").counts == Counter(
+            {"make_adder": 1, "mid": 1, "decorated_outer": 1, "local": 1}
+        )
+        # Holder 의 클래스 본문 호출(value = leaf())은 어느 함수에도 붙지 않는다
+        assert callers_of(store, "leaf").counts == Counter(
+            {"add": 1, "core": 1, "nest3": 1, "method": 1}
+        )
+
+    def test_callees(self, store):
+        assert callees_of(store, "make_adder").counts == Counter({"twig": 1, "add": 1})
+        assert callees_of(store, "nest3").counts == Counter({"leaf": 1, "mid": 1})
+        assert callees_of(store, "mid").counts == Counter({"twig": 1, "core": 1})
+        assert callees_of(store, "core").counts == Counter({"leaf": 1})
+        assert callees_of(store, "method").counts == Counter({"leaf": 1})
+        assert callees_of(store, "local").counts == Counter({"twig": 1})
+        # fn(*a) 는 인자 가림, wraps 는 색인 밖
+        assert callees_of(store, "decorated_outer").counts == Counter(
+            {"twig": 1, "wrapped": 1}
+        )
+
+    def test_the_old_extras_outer_now_returns_its_inner(self, store):
+        """extras.py 의 `return inner` — 안쪽 뒤라 종전엔 None, 이제 outer 의 name 사이트."""
+        assert callees_of(store, "outer").counts["inner"] == 1
+
+
+class TestNestedFunctionsOutsidePython:
+    """다른 walker 는 함수 안의 함수를 색인에 넣지 않는다 — 결함이 아니라 색인
+    범위(DESIGN §20 언어 표). 안쪽 함수 본문의 호출은 바깥 함수 몫으로 남는다."""
+
+    def test_javascript_inner_arrow_is_not_indexed(self):
+        store, by_name = build_fixture("javascript")
+        assert "innerJs" not in by_name
+        assert callees_of(store, "outerJs").counts == Counter(
+            {"leafJs": 1, "twigJs": 1}
+        )
