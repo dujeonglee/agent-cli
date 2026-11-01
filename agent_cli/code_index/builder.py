@@ -473,9 +473,11 @@ class _IdAllocator:
 def _link_rows(rel, syms, scopes, binds, refs, ids: _IdAllocator, rows) -> None:
     """한 파일의 범위·바인딩·참조에 id 를 붙이고 정의 기호와 잇는다."""
     by_def: dict[tuple[int, str], int] = {}
+    by_key: dict[tuple, int] = {}
     for s in syms:
         if s.get("is_definition") and s["kind"] in ("function", "type"):
             by_def.setdefault((s["line"], s["name"]), s["id"])
+        by_key.setdefault((s["line"], s["name"], s.get("kind_raw")), s["id"])
         rows["symbols"].append(s)
     scope_ids: list[int] = []
     for sc in scopes:
@@ -507,7 +509,9 @@ def _link_rows(rel, syms, scopes, binds, refs, ids: _IdAllocator, rows) -> None:
             fn_of.append(None)
     for b in binds:
         tgt = None
-        if b.kind in ("def", "class"):
+        if b.symbol_key is not None:
+            tgt = by_key.get(tuple(b.symbol_key))
+        elif b.kind in ("def", "class"):
             tgt = by_def.get((b.line, b.name))
         rows["bindings"].append(
             {
@@ -616,14 +620,35 @@ def _function_names(conn, schema: str, files: list[str]) -> set[tuple[str, str]]
 
 
 def _has_function(conn, schema: str, lang: str, name: str) -> bool:
+    """``n:<lang>:<name>`` 의 술어 — 해석이 쓰는 것과 같아야 한다(C 는 정의만)."""
+    from agent_cli.code_index.resolve.c import FUNCTION_DEFINITION
+
+    pred = FUNCTION_DEFINITION if lang == "c" else "+kind = 'function'"
     return (
         conn.execute(
-            f"SELECT 1 FROM {schema}.symbols WHERE name = ? AND +kind = 'function' "
+            f"SELECT 1 FROM {schema}.symbols WHERE name = ? AND {pred} "
             f"AND +language = ? LIMIT 1",
             (name, lang),
         ).fetchone()
         is not None
     )
+
+
+def _c_names(conn, schema: str, files: list[str]) -> set[str]:
+    """그 C 파일들이 정의하는 이름 — 기호 이름과 enum 의 열거자."""
+    out: set[str] = set()
+    for i in range(0, len(files), 500):
+        chunk = files[i : i + 500]
+        marks = ",".join("?" for _ in chunk)
+        for name, evs in conn.execute(
+            f"SELECT name, enum_values FROM {schema}.symbols "
+            f"WHERE +language = 'c' AND file IN ({marks})",
+            chunk,
+        ):
+            out.add(name)
+            if evs:
+                out.update(json.loads(evs))
+    return out
 
 
 def _resolve_targets(
@@ -667,6 +692,16 @@ def _resolve_targets(
             conn, "main", lang, name
         ):
             keys.append(f"n:{lang}:{name}")
+    # C: 밖에서 보이는 정의가 바뀐 이름 — 바뀔 수 있는 것은 다시 파싱하거나 지운 파일이
+    # 정의하는(정의했던) 이름뿐. 기호 id 는 (한정 이름, kind, kind_raw) 에 묶여 있어
+    # (id, 역할) 집합이 같으면 해석이 읽는 것도 같다(resolve/c.py)
+    c_names = _c_names(conn, "old", touched) | _c_names(conn, "main", touched)
+    if c_names:
+        from agent_cli.code_index.resolve.c import visible_members
+
+        old_v = visible_members(conn, "old", c_names)
+        new_v = visible_members(conn, "main", c_names)
+        keys += [f"g:c:{n}" for n in sorted(c_names) if old_v.get(n) != new_v.get(n)]
     out = set(parsed)
     for i in range(0, len(keys), 500):
         chunk = keys[i : i + 500]

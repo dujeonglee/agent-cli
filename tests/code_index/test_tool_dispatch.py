@@ -324,7 +324,7 @@ class TestPickingADefinition:
             "pkg/fsio.py:6:11 call _write → _write  @pkg/fsio.py",
             "user.py:5:4 call _write → _write  @pkg/fsio.py",
             (
-                '? 1 more uses of "_write" on objects of unknown type may reach it — '
+                '? 1 more uses of "_write" that could not be pinned to one definition may reach it — '
                 '"refs" with the bare name lists them.'
             ),
         ]
@@ -370,7 +370,10 @@ class TestPickingADefinition:
         out = _dispatch_one(
             {"mode": "slice", "name": "go", "with_callees": True}
         ).output
-        assert "_? 1 callee sites on objects of unknown type not followed._" in out
+        assert (
+            "_? 1 callee sites that could not be pinned to one definition not followed._"
+            in out
+        )
 
 
 class TestPickingReviewCases:
@@ -380,8 +383,8 @@ class TestPickingReviewCases:
     @pytest.fixture
     def tree(self, tmp_path, monkeypatch):
         _write(
-            tmp_path / "c/a.c",
-            "int foo(void) { return 1; }\nint bar(void) { return foo(); }\n",
+            tmp_path / "gosrc/a.go",
+            "package a\n\nfunc foo() int { return 1 }\n\nfunc bar() int { return foo() }\n",
         )
         _write(tmp_path / "web/utils.js", "function foo() { return 1; }\n")
         _write(tmp_path / "web/main.js", "function run() { return foo(); }\n")
@@ -409,15 +412,15 @@ class TestPickingReviewCases:
         lines = _dispatch_one({"mode": "refs", "name": "foo"}).output.splitlines()
         tail = '? = "foo" matched by name only ({} is not scope-resolved) — any of 1'
         assert lines[-2:] == [
-            tail.format("c") + " definitions",
+            tail.format("go") + " definitions",
             tail.format("javascript") + " definitions",
         ]
 
     def test_a_picked_definition_keeps_its_language(self, tree):
         out = _dispatch_one({"mode": "refs", "name": "utils.foo"}).output
-        assert "c/a.c" not in out and "web/main.js" in out
+        assert "gosrc/a.go" not in out and "web/main.js" in out
         out = _dispatch_one({"mode": "refs", "name": "a.foo"}).output
-        assert "web/" not in out and "c/a.c" in out
+        assert "web/" not in out and "gosrc/a.go" in out
 
     def test_cpp_qualified_suffix(self, tree):
         from agent_cli.tools.code_index import _ensure_index
@@ -457,7 +460,10 @@ class TestPickingReviewCases:
             {"mode": "slice", "name": "helper", "with_callers": True, "depth": 2}
         ).output
         # o.get() 하나 + o.save() 둘 — save 의 정의가 둘이라 겹쳐 세면 5
-        assert "_? 3 caller sites on objects of unknown type not followed._" in out
+        assert (
+            "_? 3 caller sites that could not be pinned to one definition not followed._"
+            in out
+        )
 
 
 class TestSlice:

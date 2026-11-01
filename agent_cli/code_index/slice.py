@@ -110,6 +110,7 @@ def cmd_slice(
         # 같은 자리를 두 번 세지 않는다 — callers 의 `?` 자리는 "그 이름의 것 전부" 라
         # 같은 이름의 함수가 둘 보이면 겹친다
         skipped.update((f, ln) for f, ln, _k in edges.unknown_sites)
+        skipped.update((f, ln) for f, ln, _k in edges.shared_sites)
         for n in edges.neighbors:
             if n.symbol_id is not None:
                 nxt = idx.symbol(n.symbol_id)
@@ -150,8 +151,8 @@ def cmd_slice(
                 break
         if skipped:
             out.append(
-                f"_? {len(skipped)} {title.lower()[:-1]} sites on objects of unknown "
-                "type not followed._"
+                f"_? {len(skipped)} {title.lower()[:-1]} sites that could not be "
+                "pinned to one definition not followed._"
             )
 
     # Types referenced inside the target's body

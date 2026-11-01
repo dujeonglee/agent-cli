@@ -9,7 +9,7 @@ syntax tree, no other file's resolution — so an incremental build re-resolves
 exactly the files with a recorded input that changed.
 
 Languages with scope rules (`schema.SCOPE_RESOLVED_LANGUAGES`) have a resolver
-module here (`python.py`). The others get one function scope per function
+module here (`python.py`, `c.py`). The others get one function scope per function
 definition with its parameters as bindings (`function_scopes`); their refs are
 `local` when a parameter of an enclosing function has the name and otherwise
 `candidates` — matched by name only, as before v10.96.0 — or `external` when no
@@ -67,6 +67,7 @@ def function_scopes(syms: list[dict], refs: list[dict], end_line: int):
 def resolve_files(conn, files: list[str]) -> None:
     """``files`` 의 참조를 해석해 표에 적고, 읽은 것을 ``resolve_deps`` 에 바꿔 적는다
     (같은 연결의 트랜잭션 안에서)."""
+    from agent_cli.code_index.resolve import c as c_rules
     from agent_cli.code_index.resolve import python as py
 
     by_lang: dict[str, list[str]] = {}
@@ -79,7 +80,9 @@ def resolve_files(conn, files: list[str]) -> None:
             by_lang.setdefault(lang, []).append(path)
     deps: dict[str, set[str]] = {}
     for lang, paths in by_lang.items():
-        if lang in SCOPE_RESOLVED_LANGUAGES:
+        if lang == "c":
+            deps.update(c_rules.Resolver(conn).resolve(paths))
+        elif lang in SCOPE_RESOLVED_LANGUAGES:
             try:
                 deps.update(py.Resolver(conn).resolve(paths))
             except RecursionError as e:

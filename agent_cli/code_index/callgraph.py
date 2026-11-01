@@ -33,6 +33,8 @@ class Neighbor:
     symbol_id: int | None
     sites: list = field(default_factory=list)  # [(file, line, ref_kind)] 참조 id 순
     n_definitions: int = 0  # 이름으로만 맞춘 이웃: 그 이름의 정의 수
+    # 이름으로만 맞춘 이웃: 멤버 호출이 아니라 여러 파일이 정의한 맨 이름(C)
+    shared: bool = False
 
     @property
     def count(self) -> int:
@@ -50,6 +52,11 @@ class Edges:
     # callers 만: 그 이름을 타입 모를 객체에서 부른 자리(`?` 줄)
     unknown_sites: list = field(default_factory=list)
     unknown_definitions: int = 0
+    # callers 만(C): 여러 파일이 정의한 그 이름을 맨 이름으로 쓴 자리 — 정의가 자기 파일
+    # 밖에서 보일 때만, 그리고 함수 밖에서 이니셜라이저로 등록한 자리 ``(file, line, 지정자)``
+    shared_sites: list = field(default_factory=list)
+    shared_definitions: int = 0
+    registered: list = field(default_factory=list)
 
 
 def definitions_named(store, name: str) -> list[dict]:
@@ -107,13 +114,42 @@ def callers_of(store, definition: dict) -> Edges:
         edges.neighbors.append(
             Neighbor(label=label, name=name, symbol_id=fn, sites=sites)
         )
+    # 멤버 호출은 어느 정의에든 닿을 수 있다; 맨 이름의 `candidates`(C — 여러 파일이 정의한
+    # 이름)는 이 정의가 자기 파일 밖에서 보일 때만 (`.c` 의 static 에는 다른 파일이 못 닿는다)
+    shared_ok = lang != "c" or _visible(definition)
     unknown = _dedupe(
-        [(0, f, ln, k) for f, ln, k in store.candidate_refs(definition["name"], lang)]
+        [
+            ((not member) and lang == "c", f, ln, k)
+            for f, ln, k, member in store.candidate_refs(definition["name"], lang)
+            if member or shared_ok
+        ]
     )
-    edges.unknown_sites = unknown.get(0, [])
+    edges.unknown_sites = unknown.get(False, [])
     if edges.unknown_sites:
         edges.unknown_definitions = store.definition_count(definition["name"], lang)
+    edges.shared_sites = unknown.get(True, [])
+    if lang == "c" and shared_ok:
+        # 함수 밖 ops 표에 고를 수 없는 이름으로 등록한 자리도 닿을 수 있는 자리다
+        edges.shared_sites += store.candidate_registrations(definition["name"])
+    if edges.shared_sites:
+        edges.shared_definitions = store.visible_count(definition["name"])
+    if lang == "c":
+        edges.registered = store.registrations(definition["id"])
     return edges
+
+
+def _visible(definition: dict) -> bool:
+    from agent_cli.code_index.resolve.c import visible_role
+
+    return (
+        visible_role(
+            definition["file"],
+            definition["kind"],
+            definition.get("kind_raw"),
+            definition.get("modifiers"),
+        )
+        is not None
+    )
 
 
 def callees_of(store, definition: dict) -> Edges:
@@ -128,13 +164,13 @@ def callees_of(store, definition: dict) -> Edges:
     edges = Edges(definitions=[definition], language=lang, by_name_only=False)
     resolved = []
     unknown = []
-    for name, file, line, kind, res, target in store.refs_in_functions(
+    for name, file, line, kind, res, target, member in store.refs_in_functions(
         [definition["id"]]
     ):
         if res == "resolved" and target is not None and target != definition["id"]:
             resolved.append((target, file, line, kind))
         elif res == "candidates":
-            unknown.append((name, file, line, kind))
+            unknown.append(((name, (not member) and lang == "c"), file, line, kind))
     grouped = _dedupe(resolved)
     functions = store.function_ids(grouped.keys())
     labels = _labels(store, [t for t in grouped if t in functions])
@@ -145,12 +181,22 @@ def callees_of(store, definition: dict) -> Edges:
         edges.neighbors.append(
             Neighbor(label=label, name=name, symbol_id=target, sites=sites)
         )
-    for name, sites in _dedupe(unknown).items():
-        n = store.definition_count(name, lang)
+    for (name, shared), sites in _dedupe(unknown).items():
+        # 이웃은 함수만 — 여러 파일이 정의한 이름이라도 그중 함수가 없으면 싣지 않는다
+        n = (
+            store.visible_count(name, ("fn",))
+            if shared
+            else store.definition_count(name, lang)
+        )
         if n:
             edges.neighbors.append(
                 Neighbor(
-                    label=name, name=name, symbol_id=None, sites=sites, n_definitions=n
+                    label=name,
+                    name=name,
+                    symbol_id=None,
+                    sites=sites,
+                    n_definitions=n,
+                    shared=shared,
                 )
             )
     return edges
@@ -163,7 +209,7 @@ def _by_name_callers(store, defs: list[dict]) -> Edges:
     rows = list(store.candidate_refs(name, lang, with_fn=True))
     labels = _labels(store, {r[0] for r in rows})
     grouped = _dedupe(
-        [(fn, f, ln, k) for fn, f, ln, k in rows if labels[fn][1] != name]
+        [(fn, f, ln, k) for fn, f, ln, k, _m in rows if labels[fn][1] != name]
     )
     for fn, sites in grouped.items():
         label, fname, _file = labels[fn]
@@ -179,7 +225,7 @@ def _by_name_callees(store, defs: list[dict]) -> Edges:
     edges = Edges(definitions=defs, language=lang, by_name_only=True)
     rows = [
         (rname, file, line, kind)
-        for rname, file, line, kind, res, _t in store.refs_in_functions(
+        for rname, file, line, kind, res, _t, _m in store.refs_in_functions(
             [d["id"] for d in defs]
         )
         if res == "candidates" and rname != name

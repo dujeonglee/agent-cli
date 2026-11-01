@@ -22,6 +22,13 @@ from pathlib import Path
 
 from agent_cli.code_index._sqlite import sqlite3
 
+#: 정의 사이 간선이 되는 참조 종류 — 부르기, 이름으로 가리키기(콜백), 이니셜라이저로
+#: 등록하기(C, v10.98.0).
+EDGE_KINDS = "('call', 'name', 'registration')"
+
+#: 멤버 호출 — `object` 는 C 이니셜라이저 값의 지정자·태그 키워드에도 쓰이니 kind 로 가른다.
+MEMBER_CALL = "(kind = 'call' AND object IS NOT NULL)"
+
 
 class IndexStore:
     """SQLite-backed index reader.
@@ -321,6 +328,54 @@ class IndexStore:
             (name, language),
         ).fetchone()[0]
 
+    def visible_count(self, name: str, roles=("fn", "value", "macro")) -> int:
+        """C: ``name`` 을 정의하고 자기 파일 밖에서 보이는 것 중 역할이 ``roles`` 인 것의 수
+        — 맨 이름의 ``candidates`` 가 가리킬 수 있는 정의들 (resolve/c.py 와 같은 규칙;
+        타입 참조는 ``("tag",)``·``("typedef",)``)."""
+        from agent_cli.code_index.resolve.c import visible_role
+
+        n = 0
+        for file, kind, kraw, mods, sig in self._conn.execute(
+            "SELECT file, kind, kind_raw, modifiers, signature FROM symbols "
+            "WHERE name = ? AND +language = 'c' AND is_definition = 1",
+            (name,),
+        ):
+            if visible_role(file, kind, kraw, mods, sig) in roles:
+                n += 1
+        if "value" not in roles:
+            return n
+        pattern = "%" + json.dumps(name) + "%"
+        for file, evs in self._conn.execute(
+            "SELECT file, enum_values FROM symbols WHERE +language = 'c' "
+            "AND enum_values LIKE ?",
+            (pattern,),
+        ):
+            if file.endswith(".h") and name in json.loads(evs):
+                n += 1
+        return n
+
+    def candidate_registrations(self, name: str) -> list[tuple[str, int, str]]:
+        """C: 이름으로만 맞춘(``candidates``) 함수 밖 등록 자리 ``(file, line, kind)`` —
+        여러 헤더가 정의한 이름을 ops 표에 넣은 것."""
+        return list(
+            self._conn.execute(
+                "SELECT file, line, kind FROM refs WHERE name = ? AND +language = 'c' "
+                "AND kind = 'registration' AND resolution = 'candidates' "
+                "AND fn_symbol_id IS NULL ORDER BY id",
+                (name,),
+            )
+        )
+
+    def registrations(self, target_id: int) -> list[tuple[str, int, str]]:
+        """``target_id`` 를 함수 밖(모듈 수준 표)에서 등록한 자리 ``(file, line, 지정자)``."""
+        return list(
+            self._conn.execute(
+                "SELECT file, line, object FROM refs WHERE target_id = ? "
+                "AND kind = 'registration' AND fn_symbol_id IS NULL ORDER BY file, line",
+                (target_id,),
+            )
+        )
+
     def symbols_by_id(self, ids) -> dict[int, tuple[str, str, str]]:
         """``{id: (qualified_name, name, file)}``."""
         ids = list(dict.fromkeys(ids))
@@ -353,30 +408,33 @@ class IndexStore:
         return out
 
     def refs_to(self, target_id: int) -> list[tuple[int, str, int, str]]:
-        """``target_id`` 로 해석된 call·name 참조 중 함수 안의 것 ``(fn, file, line, kind)``."""
+        """``target_id`` 로 해석된 call·name·registration 참조 중 함수 안의 것
+        ``(fn, file, line, kind)``."""
         return list(
             self._conn.execute(
                 "SELECT fn_symbol_id, file, line, kind FROM refs WHERE target_id = ? "
-                "AND kind IN ('call', 'name') AND fn_symbol_id IS NOT NULL ORDER BY id",
+                f"AND kind IN {EDGE_KINDS} AND fn_symbol_id IS NOT NULL ORDER BY id",
                 (target_id,),
             )
         )
 
     def candidate_refs(self, name: str, language: str, with_fn: bool = False):
-        """이름으로만 맞춘(``candidates``) call·name 참조 중 함수 안의 것 —
-        ``(file, line, kind)``, ``with_fn`` 이면 ``(fn, file, line, kind)``."""
+        """이름으로만 맞춘(``candidates``) call·name·registration 참조 중 함수 안의 것 —
+        ``(file, line, kind, member)``, ``with_fn`` 이면 ``(fn, file, line, kind,
+        member)``. ``member`` — 멤버 호출(``obj.m()``·``p->f()``)인가."""
         cols = "fn_symbol_id, file, line, kind" if with_fn else "file, line, kind"
         return list(
             self._conn.execute(
-                f"SELECT {cols} FROM refs WHERE name = ? AND +language = ? "
-                "AND resolution = 'candidates' AND kind IN ('call', 'name') "
-                "AND fn_symbol_id IS NOT NULL ORDER BY id",
+                f"SELECT {cols}, {MEMBER_CALL} FROM refs WHERE name = ? "
+                "AND +language = ? AND resolution = 'candidates' "
+                f"AND kind IN {EDGE_KINDS} AND fn_symbol_id IS NOT NULL ORDER BY id",
                 (name, language),
             )
         )
 
     def refs_in_functions(self, fn_ids) -> list[tuple]:
-        """함수들 안의 call·name 참조 ``(name, file, line, kind, resolution, target_id)``."""
+        """함수들 안의 call·name·registration 참조 ``(name, file, line, kind,
+        resolution, target_id, member)``."""
         fn_ids = list(fn_ids)
         out: list[tuple] = []
         for i in range(0, len(fn_ids), 500):
@@ -384,9 +442,9 @@ class IndexStore:
             marks = ",".join("?" for _ in chunk)
             out.extend(
                 self._conn.execute(
-                    f"SELECT name, file, line, kind, resolution, target_id FROM refs "
-                    f"WHERE fn_symbol_id IN ({marks}) AND kind IN ('call', 'name') "
-                    "ORDER BY id",
+                    f"SELECT name, file, line, kind, resolution, target_id, "
+                    f"{MEMBER_CALL} FROM refs WHERE fn_symbol_id IN ({marks}) "
+                    f"AND kind IN {EDGE_KINDS} ORDER BY id",
                     chunk,
                 )
             )

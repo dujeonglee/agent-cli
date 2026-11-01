@@ -924,4 +924,122 @@ any of 38 definitions`) — 처음엔 줄마다 `? (38 definitions)` 였는데 d
 는 파일 경로 규칙이라 못 고른다 — 저장된 바인딩을 `resolve_in_module` 로 따라가면 된다(후속); Go `pkg.F` 는 패키지가
 디렉터리라 `file.F` 만 맞고 나머지는 맨 이름으로.
 
-**남은 것.** PR-3 C(static·블록 범위·헤더 짝·`registration`), 다음 언어(JS/TS·Go·Rust), Java·C++ 는 언어 서버 쪽.
+**남은 것.** ~~PR-3 C~~(§22, v10.98.0), 다음 언어(JS/TS·Go·Rust), Java·C++ 는 언어 서버 쪽.
+
+## 22. C 범위 규칙과 `registration` (v10.98.0, B안 PR-3)
+
+원안은 스크래치 `scope/DESIGN.md` §6.1(Fable), 구체화 설계는 `c/pr3/DESIGN-PR3.md`; 설계 리뷰(Opus — Fable 주간 한도)
+에서 거짓 간선 둘·증분 구멍 둘을 받아 고친 판으로 구현했다. 스키마는 그대로 4(`registration` 상수·열은 PR-1 에 있었다).
+
+**왜.** v10.97.0 까지 C 는 "이름으로만": 커널 `drivers/net/ethernet/intel`(387 파일)에서 같은 이름의 static 함수 115 쌍이
+서로의 callers 에 섞였고, 지역·블록 변수는 가려지지 않았다(local 은 인자 1,670 뿐). 그리고 C 워커가 같은 자리를 call 과
+name 으로 두 번 냈다(`if c is not fn` — §21 ③ 의 py-tree-sitter `is` 함정, 3만 쌍; C++ 워커도 같은 줄이 있다 — 그쪽은
+규칙 없는 언어라 이번엔 그대로) — 정의·프로토타입 이름도 자기 자신의 `name` 참조로 나갔다.
+
+**범위·바인딩**(`languages/c.py` `walk_scopes`). 범위는 파일·함수(인자와 맨 바깥 블록이 한 범위)·블록(`compound_statement`,
+선언하는 `for`). 범위 안은 평평하다 — 블록에서 선언 앞에 같은 이름을 쓴 자리가 커널 사본 14(잃는 간선 0), Lua 0. 파일 범위
+바인딩은 Pass-1 기호를 그대로 쓴다(`walk_definitions` 를 다시 돌려 같은 줄·이름·kind_raw — `Binding.symbol_key` 로 잇는다;
+열거자는 enum 기호에, 같은 줄의 `typedef struct foo {…} foo;` 는 kind_raw 로 갈린다): 정의는 `def`, 태그는 `tag`, 열거자는
+`enumerator`, **비-static 프로토타입·`extern` 선언은 바인딩하지 않는다**(파일 밖에서 찾으러 간다 — 헤더 프로토타입 ↔ 정의
+짝), static 프로토타입만 있고 정의가 없으면 `decl`(내부 연결이라 다른 파일의 것을 가리킬 수 없다 → `external`; 커널
+`idpf/xdp.c` 처럼 매크로가 만드는 정의). 함수·블록 안은 `param`·`local`(static 지역 포함)·`typedef`·`tag`·열거자 `local`;
+블록 안 `extern`·함수 선언은 바깥을 가리키니 바인딩하지 않는다. 선언자 이름(정의·프로토타입·인자·지역·매크로 이름·열거자)은
+참조로 내지 않는다.
+
+**이름공간.** 태그 참조는 `refs.object` 에 키워드(`"struct"`)를 적고 태그만 본다; 키워드 없는 타입 참조는 typedef 만;
+그 밖의 참조는 보통 이름(인자·지역·열거자·함수·변수·매크로)만. 리뷰 H2 — 한 사슬에 섞으면 `struct nic *nic` 의 태그
+참조가 `local` 이 되고(커널 사본 261), `enum pins v = pins(1)` 의 호출이 enum 으로 풀린다.
+
+**해석**(`resolve/c.py`). 블록 → 함수 → 파일; 파일 범위는 그 줄 이전의 마지막 바인딩, 없으면 첫 것(`#undef`/`#define`
+재정의 — Python 의 모듈 규칙과 같다). 파일에 없으면 G(이름) = 밖에서 보이는 정의: **헤더의 모든 정의**(함수·static
+inline·두 매크로·변수·typedef·태그·열거자 — include 를 따르지 않는 대신 헤더 정의는 포함하는 누구에게나 보인다고 둔다) +
+`.c` 의 비-static 함수·변수 정의. 이름공간이 맞는 것이 하나면 `resolved`(상수·변수·타입도 기호가 있으니 대상 — callees 는
+종전처럼 함수 대상만), 여럿이면 `candidates`, 없으면 `external`. G 를 함수로 먼저 거르면 거짓 간선이다(리뷰 H1 — iavf 의
+`MIN_MSIX_COUNT` 는 자기 헤더의 상수인데 fm10k 헤더의 같은 이름 함수형 매크로 하나만 남아 resolved; 커널 사본 23 자리 중
+약 9 가 틀린 간선). 멤버 호출 `p->f()`·`s.f()` 은 함수 포인터 — 그 이름의 C 함수 **정의**가 있으면 `candidates`(static 포함 —
+포인터는 어디로든), 없으면 `external`.
+
+**`registration` — 결정 R3.** 이니셜라이저 값 자리(`.f = x`, `{ x, y }`, `&`·캐스트·괄호·`?:` 를 벗겨서 — 커널에서 `&f` 가
+14%)의 이름은 `name` 참조로 내고 `object` 에 지정자(`".ndo_open"`, 위치 값은 `"[]"`)를 적는다. 해석이 결과를 보고 kind 를
+정한다: 함수·함수형 매크로로 `resolved` 거나 전부 함수인 `candidates` 면 `registration`, 아니면 `name`. 구문만으로 붙이면
+커널 사본의 이니셜라이저 값 2,748 중 1,087(40%)이 상수·변수다(`refs` 는 줄마다 kind 를 찍으니 모델에게 그대로 보인다).
+해석이 kind 를 바꿔 쓰면서도 다시 해석했을 때 같은 답이 나오는 것은 구문 사실을 `object` 에 두기 때문이다 — 해석은 저장된
+kind 를 `type` 인지 아닌지에만 쓴다(복사된 파일의 kind 는 이미 `registration` 일 수 있다, 리뷰 I2). `object` 의 뜻은 셋이
+됐다(멤버 호출의 앞부분 / 이니셜라이저 지정자 / 태그 키워드) — 멤버 호출은 언제나 `kind = 'call' AND object IS NOT NULL`
+(`store.MEMBER_CALL`)로 가른다; 그 전에 `object` 를 읽던 곳은 Python 해석기 하나였다.
+
+**읽은 것.** 자기 파일 밖에서 읽는 것은 둘 — `g:c:<이름>`(G 의 (기호 id, 역할) 집합 — 역할은 kind·kind_raw·가시성에서
+나오고 기호 id 는 (한정 이름, kind, kind_raw) 에 묶여 있어 집합이 같으면 읽은 것도 같다), `n:c:<이름>`(C 함수 정의가
+있나). builder 는 다시 파싱하거나 지운 C 파일이 정의하는(정의했던) 이름 — 기호 이름과 enum 의 열거자 — 마다 G 를 옛·새
+표에서 비교한다(열거자는 기호가 아니라 enum 기호의 `enum_values` 에 있어 따로 모은다, 리뷰 I1b). `n:` 의 술어는 해석과
+builder 가 같은 것(`FUNCTION_DEFINITION` — C 는 정의만; 프로토타입이 정의로 바뀌는 편집에서 어긋나면 증분 ≠ 전체, 리뷰 I1d).
+
+**출력.** `?` 는 이제 두 뜻이다: 타입 모를 객체(멤버 호출), C 에서 여러 곳이 정의한 이름. callers 의 `?` 자리는 멤버
+호출 전부 + 정의가 밖에서 보일 때만 맨 이름의 것(`.c` 의 static 정의에는 다른 파일의 맨 호출이 닿지 않는다) — 줄은
+`? "f" on an object of unknown type — any of N definitions: …` 와 `? "f" is defined in several places (includes are not
+followed) — any of N definitions: …`(N = G 의 수). callees 의 맨 이름 `?` 이웃은 `defined in several places` 를 단다.
+`refs` 꼬리 줄도 (이름, 이름공간)마다 같은 두 문구, 정의를 고른 `refs` 의 note 는 callers 와 같은 도달 조건으로 센다(리뷰
+M3). 함수 밖의 표(ops 구조체)에만 등록된 함수는 callers 가 비었다 — 커널 사본의 `.c` static 함수 6,112 중 1,222(20%)가
+그렇고 모델은 죽은 코드로 읽는다(리뷰 H4) → `registered in a table: e1000_main.c:1012 (.ndo_open), …` 한 줄. 도구 설명은
+`a line starting with "?" could not be pinned to one definition and may reach any of the definitions it counts` — 이유는
+출력 줄이 말하고, 설명은 언어 이름 없이 짧아졌다(GLM 1,054 → 1,051 토큰; 행동 A/B 없음 — 사실 서술, 벤치에 C 과제 없음).
+`slice` 의 따라가지 않은 수도 같은 말로.
+
+**측정.**
+
+| | Lua 5.4.7 (68 파일) | 커널 intel 사본 (387) |
+|---|---|---|
+| 전체 빌드 · 색인 | 0.53 → 0.56 s · 5.0 → 3.8 MB | 5.1 → 5.9 s · 55 → 46 MB |
+| call 참조 | candidates 7,566 → 479, resolved 0 → 7,094 | candidates 30,104 → 7,972, resolved 0 → 22,134 |
+| registration | 219 | 1,926 |
+| `resolve_deps` | — | 33,685 행 |
+| 증분(본문·static 떼기·헤더에 매크로·헤더 struct 이름 바꿈·같은 이름 정의 추가) | — | 0.6~0.8 s, 다시 해석 1·1·3·47·3 파일, 모두 전체와 같음(kind·object 포함) |
+
+**정확도 — clang 대조**(Lua 는 `testes/` 를 뺀 판 — 그 아래 파일은 헤더 경로가 달라 컴파일되지 않는다). `tests/code_index/c_oracle.py`: `clang -Xclang -ast-dump=json` 의 `DeclRefExpr` 가 가리킨 선언
+사슬에서 정의 파일을 읽는다(규칙을 다시 적용하지 않는다 — 리뷰 M5: 처음 비교기는 clang 사실에 설계 규칙을 다시 씌워 "구현 =
+규칙" 만 봤다). Lua: 정의가 있는 자리 3,214 중 3,205 일치 — 나머지 7 은 `LUA_API size_t (lua_rawlen) (…)` 처럼 모르는 매크로가
+앞에 붙은 정의를 tree-sitter 가 잘못 읽은 것(파서 한계), 2 는 `ltests.h` 의 같은 이름 매크로 때문에 `candidates`. 매크로
+사용은 `clang -E -dD` 의 줄 표지로 그 자리에서 살아 있는 `#define` 의 파일과 대조(스크래치 `c/pr3/macro_oracle.py`): 5,374
+중 4,729 일치, 551 은 두 헤더(`llimits.h`·`ltests.h`)가 같은 이름을 정의해 `candidates`(include 비해석의 대가 — 거짓 간선
+아님), 90 은 `#if`/`#else` 두 갈래의 매크로와 함수(`lmathlib.c` `I2UInt` — 줄 순서 규칙이 뒤쪽 갈래를 고른다), 4 는 오라클이
+틀렸다(함수형 매크로 `G` 와 같은 이름의 지역 변수 — `(` 가 없으면 전개되지 않으니 지역이 맞다).
+
+**테스트.** `test_c_resolution.py` — fixture `c_scoping`(헤더 하나 + `.c` 다섯)의 손 정답 35(규칙마다) + 겹친 이름공간·괄호 정의·멤버 호출·열거자 충돌·헤더 상수 사례, clang 오라클을
+fixture 와 생성 프로그램 12 개(헤더 프로토타입 + 한 정의 / static / 두 파일이 각자 static / 헤더 static inline, 함수 이름으로
+만든 인자·블록 지역·for 변수, `.cb = &f`·캐스트 등록, 파일 범위 ops 표)에 — clang 이 없으면 skip(CI ubuntu 에는 있다),
+증분 = 전체(편집 12 종 + 생성 프로그램 무작위 편집 30), 등록 ↔ 변수 왕복, 묶음 독립, 도구 출력 정확 문자열. 증분 비교
+(`_snapshot`)에 `kind`·`object` 를 더했다. 사보타주 18 종(블록 범위 끄기·static 무시·헤더를 .c 처럼·프로토타입 바인딩·
+registration 규칙 끄기·이름공간 거르기 끄기·G 를 함수만·call+name 중복·열거자 무시·`g:` 이름에서 열거자 빼기·`g:` 키
+끄기·`n:` 술어 불일치·해석이 저장 kind 를 읽기·멤버 호출을 object 만으로·재정의 첫 것·static 에 맨 이름 `?`·이니셜라이저
+벗기기 끄기 …) 모두 걸린다.
+
+**구현 리뷰(Opus — Fable 주간 한도) 뒤 고친 것.** ① `typedef u64 phys_t;` 의 `u64` 가 가짜 typedef 기호로 나갔다(Pass-1
+`add_typedef` 가 `type` 필드까지 돌았다 — main 부터의 버그; 이 PR 의 `declare()` 도 같은 자리를 선언자로 빼 `u64` 타입
+참조가 사라졌다). 파일 범위 `def`·헤더 G 가 되면서 커졌다 — drivers/net 사본(6,128 파일)에서 3.4만 자리가 가짜 기호로
+`resolved`. 이제 선언자만(함수 포인터 typedef `cb_t` 도 이름이 생긴다). ② callees 가 여러 헤더가 정의한 상수(`SPEED_10`)를
+`?` 이웃으로 실었다 → 함수 역할만 센다. ③ slice 가 맨 이름 `?` 자리를 세지 않았다. ④ 객체형 매크로를 타입으로 쓰면(Lua
+`#define LUA_NUMBER double`, 618 자리) 키워드 없는 타입 참조가 typedef 만 봐 `external` → 역할 `macro` 를 두고 타입·보통
+참조 둘 다 본다 — 2회차에서 이것이 거짓 간선 19만을 만들었다(아래). ⑤ `int (*getcb(int x))(int y)` 의 인자로 바깥 `y` 를 묶었다 → 이름에 가장 가까운 function_declarator.
+⑥ 파일 범위 함수 포인터 변수(`static int (*fp)(int);`)가 기호가 아니어서 같은 파일의 `fp(1)` 이 다른 파일 것으로 → 변수
+기호. ⑦ GNU `{ name: f }` 의 지정자. ⑧ 함수 밖 표에 고를 수 없는 이름으로 등록한 자리를 callers 의 `?` 에. 리뷰어 퍼저(이름
+7 개로 충돌을 일부러 — `.c`↔`.h` 이름 바꾸기·삭제·static 붙이고 떼기·열거자·typedef·`#ifdef` 뒤집기, 1,800 시드 × 3 단계)는
+증분 ≠ 전체 0 — 40 시드를 테스트로 옮겼다(`g:` 키를 끄면 걸린다). 비용: drivers/net 사본 전체 빌드 107 → 125 s, 본문 편집
+증분 10.7 → 11.1 s; `visible_members` 가 기호 표 전체를 훑는다(정의 30만에 0.84 s, 증분 한 번에 세 번) — 커널 전체면 수 초가
+붙을 것이라 이름별 질의로 줄이는 것이 후속.
+
+**구현 리뷰 2회차.** 1회차 여덟 건 해소 확인, 새로 하나 — ④ 때문에 타입 참조가 다른 파일의 매크로를 G 에서 보게 되자
+drivers/net 사본의 `u32`·`u8`·`u16` 19.4만 자리가 `fddi/skfp/h/targetos.h` 의 `#define u8 unsigned char` 하나로 풀렸다(진짜
+typedef 는 색인 밖 include/linux/types.h — §21 H1 과 같은 꼴). 그래서 매크로를 타입으로 보는 것은 **같은 파일**의 정의만,
+그리고 값이 타입 낱말(`unsigned`·`char`·`struct` …)로 시작하는 매크로는 역할 `typemacro` — 다른 파일에서는 어느 자리(이름
+자리 `sizeof(u32)` 4,671 포함)에서도 보지 않는다(`resolve.c.global_roles`). 역할이 값(시그니처)에 달려 같은 id 에서 바뀔 수
+있으니 `g:` 는 (id, 역할) 쌍을 비교한다(`#define W 4` → `#define W unsigned` 편집 테스트). drivers/net: 그 헤더로 풀린 바깥
+참조 19.9만 → 0. 그리고 함수 포인터를 돌려주는 함수의 **프로토타입**(`int (*getcb(int x))(int y);`)이 1회차 ⑥ 수정으로 변수
+정의가 됐다(실코드 0 건) → 이름을 바로 감싼 선언자가 function_declarator 면 함수. `?` 문구는 한 헤더 안의 `#if` 쌍둥이에도
+맞게 `is defined in several places`. 리뷰어 퍼저 1,500 + 조각을 더한 판 800 시드 불일치 0.
+
+**남는 것.** 다른 파일의 매크로를 타입 자리에서 쓰는 것(Lua `LUA_NUMBER` — `external`), GCC 중첩 함수의 이름(블록에 안 묶인다), `#include` 비해석(헤더 정의는 전역 후보 — 같은 이름을 두 헤더가 정의하면 `?`), `#if`/`#else` 갈림의 같은 이름
+정의(unifdef 가 풀 때만 하나 — 아니면 줄 순서로 뒤쪽), 매크로 전개 안의 호출, 함수 몸 안의 `#define`(Pass-1 이 함수 안을
+안 본다 — 커널 사본 166, 헤더와 겹치는 것 2), `.c` 가 `.c` 를 include 하는 것(커널 kunit 162 파일·Lua `onelua.c`), 모르는
+매크로가 앞에 붙은 선언의 파싱, 함수 포인터 호출의 대상(필드 이름 ↔ 등록 지정자 `hw->mac.ops.read_reg(` ↔ `.read_reg = f`
+로 좁히기는 후속 — R3 의 지정자가 그 열쇠), 모듈 위치로 후보 좁히기(휴리스틱이라 하지 않음), C++ 는 범위 밖.
+

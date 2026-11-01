@@ -246,11 +246,11 @@ def _snapshot(db: Path) -> dict:
         )
     }
     return {
-        (f, line, col, name): (res, key.get(t))
-        for f, line, col, name, kind, res, t in store._conn.execute(
-            "SELECT file, line, col, name, kind, resolution, target_id FROM refs"
+        (f, line, col, name): (res, key.get(t), kind, obj)
+        for f, line, col, name, kind, res, t, obj in store._conn.execute(
+            "SELECT file, line, col, name, kind, resolution, target_id, object FROM refs"
         )
-        if kind != "name" or name in defined
+        if kind not in ("name", "registration") or name in defined
     }
 
 

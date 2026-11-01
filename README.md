@@ -1254,7 +1254,8 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 - 해석 결과는 다섯 가지입니다: `resolved`(색인된 정의 하나), `local`(인자·지역 변수·클래스 속성 — 호출 관계가 아님), `candidates`(이름으로만 맞춤 — 타입을 모르는 객체의 메서드 호출 등), `external`(내장 함수·색인 밖 모듈), `unresolved`.
 - **Python** 은 범위 규칙을 그대로 따릅니다: 함수 안 어디서든 대입된 이름은 그 함수 전체에서 지역, 클래스 본문은 메서드에서 보이지 않음, `global`/`nonlocal`, 모듈 본문은 위에서 아래로, `import` 는 파일까지 따라감(상대 import, `import *`, 패키지 재노출, `src/`·`tests/` 같은 소스 루트 자동 인식), `self.m()`·`cls.m()` 은 그 클래스와 부모 클래스에서, `mod.f()`·`Cls.m()` 은 체인으로.
-- **다른 언어**(C·C++·Go·Rust·Java·JS·TS)는 아직 범위 규칙이 없어 함수 범위와 인자만 압니다 — 결과 머리에 "matched by name only" 가 붙습니다. C 는 다음 단계(v10.98.0 예정)입니다.
+- **C** (v10.98.0, DESIGN §22) 는 블록 → 함수 → 파일 순으로 찾습니다: 인자·지역·블록 지역은 `local`, 파일 안의 정의(`static` 이든 아니든, 매크로 포함)는 그 정의, 파일에 없는 이름(헤더 프로토타입·`extern`)은 **다른 파일이 밖으로 보이는 정의** — 헤더(`.h`)의 모든 정의(static inline·매크로·타입·열거자 — 다만 `#define u8 unsigned char` 같은 타입 별칭 매크로와, 타입 자리의 매크로는 같은 파일 것만)와 `.c` 의 비-static 함수·변수 — 에서 하나면 그것, 여럿이면 `?`, 없으면 `external`. `#include` 는 따라가지 않습니다(헤더 정의를 포함하는 누구에게나 보인다고 두는 것이 그 대가). 그래서 파일마다 있는 같은 이름의 `static` 함수가 서로의 `callers` 에 섞이지 않습니다. 태그(`struct foo`)·typedef·보통 이름은 이름공간이 따로라 `struct nic *nic` 의 둘이 섞이지 않습니다. `p->open()` 같은 함수 포인터 호출은 `?`(그 이름의 C 함수가 있을 때). `.ndo_open = e1000_open`·`{ f, g }`·`&f`·캐스트로 이니셜라이저에 넣은 함수는 참조 종류 **`registration`** — 함수 밖의 ops 표에만 등록된 함수는 `callers` 에 `registered in a table: e1000_main.c:1012 (.ndo_open)` 줄이 붙습니다(종전엔 "No indexed function calls" 였고 모델은 죽은 코드로 읽었습니다). 줄 순서가 다른 `#undef`/`#define` 재정의는 그 줄 이전의 마지막, `#if`/`#else` 로 갈린 같은 이름 정의는 평가하지 못해 뒤쪽 것을 고릅니다.
+- **다른 언어**(C++·Go·Rust·Java·JS·TS)는 아직 범위 규칙이 없어 함수 범위와 인자만 압니다 — 결과 머리에 "matched by name only" 가 붙습니다.
 - 출력 예:
 
 ```
@@ -1267,11 +1268,12 @@ Box.use  (1×)  a.py:10
 ? "get" on an object of unknown type — any of 2 definitions:  b.py:6
 ```
 
-  맨 이름은 그 이름의 정의마다 한 덩어리(최대 5), 한정 이름(`Box.get`)은 하나만. `?` 줄은 타입을 모르는 객체에서 부른 자리입니다(그 이름의 정의 수와 함께).
+  맨 이름은 그 이름의 정의마다 한 덩어리(최대 5), 한정 이름(`Box.get`)은 하나만. `?` 줄은 정의 하나로 고를 수 없던 자리입니다 — 타입을 모르는 객체에서 부른 것(`on an object of unknown type`), C 에서 여러 파일이 정의한 이름(`is defined in several places (includes are not followed)`; `.c` 의 `static` 정의에는 붙지 않습니다). `callees` 의 `?` 이웃도 C 의 그런 이름엔 `defined in several places` 가 붙습니다.
 - **정의 고르기** (v10.97.0): `callers`·`callees`·`refs`·`slice` 에서 `path` 는 그 파일의 정의를, 모듈로 한정한 이름(`fsio._write`·`pkg.other._write`·`query.QuerySet.get`)은 그 모듈의 정의를 고릅니다 — 감싼 함수·클래스는 건너뛰어 써도 됩니다(`fsio._write` 가 `agent_cli/fsio.py` 의 `atomic_write_text._write`). 그 파일에 없으면 어디에 있는지를 오류로 알려 줍니다.
 - **`refs` 는 줄마다 무엇으로 풀렸는지** 붙입니다 (v10.97.0): `→ QuerySet.get`(같은 한정 이름이 여러 파일에 있으면 `@파일`), `→ ?`(타입 모를 객체 — 그 이름의 정의 수는 끝에 한 줄), `→ local`·`→ external`·`→ unresolved`. 정의 하나를 고르면 그 정의로 풀린 참조만, 그리고 그것일 수도 있는 `?` 자리의 수를 한 줄로. `slice` 는 따라가지 않은 `?` 자리의 수를 적습니다.
 - 정확도: django 에서 1,000 자리를 jedi 와 대조 — `resolved` 454 자리 중 jedi 가 확인한 것 전부 일치, `candidates` 64 자리 전부 jedi 의 답을 포함. 종전(이름만)은 한 호출에 평균 3.4개(`f()`)·20.4개(`obj.m()`)의 정의를 붙였습니다.
 - 증분: 파일마다 해석하면서 읽은 것(다른 파일·모듈 이름·함수 이름)을 색인에 적어 두고, 다음 빌드는 그 가운데 바뀐 것이 있는 파일만 다시 해석합니다 — 전체를 다시 만든 것과 같은 답.
+- C 정확도·비용 (v10.98.0): Lua 5.4.7 에서 clang AST 가 가리킨 정의 파일과 대조 — 정의가 있는 자리 3,214 중 3,205 일치(나머지는 `LUA_API size_t (lua_rawlen)` 처럼 매크로가 앞에 붙은 선언을 tree-sitter 가 잘못 읽은 7, 다른 헤더의 같은 이름 매크로로 `?` 2), 매크로 사용 5,374 자리는 `clang -E -dD` 로 살아 있는 `#define` 과 대조해 4,729 일치·551 `?`(같은 이름을 두 헤더가 정의)·90 `#if` 갈림. 커널 `drivers/net/ethernet/intel`(387 파일): 전체 빌드 5.1 → 5.9 s, 색인 55 → 46 MB(같은 자리의 call+name 중복 3만·정의 이름의 자기 참조가 빠졌다), 맨 호출 `?` 30,104 → 7,972, 편집 다섯 종류 증분 0.6~0.8 s 모두 전체와 같음.
 - 비용: django(2,633 파일) 전체 빌드 7.4 s·색인 99 MB(종전 98.8 MB), 본문만 고친 편집 1.1 s(종전 1.25 s), 새 파이썬 파일 1.1 s, 많이 import 되는 모듈에 함수 추가 1.1~1.2 s(1 파일 다시 해석), 가장 많이 import 되는 이름을 다시 묶는 편집 1.7 s(325 파일), `Model` 에 메서드를 더하는 편집 1.8 s(299 파일). 스키마 4 라 기존 색인은 처음 한 번 전체를 다시 만듭니다.
 
 #### 한 op = 한 query (flat-native)

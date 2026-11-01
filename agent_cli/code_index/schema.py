@@ -25,9 +25,10 @@ Kinds
     call       invocation site (`X(...)` form)
     name       bare identifier mention (callback, function pointer, macro arg)
     type       identifier in type position (var/param type, generic arg)
-    registration  a function stored into a table of function pointers
-               (C `.probe = foo_probe`) — reserved in v4, emitted by the C
-               scope rules (docs/code-index/DESIGN.md §21)
+    registration  a function stored by a brace initializer — how C fills
+               tables of function pointers (`.probe = foo_probe`, `{ f, g }`);
+               set by the C resolver when the stored name resolves to a
+               function (v10.98.0, docs/code-index/DESIGN.md §22)
 
 Name resolution (v10.96.0, schema v4, docs/code-index/DESIGN.md §21)
 --------------------------------------------------------------------
@@ -97,7 +98,7 @@ RESOLUTIONS: frozenset[str] = frozenset(
 
 #: 범위 규칙이 있는 언어 — 나머지는 함수 범위·인자만 알고 참조는 이름으로만 맞춘다
 #: (`candidates`). 언어가 규칙을 얻으면 여기에 더한다.
-SCOPE_RESOLVED_LANGUAGES: frozenset[str] = frozenset({"python"})
+SCOPE_RESOLVED_LANGUAGES: frozenset[str] = frozenset({"python", "c"})
 
 
 @dataclass
@@ -167,8 +168,14 @@ class Ref:
     col: int
     language: str
     # v4: the innermost scope the ref sits in (an index into the walker's scope
-    # list for that file), and for `obj.m()` the object chain text ("a.b",
-    # "<expr>" when it is not a plain name/attribute chain).
+    # list for that file), and `object`: for a `call` ref, the object of
+    # `obj.m()` (the chain text "a.b", "<expr>" when it is not a plain
+    # name/attribute chain); for a C name stored by a brace initializer
+    # (v10.98.0), its designator (".probe", "[]" for a positional value) — it
+    # starts with "." or "[" and the ref kind is not `call`; for a C `type` ref
+    # naming a struct/union/enum tag, the keyword ("struct") — tags and typedef
+    # names are separate namespaces. A member call is therefore
+    # `kind = 'call' AND object IS NOT NULL`.
     scope: int | None = None
     object: str | None = None
 
@@ -192,8 +199,13 @@ class Scope:
 @dataclass
 class Binding:
     """A name bound in a scope (v4). ``kind`` ∈ param | local | import | def |
-    class | global | nonlocal. Imports keep the module text and, for
-    ``from m import x``, the imported name (``"*"`` for a star import)."""
+    class | global | nonlocal, and for C (v10.98.0) also enumerator | tag |
+    typedef | decl (``languages/c.py`` ``walk_scopes``). Imports keep the module
+    text and, for ``from m import x``, the imported name (``"*"`` for a star
+    import). ``symbol_key`` — ``(line, name, kind_raw)`` of the Pass-1 symbol the
+    binding stands for, when (line, name) alone is ambiguous (C: an enumerator
+    stands for its enum, ``typedef struct foo {…} foo;`` puts two symbols named
+    ``foo`` on one line)."""
 
     scope: int
     name: str
@@ -201,3 +213,4 @@ class Binding:
     line: int
     import_module: str | None = None
     import_name: str | None = None
+    symbol_key: tuple | None = None
