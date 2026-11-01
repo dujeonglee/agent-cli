@@ -586,6 +586,42 @@ def _ref_tag(r: dict, labels: dict) -> str:
     return res
 
 
+def _shared(r: dict) -> bool:
+    """C 의 맨 이름 ``candidates`` — 멤버 호출이 아니라 여러 파일이 정의한 이름."""
+    return r["language"] == "c" and not (r["kind"] == "call" and r["object"])
+
+
+def _global(roles: tuple[str, ...]) -> tuple[str, ...]:
+    from agent_cli.code_index.resolve.c import global_roles
+
+    return global_roles(roles)
+
+
+def _ref_roles(r: dict) -> tuple[str, ...]:
+    from agent_cli.code_index.resolve.c import ref_roles
+
+    obj = r["object"]
+    return ref_roles(r["kind"], None if obj and obj[:1] in (".", "[") else obj)
+
+
+def _reachable(r: dict, defs: list[dict]) -> bool:
+    """맨 이름 참조 ``r`` 이 ``defs`` 중 하나에 닿을 수 있나 — 밖에서 보이고 역할이 맞는 것."""
+    from agent_cli.code_index.resolve.c import global_roles, visible_role
+
+    roles = _ref_roles(r)
+    return any(
+        visible_role(
+            d["file"],
+            d["kind"],
+            d.get("kind_raw"),
+            d.get("modifiers"),
+            d.get("signature"),
+        )
+        in global_roles(roles)
+        for d in defs
+    )
+
+
 def _do_refs(action_input: dict) -> ToolResult:
     from agent_cli.code_index.schema import SCOPE_RESOLVED_LANGUAGES
 
@@ -606,17 +642,21 @@ def _do_refs(action_input: dict) -> ToolResult:
         if scoped:
             refs = store.refs_resolved_to([d["id"] for d in scoped], ref_kind)
             leaf = scoped[0]["name"]
-            # 맨 이름의 `refs` 가 `?` 로 보여 줄 줄과 같은 것을 센다(모듈 최상위 포함)
+            # 맨 이름의 `refs` 가 `?` 로 보여 줄 줄 가운데 고른 정의에 닿을 수 있는 것을
+            # 센다(모듈 최상위 포함) — C 의 맨 이름 `?` 는 정의가 밖에서 보이고 이름공간이
+            # 같을 때만(callers 와 같은 조건)
             langs = {d["language"] for d in scoped}
             n_unknown = sum(
                 1
                 for r in store.find_refs(name=leaf, kind=ref_kind)
-                if r["resolution"] == "candidates" and r["language"] in langs
+                if r["resolution"] == "candidates"
+                and r["language"] in langs
+                and (not _shared(r) or _reachable(r, scoped))
             )
             if n_unknown:
                 note = (
-                    f'? {n_unknown} more uses of "{leaf}" on objects of unknown '
-                    'type may reach it — "refs" with the bare name lists them.'
+                    f'? {n_unknown} more uses of "{leaf}" that could not be pinned to '
+                    'one definition may reach it — "refs" with the bare name lists them.'
                 )
         else:
             leaf = (
@@ -647,24 +687,28 @@ def _do_refs(action_input: dict) -> ToolResult:
         for i, (qn, _n, f) in info.items()
     }
     lines = [f"{_format_ref_line(r)} → {_ref_tag(r, labels)}" for r in refs_sorted]
-    for nm, lang in sorted(
+    for nm, lang, roles in sorted(
         {
-            (r["name"], r["language"])
+            (r["name"], r["language"], _ref_roles(r) if _shared(r) else ())
             for r in refs_sorted
             if r["resolution"] == "candidates"
         }
     ):
-        n = store.definition_count(nm, lang)
         if lang not in SCOPE_RESOLVED_LANGUAGES:
             lines.append(
                 f'? = "{nm}" matched by name only ({lang} is not scope-resolved) — '
-                f"any of {n} definitions"
+                f"any of {store.definition_count(nm, lang)} definitions"
             )
-            continue
-        lines.append(
-            f'? = "{nm}" on an object of unknown type — any of '
-            f"{store.definition_count(nm, lang)} definitions"
-        )
+        elif roles:
+            lines.append(
+                f'? = "{nm}" is defined in several places (includes are not followed) '
+                f"— any of {store.visible_count(nm, _global(roles))} definitions"
+            )
+        else:
+            lines.append(
+                f'? = "{nm}" on an object of unknown type — any of '
+                f"{store.definition_count(nm, lang)} definitions"
+            )
     if note:
         lines.append(note)
     return ToolResult(True, output="\n".join(lines))
@@ -676,6 +720,17 @@ _MAX_DEFINITIONS = 5
 
 def _sites(sites: list) -> str:
     out = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
+    if len(sites) > 5:
+        out += f", … ({len(sites)} total)"
+    return out
+
+
+def _registered(sites: list) -> str:
+    """``file:line (.field)`` 을 다섯까지 — 위치 초기화(``[]``)는 지정자를 안 단다."""
+    parts = [
+        f"{f}:{ln}" + (f" ({o})" if o and o != "[]" else "") for f, ln, o in sites[:5]
+    ]
+    out = ", ".join(parts)
     if len(sites) > 5:
         out += f", … ({len(sites)} total)"
     return out
@@ -708,9 +763,10 @@ def _neighbor_lines(edges) -> list[str]:
     ]
     for n in sorted(known, key=lambda n: (-n.count, n.label)):
         lines.append(f"{n.label}  ({n.count}×)  {_sites(n.sites)}")
-    for n in sorted(guessed, key=lambda n: (-n.count, n.label)):
+    for n in sorted(guessed, key=lambda n: (-n.count, n.label, n.shared)):
+        why = ", defined in several places" if n.shared else ""
         lines.append(
-            f"? {n.label}  ({n.count}×, any of {n.n_definitions} definitions)  "
+            f"? {n.label}  ({n.count}×, any of {n.n_definitions} definitions{why})  "
             f"{_sites(n.sites)}"
         )
     return lines
@@ -732,9 +788,13 @@ def _edges_text(store, defs: list[dict], query) -> tuple[str, bool]:
     blocks: list[str] = []
     any_edge = False
     unknown_line = None
+    shared_line = None
     for d in groups[:_MAX_DEFINITIONS]:
         edges = query(store, d)
         lines = _neighbor_lines(edges)
+        if edges.registered:
+            # C: 함수 밖의 표(ops 구조체)에 등록한 자리 — callers 가 비어도 쓰이는 함수다
+            lines.append(f"registered in a table: {_registered(edges.registered)}")
         any_edge = any_edge or bool(lines)
         block = [_header(edges), *(lines or ["(none)"])]
         blocks.append("\n".join(block))
@@ -744,14 +804,22 @@ def _edges_text(store, defs: list[dict], query) -> tuple[str, bool]:
                 f'? "{d["name"]}" on an object of unknown type — any of '
                 f"{edges.unknown_definitions} definitions:  {_sites(edges.unknown_sites)}"
             )
+        if edges.shared_sites and shared_line is None:
+            any_edge = True
+            shared_line = (
+                f'? "{d["name"]}" is defined in several places (includes are not '
+                f"followed) — any of {edges.shared_definitions} definitions:  "
+                f"{_sites(edges.shared_sites)}"
+            )
     text = "\n\n".join(blocks)
     if len(groups) > _MAX_DEFINITIONS:
         text += (
             f"\n\n… {len(groups) - _MAX_DEFINITIONS} more definitions share this name"
             ' — "lookup" lists them; the qualified name picks one.'
         )
-    if unknown_line:
-        text += "\n\n" + unknown_line
+    for line in (unknown_line, shared_line):
+        if line:
+            text += "\n\n" + line
     return text, any_edge
 
 
@@ -893,8 +961,8 @@ class CodeIndexTool(Tool):
                     "tagged with what it resolves to; `ref_kind` narrows. "
                     '"callers" and "callees": the functions that call `name`, '
                     "or that `name` calls, under a heading per definition of `name`; a "
-                    'line starting with "?" is a call on an object of unknown type, '
-                    "which may reach any of the definitions it counts. "
+                    'line starting with "?" could not be pinned to one definition '
+                    "and may reach any of the definitions it counts. "
                     '"slice": the body of `name` together with '
                     "its neighbours — `with_callees`, `with_callers`, `with_types`, "
                     '`with_macros` — to `depth`. "list" and "fetch" read any file; the '
