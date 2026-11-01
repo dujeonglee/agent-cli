@@ -272,6 +272,30 @@ class IndexStore:
             )
         return out
 
+    def symbols_named(self, name: str) -> list[dict]:
+        """이름이 ``name`` 인 기호 전부, 행 순(``ORDER BY id``) — slice 의 ``pick()``
+        가 고른다 (v10.94.1; 종전엔 기호 전부를 올려 이름별로 묶었다)."""
+        return [
+            self._sym_row(r)
+            for r in self._conn.execute(
+                "SELECT * FROM symbols WHERE name = ? ORDER BY id", (name,)
+            )
+        ]
+
+    def ref_names_in_range(
+        self, file: str, start_line: int, end_line: int, kind: str
+    ) -> set[str]:
+        """그 파일 ``start_line..end_line`` 에서 ``kind`` 참조의 이름들 — slice 의
+        types·macros (v10.94.1; 종전엔 참조 전부를 훑었다)."""
+        return {
+            r[0]
+            for r in self._conn.execute(
+                "SELECT DISTINCT name FROM refs WHERE file = ? "
+                "AND line BETWEEN ? AND ? AND +kind = ?",
+                (file, start_line, end_line, kind),
+            )
+        }
+
     def call_sites_by_name(self, name: str) -> list[tuple[int, str, int, str]]:
         """``name`` 을 부르거나 가리키는 참조의 ``(id, file, line, kind)``."""
         return list(

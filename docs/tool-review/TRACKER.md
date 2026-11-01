@@ -42,7 +42,7 @@
 - [ ] 남은 도구 검토: `run_skill` → `browser`·`schedule` 순 (`code_index`·`fetch` 는 v10.92.0 구현 완료)
 - [x] `code_index` callers·callees 이름 단위 질의(v10.94.0) — 전체 콜그래프 구성 제거, 출력 동일, 1.4~1.6 s → 이름당 0.3 ms·최악 ~90 ms. docs/code-index/DESIGN.md §19
 - [ ] `code_index` `containing_fn` 결함(§19 D4) — 안쪽 함수 뒤 바깥 본문의 호출이 어디에도 안 붙음; 고치면 callers·callees·slice 출력이 바뀜
-- [ ] `code_index` slice 의 나머지 전체 로드(§19 D6) — `pick()`·types·macros 0.9~1.5 s → 이름·범위 질의
+- [x] `code_index` slice 의 나머지 전체 로드(§19 D6, v10.94.1) — 이름·범위 질의, 이름당 8~9 ms, 출력 동일. docs/code-index/DESIGN.md §19.1
 - [x] `code_index` 색인 갱신 조기 종료(D3, v10.93.0) — stat 선행·변경 없으면 무쓰기·바뀐 파일만 파싱하고 나머지 행은 SQL 복사: 4.0 s → 0.35 s(변경 없음)·1.25 s(한 파일, django). docs/code-index/DESIGN.md §18
 - [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`
 - [ ] v10.91.2 GLM 벤치 ×2 — v10.91.0 이 8/9·8/9, 그 뒤는 버그 수정(경과·로그 재사용·바쁨 거절 순서)뿐이라 급하지 않음. 볼 지표: 전경 timeout kill·`Removed` 안내·python 작업화·dash 오류

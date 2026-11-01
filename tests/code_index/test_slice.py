@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.code_index import cmd_slice
-from tests.code_index.helpers import build_fixture, build_tree
+from tests.code_index.helpers import FIXTURES, build_fixture, build_tree
 
 
 @pytest.fixture(scope="module")
@@ -298,3 +298,53 @@ class TestSlicePicksDefinition:
         assert "sample.h:" not in def_block
         # Body should contain the function definition, not just the prototype.
         assert "int compute(struct point *p) {" in out
+
+
+class _BruteForceStore:
+    """v10.94.1 전의 slice 가 하던 대로 — 기호·참조 전부를 훑어 답하는 store 대역.
+    새 질의(`symbols_named`·`ref_names_in_range`)의 순서·거르기가 같은지 잰다."""
+
+    def __init__(self, store):
+        self._s = store
+
+    def __getitem__(self, key):
+        return self._s[key]
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+    def symbols_named(self, name):
+        return [s for s in self._s.all_symbols() if s["name"] == name]
+
+    def ref_names_in_range(self, file, start, end, kind):
+        return {
+            r["name"]
+            for r in self._s.all_refs()
+            if r["kind"] == kind and r["file"] == file and start <= r["line"] <= end
+        }
+
+
+class TestSliceEquivalentToFullScan:
+    @pytest.mark.parametrize(
+        "lang", sorted(p.name for p in FIXTURES.iterdir() if p.is_dir())
+    )
+    def test_every_name_every_option(self, lang):
+        store, by_name = build_fixture(lang)
+        ref = _BruteForceStore(store)
+        for n in sorted(by_name):
+            for opts in (
+                {},
+                {"with_callees": True, "depth": 2},
+                {"with_callers": True, "depth": 2},
+                {"with_types": True, "with_macros": True},
+            ):
+                kw = {
+                    "with_callees": False,
+                    "with_callers": False,
+                    "with_types": False,
+                    "with_macros": False,
+                    "depth": 1,
+                    "max_bytes": 0,
+                    **opts,
+                }
+                assert cmd_slice(store, n, **kw) == cmd_slice(ref, n, **kw), (n, opts)

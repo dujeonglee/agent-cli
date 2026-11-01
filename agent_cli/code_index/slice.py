@@ -6,6 +6,12 @@
 symbol's source, plus optional callee bodies, caller bodies, referenced
 types, and called macros — intended for use as LLM context.
 
+v10.94.1 (docs/code-index/DESIGN.md §19.1): nothing loads the whole index —
+`pick()` asks the symbols of one name, types/macros ask the refs inside the
+target's range, callers/callees ask one name per BFS step (v10.94.0).
+Until then a slice loaded every symbol (0.2 s) and scanned every ref once
+per option (0.9–1.5 s on agent-cli).
+
 Bodies are read from the ORIGINAL files on disk (line numbers were
 preserved through the C/C++ preprocessor pipeline), so any kernel-style
 `#if/#else` and other macros appear as the author wrote them.
@@ -17,7 +23,6 @@ hashline wrapper.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 
 from agent_cli.code_index.callgraph import callees_of, callers_of
@@ -40,17 +45,12 @@ def cmd_slice(
     preprocessor), so any kernel-style `#if/#else` and other macros appear
     as the author wrote them."""
     root = Path(idx["root"])
-
-    # Index symbols by name (functions first, then everything else)
-    by_name: dict[str, list] = defaultdict(list)
-    for s in idx["symbols"]:
-        by_name[s["name"]].append(s)
     kind_priority = {"function": 0, "constant": 1, "type": 2, "variable": 3}
 
     def pick(name: str, prefer_def: bool = True):
         """Pick the best symbol record for `name`. Prefer function definitions,
         then any definition, then any declaration."""
-        cands = by_name.get(name) or []
+        cands = idx.symbols_named(name)
         if not cands:
             return None
         cands = sorted(
@@ -144,15 +144,9 @@ def cmd_slice(
 
     # Types referenced inside the target's body
     if with_types and target.get("is_definition"):
-        type_names = set()
-        for r in idx["refs"]:
-            if r["kind"] != "type":
-                continue
-            if (
-                r["file"] == target["file"]
-                and target["line"] <= r["line"] <= target["end_line"]
-            ):
-                type_names.add(r["name"])
+        type_names = idx.ref_names_in_range(
+            target["file"], target["line"], target["end_line"], "type"
+        )
         type_secs = []
         for tn in sorted(type_names):
             sym = pick(tn)
@@ -164,15 +158,9 @@ def cmd_slice(
 
     # Function-like macros invoked by the target
     if with_macros and target.get("is_definition"):
-        macro_names = set()
-        for r in idx["refs"]:
-            if r["kind"] != "call":
-                continue
-            if (
-                r["file"] == target["file"]
-                and target["line"] <= r["line"] <= target["end_line"]
-            ):
-                macro_names.add(r["name"])
+        macro_names = idx.ref_names_in_range(
+            target["file"], target["line"], target["end_line"], "call"
+        )
         macro_secs = []
         for mn in sorted(macro_names):
             sym = pick(mn)
