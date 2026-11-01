@@ -27,11 +27,14 @@ class CompleteTool(Tool):
     # 2026-10-26). 근거는 고정 틀 두 줄(Checked / Not checked): 원칙 문장 판은
     # GLM·35B 40런에서 "확인 안 한 것" 을 한 번도 쓰지 않았다(35B 는 원칙보다
     # 형식을 따른다 — monitor 평평한 인자 A/B 와 같은 교훈).
+    # v10.96.1: 사용자에게는 마크다운으로 그려진다(CLI rich·웹 final 카드) — 표·목록을
+    # 써도 된다는 것을 알린다(사용자 요청 2026-11-01). 호출한 에이전트는 원문을 받는다.
     description = (
         "Call this tool when the task is done — always the last call. `result` "
         "is the only text delivered as your answer — to the user, or to the "
-        "agent that called you; what you wrote outside it is not. Put the "
-        "answer first. When it rests on work you did, end with two lines:\n"
+        "agent that called you; what you wrote outside it is not. The user "
+        "sees it rendered as Markdown. Put the answer first. When it rests on "
+        "work you did, end with two lines:\n"
         "Checked: <what you ran or inspected, and what it showed>\n"
         "Not checked: <what you inferred from reading rather than running, or "
         "did not test — 'nothing' if so>\n"

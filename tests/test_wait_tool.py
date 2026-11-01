@@ -69,6 +69,12 @@ class TestRegistration:
     def test_complete_points_at_wait(self):
         assert "call `wait`" in TOOLS["complete"].description
 
+    def test_complete_says_the_user_sees_markdown(self):
+        # v10.96.1: 사용자에게는 마크다운으로 그려진다(CLI rich·웹 final 카드) — 사용자
+        # 요청 2026-11-01. 호출한 에이전트는 원문을 받으니 "사용자" 로 한정한다.
+        d = TOOLS["complete"].description
+        assert "The user sees it rendered as Markdown." in d
+
     def test_complete_says_result_is_the_delivered_answer(self):
         # v10.75.0: result 가 답으로 전달되는 유일한 글 — 답 먼저, 근거는 고정 틀
         # 두 줄. 추론 과정 전체를 요구하지 않는다(사용자 결정).
