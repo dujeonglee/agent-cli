@@ -217,10 +217,11 @@ class IndexStore:
     # 순이다. ``+kind`` 는 find_symbols 와 같은 planner 함정(통계 없이 kind 인덱스를
     # 고른다) 때문.
 
-    def _defs(self, where: str, params: tuple) -> list[dict]:
+    def _defs(self, where: str, params: tuple, *, functions: bool = True) -> list[dict]:
+        kind = "AND +kind = 'function' " if functions else ""
         out = []
         for r in self._conn.execute(
-            f"SELECT * FROM symbols WHERE {where} AND +kind = 'function' "
+            f"SELECT * FROM symbols WHERE {where} {kind}"
             "AND is_definition = 1 ORDER BY id",
             params,
         ):
@@ -229,14 +230,85 @@ class IndexStore:
             out.append(d)
         return out
 
-    def function_definitions(self, name: str) -> list[dict]:
-        """맨 이름이면 그 이름의 함수 정의 전부, 한정 이름(``Box.get``·``ns::f``)이면
-        그것 — 없으면 마지막 조각의 맨 이름으로."""
-        if "." in name or "::" in name:
-            return self._defs("qualified_name = ?", (name,)) or self._defs(
-                "name = ?", (name.replace("::", ".").rsplit(".", 1)[-1],)
+    def definitions(
+        self,
+        name: str,
+        *,
+        file: str | None = None,
+        functions: bool = True,
+        fallback: bool = True,
+    ) -> list[dict]:
+        """``name`` 의 정의들 (v10.97.0). 맨 이름이면 그 이름 전부; 한정 이름은
+        ``qualified_name`` 그대로(``Box.get``·``ns::f``), 아니면 모듈로 한정한 이름
+        (``fsio._write``·``agent_cli.fsio.Box.get`` — 파일 경로를 모듈 이름으로 읽어
+        ``모듈.한정 이름`` 의 끝이 맞는 것; 없으면 앞이 모듈과 맞고 마지막 조각이 이름인
+        것 — 감싼 함수·클래스를 건너뛴 ``fsio._write``), 그것도 없으면 마지막 조각의 맨
+        이름으로.
+        ``file`` 은 그 파일의 정의만. ``fallback=False`` 면 한정 이름이 맞지 않을 때
+        마지막 조각으로 넓히지 않는다(빈 목록)."""
+        where, extra = ("", ())
+        if file is not None:
+            where, extra = (" AND file = ?", (file,))
+        if "." not in name and "::" not in name:
+            return self._defs("name = ?" + where, (name, *extra), functions=functions)
+        exact = self._defs(
+            "qualified_name = ?" + where, (name, *extra), functions=functions
+        )
+        if exact:
+            return exact
+        norm = name.replace("::", ".")
+        leaf = norm.rsplit(".", 1)[-1]
+        bare = self._defs("name = ?" + where, (leaf, *extra), functions=functions)
+        by_module = [
+            d
+            for d in bare
+            if _ends_with_name(
+                f"{_module_of(d['file'])}.{d['qualified_name'].replace('::', '.')}",
+                norm,
             )
-        return self._defs("name = ?", (name,))
+        ]
+        if not by_module:
+            # 모듈만 앞에 쓰고 감싼 함수·클래스는 건너뛴 이름 — `fsio._write` 가
+            # `agent_cli/fsio.py` 의 `atomic_write_text._write`
+            prefix = norm[: -len(leaf) - 1]
+            by_module = [
+                d for d in bare if _ends_with_name(_module_of(d["file"]), prefix)
+            ]
+        return by_module or (bare if fallback else [])
+
+    def qualified_name_counts(self, names) -> dict[str, int]:
+        """한정 이름마다 그 이름의 정의 수 — 둘 이상이면 출력에 파일을 붙인다."""
+        names = list(dict.fromkeys(names))
+        out: dict[str, int] = {}
+        for i in range(0, len(names), 500):
+            chunk = names[i : i + 500]
+            marks = ",".join("?" for _ in chunk)
+            for qn, n in self._conn.execute(
+                f"SELECT qualified_name, COUNT(*) FROM symbols WHERE qualified_name "
+                f"IN ({marks}) AND is_definition = 1 GROUP BY qualified_name",
+                chunk,
+            ):
+                out[qn] = n
+        return out
+
+    def refs_resolved_to(self, ids, kind: str | None = None) -> list[dict]:
+        """``ids`` 정의로 해석된 참조 — 정의 하나를 고른 ``refs``."""
+        ids = list(dict.fromkeys(ids))
+        out: list[dict] = []
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            marks = ",".join("?" for _ in chunk)
+            q = f"SELECT * FROM refs WHERE target_id IN ({marks})"
+            params: list = list(chunk)
+            if kind is not None:
+                q += " AND kind = ?"
+                params.append(kind)
+            out += [self._ref_row(r) for r in self._conn.execute(q, params)]
+        return out
+
+    def function_definitions(self, name: str) -> list[dict]:
+        """함수 정의 — `definitions` 의 함수만."""
+        return self.definitions(name)
 
     def function_definitions_exact(self, name: str, language: str) -> list[dict]:
         """맨 이름·언어가 같은 함수 정의 전부 — 이름으로만 맞추는 언어의 한 노드."""
@@ -401,3 +473,19 @@ class IndexStore:
 
 def load_index(path: Path) -> IndexStore:
     return IndexStore(path)
+
+
+def _module_of(path: str) -> str:
+    """파일 경로를 점 이름으로 — ``agent_cli/fsio.py`` → ``agent_cli.fsio``,
+    ``pkg/__init__.py`` → ``pkg``. 확장자는 무엇이든 뗀다(점으로 한정한 이름을 쓰는
+    다른 언어도 같은 규칙)."""
+    stem = path.rsplit(".", 1)[0] if "." in path.rsplit("/", 1)[-1] else path
+    parts = stem.split("/")
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _ends_with_name(full: str, name: str) -> bool:
+    """``full`` 이 ``name`` 이거나 점 경계에서 ``name`` 으로 끝나는가."""
+    return full == name or full.endswith("." + name)

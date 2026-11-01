@@ -886,5 +886,42 @@ django 빌드·편집 비용 변화 없음. **리뷰 6회차(Opus).** 정확성 
 회귀 아님으로 남긴 것: 조건부 def(`try: from x
 import f / except: def f()`)는 Pass-1 이 if/try 안을 안 봐 기호가 없다(v10.95.0 도 같다).
 
-**남은 것.** PR-2 `refs` 해석 태그·`path` 로 정의 고르기(`fsio._write` 처럼 모듈로 한정한 이름은 아직 맨 이름으로
-떨어진다), PR-3 C(static·블록 범위·헤더 짝·`registration`), 다음 언어(JS/TS·Go·Rust), Java·C++ 는 언어 서버 쪽.
+### 21.1 정의 고르기와 `refs` 태그 (v10.97.0, B안 PR-2)
+
+**정의 고르기.** `callers`·`callees`·`refs`·`slice` 가 같은 `_definitions_for(name, path)` 를 쓴다. 이름은 순서대로 —
+`qualified_name` 그대로(`QuerySet.get`) → 모듈로 한정(파일 경로를 점 이름으로 읽어 `모듈.한정 이름` 이 점 경계에서
+`name` 으로 끝나는 것: `query.QuerySet.get`·`pkg.other._write`) → 앞이 모듈과 맞고 마지막 조각이 이름인 것(감싼
+함수·클래스를 건너뛴 `fsio._write` → `agent_cli/fsio.py` 의 `atomic_write_text._write` — 실측에서 모델이 쓰는 모양)
+→ 마지막 조각의 맨 이름(종전). `path` 는 그 파일의 정의만, 없으면 "`name` is not defined in F — it is defined in …"
+오류. `slice` 는 고른 정의를 `target` 으로 받는다(종전엔 맨 이름으로 다시 골라 한정 이름이 무시됐다).
+
+**`refs` 태그.** 줄마다 ` → 한정 이름`(같은 한정 이름이 둘 이상이면 `  @파일`) · `?` · `local` · `external` ·
+`unresolved`. `?` 의 정의 수는 줄마다 되풀이하지 않고 끝에 이름마다 한 줄(`? = "get" on an object of unknown type —
+any of 38 definitions`) — 처음엔 줄마다 `? (38 definitions)` 였는데 django `refs get` 이 3,768 줄·261 k 자, 한 줄로
+모으자 201 k 자. 정의를 하나 고르면(한정 이름·`path`, 범위 규칙이 있는 언어) 그 정의로 풀린 참조만, 그리고 그것일
+수도 있는 `?` 자리의 수를 한 줄로("`refs` with the bare name lists them"). 규칙 없는 언어는 고르기가 무의미해 그
+이름의 참조 전부(태그 `?`). `slice` 는 따라가지 않은 `?` 자리 수를 적는다.
+
+**설명.** `mode`(refs 에 "each tagged with what it resolves to"), `name`("or one led by its module (\"module.function\")"
+— `"Class.method"` 는 도구 설명 본문에 이미 있어 한 번만), `path`(네 모드에서 그 파일의 정의). GLM 토크나이저로 code_index
+블록 1,004 → 1,054 토큰(+50; PR-2 예산 +79 안), 블록 크기 가드 3,800 → 4,000 자.
+
+**검증.** 출력 정확 문자열 테스트(태그 다섯, 모듈로 한정한 이름, `path`, 없는 파일·정의, slice 의 고른 정의·다른
+정의 안내·따라가지 않은 수), store 의 이름 규칙(점 경계 — `sio._write` 는 `fsio` 와 안 맞음). 테스트가 처음 판의
+버그 하나를 잡았다: 모듈로 한정한 이름이 전체와 **정확히** 같을 때(`pkg.other._write`) 접미 비교만 해 놓쳤다. 실제
+저장소: agent-cli `refs fsio._write` 2 줄 + `?` 1(종전 113 줄), django `refs QuerySet.get` 1 줄, 질의 0.1~0.4 s.
+
+**리뷰(Opus) 뒤 고친 것.** ① 규칙 없는 언어의 꼬리 줄이 "on an object of unknown type" 이라 틀렸고 언어마다 같은 글이
+두 번 → `? = "foo" matched by name only (c is not scope-resolved) — any of N definitions`. ② 한정 이름으로 골라도 규칙
+없는 언어에선 모든 언어의 참조가 섞였다(`utils.foo` 에 C 의 `foo`) → 고른 정의의 언어로. ③ C++ `ns::f` 가 저장된
+`outer::ns::f` 와 안 맞았다(비교 때 `::` → `.`). ④ `path` 와 함께 준 없는 한정 이름이 그 파일의 맨 이름으로 조용히
+넓어졌다 → `path` 가 있으면 넓히지 않고 오류("어디 있나" 도 넓히지 않고 센다). ⑤ 모호한 `path` 가 "not a file" →
+`matches several files: …`. ⑥ note 의 수가 맨 이름 `refs` 의 `?` 줄 수와 달랐다(함수 안만 셌다) → 같은 조건으로.
+⑦ slice 의 따라가지 않은 수가 같은 자리를 겹쳐 셌다(callers 의 `?` 자리는 그 이름의 것 전부) → `(파일, 줄)` 집합.
+사례 7종 테스트, 사보타주 모두 걸림. 2회차: 7건 해소, 하나 더 — `slice` + `path` 가 클래스·상수에 "not defined"
+(함수 쪽 오류가 다른 정의로 다시 고르기를 막았다) → 둘 다 없을 때만 오류. 판단으로 남긴 것: "모듈 + 마지막 조각" 은 클래스 메서드도 건너뛰어 `pkg.core.save`
+가 `Box.save`·`Other.save` 둘을 고른다(의도한 넓이); `__init__` 이 재노출하는 공개 경로(`pkg.helper`·`django.db.models.Q`)
+는 파일 경로 규칙이라 못 고른다 — 저장된 바인딩을 `resolve_in_module` 로 따라가면 된다(후속); Go `pkg.F` 는 패키지가
+디렉터리라 `file.F` 만 맞고 나머지는 맨 이름으로.
+
+**남은 것.** PR-3 C(static·블록 범위·헤더 짝·`registration`), 다음 언어(JS/TS·Go·Rust), Java·C++ 는 언어 서버 쪽.
