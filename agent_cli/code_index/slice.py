@@ -17,10 +17,10 @@ hashline wrapper.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
-from agent_cli.code_index.callgraph import build_callgraph
+from agent_cli.code_index.callgraph import callees_of, callers_of
 
 
 def cmd_slice(
@@ -91,9 +91,9 @@ def cmd_slice(
 
     # Callee bodies (transitive up to `depth`)
     if with_callees and target["kind"] == "function":
-        calls_of, _, _ = build_callgraph(idx)
+        # v10.94.0: 단계마다 프런티어 이름만 묻는다 — 전체 그래프를 만들지 않는다
         seen: set[str] = {name}
-        frontier = list(calls_of.get(name, Counter()).keys())
+        frontier = list(callees_of(idx, name).counts)
         for d in range(1, depth + 1):
             next_frontier: list[str] = []
             level_secs: list[str] = []
@@ -109,7 +109,7 @@ def cmd_slice(
                 ):
                     continue
                 level_secs.append(section(sym, header_prefix="###"))
-                next_frontier.extend(calls_of.get(callee, Counter()).keys())
+                next_frontier.extend(callees_of(idx, callee).counts)
             if level_secs:
                 out.append(f"## Callees (depth {d})\n\n" + "\n\n".join(level_secs))
             frontier = next_frontier
@@ -118,9 +118,8 @@ def cmd_slice(
 
     # Caller bodies (transitive up to `depth`)
     if with_callers and target["kind"] == "function":
-        _, callers_of, _ = build_callgraph(idx)
         seen: set[str] = {name}
-        frontier = list(callers_of.get(name, Counter()).keys())
+        frontier = list(callers_of(idx, name).counts)
         for d in range(1, depth + 1):
             next_frontier: list[str] = []
             level_secs: list[str] = []
@@ -136,7 +135,7 @@ def cmd_slice(
                 ):
                     continue
                 level_secs.append(section(sym, header_prefix="###"))
-                next_frontier.extend(callers_of.get(caller, Counter()).keys())
+                next_frontier.extend(callers_of(idx, caller).counts)
             if level_secs:
                 out.append(f"## Callers (depth {d})\n\n" + "\n\n".join(level_secs))
             frontier = next_frontier

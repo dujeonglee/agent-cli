@@ -5,8 +5,10 @@
 `IndexStore` opens an existing index file (produced by
 `agent_cli.code_index.builder.build`) and exposes both dict-style
 access (`idx['symbols']`, `idx['root']`) and indexed-lookup methods
-(`find_symbols(name=...)`, `find_refs(...)`, `find_refs_in_range(...)`)
-that exploit the SQL secondary indexes.
+(`find_symbols(name=...)`, `find_refs(...)`) that exploit the SQL secondary
+indexes, plus the per-name call-graph queries (`call_sites_by_name`,
+`call_sites_in_range`, `function_ranges_in_file`, … — v10.94.0) that
+`callgraph.callers_of`/`callees_of` use instead of loading every row.
 
 `load_index(path)` is the convenience constructor used by callers that
 don't need to think about the class name.
@@ -180,7 +182,9 @@ class IndexStore:
             clauses.append("qualified_name = ?")
             params.append(qualified_name)
         if kind is not None:
-            clauses.append("kind = ?")
+            # 다른 등호 절이 있으면 `+kind` — 통계(sqlite_stat1)가 없어 planner 가
+            # 행이 가장 많은 idx_symbols_kind 를 고른다(6.4 ms → 0.26 ms, v10.94.0).
+            clauses.append("+kind = ?" if clauses or file is not None else "kind = ?")
             params.append(kind)
         if file is not None:
             clauses.append("file = ?")
@@ -208,16 +212,87 @@ class IndexStore:
             q += " WHERE " + " AND ".join(clauses)
         return [self._ref_row(r) for r in self._conn.execute(q, params)]
 
-    def find_refs_in_range(self, file: str, start_line: int, end_line: int):
-        """Refs in a contiguous line range of one file (used for callees)."""
-        file = self.normalize_file_path(file) or file
+    # ----- per-name call graph (v10.94.0, docs/code-index/DESIGN.md §19) -----
+    # 가벼운 튜플·좁은 열 — `_sym_row`/`_ref_row` 의 dict 변환을 피한다. 순서는
+    # 전부 ``ORDER BY id``: 콜그래프의 사이트·이웃 순서는 참조 id 순이고, 증분 빌드는
+    # 옛 행을 복사한 뒤 새 행을 붙이므로 파일 순이 아니다. ``+kind`` 는 find_symbols
+    # 와 같은 planner 함정 때문.
+
+    def function_defs(self, name: str) -> list[tuple[str, int, int]]:
+        """이름이 ``name`` 인 함수 **정의**의 ``(file, line, end_line)``."""
+        return list(
+            self._conn.execute(
+                "SELECT file, line, end_line FROM symbols WHERE name = ? "
+                "AND +kind = 'function' AND is_definition = 1 ORDER BY id",
+                (name,),
+            )
+        )
+
+    def function_ranges_in_file(self, file: str) -> list[dict]:
+        """그 파일의 함수 정의 — `callgraph.build_fn_ranges` 가 읽는 키만 든 dict."""
         return [
-            self._ref_row(r)
+            {
+                "kind": "function",
+                "is_definition": True,
+                "file": file,
+                "name": r[0],
+                "line": r[1],
+                "end_line": r[2],
+                "params": json.loads(r[3]) if r[3] else None,
+            }
             for r in self._conn.execute(
-                "SELECT * FROM refs WHERE file = ? AND line BETWEEN ? AND ?",
-                (file, start_line, end_line),
+                "SELECT name, line, end_line, params FROM symbols WHERE file = ? "
+                "AND +kind = 'function' AND is_definition = 1 ORDER BY id",
+                (file,),
             )
         ]
+
+    def is_function_name(self, name: str) -> bool:
+        """``name`` 이 함수(정의·선언)로 색인돼 있다."""
+        row = self._conn.execute(
+            "SELECT 1 FROM symbols WHERE name = ? AND +kind = 'function' LIMIT 1",
+            (name,),
+        ).fetchone()
+        return row is not None
+
+    def function_names_among(self, names) -> set[str]:
+        """``names`` 중 함수(정의·선언)로 색인된 것 — 500개씩 끊어 묻는다."""
+        names = list(dict.fromkeys(names))
+        out: set[str] = set()
+        for i in range(0, len(names), 500):
+            chunk = names[i : i + 500]
+            marks = ",".join("?" for _ in chunk)
+            out.update(
+                r[0]
+                for r in self._conn.execute(
+                    f"SELECT DISTINCT name FROM symbols WHERE +kind = 'function' "
+                    f"AND name IN ({marks})",
+                    chunk,
+                )
+            )
+        return out
+
+    def call_sites_by_name(self, name: str) -> list[tuple[int, str, int, str]]:
+        """``name`` 을 부르거나 가리키는 참조의 ``(id, file, line, kind)``."""
+        return list(
+            self._conn.execute(
+                "SELECT id, file, line, kind FROM refs WHERE name = ? "
+                "AND kind IN ('call', 'name') ORDER BY id",
+                (name,),
+            )
+        )
+
+    def call_sites_in_range(
+        self, file: str, start_line: int, end_line: int
+    ) -> list[tuple[int, str, int, str]]:
+        """그 파일 ``start_line..end_line`` 의 call·name 참조 ``(id, name, line, kind)``."""
+        return list(
+            self._conn.execute(
+                "SELECT id, name, line, kind FROM refs WHERE file = ? "
+                "AND line BETWEEN ? AND ? AND kind IN ('call', 'name') ORDER BY id",
+                (file, start_line, end_line),
+            )
+        )
 
     def kind_counts(self) -> Counter:
         return Counter(

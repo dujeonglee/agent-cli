@@ -1,7 +1,7 @@
 """Tests for IndexStore query API correctness (DESIGN §12.3).
 
 Covers the filter combinations on ``find_symbols`` / ``find_refs``,
-``find_refs_in_range`` line-bounded slicing, ``normalize_file_path``
+the per-name call-graph queries (v10.94.0), ``normalize_file_path``
 across exact / absolute / bare-basename / suffix / ambiguous shapes
 (using the ``nested/`` multi-file fixture), and the aggregate accessors
 ``kind_counts`` / ``ref_kind_counts`` / ``top_ref_names`` /
@@ -109,36 +109,76 @@ class TestFindRefs:
         assert len(all_refs) == store.n_refs()
 
 
-class TestFindRefsInRange:
-    """``find_refs_in_range`` returns only refs in [start_line, end_line]."""
+class TestPerNameCallGraphQueries:
+    """v10.94.0 — callers_of/callees_of 가 쓰는 좁은 질의들."""
 
-    def test_in_range_inclusive(self, python_index):
+    def test_call_sites_in_range_stays_in_the_window(self, python_index):
         store, by_name, _ = python_index
-        # process body lives at lines 26-27 in app.py and contains helper() call
         process = next(s for s in by_name["process"] if s.get("modifiers") == ["async"])
-        refs = store.find_refs_in_range(
+        sites = store.call_sites_in_range(
             process["file"], process["line"], process["end_line"]
         )
-        assert refs
-        for r in refs:
-            assert process["line"] <= r["line"] <= process["end_line"]
-            assert r["file"] == process["file"]
+        assert sites
+        assert all(
+            process["line"] <= line <= process["end_line"] for _i, _n, line, _k in sites
+        )
+        assert {k for *_rest, k in sites} <= {"call", "name"}
+        assert [i for i, *_ in sites] == sorted(i for i, *_ in sites)
+        assert store.call_sites_in_range("app.py", 10_000, 20_000) == []
 
-    def test_out_of_range_returns_empty(self, python_index):
+    def test_call_sites_by_name_is_in_id_order(self, python_index):
         store, _, _ = python_index
-        # high line numbers far past any file
-        refs = store.find_refs_in_range("app.py", 10_000, 20_000)
-        assert refs == []
+        sites = store.call_sites_by_name("helper")
+        assert sites and [i for i, *_ in sites] == sorted(i for i, *_ in sites)
+        assert store.call_sites_by_name("no_such_name") == []
 
-    def test_range_excludes_refs_outside_window(self, python_index):
+    def test_function_lookups(self, python_index):
         store, _, _ = python_index
-        # whole-file vs a tiny window — the tiny window should be a strict subset
-        whole = store.find_refs_in_range("app.py", 1, 10_000)
-        tiny = store.find_refs_in_range("app.py", 26, 27)
-        assert len(tiny) < len(whole)
-        whole_pairs = {(r["name"], r["line"]) for r in whole}
-        for r in tiny:
-            assert (r["name"], r["line"]) in whole_pairs
+        assert store.is_function_name("helper")
+        assert not store.is_function_name("no_such_name")
+        assert store.function_defs("helper")
+        assert store.function_defs("no_such_name") == []
+        file = store.function_defs("helper")[0][0]
+        ranges = store.function_ranges_in_file(file)
+        assert ranges and all(r["kind"] == "function" for r in ranges)
+        assert {"helper"} <= {r["name"] for r in ranges}
+
+    def test_function_names_among_crosses_the_chunk_boundary(self, python_index):
+        store, _, _ = python_index
+        names = [f"zz{i}" for i in range(1200)] + ["helper", "process"]
+        assert store.function_names_among(names) == {"helper", "process"}
+        assert store.function_names_among([]) == set()
+
+    def test_order_survives_an_incremental_build(self, tmp_path):
+        """증분 빌드는 옛 행을 복사한 뒤 새 행을 붙인다 — id 순은 파일 순이 아니다."""
+        from agent_cli.code_index import build, load_index
+
+        (tmp_path / "a.py").write_text("def a():\n    t()\n")
+        (tmp_path / "b.py").write_text("def t():\n    pass\n\n\ndef b():\n    t()\n")
+        db = tmp_path / ".db"
+        build(tmp_path, db, defs_path=None, verbose=False)
+        (tmp_path / "a.py").write_text("def a():\n    t()\n    t()\n")
+        build(tmp_path, db, defs_path=None, verbose=False)
+        files = [f for _i, f, _l, _k in load_index(db).call_sites_by_name("t")]
+        assert files[0] == "b.py" and files[-1] == "a.py"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "SELECT 1 FROM symbols WHERE name = 'x' AND +kind = 'function' LIMIT 1",
+            "SELECT * FROM symbols WHERE name = 'x' AND +kind = 'function'",
+        ],
+    )
+    def test_name_queries_use_the_name_index(self, python_index, query):
+        """통계가 없으면 planner 가 `kind = ?` 에 idx_symbols_kind 를 고른다(6.4 ms) —
+        `+kind` 가 그 선택을 막는다. find_symbols(name=, kind=) 도 같은 SQL 을 낸다."""
+        store, _, _ = python_index
+        plan = " ".join(
+            str(r[-1]) for r in store._conn.execute("EXPLAIN QUERY PLAN " + query)
+        )
+        assert "idx_symbols_name" in plan, plan
+        assert store.find_symbols(name="helper", kind="function")
+        assert store.find_symbols(kind="function")
 
 
 class TestNormalizeFilePath:
