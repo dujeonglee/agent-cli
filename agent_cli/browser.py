@@ -176,12 +176,12 @@ def host_allowed(url: str, hosts: tuple[str, ...]) -> str | None:
         if local_path(url) is None:
             return (
                 f"a file URL takes an absolute path (file:///path), not a host "
-                f"('{parsed.netloc}')"
+                f'("{parsed.netloc}")'
             )
         return None
     if not parsed.scheme:
         return (
-            f"'{url}' is neither a URL (no scheme) nor an existing file — give "
+            f'"{url}" is neither a URL (no scheme) nor an existing file — give '
             "http(s)://…, file:///path or the path of a file that exists"
         )
     if parsed.scheme == "chrome-error":
@@ -192,7 +192,7 @@ def host_allowed(url: str, hosts: tuple[str, ...]) -> str | None:
     if not host:
         return "the URL has no host"
     if hosts and not any(host == h or host.endswith("." + h) for h in hosts):
-        return f"host '{host}' is not in AGENT_CLI_BROWSER_HOSTS ({', '.join(hosts)})"
+        return f'host "{host}" is not in AGENT_CLI_BROWSER_HOSTS ({", ".join(hosts)})'
     return None
 
 

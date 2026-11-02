@@ -1260,7 +1260,7 @@ class TurnDispatcher:
             if err:
                 lines.append(f"could not ask: {err}")
             else:
-                lines.append(f'question {qid} sent — "{q}"')
+                lines.append(f'question "{qid}" sent — "{q}"')
         obs = (
             "\n".join(lines)
             + "\nYou are not blocked. Continue with whatever does not depend "

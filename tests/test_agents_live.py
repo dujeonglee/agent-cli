@@ -880,12 +880,12 @@ class TestToolTeammate:
             runtime=reg.runtime,
         )
         assert r.success
-        assert "Peers reach it with their `message` tool as 'player2' or key agt-" in (
+        assert 'Peers reach it with their `message` tool as "player2" or key "agt-' in (
             r.output
         )
         assert "roster in their own per-turn tail" in r.output
         r2 = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
-        assert "`message` tool as key agt-" in r2.output
+        assert '`message` tool as key "agt-' in r2.output
         reg.shutdown_all()
 
     def test_spawn_with_initial_task(self, tmp_path, renderer):
@@ -894,7 +894,7 @@ class TestToolTeammate:
             {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
         )
         assert r.success
-        assert "spawned agent 'agt-" in r.output
+        assert 'spawned agent "agt-' in r.output
         assert "initial task queued" in r.output
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
@@ -2306,7 +2306,7 @@ class TestPeerMessaging:
         reg, a, b = self._reg_two(tmp_path, runner)
         handler = reg._make_message_handler(reg.get(a))
         out = handler(b, "fyi: I am done", expects_reply=False)
-        assert out == "delivered as notice n-1 — nothing is owed back"
+        assert out == 'delivered as notice "n-1" — nothing is owed back'
         assert wait_until(lambda: reg.get(b).handled >= 1)
         q = next(q for q in runner.queries() if "fyi: I am done" in q)
         assert q == f"── notice [n-1] from {a} (alpha) ──\nfyi: I am done"
@@ -2324,7 +2324,7 @@ class TestPeerMessaging:
         reg, a, _b = self._reg_two(tmp_path, runner)
         handler = reg._make_message_handler(reg.get(a))
         out = handler("main", "status: half done", expects_reply=False)
-        assert out.startswith("delivered as notice n-")
+        assert out.startswith('delivered as notice "n-')
         (rec,) = [
             r for r in reg.drain_replies() if "half done" in (r.get("output") or "")
         ]
@@ -2365,8 +2365,8 @@ class TestPeerMessaging:
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
         handler = reg._make_message_handler(reg.get(a))
-        assert handler(f"agent:{b}", "by prefix").startswith("delivered as request r-")
-        assert handler("beta", "by name").startswith("delivered as request r-")
+        assert handler(f"agent:{b}", "by prefix").startswith('delivered as request "r-')
+        assert handler("beta", "by name").startswith('delivered as request "r-')
         assert wait_until(lambda: reg.get(b).handled >= 2)
         qs = runner.queries()
         assert any("by prefix" in q for q in qs) and any("by name" in q for q in qs)
@@ -2482,7 +2482,7 @@ class TestPeerMessaging:
 
         # peer 로 전송 → 대상이 author=agent:A 로 받음
         out = handler(b, "ping")
-        assert out == "delivered as request r-1 — its reply will come marked [r-1]"
+        assert out == 'delivered as request "r-1" — its reply will come marked [r-1]'
         assert wait_until(lambda: reg.get(b).handled >= 1)
         assert any(
             "ping" in q and q.startswith(f"── request [r-1] from {a}")
@@ -2495,7 +2495,7 @@ class TestPeerMessaging:
         assert "unknown" in handler("no-such", "x").lower()
 
         # main 으로 → main mailbox
-        assert handler("main", "hello main").startswith("delivered as request r-")
+        assert handler("main", "hello main").startswith('delivered as request "r-')
         recs = reg.drain_replies()
         assert any("hello main" in (r.get("output") or "") for r in recs)
         reg.shutdown_all()
@@ -2555,7 +2555,7 @@ class TestPeerMessaging:
         reg = make_registry(tmp_path)
         res = tool_agent({"mode": "spawn", "task": "build the game"}, registry=reg)
         out = res.output
-        assert "initial task queued as request r-" in out and "wakes you" in out
+        assert 'initial task queued as request "r-' in out and "wakes you" in out
         assert "Do NOT" not in out and "`wait`" not in out
         tail = build_live_agents_section(reg, include_state=True)
         assert "finish what is yours, then call `wait`" in tail
@@ -2942,7 +2942,7 @@ class TestResumeMode:
         assert r.success
         assert "remembers all previous exchanges" in r.output
         # v10.85.0: resume 의 과제도 요청 id 를 달고 간다(spawn·request 와 같게)
-        assert "task queued as request r-" in r.output
+        assert 'task queued as request "r-' in r.output
         assert "`wait`" not in r.output  # 결과는 사실만 — 기다리는 법은 꼬리
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
@@ -3153,8 +3153,8 @@ class TestResultsAreFactsOnly:
         r = tool_agent(
             {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
         )
-        key = r.output.split("'")[1]
-        assert "initial task queued as request r-" in r.output
+        key = r.output.split('"')[1]
+        assert 'initial task queued as request "r-' in r.output
         assert "wakes you" in r.output
         for banned in ("`wait`", "poll", "finish the rest", "re-send"):
             assert banned not in r.output, banned
@@ -3175,7 +3175,7 @@ class TestResultsAreFactsOnly:
 
         reg = make_registry(tmp_path)
         r = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
-        key = r.output.split("'")[1]
+        key = r.output.split('"')[1]
         wait_until(lambda: reg.get(key).state == "idle")
         outs = [r.output, reg.format_status(key)]
         outs.append(tool_agent({"mode": "kill", "key": key}, registry=reg).output)
@@ -3880,7 +3880,7 @@ class TestAgentTaskFieldUnification:
         for mode in ("request", "resume", "spawn"):
             err = tool.validate({"mode": mode, "key": "agt-x", "message": "지시"})
             assert err is not None, mode
-            assert "'task'" in err, err  # 교정 방향이 필드-정밀해야 자가 교정된다
+            assert "`task`" in err, err  # 교정 방향이 필드-정밀해야 자가 교정된다
 
     def test_task_with_no_words_is_rejected(self):
         """v10.1.2 (실측 nnq141·재현): `<parameter=task>\n>\n</parameter>` —
@@ -3892,7 +3892,7 @@ class TestAgentTaskFieldUnification:
         for mode in ("spawn", "request", "run"):
             args = {"mode": mode, "key": "agt-x", "task": "\n>\n"}
             err = tool.validate(args)
-            assert err is not None and "no words" in err and "'task'" in err, (
+            assert err is not None and "no words" in err and "`task`" in err, (
                 mode,
                 err,
             )

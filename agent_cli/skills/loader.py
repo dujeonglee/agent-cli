@@ -56,6 +56,12 @@ def load_skills() -> dict[str, Skill]:
     return skills
 
 
+def model_skills() -> dict[str, Skill]:
+    """모델이 `run_skill` 로 부를 수 있는 스킬 — ``disable-model-invocation`` 이 아닌 것.
+    목록 절·`run_skill` 광고·"not found" 안내가 같은 집합을 본다."""
+    return {n: s for n, s in load_skills().items() if not s.disable_model_invocation}
+
+
 def _parse_skill_file(path: Path) -> Skill | None:
     """Parse a single skill file. Used by tests and executor."""
     res = ResourceLoader._parse_file(path)

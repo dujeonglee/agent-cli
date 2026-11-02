@@ -17,7 +17,7 @@ def _handle_run_skill(skill_input: dict, caller: Caller) -> ToolResult:
         format_depth_limit_error,
         format_recursion_error,
     )
-    from agent_cli.skills import load_skills
+    from agent_cli.skills import load_skills, model_skills
     from agent_cli.skills.executor import SkillLoop
 
     name = skill_input.get("name", "")
@@ -47,14 +47,17 @@ def _handle_run_skill(skill_input: dict, caller: Caller) -> ToolResult:
 
     skills = load_skills()
     if name not in skills:
-        available = ", ".join(skills.keys()) if skills else "(none)"
+        # 사용자 전용 스킬은 모델이 부를 수 없으니 목록에 넣지 않는다 (넣으면 다음 턴에
+        # 그 이름으로 다시 불러 user-only 거절을 한 번 더 받는다)
+        callable_names = list(model_skills())
+        available = ", ".join(callable_names) if callable_names else "(none)"
         return ToolResult(
-            False, error=f"Skill '{name}' not found. Available: {available}"
+            False, error=f'Skill "{name}" not found. Available: {available}'
         )
     skill = skills[name]
     if skill.disable_model_invocation:
         return ToolResult(
-            False, error=f"Skill '{name}' is user-only (disable-model-invocation)."
+            False, error=f'Skill "{name}" is user-only (disable-model-invocation).'
         )
 
     skill_result = SkillLoop(skill, arguments, caller, tool_input=skill_input).run()

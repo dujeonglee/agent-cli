@@ -424,7 +424,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         head = body[: cap * 2]  # ~cap/2 tokens 어치만 발췌 (chars≈tokens*4)
         body = (
             f"(reply is ~{tokens} tokens — over the {cap}-token cap; "
-            f"full text saved to '{path}'. Read a specific range or search "
+            f'full text saved to "{path}". Read a specific range or search '
             f"it, or send a narrower request.)\n"
             f"--- head excerpt ---\n{head}"
         )
@@ -1060,7 +1060,7 @@ class AgentRegistry:
             if open_qs:
                 q = min(open_qs, key=lambda q: q.asked_at)
                 line += (
-                    f" · blocked on question {q.id} to the user, unanswered for "
+                    f' · blocked on question "{q.id}" to the user, unanswered for '
                     f"{format_duration(now - q.asked_at)}"
                 )
                 question = True
@@ -1155,7 +1155,7 @@ class AgentRegistry:
             return "", "empty question"
         tm = self._agents.get(asker)
         if tm is None:
-            return "", f"unknown asker '{asker}'"
+            return "", f'unknown asker "{asker}"'
         asked_in = tm.current_item
         with self._cv:
             # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
@@ -1229,9 +1229,9 @@ class AgentRegistry:
         with self._cv:
             q = self._questions.get(qid)
             if q is None:
-                return f"unknown or already-answered question '{qid}'"
+                return f'unknown or already-answered question "{qid}"'
             if not _is_human_addr(by):
-                return f"question '{qid}' is addressed to the person, not {by}"
+                return f'question "{qid}" is addressed to the person, not "{by}"'
             del self._questions[qid]  # 원자적 claim — 동시 답변자 중 하나만
         self._deliver_answer(q, text)
         self._save_state()
@@ -1605,9 +1605,9 @@ class AgentRegistry:
             # 모델이 읽는 거절 관찰이다(spawn 의 결과) — 영어로, 다음 행동과 함께.
             hint = f" (closest name: {near})" if near else ""
             avail = ", ".join(e.listing.models[:6])
-            where = f"profile '{profile}'" if profile else "the role settings"
+            where = f'profile "{profile}"' if profile else "the role settings"
             return (
-                f"the model '{model}' required by {where} is not on the server"
+                f'the model "{model}" required by {where} is not on the server'
                 f"{hint}. Available: {avail}. Spawn with a different profile, "
                 "or tell the user the profile's model must be fixed."
             )
@@ -1664,7 +1664,7 @@ class AgentRegistry:
             )
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
-            return "", (f"invalid instance name '{name}': [a-zA-Z0-9_-], max 24 chars")
+            return "", (f'invalid instance name "{name}": [a-zA-Z0-9_-], max 24 chars')
 
         dup = self._duplicate_label(profile, name)
         if dup:
@@ -1805,7 +1805,7 @@ class AgentRegistry:
         tm = self._agents.get(resolved) if resolved else None
         if tm is None:
             return (
-                f"unknown agent '{key}' — use a key or name from `## Live Agents` "
+                f'unknown agent "{key}" — use a key or name from `## Live Agents` '
                 '(or "main")'
             )
         key = resolved
@@ -1817,7 +1817,7 @@ class AgentRegistry:
         # `/api/stop` 은 main 의 이벤트) 죽지 않는데 서는 경로가 없다.
         if tm.state == "dead" or tm.stop_event.is_set():
             reason = f" ({tm.error})" if tm.error else ""
-            return f"agent '{key}' is dead{reason} — spawn a new one"
+            return f'agent "{key}" is dead{reason} — spawn a new one'
         if not message.strip():
             return "empty message"
         # Stamp the request's time BEFORE enqueuing. The worker runs on its own
@@ -2138,7 +2138,7 @@ class AgentRegistry:
             # `except Exception: pass` 가 삼켜 그 틱의 남은 모니터가 통째로
             # 건너뛰어진다. 에러는 문자열로 돌려 호출부가 판단하게 한다.
             return f"{type(exc).__name__}: {exc}"
-        return f"unroutable address '{addr}'"
+        return f'unroutable address "{addr}"'
 
     def _push_reply(self, reply: dict) -> None:
         with self._cv:
@@ -2195,7 +2195,7 @@ class AgentRegistry:
             return f"reply dropped — peer hop limit ({_MAX_PEER_HOPS}) reached"
         tgt = self._agents.get(requester_key)
         if tgt is None or tgt.state == "dead":
-            return f"agent '{requester_key}' is gone — the reply was not delivered"
+            return f'agent "{requester_key}" is gone — the reply was not delivered'
         return self.request(
             requester_key,
             output,
@@ -2316,7 +2316,7 @@ class AgentRegistry:
                 resolved = self.resolve_key(to)
                 if resolved is None:
                     return (
-                        f"unknown agent '{to}' — use a key or name from "
+                        f'unknown agent "{to}" — use a key or name from '
                         '`## Live Agents` (or "main")'
                     )
                 to = resolved
@@ -2364,11 +2364,7 @@ class AgentRegistry:
                 if err:
                     return err
                 self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
-            if not expects_reply:
-                return f"delivered as notice {rec_id} — nothing is owed back"
-            return (
-                f"delivered as request {rec_id} — its reply will come marked [{rec_id}]"
-            )
+            return delivered_line(rec_id, expects_reply=bool(expects_reply))
 
         return handler
 
@@ -2431,7 +2427,7 @@ class AgentRegistry:
         if key:
             tm = self._agents.get(key)
             if tm is None:
-                return f"unknown agent '{key}'"
+                return f'unknown agent "{key}"'
             items = [tm]
         else:
             items = list(self._agents.values())
@@ -2474,7 +2470,7 @@ class AgentRegistry:
         """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공)."""
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown agent '{key}'"
+            return f'unknown agent "{key}"'
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         self._cancel_checkins(f"agent:{key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
@@ -2521,10 +2517,10 @@ class AgentRegistry:
         """
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown agent '{key}'"
+            return f'unknown agent "{key}"'
         if tm.state != "dead":
             return (
-                f"agent '{key}' is still alive ({tm.state}) — send it a request instead"
+                f'agent "{key}" is still alive ({tm.state}) — send it a request instead'
             )
         if self._at_agent_limit():
             return (
@@ -3083,13 +3079,42 @@ class MailWaker:
 # 위반 7곳·11낱말이 가드 밖이라 남아 있었다. 결과는 **사실만** 말한다(키·요청 id·
 # "회신이 깨운다"); "기다리는 법"은 꼬리 `## Live Agents` 머리글이 상시로 맡고,
 # 폴링 금지는 `status` 의 넛지가 맡는다(세 겹 → 한 겹, v10.73.0 자리 원칙).
+SPAWN_DONE = 'spawned agent "{key}"'
+SPAWN_DONE_AS = 'spawned agent "{key}" ({parts})'
+
+
+def spawn_head(key: str, parts: list[str]) -> str:
+    """spawn 결과 첫 줄 — 프로파일·이름이 있으면 괄호로."""
+    if parts:
+        return SPAWN_DONE_AS.format(key=key, parts=" · ".join(parts))
+    return SPAWN_DONE.format(key=key)
+
+
+def peer_address(name: str, key: str) -> str:
+    """`SPAWN_PEERS` 의 ``who`` — 이름이 있으면 이름 또는 키, 값은 큰따옴표."""
+    return f'"{name}" or key "{key}"' if name else f'key "{key}"'
+
+
+DELIVERED_NOTICE = 'delivered as notice "{rid}" — nothing is owed back'
+DELIVERED_REQUEST = 'delivered as request "{rid}" — its reply will come marked [{rid}]'
+
+
+def delivered_line(rid: str, *, expects_reply: bool) -> str:
+    """`message` 결과 — 통지는 갚을 것 없음, 요청은 회신 표지."""
+    return (DELIVERED_REQUEST if expects_reply else DELIVERED_NOTICE).format(rid=rid)
+
+
+def quoted_keys(keys: list[str]) -> str:
+    return ", ".join(f'"{k}"' for k in keys)
+
+
 SPAWN_DEAD_SAME_PROFILE = (
     "note: dead agent(s) with the same profile exist ({keys}) — this new spawn "
     "starts with no memory of them; to continue one of them instead, kill this "
     'and bring that one back with `mode` "resume".'
 )
 SPAWN_TASK_QUEUED = (
-    "initial task queued as request {rid} — its `reply` comes back marked [{rid}] "
+    'initial task queued as request "{rid}" — its `reply` comes back marked [{rid}] '
     "and wakes you (if it completes without one you get its run summary instead)."
 )
 SPAWN_NO_TASK = 'send work with `mode` "request", `key` "{key}" and the `task` text.'
@@ -3098,7 +3123,7 @@ SPAWN_PEERS = (
     "in their own per-turn tail, so you need not relay keys."
 )
 REQUEST_QUEUED = (
-    "queued to {key} as request {rid} — its `reply` comes back marked [{rid}] at a "
+    'queued to "{key}" as request "{rid}" — its `reply` comes back marked [{rid}] at a '
     "later turn (even while you are idle) and wakes you; if it completes without "
     "one you get its run summary."
 )
@@ -3108,19 +3133,19 @@ REQUEST_STACKED = (
     "the answer. Its `reply` reaches you on its own; stop re-sending."
 )
 RESUME_DONE = (
-    "agent '{key}' resumed — it remembers all previous exchanges (its context was "
+    'agent "{key}" resumed — it remembers all previous exchanges (its context was '
     "kept across death)."
 )
 RESUME_TASK_QUEUED = (
-    "task queued as request {rid} — its `reply` comes back marked [{rid}] and "
+    'task queued as request "{rid}" — its `reply` comes back marked [{rid}] and '
     "wakes you."
 )
 KILL_DONE = (
-    "agent '{key}' terminated. Its context is kept — `mode` \"resume\" brings it "
+    'agent "{key}" terminated. Its context is kept — `mode` "resume" brings it '
     "back with full memory; a new spawn would start without it."
 )
 KILL_ALREADY = (
-    "agent '{key}' was already terminated — nothing to do. Its context is kept; "
+    'agent "{key}" was already terminated — nothing to do. Its context is kept; '
     '`mode` "resume" brings it back with full memory.'
 )
 STATUS_DEAD_SUFFIX = ' | resumable with `mode` "resume"'
@@ -3129,11 +3154,11 @@ STATUS_WAIT_NUDGE = (
     "instead of polling `status`."
 )
 DUPLICATE_DEAD = (
-    "'{label}' already exists (dead) as {key} — bring it back with `mode` "
+    '"{label}" already exists (dead) as "{key}" — bring it back with `mode` '
     '"resume" instead of spawning a duplicate, or spawn with a distinct `name`.'
 )
 DUPLICATE_ALIVE = (
-    "'{label}' is already running as {key} — send it work with `mode` "
+    '"{label}" is already running as "{key}" — send it work with `mode` '
     '"request", or spawn with a distinct `name` if you really need a second '
     "instance."
 )
@@ -3159,7 +3184,7 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     if error:
         return ToolResult(False, error=f"spawn rejected: {error}")
     _parts = [p for p in (args.get("profile", ""), args.get("name", "")) if p]
-    lines = [f"spawned agent '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")]
+    lines = [spawn_head(key, _parts)]
     # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
     # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
     profile_arg = args.get("profile", "")
@@ -3170,7 +3195,9 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
             if tm.profile_name == profile_arg and tm.state == "dead" and tm.key != key
         ]
         if dead_same_role:
-            lines.append(SPAWN_DEAD_SAME_PROFILE.format(keys=", ".join(dead_same_role)))
+            lines.append(
+                SPAWN_DEAD_SAME_PROFILE.format(keys=quoted_keys(dead_same_role))
+            )
     task = args.get("task", "")
     if task:
         rid = item_ids.next_id(item_ids.REPLY)
@@ -3185,8 +3212,7 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     # 이름), 명단은 그들의 매 턴 꼬리에 있다. 실측(mgv4en): main 이 모르면
     # 플레이어들에게 `agent(mode="request")` 를 가르쳐 한 턴씩 낭비됐다.
     _name = str(args.get("name", "") or "")
-    who = f"'{_name}' or key {key}" if _name else f"key {key}"
-    lines.append(SPAWN_PEERS.format(who=who))
+    lines.append(SPAWN_PEERS.format(who=peer_address(_name, key)))
     return ToolResult(True, output="\n".join(lines))
 
 

@@ -63,7 +63,7 @@ class TestHostAllowed:
 
     def test_no_scheme_and_failed_load_say_what_happened(self):
         why = B.host_allowed("nope.html", ())
-        assert "'nope.html' is neither a URL" in why and "file:///path" in why
+        assert '"nope.html" is neither a URL' in why and "file:///path" in why
         why = B.host_allowed("chrome-error://chromewebdata/", ())
         assert "failed to load" in why
 
@@ -658,7 +658,7 @@ class TestSessionWithFakePage:
         s.open("http://shop.test/")
         home = next(k for k, r in s._refs.items() if r.name == "Home")
         with pytest.raises(
-            B.BrowserError, match="left the page: host 'tracker.example'"
+            B.BrowserError, match='left the page: host "tracker.example"'
         ):
             s.click(home)
         assert page.url == "about:blank" and page.gotos[-1] == "about:blank"

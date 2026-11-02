@@ -390,7 +390,7 @@ class McpClientManager:
         """Call an MCP tool asynchronously."""
         client = self._clients.get(server)
         if client is None:
-            raise ConnectionError(f"MCP server '{server}' not connected")
+            raise ConnectionError(f'MCP server "{server}" not connected')
 
         session = client["session"]
         result = await session.call_tool(tool_name, arguments)
@@ -425,7 +425,7 @@ class McpClientManager:
         """Read a resource asynchronously."""
         client = self._clients.get(server)
         if client is None:
-            raise ConnectionError(f"MCP server '{server}' not connected")
+            raise ConnectionError(f'MCP server "{server}" not connected')
 
         session = client["session"]
         result = await session.read_resource(uri)

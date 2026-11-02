@@ -254,7 +254,8 @@ class AgentTool(Tool):
         # 검증 훅 — shape 는 중앙 1~5단계).
         mode = args.get("mode")
         if mode not in AGENT_MODES:
-            return f'unknown `mode` "{mode}" — must be one of {", ".join(AGENT_MODES)}'
+            modes = ", ".join(f'"{m}"' for m in AGENT_MODES)
+            return f'unknown `mode` "{mode}" — must be one of {modes}'
         if "message" in args:
             # 통일 어휘 (v8.0.0): 지시는 모든 모드에서 ``task`` 하나다. 과거
             # request 만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
@@ -262,8 +263,8 @@ class AgentTool(Tool):
             # 이중 어휘를 영구화하므로 철회 — 정밀 에러를 A5 로 되먹여 다음
             # 턴에 자가 교정시킨다(도구-입력 의미론은 엄격, wire 문법만 관용).
             return (
-                "field 'message' is not accepted — put the instruction in "
-                "'task' (every agent mode uses 'task')"
+                "field `message` is not accepted — put the instruction in "
+                "`task` (every agent mode uses `task`)"
             )
         for field in AGENT_MODES[mode].required:
             value = args.get(field)
@@ -274,7 +275,7 @@ class AgentTool(Tool):
         task = args.get("task")
         if isinstance(task, str) and task.strip() and not has_words(task):
             return (
-                f"'task' has no words ({task.strip()[:20]!r}) — write the full "
+                f"`task` has no words ({task.strip()[:20]!r}) — write the full "
                 "instruction in words; the agent cannot see your context"
             )
         return None

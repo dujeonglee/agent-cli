@@ -163,7 +163,7 @@ class TestUnifiedNudge:
         body = self._body()
         f.write_text(body)
         n = _nudge("read_file", body, tmp_path=tmp_path, args={"path": str(f)})
-        assert f"The file is '{f}' (4,000 lines) — read it in parts." in n
+        assert f'The file is "{f}" (4,000 lines) — read it in parts.' in n
         assert "saved to" not in n
 
     def _sections(self, nudge):
@@ -855,7 +855,7 @@ class TestNudgePathShape:
 
         monkeypatch.chdir(tmp_path)
         n = _nudge("shell", self._big(), tmp_path=None, args={"command": "make"})
-        m = re.search(r"Full output saved to '([^']+)'", n)
+        m = re.search(r'Full output saved to "([^"]+)"', n)
         assert m, n
         saved = m.group(1)
         assert "agent-cli-oversized" in saved

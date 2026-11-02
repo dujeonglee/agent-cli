@@ -45,7 +45,7 @@ def _tool_exception_result(tool_name: str, e: Exception) -> ToolResult:
     return ToolResult(
         False,
         error=(
-            f"Tool '{tool_name}' raised {type(e).__name__}: {e}. "
+            f"Tool `{tool_name}` raised {type(e).__name__}: {e}. "
             "This is likely a malformed input or an internal tool error. Review "
             "the arguments and retry, or try a different approach if the same "
             "input keeps failing."

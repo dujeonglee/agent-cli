@@ -34,7 +34,7 @@ class TestRefVerification:
         )
         assert not r.success and f.read_text() == "def hello():"
         assert r.error == (
-            "edit_file apply failed: Hash mismatch at line 1: ref '1#ZZ' does "
+            'edit_file apply failed: Hash mismatch at line 1: ref "1#ZZ" does '
             "not match current content.\n"
             "Current lines 1–1 (fresh refs — retry from these, no re-read "
             f"needed):\n1#{compute_line_hash(1, 'def hello():')}:def hello():"
@@ -237,7 +237,7 @@ class TestEditFileFieldTypeValidation:
         )
         assert result.success is False
         # v10.77.0: 정수 줄 번호는 적용 단계까지 가서 "줄 번호만" 오류가 된다
-        assert "pos '5' is a bare line number" in result.error
+        assert '`pos` "5" is a bare line number' in result.error
         assert "has 3 lines" in result.error  # 끝을 넘은 줄
 
     def test_end_as_int_also_caught(self, tmp_path):
@@ -253,7 +253,7 @@ class TestEditFileFieldTypeValidation:
             }
         )
         assert result.success is False
-        assert "end '7' is a bare line number" in result.error
+        assert '`end` "7" is a bare line number' in result.error
 
     def test_pos_as_list_caught(self, tmp_path):
         # ``[None]`` is truthy so it slips past the ``if pos:`` guard.
@@ -310,7 +310,7 @@ class TestEditFileFieldTypeValidation:
         msg = result.error
         # v10.77.0: the fix is in the message itself — the line's current ref.
         assert "LINE#HASH" in msg
-        assert "That line is now:\n1#" in msg and "Use '1#" in msg
+        assert "That line is now:\n1#" in msg and 'Use "1#' in msg
 
 
 class TestEditOps:
@@ -475,17 +475,17 @@ class TestBareLineNumberRefs:
             }
         )
         assert r.error == (
-            "edit_file apply failed: end '3' is a bare line number — a ref is "
-            f"LINE#HASH. That line is now:\n{tags[2]}\nUse '{tags[2].split(':')[0]}'."
+            'edit_file apply failed: `end` "3" is a bare line number — a ref is '
+            f'LINE#HASH. That line is now:\n{tags[2]}\nUse "{tags[2].split(":")[0]}".'
         )
         assert f.read_text() == "a\nb\nc\nd\n"  # 아무것도 쓰지 않았다
 
     def test_both_bare_and_past_the_end(self, tmp_path):
         f = self._file(tmp_path)
         r = tool_edit_file({"path": str(f), "op": "delete", "pos": "2", "end": "30"})
-        assert "pos '2' and end '30' are bare line numbers" in r.error
+        assert '`pos` "2" and `end` "30" are bare line numbers' in r.error
         assert "That line is now:\n2#" in r.error
-        assert f"Line 30 is past the end — {f} has 5 lines." in r.error
+        assert f'Line 30 is past the end — "{f}" has 5 lines.' in r.error
 
     def test_unknown_op_comes_first(self, tmp_path):
         f = self._file(tmp_path)

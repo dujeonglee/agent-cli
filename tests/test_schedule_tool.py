@@ -64,7 +64,7 @@ class TestRegistration:
 
 class TestValidate:
     def test_mode_and_required_fields(self, tool):
-        assert "invalid mode" in tool.validate({"mode": "nope"})
+        assert 'invalid `mode` "nope"' in tool.validate({"mode": "nope"})
         assert "`prompt` is required" in tool.validate(
             {"mode": "add", "cron": "* * * * *"}
         )
@@ -86,7 +86,7 @@ class TestRun:
         (s,) = reg.list_all()
         assert res.success and f"Scheduled [{s.id}]" in res.output
         assert s.source == "agent"
-        assert "Weekly — cron '0 9 * * 1' · next 2026-10-05 09:00" in res.output
+        assert 'Weekly — cron "0 9 * * 1" · next 2026-10-05 09:00' in res.output
         assert "→ weekly report" in res.output
 
     def test_add_passes_nickname(self, tool, reg):
@@ -118,7 +118,7 @@ class TestRun:
         tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "keep me"})
         res = tool._run({"mode": "delete", "id": "nope"})
         assert not res.success
-        assert "no schedule 'nope'" in res.error and "keep me" in res.error
+        assert 'no schedule "nope"' in res.error and "keep me" in res.error
 
     def test_list_marks_disabled_and_missed(self, tool, reg, clock):
         tool._run({"mode": "add", "cron": "0 9 * * *", "prompt": "a"})

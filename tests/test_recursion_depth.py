@@ -220,7 +220,7 @@ class TestRunSkillDispatchDepthCheck:
     def test_depth_below_limit_proceeds_to_skill_check(self, tmp_path):
         from agent_cli.loop import _handle_run_skill
 
-        # Within limit but the skill doesn't exist → "Skill 'x' not
+        # Within limit but the skill doesn't exist → 'Skill "x" not
         # found", proving we got past the depth check.
         result = _handle_run_skill(
             {"name": "does_not_exist"},
@@ -388,7 +388,7 @@ class TestExecutionContextDepth:
         assert "run_skill" in out
         # The tool has been ``agent`` since v5 — ``delegate`` is a name the
         # model cannot call (v10.11.2).
-        assert "'agent'" in out
+        assert "`agent`" in out
         assert "delegate" not in out
 
     def test_max_depth_zero_keeps_old_behaviour(self):

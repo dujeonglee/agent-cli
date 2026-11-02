@@ -252,7 +252,7 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
     k = min(k, _FANOUT_MAX_SECTIONS)
     if nlines <= 1:
         return (
-            f"Analyse the whole thing? Divide and conquer: split '{path}' into "
+            f'Analyse the whole thing? Divide and conquer: split "{path}" into '
             f"~{k} contiguous line-range sections and make one `agent` call "
             'with mode "run" per section in the same turn (they run '
             "concurrently), each returning a short summary; then merge them."
@@ -265,7 +265,7 @@ def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
         else ""
     )
     return (
-        f"Analyse the whole thing? Divide and conquer — '{path}' is "
+        f'Analyse the whole thing? Divide and conquer — "{path}" is '
         f"{nlines:,} lines; split it into {k} sections and emit {k} "
         "agent run ops in one turn (same-turn run ops execute concurrently):\n"
         f'    `agent` mode "run", task "read_file \'{path}\' lines 1-{min(step, nlines)} '
@@ -305,10 +305,10 @@ def oversized_nudge(
     head = [f"[{tool_name}: {why}. Not added to context; the call itself succeeded."]
     if path and path_is_source:
         # 도구가 읽은 원본 파일 그 자체(read_file) — 따로 저장한 것이 아니다.
-        head.append(f"The file is '{path}' ({nlines:,} lines) — read it in parts.")
+        head.append(f'The file is "{path}" ({nlines:,} lines) — read it in parts.')
     elif path:
         head.append(
-            f"Full output saved to '{path}' ({nlines:,} lines, {len(body):,} chars)."
+            f'Full output saved to "{path}" ({nlines:,} lines, {len(body):,} chars).'
         )
         if saved_note:
             head.append(saved_note)
@@ -330,12 +330,12 @@ def oversized_nudge(
     if path and can_read:
         routes.append(
             "Match by string/regex (cheapest — start here):\n"
-            f"    `read_file` on '{path}' with `search` set to a regex "
+            f'    `read_file` on "{path}" with `search` set to a regex '
             "(5 lines of context by default)"
         )
         routes.append(
             "Know roughly where it is? Read that range:\n"
-            f"    `read_file` on '{path}' with `line_start` and `line_end`"
+            f'    `read_file` on "{path}" with `line_start` and `line_end`'
         )
     if path and "agent" in tools_available:
         routes.append(_fanout_route(path, nlines, tokens, cap))

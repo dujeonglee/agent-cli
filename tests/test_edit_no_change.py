@@ -44,7 +44,7 @@ def test_same_content_replace_writes_nothing_and_says_so(tmp_path):
         }
     )
     assert r.success
-    assert r.output.startswith(f"No change: '{p}' is unchanged")
+    assert r.output.startswith(f'No change: "{p}" is unchanged')
     assert "the same as line 5 already there. Nothing was written." in r.output
     # 옆의 같은 줄 — 태그가 같다는 사실과 번호가 고른다는 것
     assert "Lines 5 and 6 have the same content, so they share a tag" in r.output

@@ -1599,7 +1599,7 @@ spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할
 {"action": "run_skill", "action_input": {"name": "summarize", "arguments": "README.md"}}
 ```
 
-스킬 내부에서는 별도 ReAct 루프가 실행되며, 결과가 artifact로 저장됩니다. `disable-model-invocation: true`인 스킬은 LLM이 호출할 수 없습니다.
+스킬 내부에서는 별도 ReAct 루프가 실행되며, 결과가 artifact로 저장됩니다. `disable-model-invocation: true`인 스킬은 LLM이 호출할 수 없습니다 — 시스템 프롬프트 `## Available Skills` 목록과 이름이 틀렸을 때의 "Available:" 안내에서도 빠지고, 모델이 부를 수 있는 스킬이 하나도 없으면 `run_skill` 도구 자체가 광고되지 않습니다(v10.100.0).
 
 결과 포맷:
 ```

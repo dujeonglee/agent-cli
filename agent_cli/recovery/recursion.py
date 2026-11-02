@@ -32,13 +32,13 @@ def format_recursion_error(kind: str, name: str, stack: list[str]) -> str:
     """
     chain = " → ".join(stack) if stack else "(empty)"
     return (
-        f"Recursive {kind} call blocked: '{name}' is already on the call "
+        f'Recursive {kind} call blocked: "{name}" is already on the call '
         f"stack ({chain}). Re-entering it would loop without progress. "
         f"Recover by one of:\n"
-        f"  (1) try a different approach that does not call '{name}' again,\n"
+        f'  (1) try a different approach that does not call "{name}" again,\n'
         f"  (2) finish the current task with what you already have via "
-        f"'complete',\n"
-        f"  (3) use 'ask' if you need user guidance to choose a path."
+        f"`complete`,\n"
+        f"  (3) use `ask` if you need user guidance to choose a path."
     )
 
 
@@ -54,16 +54,16 @@ def format_depth_limit_error(
     we report that figure for clarity in the message.
     """
     return (
-        f"Maximum call depth reached: cannot enter {kind} '{name}' — that "
+        f'Maximum call depth reached: cannot enter {kind} "{name}" — that '
         f"would put the chain at depth {current_depth + 1}, beyond the "
         f"configured limit of {max_depth}. Skill and delegate hops share "
         f"this counter. Recover by one of:\n"
-        f"  (1) finish the current level with 'complete' before any further "
+        f"  (1) finish the current level with `complete` before any further "
         f"nesting,\n"
         f"  (2) restructure the task into independent steps that can each "
         f"run at the top level,\n"
         f"  (3) tell the user the task is too deep — they may bump the "
-        f"limit with '--max-depth N' (currently {max_depth})."
+        f"limit with `--max-depth N` (currently {max_depth})."
     )
 
 

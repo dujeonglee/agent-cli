@@ -300,7 +300,7 @@ class SkillLoop(LoopKind):
             effective = [t for t in effective if t in parent]
             if not effective:
                 raise LoopKindError(
-                    f"Skill '{skill.name}' cannot run: no tools in common between "
+                    f'Skill "{skill.name}" cannot run: no tools in common between '
                     f"skill ({', '.join(skill.allowed_tools)}) and parent "
                     f"({', '.join(parent)})"
                 )
@@ -316,7 +316,7 @@ class SkillLoop(LoopKind):
             binding=self.binding,
         )
         if ctx is None:
-            raise LoopKindError(f"Skill '{skill.name}' cannot run: {err}")
+            raise LoopKindError(f'Skill "{skill.name}" cannot run: {err}')
         self.skill_ctx = ctx
         return ctx
 

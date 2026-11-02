@@ -69,7 +69,7 @@ def _parse_ref(ref: str) -> tuple[int, str]:
     m = re.match(r"^(\d+)#([A-Z]{2})(?::[^\n]*)?$", ref)
     if not m:
         raise RuntimeError(
-            f"Invalid hashline ref: '{ref}'. Expected format: LINE#HASH "
+            f'Invalid hashline ref: "{ref}". Expected format: LINE#HASH '
             f'(e.g. "5#VR") — the tag at the start of a `read_file` line.'
         )
     return int(m.group(1)), m.group(2)
@@ -195,13 +195,13 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
     try:
         regex = re.compile(pattern)
     except re.error as e:
-        return ToolResult(False, error=f"Invalid search pattern '{pattern}': {e}")
+        return ToolResult(False, error=f'Invalid search pattern "{pattern}": {e}')
 
     matches = [i for i, line in enumerate(all_lines) if regex.search(line)]
     if not matches:
         return ToolResult(
             True,
-            output=f"[search] {path}: no matches for {pattern!r} (in {len(all_lines)} lines)",
+            output=f'[search] {path}: no matches for "{pattern}" (in {len(all_lines)} lines)',
         )
 
     # Merge overlapping context ranges
@@ -214,7 +214,7 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
         else:
             ranges.append((lo, hi))
 
-    parts = [f"[search] {path}: {len(matches)} matches for {pattern!r}"]
+    parts = [f'[search] {path}: {len(matches)} matches for "{pattern}"']
     for lo, hi in ranges:
         parts.append(f"\n─── lines {lo + 1}-{hi} ───")
         parts.append(format_hashlines_range(all_lines, lo, hi))

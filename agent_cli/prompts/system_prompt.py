@@ -865,8 +865,8 @@ def _build_execution_context(
         # recovery turn.
         lines.append(
             f"Depth limit reached ({depth}/{max_depth}): no further "
-            f"'run_skill' or 'agent' calls are possible from here. "
-            f"Finish the current level with 'complete'."
+            f"`run_skill` or `agent` calls are possible from here. "
+            f"Finish the current level with `complete`."
         )
 
     return "\n".join(lines)
@@ -1075,7 +1075,8 @@ def build_live_agents_section(
 def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
     """Build skill descriptions for system prompt injection.
 
-    Excludes skills flagged ``disable-model-invocation: true`` (frontmatter).
+    Excludes skills flagged ``disable-model-invocation: true`` (frontmatter);
+    with none left the section is empty (no header without a list).
     If skills is None, loads from disk.
 
     ``dialect=None`` falls back to the default dialect (DEFAULT_DIALECT)
@@ -1092,6 +1093,7 @@ def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
         except Exception:
             return ""
 
+    skills = {n: s for n, s in skills.items() if not s.disable_model_invocation}
     if not skills:
         return ""
 
@@ -1102,20 +1104,14 @@ def build_skill_descriptions(skills: dict | None = None, dialect=None) -> str:
         "run_skill", {"name": "skill-name", "arguments": "..."}
     )
     indented = "\n".join(f"  {line}" for line in example.splitlines())
+    # 권유 문장("Consider using skills …")은 v10.100.0 에서 뺐다 — 위임 안내는 비용
+    # 우선(v10.26.0)이고, 언제 쓰는지는 각 스킬 설명이 말한다.
     lines = [
         "## Available Skills",
-        "Consider using skills for multi-step or specialized workflows.",
         "Use the `run_skill` tool to invoke:",
         indented,
     ]
     for skill in skills.values():
-        if skill.disable_model_invocation:
-            continue
         hint = f" {skill.argument_hint}" if skill.argument_hint else ""
         lines.append(f"- `{skill.name}{hint}` — {skill.description}")
-
-    # If all skills are disabled, return empty
-    if len(lines) <= 2:
-        return ""
-
     return "\n".join(lines)

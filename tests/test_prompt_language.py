@@ -88,7 +88,7 @@ class TestNoKoreanReachesTheModel:
         with patch("agent_cli.model_check.verify_model", side_effect=err):
             msg = reg._model_unavailable("qwen-z", "code-writer")
         assert not HANGUL.search(msg)
-        assert "the model 'qwen-z' required by profile 'code-writer'" in msg
+        assert 'the model "qwen-z" required by profile "code-writer"' in msg
         assert "(closest name: qwen-x)" in msg and "Available: qwen-x, qwen-y" in msg
         assert "Spawn with a different profile" in msg
         with patch("agent_cli.model_check.verify_model", side_effect=err):
@@ -170,7 +170,7 @@ class TestNoStaleTermsReachTheModel:
     def test_execution_context_names_the_agent_tool(self):
         out = sp._build_execution_context(["plan"], ["reviewer"], depth=2, max_depth=2)
         assert "delegate" not in out
-        assert "'run_skill' or 'agent' calls" in out
+        assert "`run_skill` or `agent` calls" in out
 
     def test_schema_errors_say_arguments(self):
         from agent_cli.tools.registry import validate_tool_input
