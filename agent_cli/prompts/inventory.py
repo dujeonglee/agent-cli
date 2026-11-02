@@ -36,7 +36,12 @@ from pathlib import Path
 from agent_cli import __version__, dialects
 from agent_cli.context.render import estimate_tokens
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS, effective_tool_names
+from agent_cli.tools.registry import (
+    _BUILTIN_ORDER,
+    TOOLS,
+    effective_tool_names,
+    strip_depth_gated,
+)
 
 #: Depth ceiling used for every scenario (the CLI default is the same order).
 _MAX_DEPTH = 3
@@ -77,6 +82,13 @@ SCENARIOS: tuple[Scenario, ...] = (
         1,
         False,
     ),
+    Scenario(
+        "limit",
+        "Loop at the depth ceiling — no further nesting",
+        None,
+        _MAX_DEPTH,
+        False,
+    ),
 )
 
 
@@ -93,6 +105,8 @@ def _scenario(dialect, sc: Scenario) -> dict:
     )
 
     tools = list(sc.tools) if sc.tools is not None else list(_BUILTIN_ORDER)
+    # 루프 조립과 같은 판정 — 상한 시나리오엔 `run_skill`·`agent` 와 그 절이 없다
+    tools = strip_depth_gated(tools, sc.depth, _MAX_DEPTH)
     registry = _NoAgents() if sc.has_registry else None
     sections = [
         {"name": name, "tokens": estimate_tokens(text), "text": text}
@@ -239,10 +253,10 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "`agent` spawn accepted with a first task while a dead agent of the same profile exists",
             "\n".join(
                 [
-                    "spawned agent 'agt-3' (code-writer · api)",
-                    al.SPAWN_DEAD_SAME_PROFILE.format(keys="agt-2"),
+                    al.spawn_head("agt-3", ["code-writer", "api"]),
+                    al.SPAWN_DEAD_SAME_PROFILE.format(keys=al.quoted_keys(["agt-2"])),
                     al.SPAWN_TASK_QUEUED.format(rid="r-4"),
-                    al.SPAWN_PEERS.format(who="'api' or key agt-3"),
+                    al.SPAWN_PEERS.format(who=al.peer_address("api", "agt-3")),
                 ]
             ),
         ),
@@ -279,6 +293,14 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "`agent` status: a dead agent's line suffix, and the nudge while one is working",
             al.STATUS_DEAD_SUFFIX.strip() + "\n" + al.STATUS_WAIT_NUDGE,
         ),
+        *_value_quoting_samples(),
+        (
+            "message_delivered",
+            "`message` accepted — as a request, then as a notice",
+            al.delivered_line("r-7", expects_reply=True)
+            + "\n"
+            + al.delivered_line("n-3", expects_reply=False),
+        ),
         (
             "agent_spawn_refused_duplicate",
             "`agent` spawn refused: the same profile·name exists dead / alive",
@@ -296,6 +318,41 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
                 modes="/".join(REGISTRY_MODES), hint=al.NO_REGISTRY_PEER_HINT
             ),
         ),
+    ]
+
+
+def _value_quoting_samples() -> list[tuple[str, str, str]]:
+    """경로·ref 를 값으로 싣는 문구 — 큰 출력 안내(저장본·원본 파일)와 줄 번호만 온 ref.
+    표기 가드(값은 큰따옴표)가 이 모양을 보게 표본으로 둔다."""
+    from agent_cli.tools.base import oversized_nudge
+    from agent_cli.tools.edit_file import _bare_ref_error
+
+    body = "\n".join(f"line {i}" for i in range(12000))
+    tools = frozenset(["read_file", "agent"])
+    saved = oversized_nudge(
+        tool_name="shell",
+        path=".agent-cli/tmp/out-3.txt",
+        body=body,
+        tokens=90000,
+        cap=8000,
+        retry_hint="",
+        tools_available=tools,
+    )
+    source = oversized_nudge(
+        tool_name="read_file",
+        path="src/big.c",
+        body=body,
+        tokens=90000,
+        cap=8000,
+        retry_hint="",
+        tools_available=tools,
+        path_is_source=True,
+    )
+    bare = _bare_ref_error({"pos": "2", "end": "30"}, ["a", "b", "c"], "app.py") or ""
+    return [
+        ("oversized_saved", "A tool result over the cap — saved to a file", saved),
+        ("oversized_source", "`read_file` over the cap — the file itself", source),
+        ("edit_bare_line_ref", "`edit_file` ref given as a bare line number", bare),
     ]
 
 
@@ -389,6 +446,16 @@ def _runtime_texts(dialect) -> list[dict]:
             _wait_checkin_sample(),
         ),
         *_agent_result_samples(),
+        (
+            "agent_message_field",
+            "`agent` called with `message` instead of `task`",
+            TOOLS["agent"].validate({"mode": "spawn", "message": "review it"}) or "",
+        ),
+        (
+            "agent_task_no_words",
+            "`agent` called with a `task` that has no words",
+            TOOLS["agent"].validate({"mode": "spawn", "task": "\n>\n"}) or "",
+        ),
     ]
     for level in (1, 2):
         intervention = format_action_loop_intervention(

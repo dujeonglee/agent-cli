@@ -160,7 +160,7 @@ class TestDispatchEditBatchHooks:
         result, _parts = bridge.dispatch_edit_batch(str(p), _two_edits(lines))
 
         assert not result.success
-        assert result.error.startswith("Tool 'edit_file' raised TypeError: kaboom")
+        assert result.error.startswith("Tool `edit_file` raised TypeError: kaboom")
         assert "retry" in result.error  # 단건 안전망 문구 보존
         assert len(runner.post_calls()) == 1  # 실패도 post 발화 (단건 동형)
         assert len(bridge.recent_tool_history) == 2

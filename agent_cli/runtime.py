@@ -219,6 +219,18 @@ def browser_resource():
     return True if browser_available() else None
 
 
+def skills_resource():
+    """`Tool.requires_handler="skills"` 이 보는 자원 — 모델이 부를 수 있는 스킬이 있으면
+    True, 없으면(전부 ``disable-model-invocation``·읽기 실패) None → `run_skill` 이 빠진다.
+    Skills 절(`build_skill_descriptions`)과 같은 집합을 본다."""
+    try:
+        from agent_cli.skills import model_skills
+
+        return True if model_skills() else None
+    except Exception:
+        return None
+
+
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 

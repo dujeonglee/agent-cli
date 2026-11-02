@@ -387,7 +387,7 @@ class TestAgentLines:
         text = reg.fire_checkin("main")
         assert (
             "agent:n (reviewer) · owes you a reply · itself waiting on job #1 "
-            "(`sleep 30`) · blocked on question q-3 to the user, unanswered for 9m"
+            '(`sleep 30`) · blocked on question "q-3" to the user, unanswered for 9m'
         ) in text
         assert text.endswith(
             "A question to the user is answered by the user, not by you."

@@ -259,6 +259,7 @@ class RunSkillTool(Tool):
     name = "run_skill"
     terminal = True  # 턴 종결 (complete 와 동형 — flush 후 디스패치)
     depth_gated = True  # 결합 깊이 상한에서 제거 (스킬도 depth 계수)
+    requires_handler = "skills"  # 모델이 부를 수 있는 스킬이 없으면 광고하지 않는다
     oversized_retry_hint = (
         "run the skill against a smaller target, or ask it (via arguments) for "
         "a summary instead of full output."

@@ -103,6 +103,16 @@ TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
 #: Prompt order of the built-in tools (MCP tools join ``TOOLS`` later).
 _BUILTIN_ORDER: tuple[str, ...] = tuple(TOOLS)
 
+
+def strip_depth_gated(tool_names: list[str], depth: int, max_depth: int) -> list[str]:
+    """결합 호출 깊이 상한(``depth >= max_depth``)이면 ``depth_gated`` 도구(`run_skill`·
+    `agent`)를 뺀다 — 순서 보존. 루프 조립(`loop/core.py`)과 프롬프트 인벤토리가 같은
+    판정을 쓴다(인벤토리만 안 빼면 상한 시나리오에 실제로는 없는 도구·절이 실린다)."""
+    if depth < max_depth:
+        return list(tool_names)
+    return [t for t in tool_names if not (t in TOOLS and TOOLS[t].depth_gated)]
+
+
 # Back-compat alias — schema consumers (system prompt, MCP adapter, input
 # validation) read .name/.description/.parameters, which Tool instances
 # expose identically to the old ToolSchema dataclass.

@@ -126,7 +126,7 @@ def add(
         raise MemoryError("no active session — memory is session-scoped.")
     if type not in VALID_TYPES:
         raise MemoryError(
-            f"unknown type '{type}'. Use one of: {', '.join(VALID_TYPES)}."
+            f'unknown type "{type}". Use one of: {", ".join(VALID_TYPES)}.'
         )
     if not summary or not summary.strip():
         raise MemoryError("summary is required (a one-line index label).")
@@ -159,7 +159,7 @@ def update(session_dir, mem_id: int, **fields) -> dict:
     """Replace only the provided fields of entry ``mem_id`` (None = keep)."""
     if fields.get("type") is not None and fields["type"] not in VALID_TYPES:
         raise MemoryError(
-            f"unknown type '{fields['type']}'. Use one of: {', '.join(VALID_TYPES)}."
+            f'unknown type "{fields["type"]}". Use one of: {", ".join(VALID_TYPES)}.'
         )
     with _io_lock:
         entries = load(session_dir)

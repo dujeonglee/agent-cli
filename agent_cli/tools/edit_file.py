@@ -57,7 +57,7 @@ def _resolve_ref(lines: list[str], ref: str) -> int:
             raise
         line_num = int(str(exc).split("line ", 1)[1].split(":", 1)[0])
         raise RuntimeError(
-            f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
+            f'Hash mismatch at line {line_num}: ref "{ref}" does not match '
             f"current content.\n{_mismatch_window(lines, line_num)}"
         ) from None
 
@@ -78,7 +78,7 @@ def _bare_ref_error(ed: dict, file_lines: list[str], path: str) -> str | None:
     bare = [(f, str(ed[f]).strip()) for f in ("pos", "end") if _is_bare_line(ed.get(f))]
     if not bare:
         return None
-    names = " and ".join(f"{f} '{v}'" for f, v in bare)
+    names = " and ".join(f'`{f}` "{v}"' for f, v in bare)
     verb = "is a bare line number" if len(bare) == 1 else "are bare line numbers"
     shown, past = [], []
     for _, v in bare:
@@ -89,14 +89,14 @@ def _bare_ref_error(ed: dict, file_lines: list[str], path: str) -> str | None:
             past.append(n)
     total = len(file_lines)
     if not shown:
-        return f"{names} {verb} — a ref is LINE#HASH, and {path} has {total} lines."
+        return f'{names} {verb} — a ref is LINE#HASH, and "{path}" has {total} lines.'
     msg = f"{names} {verb} — a ref is LINE#HASH. " + (
         "That line is now:" if len(shown) == 1 else "Those lines are now:"
     )
-    refs = " and ".join(f"'{ln.split(':', 1)[0]}'" for ln in shown)
+    refs = " and ".join(f'"{ln.split(":", 1)[0]}"' for ln in shown)
     msg += "\n" + "\n".join(shown) + f"\nUse {refs}."
     if past:
-        msg += f"\nLine {', '.join(map(str, past))} is past the end — {path} has {total} lines."
+        msg += f'\nLine {", ".join(map(str, past))} is past the end — "{path}" has {total} lines.'
     return msg
 
 
@@ -135,7 +135,7 @@ def _op_to_span(
 
     if op in ("replace", "delete"):
         if not pos:
-            raise RuntimeError(f"{op} requires 'pos'.")
+            raise RuntimeError(f"{op} requires `pos`.")
         repl = [] if op == "delete" else lines
         lo = resolve(pos)
         hi = (resolve(end) + 1) if end else lo + 1
@@ -150,7 +150,7 @@ def _op_to_span(
             i = resolve(pos)
             return i, i, lines
         return 0, 0, lines
-    raise RuntimeError(f"Unknown edit op: '{op}'. Use {'|'.join(EDIT_OPS)}.")
+    raise RuntimeError(f'Unknown edit op: "{op}". Use {"|".join(EDIT_OPS)}.')
 
 
 def _find_overlap(spans: list[tuple]) -> str | None:
@@ -246,7 +246,7 @@ def apply_edits_batch_parts(
     try:
         original_text = Path(path).read_text(encoding="utf-8")
     except Exception as e:
-        return _all(f"edit_file: cannot read '{path}': {e}")
+        return _all(f'edit_file: cannot read "{path}": {e}')
     file_lines = original_text.split("\n")
 
     # 1. Resolve EVERY op against the original (all-or-nothing on a bad ref).
@@ -273,7 +273,7 @@ def apply_edits_batch_parts(
         # same core, same model-facing text): op errors bare, ref errors
         # prefixed. No "batch" vocabulary for a model that sent one edit.
         err = raw[0]
-        if not err.endswith("requires 'pos'."):
+        if not err.endswith("requires `pos`."):
             err = f"edit_file apply failed: {err}"
         return ToolResult(False, error=err), [{"success": False, "content": err}]
     if bad:
@@ -292,7 +292,7 @@ def apply_edits_batch_parts(
             False,
             error=(
                 f"edit_file batch: {len(bad)} of {len(edits)} edits rejected — nothing "
-                f"written, '{path}' is unchanged.\n"
+                f'written, "{path}" is unchanged.\n'
                 + "\n".join(
                     f"  {line}"
                     + ("\n" + window[i] if i in window else "").replace("\n", "\n    ")
@@ -310,13 +310,13 @@ def apply_edits_batch_parts(
         parts = []
         for i, ed in enumerate(edits):
             if i in bad:
-                text = f"{bad[i]} — nothing written, '{path}' is unchanged."
+                text = f'{bad[i]} — nothing written, "{path}" is unchanged.'
                 if i in window:
                     text += "\n" + window[i]
             else:
                 text = (
                     f"{_op_label(ed)}: ref valid as sent — not applied, the batch "
-                    f"is all-or-nothing and '{path}' is unchanged."
+                    f'is all-or-nothing and "{path}" is unchanged.'
                 )
             parts.append({"success": False, "content": text})
         parts[-1]["content"] += "\n" + resend
@@ -375,7 +375,7 @@ def apply_edits_batch_parts(
     try:
         Path(path).write_text(result_text, encoding="utf-8")
     except Exception as e:
-        return _all(f"edit_file: cannot write '{path}': {e}")
+        return _all(f'edit_file: cannot write "{path}": {e}')
 
     n = len(edits)
     msg = (
@@ -419,7 +419,7 @@ def _no_change_message(
         why.append("`end` comes before `pos`, so the range is empty")
     if not why:  # 빈 파일의 유일한 빈 줄을 지운 것처럼 — 결과 글이 그대로다
         why.append("the result is the same text as before")
-    out = f"No change: '{path}' is unchanged — {'; '.join(why)}. Nothing was written."
+    out = f'No change: "{path}" is unchanged — {"; ".join(why)}. Nothing was written.'
     twins = []
     for lo, hi in unchanged:
         for i in range(lo, hi):
@@ -447,7 +447,7 @@ def _validate_semantics(args: dict) -> str | None:
     오류)은 기존 tool_edit_file 과 바이트 동일 의미론."""
     op = args.get("op", "")
     if op not in EDIT_OPS:
-        return f"Unknown edit op: '{op}'. Use {'|'.join(EDIT_OPS)}."
+        return f'Unknown edit op: "{op}". Use {"|".join(EDIT_OPS)}.'
     for field in ("pos", "end"):
         v = args.get(field)
         # 줄 번호만(정수)은 통과시켜 적용 단계가 그 줄의 지금 ref 를 보여 준다

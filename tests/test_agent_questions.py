@@ -1490,7 +1490,7 @@ class TestCompleteIsLocal:
         a, b = spawn_idle(reg), spawn_idle(reg)
         reg.request(a, "원 일감")
         assert wait_until(lambda: got, timeout=5.0)
-        rid = box["res"].split("delivered as request ")[1].split(" ")[0]
+        rid = box["res"].split('delivered as request "')[1].split('"')[0]
         assert rid.startswith("r-")
         head, _, body = got[0].partition("\n")
         assert head.startswith("── reply [n-") and head.endswith(f"re [{rid}] ──")

@@ -56,6 +56,7 @@ from agent_cli.render import (
     render_turn_sep,
 )
 from agent_cli.tools import TOOLS, RunContext
+from agent_cli.tools.registry import strip_depth_gated
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -211,16 +212,14 @@ class AgentLoop:
         #    ``force_mount``(message, v5.11)면 자원이 있을 때 프로파일
         #    allowed-tools 와 무관하게 커널이 강제 탑재(상주 서브에이전트의
         #    기본 능력).
-        if depth >= max_depth:
-            tools_list = [
-                t for t in tools_list if not (t in TOOLS and TOOLS[t].depth_gated)
-            ]
+        tools_list = strip_depth_gated(tools_list, depth, max_depth)
         # 포트에서 **파생**한다 — 종전엔 여기 3키짜리 dict 리터럴이었고,
         # 새 포트가 생길 때마다 이 줄을 기억해서 고쳐야 했다. ``ctx`` 는
         # 포트가 아니므로(§4.2) 여기서 얹는다.
         from agent_cli.runtime import (
             browser_resource,
             python_resource,
+            skills_resource,
             snapshot_resource,
         )
 
@@ -233,6 +232,9 @@ class AgentLoop:
             "browser": browser_resource(),
             # ``wait`` (v10.65.0) — 깨울 길이 있는 루프(main·상주)에만.
             "wake": True if ports.wakeable() else None,
+            # ``run_skill`` (v10.100.0) — 모델이 부를 수 있는 스킬이 하나라도 있을 때만
+            # (전부 사용자 전용이면 목록 없는 도구를 광고하게 된다).
+            "skills": skills_resource(),
             # ``python`` (v10.66.0) — 워커 레지스트리가 선 세션에서만.
             "python": python_resource(),
             # ``view_image`` (v10.77.0) — 못 본다고 알려진 모델(`supports_vision:

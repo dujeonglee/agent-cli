@@ -40,7 +40,7 @@ def _fmt_schedules(registry) -> str:
     lines = []
     for s in scheds:
         nxt = registry.next_fire(s)
-        bits = [f"cron '{s.cron}'"]
+        bits = [f'cron "{s.cron}"']
         if not s.enabled:
             bits.append("disabled")
         elif nxt is not None:
@@ -112,7 +112,7 @@ class ScheduleTool(Tool):
     def validate(self, args: dict) -> str | None:
         mode = (args.get("mode") or "").strip()
         if mode not in ("add", "delete", "list"):
-            return f"invalid mode: {mode!r}. Valid: ['add', 'delete', 'list']"
+            return f'invalid `mode` "{mode}" — must be one of "add", "delete", "list"'
         if mode == "add" and not (args.get("prompt") or "").strip():
             return '`prompt` is required for `mode` "add"'
         if mode == "add" and not (args.get("cron") or "").strip():
@@ -145,7 +145,7 @@ class ScheduleTool(Tool):
             if not registry.delete(sid):
                 return ToolResult(
                     False,
-                    error=f"schedule delete rejected: no schedule {sid!r}.\n"
+                    error=f'schedule delete rejected: no schedule "{sid}".\n'
                     f"{_fmt_schedules(registry)}",
                 )
             return ToolResult(True, output=f"Deleted.\n{_fmt_schedules(registry)}")

@@ -93,17 +93,17 @@ class TestDeliverSurface:
         err = reg.deliver(
             "somewhere", mail={}, text="x", author="main", expects_reply=False
         )
-        assert err == "unroutable address 'somewhere'"
+        assert err == 'unroutable address "somewhere"'
         assert (calls.mail, calls.requests) == ([], [])
 
     def test_agent_backend_propagates_the_error_string(self, reg):
         """`request` 의 에러가 호출부로 그대로 올라간다 — 삼키지 않는다.
 
         `"nope" in err` 로는 부족하다: `agent:` 분기를 통째로 지워도
-        `"unroutable address 'agent:nope'"` 가 그 부분 문자열을 포함해
+        `'unroutable address "agent:nope"'` 가 그 부분 문자열을 포함해
         **지운 채로 통과**한다. 백엔드가 실제로 불렸음을 문구로 고정한다.
         """
         err = reg.deliver(
             "agent:nope", mail={}, text="x", author="main", expects_reply=False
         )
-        assert err.startswith("unknown agent 'nope'")
+        assert err.startswith('unknown agent "nope"')

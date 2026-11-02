@@ -42,15 +42,15 @@ def load_profile(name: str) -> tuple[str | None, dict, str | None]:
     구 ``_load_agent``/``load_teammate_role`` 의 동형 계약.
     """
     if not _PROFILE_NAME_PATTERN.match(name):
-        return None, {}, f"Invalid profile name '{name}': only [a-zA-Z0-9_-] allowed"
+        return None, {}, f'Invalid profile name "{name}": only [a-zA-Z0-9_-] allowed'
 
     resource = _profile_loader.load_one(name)
     if resource is None:
         paths_str = ", ".join(str(p / f"{name}.md") for p in _PROFILE_SEARCH_PATHS)
-        return None, {}, f"Profile '{name}' not found. Searched: {paths_str}"
+        return None, {}, f'Profile "{name}" not found. Searched: {paths_str}'
 
     if not resource.body:
-        return None, {}, f"Profile file '{name}.md' has no content"
+        return None, {}, f'Profile file "{name}.md" has no content'
 
     return resource.body, resource.meta, None
 

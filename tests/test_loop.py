@@ -315,7 +315,7 @@ class TestToolExceptionSafetyNet:
 
     def test_keyboard_interrupt_propagates(self, caps, monkeypatch):
         # User Ctrl+C must exit the loop, not be silently swallowed
-        # into "Tool 'x' raised KeyboardInterrupt — retry?" — that
+        # into "Tool `x` raised KeyboardInterrupt — retry?" — that
         # would trap the user in a runaway loop they can't quit.
         def interrupted(args):
             raise KeyboardInterrupt()
@@ -1879,7 +1879,12 @@ class TestToolPolicyDeclarations:
         expected = {
             "complete": {"terminal": True},
             "wait": {"terminal": True, "requires_handler": "wake"},
-            "run_skill": {"terminal": True, "depth_gated": True},
+            # 모델이 부를 수 있는 스킬이 없으면 광고하지 않는다 (v10.100.0).
+            "run_skill": {
+                "terminal": True,
+                "depth_gated": True,
+                "requires_handler": "skills",
+            },
             "agent": {"depth_gated": True},
             "ask": {"requires_handler": "ctx"},
             "message": {"requires_handler": "message_handler", "force_mount": True},

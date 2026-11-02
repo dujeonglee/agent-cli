@@ -82,7 +82,8 @@ pre{margin:0;padding:12px;border-top:1px solid var(--line);white-space:pre-wrap;
   const $=id=>document.getElementById(id);
   const data=JSON.parse(document.getElementById('inventory-data').textContent);
 
-  const SC_KO={main:'메인 루프',subagent:'서브에이전트',narrowed:'좁힌 도구 목록'};
+  const SC_KO={main:'메인 루프',subagent:'서브에이전트',narrowed:'좁힌 도구 목록',limit:'깊이 상한'};
+  const scLabel=k=>SC_KO[k]||k;
   const VIEWS=[['sections','프롬프트 섹션'],['tools','도구'],['runtime','실행 중 문구']];
   const names=Object.keys(data.dialects);
   const st={d:names.includes('json_fc')?'json_fc':names[0],s:'main',v:'sections'};
@@ -103,7 +104,7 @@ pre{margin:0;padding:12px;border-top:1px solid var(--line);white-space:pre-wrap;
 
   function summary(){
     const keys=Object.keys(data.scenarios);
-    let h='<thead><tr><th>방언</th>'+keys.map(k=>'<th>'+SC_KO[k]+'</th>').join('')+'</tr></thead><tbody>';
+    let h='<thead><tr><th>방언</th>'+keys.map(k=>'<th>'+scLabel(k)+'</th>').join('')+'</tr></thead><tbody>';
     names.forEach(n=>{
       h+='<tr data-d="'+n+'" class="'+(n===st.d?'sel':'')+'" style="cursor:pointer"><td>'+n+'</td>'+keys.map(k=>{
         const s=data.dialects[n].scenarios[k];
@@ -123,7 +124,7 @@ pre{margin:0;padding:12px;border-top:1px solid var(--line);white-space:pre-wrap;
 
   function render(){
     seg($('dialects'),names.map(n=>[n,n]),'d');
-    seg($('scenarios'),Object.keys(data.scenarios).map(k=>[k,SC_KO[k]]),'s');
+    seg($('scenarios'),Object.keys(data.scenarios).map(k=>[k,scLabel(k)]),'s');
     seg($('views'),VIEWS,'v');
     summary();
     const D=data.dialects[st.d], S=D.scenarios[st.s], L=$('list');

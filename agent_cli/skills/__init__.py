@@ -1,7 +1,7 @@
 """Prompt skill system — reusable task-optimized prompt templates."""
 
 from agent_cli.skills.executor import SkillLoop
-from agent_cli.skills.loader import load_skills
+from agent_cli.skills.loader import load_skills, model_skills
 from agent_cli.skills.models import Skill
 
-__all__ = ["Skill", "SkillLoop", "load_skills"]
+__all__ = ["Skill", "SkillLoop", "load_skills", "model_skills"]

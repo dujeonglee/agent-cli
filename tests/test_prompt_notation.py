@@ -41,6 +41,21 @@ _CALL = re.compile(
 _EXAMPLE = re.compile(
     r'"action"|"name":|<function=|<tool_call>|<arg_key>|^\s*`\w+` \{|^\s*[a-z_]+\s*$'
 )
+# 따옴표로 감싼 도구 이름 — 도구 이름은 백틱이다 (v10.100.0: 깊이 상한 줄의
+# `'run_skill'` 이 `_BARE` 의 따옴표 제외에 걸려 빠져나갔다). 단어형 이름도 따옴표 안이면
+# 영어가 아니라 이름이니 함께 본다.
+_QUOTED = re.compile(r"'(?:" + "|".join(_BUILTIN_ORDER) + r")'")
+# 작은따옴표로 감싼 id 모양 값 — 에이전트 키(`agt-3`·`agt-1a2b3c4d`)와 장부 id(`r-5`·`q-2`).
+# 값은 큰따옴표다 (v10.100.0: `agent` 결과가 `'agt-3'` 으로 썼다). 값 일반은 목록이 없어
+# 기계로 못 가리니 모양이 정해진 id 만 본다.
+_QUOTED_ID = re.compile(r"'(?:agt-[0-9a-z]+|[unrq]-\d+)'")
+# 작은따옴표로 감싼 경로·ref 모양 값 (`'src/a.py'`·`'out.txt'`·`'12#KT'`) — 값은 큰따옴표
+# (v10.100.0). 큰따옴표 값 안에 다시 든 것(`task "read_file 'a.c' lines 1-40"`)은 겹쳐
+# 쓴 따옴표, 낱말 바로 뒤의 `'` 는 소유격(`agent's/…`), 백틱 구간(SQL 예시의 `LIKE 'a/%'`)은 코드라 규칙 밖 — 둘을 먼저 걷어 낸다.
+_QUOTED_PATH = re.compile(
+    r"(?<![A-Za-z])'[^'\s]*(?:/|\.[A-Za-z]{1,5}\b|\d+#[A-Z]{2})[^'\s]*'"
+)
+_DQ_SPAN = re.compile(r'"[^"\n]*"')
 _LABEL = re.compile(r"^\s*(?:\[)?(?:" + "|".join(_UNDERSCORED) + r")[ :\]]")
 # 머리글자·형식 이름 — 뜻이 대문자 그 자체인 것만. 강조로 쓴 보통 단어는 여기 없다.
 _ACRONYMS = frozenset(
@@ -90,6 +105,40 @@ def _lines(text):
 def test_tool_names_are_backticked(where, text):
     bad = [ln.strip() for ln in _lines(text) if _BARE.search(ln)]
     assert not bad, f"{where}: {bad[:3]}"
+
+
+@pytest.mark.parametrize(("where", "text"), _ALL, ids=[w for w, _ in _ALL])
+def test_tool_names_are_not_single_quoted(where, text):
+    bad = [ln.strip() for ln in _lines(text) if _QUOTED.search(ln)]
+    assert not bad, f"{where}: {bad[:3]}"
+
+
+@pytest.mark.parametrize(("where", "text"), _ALL, ids=[w for w, _ in _ALL])
+def test_ids_are_not_single_quoted(where, text):
+    bad = [ln.strip() for ln in _lines(text) if _QUOTED_ID.search(ln)]
+    assert not bad, f"{where}: {bad[:3]}"
+
+
+@pytest.mark.parametrize(("where", "text"), _ALL, ids=[w for w, _ in _ALL])
+def test_paths_and_refs_are_not_single_quoted(where, text):
+    bad = [
+        ln.strip()
+        for ln in _lines(text)
+        if _QUOTED_PATH.search(_DQ_SPAN.sub("", _CODE_SPAN.sub("", ln)))
+    ]
+    assert not bad, f"{where}: {bad[:3]}"
+
+
+def test_value_samples_are_in_the_inventory():
+    """경로·ref 를 싣는 문구가 표본에 있어야 위 가드가 본다."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {"oversized_saved", "oversized_source", "edit_bare_line_ref"} <= ids
+
+
+def test_depth_limit_line_is_in_the_inventory():
+    """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
+    texts = [t for w, t in _ALL if " limit section " in w]
+    assert any("Depth limit reached" in t for t in texts)
 
 
 @pytest.mark.parametrize(("where", "text"), _ALL, ids=[w for w, _ in _ALL])
