@@ -26,8 +26,9 @@
 
 - `agent_cli/` — 소스 코드 패키지
 - `agent_cli/render/` — 플러그인 렌더러 시스템 (minimal — 커스텀 추가 가능)
-- `agent_cli/skills/builtin/` — 패키지 내장 스킬 (create-skill, create-agent, plan, create-team)
-- `agent_cli/agents/builtin/` — 패키지 내장 에이전트 (explorer)
+- `agent_cli/skills/builtin/` — 패키지 내장 스킬 (모델 호출 가능: orchestrate, plan · 사용자 전용: create-skill, create-agent)
+- `agent_cli/agents/builtin/` — 패키지 내장 에이전트 프로파일 (general, code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst, orchestrator)
+- `agent_cli/agents/harness/` — 하니스 전용 프로파일 (auditor — 모델이 spawn 하지 않음)
 - `agent_cli/resource_loader.py` — 공유 파일 로더 (스킬/에이전트/지시사항)
 - `tests/` — 유닛 + 통합 테스트
 - `docs/` — 아키텍처 문서 + 설계 문서 (`delegate-redesign/` 등)
