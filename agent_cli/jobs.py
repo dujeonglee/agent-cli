@@ -19,9 +19,8 @@
 작업은 죽이고, 세션이 끝날 때 남은 작업도 죽인다(우리가 띄운 것이므로 고아를
 남기지 않는다). 영속은 없다 — PID 는 프로세스와 함께 죽는다.
 
-작업의 몸은 **핸들**(v10.91.0, `JobHandle`): 셸 명령은 ``Popen`` 을 감싼
-`ProcHandle`. 레지스트리는 핸들에게 끝났는지(`poll`)·멈춤(`stop`/`force`)·멈추는 법
-문구(`stop_hint`)만 묻는다. 셸 명령은 bash 가
+작업의 몸은 ``Popen`` 을 감싼 `ProcHandle` — 레지스트리는 거기에 끝났는지(`poll`)·
+멈춤(`stop`/`force`)·멈추는 법 문구(`stop_hint`)만 묻는다. 셸 명령은 bash 가
 있으면 bash 로 띄운다(`SHELL`): 벤치에서 `[[ ]]`·`<(…)` 가 dash 에서 깨져 턴을 잃었다.
 """
 
@@ -36,7 +35,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
 
 POLL_SECS = 1.0
 #: 종료 통지에 싣는 로그 꼬리 줄 수 — 모니터 보고(5줄)와 같은 크기 감각
@@ -57,30 +55,6 @@ def shell_name() -> str:
     return "bash" if SHELL else "sh"
 
 
-class JobHandle(Protocol):
-    """레지스트리가 작업의 몸에 묻는 전부."""
-
-    @property
-    def pid(self) -> int: ...
-
-    def poll(self) -> int | None:
-        """끝났으면 종료 코드, 아직이면 ``None``. 끝난 뒤의 재호출은 같은 값."""
-        ...
-
-    def stop(self) -> None:
-        """부드럽게 멈추라고 한다 (셸: 그룹에 TERM)."""
-        ...
-
-    def force(self) -> None:
-        """듣지 않으면 죽인다 (셸: 그룹에 KILL)."""
-        ...
-
-    @property
-    def stop_hint(self) -> str:
-        """모델이 이 작업을 멈추는 명령 — 꼬리·결과·중간 깨우기가 같은 모양."""
-        ...
-
-
 class ProcHandle:
     """셸 명령 하나 — 자기 세션(`start_new_session`)의 ``Popen``."""
 
@@ -92,6 +66,7 @@ class ProcHandle:
         return self.proc.pid
 
     def poll(self) -> int | None:
+        """끝났으면 종료 코드, 아직이면 ``None``. 끝난 뒤의 재호출은 같은 값."""
         return self.proc.poll()
 
     def stop(self) -> None:
@@ -123,7 +98,7 @@ class Job:
     command: str
     log: Path  # 작업 디렉터리 기준 상대 경로 (꼬리·통지에 그대로 보인다)
     owner: str  # "main" | "agent:<key>"
-    handle: JobHandle = field(repr=False)
+    handle: ProcHandle = field(repr=False)
     started_at: float = field(default_factory=time.time)
     rc: int | None = None
     ended_at: float | None = None
@@ -340,7 +315,7 @@ class JobRegistry:
         self._finish(job, rc if rc is not None else -1, notify=False)
 
     @staticmethod
-    def _await(handle: JobHandle) -> int | None:
+    def _await(handle: ProcHandle) -> int | None:
         deadline = time.time() + KILL_GRACE_S
         while True:
             rc = handle.poll()

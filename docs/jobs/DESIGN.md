@@ -70,7 +70,7 @@ GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 —
   지운 것은 결과에 적으므로 모델이 본다: "Removed `nohup`, the trailing `&` — a background job is already detached,
   logged and reported by the harness; use the pid below instead of `$!`." `setsid` 는 새 세션으로 그룹을 빠져나가
   `kill -- -<pid>` 가 닿지 않으니 반드시 지운다. 다 지우고 남는 게 없으면 "Nothing is left to run."
-- **작업의 몸은 핸들** (`JobHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`). 셸 명령은 `ProcHandle`
+- **작업의 몸은 핸들** (`ProcHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`; v10.102.1 에 구현 하나뿐인 `JobHandle` 프로토콜 삭제). 셸 명령은 `ProcHandle`
   (TERM → KILL, `kill -- -P`). v10.91.0~v10.101.0 엔 한도를 넘긴 `python` 셀(`pyworker.PendingCell`)도
   `JobRegistry.adopt` 로 받았다 — v10.102.0 에 `python` 도구와 함께 `adopt` 를 지웠다(docs/python-tool/DESIGN.md §0).
 - **셸은 bash** (`jobs.SHELL` = `shutil.which("bash")`, 없으면 `/bin/sh`). 벤치에서 모델은 bash 문법을 썼고 컨테이너의
