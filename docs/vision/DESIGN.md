@@ -252,6 +252,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.100.1 | 썸네일·마크다운 그림 URL 에 판(`&v=`) — 참조가 있으면 `sha256` 앞 16자, 없으면 그린 시각. 브라우저는 한 문서 안에서 같은 URL 의 이미지를 메모리에서 다시 써(`no-cache` 무관) 덮어쓴 스크린샷의 새 카드가 옛 그림을 그렸다(사용자 제보). 서버는 `v` 를 보지 않고 지금 파일을 준다 — 새로고침 뒤의 옛 카드는 지금 그림이다(과거 내용은 저장하지 않는다). |
 | v10.77.0 | §12: `view_image` 도구(read_file 이미지 분기 이전), 도구를 바꾸는 층 `loop/reroute.py`(read_file 이미지 → view_image, 레코드에 바뀐 호출 + `rewritten_from`), 장수 상한 `keep_recent`·`AGENT_CLI_IMAGE_KEEP` 삭제(압축만), 요약 IMAGES 항목·`## Images viewed in earlier turns` 블록(`image_list`), read_file 의 텍스트 아님 한 줄. |
 | v10.68.0 | 프로브 결과 영속: `vision_support` 가 판정(답 수신 또는 4xx)이면 `config.fill_model_entry` 로 엔트리의 **빠진** `supports_vision` 만 채운다. 연결 실패·5xx 는 프로세스 한정. 동기: v10.59.0 이전 엔트리 셋이 harbor trial·보드 방마다 다시 프로브했다. |
 | v10.61.3 | 대기 줄·런 머리의 작은 썸네일(`miniThumbs`) — 사용자 검토 1차. |

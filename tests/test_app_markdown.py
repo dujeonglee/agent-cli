@@ -532,8 +532,20 @@ class TestImages:
 
     def test_workspace_path_goes_through_the_image_endpoint(self):
         out = _format("see ![chart](out/a&b.png)")
-        assert 'src="api/workspace/file?path=out%2Fa%26b.png"' in out
+        # ``&v=<그린 시각>`` (v10.100.1) — 덮어쓴 그림이 메모리 캐시의 옛 그림으로
+        # 나오지 않게 그릴 때마다 주소가 다르다.
+        m = re.search(
+            r'src="api/workspace/file\?path=out%2Fa%26b\.png&amp;v=([0-9a-z]+)"', out
+        )
+        assert m, out
         assert 'alt="chart"' in out and 'target="_blank"' in out
+        # 링크(원본 보기)와 그림이 같은 주소다.
+        assert (
+            out.count(
+                f'href="api/workspace/file?path=out%2Fa%26b.png&amp;v={m.group(1)}"'
+            )
+            == 1
+        )
 
     def test_raster_data_uri_is_inlined(self):
         out = _format(f"![dot]({self.PNG})")

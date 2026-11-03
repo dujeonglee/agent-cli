@@ -342,6 +342,8 @@
   const MD_IMAGE = /!\[([^\]\n]*)\]\(([^()\s]+)\)/g;
   const MD_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
   function renderImages(html) {
+    // 참조(sha256)가 없는 그림 — 그린 시각이 판이다(같은 카드의 그림들은 한 판).
+    const ver = Date.now().toString(36);
     return html
       .split(/(`[^`\n]+`)/)
       .map(function (part, i) {
@@ -357,7 +359,7 @@
             );
           }
           if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.indexOf("//") === 0) return all;
-          const url = escapeHtml(imageUrl(unescapeHtml(src)));
+          const url = escapeHtml(imageUrl(unescapeHtml(src), ver));
           return (
             '<a class="md-img-wrap" href="' + url + '" target="_blank" rel="noopener">' +
             '<img class="md-img" src="' + url + '" alt="' + alt + '" loading="lazy"></a>'
@@ -1661,14 +1663,23 @@
   // 사용자 말풍선·관찰 본문 아래 같은 줄. 원본은 `api/workspace/file?path=` —
   // 워크스페이스 안 이미지만 서빙된다(서버가 매직 바이트로 거른다).
   const IMAGE_PLACEHOLDER_RE = /^\[image: .+ \(\d+×\d+\)\]$/;
-  function imageUrl(path) {
-    return "api/workspace/file?path=" + encodeURIComponent(path);
+  // ``ver`` (v10.100.1): 한 문서 안에서 브라우저는 **같은 URL** 의 이미지를
+  // 메모리에서 다시 쓴다 — ``no-cache`` 와 무관하다(HTML 의 available images
+  // 목록). 경로만 실으면 덮어쓴 스크린샷의 새 카드가 옛 그림을 그린다. 참조가
+  // 있으면 ``sha256`` 앞부분을, 없으면(마크다운 그림) 그린 시각을 싣는다 —
+  // 내용이 다르면 주소도 다르다. 서버는 ``v`` 를 보지 않고 지금 파일을 준다.
+  function imageUrl(path, ver) {
+    const url = "api/workspace/file?path=" + encodeURIComponent(path);
+    return ver ? url + "&v=" + encodeURIComponent(ver) : url;
+  }
+  function refVersion(ref) {
+    return ref && ref.sha256 ? String(ref.sha256).slice(0, 16) : "";
   }
   function thumbStrip(images) {
     const strip = el("div", ["thumbs"]);
     images.forEach(function (ref) {
       if (!ref || !ref.path) return;
-      const url = imageUrl(ref.path); // 상대 URL — <base href> 아래로 풀린다
+      const url = imageUrl(ref.path, refVersion(ref)); // 상대 URL — <base href> 아래로 풀린다
       const a = el("a");
       a.href = url;
       a.target = "_blank";
@@ -1690,7 +1701,7 @@
     (Array.isArray(images) ? images : []).forEach(function (ref) {
       if (!ref || !ref.path) return;
       const img = el("img");
-      img.src = imageUrl(ref.path);
+      img.src = imageUrl(ref.path, refVersion(ref));
       img.alt = ref.path;
       img.title = ref.path + " (" + ref.width + "×" + ref.height + ")";
       strip.appendChild(img);

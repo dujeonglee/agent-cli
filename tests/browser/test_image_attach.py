@@ -229,3 +229,46 @@ def test_markdown_image_loads_from_workspace_and_external_never_fetches(
     assert link == ["https://evil.example/p.png?d=s", "🖼 leak"]
     page.wait_for_timeout(300)
     assert outbound == []
+
+
+def test_changed_image_gets_a_fresh_thumbnail(stack, page, ws):
+    """같은 경로의 그림이 바뀌면 새 카드는 새 그림을 그린다 (v10.100.1).
+
+    브라우저는 한 문서 안에서 **같은 URL** 의 이미지를 메모리에서 다시 쓴다 —
+    ``Cache-Control: no-cache`` 와 무관하다(HTML 의 available images 목록).
+    URL 이 경로뿐이면 덮어쓴 스크린샷이 옛 그림으로 나온다. 참조의 ``sha256``
+    을 URL 에 실어 내용이 다르면 주소도 다르게 한다."""
+    from agent_cli import images as _images
+
+    shot = ws / "shot.png"
+    shot.write_bytes(_png_bytes((64, 32)))
+    first = _images.make_ref(shot).to_dict()
+    stack.emit_ready()
+    page.goto(stack.url)
+    page.wait_for_selector("#attach", timeout=8000)
+    stack.renderer.push_user_message("[dj]: one", author="dj", images=[first])
+    page.wait_for_selector("#messages .card-user .thumbs img", timeout=8000)
+    assert _wait(
+        lambda: page.evaluate(
+            "() => { const i = document.querySelector('#messages .card-user .thumbs img');"
+            " return i.complete && i.naturalWidth === 64; }"
+        )
+    )
+    shot.write_bytes(_png_bytes((40, 20)))
+    second = _images.make_ref(shot).to_dict()
+    assert second["sha256"] != first["sha256"]
+    stack.renderer.push_user_message("[dj]: two", author="dj", images=[second])
+    assert _wait(
+        lambda: (
+            page.evaluate(
+                "() => document.querySelectorAll('#messages .card-user .thumbs img').length"
+            )
+            == 2
+        )
+    )
+    assert _wait(
+        lambda: page.evaluate(
+            "() => { const a = document.querySelectorAll('#messages .card-user .thumbs img');"
+            " const i = a[a.length - 1]; return i.complete && i.naturalWidth === 40; }"
+        )
+    ), "덮어쓴 그림의 새 카드가 옛 그림(메모리 캐시)을 그린다"
