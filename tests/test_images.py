@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 from pathlib import Path
 
 import pytest
@@ -189,11 +190,28 @@ class TestExpand:
         )
         assert out[0]["content"] == "q\n(image gone.png not shown: file missing)"
 
-    def test_changed_file_is_not_sent(self, tmp_path, monkeypatch):
+    def test_changed_file_sends_the_recorded_image(self, tmp_path, monkeypatch):
+        """덮어써도 기록된 그림이 간다 (v10.101.0 보관본) — 대화 앞부분이
+        바뀌지 않는다(화면 기록과 같고 KV 캐시도 산다)."""
+        monkeypatch.chdir(tmp_path)
+        p = make_png(tmp_path / "a.png")
+        recorded = base64.b64encode(p.read_bytes()).decode("ascii")
+        ref = images.make_ref(p)
+        make_png(p, color=(0, 255, 0))  # 기록 뒤 바뀐 파일
+        out = images.expand(
+            [{"role": "user", "content": "q", "images": [ref.to_dict()]}],
+            enabled=True,
+            part=images.openai_part,
+        )
+        assert out[0]["content"][1]["image_url"]["url"].endswith(recorded)
+
+    def test_changed_file_without_a_kept_copy_is_not_sent(self, tmp_path, monkeypatch):
+        """보관본이 없으면(v10.101.0 이전 기록) 종전대로 해시로 원본을 확인한다."""
         monkeypatch.chdir(tmp_path)
         p = make_png(tmp_path / "a.png")
         ref = images.make_ref(p)
-        make_png(p, color=(0, 255, 0))  # 기록 뒤 바뀐 파일
+        images.stored_path(ref.sha256, ref.mime).unlink()
+        make_png(p, color=(0, 255, 0))
         out = images.expand(
             [{"role": "user", "content": "q", "images": [ref.to_dict()]}],
             enabled=True,
@@ -674,3 +692,82 @@ class TestEncodeWithoutPillow:
         import base64
 
         assert I.image_size(base64.b64decode(b64)) == (64, 43)
+
+
+class TestStore:
+    """보관소 (v10.101.0) — 참조를 만들 때 내용을 ``<sha256>.<ext>`` 로 남긴다."""
+
+    def test_make_ref_keeps_a_copy_once(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        p = make_png(tmp_path / "a.png")
+        ref = images.make_ref(p)
+        kept = images.stored_path(ref.sha256, "image/png")
+        assert kept.name == f"{ref.sha256}.png"
+        assert kept.read_bytes() == p.read_bytes()
+        mtime = kept.stat().st_mtime_ns
+        images.make_ref(p)  # 같은 내용 — 다시 쓰지 않는다
+        assert kept.stat().st_mtime_ns == mtime
+        assert [x.name for x in kept.parent.iterdir()] == [kept.name]  # 임시 파일 없음
+
+    def test_resolve_prefers_the_copy_then_a_matching_original(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        p = make_png(tmp_path / "a.png")
+        ref = images.make_ref(p)
+        assert images.resolve_file(ref) == images.stored_path(ref.sha256, ref.mime)
+        images.stored_path(ref.sha256, ref.mime).unlink()
+        assert Path(images.resolve_file(ref)).resolve() == p.resolve()
+        p.unlink()
+        assert images.resolve_file(ref) == "file missing"
+
+    def test_resolve_by_hash_alone(self, tmp_path, monkeypatch):
+        """웹 ``?v=`` 는 해시만 안다 — mime 없이도 보관본을 찾는다."""
+        monkeypatch.chdir(tmp_path)
+        ref = images.make_ref(make_png(tmp_path / "a.png"))
+        bare = ImageRef(
+            path="elsewhere.png", mime="", width=0, height=0, bytes=0, sha256=ref.sha256
+        )
+        assert images.resolve_file(bare) == images.stored_path(ref.sha256, ref.mime)
+
+    def test_unwritable_store_still_makes_the_ref(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        blocker = tmp_path / "store"
+        blocker.write_text("not a directory")
+        monkeypatch.setattr(images, "_STORE_DIR", blocker)
+        p = make_png(tmp_path / "a.png")
+        ref = images.make_ref(p)
+        assert ref.width == 64
+        assert Path(images.resolve_file(ref)).resolve() == p.resolve()  # 원본을 해시로
+
+    def test_default_store_is_cwd_relative(self, tmp_path, monkeypatch):
+        """운영 구성 — conftest 가 돌려 둔 자리 대신 ``paths.images_dir()`` 그대로."""
+        from agent_cli import paths
+
+        monkeypatch.setattr(images, "_STORE_DIR", paths.images_dir())
+        monkeypatch.chdir(tmp_path)
+        ref = images.make_ref(make_png(tmp_path / "a.png"))
+        assert (tmp_path / ".agent-cli" / "images" / f"{ref.sha256}.png").is_file()
+
+    def test_interleaved_stores_use_separate_temp_files(self, tmp_path, monkeypatch):
+        """같은 그림을 두 스레드(서브에이전트)가 동시에 보관할 때 — 한쪽이 교체하기
+        직전에 다른 쪽이 끼어들어도 서로의 임시 파일을 자르지 않는다. 끼어들기를
+        ``os.replace`` 안에서 결정적으로 재현한다(종전 pid 이름은 둘이 같았다)."""
+        monkeypatch.chdir(tmp_path)
+        data = make_png(tmp_path / "a.png", size=(400, 300)).read_bytes()
+        sha = "f" * 64
+        real_replace = os.replace
+        sources: list[str] = []
+
+        def replace(src, dst):
+            sources.append(str(src))
+            if len(sources) == 1:
+                images._store(sha, "image/png", data)  # 다른 스레드가 끼어든다
+            real_replace(src, dst)
+
+        monkeypatch.setattr(images.os, "replace", replace)
+        images._store(sha, "image/png", data)
+        assert len(sources) == 2 and sources[0] != sources[1]
+        dest = images.stored_path(sha, "image/png")
+        assert dest.read_bytes() == data
+        assert [p.name for p in dest.parent.iterdir()] == [dest.name]  # 임시 파일 없음

@@ -54,6 +54,24 @@ def _disable_workspace_confine(monkeypatch):
     monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "0")
 
 
+@pytest.fixture(scope="session")
+def _image_store_root(tmp_path_factory):
+    return tmp_path_factory.mktemp("image-store")
+
+
+@pytest.fixture(autouse=True)
+def _image_store_in_tmp(monkeypatch, request, _image_store_root):
+    """그림 보관소(v10.101.0)를 저장소 루트가 아닌 tmp 로 — ``make_ref`` 가
+    cwd 상대 ``.agent-cli/images/`` 에 사본을 쓰므로, chdir 하지 않는 테스트가
+    저장소에 파일을 남기지 않게. 테스트마다 다른 자리(쓸 때 만든다)."""
+    import hashlib
+
+    from agent_cli import images
+
+    sub = hashlib.sha1(request.node.nodeid.encode()).hexdigest()[:16]
+    monkeypatch.setattr(images, "_STORE_DIR", _image_store_root / sub)
+
+
 # ── omlx integration connection ───────────────────────────
 OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")

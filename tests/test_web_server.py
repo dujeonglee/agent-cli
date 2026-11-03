@@ -3428,6 +3428,55 @@ class TestWorkspaceFile:
         )
 
 
+class TestWorkspaceFileVersion:
+    """``?v=<sha256>`` (v10.101.0) — 그 내용의 보관본, 없으면 해시가 맞는 원본만."""
+
+    def test_overwritten_file_serves_the_recorded_copy(
+        self, server_and_client, tmp_path
+    ):
+        from agent_cli import images
+
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        shot = tmp_path / "shot.png"
+        shot.write_bytes(_png_bytes(size=(64, 32)))
+        old = shot.read_bytes()
+        ref = images.make_ref(shot)
+        shot.write_bytes(_png_bytes(size=(40, 20)))
+        url = f"/api/workspace/file?token=testtoken&path=shot.png&v={ref.sha256}"
+        r = client.get(url)
+        assert r.status_code == 200 and r.content == old
+        assert r.headers["content-type"].startswith("image/png")
+        # ``v`` 없이는 지금 파일
+        r = client.get("/api/workspace/file?token=testtoken&path=shot.png")
+        assert r.content == shot.read_bytes()
+
+    def test_changed_without_a_copy_is_404(self, server_and_client, tmp_path):
+        from agent_cli import images
+
+        server, _, client = server_and_client
+        server.workspace = tmp_path.resolve()
+        shot = tmp_path / "shot.png"
+        shot.write_bytes(_png_bytes(size=(64, 32)))
+        ref = images.make_ref(shot)
+        images.stored_path(ref.sha256, ref.mime).unlink()
+        url = f"/api/workspace/file?token=testtoken&path=shot.png&v={ref.sha256}"
+        assert client.get(url).status_code == 200  # 해시가 맞는 원본
+        shot.write_bytes(_png_bytes(size=(40, 20)))
+        r = client.get(url)
+        assert r.status_code == 404 and "changed" in r.text
+
+    def test_bad_version_and_outside_path(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        server.workspace = ws.resolve()
+        (ws / "a.png").write_bytes(_png_bytes())
+        base = "/api/workspace/file?token=testtoken"
+        assert client.get(f"{base}&path=a.png&v=abc").status_code == 400
+        assert client.get(f"{base}&path=../a.png&v={'0' * 64}").status_code == 400
+
+
 class TestChatWithImages:
     """``POST /api/input {"kind":"chat","images":[path]}`` → 큐 아이템 ``images``."""
 

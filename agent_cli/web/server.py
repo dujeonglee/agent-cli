@@ -35,6 +35,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import tempfile
@@ -60,6 +61,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 async def _stream_body_to(request: Request, dest: Path) -> int:
@@ -1244,11 +1246,29 @@ def create_app(server: WebServer) -> FastAPI:
         return {"supported": vision_known(b.capabilities, b.base_url, b.model)}
 
     @app.get("/api/workspace/file")
-    async def workspace_file(path: str = Query(..., min_length=1)):
+    async def workspace_file(path: str = Query(..., min_length=1), v: str = ""):
         """워크스페이스 안 **이미지** 하나를 그대로 준다 (v10.60.0) — 사용자·관찰
         카드의 썸네일과 원본 보기. 범위는 워크스페이스 전부(사용자 결정) 이되
-        이미지만: 매직 바이트가 아니면 400. 밖이면 400, 없으면 404."""
+        이미지만: 매직 바이트가 아니면 400. 밖이면 400, 없으면 404.
+
+        ``v`` (v10.101.0) = 참조의 ``sha256``: 그 내용의 보관본을 주고, 보관본이
+        없으면 해시가 맞는 원본만 준다 — 바뀌었으면 404. 카드는 그때의 그림을
+        그린다(지금 파일의 새 그림이 옛 카드에 나오지 않는다). ``v`` 가 없으면
+        (마크다운 그림 — 참조가 없다) 지금 파일."""
         p = server._safe_workspace_path(path)
+        if v:
+            if not _SHA256_RE.fullmatch(v):
+                raise HTTPException(status_code=400, detail="v must be a sha256")
+            ref = _images.ImageRef(
+                path=str(p), mime="", width=0, height=0, bytes=0, sha256=v
+            )
+            got = _images.resolve_file(ref)
+            if isinstance(got, str):
+                raise HTTPException(status_code=404, detail=got)
+            mime = _images.sniff_file(got)
+            if mime is None:
+                raise HTTPException(status_code=400, detail="not an image")
+            return FileResponse(got, media_type=mime, headers=_NO_CACHE_HEADERS)
         if not p.is_file():
             raise HTTPException(status_code=404, detail="not found")
         mime = _images.sniff_file(p)

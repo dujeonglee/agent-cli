@@ -5,8 +5,10 @@
 **공급자 경계** (:func:`expand`) 에서만 조각(parts)으로 펼쳐진다. 그래서
 꼬리 붙이기·토큰 추정·압축·재생·세션 목록은 문자열 가정을 그대로 둔다.
 
-파일이 진실, 기록은 참조: 보낼 때 파일에서 읽고(해시로 같은 파일인지 확인),
-없으면 글 자리표시로 대신한다. 자리표시 ``[image: path (W×H)]`` 는 레코드의
+기록은 참조, 내용은 보관본(v10.101.0): 참조를 만들 때 내용을 해시 이름으로
+``.agent-cli/images/`` 에 복사해 두고, 보낼 때·화면에 그릴 때 그것부터 읽는다 —
+같은 경로에 덮어써도 기록된 그림이 남는다. 보관본이 없으면(옛 기록) 원본을
+해시로 확인해 읽고, 없거나 바뀌었으면 글 자리표시로 대신한다. 자리표시 ``[image: path (W×H)]`` 는 레코드의
 ``content`` 에도 들어 있어 이미지가 못 가는 경로(요약기·텍스트 전용 모델·
 파일 소실)에서도 같은 레코드가 그대로 읽힌다.
 """
@@ -22,6 +24,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from agent_cli import paths
 
 #: 토큰 추정 — 픽셀 수 / 이 값. Qwen3.6(omlx) 실측 ≈ 1K px/token
 #: (480×240 ≈ 130, 1280×720 ≈ 890, 1920×1080 ≈ 2,050). Anthropic 공식은
@@ -39,6 +43,12 @@ UPLOAD_DIR = ".agent-cli/tmp/uploads"
 SCREENSHOT_DIR = ".agent-cli/tmp/screenshots"
 #: MCP 도구가 돌려준 이미지 조각을 파일로 두는 자리 (v10.61.0).
 MCP_IMAGE_DIR = ".agent-cli/tmp/mcp"
+#: 참조를 만들 때 내용을 ``<sha256>.<ext>`` 로 복사해 두는 보관소 (v10.101.0,
+#: ``paths.images_dir``). 같은 경로에 덮어써도 기록된 그림이 남는다 — 공급자
+#: 경계(:func:`encode`)와 웹 썸네일(``/api/workspace/file?v=``)이 이것부터 읽는다.
+#: 워크스페이스 밖에서 본 그림도 사본은 여기(안)로 들어온다. 테스트 seam
+#: (conftest 가 테스트마다 tmp 로 돌린다).
+_STORE_DIR = paths.images_dir()
 #: mime → 파일 확장자 (저장 이름용).
 IMAGE_EXT = {
     "image/png": "png",
@@ -166,14 +176,92 @@ def make_ref(path: str | Path) -> ImageRef:
     size = image_size(data)
     if size is None:
         raise ValueError(f"{path}: image header is damaged (no size)")
+    sha = hashlib.sha256(data).hexdigest()
+    _store(sha, mime, data)
     return ImageRef(
         path=display_path(p),
         mime=mime,
         width=size[0],
         height=size[1],
         bytes=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
+        sha256=sha,
     )
+
+
+# ── 보관소 — 기록된 그림의 사본 (v10.101.0) ─────────────────────────
+
+
+def stored_path(sha: str, mime: str) -> Path:
+    """보관본 자리 — ``_STORE_DIR`` 가 상대면 cwd 기준(참조의 경로와 같은 기준:
+    ``display_path`` 도 cwd 상대다; 웹 서버의 workspace 는 cwd)."""
+    return _STORE_DIR / f"{sha}.{IMAGE_EXT.get(mime, 'bin')}"
+
+
+def _store(sha: str, mime: str, data: bytes) -> None:
+    """내용 주소 사본을 남긴다 — 이미 있으면 그대로(같은 해시 = 같은 내용).
+
+    고유한 임시 파일 + ``os.replace`` 라 읽는 쪽이 반쯤 쓴 파일을 보지 않는다 —
+    같은 프로세스의 두 스레드(서브에이전트)가 같은 그림을 동시에 보관해도 서로의
+    임시 파일을 자르지 않는다. 쓰지 못하면(읽기 전용 작업 폴더 등) 조용히
+    넘어간다 — 그때는 종전처럼 원본 파일을 해시로 확인해 읽는다(:func:`resolve_file`).
+    보관본 권한은 ``mkstemp`` 의 0600 — 읽는 쪽(하니스·웹 서버)은 같은 사용자이고,
+    워크스페이스 밖에서 본 그림의 사본도 들어오므로 좁은 편이 맞다."""
+    import tempfile
+
+    dest = stored_path(sha, mime)
+    if dest.is_file():
+        return
+    tmp_name = None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", dir=dest.parent)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp_name, dest)
+    except OSError:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+
+
+def resolve_file(ref: ImageRef) -> Path | str:
+    """기록된 그 내용을 담은 파일 — 보관본, 없으면 해시가 맞는 원본.
+
+    실패하면 사유 문자열("file missing" · "file changed since it was recorded").
+    보관본이 없는 건 v10.101.0 이전 기록이거나 보관에 실패한 경우다. 해시가 없는
+    참조(옛 기록)는 원본을 그대로 믿는다."""
+    if ref.sha256:
+        # mime 을 모르면(웹 ``?v=`` — 해시만 온다) 네 확장자를 다 본다.
+        mimes = (ref.mime,) if ref.mime in IMAGE_EXT else IMAGE_MIMES
+        for m in mimes:
+            kept = stored_path(ref.sha256, m)
+            if kept.is_file():
+                return kept
+    p = Path(ref.path)
+    if not p.is_file():
+        return "file missing"
+    if ref.sha256 and _file_sha(p) != ref.sha256:
+        return "file changed since it was recorded"
+    return p
+
+
+#: ``(path, size, mtime_ns) → sha256`` — 원본 확인이 매번 파일 전체를 해시하지 않게.
+_sha_cache: dict[tuple[str, int, int], str] = {}
+
+
+def _file_sha(p: Path) -> str | None:
+    try:
+        st = p.stat()
+        key = (str(p), st.st_size, st.st_mtime_ns)
+        hit = _sha_cache.get(key)
+        if hit is None:
+            hit = hashlib.sha256(p.read_bytes()).hexdigest()
+            _sha_cache[key] = hit
+        return hit
+    except OSError:
+        return None
 
 
 def image_size(data: bytes) -> tuple[int, int] | None:
@@ -356,8 +444,15 @@ def _encode_bytes(data: bytes, mime: str) -> tuple[str, bytes]:
 
 
 def encode(ref: ImageRef) -> tuple[str, str] | str:
-    """참조 → ``(mime, base64)``. 실패하면 그 사유 문자열 (파일 없음·해시 불일치)."""
-    p = Path(ref.path)
+    """참조 → ``(mime, base64)``. 실패하면 그 사유 문자열 (파일 없음·해시 불일치).
+
+    읽는 파일은 :func:`resolve_file` 이 고른다 — 보관본이 있으면 원본이 그 뒤에
+    바뀌었어도 **기록된 그림**이 간다(v10.101.0; 종전엔 "file changed" 사유 줄로
+    바뀌어 화면 기록과 어긋나고, 대화 앞부분이 바뀌어 KV 캐시도 깨졌다)."""
+    got = resolve_file(ref)
+    if isinstance(got, str):
+        return got
+    p = got
     try:
         st = p.stat()
     except OSError:

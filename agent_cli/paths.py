@@ -55,6 +55,14 @@ def sessions_dir() -> Path:
     return Path(raw).expanduser() if raw else Path(_DIR_NAME) / "sessions"
 
 
+def images_dir() -> Path:
+    """``.agent-cli/images`` — 기록된 그림의 보관본 ``<sha256>.<ext>`` (v10.101.0,
+    ``images.make_ref`` 가 쓴다). ``tmp`` 밖인 이유: 모델이 임시 파일 자리로 안내받는
+    곳이라 통째로 지울 수 있다. 지워도 안전하다 — 보관본이 없으면 해시가 맞는 원본을
+    읽는다. cwd 상대(``scratch_dir`` 와 같은 이유)."""
+    return Path(_DIR_NAME) / "images"
+
+
 def scratch_dir() -> Path:
     """``.agent-cli/tmp`` — 모델의 임시 파일(중간 결과·보조 스크립트·백업본)과
     하니스 하위 디렉토리(``jobs/``·``python/``·``downloads/``·``uploads/``)의

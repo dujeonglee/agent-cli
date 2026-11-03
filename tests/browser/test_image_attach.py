@@ -232,12 +232,13 @@ def test_markdown_image_loads_from_workspace_and_external_never_fetches(
 
 
 def test_changed_image_gets_a_fresh_thumbnail(stack, page, ws):
-    """같은 경로의 그림이 바뀌면 새 카드는 새 그림을 그린다 (v10.100.1).
+    """같은 경로의 그림이 바뀌면 새 카드는 새 그림, 옛 카드는 옛 그림 (v10.100.1·v10.101.0).
 
     브라우저는 한 문서 안에서 **같은 URL** 의 이미지를 메모리에서 다시 쓴다 —
     ``Cache-Control: no-cache`` 와 무관하다(HTML 의 available images 목록).
     URL 이 경로뿐이면 덮어쓴 스크린샷이 옛 그림으로 나온다. 참조의 ``sha256``
-    을 URL 에 실어 내용이 다르면 주소도 다르게 한다."""
+    을 URL 에 실어 내용이 다르면 주소도 다르게 하고, 서버는 그 해시의 보관본을
+    준다 — 새로고침 뒤에도 옛 카드가 지금 파일의 그림으로 바뀌지 않는다."""
     from agent_cli import images as _images
 
     shot = ws / "shot.png"
@@ -272,3 +273,12 @@ def test_changed_image_gets_a_fresh_thumbnail(stack, page, ws):
             " const i = a[a.length - 1]; return i.complete && i.naturalWidth === 40; }"
         )
     ), "덮어쓴 그림의 새 카드가 옛 그림(메모리 캐시)을 그린다"
+    # 새로고침 뒤에도 옛 카드는 그때의 그림이다 — 보관본 (v10.101.0).
+    page.reload()
+    assert _wait(
+        lambda: page.evaluate(
+            "() => { const a = document.querySelectorAll('#messages .card-user .thumbs img');"
+            " return a.length === 2 && a[0].complete && a[1].complete"
+            " && a[0].naturalWidth === 64 && a[1].naturalWidth === 40; }"
+        )
+    ), "새로고침 뒤 옛 카드가 지금 파일의 그림을 그린다"
