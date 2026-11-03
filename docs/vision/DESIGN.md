@@ -27,8 +27,12 @@ fetch 가 `.agent-cli/tmp/downloads/` 에 받아 둔 이미지, 브라우저가 
    `render.py:64` `_message_texts` 는 list 를 0 토큰으로 센다, `records.py:76`,
    `session.py:216`, `web.py:1145`). 이 가정을 바꾸지 않는다 — 이미지는 **별도 필드**로
    레코드에 실리고, **공급자 경계에서만** 조각(parts)으로 펼친다.
-2. **파일이 진실, 기록은 참조.** history.jsonl 에는 base64 가 아니라 경로·크기·해시만.
-   보낼 때 파일에서 읽고, 파일이 없으면 글 자리표시로 대신한다.
+2. **기록은 참조, 내용은 보관본 (v10.101.0).** history.jsonl 에는 base64 가 아니라 경로·크기·해시만.
+   참조를 만들 때 내용을 `.agent-cli/images/<sha256>.<ext>` 에 복사하고, 보낼 때·웹 썸네일을
+   그릴 때 그것부터 읽는다 — 덮어써도 기록된 그림. 보관본이 없으면 해시가 맞는 원본, 그것도
+   아니면 글 자리표시(웹은 404). 워크스페이스 밖에서 본 그림(`view_image` 는 밖도 연다)도
+   사본이 보관소로 들어와 웹에서 보인다(토큰 게이트 뒤, 워크스페이스 서빙 범위). 종전(~v10.100.1)
+   은 "파일이 진실" — 덮어쓴 그림의 옛 카드가 새 그림을 그렸다.
 3. **공급자마다 자기 모양.** OpenAI 는 `image_url` data URL, Anthropic 은
    `{"type":"image","source":{"type":"base64",…}}`. 변환은 provider 안 한 함수.
    방언·컨텍스트·도구는 공급자 모양을 모른다.
@@ -50,7 +54,8 @@ fetch 가 `.agent-cli/tmp/downloads/` 에 받아 둔 이미지, 브라우저가 
 - `path` 는 워크스페이스 기준 상대 경로(`display_path` 규칙). 워크스페이스 밖 파일은
   입력 단계에서 `.agent-cli/tmp/uploads/` 로 복사한다(세션과 함께 정리, 재개 때도 남아 있다).
 - 크기는 헤더만 읽어 구한다(PNG·JPEG·GIF·WebP, stdlib) — Pillow 없이 동작.
-- `sha256` 은 재개 때 "같은 파일인가" 확인용. 다르면 자리표시로 대체하고 알린다.
+- `sha256` 은 보관본의 이름(v10.101.0)이자, 보관본이 없을 때 "같은 파일인가" 확인용 — 다르면
+  자리표시로 대체하고 알린다.
 
 ### 3.2 레코드 — `images` 필드
 
@@ -252,6 +257,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.101.0 | 보관소 `.agent-cli/images/<sha256>.<ext>`: `make_ref` 가 사본을 남기고 공급자 경계·웹 썸네일(`?v=<sha256>`)이 그것부터 읽는다 — 덮어쓴 그림도 기록된 그림(사용자 결정: 카드는 그때 본 것의 기록). 모델 쪽도 "file changed" 사유 줄 대신 기록된 그림이 가서 대화 앞부분이 안 바뀐다. 보관본이 없으면(이전 기록) 해시 맞는 원본만, 아니면 사유/404. 마크다운 그림은 참조가 없어 `&t=` 로 주소만 가른다. 정리(GC) 없음 — 같은 내용은 한 번. |
 | v10.100.1 | 썸네일·마크다운 그림 URL 에 판(`&v=`) — 참조가 있으면 `sha256` 앞 16자, 없으면 그린 시각. 브라우저는 한 문서 안에서 같은 URL 의 이미지를 메모리에서 다시 써(`no-cache` 무관) 덮어쓴 스크린샷의 새 카드가 옛 그림을 그렸다(사용자 제보). 서버는 `v` 를 보지 않고 지금 파일을 준다 — 새로고침 뒤의 옛 카드는 지금 그림이다(과거 내용은 저장하지 않는다). |
 | v10.77.0 | §12: `view_image` 도구(read_file 이미지 분기 이전), 도구를 바꾸는 층 `loop/reroute.py`(read_file 이미지 → view_image, 레코드에 바뀐 호출 + `rewritten_from`), 장수 상한 `keep_recent`·`AGENT_CLI_IMAGE_KEEP` 삭제(압축만), 요약 IMAGES 항목·`## Images viewed in earlier turns` 블록(`image_list`), read_file 의 텍스트 아님 한 줄. |
 | v10.68.0 | 프로브 결과 영속: `vision_support` 가 판정(답 수신 또는 4xx)이면 `config.fill_model_entry` 로 엔트리의 **빠진** `supports_vision` 만 채운다. 연결 실패·5xx 는 프로세스 한정. 동기: v10.59.0 이전 엔트리 셋이 harbor trial·보드 방마다 다시 프로브했다. |

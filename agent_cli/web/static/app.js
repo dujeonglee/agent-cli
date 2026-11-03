@@ -343,7 +343,7 @@
   const MD_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
   function renderImages(html) {
     // 참조(sha256)가 없는 그림 — 그린 시각이 판이다(같은 카드의 그림들은 한 판).
-    const ver = Date.now().toString(36);
+    const drawn = Date.now().toString(36);
     return html
       .split(/(`[^`\n]+`)/)
       .map(function (part, i) {
@@ -359,7 +359,7 @@
             );
           }
           if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.indexOf("//") === 0) return all;
-          const url = escapeHtml(imageUrl(unescapeHtml(src), ver));
+          const url = escapeHtml(imageUrl(unescapeHtml(src), "", drawn));
           return (
             '<a class="md-img-wrap" href="' + url + '" target="_blank" rel="noopener">' +
             '<img class="md-img" src="' + url + '" alt="' + alt + '" loading="lazy"></a>'
@@ -1665,15 +1665,19 @@
   const IMAGE_PLACEHOLDER_RE = /^\[image: .+ \(\d+×\d+\)\]$/;
   // ``ver`` (v10.100.1): 한 문서 안에서 브라우저는 **같은 URL** 의 이미지를
   // 메모리에서 다시 쓴다 — ``no-cache`` 와 무관하다(HTML 의 available images
-  // 목록). 경로만 실으면 덮어쓴 스크린샷의 새 카드가 옛 그림을 그린다. 참조가
-  // 있으면 ``sha256`` 앞부분을, 없으면(마크다운 그림) 그린 시각을 싣는다 —
-  // 내용이 다르면 주소도 다르다. 서버는 ``v`` 를 보지 않고 지금 파일을 준다.
-  function imageUrl(path, ver) {
-    const url = "api/workspace/file?path=" + encodeURIComponent(path);
-    return ver ? url + "&v=" + encodeURIComponent(ver) : url;
+  // 목록). 경로만 실으면 덮어쓴 스크린샷의 새 카드가 옛 그림을 그린다.
+  // 참조가 있으면 ``v=<sha256>`` — 서버가 그 내용의 보관본을 준다
+  // (v10.101.0: 옛 카드는 새로고침 뒤에도 그때의 그림). 참조가 없는 마크다운
+  // 그림은 ``t=<그린 시각>`` 으로 주소만 가른다 — 서버는 ``t`` 를 보지 않고
+  // 지금 파일을 준다.
+  function imageUrl(path, sha, drawn) {
+    let url = "api/workspace/file?path=" + encodeURIComponent(path);
+    if (sha) url += "&v=" + sha;
+    else if (drawn) url += "&t=" + drawn;
+    return url;
   }
   function refVersion(ref) {
-    return ref && ref.sha256 ? String(ref.sha256).slice(0, 16) : "";
+    return ref && /^[0-9a-f]{64}$/.test(ref.sha256 || "") ? ref.sha256 : "";
   }
   function thumbStrip(images) {
     const strip = el("div", ["thumbs"]);
