@@ -317,28 +317,11 @@ monitor(add, command="test -f out/done", every="60s")
 파일에 아무것도 쓰지 않아 건강한 작업이 침묵으로 보이므로 언버퍼로 돌리라는 문장(실행 파일 이름 없이).
 monitor 의 `file+pattern`/`file+idle` 은 그 작업의 로그 파일(`.agent-cli/tmp/jobs/…`)을 가리키면 됩니다.
 
-### 🐍 `python` 도구 — 상태가 남는 파이썬 (v10.66.0)
+### 반복 작업의 상태는 파일에 (v10.102.0 — `python` 도구 삭제)
 
-데이터를 다루는 일(파싱·추출·변환)은 `python` 도구로 합니다. Jupyter 셀 하나처럼 코드 조각을 실행하고 **변수·import·함수·읽어 둔 데이터가 다음 호출에도 남습니다.** 종전엔 `write_file` 로 스크립트를 쓰고 `shell python3` 로 돌리는 길뿐이라, 파싱 한 줄을 고칠 때마다 파일 전체를 다시 쓰고 OCR 같은 전처리까지 다시 했습니다(v10.62.2 벤치 financial: OCR 3번·`process.py` 8번 재작성, `docs/python-tool/DESIGN.md`).
+비용 큰 단계(로딩·디코딩·데이터 준비) 뒤에 다음 단계를 여러 번 시도하는 일은, 비용 큰 단계의 결과를 `.agent-cli/tmp/` 에 다시 불러올 수 있는 파일로 저장하고 시도마다 그 파일을 불러오라고 꼬리의 Task Guidelines 가 한 줄로 안내합니다. 저장 형식(JSON·npy·CSV …)은 모델이 고르고, 시도는 `shell` 에서 평범한 스크립트로 돕니다.
 
-```
-python({"code": "texts = {f: open(f).read() for f in glob.glob('docs/*.txt')}\nlen(texts)"})
-→ => 12
-  state: texts (dict, 12 keys)
-python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
-→ => {'total': '1,234.50'}
-  state: texts (dict, 12 keys) · parse (function)
-```
-
-- import 경로(v10.77.1): 대화형 python3 처럼 **지금 폴더가 맨 앞**입니다 — 작업 폴더의 모듈(방금 쓴 `fib.py` 등)을 `import` 할 수 있고, 셀에서 `os.chdir` 하면 따라갑니다. 종전엔 하니스 내부 폴더가 맨 앞이라 작업 폴더 모듈을 못 불렀습니다.
-- 가이드의 자리(v10.73.0, `docs/tail/DESIGN.md`): 도구 설명은 성질만, 꼬리의 Task Guidelines 는 "비용 큰 단계 뒤에 다음 단계를 반복 시도하는 일은 `python` 으로, shell 에서 돌린 파이썬 아님" 한 줄(작업 종류나 실행 파일 이름은 쓰지 않습니다). 인터프리터에 무언가 들어 있는 동안은 꼬리에 `## Python session — holding: texts (dict, 12 keys) · parse (function)` 블록과 쓰는 법(한 번 로드·한 호출 = 한 단계·누적·그림·산출물)이 뜨고, 지난 턴에 shell 로 파이썬을 돌렸으면(`-c`·heredoc·`.py`) "`python` 도구를 쓰라" 교정 한 줄이 뜹니다.
-- 관찰 = 출력(stdout·stderr 와 자식 프로세스 출력이 **실제 순서로 한 흐름**) + 마지막 식의 값(`=> …`) + **`state:` 한 줄**(메모리에 든 것의 이름·타입·크기, 20개까지 — 데이터 → 함수 → 객체 → 스칼라 순, 파일 핸들 제외, 데이터가 있으면 "still in memory: reuse it, do not reload"). 상태줄은 관찰에만 — 꼬리엔 없습니다.
-- 예외는 트레이스백이 실패 관찰로 오고 상태는 그대로입니다. `timeout`(기본 120초)을 넘기면 노트북의 Ctrl-C 처럼 **코드만 멈추고 상태는 남습니다** — 루프가 dict 에 모으던 결과가 그대로 있고 다음 호출이 이어 갑니다(띄운 하위 프로세스도 같이 멈춥니다). 인터럽트를 무시하는 코드만 몇 초 뒤 인터프리터를 죽이고 **상태가 사라졌음**을 들고 있던 이름과 함께 알립니다. `reset: true` 면 새 인터프리터부터.
-- 열린 matplotlib figure 는 `.agent-cli/tmp/python/` 에 PNG 로 저장되어 이미지로 첨부됩니다 — 좌표·경로 데이터는 숫자를 읽는 대신 그려서 봅니다.
-- **한도를 넘긴 셀은 백그라운드 작업이 됩니다** (v10.91.0). `timeout` 의 기본값 120초가 상한이고, 그 안에 끝나지 않은 셀은 끊지 않고 `job #n` 으로 넘어갑니다 — 결과는 즉시 돌아오고("the step is still running after 120s and continues as job #3 … the interpreter is busy until it ends"), 끝나면 셸 작업과 같은 통지에 출력 꼬리·마지막 값·예외·`state:` 줄이 실립니다. 그동안 같은 인터프리터로의 `python` 호출은 바쁨으로 거절되고(`wait` 안내), 멈추는 법은 `kill -INT -- -<pid>`(셀만 끊기고 상태는 남음). 셀의 출력은 소유자당 로그 `.agent-cli/tmp/python/<owner>.log` 에 쌓여 `wait` 의 중간 깨우기가 진행을 읽습니다. 계기: GLM 벤치에서 같은 OCR 셀이 인터럽트로 여덟 번 연속 끊기며 16분을 썼습니다 — docs/python-tool/DESIGN.md §8.
-- 소유자(main·에이전트)마다 인터프리터 하나. 에이전트가 끝나면 그 인터프리터도 끝나고, 세션이 끝나면 전부 끝납니다. resume 뒤는 빈 인터프리터입니다.
-- 인터프리터는 PATH 의 `python3`, 없으면 `python` — 모델이 `shell` 에서 쓰는 파이썬과 같은 것이라 그 환경의 패키지를 그대로 씁니다(v10.78.0). 둘 다 없으면 agent-cli 자신의 파이썬으로 떨어지지 않고 "없다 — shell 에서 설치하면 다음 호출부터" 를 돌려줍니다. 특정 venv 를 쓰려면 그 venv 를 활성화한 채 agent-cli 를 띄우세요. ModuleNotFoundError 관찰에는 이 인터프리터 경로와 거기에 설치하는 명령(`<exe> -m pip install <pkg>`, pip 이 없으면 `ensurepip` 먼저)이 붙습니다(v10.73.0). 셀은 진짜 `__main__` 모듈에서 돌아 셀에서 정의한 함수를 pickle·fork `Pool`·`unittest.main()` 이 찾습니다(spawn 방식 `Pool` 은 대화형 python 처럼 안 되며 타임아웃이 끊습니다).
-- 끄기: `AGENT_CLI_PYTHON_TOOL=0` — 도구가 프롬프트에서 빠집니다. 워크스페이스 봉쇄는 `shell` 과 같은 best-effort(코드 안의 절대경로 문자열만 봅니다).
+v10.66.0 부터 있던 `python` 도구(호출 사이에 변수·데이터가 남는 인터프리터)는 v10.102.0 에 지웠습니다. 상태를 프로세스 안에 두는 설계가 세 가지 문제를 만들었기 때문입니다 — ① 셀 코드가 파일이 아니라 spawn·forkserver 방식 `multiprocessing`(macOS·Windows 기본, Linux 3.14+ 기본)이 셀의 함수를 찾지 못하고 `Pool` 이 멈춤, ② 한 프로세스에 상태가 쌓여 고친 모듈이 반영되지 않고(재-import 하지 않음), fork 는 부모가 먼저 쓴 Accelerate·OpenCV·잠긴 lock 때문에 자식이 멈추며, 인터프리터를 죽이면 전부 잃음, ③ POSIX 전용 구현(`os.killpg`·`start_new_session`). 같은 GLM 벤치 9과제를 교차로 3회씩 돌려 도구 있는 판 17, 이 문장 판 19 통과(과제별로는 셋이 오르고 둘이 한 번씩 내림, 벽시계 짧음)라 지웠습니다 — docs/python-tool/DESIGN.md §0.
 
 ### 🧵 background jobs — 긴 명령은 하니스가 든다 (v10.47.0)
 
@@ -358,7 +341,7 @@ python({"code": "def parse(t): ...\nparse(texts['docs/a.txt'])"})
 하니스가 작업 디렉터리를 **git 그림자 저장소**(`.agent-cli/snapshot.git`, bare — 작업
 디렉터리엔 `.git` 이 생기지 않고, 이미 git 저장소여도 그 히스토리를 건드리지 않음)에
 자동으로 커밋해 둡니다: 세션 시작 때 한 번(변경이 없어도 — 세션의 경계, 라벨에 세션 id),
-그 뒤 `shell`·`python`·`edit_file`·`write_file` 호출 **직전**마다(최소 10초 간격, 변경 없으면
+그 뒤 `shell`·`edit_file`·`write_file` 호출 **직전**마다(최소 10초 간격, 변경 없으면
 커밋 없음). 라벨은 `before shell (turn 7): sqlite3 main.db` 처럼 그 호출의 요약(명령·경로 앞
 60자)을 담아 목록만 보고 "망치기 직전" 을 고를 수 있습니다(v10.80.0). 모델에겐 시스템
 프롬프트로 "망쳤으면 `snapshot` 도구(mode restore)" 만 알립니다.
@@ -679,7 +662,7 @@ agent-cli setup
 
 `run`과 `web` 모두 세션을 `.agent-cli/sessions/{session_id}/`에 자동 저장합니다. 세션 종료 시 컨텍스트 윈도우 내용이 요약으로 저장됩니다. `--resume`으로 이전 세션을 이어서 작업할 수 있습니다. 세션 루트는 `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 옮길 수 있습니다(헤드리스/CI·벤치 — `run`·`web`·`sessions`·`--resume` 이 모두 같은 루트를 봅니다, v8.50.0).
 
-모델이 만드는 **임시 파일**(중간 결과·보조 스크립트·다운로드·백업본)은 `.agent-cli/tmp/` 에 두도록 꼬리의 Task Guidelines 가 안내합니다(v10.27.0; v10.28.0 부터 "입력 파일을 변경·소비하는 명령 전에 원본을 복사해 두라"는 백업 규칙도 같은 줄에 있어 백업본이 가는 곳이 한 군데입니다 — 전에는 위치 없이 "안전한 곳"이라고만 해서 소스 옆에 `.bak` 이 남았습니다) — `/tmp` 에 쌓이지 않고 프로젝트와 함께 지워지며, 워크스페이스 안이라 봉쇄 확인도 묻지 않습니다. 임시 파일 과제 8종 × 3회 실측: 시스템 임시 경로 사용 15/24 → 1/24 런, 봉쇄 거절 13 → 3. 절대 경로로 알려 주는 변형은 그 경로가 셸 명령 63% 에 `cd /abs && ` 로 번져 op 가 두 배가 되어 기각했습니다(상대 경로 규칙과 한 목소리). v10.90.0 부터 이 디렉토리는 세션을 조립할 때 하니스가 만들어 둡니다 — 종전 안내 "없으면 만들라" 는 GLM 벤치 27 트라이얼 중 5 에서 잊혔고(`Directory nonexistent`, `savefig` 실패 두 건 포함) 한 턴씩 잃었습니다. 같은 벤치에서 `python3` 없는 컨테이너가 `python` 도구를 헛호출한 세 건을 두고, `python` 이 로스터에 있는데 세션 시작 때 PATH 에 인터프리터가 없으면 Environment 절이 한 줄로 알려 줍니다(설치 먼저).
+모델이 만드는 **임시 파일**(중간 결과·보조 스크립트·다운로드·백업본)은 `.agent-cli/tmp/` 에 두도록 꼬리의 Task Guidelines 가 안내합니다(v10.27.0; v10.28.0 부터 "입력 파일을 변경·소비하는 명령 전에 원본을 복사해 두라"는 백업 규칙도 같은 줄에 있어 백업본이 가는 곳이 한 군데입니다 — 전에는 위치 없이 "안전한 곳"이라고만 해서 소스 옆에 `.bak` 이 남았습니다) — `/tmp` 에 쌓이지 않고 프로젝트와 함께 지워지며, 워크스페이스 안이라 봉쇄 확인도 묻지 않습니다. 임시 파일 과제 8종 × 3회 실측: 시스템 임시 경로 사용 15/24 → 1/24 런, 봉쇄 거절 13 → 3. 절대 경로로 알려 주는 변형은 그 경로가 셸 명령 63% 에 `cd /abs && ` 로 번져 op 가 두 배가 되어 기각했습니다(상대 경로 규칙과 한 목소리). v10.90.0 부터 이 디렉토리는 세션을 조립할 때 하니스가 만들어 둡니다 — 종전 안내 "없으면 만들라" 는 GLM 벤치 27 트라이얼 중 5 에서 잊혔고(`Directory nonexistent`, `savefig` 실패 두 건 포함) 한 턴씩 잃었습니다.
 
 ```bash
 # 현재 워크스페이스의 세션 목록
@@ -1035,7 +1018,6 @@ LLM이 사용할 수 있는 도구 목록:
 | `write_file` | 파일 생성/덮어쓰기. 작성 content 를 hashline 으로 반환 (read_file 없이 edit_file 직결) |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
-| `python` | **상태가 남는** 파이썬 실행 (v10.66.0) — 노트북 셀처럼 변수·import·읽어 둔 데이터가 호출 사이에 남는다. 관찰은 출력 + 마지막 식의 값 + `state:` 한 줄(메모리에 든 것의 이름·타입·크기). 열린 matplotlib figure 는 이미지로 첨부. [아래 참고](#-python-도구--상태가-남는-파이썬-v10660) |
 | `fetch` | URL 을 가져온다 — HTML 은 마크다운으로, JSON 은 들여쓴 텍스트로, XML·평문은 그대로. v10.92.0: 같은 도메인 링크를 따라가던 `depth` 를 지웠고(벤치·실사용 0회) 오류 결과는 사실만 말합니다(종전 "Try again later." 힌트 삭제) — docs/tool-review/TRACKER.md. v10.52.0 부터 JSON API(PyPI·Wikipedia REST·OSV·GitHub API 등)를 직접 읽고, charset 없는 UTF-8 페이지가 깨지지 않습니다. v10.56.2 부터 본문을 자르지 않습니다 — 종전엔 페이지마다 20만 자에서 표시 없이 잘려 큰 JSON 이 깨진 채로 오고 큰 HTML 은 본문 뒷부분이 사라졌습니다(Wikipedia Python 문서: 8,660 → 93,657자). 큰 결과는 다른 도구와 같이 파일로 저장되고 발췌가 옵니다. v10.56.3 부터 성공 코드(200·202)로 온 봇 확인 페이지와 JavaScript 로만 그려지는 빈 껍데기를 실패(`Bot check:` / `Needs JavaScript:`)로 돌려줍니다 — 종전엔 확인 페이지 글자가 내용으로 넘어갔습니다(DuckDuckGo 202, Google 검색 89자). v10.56.4: HTML 표를 행마다 한 줄로 읽고(코드 보기 페이지·위키 정보상자의 줄과 칸이 붙던 것), Gerrit·gitiles 의 `)]}'` 접두 JSON 과 `?format=TEXT` base64 원문을 바로 읽습니다. v10.57.2: 링크를 `[글](주소)` 로 싣습니다(같은 사이트는 `/경로`, 주소가 글을 되풀이할 뿐이면 글만; Bing·Google·DuckDuckGo 추적 주소는 실제 주소로) — 종전엔 링크가 본문에 없어 검색 결과를 따라갈 수 없었습니다. 블록 경계에서 줄을 바꾸고(Scholar 제목·저자가 붙던 것), 숨김 요소(`hidden`·`aria-hidden`·`display:none`)를 건너뛰고(Scholar 가 늘 싣는 숨은 "작동되지 않습니다" 문구), 공백을 HTML 처럼 접어 탭만 있는 줄·빈 목록 줄을 없앱니다(Wikipedia 본문이 266번째 줄 → 7번째 줄). 그림은 alt 글로(Wikipedia 수식의 TeX). v10.58.0 부터 `download_to` 인자로 응답을 변환 없이(원본 HTML·JSON·파일 바이트) 그 경로에 저장하고 결과로 경로·크기·첫 몇 줄만 받습니다(`depth` 와는 함께 못 씀). 바이너리(PDF·이미지·압축 파일)는 거절하지 않고 `.agent-cli/tmp/downloads/` 에 자동 저장합니다(이름은 URL 마지막 조각, 겹치면 번호; gitiles 바이너리 blob 은 base64 를 풀어 저장). v10.58.1 부터 큰 결과의 저장 파일은 `[Fetched …]` 머리줄 없이 본문만 담고, 안내가 그 파일이 변환본(원본 응답 아님)이며 원본은 `download_to` 로 받으라고 말합니다 — 모델이 머리줄째 복사한 파일을 JSON 으로 넘긴 일이 있었습니다 |
 | `browser` | 헤드리스 브라우저 — JavaScript 가 그리는 페이지를 읽고 클릭·입력 (v10.39.0). 스냅샷의 `[ref=eN]` 로 조작. 선택 설치 `agent-cli[browser]` — playwright 가 없으면 도구 자체가 프롬프트에서 빠짐. [아래 참고](#브라우저-도구-browser) |
 | `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "`wait` 로 턴을 마쳐라" 힌트가 붙음 — v10.65.0, 종전 `complete`). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |

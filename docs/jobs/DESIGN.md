@@ -70,10 +70,9 @@ GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 —
   지운 것은 결과에 적으므로 모델이 본다: "Removed `nohup`, the trailing `&` — a background job is already detached,
   logged and reported by the harness; use the pid below instead of `$!`." `setsid` 는 새 세션으로 그룹을 빠져나가
   `kill -- -<pid>` 가 닿지 않으니 반드시 지운다. 다 지우고 남는 게 없으면 "Nothing is left to run."
-- **작업의 몸은 핸들** (`JobHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`·`report_lines`). 셸 명령은 `ProcHandle`
-  (TERM → KILL, `kill -- -P`), 한도를 넘긴 `python` 셀은 `pyworker.PendingCell`(INT → 인터프리터째, `kill -INT -- -P`,
-  통지에 값·예외·그림·상태 줄을 덧붙임). `JobRegistry.adopt(handle, command, log, owner)` 가 이미 도는 몸을 받는다 —
-  번호·로그·꼬리·통지·수명(`has_active_work`·`drop_owner`·`stop_all`)은 둘이 같다. docs/python-tool/DESIGN.md §8.
+- **작업의 몸은 핸들** (`JobHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`). 셸 명령은 `ProcHandle`
+  (TERM → KILL, `kill -- -P`). v10.91.0~v10.101.0 엔 한도를 넘긴 `python` 셀(`pyworker.PendingCell`)도
+  `JobRegistry.adopt` 로 받았다 — v10.102.0 에 `python` 도구와 함께 `adopt` 를 지웠다(docs/python-tool/DESIGN.md §0).
 - **셸은 bash** (`jobs.SHELL` = `shutil.which("bash")`, 없으면 `/bin/sh`). 벤치에서 모델은 bash 문법을 썼고 컨테이너의
   sh 는 dash 였다: `diff <(…)` 두 턴 연속 실패, `[[ $f == *.pdf ]]` 가 분류 루프 결과를 전부 비웠다. 전경(`tool_shell`)과
   작업(`JobRegistry.start`)이 같은 실행기를 쓰고, Environment 절이 그 이름을 한 줄로 적는다("- Shell: bash (`shell` runs

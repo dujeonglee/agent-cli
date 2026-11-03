@@ -1585,3 +1585,21 @@ class TestShellTimeout:
         함수 자체(레지스트리 없는 런)는 상한으로 깎는다."""
         got = self._capture_timeout(monkeypatch, {"command": "make", "timeout": 600})
         assert got == 120
+
+
+def test_python_tool_is_gone():
+    """v10.102.0: 상태가 남는 `python` 도구를 지웠다(docs/python-tool/DESIGN.md §0).
+    도구 목록에도, 꼬리 블록·교정 줄을 만들던 모듈에도 남지 않는다."""
+    import importlib.util
+
+    from agent_cli.prompts import session_state
+    from agent_cli.tools import TOOLS
+
+    assert "python" not in TOOLS
+    assert not hasattr(session_state, "SHELL_PYTHON_NOTICE")
+    for mod in (
+        "agent_cli.pyworker",
+        "agent_cli.tools.python_tool",
+        "agent_cli.tools._pyworker_child",
+    ):
+        assert importlib.util.find_spec(mod) is None, mod

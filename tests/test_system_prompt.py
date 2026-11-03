@@ -674,6 +674,18 @@ class TestBuildSystemPrompt:
         assert "opening a database" in scratch
         assert "a mere open can destroy state" in scratch
 
+    def test_iterated_work_keeps_its_state_in_files(self):
+        """v10.102.0: 반복 작업의 상태는 파일에 둔다 — `python` 도구(상태가 남는
+        인터프리터)를 지운 판. GLM 9과제 × 3회 교차 A/B 에서 도구 있는 판 17,
+        이 문장 판 19 (docs/python-tool/DESIGN.md §0). 모델 대면 문장 어디에도
+        지운 도구를 가리키는 말이 없어야 한다."""
+        line = next(
+            b for b in TASK_GUIDELINES.split("\n- ") if b.startswith("Work you will")
+        )
+        assert "save the costly step's result in `.agent-cli/tmp/`" in line
+        assert "have each attempt load it instead of redoing the step" in line
+        assert "`python`" not in TASK_GUIDELINES
+
     def test_task_guidelines_require_terse_reasoning(self):
         """v8.59.0: 간결한 reasoning 지시 — Harbor tb21 실측에서 출력 토큰을
         18~92% 줄였고(3/3 일관) 품질 저하 신호 없음. ASD-STE100 규격 원문보다
@@ -938,28 +950,6 @@ class TestEnvironmentSection:
         # Date removed for KV prefix-cache stability across midnight.
         section = _build_environment_section()
         assert "Date:" not in section
-
-    # ── v10.90.0: `python` 이 로스터에 있는데 인터프리터가 없으면 한 줄 ──
-    # 벤치 세 트라이얼이 `python` 을 헛호출(`no_interpreter`)한 뒤에야 설치했다.
-
-    def test_python_line_when_no_interpreter(self, monkeypatch):
-        monkeypatch.setattr("agent_cli.pyworker.interpreter", lambda: None)
-        section = _build_environment_section(["shell", "python"])
-        assert (
-            "- Python: no `python3` was on `PATH` when this session started" in section
-        )
-        assert "install one with `shell`" in section
-
-    def test_no_python_line_when_interpreter_present(self, monkeypatch):
-        monkeypatch.setattr(
-            "agent_cli.pyworker.interpreter", lambda: "/usr/bin/python3"
-        )
-        assert "- Python:" not in _build_environment_section(["shell", "python"])
-
-    def test_no_python_line_when_python_not_on_roster(self, monkeypatch):
-        monkeypatch.setattr("agent_cli.pyworker.interpreter", lambda: None)
-        assert "- Python:" not in _build_environment_section(["shell"])
-        assert "- Python:" not in _build_environment_section()
 
     # ── v10.91.0: 명령을 돌리는 셸 — 실행기(`jobs.SHELL`)와 한 소스 ──
 

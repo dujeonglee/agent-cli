@@ -92,11 +92,11 @@ class TestSchemaAndValidation:
 
     def test_description_names_every_mutating_tool(self):
         """훅의 MUTATING_TOOLS 와 모델 문구는 한 상수 — v10.66.0 에 `python` 이 훅에만
-        더해져 설명이 셋만 말하던 어긋남(S3)."""
+        더해져 설명이 셋만 말하던 어긋남(S3). v10.102.0 에 `python` 을 지워 셋."""
         from agent_cli.snapshot import MUTATING_TOOLS
 
         d = TOOLS["snapshot"].description
-        assert "`shell` / `python` / `edit_file` / `write_file`" in d
+        assert "`shell` / `edit_file` / `write_file`" in d
         for t in MUTATING_TOOLS:
             assert f"`{t}`" in d
         assert "with `path`, only the snapshots that changed that path" in d

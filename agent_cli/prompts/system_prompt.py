@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import platform
 import re
-from collections.abc import Sequence
 from pathlib import Path
 
-from agent_cli import jobs, pyworker
+from agent_cli import jobs
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -98,13 +97,11 @@ sub-agents. The same applies when one turn's results add up to too much, so
 prefer a few targeted ops over many broad ones."""
 
 # ── Section 3: Task Guidelines ───────────────────
-# v10.73.0 (docs/tail/DESIGN.md): python 줄은 **경로 선택** 한 문장만 — 이득이 나는
-# 일의 **성질**로 말한다("비용 큰 단계 뒤에 다음 단계를 반복 시도하는 일" — 상태가
-# 남아 비용 큰 단계는 한 번만). 작업 종류(OCR·파싱…)나 실행 파일 이름(`python3`)은
-# 쓰지 않는다 — 과제·환경에 묶인다(사용자 지적). 쓰는 법(한 번 로드·
-# 한 호출 = 한 단계·누적·그림·산출물)은 인터프리터에 상태가 있는 동안만 뜨는
-# `## Python session` 블록(`tools/python_tool.tail_block`)으로, 잘못된 경로 직후엔
-# `session_state.SHELL_PYTHON_NOTICE` 로. 도구 설명(머리)에는 성질만 남겼다.
+# v10.102.0 (docs/python-tool/DESIGN.md §0): 반복 작업 줄은 상태를 **파일**에 둔다 —
+# 비용 큰 단계의 결과를 `.agent-cli/tmp/` 에 저장하고 시도마다 불러온다. 종전
+# (v10.73.0)엔 같은 자리가 `python` 도구(상태가 남는 인터프리터)로 보냈다. 이득이
+# 나는 일의 **성질**로 말한다 — 작업 종류(OCR·파싱…)나 실행 파일 이름(`python3`)은
+# 쓰지 않는다(과제·환경에 묶인다, 사용자 지적). 저장 형식은 모델이 고른다.
 TASK_GUIDELINES = """\
 ## Task Guidelines
 - Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.
@@ -116,7 +113,7 @@ TASK_GUIDELINES = """\
 - If an approach fails, diagnose the cause before switching tactics.
 - Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.
 - A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.
-- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one — goes through `python`, not Python run from `shell` (an inline `-c`, a heredoc or a script file): state persists between calls, so the costly step runs once and only the attempt changes.
+- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.
 - Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.
 - Do not introduce new security vulnerabilities.
 - All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.
@@ -467,14 +464,9 @@ def _build_tools_section(
     return f"## Available Tools\n{tool_block}"
 
 
-def _build_environment_section(active_tools: Sequence[str] = ()) -> str:
+def _build_environment_section() -> str:
     """Build environment context section with CWD, platform, and the
-    relative-path rule — plus, when ``python`` is on the roster and no
-    interpreter was on PATH at session start, one line saying so (v10.90.0):
-    three bench trials spent a turn calling ``python`` into
-    ``PyResult.no_interpreter`` before installing one. The line is phrased
-    about session start so it stays true after the model installs Python
-    (the section is built once).
+    relative-path rule.
 
     Date is intentionally omitted: it has no programmatic consumer and
     its daily rollover invalidates provider-side prefix caches across
@@ -512,12 +504,6 @@ def _build_environment_section(active_tools: Sequence[str] = ()) -> str:
         "path only for a file genuinely outside the working directory, or when "
         "telling the user where something is in your final answer."
     )
-    if "python" in active_tools and pyworker.interpreter() is None:
-        lines.append(
-            "- Python: no `python3` was on `PATH` when this session started, so "
-            "`python` has no interpreter yet — install one with `shell` (for "
-            "example through the system package manager) before calling it."
-        )
     return "\n".join(lines)
 
 
@@ -741,7 +727,7 @@ def build_system_prompt_sections(
         sections.append(("Reply Discipline", _REPLY_DISCIPLINE_SECTION))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
-    sections.append(("Environment", _build_environment_section(active_tools)))
+    sections.append(("Environment", _build_environment_section()))
 
     # Context Recovery Guide (replaces session_id + git context)
     # Only where the tool it names is callable — a profile with a narrowed

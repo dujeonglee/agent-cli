@@ -6,7 +6,7 @@
   실패했다). 저장소를 부트스트랩에서 세우는 이유: `snapshot` 도구의 광고 여부
   (`requires_handler="snapshot"`)가 LoopConfig 조립 때 정해지기 때문. 끔·git 없음·
   실패의 사람용 한 줄도 거기서 난다.
-- ``PreToolUse``: `snapshot.MUTATING_TOOLS`(shell·python·edit_file·write_file) 직전
+- ``PreToolUse``: `snapshot.MUTATING_TOOLS`(shell·edit_file·write_file) 직전
   체크포인트(최소 간격 안이면 건너뜀). 라벨은 `checkpoint_label` — 도구·턴에 그 호출의
   요약(`Tool.summary_arg`: 명령·경로)을 붙여 `list` 만 보고 "망치기 직전" 을 고를 수
   있게(v10.80.0; 종전 "before shell (turn 18)" 만으로는 어느 명령인지 history 를
@@ -50,7 +50,7 @@ def on_session_start(ctx):
 
 
 def _call_summary(tool_name: str, tool_input) -> str:
-    """호출의 요약 — 도구 자신의 `summary_arg`(shell·python 은 전문, edit·write 는 경로).
+    """호출의 요약 — 도구 자신의 `summary_arg`(shell 은 전문, edit·write 는 경로).
     접는 것은 `checkpoint_label` 의 일."""
     if not isinstance(tool_input, dict):
         return ""

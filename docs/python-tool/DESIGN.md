@@ -1,4 +1,60 @@
-# `python` 도구 — 상태가 남는 파이썬 실행 (v10.66.0)
+# `python` 도구 — 상태가 남는 파이썬 실행 (v10.66.0 ~ v10.101.0, **v10.102.0 에 삭제**)
+
+## 0. 삭제 (v10.102.0)
+
+아래 §1~§8 은 기록이다. 도구는 v10.102.0 에 지웠다 — 남는 것은 꼬리 Task Guidelines
+의 한 줄: "Work you will iterate on — a costly step (loading, decoding, preparing
+data) followed by repeated attempts at the next one: save the costly step's result in
+`.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead
+of redoing the step." 상태를 프로세스 대신 **파일**에 둔다. 저장 형식은 모델이 고른다.
+
+### 0.1 문제의 뿌리 세 가지
+
+1. **셀 코드는 파일이 아니다.** spawn·forkserver 방식 `multiprocessing` 은 자식에서
+   `__main__` 을 파일로 다시 import 하고 함수를 이름으로 pickle 한다. 셀의
+   `__main__` 에는 파일이 없어 자식이 `AttributeError: Can't get attribute 'worker'
+   on <module '__main__' (built-in)>` 로 죽고 `Pool` 은 자식을 끝없이 다시 띄운다
+   (멈춤). 기본 방식: macOS spawn · Windows spawn · Linux ≤3.13 fork · Linux 3.14+
+   forkserver. v10.78.0 의 진짜 `__main__` 모듈은 fork 에서만 통한다.
+2. **한 프로세스에 상태가 쌓인다.**
+   - fork 로 고정하면 부모가 먼저 쓴 것에 자식이 걸린다 — 실측(macOS): 부모가
+     numpy(Accelerate)·OpenCV 를 먼저 쓰면 fork 자식 10/10 멈춤(부모가 안 쓰면 정상).
+     배경 스레드가 쥔 `threading.Lock` 은 macOS·Linux(docker `python:3.12-slim`)
+     모두 20/20 멈춤(spawn 정상). logging 은 fork 뒤 잠금 재초기화가 있어 30/30 정상.
+   - 고친 모듈은 반영되지 않는다 — 부모는 처음 import 한 판을 `importlib.reload`
+     전까지 쓰고, `Pool(2)` 의 자식끼리 판이 섞일 수 있고, 같은 초·같은 크기 편집은
+     낡은 `.pyc` 를 탄다(설명 페이지로 정리, 리뷰 세 차례).
+   - 인터프리터를 죽이면 전부 잃는다(타임아웃·인터럽트 무시·OOM).
+3. **POSIX 전용 구현** — `os.killpg`·`start_new_session`.
+
+1·2 를 "셀을 파일로 저장해 import" 로 풀려 하면 2 의 낡은 판 문제가 그대로 남고,
+fork 로 통일하면 2 의 멈춤이 OS 를 가리지 않는다. 상태를 프로세스 밖(파일)에 두면
+세 가지가 함께 사라진다 — 매 시도가 새 프로세스라 spawn 이 파일을 import 하고, 고친
+코드가 그대로 돌고, 죽어도 잃는 것이 없다.
+
+### 0.2 측정 (2026-11-03~04, GLM-5.3-Flash-oQ4, tb21 9과제, 교차 3회씩)
+
+변형 B = 도구를 끈 판(`AGENT_CLI_PYTHON_TOOL=0`) + 위 문장. 스위치가 0 이면 꼬리의
+`## Python session` 블록·shell 파이썬 교정 줄·Environment 의 "no `python3`" 줄도
+모두 빠지므로, 삭제판이 모델에게 보이는 프롬프트는 측정한 B 와 같다. 차이 하나: 스냅샷 안내의
+변경 도구 목록(`MUTATING_TOOLS_PHRASE`)에서 `python` 이 빠진다(B 에서는 정적이라
+남아 있었다).
+
+| | 현행 (도구) | B (파일) |
+|---|---|---|
+| 통과 (런별) | 5 · 7 · 5 = **17** | 6 · 6 · 7 = **19** |
+| 벽시계 (분) | 54 · 48 · 47 | 47 · 43 · 36 |
+| 턴 합 | 300 | 311 |
+| shell 파이썬 실행 / 오류 | 45 / 1 | 76 / 7 |
+| `python` 도구 실패 | 14 | — |
+| 비용 큰 명령 반복 | 14 · 24 · 20 | 21 · 16 · 13 |
+
+과제별(현행 / B): elf 3/3 · log 3/3 · multi 3/3 · db-wal 2/3 · large-scale 3/2(B 의
+실패는 `:wq` 대신 `wq` — 파이썬과 무관) · regex 1/3 · financial 2/1 · gcode 0/1 · video 0/0.
+B 에서 한 번씩 내려간 과제가 둘(large-scale·financial)이고 올라간 과제가 셋
+(db-wal·regex·gcode)이다 — 셋 중 한 번 차이는 GLM 의 런 간 흔들림 범위다. 합계는
+퇴행이 없고 비용 큰 단계의 반복도 늘지 않아 B. GLM 만 쟀다(35B 미측정).
+
 
 ## 1. 왜
 

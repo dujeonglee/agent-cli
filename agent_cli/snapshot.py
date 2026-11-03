@@ -47,9 +47,8 @@ EXCLUDE_DIRS: tuple[str, ...] = (".agent-cli", "node_modules", "__pycache__", ".
 SNAPSHOT_DIR_NAME = "snapshot.git"
 _AUTHOR = ("agent-cli snapshot", "snapshot@agent-cli")
 #: 직전에 체크포인트를 찍는 도구 — 내장 훅(``hooks/builtin/10_snapshot.py``)이 보고,
-#: 모델에게 가는 문구(시스템 섹션·도구 설명)도 여기서 나온다(한 곳 — v10.66.0 에
-#: ``python`` 이 훅에만 더해져 문구가 셋만 말하던 어긋남을 닫는다).
-MUTATING_TOOLS: tuple[str, ...] = ("shell", "python", "edit_file", "write_file")
+#: 모델에게 가는 문구(시스템 섹션·도구 설명)도 여기서 나온다(한 곳).
+MUTATING_TOOLS: tuple[str, ...] = ("shell", "edit_file", "write_file")
 MUTATING_TOOLS_PHRASE = " / ".join(f"`{t}`" for t in MUTATING_TOOLS)
 #: 체크포인트 라벨에 붙는 호출 요약의 상한(문자) — "before shell (turn 7): sqlite3 main.db"
 LABEL_SUMMARY_CHARS = 60
