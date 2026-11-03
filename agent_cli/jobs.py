@@ -20,9 +20,8 @@
 남기지 않는다). 영속은 없다 — PID 는 프로세스와 함께 죽는다.
 
 작업의 몸은 **핸들**(v10.91.0, `JobHandle`): 셸 명령은 ``Popen`` 을 감싼
-`ProcHandle`, 한도를 넘겨 계속 도는 `python` 셀은 `pyworker.PendingCell`. 레지스트리는
-핸들에게 끝났는지(`poll`)·멈춤(`stop`/`force`)·멈추는 법 문구(`stop_hint`)·통지에 덧붙일
-줄(`report_lines`)만 묻는다 — 번호·로그·꼬리·통지·수명은 둘이 같다. 셸 명령은 bash 가
+`ProcHandle`. 레지스트리는 핸들에게 끝났는지(`poll`)·멈춤(`stop`/`force`)·멈추는 법
+문구(`stop_hint`)만 묻는다. 셸 명령은 bash 가
 있으면 bash 로 띄운다(`SHELL`): 벤치에서 `[[ ]]`·`<(…)` 가 dash 에서 깨져 턴을 잃었다.
 """
 
@@ -69,20 +68,16 @@ class JobHandle(Protocol):
         ...
 
     def stop(self) -> None:
-        """부드럽게 멈추라고 한다 (셸: 그룹에 TERM, 셀: 그룹에 INT)."""
+        """부드럽게 멈추라고 한다 (셸: 그룹에 TERM)."""
         ...
 
     def force(self) -> None:
-        """듣지 않으면 죽인다 (셸: 그룹에 KILL, 셀: 인터프리터째)."""
+        """듣지 않으면 죽인다 (셸: 그룹에 KILL)."""
         ...
 
     @property
     def stop_hint(self) -> str:
         """모델이 이 작업을 멈추는 명령 — 꼬리·결과·중간 깨우기가 같은 모양."""
-        ...
-
-    def report_lines(self) -> list[str]:
-        """종료 통지의 로그 꼬리 뒤에 덧붙일 줄 (셀: 값·예외·상태 줄)."""
         ...
 
 
@@ -120,9 +115,6 @@ class ProcHandle:
         ``--`` 는 음수를 신호 번호로 읽지 않게 하는 표기다."""
         return f"`kill -- -{self.proc.pid}`"
 
-    def report_lines(self) -> list[str]:
-        return []
-
 
 @dataclass
 class Job:
@@ -157,7 +149,7 @@ class Job:
 
 
 def elapsed_text(seconds: int) -> str:
-    """``5s`` · ``2m31s`` · ``1h05m`` — 작업 꼬리·통지·`python` 의 바쁨 안내가 같은 모양."""
+    """``5s`` · ``2m31s`` · ``1h05m`` — 작업 꼬리·통지가 같은 모양."""
     s = max(0, seconds)
     h, rem = divmod(s, 3600)
     m, sec = divmod(rem, 60)
@@ -194,7 +186,7 @@ class JobRegistry:
 
     @property
     def available(self) -> bool:
-        """띄워도 통지가 갈 곳이 있다 — `python` 이 한도 뒤 셀을 작업으로 넘길지 정할 때 본다."""
+        """띄워도 통지가 갈 곳이 있다 — `shell` 이 상한 위 명령을 작업으로 띄울지 정할 때 본다."""
         return self.deliver is not None and not self.closed
 
     def _ensure_available(self) -> None:
@@ -234,52 +226,13 @@ class JobRegistry:
                 stdout=logf,
                 stderr=subprocess.STDOUT,
             )
-        return self._register(
-            job_id, ProcHandle(proc), command=command, log=rel, owner=owner
-        )
-
-    def adopt(
-        self,
-        handle: JobHandle,
-        *,
-        command: str,
-        log: Path,
-        owner: str,
-        started_at: float,
-    ) -> Job:
-        """이미 돌고 있는 몸을 작업으로 받는다 (v10.91.0) — 한도를 넘긴 `python` 셀.
-        ``log`` 는 작업 디렉터리 기준 상대 경로이고 그 첫 줄은 ``$ {command}`` 여야
-        한다(`header_bytes`·꼬리 필터가 셸 작업과 같은 모양을 기대한다).
-        ``started_at`` 은 몸이 **실제로 시작한** 시각 — 경과 시간(꼬리·통지)은
-        거기서 센다 (v10.91.1)."""
-        self._ensure_available()
-        return self._register(
-            self._next_id(),
-            handle,
-            command=command,
-            log=log,
-            owner=owner,
-            started_at=started_at,
-        )
-
-    def _register(
-        self,
-        job_id: int,
-        handle: JobHandle,
-        *,
-        command: str,
-        log: Path,
-        owner: str,
-        started_at: float | None = None,
-    ) -> Job:
         job = Job(
             id=job_id,
-            pid=handle.pid,
+            pid=proc.pid,
             command=command,
-            log=log,
+            log=rel,
             owner=owner,
-            handle=handle,
-            started_at=started_at if started_at is not None else time.time(),
+            handle=ProcHandle(proc),
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -477,7 +430,6 @@ class JobRegistry:
         )
         body = [f"log: {job.log.as_posix()} (last {len(tail)} line(s))"]
         body += [ln[:TAIL_LINE_CHARS] for ln in tail]
-        body += job.handle.report_lines()
         return "\n".join([head, *(f"  {ln}" for ln in body)])
 
     def _tail(self, job: Job) -> list[str]:

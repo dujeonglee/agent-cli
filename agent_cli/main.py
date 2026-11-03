@@ -1400,7 +1400,6 @@ def run(
         build_hook_runner,
         build_job_registry,
         build_monitor_registry,
-        build_py_registry,
         build_schedule_registry,
         build_snapshot_store,
         wire_agent_mail,
@@ -1410,7 +1409,6 @@ def run(
     # 일어난다. board 도 env 도 없이 항상 조립된다.
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
-    build_py_registry()  # 🐍 python 워커 — 레지스트리가 서야 도구가 광고된다 (v10.66.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     build_snapshot_store(
         session.session_id
@@ -2383,14 +2381,12 @@ def web(
         build_hook_runner,
         build_job_registry,
         build_monitor_registry,
-        build_py_registry,
         build_schedule_registry,
         build_snapshot_store,
     )
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
-    build_py_registry()  # 🐍 python 워커 — 레지스트리가 서야 도구가 광고된다 (v10.66.0)
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     build_snapshot_store(
         session.session_id

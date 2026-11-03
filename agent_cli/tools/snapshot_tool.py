@@ -2,7 +2,7 @@
 
 The snapshots themselves are taken by the built-in hook
 (``hooks/builtin/10_snapshot.py``) — at session start and just before every
-call of ``snapshot.MUTATING_TOOLS`` (shell / python / edit_file / write_file).
+call of ``snapshot.MUTATING_TOOLS`` (shell / edit_file / write_file).
 This tool is the model's way back: one call, no PATH or git knowledge needed.
 It is native like ``monitor`` and ``schedule`` (the store lives in this
 process — ``snapshot.get_snapshot``).

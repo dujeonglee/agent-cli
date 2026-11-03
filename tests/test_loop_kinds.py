@@ -418,7 +418,7 @@ class TestOneHarnessRecord:
 
 class TestReleaseOwnerIsOneFunction:
     def test_private_and_resident_release_the_same_resources(self, monkeypatch):
-        """잡·모니터·python 워커·메일함(체크인) — 한 함수가 거둔다. 상주의 `_drop_monitors` 는
+        """잡·모니터·메일함(체크인) — 한 함수가 거둔다. 상주의 `_drop_monitors` 는
         같은 함수의 자원 몫(메일함은 죽음의 정본 자리인 워커 finally 가 레지스트리를 넘긴다)."""
         from agent_cli.runtime import release_owner
         from agent_cli.subagent.agents_live import AgentRegistry
@@ -436,14 +436,13 @@ class TestReleaseOwnerIsOneFunction:
                 dropped.append((self.name, owner))
                 return 1
 
-        monkeypatch.setattr("agent_cli.pyworker.get_py_registry", lambda: _Reg("py"))
         out = release_owner("run:q", jobs=_Reg("jobs"), monitors=_Reg("mon"))
-        assert out.count == 3 and "monitor" in out.note and "job" not in out.note
-        assert sorted(dropped) == [("jobs", "run:q"), ("mon", "run:q"), ("py", "run:q")]
+        assert out.count == 2 and "monitor" in out.note and "job" not in out.note
+        assert sorted(dropped) == [("jobs", "run:q"), ("mon", "run:q")]
         dropped.clear()
         registry = AgentRegistry.__new__(AgentRegistry)
         registry.jobs, registry.monitors = _Reg("jobs"), _Reg("mon")
-        assert registry._drop_monitors("k") == 3
+        assert registry._drop_monitors("k") == 2
         assert {o for _, o in dropped} == {"agent:k"}
 
 

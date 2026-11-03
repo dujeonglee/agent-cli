@@ -25,7 +25,6 @@ from agent_cli.tools.fetch import FetchTool
 from agent_cli.tools.history import HistoryTool
 from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.monitor_tool import MonitorTool
-from agent_cli.tools.python_tool import PythonTool
 from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
@@ -68,9 +67,6 @@ _ALL_TOOLS: list[Tool] = [
     # ="vision"`` — 못 보는 모델이면 광고되지 않는다.
     ViewImageTool(),
     ShellTool(),
-    # 🐍 shell 의 짝 (v10.66.0): 상태가 남는 파이썬 — ``requires_handler="python"``,
-    # 세션 레지스트리(`runtime.build_py_registry`)가 없으면 광고되지 않는다.
-    PythonTool(),
     FetchTool(),
     # 🌐 fetch 의 짝: JavaScript 가 그리는 페이지·클릭이 필요한 페이지.
     # ``requires_handler="browser"`` — playwright 가 없으면 광고되지 않는다.

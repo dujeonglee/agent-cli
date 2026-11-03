@@ -218,7 +218,6 @@ class AgentLoop:
         # 포트가 아니므로(§4.2) 여기서 얹는다.
         from agent_cli.runtime import (
             browser_resource,
-            python_resource,
             skills_resource,
             snapshot_resource,
         )
@@ -235,8 +234,6 @@ class AgentLoop:
             # ``run_skill`` (v10.100.0) — 모델이 부를 수 있는 스킬이 하나라도 있을 때만
             # (전부 사용자 전용이면 목록 없는 도구를 광고하게 된다).
             "skills": skills_resource(),
-            # ``python`` (v10.66.0) — 워커 레지스트리가 선 세션에서만.
-            "python": python_resource(),
             # ``view_image`` (v10.77.0) — 못 본다고 알려진 모델(`supports_vision:
             # false`)만 뺀다. 모르면(프로브 전) 광고하고 공급자 경계가 판정한다.
             "vision": None

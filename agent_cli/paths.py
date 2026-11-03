@@ -65,7 +65,7 @@ def images_dir() -> Path:
 
 def scratch_dir() -> Path:
     """``.agent-cli/tmp`` — 모델의 임시 파일(중간 결과·보조 스크립트·백업본)과
-    하니스 하위 디렉토리(``jobs/``·``python/``·``downloads/``·``uploads/``)의
+    하니스 하위 디렉토리(``jobs/``·``downloads/``·``uploads/``)의
     집. 세션을 조립할 때(main ``_build_context``) 만들어 둔다 (v10.90.0) —
     종전엔 프롬프트가 "없으면 만들라" 고만 했고, 벤치 27 트라이얼 중 5 에서
     모델이 잊은 채 거기에 쓰다 "Directory nonexistent" 로 한 턴씩 잃었다

@@ -1561,7 +1561,7 @@ class AgentRegistry:
         )
 
     def _drop_monitors(self, key: str) -> int:
-        """이 에이전트가 건 감시·띄운 백그라운드 작업·python 워커를 폐기 — private 종류와 같은
+        """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — private 종류와 같은
         함수(`runtime.release_owner`, v10.89.0). 메일함·체크인은 부르는 쪽이 따로(kill·종료는
         자기 순서로 취소하고, 죽음의 정본 자리는 레지스트리까지 넘긴다)."""
         from agent_cli.runtime import release_owner

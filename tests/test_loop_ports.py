@@ -161,7 +161,7 @@ class TestHandlerResources:
         아니면 그 도구는 **어느 루프에서도** 안 붙는다(조용한 실종)."""
         from agent_cli.tools import TOOLS
 
-        # ``ctx``·``snapshot``·``browser``·``python``·``vision``·``skills`` 는 포트가
+        # ``ctx``·``snapshot``·``browser``·``vision``·``skills`` 는 포트가
         # 아닌 세션 자원 — core 가 얹는다(``vision`` 은 바인딩의 능력, ``skills`` 는
         # 모델이 부를 수 있는 스킬 유무).
         available = set(BUILDERS["oneshot"]().handler_resources()) | {
@@ -169,7 +169,6 @@ class TestHandlerResources:
             "snapshot",
             "browser",
             "wake",
-            "python",
             "vision",
             "skills",
         }

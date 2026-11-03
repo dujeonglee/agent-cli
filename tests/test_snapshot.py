@@ -262,8 +262,8 @@ class TestLabel:
             "before shell (turn 7): sqlite3 main.db"
         )
         assert checkpoint_label("shell", 7, "") == "before shell (turn 7)"
-        assert checkpoint_label("python", 3, "import os\n\nprint(  1 )") == (
-            "before python (turn 3): import os print( 1 )"
+        assert checkpoint_label("shell", 3, "ls\n\nwc  -l") == (
+            "before shell (turn 3): ls wc -l"
         )
         long = "x" * 200
         lab = checkpoint_label("shell", 1, long)
@@ -442,7 +442,7 @@ class TestBuiltinHook:
     def test_mutating_tools_come_from_the_store_module(self):
         """훅과 모델 문구가 같은 상수를 본다(S3)."""
         assert self._hook().MUTATING_TOOLS is MUTATING_TOOLS
-        assert "python" in MUTATING_TOOLS
+        assert MUTATING_TOOLS == ("shell", "edit_file", "write_file")
 
     @pytest.mark.parametrize(
         ("tool", "tool_input", "want"),
@@ -451,11 +451,6 @@ class TestBuiltinHook:
                 "shell",
                 {"command": "sqlite3 main.db  'PRAGMA x'"},
                 "sqlite3 main.db 'PRAGMA x'",
-            ),
-            (
-                "python",
-                {"code": "import os\nos.remove('a')"},
-                "import os os.remove('a')",
             ),
             ("edit_file", {"path": "src/a.py", "edits": []}, "src/a.py"),
             ("write_file", {"path": "out.txt", "content": "zzz"}, "out.txt"),
