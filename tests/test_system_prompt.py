@@ -651,7 +651,10 @@ class TestBuildSystemPrompt:
         absolute-path variant bled its path into 63% of shell commands
         (``cd /abs/… &&``) and doubled the op count, so it was rejected."""
         assert "`.agent-cli/tmp/`" in TASK_GUIDELINES
-        assert "never in /tmp" in TASK_GUIDELINES
+        # v10.103.0: 게이트가 시스템 임시 디렉터리를 묻지 않게 되어 "need no
+        # confirmation" 이유 절을 뺐다 — 안내는 선호(not), 금지(never)가 아니다.
+        assert "not in /tmp" in TASK_GUIDELINES
+        assert "need no confirmation" not in TASK_GUIDELINES
         assert "{scratch_dir}" not in TASK_GUIDELINES  # no absolute path
 
     def test_backup_rule_lives_in_the_scratch_bullet(self):

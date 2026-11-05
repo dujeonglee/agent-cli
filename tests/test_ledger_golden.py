@@ -19,6 +19,10 @@ P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·�
   ", unanswered questions are closed" 삭제, 질문 빚 시나리오(q-7a3f `answer`)는 회신 빚
   (r-2 `reply`)으로 — 그 셋으로만 달라졌다(나머지 바이트 동일, 다시 만들며 대조).
 
+- v10.103.0: 꼬리 Scratch 줄 "never in /tmp … need no confirmation" → "not in /tmp …
+  stay visible to the user"(봉쇄가 시스템 임시 디렉터리를 묻지 않게 되어 이유 절 교체) —
+  그 치환 하나로만 달라졌다(스크립트로 대조, 나머지 바이트 동일).
+
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """
 

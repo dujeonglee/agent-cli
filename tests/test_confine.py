@@ -40,6 +40,13 @@ def confined(tmp_path, monkeypatch):
     outside.mkdir()
     monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "1")
     monkeypatch.setenv("AGENT_CLI_WORKSPACE_ROOT", str(ws))
+    # pytest 의 ``tmp_path`` 는 시스템 임시 디렉터리 아래다 — 바로 v10.103.0 부터
+    # 묻지 않는 자리. 실제 루트를 쓰면 ``outside`` 가 전부 통과해 "밖이면 묻는다"
+    # 테스트가 공허해지므로, 이 픽스처 안에서는 임시 루트를 ``<tmp>/systmp`` 하나로
+    # 바꿔 끼운다. 실제 루트 계산은 ``TestSystemTempDirs`` 가 따로 본다.
+    systmp = tmp_path / "systmp"
+    systmp.mkdir()
+    monkeypatch.setattr(_confine, "temp_roots", lambda: frozenset({systmp.resolve()}))
     return ws, outside
 
 
@@ -220,9 +227,11 @@ class TestDevicePseudoFiles:
     def test_stderr_redirect_to_a_real_file_is_still_a_write(self, confined):
         """``2>/tmp/err.log`` — 종전엔 ``2>`` 토큰이 통째로 버려져 밖으로 쓰는
         stderr 리다이렉션이 게이트를 비켜갔다."""
-        paths = _confine.extract_shell_paths("make 2>/tmp/err.log")
-        assert "/tmp/err.log" in paths
-        denial = _confine.guard(paths, "shell", command="make 2>/tmp/err.log")
+        _, outside = confined
+        cmd = f"make 2>{outside}/err.log"
+        paths = _confine.extract_shell_paths(cmd)
+        assert f"{outside}/err.log" in paths
+        denial = _confine.guard(paths, "shell", command=cmd)
         assert denial is not None and "outside the workspace" in denial
 
     def test_file_redirect_still_makes_the_segment_mutating(self, confined, tmp_path):
@@ -237,6 +246,62 @@ class TestDevicePseudoFiles:
 
     def test_write_file_to_dev_null_passes(self, confined):
         assert _confine.guard(["/dev/null"], "write_file") is None
+
+
+class TestSystemTempDirs:
+    """시스템 임시 디렉터리는 묻지 않는다 (v10.103.0).
+
+    봉쇄는 사고 방지 + 워크스페이스 밖으로 새는 것의 속도 제한인데 임시
+    디렉터리에는 사용자의 파일이 없고 유출 경로도 아니다. 모델이 고르지 않아도
+    컴파일러·pip·pytest·mktemp 가 `/tmp` 를 명령줄에 올리고, 클라이언트가 안
+    붙은 방·배치 런에서는 확인 대신 거절이 되어 호출이 실패했다. 민감 사전과
+    심링크 탈출은 그대로 걸린다."""
+
+    def test_temp_file_passes_without_prompt(self, confined, tmp_path):
+        target = tmp_path / "systmp" / "build" / "x.log"
+        assert _confine.guard([str(target)], "write_file") is None
+        cmd = f"make 2>{target}"
+        assert (
+            _confine.guard(_confine.extract_shell_paths(cmd), "shell", command=cmd)
+            is None
+        )
+
+    def test_temp_root_itself_passes(self, confined, tmp_path):
+        root = tmp_path / "systmp"
+        assert _confine.guard([str(root)], "shell", command=f"cd {root}; ls") is None
+
+    def test_symlink_in_temp_pointing_outside_still_gated(self, confined, tmp_path):
+        """resolve 결과로 비교한다 — `/tmp/link -> <밖>` 은 여전히 밖이다."""
+        _, outside = confined
+        link = tmp_path / "systmp" / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        denial = _confine.guard([str(link / "x")], "write_file")
+        assert denial is not None and "outside the workspace" in denial
+
+    def test_sensitive_name_in_temp_still_asks(self, confined, tmp_path):
+        """민감 경로 사전은 임시 통과보다 먼저 본다."""
+        denial = _confine.guard(
+            [str(tmp_path / "systmp" / "id_rsa")], "read_file", check_workspace=False
+        )
+        assert denial is not None and "sensitive" in denial
+
+    def test_write_file_tool_into_temp_succeeds(self, confined, tmp_path):
+        target = tmp_path / "systmp" / "a.txt"
+        r = tool_write_file({"path": str(target), "content": "hi"})
+        assert r.success and target.read_text() == "hi"
+
+    def test_real_roots_cover_tmp_and_tempfile(self):
+        """픽스처 없이 — 실제 계산이 `/tmp` 와 `tempfile.gettempdir()` 을 품는지."""
+        import tempfile
+        from pathlib import Path
+
+        roots = _confine.temp_roots()
+        assert Path(tempfile.gettempdir()).resolve() in roots
+        if Path("/tmp").is_dir():
+            assert Path("/tmp").resolve() in roots
+            assert _confine._temp_pass(Path("/tmp/x/y.log").resolve())
+        assert _confine._temp_pass(Path(tempfile.gettempdir()).resolve() / "x")
+        assert not _confine._temp_pass(Path.home().resolve() / "x")
 
 
 # ── guard: prompt decisions ────────────────────────────────
