@@ -392,7 +392,7 @@ def function_schemas_for(
     목록을 만든다 — 같은 도구 집합·같은 설명 오버라이드·같은 파라미터 오버라이드·
     같은 인라인 가이드(전문, NATIVE.md N1). 프롬프트가 가르치는 것과 요청이
     싣는 것이 어긋나지 않게 한 함수에서 나온다."""
-    from agent_cli.tools.registry import TOOL_SCHEMAS, effective_tool_names
+    from agent_cli.tools.registry import TOOL_SCHEMAS, effective_tool_names, tool_view
 
     overrides = description_overrides_for(
         active_tools,
@@ -408,14 +408,18 @@ def function_schemas_for(
     )
     out: list[dict] = []
     for name in effective_tool_names(active_tools, dialect):
-        schema = TOOL_SCHEMAS.get(name)
-        if schema is None:
+        if TOOL_SCHEMAS.get(name) is None:
             continue
-        description = overrides.get(name, schema.description)
-        guide = (guides.get(name) or "").strip()
+        # 프롬프트 절과 같은 판정 (v10.109.0) — 지연 도구는 한 줄 요약·뼈대·안내 없음.
+        description, params, guide = tool_view(
+            name,
+            description_overrides=overrides,
+            parameter_overrides=param_overrides,
+            inline_guides=guides,
+        )
+        guide = (guide or "").strip()
         if guide:
             description = f"{description}\n\n{guide}"
-        params = param_overrides.get(name, schema.parameters)
         out.append(
             {
                 "type": "function",
@@ -427,6 +431,41 @@ def function_schemas_for(
             }
         )
     return out
+
+
+def tool_guide_text(
+    name: str,
+    active_tools: list[str],
+    dialect,
+    *,
+    has_agent_registry: bool = True,
+    nonblocking_ask: bool = False,
+) -> str | None:
+    """도구 하나의 **전문** — 이 루프의 ``## Available Tools`` 에 지연 없이 실렸을 블록
+    그대로 (v10.109.0). `tool_help` 의 결과와 A5 자동 전문의 출처(루프가
+    ``RunContext.tool_guide`` 로 묶는다). 모르는 이름이면 None."""
+    from agent_cli.tools.registry import TOOL_SCHEMAS, render_tool_block
+
+    if TOOL_SCHEMAS.get(name) is None:
+        return None
+    line, guide = render_tool_block(
+        name,
+        dialect=dialect,
+        description_overrides=description_overrides_for(
+            active_tools,
+            has_agent_registry=has_agent_registry,
+            nonblocking_ask=nonblocking_ask,
+        ),
+        parameter_overrides=parameter_overrides_for(active_tools, has_agent_registry),
+        inline_guides=_build_tool_inline_guides(
+            active_tools,
+            dialect,
+            nonblocking_ask=nonblocking_ask,
+            has_agent_registry=has_agent_registry,
+        ),
+        full=True,
+    )
+    return line + guide
 
 
 def _build_tools_section(

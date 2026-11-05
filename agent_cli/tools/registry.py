@@ -30,6 +30,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.tools.schedule import ScheduleTool
 from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.snapshot_tool import SnapshotTool
+from agent_cli.tools.tool_help import ToolHelpTool
 from agent_cli.tools.view_image import ViewImageTool
 from agent_cli.tools.virtual import (
     AskTool,
@@ -92,8 +93,22 @@ _ALL_TOOLS: list[Tool] = [
     RunSkillTool(),
     # ⏸ complete 의 짝 (v10.65.0): 닫지 않고 끝낸다 — 깨울 것이 있을 때만.
     WaitTool(),
+    # 📖 한 줄로만 소개된(지연) 도구의 전문 (v10.109.0). ``requires_handler=
+    # "deferred"`` — 지연 도구가 남은 루프에만 붙는다(지금은 지연 도구가 없다).
+    ToolHelpTool(),
     CompleteTool(),
 ]
+
+
+def check_deferred(tool: Tool) -> None:
+    """지연 도구는 한 줄 ``summary`` 를 가져야 한다 (v10.109.0) — 비어 있으면 설명
+    자리가 빈 채 광고된다. 조용히 전문으로 되돌리지 않고 등록 시점에 실패한다."""
+    if tool.deferred and not (tool.summary or "").strip():
+        raise ValueError(f"tool {tool.name!r} is deferred but has no summary")
+
+
+for _tool in _ALL_TOOLS:
+    check_deferred(_tool)
 
 TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
 #: Prompt order of the built-in tools (MCP tools join ``TOOLS`` later).
@@ -222,6 +237,10 @@ def render_param_value(prop_schema: dict, required: bool) -> str:
     head_parts = [p for p in (type_spec, "required" if required else "") if p]
     head = ", ".join(head_parts)
     desc = prop_schema.get("description", "")
+    if not desc and prop_schema.get("enum"):
+        # 설명이 없는 열거값(지연 도구의 뼈대, v10.109.0) — 값은 스키마의 ``enum`` 에서
+        # 읽는다. 설명이 있으면 종전 그대로 설명만(값 목록은 설명이 이미 말한다).
+        desc = " | ".join(f'"{v}"' for v in prop_schema["enum"])
     if head and desc:
         return f"{head} — {desc}"
     return head or desc
@@ -319,6 +338,98 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
 _MULTI_OP_DESC_REWRITES: dict[str, list[tuple[str, str]]] = {}
 
 
+#: 지연 도구의 인자 설명도 지울까 (v10.109.0, docs/tool-help/DESIGN.md D3) — True 면
+#: V2(인자 뼈대: 이름·타입·enum·필수만), False 면 V1(인자 전문 유지). **측정용**이다:
+#: PR 2 의 표적 과제 측정으로 승자를 정하면 그 쪽으로 고정하고 이 상수를 없앤다.
+DEFER_PARAM_DESCRIPTIONS = True
+
+#: 하위 스키마를 품는 JSON 스키마 키 — ``deferred_schema`` 가 이 자리만 내려간다.
+_SUBSCHEMA_LIST_KEYS = ("anyOf", "oneOf", "allOf", "prefixItems")
+_SUBSCHEMA_KEYS = ("items", "additionalProperties", "not")
+
+
+def deferred_schema(schema):
+    """JSON 스키마에서 ``description`` 키만 재귀적으로 지운 사본 (v10.109.0).
+    type·enum·required·items·minLength 등은 그대로 — 문법·검증이 쓰는 정보다.
+    ``properties`` 의 **키**는 인자 이름이라 지우지 않는다(``description`` 이라는
+    이름의 인자가 있어도 남는다); 그 값(하위 스키마)만 내려간다."""
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for k, v in schema.items():
+        if k == "description":
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {name: deferred_schema(sub) for name, sub in v.items()}
+        elif k in _SUBSCHEMA_KEYS and isinstance(v, dict):
+            out[k] = deferred_schema(v)
+        elif k in _SUBSCHEMA_LIST_KEYS and isinstance(v, list):
+            out[k] = [deferred_schema(sub) for sub in v]
+        else:
+            out[k] = v
+    return out
+
+
+def tool_view(
+    name: str,
+    *,
+    description_overrides: dict[str, str] | None = None,
+    parameter_overrides: dict[str, dict] | None = None,
+    inline_guides: dict[str, str] | None = None,
+    full: bool = False,
+) -> tuple[str, dict, str]:
+    """이 루프에서 도구 하나가 보이는 모양 — ``(설명, 인자 스키마, 인라인 안내)``.
+
+    프롬프트 절(:func:`get_tool_descriptions`)과 native ``tools[]``
+    (``system_prompt.function_schemas_for``)가 **이 한 함수**를 거친다 — 지연 판정이
+    둘 사이에서 어긋날 수 없게 (v10.109.0). 지연 도구(``Tool.deferred``)는 설명 자리에
+    ``summary``, 안내 없음, 인자는 ``DEFER_PARAM_DESCRIPTIONS`` 면 뼈대.
+    ``full=True`` 는 지연을 무시한 전문(`tool_help` 의 결과)."""
+    tool = TOOL_SCHEMAS[name]
+    description = (description_overrides or {}).get(name, tool.description)
+    params = (parameter_overrides or {}).get(name, tool.parameters)
+    guide = (inline_guides or {}).get(name, "")
+    if tool.deferred and not full:
+        description, guide = tool.summary, ""
+        if DEFER_PARAM_DESCRIPTIONS:
+            params = deferred_schema(params)
+    return description, params, guide
+
+
+def render_tool_block(
+    name: str,
+    *,
+    dialect=None,
+    description_overrides: dict[str, str] | None = None,
+    parameter_overrides: dict[str, dict] | None = None,
+    inline_guides: dict[str, str] | None = None,
+    full: bool = False,
+) -> tuple[str, str]:
+    """도구 하나의 ``## Available Tools`` 글 — ``(목록 줄, 안내 블록)``.
+    :func:`get_tool_descriptions` 가 도구마다 부르고, `tool_help` 가 ``full=True`` 로
+    같은 글을 얻는다(따로 쓴 두 벌이 생기지 않는다)."""
+    description, params_schema, guide = tool_view(
+        name,
+        description_overrides=description_overrides,
+        parameter_overrides=parameter_overrides,
+        inline_guides=inline_guides,
+        full=full,
+    )
+    multi_op = bool(getattr(dialect, "multi_op", False))
+    props = params_schema.get("properties", {})
+    required = set(params_schema.get("required", []))
+    if multi_op:
+        params = _multi_op_flat_params(name, props, required)
+    else:
+        params = {k: render_param_value(v, k in required) for k, v in props.items()}
+    params_str = json.dumps(params, ensure_ascii=False)
+    if multi_op:
+        description = _strip_own_prefix(name, description)
+        for old, new in _MULTI_OP_DESC_REWRITES.get(name, []):
+            description = description.replace(old, new)
+    return f"- {name}: {description}\n  Input JSON: {params_str}", guide
+
+
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
@@ -339,12 +450,6 @@ def get_tool_descriptions(
 
     Tools are ordered by ``effective_tool_names`` (related tools together).
     """
-    guides = inline_guides or {}
-    overrides = description_overrides or {}
-    # 루프별 스키마 교체 (v9.20.0) — 설명 교체와 같은 자리. 상주 에이전트의
-    # ``ask`` 가 ``to`` 를 갖고, main 의 ``ask`` 는 갖지 않는다.
-    param_overrides = parameter_overrides or {}
-    multi_op = bool(getattr(dialect, "multi_op", False))
     # Always-present tools added / `complete` dropped when unexposed, static
     # first — one function, shared with the decoding grammar.
     ordered = effective_tool_names(tool_names, dialect)
@@ -358,27 +463,18 @@ def get_tool_descriptions(
     roster: list[str] = []
     guide_blocks: list[str] = []
     for name in ordered:
-        schema = TOOL_SCHEMAS.get(name)
-        if schema is None:
+        if TOOL_SCHEMAS.get(name) is None:
             continue
-        params_schema = param_overrides.get(name, schema.parameters)
-        props = params_schema.get("properties", {})
-        required = set(params_schema.get("required", []))
-        if multi_op:
-            params = _multi_op_flat_params(name, props, required)
-        else:
-            params = {k: render_param_value(v, k in required) for k, v in props.items()}
-        params_str = json.dumps(params, ensure_ascii=False)
-        base_description = overrides.get(name, schema.description)
-        if multi_op:
-            description = _strip_own_prefix(name, base_description)
-            for old, new in _MULTI_OP_DESC_REWRITES.get(name, []):
-                description = description.replace(old, new)
-        else:
-            description = base_description
-        roster.append(f"- {name}: {description}\n  Input JSON: {params_str}")
-        if name in guides:
-            guide_blocks.append(guides[name])
+        line, guide = render_tool_block(
+            name,
+            dialect=dialect,
+            description_overrides=description_overrides,
+            parameter_overrides=parameter_overrides,
+            inline_guides=inline_guides,
+        )
+        roster.append(line)
+        if guide:
+            guide_blocks.append(guide)
     # Each guide already opens with leading newlines (it was appended inline),
     # so joining them keeps a blank line between guides as a soft separator.
     return "\n".join(roster) + "".join(guide_blocks)

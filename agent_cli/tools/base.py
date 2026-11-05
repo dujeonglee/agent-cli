@@ -82,6 +82,11 @@ class RunContext:
     #: `memory` 가 항목에 `turn` 을 적어 색인 줄 "(turn 12)" 가 `history` 의
     #: `turn = 12` 로 원문에 닿는 손잡이가 되게 한다(docs/session-memory/DESIGN.md §11).
     turn_now: Callable[[], int] | None = None
+    #: 도구 이름 → 이 루프의 프롬프트에 실리는 그 도구의 **전문** 블록 (v10.109.0,
+    #: docs/tool-help/DESIGN.md). 루프가 자기 방언·설명/스키마 교체·인라인 안내로
+    #: 묶어 둔 콜러블 — 모르는 이름이면 None. `tool_help` 와 A5 자동 전문이 같은
+    #: 글을 내도록 한 출처. 루프 상수라 위 캐시 조건에 맞는다.
+    tool_guide: Callable[[str], str | None] | None = None
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────
@@ -420,6 +425,17 @@ class Tool(ABC):
     #: (통째로 덮어쓸 수 있으면 일부도 고칠 수 있다; 막으면 작은 수정도 전체를
     #: 다시 쓰는 비용만 남는다).
     mounted_with: str | None = None
+
+    #: 프롬프트에 전문을 싣지 않는다 (v10.109.0, docs/tool-help/DESIGN.md) — 설명
+    #: 자리에 한 줄 ``summary``, 인자는 뼈대(``registry.DEFER_PARAM_DESCRIPTIONS``),
+    #: 인라인 안내는 빠진다. 전문은 `tool_help` 가 관찰로 준다(머리는 런 동안 고정 —
+    #: 펼치지 않는다). 프롬프트 절과 native `tools[]` 가 ``registry.tool_view`` 한
+    #: 곳에서 같은 판정을 받는다.
+    deferred: bool = False
+    #: 지연 도구의 한 줄 — "무엇인가" 가 아니라 "언제 쓰는가" (모델이 이 한 줄로 길을
+    #: 고른다). 손으로 쓴다(첫 문장 발췌 아님). ``deferred`` 인데 비어 있으면 등록
+    #: 시점에 실패한다 — 조용히 전문으로 되돌리지 않는다(``registry.check_deferred``).
+    summary: str = ""
 
     @property
     def key_prefix(self) -> str:
