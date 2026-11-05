@@ -191,6 +191,33 @@ def test_monitor_result_samples_are_in_the_inventory():
     assert 'unknown id "err-watch"' in text and "'" not in text
 
 
+def test_monitor_report_samples_are_in_the_inventory():
+    """`monitor` 의 나머지 결과 문구(v10.111.0) — 목록·등록 안내·발화 보고·삭제가 표본으로
+    가드에 닿는다. 등록 안내·보고는 임시 파일로 실제 함수를 불러 만든 글이다."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {
+        "monitor_list_empty",
+        "monitor_list",
+        "monitor_added",
+        "monitor_reports",
+        "monitor_deleted",
+    } <= ids
+    text = "\n".join(t for w, t in _ALL if " runtime monitor_" in w)
+    assert "'" not in text  # repr 작은따옴표 값이 돌아오지 않는다
+    for phrase in (
+        "lines written before now are not reported",
+        "Its last line matching the pattern:",
+        "is small, so its current contents count as new lines",
+        "no change for 400s",
+        "the file never appeared",
+        "(deadline expired) 3 match(es) total",
+        "fired once — monitor retired",
+        "· repeating",
+    ):
+        assert phrase in text, phrase
+    assert "/work/app.log" in text and "/var/folders" not in text  # 임시 경로는 고정
+
+
 def test_depth_limit_line_is_in_the_inventory():
     """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
     texts = [t for w, t in _ALL if " limit section " in w]

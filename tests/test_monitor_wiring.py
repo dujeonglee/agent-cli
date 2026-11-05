@@ -13,6 +13,7 @@ import time
 import pytest
 
 from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.tools.monitor_tool import NO_MONITORS
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -152,7 +153,7 @@ class TestToolSurface:
             assert mon_id in lst.output
 
             assert TOOLS["monitor"].run({"mode": "delete", "id": mon_id}).success
-            assert "No active monitors" in TOOLS["monitor"].run({"mode": "list"}).output
+            assert TOOLS["monitor"].run({"mode": "list"}).output == NO_MONITORS
         finally:
             set_monitor_registry(None)
             r.stop()

@@ -15,7 +15,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import conditions as mc
 from agent_cli.monitor.conditions import MatchCondition
+from agent_cli.tools import monitor_tool as mt
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -84,7 +86,7 @@ class TestRegister:
         old = time.time() - 60
         os.utime(f, (old, old))
         _, note = _match(f).register(observed_at=time.time())
-        assert "No existing line matches" in note
+        assert note.endswith(mc.NO_MATCH_YET)
 
     def test_large_file_modified_after_observation_gets_info_only(
         self, reg, tmp_path, monkeypatch
@@ -189,6 +191,7 @@ class TestToolRegistration:
                 ctx=ctx,
             )
             assert res.success and "nothing to check in the meantime" in res.output
+            assert "nothing to check in the meantime" in mt.ADDED  # 같은 출처
             assert "count as new" in res.output
             mon = r.list_all()[0]
             assert mon.state["offset"] == 0, "초기 커서가 공개 전에 심기지 않았다"

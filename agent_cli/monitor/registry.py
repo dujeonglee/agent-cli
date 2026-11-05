@@ -47,6 +47,19 @@ MAX_WAKES = 20
 REPORT_MAX_LINES = 5  # §10.3
 REPORT_MAX_LINE_CHARS = 500
 
+# ── 모델이 보는 문구 (v10.111.0) — 실행과 inventory 표본이 같은 출처 ──
+#: 보고 머리줄 — 어느 모니터인지(id·짝)와 경과·적중 수.
+REPORT_HEAD = "🔔 monitor {id} ({desc})   {ago} ago · {hits} hit(s)"
+REPORT_MORE = "… {n} more"
+#: 물러남 사유 — 마지막 보고의 끝 줄(``note``)이 된다.
+RETIRE_DEADLINE = "deadline expired"
+RETIRE_ONCE = "fired once — monitor retired"
+RETIRE_CAP = "report cap ({cap}) reached — released"
+#: 버퍼가 빈 채 물러날 때의 한 줄.
+RETIRE_SUMMARY = "({why}) {n} match(es) total"
+UNAVAILABLE_UNWIRED = "monitor: delivery is not wired (internal error)"
+UNAVAILABLE_CLOSED = "monitor: the session is shutting down"
+
 
 class MonitorUnavailable(RuntimeError):
     """배달 배선이 없거나 세션이 닫혔다 — 등록해 봐야 보고가 갈 곳이 없다.
@@ -114,12 +127,12 @@ def _format_report(mon: Monitor, lines: list[str], *, note: str = "") -> str:
     h, rem = divmod(elapsed, 3600)
     m = rem // 60
     ago = f"{h}h {m}m" if h else f"{m}m"
-    head = (
-        f"🔔 monitor {mon.id} ({mon.cond.describe()})   {ago} ago · {len(lines)} hit(s)"
+    head = REPORT_HEAD.format(
+        id=mon.id, desc=mon.cond.describe(), ago=ago, hits=len(lines)
     )
     body = [ln[:REPORT_MAX_LINE_CHARS] for ln in lines[:REPORT_MAX_LINES]]
     if len(lines) > REPORT_MAX_LINES:
-        body.append(f"… {len(lines) - REPORT_MAX_LINES} more")
+        body.append(REPORT_MORE.format(n=len(lines) - REPORT_MAX_LINES))
     if note:
         body.append(note)
     return "\n".join([head, *(f"  {ln}" for ln in body)])
@@ -171,9 +184,9 @@ class MonitorRegistry:
         `deliver` 를 꽂는다(docs/wiring §3.3).
         """
         if self.deliver is None:
-            raise MonitorUnavailable("monitor: delivery is not wired (internal error)")
+            raise MonitorUnavailable(UNAVAILABLE_UNWIRED)
         if self.closed:
-            raise MonitorUnavailable("monitor: the session is shutting down")
+            raise MonitorUnavailable(UNAVAILABLE_CLOSED)
         mon = Monitor(
             id=f"mon-{uuid.uuid4().hex[:6]}",
             cond=cond,
@@ -320,7 +333,7 @@ class MonitorRegistry:
             live = [m for m in self._monitors.values() if m.alive]
         for mon in live:
             if now >= mon.deadline_at:
-                self._retire(mon, "deadline expired", now)
+                self._retire(mon, RETIRE_DEADLINE, now)
                 continue
             try:
                 hit: Match | None = mon.cond.check(mon.state, now=now)
@@ -334,7 +347,7 @@ class MonitorRegistry:
             mon.matches += len(hit.lines) or 1
             mon._buf.extend(hit.lines)
             if mon.once:
-                self._retire(mon, "fired once — monitor retired", now, flush=True)
+                self._retire(mon, RETIRE_ONCE, now, flush=True)
             elif now - mon._last_report >= MIN_INTERVAL_S:
                 self._flush(mon, now)
 
@@ -361,7 +374,7 @@ class MonitorRegistry:
             with self._lock:
                 self._inflight -= 1
         if mon.alive and mon.wakes >= MAX_WAKES:
-            self._retire(mon, f"report cap ({MAX_WAKES}) reached — released", now)
+            self._retire(mon, RETIRE_CAP.format(cap=MAX_WAKES), now)
 
     def _retire(
         self, mon: Monitor, why: str, now: float, *, flush: bool = False
@@ -387,7 +400,9 @@ class MonitorRegistry:
                 lines, mon._buf = mon._buf, []
                 report = _format_report(mon, lines, note=why)
             else:
-                report = _format_report(mon, [f"({why}) {mon.matches} match(es) total"])
+                report = _format_report(
+                    mon, [RETIRE_SUMMARY.format(why=why, n=mon.matches)]
+                )
             mon.wakes += 1
             err = self._send(mon, report, retiring=True)
             if err:

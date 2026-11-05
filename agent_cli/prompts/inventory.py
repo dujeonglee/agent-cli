@@ -531,11 +531,22 @@ def _schedule_result_samples() -> list[tuple[str, str, str]]:
 
 
 def _monitor_result_samples() -> list[tuple[str, str, str]]:
-    """`monitor` 거절 문구 표본 (v10.110.0) — 검증(`validate`)과 조건 조립(`build`,
-    순수 함수)을 잘못된 인자로 실제로 불러 얻은 글, 그리고 모르는 `id` 상수. 등록 안내·
-    발화 보고는 파일 상태가 있어야 나와 여기 없다. 표기 가드가 본다."""
+    """`monitor` 결과·거절 문구 표본 (v10.110.0 거절 셋, v10.111.0 나머지).
+
+    거절은 검증(`validate`)과 조건 조립(`build`)을 잘못된 인자로 실제로 불러 얻는다.
+    등록 안내·발화 보고는 파일 상태가 있어야 나오므로 ``tempfile`` 디렉터리에 실제
+    파일을 만들어 실제 함수(`register`·`check`·`_format_report`)를 부르고 지운다.
+    출력이 결정적이도록 조건 검사에는 고정 시각을 넘기고, 임시 경로는 ``/work`` 로,
+    벽시계에 묶인 "modified HH:MM:SS, Ns ago" 는 고정 값으로 바꾼다. 표기 가드가 본다."""
+    import os
+    import re as _re
+    import tempfile
+    import time
+
+    from agent_cli.constants import format_duration
     from agent_cli.monitor import build
-    from agent_cli.tools.monitor_tool import UNKNOWN_ID
+    from agent_cli.monitor import registry as mr
+    from agent_cli.tools import monitor_tool as mt
 
     tool = TOOLS["monitor"]
 
@@ -543,9 +554,110 @@ def _monitor_result_samples() -> list[tuple[str, str, str]]:
         try:
             build(spec)
         except ValueError as e:
-            return f"monitor: {e}"
+            return mt.REJECTED.format(why=e)
         return ""
 
+    with tempfile.TemporaryDirectory() as tmp:
+        log = os.path.join(tmp, "app.log")
+
+        def fixed(text: str) -> str:
+            text = text.replace(tmp, "/work")
+            return _re.sub(
+                r"modified \d\d:\d\d:\d\d, \d+s ago",
+                "modified 09:14:02, 40s ago",
+                text,
+            )
+
+        def mon(cond, mon_id):
+            m = mr.Monitor(id=mon_id, cond=cond, deadline_at=0.0, owner="main")
+            m.created_at = time.time() - 720  # 보고 머리줄의 "12m ago"
+            return m
+
+        match = build({"file": log, "pattern": "failed"})
+        poll = build({"command": "curl -sf localhost:8080/health", "every": "30s"})
+        listing = "\n".join(
+            [
+                mt.LIST_HEAD,
+                mt.list_line(
+                    "mon-1a2b3c", match.describe(), format_duration(6540), once=True
+                ),
+                mt.list_line(
+                    "mon-4d5e6f", poll.describe(), format_duration(90), once=False
+                ),
+            ]
+        )
+        # 등록 — 아직 없는 파일(안내 없음), 이미 있는 큰 로그(근거), 모델이 못 본 작은 파일
+        absent = mt.added_text("mon-1a2b3c", match.describe(), "2h", once=True, note="")
+        with open(log, "w", encoding="utf-8") as f:
+            f.write("info start\nupload failed: disk full\ninfo retry\n")
+        mtime = os.stat(log).st_mtime
+        _, before_note = match.register(observed_at=mtime + 10)
+        existing = mt.added_text(
+            "mon-1a2b3c", match.describe(), "2h", once=True, note=before_note
+        )
+        _, after_note = match.register(observed_at=mtime - 10)
+        small_new = mt.added_text(
+            "mon-1a2b3c", match.describe(), "2h", once=False, note=after_note
+        )
+        # 발화 — 새 줄의 `pattern` 적중
+        st: dict = {"offset": os.path.getsize(log), "ino": os.stat(log).st_ino}
+        with open(log, "a", encoding="utf-8") as f:
+            f.write("query failed: db timeout\ninfo ok\n")
+        hit = match.check(st, now=time.time())
+        pattern_report = mr._format_report(
+            mon(match, "mon-1a2b3c"), hit.lines if hit else [], note=mr.RETIRE_ONCE
+        )
+        # 발화 — `file` + `idle`: 고정 시각으로 400초 조용함
+        idle = build({"file": log, "idle": "5m"})
+        os.utime(log, (500, 500))
+        idle_hit = idle.check({"registered_at": 1000}, now=1400)
+        idle_report = mr._format_report(
+            mon(idle, "mon-7a8b9c"),
+            idle_hit.lines if idle_hit else [],
+            note=mr.RETIRE_ONCE,
+        )
+        # 물러남 — 조용함 한도(`silent`), 파일이 끝내 안 생긴 경우
+        quiet = build(
+            {"file": os.path.join(tmp, "build.log"), "pattern": "done", "silent": "10m"}
+        )
+        gone = quiet.check({"registered_at": 1000}, now=1700)
+        why = gone.retire if gone else ""
+        silent_report = mr._format_report(
+            mon(quiet, "mon-0d1e2f"), [mr.RETIRE_SUMMARY.format(why=why, n=0)]
+        )
+        deadline_report = mr._format_report(
+            mon(poll, "mon-4d5e6f"),
+            [mr.RETIRE_SUMMARY.format(why=mr.RETIRE_DEADLINE, n=3)],
+        )
+        samples = [
+            ("monitor_list_empty", "`monitor` list with nothing live", mt.NO_MONITORS),
+            (
+                "monitor_list",
+                "`monitor` list: one `file` + `pattern`, one repeating `command` near its deadline",
+                listing,
+            ),
+            (
+                "monitor_added",
+                "`monitor` add: the file does not exist yet / exists already / is new and small",
+                f"{absent}\n{existing}\n{small_new}",
+            ),
+            (
+                "monitor_reports",
+                "Monitor reports: a `pattern` hit, a `file` + `idle` fire, a `silent` retire, a deadline",
+                f"{pattern_report}\n{idle_report}\n{silent_report}\n{deadline_report}",
+            ),
+            (
+                "monitor_deleted",
+                "`monitor` delete accepted, then with an `id` that is not live",
+                "\n".join(
+                    [
+                        mt.DELETED.format(id="mon-1a2b3c"),
+                        mt.UNKNOWN_ID.format(id="err-watch"),
+                    ]
+                ),
+            ),
+        ]
+        samples = [(i, w, fixed(t)) for i, w, t in samples]
     return [
         (
             "monitor_validation",
@@ -572,8 +684,9 @@ def _monitor_result_samples() -> list[tuple[str, str, str]]:
         (
             "monitor_unknown_id",
             "`monitor` delete with an `id` that is not live",
-            UNKNOWN_ID.format(id="err-watch"),
+            mt.UNKNOWN_ID.format(id="err-watch"),
         ),
+        *samples,
     ]
 
 

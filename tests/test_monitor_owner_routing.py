@@ -18,9 +18,13 @@ import pathlib
 import pytest
 
 from agent_cli.loop.ports import LoopPorts
-from agent_cli.monitor.registry import MonitorRegistry, MonitorUnavailable
+from agent_cli.monitor.registry import (
+    UNAVAILABLE_UNWIRED,
+    MonitorRegistry,
+    MonitorUnavailable,
+)
 from agent_cli.tools import RunContext
-from agent_cli.tools.monitor_tool import MonitorTool
+from agent_cli.tools.monitor_tool import NEEDS_SHELL, MonitorTool
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -105,7 +109,7 @@ class TestToolKnowsItsAddress:
             },
             ctx=RunContext(),
         )
-        assert not res.success and "delivery is not wired" in res.error
+        assert not res.success and res.error == UNAVAILABLE_UNWIRED
 
 
 # ── ② 주소는 종류가 정한다 ─────────────────────────────
@@ -584,7 +588,7 @@ class TestProfileReach:
                 },
                 ctx=no_shell,
             )
-            assert not r.success and "need the `shell` tool" in r.error
+            assert not r.success and r.error == NEEDS_SHELL
             assert "`run`" not in r.error
             r = tool._run(
                 {

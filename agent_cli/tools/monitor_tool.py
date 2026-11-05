@@ -29,9 +29,47 @@ def _registry():
     return get_monitor_registry()
 
 
-#: 모르는 `id` 로 지울 때 (v10.110.0 — 값은 큰따옴표; 종전 repr 작은따옴표). inventory
-#: 표본(`_monitor_result_samples`)이 같은 상수를 쓴다.
+# ── 모델이 보는 문구 (v10.110.0~v10.111.0) — 실행과 inventory 표본
+# (`_monitor_result_samples`)이 같은 출처를 쓴다.
+#: 모르는 `id` 로 지울 때 (v10.110.0 — 값은 큰따옴표; 종전 repr 작은따옴표).
 UNKNOWN_ID = 'monitor: unknown id "{id}" (see `mode` "list")'
+BAD_MODE = "monitor: mode must be one of {modes}"
+ADD_NEEDS_CONDITION = "monitor: add requires a condition — one of {shapes}"
+DELETE_NEEDS_ID = 'monitor: "delete" requires `id` (see `mode` "list")'
+NO_REGISTRY = "monitor: not available in this run (no registry)"
+NO_MONITORS = "No active monitors."
+LIST_HEAD = "Active monitors:"
+DELETED = "deleted {id}"
+#: 조건 조립·기간 인자의 거절 — ``{why}`` 는 `monitor.conditions` 의 문구.
+REJECTED = "monitor: {why}"
+BAD_DEADLINE = "monitor: `deadline` — {why}"
+NEEDS_SHELL = (
+    "monitor: `command` conditions need the `shell` tool, which "
+    "this agent does not have — use a `file` + `pattern` or "
+    "`file` + `idle` condition"
+)
+#: 등록 결과 — ``{note}`` 는 조건의 등록 안내(있으면 앞에 공백 하나).
+ADDED = (
+    "monitor {id} watching {desc} for {left}{repeating}. "
+    "It reports to you when it fires; there is nothing to check in the "
+    "meantime.{note}"
+)
+
+
+def list_line(mon_id: str, desc: str, left: str, *, once: bool) -> str:
+    """`list` 의 한 줄 — 실행과 표본 공용."""
+    return f"- [{mon_id}] {desc} · {left} left{'' if once else ' · repeating'}"
+
+
+def added_text(mon_id: str, desc: str, left: str, *, once: bool, note: str) -> str:
+    """등록 결과 — 실행과 표본 공용."""
+    return ADDED.format(
+        id=mon_id,
+        desc=desc,
+        left=left,
+        repeating="" if once else " (repeating)",
+        note=" " + note if note else "",
+    )
 
 
 class MonitorTool(Tool):
@@ -135,15 +173,15 @@ class MonitorTool(Tool):
     def validate(self, args: dict) -> str | None:
         mode = str(args.get("mode", "")).strip()
         if mode not in MODES:
-            return f"monitor: mode must be one of {', '.join(MODES)}"
+            return BAD_MODE.format(modes=", ".join(MODES))
         if mode == "add" and not any(
             args.get(k) not in (None, "") for k in ("file", "command")
         ):
             from agent_cli.monitor.conditions import SHAPES
 
-            return f"monitor: add requires a condition — one of {SHAPES}"
+            return ADD_NEEDS_CONDITION.format(shapes=SHAPES)
         if mode == "delete" and not str(args.get("id", "")).strip():
-            return 'monitor: "delete" requires `id` (see `mode` "list")'
+            return DELETE_NEEDS_ID
         return None
 
     def summary_arg(self, action_input: dict) -> str:
@@ -157,26 +195,27 @@ class MonitorTool(Tool):
         mode = str(args.get("mode", "")).strip()
         reg = _registry()
         if reg is None:
-            return ToolResult(
-                False, error="monitor: not available in this run (no registry)"
-            )
+            return ToolResult(False, error=NO_REGISTRY)
         if mode == "list":
             live = reg.list_all()
             if not live:
-                return ToolResult(True, output="No active monitors.")
+                return ToolResult(True, output=NO_MONITORS)
             now = _t.time()
             lines = [
-                f"- [{m.id}] {m.cond.describe()}"
-                f" · {format_duration(m.deadline_at - now)} left"
-                f"{'' if m.once else ' · repeating'}"
+                list_line(
+                    m.id,
+                    m.cond.describe(),
+                    format_duration(m.deadline_at - now),
+                    once=m.once,
+                )
                 for m in live
             ]
-            return ToolResult(True, output="Active monitors:\n" + "\n".join(lines))
+            return ToolResult(True, output=f"{LIST_HEAD}\n" + "\n".join(lines))
         if mode == "delete":
             mon_id = str(args.get("id", "")).strip()
             ok = reg.delete(mon_id)
             return (
-                ToolResult(ok, output=f"deleted {mon_id}")
+                ToolResult(ok, output=DELETED.format(id=mon_id))
                 if ok
                 else ToolResult(False, error=UNKNOWN_ID.format(id=mon_id))
             )
@@ -190,7 +229,7 @@ class MonitorTool(Tool):
         except ValueError as exc:
             # 문법 오류는 **ToolResult** 로 — 예외는 도구 경계를 못 넘는다
             # (constants.parse_duration 과 같은 분업).
-            return ToolResult(False, error=f"monitor: {exc}")
+            return ToolResult(False, error=REJECTED.format(why=exc))
 
         raw_deadline = args.get("deadline")
         if raw_deadline in (None, ""):
@@ -199,7 +238,7 @@ class MonitorTool(Tool):
             try:
                 deadline_s = parse_duration(str(raw_deadline))
             except ValueError as exc:
-                return ToolResult(False, error=f"monitor: `deadline` — {exc}")
+                return ToolResult(False, error=BAD_DEADLINE.format(why=exc))
 
         gate = _gate_command(cond)
         if gate:
@@ -213,12 +252,7 @@ class MonitorTool(Tool):
             and ctx.tools_available
             and "shell" not in ctx.tools_available
         ):
-            return ToolResult(
-                False,
-                error="monitor: `command` conditions need the `shell` tool, which "
-                "this agent does not have — use a `file` + `pattern` or "
-                "`file` + `idle` condition",
-            )
+            return ToolResult(False, error=NEEDS_SHELL)
 
         once = args.get("once")
         from agent_cli.monitor.registry import MonitorUnavailable
@@ -244,11 +278,8 @@ class MonitorTool(Tool):
         left = format_duration(mon.deadline_at - _t.time())
         return ToolResult(
             True,
-            output=(
-                f"monitor {mon.id} watching {mon.cond.describe()} for {left}"
-                f"{'' if mon.once else ' (repeating)'}. "
-                f"It reports to you when it fires; there is nothing to check in the "
-                f"meantime.{' ' + note if note else ''}"
+            output=added_text(
+                mon.id, mon.cond.describe(), left, once=mon.once, note=note
             ),
         )
 

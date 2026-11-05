@@ -717,3 +717,12 @@ monitor 의 지워진 인자 하나만 보는 것이라 "모르는 인자는 조
 `test_monitor_core.py::TestRunIsGone`, `test_monitor_owner_routing.py` 의 경합 재현 끼움점은
 `_run_side_effect` 에서 `_format_report` 로 옮겼다(창은 같은 자리). 측정은 전체 벤치에서 지시가
 있을 때 — 지표는 작업 종료를 지켜보는 monitor 수, 설명 길이는 실제 토크나이저로.
+
+## 14. 결과 문구 상수화와 표본 (v10.111.0, 2026-11-06)
+
+v10.110.0 은 거절 문구 셋만 상수로 빼 inventory 표본에 넣었다. 나머지 모델 대면 문구 — `list` 의 빈 목록·머리·각 줄, `add` 의 결과와 등록 안내(파일이 이미 있음·마지막 매칭 줄·작은 새 파일), 발화 보고(머리줄·"… N more"·물러남 사유 넷·버퍼가 빈 물러남 한 줄), `delete` 결과, 배달 불가 둘, `shell` 없는 루프의 `command` 거절, 조건 조립의 모든 거절과 기간 인자 오류, `describe()` 세 모양 — 를 **문구는 그대로** 모듈 상수와 작은 포맷 함수로 뺐다: `monitor/conditions.py`(`MIXED`·`NEEDS`·`BAD_REGEX`·`REGISTER_*`·`LAST_MATCH`·`SILENT_RETIRE`·`IDLE_HIT`·`DESCRIBE_*` …), `monitor/registry.py`(`REPORT_HEAD`·`REPORT_MORE`·`RETIRE_*`·`UNAVAILABLE_*`), `tools/monitor_tool.py`(`NO_MONITORS`·`LIST_HEAD`·`DELETED`·`NEEDS_SHELL`·`ADDED` + `list_line`·`added_text`). 실행과 표본이 같은 출처를 쓴다.
+
+- **표본** (`prompts.inventory._monitor_result_samples`): 기존 셋(`monitor_validation`·`monitor_condition_errors`·`monitor_unknown_id`)에 `monitor_list_empty`·`monitor_list`(`file` + `pattern` 하나, 마감 임박한 반복 `command` 하나)·`monitor_added`(파일 없음 / 이미 있는 로그 / 모델이 못 본 작은 새 파일)·`monitor_reports`(`pattern` 적중·`file` + `idle`·`silent` 물러남·마감)·`monitor_deleted`. 등록 안내·보고는 `tempfile` 디렉터리에 실제 파일을 만들어 실제 `register`·`check`·`_format_report` 를 부르고 지운다. 출력이 결정적이도록 조건 검사에 고정 시각을 넘기고, 임시 경로는 `/work` 로, 벽시계에 묶인 "modified HH:MM:SS, Ns ago" 는 고정 값으로 바꾼다 — inventory 를 두 번 떠서 바이트 같음을 확인했다.
+- **표기**: 남은 문구에서 새 위반은 없었다(v10.110.0 이 repr 셋·대문자 강조 하나를 이미 고쳤다). 표본의 가짜 로그 줄은 대문자 낱말(`ERROR`)이 가드의 대문자 강조 검사에 걸려 소문자 로그(`upload failed: disk full`)로 썼다 — 하니스 문구가 아니라 표본 데이터라서.
+- **알고 둔 것**: 버퍼가 빈 채 물러나는 보고(`silent`·마감)의 머리줄은 "1 hit(s)" 라고 쓴다 — 적중 수가 아니라 보고 본문 줄 수를 센다(`_format_report` 의 `len(lines)`). 문구가 아니라 셈의 문제라 이 변경에서 손대지 않았다. 이전 세션 모니터 통지(`main._previous_monitors_notice`)는 이 패키지 밖이라 범위 밖.
+- 테스트: 문구를 단정하던 monitor 테스트는 지우지 않고 상수를 쓰게 바꿨다 — `tests/test_monitor_wording.py` 는 문구를 그대로 고정하면서 상수와 같은지도 본다. 표본 존재·작은따옴표 재유입은 `tests/test_prompt_notation.py::test_monitor_report_samples_are_in_the_inventory`.

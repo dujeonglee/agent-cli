@@ -163,7 +163,7 @@
      - monitor 는 요약만 보고 조건 짝을 섞어(`command` + `every` + `pattern`, V2 는 `id` 까지 지어냄) 첫 호출이 **도구 오류**("give one condition — …")로 거절되고 다음 턴에 고쳤다: V1 5/5, V2 4/5 (V2 r2 는 인자가 깨진 채 우연히 통과). V1 의 인자 설명도 이것을 못 막았다 — 짝 규칙은 설명 산문에만 있다. V2 r3·r4·r5 는 두 번째 시도에서 `command` + `every` "2s"(1m 로 클램프) 폴링을 골라 동작은 했지만 `file` + `pattern` 보다 나쁘다.
      - `tool_help` 는 75런에서 0회 — 모델은 미리 읽지 않고 시도하고 오류로 배운다. (짝이 섞인 호출은 스키마 검증을 통과하므로 A5 자동 전문도 붙지 않는다 — 도구가 거절한다.)
      - **결정 D3: V2** (2026-11-06). 정답·선택률이 같고 가장 싸다. 부족한 것은 요약으로 보강한다 → monitor 요약에 세 짝을 이름으로 넣었다(위 표). 측정용 상수와 V1 렌더 경로·테스트를 지웠다.
-   - 같은 커밋의 표기 수정: monitor 의 모델 대면 문구 셋이 repr 작은따옴표였다(`unknown id`·잘못된 정규식 `pattern`·등록 안내의 "last line matching") → 큰따옴표, 등록 안내의 "are NOT reported" 대문자 강조 → 소문자. 거절 문구는 inventory 표본 `monitor_validation`·`monitor_condition_errors`·`monitor_unknown_id` 로 표기 가드가 본다(검증·조건 조립을 잘못된 인자로 실제로 불러 얻은 글). 등록 안내·발화 보고는 파일 상태가 있어야 나와 표본에 없다 — 다음 검토 몫.
+   - 같은 커밋의 표기 수정: monitor 의 모델 대면 문구 셋이 repr 작은따옴표였다(`unknown id`·잘못된 정규식 `pattern`·등록 안내의 "last line matching") → 큰따옴표, 등록 안내의 "are NOT reported" 대문자 강조 → 소문자. 거절 문구는 inventory 표본 `monitor_validation`·`monitor_condition_errors`·`monitor_unknown_id` 로 표기 가드가 본다(검증·조건 조립을 잘못된 인자로 실제로 불러 얻은 글). 등록 안내·발화 보고는 파일 상태가 있어야 나와 이때 표본에 없었다 — v10.111.0 에서 처리(docs/monitor/DESIGN.md §14).
    - **monitor 재측정 (최종 코드 984c24d2, 요약 보강 뒤, 5회)**: 5/5 정답, 첫 호출에 올바른 짝 4/5(1런은 잉여 키 `add`·`id`·`once` 로 한 번 재시도), 호출 합 26(기준 22, 보강 전 V2 34), 모델 호출 평균 4.4, 입력 토큰 합 평균 33,121(기준 35,348, 보강 전 V2 49,646). `tool_help` 0회.
    - **벤치 (GLM-5.3-Flash 사고 off, 9과제, 기준 v10.109.0 휠·후보 984c24d2 휠, 순서 base-r1 → cand-r1 → cand-r2 → base-r2, 2026-11-06 01:10~04:00)**:
 

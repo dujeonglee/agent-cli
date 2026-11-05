@@ -86,6 +86,56 @@ _SIGNATURES: tuple[tuple[str, frozenset[str]], ...] = (
 #: 모델이 보는 세 모양 — 인자 짝으로 (v10.79.0). 종전 ``{command, every}`` 중괄호와
 #: 내부 조건 이름(`match`·`silence`)은 모델이 쓰는 어휘가 아니었다.
 SHAPES = "`command` + `every`, `file` + `pattern`, or `file` + `idle`"
+# ── 모델이 보는 문구 (v10.111.0) ─────────────────────────────
+# 조건 조립의 거절, 등록 안내, 발화·물러남 줄. 실행과 ``prompts.inventory`` 의 표본
+# (`_monitor_result_samples`)이 같은 출처를 쓴다 — 표기 가드(tests/test_prompt_notation.py).
+MIXED = "give one condition — {shapes}; yours mixes {given}"
+NOT_ONE = "the condition must be one of {shapes} — {why}"
+ONLY_SOME = "yours has only {given}"
+NONE_GIVEN = "none of those arguments were given"
+NOT_OBJECT = "condition arguments must be an object"
+#: ``{pair}`` 는 `file` + `pattern` 처럼 백틱 짝, ``{key}`` 는 인자 이름.
+NEEDS = "{pair} needs `{key}`"
+BAD_REGEX = '`pattern` "{pattern}" is not a valid regex — {why}'
+#: 기간 인자(`silent`·`idle`·`every`)를 못 읽었을 때 — ``{why}`` 는 `parse_duration` 의 사유.
+BAD_DURATION = "`{arg}` — {why}"
+IDLE_ZERO = "`idle` must be longer than zero"
+#: 등록 때 파일이 이미 있고 모델이 못 본 작은 내용 — 전부 새 줄로 본다.
+REGISTER_SMALL_NEW = (
+    "The file already exists (modified {when}, {age}s ago, after your "
+    "last tool result) and is small, so its current contents count "
+    "as new lines — expect a report shortly."
+)
+#: 등록 때 파일이 이미 있다 — 근거만 준다. ``{rel}`` 은 아래 셋 중 하나, ``{tail}`` 은
+#: ``LAST_MATCH`` 또는 ``NO_MATCH_YET``.
+REGISTER_EXISTING = (
+    "The file already exists (modified {when}, {age}s ago, {rel}); "
+    "lines written before now are not reported. {tail}"
+)
+REL_NO_OBSERVATION = "before this registration"
+REL_AFTER = "after your last tool result"
+REL_BEFORE = "before your last tool result"
+LAST_MATCH = (
+    'Its last line matching the pattern: "{line}" — not a new event; '
+    "decide whether it is what you are waiting for."
+)
+NO_MATCH_YET = "No existing line matches the pattern."
+#: 조용함 한도로 물러남 — ``{what}`` 은 ``NEVER_APPEARED`` 또는 ``UNCHANGED_SINCE``.
+SILENT_RETIRE = (
+    "silent for {minutes}m without a match — the file {what}; the writer is "
+    "probably gone. Retiring (set `silent` to change the limit)."
+)
+NEVER_APPEARED = "never appeared"
+UNCHANGED_SINCE = "unchanged since {when}"
+#: `file` + `idle` 발화 줄 — 아직 없는 파일이면 ``{where}`` 에 ``NOT_CREATED`` 가 붙는다.
+IDLE_HIT = "{where} — no change for {seconds}s"
+NOT_CREATED = "{file} (not created yet)"
+COMMAND_TIMEOUT = "(command did not finish within {seconds}s)"
+COMMAND_NO_OUTPUT = "(exit 0, no output)"
+DESCRIBE_MATCH = "`file` + `pattern` on {file}"
+DESCRIBE_IDLE = "`file` + `idle` on {file} for {duration}"
+DESCRIBE_COMMAND = "`command` + `every` running `{command}` every {duration}"
+
 #: 서명 + 그 조건이 받는 선택 키 — 이 밖의 조건 키가 섞이면 거절.
 _ALLOWED = {
     "command": frozenset({"command", "every"}),
@@ -107,10 +157,12 @@ def infer_type(spec: dict) -> str:
         return hits[0]
     given = ", ".join(f"`{k}`" for k in sorted(cond))
     if hits:
-        raise ValueError(f"give one condition — {SHAPES}; yours mixes {given}")
+        raise ValueError(MIXED.format(shapes=SHAPES, given=given))
     raise ValueError(
-        f"the condition must be one of {SHAPES} — "
-        + (f"yours has only {given}" if given else "none of those arguments were given")
+        NOT_ONE.format(
+            shapes=SHAPES,
+            why=ONLY_SOME.format(given=given) if given else NONE_GIVEN,
+        )
     )
 
 
@@ -121,7 +173,7 @@ def build(spec: dict) -> Condition:
     if not isinstance(spec, dict):
         # ValueError 로 통일한다 — 호출자(도구)가 ToolResult 로 변환하는데
         # 예외 종류가 갈리면 변환부가 둘이 된다.
-        raise ValueError("condition arguments must be an object")  # noqa: TRY004
+        raise ValueError(NOT_OBJECT)  # noqa: TRY004
     cls = _REGISTRY[infer_type(spec)]
     return cls.from_spec(spec)  # type: ignore[attr-defined]
 
@@ -196,15 +248,13 @@ class MatchCondition(Condition):
         file = str(spec.get("file") or "").strip()
         pattern = str(spec.get("pattern") or "")
         if not file:
-            raise ValueError("`file` + `pattern` needs `file`")
+            raise ValueError(NEEDS.format(pair="`file` + `pattern`", key="file"))
         if not pattern:
-            raise ValueError("`file` + `pattern` needs `pattern`")
+            raise ValueError(NEEDS.format(pair="`file` + `pattern`", key="pattern"))
         try:
             re.compile(pattern)
         except re.error as exc:
-            raise ValueError(
-                f'`pattern` "{pattern}" is not a valid regex — {exc}'
-            ) from None
+            raise ValueError(BAD_REGEX.format(pattern=pattern, why=exc)) from None
         from agent_cli.constants import MONITOR_SILENT_DEFAULT_S, parse_duration
 
         raw = spec.get("silent")
@@ -214,12 +264,12 @@ class MatchCondition(Condition):
             try:
                 silent_s = parse_duration(str(raw))
             except ValueError as exc:
-                raise ValueError(f"`silent` — {exc}") from None
+                raise ValueError(BAD_DURATION.format(arg="silent", why=exc)) from None
         return cls(file, pattern, silent_s)
 
     def describe(self) -> str:
         # 모델이 쓰는 말은 인자 짝뿐이다 (v10.79.0) — 종전 "match · <file>"
-        return f"`file` + `pattern` on {self.file}"
+        return DESCRIBE_MATCH.format(file=self.file)
 
     def register(self, *, observed_at: float | None) -> tuple[dict, str]:
         from agent_cli.constants import (
@@ -238,30 +288,17 @@ class MatchCondition(Condition):
         cap = monitor_replay_max_bytes()
         if after and (cap < 0 or size <= cap):
             # 모델이 못 본 내용이고 작다 — 전부 새 줄로 본다.
-            note = (
-                f"The file already exists (modified {when}, {age}s ago, after your "
-                f"last tool result) and is small, so its current contents count "
-                f"as new lines — expect a report shortly."
-            )
+            note = REGISTER_SMALL_NEW.format(when=when, age=age)
             return {"offset": 0, "ino": stt.st_ino}, note
         if observed_at is None:
-            rel = "before this registration"
+            rel = REL_NO_OBSERVATION
         elif after:
-            rel = "after your last tool result"
+            rel = REL_AFTER
         else:
-            rel = "before your last tool result"
+            rel = REL_BEFORE
         last = self._last_matching_line(path, size, MONITOR_PREVIEW_TAIL_BYTES)
-        tail = (
-            f'Its last line matching the pattern: "{last}" — not a new event; '
-            f"decide whether it is what you are waiting for."
-            if last is not None
-            else "No existing line matches the pattern."
-        )
-        note = (
-            f"The file already exists (modified {when}, {age}s ago, {rel}); "
-            f"lines written before now are not reported. {tail}"
-        )
-        return {}, note
+        tail = LAST_MATCH.format(line=last) if last is not None else NO_MATCH_YET
+        return {}, REGISTER_EXISTING.format(when=when, age=age, rel=rel, tail=tail)
 
     def _last_matching_line(self, path: Path, size: int, tail_bytes: int) -> str | None:
         """꼬리 ``tail_bytes`` 안에서 패턴에 맞는 마지막 줄 — 큰 로그도 비용 고정."""
@@ -295,13 +332,8 @@ class MatchCondition(Condition):
             return None
         m = self.silent_s // 60
         when = time.strftime("%H:%M:%S", time.localtime(since))
-        what = "never appeared" if stt is None else f"unchanged since {when}"
-        return Match(
-            retire=(
-                f"silent for {m}m without a match — the file {what}; the writer is "
-                f"probably gone. Retiring (set `silent` to change the limit)."
-            )
-        )
+        what = NEVER_APPEARED if stt is None else UNCHANGED_SINCE.format(when=when)
+        return Match(retire=SILENT_RETIRE.format(minutes=m, what=what))
 
     def check(self, st: dict, *, now: float) -> Match | None:
         path = Path(self.file).expanduser()
@@ -358,19 +390,21 @@ class SilenceCondition(Condition):
 
         file = str(spec.get("file") or "").strip()
         if not file:
-            raise ValueError("`file` + `idle` needs `file`")
+            raise ValueError(NEEDS.format(pair="`file` + `idle`", key="file"))
         try:
             seconds = parse_duration(str(spec.get("idle")))
         except ValueError as exc:
-            raise ValueError(f"`idle` — {exc}") from None
+            raise ValueError(BAD_DURATION.format(arg="idle", why=exc)) from None
         if seconds <= 0:
-            raise ValueError("`idle` must be longer than zero")
+            raise ValueError(IDLE_ZERO)
         return cls(file, seconds)
 
     def describe(self) -> str:
         from agent_cli.constants import format_duration
 
-        return f"`file` + `idle` on {self.file} for {format_duration(self.seconds)}"
+        return DESCRIBE_IDLE.format(
+            file=self.file, duration=format_duration(self.seconds)
+        )
 
     def check(self, st: dict, *, now: float) -> Match | None:
         path = Path(self.file).expanduser()
@@ -380,8 +414,8 @@ class SilenceCondition(Condition):
         if now - last < self.seconds:
             return None
         quiet = int(now - last)
-        where = self.file if stt is not None else f"{self.file} (not created yet)"
-        return Match([f"{where} — no change for {quiet}s"])
+        where = self.file if stt is not None else NOT_CREATED.format(file=self.file)
+        return Match([IDLE_HIT.format(where=where, seconds=quiet)])
 
 
 @register
@@ -407,12 +441,12 @@ class CommandCondition(Condition):
 
         command = str(spec.get("command") or "").strip()
         if not command:
-            raise ValueError("`command` + `every` needs `command`")
+            raise ValueError(NEEDS.format(pair="`command` + `every`", key="command"))
         raw = spec.get("every", MONITOR_INTERVAL_MIN_S)
         try:
             every = parse_duration(str(raw))
         except ValueError as exc:
-            raise ValueError(f"`every` — {exc}") from None
+            raise ValueError(BAD_DURATION.format(arg="every", why=exc)) from None
         # clamp (거부 아님) — §10.2
         every = max(MONITOR_INTERVAL_MIN_S, every)
         return cls(command, every)
@@ -420,9 +454,8 @@ class CommandCondition(Condition):
     def describe(self) -> str:
         from agent_cli.constants import format_duration
 
-        return (
-            f"`command` + `every` running `{self.command[:60]}` every "
-            f"{format_duration(self.every)}"
+        return DESCRIBE_COMMAND.format(
+            command=self.command[:60], duration=format_duration(self.every)
         )
 
     def check(self, st: dict, *, now: float) -> Match | None:
@@ -439,8 +472,8 @@ class CommandCondition(Condition):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return Match([f"(command did not finish within {COMMAND_TIMEOUT_S}s)"])
+            return Match([COMMAND_TIMEOUT.format(seconds=COMMAND_TIMEOUT_S)])
         if proc.returncode != 0:
             return None
         out = proc.stdout.decode("utf-8", errors="replace").strip()
-        return Match(out.splitlines() if out else ["(exit 0, no output)"])
+        return Match(out.splitlines() if out else [COMMAND_NO_OUTPUT])
