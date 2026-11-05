@@ -29,10 +29,10 @@ PAGES = {
 <button>Search</button></form><div id=r></div><script>f.onsubmit=e=>{e.preventDefault();
 r.textContent=q.value+' @ '+b.value+' → Shelf R-03'}</script>""",
     # v10.106.0: 키 입력은 변수만 바꾸고 rAF 루프가 글을 그린다 (캔버스 게임의 HUD 모양).
-    # 글은 네 프레임마다 — 무거운 그리기로 프레임이 느린 게임처럼, 조작 직후 읽기보다 늦다.
+    # 매 프레임 그린다 (v10.106.1) — 네 프레임 판은 느린 CI 에서 정착 안에 안 들어왔다.
     "/raf.html": """<!doctype html><title>Floors</title><canvas width=40 height=40></canvas>
-<p id=h>Floor 1</p><script>let floor=1,n=0;addEventListener('keydown',e=>{if(e.key==='r')floor++});
-(function loop(){if(++n%4===0)h.textContent='Floor '+floor;requestAnimationFrame(loop)})()</script>""",
+<p id=h>Floor 1</p><script>let floor=1;addEventListener('keydown',e=>{if(e.key==='r')floor++});
+(function loop(){h.textContent='Floor '+floor;requestAnimationFrame(loop)})()</script>""",
     "/challenge.html": """<!doctype html><title>Just a moment…</title><p>Unfortunately, bots use this site too.
 Please complete the following challenge to confirm you are human.</p><input type=checkbox id=c><label for=c>I am not a robot</label>""",
 }
@@ -179,7 +179,14 @@ def test_action_without_effect_reports_unchanged_tree(session, site):
 
 
 def test_frame_loop_update_is_reported_as_changed(session, site):
-    """v10.106.0: rAF 루프로 그려지는 변화도 그 조작의 결과로 잡힌다 (정착 + 재읽기)."""
+    """v10.106.0: rAF 루프로 그려지는 변화도 그 조작의 결과로 잡힌다 — 실브라우저 스모크.
+
+    역할 분담 (v10.106.1): 이 테스트는 "실 Chromium 에서도 다음 프레임에 그려진
+    변화가 결과에 실린다" 만 본다(매 프레임 갱신 페이지). 결함 재현 — 정착 없이
+    읽으면 늦은 갱신을 놓친다 — 은 FakePage 의 ``mutates_late`` 유닛 테스트
+    (tests/test_browser_tool.py ``test_late_change_is_caught_by_the_one_retry``)가
+    결정적으로 맡는다. 네 프레임마다 그리는 판은 로컬 macOS 에서 옛 코드 5/5 실패를
+    보였지만 CI(Linux 헤드리스)는 프레임 속도를 믿을 수 없어 새 코드도 놓쳤다."""
     s = session
     out = s.open(f"{site}/raf.html")
     assert "Floor 1" in out
