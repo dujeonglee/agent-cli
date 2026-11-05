@@ -35,7 +35,8 @@ class TestRefVerification:
         assert not r.success and f.read_text() == "def hello():"
         assert r.error == (
             'edit_file apply failed: Hash mismatch at line 1: ref "1#ZZ" does '
-            "not match current content.\n"
+            "not match current content. This is a guardrail, not a failure: the "
+            "file changed since that read.\n"
             "Current lines 1–1 (fresh refs — retry from these, no re-read "
             f"needed):\n1#{compute_line_hash(1, 'def hello():')}:def hello():"
         )

@@ -37,6 +37,13 @@ class Match:
 
     lines: list[str] = field(default_factory=list)
     retire: str = ""
+    #: 적중 수 (v10.111.0+, None = ``lines`` 의 줄 수). 보고 본문 줄과 적중이 다른
+    #: 조건이 직접 센다 — `command` 한 번의 발화는 stdout 이 여러 줄이어도 한 번이다.
+    count: int | None = None
+
+    @property
+    def hits(self) -> int:
+        return len(self.lines) if self.count is None else self.count
 
 
 class Condition(ABC):
@@ -472,8 +479,8 @@ class CommandCondition(Condition):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return Match([COMMAND_TIMEOUT.format(seconds=COMMAND_TIMEOUT_S)])
+            return Match([COMMAND_TIMEOUT.format(seconds=COMMAND_TIMEOUT_S)], count=1)
         if proc.returncode != 0:
             return None
         out = proc.stdout.decode("utf-8", errors="replace").strip()
-        return Match(out.splitlines() if out else [COMMAND_NO_OUTPUT])
+        return Match(out.splitlines() if out else [COMMAND_NO_OUTPUT], count=1)

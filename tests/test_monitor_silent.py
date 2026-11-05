@@ -140,3 +140,50 @@ class TestRetire:
         reg.add(cond, owner="main", deadline_s=7200)
         assert cond.describe() == f"`file` + `pattern` on {tmp_path / 'a.log'}"
         assert (tmp_path / "monitors.json").exists()
+
+
+class TestHitCount:
+    """v10.112.0: 보고 머리줄의 수는 **적중 수**다 — 종전엔 본문 줄 수라 적중 없이
+    물러나는 보고(조용함·마감, 본문은 요약 한 줄)가 "1 hit(s)" 라고 했다."""
+
+    def test_silent_retire_says_zero_hits(self, tmp_path):
+        reg = _reg(tmp_path)
+        cond = MatchCondition(str(tmp_path / "never.log"), "^EXIT:", silent_s=60)
+        mon = reg.add(cond, owner="main", deadline_s=7200)
+        reg.tick(mon.created_at + 61)
+        head = reg.deliver.reports[-1].split("\n", 1)[0]
+        assert head.endswith("· 0 hit(s)"), head
+
+    def test_deadline_retire_says_zero_hits(self, tmp_path):
+        reg = _reg(tmp_path)
+        cond = MatchCondition(str(tmp_path / "x.log"), "^EXIT:", silent_s=0)
+        mon = reg.add(cond, owner="main", deadline_s=60)
+        reg.tick(mon.deadline_at + 1)
+        head = reg.deliver.reports[-1].split("\n", 1)[0]
+        assert (
+            head.endswith("· 0 hit(s)")
+            and "(deadline expired)" in (reg.deliver.reports[-1])
+        )
+
+    def test_pattern_hits_count_matching_lines(self, tmp_path):
+        reg = _reg(tmp_path)
+        log = tmp_path / "run.log"
+        cond = MatchCondition(str(log), "^E", silent_s=0)
+        mon = reg.add(cond, owner="main", deadline_s=7200)
+        reg.tick(mon.created_at + 1)  # 아직 없는 파일 — 커서 0 에서 대기
+        log.write_text("E one\ninfo\nE two\n")
+        reg.tick(mon.created_at + 2)
+        head = reg.deliver.reports[-1].split("\n", 1)[0]
+        assert head.endswith("· 2 hit(s)"), head
+
+    def test_one_command_fire_is_one_hit_however_many_lines(self, tmp_path):
+        from agent_cli.monitor.conditions import CommandCondition
+
+        reg = _reg(tmp_path)
+        cond = CommandCondition("printf 'a\\nb\\nc\\n'", 60)
+        mon = reg.add(cond, owner="main", deadline_s=7200)
+        reg.tick(mon.created_at + 1)
+        report = reg.deliver.reports[-1]
+        head, body = report.split("\n", 1)
+        assert head.endswith("· 1 hit(s)"), head
+        assert "  a\n  b\n  c" in body  # 본문은 stdout 세 줄 그대로

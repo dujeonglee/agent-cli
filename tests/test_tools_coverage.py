@@ -783,18 +783,56 @@ class TestEditFile:
         assert "c" not in content
         assert "X" in content
 
-    def test_string_lines_converted(self, tmp_path):
-        """If lines is a string instead of list, should split by newline."""
+    def test_string_lines_are_rejected_not_split(self, tmp_path):
+        """v10.112.0: `lines` 가 맨 문자열이면 거절한다 — 종전엔 ``split("\\n")`` 으로
+        조용히 받아, 모델이 들여쓰기 없이 쓴 문자열이 들여쓰기 없는 줄로 들어갔다
+        (측정: edit3 후보 6/6 런, 한 런은 `return` 이 0 칸인 채 완료). 배열은 종전대로."""
+        from agent_cli.tools.edit_file import LINES_NOT_ARRAY
+
         f = tmp_path / "test.py"
-        f.write_text("old\n")
-        lines = f.read_text().split("\n")
-        h1 = compute_line_hash(1, lines[0])
-        tool_edit_file(
-            {"path": str(f), "op": "replace", "pos": f"1#{h1}", "lines": "new1\nnew2"}
+        f.write_text("def f():\n    return 1\n")
+        h2 = compute_line_hash(2, "    return 1")
+        r = tool_edit_file(
+            {"path": str(f), "op": "replace", "pos": f"2#{h2}", "lines": "return 2"}
         )
-        content = f.read_text()
-        assert "new1" in content
-        assert "new2" in content
+        assert not r.success and r.error == LINES_NOT_ARRAY
+        assert f.read_text() == "def f():\n    return 1\n"  # 쓰지 않았다
+        r = tool_edit_file(
+            {
+                "path": str(f),
+                "op": "replace",
+                "pos": f"2#{h2}",
+                "lines": ["    return 2"],
+            }
+        )
+        assert r.success and f.read_text() == "def f():\n    return 2\n"
+
+    def test_delete_ignores_a_string_lines_as_before(self, tmp_path):
+        """`delete` 는 `lines` 를 쓰지 않는다 — 문자열이 와도 종전대로 지운다."""
+        f = tmp_path / "t.txt"
+        f.write_text("a\nb\n")
+        h1 = compute_line_hash(1, "a")
+        r = tool_edit_file(
+            {"path": str(f), "op": "delete", "pos": f"1#{h1}", "lines": "x"}
+        )
+        assert r.success and f.read_text() == "b\n"
+
+    def test_string_lines_in_a_batch_rejects_the_batch(self, tmp_path):
+        """같은 파일 묶음 안의 문자열 `lines` 도 같은 문구로 거절되고 묶음은 쓰지 않는다."""
+        from agent_cli.tools.edit_file import LINES_NOT_ARRAY, apply_edits_batch_parts
+
+        f = tmp_path / "t.txt"
+        f.write_text("a\nb\nc\n")
+        ha, hc = compute_line_hash(1, "a"), compute_line_hash(3, "c")
+        res, _parts = apply_edits_batch_parts(
+            str(f),
+            [
+                {"path": str(f), "op": "replace", "pos": f"1#{ha}", "lines": ["A"]},
+                {"path": str(f), "op": "replace", "pos": f"3#{hc}", "lines": "C"},
+            ],
+        )
+        assert not res.success and LINES_NOT_ARRAY in res.error
+        assert "op 2" in res.error and f.read_text() == "a\nb\nc\n"
 
 
 class TestDelegateResult:

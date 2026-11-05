@@ -125,73 +125,6 @@ TASK_GUIDELINES = """\
 
 
 # ── Inline guides for tools ──────────────────────
-def _build_edit_file_inline(dialect) -> str:
-    """Build the edit_file inline guide.
-
-    The op-semantics / hashline / constraints prose is wire-agnostic — every
-    plugin gets the SAME explanatory text at the SAME level of detail. Only
-    the worked example passes through ``dialect.render_action_input`` so
-    each wire shows it in its own shape (json_fc renders the JSON action_input
-    verbatim; a future plugin whose action_input is not a JSON dict transforms
-    here — same hook delegate/read_file already use). The wire-shape rules
-    themselves live in each plugin's ``format_rules()`` — this guide stays
-    about edit_file's tool semantics.
-    """
-
-    def rai(j):
-        return _rai_prefixed(dialect, "edit_file", j)
-
-    def _indent(s: str) -> str:
-        return "\n".join("      " + ln for ln in s.split("\n"))
-
-    # edit_file is flat-native (consolidation Step 3): one op = one edit, no
-    # `edits` batch array (nesting a batch array inside the op array is what
-    # broke 27B — DESIGN Exp 8). The worked example is the flat single-edit
-    # shape; a single edit's `lines` array stays (irreducible).
-    ex_single = rai(
-        {
-            "path": "app.py",
-            "op": "replace",
-            "pos": "2#KT",
-            "lines": ['    return "hello"'],
-        }
-    )
-    # v10.77.0: op 목록·"copied EXACTLY from read_file" 삭제(출처는 설명 한 곳),
-    # "never a bare line number" 한 줄(35B 편집의 18%), 같은 파일 여러 편집 문단은
-    # 뜻만(45런 0회 사용). single-op 쪽 "re-read between calls" 는 사실이 아니었다 —
-    # 편집 결과의 Updated region 이 새 ref 를 준다.
-    if getattr(dialect, "multi_op", False):
-        # Same-file batching: consecutive same-path edit_file ops in one turn
-        # are applied together against ONE original read (all refs resolved
-        # before any write, bottom-up, all-or-nothing), so a later op's ref does
-        # NOT go stale from an earlier op's line shift.
-        same_file = """
-  - Several edits to one file can go in one turn as adjacent `edit_file`
-    calls, every ref from the same read: they are applied together, so do
-    not shift line numbers for each other. If any is rejected, nothing is
-    written and the result names the bad ones — resend all, fixing only
-    those. Overlapping ranges are rejected; split them across turns."""
-    else:
-        same_file = """
-  - Several edits to one file: one call each, taking each ref from the
-    latest output — an earlier edit's result shows the fresh refs of the
-    region it changed."""
-
-    return f"""
-
-  Hashline refs:
-  `read_file` returns lines tagged as LINE#HASH:content, e.g.:
-    1#VR:def hello():
-    2#KT:    return "world"
-  A ref is the LINE#HASH part ("2#KT"), never a bare line number.
-  - one edit per call:
-{_indent(ex_single)}
-  - A ref from before the file last changed no longer matches. A hash
-    mismatch is a guardrail, not a failure: the error shows the current
-    lines around it with fresh refs — retry from those.\
-{same_file}"""
-
-
 def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
     """Build the delegate inline guide.
 
@@ -265,35 +198,10 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
 {rendered}"""
 
 
-_ASK_INLINE = """\
-
-  `ask` vs `complete` — pick by intent, not tone:
-  - `ask`: you genuinely cannot proceed without information from the
-    user. A real question with real alternatives where you don't know
-    the right answer. "Which of these two paths should I take?",
-    "What's the production database name?", "Should I overwrite this
-    file or keep both?".
-  - `complete`: every other ending. Task done, user said goodbye, user
-    said thanks, user gave a casual reply, you finished your answer
-    and have nothing else to do. The conversation does not need a
-    question to continue — the user can simply reply at the next
-    prompt if they want more.
-
-  Common mistakes that keep the loop alive when it should end:
-  - "Was that helpful?" / "Anything else?" / "Let me know if you have
-    questions" — these are pleasantries, not questions. Use `complete`.
-  - "Goodbye!" / "See you next time!" / "👋" — closing remarks. Use
-    `complete`.
-  - Restating the user's last message back as a question
-    ("So you want X?") when their meaning was already clear. Use
-    `complete` and answer.
-
-  Rule of thumb: if your "question" could be a statement and the
-  conversation would still flow, it's not a real question — use
-  `complete`."""
-
-# 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 위 두 변형은 "묻느냐
-# 끝내느냐" 를 가르지만, 비동기에서는 **그 둘이 배타적이지 않다** — 물어
+# 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). main 의 `ask` 는 안내가 없다
+# (v10.112.0 — 벤치 946 세션 0회·실사용 59 세션 2회, 막으려던 오용은 기록에 없어
+# 지웠다; 대화형 종결은 `complete` 라는 한 문장이 설명에 있다). main 의 안내는 "묻느냐
+# 끝내느냐" 를 갈랐지만, 비동기에서는 **그 둘이 배타적이지 않다** — 물어
 # 두고 끝내는 것이 정상이고, 답이 오면 이어서 깨어난다. 잘못 고르는 비용도
 # 다르다: 여기서 진짜 위험은 군더더기 질문이 아니라 **묻지 않고 추측하는
 # 것**이다(막히지 않으니 물어도 비용이 거의 없다).
@@ -327,19 +235,17 @@ def _build_tool_inline_guides(
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
-    ``ask`` 의 안내는 루프 종류(상주면 막지 않는 ask)에 따라 다르므로 호출마다
-    다시 만든다. ``code_index`` 의 안내는 v10.92.0 에 지웠다 — 모드 설명은 도구의
-    `mode` 인자에 있다 (docs/tool-review/TRACKER.md).
+    남은 안내는 둘이다: `agent`(예시·제약 — 지연 도구라 `tool_help` 전문에만 실린다)와
+    상주 루프의 `ask`(막지 않는 의미론). ``code_index`` 의 안내는 v10.92.0 에, main
+    `ask`·`edit_file` 의 안내는 v10.112.0 에 지웠다 — 교정은 트리거 직후(오류 문구),
+    설명은 머리(도구 설명)가 맡는다 (docs/tool-review/TRACKER.md).
     """
-    if nonblocking_ask:
-        ask = _ASK_INLINE_RESIDENT
-    else:
-        ask = _ASK_INLINE
-    return {
-        "edit_file": _build_edit_file_inline(dialect),
+    guides = {
         "agent": _build_agent_inline(dialect, has_agent_registry=has_agent_registry),
-        "ask": ask,
     }
+    if nonblocking_ask:
+        guides["ask"] = _ASK_INLINE_RESIDENT
+    return guides
 
 
 def description_overrides_for(

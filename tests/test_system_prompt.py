@@ -32,7 +32,6 @@ from agent_cli.prompts.system_prompt import (
     TASK_GUIDELINES,
     _build_agent_inline,
     _build_context_recovery,
-    _build_edit_file_inline,
     _build_environment_section,
     _build_tools_section,
     _load_directives,
@@ -132,7 +131,12 @@ class TestMultiOpPromptBranches:
         thought-only terminal was dropped), so it is always offered and the
         ask guide always speaks of ``complete``."""
         assert "- complete:" in section
-        assert "`ask` vs `complete`" in section
+        # v10.112.0: "`ask` vs `complete`" 안내 블록을 지웠다 — 그 뜻은 `ask` 설명의 한 문장
+        assert (
+            "A closing remark or a pleasantry is not a question — end with "
+            "`complete` instead." in section
+        )
+        assert "`ask` vs `complete`" not in section
         assert "thought-only" not in section
         # ready_for_review tool was removed entirely
         assert "ready_for_review" not in section
@@ -166,7 +170,9 @@ class TestMultiOpPromptBranches:
         assert "read_file op reads" not in section
 
     def test_edit_file_one_edit_per_op(self, section):
-        assert "one edit per call" in section
+        # v10.112.0: 안내의 "one edit per call" 예시 줄은 지웠다 — 한 호출 = 한 편집은
+        # 설명의 "adjacent `edit_file` calls" 가 말한다(스키마도 묶음 배열이 없다).
+        assert "as adjacent `edit_file` calls" in section
         assert "batch in one call" not in section
         # the batch-array constraint bullet is dropped
         assert "the array is NOT a" not in section
@@ -327,12 +333,15 @@ class TestBuildSystemPrompt:
     def test_active_tools_only(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
-        assert "Hashline" not in prompt  # No edit_file → no hashline guide
+        assert "LINE#HASH refs" not in prompt  # No edit_file → no ref rule
         assert "- edit_file:" not in prompt  # Not in active_tools list
 
-    def test_hashline_guide_inlined_with_edit(self):
+    def test_hashline_rule_rides_in_the_edit_file_description(self):
+        """v10.112.0: the hashline guide block ("Hashline refs:", worked example)
+        is gone; the ref rule is the edit_file description's, rendered with it."""
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
-        assert "Hashline" in prompt
+        assert "Lines are addressed by their LINE#HASH refs" in prompt
+        assert "Hashline refs:" not in prompt
         # Should be inline, not a separate section
         assert "## Hashline" not in prompt
 
@@ -374,9 +383,10 @@ class TestBuildSystemPrompt:
         `complete` instead of `ask`. Repro: model emitted goodbyes
         ("see you next time!", "was that helpful?") via `ask` instead
         of `complete`, keeping the loop alive waiting for replies the
-        user had no reason to give. The detailed prohibition lives in
-        the inline guide (`_ASK_INLINE`); the one-line tool description
-        is kept compact to avoid duplicating it. Intent-level checks —
+        user had no reason to give. v10.112.0: the inline guide
+        (`_ASK_INLINE`) was removed (bench 946 sessions 0 calls, live 59
+        sessions 2 real questions, the misuse never seen); the description's
+        last sentence carries the intent. Intent-level checks —
         at least one conversational category is named AND it is routed
         to `complete`."""
         import re
@@ -395,24 +405,24 @@ class TestBuildSystemPrompt:
         # ...and routed to `complete` (the prohibition: don't ask for it).
         assert "use `complete`" in flat or "end with `complete`" in flat
 
-    def test_ask_inline_guide_contrasts_with_complete(self):
-        """Inline guide for `ask` must explicitly contrast it with
-        `complete` so the model has both halves of the decision in
-        one place. Without this, the description alone (one paragraph
-        in the tool listing) was getting drowned out and the model
-        kept defaulting to `ask` for any non-task-oriented turn."""
+    def test_ask_description_contrasts_with_complete(self):
+        """`ask` must still be contrasted with `complete` (v10.112.0: in its
+        description, not an inline guide). The main loop carries no `ask`
+        guide any more; a resident agent keeps its non-blocking guide."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["ask"])
-        flat = re.sub(r"\s+", " ", prompt).lower()
-        # The guide places ask and complete side-by-side.
-        assert "complete" in flat
-        # And gives the model a concrete heuristic for picking.
-        assert (
-            "rule of thumb" in flat
-            or "if your" in flat
-            or "could be a statement" in flat
-        )
+        from agent_cli.prompts.system_prompt import _build_tool_inline_guides
+        from agent_cli.tools import TOOLS
+
+        d = TOOLS["ask"].description
+        assert "otherwise end with `complete`" in d
+        assert "A closing remark or a pleasantry is not a question" in d
+        flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["ask"])).lower()
+        assert "rule of thumb" not in flat and "`ask` vs `complete`" not in flat
+        dialect = _get_dialect("json_fc")
+        assert "ask" not in _build_tool_inline_guides(["ask"], dialect)
+        resident = _build_tool_inline_guides(["ask"], dialect, nonblocking_ask=True)
+        assert "does not block you" in resident["ask"]
 
     def test_hashline_guide_ties_refs_to_the_latest_view_of_the_lines(self):
         """Pre-call routine. "Always read the file first" was too lax — models
@@ -434,14 +444,32 @@ class TestBuildSystemPrompt:
         d = TOOLS["edit_file"].description
         assert "taken from the latest output that showed them" in d
         assert '`code_index` "fetch", `write_file`, or an earlier `edit_file`' in d
-        assert "A ref from before the file last changed no longer matches" in flat
-        assert "never a bare line number" in flat
+        # v10.112.0: 안내의 두 줄("A ref from before the file last changed no longer
+        # matches", "never a bare line number")은 트리거 직후로 옮겼다 — 해시 불일치
+        # 오류가 "the file changed since that read" 를, 줄 번호만 온 ref 의 오류가
+        # 그 줄의 지금 ref 를 말한다.
+        from agent_cli.tools.edit_file import _bare_ref_error, _resolve_ref
+
+        try:
+            _resolve_ref(["a", "b", "c"], "2#ZZ")
+        except RuntimeError as e:
+            mismatch = str(e)
+        assert "the file changed since that read" in mismatch
+        bare = _bare_ref_error({"pos": "2"}, ["a", "b", "c"], "app.py") or ""
+        assert "bare line number" in bare and "#" in bare
+        assert "never a bare line number" not in flat
 
     def test_edit_guide_does_not_restate_the_edit_vs_write_rule(self):
         """The rule is told once, in write_file's description (the point of
         choice, right below edit_file). The edit guide used to carry it three
         more times, the last one contradicting the first."""
-        guide = _build_edit_file_inline(_get_dialect("json_fc"))
+        # v10.112.0: 안내 블록은 지웠다 — 같은 규칙이 edit_file 의 글(설명)에 되살아나지
+        # 않는지 프롬프트로 본다.
+        import re
+
+        guide = re.sub(
+            r"\s+", " ", build_system_prompt(_make_caps(), ["edit_file", "write_file"])
+        ).split("- write_file:")[0]
         assert "edit vs write" not in guide
         assert "Use write_file only for creating new files" not in guide
         assert "beats rewriting" not in guide
@@ -451,18 +479,22 @@ class TestBuildSystemPrompt:
         not a failure. Models that take mismatch as "I made a mistake"
         spiral into apology / excessive caution; framing it as a system
         guardrail keeps the recovery action mechanical (re-read,
-        retry)."""
-        import re
+        retry). v10.112.0: said where it triggers — in the mismatch error
+        itself, not an inline guide read at the start."""
+        from agent_cli.tools.edit_file import _resolve_ref
 
-        prompt = build_system_prompt(_make_caps(), ["edit_file"])
-        flat = re.sub(r"\s+", " ", prompt)
-        # The reframe word "guardrail" appears.
-        assert "guardrail" in flat.lower()
-        # The negation "not a failure" (or close paraphrase) appears so
-        # the model doesn't take it as their own error.
-        assert "not a failure" in flat.lower()
+        try:
+            _resolve_ref(["def f():", "    return 1", ""], "2#ZZ")
+        except RuntimeError as e:
+            err = str(e)
+        first, rest = err.split("\n", 1)
+        assert first.startswith('Hash mismatch at line 2: ref "2#ZZ"')
+        # The reframe word "guardrail" and the negation "not a failure" — on the
+        # verdict line, before the fresh refs.
+        assert "guardrail" in first.lower() and "not a failure" in first.lower()
         # Recovery action is still spelled out.
-        assert "retry from those" in flat
+        assert "fresh refs — retry from these" in rest
+        assert "guardrail" not in build_system_prompt(_make_caps(), ["edit_file"])
 
     def test_hashline_guide_allows_same_file_batched_edits(self):
         """Multi-op + flat-native edit_file: consecutive same-path edit_file ops
@@ -474,6 +506,10 @@ class TestBuildSystemPrompt:
         is collapsed because the inline guide wraps across lines."""
         import re
 
+        # v10.112.0: 이 규칙은 안내가 아니라 edit_file 설명에 있다(프롬프트에 그대로 실린다).
+        from agent_cli.tools import TOOLS
+
+        assert "Several edits to one file" in TOOLS["edit_file"].description
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
         # Invites same-file edits batched in one turn …
@@ -482,7 +518,7 @@ class TestBuildSystemPrompt:
         # … refs from the read, applied together (not pre-adjusted) …
         assert "do not shift line numbers for each other" in flat
         # … and overlaps are rejected.
-        assert "Overlapping ranges are rejected" in flat
+        assert "overlapping ranges are rejected" in flat
 
     def test_no_heredoc_ban(self):
         """v10.77.0 — "NEVER a shell heredoc" 를 지웠다: native_fc 64회가 모두
@@ -497,10 +533,12 @@ class TestBuildSystemPrompt:
 
         assert "needs no shell quoting" in TOOLS["write_file"].description
 
-    def test_every_tool_intro_precedes_all_reference_examples(self):
+    def test_every_tool_intro_precedes_all_reference_examples(self, full_tool_text):
         """Available Tools is a two-tier layout: every tool's basic intro
         (``- name:`` + Input JSON) comes first, THEN the detailed guides with
-        their ``{"action": ...}`` examples. This guarantees a tool is
+        their ``{"action": ...}`` examples (v10.112.0: only `agent`'s guide has
+        examples left, and `agent` is deferred — so this is the full text that
+        `tool_help` returns). This guarantees a tool is
         introduced before any guide REFERENCES it across tools (the edit_file
         guide names read_file and code_index). Attention: establish the full
         tool roster before any usage example."""

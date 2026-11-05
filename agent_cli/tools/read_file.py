@@ -53,7 +53,7 @@ def _parse_ref(ref: str) -> tuple[int, str]:
         # Contract (see docstring): bad input always surfaces as RuntimeError,
         # which callers catch and translate — not TypeError.
         raise RuntimeError(  # noqa: TRY004
-            f"Invalid hashline ref: {ref!r} (expected string, got "
+            f'Invalid hashline ref: "{ref}" (expected string, got '
             f"{type(ref).__name__}). Expected format: LINE#HASH "
             f'(e.g. "5#VR"). Re-read the file with `read_file` to get '
             f"fresh hashline tags."

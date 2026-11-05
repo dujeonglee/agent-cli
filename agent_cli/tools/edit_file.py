@@ -45,6 +45,20 @@ def _mismatch_window(lines: list[str], line_num: int) -> str:
     )
 
 
+#: 해시 불일치는 실패가 아니라 가드레일이다 (v10.112.0 — 인라인 안내에서 트리거 직후로
+#: 옮김: 교정은 그 순간의 오류 문구가 맡는다).
+GUARDRAIL_NOTE = "This is a guardrail, not a failure: the file changed since that read."
+#: `lines` 가 맨 문자열 (v10.112.0) — 종전엔 ``split("\n")`` 으로 조용히 받아, 모델이
+#: 들여쓰기 없이 쓴 한 줄 문자열이 들여쓰기 없는 줄로 들어갔다(측정: edit3 후보 6/6 런이
+#: 문자열로 보냈고 한 런은 `return` 이 0 칸인 채 완료). 넣는 op 에서만 — "delete" 는
+#: `lines` 를 쓰지 않는다.
+LINES_NOT_ARRAY = (
+    "`lines` must be a JSON array of strings, one per line with its indentation "
+    "— not a single string."
+)
+_INSERTING_OPS = ("replace", "append", "prepend")
+
+
 def _resolve_ref(lines: list[str], ref: str) -> int:
     """Exact ref → 0-based index. A hash mismatch says which ref failed and
     shows the current lines around it (:func:`_mismatch_window`) — first line
@@ -58,7 +72,7 @@ def _resolve_ref(lines: list[str], ref: str) -> int:
         line_num = int(str(exc).split("line ", 1)[1].split(":", 1)[0])
         raise RuntimeError(
             f'Hash mismatch at line {line_num}: ref "{ref}" does not match '
-            f"current content.\n{_mismatch_window(lines, line_num)}"
+            f"current content. {GUARDRAIL_NOTE}\n{_mismatch_window(lines, line_num)}"
         ) from None
 
 
@@ -121,7 +135,9 @@ def _op_to_span(
     end = ed.get("end")
     lines = ed.get("lines")
     if isinstance(lines, str):
-        lines = lines.split("\n")
+        if op in _INSERTING_OPS:
+            raise RuntimeError(LINES_NOT_ARRAY)
+        lines = []  # "delete"·모르는 op — `lines` 를 쓰지 않는다
     if lines is None:
         lines = []
 
@@ -448,6 +464,8 @@ def _validate_semantics(args: dict) -> str | None:
     op = args.get("op", "")
     if op not in EDIT_OPS:
         return f'Unknown edit op: "{op}". Use {"|".join(EDIT_OPS)}.'
+    if op in _INSERTING_OPS and isinstance(args.get("lines"), str):
+        return LINES_NOT_ARRAY
     for field in ("pos", "end"):
         v = args.get(field)
         # 줄 번호만(정수)은 통과시켜 적용 단계가 그 줄의 지금 ref 를 보여 준다
@@ -487,7 +505,10 @@ class EditFileTool(Tool):
         "from `pos` through `end` (inclusive; just `pos` without `end`) for "
         '`lines`; "append" inserts `lines` after `pos`; "prepend" inserts '
         '`lines` before `pos`; "delete" removes `pos` through `end` and takes '
-        "no `lines`."
+        "no `lines`. Several edits to one file can go in one turn as adjacent "
+        "`edit_file` calls, every ref from the same read; they are applied together, "
+        "so do not shift line numbers for each other. If any is rejected nothing is "
+        "written and the result names the bad ones; overlapping ranges are rejected."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-edit shape — no `edit_file_` wire-key prefix and no `edits` batch
@@ -525,7 +546,13 @@ class EditFileTool(Tool):
             "lines": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "The new lines, as they should appear in the file — without LINE#HASH: tags",
+                # v10.112.0: 배열·한 줄에 하나·들여쓰기 포함 — 지운 안내의 호출 예시가 가르치던
+                # 세 가지(측정: 안내를 지우자 맨 문자열·들여쓰기 없는 줄이 늘었다).
+                "description": (
+                    "The new lines as a JSON array of strings, one per line, each "
+                    'complete with its leading indentation — like ["    return x"]; '
+                    "without LINE#HASH: tags."
+                ),
             },
         },
         "required": ["path", "op", "pos"],

@@ -87,6 +87,8 @@ class Monitor:
     created_at: float = field(default_factory=time.time)
     # min_interval 합치기 버퍼
     _buf: list[str] = field(default_factory=list)
+    #: ``_buf`` 에 든 적중 수 — 본문 줄 수와 다를 수 있다(`command` 발화는 한 번에 여러 줄).
+    _buf_hits: int = 0
     _last_report: float = 0.0
     retired: str = ""  # "" = 살아 있음, 아니면 해제 사유
     #: 소유자 사망으로 **폐기**됐는가. `retired` 로는 구분이 안 된다 —
@@ -116,7 +118,7 @@ def _clamp_deadline(seconds: int) -> int:
     return max(MONITOR_DEADLINE_MIN_S, min(seconds, MONITOR_DEADLINE_MAX_S))
 
 
-def _format_report(mon: Monitor, lines: list[str], *, note: str = "") -> str:
+def _format_report(mon: Monitor, lines: list[str], *, hits: int, note: str = "") -> str:
     """보고문 — 5줄 상한 + 줄당 500자 + 머리줄에 id·타입·경과 (§10.3).
 
     과대 출력 캡(`apply_oversized_cap`)은 쓰지 않는다. 그건 *도구 결과*를 위한
@@ -127,9 +129,9 @@ def _format_report(mon: Monitor, lines: list[str], *, note: str = "") -> str:
     h, rem = divmod(elapsed, 3600)
     m = rem // 60
     ago = f"{h}h {m}m" if h else f"{m}m"
-    head = REPORT_HEAD.format(
-        id=mon.id, desc=mon.cond.describe(), ago=ago, hits=len(lines)
-    )
+    # 머리줄의 수는 **적중 수**다 (v10.112.0) — 종전엔 본문 줄 수(``len(lines)``)라 적중
+    # 없이 물러나는 보고(조용함·마감 — 본문은 요약 한 줄)가 "1 hit(s)" 라고 했다.
+    head = REPORT_HEAD.format(id=mon.id, desc=mon.cond.describe(), ago=ago, hits=hits)
     body = [ln[:REPORT_MAX_LINE_CHARS] for ln in lines[:REPORT_MAX_LINES]]
     if len(lines) > REPORT_MAX_LINES:
         body.append(REPORT_MORE.format(n=len(lines) - REPORT_MAX_LINES))
@@ -344,8 +346,9 @@ class MonitorRegistry:
             if hit.retire:  # 조용함 한도 (v10.47.0) — 발화가 아니라 물러남
                 self._retire(mon, hit.retire, now)
                 continue
-            mon.matches += len(hit.lines) or 1
+            mon.matches += hit.hits or 1
             mon._buf.extend(hit.lines)
+            mon._buf_hits += hit.hits or 1
             if mon.once:
                 self._retire(mon, RETIRE_ONCE, now, flush=True)
             elif now - mon._last_report >= MIN_INTERVAL_S:
@@ -364,7 +367,8 @@ class MonitorRegistry:
             self._inflight += 1
         try:
             lines, mon._buf = mon._buf, []
-            report = _format_report(mon, lines, note=note)
+            hits, mon._buf_hits = mon._buf_hits, 0
+            report = _format_report(mon, lines, hits=hits, note=note)
             mon.wakes += 1
             mon._last_report = now
             err = self._send(mon, report)
@@ -398,10 +402,12 @@ class MonitorRegistry:
         try:
             if flush or mon._buf:
                 lines, mon._buf = mon._buf, []
-                report = _format_report(mon, lines, note=why)
+                hits, mon._buf_hits = mon._buf_hits, 0
+                report = _format_report(mon, lines, hits=hits, note=why)
             else:
+                # 버퍼가 비었다 — 이 보고에 실린 적중은 없다(누적은 본문 한 줄이 말한다)
                 report = _format_report(
-                    mon, [RETIRE_SUMMARY.format(why=why, n=mon.matches)]
+                    mon, [RETIRE_SUMMARY.format(why=why, n=mon.matches)], hits=0
                 )
             mon.wakes += 1
             err = self._send(mon, report, retiring=True)
