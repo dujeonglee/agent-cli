@@ -1953,6 +1953,8 @@ class TestToolPolicyDeclarations:
         tools_list = [t for t in tools_list if t != "snapshot"]
         # ``wait`` (v10.65.0) 은 깨울 길(큐·받은편지함)이 있는 루프에만 — 이 포트엔 없다.
         tools_list = [t for t in tools_list if t != "wait"]
+        # ``tool_help`` (v10.109.0) 은 지연 도구가 남은 루프에만 — 지금은 지연 도구가 없다.
+        tools_list = [t for t in tools_list if t != "tool_help"]
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
@@ -2029,6 +2031,8 @@ class TestToolPolicyDeclarations:
             # 🌐 playwright 가 없거나 꺼져 있으면 광고하지 않는다 (v10.39.0).
             "browser": {"requires_handler": "browser"},
             "view_image": {"requires_handler": "vision"},
+            # 📖 지연 도구가 남은 루프에만, 그런 루프면 강제 탑재 (v10.109.0).
+            "tool_help": {"requires_handler": "deferred", "force_mount": True},
         }
         defaults = {
             "terminal": False,

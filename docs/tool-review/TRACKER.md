@@ -52,7 +52,7 @@
 - [x] (v10.96.0 B안으로 닫음 — 범위·바인딩 저장, DESIGN §21) `code_index` 인자 가림을 감싼 함수 체인의 합집합으로 — 클로저가 잡은 바깥 인자가 같은 이름 함수로의 거짓 간선(django 61 쌍·agent-cli 81 쌍; 측정 스크립트 스크래치 `d4/measure.py` B 열)
 - [x] `code_index` slice 의 나머지 전체 로드(§19 D6, v10.94.1) — 이름·범위 질의, 이름당 8~9 ms, 출력 동일. docs/code-index/DESIGN.md §19.1
 - [x] `code_index` 색인 갱신 조기 종료(D3, v10.93.0) — stat 선행·변경 없으면 무쓰기·바뀐 파일만 파싱하고 나머지 행은 SQL 복사: 4.0 s → 0.35 s(변경 없음)·1.25 s(한 파일, django). docs/code-index/DESIGN.md §18
-- [ ] 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 설계 검토부터(프롬프트 크기·벤치 영향 둘 다 잰다). 메모리 `deferred-tool-descriptions-idea`
+- [ ] (진행 중 — PR 1 v10.109.0 기반·행동 불변, PR 2 는 D1 열한 개 지연 + §6 측정 뒤; docs/tool-help/DESIGN.md) 도구 설명 지연 로딩(ToolSearch 식) — 드문 도구는 이름·한 줄만 싣고 설명은 요청 시. 결정 D1~D5(사용자 2026-11-05). 메모리 `deferred-tool-descriptions-idea`
 - [ ] v10.91.2 GLM 벤치 ×2 — v10.91.0 이 8/9·8/9, 그 뒤는 버그 수정(경과·로그 재사용·바쁨 거절 순서)뿐이라 급하지 않음. 볼 지표: 전경 timeout kill·`Removed` 안내·python 작업화·dash 오류
 - [ ] 도구를 바꾸는 층 규칙 후보: shell `cat`·`head`·`tail`(파일 하나) → `read_file` — 원칙을 "같은 정보"로 넓히는 일이라 결정 필요 (35B 8런 29회, GLM 거의 없음)
 - [ ] `plan` 스킬을 실제 모델로 한 번 돌려 확인 (write 면 edit 도 붙는지)

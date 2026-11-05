@@ -530,6 +530,30 @@ def _schedule_result_samples() -> list[tuple[str, str, str]]:
     ]
 
 
+def _tool_help_samples(dialect) -> list[tuple[str, str, str]]:
+    """`tool_help` 결과 표본 (v10.109.0) — main 루프와 같은 묶음(이 방언·레지스트리
+    있음)으로 `monitor` 의 전문 한 건과 모르는 이름 한 건. 표기 가드가 본다."""
+    from agent_cli.prompts.system_prompt import tool_guide_text
+    from agent_cli.tools.base import RunContext
+
+    names = list(_BUILTIN_ORDER)
+    ctx = RunContext(
+        tools_available=frozenset(names),
+        tool_guide=lambda n: tool_guide_text(n, names, dialect),
+    )
+    help_tool = TOOLS["tool_help"]
+    full = help_tool._run({"name": "monitor"}, ctx=ctx)
+    unknown = help_tool._run({"name": "grep"}, ctx=ctx)
+    return [
+        ("tool_help_result", "`tool_help` for `monitor`", full.output or ""),
+        (
+            "tool_help_unknown",
+            "`tool_help` with a name not in this loop",
+            unknown.error,
+        ),
+    ]
+
+
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
@@ -622,6 +646,7 @@ def _runtime_texts(dialect) -> list[dict]:
         *_agent_result_samples(),
         *_browser_result_samples(),
         *_schedule_result_samples(),
+        *_tool_help_samples(dialect),
         (
             "agent_message_field",
             "`agent` called with `message` instead of `task`",

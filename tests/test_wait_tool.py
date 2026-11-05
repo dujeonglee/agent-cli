@@ -62,7 +62,8 @@ def _provider(*replies: dict):
 class TestRegistration:
     def test_right_before_complete_and_terminal(self):
         order = list(_BUILTIN_ORDER)
-        assert order[-2:] == ["wait", "complete"]
+        # v10.109.0: `tool_help` 가 `complete` 바로 앞에 끼었다 — wait 는 그 앞
+        assert order[-3:] == ["wait", "tool_help", "complete"]
         assert isinstance(TOOLS["wait"], WaitTool) and TOOLS["wait"].terminal
         assert "wait" in terminal_tools(["wait", "complete", "shell"])
 

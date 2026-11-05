@@ -241,14 +241,17 @@ class AgentLoop:
             and binding.capabilities.supports_vision is False
             else True,
         }
+
+        def gate(tool_name, tool, tools_list):
+            if not handler_resources.get(tool.requires_handler):
+                return [t for t in tools_list if t != tool_name]
+            if tool.force_mount and tool_name not in tools_list:
+                return [*tools_list, tool_name]
+            return tools_list
+
         for tool_name, tool in TOOLS.items():
-            required = tool.requires_handler
-            if not required:
-                continue
-            if not handler_resources.get(required):
-                tools_list = [t for t in tools_list if t != tool_name]
-            elif tool.force_mount and tool_name not in tools_list:
-                tools_list = [*tools_list, tool_name]
+            if tool.requires_handler and tool.requires_handler != "deferred":
+                tools_list = gate(tool_name, tool, tools_list)
         # 더 큰 권한의 짝이 있으면 붙는다 (``Tool.mounted_with``, v10.77.0) —
         # write_file 만 허용한 스킬·프로파일도 edit_file 을 갖는다.
         for tool_name, tool in TOOLS.items():
@@ -258,6 +261,17 @@ class AgentLoop:
                 and tool_name not in tools_list
             ):
                 tools_list = [*tools_list, tool_name]
+        # ``tool_help`` (v10.109.0) — 지연 도구(``Tool.deferred``)가 **남은** 루프에만.
+        # 판정은 위의 게이트·짝 탑재가 끝난 목록으로 한다(지연 도구도 거기서 빠지거나
+        # 붙는다). ``force_mount`` 라 그런 루프면 allowed-tools 와 무관하게 붙는다.
+        handler_resources["deferred"] = (
+            True
+            if any(getattr(TOOLS.get(t), "deferred", False) for t in tools_list)
+            else None
+        )
+        for tool_name, tool in TOOLS.items():
+            if tool.requires_handler == "deferred":
+                tools_list = gate(tool_name, tool, tools_list)
         # agent 도구는 모든 루프에 존재 (5.0.0 모드 축소 노출, 설계 §3.2):
         # 서브루프(레지스트리 없음)는 run 만 문서화된 축소 설명을 받고,
         # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라

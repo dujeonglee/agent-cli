@@ -115,6 +115,10 @@ def _flag(value, *, default: bool) -> bool:
     return bool(value)
 
 
+#: A5 자동 전문의 머리 (v10.109.0) — 뒤에 `tool_help` 가 줄 전문이 온다.
+FULL_GUIDE_HEAD = "Full guide:"
+
+
 class TurnDispatcher:
     """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
 
@@ -138,6 +142,21 @@ class TurnDispatcher:
         # B1 (action loop) detector. Threshold=2 fires on the second
         # consecutive identical (action, args).
         self.loop_detector = ActionLoopDetector(threshold=2)
+        #: 이 런에서 A5 자동 전문을 이미 받은 지연 도구 (v10.109.0) — 한 도구에 한 번.
+        #: 디스패치만 쓰는 상태라 ``LoopState`` 가 아니라 여기(소유자)에 둔다.
+        self._guided_tools: set[str] = set()
+
+    def _first_rejection_guide(self, tool_name: str) -> str:
+        """지연 도구가 이 런에서 **처음** 스키마 불일치(A5)로 거절될 때 거절 관찰 끝에
+        붙일 전문 (v10.109.0, docs/tool-help/DESIGN.md §4.2) — 뼈대만 보고 틀리게 부른
+        순간이 전문이 필요한 순간이고, `tool_help` 왕복 하나를 아낀다. 두 번째부터는
+        ``""``. 지연 도구가 없으면(지금) 언제나 ``""``."""
+        tool = TOOLS.get(tool_name)
+        if not getattr(tool, "deferred", False) or tool_name in self._guided_tools:
+            return ""
+        self._guided_tools.add(tool_name)
+        text = self.tools._run_ctx().tool_guide(tool_name)
+        return f"\n{FULL_GUIDE_HEAD}\n{text}" if text else ""
 
     def _progressed(self, tool_name: str, tool_input) -> bool:
         """같은 호출(도구 + 정규화 인자)이 아직 진행 중인가 — B1 의 일반 규칙
@@ -1572,14 +1591,18 @@ class TurnDispatcher:
             sent = summarize_call(
                 tool_name, display_input, missing=missing, unknown=unknown
             )
+            guide = self._first_rejection_guide(tool_name)
             return self._reject_op(
                 llm_text,
                 turn,
                 outcome,
                 accumulate,
                 tool_name=tool_name,
-                batch_note=f"{schema_err}\n{sent}",
-                alone=f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
+                batch_note=f"{schema_err}\n{sent}{guide}",
+                alone=(
+                    f"Observation: {err_msg}\n{sent}\n"
+                    f"{echo_prior_output(llm_text)}{guide}"
+                ),
                 reason="schema mismatch",
                 signal=FAILURE_SCHEMA_MISMATCH,
             )

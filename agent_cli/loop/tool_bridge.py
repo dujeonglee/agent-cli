@@ -385,6 +385,20 @@ class ToolBridge:
         )
 
     # ── per-call loop context (execute + render seams share it) ─────
+    def _tool_guide(self, name: str) -> str | None:
+        """이 루프의 프롬프트에 실렸을 도구 하나의 전문 (v10.109.0) — 같은 방언·
+        종류별 설명/스키마 교체·인라인 안내로. `tool_help` 와 A5 자동 전문이 쓴다."""
+        from agent_cli.prompts.system_prompt import tool_guide_text
+
+        profile = self.cfg.kind.prompt_profile()
+        return tool_guide_text(
+            name,
+            self.cfg.tools_list,
+            self.cfg.dialect,
+            has_agent_registry=profile.agent_registry is not None,
+            nonblocking_ask=not profile.ask_blocking,
+        )
+
     def _run_ctx(self) -> RunContext:
         """The :class:`RunContext` for the CURRENT tool call — the single
         per-call bundle handed to both tool surfaces (``run``/``_run`` and
@@ -407,6 +421,7 @@ class ToolBridge:
                 owner=self.cfg.owner,
                 observed_at=lambda: self.last_observation_at,
                 turn_now=lambda: self.state.turn,
+                tool_guide=self._tool_guide,
             )
             self._run_ctx_cache = cached
         return cached

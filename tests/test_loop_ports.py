@@ -163,7 +163,8 @@ class TestHandlerResources:
 
         # ``ctx``·``snapshot``·``browser``·``vision``·``skills`` 는 포트가
         # 아닌 세션 자원 — core 가 얹는다(``vision`` 은 바인딩의 능력, ``skills`` 는
-        # 모델이 부를 수 있는 스킬 유무).
+        # 모델이 부를 수 있는 스킬 유무). ``deferred``(v10.109.0)는 게이트가 끝난
+        # 도구 목록에서 core 가 판정한다(지연 도구가 남았나).
         available = set(BUILDERS["oneshot"]().handler_resources()) | {
             "ctx",
             "snapshot",
@@ -171,6 +172,7 @@ class TestHandlerResources:
             "wake",
             "vision",
             "skills",
+            "deferred",
         }
         required = {t.requires_handler for t in TOOLS.values() if t.requires_handler}
         assert required <= available, f"해결 불가한 요구: {required - available}"

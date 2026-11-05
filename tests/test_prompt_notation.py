@@ -169,6 +169,15 @@ def test_schedule_result_samples_are_in_the_inventory():
     assert "missed 2026-11-03T09:00:00" in text  # 놓친 발화 줄도 표본에 있다
 
 
+def test_tool_help_samples_are_in_the_inventory():
+    """`tool_help` 결과(v10.109.0)도 도구 결과라 표본으로만 가드에 닿는다 — 모르는
+    이름의 도구 목록은 백틱(가드가 처음에 잡았다)."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {"tool_help_result", "tool_help_unknown"} <= ids
+    unknown = next(t for w, t in _ALL if w.endswith(" runtime tool_help_unknown"))
+    assert "Tools: `read_file`, `edit_file`" in unknown
+
+
 def test_depth_limit_line_is_in_the_inventory():
     """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
     texts = [t for w, t in _ALL if " limit section " in w]
