@@ -137,6 +137,23 @@ def test_value_samples_are_in_the_inventory():
     assert {"oversized_saved", "oversized_source", "edit_bare_line_ref"} <= ids
 
 
+def test_browser_result_samples_are_in_the_inventory():
+    """`browser` 결과·거절 문구(v10.106.0)는 도구 결과라 표본으로만 가드에 닿는다."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {
+        "browser_same_page_changed",
+        "browser_same_page_unchanged",
+        "browser_snapshot_cut",
+        "browser_ref_errors",
+        "browser_page_errors",
+        "browser_header_lines",
+        "browser_no_match",
+        "browser_challenge",
+    } <= ids
+    text = "\n".join(t for w, t in _ALL if " runtime browser_" in w)
+    assert "'" not in text.replace("site's", "")  # repr 작은따옴표 값이 돌아오지 않는다
+
+
 def test_depth_limit_line_is_in_the_inventory():
     """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
     texts = [t for w, t in _ALL if " limit section " in w]

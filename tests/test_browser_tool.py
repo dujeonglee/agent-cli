@@ -247,10 +247,10 @@ class TestChallenge:
             "bot challenge ("
         )
         assert B.is_challenge("https://x.test/", "Just a moment…", "") == (
-            "bot challenge ('just a moment')"
+            'bot challenge ("just a moment")'
         )
         assert B.is_challenge("https://x.test/", "", "비정상적인 트래픽이 감지") == (
-            "bot challenge ('비정상적인 트래픽')"
+            'bot challenge ("비정상적인 트래픽")'
         )
 
     def test_long_page_about_captchas_is_not_a_challenge(self):
@@ -313,6 +313,7 @@ class FakeLocator:
         nav = self.page.navigates.get((self.role, self.name, self.index))
         if nav:
             self.page.load(*nav)
+        self.page.mutate((self.role, self.name, self.index))
 
     def click(self):
         self._act("click")
@@ -333,6 +334,7 @@ class FakeKeyboard:
 
     def press(self, key):
         self.page.actions.append(("key", key))
+        self.page.mutate(("key", key))
 
 
 class FakePage:
@@ -343,6 +345,14 @@ class FakePage:
         self.text_of = {}
         self.body_text = {}  # url -> inner_text of body
         self.navigates = {}  # (role, name, nth) -> (url)
+        #: (role, name, nth) 또는 ("key", key) -> 같은 URL 에서 바뀐 트리 (v10.106.0)
+        self.mutates = {}
+        #: 같은 키 -> 기다린 뒤에야(``wait_for_timeout``) 보이는 트리 — setTimeout 식 늦은 갱신
+        self.mutates_late = {}
+        self._pending = None
+        self.settles, self.waits = 0, []
+        #: 같은 키 -> 그 조작이 띄우는 대화상자 (닫히고 머리에 실린다)
+        self.dialog_on = set()
         self.context = FakeContext(None, None)
         self.actions, self.lookups, self.gotos = [], [], []
         self.keyboard = FakeKeyboard(self)
@@ -352,6 +362,14 @@ class FakePage:
 
     def is_closed(self):
         return self.closed
+
+    def mutate(self, key):
+        if key in self.mutates:
+            self.tree = self.mutates[key]
+        if key in self.mutates_late:
+            self._pending = self.mutates_late[key]
+        if key in self.dialog_on:
+            self.handlers["dialog"](FakeDialog())
 
     def load(self, url):
         self.history.append(self.url)
@@ -379,6 +397,16 @@ class FakePage:
 
     def wait_for_load_state(self, *a, **k):
         pass
+
+    def evaluate(self, js):
+        """정착(rAF 두 프레임) 스텁 — 호출 수만 센다."""
+        assert "requestAnimationFrame" in js
+        self.settles += 1
+
+    def wait_for_timeout(self, ms):
+        self.waits.append(ms)
+        if self._pending is not None:
+            self.tree, self._pending = self._pending, None
 
     def set_default_timeout(self, ms):
         pass
@@ -584,7 +612,11 @@ class TestSessionWithFakePage:
             k for k, r in s._refs.items() if r.role == "button" and r.name == "Search"
         ][1]
         out = s.click(second)
-        assert out.startswith('clicked button "Search" — same page (http://shop.test/)')
+        assert out == (
+            'clicked button "Search" — same page (http://shop.test/); the '
+            "accessibility tree is unchanged — a canvas or picture may still have "
+            'changed, which only "screenshot" shows'
+        )
         assert page.actions[-1] == ("click", "button", "Search", 1)
 
     def test_type_select_press(self, fake):
@@ -593,17 +625,113 @@ class TestSessionWithFakePage:
         box = next(k for k, r in s._refs.items() if r.role == "textbox")
         combo = next(k for k, r in s._refs.items() if r.role == "combobox")
         assert s.type(box, "glass", submit=True).startswith(
-            "typed 'glass' into textbox \"Email\" and pressed Enter"
+            'typed "glass" into textbox "Email" and pressed Enter — same page ('
         )
         assert page.actions[-2:] == [
             (("fill", "glass"), "textbox", "Email", 0),
             (("press", "Enter"), "textbox", "Email", 0),
         ]
         assert s.select(combo, "North").startswith(
-            "selected 'North' in combobox \"Branch\""
+            'selected "North" in combobox "Branch" — same page ('
         )
-        assert s.press("Tab").startswith("pressed Tab — same page")
+        assert s.press("Tab").startswith("pressed Tab — same page (")
         assert page.actions[-1] == ("key", "Tab")
+
+    def test_same_page_change_carries_header_and_budgeted_snapshot(self, fake):
+        """v10.106.0: 같은 페이지에서 트리가 바뀌면 머리 + 예산 스냅샷이 실린다 —
+        예산을 넘으면 자동 스냅샷과 같은 ``[snapshot cut …]`` 꼬리."""
+        s, page = fake
+        s.open("http://shop.test/")
+        page.mutates[("key", "ArrowDown")] = SHOP + '- status: "Moved to row 2"\n'
+        out = s.press("ArrowDown")
+        head, page_line, *rest = out.split("\n")
+        assert head == "pressed ArrowDown — same page, changed in place"
+        assert page_line == "[page] http://shop.test/ — Gadget Shop"
+        assert '- status: "Moved to row 2"' in rest and "[snapshot cut" not in out
+        # 예산을 넘는 변화 — 깊이 0 바닥까지 잘리고 꼬리가 붙는다
+        page.mutates[("key", "ArrowUp")] = SHOP
+        out = s.press("ArrowUp", budget=1)
+        assert out.startswith("pressed ArrowUp — same page, changed in place\n[page]")
+        assert "\n[snapshot cut to depth 0: " in out and out.endswith(
+            "for the part you need]"
+        )
+
+    def test_select_counts_as_a_change(self, fake):
+        """드롭다운 값이 바뀌는 작은 변화도 "changed" — 크기는 예산이 막는다."""
+        s, page = fake
+        s.open("http://shop.test/")
+        combo = next(k for k, r in s._refs.items() if r.role == "combobox")
+        page.mutates[("combobox", "Branch", 0)] = SHOP.replace(
+            '- option "All" [selected]\n    - option "North"',
+            '- option "All"\n    - option "North" [selected]',
+        )
+        out = s.select(combo, "North")
+        assert out.startswith(
+            'selected "North" in combobox "Branch" — same page, changed in place\n'
+        )
+        assert '- option "North" [selected]' in out
+
+    def test_unchanged_tree_ignores_ref_numbers(self, fake):
+        """비교는 ref 번호를 뺀 렌더 — 읽을 때마다 번호가 새로 찍혀도 같은 트리는
+        "unchanged". 조작 직전에 다시 읽지 않는다(조작마다 트리 읽기 한 번)."""
+        s, page = fake
+        s.open("http://shop.test/")
+        per_read = s._next_ref - 1  # 한 번 읽을 때 찍히는 ref 수
+        s.snapshot()  # 번호가 새로 찍힌 전체 읽기 — 기준이 이것으로 바뀐다
+        before = s._next_ref
+        out = s.press("Tab")
+        assert "the accessibility tree is unchanged" in out
+        # unchanged 는 정착 뒤 읽기 + 200 ms 뒤 재읽기 — 정확히 두 번
+        assert s._next_ref == before + 2 * per_read
+        assert page.settles == 1 and page.waits == [B.SETTLE_RETRY_MS]
+        out = s.press("Tab")
+        assert "the accessibility tree is unchanged" in out
+
+    def test_late_change_is_caught_by_the_one_retry(self, fake):
+        """정착 뒤 첫 읽기에선 그대로, 기다린 뒤 바뀌는 페이지(setTimeout·rAF 루프) —
+        재읽기 한 번이 잡아 "changed in place"; 다음 조작에 밀려 귀속되지 않는다."""
+        s, page = fake
+        s.open("http://shop.test/")
+        page.mutates_late[("key", "r")] = SHOP + '- status: "Floor 2"\n'
+        out = s.press("r")
+        assert out.startswith("pressed r — same page, changed in place\n[page]")
+        assert '- status: "Floor 2"' in out and page.waits == [B.SETTLE_RETRY_MS]
+        out = s.press("Tab")  # 늦은 변화는 이미 앞 조작에 귀속됐다
+        assert "the accessibility tree is unchanged" in out
+
+    def test_immediate_change_skips_the_wait(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        page.mutates[("key", "x")] = ITEM
+        assert "changed in place" in s.press("x")
+        assert page.settles == 1 and page.waits == []  # 빠른 길: 재읽기 없음
+
+    def test_unread_document_counts_as_changed(self, fake):
+        """새 문서(이동)가 기준을 비운다 — 비교할 것이 없으면 스냅샷을 싣는다."""
+        s, _ = fake
+        s.open("http://shop.test/")
+        s._new_document()  # 같은 URL 의 새 문서(예: 다시 열기 직후, 트리 미독)
+        out = s.press("Tab")
+        assert out.startswith("pressed Tab — same page, changed in place\n[page]")
+
+    def test_same_page_dialog_header_is_kept(self, fake):
+        s, page = fake
+        s.open("http://shop.test/")
+        page.dialog_on.add(("key", "Enter"))
+        out = s.press("Enter")
+        assert out.split("\n")[1:] == [
+            "[page] http://shop.test/ — Gadget Shop",
+            "[dialog dismissed] alert: hello",
+        ]
+        assert "the accessibility tree is unchanged" in out.split("\n")[0]
+        page.dialog_on.add(("key", "Escape"))
+        page.mutates[("key", "Escape")] = ITEM
+        out = s.press("Escape")
+        assert out.split("\n")[:3] == [
+            "pressed Escape — same page, changed in place",
+            "[page] http://shop.test/ — Gadget Shop",
+            "[dialog dismissed] alert: hello",
+        ]
 
     def test_find_and_text(self, fake):
         s, _ = fake
@@ -611,7 +739,7 @@ class TestSessionWithFakePage:
         out = s.find(text="aurora")
         assert out.startswith("4 match(es) on http://shop.test/:")
         assert '> link "Aurora Lamp" [ref=' in out
-        assert s.find(regex="zzz") == "no match for 'zzz' on http://shop.test/"
+        assert s.find(regex="zzz") == 'no match for "zzz" on http://shop.test/'
         text = s.text()
         assert (
             text.startswith("[text of http://shop.test/ — ")
@@ -985,7 +1113,7 @@ class TestToolDispatch:
         assert r.success and "- navigation" in r.output
         box = next(k for k, r in session._refs.items() if r.role == "textbox")
         r = t.run({"mode": "type", "ref": box, "text": "x", "submit": True})
-        assert r.success and r.output.startswith("typed 'x' into")
+        assert r.success and r.output.startswith('typed "x" into')
 
     def test_open_local_file_resolves_and_gates_secrets(
         self, monkeypatch, fake, tmp_path

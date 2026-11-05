@@ -1234,7 +1234,7 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 | `snapshot` | `ref?`, `depth?` | 페이지(또는 `ref` 랜드마크 아래)의 트리 — 긴 텍스트는 80자에서 자름 |
 | `find` | `text` 또는 `regex` | 스냅샷에 보이는 모양(`link "Aurora Lamp"`)으로 맞는 노드만, 조상 경로와 함께 |
 | `text` | `ref?` | 읽을 글만 (본문·기사 — 스냅샷 대신 이걸로) |
-| `click` / `type` / `select` / `press` | `ref` / `ref, text, submit?` / `ref, value` / `key` | 조작. 페이지가 바뀌면 결과에 새 스냅샷이 포함됨(`open` 과 같은 예산) |
+| `click` / `type` / `select` / `press` | `ref` / `ref, text, submit?` / `ref, value` / `key` | 조작. 다른 페이지로 가면 새 스냅샷이, 같은 페이지에서 트리가 바뀌면(영역이 펼쳐짐·드롭다운 값) `same page, changed in place` 와 새 스냅샷이 결과에 포함됨(둘 다 `open` 과 같은 예산). 비교 전에 화면 갱신 두 프레임을 기다리고, 그대로면 200 ms 뒤 한 번 더 읽음. 그래도 그대로면 그렇다고 한 줄로 알림 — 캔버스·그림의 변화는 `screenshot` 만 보여 줌 (v10.106.0) |
 | `screenshot` | `full_page?` | 뷰포트(또는 문서 전체)를 PNG 로 `.agent-cli/tmp/screenshots/` 에 저장하고 **이미지로 보여 줌**(v10.61.0 — 모델이 이미지를 보면; 트리가 못 말하는 배치·차트·그림용) |
 | `back` / `close` | — | 뒤로 / 종료 |
 

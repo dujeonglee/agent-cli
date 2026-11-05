@@ -28,6 +28,11 @@ PAGES = {
 <label>Branch <select id=b><option value=all>All</option><option value=river>Riverside</option></select></label>
 <button>Search</button></form><div id=r></div><script>f.onsubmit=e=>{e.preventDefault();
 r.textContent=q.value+' @ '+b.value+' → Shelf R-03'}</script>""",
+    # v10.106.0: 키 입력은 변수만 바꾸고 rAF 루프가 글을 그린다 (캔버스 게임의 HUD 모양).
+    # 글은 네 프레임마다 — 무거운 그리기로 프레임이 느린 게임처럼, 조작 직후 읽기보다 늦다.
+    "/raf.html": """<!doctype html><title>Floors</title><canvas width=40 height=40></canvas>
+<p id=h>Floor 1</p><script>let floor=1,n=0;addEventListener('keydown',e=>{if(e.key==='r')floor++});
+(function loop(){if(++n%4===0)h.textContent='Floor '+floor;requestAnimationFrame(loop)})()</script>""",
     "/challenge.html": """<!doctype html><title>Just a moment…</title><p>Unfortunately, bots use this site too.
 Please complete the following challenge to confirm you are human.</p><input type=checkbox id=c><label for=c>I am not a robot</label>""",
 }
@@ -83,7 +88,10 @@ def test_delayed_table_link_and_revealed_section(session, site):
         and "/item.html" in out
     )
     out = s.click(_ref(s, "button", "Show specifications"))
-    assert "same page" in out
+    # v10.106.0: 펼친 영역은 같은 페이지의 트리 변화 — 결과에 실린다
+    assert out.startswith(
+        'clicked button "Show specifications" — same page, changed in place\n[page]'
+    )
     assert "SKU: AL-4471" in s.text()
     assert "SKU: AL-4471" in s.find(text="SKU")
 
@@ -94,7 +102,7 @@ def test_form_type_select_submit(session, site):
     s.type(_ref(s, "textbox", "Title"), "glass")
     s.select(_ref(s, "combobox", "Branch"), "Riverside")
     out = s.click(_ref(s, "button", "Search"))
-    assert "same page" in out
+    assert out.startswith('clicked button "Search" — same page, changed in place')
     assert "glass @ river → Shelf R-03" in s.text()
 
 
@@ -159,3 +167,24 @@ def test_screenshot_writes_a_real_png(session, site, tmp_path):
     full = tmp_path / "full.png"
     assert "(full page)" in session.screenshot(str(full), full_page=True)
     assert _images.sniff_file(full) == "image/png"
+
+
+def test_action_without_effect_reports_unchanged_tree(session, site):
+    """v10.106.0: 실 Chromium 에서도 아무것도 바꾸지 않는 조작은 "unchanged" —
+    ref 번호가 새로 찍혀도 비교에 끼지 않는다."""
+    s = session
+    s.open(f"{site}/search.html")
+    out = s.press("Shift")
+    assert "the accessibility tree is unchanged" in out, out
+
+
+def test_frame_loop_update_is_reported_as_changed(session, site):
+    """v10.106.0: rAF 루프로 그려지는 변화도 그 조작의 결과로 잡힌다 (정착 + 재읽기)."""
+    s = session
+    out = s.open(f"{site}/raf.html")
+    assert "Floor 1" in out
+    out = s.press("r")
+    assert out.startswith("pressed r — same page, changed in place"), out
+    assert "Floor 2" in out
+    out = s.press("Shift")
+    assert "the accessibility tree is unchanged" in out, out
