@@ -49,16 +49,16 @@ def _parse_field(text: str, name: str, lo: int, hi: int) -> frozenset:
     for part in text.split(","):
         part = part.strip()
         if not part:
-            raise ValueError(f"cron {name}: empty list item in {text!r}")
+            raise ValueError(f'cron {name}: empty list item in "{text}"')
         step = 1
         if "/" in part:
             part, step_s = part.split("/", 1)
             try:
                 step = int(step_s)
             except ValueError:
-                raise ValueError(f"cron {name}: bad step in {text!r}") from None
+                raise ValueError(f'cron {name}: bad step in "{text}"') from None
             if step < 1:
-                raise ValueError(f"cron {name}: step must be >= 1 in {text!r}")
+                raise ValueError(f'cron {name}: step must be >= 1 in "{text}"')
         if part == "*":
             start, end = lo, hi
         elif "-" in part:
@@ -66,12 +66,12 @@ def _parse_field(text: str, name: str, lo: int, hi: int) -> frozenset:
             try:
                 start, end = int(a), int(b)
             except ValueError:
-                raise ValueError(f"cron {name}: bad range in {text!r}") from None
+                raise ValueError(f'cron {name}: bad range in "{text}"') from None
         else:
             try:
                 start = end = int(part)
             except ValueError:
-                raise ValueError(f"cron {name}: bad value in {text!r}") from None
+                raise ValueError(f'cron {name}: bad value in "{text}"') from None
         # weekday alias: 7 == Sunday == 0
         if name == "weekday":
             if start == 7:
@@ -79,10 +79,10 @@ def _parse_field(text: str, name: str, lo: int, hi: int) -> frozenset:
             if end == 7:
                 end = 0
         if start > end:
-            raise ValueError(f"cron {name}: reversed range in {text!r}")
+            raise ValueError(f'cron {name}: reversed range in "{text}"')
         if start < lo or end > hi:
             raise ValueError(
-                f"cron {name}: {part!r} out of range {lo}-{hi} in {text!r}"
+                f'cron {name}: "{part}" out of range {lo}-{hi} in "{text}"'
             )
         out.update(range(start, end + 1, step))
     return frozenset(out)

@@ -45,6 +45,13 @@ class ScheduleError(ValueError):
     """예약을 받아들일 수 없다 — 메시지는 모델·사용자에게 그대로 간다."""
 
 
+#: 거절 사유 (v10.108.0) — 실행과 ``prompts.inventory`` 의 표본이 같은 출처를 쓴다
+#: (표기 가드: 값은 큰따옴표). 도구는 ``schedule add rejected: `` 를 앞에 붙인다.
+INVALID_CRON = 'invalid cron "{cron}": {why}'
+EMPTY_PROMPT = "prompt is empty"
+CAP_REACHED = "this session already has {cap} agent schedules — delete one first"
+
+
 @dataclass
 class Schedule:
     id: str
@@ -179,17 +186,14 @@ class ScheduleRegistry:
         try:
             cron.parse(cron_expr)
         except ValueError as e:
-            raise ScheduleError(f"invalid cron {cron_expr!r}: {e}") from None
+            raise ScheduleError(INVALID_CRON.format(cron=cron_expr, why=e)) from None
         if not prompt:
-            raise ScheduleError("prompt is empty")
+            raise ScheduleError(EMPTY_PROMPT)
         with self._lock:
             if source == "agent":
                 mine = sum(1 for s in self._schedules.values() if s.source == "agent")
                 if mine >= AGENT_CAP:
-                    raise ScheduleError(
-                        f"this session already has {AGENT_CAP} agent schedules — "
-                        "delete one first"
-                    )
+                    raise ScheduleError(CAP_REACHED.format(cap=AGENT_CAP))
             now = self._clock().isoformat(timespec="seconds")
             s = Schedule(
                 id=uuid.uuid4().hex[:8],

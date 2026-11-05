@@ -206,6 +206,7 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 
 - reveal·form: 정답 동일, 런마다 호출 하나가 줄고(조작 뒤 재스냅샷 5→0), reveal 은 입력 토큰 합 26% 감소. form 은 모델 호출 수가 같아(기준이 `type`·`select` 를 한 턴에 묶음) 토큰 차이 1%.
 - game 은 두 변형 모두 하니스의 액션 루프 감지기(`ActionLoopDetector(threshold=2)`, dispatch.py — 연속 동일 (action, args) 두 번이면 `probe_progress` → `restate_task` → "Action loop unresolved … Stopping")에 걸렸다. 과제가 요구한 `press` "ArrowRight" 세 번 연속이 그 모양이다. 기준은 5런 중 2런, 후보는 4런이 이것으로 멈췄다(결과 파일 없음). 후보가 더 많이 걸린 까닭은 결과에 HUD 변화가 보여 모델이 "progressing, continue" 라며 같은 키를 그대로 반복한 반면(후보 r1 의 사고 문장), 기준은 변화를 못 봐 Space 로 바꿔 누르다 우연히 감지기를 피한 것. 감지기는 관찰 내용을 보지 않으므로 B1 의 결함이 아니라 감지기의 한계이고, 게임 과제의 정답 차이는 B1 에 귀속하지 않는다. 후속 과제로 남긴다(docs/tool-review/TRACKER.md TODO).
+- game 의 판정 보류는 v10.107.0(루프 감지기 진행 규칙 — 같은 호출의 결과가 바뀌면 반복으로 세지 않음, docs/robust-harness/DESIGN.md "B1 진행 규칙")으로 풀렸다: 같은 조건에서 같은 과제 5/5·런당 호출 8·중단 0 (2026-11-05).
 
 ## 8. 결정 (2026-10-15 권고안대로 승인)
 

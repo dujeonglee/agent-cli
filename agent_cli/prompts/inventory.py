@@ -437,6 +437,99 @@ def _browser_result_samples() -> list[tuple[str, str, str]]:
     ]
 
 
+class _TwoSchedules:
+    """`schedule` 목록 표본용 가짜 레지스트리 — 켠 예약 하나(놓친 발화 있음)와 꺼 둔
+    예약 하나. ``list_all``·``next_fire`` 만 흉내 낸다."""
+
+    def __init__(self):
+        from agent_cli.schedule.registry import Schedule
+
+        def sched(sid, cron, prompt, label, enabled, missed=None):
+            return Schedule(
+                id=sid,
+                source="agent",
+                cron=cron,
+                prompt=prompt,
+                label=label,
+                nickname="",
+                enabled=enabled,
+                created_at="2026-11-01T08:00:00",
+                settled_at="2026-11-01T08:00:00",
+                missed_at=missed,
+            )
+
+        self._all = [
+            sched(
+                "1a2b3c4d",
+                "0 9 * * 1",
+                "weekly report",
+                "Weekly",
+                True,
+                missed="2026-11-03T09:00:00",
+            ),
+            sched("5e6f7a8b", "*/30 * * * *", "check the queue", "", False),
+        ]
+
+    def list_all(self):
+        return list(self._all)
+
+    def next_fire(self, s):
+        from datetime import datetime
+
+        # 예약은 현지 시각 기준(naive) — 레지스트리와 같은 모양으로 고정 시각을 준다
+        return datetime.fromisoformat("2026-11-10T09:00") if s.enabled else None
+
+
+def _schedule_result_samples() -> list[tuple[str, str, str]]:
+    """`schedule` 결과·거절 문구 표본 (v10.108.0) — ``tools.schedule`` 와
+    ``schedule.registry`` 의 모듈 상수를 가짜 인자로 채운 것. 도구 결과라 다른
+    경로로는 inventory 에 안 실린다; 표기 가드가 이 표본을 본다."""
+    from agent_cli.schedule import cron
+    from agent_cli.schedule import registry as sr
+    from agent_cli.tools import schedule as st
+
+    listing = st._fmt_schedules(_TwoSchedules())
+    try:  # 파서의 실제 사유를 싣는다
+        cron.parse("99 9 * * *")
+        bad_cron = ""
+    except ValueError as e:
+        bad_cron = str(e)
+    return [
+        (
+            "schedule_added",
+            "`schedule` add accepted — the listing follows",
+            f"{st.SCHEDULED.format(id='1a2b3c4d')}\n{listing}",
+        ),
+        (
+            "schedule_deleted_empty",
+            "`schedule` delete accepted, nothing left",
+            f"{st.DELETED}\n{st.NO_SCHEDULES}",
+        ),
+        (
+            "schedule_add_rejected",
+            "`schedule` add refused: bad cron, empty prompt, the per-session cap",
+            "\n".join(
+                st.ADD_REJECTED.format(why=why)
+                for why in (
+                    sr.INVALID_CRON.format(cron="99 9 * * *", why=bad_cron),
+                    sr.EMPTY_PROMPT,
+                    sr.CAP_REACHED.format(cap=sr.AGENT_CAP),
+                )
+            ),
+        ),
+        (
+            "schedule_delete_rejected",
+            "`schedule` delete with an unknown `id` — the listing follows",
+            f"{st.DELETE_REJECTED.format(sid='nope')}\n{listing}",
+        ),
+        (
+            "schedule_unavailable",
+            "`schedule` called with no active session",
+            st.UNAVAILABLE,
+        ),
+    ]
+
+
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
@@ -528,6 +621,7 @@ def _runtime_texts(dialect) -> list[dict]:
         ),
         *_agent_result_samples(),
         *_browser_result_samples(),
+        *_schedule_result_samples(),
         (
             "agent_message_field",
             "`agent` called with `message` instead of `task`",
