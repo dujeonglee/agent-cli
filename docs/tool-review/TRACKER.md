@@ -44,7 +44,7 @@
 - [ ] `code_index` B안 PR-2(v10.97.0) — `refs` 해석 태그, `path` 로 정의 고르기 / PR-3(v10.98.0) C 범위 규칙 / 이후 JS/TS·Go·Rust(언어마다 공개 저장소 + 언어 서버로 대조), Java·C++ 는 언어 서버 백엔드
 - [x] `complete` 의 `result` 가 사용자에게 마크다운으로 렌더링돼 보인다는 것을 모델에게 알리는 문장 한 줄(사용자 요청 2026-11-01) — v10.96.1: 도구 설명의 "`result` is the only text delivered…" 다음 문장("The user sees it rendered as Markdown."), 인자 설명은 그대로. 호출한 에이전트는 원문을 받으니 "사용자" 로 한정
 - [x] (v10.99.0, docs/browser/DESIGN.md §4.2 — `read_file` 과 같은 경계: 밖 허용·자격증명 사전만 확인) `browser` 가 `file://` 주소를 열게 — 지금은 "browser: refused: only http(s) URLs can be opened (got file scheme)" 로 거절(사용자 요청 2026-11-01). 로컬 HTML·보고서를 보는 길; 작업 디렉터리 안 경로만 허용할지(`_confine` 과 같은 규칙) 검토와 함께
-- [ ] 액션 루프 감지기와 `browser` 반복 조작 — 연속 동일 `press`/`click` 이 정당한 과제(키 세 번)에서 감지기가 2회에 멈춤(2026-11-05 라이브: game 기준 2/5·후보 4/5 런 중단). 후보: 관찰이 직전과 다르면 반복으로 세지 않기(browser 조작 모드만, 또는 일반 규칙) — 사용자 결정 뒤
+- [x] (v10.107.0, 결정: 모든 도구의 일반 규칙 — 사용자 2026-11-05; 같은 호출의 직전 두 결과가 다르거나 하나뿐이면 세지 않음, 진짜 루프는 3번째 호출에서 1단계, 시각·난수가 섞인 결과는 감지기를 피함 — docs/robust-harness/DESIGN.md §6 "B1 진행 규칙") 액션 루프 감지기와 `browser` 반복 조작 — 연속 동일 `press`/`click` 이 정당한 과제(키 세 번)에서 감지기가 2회에 멈춤(2026-11-05 라이브: game 기준 2/5·후보 4/5 런 중단). 후보: 관찰이 직전과 다르면 반복으로 세지 않기(browser 조작 모드만, 또는 일반 규칙) — 사용자 결정 뒤
 - [ ] 남은 도구 검토: `schedule` (`code_index`·`fetch` 는 v10.92.0, `browser` 는 v10.106.0 구현 완료)
 - [x] `code_index` callers·callees 이름 단위 질의(v10.94.0) — 전체 콜그래프 구성 제거, 출력 동일, 1.4~1.6 s → 이름당 0.3 ms·최악 ~90 ms. docs/code-index/DESIGN.md §19
 - [x] `code_index` `containing_fn` 결함(§19 D4, v10.95.0) — 가장 안쪽 함수 규칙·부모 포인터, Python 만, 잃는 간선 0, django callers 답 6.0%·callees 4.0% 이름에서 호출이 늘어남. docs/code-index/DESIGN.md §20

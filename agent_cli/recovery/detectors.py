@@ -32,7 +32,11 @@ class ActionLoopDetector:
 
     The detector looks only at the model's *intent* (action + args) — it
     does not consult the model's response text or the tool result. That
-    keeps it purely about "the model wants to do X with Y again".
+    keeps it purely about "the model wants to do X with Y again". Whether
+    the earlier identical calls *made progress* is the caller's judgment
+    (v10.107.0: ``TurnDispatcher._progressed`` compares the last two
+    results of the same call) and arrives as ``progressed=True`` — the same
+    reset as an error retry.
 
     Threshold default is 2 (early nudge): after one repeat the next
     observation fires. The 2-fire principle mirrors human metacognition
@@ -46,6 +50,7 @@ class ActionLoopDetector:
         self.threshold = threshold
         self._last_signature: str | None = None
         self._consecutive_count = 0
+        self._run_length = 0
         self._fire_count = 0
 
     @property
@@ -55,10 +60,25 @@ class ActionLoopDetector:
 
     @property
     def consecutive_count(self) -> int:
-        """How many consecutive emissions of the current signature so far."""
+        """Consecutive emissions of the current signature counted toward the
+        threshold — an error retry or a progress reset starts it again at 1."""
         return self._consecutive_count
 
-    def observe(self, action: str, args: Any, *, prev_was_error: bool = False) -> int:
+    @property
+    def run_length(self) -> int:
+        """How many times in a row the current signature was emitted, resets
+        included (v10.107.0) — the number the nudge quotes to the model. Only a
+        different signature restarts it."""
+        return self._run_length
+
+    def observe(
+        self,
+        action: str,
+        args: Any,
+        *,
+        prev_was_error: bool = False,
+        progressed: bool = False,
+    ) -> int:
         """Record an action emission. Returns escalation level.
 
         Returns:
@@ -74,12 +94,18 @@ class ActionLoopDetector:
             prev_was_error: ``True`` when the previous tool call (with
                 the same signature) returned an error. Error retries
                 are legitimate — counter resets, no fire.
+            progressed: ``True`` when the earlier identical calls are still
+                making progress (v10.107.0 — their last two results differ, or
+                only one has run so there is nothing to compare). Same reset
+                as ``prev_was_error``.
         """
         sig = self._canonical(action, args)
+        self._run_length = self._run_length + 1 if sig == self._last_signature else 1
 
-        if prev_was_error:
-            # Legitimate retry after a failure — reset counter so the
-            # current emission is treated as a fresh attempt. The next
+        if prev_was_error or progressed:
+            # Legitimate retry after a failure, or a repeat whose results are
+            # still changing — reset counter so the current emission is
+            # treated as a fresh attempt. The next
             # *same-sig* emission after a successful run can still fire.
             self._last_signature = sig
             self._consecutive_count = 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 
@@ -627,12 +628,16 @@ class ToolBridge:
         """
         from agent_cli.recovery.primitives import bounded_excerpt
 
-        obs = result.output if result.success else result.error
+        obs = (result.output if result.success else result.error) or ""
         self.recent_tool_history.append(
             {
                 "tool": tool_name,
                 "input": _normalize_input(tool_input),
-                "result": bounded_excerpt(obs or ""),
+                "result": bounded_excerpt(obs),
+                # 관찰 본문 전체의 지문 (v10.107.0) — B1 이 같은 호출의 직전 두
+                # 결과를 비교한다. ``result`` 는 머리+꼬리 발췌라 가운데만 바뀐
+                # 결과(진행 표·긴 트리)를 같은 것으로 본다.
+                "digest": hashlib.sha256(obs.encode("utf-8", "replace")).hexdigest(),
                 "turn": self.state.turn,
                 "success": result.success,
             }
