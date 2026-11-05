@@ -249,7 +249,7 @@ class TestRegistrationTimeGate:
             res = TOOLS["monitor"].run(
                 {
                     "mode": "add",
-                    "command": "rm -rf /tmp/whatever",
+                    "command": "rm -rf /nonexistent/whatever",
                     "every": "60s",
                 }
             )

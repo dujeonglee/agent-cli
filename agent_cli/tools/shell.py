@@ -157,6 +157,13 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
     keyword = _detect_dangerous(cmd)
     if not keyword or keyword in _session_allowlist:
         return None, ""
+    from agent_cli.tools import _confine
+
+    # 대상이 전부 임시 자리(시스템 임시 루트·`.agent-cli/tmp`) 안이면 묻지 않는다
+    # (v10.104.0) — 임시 파일을 지우는 데 사람을 세우지 않는다. 판정은 보수적
+    # (`_confine.temp_targets_only`): 루트 자체·글로브 루트·상대 경로·파이프 뒤 `rm` 은 묻는다.
+    if _confine.temp_targets_only(cmd, _DANGEROUS_KEYWORDS):
+        return None, ""
 
     from agent_cli.render import get_renderer, interactive_lock
 
