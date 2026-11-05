@@ -45,25 +45,17 @@ class BrowserTool(Tool):
     #: tools_list 에서 벗겨져 프롬프트에 나오지 않는다.
     requires_handler = "browser"
     description = (
-        "Headless browser for pages that need JavaScript or interaction (for plain HTML"
-        ' use `fetch`). `mode` "open" with `url` loads a page and returns its snapshot:'
-        " an accessibility tree where buttons, links, inputs and landmarks carry "
-        '[ref=eN]. Act with a `ref`: "click" with `ref`; "type" with `ref`, `text` and '
-        'optional `submit` (presses Enter); "select" with `ref` and `value`; "press" '
-        'with `key`. "snapshot" (optional `ref`, `depth`) re-reads the page or one '
-        'landmark; "find" with `text` or `regex` returns only the matching nodes with '
-        'their path; "text" (optional `ref`) returns the readable text of the page or '
-        "an element — use it for articles and long content, snapshots cut long text. "
-        '"screenshot" (optional `full_page`) saves a PNG of the viewport (or the whole '
-        "page) and shows it to you if the model can view images — for layout, charts "
-        'and rendered figures the tree cannot describe. "back", "close". Refs stay '
-        "valid until the next page load; when an action changes the page the result "
-        "already includes the new snapshot (cut to the depth that fits when the page is"
-        ' big — the hidden part is still reachable by "find"/"text"/"snapshot"). If a '
-        "site demands human verification (bot challenge) the result says so: never try "
-        "to answer it — ask the user, who can complete it in the browser window when "
-        "one was opened, or use another source. Search engines block automation often; "
-        "go to a site you know directly, or use `fetch` for plain pages."
+        "Headless browser for pages that need JavaScript or interaction (plain HTML: "
+        "`fetch`). A snapshot is the page's accessibility tree; buttons, links, "
+        "inputs and landmarks carry [ref=eN], and actions take that `ref`. Refs stay "
+        "valid until the next page load. Opening a page, or an action that changes "
+        "it, returns the new snapshot, cut to the depth that fits when the page is "
+        'big — the rest is reachable with "find", "text" or "snapshot". Use "text" '
+        'for long readable content, "screenshot" (a PNG of the page) for what the '
+        "tree cannot show (layout, charts, canvas). If a site asks for human "
+        "verification the result says so: do not answer or work around it — ask the "
+        "user or use another source. Search engines often block automation; go "
+        "directly to a site you know."
     )
     oversized_retry_hint = (
         '"snapshot" one landmark (its `ref`) or a shallower `depth`, "find" the '
@@ -155,14 +147,19 @@ class BrowserTool(Tool):
         return f"{mode} {rest}".strip()
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        from agent_cli.browser import AUTO_SNAPSHOT_SHARE, BrowserError, get_browser
+        from agent_cli.browser import (
+            AUTO_SNAPSHOT_SHARE,
+            NO_PAGE,
+            BrowserError,
+            get_browser,
+        )
 
         mode = str(args.get("mode", "")).strip()
         session = get_browser(create=mode == "open")
         if session is None:
             return ToolResult(
                 False,
-                error='browser: no page is open — call `mode` "open" with a `url` first',
+                error=f"browser: {NO_PAGE}",
             )
         # 이동 뒤 자동 스냅샷 예산 — 과대 출력 캡(창/10)의 일부. 캡이 꺼져
         # 있으면(0) 예산도 없다.

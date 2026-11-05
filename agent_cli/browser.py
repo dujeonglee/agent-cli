@@ -91,6 +91,16 @@ LANDMARK_ROLES = frozenset(
 )
 NAVIGATION_TIMEOUT_MS = 30_000
 ACTION_TIMEOUT_MS = 10_000
+#: 같은 페이지 조작 뒤 트리를 읽기 전 "정착" (v10.106.0) — 화면 갱신 두 프레임을
+#: 기다린다. ``requestAnimationFrame`` 루프로 글을 바꾸는 페이지(캔버스 게임의 HUD)는
+#: 키 입력 직후엔 아직 옛 트리다. 숨은 탭처럼 프레임이 안 오면 상한(ms)에서 끝낸다.
+_SETTLE_JS = """() => new Promise(done => {
+  const t = setTimeout(done, 100);
+  requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); done(); }));
+})"""
+#: 정착 뒤에도 트리가 그대로면 이만큼(ms) 더 기다렸다 **한 번만** 다시 읽는다 —
+#: ``setTimeout`` 으로 늦게 반영되는 변화. 비용은 "unchanged" 경우에만 든다.
+SETTLE_RETRY_MS = 200
 #: 큐 대기 상한 — Playwright 자체 타임아웃보다 넉넉히.
 CALL_TIMEOUT_S = 90.0
 
@@ -332,7 +342,7 @@ def is_challenge(url: str, title: str, text: str) -> str:
         return ""
     hay = f"{title}\n{text}".lower()
     hit = next((m for m in CHALLENGE_MARKERS if m in hay), "")
-    return f"bot challenge ({hit!r})" if hit else ""
+    return f'bot challenge ("{hit}")' if hit else ""
 
 
 def find_nodes(nodes: list[Node], *, text: str = "", regex: str = "") -> list[str]:
@@ -357,6 +367,97 @@ def find_nodes(nodes: list[Node], *, text: str = "", regex: str = "") -> list[st
         if not node.prop:
             stack.append(node)
     return out
+
+
+# ── 모델이 보는 고정 문구 (v10.106.0) ───────────────────────────────────
+# 실행과 ``prompts.inventory`` 의 표본이 같은 출처를 쓴다 — 표기 가드
+# (tests/test_prompt_notation.py)가 이 문구를 본다.
+
+NO_PAGE = 'no page is open — call `mode` "open" with a `url` first'
+BROWSER_CLOSED = 'browser is closed — call `mode` "open" to start again'
+WINDOW_CLOSED = (
+    "the browser window was closed (by the user or a crash) — call "
+    '`mode` "open" with a `url` to start a new one; cookies and logins '
+    "from the old window are gone"
+)
+WINDOW_LOST_LINE = (
+    "[browser] the previous window was closed (by the user or a "
+    "crash); this is a new one — cookies and logins from the old "
+    "window are gone"
+)
+VERIFICATION_PENDING_LINE = (
+    "[browser] visible — verification still pending; the user "
+    "must complete it in the window"
+)
+VERIFICATION_PASSED_LINE = (
+    "[browser] visible — verification passed; staying visible for this session"
+)
+BAD_REF = 'ref must look like e12 (got "{ref}")'
+UNKNOWN_REF = "unknown ref {ref} — take a snapshot and use a ref from it"
+STALE_REF = "stale ref {ref} (the page has changed) — take a new snapshot"
+NOT_ACTIONABLE = (
+    "{ref} is a {role}, not something you can act on — "
+    "pick a button/link/textbox/… ref from the snapshot"
+)
+NO_MATCH = 'no match for "{pattern}" on {url}'
+SNAPSHOT_CUT = (
+    "[snapshot cut to depth {depth}: {shown} of {total} nodes "
+    "(whole tree ~{tokens:,} tokens) — use "
+    '"find" with `text`, "text" with `ref`, or "snapshot" with a landmark `ref` '
+    "for the part you need]"
+)
+#: 같은 페이지 조작 뒤 (v10.106.0, DESIGN §6.1) — 트리가 바뀌었으면 머리 +
+#: 예산 스냅샷이 이어 붙고, 안 바뀌었으면 이 한 줄이 사실만 말한다.
+SAME_PAGE_CHANGED = "{what} — same page, changed in place"
+SAME_PAGE_UNCHANGED = (
+    "{what} — same page ({url}); the accessibility tree is unchanged — a canvas "
+    'or picture may still have changed, which only "screenshot" shows'
+)
+_NO_WORKAROUND = (
+    "Automation cannot pass this, and must not try to work around it with other "
+    "tools (curl with a browser user agent, retries, proxies)."
+)
+
+
+def challenge_refusal(why: str, *, visible: bool) -> str:
+    """사람 확인 페이지에서 조작을 거부하는 문구."""
+    return (
+        f"this page is a human-verification challenge ({why}) "
+        "— automation must not answer it. "
+        + (
+            "The user must complete it in the visible browser window; then call "
+            '`browser` with `mode` "snapshot".'
+            if visible
+            else "Ask the user, use the site's official API or another source."
+        )
+    )
+
+
+def challenge_notice(url: str, why: str, *, shown: str, failed: str = "") -> str:
+    """이동이 사람 확인 페이지에 닿았을 때의 관찰. ``shown``: "visible"(이미 보이는
+    창), "opened"(지금 띄움), "blocked"(못 띄움 — ``failed`` 가 이유)."""
+    if shown == "blocked":
+        return (
+            f"[blocked] {url} — {why}. Automation cannot pass this and no browser "
+            f"window can be shown here ({failed}). Do not try to work "
+            "around it with other tools (curl with a browser user agent, retries, "
+            "proxies) — that is answering the challenge by other means. Ask the "
+            "user, use the site's official API or another source, or fetch a "
+            "different page."
+        )
+    lead = f"[verification needed] {url} — {why}. {_NO_WORKAROUND}"
+    if shown == "visible":
+        return (
+            f"{lead} The browser window is visible on this machine; ask the "
+            "user to complete the verification there, then call `browser` with "
+            '`mode` "snapshot" to continue.'
+        )
+    return (
+        f"{lead} A visible browser window was opened on this machine with "
+        "the same session; ask the user to complete the verification there, "
+        'then call `browser` with `mode` "snapshot" to continue. The browser stays '
+        "visible for the rest of this session."
+    )
 
 
 def browser_available() -> bool:
@@ -408,11 +509,14 @@ class BrowserSession:
     #: 창이 닫혀(사용자가 닫았거나 브라우저가 죽음) 새로 띄웠다 — 다음 머리에
     #: 한 줄 알리고 끈다. 쿠키·로그인은 옛 창과 함께 사라졌다.
     _window_lost: bool = False
+    #: 직전 전체 트리 읽기의 렌더(ref 번호 없음) — 같은 페이지 조작 뒤 비교의 기준.
+    #: 새 문서(``_new_document``)면 비운다(None = 비교할 것 없음 → "changed").
+    _last_tree: str | None = field(default=None, repr=False)
 
     # ── 스레드 ──
     def _call(self, fn):
         if self.closed:
-            raise BrowserError('browser is closed — call `mode` "open" to start again')
+            raise BrowserError(BROWSER_CLOSED)
         if self._thread is None or not self._thread.is_alive():
             self._thread = threading.Thread(
                 target=self._loop, name="agent-cli-browser", daemon=True
@@ -553,15 +657,7 @@ class BrowserSession:
 
     def _refuse_challenge(self, page):
         if self._challenge and self._challenge_on(page):
-            raise BrowserError(
-                f"this page is a human-verification challenge ({self._challenge}) "
-                "— automation must not answer it. "
-                + (
-                    'The user must complete it in the visible browser window; then call `browser` with `mode` "snapshot".'
-                    if self.visible
-                    else "Ask the user, use the site's official API or another source."
-                )
-            )
+            raise BrowserError(challenge_refusal(self._challenge, visible=self.visible))
 
     def _landed(self, budget: int) -> str:
         """이동이 끝난 뒤의 관찰 — 보통은 헤더 + 자동 스냅샷, 사람 확인 페이지면
@@ -571,38 +667,16 @@ class BrowserSession:
         if not why:
             return f"{self._header(self._state())}\n{self._auto_snapshot(budget)}"
         url = page.url
-        lead = (
-            f"[verification needed] {url} — {why}. Automation cannot pass this, "
-            "and must not try to work around it with other tools (curl with a "
-            "browser user agent, retries, proxies)."
-        )
         if self.visible:
-            return (
-                f"{lead} The browser window is visible on this machine; ask the "
-                "user to complete the verification there, then call `browser` with `mode` "
-                '"snapshot" to continue.'
-            )
+            return challenge_notice(url, why, shown="visible")
         failed = (
             self._show_window(url)
             if self.knobs.get("headless", "auto") == "auto"
             else "AGENT_CLI_BROWSER_HEADLESS=1"
         )
         if not failed:
-            return (
-                f"{lead} A visible browser window was opened on this machine with "
-                "the same session; ask the user to complete the verification there, "
-                'then call `browser` with `mode` "snapshot" to continue. The browser stays '
-                "visible for the "
-                "rest of this session."
-            )
-        return (
-            f"[blocked] {url} — {why}. Automation cannot pass this and no browser "
-            f"window can be shown here ({_first_line(failed)}). Do not try to work "
-            "around it with other tools (curl with a browser user agent, retries, "
-            "proxies) — that is answering the challenge by other means. Ask the "
-            "user, use the site's official API or another source, or fetch a "
-            "different page."
-        )
+            return challenge_notice(url, why, shown="opened")
+        return challenge_notice(url, why, shown="blocked", failed=_first_line(failed))
 
     def _on_dialog(self, dialog):
         self._dialogs.append(f"{dialog.type}: {dialog.message}"[:200])
@@ -624,6 +698,7 @@ class BrowserSession:
         """새 문서 — 옛 ref 는 남겨 두고 세대만 올린다. 번호는 세션 내내 단조
         증가라 옛 번호가 새 요소의 뜻으로 바뀌는 일이 없다(옛 번호 → stale)."""
         self.generation += 1
+        self._last_tree = None
 
     def _check_host(self, url: str):
         why = host_allowed(url, self.knobs.get("hosts", ()))
@@ -661,37 +736,23 @@ class BrowserSession:
             self._dialogs = []
         if self._window_lost:
             self._window_lost = False
-            head += (
-                "\n[browser] the previous window was closed (by the user or a "
-                "crash); this is a new one — cookies and logins from the old "
-                "window are gone"
-            )
+            head += "\n" + WINDOW_LOST_LINE
         if self._verification_pending:
             if self._challenge_on(self._page):
-                head += (
-                    "\n[browser] visible — verification still pending; the user "
-                    "must complete it in the window"
-                )
+                head += "\n" + VERIFICATION_PENDING_LINE
             else:
                 self._verification_pending = False
-                head += (
-                    "\n[browser] visible — verification passed; staying visible "
-                    "for this session"
-                )
+                head += "\n" + VERIFICATION_PASSED_LINE
         return head
 
     def _locator(self, ref: str):
         if not _REF_RE.match(ref or ""):
-            raise BrowserError(f"ref must look like e12 (got {ref!r})")
+            raise BrowserError(BAD_REF.format(ref=ref))
         target = self._refs.get(ref)
         if target is None:
-            raise BrowserError(
-                f"unknown ref {ref} — take a snapshot and use a ref from it"
-            )
+            raise BrowserError(UNKNOWN_REF.format(ref=ref))
         if target.generation != self.generation:
-            raise BrowserError(
-                f"stale ref {ref} (the page has changed) — take a new snapshot"
-            )
+            raise BrowserError(STALE_REF.format(ref=ref))
         root = self._locator(target.scope) if target.scope else self._page
         if target.name:
             loc = root.get_by_role(target.role, name=target.name, exact=True)
@@ -700,9 +761,13 @@ class BrowserSession:
         return loc.nth(target.nth)
 
     def _read_nodes(self, ref: str = "") -> list[Node]:
-        """트리를 읽고 ref 를 붙인다 — 스냅샷·자동 스냅샷·find 가 같은 길."""
+        """트리를 읽고 ref 를 붙인다 — 스냅샷·자동 스냅샷·find 가 같은 길.
+        전체(``ref`` 없음)를 읽으면 ref 를 붙이기 전의 렌더(= ref 번호를 뺀 모양)를
+        ``_last_tree`` 에 남긴다 — 같은 페이지 조작 뒤 "바뀌었나" 의 기준."""
         root = self._locator(ref) if ref else self._page.locator("body")
         nodes = parse_aria(root.aria_snapshot())
+        if not ref:
+            self._last_tree = render_nodes(nodes)
         refs = assign_refs(
             nodes, start=self._next_ref, generation=self.generation, scope=ref
         )
@@ -716,16 +781,19 @@ class BrowserSession:
     def _auto_snapshot(self, budget: int) -> str:
         """이동 뒤 자동으로 붙는 스냅샷 — ``budget``(토큰) 안에 드는 깊이까지.
         ref 는 보이지 않는 노드에도 붙어 있어 ``find`` 가 바로 찾는다."""
-        nodes = self._read_nodes()
+        return self._budgeted(self._read_nodes(), budget)
+
+    @staticmethod
+    def _budgeted(nodes: list[Node], budget: int) -> str:
+        """이미 읽은 ``nodes`` 를 예산 안의 깊이로 렌더하고, 잘렸으면 꼬리 한 줄."""
         body, depth = render_within(nodes, budget)
         if depth is None:
             return body or "(empty)"
-        shown = body.count("\n") + 1
-        return (
-            f"{body}\n[snapshot cut to depth {depth}: {shown} of {len(nodes)} nodes "
-            f"(whole tree ~{estimate_tokens(render_nodes(nodes)):,} tokens) — use "
-            '"find" with `text`, "text" with `ref`, or "snapshot" with a landmark `ref` '
-            "for the part you need]"
+        return f"{body}\n" + SNAPSHOT_CUT.format(
+            depth=depth,
+            shown=body.count("\n") + 1,
+            total=len(nodes),
+            tokens=estimate_tokens(render_nodes(nodes)),
         )
 
     def _after_action(self, page, before: PageState, what: str, budget: int) -> str:
@@ -738,10 +806,37 @@ class BrowserSession:
         if after.url != before.url:
             self._new_document()
             return f"{what} — page changed\n{self._landed(budget)}"
+        # 같은 문서 — 정착시킨 뒤 트리를 다시 읽어 직전 전체 읽기와 비교한다
+        # (v10.106.0). 실사용에서 같은 페이지 조작 13건 중 7건 뒤에 모델이 곧바로
+        # 스냅샷·스크린샷을 불렀다; 바뀐 트리는 예산 안에서 결과에 싣고, 안 바뀌었으면
+        # 그 사실을 말한다. 그대로면 한 번만 더 기다려 읽는다(늦은 갱신을 다음 조작의
+        # 변화로 잘못 돌리지 않게).
+        before_tree = self._last_tree
+        self._settle(page)
+        nodes = self._read_nodes()
+        if before_tree is not None and self._last_tree == before_tree:
+            try:
+                page.wait_for_timeout(SETTLE_RETRY_MS)
+            except Exception:
+                pass
+            nodes = self._read_nodes()
+        if before_tree is not None and self._last_tree == before_tree:
+            return SAME_PAGE_UNCHANGED.format(what=what, url=after.url) + (
+                "\n" + self._header(after) if self._dialogs else ""
+            )
         return (
-            f"{what} — same page ({after.url}); take a snapshot to see what changed"
-            + ("\n" + self._header(after) if self._dialogs else "")
+            SAME_PAGE_CHANGED.format(what=what)
+            + f"\n{self._header(after)}\n{self._budgeted(nodes, budget)}"
         )
+
+    @staticmethod
+    def _settle(page):
+        """화면 갱신 두 프레임을 기다린다 (``_SETTLE_JS``). 실패는 무시 — 정착은
+        비교를 정확하게 할 뿐 조작의 성패와 무관하다."""
+        try:
+            page.evaluate(_SETTLE_JS)
+        except Exception:
+            pass
 
     # ── 모드 ── (``budget`` = 자동 스냅샷 예산, 토큰; 0 = 무제한)
     def open(self, url: str, *, budget: int = 0) -> str:
@@ -780,7 +875,7 @@ class BrowserSession:
             page = self._need_page()
             hits = find_nodes(self._read_nodes(), text=text, regex=regex)
             if not hits:
-                return f"no match for {regex or text!r} on {page.url}"
+                return NO_MATCH.format(pattern=regex or text, url=page.url)
             return f"{len(hits)} match(es) on {page.url}:\n" + "\n".join(
                 f"- {h}" for h in hits
             )
@@ -831,7 +926,7 @@ class BrowserSession:
             target = self._interactive(ref)
             loc = self._locator(ref)
             loc.fill(text)
-            what = f"typed {text!r} into {target}"
+            what = f'typed "{text}" into {target}'
             if submit:
                 loc.press("Enter")
                 what += " and pressed Enter"
@@ -847,7 +942,7 @@ class BrowserSession:
             target = self._interactive(ref)
             self._locator(ref).select_option(value)
             return self._after_action(
-                page, before, f"selected {value!r} in {target}", budget
+                page, before, f'selected "{value}" in {target}', budget
             )
 
         return self._call(go)
@@ -891,24 +986,15 @@ class BrowserSession:
     # ── 보조 ──
     def _need_page(self):
         if self._page is None:
-            raise BrowserError(
-                'no page is open — call `mode` "open" with a `url` first'
-            )
+            raise BrowserError(NO_PAGE)
         if not self._alive():
-            raise BrowserError(
-                "the browser window was closed (by the user or a crash) — call "
-                '`mode` "open" with a `url` to start a new one; cookies and logins '
-                "from the old window are gone"
-            )
+            raise BrowserError(WINDOW_CLOSED)
         return self._page
 
     def _interactive(self, ref: str) -> str:
         target = self._refs.get(ref)
         if target is not None and target.role not in INTERACTIVE_ROLES:
-            raise BrowserError(
-                f"{ref} is a {target.role}, not something you can act on — "
-                "pick a button/link/textbox/… ref from the snapshot"
-            )
+            raise BrowserError(NOT_ACTIONABLE.format(ref=ref, role=target.role))
         self._locator(ref)  # unknown/stale 검사
         return f'{target.role} "{_cut(target.name)}"' if target.name else target.role
 

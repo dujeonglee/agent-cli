@@ -33,10 +33,10 @@
 | `find` | `text` 또는 `regex` | 일치하는 노드만 | 일치 노드 + 조상 경로 (MCP `browser_find` 와 같은 모양) |
 | `text` | `ref?` | 읽을 글만 (본문) | `fetch` 와 같은 마크다운풍 텍스트 |
 | `screenshot` | `full_page?` | 뷰포트(또는 전체 문서)를 PNG 로 저장 (v10.61.0, docs/vision/DESIGN.md) | 자리표시 줄 + 파일 정보, `images=[ref]` — 모델이 보면 이미지로 |
-| `click` | `ref` | 클릭 | 한 줄 결과; 페이지가 바뀌었으면(URL·제목) 새 스냅샷 |
+| `click` | `ref` | 클릭 | 한 줄 결과 + 다른 페이지면 머리 + 새 스냅샷; 같은 페이지에서 트리가 바뀌었으면 `same page, changed in place` + 머리 + 예산 스냅샷, 그대로면 "트리 불변(캔버스·그림은 `screenshot` 만)" 한 줄 (v10.106.0, §6.1) |
 | `type` | `ref`, `text`, `submit?` | 입력 (+Enter) | 위와 같음 |
-| `select` | `ref`, `value` | 드롭다운 선택 | 한 줄 |
-| `press` | `key` | 키 입력 (`Enter`, `Escape`…) | 한 줄 (+새 스냅샷 if 바뀜) |
+| `select` | `ref`, `value` | 드롭다운 선택 | 위와 같음 (선택값이 바뀌는 작은 변화도 "changed" — 크기는 예산이 막는다) |
+| `press` | `key` | 키 입력 (`Enter`, `Escape`…) | 위와 같음 |
 | `back` | — | 뒤로 | 헤더 + 스냅샷 |
 | `close` | — | 브라우저 종료 | 한 줄 |
 
@@ -133,7 +133,10 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 - **ref 번호는 세션 내내 단조 증가**(설계는 문서마다 1부터). 문서가 바뀔 때 번호를 되돌리면 옛 번호가 새 요소의 뜻으로 조용히 바뀐다(옛 `e2`=heading, 새 `e2`=button) — 번호를 이어 가면 옛 번호는 언제나 "stale" 로 잡힌다.
 - **같은 문서 안에서는 조작 뒤에도 ref 를 무효화하지 않는다.** ref 가 role/name 로케이터라 DOM 이 바뀌어도 요소가 남아 있으면 계속 맞는다(MCP 의 내부 id 와 다른 점). 사라진 요소는 Playwright 타임아웃이 알린다.
 - `find` 는 스냅샷에 보이는 모양(`link "Aurora Lamp"`)에 맞춘다 — 모델이 보는 것과 찾는 것이 같은 꼴이도록.
-- 조작 결과가 "same page" 일 때는 스냅샷을 붙이지 않고 "take a snapshot to see what changed" 로 끝낸다(드롭다운이 열린 것 같은 작은 변화에 전체 트리를 다시 보내지 않는다).
+- 조작 결과가 "same page" 일 때 (v10.106.0 에서 바꿈): 먼저 정착시킨다(`page.evaluate` 로 `requestAnimationFrame` 두 프레임, 100 ms 상한·실패 무시). 그다음 트리를 다시 읽어 직전 전체 읽기(`_last_tree` — ref 를 붙이기 전 렌더라 번호와 무관, 새 문서면 비움)와 비교한다. 그대로면 `SETTLE_RETRY_MS`(200 ms) 뒤 **한 번만** 다시 읽어 비교한다 — changed 는 첫 읽기에서 바로 돌아가고, 읽기 한 번 더는 unchanged 일 때만 든다. 바뀌었으면 `… — same page, changed in place` + 머리 + 예산 스냅샷(§3.2 와 같은 규칙, 이미 읽은 노드 재사용), 그대로면 `… — same page (url); the accessibility tree is unchanged — a canvas or picture may still have changed, which only "screenshot" shows`. 조작 직전에는 다시 읽지 않는다(호출마다 `aria_snapshot` 한 번, unchanged 면 두 번 추가). 대화상자 머리는 그대로.
+  - 정착을 둔 이유 (리뷰 실측, 2026-11-05): `requestAnimationFrame` 루프로 HUD 를 그리는 캔버스 게임(`action_rpg.html`)에서 정착 없이 읽으면 `press r` 이 5/5 "unchanged" 였고 300 ms 뒤 스냅샷에는 "2층 입장!" 이 있었다 — 변화가 다음 조작의 결과로 밀려 귀속됐다. 정착 + 재읽기 뒤 3/3 "changed in place" + "2층". 라이브 테스트 `raf.html`(네 프레임마다 글을 그림)은 옛 코드 5/5 실패, 새 코드 5/5 통과.
+  - 한계: 조작과 무관하게 스스로 바뀌는 페이지(같은 게임에서 입력 없이 1초 사이 HP 100→84)는 그 변화도 "changed" 로 실린다 — 판정은 "조작 전후 트리가 다르다" 이지 "조작이 바꿨다" 가 아니다.
+  - 왜 바꿨나: 종전엔 스냅샷 없이 "take a snapshot to see what changed" 로 끝냈다(작은 변화에 전체 트리를 다시 보내지 않으려고). 실사용 한 세션(캔버스 게임 테스트)에서 같은 페이지 조작 13건 중 7건 뒤에 모델이 곧바로 `snapshot`(5)·`screenshot`(2)을 불러 왕복이 늘었고, 큰 트리 걱정은 그 뒤 생긴 자동 스냅샷 예산(`AUTO_SNAPSHOT_SHARE`·`render_within`)이 이미 막아 종전 이유가 사라졌다.
 - **자동 포함 스냅샷은 예산(캡의 1/4) 안의 깊이까지만** (§3.2). 설계는 전체를 붙였고, 1차 측정(§7)에서 큰 문서가 262K 창의 컨텍스트를 두 배로 키우고 32K 창에서는 캡→파일→검색 경로로 밀려 틀리게 했다. 예산은 루프의 `RunContext.oversized_cap` 에서 오므로 도구가 세션 메서드에 `budget=` 으로 넘긴다(세션은 창 크기를 모른다).
 
 ## 7. 릴리스 전 측정
@@ -186,6 +189,22 @@ Python Playwright 공개 API 에는 MCP 서버의 `[ref=eN]` 스냅샷이 없다
 - 1판 문구("Ask the user, use the site's official API or another source")만으로는 DDG 5회 중 2회가 `[blocked]` 를 받고 셸에서 `curl -A "Mozilla/5.0 …"` 로 같은 URL 을 다시 쳤다. "Do not try to work around it with other tools (curl with a browser user agent, retries, proxies) — that is answering the challenge by other means" 를 더한 2판에서는 10/10 모두 0회. 다른 검색 엔진을 `fetch` 로 돌아보는 것(Bing·Mojeek·lite 판)은 허용 범위이고, 그래서 호출 수가 2–8 로 흩어진다.
 - `auto`: 창이 뜨고 `[verification needed]` 가 돌아오자 모델은 `snapshot` 을 불렀고, 보이는 Chrome 창에서는 DDG 가 챌린지를 띄우지 않아 머리에 `[browser] visible — verification passed` 가 붙은 채 결과를 읽었다(1회 정답, 1회는 max-turns 4 안에 보고로 끝). 사용자에게 묻는 단계는 물을 필요가 없어 건너뛰었다. 2판 DDG 고정 모드 1회는 `ask` 로 선택지 세 개(창에서 풀기·다른 출처·본문 붙여넣기)를 물었다 — 비대화형 측정이라 "(no response)" 로 넘어갔고 실제 사용에서는 답을 기다린다.
 - 창이 떴을 때 사용자가 실제로 챌린지를 푸는 경우는 측정하지 않았다(사람이 필요). 그 경로는 `test_browser_tool.py::TestVerificationSwitch` 가 가짜 페이지로 고정한다.
+
+### 7.3 같은 페이지 조작 뒤 스냅샷 (v10.106.0, 2026-11-05)
+
+조건: GLM-5.3-Flash-oQ4-mtp, 사고 off, T0.2, native_fc, headless, 로컬 페이지(`http://127.0.0.1:8787`). 기준(main ab8db81e)·후보(v10.106.0) worktree 를 PYTHONPATH 로 과제마다 교차 실행, 5회씩. 측정 틀은 세션 스크래치(`brs/live/{run.sh,batch.sh,score.py}`)에 있고 저장소에는 없다.
+
+| 과제 | 변형 | 정답 | 호출 수(ops) 합 | 조작 뒤 곧바로 snapshot/screenshot | 모델 호출 평균 | 입력 토큰 합 평균 |
+|---|---|---|---|---|---|---|
+| reveal(버튼으로 펼친 SKU·무게 읽기) | 기준 | 5/5 | 20 | 5 | 4.0 | 41,993 |
+| reveal | 후보 | 5/5 | 15 | 0 | 3.0 | 30,909 |
+| form(제목 입력·지점 선택·검색, 같은 페이지 결과) | 기준 | 5/5 | 30 | 5 | 5.0 | 53,051 |
+| form | 후보 | 5/5 | 25 | 0 | 5.0 | 52,396 |
+| game(캔버스 RPG: R, ArrowRight ×3, Space ×2 뒤 HUD 보고) | 기준 | 3/5 | 42 | 11 | 10.8 | 117,083 |
+| game | 후보 | 1/5 | 26 | 0 | 8.8 | 104,005 |
+
+- reveal·form: 정답 동일, 런마다 호출 하나가 줄고(조작 뒤 재스냅샷 5→0), reveal 은 입력 토큰 합 26% 감소. form 은 모델 호출 수가 같아(기준이 `type`·`select` 를 한 턴에 묶음) 토큰 차이 1%.
+- game 은 두 변형 모두 하니스의 액션 루프 감지기(`ActionLoopDetector(threshold=2)`, dispatch.py — 연속 동일 (action, args) 두 번이면 `probe_progress` → `restate_task` → "Action loop unresolved … Stopping")에 걸렸다. 과제가 요구한 `press` "ArrowRight" 세 번 연속이 그 모양이다. 기준은 5런 중 2런, 후보는 4런이 이것으로 멈췄다(결과 파일 없음). 후보가 더 많이 걸린 까닭은 결과에 HUD 변화가 보여 모델이 "progressing, continue" 라며 같은 키를 그대로 반복한 반면(후보 r1 의 사고 문장), 기준은 변화를 못 봐 Space 로 바꿔 누르다 우연히 감지기를 피한 것. 감지기는 관찰 내용을 보지 않으므로 B1 의 결함이 아니라 감지기의 한계이고, 게임 과제의 정답 차이는 B1 에 귀속하지 않는다. 후속 과제로 남긴다(docs/tool-review/TRACKER.md TODO).
 
 ## 8. 결정 (2026-10-15 권고안대로 승인)
 

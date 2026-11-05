@@ -356,6 +356,87 @@ def _value_quoting_samples() -> list[tuple[str, str, str]]:
     ]
 
 
+def _browser_result_samples() -> list[tuple[str, str, str]]:
+    """`browser` 결과·거절 문구 표본 (v10.106.0) — ``agent_cli.browser`` 의 모듈 상수와
+    작은 함수를 가짜 인자로 채운 것. 도구 결과라 다른 경로로는 inventory 에 안 실린다;
+    표기 가드가 이 표본을 본다. playwright 없이 돈다(문구만 쓴다)."""
+    from agent_cli import browser as br
+
+    url = "https://shop.test/"
+    return [
+        (
+            "browser_same_page_changed",
+            "`browser` action that changed the tree in place (header and snapshot follow)",
+            br.SAME_PAGE_CHANGED.format(what='selected "North" in combobox "Branch"'),
+        ),
+        (
+            "browser_same_page_unchanged",
+            "`browser` action after which the accessibility tree is the same",
+            br.SAME_PAGE_UNCHANGED.format(what="pressed ArrowLeft", url=url),
+        ),
+        (
+            "browser_snapshot_cut",
+            "Tail of a snapshot cut to the auto-snapshot budget",
+            br.SNAPSHOT_CUT.format(depth=2, shown=36, total=640, tokens=17000),
+        ),
+        (
+            "browser_ref_errors",
+            "`browser` refused a `ref`: malformed, unknown, stale, not actionable",
+            "\n".join(
+                [
+                    br.BAD_REF.format(ref="Search"),
+                    br.UNKNOWN_REF.format(ref="e99"),
+                    br.STALE_REF.format(ref="e12"),
+                    br.NOT_ACTIONABLE.format(ref="e4", role="heading"),
+                ]
+            ),
+        ),
+        (
+            "browser_page_errors",
+            "`browser` called with no page, after `close`, after the window closed",
+            f"{br.NO_PAGE}\n{br.BROWSER_CLOSED}\n{br.WINDOW_CLOSED}",
+        ),
+        (
+            "browser_header_lines",
+            "Lines under a snapshot header: new window, verification pending / passed",
+            (
+                f"{br.WINDOW_LOST_LINE}\n{br.VERIFICATION_PENDING_LINE}\n"
+                f"{br.VERIFICATION_PASSED_LINE}"
+            ),
+        ),
+        (
+            "browser_no_match",
+            "`browser` find with no match",
+            br.NO_MATCH.format(pattern="zzz", url=url),
+        ),
+        (
+            "browser_challenge",
+            (
+                "A page that asks for human verification: window visible / opened / "
+                "none possible, then an action refused on it"
+            ),
+            "\n".join(
+                [
+                    br.challenge_notice(
+                        url, br.is_challenge(url, "Just a moment…", ""), shown=shown
+                    )
+                    for shown in ("visible", "opened")
+                ]
+                + [
+                    br.challenge_notice(
+                        url,
+                        "unusual-traffic block",
+                        shown="blocked",
+                        failed="AGENT_CLI_BROWSER_HEADLESS=1",
+                    ),
+                    br.challenge_refusal("unusual-traffic block", visible=False),
+                    br.challenge_refusal("unusual-traffic block", visible=True),
+                ]
+            ),
+        ),
+    ]
+
+
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
@@ -446,6 +527,7 @@ def _runtime_texts(dialect) -> list[dict]:
             _wait_checkin_sample(),
         ),
         *_agent_result_samples(),
+        *_browser_result_samples(),
         (
             "agent_message_field",
             "`agent` called with `message` instead of `task`",
