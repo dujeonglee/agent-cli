@@ -1,13 +1,13 @@
 ## Available Tools
 - read_file: Read a text file. Each line comes back tagged LINE#HASH:content; edits address lines by these tags. With no mode you get the whole file. `line_start` and `line_end` return that range of lines (1-based, inclusive). `search` returns the lines matching a regex, each with `context` lines around it. `stat` returns only the line count, size and first 20 lines — the file is not read yet. A whole-file read too large for one context is not delivered: you get an excerpt and how to read the rest in parts.
   Input JSON: {"path": "string, required — File path to read", "line_start": "integer — First line to return (1-based). Omit to start at line 1.", "line_end": "integer — Last line to return (1-based, inclusive). Omit to read to the end.", "search": "string — Regex; returns only the matching lines, each with `context` lines around it.", "context": "integer — Lines shown before and after each `search` match (default 5).", "stat": "boolean — Return only the line count, size and first 20 lines — the file is not read."}
-- edit_file: Change part of an existing file — the default way to modify one. Lines are addressed by their LINE#HASH refs, taken from the latest output that showed them: `read_file`, `code_index` "fetch", `write_file`, or an earlier `edit_file`. `op` says what to do at `pos`: "replace" swaps the lines from `pos` through `end` (inclusive; just `pos` without `end`) for `lines`; "append" inserts `lines` after `pos`; "prepend" inserts `lines` before `pos`; "delete" removes `pos` through `end` and takes no `lines`.
-  Input JSON: {"path": "string, required — File to change", "op": "string, required — \"replace\" | \"append\" | \"prepend\" | \"delete\" — what to do at `pos` (see the description)", "pos": "string, required — Ref of the target line, LINE#HASH like \"5#VR\" — not a bare number", "end": "string — Ref of the last line of an inclusive range (\"replace\"/\"delete\"), like \"9#KT\"", "lines": "array<string> — The new lines, as they should appear in the file — without LINE#HASH: tags"}
+- edit_file: Change part of an existing file — the default way to modify one. Lines are addressed by their LINE#HASH refs, taken from the latest output that showed them: `read_file`, `code_index` "fetch", `write_file`, or an earlier `edit_file`. `op` says what to do at `pos`: "replace" swaps the lines from `pos` through `end` (inclusive; just `pos` without `end`) for `lines`; "append" inserts `lines` after `pos`; "prepend" inserts `lines` before `pos`; "delete" removes `pos` through `end` and takes no `lines`. Several edits to one file can go in one turn as adjacent `edit_file` calls, every ref from the same read; they are applied together, so do not shift line numbers for each other. If any is rejected nothing is written and the result names the bad ones; overlapping ranges are rejected.
+  Input JSON: {"path": "string, required — File to change", "op": "string, required — \"replace\" | \"append\" | \"prepend\" | \"delete\" — what to do at `pos` (see the description)", "pos": "string, required — Ref of the target line, LINE#HASH like \"5#VR\" — not a bare number", "end": "string — Ref of the last line of an inclusive range (\"replace\"/\"delete\"), like \"9#KT\"", "lines": "array<string> — The new lines as a JSON array of strings, one per line, each complete with its leading indentation — like [\"    return x\"]; without LINE#HASH: tags."}
 - code_index: Find definitions, callers and references in a codebase — reach for it before grepping source.
   Input JSON: {"mode": "string, required — \"list\" | \"fetch\" | \"lookup\" | \"kind\" | \"file\" | \"refs\" | \"callers\" | \"callees\" | \"slice\"", "path": "string", "name": "string", "symbol_kind": "string — \"function\" | \"type\" | \"variable\" | \"constant\" | \"section\"", "ref_kind": "string — \"call\" | \"name\" | \"type\"", "search": "string", "with_callees": "boolean", "with_callers": "boolean", "with_types": "boolean", "with_macros": "boolean", "depth": "integer", "max_bytes": "integer"}
 - shell: Run a shell command in the working directory. The result is its stdout, then its stderr under `[stderr]`, then `[exit code: N]` when the exit code is not 0 — the command needs no `echo $?` or `2>&1` for that. For a command that may run longer than about a minute, set `background` to true: the harness starts it for you, sends its output to a log under .agent-cli/tmp/jobs/ and tells you when it ends (exit code + last lines) — keep working meanwhile.
   Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Seconds a foreground command may run (default and maximum 120); at the limit it is stopped, together with everything it started. A larger value starts the command as a background job instead.", "background": "boolean — true = start the command as a background job owned by the harness (returns at once with the job id, pid and log path; you are notified when it ends). Use it for anything that may run longer than about a minute. Give the plain command: no trailing `&`, no redirection, no `echo EXIT` — the harness logs it and reports the exit code."}
-- ask: Ask the user one question and wait for their reply. One question per call — to ask several, make several `ask` calls in one turn (each is answered in turn). Use only when you cannot proceed without specific input; otherwise end with `complete`.
+- ask: Ask the user one question and wait for their reply. One question per call — to ask several, make several `ask` calls in one turn (each is answered in turn). Use only when you cannot proceed without specific input; otherwise end with `complete`. A closing remark or a pleasantry is not a question — end with `complete` instead.
   Input JSON: {"question": "string, required — The question to ask the user."}
 - agent: Hand a task to another agent that works in its own context; the profiles are listed under `## Agent Profiles`.
   Input JSON: {"mode": "string, required — \"run\" | \"spawn\" | \"request\" | \"status\" | \"resume\" | \"kill\"", "profile": "string", "name": "string", "task": "string", "instructions": "string", "key": "string", "tools": "array<string>", "context": "string — \"none\" | \"fork\""}
@@ -16,43 +16,3 @@ Checked: <what you ran or inspected, and what it showed>
 Not checked: <what you inferred from reading rather than running, or did not test — 'nothing' if so>
 A reply with nothing to check has neither line. When `## Open Items` lists items closed by `complete`, `answers` is required: list the ids your result covers. Ids you leave out stay open. Not for waiting — to pause until a job, monitor or agent reports back, call `wait`.
   Input JSON: {"result": "string, required — The answer, then the Checked / Not checked lines", "answers": "array<string> — Ids from `## Open Items` (`u-…` user requests, `n-…` mail) that this result covers."}
-
-  Hashline refs:
-  `read_file` returns lines tagged as LINE#HASH:content, e.g.:
-    1#VR:def hello():
-    2#KT:    return "world"
-  A ref is the LINE#HASH part ("2#KT"), never a bare line number.
-  - one edit per call:
-      {"action": "edit_file", "path": "app.py", "op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
-  - A ref from before the file last changed no longer matches. A hash
-    mismatch is a guardrail, not a failure: the error shows the current
-    lines around it with fresh refs — retry from those.
-  - Several edits to one file can go in one turn as adjacent `edit_file`
-    calls, every ref from the same read: they are applied together, so do
-    not shift line numbers for each other. If any is rejected, nothing is
-    written and the result names the bad ones — resend all, fixing only
-    those. Overlapping ranges are rejected; split them across turns.
-  `ask` vs `complete` — pick by intent, not tone:
-  - `ask`: you genuinely cannot proceed without information from the
-    user. A real question with real alternatives where you don't know
-    the right answer. "Which of these two paths should I take?",
-    "What's the production database name?", "Should I overwrite this
-    file or keep both?".
-  - `complete`: every other ending. Task done, user said goodbye, user
-    said thanks, user gave a casual reply, you finished your answer
-    and have nothing else to do. The conversation does not need a
-    question to continue — the user can simply reply at the next
-    prompt if they want more.
-
-  Common mistakes that keep the loop alive when it should end:
-  - "Was that helpful?" / "Anything else?" / "Let me know if you have
-    questions" — these are pleasantries, not questions. Use `complete`.
-  - "Goodbye!" / "See you next time!" / "👋" — closing remarks. Use
-    `complete`.
-  - Restating the user's last message back as a question
-    ("So you want X?") when their meaning was already clear. Use
-    `complete` and answer.
-
-  Rule of thumb: if your "question" could be a statement and the
-  conversation would still flow, it's not a real question — use
-  `complete`.

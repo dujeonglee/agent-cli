@@ -1059,7 +1059,10 @@ class TestFlipPrompt:
         # 인라인 가이드도 함께 — 둘이 엇갈리면 모델이 헷갈린다
         assert "does not block you" in resident
         assert "does not block you" not in main
-        assert "pick by intent" in main and "pick by intent" not in resident
+        # v10.112.0: main 의 `ask` 안내("pick by intent")는 지웠다 — main 에는 안내가 없고
+        # 대화형 종결은 설명의 한 문장이 맡는다.
+        assert "pick by intent" not in main and "pick by intent" not in resident
+        assert "A closing remark or a pleasantry is not a question" in main
 
     def test_resident_ask_description_says_it_does_not_block(self):
         """설명이 'WAIT for their reply' 라고 거짓말하면 모델이 그걸 믿고
@@ -1076,7 +1079,9 @@ class TestFlipPrompt:
         # 인라인 가이드도 함께 바뀐다 — 둘이 엇갈리면 모델이 헷갈린다
         assert "does not block you" in resident
         assert "does not block you" not in blocking
-        assert "pick by intent" in blocking
+        # v10.112.0: 차단형 `ask` 의 안내는 없다 — 설명의 한 문장만
+        assert "pick by intent" not in blocking
+        assert "end with `complete` instead" in blocking
 
 
 # ── ⑧ 질문은 사람에게만 (v9.20.0 `to="user"` → v10.77.0 B) ────────

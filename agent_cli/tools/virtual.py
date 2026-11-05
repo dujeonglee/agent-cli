@@ -118,16 +118,15 @@ class WaitTool(Tool):
 class AskTool(Tool):
     name = "ask"
     requires_handler = "ctx"  # 비대화형 루프(ctx 없음)에선 목록에서 제거
-    # Compact gate only. The full ask-vs-complete decision tree (examples,
-    # rule of thumb) lives in the inline guide ``_ASK_INLINE`` in
-    # ``prompts/system_prompt.py``, which is always rendered right after
-    # this description — keeping the prose in one place avoids the two
-    # surfaces teaching the same distinction back to back.
+    # v10.112.0: main 의 안내 블록(`_ASK_INLINE`, 304 토큰 — "ask vs complete" 결정
+    # 나무)을 지웠다. 벤치 946 세션 0회·실사용 59 세션 2회(진짜 질문), 막으려던
+    # 오용(작별 인사를 `ask` 로)은 기록에 없었다. 그 뜻은 마지막 한 문장이 맡는다.
     description = (
         "Ask the user one question and wait for their reply. One question per call — to"
         " ask several, make several `ask` calls in one turn (each is answered in turn)."
         " Use only when you cannot proceed without specific input; otherwise end with "
-        "`complete`."
+        "`complete`. A closing remark or a pleasantry is not a question — end with "
+        "`complete` instead."
     )
     # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
     # **막지 않는다** — 질문을 사람의 트레이에 올리고 즉시 돌아온다. 마지막

@@ -197,9 +197,11 @@ class TestSystemPromptAndSchemas:
         by = {s["function"]["name"]: s for s in schemas}
         assert "complete" in by and "edit_file" in by  # 항상 포함되는 종결 함수
         assert by["edit_file"]["type"] == "function"
-        assert (
-            "Hashline refs:" in by["edit_file"]["function"]["description"]
-        )  # 가이드 전문 (N1)
+        # 가이드 전문 (N1) — v10.112.0 부터 edit_file 은 안내가 없어 설명이 곧 전문이다;
+        # 안내가 남은 도구(agent, 지연이라 `tool_help` 쪽)는 native 에서 안내를 붙인다.
+        edit = by["edit_file"]["function"]["description"]
+        assert "Several edits to one file can go in one turn" in edit
+        assert "Hashline refs:" not in edit
         assert by["read_file"]["function"]["parameters"]["type"] == "object"
 
 
@@ -502,7 +504,7 @@ class TestEveryCallGetsAResult:
                                 "path": str(f),
                                 "op": "replace",
                                 "pos": refs[0],
-                                "lines": "A",
+                                "lines": ["A"],  # v10.112.0: 맨 문자열은 거절
                             },
                         ),
                         (
@@ -511,7 +513,7 @@ class TestEveryCallGetsAResult:
                                 "path": str(f),
                                 "op": "replace",
                                 "pos": refs[2],
-                                "lines": "C",
+                                "lines": ["C"],
                             },
                         ),
                     ]

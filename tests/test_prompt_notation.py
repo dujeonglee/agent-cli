@@ -134,7 +134,13 @@ def test_paths_and_refs_are_not_single_quoted(where, text):
 def test_value_samples_are_in_the_inventory():
     """경로·ref 를 싣는 문구가 표본에 있어야 위 가드가 본다."""
     ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
-    assert {"oversized_saved", "oversized_source", "edit_bare_line_ref"} <= ids
+    assert {
+        "oversized_saved",
+        "oversized_source",
+        "edit_bare_line_ref",
+        "edit_hash_mismatch",
+        "edit_lines_not_array",
+    } <= ids
 
 
 def test_browser_result_samples_are_in_the_inventory():
@@ -211,6 +217,7 @@ def test_monitor_report_samples_are_in_the_inventory():
         "no change for 400s",
         "the file never appeared",
         "(deadline expired) 3 match(es) total",
+        "· 0 hit(s)",  # v10.112.0: 적중 없이 물러난 보고
         "fired once — monitor retired",
         "· repeating",
     ):

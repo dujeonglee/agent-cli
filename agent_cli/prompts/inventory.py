@@ -325,7 +325,7 @@ def _value_quoting_samples() -> list[tuple[str, str, str]]:
     """경로·ref 를 값으로 싣는 문구 — 큰 출력 안내(저장본·원본 파일)와 줄 번호만 온 ref.
     표기 가드(값은 큰따옴표)가 이 모양을 보게 표본으로 둔다."""
     from agent_cli.tools.base import oversized_nudge
-    from agent_cli.tools.edit_file import _bare_ref_error
+    from agent_cli.tools.edit_file import _bare_ref_error, _validate_semantics
 
     body = "\n".join(f"line {i}" for i in range(12000))
     tools = frozenset(["read_file", "agent"])
@@ -349,10 +349,29 @@ def _value_quoting_samples() -> list[tuple[str, str, str]]:
         path_is_source=True,
     )
     bare = _bare_ref_error({"pos": "2", "end": "30"}, ["a", "b", "c"], "app.py") or ""
+    # 해시 불일치 (v10.112.0) — 가드레일 어조가 안내에서 이 오류로 옮겨 왔다
+    from agent_cli.tools.edit_file import _resolve_ref
+
+    try:
+        _resolve_ref(["def f():", "    return 1", "", "x = f()"], "2#ZZ")
+        mismatch = ""
+    except RuntimeError as e:
+        mismatch = str(e)
     return [
         ("oversized_saved", "A tool result over the cap — saved to a file", saved),
         ("oversized_source", "`read_file` over the cap — the file itself", source),
         ("edit_bare_line_ref", "`edit_file` ref given as a bare line number", bare),
+        (
+            "edit_hash_mismatch",
+            "`edit_file` ref whose line changed since that read",
+            mismatch,
+        ),
+        (
+            "edit_lines_not_array",
+            "`edit_file` with `lines` sent as one string",
+            _validate_semantics({"op": "replace", "pos": "2#KT", "lines": "return x"})
+            or "",
+        ),
     ]
 
 
@@ -605,7 +624,10 @@ def _monitor_result_samples() -> list[tuple[str, str, str]]:
             f.write("query failed: db timeout\ninfo ok\n")
         hit = match.check(st, now=time.time())
         pattern_report = mr._format_report(
-            mon(match, "mon-1a2b3c"), hit.lines if hit else [], note=mr.RETIRE_ONCE
+            mon(match, "mon-1a2b3c"),
+            hit.lines if hit else [],
+            hits=hit.hits if hit else 0,
+            note=mr.RETIRE_ONCE,
         )
         # 발화 — `file` + `idle`: 고정 시각으로 400초 조용함
         idle = build({"file": log, "idle": "5m"})
@@ -614,6 +636,7 @@ def _monitor_result_samples() -> list[tuple[str, str, str]]:
         idle_report = mr._format_report(
             mon(idle, "mon-7a8b9c"),
             idle_hit.lines if idle_hit else [],
+            hits=idle_hit.hits if idle_hit else 0,
             note=mr.RETIRE_ONCE,
         )
         # 물러남 — 조용함 한도(`silent`), 파일이 끝내 안 생긴 경우
@@ -623,11 +646,12 @@ def _monitor_result_samples() -> list[tuple[str, str, str]]:
         gone = quiet.check({"registered_at": 1000}, now=1700)
         why = gone.retire if gone else ""
         silent_report = mr._format_report(
-            mon(quiet, "mon-0d1e2f"), [mr.RETIRE_SUMMARY.format(why=why, n=0)]
+            mon(quiet, "mon-0d1e2f"), [mr.RETIRE_SUMMARY.format(why=why, n=0)], hits=0
         )
         deadline_report = mr._format_report(
             mon(poll, "mon-4d5e6f"),
             [mr.RETIRE_SUMMARY.format(why=mr.RETIRE_DEADLINE, n=3)],
+            hits=0,
         )
         samples = [
             ("monitor_list_empty", "`monitor` list with nothing live", mt.NO_MONITORS),

@@ -1106,7 +1106,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### edit_file — Hashline 편집
 
-`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native). v10.77.0: `pos`/`end` 에 줄 번호만(`"20"`·`20`) 보내면 편집하지 않고, 그 줄의 지금 ref 를 오류에 보여 줍니다(`end '20' is a bare line number — … That line is now: 20#KT:… Use '20#KT'.` — 35B 최근 런 편집의 18% 가 이 모양이었습니다). 설명은 `op` 의 네 값과 인자를 이름으로 말하고, 안내는 짧아졌습니다:
+`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native). 같은 파일의 여러 편집은 한 턴에 이어진 `edit_file` 호출로 보낼 수 있고(모든 ref 는 같은 읽기에서, 함께 적용되므로 서로의 줄 번호를 고쳐 쓰지 않는다) — 이 규칙은 v10.112.0 부터 도구 설명에 있습니다(종전 인라인 안내는 삭제). 해시 불일치 오류는 "This is a guardrail, not a failure: the file changed since that read." 로 시작해 지금 줄과 새 ref 를 보여 줍니다. `lines` 는 줄마다 들여쓰기까지 담은 문자열 배열이어야 하고, 맨 문자열이면 거절합니다(v10.112.0 — 종전엔 줄바꿈으로 쪼개 조용히 받아 들여쓰기 없는 줄이 들어갔습니다; "delete" 는 `lines` 를 쓰지 않으니 무시). v10.77.0: `pos`/`end` 에 줄 번호만(`"20"`·`20`) 보내면 편집하지 않고, 그 줄의 지금 ref 를 오류에 보여 줍니다(`end '20' is a bare line number — … That line is now: 20#KT:… Use '20#KT'.` — 35B 최근 런 편집의 18% 가 이 모양이었습니다). 설명은 `op` 의 네 값과 인자를 이름으로 말하고, 안내는 짧아졌습니다:
 
 **바뀐 것이 없으면 그렇게 말합니다 (v10.77.1)**: 새 `lines` 가 그 자리의 줄과 같거나, 넣을 줄이 없거나, `end` 가 `pos` 보다 앞이라 파일이 그대로면, 쓰지 않고 `No change: … — <까닭>. Nothing was written.` 을 돌려줍니다. 종전엔 diff 없는 "Edit complete" 라, 모델이 바뀐 줄 알고 다시 읽고 같은 편집을 되보냈습니다(라이브 GLM: 중복된 두 줄 중 하나를 같은 내용으로 두 번 replace). 같은 내용의 줄은 해시 태그도 같다는 것도 함께 알립니다(ref 의 번호가 그중 하나를 고릅니다).
 
