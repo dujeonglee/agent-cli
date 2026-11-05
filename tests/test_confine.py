@@ -563,3 +563,84 @@ class TestConfineHighlight:
         res = shell_mod.tool_shell({"command": f"echo hi > {p}"})
         assert res.success is False
         assert seen["command"] == f"echo hi > {p}"
+
+
+class TestDangerousInTempDirs:
+    """`rm`·`rmdir`·`mv` 의 대상이 전부 임시 자리면 위험 명령 확인도 묻지 않는다
+    (v10.104.0). 임시 자리 = 시스템 임시 루트(픽스처에서 `<tmp>/systmp`) +
+    `.agent-cli/tmp`. 애매하면 묻는다 — 루트 자체·글로브 루트·상대 경로·
+    파이프 뒤 `rm`·바깥행 심링크·민감 이름."""
+
+    @pytest.fixture(autouse=True)
+    def _confirm_on(self, confined, monkeypatch):
+        from agent_cli.tools import shell as shell_mod
+
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        shell_mod._session_allowlist.clear()
+        yield
+        shell_mod._session_allowlist.clear()
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf {t}/build",
+            "rm {t}/a {t}/b",
+            "rmdir {t}/d",
+            "mv {t}/a {t}/b",
+            "rm -- {t}/x",
+            "rm -rf {t}/build/*",
+            "rm -f {t}/build/*.o",
+            "rm {t}/x; echo done",
+            "rm .agent-cli/tmp/x",
+            "rm -rf {ws}/.agent-cli/tmp/jobs",
+        ],
+    )
+    def test_temp_targets_pass(self, tmp_path, cmd):
+        from agent_cli.tools.shell import _DANGEROUS_KEYWORDS, confirm_dangerous
+
+        cmd = cmd.format(t=tmp_path / "systmp", ws=_confine.workspace_root())
+        assert _confine.temp_targets_only(cmd, _DANGEROUS_KEYWORDS)
+        assert confirm_dangerous(cmd) == (
+            None,
+            "",
+        )  # pytest 엔 TTY 가 없어 물었다면 거절 문자열
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf {t}",  # 루트 자체
+            "rm -rf {t}/*",  # 글로브가 루트 바로 아래
+            "rm {t}/a src/b",  # 하나라도 임시 밖
+            "mv src/a.c {t}/",  # 워크스페이스 파일을 밖으로
+            "mv {t}/a .",  # 임시 파일을 워크스페이스로
+            "find {t} -name x | xargs rm",  # 대상을 알 수 없다
+            "find {t} -exec rm {{}} \\;",
+            "sudo rm -rf {t}/x",
+            "cd {t} && rm x",  # 상대 경로는 워크스페이스 기준
+            "rm .agent-cli/tmp",  # 스크래치 루트 자체
+            "rm {t}/id_rsa",  # 민감 이름
+            "rm -rf",  # 대상 없음
+        ],
+    )
+    def test_ambiguous_or_outside_still_asks(self, tmp_path, cmd):
+        from agent_cli.tools.shell import _DANGEROUS_KEYWORDS, confirm_dangerous
+
+        cmd = cmd.format(t=tmp_path / "systmp")
+        assert not _confine.temp_targets_only(cmd, _DANGEROUS_KEYWORDS)
+        denied, _ = confirm_dangerous(cmd)
+        assert denied is not None and "confirm" in denied
+
+    def test_symlink_in_temp_pointing_outside_still_asks(self, confined, tmp_path):
+        from agent_cli.tools.shell import _DANGEROUS_KEYWORDS
+
+        _, outside = confined
+        link = tmp_path / "systmp" / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        assert not _confine.temp_targets_only(f"rm -rf {link}/x", _DANGEROUS_KEYWORDS)
+
+    def test_tool_shell_removes_a_temp_file_without_prompt(self, tmp_path):
+        target = tmp_path / "systmp" / "gone.txt"
+        target.write_text("x")
+        r = tool_shell({"command": f"rm {target}"})
+        assert r.success, r.error
+        assert not target.exists()

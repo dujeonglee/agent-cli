@@ -135,6 +135,65 @@ def _temp_pass(resolved: Path) -> bool:
     return False
 
 
+# 글로브 문자 — `rm -rf /tmp/build/*` 는 글로브 앞 디렉터리로 판정한다.
+_GLOB = re.compile(r"[*?\[]")
+
+
+def scratch_root() -> Path:
+    """`.agent-cli/tmp` 의 resolve 경로 (워크스페이스 루트 기준)."""
+    from agent_cli.paths import scratch_dir
+
+    return (workspace_root() / scratch_dir()).resolve()
+
+
+def temp_targets_only(cmd: str, keywords) -> bool:
+    """`rm`·`rmdir`·`mv` 가 건드리는 것이 **전부** 임시 자리 안인가 — 위험 명령
+    확인을 건너뛸 근거 (v10.104.0). 임시 자리 = 시스템 임시 루트(`temp_roots`)와
+    `.agent-cli/tmp`. 사용자 결정: 임시 파일은 그야말로 임시라 지우는 데 확인이
+    필요 없다 — 봉쇄가 임시 디렉터리를 묻지 않게 된 v10.103.0 과 같은 축.
+
+    보수적으로 판정한다 — 애매하면 False(= 묻는다):
+    - 키워드가 세그먼트의 **첫 토큰**이어야 한다. `xargs rm`·`find -exec rm`·
+      `sudo rm` 은 대상을 알 수 없으니 묻는다.
+    - 옵션(`-` 로 시작) 뒤의 토큰이 전부 대상이고, 대상이 하나는 있어야 한다.
+    - 대상은 임시 루트 **아래**여야 한다 — 루트 자체(`rm -rf /tmp`)는 묻는다. 글로브는
+      글로브 앞 디렉터리로 판정한다(`/tmp/build/*` 통과, `/tmp/*` 질문).
+    - 상대 경로는 워크스페이스 루트 기준으로 푼다 — `.agent-cli/tmp/x` 는 통과,
+      `src/a.c` 는 묻는다. 그래서 `mv src/a.c /tmp/` 처럼 워크스페이스 파일을
+      밖으로 옮기는 것도 묻는다.
+    - resolve 결과로 보므로 바깥행 심링크는 묻고, 민감 이름(`id_rsa`)도 묻는다.
+    """
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError:
+        return False
+    roots = set(temp_roots()) | {scratch_root()}
+    seen = False
+    for seg in _shell_segments(tokens):
+        if not any(t in keywords for t in seg):
+            continue
+        seen = True
+        if seg[0] not in keywords:
+            return False
+        targets = [t for t in seg[1:] if not t.startswith("-")]
+        if not targets or not all(_temp_target(t, roots) for t in targets):
+            return False
+    return seen
+
+
+def _temp_target(tok: str, roots: set[Path]) -> bool:
+    m = _GLOB.search(tok)
+    if m:
+        prefix = tok[: m.start()]
+        tok = prefix if prefix.endswith("/") else os.path.dirname(prefix)
+        if not tok:
+            return False
+    resolved, _ = resolve_within(tok)
+    if sensitive_reason(resolved):
+        return False
+    return any(root in resolved.parents for root in roots)
+
+
 def _allowlisted(resolved: Path) -> bool:
     for root in _session_root_allowlist:
         rp = Path(root)

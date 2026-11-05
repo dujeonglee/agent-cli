@@ -331,7 +331,7 @@ class TestShellDangerousCommandConfirmation:
         keep retrying. Under pytest the CLI renderer has no TTY, so
         ``can_prompt()`` is False."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        result = tool_shell({"command": "rm -rf /tmp/build"})
+        result = tool_shell({"command": "rm -rf /nonexistent/build"})
         assert not result.success
         assert "confirm" in (result.error or "")
         assert "rm" in (result.error or "")
@@ -365,7 +365,7 @@ class TestShellDangerousCommandConfirmation:
         from agent_cli.tools import shell as shell_mod
 
         with patch("builtins.input", return_value="allow"):
-            tool_shell({"command": "rm /tmp/foo"})
+            tool_shell({"command": "rm /nonexistent/foo"})
         assert "rm" in shell_mod._session_allowlist
 
     def test_affirmative_alias_runs_once(self, monkeypatch):
@@ -406,13 +406,13 @@ class TestShellDangerousCommandConfirmation:
         from agent_cli.tools import shell as shell_mod
 
         with patch("builtins.input", return_value="a"):
-            tool_shell({"command": "rm /tmp/foo"})
+            tool_shell({"command": "rm /nonexistent/foo"})
         assert "rm" in shell_mod._session_allowlist
 
         # Second `rm` runs straight through — `input` is patched to
         # raise so we'd notice if the prompt fired.
         with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            result = tool_shell({"command": "rm /tmp/bar"})
+            result = tool_shell({"command": "rm /nonexistent/bar"})
         # No exception means no prompt happened. Command itself may
         # still fail because the path doesn't exist.
         assert "exit code:" in (result.output or "") or result.success

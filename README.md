@@ -203,7 +203,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_BROWSER_EXECUTABLE` | — | `browser` 가 띄울 브라우저 실행 파일 (기본: 설치된 Chrome → Playwright Chromium) |
 | `AGENT_CLI_BROWSER_HEADLESS` | — | `auto`(기본): 헤드리스로 시작, 사이트가 사람 확인을 요구하면 보이는 창으로 전환 · `1`: 항상 헤드리스 · `0`: 처음부터 보이는 창 |
 | `AGENT_CLI_AUDITOR` | — | `1` 이면 세션 감사 켬 (v10.42.0, 기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끔): main 의 사용자 런이 `complete` 할 때마다 하니스가 그 런의 기록만 읽는 감사 런을 돌리고 요청별 충족 판정을 main 에게 전한다 — main 이 한 번 더 깨어나 미충족을 손본다 (아래 "세션 감사자") |
-| `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
+| `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성. 대상이 전부 임시 자리(`/tmp`·`$TMPDIR`·`.agent-cli/tmp`) 안이면 묻지 않음 (v10.104.0) |
 | `AGENT_CLI_THINKING` | `off` | 사고 스위치: `off`/`on` (미설정=**끔**, v9.24.8). 웹 🧠 노브의 초기값이자 headless(run·harbor)의 유일한 제어 — `supports_thinking:true` 모델에서만 요청에 실린다. v10.72.0: `auto` 와 정도(`AGENT_CLI_REASONING_EFFORT`)는 제거 — 켰을 때 얼마나 사고하는지는 서버·모델 기본값이 정한다(모델마다 정도의 키·어휘가 달라 하니스가 번역하면 조용히 틀린다) |
 | `AGENT_CLI_TEMPERATURE` | — | 샘플링 temperature (0~2) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = **보내지 않음**: `models.json` 엔트리의 `temperature` → 서버 기본. `--temperature` 또는 웹 🎲 칩으로 세션 중 변경 |
 | `AGENT_CLI_TOP_P` | — | 샘플링 top_p (0~1) — 매 LLM 요청에 실린다 (v10.69.0). 미설정 = 보내지 않음: `models.json` 엔트리의 `top_p` → 서버 기본. `--top-p` 또는 웹 🎲 칩 |
@@ -1420,7 +1420,7 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 **위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다. 실행될 명령이 별도 줄로 표시되고, **확인을 유발한 위험 키워드만 강조**됩니다 (CLI 는 볼드-레드, 웹 다이얼로그는 `.danger` 스팬):
 
 ```
-  $ rm -rf /tmp/build        ← 'rm' 강조
+  $ rm -rf build/            ← 'rm' 강조
 ⚠ Dangerous command detected (`rm`). Allow? (y=once, n=deny, a=always allow `rm` this session)
   [y/n/a, optional comment after]:
 ```
@@ -1435,6 +1435,8 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 첫 토큰은 별칭도 인식합니다 — `y`(yes/ok/okay/yep/yeah/sure), `a`(always/**allow**), `n`(no/nope) — 자연스러운 긍정이 안전 기본값 거부로 오인되지 않게. (`allow` 는 옵션 라벨이 "always allow" 이므로 `a` 로 매핑.)
 
 **누가/왜 묻는지 표시.** 서브에이전트(agent run)에서 올라온 확인/질문에는 **에이전트 라벨 + reasoning(thought)**(확인은 실행하려는 **action**까지)이 함께 표시됩니다 — CLI는 프롬프트 위 `↳ from [explorer] · 💭 … · ⚡ …` 헤더, 웹은 확인 다이얼로그/답변 영역에 같은 정보. 메인 에이전트는 thought/action 이 이미 인라인이라 헤더 생략.
+
+**임시 자리는 묻지 않습니다** (v10.104.0). `rm`·`rmdir`·`mv` 의 대상이 **전부** 시스템 임시 루트(`/tmp`·`/var/tmp`·`$TMPDIR`) 또는 `.agent-cli/tmp/` **아래**면 확인 없이 실행됩니다 — 임시 파일은 그야말로 임시라 지우는 데 사람을 세울 이유가 없고, 클라이언트가 안 붙은 방에서는 그 확인이 곧 거절이었습니다. 판정은 보수적이어서 애매하면 묻습니다: 루트 자체(`rm -rf /tmp`)·루트 바로 아래 글로브(`rm -rf /tmp/*`)·대상 중 하나라도 임시 밖(`rm /tmp/a src/b`, `mv src/a.c /tmp/`)·파이프나 `find -exec`·`sudo` 뒤의 `rm`·`cd /tmp && rm x` 같은 상대 경로·`/tmp` 안의 바깥행 심링크·민감 이름(`id_rsa`). `rm -rf /tmp/build/*` 처럼 글로브 앞 디렉터리가 루트 아래면 통과합니다.
 
 기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. 확인을 띄울 수 있는지는 **렌더러가 판단**합니다 — CLI는 터미널(TTY), 웹은 연결된 브라우저(SSE 다이얼로그, TTY 불필요). 어느 쪽으로도 물어볼 수 없는 무인 환경(TTY 없는 CI/배치 + 미접속)에서는 자동 거부 — 위험 명령이 silent 실행되는 일 없음. 병렬 run 팬아웃처럼 여러 작업이 동시에 도는 경우에도 확인은 **직렬화**되어 한 번에 하나만 떠서, 응답이 엉뚱한 작업으로 새지 않음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
 
