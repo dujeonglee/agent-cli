@@ -65,6 +65,8 @@ _ACRONYMS = frozenset(
         *("EOS", "PID", "CPU", "GPU", "RAM", "UTF", "ASCII", "OCR", "ISO", "UUID"),
         *("ZIP", "YAML", "TOML", "WAL", "TTY", "SIGINT", "SIGTERM", "SIGKILL"),
         *("RAII", "OOM", "ASGI", "README"),
+        # windows-dump 스킬 (v10.105.0): 덤프·심볼 형식 이름
+        *("PDB", "GUID", "OMAP", "DBI", "MDMP", "IRQL"),
     ]
 )
 # 세 글자 이상의 대문자 낱말 — 백틱·따옴표·경로·`#`(LINE#HASH)·`$`(변수) 옆과

@@ -49,6 +49,9 @@ class TestBuiltinResourcesPackaged:
         for root in roots:
             for f in root.rglob("*.md"):
                 out.append(f.relative_to(_PKG).as_posix())
+        # windows-dump 스킬의 kdump.py — 패키지 모듈이 아닌 .py 라 package-data 에 따로 적어야 실린다
+        for f in (_PKG / "skills" / "builtin").rglob("*.py"):
+            out.append(f.relative_to(_PKG).as_posix())
         return out
 
     def test_every_builtin_md_is_in_package_data(self):

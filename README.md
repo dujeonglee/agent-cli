@@ -744,9 +744,42 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
 | `/create-skill <name>` | 새 스킬 파일을 대화형으로 생성 (SKILL.md + scripts/) |
 | `/create-agent <name>` | 새 에이전트 정의 파일을 대화형으로 생성 |
 | `/plan <feature>` | 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화하여 `plan/` 에 저장 |
+| `/windows-dump <dump>` | **Windows 전용** — 커널 미니덤프·`MEMORY.DMP`·사용자 모드 `.dmp` 를 Linux/macOS 에서 분류. 동봉된 `kdump.py` 가 버그체크 파라미터를 해석·역참조하고 드라이버 목록·스택 스캔·PDB 짝 판정·심볼을 낸다. 모델이 덤프를 보면 스스로 부른다 (아래 [Windows 덤프 분류](#windows-덤프-분류-windows-dump)) |
 | `/orchestrate <task>` | 자율 에이전트 팀 부트스트랩 — 계획 수립 후 워커들을 **idle 로 소환만** 하고(일을 시키면 회신이 main 을 깨움), 로스터(키)를 `orchestrator` 에이전트에게 인계 후 즉시 반환. 조율(배정→리뷰→수리)은 orchestrator 가 peer message 로 자율 진행, main 은 최종 보고만 자동 수신 |
 
 사용자가 같은 이름의 스킬을 `.agent-cli/skills/`에 만들면 built-in을 오버라이드합니다.
+
+### Windows 덤프 분류 (windows-dump)
+
+Windows 드라이버 크래시를 Linux/macOS 에서 보기 위한 내장 스킬입니다 (v10.105.0). 모델이 덤프 파서를 즉석에서
+짜면 레이아웃을 틀리고 틀린 줄을 모른 채 분석을 이어갑니다 — 실제로 맞는 PDB 를 "이미지와 안 맞는다" 고
+우기다 실패한 사례가 있었습니다(PE 의 RSDS Age 2 와 PDB 정보 스트림 Age 5 가 달랐을 뿐 GUID 는 같고 DBI
+Age 는 2). 그래서 검증된 도구 `agent_cli/skills/builtin/windows-dump/kdump.py` 를 주고(표준 라이브러리만,
+3.10+, 폐쇄망 OK) 중간값을 전부 보이게 했습니다.
+
+```
+python3 .../windows-dump/kdump.py info      MEMORY.DMP   # 버그체크 코드·파라미터(종류별 해석·역참조)·OS 빌드·레지스터·예외
+python3 .../windows-dump/kdump.py modules   MEMORY.DMP   # 적재 드라이버: base·size·TimeDateStamp·심볼서버 식별자·PDB
+python3 .../windows-dump/kdump.py stack     MEMORY.DMP   # 스택 스캔(언와인딩 아님) + 범인 명령·경계 표시
+python3 .../windows-dump/kdump.py symbolize MEMORY.DMP --symdir sym --pe mydrv.sys=… --pdb mydrv.sys=…
+python3 .../windows-dump/kdump.py pdbcheck  build/mydrv.sys build/mydrv.pdb      # GUID 16바이트 비교, Age 세 값 표시
+python3 .../windows-dump/kdump.py fetch-symbols MEMORY.DMP --symdir sym [--server 사내서버]
+```
+
+- **버그체크 파라미터 표**: 코드마다 네 파라미터에 종류(`ip`·`va`·`irql`·`access`·`ntstatus`·`trap`·`ctx`·`exr`·`prcb`·`ptr`·`sub`)를
+  붙여 두었고(Microsoft 레퍼런스 대조, 2026-11-05), `info` 가 종류대로 따라갑니다 — 명령 주소는 `module+rva`, 데이터 주소는
+  널·비정규·모듈·언로드 범위·스택·풀로 분류, 트랩 프레임·CONTEXT 포인터는 역참조해 **진짜 문제 지점의 레지스터**
+  (`faulting_context`)를 냅니다. 전체 덤프의 헤더 컨텍스트는 `KeBugCheckEx` 호출 지점이라 그것만 보면 범인 프레임을
+  놓칩니다(WinDbg `!analyze -v` 가 `.trap`/`.cxr` 로 하는 일). `stack` 은 그 Rsp 자리에 경계선을 긋고, 다른 스택이면
+  따로 스캔합니다.
+- **PDB 짝 판정**은 GUID 16바이트로만 하고 Age 는 세 값(PE·PDB info·DBI)을 다 보여 줍니다. PDB 가 없거나 GUID 가
+  다르면 이름을 지어내지 않고 `module+rva` 로 멈춥니다.
+- 검증 범위: kdmp-parser 공개 덤프 6종(레지스터·물리 읽기 전부 일치), dumplib 커널 미니덤프 x64·x86(x86 샘플로
+  KTRAP_FRAME 의 `&HardwareEsp == Esp` 실측), rust-minidump MDMP, msdl 다운로드, Win7 `ntkrnlmp.pdb`(OMAP) 로
+  `KeBugCheckEx` 복원. **x64 KTRAP_FRAME 레이아웃과 실제 사내 덤프는 WinDbg 와 아직 대조하지 않았습니다** —
+  `references/verify-prompt.md` 가 그 대조 절차(모델에게 붙여 넣는 프롬프트)입니다.
+- 하지 않는 것: `!analyze -v` 식 원인 추정, 언와인딩, `!irp`·`!wdfkd` 류 확장, WPP 디코딩. 그건 Windows 호스트의
+  WinDbg(ssh 로 `kd -z x.dmp -c "…; q"`) 몫이고 포인터 종류 파라미터는 그 용도로 그대로 찍어 줍니다.
 
 ### 프로젝트 스킬 예시
 
