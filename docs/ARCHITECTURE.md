@@ -235,7 +235,8 @@ agent_cli/
 │       ├── create-skill/            스킬 생성 메타 스킬 (references/format.md — ${SKILL_DIR} placeholder 가 render 치환 피하도록 분리)
 │       ├── create-agent.md         에이전트 생성 메타 스킬
 │       ├── plan.md                 구현 계획 생성 (plan/ 디렉토리에 저장)
-│       └── orchestrate.md         멀티스텝 작업을 계획+워커 5종 조율 (main 오케스트레이션)
+│       ├── orchestrate.md         멀티스텝 작업을 계획+워커 5종 조율 (main 오케스트레이션)
+│       └── windows-dump/           **v10.105.0** Windows 덤프 분류 — `kdump.py`(2,993, 표준 라이브러리 단일 파일: PAGEDU64/PAGEDUMP 커널 덤프 미니·전체·비트맵·RDMP, MDMP, PE/PDB(MSF7·DBI·OMAP), 버그체크 파라미터 표 `BUGCHECKS`/`SUBTYPES`/`PARAM_NAMES` + 종류별 해석·역참조(`params`·`faulting`·`read_trap`·`read_context_at`·`classify_va`), 스택 스캔 `fault-ip`/`marker`) + `SKILL.md`(`${SKILL_DIR}/kdump.py` 요리법) + `references/verify-prompt.md`(WinDbg 대조 절차); 테스트 `tests/test_windows_dump.py` 가 importlib 로 읽는다(합성 덤프 항상, 공개 샘플은 `KDUMP_TESTDATA`)
 │           ├── SKILL.md            6단계 워크플로 (분석→설계→에이전트→스킬→오케스트레이터→검증)
 │           └── references/         단계별 가이드 (design-patterns, agent-writing, skill-writing)
 │
@@ -1454,6 +1455,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 동일 name의 스킬이 여러 위치에 있으면 상위 우선순위가 오버라이드합니다.
 
 패키지 내장 스킬:
+- `windows-dump` — Windows 크래시 덤프 분류 (`kdump.py` 동봉, 모델 호출 가능, v10.105.0)
 - `create-skill` — 새 스킬 파일 대화형 생성
 - `create-agent` — 새 에이전트 정의 파일 대화형 생성
 - `plan` — 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화 (plan/ 저장)
