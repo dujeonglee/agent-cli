@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from agent_cli.constants import MONITOR_SILENT_DEFAULT_S
 from agent_cli.monitor.conditions import MatchCondition, build
-from agent_cli.monitor.registry import MonitorRegistry
+from agent_cli.monitor.registry import RETIRE_ONCE, MonitorRegistry
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -84,6 +84,7 @@ class TestRetire:
         assert not mon.alive and "silent for 1m" in mon.retired
         text = reg.deliver.reports[-1]
         assert "never appeared" in text and "Retiring" in text and "`silent`" in text
+        assert text.endswith("0 match(es) total")  # RETIRE_SUMMARY 한 줄 (v10.111.0)
 
     def test_unchanged_file_retires_but_a_changing_one_does_not(self, tmp_path):
         reg = _reg(tmp_path)
@@ -113,7 +114,7 @@ class TestRetire:
         with log.open("a") as f:
             f.write("EXIT:0\n")
         reg.tick(t0 + 2)
-        assert not mon.alive and "fired once" in mon.retired
+        assert not mon.alive and mon.retired == RETIRE_ONCE
         assert "EXIT:0" in reg.deliver.reports[-1]
 
     def test_zero_disables_the_limit(self, tmp_path):
@@ -131,7 +132,7 @@ class TestRetire:
         cond = build({"type": "silence", "file": str(log), "idle": 30})
         mon = reg.add(cond, owner="main", deadline_s=7200)
         reg.tick(mon.created_at + 31)
-        assert not mon.alive and "fired once" in mon.retired
+        assert not mon.alive and mon.retired == RETIRE_ONCE
 
     def test_persisted_description_is_unchanged(self, tmp_path):
         reg = _reg(tmp_path)

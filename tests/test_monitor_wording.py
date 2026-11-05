@@ -17,6 +17,7 @@ from agent_cli.monitor import MonitorRegistry, build
 from agent_cli.monitor.conditions import SHAPES
 from agent_cli.monitor.registry import describe_previous
 from agent_cli.monitor.runtime import set_monitor_registry
+from agent_cli.tools import monitor_tool as mt
 from agent_cli.tools.base import RunContext
 from agent_cli.tools.monitor_tool import MonitorTool
 from tests.monitor_delivery import RecordingDelivery
@@ -109,6 +110,7 @@ class TestRunIsJustUnknown:
                 "monitor: `command` conditions need the `shell` tool, which this agent "
                 "does not have — use a `file` + `pattern` or `file` + `idle` condition"
             )
+            assert r.error == mt.NEEDS_SHELL  # 문구 고정 + 같은 출처 (v10.111.0)
         finally:
             set_monitor_registry(None)
 
@@ -144,6 +146,16 @@ class TestReportsListsAndErrors:
             assert (
                 f"watching `file` + `pattern` on {log} for 2h. It reports to you when it fires; there is nothing to check in the meantime."
                 in r.output
+            )
+            # 같은 출처 (v10.111.0) — 파일이 이미 있어 등록 안내가 뒤에 붙는다
+            assert r.output.startswith(
+                mt.added_text(
+                    reg.list_all()[0].id,
+                    f"`file` + `pattern` on {log}",
+                    "2h",
+                    once=True,
+                    note="",
+                )
             )
             assert "7200s" not in r.output and "do NOT poll" not in r.output
             mon = reg.list_all()[0]

@@ -498,4 +498,4 @@ class TestRunIsGone:
         log.write_text("X\n")
         reg.tick(time.time())
         rep = reg.deliver.take()[0]
-        assert "↳ run" not in rep and "fired once" in rep
+        assert "↳ run" not in rep and reg_mod.RETIRE_ONCE in rep
