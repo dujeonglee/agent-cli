@@ -166,6 +166,10 @@ class AskTool(Tool):
 
 class MessageTool(Tool):
     name = "message"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = 'Send a request or a notice to another running agent, or to "main".'
     # Present ONLY for resident (persistent) sub-agents — the loop injects a
     # ``message_handler`` and force-adds this tool for them, and strips it
     # everywhere else (the main agent talks to agents via the ``agent`` tool).
@@ -223,6 +227,14 @@ class ReplyTool(Tool):
     류의 ack 가 정확히 거기서 새어 나온다(사용자 결정)."""
 
     name = "reply"
+
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+
+    #: 전문은 `tool_help`.
+
+    deferred = True
+
+    summary = "Answer a request someone is waiting on — another agent's `message` or the request you were given."
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
     # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent request`
     # 로 "가장 오래된 빚" 을 갚았다. 질문 포트가 있는 루프(main·상주)에 붙는다.

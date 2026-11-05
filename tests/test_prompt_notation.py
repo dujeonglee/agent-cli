@@ -178,6 +178,19 @@ def test_tool_help_samples_are_in_the_inventory():
     assert "Tools: `read_file`, `edit_file`" in unknown
 
 
+def test_monitor_result_samples_are_in_the_inventory():
+    """`monitor` 거절 문구(v10.110.0)도 표본으로 가드에 닿는다 — 값은 큰따옴표."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {
+        "monitor_validation",
+        "monitor_condition_errors",
+        "monitor_unknown_id",
+    } <= ids
+    text = "\n".join(t for w, t in _ALL if " runtime monitor_" in w)
+    assert '`pattern` "([" is not a valid regex' in text
+    assert 'unknown id "err-watch"' in text and "'" not in text
+
+
 def test_depth_limit_line_is_in_the_inventory():
     """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
     texts = [t for w, t in _ALL if " limit section " in w]

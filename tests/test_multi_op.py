@@ -952,7 +952,17 @@ class TestMidBatchValidationFailure:
             in body
         )
         assert '`detail` "b" — missing: `mode`.' in body
-        assert "Expected: {" not in body and len(body) < 1500
+        assert "Expected: {" not in body
+        # v10.110.0: `memory` 는 지연 도구 — 이 런의 첫 거절에만 전문이 "이 op 는 안
+        # 돌았다" 뒤에 한 번 붙는다(두 번째 op 에는 없다). 거절 글 자체는 여전히 짧다.
+        from agent_cli.loop.dispatch import FULL_GUIDE_HEAD
+
+        assert body.count(FULL_GUIDE_HEAD) == 1
+        first, rest = body.split(FULL_GUIDE_HEAD)
+        assert first.rstrip().endswith("Fix this op and re-send only it.")
+        assert "[2/2] memory — FAILED" in rest
+        rejection = first + rest[rest.index("[2/2]") :]
+        assert len(rejection) < 1500
 
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
         f1 = tmp_path / "a.txt"

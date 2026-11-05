@@ -338,11 +338,6 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
 _MULTI_OP_DESC_REWRITES: dict[str, list[tuple[str, str]]] = {}
 
 
-#: 지연 도구의 인자 설명도 지울까 (v10.109.0, docs/tool-help/DESIGN.md D3) — True 면
-#: V2(인자 뼈대: 이름·타입·enum·필수만), False 면 V1(인자 전문 유지). **측정용**이다:
-#: PR 2 의 표적 과제 측정으로 승자를 정하면 그 쪽으로 고정하고 이 상수를 없앤다.
-DEFER_PARAM_DESCRIPTIONS = True
-
 #: 하위 스키마를 품는 JSON 스키마 키 — ``deferred_schema`` 가 이 자리만 내려간다.
 _SUBSCHEMA_LIST_KEYS = ("anyOf", "oneOf", "allOf", "prefixItems")
 _SUBSCHEMA_KEYS = ("items", "additionalProperties", "not")
@@ -383,7 +378,8 @@ def tool_view(
     프롬프트 절(:func:`get_tool_descriptions`)과 native ``tools[]``
     (``system_prompt.function_schemas_for``)가 **이 한 함수**를 거친다 — 지연 판정이
     둘 사이에서 어긋날 수 없게 (v10.109.0). 지연 도구(``Tool.deferred``)는 설명 자리에
-    ``summary``, 안내 없음, 인자는 ``DEFER_PARAM_DESCRIPTIONS`` 면 뼈대.
+    ``summary``, 안내 없음, 인자는 뼈대(``deferred_schema`` — D3 측정으로 V2 확정,
+    v10.110.0: 인자 설명을 남긴 V1 은 정답·선택률이 같고 더 비쌌다; DESIGN §7).
     ``full=True`` 는 지연을 무시한 전문(`tool_help` 의 결과)."""
     tool = TOOL_SCHEMAS[name]
     description = (description_overrides or {}).get(name, tool.description)
@@ -391,8 +387,7 @@ def tool_view(
     guide = (inline_guides or {}).get(name, "")
     if tool.deferred and not full:
         description, guide = tool.summary, ""
-        if DEFER_PARAM_DESCRIPTIONS:
-            params = deferred_schema(params)
+        params = deferred_schema(params)
     return description, params, guide
 
 

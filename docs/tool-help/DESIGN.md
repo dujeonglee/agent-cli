@@ -73,7 +73,7 @@
 - `Tool.deferred: bool = False` — 프롬프트에 전문을 싣지 않는다.
 - `Tool.summary: str = ""` — 지연 도구의 한 줄. "무엇인가" 가 아니라 "언제 쓰는가"(모델이 이 한 줄로 길을 고른다). 손으로 쓴다. `deferred` 인데 비면 등록 시점에 실패(`registry.check_deferred`) — 조용히 전문으로 되돌리지 않는다.
 
-렌더는 두 곳이 같은 함수를 탄다: `registry.tool_view(name, …)` → `(설명, 인자 스키마, 안내)`. `get_tool_descriptions`(프롬프트 절, 도구마다 `render_tool_block`)와 `system_prompt.function_schemas_for`(native `tools[]`)가 둘 다 이것을 부른다. 지연 도구는 설명 자리에 `summary`, 안내 없음, 인자는 `DEFER_PARAM_DESCRIPTIONS` 가 True(V2)면 `deferred_schema(parameters)` — JSON 스키마에서 `description` 키만 재귀로 지우고 type·enum·required·items·minLength 는 보존(`properties` 의 키는 인자 이름이라 지우지 않는다). 텍스트 렌더(`render_param_value`)는 설명이 없는 열거값이면 스키마 `enum` 에서 값을 읽어 `"mode": "string, required — "add" | "list" | "delete""` 를 뼈대에서도 낸다(설명이 있으면 종전 그대로 — 지금 모든 enum 인자는 설명이 있어 바이트 불변).
+렌더는 두 곳이 같은 함수를 탄다: `registry.tool_view(name, …)` → `(설명, 인자 스키마, 안내)`. `get_tool_descriptions`(프롬프트 절, 도구마다 `render_tool_block`)와 `system_prompt.function_schemas_for`(native `tools[]`)가 둘 다 이것을 부른다. 지연 도구는 설명 자리에 `summary`, 안내 없음, 인자는 `deferred_schema(parameters)`(V2 — v10.110.0 측정으로 확정, §7) — JSON 스키마에서 `description` 키만 재귀로 지우고 type·enum·required·items·minLength 는 보존(`properties` 의 키는 인자 이름이라 지우지 않는다). 텍스트 렌더(`render_param_value`)는 설명이 없는 열거값이면 스키마 `enum` 에서 값을 읽어 `"mode": "string, required — "add" | "list" | "delete""` 를 뼈대에서도 낸다(설명이 있으면 종전 그대로 — 지금 모든 enum 인자는 설명이 있어 바이트 불변).
 
 ### 4.2 전문을 주는 길 — `tool_help`
 
@@ -121,12 +121,71 @@
 
 1. **PR 1 (v10.109.0, 행동 불변)** — 이 문서의 §4 기반 전부: `Tool.deferred`·`summary`·`check_deferred`, `deferred_schema`·`tool_view`·`render_tool_block`, 렌더 두 곳의 공용 판정, `render_param_value` 의 enum 대체, `DEFER_PARAM_DESCRIPTIONS`(측정용 상수, V2 기본), `tool_help`(+ `RunContext.tool_guide`, `deferred` 게이트), A5 자동 전문, inventory 표본(`tool_help_result`·`tool_help_unknown`). **어떤 도구도 `deferred=True` 가 아니다** — 지연 경로는 가짜로 켠 도구로 단위 테스트(tests/test_tool_help.py).
    - 불변 검증: `python -m agent_cli.prompts.inventory -o` 를 origin/main(v10.108.0) worktree 와 이 커밋에서 떠서, `tool_help` 항목(도구 목록·`- tool_help:` 줄·native 함수·표본)과 작업 폴더 줄만 걷어 내고 비교 — 다섯 방언 × 네 시나리오의 절 131개·도구 목록·native 함수·실행 중 문구 전부 바이트 동일. 실제 루프는 지연 도구가 없어 `tool_help` 도 광고하지 않으므로(게이트) 모델이 보는 글은 종전과 완전히 같다. inventory 는 원래 게이트를 적용하지 않고 모든 내장 도구를 보이므로 `tool_help` 줄이 거기에만 나온다.
-2. **PR 2 (V1 또는 V2 켬)** — D1 열한 개에 `deferred=True` 와 손으로 쓴 `summary`(영어, 표기 규칙), §6 측정 뒤 머지. 승자로 `DEFER_PARAM_DESCRIPTIONS` 를 고정하고 상수를 없앤다.
+2. **PR 2 (v10.110.0, 지연 켬)** — D1 열한 개에 `deferred = True` 와 손으로 쓴 `summary`. 인자는 언제나 뼈대(V2): 측정용 상수 `DEFER_PARAM_DESCRIPTIONS` 는 아래 측정으로 V2 가 정해져 지웠다.
+   - 요약 원문 (영어, 10~40 낱말 한 문장, 표기 규칙 — `tests/test_tool_help.py::TestDeferredSet` 가 고정; 상한은 처음 25, monitor 보강으로 40):
+
+     | 도구 | `summary` |
+     |---|---|
+     | agent | Hand a task to another agent that works in its own context; the profiles are listed under `## Agent Profiles`. |
+     | code_index | Find definitions, callers and references in a codebase — reach for it before grepping source. |
+     | monitor | Get told when a file or log meets a condition — give exactly one pair: `file` + `pattern`, `file` + `idle`, or `command` + `every`; a `shell` job with `background` true already reports when it ends. |
+     | browser | Use it for pages that need JavaScript, clicking or typing; for plain HTML use `fetch`. |
+     | schedule | Run a request on a cron schedule in this session, for periodic work the user asked to automate. |
+     | history | Read records that have left your context, such as the full text of an old observation or an earlier session. |
+     | fetch | Read one URL (HTML comes back as markdown) or download a file. |
+     | snapshot | Bring back a file that a `shell`, `edit_file` or `write_file` call damaged or deleted. |
+     | memory | Keep a decision or fact that must survive context compaction. |
+     | message | Send a request or a notice to another running agent, or to "main". |
+     | reply | Answer a request someone is waiting on — another agent's `message` or the request you were given. |
+
+     초안(§4.3)에서 고친 것: `agent` 는 "or start a resident one" 을 뺐다 — 요약은 모든 루프에 같은 글인데 서브루프의 `agent` 는 `run` 만 된다(지연 뷰는 루프별 설명 교체를 쓰지 않는다; 축소는 뼈대의 `mode` 값 "run" 하나와 `tool_help` 전문이 말한다). `snapshot` 은 "inspect the state before an edit" 가 없는 기능이라(이 도구는 자동 스냅샷에서 파일을 되돌리고 목록을 볼 뿐) 되돌리기만. `reply` 는 에이전트의 요청만이 아니라 받은 요청(main 의 사용자 요청 id 포함)에도 답한다. `browser` 는 "언제" 문장으로("Use it for pages …"). `monitor` 는 끝을 알리는 것이 `background` 로 띄운 `shell` 작업이라고 이름으로. `fetch` 는 바이너리 저장·`download_to` 도 있어 "or download a file". `history` 는 다른 세션도 닿는다.
+   - 토큰 (GLM 토크나이저, main 루프가 실제로 보는 것 — 전: 지연 없음·`tool_help` 미광고, 후: 지연 11개 + `tool_help`):
+
+     | 방언 | 시스템 프롬프트 | 도구 절 | native `tools[]` JSON |
+     |---|---:|---:|---:|
+     | xml_fc | 8,002 → **4,763** (−3,239, −40%) | 6,320 → **3,081** | — |
+     | json_fc | 7,972 → **4,774** (−3,198) | 6,260 → **3,062** | — |
+     | native_fc | 1,276 → 1,276 | — | 7,915 → **4,305** (−3,610, −46%) |
+
+     §2.2 의 V2 추정(−3,790)보다 약 550 적다 — 요약이 첫 문장 근사보다 길고(10~36 낱말; monitor 보강 +27), `tool_help` 한 줄(+50)과 뼈대의 enum 값 목록이 남는다. monitor 보강 전 값은 4,736 / 4,747 / 4,278.
+   - 프롬프트 글을 단정하던 테스트는 지우지 않고 옮겼다: 지연 도구의 설명·인자 설명·안내를 보는 것은 `full_tool_text` 픽스처(지연을 끈 렌더 = `tool_help` 결과, tests/conftest.py)로, 서브루프 축소는 `tool_guide_text` 전문 + 뼈대의 `mode` 값으로, json_fc 도구 절 스냅샷은 전문 판(옛 파일 그대로)과 지연 판(`tools_section_json_fc_deferred.txt`) 둘. 묶음 안의 A5 거절은 자동 전문이 "This op did not run …" **뒤**에 붙도록 고쳤다(`_reject_op(tail=)` — PR 1 은 그 사이에 끼워 거절 문장을 갈랐다).
+   - **표적 과제 측정 (§6.3, 2026-11-06, GLM-5.3-Flash 사고 off T0.2)** — 기준 v10.109.0·V1·V2 교차, 5 과제 × 5회. chose = 올바른 도구를 골랐나, firstok = 첫 호출이 검증 통과, ok = 정답. 열의 세 값은 기준 / V1 / V2.
+
+     | 과제 | chose | `tool_help` | firstok | ok | 호출 합(5런) | 모델 호출 평균 | 입력 토큰 합 평균 | 첫 프롬프트 |
+     |---|---|---|---|---|---|---|---|---|
+     | agent | 5/5 모두 | 0 | 5/5 모두 | 5/5 모두 | 15 / 15 / 15 | 2.0 | 20,744 / 17,982 / 14,694 | 10,146 / 8,770 / 7,110 |
+     | browser | 5/5 | 0 | 5/5 | 5/5 | 15 / 15 / 15 | 3.0 | 30,729 / 26,601 / 21,621 | 10,141 / 8,765 / 7,105 |
+     | code_index | 5/5 | 0 | 5/5 | 5/5 | 15 / 15 / 15 | 2.8 / 2.6 / 3.0 | 28,486 / 22,883 / 21,453 | 10,118 / 8,742 / 7,082 |
+     | memory | 5/5 | 0 | 5/5 | 5/5 | 10 / 10 / 10 | 2.0 | 20,403 / 17,673 / 14,346 | 10,125 / 8,749 / 7,089 |
+     | monitor | 5/5 | 0 | 5/5 (검증) | 5/5 | 22 / 31 / 34 | 3.4 / 6.2 / 6.6 | 35,348 / 56,265 / 49,646 | 10,136 / 8,760 / 7,100 |
+
+     - 네 과제(agent·browser·code_index·memory)는 세 변형의 행동이 같고 토큰만 V2 가 가장 적다(입력 합 −25~−30%).
+     - monitor 는 요약만 보고 조건 짝을 섞어(`command` + `every` + `pattern`, V2 는 `id` 까지 지어냄) 첫 호출이 **도구 오류**("give one condition — …")로 거절되고 다음 턴에 고쳤다: V1 5/5, V2 4/5 (V2 r2 는 인자가 깨진 채 우연히 통과). V1 의 인자 설명도 이것을 못 막았다 — 짝 규칙은 설명 산문에만 있다. V2 r3·r4·r5 는 두 번째 시도에서 `command` + `every` "2s"(1m 로 클램프) 폴링을 골라 동작은 했지만 `file` + `pattern` 보다 나쁘다.
+     - `tool_help` 는 75런에서 0회 — 모델은 미리 읽지 않고 시도하고 오류로 배운다. (짝이 섞인 호출은 스키마 검증을 통과하므로 A5 자동 전문도 붙지 않는다 — 도구가 거절한다.)
+     - **결정 D3: V2** (2026-11-06). 정답·선택률이 같고 가장 싸다. 부족한 것은 요약으로 보강한다 → monitor 요약에 세 짝을 이름으로 넣었다(위 표). 측정용 상수와 V1 렌더 경로·테스트를 지웠다.
+   - 같은 커밋의 표기 수정: monitor 의 모델 대면 문구 셋이 repr 작은따옴표였다(`unknown id`·잘못된 정규식 `pattern`·등록 안내의 "last line matching") → 큰따옴표, 등록 안내의 "are NOT reported" 대문자 강조 → 소문자. 거절 문구는 inventory 표본 `monitor_validation`·`monitor_condition_errors`·`monitor_unknown_id` 로 표기 가드가 본다(검증·조건 조립을 잘못된 인자로 실제로 불러 얻은 글). 등록 안내·발화 보고는 파일 상태가 있어야 나와 표본에 없다 — 다음 검토 몫.
+   - **monitor 재측정 (최종 코드 984c24d2, 요약 보강 뒤, 5회)**: 5/5 정답, 첫 호출에 올바른 짝 4/5(1런은 잉여 키 `add`·`id`·`once` 로 한 번 재시도), 호출 합 26(기준 22, 보강 전 V2 34), 모델 호출 평균 4.4, 입력 토큰 합 평균 33,121(기준 35,348, 보강 전 V2 49,646). `tool_help` 0회.
+   - **벤치 (GLM-5.3-Flash 사고 off, 9과제, 기준 v10.109.0 휠·후보 984c24d2 휠, 순서 base-r1 → cand-r1 → cand-r2 → base-r2, 2026-11-06 01:10~04:00)**:
+
+     | 과제 | base-r1 | cand-r1 | cand-r2 | base-r2 |
+     |---|---|---|---|---|
+     | db-wal-recovery | 1 | 1 | 1 | 1 |
+     | extract-elf | 1 | 1 | 1 | 0 |
+     | extract-moves-from-video | 0 | 0 | 0 | 0 |
+     | financial-document-processor | 1 | 0 | 0 | 0 |
+     | gcode-to-text | 1 | 0 | 0 | 0 |
+     | large-scale-text-editing | 1 | 1 | 0 | 0 |
+     | log-summary-date-ranges | 1 | 0 | 1 | 1 |
+     | multi-source-data-merger | 1 | 1 | 1 | 1 |
+     | regex-log | 1 | 1 | 1 | 1 |
+     | 합 | 8/9 | 5/9 | 5/9 | 4/9 |
+
+     해석: 기준 8·4, 후보 5·5 — 차이는 GLM 의 런 변동 범위 안(역대 main 기준 런 3~8/9, 예 v10.100 6·5, v10.99 6·6, v10.91.2 7·5). 네 런 36 trial 에서 지연 도구 11개는 한 번도 불리지 않았고 `tool_help` 도 0회 — 벤치는 지연의 행동 효과를 재지 못하며 비용만 보인다: 첫 요청 10.0~10.4K → 7.2~7.6K 토큰. 실패 과제(financial·gcode·video·large-scale·log-summary)는 기록상 알려진 흔들림 모드.
 
 ## 8. 결정 (사용자, 2026-11-05)
 
 - **D1** 지연 집합 = agent, code_index, monitor, browser, schedule, history, fetch, snapshot, memory, message, reply (세션 5% 이하).
 - **D2** 전문 경로 = `tool_help` 도구 + 스키마 불일치(A5) 거절에 자동 전문 한 번. (자동만 두는 대안은 모델이 미리 읽을 길이 없어 비권고.)
-- **D3** V1/V2 둘 다 후보로 만들어 표적 과제 ③ 으로 정한다.
+- **D3** V1/V2 둘 다 후보로 만들어 표적 과제 ③ 으로 정한다. → **V2 확정 (2026-11-06)**, monitor 요약 보강 (§7).
 - **D4** 모든 루프 같은 규칙(도구 속성).
 - **D5** PR 2 머지 전에 §6 전부(벤치 2회 + 표적 25런 × 2변형).
