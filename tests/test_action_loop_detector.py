@@ -101,6 +101,36 @@ class TestErrorRetryReset:
         assert d.observe("a", {}) == 1
 
 
+class TestProgressReset:
+    """v10.107.0: ``progressed=True`` (같은 호출의 직전 두 결과가 다르거나 하나뿐)은
+    오류 재시도와 같은 리셋 — 개입 없음, fire_count 0, 다음 반복은 다시 센다."""
+
+    def test_progressed_resets_counter_and_fire_count(self):
+        d = ActionLoopDetector()
+        d.observe("browser", {"key": "ArrowRight"})
+        assert d.observe("browser", {"key": "ArrowRight"}) == 1
+        assert d.observe("browser", {"key": "ArrowRight"}, progressed=True) == 0
+        assert d.fire_count == 0 and d.consecutive_count == 1
+
+    def test_next_repeat_without_progress_counts_again(self):
+        d = ActionLoopDetector()
+        d.observe("a", {}, progressed=True)
+        d.observe("a", {}, progressed=True)
+        assert d.observe("a", {}) == 1  # 결과가 같아진 첫 반복 = 1단계
+        assert d.observe("a", {}) == 2
+
+    def test_run_length_counts_every_emission_through_resets(self):
+        """넛지가 말하는 "N times in a row" 는 리셋과 무관한 실제 연속 횟수."""
+        d = ActionLoopDetector()
+        d.observe("a", {})
+        d.observe("a", {}, progressed=True)
+        d.observe("a", {}, prev_was_error=True)
+        d.observe("a", {})
+        assert d.run_length == 4 and d.consecutive_count == 2
+        d.observe("b", {})
+        assert d.run_length == 1
+
+
 class TestEscalationCounters:
     def test_fire_count_property_tracks_fires(self):
         d = ActionLoopDetector()

@@ -8,6 +8,7 @@ import pytest
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS, make_ports, split_ports
@@ -1248,10 +1249,23 @@ def _shell_call(cmd: str) -> str:
 class TestRunLoopActionLoop:
     """B1 (action loop) detection + recovery — manufactured loop scenarios.
 
-    Threshold is 2: the SECOND consecutive identical (action, args) call
-    fires probe_progress; the third fires restate_task; the fourth
-    hard-fails. A different action interleaved resets the counter.
+    v10.107.0 (사용자 결정): 같은 호출의 직전 두 결과가 다르면 진행 중이라 세지
+    않고, 결과가 하나뿐이면 비교할 것이 없어 세지 않는다. 그래서 같은 결과의
+    반복은 THIRD 호출이 probe_progress, 넷째가 restate_task, 다섯째가 하드 실패
+    (종전엔 둘째·셋째·넷째). 실행된 두 호출은 실제로 돈다 — 중복 실행 한 번이
+    감수한 비용. 다른 행동이 끼면 카운터가 되돌아간다. shell 결과는 고정한다
+    (``ls /tmp`` 같은 실제 출력이 호출 사이에 바뀌면 진행으로 보인다).
     """
+
+    @pytest.fixture(autouse=True)
+    def _fixed_shell(self, monkeypatch):
+        from agent_cli.tools import TOOLS
+
+        monkeypatch.setattr(
+            TOOLS["shell"],
+            "_run",
+            lambda args, **kw: ToolResult(True, output=f"out of {args['command']}"),
+        )
 
     def _read_turns(self, session_dir):
         path = session_dir / "turns.jsonl"
@@ -1259,17 +1273,18 @@ class TestRunLoopActionLoop:
             return []
         return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
 
-    def test_two_repeats_fires_probe_progress(self, caps, tmp_path):
-        """First repeat (call #2 with same args) → probe_progress nudge,
-        no dispatch. Recovery: model emits complete on next turn."""
+    def test_third_same_result_call_fires_probe_progress(self, caps, tmp_path):
+        """v10.107.0: 두 번째 같은 호출은 비교할 결과가 하나뿐이라 실행되고, 두 결과가
+        같으면 세 번째 호출이 probe_progress (실행 안 됨). 회복: 다음 턴 complete."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=_shell_call("ls /tmp")),  # turn 1: dispatch
-            LLMResponse(content=_shell_call("ls /tmp")),  # turn 2: B1 fires
-            LLMResponse(content=_complete("done")),  # turn 3: recovery
+            LLMResponse(content=_shell_call("ls /tmp")),  # turn 2: dispatch (결과 하나)
+            LLMResponse(content=_shell_call("ls /tmp")),  # turn 3: B1 fires
+            LLMResponse(content=_complete("done")),  # turn 4: recovery
         ]
         result = run_loop(
             ports=TEST_PORTS,
@@ -1281,10 +1296,11 @@ class TestRunLoopActionLoop:
             max_turns=10,
         )
         assert result.success
-        # Turn 2 retry message should contain probe_progress phrasing
-        third_call_messages = provider.call.call_args_list[2].kwargs["messages"]
-        retry_msg = third_call_messages[-1]["content"]
+        # Turn 3 retry message should contain probe_progress phrasing
+        fourth_call_messages = provider.call.call_args_list[3].kwargs["messages"]
+        retry_msg = fourth_call_messages[-1]["content"]
         assert "You have called" in retry_msg
+        assert "3 times in a row" in retry_msg  # 실제로 보낸 횟수
         assert "shell" in retry_msg
         # v10.32.0: 직전 결과를 인용한다 — "다시 읽어라" 가 아니라
         assert "The previous call already returned:" in retry_msg
@@ -1299,9 +1315,10 @@ class TestRunLoopActionLoop:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=_shell_call("ls")),  # 1: dispatch
-            LLMResponse(content=_shell_call("ls")),  # 2: probe_progress
-            LLMResponse(content=_shell_call("ls")),  # 3: restate_task
-            LLMResponse(content=_complete("done")),  # 4: recovery
+            LLMResponse(content=_shell_call("ls")),  # 2: dispatch (결과 하나)
+            LLMResponse(content=_shell_call("ls")),  # 3: probe_progress
+            LLMResponse(content=_shell_call("ls")),  # 4: restate_task
+            LLMResponse(content=_complete("done")),  # 5: recovery
         ]
         result = run_loop(
             ports=TEST_PORTS,
@@ -1313,20 +1330,20 @@ class TestRunLoopActionLoop:
             max_turns=10,
         )
         assert result.success
-        # Turn 3 (4th LLM call) should see restate_task message
-        fourth_call_messages = provider.call.call_args_list[3].kwargs["messages"]
-        retry_msg = fourth_call_messages[-1]["content"]
+        # Turn 4 (5th LLM call) should see restate_task message
+        fifth_call_messages = provider.call.call_args_list[4].kwargs["messages"]
+        retry_msg = fifth_call_messages[-1]["content"]
         assert "You were asked to:" in retry_msg
         assert "The original user task here" in retry_msg
         assert "previous nudge did not work" in retry_msg.lower()
 
-    def test_four_repeats_hard_fails(self, caps, tmp_path):
+    def test_five_same_result_calls_hard_fail(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=_shell_call("ls")) for _ in range(5)
+            LLMResponse(content=_shell_call("ls")) for _ in range(6)
         ]
         result = run_loop(
             ports=TEST_PORTS,
@@ -1342,6 +1359,7 @@ class TestRunLoopActionLoop:
         # Error message should cite which primitives were tried
         assert "probe_progress" in result.error
         assert "restate_task" in result.error
+        assert provider.call.call_count == 5  # 다섯 번째 호출에서 멈춘다
 
     def test_repeat_of_a_rejected_call_gets_the_rejection_again(self, caps, tmp_path):
         """v10.32.0 — 실행 전에 거부된(A5) 호출을 그대로 다시 보내는 건 결과를
@@ -1423,12 +1441,125 @@ class TestRunLoopActionLoop:
         rows = self._read_turns(tmp_path)
         assert all(r["failure_signal"] != "ACTION_LOOP" for r in rows)
 
+    def test_changing_results_never_count_as_a_loop(self, caps, tmp_path, monkeypatch):
+        """v10.107.0: 결과가 매번 다른 같은 호출(키 입력·진행 중인 명령 재조회)은
+        다섯 번 반복해도 개입 0 — 다섯 번 모두 실행된다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.tools import TOOLS
+
+        ran: list[str] = []
+
+        def ticking(args, **kw):
+            ran.append(args["command"])
+            return ToolResult(True, output=f"tick {len(ran)}")
+
+        monkeypatch.setattr(TOOLS["shell"], "_run", ticking)
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            *(LLMResponse(content=_shell_call("poll")) for _ in range(5)),
+            LLMResponse(content=_complete("done")),
+        ]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert result.success and ran == ["poll"] * 5
+        rows = self._read_turns(tmp_path)
+        assert all(r["failure_signal"] != "ACTION_LOOP" for r in rows)
+
+    def test_change_in_the_middle_of_a_long_result_is_progress(
+        self, caps, tmp_path, monkeypatch
+    ):
+        """비교는 관찰 본문 전체의 지문 — 이력의 ``result`` 는 머리+꼬리 발췌라
+        가운데만 바뀐 긴 결과(진행 표)를 같은 것으로 볼 것이다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.recovery.primitives import bounded_excerpt
+        from agent_cli.tools import TOOLS
+
+        n = iter(range(10))
+        bodies = []
+
+        def long_table(args, **kw):
+            body = "head\n" * 600 + f"row {next(n)}\n" + "tail\n" * 300
+            bodies.append(body)
+            return ToolResult(True, output=body)
+
+        monkeypatch.setattr(TOOLS["shell"], "_run", long_table)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            *(LLMResponse(content=_shell_call("status")) for _ in range(4)),
+            LLMResponse(content=_complete("done")),
+        ]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ContextManager(session_dir=tmp_path),
+            max_turns=10,
+        )
+        assert result.success and len(bodies) == 4
+        assert bounded_excerpt(bodies[0]) == bounded_excerpt(bodies[1])  # 발췌는 같다
+        rows = self._read_turns(tmp_path)
+        assert all(r["failure_signal"] != "ACTION_LOOP" for r in rows)
+
+    def test_a_changed_third_result_resets_the_count(self, caps, tmp_path, monkeypatch):
+        """같은 결과 둘 → 세 번째 호출이 1단계 넛지(실행 안 됨). 다른 행동 뒤 같은
+        호출이 다시 돌아 결과가 달라지면(셋째 결과) 직전 두 결과가 달라 진행 중 —
+        그다음 같은 호출도 개입 없이 실행된다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.tools import TOOLS
+
+        outputs = iter(["A", "A", "pwd-out", "B", "C"])
+        ran: list[str] = []
+
+        def scripted(args, **kw):
+            ran.append(args["command"])
+            return ToolResult(True, output=next(outputs))
+
+        monkeypatch.setattr(TOOLS["shell"], "_run", scripted)
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("x")),  # A
+            LLMResponse(content=_shell_call("x")),  # A
+            LLMResponse(content=_shell_call("x")),  # 1단계 넛지, 실행 안 됨
+            LLMResponse(content=_shell_call("pwd")),  # 다른 행동
+            LLMResponse(
+                content=_shell_call("x")
+            ),  # B — 직전 두 결과 A·A 지만 서명이 바뀌어 1회째
+            LLMResponse(content=_shell_call("x")),  # 직전 두 결과 A·B 가 달라 진행 → C
+            LLMResponse(content=_complete("done")),
+        ]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=12,
+        )
+        assert result.success
+        assert ran == ["x", "x", "pwd", "x", "x"]
+        rows = self._read_turns(tmp_path)
+        b1 = [r for r in rows if r["failure_signal"] == "ACTION_LOOP"]
+        assert len(b1) == 1 and b1[0]["primitives_applied"] == ["probe_progress"]
+
     def test_probe_progress_recorded_in_turnrecord(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),
             LLMResponse(content=_shell_call("ls")),
             LLMResponse(content=_shell_call("ls")),  # B1 fires
             LLMResponse(content=_complete("done")),
@@ -1454,6 +1585,7 @@ class TestRunLoopActionLoop:
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),
             LLMResponse(content=_shell_call("ls")),
             LLMResponse(content=_shell_call("ls")),  # probe_progress
             LLMResponse(content=_shell_call("ls")),  # restate_task
@@ -5272,21 +5404,22 @@ class TestActionLoopRetriesAreNotRecorded:
         same = "again\n\n" + json.dumps(
             [{"action": "shell", "command": f"tail -1 {log}"}]
         )
+        # v10.107.0: 같은 결과 둘이 실행된 뒤 셋째가 1단계, 넷째가 2단계
         provider, result = self._run(
-            caps, tmp_path, [same, same, same, _complete("ok")]
+            caps, tmp_path, [same, same, same, same, _complete("ok")]
         )
-        msgs = self._msgs(provider, 3)
+        msgs = self._msgs(provider, 4)
         calls = [
             m
             for m in msgs
             if m.get("role") == "assistant"
             and f"tail -1 {log}" in str(m.get("content"))
         ]
-        assert len(calls) == 1, f"막힌 반복 호출이 저장됐다: {len(calls)}"
+        assert len(calls) == 2, f"막힌 반복 호출이 저장됐다: {len(calls)}"
         blob = "\n".join(str(m.get("content", "")) for m in msgs)
         # v10.32.0: 넛지는 최신 하나만 — 2단계가 붙을 때 1단계는 접힌다
-        assert "3 times in a row" in blob
-        assert "2 times in a row" not in blob, "1단계 넛지가 2단계 뒤에도 남았다"
+        assert "4 times in a row" in blob
+        assert "3 times in a row" not in blob, "1단계 넛지가 2단계 뒤에도 남았다"
         assert result.output == "ok"
 
     def test_nudge_quotes_prior_result_and_folds_after_recovery(self, caps, tmp_path):
@@ -5299,23 +5432,23 @@ class TestActionLoopRetriesAreNotRecorded:
         )
         other = "next\n\n" + json.dumps([{"action": "shell", "command": "pwd"}])
         provider, result = self._run(
-            caps, tmp_path, [same, same, other, _complete("ok")]
+            caps, tmp_path, [same, same, same, other, _complete("ok")]
         )
-        # 넛지 턴(세 번째 호출)의 메시지에 넛지가 있고 직전 결과를 품는다
+        # 넛지 턴(네 번째 호출)의 메시지에 넛지가 있고 직전 결과를 품는다
         # (리스트는 그 뒤 관찰이 제자리 추가되므로 [-1] 이 아니라 찾아서 본다)
         nudges = [
             str(m.get("content", ""))
-            for m in self._msgs(provider, 2)
-            if "2 times in a row" in str(m.get("content", ""))
+            for m in self._msgs(provider, 3)
+            if "3 times in a row" in str(m.get("content", ""))
         ]
         assert len(nudges) == 1
         assert "MARKER-7731" in nudges[0]
         assert "Call `complete` only if the task itself is finished" in nudges[0]
         # 다른 행동(pwd)이 통과한 뒤의 호출: 넛지는 접히고 원래 관찰은 남는다
-        msgs = self._msgs(provider, 3)
+        msgs = self._msgs(provider, 4)
         blob = "\n".join(str(m.get("content", "")) for m in msgs)
-        assert "2 times in a row" not in blob, "넛지가 회복 뒤에도 남았다"
-        assert blob.count("MARKER-7731") == 1  # 실행된 호출의 관찰만
+        assert "3 times in a row" not in blob, "넛지가 회복 뒤에도 남았다"
+        assert blob.count("MARKER-7731") == 2  # 실행된 두 호출의 관찰만
         assert any(
             m.get("role") == "assistant" and f"tail -1 {log}" in str(m.get("content"))
             for m in msgs
@@ -5335,8 +5468,11 @@ class TestActionLoopRetriesAreNotRecorded:
                 {"action": "shell", "command": f"ls {log}"},
             ]
         )
-        provider, result = self._run(caps, tmp_path, [first, batch, _complete("ok")])
-        obs = str(self._msgs(provider, 2)[-1].get("content", ""))
+        # v10.107.0: 같은 결과가 둘 쌓여야 센다 — 첫 호출을 두 번 실행해 둔다
+        provider, result = self._run(
+            caps, tmp_path, [first, first, batch, _complete("ok")]
+        )
+        obs = str(self._msgs(provider, 3)[-1].get("content", ""))
         assert "[1/3] shell — FAILED" in obs and "This op did not run" in obs
         assert "[2/3] shell — OK" in obs and "[3/3] shell — OK" in obs
         assert "aborted" not in obs, "뒤의 새 op 들이 취소됐다"

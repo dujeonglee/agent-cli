@@ -48,7 +48,7 @@ JSON envelope drift, tool name 환각, action_input 스키마 위반, 무한 루
 
 | ID | 이름 | 감지 방법 |
 |---|---|---|
-| B1 | Action loop | 같은 `(action, args)` 해시 연속 ≥3회 |
+| B1 | Action loop | 같은 `(action, args)` 해시의 연속 반복 — 임계값 2(dispatch 전에 셈). **v10.107.0**: 그 호출의 직전 두 결과가 다르거나 결과가 하나뿐이면 진행 중이라 세지 않는다 → 같은 결과의 반복은 3번째 호출에서 1단계 (§6 표 아래 "B1 진행 규칙") |
 | B2 | Tool result 무시 | 직전 turn 결과를 다음 thought가 참조 안 함 (휴리스틱) |
 
 ### Layer C — 자원 실패
@@ -256,6 +256,8 @@ v1에선 **유혹돼도 안 들임**:
 | **4a-1** | ✅ 완료 | A6 (Nested envelope) 추가 — `detect_nested_envelope` 라벨링 전용. 자동 unwrap 안 함 (anti-patchwork: 측정 후 결정). qwen3.5/3.6 계열에서 관찰된 `complete.action_input.result == '{"result": ...}'` 이중 래핑 패턴. | 낮음 (additive, observe-only) | A6 TurnRecord에 라벨 기록 ✓ |
 | **4a-2** | ✅ 완료 | A1을 A1a (NO_JSON, 형식 드리프트) / A1b (NO_OUTPUT, 빈 응답) 두 라벨로 분리. 회복 경로는 동일 (정적 fallback) — 관찰성만 분리해 후속 처방 결정의 데이터 입력으로. 실 세션에서 NO_JSON 15건 중 12건이 빈 응답이었음 — 한 라벨로 묶이면 보이지 않던 패턴. | 낮음 (additive, label-only) | A1a/A1b 분리 라벨 TurnRecord에 기록 ✓ |
 | **4b** | 데이터 누적 후 | TurnRecord 통계로 회복률 측정 → 필요하면 `probe_tool_name` / `echo_diff` / A6 unwrap 등 primitive 추가 + playbook 매핑. | 낮음 (data-driven) | 측정값 기반 결정 |
+
+**B1 진행 규칙 (v10.107.0, 사용자 결정 2026-11-05)** — 모든 도구의 일반 규칙: "관찰이 직전 관찰과 다르면 반복으로 세지 않는다". 계기는 v10.106.0 라이브 측정의 game 과제(캔버스 RPG, `press` "ArrowRight" 세 번)에서 기준 2/5·후보 4/5 런이 "Action loop unresolved … Stopping" 으로 끊긴 것 — 감지기가 결과를 보지 않아 결과가 매번 달라지는 정당한 반복(키 입력, 진행 중인 명령 재조회)을 루프로 오판했다. 감지기는 dispatch 전에 세므로 지금 호출의 결과는 모른다 — `TurnDispatcher._progressed` 가 `recent_tool_history` 에서 같은 호출(도구 + 정규화 인자)의 **직전 두 결과**를 보고, 다르면 진행(`observe(progressed=True)` — `prev_was_error` 와 같은 리셋, 개입 없음, 호출 실행). 결과가 하나뿐이면 비교할 것이 없어 진행으로 본다. 결과가 하나도 없으면(실행 전에 A4/A5 로 거부만 된 호출) 진행이 아니다 — 거부 반복의 상한(짝 없음, level ≥3 하드 실패)은 그대로. 비교는 관찰 본문 전체의 sha256 지문(이력 행의 `digest`, 정규화 없음) — `result` 는 머리+꼬리 발췌라 가운데만 바뀐 결과를 같은 것으로 본다. 이력은 루프 동안 길이 상한이 없다(`ToolBridge.recent_tool_history` 는 append 만). **시점 변화**: 같은 결과의 진짜 루프는 종전 2번째 호출이 아니라 **3번째 호출에서 level 1**(probe_progress), 4번째 level 2(restate_task), 5번째 하드 실패 — 중복 실행 비용이 한 번 는다. 넛지의 "N times in a row" 는 리셋과 무관한 실제 연속 횟수(`ActionLoopDetector.run_length`, 문구는 그대로). **트레이드오프**: 결과에 시각·난수가 섞여 매번 다른 호출(`date`, 타임스탬프가 붙는 출력)은 감지기를 피한다 — 그런 반복은 `max_turns` 가 막는다. 조작과 무관하게 스스로 바뀌는 페이지(같은 게임에서 입력 없이 HP 가 떨어짐)도 같다.
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트
 + regression 0 후 단일 커밋·푸쉬.

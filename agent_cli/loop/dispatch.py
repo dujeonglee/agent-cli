@@ -139,6 +139,27 @@ class TurnDispatcher:
         # consecutive identical (action, args).
         self.loop_detector = ActionLoopDetector(threshold=2)
 
+    def _progressed(self, tool_name: str, tool_input) -> bool:
+        """같은 호출(도구 + 정규화 인자)이 아직 진행 중인가 — B1 의 일반 규칙
+        (v10.107.0, 사용자 결정 2026-11-05): 이력에서 그 호출의 **직전 두 결과**가
+        다르면 진행 중이다. 결과가 하나뿐이면 비교할 것이 없어 진행으로 본다 —
+        그래서 진짜 루프(같은 호출, 같은 결과)는 세 번째 호출에서 1단계가 된다.
+        결과가 하나도 없으면(실행 전에 거부만 된 호출) 진행이 아니다 — 거부 반복의
+        상한(짝 없음, 4번째 하드 실패)은 그대로 센다.
+
+        비교는 관찰 본문 전체의 지문(``digest``) 그대로, 정규화 없음. 그래서 결과에
+        시각·난수가 섞여 매번 다른 호출(`date`)은 감지기를 피한다 — 감수한 대가."""
+        sig = _normalize_input(tool_input)
+        digests: list[str] = []
+        for row in reversed(self.tools.recent_tool_history):
+            if row.get("tool") == tool_name and row.get("input") == sig:
+                digests.append(row.get("digest", ""))
+                if len(digests) == 2:
+                    break
+        if len(digests) == 1:
+            return True
+        return len(digests) == 2 and digests[0] != digests[1]
+
     def _task_text(self) -> str:
         """All user requests this run (first query + injected), for recovery /
         review anchoring. Falls back to the raw query if the log is empty."""
@@ -1364,14 +1385,18 @@ class TurnDispatcher:
         # B1 (action loop) detection — observe BEFORE dispatch so a
         # repeated call doesn't pay the cost of the redundant tool
         # run. Counter resets after a tool error so legitimate
-        # retries don't false-positive.
+        # retries don't false-positive, and (v10.107.0) while the same
+        # call's results are still changing (``_progressed``).
         prev_was_error = bool(
             self.tools.recent_tool_history
             and self.tools.recent_tool_history[-1].get("tool") == tool_name
             and self.tools.recent_tool_history[-1].get("success") is False
         )
         loop_level = self.loop_detector.observe(
-            tool_name, tool_input, prev_was_error=prev_was_error
+            tool_name,
+            tool_input,
+            prev_was_error=prev_was_error,
+            progressed=self._progressed(tool_name, tool_input),
         )
         # 짝 (v10.32.0): 이력의 마지막 행이 정확히 이 호출(도구+정규화 인자)
         # 이면 그 결과가 "직전 결과". 감지기는 dispatch 전에 세므로 A4/A5 로
@@ -1403,7 +1428,7 @@ class TurnDispatcher:
                     level=loop_level,
                     action=tool_name,
                     args_repr=args_repr,
-                    repeat_count=self.loop_detector.consecutive_count,
+                    repeat_count=self.loop_detector.run_length,
                     task=self._task_text(),
                     prior_result=last.get("result") or "",
                 )
