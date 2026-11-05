@@ -36,19 +36,79 @@ def _defer(monkeypatch, name, summary=SUMMARY):
     monkeypatch.setattr(TOOLS[name], "summary", summary, raising=False)
 
 
-class TestNothingIsDeferredYet:
-    def test_no_builtin_tool_is_deferred(self):
-        assert not [n for n, t in TOOLS.items() if t.deferred]
+#: 결정 D1 (사용자 2026-11-05) — 세션의 5% 이하에서만 불린 도구 11개.
+D1 = {
+    "agent", "code_index", "monitor", "browser", "schedule", "history",
+    "fetch", "snapshot", "memory", "message", "reply",
+}  # fmt: skip
+
+
+class TestDeferredSet:
+    """v10.110.0 (PR 2): D1 열한 개가 지연, 나머지는 전문."""
+
+    def test_exactly_d1_is_deferred(self):
+        assert {n for n, t in TOOLS.items() if t.deferred} == D1
+
+    @pytest.mark.parametrize("name", sorted(D1))
+    def test_summary_is_one_short_sentence_in_the_notation(self, name):
+        """요약은 "언제 쓰는가" 한 문장(10~40 낱말), 표기 규칙 — 대문자 강조 없음.
+        상한 40: 처음엔 25 였는데 v10.110.0 측정에서 monitor 가 요약만 보고 조건 짝을
+        섞어 첫 호출이 거절됐다 — 세 짝(`file` + `pattern`·`file` + `idle`·`command` +
+        `every`)을 이름으로 넣은 요약이 36 낱말(`+`·`—` 포함)이다.
+        도구 이름·호출 모양은 inventory 의 지연 뷰가 프롬프트 절에 실리므로 표기
+        가드(tests/test_prompt_notation.py)가 본다."""
+        from tests.test_prompt_notation import caps_emphasis
+
+        s = TOOLS[name].summary
+        assert s.endswith(".") and "\n" not in s
+        assert s[:-1].count(". ") == 0, s  # 한 문장
+        assert 10 <= len(s.split()) <= 40, (name, len(s.split()))
+        assert not caps_emphasis(s), s
 
     def test_tool_help_sits_right_before_complete(self):
         assert ALL[-2:] == ["tool_help", "complete"]
 
-    @pytest.mark.parametrize("dn", ["xml_fc", "json_fc", "native_fc"])
-    def test_tool_view_is_the_raw_tool_when_nothing_is_deferred(self, dn):
+    def test_tool_view_is_the_raw_tool_for_the_rest(self):
         for name in ALL:
+            if name in D1:
+                continue
             desc, params, guide = R.tool_view(name)
             assert desc == TOOLS[name].description
             assert params is TOOLS[name].parameters and guide == ""
+
+
+class TestMainPromptIsDeferred:
+    """main 시나리오 프롬프트에 `tool_help` 가 광고되고 지연 도구 줄은 요약 + 뼈대 —
+    native `tools[]` 도 같다."""
+
+    @pytest.mark.parametrize("dn", ["xml_fc", "json_fc"])
+    def test_tools_section(self, dn):
+        from agent_cli.prompts import inventory as inv
+
+        sc = inv._scenario(D.get(dn), inv.SCENARIOS[0])
+        tools = next(
+            s["text"] for s in sc["sections"] if s["name"] == "Available Tools"
+        )
+        assert "\n- tool_help: " in tools
+        for name in D1:
+            line = next(ln for ln in tools.split("\n") if ln.startswith(f"- {name}: "))
+            assert line == f"- {name}: {TOOLS[name].summary}", name
+        # agent 의 안내 블록(`run`·`spawn` 예시)은 실리지 않는다
+        assert "Persistent:" not in tools
+        assert TOOLS["code_index"].description not in tools
+
+    def test_native_tools(self):
+        fns = {
+            f["function"]["name"]: f["function"]
+            for f in function_schemas_for(ALL, D.get("native_fc"))
+        }
+        assert "tool_help" in fns
+        for name in D1:
+            assert fns[name]["description"] == TOOLS[name].summary
+            assert "description" not in json.dumps(fns[name]["parameters"]).replace(
+                '"description": {', ""
+            )
+        assert fns["shell"]["description"] == TOOLS["shell"].description
 
 
 class TestDeferredSchema:
@@ -121,11 +181,9 @@ class TestDeferredView:
         return blocks
 
     @pytest.mark.parametrize("dn", ["xml_fc", "json_fc"])
-    @pytest.mark.parametrize("v2", [True, False])
-    def test_only_the_deferred_tool_changes(self, monkeypatch, dn, v2):
-        """지연을 켜면 그 도구의 목록 줄(요약·뼈대)과 안내만 바뀌고 다른 도구의 글은
-        바이트 그대로 — `agent` 의 안내 블록은 빠진다."""
-        monkeypatch.setattr(R, "DEFER_PARAM_DESCRIPTIONS", v2)
+    def test_only_the_deferred_tool_changes(self, monkeypatch, full_tool_text, dn):
+        """전문 판에서 지연을 켜면 그 도구의 목록 줄(요약·뼈대)과 안내만 바뀌고 다른
+        도구의 글은 바이트 그대로 — `agent` 의 안내 블록은 빠진다."""
         d = D.get(dn)
         before = self._per_tool(d)
         for name in ("monitor", "agent"):
@@ -137,12 +195,10 @@ class TestDeferredView:
         assert line.startswith(f"- monitor: {SUMMARY}\n  Input JSON: ")
         params = json.loads(line.split("Input JSON: ", 1)[1])
         full = json.loads(before["monitor"][0].split("Input JSON: ", 1)[1])
-        if v2:  # 뼈대: 이름·타입·필수·enum 값만
-            assert params["mode"] == 'string, required — "add" | "list" | "delete"'
-            assert params["file"] == "string"
-            assert list(params) == list(full)  # 인자 이름·순서는 그대로
-        else:  # V1: 인자 전문
-            assert params == full
+        # 뼈대 (V2 — v10.110.0 측정으로 확정): 이름·타입·필수·enum 값만
+        assert params["mode"] == 'string, required — "add" | "list" | "delete"'
+        assert params["file"] == "string"
+        assert list(params) == list(full)  # 인자 이름·순서는 그대로
 
     def test_native_tools_get_the_same_summary_and_skeleton(self, monkeypatch):
         _defer(monkeypatch, "agent")
@@ -216,8 +272,12 @@ def _loop(active=None, **kw):
 
 
 class TestAdvertised:
+    def test_advertised_in_a_main_loop(self):
+        """v10.110.0: 전체 도구의 루프엔 지연 도구가 있으니 `tool_help` 가 붙는다."""
+        assert "tool_help" in _loop().tools_list
+
     def test_not_advertised_without_deferred_tools(self):
-        assert "tool_help" not in _loop().tools_list
+        assert "tool_help" not in _loop(active=["read_file", "shell"]).tools_list
 
     def test_mounted_when_a_deferred_tool_remains(self, monkeypatch):
         """allowed-tools 에 없어도 붙는다(force_mount) — 지연 도구가 남은 루프면."""
@@ -276,7 +336,7 @@ class TestA5FullGuideOnce:
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
 
-        bad = json.dumps({"action": "monitor", "every": "5s"})
+        bad = json.dumps({"action": "write_file", "path": "x.txt"})  # `content` 누락
         done = json.dumps({"action": "complete", "result": "ok"})
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=c) for c in (bad, done)]

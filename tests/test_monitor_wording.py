@@ -165,7 +165,7 @@ class TestReportsListsAndErrors:
                     "x",
                     "pattern",
                     "([",
-                ): "monitor: `pattern` '([' is not a valid regex",
+                ): 'monitor: `pattern` "([" is not a valid regex',  # v10.110.0 큰따옴표
                 ("file", "x", "every", "60s", "pattern", "a"): (
                     "monitor: give one condition — `command` + `every`, `file` + "
                     "`pattern`, or `file` + `idle`; yours mixes `every`, `file`, `pattern`"

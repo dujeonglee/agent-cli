@@ -61,7 +61,9 @@ for n in ('json_fc',)]"
     """
 
     @pytest.mark.parametrize("name", ["json_fc"])
-    def test_tools_section_matches_snapshot(self, name):
+    def test_tools_section_matches_snapshot(self, name, full_tool_text):
+        """전문 판 — 지연 도구(code_index·agent)도 전문으로. v10.110.0 부터 이 글은
+        프롬프트가 아니라 `tool_help` 결과로 간다(바이트는 그대로)."""
         expected = (_SNAPSHOT_DIR / f"tools_section_{name}.txt").read_text(
             encoding="utf-8"
         )
@@ -69,6 +71,20 @@ for n in ('json_fc',)]"
         assert actual == expected, (
             f"{name} Available Tools section changed — if intentional, "
             "regenerate the snapshot (see class docstring)."
+        )
+
+    @pytest.mark.parametrize("name", ["json_fc"])
+    def test_deferred_tools_section_matches_snapshot(self, name):
+        """지연 판 (v10.110.0) — 프롬프트에 실제로 실리는 글: code_index·agent 는
+        한 줄 요약 + 인자 뼈대, agent 의 안내 블록 없음. 다시 만들려면 위 명령에서
+        파일 이름을 ``tools_section_{n}_deferred.txt`` 로."""
+        expected = (_SNAPSHOT_DIR / f"tools_section_{name}_deferred.txt").read_text(
+            encoding="utf-8"
+        )
+        actual = _build_tools_section(_SNAPSHOT_TOOLS, _get_dialect(name))
+        assert actual == expected, (
+            f"{name} deferred Available Tools section changed — if intentional, "
+            "regenerate the snapshot (see the test docstring)."
         )
 
 
@@ -105,7 +121,9 @@ class TestMultiOpPromptBranches:
     byte-guarded by the snapshot test above."""
 
     @pytest.fixture
-    def section(self):
+    def section(self, full_tool_text):
+        # 전문 판 — code_index·agent 의 설명·인자 설명을 단정한다(v10.110.0 부터
+        # 이 글은 `tool_help` 결과로 간다).
         return _build_tools_section(_SNAPSHOT_TOOLS, _MultiOpFormat())
 
     def test_complete_is_always_listed(self, section):
@@ -508,21 +526,23 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "- agent:" not in prompt.split("## Available Tools")[1]
 
-    def test_delegate_guide_mentions_context_modes(self):
+    def test_delegate_guide_mentions_context_modes(self, full_tool_text):
         prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
         assert "none" in prompt
         assert "fork" in prompt
 
-    def test_delegate_guide_mentions_parallel(self):
+    def test_delegate_guide_mentions_parallel(self, full_tool_text):
         prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
         assert "parallel" in prompt.lower()
 
-    def test_agent_guide_shows_run_and_spawn_to_a_loop_that_can_spawn(self):
+    def test_agent_guide_shows_run_and_spawn_to_a_loop_that_can_spawn(
+        self, full_tool_text
+    ):
         # 5.0.0: tasks 배열 없음 — run/spawn 예시가 가이드에 존재
         tools = _build_tools_section(["shell", "agent"], _get_dialect("json_fc"))
         assert '"mode": "run"' in tools and '"mode": "spawn"' in tools
 
-    def test_sub_loop_sees_run_only_everywhere(self):
+    def test_sub_loop_sees_run_only_everywhere(self, full_tool_text):
         """A loop without an agent registry can only ``run``. Its description
         said so, but the schema still listed all six modes, the guide showed a
         spawn example and Agent Profiles advertised mode:"spawn" — a
@@ -811,7 +831,7 @@ class TestBuildSystemPrompt:
         tools_pos = prompt.index("## Available Tools")
         assert ctx_pos < format_pos < tools_pos
 
-    def test_code_index_has_no_guide_block(self):
+    def test_code_index_has_no_guide_block(self, full_tool_text):
         """v10.92.0 — 안내 블록(번호 목록·호출 예시 11개·SQLite 경로·"index-scoped")을
         지웠다. 모드는 `mode` 인자 설명이, 이름 규칙·확장자는 도구 설명이 말한다."""
         prompt = build_system_prompt(_make_caps(), ["code_index"]).replace('\\"', '"')
@@ -829,7 +849,7 @@ class TestBuildSystemPrompt:
         assert "ns::Type::method" in prompt
         assert "## Setup" in prompt
 
-    def test_code_index_lists_supported_languages(self):
+    def test_code_index_lists_supported_languages(self, full_tool_text):
         """Every extension registered by a walker module must appear in the
         description. Single-source-of-truth guard: the description is built
         from get_supported_extensions()."""
@@ -839,7 +859,7 @@ class TestBuildSystemPrompt:
         for ext in get_supported_extensions():
             assert ext in prompt, f"{ext} missing from the code_index description"
 
-    def test_code_index_says_which_modes_read_any_file(self):
+    def test_code_index_says_which_modes_read_any_file(self, full_tool_text):
         """ "list"·"fetch" 는 어떤 파일이든, 나머지는 프로젝트 루트 아래만 — 모델이
         루트 밖 파일에 "file" 을 쓰지 않게 하는 한 문장."""
         prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
@@ -849,7 +869,7 @@ class TestBuildSystemPrompt:
             "under the project root" in flat
         )
 
-    def test_code_index_fetch_says_it_feeds_edit_file(self):
+    def test_code_index_fetch_says_it_feeds_edit_file(self, full_tool_text):
         prompt = build_system_prompt(_make_caps(), ["code_index"])
         assert "LINE#HASH" in prompt and "ready for `edit_file`" in prompt
 
@@ -1651,7 +1671,7 @@ class TestRunDescriptionFocusesOnContext:
             ctx = params["properties"]["context"]["description"]
             assert "fork" in ctx and "copy of your conversation" in ctx
 
-    def test_not_for_speed_is_said_once_in_the_tools_section(self):
+    def test_not_for_speed_is_said_once_in_the_tools_section(self, full_tool_text):
         from agent_cli.dialects import get
         from agent_cli.prompts.system_prompt import _build_tools_section
 
@@ -1721,7 +1741,12 @@ class TestEditVsWriteRule:
 class TestCodeIndexToldOnce:
     """v10.13.0 — 사실은 한 번만. v10.92.0 — 안내 블록이 없어졌으니 그 한 번은 설명
     (이름 규칙·확장자)과 `mode` 인자 설명(모드)이다. 모델이 보는 글은 1,689 → 683
-    토큰(GLM 토크나이저); 글자 수로 상한을 건다."""
+    토큰(GLM 토크나이저); 글자 수로 상한을 건다. v10.110.0 — code_index 는 지연 도구라
+    이 글은 `tool_help` 결과로 간다: 전문 판으로 잰다."""
+
+    @pytest.fixture(autouse=True)
+    def _full(self, full_tool_text):
+        pass
 
     def _block(self):
         # Input JSON 렌더는 설명 속 큰따옴표를 이스케이프한다 — 셀 때는 되돌린다.

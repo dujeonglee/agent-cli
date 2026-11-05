@@ -380,6 +380,10 @@ def _help(session_dir: Path | None) -> ToolResult:
 
 class HistoryTool(Tool):
     name = "history"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Read records that have left your context, such as the full text of an old observation or an earlier session."
     description = (
         "Query the session record with SQL — what has left your context is still "
         "here. `query` is a read-only SELECT over the table `history` (one row per "

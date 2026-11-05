@@ -29,8 +29,23 @@ def _registry():
     return get_monitor_registry()
 
 
+#: 모르는 `id` 로 지울 때 (v10.110.0 — 값은 큰따옴표; 종전 repr 작은따옴표). inventory
+#: 표본(`_monitor_result_samples`)이 같은 상수를 쓴다.
+UNKNOWN_ID = 'monitor: unknown id "{id}" (see `mode` "list")'
+
+
 class MonitorTool(Tool):
     name = "monitor"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    #: 세 짝을 이름으로 (v10.110.0 측정): 짝 규칙이 설명 산문에만 있어 요약만 본 모델이
+    #: `command`+`every`+`pattern` 처럼 섞어 첫 호출이 거절됐다(V1·V2 모두).
+    summary = (
+        "Get told when a file or log meets a condition — give exactly one pair: "
+        "`file` + `pattern`, `file` + `idle`, or `command` + `every`; a `shell` job "
+        "with `background` true already reports when it ends."
+    )
     #: 설명은 성질만 (v10.74.0, docs/tail/DESIGN.md §11). 종전의 셸 요리법(`nohup … >
     #: /tmp/x.log 2>&1 & echo $!`, `python -u`/PYTHONUNBUFFERED, `( CMD; echo "EXIT:$?" )`)은
     #: 모델이 직접 백그라운드를 띄우던 설계(§4.4 실측)의 산물이다. v10.47.0 부터 `shell`
@@ -163,9 +178,7 @@ class MonitorTool(Tool):
             return (
                 ToolResult(ok, output=f"deleted {mon_id}")
                 if ok
-                else ToolResult(
-                    False, error=f'monitor: unknown id {mon_id!r} (see `mode` "list")'
-                )
+                else ToolResult(False, error=UNKNOWN_ID.format(id=mon_id))
             )
 
         # ── add ──

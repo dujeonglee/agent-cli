@@ -427,7 +427,7 @@ class Tool(ABC):
     mounted_with: str | None = None
 
     #: 프롬프트에 전문을 싣지 않는다 (v10.109.0, docs/tool-help/DESIGN.md) — 설명
-    #: 자리에 한 줄 ``summary``, 인자는 뼈대(``registry.DEFER_PARAM_DESCRIPTIONS``),
+    #: 자리에 한 줄 ``summary``, 인자는 뼈대(``registry.deferred_schema``, V2),
     #: 인라인 안내는 빠진다. 전문은 `tool_help` 가 관찰로 준다(머리는 런 동안 고정 —
     #: 펼치지 않는다). 프롬프트 절과 native `tools[]` 가 ``registry.tool_view`` 한
     #: 곳에서 같은 판정을 받는다.

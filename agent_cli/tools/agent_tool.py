@@ -59,6 +59,10 @@ REGISTRY_MODES: tuple[str, ...] = tuple(
 
 class AgentTool(Tool):
     name = "agent"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Hand a task to another agent that works in its own context; the profiles are listed under `## Agent Profiles`."
     depth_gated = True  # 결합 깊이 상한에서 제거 (T3 선언화 — run 도 불가)
     # run 의 설명 — 메인·서브루프 두 설명이 같은 문장을 쓴다 (v9.24.1).
     # 초점은 동시성이 아니라 **분리된 컨텍스트**: 종전 "fan out … in

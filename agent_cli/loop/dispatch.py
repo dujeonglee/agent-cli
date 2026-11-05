@@ -679,6 +679,7 @@ class TurnDispatcher:
         alone: str,
         reason: str,
         signal: str,
+        tail: str = "",
     ):
         """이 op 을 실행하지 않는다 — 입력 검증 실패의 한 길 (v10.49.0 C3).
 
@@ -689,13 +690,18 @@ class TurnDispatcher:
         이미 실행됐을 수 있다. A4(모르는 도구)·A5(스키마)·인자 JSON 오류가 쓴다."""
         outcome["failure_signal"] = signal
         if accumulate is not None:
+            # ``tail``(A5 자동 전문, v10.109.0)은 "이 op 는 안 돌았다" 뒤에 — 거절 사실이
+            # 한 덩어리로 먼저 오고 참고 글이 뒤따른다.
             self.tools.accumulate_raw(
-                accumulate, tool_name, f"{batch_note}\n{BATCH_OP_SKIPPED_NOTE}", False
+                accumulate,
+                tool_name,
+                f"{batch_note}\n{BATCH_OP_SKIPPED_NOTE}{tail}",
+                False,
             )
             return None
         return self._intervene(
             llm_text,
-            alone,
+            alone + tail,
             reason,
             outcome,
             record=turn.record,
@@ -1598,13 +1604,11 @@ class TurnDispatcher:
                 outcome,
                 accumulate,
                 tool_name=tool_name,
-                batch_note=f"{schema_err}\n{sent}{guide}",
-                alone=(
-                    f"Observation: {err_msg}\n{sent}\n"
-                    f"{echo_prior_output(llm_text)}{guide}"
-                ),
+                batch_note=f"{schema_err}\n{sent}",
+                alone=f"Observation: {err_msg}\n{sent}\n{echo_prior_output(llm_text)}",
                 reason="schema mismatch",
                 signal=FAILURE_SCHEMA_MISMATCH,
+                tail=guide,
             )
         tool_input = normalized  # use post-normalization input for dispatch
         if accumulate is None:

@@ -530,6 +530,53 @@ def _schedule_result_samples() -> list[tuple[str, str, str]]:
     ]
 
 
+def _monitor_result_samples() -> list[tuple[str, str, str]]:
+    """`monitor` 거절 문구 표본 (v10.110.0) — 검증(`validate`)과 조건 조립(`build`,
+    순수 함수)을 잘못된 인자로 실제로 불러 얻은 글, 그리고 모르는 `id` 상수. 등록 안내·
+    발화 보고는 파일 상태가 있어야 나와 여기 없다. 표기 가드가 본다."""
+    from agent_cli.monitor import build
+    from agent_cli.tools.monitor_tool import UNKNOWN_ID
+
+    tool = TOOLS["monitor"]
+
+    def build_error(spec):
+        try:
+            build(spec)
+        except ValueError as e:
+            return f"monitor: {e}"
+        return ""
+
+    return [
+        (
+            "monitor_validation",
+            "`monitor` refused before it runs: no condition, `delete` without `id`",
+            "\n".join(
+                [
+                    tool.validate({"mode": "add"}) or "",
+                    tool.validate({"mode": "delete"}) or "",
+                ]
+            ),
+        ),
+        (
+            "monitor_condition_errors",
+            "`monitor` add with a mixed, partial or invalid condition",
+            "\n".join(
+                [
+                    build_error({"file": "app.log", "pattern": "a", "every": "60s"}),
+                    build_error({"file": "app.log"}),
+                    build_error({"file": "app.log", "pattern": "(["}),
+                    build_error({"file": "app.log", "idle": "0"}),
+                ]
+            ),
+        ),
+        (
+            "monitor_unknown_id",
+            "`monitor` delete with an `id` that is not live",
+            UNKNOWN_ID.format(id="err-watch"),
+        ),
+    ]
+
+
 def _tool_help_samples(dialect) -> list[tuple[str, str, str]]:
     """`tool_help` 결과 표본 (v10.109.0) — main 루프와 같은 묶음(이 방언·레지스트리
     있음)으로 `monitor` 의 전문 한 건과 모르는 이름 한 건. 표기 가드가 본다."""
@@ -646,6 +693,7 @@ def _runtime_texts(dialect) -> list[dict]:
         *_agent_result_samples(),
         *_browser_result_samples(),
         *_schedule_result_samples(),
+        *_monitor_result_samples(),
         *_tool_help_samples(dialect),
         (
             "agent_message_field",

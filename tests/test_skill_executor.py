@@ -303,9 +303,21 @@ class TestSkillRegistryInheritance:
         )
         # registry present → full agent tool (spawn enum value visible)
         assert "spawn" in with_reg
-        # registry absent → SUBLOOP description ("run ... only here")
-        assert "only here" in without.lower()
-        assert "spawn" not in without or "only here" in without.lower()
+        # v10.110.0: agent 는 지연 도구 — 프롬프트에는 뼈대만이라 축소는 `mode` 값으로
+        # 보이고("run" 하나), SUBLOOP 설명("run ... only here")은 `tool_help` 전문에 있다.
+        from agent_cli.dialects import get as get_dialect
+        from agent_cli.prompts.system_prompt import tool_guide_text
+
+        tools = without.split("## Available Tools", 1)[1].split("- complete:")[0]
+        assert '"mode": "string, required — \\"run\\""' in tools
+        assert "spawn" not in tools
+        full = tool_guide_text(
+            "agent",
+            ["read_file", "agent"],
+            get_dialect("json_fc"),
+            has_agent_registry=False,
+        )
+        assert "only here" in full.lower()
 
 
 class TestSkillSpawnExecution:

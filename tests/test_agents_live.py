@@ -1141,15 +1141,26 @@ class TestFullLoopIntegration:
     def test_subloop_gets_reduced_agent_description(self, tmp_path):
         # 5.0.0 모드 축소: 서브루프(레지스트리 없음)의 Available Tools 는
         # run 전용 축소 설명, main 은 상주 모드 포함 전체 설명.
+        # v10.110.0: agent 는 지연 도구 — 설명 전문은 `tool_help` 결과(`tool_guide_text`)로
+        # 가고, 프롬프트에는 한 줄 요약 + 인자 뼈대만. 축소는 둘 다에 남는다: 전문은
+        # 서브루프 설명, 뼈대의 `mode` 는 "run" 하나.
         from agent_cli.dialects import get as get_wf
-        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.prompts.system_prompt import (
+            _build_tools_section,
+            tool_guide_text,
+        )
 
         wf = get_wf("json_fc")
-        sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
-        main = _build_tools_section(["agent"], wf, has_agent_registry=True)
+        sub = tool_guide_text("agent", ["agent"], wf, has_agent_registry=False)
+        main = tool_guide_text("agent", ["agent"], wf, has_agent_registry=True)
         assert '`mode` "run" only here' in sub
         assert "a persistent agent that keeps" not in sub.split("Input JSON")[0]
         assert "spawn" in main and "a persistent agent that keeps" in main
+        sub_prompt = _build_tools_section(["agent"], wf, has_agent_registry=False)
+        main_prompt = _build_tools_section(["agent"], wf, has_agent_registry=True)
+        assert '"mode": "string, required — \\"run\\""' in sub_prompt
+        assert "spawn" not in sub_prompt.split("- complete:")[0]
+        assert '\\"spawn\\"' in main_prompt
 
 
 # ── P2: ask→main 양방향 라우팅 ──────────────────

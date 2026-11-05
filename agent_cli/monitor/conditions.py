@@ -203,7 +203,7 @@ class MatchCondition(Condition):
             re.compile(pattern)
         except re.error as exc:
             raise ValueError(
-                f"`pattern` {pattern!r} is not a valid regex — {exc}"
+                f'`pattern` "{pattern}" is not a valid regex — {exc}'
             ) from None
         from agent_cli.constants import MONITOR_SILENT_DEFAULT_S, parse_duration
 
@@ -252,14 +252,14 @@ class MatchCondition(Condition):
             rel = "before your last tool result"
         last = self._last_matching_line(path, size, MONITOR_PREVIEW_TAIL_BYTES)
         tail = (
-            f"Its last line matching the pattern: {last!r} — not a new event; "
+            f'Its last line matching the pattern: "{last}" — not a new event; '
             f"decide whether it is what you are waiting for."
             if last is not None
             else "No existing line matches the pattern."
         )
         note = (
             f"The file already exists (modified {when}, {age}s ago, {rel}); "
-            f"lines written before now are NOT reported. {tail}"
+            f"lines written before now are not reported. {tail}"
         )
         return {}, note
 

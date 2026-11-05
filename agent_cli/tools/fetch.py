@@ -626,6 +626,10 @@ def tool_fetch(args: dict) -> ToolResult:
 
 class FetchTool(Tool):
     name = "fetch"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Read one URL (HTML comes back as markdown) or download a file."
     # v10.92.0: 공용 과대 출력 규칙(시스템 절에 있다)의 되풀이와 `depth` 를 지웠다 —
     # 136+112 → 89+43 토큰. 설명은 결과의 모양만 말한다.
     description = (

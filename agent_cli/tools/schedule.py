@@ -74,6 +74,10 @@ def _sched_id(args: dict) -> str:
 
 class ScheduleTool(Tool):
     name = "schedule"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Run a request on a cron schedule in this session, for periodic work the user asked to automate."
     description = (
         "Schedule a recurring request for this session: at each cron time the prompt "
         "arrives as if the user had sent it. Use for standing or periodic work the "

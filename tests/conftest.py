@@ -128,6 +128,20 @@ _available_models = get_available_integration_models()
 # ── 방언 강제 (v10.3.0) ────────────────────────────────────
 
 
+@pytest.fixture
+def full_tool_text(monkeypatch):
+    """지연 도구(v10.110.0)를 전문으로 렌더한다 — `tool_help` 가 주는 바로 그 글.
+
+    지연 도구의 설명·인자 설명·안내를 단정하던 테스트가 쓴다: 그 글은 프롬프트에서
+    `tool_help` 결과로 옮겨 갔다(지우지 않고 옮긴다). 지연을 끈 렌더와 `tool_help`
+    결과가 바이트 같다는 것은 tests/test_tool_help.py 가 고정한다."""
+    from agent_cli.tools.registry import TOOLS
+
+    for tool in TOOLS.values():
+        if tool.deferred:
+            monkeypatch.setattr(tool, "deferred", False)
+
+
 @pytest.fixture(autouse=True)
 def _force_json_fc_dialect(monkeypatch):
     """스위트 전체를 ``--dialect json_fc`` 로 띄운 것과 같게 둔다.

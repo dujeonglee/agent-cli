@@ -93,6 +93,10 @@ def _as_id(v):
 
 class MemoryTool(Tool):
     name = "memory"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Keep a decision or fact that must survive context compaction."
     description = (
         "Record a session note that must survive context compaction: a failure (so "
         "you do not repeat it), a discovery (to reuse), a decision (why you chose X), "

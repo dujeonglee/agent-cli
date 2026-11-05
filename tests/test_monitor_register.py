@@ -65,8 +65,8 @@ class TestRegister:
         state, note = cond.register(observed_at=time.time())
         assert state == {}
         assert "before your last tool result" in note
-        assert "NOT reported" in note
-        assert "'ERROR old two'" in note and "not a new event" in note
+        assert "not reported" in note  # v10.110.0: 대문자 강조 없이
+        assert '"ERROR old two"' in note and "not a new event" in note
 
         reg.add(cond, owner="main", deadline_s=3600, state=state)
         reg.tick(time.time())
@@ -99,7 +99,7 @@ class TestRegister:
         state, note = cond.register(observed_at=time.time() - 10)
         assert state == {}
         assert "after your last tool result" in note
-        assert "'ERROR latest'" in note, "꼬리 스캔이 마지막 매칭 줄을 못 찾았다"
+        assert '"ERROR latest"' in note, "꼬리 스캔이 마지막 매칭 줄을 못 찾았다"
         reg.add(cond, owner="main", deadline_s=3600, state=state)
         reg.tick(time.time())
         assert not reg.deliver.calls

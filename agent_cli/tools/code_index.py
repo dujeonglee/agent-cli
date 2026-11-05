@@ -920,6 +920,10 @@ _EXTENSIONS = ", ".join(get_supported_extensions())
 
 class CodeIndexTool(Tool):
     name = "code_index"
+    #: 지연 (v10.110.0, docs/tool-help/DESIGN.md D1) — 프롬프트엔 이 한 줄과 인자 뼈대,
+    #: 전문은 `tool_help`.
+    deferred = True
+    summary = "Find definitions, callers and references in a codebase — reach for it before grepping source."
     # v10.92.0 (docs/tool-review/TRACKER.md): 안내 블록(1,104 토큰, 호출 모양 예시
     # 11개)을 지우고 모드 설명을 `mode` 인자 한 곳에 — 모델이 보는 글이 1,689 → 683
     # 토큰. 예시의 가짜 경로(`agent_cli/loop.py`)를 벤치의 모델이 실제 경로로 오인해
