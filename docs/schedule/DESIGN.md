@@ -146,6 +146,20 @@ missed(s, due):
   꺼져 있던 동안 지난 것은 자동 실행되지 않는다.
 - `monitor` 설명의 "On a board session, …" 문장은 "For periodic work prefer
   `schedule` — it survives a restart, a monitor does not." 로 고친다.
+- **v10.108.0 (도구 검토, 2026-11-05)**: 근거는 벤치 900 세션·실사용 59 세션에서 호출
+  0회 — 행동 측정이 불가해 토큰과 문구의 사실성으로만 봤다. ① 놓친 발화 문장을 사실로:
+  종전 "is not run automatically — the user is asked whether to run it" 은 web 의 ⏰
+  서랍에서만 참이었다(`run` 은 기동 때 알림 한 줄, 물을 화면이 없다). 이제 "is not run;
+  it waits in the web UI for the user to run it now or skip it". 목록의 `MISSED … the
+  user decides run-now or skip` 도 대문자 강조와 모델이 할 수 없는 일을 빼고 "missed …
+  — not run; waiting for the user's run-now or skip in the web UI". ② `mode` 에 enum
+  (`MODES`, 검증과 같은 상수) — 디코딩 문법이 값을 제한하고 필수 + 열거값 강제가 걸린다
+  (monitor·memory·snapshot 과 같다). ③ 설명 축약: GLM 173 → 91 토큰(도구 블록 565 →
+  492; 인자는 enum·cron 형식 이동으로 199 → 220). cron 형식·예시와 nickname 기본값은
+  인자 설명에만. ④ 표기: `invalid cron` 과 cron 파서 오류의 repr 작은따옴표 → 큰따옴표,
+  결과·거절 고정 문구를 모듈 상수로 빼 `prompts.inventory._schedule_result_samples` 표본
+  5개로 등록(표기 가드가 도구 결과를 본다). 광고 범위(main 루프에 항상, 벤치 `run` 에도
+  보임 — §10)는 바꾸지 않았다(사용자 결정).
 
 ### 6.3 프로세스 수명
 

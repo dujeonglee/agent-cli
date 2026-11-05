@@ -588,13 +588,27 @@ class TestSchemaEnforcementPieces:
         assert "p_memory" in line
 
 
+class TestScheduleModeIsForced:
+    """v10.108.0: `schedule` 의 `mode` 에 enum 이 생겨 필수 + 열거값 — 문법이 값을
+    제한하고 호출이 닫히기 전에 `mode` 를 강제한다(monitor·memory 와 같은 규칙)."""
+
+    @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
+    def test_both_formats_force_schedule_mode(self, fmt):
+        g = get(fmt).grammar(_tools(["schedule"], fmt))
+        assert "p_schedule ::= " in g
+        line = next(ln for ln in g.splitlines() if ln.startswith("t_schedule ::= "))
+        assert "p_schedule" in line
+        for v in ("add", "delete", "list"):
+            assert v in line
+
+
 class TestSchemaDeclarationsAreSingleSource:
     """스키마의 enum 은 도구 코드가 실제로 분기하는 상수와 같은 객체에서 온다 —
     문법·검증기·도구 셋이 어긋나지 않는다."""
 
     def test_enums_come_from_the_tool_constants(self):
         from agent_cli import memory
-        from agent_cli.tools import monitor_tool
+        from agent_cli.tools import monitor_tool, schedule
         from agent_cli.tools.edit_file import EDIT_OPS
         from agent_cli.tools.memory_tool import MODES as MEMORY_MODES
         from agent_cli.tools.registry import TOOL_SCHEMAS
@@ -606,6 +620,7 @@ class TestSchemaDeclarationsAreSingleSource:
         assert enum("memory", "type") == list(memory.VALID_TYPES)
         assert enum("edit_file", "op") == list(EDIT_OPS)
         assert enum("monitor", "mode") == list(monitor_tool.MODES)
+        assert enum("schedule", "mode") == list(schedule.MODES)  # v10.108.0
 
     def test_min_length_only_where_empty_is_meaningless(self):
         from agent_cli.tools.registry import TOOL_SCHEMAS

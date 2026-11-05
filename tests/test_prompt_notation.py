@@ -154,6 +154,21 @@ def test_browser_result_samples_are_in_the_inventory():
     assert "'" not in text.replace("site's", "")  # repr 작은따옴표 값이 돌아오지 않는다
 
 
+def test_schedule_result_samples_are_in_the_inventory():
+    """`schedule` 결과·거절 문구(v10.108.0)도 도구 결과라 표본으로만 가드에 닿는다."""
+    ids = {w.split(" runtime ")[-1] for w, _ in _ALL if " runtime " in w}
+    assert {
+        "schedule_added",
+        "schedule_deleted_empty",
+        "schedule_add_rejected",
+        "schedule_delete_rejected",
+        "schedule_unavailable",
+    } <= ids
+    text = "\n".join(t for w, t in _ALL if " runtime schedule_" in w)
+    assert "'" not in text.replace("user's", "")  # repr 작은따옴표 값이 돌아오지 않는다
+    assert "missed 2026-11-03T09:00:00" in text  # 놓친 발화 줄도 표본에 있다
+
+
 def test_depth_limit_line_is_in_the_inventory():
     """깊이 상한 줄은 상한에 닿은 루프에만 실린다 — 시나리오가 없으면 가드가 못 본다."""
     texts = [t for w, t in _ALL if " limit section " in w]

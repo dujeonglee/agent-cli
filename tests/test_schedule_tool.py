@@ -16,7 +16,7 @@ import pytest
 from agent_cli.schedule.registry import AGENT_CAP, ScheduleRegistry
 from agent_cli.schedule.runtime import set_schedule_registry
 from agent_cli.tools import TOOLS
-from agent_cli.tools.schedule import ScheduleTool
+from agent_cli.tools.schedule import MODES, ScheduleTool
 
 HANGUL = re.compile(r"[가-힣]")
 
@@ -58,13 +58,25 @@ class TestRegistration:
     def test_description_states_the_lifetime(self, tool):
         d = tool.description
         assert "saved with the session" in d
-        assert "not run automatically" in d
+        # v10.108.0: 놓친 발화는 사실만 — web 화면이 묻는다(모델이 할 일이 없다)
+        assert "is not run; it waits in the web UI" in d
+        assert "the user is asked" not in d
         assert "board" not in d  # 보드는 더 이상 이 기능의 일부가 아니다
+
+    def test_cron_format_and_nickname_default_live_in_the_arguments(self, tool):
+        """v10.108.0: 형식·기본값은 인자 설명에만 — 설명과 겹치지 않는다."""
+        props = tool.parameters["properties"]
+        assert '"min hour day month weekday"' in props["cron"]["description"]
+        assert "Scheduler-<label or id>" in props["nickname"]["description"]
+        assert "min hour" not in tool.description
+        assert "Scheduler-" not in tool.description
 
 
 class TestValidate:
     def test_mode_and_required_fields(self, tool):
         assert 'invalid `mode` "nope"' in tool.validate({"mode": "nope"})
+        # v10.108.0: 스키마 enum 과 검증이 같은 상수
+        assert tool.parameters["properties"]["mode"]["enum"] == list(MODES)
         assert "`prompt` is required" in tool.validate(
             {"mode": "add", "cron": "* * * * *"}
         )
@@ -97,7 +109,11 @@ class TestRun:
 
     def test_bad_cron_is_rejected_with_the_reason(self, tool, reg):
         res = tool._run({"mode": "add", "cron": "99 9 * * *", "prompt": "x"})
-        assert not res.success and "schedule add rejected: invalid cron" in res.error
+        assert not res.success
+        assert res.error.startswith(
+            'schedule add rejected: invalid cron "99 9 * * *": '
+        )
+        assert "'" not in res.error  # 값은 큰따옴표 (v10.108.0)
         assert reg.list_all() == []
 
     def test_agent_cap(self, tool, reg):
@@ -128,7 +144,11 @@ class TestRun:
         clock.now += timedelta(hours=3)
         reg.settle()
         out = tool._run({"mode": "list"}).output
-        assert "MISSED 2026-10-05T09:00:00 — not run" in out
+        assert (
+            "missed 2026-10-05T09:00:00 — not run; waiting for the user's run-now "
+            "or skip in the web UI"
+        ) in out
+        assert "MISSED" not in out
         assert "disabled" in out
 
     def test_listing_is_english_even_with_korean_ui_labels(self, tool, reg):
