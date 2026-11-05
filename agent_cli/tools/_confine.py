@@ -20,6 +20,10 @@ confined.
 파일에 다르게 굴면 그건 일관성이 아니라 우연이다. 봉쇄는 워크스페이스 경계를,
 사전은 "무엇을 읽느냐"를 본다. `guard(check_workspace=False)` 가 후자만 건다.
 
+시스템 임시 디렉터리(`temp_roots`)는 안으로 친다 (v10.103.0) — 사용자의 것이
+없고 유출 경로도 아니며, 비대화형 방에서 `/tmp` 한 토큰이 거절이 됐다. 민감
+사전은 그대로 건다.
+
 Root = the process cwd at call time, or ``AGENT_CLI_WORKSPACE_ROOT`` if set.
 agent-board spawns each instance with cwd = its post workspace, so the default
 lands exactly right. Disable entirely with ``AGENT_CLI_WORKSPACE_CONFINE=0``.
@@ -30,6 +34,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import tempfile
 from pathlib import Path
 
 from agent_cli.tools._sensitive import sensitive_reason
@@ -102,6 +107,30 @@ def _device_pass(literal: str, resolved: Path) -> bool:
     그대로와 풀린 것 둘 다 본다."""
     for cand in (str(Path(literal).expanduser()), str(resolved)):
         if cand in _DEVICE_PASS or _DEV_FD.match(cand):
+            return True
+    return False
+
+
+# 시스템 임시 디렉터리는 묻지 않는다 (v10.103.0). 봉쇄의 위협 모델은 사고 방지와
+# 워크스페이스 밖으로 새는 것의 속도 제한인데, 임시 디렉터리에는 사용자의 파일이
+# 없고 유출 경로도 아니다. 모델이 고르지 않아도 컴파일러·pip·pytest·`mktemp` 가
+# 명령줄에 `/tmp` 를 올리고, 클라이언트가 안 붙은 방·배치 런에서는 확인이 아니라
+# **거절**이 되어 호출이 통째로 실패했다(A/B 런 기록). `_DEVICE_PASS` 와 같은 논리.
+# 단 두 축은 그대로다: 비교는 resolve 결과라 `/tmp` 안에 심어 둔 바깥행 심링크는
+# 여전히 밖이고, 민감 경로 사전(`/tmp/id_rsa`)은 `guard` 가 이 통과보다 먼저 본다.
+# 범위는 이름이 "임시" 인 디렉터리 셋뿐 — `~/Downloads` 나 캐시 디렉터리까지
+# 넓히면 봉쇄가 있는 의미가 없다.
+def temp_roots() -> frozenset[Path]:
+    """시스템 임시 루트(resolve 됨): ``tempfile.gettempdir()``(``$TMPDIR``·``%TEMP%``)
+    ·``/tmp``·``/var/tmp`` 중 실제로 있는 것. 캐시하지 않는다 — ``guard`` 가 밖
+    경로를 만났을 때만 부르므로 비용이 없고, 테스트가 바꿔 끼울 수 있다."""
+    roots = {tempfile.gettempdir(), "/tmp", "/var/tmp"}
+    return frozenset(Path(r).resolve() for r in roots if os.path.isdir(r))
+
+
+def _temp_pass(resolved: Path) -> bool:
+    for root in temp_roots():
+        if resolved == root or root in resolved.parents:
             return True
     return False
 
@@ -425,7 +454,7 @@ def guard(
         if _allowlisted(resolved) or _device_pass(path, resolved):
             continue
         secret = sensitive_reason(resolved)
-        if inside and not secret:
+        if (inside or _temp_pass(resolved)) and not secret:
             continue
         if not check_workspace and not secret:
             continue
