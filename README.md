@@ -1229,6 +1229,8 @@ pip install 'agent-cli[browser]'      # playwright (Node.js 를 따로 깔 필�
 playwright install chromium
 ```
 
+Playwright 는 **1.49 이상**이어야 합니다(페이지를 `Locator.aria_snapshot` 으로 읽는데 1.49 부터 있음, v10.112.1). 더 낮으면 도구는 그대로 보이고, 첫 호출이 설치된 버전과 `pip install -U 'playwright>=1.49'` 를 알리며 거절합니다.
+
 playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프트에 나오지 않습니다**(`snapshot` 과 같은 규칙 — 없는 기능을 약속하지 않음). 브라우저는 첫 호출 때 뜨고(안 쓰는 세션은 비용 0), 세션이 끝나면 닫힙니다.
 
 | mode | 인자 | 하는 일 |
