@@ -19,6 +19,19 @@ from agent_cli.tools.result import ToolResult
 
 #: 목록 등 문자열이 아닌 ``path`` 의 오류 — 구제하지 않고 다시 낼 방법을 말한다
 #: (관측되면 그때 구제, 2026-10-28 사용자 결정).
+#: 본문을 풀 수 없는 그림 (v10.113.0, Pillow 가 있을 때만 — docs/vision/DESIGN.md §13).
+#: 헤더는 정상인데 본문이 잘린 PNG 가 서버 400 으로 런을 끝냈다.
+UNDECODABLE = (
+    "view_image: {path} is a {kind} whose image data cannot be decoded ({why}) — "
+    f"{_images.UNDECODABLE_HINT}"
+)
+_KIND = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/gif": "GIF",
+    "image/webp": "WebP",
+}
+
 PATH_NOT_ONE = (
     "view_image: path must be one file path; to view several images, "
     "call `view_image` once per image"
@@ -84,6 +97,19 @@ class ViewImageTool(Tool):
                 False,
                 error=f"view_image: {path} is not a PNG, JPEG, GIF or WebP image{hint}",
             )
+        # 본문 검사 — 보관소(`make_ref`)에 손상본을 남기지 않도록 그 전에.
+        if _images.has_pillow():
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError as e:
+                return ToolResult(False, error=f"view_image failed: {e}")
+            why = _images.decode_check(data)
+            if why:
+                kind = _KIND.get(_images.sniff_image(head) or "", "image")
+                return ToolResult(
+                    False, error=UNDECODABLE.format(path=path, kind=kind, why=why)
+                )
         try:
             ref = _images.make_ref(path)
         except (ValueError, OSError) as e:

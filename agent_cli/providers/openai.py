@@ -74,7 +74,10 @@ class OpenAIProvider:
         enabled = _has_images(messages) and vision_support(
             capabilities, self.capability_transport, self.base_url, model, self.api_key
         )
-        messages = _images.expand(messages, enabled=enabled, part=_images.openai_part)
+        blocked = (kwargs.get("settings") or CallSettings()).blocked_images
+        messages = _images.expand(
+            messages, enabled=enabled, part=_images.openai_part, blocked=blocked
+        )
         msgs = [{"role": "system", "content": system}] + messages
 
         body: dict = {

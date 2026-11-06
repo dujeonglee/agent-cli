@@ -1384,6 +1384,36 @@ class TestImagesAtProviderBoundary:
         )
         assert msgs[2]["content"] == "ok"
 
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_openai_sends_a_blocked_image_as_a_reason_line(
+        self, mock_post, tmp_path, monkeypatch
+    ):
+        """v10.113.0: 서버가 디코딩하지 못한 그림(`CallSettings.blocked_images`)은 실제
+        요청 본문에서 조각이 아니라 사유 줄이다 — 조각 수로 확인한다."""
+        from agent_cli import images as I
+        from agent_cli.providers.base import CallSettings
+
+        monkeypatch.chdir(tmp_path)
+        ref = _png_ref(tmp_path)
+        mock_post.return_value = _mock_response(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+        caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
+        OpenAIProvider("http://x/v1", "k").call(
+            messages=[
+                {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
+            ],
+            system="s",
+            model="m",
+            capabilities=caps,
+            settings=CallSettings(blocked_images=frozenset({ref.sha256})),
+        )
+        user = mock_post.call_args.kwargs["json"]["messages"][1]
+        assert isinstance(user["content"], str)  # image_url 조각 0개
+        assert user["content"].endswith(
+            f"(image {ref.path} not shown: {I.SERVER_UNDECODABLE})"
+        )
+
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_expands_to_image_blocks(self, mock_post, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

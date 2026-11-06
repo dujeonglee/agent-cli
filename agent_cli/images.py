@@ -326,6 +326,66 @@ def has_pillow() -> bool:
     return importlib.util.find_spec("PIL") is not None
 
 
+# ── 디코딩 불가 이미지 (v10.113.0, docs/vision/DESIGN.md §13) ─────────────
+#
+# 모델이 손수 만든 PNG(zlib·struct 로 직접 씀)가 헤더는 멀쩡하고 본문(IDAT)만
+# 잘린 채 오면, 매직 바이트·헤더 크기만 보는 검사는 통과하고 서버가 400 "image_url
+# does not contain a decodable image" 로 요청 전체를 거절해 런이 죽었다(벤치 40회 중
+# 3회). Pillow 의 ``verify()`` 는 그 두 실물을 통과시켰다 — 본문까지 푸는 것은
+# ``load()`` 뿐이다.
+
+#: 손상 이미지 사유 뒤에 붙는 고칠 길 — 모델이 다시 만들 수 있다.
+UNDECODABLE_HINT = "the file is damaged or incomplete; regenerate it"
+#: 서버가 디코딩하지 못해 막은 그림의 사유 (F3 — 어느 그림인지 서버는 말하지 않는다;
+#: 마지막 성공 요청에 없던 그림을 막는다).
+SERVER_UNDECODABLE = f"the server could not decode it — {UNDECODABLE_HINT}"
+
+
+def decode_check(data: bytes) -> str | None:
+    """이미지 본문을 실제로 풀어 본다 — 못 풀면 Pillow 오류 한 줄, 풀리면 None.
+
+    Pillow 가 없으면 None(검사 못 함 — 헤더 검사만 한 종전과 같다). ``verify()`` 가
+    아니라 ``load()`` 다: 헤더가 정상이고 IDAT 가 잘린 PNG 는 ``verify()`` 를
+    통과한다(§13 실측)."""
+    if not has_pillow():
+        return None
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+    except Exception as e:  # 손상·잘림·모르는 압축 — 무엇이든 "못 푼다"
+        return (str(e).strip().splitlines() or [type(e).__name__])[0]
+    return None
+
+
+def is_undecodable_image_error(exc: Exception) -> bool:
+    """서버가 그림을 디코딩하지 못해 요청을 거절했는가 (OpenAI 호환 경로, omlx 실측).
+
+    ``context.overflow.classify_overflow`` 와 같은 꼴 — **HTTP 400 상태 코드가 게이트**
+    이고 그 위에서 본문에 ``image_url`` 과 ``decodable`` 이 함께 있을 때만 참. 문구만
+    보고 판정하지 않는다(다른 오류를 그림 탓으로 돌려 그림을 막으면 안 된다).
+    Anthropic 공급자의 같은 오류 문구는 모른다 — 지어내지 않는다."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status != 400:
+        return False
+    text = str(exc).lower()
+    return "image_url" in text and "decodable" in text
+
+
+def image_shas(messages: list[dict]) -> set[str]:
+    """요청 메시지들에 실린 그림 참조의 sha256 집합 (빈 값 제외)."""
+    out: set[str] = set()
+    for m in messages:
+        refs = m.get("images")
+        if not isinstance(refs, list):
+            continue
+        for r in refs:
+            if isinstance(r, dict) and r.get("sha256"):
+                out.add(str(r["sha256"]))
+    return out
+
+
 def stage_upload(src: str | Path, workspace: Path | None = None) -> ImageRef:
     """사용자가 건넨 파일을 레코드가 가리킬 수 있는 자리로 들여온다.
 
@@ -392,8 +452,9 @@ def messages_image_tokens(messages: list[dict]) -> int:
 # ── 공급자 경계 — 파일에서 읽어 조각으로 ─────────────────────────────
 
 #: 세션당 ``(path, size, mtime_ns) → (sha256, mime, b64)`` — 같은 이미지가
-#: 턴마다 다시 인코딩·축소되지 않게.
-_encode_cache: dict[tuple[str, int, int], tuple[str, str, str]] = {}
+#: 턴마다 다시 인코딩·축소되지 않게. 실패 사유(손상본·바이트 상한)도 같은 키로
+#: 문자열을 담는다 (v10.113.0) — 레코드에 남은 손상본을 턴마다 다시 읽고 풀지 않게.
+_encode_cache: dict[tuple[str, int, int], tuple[str, str, str] | str] = {}
 
 
 #: Pillow 없이 바이트 상한을 넘었을 때 공급자 경계가 적는 사유 (v10.61.1).
@@ -424,9 +485,13 @@ def _encode_bytes(data: bytes, mime: str) -> tuple[str, bytes]:
     from PIL import Image
 
     with Image.open(io.BytesIO(data)) as im:
+        # 크기와 무관하게 언제나 본문을 푼다 (v10.113.0) — 종전엔 축소할 때만 load()
+        # 해서, 작은 손상 PNG 가 원본 그대로 조각이 되어 서버가 요청을 400 으로
+        # 거절했다. 실패는 `encode` 가 사유 줄로 바꾼다. 비용은 파일당 한 번
+        # (`_encode_cache`).
+        im.load()
         w, h = im.size
         if (max_edge and max(w, h) > max_edge) or len(data) > IMAGE_MAX_BYTES:
-            im.load()
             if max_edge and max(w, h) > max_edge:
                 im.thumbnail((max_edge, max_edge))
             out_mime = "image/jpeg" if mime == "image/jpeg" else "image/png"
@@ -468,12 +533,15 @@ def encode(ref: ImageRef) -> tuple[str, str] | str:
         mime = sniff_image(data[:16]) or ref.mime
         try:
             mime, data = _encode_bytes(data, mime)
+            hit = (sha, mime, base64.b64encode(data).decode("ascii"))
         except ImageTooLarge as e:
-            return str(e)
-        except Exception as e:  # Pillow 가 못 여는 손상 파일 등
-            return f"cannot encode ({e})"
-        hit = (sha, mime, base64.b64encode(data).decode("ascii"))
+            hit = str(e)
+        except Exception as e:  # Pillow 가 못 여는·못 푸는 손상 파일 등
+            why = (str(e).strip().splitlines() or [type(e).__name__])[0]
+            hit = f"cannot encode ({why}) — {UNDECODABLE_HINT}"
         _encode_cache[key] = hit
+    if isinstance(hit, str):  # 캐시된 실패 사유 — 같은 파일이면 같은 사유
+        return hit
     sha, mime, b64 = hit
     if ref.sha256 and sha != ref.sha256:
         return "file changed since it was recorded"
@@ -485,6 +553,7 @@ def expand(
     *,
     enabled: bool,
     part: Callable[[str, str], dict],
+    blocked: set[str] | frozenset[str] | None = None,
 ) -> list[dict]:
     """``images`` 를 공급자 조각으로 펼친 요청 메시지 목록.
 
@@ -493,6 +562,9 @@ def expand(
     가 되고, 못 읽는 참조는 조각 대신 ``content`` 끝에 사유 한 줄을 덧붙인다.
     ``enabled`` 가 아니면(텍스트 전용 모델) 조각 없이 그 사실을 한 줄 덧붙인다
     — 모델이 "봤다" 고 착각하지 않게. 레코드는 건드리지 않는다.
+
+    ``blocked`` (v10.113.0): 서버가 디코딩하지 못해 막은 그림의 sha256 — 그 참조는
+    조각 대신 :data:`SERVER_UNDECODABLE` 사유 줄이 된다.
     """
     out: list[dict] = []
     for m in messages:
@@ -515,6 +587,9 @@ def expand(
             if not isinstance(r, dict):
                 continue
             ref = ImageRef.from_dict(r)
+            if blocked and ref.sha256 in blocked:
+                notes.append(f"(image {ref.path} not shown: {SERVER_UNDECODABLE})")
+                continue
             got = encode(ref)
             if isinstance(got, str):
                 notes.append(f"(image {ref.path} not shown: {got})")
