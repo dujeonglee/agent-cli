@@ -17,7 +17,7 @@
 
 | 항목 | 결정 |
 |---|---|
-| Python 패키지 | `pip install agent-cli[browser]` → `playwright`. 기본 설치에는 없다 (CLAUDE.md "새 의존성 최소화"). Node.js 를 따로 깔 필요는 없다 — 패키지 안에 드라이버가 들어 있다. |
+| Python 패키지 | `pip install agent-cli[browser]` → `playwright`. 기본 설치에는 없다 (CLAUDE.md "새 의존성 최소화"). Node.js 를 따로 깔 필요는 없다 — 패키지 안에 드라이버가 들어 있다. **최소 1.49** (v10.112.1): 트리를 `Locator.aria_snapshot()` 으로 읽는데 그것이 1.49(2024-11) 부터 있다 — extra 가 `>=1.40` 이던 동안 1.40~1.48 환경(사용자 회사 머신)에서 `AttributeError: 'Locator' object has no attribute 'aria_snapshot'` 원문이 모델에게 갔다. 낮으면 `_launch` 가 드라이버를 띄우기 **전에** `PLAYWRIGHT_TOO_OLD`(설치 버전 + `pip install -U` 명령)로 거절한다. 판정은 능력(속성 유무, `playwright_too_old`)이고 버전은 문구용. 도구는 숨기지 않는다 — 아래 "실행 시점" 처럼 첫 호출이 사유를 말하는 편이 말없이 사라지는 것보다 낫다. |
 | 브라우저 엔진 | 순서대로 시도: ① `AGENT_CLI_BROWSER_EXECUTABLE` 경로 ② 설치된 Google Chrome (`channel="chrome"`) ③ Playwright Chromium (`playwright install chromium`). 셋 다 없으면 도구 호출이 설치 안내와 함께 실패한다. |
 | 가용성 게이트 | `requires_handler="browser"` — `runtime.browser_resource()` 가 `playwright` 를 import 할 수 있고 `AGENT_CLI_BROWSER_TOOL` 이 `0` 이 아닐 때만 자원을 돌려준다. 아니면 `snapshot` 도구와 같은 seam(`core.py` handlers)으로 tools_list 에서 빠져 **프롬프트에 나오지 않는다** — 없는 기능을 약속하지 않는다. |
 | 실행 시점 | 브라우저는 **첫 호출 때** 띄운다. 안 쓰는 세션은 비용 0. |

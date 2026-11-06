@@ -971,6 +971,92 @@ class TestVerificationSwitch:
             s.close()
 
 
+def _fake_playwright(monkeypatch, *, has_aria: bool, version="1.48.0"):
+    """``playwright.sync_api`` 대역 — ``Locator`` 의 ``aria_snapshot`` 유무와 설치
+    버전을 고른다. ``sync_playwright`` 가 불리면 실패한다(낡은 판에서 드라이버를 띄우면
+    안 된다)."""
+    import importlib.metadata
+    import sys
+    import types
+
+    attrs = {"aria_snapshot": lambda self: ""} if has_aria else {}
+
+    def must_not_start():
+        raise AssertionError("sync_playwright() was called on an old Playwright")
+
+    mod = types.SimpleNamespace(
+        Locator=type("Locator", (), attrs), sync_playwright=must_not_start
+    )
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", mod)
+    monkeypatch.setitem(sys.modules, "playwright", types.SimpleNamespace(sync_api=mod))
+    real = importlib.metadata.version
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: version if name == "playwright" else real(name),
+    )
+
+
+class TestPlaywrightMinVersion:
+    """v10.112.1: ``Locator.aria_snapshot`` 은 Playwright 1.49 부터 — 낮으면 첫 호출이
+    설치 버전과 함께 거절한다(속성 오류 원문 대신). 판정은 능력, 버전은 문구용."""
+
+    def test_old_playwright_names_the_installed_version(self, monkeypatch):
+        _fake_playwright(monkeypatch, has_aria=False)
+        msg = B.playwright_too_old()
+        assert msg == B.PLAYWRIGHT_TOO_OLD.format(have="1.48.0", need="1.49")
+        assert "playwright 1.48.0 is installed" in msg
+        assert "`pip install -U 'playwright>=1.49'`" in msg
+
+    def test_capability_decides_not_the_version_string(self, monkeypatch):
+        # 버전 문자열이 낡아 보여도 속성이 있으면 통과한다
+        _fake_playwright(monkeypatch, has_aria=True, version="1.40.0")
+        assert B.playwright_too_old() is None
+
+    def test_unknown_version_still_refuses(self, monkeypatch):
+        import importlib.metadata
+
+        _fake_playwright(monkeypatch, has_aria=False)
+
+        def boom(name):
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(importlib.metadata, "version", boom)
+        assert "playwright unknown is installed" in B.playwright_too_old()
+
+    def test_launch_refuses_before_starting_the_driver(self, monkeypatch):
+        _fake_playwright(monkeypatch, has_aria=False)
+        s = B.BrowserSession(knobs={"enabled": True, "hosts": (), "executable": ""})
+        try:
+            with pytest.raises(B.BrowserError, match="1.48.0 is installed"):
+                s.open("http://x.test/")
+            assert s._pw is None  # 드라이버를 띄우지 않았다(되감을 것 없음)
+        finally:
+            s.close()
+
+    def test_tool_result_says_why(self, monkeypatch):
+        from agent_cli import browser as browser_mod
+
+        _fake_playwright(monkeypatch, has_aria=False)
+        monkeypatch.setattr(browser_mod, "_SESSION", None)
+        try:
+            r = BrowserTool().run({"mode": "open", "url": "http://x.test/"})
+            assert not r.success
+            assert r.error.startswith(
+                "browser: playwright 1.48.0 is installed; agent-cli needs 1.49 or newer"
+            )
+            assert "AttributeError" not in r.error
+        finally:
+            browser_mod.reset_browser()
+
+    def test_the_tool_is_still_advertised(self, monkeypatch):
+        """숨기지 않는다 — 깔아 둔 사용자에게 도구가 말없이 사라지는 것보다 낫다."""
+        _fake_playwright(monkeypatch, has_aria=False)
+        monkeypatch.setattr(B.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(B, "browser_knobs", lambda: {"enabled": True})
+        assert B.browser_available() is True
+
+
 class TestLaunchFallback:
     def test_tries_executable_chrome_then_chromium_and_reports_all(self, monkeypatch):
         calls = []
@@ -989,7 +1075,9 @@ class TestLaunchFallback:
         import types
 
         fake_mod = types.SimpleNamespace(
-            sync_playwright=lambda: types.SimpleNamespace(start=lambda: PW())
+            sync_playwright=lambda: types.SimpleNamespace(start=lambda: PW()),
+            # v10.112.1: `_launch` 가 먼저 능력을 본다 — 1.49+ 처럼 aria_snapshot 이 있다
+            Locator=type("Locator", (), {"aria_snapshot": lambda self: ""}),
         )
         monkeypatch.setitem(__import__("sys").modules, "playwright.sync_api", fake_mod)
         monkeypatch.setitem(

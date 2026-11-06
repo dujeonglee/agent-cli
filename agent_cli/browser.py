@@ -374,6 +374,15 @@ def find_nodes(nodes: list[Node], *, text: str = "", regex: str = "") -> list[st
 # (tests/test_prompt_notation.py)가 이 문구를 본다.
 
 NO_PAGE = 'no page is open — call `mode` "open" with a `url` first'
+#: 필요한 Playwright (v10.112.1) — 트리를 ``Locator.aria_snapshot()`` 으로 읽는데 그것은
+#: 1.49(2024-11) 부터 있다. extra 가 ``>=1.40`` 이라 1.40~1.48 에서는 속성 오류 원문이
+#: 모델에게 갔다. 판정은 능력(속성 유무)으로, 버전은 문구에만 쓴다(``playwright_too_old``).
+MIN_PLAYWRIGHT = "1.49"
+PLAYWRIGHT_TOO_OLD = (
+    "playwright {have} is installed; agent-cli needs {need} or newer (it reads pages "
+    "with Locator.aria_snapshot). Run `pip install -U 'playwright>={need}'` and "
+    "restart the session."
+)
 BROWSER_CLOSED = 'browser is closed — call `mode` "open" to start again'
 WINDOW_CLOSED = (
     "the browser window was closed (by the user or a crash) — call "
@@ -458,6 +467,24 @@ def challenge_notice(url: str, why: str, *, shown: str, failed: str = "") -> str
         'then call `browser` with `mode` "snapshot" to continue. The browser stays '
         "visible for the rest of this session."
     )
+
+
+def playwright_too_old() -> str | None:
+    """설치된 Playwright 가 ``Locator.aria_snapshot`` 을 갖지 않으면 거절 문구, 아니면 None.
+
+    **능력 검사**가 판정이다 — 버전 문자열을 파싱하지 않는다(그 속성이 곧 필요한 것).
+    버전은 문구에만 쓰고, 읽지 못하면 "unknown"."""
+    from playwright.sync_api import Locator
+
+    if hasattr(Locator, "aria_snapshot"):
+        return None
+    try:
+        from importlib.metadata import version
+
+        have = version("playwright")
+    except Exception:
+        have = "unknown"
+    return PLAYWRIGHT_TOO_OLD.format(have=have, need=MIN_PLAYWRIGHT)
 
 
 def browser_available() -> bool:
@@ -547,6 +574,12 @@ class BrowserSession:
         같은 스레드에서 두 번 시작하면 "Sync API inside the asyncio loop" 로
         거부되므로, 보이는 창으로 옮길 때도 드라이버는 그대로 두고 브라우저만
         새로 띄운다."""
+        # 낡은 Playwright 는 드라이버를 띄우기 **전에** 거절한다 — 띄우지 않았으니 되감을
+        # 것도 없다. 도구를 숨기지는 않는다(`browser_available`): 깔아 둔 사용자에게
+        # 도구가 말없이 사라지는 것보다 첫 호출이 사유를 말하는 편이 낫다(DESIGN §2).
+        too_old = playwright_too_old()
+        if too_old:
+            raise BrowserError(too_old)
         if self._pw is None:
             from playwright.sync_api import sync_playwright
 
