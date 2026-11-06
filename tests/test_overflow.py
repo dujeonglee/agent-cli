@@ -161,3 +161,109 @@ class TestClassifyOverflow:
 
     def test_connection_error_is_ignored(self):
         assert classify_overflow(requests.ConnectionError("Connection refused")) is None
+
+
+# ── 디코딩 불가 그림 (v10.113.0, docs/vision/DESIGN.md §13) ─────────────
+
+_UNDECODABLE_BODY = (
+    '{"error":{"message":"image_url does not contain a decodable image.",'
+    '"type":"invalid_request_error","param":"image_url"}}'
+)
+
+
+class TestUndecodableImageRetry:
+    """omlx 가 400 "image_url does not contain a decodable image" 을 주면, 마지막 성공
+    요청 뒤 새로 들어간 그림만 막고 한 번 재시도한다. 두 번째 400·새 그림 없음은 실패."""
+
+    @staticmethod
+    def _run(tmp_path, replies):
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import TEST_PORTS
+
+        def as_call(r):
+            if isinstance(r, Exception):
+                return r
+            return LLMResponse(content=json.dumps(r))
+
+        provider = MagicMock()
+        provider.call.side_effect = [as_call(r) for r in replies]
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="look at the image",
+            provider=provider,
+            capabilities=ModelCapabilities(
+                context_window=32768,
+                max_output_tokens=4096,
+                supports_thinking=False,
+                supports_vision=True,
+            ),
+            model="m",
+            ctx=ContextManager(session_dir=tmp_path),
+            max_turns=8,
+        )
+        settings = [c.kwargs["settings"] for c in provider.call.call_args_list]
+        return result, settings
+
+    @staticmethod
+    def _image(tmp_path, monkeypatch):
+        from PIL import Image
+
+        monkeypatch.chdir(tmp_path)
+        Image.new("RGB", (40, 20), (0, 0, 255)).save(tmp_path / "p.png", format="PNG")
+        import hashlib
+
+        return "p.png", hashlib.sha256((tmp_path / "p.png").read_bytes()).hexdigest()
+
+    def test_new_image_is_blocked_and_the_call_retried_once(
+        self, tmp_path, monkeypatch
+    ):
+        path, sha = self._image(tmp_path, monkeypatch)
+        result, settings = self._run(
+            tmp_path,
+            [
+                {"action": "view_image", "path": path},
+                _http_error(400, _UNDECODABLE_BODY),
+                {"action": "complete", "result": "done"},
+            ],
+        )
+        assert result.success and result.output == "done"
+        assert [s.blocked_images for s in settings] == [
+            frozenset(),
+            frozenset(),
+            frozenset({sha}),  # 재시도는 그 그림을 사유 줄로
+        ]
+
+    def test_a_second_400_fails(self, tmp_path, monkeypatch):
+        path, _sha = self._image(tmp_path, monkeypatch)
+        result, settings = self._run(
+            tmp_path,
+            [
+                {"action": "view_image", "path": path},
+                _http_error(400, _UNDECODABLE_BODY),
+                _http_error(400, _UNDECODABLE_BODY),
+            ],
+        )
+        assert not result.success and "LLM call failed" in result.error
+        assert len(settings) == 3  # 재시도는 한 번뿐
+
+    def test_no_new_image_means_no_retry(self, tmp_path):
+        result, settings = self._run(tmp_path, [_http_error(400, _UNDECODABLE_BODY)])
+        assert not result.success and "LLM call failed" in result.error
+        assert len(settings) == 1
+
+    def test_other_400_is_not_retried(self, tmp_path, monkeypatch):
+        path, _sha = self._image(tmp_path, monkeypatch)
+        result, settings = self._run(
+            tmp_path,
+            [
+                {"action": "view_image", "path": path},
+                _http_error(400, '{"error":{"message":"bad request"}}'),
+            ],
+        )
+        assert not result.success and len(settings) == 2

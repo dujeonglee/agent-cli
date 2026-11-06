@@ -257,6 +257,7 @@ scratchpad `vision/measure/measure.py`.
 
 | 버전 | 내용 |
 |---|---|
+| v10.113.0 | §13: 디코딩 불가 이미지가 런을 죽이지 않게 — `images.decode_check`(Pillow `load()`), `view_image` 가 본문을 풀어 보고 손상본은 도구 오류(보관 안 함), `_encode_bytes` 는 Pillow 가 있으면 크기와 무관하게 언제나 `load()` 해 손상본이 `cannot encode (…) — the file is damaged or incomplete; regenerate it` 사유 줄로, OpenAI 호환 400 `image_url`+`decodable`(상태 코드 게이트, `is_undecodable_image_error`)이면 마지막 성공 요청 뒤 새로 들어간 그림만 막고(`CallSettings.blocked_images` → `expand(blocked=)`) 한 번 재시도. |
 | v10.101.0 | 보관소 `.agent-cli/images/<sha256>.<ext>`: `make_ref` 가 사본을 남기고 공급자 경계·웹 썸네일(`?v=<sha256>`)이 그것부터 읽는다 — 덮어쓴 그림도 기록된 그림(사용자 결정: 카드는 그때 본 것의 기록). 모델 쪽도 "file changed" 사유 줄 대신 기록된 그림이 가서 대화 앞부분이 안 바뀐다. 보관본이 없으면(이전 기록) 해시 맞는 원본만, 아니면 사유/404. 마크다운 그림은 참조가 없어 `&t=` 로 주소만 가른다. 정리(GC) 없음 — 같은 내용은 한 번. |
 | v10.100.1 | 썸네일·마크다운 그림 URL 에 판(`&v=`) — 참조가 있으면 `sha256` 앞 16자, 없으면 그린 시각. 브라우저는 한 문서 안에서 같은 URL 의 이미지를 메모리에서 다시 써(`no-cache` 무관) 덮어쓴 스크린샷의 새 카드가 옛 그림을 그렸다(사용자 제보). 서버는 `v` 를 보지 않고 지금 파일을 준다 — 새로고침 뒤의 옛 카드는 지금 그림이다(과거 내용은 저장하지 않는다). |
 | v10.77.0 | §12: `view_image` 도구(read_file 이미지 분기 이전), 도구를 바꾸는 층 `loop/reroute.py`(read_file 이미지 → view_image, 레코드에 바뀐 호출 + `rewritten_from`), 장수 상한 `keep_recent`·`AGENT_CLI_IMAGE_KEEP` 삭제(압축만), 요약 IMAGES 항목·`## Images viewed in earlier turns` 블록(`image_list`), read_file 의 텍스트 아님 한 줄. |
@@ -336,4 +337,29 @@ scratchpad `vision/measure/measure.py`.
 뒤 다시 보기 수·요약의 IMAGES 항목, 그림에서 읽을 값을 틀린 수, 이미지 턴의 TTFT·`cached_tokens`,
 그다음 통과 수·턴 수. **회귀**(어느 한 모델이라도 두 짝 모두에서 두 과제 통과 수가 기준보다 적거나
 다시 보기·압축이 눈에 띄게 늘면)면 이미지를 read_file 로 되돌리고 층은 규칙만 비운 채 남긴다.
+
+## 13. 디코딩 불가 이미지 (v10.113.0, 2026-11-07)
+
+### 13.1 사실 (벤치 실측)
+
+gcode 과제 `-n 1` 40 트라이얼 중 3회(`tb21-glm53flash-oq4-off-n1-{base-8,cand-9,v110-8}`)에서 런이 이렇게 죽었다:
+
+1. 모델이 손수 PNG 를 만든다(zlib·struct 로 직접 씀). 헤더(시그니처·IHDR)는 정상이고 본문(IDAT)이 잘렸거나 비었다. 실물 둘(20,435 B 1057×1378, 70 B 870×310) 모두 Pillow `Image.open(…).verify()` 는 **통과**하고 `load()` 만 `OSError: image file is truncated (0 bytes not processed)` 로 실패한다 — 그래서 검사는 `load()` 다.
+2. `view_image` 는 매직 바이트(`sniff_image`)와 헤더 크기(`image_size`)만 보고 성공을 돌려줬다.
+3. 공급자 경계 `images.encode` → `_encode_bytes` 는 Pillow 가 있어도 긴 변 2048 초과·5MB 초과일 때만 `load()` 했다. 작은 손상 PNG 는 원본 바이트 그대로 `image_url` 조각이 됐다.
+4. omlx 가 400 `{"error":{"message":"image_url does not contain a decodable image.","type":"invalid_request_error","param":"image_url"}}` 을 돌려주고, `loop/llm.py` 의 except 는 overflow 가 아니라 `LLM call failed` 로 런을 끝냈다.
+
+### 13.2 세 울타리
+
+| 울타리 | 자리 | Pillow 있음 | Pillow 없음 |
+|---|---|---|---|
+| F1 | `view_image._run` — `make_ref` **전에** `images.decode_check(data)`(`load()`) | 손상본을 도구 오류로: `view_image: <path> is a PNG whose image data cannot be decoded (<Pillow 오류 한 줄>) — the file is damaged or incomplete; regenerate it`. 그림을 붙이지도 보관소에 남기지도 않는다. | 검사 못 함 — 종전대로 헤더만 보고 통과. 문구에 Pillow 설치를 권하지 않는다(이 오류는 Pillow 가 있을 때만 난다). |
+| F2 | 공급자 경계 `_encode_bytes` — 크기와 무관하게 언제나 `im.load()` | 레코드에 이미 들어간 손상본(이전 세션·`run --image`·웹 업로드·MCP 그림)이 조각 대신 `(image <path> not shown: cannot encode (<오류>) — the file is damaged or incomplete; regenerate it)` 사유 줄. 비용은 파일당 한 번(`_encode_cache`). | 해당 없음(원본 그대로) |
+| F3 | `loop/llm.py` except — `images.is_undecodable_image_error(e)` | 두 울타리를 지난 경우의 마지막 그물 | **유일한 보호.** HTTP 400 **상태 코드 게이트** 위에서 본문에 `image_url` 과 `decodable` 이 함께 있을 때만. 마지막 성공 요청에 실리지 않았던 그림(sha256)을 막힌 집합에 넣고 턴을 되돌려 한 번 재시도한다 — 막힌 그림은 `CallSettings.blocked_images` → `images.expand(blocked=)` 로 조각 대신 `(image <path> not shown: the server could not decode it — the file is damaged or incomplete; regenerate it)`. 상태 줄 `Server rejected an image as undecodable — retrying without it`. 새로 들어간 그림이 없으면 재시도 없이 실패, 재시도는 성공 사이에 한 번(두 번째 400 은 실패). 막힌 집합은 루프 상태 — 세션에 저장하지 않고, 레코드는 건드리지 않는다. |
+
+### 13.3 범위 밖
+
+- 서버는 어느 그림인지 말하지 않는다 — 이분 탐색이나 전체 그림 제거는 하지 않는다. 마지막 성공 요청 뒤 새로 들어간 그림을 모두 막는다(보통 한 장).
+- Anthropic 공급자의 손상 이미지 오류 문구는 모른다 — F3 는 OpenAI 호환 경로(omlx 실측)의 문구만 알아본다. 지어내지 않는다.
+- `view_image` 에 Pillow 설치 안내를 넣지 않는다.
 

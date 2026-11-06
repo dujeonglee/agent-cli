@@ -90,7 +90,10 @@ class AnthropicProvider:
             capabilities, self.capability_transport, self.base_url, model, self.api_key
         )
         messages = _images.expand(
-            messages, enabled=enabled, part=_images.anthropic_part
+            messages,
+            enabled=enabled,
+            part=_images.anthropic_part,
+            blocked=(kwargs.get("settings") or CallSettings()).blocked_images,
         )
         body: dict = {
             "model": model,

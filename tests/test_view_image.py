@@ -88,6 +88,45 @@ class TestTool:
         assert order.index("code_index") + 1 == order.index("view_image")
 
 
+class TestUndecodable:
+    """v10.113.0: Pillow 가 있으면 본문까지 풀어 본다 — 헤더만 정상인 손상 PNG 는
+    도구 오류로 돌려주고 그림을 붙이지도 보관하지도 않는다 (docs/vision/DESIGN.md §13)."""
+
+    def test_damaged_png_is_a_tool_error(self, tmp_path):
+        from agent_cli import images
+        from tests.test_images import bad_png
+
+        p = bad_png(tmp_path / "cut.png")
+        r = TOOLS["view_image"].run({"path": str(p)})
+        assert not r.success and not r.images
+        assert r.error.startswith(
+            f"view_image: {p} is a PNG whose image data cannot be decoded ("
+        )
+        assert r.error.endswith(") — the file is damaged or incomplete; regenerate it")
+        sha = __import__("hashlib").sha256(p.read_bytes()).hexdigest()
+        assert not images.stored_path(sha, "image/png").exists()  # 보관소에 사본 없음
+
+    def test_missing_idat_too(self, tmp_path):
+        from tests.test_images import bad_png
+
+        p = bad_png(tmp_path / "none.png", idat=None)
+        r = TOOLS["view_image"].run({"path": str(p)})
+        assert not r.success and "cannot be decoded" in r.error
+
+    def test_without_pillow_it_passes_as_before(self, tmp_path, monkeypatch):
+        from agent_cli import images
+        from tests.test_images import bad_png
+
+        monkeypatch.setattr(images, "has_pillow", lambda: False)
+        p = bad_png(tmp_path / "cut.png")
+        r = TOOLS["view_image"].run({"path": str(p)})
+        assert r.success and r.images  # 헤더만 본다 — 공급자 경계(F3)가 남은 울타리
+
+    def test_a_good_png_still_attaches(self, shot):
+        r = TOOLS["view_image"].run({"path": shot})
+        assert r.success and r.images
+
+
 class TestAdvertised:
     def _tools(self, vision):
         from unittest.mock import MagicMock

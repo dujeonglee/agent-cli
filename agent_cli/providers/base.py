@@ -116,6 +116,9 @@ class CallSettings:
     #: None/빈 dict = 세션이 정한 값 없음 → 모델 엔트리(capabilities) → 보내지 않음.
     #: 해석은 :func:`resolve_sampling` 한 곳.
     sampling: dict | None = None
+    #: v10.113.0 — 서버가 디코딩하지 못해 막은 그림의 sha256 (루프 상태, 세션에 저장
+    #: 안 함). 공급자 경계 ``images.expand(blocked=)`` 가 조각 대신 사유 줄로 바꾼다.
+    blocked_images: frozenset[str] = frozenset()
 
 
 #: 샘플링 노브 이름 — 요청 본문 키와 같다 (OpenAI·Anthropic 둘 다 이 이름).

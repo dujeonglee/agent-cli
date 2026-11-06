@@ -771,3 +771,162 @@ class TestStore:
         dest = images.stored_path(sha, "image/png")
         assert dest.read_bytes() == data
         assert [p.name for p in dest.parent.iterdir()] == [dest.name]  # 임시 파일 없음
+
+
+# ── 디코딩 불가 이미지 (v10.113.0, docs/vision/DESIGN.md §13) ─────────────
+
+
+def bad_png(path: Path, *, idat: bytes | None = b"\x78\x9c\x63") -> Path:
+    """시그니처·IHDR 는 정상이고 본문(IDAT)이 잘렸거나(기본) 없는 PNG — 모델이 손수
+    만든 실물과 같은 모양을 테스트가 직접 만든다(실물 복사 아님)."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    body = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", 40, 20, 8, 2, 0, 0, 0)
+    )
+    if idat is not None:
+        body += chunk(b"IDAT", idat)
+    body += chunk(b"IEND", b"")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    return path
+
+
+class TestDecodeCheck:
+    def test_truncated_and_missing_idat_are_caught(self, tmp_path):
+        for name, idat in (("cut.png", b"\x78\x9c\x63"), ("none.png", None)):
+            data = bad_png(tmp_path / name, idat=idat).read_bytes()
+            # 헤더 검사는 통과한다 — 그래서 본문까지 풀어 봐야 한다
+            assert images.sniff_image(data[:16]) == "image/png"
+            assert images.image_size(data) == (40, 20)
+            assert images.decode_check(data), name
+
+    def test_verify_would_pass_but_load_does_not(self, tmp_path):
+        """`verify()` 가 아니라 `load()` 인 이유 — 본문이 잘린 PNG 를 verify 는 통과시킨다."""
+        data = bad_png(tmp_path / "cut.png").read_bytes()
+        with Image.open(io.BytesIO(data)) as im:
+            im.verify()  # 예외 없음
+        assert images.decode_check(data)
+
+    def test_a_good_png_passes(self, tmp_path):
+        assert images.decode_check(make_png(tmp_path / "ok.png").read_bytes()) is None
+
+    def test_without_pillow_it_cannot_check(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(images, "has_pillow", lambda: False)
+        assert images.decode_check(bad_png(tmp_path / "cut.png").read_bytes()) is None
+
+
+class TestEncodeUndecodable:
+    def test_small_damaged_png_is_a_reason_not_a_part(self, tmp_path):
+        """작아서 축소하지 않는 손상본도 본문을 푼다 — 종전엔 원본 그대로 조각이 되어
+        서버가 요청을 400 으로 거절했다."""
+        p = bad_png(tmp_path / "cut.png")
+        with pytest.raises(Exception, match="truncated|broken|decompress|not enough"):
+            images._encode_bytes(p.read_bytes(), "image/png")
+        got = images.encode(images.make_ref(p))
+        assert isinstance(got, str) and got.startswith("cannot encode (")
+        assert got.endswith(f"— {images.UNDECODABLE_HINT}")
+
+    def test_the_failure_reason_is_cached(self, tmp_path, monkeypatch):
+        """실패 사유도 같은 키로 캐시한다 — 레코드에 남은 손상본을 턴마다 다시 읽고
+        다시 풀지 않는다(큰 잘린 파일이면 턴마다 비용)."""
+        ref = images.make_ref(bad_png(tmp_path / "cut.png"))
+        decodes, reads = [], []
+        real_encode, real_read = images._encode_bytes, Path.read_bytes
+
+        def counting_encode(data, mime):
+            decodes.append(1)
+            return real_encode(data, mime)
+
+        def counting_read(self):
+            reads.append(self.name)
+            return real_read(self)
+
+        monkeypatch.setattr(images, "_encode_bytes", counting_encode)
+        monkeypatch.setattr(Path, "read_bytes", counting_read)
+        first = images.encode(ref)
+        second = images.encode(ref)
+        assert isinstance(first, str) and second == first
+        assert len(decodes) == 1 and len(reads) == 1  # 두 번째는 읽지도 풀지도 않는다
+
+    def test_too_large_reason_is_cached_too(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(images, "has_pillow", lambda: False)
+        monkeypatch.setattr(images, "IMAGE_MAX_BYTES", 100)
+        ref = images.make_ref(make_png(tmp_path / "big.png", size=(300, 200)))
+        calls = []
+        real = images._encode_bytes
+        monkeypatch.setattr(
+            images, "_encode_bytes", lambda d, m: calls.append(1) or real(d, m)
+        )
+        first = images.encode(ref)
+        assert first.startswith("too large (") and images.encode(ref) == first
+        assert len(calls) == 1
+
+    def test_expand_puts_the_reason_line_instead_of_a_part(self, tmp_path):
+        p = bad_png(tmp_path / "cut.png")
+        ref = images.make_ref(p)
+        msgs = [{"role": "user", "content": "look", "images": [ref.to_dict()]}]
+        (m,) = images.expand(msgs, enabled=True, part=images.openai_part)
+        assert isinstance(m["content"], str)  # 조각 없음
+        assert f"(image {ref.path} not shown: cannot encode (" in m["content"]
+        assert images.UNDECODABLE_HINT in m["content"]
+
+
+class TestUndecodableServerError:
+    @staticmethod
+    def _http(status: int, body: str):
+        import requests
+
+        r = requests.Response()
+        r.status_code = status
+        return requests.HTTPError(f"{status} Error: {body}", response=r)
+
+    OMLX = (
+        '{"error":{"message":"image_url does not contain a decodable image.",'
+        '"type":"invalid_request_error","param":"image_url"}}'
+    )
+
+    def test_400_with_the_phrase(self):
+        assert images.is_undecodable_image_error(self._http(400, self.OMLX))
+
+    def test_400_with_another_phrase(self):
+        assert not images.is_undecodable_image_error(
+            self._http(400, '{"error":{"message":"bad request"}}')
+        )
+
+    def test_status_gate(self):
+        """문구만으로는 안 된다 — 500 이면 같은 문구라도 거짓."""
+        assert not images.is_undecodable_image_error(self._http(500, self.OMLX))
+
+    def test_not_an_http_error(self):
+        assert not images.is_undecodable_image_error(ValueError(self.OMLX))
+
+
+class TestExpandBlocked:
+    def test_blocked_sha_becomes_a_reason_line(self, tmp_path):
+        good = images.make_ref(make_png(tmp_path / "a.png"))
+        other = images.make_ref(make_png(tmp_path / "b.png", color=(0, 255, 0)))
+        msgs = [
+            {
+                "role": "user",
+                "content": "two",
+                "images": [good.to_dict(), other.to_dict()],
+            }
+        ]
+        (m,) = images.expand(
+            msgs, enabled=True, part=images.openai_part, blocked={good.sha256}
+        )
+        parts = [p for p in m["content"] if p.get("type") == "image_url"]
+        assert len(parts) == 1  # 막힌 그림만 빠진다
+        assert m["content"][0]["text"].endswith(
+            f"(image {good.path} not shown: {images.SERVER_UNDECODABLE})"
+        )
+        assert images.SERVER_UNDECODABLE == (
+            "the server could not decode it — the file is damaged or incomplete; "
+            "regenerate it"
+        )

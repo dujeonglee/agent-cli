@@ -76,6 +76,12 @@ class LLMCaller:
         # Reactive context-overflow recovery (flow 2) 카운터 — 현재 턴에서
         # 축소-재시도한 횟수. _MAX_OVERFLOW_RETRIES 로 유계.
         self.overflow_retries = 0
+        # 디코딩 불가 그림 (v10.113.0, docs/vision/DESIGN.md §13) — 서버는 어느 그림인지
+        # 말하지 않는다. 마지막 성공 요청에 실린 그림의 sha 를 기억해 두고, 400 이 오면
+        # 그 뒤 새로 들어간 그림만 막고 한 번 재시도한다. 세션에 저장하지 않는다.
+        self._images_sent: set[str] = set()
+        self._images_blocked: set[str] = set()
+        self._image_retry_used = False
         # Size of the last session-state block, reserved from the next turn's
         # compaction budget (see _call_llm).
         self._state_tokens = 0
@@ -459,6 +465,7 @@ class LLMCaller:
                     # 🎲 (v10.69.0) — 세션이 정한 키만; 나머지는 프로바이더가
                     # 모델 엔트리에서(resolve_sampling).
                     sampling=self.ctx.sampling if self.ctx else None,
+                    blocked_images=frozenset(self._images_blocked),
                 ),
                 **extra_call_kwargs,
             )
@@ -490,6 +497,8 @@ class LLMCaller:
             # turn — reset the counter so a later turn gets a fresh budget
             # of shrink-and-retry attempts.
             self.overflow_retries = 0
+            self._images_sent = _images.image_shas(call_messages)
+            self._image_retry_used = False
             return response
         except Exception as e:
             overflow_amounts = classify_overflow(e)
@@ -519,6 +528,27 @@ class LLMCaller:
                     return _RETRY
                 # force_fit could not shrink further (only the anchor
                 # remains) — fall through to a clean failure.
+            if (
+                _images.is_undecodable_image_error(e)
+                and self.ctx
+                and not self._image_retry_used
+            ):
+                # 서버가 그림을 디코딩하지 못했다 — 마지막 성공 요청 뒤 새로 들어간 그림만
+                # 막고(사유 줄로) 한 번 재시도한다. 막을 새 그림이 없으면 아래 실패로.
+                fresh = (
+                    _images.image_shas(call_messages)
+                    - self._images_sent
+                    - self._images_blocked
+                )
+                if fresh:
+                    self._images_blocked |= fresh
+                    self._image_retry_used = True
+                    render_status(
+                        "running",
+                        "Server rejected an image as undecodable — retrying without it",
+                    )
+                    self.state.turn -= 1
+                    return _RETRY
             _debug_log(
                 f"LLM call failed: model={self.cfg.model} iter={self.state.turn} skill={self.cfg.skill_name} error={e}"
             )
