@@ -31,10 +31,11 @@ emission. A wire sentinel the model leaked mid-turn is sanitized once at save
 time (B), so it can't ride back into the prior and re-teach a runaway shape.
 
 Each transition is owned by the plugin via a method on this base class.
+The history serializers (``serialize_assistant_for_history`` ·
+``serialize_terminal_for_history``) and ``render_observation_from_history``
+are abstract — the only implementation is ``engine.Dialect`` (v10.115.1).
 Default implementations are provided for the common cases:
 
-  - ``serialize_assistant_for_history`` — parse + structured-field extraction;
-    sanitizes at save time (``sanitize_thought`` on thought + bare content).
   - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``;
     builds the next-turn prior (live AND resume).
   - ``render_action_input`` — dict → JSON via ``json.dumps``.
@@ -44,11 +45,9 @@ Default implementations are provided for the common cases:
 So a typical plugin only implements the wire-shape-specific abstract
 methods: ``parse_turn``(루프의 1차 파서 — v8.41.0 추상 승격),
 ``render_full_example``, ``format_rules``, and the recovery wording
-strings. The serialize / render defaults compose those into the lifecycle
-automatically — ``serialize`` calls ``self.parse()``(기본 = parse_turn 의
-첫-op 투영) and extracts structured fields; ``render`` calls
-``self.render_full_example()`` to re-emit the wire shape from the stored
-record.
+strings, plus the history serializers above. The ``render`` default
+calls ``self.render_full_example()`` to re-emit the wire shape from the
+stored record.
 
 See ``agent_cli/dialects/specs/json_fc.py`` (spec) + ``engine.py`` for the reference implementation.
 """
@@ -174,7 +173,7 @@ class DialectBase(ABC):
 
     Plugins inherit from this class and override the abstract methods
     that define their wire shape. Concrete defaults handle the common
-    cases (history pipeline round-trip, identity hooks, shared builder)
+    cases (history re-render, identity hooks, shared builder)
     so a typical plugin only specifies what makes its wire shape unique:
     the parser, the rendering of one example, the rules section bits,
     and the recovery wording.
@@ -546,57 +545,30 @@ class DialectBase(ABC):
         """
         return ""
 
-    # ─── History / context-window (default) ─────────────────────
-    # Default implementations of the (A → B) and (B → D) transitions
-    # compose ``self.parse()`` and ``self.render_full_example()``. They
-    # form the round-trip: ``serialize`` and ``render`` are inverses up
-    # to JSON normalization (key order = thought→action→action_input,
-    # default ``json.dumps`` spacing). Plugins override only when their
-    # wire shape needs non-round-trip behavior.
+    # ─── History / context-window ───────────────────────────────
+    # (A → B) 저장과 관찰 재렌더는 추상 — 구현은 ``engine.Dialect`` 하나다
+    # (v10.115.1, 기본 구현 삭제). (B → D) 의 ``render_assistant_from_history``
+    # 만 기본 구현을 가진다: ``self.render_full_example()`` 로 저장된 레코드를
+    # wire shape 로 되돌린다(JSON 정규화 — 키 순서·``json.dumps`` 간격 — 까지).
 
+    @abstractmethod
     def serialize_assistant_for_history(self, raw_text: str) -> dict:
         """Convert a raw emission into the dict stored in history.jsonl.
 
-        Default: ``self.parse(raw_text)`` + structured-field extraction.
-        Returned dict carries ``role="assistant"`` plus
-        ``thought / action / action_input`` as top-level fields when
-        parse succeeded with an action, falling back to bare ``content``
-        when parse produced no action so corrupt emissions still survive
-        in the log for postmortem.
+        Returns ``role="assistant"`` plus ``thought`` and the structured
+        call fields when the emission parsed into at least one op, or bare
+        ``content`` when it did not, so corrupt emissions still survive in
+        the log for postmortem.
 
-        Both branches are sanitized at this single save-time point (the ABI
-        contract): the structured ``thought`` is cleaned inside ``parse``,
-        and the bare ``content`` fallback is passed through
-        :meth:`sanitize_thought` here. This is what keeps a wire sentinel the
-        model leaked from riding back into the next-turn prior (which is built
-        by ``render`` from this record) and re-teaching the runaway shape.
-
-        Routing parse through this default also means the live-dispatch
-        parser and the history-write parser share the same 3-stage
-        fallback — including JSON repair — so a recoverable emission
-        produces the same structured record either way.
+        Save time is the single sanitize point (the ABI contract): the
+        stored ``thought`` comes cleaned from the parser and the bare
+        ``content`` passes through :meth:`sanitize_thought`, so a wire sentinel the model
+        leaked cannot ride back into the next-turn prior (built from this
+        record) and re-teach the runaway shape. A fully-degenerate emission
+        stores empty ``content``, never the raw text.
         """
-        parsed = self.parse(raw_text)
-        if parsed.action:
-            return {
-                "role": "assistant",
-                "thought": parsed.thought or "",
-                "action": parsed.action,
-                "action_input": (
-                    parsed.action_input if parsed.action_input is not None else {}
-                ),
-            }
-        # ``or ""`` (NOT ``or raw_text``): if sanitize empties the content
-        # (a fully-degenerate emission that was nothing but sentinel lines),
-        # the prior must be blank — falling back to raw would re-inject the
-        # exact sentinels we are trying to strip. Bare content that is real
-        # prose (e.g. broken-JSON NO_JSON turns with no ## headers) is left
-        # intact because sanitize returns it unchanged.
-        return {
-            "role": "assistant",
-            "content": self.sanitize_thought(raw_text) or "",
-        }
 
+    @abstractmethod
     def serialize_terminal_for_history(
         self,
         thought: str,
@@ -607,38 +579,25 @@ class DialectBase(ABC):
     ) -> dict:
         """History record for a terminal ``complete`` turn.
 
-        ``open_requests`` (v10.23.0): the request ids still open AFTER this
-        claim was settled — a record-level additive field, only when the model
-        sent ``answers``. The server-parsed render reads it to word the call's
-        result as the harness's own bookkeeping ("removed from the queue …
-        still pending …"); nothing at render time knows the queue otherwise.
-
         The loop's complete handler holds the (possibly nested-envelope-
         unwrapped) result rather than the raw emission, so it cannot route
         through :meth:`serialize_assistant_for_history`. This is the parallel
-        entry point that stores the terminal turn in the SAME shape this
-        format uses for every other op, keeping history homogeneous (and
-        resume / shape-reading tooling consistent — a hand-built record here
-        once stored ``complete`` in a different shape than the rest).
+        entry point; the record must use the SAME shape the dialect uses for
+        every other op, keeping history homogeneous (resume / shape-reading
+        tooling consistent). ``action_input`` is ``_terminal_input(result,
+        answers)``.
 
-        Default is the singular ``{action, action_input}`` shape; multi-op
-        formats override to their ``ops`` shape.
+        ``answers`` (v9.17.0): the request-id claim the model sent, stored
+        verbatim. The record is rebuilt from ``(thought, result)``, not from
+        the emission, so without it nothing — history, the Prompt Inspector,
+        resume, an audit — could say which requests a run declared answered.
 
-        ``answers`` (v9.17.0) is the request-id claim the model sent, stored
-        verbatim. It used to be **dropped**: this record is rebuilt from
-        ``(thought, result)``, not from the model's emission, so the claim
-        existed only in memory for the length of one call. Nothing — history,
-        the Prompt Inspector, resume, an audit — could say which requests a
-        run declared answered, and a live investigation read the rebuilt
-        record as proof the model had sent nothing.
+        ``open_requests`` (v10.23.0): the request ids still open AFTER this
+        claim was settled — a record-level additive field, only when the model
+        sent ``answers``. The server-parsed render reads it to word the call's
+        result as the harness's own bookkeeping; nothing at render time knows
+        the queue otherwise.
         """
-        del open_requests  # 단일 op shape 의 기본 구현은 쓰지 않는다 (engine 이 덮어씀)
-        return {
-            "role": "assistant",
-            "thought": thought or "",
-            "action": "complete",
-            "action_input": _terminal_input(result, answers),
-        }
 
     #: v10.2.0 — 서버가 호출을 파싱하는 방언인가 (요청 `tools`, 응답 `tool_calls`).
     server_parsed: bool = False
@@ -667,6 +626,7 @@ class DialectBase(ABC):
             thought=None, action=tool, action_input=self.render_action_input(args)
         )
 
+    @abstractmethod
     def render_observation_from_history(
         self, record: dict, *, index: int, assistant_index: int | None
     ) -> list[dict] | None:
@@ -676,7 +636,6 @@ class DialectBase(ABC):
         서버 파싱 방언은 op 마다 `{"role": "tool", "tool_call_id": …}` 를 돌려준다;
         id 는 렌더 시점에 결정적으로 합성(``call_<assistant_index>_<op>``)되어 앞
         assistant 의 ``tool_calls`` 와 짝이 맞는다. 기록 스키마는 바뀌지 않는다."""
-        return None
 
     def pair_call_results(self, messages: list[dict]) -> list[dict]:
         """렌더된 요청 메시지 목록의 마무리 (v10.20.0). 서버 파싱 방언은 모든
