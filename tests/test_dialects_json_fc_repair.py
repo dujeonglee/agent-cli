@@ -531,6 +531,30 @@ class TestRenderHelpers:
         out = WF.render_action_input({"read_file_path": "a.py", "read_file_stat": True})
         assert json.loads(out) == {"action": "read_file", "path": "a.py", "stat": True}
 
+    def test_render_action_input_strips_via_tool_strip_prefix(self, monkeypatch):
+        """접두 벗기기는 도구의 `Tool.strip_prefix` 를 거친다 (v10.114.0) — 엔진이
+        규칙을 따로 들지 않는다. 접두가 없는 dict 는 도구 호출로 바꾸지 않는다."""
+        from agent_cli.tools.base import Tool
+        from agent_cli.tools.registry import TOOLS
+
+        seen = []
+        orig = Tool.strip_prefix
+
+        def spy(self, args):
+            seen.append(self.name)
+            return orig(self, args)
+
+        monkeypatch.setattr(Tool, "strip_prefix", spy)
+        out = WF.render_action_input({"read_file_path": "a.py"})
+        assert json.loads(out) == {"action": "read_file", "path": "a.py"}
+        assert seen == ["read_file"]
+        assert TOOLS["read_file"].key_prefix == "read_file_"
+
+        seen.clear()
+        out = WF.render_action_input({"path": "a.py"})
+        assert json.loads(out) == {"path": "a.py"}
+        assert seen == []
+
     def test_render_full_example_wraps_array(self):
         ex = WF.render_full_example(
             thought="t",
