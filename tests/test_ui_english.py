@@ -63,7 +63,7 @@ def _hangul_lines(lines: list[str]) -> list[str]:
 
 
 def test_static_file_list_covers_modules():
-    assert len(_STATIC_FILES) > 4 and "js/main.js" in _STATIC_FILES
+    assert len(_STATIC_FILES) > 4 and "js/channels.js" in _STATIC_FILES
 
 
 @pytest.mark.parametrize("name", _STATIC_FILES)

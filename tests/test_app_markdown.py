@@ -1,15 +1,19 @@
-"""Optional Node-driven smoke tests for the markdown helpers in
-``agent_cli/web/static/js/main.js`` (v10.116.0 전엔 ``app.js`` 의 메인 IIFE).
+"""Optional Node-driven tests for the web front's pure helpers — node **imports the
+real modules** (v10.117.0, docs/web-modules/DESIGN.md §8.6).
 
 These tests run only when a working ``node`` binary is on ``PATH``.
-They extract the markdown helper functions from ``app.js`` and
-evaluate them in a Node VM — that way we exercise the same source
-the browser does, without duplicating the regex logic in Python (the
-"dual source of truth" trap the design called out).
 
-Each test ships a small JS harness that requires the function under
-test, runs it on a known input, and prints the result. The Python
-side captures stdout and asserts on the rendered HTML.
+- ``js/markdown.js`` 는 순수 모듈이다(import 없음, top-level 에서 DOM·window 를
+  건드리지 않음). 하니스가 DOM 대역 없이 그 파일을 그대로 import 한다 — 대역이
+  필요해지면 import 시점에 브라우저 전역을 건드린다는 뜻이라 테스트가 깨진다.
+- ``obsSummary``(cards.js)·에이전트 아이콘(channels.js)은 순환 묶음 안에 있어
+  메인 화면 모듈 그래프 전체가 딸려 온다. 하니스는 DOM 대역(``_DOM_STUB``)을 먼저
+  평가하고 메인 화면 모듈을 **app.js 순서 그대로** import 한다 — 같은 순서의
+  평가가 TDZ 없이 끝나는 것 자체가 ``test_main_screen_graph_evaluates`` 의 단정이다.
+
+v10.116.0 까지는 ``main.js`` 소스를 긁어 함수로 감싸거나(``(function(){…})()``),
+``js_fn_body`` 로 함수 하나씩 떼어 이어 붙였다. 이제 긁기는 없다 — 브라우저와 같은
+파일을 같은 ES 모듈 의미론으로 실행한다.
 
 If ``node`` is missing (clean dev box, CI without Node), the whole
 module is skipped — the markdown contract is then validated via the
@@ -27,115 +31,111 @@ from pathlib import Path
 
 import pytest
 
-from tests.web_static import js_fn_body, js_text
+from tests.web_static import STATIC, module_order
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None,
     reason="node not installed — markdown smoke tests skipped",
 )
 
+# 하니스가 모듈에서 import 하는 이름 — 다른 모듈이 쓰지 않아도 export 되는 것은
+# 이것뿐이다(tests/test_web_static_modules.py 의 "쓰이지 않는 export 금지" 가 센다).
+HARNESS_IMPORTS = {
+    "markdown": (
+        "escapeAndFormat",
+        "extractCodeFences",
+        "renderHeadings",
+    ),
+    "cards": ("obsSummary",),
+    "channels": (
+        "ovAgentIcon",
+        "ovAgentNickname",
+        "OV_AGENT_ICONS",
+        "OV_AGENT_ANIMALS",
+    ),
+}
 
-def _extract_iife_body() -> str:
-    """메인 모듈(``js/main.js``) 본문 — Node 하니스가 ``(function(){ … })()`` 로
-    감싸 실행한다(v10.116.0 전엔 app.js 첫 IIFE 의 여닫이를 정규식으로 벗겼다).
+# 브라우저 전역 대역 — 메인 화면 모듈의 top-level 코드(DOM 참조·리스너 등록·
+# 관찰자·EventSource·첫 fetch)가 node 에서 돌 만큼만. 하니스의 첫 import 로
+# 평가되므로 다른 모듈보다 먼저 전역이 선다.
+_DOM_STUB = """\
+function _stubEl() {
+  return new Proxy({}, {
+    get: function (t, k) {
+      if (k === "classList") return { add: function () {}, remove: function () {}, toggle: function () {} };
+      if (k === "addEventListener") return function () {};
+      if (k === "appendChild") return function () {};
+      if (k === "insertBefore") return function () {};
+      if (k === "removeChild") return function () {};
+      if (k === "parentNode") return _stubEl();
+      if (k === "querySelector") return function () { return null; };
+      if (k === "querySelectorAll") return function () { return []; };
+      if (k === "remove") return function () {};
+      if (k === "style") return {};
+      // v9.26.0 따라가기: #messages[data-pinned] 상태 노출 + 버튼 배치
+      if (k === "dataset") return t.__ds || (t.__ds = {});
+      if (k === "getBoundingClientRect") return function () { return { left: 0, top: 0, width: 0, height: 0, bottom: 0 }; };
+      return t[k];
+    },
+    set: function (t, k, v) { t[k] = v; return true; },
+  });
+}
+globalThis.window = {
+  location: { search: "?token=t", pathname: "/", hash: "", reload: function () {} },
+  addEventListener: function () {},
+};
+// boot.js 가 주소창의 ?token= 을 history.replaceState 로 걷는다.
+globalThis.history = { replaceState: function () {} };
+globalThis.document = {
+  getElementById: function () { return _stubEl(); },
+  createElement: function () { return _stubEl(); },
+  body: _stubEl(),
+};
+globalThis.EventSource = function () { return _stubEl(); };
+// v9.26.0 따라가기가 로드 시 붙이는 관찰자 — 여기선 아무것도 안 본다.
+globalThis.MutationObserver = function () { return { observe: function () {} }; };
+globalThis.ResizeObserver = function () { return { observe: function () {} }; };
+globalThis.fetch = function () { return Promise.resolve({}); };
+"""
 
-    메인 모듈엔 ``import``/``export`` 가 없어야 한다 — 함수 안에 감싸 실행하므로
-    그런 줄이 생기면(2단계 분할) 하니스부터 ``import()`` 로 바꿔야 한다는 신호다.
-    다른 기능 모듈은 로드 시점에 DOM 을 건드리므로 하니스에 딸려 오면 안 된다.
+
+def _module_url(name: str) -> str:
+    return (STATIC / "js" / f"{name}.js").as_uri()
+
+
+def _main_screen() -> list[str]:
+    """app.js 적재 순서 중 메인 화면 모듈 — 기능 모듈(``directives`` 부터)의 앞."""
+    order = module_order()
+    return order[: order.index("directives")]
+
+
+def _harness_import(module: str, *names: str) -> str:
+    assert set(names) <= set(HARNESS_IMPORTS[module]), (module, names)
+    return "import { " + ", ".join(names) + ' } from "' + _module_url(module) + '";\n'
+
+
+def _run_node_harness(source: str, *, dom_stub: bool = False) -> str:
+    """ES 모듈 소스 ``source`` 를 node 로 실행해 stdout 을 돌려준다.
+
+    ``dom_stub`` 이면 브라우저 전역 대역을 먼저 평가하고 메인 화면 모듈을 app.js
+    순서로 import 한 뒤 ``source`` 를 잇는다(정적 import 는 적힌 순서로 평가된다).
     """
-    src = js_text("main")
-    assert not re.search(r"^(?:import|export)\b", src, re.MULTILINE), (
-        "main.js grew import/export — switch this harness to import()"
-    )
-    return src
-
-
-def _run_node_harness(call_expr: str, input_value: str) -> str:
-    """Evaluate ``call_expr(input_value)`` in Node and return stdout.
-
-    The IIFE body is wrapped in a function that stops short of the SSE
-    setup (which expects ``window`` / ``document``) by short-circuiting
-    on the first ``document.getElementById`` lookup. We only need the
-    pure-string helpers defined near the top of the file.
-    """
-    body = _extract_iife_body()
-    # Stop the IIFE from touching browser-only globals. Replace the
-    # DOM ref block with stubs that throw on access; the helper
-    # functions we test don't touch them. The harness then exposes
-    # the named helper via ``globalThis``.
-    stub = (
-        "var window = { location: { search: '?token=t', pathname: '/', hash: '', "
-        "reload: function(){} },\n"
-        "  addEventListener: function(){} };\n"
-        # app.js's bootstrap strips ?token= from the URL via history.replaceState.
-        "var history = { replaceState: function(){} };\n"
-        "function _stubEl(){ return new Proxy({}, {\n"
-        "  get: function(t, k){\n"
-        "    if (k === 'classList') return { add: function(){}, remove: function(){}, "
-        "toggle: function(){} };\n"
-        "    if (k === 'addEventListener') return function(){};\n"
-        "    if (k === 'appendChild') return function(){};\n"
-        "    if (k === 'insertBefore') return function(){};\n"
-        "    if (k === 'removeChild') return function(){};\n"
-        "    if (k === 'parentNode') return _stubEl();\n"
-        "    if (k === 'querySelector') return function(){ return null; };\n"
-        "    if (k === 'querySelectorAll') return function(){ return []; };\n"
-        "    if (k === 'remove') return function(){};\n"
-        "    if (k === 'style') return {};\n"
-        # v9.26.0 따라가기: #messages[data-pinned] 상태 노출 + 버튼 배치
-        "    if (k === 'dataset') return t.__ds || (t.__ds = {});\n"
-        "    if (k === 'getBoundingClientRect') return function(){ "
-        "return { left: 0, top: 0, width: 0, height: 0, bottom: 0 }; };\n"
-        "    return t[k];\n"
-        "  },\n"
-        "  set: function(t, k, v){ t[k] = v; return true; }\n"
-        "}); }\n"
-        "var document = { getElementById: function(){ return _stubEl(); },\n"
-        "  createElement: function(){ return _stubEl(); },\n"
-        "  body: _stubEl() };\n"
-        # Native URLSearchParams (app.js uses .has/.delete/.toString for the
-        # bootstrap-token strip, not just .get).
-        "var URLSearchParams = globalThis.URLSearchParams;\n"
-        "var EventSource = function(){ return _stubEl(); };\n"
-        # v9.26.0 따라가기가 로드 시 붙이는 관찰자 — 여기선 아무것도 안 본다.
-        "var MutationObserver = function(){ return { observe: function(){} }; };\n"
-        "var ResizeObserver = function(){ return { observe: function(){} }; };\n"
-        "var fetch = function(){ return Promise.resolve({}); };\n"
-    )
-    expose = (
-        "\nglobalThis.__escapeAndFormat = escapeAndFormat;\n"
-        "globalThis.__extractCodeFences = extractCodeFences;\n"
-        "globalThis.__restoreCodeFences = restoreCodeFences;\n"
-        "globalThis.__renderHeadings = renderHeadings;\n"
-        "globalThis.__renderTables = renderTables;\n"
-        "globalThis.__renderLists = renderLists;\n"
-        "globalThis.__renderEmphasis = renderEmphasis;\n"
-        "globalThis.__markdownInline = markdownInline;\n"
-        "globalThis.__obsSummary = obsSummary;\n"
-    )
-    harness = (
-        stub
-        + "(function(){\n"
-        + body
-        + expose
-        + "})();\n"
-        + "const input = "
-        + json.dumps(input_value)
-        + ";\n"
-        + f"const out = {call_expr};\n"
-        + "process.stdout.write(typeof out === 'string' ? out : JSON.stringify(out));\n"
-    )
-    # 파일로 넘긴다 — ``node -e <script>`` 는 리눅스의 인자 **1개** 상한
-    # (MAX_ARG_STRLEN = 32페이지 = 128 KiB)에 걸린다. app.js 가 커지다
-    # 128,642 바이트에서 벼랑 끝에 서 있었고, 1 KB 를 더한 커밋이 CI 를
-    # 통째로 빨갛게 만들었다(macOS 엔 그 상한이 없어 로컬은 초록 — "로컬
-    # 통과는 증거가 아니다" 의 교과서적 사례). 파일에는 상한이 없다.
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".js", encoding="utf-8", delete=False
-    ) as fh:
-        fh.write(harness)
-        script = fh.name
-    try:
+    with tempfile.TemporaryDirectory() as tmp:
+        if dom_stub:
+            (Path(tmp) / "stub.mjs").write_text(_DOM_STUB, encoding="utf-8")
+            source = (
+                'import "./stub.mjs";\n'
+                + "".join(f'import "{_module_url(m)}";\n' for m in _main_screen())
+                + source
+            )
+        # 파일로 넘긴다 — ``node -e <script>`` 는 리눅스의 인자 **1개** 상한
+        # (MAX_ARG_STRLEN = 32페이지 = 128 KiB)에 걸린다. app.js 가 커지다
+        # 128,642 바이트에서 벼랑 끝에 서 있었고, 1 KB 를 더한 커밋이 CI 를
+        # 통째로 빨갛게 만들었다(macOS 엔 그 상한이 없어 로컬은 초록 — "로컬
+        # 통과는 증거가 아니다" 의 교과서적 사례). 파일에는 상한이 없다.
+        # ``.mjs`` 라 node 가 ES 모듈로 읽는다.
+        script = str(Path(tmp) / "harness.mjs")
+        Path(script).write_text(source, encoding="utf-8")
         result = subprocess.run(
             ["node", script],
             capture_output=True,
@@ -143,8 +143,6 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
             timeout=10,
             check=False,
         )
-    finally:
-        Path(script).unlink(missing_ok=True)
     if result.returncode != 0:
         raise AssertionError(
             f"node harness failed: {result.stderr.strip()}\nstdout: {result.stdout!r}"
@@ -152,8 +150,26 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
     return result.stdout
 
 
+def _write_out(expr: str) -> str:
+    return (
+        f"const out = {expr};\n"
+        "process.stdout.write(typeof out === 'string' ? out : JSON.stringify(out));\n"
+    )
+
+
+def _markdown(name: str, call: str, input_value: str) -> str:
+    """markdown.js 의 ``name`` 을 DOM 대역 **없이** import 해 ``call`` 을 평가한다."""
+    return _run_node_harness(
+        _harness_import("markdown", name)
+        + "const input = "
+        + json.dumps(input_value)
+        + ";\n"
+        + _write_out(call)
+    )
+
+
 def _format(text: str) -> str:
-    return _run_node_harness("globalThis.__escapeAndFormat(input)", text)
+    return _markdown("escapeAndFormat", "escapeAndFormat(input)", text)
 
 
 class TestEscapeAndFormat:
@@ -259,8 +275,9 @@ class TestMarkdownHelpers:
     """Direct invocations to pin behaviour of individual helpers."""
 
     def test_extract_code_fences_replaces_with_placeholder(self):
-        out = _run_node_harness(
-            "globalThis.__extractCodeFences(input).stripped",
+        out = _markdown(
+            "extractCodeFences",
+            "extractCodeFences(input).stripped",
             "before\n```\ninside\n```\nafter",
         )
         # The fence is replaced by an HTML comment placeholder.
@@ -269,8 +286,9 @@ class TestMarkdownHelpers:
         assert "before" in out and "after" in out
 
     def test_render_headings_only_h1_h3(self):
-        out = _run_node_harness(
-            "globalThis.__renderHeadings(input)",
+        out = _markdown(
+            "renderHeadings",
+            "renderHeadings(input)",
             "# a\n## b\n### c\n#### d\n##### e",
         )
         assert "<h1>a</h1>" in out
@@ -282,47 +300,23 @@ class TestMarkdownHelpers:
         assert "#### d" in out
 
 
-def _extract_fn(name: str) -> str:
-    """메인 모듈의 top-level ``function <name>(...) { ... }`` 를 중괄호 짝으로 자른다
-    (``tests/web_static.js_fn_body``). 하니스 전체를 돌리지 않고 함수 하나만
-    독립 실행할 때 쓴다 — 예: ``ovUserHtml`` 은 ``escapeHtml`` 만 닫아 쓴다."""
-    return js_fn_body(js_text("main"), name)
+def test_markdown_module_is_pure():
+    """markdown.js 는 import 가 없다 — node 가 DOM 대역 없이 import 하는 전제.
+    (실행 쪽 증거는 위 테스트들: 대역 없이 import 해 돌린다.)"""
+    src = (STATIC / "js" / "markdown.js").read_text(encoding="utf-8")
+    assert not re.search(r"^import\b", src, re.MULTILINE)
 
 
-def _ov_render_html(name, entry, *, is_hero=False):
-    """Run app.js's REAL ovUserHtml/ovRespHtml (pure string builders) standalone.
-    They only close over escapeHtml/escapeAndFormat, which we extract alongside —
-    exercising the same source the browser runs. The flat log has NO grouping
-    function anymore (no pairing), so we test the per-entry renderers directly."""
-    deps = _extract_fn("escapeHtml") + "\n"
-    if name == "ovRespHtml":
-        # ovRespHtml uses the markdown pipeline; pull the whole chain.
-        for dep in (
-            "renderTables",
-            "renderHeadings",
-            "renderLists",
-            "renderEmphasis",
-            "markdownInline",
-            "extractCodeFences",
-            "restoreCodeFences",
-            "escapeAndFormat",
-        ):
-            deps += _extract_fn(dep) + "\n"
-    fn = _extract_fn(name)
-    call = (
-        name
-        + "("
-        + json.dumps(entry)
-        + ((", " + ("true" if is_hero else "false")) if name == "ovRespHtml" else "")
-        + ")"
-    )
-    harness = deps + fn + "\n" + "process.stdout.write(" + call + ");\n"
-    result = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=10, check=False
-    )
-    if result.returncode != 0:
-        raise AssertionError(f"node failed: {result.stderr.strip()}")
-    return result.stdout
+def test_main_screen_graph_evaluates():
+    """메인 화면 모듈 그래프가 app.js 순서로 TDZ 없이 평가된다 (DESIGN §8.4).
+
+    모듈끼리 함수 호출로 순환하고, 순환에서는 처음 import 된 모듈이 마지막에
+    평가된다. top-level 에서 순환 안 함수를 부르는 채널 바 IIFE(channels.js)가
+    다른 모듈의 const(frames 등)를 읽으므로, 진입점이 바뀌어 channels 가 먼저
+    평가되면 ``ReferenceError: Cannot access 'frames' before initialization`` 이
+    난다 — 브라우저에선 화면이 통째로 안 뜬다."""
+    out = _run_node_harness("process.stdout.write('ok');\n", dom_stub=True)
+    assert out == "ok"
 
 
 _PARITY_KEYS = [
@@ -337,30 +331,9 @@ _PARITY_KEYS = [
 ]
 
 
-def _js_pool(src, name):
-    return re.search(rf"var {name} = (\[[\s\S]*?\]);", src).group(1)
-
-
-def _js_fn(src, name):
-    return js_fn_body(src, name)
-
-
-def _run_js(prelude, expr, keys):
-    harness = (
-        prelude
-        + "\nconst ks="
-        + json.dumps(keys)
-        + ";\nprocess.stdout.write(ks.map(k=>("
-        + expr
-        + ")).join('\\n'));"
-    )
-    return subprocess.run(
-        ["node", "-e", harness],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    ).stdout.splitlines()
+def _channels(names: tuple[str, ...], body: str) -> str:
+    """channels.js 의 ``names`` 를 메인 화면 그래프째(DOM 대역 위) import 해 ``body`` 를 돌린다."""
+    return _run_node_harness(_harness_import("channels", *names) + body, dom_stub=True)
 
 
 class TestAgentIconParity:
@@ -374,14 +347,11 @@ class TestAgentIconParity:
     def test_js_python_icon_parity(self):
         from agent_cli.agent_icon import agent_icon
 
-        src = js_text("main")
-        prelude = (
-            f"var OV_AGENT_ICONS = {_js_pool(src, 'OV_AGENT_ICONS')};\n"
-            + _js_fn(src, "ovAgentHash")
-            + "\n"
-            + _js_fn(src, "ovAgentIcon")
-        )
-        out = _run_js(prelude, "ovAgentIcon(k)", _PARITY_KEYS)
+        out = _channels(
+            ("ovAgentIcon",),
+            f"const ks = {json.dumps(_PARITY_KEYS)};\n"
+            "process.stdout.write(ks.map((k) => ovAgentIcon(k)).join('\\n'));\n",
+        ).splitlines()
         assert len(out) == len(_PARITY_KEYS)
         for key, js_icon in zip(_PARITY_KEYS, out):
             assert agent_icon(key) == js_icon, (
@@ -392,15 +362,11 @@ class TestAgentIconParity:
         """v9.9.0 — 별명 풀·해시도 양쪽이 같아야 한다."""
         from agent_cli.agent_icon import agent_nickname
 
-        src = js_text("main")
-        prelude = (
-            f"var OV_AGENT_ANIMALS = {_js_pool(src, 'OV_AGENT_ANIMALS')};\n"
-            f"var OV_AGENT_ADJECTIVES = {_js_pool(src, 'OV_AGENT_ADJECTIVES')};\n"
-            + _js_fn(src, "ovAgentHash")
-            + "\n"
-            + _js_fn(src, "ovAgentNickname")
-        )
-        out = _run_js(prelude, "ovAgentNickname(k)", _PARITY_KEYS)
+        out = _channels(
+            ("ovAgentNickname",),
+            f"const ks = {json.dumps(_PARITY_KEYS)};\n"
+            "process.stdout.write(ks.map((k) => ovAgentNickname(k)).join('\\n'));\n",
+        ).splitlines()
         assert len(out) == len(_PARITY_KEYS)
         for key, js_nick in zip(_PARITY_KEYS, out):
             assert agent_nickname(key) == js_nick, (
@@ -410,18 +376,21 @@ class TestAgentIconParity:
     def test_animal_pool_is_paired_with_the_icon_pool(self):
         """ "🦊 날쌘 여우" 가 어긋나지 않으려면 같은 인덱스여야 한다 — 길이
         불일치는 조용히 짝을 깨므로(아이콘만 늘리면 % 가 달라진다) 고정한다."""
-        import re
-
         from agent_cli.agent_icon import AGENT_ANIMALS, AGENT_ICONS
 
         assert len(AGENT_ICONS) == len(AGENT_ANIMALS)
-        src = js_text("main")
+        pools = json.loads(
+            _channels(
+                ("OV_AGENT_ICONS", "OV_AGENT_ANIMALS"),
+                "process.stdout.write(JSON.stringify("
+                "{ OV_AGENT_ICONS, OV_AGENT_ANIMALS }));\n",
+            )
+        )
         for py_pool, js_name in (
             (AGENT_ICONS, "OV_AGENT_ICONS"),
             (AGENT_ANIMALS, "OV_AGENT_ANIMALS"),
         ):
-            js = re.findall(r'"([^"]+)"', _js_pool(src, js_name))
-            assert js == py_pool, f"{js_name}: 풀이 서버와 다르다"
+            assert pools[js_name] == py_pool, f"{js_name}: 풀이 서버와 다르다"
 
 
 def test_harness_does_not_pass_the_script_as_an_argv_string():
@@ -462,7 +431,10 @@ class TestObsSummaryAbsorbedRequest:
 
     def _sum(self, text, failed=False):
         return _run_node_harness(
-            f"globalThis.__obsSummary(input, {'true' if failed else 'false'})", text
+            _harness_import("cards", "obsSummary")
+            + f"const input = {json.dumps(text)};\n"
+            + _write_out(f"obsSummary(input, {'true' if failed else 'false'})"),
+            dom_stub=True,
         )
 
     def test_shows_who_and_the_first_line_of_the_request(self):
