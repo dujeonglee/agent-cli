@@ -510,6 +510,16 @@ function renderActionInput(toolName, toolInputStr) {
   );
 }
 
+/** fetch 실패의 원인 칩 (v10.118.0) — 본문 첫 줄 `Fetch failed (<cause>): <url>`
+ *  에서 `cause` 를 뽑는다. 레코드에 필드를 더하지 않고 문구의 첫 줄이 곧 문법이다
+ *  (tools/fetch.py `failure_text`). 다른 도구·다른 모양이면 null. */
+const FETCH_FAILED_HEAD = /^Fetch failed \(([a-z-]+)\): \S+$/;
+function fetchCauseChip(tool, content, success) {
+  if (tool !== "fetch" || success) return null;
+  const m = FETCH_FAILED_HEAD.exec(String(content || "").split("\n", 1)[0]);
+  return m ? el("span", ["obs-cause"], m[1]) : null;
+}
+
 export function renderObservation(d) {
   const card = el("div", ["card", "card-observation"]);
   card.classList.add(d.success ? "ok" : "fail");
@@ -540,18 +550,23 @@ export function renderObservation(d) {
   // 종류 칸은 **도구 이름** — "결과"라고만 쓰면 어느 도구의 결과인지 알 수
   // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
   // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
-  const row = makeRow(
-    d.success ? "✓" : "✗", tool || "result", obsSummary(content, !d.success), body,
-    [d.success ? "ok" : "bad"]
-  );
   // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
   const step = pendingStep[stepKey(d)];
+  const attach = step && step.turn === d.turn;
+  // 원인 칩은 **접힌 채 보이는 머리 행**에 선다 — 스텝에 붙으면 스텝 머리의
+  // 배지 줄(✗ 앞), 단독 카드면 관찰 행의 꼬리 칸.
+  const cause = fetchCauseChip(tool, content, d.success);
+  const row = makeRow(
+    d.success ? "✓" : "✗", tool || "result", obsSummary(content, !d.success), body,
+    [d.success ? "ok" : "bad"], attach ? null : cause
+  );
   // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
   // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
-  if (step && step.turn === d.turn) {
+  if (attach) {
     delete pendingStep[stepKey(d)];
     step.md.obs.push({ tool: tool, content: content, success: !!d.success });
     step.body.appendChild(row);
+    if (cause) step.badges.appendChild(cause);
     step.badges.appendChild(
       el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
     );

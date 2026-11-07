@@ -5,7 +5,7 @@
   {
    "id": "search.engines",
    "group": "search",
-   "text": "www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n— engines often answer automated requests with a bot check; fetch then fails with \"Bot check:\" or\n\"Needs JavaScript:\", and the browser tool can open the same search (a person can pass the check there)"
+   "text": "www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n— engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n\"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)"
   },
   {
    "id": "wiki.summary",

@@ -928,6 +928,24 @@ class TestStaticUI:
         # 행 자체는 텍스트 — makeRow 가 el() 로 만든다(주입 표면 없음)
         assert "makeRow(" in body
 
+    def test_fetch_failure_head_makes_a_cause_chip(self, server_and_client):
+        """v10.118.0: fetch 실패 첫 줄 `Fetch failed (<cause>): <url>` 에서 원인을 뽑아
+        머리 행에 `.obs-cause` 칩을 단다 — 레코드 필드가 아니라 문구의 첫 줄이 문법
+        (tools/fetch.py `failure_text`). 칩은 텍스트(el)이고 실패 토큰으로 그린다."""
+        _, _, client = server_and_client
+        js = js_text("cards")
+        chip = js_fn_body(js, "fetchCauseChip")
+        assert 'tool !== "fetch"' in chip
+        assert 'el("span", ["obs-cause"], m[1])' in chip
+        assert "const FETCH_FAILED_HEAD = /^Fetch failed \\(([a-z-]+)\\): \\S+$/;" in js
+        body = js_fn_body(js, "renderObservation")
+        assert "fetchCauseChip(tool, content, d.success)" in body
+        assert "step.badges.appendChild(cause)" in body  # 스텝 머리(접힌 채 보임)
+        assert "attach ? null : cause" in body  # 단독 카드면 관찰 행의 꼬리 칸
+        css = client.get("/static/style.css").text
+        block = css.split(".obs-cause {", 1)[1].split("}", 1)[0]
+        assert "var(--fail)" in block and "var(--fail-soft-border)" in block
+
     def test_action_detail_wraps_long_paths(self, server_and_client):
         """긴 절대경로(공백 없음)가 카드 박스를 넘지 않도록 줄바꿈 규칙 —
         read_file/edit_file 액션 상세가 가로로 삐져나가던 것 수리(v8.42.3).
