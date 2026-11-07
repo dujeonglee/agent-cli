@@ -1116,6 +1116,84 @@ class TestHeaderWorkspace:
         assert all(ev != "ready" for (ev, _) in r._event_buffer)
 
 
+class TestNestedLoopHeader:
+    """v10.114.1: 스킬이 아닌 중첩 루프(one-shot/delegate 워커·상주 에이전트·
+    하니스 작업)의 ``header()`` 도 세션 ready 스티키를 덮지 않는다 — 서브
+    루프는 다른 모델로 돌 수 있어, 덮이면 늦게 접속한 뷰어의 상단 바가 서브
+    에이전트의 모델을 보인다. 중첩 판정은 호출 스레드의 스코프 기준."""
+
+    @staticmethod
+    def _ready(r):
+        snapshot = r.register_connection(WebConnection(id=f"c{time.monotonic_ns()}"))
+        assert snapshot[0][0] == "identity"
+        event, data = snapshot[1]
+        assert event == "ready"
+        return data
+
+    @staticmethod
+    def _no_ready_in_buffer(r):
+        assert all(ev != "ready" for (ev, _) in r._event_buffer)
+
+    def test_same_thread_scope_header_skipped_then_restored(self):
+        r = WebRenderer(workspace="/proj")
+        r.header("openai", "main-model", 10)
+        r.begin_scope(task_id="t1", kind="run")
+        assert r.in_nested_render() is True
+        r.header("openai", "sub-model", 5)
+        r.end_scope(task_id="t1")
+        assert r.in_nested_render() is False
+        assert self._ready(r)["model"] == "main-model"
+        self._no_ready_in_buffer(r)
+        # 최상위로 돌아오면 다시 세션 헤더다.
+        r.header("openai", "main-model-2", 10)
+        assert self._ready(r)["model"] == "main-model-2"
+
+    def test_worker_thread_scope_header_skipped(self):
+        r = WebRenderer(workspace="/proj")
+        r.header("openai", "main-model", 10)
+        seen = {}
+
+        def worker():
+            r.begin_scope(task_id="w1", kind="run", parent="")
+            seen["nested"] = r.in_nested_render()
+            r.header("other", "sub-model", 5)
+            r.end_scope(task_id="w1")
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=5)
+        assert seen["nested"] is True
+        # 메인 스레드는 스코프 밖 그대로.
+        assert r.in_nested_render() is False
+        data = self._ready(r)
+        assert data["model"] == "main-model"
+        assert data["provider"] == "openai"
+
+    def test_resident_prompt_scope_header_skipped(self):
+        r = WebRenderer(workspace="/proj")
+        r.header("openai", "main-model", 10)
+        r.begin_prompt_scope("agt-1", label="agent:x")
+        assert r.in_nested_render() is True
+        r.header("openai", "sub-model", 5)
+        assert self._ready(r)["model"] == "main-model"
+        r.end_prompt_scope("agt-1")
+        assert r.in_nested_render() is False
+        r.header("openai", "main-model-2", 10)
+        assert self._ready(r)["model"] == "main-model-2"
+
+    def test_agent_work_header_skipped(self):
+        r = WebRenderer(workspace="/proj")
+        r.header("openai", "main-model", 10)
+        r.begin_agent_work(key="agt-1", item="u-1", profile="", message="do it")
+        assert r.in_nested_render() is True
+        r.header("openai", "sub-model", 5)
+        assert self._ready(r)["model"] == "main-model"
+        r.end_agent_work(key="agt-1", item="u-1", success=True, duration_s=0.1)
+        assert r.in_nested_render() is False
+        r.header("openai", "main-model-2", 10)
+        assert self._ready(r)["model"] == "main-model-2"
+
+
 class TestDelegateTaskVisibility:
     """Parallel delegate worker threads register themselves via
     ``begin_delegate_task`` so subsequent emits from the worker are

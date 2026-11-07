@@ -644,6 +644,19 @@ class WebRenderer(Renderer):
             self._scope_final[scope] = final
         self._persist_prompt_view(scope)
 
+    def in_nested_render(self) -> bool:
+        """호출 스레드가 스코프 안이면 True — ``begin_scope``·
+        ``begin_prompt_scope`` 가 채우는 스택이나 ``begin_agent_work`` 가 채우는
+        ``_thread_to_task`` 중 하나라도 있으면 중첩 루프다(짝 ``end_*`` 가 비운다).
+
+        기반의 ``_depth`` 는 프로세스 전역 정수라 병렬 워커·상주 에이전트의
+        스레드를 가려낼 수 없다 — 그래서 웹은 스레드 기준으로 판정한다."""
+        tid = threading.get_ident()
+        with self._lock:
+            return bool(self._thread_prompt_scopes.get(tid)) or bool(
+                self._thread_to_task.get(tid)
+            )
+
     def current_scope(self) -> str:
         """This thread's innermost open scope id ("" = main). Captured by code
         that is about to spawn worker threads: the worker's own stack is empty,
@@ -1464,7 +1477,10 @@ class WebRenderer(Renderer):
         # frontend's top bar should keep showing "provider · model ·
         # cwd" while a sub-flow runs, not flicker to a skill name and
         # back. Skip non-top-level headers entirely.
-        if skill_name or skill_args:
+        # 스킬 배너는 어떤 경우에도 세션 헤더가 아니다. 스킬이 아닌 서브루프
+        # (one-shot/delegate 워커·상주 에이전트·하니스 작업)는 다른 모델로 돌 수
+        # 있어 스레드 스코프로 거른다 (v10.114.1, in_nested_render).
+        if skill_name or skill_args or self.in_nested_render():
             return
         payload = {
             "provider": provider,

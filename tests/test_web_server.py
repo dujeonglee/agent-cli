@@ -2673,6 +2673,47 @@ class TestWorkspaceDelete:
         assert "rootSize" in js or "totalSize" in js
 
 
+class TestJsonObjectBody:
+    """v10.114.1: 본문을 직접 읽는 여섯 핸들러는 가드 하나(``_json_object``)
+    를 쓴다 — 잘못된 JSON 과 객체 아닌 JSON 이 500 대신 400."""
+
+    class _Reg:
+        def request(self, *a, **k):
+            return ""
+
+    _ENDPOINTS = (
+        "/api/workspace/download",
+        "/api/workspace/delete",
+        "/api/agent/agt-1/input",
+        "/api/input",
+        "/api/queue/cancel",
+        "/api/nickname",
+    )
+
+    @pytest.mark.parametrize("path", _ENDPOINTS)
+    @pytest.mark.parametrize(
+        ("body", "detail"),
+        [
+            ("{not json", "invalid JSON body"),
+            ("[]", "JSON body must be an object"),
+            ('"x"', "JSON body must be an object"),
+            ("1", "JSON body must be an object"),
+        ],
+    )
+    def test_bad_body_is_400(self, server_and_client, tmp_path, path, body, detail):
+        server, _, _ = server_and_client
+        server.workspace = tmp_path.resolve()
+        server.agent_registry = self._Reg()
+        client = TestClient(create_app(server), raise_server_exceptions=False)
+        r = client.post(
+            f"{path}?token=testtoken",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == detail
+
+
 class TestWorkspaceUpload:
     """Workspace file upload (📎). Token-auth, WRITE — so the guards are
     stricter than download: filename basename-only, target dir under the

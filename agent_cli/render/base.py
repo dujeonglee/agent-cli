@@ -87,6 +87,13 @@ class Renderer(ABC):
         if self._depth > 0:
             self._depth -= 1
 
+    def in_nested_render(self) -> bool:
+        """이 호출이 세션 최상위가 아닌 루프(스킬·delegate·one-shot 워커 등)
+        에서 왔는가. 기본 규칙은 깊이 > 0 또는 이 스레드가 캡처 중 — 병렬
+        delegate 는 캡처로 돈다. 렌더러마다 중첩을 다르게 추적하면 오버라이드한다
+        (web 은 스레드 스코프 기준)."""
+        return self._depth > 0 or self.is_capturing
+
     # ── Capture (parallel buffering) ─────────────────
 
     def start_capture(self) -> None:
