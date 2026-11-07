@@ -12,7 +12,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 from agent_cli.web.server import WebServer, create_app
 
 
@@ -139,7 +140,7 @@ class TestRestore:
         r = WebRenderer(session_dir=str(tmp_path))
         _run_scope(r, "t-1", view=view)
         resumed = self._resumed(tmp_path)
-        snapshot = resumed.register_connection(WebConnection(id="c"))
+        snapshot = resumed.hub.register(WebConnection(id="c"))
         views = [d for e, d in snapshot if e == "ctx_view"]
         assert views == [{**view, "task_id": "t-1"}]
 
@@ -149,7 +150,7 @@ class TestRestore:
         r.note_system_prompt(_SECTIONS, turn=1)
         r.context_view({"gone": {"hidx": 7}, "summary": None})
         resumed = self._resumed(tmp_path)
-        snapshot = resumed.register_connection(WebConnection(id="c"))
+        snapshot = resumed.hub.register(WebConnection(id="c"))
         assert not [d for e, d in snapshot if e == "ctx_view"]
 
     def test_measured_usage_comes_back_and_refills_the_header(self, tmp_path):
@@ -163,7 +164,7 @@ class TestRestore:
         resumed = self._resumed(tmp_path)
         assert _prompt(resumed)["budget"] == before
         assert before["measured"] is True and before["total"] == 9100
-        snapshot = resumed.register_connection(WebConnection(id="c"))
+        snapshot = resumed.hub.register(WebConnection(id="c"))
         assert [d for e, d in snapshot if e == "token_usage"] == [{**stats, "turn": 2}]
 
     def test_no_measurement_stays_unmeasured_after_resume(self, tmp_path):
@@ -173,7 +174,7 @@ class TestRestore:
         r.note_system_prompt(_SECTIONS, turn=1, tail=_tail(1))
         resumed = self._resumed(tmp_path)
         assert _prompt(resumed)["budget"]["measured"] is False
-        snapshot = resumed.register_connection(WebConnection(id="c"))
+        snapshot = resumed.hub.register(WebConnection(id="c"))
         assert not [d for e, d in snapshot if e == "token_usage"]
         resumed.token_usage({"in": 500, "out": 1, "split": _SPLIT}, 1)
         assert _prompt(resumed)["budget"]["total"] == 500

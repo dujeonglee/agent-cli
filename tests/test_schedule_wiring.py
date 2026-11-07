@@ -21,9 +21,13 @@ class Clock:
         return self.now
 
 
-class _Renderer:
+class _Hub:
     def has_live_connections(self):
         return False
+
+
+class _Renderer:
+    hub = _Hub()
 
     def worker_is_busy(self):
         return False

@@ -1621,7 +1621,7 @@ def web_instance_is_active(
     from agent_cli.runtime import session_has_live_work
 
     return bool(
-        renderer.has_live_connections()
+        renderer.hub.has_live_connections()
         or renderer.worker_is_busy()
         # any_activity (미배달 회신 제외) — run 펌프의 has_active_work 와
         # 다른 뜻이라 공용 술어 밖에 둔다 (runtime.session_has_live_work).
@@ -2688,7 +2688,7 @@ def web(
     finally:
         remove_instance_file(_session_dir)  # board sees the instance is gone
         remove_status_file(_session_dir)  # drop the live status sidecar too
-        renderer.shutdown_all_connections()
+        renderer.hub.shutdown_all()
         server.shutdown()
         worker.join(timeout=2.0)
         console.print(f"[{C['muted']}]Saving session...[/]")

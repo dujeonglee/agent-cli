@@ -22,7 +22,8 @@ import time
 from typing import ClassVar
 
 from agent_cli.render.base import ConfirmOption
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 from agent_cli.web.instance_file import read_status_file
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -109,11 +110,11 @@ class TestStatusPublishing:
     def test_viewers_tracked_on_register_and_unregister(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         c1, c2 = WebConnection(id="c1"), WebConnection(id="c2")
-        r.register_connection(c1)
+        r.hub.register(c1)
         assert read_status_file(tmp_path)["viewers"] == 1
-        r.register_connection(c2)
+        r.hub.register(c2)
         assert read_status_file(tmp_path)["viewers"] == 2
-        r.unregister_connection(c1)
+        r.hub.unregister(c1)
         assert read_status_file(tmp_path)["viewers"] == 1
 
     def test_unrelated_sticky_does_not_flip_status(self, tmp_path):
@@ -133,7 +134,7 @@ class TestCanPrompt:
     다른 방을 보는 사이 ask/confirm 이 즉시 "(no response)"로 포기하던
     것을, 대기 + board "답변 필요" 표시 + 재접속 시 pending 질문
     replay(기존 sticky 기계) 흐름으로 교체. 뷰어 존재 여부는
-    ``has_live_connections()`` 가 따로 답한다."""
+    ``hub.has_live_connections()`` 가 따로 답한다."""
 
     def test_true_even_without_connection(self):
         """뷰어 0명이어도 True — ask/confirm 은 대기하고, 늦게 접속한
@@ -143,7 +144,7 @@ class TestCanPrompt:
 
     def test_true_with_open_connection(self):
         r = WebRenderer()
-        r.register_connection(WebConnection(id="c1"))
+        r.hub.register(WebConnection(id="c1"))
         assert r.can_prompt() is True
 
     def test_late_viewer_gets_pending_prompt_and_can_answer(self):
@@ -162,7 +163,7 @@ class TestCanPrompt:
         assert t.is_alive(), "뷰어가 없어도 대기해야 한다 (즉시 포기 금지)"
 
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         pending = [ev for ev, data in snapshot if ev == "input_required"]
         assert pending, "늦게 온 뷰어의 snapshot 에 pending 질문이 있어야 한다"
 
@@ -178,6 +179,7 @@ class TestWebInstanceIsActive:
     class _R:
         def __init__(self, live=False, busy=False):
             self._live, self._busy = live, busy
+            self.hub = self  # 술어는 ``renderer.hub.has_live_connections()`` 를 본다
 
         def has_live_connections(self):
             return self._live
@@ -246,7 +248,7 @@ class TestDangerousShellWaitsForViewer:
 
         # 늦게 접속 → snapshot 에 pending confirm replay
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
         assert "confirm" in kinds
 
@@ -289,7 +291,7 @@ class TestDangerousShellWaitsForViewer:
             web_state(KNOB_BY_NAME["auto_approve"], KnobSession(renderer=r))
         )
         conn = WebConnection(id="v")
-        snap = r.register_connection(conn)
+        snap = r.hub.register(conn)
         cm = [d for ev, d in snap if ev == "knob" and d.get("name") == "auto_approve"]
         assert cm and cm[0].get("value") is True
 
@@ -311,7 +313,7 @@ class TestDangerousShellWaitsForViewer:
         time.sleep(0.3)
         try:
             conn = WebConnection(id="late")
-            snapshot = r.register_connection(conn)
+            snapshot = r.hub.register(conn)
             payload = next(
                 d
                 for ev, d in snapshot
@@ -330,12 +332,12 @@ class TestEventDistribution:
     def test_persistent_event_lands_in_buffer_and_queue(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.final("done", turn=1)
 
         # Buffer keeps it for replay.
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
         # Live connection got it too.
         event, data = conn.queue.get(timeout=0.5)
         assert event == "assistant_turn"
@@ -345,7 +347,7 @@ class TestEventDistribution:
     def test_transient_event_skips_buffer(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.status("running", "thinking…")
 
@@ -354,7 +356,7 @@ class TestEventDistribution:
         assert event == "status"
         assert data["message"] == "thinking…"
         # But buffer stays empty.
-        assert r.persistent_count == 0
+        assert r.hub.persistent_count == 0
 
 
 class TestRecovery:
@@ -375,7 +377,7 @@ class TestRecovery:
     def test_recovery_emits_a_transient_retry_tick_only(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.recovery("{bad", "Observation: add an action", "no action", turn=2)
 
@@ -389,21 +391,21 @@ class TestRecovery:
 
         # **영속이 아니다** — 재접속 replay 에서 되살리면 옛 시도분이 카운터에
         # 더해진다(`stream_tick` 과 같은 성질).
-        assert r.persistent_count == 0
+        assert r.hub.persistent_count == 0
 
     def test_hard_failure_is_still_persistent(self):
         """재시도를 다 쓴 경우는 **남아야** 한다 — 런이 왜 끝났는지의 유일한
         근거이고, 리로드해도 보여야 한다(`render_run_ended` → `turn_error`)."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.error("Action loop unresolved: shell repeated; Stopping.", turn=3)
 
         event, data = conn.queue.get(timeout=0.5)
         assert event == "turn_error"
         assert "Action loop unresolved" in data["content"]
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
 
 
 class TestTurnErrorEventName:
@@ -419,7 +421,7 @@ class TestTurnErrorEventName:
     def test_error_emits_turn_error_not_error(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.error("boom", turn=3)
 
@@ -431,7 +433,7 @@ class TestTurnErrorEventName:
         assert data["content"] == "boom"
         assert data["turn"] == 3
         # Persistent so a reconnecting client replays it.
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
 
 
 class TestAgentConversationSurface:
@@ -449,7 +451,7 @@ class TestAgentConversationSurface:
             key="agt-1", direction="out", author="agt-1", text="x", ts=12345.0
         )
         conn = WebConnection(id="c1")
-        snap = r.register_connection(conn)
+        snap = r.hub.register(conn)
         msg = self._agent_msgs(snap)[0]
         assert msg["ts"] == 12345.0  # 부활 순간이 아닌 원래 대화 시각
 
@@ -464,15 +466,15 @@ class TestAgentConversationSurface:
         r.agent_message(
             key="agt-2", direction="in", author="main", text="c", item="u-1"
         )
-        assert r.persistent_count == 3
+        assert r.hub.persistent_count == 3
 
         r.clear_agent_conversation("agt-1")
 
         # 버퍼에서 agt-1 만 제거, agt-2 는 유지. count 도 제거분만큼 보정
         # (안 하면 재접속 snapshot 의 ``transcript_truncated`` omitted 가 부풀음).
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
         conn = WebConnection(id="c1")
-        snap = r.register_connection(conn)
+        snap = r.hub.register(conn)
         keys = [d.get("key") for d in self._agent_msgs(snap)]
         assert keys == ["agt-2"]
         assert not any(ev == "transcript_truncated" for (ev, _d) in snap)
@@ -480,7 +482,7 @@ class TestAgentConversationSurface:
     def test_clear_emits_agent_cleared_live(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.agent_message(
             key="agt-1", direction="in", author="main", text="a", item="u-1"
         )
@@ -508,7 +510,7 @@ class TestConnectionLifecycle:
         r.observation("ok", turn=1, tool_name="shell", success=True)
 
         conn = WebConnection(id="c1")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
 
         # First entry is this connection's identity (it learns conn_id before
         # anything else); the rest is the usual buffer replay.
@@ -526,12 +528,12 @@ class TestConnectionLifecycle:
         # the worker waits (reconnect, second browser, board proxy) replays the
         # prompt — else the worker blocks on an answer the UI never offered.
         r = WebRenderer()
-        r.register_connection(WebConnection(id="live"))  # a connection exists
+        r.hub.register(WebConnection(id="live"))  # a connection exists
         seen = {}
 
         def fake_wait():
             late = WebConnection(id="late")
-            seen["events"] = [e for e, _ in r.register_connection(late)]
+            seen["events"] = [e for e, _ in r.hub.register(late)]
             return "answer"
 
         r._wait_for_input = fake_wait
@@ -540,26 +542,26 @@ class TestConnectionLifecycle:
         assert "input_required" in seen["events"]  # replayed while pending
 
         # Resolved → a freshly connecting client must NOT replay the stale prompt.
-        after = [e for e, _ in r.register_connection(WebConnection(id="after"))]
+        after = [e for e, _ in r.hub.register(WebConnection(id="after"))]
         assert "input_required" not in after
 
     def test_clear_sticky_removes_slot_from_snapshot(self):
         r = WebRenderer()
         r.set_sticky("input_required", "input_required", {"kind": "prompt"})
-        snap = [e for e, _ in r.register_connection(WebConnection(id="a"))]
+        snap = [e for e, _ in r.hub.register(WebConnection(id="a"))]
         assert "input_required" in snap
         r.clear_sticky("input_required")
-        snap2 = [e for e, _ in r.register_connection(WebConnection(id="b"))]
+        snap2 = [e for e, _ in r.hub.register(WebConnection(id="b"))]
         assert "input_required" not in snap2
 
     def test_all_connections_receive_the_fanout(self):
         r = WebRenderer()
         a = WebConnection(id="a")
-        snap_a = r.register_connection(a)
+        snap_a = r.hub.register(a)
         assert snap_a[0] == ("identity", {"conn_id": "a"})
 
         b = WebConnection(id="b")
-        snap_b = r.register_connection(b)
+        snap_b = r.hub.register(b)
         assert snap_b[0] == ("identity", {"conn_id": "b"})
         assert not a.closed.is_set()
         # A subsequent emit fans out to BOTH (every connection is equal).
@@ -571,8 +573,8 @@ class TestConnectionLifecycle:
     def test_unregister_pushes_close_sentinel_and_stops_receiving(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
-        r.unregister_connection(conn)
+        r.hub.register(conn)
+        r.hub.unregister(conn)
         r.final("dropped", turn=1)
         # Unregister pushes a ``__close__`` sentinel so the SSE
         # generator's blocking queue.get wakes up promptly. After the
@@ -596,7 +598,7 @@ class TestTokenUsage:
     def test_emits_token_usage_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.token_usage(self._STATS, turn=2)
         event, data = conn.queue.get(timeout=0.5)
         assert event == "token_usage"
@@ -609,20 +611,20 @@ class TestTokenUsage:
         the persistent buffer (only the latest is cached separately)."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.token_usage(self._STATS, turn=1)
-        assert r.persistent_count == 0
+        assert r.hub.persistent_count == 0
 
     def test_latest_token_usage_replayed_on_reconnect(self):
         """A client connecting after a turn sees the latest usage in its
         snapshot, so the top-bar readout isn't blank until the next turn."""
         r = WebRenderer()
         first = WebConnection(id="c1")
-        r.register_connection(first)
+        r.hub.register(first)
         r.token_usage(self._STATS, turn=1)
         # New connection — snapshot should carry the usage.
         second = WebConnection(id="c2")
-        snapshot = r.register_connection(second)
+        snapshot = r.hub.register(second)
         assert any(ev == "token_usage" and d.get("in") == 5000 for ev, d in snapshot)
 
 
@@ -633,7 +635,7 @@ class TestCompaction:
     def test_emits_structured_compaction_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.compaction(phase="done", old_tokens=12400, new_tokens=5100, evicted_count=8)
         event, data = conn.queue.get(timeout=0.5)
         assert event == "compaction"
@@ -646,14 +648,14 @@ class TestCompaction:
         """A compaction is a live timeline marker — not replayed on reconnect."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.compaction(phase="start", old_tokens=12400, evicted_count=8)
-        assert r.persistent_count == 0
+        assert r.hub.persistent_count == 0
 
     def test_warning_phase_carries_reason(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.compaction(phase="warning", reason="provider down")
         event, data = conn.queue.get(timeout=0.5)
         assert event == "compaction"
@@ -679,7 +681,7 @@ class TestCardTimestamps:
     def test_live_event_stamped_with_epoch_ts(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.push_user_message("hello")
         event, data = conn.queue.get(timeout=0.5)
         assert event == "user_message"
@@ -690,7 +692,7 @@ class TestCardTimestamps:
         history record's ISO ts — not the resume moment."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         iso = "2026-06-17T14:32:05.123456+00:00"
         ctx = _FakeResumeCtx([{"role": "user", "content": "hi", "ts": iso}])
         r.replay_from_history(ctx)
@@ -702,7 +704,7 @@ class TestCardTimestamps:
         """After the seed loop, live events fall back to fresh wall-clock."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         ctx = _FakeResumeCtx(
             [{"role": "user", "content": "old", "ts": "2026-06-17T14:32:05+00:00"}]
         )
@@ -716,7 +718,7 @@ class TestCardTimestamps:
         """A pre-ts history record (no ``ts``) still gets a usable stamp."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         ctx = _FakeResumeCtx([{"role": "user", "content": "ancient"}])
         r.replay_from_history(ctx)
         _, data = conn.queue.get(timeout=0.5)
@@ -735,7 +737,7 @@ class TestAssistantTurnBundling:
     def test_thought_plus_action_emit_one_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.thought("I should read the file", turn=1)
         r.action("read_file", '{"path":"x.py"}', turn=1)
@@ -746,12 +748,12 @@ class TestAssistantTurnBundling:
         assert data["action"]["tool_name"] == "read_file"
         assert data["turn"] == 1
         # Only one persistent event — thought did NOT fire on its own.
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
 
     def test_thought_plus_final_emit_one_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.thought("confirmed", turn=2)
         r.final("the answer is 42", turn=2)
@@ -760,7 +762,7 @@ class TestAssistantTurnBundling:
         assert event == "assistant_turn"
         assert data["thought"] == "confirmed"
         assert data["final"] == "the answer is 42"
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
 
 
 # ── User message echo ──────────────────────────────
@@ -770,14 +772,14 @@ class TestUserMessageEcho:
     def test_push_user_message_appends_persistent_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.push_user_message("hello world")
 
         event, data = conn.queue.get(timeout=0.5)
         assert event == "user_message"
         assert data["content"] == "hello world"
-        assert r.persistent_count == 1
+        assert r.hub.persistent_count == 1
 
 
 # ── Input flow ─────────────────────────────────────
@@ -812,7 +814,7 @@ class TestPromptUserInput:
         the ANSWERING badge."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         def worker():
             r.prompt_user(
@@ -840,7 +842,7 @@ class TestPromptUserInput:
         thread before prompting)."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         def worker():
             r.set_thread_agent("explorer")
@@ -866,7 +868,7 @@ class TestPromptUserInput:
 
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         def worker():
             r.set_thread_agent("explorer")
@@ -1028,7 +1030,7 @@ class TestHeaderWorkspace:
     def test_workspace_included_when_provided(self):
         r = WebRenderer(workspace="/Users/me/proj")
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.header("openai", "gpt-4o", 10)
         event, data = conn.queue.get(timeout=1.0)
         assert event == "ready"
@@ -1042,13 +1044,13 @@ class TestHeaderWorkspace:
         (프런트가 빈 제목 자리를 그리지 않게)."""
         r = WebRenderer(title="GLM — bench rerun")
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.header("openai", "gpt-4o", 10)
         _event, data = conn.queue.get(timeout=1.0)
         assert data["title"] == "GLM — bench rerun"
         r2 = WebRenderer()
         conn2 = WebConnection(id="c2")
-        r2.register_connection(conn2)
+        r2.hub.register(conn2)
         r2.header("openai", "gpt-4o", 10)
         _event, data2 = conn2.queue.get(timeout=1.0)
         assert "title" not in data2
@@ -1059,7 +1061,7 @@ class TestHeaderWorkspace:
         truth for "show the path or not"."""
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.header("openai", "gpt-4o", 10)
         event, data = conn.queue.get(timeout=1.0)
         assert event == "ready"
@@ -1075,7 +1077,7 @@ class TestHeaderWorkspace:
         r.header("openai", "gpt-4o", 10)
         # Late client connects.
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         # ``role`` is index 0 (connection identity); the latest ready must be
         # next so the top-bar renders before any other replayed cards.
         assert snapshot[0][0] == "identity"
@@ -1096,7 +1098,7 @@ class TestHeaderWorkspace:
         # Latest ready in snapshot should still be the top-level one,
         # with NO ``skill_name`` field set on the visible data.
         conn = WebConnection(id="c")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         assert snapshot[0][0] == "identity"  # connection identity first
         event, data = snapshot[1]
         assert event == "ready"
@@ -1113,7 +1115,7 @@ class TestHeaderWorkspace:
         # Drain the live queue side and confirm buffer has no rolling
         # ``ready`` entries (only the slot, which is prepended to
         # snapshot from outside the buffer).
-        assert all(ev != "ready" for (ev, _) in r._event_buffer)
+        assert all(ev != "ready" for (ev, _) in r.hub.events)
 
 
 class TestNestedLoopHeader:
@@ -1124,7 +1126,7 @@ class TestNestedLoopHeader:
 
     @staticmethod
     def _ready(r):
-        snapshot = r.register_connection(WebConnection(id=f"c{time.monotonic_ns()}"))
+        snapshot = r.hub.register(WebConnection(id=f"c{time.monotonic_ns()}"))
         assert snapshot[0][0] == "identity"
         event, data = snapshot[1]
         assert event == "ready"
@@ -1132,7 +1134,7 @@ class TestNestedLoopHeader:
 
     @staticmethod
     def _no_ready_in_buffer(r):
-        assert all(ev != "ready" for (ev, _) in r._event_buffer)
+        assert all(ev != "ready" for (ev, _) in r.hub.events)
 
     def test_same_thread_scope_header_skipped_then_restored(self):
         r = WebRenderer(workspace="/proj")
@@ -1205,7 +1207,7 @@ class TestDelegateTaskVisibility:
     def test_begin_delegate_task_emits_persistent_start_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_scope(task_id="t-1", index=0, agent="explorer", label="find X")
         event, data = conn.queue.get(timeout=1.0)
         assert event == "scope_start"
@@ -1221,12 +1223,12 @@ class TestDelegateTaskVisibility:
             "depth": 0,
         }
         # Persistent so a late-joining client replays the open card.
-        assert any(ev == "scope_start" for (ev, _) in r._event_buffer)
+        assert any(ev == "scope_start" for (ev, _) in r.hub.events)
 
     def test_end_delegate_task_emits_persistent_end_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_scope(task_id="t-1", index=0, agent="", label="t")
         # Drain start.
         conn.queue.get(timeout=1.0)
@@ -1243,7 +1245,7 @@ class TestDelegateTaskVisibility:
     def test_end_delegate_task_carries_error_when_failed(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_scope(task_id="t-1", index=0, agent="", label="t")
         conn.queue.get(timeout=1.0)
         r.end_scope(task_id="t-1", success=False, duration_s=1.0, error="timed out")
@@ -1258,7 +1260,7 @@ class TestDelegateTaskVisibility:
         cards. Outside the window the field MUST be absent."""
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         # Before begin: no task_id auto-attach.
         r._emit("assistant_turn", {"turn": 1, "thought": "no task"}, persistent=True)
@@ -1290,7 +1292,7 @@ class TestDelegateTaskVisibility:
         nested delegate."""
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.begin_scope(task_id="outer", index=0, agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
@@ -1307,7 +1309,7 @@ class TestDelegateTaskVisibility:
     def test_set_thread_status_emits_status_event_when_in_task(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_scope(task_id="t-1", index=0, agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
 
@@ -1324,7 +1326,7 @@ class TestDelegateTaskVisibility:
         leak data the UI has nowhere to show."""
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.set_thread_status("orphan status")
         assert conn.queue.empty()
 
@@ -1378,15 +1380,15 @@ class TestShutdownAllConnections:
     out the 15s keep-alive timer."""
 
     def test_pushes_close_sentinel_to_every_active_connection(self):
-        from agent_cli.render.web import _CLOSE_SENTINEL
+        from agent_cli.render.web_hub import _CLOSE_SENTINEL
 
         r = WebRenderer()
         a = WebConnection(id="a")
         # Two connections — registering ``b`` would take over ``a``
         # via the existing single-active-client model, so we register
         # one at a time and validate the active set was closed.
-        r.register_connection(a)
-        r.shutdown_all_connections()
+        r.hub.register(a)
+        r.hub.shutdown_all()
 
         # Active connection got the sentinel.
         item = a.queue.get(timeout=0.5)
@@ -1400,12 +1402,12 @@ class TestShutdownAllConnections:
     def test_is_idempotent(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
-        r.shutdown_all_connections()
+        r.hub.register(conn)
+        r.hub.shutdown_all()
         # Second call should not raise and should leave the connection
         # list empty.
-        r.shutdown_all_connections()
-        assert r._connections == []
+        r.hub.shutdown_all()
+        assert r.hub.connections == []
 
 
 class TestReplayFromHistory:
@@ -1433,7 +1435,7 @@ class TestReplayFromHistory:
         r.replay_from_history(ctx)
 
         # Persistent events landed in the buffer for snapshot replay.
-        events = [(ev, data) for (ev, data) in r._event_buffer]
+        events = [(ev, data) for (ev, data) in r.hub.events]
         names = [e for e, _ in events]
         assert "user_message" in names
         assert "assistant_turn" in names
@@ -1457,9 +1459,9 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert "observation" in names
-        data = next(d for e, d in r._event_buffer if e == "observation")
+        data = next(d for e, d in r.hub.events if e == "observation")
         assert data["tool_name"] == "shell"
         assert data["content"] == "hello-from-shell"
         assert data["success"] is True
@@ -1484,7 +1486,7 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        data = next(d for e, d in r._event_buffer if e == "observation")
+        data = next(d for e, d in r.hub.events if e == "observation")
         assert data["content"] == "File saved: /tmp/x.txt (12 bytes)"
 
     def test_replay_preserves_failure_status(self, tmp_path):
@@ -1505,7 +1507,7 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        data = next(d for e, d in r._event_buffer if e == "observation")
+        data = next(d for e, d in r.hub.events if e == "observation")
         assert data["success"] is False
         assert data["tool_name"] == "edit_file"
         assert data["content"] == "ERROR: file not found"
@@ -1530,9 +1532,9 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert names == ["observation"]
-        data = r._event_buffer[0][1]
+        data = r.hub.events[0][1]
         assert data["tool_name"] == ""
         assert data["success"] is False
 
@@ -1550,9 +1552,9 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert names == ["user_message"]
-        assert r._event_buffer[0][1]["content"] == "this is a real chat turn"
+        assert r.hub.events[0][1]["content"] == "this is a real chat turn"
 
     def test_replays_assistant_action_call(self, tmp_path):
         from agent_cli.context.manager import ContextManager
@@ -1569,9 +1571,9 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert names == ["assistant_turn"]
-        data = r._event_buffer[0][1]
+        data = r.hub.events[0][1]
         assert data["thought"] == "I should read the file"
         assert data["action"]["tool_name"] == "read_file"
         # action_input is dialect JSON so the frontend can render
@@ -1588,7 +1590,7 @@ class TestReplayFromHistory:
         ctx.add({"role": "user", "content": ""})
         r = WebRenderer()
         r.replay_from_history(ctx)
-        assert list(r._event_buffer) == []
+        assert list(r.hub.events) == []
 
     def test_snapshot_includes_replayed_events_for_first_connection(self, tmp_path):
         """After resume + replay, the FIRST SSE client connecting must
@@ -1613,7 +1615,7 @@ class TestReplayFromHistory:
         r.replay_from_history(ctx)
 
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         names = [e for e, _ in snapshot]
         # role first (connection identity), ready next (header replay), then
         # the replayed conversation events.
@@ -1646,7 +1648,7 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        events = [(e, d) for e, d in r._event_buffer]
+        events = [(e, d) for e, d in r.hub.events]
         assert [e for e, _ in events] == ["assistant_turn"]
         turn = events[0][1]
         assert turn["final"] == "the answer"
@@ -1666,9 +1668,9 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert names == ["assistant_turn"]
-        data = r._event_buffer[0][1]
+        data = r.hub.events[0][1]
         assert data["thought"] == "read it"
         assert data["action"]["tool_name"] == "read_file"
         assert json.loads(data["action"]["tool_input"]) == {"path": "y.py"}
@@ -1691,7 +1693,7 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        cards = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        cards = [d for e, d in r.hub.events if e == "assistant_turn"]
         assert len(cards) == 2
         assert cards[0]["thought"] == "two reads"
         assert cards[1]["thought"] == ""  # thought already flushed on first op
@@ -1708,7 +1710,7 @@ class TestReplayFromHistory:
         r = WebRenderer()
         r.replay_from_history(ctx)
 
-        events = [(e, d) for e, d in r._event_buffer]
+        events = [(e, d) for e, d in r.hub.events]
         assert [e for e, _ in events] == ["assistant_turn"]
         assert events[0][1]["final"] == "raw leftover text"
 
@@ -1728,7 +1730,7 @@ class TestWorkerStateEmit:
     def test_worker_busy_emits_busy_true(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.worker_busy()
         event, data = conn.queue.get(timeout=1.0)
         assert event == "worker_state"
@@ -1738,7 +1740,7 @@ class TestWorkerStateEmit:
     def test_worker_idle_emits_busy_false(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.worker_idle()
         event, data = conn.queue.get(timeout=1.0)
         assert event == "worker_state"
@@ -1753,7 +1755,7 @@ class TestWorkerStateEmit:
         for _ in range(3):
             r.worker_busy()
             r.worker_idle()
-        buffered = [ev for (ev, _) in r._event_buffer]
+        buffered = [ev for (ev, _) in r.hub.events]
         assert "worker_state" not in buffered
 
     def test_latest_worker_state_replaces_not_accumulates(self):
@@ -1764,9 +1766,9 @@ class TestWorkerStateEmit:
         r.worker_busy()
         r.worker_idle()
         r.worker_busy()
-        assert r._sticky["worker_state"]["payload"] == {"busy": True}
+        assert r.hub.sticky_payload("worker_state") == {"busy": True}
         r.worker_idle()
-        assert r._sticky["worker_state"]["payload"] == {"busy": False}
+        assert r.hub.sticky_payload("worker_state") == {"busy": False}
 
 
 class TestWorkerStateReconnect:
@@ -1787,7 +1789,7 @@ class TestWorkerStateReconnect:
         r = WebRenderer()
         r.worker_busy()
         conn = WebConnection(id="reconnect")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         names = [e for e, _ in snapshot]
         assert "worker_state" in names
         data = next(d for e, d in snapshot if e == "worker_state")
@@ -1801,7 +1803,7 @@ class TestWorkerStateReconnect:
         r.worker_busy()
         r.worker_idle()
         conn = WebConnection(id="fresh")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         data = next(d for e, d in snapshot if e == "worker_state")
         assert data == {"busy": False}
 
@@ -1813,7 +1815,7 @@ class TestWorkerStateReconnect:
         # matches the actual server state.
         r = WebRenderer()
         conn = WebConnection(id="first")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         names = [e for e, _ in snapshot]
         assert "worker_state" not in names
 
@@ -1828,7 +1830,7 @@ class TestWorkerStateReconnect:
         r.worker_busy()  # ends busy
 
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         worker_states = [d for e, d in snapshot if e == "worker_state"]
         # Exactly one — the slot, not the history.
         assert len(worker_states) == 1
@@ -1840,14 +1842,14 @@ class TestWorkerStateReconnect:
         # joining is not a state reset, and the first client stays connected.
         r = WebRenderer()
         old = WebConnection(id="old")
-        r.register_connection(old)
+        r.hub.register(old)
         r.worker_busy()
         ev, _ = old.queue.get(timeout=1.0)
         assert ev == "worker_state"
 
         # Second client joins (observer).
         new = WebConnection(id="new")
-        snapshot = r.register_connection(new)
+        snapshot = r.hub.register(new)
 
         # The first client is NOT closed (no takeover).
         assert not old.closed.is_set()
@@ -1864,12 +1866,12 @@ class TestWorkerStateReconnect:
         # still hand back the current worker_state in snapshot.
         r = WebRenderer()
         c1 = WebConnection(id="c1")
-        r.register_connection(c1)
+        r.hub.register(c1)
         r.worker_busy()
-        r.unregister_connection(c1)
+        r.hub.unregister(c1)
 
         c2 = WebConnection(id="c2")
-        snapshot = r.register_connection(c2)
+        snapshot = r.hub.register(c2)
         data = next(d for e, d in snapshot if e == "worker_state")
         assert data == {"busy": True}
 
@@ -1886,7 +1888,7 @@ class TestWorkerStateReconnect:
         r.worker_idle()
 
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         # the viewer-count event is positionally irrelevant — filter it so the
         # ready-first / worker_state-trails invariant stays the assertion
         names = [e for e, _ in snapshot if e not in ("viewers", "snapshot_end")]
@@ -1929,7 +1931,7 @@ class TestWorkerLoopIntegration:
         r = WebRenderer()
         s = WebServer(r, token="t")
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         # Caller enqueues a message before the worker pops, then the
         # worker emits idle → dequeue → busy. The frontend sees
@@ -1956,7 +1958,7 @@ class TestWorkerLoopIntegration:
         r = WebRenderer()
         s = WebServer(r, token="t")
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         # SHUTDOWN must skip the busy flip — busy after shutdown is
         # nonsensical and the connections are tearing down anyway.
@@ -1965,7 +1967,7 @@ class TestWorkerLoopIntegration:
         item = s.dequeue_blocking()
         assert item is s.SHUTDOWN
         # Latest state should still be idle.
-        assert r._sticky["worker_state"]["payload"] == {"busy": False}
+        assert r.hub.sticky_payload("worker_state") == {"busy": False}
 
 
 # ── Prompt Inspector per-agent scopes ──────────────
@@ -2068,12 +2070,12 @@ class TestSetNickname:
     def test_set_nickname_rebroadcasts_updated_roster(self):
         r = WebRenderer()
         c = WebConnection(id="c1")
-        r.register_connection(c)
+        r.hub.register(c)
 
         # First set, then a mid-session change — both return True and each
         # re-broadcasts the roster.
-        assert r.set_nickname("c1", "Alice") is True
-        assert r.set_nickname("c1", "Bob") is True
+        assert r.hub.set_nickname("c1", "Alice") is True
+        assert r.hub.set_nickname("c1", "Bob") is True
 
         # Drain the queue; the last viewers event must carry the new name.
         last = None
@@ -2105,7 +2107,7 @@ class TestStickyState:
         r.worker_busy()  # worker_state
         r.token_usage({"in": 10, "out": 5}, turn=1)  # token_usage
         r.queue_state([{"id": "1", "nickname": "n", "text": "t"}])  # queue
-        snap = r.register_connection(WebConnection(id="c1"))
+        snap = r.hub.register(WebConnection(id="c1"))
         ev = self._events(snap)
         # identity first, then ready (prepended), worker/token/queue appended
         assert ev[0] == "identity"
@@ -2118,7 +2120,7 @@ class TestStickyState:
         r = WebRenderer()
         r.worker_busy()
         r.worker_idle()  # later value
-        snap = r.register_connection(WebConnection(id="c1"))
+        snap = r.hub.register(WebConnection(id="c1"))
         ws = [d for e, d in snap if e == "worker_state"]
         assert len(ws) == 1 and ws[0] == {"busy": False}  # only the latest
 
@@ -2126,7 +2128,7 @@ class TestStickyState:
         r = WebRenderer()
         r.token_usage({"in": 42, "out": 1}, turn=3)
         # a brand-new connection (reconnect/refresh) must see the cached value
-        snap = r.register_connection(WebConnection(id="late"))
+        snap = r.hub.register(WebConnection(id="late"))
         tok = [d for e, d in snap if e == "token_usage"]
         assert tok and tok[0]["in"] == 42
 
@@ -2159,14 +2161,15 @@ class TestDirectivesDirtyFlag:
         # update-when-applied: notify_directives_applied → SSE event so open
         # inspectors re-fetch the prompt view at the moment it takes effect.
         from agent_cli import render
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         prev = render.get_renderer()
         try:
             r = WebRenderer()
             render.set_renderer(r)
             conn = WebConnection(id="c1")
-            r.register_connection(conn)
+            r.hub.register(conn)
             render.notify_directives_applied()
             assert _qget(conn)[0] == "directives_changed"
         finally:
@@ -2176,14 +2179,15 @@ class TestDirectivesDirtyFlag:
         # A `memory` op → notify_memory_applied → SSE event so open inspectors
         # re-fetch the prompt view (## Session Memory index) live.
         from agent_cli import render
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         prev = render.get_renderer()
         try:
             r = WebRenderer()
             render.set_renderer(r)
             conn = WebConnection(id="c1")
-            r.register_connection(conn)
+            r.hub.register(conn)
             render.notify_memory_applied()
             assert _qget(conn)[0] == "memory_changed"
         finally:
@@ -2194,25 +2198,25 @@ class TestDirectivesDirtyFlag:
 
 
 class TestBoundedEventBuffer:
-    """``_event_buffer`` is a ``deque(maxlen=_EVENT_BUFFER_MAX)`` — long
+    """The hub's replay buffer is a ``deque(maxlen=_EVENT_BUFFER_MAX)`` — long
     sessions stop growing memory, and a reconnecting client gets a
     ``transcript_truncated`` notice ahead of the windowed replay."""
 
     def _small_buffer_renderer(self, monkeypatch, maxlen):
-        import agent_cli.render.web as web_mod
+        import agent_cli.render.web_hub as hub_mod
 
-        monkeypatch.setattr(web_mod, "_EVENT_BUFFER_MAX", maxlen)
+        monkeypatch.setattr(hub_mod, "_EVENT_BUFFER_MAX", maxlen)
         return WebRenderer()
 
     def test_buffer_capped_and_truncation_notice(self, monkeypatch):
         r = self._small_buffer_renderer(monkeypatch, maxlen=5)
         for i in range(8):
             r.push_user_message(f"m{i}")  # persistent event per call
-        assert len(r._event_buffer) == 5  # oldest 3 fell off
-        assert r.persistent_count == 8  # total ever emitted survives
+        assert len(r.hub.events) == 5  # oldest 3 fell off
+        assert r.hub.persistent_count == 8  # total ever emitted survives
 
         conn = WebConnection(id="c1")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         events = [e for e, _ in snapshot]
         assert "transcript_truncated" in events
         idx = events.index("transcript_truncated")
@@ -2229,7 +2233,7 @@ class TestBoundedEventBuffer:
         r = self._small_buffer_renderer(monkeypatch, maxlen=5)
         r.push_user_message("only one")
         conn = WebConnection(id="c1")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         assert "transcript_truncated" not in [e for e, _ in snapshot]
 
 
@@ -2241,7 +2245,7 @@ class TestEmitSerializesOnce:
     def test_queue_payload_carries_cached_json(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.push_user_message("hello")
         event, data = _qget(conn)
         assert event == "user_message"
@@ -2254,7 +2258,7 @@ class TestEmitSerializesOnce:
         r = WebRenderer()
         r.push_user_message("hello")
         conn = WebConnection(id="c1")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         replayed = [d for e, d in snapshot if e == "user_message"]
         assert len(replayed) == 1
         assert isinstance(getattr(replayed[0], "json_str", None), str)
@@ -2264,7 +2268,7 @@ class TestEmitSerializesOnce:
         # the server falls back to json.dumps for them (a handful per connect).
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         ident = next(d for e, d in snapshot if e == "identity")
         assert getattr(ident, "json_str", None) is None
 
@@ -2320,12 +2324,12 @@ class TestTeammateWork:
         r = WebRenderer()
         r.begin_agent_work(key="agt-1", item="u-2", profile="researcher", message="dig")
         r.end_agent_work(key="agt-1", item="u-2", success=True, duration_s=0.3)
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert "scope_start" in names and "scope_end" in names
-        start = next(d for e, d in r._event_buffer if e == "scope_start")
+        start = next(d for e, d in r.hub.events if e == "scope_start")
         assert start["task_id"] == "agt-1#u-2"
         assert "researcher" in start["agent"]
-        end = next(d for e, d in r._event_buffer if e == "scope_end")
+        end = next(d for e, d in r.hub.events if e == "scope_end")
         assert end["task_id"] == "agt-1#u-2" and end["success"] is True
 
     def test_work_routes_thread_without_touching_prompt_scope(self, tmp_path):
@@ -2357,7 +2361,7 @@ class TestTeammateWindowEvents:
         r = WebRenderer()
         r.agent_roster([{"key": "agt-1", "profile": "res", "state": "idle"}])
         r.agent_roster([{"key": "agt-1", "profile": "res", "state": "busy"}])
-        snap = r.register_connection(WebConnection(id="late"))
+        snap = r.hub.register(WebConnection(id="late"))
         roster_evs = [d for (e, d) in snap if e == "agent_roster"]
         assert len(roster_evs) == 1  # latest wins (슬롯 1개)
         assert roster_evs[0]["roster"][0]["state"] == "busy"
@@ -2367,9 +2371,9 @@ class TestTeammateWindowEvents:
         r.agent_message(
             key="agt-1", direction="out", author="agt-1", text="hi", item="u-1"
         )
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert "agent_msg" in names
-        data = next(d for e, d in r._event_buffer if e == "agent_msg")
+        data = next(d for e, d in r.hub.events if e == "agent_msg")
         assert data["direction"] == "out" and data["text"] == "hi"
 
 
@@ -2420,7 +2424,7 @@ class TestScopePersistenceAndReplay:
         # Fresh process (empty buffer) → replay restores the scope events.
         r2 = WebRenderer(session_dir=str(tmp_path))
         r2.replay_scopes()
-        starts = [d for e, d in r2._event_buffer if e == "scope_start"]
+        starts = [d for e, d in r2.hub.events if e == "scope_start"]
         assert starts and starts[0]["task_id"] == "w1#u-0"
         assert starts[0]["replay"] is True  # frontend skips timeline card
         assert starts[0]["ts"] == original_ts  # original time, not resume moment
@@ -2428,7 +2432,7 @@ class TestScopePersistenceAndReplay:
     def test_replay_noop_without_sidecar(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))  # no scopes.jsonl yet
         r.replay_scopes()
-        assert len(r._event_buffer) == 0  # pre-feature/fresh session → unchanged
+        assert len(r.hub.events) == 0  # pre-feature/fresh session → unchanged
 
     def test_replay_synthesizes_end_for_open_scope(self, tmp_path):
         # Process died mid-scope: scope_start logged, no scope_end.
@@ -2436,7 +2440,7 @@ class TestScopePersistenceAndReplay:
         r1.begin_scope(task_id="sk1", kind="skill", label="plan")
         r2 = WebRenderer(session_dir=str(tmp_path))
         r2.replay_scopes()
-        evs = [e for e, _ in r2._event_buffer]
+        evs = [e for e, _ in r2.hub.events]
         assert evs.count("scope_start") == 1
         assert evs.count("scope_end") == 1  # synthesized so bar isn't perpetual
 
@@ -2465,7 +2469,7 @@ class TestScopeNesting:
 
     @staticmethod
     def _starts(r):
-        return [d for e, d in r._event_buffer if e == "scope_start"]
+        return [d for e, d in r.hub.events if e == "scope_start"]
 
     def test_same_thread_nesting_derives_parent_and_depth(self):
         r = WebRenderer()
@@ -2713,7 +2717,7 @@ class TestResumeInnerTurnReplay:
     def test_inner_turns_replay_into_the_card(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path))
-        seq = [(e, dict(d).get("task_id")) for e, d in r._event_buffer]
+        seq = [(e, dict(d).get("task_id")) for e, d in r.hub.events]
         # 카드 열림 → 내부 턴들(카드 라우팅) → 카드 닫힘 순서
         i_start = seq.index(("scope_start", "sk1"))
         i_end = seq.index(("scope_end", "sk1"))
@@ -2772,7 +2776,7 @@ class TestResumeInnerTurnReplay:
         r.replay_session(
             self._Ctx([{"role": "user", "content": "go", "ts": self._iso(90.0)}])
         )
-        seq = [(e, dict(d).get("task_id")) for e, d in r._event_buffer]
+        seq = [(e, dict(d).get("task_id")) for e, d in r.hub.events]
         i, j = (
             seq.index(("scope_start", "harness-auditor-1-4")),
             seq.index(("scope_end", "harness-auditor-1-4")),
@@ -2785,7 +2789,7 @@ class TestResumeInnerTurnReplay:
         id 와 다르다 — 카드 라우팅은 사이드카의 id 로 강제해야 한다."""
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path))
-        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        turns = [d for e, d in r.hub.events if e == "assistant_turn"]
         assert all(dict(d).get("task_id") == "sk1" for d in turns)
 
     def test_inner_plain_user_records_are_skipped(self, tmp_path):
@@ -2793,26 +2797,26 @@ class TestResumeInnerTurnReplay:
         없으므로 재생도 안 한다 — main 의 user 카드는 그대로."""
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path))
-        users = [dict(d) for e, d in r._event_buffer if e == "user_message"]
+        users = [dict(d) for e, d in r.hub.events if e == "user_message"]
         assert len(users) == 1  # main 의 "계획 짜줘" 뿐
 
     def test_inner_records_keep_original_ts(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path))
-        turn = next(dict(d) for e, d in r._event_buffer if e == "assistant_turn")
+        turn = next(dict(d) for e, d in r.hub.events if e == "assistant_turn")
         assert turn["ts"] == self._iso(110.0)
 
     def test_missing_dir_leaves_card_empty_without_crash(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path, with_dir=False))
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert "scope_start" in names and "scope_end" in names
         assert "assistant_turn" not in names  # 내부 턴 없음, 크래시도 없음
 
     def test_old_sidecar_without_ctx_dir_unchanged(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._skill_session(tmp_path, ctx_dir=""))
-        names = [e for e, _ in r._event_buffer]
+        names = [e for e, _ in r.hub.events]
         assert "assistant_turn" not in names  # 종전 동작 그대로 (카드+노트)
 
     def test_traversal_in_ctx_dir_is_refused(self, tmp_path):
@@ -2859,7 +2863,7 @@ class TestResumeInnerTurnReplay:
         )
         r = WebRenderer(session_dir=str(session))
         r.replay_session(self._Ctx([]))
-        assert "assistant_turn" not in [e for e, _ in r._event_buffer]
+        assert "assistant_turn" not in [e for e, _ in r.hub.events]
 
     def test_agent_history_is_sliced_per_request_scope(self, tmp_path):
         """상주 에이전트의 history 는 요청들을 관통하는 한 파일 — 각 요청
@@ -2939,7 +2943,7 @@ class TestResumeInnerTurnReplay:
         r = WebRenderer(session_dir=str(tmp_path))
         r.replay_session(self._Ctx([]))
         by_scope = {}
-        for e, d in r._event_buffer:
+        for e, d in r.hub.events:
             if e in ("assistant_turn", "observation"):
                 by_scope.setdefault(dict(d).get("task_id"), []).append(e)
         assert by_scope == {
@@ -2950,13 +2954,13 @@ class TestResumeInnerTurnReplay:
     def test_scope_start_payload_carries_ctx_dir(self):
         r = WebRenderer()
         r.begin_scope(task_id="t", kind="run", label="x", ctx_dir="run_task_ab_1")
-        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
         assert start["ctx_dir"] == "run_task_ab_1"
 
     def test_agent_work_scope_carries_home_dir(self):
         r = WebRenderer()
         r.begin_agent_work(key="agt-z", item="u-3", profile="code-writer", message="do")
-        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
         assert start["ctx_dir"] == "agents/agt-z"
 
 
@@ -3028,7 +3032,7 @@ class TestCtxDirWiring:
                     session=None,
                 ),
             )
-            start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+            start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
             assert captured["session_subdir"], "SkillLoop 에 dir 미전달"
             assert start.get("ctx_dir") == captured["session_subdir"]
             assert start["ctx_dir"].startswith("skill_plan_")
@@ -3128,7 +3132,7 @@ class TestCtxDirWiring:
             {"tasks": [{"task": "t", "agent": "explorer"}]},
             make_caller(binding=make_binding(capabilities=self._caps())),
         )
-        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
         assert captured["run_dir_name"]
         assert start.get("ctx_dir") == captured["run_dir_name"]
         assert start["ctx_dir"].startswith("run_explorer_")
@@ -3155,7 +3159,7 @@ class TestCtxDirWiring:
         )
         starts = {
             dict(d)["ctx_dir"]
-            for e, d in r._event_buffer
+            for e, d in r.hub.events
             if e == "scope_start" and dict(d).get("ctx_dir")
         }
         assert starts == set(captured)
@@ -3176,7 +3180,7 @@ class TestCompleteAttribution:
     def _renderer_with_conn(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         return r, conn
 
     def _events(self, conn):
@@ -3407,7 +3411,7 @@ class TestAgentWorkNavTs:
     the 'no card' notice."""
 
     def _scope_starts(self, r):
-        snap = r.register_connection(WebConnection(id="c1"))
+        snap = r.hub.register(WebConnection(id="c1"))
         return [d for e, d in snap if e == "scope_start"]
 
     def test_nav_ts_baked_into_scope_start(self):
@@ -3453,7 +3457,7 @@ class TestPendingThoughtPerThread:
         t1.start()
         t2.start()
         done.wait(timeout=5)
-        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        turns = [d for e, d in r.hub.events if e == "assistant_turn"]
         assert len(turns) == 2
         by_cmd = {t["action"]["tool_input"]: t["thought"] for t in turns}
         # 각 워커의 카드에 자기 thought 가 실린다 (단일 슬롯이면 한쪽이 덮임).
@@ -3465,7 +3469,7 @@ class TestPendingThoughtPerThread:
         r.thought("only-once", turn=1)
         r.action("shell", "c1", turn=1)
         r.final("done", turn=1)  # 두 번째 emit 에 이전 thought 가 새면 안 됨
-        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        turns = [d for e, d in r.hub.events if e == "assistant_turn"]
         assert turns[0]["thought"] == "only-once"
         assert turns[1]["thought"] == ""
         # 스코프 전부 닫힌 스레드의 잔여 슬롯 정리(누수 방지)
@@ -3491,9 +3495,9 @@ class TestStreamStallDisplay:
         """회귀 가드 — status 로 돌아가면 웹에서 다시 드롭된다."""
         r = WebRenderer(session_dir=str(tmp_path))
         r.stream_stall(kind="wait", elapsed_s=90, limit_s=600, attempt=1, attempts=4)
-        slot = r._sticky["stream_stall"]
-        assert slot["event"] == "stream_stall"
-        assert slot["payload"] == {
+        snap = r.hub.register(WebConnection(id="late"))
+        assert [ev for ev, _ in snap if ev == "stream_stall"] == ["stream_stall"]
+        assert r.hub.sticky_payload("stream_stall") == {
             "kind": "wait",
             "elapsed_s": 90,
             "limit_s": 600,
@@ -3506,15 +3510,15 @@ class TestStreamStallDisplay:
         r = WebRenderer(session_dir=str(tmp_path))
         for tick in range(1, 21):
             r.stream_stall(kind="wait", elapsed_s=tick * 30, limit_s=600, attempts=4)
-        assert r._sticky["stream_stall"]["payload"]["elapsed_s"] == 600
-        assert sum(1 for k in r._sticky if k.startswith("stream_stall")) == 1
+        assert r.hub.sticky_payload("stream_stall")["elapsed_s"] == 600
+        assert len(r.hub.sticky_items("stream_stall")) == 1
 
     def test_wait_is_sticky_so_late_viewers_see_it(self, tmp_path):
         """긴 대기 도중 접속한 뷰어도 현재 상태를 봐야 한다 — 재접속
         snapshot 에 실린다."""
         r = WebRenderer(session_dir=str(tmp_path))
         r.stream_stall(kind="wait", elapsed_s=120, limit_s=600, attempts=4)
-        snap = r.register_connection(WebConnection(id="late"))
+        snap = r.hub.register(WebConnection(id="late"))
         events = [p for ev, p in snap if ev == "stream_stall"]
         assert events and events[0]["elapsed_s"] == 120
 
@@ -3524,8 +3528,8 @@ class TestStreamStallDisplay:
         r = WebRenderer(session_dir=str(tmp_path))
         r.stream_stall(kind="wait", elapsed_s=600, limit_s=600, attempts=4)
         r.stream_stall(kind="resend", attempt=2, attempts=4)
-        assert "stream_stall" not in r._sticky
-        snap = r.register_connection(WebConnection(id="late"))
+        assert r.hub.sticky_payload("stream_stall") is None
+        snap = r.hub.register(WebConnection(id="late"))
         assert not [p for ev, p in snap if ev == "stream_stall"]
 
     def test_clear_removes_wait_without_leaving_a_record(self, tmp_path):
@@ -3533,8 +3537,8 @@ class TestStreamStallDisplay:
         r = WebRenderer(session_dir=str(tmp_path))
         r.stream_stall(kind="wait", elapsed_s=30, limit_s=600, attempts=4)
         r.stream_stall(kind="clear")
-        assert "stream_stall" not in r._sticky
-        snap = r.register_connection(WebConnection(id="late"))
+        assert r.hub.sticky_payload("stream_stall") is None
+        snap = r.hub.register(WebConnection(id="late"))
         assert not [p for ev, p in snap if ev == "stream_stall"]
 
     def test_frontend_listens_for_the_event(self):
@@ -3556,7 +3560,7 @@ class TestStreamResetWeb:
     def test_emits_dedicated_event(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.stream_reset()
         events = []
         while not conn.queue.empty():
@@ -3568,7 +3572,7 @@ class TestStreamResetWeb:
         빈 reset 이 날아오면 프론트가 멀쩡한 카드를 지울 수도 있다."""
         r = WebRenderer(session_dir=str(tmp_path))
         r.stream_reset()
-        snap = r.register_connection(WebConnection(id="late"))
+        snap = r.hub.register(WebConnection(id="late"))
         assert not [p for ev, p in snap if ev == "stream_reset"]
 
     def test_carries_scope_task_id(self, tmp_path):
@@ -3576,7 +3580,7 @@ class TestStreamResetWeb:
         빠지면 메인 타임라인의 카드가 날아간다."""
         r = WebRenderer(session_dir=str(tmp_path))
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         import threading
 
         r._thread_to_task[threading.get_ident()] = "task-7"
@@ -3681,7 +3685,7 @@ class TestNoteNext:
     def test_attaches_to_the_next_event_and_is_consumed_once(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.note_next("🔓 승인됨")
         r.observation("removed 1204 files", turn=1, tool_name="shell", success=True)
@@ -3697,7 +3701,7 @@ class TestNoteNext:
         """표시/모델 분리의 핵심 — 별도 필드여야 도구 출력이 오염되지 않는다."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.note_next("🔓 사용자가 `rm` 포함 명령을 승인")
         r.observation("removed 1204 files", turn=1, tool_name="shell", success=True)
@@ -3709,7 +3713,7 @@ class TestNoteNext:
         """병렬 스코프(에이전트 워커·delegate)끼리 주석이 새지 않는다."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         r.note_next("주 스레드 주석")
 
@@ -3777,7 +3781,7 @@ class TestRunBlockFields:
     def test_scope_start_carries_items_defaulting_to_the_run_item(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_agent_work(key="agt-a", item="u-3", profile="p", message="일감")
         d = self._next(conn, "scope_start")
         assert d["task_id"] == "agt-a#u-3" and d["items"] == ["u-3"]
@@ -3786,7 +3790,7 @@ class TestRunBlockFields:
     def test_scope_start_carries_the_batch_items(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.begin_agent_work(
             key="agt-a",
             item="u-7",
@@ -3800,7 +3804,7 @@ class TestRunBlockFields:
     def test_agent_msg_marks_a_fallback_send_only_when_told(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.agent_message(key="agt-a", direction="out", author="agt-a", text="x")
         assert "fallback" not in self._next(conn, "agent_msg")
         r.agent_message(
@@ -3829,7 +3833,7 @@ class TestImagesOnCards:
     def test_user_message_carries_images(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.push_user_message("[dj]: look", author="dj", images=[self.REF])
         event, data = conn.queue.get(timeout=0.5)
         assert event == "user_message"
@@ -3841,7 +3845,7 @@ class TestImagesOnCards:
     def test_observation_carries_images(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.observation("[image: shot.png (800×400)]", 1, "read_file", images=[self.REF])
         event, data = conn.queue.get(timeout=0.5)
         assert event == "observation"
@@ -3873,7 +3877,7 @@ class TestImagesOnCards:
         )
         r = WebRenderer()
         r.replay_from_history(ctx)
-        by_event = {e: d for e, d in r._event_buffer}
+        by_event = {e: d for e, d in r.hub.events}
         assert by_event["user_message"]["images"] == [self.REF]
         assert by_event["observation"]["images"] == [self.REF]
 
@@ -3881,7 +3885,7 @@ class TestImagesOnCards:
         """v10.61.0: 에이전트 창의 수신 메시지도 썸네일 — 없으면 키도 없다."""
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.agent_message(
             key="agt-1",
             direction="in",

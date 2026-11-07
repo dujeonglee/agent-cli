@@ -2767,10 +2767,10 @@ class TestRendererSignatureRegression:
         _announce_agent_boot(r, revived=2, auto=1)  # TypeError 면 즉사
         # transient status 이벤트가 실제로 흘렀는지까지 확인
         # (persistent 버퍼가 아닌 라이브 큐라 connection 으로 수신)
-        from agent_cli.render.web import WebConnection
+        from agent_cli.render.web_hub import WebConnection
 
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         _announce_agent_boot(r, revived=1, auto=0)
         events = []
         while not conn.queue.empty():

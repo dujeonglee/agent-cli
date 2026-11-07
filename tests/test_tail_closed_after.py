@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 from agent_cli.web.server import WebServer, create_app
 from tests.loop_ports import TEST_PORTS
 
@@ -39,12 +40,12 @@ class TestSnapshotEvent:
     def test_each_snapshot_announces_its_scope_at_call_start(self):
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.note_system_prompt([("S", "x")], turn=1, tail=_TAIL, open_items=["u-1"])
         snaps = [d for ev, d in _events(conn) if ev == "prompt_snapshot"]
         assert snaps and snaps[0]["scope"] == ""
         # 일시 이벤트 — 새로고침 재생에 쌓이지 않는다
-        assert all(ev != "prompt_snapshot" for ev, _d in r._event_buffer)
+        assert all(ev != "prompt_snapshot" for ev, _d in r.hub.events)
 
 
 class TestClosedAfter:
@@ -54,7 +55,7 @@ class TestClosedAfter:
             [("S", "x")], turn=2, tail=_TAIL, open_items=["u-1", "u-2"]
         )
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.note_items_closed_after(["u-2"])
         d = _prompt(r)
         assert d["closed_after"] == ["u-1"]
@@ -66,7 +67,7 @@ class TestClosedAfter:
         r = WebRenderer()
         r.note_system_prompt([("S", "x")], turn=2, tail=_TAIL, open_items=["u-1"])
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.note_items_closed_after(["u-1"])
         assert _prompt(r)["closed_after"] == []
         assert not any(ev == "prompt_snapshot" for ev, _d in _events(conn))

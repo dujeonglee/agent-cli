@@ -142,17 +142,17 @@ class TestActivityAccessors:
 
     def test_has_live_connections_empty(self):
         r = self._renderer()
-        assert r.has_live_connections() is False
+        assert r.hub.has_live_connections() is False
 
     def test_has_live_connections_with_open_conn(self):
-        from agent_cli.render.web import WebConnection
+        from agent_cli.render.web_hub import WebConnection
 
         r = self._renderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
-        assert r.has_live_connections() is True
+        r.hub.register(conn)
+        assert r.hub.has_live_connections() is True
         conn.closed.set()  # client gone
-        assert r.has_live_connections() is False
+        assert r.hub.has_live_connections() is False
 
     def test_pending_count(self):
         from agent_cli.web.server import WebServer

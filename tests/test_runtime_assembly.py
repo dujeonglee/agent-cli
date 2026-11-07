@@ -367,7 +367,9 @@ class TestExitPathConvergence:
     def test_web_converges_on_teardown_session(self):
         body = self._body("web")
         assert "teardown_session(" in body
-        assert "shutdown_all()" not in body  # registry 직접 나열 부활 금지
+        # registry 직접 나열 부활 금지 — 연결 허브의 종료(``renderer.hub.shutdown_all()``,
+        # v10.115.0)는 별개라 그것만 허용한다.
+        assert body.count("shutdown_all()") == body.count("renderer.hub.shutdown_all()")
         assert "disconnect_all()" not in body
 
     def test_web_hooks_wired_like_run(self):

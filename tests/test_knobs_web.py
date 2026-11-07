@@ -17,7 +17,8 @@ from fastapi.testclient import TestClient
 from agent_cli.context.manager import ContextManager
 from agent_cli.knobs import KNOBS
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.web.server import WebServer, create_app
 from tests.binding_support import make_binding
@@ -92,9 +93,9 @@ class TestTableDriven:
         r = _post(client, name, value)
         assert r["ok"] is True and r["value"] == expect, r
         assert _get(client, name)["value"] == expect
-        assert renderer._sticky[f"knob:{name}"]["payload"]["value"] == expect
+        assert renderer.hub.sticky_payload(f"knob:{name}")["value"] == expect
         # 재접속 snapshot 에 실린다 — 뷰어 동기화의 토대
-        snap = renderer.register_connection(WebConnection(id="v2"))
+        snap = renderer.hub.register(WebConnection(id="v2"))
         assert any(ev == "knob" and d.get("name") == name for ev, d in snap)
 
     def test_unknown_knob_is_404(self, tmp_path):
@@ -218,7 +219,7 @@ class TestChipShapeComesFromTheServer:
         client.post(f"/api/knobs/stall_attempts?token={TOKEN}", json={"value": 6})
         for name in ("stall", "stall_attempts"):
             assert (
-                renderer._sticky[f"knob:{name}"]["payload"]["group"]["badge"] == "10m×6"
+                renderer.hub.sticky_payload(f"knob:{name}")["group"]["badge"] == "10m×6"
             )
 
     def test_model_switch_rebroadcasts_the_dependent_locks(self, tmp_path, monkeypatch):
@@ -251,8 +252,8 @@ class TestChipShapeComesFromTheServer:
         assert _get(client, "thinking")["locked"] is None
         r = client.post(f"/api/knobs/model?token={TOKEN}", json={"value": "m2"}).json()
         assert r["ok"] and r["badge"] == "m2"
-        assert renderer._sticky["knob:thinking"]["payload"]["locked"]
-        assert renderer._sticky["knob:thinking"]["payload"]["badge"] == "unsupported"
+        assert renderer.hub.sticky_payload("knob:thinking")["locked"]
+        assert renderer.hub.sticky_payload("knob:thinking")["badge"] == "unsupported"
 
     def test_stall_zero_locks_attempts(self, tmp_path):
         _s, _r, client = _full(tmp_path)

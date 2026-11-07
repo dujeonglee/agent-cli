@@ -412,12 +412,13 @@ class TestWebDispatchOutput:
     """
 
     def _make(self):
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
         from agent_cli.web.slash import WebDispatchOutput
 
         renderer = WebRenderer()
         conn = WebConnection(id="t")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
         return WebDispatchOutput(renderer), conn
 
     def _pop(self, conn):

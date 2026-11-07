@@ -107,7 +107,7 @@ class TestReconnectReplay:
         """뷰어 0명일 때 시작된 confirm(v7.8.0 부재 중 대기)이 늦게 접속한
         브라우저의 snapshot replay 로 그대로 뜨고 답변 가능해야 한다."""
         results: list = []
-        # 접속 전에 confirm 을 걸어야 하므로 has_live_connections 대기를
+        # 접속 전에 confirm 을 걸어야 하므로 hub.has_live_connections 대기를
         # 우회해 직접 스레드를 건다.
         import threading
 

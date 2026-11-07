@@ -18,7 +18,8 @@ import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.render import get_renderer, set_renderer
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 from tests.binding_support import make_binding
 
 
@@ -180,21 +181,21 @@ class TestWebRendererContextView:
     def test_main_scope_sticky_and_replay(self):
         r = WebRenderer()
         c1 = WebConnection(id="c1")
-        r.register_connection(c1)
+        r.hub.register(c1)
         view = {"gone": {"hidx": 9}, "summary": None}
         r.context_view(view)
         ev, data = c1.queue.get_nowait()
         assert ev == "ctx_view" and data["gone"] == view["gone"]
         assert "task_id" not in data  # main
         c2 = WebConnection(id="c2")
-        snapshot = r.register_connection(c2)
+        snapshot = r.hub.register(c2)
         assert any(e == "ctx_view" and d["gone"] == view["gone"] for e, d in snapshot)
 
     def test_latest_view_replaces_the_sticky(self):
         r = WebRenderer()
         r.context_view({"gone": {"hidx": 1}, "summary": None})
         r.context_view({"gone": {"hidx": 5}, "summary": None})
-        snapshot = r.register_connection(WebConnection(id="c"))
+        snapshot = r.hub.register(WebConnection(id="c"))
         views = [d for e, d in snapshot if e == "ctx_view"]
         assert len(views) == 1 and views[0]["gone"]["hidx"] == 5
 
@@ -206,7 +207,7 @@ class TestWebRendererContextView:
             r.context_view({"gone": None, "summary": None})
         finally:
             r.end_scope(task_id=sid)
-        snapshot = r.register_connection(WebConnection(id="c"))
+        snapshot = r.hub.register(WebConnection(id="c"))
         views = [d for e, d in snapshot if e == "ctx_view"]
         assert views and views[-1]["task_id"] == sid
 
@@ -214,7 +215,7 @@ class TestWebRendererContextView:
 class TestReplayCarriesTurnsAndOrdinals:
     def _events(self, r, records):
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         for i, rec in enumerate(records):
             r._replay_record(rec, hidx=i)
         out = []
@@ -263,7 +264,7 @@ class TestReplayCarriesTurnsAndOrdinals:
     def test_live_user_message_hidx_is_optional(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.push_user_message("hi")
         r.push_user_message("hi", hidx=7)
         first = conn.queue.get_nowait()[1]
@@ -274,7 +275,7 @@ class TestReplayCarriesTurnsAndOrdinals:
         # 한 카드가 소비한 서수는 다음 카드에 남지 않는다
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         r.push_user_message("a", hidx=3)
         r.push_user_message("b")
         conn.queue.get_nowait()
@@ -312,7 +313,7 @@ class TestResumeDrawsTheEvictedCards:
         r.replay_from_history(resumed)
         cards = [
             (e, dict(d))
-            for e, d in r._event_buffer
+            for e, d in r.hub.events
             if e in ("user_message", "assistant_turn", "observation")
         ]
         ordinals = [d["hidx"] for _, d in cards]
@@ -340,7 +341,7 @@ class TestResumeDrawsTheEvictedCards:
 
         r = WebRenderer()
         r.replay_from_history(_Ctx())
-        got = [(e, dict(d)["hidx"]) for e, d in r._event_buffer]
+        got = [(e, dict(d)["hidx"]) for e, d in r.hub.events]
         assert got == [("user_message", 3), ("observation", 4), ("user_message", 5)]
 
 
@@ -352,9 +353,7 @@ class TestInlineCardKnowsTheRecordThatOpenedIt:
     @staticmethod
     def _starts(r):
         return {
-            dict(d)["task_id"]: dict(d)
-            for e, d in r._event_buffer
-            if e == "scope_start"
+            dict(d)["task_id"]: dict(d) for e, d in r.hub.events if e == "scope_start"
         }
 
     def test_scope_start_carries_the_parents_latest_record(self):
@@ -431,7 +430,7 @@ class TestLiveDispatchOrdinals:
         set_renderer(r)
         try:
             conn = WebConnection(id="c")
-            r.register_connection(conn)
+            r.hub.register(conn)
             wf = get_dialect("json_fc")
             ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
             ctx.add({"role": "user", "content": "q"})
@@ -492,7 +491,7 @@ class TestSnapshotEnd:
         r = WebRenderer()
         r.push_user_message("a")
         r.push_user_message("b")
-        snapshot = r.register_connection(WebConnection(id="c"))
+        snapshot = r.hub.register(WebConnection(id="c"))
         assert snapshot[-1][0] == "snapshot_end"
         assert snapshot[-1][1] == {"events": len(snapshot) - 1}
         assert sum(1 for e, _ in snapshot if e == "snapshot_end") == 1
@@ -500,8 +499,8 @@ class TestSnapshotEnd:
     def test_marker_is_not_a_live_event(self):
         r = WebRenderer()
         c1 = WebConnection(id="c1")
-        r.register_connection(c1)
-        r.register_connection(WebConnection(id="c2"))  # 두 번째 접속
+        r.hub.register(c1)
+        r.hub.register(WebConnection(id="c2"))  # 두 번째 접속
         live = []
         while not c1.queue.empty():
             live.append(c1.queue.get_nowait()[0])
@@ -512,7 +511,7 @@ class TestAbsorbedAgentMessage:
     def test_absorbed_into_rides_on_the_payload(self):
         r = WebRenderer()
         c = WebConnection(id="c")
-        r.register_connection(c)
+        r.hub.register(c)
         r.agent_message(
             key="agt-1",
             direction="absorbed",

@@ -451,7 +451,8 @@ class TestConfineWaitsForLateViewer:
         import time
 
         import agent_cli.render as render_mod
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         _ws, outside = confined
         r = WebRenderer()
@@ -467,7 +468,7 @@ class TestConfineWaitsForLateViewer:
         assert t.is_alive(), "뷰어 0명이어도 confine 승인은 대기해야 한다"
 
         conn = WebConnection(id="late")
-        snapshot = r.register_connection(conn)
+        snapshot = r.hub.register(conn)
         kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
         assert "confirm" in kinds
 
