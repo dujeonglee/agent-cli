@@ -109,6 +109,15 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 제품 스위트(`tests/`)와 분리. `test_hermes_local.py` 는 harbor 가 import 될 때만 돈다 —
 `uvx --from harbor==0.24.0 --with pytest python -m pytest bench/harbor/test_hermes_local.py`.
 
+## 벤치 정책 (2026-11 확정)
+
+- **모델·횟수**: GLM-5.3-Flash(`GLM-5.3-Flash-oQ4-mtp`, 사고 off = `--ae AGENT_CLI_THINKING=off`) 로 기준·후보를 **교차** 2회 이상(base-r1 → cand-r1 → cand-r2 → base-r2). 고정 기준 한 런에 변형들을 대지 않는다 — 같은 main 이 낮 7/9·심야 4/9 를 낸 적이 있다. 모델 서버는 한 번에 한 소비자.
+- **gcode-to-text 는 합계에서 빼고 따로 보고한다.** 그림 판독 과제라 하니스 변화를 재지 못하고, 같은 휠 10회 배치가 7·5·5·0·5 (/10) 로 흔들린다(2026-11-06~07). 9과제 합계는 8과제 합계 + "gcode n/3" 로 적는다.
+- **동시성**: harbor 기본 `-n 4` 는 omlx 하나를 네 trial 이 나눠 쓴다 — 첫 토큰 대기(프리필)가 과제 예산 900 s 의 55~95% 였다. 통과율이 움직이면 먼저 시간 예산 효과인지 보고, 시간 경계 과제(gcode·video·extract-moves)는 `-n 1` 로 다시 잰다.
+- **극단값은 같은 휠을 다른 배치에서 재현부터.** 10회 배치의 0/10 과 7/10 이 모두 재현 런에서 5/10 으로 돌아왔다 — 한 배치의 극단은 코드에 귀속하지 않는다.
+- **런 전 확인**: `--ak models_json=…` 파일이 있는지(스크래치의 설정 파일이 사라져 한 런이 전멸한 적 있다). 로그의 `First run` 줄은 설정 누락 신호다.
+- **읽는 위치**: `result.json` 의 `verifier_result.rewards.reward`(통과)·`agent_info.version`(실제 돈 휠)·`agent_execution.{started_at,finished_at}`; 행동은 `agent/trajectory.json` 의 steps(`tool_calls`·`metrics.prompt_tokens`). 첫 스텝 `prompt_tokens` 가 두 휠에서 같으면 프롬프트가 같다는 실측이다.
+
 ## 주의
 
 - **arm64**: Terminal-Bench 2 이미지의 multi-arch 여부는 태스크마다 다름. SWE-bench 는 x86.
