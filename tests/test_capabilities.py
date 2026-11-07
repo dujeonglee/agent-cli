@@ -10,8 +10,9 @@ from agent_cli.providers.capabilities import (
     DEFAULT_CONTEXT_WINDOW,
     MIN_CONTEXT_WINDOW,
     UnsupportedModelError,
-    _detect_openai_capabilities,
+    _detect_capabilities,
     _emit_progress,
+    _OpenAITransport,
     get_capabilities,
     set_progress_callback,
 )
@@ -141,9 +142,14 @@ class TestOpenAIRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        caps = _detect_capabilities(
+            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+        )
         assert caps is not None
         assert caps.context_window == 32768
         assert caps.supports_thinking is True
@@ -176,9 +182,14 @@ class TestOpenAIRuntimeDetection:
             self._chat_resp({"content": "Green, blue."}),  # 4차: 비전 프로브 (v10.59.0)
         ]
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        caps = _detect_capabilities(
+            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+        )
         assert caps is not None
         assert caps.supports_thinking is True
         assert caps.supports_grammar is True
@@ -204,9 +215,14 @@ class TestOpenAIRuntimeDetection:
             {"content": "Hi", "reasoning_content": "let me think"}
         )
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        caps = _detect_capabilities(
+            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+        )
         assert caps is not None
         assert caps.supports_thinking is True
         # 1차에서 검출 → 사고 재프로브 없음; 문법 프로브(v9.24.0)와 비전 프로브
@@ -226,9 +242,14 @@ class TestOpenAIRuntimeDetection:
             Exception("400 chat_template_kwargs rejected"),  # 2차: 재프로브 실패
         ]
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        caps = _detect_capabilities(
+            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+        )
         assert caps is not None
         assert caps.supports_thinking is False
 
@@ -252,10 +273,16 @@ class TestOpenAIRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        _detect_openai_capabilities(
-            "http://localhost:8080/v1", "model", api_key="test-key-123"
+        _detect_capabilities(
+            "model",
+            _OpenAITransport(
+                "http://localhost:8080/v1", "model", api_key="test-key-123"
+            ),
         )
 
         # Verify Authorization header in GET /v1/models
@@ -284,9 +311,14 @@ class TestOpenAIRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        _detect_openai_capabilities("http://localhost:8080/v1", "model", api_key="")
+        _detect_capabilities(
+            "model", _OpenAITransport("http://localhost:8080/v1", "model", api_key="")
+        )
 
         get_headers = mock_get.call_args.kwargs.get("headers", {})
         assert "Authorization" not in get_headers
@@ -309,9 +341,14 @@ class TestOpenAIRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
+        caps = _detect_capabilities(
+            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+        )
         assert caps is not None
         assert caps.context_window == 131072  # 128K fallback
         assert caps.supports_thinking is False
@@ -322,14 +359,19 @@ class TestOpenAIRuntimeDetection:
         mock_get.side_effect = Exception("Connection refused")
         mock_post.side_effect = Exception("Connection refused")
 
-        from agent_cli.providers.capabilities import _detect_openai_capabilities
+        from agent_cli.providers.capabilities import (
+            _detect_capabilities,
+            _OpenAITransport,
+        )
 
-        caps = _detect_openai_capabilities("http://localhost:8080/v1", "model")
+        caps = _detect_capabilities(
+            "model", _OpenAITransport("http://localhost:8080/v1", "model")
+        )
         assert caps is None
 
     @patch("agent_cli.providers.capabilities.requests.get")
     def test_context_window_detection(self, mock_get):
-        """Test _detect_openai_context_window directly."""
+        """Test `_OpenAITransport.context_window` directly."""
         models_resp = MagicMock()
         models_resp.status_code = 200
         models_resp.json.return_value = {
@@ -341,9 +383,11 @@ class TestOpenAIRuntimeDetection:
         models_resp.raise_for_status.return_value = None
         mock_get.return_value = models_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_context_window
+        from agent_cli.providers.capabilities import _OpenAITransport
 
-        ctx = _detect_openai_context_window("http://localhost:8080/v1", "target-model")
+        ctx = _OpenAITransport(
+            "http://localhost:8080/v1", "target-model"
+        ).context_window()
         assert ctx == 65536
 
 
@@ -515,8 +559,8 @@ _OMLX_OVERFLOW_400 = (
 class TestContextWindowProbe:
     """PR C — detect-time context-window discovery via overflow probe.
 
-    Covers _probe_context_window_via_overflow in isolation plus the
-    _detect_openai_context_window tier ordering (metadata → probe →
+    Covers `_OpenAITransport._overflow_window` in isolation plus the
+    `_OpenAITransport.context_window` tier ordering (metadata → probe →
     128K fallback)."""
 
     def _resp(self, status, text=""):
@@ -527,75 +571,158 @@ class TestContextWindowProbe:
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_parses_limit_from_overflow_400(self, mock_post):
-        from agent_cli.providers.capabilities import _probe_context_window_via_overflow
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
-        assert _probe_context_window_via_overflow("http://x/v1", "m") == 262144
+        assert _OpenAITransport("http://x/v1", "m")._overflow_window() == 262144
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_when_prompt_fits(self, mock_post):
         """200 means the window exceeds our probe — can't learn exact size."""
-        from agent_cli.providers.capabilities import _probe_context_window_via_overflow
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(200, "")
-        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_overflow_without_number(self, mock_post):
-        from agent_cli.providers.capabilities import _probe_context_window_via_overflow
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         # Classified as overflow, but no parseable number.
         mock_post.return_value = self._resp(400, "context length exceeded")
-        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_non_overflow_400(self, mock_post):
-        from agent_cli.providers.capabilities import _probe_context_window_via_overflow
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(400, "invalid_request: unknown field")
-        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_connection_error(self, mock_post):
-        from agent_cli.providers.capabilities import _probe_context_window_via_overflow
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.side_effect = Exception("Connection refused")
-        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_detect_uses_metadata_and_skips_probe(self, mock_post, mock_get):
         """When /v1/models has max_model_len, no probe POST is sent."""
-        from agent_cli.providers.capabilities import _detect_openai_context_window
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {
             "data": [{"id": "m", "max_model_len": 32768}]
         }
-        assert _detect_openai_context_window("http://x/v1", "m") == 32768
+        assert _OpenAITransport("http://x/v1", "m").context_window() == 32768
         mock_post.assert_not_called()
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_detect_falls_back_to_probe(self, mock_post, mock_get):
         """No metadata → probe discovers the real limit (omlx path)."""
-        from agent_cli.providers.capabilities import _detect_openai_context_window
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {"data": []}  # model absent
         mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
-        assert _detect_openai_context_window("http://x/v1", "m") == 262144
+        assert _OpenAITransport("http://x/v1", "m").context_window() == 262144
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_detect_falls_back_to_128k_when_probe_fails(self, mock_post, mock_get):
         """No metadata + probe yields nothing → 128K (not the old 4096)."""
-        from agent_cli.providers.capabilities import _detect_openai_context_window
+        from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {"data": []}
         mock_post.return_value = self._resp(200, "")  # prompt fit → no number
-        assert _detect_openai_context_window("http://x/v1", "m") == 131072
+        assert _OpenAITransport("http://x/v1", "m").context_window() == 131072
+
+    # ── Anthropic 짝 (v10.114.0: 3단은 전송 기반 클래스 한 곳) ──
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_anthropic_detect_uses_metadata_and_skips_probe(self, mock_post, mock_get):
+        """Anthropic 도 /models 에 max_model_len 이 있으면 프로브 POST 없음."""
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {
+            "data": [{"id": "m", "max_model_len": 32768}]
+        }
+        assert _AnthropicTransport("http://x/v1", "m").context_window() == 32768
+        mock_post.assert_not_called()
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_anthropic_detect_falls_back_to_probe(self, mock_post, mock_get):
+        """메타 없음 → /messages 상한 초과 프로브가 실제 상한을 찾는다."""
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {"data": []}
+        mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
+        assert _AnthropicTransport("http://x/v1", "m").context_window() == 262144
+        assert mock_post.call_args.args[0] == "http://x/v1/messages"
+        body = mock_post.call_args.kwargs["json"]
+        assert list(body) == ["model", "max_tokens", "messages"]
+        assert body["max_tokens"] == 16
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_anthropic_detect_falls_back_to_128k_when_probe_fails(
+        self, mock_post, mock_get
+    ):
+        """메타 없음 + 프로브가 숫자를 못 줌 → 128K."""
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        mock_get.side_effect = Exception("Not found")
+        mock_post.return_value = self._resp(200, "")
+        assert _AnthropicTransport("http://x/v1", "m").context_window() == 131072
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    def test_anthropic_models_get_headers(self, mock_get):
+        """GET /models 헤더: anthropic-version 항상, x-api-key 는 키 있을 때만,
+        Content-Type 은 없다(통합 전과 같은 바이트)."""
+        from agent_cli.providers.capabilities import _AnthropicTransport
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {
+            "data": [{"id": "m", "max_model_len": 32768}]
+        }
+        _AnthropicTransport("http://x/v1", "m", "sk").context_window()
+        assert mock_get.call_args.kwargs["headers"] == {
+            "anthropic-version": "2023-06-01",
+            "x-api-key": "sk",
+        }
+        _AnthropicTransport("http://x/v1", "m").context_window()
+        assert mock_get.call_args.kwargs["headers"] == {
+            "anthropic-version": "2023-06-01"
+        }
+
+    def test_base_class_owns_shared_probes(self):
+        """3단·정규화·사고 2단·비전 흐름은 `_ProbeTransport` 한 곳 — 서브클래스는
+        모양(URL·헤더·본문·응답 읽기)만 정하고 공통을 다시 쓰지 않는다."""
+        from agent_cli.providers.capabilities import (
+            _AnthropicTransport,
+            _OpenAITransport,
+            _ProbeTransport,
+        )
+
+        for cls in (_OpenAITransport, _AnthropicTransport):
+            assert issubclass(cls, _ProbeTransport)
+            for name in (
+                "context_window",
+                "_metadata_window",
+                "_overflow_window",
+                "simple_chat",
+                "thinking_probe",
+                "vision_probe",
+            ):
+                assert name not in cls.__dict__, (cls.__name__, name)
 
 
 class TestModelRejectAndOutputScaling:
@@ -613,7 +740,7 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_openai_capabilities("http://x/v1", "big")
+        caps = _detect_capabilities("big", _OpenAITransport("http://x/v1", "big"))
         assert caps.max_output_tokens == 262144 // 4
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -630,7 +757,7 @@ class TestModelRejectAndOutputScaling:
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
         with pytest.raises(UnsupportedModelError):
-            _detect_openai_capabilities("http://x/v1", "tiny")
+            _detect_capabilities("tiny", _OpenAITransport("http://x/v1", "tiny"))
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -646,13 +773,13 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_openai_capabilities("http://x/v1", "edge")
+        caps = _detect_capabilities("edge", _OpenAITransport("http://x/v1", "edge"))
         assert caps is not None
         assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
 
 
 class TestDetectionWiresStructuredFlags:
-    """_detect_openai_capabilities should reflect the structured-output probe."""
+    """`_detect_capabilities` with an OpenAI transport should reflect the structured-output probe."""
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -667,7 +794,7 @@ class TestDetectionWiresStructuredFlags:
             _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
             _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
         ]
-        caps = _detect_openai_capabilities("http://x/v1", "m")
+        caps = _detect_capabilities("m", _OpenAITransport("http://x/v1", "m"))
         assert caps is not None
         assert caps.supports_thinking is False
 
@@ -790,13 +917,13 @@ class TestAnthropicRuntimeDetection:
         assert caps.supports_thinking is False
 
     def test_anthropic_text_skips_leading_thinking_block(self):
-        """_anthropic_text 는 첫 **text 타입** 블록을 찾는다 — thinking 활성
+        """`_AnthropicTransport._text` 는 첫 **text 타입** 블록을 찾는다 — thinking 활성
         응답(blocks[0]=thinking)에서 위치 고정 인덱싱이 빈 문자열을 돌려주던
         것의 수리."""
-        from agent_cli.providers.capabilities import _anthropic_text
+        from agent_cli.providers.capabilities import _AnthropicTransport
 
         assert (
-            _anthropic_text(
+            _AnthropicTransport("http://x", "m")._text(
                 {
                     "content": [
                         {"type": "thinking", "thinking": "r"},
@@ -806,8 +933,13 @@ class TestAnthropicRuntimeDetection:
             )
             == "Hello"
         )
-        assert _anthropic_text({"content": [{"type": "text", "text": "x"}]}) == "x"
-        assert _anthropic_text({"content": []}) == ""
+        assert (
+            _AnthropicTransport("http://x", "m")._text(
+                {"content": [{"type": "text", "text": "x"}]}
+            )
+            == "x"
+        )
+        assert _AnthropicTransport("http://x", "m")._text({"content": []}) == ""
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")

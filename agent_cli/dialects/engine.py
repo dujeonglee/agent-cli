@@ -249,11 +249,12 @@ class Dialect(DialectBase):
         if isinstance(action_input, dict) and action_input:
             from agent_cli.tools.registry import TOOLS
 
+            # 접두 규칙은 도구가 소유한다(`Tool.key_prefix`·`strip_prefix`) — 긴
+            # 이름 먼저라 `read_file_` 가 `read_` 류보다 앞선다.
             for tool_name in sorted(TOOLS, key=len, reverse=True):
-                pfx = tool_name + "_"
-                if all(k.startswith(pfx) for k in action_input):
-                    flat = {k[len(pfx) :]: v for k, v in action_input.items()}
-                    return self.render_call(tool_name, flat)
+                tool = TOOLS[tool_name]
+                if all(k.startswith(tool.key_prefix) for k in action_input):
+                    return self.render_call(tool_name, tool.strip_prefix(action_input))
         if self.spec.args in (ArgStyle.JSON_NATIVE, ArgStyle.JSON_IN_TAG):
             return json.dumps(action_input, ensure_ascii=False)
         if isinstance(action_input, dict):

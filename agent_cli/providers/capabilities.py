@@ -397,405 +397,312 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
         return None
 
 
-class _OpenAITransport:
-    """Capability-probe transport for OpenAI-compatible servers
-    (omlx / vLLM / LM Studio / OpenAI). Delegates context-window + structured
-    probes to the existing OpenAI-specific helpers."""
+class _ProbeTransport:
+    """capability 프로브 전송의 공통 골격 (v10.114.0).
+
+    프로바이더와 무관한 흐름은 여기 한 곳이 소유한다:
+      - ``context_window()`` 3단 — ``/models`` 메타데이터(``max_model_len`` →
+        ``context_length``) → 상한 초과 프로브의 400 본문 파싱 →
+        ``_DEFAULT_CONTEXT_FALLBACK``.
+      - ``simple_chat()`` — 사고(필드·블록)를 ``<think>…</think>content`` 로
+        정규화해 태그 검출 하나로 합친다.
+      - ``thinking_probe()`` 2단 · ``vision_probe()``.
+
+    서브클래스는 **모양만** 정한다: ``chat_url``·``_auth_headers()``·
+    ``_body()``·``_text()``·``_thinking()``·``_image_part()``·``grammar_probe()``.
+    요청 URL·헤더·JSON 본문은 통합 전(v10.113.x)의 두 전송·모듈 함수가 보내던
+    것과 같다 — 옛 코드와 나란히 돌려 기록을 대조해 확인했다."""
+
+    #: ``self.base`` 뒤에 붙는 채팅 끝점 경로 — 서브클래스가 정한다.
+    chat_path: str = ""
 
     def __init__(self, base_url: str, model: str, api_key: str = ""):
         self.base = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
 
-    def _headers(self) -> dict:
-        h = {"Content-Type": "application/json"}
-        if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
-        return h
+    @property
+    def chat_url(self) -> str:
+        return f"{self.base}{self.chat_path}"
+
+    # ─── 프로바이더별 모양 (서브클래스) ───────────────────────────
+
+    def _auth_headers(self) -> dict:
+        """인증·버전 헤더 — GET ``/models`` 는 이것만 보낸다(Content-Type 없음)."""
+        raise NotImplementedError
+
+    def _body(
+        self,
+        content,
+        max_tokens: int,
+        *,
+        enable_thinking: bool = False,
+        probe: bool = False,
+    ) -> dict:
+        """한 사용자 메시지짜리 요청 본문. ``content`` 는 문자열 또는 조각 목록.
+        ``enable_thinking`` 은 방언의 사고 켜기 스위치, ``probe`` 는 판정용
+        프로브(비전·문법)가 덧붙이는 결정성 필드."""
+        raise NotImplementedError
+
+    def _text(self, data) -> str:
+        """응답 본문의 답 텍스트."""
+        raise NotImplementedError
+
+    def _thinking(self, data) -> str:
+        """응답 본문의 사고 텍스트(없으면 빈 문자열)."""
+        raise NotImplementedError
+
+    def _image_part(self, mime: str, b64: str) -> dict:
+        raise NotImplementedError
+
+    def grammar_probe(self) -> bool:
+        raise NotImplementedError
+
+    # ─── 공통 ────────────────────────────────────────────────────
+
+    def _post_headers(self) -> dict:
+        return {"Content-Type": "application/json", **self._auth_headers()}
+
+    def _post(self, body: dict):
+        return requests.post(
+            self.chat_url,
+            json=body,
+            headers=self._post_headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
 
     def context_window(self) -> int:
-        return _detect_openai_context_window(self.base, self.model, self.api_key)
+        """3단: 메타데이터 → 상한 초과 프로브 → ``_DEFAULT_CONTEXT_FALLBACK``
+        (128K — 낮게 잡아 그 자체로 400 을 내지 않고, 실제가 더 작으면 flow 2
+        런타임 복구가 고친다)."""
+        ctx = self._metadata_window()
+        if ctx:
+            return ctx
+        # 메타데이터에 없다(omlx 등, 실 Anthropic 도) — 상한 초과로 묻는다.
+        _emit_progress(f"Probing context window via overflow ({self.model})")
+        probed = self._overflow_window()
+        if probed:
+            return probed
+        return _DEFAULT_CONTEXT_FALLBACK
+
+    def _metadata_window(self) -> int | None:
+        """``GET {base}/models`` 에서 이 모델 항목의 ``max_model_len``(vLLM)
+        또는 ``context_length`` — 양의 int 만. 실패·부재는 None."""
+        try:
+            r = requests.get(
+                f"{self.base}/models", headers=self._auth_headers(), timeout=10
+            )
+            r.raise_for_status()
+            for m in r.json().get("data", []):
+                if m.get("id") == self.model:
+                    for key in ("max_model_len", "context_length"):
+                        ctx = m.get(key)
+                        if isinstance(ctx, int) and ctx > 0:
+                            return ctx
+                    break
+        except Exception:
+            pass
+        return None
+
+    def _overflow_window(self) -> int | None:
+        """의도적인 상한 초과 거절에서 실제 컨텍스트 창을 읽는다.
+
+        메타데이터에 창을 싣지 않는 서버(omlx/mlx-lm)는 상한 초과 프롬프트를
+        상한을 적은 400 으로 거절한다(예: ``"...exceeds max context window of
+        262144 tokens"``). 런타임 복구층과 같은 ``parse_overflow_amounts`` 로
+        그 숫자를 뽑는다.
+
+        비용: 상한 초과 프롬프트는 *토크나이즈* 직후 거절된다 — eval·생성이
+        없어 서버를 점유하지 않는다(omlx 실측 2026-05-30). 그래서 경계로
+        좁혀 가는 이분 탐색은 하지 않는다: 상한 *이하* 프로브는 전체
+        prompt-eval 을 일으켜 그동안 서버를 막는다.
+
+        200(창이 프로브보다 큼)·상한 초과가 아닌 응답·숫자 없는 400·예외는
+        None — 호출자가 기본값으로 떨어진다."""
+        from agent_cli.context.overflow import (
+            is_context_overflow,
+            parse_overflow_amounts,
+        )
+
+        try:
+            r = self._post(self._body("word " * _CONTEXT_PROBE_WORDS, max_tokens=16))
+            if r.status_code == 200:
+                return None
+            text = r.text
+            if not is_context_overflow(text):
+                return None
+            _actual, limit = parse_overflow_amounts(text)
+        except Exception:
+            return None
+        return limit if (limit and limit > 0) else None
 
     def simple_chat(
         self, user_text: str, max_tokens: int, enable_thinking: bool = False
     ) -> str:
+        r = self._post(
+            self._body(user_text, max_tokens, enable_thinking=enable_thinking)
+        )
+        r.raise_for_status()
+        data = r.json()
+        # 사고를 별도 필드(vLLM reasoning 파서의 `reasoning_content`)나 블록
+        # (Anthropic thinking)으로 주는 서버가 있다 — `<think>` 로 정규화해 태그
+        # 검출과 하나로 합친다(필드/태그 어느 쪽이든 감지).
+        thinking = self._thinking(data)
+        content = self._text(data)
+        return f"<think>{thinking}</think>{content}" if thinking else content
+
+    def thinking_probe(self) -> bool:
+        """2단계 사고 감지: ① 기본 프로브(모델이 기본으로 사고를 뱉으면 감지).
+        미검출이면 ② 방언의 사고 켜기 스위치로 재프로브 — Qwen 처럼 사고가
+        기본 OFF 인 모델을 잡는다. 재프로브 실패(서버가 스위치를 거부 등)는
+        관용(→ 미지원); 실 Anthropic 모델은 레지스트리 기반이라 이 경로를 타지
+        않는다. 1차 프로브 오류는 상위로 전파(검출 실패 = 기본값 폴백)."""
+        if _detect_thinking(self.simple_chat("Say hello.", 512)):
+            return True
+        try:
+            return _detect_thinking(
+                self.simple_chat("Say hello.", 512, enable_thinking=True)
+            )
+        except Exception:
+            return False
+
+    def vision_probe(self) -> bool:
+        """이미지 조각을 보내 두 색을 순서대로 맞히면 True."""
+        from agent_cli import images
+
+        mime, b64 = images.probe_image()
+        content = [
+            {"type": "text", "text": images.PROBE_QUESTION},
+            self._image_part(mime, b64),
+        ]
+        r = self._post(self._body(content, max_tokens=64, probe=True))
+        r.raise_for_status()
+        return images.probe_answer_ok(self._text(r.json()))
+
+
+class _OpenAITransport(_ProbeTransport):
+    """OpenAI 호환 서버(omlx / vLLM / LM Studio / OpenAI) — ``/chat/completions``
+    · ``Authorization: Bearer`` · ``choices[0].message``."""
+
+    chat_path = "/chat/completions"
+
+    def _auth_headers(self) -> dict:
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return {}
+
+    def _body(
+        self,
+        content,
+        max_tokens: int,
+        *,
+        enable_thinking: bool = False,
+        probe: bool = False,
+    ) -> dict:
         body: dict = {
             "model": self.model,
-            "messages": [{"role": "user", "content": user_text}],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
         # 기본 OFF 모델(Qwen 등)을 재프로브할 때 사고 스위치를 켠다.
         if enable_thinking:
             body["chat_template_kwargs"] = {"enable_thinking": True}
-        r = requests.post(
-            f"{self.base}/chat/completions",
-            json=body,
-            headers=self._headers(),
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
-        content = msg.get("content") or ""
-        # vLLM reasoning 파서는 사고를 별도 `reasoning_content` 필드로 뽑는다
-        # (content 엔 `<think>` 가 없음). 이를 `<think>` 로 정규화해 태그 검출과
-        # 하나로 합친다 — 필드/태그 어느 쪽이든 감지.
-        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
-        return f"<think>{reasoning}</think>{content}" if reasoning else content
+        # 판정 프로브는 결정적으로, 사고는 끈다(켜져 있으면 답이 사고 채널에
+        # 갇혀 판정이 흐려진다).
+        if probe:
+            body["temperature"] = 0
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        return body
+
+    @staticmethod
+    def _message(data) -> dict:
+        return data.get("choices", [{}])[0].get("message", {}) or {}
+
+    def _text(self, data) -> str:
+        return self._message(data).get("content") or ""
+
+    def _thinking(self, data) -> str:
+        msg = self._message(data)
+        return msg.get("reasoning_content") or msg.get("reasoning") or ""
+
+    def _image_part(self, mime: str, b64: str) -> dict:
+        from agent_cli import images
+
+        return images.openai_part(mime, b64)
 
     def grammar_probe(self) -> bool:
         """``guided_grammar`` 가 출력을 실제로 묶는가 — 한 단어짜리 문법을 보내
         정확히 그 단어만 돌아오면 True. 사고는 끈다(켜져 있으면 닫는 태그
         규칙이 없는 문법에 출력이 사고 채널로 갇혀 판정이 흐려진다)."""
-        body: dict = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": "Say hello."}],
-            "max_tokens": 16,
-            "temperature": 0,
-            "chat_template_kwargs": {"enable_thinking": False},
-            "guided_grammar": f'root ::= "{_GRAMMAR_PROBE_ANSWER}"',
-        }
-        r = requests.post(
-            f"{self.base}/chat/completions",
-            json=body,
-            headers=self._headers(),
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
+        body = self._body("Say hello.", 16, probe=True)
+        body["guided_grammar"] = f'root ::= "{_GRAMMAR_PROBE_ANSWER}"'
+        r = self._post(body)
         r.raise_for_status()
-        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
-        return (msg.get("content") or "").strip() == _GRAMMAR_PROBE_ANSWER
-
-    def vision_probe(self) -> bool:
-        """이미지를 ``image_url`` 조각으로 보내 두 색을 순서대로 맞히면 True."""
-        from agent_cli import images
-
-        mime, b64 = images.probe_image()
-        body: dict = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": images.PROBE_QUESTION},
-                        images.openai_part(mime, b64),
-                    ],
-                }
-            ],
-            "max_tokens": 64,
-            "temperature": 0,
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-        r = requests.post(
-            f"{self.base}/chat/completions",
-            json=body,
-            headers=self._headers(),
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        msg = r.json().get("choices", [{}])[0].get("message", {}) or {}
-        return images.probe_answer_ok(msg.get("content") or "")
-
-    def thinking_probe(self) -> bool:
-        """2단계 사고 감지: ① 기본 프로브(모델이 기본으로 사고를 뱉으면 감지).
-        미검출이면 ② `enable_thinking=true` 재프로브 — Qwen 처럼 사고가 기본 OFF
-        이고 chat_template 스위치로 켜지는 모델을 잡는다. 재프로브가 실패(서버가
-        chat_template_kwargs 거부 등)해도 검출 전체를 깨지 않도록 관용(→ 미지원).
-        1차 프로브 오류는 상위로 전파(검출 실패 = 기본값 폴백, 기존 계약)."""
-        if _detect_thinking(self.simple_chat("Say hello.", 512)):
-            return True
-        try:
-            return _detect_thinking(
-                self.simple_chat("Say hello.", 512, enable_thinking=True)
-            )
-        except Exception:
-            return False
+        return self._text(r.json()).strip() == _GRAMMAR_PROBE_ANSWER
 
 
-def _detect_openai_capabilities(
-    base_url: str, model: str, api_key: str = ""
-) -> ModelCapabilities | None:
-    """Detect capabilities for OpenAI-compatible servers — back-compat entry
-    that routes through the shared orchestrator with an OpenAI transport."""
-    return _detect_capabilities(model, _OpenAITransport(base_url, model, api_key))
+class _AnthropicTransport(_ProbeTransport):
+    """Anthropic Messages API(실 Anthropic 또는 omlx 같은 호환 서버) —
+    ``/messages`` · ``anthropic-version`` + ``x-api-key`` · ``content[]`` 블록.
+    실 Anthropic 의 ``/v1/models`` 에는 창 메타가 없어 프로브·폴백·레지스트리로
+    가고, omlx 류는 ``max_model_len`` 을 싣는다."""
 
+    chat_path = "/messages"
 
-def _anthropic_text(data: dict) -> str:
-    """Text of an Anthropic ``/messages`` response
-    (``{"content": [{"type": "text", "text": …}]}``). 첫 **text 타입** 블록을
-    찾는다 — thinking 활성 응답은 blocks[0] 이 thinking 블록이라 위치 고정
-    인덱싱이 빈 문자열을 돌려주던 것을 수리."""
-    blocks = data.get("content") if isinstance(data, dict) else None
-    if isinstance(blocks, list):
-        for b in blocks:
-            if isinstance(b, dict) and b.get("type", "text") == "text":
-                return b.get("text", "") or ""
-    return ""
-
-
-_ANTHROPIC_STRUCTURED_PROMPT = (
-    'Respond with ONLY a JSON object of the form {"colors": [...]} listing three '
-    "primary colors. No prose, no markdown fences."
-)
-
-
-class _AnthropicTransport:
-    """Capability-probe transport for the Anthropic Messages API (real Anthropic
-    or an Anthropic-compatible server such as omlx). ``/messages`` + ``x-api-key``
-    / ``anthropic-version`` headers; response is ``content[].text``. Anthropic
-    has no ``response_format`` enforcement, so the structured probe is
-    prompt-only and strict-schema is always False."""
-
-    def __init__(self, base_url: str, model: str, api_key: str = ""):
-        self.base = base_url.rstrip("/")
-        self.model = model
-        self.api_key = api_key
-
-    def _headers(self) -> dict:
-        h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+    def _auth_headers(self) -> dict:
+        h = {"anthropic-version": "2023-06-01"}
         if self.api_key:
             h["x-api-key"] = self.api_key
         return h
 
-    def context_window(self) -> int:
-        return _detect_anthropic_context_window(self.base, self.model, self.api_key)
-
-    def simple_chat(
-        self, user_text: str, max_tokens: int, enable_thinking: bool = False
-    ) -> str:
+    def _body(
+        self,
+        content,
+        max_tokens: int,
+        *,
+        enable_thinking: bool = False,
+        probe: bool = False,
+    ) -> dict:
+        # probe 에 덧붙일 필드는 없다(통합 전 비전 프로브도 보내지 않았다).
         body: dict = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": user_text}],
+            "messages": [{"role": "user", "content": content}],
         }
-        # 기본 OFF 모델을 재프로브할 때 Anthropic 방언의 사고 스위치(thinking
-        # 블록)를 켠다 — OpenAI transport 의 chat_template_kwargs 와 동형 계약.
-        # 모양은 프로바이더가 실제로 보내는 것과 같다(``anthropic._THINKING_ON``,
-        # v10.72.0: 현행 Claude 는 ``budget_tokens`` 를 거절한다).
+        # 사고 켜기는 프로바이더가 실제로 보내는 모양과 같다
+        # (``anthropic._THINKING_ON``, v10.72.0: 현행 Claude 는 ``budget_tokens``
+        # 를 거절한다).
         if enable_thinking:
             from agent_cli.providers.anthropic import _THINKING_ON
 
             body["thinking"] = dict(_THINKING_ON)
-        r = requests.post(
-            f"{self.base}/messages",
-            json=body,
-            headers=self._headers(),
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        content = _anthropic_text(data)
-        # thinking 블록을 `<think>` 로 정규화 — OpenAI transport 의
-        # reasoning_content 정규화와 동형(필드/태그 어느 쪽이든 감지).
+        return body
+
+    @staticmethod
+    def _blocks(data) -> list:
         blocks = data.get("content") if isinstance(data, dict) else None
-        thinking = ""
-        if isinstance(blocks, list):
-            thinking = "".join(
-                b.get("thinking", "") or ""
-                for b in blocks
-                if isinstance(b, dict) and b.get("type") == "thinking"
-            )
-        return f"<think>{thinking}</think>{content}" if thinking else content
+        return blocks if isinstance(blocks, list) else []
+
+    def _text(self, data) -> str:
+        """첫 **text 타입** 블록의 텍스트 — thinking 활성 응답은 blocks[0] 이
+        thinking 블록이라 위치 고정 인덱싱은 빈 문자열을 돌려준다."""
+        for b in self._blocks(data):
+            if isinstance(b, dict) and b.get("type", "text") == "text":
+                return b.get("text", "") or ""
+        return ""
+
+    def _thinking(self, data) -> str:
+        return "".join(
+            b.get("thinking", "") or ""
+            for b in self._blocks(data)
+            if isinstance(b, dict) and b.get("type") == "thinking"
+        )
+
+    def _image_part(self, mime: str, b64: str) -> dict:
+        from agent_cli import images
+
+        return images.anthropic_part(mime, b64)
 
     def grammar_probe(self) -> bool:
         """Anthropic Messages API 에는 디코딩 문법을 실을 필드가 없다."""
         return False
-
-    def vision_probe(self) -> bool:
-        """이미지를 ``image`` 블록으로 보내 두 색을 순서대로 맞히면 True."""
-        from agent_cli import images
-
-        mime, b64 = images.probe_image()
-        body: dict = {
-            "model": self.model,
-            "max_tokens": 64,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": images.PROBE_QUESTION},
-                        images.anthropic_part(mime, b64),
-                    ],
-                }
-            ],
-        }
-        r = requests.post(
-            f"{self.base}/messages",
-            json=body,
-            headers=self._headers(),
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        return images.probe_answer_ok(_anthropic_text(r.json()))
-
-    def thinking_probe(self) -> bool:
-        """2단계 사고 감지 (transport 공통 계약 — OpenAI 와 동형): ① 기본
-        프로브(`<think>` 태그·thinking 블록). 미검출이면 ② thinking 블록을 켠
-        재프로브 — Anthropic-호환 로컬 서버(omlx 등)가 서빙하는 기본 OFF 사고
-        모델(Qwen 류)을 잡는다. 재프로브 실패(비사고 모델에 thinking 블록을
-        보내 400 등)는 관용(→ 미지원); 실 Anthropic 모델은 레지스트리 기반이라
-        이 프로브 경로 자체를 타지 않는다. 1차 프로브 오류는 상위로 전파
-        (검출 실패 = 기본값 폴백, 기존 계약)."""
-        if _detect_thinking(self.simple_chat("Say hello.", 512)):
-            return True
-        try:
-            return _detect_thinking(
-                self.simple_chat("Say hello.", 512, enable_thinking=True)
-            )
-        except Exception:
-            return False
-
-
-def _detect_anthropic_context_window(
-    base_url: str, model: str, api_key: str = ""
-) -> int:
-    """Anthropic context window: ``/models`` metadata → ``/messages`` overflow
-    probe → ``_DEFAULT_CONTEXT_FALLBACK``. Mirrors the OpenAI tiers via the
-    Anthropic API. Real Anthropic ``/v1/models`` lacks the field (→ fallback /
-    registry), but omlx-style servers DO expose ``max_model_len`` and the
-    overflow probe reveals the limit otherwise."""
-    base = base_url.rstrip("/")
-    headers = {"anthropic-version": "2023-06-01"}
-    if api_key:
-        headers["x-api-key"] = api_key
-    # Tier 1: /models metadata (omlx exposes it; real Anthropic doesn't).
-    try:
-        r = requests.get(f"{base}/models", headers=headers, timeout=10)
-        r.raise_for_status()
-        for m in r.json().get("data", []):
-            if m.get("id") == model:
-                for key in ("max_model_len", "context_length"):
-                    ctx = m.get(key)
-                    if isinstance(ctx, int) and ctx > 0:
-                        return ctx
-                break
-    except Exception:
-        pass
-    # Tier 2: overflow probe via /messages — parse the limit from the 400 body.
-    from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
-
-    _emit_progress(f"Probing context window via overflow ({model})")
-    try:
-        r = requests.post(
-            f"{base}/messages",
-            json={
-                "model": model,
-                "max_tokens": 16,
-                "messages": [
-                    {"role": "user", "content": "word " * _CONTEXT_PROBE_WORDS}
-                ],
-            },
-            headers={**headers, "Content-Type": "application/json"},
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        if r.status_code != 200 and is_context_overflow(r.text):
-            _actual, limit = parse_overflow_amounts(r.text)
-            if limit and limit > 0:
-                return limit
-    except Exception:
-        pass
-    return _DEFAULT_CONTEXT_FALLBACK
-
-
-def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") -> int:
-    """Determine the model's context window for an OpenAI-compatible server.
-
-    Three tiers, in order:
-      1. ``/v1/models`` metadata — ``max_model_len`` (vLLM) or
-         ``context_length``. Cheapest and exact when present.
-      2. Overflow probe — servers that don't expose the window in
-         metadata (notably omlx/mlx-lm) still reveal it by rejecting an
-         over-limit prompt with a 400 that names the limit. See
-         ``_probe_context_window_via_overflow``.
-      3. ``_DEFAULT_CONTEXT_FALLBACK`` (128K) when neither yields a
-         number — conservative/under-set so it never triggers a 400 on
-         its own; flow-2 runtime recovery corrects a too-large estimate.
-    """
-    try:
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        r = requests.get(f"{base_url}/models", headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        for m in data.get("data", []):
-            if m.get("id") == model:
-                # vLLM: max_model_len
-                ctx = m.get("max_model_len")
-                if isinstance(ctx, int) and ctx > 0:
-                    return ctx
-                # Some servers: context_length
-                ctx = m.get("context_length")
-                if isinstance(ctx, int) and ctx > 0:
-                    return ctx
-                break
-    except Exception:
-        pass
-
-    # Metadata didn't expose it (e.g. omlx) — probe via overflow.
-    _emit_progress(f"Probing context window via overflow ({model})")
-    probed = _probe_context_window_via_overflow(base_url, model, api_key)
-    if probed:
-        return probed
-
-    return _DEFAULT_CONTEXT_FALLBACK
-
-
-def _probe_context_window_via_overflow(
-    base_url: str, model: str, api_key: str = ""
-) -> int | None:
-    """Read the real context window from an intentional overflow rejection.
-
-    Servers that don't advertise their window in ``/v1/models`` metadata
-    (notably omlx/mlx-lm) reject an over-limit prompt with a 400 whose
-    body names the limit, e.g. ``"...exceeds max context window of
-    262144 tokens"``. We send a deliberately huge prompt and parse that
-    number out via the same ``parse_overflow_amounts`` the runtime
-    recovery layer uses.
-
-    Cost: an over-limit prompt is rejected right after *tokenisation* —
-    no eval, no generation — so the server is not occupied the way an
-    under-limit prompt would be (verified live against omlx, 2026-05-30).
-    This is why we never binary-search toward the boundary: an
-    under-limit probe would force a full prompt-eval and block the
-    server for the duration.
-
-    Returns the parsed limit, or ``None`` when the server accepted the
-    prompt (window exceeds the probe size), didn't return an overflow
-    400, or returned a 400 without a parseable number. The caller falls
-    back to a conservative default in those cases.
-    """
-    from agent_cli.context.overflow import (
-        is_context_overflow,
-        parse_overflow_amounts,
-    )
-
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": "word " * _CONTEXT_PROBE_WORDS}],
-        "max_tokens": 16,
-    }
-    try:
-        r = requests.post(
-            url, json=body, headers=headers, timeout=DETECTION_PROBE_TIMEOUT
-        )
-    except Exception:
-        return None
-
-    if r.status_code == 200:
-        # Prompt fit — the window is larger than our probe; can't learn
-        # the exact value this way.
-        return None
-
-    try:
-        text = r.text
-    except Exception:
-        return None
-
-    if not is_context_overflow(text):
-        return None
-    _actual, limit = parse_overflow_amounts(text)
-    return limit if (limit and limit > 0) else None
