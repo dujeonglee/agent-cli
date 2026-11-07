@@ -20,7 +20,12 @@ import json
 from typing import ClassVar
 from unittest.mock import MagicMock
 
-from agent_cli.dialects.base import DialectBase, Op, ParsedAction, ParsedTurn
+from agent_cli.dialects.base import (
+    DialectBase,
+    Op,
+    ParsedTurn,
+    _terminal_input,
+)
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS
@@ -124,10 +129,6 @@ class _MultiOpFormat(DialectBase):
             parse_stage=1,
         )
 
-    def parse(self, llm_text: str) -> ParsedAction:
-        # history-serialization fallback only; the loop uses parse_turn.
-        return ParsedAction(raw=llm_text, parse_stage=1)
-
     def render_full_example(self, *, thought, action, action_input) -> str:
         return json.dumps(
             {"thought": thought or "", "ops": [{"action": action}]},
@@ -159,6 +160,34 @@ class _MultiOpFormat(DialectBase):
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return ("Bad format.", "No ops.")
+
+    # v10.115.1: history 직렬화 셋은 추상 — engine.Dialect 와 같은 ops shape.
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        turn = self.parse_turn(raw_text)
+        if turn.ops:
+            return {
+                "role": "assistant",
+                "thought": turn.thought or "",
+                "ops": [
+                    {"action": op.action, "action_input": op.action_input or {}}
+                    for op in turn.ops
+                ],
+            }
+        return {"role": "assistant", "content": self.sanitize_thought(raw_text) or ""}
+
+    def serialize_terminal_for_history(
+        self, thought, result, answers=None, *, open_requests=None
+    ) -> dict:
+        return {
+            "role": "assistant",
+            "thought": thought or "",
+            "ops": [
+                {"action": "complete", "action_input": _terminal_input(result, answers)}
+            ],
+        }
+
+    def render_observation_from_history(self, record, *, index, assistant_index):
+        return None
 
 
 def _caps():

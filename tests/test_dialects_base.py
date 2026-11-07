@@ -5,10 +5,10 @@ Covers ``agent_cli/dialects/base.py`` (``ParsedAction`` + the
 ``agent_cli/dialects/__init__.py``. Concrete dialects (``Dialect(JSON_FC)``
 etc.) are tested in their own files.
 
-A small mock subclass implements every abstract method but inherits the
-defaults (history pipeline round-trip, identity hooks, shared format-
-rules builder). The mock verifies registry behavior and exercises the
-default implementations so changes to the base land here too.
+A small mock subclass implements every abstract method (history
+serializers included — v10.115.1 추상) but inherits the remaining defaults
+(history re-render, identity hooks). The mock verifies registry behavior and
+exercises the default implementations so changes to the base land here too.
 """
 
 from __future__ import annotations
@@ -68,8 +68,9 @@ class _MockFormat(DialectBase):
     """Minimal DialectBase implementation for registry / ABC tests.
 
     Implements every abstract method (v8.41.0 ABC: ``parse_turn`` 이 1차
-    추상, ``parse`` 는 첫-op 투영 기본 상속); inherits the concrete
-    defaults (history pipeline, identity hooks) so the mock stays minimal."""
+    추상, ``parse`` 는 첫-op 투영 기본 상속; v10.115.1 history 직렬화 셋도
+    추상 — 단수 shape 최소 구현); inherits the concrete defaults (history
+    re-render, identity hooks) so the mock stays minimal."""
 
     name = "_mock_for_tests"
 
@@ -109,6 +110,17 @@ class _MockFormat(DialectBase):
     def system_user_prefixes(self) -> tuple[str, ...]:
         return ("Mock parse fail.", "Mock no action.")
 
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        return {"role": "assistant", "content": raw_text}
+
+    def serialize_terminal_for_history(
+        self, thought, result, answers=None, *, open_requests=None
+    ) -> dict:
+        return {"role": "assistant", "thought": thought, "action": "complete"}
+
+    def render_observation_from_history(self, record, *, index, assistant_index):
+        return None
+
 
 class _ConfigurableFormat(_MockFormat):
     """Mock whose ``parse_turn()`` returns a preset ParsedTurn, to exercise
@@ -126,7 +138,7 @@ class _ConfigurableFormat(_MockFormat):
 
 class TestParseDefaultProjection:
     """``DialectBase.parse`` defaults to the first-op projection of
-    ``parse_turn`` — 레거시 단수 소비자(history 직렬화 기본·직접 호출)용.
+    ``parse_turn`` — 레거시 단수 소비자(직접 호출)용.
     v8.41.0 역전: 종전엔 parse 가 추상 + parse_turn 기본이 그것을 감쌌는데
     등록 포맷 전부 multi-op 라 그 기본이 사문이었다."""
 
@@ -191,6 +203,15 @@ class TestParseDefaultProjection:
         assert turn.thought == "reason"
 
 
+_HISTORY_ABSTRACTS = frozenset(
+    {
+        "serialize_assistant_for_history",
+        "serialize_terminal_for_history",
+        "render_observation_from_history",
+    }
+)
+
+
 class TestABCConformance:
     """A typical plugin shape should be a valid DialectBase subclass.
 
@@ -214,6 +235,14 @@ class TestABCConformance:
         # Python's ABC mechanism mentions the abstract method name(s) in
         # the error so plugin authors see what's missing.
         assert "abstract" in str(exc_info.value).lower()
+        # v10.115.1: history 직렬화 셋도 빠뜨리면 이름이 메시지에 나온다.
+        assert all(name in str(exc_info.value) for name in _HISTORY_ABSTRACTS)
+
+    def test_history_methods_are_abstract(self):
+        # v10.115.1 가드: 기본 구현을 삭제한 셋 — 구현은 engine.Dialect 만.
+        assert _HISTORY_ABSTRACTS <= DialectBase.__abstractmethods__
+        # render_assistant_from_history 는 Dialect 가 super() 로 쓰는 기본 구현이다.
+        assert "render_assistant_from_history" not in DialectBase.__abstractmethods__
 
     def test_unrelated_class_is_not_an_instance(self):
         class Unrelated:
@@ -299,6 +328,19 @@ class TestRegistry:
 
             def system_user_prefixes(self) -> tuple[str, ...]:
                 return ()
+
+            def serialize_assistant_for_history(self, raw_text) -> dict:
+                return {}
+
+            def serialize_terminal_for_history(
+                self, thought, result, answers=None, *, open_requests=None
+            ) -> dict:
+                return {}
+
+            def render_observation_from_history(
+                self, record, *, index, assistant_index
+            ):
+                return None
 
         a = _MockFormat()  # name "_mock_for_tests"
         b = _MockB()  # name "bbb"
