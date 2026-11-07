@@ -42,6 +42,10 @@ from agent_cli.web.server import (
     suppress_incomplete_response_log,
 )
 from tests.binding_support import make_binding
+from tests.web_static import STATIC, js_fn_body, js_text, module_order
+
+# 모듈 스크립트가 허용되는 JS MIME (Python 버전·플랫폼 mimetypes 표에 따라 둘 중 하나).
+_JS_MIME = {"text/javascript", "application/javascript"}
 
 
 @pytest.fixture
@@ -553,6 +557,8 @@ class TestStaticUI:
         # flow). v7.7.0: 입장 게이트(boot.js) 제거 — 직접 로드로 복귀.
         assert "static/app.js" in body
         assert "static/style.css" in body
+        # v10.116.0: 진입 파일은 ES 모듈 — 일반 스크립트로 실으면 import 가 문법 오류.
+        assert '<script type="module" src="static/app.js"></script>' in body
 
     def test_flow_view_is_gone(self, server_and_client):
         """흐름 뷰(스윔레인) 전면 제거 — 채널 칩이 대체한다(docs/chat-ui §7).
@@ -560,7 +566,7 @@ class TestStaticUI:
         테스트 없이 부활하는 셈이다."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         assert 'id="team-view"' not in html
         assert 'id="vt-flow"' not in html
@@ -580,7 +586,7 @@ class TestStaticUI:
         영수증(✓ 주입됨 / ✕ 취소됨)을 보인다. 주입 판정은 user_message 매칭
         (기존 이벤트 추론), 승격은 개요 블록으로 자동."""
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         # leaving-item lifecycle + injected/cancelled classification
         assert "qLeaving" in js
@@ -598,7 +604,7 @@ class TestStaticUI:
         전면 제거. 흐름 막대/화살표 클릭은 전문 드로어로 직행한다."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         assert 'id="detail-panel"' not in html
         for gone in ("dpPinCard", "dpPinOverview", "dpFill", "dpClose", ".dp-btn"):
@@ -636,7 +642,7 @@ class TestStaticUI:
         그대로 복원한다(구조상 중복·유실이 생길 자리가 없다)."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         # 채널 칩 바(select 아님)
         assert 'id="ov-channels"' in html
@@ -650,20 +656,20 @@ class TestStaticUI:
         assert "ovOnAgentMsg(d)" in am
         # v9.23.0 런 블록: 수신은 블록 머리(없으면 ⏳ 대기), 발신은 폴백만, 질문은
         # 트레이 갱신만 — 왕래 줄 렌더러(ovRenderAgentMsg)는 사라졌다.
-        om = _js_fn_body(js, "ovOnAgentMsg")
+        om = js_fn_body(js, "ovOnAgentMsg")
         assert "claimIn(" in om and '"대기"' in om
         assert "if (!d.fallback) return;" in om
         assert "ovRenderAskTray()" in om
         assert "ovRenderAgentMsg" not in js
         # 입력 라우팅: agent 채널 + chat 이면 /api/agent/<key>/input
-        sc = _js_fn_body(js, "submitChatOrPrompt")
+        sc = js_fn_body(js, "submitChatOrPrompt")
         assert 'ovActiveChannel !== "main"' in sc
         assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
         # 채널 전환이 **표시**까지 바꾼다 (⑥ 이전엔 입력 라우팅만 바뀌었다)
-        assert "applyChannelFilter()" in _js_fn_body(js, "ovSetChannel")
+        assert "applyChannelFilter()" in js_fn_body(js, "ovSetChannel")
         # 필터의 대상은 `#messages` 직계 자식의 `data-ch` 뿐 — `data-ch` 가
         # 없는 노드(생성 중 한 줄)는 어느 채널에서나 보인다.
-        f = _js_fn_body(js, "applyChannelFilter")
+        f = js_fn_body(js, "applyChannelFilter")
         assert "n.hidden = ch !== ovActiveChannel" in f
         assert "if (ch)" in f  # data-ch 없는 노드는 손대지 않는다
         assert "#ov-channels" in css and ".card-run" in css
@@ -674,7 +680,7 @@ class TestStaticUI:
         (main → main 스코프, agent 채널 → task_id=agent key)."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         # 드로어·🔍 버튼은 없다 — 틀이 놓일 자리만 있다
         assert 'id="inspector"' not in html and 'id="insp-main-btn"' not in html
         assert 'id="ctx-tail"' in html and 'id="ctx-budget"' in html
@@ -683,7 +689,7 @@ class TestStaticUI:
         assert 'frameMake(key, key === "main" ? "" : key, true)' in js
         assert '"?task_id=" + encodeURIComponent(f.scope)' in js
         # 채널 전환이 띠·예산 줄을 바꾼다
-        assert "frameShowChannel(ovActiveChannel);" in _js_fn_body(js, "ovSetChannel")
+        assert "frameShowChannel(ovActiveChannel);" in js_fn_body(js, "ovSetChannel")
         # 인라인 카드(agent/skill)도 같은 틀을 갖는다
         assert "frameForCard(taskId, header, body);" in js
 
@@ -691,11 +697,10 @@ class TestStaticUI:
         """P0-6②: el() 3번째 인자는 textContent(기본이 안전 — 모델/서버 원문을
         그대로 넘겨도 마크업 실행 불가), HTML 은 elHtml() 로만 명시. 종전
         innerHTML-기본은 콜사이트마다 escapeHtml 규율이 갈려 누락=self-XSS 였다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        el_body = _js_fn_body(js, "el")
+        js = js_text()
+        el_body = js_fn_body(js_text("main"), "el")
         assert "textContent" in el_body and "innerHTML" not in el_body
-        elh_body = _js_fn_body(js, "elHtml")
+        elh_body = js_fn_body(js, "elHtml")
         assert "innerHTML" in elh_body
         # elHtml 은 의도가 자명한 HTML 소스에만 — escapeAndFormat(마크다운)/
         # colorizeDiffBody(diff 색)/highlightDangerHtml(위험 강조) 콜사이트 존재.
@@ -727,7 +732,7 @@ class TestStaticUI:
         import re
 
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         html = client.get("/").text
 
@@ -793,8 +798,7 @@ class TestStaticUI:
         중계 5개를 접었다가 여기서 잡혔다). 20줄보다 가드가 값지다."""
         import re
 
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         web_src = (
             pathlib.Path(agent_cli.__file__).parent / "render" / "web.py"
         ).read_text()
@@ -850,8 +854,7 @@ class TestStaticUI:
         줄). 규율을 정적 검사로 바꾼다."""
         import re
 
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         bad = [
             m.group(0)
             for m in re.finditer(r"appendToTimeline\(([^)]*)\)", js)
@@ -873,8 +876,7 @@ class TestStaticUI:
         결과가 있으면 실패 → elHtml 을 쓰라는 신호."""
         import re
 
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
 
         def _el_call_bodies(src):
             """``el(`` 호출의 인자 본문을 괄호 균형으로 추출 (elHtml 은 제외 —
@@ -913,11 +915,10 @@ class TestStaticUI:
         v9.4.0 ③: 헤더(obs-head)는 행(.row)으로 바뀌었고, 행의 아이콘·도구명은
         **텍스트**라 el() 이 맞다(마크업이 없으니 elHtml 이면 오히려 주입 표면).
         그래서 핀의 대상이 헤더 → 본문으로 옮겨간다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         import re
 
-        body = _js_fn_body(js, "renderObservation")
+        body = js_fn_body(js, "renderObservation")
         assert re.search(r'elHtml\(\s*"pre",\s*\["obs-body"\]', body), (
             "obs-body 가 elHtml 경유가 아님 — diff 색상 span 이 문자로 노출된다"
         )
@@ -940,10 +941,9 @@ class TestStaticUI:
         """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신
         이를 쓴다. 서버(agent_icon) parity 는 test_app_markdown 이 강제.
         서버 scope_start 도 agent_icon 으로 라벨을 짓는다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert "var OV_AGENT_ICONS" in js and "function ovAgentIcon(" in js
-        lbl = _js_fn_body(js, "ovAgentLabel")
+        lbl = js_fn_body(js, "ovAgentLabel")
         assert "ovAgentIcon(key)" in lbl
         assert '"🤝 " +' not in lbl  # 고정 악수 아이콘 제거
         # 서버 스윔레인/주체배지 라벨(scope_start)도 per-key agent_icon
@@ -958,10 +958,10 @@ class TestStaticUI:
         에이전트 상태 dot 을 채널 칩(agent 탭)에 직접 — 흐름-탭 dots 통합."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         # 채널 칩 안에 상태 dot (흐름-탭 dots 제거)
-        chip = _js_fn_body(js, "ovChanChip")
+        chip = js_fn_body(js, "ovChanChip")
         assert '"ov-dot "' in chip or "ov-dot " in chip
         assert ".ov-dot" in css
         assert 'id="vt-flow-dots"' not in html
@@ -975,12 +975,12 @@ class TestStaticUI:
         입력 비활성/사망고지(⑤) + kill/resume 컨트롤(I-1). (🔔 안본회신 배지는
         v8.31.0 에서 제거 — replay inflation 으로 '글 수'처럼 보여 폐기.)"""
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         # 🔔 안본회신 배지·상태는 제거됨
         assert "ovChanUnread" not in js
         assert "ov-ch-n" not in css
-        chip = _js_fn_body(js, "ovChanChip")
+        chip = js_fn_body(js, "ovChanChip")
         # v9.8.0: ❓ 배지 제거 — dot 이 이미 상태를 말해 한 칩 안에서 같은
         # 사실을 두 기호로 말했다. dot 은 남는다(상태 — idle/busy/dead).
         assert "ov-ch-q" not in chip
@@ -988,7 +988,7 @@ class TestStaticUI:
         # busy 거나 idle 이고, 질문은 dot 이 아니라 ❓ 트레이가 알린다.
         assert '"w"' not in chip
         # 죽은 agent: 입력 비활성 + 사망 고지(⑤)
-        aci = _js_fn_body(js, "ovApplyChannelInput")
+        aci = js_fn_body(js, "ovApplyChannelInput")
         assert "ovActiveDead()" in aci
         assert "$input.disabled = dead" in aci
         assert "has exited" in aci
@@ -1005,7 +1005,7 @@ class TestStaticUI:
         (roster 의 ``open_questions`` 가 진실원)."""
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         assert 'id="ask-tray"' in html
         # 트레이의 진실원은 roster 행의 ``open_questions`` 다 — 프런트가
@@ -1014,14 +1014,14 @@ class TestStaticUI:
         assert "open_questions" in js
         assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
         # roster 의 open_questions 가 표시 진실원 — 주소는 언제나 사람(v10.77.0)
-        rt = _js_fn_body(js, "ovRenderAskTray")
+        rt = js_fn_body(js, "ovRenderAskTray")
         assert "t.open_questions" in rt
         assert "waiting_ask" not in rt
         # roster 갱신마다 재렌더
-        onr = _js_fn_body(js, "ovOnRoster")
+        onr = js_fn_body(js, "ovOnRoster")
         assert "ovRenderAskTray()" in onr
         # 답변 라우팅: 그 agent 로 고정 + 질문 id 로 짝짓기
-        sa = _js_fn_body(js, "ovSubmitAsk")
+        sa = js_fn_body(js, "ovSubmitAsk")
         assert '"api/agent/" + encodeURIComponent(key) + "/input"' in sa
         assert "body.answer_id = qid" in sa
         assert ".ask-item" in css and ".ask-answer" in css
@@ -1030,9 +1030,9 @@ class TestStaticUI:
         """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
         양쪽 토글 + sticky 헤더."""
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
-        fn = _js_fn_body(js, "ensureTaskGroup")
+        fn = js_fn_body(js, "ensureTaskGroup")
         assert "toggleTaskGroup" in fn
         assert 'header.addEventListener("click", toggleTaskGroup)' in fn
         assert "e.target === body" in fn  # 본문 여백 클릭만 접기
@@ -1054,9 +1054,9 @@ class TestStaticUI:
         ``$messages.appendChild`` 라서 skill 안의 skill/run 카드가 형제로 붙어
         계층이 사라졌다."""
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
-        fn = _js_fn_body(js, "ensureTaskGroup")
+        fn = js_fn_body(js, "ensureTaskGroup")
         # v9.8.0: `finishCard(card, {task_id: parent}, 자기채널)` — 중첩 위치는
         # 부모가, 채널 귀속은 자기가 정한다. 종전엔 append 뒤에 `data-ch` 를
         # 다시 칠했다.
@@ -1075,7 +1075,8 @@ class TestStaticUI:
         _, _, client = server_and_client
         resp = client.get("/static/app.js")
         assert resp.status_code == 200
-        body = resp.text
+        assert resp.headers["content-type"].split(";")[0] in _JS_MIME
+        body = js_text()
         # Critical wires must be present.
         assert "EventSource" in body
         assert "api/stream" in body
@@ -1092,6 +1093,23 @@ class TestStaticUI:
         # "(0 edits)"); it shows the op/ref instead.
         assert "editCount" not in body
 
+    def test_every_module_is_served_as_javascript(self, server_and_client):
+        """v10.116.0: 진입 파일이 import 하는 모듈 전부가 200 + JS MIME 으로 서빙된다.
+        브라우저는 모듈 스크립트를 JS MIME 이 아니면 거부한다(일반 스크립트와 달리
+        관대하지 않다) — 서빙 쪽 MIME 이 바뀌면 화면 전체가 조용히 안 뜬다."""
+        _, _, client = server_and_client
+        names = module_order()
+        assert names[0] == "main"
+        for name in names:
+            assert (STATIC / "js" / f"{name}.js").is_file(), name
+            resp = client.get(f"/static/js/{name}.js")
+            assert resp.status_code == 200, name
+            assert resp.headers["content-type"].split(";")[0] in _JS_MIME, name
+        # 실리지 않는 모듈 파일이 없다 — js/ 에 둔 파일은 전부 적재 순서에 있다.
+        on_disk = sorted(p.stem for p in (STATIC / "js").glob("*.js"))
+        assert on_disk == sorted(names)
+        assert client.get("/static/js/nope.js").status_code == 404
+
     def test_copy_ui_wired(self, server_and_client):
         """v10.8.0: export(📤·선택 모드·HTML/Jira) 는 사라지고 **복사**가 대신한다 —
         헤더의 ⧉(대화 전체, 마크다운)와 카드마다 ⧉. 프런트↔백 계약: export
@@ -1101,7 +1119,7 @@ class TestStaticUI:
         assert 'id="copy-all-btn"' in html
         for el_id in ("export-btn", "export-bar", "export-all", "export-jira-form"):
             assert f'id="{el_id}"' not in html, el_id
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert "api/export" not in js
         assert "function cardMarkdown(" in js and "function timelineMarkdown(" in js
         assert "window.__cardMarkdown" in js  # 브라우저 테스트가 읽는 공개면
@@ -1164,7 +1182,7 @@ class TestStaticUI:
         ):
             assert old not in html, old
         assert 'id="mcp-wrap"' in html  # 🔌 는 노브가 아니다(읽기 전용) — 마크업 유지
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert "knob-btn" in js  # 노브 칩 토글(문서 위임 — 생성된 칩에도 듣는다)
         assert '"knob-" + name + "-wrap"' in js and '"knob-" + d.name' in js
         # v9.8.0: 헤더의 💭 세그먼트 제거 — 생성 중 줄이 같은 숫자를 이미 보여
@@ -1197,8 +1215,8 @@ class TestStaticUI:
         선다 — 도착 힌트(`agent_mail`)와 깨우기 카드(`agent_wake`)는 없다. 메일
         줄은 취소 버튼이 없고, 유예(놀 때 깜빡임 방지) 뒤에야 그리며, 빠지면
         곧 주입이다."""
-        server, renderer, client = server_and_client
-        js = client.get("/static/app.js").text
+        server, renderer, _ = server_and_client
+        js = js_text()
         for gone in (
             '"agent_mail"',
             '"agent_wake"',
@@ -1261,11 +1279,10 @@ class TestStaticUI:
 
         v9.4.0 ⑥: 왕래가 별도 스트림이 아니라 타임라인의 카드가 됐으므로
         비우는 곳도 DOM 이다."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert '"agent_cleared"' in js  # SSE 리스너
         assert "ovOnAgentCleared(" in js  # 채널 정리로 라우팅
-        cleared = _js_fn_body(js, "ovOnAgentCleared")
+        cleared = js_fn_body(js, "ovOnAgentCleared")
         # v9.23.1: `agent_msg` 에서 나온 것만 — 머리 항목·폴백 줄·대기 줄.
         # 블록은 스코프·턴 이벤트라 서버 버퍼에 남고, resume 재생이 머리를 되돌린다.
         assert ".run-head > .run-item" in cleared and "c.remove()" in cleared
@@ -1280,7 +1297,7 @@ class TestStaticUI:
         # the other (monospace) tool outputs use. Guard the branch + style so
         # it can't silently regress to the unreadable raw blob.
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert '=== "agent"' in js
         assert "obs-md" in js and "escapeAndFormat" in js
         css = client.get("/static/style.css").text
@@ -1301,7 +1318,7 @@ class TestStaticUI:
         _, _, client = server_and_client
         css = client.get("/static/style.css").text
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
 
         # :root base (= slate) + every curated theme defines tokens
         assert ":root {" in css
@@ -1786,21 +1803,10 @@ class TestTabPresenceBeacon:
     게이트의 유일한 데이터 소스)."""
 
     def test_beacon_wired_in_app_js(self, server_and_client):
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert "agentcli_tab_presence" in js
         assert "BroadcastChannel" in js
         assert '"pong"' in js
-
-
-def _js_fn_body(js: str, name: str) -> str:
-    """app.js 에서 ``function NAME(`` 본문 슬라이스 — substring 테스트를
-    함수-스코프 동시출현으로 강화하는 헬퍼 (v7.11.4 감사: "3000줄 어디든
-    문자열만 있으면 통과"의 수리. JS 테스트 인프라 도입 전의 최소안)."""
-    start = js.index(f"function {name}(")
-    nxt = js.find("\n  function ", start + 1)
-    end = nxt if nxt != -1 else start + 4000
-    return js[start:end]
 
 
 class TestConfirmStallWarning:
@@ -1810,20 +1816,19 @@ class TestConfirmStallWarning:
 
     def test_stall_warning_wired_in_js_and_css(self, server_and_client):
         _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         css = client.get("/static/style.css").text
         assert "CONFIRM_STALL_MS" in js
         assert ".confirm-stall" in css
         # 타이머 arm 은 트레이의 main confirm 제출부에서 (3b).
-        body = _js_fn_body(js, "ovSubmitMainConfirm")
+        body = js_fn_body(js, "ovSubmitMainConfirm")
         assert "confirmStallTimer = setTimeout" in body
 
     def test_stall_timer_cleared_on_transition(self, server_and_client):
         """해결(input_resolved→ovFoldMainAsk)·새 프롬프트 진입(input_required)
         시 타이머 정리 — 아니면 정상 해결 뒤 가짜 '연결 정체' 경고/타이머 누수."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        assert "clearConfirmStall()" in _js_fn_body(js, "ovFoldMainAsk")
+        js = js_text()
+        assert "clearConfirmStall()" in js_fn_body(js, "ovFoldMainAsk")
         ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
             0
         ]
@@ -1832,16 +1837,15 @@ class TestConfirmStallWarning:
     def test_frontend_handles_409_as_stale_ask(self, server_and_client):
         """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
         (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서."""
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        confirm_body = _js_fn_body(js, "ovSubmitMainConfirm")
+        js = js_text()
+        confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
         assert "res.status === 409" in confirm_body
         assert "ovFoldMainAsk()" in confirm_body
-        prompt_body = _js_fn_body(js, "ovSubmitMainPrompt")
+        prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
         assert "res.status === 409" in prompt_body
         assert "ovFoldMainAsk()" in prompt_body
         # 두 제출부 모두 postInput 이 raw fetch Response 를 반환한다는 전제.
-        assert "return fetch(" in _js_fn_body(js, "postInput")
+        assert "return fetch(" in js_fn_body(js, "postInput")
 
     def test_main_ask_in_tray_input_box_chat_only(self, server_and_client):
         """3b: main prompt/confirm 이 input box 가 아니라 글로벌 트레이 항목으로
@@ -1849,7 +1853,7 @@ class TestConfirmStallWarning:
         """
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         # input box mode 머신 제거
         assert "setInputMode" not in js
         assert 'id="input-mode-badge"' not in html
@@ -1861,13 +1865,13 @@ class TestConfirmStallWarning:
         assert "ovMainAsk = { kind: d.kind, data: d }" in ir
         assert "ovRenderAskTray()" in ir
         # input box 는 chat 전용 — prompt kind 제출 경로 없음
-        sc = _js_fn_body(js, "submitChatOrPrompt")
+        sc = js_fn_body(js, "submitChatOrPrompt")
         assert '"prompt"' not in sc
         # 트레이 main confirm 은 검증된 조각 재사용
-        bm = _js_fn_body(js, "ovBuildMainAskEl")
+        bm = js_fn_body(js, "ovBuildMainAskEl")
         assert "buildPromptMetaEl(" in bm and "highlightDangerHtml(" in bm
         # main ask 대기 중엔 #chat-stop 숨김 — #abort 와 두 Stop 동시노출 방지.
-        assert "!ovMainAsk" in _js_fn_body(js, "isBusyChat")
+        assert "!ovMainAsk" in js_fn_body(js, "isBusyChat")
 
 
 class TestWebResumeCli:
@@ -1974,7 +1978,7 @@ class TestMessageQueue:
         html = client.get("/").text
         for el_id in ("queue-list", "chat-stop"):
             assert f'id="{el_id}"' in html, el_id
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert '"queue"' in js  # SSE handler
         assert "api/queue/cancel" in js
 
@@ -2457,8 +2461,7 @@ class TestWorkspaceDownload:
         assert r.status_code == 400
 
     def test_frontend_draws_link_entries(self, server_and_client):
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert 'entry.type === "link"' in js and "🔗" in js
         assert "outside the workspace, not listed" in js
         assert "target does not exist" in js
@@ -2538,7 +2541,7 @@ class TestWorkspaceDownload:
         # directory upload: folder-pick button + recursive drop walk
         assert 'id="ul-pick-dir"' in html
         assert "webkitdirectory" in html
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert "api/workspace/tree" in js
         assert "api/workspace/download" in js
         assert "api/workspace/upload" in js  # upload merged in
@@ -2662,7 +2665,7 @@ class TestWorkspaceDelete:
     def test_delete_ui_wired(self, server_and_client):
         _, _, client = server_and_client
         html = client.get("/").text
-        js = client.get("/static/app.js").text
+        js = js_text()
         # 🗑 Delete button in the drawer foot + JS posts to the delete endpoint
         assert 'id="dl-delete"' in html
         assert "api/workspace/delete" in js
@@ -2888,7 +2891,7 @@ class TestViewerCount:
     def test_viewers_ui_wired(self, server_and_client):
         _, _, client = server_and_client
         assert 'id="viewers"' in client.get("/").text
-        assert '"viewers"' in client.get("/static/app.js").text
+        assert '"viewers"' in js_text()
 
 
 class TestNickname:
@@ -2927,7 +2930,7 @@ class TestNickname:
         html = client.get("/").text
         for el_id in ("name-bar", "nb-input", "nb-set"):
             assert f'id="{el_id}"' in html, el_id
-        assert "api/nickname" in client.get("/static/app.js").text
+        assert "api/nickname" in js_text()
 
 
 class TestDirectivesEndpoint:
@@ -3217,8 +3220,7 @@ class TestWorkspaceCopyButton:
     def test_app_js_wires_copy_button(self, server_and_client):
         # v7.1.0: 별도 내부 버튼 → ws 칩 자체가 클릭-복사 (칩 높이보다 큰
         # btn-icon 이 세로 클리핑되던 실사용 피드백의 수리)
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
+        js = js_text()
         assert 'getElementById("chip-ws")' in js
         assert "Copy workspace path" in js
         assert "copyToClipboard(d.workspace)" in js
@@ -3374,8 +3376,7 @@ class TestRenderCoalescing:
     이벤트 경로가 직접 호출로 회귀하면 실패한다."""
 
     def _js(self):
-        with open("agent_cli/web/static/app.js", encoding="utf-8") as f:
-            return f.read()
+        return js_text()
 
 
 class TestMcpStatusEndpoint:
@@ -3435,7 +3436,7 @@ class TestMcpStatusEndpoint:
     def test_frontend_wired(self):
         from pathlib import Path
 
-        js = Path("agent_cli/web/static/app.js").read_text(encoding="utf-8")
+        js = js_text()
         html = Path("agent_cli/web/static/index.html").read_text(encoding="utf-8")
         assert 'fetch("api/mcp")' in js
         assert 'id="mcp-wrap"' in html and 'id="mcp-badge"' in html

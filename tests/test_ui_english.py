@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parents[1] / "agent_cli" / "web" / "static"
+# v10.116.0: 프런트가 js/ 모듈로 나뉘었다 — 정적 파일 전부를 본다(새 모듈이 생겨도 빠지지 않게).
+_STATIC_FILES = ["index.html", "style.css", "app.js"] + sorted(
+    f"js/{p.name}" for p in (STATIC / "js").glob("*.js")
+)
 HANGUL = re.compile(r"[가-힣]")
 
 
@@ -58,15 +62,13 @@ def _hangul_lines(lines: list[str]) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize(
-    ("name", "stripper"),
-    [
-        ("index.html", strip_html_comments),
-        ("app.js", strip_js_comments),
-        ("style.css", strip_js_comments),
-    ],
-)
-def test_web_static_has_no_korean_outside_comments(name, stripper):
+def test_static_file_list_covers_modules():
+    assert len(_STATIC_FILES) > 4 and "js/main.js" in _STATIC_FILES
+
+
+@pytest.mark.parametrize("name", _STATIC_FILES)
+def test_web_static_has_no_korean_outside_comments(name):
+    stripper = strip_html_comments if name.endswith(".html") else strip_js_comments
     hits = _hangul_lines(stripper((STATIC / name).read_text(encoding="utf-8")))
     assert not hits, f"{name}: Korean in user-facing code — " + "; ".join(hits[:5])
 
