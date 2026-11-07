@@ -366,6 +366,16 @@ class TestWebSource:
             'import { es } from "./sse.js";',
         ]
 
+    def test_closed_receipt_is_not_struck_through(self):
+        """v10.119.1: 닫힘 영수증은 배경·✓ closed 글자로만 — 제목 취소선 규칙이 없다."""
+        from tests.web_static import STATIC
+
+        css = (STATIC / "style.css").read_text(encoding="utf-8")
+        assert ".oi-item.oi-closed {" in css  # 행 배경은 남는다
+        assert not [
+            ln for ln in css.splitlines() if "oi-closed" in ln and "line-through" in ln
+        ]
+
     def test_channels_listens_for_the_jump(self):
         from tests.web_static import js_text
 

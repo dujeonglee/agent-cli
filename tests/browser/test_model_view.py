@@ -481,12 +481,14 @@ def test_budget_shows_only_what_the_server_measured(stack, page):
 
 def test_tail_follows_the_call_and_marks_items_closed_after_it(stack, page):
     """v10.63.0: 스냅샷이 찍히는 순간 띠가 바뀌고(``prompt_snapshot``), 런이 끝나면
-    `complete` 로 닫힌 항목 줄에 ✓ 표시가 붙는다 — 꼬리 글은 그대로."""
+    `complete` 로 닫힌 항목 줄에 ✓ 표시가 붙는다 — 꼬리 글은 그대로.
+    v10.119.1: 표시는 줄 끝 ``✓ closed`` 태그로만, 글은 긋지 않는다."""
     _seed_main(stack)
     errors = _open(page, stack)
     items = (
         "turn 6/30\n\n## Open Items — close them in this order\n"
-        '     [u-1] (dj) "A 해줘"\n     [u-2] (dj) "B 해줘"'
+        '     [u-1] (dj) "A 해줘"\n     [u-2] (dj) "B 해줘"\n'
+        "     → then `complete` with answers"
     )
     tail = [("Session State (per-turn tail)", items)]
     stack.renderer.note_system_prompt(
@@ -503,13 +505,34 @@ def test_tail_follows_the_call_and_marks_items_closed_after_it(stack, page):
     )
     page.click("#ctx-tail .ctx-bar")
     facts = page.evaluate(
-        """() => ({
-            struck: [...document.querySelectorAll('#ctx-tail .ctx-closed')].map(e => e.textContent),
-            tags: [...document.querySelectorAll('#ctx-tail .insp-tail .insp-tag.ok')].length,
-            body: document.querySelector('#ctx-tail .insp-diff, #ctx-tail .insp-body').textContent,
-        })"""
+        """() => {
+            const pre = document.querySelector('#ctx-tail .insp-diff, #ctx-tail .insp-body');
+            const tagged = [...pre.querySelectorAll('.insp-tag.ok')];
+            const struck = [pre, ...pre.querySelectorAll('*')].filter(
+                e => !e.closest('.del')  // diff 의 삭제 줄은 다른 뜻 — 그대로 긋는다
+                    && getComputedStyle(e).textDecorationLine.includes('line-through'));
+            return {
+                lines: pre.textContent.split('\\n'),
+                tagged: tagged.map(e => e.textContent),
+                struck: struck.length,
+                tags: document.querySelectorAll('#ctx-tail .insp-tail .insp-tag.ok').length,
+                body: pre.textContent,
+            };
+        }"""
     )
-    assert len(facts["struck"]) == 1 and "[u-1]" in facts["struck"][0]
+    # 닫힌 u-1 줄만 끝에 ✓ closed 태그 — 긋지 않는다(삭제 줄 밖엔 line-through 없음)
+    assert facts["tagged"] == ["✓ closed"]
+    closed_lines = [ln for ln in facts["lines"] if ln.rstrip().endswith("✓ closed")]
+    assert len(closed_lines) == 1 and "[u-1]" in closed_lines[0]
+    assert "after this call" not in closed_lines[0]
+    assert facts["struck"] == 0
+    # 지시문 줄·열린 u-2 줄엔 태그가 없다
+    assert any("→ then" in ln for ln in facts["lines"])
+    assert all(
+        not ln.rstrip().endswith("✓ closed")
+        for ln in facts["lines"]
+        if "[u-1]" not in ln
+    )
     assert facts["tags"] == 1
     assert '[u-2] (dj) "B 해줘"' in facts["body"]  # 아직 열린 건 그대로
     assert errors == []

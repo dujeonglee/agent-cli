@@ -296,12 +296,14 @@ function frameSecHtml(s, cls, extraTag) {
     "</details>"
   );
 }
-/** Open Items 의 `[u-1] …` 줄 — 그 호출 뒤에 닫혔으면(`closed_after`) 긋고
- * 표시한다. 꼬리 글은 그대로다: 모델이 받은 것을 고쳐 쓰지 않는다. */
+/** Open Items 의 `[u-1] …` 줄 — 그 호출 뒤에 닫혔으면(`closed_after`) 줄 끝에
+ * `✓ closed` 태그만 붙인다. 글은 긋지 않는다(v10.119.1, 사용자 결정) — "이 호출
+ * 뒤" 라는 말은 섹션 머리 칩과 각주가 한다. 꼬리 글은 그대로다: 모델이 받은 것을
+ * 고쳐 쓰지 않는다. */
 function markClosed(raw, html, closed) {
   const m = /^\s*\[([A-Za-z]+-\d+)\]/.exec(raw);
   if (!m || !closed[m[1]]) return html;
-  return '<span class="ctx-closed">' + html + '</span> <span class="insp-tag ok">✓ closed after this call</span>';
+  return html + ' <span class="insp-tag ok">✓ closed</span>';
 }
 function frameTailSecHtml(s, d, prevTurn, closed) {
   let tags = "";
