@@ -305,7 +305,7 @@ class MinimalRenderer(Renderer):
         # Skip header for nested calls (depth>0) or parallel delegates (capture mode).
         # Each AgentLoop calls render_header in _setup(), but only the main loop
         # should show the banner.
-        if self._depth > 0 or self.is_capturing:
+        if self.in_nested_render():
             return
         self.con.print()
         if skill_name:

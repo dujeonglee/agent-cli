@@ -64,6 +64,20 @@ _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
+async def _json_object(request: Request) -> dict:
+    """요청 본문을 JSON 객체로 읽는다 — 본문을 직접 읽는 핸들러의 가드 하나.
+
+    잘못된 JSON 도, 객체가 아닌 JSON(``[]``·``"x"``·``1``)도 500 이 아니라 400.
+    ``body: dict`` 로 FastAPI 가 파싱하는 핸들러는 쓰지 않는다(422 계약 유지)."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+    return body
+
+
 async def _stream_body_to(request: Request, dest: Path) -> int:
     """요청 본문을 ``dest`` 에 스트리밍으로 쓴다 — 바이트 수 반환.
 
@@ -1096,10 +1110,7 @@ def create_app(server: WebServer) -> FastAPI:
         """Zip the selected workspace paths and return the archive, deleting
         the temp file after send. Body: ``{paths:[rel...], all?:bool}``. A dir
         is added recursively; a file individually. Read-only, token-auth."""
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = await _json_object(request)
         rels = ["."] if body.get("all") else (body.get("paths") or [])
         if not isinstance(rels, list) or not rels:
             raise HTTPException(status_code=400, detail="no paths selected")
@@ -1147,7 +1158,7 @@ def create_app(server: WebServer) -> FastAPI:
         reported (not fatal) so one bad path doesn't abort the rest."""
         import shutil
 
-        body = await request.json()
+        body = await _json_object(request)
         rels = body.get("paths") or []
         if not rels:
             raise HTTPException(status_code=400, detail="no paths given")
@@ -1323,10 +1334,7 @@ def create_app(server: WebServer) -> FastAPI:
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = await _json_object(request)
         content = body.get("content", "")
         if not isinstance(content, str):
             raise HTTPException(status_code=400, detail="content must be a string")
@@ -1404,10 +1412,7 @@ def create_app(server: WebServer) -> FastAPI:
         ``ImageRef`` dicts here (:meth:`WebServer.image_refs`); a message may
         be images only (empty ``content``).
         """
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = await _json_object(request)
         kind = body.get("kind")
         if kind == "chat":
             content = body.get("content", "")
@@ -1464,10 +1469,7 @@ def create_app(server: WebServer) -> FastAPI:
         """Cancel a still-pending queued message. Body: ``{conn_id, id}`` —
         only the owner (matching ``conn_id``) may cancel; already-dequeued
         messages can't be cancelled. Returns ``{cancelled: bool}``."""
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = await _json_object(request)
         ok = server.cancel_pending(body.get("conn_id"), str(body.get("id", "")))
         return JSONResponse({"cancelled": ok})
 
@@ -1475,10 +1477,7 @@ def create_app(server: WebServer) -> FastAPI:
     async def set_nickname(request: Request):
         """Set the caller's display nickname. Body: ``{conn_id, name}``. The
         UI pre-fills the assigned fun default; the user edits/confirms."""
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = await _json_object(request)
         ok = server.renderer.set_nickname(body.get("conn_id"), body.get("name", ""))
         return JSONResponse({"ok": ok})
 

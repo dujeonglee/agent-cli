@@ -217,6 +217,23 @@ class TestPromptProvenance:
         r.end_scope(task_id="t1", success=True, duration_s=0.1)
 
 
+class TestMinimalInNestedRender:
+    """v10.114.1: 중첩 판정 ``in_nested_render`` 는 기반 메서드 — minimal 은
+    현행 규칙(깊이 > 0 또는 캡처 중) 그대로, ``header()`` 가 이것을 쓴다."""
+
+    def test_reflects_depth_and_capture(self):
+        r = MinimalRenderer(Console())
+        assert r.in_nested_render() is False
+        r.push_depth()
+        assert r.in_nested_render() is True
+        r.pop_depth()
+        assert r.in_nested_render() is False
+        r.start_capture()
+        assert r.in_nested_render() is True
+        r.stop_capture()
+        assert r.in_nested_render() is False
+
+
 class TestLoadRendererByName:
     def test_load_minimal(self):
         old = get_renderer()
