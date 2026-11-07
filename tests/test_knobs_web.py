@@ -22,6 +22,7 @@ from agent_cli.render.web_hub import WebConnection
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.web.server import WebServer, create_app
 from tests.binding_support import make_binding
+from tests.web_static import js_text
 
 TOKEN = "t"
 
@@ -324,7 +325,7 @@ class TestStatusFileMirrorsTheKnobs:
 class TestFrontendIsOneRenderer:
     def test_chips_are_rendered_not_written(self, tmp_path):
         _s, _r, client = _full(tmp_path)
-        js = client.get(f"/static/app.js?token={TOKEN}").text
+        js = js_text()
         html = client.get(f"/?token={TOKEN}").text
         assert 'fetch("api/knobs")' in js and '"api/knobs/" + name' in js
         assert 'es.addEventListener("knob"' in js and "agentcli:knob" in js

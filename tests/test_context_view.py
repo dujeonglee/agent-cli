@@ -21,6 +21,7 @@ from agent_cli.render import get_renderer, set_renderer
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from tests.binding_support import make_binding
+from tests.web_static import js_text
 
 
 class _CapturingRenderer(WebRenderer):
@@ -470,7 +471,7 @@ class TestStaticWiring:
         import agent_cli.web as web_pkg
 
         root = Path(web_pkg.__file__).parent / "static"
-        js = (root / "app.js").read_text(encoding="utf-8")
+        js = js_text()
         css = (root / "style.css").read_text(encoding="utf-8")
         assert 'addEventListener("ctx_view"' in js
         assert "ctx-gone" in js and "ctx-summary" in js
@@ -556,11 +557,6 @@ class TestPinnedRequestInTheView:
         assert "kept" not in ctx.context_view()["gone"]
 
     def test_frontend_honours_kept(self):
-        from pathlib import Path
 
-        import agent_cli.web as web_pkg
-
-        js = (Path(web_pkg.__file__).parent / "static" / "app.js").read_text(
-            encoding="utf-8"
-        )
+        js = js_text()
         assert "gone.kept" in js

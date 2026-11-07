@@ -1,5 +1,5 @@
 """Optional Node-driven smoke tests for the markdown helpers in
-``agent_cli/web/static/app.js``.
+``agent_cli/web/static/js/main.js`` (v10.116.0 전엔 ``app.js`` 의 메인 IIFE).
 
 These tests run only when a working ``node`` binary is on ``PATH``.
 They extract the markdown helper functions from ``app.js`` and
@@ -27,9 +27,7 @@ from pathlib import Path
 
 import pytest
 
-_APP_JS = (
-    Path(__file__).resolve().parent.parent / "agent_cli" / "web" / "static" / "app.js"
-)
+from tests.web_static import js_fn_body, js_text
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None,
@@ -38,29 +36,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _extract_iife_body() -> str:
-    """Return the body of app.js's IIFE so a Node harness can run the
-    helper functions defined inside. Strips the opening
-    ``(function () { "use strict";`` and the trailing ``})();`` so the
-    body can be wrapped in a different shell that exposes the helpers
-    for testing.
+    """메인 모듈(``js/main.js``) 본문 — Node 하니스가 ``(function(){ … })()`` 로
+    감싸 실행한다(v10.116.0 전엔 app.js 첫 IIFE 의 여닫이를 정규식으로 벗겼다).
+
+    메인 모듈엔 ``import``/``export`` 가 없어야 한다 — 함수 안에 감싸 실행하므로
+    그런 줄이 생기면(2단계 분할) 하니스부터 ``import()`` 로 바꿔야 한다는 신호다.
+    다른 기능 모듈은 로드 시점에 DOM 을 건드리므로 하니스에 딸려 오면 안 된다.
     """
-    src = _APP_JS.read_text(encoding="utf-8")
-    # Match the FIRST IIFE (the chat client, which owns the markdown
-    # helpers) and cut at ITS closer. Sibling IIFEs (Prompt Inspector 등)는
-    # 로드 시점에 DOM 을 건드리므로 하네스에 딸려 오면 안 된다.
-    #
-    # 닫는 위치는 **열 0 의** ``})();`` 로 찾는다 (v9.4.0 ②). 종전엔 첫
-    # ``})();`` 를 그냥 찾았는데, 그게 실제로는 app.js 주석 안의 문자열
-    # ("first })(); = main closer" 라고 적힌 그 주석!)에 걸려 있었다 —
-    # 줄 주석이라 뒤가 통째로 삼켜져 우연히 파싱이 됐을 뿐이다. 그 주석을
-    # 지우자 첫 매치가 **중첩 IIFE 의 닫는 줄**로 옮겨가 본문이 불균형해졌다.
-    # 메인 IIFE 의 닫기는 열 0, 중첩은 들여쓰기이므로 이 구분이 견고하다.
-    m = re.search(r"\(function \(\) \{\s*(?:\"use strict\";)?\s*", src)
-    assert m, "could not find IIFE opener in app.js"
-    start = m.end()
-    end = src.find("\n})();", start)
-    assert end > start, "could not find IIFE closer in app.js"
-    return src[start:end]
+    src = js_text("main")
+    assert not re.search(r"^(?:import|export)\b", src, re.MULTILINE), (
+        "main.js grew import/export — switch this harness to import()"
+    )
+    return src
 
 
 def _run_node_harness(call_expr: str, input_value: str) -> str:
@@ -296,23 +283,10 @@ class TestMarkdownHelpers:
 
 
 def _extract_fn(name: str) -> str:
-    """Return the source of a top-level ``function <name>(...) { ... }`` from
-    app.js by brace-matching. ``ovBuildBlocks`` lives past the first ``})();``
-    (a nested IIFE closer), so the whole-IIFE harness can't reach it — but the
-    function only closes over ``ovEntries``, so we run it standalone."""
-    src = _APP_JS.read_text(encoding="utf-8")
-    m = re.search(r"\n  function " + re.escape(name) + r"\(", src)
-    assert m, f"could not find function {name} in app.js"
-    brace = src.index("{", m.end())
-    depth = 0
-    for i in range(brace, len(src)):
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return src[m.start() : i + 1]
-    raise AssertionError(f"unbalanced braces for {name}")
+    """메인 모듈의 top-level ``function <name>(...) { ... }`` 를 중괄호 짝으로 자른다
+    (``tests/web_static.js_fn_body``). 하니스 전체를 돌리지 않고 함수 하나만
+    독립 실행할 때 쓴다 — 예: ``ovUserHtml`` 은 ``escapeHtml`` 만 닫아 쓴다."""
+    return js_fn_body(js_text("main"), name)
 
 
 def _ov_render_html(name, entry, *, is_hero=False):
@@ -364,15 +338,11 @@ _PARITY_KEYS = [
 
 
 def _js_pool(src, name):
-    import re
-
     return re.search(rf"var {name} = (\[[\s\S]*?\]);", src).group(1)
 
 
 def _js_fn(src, name):
-    import re
-
-    return re.search(rf"(function {name}\(key\) \{{[\s\S]*?\n  \}})", src).group(1)
+    return js_fn_body(src, name)
 
 
 def _run_js(prelude, expr, keys):
@@ -404,7 +374,7 @@ class TestAgentIconParity:
     def test_js_python_icon_parity(self):
         from agent_cli.agent_icon import agent_icon
 
-        src = _APP_JS.read_text(encoding="utf-8")
+        src = js_text("main")
         prelude = (
             f"var OV_AGENT_ICONS = {_js_pool(src, 'OV_AGENT_ICONS')};\n"
             + _js_fn(src, "ovAgentHash")
@@ -422,7 +392,7 @@ class TestAgentIconParity:
         """v9.9.0 — 별명 풀·해시도 양쪽이 같아야 한다."""
         from agent_cli.agent_icon import agent_nickname
 
-        src = _APP_JS.read_text(encoding="utf-8")
+        src = js_text("main")
         prelude = (
             f"var OV_AGENT_ANIMALS = {_js_pool(src, 'OV_AGENT_ANIMALS')};\n"
             f"var OV_AGENT_ADJECTIVES = {_js_pool(src, 'OV_AGENT_ADJECTIVES')};\n"
@@ -445,7 +415,7 @@ class TestAgentIconParity:
         from agent_cli.agent_icon import AGENT_ANIMALS, AGENT_ICONS
 
         assert len(AGENT_ICONS) == len(AGENT_ANIMALS)
-        src = _APP_JS.read_text(encoding="utf-8")
+        src = js_text("main")
         for py_pool, js_name in (
             (AGENT_ICONS, "OV_AGENT_ICONS"),
             (AGENT_ANIMALS, "OV_AGENT_ANIMALS"),

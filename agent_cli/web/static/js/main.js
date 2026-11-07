@@ -1,0 +1,4210 @@
+// ── 메인 화면 (구 app.js 메인 IIFE) ─────────────────────────────────
+// SSE 수신·카드 렌더·입력 모드·타임라인·프레임 등 화면 본체. v10.116.0 에서
+// IIFE 본문을 그대로 내어써 모듈이 됐다(코드 불변). 2단계에서 절 단위 모듈로
+// 쪼갠다 — docs/web-modules/DESIGN.md.
+
+// ── Bootstrap token → cookie ───────────────
+// The index response set an HttpOnly ``act`` cookie from the one-time
+// ``?token=`` URL, so every request (and the SSE stream, which cannot send
+// headers) authenticates via that cookie — the token never rides in a
+// per-request URL. Strip it from the address bar. If we hold no valid cookie,
+// the SSE handshake fails and ``showSetupHelp`` (below) explains what to do.
+const params = new URLSearchParams(window.location.search);
+if (params.has("token")) {
+  params.delete("token");
+  const q = params.toString();
+  history.replaceState(
+    null,
+    "",
+    window.location.pathname + (q ? "?" + q : "") + window.location.hash
+  );
+}
+
+function showSetupHelp() {
+  document.body.innerHTML =
+    '<div class="setup-message">' +
+    "<h1>agent-cli web</h1>" +
+    "<p>Not authenticated. Open the URL printed by " +
+    "<code>agent-cli web</code> — it carries a one-time " +
+    "<code>?token=</code> that installs your session cookie.</p>" +
+    "</div>";
+}
+
+// ── DOM refs ───────────────────────────────
+const $messages = document.getElementById("messages");
+const $input = document.getElementById("input");
+const $send = document.getElementById("send");
+const $chatStop = document.getElementById("chat-stop");
+const $abort = document.getElementById("abort");
+const $tokenUsage = document.getElementById("token-usage");
+const $status = document.getElementById("conn-status");
+const $inputArea = document.getElementById("input-area");
+
+// ── State ──────────────────────────────────
+// 3b: 입력창은 항상 chat(활성 채널로 라우팅). main 의 prompt/confirm 은 글로벌
+// ask 트레이의 항목으로 렌더된다(ovMainAsk) — 입력창 mode 전환 폐지.
+var ovMainAsk = null; // null | {kind:"prompt"|"confirm", data}
+// Every connection is equal (all may send input / queue). ``myConnId`` (from
+// the ``identity`` event) is used to mark "(you)" in the viewer roster and
+// to own queued messages.
+let myConnId = null;
+// ``workerBusy`` mirrors the server's ``worker_state`` event: true
+// means the chat worker is between popping a user message and
+// returning to the next ``dequeue_blocking`` call. While busy,
+// the chat ``Send`` button stays disabled so a second message
+// can't be queued into an in-flight turn. The prompt-mode answer
+// path is not gated by this flag — answering an ``ask`` is the
+// expected way to *unblock* the worker, not an additional message.
+// Refresh / reconnect uses the server's ``_latest_worker_state``
+// snapshot prepend, so this flag is set from the very first event
+// a fresh client receives.
+let workerBusy = false;
+// True between clicking "Stop" and the worker actually returning to
+// idle. While set, the button shows "Stopping…" and is disabled so a
+// second click can't fire a redundant /api/stop. Reset on the next
+// worker_state event (idle = the turn ended; busy = a fresh turn).
+let stopRequested = false;
+
+// True when the Send button is acting as a Stop button: chat mode +
+// worker busy. In that state a click POSTs /api/stop instead of
+// sending, halting the in-flight turn at the next turn boundary
+// (server.trigger_stop → run_loop stop_event). Enter is NOT wired to
+// stop — the button is the deliberate affordance, so a stray Enter
+// can't abort a run by accident.
+// Whether a chat run is in flight (Stop button shown). Send is ALWAYS
+// available in chat mode now — typing while busy QUEUES the message
+// (injected at the next turn boundary), so Stop is a separate button.
+function isBusyChat() {
+  // main ask(prompt/confirm) 대기 중엔 #chat-stop 을 숨긴다 — 그땐 런을
+  // 중단(#chat-stop)하는 게 아니라 입력 대기를 취소(#abort)하는 상황.
+  // (예전 currentMode 게이트를 ovMainAsk 로 대체 — 두 Stop 동시노출 방지.)
+  return workerBusy && !ovMainAsk;
+}
+
+function updateSendEnabled() {
+  // Send is always enabled (chat idle → starts a run; chat busy → queues).
+  // Stop is a SEPARATE button shown only while a chat run is in flight.
+  const busy = isBusyChat();
+  const stopping = busy && stopRequested;
+  $send.disabled = false;
+  $send.textContent = "Send";
+  if ($chatStop) {
+    $chatStop.hidden = !busy;
+    $chatStop.disabled = stopping;
+    $chatStop.textContent = stopping ? "Stopping…" : "Stop";
+  }
+  // placeholder 는 채널(+busy) 인지형 — ovApplyChannelInput 단일 소유.
+  ovApplyChannelInput();
+}
+
+// ── HTML escaping + minimal markdown ───────
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[c];
+  });
+}
+
+/** Colour a write_file/edit_file observation body. ``format_diff``
+ * now emits a PLAIN standard unified diff (no Rich markup — the LLM
+ * observation stays clean), so the colour is applied here by reading
+ * each line's leading character, mirroring the CLI's
+ * ``_colorize_diff_line``. Input MUST already be ``escapeHtml``-ed.
+ * Only the diff block (from the ``--- a/`` header onward) is coloured;
+ * preceding lines like "File saved: …" pass through untouched. */
+function colorizeDiffBody(escaped) {
+  let inDiff = false;
+  return escaped
+    .split("\n")
+    .map(function (line) {
+      if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+        inDiff = true;
+        return '<span class="rich-bold">' + line + "</span>";
+      }
+      if (line.startsWith("@@")) {
+        inDiff = true;
+        return '<span class="rich-cyan">' + line + "</span>";
+      }
+      if (inDiff && line.startsWith("+")) {
+        return '<span class="rich-green">' + line + "</span>";
+      }
+      if (inDiff && line.startsWith("-")) {
+        return '<span class="rich-red">' + line + "</span>";
+      }
+      return line; // context / blank / non-diff line — plain
+    })
+    .join("\n");
+}
+
+/** Extract fenced code blocks (``` … ```), replacing each with a
+ * placeholder comment so subsequent inline/block markdown passes
+ * can't munge the content. Returns ``{ stripped, blocks }`` where
+ * ``stripped`` contains the placeholders and ``blocks[i].html`` is
+ * the pre-rendered ``<pre><code>`` to splice back in.
+ *
+ * Pre-rendering at extraction time means the placeholder is a
+ * sealed leaf — restore is a literal string replace. Input must be
+ * already-escaped HTML; the code body inside fences IS the escaped
+ * text, so no further escaping is needed when we wrap it. */
+function extractCodeFences(s) {
+  const blocks = [];
+  const stripped = s.replace(
+    /```([\w-]*)\n([\s\S]*?)```/g,
+    function (_m, _lang, code) {
+      const token = "<!--cf:" + blocks.length + "-->";
+      blocks.push({
+        token: token,
+        html: '<pre class="code"><code>' + code + "</code></pre>",
+      });
+      return token;
+    }
+  );
+  return { stripped: stripped, blocks: blocks };
+}
+
+function restoreCodeFences(s, blocks) {
+  let html = s;
+  for (const b of blocks) {
+    html = html.split(b.token).join(b.html);
+  }
+  return html;
+}
+
+/** Scan the input line-by-line and replace contiguous GFM pipe-table
+ * runs (header row + ``---`` separator row + body rows) with a
+ * single ``<table>`` block. Lines that don't fit the pattern pass
+ * through untouched.
+ *
+ * Alignment specifiers (``:--``, ``:--:``, ``--:``) are out of
+ * scope for v1 — the separator row just has to look like a
+ * separator. */
+function renderTables(s) {
+  const lines = s.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const headerLine = lines[i];
+    if (i + 1 < lines.length && /^\s*\|.*\|\s*$/.test(headerLine)) {
+      const sepLine = lines[i + 1];
+      if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(sepLine)) {
+        const headerCells = splitTableRow(headerLine);
+        const bodyRows = [];
+        let j = i + 2;
+        while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) {
+          bodyRows.push(splitTableRow(lines[j]));
+          j++;
+        }
+        let table = "<table><thead><tr>";
+        for (const c of headerCells) {
+          table += "<th>" + c + "</th>";
+        }
+        table += "</tr></thead><tbody>";
+        for (const row of bodyRows) {
+          table += "<tr>";
+          for (const c of row) {
+            table += "<td>" + c + "</td>";
+          }
+          table += "</tr>";
+        }
+        table += "</tbody></table>";
+        out.push(table);
+        i = j;
+        continue;
+      }
+    }
+    out.push(headerLine);
+    i++;
+  }
+  return out.join("\n");
+}
+
+function splitTableRow(line) {
+  // Strip leading/trailing pipe then split on remaining pipes. Cells
+  // are trimmed to avoid leading-space artefacts but their content
+  // stays as-is (already HTML-escaped upstream).
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map(function (c) {
+    return c.trim();
+  });
+}
+
+/** ATX headings: ``# H1`` / ``## H2`` / ``### H3``. ``####`` and
+ * deeper are left as literal text (FR-MD-1). The regex is anchored
+ * to line start with the ``m`` flag so headers inside paragraphs
+ * don't accidentally match. */
+function renderHeadings(s) {
+  return s.replace(/^(#{1,3})\s+(.+?)\s*$/gm, function (_m, hashes, body) {
+    const level = hashes.length;
+    return "<h" + level + ">" + body + "</h" + level + ">";
+  });
+}
+
+/** Group consecutive ``-`` / ``*`` / ``\d+.`` lines into ``<ul>`` /
+ * ``<ol>``. A blank line ends the group. Unordered and ordered
+ * markers are not mixed mid-group — switching markers starts a
+ * fresh list. Nested lists are out of scope (FR-MD-4). */
+function renderLists(s) {
+  const lines = s.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const ulMatch = /^\s*[-*]\s+(.*)$/.exec(line);
+    const olMatch = /^\s*\d+\.\s+(.*)$/.exec(line);
+    if (ulMatch) {
+      const items = [ulMatch[1]];
+      let j = i + 1;
+      while (j < lines.length) {
+        const m = /^\s*[-*]\s+(.*)$/.exec(lines[j]);
+        if (!m) break;
+        items.push(m[1]);
+        j++;
+      }
+      out.push("<ul>" + items.map(function (x) {
+        return "<li>" + x + "</li>";
+      }).join("") + "</ul>");
+      i = j;
+    } else if (olMatch) {
+      const items = [olMatch[1]];
+      let j = i + 1;
+      while (j < lines.length) {
+        const m = /^\s*\d+\.\s+(.*)$/.exec(lines[j]);
+        if (!m) break;
+        items.push(m[1]);
+        j++;
+      }
+      out.push("<ol>" + items.map(function (x) {
+        return "<li>" + x + "</li>";
+      }).join("") + "</ol>");
+      i = j;
+    } else {
+      out.push(line);
+      i++;
+    }
+  }
+  return out.join("\n");
+}
+
+/** Bold (``**…**``) then italic (``*…*``). Bold first so the
+ * leftover single ``*`` characters that bracket italics can't
+ * eat the inner ``*`` of a bold pair. The italic regex requires a
+ * non-``*`` prefix character (or start-of-string) so it doesn't
+ * fire on the middle ``*`` of ``***``.
+ *
+ * CommonMark flanking (v9.22.3): a delimiter followed by whitespace
+ * cannot open, one preceded by whitespace cannot close. Without it a
+ * cron line ``0 9 * * 1-5`` or ``2 * 3 * 4`` lost its stars to an
+ * italic space — in user bubbles and assistant text alike. */
+function renderEmphasis(s) {
+  let html = s.replace(/\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(
+    /(^|[^*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g,
+    "$1<em>$2</em>"
+  );
+  return html;
+}
+
+/** Pipeline orchestrator — runs block-level transforms (table,
+ * headings, lists) before inline ones (emphasis, inline code) so
+ * inline regexes never see header / list markers. */
+function unescapeHtml(s) {
+  return s.replace(/&(amp|lt|gt|quot|#39);/g, function (_m, e) {
+    return { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e];
+  });
+}
+
+/** 그림 ``![alt](src)`` (v10.64.0). ``<img>`` 는 그려지는 순간 브라우저가 스스로
+ * 요청을 내므로 출처를 좁힌다: 작업 폴더 경로(`api/workspace/file` — 서버가
+ * 워크스페이스 밖·이미지 아닌 파일을 거절한다)와 래스터 ``data:`` URI 만 그림으로.
+ * 외부 http(s) 는 그리지 않고 링크로 둔다 — 인젝션된 페이지가 모델에게
+ * ``![](https://x/?d=<비밀>)`` 을 쓰게 하면 보는 것만으로 새어 나간다(클릭은
+ * 사람의 의도). SVG ``data:`` 는 스크립트를 품을 수 있어 뺀다. 그 밖의 스킴
+ * (``javascript:`` 등)은 글 그대로. 인라인 코드 안은 건드리지 않는다.
+ * 입력은 이미 이스케이프된 글이라 alt·src 를 그대로 속성에 넣어도 따옴표를
+ * 깨지 못한다. 강조보다 먼저 — alt 에 ``<strong>`` 이 끼지 않게. */
+const MD_IMAGE = /!\[([^\]\n]*)\]\(([^()\s]+)\)/g;
+const MD_DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+function renderImages(html) {
+  // 참조(sha256)가 없는 그림 — 그린 시각이 판이다(같은 카드의 그림들은 한 판).
+  const drawn = Date.now().toString(36);
+  return html
+    .split(/(`[^`\n]+`)/)
+    .map(function (part, i) {
+      if (i % 2) return part; // 인라인 코드
+      return part.replace(MD_IMAGE, function (all, alt, src) {
+        if (MD_DATA_IMAGE.test(src)) {
+          return '<img class="md-img" src="' + src + '" alt="' + alt + '">';
+        }
+        if (/^https?:\/\//i.test(src)) {
+          return (
+            '<a class="md-img-link" href="' + src + '" target="_blank" rel="noopener noreferrer" ' +
+            'title="External image — not loaded; click to open">🖼 ' + (alt || src) + "</a>"
+          );
+        }
+        if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.indexOf("//") === 0) return all;
+        const url = escapeHtml(imageUrl(unescapeHtml(src), "", drawn));
+        return (
+          '<a class="md-img-wrap" href="' + url + '" target="_blank" rel="noopener">' +
+          '<img class="md-img" src="' + url + '" alt="' + alt + '" loading="lazy"></a>'
+        );
+      });
+    })
+    .join("");
+}
+
+function markdownInline(s) {
+  let html = renderTables(s);
+  html = renderHeadings(html);
+  html = renderLists(html);
+  html = renderImages(html);
+  html = renderEmphasis(html);
+  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  return html;
+}
+
+/** Apply a tiny subset of markdown — fenced code blocks, headings
+ * (h1-h3), GFM tables, lists, images (workspace paths and raster
+ * ``data:`` only — see renderImages), bold/italic, and inline code.
+ * Everything else stays as escaped text. No external library;
+ * variants beyond this set are intentionally out of scope
+ * (NFR-MD-1: zero new JS deps).
+ *
+ * Order is load-bearing for XSS safety (NFR-MD-2): escapeHtml runs
+ * first so every ``<`` becomes ``&lt;``, then fences are extracted
+ * to placeholders (so markdown passes don't fire inside code), then
+ * block + inline transforms run on the stripped body, and finally
+ * fences are restored as pre-rendered ``<pre><code>`` blocks. */
+function escapeAndFormat(s) {
+  const escaped = escapeHtml(s);
+  const { stripped, blocks } = extractCodeFences(escaped);
+  const transformed = markdownInline(stripped);
+  return restoreCodeFences(transformed, blocks);
+}
+
+// ── DOM helpers ────────────────────────────
+// P0-6②: el() 의 3번째 인자는 **textContent** — 기본이 안전(모델/서버 원문을
+// 그대로 넘겨도 마크업 실행 불가). HTML 이 필요한 곳만 elHtml() 로 **명시**한다.
+// 종전엔 el() 이 무조건 innerHTML 이라 콜사이트마다 escapeHtml 규율이 갈렸고
+// (606 은 이스케이프, 실패 카드는 누락 → self-XSS), 누락 = 취약이었다.
+function el(tag, classes, text) {
+  const e = document.createElement(tag);
+  if (classes && classes.length) e.classList.add.apply(e.classList, classes);
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+// 이미 이스케이프/조립된 HTML 전용 — 새 콜사이트는 "왜 HTML 인가"가 자명할
+// 때만 사용(마크다운 렌더·diff 색상·danger 하이라이트 류).
+function elHtml(tag, classes, html) {
+  const e = document.createElement(tag);
+  if (classes && classes.length) e.classList.add.apply(e.classList, classes);
+  if (html !== undefined && html !== null) e.innerHTML = html;
+  return e;
+}
+
+// ── Card timestamps ────────────────────────
+// Server stamps every event with `ts` (epoch seconds) at emit time; the
+// browser formats to its own local time. Short form on the card
+// (YYMMDD HH:MM:SS), full form (with ms) in the hover tooltip.
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+// `ts` is epoch seconds (live `_emit`) or an ISO string (resume replay,
+// from the history record). Normalise both to a Date.
+function tsToDate(ts) {
+  return typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
+}
+function fmtCardTime(ts) {
+  const d = tsToDate(ts);
+  return (
+    pad2(d.getFullYear() % 100) + pad2(d.getMonth() + 1) + pad2(d.getDate()) +
+    " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds())
+  );
+}
+function fmtCardTimeFull(ts) {
+  const d = tsToDate(ts);
+  return (
+    d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+    " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()) +
+    "." + String(d.getMilliseconds()).padStart(3, "0")
+  );
+}
+// Attach a muted timestamp to any `.card`. No-op when `ts` is absent
+// (e.g. legacy buffered events) so nothing breaks if the field is missing.
+//
+// 자리는 **둘 중 하나**다 (v9.4.0 ⑥):
+//   · 행(.row)이 있는 카드 → **첫 행 안**의 한 칸 (.row-time)
+//   · 그 외(사용자 말풍선·시스템 줄·최종답) → 우상단 코너 배지 (.card-time)
+// 코너 배지는 absolute 라 그 아래 놓이는 줄의 글자를 덮어 **겹쳐 보였다**
+// (사용자 지적 2회 — 왕래 줄의 상대 칩, 그리고 생각/도구/관찰의 요약).
+// 여백을 상수로 비워두는 방식은 배지 폭 추정에 기대 깨지기 쉬우므로, 행이
+// 있으면 같은 그리드 안에 넣는다 — 겹칠 자리가 원천적으로 없다. 행이 없는
+// 산문 블록만 `--time-w` 로 자리를 비운다.
+function stampCard(cardEl, ts) {
+  if (ts == null) return cardEl;
+  const row = cardEl.querySelector(".row");
+  const t = el("span", [row ? "row-time" : "card-time"], fmtCardTime(ts));
+  t.title = fmtCardTimeFull(ts);
+  if (row) {
+    row.classList.add("has-time");
+    row.insertBefore(t, row.querySelector(".x"));
+  } else {
+    cardEl.appendChild(t);
+  }
+  return cardEl;
+}
+
+// ── 따라가기 (v9.26.0, 사용자가 시안으로 확인한 세 규칙) ──────────
+// 상태는 값 하나: ``pinned``.
+//   1. 처음 열면 맨 아래 — 스냅샷 재생·늦게 자라는 레이아웃(폰트·이미지·
+//      펼친 카드)까지 바닥을 유지한다.
+//   2. 바닥에서 SCROLL_BOTTOM_THRESHOLD 안으로 오면 **그 자리에서** 바닥에
+//      붙이고 pinned — 이후 새 내용·스트리밍·창 크기 변화에 바닥을 따라간다.
+//   3. 그보다 멀어지면 unpinned — 보던 줄이 움직이지 않고, 그 사이 도착한
+//      카드 수가 "↓ 새 메시지 n" 버튼에 쌓인다. 누르면 규칙 2.
+// 종전(~v9.25)은 근처에서 플래그만 바꿔 **다음 이벤트가 와야** 따라갔고,
+// 로드 뒤 늦게 자란 내용은 바닥을 놓쳤다(사용자 보고: "기본이 맨 아래여야").
+let pinned = true;
+// 열 때(v10.8.1): 스냅샷이 다 재생될 때까지 타임라인을 숨기고 스크롤도 하지
+// 않는다 — 카드가 붙을 때마다 내려가는 모습 대신, `snapshot_end` 에서 한 번에
+// 맨 아래로 점프한 뒤 보여 준다. 재접속은 전체 리로드(es.onerror)라 같은 길.
+let loading = true;
+document.body.classList.add("loading");
+function revealAtBottom() {
+  if (!loading) return;
+  loading = false;
+  setScrollTop($messages.scrollHeight);
+  document.body.classList.remove("loading");
+}
+// 옛 서버(snapshot_end 없음)와의 창: 2초면 어차피 다 왔다. 브라우저 전역이
+// 있을 때만 — 노드 마크다운 하네스(test_app_markdown)는 이 IIFE 를 그대로 돈다.
+if (typeof requestAnimationFrame === "function") setTimeout(revealAtBottom, 2000);
+const SCROLL_BOTTOM_THRESHOLD = 48; // px — 메시지 두 줄쯤 (시안에서 확인)
+let _unseen = 0; // 위치 고정 중 도착한 카드 수
+let _programmaticTop = -1; // 우리가 쓴 scrollTop — 그 이벤트는 판정에서 제외
+
+function isAtBottom() {
+  const dist =
+    $messages.scrollHeight - $messages.scrollTop - $messages.clientHeight;
+  return dist <= SCROLL_BOTTOM_THRESHOLD;
+}
+
+// 프로그램 스크롤은 규칙 2·3 판정에서 제외 — scroll 이벤트는 다음 렌더
+// 단계에서, rAF 콜백보다 먼저 온다.
+// 값을 기억해 두고, 그 값에 도착한 scroll 이벤트만 우리 것으로 본다 —
+// 불리언 플래그는 같은 프레임에 끼어든 사용자 굴림까지 삼켰다(실브라우저
+// 테스트에서 로드 직후 굴림이 무시됨). 위치가 안 바뀌면 이벤트가 없으니
+// rAF 에서 지운다.
+function setScrollTop(v) {
+  const max = Math.max(0, $messages.scrollHeight - $messages.clientHeight);
+  v = Math.min(v, max);
+  if (Math.abs($messages.scrollTop - v) < 1) return; // 이미 거기 — 쓰기 없음
+  _programmaticTop = v;
+  $messages.scrollTop = v;
+  requestAnimationFrame(function () {
+    _programmaticTop = -1;
+  });
+}
+
+function scrollToBottom() {
+  if (!pinned) return;
+  setScrollTop($messages.scrollHeight);
+}
+
+// "↓ 새 메시지 n" — #messages 밖(body)에 fixed 로 띄운다. #messages 안에
+// 두면 `#messages > *` 를 세는 곳(성능 테스트·내보내기)에 섞이고, 카드가
+// 뒤에 붙으면 마지막 자식이 아니게 된다.
+const $jump = document.createElement("button");
+$jump.id = "jump-new";
+$jump.type = "button";
+$jump.hidden = true;
+$jump.title = "Jump to bottom";
+document.body.appendChild($jump);
+function placeJump() {
+  const r = $messages.getBoundingClientRect();
+  $jump.style.left = r.left + r.width / 2 + "px";
+  $jump.style.bottom = window.innerHeight - r.bottom + 14 + "px";
+}
+function renderJump() {
+  $jump.hidden = pinned || _unseen === 0;
+  if (!$jump.hidden) {
+    $jump.textContent = "↓ " + _unseen + " new";
+    placeJump();
+  }
+}
+function pin() {
+  pinned = true;
+  _unseen = 0;
+  $messages.dataset.pinned = "1"; // 상태 노출 — 실브라우저 테스트가 읽는다
+  renderJump();
+  scrollToBottom();
+}
+function unpin() {
+  if (!pinned) return;
+  pinned = false;
+  $messages.dataset.pinned = "0";
+  renderJump();
+}
+$messages.dataset.pinned = "1";
+$jump.addEventListener("click", pin);
+
+// 렌더 병합 (v8.42.0 — 리뷰 §4.6 효율): 스냅샷 재생·스트리밍처럼 이벤트가
+// 동기로 폭주하는 구간에서 scrollTop=scrollHeight 쓰기가 이벤트마다 전체
+// 레이아웃을 강제해 O(N²) 였다 (888이벤트 스냅샷에서 ~400ms 블로킹 실측).
+// requestAnimationFrame 당 1회로 병합 — 폭주 구간에선 사실상 마지막 1회만
+// 실행되고, 라이브에서도 프레임당 1회로 준다. ~16ms 지연은 인지 불가.
+var _scrollQueued = false;
+function scheduleScroll() {
+  if (_scrollQueued) return;
+  _scrollQueued = true;
+  requestAnimationFrame(function () {
+    _scrollQueued = false;
+    scrollToBottom();
+  });
+}
+
+// 규칙 2·3 — 사용자가 굴릴 때마다 바닥과의 거리로 판정. 근처에 들어오면
+// 굴림이 멎은 뒤(80ms) 붙인다 — 굴리는 손에서 낚아채지 않는다.
+let _settle = null;
+$messages.addEventListener("scroll", function () {
+  if (_programmaticTop >= 0 && Math.abs($messages.scrollTop - _programmaticTop) < 1) {
+    _programmaticTop = -1; // 쓰기 하나 = 이벤트 하나 — 여기서 소비
+    return;
+  }
+  if (isAtBottom()) {
+    clearTimeout(_settle);
+    _settle = setTimeout(function () {
+      if (isAtBottom()) pin();
+    }, 80);
+  } else {
+    clearTimeout(_settle);
+    unpin();
+  }
+});
+
+// 규칙 1·3 — 카드가 붙을 때: 고정이면 따라가고(늦은 추가까지), 아니면
+// 보이는 카드만 센다(채널 필터가 `hidden` 으로 감춘 것은 제외 — 필터는
+// 추가와 같은 동기 구간에서 끝나고 이 콜백은 그 뒤 마이크로태스크다).
+new MutationObserver(function (records) {
+  let added = 0;
+  for (const rec of records)
+    for (const n of rec.addedNodes)
+      if (n.nodeType === 1 && !n.hidden) added++;
+  if (loading) return; // 재생 중엔 숨겨져 있다 — snapshot_end 가 한 번에 내린다
+  if (pinned) {
+    if (added) scheduleScroll();
+  } else if (added) {
+    _unseen += added;
+    renderJump();
+  }
+}).observe($messages, { childList: true });
+// 규칙 1·2 끝부분 — 창 크기·늦은 레이아웃(폰트·이미지)에도 바닥 유지.
+new ResizeObserver(function () {
+  if (pinned) scheduleScroll();
+  if (!$jump.hidden) placeJump();
+}).observe($messages);
+$messages.addEventListener("load", function () { if (pinned) scheduleScroll(); }, true);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleScroll);
+
+// ── Delegate task groups (collapsible cards) ──
+//
+// Parallel delegate workers (one per ``delegate({tasks:[...]})``
+// entry) get their own collapsible card. Every event the worker
+// emits — assistant_turn, observation, stream_chunk, error —
+// carries ``task_id`` (auto-attached by ``WebRenderer._emit``),
+// which routes the card into the matching group's body instead of
+// the main timeline. Without this routing the parallel work would
+// interleave and the user couldn't tell which task is doing what.
+//
+// Group state per task_id: { card, header, body, statusEl, closed }.
+const taskGroups = {};
+// task_id → enclosing scope's task_id ("" = top level). Outlives the group
+// entry (which ``closeTaskGroup`` drops) because the CARDS stay in the
+// timeline: swimlane click-navigation still has to expand a finished
+// ancestor chain to reveal a nested card.
+const scopeParent = {};
+// ancestor task_id → [{id, label}] of its currently-running descendants.
+// A collapsed parent would otherwise hide live nested work completely.
+const liveKids = {};
+// task_id → **대화 채널**("main" 또는 상주 에이전트 key). 채널은 타임라인의
+// 필터다(v9.4.0 ⑥): `#messages` 의 **직계** 자식만 `data-ch` 로 걸러 보여준다.
+// 상주 에이전트의 작업 스코프는 `ctx_dir="agents/<key>"` 로 자기를 밝히므로
+// (render/web.py begin_agent_work) 서버에 새 필드를 더할 필요가 없다. 중첩
+// 스코프는 부모의 채널을 물려받는다 — 카드가 부모 body 안에 있어 필터가
+// 닿지 않지만, 그 안에서 append 되는 왕래 줄의 귀속에는 쓰인다.
+const scopeChannel = {};
+function channelOf(taskId) {
+  return (taskId && scopeChannel[taskId]) || "main";
+}
+
+function scopeAncestors(taskId) {
+  const chain = [];
+  let cur = scopeParent[taskId];
+  while (cur && chain.indexOf(cur) < 0) {
+    chain.push(cur);
+    cur = scopeParent[cur];
+  }
+  return chain;
+}
+
+/** Paint (or clear) the "▸ child running" hint on one ancestor header. This
+ * is a DEDICATED element, not the status line: ``scope_status`` targets the
+ * innermost scope of its own thread, so a parallel child and its parent can
+ * both be writing status at the same time. */
+function refreshLiveKids(taskId) {
+  const g = taskGroups[taskId];
+  if (!g) return;
+  const kids = liveKids[taskId] || [];
+  const last = kids.length ? kids[kids.length - 1].label : "";
+  g.subEl.textContent = kids.length
+    ? "▸ " + last + (kids.length > 1 ? " +" + (kids.length - 1) : "") + " running"
+    : "";
+}
+
+function noteScopeStart(taskId, parent, label) {
+  scopeParent[taskId] = parent || "";
+  scopeAncestors(taskId).forEach(function (a) {
+    (liveKids[a] = liveKids[a] || []).push({ id: taskId, label: label });
+    refreshLiveKids(a);
+  });
+}
+
+function noteScopeEnd(taskId) {
+  scopeAncestors(taskId).forEach(function (a) {
+    const list = liveKids[a];
+    if (!list) return;
+    liveKids[a] = list.filter(function (x) {
+      return x.id !== taskId;
+    });
+    refreshLiveKids(a);
+  });
+}
+
+/** 스코프의 **채널 귀속**을 등록하고, 이 스코프가 곧 채널인지 돌려준다.
+ *
+ * 상주 에이전트 작업은 `ctx_dir="agents/<key>"` 로 자기를 밝힌다(서버의
+ * `begin_agent_work`). 그런 스코프는 **채널 자체**라 카드를 만들지 않는다
+ * (v9.7.0) — 채널이 이미 묶어 주는데 그 안에서 또 묶으면 아무 정보도 더하지
+ * 않으면서 기본 접힘 뒤로 투명성을 숨기고, main 창은 평평한데 agent 창만 한
+ * 겹 들어가 "같은 컨셉으로 통일"이 깨진다. 요청의 경계는 왕래 줄(`← 받음` /
+ * `→ 보냄`)이 이미 긋고 있다.
+ *
+ * 카드를 안 만들어도 배관은 그대로다: `appendToTimeline` 은 그룹이 없으면
+ * `channelOf(taskId)` 로 도장을 찍어 루트에 붙이는데, 그게 정확히 원하는
+ * 동작이다. 그 스코프 **안에서** 열리는 skill/inline 은 자기 카드를 그대로
+ * 갖고, 부모 그룹이 없으니 `channelOf(parent)` = 그 에이전트 채널의 루트에
+ * 붙는다 — 중첩 블록은 살아 있다. */
+function noteScopeChannel(taskId, parent, ctxDir) {
+  const m = /^agents\/(.+)$/.exec(ctxDir || "");
+  scopeChannel[taskId] = m ? m[1] : channelOf(parent);
+  return !!m;
+}
+
+/** 스코프 카드를 연다. 중첩 블록의 종류는 `kind` 가 가른다 (docs/chat-ui §3):
+ * `skill` → 🪄 보라 레일, 그 외 → 🦀 inline agent · amber 레일.
+ * 상주 에이전트는 여기 오지 않는다 (``noteScopeChannel`` 참조). */
+function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, hidx) {
+  if (taskGroups[taskId]) return taskGroups[taskId];
+
+  const card = el("div", ["card", "card-task-group"]);
+  card.dataset.taskId = taskId;
+  // 이 카드를 연 레코드의 서수(부모 컨텍스트 기준) — 그 레코드가 부모의
+  // 컨텍스트에서 빠지면 카드째 "컨텍스트 밖 대화" 로 접힌다 (v10.24.1).
+  if (hidx != null) card.dataset.hidx = String(hidx);
+  card.dataset.kind = kind || "run";
+  card.dataset.depth = String(depth || 0);
+  card.classList.add(
+    kind === "skill" ? "scope-skill" : kind === "harness" ? "scope-harness" : "scope-inline"
+  );
+
+  const header = el("div", ["task-header"]);
+  const chevron = el("span", ["task-chevron"], "▶");
+  const title = el("span", ["task-title"]);
+  // Scope card title adapts to kind: a skill subloop (🪄 label) vs a
+  // delegate/one-shot worker (🦀 [n] agent: task).
+  if (kind === "skill") {
+    title.textContent = "🪄 " + taskText;
+  } else if (kind === "harness") {
+    // 하니스 작업(감사, v10.53.0) — main 이 한 일이 아니다. 접힌 채로 한 줄,
+    // 펼치면 그 런이 실제로 한 일. 종전엔 스코프가 없어 main 타임라인에 섞였다.
+    title.textContent = "🔎 " + (agent || "harness") + " · seq " + taskText;
+  } else {
+    const label = agent ? agent + ": " + taskText : taskText;
+    title.textContent = "🦀 [" + (index + 1) + "] " + label;
+  }
+  const statusEl = el("span", ["task-status"], "starting…");
+  const subEl = el("span", ["task-sub"]);
+  const meta = el("span", ["task-meta"]);
+  header.appendChild(chevron);
+  header.appendChild(title);
+  header.appendChild(subEl);
+  header.appendChild(statusEl);
+  header.appendChild(meta);
+
+  const body = el("div", ["task-body"]);
+  body.hidden = true; // default collapsed
+
+  // Collapse from ANY position (not just the top arrow):
+  //   1. the whole header row toggles (chevron is decorative),
+  //   2. the header is CSS-sticky, so on a long expanded card it
+  //      stays pinned at the top of the viewport — one click to
+  //      collapse no matter how far you've scrolled into the body,
+  //   3. clicking the body's own padding/gutter also collapses
+  //      (``e.target === body`` only — nested cards, links, and text
+  //      selection inside the body are untouched).
+  function toggleTaskGroup() {
+    body.hidden = !body.hidden;
+    chevron.textContent = body.hidden ? "▶" : "▼";
+    // NOTE: no scrollIntoView here. The header is CSS-sticky (top:0), so
+    // it already stays reachable when a long body expands — the earlier
+    // `scrollIntoView({behavior:"smooth"})` became both REDUNDANT and
+    // HARMFUL once sticky was added (v7.13.0): smooth-scrolling toward a
+    // sticky element re-computes a moving target and thrashes against the
+    // streaming `scrollToBottom`, freezing the UI on a live delegate card.
+  }
+
+  header.addEventListener("click", toggleTaskGroup);
+  body.addEventListener("click", function (e) {
+    // Only the body's own surface (padding/gutter) collapses — never a
+    // click that lands on nested content the user is reading/selecting.
+    if (e.target === body) toggleTaskGroup();
+  });
+
+  card.appendChild(header);
+  card.appendChild(body);
+  // 모델 시점 틀: 머리 아래 "맨 처음 받는 것", 몸통 아래 "매 턴 끝에 붙는 것".
+  // 몸통이 접혀 있으면 CSS 가 둘 다 감춘다.
+  frameForCard(taskId, header, body);
+  // 중첩 위치는 **부모**가 정하고(`task_id: parent`), 채널 귀속은 **자기
+  // 것**이다(세 번째 인자) — 부모가 카드 없는 상주 스코프면 루트로 떨어지는데
+  // 그때 부모 채널로 찍히면 출처가 어긋난다. 종전엔 append 뒤에 `data-ch` 를
+  // 다시 칠했고, 이제 인자 하나로 끝난다.
+  //
+  // `ts` 를 주지 않는 이유: 헤더 우상단은 이미 `✓ (2.1s)` 가 쓰고 있어
+  // 코너 배지가 겹친다(어제 왕래 줄에서 겪은 그 부류). 스코프 카드는 소요
+  // 시간을 `meta` 에 따로 보이므로 시각이 없어도 잃는 게 없다.
+  finishCard(card, { task_id: parent }, scopeChannel[taskId]);
+
+  const group = {
+    card: card,
+    header: header,
+    body: body,
+    chevron: chevron,
+    statusEl: statusEl,
+    subEl: subEl,
+    meta: meta,
+    closed: false,
+    toggle: toggleTaskGroup,
+  };
+  taskGroups[taskId] = group;
+  scheduleScroll();
+  return group;
+}
+
+function updateTaskStatus(taskId, status) {
+  const g = taskGroups[taskId];
+  if (!g || g.closed) return;
+  g.statusEl.textContent = status;
+}
+
+function closeTaskGroup(taskId, success, durationS, error) {
+  const g = taskGroups[taskId];
+  if (!g) return;
+  g.closed = true;
+  g.statusEl.textContent = ""; // live status no longer relevant
+  g.subEl.textContent = ""; // nor a nested-child hint
+  delete liveKids[taskId];
+  g.card.classList.add(success ? "task-ok" : "task-fail");
+  const icon = success ? "✓" : "✗";
+  const dur = durationS != null ? " (" + durationS.toFixed(1) + "s)" : "";
+  g.meta.textContent = icon + dur;
+  if (!success && error) {
+    const errEl = el("div", ["task-error"], error);
+    g.body.appendChild(errEl);
+  }
+  // Release the global entry now that the task is done. The card's
+  // DOM stays in the timeline (still visible + expandable via its own
+  // header listener); only this bookkeeping reference is dropped so
+  // ``taskGroups`` doesn't grow unbounded over a long session and no
+  // stale entry lingers for a future task_id to collide with. No more
+  // worker events arrive for this task_id after ``delegate_task_end``.
+  delete taskGroups[taskId];
+}
+
+/** Append ``cardEl`` to either the main timeline or a task group's
+ * body, based on ``taskId``. If the task group hasn't been
+ * registered yet (event raced before ``delegate_task_start``), the
+ * card falls back to the main timeline so it isn't dropped. */
+function appendToTimeline(cardEl, taskId, channel) {
+  if (taskId && runBlocks[taskId]) {
+    runBlocks[taskId].body.appendChild(cardEl);
+    return;
+  }
+  if (taskId && taskGroups[taskId]) {
+    taskGroups[taskId].body.appendChild(cardEl);
+    return;
+  }
+  // 루트 append 만 채널 필터의 대상이다. `data-ch` 가 **없는** 노드는 어느
+  // 채널에서나 보인다(생성 중 한 줄처럼 채널과 무관한 표시).
+  // ``channel`` 은 귀속을 **직접** 지정한다 — 왕래 줄은 자기 에이전트의
+  // 채널에 속하지 `channelOf(task_id)` 가 아니다. 종전엔 호출부가
+  // `$messages.appendChild` + `dataset.ch` + `applyChannelFilter` 를 손으로
+  // 조립했고, 그 세 단계가 누수의 단골 자리였다.
+  cardEl.dataset.ch = channel || channelOf(taskId);
+  $messages.appendChild(cardEl);
+  applyChannelFilter(cardEl);
+}
+
+/** 타임라인 카드를 **마무리**한다 — 시각 도장 · 배치(중첩 body 또는 채널
+ * 필터가 걸린 루트) · 스크롤 1회 병합.
+ *
+ * 13개 렌더러가 진짜로 공유하는 건 본문 구성이 아니라 이 **꼬리 배관**이고,
+ * 최근 누수가 전부 여기서 났다(사용자 입력=도장 누락, 거부된 응답=task_id
+ * 흘림, 왕래=세 단계 수동 조립, 무진전 줄=스코프 누락). 조사에서 하나 더
+ * 나왔다 — 거부된 응답 카드는 아예 `stampCard` 를 안 불러 **시각 없는
+ * 카드**였다(그 카드 자체가 v9.8.0 에서 사라졌다).
+ *
+ * 인자는 **이벤트 페이로드 통째**다. 추출한 id 를 받으면 `undefined` 가
+ * 조용히 통과하지만(실제로 `transcript_truncated` 가 그랬다), 페이로드를
+ * 받으면 귀속 누락이 "필드를 잊었다"가 아니라 **"인자를 안 넘겼다"** 가 된다.
+ * main 에 일부러 두려면 `MAIN` 을 명시한다. */
+const MAIN = { task_id: "" };
+function finishCard(cardEl, ev, channel) {
+  stampCard(cardEl, ev && ev.ts);
+  // 표시 전용 주석 — 서버의 `note_next()` 가 `_emit` 에서 실어 보낸다.
+  // **여기 한 곳**이라 어떤 타임라인 객체든 공짜로 주석을 받는다(관찰·최종답·
+  // 왕래·시스템 줄 전부 이 함수를 지난다). 모델 컨텍스트와는 무관하다.
+  if (ev && ev.note) {
+    const n = el("span", ["card-note"], ev.note);
+    n.title = ev.note;
+    cardEl.appendChild(n);
+  }
+  appendToTimeline(cardEl, (ev && ev.task_id) || "", channel);
+  ctxApplyToCard(cardEl, (ev && ev.task_id) || "");
+  attachCopy(cardEl);
+  scheduleScroll();
+}
+
+// ── 복사 (v10.8.0) — export 를 대신한다 ──────────────────────────
+// 카드마다 ⧉ 하나: 그 카드를 **마크다운**으로 클립보드에. 헤더의 ⧉ 는 보이는
+// 대화 전체(현재 채널)를 같은 포맷으로 이어 붙인다. 카드는 자기 마크다운을
+// `_md`(함수)로 가진다 — 렌더 결과(HTML)를 되긁지 않고 원문(최종답의 마크다운
+// 소스, 도구 입력 JSON, 관찰 원문)에서 만든다. 인라인 카드는 자식 카드를 재귀.
+function fence(text, lang) {
+  const body = String(text == null ? "" : text);
+  // 본문에 ``` 가 있으면 더 긴 울타리로
+  let f = "```";
+  while (body.indexOf(f) !== -1) f += "`";
+  return f + (lang || "") + "\n" + body.replace(/\n$/, "") + "\n" + f;
+}
+function cardMarkdown(card) {
+  if (!card || !card.classList) return "";
+  if (typeof card._md === "function") return card._md() || "";
+  if (card.classList.contains("card-task-group")) {
+    const title = card.querySelector(":scope > .task-header > .task-title");
+    const meta = card.querySelector(":scope > .task-header > .task-meta");
+    const body = card.querySelector(":scope > .task-body");
+    const kids = body ? Array.prototype.slice.call(body.children) : [];
+    const topEl = card.querySelector(":scope > .ctx-top");
+    const inner = (topEl ? [topEl] : []).concat(kids).map(cardMarkdown).filter(Boolean).join("\n\n");
+    return (
+      "#### " + ((title && title.textContent) || "") +
+      (meta && meta.textContent ? " — " + meta.textContent : "") +
+      (inner ? "\n\n" + inner : "")
+    );
+  }
+  if (card.classList.contains("card-sys")) {
+    const t = card.querySelector(".sys-text");
+    return t && t.textContent ? "_" + t.textContent + "_" : "";
+  }
+  return "";
+}
+function timelineMarkdown() {
+  return Array.prototype.slice
+    .call($messages.children)
+    .filter(function (n) { return !n.hidden; }) // 현재 채널에 보이는 것만
+    .map(cardMarkdown)
+    .filter(Boolean)
+    .join("\n\n");
+}
+function flashCopied(btn) {
+  const old = btn.textContent;
+  btn.textContent = "✓";
+  btn.classList.add("done");
+  setTimeout(function () { btn.textContent = old; btn.classList.remove("done"); }, 1000);
+}
+function attachCopy(card) {
+  if (!card.classList || card.querySelector(":scope > .card-copy")) return;
+  if (typeof card._md !== "function" && !card.classList.contains("card-task-group")) return;
+  const btn = el("button", ["card-copy"], "⧉");
+  btn.type = "button";
+  btn.title = "Copy this card (Markdown)";
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    copyToClipboard(cardMarkdown(card)).then(function () { flashCopied(btn); });
+  });
+  card.appendChild(btn);
+}
+window.__cardMarkdown = cardMarkdown; // 브라우저 테스트가 읽는다
+window.__timelineMarkdown = timelineMarkdown;
+(function () {
+  const btn = document.getElementById("copy-all-btn");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    copyToClipboard(timelineMarkdown()).then(function () { flashCopied(btn); });
+  });
+})();
+
+// ── 모델 시점 (v10.17.0, docs/inspector-model-view) ─────────────
+// 화면은 위에서 아래로 **모델이 받는 순서**다. main · 상주 에이전트 채널 ·
+// 인라인 카드(agent/skill)가 같은 세 부분을 가진다:
+//   맨 위  "맨 처음 받는 것"   — 시스템 프롬프트·함수 스키마·문법·압축 요약
+//   가운데 대화               — 지금 컨텍스트에 있는 카드
+//   맨 아래 "매 턴 끝에 붙는 것" — 매턴 꼬리(직전 턴과의 diff)
+// 컨텍스트에서 빠진 카드는 한 묶음으로 접힌다(기본 접힘, 펼치면 흐린 카드).
+// 종전의 🔍 드로어가 보여 주던 것이 전부 이 틀 안에 있다.
+//
+// 서버의 sticky `ctx_view` 가 스코프별로 "캐시에서 빠진 접두사의 경계" 와 압축
+// 요약을 보낸다. 뷰의 열쇠는 **컨테이너**다: 인라인 카드면 그 카드(task_id),
+// 아니면 채널(main / 상주 에이전트 key) — 상주 에이전트의 런 스코프 id 는
+// 런마다 다르므로 채널로 모은다(그 에이전트의 컨텍스트는 런을 넘어 이어진다).
+const ctxViews = {}; // viewKey → ctx_view payload
+const ctxFoldOpen = {}; // viewKey → "컨텍스트 밖 대화" 묶음을 펼쳤나
+const ctxFoldRows = {}; // viewKey → 묶음 머리 줄
+const ctxApplyTimers = {};
+const frames = {}; // viewKey → 틀 {key, scope, channel, top, tail, body, data, …}
+const $ctxTail = document.getElementById("ctx-tail");
+const $ctxBudget = document.getElementById("ctx-budget");
+
+function ctxViewKey(taskId) {
+  // 인라인 카드의 틀은 카드가 닫힌 뒤에도 남는다(`taskGroups` 항목은 종료 때
+  // 풀린다) — 재접속 스냅샷이 끝난 스코프의 뷰를 채널에 잘못 덮지 않게 한다.
+  if (!taskId) return "main";
+  if (frames[taskId] && !frames[taskId].channel) return taskId;
+  // 상주 에이전트의 뷰는 런 스코프(`key#<item id>`)가 아니라 그 에이전트의 프롬프트
+  // 스코프 = **채널 key 그대로** 온다. 모르는 id 를 main 으로 돌리면 그 뷰가
+  // main 의 뷰를 덮어 "컨텍스트 밖 대화" 가 통째로 사라진다(v10.18.1) — 모르는
+  // id 는 자기 열쇠로 둔다.
+  return scopeChannel[taskId] || taskId;
+}
+// 경계는 history 레코드 서수 하나(`gone.hidx` = 캐시에 남은 첫 레코드) —
+// 카드는 자기 레코드의 서수(`data-hidx`, 이벤트의 `hidx`)가 그보다 작으면 빠진 것.
+// 턴 번호는 런마다 1 부터 다시 시작해 경계가 될 수 없다(실측).
+// 예외는 `gone.kept` — 경계 앞인데 압축이 원문으로 남긴 미답 요청(v10.41.0).
+function ctxCardGone(card, gone) {
+  if (!gone || card.dataset.hidx === undefined) return false;
+  const h = Number(card.dataset.hidx);
+  if (gone.kept && gone.kept.includes(h)) return false;
+  return h < gone.hidx;
+}
+function ctxApplyToCard(card, taskId) {
+  if (!card.dataset || card.dataset.hidx === undefined) return;
+  const key = ctxViewKey(taskId);
+  const v = ctxViews[key];
+  if (!v) return;
+  // 빠진 카드가 뷰보다 늦게 오면(재생 순서) 묶음을 다시 센다 — 한 번으로 합쳐서.
+  if (ctxCardGone(card, v.gone)) ctxScheduleApply(key);
+}
+function ctxScheduleApply(key) {
+  if (ctxApplyTimers[key]) return;
+  ctxApplyTimers[key] = setTimeout(function () {
+    delete ctxApplyTimers[key];
+    ctxApplyView(key);
+  }, 0);
+}
+/** 뷰의 카드들. `root` 는 그 카드가 놓인 컨테이너 직계 노드 — 채널에서는
+ * 런 블록 안의 카드도 그 채널의 대화라 블록을 풀어 넣는다. */
+function ctxCards(key) {
+  const f = frames[key];
+  const out = [];
+  if (f && !f.channel) {
+    Array.prototype.forEach.call(f.body.children, function (n) {
+      if (n.classList.contains("card")) out.push({ card: n, root: n });
+    });
+    return { parent: f.body, cards: out };
+  }
+  Array.prototype.forEach.call($messages.children, function (n) {
+    if (!n.dataset || n.dataset.ch !== key || !n.classList.contains("card")) return;
+    if (n.classList.contains("card-run")) {
+      const body = n.querySelector(":scope > .run-body");
+      Array.prototype.forEach.call(body ? body.children : [], function (c) {
+        if (c.classList.contains("card")) out.push({ card: c, root: n });
+      });
+    } else {
+      out.push({ card: n, root: n });
+    }
+  });
+  return { parent: $messages, cards: out };
+}
+function ctxFoldRow(key) {
+  const row = el("button", ["ctx-fold"]);
+  row.type = "button";
+  row.appendChild(el("span", ["ctx-chev"], "▶"));
+  row.appendChild(el("span", ["ctx-title"], "Evicted"));
+  row.appendChild(el("span", ["ctx-count"], ""));
+  row.appendChild(el("span", ["ctx-note"], "The model no longer sees this part"));
+  row.addEventListener("click", function () {
+    ctxFoldOpen[key] = !ctxFoldOpen[key];
+    ctxApplyView(key);
+  });
+  return row;
+}
+function ctxApplyView(key) {
+  const v = ctxViews[key];
+  if (!v) return;
+  const found = ctxCards(key);
+  const open = !!ctxFoldOpen[key];
+  let first = null;
+  let n = 0;
+  const blocks = []; // 런 블록 → {el, all, gone}
+  found.cards.forEach(function (it) {
+    const c = it.card;
+    const gone = ctxCardGone(c, v.gone);
+    c.classList.toggle("ctx-gone", gone);
+    c.classList.toggle("ctx-folded", gone && !open);
+    if (gone) {
+      c.dataset.ctxKey = key;
+      n += 1;
+      if (!first) first = it.root;
+    }
+    if (it.root !== c && c.dataset.hidx !== undefined) {
+      let b = blocks.length && blocks[blocks.length - 1].el === it.root ? blocks[blocks.length - 1] : null;
+      if (!b) { b = { el: it.root, all: 0, gone: 0 }; blocks.push(b); }
+      b.all += 1;
+      if (gone) b.gone += 1;
+    }
+  });
+  // 기록이 전부 빠진 런 블록은 블록째 접는다(머리만 남아 떠 있지 않게).
+  blocks.forEach(function (b) {
+    const whole = b.all > 0 && b.gone === b.all;
+    b.el.classList.toggle("ctx-gone", whole);
+    b.el.classList.toggle("ctx-folded", whole && !open);
+    if (whole) b.el.dataset.ctxKey = key;
+  });
+  let row = ctxFoldRows[key];
+  if (!n) {
+    if (row) { row.remove(); delete ctxFoldRows[key]; }
+  } else {
+    if (!row) {
+      row = ctxFoldRows[key] = ctxFoldRow(key);
+      if (found.parent === $messages) row.dataset.ch = key;
+    }
+    if (row.nextElementSibling !== first) first.insertAdjacentElement("beforebegin", row);
+    if (found.parent === $messages) applyChannelFilter(row);
+    row.classList.toggle("open", open);
+    row.setAttribute("aria-expanded", open ? "true" : "false");
+    row.querySelector(".ctx-chev").textContent = open ? "▼" : "▶";
+    row.querySelector(".ctx-count").textContent = n + " cards";
+  }
+  if (frames[key]) frameRender(frames[key]); // 압축 요약은 맨 위 카드에 산다
+}
+/** 접힌 묶음 안의 카드로 점프하려면 먼저 묶음을 편다. */
+function ctxReveal(node) {
+  const folded = node && node.closest ? node.closest(".ctx-folded") : null;
+  if (!folded || !folded.dataset.ctxKey) return;
+  ctxFoldOpen[folded.dataset.ctxKey] = true;
+  ctxApplyView(folded.dataset.ctxKey);
+}
+
+// ── 틀: 맨 위 카드 + 맨 아래 띠 ──
+// 데이터는 `GET api/debug/prompt?task_id=` (그 스코프의 마지막 LLM 호출
+// 스냅샷). 보일 때만 가져온다 — 재생이 인라인 카드를 수백 개 만들어도 접힌
+// 카드는 요청을 내지 않는다(IntersectionObserver: 안 보이는 요소는 교차하지
+// 않는다). 턴이 끝나면(`token_usage`) 보이는 틀만 다시 가져온다.
+const frameSeen = window.IntersectionObserver
+  ? new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting && en.target.__frame) frameLoad(en.target.__frame);
+      });
+    })
+  : null;
+
+function frameMake(key, scope, channel) {
+  const f = {
+    key: key, scope: scope, channel: channel,
+    top: el("div", ["ctx-top"]), tail: el("div", ["ctx-tail"]),
+    body: null, data: null, stale: true, loading: false, again: false,
+    open: { top: false, tail: false }, sig: { top: "", tail: "" },
+  };
+  frames[key] = f;
+  ["top", "tail"].forEach(function (which) {
+    const part = f[which];
+    part.__frame = f;
+    part.addEventListener("click", function (e) { frameClick(f, which, e); });
+    if (frameSeen) frameSeen.observe(part);
+  });
+  // 복사: 맨 위 카드가 압축 요약을 싣는다(대화 복사에 요약이 빠지지 않게).
+  f.top._md = function () {
+    const v = ctxViews[key];
+    const s = v && v.summary;
+    if (!s) return "";
+    let body = s.text || "";
+    if (s.files && s.files.length) body += "\nFiles: " + s.files.join(", ");
+    return "> ⊙ **Compaction summary** · " + frameSummaryMeta(v) + "\n>\n> " + body.split("\n").join("\n> ");
+  };
+  frameRender(f);
+  if (!frameSeen) frameLoad(f);
+  return f;
+}
+/** 채널(main / 상주 에이전트)의 틀 — 맨 위 카드는 타임라인 맨 앞, 띠는 입력창 위. */
+function frameForChannel(key) {
+  if (frames[key]) return frames[key];
+  const f = frameMake(key, key === "main" ? "" : key, true);
+  f.top.dataset.ch = key;
+  $messages.insertBefore(f.top, $messages.firstChild);
+  applyChannelFilter(f.top);
+  if ($ctxTail) $ctxTail.appendChild(f.tail);
+  f.tail.hidden = key !== ovActiveChannel;
+  return f;
+}
+/** 인라인 카드의 틀 — 맨 위 카드는 머리 바로 아래, 띠는 몸통 바로 아래. */
+function frameForCard(taskId, header, body) {
+  if (frames[taskId]) return frames[taskId];
+  const f = frameMake(taskId, taskId, false);
+  f.body = body;
+  header.insertAdjacentElement("afterend", f.top);
+  body.insertAdjacentElement("afterend", f.tail);
+  return f;
+}
+/** 채널 전환 — 띠와 예산 줄은 지금 채널의 것만 보인다. */
+function frameShowChannel(key) {
+  frameForChannel(key);
+  Object.keys(frames).forEach(function (k) {
+    if (frames[k].channel) frames[k].tail.hidden = k !== key;
+  });
+  frameRenderBudget(frames[key]);
+}
+/** 이벤트의 task_id → 틀. 상주 에이전트의 런(`<key>#<n>`)은 그 채널의 틀. */
+function frameOfScope(taskId) {
+  if (!taskId) return frames.main || null;
+  return frames[taskId] || frames[taskId.replace(/#\d+$/, "")] ||
+    (runBlocks[taskId] ? frames[channelOf(taskId)] : null) || null;
+}
+function frameVisible(f) {
+  return f.top.offsetParent !== null || f.tail.offsetParent !== null;
+}
+/** 그 스코프의 스냅샷이 바뀌었다 — 보이면 지금, 아니면 다음에 보일 때 가져온다. */
+function frameTouch(f) {
+  if (!f) return;
+  f.stale = true;
+  if (frameVisible(f)) frameLoad(f);
+}
+function frameLoad(f) {
+  if (!f.stale) return;
+  if (f.loading) { f.again = true; return; }
+  f.loading = true;
+  f.stale = false;
+  const q = f.scope ? "?task_id=" + encodeURIComponent(f.scope) : "";
+  fetch("api/debug/prompt" + q)
+    .then(function (r) { return r.json(); })
+    .then(function (data) { f.data = data; })
+    .catch(function () { f.stale = true; })
+    .then(function () {
+      f.loading = false;
+      frameRender(f);
+      if (f.again) { f.again = false; f.stale = true; frameLoad(f); }
+    });
+}
+
+// 줄 단위 LCS diff — 꼬리는 수십 줄이라 O(n·m) 으로 충분하다.
+function lineDiff(prev, cur) {
+  const a = prev.split("\n"), b = cur.split("\n");
+  const n = a.length, m = b.length;
+  const dp = [];
+  for (let i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0, ins = 0, del = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push(["=", b[j]]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(["-", a[i]]); i++; del++; }
+    else { out.push(["+", b[j]]); j++; ins++; }
+  }
+  while (i < n) { out.push(["-", a[i++]]); del++; }
+  while (j < m) { out.push(["+", b[j++]]); ins++; }
+  return { lines: out, ins: ins, del: del };
+}
+function frameSecHtml(s, cls, extraTag) {
+  return (
+    '<details class="insp-sec ' + cls + '" data-sec="' + escapeHtml(cls + ":" + s.name) + '">' +
+    "<summary>" +
+    '<span class="insp-name">' + escapeHtml(s.name) + (extraTag || "") + "</span>" +
+    '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+    '<button class="insp-cp" type="button" title="Copy this section">⧉</button>' +
+    "</summary>" +
+    '<pre class="insp-body">' + escapeHtml(s.text) + "</pre>" +
+    "</details>"
+  );
+}
+/** Open Items 의 `[u-1] …` 줄 — 그 호출 뒤에 닫혔으면(`closed_after`) 긋고
+ * 표시한다. 꼬리 글은 그대로다: 모델이 받은 것을 고쳐 쓰지 않는다. */
+function markClosed(raw, html, closed) {
+  const m = /^\s*\[([A-Za-z]+-\d+)\]/.exec(raw);
+  if (!m || !closed[m[1]]) return html;
+  return '<span class="ctx-closed">' + html + '</span> <span class="insp-tag ok">✓ closed after this call</span>';
+}
+function frameTailSecHtml(s, d, prevTurn, closed) {
+  let tags = "";
+  const lines = s.text.split("\n");
+  const hasClosed = lines.some(function (l) { return markClosed(l, "", closed) !== ""; });
+  let body = '<pre class="insp-body">' +
+    lines.map(function (l) { return markClosed(l, escapeHtml(l), closed); }).join("\n") + "</pre>";
+  let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
+  if (d) {
+    // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다. 닫힌 항목이 있으면 그 섹션도.
+    open = !!(d.ins || d.del) || hasClosed;
+    if (open) {
+      if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
+      if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
+      if (prevTurn != null) tags += '<span class="insp-tag">vs turn ' + escapeHtml(prevTurn) + "</span>";
+      body =
+        '<pre class="insp-diff">' +
+        d.lines
+          .map(function (l) {
+            if (l[0] === "+") return '<span class="ins">+ ' + markClosed(l[1], escapeHtml(l[1]), closed) + "</span>";
+            if (l[0] === "-") return '<span class="del">- ' + escapeHtml(l[1]) + "</span>";
+            return markClosed(l[1], escapeHtml(l[1]), closed);
+          })
+          .join("\n") +
+        "</pre>";
+    } else if (!hasClosed) {
+      tags += '<span class="insp-tag">no change</span>';
+    }
+  }
+  return (
+    '<details class="insp-sec insp-tail"' + (open ? " open" : "") + ">" +
+    "<summary>" +
+    '<span class="insp-name">' + escapeHtml(s.name) + tags + "</span>" +
+    '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
+    '<button class="insp-cp" type="button" title="Copy this section">⧉</button>' +
+    "</summary>" +
+    body +
+    "</details>"
+  );
+}
+/** 모델이 지금 보는 양 — **서버가 센 값만** 그린다. 실측이 없으면(첫 호출 전 ·
+ * usage 를 안 주는 서버 · 옛 세션) 추정으로 채우지 않고 N/A 로 둔다; 다음
+ * 호출이 끝나면 채워진다. 칸은 실측 합계를 바이트 비율로 나눈 것이라 합이
+ * 합계와 같다. 막대는 창 대비(빈 자리 = 남은 창). */
+function frameBudgetHtml(b, ended) {
+  const label = "Context" + (ended ? " (at end)" : "");
+  if (!b.measured) {
+    return (
+      '<div class="bl"><span>' + label + '</span><span class="bn">N/A</span></div>' +
+      '<div class="bleg"><span>' +
+      (ended ? "No server-measured count was recorded." : "No server-measured count yet — filled after the next model call.") +
+      "</span></div>"
+    );
+  }
+  const base = Math.max(1, b.window || b.total);
+  const seg = function (v, css) {
+    return '<i style="width:' + Math.min(100, (100 * (v || 0)) / base).toFixed(1) + "%;background:var(" + css + ')"></i>';
+  };
+  const head =
+    (b.window
+      ? fmtTok(b.total) + " / " + fmtTok(b.window) + " (" + Math.round((100 * b.total) / b.window) + "%)"
+      : fmtTok(b.total)) +
+    (b.turn != null ? " · turn " + escapeHtml(b.turn) + " measured" : " · measured");
+  return (
+    '<div class="bl"><span>' + label + '</span><span class="bn">' + head + "</span></div>" +
+    '<div class="bbar">' + seg(b.system, "--insp-system") + seg(b.tools, "--insp-tools") + seg(b.convo, "--insp-convo") + seg(b.tail, "--insp-tail") + "</div>" +
+    '<div class="bleg">' +
+    '<span><b style="background:var(--insp-system)"></b>system <span class="n">' + fmtTok(b.system) + "</span></span>" +
+    (b.tools ? '<span><b style="background:var(--insp-tools)"></b>tool schemas <span class="n">' + fmtTok(b.tools) + "</span></span>" : "") +
+    '<span><b style="background:var(--insp-convo)"></b>conversation <span class="n">' + fmtTok(b.convo) + "</span></span>" +
+    '<span><b style="background:var(--insp-tail)"></b>tail <span class="n">' + fmtTok(b.tail) + "</span></span>" +
+    (b.compactions ? '<span class="insp-tag">⊙ compactions ' + b.compactions + "</span>" : "") +
+    "</div>"
+  );
+}
+function frameRenderBudget(f) {
+  if (!$ctxBudget || !f || !f.channel || f.key !== ovActiveChannel) return;
+  const b = f.data && f.data.ok ? f.data.budget : null;
+  $ctxBudget.hidden = !b;
+  if (b) $ctxBudget.innerHTML = frameBudgetHtml(b, false);
+}
+function frameSummaryMeta(v) {
+  const s = v.summary;
+  let meta = "";
+  if (s.turns && s.turns.length === 2) meta += "turns " + s.turns[0] + "–" + s.turns[1];
+  if (s.before_tokens != null && s.after_tokens != null) {
+    meta += (meta ? " · " : "") + fmtTok(s.before_tokens) + " → " + fmtTok(s.after_tokens) + " tok";
+  }
+  return meta || "compactions " + (v.compactions || 1);
+}
+function frameBarHtml(title, open, chips, right, tip) {
+  return (
+    '<button type="button" class="ctx-bar" aria-expanded="' + (open ? "true" : "false") + '"' +
+    (tip ? ' title="' + escapeHtml(tip) + '"' : "") + ">" +
+    '<span class="ctx-chev">' + (open ? "▼" : "▶") + "</span>" +
+    '<span class="ctx-title">' + title + "</span>" +
+    '<span class="ctx-chips">' + chips.join('<span class="ctx-dot"> · </span>') + "</span>" +
+    '<span class="ctx-right">' + right + "</span>" +
+    "</button>"
+  );
+}
+/** 다시 그려도 사용자가 펼쳐 둔 섹션은 그대로 둔다. */
+function frameSetHtml(part, html) {
+  const openSecs = {};
+  part.querySelectorAll("details[open][data-sec]").forEach(function (d) {
+    openSecs[d.dataset.sec] = true;
+  });
+  part.innerHTML = html;
+  part.querySelectorAll("details[data-sec]").forEach(function (d) {
+    if (openSecs[d.dataset.sec]) d.open = true;
+  });
+}
+function frameRender(f) {
+  const d = f.data;
+  const ok = !!(d && d.ok);
+  const v = ctxViews[f.key];
+  const sum = v && v.summary;
+  const ended = !f.channel && ok && d.scope && d.scope.ended;
+  const sys = [], tools = [], tail = [];
+  let grammar = null;
+  if (ok) {
+    d.sections.forEach(function (s) {
+      if (s.kind === "tools") tools.push(s);
+      else if (s.kind === "tail") tail.push(s);
+      else if (s.kind === "grammar") grammar = s;
+      else if (s.kind === "system" || !s.kind) sys.push(s);
+    });
+  }
+  const pending = !ok && (f.loading || f.stale);
+
+  // ── 맨 위: 맨 처음 받는 것 ──
+  const chips = [];
+  if (ok) {
+    const hooks = sys.filter(function (s) { return /^Hook: /.test(s.name); }).length;
+    chips.push(sys.length + " system prompt sections");
+    if (hooks) chips.push(hooks + " hook sections");
+    if (tools.length) chips.push(tools.length + " tool schemas");
+    if (grammar) chips.push("Decoding grammar");
+  } else {
+    chips.push(pending ? "…" : "no model call yet");
+  }
+  if (sum) {
+    const t = sum.turns && sum.turns.length === 2 ? " turns " + sum.turns[0] + "–" + sum.turns[1] : "";
+    chips.push('<span class="ctx-sumchip">Compaction summary' + t + "</span>");
+  }
+  const b = ok ? d.budget : null;
+  let top = frameBarHtml(
+    "Head", f.open.top, chips,
+    // 섹션 배지와 같은 척도(추정) — 실측 합계는 예산 줄이 보여 준다.
+    ok ? "~" + fmtTok(sys.concat(tools).reduce(function (n, x) { return n + (x.est_tokens || 0); }, 0)) + " tok" : "",
+    "What the model receives first: system prompt · function schemas · decoding grammar · compaction summary"
+  );
+  if (f.open.top) {
+    top += '<div class="ctx-body">';
+    if (ok) {
+      top += '<div class="ctx-actions"><button type="button" class="insp-mini ctx-copyall" title="Copy all system prompt and tool schema sections">⧉ Copy all</button></div>';
+      if (!f.channel && b) top += '<div class="insp-budget">' + frameBudgetHtml(b, ended) + "</div>";
+      top += '<div class="insp-group">System prompt</div>';
+      top += sys.map(function (s) {
+        return frameSecHtml(s, "insp-system", /^Hook: /.test(s.name) ? '<span class="insp-tag">hook · may change every turn</span>' : "");
+      }).join("");
+      if (tools.length) {
+        top += '<div class="insp-group">Tool schemas — request tools[]</div>';
+        top += tools.map(function (s) { return frameSecHtml(s, "insp-tools", ""); }).join("");
+      }
+      top += '<div class="insp-group">Request settings</div>';
+      top += grammar
+        ? frameSecHtml(
+            { name: "Decoding grammar", text: grammar.text, est_tokens: grammar.est_tokens },
+            "insp-grammar",
+            '<span class="insp-tag">' + (grammar.thinking_open ? "thinking open" : "thinking closed") + " · enforced by the server</span>"
+          )
+        : '<div class="insp-sub">No decoding grammar — the server parses.</div>';
+    } else {
+      top += '<div class="insp-sub">' + (pending ? "Loading…" : "This scope has not called the model yet.") + "</div>";
+    }
+    if (sum) {
+      let body = sum.text || "";
+      if (sum.files && sum.files.length) body += "\nFiles: " + sum.files.join(", ");
+      top +=
+        '<div class="insp-group">Compaction summary — what the model sees instead of the evicted conversation</div>' +
+        '<div class="ctx-summary"><div class="ctx-summary-meta">' + escapeHtml(frameSummaryMeta(v)) + "</div>" +
+        '<div class="ctx-summary-body">' + escapeHtml(body) + "</div></div>";
+    }
+    top += "</div>";
+  }
+  if (top !== f.sig.top) { f.sig.top = top; frameSetHtml(f.top, top); }
+  f.top.classList.toggle("open", f.open.top);
+
+  // ── 맨 아래: 매 턴 끝에 붙는 것 ──
+  const prevByName = {};
+  ((ok && d.tail_prev) || []).forEach(function (s) { prevByName[s.name] = s.text; });
+  let ins = 0, del = 0, tailTok = 0;
+  const diffs = tail.map(function (s) {
+    tailTok += s.est_tokens || 0;
+    if (prevByName[s.name] === undefined) return null;
+    const df = lineDiff(prevByName[s.name], s.text);
+    ins += df.ins;
+    del += df.del;
+    return df;
+  });
+  // 이 호출 뒤에 닫힌 항목 (v10.63.0) — 런이 끝나면 서버가 단다.
+  const closedIds = (ok && d.closed_after) || [];
+  const closed = {};
+  closedIds.forEach(function (id) { closed[id] = true; });
+  const tchips = [];
+  if (!ok) tchips.push(pending ? "…" : "no model call yet");
+  else if (!tail.length) tchips.push(d.turn ? "this call had no tail" : "filled on the first model call");
+  else {
+    if (ended) tchips.push("state at end");
+    // 꼬리 본문에서 읽는다: `turn 3/30 …` 한 줄과 `## ` 제목들.
+    const text = tail.map(function (s) { return s.text; }).join("\n");
+    const tm = /^turn (\d+)\/(\d+)/m.exec(text);
+    tchips.push(tm ? "turn " + tm[1] + "/" + tm[2] : "turn " + d.turn);
+    text.split("\n").forEach(function (line) {
+      const hm = /^## (.+)$/.exec(line);
+      if (hm) tchips.push(escapeHtml(hm[1]));
+    });
+  }
+  let right = "";
+  if (closedIds.length) right += '<span class="insp-tag ok">✓ ' + closedIds.length + " closed after</span>";
+  if (ins) right += '<span class="insp-tag ins">+' + ins + "</span>";
+  if (del) right += '<span class="insp-tag del">−' + del + "</span>";
+  if ((ins || del) && d.prev_turn != null) right += '<span class="ctx-vs">vs turn ' + escapeHtml(d.prev_turn) + "</span>";
+  if (tailTok) right += fmtTok(tailTok) + " tok";
+  let tl = frameBarHtml("Tail", f.open.tail, tchips, right,
+    "Appended to the last message on every model call · diff vs the previous call");
+  if (f.open.tail) {
+    tl += '<div class="ctx-body">';
+    if (tail.length) {
+      tl += '<div class="insp-sub">' + (ended ? "Snapshot at end — no further changes." : "As of the last model call (turn " + escapeHtml(d.turn) + ").") +
+        (closedIds.length ? " Items marked ✓ were closed after this call." : "") + "</div>";
+      tl += tail.map(function (s, i) { return frameTailSecHtml(s, diffs[i], d.prev_turn, closed); }).join("");
+    } else {
+      tl += '<div class="insp-sub">' + tchips[0] + "</div>";
+    }
+    tl += "</div>";
+  }
+  if (tl !== f.sig.tail) { f.sig.tail = tl; f.tail.innerHTML = tl; }
+  f.tail.classList.toggle("open", f.open.tail);
+  frameRenderBudget(f);
+}
+function frameClick(f, which, e) {
+  const cp = e.target.closest(".insp-cp");
+  if (cp) {
+    // 섹션 복사 — <details> 토글로 번지지 않게.
+    e.preventDefault();
+    e.stopPropagation();
+    const det = cp.closest(".insp-sec");
+    const body = det && det.querySelector(".insp-body, .insp-diff");
+    if (body) copyToClipboard(body.textContent).then(function () { flashCopied(cp); });
+    return;
+  }
+  const all = e.target.closest(".ctx-copyall");
+  if (all) {
+    e.stopPropagation();
+    if (!f.data || !f.data.ok) return;
+    const text = f.data.sections
+      .filter(function (s) { return s.kind !== "grammar" && s.kind !== "tail"; })
+      .map(function (s) { return "### " + s.name + "\n" + s.text; })
+      .join("\n\n");
+    copyToClipboard(text).then(function () { flashCopied(all); });
+    return;
+  }
+  if (e.target.closest(".ctx-bar")) {
+    e.stopPropagation(); // 인라인 카드의 몸통 클릭(접기)으로 번지지 않게
+    f.open[which] = !f.open[which];
+    frameRender(f);
+    frameLoad(f);
+  }
+}
+window.__ctxFrames = frames; // 브라우저 테스트가 읽는다
+
+// Inline context-compaction marker. `start` drops a "압축 중…" system line;
+// `done`/`warning` update that same line in place (tracked per scope so a
+// delegate subagent's compaction updates its own line, not main's). The
+// marker is transient — not replayed on reconnect (see WebRenderer).
+const compactionLines = {};
+function renderCompaction(d) {
+  const scope = d.task_id || "main";
+  let line = compactionLines[scope];
+  if (d.phase === "start") {
+    line = el("div", ["card", "card-sys"]);
+    line.appendChild(el("span", ["sys-icon"], "⊙"));
+    line.appendChild(
+      el("span", ["sys-text"], "Compacting context… (" + fmtTok(d.old_tokens) + " tok)")
+    );
+    compactionLines[scope] = line;
+    finishCard(line, d);
+    return;
+  }
+  // done / warning: update the pending line, or append a fresh one if the
+  // start event was missed (reconnect mid-compaction).
+  if (!line) {
+    line = el("div", ["card", "card-sys"]);
+    line.appendChild(el("span", ["sys-icon"], "⊙"));
+    line.appendChild(el("span", ["sys-text"], ""));
+    finishCard(line, d);
+  }
+  const textEl = line.querySelector(".sys-text");
+  if (d.phase === "done") {
+    textEl.textContent =
+      "Context compacted " + fmtTok(d.old_tokens) + " → " + fmtTok(d.new_tokens) + " tok";
+  } else if (d.phase === "warning") {
+    line.classList.add("warn");
+    textEl.textContent = "Context compaction failed (" + (d.reason || "") + ") — using FIFO";
+  }
+  delete compactionLines[scope];
+  scheduleScroll();
+}
+
+/** `card-sys` 한 줄 — 아이콘 + 텍스트. 타임라인 카드와 달리 4칸 리듬이
+ * 아니라 가운데 정렬된 **구분선**에 가깝다(압축·무진전·시스템 고지).
+ * 손으로 일곱 번 쓰이던 것을 한 곳으로. 제자리 갱신하는 호출부는 반환된
+ * 노드의 `.sys-text` 를 그대로 잡아 쓴다. */
+function sysLine(icon, text, extraCls) {
+  const line = el("div", ["card", "card-sys"].concat(extraCls || []));
+  line.appendChild(el("span", ["sys-icon"], icon));
+  line.appendChild(el("span", ["sys-text"], text || ""));
+  return line;
+}
+
+// ── 스트림 무진전(stall) 표시 (v8.60.0) ──────────────────────
+// 종전엔 이 알림이 전부 ``status`` 이벤트로 왔고 여기 리스너가 없어
+// **통째로 드롭**됐다 — 사용자는 40분을 아무 표시 없이 기다린 뒤
+// "LLM call failed" 만 봤다. 두 부류로 갈라 표시한다:
+//   wait   = 30초마다 반복 → 카드 하나를 **제자리 갱신** (compaction
+//            마커가 scope 별 줄을 재사용하는 것과 동형)
+//   resend = 드문 전이 → 기록으로 남긴다
+//   clear  = 대기 종료 → 제자리 카드 제거
+let stallLine = null;
+function mmss(s) {
+  const n = Math.max(0, Math.floor(Number(s) || 0));
+  return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+}
+function renderStreamStall(d) {
+  if (d.kind === "wait") {
+    if (!stallLine || !stallLine.isConnected) {
+      stallLine = el("div", ["card", "card-sys", "stall-line"]);
+      stallLine.appendChild(el("span", ["sys-icon"], "⏳"));
+      stallLine.appendChild(el("span", ["sys-text"]));
+      const bar = el("div", ["stall-bar"]);
+      bar.appendChild(el("i"));
+      stallLine.appendChild(bar);
+      // 생성 시 한 번만 찍힌다 → **대기 시작 시각**. 이 줄은 30초마다
+      // 제자리 갱신되므로, 마지막 갱신 시각이 아니라 "언제부터 기다렸나"가
+      // 남는 게 맞다(본문의 경과 시간과 합쳐 읽힌다).
+      finishCard(stallLine, d);
+    }
+    const txt = stallLine.querySelector(".sys-text");
+    const fill = stallLine.querySelector(".stall-bar > i");
+    txt.textContent =
+      "Waiting for a response " +
+      mmss(d.elapsed_s) +
+      " / " +
+      mmss(d.limit_s) +
+      " · attempt " +
+      d.attempt +
+      "/" +
+      d.attempts;
+    if (fill) {
+      const pct = d.limit_s > 0 ? (d.elapsed_s / d.limit_s) * 100 : 0;
+      fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    }
+    return;
+  }
+  // 전이·정리 — 제자리 줄을 먼저 걷는다(낡은 경과 시간을 남기지 않는다).
+  if (stallLine && stallLine.isConnected) stallLine.remove();
+  stallLine = null;
+  if (d.kind === "resend") {
+    const line = el("div", ["card", "card-sys", "stall-resend"]);
+    line.appendChild(el("span", ["sys-icon"], "↻"));
+    line.appendChild(
+      el(
+        "span",
+        ["sys-text"],
+        "Stream stalled — reconnected and resent (attempt " +
+          d.attempt +
+          "/" +
+          d.attempts +
+          ")"
+      )
+    );
+    finishCard(line, d);
+  }
+}
+
+// ── Card renderers ─────────────────────────
+
+/** 사용자 말풍선. ``author`` 가 있으면 내용 앞의 `[닉]: ` 접두를 떼어
+ * **별도 라벨**로 돌린다 — 단독 세션에선 오른쪽 파란 말풍선이 이미 "나"라
+ * 접두가 순수 소음이고, 여러 명일 때만 누가 보냈는지가 정보다.
+ *
+ * 표시 여부는 CSS(`body.multi-viewer`)가 정한다. 렌더 시점에 뷰어 수로
+ * 분기하면 **스냅샷 재생 순서에 종속**된다(`viewers` 가 늦게 오면 이미 그린
+ * 카드들이 영영 안 바뀐다). 클래스 토글이면 나중에 온 뷰어 정보가 과거
+ * 카드에도 소급된다. */
+// ── 이미지 썸네일 (v10.60.0, docs/vision/DESIGN.md §7) ─────────────
+// 사용자 말풍선·관찰 본문 아래 같은 줄. 원본은 `api/workspace/file?path=` —
+// 워크스페이스 안 이미지만 서빙된다(서버가 매직 바이트로 거른다).
+const IMAGE_PLACEHOLDER_RE = /^\[image: .+ \(\d+×\d+\)\]$/;
+// ``ver`` (v10.100.1): 한 문서 안에서 브라우저는 **같은 URL** 의 이미지를
+// 메모리에서 다시 쓴다 — ``no-cache`` 와 무관하다(HTML 의 available images
+// 목록). 경로만 실으면 덮어쓴 스크린샷의 새 카드가 옛 그림을 그린다.
+// 참조가 있으면 ``v=<sha256>`` — 서버가 그 내용의 보관본을 준다
+// (v10.101.0: 옛 카드는 새로고침 뒤에도 그때의 그림). 참조가 없는 마크다운
+// 그림은 ``t=<그린 시각>`` 으로 주소만 가른다 — 서버는 ``t`` 를 보지 않고
+// 지금 파일을 준다.
+function imageUrl(path, sha, drawn) {
+  let url = "api/workspace/file?path=" + encodeURIComponent(path);
+  if (sha) url += "&v=" + sha;
+  else if (drawn) url += "&t=" + drawn;
+  return url;
+}
+function refVersion(ref) {
+  return ref && /^[0-9a-f]{64}$/.test(ref.sha256 || "") ? ref.sha256 : "";
+}
+function thumbStrip(images) {
+  const strip = el("div", ["thumbs"]);
+  images.forEach(function (ref) {
+    if (!ref || !ref.path) return;
+    const url = imageUrl(ref.path, refVersion(ref)); // 상대 URL — <base href> 아래로 풀린다
+    const a = el("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    const img = el("img");
+    img.src = url;
+    img.alt = ref.path;
+    img.loading = "lazy";
+    a.appendChild(img);
+    a.appendChild(el("span", ["cap"], ref.path + " (" + ref.width + "×" + ref.height + ")"));
+    strip.appendChild(a);
+  });
+  return strip;
+}
+// 작은 썸네일 줄 (v10.61.3): 대기 줄·런 머리처럼 **접힌 채로도** 이미지가 있다는
+// 사실이 보여야 하는 자리. 28px, 캡션 없음(제목에 경로). 펼치면 `thumbStrip`.
+function miniThumbs(images) {
+  const strip = el("span", ["mini-thumbs"]);
+  (Array.isArray(images) ? images : []).forEach(function (ref) {
+    if (!ref || !ref.path) return;
+    const img = el("img");
+    img.src = imageUrl(ref.path, refVersion(ref));
+    img.alt = ref.path;
+    img.title = ref.path + " (" + ref.width + "×" + ref.height + ")";
+    strip.appendChild(img);
+  });
+  return strip;
+}
+// 레코드의 자리표시 줄(`[image: path (W×H)]`)은 썸네일이 대신 말한다 — 재생
+// 카드의 본문에서 뗀다(라이브 에코는 애초에 없다).
+function stripImagePlaceholders(text) {
+  return text
+    .split("\n")
+    .filter(function (line) { return !IMAGE_PLACEHOLDER_RE.test(line); })
+    .join("\n")
+    .replace(/\n+$/, "");
+}
+
+function renderUserMessage(content, ts, author, hidx, images) {
+  const card = el("div", ["card", "card-user"]);
+  if (hidx != null) card.dataset.hidx = String(hidx);
+  let body = content;
+  if (author) {
+    const tag = "[" + author + "]: ";
+    if (body.startsWith(tag)) body = body.slice(tag.length);
+  }
+  const imgs = Array.isArray(images) ? images : [];
+  if (imgs.length) body = stripImagePlaceholders(body);
+  const bubble = elHtml("div", ["bubble"], escapeAndFormat(body));
+  if (author) bubble.insertBefore(el("span", ["who"], author), bubble.firstChild);
+  if (imgs.length) bubble.appendChild(thumbStrip(imgs));
+  card.appendChild(bubble);
+  card._md = function () {
+    const lines = imgs.map(function (r) { return "[image: " + r.path + " (" + r.width + "×" + r.height + ")]"; });
+    return "**👤 " + (author || "user") + "**\n\n" + [body].concat(lines).filter(Boolean).join("\n");
+  };
+  // main 에 두는 것을 **명시**한다 — 에이전트 채널의 사용자 입력은 여기
+  // 오지 않는다 — `api/agent/<key>/input` 을 거쳐 `agent_msg` 왕래 줄로 온다.
+  finishCard(card, { ts: ts, task_id: MAIN.task_id });
+  scheduleScroll();
+}
+
+// ── 한 줄 리듬 (v9.4.0 ③, docs/chat-ui §2) ──────────────────
+// 모든 줄이 `아이콘 · 종류 · 한 줄 요약 · 펼침표시` 4칸 그리드다. 기본은
+// 한 줄이고 누르면 전문이 펼쳐진다 — **투명성은 깊이로, 간결함은 기본
+// 상태로**. 펼칠 게 있는 줄에만 ▸ 가 뜬다(없는 줄에 뜨면 눌러도 아무 일이
+// 없어 고장으로 읽힌다).
+function makeRow(icon, kind, summary, bodyNode, extraCls, tailNode) {
+  const row = el("div", ["row"].concat(extraCls || []));
+  row.appendChild(el("span", ["ic"], icon));
+  row.appendChild(el("span", ["k"], kind));
+  row.appendChild(el("span", ["s"], summary));
+  // 꼬리 칸(선택): 왕래 줄의 **상대 이름**처럼 항상 보여야 하는 것. 펼침
+  // 표시(`.x`)는 hover 전까지 투명하므로 거기에 섞을 수 없다 — 별도 칸으로
+  // 두고 그리드를 5칸으로 늘린다(`.row.has-tail`).
+  if (tailNode) {
+    row.classList.add("has-tail");
+    row.appendChild(tailNode);
+  }
+  const mark = el("span", ["x"]);
+  row.appendChild(mark);
+  if (bodyNode) {
+    row.classList.add("can");
+    mark.textContent = "▸";
+    bodyNode.classList.add("row-body", "hide");
+    row.appendChild(bodyNode);
+    row.addEventListener("click", function (e) {
+      // 본문 안의 선택·클릭(복사 등)은 접기를 유발하지 않는다.
+      if (e.target.closest(".row-body")) return;
+      const open = !bodyNode.classList.toggle("hide");
+      row.classList.toggle("open", open);
+      mark.textContent = open ? "▾" : "▸";
+    });
+  }
+  return row;
+}
+
+/** 도구 호출 → 한 줄 요약. 길이는 CSS ellipsis 가 맡고, 여기선 **무엇을
+ *  했는지 알아볼 수 있는 가장 짧은 문자열**을 고른다. */
+function actionSummary(tool, inputStr) {
+  let p = {};
+  try {
+    p = JSON.parse(inputStr || "{}");
+  } catch (_e) {
+    p = {};
+  }
+  if (typeof p !== "object" || p === null) p = {};
+  if (tool === "shell" || tool === "sh") return String(p.command || "");
+  if (tool === "wait") return String(p.reason || "waiting");
+  if (tool === "read_file") return String(p.path || "");
+  if (tool === "write_file") return String(p.path || "");
+  if (tool === "edit_file") {
+    const n = Array.isArray(p.edits) ? p.edits.length : 0;
+    return String(p.path || "") + (n ? " · " + n + " places" : "");
+  }
+  if (tool === "run_skill") return String(p.name || "");
+  if (tool === "agent") {
+    const who = p.key || p.agent || p.profile || p.mode || "";
+    const task = String(p.task || p.message || "");
+    return (who ? who + (task ? " · " : "") : "") + task;
+  }
+  if (tool === "ask") {
+    if (typeof p.question === "string" && p.question) return p.question;
+    const qs = Array.isArray(p.questions) ? p.questions : [];
+    return qs.length ? String(qs[0]) + (qs.length > 1 ? " +" + (qs.length - 1) + " more" : "") : "";
+  }
+  // 발신 도구 — 본문이 곧 요약. 상대는 꼬리 칩(`sendPeerChip`)이 맡는다.
+  if (SEND_TOOLS[tool]) return String(p.text || "");
+  if (tool === "complete") return String(p.result || "");
+  // 알 수 없는 도구: 첫 문자열 값이 대개 가장 설명적이다
+  for (const k of Object.keys(p)) {
+    if (typeof p[k] === "string" && p[k]) return p[k];
+  }
+  return "";
+}
+
+/** 관찰 출력 → 한 줄 요약. **첫** 유의미한 줄 (v10.74.1). 접힌 줄은 사람이
+ *  보는 것이고, 사람은 "펼치기 전엔 첫 줄" 에 익숙하다. 종전(v9.4.0)엔 성공이면
+ *  **마지막** 줄이었다 — 테스트·린트의 결론(3826 passed)이 끝에 있어서. 그러나
+ *  하니스의 파일 도구는 머리가 요약이고(write_file "Wrote …", 그 뒤 해시라인 에코),
+ *  read_file·fetch·`/sh ls` 의 끝 줄은 임의의 한 줄이라 접힌 줄이 파일의 `}` 나
+ *  목록의 마지막 항목을 보였다(사용자 보고). 결론이 끝에 있는 출력은 펼쳐 본다. */
+// 실패는 **원인** 줄 (v9.24.2): 오류 원인은 앞에 오고, 끝은 안내 문구거나 긴
+// 덤프의 꼬리다 — 실측 `✗ memory×2  } This op did NOT run…` (스키마 JSON 의 닫는
+// 괄호). 배치면 첫 FAILED op 의 다음 줄이 그 op 의 원인이다.
+const BATCH_HEAD = /^\[\d+\/\d+\]\s/;
+// 런 도중 흡수된 요청(v9.25.0 `absorb_pending`) — 머리 `── request [n]
+// from X (arrived while you were working) ──`, 본문, 꼬리 `(You now owe …)`.
+// 종전 "성공은 마지막 줄" 규칙이 꼬리 상용구만 보여줘 33건이 전부 같은 한 줄로
+// 보였다(2an3cv). 첫 줄 규칙에서도 머리 `── request … ──` 는 장식이라 요청 본문의
+// 첫 줄과 보낸 이를 낸다(v9.26.1).
+const ABSORBED_HEAD = /^── request \[(\d+)\] from (.+?) \(arrived while you were working\) ──$/;
+function absorbedSummary(lines) {
+  const m = ABSORBED_HEAD.exec(lines[0].replace(/^Observation:\s*/, "").trim());
+  if (!m) return null;
+  const body = lines.slice(1).find((l) => !/^\(You now owe /.test(l.trim()));
+  return "[" + m[1] + "] " + m[2] + ": " + (body ? body.trim() : "");
+}
+
+function obsSummary(content, failed) {
+  const lines = String(content || "").split("\n").filter((l) => l.trim());
+  if (!lines.length) return "(no output)";
+  if (!failed) return absorbedSummary(lines) || lines[0].replace(/^Observation:\s*/, "").trim();
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (BATCH_HEAD.test(lines[i]) && /FAILED\s*$/.test(lines[i])) {
+      return lines[i + 1].trim();
+    }
+  }
+  const first = lines.find((l) => !BATCH_HEAD.test(l)) || lines[0];
+  return first.replace(/^Observation:\s*/, "").trim();
+}
+
+/** `⚡ agent` 도구 호출의 대상 칩 — roster 에 있는 **상주** 에이전트일 때만.
+ * 일회성 위임(`run`)은 대상이 채널이 아니라 이 카드 안의 중첩 블록이라
+ * 갈 곳이 없다(docs/chat-ui §3). 없으면 null → 꼬리 칸 자체가 안 생긴다. */
+// ── 발신 도구 (v9.23.0) ──────────────────────────────────
+// `message`/`reply`/`ask` 는 왕래다 — 아이콘 `→`, 꼬리에 상대.
+// 종전엔 같은 발신이 `⚡ message {…}` 도구 줄 **과** `→ 보냄` 왕래 줄로
+// 두 번 그려졌다. 도구 줄 하나가 그 자리를 맡고, 배달 결과는 스텝 배지
+// (✓/✗) 가 이미 말한다 — 거부만 펼쳐서 사유가 보인다.
+const SEND_TOOLS = { message: 1, reply: 1, ask: 1 };
+function actIcon(tool) {
+  return SEND_TOOLS[tool] ? "→" : "⚡";
+}
+/** 상대(또는 요청 id)를 글자로만 — 점프 없음. 반쪽만 눌리는 버튼(peer 만
+ * 되고 main·사람은 안 되던)은 고장으로 읽혀 걷어냈다. */
+function sendPeerChip(tool, inputStr) {
+  if (!SEND_TOOLS[tool]) return null;
+  let p = {};
+  try {
+    p = JSON.parse(inputStr || "{}");
+  } catch (_e) {
+    return null;
+  }
+  let label = "";
+  if (tool === "message") label = peerLabel(String(p.to || ""));
+  else if (tool === "ask") label = "user (human)"; // 질문은 사람에게만 (v10.77.0)
+  else if (tool === "reply") label = String(p.id || "") || "requester";
+  return label ? el("span", ["peer"], label) : null;
+}
+/** 주소 → 사람이 읽을 이름. `author` 네임스페이스가 이미 셋을 구분한다
+ * (`main` / `user:<닉>` / `agent:<key>` 또는 bare key). 렌더 시점에
+ * 로스터로 해소한다 — replay 에서 agent_msg 가 roster 보다 먼저 와도 된다. */
+function peerLabel(who) {
+  var w = String(who || "");
+  if (!w || w === "main") return "main";
+  if (w === "user") return "user (human)";
+  if (w.indexOf("user:") === 0) return w.slice(5) + " (human)";
+  var k = w.indexOf("agent:") === 0 ? w.slice(6) : w;
+  return ovAgentLabel(k);
+}
+
+function agentJumpChip(inputStr) {
+  let p = {};
+  try {
+    p = JSON.parse(inputStr || "{}");
+  } catch (_e) {
+    return null;
+  }
+  const key = p && typeof p.key === "string" ? p.key : "";
+  if (!key || !ovRoster.some((t) => t.key === key)) return null;
+  const chip = el("span", ["peer", "can-jump"], ovAgentLabel(key));
+  chip.title = "Go to " + ovAgentLabel(key);
+  chip.addEventListener("click", function (e) {
+    e.stopPropagation();
+    ovJump(key);
+  });
+  return chip;
+}
+
+// ── 스텝 카드 (docs/chat-ui — 사고·행동·관찰을 한 장으로) ──────
+//
+// 종전엔 한 스텝이 카드 **둘**로 흩어졌다(assistant: 💭+⚡ / observation).
+// 타임라인이 길어지면 어느 관찰이 어느 행동의 것인지 눈으로 다시 묶어야
+// 했다. 이제 한 장으로 접는다:
+//
+//   접힘:  머리 한 줄 + 오른쪽 배지( ⚡도구 · ✓/✗ )
+//   펼침:  행동 상세 + 관찰
+//
+// **머리 = 그 스텝이 가진 것 중 가장 요약적인 것** — 생각이 있으면 생각,
+// 없으면 행동. 살아 있는 두 wire format 모두 생각이 선택이라(행동 앞 산문)
+// 생각 없는 턴이 실측 1/3이고, 빈 자리에 "(생각 없음)" 을 그리면 줄만
+// 쓰고 아무것도 안 알려준다.
+//
+// 배지를 남기는 이유: 접힘의 목적은 "안 읽고 지나가기" 가 아니라 **"읽을
+// 곳을 고르기"** 다. 도구 이름과 성패는 그 선택에 쓰이는 정보라, 같은 줄
+// 오른쪽 끝에 두면 줄 수를 안 늘리고 실패한 스텝이 목록에서 튀어나온다.
+
+// **스코프별** 관찰을 기다리는 스텝 카드 한 장. DOM 을 뒤지지 않는 이유는
+// 카드가 루트가 아니라 task group 본문에 들어갈 수 있어서다(appendToTimeline).
+//
+// ★ 열쇠는 채널이 아니라 **스코프**다(`stepKey`). 턴 번호는 루프마다 1 부터라
+// main 의 턴 1(`⚡ agent`)이 열려 있는 동안 그 서브에이전트의 턴 1 이 오면
+// 채널 열쇠로는 "같은 턴의 두 번째 op" 로 보인다 — 서브에이전트의 스텝이 main
+// 의 카드 안으로 들어가고, 자기 카드에는 최종답만 남고, main 의 `agent` 관찰은
+// 짝을 잃어 따로 떨어졌다(라이브만 — resume 재생은 순서가 달라 멀쩡했다).
+//
+// ★ 병합 단위는 **턴**이지 "직전 행동" 이 아니다. 서버는 `action()` 을
+// op 마다 부르므로 다중 op 턴은 `assistant_turn` 을 **N개** 내고 관찰은
+// 합쳐서 **하나** 낸다(`[1/2] shell — OK …`). "직전 행동" 으로 붙이면 마지막
+// op 만 관찰을 받고 **앞 카드들은 성패 배지 없이 영영 남는다** — 실제로 그
+// 회귀를 냈다(사용자 제보, 한 세션의 다중 op 턴 30건). 같은 턴의 두 번째
+// 행동은 새 카드가 아니라 **그 카드의 본문**으로 들어간다.
+const pendingStep = {};
+function stepKey(d) {
+  return d.task_id ? "scope:" + d.task_id : "main";
+}
+
+/** 스텝 카드의 머리 행 — 통째로 눌러 본문을 여닫는다. */
+function makeStepHead(icon, kind, summary, badges, cls, tailNode) {
+  const row = makeRow(icon, kind, summary, null, cls, tailNode || badges);
+  row.classList.add("can", "step-head");
+  const mark = row.querySelector(".x");
+  if (mark) mark.textContent = "▸";
+  return row;
+}
+
+function renderAssistantTurn(d) {
+  const card = el("div", ["card", "card-assistant"]);
+  if (d.hidx != null) card.dataset.hidx = String(d.hidx);
+  const t = d.thought ? String(d.thought).trim() : "";
+  const first = t ? t.split("\n").find((l) => l.trim()) || t : "";
+  const thoughtBody = t && t !== first.trim()
+    ? elHtml("div", ["md"], escapeAndFormat(t))
+    : null;
+
+  if (d.final !== undefined) {
+    // 최종 답변은 **접지 않는다** — 읽히려고 있는 것이고, 접으면 대화가
+    // 아니라 로그가 된다. 묶음 카드도 아니다(뒤따를 관찰이 없다).
+    if (t) {
+      // 생각은 **펼친 채로** 둔다(v10.19.0) — 모델이 할 말을 생각 칸에 쓰고
+      // 최종답에는 한 단어만 내는 일이 있고(실측 `out`), 접혀 있으면 빈 답을
+      // 받은 것으로 보인다. 답보다 흐리게 그려 답이 먼저 읽히게 한다.
+      // 한 줄짜리 생각은 머리 줄이 전부다(긴 요약은 줄바꿈된다) — 펼칠 게 없다.
+      const think = makeRow("💭", "Thinking", first.trim(), thoughtBody, ["think", "final-think"]);
+      if (thoughtBody) {
+        thoughtBody.classList.remove("hide");
+        think.classList.add("open");
+        think.querySelector(".x").textContent = "▾";
+      }
+      card.appendChild(think);
+    }
+    // 이 카드가 `complete` 임을 **표식**으로 (v10.47.1): 종전엔 본문과 각주만
+    // 있어 바로 위 액션 카드(monitor 등)에 이어진 산문처럼 읽혔다(보드 방 실측).
+    card.appendChild(el("div", ["final-tag"], "✔ complete"));
+    card.appendChild(elHtml("div", ["final"], escapeAndFormat(d.final)));
+    card._md = function () { return (t ? "💭 " + t + "\n\n" : "") + String(d.final); };
+    // 이 답이 **무엇에 대한 답인지** (v9.19.0). 합쳐진 런에서는 카드 위치가
+    // 알려주지 않는다 — 요청 둘이 한 턴에 들어오고 최종답은 하나다.
+    // `d.requests` 는 모델이 `complete` 의 `answers` 로 주장한 요청들이고,
+    // 라이브·resume 양쪽에서 같은 모양으로 온다.
+    if (Array.isArray(d.requests) && d.requests.length) {
+      const box = el("div", ["final-answers"]);
+      box.appendChild(el("span", ["fa-label"], "Answered request"));
+      d.requests.forEach(function (r) {
+        const chip = el("span", ["fa-chip"]);
+        chip.appendChild(el("span", ["fa-id"], "[" + (r.id || "?") + "]"));
+        if (r.author) chip.appendChild(el("span", ["fa-who"], r.author));
+        chip.appendChild(el("span", ["fa-text"], r.text || ""));
+        chip.title = (r.author ? r.author + ": " : "") + (r.text || "");
+        box.appendChild(chip);
+      });
+      card.appendChild(box);
+    }
+    delete pendingStep[stepKey(d)];
+    finishCard(card, d);
+    return;
+  }
+
+  if (!d.action) {
+    // 생각만 있는 턴 — 묶을 것이 없다.
+    if (t) {
+      card.appendChild(
+        makeRow("💭", "Thinking", first.trim(), thoughtBody, ["think"])
+      );
+    }
+    card._md = function () { return t ? "💭 " + t : ""; };
+    delete pendingStep[stepKey(d)];
+    finishCard(card, d);
+    return;
+  }
+
+  const tool = d.action.tool_name || "";
+  const input = d.action.tool_input || "";
+  // main → agent 점프의 출발점. main 쪽에서 상주 에이전트에게 거는 일은
+  // **왕래 줄이 아니라 `⚡ agent` 도구 호출**로 나타나므로(docs/chat-ui §5),
+  // 상대 칩을 여기 붙인다.
+  const jump = tool === "agent" ? agentJumpChip(input) : sendPeerChip(tool, input);
+  const actCls = SEND_TOOLS[tool] ? ["act", "send"] : ["act"];
+
+  // 같은 턴의 두 번째 op — 새 카드가 아니라 앞 카드에 행을 더한다.
+  const openStep = pendingStep[stepKey(d)];
+  if (openStep && openStep.turn === d.turn) {
+    openStep.body.appendChild(
+      makeRow(actIcon(tool), tool, actionSummary(tool, input),
+              renderActionInput(tool, input), actCls, jump)
+    );
+    openStep.acts += 1;
+    openStep.md.actions.push({ tool: tool, input: input });
+    // 배지는 `⚡ 첫도구 +N` 으로 접는다 — 도구 이름을 전부 늘어놓으면
+    // 머리 한 줄이 배지로 밀린다.
+    if (openStep.toolBadge) {
+      openStep.toolBadge.textContent =
+        "⚡ " + openStep.firstTool + " +" + (openStep.acts - 1);
+    }
+    scheduleScroll();
+    return;
+  }
+
+  card.classList.add("step");
+  const badges = el("span", ["badges"]);
+  const body = el("div", ["step-body"]);
+  body.hidden = true;
+
+  let head;
+  if (t) {
+    head = makeStepHead("💭", "Thinking", first.trim(), badges, ["think"]);
+    // 도구 이름은 머리의 `k` 칸에 없으므로 배지로 알린다.
+    badges.appendChild(el("span", ["badge", "tool"], "⚡ " + (tool || "?")));
+    if (thoughtBody) body.appendChild(thoughtBody);
+    const actRow = makeRow(actIcon(tool), tool, actionSummary(tool, input),
+                           renderActionInput(tool, input), actCls, jump);
+    body.appendChild(actRow);
+  } else {
+    // 생각이 없으면 행동이 머리로 올라온다 — 도구 이름이 이미 `k` 칸에
+    // 있으므로 배지에서는 빼고 성패만 남긴다(같은 사실을 두 번 말하지 않는다).
+    head = makeStepHead(actIcon(tool), tool, actionSummary(tool, input), badges,
+                        actCls, jump || undefined);
+    if (jump) head.appendChild(badges);
+    const detail = renderActionInput(tool, input);
+    if (detail) {
+      detail.classList.add("row-body");
+      body.appendChild(detail);
+    }
+  }
+  head.addEventListener("click", function (e) {
+    if (e.target.closest(".step-body") || e.target.closest("a, button")) return;
+    const open = body.hidden;
+    body.hidden = !open;
+    head.classList.toggle("open", open);
+    card.classList.toggle("open", open);
+    const mark = head.querySelector(".x");
+    if (mark) mark.textContent = open ? "▾" : "▸";
+  });
+  card.appendChild(head);
+  card.appendChild(body);
+  // 관찰이 이 카드를 찾아 붙는다. 못 찾으면 종전대로 단독 카드로 떨어진다
+  // (안전망 — 구조적으로는 관찰이 행동 없이 오지 않는다).
+  // 복사용 원문 — 행동은 같은 턴의 op 마다, 관찰은 붙을 때 쌓인다.
+  const md = { thought: t, actions: [{ tool: tool, input: input }], obs: [] };
+  card._md = function () { return stepMarkdown(md); };
+  pendingStep[stepKey(d)] = {
+    card: card, head: head, body: body, badges: badges,
+    turn: d.turn, acts: 1, firstTool: tool || "?",
+    toolBadge: badges.querySelector(".badge.tool"),
+    md: md,
+  };
+  finishCard(card, d);
+}
+
+/** 스텝 카드의 마크다운: 💭 생각 → ⚡ 도구 + 입력(JSON) → ✓/✗ 도구 + 관찰 원문. */
+function stepMarkdown(md) {
+  const parts = [];
+  if (md.thought) parts.push("💭 " + md.thought);
+  md.actions.forEach(function (a) {
+    let input = a.input;
+    try { input = JSON.stringify(JSON.parse(a.input), null, 2); } catch (_e) {}
+    parts.push("⚡ `" + (a.tool || "?") + "`" + (input ? "\n" + fence(input, "json") : ""));
+  });
+  md.obs.forEach(function (o) {
+    parts.push((o.success ? "✓" : "✗") + " `" + (o.tool || "result") + "`" + (o.content ? "\n" + fence(o.content) : ""));
+  });
+  return parts.join("\n\n");
+}
+
+/** Render the action_input portion of an assistant_turn card.
+ *
+ * Known tool names get a custom layout (ask → numbered question list,
+ * shell → ``$ <cmd>``, read_file → path + flags, edit_file →
+ * path + edit count, agent → mode/task 요약). Unknown tools fall
+ * back to pretty-printed JSON. Always escapes user-supplied text.
+ */
+function renderActionInput(toolName, toolInputStr) {
+  let parsed;
+  try {
+    parsed = JSON.parse(toolInputStr);
+  } catch (_e) {
+    // tool_input wasn't valid JSON (e.g. parser returned a string).
+    // Show it verbatim so the user can still inspect what happened.
+    return el("pre", ["args"], toolInputStr);
+  }
+
+  if (toolName === "ask" && Array.isArray(parsed.questions)) {
+    const ol = el("ol", ["action-ask"]);
+    parsed.questions.forEach(function (q) {
+      const li = document.createElement("li");
+      li.textContent = String(q);
+      ol.appendChild(li);
+    });
+    return ol;
+  }
+
+  if (toolName === "shell" && typeof parsed.command === "string") {
+    return el(
+      "pre",
+      ["action-shell"],
+      "$ " + parsed.command
+    );
+  }
+
+  if (toolName === "read_file" && typeof parsed.path === "string") {
+    const parts = [escapeHtml(parsed.path)];
+    if (parsed.stat) parts.push('<span class="muted">(stat)</span>');
+    if (parsed.search) {
+      parts.push(
+        '<span class="muted">search:</span> ' + escapeHtml(parsed.search)
+      );
+    }
+    if (parsed.line_start) {
+      parts.push(
+        '<span class="muted">lines:</span> ' +
+          parsed.line_start +
+          "-" +
+          (parsed.line_end || "?")
+      );
+    }
+    return elHtml("div", ["action-detail"], parts.join(" "));
+  }
+
+  if (toolName === "edit_file" && typeof parsed.path === "string") {
+    // edit_file is flat-native: one op = {path, op, pos, end?, lines?} — no
+    // `edits` array (that always read 0 → "(0 edits)"). Show the op + target
+    // ref instead, e.g. "app.py (replace 2#KT)". Legacy/batch `edits[]` (if it
+    // ever returns) still falls back to a count.
+    let detail;
+    if (Array.isArray(parsed.edits)) {
+      const n = parsed.edits.length;
+      detail = "(" + n + " edit" + (n === 1 ? "" : "s") + ")";
+    } else if (parsed.op) {
+      const ref = parsed.end
+        ? parsed.pos + ".." + parsed.end
+        : parsed.pos || "";
+      detail = "(" + parsed.op + (ref ? " " + ref : "") + ")";
+    } else {
+      detail = "";
+    }
+    return elHtml(
+      "div",
+      ["action-detail"],
+      escapeHtml(parsed.path) +
+        (detail ? ' <span class="muted">' + escapeHtml(detail) + "</span>" : "")
+    );
+  }
+
+  if (toolName === "agent") {
+    // 배치형 {tasks:[...]} — run fan-out 을 task 목록으로.
+    if (Array.isArray(parsed.tasks)) {
+      const ul = el("ul", ["action-delegate"]);
+      parsed.tasks.forEach(function (t) {
+        const li = document.createElement("li");
+        li.textContent = String(t.task || "");
+        if (t.agent || t.profile) {
+          const prof = el(
+            "span",
+            ["muted"],
+            " → " + String(t.agent || t.profile)
+          );
+          li.appendChild(prof);
+        }
+        ul.appendChild(li);
+      });
+      return ul;
+    }
+    // 플랫 op — "run: <task>" / "request agt-x: <message>" 한 줄 요약.
+    if (typeof parsed.mode === "string") {
+      const target = parsed.key || parsed.profile || "";
+      const body = parsed.task || parsed.message || "";
+      return elHtml(
+        "div",
+        ["action-detail"],
+        escapeHtml(parsed.mode + (target ? " " + target : "")) +
+          (body
+            ? ' <span class="muted">' + escapeHtml(String(body)) + "</span>"
+            : "")
+      );
+    }
+  }
+
+  if (toolName === "complete" && typeof parsed.result === "string") {
+    // Should not normally hit (complete renders as ``final``) but
+    // act gracefully if the model emits an explicit complete action.
+    return elHtml("div", ["final"], escapeAndFormat(parsed.result));
+  }
+
+  // Fallback: pretty JSON. Two-space indent keeps wide objects readable
+  // without burning horizontal real estate.
+  return el(
+    "pre",
+    ["args"],
+    JSON.stringify(parsed, null, 2)
+  );
+}
+
+function renderObservation(d) {
+  const card = el("div", ["card", "card-observation"]);
+  card.classList.add(d.success ? "ok" : "fail");
+  if (d.hidx != null) card.dataset.hidx = String(d.hidx);
+  const content = d.content || "";
+  const tool = d.tool_name || "";
+  // An `agent` observation is a subagent's prose answer (run 결과의
+  // STATUS/RESULT/[Task N]/[Duration] wrapper, 상주 회신 배달), so
+  // render it through the markdown pipeline like an assistant turn. Every
+  // other tool's output (read_file hashlines, shell text, write/edit diffs)
+  // is monospace/structured → keep the <pre> + diff colouring.
+  let body =
+    tool === "agent"
+      ? elHtml("div", ["obs-body", "obs-md"], escapeAndFormat(content))
+      : elHtml("pre", ["obs-body"], colorizeDiffBody(escapeHtml(content)));
+  // 이미지가 딸린 관찰 (v10.60.0, read_file 의 PNG 등): 본문 아래 썸네일.
+  // `makeRow` 가 접힘 클래스를 바깥 상자에 달므로 본문과 썸네일을 한 상자에.
+  if (Array.isArray(d.images) && d.images.length) {
+    const wrap = el("div", ["obs-images"]);
+    wrap.appendChild(body);
+    wrap.appendChild(thumbStrip(d.images));
+    body = wrap;
+  }
+  // 실패도 **접어 둔다**(v10.19.0) — 펼쳐진 실패가 화면을 차지해 바로 옆의
+  // 성공한 스텝을 가렸다(실측: 파일을 만든 카드를 못 찾음). 접힌 줄이 원인을
+  // 말한다: 요약 칸이 원인 줄이고(`obsSummary`), 스텝 카드는 머리 아래에
+  // `✗ 도구 · 원인` 한 줄을 단다.
+  // 종류 칸은 **도구 이름** — "결과"라고만 쓰면 어느 도구의 결과인지 알 수
+  // 없다(브라우저 TC 가 잡은 실수). 바로 위 ⚡ 행과 같은 이름이 서로를
+  // 가리키므로 호출↔결과 짝이 눈으로 붙는다.
+  const row = makeRow(
+    d.success ? "✓" : "✗", tool || "result", obsSummary(content, !d.success), body,
+    [d.success ? "ok" : "bad"]
+  );
+  // 자기 행동이 만든 **스텝 카드**에 붙는다 — 한 스텝은 한 장이다.
+  const step = pendingStep[stepKey(d)];
+  // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
+  // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
+  if (step && step.turn === d.turn) {
+    delete pendingStep[stepKey(d)];
+    step.md.obs.push({ tool: tool, content: content, success: !!d.success });
+    step.body.appendChild(row);
+    step.badges.appendChild(
+      el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
+    );
+    if (!d.success) {
+      // 카드는 접힌 채 — 빨간 표시와 원인 한 줄만 낸다. 펼치면 관찰 본문이
+      // 바로 보이게 그 행은 열어 둔다(실패를 보러 연 것이므로).
+      step.card.classList.add("failed");
+      body.classList.remove("hide");
+      row.classList.add("open");
+      const mark = row.querySelector(".x");
+      if (mark) mark.textContent = "▾";
+      const why = el("div", ["step-why"]);
+      why.appendChild(el("span", ["why-ic"], "✗"));
+      why.appendChild(el("span", ["why-tool"], tool || "result"));
+      why.appendChild(el("span", ["why-text"], obsSummary(content, true)));
+      why.addEventListener("click", function () { step.head.click(); });
+      step.card.insertBefore(why, step.body);
+    }
+    scheduleScroll();
+    return;
+  }
+
+  // 안전망: 붙일 스텝을 못 찾았다. 조용히 버리면 결과가 **사라지므로**
+  // 종전대로 단독 카드로 떨어뜨린다 — 최악이 "안 묶임" 이지 "유실" 이 아니다.
+  card.appendChild(row);
+  card._md = function () {
+    return (d.success ? "✓" : "✗") + " `" + (tool || "result") + "`" + (content ? "\n" + fence(content) : "");
+  };
+  finishCard(card, d);
+}
+
+function renderError(d) {
+  const card = el("div", ["card", "card-error"]);
+  card.textContent = d.content;
+  finishCard(card, d);
+}
+
+// ── 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) ────────────────────
+// 스트리밍(라이브 타이핑)을 버리고 **한 줄**만 남긴다:
+//     ● 생성 중 · 1.2K tokens · 💭 사고 2.1K
+// 숫자가 오르면 살아 있다는 뜻이고, 사고 토큰이 따로 잡히면 러너웨이가
+// 바로 보인다. 본문이 흐르지 않으므로 **카드가 자라며 화면이 튀지 않는다**.
+// 서버는 0.5s 스로틀 tick 만 보내므로 트래픽도 토큰 수와 무관하다.
+// **채널당 하나**다 (v9.9.0). 종전엔 전역 엘리먼트 하나를 `data-ch` 없이
+// 붙여 모든 채널에 같은 줄이 보였다 — 에이전트가 하나일 때를 전제한 판단이라
+// 넷이 되자 거짓말이 됐다(멈춰 있는 에이전트 창에 옆 에이전트의 사고량이
+// 비쳤다, 사용자 제보). 서버도 같은 릴리스에서 누적을 스코프별로 갈랐다 —
+// 화면만 나눠 그리면 숫자 자체가 이미 섞인 값이다.
+//
+// `channel -> {el, body, think, retry}`. 귀속은 `channelOf(task_id)` —
+// 카드가 쓰는 그 함수라 필터와 어긋날 수 없다.
+const genByCh = {};
+// 📐 문법 제약이 실리는 세션인가 — 생성 중 줄이 읽는다(sticky knob:grammar).
+const GRAMMAR = { active: false };
+// fmtTok 은 헤더 토큰바가 이미 가진 것을 쓴다 (같은 IIFE — 중복 선언 금지).
+
+function genSlot(channel) {
+  let g = genByCh[channel];
+  if (!g) {
+    const node = el("div", ["gen"]);
+    node.appendChild(el("span", ["gen-pulse"]));
+    node.appendChild(el("span", ["gen-label"], "Generating"));
+    node.appendChild(el("span", ["gen-tok"]));
+    g = genByCh[channel] = { el: node, body: 0, think: 0, tool: 0, retry: 0 };
+  }
+  return g;
+}
+
+/** `taskId` 가 속한 채널의 생성 중 줄을 갱신한다(없으면 만든다). */
+function showGenerating(taskId) {
+  const channel = channelOf(taskId || "");
+  const g = genSlot(channel);
+  const parts = [];
+  // v10.70.0: 앞 숫자는 세 채널(본문·🧠 사고·🔧 호출 조각)의 합 — "생성 중" 의
+  // 크기. 내역은 0 이 아닌 사고·호출만. 아이콘은 노브 칩(🧠)과 같다.
+  const total = (g.body || 0) + (g.think || 0) + (g.tool || 0);
+  if (total) parts.push("· ~" + fmtTok(total) + " tokens");
+  if (g.think) parts.push("· 🧠 " + fmtTok(g.think));
+  if (g.tool) parts.push("· 🔧 " + fmtTok(g.tool));
+  // 재시도는 **왜 오래 걸리는지**의 유일한 단서다. 거부된 응답 자체는 안
+  // 보여주지만(하네스의 재시도 기계는 모델의 작업이 아니다), "그냥 느린 것"과
+  // "형식 거부로 맴도는 것"은 구별돼야 한다 — 형식 붕괴가 잦은 로컬 모델에선
+  // 실제로 다른 상황이고, 후자면 `--verbose` 로 넘어갈 신호다.
+  if (g.retry) parts.push("· ↻ retries " + g.retry);
+  // 문법 제약 중이면 표시 — 속도가 왜 다른지가 이 줄에 있어야 한다.
+  if (GRAMMAR.active) parts.push("· 📐");
+  g.el.querySelector(".gen-tok").textContent = parts.join(" ");
+  // 매번 다시 붙인다 = **맨 아래로 이동**(appendChild 는 기존 노드를 옮긴다).
+  // 진행 표시는 그 채널의 마지막 줄이어야 한다. taskId 를 비워 넘기는 이유:
+  // delegate/skill 스코프의 접히는 카드 **안**으로 들어가면 접었을 때 사라져
+  // "멈춘 것처럼" 보인다 — 귀속은 채널로 직접 지정한다.
+  appendToTimeline(g.el, "", channel);
+  scheduleScroll();
+}
+
+/** 그 채널의 생성 중 줄을 거둔다. 다른 채널은 건드리지 않는다. */
+function hideGenerating(taskId) {
+  const channel = channelOf(taskId || "");
+  const g = genByCh[channel];
+  if (!g) return;
+  g.el.remove();
+  delete genByCh[channel];
+}
+
+
+// ── Input mode switching ───────────────────
+// Provenance block (who/why/what) shown with a confirm or ask prompt so
+// the user can tell which delegate agent is asking and about what.
+// Returns null when there's nothing to show (e.g. main-agent prompt).
+function buildPromptMetaEl(data, includeAction) {
+  if (!data) return null;
+  const agent = typeof data.agent === "string" ? data.agent : "";
+  const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
+  const action = typeof data.action === "string" ? data.action : "";
+  // **agent 없으면 안 그린다** — CLI 가 이미 내린 판단을 옮긴 것
+  // (`base._format_prompt_meta`: *"the main agent already prints its
+  // thought/action inline right above the prompt, so a header would just
+  // duplicate it"*). 웹에만 이 게이트가 없어서 main confirm 이 바로 위
+  // 💭/⚡ 두 줄을 그대로 반복했다. 서브에이전트 confirm 의 `↳ from` 은
+  // agent 가 있으므로 그대로 산다 — 거기선 출처를 달리 알 방법이 없다.
+  if (!agent) return null;
+  if (!reasoning && !(includeAction && action)) return null;
+  const box = el("div", ["prompt-meta"]);
+  if (agent) {
+    const a = el("div", ["prompt-meta-agent"]);
+    a.textContent = "↳ from " + agent;
+    box.appendChild(a);
+  }
+  if (reasoning) {
+    const r = el("div", ["prompt-meta-reasoning"]);
+    r.textContent = "💭 " + reasoning.split("\n")[0];
+    box.appendChild(r);
+  }
+  if (includeAction && action) {
+    const ac = el("div", ["prompt-meta-action"]);
+    ac.textContent = "⚡ " + action;
+    box.appendChild(ac);
+  }
+  return box;
+}
+
+// Build the "$ <command>" HTML for a confirm dialog, wrapping each
+// dangerous (start,end) char range in a <span class="danger">. Ranges are
+// pre-computed server-side (single source of truth); we only paint them.
+// Every segment is escaped, so a command with < > & stays inert.
+function highlightDangerHtml(command, spans) {
+  const cmd = String(command);
+  if (!Array.isArray(spans) || !spans.length) {
+    return "$ " + escapeHtml(cmd);
+  }
+  let out = "$ ";
+  let pos = 0;
+  spans.forEach(function (sp) {
+    const s = sp[0];
+    const e = sp[1];
+    if (typeof s !== "number" || typeof e !== "number") return;
+    if (s < pos || s >= e || e > cmd.length) return; // skip bad/overlapping
+    out += escapeHtml(cmd.slice(pos, s));
+    out += '<span class="danger">' + escapeHtml(cmd.slice(s, e)) + "</span>";
+    pos = e;
+  });
+  out += escapeHtml(cmd.slice(pos));
+  return out;
+}
+
+// ── POST helpers ───────────────────────────
+function postInput(body) {
+  body.conn_id = myConnId; // identifies the sender (queued-message ownership)
+  return fetch(
+    "api/input",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+// 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
+// /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
+function submitChatOrPrompt() {
+  const text = $input.value.trim();
+  const images = attachReadyPaths();
+  if (!text && !images.length) return;
+  if (attachBusy()) {
+    attachMessage("Still uploading");
+    return;
+  }
+  if (ovActiveChannel !== "main") {
+    // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
+    // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
+    const agentBody = { content: text, conn_id: myConnId };
+    if (images.length) agentBody.images = images;
+    fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(agentBody),
+    });
+    $input.value = "";
+    attachClear();
+    return;
+  }
+  const body = { kind: "chat", content: text };
+  if (images.length) body.images = images;
+  postInput(body);
+  $input.value = "";
+  attachClear();
+}
+
+// main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
+function ovFoldMainAsk() {
+  ovMainAsk = null;
+  clearConfirmStall();
+  ovRenderAskTray();
+  updateSendEnabled(); // ovMainAsk 해제 → busy 면 #chat-stop 다시 노출
+  setAbortVisible(false);
+}
+
+// ── Confirm stall visibility ───────────────
+// A confirm click normally resolves in well under a second (POST →
+// worker unblocks → input_resolved). When nothing comes back — e.g.
+// the browser's 6-connections-per-origin pool is starved by SSE tabs
+// and the POST is silently queued — the button just looks broken.
+// Surface that state instead of staying silent.
+const CONFIRM_STALL_MS = 3000;
+let confirmStallTimer = null;
+
+function clearConfirmStall() {
+  if (confirmStallTimer) {
+    clearTimeout(confirmStallTimer);
+    confirmStallTimer = null;
+  }
+  const w = document.getElementById("confirm-stall");
+  if (w) w.remove();
+}
+
+// main prompt(ask) 답변 — 트레이 항목의 입력에서 호출.
+function ovSubmitMainPrompt(text) {
+  if (!text.trim()) return;
+  postInput({ kind: "prompt", content: text }).then(function (res) {
+    if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨(다른 뷰어)
+  });
+}
+
+// main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트).
+function ovSubmitMainConfirm(key, comment) {
+  clearConfirmStall();
+  confirmStallTimer = setTimeout(function () {
+    var item = document.querySelector(".ask-main");
+    if (!ovMainAsk || ovMainAsk.kind !== "confirm" || !item) return;
+    if (item.querySelector(".confirm-stall")) return;
+    const warn = el("div", ["confirm-stall"]);
+    warn.textContent =
+      "⚠ No response from the server yet — the connection may be " +
+      "stalled (e.g. too many open tabs holding connections to this " +
+      "host). The click applies as soon as it gets through; closing " +
+      "unused tabs can help.";
+    item.appendChild(warn);
+  }, CONFIRM_STALL_MS);
+  postInput({ kind: "confirm", key: key, comment: comment || "" })
+    .then(function (res) {
+      if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨
+    })
+    .catch(function () {
+      /* network error — the stall warning covers the visible feedback */
+    });
+}
+
+// ── Input bindings ─────────────────────────
+function requestStop() {
+  // Halt the in-flight chat turn at the next turn boundary. Fire and
+  // forget — the worker's _on_interrupt path emits the observation and
+  // flips back to worker_idle, which the SSE stream reflects.
+  // Flip to "Stopping…" (disabled) immediately so the user gets
+  // feedback and can't double-fire /api/stop.
+  stopRequested = true;
+  updateSendEnabled();
+  fetch("api/stop", {
+    method: "POST",
+  }).catch(function () {
+    /* network blip — ignore; the turn will end on its own anyway */
+  });
+}
+
+if ($chatStop) {
+  $chatStop.addEventListener("click", function () {
+    if (!$chatStop.disabled) requestStop();
+  });
+}
+
+$send.addEventListener("click", function () {
+  if ($send.disabled) return;
+  // 입력창은 항상 chat(idle→런 시작·busy→큐). main ask 답변은 트레이가 담당.
+  submitChatOrPrompt();
+});
+$input.addEventListener("keydown", function (e) {
+  // ``e.isComposing`` / ``keyCode === 229`` guard the IME commit
+  // step: when typing Korean / Japanese / Chinese, the Enter that
+  // finalises the in-flight syllable arrives as a keydown with
+  // ``isComposing: true``. Submitting on that Enter races the IME
+  // commit — the typed-but-not-yet-committed character lands in
+  // the textarea after we already sent the (incomplete) value,
+  // leaving an orphan glyph + newline behind. Only treat Enter as
+  // submit when no composition is active.
+  if (
+    e.key === "Enter" &&
+    !e.shiftKey &&
+    !e.isComposing &&
+    e.keyCode !== 229
+  ) {
+    e.preventDefault();
+    if ($send.disabled) return;
+    submitChatOrPrompt(); // chat (queues if busy). Stop 은 별도 버튼.
+  }
+});
+
+// ── 이미지 첨부 (v10.60.0, docs/vision/DESIGN.md §5) ───────────────
+// 세 입구(📎 · 붙여넣기 · 끌어놓기)가 한 함수(`attachFiles`)로 모인다. 파일은
+// 고르는 즉시 `api/images/upload` 로 올라가 `.agent-cli/tmp/uploads/` 에
+// 들어가고, 칩은 서버가 돌려준 참조(`path`·크기)를 든다. 보내기는 그 경로만
+// `api/input` 의 `images` 에 싣는다 — 서버가 다시 검증해 참조를 만든다.
+// 모델이 이미지를 못 보면(`api/images/support` = false) 📎 를 숨기고
+// 붙여넣기·끌어놓기에 한 줄로 알린다. null(미확인)이면 보통처럼 받는다 —
+// 첫 이미지 런이 값을 정하고, 런이 끝날 때마다 다시 묻는다.
+const $attach = document.getElementById("attach");
+const $attachInput = document.getElementById("attach-input");
+const $attachStrip = document.getElementById("attach-strip");
+const attachChips = []; // {chip, path, uploading}
+let attachVision = null; // true | false | null(미확인)
+let attachMsgTimer = null;
+
+function attachRefreshVision() {
+  fetch("api/images/support")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      attachVision = d.supported;
+      $attach.hidden = attachVision === false;
+    })
+    .catch(function () {});
+}
+
+function attachMessage(text) {
+  let m = $attachStrip.querySelector(".attach-msg");
+  if (!m) {
+    m = el("span", ["attach-msg"]);
+    $attachStrip.appendChild(m);
+  }
+  m.textContent = text;
+  $attachStrip.hidden = false;
+  clearTimeout(attachMsgTimer);
+  attachMsgTimer = setTimeout(function () {
+    m.remove();
+    attachSyncStrip();
+  }, 4000);
+}
+
+function attachSyncStrip() {
+  $attachStrip.hidden = !attachChips.length && !$attachStrip.querySelector(".attach-msg");
+}
+
+function attachReadyPaths() {
+  return attachChips.filter(function (c) { return !c.uploading && c.path; })
+    .map(function (c) { return c.path; });
+}
+function attachBusy() {
+  return attachChips.some(function (c) { return c.uploading; });
+}
+function attachClear() {
+  attachChips.splice(0).forEach(function (c) { c.chip.remove(); });
+  attachSyncStrip();
+}
+
+function attachFiles(files) {
+  const list = Array.prototype.filter.call(files || [], function (f) {
+    return f && /^image\/(png|jpeg|gif|webp)$/.test(f.type);
+  });
+  if (!list.length) return false;
+  if (attachVision === false) {
+    attachMessage("This model cannot view images — describe it in words");
+    return true;
+  }
+  list.forEach(attachOne);
+  return true;
+}
+
+function attachOne(file) {
+  const chip = el("span", ["attach-chip", "uploading"]);
+  const img = el("img");
+  img.src = URL.createObjectURL(file);
+  img.alt = file.name;
+  chip.appendChild(img);
+  const label = el("span", [], file.name || "image");
+  chip.appendChild(label);
+  const rm = el("span", ["rm"], "✕");
+  rm.title = "Remove";
+  chip.appendChild(rm);
+  $attachStrip.appendChild(chip);
+  const entry = { chip: chip, path: "", uploading: true };
+  attachChips.push(entry);
+  attachSyncStrip();
+  rm.addEventListener("click", function () {
+    const i = attachChips.indexOf(entry);
+    if (i >= 0) attachChips.splice(i, 1);
+    chip.remove();
+    attachSyncStrip();
+  });
+  const name = (file.name || "image").replace(/[\\/]/g, "_") || "image";
+  fetch("api/images/upload?name=" + encodeURIComponent(name), {
+    method: "POST",
+    body: file,
+  })
+    .then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+    })
+    .then(function (res) {
+      if (!res.ok) throw new Error((res.d && res.d.detail) || "upload failed");
+      entry.path = res.d.path;
+      entry.uploading = false;
+      chip.classList.remove("uploading");
+      label.textContent = res.d.path + " (" + res.d.width + "×" + res.d.height + ")";
+    })
+    .catch(function (err) {
+      const i = attachChips.indexOf(entry);
+      if (i >= 0) attachChips.splice(i, 1);
+      chip.remove();
+      attachMessage(String(err.message || err));
+    });
+}
+
+$attach.addEventListener("click", function () { $attachInput.click(); });
+$attachInput.addEventListener("change", function () {
+  attachFiles($attachInput.files);
+  $attachInput.value = "";
+});
+// 붙여넣기: 클립보드에 이미지 파일이 있으면 그것만 받고 글 붙여넣기는 막는다
+// (스크린샷 붙여넣기는 글이 비어 있다). 글만 있으면 기본 동작 그대로.
+$input.addEventListener("paste", function (e) {
+  const files = e.clipboardData && e.clipboardData.files;
+  if (files && files.length && attachFiles(files)) e.preventDefault();
+});
+["dragenter", "dragover"].forEach(function (ev) {
+  $inputArea.addEventListener(ev, function (e) {
+    if (!e.dataTransfer || !Array.prototype.some.call(e.dataTransfer.types || [], function (t) { return t === "Files"; })) return;
+    e.preventDefault();
+    $inputArea.classList.add("drop-over");
+  });
+});
+$inputArea.addEventListener("dragleave", function () {
+  $inputArea.classList.remove("drop-over");
+});
+$inputArea.addEventListener("drop", function (e) {
+  $inputArea.classList.remove("drop-over");
+  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  if (!attachFiles(e.dataTransfer.files)) attachMessage("Only PNG, JPEG, GIF or WebP can be attached");
+});
+attachRefreshVision();
+
+// ── SSE connection ─────────────────────────
+const es = new EventSource(
+  "api/stream"
+);
+
+let sseConnected = false;
+es.onopen = function () {
+  sseConnected = true;
+  $status.classList.remove("down");
+  $status.classList.add("up");
+};
+es.onerror = function () {
+  $status.classList.remove("up");
+  $status.classList.add("down");
+  // EventSource does NOT retry a failed handshake (401 → readyState CLOSED).
+  // A hard failure before we ever connected means the browser holds no valid
+  // auth cookie — show the setup help instead of a silently dead UI.
+  if (!sseConnected && es.readyState === EventSource.CLOSED) showSetupHelp();
+};
+
+// Release the SSE when the page is hidden — navigation, tab close, or
+// bfcache (back/forward cache). Browsers keep a bfcached page's connections
+// open, so without this the server keeps counting a viewer that has left
+// (roster grows on every revisit; idle-reap never fires). On bfcache restore
+// reload to get a fresh connection rather than a frozen, already-closed one.
+window.addEventListener("pagehide", function () {
+  es.close();
+});
+window.addEventListener("pageshow", function (e) {
+  if (e.persisted) {
+    location.reload();
+  }
+});
+
+/** Copy ``text`` to the clipboard. navigator.clipboard needs a secure
+ * context (https / localhost) — board-proxied LAN sessions are plain
+ * http, so fall back to the legacy textarea + execCommand path there. */
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(ta);
+  }
+  return Promise.resolve();
+}
+
+es.addEventListener("ready", function (e) {
+  const d = JSON.parse(e.data);
+  // 방 제목 (v10.71.0): 보드 글의 topic 이 --title 로 온다. 헤더 첫 자리와 브라우저
+  // 탭 제목이 된다 — 방을 여럿 열어도 탭만 보고 고를 수 있게. 없으면 둘 다 종전대로.
+  const $title = document.getElementById("room-title");
+  if ($title) {
+    if (d.title) {
+      $title.textContent = d.title;
+      $title.title = "Room title — " + d.title;
+      $title.hidden = false;
+      document.title = d.title + " · agent-cli";
+    } else {
+      $title.hidden = true;
+      document.title = "agent-cli";
+    }
+  }
+  // ``workspace`` is the agent's working directory at session
+  // creation time. Showing it in the top bar disambiguates which
+  // checkout you're talking to when several LAN sessions are open
+  // side-by-side. Field is omitted (rather than empty-string) when
+  // unavailable so we never render a dangling " · " separator.
+  // 칩 헤더 (v7.1.0): 모델 칩 = 모델명만 (provider 는 hover), 워크스
+  // 페이스는 별도 칩에 꼬리(마지막 세그먼트)만 — hover 로 전체 경로.
+  // 모델은 🤖 노브 칩이 보여 준다 (v10.47.1 — 종전 #info 모델 박스 삭제)
+  if (d.workspace) {
+    // ws 칩 = 클릭-복사 버튼 (별도 내부 버튼은 칩 높이보다 커서 세로
+    // 클리핑됐던 실사용 피드백의 수리). 표시는 마지막 2세그먼트,
+    // hover = 전체 경로, 클릭 = 복사 + ✓ 플래시.
+    const ws = document.getElementById("chip-ws");
+    const ic = document.getElementById("ws-copy-ic");
+    const segs = d.workspace.replace(/\/+$/, "").split("/").filter(Boolean);
+    const tail =
+      segs.length > 2 ? "…/" + segs.slice(-2).join("/") : d.workspace;
+    document.getElementById("ws-tail").textContent = tail;
+    ws.title = "Copy workspace path — " + d.workspace;
+    ws.hidden = false;
+    ws.addEventListener("click", function () {
+      copyToClipboard(d.workspace).then(function () {
+        ic.textContent = "✓";
+        setTimeout(function () {
+          ic.textContent = "📋";
+        }, 1000);
+      });
+    });
+  }
+});
+
+// ── Share link (🔗) — copy a token-bearing URL others can open ──
+// The token lives in an HttpOnly cookie (JS can't read it), so fetch it from
+// the server and build the shareable URL from <base href> (which already
+// carries origin + base-path, so it is correct for direct / LAN / board /
+// caddy alike). This deliberately re-exposes the shared access token to the
+// authenticated session so the operator can hand it to a teammate.
+const $shareBtn = document.getElementById("share-btn");
+if ($shareBtn) {
+  $shareBtn.addEventListener("click", async function () {
+    const orig = $shareBtn.textContent;
+    try {
+      const r = await fetch("api/share-url");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = await r.json();
+      const base = document.querySelector("base");
+      const baseHref = base ? base.href : window.location.origin + "/";
+      const url = baseHref + "?token=" + encodeURIComponent(d.token);
+      await copyToClipboard(url);
+      $shareBtn.textContent = "✓";
+      $shareBtn.title = "Copied: " + url;
+    } catch (e) {
+      $shareBtn.textContent = "✗";
+      $shareBtn.title = "Copy failed: " + e.message;
+    }
+    setTimeout(function () {
+      $shareBtn.textContent = orig;
+    }, 1200);
+  });
+}
+
+function fmtTok(n) {
+  n = n || 0;
+  return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
+}
+
+
+es.addEventListener("agent_roster", function (e) {
+  // 상주 에이전트 목록/상태 sticky (P4) — Team 스윔레인 + 개요 채널 바.
+  const d = JSON.parse(e.data);
+  ovOnRoster(d); // 개요: 채널 바 + ask 트레이 + 상태
+});
+
+es.addEventListener("agent_msg", function (e) {
+  // 상주 에이전트 대화 메시지 (persistent — 재접속 replay 포함).
+  const d = JSON.parse(e.data);
+  ovOnAgentMsg(d); // 개요: agent 대화 채널 스트림
+});
+
+es.addEventListener("agent_cleared", function (e) {
+  // kill 시 그 에이전트 대화 비움 (resume 재생과 대칭 — 안 지우면 부활 시
+  // conversation.jsonl 재생이 채널 스트림에 중복 append). 5단계: 드로어
+  // 대신 개요 채널을 정리.
+  const d = JSON.parse(e.data);
+  if (d && d.key) ovOnAgentCleared(d.key);
+});
+
+es.addEventListener("knob", function (e) {
+  // 세션 노브 상태 한 장 (v10.43.0, `/api/knobs` 와 같은 모양) — 다른 뷰어가
+  // 바꾸면(또는 부팅 초기값) sticky `knob:<name>` 으로. 칩 IIFE 들이 name 으로
+  // 거른다(KNOBS.on). 종전 노브별 SSE 이벤트 일곱 개를 대체.
+  const d = JSON.parse(e.data);
+  if (d && d.name === "grammar") GRAMMAR.active = !!d.active;
+  document.dispatchEvent(new CustomEvent("agentcli:knob", { detail: d }));
+});
+
+es.addEventListener("thinking_tick", function (e) {
+  // P5/v8.57.0: 사고 러너웨이 가시화. v9.8.0 부터 **대화 쪽 한 곳**만 —
+  // 헤더 배지는 같은 숫자를 두 번 보여 제거했다.
+  const d = JSON.parse(e.data);
+  if (typeof d.tokens !== "number") return;
+  // 헤더 배지는 제거했다 (v9.8.0) — 아래 생성 중 줄이 같은 숫자를 이미
+  // 보여 화면에 문자 그대로 두 번 있었다. 그 줄은 `data-ch` 가 없어 **모든
+  // 채널에서 항상 맨 아래**이고 자동 스크롤이 따라가므로, 헤더를 빼도
+  // "지금 얼마나 생각 중인가"는 계속 보인다.
+  // v9.4.0 ④: 생성 중 줄에도 싣는다. 사고만 하고 본문이 아직 없는 구간
+  // (러너웨이가 정확히 그 모양이다)에서도 살아있음이 보여야 한다 —
+  // 헤더 배지만 갱신하면 대화 쪽은 조용해 멎은 것처럼 읽힌다.
+  genSlot(channelOf(d.task_id || "")).think = d.tokens;
+  showGenerating(d.task_id);
+});
+
+es.addEventListener("directives_changed", function () {
+  // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
+  // IIFE to re-fetch the editor so concurrent editors don't show stale text.
+  window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
+});
+
+es.addEventListener("schedules_changed", function () {
+  // 예약이 바뀌었다(추가·삭제·발화·놓침) → ⏰ IIFE 가 다시 가져온다.
+  window.dispatchEvent(new CustomEvent("agentcli:schedules-changed"));
+});
+
+es.addEventListener("memory_changed", function () {
+  // A `memory` op updated the ## Session Memory index.
+  // 메모리 인덱스는 꼬리에 실린다 — 채널 틀을 다시 가져온다.
+  Object.keys(frames).forEach(function (k) {
+    if (frames[k].channel) frameTouch(frames[k]);
+  });
+});
+
+es.addEventListener("prompt_snapshot", function (e) {
+  // 모델 호출이 막 나갔다(또는 런이 끝나 닫힌 항목이 붙었다) — 그 스코프의 틀을
+  // 지금 다시 가져온다. 사용량 줄은 호출이 끝난 뒤(token_usage) 채워진다.
+  frameTouch(frameOfScope(JSON.parse(e.data).scope || ""));
+});
+
+es.addEventListener("token_usage", function (e) {
+  // Top-bar readout: context occupancy %, this turn's in/out, and the
+  // cumulative session output. Server sends raw counts; we format here.
+  const d = JSON.parse(e.data);
+  // 모델 시점 틀: 이 호출을 낸 스코프의 스냅샷이 바뀌었다.
+  frameTouch(frameOfScope(d.task_id || ""));
+  const parts = [];
+  const inTok = d.in || 0;
+  const win = d.context_window || 0;
+  if (inTok && win) {
+    const pct = Math.round((inTok / win) * 100);
+    parts.push("ctx " + fmtTok(inTok) + "/" + fmtTok(win) + " (" + pct + "%)");
+  }
+  // v8.57.0: ↑(턴 입력)은 ctx 분자와 동일 값이라 생략 — ↓(출력)·Σ↓(누적)만.
+  if (inTok || d.out) {
+    parts.push("↓" + fmtTok(d.out));
+  }
+  if (d.total_out) {
+    parts.push("Σ↓" + fmtTok(d.total_out));
+  }
+  if (d.grammar) parts.push("📐"); // 이 턴은 문법 제약 하에 생성됐다
+  var $base = document.getElementById("tok-base");
+  if ($base) $base.textContent = parts.join(" · ");
+  $tokenUsage.title =
+    "context " +
+    fmtTok(inTok) +
+    " / " +
+    fmtTok(win) +
+    " · turn out " +
+    fmtTok(d.out) +
+    " · session out " +
+    fmtTok(d.total_out);
+  // v8.57.0: 토큰 상세는 헤더에 상시 노출 (구 ctx 게이지 칩 폐기).
+  if (inTok && win) $tokenUsage.hidden = false;
+});
+
+es.addEventListener("user_message", function (e) {
+  const d = JSON.parse(e.data);
+  renderUserMessage(d.content, d.ts, d.author || "", d.hidx, d.images);
+  // ``author`` (a user's nickname) puts the message on the swimlane's
+  // multiplexed user lane; author-less messages (🤝 starter) are card-only.
+  qOnUserMsg(d); // 큐: 이 메시지가 큐서 주입된 것이면 ✓ 영수증
+});
+
+es.addEventListener("assistant_turn", function (e) {
+  const d = JSON.parse(e.data);
+  hideGenerating(d.task_id);
+  renderAssistantTurn(d);
+});
+
+// 형식 거부 → 재시도. **카드를 그리지 않는다** (v9.8.0) — 거부된 원문은
+// 하네스의 재시도 기계지 모델의 작업이 아니고, 사용자가 할 수 있는 일도 없다.
+// 대신 생성 중 줄의 카운터만 올린다: 런은 계속되므로 `hideGenerating` 도
+// 부르지 않는다(종전엔 불렀다가 다음 tick 에 다시 만들어 깜빡였다).
+// 재시도를 다 쓰면 하드페일이 `turn_error` 로 **영속** 표면에 남는다.
+es.addEventListener("retry_tick", function (e) {
+  const d = JSON.parse(e.data || "{}");
+  genSlot(channelOf(d.task_id || "")).retry += 1;
+  showGenerating(d.task_id);
+});
+
+es.addEventListener("observation", function (e) {
+  const d = JSON.parse(e.data);
+  renderObservation(d);
+});
+
+es.addEventListener("compaction", function (e) {
+  renderCompaction(JSON.parse(e.data));
+});
+// 모델 시점 (v10.6.0): 스코프별 sticky — 재접속 스냅샷에도 실린다.
+es.addEventListener("ctx_view", function (e) {
+  const d = JSON.parse(e.data || "{}");
+  const key = ctxViewKey(d.task_id || "");
+  ctxViews[key] = d;
+  ctxApplyView(key);
+});
+
+// 턴 사이의 **진행 해설** — 재시도·열화·부팅 고지. 종전엔 이 이벤트에
+// 리스너가 없어 10곳의 호출이 웹에서 통째로 버려졌다(HTTP 재시도 전부가
+// 암전이었다 — `stream_stall` 이 고친 것과 같은 병인데 그쪽은 스트림
+// 레벨만 덮었다). 휘발 한 줄이 이 부류의 올바른 기본값이다: 대화 기록에
+// 남아야 하는 것(런 종료 사유)은 `turn_error` 로 따로 간다.
+es.addEventListener("status", function (e) {
+  const d = JSON.parse(e.data);
+  if (!d || !d.message) return;
+  const line = sysLine(d.state === "error" ? "✗" : "●", d.message,
+                       d.state === "error" ? ["warn"] : null);
+  finishCard(line, d);
+});
+
+es.addEventListener("stream_stall", function (e) {
+  renderStreamStall(JSON.parse(e.data));
+});
+
+// v9.4.0 ④: stream_reset 리스너 제거 — 버릴 **부분 출력이 없다**.
+// (v8.61.0 이 재전송 시 이어붙기를 고치려 넣은 것인데, 라이브 타이핑을
+// 버리면서 그 문제 자체가 사라졌다. 서버 방출은 CLI 마르퀴가 쓰므로 유지.)
+
+// Application-level turn/tool errors arrive as ``turn_error`` — NOT
+// ``error`` — precisely so they don't collide with the native EventSource
+// "error" event type (which drives the connection dot via ``es.onerror``
+// above). Listening for ``error`` here would also latch the dot red on a
+// healthy stream and try to ``JSON.parse`` data-less transport errors.
+es.addEventListener("turn_error", function (e) {
+  const d = JSON.parse(e.data);
+  renderError(d);
+});
+
+// Bounded replay buffer: on reconnect to a very long session the server
+// replays only the most recent window and says how many events fell off.
+// Full history is still on disk (history.jsonl / --resume).
+es.addEventListener("transcript_truncated", function (e) {
+  const d = JSON.parse(e.data);
+  const line = el("div", ["card", "card-sys"]);
+  line.appendChild(el("span", ["sys-icon"], "⋯"));
+  line.appendChild(
+    el(
+      "span",
+      ["sys-text"],
+      d.omitted + " earlier events omitted (reconnect replay limit — full record kept in session history)"
+    )
+  );
+  // 세션 전체에 대한 고지라 main 에 둔다 — 인자를 **생략하지 않고 명시**한다
+  // (생략하면 "귀속을 잊었다"와 구별이 안 된다; 소스 핀이 이걸 강제한다).
+  // 이 이벤트엔 `ts` 가 없어(스냅샷에 직접 삽입) 시각은 안 찍힌다 —
+  // `stampCard` 가 `ts == null` 이면 그냥 넘어간다.
+  finishCard(line, { ts: d.ts, task_id: MAIN.task_id });
+});
+
+// 본문·사고 tick — 토큰 수만 온다(텍스트 없음).
+es.addEventListener("stream_tick", function (e) {
+  const d = JSON.parse(e.data) || {};
+  genSlot(channelOf(d.task_id || "")).body = d.tokens || 0;
+  showGenerating(d.task_id);
+});
+
+es.addEventListener("tool_tick", function (e) {
+  // v10.70.0: 서버가 구조로 보내는 호출 조각(native_fc) — 긴 python 호출을 쓰는
+  // 동안 본문·사고가 0 이라 멈춘 듯 보이던 구간을 메운다.
+  const d = JSON.parse(e.data) || {};
+  genSlot(channelOf(d.task_id || "")).tool = d.tokens || 0;
+  showGenerating(d.task_id);
+});
+
+es.addEventListener("stream_end", function (e) {
+  hideGenerating((JSON.parse(e.data || "{}") || {}).task_id);
+});
+
+// ── Delegate task lifecycle ────────────────
+//
+// Three event types frame each parallel-delegate worker's
+// collapsible card:
+//   scope_start   → open card (default collapsed); kind = skill | run
+//   scope_status  → update live status line (transient)
+//   scope_end     → close card with ✓/✗ + duration
+// Unified path: a skill subloop (e.g. /orchestrate) and a delegate/one-shot
+// worker now BOTH arrive as scope_start — previously skills emitted an
+// un-handled group_start and drew no card.
+es.addEventListener("scope_start", function (e) {
+  const d = JSON.parse(e.data);
+  // NOTE: a resume-replayed scope (``d.replay``) builds its card too. It used
+  // to return here — the reasoning being that the scope's turns replayed flat,
+  // so the card would be an empty shell. Since v7.28.0 the resume replay is
+  // ONE time-ordered stream (``replay_session``) and each turn carries the
+  // scope it belongs to, so the card opens BEFORE its turns arrive and they
+  // land inside it. Skipping it now would be the bug: no card at all, and a
+  // swimlane bar offering navigation to something that does not exist.
+  // 채널 귀속은 카드와 무관한 등록이라 먼저, 그리고 **채널 자체인 스코프는
+  // 카드를 만들지 않는다**(v9.7.0 — 자기 채널 안에서 자기를 또 묶지 않는다).
+  // 채널 자체인 스코프(상주 에이전트의 런)는 접히는 카드가 아니라 **런
+  // 블록**이다 (v9.23.0, docs/chat-ui §12): 받은 항목이 머리, 단계가 몸통,
+  // 결과가 꼬리. 왕래 줄(보냄/받음)이 하던 "요청 경계" 를 이 블록이 긋는다.
+  const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "")
+    ? (ensureRunBlock(d), null)
+    : ensureTaskGroup(
+        d.task_id,
+        d.index || 0,
+        d.agent || "",
+        d.label || "",
+        d.kind || "run",
+        d.parent || "",
+        d.depth || 0,
+        d.hidx,
+      );
+  // Register the parent link + light up the ancestors' "child running" hint.
+  // AFTER ensureTaskGroup so the new card is already nested inside its parent.
+  noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
+});
+
+es.addEventListener("scope_status", function (e) {
+  const d = JSON.parse(e.data);
+  updateTaskStatus(d.task_id, d.status || "");
+});
+
+es.addEventListener("scope_end", function (e) {
+  const d = JSON.parse(e.data);
+  noteScopeEnd(d.task_id);
+  if (runBlocks[d.task_id]) {
+    closeRunBlock(d);
+    frameTouch(frameOfScope(d.task_id));
+    return;
+  }
+  // A replayed scope whose turns are not in this session's history closes
+  // EMPTY (an old session recorded before turns carried their scope, or a
+  // sub-agent whose turns live in its own context). Say why, rather than
+  // leaving a card that looks like it lost its content.
+  if (d.replay) {
+    const g = taskGroups[d.task_id];
+    if (g && !g.body.querySelector(".card")) {
+      const note = el("div", ["card", "card-sys", "task-empty-note"]);
+      note.appendChild(el("span", ["sys-icon"], "⊘"));
+      note.appendChild(
+        el(
+          "span",
+          ["sys-text"],
+          "This run's turn records are not in this session's history — a subagent context, or a record from before resume.",
+        ),
+      );
+      g.body.appendChild(note);
+    }
+  }
+  closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
+  frameTouch(frames[d.task_id]); // 종료 시점 상태로 고정된다
+});
+
+// ── 타임라인 = 유일한 표면 (v9.4.0 ②, docs/chat-ui) ──
+// 종전엔 개요(요약) / 전문(드로어) / 흐름(스윔레인) 셋이 같은 대화를 각자
+// 그렸고, 투명성(도구 호출·reasoning)이 **드로어 안에만** 있었다. 기본 화면인
+// 개요엔 도구가 아예 안 나와(슬래시만 화이트리스트 예외) "간단"과 "투명"이
+// 둘 다 손해였다. 이제 `#messages` 하나다 — 뷰 전환·드로어·탭이 전부 없다.
+//
+// 에이전트 작업이 사라지지 않는 이유: `begin_agent_work` 가 task_id 를 붙여
+// `scope_start` 를 내고 `_emit` 이 후속 이벤트에 자동 부착하므로, 에이전트의
+// 생각·도구·결과는 **이미** 여기 중첩 카드로 들어와 있었다(§7.5). 개요를
+// 지우는 것은 잃는 게 아니라 드러내는 것이다.
+
+// ── 채널·트레이 상태 (구 개요의 잔존분) ─────────────────
+// ② 가 개요 렌더를 지웠을 때 그 **데이터**(ovEntries/ovTopScopes/ovScopeSrc/
+// ovSkills)는 선언만 남아 아무도 읽지 않았다 — ⑥ 에서 함께 걷어낸다. 남는
+// 것은 실제로 읽히는 둘: roster(채널 칩·점프 가능 판정의 진실원)와 활성 채널.
+var ovRoster = []; // agent_roster
+// 대화 채널. "main" = 메인, 그 외 = 상주 agent key. 채널은 **타임라인의
+// 필터**다(v9.4.0 ⑥) — 별도 스트림을 들고 있지 않으므로 리로드하면
+// replay 버퍼가 그대로 복원한다.
+var ovActiveChannel = "main";
+// 3단계: 글로벌 ask 트레이 — **주소가 사람인 열린 질문**을 채널 무관하게
+// 노출한다. 진실원은 roster 행의 `open_questions` 다(질문 단위).
+// 에이전트별 결정적 아이콘 — key 해시로 고정. 서버(agent_cli/agent_icon.py)와
+// 반드시 동일한 풀·순서·해시(test_app_markdown 이 대조). key 는 ASCII 라
+// charCodeAt == Python ord.
+var OV_AGENT_ICONS = [
+  "🦊", "🐙", "🦉", "🦄", "🐳", "🦋", "🐢", "🐝",
+  "🦁", "🐧", "🦩", "🐬", "🦇", "🐡", "🦕", "🐌",
+  "🦔", "🦦", "🐨", "🐼", "🦭", "🦡", "🐺", "🐸",
+];
+// 아이콘과 **같은 인덱스**의 동물 + 독립 해시의 수식어 → "날쌘 여우".
+// 별명은 **표시 전용**이다 — 주소는 언제나 key(`@agt-<key>`)라, 화면은 늘
+// key 를 흐리게 곁에 단다(`ovAgentLabelHtml`). 별명을 주소로 받기 시작하면
+// 유일성·경로·rename 이 따라오는데 key 가 uuid 라 그 셋이 이미 해결돼 있다.
+var OV_AGENT_ANIMALS = [
+  "Fox", "Octopus", "Owl", "Unicorn", "Whale", "Butterfly", "Turtle", "Bee",
+  "Lion", "Penguin", "Flamingo", "Dolphin", "Bat", "Pufferfish", "Dinosaur", "Snail",
+  "Hedgehog", "Otter", "Koala", "Panda", "Seal", "Badger", "Wolf", "Frog",
+];
+var OV_AGENT_ADJECTIVES = [
+  "Swift", "Easygoing", "Meticulous", "Brave", "Quiet", "Quirky", "Diligent", "Clever",
+  "Steady", "Nimble", "Careful", "Kind", "Reliable", "Busy", "Calm", "Cheerful",
+];
+function ovAgentHash(key) {
+  var s = 0;
+  for (var i = 0; i < key.length; i++) s += key.charCodeAt(i);
+  return s;
+}
+function ovAgentIcon(key) {
+  if (!key) return OV_AGENT_ICONS[0];
+  return OV_AGENT_ICONS[ovAgentHash(key) % OV_AGENT_ICONS.length];
+}
+function ovAgentNickname(key) {
+  var h = ovAgentHash(key);
+  return (
+    OV_AGENT_ADJECTIVES[
+      Math.floor(h / OV_AGENT_ANIMALS.length) % OV_AGENT_ADJECTIVES.length
+    ] + " " + OV_AGENT_ANIMALS[h % OV_AGENT_ANIMALS.length]
+  );
+}
+// 화면에 쓸 **이름** — 구체적인 것부터: 인스턴스 이름 > 프로파일 > 별명.
+// (서버 `agent_icon.agent_display_name` 과 같은 우선순위 — 한 에이전트가
+// CLI 와 웹에서 다른 이름으로 불리면 안 된다.)
+function ovAgentDisplayName(key) {
+  var tm = ovRoster.filter(function (t) { return t.key === key; })[0];
+  var profile = (tm && tm.profile) || "";
+  var name = (tm && tm.name) || "";
+  if (name && profile) return profile + " · " + name;
+  return name || profile || ovAgentNickname(key);
+}
+// 채널 표시명(**평문**) — title/placeholder 등 마크업을 못 쓰는 자리용.
+function ovAgentLabel(key) {
+  return ovAgentIcon(key) + " " + ovAgentDisplayName(key);
+}
+// 이름 + **흐린 key** — 자리가 있는 곳(채널 칩·ask 트레이)에서 쓴다.
+// 사람은 이름으로 기억하고, `@agt-…` 로 부를 때 필요한 주소가 바로 옆에 있다.
+function ovAgentLabelHtml(key) {
+  return (
+    escapeHtml(ovAgentLabel(key)) +
+    ' <span class="ag-key">' + escapeHtml(key) + "</span>"
+  );
+}
+
+// 사용자 입력 = 독립된 평문 줄(그룹핑 없음).
+// 응답 = 독립된 블록(항상 done — complete 시 한 번에 append). 짝짓기·귀속 없음.
+// 활동 스트립: 실행 중 도구 호출 축약 한 줄(왼쪽=누적 카운트, 오른쪽=현재 배치 칩).
+function ovOnRoster(d) {
+  ovRoster = (d && d.roster) || [];
+  ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
+  ovRenderAskTray(); // 진실원은 roster 의 open_questions
+}
+// 글로벌 ask 트레이: roster 행의 `open_questions` 중 사람 주소인 것을
+// 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
+// 공유 상태라 누가 먼저 답하면 질문이 닫혀 → 모든 뷰어에서 사라짐(선착순).
+// main 의 prompt/confirm 을 트레이 항목(DOM)으로 — 검증된 조각 재사용
+// (buildPromptMetaEl·highlightDangerHtml·confirm-btn·mode-context). 3b.
+function ovBuildMainAskEl() {
+  var kind = ovMainAsk.kind;
+  var data = ovMainAsk.data || {};
+  var item = el("div", ["ask-item", "ask-main"]);
+  var head = el("div", ["ask-q"]);
+  head.textContent =
+    kind === "confirm" ? "⚠ main — confirmation needed" : "❓ main asked";
+  item.appendChild(head);
+  var meta = buildPromptMetaEl(data, kind === "confirm");
+  if (meta) item.appendChild(meta);
+  if (kind === "confirm") {
+    // **무엇을 승인하는지**를 먼저 보인다. 종전엔 이 줄이 없어서, 워크스페이스
+    // 밖 경로에 쓰려는 것을 승인할 때 화면에 남는 게 헤더+버튼뿐이었다 —
+    // 이게 이탈 가드라는 사실도, 어느 경로가 밖인지도, 루트가 뭔지도 없이
+    // `a` 버튼만 "always allow these locations" 라고 말했다(감사 발견).
+    // `shell` 은 `command` 를 따로 실어 강조 렌더가 되지만 edit/write_file 은
+    // 안 싣는다. `prompt` 는 그 사유의 유일한 전달자다.
+    if (typeof data.prompt === "string" && data.prompt.trim()) {
+      item.appendChild(el("div", ["confirm-why"], data.prompt.trim()));
+    }
+    if (typeof data.command === "string" && data.command) {
+      item.appendChild(
+        elHtml("pre", ["action-shell", "confirm-cmd"],
+          highlightDangerHtml(data.command, data.danger_spans))
+      );
+    }
+    var cmt = el("input", ["ask-answer"]);
+    cmt.type = "text";
+    cmt.placeholder = "Optional comment";
+    var btns = el("div", ["ask-confirm-btns"]);
+    (data.options || []).forEach(function (opt) {
+      var b = el("button", ["confirm-btn"]);
+      if (opt.key === data.default_key) b.classList.add("default");
+      b.textContent = opt.key + " — " + opt.label;
+      b.addEventListener("click", function () {
+        ovSubmitMainConfirm(opt.key, cmt.value.trim());
+      });
+      btns.appendChild(b);
+    });
+    cmt.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        ovSubmitMainConfirm(data.default_key, cmt.value.trim());
+      }
+    });
+    item.appendChild(btns);
+    var cw = el("div", ["ask-in"]);
+    cw.appendChild(cmt);
+    item.appendChild(cw);
+  } else {
+    var ctx = typeof data.context === "string" ? data.context : "";
+    if (ctx) {
+      var ce = el("div", ["mode-context"]);
+      ce.textContent = ctx;
+      item.appendChild(ce);
+    }
+    var ans = el("input", ["ask-answer"]);
+    ans.type = "text";
+    ans.placeholder = "Answer… (Enter to send)";
+    var send = el("button", ["ask-send", "btn-primary"]);
+    send.textContent = "Send";
+    send.addEventListener("click", function () {
+      ovSubmitMainPrompt(ans.value);
+      ans.value = "";
+    });
+    ans.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        ovSubmitMainPrompt(ans.value);
+        ans.value = "";
+      }
+    });
+    var iw = el("div", ["ask-in"]);
+    iw.appendChild(ans);
+    iw.appendChild(send);
+    item.appendChild(iw);
+  }
+  return item;
+}
+function ovRenderAskTray() {
+  var tray = document.getElementById("ask-tray");
+  if (!tray) return;
+  // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 열린 질문이 뜬다 — 주소는
+  // 언제나 사람이다(v10.77.0). 상대가 막혀 있지 않으므로 state 로는 알 수
+  // 없고 질문 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
+  // 질문 단위.
+  var open = [];
+  ovRoster.forEach(function (t) {
+    (t.open_questions || []).forEach(function (q) {
+      open.push({ key: t.key, q: q });
+    });
+  });
+  if (!ovMainAsk && !open.length) {
+    tray.hidden = true;
+    tray.innerHTML = "";
+    return;
+  }
+  var html = "";
+  open.forEach(function (it) {
+    html +=
+      '<div class="ask-item" data-key="' + escapeHtml(it.key) +
+      '" data-qid="' + escapeHtml(it.q.id) + '">' +
+      '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
+      "</b> asked</div>" +
+      '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
+      '<div class="ask-in"><input class="ask-answer" type="text" ' +
+      'placeholder="Answer…" aria-label="Answer"><button type="button" ' +
+      'class="ask-send btn-primary">Send</button></div></div>';
+  });
+  tray.innerHTML = html;
+  // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
+  if (ovMainAsk) tray.insertBefore(ovBuildMainAskEl(), tray.firstChild);
+  tray.hidden = false;
+}
+// 트레이 답변 전송(그 asker 로 고정 — 드롭박스 채널과 무관).
+function ovSubmitAsk(key, text, qid) {
+  if (!key || !text.trim()) return;
+  // `answer_id` 가 있으면 새 일감이 아니라 **그 질문의 답**으로 짝짓는다
+  // — 없으면 서버가 종전대로 inbox 로 넣는다(블로킹 경로).
+  var body = { content: text, conn_id: myConnId };
+  if (qid) body.answer_id = qid;
+  fetch("api/agent/" + encodeURIComponent(key) + "/input", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+(function () {
+  var tray = document.getElementById("ask-tray");
+  if (!tray) return;
+  function submitFrom(el) {
+    var item = el.closest(".ask-item");
+    if (!item) return;
+    var inp = item.querySelector(".ask-answer");
+    ovSubmitAsk(
+      item.getAttribute("data-key"),
+      inp ? inp.value : "",
+      item.getAttribute("data-qid")
+    );
+    if (inp) inp.value = ""; // 낙관적 클리어 — roster 갱신이 항목 제거
+  }
+  tray.addEventListener("click", function (e) {
+    if (e.target.classList.contains("ask-send")) submitFrom(e.target);
+  });
+  tray.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing && e.target.classList.contains("ask-answer")) {
+      e.preventDefault();
+      submitFrom(e.target);
+    }
+  });
+})();
+// ── 런 블록 (v9.23.0, docs/chat-ui §12) ─────────────────────
+// 에이전트 채널의 단위는 **런**이다: 런이 시작될 때 블록이 열리고
+// (`scope_start`, 앵커 = `key#<item id>`), 그 런이 받은 항목(들)이 머리, 단계가
+// 몸통, 결과가 꼬리. 왕래 줄 셋(← 받음 / → 보냄 / ❓ 질문)은 사라졌다:
+//   · 받음 → 블록 머리. 수신 줄은 **큐에 넣을 때** 나가 런보다 앞서므로
+//     블록이 없으면 `⏳ 대기` 로 두었다가 그 id 를 품은 런이 열리면 끌어온다
+//     (`scope_start.items` — 배치는 N개; v10.77.0 부터 배달 id 가 키). 앵커를 수신 줄로 잡으면 바쁠 때
+//     쌓인 3건이 블록 3개를 먼저 연다.
+//   · 보냄 → 그리지 않는다. `message`/`reply`/`answer` **도구 줄**이 그 발신
+//     이고(라이브·resume 재생 둘 다 history 에서 온다), 유일한 예외는 도구
+//     호출 없는 하네스 폴백(`fallback`) — 그것만 ⚠ 줄로 몸통에.
+//   · 질문 → `→ ask` 도구 줄. 트레이 갱신만 남는다.
+// resume: `scopes.jsonl` 이 같은 scope_start/end 를 재생하고 에이전트
+// history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**.
+const runBlocks = {}; // task_id → {card, head, body, key, items, closed}
+const runByItem = {}; // key → {item id → task_id}
+const queuedIn = {}; // key → {item id → {d, card}}  블록이 아직 없는 수신 줄
+const pendingFallback = {}; // key → {item id → [d]}  블록이 아직 없는 폴백 줄
+
+function firstLineOf(text) {
+  var t = String(text || "");
+  return (t.split("\n").find(function (l) { return l.trim(); }) || t).trim();
+}
+
+/** 수신 항목 한 줄 — 블록 머리의 그리드(`← 본문 · 누가`). */
+function runItem(d) {
+  var it = el("div", ["run-item"]);
+  it.appendChild(el("span", ["ic"], "←"));
+  var text = String(d.text || "");
+  var first = firstLineOf(text);
+  var sCell = el("span", ["s"], first);
+  it.appendChild(sCell);
+  it.appendChild(el("span", ["who"], peerLabel(d.author)));
+  var imgs = Array.isArray(d.images) ? d.images : [];
+  if (imgs.length) sCell.appendChild(miniThumbs(imgs)); // 접힌 채로도 보인다 (v10.61.3)
+  if (text.trim() !== first || imgs.length) {
+    var body = elHtml("div", ["run-item-body", "md"], escapeAndFormat(text));
+    if (imgs.length) body.appendChild(thumbStrip(imgs)); // 창에서 붙인 이미지 (v10.61.0)
+    body.hidden = true;
+    it.appendChild(body);
+    it.classList.add("can");
+    it.addEventListener("click", function () {
+      body.hidden = !body.hidden;
+      it.classList.toggle("open", !body.hidden);
+    });
+  }
+  return it;
+}
+
+function claimIn(blk, q) {
+  if (q.card) q.card.remove();
+  var it = runItem(q.d);
+  it.dataset.item = String(q.d.item || "");
+  blk.head.appendChild(it);
+}
+
+function ensureRunBlock(d) {
+  if (runBlocks[d.task_id]) return runBlocks[d.task_id];
+  var key = scopeChannel[d.task_id] || "";
+  var items = Array.isArray(d.items) ? d.items.map(String) : [];
+  var card = el("div", ["card", "card-run"]);
+  card.dataset.taskId = d.task_id;
+  var head = el("div", ["run-head"]);
+  var body = el("div", ["run-body"]);
+  card.appendChild(head);
+  card.appendChild(body);
+  var blk = { card: card, head: head, body: body, key: key, items: items, closed: false };
+  runBlocks[d.task_id] = blk;
+  var byItem = runByItem[key] || (runByItem[key] = {});
+  // 큐에서 먼저 도착한 수신 줄 → 머리 (배치는 받은 순서대로).
+  var q = queuedIn[key] || {};
+  var pf = pendingFallback[key] || {};
+  items.forEach(function (id) {
+    byItem[id] = d.task_id;
+    if (q[id]) {
+      claimIn(blk, q[id]);
+      delete q[id];
+    }
+    (pf[id] || []).forEach(function (fd) { renderFallbackRow(blk, fd); });
+    delete pf[id];
+  });
+  // 루트에, 자기 채널로. 시각은 첫 수신 줄이 아니라 런 시작이다.
+  finishCard(card, { task_id: "", ts: d.ts }, key);
+  return blk;
+}
+
+/** 꼬리 — 최종답이 있으면 **그 카드가 꼬리**(같은 말을 두 번 하지 않는다),
+ * 없으면(중단·오류·complete 없이 끝남) 상태 한 줄. */
+function closeRunBlock(d) {
+  var blk = runBlocks[d.task_id];
+  if (!blk || blk.closed) return;
+  blk.closed = true;
+  var ok = !!d.success;
+  blk.card.classList.add(ok ? "run-ok" : "run-fail");
+  var dur = d.duration_s != null ? " (" + Number(d.duration_s).toFixed(1) + "s)" : "";
+  var finalCard = null;
+  var fins = blk.body.querySelectorAll(":scope > .card-assistant > .final");
+  if (fins.length) finalCard = fins[fins.length - 1].parentNode;
+  if (ok && finalCard) {
+    finalCard.classList.add("run-final");
+    var meta = el("span", ["run-meta"], "✓" + dur);
+    var finEl = finalCard.querySelector(".final");
+    finEl.insertBefore(meta, finEl.firstChild); // 여백 안 — CSS 참조
+    scheduleScroll();
+    return;
+  }
+  var foot = makeRow(
+    ok ? "✓" : "✗",
+    ok ? "Done" : "Failed",
+    ok ? "ended without a result" + dur : (d.error || "stopped before the run ended") + dur,
+    null,
+    ["run-foot", ok ? "ok" : "bad"]
+  );
+  blk.body.appendChild(foot);
+  scheduleScroll();
+}
+
+/** 하네스 폴백 — 회신 없이 끝난 런의 요약을 하네스가 대신 보냈다. 본문
+ * 첫 줄은 그 사정을 말하는 라벨이라 요약에서는 뺀다. */
+function renderFallbackRow(blk, d) {
+  var text = String(d.text || "");
+  var lines = text.split("\n");
+  var rest = lines.slice(1).join("\n").trim();
+  var body = rest ? elHtml("div", ["md"], escapeAndFormat(text)) : null;
+  var tail = el("span", ["peer"], peerLabel(d.to));
+  var row = makeRow("⚠", "Fallback", "ended without a reply — the harness sent the run summary instead", body, ["fallback"], tail);
+  var card = el("div", ["card", "card-fallback"]);
+  card.appendChild(row);
+  stampCard(card, d.ts);
+  blk.body.appendChild(card);
+  scheduleScroll();
+}
+
+function ovOnAgentMsg(d) {
+  if (!d || !d.key) return;
+  var key = d.key;
+  var item = String(d.item || "");
+  if (d.direction === "in") {
+    var tid = runByItem[key] && runByItem[key][item];
+    if (tid && runBlocks[tid]) {
+      claimIn(runBlocks[tid], { d: d });
+      return;
+    }
+    var card = el("div", ["card", "card-queued"]);
+    card.dataset.item = item;
+    var hasImgs = Array.isArray(d.images) && d.images.length > 0;
+    var qRow = makeRow("⏳", "Queued", firstLineOf(d.text), hasImgs ? thumbStrip(d.images) : null,
+                       ["queued"], el("span", ["peer"], peerLabel(d.author)));
+    if (hasImgs) qRow.querySelector(".s").appendChild(miniThumbs(d.images)); // 접힌 채로도 보인다
+    card.appendChild(qRow);
+    // `d.task_id` 는 **보낸 쪽**의 런이다(peer 워커 스레드의 `_emit` 이
+    // 붙인다) — 그걸로 배치하면 이 줄이 남의 블록 몸통에 들어간다. 수신
+    // 줄의 자리는 언제나 자기 채널의 루트.
+    finishCard(card, { ts: d.ts, note: d.note }, key);
+    (queuedIn[key] || (queuedIn[key] = {}))[item] = { d: d, card: card };
+    return;
+  }
+  if (d.direction === "absorbed") {
+    // 런 도중 턴 경계에서 흡수됨 (v10.8.2): 그 id 의 ⏳ 대기 줄을 **도는 런**
+    // (absorbed_into) 블록 머리로 옮긴다 — 새 런이 열리지 않으니 종전엔 배달
+    // 뒤에도 "대기" 로 남았다. 블록이 없으면(재생 순서) 줄만 ✓ 로.
+    var into = String(d.absorbed_into || "");
+    var q = queuedIn[key] && queuedIn[key][item];
+    var tidInto = runByItem[key] && runByItem[key][into];
+    if (tidInto && runBlocks[tidInto]) {
+      var blkInto = runBlocks[tidInto];
+      if (q) {
+        claimIn(blkInto, q);
+        delete queuedIn[key][item];
+      } else if (!blkInto.head.querySelector('.run-item[data-item="' + item + '"]')) {
+        claimIn(blkInto, { d: d }); // 대기 줄이 안 왔다(버퍼 창 밖) — 머리에 직접
+      }
+      if (blkInto.items.indexOf(item) < 0) blkInto.items.push(item);
+      (runByItem[key] || (runByItem[key] = {}))[item] = tidInto;
+      return;
+    }
+    if (q) {
+      var row = q.card.querySelector(".row");
+      row.classList.add("absorbed");
+      row.querySelector(".ic").textContent = "✓";
+      row.querySelector(".k").textContent = "Absorbed";
+      row.title = "absorbed into run " + into + " at a turn boundary";
+    }
+    return;
+  }
+  if (d.direction === "out") {
+    if (!d.fallback) return; // 도구 줄이 이미 그 발신이다
+    var t2 = runByItem[key] && runByItem[key][item];
+    if (t2 && runBlocks[t2]) renderFallbackRow(runBlocks[t2], d);
+    else {
+      var pf = pendingFallback[key] || (pendingFallback[key] = {});
+      (pf[item] || (pf[item] = [])).push(d);
+    }
+    return;
+  }
+  if (d.direction === "question") {
+    // 대화 줄은 `→ ask` 도구 줄이 맡는다. 트레이는 **주소가 사람인 질문에만**
+    // 뜨고, 무엇을 띄울지는 roster 의 `open_questions` 가 정한다.
+    ovRenderAskTray();
+  }
+}
+// kill(agent_cleared) → **`agent_msg` 에서 나온 것만** 정리한다: 블록 머리의
+// 수신 항목 · 폴백 줄 · 대기 줄. 서버도 버퍼에서 `agent_msg` 만 지운다 — 블록
+// 자체와 그 안의 턴 카드는 스코프·턴 이벤트에서 왔고 서버 버퍼에 그대로
+// 남는다. 블록까지 지우면(v9.23.0 초판) resume 의 `conversation.jsonl` 재생이
+// 수신 줄만 다시 보내 붙을 블록이 없어 전부 `⏳ 대기` 로 떨어졌다(사용자 보고
+// — 새로고침해야 버퍼의 스코프가 블록을 다시 세웠다). 블록과 `runByItem` 을
+// 남겨 두면 재생된 수신 줄이 제자리 머리로 돌아온다.
+function ovOnAgentCleared(key) {
+  var ch = cssEsc(key);
+  $messages
+    .querySelectorAll(
+      ':scope > .card-queued[data-ch="' + ch + '"], ' +
+      ':scope > .card-run[data-ch="' + ch + '"] .run-head > .run-item, ' +
+      ':scope > .card-run[data-ch="' + ch + '"] .run-body > .card-fallback'
+    )
+    .forEach(function (c) { c.remove(); });
+  delete queuedIn[key];
+  delete pendingFallback[key];
+  ovRenderAskTray();
+  ovSyncChannels();
+}
+// 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
+// (idle/busy/dead) + ✕(kill)/↻(resume). 에이전트 상태를
+// 이 "agent 탭"에 직접 표시(v8.33.0 — 구 흐름-탭 dots 통합).
+function ovSyncChannels() {
+  var bar = document.getElementById("ov-channels");
+  if (!bar) return;
+  // 선택 채널이 roster 에서 완전히 사라지면(dead 도 아님) main 복귀. dead 는
+  // 유지(⑤: 사망 고지 + ↻ 되살리기 가능).
+  if (ovActiveChannel !== "main" &&
+      !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
+    ovActiveChannel = "main";
+    applyChannelFilter(); // 사라진 채널을 보고 있었다면 표시도 되돌린다
+  }
+  // 돌아갈 채널이 사라졌으면 버튼도 사라진다(눌러도 갈 곳이 없다).
+  if (ovBack && ovBack.ch !== "main" &&
+      !ovRoster.some(function (t) { return t.key === ovBack.ch; })) {
+    ovBack = null;
+  }
+  ovRenderBack(); // 라벨은 roster 가 와야 이름으로 해소된다
+  var html = ovChanChip(
+    "main", escapeHtml("💬 main"), "", ovActiveChannel === "main"
+  );
+  ovRoster.forEach(function (t) {
+    html += ovChanChip(
+      t.key, ovAgentLabelHtml(t.key), t.state, ovActiveChannel === t.key
+    );
+  });
+  bar.innerHTML = html;
+  // 에이전트가 없으면 바 전체를 숨긴다 — "탭 1개짜리 탭바"는 고를 것이
+  // 없다. `#ov-channels:empty` 규칙은 main 칩을 항상 그리므로 **절대
+  // 발동하지 않았다**(감사 발견). 🔌 칩의 판례와 같은 판단:
+  // "0/0 은 정보가 아니라 소음".
+  bar.hidden = ovRoster.length === 0;
+  ovApplyChannelInput();
+}
+// `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를
+// 담기 위해 평문이 아니다. 호출부가 이스케이프 책임을 진다.
+function ovChanChip(key, labelHtml, state, active) {
+  var dead = state === "dead";
+  // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
+  var dot = "";
+  if (key !== "main") {
+    var c = state === "busy" ? "b" : dead ? "x" : "i";
+    dot = '<span class="ov-dot ' + c + '"></span>';
+  }
+  // ❓ 배지는 없다 (v9.8.0) — dot 이 이미 상태를 말하고 있어 한 칩 안에서
+  // 같은 사실을 두 기호로 말하게 된다. 질문은 dot 이 아니라 ❓ 트레이가
+  // 알린다 (비동기라 질문 중에도 에이전트는 busy 거나 idle 이다).
+  var badges = "";
+  var ctrl = "";
+  if (key !== "main") {
+    ctrl = dead
+      ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>'
+      : '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
+  }
+  return (
+    '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
+    '" data-key="' + escapeHtml(key) + '" role="tab" aria-selected="' +
+    (active ? "true" : "false") + '">' + dot + '<span class="ov-ch-lb">' +
+    labelHtml + "</span>" + badges + ctrl + "</span>"
+  );
+}
+function ovActiveDead() {
+  if (ovActiveChannel === "main") return false;
+  var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
+  return !!(t && t.state === "dead");
+}
+// 입력창 placeholder/disabled 를 현재 채널(+busy·dead)에 맞게. 입력창은 chat 전용.
+function ovApplyChannelInput() {
+  if (!$input) return;
+  var dead = ovActiveDead();
+  $input.disabled = dead;
+  if ($send) $send.disabled = dead;
+  if (dead) {
+    $input.placeholder = "✕ This agent has exited — pick another channel or revive it with ↻";
+  } else if (ovActiveChannel !== "main") {
+    $input.placeholder = "To " + ovAgentLabel(ovActiveChannel) + "… (Enter to send)";
+  } else {
+    $input.placeholder = workerBusy
+      ? "Worker is processing… your message will be queued (injected next turn)"
+      : "Type a message — Enter to send, Shift+Enter for newline";
+  }
+}
+// ── 채널 = 타임라인 필터 (v9.4.0 ⑥) ──────────────────────
+// `#messages` 의 **직계 자식**만 걸러 보여준다. `data-ch` 가 없는 노드는
+// 어느 채널에서나 보인다(생성 중 한 줄 — 채널과 무관한 표시).
+// 인자를 주면 그 노드 하나만(새로 append 된 카드), 없으면 전부 훑는다.
+function applyChannelFilter(one) {
+  var nodes = one ? [one] : Array.prototype.slice.call($messages.children);
+  nodes.forEach(function (n) {
+    var ch = n.dataset ? n.dataset.ch : null;
+    if (ch) n.hidden = ch !== ovActiveChannel;
+  });
+}
+
+// 채널 전환. 표시(필터) · 입력 라우팅 · 칩 활성이 한 지점에서 움직인다.
+//
+// **전환하면 그 대화의 맨 아래로 간다.** 필터가 노드를 감추고 드러내면
+// 문서 높이가 확 바뀌는데, 스크롤 위치는 그대로라 아무 데나 떨어져 있었다
+// — 칩을 누를 때마다 "어딘지 모를 곳"으로 튀어 규칙을 읽을 수 없었다
+// (사용자 보고). 대화를 열면 최신부터 보는 게 채팅의 규칙이고, 자동 따라가기도
+// 함께 되살려 그 채널에 새 줄이 오면 이어서 따라간다.
+// (점프는 이 뒤에 앵커로 다시 스크롤하므로 영향받지 않는다 — ovJump 참조.)
+function ovSetChannel(key) {
+  ovActiveChannel = key || "main";
+  ovSyncChannels();
+  applyChannelFilter();
+  frameShowChannel(ovActiveChannel);
+  ovApplyChannelInput();
+  pin();
+}
+
+// ── 점프 — 엿보기, 네비게이션이 아니다 (docs/chat-ui §5) ────
+// 상태는 값 하나: 직전에 어디서 왔는지. **스택이 아니다** — 새 점프가 이전
+// 것을 덮고, 한 번 누르면 사라진다. 스택이면 누를 때마다 라벨이 바뀌어
+// 어디로 갈지 예측이 안 되는데, 채널 칩이 항상 보이므로 그 복잡도를 살
+// 이유가 없다(사용자 지적으로 스택→단일 변경).
+var ovBack = null; // {ch, id} | null
+function ovRenderBack() {
+  var btn = document.getElementById("ch-back");
+  if (!btn) return;
+  if (!ovBack) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  btn.textContent =
+    "↩ Back to " + (ovBack.ch === "main" ? "💬 main" : ovAgentLabel(ovBack.ch));
+}
+/** 채널의 앵커 카드 = 그 채널의 마지막 카드 — 도착은 했음을 보이는 게
+ * 아무것도 안 하는 것보다 낫다. (왕래 줄 앵커는 v9.23.0 에서 줄과 함께
+ * 사라졌다 — 점프는 main 의 `⚡ agent` 도구 줄에서만 출발한다.) */
+function ovChannelAnchor(key) {
+  var cards = $messages.querySelectorAll(
+    ':scope > [data-ch="' + cssEsc(key) + '"]'
+  );
+  return cards.length ? cards[cards.length - 1] : null;
+}
+function cssEsc(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
+}
+function ovJump(key) {
+  if (!key || key === ovActiveChannel) return;
+  ovBack = { ch: ovActiveChannel };
+  ovSetChannel(key);
+  ovRenderBack();
+  var anchor = ovChannelAnchor(key);
+  if (anchor) {
+    expandAncestors(anchor.dataset.taskId || "");
+    scrollTimelineTo(anchor);
+  }
+}
+(function () {
+  var btn = document.getElementById("ch-back");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    if (!ovBack) return;
+    var to = ovBack.ch;
+    ovBack = null; // 한 단계 — 돌아가면 사라진다
+    ovSetChannel(to);
+    ovRenderBack();
+  });
+})();
+(function () {
+  var bar = document.getElementById("ov-channels");
+  if (!bar) return;
+  bar.addEventListener("click", function (e) {
+    var chip = e.target.closest ? e.target.closest(".ov-ch") : null;
+    if (!chip) return;
+    var key = chip.getAttribute("data-key");
+    var ctl = e.target.closest(".ov-ch-ctl");
+    if (ctl) {
+      e.stopPropagation();
+      fetch("api/agent/" + encodeURIComponent(key) + "/" +
+        ctl.getAttribute("data-act"), { method: "POST" });
+      return;
+    }
+    ovSetChannel(key);
+  });
+  ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
+  frameShowChannel(ovActiveChannel); // main 의 맨 위 카드·꼬리 띠
+})();
+
+/** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
+ * also scrolls every scrollable ancestor (incl. horizontally) and shoved
+ * the whole team view sideways in the mockup. The container is the one
+ * surface that should move. */
+function scrollTimelineTo(card) {
+  ctxReveal(card); // 접힌 "컨텍스트 밖 대화" 안이면 먼저 편다
+  // Off auto-follow so a live scrollToBottom() can't yank us back down.
+  // (프로그램 스크롤로 표시 — 도착지가 바닥 근처여도 규칙 2 가 되붙이지 않는다.)
+  unpin();
+  const top =
+    card.getBoundingClientRect().top -
+    $messages.getBoundingClientRect().top +
+    $messages.scrollTop -
+    10;
+  setScrollTop(Math.max(0, top));
+  flashOnce(card);
+}
+
+/** 점프 도착지를 한 번 번쩍이고 **클래스를 뗀다**.
+ *
+ * 떼는 것이 핵심이다. `.tv-nav-hl` 은 CSS 애니메이션인데, 채널 전환이
+ * `n.hidden` 으로 카드를 숨겼다 드러낸다(`applyChannelFilter`). 숨겨졌던
+ * 요소가 다시 표시되면 **CSS 애니메이션은 처음부터 다시 재생된다** — 그래서
+ * 클래스를 남겨두면 그 탭을 열 때마다 엉뚱하게 또 번쩍였다(사용자 보고).
+ *
+ * 전환이 빨라 `animationend` 가 안 오는 경우(애니메이션 중 숨겨지면 이벤트가
+ * 안 뜬다)를 위해 타이머도 함께 건다. 같은 카드로 다시 점프하면 이전 타이머는
+ * 취소한다 — 안 그러면 옛 타이머가 **새 번쩍임을 중간에 꺼버린다**.
+ */
+function flashOnce(card) {
+  if (card.__flashTimer) clearTimeout(card.__flashTimer);
+  if (card.__flashEnd) {
+    card.removeEventListener("animationend", card.__flashEnd);
+  }
+  card.classList.remove("tv-nav-hl");
+  void card.offsetWidth; // restart the animation
+  card.classList.add("tv-nav-hl");
+
+  const clear = function () {
+    if (card.__flashTimer) clearTimeout(card.__flashTimer);
+    if (card.__flashEnd) {
+      card.removeEventListener("animationend", card.__flashEnd);
+    }
+    card.__flashTimer = null;
+    card.__flashEnd = null;
+    card.classList.remove("tv-nav-hl");
+  };
+  card.__flashEnd = function (e) {
+    // 다른 애니메이션의 종료로 꺼지면 안 된다.
+    if (e.animationName === "tv-nav-flash") clear();
+  };
+  card.addEventListener("animationend", card.__flashEnd);
+  card.__flashTimer = setTimeout(clear, 2500);
+}
+
+/** Expand a scope card's collapsed ancestor chain, OUTERMOST first (jumping
+ * before expanding would move the target away from the jump). */
+function expandAncestors(tid) {
+  scopeAncestors(tid)
+    .slice()
+    .reverse()
+    .forEach(function (a) {
+      const g = taskGroups[a];
+      if (g && g.body.hidden) g.toggle();
+      else if (!g) {
+        // Group entry already released (scope finished) — the card's own
+        // DOM is still there, so toggle it through the element.
+        const anc = $messages.querySelector(
+          '.card-task-group[data-task-id="' +
+            (window.CSS && CSS.escape ? CSS.escape(a) : a.replace(/"/g, '\\"')) +
+            '"]',
+        );
+        const b = anc && anc.querySelector(":scope > .task-body");
+        if (b && b.hidden) {
+          b.hidden = false;
+          const ch = anc.querySelector(":scope > .task-header > .task-chevron");
+          if (ch) ch.textContent = "▼";
+        }
+      }
+    });
+}
+
+// ── Abort button visibility ────────────────
+// Shown only during ``input_required`` waits (ask answer / confirm
+// decision) — POST /api/abort releases the worker thread's blocking
+// input wait via an EOF sentinel. NOT shown during LLM streaming:
+// the abort endpoint can't cancel a streaming provider call, and
+// a button that doesn't do what it says undermines trust. True
+// streaming cancellation is a Phase D concern (provider-level).
+function setAbortVisible(visible) {
+  $abort.hidden = !visible;
+}
+$abort.addEventListener("click", function () {
+  fetch("api/abort", {
+    method: "POST",
+  });
+});
+
+es.addEventListener("input_required", function (e) {
+  const d = JSON.parse(e.data);
+  // 3b: main 의 prompt/confirm 을 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
+  clearConfirmStall();
+  ovMainAsk = { kind: d.kind, data: d };
+  ovRenderAskTray();
+  updateSendEnabled(); // ovMainAsk 반영 → #chat-stop 숨김(두 Stop 방지)
+  // Allow aborting a stuck prompt / confirm wait. Worker side
+  // surfaces this as EOFError → ``(no response)`` (ask) or
+  // ``(default_key, "")`` (confirm).
+  setAbortVisible(true);
+});
+
+es.addEventListener("input_resolved", function () {
+  ovFoldMainAsk();
+});
+
+es.addEventListener("worker_state", function (e) {
+  // Server-side flip: worker_busy fires right after popping a
+  // user message, worker_idle right before the next dequeue
+  // wait. Refresh / reconnect lands here too — the server
+  // prepends the latest worker_state to the snapshot replay so
+  // a freshly-connected client sees the correct send-button
+  // state on the very first event, without having to wait for
+  // the worker to actually transition.
+  const d = JSON.parse(e.data);
+  workerBusy = !!d.busy;
+  // Any worker_state transition ends a pending stop: idle = the turn
+  // we were stopping has finished; busy = a fresh turn started.
+  stopRequested = false;
+  updateSendEnabled();
+  // 런이 끝났다 — 첫 이미지 런이 모델의 vision 여부를 정했을 수 있다 (v10.60.0).
+  if (!workerBusy) attachRefreshVision();
+});
+
+// ── Identity + viewer roster ───────
+// Every connection is equal (all may send input / queue). conn_id is needed
+// only to mark "(you)" in the roster and to own queued messages.
+es.addEventListener("snapshot_end", function () {
+  revealAtBottom();
+});
+es.addEventListener("identity", function (e) {
+  myConnId = JSON.parse(e.data).conn_id;
+  // 상주 에이전트 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.
+  window.AGENTCLI_CONN_ID = myConnId;
+});
+
+const $viewers = document.getElementById("viewers");
+const $renameBtn = document.getElementById("rename-btn");
+es.addEventListener("viewers", function (e) {
+  if (!$viewers) return;
+  const d = JSON.parse(e.data);
+  const labels = (d.viewers || []).map(function (v) {
+    return v.id === myConnId ? v.name + " (you)" : v.name;
+  });
+  $viewers.textContent =
+    "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
+  $viewers.title = labels.join(", ");
+  // ✎ rename: visible once we know who we are and we're in the roster.
+  const me = (d.viewers || []).find(function (v) {
+    return v.id === myConnId;
+  });
+  // 2인 이상일 때만 말풍선에 보낸 사람 이름을 보인다(위 renderUserMessage).
+  document.body.classList.toggle("multi-viewer", (d.count || 0) > 1);
+  if (me) myNickname = me.name; // latest name for rename prefill
+  if ($renameBtn) $renameBtn.hidden = !me;
+  maybeNamePrompt(d.viewers || []);
+});
+
+// ── Nickname (input on first connect; fun default pre-filled) ───────
+// Once per page load: if a name was saved before, re-apply it silently;
+// otherwise show a bar pre-filled with the assigned fun default so the
+// user can edit/confirm (or ✕ to keep the default).
+const NICK_KEY = "agentcli_nickname";
+const $nameBar = document.getElementById("name-bar");
+const $nbInput = document.getElementById("nb-input");
+const $nbSet = document.getElementById("nb-set");
+const $nbSkip = document.getElementById("nb-skip");
+let namePrompted = false;
+let myNickname = ""; // latest roster name, for prefill on rename
+
+function postNickname(name) {
+  fetch("api/nickname", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conn_id: myConnId, name: name }),
+  }).catch(function () {});
+}
+
+// Show the name-bar pre-filled with `current`, focused. Shared by the
+// first-connect prompt and the ✎ rename entry point.
+function openNameBar(current) {
+  if (!$nameBar) return;
+  $nbInput.value = current || "";
+  $nameBar.hidden = false;
+  $nbInput.focus();
+  $nbInput.select();
+}
+
+function maybeNamePrompt(viewers) {
+  if (namePrompted || !myConnId || !$nameBar) return;
+  namePrompted = true;
+  const saved = (localStorage.getItem(NICK_KEY) || "").trim();
+  if (saved) {
+    postNickname(saved); // remembered from a previous session
+    return;
+  }
+  const me = viewers.find(function (v) {
+    return v.id === myConnId;
+  });
+  openNameBar(me ? me.name : ""); // pre-fill the fun default
+}
+
+function applyNickname() {
+  const name = $nbInput.value.trim();
+  if (name) {
+    postNickname(name);
+    localStorage.setItem(NICK_KEY, name);
+  }
+  $nameBar.hidden = true;
+}
+if ($nbSet) $nbSet.addEventListener("click", applyNickname);
+if ($nbSkip) {
+  $nbSkip.addEventListener("click", function () {
+    $nameBar.hidden = true;
+  });
+}
+if ($nbInput) {
+  $nbInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyNickname();
+    }
+  });
+}
+if ($renameBtn) {
+  $renameBtn.addEventListener("click", function () {
+    if (!myConnId) return; // identity not yet known
+    openNameBar(myNickname); // prefill with current nickname
+  });
+}
+
+// ── Pending message queue (live) + 전달 상태 ───────
+// Messages queued while the worker is busy; injected one-per-turn-boundary.
+// Each viewer can cancel their OWN still-pending items.
+//
+// 조용히 사라지는 대신 "전달됨" 을 보여준다(단계 3): 큐를 떠난 항목은
+// ⏳ → ✓ 주입됨(내 것=✓ 내 요청 반영됨) 또는 ✕ 취소됨 영수증으로 잠깐 남았다
+// 사라진다. 주입/취소 판정은 기존 이벤트로 추론(로직 불변): 큐에서 빠진 항목의
+// 텍스트가 곧 user_message 로 재방출되면 주입(그리고 개요의 다음 응답 블록
+// 요청으로 자동 승격), ~1.4s 내 매칭이 없으면 취소. 내가 ✕ 누른 건 즉시 취소.
+const $queueList = document.getElementById("queue-list");
+let qPrevById = {}; // 직전 pending: id → item
+const qLeaving = {}; // id → {item, state:'wait'|'injected'|'cancelled', _timer}
+const qCancelledByMe = {}; // id → true (내가 ✕)
+let qPending = [];
+// main 앞 미배달 메일도 같은 대기열에 선다 (v10.51.0, `mail: true`) — 사용자
+// 요청이 바쁠 때 서는 그 자리, 같은 ⏳ → ✓ 주입됨. 다른 점 둘: 아무도 취소할
+// 수 없고, **유예 뒤에야** 그린다 — main 이 놀면 1초 안에 깨우기 런이 흡수해
+// 종전처럼 떴다 사라지는 줄(사용자 지적, `InputQueue.snapshot`)이 되기 때문.
+// 큐에서 빠진 메일은 곧 주입된 것이다(메일박스 drain = 관찰 주입).
+const Q_MAIL_GRACE_MS = 1500;
+const qMailSince = {}; // id → 처음 본 시각 (유예 판정)
+function qVisible(it) {
+  return !it.mail || Date.now() - qMailSince[it.id] >= Q_MAIL_GRACE_MS;
+}
+
+function qScheduleRemove(id) {
+  setTimeout(function () {
+    delete qLeaving[id];
+    delete qCancelledByMe[id];
+    qRender();
+  }, 1800);
+}
+function qRender() {
+  if (!$queueList) return;
+  const leaving = Object.keys(qLeaving);
+  $queueList.innerHTML = "";
+  const shown = qPending.filter(qVisible);
+  $queueList.hidden = shown.length + leaving.length === 0;
+  shown.forEach(function (it) {
+    const row = el("div", ["queue-item"]);
+    const txt = el("span", ["queue-text"]);
+    txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
+    row.appendChild(txt);
+    if (Array.isArray(it.images) && it.images.length) row.appendChild(miniThumbs(it.images));
+    if (!it.mail && it.conn_id === myConnId) {
+      const x = el("button", ["queue-cancel"]);
+      x.type = "button";
+      x.textContent = "✕";
+      x.title = "Cancel this queued message";
+      x.addEventListener("click", function () {
+        qCancelledByMe[it.id] = true; // 로컬 확정 — 다음 queue 이벤트서 취소 영수증
+        fetch("api/queue/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conn_id: myConnId, id: it.id }),
+        });
+      });
+      row.appendChild(x);
+    }
+    $queueList.appendChild(row);
+  });
+  leaving.forEach(function (id) {
+    const lv = qLeaving[id];
+    const cancelled = lv.state === "cancelled";
+    const mine = lv.item.conn_id === myConnId;
+    const row = el("div", ["queue-item", cancelled ? "q-cancelled" : "q-injected"]);
+    const txt = el("span", ["queue-text"]);
+    txt.textContent = (cancelled ? "✕" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
+    row.appendChild(txt);
+    if (Array.isArray(lv.item.images) && lv.item.images.length) row.appendChild(miniThumbs(lv.item.images));
+    const st = el("span", ["queue-state"]);
+    st.textContent = cancelled
+      ? "Cancelled"
+      : mine && !lv.item.mail
+        ? "✓ My request applied"
+        : "Injected · applies to the next answer";
+    row.appendChild(st);
+    $queueList.appendChild(row);
+  });
+}
+function qOnUserMsg(d) {
+  // 큐를 떠나 대기 중인 항목이 user_message 로 재방출 → 주입 확정.
+  const c = d.content || "";
+  Object.keys(qLeaving).forEach(function (id) {
+    const lv = qLeaving[id];
+    if (
+      lv.state === "wait" &&
+      (c === lv.item.text || c.indexOf(lv.item.text) >= 0 || lv.item.text.indexOf(c) >= 0)
+    ) {
+      if (lv._timer) clearTimeout(lv._timer);
+      lv.state = "injected";
+      qRender();
+      qScheduleRemove(id);
+    }
+  });
+}
+es.addEventListener("queue", function (e) {
+  if (!$queueList) return;
+  const pending = JSON.parse(e.data).pending || [];
+  const newIds = {};
+  pending.forEach(function (it) {
+    newIds[it.id] = true;
+  });
+  // pending 에서 빠진 항목 → 영수증(즉시 취소 or 판정 대기)
+  Object.keys(qPrevById).forEach(function (id) {
+    if (newIds[id] || qLeaving[id]) return;
+    const item = qPrevById[id];
+    if (item.mail) {
+      // 메일: 빠짐 = 주입. 유예 안에 빠졌으면(main 이 놀았다) 영수증도 없다 —
+      // 타임라인의 관찰 줄이 전부다.
+      const wasShown = qVisible(item);
+      delete qMailSince[id];
+      if (!wasShown) return;
+      qLeaving[id] = { item: item, state: "injected" };
+      qScheduleRemove(id);
+      return;
+    }
+    if (qCancelledByMe[id]) {
+      qLeaving[id] = { item: item, state: "cancelled" };
+      qScheduleRemove(id);
+    } else {
+      qLeaving[id] = { item: item, state: "wait" };
+      qLeaving[id]._timer = setTimeout(function () {
+        if (qLeaving[id] && qLeaving[id].state === "wait") {
+          qLeaving[id].state = "cancelled";
+          qRender();
+          qScheduleRemove(id);
+        }
+      }, 1400);
+    }
+  });
+  qPending = pending;
+  qPrevById = {};
+  let graceTimer = false;
+  pending.forEach(function (it) {
+    qPrevById[it.id] = it;
+    if (it.mail && qMailSince[it.id] === undefined) {
+      qMailSince[it.id] = Date.now();
+      graceTimer = true;
+    }
+  });
+  // 유예가 끝나도 아직 서 있으면 그때 그린다(새 queue 이벤트가 없어도).
+  if (graceTimer) setTimeout(qRender, Q_MAIL_GRACE_MS + 20);
+  qRender();
+});

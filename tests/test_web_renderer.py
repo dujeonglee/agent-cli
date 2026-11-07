@@ -27,6 +27,7 @@ from agent_cli.render.web_hub import WebConnection
 from agent_cli.web.instance_file import read_status_file
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
+from tests.web_static import js_text
 
 
 def _qget(conn, timeout=0.5):
@@ -3544,9 +3545,8 @@ class TestStreamStallDisplay:
     def test_frontend_listens_for_the_event(self):
         """이벤트를 내도 프론트가 안 들으면 원래 버그 그대로다. 이 배선이
         끊기면 증상이 '조용히 아무것도 안 보임'이라 눈에 안 띈다."""
-        from pathlib import Path
 
-        js = Path("agent_cli/web/static/app.js").read_text()
+        js = js_text()
         assert 'es.addEventListener("stream_stall"' in js
         assert "function renderStreamStall" in js
 
@@ -3607,7 +3607,7 @@ class TestStreamResetWeb:
         듣지 않는 상태가 계약이다."""
         from pathlib import Path
 
-        js = Path("agent_cli/web/static/app.js").read_text()
+        js = js_text()
         assert 'es.addEventListener("stream_reset"' not in js
         # 서버는 계속 낸다 — CLI 쪽 계약(TestStreamResetCli)이 그걸 쓴다
         web = Path("agent_cli/render/web.py").read_text()
