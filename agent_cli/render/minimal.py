@@ -268,6 +268,8 @@ class MinimalRenderer(Renderer):
         # keep an explicit list for clarity and stability across
         # future dict-mutation refactors.
         self._parallel_order: list[str] = []
+        # 직전 장부 스냅샷 (v10.119.0) — 같은 것이 연달아 오면 줄을 다시 찍지 않는다.
+        self._last_open_items: dict | None = None
 
     @property
     def _prefix(self) -> str:
@@ -410,6 +412,18 @@ class MinimalRenderer(Renderer):
 
     def error(self, content: str, turn: int) -> None:
         self._p(f"  ✗ {content}", highlight=False)
+
+    def open_items(self, snapshot: dict) -> None:
+        """열린 항목 한 줄 ``open: u-2 n-1 r-1`` (v10.119.0, docs/ledger/DESIGN.md
+        §15) — 턴 경계마다 사용량 줄 뒤에 온다. 항목이 없거나 직전과 같은 스냅샷이면
+        찍지 않는다. id 는 대괄호 없이 공백으로 잇고 이스케이프한다 — rich 가
+        ``[u-1]`` 을 스타일 태그로 삼킨 사고(v10.56.1)의 재발 방지."""
+        if snapshot == self._last_open_items:
+            return
+        self._last_open_items = snapshot
+        ids = [str(it.get("id")) for it in snapshot.get("items") or []]
+        if ids:
+            self._p(f"  [{_MUTED}]{escape('open: ' + ' '.join(ids))}[/]")
 
     def push_user_message(
         self,

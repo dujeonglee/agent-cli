@@ -192,6 +192,15 @@ class Renderer(ABC):
         """런 끝의 아직 열린 항목 id (v10.63.0) — 마지막 스냅샷의 ``open_items``
         와 비교해 그 호출 뒤에 닫힌 것을 표시하는 데 쓴다. Default no-op."""
 
+    def open_items(self, snapshot: dict) -> None:
+        """사람에게 보이는 장부 (v10.119.0, docs/ledger/DESIGN.md §15) — main 런의
+        `Ledger.snapshot` 이 런 시작·턴 경계·`complete` 정산·런 끝에 온다. 모델
+        입력과 무관한 표시 전용이다. Default no-op — web 은 스티키, CLI 는 한 줄."""
+
+    def note_request(self, request_id: str, hidx: int) -> None:
+        """장부 항목 ``request_id`` 의 원문 레코드 history 서수 (v10.119.0) —
+        `open_items` 의 행이 그 카드로 점프하는 데 쓴다. Default no-op."""
+
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:
         ``agent`` (delegate label, empty for the main agent), ``reasoning``

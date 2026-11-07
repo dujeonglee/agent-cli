@@ -731,6 +731,8 @@ def create_app(server: WebServer) -> FastAPI:
             "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
             # v10.42.0: 감사 런 진행 중 (status.json 동형)
             "auditing": server.auditor is not None and server.auditor.in_flight > 0,
+            # v10.119.0: 장부 요약 (없으면 None) — status.json 과 같은 소스
+            "open_items": server.renderer.open_items_summary(),
         }
 
     @app.get("/api/share-url")

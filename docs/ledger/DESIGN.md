@@ -154,7 +154,7 @@ class OpenItem:
 | P1 | 장부 데이터 모델 하나 — 꼬리·강제 문구 **바이트 동일**. 주석·문서 표류 정리(§3.6-1·10) | 없음 | 꼬리 golden + 동등성 |
 | P2 | 메일 7종 항목화(`[nK]`), 깨우기 문장 컨텍스트 제거, 열린 항목 전부 압축 핀 — **구현 v10.55.0** (§10) | 있음 | 깨우기·바쁜 런 재생 |
 | P3 | 꼬리 `## Open Items` 하나 + 정책 통일(계속형·상한 N) — **구현 v10.56.0** (§12) | 있음 | main+상주 재생, 같은 조건 반복으로 흔들림부터 |
-| P4 | 사람에게 보이는 장부(화면·status.json·보드) | 없음 | 브라우저 |
+| P4 | 사람에게 보이는 장부(화면·status.json·보드) — **구현 v10.119.0** (§15, 보드 칩은 보드 v1.44.0) | 없음 | 브라우저 |
 
 측정 규율(2026-10-18 깨우기 재생의 교훈): 같은 조건을 다시 돌려 흔들림부터 잰다 — 같은 조건이
 5/50 ↔ 13/50 으로 움직였고, 그 범위 안의 "차이" 로 결론을 냈다가 철회했다.
@@ -386,11 +386,115 @@ main 앞 메일의 세 갈래(§2) 중 회신 빚은 처음부터 필드(`expect
 `tests/test_ledger_mail.py` 가 그것(기본 → 항목, `expects_reply` → 밖, kind 이름만으로는 아무것도 정해지지 않음,
 `"none"` 은 영속되지 않음)을 고정한다. 첫 사용자는 `wait` 의 중간 깨우기(v10.79.0, `kind: "checkin"`, docs/wait/DESIGN.md §6)다.
 
+
+## 15. P4 구현 (v10.119.0)
+
+장부는 모델에게만 보였다(꼬리 `## Open Items`). 사람 화면엔 그 반대편 둘 — ⏳ 대기열(아직 런에
+안 들어간 사람 메시지)과 ❓ 트레이(모델이 사람에게 묻는 것) — 만 있어서, "모델이 지금 무엇을 갚아야
+하는가" 는 모델 시점 틀을 열어 꼬리를 읽어야 알았다. P4 는 같은 장부를 사람에게 보인다. **표시만**
+한다: 꼬리·되돌림 관찰·핀은 바이트 하나 안 바뀐다(`tests/test_ledger_golden.py` 가 지킨다).
+
+### 15.1 스냅샷 — `Ledger.snapshot(turn) -> dict`
+
+`{"items": [...], "budget": {"left": int, "total": NAG_BUDGET}}`. 항목 순서는 꼬리와 같다 — 행동으로
+닫는 빚 먼저, `complete` 로 닫는 요청 마지막.
+
+| 필드 | 요청(`u-`)·메일(`n-`) | 빚(`r-`)·질문(`q-`) |
+|---|---|---|
+| `id` | 항목 id | 빚 id |
+| `source` | `"user"` · `"mail"` (접두로) | `"debt"` · `"question"` (접두로) |
+| `who` | `author` | `to` 의 `:` 뒤(`_debt_line` 과 같은 출처) |
+| `head` | `_head(text)` — 꼬리와 같은 한 줄 120자 | 같다 |
+| `closer` | `closer_of(id)` = `"complete"` | `"reply"`; `q-` 는 `"answer"`(모델이 아니라 사람이 트레이에서 닫는다) |
+| `turns` | `turn - 오른 턴` | `None` — 포트가 연 때를 모른다 |
+| `hidx` | `None` — 렌더러가 채운다(§15.3) | `None` |
+
+오른 턴은 `add_request(…, turn=)` 로 받는다(additive, 기본 0). 항목 dict 에는 넣지 않고 장부 안의
+맵에 둔다 — 그 dict 는 최종 카드의 `requests` 와 `park_requests` 로 그대로 흘러가므로 모양이 바뀌면
+최종 카드 payload 와 깨우기 런의 장부가 함께 바뀐다. 호출자는 `core.py` 의 여섯(런 시작 셋 —
+`user_requests`·`wait` 로 넘긴 요청·시작 요청, 턴 경계 셋 — 큐 주입·메일·상주 받은편지함)이고
+모두 그 시점의 `state.turn` 을 넘긴다.
+
+### 15.2 부르는 자리와 거름
+
+`show_open_items(cfg, state)`(`loop/dispatch.py`) 하나가 `get_renderer().open_items(state.ledger.snapshot(state.turn))`
+를 부른다. 자리는 넷이다.
+
+1. 런 시작 — `_setup()` 뒤(시작 핀).
+2. 턴 경계 — `_intake()` 뒤. 지난 턴의 관찰과 방금 흡수한 메일·요청이 다 기록된 뒤다. 메일·빚은
+   루프 밖에서 바뀌므로 턴마다 다시 보낸다.
+3. `_op_complete` — `settle`·`spend` 뒤(닫힘과 예산 소진이 띠에 바로 선다).
+4. 런 끝 — `run()` 의 `finally`(완료·턴 상한·취소·예외). 남은 항목을 그대로 한 번 더 보낸다. 비었으면
+   띠가 숨는다.
+
+**main 런만** 보낸다(`kind.tracks_run_authors` — 입력 큐가 있는 종류). 상주·one-shot·스킬 루프도 같은
+프로세스 렌더러를 쓰므로, 거르지 않으면 그 루프의 장부가 main 의 띠를 덮어쓴다. 같은 스냅샷이 연달아
+오면 렌더러가 거른다(호출 자리가 넷이라 흔하다).
+
+### 15.3 `hidx` — 렌더러가 채운다
+
+장부는 history 를 모른다. 원문 레코드의 서수는 루프가 레코드를 기록하는 순간 안다. 그래서 루프가
+`Renderer.note_request(request_id, hidx)` 로 알리고(기본 no-op), `WebRenderer` 가 `request_id → hidx`
+맵을 들고 스냅샷의 `hidx` 를 채운다. 알리는 곳은 `_add_user_message`(요청 레코드)와 `_inject_mail`
+(메일·회신 빚 관찰 레코드) 두 곳이고, 기록 직후의 `ctx.last_ordinal` 을 넘긴다. resume 은
+`_replay_record` 가 레코드의 `request_id` 와 재생 서수로 같은 맵을 채운다.
+
+`hidx` 를 못 채우는 경우 — 행은 점프 없이 그린다.
+
+- `q-` 질문: 장부 레코드가 없다(사람에게 간 질문이다).
+- ctx 가 없거나 서수를 모르는 ctx(테스트 더미) — 루프가 알리지 않는다.
+- 상주 받은편지함의 레코드(`_inject_item` 의 `record` 길): main 이 아니라 거른다.
+- resume 뒤 재생 범위 밖의 레코드: 재생은 캐시와 캐시에서 빠진 접두사(`evicted_records`)를 돈다.
+  그 밖(압축 요약 앞에서 버려진 레코드)은 맵에 없다.
+
+웹의 점프는 main 채널의 카드만 찾는다 — 에이전트 채널·delegate 그룹 안 카드는 자기 history 의
+서수라 같은 숫자가 다른 레코드다. 압축으로 화면의 "컨텍스트 밖" 묶음 안에 들어간 카드는 그 묶음을
+펴고 간다(`ctxReveal`).
+
+### 15.4 웹 — 스티키 하나, 띠 셋
+
+- **스티키** `open_items`(이벤트 이름도 같다). 늦게 접속한 뷰어는 스냅샷으로, 연결된 뷰어는 라이브로
+  받는다. 아직 띠가 없을 때 빈 장부는 보내지 않는다. `_flips_status` 에 들어 있어 바뀔 때 `status.json`
+  도 다시 쓴다.
+- **`status.json`** `open_items: {count, ids, oldest_turns, budget_left}` — additive, 열린 항목이 없으면
+  생략(구버전 보드와 같은 모양). `oldest_turns` 는 `turns` 가 있는 항목 중 최대(빚만이면 `null`).
+  `/api/health` 도 같은 요약(없으면 `null`) — 보드 v1.44.0 의 📋 칩 소스.
+- **띠** `#open-items` 는 `#ask-tray` 와 `#queue-list` 사이. 모듈 `static/js/ledger.js` — 순환 밖 잎
+  (`dom`·`sse` 만 import, app.js 에서 `attach` 뒤·`channels` 앞, docs/web-modules/DESIGN.md §8.1·§8.4).
+  머리 `📋 open items · the model owes these` 와 오른쪽 `budget <left>/<total>`(0 이면 `--warn`). 행은
+  id 칩(`.oi-id`) · who · 머리말(`.oi-head`, 한 줄 말줄임) · 닫는 법(`→ complete` / `→ complete, answers` /
+  `→ reply "r-1"` / `→ answer "q-…"`) · `N turns`(`null` 이면 생략). `hidx` 가 있는 행만 누를 수 있고,
+  `agentcli:jump` {hidx} CustomEvent 를 `document` 로 보낸다 — 점프는 순환 안(`channels.js`)의 일이라
+  잎이 직접 부르지 않는다. 닫힘은 직전 스냅샷에 있다가 사라진 id 로 판정해 `✓ closed` 취소선으로 1.5초
+  남긴다(대기열 ✓ 영수증과 같은 ok 토큰). 대기열 행에도 같은 `.oi-id` 칩을 붙인다(글 `⏳ [닉] 본문` 은
+  그대로) — 디큐된 `u-N` 이 같은 id 로 📋 띠에 오른다.
+
+**띠 셋의 관계** (§9 의 열린 질문을 닫는다): 방향으로 나뉜다. 사람→모델은 ⏳ 대기열(아직 안 들어감)과
+📋 장부(들어가서 갚는 중), 모델→사람은 ❓ 트레이. 위에서 아래로 ❓ → 📋 → ⏳ — 트레이는 사람이 지금
+해야 할 일이라 맨 위, 대기열은 시작도 안 한 것이라 맨 아래다. 하나로 합치지 않는 이유는 할 수 있는
+행동이 다르기 때문이다. 대기열은 취소하고, 트레이는 답하고, 장부는 보고 점프만 한다.
+
+### 15.5 CLI(run) 한 줄
+
+`MinimalRenderer.open_items` 는 `open: u-2 n-1 r-1` 한 줄을 흐린 색으로 찍는다. 자리는 턴 경계 —
+지난 턴의 사용량 줄과 관찰 뒤다. 열린 항목이 없거나 직전과 같은 스냅샷이면 찍지 않는다(스냅샷에 `turns`
+가 있으므로 항목이 남아 있는 동안은 턴마다 한 줄). rich 가 `[u-1]` 을 태그로 삼킨 사고(v10.56.1)가
+있었으므로 대괄호 없이 공백으로 잇고 `rich.markup.escape` 를 거친다.
+
+### 15.6 검증
+
+`tests/test_open_items_view.py` — 스냅샷(각 source·closer·head·turns, 빈 장부, 예산, 항목 dict 모양
+불변, 꼬리 불변), 스티키(라이브·늦은 접속·같은 payload 생략·빈 장부), `hidx` 맵(라이브 `note_request`·
+재생의 `request_id`), `status.json`·`/api/health` 요약, CLI 한 줄, 루프의 부르는 자리(`run()` 의 시작·
+경계·끝, `complete`)와 main 거름, 웹 소스(이벤트 이름·`agentcli:jump`·budget·띠 순서·대기열 칩).
+실브라우저 `tests/browser/test_open_items.py` — 띠 등장·닫힘 영수증·예산 0·숨김, 늦은 접속 스냅샷과 점프.
+
 ## 9. 열린 질문
 
 - 예산 기본값(후보 8)과 소진 뒤 표시 문구 — P3.
 - 빈 `answers: []` — 되묻기에서도 "아무것도 안 답함" 진술로 받을지(지금은 빈칸으로 되돌림) — P3.
 - 상주 에이전트의 장부 — 같은 모델을 쓰되 닫는 법(`reply`)과 주소(요청자)가 다르다.
 - 바쁜 런에 메일이 끼면 사용자 요청과 섞인 `answers` — 누락률이 늘면 정책을 다시 본다.
-- 사람에게 보이는 장부(P4)의 자리 — 입력창 위 대기열·❓ 트레이와의 관계.
+- ~~사람에게 보이는 장부(P4)의 자리 — 입력창 위 대기열·❓ 트레이와의 관계.~~ **닫힘(v10.119.0, §15.4)**:
+  띠 셋은 방향으로 나뉘고, 할 수 있는 행동이 달라 합치지 않는다.
 - `answers` 의 세 뜻(§3.6-7) — 모델이 보는 것은 `complete.answers` 하나지만 내부 필드 이름 정리.

@@ -437,6 +437,35 @@ function expandAncestors(tid) {
     });
 }
 
+// ── 원문 레코드로 점프 (v10.119.0, 장부 P4) ─────────────────
+// 📋 띠(ledger.js — 순환 밖 잎이라 이 모듈을 import 하지 않는다)가 행 클릭에
+// `agentcli:jump` {hidx} 를 보낸다. 장부는 main 의 것이므로 main 채널의 카드만
+// 찾는다 — 에이전트 채널·delegate 그룹 안 카드는 자기 history 의 서수라 같은 숫자가
+// 다른 레코드다. 다른 채널에 있었으면 main 으로 옮기고 돌아가기 한 단계를 남긴다
+// (ovJump 와 같은 엿보기).
+function ovRecordCard(hidx) {
+  var hits = $messages.querySelectorAll('[data-hidx="' + cssEsc(hidx) + '"]');
+  for (var i = 0; i < hits.length; i++) {
+    var top = hits[i];
+    while (top.parentNode && top.parentNode !== $messages) top = top.parentNode;
+    var ch = top.dataset ? top.dataset.ch : null;
+    if ((!ch || ch === "main") && !hits[i].closest(".task-body")) return hits[i];
+  }
+  return null;
+}
+document.addEventListener("agentcli:jump", function (e) {
+  var hidx = e.detail ? e.detail.hidx : null;
+  if (hidx == null) return;
+  var card = ovRecordCard(hidx);
+  if (!card) return;
+  if (ovActiveChannel !== "main") {
+    ovBack = { ch: ovActiveChannel };
+    ovSetChannel("main");
+    ovRenderBack();
+  }
+  scrollTimelineTo(card);
+});
+
 // 모듈 경계의 setter — 이 모듈의 let/var 는 이 모듈만 대입한다(DESIGN §8.3).
 export function setOvActiveChannel(v) { ovActiveChannel = v; }
 export function setOvBack(v) { ovBack = v; }

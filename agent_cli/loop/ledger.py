@@ -3,6 +3,8 @@
 - P1 (v10.54.0): 흩어져 있던 회계를 한 객체로.
 - P2 (v10.55.0): main 앞 메일 7종이 요청으로 오르고, 열린 항목 전부가 압축 핀.
 - P3 (v10.56.0): **장부 하나 · 정책 하나 · 순서 하나.**
+- P4 (v10.119.0): 사람에게도 보인다 — :meth:`Ledger.snapshot` 이 화면용 사본을
+  만든다(웹 📋 띠·status.json·CLI 한 줄). 꼬리는 그대로다(모델 입력 불변, §15).
 
   - 꼬리 블록 하나 ``## Open Items`` — 행동으로 닫는 것(회신 빚 ``reply``) 먼저,
     ``complete`` 의 ``answers`` 로 닫는 것(사람 요청·메일) 마지막. (v10.77.0:
@@ -90,6 +92,8 @@ class Ledger:
         #: 남은 되돌림 예산 (:data:`NAG_BUDGET`).
         self.budget = NAG_BUDGET
         self._port = None
+        #: 요청 id → 오른 턴 (v10.119.0, 화면의 "N turns" 전용)
+        self._opened: dict[str, int] = {}
 
     # ── 출처 ──────────────────────────────────────────────
 
@@ -97,10 +101,14 @@ class Ledger:
         """빚을 읽을 질문 포트(`LoopPorts.questions`). None = 빚 없음."""
         self._port = port
 
-    def add_request(self, rid: str, author: str, text: str) -> None:
+    def add_request(self, rid: str, author: str, text: str, *, turn: int = 0) -> None:
+        """``turn`` (v10.119.0): 오른 때의 턴 — 화면의 "N turns" 만 쓴다(꼬리는
+        안 읽는다). 항목 dict 에 넣지 않고 따로 둔다: 그 dict 는 최종 카드의
+        ``requests``·``park_requests`` 로 그대로 흘러가 모양이 바뀌면 안 된다."""
         self.requests.append(
             {"id": str(rid), "author": author or "", "text": text or ""}
         )
+        self._opened.setdefault(str(rid), int(turn))
 
     # ── 읽기 ──────────────────────────────────────────────
 
@@ -148,6 +156,50 @@ class Ledger:
             return False
         self.budget -= 1
         return True
+
+    # ── 사람 화면 (P4) ────────────────────────────────────
+
+    def snapshot(self, turn: int) -> dict:
+        """화면용 사본 (v10.119.0, docs/ledger/DESIGN.md §15) — 꼬리와 **같은 출처·
+        같은 머리말**, 모양만 다르다. ``hidx`` 는 언제나 ``None`` 으로 둔다: 장부는
+        history 를 모르고, 원문 레코드의 서수를 아는 렌더러가 채운다.
+
+        항목 순서는 꼬리와 같다 — 행동으로 닫는 빚 먼저, `complete` 로 닫는 요청
+        마지막. 빚의 ``turns`` 는 포트가 연 때를 모르므로 ``None``."""
+        items: list[dict] = []
+        for d in self.debts():
+            did = str(d.get("id") or "")
+            if not did:
+                continue
+            question = item_ids.prefix_of(did) == item_ids.QUESTION
+            items.append(
+                {
+                    "id": did,
+                    "source": "question" if question else "debt",
+                    "who": str(d.get("to") or "").split(":", 1)[-1],
+                    "head": _head(d.get("text")),
+                    # q- 는 모델이 닫지 않는다 — 사람이 트레이에서 답한다
+                    "closer": "answer" if question else item_ids.closer_of(did),
+                    "turns": None,
+                    "hidx": None,
+                }
+            )
+        for r in self.requests:
+            rid = str(r.get("id"))
+            items.append(
+                {
+                    "id": rid,
+                    "source": "mail"
+                    if item_ids.prefix_of(rid) == item_ids.MAIL
+                    else "user",
+                    "who": r.get("author") or "",
+                    "head": _head(r.get("text")),
+                    "closer": item_ids.closer_of(rid),
+                    "turns": max(0, int(turn) - self._opened.get(rid, int(turn))),
+                    "hidx": None,
+                }
+            )
+        return {"items": items, "budget": {"left": self.budget, "total": NAG_BUDGET}}
 
     # ── 꼬리 ──────────────────────────────────────────────
 
